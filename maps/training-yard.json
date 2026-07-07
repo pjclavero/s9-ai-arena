@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "training-yard",
+  "name": "Training Yard",
+  "width": 1200,
+  "height": 720,
+  "seed": 20260707,
+  "walls": [
+    { "id": "north", "kind": "wall", "x": 600, "y": 15, "width": 1200, "height": 30 },
+    { "id": "south", "kind": "wall", "x": 600, "y": 705, "width": 1200, "height": 30 },
+    { "id": "west", "kind": "wall", "x": 15, "y": 360, "width": 30, "height": 720 },
+    { "id": "east", "kind": "wall", "x": 1185, "y": 360, "width": 30, "height": 720 },
+    { "id": "center-top", "kind": "wall", "x": 600, "y": 220, "width": 280, "height": 34 },
+    { "id": "center-bottom", "kind": "wall", "x": 600, "y": 500, "width": 280, "height": 34 }
+  ],
+  "obstacles": [
+    { "id": "crate-left", "kind": "destructible", "x": 430, "y": 360, "width": 70, "height": 70, "health": 60 },
+    { "id": "crate-right", "kind": "destructible", "x": 770, "y": 360, "width": 70, "height": 70, "health": 60 }
+  ],
+  "spawns": [
+    { "id": "red-1", "team": "red", "x": 130, "y": 360, "heading": 0 },
+    { "id": "blue-1", "team": "blue", "x": 1070, "y": 360, "heading": 3.141592653589793 }
+  ]
+}

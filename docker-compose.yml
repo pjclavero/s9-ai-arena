@@ -1,0 +1,61 @@
+services:
+  arena-server:
+    build:
+      context: .
+      dockerfile: apps/arena-server/Dockerfile
+    environment:
+      ARENA_PORT: 8081
+      TICK_RATE: 20
+    ports:
+      - "8081:8081"
+    restart: unless-stopped
+    networks:
+      - arena
+
+  arena-viewer:
+    build:
+      context: .
+      dockerfile: apps/arena-viewer/Dockerfile
+      args:
+        VITE_ARENA_WS_URL: ws://localhost:8081/viewer
+    ports:
+      - "3000:80"
+    depends_on:
+      - arena-server
+    restart: unless-stopped
+    networks:
+      - arena
+
+  bot-red:
+    build:
+      context: .
+      dockerfile: bots/bot-red/Dockerfile
+    environment:
+      ARENA_WS_URL: ws://arena-server:8081/bot
+      BOT_ID: bot-red
+      BOT_NAME: Red Runner
+      BOT_TEAM: red
+    depends_on:
+      - arena-server
+    restart: unless-stopped
+    networks:
+      - arena
+
+  bot-blue:
+    build:
+      context: .
+      dockerfile: bots/bot-blue/Dockerfile
+    environment:
+      ARENA_WS_URL: ws://arena-server:8081/bot
+      BOT_ID: bot-blue
+      BOT_NAME: Blue Spinner
+      BOT_TEAM: blue
+    depends_on:
+      - arena-server
+    restart: unless-stopped
+    networks:
+      - arena
+
+networks:
+  arena:
+    driver: bridge

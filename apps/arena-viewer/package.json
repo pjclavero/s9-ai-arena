@@ -1,0 +1,20 @@
+{
+  "name": "@s9/arena-viewer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b --pretty false",
+    "lint": "echo 'lint pending'"
+  },
+  "dependencies": {
+    "@s9/protocol": "workspace:*",
+    "phaser": "^3.90.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
+  }
+}
