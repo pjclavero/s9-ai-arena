@@ -1,0 +1,23 @@
+{
+  "proto": "arena/1",
+  "type": "COMMAND",
+  "seq": 1,
+  "tick": 309,
+  "payload": {
+    "forTick": 309,
+    "move": {
+      "throttle": 0,
+      "steer": 0
+    },
+    "deployMine": {
+      "slot": "mine_bay",
+      "armDelayTicks": 60
+    },
+    "modules": [
+      {
+        "slot": "sensor_a",
+        "enabled": false
+      }
+    ]
+  }
+}

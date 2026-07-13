@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://s9.arena/schemas/arena/1/event.schema.json",
+  "title": "EVENT · Motor → Bot",
+  "description": "Notificación de algo ocurrido. Un bot solo recibe eventos que le conciernen o que ha podido percibir: un impacto que sufre, una captura de su equipo, el rechazo de una acción suya. Los eventos NO son un canal alternativo de información: aplican la misma niebla de guerra (D8).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tick", "kind"],
+  "properties": {
+    "tick": { "$ref": "common.schema.json#/$defs/tick" },
+    "kind": {
+      "enum": [
+        "hit_taken",
+        "hit_dealt",
+        "module_state_changed",
+        "vehicle_destroyed",
+        "respawned",
+        "mine_deployed",
+        "mine_triggered",
+        "flag_taken",
+        "flag_dropped",
+        "flag_returned",
+        "flag_captured",
+        "zone_captured",
+        "score_changed",
+        "radio_dropped",
+        "rejected_action",
+        "decision_timeout",
+        "round_ending"
+      ]
+    },
+    "sector": { "$ref": "common.schema.json#/$defs/sector" },
+    "slot": { "$ref": "common.schema.json#/$defs/slotId" },
+    "state": { "$ref": "common.schema.json#/$defs/moduleState" },
+    "damage": { "type": "number", "minimum": 0 },
+    "sourceId": {
+      "$ref": "common.schema.json#/$defs/entityId",
+      "description": "Origen del evento, solo si el bot podía percibirlo. Un disparo recibido desde un enemigo no detectado NO revela su entityId."
+    },
+    "targetId": { "$ref": "common.schema.json#/$defs/entityId" },
+    "team": { "$ref": "common.schema.json#/$defs/team" },
+    "position": {
+      "$ref": "common.schema.json#/$defs/vec2",
+      "description": "Solo si la posición es pública o percibida."
+    },
+    "score": {
+      "type": "object",
+      "additionalProperties": { "type": "number" }
+    },
+    "reason": {
+      "type": "string",
+      "maxLength": 64,
+      "description": "Código legible para rejected_action y radio_dropped: no_ammo, no_energy, cooldown, out_of_arc, module_destroyed, invalid_position, rate_limited, too_large, no_radio, out_of_range, extra_command_discarded."
+    },
+    "ticksRemaining": { "type": "integer", "minimum": 0 }
+  }
+}

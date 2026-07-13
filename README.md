@@ -1,48 +1,26 @@
-# S9 AI Arena
+# S9 AI Arena — monorepo
 
-Prototipo inicial de una arena 2D programable con servidor autoritativo, bots externos y visor web.
+Estado actual: **E1 (Contratos y Especificación)** y **E2 (Motor de Simulación)** completados.
 
-## Incluido en este primer bloque
+- Cómo se fusionaron estas dos entregas, y qué prevalece sobre qué: **[FUSION.md](FUSION.md)**
+- Detalle de la entrega de E1: **[docs/entrega-E1.md](docs/entrega-E1.md)**
+- Detalle de la entrega de E2: **[docs/entrega-E2.md](docs/entrega-E2.md)**
+- Decisiones fundacionales (ADR-000): **[docs/decisiones/ADR-000-decisiones-fundacionales.md](docs/decisiones/ADR-000-decisiones-fundacionales.md)**
 
-- Monorepo TypeScript con pnpm.
-- Servidor WebSocket autoritativo.
-- Protocolo compartido versionado.
-- Dos bots de demostración ejecutados como contenedores independientes.
-- Movimiento, torreta, disparos, impactos, daño y límites de arena.
-- Visor web Phaser en tiempo real.
-- Despliegue completo mediante Docker Compose.
-
-## Arranque
-
-Requisitos: Docker Engine y Docker Compose v2.
+## Arranque rápido
 
 ```bash
-git clone https://github.com/pjclavero/s9-ai-arena.git
-cd s9-ai-arena
-docker compose up --build
+npm install
+
+# Contratos (E1)
+node packages/protocol/scripts/validate.js
+node packages/module-catalog/scripts/validate-catalog.js
+
+# Motor (E2)
+npm test
+npm run lint
 ```
 
-Abrir:
+## Próximo equipo
 
-- Visor: http://localhost:3000
-- Salud del servidor: http://localhost:8081/health
-
-## Arquitectura
-
-- `apps/arena-server`: simulación autoritativa y conexiones WebSocket.
-- `apps/arena-viewer`: visor Phaser servido por Nginx.
-- `packages/protocol`: contratos compartidos entre motor, bots y visor.
-- `bots/bot-red`: bot de demostración ofensivo.
-- `bots/bot-blue`: bot de demostración evasivo.
-
-## Estado
-
-Este es un prototipo de Sprint 1-3. Todavía no contiene Rapier, mapas, módulos, sensores reales, usuarios, torneos ni persistencia.
-
-## Próximo bloque
-
-1. Añadir Rapier 2D.
-2. Separar motor de transporte WebSocket.
-3. Incorporar mapas JSON y muros sólidos.
-4. Añadir registro de eventos y repetición básica.
-5. Endurecer aislamiento de contenedores de bots.
+**E3 · Sistema Modular de Vehículos** — catálogo de módulos, validador de ensamblaje de loadouts y balance. Sustituirá el catálogo provisional de `apps/arena-engine/src/fixtures.ts`.

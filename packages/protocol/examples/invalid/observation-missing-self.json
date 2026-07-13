@@ -1,0 +1,11 @@
+{
+  "_why": "toda observacion incluye el estado propio",
+  "proto": "arena/1",
+  "type": "OBSERVATION",
+  "tick": 1,
+  "seq": 3,
+  "payload": {
+    "tick": 1,
+    "sensors": {}
+  }
+}

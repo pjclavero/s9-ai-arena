@@ -1,0 +1,14 @@
+{
+  "_why": "throttle fuera de [-1,1]: la intencion es normalizada (D3)",
+  "proto": "arena/1",
+  "type": "COMMAND",
+  "tick": 10,
+  "seq": 4,
+  "payload": {
+    "forTick": 12,
+    "move": {
+      "throttle": 5,
+      "steer": 0
+    }
+  }
+}

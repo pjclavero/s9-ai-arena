@@ -1,0 +1,27 @@
+{
+  "_why": "hullHp no puede ser negativo",
+  "proto": "arena/1",
+  "type": "OBSERVATION",
+  "tick": 1,
+  "seq": 3,
+  "payload": {
+    "tick": 1,
+    "self": {
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "heading": 0,
+      "velocity": {
+        "x": 0,
+        "y": 0
+      },
+      "hullHp": -5,
+      "energy": {
+        "storedEU": 0,
+        "capacityEU": 1
+      },
+      "modules": []
+    }
+  }
+}

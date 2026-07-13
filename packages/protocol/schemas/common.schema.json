@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://s9.arena/schemas/arena/1/common.schema.json",
+  "title": "Tipos comunes del protocolo arena/1",
+  "$defs": {
+    "protoId": {
+      "const": "arena/1",
+      "description": "Identificador de versión del protocolo. Una versión desconocida se rechaza con SHUTDOWN."
+    },
+    "tick": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Tick de simulación al que se refiere el mensaje."
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Contador monótono por emisor. Detecta pérdidas y duplicados."
+    },
+    "entityId": {
+      "type": "string",
+      "pattern": "^[a-z]+_[0-9a-zA-Z]{1,16}$",
+      "description": "Identificador opaco de entidad dentro de la batalla (p. ej. veh_3, proj_a1)."
+    },
+    "moduleId": {
+      "type": "string",
+      "pattern": "^[a-z]+\\.[a-z0-9_]+@[0-9]+$",
+      "description": "Id versionado de una definición de módulo del catálogo (p. ej. weapon.cannon@1)."
+    },
+    "slotId": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]{1,24}$",
+      "description": "Ranura del chasis en la que está montado el módulo."
+    },
+    "vec2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      },
+      "description": "Vector 2D en metros (D1)."
+    },
+    "angle": {
+      "type": "number",
+      "minimum": -3.14159266,
+      "maximum": 3.14159266,
+      "description": "Ángulo en radianes, antihorario, 0 = eje +X (D1)."
+    },
+    "unitInterval": { "type": "number", "minimum": 0, "maximum": 1 },
+    "signedUnit": { "type": "number", "minimum": -1, "maximum": 1 },
+    "sector": { "enum": ["front", "left", "right", "rear"] },
+    "moduleState": {
+      "enum": ["operational", "damaged", "critical", "destroyed", "offline"],
+      "description": "Estados del capítulo 12.2."
+    },
+    "team": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]{1,16}$"
+    },
+    "entityKind": {
+      "enum": [
+        "vehicle",
+        "projectile",
+        "mine",
+        "wall",
+        "destructible",
+        "flag",
+        "base",
+        "zone",
+        "unknown"
+      ]
+    },
+    "shutdownReason": {
+      "enum": [
+        "battle_finished",
+        "protocol_version_unsupported",
+        "handshake_failed",
+        "invalid_message",
+        "timeout_disqualified",
+        "disconnected",
+        "suspended",
+        "engine_error"
+      ]
+    }
+  }
+}

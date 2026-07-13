@@ -1,0 +1,15 @@
+{
+  "_why": "botId no cumple el patron bot_*",
+  "proto": "arena/1",
+  "type": "HELLO",
+  "seq": 1,
+  "payload": {
+    "botId": "scout",
+    "botVersion": "1.0.0",
+    "sdk": {
+      "name": "custom",
+      "version": "1"
+    },
+    "battleToken": "btl_0123456789abcdef"
+  }
+}

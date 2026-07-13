@@ -1,0 +1,192 @@
+/**
+ * Replays (T2.6). Formato JSONL: una línea por registro, comprimible con zstd por E8.
+ *
+ * Un replay NO es un vídeo: es la RECETA para volver a cocinar la batalla.
+ * Contiene la cabecera (config + semilla + versiones + checksum de mapa) y los comandos
+ * recibidos. Los eventos y snapshots se incluyen para que el visor no tenga que
+ * re-simular, pero son REDUNDANTES: la verdad es la cabecera + los comandos.
+ *
+ * De ahí que verify() sea posible: re-simulamos desde la cabecera aplicando los mismos
+ * comandos y el resultado debe ser idéntico bit a bit. Si no lo es, o el motor no es
+ * determinista, o el replay fue manipulado. Ambas cosas son graves y hay que detectarlas.
+ */
+import { Battle, type BattleConfig, type BattleResult, type BotAgent } from "./sim/battle.js";
+
+export interface ReplayHeader {
+  formatVersion: 1;
+  battleId: string;
+  seed: string;
+  rulesetId: string;
+  ruleset: any;
+  map: any;
+  participants: any[];
+  versions: Record<string, string>;
+  recordedAt: string;
+}
+
+export interface Replay {
+  header: ReplayHeader;
+  commands: { tick: number; vehicleId: string; command: any }[];
+  events: any[];
+  snapshots: any[];
+  stateHashes: { tick: number; hash: string }[];
+  result: BattleResult;
+}
+
+/** Serializa a JSONL: una línea por registro. Compacto, streameable y diffable. */
+export function toJsonl(replay: Replay): string {
+  const lines: string[] = [];
+  lines.push(JSON.stringify({ t: "header", ...replay.header }));
+  for (const c of replay.commands) lines.push(JSON.stringify({ t: "cmd", ...c }));
+  for (const e of replay.events) lines.push(JSON.stringify({ t: "evt", ...e }));
+  for (const s of replay.snapshots) lines.push(JSON.stringify({ t: "snap", ...s }));
+  for (const h of replay.stateHashes) lines.push(JSON.stringify({ t: "hash", ...h }));
+  lines.push(JSON.stringify({ t: "result", ...replay.result }));
+  return lines.join("\n") + "\n";
+}
+
+export function fromJsonl(jsonl: string): Replay {
+  const replay: Replay = {
+    header: null as any,
+    commands: [],
+    events: [],
+    snapshots: [],
+    stateHashes: [],
+    result: null as any,
+  };
+  for (const line of jsonl.split("\n")) {
+    if (!line.trim()) continue;
+    const rec = JSON.parse(line);
+    const { t, ...rest } = rec;
+    switch (t) {
+      case "header": replay.header = rest as ReplayHeader; break;
+      case "cmd": replay.commands.push(rest as any); break;
+      case "evt": replay.events.push(rest); break;
+      case "snap": replay.snapshots.push(rest); break;
+      case "hash": replay.stateHashes.push(rest as any); break;
+      case "result": replay.result = rest as BattleResult; break;
+    }
+  }
+  if (!replay.header) throw new Error("Replay sin cabecera: archivo corrupto");
+  return replay;
+}
+
+/**
+ * Agente que NO piensa: reproduce los comandos grabados.
+ * Es la pieza que permite re-simular un replay sin ejecutar el código del bot original
+ * (que puede ser privado, o no estar ya disponible). El motor no distingue este agente
+ * de uno real: recibe observaciones y devuelve comandos, igual que cualquier otro.
+ */
+class ReplayAgent implements BotAgent {
+  private byTick = new Map<number, any>();
+
+  constructor(readonly botId: string, commands: { tick: number; command: any }[]) {
+    for (const c of commands) this.byTick.set(c.tick, c.command);
+  }
+
+  decide(obs: any): any | null {
+    // Si en ese tick el bot original no envió nada (timeout), devolvemos null:
+    // reproducimos también sus fallos, o la re-simulación divergería.
+    return this.byTick.get(obs.tick) ?? null;
+  }
+}
+
+/** Graba una batalla completa. Los agentes son los reales (o stubs). */
+export async function record(
+  config: BattleConfig,
+  attach: (b: Battle) => void,
+): Promise<Replay> {
+  const b = await Battle.create({ ...config, recordReplay: true });
+  attach(b);
+  const result = b.run();
+
+  const replay: Replay = {
+    header: {
+      formatVersion: 1,
+      battleId: config.battleId,
+      seed: config.seed,
+      rulesetId: config.ruleset.rulesetId,
+      ruleset: config.ruleset,
+      map: config.map,
+      participants: config.participants,
+      versions: result.versions,
+      recordedAt: new Date().toISOString(),
+    },
+    commands: (b as any).replayCommands,
+    events: b.publicEvents,
+    snapshots: b.snapshots,
+    stateHashes: b.stateHashes,
+    result,
+  };
+  b.free();
+  return replay;
+}
+
+export interface VerifyResult {
+  matches: boolean;
+  officialHash: string;
+  recomputedHash: string;
+  divergedAtTick: number | null;
+  officialResult: BattleResult;
+  recomputedResult: BattleResult;
+}
+
+/**
+ * Re-simula el replay y compara con el resultado oficial.
+ *
+ * Comprueba los hashes INTERMEDIOS, no solo el final: si dos batallas divergen en el
+ * tick 500 y vuelven a converger por casualidad en el final, un test que solo mirara
+ * el hash final daría un falso "correcto". Aquí se detecta el tick exacto.
+ */
+export async function verify(replay: Replay): Promise<VerifyResult> {
+  const config: BattleConfig = {
+    battleId: replay.header.battleId,
+    seed: replay.header.seed,
+    ruleset: replay.header.ruleset,
+    map: replay.header.map,
+    participants: replay.header.participants,
+    recordReplay: false,
+  };
+
+  const b = await Battle.create(config);
+
+  // Cada vehículo recibe un agente que reproduce sus comandos grabados.
+  const byVehicle = new Map<string, { tick: number; command: any }[]>();
+  for (const c of replay.commands) {
+    if (!byVehicle.has(c.vehicleId)) byVehicle.set(c.vehicleId, []);
+    byVehicle.get(c.vehicleId)!.push({ tick: c.tick, command: c.command });
+  }
+  for (const p of replay.header.participants) {
+    b.attachBot(p.id, new ReplayAgent(p.botId, byVehicle.get(p.id) ?? []));
+  }
+
+  const recomputedResult = b.run();
+  const recomputed = b.stateHashes;
+  b.free();
+
+  // Primer tick en el que los hashes intermedios difieren.
+  let divergedAtTick: number | null = null;
+  const official = replay.stateHashes;
+  for (let i = 0; i < Math.min(official.length, recomputed.length); i++) {
+    if (official[i].hash !== recomputed[i].hash) {
+      divergedAtTick = official[i].tick;
+      break;
+    }
+  }
+  if (divergedAtTick === null && official.length !== recomputed.length) {
+    divergedAtTick = Math.min(official.length, recomputed.length);
+  }
+
+  const matches =
+    divergedAtTick === null &&
+    recomputedResult.finalStateHash === replay.result.finalStateHash;
+
+  return {
+    matches,
+    officialHash: replay.result.finalStateHash,
+    recomputedHash: recomputedResult.finalStateHash,
+    divergedAtTick,
+    officialResult: replay.result,
+    recomputedResult,
+  };
+}

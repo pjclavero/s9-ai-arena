@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://s9.arena/schemas/arena/1/command.schema.json",
+  "title": "COMMAND · Bot → Motor",
+  "description": "Intención del bot para el siguiente ciclo de decisión. TODOS los campos son opcionales: un COMMAND vacío es válido y significa 'sin cambios'. El motor acepta como máximo un COMMAND por ciclo (E5/T5.1); los siguientes se descartan con evento. Un comando imposible (arma destruida, sin munición, sin energía) no invalida el mensaje: se rechaza esa acción y se emite un EVENT de rejected_action.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["forTick"],
+  "properties": {
+    "forTick": {
+      "$ref": "common.schema.json#/$defs/tick",
+      "description": "Tick de decisión al que responde. Un comando para un tick pasado se descarta (llegó tarde)."
+    },
+
+    "move": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Intención de movimiento arcade (D3). Se traduce a velocidad objetivo según el módulo de movimiento y la masa.",
+      "properties": {
+        "throttle": {
+          "$ref": "common.schema.json#/$defs/signedUnit",
+          "description": "-1 marcha atrás a fondo, 0 parar, 1 avance a fondo."
+        },
+        "steer": {
+          "$ref": "common.schema.json#/$defs/signedUnit",
+          "description": "-1 giro a la derecha a fondo, 1 giro a la izquierda a fondo (antihorario positivo, D1)."
+        }
+      }
+    },
+
+    "turret": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Objetivo de la torreta. El motor gira hacia él a la velocidad del módulo; no teletransporta el ángulo.",
+      "properties": {
+        "targetHeading": {
+          "$ref": "common.schema.json#/$defs/angle",
+          "description": "Ángulo absoluto deseado. Excluyente con targetPoint."
+        },
+        "targetPoint": {
+          "$ref": "common.schema.json#/$defs/vec2",
+          "description": "Punto del mundo hacia el que apuntar. Excluyente con targetHeading."
+        }
+      },
+      "not": { "required": ["targetHeading", "targetPoint"] }
+    },
+
+    "fire": {
+      "type": "array",
+      "description": "Armas que se desea disparar este ciclo. Sujeto a cadencia, energía, munición y arco de torreta.",
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": { "$ref": "common.schema.json#/$defs/slotId" }
+    },
+
+    "deployMine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slot"],
+      "description": "Solicita desplegar una mina (cap. 12.3). El motor valida posición, inventario, cooldown y límites; la entidad la crea el servidor, nunca el bot.",
+      "properties": {
+        "slot": { "$ref": "common.schema.json#/$defs/slotId" },
+        "armDelayTicks": { "type": "integer", "minimum": 0, "maximum": 300 }
+      }
+    },
+
+    "modules": {
+      "type": "array",
+      "description": "Encender o apagar módulos para ahorrar energía o evitar daños (estado offline, cap. 12.2). Reactivar cuesta MODULE_REACTIVATION_TICKS.",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["slot", "enabled"],
+        "properties": {
+          "slot": { "$ref": "common.schema.json#/$defs/slotId" },
+          "enabled": { "type": "boolean" }
+        }
+      }
+    },
+
+    "utility": {
+      "type": "array",
+      "description": "Activación de utilidades (humo, reparación, jammer...). Fuera del catálogo MVP salvo las declaradas en WELCOME.",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["slot"],
+        "properties": {
+          "slot": { "$ref": "common.schema.json#/$defs/slotId" },
+          "target": { "$ref": "common.schema.json#/$defs/vec2" }
+        }
+      }
+    },
+
+    "radio": {
+      "type": "array",
+      "description": "Mensajes de equipo a emitir. Contenido opaco. Exceder tamaño o frecuencia (D8) descarta el mensaje con evento.",
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["slot", "data"],
+        "properties": {
+          "slot": { "$ref": "common.schema.json#/$defs/slotId" },
+          "data": {
+            "type": "string",
+            "contentEncoding": "base64",
+            "maxLength": 44,
+            "description": "Hasta 32 bytes reales."
+          },
+          "to": {
+            "$ref": "common.schema.json#/$defs/entityId",
+            "description": "Destinatario concreto. Ausente = difusión al equipo."
+          }
+        }
+      }
+    },
+
+    "debug": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Anotaciones del bot para las capas de depuración del visor (rutas, objetivos). El motor las ignora por completo: no afectan a la simulación y solo se conservan en replays privados.",
+      "maxProperties": 16
+    }
+  }
+}

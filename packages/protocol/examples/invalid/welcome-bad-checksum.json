@@ -1,0 +1,47 @@
+{
+  "_why": "checksum del mapa sin el formato sha256:<64 hex>",
+  "proto": "arena/1",
+  "type": "WELCOME",
+  "seq": 2,
+  "payload": {
+    "battleId": "b",
+    "selfId": "veh_1",
+    "team": "red",
+    "timing": {
+      "tickHz": 30,
+      "decisionEveryNTicks": 3,
+      "decisionDeadlineMs": 80,
+      "maxConsecutiveTimeouts": 20
+    },
+    "rules": {
+      "mode": "deathmatch",
+      "rulesetId": "r"
+    },
+    "vehicle": {
+      "chassis": {
+        "moduleId": "chassis.light@1",
+        "hullHp": 1,
+        "radiusM": 1
+      },
+      "modules": [],
+      "massKg": 1,
+      "energy": {
+        "capacityEU": 1,
+        "generationEUs": 1
+      }
+    },
+    "map": {
+      "mapId": "m",
+      "mapVersion": 1,
+      "checksum": "abc",
+      "widthM": 1,
+      "heightM": 1
+    },
+    "versions": {
+      "engine": "1",
+      "rules": "1",
+      "catalog": "1",
+      "protocol": "arena/1"
+    }
+  }
+}

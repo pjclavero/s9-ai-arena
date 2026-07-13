@@ -1,0 +1,9 @@
+{
+  "_why": "reason es obligatorio: el bot debe saber por que se cierra",
+  "proto": "arena/1",
+  "type": "SHUTDOWN",
+  "seq": 6,
+  "payload": {
+    "detail": "adios"
+  }
+}

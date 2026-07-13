@@ -1,0 +1,16 @@
+{
+  "_why": "additionalProperties: false — un campo no declarado se rechaza",
+  "proto": "arena/1",
+  "type": "HELLO",
+  "seq": 1,
+  "payload": {
+    "botId": "bot_a",
+    "botVersion": "1.0.0",
+    "sdk": {
+      "name": "custom",
+      "version": "1"
+    },
+    "battleToken": "btl_0123456789abcdef",
+    "cheatMode": true
+  }
+}

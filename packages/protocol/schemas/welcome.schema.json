@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://s9.arena/schemas/arena/1/welcome.schema.json",
+  "title": "WELCOME · Motor → Bot",
+  "description": "Respuesta al handshake. Entrega al bot todo lo que necesita saber antes del primer tick: sus reglas, su temporización, su vehículo resuelto y el mapa que le está permitido conocer a priori.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["battleId", "selfId", "team", "timing", "rules", "vehicle", "map", "versions"],
+  "properties": {
+    "battleId": { "type": "string", "maxLength": 64 },
+    "selfId": { "$ref": "common.schema.json#/$defs/entityId" },
+    "team": { "$ref": "common.schema.json#/$defs/team" },
+    "encoding": { "enum": ["json"], "default": "json" },
+
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tickHz", "decisionEveryNTicks", "decisionDeadlineMs", "maxConsecutiveTimeouts"],
+      "properties": {
+        "tickHz": { "type": "integer", "minimum": 1 },
+        "decisionEveryNTicks": { "type": "integer", "minimum": 1 },
+        "decisionDeadlineMs": { "type": "integer", "minimum": 1 },
+        "maxConsecutiveTimeouts": { "type": "integer", "minimum": 1 }
+      },
+      "description": "Valores efectivos de D2 para esta batalla. El bot NO debe asumir constantes: debe leerlas de aquí."
+    },
+
+    "rules": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "rulesetId"],
+      "properties": {
+        "mode": { "enum": ["deathmatch", "team_deathmatch", "capture_the_flag", "zone_control"] },
+        "rulesetId": { "type": "string", "maxLength": 64 },
+        "budgetCredits": {
+          "type": "integer",
+          "minimum": 200,
+          "maximum": 5000,
+          "default": 1000,
+          "description": "Presupuesto de créditos EFECTIVO de esta batalla (D7). Ajustable por ruleset/torneo como perilla de dificultad; si el ruleset no lo fija, se aplica BUDGET_CREDITS_MVP=1000. Todos los participantes de una misma competición juegan bajo el mismo valor, congelado al cerrar inscripciones."
+        },
+        "timeLimitTicks": { "type": "integer", "minimum": 1 },
+        "scoreToWin": { "type": "integer", "minimum": 1 },
+        "friendlyFire": { "type": "boolean" },
+        "respawn": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "delayTicks": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "sharedTeamVision": { "type": "boolean", "default": false },
+        "radio": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxMessageBytes": { "type": "integer", "minimum": 1 },
+            "maxMessagesPerSecond": { "type": "number", "minimum": 0 },
+            "deliveryDelayDecisions": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+
+    "vehicle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chassis", "modules", "massKg", "energy"],
+      "description": "Ficha efectiva resuelta por E3 (resolveVehicle) con el catálogo congelado de la batalla.",
+      "properties": {
+        "chassis": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["moduleId", "hullHp", "radiusM"],
+          "properties": {
+            "moduleId": { "$ref": "common.schema.json#/$defs/moduleId" },
+            "hullHp": { "type": "number", "exclusiveMinimum": 0 },
+            "radiusM": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        "modules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["slot", "moduleId", "category"],
+            "properties": {
+              "slot": { "$ref": "common.schema.json#/$defs/slotId" },
+              "moduleId": { "$ref": "common.schema.json#/$defs/moduleId" },
+              "category": {
+                "enum": ["movement", "power", "sensor", "weapon", "ammo", "mine", "armor", "radio", "utility"]
+              },
+              "specs": {
+                "type": "object",
+                "description": "Parámetros efectivos del módulo a plena salud (rango, FOV, cadencia, daño...). Su forma depende de la categoría y la define el esquema de módulo de E3.",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "massKg": { "type": "number", "exclusiveMinimum": 0 },
+        "energy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capacityEU", "generationEUs"],
+          "properties": {
+            "capacityEU": { "type": "number", "minimum": 0 },
+            "generationEUs": { "type": "number", "minimum": 0 }
+          }
+        }
+      }
+    },
+
+    "map": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mapId", "mapVersion", "checksum", "widthM", "heightM"],
+      "description": "Metadatos del mapa y, si el ruleset lo permite, su geometría estática. La niebla de guerra (D8) NO oculta los muros fijos: oculta entidades. Un ruleset puede poner staticGeometry a false para modos de exploración a ciegas.",
+      "properties": {
+        "mapId": { "type": "string", "maxLength": 64 },
+        "mapVersion": { "type": "integer", "minimum": 1 },
+        "checksum": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "widthM": { "type": "number", "exclusiveMinimum": 0 },
+        "heightM": { "type": "number", "exclusiveMinimum": 0 },
+        "staticGeometry": {
+          "type": "object",
+          "description": "Muros y terreno estático, si el ruleset lo entrega. Los obstáculos destructibles y las minas NO van aquí: son entidades dinámicas y solo se perciben por sensores.",
+          "additionalProperties": true
+        },
+        "spawns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["team", "position"],
+            "properties": {
+              "team": { "$ref": "common.schema.json#/$defs/team" },
+              "position": { "$ref": "common.schema.json#/$defs/vec2" }
+            }
+          }
+        },
+        "bases": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["team", "position"],
+            "properties": {
+              "team": { "$ref": "common.schema.json#/$defs/team" },
+              "position": { "$ref": "common.schema.json#/$defs/vec2" }
+            }
+          }
+        }
+      }
+    },
+
+    "teammates": {
+      "type": "array",
+      "items": { "$ref": "common.schema.json#/$defs/entityId" },
+      "description": "Ids de los compañeros de equipo. Conocer quién es aliado no revela dónde está."
+    },
+
+    "versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["engine", "rules", "catalog", "protocol"],
+      "description": "Versiones exactas de los artefactos de esta batalla (cap. 8, 'versión fija').",
+      "properties": {
+        "engine": { "type": "string" },
+        "physics": { "type": "string" },
+        "rules": { "type": "string" },
+        "catalog": { "type": "string" },
+        "protocol": { "const": "arena/1" }
+      }
+    }
+  }
+}

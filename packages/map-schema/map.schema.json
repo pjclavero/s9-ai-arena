@@ -1,0 +1,233 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://s9.arena/schemas/map/1/map.schema.json",
+  "title": "Mapa · formato interno",
+  "description": "Formato interno al que el importador de Tiled (E4/T4.1) traduce el TMX. Un mapa publicado es INMUTABLE: cualquier cambio crea una versión nueva. El checksum se calcula sobre la serialización canónica del documento SIN el propio campo checksum (JSON con claves ordenadas, sin espacios, UTF-8, números en su forma más corta) y permite verificar que replay y batalla usan el mismo contenido (cap. 14.2).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "mapId", "version", "checksum", "widthM", "heightM", "materials", "layers", "meta"],
+  "properties": {
+    "schemaVersion": { "const": 1, "description": "Permite migraciones (cap. 14.2)." },
+    "mapId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9\\-]{1,62}$" },
+    "version": { "type": "integer", "minimum": 1 },
+    "checksum": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+
+    "widthM": { "type": "number", "exclusiveMinimum": 0 },
+    "heightM": { "type": "number", "exclusiveMinimum": 0 },
+    "navCellSizeM": { "type": "number", "exclusiveMinimum": 0, "default": 0.5 },
+
+    "generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Presente solo en mapas procedurales (E4/T4.4). Permite regenerar el mapa byte a byte.",
+      "required": ["generator", "seed", "params"],
+      "properties": {
+        "generator": { "type": "string", "maxLength": 64 },
+        "seed": { "type": "string", "maxLength": 64 },
+        "params": { "type": "object", "additionalProperties": true },
+        "attempts": { "type": "integer", "minimum": 1 }
+      }
+    },
+
+    "materials": {
+      "type": "array",
+      "minItems": 1,
+      "description": "IDs estables de material (cap. 14.2).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "blocksMovement", "blocksVision"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9_]{1,24}$" },
+          "name": { "type": "string", "maxLength": 48 },
+          "blocksMovement": { "type": "boolean" },
+          "blocksVision": { "type": "boolean" },
+          "hp": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Solo materiales destructibles. Su ausencia significa indestructible."
+          },
+          "damagePerSecond": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Terreno dañino (zonas de daño del MVP)."
+          },
+          "speedFactor": { "type": "number", "exclusiveMinimum": 0, "maximum": 1, "default": 1 }
+        }
+      }
+    },
+
+    "layers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ground", "walls", "spawns"],
+      "description": "Capas del capítulo 14.1. 'decoration' no existe aquí: es puramente visual y vive en los assets del visor.",
+      "properties": {
+        "ground": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tileSizeM", "cols", "rows", "data"],
+          "properties": {
+            "tileSizeM": { "type": "number", "exclusiveMinimum": 0 },
+            "cols": { "type": "integer", "minimum": 1 },
+            "rows": { "type": "integer", "minimum": 1 },
+            "data": {
+              "type": "array",
+              "items": { "type": "integer", "minimum": 0 },
+              "description": "Índices sobre materials, fila a fila. La longitud debe ser cols*rows (lo verifica el validador de E4, no el esquema)."
+            }
+          }
+        },
+        "walls": {
+          "type": "array",
+          "description": "Muros indestructibles como rectángulos orientados o polígonos.",
+          "items": { "$ref": "#/$defs/shape" }
+        },
+        "destructibles": {
+          "type": "array",
+          "items": {
+            "allOf": [{ "$ref": "#/$defs/shape" }],
+            "type": "object",
+            "required": ["objectId", "material"],
+            "properties": {
+              "objectId": { "$ref": "#/$defs/objectId" },
+              "material": { "type": "string" }
+            }
+          }
+        },
+        "zones": {
+          "type": "array",
+          "items": {
+            "allOf": [{ "$ref": "#/$defs/shape" }],
+            "type": "object",
+            "required": ["objectId", "zoneType"],
+            "properties": {
+              "objectId": { "$ref": "#/$defs/objectId" },
+              "zoneType": { "enum": ["damage", "capture", "no_entry", "cover"] },
+              "team": { "type": "string", "pattern": "^[a-z0-9_]{1,16}$" },
+              "damagePerSecond": { "type": "number", "minimum": 0 },
+              "captureTimeTicks": { "type": "integer", "minimum": 1 }
+            }
+          }
+        },
+        "spawns": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["objectId", "team", "position", "heading"],
+            "properties": {
+              "objectId": { "$ref": "#/$defs/objectId" },
+              "team": { "type": "string", "pattern": "^[a-z0-9_]{1,16}$" },
+              "position": { "$ref": "#/$defs/vec2" },
+              "heading": { "type": "number" },
+              "maxChassisSize": { "enum": ["light", "medium", "heavy"] }
+            }
+          }
+        },
+        "bases": {
+          "type": "array",
+          "items": {
+            "allOf": [{ "$ref": "#/$defs/shape" }],
+            "type": "object",
+            "required": ["objectId", "team"],
+            "properties": {
+              "objectId": { "$ref": "#/$defs/objectId" },
+              "team": { "type": "string", "pattern": "^[a-z0-9_]{1,16}$" }
+            }
+          }
+        },
+        "flags": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["objectId", "team", "position"],
+            "properties": {
+              "objectId": { "$ref": "#/$defs/objectId" },
+              "team": { "type": "string", "pattern": "^[a-z0-9_]{1,16}$" },
+              "position": { "$ref": "#/$defs/vec2" }
+            }
+          }
+        },
+        "navigation": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Grid de navegación precalculado por el importador. Es derivable de ground+walls+destructibles; se incluye para que el validador y los bots minadores no lo recalculen.",
+          "required": ["cellSizeM", "cols", "rows", "blocked"],
+          "properties": {
+            "cellSizeM": { "type": "number", "exclusiveMinimum": 0 },
+            "cols": { "type": "integer", "minimum": 1 },
+            "rows": { "type": "integer", "minimum": 1 },
+            "blocked": {
+              "type": "string",
+              "contentEncoding": "base64",
+              "description": "Bitset fila a fila: 1 = celda no transitable por el chasis más pequeño."
+            }
+          }
+        }
+      }
+    },
+
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["author", "license", "supportedModes"],
+      "properties": {
+        "name": { "type": "string", "maxLength": 64 },
+        "author": { "type": "string", "maxLength": 64 },
+        "license": { "type": "string", "maxLength": 64 },
+        "supportedModes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["deathmatch", "team_deathmatch", "capture_the_flag", "zone_control"] }
+        },
+        "supportedChassisSizes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["light", "medium", "heavy"] }
+        },
+        "thumbnail": { "type": "string", "maxLength": 256, "description": "Ruta relativa de la miniatura PNG generada al publicar." },
+        "maxDestructibles": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Cota de entidades destructibles. Protege el presupuesto de tick del motor (mejora E4.M)."
+        },
+        "destructiblesMayBlockOnlyRoute": {
+          "type": "boolean",
+          "default": false,
+          "description": "Si es false, el validador exige que exista ruta a todos los objetivos SIN destruir nada (cap. 14.3)."
+        }
+      }
+    }
+  },
+
+  "$defs": {
+    "objectId": { "type": "string", "pattern": "^[a-z0-9_\\-]{1,32}$" },
+    "vec2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": { "x": { "type": "number" }, "y": { "type": "number" } }
+    },
+    "shape": {
+      "type": "object",
+      "required": ["shape"],
+      "properties": {
+        "shape": { "enum": ["rect", "polygon", "circle"] },
+        "position": { "$ref": "#/$defs/vec2" },
+        "widthM": { "type": "number", "exclusiveMinimum": 0 },
+        "heightM": { "type": "number", "exclusiveMinimum": 0 },
+        "radiusM": { "type": "number", "exclusiveMinimum": 0 },
+        "rotation": { "type": "number" },
+        "points": {
+          "type": "array",
+          "minItems": 3,
+          "items": { "$ref": "#/$defs/vec2" }
+        }
+      }
+    }
+  }
+}

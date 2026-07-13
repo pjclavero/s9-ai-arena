@@ -1,0 +1,9 @@
+{
+  "proto": "arena/1",
+  "type": "COMMAND",
+  "seq": 1,
+  "tick": 306,
+  "payload": {
+    "forTick": 306
+  }
+}

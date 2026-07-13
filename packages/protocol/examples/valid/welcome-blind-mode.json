@@ -1,0 +1,53 @@
+{
+  "proto": "arena/1",
+  "type": "WELCOME",
+  "seq": 1,
+  "payload": {
+    "battleId": "btl_blind",
+    "selfId": "veh_2",
+    "team": "blue",
+    "timing": {
+      "tickHz": 30,
+      "decisionEveryNTicks": 3,
+      "decisionDeadlineMs": 80,
+      "maxConsecutiveTimeouts": 20
+    },
+    "rules": {
+      "mode": "zone_control",
+      "rulesetId": "zc_blind@1",
+      "sharedTeamVision": true
+    },
+    "vehicle": {
+      "chassis": {
+        "moduleId": "chassis.heavy@1",
+        "hullHp": 500,
+        "radiusM": 2.1
+      },
+      "modules": [
+        {
+          "slot": "drive",
+          "moduleId": "movement.wheels@1",
+          "category": "movement"
+        }
+      ],
+      "massKg": 4200,
+      "energy": {
+        "capacityEU": 600,
+        "generationEUs": 25
+      }
+    },
+    "map": {
+      "mapId": "gen-7f3a",
+      "mapVersion": 1,
+      "checksum": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "widthM": 100,
+      "heightM": 100
+    },
+    "versions": {
+      "engine": "0.4.0",
+      "rules": "zc_blind@1",
+      "catalog": "mvp@1",
+      "protocol": "arena/1"
+    }
+  }
+}

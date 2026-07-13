@@ -1,0 +1,12 @@
+{
+  "proto": "arena/1",
+  "type": "EVENT",
+  "seq": 1,
+  "tick": 311,
+  "payload": {
+    "tick": 311,
+    "kind": "rejected_action",
+    "slot": "turret_main",
+    "reason": "cooldown"
+  }
+}

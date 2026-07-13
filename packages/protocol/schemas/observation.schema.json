@@ -1,0 +1,225 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://s9.arena/schemas/arena/1/observation.schema.json",
+  "title": "OBSERVATION · Motor → Bot",
+  "description": "Estado propio + detecciones autorizadas. REGLA DURA (D8): este objeto solo contiene lo que los sensores instalados y operativos del bot han percibido. Nada oculto viaja, ni siquiera marcado como oculto. Los bloques de sensor solo existen si el módulo correspondiente está instalado y en estado operational, damaged o critical.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tick", "self"],
+  "properties": {
+    "tick": { "$ref": "common.schema.json#/$defs/tick" },
+
+    "self": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["position", "heading", "velocity", "hullHp", "energy", "modules"],
+      "properties": {
+        "position": { "$ref": "common.schema.json#/$defs/vec2" },
+        "heading": { "$ref": "common.schema.json#/$defs/angle" },
+        "velocity": { "$ref": "common.schema.json#/$defs/vec2" },
+        "angularVelocity": { "type": "number" },
+        "turretHeading": {
+          "$ref": "common.schema.json#/$defs/angle",
+          "description": "Absoluto, no relativo al chasis."
+        },
+        "hullHp": { "type": "number", "minimum": 0 },
+        "hullHpMax": { "type": "number", "exclusiveMinimum": 0 },
+        "energy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["storedEU", "capacityEU"],
+          "properties": {
+            "storedEU": { "type": "number", "minimum": 0 },
+            "capacityEU": { "type": "number", "minimum": 0 },
+            "netFlowEUs": { "type": "number", "description": "Generación menos consumo actual." }
+          }
+        },
+        "armor": {
+          "type": "object",
+          "description": "Salud restante del blindaje por sector, fracción 0..1. Solo sectores con blindaje instalado.",
+          "additionalProperties": false,
+          "properties": {
+            "front": { "$ref": "common.schema.json#/$defs/unitInterval" },
+            "left": { "$ref": "common.schema.json#/$defs/unitInterval" },
+            "right": { "$ref": "common.schema.json#/$defs/unitInterval" },
+            "rear": { "$ref": "common.schema.json#/$defs/unitInterval" }
+          }
+        },
+        "modules": {
+          "type": "array",
+          "description": "Estado de cada módulo instalado (cap. 12.2). El bot puede saber que se ha quedado ciego.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["slot", "state"],
+            "properties": {
+              "slot": { "$ref": "common.schema.json#/$defs/slotId" },
+              "state": { "$ref": "common.schema.json#/$defs/moduleState" },
+              "healthFraction": { "$ref": "common.schema.json#/$defs/unitInterval" },
+              "cooldownTicks": { "type": "integer", "minimum": 0 },
+              "ammo": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "carryingFlag": {
+          "type": ["string", "null"],
+          "description": "Equipo dueño de la bandera transportada, o null."
+        },
+        "respawningInTicks": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "sensors": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Un bloque por sensor instalado y no destruido/apagado. Ausencia de bloque = ausencia de sensor operativo.",
+      "properties": {
+        "lidar": {
+          "type": "array",
+          "description": "Un elemento por módulo lidar instalado.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["slot", "originHeading", "fovRad", "rays"],
+            "properties": {
+              "slot": { "$ref": "common.schema.json#/$defs/slotId" },
+              "originHeading": { "$ref": "common.schema.json#/$defs/angle" },
+              "fovRad": { "type": "number", "exclusiveMinimum": 0 },
+              "rays": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["angle", "distanceM", "hit"],
+                  "properties": {
+                    "angle": { "$ref": "common.schema.json#/$defs/angle" },
+                    "distanceM": { "type": "number", "minimum": 0 },
+                    "hit": { "$ref": "common.schema.json#/$defs/entityKind" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "radar": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["slot", "contacts"],
+            "properties": {
+              "slot": { "$ref": "common.schema.json#/$defs/slotId" },
+              "contacts": {
+                "type": "array",
+                "description": "Contactos con error (D8). La posición NO es exacta y el id puede ser desconocido.",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["position", "errorM"],
+                  "properties": {
+                    "entityId": { "$ref": "common.schema.json#/$defs/entityId" },
+                    "kind": { "$ref": "common.schema.json#/$defs/entityKind" },
+                    "team": { "$ref": "common.schema.json#/$defs/team" },
+                    "position": { "$ref": "common.schema.json#/$defs/vec2" },
+                    "velocity": { "$ref": "common.schema.json#/$defs/vec2" },
+                    "errorM": { "type": "number", "minimum": 0 },
+                    "confidence": { "$ref": "common.schema.json#/$defs/unitInterval" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "proximity": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["slot", "triggered"],
+            "properties": {
+              "slot": { "$ref": "common.schema.json#/$defs/slotId" },
+              "triggered": { "type": "boolean" },
+              "bearings": {
+                "type": "array",
+                "items": { "$ref": "common.schema.json#/$defs/angle" }
+              }
+            }
+          }
+        },
+        "acoustic": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["slot", "sources"],
+            "properties": {
+              "slot": { "$ref": "common.schema.json#/$defs/slotId" },
+              "sources": {
+                "type": "array",
+                "description": "Solo dirección, nunca posición (cap. 11).",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["bearing", "kind"],
+                  "properties": {
+                    "bearing": { "$ref": "common.schema.json#/$defs/angle" },
+                    "kind": { "enum": ["gunshot", "engine", "explosion"] },
+                    "intensity": { "$ref": "common.schema.json#/$defs/unitInterval" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "radio": {
+      "type": "array",
+      "description": "Mensajes de equipo entregados en este ciclo. Contenido opaco para el motor (D8).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["from", "data"],
+        "properties": {
+          "from": { "$ref": "common.schema.json#/$defs/entityId" },
+          "data": {
+            "type": "string",
+            "contentEncoding": "base64",
+            "maxLength": 44,
+            "description": "Hasta RADIO_MAX_MESSAGE_BYTES (32) bytes en base64."
+          },
+          "sentTick": { "$ref": "common.schema.json#/$defs/tick" }
+        }
+      }
+    },
+
+    "score": {
+      "type": "object",
+      "description": "Marcador público del modo de juego. No revela posiciones.",
+      "additionalProperties": { "type": "number" }
+    },
+
+    "objectives": {
+      "type": "array",
+      "description": "Estado público de objetivos según el modo (banderas en base o capturadas, propiedad de zonas). Una bandera transportada o caída solo aparece aquí si es información pública por ruleset; si no, hay que verla con un sensor.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "team", "state"],
+        "properties": {
+          "kind": { "enum": ["flag", "zone"] },
+          "team": { "$ref": "common.schema.json#/$defs/team" },
+          "state": {
+            "enum": ["at_base", "carried", "dropped", "returning", "captured", "neutral", "contested", "held"]
+          },
+          "position": {
+            "$ref": "common.schema.json#/$defs/vec2",
+            "description": "Presente solo si la posición es pública (base, zona) o percibida."
+          },
+          "captureProgress": { "$ref": "common.schema.json#/$defs/unitInterval" }
+        }
+      }
+    }
+  }
+}

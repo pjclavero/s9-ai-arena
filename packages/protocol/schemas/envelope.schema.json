@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://s9.arena/schemas/arena/1/envelope.schema.json",
+  "title": "Envelope arena/1",
+  "description": "Todo mensaje del protocolo viaja dentro de este envelope. El campo payload se valida contra el esquema del type correspondiente. Un envelope con proto desconocido se rechaza sin inspeccionar el payload (D5).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["proto", "type", "seq", "payload"],
+  "properties": {
+    "proto": { "$ref": "common.schema.json#/$defs/protoId" },
+    "type": {
+      "enum": ["HELLO", "WELCOME", "OBSERVATION", "COMMAND", "EVENT", "SHUTDOWN"]
+    },
+    "tick": { "$ref": "common.schema.json#/$defs/tick" },
+    "seq": { "$ref": "common.schema.json#/$defs/seq" },
+    "payload": { "type": "object" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "type": { "enum": ["OBSERVATION", "COMMAND", "EVENT"] } },
+        "required": ["type"]
+      },
+      "then": {
+        "required": ["tick"],
+        "description": "Los mensajes de ciclo de batalla siempre indican su tick."
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "HELLO" } }, "required": ["type"] },
+      "then": { "properties": { "payload": { "$ref": "hello.schema.json" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "WELCOME" } }, "required": ["type"] },
+      "then": { "properties": { "payload": { "$ref": "welcome.schema.json" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "OBSERVATION" } }, "required": ["type"] },
+      "then": { "properties": { "payload": { "$ref": "observation.schema.json" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "COMMAND" } }, "required": ["type"] },
+      "then": { "properties": { "payload": { "$ref": "command.schema.json" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "EVENT" } }, "required": ["type"] },
+      "then": { "properties": { "payload": { "$ref": "event.schema.json" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "SHUTDOWN" } }, "required": ["type"] },
+      "then": { "properties": { "payload": { "$ref": "shutdown.schema.json" } } }
+    }
+  ]
+}

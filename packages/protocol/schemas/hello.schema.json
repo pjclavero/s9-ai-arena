@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://s9.arena/schemas/arena/1/hello.schema.json",
+  "title": "HELLO · Bot → Motor",
+  "description": "Primer mensaje del bot. Identifica SDK, protocolo y credencial de participación en la batalla (token emitido por bot-manager al lanzarla, ver E5.M).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["botId", "botVersion", "sdk", "battleToken"],
+  "properties": {
+    "botId": {
+      "type": "string",
+      "pattern": "^bot_[0-9a-zA-Z]{1,24}$"
+    },
+    "botVersion": {
+      "type": "string",
+      "description": "Versión de código del bot registrada en la plataforma.",
+      "maxLength": 64
+    },
+    "sdk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "enum": ["arena-sdk-python", "arena-sdk-js", "arena-sdk-java", "arena-sdk-dotnet", "custom"] },
+        "version": { "type": "string", "maxLength": 32 }
+      }
+    },
+    "battleToken": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 512,
+      "description": "Token de participación de un solo uso, ligado a battleId + botId. Impide que un contenedor se conecte a una batalla ajena."
+    },
+    "encodings": {
+      "type": "array",
+      "items": { "enum": ["json"] },
+      "minItems": 1,
+      "uniqueItems": true,
+      "default": ["json"],
+      "description": "Codificaciones que el bot admite. Reserva para la migración a binario (D5)."
+    }
+  }
+}

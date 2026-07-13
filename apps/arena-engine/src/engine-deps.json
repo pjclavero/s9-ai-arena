@@ -1,0 +1,16 @@
+{
+  "$comment": "D4 del ADR-000. El motor verifica estos hashes al arrancar y se niega a ejecutar si no coinciden. Cambiar un valor aquí exige un ADR y regenerar las batallas golden: una build distinta de Rapier puede alterar resultados deterministas e invalidar replays oficiales.",
+  "engine": {
+    "version": "0.1.0",
+    "runtime": "node22"
+  },
+  "physics": {
+    "package": "@dimforge/rapier2d-compat",
+    "version": "0.19.3",
+    "wasmFile": "rapier_wasm2d_bg.wasm",
+    "wasmSha256": "c7b8deb2aefd3217c90fe67c7b1911813f047ae0afd60e3f4a031af143921de6",
+    "wasmBytes": 1175792
+  },
+  "protocol": "arena/1",
+  "rulesSchema": 1
+}

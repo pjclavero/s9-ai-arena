@@ -1,0 +1,7 @@
+{
+  "_why": "type no pertenece a los seis mensajes del contrato",
+  "proto": "arena/1",
+  "type": "PING",
+  "seq": 1,
+  "payload": {}
+}

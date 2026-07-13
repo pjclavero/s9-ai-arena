@@ -1,0 +1,1260 @@
+openapi: 3.1.0
+info:
+  title: S9 AI Arena · API de plataforma
+  version: 0.1.0
+  description: |
+    Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
+
+    **Autorización.** Cada operación declara `x-min-role` con el rol mínimo requerido.
+    La jerarquía es acumulativa: visitor < user < developer < team_captain < organizer < moderator < admin.
+    El middleware de E7 lee esta extensión: la interfaz web solo oculta, nunca autoriza.
+    Además del rol, toda operación sobre un recurso propio exige **autorización de objeto**
+    (ser dueño o miembro del equipo dueño); un rol suficiente no da acceso a recursos ajenos.
+
+    **Privacidad.** Los campos marcados con `x-private: true` no aparecen NUNCA en respuestas
+    a `visitor`. El test de fuga por contrato de E7/T7.5 recorre esta extensión.
+
+    **Paginación** por cursor opaco (`cursor` + `limit`), nunca por offset.
+
+servers:
+  - url: https://arena.example/api/v1
+
+tags:
+  - name: auth
+  - name: users
+  - name: teams
+  - name: bots
+  - name: builds
+  - name: maps
+  - name: catalog
+  - name: tournaments
+  - name: battles
+  - name: replays
+  - name: standings
+  - name: admin
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ------------------------------------------------------------------ AUTH
+  /auth/register:
+    post:
+      tags: [auth]
+      operationId: register
+      summary: Crear cuenta
+      security: []
+      x-min-role: visitor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+      responses:
+        '201': { description: Cuenta creada, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: Iniciar sesión (devuelve access + refresh; exige TOTP si hay 2FA activo)
+      security: []
+      x-min-role: visitor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200': { description: Sesión iniciada, content: { application/json: { schema: { $ref: '#/components/schemas/TokenPair' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /auth/refresh:
+    post:
+      tags: [auth]
+      operationId: refreshToken
+      security: []
+      x-min-role: visitor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties: { refreshToken: { type: string } }
+      responses:
+        '200': { description: Nuevo par de tokens, content: { application/json: { schema: { $ref: '#/components/schemas/TokenPair' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/sessions:
+    get:
+      tags: [auth]
+      operationId: listSessions
+      summary: Sesiones activas propias
+      x-min-role: user
+      responses:
+        '200':
+          description: Lista de sesiones
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Session' } }
+  /auth/sessions/{sessionId}:
+    delete:
+      tags: [auth]
+      operationId: revokeSession
+      summary: Revocar una sesión (propia, o cualquiera si es admin)
+      x-min-role: user
+      parameters: [{ $ref: '#/components/parameters/SessionId' }]
+      responses:
+        '204': { description: Revocada }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /auth/2fa:
+    post:
+      tags: [auth]
+      operationId: enable2fa
+      summary: Activar 2FA TOTP
+      x-min-role: user
+      responses:
+        '200':
+          description: Secreto TOTP y códigos de recuperación (se muestran una sola vez)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  otpauthUrl: { type: string, x-private: true }
+                  recoveryCodes: { type: array, items: { type: string }, x-private: true }
+    delete:
+      tags: [auth]
+      operationId: disable2fa
+      x-min-role: user
+      responses: { '204': { description: Desactivado } }
+
+  # ----------------------------------------------------------------- USERS
+  /users/me:
+    get:
+      tags: [users]
+      operationId: getMe
+      x-min-role: user
+      responses:
+        '200': { description: Usuario propio, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+    patch:
+      tags: [users]
+      operationId: updateMe
+      x-min-role: user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                displayName: { type: string, maxLength: 48 }
+      responses:
+        '200': { description: Actualizado, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+
+  /users/{userId}:
+    get:
+      tags: [users]
+      operationId: getUserPublic
+      summary: Perfil público (nunca incluye email ni roles internos)
+      x-min-role: visitor
+      security: []
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '200': { description: Perfil público, content: { application/json: { schema: { $ref: '#/components/schemas/PublicProfile' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /users/{userId}/roles:
+    put:
+      tags: [admin]
+      operationId: setUserRoles
+      summary: Asignar roles (queda en audit_log)
+      x-min-role: admin
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [roles]
+              properties:
+                roles: { type: array, items: { $ref: '#/components/schemas/Role' } }
+      responses:
+        '200': { description: Roles actualizados, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ----------------------------------------------------------------- TEAMS
+  /teams:
+    get:
+      tags: [teams]
+      operationId: listTeams
+      x-min-role: visitor
+      security: []
+      parameters: [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      responses:
+        '200': { description: Equipos, content: { application/json: { schema: { $ref: '#/components/schemas/TeamPage' } } } }
+    post:
+      tags: [teams]
+      operationId: createTeam
+      summary: Crear equipo (el creador queda como capitán)
+      x-min-role: user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties: { name: { type: string, maxLength: 48 } }
+      responses:
+        '201': { description: Creado, content: { application/json: { schema: { $ref: '#/components/schemas/Team' } } } }
+
+  /teams/{teamId}/members:
+    post:
+      tags: [teams]
+      operationId: addTeamMember
+      x-min-role: team_captain
+      parameters: [{ $ref: '#/components/parameters/TeamId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId]
+              properties: { userId: { type: string } }
+      responses:
+        '201': { description: Miembro añadido }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /teams/{teamId}/members/{userId}:
+    delete:
+      tags: [teams]
+      operationId: removeTeamMember
+      x-min-role: team_captain
+      parameters: [{ $ref: '#/components/parameters/TeamId' }, { $ref: '#/components/parameters/UserId' }]
+      responses:
+        '204': { description: Eliminado }
+
+  # ------------------------------------------------------------------ BOTS
+  /bots:
+    get:
+      tags: [bots]
+      operationId: listBots
+      summary: Lista bots visibles para el solicitante (públicos, o propios/de su equipo)
+      x-min-role: visitor
+      security: []
+      parameters:
+        - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/Limit' }
+        - name: ownerId
+          in: query
+          schema: { type: string }
+      responses:
+        '200': { description: Bots, content: { application/json: { schema: { $ref: '#/components/schemas/BotPage' } } } }
+    post:
+      tags: [bots]
+      operationId: createBot
+      x-min-role: user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 48 }
+                visibility: { $ref: '#/components/schemas/Visibility' }
+                teamId: { type: string }
+      responses:
+        '201': { description: Bot creado en estado draft, content: { application/json: { schema: { $ref: '#/components/schemas/Bot' } } } }
+
+  /bots/{botId}:
+    get:
+      tags: [bots]
+      operationId: getBot
+      x-min-role: visitor
+      security: []
+      parameters: [{ $ref: '#/components/parameters/BotId' }]
+      responses:
+        '200': { description: Bot, content: { application/json: { schema: { $ref: '#/components/schemas/Bot' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [bots]
+      operationId: updateBot
+      summary: Editar metadatos del bot (solo el dueño; no afecta a versiones publicadas)
+      x-min-role: user
+      parameters: [{ $ref: '#/components/parameters/BotId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 48 }
+                visibility: { $ref: '#/components/schemas/Visibility' }
+      responses:
+        '200': { description: Actualizado, content: { application/json: { schema: { $ref: '#/components/schemas/Bot' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /bots/{botId}/loadouts:
+    post:
+      tags: [bots]
+      operationId: createLoadoutRevision
+      summary: |
+        Crear una revisión de loadout. El servidor ejecuta SIEMPRE el validador de ensamblaje
+        de E3 (T3.2); un loadout ilegal devuelve 422 con la lista de violaciones. Un cambio de
+        módulo crea revisión nueva aunque el código no cambie (cap. 17.2).
+      x-min-role: user
+      parameters: [{ $ref: '#/components/parameters/BotId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoadoutInput' }
+      responses:
+        '201': { description: Revisión creada, content: { application/json: { schema: { $ref: '#/components/schemas/Loadout' } } } }
+        '422': { $ref: '#/components/responses/LoadoutInvalid' }
+
+  /bots/{botId}/versions:
+    get:
+      tags: [bots]
+      operationId: listBotVersions
+      x-min-role: visitor
+      security: []
+      parameters: [{ $ref: '#/components/parameters/BotId' }]
+      responses:
+        '200':
+          description: Versiones
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/BotVersion' } }
+    post:
+      tags: [bots]
+      operationId: createBotVersion
+      summary: Subir una versión de código (queda en draft; no compila todavía)
+      x-min-role: developer
+      parameters: [{ $ref: '#/components/parameters/BotId' }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [source, runtime, loadoutRevision]
+              properties:
+                source: { type: string, format: binary, description: 'Archivo comprimido del código. Límite 10 MB (E6.M).' }
+                runtime: { $ref: '#/components/schemas/Runtime' }
+                loadoutRevision: { type: integer }
+      responses:
+        '201': { description: Versión creada, content: { application/json: { schema: { $ref: '#/components/schemas/BotVersion' } } } }
+        '413': { description: Código demasiado grande, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /bots/{botId}/versions/{version}/source:
+    get:
+      tags: [bots]
+      operationId: getBotSource
+      summary: |
+        Descargar el código. Solo el dueño, su equipo y moderadores/admin, salvo que la versión
+        esté publicada con codePublic=true (D9). Un visitante NUNCA descarga código privado.
+      x-min-role: user
+      parameters: [{ $ref: '#/components/parameters/BotId' }, { $ref: '#/components/parameters/Version' }]
+      responses:
+        '200': { description: Código, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # -------- Transiciones de estado del capítulo 17.1 (acciones explícitas)
+  /bots/{botId}/versions/{version}/actions/submit:
+    post:
+      tags: [bots]
+      operationId: submitBotVersion
+      summary: 'draft → validating. Lanza el pipeline de bot-manager (E6/T6.1).'
+      x-min-role: developer
+      parameters: [{ $ref: '#/components/parameters/BotId' }, { $ref: '#/components/parameters/Version' }]
+      responses:
+        '202': { description: Pipeline encolado, content: { application/json: { schema: { $ref: '#/components/schemas/Build' } } } }
+        '409': { $ref: '#/components/responses/IllegalTransition' }
+
+  /bots/{botId}/versions/{version}/actions/publish:
+    post:
+      tags: [bots]
+      operationId: publishBotVersion
+      summary: 'validated → published. La versión pasa a ser INMUTABLE. codePublic es irreversible (D9).'
+      x-min-role: developer
+      parameters: [{ $ref: '#/components/parameters/BotId' }, { $ref: '#/components/parameters/Version' }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                codePublic: { type: boolean, default: false }
+      responses:
+        '200': { description: Publicada, content: { application/json: { schema: { $ref: '#/components/schemas/BotVersion' } } } }
+        '409': { $ref: '#/components/responses/IllegalTransition' }
+
+  /bots/{botId}/versions/{version}/actions/suspend:
+    post:
+      tags: [admin]
+      operationId: suspendBotVersion
+      summary: 'cualquiera → suspended. Motivo obligatorio. Queda en audit_log y bloquea su ejecución (E6/T6.4).'
+      x-min-role: moderator
+      parameters: [{ $ref: '#/components/parameters/BotId' }, { $ref: '#/components/parameters/Version' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties: { reason: { type: string, maxLength: 256 } }
+      responses:
+        '200': { description: Suspendida, content: { application/json: { schema: { $ref: '#/components/schemas/BotVersion' } } } }
+
+  /bots/{botId}/versions/{version}/actions/retire:
+    post:
+      tags: [bots]
+      operationId: retireBotVersion
+      summary: 'published → retired. No admite inscripciones nuevas; conserva historial.'
+      x-min-role: developer
+      parameters: [{ $ref: '#/components/parameters/BotId' }, { $ref: '#/components/parameters/Version' }]
+      responses:
+        '200': { description: Retirada, content: { application/json: { schema: { $ref: '#/components/schemas/BotVersion' } } } }
+        '409': { $ref: '#/components/responses/IllegalTransition' }
+
+  # ---------------------------------------------------------------- BUILDS
+  /builds/{buildId}:
+    get:
+      tags: [builds]
+      operationId: getBuild
+      summary: Estado y etapas del pipeline. Los logs solo los ve el dueño (o moderador/admin).
+      x-min-role: developer
+      parameters: [{ $ref: '#/components/parameters/BuildId' }]
+      responses:
+        '200': { description: Build, content: { application/json: { schema: { $ref: '#/components/schemas/Build' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ------------------------------------------------------------------ MAPS
+  /maps:
+    get:
+      tags: [maps]
+      operationId: listMaps
+      x-min-role: visitor
+      security: []
+      parameters: [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      responses:
+        '200': { description: Mapas, content: { application/json: { schema: { $ref: '#/components/schemas/MapPage' } } } }
+    post:
+      tags: [maps]
+      operationId: importMap
+      summary: 'Importar un TMX o un mapa interno. Se valida (E4/T4.2); si hay errores, 422 y NO se crea.'
+      x-min-role: user
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '201': { description: Mapa en borrador, content: { application/json: { schema: { $ref: '#/components/schemas/MapVersion' } } } }
+        '422': { $ref: '#/components/responses/MapInvalid' }
+
+  /maps/{mapId}/versions/{version}:
+    get:
+      tags: [maps]
+      operationId: getMapVersion
+      x-min-role: visitor
+      security: []
+      parameters: [{ $ref: '#/components/parameters/MapId' }, { $ref: '#/components/parameters/Version' }]
+      responses:
+        '200': { description: Mapa, content: { application/json: { schema: { $ref: '#/components/schemas/MapVersion' } } } }
+    put:
+      tags: [maps]
+      operationId: replaceMapVersion
+      summary: 'SIEMPRE 409: una versión publicada es inmutable (cap. 14.2). Existe para documentar el rechazo.'
+      x-min-role: admin
+      parameters: [{ $ref: '#/components/parameters/MapId' }, { $ref: '#/components/parameters/Version' }]
+      responses:
+        '409': { $ref: '#/components/responses/Immutable' }
+
+  /maps/{mapId}/versions/{version}/actions/publish:
+    post:
+      tags: [maps]
+      operationId: publishMapVersion
+      summary: Congela contenido y checksum, y genera miniatura. Solo si la validación pasó sin errores.
+      x-min-role: organizer
+      parameters: [{ $ref: '#/components/parameters/MapId' }, { $ref: '#/components/parameters/Version' }]
+      responses:
+        '200': { description: Publicado, content: { application/json: { schema: { $ref: '#/components/schemas/MapVersion' } } } }
+        '409': { $ref: '#/components/responses/IllegalTransition' }
+
+  /maps/generate:
+    post:
+      tags: [maps]
+      operationId: generateMap
+      summary: 'Generación procedural determinista (E4/T4.4): mismos parámetros y semilla ⇒ mismo checksum.'
+      x-min-role: organizer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [params, seed]
+              properties:
+                params: { type: object, additionalProperties: true }
+                seed: { type: string }
+      responses:
+        '201': { description: Mapa generado y validado, content: { application/json: { schema: { $ref: '#/components/schemas/MapVersion' } } } }
+
+  # --------------------------------------------------------------- CATALOG
+  /catalog/versions:
+    get:
+      tags: [catalog]
+      operationId: listCatalogVersions
+      x-min-role: visitor
+      security: []
+      responses:
+        '200':
+          description: Versiones de catálogo (una temporada congela una, cap. 10.4)
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/CatalogVersion' } }
+    post:
+      tags: [admin]
+      operationId: importCatalogVersion
+      summary: 'Importar un catálogo desde los JSON versionados del repo. Idempotente; NUNCA sobrescribe una versión existente.'
+      x-min-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [catalogVersion, modules]
+              properties:
+                catalogVersion: { type: string }
+                modules: { type: array, items: { type: object, additionalProperties: true } }
+      responses:
+        '201': { description: Importado }
+        '409': { $ref: '#/components/responses/Immutable' }
+
+  /catalog/{catalogVersion}/modules:
+    get:
+      tags: [catalog]
+      operationId: listModules
+      x-min-role: visitor
+      security: []
+      parameters:
+        - name: catalogVersion
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Definiciones de módulo del catálogo
+          content:
+            application/json:
+              schema: { type: array, items: { type: object, additionalProperties: true } }
+
+  # ------------------------------------------------------------ TOURNAMENTS
+  /tournaments:
+    get:
+      tags: [tournaments]
+      operationId: listTournaments
+      x-min-role: visitor
+      security: []
+      parameters: [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      responses:
+        '200': { description: Torneos, content: { application/json: { schema: { $ref: '#/components/schemas/TournamentPage' } } } }
+    post:
+      tags: [tournaments]
+      operationId: createTournament
+      x-min-role: organizer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TournamentInput' }
+      responses:
+        '201': { description: Creado, content: { application/json: { schema: { $ref: '#/components/schemas/Tournament' } } } }
+
+  /tournaments/{tournamentId}/entries:
+    post:
+      tags: [tournaments]
+      operationId: enterTournament
+      summary: 'Inscribir un bot. Congela la combinación exacta de versión de código + revisión de loadout (cap. 17.2).'
+      x-min-role: user
+      parameters: [{ $ref: '#/components/parameters/TournamentId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [botId, version]
+              properties:
+                botId: { type: string }
+                version: { type: integer }
+      responses:
+        '201': { description: Inscrito, content: { application/json: { schema: { $ref: '#/components/schemas/Entry' } } } }
+        '409': { description: 'Inscripciones cerradas, bot no publicado o suspendido', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /tournaments/{tournamentId}/actions/close-entries:
+    post:
+      tags: [tournaments]
+      operationId: closeEntries
+      summary: 'Cierra inscripciones, congela versiones, revela las semillas del commit-reveal y genera el calendario (E9/T9.4).'
+      x-min-role: organizer
+      parameters: [{ $ref: '#/components/parameters/TournamentId' }]
+      responses:
+        '200': { description: Cerrado y calendario generado, content: { application/json: { schema: { $ref: '#/components/schemas/Tournament' } } } }
+        '409': { $ref: '#/components/responses/IllegalTransition' }
+
+  /tournaments/{tournamentId}/actions/dry-run:
+    post:
+      tags: [tournaments]
+      operationId: dryRunTournament
+      summary: 'Simulacro con bots de ejemplo antes de un torneo público (mejora E9.M). No afecta a ratings.'
+      x-min-role: organizer
+      parameters: [{ $ref: '#/components/parameters/TournamentId' }]
+      responses:
+        '202': { description: Simulacro encolado }
+
+  # --------------------------------------------------------------- BATTLES
+  /battles:
+    get:
+      tags: [battles]
+      operationId: listBattles
+      summary: Batallas en directo, programadas y terminadas
+      x-min-role: visitor
+      security: []
+      parameters:
+        - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/Limit' }
+        - name: status
+          in: query
+          schema: { enum: [scheduled, running, finished, failed] }
+      responses:
+        '200': { description: Batallas, content: { application/json: { schema: { $ref: '#/components/schemas/BattlePage' } } } }
+    post:
+      tags: [battles]
+      operationId: createPracticeBattle
+      summary: Lanzar una batalla privada de prueba (no afecta al rating)
+      x-min-role: user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PracticeBattleInput' }
+      responses:
+        '202': { description: Encolada, content: { application/json: { schema: { $ref: '#/components/schemas/Battle' } } } }
+
+  /battles/{battleId}:
+    get:
+      tags: [battles]
+      operationId: getBattle
+      x-min-role: visitor
+      security: []
+      parameters: [{ $ref: '#/components/parameters/BattleId' }]
+      responses:
+        '200': { description: Batalla, content: { application/json: { schema: { $ref: '#/components/schemas/Battle' } } } }
+
+  /battles/{battleId}/spectate-ticket:
+    post:
+      tags: [battles]
+      operationId: getSpectateTicket
+      summary: |
+        Ticket de un solo uso para abrir el WebSocket de espectador en el gateway.
+        El canal de espectador transporta ÚNICAMENTE snapshots públicos: nunca observaciones
+        privadas de bots (D8, criterio del cap. 28).
+      x-min-role: visitor
+      security: []
+      parameters: [{ $ref: '#/components/parameters/BattleId' }]
+      responses:
+        '201':
+          description: Ticket
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ticket: { type: string }
+                  wsUrl: { type: string }
+                  expiresAt: { type: string, format: date-time }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /battles/{battleId}/audit:
+    get:
+      tags: [battles]
+      operationId: getBattleAudit
+      summary: |
+        Todo lo necesario para re-simular y verificar la batalla (E9/T9.4): versiones de motor,
+        física, reglas y catálogo; checksum del mapa; hashes y firmas de los artefactos de bots;
+        semilla y su prueba de commit-reveal. Público: la auditabilidad no exige revelar código.
+      x-min-role: visitor
+      security: []
+      parameters: [{ $ref: '#/components/parameters/BattleId' }]
+      responses:
+        '200': { description: Auditoría, content: { application/json: { schema: { $ref: '#/components/schemas/BattleAudit' } } } }
+
+  /battles/{battleId}/stats:
+    get:
+      tags: [battles]
+      operationId: getBattleStats
+      summary: Estadísticas por bot, equipo, módulo y mapa (cap. 20.3)
+      x-min-role: visitor
+      security: []
+      parameters: [{ $ref: '#/components/parameters/BattleId' }]
+      responses:
+        '200': { description: Estadísticas, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+
+  # --------------------------------------------------------------- REPLAYS
+  /replays/{battleId}:
+    get:
+      tags: [replays]
+      operationId: getReplay
+      summary: Replay de datos (no vídeo), comprimido, con índice de keyframes para salto temporal
+      x-min-role: visitor
+      security: []
+      parameters: [{ $ref: '#/components/parameters/BattleId' }]
+      responses:
+        '200':
+          description: Replay
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /replays/{battleId}/verify:
+    post:
+      tags: [replays]
+      operationId: verifyReplay
+      summary: Re-simula el replay con la versión registrada del motor y compara resultado y hashes
+      x-min-role: visitor
+      security: []
+      parameters: [{ $ref: '#/components/parameters/BattleId' }]
+      responses:
+        '200':
+          description: Resultado de la verificación
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  matches: { type: boolean }
+                  officialHash: { type: string }
+                  recomputedHash: { type: string }
+
+  # ------------------------------------------------------------- STANDINGS
+  /standings:
+    get:
+      tags: [standings]
+      operationId: getStandings
+      x-min-role: visitor
+      security: []
+      parameters:
+        - name: seasonId
+          in: query
+          schema: { type: string }
+        - name: mode
+          in: query
+          schema: { enum: [deathmatch, team_deathmatch, capture_the_flag, zone_control] }
+      responses:
+        '200':
+          description: Clasificación
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Standing' } }
+
+  # ------------------------------------------------------------------ ADMIN
+  /admin/security-findings:
+    get:
+      tags: [admin]
+      operationId: listSecurityFindings
+      summary: Hallazgos del sandbox y del escaneo de secretos (E6/T6.4). Nunca visibles para otros roles.
+      x-min-role: admin
+      parameters: [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      responses:
+        '200':
+          description: Hallazgos
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/SecurityFinding' } }
+
+  /admin/audit-log:
+    get:
+      tags: [admin]
+      operationId: listAuditLog
+      summary: 'Registro de auditoría. Es de SOLO INSERCIÓN: no existe operación de borrado ni edición (E6/T6.4).'
+      x-min-role: admin
+      parameters: [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      responses:
+        '200':
+          description: Entradas
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/AuditEntry' } }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    Cursor: { name: cursor, in: query, schema: { type: string }, description: Cursor opaco de paginación }
+    Limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+    UserId: { name: userId, in: path, required: true, schema: { type: string } }
+    TeamId: { name: teamId, in: path, required: true, schema: { type: string } }
+    BotId: { name: botId, in: path, required: true, schema: { type: string } }
+    BuildId: { name: buildId, in: path, required: true, schema: { type: string } }
+    MapId: { name: mapId, in: path, required: true, schema: { type: string } }
+    BattleId: { name: battleId, in: path, required: true, schema: { type: string } }
+    TournamentId: { name: tournamentId, in: path, required: true, schema: { type: string } }
+    SessionId: { name: sessionId, in: path, required: true, schema: { type: string } }
+    Version: { name: version, in: path, required: true, schema: { type: integer, minimum: 1 } }
+
+  responses:
+    Unauthorized:
+      description: Credenciales ausentes o inválidas
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Forbidden:
+      description: Rol insuficiente o recurso ajeno
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    NotFound:
+      description: No existe o no es visible para el solicitante
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Conflict:
+      description: Conflicto de estado
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    IllegalTransition:
+      description: 'Transición de estado ilegal (cap. 17.1). El cuerpo indica estado actual y transiciones permitidas.'
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - type: object
+                properties:
+                  currentState: { $ref: '#/components/schemas/BotState' }
+                  allowedTransitions: { type: array, items: { type: string } }
+    Immutable:
+      description: El recurso está publicado o congelado y es inmutable. Cree una versión nueva.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    LoadoutInvalid:
+      description: 'El loadout viola una o más reglas de ensamblaje (cap. 10.2). Devuelve los códigos del validador de E3.'
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string, const: loadout_invalid }
+              violations:
+                type: array
+                items:
+                  type: object
+                  required: [code, message]
+                  properties:
+                    code:
+                      enum: [slot_type_mismatch, slot_size_exceeded, unknown_slot, duplicate_slot, mass_exceeded, energy_deficit, budget_exceeded, incompatible_ammo, incompatible_chassis, duplicate_limit_exceeded, category_forbidden_by_ruleset, module_cost_cap_exceeded]
+                    moduleId: { type: string }
+                    slot: { type: string }
+                    message: { type: string }
+    MapInvalid:
+      description: 'El mapa no supera el validador (cap. 14.3). Nunca llega a publicarse.'
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string, const: map_invalid }
+              checks:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    check: { enum: [geometry, navigation, playability, balance, mode, destruction] }
+                    severity: { enum: [error, warning] }
+                    message: { type: string }
+    TooManyRequests:
+      description: Límite de peticiones superado
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  schemas:
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error: { type: string, description: Código estable, apto para máquinas }
+        message: { type: string, description: Explicación legible }
+        correlationId: { type: string, description: Enlaza con los logs estructurados (cap. 24) }
+
+    Role:
+      enum: [visitor, user, developer, team_captain, organizer, moderator, admin]
+
+    Visibility:
+      enum: [private, team, public]
+
+    Runtime:
+      enum: [python, node]
+
+    BotState:
+      enum: [draft, validating, rejected, validated, published, frozen, suspended, retired]
+      description: Estados del capítulo 17.1
+
+    User:
+      type: object
+      properties:
+        id: { type: string }
+        displayName: { type: string }
+        email: { type: string, format: email, x-private: true }
+        roles: { type: array, items: { $ref: '#/components/schemas/Role' }, x-private: true }
+        twoFactorEnabled: { type: boolean, x-private: true }
+        createdAt: { type: string, format: date-time }
+
+    PublicProfile:
+      type: object
+      description: Proyección pública de un usuario. No contiene ningún campo x-private.
+      properties:
+        id: { type: string }
+        displayName: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    Session:
+      type: object
+      properties:
+        id: { type: string }
+        createdAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+        userAgent: { type: string }
+
+    RegisterRequest:
+      type: object
+      required: [email, password, displayName]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 12, x-private: true }
+        displayName: { type: string, maxLength: 48 }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, x-private: true }
+        totp: { type: string, pattern: '^[0-9]{6}$' }
+
+    TokenPair:
+      type: object
+      properties:
+        accessToken: { type: string, x-private: true }
+        refreshToken: { type: string, x-private: true }
+        expiresIn: { type: integer, description: Segundos de vida del access token (corta duración, cap. 16.1) }
+
+    Team:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        captainId: { type: string }
+        memberIds: { type: array, items: { type: string } }
+    TeamPage:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Team' } }
+        nextCursor: { type: string }
+
+    Bot:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        ownerId: { type: string }
+        teamId: { type: string }
+        visibility: { $ref: '#/components/schemas/Visibility' }
+        latestPublishedVersion: { type: integer }
+        rating: { type: number }
+        createdAt: { type: string, format: date-time }
+    BotPage:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Bot' } }
+        nextCursor: { type: string }
+
+    BotVersion:
+      type: object
+      properties:
+        botId: { type: string }
+        version: { type: integer }
+        state: { $ref: '#/components/schemas/BotState' }
+        runtime: { $ref: '#/components/schemas/Runtime' }
+        loadoutRevision: { type: integer }
+        artifactHash: { type: string, description: 'sha256 del artefacto firmado. Público: permite auditar sin revelar código.' }
+        codePublic: { type: boolean, description: 'Irreversible una vez publicada (D9).' }
+        rejectionReason: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    LoadoutInput:
+      type: object
+      required: [chassis, modules]
+      properties:
+        name: { type: string, maxLength: 64 }
+        catalogVersion: { type: string }
+        chassis: { type: string }
+        modules:
+          type: array
+          items:
+            type: object
+            required: [slot, moduleId]
+            properties:
+              slot: { type: string }
+              moduleId: { type: string }
+              ammo: { type: string }
+
+    Loadout:
+      allOf:
+        - $ref: '#/components/schemas/LoadoutInput'
+        - type: object
+          properties:
+            loadoutId: { type: string }
+            revision: { type: integer }
+            summary:
+              type: object
+              description: Resultado de resolveVehicle (E3/T3.3). Público, como el loadout (D9).
+              properties:
+                massKg: { type: number }
+                costCredits: { type: number }
+                energyBalanceEUs: { type: number }
+
+    Build:
+      type: object
+      properties:
+        id: { type: string }
+        botId: { type: string }
+        version: { type: integer }
+        status: { enum: [queued, running, passed, failed] }
+        stages:
+          type: array
+          description: Etapas del pipeline del capítulo 18.1, en orden
+          items:
+            type: object
+            properties:
+              name:
+                enum: [structure, static_analysis, dependencies, build, protocol_test, smoke_battle, resource_limits, secret_scan, sign, publish]
+              status: { enum: [pending, running, passed, failed, skipped] }
+              message: { type: string }
+              logUrl: { type: string, x-private: true, description: Solo dueño, moderador o admin }
+        artifactHash: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    MapVersion:
+      type: object
+      properties:
+        mapId: { type: string }
+        version: { type: integer }
+        state: { enum: [draft, validated, published] }
+        checksum: { type: string }
+        widthM: { type: number }
+        heightM: { type: number }
+        supportedModes: { type: array, items: { type: string } }
+        thumbnailUrl: { type: string }
+        generation:
+          type: object
+          properties:
+            seed: { type: string }
+            generator: { type: string }
+    MapPage:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/MapVersion' } }
+        nextCursor: { type: string }
+
+    CatalogVersion:
+      type: object
+      properties:
+        catalogVersion: { type: string }
+        moduleCount: { type: integer }
+        frozen: { type: boolean }
+        importedAt: { type: string, format: date-time }
+
+    TournamentInput:
+      type: object
+      required: [name, format, mode, rulesetId]
+      properties:
+        name: { type: string, maxLength: 64 }
+        format: { enum: [league, round_robin, single_elimination, double_elimination, swiss, teams] }
+        mode: { enum: [deathmatch, team_deathmatch, capture_the_flag, zone_control] }
+        rulesetId: { type: string }
+        budgetCredits:
+          type: integer
+          minimum: 200
+          maximum: 5000
+          default: 1000
+          description: >-
+            Presupuesto de créditos por loadout para esta competición (D7). Perilla de dificultad:
+            una liga "skirmish" puede fijar 600, una "asedio" 2000. Si se omite, se usa el valor
+            por defecto del ruleset (BUDGET_CREDITS_MVP=1000). Se congela para todas las batallas
+            del torneo al cerrar inscripciones (E9/T9.4) y es igual para todos los participantes.
+        catalogVersion: { type: string }
+        mapPool: { type: array, items: { type: string } }
+        roundsPerPairing: { type: integer, minimum: 1, description: 'Con intercambio de lados (cap. 19.2)' }
+        entriesCloseAt: { type: string, format: date-time }
+        seedCommitment:
+          type: string
+          description: 'Hash del lote de semillas, publicado ANTES del cierre (commit-reveal, E9/T9.4).'
+
+    Tournament:
+      allOf:
+        - $ref: '#/components/schemas/TournamentInput'
+        - type: object
+          properties:
+            id: { type: string }
+            state: { enum: [draft, open, closed, running, finished, cancelled] }
+            seedsRevealed: { type: array, items: { type: string }, description: 'Se rellena al cerrar inscripciones.' }
+    TournamentPage:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Tournament' } }
+        nextCursor: { type: string }
+
+    Entry:
+      type: object
+      properties:
+        id: { type: string }
+        tournamentId: { type: string }
+        botId: { type: string }
+        version: { type: integer }
+        loadoutRevision: { type: integer }
+        frozen: { type: boolean, description: 'Congelado al cerrar inscripciones: la combinación código+loadout ya no cambia (cap. 17.2).' }
+
+    PracticeBattleInput:
+      type: object
+      required: [mode, rulesetId, mapId, participants]
+      properties:
+        mode: { enum: [deathmatch, team_deathmatch, capture_the_flag, zone_control] }
+        rulesetId: { type: string }
+        mapId: { type: string }
+        mapVersion: { type: integer }
+        seed: { type: string }
+        participants:
+          type: array
+          minItems: 1
+          maxItems: 8
+          items:
+            type: object
+            required: [botId, version, team]
+            properties:
+              botId: { type: string }
+              version: { type: integer }
+              team: { type: string }
+
+    Battle:
+      type: object
+      properties:
+        id: { type: string }
+        tournamentId: { type: string }
+        status: { enum: [scheduled, running, finished, failed] }
+        official: { type: boolean, description: 'Las no oficiales no afectan al rating.' }
+        mode: { type: string }
+        mapId: { type: string }
+        mapVersion: { type: integer }
+        participants:
+          type: array
+          items:
+            type: object
+            properties:
+              botId: { type: string }
+              version: { type: integer }
+              team: { type: string }
+              outcome: { enum: [win, loss, draw, disqualified] }
+        result:
+          type: object
+          properties:
+            score: { type: object, additionalProperties: { type: number } }
+            ticks: { type: integer }
+        failureKind:
+          enum: [none, bot_timeout, bot_crash, infrastructure]
+          description: 'Distingue derrota deportiva de fallo técnico (cap. 19.2). Solo infrastructure se reintenta.'
+    BattlePage:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Battle' } }
+        nextCursor: { type: string }
+
+    BattleAudit:
+      type: object
+      description: Suficiente para re-simular y verificar la batalla sin revelar código privado.
+      properties:
+        battleId: { type: string }
+        seed: { type: string }
+        seedCommitment: { type: string }
+        seedRevealProof: { type: string }
+        versions:
+          type: object
+          properties:
+            engine: { type: string }
+            physics: { type: string }
+            rules: { type: string }
+            catalog: { type: string }
+            protocol: { type: string }
+        map:
+          type: object
+          properties:
+            mapId: { type: string }
+            version: { type: integer }
+            checksum: { type: string }
+        artifacts:
+          type: array
+          items:
+            type: object
+            properties:
+              botId: { type: string }
+              version: { type: integer }
+              artifactHash: { type: string }
+              signature: { type: string }
+        finalStateHash: { type: string }
+
+    Standing:
+      type: object
+      properties:
+        rank: { type: integer }
+        botId: { type: string }
+        botName: { type: string }
+        rating: { type: number }
+        wins: { type: integer }
+        losses: { type: integer }
+        draws: { type: integer }
+
+    SecurityFinding:
+      type: object
+      properties:
+        id: { type: string }
+        kind: { enum: [sandbox_escape_attempt, forbidden_dependency, secret_in_source, resource_limit_exceeded, protocol_abuse] }
+        botId: { type: string }
+        version: { type: integer }
+        severity: { enum: [low, medium, high, critical] }
+        detail: { type: string }
+        detectedAt: { type: string, format: date-time }
+
+    AuditEntry:
+      type: object
+      properties:
+        id: { type: string }
+        actorId: { type: string }
+        action: { type: string }
+        target: { type: string }
+        correlationId: { type: string }
+        at: { type: string, format: date-time }

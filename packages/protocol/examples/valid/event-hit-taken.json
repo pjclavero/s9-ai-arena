@@ -1,0 +1,13 @@
+{
+  "proto": "arena/1",
+  "type": "EVENT",
+  "seq": 1,
+  "tick": 310,
+  "payload": {
+    "tick": 310,
+    "kind": "hit_taken",
+    "sector": "front",
+    "damage": 45,
+    "sourceId": "veh_7"
+  }
+}

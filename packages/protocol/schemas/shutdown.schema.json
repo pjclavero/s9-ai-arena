@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://s9.arena/schemas/arena/1/shutdown.schema.json",
+  "title": "SHUTDOWN · Motor → Bot",
+  "description": "Cierre controlado. Es el último mensaje que recibe el bot; tras enviarlo el motor cierra la conexión. El bot dispone de gracePeriodMs para terminar (persistir aprendizaje local, cerrar ficheros) antes de que el contenedor se detenga.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reason"],
+  "properties": {
+    "reason": { "$ref": "common.schema.json#/$defs/shutdownReason" },
+    "detail": {
+      "type": "string",
+      "maxLength": 256,
+      "description": "Explicación legible. Nunca contiene información privada de otros bots ni internos del motor."
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Presente solo cuando reason = battle_finished.",
+      "properties": {
+        "outcome": { "enum": ["win", "loss", "draw", "disqualified"] },
+        "score": {
+          "type": "object",
+          "additionalProperties": { "type": "number" }
+        },
+        "ticks": { "$ref": "common.schema.json#/$defs/tick" }
+      }
+    },
+    "gracePeriodMs": { "type": "integer", "minimum": 0, "default": 500 }
+  }
+}
