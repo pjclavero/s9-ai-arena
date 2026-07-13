@@ -1,0 +1,14 @@
+{
+  "id": "ammo.ap",
+  "version": 1,
+  "category": "ammo",
+  "name": "Munición perforante",
+  "description": "Para el cañón. Multiplicador >1, sin explosión: pensada contra blindaje, no contra grupos.",
+  "massKg": 80,
+  "costCredits": 50,
+  "size": "M",
+  "hp": 30,
+  "rounds": 40,
+  "damageMultiplier": 1.2,
+  "explosionRadiusM": 0
+}

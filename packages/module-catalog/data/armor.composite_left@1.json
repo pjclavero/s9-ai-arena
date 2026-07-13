@@ -1,0 +1,13 @@
+{
+  "id": "armor.composite_left",
+  "version": 1,
+  "category": "armor",
+  "name": "Blindaje compuesto lateral izquierdo",
+  "description": "Versión ligera de armor.steel_left, mismo compromiso masa/crédito que composite_front.",
+  "massKg": 150,
+  "costCredits": 110,
+  "size": "M",
+  "hp": 100,
+  "sector": "left",
+  "reduction": 0.2
+}

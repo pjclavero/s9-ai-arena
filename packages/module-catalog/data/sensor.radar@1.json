@@ -1,0 +1,15 @@
+{
+  "id": "sensor.radar",
+  "version": 1,
+  "category": "sensor",
+  "name": "Radar básico",
+  "description": "Mayor alcance que el lidar pero con error de posición (D8); barato de energía por metro de alcance.",
+  "massKg": 50,
+  "costCredits": 130,
+  "size": "M",
+  "hp": 35,
+  "power": { "passiveEUs": 5 },
+  "sensorType": "radar",
+  "rangeM": 50,
+  "errorM": 2
+}

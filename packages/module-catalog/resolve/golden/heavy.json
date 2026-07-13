@@ -1,0 +1,14 @@
+{
+  "chassisId": "chassis.heavy@1",
+  "hullHp": 480,
+  "radiusM": 2,
+  "massKg": 4070,
+  "modules": [
+    { "slot": "drive", "moduleId": "movement.tracks@1", "category": "movement", "hp": 100, "massKg": 400, "costCredits": 120, "passiveEUs": 2, "maxSpeedMs": 9, "accelerationMs2": 6, "turnRateRads": 1.2, "ratedLoadKg": 2600 },
+    { "slot": "power", "moduleId": "power.generator@1", "category": "power", "hp": 45, "massKg": 130, "costCredits": 70, "capacityEU": 150, "generationEUs": 22 },
+    { "slot": "sensor_a", "moduleId": "sensor.lidar360@1", "category": "sensor", "hp": 40, "massKg": 60, "costCredits": 140, "passiveEUs": 4, "sensorType": "lidar", "rangeM": 40, "fovRad": 6.2832, "rays": 48 },
+    { "slot": "turret_main", "moduleId": "weapon.cannon@1", "category": "weapon", "hp": 90, "massKg": 380, "costCredits": 190, "passiveEUs": 1.5, "perActionEU": 12, "rangeM": 60, "damage": 45, "cooldownTicks": 30, "projectileSpeedMs": 120, "spreadRad": 0.01, "turretArcRad": 6.2832, "turretRateRads": 1, "acceptsAmmo": ["ammo.ap", "ammo.he"] },
+    { "slot": "ammo_main", "moduleId": "ammo.ap@1", "category": "ammo", "hp": 30, "massKg": 80, "costCredits": 50, "rounds": 40, "damageMultiplier": 1.2, "explosionRadiusM": 0 },
+    { "slot": "armor_front", "moduleId": "armor.steel_front@1", "category": "armor", "hp": 200, "massKg": 420, "costCredits": 120, "sector": "front", "reduction": 0.35 }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "id": "mine.explosive",
+  "version": 1,
+  "category": "mine",
+  "name": "Mina explosiva",
+  "description": "3 cargas, retardo de armado de 1s (30 ticks) para que el minador se aleje antes de que arme.",
+  "massKg": 120,
+  "costCredits": 100,
+  "size": "M",
+  "hp": 40,
+  "power": { "perActionEU": 8 },
+  "charges": 3,
+  "damage": 90,
+  "triggerRadiusM": 2.5,
+  "explosionRadiusM": 6,
+  "armDelayTicks": 30,
+  "cooldownTicks": 90,
+  "lifetimeTicks": 5400
+}

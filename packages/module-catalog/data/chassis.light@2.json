@@ -1,0 +1,24 @@
+{
+  "id": "chassis.light",
+  "version": 2,
+  "category": "chassis",
+  "name": "Chasis ligero (v2, balance)",
+  "description": "Ajuste de balance T3.4 (2ª iteración): @1 perdía el 0% de los duelos 1v1; con +40hp aún perdía 83-86%. +100 hullHp, +40 créditos totales. Sigue siendo el más frágil. No sustituye a @1 (goldens de T3.3).",
+  "massKg": 700,
+  "costCredits": 190,
+  "hullHp": 280,
+  "radiusM": 1.2,
+  "maxLoadKg": 1200,
+  "slots": [
+    { "id": "drive", "accepts": ["movement"], "maxSize": "M" },
+    { "id": "power", "accepts": ["power"], "maxSize": "M" },
+    { "id": "sensor_a", "accepts": ["sensor"], "maxSize": "M" },
+    { "id": "turret_main", "accepts": ["weapon"], "maxSize": "M" },
+    { "id": "ammo_main", "accepts": ["ammo"], "maxSize": "M" },
+    { "id": "radio_a", "accepts": ["radio"], "maxSize": "S" },
+    { "id": "armor_front", "accepts": ["armor"], "maxSize": "M", "sector": "front" },
+    { "id": "armor_left", "accepts": ["armor"], "maxSize": "S", "sector": "left" },
+    { "id": "armor_right", "accepts": ["armor"], "maxSize": "S", "sector": "right" },
+    { "id": "armor_rear", "accepts": ["armor"], "maxSize": "S", "sector": "rear" }
+  ]
+}

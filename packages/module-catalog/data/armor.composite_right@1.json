@@ -1,0 +1,13 @@
+{
+  "id": "armor.composite_right",
+  "version": 1,
+  "category": "armor",
+  "name": "Blindaje compuesto lateral derecho",
+  "description": "Simétrico a armor.composite_left.",
+  "massKg": 150,
+  "costCredits": 110,
+  "size": "M",
+  "hp": 100,
+  "sector": "right",
+  "reduction": 0.2
+}

@@ -1,0 +1,17 @@
+{
+  "id": "movement.tracks",
+  "version": 1,
+  "category": "movement",
+  "name": "Orugas",
+  "description": "Más lentas que las ruedas pero toleran mucha más carga antes de degradarse (D7).",
+  "massKg": 400,
+  "costCredits": 120,
+  "size": "L",
+  "hp": 100,
+  "power": { "passiveEUs": 2 },
+  "maxSpeedMs": 9,
+  "accelerationMs2": 6,
+  "turnRateRads": 1.2,
+  "ratedLoadKg": 2600,
+  "terrain": ["road", "rough", "sand"]
+}

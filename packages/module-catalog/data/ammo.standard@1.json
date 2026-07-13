@@ -1,0 +1,14 @@
+{
+  "id": "ammo.standard",
+  "version": 1,
+  "category": "ammo",
+  "name": "Munición estándar",
+  "description": "Munición de la ametralladora. Muchas rondas, sin multiplicador ni explosión.",
+  "massKg": 50,
+  "costCredits": 30,
+  "size": "S",
+  "hp": 25,
+  "rounds": 300,
+  "damageMultiplier": 1,
+  "explosionRadiusM": 0
+}

@@ -1,0 +1,23 @@
+{
+  "_comment": "Snapshot de los módulos referenciados por resolve/golden/*.json y balance/run.ts en el momento en que esos goldens se generaron. Si un test de inmutabilidad falla comparando esto contra data/, alguien sobrescribió una versión ya usada en vez de crear una @N+1 (cap. 10.4). No edites este archivo a mano salvo al regenerar los goldens deliberadamente.",
+  "modules": {
+    "chassis.light@1": { "id": "chassis.light", "version": 1, "category": "chassis", "massKg": 700, "costCredits": 150, "hullHp": 180, "radiusM": 1.2, "maxLoadKg": 1200 },
+    "chassis.medium@1": { "id": "chassis.medium", "version": 1, "category": "chassis", "massKg": 1400, "costCredits": 220, "hullHp": 300, "radiusM": 1.6, "maxLoadKg": 1600 },
+    "chassis.heavy@1": { "id": "chassis.heavy", "version": 1, "category": "chassis", "massKg": 2600, "costCredits": 280, "hullHp": 480, "radiusM": 2.0, "maxLoadKg": 2400 },
+    "movement.wheels@1": { "id": "movement.wheels", "version": 1, "category": "movement", "massKg": 200, "costCredits": 90, "size": "M", "hp": 60, "power": { "passiveEUs": 1.5 }, "maxSpeedMs": 13, "accelerationMs2": 9, "turnRateRads": 1.8, "ratedLoadKg": 1600 },
+    "movement.tracks@1": { "id": "movement.tracks", "version": 1, "category": "movement", "massKg": 400, "costCredits": 120, "size": "L", "hp": 100, "power": { "passiveEUs": 2 }, "maxSpeedMs": 9, "accelerationMs2": 6, "turnRateRads": 1.2, "ratedLoadKg": 2600 },
+    "power.battery@1": { "id": "power.battery", "version": 1, "category": "power", "massKg": 150, "costCredits": 60, "size": "M", "hp": 50, "capacityEU": 500, "generationEUs": 8 },
+    "power.generator@1": { "id": "power.generator", "version": 1, "category": "power", "massKg": 130, "costCredits": 70, "size": "M", "hp": 45, "capacityEU": 150, "generationEUs": 22 },
+    "sensor.lidar_front@1": { "id": "sensor.lidar_front", "version": 1, "category": "sensor", "massKg": 35, "costCredits": 80, "size": "S", "hp": 40, "power": { "passiveEUs": 2 }, "sensorType": "lidar", "rangeM": 45, "fovRad": 1.5708, "rays": 16 },
+    "sensor.radar@1": { "id": "sensor.radar", "version": 1, "category": "sensor", "massKg": 50, "costCredits": 130, "size": "M", "hp": 35, "power": { "passiveEUs": 5 }, "sensorType": "radar", "rangeM": 50, "errorM": 2 },
+    "sensor.lidar360@1": { "id": "sensor.lidar360", "version": 1, "category": "sensor", "massKg": 60, "costCredits": 140, "size": "M", "hp": 40, "power": { "passiveEUs": 4 }, "sensorType": "lidar", "rangeM": 40, "fovRad": 6.2832, "rays": 48, "maxPerVehicle": 1 },
+    "weapon.mg@1": { "id": "weapon.mg", "version": 1, "category": "weapon", "massKg": 120, "costCredits": 90, "size": "M", "hp": 50, "power": { "passiveEUs": 1, "perActionEU": 3 }, "damage": 12, "cooldownTicks": 6, "projectileSpeedMs": 200, "spreadRad": 0.05, "rangeM": 55, "acceptsAmmo": ["ammo.standard"], "turretArcRad": 6.2832, "turretRateRads": 2.2 },
+    "weapon.cannon@1": { "id": "weapon.cannon", "version": 1, "category": "weapon", "massKg": 380, "costCredits": 190, "size": "L", "hp": 90, "power": { "passiveEUs": 1.5, "perActionEU": 12 }, "damage": 45, "cooldownTicks": 30, "projectileSpeedMs": 120, "spreadRad": 0.01, "rangeM": 60, "acceptsAmmo": ["ammo.ap", "ammo.he"], "turretArcRad": 6.2832, "turretRateRads": 1.0, "maxPerVehicle": 1 },
+    "ammo.standard@1": { "id": "ammo.standard", "version": 1, "category": "ammo", "massKg": 50, "costCredits": 30, "size": "S", "hp": 25, "rounds": 300, "damageMultiplier": 1, "explosionRadiusM": 0 },
+    "ammo.ap@1": { "id": "ammo.ap", "version": 1, "category": "ammo", "massKg": 80, "costCredits": 50, "size": "M", "hp": 30, "rounds": 40, "damageMultiplier": 1.2, "explosionRadiusM": 0 },
+    "mine.explosive@1": { "id": "mine.explosive", "version": 1, "category": "mine", "massKg": 120, "costCredits": 100, "size": "M", "hp": 40, "power": { "perActionEU": 8 }, "charges": 3, "damage": 90, "triggerRadiusM": 2.5, "explosionRadiusM": 6, "armDelayTicks": 30, "cooldownTicks": 90, "lifetimeTicks": 5400 },
+    "armor.steel_front@1": { "id": "armor.steel_front", "version": 1, "category": "armor", "massKg": 420, "costCredits": 120, "size": "L", "hp": 200, "sector": "front", "reduction": 0.35 },
+    "armor.steel_rear@1": { "id": "armor.steel_rear", "version": 1, "category": "armor", "massKg": 260, "costCredits": 70, "size": "M", "hp": 120, "sector": "rear", "reduction": 0.2 },
+    "radio.short@1": { "id": "radio.short", "version": 1, "category": "radio", "massKg": 20, "costCredits": 40, "size": "S", "hp": 25, "power": { "passiveEUs": 1 }, "rangeM": 80, "maxMessageBytes": 32, "maxMessagesPerSecond": 2 }
+  }
+}

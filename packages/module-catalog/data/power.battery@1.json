@@ -1,0 +1,13 @@
+{
+  "id": "power.battery",
+  "version": 1,
+  "category": "power",
+  "name": "Batería",
+  "description": "Pool grande, recarga lenta. Absorbe picos de disparo pero no sostiene un consumo pasivo alto.",
+  "massKg": 150,
+  "costCredits": 60,
+  "size": "M",
+  "hp": 50,
+  "capacityEU": 500,
+  "generationEUs": 8
+}

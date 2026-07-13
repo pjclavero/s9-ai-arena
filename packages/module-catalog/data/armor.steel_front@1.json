@@ -1,0 +1,13 @@
+{
+  "id": "armor.steel_front",
+  "version": 1,
+  "category": "armor",
+  "name": "Blindaje de acero frontal",
+  "description": "Material 'acero': barato por punto de reducción, pesado. reduction/costCredits ≈ 0,0029.",
+  "massKg": 420,
+  "costCredits": 120,
+  "size": "L",
+  "hp": 200,
+  "sector": "front",
+  "reduction": 0.35
+}

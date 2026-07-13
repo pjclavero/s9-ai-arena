@@ -1,0 +1,16 @@
+{
+  "id": "sensor.lidar_front",
+  "version": 1,
+  "category": "sensor",
+  "name": "Lidar frontal",
+  "description": "Cono de 90° al frente. Barato y ligero: evitación de obstáculos, no conciencia táctica 360.",
+  "massKg": 35,
+  "costCredits": 80,
+  "size": "S",
+  "hp": 40,
+  "power": { "passiveEUs": 2 },
+  "sensorType": "lidar",
+  "rangeM": 45,
+  "fovRad": 1.5708,
+  "rays": 16
+}

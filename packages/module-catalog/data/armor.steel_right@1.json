@@ -1,0 +1,13 @@
+{
+  "id": "armor.steel_right",
+  "version": 1,
+  "category": "armor",
+  "name": "Blindaje de acero lateral derecho",
+  "description": "Simétrico a armor.steel_left.",
+  "massKg": 280,
+  "costCredits": 80,
+  "size": "M",
+  "hp": 140,
+  "sector": "right",
+  "reduction": 0.25
+}

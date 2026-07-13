@@ -1,0 +1,13 @@
+{
+  "id": "armor.steel_left",
+  "version": 1,
+  "category": "armor",
+  "name": "Blindaje de acero lateral izquierdo",
+  "description": "Mismo material que armor.steel_front, place lateral: menos hp/reducción porque el flanco recibe menos impactos directos que el frente.",
+  "massKg": 280,
+  "costCredits": 80,
+  "size": "M",
+  "hp": 140,
+  "sector": "left",
+  "reduction": 0.25
+}

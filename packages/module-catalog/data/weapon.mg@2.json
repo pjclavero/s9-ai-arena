@@ -1,0 +1,20 @@
+{
+  "id": "weapon.mg",
+  "version": 2,
+  "category": "weapon",
+  "name": "Ametralladora (v2, balance)",
+  "description": "Ajuste de balance T3.4 (2ª iteración): @1 (damage12) no competía en DPS con el cañón; con damage16 aún perdía la mayoría. Sube daño otra vez (16→18), cadencia (cooldownTicks 6→5), baja coste (perActionEU 3→2.5). DPS bruto: 60→108 dmg/s.",
+  "massKg": 120,
+  "costCredits": 115,
+  "size": "M",
+  "hp": 50,
+  "power": { "passiveEUs": 1, "perActionEU": 2.5 },
+  "damage": 18,
+  "cooldownTicks": 5,
+  "projectileSpeedMs": 200,
+  "spreadRad": 0.05,
+  "rangeM": 55,
+  "acceptsAmmo": ["ammo.standard"],
+  "turretArcRad": 6.2832,
+  "turretRateRads": 2.2
+}

@@ -1,0 +1,15 @@
+{
+  "chassisId": "chassis.medium@1",
+  "hullHp": 300,
+  "radiusM": 1.6,
+  "massKg": 2515,
+  "modules": [
+    { "slot": "drive", "moduleId": "movement.tracks@1", "category": "movement", "hp": 100, "massKg": 400, "costCredits": 120, "passiveEUs": 2, "maxSpeedMs": 9, "accelerationMs2": 6, "turnRateRads": 1.2, "ratedLoadKg": 2600 },
+    { "slot": "power", "moduleId": "power.generator@1", "category": "power", "hp": 45, "massKg": 130, "costCredits": 70, "capacityEU": 150, "generationEUs": 22 },
+    { "slot": "sensor_a", "moduleId": "sensor.lidar_front@1", "category": "sensor", "hp": 40, "massKg": 35, "costCredits": 80, "passiveEUs": 2, "sensorType": "lidar", "rangeM": 45, "fovRad": 1.5708, "rays": 16 },
+    { "slot": "mine_bay", "moduleId": "mine.explosive@1", "category": "mine", "hp": 40, "massKg": 120, "costCredits": 100, "perActionEU": 8, "damage": 90, "cooldownTicks": 90, "charges": 3, "triggerRadiusM": 2.5, "explosionRadiusM": 6, "armDelayTicks": 30, "lifetimeTicks": 5400 },
+    { "slot": "turret_main", "moduleId": "weapon.mg@1", "category": "weapon", "hp": 50, "massKg": 120, "costCredits": 90, "passiveEUs": 1, "perActionEU": 3, "rangeM": 55, "damage": 12, "cooldownTicks": 6, "projectileSpeedMs": 200, "spreadRad": 0.05, "turretArcRad": 6.2832, "turretRateRads": 2.2, "acceptsAmmo": ["ammo.standard"] },
+    { "slot": "ammo_main", "moduleId": "ammo.standard@1", "category": "ammo", "hp": 25, "massKg": 50, "costCredits": 30, "rounds": 300, "damageMultiplier": 1, "explosionRadiusM": 0 },
+    { "slot": "armor_rear", "moduleId": "armor.steel_rear@1", "category": "armor", "hp": 120, "massKg": 260, "costCredits": 70, "sector": "rear", "reduction": 0.2 }
+  ]
+}

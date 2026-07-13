@@ -1,0 +1,13 @@
+{
+  "id": "power.generator",
+  "version": 2,
+  "category": "power",
+  "name": "Generador básico (v2, balance)",
+  "description": "Ajuste de balance T3.4 (2ª iteración): sube generationEUs (22→30) para sostener weapon.mg@2 a cadencia máxima con margen, tras dos rondas de ajuste del arma.",
+  "massKg": 130,
+  "costCredits": 85,
+  "size": "M",
+  "hp": 45,
+  "capacityEU": 150,
+  "generationEUs": 30
+}

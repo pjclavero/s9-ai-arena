@@ -1,0 +1,25 @@
+{
+  "id": "chassis.medium",
+  "version": 1,
+  "category": "chassis",
+  "name": "Chasis medio",
+  "description": "Chasis polivalente: el punto de partida por defecto de la mayoría de loadouts del MVP.",
+  "massKg": 1400,
+  "costCredits": 220,
+  "hullHp": 300,
+  "radiusM": 1.6,
+  "maxLoadKg": 1600,
+  "slots": [
+    { "id": "drive", "accepts": ["movement"], "maxSize": "L" },
+    { "id": "power", "accepts": ["power"], "maxSize": "M" },
+    { "id": "sensor_a", "accepts": ["sensor"], "maxSize": "M" },
+    { "id": "turret_main", "accepts": ["weapon"], "maxSize": "L" },
+    { "id": "ammo_main", "accepts": ["ammo"], "maxSize": "M" },
+    { "id": "mine_bay", "accepts": ["mine", "utility"], "maxSize": "M" },
+    { "id": "radio_a", "accepts": ["radio"], "maxSize": "S" },
+    { "id": "armor_front", "accepts": ["armor"], "maxSize": "L", "sector": "front" },
+    { "id": "armor_left", "accepts": ["armor"], "maxSize": "M", "sector": "left" },
+    { "id": "armor_right", "accepts": ["armor"], "maxSize": "M", "sector": "right" },
+    { "id": "armor_rear", "accepts": ["armor"], "maxSize": "M", "sector": "rear" }
+  ]
+}

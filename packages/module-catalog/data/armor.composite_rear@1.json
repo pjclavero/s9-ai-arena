@@ -1,0 +1,13 @@
+{
+  "id": "armor.composite_rear",
+  "version": 1,
+  "category": "armor",
+  "name": "Blindaje compuesto trasero",
+  "description": "Versión ligera de armor.steel_rear.",
+  "massKg": 140,
+  "costCredits": 95,
+  "size": "M",
+  "hp": 90,
+  "sector": "rear",
+  "reduction": 0.16
+}

@@ -1,0 +1,17 @@
+{
+  "id": "movement.wheels",
+  "version": 1,
+  "category": "movement",
+  "name": "Ruedas todoterreno",
+  "description": "Rápidas y ligeras, ratedLoadKg bajo: penalizan pronto a un chasis sobrecargado.",
+  "massKg": 200,
+  "costCredits": 90,
+  "size": "M",
+  "hp": 60,
+  "power": { "passiveEUs": 1.5 },
+  "maxSpeedMs": 13,
+  "accelerationMs2": 9,
+  "turnRateRads": 1.8,
+  "ratedLoadKg": 1600,
+  "terrain": ["road"]
+}

@@ -1,0 +1,13 @@
+{
+  "id": "armor.steel_rear",
+  "version": 1,
+  "category": "armor",
+  "name": "Blindaje de acero trasero",
+  "description": "El sector con menor prioridad táctica: reducción más baja del set de acero.",
+  "massKg": 260,
+  "costCredits": 70,
+  "size": "M",
+  "hp": 120,
+  "sector": "rear",
+  "reduction": 0.2
+}

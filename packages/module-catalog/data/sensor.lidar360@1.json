@@ -1,0 +1,17 @@
+{
+  "id": "sensor.lidar360",
+  "version": 1,
+  "category": "sensor",
+  "name": "Lidar 360",
+  "description": "Cobertura completa. maxPerVehicle=1: dos unidades serían redundantes, no aportan visión adicional.",
+  "massKg": 60,
+  "costCredits": 140,
+  "size": "M",
+  "hp": 40,
+  "power": { "passiveEUs": 4 },
+  "sensorType": "lidar",
+  "rangeM": 40,
+  "fovRad": 6.2832,
+  "rays": 48,
+  "maxPerVehicle": 1
+}

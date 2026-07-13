@@ -1,0 +1,20 @@
+{
+  "id": "weapon.mg",
+  "version": 1,
+  "category": "weapon",
+  "name": "Ametralladora",
+  "description": "Cadencia alta, daño bajo por impacto. Cabe en el chasis ligero (size M); el cañón no.",
+  "massKg": 120,
+  "costCredits": 90,
+  "size": "M",
+  "hp": 50,
+  "power": { "passiveEUs": 1, "perActionEU": 3 },
+  "damage": 12,
+  "cooldownTicks": 6,
+  "projectileSpeedMs": 200,
+  "spreadRad": 0.05,
+  "rangeM": 55,
+  "acceptsAmmo": ["ammo.standard"],
+  "turretArcRad": 6.2832,
+  "turretRateRads": 2.2
+}

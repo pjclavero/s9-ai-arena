@@ -1,0 +1,25 @@
+{
+  "id": "chassis.medium",
+  "version": 2,
+  "category": "chassis",
+  "name": "Chasis medio (v2, balance)",
+  "description": "Ajuste de balance T3.4: gunner_vs_heavy salía en 39,2% (heavy ganaba ~61%) por diferencia de hullHp a igual arma y blindaje. +50 hullHp, +20 créditos: sigue siendo más frágil que el pesado a propósito.",
+  "massKg": 1400,
+  "costCredits": 240,
+  "hullHp": 350,
+  "radiusM": 1.6,
+  "maxLoadKg": 1600,
+  "slots": [
+    { "id": "drive", "accepts": ["movement"], "maxSize": "L" },
+    { "id": "power", "accepts": ["power"], "maxSize": "M" },
+    { "id": "sensor_a", "accepts": ["sensor"], "maxSize": "M" },
+    { "id": "turret_main", "accepts": ["weapon"], "maxSize": "L" },
+    { "id": "ammo_main", "accepts": ["ammo"], "maxSize": "M" },
+    { "id": "mine_bay", "accepts": ["mine", "utility"], "maxSize": "M" },
+    { "id": "radio_a", "accepts": ["radio"], "maxSize": "S" },
+    { "id": "armor_front", "accepts": ["armor"], "maxSize": "L", "sector": "front" },
+    { "id": "armor_left", "accepts": ["armor"], "maxSize": "M", "sector": "left" },
+    { "id": "armor_right", "accepts": ["armor"], "maxSize": "M", "sector": "right" },
+    { "id": "armor_rear", "accepts": ["armor"], "maxSize": "M", "sector": "rear" }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "id": "ammo.he",
+  "version": 1,
+  "category": "ammo",
+  "name": "Munición explosiva",
+  "description": "Para el cañón. Multiplicador <1 por impacto directo, pero con radio de explosión de área.",
+  "massKg": 90,
+  "costCredits": 60,
+  "size": "M",
+  "hp": 30,
+  "rounds": 30,
+  "damageMultiplier": 0.9,
+  "explosionRadiusM": 5
+}

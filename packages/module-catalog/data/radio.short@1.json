@@ -1,0 +1,15 @@
+{
+  "id": "radio.short",
+  "version": 1,
+  "category": "radio",
+  "name": "Radio corta",
+  "description": "Único módulo de radio del MVP. Límites de mensaje/frecuencia iguales al techo de D8: no hay margen de mejora en este catálogo v1.",
+  "massKg": 20,
+  "costCredits": 40,
+  "size": "S",
+  "hp": 25,
+  "power": { "passiveEUs": 1 },
+  "rangeM": 80,
+  "maxMessageBytes": 32,
+  "maxMessagesPerSecond": 2
+}

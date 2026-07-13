@@ -1,0 +1,13 @@
+{
+  "id": "power.generator",
+  "version": 1,
+  "category": "power",
+  "name": "Generador básico",
+  "description": "Pool pequeño, recarga rápida. Sostiene builds con consumo pasivo alto (varios sensores, radio, arma).",
+  "massKg": 130,
+  "costCredits": 70,
+  "size": "M",
+  "hp": 45,
+  "capacityEU": 150,
+  "generationEUs": 22
+}
