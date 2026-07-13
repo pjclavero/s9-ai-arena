@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://s9.arena/schemas/catalog/1/loadout.schema.json",
+  "title": "Loadout (diseño modular de un vehículo)",
+  "description": "El esquema garantiza la FORMA del loadout (estructura, referencias bien formadas, sin ranuras duplicadas). NO garantiza su LEGALIDAD: masa, energía, presupuesto, compatibilidad y duplicados los verifica el validador de ensamblaje de E3 (T3.2) contra un catálogo concreto, porque dependen de datos externos al documento.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["loadoutId", "revision", "catalogVersion", "chassis", "modules"],
+  "properties": {
+    "loadoutId": { "type": "string", "pattern": "^ldt_[0-9a-zA-Z]{1,24}$" },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Cualquier cambio de módulo crea una revisión nueva, aunque el código no cambie (cap. 17.2)."
+    },
+    "name": { "type": "string", "maxLength": 64 },
+    "catalogVersion": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]+@[0-9]+$",
+      "description": "Catálogo contra el que se validó. Una temporada congela un catálogo (cap. 10.4)."
+    },
+    "chassis": {
+      "type": "string",
+      "pattern": "^chassis\\.[a-z0-9_]+@[0-9]+$",
+      "description": "Id versionado del chasis."
+    },
+    "modules": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["slot", "moduleId"],
+        "properties": {
+          "slot": { "type": "string", "pattern": "^[a-z0-9_]{1,24}$" },
+          "moduleId": {
+            "type": "string",
+            "pattern": "^[a-z]+\\.[a-z0-9_]+@[0-9]+$",
+            "description": "Id versionado del módulo instalado."
+          },
+          "ammo": {
+            "type": "string",
+            "pattern": "^ammo\\.[a-z0-9_]+@[0-9]+$",
+            "description": "Solo en ranuras de arma: munición cargada."
+          }
+        }
+      }
+    }
+  },
+  "$comment": "La unicidad de 'slot' no es expresable en JSON Schema sin uniqueItems sobre objetos completos; la verifica el validador de E3 y está cubierta por un caso del corpus de tests."
+}

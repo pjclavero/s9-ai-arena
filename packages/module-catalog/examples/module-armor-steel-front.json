@@ -1,0 +1,12 @@
+{
+  "id": "armor.steel_front",
+  "version": 1,
+  "category": "armor",
+  "name": "Blindaje de acero frontal",
+  "massKg": 420,
+  "costCredits": 120,
+  "size": "L",
+  "hp": 200,
+  "sector": "front",
+  "reduction": 0.35
+}

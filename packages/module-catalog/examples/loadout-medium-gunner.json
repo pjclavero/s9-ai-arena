@@ -1,0 +1,30 @@
+{
+  "loadoutId": "ldt_gunner01",
+  "revision": 3,
+  "name": "Artillero medio",
+  "catalogVersion": "mvp@1",
+  "chassis": "chassis.medium@1",
+  "modules": [
+    {
+      "slot": "drive",
+      "moduleId": "movement.tracks@1"
+    },
+    {
+      "slot": "power",
+      "moduleId": "power.battery@1"
+    },
+    {
+      "slot": "sensor_a",
+      "moduleId": "sensor.lidar360@1"
+    },
+    {
+      "slot": "turret_main",
+      "moduleId": "weapon.cannon@1",
+      "ammo": "ammo.ap@1"
+    },
+    {
+      "slot": "armor_front",
+      "moduleId": "armor.steel_front@1"
+    }
+  ]
+}

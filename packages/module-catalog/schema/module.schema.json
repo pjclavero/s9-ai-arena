@@ -1,0 +1,236 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://s9.arena/schemas/catalog/1/module.schema.json",
+  "title": "Definición de módulo",
+  "description": "Un módulo es un dato, no código (principio 'datos antes que código'). Su versión es inmutable: modificar estadísticas crea una versión nueva y nunca sobrescribe una usada en batallas oficiales (cap. 10.4).",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": ["id", "version", "category", "name", "massKg", "costCredits"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z]+\\.[a-z0-9_]+$",
+      "description": "Id estable sin versión (p. ej. weapon.cannon). El id versionado es id@version."
+    },
+    "version": { "type": "integer", "minimum": 1 },
+    "category": {
+      "enum": ["chassis", "movement", "power", "sensor", "weapon", "ammo", "mine", "armor", "radio", "utility"]
+    },
+    "name": { "type": "string", "maxLength": 64 },
+    "description": { "type": "string", "maxLength": 256 },
+    "massKg": { "type": "number", "minimum": 0 },
+    "costCredits": { "type": "number", "minimum": 0 },
+    "size": {
+      "enum": ["S", "M", "L", "XL"],
+      "description": "Volumen ocupado (cap. 10.2). Los chasis no lo declaran."
+    },
+    "power": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "passiveEUs": { "type": "number", "minimum": 0, "description": "Consumo continuo en EU/s." },
+        "perActionEU": { "type": "number", "minimum": 0, "description": "Coste puntual por acción (disparo, despliegue)." }
+      }
+    },
+    "maxPerVehicle": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Límite de duplicados (cap. 10.2)."
+    },
+    "requiresChassis": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^chassis\\.[a-z0-9_]+$" },
+      "description": "Si está presente, solo puede montarse en estos chasis."
+    },
+    "hp": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Salud del módulo. Determina sus estados según MODULE_STATE_THRESHOLDS."
+    },
+    "tags": { "type": "array", "items": { "type": "string", "maxLength": 24 }, "uniqueItems": true }
+  },
+
+  "allOf": [
+    {
+      "if": { "properties": { "category": { "const": "chassis" } }, "required": ["category"] },
+      "then": {
+        "required": ["hullHp", "radiusM", "maxLoadKg", "slots"],
+        "properties": {
+          "hullHp": { "type": "number", "exclusiveMinimum": 0 },
+          "radiusM": { "type": "number", "exclusiveMinimum": 0 },
+          "maxLoadKg": { "type": "number", "exclusiveMinimum": 0, "description": "Masa máxima de módulos instalables." },
+          "slots": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Ranuras que ofrece el chasis: tipo, tamaño máximo y posición (cap. 10.2).",
+            "items": {
+              "type": "object",
+              "unevaluatedProperties": false,
+              "required": ["id", "accepts", "maxSize"],
+              "properties": {
+                "id": { "type": "string", "pattern": "^[a-z0-9_]{1,24}$" },
+                "accepts": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": { "enum": ["movement", "power", "sensor", "weapon", "ammo", "mine", "armor", "radio", "utility"] }
+                },
+                "maxSize": { "enum": ["S", "M", "L", "XL"] },
+                "sector": {
+                  "enum": ["front", "left", "right", "rear"],
+                  "description": "Obligatorio en ranuras de blindaje."
+                },
+                "offsetM": {
+                  "type": "object",
+                  "unevaluatedProperties": false,
+                  "required": ["x", "y"],
+                  "properties": { "x": { "type": "number" }, "y": { "type": "number" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "category": { "const": "movement" } }, "required": ["category"] },
+      "then": {
+        "required": ["maxSpeedMs", "accelerationMs2", "turnRateRads", "ratedLoadKg"],
+        "properties": {
+          "maxSpeedMs": { "type": "number", "exclusiveMinimum": 0 },
+          "accelerationMs2": { "type": "number", "exclusiveMinimum": 0 },
+          "turnRateRads": { "type": "number", "exclusiveMinimum": 0 },
+          "ratedLoadKg": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Masa total para la que las prestaciones son nominales. Por encima, se degradan con MASS_SPEED_FLOOR (D7)."
+          },
+          "terrain": { "type": "array", "items": { "enum": ["road", "rough", "sand", "water"] }, "uniqueItems": true }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "category": { "const": "power" } }, "required": ["category"] },
+      "then": {
+        "required": ["capacityEU", "generationEUs"],
+        "properties": {
+          "capacityEU": { "type": "number", "minimum": 0 },
+          "generationEUs": { "type": "number", "minimum": 0 },
+          "peakEUs": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "category": { "const": "sensor" } }, "required": ["category"] },
+      "then": {
+        "required": ["sensorType", "rangeM"],
+        "properties": {
+          "sensorType": { "enum": ["lidar", "radar", "proximity", "acoustic"] },
+          "rangeM": { "type": "number", "exclusiveMinimum": 0 },
+          "fovRad": { "type": "number", "exclusiveMinimum": 0, "maximum": 6.2832 },
+          "rays": { "type": "integer", "minimum": 1, "maximum": 256, "description": "Solo lidar. Limitado para proteger el presupuesto de tick." },
+          "errorM": { "type": "number", "minimum": 0, "description": "Solo radar: error de posición del contacto (D8)." },
+          "refreshEveryNDecisions": { "type": "integer", "minimum": 1, "default": 1 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "category": { "const": "weapon" } }, "required": ["category"] },
+      "then": {
+        "required": ["damage", "cooldownTicks", "projectileSpeedMs", "acceptsAmmo", "turretArcRad", "turretRateRads"],
+        "properties": {
+          "damage": { "type": "number", "exclusiveMinimum": 0 },
+          "cooldownTicks": { "type": "integer", "minimum": 1 },
+          "projectileSpeedMs": { "type": "number", "exclusiveMinimum": 0 },
+          "spreadRad": { "type": "number", "minimum": 0, "default": 0 },
+          "rangeM": { "type": "number", "exclusiveMinimum": 0 },
+          "acceptsAmmo": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "pattern": "^ammo\\.[a-z0-9_]+$" },
+            "description": "Compatibilidad arma–munición (cap. 10.2)."
+          },
+          "turretArcRad": { "type": "number", "exclusiveMinimum": 0, "maximum": 6.2832 },
+          "turretRateRads": { "type": "number", "exclusiveMinimum": 0 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "category": { "const": "ammo" } }, "required": ["category"] },
+      "then": {
+        "required": ["rounds", "damageMultiplier"],
+        "properties": {
+          "rounds": { "type": "integer", "minimum": 1 },
+          "damageMultiplier": { "type": "number", "exclusiveMinimum": 0 },
+          "explosionRadiusM": { "type": "number", "minimum": 0, "default": 0 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "category": { "const": "mine" } }, "required": ["category"] },
+      "then": {
+        "required": ["charges", "damage", "triggerRadiusM", "armDelayTicks", "cooldownTicks"],
+        "properties": {
+          "charges": { "type": "integer", "minimum": 1 },
+          "damage": { "type": "number", "exclusiveMinimum": 0 },
+          "triggerRadiusM": { "type": "number", "exclusiveMinimum": 0 },
+          "explosionRadiusM": { "type": "number", "exclusiveMinimum": 0 },
+          "armDelayTicks": { "type": "integer", "minimum": 0 },
+          "cooldownTicks": { "type": "integer", "minimum": 1 },
+          "lifetimeTicks": { "type": "integer", "minimum": 1 },
+          "detectable": { "type": "boolean", "default": true }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "category": { "const": "armor" } }, "required": ["category"] },
+      "then": {
+        "required": ["sector", "reduction"],
+        "properties": {
+          "sector": { "enum": ["front", "left", "right", "rear"] },
+          "reduction": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 0.9,
+            "description": "Reducción de daño en ese sector. Techo 0,9: con DMG_MIN_FRACTION=0,1 el blindaje nunca anula el daño (D6)."
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "category": { "const": "radio" } }, "required": ["category"] },
+      "then": {
+        "required": ["rangeM", "maxMessageBytes", "maxMessagesPerSecond"],
+        "properties": {
+          "rangeM": { "type": "number", "exclusiveMinimum": 0 },
+          "maxMessageBytes": { "type": "integer", "minimum": 1, "maximum": 32 },
+          "maxMessagesPerSecond": { "type": "number", "exclusiveMinimum": 0, "maximum": 2 },
+          "encrypted": { "type": "boolean", "default": false }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "category": { "const": "utility" } }, "required": ["category"] },
+      "then": {
+        "required": ["effect", "charges", "cooldownTicks"],
+        "properties": {
+          "effect": { "enum": ["smoke", "repair", "jammer", "drone"] },
+          "charges": { "type": "integer", "minimum": 1 },
+          "cooldownTicks": { "type": "integer", "minimum": 1 },
+          "magnitude": { "type": "number", "minimum": 0 },
+          "durationTicks": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "category": { "not": { "const": "chassis" } } },
+        "required": ["category"]
+      },
+      "then": {
+        "required": ["size", "hp"],
+        "description": "Todo módulo no-chasis ocupa volumen y es dañable (cap. 12.2)."
+      }
+    }
+  ]
+}
