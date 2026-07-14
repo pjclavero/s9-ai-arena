@@ -1,0 +1,61 @@
+{
+  "name": "observation-sensor-destroyed",
+  "kind": "valid",
+  "envelope": {
+    "proto": "arena/1",
+    "type": "OBSERVATION",
+    "seq": 1,
+    "tick": 900,
+    "payload": {
+      "tick": 900,
+      "self": {
+        "position": {
+          "x": 60,
+          "y": 20
+        },
+        "heading": -1.2,
+        "velocity": {
+          "x": 0,
+          "y": 0
+        },
+        "turretHeading": -1.2,
+        "hullHp": 40,
+        "hullHpMax": 300,
+        "energy": {
+          "storedEU": 10,
+          "capacityEU": 400,
+          "netFlowEUs": 2
+        },
+        "armor": {
+          "front": 0,
+          "left": 0.1,
+          "right": 0.8,
+          "rear": 1
+        },
+        "modules": [
+          {
+            "slot": "drive",
+            "state": "destroyed",
+            "healthFraction": 0
+          },
+          {
+            "slot": "sensor_a",
+            "state": "destroyed",
+            "healthFraction": 0
+          },
+          {
+            "slot": "turret_main",
+            "state": "critical",
+            "healthFraction": 0.2,
+            "ammo": 3
+          }
+        ],
+        "respawningInTicks": 0
+      },
+      "score": {
+        "red": 1,
+        "blue": 2
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "command-missing-fortick",
+  "kind": "invalid",
+  "why": "sin forTick el motor no puede descartar comandos tardios",
+  "envelope": {
+    "proto": "arena/1",
+    "type": "COMMAND",
+    "tick": 10,
+    "seq": 4,
+    "payload": {
+      "move": {
+        "throttle": 1
+      }
+    }
+  }
+}

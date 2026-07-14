@@ -1,0 +1,112 @@
+{
+  "name": "observation-full",
+  "kind": "valid",
+  "envelope": {
+    "proto": "arena/1",
+    "type": "OBSERVATION",
+    "seq": 1,
+    "tick": 300,
+    "payload": {
+      "tick": 300,
+      "self": {
+        "position": {
+          "x": 24.5,
+          "y": 40.1
+        },
+        "heading": 0.35,
+        "velocity": {
+          "x": 6.2,
+          "y": 1.1
+        },
+        "angularVelocity": 0.1,
+        "turretHeading": 0.9,
+        "hullHp": 245,
+        "hullHpMax": 300,
+        "energy": {
+          "storedEU": 312.5,
+          "capacityEU": 400,
+          "netFlowEUs": -4.2
+        },
+        "armor": {
+          "front": 0.72,
+          "left": 1,
+          "right": 1,
+          "rear": 1
+        },
+        "modules": [
+          {
+            "slot": "drive",
+            "state": "operational",
+            "healthFraction": 1
+          },
+          {
+            "slot": "sensor_a",
+            "state": "damaged",
+            "healthFraction": 0.5
+          },
+          {
+            "slot": "turret_main",
+            "state": "operational",
+            "healthFraction": 1,
+            "cooldownTicks": 12,
+            "ammo": 34
+          }
+        ],
+        "carryingFlag": null
+      },
+      "sensors": {
+        "lidar": [
+          {
+            "slot": "sensor_a",
+            "originHeading": 0.35,
+            "fovRad": 6.28,
+            "rays": [
+              {
+                "angle": 0,
+                "distanceM": 18.3,
+                "hit": "wall"
+              },
+              {
+                "angle": 0.4,
+                "distanceM": 12.1,
+                "hit": "vehicle"
+              },
+              {
+                "angle": 0.8,
+                "distanceM": 40,
+                "hit": "unknown"
+              }
+            ]
+          }
+        ]
+      },
+      "radio": [
+        {
+          "from": "veh_4",
+          "data": "ZW5lbXkgd2VzdA==",
+          "sentTick": 297
+        }
+      ],
+      "score": {
+        "red": 1,
+        "blue": 0
+      },
+      "objectives": [
+        {
+          "kind": "flag",
+          "team": "red",
+          "state": "at_base",
+          "position": {
+            "x": 8,
+            "y": 40
+          }
+        },
+        {
+          "kind": "flag",
+          "team": "blue",
+          "state": "carried"
+        }
+      ]
+    }
+  }
+}

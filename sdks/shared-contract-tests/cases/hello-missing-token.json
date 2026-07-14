@@ -1,0 +1,18 @@
+{
+  "name": "hello-missing-token",
+  "kind": "invalid",
+  "why": "sin battleToken: un contenedor no puede conectarse a una batalla ajena (E5.M)",
+  "envelope": {
+    "proto": "arena/1",
+    "type": "HELLO",
+    "seq": 1,
+    "payload": {
+      "botId": "bot_a",
+      "botVersion": "1.0.0",
+      "sdk": {
+        "name": "custom",
+        "version": "1"
+      }
+    }
+  }
+}

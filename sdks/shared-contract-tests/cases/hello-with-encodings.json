@@ -1,0 +1,21 @@
+{
+  "name": "hello-with-encodings",
+  "kind": "valid",
+  "envelope": {
+    "proto": "arena/1",
+    "type": "HELLO",
+    "seq": 1,
+    "payload": {
+      "botId": "bot_gunner",
+      "botVersion": "2.0.0",
+      "sdk": {
+        "name": "arena-sdk-js",
+        "version": "0.3.0"
+      },
+      "battleToken": "btl_aaaabbbbccccdddd",
+      "encodings": [
+        "json"
+      ]
+    }
+  }
+}

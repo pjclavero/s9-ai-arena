@@ -1,0 +1,11 @@
+{
+  "name": "env-unknown-type",
+  "kind": "invalid",
+  "why": "type no pertenece a los seis mensajes del contrato",
+  "envelope": {
+    "proto": "arena/1",
+    "type": "PING",
+    "seq": 1,
+    "payload": {}
+  }
+}

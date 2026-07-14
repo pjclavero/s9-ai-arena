@@ -1,0 +1,21 @@
+{
+  "name": "shutdown-finished-win",
+  "kind": "valid",
+  "envelope": {
+    "proto": "arena/1",
+    "type": "SHUTDOWN",
+    "seq": 1,
+    "payload": {
+      "reason": "battle_finished",
+      "result": {
+        "outcome": "win",
+        "score": {
+          "red": 3,
+          "blue": 1
+        },
+        "ticks": 7420
+      },
+      "gracePeriodMs": 500
+    }
+  }
+}

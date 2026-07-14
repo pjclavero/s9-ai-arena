@@ -1,0 +1,18 @@
+{
+  "name": "hello-minimal",
+  "kind": "valid",
+  "envelope": {
+    "proto": "arena/1",
+    "type": "HELLO",
+    "seq": 1,
+    "payload": {
+      "botId": "bot_scout01",
+      "botVersion": "1.4.2",
+      "sdk": {
+        "name": "arena-sdk-python",
+        "version": "0.3.0"
+      },
+      "battleToken": "btl_9f2c4a7e1b8d3506"
+    }
+  }
+}

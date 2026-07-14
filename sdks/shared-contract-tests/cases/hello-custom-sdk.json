@@ -1,0 +1,18 @@
+{
+  "name": "hello-custom-sdk",
+  "kind": "valid",
+  "envelope": {
+    "proto": "arena/1",
+    "type": "HELLO",
+    "seq": 1,
+    "payload": {
+      "botId": "bot_x9",
+      "botVersion": "0.0.1-dev",
+      "sdk": {
+        "name": "custom",
+        "version": "handrolled"
+      },
+      "battleToken": "btl_0123456789abcdef"
+    }
+  }
+}

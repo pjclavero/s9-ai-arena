@@ -1,7 +1,17 @@
 import { defineConfig } from "vitest/config";
+import { fileURLToPath } from "node:url";
+
 export default defineConfig({
+  resolve: {
+    // Mismo alias que consumer-typecheck-example/tsconfig.json (paths): permite que
+    // los bots de ejemplo y sus tests importen "@arena/sdk" como lo haría un
+    // consumidor externo real, en vez de una ruta relativa a sdks/javascript/src.
+    alias: {
+      "@arena/sdk": fileURLToPath(new URL("./sdks/javascript/src/index.ts", import.meta.url)),
+    },
+  },
   test: {
-    include: ["apps/**/tests/**/*.test.ts", "packages/**/*.test.ts"],
+    include: ["apps/**/*.test.ts", "packages/**/*.test.ts", "sdks/**/*.test.ts", "example-bots/**/*.test.ts"],
     testTimeout: 180000,
     hookTimeout: 60000,
   },

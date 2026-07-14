@@ -1,0 +1,16 @@
+{
+  "name": "event-negative-damage",
+  "kind": "invalid",
+  "why": "el dano no puede ser negativo",
+  "envelope": {
+    "proto": "arena/1",
+    "type": "EVENT",
+    "tick": 20,
+    "seq": 5,
+    "payload": {
+      "tick": 20,
+      "kind": "hit_taken",
+      "damage": -3
+    }
+  }
+}

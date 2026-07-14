@@ -1,0 +1,13 @@
+{
+  "name": "shutdown-timeout-dq",
+  "kind": "valid",
+  "envelope": {
+    "proto": "arena/1",
+    "type": "SHUTDOWN",
+    "seq": 1,
+    "payload": {
+      "reason": "timeout_disqualified",
+      "detail": "20 decisiones consecutivas sin comando valido"
+    }
+  }
+}

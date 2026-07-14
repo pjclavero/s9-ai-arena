@@ -1,0 +1,15 @@
+{
+  "name": "observation-missing-self",
+  "kind": "invalid",
+  "why": "toda observacion incluye el estado propio",
+  "envelope": {
+    "proto": "arena/1",
+    "type": "OBSERVATION",
+    "tick": 1,
+    "seq": 3,
+    "payload": {
+      "tick": 1,
+      "sensors": {}
+    }
+  }
+}

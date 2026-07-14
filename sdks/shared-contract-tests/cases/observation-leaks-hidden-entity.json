@@ -1,0 +1,38 @@
+{
+  "name": "observation-leaks-hidden-entity",
+  "kind": "invalid",
+  "why": "campo no declarado (allEntities): la niebla de guerra prohibe canales alternativos (D8)",
+  "envelope": {
+    "proto": "arena/1",
+    "type": "OBSERVATION",
+    "tick": 1,
+    "seq": 3,
+    "payload": {
+      "tick": 1,
+      "self": {
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "heading": 0,
+        "velocity": {
+          "x": 0,
+          "y": 0
+        },
+        "hullHp": 10,
+        "energy": {
+          "storedEU": 0,
+          "capacityEU": 1
+        },
+        "modules": []
+      },
+      "allEntities": [
+        {
+          "id": "veh_9",
+          "x": 100,
+          "y": 10
+        }
+      ]
+    }
+  }
+}

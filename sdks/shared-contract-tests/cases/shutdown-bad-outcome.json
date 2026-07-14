@@ -1,0 +1,16 @@
+{
+  "name": "shutdown-bad-outcome",
+  "kind": "invalid",
+  "why": "outcome fuera del enum",
+  "envelope": {
+    "proto": "arena/1",
+    "type": "SHUTDOWN",
+    "seq": 6,
+    "payload": {
+      "reason": "battle_finished",
+      "result": {
+        "outcome": "almost"
+      }
+    }
+  }
+}

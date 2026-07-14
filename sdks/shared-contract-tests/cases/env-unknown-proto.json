@@ -1,0 +1,19 @@
+{
+  "name": "env-unknown-proto",
+  "kind": "invalid",
+  "why": "proto desconocido: se rechaza sin inspeccionar payload (D5)",
+  "envelope": {
+    "proto": "arena/2",
+    "type": "HELLO",
+    "seq": 1,
+    "payload": {
+      "botId": "bot_a",
+      "botVersion": "1",
+      "sdk": {
+        "name": "custom",
+        "version": "1"
+      },
+      "battleToken": "btl_0123456789abcdef"
+    }
+  }
+}

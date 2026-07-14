@@ -1,0 +1,36 @@
+{
+  "name": "observation-blind-bot",
+  "kind": "valid",
+  "envelope": {
+    "proto": "arena/1",
+    "type": "OBSERVATION",
+    "seq": 1,
+    "tick": 12,
+    "payload": {
+      "tick": 12,
+      "self": {
+        "position": {
+          "x": 10,
+          "y": 40
+        },
+        "heading": 0,
+        "velocity": {
+          "x": 0,
+          "y": 0
+        },
+        "hullHp": 180,
+        "hullHpMax": 180,
+        "energy": {
+          "storedEU": 200,
+          "capacityEU": 200
+        },
+        "modules": [
+          {
+            "slot": "drive",
+            "state": "operational"
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "command-empty-is-valid",
+  "kind": "valid",
+  "envelope": {
+    "proto": "arena/1",
+    "type": "COMMAND",
+    "seq": 1,
+    "tick": 306,
+    "payload": {
+      "forTick": 306
+    }
+  }
+}

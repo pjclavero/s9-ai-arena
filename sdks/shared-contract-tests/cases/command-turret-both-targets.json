@@ -1,0 +1,21 @@
+{
+  "name": "command-turret-both-targets",
+  "kind": "invalid",
+  "why": "targetHeading y targetPoint son excluyentes",
+  "envelope": {
+    "proto": "arena/1",
+    "type": "COMMAND",
+    "tick": 10,
+    "seq": 4,
+    "payload": {
+      "forTick": 12,
+      "turret": {
+        "targetHeading": 0.5,
+        "targetPoint": {
+          "x": 1,
+          "y": 1
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "name": "command-full",
+  "kind": "valid",
+  "envelope": {
+    "proto": "arena/1",
+    "type": "COMMAND",
+    "seq": 1,
+    "tick": 303,
+    "payload": {
+      "forTick": 303,
+      "move": {
+        "throttle": 1,
+        "steer": -0.4
+      },
+      "turret": {
+        "targetPoint": {
+          "x": 80,
+          "y": 35
+        }
+      },
+      "fire": [
+        "turret_main"
+      ],
+      "radio": [
+        {
+          "slot": "radio_a",
+          "data": "ZW5lbXkgd2VzdA=="
+        }
+      ]
+    }
+  }
+}

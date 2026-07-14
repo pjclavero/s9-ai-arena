@@ -1,0 +1,15 @@
+{
+  "name": "event-unknown-kind",
+  "kind": "invalid",
+  "why": "kind fuera del enum",
+  "envelope": {
+    "proto": "arena/1",
+    "type": "EVENT",
+    "tick": 20,
+    "seq": 5,
+    "payload": {
+      "tick": 20,
+      "kind": "teleported"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "shutdown-bad-version",
+  "kind": "valid",
+  "envelope": {
+    "proto": "arena/1",
+    "type": "SHUTDOWN",
+    "seq": 1,
+    "payload": {
+      "reason": "protocol_version_unsupported",
+      "detail": "El motor soporta arena/1"
+    }
+  }
+}

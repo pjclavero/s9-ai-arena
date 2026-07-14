@@ -1,0 +1,15 @@
+{
+  "name": "event-missing-kind",
+  "kind": "invalid",
+  "why": "kind es obligatorio",
+  "envelope": {
+    "proto": "arena/1",
+    "type": "EVENT",
+    "tick": 20,
+    "seq": 5,
+    "payload": {
+      "tick": 20,
+      "damage": 10
+    }
+  }
+}

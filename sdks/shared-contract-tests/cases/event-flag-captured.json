@@ -1,0 +1,19 @@
+{
+  "name": "event-flag-captured",
+  "kind": "valid",
+  "envelope": {
+    "proto": "arena/1",
+    "type": "EVENT",
+    "seq": 1,
+    "tick": 1500,
+    "payload": {
+      "tick": 1500,
+      "kind": "flag_captured",
+      "team": "red",
+      "score": {
+        "red": 2,
+        "blue": 0
+      }
+    }
+  }
+}

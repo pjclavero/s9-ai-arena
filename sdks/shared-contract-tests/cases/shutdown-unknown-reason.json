@@ -1,0 +1,13 @@
+{
+  "name": "shutdown-unknown-reason",
+  "kind": "invalid",
+  "why": "reason fuera del enum de causas de cierre",
+  "envelope": {
+    "proto": "arena/1",
+    "type": "SHUTDOWN",
+    "seq": 6,
+    "payload": {
+      "reason": "because"
+    }
+  }
+}
