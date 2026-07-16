@@ -454,7 +454,51 @@ const m006_operations: Migration = {
   },
 };
 
-export const MIGRATIONS: Migration[] = [m001_identity, m002_content, m003_bots, m004_competition, m005_results, m006_operations];
+// ---------------------------------------------------------------------------
+// E9 · T9.1 — Cola de trabajos durable sobre la tabla `jobs` de E7 (cap. 8).
+// La tabla es la FUENTE DE VERDAD del trabajo (sobrevive a Redis); el bloqueo
+// distribuido se materializa con locked_by/locked_at + FOR UPDATE SKIP LOCKED.
+// `dedupe_key` da idempotencia por inserción (mismo trabajo lógico = una fila).
+// `needs_review` es el estado terminal del 19.2 tras agotar reintentos de
+// infraestructura: revisión manual, nunca reintento infinito.
+const m007_e9_queue: Migration = {
+  name: "007_e9_queue",
+  async up(db) {
+    await db.raw(`
+      ALTER TABLE jobs
+        ADD COLUMN dedupe_key   text UNIQUE,
+        ADD COLUMN locked_by    text,
+        ADD COLUMN locked_at    timestamptz,
+        ADD COLUMN run_after    timestamptz NOT NULL DEFAULT now(),
+        ADD COLUMN max_attempts integer NOT NULL DEFAULT 3,
+        ADD COLUMN last_error   text,
+        ADD COLUMN error_class  text CHECK (error_class IN ('sporting','infrastructure'));
+      ALTER TABLE jobs DROP CONSTRAINT jobs_status_check;
+      ALTER TABLE jobs ADD CONSTRAINT jobs_status_check
+        CHECK (status IN ('queued','running','done','failed','needs_review'));
+      CREATE INDEX jobs_claim_idx ON jobs (status, run_after, created_at) WHERE status IN ('queued','running');
+    `);
+  },
+  async down(db) {
+    await db.raw(`
+      DROP INDEX IF EXISTS jobs_claim_idx;
+      UPDATE jobs SET status = 'failed' WHERE status = 'needs_review';
+      ALTER TABLE jobs DROP CONSTRAINT jobs_status_check;
+      ALTER TABLE jobs ADD CONSTRAINT jobs_status_check
+        CHECK (status IN ('queued','running','done','failed'));
+      ALTER TABLE jobs
+        DROP COLUMN dedupe_key,
+        DROP COLUMN locked_by,
+        DROP COLUMN locked_at,
+        DROP COLUMN run_after,
+        DROP COLUMN max_attempts,
+        DROP COLUMN last_error,
+        DROP COLUMN error_class;
+    `);
+  },
+};
+
+export const MIGRATIONS: Migration[] = [m001_identity, m002_content, m003_bots, m004_competition, m005_results, m006_operations, m007_e9_queue];
 
 class ProgrammaticMigrationSource {
   getMigrations() {
