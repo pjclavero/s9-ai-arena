@@ -23,6 +23,8 @@ const CORE = [
   "bot-manager", "map-service", "replay-service", "queue",
 ];
 const TABLE_6_2 = [...CORE, "postgres", "streamer", "bot-runtime-template"];
+// Operación (T10.4): cron de backup dentro del stack.
+const OPERATION = ["backup"];
 const OBSERVABILITY = [
   "prometheus", "alertmanager", "grafana", "loki", "promtail",
   "cadvisor", "node-exporter", "postgres-exporter",
@@ -47,7 +49,7 @@ function configServices(profiles: string[]): string[] {
 describe("tabla 6.2 · los doce servicios", () => {
   it("existen los doce servicios del dosier (más el perfil observability)", () => {
     for (const s of TABLE_6_2) expect(services, `falta ${s}`).toHaveProperty(s);
-    expect(Object.keys(services).sort()).toEqual([...TABLE_6_2, ...OBSERVABILITY].sort());
+    expect(Object.keys(services).sort()).toEqual([...TABLE_6_2, ...OPERATION, ...OBSERVABILITY].sort());
   });
 
   it("todo lo que no está en la tabla 6.2 es del perfil opcional observability", () => {
@@ -102,11 +104,12 @@ describe("6.4 · las cinco redes y sus reglas", () => {
   it("en public solo gateway (puertos) y las salidas documentadas sin puertos (streamer RTMPS, alertmanager webhook)", () => {
     for (const [name, def] of Object.entries(services)) {
       if (def.networks?.includes("public")) {
-        expect(["gateway", "streamer", "alertmanager"], `${name} no pinta nada en public`).toContain(name);
+        expect(["gateway", "streamer", "alertmanager", "backup"], `${name} no pinta nada en public`).toContain(name);
       }
     }
     expect(services.streamer.ports).toBeUndefined();
     expect(services.alertmanager.ports).toBeUndefined();
+    expect(services.backup.ports).toBeUndefined();
   });
 
   it("los bots solo están en arena: sin ruta a postgres, redis ni api", () => {

@@ -427,6 +427,51 @@ services:
     restart: "no"
     logging: *default-logging
 
+  # ── backup · pg_dump + restic con cron dentro del stack (T10.4) ─────────────
+  # En public SOLO para alcanzar el destino restic (NAS/ZFS del operador):
+  # las redes internas no tienen salida. No publica puertos. Los volúmenes de
+  # datos se montan de SOLO lectura; secrets/ se copia cifrado por restic.
+  backup:
+    build:
+      context: ..
+      dockerfile: infrastructure/docker/backup/Dockerfile
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/backup:${TAG:-latest}
+    profiles: [production, external-db]
+    networks: [data, public]
+    environment:
+      BACKUP_CRON: ${BACKUP_CRON:-15 4 * * *}
+      REPLAY_RETENTION_DAYS: ${REPLAY_RETENTION_DAYS:-180}
+      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:-}
+      RESTIC_PASSWORD_FILE: /run/secrets/restic_password
+      PGHOST: postgres
+      PGUSER: arena
+      PGDATABASE: arena
+      PGPASSWORD_FILE: /run/secrets/postgres_password
+      METRICS_DIR: /textfile
+    secrets: [postgres_password, restic_password]
+    volumes:
+      - arena_maps:/data/maps:ro
+      - arena_bot_sources:/data/bot-sources:ro
+      - arena_replays:/data/replays:ro
+      - ./secrets:/secrets:ro
+      - backup_metrics:/textfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep crond >/dev/null"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
   # ═══════════════════════════════════════════════════════════════════════════
   # Perfil observability (T10.3, cap. 24, ADR-010 D10.3) — OPCIONAL:
   # la plataforma funciona sin él (test en infrastructure/tests/).
@@ -685,3 +730,5 @@ secrets:
     file: ./secrets/stream_key.txt
   grafana_admin_password:
     file: ./secrets/grafana_admin_password.txt
+  restic_password:
+    file: ./secrets/restic_password.txt
