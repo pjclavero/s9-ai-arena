@@ -1,0 +1,10 @@
+{
+  "name": "arena-bot-runtime-node",
+  "version": "1.0.0",
+  "private": true,
+  "description": "E6/T6.3 · allowlist Node preinstalada en el runtime de bots. Sincronizar con ALLOWED-PACKAGES.md y config.ts (DEFAULT_NODE_ALLOWLIST).",
+  "dependencies": {
+    "@arena/sdk": "1.0.0",
+    "ws": "8.18.0"
+  }
+}

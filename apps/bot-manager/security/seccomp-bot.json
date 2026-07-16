@@ -1,0 +1,31 @@
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "defaultErrnoRet": 1,
+  "architectures": ["SCMP_ARCH_X86_64", "SCMP_ARCH_X86", "SCMP_ARCH_X32", "SCMP_ARCH_AARCH64"],
+  "syscalls": [
+    {
+      "comment": "Allowlist restrictiva para runtimes de bot (Python/Node). defaultAction ERRNO: todo lo no listado se deniega. NO incluye: ptrace, mount, umount, kexec_load, init_module, finit_module, delete_module, reboot, swapon/swapoff, bpf, keyctl, add_key, request_key, setns, unshare, pivot_root, chroot, process_vm_writev, perf_event_open, acct, quotactl, settimeofday, clock_settime, syslog, mknod, personality (peligrosos).",
+      "action": "SCMP_ACT_ALLOW",
+      "names": [
+        "read", "write", "readv", "writev", "pread64", "pwrite64", "preadv", "pwritev",
+        "open", "openat", "close", "stat", "fstat", "lstat", "newfstatat", "statx",
+        "lseek", "dup", "dup2", "dup3", "fcntl", "flock", "fsync", "fdatasync", "ftruncate",
+        "getdents", "getdents64", "getcwd", "readlink", "readlinkat", "access", "faccessat", "faccessat2",
+        "mmap", "munmap", "mremap", "mprotect", "madvise", "brk", "mlock", "munlock",
+        "rt_sigaction", "rt_sigprocmask", "rt_sigreturn", "rt_sigpending", "sigaltstack",
+        "nanosleep", "clock_nanosleep", "clock_gettime", "clock_getres", "gettimeofday", "time",
+        "getpid", "gettid", "getppid", "getuid", "geteuid", "getgid", "getegid", "getgroups",
+        "getrandom", "getrusage", "getrlimit", "prlimit64", "sysinfo", "uname",
+        "futex", "set_robust_list", "get_robust_list", "set_tid_address",
+        "epoll_create", "epoll_create1", "epoll_ctl", "epoll_wait", "epoll_pwait",
+        "poll", "ppoll", "select", "pselect6", "eventfd", "eventfd2", "timerfd_create", "timerfd_settime", "timerfd_gettime",
+        "pipe", "pipe2", "socket", "socketpair", "connect", "getsockname", "getpeername",
+        "sendto", "recvfrom", "sendmsg", "recvmsg", "shutdown", "setsockopt", "getsockopt",
+        "clone", "clone3", "wait4", "waitid", "exit", "exit_group", "execve", "execveat",
+        "sched_yield", "sched_getaffinity", "sched_setaffinity", "arch_prctl", "prctl",
+        "rseq", "membarrier", "restart_syscall", "tgkill", "kill",
+        "ioctl", "umask", "chdir", "fchdir"
+      ]
+    }
+  ]
+}

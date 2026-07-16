@@ -1,0 +1,13 @@
+# E6 · T6.3 — Digests FIJADOS de las imágenes de runtime (cap. 18.3).
+#
+# Las imágenes se referencian por DIGEST inmutable, nunca por tag. Estos digests se
+# fijan en el repo y se verifican en CI (scripts/verify-runtime-digests.ts). Un bot solo
+# puede construirse sobre el runtime declarado en su manifiesto, resuelto a estos digests.
+#
+# Formato: <runtime> <base-image-por-digest> <runtime-image-por-digest>
+# Los sha256 de la BASE (python/node oficiales) se obtienen con `docker buildx imagetools
+# inspect`; los de la IMAGEN de runtime, tras `docker build` reproducible. Placeholders
+# del MVP hasta construir en un entorno con Docker.
+
+python  python@sha256:0000000000000000000000000000000000000000000000000000000000000000  arena/bot-runtime-python@sha256:1111111111111111111111111111111111111111111111111111111111111111
+node    node@sha256:0000000000000000000000000000000000000000000000000000000000000000    arena/bot-runtime-node@sha256:2222222222222222222222222222222222222222222222222222222222222222
