@@ -6,6 +6,7 @@
  * ticket firmado — pendiente de reconciliación con E8 para el consumo del ticket.
  */
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import jwt from "jsonwebtoken";
 import { fromJsonl, type Replay } from "../../../arena-engine/src/replay.js";
@@ -13,6 +14,7 @@ import { decompress, sha256 } from "../../../replay-service/src/format.js";
 import { verifyLoaded } from "../../../replay-service/src/store.js";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
+import { ROLE_RANK } from "../openapi.js";
 import { badRequest, conflict, notFound } from "../errors.js";
 import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
 import { jwtSecret } from "../auth/tokens.js";
@@ -129,9 +131,15 @@ export function battleRoutes(db: Db, quota: AnonQuotaConfig): Router {
     "getSpectateTicket",
     async (req, res) => {
       const battle = await getBattleOr404(db, req.params.battleId);
-      const ticket = jwt.sign({ kind: "spectate", battleId: battle.id }, jwtSecret(), {
-        expiresIn: SPECTATE_TICKET_TTL_S,
-      });
+      // E8/T8.2: jti ⇒ el gateway hace el ticket de UN SOLO USO; debug ⇒ capas de
+      // depuración (sensores, rutas, colisiones) solo para roles autorizados: el flag
+      // viaja FIRMADO por la API, el visor no puede autoconcedérselo.
+      const debug = (req.auth?.rank ?? 0) >= ROLE_RANK.moderator;
+      const ticket = jwt.sign(
+        { kind: "spectate", battleId: battle.id, jti: randomUUID(), ...(debug ? { debug: true } : {}) },
+        jwtSecret(),
+        { expiresIn: SPECTATE_TICKET_TTL_S },
+      );
       // El canal transporta SOLO snapshots públicos (D8): lo sirve el gateway (E8/E10).
       const wsBase = process.env.SPECTATE_WS_URL ?? "ws://localhost:8081/spectate";
       res.status(201).json({
