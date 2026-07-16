@@ -1460,7 +1460,7 @@ Haz que deathmatch rechace en construcción una lista de participantes donde dos
 **Prompt de ejecución**
 
 ```
-Cierra la única carencia de paridad declarada en docs/sdk-paridad.md y docs/entrega-E5.md: el
+Cierra la única carencia de paridad declarada en docs/sdk-paridad.md y docs/historial/entrega-E5.md: el
 SDK JavaScript no tiene el envoltorio CLI equivalente a `arena-sim` del SDK Python (levantar el
 motor real con un mapa de práctica y conectar 1–4 bots locales sin Docker ni plataforma).
 Impleméntalo reutilizando el mismo motor/protocolo, con la misma interfaz conceptual, y actualiza
@@ -1835,51 +1835,42 @@ de solo lectura: no hace falta volver sobre ellos para planificar la Ronda 2.*
 
 **Método:** cada documento de `docs/` (entregas E1–E12, ADRs, balance, game days, runbooks,
 auditorías, FUSION, ROADMAP) se cruzó buscando fallos/pendientes declarados por sus propios
-autores. El resultado se reparte en tres cubos: **archivado** (revisado y OK), **abierto por
-entorno/reconciliación** (completo en capa verificable, se cierra al pasar R-DEPLOY) y **registro
-vivo** (los que documentan la deuda que la Ronda 2 corrige).
+autores. El resultado se reparte en tres cubos: **archivado** (informe histórico movido a
+`docs/historial/`), **referencia viva** (se queda en `docs/` porque lo citan tareas u otros
+documentos) y **registro vivo** (los que documentan la deuda que la Ronda 2 corrige).
 
-### 16.1 · Archivado (revisado y correcto — no requiere relectura)
+### 16.1 · Archivado en `docs/historial/` (evidencia histórica — no requiere relectura)
 
-Declaran su entrega completa y sin fallos de código propios abiertos. Se conservan como
-evidencia; no se mantienen ni se re-auditan.
+Los **informes de entrega E1–E12** más **`FUSION.md`** y **`ROADMAP.md`** se han movido
+físicamente a **`docs/historial/`** (con `git mv`, conservando su historia). Son registros de lo
+que se entregó; se conservan como evidencia y no se mantienen ni se re-auditan. La serie se mueve
+entera para no partir la numeración E1–E12 entre dos carpetas.
 
-| Documento | Contenido | Veredicto |
-|---|---|---|
-| `docs/entrega-E2.md` | Motor de simulación | Completo; solo avisos de diseño a otros equipos, sin bugs propios |
-| `docs/entrega-E3.md` | Módulos y validador | Completo (191 tests, 0 fallos) |
-| `docs/entrega-E5.md` | Protocolo y SDKs | Completo; los 4 bugs hallados quedaron corregidos en la propia entrega (queda solo la deuda menor del CLI JS → **R2.8**) |
-| `docs/balance/informe-v1.md` | 200 batallas/emparejamiento | Completo; winrates en rango 45–55 % |
-| `docs/balance/v1.md` | Justificación del balance | Cerrado; notas de diseño, sin bugs |
-| `FUSION.md` | Fusión E1+E2 | Cerrado (81/81 tests, sin duplicados de contrato) |
-| `docs/ROADMAP.md` | Hoja de ruta del prototipo v1 | **Histórico**, explícitamente superado y no mantenido |
-| `docs/compatibilidad.md` | Política de versiones | Sin bugs (solo marcador de plantilla) |
-| `docs/decisiones/ADR-000` | Decisiones fundacionales | Aceptado |
-| `docs/decisiones/ADR-010` | DevOps/CI/observabilidad | Ratificado |
-| `docs/decisiones/ADR-E7-001` | Migraciones Knex | Aceptado |
-| `docs/decisiones/ADR-E7-002` | Postgres embebido en tests | Aceptado y verificado |
-| `docs/decisiones/ADR-E9-002` | Rating Elo | Aceptado |
+> **Matiz importante:** "archivado" se refiere al **documento**, no al estado. Algunas entregas
+> (E4, E6–E12) declaran pendientes de entorno (Docker/navegador); ese estado **no se pierde**: vive
+> en `docs/estado-proyecto.md` y se cierra al pasar la banda **R-DEPLOY**. Archivar el informe solo
+> retira la literatura de la ruta de trabajo diaria; el seguimiento sigue en los documentos vivos.
 
-*Archivado físico opcional (tarea de higiene, no bloqueante):* mover estos ficheros a
-`docs/history/` y actualizar los enlaces. No se hace aquí para no romper referencias; queda como
-mejora de organización dentro de **R2.3/R4.4** (documentación).
+| En `docs/historial/` | Qué es |
+|---|---|
+| `entrega-E1.md` … `entrega-E12.md` | Informes de las 12 entregas del dosier original |
+| `FUSION.md` | Nota de fusión E1+E2 (81/81 tests, sin duplicados de contrato) |
+| `ROADMAP.md` | Hoja de ruta del prototipo v1, explícitamente superada |
 
-### 16.2 · Abierto por entorno o reconciliación (no archivar todavía)
+### 16.2 · Referencia viva — se queda en `docs/` (no se archiva)
 
-Completos en su capa verificable sin Docker, pero su cierre **depende de la banda R-DEPLOY**
-(navegador real, Docker con salida a internet, servicios externos) o de una reconciliación entre
-equipos. Se archivarán cuando su puerta se cruce.
+Revisados y sin bugs propios abiertos, pero **no se mueven** porque las tareas del dosier u otros
+documentos los citan como referencia activa; archivarlos rompería enlaces o los haría parecer
+obsoletos cuando siguen siendo la fuente de una decisión o un dato vigente.
 
-- `docs/entrega-E1.md` (firma humana + tooling menor ya cubierto por E4/E8).
-- `docs/entrega-E4.md`, `E6.md`, `E7.md`, `E8.md`, `E9.md`, `E10.md`, `E11.md`, `E12.md`
-  — todos con secciones honestas de "pendiente de entorno con Docker/navegador".
-- `docs/aceptacion/ultimo-informe.md` (10/10 verde salvo render/60 fps con navegador real).
-- `docs/gamedays/acta-2026-07-16-m3.md`, `docs/gamedays/README.md` (GD-5 y etapas
-  containerizadas pendientes de staging).
-- `docs/despliegue.md`, `docs/recuperacion.md`, `docs/streaming-runbook.md` (verificación y
-  simulacros pendientes de Docker).
-- `docs/decisiones/ADR-E7-003` (Playwright pendiente de runner), `ADR-E9-001` (Redis real
-  pendiente de entorno).
+- `docs/decisiones/ADR-000`, `ADR-010`, `ADR-E7-001`, `ADR-E7-002`, `ADR-E9-002` — decisiones
+  aceptadas; un ADR es guía activa, no un informe cerrado, y la convención es mantenerlos juntos
+  en `decisiones/`. (`ADR-E7-003` y `ADR-E9-001` siguen además pendientes de entorno.)
+- `docs/balance/v1.md`, `docs/balance/informe-v1.md` — balance vigente, citado por las tareas de E3.
+- `docs/compatibilidad.md`, `docs/sdk-paridad.md` — política de versiones y paridad de SDKs.
+- `docs/despliegue.md`, `docs/recuperacion.md`, `docs/streaming-runbook.md` — runbooks operativos
+  (verificación pendiente de Docker; se completan en R-DEPLOY).
+- `docs/aceptacion/ultimo-informe.md`, `docs/gamedays/*` — evidencia de QA que se re-ejecuta en R-DEPLOY.
 
 ### 16.3 · Registro vivo (permanece abierto)
 
@@ -1888,6 +1879,7 @@ Estos NO se archivan: son el inventario de la deuda que la Ronda 2 corrige.
 - `docs/auditoria-consolidada-2026-07-16.md` — catálogo maestro de errores (`ERR-*`).
 - `docs/auditoria-2026-07-16.md` — auditoría previa (H1–H7); parte superada por la consolidada.
 - `docs/estado-proyecto.md` — estado global y deudas conocidas.
+- `docs/Dosier_tareas_S9_AI_Arena.md` — este dosier (tareas E1–E12 + Ronda 2).
 
 ### 16.4 · Trazabilidad: bug conocido en un informe → tarea que lo corrige
 

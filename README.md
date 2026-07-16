@@ -64,7 +64,7 @@ npm run lint
 | **[docs/Dosier_tareas_S9_AI_Arena.md](docs/Dosier_tareas_S9_AI_Arena.md)** | Dosier de tareas E1–E12 + **Ronda 2** (remediación, integración, evolución y retirada de v1). |
 | **[docs/decisiones/](docs/decisiones/)** | ADRs (decisiones fundacionales y por equipo). |
 | **[docs/despliegue.md](docs/despliegue.md)** · **[docs/recuperacion.md](docs/recuperacion.md)** | Runbooks de despliegue y recuperación. |
-| **[docs/entrega-E1.md](docs/entrega-E1.md) … [E12](docs/entrega-E12.md)** | Evidencia histórica de cada entrega (no usar como estado operativo). |
+| **[docs/historial/](docs/historial/)** | Archivo: informes de entrega E1–E12, `FUSION.md` y `ROADMAP.md`. Evidencia histórica (no usar como estado operativo). |
 
 ## Estado de despliegue
 

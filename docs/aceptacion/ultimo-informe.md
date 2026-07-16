@@ -33,4 +33,4 @@ exige un entorno con Docker/staging y dónde está implementada.
 Generado en un runner sin privilegios Docker: los criterios marcados "parcial"
 ejecutan la parte lógica/configuración REAL de su suite; la verificación
 containerizada correspondiente está implementada y documentada por E6/E10 y se
-ejecuta en la puerta M5 sobre staging (docs/despliegue.md, docs/entrega-E6.md).
+ejecuta en la puerta M5 sobre staging (docs/despliegue.md, docs/historial/entrega-E6.md).

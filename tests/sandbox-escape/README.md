@@ -32,7 +32,7 @@ falla (exit 1) si algún bot imprime un marcador de escape (`ESCAPE-OK`,
 **no se ha ejecutado aquí**. La lógica que SÍ es verificable sin Docker —los flags
 generados, el parser de `docker inspect` y el escáner del Compose— tiene tests reales en
 `apps/bot-manager/tests/container-runner.test.ts` y `compose-scan.test.ts`. Ver
-`docs/entrega-E6.md` para el desglose "verificado vs pendiente de entorno".
+`docs/historial/entrega-E6.md` para el desglose "verificado vs pendiente de entorno".
 
 El test `apps/bot-manager/tests/sandbox-escape-suite.test.ts` verifica de verdad que la
 suite está **completa** (los 7 vectores presentes y consistentes con el manifiesto).
