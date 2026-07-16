@@ -1455,6 +1455,23 @@ Haz que deathmatch rechace en construcción una lista de participantes donde dos
 - [ ] `dm_practice` con dos vehículos del mismo equipo se rechaza al construir la batalla (test).
 - [ ] La fuga de `radioSentThisSecond` no crece en una batalla de 5 min (test de memoria).
 
+#### R2.8 — Paridad de SDK: CLI `arena-sim` en JavaScript (deuda de E5) · Equipo E5
+
+**Prompt de ejecución**
+
+```
+Cierra la única carencia de paridad declarada en docs/sdk-paridad.md y docs/entrega-E5.md: el
+SDK JavaScript no tiene el envoltorio CLI equivalente a `arena-sim` del SDK Python (levantar el
+motor real con un mapa de práctica y conectar 1–4 bots locales sin Docker ni plataforma).
+Impleméntalo reutilizando el mismo motor/protocolo, con la misma interfaz conceptual, y actualiza
+docs/sdk-paridad.md marcando la fila como cubierta.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] El bot TypeScript de ejemplo completa una batalla en el simulador local por CLI, sin Docker (test E2E).
+- [ ] La tabla de paridad de `docs/sdk-paridad.md` deja de marcar el CLI JS como carencia.
+
 ---
 
 ### Banda R-P2 · Producto, gráficos y modos de combate baratos
@@ -1806,3 +1823,100 @@ producción firmada.
 > stats → clasificación → restaurar y reproducir— corre en verde sobre la **v2 desplegada en
 > staging**, con la puerta M5 y el checklist del capítulo 14 completos. A partir de ahí, R-P2/R-P3
 > continúan como evolución de producto sin bloquear la apertura de la plataforma.
+
+---
+
+## 16. Archivado — informes revisados y cerrados
+
+*Añadido el 2026-07-17. Esta sección reduce la literatura que hay que releer: recopila los
+informes de entrega y reportes previos que **se han revisado uno a uno contra el código** y que
+**declaran su trabajo completo sin bugs de código abiertos**. Trátalos como evidencia histórica
+de solo lectura: no hace falta volver sobre ellos para planificar la Ronda 2.*
+
+**Método:** cada documento de `docs/` (entregas E1–E12, ADRs, balance, game days, runbooks,
+auditorías, FUSION, ROADMAP) se cruzó buscando fallos/pendientes declarados por sus propios
+autores. El resultado se reparte en tres cubos: **archivado** (revisado y OK), **abierto por
+entorno/reconciliación** (completo en capa verificable, se cierra al pasar R-DEPLOY) y **registro
+vivo** (los que documentan la deuda que la Ronda 2 corrige).
+
+### 16.1 · Archivado (revisado y correcto — no requiere relectura)
+
+Declaran su entrega completa y sin fallos de código propios abiertos. Se conservan como
+evidencia; no se mantienen ni se re-auditan.
+
+| Documento | Contenido | Veredicto |
+|---|---|---|
+| `docs/entrega-E2.md` | Motor de simulación | Completo; solo avisos de diseño a otros equipos, sin bugs propios |
+| `docs/entrega-E3.md` | Módulos y validador | Completo (191 tests, 0 fallos) |
+| `docs/entrega-E5.md` | Protocolo y SDKs | Completo; los 4 bugs hallados quedaron corregidos en la propia entrega (queda solo la deuda menor del CLI JS → **R2.8**) |
+| `docs/balance/informe-v1.md` | 200 batallas/emparejamiento | Completo; winrates en rango 45–55 % |
+| `docs/balance/v1.md` | Justificación del balance | Cerrado; notas de diseño, sin bugs |
+| `FUSION.md` | Fusión E1+E2 | Cerrado (81/81 tests, sin duplicados de contrato) |
+| `docs/ROADMAP.md` | Hoja de ruta del prototipo v1 | **Histórico**, explícitamente superado y no mantenido |
+| `docs/compatibilidad.md` | Política de versiones | Sin bugs (solo marcador de plantilla) |
+| `docs/decisiones/ADR-000` | Decisiones fundacionales | Aceptado |
+| `docs/decisiones/ADR-010` | DevOps/CI/observabilidad | Ratificado |
+| `docs/decisiones/ADR-E7-001` | Migraciones Knex | Aceptado |
+| `docs/decisiones/ADR-E7-002` | Postgres embebido en tests | Aceptado y verificado |
+| `docs/decisiones/ADR-E9-002` | Rating Elo | Aceptado |
+
+*Archivado físico opcional (tarea de higiene, no bloqueante):* mover estos ficheros a
+`docs/history/` y actualizar los enlaces. No se hace aquí para no romper referencias; queda como
+mejora de organización dentro de **R2.3/R4.4** (documentación).
+
+### 16.2 · Abierto por entorno o reconciliación (no archivar todavía)
+
+Completos en su capa verificable sin Docker, pero su cierre **depende de la banda R-DEPLOY**
+(navegador real, Docker con salida a internet, servicios externos) o de una reconciliación entre
+equipos. Se archivarán cuando su puerta se cruce.
+
+- `docs/entrega-E1.md` (firma humana + tooling menor ya cubierto por E4/E8).
+- `docs/entrega-E4.md`, `E6.md`, `E7.md`, `E8.md`, `E9.md`, `E10.md`, `E11.md`, `E12.md`
+  — todos con secciones honestas de "pendiente de entorno con Docker/navegador".
+- `docs/aceptacion/ultimo-informe.md` (10/10 verde salvo render/60 fps con navegador real).
+- `docs/gamedays/acta-2026-07-16-m3.md`, `docs/gamedays/README.md` (GD-5 y etapas
+  containerizadas pendientes de staging).
+- `docs/despliegue.md`, `docs/recuperacion.md`, `docs/streaming-runbook.md` (verificación y
+  simulacros pendientes de Docker).
+- `docs/decisiones/ADR-E7-003` (Playwright pendiente de runner), `ADR-E9-001` (Redis real
+  pendiente de entorno).
+
+### 16.3 · Registro vivo (permanece abierto)
+
+Estos NO se archivan: son el inventario de la deuda que la Ronda 2 corrige.
+
+- `docs/auditoria-consolidada-2026-07-16.md` — catálogo maestro de errores (`ERR-*`).
+- `docs/auditoria-2026-07-16.md` — auditoría previa (H1–H7); parte superada por la consolidada.
+- `docs/estado-proyecto.md` — estado global y deudas conocidas.
+
+### 16.4 · Trazabilidad: bug conocido en un informe → tarea que lo corrige
+
+Confirmación de que **todo fallo de código que los informes previos dejaron anotado está
+contemplado en una tarea de la Ronda 2**, y de que se corrige **antes** que el código nuevo que
+podría heredarlo (columna "banda": R-P0 y R-P1 van antes que R-P2/R-P3).
+
+| Bug conocido (informe que lo declara) | ERR | Tarea | Banda |
+|---|---|---|---|
+| Munición no propagada #15 (E12, estado-proyecto, auditoría) | ERR-ENG-08 | R1.1 | **R-P0** |
+| Sensor acústico muerto (auditoría consolidada) | ERR-ENG-01 | R1.2 (+R1.3) | **R-P0** |
+| `zone_control` no jugable | ERR-ENG-03 | R1.9 | **R-P0** |
+| Bot solo-stdlib llega a `validated` — H1 (auditoría, acta game day GD7-1) | ERR-SEC-03/06 | R1.5 + R2.4 | **R-P0/P1** |
+| Secreto JWT degradado | ERR-SEC-01 | R1.4 | **R-P0** |
+| `docker.sock` montado | ERR-SEC-02 | R1.7 | **R-P0** |
+| CI de sandbox falsamente verde | ERR-SEC-04 | R1.6 | **R-P0** |
+| Rate-limit sobre IP del gateway | ERR-SEC-05 | R1.8 | **R-P0** |
+| Lint no cubre el RNG | ERR-ENG-02 | R2.7 | **R-P1** |
+| Punto ciego del hash / heading global / fugas / DM sin premisa | ERR-ENG-04/05/06/07 | R2.7 | **R-P1** |
+| tsc: 268 errores, H7 no cerrado | ERR-GES-02/03 | R2.1 | **R-P1** |
+| CI presenta staging omitido como verde | ERR-GES-05 | R2.2 | **R-P1** |
+| Desactivar 2FA sin reautenticación / `allowScripts` inerte | ERR-SEC-07/13 | R2.4 / R2.5 | **R-P1** |
+| CLI `arena-sim` JS (E5, sdk-paridad) | — | R2.8 | **R-P1** |
+| Replay no interpola / sin pantalla de torneos / sesión F5 / editor no carga | ERR-VIS-01/02/03/04 | R3.1 / R3.7 | R-P2 |
+| `cpuMs` sin rellenar — H5 | ERR-GES-07 | R6.6 (medición real) | R-DEPLOY |
+| Digests placeholder | ERR-GES-06 | R6.1 | R-DEPLOY |
+
+**Principio de no arrastrar deuda:** los modos nuevos que tocan estado de simulación (R3.8,
+R4.1–R4.3) se construyen **después** de arreglar `zone_control` (R1.9), el hash y el lint de
+determinismo (R2.7) y de escribir la regla de oro (toda entidad nueva entra en el hash); y la
+capa gráfica/HUD (R3.4–R3.6) se construye **después** de sanear el visor (R3.1–R3.3). Así el
+código nuevo no hereda los fallos de auditoría ni de rendimiento del existente.
