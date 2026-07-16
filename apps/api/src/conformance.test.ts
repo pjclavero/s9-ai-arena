@@ -10,11 +10,12 @@ import { loadContract } from "./openapi.js";
 import { implementedOperations } from "./registry.js";
 import { StubBotManager } from "./services/bot-manager.js";
 
-/** Operaciones del contrato aún no implementadas por E7, con el motivo. */
-export const PENDING_OPERATIONS: Record<string, string> = {
-  verifyReplay:
-    "Re-simular el replay exige el replay-service y el formato de E8 (T8.1) sobre el motor de E2; pendiente de reconciliación con E8.",
-};
+/**
+ * Operaciones del contrato aún no implementadas, con el motivo.
+ * `verifyReplay` era la única pendiente de E7: la implementó E8 (T8.1) sobre el
+ * replay-service real. Con esto, las 53 operaciones del contrato están implementadas.
+ */
+export const PENDING_OPERATIONS: Record<string, string> = {};
 
 beforeAll(() => {
   // Registrar rutas sin tocar la BD (knex es perezoso: no conecta hasta la primera query)

@@ -74,6 +74,16 @@ export interface Ruleset {
   zone?: { pointsPerTickHeld: number };
   /** Categorías de módulo prohibidas en esta competición (usado por el validador de E3). */
   forbiddenCategories?: string[];
+  /**
+   * E8/T8.2 · Modo espectador. Opcional y aditivo: si no se declara, el visor no
+   * permite la vista con niebla de guerra y el directo va sin retardo.
+   */
+  spectator?: {
+    /** ¿Puede el espectador activar la vista con niebla de guerra (perspectiva de equipo)? */
+    allowFogView?: boolean;
+    /** Retardo del directo en segundos (anti-coaching en torneos, mejora E8.M). */
+    delaySeconds?: number;
+  };
 }
 
 const base: Omit<Ruleset, "rulesetId" | "mode"> = {

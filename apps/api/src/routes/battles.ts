@@ -6,10 +6,15 @@
  * ticket firmado — pendiente de reconciliación con E8 para el consumo del ticket.
  */
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import jwt from "jsonwebtoken";
+import { fromJsonl, type Replay } from "../../../arena-engine/src/replay.js";
+import { decompress, sha256 } from "../../../replay-service/src/format.js";
+import { verifyLoaded } from "../../../replay-service/src/store.js";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
+import { ROLE_RANK } from "../openapi.js";
 import { badRequest, conflict, notFound } from "../errors.js";
 import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
 import { jwtSecret } from "../auth/tokens.js";
@@ -126,9 +131,15 @@ export function battleRoutes(db: Db, quota: AnonQuotaConfig): Router {
     "getSpectateTicket",
     async (req, res) => {
       const battle = await getBattleOr404(db, req.params.battleId);
-      const ticket = jwt.sign({ kind: "spectate", battleId: battle.id }, jwtSecret(), {
-        expiresIn: SPECTATE_TICKET_TTL_S,
-      });
+      // E8/T8.2: jti ⇒ el gateway hace el ticket de UN SOLO USO; debug ⇒ capas de
+      // depuración (sensores, rutas, colisiones) solo para roles autorizados: el flag
+      // viaja FIRMADO por la API, el visor no puede autoconcedérselo.
+      const debug = (req.auth?.rank ?? 0) >= ROLE_RANK.moderator;
+      const ticket = jwt.sign(
+        { kind: "spectate", battleId: battle.id, jti: randomUUID(), ...(debug ? { debug: true } : {}) },
+        jwtSecret(),
+        { expiresIn: SPECTATE_TICKET_TTL_S },
+      );
       // El canal transporta SOLO snapshots públicos (D8): lo sirve el gateway (E8/E10).
       const wsBase = process.env.SPECTATE_WS_URL ?? "ws://localhost:8081/spectate";
       res.status(201).json({
@@ -199,6 +210,52 @@ export function battleRoutes(db: Db, quota: AnonQuotaConfig): Router {
         .send(bytes);
     },
     (req, res, next) => anonQuota(db, "replays", quota)(req, res, next),
+  );
+
+  /**
+   * E8/T8.1 · verifyReplay: re-simula el replay con el motor de E2 (versión registrada
+   * en la cabecera) y compara resultado y hashes con el oficial. Era la operación
+   * pendiente declarada por E7 en conformance.test.ts — la implementa E8 sobre el
+   * replay-service real, no en paralelo. Es cara (re-simulación completa): cuota
+   * anónima propia, más estricta que la de descarga.
+   */
+  defineOperation(
+    router,
+    "verifyReplay",
+    async (req, res) => {
+      const battle = await getBattleOr404(db, req.params.battleId);
+      if (!battle.replay_ref) throw notFound("La batalla no tiene replay publicado");
+      let bytes: Buffer;
+      try {
+        bytes = await readFile(battle.replay_ref);
+      } catch {
+        throw notFound("Replay no disponible");
+      }
+      // Manipulación byte a byte: el hash registrado en la BD manda (DoD T8.1).
+      if (battle.replay_hash && sha256(bytes) !== battle.replay_hash) {
+        res.json({ matches: false, valid: false, reason: "checksum_mismatch" });
+        return;
+      }
+      let replay: Replay;
+      try {
+        replay = fromJsonl(decompress(bytes).toString("utf8"));
+      } catch (e) {
+        res.json({ matches: false, valid: false, reason: `corrupt_file: ${(e as Error).message}` });
+        return;
+      }
+      const r = await verifyLoaded(battle.id, replay);
+      // Cinturón extra: el resultado oficial del ARCHIVO debe ser el que registró la BD.
+      const dbHashOk = !battle.final_state_hash || battle.final_state_hash === replay.result?.finalStateHash;
+      res.json({
+        matches: (r.verification?.matches ?? false) && dbHashOk,
+        officialHash: r.verification?.officialHash,
+        recomputedHash: r.verification?.recomputedHash,
+        valid: r.valid && dbHashOk,
+        reason: !dbHashOk ? "final_state_hash_mismatch_with_db" : r.reason,
+        divergedAtTick: r.verification?.divergedAtTick ?? undefined,
+      });
+    },
+    (req, res, next) => anonQuota(db, "replay-verify", quota)(req, res, next),
   );
 
   return router;
