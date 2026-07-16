@@ -153,10 +153,36 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
 
+  # ── E12/T12.1: suite E2E del criterio de éxito del MVP (26.1) ─────────────
+  # Definición operativa de "el MVP funciona": 6 pasos con evidencia (ids,
+  # hashes, cifras) archivada como artefacto + 6 sabotajes deliberados.
+  # Compone EN PROCESO las piezas reales (API E7 + pipeline E6 + motor E2 +
+  # mapa E4 + catálogo E3 + gateway y stats E8). Cuando el operador configure
+  # staging (STAGING_HOST), la etapa 8 añade el humo HTTP contra staging.
+  e2e-mvp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # DoD T12.1: duración total < 20 min
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Suite E2E del MVP (pasos 1-6 + 6 sabotajes)
+        run: npx vitest run tests/e2e --maxWorkers=2
+      - name: Evidencia de los 6 pasos como artefacto de CI
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-mvp-evidence
+          path: tests/e2e/evidence/
+          if-no-files-found: warn
+
   # ── Etapa 7: despliegue a staging (solo main) ──────────────────────────────
   deploy-staging:
     if: github.ref == 'refs/heads/main'
-    needs: [scan]
+    needs: [scan, e2e-mvp]
     runs-on: ubuntu-latest
     environment: staging
     steps:

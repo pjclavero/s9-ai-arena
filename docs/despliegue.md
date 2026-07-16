@@ -113,6 +113,11 @@ Falta configuración del repositorio en GitHub que E10 NO aplica por sí mismo:
 3. Secretos de despliegue: `STAGING_HOST`, `STAGING_SSH_KEY`.
 4. PR canario de verificación (romper un esquema de E1 / un golden de E2 y
    comprobar el bloqueo automático).
+5. **Regla de aceptación (E12/T12.2):** la aprobación manual del environment
+   `production` (etapa 8) exige que la última ejecución del workflow
+   `acceptance` (10 criterios del cap. 28, nightly y bajo demanda) esté en
+   verde: el informe está en `docs/aceptacion/ultimo-informe.md` y como
+   artefacto `acceptance-report`. Un criterio en rojo = NO se promociona.
 
 ## Actualización en caliente (E10.M)
 
