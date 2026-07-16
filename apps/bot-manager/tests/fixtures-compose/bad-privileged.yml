@@ -1,0 +1,10 @@
+services:
+  evil:
+    image: some/image
+    privileged: true
+    cap_add:
+      - ALL
+    network_mode: host
+    pid: host
+    security_opt:
+      - seccomp=unconfined

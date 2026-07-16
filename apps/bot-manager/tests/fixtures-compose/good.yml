@@ -1,0 +1,15 @@
+services:
+  arena-server:
+    image: arena/server@sha256:deadbeef
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges
+      - seccomp=./security/seccomp-bot.json
+    networks:
+      - arena
+    # nota: el comentario menciona docker.sock pero comentado no debe contar
+networks:
+  arena:
+    driver: bridge

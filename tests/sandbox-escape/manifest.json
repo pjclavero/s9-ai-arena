@@ -1,0 +1,13 @@
+{
+  "description": "Suite de bots maliciosos deliberados (E6/T6.2). Cada uno intenta un escape del sandbox de la tabla 18.2. En un entorno con Docker, run-escape-suite.sh los lanza con DockerContainerRunner.buildRunArgs y verifica que NINGUNO logra su objetivo (no aparece 'ESCAPE-OK'/'ESCAPE-CRITICAL' en la salida) y que quedan registrados como security_findings. ia02 no tiene grupo docker: aquí la suite está ESCRITA Y LISTA, verificación real pendiente de entorno con Docker.",
+  "control": "tabla 18.2",
+  "bots": [
+    { "id": "01_internet_connect", "attack": "conexión a Internet", "mitigation": "red solo arena, sin DNS externo", "escapeMarker": "ESCAPE-OK" },
+    { "id": "02_write_outside_tmp", "attack": "escritura fuera de /tmp", "mitigation": "rootfs read-only, solo tmpfs /tmp", "escapeMarker": "ESCAPE-OK" },
+    { "id": "03_fork_bomb", "attack": "fork bomb", "mitigation": "--pids-limit + deadline", "escapeMarker": "ESCAPE-OK" },
+    { "id": "04_memory_exhaustion", "attack": "agotamiento de memoria", "mitigation": "--memory + OOM por contenedor", "escapeMarker": "ESCAPE-OK" },
+    { "id": "05_internal_network_scan", "attack": "escaneo de red interna", "mitigation": "segmentación: solo endpoint del motor", "escapeMarker": "ESCAPE-OK" },
+    { "id": "06_read_proc_sensitive", "attack": "lectura de /proc y secretos", "mitigation": "cap-drop ALL, seccomp, sin secretos montados", "escapeMarker": "LEAK" },
+    { "id": "07_docker_sock", "attack": "abrir docker.sock", "mitigation": "nunca se monta el socket de Docker", "escapeMarker": "ESCAPE-CRITICAL" }
+  ]
+}

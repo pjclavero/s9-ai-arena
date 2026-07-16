@@ -1,0 +1,10 @@
+services:
+  evil:
+    image: some/image
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - arena
+networks:
+  arena:
+    driver: bridge
