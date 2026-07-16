@@ -11,6 +11,8 @@ import { audit } from "../audit.js";
 import { badRequest, conflict, forbidden, notFound } from "../errors.js";
 import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
 import { applyTransition } from "../services/bots.js";
+// H6 (issue #10) · La tabla por equipos es la de E9; se importa, no se duplica.
+import { leagueTable } from "../../../tournament-worker/src/results.js";
 
 const FORMATS = ["league", "round_robin", "single_elimination", "double_elimination", "swiss", "teams"];
 const MODES = ["deathmatch", "team_deathmatch", "capture_the_flag", "zone_control"];
@@ -186,6 +188,38 @@ export function tournamentRoutes(db: Db): Router {
     // Simulacro con bots de ejemplo (E9.M): lo consume el tournament-worker de E9.
     await db("jobs").insert({ kind: "tournament_dry_run", payload: JSON.stringify({ tournamentId: t.id }) });
     res.status(202).json({ status: "queued" });
+  });
+
+  /**
+   * H6 (issue #10) · Clasificación por EQUIPOS de un torneo `teams`: la tabla
+   * de liga REAL de E9 (leagueTable con isTeams, desempates documentados en
+   * formats.ts), que E7 dejó "pendiente de reconciliación si la API pública
+   * quiere tabla por equipos". No se reimplementa: se importa.
+   */
+  defineOperation(router, "getTeamStandings", async (req, res) => {
+    const t = await db("tournaments").where({ id: req.params.tournamentId }).first().catch(() => null);
+    if (!t) throw notFound();
+    if (t.format !== "teams") {
+      throw conflict("not_a_team_tournament", "La clasificación por equipos solo existe en torneos de formato 'teams'");
+    }
+    const table = await leagueTable(db, t.id as string, /*isTeams*/ true);
+    const teamIds = table.map((r) => r.id).filter((id) => id !== null && id !== undefined);
+    const teams = teamIds.length > 0 ? await db("teams").whereIn("id", teamIds) : [];
+    const nameById = new Map(teams.map((row: Record<string, unknown>) => [row.id as string, row.name as string]));
+    res.setHeader("Cache-Control", "public, max-age=60");
+    res.json(
+      table.map((row, i) => ({
+        rank: i + 1,
+        teamId: row.id,
+        teamName: nameById.get(row.id),
+        points: row.points,
+        wins: row.wins,
+        losses: row.losses,
+        draws: row.draws,
+        scoreDiff: row.scoreDiff,
+        seed: row.seed,
+      })),
+    );
   });
 
   return router;
