@@ -91,16 +91,19 @@ class ReplayAgent implements BotAgent {
   }
 }
 
-/** Graba una batalla completa. Los agentes son los reales (o stubs). */
-export async function record(
-  config: BattleConfig,
-  attach: (b: Battle) => void,
-): Promise<Replay> {
-  const b = await Battle.create({ ...config, recordReplay: true });
-  attach(b);
-  const result = b.run();
-
-  const replay: Replay = {
+/**
+ * Construye el Replay de una batalla YA ejecutada (con `recordReplay: true`).
+ * Es la misma lógica que usa record(); se expone por separado para que quien
+ * ejecute la batalla por otro camino (p. ej. el bucle en vivo de ProtocolServer)
+ * pueda obtener el replay de SU ejecución sin duplicar este ensamblado.
+ * Llamar ANTES de b.free().
+ */
+export function replayFromBattle(b: Battle, result: BattleResult): Replay {
+  const config = b.config;
+  if (!config.recordReplay) {
+    throw new Error("La batalla no se creó con recordReplay: true; no hay comandos grabados");
+  }
+  return {
     header: {
       formatVersion: 1,
       battleId: config.battleId,
@@ -118,6 +121,17 @@ export async function record(
     stateHashes: b.stateHashes,
     result,
   };
+}
+
+/** Graba una batalla completa. Los agentes son los reales (o stubs). */
+export async function record(
+  config: BattleConfig,
+  attach: (b: Battle) => void,
+): Promise<Replay> {
+  const b = await Battle.create({ ...config, recordReplay: true });
+  attach(b);
+  const result = b.run();
+  const replay = replayFromBattle(b, result);
   b.free();
   return replay;
 }

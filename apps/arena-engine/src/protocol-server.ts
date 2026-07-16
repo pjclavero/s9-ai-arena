@@ -36,6 +36,7 @@ import {
   TICK_HZ,
 } from "../../../packages/game-rules/index.js";
 import { Battle, type BattleResult, type BotAgent } from "./sim/battle.js";
+import { replayFromBattle, type Replay } from "./replay.js";
 import deps from "./engine-deps.json" with { type: "json" };
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -471,6 +472,20 @@ export class ProtocolServer {
   }
   private teamOf(agent: WebSocketBotAgent): string {
     return this.battle.getVehicle(this.vehicleIdOf(agent))?.team ?? "";
+  }
+
+  /**
+   * Replay de ESTA ejecución en vivo (batalla terminada y creada con
+   * `recordReplay: true`). Contiene los comandos REALMENTE aplicados por el motor
+   * — incluidos los ticks en los que un bot no llegó a tiempo (timeout ⇒ sin
+   * comando) — así que `verify()` de replay.ts puede comprobar que la partida en
+   * vivo es autoconsistente: re-simulada desde su cabecera reproduce bit a bit
+   * sus propios hashes. Reutiliza el ensamblado de record(); no lo duplica.
+   */
+  getReplay(): Replay {
+    const result = this.battle.getResult();
+    if (!result) throw new Error("La batalla aún no ha terminado; no hay replay que devolver");
+    return replayFromBattle(this.battle, result);
   }
 
   waitForResult(): Promise<BattleResult> {

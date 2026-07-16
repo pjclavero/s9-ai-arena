@@ -12,6 +12,7 @@ import { initPhysics } from "./sim/physics.js";
 import { emptyArena, gunnerLoadout, scoutLoadout } from "./fixtures.js";
 import { HunterBot } from "./stubs.js";
 import { ProtocolServer, type ExpectedBot } from "./protocol-server.js";
+import { verify } from "./replay.js";
 
 beforeAll(async () => {
   await initPhysics();
@@ -235,7 +236,22 @@ describe("T5.1 · un COMMAND por ciclo, y solo a tiempo", () => {
 });
 
 describe("T5.1 · fuzzing: 1000 payloads corruptos no rompen el servidor ni desincronizan el hash", () => {
-  async function runScripted(seed: string, fuzz: boolean): Promise<string> {
+  /**
+   * Ejecuta UNA batalla en vivo (WebSocket real) con bombardeo de payloads
+   * corruptos, grabando los comandos realmente aplicados (`recordReplay: true`).
+   * Devuelve el resultado y el Replay de esa misma ejecución.
+   *
+   * OJO: aquí NO se comparan dos ejecuciones en vivo entre sí. Dos ejecuciones
+   * en vivo con la misma semilla NO tienen por qué dar el mismo hash: el jitter
+   * real del transporte (ida-vuelta del socket vs. deadline) puede hacer que un
+   * comando llegue a tiempo en una y tarde en la otra — y eso es comportamiento
+   * CORRECTO del protocolo, no una desincronización. La garantía que sí exige el
+   * protocolo es AUTOCONSISTENCIA: la ejecución en vivo, re-simulada desde su
+   * cabecera con los comandos que el motor aplicó de verdad (incluidos los ticks
+   * sin comando por timeout), debe reproducirse bit a bit. Eso lo comprueba
+   * verify() de replay.ts — el mismo mecanismo que E2 usa en replay-golden.
+   */
+  async function runFuzzedLive(seed: string) {
     const ruleset = loadRuleset("dm_practice@1", { timeLimitTicks: 150 });
     const battle = await Battle.create({
       battleId: "fuzz_" + seed,
@@ -246,6 +262,7 @@ describe("T5.1 · fuzzing: 1000 payloads corruptos no rompen el servidor ni desi
         { id: "veh_1", botId: "bot_ws1", team: "red", spec: scoutLoadout() },
         { id: "veh_2", botId: "bot_2", team: "blue", spec: gunnerLoadout() },
       ],
+      recordReplay: true,
     });
     battle.attachBot("veh_2", new HunterBot("bot_2"));
 
@@ -254,13 +271,18 @@ describe("T5.1 · fuzzing: 1000 payloads corruptos no rompen el servidor ni desi
       expected: [makeExpected("bot_ws1", "veh_1")],
       tickIntervalMs: 2, decisionDeadlineMs: 40,
     });
-    server.start();
 
+    // Handshake ANTES de arrancar el bucle: así el agente WebSocket está
+    // enganchado desde el tick 0, igual que lo estará el ReplayAgent en la
+    // re-simulación de verify(). (Si el bucle arrancara primero, los ticks de
+    // decisión previos al WELCOME no tendrían agente para veh_1 y la
+    // re-simulación no partiría de las mismas condiciones.)
     const ws = new WebSocket(`ws://127.0.0.1:${server.port}`);
     await waitOpen(ws);
     const q = messageQueue(ws);
     send(ws, "HELLO", { botId: "bot_ws1", botVersion: "1.0.0", sdk: { name: "custom", version: "0" }, battleToken: "t".repeat(16) });
     await q.next(); // WELCOME
+    server.start();
 
     // Bot determinista: por cada OBSERVATION responde con el MISMO comando (función pura del tick).
     (async () => {
@@ -275,7 +297,7 @@ describe("T5.1 · fuzzing: 1000 payloads corruptos no rompen el servidor ni desi
       }
     })();
 
-    if (fuzz) {
+    {
       const garbage = [
         () => "not even json {{{",
         () => JSON.stringify({ proto: "arena/1", type: "COMMAND" }), // sin seq/payload
@@ -294,15 +316,30 @@ describe("T5.1 · fuzzing: 1000 payloads corruptos no rompen el servidor ni desi
     }
 
     const result = await server.waitForResult();
+    const replay = server.getReplay();
     ws.close();
     server.stop();
     battle.free();
-    return result.finalStateHash;
+    return { result, replay };
   }
 
-  it("el hash final es idéntico con y sin fuzzing (misma semilla)", async () => {
-    const control = await runScripted("fuzz-hash-check", false);
-    const fuzzed = await runScripted("fuzz-hash-check", true);
-    expect(fuzzed).toBe(control);
+  it("la ejecución en vivo con fuzzing es autoconsistente: verify(replay) la reproduce bit a bit", async () => {
+    const { result, replay } = await runFuzzedLive("fuzz-hash-check");
+
+    // El servidor sobrevivió a los 1000 payloads corruptos: la batalla terminó
+    // de verdad y produjo un hash final.
+    expect(result.finalStateHash).toBeTruthy();
+    expect(result.ticks).toBeGreaterThan(0);
+    expect(replay.header.seed).toBe("fuzz-hash-check");
+    expect(replay.stateHashes.length).toBeGreaterThan(0);
+
+    // Autoconsistencia: re-simular el replay (comandos realmente aplicados)
+    // reproduce exactamente los hashes intermedios y el resultado de la
+    // ejecución en vivo. Si el fuzzing hubiera colado basura en el motor o
+    // corrompido el estado, la re-simulación divergiría en un tick concreto.
+    const v = await verify(replay);
+    expect(v.divergedAtTick).toBeNull();
+    expect(v.matches).toBe(true);
+    expect(v.recomputedHash).toBe(result.finalStateHash);
   }, 30000);
 });

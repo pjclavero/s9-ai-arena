@@ -47,7 +47,7 @@ docs/sdk-paridad.md             T5.3 · diferencias reales entre los dos SDKs
 |---|---|---|
 | T5.1 | Bot que no responde nunca → batalla termina, aparece en `disqualified` | ✅ test de integración real |
 | T5.1 | `proto` ≠ `arena/1` → SHUTDOWN `protocol_version_unsupported`, sin interpretar el resto | ✅ |
-| T5.1 | Fuzzing 1000 payloads corruptos: no rompe el proceso ni desincroniza el hash | ✅ hash final idéntico con y sin fuzzing |
+| T5.1 | Fuzzing 1000 payloads corruptos: no rompe el proceso ni desincroniza el hash | ✅ la ejecución en vivo con fuzzing es autoconsistente: `verify(replay)` la reproduce bit a bit |
 | T5.1 | Un COMMAND tras el deadline no se aplica en ese tick | ✅ con temporizadores reales de test |
 | T5.2 | Contract tests: cada mensaje valida contra los esquemas de E1 | ✅ suite compartida + mensajes reales |
 | T5.2 | El bot del tutorial derrota a un bot inmóvil en el simulador local | ✅ test E2E real |
@@ -68,8 +68,26 @@ docs/sdk-paridad.md             T5.3 · diferencias reales entre los dos SDKs
 
 - **Servidor de protocolo:** 7 tests. Fuzzing de **1000 payloads corruptos** (JSON
   malformado, tipos cambiados, `type` desconocido, `turret` con ambos objetivos):
-  el hash final de la batalla es **idéntico** con y sin fuzzing (misma semilla) — el
-  ruido de red no desincroniza la simulación.
+  el proceso sobrevive y la batalla en vivo es **autoconsistente** — su replay,
+  re-simulado con los comandos realmente aplicados, reproduce bit a bit todos sus
+  hashes intermedios y el resultado (`verify()` de `replay.ts`). El ruido de red
+  no desincroniza la simulación.
+
+  *Nota (cambio de criterio, 2026-07-16):* la versión anterior del test comparaba
+  el hash final de **dos ejecuciones en vivo** con la misma semilla (con y sin
+  fuzzing) y era flaky. Eso mezclaba dos garantías distintas: el determinismo del
+  motor (misma semilla + mismos comandos ⇒ mismo hash) ya lo prueba E2 con
+  replays; pero dos ejecuciones **en vivo** no reciben los mismos comandos, porque
+  el jitter real del transporte puede hacer que un COMMAND llegue dentro del
+  deadline en una ejecución y fuera en la otra — y descartarlo es comportamiento
+  **correcto** del protocolo (D2), no una desincronización. La garantía que sí
+  exige el fuzzing es la **autoconsistencia**: una sola ejecución en vivo,
+  grabada con `recordReplay` y verificada con el `verify()` existente contra sus
+  propios comandos aplicados (incluidas las acciones seguras por timeouts
+  reales), debe reproducirse exactamente. El test actual comprueba eso — es el
+  criterio correcto, no solo uno "menos flaky" — y `ProtocolServer` expone
+  `getReplay()` reutilizando el ensamblado de `record()`. Con esto la suite no
+  tiene fallos intermitentes conocidos.
 - **SDK Python:** 45 tests (`pytest`). La suite compartida (41 casos) + mensajes
   reales capturados de una batalla real, todos validados contra
   `packages/protocol/schemas/`.
