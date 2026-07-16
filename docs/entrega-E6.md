@@ -194,3 +194,48 @@ Con autorización explícita del operador se verificó E6 en VM108 (Docker CE 29
   Vías: restaurar la salida a internet de Docker en VM108 (hallazgo de infraestructura,
   la v1 se desplegó allí en su día) o ejecutar los jobs de CI de `e6-security.yml` en
   GitHub Actions.
+
+## Cierre H1/H4/H7 + guards (2026-07-16)
+
+Rama `fix-seguridad-ci` (base e59d9e8, dosier E1–E12 integrado): cierre de los fallos
+de seguridad y CI de `docs/auditoria-2026-07-16.md` (issues #5, #8, #11, #12, #13).
+
+- **H1 (issue #5, P1)** — Los builtins peligrosos de la stdlib (`socket`, `subprocess`,
+  `ctypes`… en Python; `child_process`, `net`, `dgram`, `fs`… en Node, también con
+  prefijo `node:`) ya no son solo hallazgo: la política `dangerousBuiltins` de
+  `config.ts` (lista configurable por runtime) los **BLOQUEA en `static_analysis` por
+  defecto** (`mode: "block"`; `"audit"` conserva el comportamiento anterior). El
+  hallazgo de auditoría `dangerous_import` se registra con ambas políticas. El sandbox
+  (T6.2) sigue siendo la defensa principal; esto es defensa en profundidad: un bot
+  hostil de solo-stdlib ya no llega a `validated`. El GD-7 de E12
+  (`tests/gamedays/gameday-m3.test.ts`) se ajustó documentando la nueva expectativa.
+- **Guard de placeholders (issue #12)** — Nuevo `src/digest-guard.ts`: un sha256 de 64
+  hex con el mismo carácter repetido (los `000…0`/`111…1` del MVP) es placeholder. El
+  bot-manager se niega a lanzar bots sobre él (`buildRunArgs()`/`launch()` lanzan
+  `PlaceholderDigestError`: *"digests placeholder: ejecuta el build real"*) y
+  `scripts/verify-runtime-digests.ts` añade `placeholderViolations()` (barre
+  `DIGESTS.lock`, los `FROM` de los Dockerfiles y los `--hash` de los lockfiles de
+  `runtimes/`), de modo que la CI de `e6-security.yml` **no da OK mientras queden
+  placeholders** (hoy: 9 detectados). Tests en `tests/digest-guard.test.ts`.
+- **Estados E6↔E7 (issue #13)** — El pipeline termina en `botVersionState="validated"`
+  (máquina 17.1; antes `published`), con evento `build.validated`. La etapa `publish`
+  del contrato OpenAPI se mantiene (publica el ARTEFACTO inmutable); publicar la
+  versión es acción explícita del dueño vía E7. El adaptador
+  `apps/api/src/services/e6-bot-manager.ts` no cambia de comportamiento (ya persistía
+  `passed → validated`).
+- **H4 (issue #8)** — `ci.yml` etapa 5 construye las **8 imágenes** de servicio (antes
+  2): gateway y arena-engine con Dockerfile propio; web, api, tournament-worker,
+  bot-manager, map-service y replay-service con
+  `infrastructure/docker/node-service/Dockerfile` + `APP_PATH`, como en el Compose.
+  Validado por parseo YAML (el primer run real de la CI sigue pendiente, issue #14).
+- **H7 (issue #11)** — Corregidos 5 de los 7 errores de `tsc --noEmit` (solo tipos):
+  2 en `apps/map-service/src/generate/index.ts` y 3 en `packages/module-catalog`.
+  Los 2 restantes son de `apps/arena-engine/src/sim/battle.ts` (equipo E2, `src/sim`
+  intocable): detalle exacto y corrección propuesta comentados en el issue #11. El
+  typecheck sigue `continue-on-error` hasta quedar a 0.
+
+Suite completa tras el cierre (`npm test -- --maxWorkers=2`): **658 tests pasan /
+1 falla (zstd, entorno Node 20, preexistente) / 3 skipped** — línea base previa
+646/1/3; los +12 son los tests nuevos de estas correcciones (2 de política H1 en
+static-analysis, 2 en pipeline, 8 del guard de digests) y el único rojo sigue
+siendo el de entorno.
