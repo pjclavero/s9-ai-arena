@@ -111,10 +111,13 @@ export class BuildPipeline {
     }
 
     build.status = "passed";
-    build.botVersionState = "published";
+    // Cap. 17.1 (máquina de estados de E7, issue #13): el pase del pipeline deja la
+    // versión en `validated`; PUBLICAR es una acción explícita del dueño, no del
+    // pipeline. (Antes E6 marcaba "published" aquí; E7 ya aplicaba 17.1 al mapear.)
+    build.botVersionState = "validated";
     build.finishedAt = this.now();
     this.deps.store.save(build);
-    this.audit.record({ type: "build.published", botId: build.botId, version: build.version, userId: build.ownerUserId, correlationId, detail: { buildId: build.id, artifactHash: build.artifactHash } });
+    this.audit.record({ type: "build.validated", botId: build.botId, version: build.version, userId: build.ownerUserId, correlationId, detail: { buildId: build.id, artifactHash: build.artifactHash } });
     return this.deps.store.get(build.id)!;
   }
 
@@ -156,11 +159,19 @@ export class BuildPipeline {
         const res = analyze(sub.runtime, sub.files, cfg);
         stage.logs.push(`imports: ${res.imports.join(", ") || "(ninguno externo)"}`);
         if (res.dangerousImports.length) {
+          // El hallazgo de auditoría se registra SIEMPRE (con cualquier política).
           stage.logs.push(`imports peligrosos señalados: ${res.dangerousImports.join(", ")}`);
-          this.audit.finding({ category: "dangerous_import", severity: "medium", botId: sub.botId, version: sub.version, userId: sub.ownerUserId, correlationId, summary: `imports de red/proceso/FS: ${res.dangerousImports.join(", ")}`, detail: { imports: res.dangerousImports } });
+          this.audit.finding({ category: "dangerous_import", severity: "medium", botId: sub.botId, version: sub.version, userId: sub.ownerUserId, correlationId, summary: `imports de red/proceso/FS: ${res.dangerousImports.join(", ")}`, detail: { imports: res.dangerousImports, policy: cfg.dangerousBuiltins.mode } });
         }
         if (res.disallowedImports.length) {
           stage.message = `import(s) de paquete no permitido: ${res.disallowedImports.join(", ")}`;
+          return false;
+        }
+        // H1 (issue #5): política bloqueante por defecto para builtins peligrosos de la
+        // stdlib. El sandbox (T6.2) sigue siendo la defensa principal; esto es defensa
+        // en profundidad mientras no esté verificado en vivo.
+        if (cfg.dangerousBuiltins.mode === "block" && res.dangerousImports.length) {
+          stage.message = `import(s) de builtin peligroso bloqueado(s) por política: ${res.dangerousImports.join(", ")} (el sandbox sigue siendo la defensa principal; ver issue #5)`;
           return false;
         }
         stage.logs.push("análisis estático ok");
@@ -267,7 +278,10 @@ export class BuildPipeline {
         return true;
       }
       case "publish": {
-        stage.logs.push(`versión ${sub.version} de ${sub.botId} publicada (inmutable)`);
+        // La etapa `publish` del contrato OpenAPI publica el ARTEFACTO (inmutable) en
+        // el registro interno; el ESTADO de la versión queda en `validated` (17.1):
+        // exponerla públicamente es una acción explícita del dueño vía la API de E7.
+        stage.logs.push(`artefacto de la versión ${sub.version} de ${sub.botId} publicado (inmutable); versión validated`);
         return true;
       }
     }

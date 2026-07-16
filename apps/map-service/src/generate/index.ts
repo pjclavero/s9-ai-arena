@@ -67,12 +67,20 @@ export function generateMap(params: GenerateParams, seed: string): GenerateResul
   return { map: lastMap!, attempts: p.maxAttempts, seed };
 }
 
-function canonicalParams(p: Required<GenerateParams>): string {
+/**
+ * Parámetros con los DEFAULTS aplicados: todo obligatorio salvo mapId, que no tiene
+ * default (si falta se deriva de la semilla). Es exactamente el tipo del spread
+ * `{ ...DEFAULTS, ...params }` — corrige 2 errores de tsc de H7 (issue #11) sin
+ * cambiar lógica.
+ */
+type ResolvedParams = Required<Omit<GenerateParams, "mapId">> & Pick<GenerateParams, "mapId">;
+
+function canonicalParams(p: ResolvedParams): string {
   return JSON.stringify(Object.keys(p).sort().map((k) => [k, (p as any)[k]]));
 }
 
 function buildSymmetricMap(
-  p: Required<GenerateParams>,
+  p: ResolvedParams,
   rng: Rng,
   seed: string,
   attempt: number,

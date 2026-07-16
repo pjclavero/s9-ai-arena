@@ -230,10 +230,12 @@ describe("Game day M3 · guiones de caos con comportamiento esperado predefinido
     const auth = { Authorization: `Bearer ${dev}` };
 
     // Bot hostil nuevo: NO usa fixtures de E6 (regla de independencia de la DoD).
-    // Exfiltra por HTTP con `requests` (paquete de terceros FUERA de la allowlist):
-    // ese import es un motivo de RECHAZO real en el análisis estático (a diferencia
-    // de socket/subprocess de stdlib, que solo se SEÑALAN como hallazgo — ver la
-    // sección de hallazgos de docs/entrega-E12.md y el acta del game day).
+    // EXPECTATIVA AJUSTADA tras el cierre de H1 (issue #5, 2026-07-16): cuando este
+    // game day se escribió, socket/subprocess de stdlib solo se SEÑALABAN como
+    // hallazgo y el rechazo dependía del import de `requests` (fuera de allowlist).
+    // Ahora la política por defecto de E6 BLOQUEA también los builtins peligrosos de
+    // stdlib en static_analysis (defensa en profundidad; el sandbox sigue siendo la
+    // defensa principal), así que este bot cae por AMBOS motivos.
     const hostileFiles = [
       { path: "requirements.txt", content: "arena-sdk==1.0.0\nrequests==2.31.0\n" },
       { path: "requirements.lock", content: "arena-sdk==1.0.0\nrequests==2.31.0\n" },
@@ -242,8 +244,8 @@ describe("Game day M3 · guiones de caos con comportamiento esperado predefinido
         path: "src/bot.py",
         content: [
           "import os",
-          "import socket        # exfiltración de red (stdlib: solo señalado)",
-          "import subprocess    # ejecución de comandos (stdlib: solo señalado)",
+          "import socket        # exfiltración de red (stdlib: BLOQUEADO por política H1)",
+          "import subprocess    # ejecución de comandos (stdlib: BLOQUEADO por política H1)",
           "import requests      # HTTP de terceros: FUERA de la allowlist → rechazo",
           "from arena_sdk import Bot",
           "",
@@ -272,6 +274,9 @@ describe("Game day M3 · guiones de caos con comportamiento esperado predefinido
     expect(submit.body.status).toBe("failed"); // rechazado ANTES de ejecutarse
     const byName = Object.fromEntries(submit.body.stages.map((s: any) => [s.name, s.status]));
     expect(byName.static_analysis).toBe("failed"); // el análisis estático lo pilla
+    // H1 (issue #5): los builtins de stdlib ya no son solo hallazgo — bloquean.
+    const saStage = submit.body.stages.find((s: any) => s.name === "static_analysis");
+    expect(saStage.message).toMatch(/requests|builtin peligroso/);
 
     const v = await h.db("bot_versions").where({ bot_id: bot.body.id, version: version.body.version }).first();
     expect(v.state).toBe("rejected");
