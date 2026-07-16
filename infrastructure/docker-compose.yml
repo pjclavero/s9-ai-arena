@@ -380,10 +380,22 @@ services:
       BROADCAST_URL: ${BROADCAST_URL:-http://web:3000/broadcast}
       RTMPS_URL: ${RTMPS_URL:-rtmps://a.rtmps.youtube.com/live2}
       STREAM_KEY_FILE: /run/secrets/stream_key
+      # E11/T11.2: rtmps (emitir) | record (solo grabación a arena_replays/video, E11.M)
+      STREAM_MODE: ${STREAM_MODE:-rtmps}
+      # x264 por software (base); nvenc exige GPU con passthrough en Proxmox (runbook)
+      STREAM_ENCODER: ${STREAM_ENCODER:-x264}
+      STREAM_AUTOSTART: ${STREAM_AUTOSTART:-0}
+      STREAMER_CONTROL_PORT: "8090"
+      RECORD_DIR: /data/replays/video
       LOG_FORMAT: json
+    volumes:
+      # Solo para el modo grabación E11.M (clips a arena_replays/video).
+      - arena_replays:/data/replays
     secrets: [stream_key]
     healthcheck:
-      test: ["CMD-SHELL", "pgrep -x ffmpeg >/dev/null"]
+      # La API interna de control responde aunque la emisión esté parada; el
+      # estado de la emisión en sí lo vigila E10 por /metrics (streamer_up).
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8090/healthz >/dev/null"]
       interval: 30s
       timeout: 5s
       retries: 3
