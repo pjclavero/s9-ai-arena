@@ -20,6 +20,7 @@ import { tokenFor } from "../../api/src/testing/helpers.js";
 import { createApp } from "../../api/src/app.js";
 import { FakeBotManager } from "../../api/src/services/bot-manager.js";
 import { fromJsonl, verify } from "../../arena-engine/src/replay.js";
+import { decompress } from "../../replay-service/src/format.js";
 import { TournamentWorker } from "./worker.js";
 import { makeDefaultHandlers } from "./engine-executor.js";
 import { commitSeedBatch, deriveBattleSeed } from "./scheduler.js";
@@ -176,7 +177,8 @@ describe("T9.4 · commit-reveal de semillas", () => {
       // = verify() real del motor E2, hashes intermedios incluidos).
       const replayRes = await request(app).get(`/replays/${b.id}`).buffer(true);
       expect(replayRes.status).toBe(200);
-      const replay = fromJsonl(Buffer.from(replayRes.body).toString("utf8"));
+      // H2: el worker archiva por el almacén de E8 (comprimido); se descomprime como el visor.
+      const replay = fromJsonl(decompress(Buffer.from(replayRes.body)).toString("utf8"));
       const verdict = await verify(replay);
       expect(verdict.matches).toBe(true);
       expect(verdict.recomputedResult.finalStateHash).toBe(a.finalStateHash);

@@ -45,7 +45,6 @@ function scriptedExecutor(log: Map<string, number>, fail?: (ctx: BattleContext) 
       finalStateHash: `hash-${ctx.battle.id}`,
       disqualified: [],
       versions: { engine: "test" },
-      statsPerBot: Object.fromEntries(ctx.participants.map((p) => [p.bot_id, { score: ctx.battle.id }])),
     };
   };
 }
