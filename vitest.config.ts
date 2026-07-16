@@ -10,8 +10,10 @@ export default defineConfig({
       "@arena/sdk": fileURLToPath(new URL("./sdks/javascript/src/index.ts", import.meta.url)),
     },
   },
+  // JSX del panel web de E7 (apps/web): runtime automático de React.
+  esbuild: { jsx: "automatic" },
   test: {
-    include: ["apps/**/*.test.ts", "packages/**/*.test.ts", "sdks/**/*.test.ts", "example-bots/**/*.test.ts"],
+    include: ["apps/**/*.test.ts", "apps/**/*.test.tsx", "packages/**/*.test.ts", "sdks/**/*.test.ts", "example-bots/**/*.test.ts"],
     testTimeout: 180000,
     hookTimeout: 60000,
   },

@@ -308,6 +308,30 @@ describe("T7.3 loadouts (cap. 17.2)", () => {
     expect(loadouts.length).toBe(1);
   });
 
+  it("T7.4 bypass: una petición manual sobre presupuesto es re-verificada por el servidor (422)", async () => {
+    // El editor web bloquea esto en cliente; aquí lo enviamos a mano igualmente.
+    const bot = await newBotWithLoadout("bypass-bot");
+    const r = await request(app)
+      .post(`/bots/${bot.id}/loadouts`)
+      .set(auth(dev))
+      .send({
+        catalogVersion: "mvp@1",
+        chassis: "chassis.heavy@1",
+        modules: [
+          { slot: "drive", moduleId: "movement.tracks@1" },
+          { slot: "power", moduleId: "power.generator@1" },
+          { slot: "sensor_a", moduleId: "sensor.lidar360@1" },
+          { slot: "turret_main", moduleId: "weapon.cannon@1", ammo: "ammo.ap@1" },
+          { slot: "armor_front", moduleId: "armor.composite_front@1" },
+          { slot: "armor_left", moduleId: "armor.composite_left@1" },
+          { slot: "armor_right", moduleId: "armor.composite_right@1" },
+          { slot: "armor_rear", moduleId: "armor.composite_rear@1" },
+        ],
+      });
+    expect(r.status).toBe(422);
+    expect(r.body.violations.map((v: { code: string }) => v.code)).toContain("budget_exceeded");
+  });
+
   it("las referencias del loadout impiden borrar módulos del catálogo (integridad T7.1)", async () => {
     await expect(
       h.db("module_definitions")

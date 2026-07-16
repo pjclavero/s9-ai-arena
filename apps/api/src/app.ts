@@ -11,6 +11,8 @@ import { authRoutes } from "./routes/auth.js";
 import { userRoutes } from "./routes/users.js";
 import { teamRoutes } from "./routes/teams.js";
 import { botRoutes, buildRoutes } from "./routes/bots.js";
+import { catalogRoutes } from "./routes/catalog.js";
+import { adminRoutes } from "./routes/admin.js";
 import type { BotManagerClient } from "./services/bot-manager.js";
 import { E6PipelineBotManager } from "./services/e6-bot-manager.js";
 
@@ -44,6 +46,8 @@ export function createApp(cfg: AppConfig): express.Express {
   app.use(teamRoutes(cfg.db));
   app.use(botRoutes(cfg.db, cfg.botManager ?? new E6PipelineBotManager(cfg.db)));
   app.use(buildRoutes(cfg.db));
+  app.use(catalogRoutes(cfg.db));
+  app.use(adminRoutes(cfg.db));
 
   app.use((req: Request, res: Response) => {
     res.status(404).json({ error: "not_found", message: "Ruta no encontrada", correlationId: req.correlationId });
