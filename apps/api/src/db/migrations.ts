@@ -498,7 +498,68 @@ const m007_e9_queue: Migration = {
   },
 };
 
-export const MIGRATIONS: Migration[] = [m001_identity, m002_content, m003_bots, m004_competition, m005_results, m006_operations, m007_e9_queue];
+// E9 · T9.2/T9.3/T9.4 — calendario materializado, temporadas y auditoría.
+//  - matches gana slot/pairing (estructura del bracket con fuentes winner/loser),
+//    ganador y marca de final (modo visible, 19.1).
+//  - tournaments gana temporada (ratings por temporada, T9.3), K de Elo
+//    configurable por liga (ADR-E9-002) y campeón.
+//  - battles gana game_index (nº de juego dentro de la serie, para el
+//    intercambio de lados de T9.4) y spectator_mode ('delayed' por defecto,
+//    E8.M anti-coaching; la final se marca 'visible').
+//  - rating_events: libro mayor de rating (T9.3): idempotencia por batalla,
+//    reversión de batallas anuladas y reconstrucción histórica.
+const m008_e9_competition: Migration = {
+  name: "008_e9_competition",
+  async up(db) {
+    await db.raw(`
+      ALTER TABLE matches
+        ADD COLUMN slot           text,
+        ADD COLUMN pairing        jsonb NOT NULL DEFAULT '{}',
+        ADD COLUMN winner_bot_id  uuid REFERENCES bots(id) ON DELETE SET NULL,
+        ADD COLUMN winner_team_id uuid REFERENCES teams(id) ON DELETE SET NULL,
+        ADD COLUMN final          boolean NOT NULL DEFAULT false;
+      CREATE UNIQUE INDEX matches_tournament_slot_idx ON matches (tournament_id, slot);
+
+      ALTER TABLE tournaments
+        ADD COLUMN season_id       text NOT NULL DEFAULT 'season-1',
+        ADD COLUMN elo_k           double precision NOT NULL DEFAULT 24 CHECK (elo_k > 0),
+        ADD COLUMN champion_bot_id uuid REFERENCES bots(id) ON DELETE SET NULL;
+
+      ALTER TABLE battles
+        ADD COLUMN game_index     integer NOT NULL DEFAULT 1 CHECK (game_index >= 1),
+        ADD COLUMN spectator_mode text NOT NULL DEFAULT 'delayed' CHECK (spectator_mode IN ('delayed','visible'));
+
+      CREATE TABLE rating_events (
+        id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        battle_id     uuid NOT NULL REFERENCES battles(id) ON DELETE CASCADE,
+        bot_id        uuid NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        bot_version   integer NOT NULL,
+        season_id     text NOT NULL,
+        mode          text NOT NULL,
+        k             double precision NOT NULL,
+        rating_before double precision NOT NULL,
+        delta         double precision NOT NULL,
+        rating_after  double precision NOT NULL,
+        reverted      boolean NOT NULL DEFAULT false,
+        created_at    timestamptz NOT NULL DEFAULT now(),
+        -- Idempotencia (T9.3): una batalla solo puntúa UNA vez por bot.
+        UNIQUE (battle_id, bot_id)
+      );
+      CREATE INDEX rating_events_history_idx ON rating_events (bot_id, season_id, mode, created_at);
+    `);
+  },
+  async down(db) {
+    await db.raw(`
+      DROP TABLE IF EXISTS rating_events CASCADE;
+      ALTER TABLE battles DROP COLUMN game_index, DROP COLUMN spectator_mode;
+      ALTER TABLE tournaments DROP COLUMN season_id, DROP COLUMN elo_k, DROP COLUMN champion_bot_id;
+      DROP INDEX IF EXISTS matches_tournament_slot_idx;
+      ALTER TABLE matches DROP COLUMN slot, DROP COLUMN pairing, DROP COLUMN winner_bot_id, DROP COLUMN winner_team_id, DROP COLUMN final;
+    `);
+  },
+};
+
+export const MIGRATIONS: Migration[] = [m001_identity, m002_content, m003_bots, m004_competition, m005_results, m006_operations, m007_e9_queue, m008_e9_competition];
 
 class ProgrammaticMigrationSource {
   getMigrations() {
