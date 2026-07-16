@@ -1,0 +1,29 @@
+# CODEOWNERS — dosier 22.2 (E10 T10.1)
+#
+# Regla del dosier: los cambios en motor, protocolo, sandbox y runtimes exigen
+# revisión del equipo E6 (seguridad/sandbox). Mientras no existan equipos de
+# GitHub (@pjclavero/e6-seguridad, etc.), el propietario del repositorio actúa
+# como revisor de E6. Cuando se creen los equipos, sustituir @pjclavero por
+# @pjclavero/e6-seguridad en las rutas marcadas [E6].
+#
+# NOTA para el operador: CODEOWNERS solo bloquea el merge si la protección de
+# rama de main activa "Require review from Code Owners". Ver pasos del operador
+# en docs/despliegue.md (sección "Protección de ramas").
+
+# Por defecto, todo requiere al menos una revisión del propietario.
+*                           @pjclavero
+
+# [E6] Motor de simulación determinista.
+/apps/arena-engine/         @pjclavero
+
+# [E6] Protocolo y contratos entre bots y motor.
+/packages/protocol/         @pjclavero
+/sdks/shared-contract-tests/ @pjclavero
+
+# [E6] Sandbox: build y ejecución de código no confiable.
+/apps/bot-manager/          @pjclavero
+/runtimes/                  @pjclavero
+
+# [E10] Infraestructura, CI y despliegue.
+/infrastructure/            @pjclavero
+/.github/                   @pjclavero
