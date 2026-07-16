@@ -9,22 +9,24 @@
  */
 import { updateStandings } from "../../api/src/services/standings.js";
 import { leagueTable } from "./results.js";
+import { applyBattleRating, seasonRatings, INITIAL_RATING } from "./ratings.js";
 import type { JobRow } from "./queue.js";
 import type { HandlerContext } from "./worker.js";
-
-export const INITIAL_RATING = 1000;
 
 export async function handleUpdateStandings(job: JobRow, ctx: HandlerContext): Promise<void> {
   const db = ctx.db;
   const tournamentId = String(job.payload.tournamentId ?? "");
+  const battleId = String(job.payload.battleId ?? "");
   const t = await db("tournaments").where({ id: tournamentId }).first();
   if (!t) throw new Error(`update_standings: torneo ${tournamentId} inexistente`);
+
+  // T9.3: rating Elo de la batalla OFICIAL (idempotente por battle_id).
+  if (battleId) await applyBattleRating(db, battleId);
 
   const isTeams = t.format === "teams";
   const table = await leagueTable(db, tournamentId, isTeams);
   if (!isTeams) {
-    const ratingRows = await db("ratings").where({ season_id: t.season_id, mode: t.mode });
-    const ratings = new Map<string, number>(ratingRows.map((r: Record<string, unknown>) => [r.bot_id as string, r.rating as number]));
+    const ratings = await seasonRatings(db, t.season_id, t.mode);
     await updateStandings(
       db,
       t.season_id,
