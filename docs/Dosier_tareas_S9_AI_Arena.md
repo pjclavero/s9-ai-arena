@@ -1074,3 +1074,735 @@ Verificación final sobre el servidor de producción (VM dedicada en el Proxmox 
 **Declaración de fin de proyecto**
 
 > Con los doce puntos anteriores verificados, S9 AI Arena v1.0 queda desplegada y el proyecto definido por el Dosier técnico v1.0 se declara terminado. Cualquier trabajo posterior pertenece a la evolución futura (capítulo 29 del dosier técnico) y requiere un nuevo ciclo de planificación.
+
+---
+
+## 15. Ronda 2 — Remediación, integración, evolución y retirada de v1
+
+*Añadido el 2026-07-16 tras la auditoría consolidada. Esta parte amplía el dosier con el
+trabajo que va **después** de tener E1–E12 implementados: corregir los errores detectados,
+cerrar la integración, mejorar producto y gráficos, añadir modos de combate, retirar el
+prototipo v1 y, en último lugar, todo lo que solo puede probarse con la plataforma desplegada.*
+
+**Documento hermano obligatorio:** [auditoria-consolidada-2026-07-16.md](auditoria-consolidada-2026-07-16.md).
+Cada tarea de aquí cita los `ERR-*`/`MEJ` de ese documento, donde está el detalle técnico y el
+`archivo:línea`. Este dosier dice **quién lo hace y cómo se prueba**; el otro, **qué está mal y
+por qué**.
+
+### 15.0 Cómo usar esta ronda
+
+- **Convenciones idénticas al resto del dosier:** cada tarea tiene ID `Rx.y`, un prompt
+  autocontenido y una lista de Pruebas / Definition of Done objetiva. Una tarea solo se cierra
+  cuando sus pruebas están automatizadas y en verde.
+- **Prioridad = orden de bandas.** Se ejecutan por bandas: **R-P0** (errores bloqueantes) →
+  **R-P1** (integración y robustez) → **R-P2** (producto, gráficos y modos baratos) → **R-P3**
+  (evolución avanzada). Dentro de una banda las tareas de equipos distintos van en paralelo.
+- **Regla de oro de esta ronda (la que explica casi todos los P0):** *toda ruta que no se
+  pueda verificar debe **fallar cerrada** y reportarse como **omitida**, nunca como superada.*
+  El pipeline no debe devolver `passed`, la CI no debe decir `OK` ni el estado ser `validated`
+  cuando la etapa no se ejecutó.
+- **Lo que necesita despliegue se deja para el final, a propósito.** Las bandas R-P0…R-P3 están
+  diseñadas para completarse **en local / CI sin desplegar la v2**. Todo lo que solo puede
+  probarse con la plataforma en marcha se agrupa en la banda final **R-DEPLOY**. Antes de
+  R-DEPLOY se ejecuta **R-V1** (sacar el prototipo v1 del camino).
+- **Nuevos roles de esta ronda:** se reutilizan los equipos E1–E12 y se añade **EA · Arte y
+  Dirección Visual** (assets, sprites, efectos y HUD del visor), que en el dosier original no
+  existía porque el MVP se dibujaba con primitivas.
+
+**Mapa de bandas**
+
+| Banda | Objetivo | ¿Necesita despliegue? |
+|---|---|---|
+| **R-P0** | Errores bloqueantes: funcionales y de seguridad | No (local/CI) |
+| **R-P1** | Integración, robustez, CI honesta, tipos en verde | No (local/CI) |
+| **R-P2** | Producto usable, gráficos, HUD, modos de combate baratos | No (local/CI) |
+| **R-P3** | Modos avanzados y evolución que toca el motor | No (local/CI) |
+| **R-V1** | Retirar el prototipo v1 del despliegue y del repo activo | No |
+| **R-DEPLOY** | Todo lo verificable solo con la v2 desplegada | **Sí** |
+
+---
+
+### Banda R-P0 · Errores bloqueantes
+
+*Nada de abrir la plataforma a terceros ni jugar torneos "de verdad" hasta cerrar esta banda.
+Contiene los dos críticos funcionales (los bots no disparan; el acústico no oye) y los tres
+críticos de seguridad (secreto JWT, sandbox que no se ejecuta, docker.sock).*
+
+#### R1.1 — Propagar la munición del loadout al motor (ERR-ENG-08 / issue #15) · Equipo E3+E2
+
+**Prompt de ejecución**
+
+```
+Corrige resolveVehicle (packages/module-catalog/resolve/index.ts) para que lea entry.ammo de
+cada módulo-arma del loadout canónico y materialice el módulo de munición correspondiente en el
+VehicleSpec resuelto, de forma que el motor (combat.ts ammoFor/fire) encuentre munición y el
+disparo no salga como "no_ammo". Elimina el "doble-ammo" de los fixtures resolve/archetypes.ts
+(el módulo ammo_main añadido a mano) y regenera los golden de resolve/ para que reflejen la
+forma canónica real (munición como propiedad del arma), no la pre-expandida. Añade una prueba
+vertical obligatoria que recorra loadout persistido → resolveVehicle → inicio de batalla →
+consumo de munición → disparo → impacto → daño registrado, usando el loadout de ejemplo real
+(loadout-medium-gunner.json), sin fixtures que dupliquen munición.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] Un bot construido desde `loadout-medium-gunner.json` dispara y hace daño en una batalla real (test que asevera daño > 0, no solo que haya campeón).
+- [ ] Los golden de `resolve/` se comparan contra la salida real de `resolveVehicle`, sin `ammo_main` pre-expandido.
+- [ ] El E2E de torneo (`tournament-e2e.test.ts`) verifica que al menos un disparo impacta; falla si algún bot resuelve sin munición.
+- [ ] Prueba de regresión: un loadout sin `ammo` en un arma que la exige se rechaza en validación con el código de violación de E3, no en runtime.
+
+#### R1.2 — Reparar el sensor acústico y su test vacuo (ERR-ENG-01) · Equipo E2
+
+**Prompt de ejecución**
+
+```
+Corrige el doble borrado de sonidos en arena-engine/src/sim/battle.ts: implementa doble búfer
+de sonidos de forma que las observaciones de un ciclo de decisión reciban los sonidos
+acumulados durante el ciclo ANTERIOR, e intercambia los búferes DESPUÉS de construir todas las
+observaciones, no antes. Unifica las dos rutas de observación (el bucle interno y
+observationFor()) para que vean exactamente el mismo conjunto de sonidos. Endurece
+sensors-fog.test.ts para que EXIJA que un vehículo con sensor.acoustic perciba un disparo
+cercano (sources.length > 0), eliminando el guard condicional que hoy hace que el test pase con
+el array vacío.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] Test que dispara cerca de un vehículo con acústico y asevera que su observación contiene la fuente (dirección aproximada); falla si `sources` está vacío.
+- [ ] Las dos rutas de observación producen el mismo bloque acústico para el mismo tick (test de coherencia).
+- [ ] La corrección no altera el hash de estado de las batallas golden existentes (el sonido no entra en el hash; regenerar solo si cambia deliberadamente).
+
+#### R1.3 — Publicar los sensores que faltan en el catálogo (ERR-ENG-01 dependiente) · Equipo E3
+
+**Prompt de ejecución**
+
+```
+Añade a packages/module-catalog/data los JSON de sensor.acoustic y sensor.proximity conformes
+al esquema de E1, con masa, coste, consumo y parámetros coherentes con el balance v1 (el motor
+ya los implementa en sensors.ts; hoy ningún vehículo puede montarlos porque no existen como
+datos). Documenta sus valores en docs/balance/. Requiere R1.2 cerrado para que el acústico
+funcione de verdad.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] Ambos sensores validan contra el esquema de E1 y son montables en un loadout legal.
+- [ ] Un bot con `sensor.acoustic` percibe disparos en una batalla real (integra con R1.2).
+- [ ] El balance documenta cada valor.
+
+#### R1.4 — Secreto JWT: fallar cerrado y leer por archivo (ERR-SEC-01) · Equipo E7
+
+**Prompt de ejecución**
+
+```
+Elimina el literal "dev-only-jwt-secret" de apps/api/src/auth/tokens.ts. Implementa la lectura
+de secretos por archivo (JWT_SECRET_FILE con precedencia sobre JWT_SECRET) y haz que el arranque
+FALLE si no hay secreto explícito, sin depender de NODE_ENV (invierte la lógica: exigir secreto
+salvo que se declare explícitamente un modo desarrollo). Separa el secreto de firma de tickets
+de espectador del de sesión, y asigna audience/issuer distintos por tipo de token; verifica el
+algoritmo explícitamente en jwt.verify.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] Arrancar la API sin secreto configurado lanza y no levanta el servidor (test).
+- [ ] Un ticket de espectador firmado con el secreto de sesión (o viceversa) es rechazado por `audience` (test).
+- [ ] `JWT_SECRET_FILE` tiene precedencia y el literal ya no existe en el repo (grep en CI).
+- [ ] `jwt.verify` fija algoritmo; un token con `alg` distinto se rechaza.
+
+#### R1.5 — Sandbox: fallar cerrado sin runner (ERR-SEC-03) · Equipo E6
+
+**Prompt de ejecución**
+
+```
+Cambia el pipeline de bot-manager para que la ausencia de agentResolver (las etapas que ejecutan
+el bot: protocol_test, smoke_battle, resource_limits) RECHACE el build en vez de aprobarlo.
+Distingue en el tipo de retorno de cada etapa entre "superada", "fallida" y "no ejecutable", y
+trata "no ejecutable" como bloqueante para cualquier transición a validated. Mientras no exista
+entorno con Docker, el estado terminal de un bot cuyo sandbox no se pudo ejecutar debe ser
+rejected o un estado explícito "no verificable", nunca validated. Añade el resolver real de
+sandbox como dependencia obligatoria en producción.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] Un build sin `agentResolver` termina en `rejected`/"no verificable", nunca en `validated` (test).
+- [ ] Las tres etapas de ejecución, si no corren, cuentan como bloqueantes (test por etapa).
+- [ ] Ningún camino de código lleva un bot a `validated` sin haber ejecutado el sandbox (test de la máquina de estados).
+
+#### R1.6 — CI del sandbox: dejar de pasar en verde sin probar (ERR-SEC-04) · Equipo E6+E10
+
+**Prompt de ejecución**
+
+```
+Reescribe tests/sandbox-escape/run-escape-suite.sh y el job de .github/workflows/e6-security.yml
+para que: capturen el código de salida de docker run por separado y ABORTEN con error si el
+contenedor no llegó a ejecutarse (nada de "|| true" que trague fallos); exijan que cada bot
+hostil emita un marcador positivo de "intenté el ataque y fui bloqueado", de modo que el silencio
+se interprete como fallo; rechacen digests placeholder reutilizando el guard digest-guard.ts; y
+marquen el job como SKIPPED (no passed) mientras no haya runner con Docker y digests reales.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] Con la imagen `@sha256:PENDIENTE`, el job termina en `skipped` o `failed`, jamás en `passed` (verificado forzando el caso).
+- [ ] Un contenedor que no arranca hace fallar el job (test del script con un digest inválido).
+- [ ] Cada uno de los 7 vectores de escape produce un marcador positivo de bloqueo; su ausencia falla el job.
+
+#### R1.7 — Retirar el montaje de docker.sock (ERR-SEC-02) · Equipo E6+E10
+
+**Prompt de ejecución**
+
+```
+Elimina el montaje directo de /var/run/docker.sock del servicio bot-manager en
+infrastructure/docker-compose.yml. Interpón un proxy de API de Docker que exponga solo
+crear/arrancar/parar/inspeccionar con una allowlist estricta de parámetros que rechace
+privileged, bind-mounts, --network host y cambios de usuario; o migra a Docker rootless o a un
+runtime con aislamiento de kernel (gVisor/Kata/sysbox). Retira la excepción del bot-manager en
+scan-compose.mjs y alinéalo con complianceViolations de container-runner.ts como única fuente de
+verdad, de modo que cualquier servicio que monte docker.sock haga fallar el escáner. Aísla el
+nodo de build/ejecución de bots sin acceso a PostgreSQL, backups, secretos ni red administrativa.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] El escáner de Compose falla si algún servicio monta `docker.sock` directamente (test, sin excepciones).
+- [ ] El bot-manager lanza contenedores a través del proxy con allowlist; un intento de `privileged`/bind-mount es rechazado por el proxy (test).
+- [ ] El nodo de bots no tiene ruta de red a la BD ni a los secretos (verificación de segmentación).
+
+#### R1.8 — Rate-limit y bloqueo de login tras proxy (ERR-SEC-05) · Equipo E7
+
+**Prompt de ejecución**
+
+```
+Configura la confianza de proxy en Express de forma ACOTADA (declarando el salto/rango del
+gateway, no genérica) para que req.ip sea la IP real del cliente y no la del gateway. Verifica la
+coherencia con el modo "detrás del proxy de VM104" (dos saltos). Asegura que la cuota anónima y
+la clave de bloqueo de fuerza bruta (${ip}|${email}) usan la IP real. Añade un test que confirme
+que una X-Forwarded-For inyectada por un cliente externo NO altera la clave de límite.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] Con dos peticiones desde IPs distintas tras el gateway, la cuota anónima las cuenta por separado (test).
+- [ ] Una `X-Forwarded-For` falsificada desde fuera del gateway no cambia `req.ip` (test).
+- [ ] El bloqueo de login se aplica por IP+email real, no `<gateway>|email` (test que demuestra que no se puede bloquear una cuenta ajena desde una sola IP externa con XFF falsa).
+
+#### R1.9 — `zone_control` jugable + King of the Hill (ERR-ENG-03 / MEJ-modo) · Equipo E2
+
+**Prompt de ejecución**
+
+```
+Corrige zone_control en modes.ts: separa propiedad de puntuación de modo que solo se puntúe con
+presencia real de un equipo en la zona (elimina el caso teamsInside.size == 0 como puntuable), o
+introduce decaimiento/neutralización tras N ticks sin nadie dentro. Incluye id y posición de cada
+zona en objectives() para que un bot con más de una zona pueda decidir a cuál ir (la posición es
+pública por definición del modo). Con eso hecho, registra el modo King of the Hill como una
+configuración de zone_control con una sola zona y puntuación solo por presencia, más su ruleset.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] Un equipo que toca una zona y se marcha NO gana; solo puntúa mientras hay presencia (test guionizado).
+- [ ] Con dos zonas, `objectives()` entrega id y posición distintos para cada una (test).
+- [ ] Un escenario de King of the Hill 2v2 termina con el marcador esperado de forma determinista.
+
+---
+
+### Banda R-P1 · Integración, robustez y CI honesta
+
+*Cerrar la deuda que no bloquea la seguridad pero impide que "verde" signifique lo que dice.
+Todo local/CI, sin desplegar.*
+
+#### R2.1 — Tipos en verde y CI bloqueante (ERR-GES-02 / ERR-GES-03) · Equipo E7+E10
+
+**Prompt de ejecución**
+
+```
+Separa el typecheck de apps/web del resto: excluye apps/web del tsconfig.json raíz (o dale su
+propio proyecto de typecheck con jsx), de modo que npx tsc --noEmit sobre el tsconfig raíz deje
+de emitir los ~230 falsos errores de JSX. Corrige los 38 errores de tsc genuinos restantes
+(query params string|string[] en routes/bots.ts, battles.ts, standings.ts, catalog.ts;
+supportedModes en maps.ts; los 2 de battle.ts de E2; pipeline.ts, streamer/main.ts,
+redis-signal.ts). Luego RETIRA continue-on-error: true del paso de tipos en ci.yml para que el
+typecheck rompa la CI. Sustituye el paso "Formato" (hoy un echo) por un formateador real y añade
+un paso de cobertura.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] `npx tsc --noEmit` sobre el tsconfig raíz y sobre `apps/web` da **0 errores**.
+- [ ] La CI **falla** si se introduce un error de tipos (verificado con un error deliberado).
+- [ ] El paso de formato ejecuta un formateador real y falla ante código sin formatear.
+- [ ] Se publica un informe de cobertura como artefacto de CI.
+
+#### R2.2 — CI con semáforo verde/amarillo/rojo (ERR-GES-05) · Equipo E10
+
+**Prompt de ejecución**
+
+```
+Reestructura los workflows para distinguir tres resultados: verde (todo ejecutado y aprobado),
+amarillo (pruebas correctas pero entorno externo no disponible, p.ej. sin STAGING_HOST o sin
+Docker) y rojo (fallo funcional o de seguridad). deploy-staging y smoke-and-promote no deben
+presentar un despliegue omitido como éxito: si STAGING_HOST no está configurado, el resultado es
+amarillo explícito, no verde. Haz bloqueantes los pasos de tipos (R2.1) y de seguridad.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] Una ejecución que omite staging por falta de secreto se marca amarilla, no verde (verificado).
+- [ ] Un fallo de seguridad (escáner de Compose, Trivy crítico) pone la CI en rojo y bloquea la promoción.
+- [ ] El estado que ve el operador refleja sin ambigüedad qué se ejecutó de verdad.
+
+#### R2.3 — Robustez de la suite en Windows y separación por dependencia de BD (ERR-GES-04) · Equipo E7+E12
+
+**Prompt de ejecución**
+
+```
+Etiqueta los tests que exigen PostgreSQL (los 22 ficheros que hoy fallan en Windows por
+embedded-postgres/pg_ctl) para poder ejecutarlos por separado del resto. Documenta en
+docs/getting-started el requisito y ofrece una ruta alternativa (PostgreSQL en contenedor o
+servicio local vía DATABASE_URL) para desarrolladores en Windows, de modo que npm test sin BD
+ejecute la parte pura en verde y la parte con BD se corra aparte. No cambies la lógica de los
+tests; es un problema de entorno y de organización de la suite.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] `npm test` sin BD ejecuta la parte pura del motor/validadores/SDK en verde en Windows.
+- [ ] Los tests con BD corren en verde apuntando a un PostgreSQL por `DATABASE_URL` (documentado).
+- [ ] La documentación explica ambos caminos y el motivo.
+
+#### R2.4 — Endurecer análisis estático y auth (ERR-SEC-06/07/08/11) · Equipo E6+E7
+
+**Prompt de ejecución**
+
+```
+(E6) Amplía la lista de módulos peligrosos con os, importlib, pickle, marshal, pty, runpy, code,
+shutil y equivalentes de proceso/FFI/serialización; saca os y process de las listas de builtins
+permitidos; sustituye el parseo por regex por análisis del AST real de cada runtime (detecta
+imports dinámicos, eval/exec, acceso a __builtins__). (E7) Exige reautenticación fuerte
+(contraseña + TOTP/recuperación) para desactivar 2FA y revoca el resto de sesiones al cambiar el
+estado; implementa detección de reutilización de refresh tokens por familias (revocar la familia
+ante un token ya rotado) con vida máxima absoluta y rate-limit; ejecuta siempre Argon2id contra
+un hash señuelo cuando el email no existe en login (anti-enumeración).
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] Un bot que importa `os`/`__import__` dinámico es detectado por el AST y bloqueado (tests).
+- [ ] Desactivar 2FA sin reautenticación fuerte devuelve 401/403 (test).
+- [ ] Presentar un refresh token ya rotado revoca toda la familia y audita (test).
+- [ ] El tiempo de respuesta de login es indistinguible entre email existente e inexistente (test estadístico).
+
+#### R2.5 — Encolar builds y firma verificable (ERR-SEC-12/15/14) · Equipo E6+E7
+
+**Prompt de ejecución**
+
+```
+Convierte submitBotVersion en encolado real: persiste el trabajo en la tabla jobs (patrón ya
+usado en batallas), devuelve 202 y que el worker de bot-manager lo consuma, sacando el pipeline
+del proceso de la API. Aplica rate-limit por usuario a la creación de versiones/builds. Carga la
+clave privada de firma de artefactos desde el almacén de secretos (no efímera), publica la
+pública y verifica la firma antes de cada lanzamiento. Traslada el estado de rate-limit/bloqueo a
+un almacén compartido (Redis/tabla api_usage) con expiración y cota de claves.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] Subir una versión devuelve 202 y el build corre en el worker, no en la API (test).
+- [ ] La firma de un artefacto se verifica con la clave pública publicada; un artefacto manipulado se rechaza (test).
+- [ ] El rate-limit sobrevive a un reinicio del proceso (test contra el almacén compartido).
+
+#### R2.6 — Saneado de subidas y cabeceras (ERR-SEC-09/10/16) · Equipo E7
+
+**Prompt de ejecución**
+
+```
+Valida el paquete de código subido con esquema estricto (ajv): rechaza toda ruta que no sea
+relativa, normalizada y contenida bajo el directorio del paquete (sin .., sin absolutos, sin
+control), exige el manifiesto en la raíz exacta y limita el número de ficheros. Sanea
+source_filename (base, allowlist, longitud) y emite Content-Disposition con la codificación
+estándar de parámetros, con nombre por defecto derivado del id de versión. Corrige los flecos:
+transportar el ticket de espectador fuera de la URL y exigir wss en producción; mover HSTS al
+gateway; corregir SERVICE_ENTRY de la API (server.ts, no main.ts) para que el contenedor arranque.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] Un paquete con `path` `../x` o absoluto es rechazado en decodificación (test).
+- [ ] Un `source_filename` con comillas/CRLF no rompe la cabecera ni permite spoofing (test).
+- [ ] El contenedor de la API arranca con el `SERVICE_ENTRY` corregido (verificado en `docker compose config` + arranque en R-DEPLOY).
+
+#### R2.7 — Hash de estado y lint de determinismo completos (ERR-ENG-02/04/05/06/07) · Equipo E2
+
+**Prompt de ejecución**
+
+```
+Invierte el lint de determinismo (lint-determinism.mjs) para vigilar todo src/ con una lista de
+exclusión explícita y comentada (protocol-server.ts, cli.ts), de modo que rng.ts, replay.ts y
+cualquier fichero nuevo queden vigilados por defecto. Añade al hash canónico de estado el número
+de cuerpos despiertos y el conteo de contactos de Rapier, y expón hashEveryNTicks como parámetro
+del ruleset. Mueve el heading del chasis a un campo de Vehicle (elimina el headingCache global).
+Purga radioSentThisSecond con un contador por vehículo y añade guard de longitud a radioQueue.
+Haz que deathmatch rechace en construcción una lista de participantes donde dos compartan equipo.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] Un `Math.random()` introducido en `rng.ts` hace fallar el lint (test).
+- [ ] El hash detecta una divergencia del solver que antes era invisible (test con escenario construido).
+- [ ] `dm_practice` con dos vehículos del mismo equipo se rechaza al construir la batalla (test).
+- [ ] La fuga de `radioSentThisSecond` no crece en una batalla de 5 min (test de memoria).
+
+---
+
+### Banda R-P2 · Producto, gráficos y modos de combate baratos
+
+*Lo que convierte un visualizador técnico en un producto. Todo local/CI. Introduce el equipo EA
+de arte. Incluye los cuatro modos de combate que no tocan el motor.*
+
+#### R3.1 — El replay interpola como el directo (ERR-VIS-01) · Equipo E8
+
+**Prompt de ejecución**
+
+```
+Corrige ReplayPage/PhaserViewer para que el reproductor de replay empuje snapshots con
+pushSnapshot usando el instante derivado del playhead (no performance.now()) y use resetTo solo
+tras un seek, de modo que el interpolador funcione igual en directo y en replay y el replay deje
+de verse a 10 saltos por segundo. Idealmente, que la escena acepte un "tiempo de reproducción"
+explícito compartido por ambas rutas.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] El replay a 1× se ve interpolado, no a saltos (test de que se llama a `pushSnapshot` por frame y `resetTo` solo tras seek).
+- [ ] Un seek reposiciona sin arrastrar interpolación del tramo anterior.
+- [ ] Directo y replay comparten la misma ruta de interpolación (sin duplicación).
+
+#### R3.2 — Interpolación, cámara y transporte robustos (ERR-VIS-06/07/08) · Equipo E8
+
+**Prompt de ejecución**
+
+```
+Interpola sobre delta de ticks (no tiempo de llegada) con un reloj de reproducción y delay-buffer
+de ~2 intervalos; simula los proyectiles balísticos localmente entre snapshots; filtra la niebla
+DESPUÉS de interpolar con fundido de alfa e histéresis. Añade serverTimeMs al snapshot. Suaviza la
+cámara (amortiguación crítica sobre centro y zoom, deadzone en follow, clamp a los límites del
+mapa) y añade interacción (rueda para zoom, arrastre para pan, teclas 1–4 para seguir bots).
+Configura escala RESIZE + devicePixelRatio; fuerza WebGL con SwiftShader en el streamer; fija el
+FPS objetivo por vista. Reconexión con backoff exponencial + jitter, heartbeat/watchdog y ruteo
+del fallo inicial al bucle de reconexión; buffer circular de eventos.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] Los proyectiles rápidos se ven como trayectorias, no parpadeos (prueba visual + unitaria de la simulación balística local).
+- [ ] Un enemigo que entra/sale de niebla aparece/desaparece con fundido, sin teletransporte (test de histéresis).
+- [ ] La cámara no da tirones al cambiar de modo ni muestra el vacío fuera del mapa (test de clamp).
+- [ ] Tras cortar y restaurar el gateway, el visor reconecta con backoff y sin estampida (test).
+
+#### R3.3 — Rendimiento del front y medición (ERR-VIS-09/11) · Equipo E8
+
+**Prompt de ejecución**
+
+```
+Sustituye Shapes/Text por Sprites de un atlas de texturas (batcheables) con setTint por equipo y
+BitmapText; hornea la capa estática del mapa a una RenderTexture; pon techo al pool de
+proyectiles; elimina las asignaciones por frame en frameOf/applyCamera reutilizando mapas. Saca
+el tick del replay de React (ref con throttling ~4 Hz), prefetch del chunk N+1 fuera del bucle de
+RAF, y seek al soltar el slider con AbortController. Añade un contador de FPS y una prueba de
+rendimiento en CI (Playwright headless) que mida 60 fps en el visor y 1080p30 en /broadcast.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] Los draw calls por frame bajan de ~35 a un puñado (medido con el contador).
+- [ ] El replay ya no re-renderiza React a 60 fps (test del throttling).
+- [ ] La prueba de rendimiento en CI verifica 60 fps sostenidos con 8 bots y proyectiles densos.
+
+#### R3.4 — Dirección artística y sprites modulares (ERR-VIS-05 / MEJ-gráficos) · Equipo EA+E8
+
+**Prompt de ejecución**
+
+```
+Define una dirección artística única (estética táctica/industrial, paleta S9, tipografía) y
+produce un atlas de texturas con: chasis por tipo, torreta, arma, proyectil, banderas, iconos de
+módulo y partículas (humo/chispa). Integra en el visor sprites modulares derivados del loadout
+(un espectador debe distinguir explorador/artillero/pesado de un vistazo), coloreados por equipo
+con setTint desde el ruleset (no colores hardcodeados; equipos distintos de red/blue deben tener
+color propio). Sustituye el id crudo por el nombre del bot en BitmapText. Todo consumiendo solo el
+snapshot público y los eventos que ya llegan.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] El vehículo se dibuja con sprite según su chasis y se colorea por equipo desde el ruleset (test visual + de que no hay colores hardcodeados).
+- [ ] El nombre del bot (no el UUID) aparece sobre el vehículo.
+- [ ] El atlas es un solo asset batcheable (verificado en el contador de draw calls de R3.3).
+
+#### R3.5 — Efectos, daño visible y objetivos dibujados (ERR-VIS-05 / MEJ-gráficos) · Equipo EA+E8
+
+**Prompt de ejecución**
+
+```
+Añade efectos reproducibles desde eventos (nunca afectan a la simulación): fogonazo de disparo,
+trazadoras/estelas de proyectil, impactos y explosiones en vehicle_destroyed/mine_triggered,
+humo creciente conforme baja el casco, decals persistentes en RenderTexture. Representa el daño
+visible coincidiendo exactamente con el estado público (blindaje roto, módulos destruidos,
+torreta bloqueada). Dibuja los objetivos que hoy se ignoran pese a llegar al overlay: banderas
+CTF, bases y zonas de captura con su estado/animación, y minas visibles según permisos de
+espectador.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] Cada evento (disparo, impacto, destrucción, mina) produce su efecto y ninguno altera el hash de la batalla (test de no-interferencia).
+- [ ] El estado visible de daño coincide con el estado público del motor (test de correspondencia).
+- [ ] Banderas, bases y zonas se dibujan en el canvas con su estado (test visual).
+
+#### R3.6 — HUD completo y minimapa (MEJ-gráficos) · Equipo EA+E8
+
+**Prompt de ejecución**
+
+```
+Construye un HUD completo sobre los datos que el overlay ya mantiene: marcador superior, reloj y
+fase, objetivo actual, panel de bots por equipo con vida y módulos, kill feed, estado de banderas
+y control de zonas, y un minimapa real (segunda cámara de Phaser con setViewport + ignore(), sin
+duplicar entidades). Añade indicadores de fin de partida sobre el canvas. Mantén el HUD legible en
+el visor interactivo y en /broadcast.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] El minimapa muestra posiciones de vehículos y objetivos con una sola cámara adicional (test).
+- [ ] El HUD refleja marcador, vida y estado de objetivos en vivo (test contra un snapshot conocido).
+- [ ] El fin de partida se anuncia sobre el canvas, no solo en el feed HTML.
+
+#### R3.7 — Panel: torneos, batallas, sesión y editor (ERR-VIS-02/03/04/10) · Equipo E7 (web)
+
+**Prompt de ejecución**
+
+```
+Añade al panel las pantallas que faltan: torneos (crear/ver/seguir con cuadro visual, cola,
+batallas en curso), batallas e historial, con enlaces desde bot → batallas → replay (hoy el
+visor solo se abre tecleando un UUID en el hash). Persiste la sesión (cookie httpOnly emitida por
+la API) con interceptor único de 401 (refresh o limpieza + redirección con mensaje). Corrige el
+editor de loadout para que cargue la revisión vigente del bot (key={bot.id} para remontar,
+duplicar/comparar), con selección explícita de munición y sin non-null assertions; añade un error
+boundary global. Corrige la accesibilidad base: formularios con onSubmit (envío con Enter),
+labels visibles, role="alert"/aria-live en errores y feed, :focus-visible, responsive y estados
+de carga/error por recurso (nunca lista vacía cuando la carga falló).
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] Se puede crear y seguir un torneo y abrir su directo/replay desde la UI sin teclear UUIDs (E2E).
+- [ ] Recargar (F5) mantiene la sesión; un 401 se maneja sin romper cada pantalla (test).
+- [ ] El editor carga el loadout guardado de un bot y permite editarlo; el catálogo incompleto no tumba la pantalla (test con error boundary).
+- [ ] Los formularios se envían con Enter y los errores se anuncian a lectores de pantalla (tests de a11y).
+
+#### R3.8 — Modos de combate baratos: rondas, Domination, Juggernaut (MEJ-modos) · Equipo E2+E9
+
+**Prompt de ejecución**
+
+```
+Implementa, sin tocar el núcleo de simulación salvo lo imprescindible, tres modos nuevos como
+clases de GameMode + rulesets: (1) Eliminación por rondas / Last Man Standing, introduciendo un
+nivel "match" de N batallas con semillas derivadas mediante rng.fork() (hoy sin usar) y cambio de
+lado; (2) Domination con varias zonas permanentes y ritmo de puntuación por nº de zonas
+controladas (reutiliza zone_control corregido de R1.9); (3) Juggernaut/VIP con un vehículo
+marcado (campo por vehículo al estilo carryingFlag) al que el resto puntúa destruir. Registra cada
+modo con metadatos (mapas compatibles, equipos mín/máx, respawn, desempate).
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] Cada modo tiene un escenario guionizado 2v2/FFA que termina con el marcador esperado de forma determinista.
+- [ ] Eliminación por rondas reproduce el mismo resultado por semilla a través de las rondas (test de `rng.fork`).
+- [ ] El registro de modos por metadatos rechaza una combinación mapa/modo incompatible (test).
+
+---
+
+### Banda R-P3 · Evolución avanzada (toca el motor)
+
+*Modos que introducen estado nuevo de simulación. La regla de oro manda: toda entidad nueva debe
+entrar en el hash y el snapshot.*
+
+#### R4.1 — Zonas mutables y Battle Royale (MEJ-modos) · Equipo E2
+
+**Prompt de ejecución**
+
+```
+Expón zonas mutables en ModeContext (posición y radio modificables por el modo) e incorpora la
+geometría de la zona al hash canónico de estado y al snapshot público (es ahora estado de
+simulación). Implementa Battle Royale con algoritmo de cierre de zona, spawns distribuidos,
+loadout inicial equilibrado y reglas antiocultación, reutilizando el daño de zona existente.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] Dos batallas Battle Royale con la misma semilla producen el mismo hash, con la zona encogiéndose igual (test de determinismo).
+- [ ] Un cambio de geometría de zona que no entrara en el hash haría fallar un test guardián (test negativo).
+- [ ] Una partida de 20 vehículos termina con un único superviviente dentro del presupuesto de tick.
+
+#### R4.2 — Entidades dinámicas neutrales: Payload / Escolta (MEJ-modos) · Equipo E2
+
+**Prompt de ejecución**
+
+```
+Añade al motor un cuerpo dinámico neutral (no vehículo) con su entrada en el hash y en el
+snapshot público, y las rutas/checkpoints necesarios. Implementa Payload: una carga neutral que
+avanza por una ruta cuando el atacante controla su entorno, con bloqueo/retroceso, spawns
+dinámicos y overtime.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] El payload entra en el hash y el replay lo reproduce en la misma posición (test).
+- [ ] La carga avanza/retrocede según control de entorno de forma determinista (escenario guionizado).
+- [ ] El overtime se dispara y resuelve según la regla publicada (test).
+
+#### R4.3 — Extracción de recursos y Horda PvE (MEJ-modos) · Equipo E2+E3
+
+**Prompt de ejecución**
+
+```
+Introduce objetos recogibles con capacidad de carga y puntos de extracción (con su estado en
+hash/snapshot) para el modo Extracción. Para Horda PvE, añade IA neutral controlada por el
+servidor y un generador de oleadas determinista con dificultad escalada. Ambos requieren R4.1
+(patrón de entidad de estado en el hash) como base.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] Recoger, transportar y perder recursos al morir es determinista y reproducible por replay (test).
+- [ ] El generador de oleadas produce las mismas oleadas por semilla (test).
+- [ ] La dificultad escala según la regla publicada y la partida es auditable.
+
+#### R4.4 — Gobierno de seguridad y determinismo cross-entorno (ERR-GES-08 / MEJ-motor) · Equipo E10+E2
+
+**Prompt de ejecución**
+
+```
+Añade SECURITY.md con proceso privado de reporte de vulnerabilidades, Dependabot/Renovate,
+protección de main gateada por CI, acciones de terceros fijadas a SHA y SBOM por imagen. Separa
+la documentación pública del inventario privado de infraestructura (IPs/VMs fuera del repo
+público). Amplía la verificación de determinismo para comparar hashes entre versiones de Node,
+hosts y nº de núcleos y tras serializar/restaurar snapshot; cuantiza lo que decide
+colisiones/puntuación. Versiona los reglamentos como inmutables por combate.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] `main` está protegida y requiere CI verde + revisión de CODEOWNERS (verificado).
+- [ ] El hash de una batalla coincide entre dos versiones compatibles de Node y tras restaurar un snapshot (test nightly).
+- [ ] La documentación pública no contiene inventario de infraestructura interna (revisión).
+
+---
+
+### Banda R-V1 · Retirar el prototipo v1 del camino
+
+*Se ejecuta antes de R-DEPLOY para que el despliegue de la v2 no pueda confundirse con el
+prototipo. No borra la historia: la archiva y la desconecta del despliegue.*
+
+#### R5.1 — Archivar el prototipo v1 y separarlo del despliegue · Equipo E10
+
+**Prompt de ejecución**
+
+```
+Mueve el prototipo v1 fuera de la ruta activa sin perder la historia: traslada docker-compose.yml
+de la raíz, apps/arena-server, apps/arena-viewer (Phaser 3) y bots/bot-red, bots/bot-blue a
+archive/v1-prototype/ (o etiqueta un release git v1-final y los retira de la raíz). Deja en la
+raíz un README breve que apunte a infrastructure/docker-compose.yml como único stack canónico.
+Añade una comprobación en CI que impida reintroducir en la raíz un compose o servicios del
+prototipo, y que falle si el compose canónico referencia artefactos de v1. Confirma que ningún
+servicio v2 depende de arena-server/arena-viewer.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] No existe `docker-compose.yml` de prototipo en la raíz; el único stack es `infrastructure/docker-compose.yml`.
+- [ ] La CI falla si se reintroduce un servicio del prototipo en la raíz (test).
+- [ ] La historia de v1 se conserva (archivada o en tag) y está documentada como legacy.
+
+#### R5.2 — Plan de corte de producción v1 → v2 · Equipo E10 (coordinado con el operador)
+
+**Prompt de ejecución**
+
+```
+Redacta y prepara el runbook de corte de la v1 en producción (VM108, tras el proxy de VM104): qué
+URL/puertos deja de servir arena-server/arena-viewer, cómo el proxy de VM104 pasa a apuntar al
+gateway de la v2, y el orden de arranque/parada para que no haya ventana de doble sistema activo.
+La ejecución real del corte pertenece a R-DEPLOY (requiere la v2 desplegada y verificada); esta
+tarea deja el plan escrito, revisado y con criterio de rollback a v1 si la v2 falla el humo.
+```
+
+**Pruebas y Definition of Done**
+
+- [ ] Runbook de corte revisado con pasos, responsables y criterio de rollback.
+- [ ] El plan no crea ventana de doble sistema sirviendo la misma URL.
+- [ ] Rollback a v1 documentado y probado en seco.
+
+---
+
+### Banda R-DEPLOY · Solo verificable con la v2 desplegada (lo último)
+
+*Todo lo que exige Docker con salida a internet y la plataforma en marcha. Es el camino crítico
+histórico del proyecto. No empezar hasta cerrar R-P0 y tener R-V1 preparada. Reutiliza las
+suites de E12 y las puertas de los hitos M3–M5 del capítulo 13.*
+
+#### R6.1 — Construir imágenes y fijar digests reales (ERR-GES-06) · Equipo E10
+
+**Prompt · DoD:** Construir las imágenes de runtime en un entorno con Docker+red, fijar los
+**digests reales** en `DIGESTS.lock`, y verificar que el guard rechaza placeholders, `latest` e
+imágenes sin firma/SBOM. **DoD:** `DIGESTS.lock` sin `sha256:000…0`; el despliegue rechaza una
+imagen sin firmar (test); Trivy sin críticas.
+
+#### R6.2 — Verificación viva del sandbox (ERR-SEC-03/04 cierre real) · Equipo E6+E12
+
+**Prompt · DoD:** Ejecutar la suite de escape (R1.6) contra contenedores **vivos**, `docker
+inspect` contra la tabla 18.2 y Trivy; añadir los vectores que faltaban (abuso del endpoint del
+motor, verificación del propio seccomp, `noexec` del tmpfs, agotamiento de disco/inodos, escape
+post-arranque). **DoD:** los 7+ vectores fallan su objetivo con marcador de bloqueo; `docker
+inspect` confirma cero capabilities, read-only, seccomp y no-new-privileges; puerta M3 cruzada.
+
+#### R6.3 — Desplegar la v2 de extremo a extremo en staging (ERR-SEC-16 arranque incluido) · Equipo E10+E12
+
+**Prompt · DoD:** `docker compose up` del stack v2 completo con migraciones, secretos reales y
+healthchecks; una batalla automática visible en directo, con replay, estadísticas, torneo,
+backup y restauración, verificada **desde una máquina distinta** al servidor. **DoD:** la suite
+E2E del MVP (T12.1) en verde contra staging; el contenedor de la API arranca con el
+`SERVICE_ENTRY` corregido; evidencia archivada.
+
+#### R6.4 — Staging real y semáforo de promoción (ERR-GES-05 cierre) · Equipo E10
+
+**Prompt · DoD:** Configurar `STAGING_HOST` y hacer que cada versión candidata despliegue por
+digest, ejecute migraciones, lance una batalla con dos bots, abra el espectador, genere replay y
+stats, verifique métricas y ejecute rollback. **DoD:** `deploy-staging` deja de ser stub; la
+promoción a producción exige el pipeline de aceptación (T12.2) 10/10 en verde.
+
+#### R6.5 — Ejecutar el corte v1 → v2 en producción (R5.2) · Equipo E10
+
+**Prompt · DoD:** Ejecutar el runbook de corte: el proxy de VM104 apunta al gateway v2, se para
+el prototipo v1, sin ventana de doble sistema. **DoD:** producción sirve solo la v2; healthchecks
+verdes 24 h; rollback disponible; acta firmada.
+
+#### R6.6 — Streaming real, recuperación y checklist de producción (puerta M5) · Equipo E11+E10+E12
+
+**Prompt · DoD:** Emisión privada de 30 min a YouTube sin afectar al tick; simulacro de
+recuperación total cronometrado bajo objetivo; checklist del capítulo 14 completo. **DoD:** las
+tres puertas de M5 en verde; `cpuMs` (H5) rellenado con medición real del runner; declaración de
+producción firmada.
+
+---
+
+### 15.1 Puerta de salida de la Ronda 2
+
+> La Ronda 2 se declara terminada cuando: **(a)** la banda R-P0 está cerrada (los dos críticos
+> funcionales y los tres de seguridad), **(b)** `tsc` da 0 y la CI es honesta (verde/amarillo/rojo),
+> **(c)** el prototipo v1 está fuera del despliegue, y **(d)** la cadena completa —crear bot →
+> loadout → subir → **sandbox real valida** → publicar → torneo → combate → directo → replay →
+> stats → clasificación → restaurar y reproducir— corre en verde sobre la **v2 desplegada en
+> staging**, con la puerta M5 y el checklist del capítulo 14 completos. A partir de ahí, R-P2/R-P3
+> continúan como evolución de producto sin bloquear la apertura de la plataforma.

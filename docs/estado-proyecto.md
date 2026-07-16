@@ -4,6 +4,17 @@
 > Este documento existe para entender de un vistazo qué hay hecho DE VERDAD (verificado con
 > ejecuciones reales) y qué falta, siguiendo el dosier `docs/Dosier_tareas_S9_AI_Arena.md`.
 
+> **Corrección 2026-07-17 (auditoría consolidada).** La auditoría de
+> [`auditoria-consolidada-2026-07-16.md`](auditoria-consolidada-2026-07-16.md) matiza tres
+> cifras de este documento con verificación en código: **(1)** `tsc --noEmit` no da "2 errores"
+> sino **268** (≈230 son un fallo de configuración del tsconfig raíz con `apps/web`, y **38 son
+> genuinos**, varios introducidos por los fixes de H6; H7 **no** está cerrado). **(2)** Hay **dos
+> errores CRÍTICOS FUNCIONALES** que los tests no cogen: la munición del loadout **no se propaga**
+> al motor (los bots reales disparan `no_ammo`, issue #15) y el **sensor acústico está muerto**
+> (un test vacuo lo enmascara). **(3)** Persisten tres críticos de seguridad para abrir la
+> plataforma (secreto JWT degradado, sandbox que nunca se ejecuta, `docker.sock`). El plan de
+> corrección por equipos está en la **Ronda 2** del dosier. Lo demás de este documento sigue vigente.
+
 ## Dónde vive cada cosa
 
 | Qué | Dónde |
