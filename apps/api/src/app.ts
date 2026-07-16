@@ -10,11 +10,15 @@ import { FailedLoginGuard, SlidingWindowLimiter } from "./middleware/rate-limit.
 import { authRoutes } from "./routes/auth.js";
 import { userRoutes } from "./routes/users.js";
 import { teamRoutes } from "./routes/teams.js";
+import { botRoutes, buildRoutes } from "./routes/bots.js";
+import { StubBotManager, type BotManagerClient } from "./services/bot-manager.js";
 
 export interface AppConfig {
   db: Db;
   corsOrigin?: string;
   loginGuard?: FailedLoginGuard;
+  /** Cliente del pipeline de builds (E6). Por defecto, stub que encola en `jobs`. */
+  botManager?: BotManagerClient;
 }
 
 export function createApp(cfg: AppConfig): express.Express {
@@ -37,6 +41,8 @@ export function createApp(cfg: AppConfig): express.Express {
   );
   app.use(userRoutes(cfg.db));
   app.use(teamRoutes(cfg.db));
+  app.use(botRoutes(cfg.db, cfg.botManager ?? new StubBotManager(cfg.db)));
+  app.use(buildRoutes(cfg.db));
 
   app.use((req: Request, res: Response) => {
     res.status(404).json({ error: "not_found", message: "Ruta no encontrada", correlationId: req.correlationId });
