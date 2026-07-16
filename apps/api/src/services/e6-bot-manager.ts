@@ -10,9 +10,9 @@
  * Reconciliación con E6 (documentada en docs/entrega-E7.md):
  *  - Sin agentResolver, E6 deja protocol_test/smoke_battle/resource_limits en
  *    `skipped` (su ejecución containerizada exige Docker, T6.2).
- *  - E6 marca botVersionState="published" al acabar; el cap. 17.1 dice que el pase
- *    del pipeline deja la versión en `validated` y publicar es una acción EXPLÍCITA
- *    del dueño. La plataforma aplica 17.1 (mapea passed → validated).
+ *  - E6 y E7 aplican ambos el cap. 17.1 (reconciliado en el issue #13): el pase del
+ *    pipeline deja la versión en `validated` (también en el Build de E6) y publicar
+ *    es una acción EXPLÍCITA del dueño. Aquí completeBuild persiste passed → validated.
  */
 import { BuildPipeline } from "../../../bot-manager/src/pipeline.js";
 import { InMemoryBuildStore } from "../../../bot-manager/src/store.js";

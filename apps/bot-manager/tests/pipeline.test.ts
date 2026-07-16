@@ -41,12 +41,12 @@ function deps(overrides: Partial<PipelineDeps> = {}): PipelineDeps {
 }
 
 describe("T6.1 · pipeline de build y publicación", () => {
-  it("un bot Python correcto recorre todas las etapas y se publica", async () => {
+  it("un bot Python correcto recorre todas las etapas y queda validated (17.1, issue #13)", async () => {
     const d = deps();
     const pipe = new BuildPipeline(d);
     const build = await pipe.run(submission(pyGoodFiles()));
     expect(build.status).toBe("passed");
-    expect(build.botVersionState).toBe("published");
+    expect(build.botVersionState).toBe("validated"); // 17.1: publicar es acción explícita del dueño (issue #13)
     expect(build.stages.every((s) => s.status === "passed")).toBe(true);
     expect(build.artifactHash).toMatch(/^[0-9a-f]{64}$/);
     expect(build.signature).toBeTruthy();
@@ -151,9 +151,9 @@ describe("T6.1 · pipeline de build y publicación", () => {
     expect(sink.findings.some((f) => f.category === "resource_abuse")).toBe(true);
   });
 
-  it("sin agentResolver, las etapas de ejecución quedan 'skipped' (honesto) y el resto publica", async () => {
+  it("sin agentResolver, las etapas de ejecución quedan 'skipped' (honesto) y el resto valida", async () => {
     const build = await new BuildPipeline(deps({ agentResolver: undefined, referenceAgent: undefined })).run(submission(pyGoodFiles()));
-    expect(build.botVersionState).toBe("published");
+    expect(build.botVersionState).toBe("validated"); // 17.1: publicar es acción explícita del dueño (issue #13)
     for (const name of ["protocol_test", "smoke_battle", "resource_limits"]) {
       expect(build.stages.find((s) => s.name === name)!.status).toBe("skipped");
     }
@@ -165,7 +165,7 @@ describe("T6.1 · pipeline de build y publicación", () => {
     const ms = performance.now() - t0;
     // eslint-disable-next-line no-console
     console.log(`[T6.1] pipeline completo (con partida de humo real): ${(ms / 1000).toFixed(1)} s`);
-    expect(build.botVersionState).toBe("published");
+    expect(build.botVersionState).toBe("validated"); // 17.1: publicar es acción explícita del dueño (issue #13)
     expect(ms).toBeLessThan(180000);
   });
 });

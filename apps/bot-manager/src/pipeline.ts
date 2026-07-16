@@ -111,10 +111,13 @@ export class BuildPipeline {
     }
 
     build.status = "passed";
-    build.botVersionState = "published";
+    // Cap. 17.1 (máquina de estados de E7, issue #13): el pase del pipeline deja la
+    // versión en `validated`; PUBLICAR es una acción explícita del dueño, no del
+    // pipeline. (Antes E6 marcaba "published" aquí; E7 ya aplicaba 17.1 al mapear.)
+    build.botVersionState = "validated";
     build.finishedAt = this.now();
     this.deps.store.save(build);
-    this.audit.record({ type: "build.published", botId: build.botId, version: build.version, userId: build.ownerUserId, correlationId, detail: { buildId: build.id, artifactHash: build.artifactHash } });
+    this.audit.record({ type: "build.validated", botId: build.botId, version: build.version, userId: build.ownerUserId, correlationId, detail: { buildId: build.id, artifactHash: build.artifactHash } });
     return this.deps.store.get(build.id)!;
   }
 
@@ -275,7 +278,10 @@ export class BuildPipeline {
         return true;
       }
       case "publish": {
-        stage.logs.push(`versión ${sub.version} de ${sub.botId} publicada (inmutable)`);
+        // La etapa `publish` del contrato OpenAPI publica el ARTEFACTO (inmutable) en
+        // el registro interno; el ESTADO de la versión queda en `validated` (17.1):
+        // exponerla públicamente es una acción explícita del dueño vía la API de E7.
+        stage.logs.push(`artefacto de la versión ${sub.version} de ${sub.botId} publicado (inmutable); versión validated`);
         return true;
       }
     }
