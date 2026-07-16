@@ -37,9 +37,12 @@ jobs:
       - name: Lint de determinismo (nada de reloj real/Math.random en src/sim)
         run: npm run lint
       - name: Tipos (tsc --noEmit)
-        # PENDIENTE de bloquear: quedan 7 errores de tipos preexistentes de
-        # E2/E3/E4 (battle.ts, map-service/generate, module-catalog). Cuando
-        # los equipos propietarios los limpien, eliminar continue-on-error.
+        # PENDIENTE de bloquear (H7, issue #11): de los 7 errores preexistentes
+        # de E2/E3/E4, quedan 2 en apps/arena-engine/src/sim/battle.ts (los 5 de
+        # map-service/generate y module-catalog se corrigieron el 2026-07-16).
+        # battle.ts es del equipo E2 (src/sim es intocable fuera de ese equipo);
+        # el detalle exacto y la corrección propuesta están en el issue #11.
+        # Cuando E2 los limpie y tsc dé 0, eliminar continue-on-error.
         continue-on-error: true
         run: npx tsc --noEmit
       - name: Formato
