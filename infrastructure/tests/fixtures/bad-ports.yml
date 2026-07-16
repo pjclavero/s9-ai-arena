@@ -1,0 +1,7 @@
+services:
+  gateway:
+    image: nginx:alpine
+    ports: ["80:80"]
+  api:
+    image: node:22-alpine
+    ports: ["8080:8080"]

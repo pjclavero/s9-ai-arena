@@ -11,7 +11,7 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["apps/**/*.test.ts", "packages/**/*.test.ts", "sdks/**/*.test.ts", "example-bots/**/*.test.ts"],
+    include: ["apps/**/*.test.ts", "packages/**/*.test.ts", "sdks/**/*.test.ts", "example-bots/**/*.test.ts", "infrastructure/**/*.test.ts"],
     testTimeout: 180000,
     hookTimeout: 60000,
   },

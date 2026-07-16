@@ -1,0 +1,10 @@
+services:
+  gateway:
+    image: nginx:alpine
+    ports: ["80:80", "443:443"]
+  api:
+    image: node:22-alpine
+  bot-manager:
+    image: node:22-alpine
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
