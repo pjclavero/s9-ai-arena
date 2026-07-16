@@ -11,13 +11,14 @@ import { authRoutes } from "./routes/auth.js";
 import { userRoutes } from "./routes/users.js";
 import { teamRoutes } from "./routes/teams.js";
 import { botRoutes, buildRoutes } from "./routes/bots.js";
-import { StubBotManager, type BotManagerClient } from "./services/bot-manager.js";
+import type { BotManagerClient } from "./services/bot-manager.js";
+import { E6PipelineBotManager } from "./services/e6-bot-manager.js";
 
 export interface AppConfig {
   db: Db;
   corsOrigin?: string;
   loginGuard?: FailedLoginGuard;
-  /** Cliente del pipeline de builds (E6). Por defecto, stub que encola en `jobs`. */
+  /** Cliente del pipeline de builds. Por defecto, el pipeline REAL de E6 en proceso. */
   botManager?: BotManagerClient;
 }
 
@@ -41,7 +42,7 @@ export function createApp(cfg: AppConfig): express.Express {
   );
   app.use(userRoutes(cfg.db));
   app.use(teamRoutes(cfg.db));
-  app.use(botRoutes(cfg.db, cfg.botManager ?? new StubBotManager(cfg.db)));
+  app.use(botRoutes(cfg.db, cfg.botManager ?? new E6PipelineBotManager(cfg.db)));
   app.use(buildRoutes(cfg.db));
 
   app.use((req: Request, res: Response) => {
