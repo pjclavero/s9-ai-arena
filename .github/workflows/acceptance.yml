@@ -1,0 +1,40 @@
+# E12 · T12.2 — Pipeline de aceptación del capítulo 28 (puerta del hito M5).
+#
+# Corre BAJO DEMANDA (workflow_dispatch) y en NIGHTLY. Un criterio en rojo hace
+# fallar el workflow: la promoción a producción (etapa 8 de ci.yml, environment
+# `production` con required reviewers) exige que la última ejecución de este
+# workflow esté en verde — regla documentada en docs/despliegue.md y en el
+# propio informe. El artefacto `acceptance-report` contiene la tabla legible
+# por el operador (docs/aceptacion/ultimo-informe.md) y el JSON con evidencia.
+name: acceptance
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "45 4 * * *" # tras la nightly de determinismo (03:30 UTC)
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Pipeline de aceptación (10 criterios del cap. 28)
+        env:
+          # DoD del criterio "motor": 1000 batallas de regresión en nightly.
+          DETERMINISM_RUNS: ${{ github.event_name == 'schedule' && '1000' || '100' }}
+        run: node acceptance/run-acceptance.mjs
+      - name: Informe y evidencia como artefacto
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-report
+          path: |
+            docs/aceptacion/ultimo-informe.md
+            acceptance/report.json
+          if-no-files-found: error
