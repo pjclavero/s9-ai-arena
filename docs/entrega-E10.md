@@ -141,3 +141,23 @@ Checklist consolidado en `docs/despliegue.md` (§ Verificación pendiente),
 `docs/recuperacion.md` (simulacro cronometrado) y ADR-010 D10.5 (PR canario y
 CODEOWNERS). Test de caos de la alerta de motor: pausar el bucle de tick
 (SIGSTOP al proceso del motor) y medir hasta `ALERTS{alertname="EngineTickStalled",alertstate="firing"}`.
+
+## Addendum 2026-07-16 · Verificación con Docker real en VM108
+
+Con autorización explícita del operador se verificó E10 en VM108 (Docker CE 29.6.1 +
+Compose + Buildx), sin tocar la v1 en producción (intacta antes y después):
+
+- **[EJECUTADO]** `docker compose config` con el CLI real de Docker 29.6.1 sobre
+  `infrastructure/docker-compose.yml`, todas las combinaciones: development = 10
+  servicios, production = 11, production+observability = 19, external-db excluye
+  postgres. Todas correctas.
+- **[EJECUTADO]** Escáner `scan-compose` contra el stack real: **0 infracciones**
+  (sin docker.sock, sin privileged, redes internas `internal: true`, solo el gateway
+  publica puertos).
+- **[EJECUTADO]** Suite E10 dentro de un contenedor `node:22`: 51/51 tests ejecutables
+  verdes (5 skipped por falta de `git` en `node:22-slim`, no es fallo de código).
+- **[BLOQUEADO POR ENTORNO]** `docker compose up` del stack, healthchecks en vivo,
+  conectividad de bots y simulacro de recuperación: **VM108 no tiene salida a internet
+  para Docker** (no puede hacer pull de imágenes base). Vías: restaurar esa salida
+  (hallazgo de infraestructura a diagnosticar) o el runner de GitHub Actions que la CI
+  de T10.1 ya define (Node 22 + Docker).
