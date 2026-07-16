@@ -9,6 +9,8 @@ import { AdminPage, isAdmin } from "./pages/AdminPage.js";
 import { ViewerPage } from "./pages/ViewerPage.js";
 import { ReplayPage } from "./pages/ReplayPage.js";
 import { parseShareLink } from "./viewer/replay-player.js";
+import { matchBroadcastRoute } from "./broadcast/config.js";
+import { BroadcastPage } from "./pages/BroadcastPage.js";
 
 const BUDGET_DEFAULT = 1000; // BUDGET_CREDITS_MVP; el ruleset de cada torneo puede cambiarlo (D7)
 
@@ -50,6 +52,11 @@ export function App() {
       })
       .catch(() => {});
   }, [me]);
+
+  // E11/T11.1: la vista /broadcast (composición 1080p para captura, cap. 21) es
+  // pública, sin panel ni login, y se autoconfigura por query (?battle|?tournament).
+  const broadcast = matchBroadcastRoute(window.location.pathname, window.location.search, route);
+  if (broadcast) return <BroadcastPage config={broadcast} />;
 
   // E8: el visor y los replays son PÚBLICOS (DoD T7.5: un visitante anónimo ve la
   // batalla en directo y el replay sin cuenta). No pasan por el login del panel.
