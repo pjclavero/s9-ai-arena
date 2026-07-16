@@ -45,6 +45,8 @@ export interface IngestOptions {
   official: boolean;
   temporaryTtlMs?: number;
   keyframeEveryNSnapshots?: number;
+  /** T8.3 · El dueño permite abrir las capas de depuración (comandos) a todos en replay. */
+  debugOpen?: boolean;
   /** Reloj inyectable: los tests de retención NO esperan días de verdad. */
   now?: () => number;
 }
@@ -115,6 +117,13 @@ export function ingestReplay(dir: string, replay: Replay, opts: IngestOptions): 
     versions: replay.header.versions,
     mapChecksum: replay.header.map.checksum,
     keyframes: buildKeyframes(replay.snapshots, opts.keyframeEveryNSnapshots),
+    result: {
+      winner: replay.result.winner,
+      ticks: replay.result.ticks,
+      score: replay.result.score,
+      finalStateHash: replay.result.finalStateHash,
+    },
+    debugOpen: opts.debugOpen === true,
   };
 
   const path = replayPath(dir, index.battleId);

@@ -6,8 +6,25 @@ import { LoginPage } from "./pages/LoginPage.js";
 import { BotsPage } from "./pages/BotsPage.js";
 import { TeamsPage } from "./pages/TeamsPage.js";
 import { AdminPage, isAdmin } from "./pages/AdminPage.js";
+import { ViewerPage } from "./pages/ViewerPage.js";
+import { ReplayPage } from "./pages/ReplayPage.js";
+import { parseShareLink } from "./viewer/replay-player.js";
 
 const BUDGET_DEFAULT = 1000; // BUDGET_CREDITS_MVP; el ruleset de cada torneo puede cambiarlo (D7)
+
+/**
+ * E8 · Rutas públicas: #/viewer/<battleId> (directo) y #/replay/<battleId>?t=<tick>
+ * (enlace compartible con tick inicial, DoD T8.3).
+ */
+export function matchPublicRoute(
+  route: string,
+): { kind: "viewer"; battleId: string } | { kind: "replay"; battleId: string; t: number } | null {
+  const viewer = /^#\/viewer\/([^/?]+)/.exec(route);
+  if (viewer) return { kind: "viewer", battleId: decodeURIComponent(viewer[1]) };
+  const replay = parseShareLink(route); // el MISMO parser que genera los enlaces (T8.3)
+  if (replay) return { kind: "replay", battleId: replay.battleId, t: replay.t };
+  return null;
+}
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
@@ -33,6 +50,22 @@ export function App() {
       })
       .catch(() => {});
   }, [me]);
+
+  // E8: el visor y los replays son PÚBLICOS (DoD T7.5: un visitante anónimo ve la
+  // batalla en directo y el replay sin cuenta). No pasan por el login del panel.
+  const publicView = matchPublicRoute(route);
+  if (publicView) {
+    return (
+      <main>
+        <h1>S9 AI Arena</h1>
+        {publicView.kind === "viewer" ? (
+          <ViewerPage battleId={publicView.battleId} />
+        ) : (
+          <ReplayPage battleId={publicView.battleId} initialTick={publicView.t} />
+        )}
+      </main>
+    );
+  }
 
   if (!me || !getToken()) {
     return (

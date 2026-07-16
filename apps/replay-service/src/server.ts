@@ -29,7 +29,7 @@ export interface ReplayServerOptions {
 }
 
 /** Cache de segmentos: decodificar 9000 ticks por cada petición de salto sería absurdo. */
-const decodedCache = new Map<string, { sha: string; snapshots: any[]; events: any[] }>();
+const decodedCache = new Map<string, { sha: string; snapshots: any[]; events: any[]; commands: any[] }>();
 
 function decodedFor(dir: string, battleId: string) {
   const index = readIndex(dir, battleId);
@@ -39,7 +39,12 @@ function decodedFor(dir: string, battleId: string) {
   if (cached && cached.sha === index.sha256) return cached;
   const loaded = loadStored(dir, battleId);
   if (!loaded.valid || !loaded.replay) return null;
-  const entry = { sha: index.sha256, snapshots: loaded.replay.snapshots, events: loaded.replay.events };
+  const entry = {
+    sha: index.sha256,
+    snapshots: loaded.replay.snapshots,
+    events: loaded.replay.events,
+    commands: loaded.replay.commands,
+  };
   decodedCache.set(battleId, entry);
   return entry;
 }
@@ -145,7 +150,17 @@ export function createReplayServer(opts: ReplayServerOptions): Express {
     }
     const events = decoded.events.filter((e: any) => e.tick >= (kf?.tick ?? 0) && e.tick <= toTick);
     res.setHeader("Cache-Control", "public, max-age=3600, immutable");
-    res.json({ battleId: index.battleId, fromKeyframeTick: kf?.tick ?? 0, snapshots, events });
+    res.json({
+      battleId: index.battleId,
+      fromKeyframeTick: kf?.tick ?? 0,
+      snapshots,
+      events,
+      // T8.3: capas de depuración en replay (comandos grabados) SOLO si el dueño
+      // del replay lo permitió al publicarlo (debugOpen). Nunca por defecto.
+      ...(index.debugOpen
+        ? { commands: decoded.commands.filter((c: any) => c.tick >= (kf?.tick ?? 0) && c.tick <= toTick) }
+        : {}),
+    });
   });
 
   // --------------------------------------------------------------- verify

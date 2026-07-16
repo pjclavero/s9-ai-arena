@@ -82,6 +82,13 @@ export interface StoredReplayIndex {
   versions: Record<string, string>;
   mapChecksum: string;
   keyframes: Keyframe[];
+  /** Resultado oficial (T8.3: el reproductor compara su marcador final contra esto). */
+  result: { winner: string; ticks: number; score: Record<string, number>; finalStateHash: string };
+  /**
+   * T8.3 · ¿Permite el dueño abrir las capas de depuración (comandos grabados) a
+   * todos en el reproductor? En directo exigen rol; en replay son opt-in del dueño.
+   */
+  debugOpen: boolean;
 }
 
 /** Un keyframe cada N snapshots (a 10 Hz de snapshot, N=30 ≈ un keyframe cada 3 s). */
