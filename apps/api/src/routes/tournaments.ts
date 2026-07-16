@@ -139,14 +139,37 @@ export function tournamentRoutes(db: Db): Router {
         await applyTransition(db, req.auth, v, "freeze", {}, req.correlationId);
       }
     }
-    // Revelación de semillas (commit-reveal completo con calendario: E9/T9.4, pendiente).
-    const seeds = Array.from({ length: 8 }, () => randomBytes(16).toString("hex"));
-    const proof = createHash("sha256").update(seeds.join("|")).digest("hex");
+    // Commit-reveal de semillas (E9/T9.4): si el organizador publicó el hash
+    // del lote ANTES del cierre (seedCommitment al crear el torneo), ahora
+    // debe revelar las semillas que casan con él; ambos quedan en la BD y son
+    // verificables públicamente (endpoint de auditoría). Sin compromiso
+    // previo, el servidor genera lote y compromiso juntos (auto-commit).
+    const revealed: string[] | null = Array.isArray(req.body?.seeds) ? req.body.seeds.map(String) : null;
+    let seeds: string[];
+    let commitment: string;
+    if (t.seed_commitment) {
+      if (!revealed || revealed.length === 0) {
+        throw conflict("seeds_required", "El torneo publicó un compromiso: el cierre debe revelar las semillas");
+      }
+      commitment = t.seed_commitment;
+      const proof = createHash("sha256").update(revealed.join("|")).digest("hex");
+      if (proof !== commitment) {
+        throw conflict("seed_reveal_mismatch", "Las semillas reveladas no casan con el compromiso publicado");
+      }
+      seeds = revealed;
+    } else {
+      seeds = Array.from({ length: 8 }, () => randomBytes(16).toString("hex"));
+      commitment = createHash("sha256").update(seeds.join("|")).digest("hex");
+    }
     const [updated] = await db("tournaments")
       .where({ id: t.id })
-      .update({ state: "closed", seeds_revealed: JSON.stringify(seeds) })
+      .update({ state: "closed", seeds_revealed: JSON.stringify(seeds), seed_commitment: commitment })
       .returning("*");
-    await db("jobs").insert({ kind: "generate_schedule", payload: JSON.stringify({ tournamentId: t.id, seedProof: proof }) });
+    await db("jobs").insert({
+      kind: "generate_schedule",
+      payload: JSON.stringify({ tournamentId: t.id, seedProof: commitment }),
+      dedupe_key: `generate_schedule:${t.id}`,
+    });
     await audit(db, {
       actorId: req.auth!.userId,
       action: "tournament.entries_closed",
