@@ -1,0 +1,63 @@
+/**
+ * T7.5 · Conformidad con el contrato OpenAPI de E1: cada una de las 53
+ * operaciones está IMPLEMENTADA (método+ruta+x-min-role derivados del contrato
+ * por construcción, ver registry.ts) o declarada PENDIENTE con su motivo.
+ */
+import { describe, it, expect, beforeAll } from "vitest";
+import { createApp } from "./app.js";
+import { createDb } from "./db/connection.js";
+import { loadContract } from "./openapi.js";
+import { implementedOperations } from "./registry.js";
+import { StubBotManager } from "./services/bot-manager.js";
+
+/** Operaciones del contrato aún no implementadas por E7, con el motivo. */
+export const PENDING_OPERATIONS: Record<string, string> = {
+  verifyReplay:
+    "Re-simular el replay exige el replay-service y el formato de E8 (T8.1) sobre el motor de E2; pendiente de reconciliación con E8.",
+};
+
+beforeAll(() => {
+  // Registrar rutas sin tocar la BD (knex es perezoso: no conecta hasta la primera query)
+  const db = createDb("postgres://unused:unused@localhost:1/unused");
+  createApp({ db, botManager: new StubBotManager(db) });
+});
+
+describe("T7.5 conformidad con el contrato de E1", () => {
+  it("el contrato tiene 53 operaciones", () => {
+    expect(loadContract().operations.length).toBe(53);
+  });
+
+  it("toda operación del contrato está implementada o declarada pendiente con motivo", () => {
+    const implemented = new Set(implementedOperations.filter((o) => !o.extension).map((o) => o.operationId));
+    const missing: string[] = [];
+    for (const op of loadContract().operations) {
+      if (!implemented.has(op.operationId) && !PENDING_OPERATIONS[op.operationId]) {
+        missing.push(op.operationId);
+      }
+    }
+    expect(missing, `operaciones sin implementar ni declarar: ${missing.join(", ")}`).toEqual([]);
+  });
+
+  it("no hay operaciones 'pendientes' que en realidad estén implementadas", () => {
+    const implemented = new Set(implementedOperations.map((o) => o.operationId));
+    for (const id of Object.keys(PENDING_OPERATIONS)) {
+      expect(implemented.has(id), `${id} está implementada: quitarla de PENDING_OPERATIONS`).toBe(false);
+    }
+  });
+
+  it("las extensiones fuera de contrato están documentadas y son solo de recuperación de cuenta", () => {
+    const extensions = implementedOperations.filter((o) => o.extension).map((o) => o.operationId);
+    expect(extensions.sort()).toEqual(["recoverAccount", "resetPassword"]);
+  });
+
+  it("cada operación implementada usa el x-min-role del contrato (por construcción)", () => {
+    const contract = loadContract();
+    for (const op of implementedOperations) {
+      if (op.extension) continue;
+      const c = contract.byOperationId.get(op.operationId)!;
+      expect(op.minRole).toBe(c.minRole);
+      expect(op.method).toBe(c.method);
+      expect(op.path).toBe(c.path);
+    }
+  });
+});
