@@ -102,10 +102,36 @@ jobs:
       packages: write
     strategy:
       matrix:
-        service: [gateway, arena-engine]
-        # PENDIENTE: añadir web, api, tournament-worker, bot-manager,
-        # map-service, replay-service cuando sus equipos entreguen el
-        # entrypoint (usan infrastructure/docker/node-service/Dockerfile).
+        # H4 (issue #8): las 8 imágenes de servicio. gateway y arena-engine tienen
+        # Dockerfile propio; los otros 6 usan la imagen genérica node-service con
+        # APP_PATH como build-arg (mismos valores que infrastructure/docker-compose.yml).
+        # El entrypoint (SERVICE_ENTRY) lo fija el Compose en despliegue; la imagen
+        # construye igualmente y falla al arrancar con mensaje claro si aún no existe.
+        include:
+          - service: gateway
+            dockerfile: infrastructure/docker/gateway/Dockerfile
+            build_args: ""
+          - service: arena-engine
+            dockerfile: infrastructure/docker/arena-engine/Dockerfile
+            build_args: ""
+          - service: web
+            dockerfile: infrastructure/docker/node-service/Dockerfile
+            build_args: APP_PATH=apps/web
+          - service: api
+            dockerfile: infrastructure/docker/node-service/Dockerfile
+            build_args: APP_PATH=apps/api
+          - service: tournament-worker
+            dockerfile: infrastructure/docker/node-service/Dockerfile
+            build_args: APP_PATH=apps/tournament-worker
+          - service: bot-manager
+            dockerfile: infrastructure/docker/node-service/Dockerfile
+            build_args: APP_PATH=apps/bot-manager
+          - service: map-service
+            dockerfile: infrastructure/docker/node-service/Dockerfile
+            build_args: APP_PATH=apps/map-service
+          - service: replay-service
+            dockerfile: infrastructure/docker/node-service/Dockerfile
+            build_args: APP_PATH=apps/replay-service
     steps:
       - uses: actions/checkout@v4
       - name: Login en GHCR (solo main)
@@ -122,7 +148,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: infrastructure/docker/${{ matrix.service }}/Dockerfile
+          file: ${{ matrix.dockerfile }}
+          build-args: ${{ matrix.build_args }}
           push: ${{ github.ref == 'refs/heads/main' }}
           tags: |
             ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:sha-${{ github.sha }}
