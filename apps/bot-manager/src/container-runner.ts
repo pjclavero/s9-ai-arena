@@ -15,6 +15,8 @@
  * arbitrario ejecutándose; el aislamiento tiene que ser del PROCESO/kernel, no del texto.
  */
 
+import { assertRealDigest } from "./digest-guard.js";
+
 export interface ContainerLimits {
   /** Cuota de CPU (nº de núcleos, p. ej. 0.5). */
   cpus: number;
@@ -112,6 +114,8 @@ export class DockerContainerRunner implements ContainerRunner {
 
   /** Flags EXACTOS de la tabla 18.2. */
   static buildRunArgs(spec: SandboxSpec, name: string): string[] {
+    // Guard issue #12: nunca componer un `docker run` sobre un digest placeholder.
+    assertRealDigest(spec.imageDigest, `imagen de runtime para ${spec.botId} v${spec.version}`);
     const l = spec.limits;
     return [
       "run",
@@ -174,6 +178,9 @@ export class DockerContainerRunner implements ContainerRunner {
   }
 
   async launch(_spec: SandboxSpec): Promise<ContainerHandle> {
+    // Guard issue #12 ANTES de cualquier intento de lanzamiento: con digests
+    // placeholder (000…0) el bot-manager se niega a lanzar bots.
+    assertRealDigest(_spec.imageDigest, `imagen de runtime para ${_spec.botId} v${_spec.version}`);
     throw new Error(
       "DockerContainerRunner.launch: requiere un entorno con Docker (ia02 no está en el grupo docker). " +
         "Usa buildRunArgs()/analyzeInspect() para inspección, o SandboxProcessRunner en tests.",

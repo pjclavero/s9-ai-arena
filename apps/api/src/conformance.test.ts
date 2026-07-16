@@ -1,6 +1,7 @@
 /**
- * T7.5 · Conformidad con el contrato OpenAPI de E1: cada una de las 53
- * operaciones está IMPLEMENTADA (método+ruta+x-min-role derivados del contrato
+ * T7.5 · Conformidad con el contrato OpenAPI de E1: cada una de las 55
+ * operaciones (53 originales + getBotRatingHistory/getTeamStandings, H6 issue
+ * #10, contrato 0.2.0) está IMPLEMENTADA (método+ruta+x-min-role derivados del contrato
  * por construcción, ver registry.ts) o declarada PENDIENTE con su motivo.
  */
 import { describe, it, expect, beforeAll } from "vitest";
@@ -24,8 +25,8 @@ beforeAll(() => {
 });
 
 describe("T7.5 conformidad con el contrato de E1", () => {
-  it("el contrato tiene 53 operaciones", () => {
-    expect(loadContract().operations.length).toBe(53);
+  it("el contrato tiene 55 operaciones (53 + las 2 de H6, contrato 0.2.0)", () => {
+    expect(loadContract().operations.length).toBe(55);
   });
 
   it("toda operación del contrato está implementada o declarada pendiente con motivo", () => {

@@ -19,10 +19,10 @@
  * Idempotencia: si la batalla ya está `finished`, el handler no re-ejecuta nada
  * (protege contra re-entregas del mismo trabajo tras un worker muerto).
  */
-import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import type { Knex } from "knex";
+import { fromJsonl } from "../../arena-engine/src/replay.js";
+import { ingestReplay } from "../../replay-service/src/store.js";
+import { runStatsJob } from "../../replay-service/src/stats.js";
 import { administrativeDisqualifications } from "../../bot-manager/src/suspension.js";
 import type { SuspensionCheck } from "../../bot-manager/src/launch-guard.js";
 import { InfrastructureFailure, SportingFailure } from "./errors.js";
@@ -41,6 +41,8 @@ export interface BattleRow {
   map_version: number;
   seed: string | null;
   result: unknown;
+  /** E9/008: 'delayed' (anti-coaching E8.M) o 'visible' (la final, en claro). */
+  spectator_mode?: string;
 }
 
 export interface ParticipantRow {
@@ -59,10 +61,12 @@ export interface BattleExecution {
   finalStateHash: string;
   disqualified: string[]; // botIds descalificados por el motor
   versions: Record<string, string>;
-  /** Replay JSONL (T2.6). El runner lo persiste como archivo (política 23.1). */
+  /** Replay JSONL (T2.6). El runner lo archiva vía el almacén de E8 (política 23.1). */
   replayJsonl?: string;
-  /** Stats por botId para battle_stats (las ricas son de E8). */
-  statsPerBot?: Record<string, unknown>;
+  // H3 (issue #7): aquí existió `statsPerBot` (forma simple {team, teamScore,
+  // ticks, disqualified}). Se ELIMINÓ: battle_stats tiene UNA sola forma, la
+  // canónica del runStatsJob de E8 (la que leen los agregados de E9). No
+  // reintroducir un segundo escritor: battle-stats-canonical.test.ts lo vigila.
 }
 
 export interface BattleContext {
@@ -101,8 +105,12 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
     const battleId = String(job.payload.battleId ?? "");
     const { battle, participants } = await loadBattle(db, battleId);
 
-    // Idempotencia: re-entrega tras worker muerto NO re-ejecuta una batalla terminada.
-    if (battle.status === "finished") return;
+    // Idempotencia: re-entrega tras worker muerto NO re-ejecuta una batalla
+    // terminada; solo rellena las stats ricas de E8 si faltan (H2, issue #6).
+    if (battle.status === "finished") {
+      await ensureRichStats(db, battleId, deps);
+      return;
+    }
 
     // E6 · suspensiones: descalificación administrativa antes de lanzar nada.
     const adminDq = deps.suspensions
@@ -154,7 +162,33 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
     }
 
     await finishBattle(db, battle, participants, execution, adminDq, "none", deps.replaysDir);
+    // H2 (issue #6) · Stats RICAS de E8 (T8.4) al archivar el replay: el mismo
+    // runStatsJob que usan el replay-service y los agregados de E9. Va DESPUÉS
+    // de persistir el resultado: un fallo aquí no pierde la batalla (el job se
+    // reintenta y el camino idempotente de arriba rellena lo que falte).
+    await ensureRichStats(db, battleId, deps);
   };
+}
+
+/**
+ * H2+H3 (issues #6/#7) · Garantiza las stats ricas de E8 para una batalla con
+ * replay archivado: ejecuta el runStatsJob REAL de E8 (re-simulación, T8.4),
+ * que deja `battle_stats` SIEMPRE en la forma canónica que leen los agregados
+ * de E9. runStatsJob es idempotente por battle_id (delete+insert): reprocesar
+ * sobrescribe, jamás duplica. Sin replay archivado (walkover, derrota
+ * deportiva) no hay stats que calcular.
+ */
+async function ensureRichStats(db: Knex, battleId: string, deps: BattleRunnerDeps): Promise<void> {
+  if (!deps.replaysDir) return;
+  const row = await db("battles").where({ id: battleId }).first();
+  // Solo replays del almacén de E8 (<id>.replay); refs antiguas u otras rutas no se tocan.
+  if (!row?.replay_ref || !String(row.replay_ref).endsWith(`${battleId}.replay`)) return;
+  try {
+    await runStatsJob(db, deps.replaysDir, battleId);
+  } catch (err) {
+    // El resultado ya es firme; las stats se reintentan como infraestructura.
+    throw new InfrastructureFailure("storage_unavailable", `stats de ${battleId}: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 async function finishBattle(
@@ -169,10 +203,16 @@ async function finishBattle(
   let replayRef: string | null = null;
   let replayHash: string | null = null;
   if (execution.replayJsonl && replaysDir) {
-    mkdirSync(replaysDir, { recursive: true });
-    replayRef = join(replaysDir, `${battle.id}.replay.jsonl`);
-    writeFileSync(replayRef, execution.replayJsonl);
-    replayHash = createHash("sha256").update(execution.replayJsonl).digest("hex");
+    // H2 (issue #6) · Ingesta por el almacén REAL de E8 (T8.1): valida,
+    // comprime y persiste con índice; battles.replay_ref/replay_hash siguen el
+    // convenio del almacén (hash del archivo comprimido, el que comprueban
+    // getReplay/verifyReplay de la API). Antes el worker escribía JSONL crudo
+    // que el replay-service no podía leer.
+    const stored = ingestReplay(replaysDir, fromJsonl(execution.replayJsonl), {
+      official: battle.official,
+    });
+    replayRef = stored.path;
+    replayHash = stored.index.sha256;
   }
   const disqualified = new Set([...adminDq, ...execution.disqualified]);
 
@@ -199,14 +239,8 @@ async function finishBattle(
         .where({ battle_id: battle.id, bot_id: p.bot_id })
         .update({ outcome: outcomeFor(p, execution.winner, disqualified) });
     }
-    if (execution.statsPerBot) {
-      for (const [botId, stats] of Object.entries(execution.statsPerBot)) {
-        await trx("battle_stats")
-          .insert({ battle_id: battle.id, bot_id: botId, stats: JSON.stringify(stats) })
-          .onConflict(["battle_id", "bot_id"])
-          .merge();
-      }
-    }
+    // H3 (issue #7): battle_stats NO se escribe aquí. La única forma canónica
+    // la escribe el runStatsJob de E8 (ensureRichStats, tras esta transacción).
   });
   // 19.1: el resultado se procesa (avance de rondas, ratings) en su propio trabajo.
   await enqueueJob(db, "process_result", { battleId: battle.id }, { dedupeKey: `process_result:${battle.id}` });

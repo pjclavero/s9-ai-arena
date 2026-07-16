@@ -27,7 +27,9 @@ describe("T3.1 · catálogo v1 — validación de esquema", () => {
 
   for (const m of loadCatalog()) {
     it(`${m.id}@${m.version} valida contra module.schema.json`, () => {
-      const ok = validateModule(m);
+      // `: boolean` evita que el type-predicate de Ajv estreche `m` a `never` en la
+      // rama !ok (2 errores de tsc de H7, issue #11); misma semántica.
+      const ok: boolean = validateModule(m);
       if (!ok) {
         throw new Error(
           `${m.id}@${m.version}: ${JSON.stringify(validateModule.errors, null, 2)}`,

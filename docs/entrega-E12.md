@@ -207,3 +207,72 @@ transversal o lo reporta para decisión del dueño (no se invade ámbito ajeno).
 `apps/arena-engine/src/sim/` y `docs/estado-proyecto.md` intactos. No se
 reimplementó lógica de ningún equipo: toda la integración importa las piezas
 reales. `main` no se toca.
+
+---
+
+## Cierre H2/H3/H6 (2026-07-16)
+
+Equipo de INTEGRACIÓN, rama `fix-integracion` (base `e59d9e8`). Tres hallazgos
+de la auditoría 2026-07-16 cerrados con código, cada uno en su commit
+(`Refs #6/#7/#10`; el cierre de las issues lo decide el operador al mergear).
+
+### H2 · Worker → espectador en vivo + stats ricas (issue #6) — CERRADO
+
+- `makeDefaultHandlers`/`makeEngineExecutor` aceptan `spectate` (un
+  `Pick<SpectateGateway, "attachBattle" | "detachBattle">` del gateway REAL de
+  E8): cada batalla se registra con `attachBattle()` al arrancar — con
+  `meta.round` (sugerencia de E11 para la vista broadcast) y el retardo
+  anti-coaching del ruleset salvo `spectator_mode='visible'` — y se retira tras
+  emitir el resultado. El motor corre tick a tick cediendo el bucle de eventos
+  (antes `record()` bloqueaba hasta el final y el directo era imposible); el
+  cierre por límite de ticks sigue siendo `run()` del motor.
+- El replay se archiva por el almacén REAL de E8 (`ingestReplay`: validación,
+  compresión e índice; `replay_ref`/`replay_hash` con el convenio del almacén)
+  y tras persistir el resultado corre el `runStatsJob` REAL de E8 (T8.4), con
+  backfill idempotente en re-entregas del trabajo.
+- Prueba: `apps/tournament-worker/src/spectate-live.test.ts` — espectador
+  ANÓNIMO (ticket de la API de E7) ve una batalla de torneo del worker EN
+  DIRECTO (init con `finished:false`, >3 snapshots antes del resultado, sin
+  fuga D8), `meta.round=2` en el attach, replay en el almacén y `battle_stats`
+  ricas.
+
+### H3 · `battle_stats` con UNA forma canónica (issue #7) — CERRADO
+
+- Eliminado el segundo escritor (el `statsPerBot` simple del ejecutor y su
+  insert en `finishBattle`): la única forma es la del `runStatsJob` de E8, la
+  que leen los agregados de E9 (`aggregateByBotVersion`).
+- Prueba anti-regresión: `apps/tournament-worker/src/battle-stats-canonical.test.ts`
+  compara BYTE A BYTE lo que el worker deja en `battle_stats` con el recomputo
+  del `runStatsJob` real sobre el mismo replay, fija el conjunto exacto de
+  campos canónicos (y la ausencia de `teamScore`/`ticks` del escritor legado)
+  y verifica que los eventos privados re-simulados (rechazos por módulo)
+  llegan a la tabla. Si alguien reintroduce otro escritor, revienta.
+- Nota (ajena a H3, para E3/E2): con el catálogo actual `resolveVehicle` no
+  propaga la munición del loadout (`ammo.*`), así que los disparos de bots por
+  catálogo se rechazan con `no_ammo`; los tests lo rodean y lo dejan anotado.
+
+### H6 · Rutas públicas de rating e standings por equipos (issue #10) — CERRADO
+
+- Contrato `apps/api/openapi.yaml` 0.1.0 → **0.2.0** (añadir endpoint = MINOR,
+  `docs/compatibilidad.md` §2). 53 → 55 operaciones, todas implementadas:
+  - `GET /bots/{botId}/rating-history` (`getBotRatingHistory`, visitor):
+    libro mayor `rating_events` de E9 con `?at=` (reconstrucción `ratingAt`).
+  - `GET /tournaments/{tournamentId}/team-standings` (`getTeamStandings`,
+    visitor): tabla por equipos de E9 (`leagueTable`/isTeams, desempates de
+    `formats.ts`); 409 si el torneo no es de formato `teams`.
+- Las rutas importan `ratings.ts`/`results.ts` de E9 — cero reimplementación.
+- Prueba: `apps/api/src/h6-public-routes.test.ts` (rating con
+  `applyBattleRating` real y suma conservada; tabla 3/0 puntos con nombres de
+  equipo; 400/404/409).
+
+### Suite y límites
+
+- Suite completa (`npm test -- --maxWorkers=2`): **657 pasan / 1 falla / 3
+  skipped** (línea base 646/1/3 + 11 tests nuevos). El único rojo sigue siendo
+  `replay-golden.test.ts` (zstd, exige Node ≥22.15): de entorno, preexistente.
+- Commits: `dbe611a` (Fix H2, Refs #6), `48ddfda` (Fix H3, Refs #7),
+  `5c7a8f7` (Fix H6, Refs #10).
+- Fuera de alcance (sigue pendiente): H1 (bloqueo estático E6), H4 (imágenes
+  CI), H5 (`cpuMs`, runner containerizado), H7 (errores de `tsc` ajenos) y la
+  munición del catálogo anotada arriba. `apps/arena-engine/src/sim/` y
+  `docs/estado-proyecto.md` intactos; producción no tocada.

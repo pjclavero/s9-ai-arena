@@ -32,7 +32,8 @@ describe("T3.4 · inmutabilidad de versiones ya usadas por los goldens de T3.3",
 
       for (const [field, lockedValue] of Object.entries(lockedFields)) {
         expect(
-          (current as Record<string, unknown>)[field],
+          // vía unknown: ModuleDefinition no indexa por string (1 error tsc de H7, issue #11)
+          (current as unknown as Record<string, unknown>)[field],
           `${versionedId}.${field} cambió respecto al snapshot bloqueado. ` +
             `Si es un ajuste de balance deliberado, crea ${base}@${Number(versionStr) + 1} ` +
             `en vez de editar ${versionedId} in situ (cap. 10.4), y regenera los goldens de T3.3.`,

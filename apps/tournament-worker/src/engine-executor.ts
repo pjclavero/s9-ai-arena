@@ -22,10 +22,10 @@ import type { LoadoutInput, ModuleDefinition } from "../../../packages/module-ca
 import { getCatalog } from "../../api/src/services/catalog.js";
 import { toEngineMap } from "../../map-service/src/to-engine-map.js";
 import type { InternalMap } from "../../map-service/src/types.js";
-import { record } from "../../arena-engine/src/replay.js";
-import { toJsonl } from "../../arena-engine/src/replay.js";
-import type { BotAgent, Participant } from "../../arena-engine/src/sim/battle.js";
+import { replayFromBattle, toJsonl } from "../../arena-engine/src/replay.js";
+import { Battle, type BotAgent, type Participant } from "../../arena-engine/src/sim/battle.js";
 import { HunterBot } from "../../arena-engine/src/stubs.js";
+import type { SpectateGateway } from "../../api/src/spectate/gateway.js";
 import { InfrastructureFailure } from "./errors.js";
 import type { BattleContext, BattleExecution, BattleExecutor } from "./battle-runner.js";
 
@@ -42,12 +42,32 @@ export type AgentResolver = (botId: string, version: number, vehicleId: string) 
 
 const defaultAgentResolver: AgentResolver = (botId) => new HunterBot(botId);
 
+/**
+ * H2 (issue #6) · Lo que el ejecutor necesita del gateway de espectador de E8
+ * (T8.2). Es un Pick del SpectateGateway REAL: cualquier divergencia de firma
+ * rompe en compilación — no se duplica ni se reimplementa nada de E8.
+ */
+export type SpectateSink = Pick<SpectateGateway, "attachBattle" | "detachBattle">;
+
+/** Techo de ticks del motor (mismo valor por defecto que Battle.run()). */
+const MAX_TICKS = 100000;
+/** Cada cuántos ticks se cede el bucle de eventos para que el gateway bombee. */
+const YIELD_EVERY_N_TICKS = 25;
+
 export interface EngineExecutorOptions {
   db: Knex;
   /** Resolver de agentes: por defecto stubs deterministas del motor. */
   agentResolver?: AgentResolver;
   /** Overrides del ruleset del motor (p. ej. timeLimitTicks corto en tests). */
   rulesetOverrides?: Record<string, unknown>;
+  /**
+   * H2 (issue #6) · Gateway de espectador de E8: si se pasa, cada batalla se
+   * registra EN VIVO con attachBattle() al arrancar (con `meta.round`, la
+   * sugerencia de E11 para la vista broadcast) y se retira tras el resultado.
+   */
+  spectate?: SpectateSink;
+  /** ms entre el final de la batalla y el detach (deja al pump del gateway entregar el resultado). */
+  spectateDetachDelayMs?: number;
 }
 
 export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor {
@@ -127,28 +147,67 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
 
     // --- batalla real del motor (con replay T2.6) ----------------------------
     try {
-      const replay = await record(
-        {
-          battleId: battle.id,
-          seed: battle.seed ?? battle.id,
-          ruleset,
-          map: arenaMap,
-          participants: engineParticipants,
-        },
-        (b) => {
-          for (const [vehicleId, agent] of agents) b.attachBot(vehicleId, agent);
-        },
-      );
-      const result = replay.result;
-      const statsPerBot: Record<string, unknown> = {};
-      for (const p of engineParticipants) {
-        statsPerBot[p.botId] = {
-          team: p.team,
-          teamScore: result.score[p.team] ?? 0,
-          ticks: result.ticks,
-          disqualified: result.disqualified.includes(p.botId),
-        };
+      const b = await Battle.create({
+        battleId: battle.id,
+        seed: battle.seed ?? battle.id,
+        ruleset,
+        map: arenaMap,
+        participants: engineParticipants,
+        recordReplay: true,
+      });
+      for (const [vehicleId, agent] of agents) b.attachBot(vehicleId, agent);
+
+      // H2 (issue #6) · Registro EN VIVO en el gateway de espectador de E8:
+      // el visor/broadcast de E11 muestra la batalla de torneo en directo.
+      if (opts.spectate) {
+        // `meta.round` = sugerencia de E11 (entrega-E11, decisión 2): la vista
+        // broadcast promociona el progreso del torneo sin tocar el contrato.
+        let round: number | null = null;
+        if (battle.match_id) {
+          const match = await db("matches").where({ id: battle.match_id }).first();
+          round = (match?.round as number) ?? null;
+        }
+        // E8.M anti-coaching: retardo del ruleset, salvo que E9 marque la
+        // batalla 'visible' (la final se emite sin retardo, migración 008).
+        const spectator =
+          battle.spectator_mode === "visible"
+            ? { ...(ruleset.spectator ?? {}), delaySeconds: 0 }
+            : ruleset.spectator;
+        opts.spectate.attachBattle(battle.id, b, {
+          spectator,
+          meta: {
+            mode: battle.mode,
+            mapId: battle.map_id,
+            mapVersion: battle.map_version,
+            tournamentId: battle.tournament_id,
+            matchId: battle.match_id,
+            round,
+            official: battle.official,
+          },
+        });
       }
+
+      let result;
+      try {
+        // Tick a tick CEDIENDO el bucle de eventos: record()/run() corren
+        // síncronos y el pump del gateway no emitiría nada hasta el final.
+        while (!b.isFinished() && b.tick < MAX_TICKS) {
+          b.step();
+          if (b.tick % YIELD_EVERY_N_TICKS === 0) await new Promise((r) => setImmediate(r));
+        }
+        // Cierre por el MOTOR (no se duplica su lógica): si agotó los ticks,
+        // run() con el techo ya alcanzado declara el empate; si terminó,
+        // devuelve el resultado ya calculado.
+        result = b.run(MAX_TICKS);
+      } finally {
+        if (opts.spectate) {
+          const sink = opts.spectate;
+          const t = setTimeout(() => sink.detachBattle(battle.id), opts.spectateDetachDelayMs ?? 3000);
+          t.unref?.();
+        }
+      }
+      const replay = replayFromBattle(b, result);
+      b.free();
       return {
         winner: result.winner,
         ticks: result.ticks,
@@ -162,7 +221,6 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
           rulesetDb: battle.ruleset_id ?? "",
         },
         replayJsonl: toJsonl(replay),
-        statsPerBot,
       };
     } catch (err) {
       if (err instanceof InfrastructureFailure) throw err;

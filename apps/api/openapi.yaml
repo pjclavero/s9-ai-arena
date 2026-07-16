@@ -1,7 +1,9 @@
 openapi: 3.1.0
 info:
   title: S9 AI Arena · API de plataforma
-  version: 0.1.0
+  # 0.2.0 · H6 (issue #10): añade getBotRatingHistory y getTeamStandings.
+  # Añadir un endpoint = MINOR (docs/compatibilidad.md, §2 Semver por paquete).
+  version: 0.2.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -778,6 +780,60 @@ paths:
             application/json:
               schema: { type: array, items: { $ref: '#/components/schemas/Standing' } }
 
+  /bots/{botId}/rating-history:
+    get:
+      tags: [standings]
+      operationId: getBotRatingHistory
+      summary: >-
+        H6 (issue #10) · Historial público de rating del bot: el libro mayor
+        rating_events de E9 (before/delta/after por batalla oficial, con K y
+        reversiones). Con `?at=` incluye además el rating reconstruido a esa
+        fecha (ratingAt de E9).
+      x-min-role: visitor
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/BotId'
+        - name: seasonId
+          in: query
+          schema: { type: string, default: season-1 }
+        - name: mode
+          in: query
+          schema: { enum: [deathmatch, team_deathmatch, capture_the_flag, zone_control], default: deathmatch }
+        - name: at
+          in: query
+          description: Fecha para la reconstrucción histórica (rating vigente en ese instante).
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Historial de rating del bot en la temporada/modo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RatingHistory' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /tournaments/{tournamentId}/team-standings:
+    get:
+      tags: [tournaments, standings]
+      operationId: getTeamStandings
+      summary: >-
+        H6 (issue #10) · Clasificación por EQUIPOS de un torneo de formato
+        `teams` (la tabla de liga real de E9 con sus desempates: puntos →
+        enfrentamiento directo → diferencia de puntuación → seed). E7 la dejó
+        pendiente de contrato.
+      x-min-role: visitor
+      security: []
+      parameters: [{ $ref: '#/components/parameters/TournamentId' }]
+      responses:
+        '200':
+          description: Tabla por equipos del torneo
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/TeamStanding' } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: El torneo no es de formato por equipos
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
   # ------------------------------------------------------------------ ADMIN
   /admin/security-findings:
     get:
@@ -1237,6 +1293,46 @@ components:
         wins: { type: integer }
         losses: { type: integer }
         draws: { type: integer }
+
+    # H6 (issue #10) · Evento del libro mayor de rating de E9 (rating_events).
+    RatingEvent:
+      type: object
+      required: [battleId, botVersion, k, before, delta, after, reverted, at]
+      properties:
+        battleId: { type: string }
+        botVersion: { type: integer }
+        k: { type: number, description: Factor K vigente al aplicar (configurable por liga) }
+        before: { type: number }
+        delta: { type: number }
+        after: { type: number }
+        reverted: { type: boolean, description: 'true si la batalla fue anulada y el delta revertido' }
+        at: { type: string, format: date-time }
+
+    RatingHistory:
+      type: object
+      required: [botId, seasonId, mode, rating, events]
+      properties:
+        botId: { type: string }
+        seasonId: { type: string }
+        mode: { type: string }
+        rating: { type: number, description: 'Rating vigente (1000 si el bot aún no tiene eventos)' }
+        ratingAt: { type: number, description: 'Solo si se pidió ?at=: rating reconstruido a esa fecha' }
+        events: { type: array, items: { $ref: '#/components/schemas/RatingEvent' } }
+
+    # H6 (issue #10) · Fila de la tabla por equipos (leagueTable de E9, isTeams).
+    TeamStanding:
+      type: object
+      required: [rank, teamId, points, wins, losses, draws, scoreDiff]
+      properties:
+        rank: { type: integer }
+        teamId: { type: string }
+        teamName: { type: string }
+        points: { type: integer, description: 'Liga: victoria 3, empate 1 (formats.ts de E9)' }
+        wins: { type: integer }
+        losses: { type: integer }
+        draws: { type: integer }
+        scoreDiff: { type: number, description: Diferencia de puntuación agregada de las series }
+        seed: { type: integer, description: Orden de inscripción (último desempate) }
 
     SecurityFinding:
       type: object
