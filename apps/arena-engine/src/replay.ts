@@ -136,6 +136,53 @@ export async function record(
   return replay;
 }
 
+/**
+ * E8/T8.4 · Re-simula el replay entregando a `onEvent` TODOS los eventos por
+ * vehículo (privados incluidos: hit_dealt, rejected_action, decision_timeout…).
+ *
+ * Existe porque el replay solo persiste los eventos PÚBLICOS (T2.6/D8): las
+ * estadísticas por bot (daño, precisión, fallos) necesitan los privados, y la
+ * política 23.1 manda calcularlas DESDE EL ARCHIVO, no desde una BD de eventos.
+ * Re-simular con los comandos grabados los regenera exactamente (determinismo).
+ * Misma mecánica que verify(); vive aquí para no duplicar ReplayAgent fuera.
+ */
+export async function resimulateWithEvents(
+  replay: Replay,
+  onEvent: (vehicleId: string, event: any) => void,
+): Promise<BattleResult> {
+  const b = await Battle.create({
+    battleId: replay.header.battleId,
+    seed: replay.header.seed,
+    ruleset: replay.header.ruleset,
+    map: replay.header.map,
+    participants: replay.header.participants,
+    recordReplay: false,
+  });
+  const byVehicle = new Map<string, { tick: number; command: any }[]>();
+  for (const c of replay.commands) {
+    if (!byVehicle.has(c.vehicleId)) byVehicle.set(c.vehicleId, []);
+    byVehicle.get(c.vehicleId)!.push({ tick: c.tick, command: c.command });
+  }
+  for (const p of replay.header.participants) {
+    const agent = new ReplayAgent(p.botId, byVehicle.get(p.id) ?? []) as ReplayAgent & {
+      onEvent?: (e: any) => void;
+    };
+    agent.onEvent = (e: any) => onEvent(p.id, e);
+    b.attachBot(p.id, agent);
+  }
+  const result = b.run();
+  // Drenar la cola de eventos no entregados: el motor entrega los eventos de un bot
+  // al PRINCIPIO de su siguiente ciclo de decisión, así que los del último ciclo
+  // (p. ej. el vigésimo decision_timeout que descalifica, o los del tick final)
+  // quedarían sin contar. Para estadísticas eso sería mentir por poco.
+  const pending = (b as unknown as { pendingEvents: Map<string, any[]> }).pendingEvents;
+  for (const p of replay.header.participants) {
+    for (const e of pending.get(p.id) ?? []) onEvent(p.id, e);
+  }
+  b.free();
+  return result;
+}
+
 export interface VerifyResult {
   matches: boolean;
   officialHash: string;
