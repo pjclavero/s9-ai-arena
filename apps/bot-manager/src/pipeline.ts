@@ -156,11 +156,19 @@ export class BuildPipeline {
         const res = analyze(sub.runtime, sub.files, cfg);
         stage.logs.push(`imports: ${res.imports.join(", ") || "(ninguno externo)"}`);
         if (res.dangerousImports.length) {
+          // El hallazgo de auditoría se registra SIEMPRE (con cualquier política).
           stage.logs.push(`imports peligrosos señalados: ${res.dangerousImports.join(", ")}`);
-          this.audit.finding({ category: "dangerous_import", severity: "medium", botId: sub.botId, version: sub.version, userId: sub.ownerUserId, correlationId, summary: `imports de red/proceso/FS: ${res.dangerousImports.join(", ")}`, detail: { imports: res.dangerousImports } });
+          this.audit.finding({ category: "dangerous_import", severity: "medium", botId: sub.botId, version: sub.version, userId: sub.ownerUserId, correlationId, summary: `imports de red/proceso/FS: ${res.dangerousImports.join(", ")}`, detail: { imports: res.dangerousImports, policy: cfg.dangerousBuiltins.mode } });
         }
         if (res.disallowedImports.length) {
           stage.message = `import(s) de paquete no permitido: ${res.disallowedImports.join(", ")}`;
+          return false;
+        }
+        // H1 (issue #5): política bloqueante por defecto para builtins peligrosos de la
+        // stdlib. El sandbox (T6.2) sigue siendo la defensa principal; esto es defensa
+        // en profundidad mientras no esté verificado en vivo.
+        if (cfg.dangerousBuiltins.mode === "block" && res.dangerousImports.length) {
+          stage.message = `import(s) de builtin peligroso bloqueado(s) por política: ${res.dangerousImports.join(", ")} (el sandbox sigue siendo la defensa principal; ver issue #5)`;
           return false;
         }
         stage.logs.push("análisis estático ok");

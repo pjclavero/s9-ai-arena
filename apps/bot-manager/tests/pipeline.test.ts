@@ -89,6 +89,39 @@ describe("T6.1 · pipeline de build y publicación", () => {
     expect(sink.findings.some((f) => f.category === "disallowed_dependency")).toBe(true);
   });
 
+  // H1 (issue #5): un bot hostil de SOLO-stdlib (socket/subprocess, sin deps de
+  // terceros) antes llegaba al final con un simple hallazgo; ahora la política por
+  // defecto lo BLOQUEA en static_analysis, manteniendo el hallazgo de auditoría.
+  it("un bot hostil de solo-stdlib (socket/subprocess) queda RECHAZADO en static_analysis con hallazgo (H1, issue #5)", async () => {
+    const sink = new CollectingSink();
+    const files = pyGoodFiles();
+    const bot = files.find((f) => f.path === "src/bot.py")!;
+    bot.content = "import socket\nimport subprocess\n" + bot.content;
+    const build = await new BuildPipeline(deps({ audit: sink })).run(submission(files));
+    expect(build.status).toBe("failed");
+    expect(build.botVersionState).toBe("rejected");
+    const sa = build.stages.find((s) => s.name === "static_analysis")!;
+    expect(sa.status).toBe("failed");
+    expect(sa.message).toMatch(/builtin peligroso bloqueado/);
+    expect(sa.message).toMatch(/socket/);
+    // El hallazgo de auditoría se mantiene aunque ahora también bloquee.
+    expect(sink.findings.some((f) => f.category === "dangerous_import")).toBe(true);
+  });
+
+  it("con la política 'audit', el mismo bot pasa static_analysis dejando solo el hallazgo (configurable)", async () => {
+    const sink = new CollectingSink();
+    const files = pyGoodFiles();
+    const bot = files.find((f) => f.path === "src/bot.py")!;
+    bot.content = "import socket\n" + bot.content;
+    const cfg = withConfig();
+    const build = await new BuildPipeline(
+      deps({ audit: sink, config: { ...cfg, dangerousBuiltins: { ...cfg.dangerousBuiltins, mode: "audit" } } }),
+    ).run(submission(files));
+    const sa = build.stages.find((s) => s.name === "static_analysis")!;
+    expect(sa.status).toBe("passed");
+    expect(sink.findings.some((f) => f.category === "dangerous_import")).toBe(true);
+  });
+
   it("la partida de humo/prueba de protocolo detecta un bot que compila pero incumple protocolo", async () => {
     const build = await new BuildPipeline(deps({ agentResolver: () => brokenProtocolCandidate })).run(submission(pyGoodFiles()));
     expect(build.botVersionState).toBe("rejected");

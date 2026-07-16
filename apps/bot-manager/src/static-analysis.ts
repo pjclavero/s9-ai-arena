@@ -31,11 +31,10 @@ const NODE_BUILTINS = new Set([
   "url", "util", "stream", "timers", "console", "process",
 ]);
 
-// Builtins peligrosos para un bot sandboxeado: se señalan como hallazgo aunque sean
-// de la plataforma (red, procesos, FS crudo). El sandbox los neutraliza en runtime,
-// pero avisarlos en análisis es defensa en profundidad.
-const PYTHON_DANGEROUS = new Set(["socket", "subprocess", "ctypes", "multiprocessing", "asyncio"]);
-const NODE_DANGEROUS = new Set(["child_process", "net", "http", "https", "dgram", "cluster", "worker_threads", "fs", "dns", "tls", "vm", "os", "crypto"]);
+// Builtins peligrosos para un bot sandboxeado (red, procesos, FS crudo): la lista es
+// CONFIGURABLE (config.dangerousBuiltins, H1/issue #5) y la política por defecto los
+// BLOQUEA además de registrarlos como hallazgo de auditoría. El sandbox los neutraliza
+// en runtime y sigue siendo la defensa principal; esto es defensa en profundidad.
 
 export interface Dependency {
   name: string;
@@ -51,7 +50,8 @@ export interface StaticAnalysisResult {
   disallowedDeps: string[];
   /** Imports de terceros no permitidos (ni stdlib/builtin ni en allowlist). */
   disallowedImports: string[];
-  /** Imports de builtins peligrosos (red/procesos/FS). */
+  /** Imports de builtins peligrosos (red/procesos/FS). Siempre son hallazgo de
+   *  auditoría; con la política "block" (por defecto) además bloquean (H1, issue #5). */
   dangerousImports: string[];
   ok: boolean;
   reasons: string[];
@@ -124,7 +124,7 @@ export function extractImports(runtime: Runtime, files: SourceFile[]): string[] 
 export function analyze(runtime: Runtime, files: SourceFile[], config: PipelineConfig): StaticAnalysisResult {
   const allowed = config.allowedPackages[runtime];
   const stdlib = runtime === "python" ? PYTHON_STDLIB : NODE_BUILTINS;
-  const dangerous = runtime === "python" ? PYTHON_DANGEROUS : NODE_DANGEROUS;
+  const dangerous = config.dangerousBuiltins.modules[runtime];
 
   // Manifiesto
   let declared: Dependency[] = [];
@@ -153,9 +153,12 @@ export function analyze(runtime: Runtime, files: SourceFile[], config: PipelineC
     if (mod.startsWith(".") || mod.startsWith("/")) continue; // import local relativo
     imports.push(mod);
     const top = mod.split(".")[0].split("/")[0];
-    if (dangerous.has(top)) dangerousImports.push(mod);
+    // "node:fs" y "fs" son el mismo builtin: se normaliza SOLO para la detección
+    // de peligrosos (no para la stdlib, para no relajar el resto de comprobaciones).
+    const topNorm = top.replace(/^node:/, "");
+    if (dangerous.has(topNorm)) dangerousImports.push(mod);
     if (stdlib.has(top)) continue;
-    if (dangerous.has(top)) continue; // señalado arriba, no cuenta como "dep externa no permitida"
+    if (dangerous.has(topNorm)) continue; // ya señalado/bloqueado como builtin peligroso
     const pkg = importToPackage(runtime, mod);
     if (runtime === "python" && localFileStems.has(pkg)) continue; // módulo propio del bot
     if (!allowed.has(pkg)) disallowedImports.push(mod);
@@ -169,6 +172,11 @@ export function analyze(runtime: Runtime, files: SourceFile[], config: PipelineC
   }
   for (const d of disallowedDeps) reasons.push(`dependencia no permitida (fuera de allowlist): ${d}`);
   for (const im of [...new Set(disallowedImports)]) reasons.push(`import de paquete no permitido: ${im}`);
+  if (config.dangerousBuiltins.mode === "block") {
+    for (const im of [...new Set(dangerousImports)]) {
+      reasons.push(`import de builtin peligroso bloqueado por política (H1): ${im}`);
+    }
+  }
 
   return {
     declared,

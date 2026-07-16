@@ -49,12 +49,34 @@ describe("T6.1/T6.3 · análisis estático y dependencias", () => {
     expect(res.ok).toBe(false);
   });
 
-  it("los imports peligrosos (red/proceso) se señalan como hallazgo", () => {
+  // H1 (issue #5): antes solo se señalaban; ahora la política por defecto BLOQUEA.
+  it("los imports peligrosos (red/proceso) se señalan Y BLOQUEAN con la política por defecto (H1, issue #5)", () => {
     const files = pyGoodFiles();
     const bot = files.find((f) => f.path === "src/bot.py")!;
     bot.content = "import socket\nimport subprocess\n" + bot.content;
     const res = analyze("python", files, DEFAULT_CONFIG);
     expect(res.dangerousImports).toEqual(expect.arrayContaining(["socket", "subprocess"]));
+    expect(res.ok).toBe(false);
+    expect(res.reasons.join(" ")).toMatch(/builtin peligroso bloqueado por política.*socket/);
+  });
+
+  it("con la política 'audit', los imports peligrosos solo se señalan (comportamiento anterior)", () => {
+    const files = pyGoodFiles();
+    const bot = files.find((f) => f.path === "src/bot.py")!;
+    bot.content = "import socket\nimport subprocess\n" + bot.content;
+    const cfg = { ...DEFAULT_CONFIG, dangerousBuiltins: { ...DEFAULT_CONFIG.dangerousBuiltins, mode: "audit" as const } };
+    const res = analyze("python", files, cfg);
+    expect(res.dangerousImports).toEqual(expect.arrayContaining(["socket", "subprocess"]));
+    expect(res.ok).toBe(true);
+  });
+
+  it("los builtins peligrosos de Node se detectan también con el prefijo node: (child_process, net…)", () => {
+    const files = jsGoodFiles();
+    const bot = files.find((f) => f.path === "src/bot.js")!;
+    bot.content = "import { exec } from 'node:child_process';\nimport net from 'net';\n" + bot.content;
+    const res = analyze("node", files, DEFAULT_CONFIG);
+    expect(res.dangerousImports).toEqual(expect.arrayContaining(["node:child_process", "net"]));
+    expect(res.ok).toBe(false);
   });
 
   it("falta de lockfile bloquea", () => {
