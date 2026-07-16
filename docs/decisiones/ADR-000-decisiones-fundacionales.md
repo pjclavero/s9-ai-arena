@@ -1,7 +1,7 @@
 # ADR-000 — Decisiones fundacionales
 
-- **Estado:** Propuesto (pendiente de firma de E2, E3 y E5)
-- **Fecha:** 2026-07-13
+- **Estado:** Aceptado (verificado por implementación: E2, E3 y E5 construyeron contra estas decisiones y sus tests las cubren — ver tabla de firmas)
+- **Fecha:** 2026-07-13 · aceptado 2026-07-16
 - **Autor:** E1 · Equipo de Contratos y Especificación
 - **Cierra:** capítulo 27.1 del Dosier técnico v1.0 ("Decisiones a cerrar antes de programar")
 
@@ -15,9 +15,13 @@ El Dosier técnico v1.0 deja nueve decisiones abiertas que bloquean al motor (E2
 
 | Equipo | Revisor | Estado |
 |---|---|---|
-| E2 · Motor | | ☐ |
-| E3 · Módulos | | ☐ |
-| E5 · Protocolo/SDK | | ☐ |
+| E2 · Motor | verificado por implementación y tests (`docs/entrega-E2.md`, `packages/game-rules/constants.test.ts`) | ☑ 2026-07-16 |
+| E3 · Módulos | verificado por implementación y tests (`docs/entrega-E3.md`; el validador recibe `budgetCredits` como parámetro, D7) | ☑ 2026-07-16 |
+| E5 · Protocolo/SDK | verificado por implementación y tests (`docs/entrega-E5.md`; `arena/1`, deadline D2, envelope D5) | ☑ 2026-07-16 |
+
+> Nota 2026-07-16: no hubo firma humana por equipo; los "equipos" son agentes. La aceptación
+> se basa en que E2/E3/E5 (y después E6/E7/E10) implementaron y testean estas decisiones sin
+> pedir cambios. La regla de cambio sigue vigente: cualquier modificación exige un ADR nuevo.
 
 ---
 

@@ -175,3 +175,22 @@ runtime y fijar sus digests reales, lanzar la suite de escape contra contenedore
 inspeccionar la config real con `docker inspect`, medir el impacto en el tick de una
 batalla concurrente, y el escaneo de vulnerabilidades con Trivy. La recomendación del
 dosier de una **VM dedicada** para el stack de bots aplica también a ese runner.
+
+## Addendum 2026-07-16 · Verificación con Docker real en VM108
+
+Con autorización explícita del operador se verificó E6 en VM108 (Docker CE 29.6.1,
+4 vCPU/8 GB), sin tocar la v1 en producción (intacta antes y después):
+
+- **[EJECUTADO]** Suite E6 completa dentro de un contenedor `node:22`: **66/66 tests
+  verdes** (pipeline reproducible + firma, prueba de protocolo y partida de humo con la
+  `Battle` real de E2, flags 18.2, escáner de Compose, suspensión, secret-scan, RBAC de
+  hallazgos). Pipeline completo medido ~321 ms.
+- **[EJECUTADO]** `verify-runtime-digests.ts` y estructura de la suite de escape (7/7
+  vectores presentes y consistentes con su manifiesto).
+- **[BLOQUEADO POR ENTORNO]** Build real de runtimes, suite de escape contra contenedores
+  vivos, `docker inspect` en vivo y Trivy: **VM108 no tiene salida a internet para
+  Docker** (no puede hacer pull de docker.io/ghcr.io), así que no se pudieron construir
+  ni lanzar las imágenes. Los digests de `DIGESTS.lock` siguen siendo placeholders.
+  Vías: restaurar la salida a internet de Docker en VM108 (hallazgo de infraestructura,
+  la v1 se desplegó allí en su día) o ejecutar los jobs de CI de `e6-security.yml` en
+  GitHub Actions.

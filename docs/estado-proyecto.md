@@ -50,8 +50,8 @@ v20.19.2 (ver nota de zstd más abajo).
 | E5 Protocolo+SDKs | T5.1–T5.4 | protocol-server + `sdks/python` + `sdks/javascript` + `example-bots/` | `npm test` + `pytest` en `sdks/python` | **Verde**: SDK Python 45/45 (60 s); JS/protocolo en vitest | El test flaky de T5.1 (comparaba 2 ejecuciones en vivo) se reescribió como autoconsistencia vía replay — ver `docs/entrega-E5.md` |
 | E6 Seguridad | T6.1–T6.4 | `apps/bot-manager/`, `runtimes/`, `tests/sandbox-escape/`, `scripts/scan-compose.ts`, `scripts/verify-runtime-digests.ts` | Incluido en `npm test` (66 tests E6) | **Verde en la capa verificable** (pipeline, firma, análisis, prueba de protocolo + partida de humo en proceso, secret-scan, audit_log RBAC, suspensión, escáner de Compose, digests) | Capa Docker (lanzar contenedores, suite de escape viva, `docker inspect`, Trivy) **implementada pero pendiente de entorno con Docker** — ia02 sin grupo docker ni sudo. Ver `docs/entrega-E6.md` |
 | E7 Plataforma | T7.1–T7.5 | `apps/api/` (26 tablas cap. 23, migraciones Knex, auth Argon2id+TOTP, RBAC desde OpenAPI, bots 17.1, API espectador, cuotas), `apps/web/` (React+Vite, editor con validador E3) | Incluido en `npm test` (60 tests E7 contra **PostgreSQL 18.4 real embebido**) + `vite build` | **Verde en la capa verificable**: 52/53 operaciones del OpenAPI implementadas y conformes | Integra el `BuildPipeline` REAL de E6 (no reimplementado). Pendiente: `verifyReplay` (E8), jobs (E9), etapas containerizadas del pipeline sin Docker. Ver `docs/entrega-E7.md` |
-| E8 Visor/Replays | T8.x | — | — | Sin empezar | Depende de E7 |
-| E9 Torneos | T9.x | — | — | Sin empezar | Depende de E7+E6 |
+| E8 Visor/Replays | T8.x | — | — | **En curso** (2026-07-16, rama `e8-visor`) | Incluye `verifyReplay` y canal WS de espectador que E7 dejó declarados pendientes |
+| E9 Torneos | T9.x | — | — | **En curso** (2026-07-16, rama `e9-torneos`) | Consume los jobs y standings que E7 dejó preparados; suspensiones de E6 |
 | E10 DevOps | T10.1–T10.4 | `infrastructure/` (Compose 12 servicios, perfiles, 5 redes, secretos, observabilidad Prometheus+Grafana+Loki, backups pg_dump+restic), `.github/workflows/` (CI 8 etapas + nightly), `docs/despliegue.md`, `docs/recuperacion.md` | Incluido en `npm test` (56 tests E10: `docker compose config` sin daemon, escáner, backups dry-run) | **Verde en la capa verificable** | Sin Docker no se pudo levantar el stack ni ejecutar CI real (ia02 sin grupo docker). CI fija Node 22. Ver `docs/entrega-E10.md` |
 | E11 Streaming | T11.x | — | — | Sin empezar | Depende de E8+E10 |
 | E12 QA | T12.x | — | — | Sin empezar | Transversal, desde M1 |
@@ -79,6 +79,13 @@ v20.19.2 (ver nota de zstd más abajo).
   desarrollaron en ramas (`e7-plataforma`, `e10-devops`) mergeadas a main con `--no-ff`;
   conflictos resueltos: unión de devDependencies en `package.json`, unión de patrones
   include en `vitest.config.ts`, lockfile regenerado con `npm install`.
+- **Verificación con Docker real en VM108 (2026-07-16, autorizada por el operador):**
+  suite E6 66/66 y E10 51/51 (ejecutables) verdes dentro de un contenedor `node:22`;
+  `docker compose config` real de todos los perfiles correcto (10/11/19 servicios);
+  escáner de Compose 0 infracciones. La v1 en producción quedó intacta y el entorno de
+  prueba se limpió. **No se pudo levantar el stack v2 ni construir runtimes**: VM108 no
+  tiene salida a internet para Docker (ver deudas). Addenda en `entrega-E6.md` y
+  `entrega-E10.md`.
 
 ## Hallazgos / deudas conocidas
 
@@ -86,3 +93,11 @@ v20.19.2 (ver nota de zstd más abajo).
   Decidir: subir Node en ia-server o declarar `engines` en package.json.
 - **Docker inaccesible para `ia02`**: añadir el usuario al grupo `docker` (o dar acceso
   equivalente) antes de E6/E10 si se quiere verificación real y no solo por inspección.
+- **VM108 sin salida a internet para Docker** (detectado 2026-07-16): no puede hacer pull
+  de docker.io/ghcr.io, lo que bloquea builds y `compose up` allí. Llamativo porque la v1
+  se desplegó en esa VM en su día — probable cambio posterior de DNS/firewall/router.
+  Diagnóstico pendiente (operador o s9-sysadmin). Alternativa: GitHub Actions (la CI de
+  E10 ya lo cubre con Node 22 + Docker).
+- **Documentación alineada (revisión 2026-07-16):** ADR-000 pasado a Aceptado con firmas
+  verificadas por implementación; `ROADMAP.md` marcado como histórico del prototipo v1
+  (la fuente de verdad es el dosier + este documento).
