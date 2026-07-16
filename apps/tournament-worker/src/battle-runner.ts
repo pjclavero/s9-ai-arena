@@ -61,10 +61,12 @@ export interface BattleExecution {
   finalStateHash: string;
   disqualified: string[]; // botIds descalificados por el motor
   versions: Record<string, string>;
-  /** Replay JSONL (T2.6). El runner lo persiste como archivo (política 23.1). */
+  /** Replay JSONL (T2.6). El runner lo archiva vía el almacén de E8 (política 23.1). */
   replayJsonl?: string;
-  /** Stats por botId para battle_stats (las ricas son de E8). */
-  statsPerBot?: Record<string, unknown>;
+  // H3 (issue #7): aquí existió `statsPerBot` (forma simple {team, teamScore,
+  // ticks, disqualified}). Se ELIMINÓ: battle_stats tiene UNA sola forma, la
+  // canónica del runStatsJob de E8 (la que leen los agregados de E9). No
+  // reintroducir un segundo escritor: battle-stats-canonical.test.ts lo vigila.
 }
 
 export interface BattleContext {
@@ -237,14 +239,8 @@ async function finishBattle(
         .where({ battle_id: battle.id, bot_id: p.bot_id })
         .update({ outcome: outcomeFor(p, execution.winner, disqualified) });
     }
-    if (execution.statsPerBot) {
-      for (const [botId, stats] of Object.entries(execution.statsPerBot)) {
-        await trx("battle_stats")
-          .insert({ battle_id: battle.id, bot_id: botId, stats: JSON.stringify(stats) })
-          .onConflict(["battle_id", "bot_id"])
-          .merge();
-      }
-    }
+    // H3 (issue #7): battle_stats NO se escribe aquí. La única forma canónica
+    // la escribe el runStatsJob de E8 (ensureRichStats, tras esta transacción).
   });
   // 19.1: el resultado se procesa (avance de rondas, ratings) en su propio trabajo.
   await enqueueJob(db, "process_result", { battleId: battle.id }, { dedupeKey: `process_result:${battle.id}` });

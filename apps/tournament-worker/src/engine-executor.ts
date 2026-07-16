@@ -208,15 +208,6 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
       }
       const replay = replayFromBattle(b, result);
       b.free();
-      const statsPerBot: Record<string, unknown> = {};
-      for (const p of engineParticipants) {
-        statsPerBot[p.botId] = {
-          team: p.team,
-          teamScore: result.score[p.team] ?? 0,
-          ticks: result.ticks,
-          disqualified: result.disqualified.includes(p.botId),
-        };
-      }
       return {
         winner: result.winner,
         ticks: result.ticks,
@@ -230,7 +221,6 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
           rulesetDb: battle.ruleset_id ?? "",
         },
         replayJsonl: toJsonl(replay),
-        statsPerBot,
       };
     } catch (err) {
       if (err instanceof InfrastructureFailure) throw err;
