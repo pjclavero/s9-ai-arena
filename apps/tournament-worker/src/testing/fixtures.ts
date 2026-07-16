@@ -50,6 +50,14 @@ export async function createPublishedBot(db: Knex, name: string, opts: { ownerId
     loadout_revision: 1,
     artifact_hash: `hash-${name}`,
   });
+  // Artefacto firmado (E6): la auditoría de batalla (T9.4) publica hash+firma.
+  const [build] = await db("builds").insert({ bot_id: bot.id, version: 1, status: "passed" }).returning("id");
+  await db("artifacts").insert({
+    build_id: build.id,
+    hash: `hash-${name}`,
+    signature: `sig-${name}`,
+    storage_ref: `mem://artifacts/${name}`,
+  });
   return { botId: bot.id as string, ownerId, version: 1, loadoutRevision: 1, name };
 }
 
