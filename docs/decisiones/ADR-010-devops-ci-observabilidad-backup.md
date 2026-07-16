@@ -1,6 +1,6 @@
 # ADR-010 — Decisiones de DevOps: workspace, versionado, observabilidad y copias
 
-- **Estado:** Propuesto (pendiente de ratificación del operador)
+- **Estado:** Aceptado — ratificado por el operador (pjclavero) el 2026-07-16
 - **Fecha:** 2026-07-16
 - **Autor:** E10 · DevOps, Despliegue y Observabilidad
 - **Cierra:** decisiones que el dosier deja abiertas en 22.1 (tooling de workspace), 22.2 (versionado), T10.3 (stack de observabilidad) y T10.4 (herramienta de backup)
