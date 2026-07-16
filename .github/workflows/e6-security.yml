@@ -1,0 +1,42 @@
+# E6 · CI de seguridad (T6.2/T6.3).
+#
+# Verifica lo que NO necesita Docker en cualquier runner, y ejecuta los escaneos que SÍ
+# lo necesitan en un runner con Docker. En la máquina de desarrollo (ia02, sin grupo
+# docker) solo corren los jobs sin Docker; los de Docker esperan a un runner con acceso.
+name: E6 security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  static-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: npm ci
+      # Tests reales de E6 (pipeline, sandbox flags, compose scan, escape suite completa)
+      - run: npx vitest run apps/bot-manager
+      # El Compose no debe montar docker.sock ni correr privilegiado (cap. 28)
+      - run: npx tsx scripts/scan-compose.ts
+      # Los runtimes deben estar fijados por digest, no por tag (T6.3)
+      - run: npx tsx scripts/verify-runtime-digests.ts
+
+  runtime-vuln-scan:
+    # Requiere Docker: bloquea severidad crítica en las imágenes de runtime (T6.3).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Escaneo de vulnerabilidades (Trivy, bloquea CRITICAL)
+        run: ./scripts/scan-runtime-vulns.sh
+
+  sandbox-escape:
+    # Requiere Docker: ejecuta la suite de bots maliciosos (T6.2).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Suite de escape del sandbox
+        run: ./tests/sandbox-escape/run-escape-suite.sh arena/bot-runtime-python@sha256:PENDIENTE

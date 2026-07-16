@@ -1,0 +1,7 @@
+# E6 · T6.3 — Lockfile de la allowlist Python (con hashes). Fijado en el repo.
+# Los hashes se rellenan al generar la imagen; aquí quedan los placeholders del MVP.
+# Mantener SINCRONIZADO con runtimes/python/ALLOWED-PACKAGES.md y con
+# apps/bot-manager/src/config.ts (DEFAULT_PYTHON_ALLOWLIST).
+arena-sdk==1.0.0 --hash=sha256:0000000000000000000000000000000000000000000000000000000000000000
+numpy==1.26.4 --hash=sha256:0000000000000000000000000000000000000000000000000000000000000000
+websockets==12.0 --hash=sha256:0000000000000000000000000000000000000000000000000000000000000000
