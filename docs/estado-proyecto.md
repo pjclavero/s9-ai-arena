@@ -39,7 +39,7 @@ v20.19.2 (ver nota de zstd más abajo).
 | E3 Módulos | T3.1–T3.4 | `packages/module-catalog/` (datos, validador, resolver, bench) | Incluido en `npm test` + validador CLI | **Verde** | fixtures.ts del motor cableado al catálogo real |
 | E4 Mapas | T4.1–T4.4 | `apps/map-service/`, `maps/`, `tests/maps-broken/` | Incluido en `npm test` | **Verde** | Import Tiled, validador, servicio, procedural |
 | E5 Protocolo+SDKs | T5.1–T5.4 | protocol-server + `sdks/python` + `sdks/javascript` + `example-bots/` | `npm test` + `pytest` en `sdks/python` | **Verde**: SDK Python 45/45 (60 s); JS/protocolo en vitest | El test flaky de T5.1 (comparaba 2 ejecuciones en vivo) se reescribió como autoconsistencia vía replay — ver `docs/entrega-E5.md` |
-| E6 Seguridad | T6.1–T6.4 | — | — | **Sin empezar** | Siguiente en la cadena (E5 hecho; imágenes base de E10 pendientes de reconciliación) |
+| E6 Seguridad | T6.1–T6.4 | `apps/bot-manager/`, `runtimes/`, `tests/sandbox-escape/`, `scripts/scan-compose.ts`, `scripts/verify-runtime-digests.ts` | Incluido en `npm test` (66 tests E6) | **Verde en la capa verificable** (pipeline, firma, análisis, prueba de protocolo + partida de humo en proceso, secret-scan, audit_log RBAC, suspensión, escáner de Compose, digests) | Capa Docker (lanzar contenedores, suite de escape viva, `docker inspect`, Trivy) **implementada pero pendiente de entorno con Docker** — ia02 sin grupo docker ni sudo. Ver `docs/entrega-E6.md` |
 | E7 Plataforma | T7.x | — | — | Sin empezar | Depende de E6 (pipeline builds) |
 | E8 Visor/Replays | T8.x | — | — | Sin empezar | Depende de E7 |
 | E9 Torneos | T9.x | — | — | Sin empezar | Depende de E7+E6 |
@@ -60,6 +60,9 @@ v20.19.2 (ver nota de zstd más abajo).
      `zstdCompressSync`); pasa en Node ≥ 22.15.
 - Validadores E1: ambos "TODO CORRECTO".
 - SDK Python: `pytest` 45/45 en 60,8 s (necesita `pip install -e ".[dev]"` en `sdks/python`).
+- Tras E6 (2026-07-16): `npm test --maxWorkers=2` → **376 pasan, 1 falla, 3 skipped** (380).
+  El único fallo sigue siendo el zstd de entorno (E2/T2.6, Node 20). E6 añadió +66 tests
+  sin regresiones. Pipeline completo de un bot Python: ~321 ms (umbral 3 min).
 
 ## Hallazgos / deudas conocidas
 
