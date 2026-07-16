@@ -1,0 +1,734 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# S9 AI Arena — stack Docker Compose único (dosier cap. 6; E10 T10.2/T10.3/T10.4)
+#
+# Perfiles (6.1):
+#   development  desarrollo local (BD en contenedor)
+#   production   producción (BD en contenedor)
+#   external-db  producción con PostgreSQL externo vía DATABASE_URL (nota del 6.2):
+#                el servicio postgres NO pertenece a este perfil y no arranca.
+#   bots         plantilla de runtime de bots (contenedores efímeros, E6)
+#   streaming    streamer Chromium+FFmpeg (E11)
+#   observability  Prometheus+Grafana+Loki y exporters (cap. 24, opcional)
+#
+# Redes (6.4): public (solo gateway con acceso exterior), platform, arena,
+#   build y data son `internal: true` (sin salida a Internet).
+#   Excepciones documentadas de acople a `public` SIN publicar puertos (solo
+#   salida a Internet, porque las redes internas no la tienen): streamer
+#   (RTMPS hacia YouTube) y alertmanager (webhook/email del operador).
+#
+# Seguridad (cap. 28): ningún servicio corre privilegiado ni monta docker.sock,
+#   salvo bot-manager (documentado más abajo). Lo verifica
+#   infrastructure/scripts/scan-compose.mjs en la etapa 6 de la CI.
+#
+# Arranque: ver docs/despliegue.md (instalación limpia en 3 pasos).
+# ──────────────────────────────────────────────────────────────────────────────
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+    # Incluye el nombre del servicio en cada línea (attrs) para que Promtail
+    # etiquete los logs sin necesitar docker.sock.
+    labels: "com.docker.compose.service"
+
+# Contrato de logging (cap. 24, ADR-010 D10.3): JSON por stdout con ts, level,
+# service, msg y battle_id/bot_id/user_id/correlation_id cuando apliquen.
+
+x-node-env: &node-db-env
+  # Si DATABASE_URL está vacío, el servicio construye el DSN interno con
+  # PGPASSWORD_FILE (nunca la contraseña en claro en el entorno).
+  DATABASE_URL: ${DATABASE_URL:-}
+  PGHOST: postgres
+  PGUSER: arena
+  PGDATABASE: arena
+  PGPASSWORD_FILE: /run/secrets/postgres_password
+  REDIS_URL: redis://queue:6379
+  LOG_FORMAT: json
+
+services:
+  # ── gateway · Nginx, HTTPS, rutas y WebSocket. Único con puertos al exterior ─
+  gateway:
+    build:
+      context: ..
+      dockerfile: infrastructure/docker/gateway/Dockerfile
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/gateway:${TAG:-latest}
+    profiles: [development, production, external-db]
+    networks: [public, platform]
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    environment:
+      S9_DOMAIN: ${S9_DOMAIN:-arena.local}
+    volumes:
+      # Modo (a) standalone: nginx.conf (TLS en el gateway, 80/443 al exterior).
+      # Modo (b) detrás del proxy de VM104: GATEWAY_CONF=nginx-behind-proxy.conf
+      # (solo HTTP a la LAN; VM104 termina TLS). Ver docs/despliegue.md.
+      - ./gateway/${GATEWAY_CONF:-nginx.conf}:/etc/nginx/nginx.conf:ro
+      - ./secrets/tls:/etc/nginx/tls:ro
+    depends_on:
+      web:
+        condition: service_healthy
+        required: false
+      api:
+        condition: service_healthy
+        required: false
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 256M }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # ── web · panel, visor, editor y clasificación (E7/E8) ──────────────────────
+  web:
+    build:
+      context: ..
+      dockerfile: infrastructure/docker/node-service/Dockerfile
+      args: { APP_PATH: apps/web }
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/web:${TAG:-latest}
+    profiles: [development, production, external-db]
+    networks: [platform]
+    environment:
+      PORT: "3000"
+      # PENDIENTE (E7): entrypoint real; ver infrastructure/docker/node-service.
+      SERVICE_ENTRY: ${WEB_ENTRY:-apps/web/src/main.ts}
+      LOG_FORMAT: json
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # ── api · usuarios, bots, mapas, torneos y administración (E7) ──────────────
+  api:
+    build:
+      context: ..
+      dockerfile: infrastructure/docker/node-service/Dockerfile
+      args: { APP_PATH: apps/api }
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/api:${TAG:-latest}
+    profiles: [development, production, external-db]
+    networks: [platform, data]
+    environment:
+      <<: *node-db-env
+      PORT: "8080"
+      SERVICE_ENTRY: ${API_ENTRY:-apps/api/src/main.ts}
+      JWT_SECRET_FILE: /run/secrets/jwt_secret
+    secrets: [postgres_password, jwt_secret]
+    depends_on:
+      queue:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+        required: false
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 1G }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # ── arena-engine · una batalla autoritativa (E2/E5) ─────────────────────────
+  arena-engine:
+    build:
+      context: ..
+      dockerfile: infrastructure/docker/arena-engine/Dockerfile
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/arena-engine:${TAG:-latest}
+    profiles: [development, production, external-db]
+    networks: [platform, arena]
+    environment:
+      PORT: "8081"
+      # PENDIENTE (E2/E9): entrypoint de servicio (ProtocolServer + orquestación
+      # de batalla). El motor y el servidor de protocolo ya existen.
+      SERVICE_ENTRY: ${ENGINE_ENTRY:-apps/arena-engine/src/cli.ts}
+      LOG_FORMAT: json
+    volumes:
+      - arena_maps:/data/maps:ro
+      - arena_replays:/data/replays
+      - arena_logs:/data/logs
+    depends_on:
+      queue:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8081/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits: { cpus: "4.0", memory: 2G }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # ── tournament-worker · calendarios y batallas (E9) ─────────────────────────
+  tournament-worker:
+    build:
+      context: ..
+      dockerfile: infrastructure/docker/node-service/Dockerfile
+      args: { APP_PATH: apps/tournament-worker }
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/tournament-worker:${TAG:-latest}
+    profiles: [development, production, external-db]
+    networks: [platform, data]
+    environment:
+      <<: *node-db-env
+      SERVICE_ENTRY: ${WORKER_ENTRY:-apps/tournament-worker/src/main.ts}
+    secrets: [postgres_password]
+    depends_on:
+      queue:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+        required: false
+    healthcheck:
+      # Contrato: el worker toca /tmp/heartbeat en cada iteración del bucle.
+      test: ["CMD-SHELL", "test $(( $(date +%s) - $(cat /tmp/heartbeat 2>/dev/null || echo 0) )) -lt 120"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 1G }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # ── bot-manager · construye, valida y lanza contenedores de bots (E6) ───────
+  # EXCEPCIÓN DOCUMENTADA (cap. 28 / DoD T10.2): bot-manager monta docker.sock
+  # porque su función es construir imágenes y lanzar contenedores efímeros de
+  # bots. Mitigaciones: API interna restringida (nunca expuesta por el gateway),
+  # redes build+platform sin acceso a data, sin privilegios adicionales y
+  # allowlist explícita en infrastructure/scripts/scan-compose.mjs. La
+  # alternativa a largo plazo (docker-socket-proxy o rootless builder) queda
+  # propuesta en docs/despliegue.md.
+  bot-manager:
+    build:
+      context: ..
+      dockerfile: infrastructure/docker/node-service/Dockerfile
+      args: { APP_PATH: apps/bot-manager }
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/bot-manager:${TAG:-latest}
+    profiles: [development, production, external-db]
+    networks: [platform, build]
+    environment:
+      PORT: "8084"
+      SERVICE_ENTRY: ${BOT_MANAGER_ENTRY:-apps/bot-manager/src/main.ts}
+      LOG_FORMAT: json
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - arena_bot_sources:/data/bot-sources
+      - arena_build_cache:/data/build-cache
+    depends_on:
+      queue:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8084/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 2G }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # ── map-service · importa, valida, genera y versiona mapas (E4) ─────────────
+  map-service:
+    build:
+      context: ..
+      dockerfile: infrastructure/docker/node-service/Dockerfile
+      args: { APP_PATH: apps/map-service }
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/map-service:${TAG:-latest}
+    profiles: [development, production, external-db]
+    networks: [platform, data]
+    environment:
+      <<: *node-db-env
+      PORT: "8082"
+      SERVICE_ENTRY: ${MAP_SERVICE_ENTRY:-apps/map-service/src/main.ts}
+    secrets: [postgres_password]
+    volumes:
+      - arena_maps:/data/maps
+      - arena_assets:/data/assets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8082/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # ── replay-service · guarda y sirve repeticiones (E2/E9) ────────────────────
+  replay-service:
+    build:
+      context: ..
+      dockerfile: infrastructure/docker/node-service/Dockerfile
+      args: { APP_PATH: apps/replay-service }
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/replay-service:${TAG:-latest}
+    profiles: [development, production, external-db]
+    networks: [platform, data]
+    environment:
+      <<: *node-db-env
+      PORT: "8083"
+      SERVICE_ENTRY: ${REPLAY_SERVICE_ENTRY:-apps/replay-service/src/main.ts}
+    secrets: [postgres_password]
+    volumes:
+      - arena_replays:/data/replays
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8083/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # ── queue · Redis para trabajos ──────────────────────────────────────────────
+  queue:
+    image: redis:7-alpine
+    profiles: [development, production, external-db]
+    networks: [platform]
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - queue_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # ── postgres · BD (omitido en el perfil external-db, nota del 6.2) ──────────
+  postgres:
+    image: postgres:16-alpine
+    profiles: [development, production]
+    networks: [data]
+    environment:
+      POSTGRES_USER: arena
+      POSTGRES_DB: arena
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arena -d arena"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 2G }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # ── streamer · Chromium + FFmpeg, opcional (E11) ─────────────────────────────
+  # En `public` SOLO para tener salida RTMPS (las redes internas no tienen
+  # Internet); no publica ningún puerto.
+  streamer:
+    build:
+      context: ..
+      dockerfile: infrastructure/docker/streamer/Dockerfile
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/streamer:${TAG:-latest}
+    profiles: [streaming]
+    networks: [platform, public]
+    environment:
+      BROADCAST_URL: ${BROADCAST_URL:-http://web:3000/broadcast}
+      RTMPS_URL: ${RTMPS_URL:-rtmps://a.rtmps.youtube.com/live2}
+      STREAM_KEY_FILE: /run/secrets/stream_key
+      LOG_FORMAT: json
+    secrets: [stream_key]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -x ffmpeg >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits: { cpus: "4.0", memory: 4G }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # ── bot-runtime-template · plantilla de contenedor efímero de bot (E6) ──────
+  # bot-manager clona esta configuración para cada bot real: SOLO red arena
+  # (sin ruta a postgres, redis ni api), sin capacidades, sistema de archivos
+  # de solo lectura y límites estrictos. El perfil `bots` permite probar la
+  # plantilla en desarrollo.
+  bot-runtime-template:
+    build:
+      context: ..
+      dockerfile: infrastructure/docker/bot-runtime/Dockerfile
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/bot-runtime-python:${TAG:-latest}
+    profiles: [bots]
+    networks: [arena]
+    environment:
+      ARENA_WS_URL: ws://arena-engine:8081
+      LOG_FORMAT: json
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    healthcheck:
+      # Contrato con E6: el runtime toca /tmp/alive al conectar con el motor.
+      test: ["CMD-SHELL", "test -f /tmp/alive"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M, pids: 64 }
+    security_opt: ["no-new-privileges:true"]
+    restart: "no"
+    logging: *default-logging
+
+  # ── backup · pg_dump + restic con cron dentro del stack (T10.4) ─────────────
+  # En public SOLO para alcanzar el destino restic (NAS/ZFS del operador):
+  # las redes internas no tienen salida. No publica puertos. Los volúmenes de
+  # datos se montan de SOLO lectura; secrets/ se copia cifrado por restic.
+  backup:
+    build:
+      context: ..
+      dockerfile: infrastructure/docker/backup/Dockerfile
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/backup:${TAG:-latest}
+    profiles: [production, external-db]
+    networks: [data, public]
+    environment:
+      BACKUP_CRON: ${BACKUP_CRON:-15 4 * * *}
+      REPLAY_RETENTION_DAYS: ${REPLAY_RETENTION_DAYS:-180}
+      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:-}
+      RESTIC_PASSWORD_FILE: /run/secrets/restic_password
+      PGHOST: postgres
+      PGUSER: arena
+      PGDATABASE: arena
+      PGPASSWORD_FILE: /run/secrets/postgres_password
+      METRICS_DIR: /textfile
+    secrets: [postgres_password, restic_password]
+    volumes:
+      - arena_maps:/data/maps:ro
+      - arena_bot_sources:/data/bot-sources:ro
+      - arena_replays:/data/replays:ro
+      - ./secrets:/secrets:ro
+      - backup_metrics:/textfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep crond >/dev/null"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Perfil observability (T10.3, cap. 24, ADR-010 D10.3) — OPCIONAL:
+  # la plataforma funciona sin él (test en infrastructure/tests/).
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    profiles: [observability]
+    networks: [platform]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1G }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # En public SOLO para poder entregar la notificación (webhook/email) del
+  # operador: las redes internas no tienen salida. No publica puertos.
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    profiles: [observability]
+    networks: [platform, public]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        sed "s|__ALERT_WEBHOOK_URL__|$${ALERT_WEBHOOK_URL:-http://localhost/webhook-sin-configurar}|"
+        /etc/alertmanager/alertmanager.yml.tpl > /tmp/alertmanager.yml &&
+        exec /bin/alertmanager --config.file=/tmp/alertmanager.yml
+        --storage.path=/alertmanager
+    environment:
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+    volumes:
+      - ./observability/alertmanager/alertmanager.yml.tpl:/etc/alertmanager/alertmanager.yml.tpl:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9093/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 128M }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    profiles: [observability]
+    networks: [platform]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    secrets: [grafana_admin_password]
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  loki:
+    image: grafana/loki:3.1.0
+    profiles: [observability]
+    networks: [platform]
+    command: ["-config.file=/etc/loki/loki-config.yml"]
+    volumes:
+      - ./observability/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/loki
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3100/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1G }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # Lee los json-file de Docker SOLO con un bind de solo lectura (sin
+  # docker.sock: el escáner del cap. 28 solo lo permite en bot-manager).
+  promtail:
+    image: grafana/promtail:3.1.0
+    profiles: [observability]
+    networks: [platform]
+    command: ["-config.file=/etc/promtail/promtail-config.yml"]
+    volumes:
+      - ./observability/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - promtail_positions:/positions
+    depends_on:
+      loki:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9080/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 256M }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # CPU/RAM por contenedor. Sin docker.sock: usa cgroups (/rootfs, /sys,
+  # /var/lib/docker de solo lectura).
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    profiles: [observability]
+    networks: [platform]
+    volumes:
+      - /:/rootfs:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 512M }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # Disco/CPU/RAM del host + textfile collector para las métricas del backup
+  # (s9_backup_*, T10.4: volumen backup_metrics compartido con el servicio backup).
+  node-exporter:
+    image: prom/node-exporter:v1.8.1
+    profiles: [observability]
+    networks: [platform]
+    command:
+      - --path.rootfs=/host
+      - --collector.textfile.directory=/textfile
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+      - backup_metrics:/textfile:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9100/-/healthy || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 128M }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # Métricas de PostgreSQL (pg_up para la alerta de BD caída). Con BD externa
+  # (perfil external-db) el operador ajusta DATA_SOURCE_URI en .env.
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    profiles: [observability]
+    networks: [platform, data]
+    environment:
+      DATA_SOURCE_URI: ${PG_EXPORTER_URI:-postgres:5432/arena?sslmode=disable}
+      DATA_SOURCE_USER: arena
+      DATA_SOURCE_PASS_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9187/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 128M }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+networks:
+  # Solo el gateway tiene acceso exterior (6.4).
+  public:
+    driver: bridge
+  platform:
+    driver: bridge
+    internal: true
+  arena:
+    driver: bridge
+    internal: true
+  build:
+    driver: bridge
+    internal: true
+  data:
+    driver: bridge
+    internal: true
+
+volumes:
+  # Los seis volúmenes persistentes del 6.3.
+  arena_maps:
+  arena_replays:
+  arena_bot_sources:
+  arena_build_cache:
+  arena_assets:
+  arena_logs:
+  # Operativos (no forman parte de los seis del 6.3).
+  postgres_data:
+  queue_data:
+  prometheus_data:
+  grafana_data:
+  loki_data:
+  promtail_positions:
+  backup_metrics:
+
+secrets:
+  # Secretos por archivo (nunca variables en claro). Se generan con
+  # infrastructure/scripts/init-secrets.sh; el directorio secrets/ está en
+  # .gitignore y NUNCA se versiona.
+  postgres_password:
+    file: ./secrets/postgres_password.txt
+  jwt_secret:
+    file: ./secrets/jwt_secret.txt
+  stream_key:
+    file: ./secrets/stream_key.txt
+  grafana_admin_password:
+    file: ./secrets/grafana_admin_password.txt
+  restic_password:
+    file: ./secrets/restic_password.txt

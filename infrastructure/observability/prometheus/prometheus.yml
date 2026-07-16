@@ -1,0 +1,68 @@
+# Prometheus (perfil observability; cap. 24, ADR-010 D10.3).
+# Contrato de métricas de los servicios (los instrumenta cada equipo, prom-client):
+#   arena_engine_last_tick_timestamp_seconds  ← alerta de motor bloqueado
+#   arena_engine_ticks_per_second, arena_engine_tick_delay_seconds
+#   arena_queue_depth{queue=...}              ← profundidad de colas
+#   s9_build_duration_seconds, s9_build_result_total{result=ok|fail}
+#   http_requests_total{service,route,status} ← errores por endpoint
+# CPU/RAM por servicio: cAdvisor. Disco: node-exporter. Backup: textfile collector.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  # El motor se scrapea cada 5 s para que la alerta de tick estancado
+  # dispare en < 30 s (DoD T10.3).
+  - job_name: arena-engine
+    scrape_interval: 5s
+    static_configs:
+      - targets: ["arena-engine:8081"]
+
+  - job_name: api
+    static_configs:
+      - targets: ["api:8080"]
+
+  - job_name: web
+    static_configs:
+      - targets: ["web:3000"]
+
+  - job_name: map-service
+    static_configs:
+      - targets: ["map-service:8082"]
+
+  - job_name: replay-service
+    static_configs:
+      - targets: ["replay-service:8083"]
+
+  - job_name: bot-manager
+    static_configs:
+      - targets: ["bot-manager:8084"]
+
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: loki
+    static_configs:
+      - targets: ["loki:3100"]

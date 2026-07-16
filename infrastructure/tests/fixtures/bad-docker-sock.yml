@@ -1,0 +1,11 @@
+services:
+  replay-service:
+    image: node:22-alpine
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+  otro:
+    image: alpine
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock

@@ -4,5 +4,6 @@
     "strict": false, "esModuleInterop": true, "skipLibCheck": true,
     "resolveJsonModule": true, "allowImportingTsExtensions": true, "noEmit": true
   },
-  "include": ["apps/**/*", "packages/**/*"]
+  "include": ["apps/**/*", "packages/**/*"],
+  "exclude": ["apps/arena-server", "apps/arena-viewer"]
 }
