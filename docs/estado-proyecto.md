@@ -53,8 +53,8 @@ v20.19.2 (ver nota de zstd más abajo).
 | E8 Visor/Replays | T8.1–T8.4 | `apps/replay-service/` (formato zstd/gzip+sha256+keyframes, retención 23.1, CLI verify), `apps/api/src/spectate/`, `apps/web/src/viewer/` (Phaser, reproductor 0,5×–8×), pipeline de stats | Incluido en `npm test` (52 tests E8) + `vite build` | **Verde en la capa verificable**: completa las **53/53 operaciones** del OpenAPI (`verifyReplay`) | Cifras: replay 5 min 2,23→0,06 MB (37×); verify 390 ms; stats 313 ms; 50/50 batallas de regresión. Pendiente: E2E con navegador real y rama zstd (Node ≥22). Ver `docs/entrega-E8.md` |
 | E9 Torneos | T9.1–T9.4 | `apps/tournament-worker/` (cola durable sobre `jobs` de E7, SKIP LOCKED, clasificación 19.2), 6 formatos de torneo, Elo con libro mayor `rating_events`, commit-reveal + auditoría E2E con `verify()` | Incluido en `npm test` (48 tests E9) | **Verde en la capa verificable**: torneo E2E de 8 bots con 7 batallas reales del motor en ~0,9 s | budgetCredits congelado por torneo (ADR-000/D7). Redis solo probado contra stub RESP (cola es PostgreSQL-primero, ADR-E9-001). Ver `docs/entrega-E9.md` |
 | E10 DevOps | T10.1–T10.4 | `infrastructure/` (Compose 12 servicios, perfiles, 5 redes, secretos, observabilidad Prometheus+Grafana+Loki, backups pg_dump+restic), `.github/workflows/` (CI 8 etapas + nightly), `docs/despliegue.md`, `docs/recuperacion.md` | Incluido en `npm test` (56 tests E10: `docker compose config` sin daemon, escáner, backups dry-run) | **Verde en la capa verificable** | Sin Docker no se pudo levantar el stack ni ejecutar CI real (ia02 sin grupo docker). CI fija Node 22. Ver `docs/entrega-E10.md` |
-| E11 Streaming | T11.x | — | — | Sin empezar | Depende de E8+E10 |
-| E12 QA | T12.x | — | — | Sin empezar | Transversal, desde M1 |
+| E11 Streaming | T11.1–T11.2 | `apps/web/src/broadcast/` (vista 1080p sobre el visor E8, BroadcastDirector, branding por query), `apps/streamer/` + `infrastructure/docker/streamer/` (Xvfb+Chromium+FFmpeg, supervisor con reintentos, API interna, métricas), `docs/streaming-runbook.md` | Incluido en `npm test` (35 tests E11) + `vite build` | **Verde en la capa verificable** (clave RTMPS solo por archivo, redacción verificada en tests) | El streaming no toca el motor: consume el canal de espectador. [PENDIENTE]: emisión real de 30 min a YouTube y Chromium/FFmpeg vivos (requiere Docker; runbook §7). Ver `docs/entrega-E11.md` |
+| E12 QA | T12.1–T12.3 | `tests/e2e/` (criterio 26.1: 6 pasos + 6 sabotajes), `acceptance/` (pipeline cap. 28: 10 criterios + informe), `tests/gamedays/` + `docs/gamedays/` (7 guiones de caos, game day M3 6/6) | Incluido en `npm test` (19 tests E12) + pipeline de aceptación 10/10 VERDE | **Verde en la capa verificable** | Detectó los hallazgos H1–H7 (abajo). GD-5 y ejecución containerizada [PENDIENTE de staging]. Ver `docs/entrega-E12.md` |
 
 ### Cifras de la última verificación completa (2026-07-16, ia-server, Node v20.19.2)
 
@@ -90,6 +90,20 @@ v20.19.2 (ver nota de zstd más abajo).
   prueba se limpió. **No se pudo levantar el stack v2 ni construir runtimes**: VM108 no
   tiene salida a internet para Docker (ver deudas). Addenda en `entrega-E6.md` y
   `entrega-E10.md`.
+
+### Hallazgos de integración de E12 (priorizados, detalle en `docs/entrega-E12.md`)
+
+- **H1 (E6, P1):** los builtins peligrosos de stdlib (`socket`, `subprocess`…) solo generan
+  hallazgo de auditoría, no bloquean `static_analysis`; sin el sandbox containerizado, un
+  bot hostil de solo-stdlib llega a `validated`. Mitigación real = sandbox Docker (pendiente
+  de entorno).
+- **H2 (E9→E8, P2):** el tournament-worker aún no cablea `attachBattle()` (espectador en
+  vivo) ni `runStatsJob()` (stats ricas) — reconciliación declarada por ambos equipos.
+- **H3 (E8/E9, P2):** `battle_stats` se escribe con dos formas según el camino; unificar al
+  cerrar H2.
+- **H4 (E10, P2):** la CI construye imágenes de solo 2 de 8 servicios.
+- **H5–H7 (P3):** `cpuMs` null (runner E6/E9), rutas de rating/standings por equipos, 7
+  errores de `tsc --noEmit` preexistentes (typecheck no bloqueante en CI).
 
 ## Hallazgos / deudas conocidas
 
