@@ -1,0 +1,13 @@
+# Normalización de fin de línea: LF en el repositorio Y en el árbol de trabajo.
+#
+# No es cosmético. Los golden de física (tests/golden/*.json) y el golden de mapa
+# (maps/mvp-arena-01.json) se comparan BYTE A BYTE contra la salida de JSON.stringify(),
+# que emite siempre "\n". En un checkout de Windows con core.autocrlf=true, git los
+# escribe con CRLF y 5 tests fallan sin que haya ni un solo error en el código.
+#
+# El eol=lf es lo que hace que esos tests signifiquen lo mismo en cualquier máquina.
+* text=auto eol=lf
+
+# Binarios: git nunca debe intentar normalizarlos.
+*.docx binary
+*.zip  binary
