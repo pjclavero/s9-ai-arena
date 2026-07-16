@@ -13,6 +13,11 @@ import { teamRoutes } from "./routes/teams.js";
 import { botRoutes, buildRoutes } from "./routes/bots.js";
 import { catalogRoutes } from "./routes/catalog.js";
 import { adminRoutes } from "./routes/admin.js";
+import { battleRoutes } from "./routes/battles.js";
+import { standingsRoutes } from "./routes/standings.js";
+import { tournamentRoutes } from "./routes/tournaments.js";
+import { mapRoutes } from "./routes/maps.js";
+import { DEFAULT_ANON_QUOTA, type AnonQuotaConfig } from "./middleware/anon-quota.js";
 import type { BotManagerClient } from "./services/bot-manager.js";
 import { E6PipelineBotManager } from "./services/e6-bot-manager.js";
 
@@ -22,6 +27,8 @@ export interface AppConfig {
   loginGuard?: FailedLoginGuard;
   /** Cliente del pipeline de builds. Por defecto, el pipeline REAL de E6 en proceso. */
   botManager?: BotManagerClient;
+  /** Cuota de uso anónimo de los endpoints públicos (T7.5). */
+  anonQuota?: AnonQuotaConfig;
 }
 
 export function createApp(cfg: AppConfig): express.Express {
@@ -48,6 +55,10 @@ export function createApp(cfg: AppConfig): express.Express {
   app.use(buildRoutes(cfg.db));
   app.use(catalogRoutes(cfg.db));
   app.use(adminRoutes(cfg.db));
+  app.use(battleRoutes(cfg.db, cfg.anonQuota ?? DEFAULT_ANON_QUOTA));
+  app.use(standingsRoutes(cfg.db));
+  app.use(tournamentRoutes(cfg.db));
+  app.use(mapRoutes(cfg.db));
 
   app.use((req: Request, res: Response) => {
     res.status(404).json({ error: "not_found", message: "Ruta no encontrada", correlationId: req.correlationId });
