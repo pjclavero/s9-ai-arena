@@ -13,3 +13,7 @@ dist/
 # E12 · artefactos generados por QA (evidencia E2E e informes de aceptación)
 tests/e2e/evidence/
 acceptance/report.json
+
+# Andamiaje de desarrollo local (scripts y datos del stack v2 en local)
+*.local.mjs
+.local/
