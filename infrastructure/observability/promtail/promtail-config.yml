@@ -1,0 +1,51 @@
+# Promtail: recoge los logs json-file de Docker SIN montar docker.sock
+# (lee /var/lib/docker/containers, solo lectura; el escáner del cap. 28 solo
+# permite docker.sock en bot-manager). El nombre del servicio llega en attrs
+# porque el logging driver del Compose incluye la etiqueta
+# com.docker.compose.service (x-logging).
+#
+# Búsqueda por correlation_id (DoD T10.3):
+#   {job="docker"} | json | correlation_id="<id>"
+# devuelve la traza gateway→api→worker→motor (test guionizado pendiente de
+# entorno con Docker; ver docs/entrega-E10.md).
+
+server:
+  http_listen_port: 9080
+
+positions:
+  filename: /positions/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: docker
+          __path__: /var/lib/docker/containers/*/*-json.log
+    pipeline_stages:
+      # Capa 1: formato json-file de Docker ({log, stream, time, attrs}).
+      - json:
+          expressions:
+            output: log
+            stream: stream
+            attrs: attrs
+      - json:
+          expressions:
+            service: '"com.docker.compose.service"'
+          source: attrs
+      - labels:
+          service:
+          stream:
+      # Capa 2: el log de la aplicación es JSON estructurado (contrato ADR-010
+      # D10.3); level como etiqueta, el resto consultable con `| json`.
+      - json:
+          expressions:
+            level: level
+          source: output
+      - labels:
+          level:
+      - output:
+          source: output

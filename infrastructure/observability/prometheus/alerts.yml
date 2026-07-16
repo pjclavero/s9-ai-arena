@@ -1,0 +1,89 @@
+# Reglas de alerta del cap. 24: motor bloqueado, cola acumulada, disco,
+# BD caída, stream caído y (T10.4) backup fallido o caducado.
+groups:
+  - name: s9-arena
+    rules:
+      # Motor bloqueado: el bucle de tick no avanza. Con scrape de 5 s y
+      # for: 10s, dispara en < 30 s desde la pausa (DoD; verificación real
+      # pendiente de entorno con Docker: test de caos de docs/entrega-E10.md).
+      - alert: EngineTickStalled
+        expr: time() - arena_engine_last_tick_timestamp_seconds > 10
+        for: 10s
+        labels: { severity: critical }
+        annotations:
+          summary: "Motor bloqueado: el tick lleva {{ $value | humanize }}s sin avanzar"
+
+      - alert: EngineDown
+        expr: up{job="arena-engine"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "arena-engine no responde al scrape"
+
+      # Cola acumulada.
+      - alert: QueueBacklog
+        expr: max by (queue) (arena_queue_depth) > 100
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Cola {{ $labels.queue }} acumulada: {{ $value }} trabajos > 10 min"
+
+      # Disco.
+      - alert: DiskAlmostFull
+        expr: node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes < 0.10
+        for: 15m
+        labels: { severity: critical }
+        annotations:
+          summary: "Disco {{ $labels.mountpoint }} con menos del 10% libre"
+
+      # BD caída.
+      - alert: PostgresDown
+        expr: pg_up == 0 or up{job="postgres"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "PostgreSQL caído (pg_up=0 o exporter inaccesible)"
+
+      # Stream caído (solo aplica con el perfil streaming activo): el contenedor
+      # del streamer dejó de verse en cAdvisor.
+      - alert: StreamDown
+        expr: time() - max(container_last_seen{container_label_com_docker_compose_service="streamer"}) > 120
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          summary: "El streamer lleva más de 2 min sin latir (cAdvisor)"
+
+      # Errores por endpoint (contrato http_requests_total).
+      - alert: HighErrorRate
+        expr: |
+          sum by (service) (rate(http_requests_total{status=~"5.."}[5m]))
+            / sum by (service) (rate(http_requests_total[5m])) > 0.05
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.service }}: más del 5% de respuestas 5xx"
+
+  - name: s9-backup
+    rules:
+      # T10.4: el backup escribe s9_backup_* vía textfile collector de
+      # node-exporter (volumen backup_metrics).
+      - alert: BackupFailed
+        expr: s9_backup_last_exit_code != 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "El último backup terminó con error (exit {{ $value }})"
+
+      - alert: BackupTooOld
+        expr: time() - s9_backup_last_success_timestamp_seconds > 26 * 3600
+        for: 15m
+        labels: { severity: critical }
+        annotations:
+          summary: "Sin backup completado en las últimas 26 h (DoD T10.4)"
+
+      - alert: BackupMetricsMissing
+        expr: absent(s9_backup_last_success_timestamp_seconds)
+        for: 2h
+        labels: { severity: warning }
+        annotations:
+          summary: "No hay métricas de backup: ¿servicio backup parado?"

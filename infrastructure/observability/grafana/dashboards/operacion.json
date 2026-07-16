@@ -1,0 +1,96 @@
+{
+  "uid": "s9-operacion",
+  "title": "S9 AI Arena · Operación (disco, BD, backup, stream)",
+  "tags": ["s9-arena", "e10"],
+  "schemaVersion": 39,
+  "editable": false,
+  "time": { "from": "now-24h", "to": "now" },
+  "refresh": "1m",
+  "panels": [
+    {
+      "id": 1,
+      "type": "gauge",
+      "title": "Disco libre (%)",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "min(node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay\"} / node_filesystem_size_bytes) * 100"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "red", "value": null },
+            { "color": "yellow", "value": 10 },
+            { "color": "green", "value": 25 }
+          ] }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "PostgreSQL",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "pg_up" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "CAÍDA", "color": "red" }, "1": { "text": "OK", "color": "green" } } }
+          ]
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Horas desde el último backup correcto",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "(time() - s9_backup_last_success_timestamp_seconds) / 3600" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "h", "decimals": 1,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 24 },
+            { "color": "red", "value": 26 }
+          ] }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Streamer visto hace (s)",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "time() - max(container_last_seen{container_label_com_docker_compose_service=\"streamer\"})" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0 } }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Duración del backup (s)",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "s9_backup_duration_seconds" }]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Alertas activas",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (alertname) (ALERTS{alertstate=\"firing\"})", "legendFormat": "{{alertname}}" }]
+    }
+  ]
+}

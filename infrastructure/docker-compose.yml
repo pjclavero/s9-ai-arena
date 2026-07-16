@@ -28,6 +28,9 @@ x-logging: &default-logging
   options:
     max-size: "10m"
     max-file: "3"
+    # Incluye el nombre del servicio en cada línea (attrs) para que Promtail
+    # etiquete los logs sin necesitar docker.sock.
+    labels: "com.docker.compose.service"
 
 # Contrato de logging (cap. 24, ADR-010 D10.3): JSON por stdout con ts, level,
 # service, msg y battle_id/bot_id/user_id/correlation_id cuando apliquen.
@@ -424,6 +427,218 @@ services:
     restart: "no"
     logging: *default-logging
 
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Perfil observability (T10.3, cap. 24, ADR-010 D10.3) — OPCIONAL:
+  # la plataforma funciona sin él (test en infrastructure/tests/).
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    profiles: [observability]
+    networks: [platform]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1G }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # En public SOLO para poder entregar la notificación (webhook/email) del
+  # operador: las redes internas no tienen salida. No publica puertos.
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    profiles: [observability]
+    networks: [platform, public]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        sed "s|__ALERT_WEBHOOK_URL__|$${ALERT_WEBHOOK_URL:-http://localhost/webhook-sin-configurar}|"
+        /etc/alertmanager/alertmanager.yml.tpl > /tmp/alertmanager.yml &&
+        exec /bin/alertmanager --config.file=/tmp/alertmanager.yml
+        --storage.path=/alertmanager
+    environment:
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+    volumes:
+      - ./observability/alertmanager/alertmanager.yml.tpl:/etc/alertmanager/alertmanager.yml.tpl:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9093/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 128M }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    profiles: [observability]
+    networks: [platform]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    secrets: [grafana_admin_password]
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  loki:
+    image: grafana/loki:3.1.0
+    profiles: [observability]
+    networks: [platform]
+    command: ["-config.file=/etc/loki/loki-config.yml"]
+    volumes:
+      - ./observability/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/loki
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3100/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1G }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # Lee los json-file de Docker SOLO con un bind de solo lectura (sin
+  # docker.sock: el escáner del cap. 28 solo lo permite en bot-manager).
+  promtail:
+    image: grafana/promtail:3.1.0
+    profiles: [observability]
+    networks: [platform]
+    command: ["-config.file=/etc/promtail/promtail-config.yml"]
+    volumes:
+      - ./observability/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - promtail_positions:/positions
+    depends_on:
+      loki:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9080/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 256M }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # CPU/RAM por contenedor. Sin docker.sock: usa cgroups (/rootfs, /sys,
+  # /var/lib/docker de solo lectura).
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    profiles: [observability]
+    networks: [platform]
+    volumes:
+      - /:/rootfs:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 512M }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # Disco/CPU/RAM del host + textfile collector para las métricas del backup
+  # (s9_backup_*, T10.4: volumen backup_metrics compartido con el servicio backup).
+  node-exporter:
+    image: prom/node-exporter:v1.8.1
+    profiles: [observability]
+    networks: [platform]
+    command:
+      - --path.rootfs=/host
+      - --collector.textfile.directory=/textfile
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+      - backup_metrics:/textfile:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9100/-/healthy || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 128M }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # Métricas de PostgreSQL (pg_up para la alerta de BD caída). Con BD externa
+  # (perfil external-db) el operador ajusta DATA_SOURCE_URI en .env.
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    profiles: [observability]
+    networks: [platform, data]
+    environment:
+      DATA_SOURCE_URI: ${PG_EXPORTER_URI:-postgres:5432/arena?sslmode=disable}
+      DATA_SOURCE_USER: arena
+      DATA_SOURCE_PASS_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9187/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 128M }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
 networks:
   # Solo el gateway tiene acceso exterior (6.4).
   public:
@@ -452,6 +667,11 @@ volumes:
   # Operativos (no forman parte de los seis del 6.3).
   postgres_data:
   queue_data:
+  prometheus_data:
+  grafana_data:
+  loki_data:
+  promtail_positions:
+  backup_metrics:
 
 secrets:
   # Secretos por archivo (nunca variables en claro). Se generan con
@@ -463,3 +683,5 @@ secrets:
     file: ./secrets/jwt_secret.txt
   stream_key:
     file: ./secrets/stream_key.txt
+  grafana_admin_password:
+    file: ./secrets/grafana_admin_password.txt

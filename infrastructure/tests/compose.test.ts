@@ -22,6 +22,11 @@ const CORE = [
   "gateway", "web", "api", "arena-engine", "tournament-worker",
   "bot-manager", "map-service", "replay-service", "queue",
 ];
+const TABLE_6_2 = [...CORE, "postgres", "streamer", "bot-runtime-template"];
+const OBSERVABILITY = [
+  "prometheus", "alertmanager", "grafana", "loki", "promtail",
+  "cadvisor", "node-exporter", "postgres-exporter",
+];
 
 function hasCompose(): boolean {
   try {
@@ -40,10 +45,15 @@ function configServices(profiles: string[]): string[] {
 }
 
 describe("tabla 6.2 · los doce servicios", () => {
-  it("existen los doce servicios del dosier", () => {
-    const expected = [...CORE, "postgres", "streamer", "bot-runtime-template"];
-    for (const s of expected) expect(services, `falta ${s}`).toHaveProperty(s);
-    expect(Object.keys(services)).toHaveLength(12);
+  it("existen los doce servicios del dosier (más el perfil observability)", () => {
+    for (const s of TABLE_6_2) expect(services, `falta ${s}`).toHaveProperty(s);
+    expect(Object.keys(services).sort()).toEqual([...TABLE_6_2, ...OBSERVABILITY].sort());
+  });
+
+  it("todo lo que no está en la tabla 6.2 es del perfil opcional observability", () => {
+    for (const s of OBSERVABILITY) {
+      expect(services[s].profiles, `${s}`).toEqual(["observability"]);
+    }
   });
 
   it("solo el gateway publica puertos al exterior", () => {
@@ -89,13 +99,14 @@ describe("6.4 · las cinco redes y sus reglas", () => {
     }
   });
 
-  it("gateway es el único servicio publicado en public (streamer solo por salida RTMPS, sin puertos)", () => {
+  it("en public solo gateway (puertos) y las salidas documentadas sin puertos (streamer RTMPS, alertmanager webhook)", () => {
     for (const [name, def] of Object.entries(services)) {
       if (def.networks?.includes("public")) {
-        expect(["gateway", "streamer"], `${name} no pinta nada en public`).toContain(name);
+        expect(["gateway", "streamer", "alertmanager"], `${name} no pinta nada en public`).toContain(name);
       }
     }
     expect(services.streamer.ports).toBeUndefined();
+    expect(services.alertmanager.ports).toBeUndefined();
   });
 
   it("los bots solo están en arena: sin ruta a postgres, redis ni api", () => {
@@ -200,8 +211,15 @@ describe("resolución completa con docker compose config (si hay CLI; no requier
     for (const s of CORE) expect(list).toContain(s);
   });
 
-  it.skipIf(!hasCompose())("development+bots+streaming resuelve los 12 servicios", () => {
+  it.skipIf(!hasCompose())("development+bots+streaming resuelve los 12 servicios de la tabla 6.2", () => {
     const list = configServices(["development", "bots", "streaming"]);
-    expect(list).toHaveLength(12);
+    expect(list.sort()).toEqual([...TABLE_6_2].sort());
+  });
+
+  it.skipIf(!hasCompose())("el perfil observability es opcional: production no lo incluye y production+observability sí (DoD T10.3)", () => {
+    const prod = configServices(["production"]);
+    for (const s of OBSERVABILITY) expect(prod).not.toContain(s);
+    const both = configServices(["production", "observability"]);
+    for (const s of OBSERVABILITY) expect(both).toContain(s);
   });
 });

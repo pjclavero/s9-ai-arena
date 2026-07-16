@@ -1,0 +1,13 @@
+# Proveedor de dashboards: carga todo lo de /var/lib/grafana/dashboards,
+# que el Compose monta desde infrastructure/observability/grafana/dashboards/
+# (versionados en el repo; DoD T10.3).
+apiVersion: 1
+
+providers:
+  - name: s9-arena
+    folder: S9 AI Arena
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
