@@ -15,3 +15,6 @@ export * from "./container-runner.js";
 export * from "./launch-guard.js";
 export * from "./compose-scanner.js";
 export * from "./sandbox-process.js";
+export * from "./audit.js";
+export * from "./suspension.js";
+export * from "./security-events.js";
