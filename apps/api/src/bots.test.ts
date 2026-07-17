@@ -364,6 +364,29 @@ describe("T7.3 autorización de objeto (código y logs privados)", () => {
     expect(nowPublic.status).toBe(200);
   });
 
+  it("R2.6 (ERR-SEC-09): la descarga emite Content-Disposition RFC 6266/5987 sin comillas/CRLF y con defecto derivado del id de versión", async () => {
+    const bot = await newBotWithLoadout("header-bot", "public");
+    const version = await newVersion(bot.id);
+
+    // Nombre hostil persistido (fila anterior al saneado de entrada): la cabecera
+    // se sanea igualmente al emitir — sin inyección ni spoofing.
+    await h.db("bot_versions")
+      .where({ bot_id: bot.id, version })
+      .update({ source_filename: 'evil".zip\r\nX-Spoof: 1' });
+    const evil = await request(app).get(`/bots/${bot.id}/versions/${version}/source`).set(auth(dev));
+    expect(evil.status).toBe(200);
+    const header = evil.headers["content-disposition"];
+    expect(header).not.toMatch(/[\r\n]/);
+    expect(header).toMatch(/^attachment; filename="[^"]*"; filename\*=UTF-8''[A-Za-z0-9%._-]*$/);
+    expect(evil.headers["x-spoof"]).toBeUndefined();
+
+    // Sin nombre almacenado: defecto derivado del id de versión, no del cliente.
+    await h.db("bot_versions").where({ bot_id: bot.id, version }).update({ source_filename: null });
+    const fallback = await request(app).get(`/bots/${bot.id}/versions/${version}/source`).set(auth(dev));
+    expect(fallback.status).toBe(200);
+    expect(fallback.headers["content-disposition"]).toContain(`filename="bot-${bot.id}-v${version}-source.bin"`);
+  });
+
   it("un bot privado ajeno es 404 (ni existe) y sus builds/logs invisibles", async () => {
     const bot = await newBotWithLoadout("private-bot", "private");
     const version = await newVersion(bot.id);
