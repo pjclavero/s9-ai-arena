@@ -56,6 +56,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: npm ci
+      # R6.1: este paso NO existia y el job fallaba con `trivy: command not found`
+      # (exit 127). No se vio antes porque el digests-gate saltaba el job mientras hubiera
+      # placeholders: el escaneo de vulnerabilidades de los runtimes nunca se habia
+      # ejecutado. El script tambien escaneaba una imagen recien construida en vez de la
+      # fijada en DIGESTS.lock; ahora descarga la pineada (ver scan-runtime-vulns.sh).
+      - name: Instalar Trivy
+        uses: aquasecurity/setup-trivy@v0.2.0
       - name: Escaneo de vulnerabilidades (Trivy, bloquea CRITICAL)
         run: ./scripts/scan-runtime-vulns.sh
 
