@@ -19,6 +19,7 @@ Rama de trabajo: `ronda2/r-p0-bloqueantes`.
 | R6.1 | Construir los runtimes, fijar digests reales y **probar el sandbox de verdad** | ✅ Hecho y verificado (Docker real) | — | [R6.1-runtimes-digests.md](reportes/R6.1-runtimes-digests.md) | `c1e9a2b`+ |
 | R1.7 | Retirar el montaje de `docker.sock` | ⏸️ Pendiente (pausa) | — | — | — |
 | R1.8 | Rate-limit y bloqueo de login tras proxy | ⏸️ Pendiente (pausa) | — | — | — |
+| R2.5 | Encolar builds (worker + tabla `jobs`), firma verificable desde secreto y rate-limit compartido (ERR-SEC-12/15/14) | ✅ Hecho y verificado (Linux, 726/1/3) | — | [R2.5-colas-firma.md](reportes/R2.5-colas-firma.md) | rama `ronda2/r2.5-colas-firma` |
 
 > **Verificación en Linux · 2026-07-17 (VM108).** La verificación de **R1.4 y R1.5** que quedaba
 > diferida a Linux está **hecha**: los tests que usan PostgreSQL embebido (ERR-GES-04) no se podían
