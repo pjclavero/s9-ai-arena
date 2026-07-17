@@ -52,16 +52,34 @@ export class ViewerScene extends Phaser.Scene {
     this.drawStatic();
   }
 
+  /**
+   * Reloj de reproducción explícito (R3.1 · ERR-VIS-01): la escena muestrea el
+   * interpolador SIEMPRE con este reloj, y es el mismo eje temporal en el que los
+   * llamantes fechan sus snapshots. En directo es el reloj de pared (por defecto);
+   * en replay es el playhead del reproductor convertido a ms. Así directo y replay
+   * comparten la misma ruta de interpolación sin duplicarla.
+   */
+  private playbackClock: () => number = () => performance.now();
+
+  setPlaybackClock(clock: () => number): void {
+    this.playbackClock = clock;
+  }
+
+  /** Instante actual del reloj de reproducción (eje temporal de los snapshots). */
+  playbackNow(): number {
+    return this.playbackClock();
+  }
+
   /** Entrada de datos desde SpectatorClient / ReplayPlayer. */
-  pushSnapshot(snapshot: any, receivedAtMs = performance.now()): void {
+  pushSnapshot(snapshot: any, atMs = this.playbackNow()): void {
     const filtered = applyFog(snapshot, this.fog);
-    this.interpolator.push(filtered, receivedAtMs);
+    this.interpolator.push(filtered, atMs);
     this.overlay.applySnapshot(filtered);
   }
 
-  resetTo(snapshot: any, receivedAtMs = performance.now()): void {
+  resetTo(snapshot: any, atMs = this.playbackNow()): void {
     const filtered = applyFog(snapshot, this.fog);
-    this.interpolator.reset(filtered, receivedAtMs);
+    this.interpolator.reset(filtered, atMs);
     this.overlay.applySnapshot(filtered);
   }
 
@@ -93,7 +111,7 @@ export class ViewerScene extends Phaser.Scene {
   }
 
   update(): void {
-    const frame = this.interpolator.sampleAt(performance.now());
+    const frame = this.interpolator.sampleAt(this.playbackNow());
     if (!frame) return;
     this.renderFrame(frame);
     this.applyCamera(frame);
