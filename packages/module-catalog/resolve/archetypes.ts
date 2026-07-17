@@ -2,6 +2,11 @@
  * Los 4 arquetipos de referencia del MVP (T3.3 golden files, T3.4 banco de balance).
  * Cada uno es un LoadoutInput legal contra el catálogo real con BUDGET_CREDITS_MVP.
  * Verificado a mano en docs/balance/v1.md y por data.test.ts (constructivos por chasis).
+ *
+ * FORMA CANÓNICA (R1.1 / issue #15): la munición es una PROPIEDAD del arma (`ammo:`), NO
+ * un módulo aparte. resolveVehicle materializa el módulo de munición en la bahía del
+ * chasis (ammo_main). Antes, estos fixtures duplicaban la munición a mano (un módulo
+ * `ammo_main` además de `ammo:`), lo que enmascaraba que el resolvedor la descartaba.
  */
 import { CATALOG_VERSION } from "../loadCatalog.js";
 import type { LoadoutInput } from "../types.js";
@@ -18,7 +23,6 @@ export const scoutLoadout: LoadoutInput = {
     { slot: "power", moduleId: "power.battery@1" },
     { slot: "sensor_a", moduleId: "sensor.lidar_front@1" },
     { slot: "turret_main", moduleId: "weapon.mg@1", ammo: "ammo.standard@1" },
-    { slot: "ammo_main", moduleId: "ammo.standard@1" },
     { slot: "radio_a", moduleId: "radio.short@1" },
   ],
 };
@@ -35,7 +39,6 @@ export const gunnerLoadout: LoadoutInput = {
     { slot: "power", moduleId: "power.generator@1" },
     { slot: "sensor_a", moduleId: "sensor.radar@1" },
     { slot: "turret_main", moduleId: "weapon.cannon@1", ammo: "ammo.ap@1" },
-    { slot: "ammo_main", moduleId: "ammo.ap@1" },
     { slot: "armor_front", moduleId: "armor.steel_front@1" },
     { slot: "radio_a", moduleId: "radio.short@1" },
   ],
@@ -54,7 +57,6 @@ export const minerLoadout: LoadoutInput = {
     { slot: "sensor_a", moduleId: "sensor.lidar_front@1" },
     { slot: "mine_bay", moduleId: "mine.explosive@1" },
     { slot: "turret_main", moduleId: "weapon.mg@1", ammo: "ammo.standard@1" },
-    { slot: "ammo_main", moduleId: "ammo.standard@1" },
     { slot: "armor_rear", moduleId: "armor.steel_rear@1" },
   ],
 };
@@ -71,7 +73,6 @@ export const heavyLoadout: LoadoutInput = {
     { slot: "power", moduleId: "power.generator@1" },
     { slot: "sensor_a", moduleId: "sensor.lidar360@1" },
     { slot: "turret_main", moduleId: "weapon.cannon@1", ammo: "ammo.ap@1" },
-    { slot: "ammo_main", moduleId: "ammo.ap@1" },
     { slot: "armor_front", moduleId: "armor.steel_front@1" },
   ],
 };

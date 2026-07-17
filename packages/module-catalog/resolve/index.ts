@@ -84,13 +84,38 @@ export function resolveVehicle(loadout: LoadoutInput, catalog: ModuleDefinition[
     throw new UnresolvableLoadoutError(`${chassisDef.id}: chasis sin hullHp/radiusM (viola module.schema.json)`);
   }
 
-  const modules: ModuleSpec[] = loadout.modules.map((entry) => {
+  // Bahías de munición del chasis, en orden. La forma CANÓNICA de un loadout (editor/API,
+  // lo que valida E3) guarda la munición como PROPIEDAD del arma (entry.ammo), NO como un
+  // módulo aparte. El motor, en cambio, la busca en modulesOf("ammo") (combat.ammoFor). Aquí
+  // se materializa: cada arma con `ammo` produce un módulo de categoría `ammo` en la bahía
+  // de munición del chasis (ammo_main en los chasis del MVP), justo detrás de su arma.
+  const ammoSlotIds = (chassisDef.slots ?? [])
+    .filter((s) => s.accepts.includes("ammo"))
+    .map((s) => s.id);
+  // Si el loadout ya lista una munición como módulo propio (forma heredada, p. ej. los
+  // bancos de balance), se respeta ese módulo explícito y NO se duplica.
+  const explicitModuleIds = new Set(loadout.modules.map((m) => m.moduleId));
+
+  const modules: ModuleSpec[] = [];
+  let ammoSlotCursor = 0;
+  for (const entry of loadout.modules) {
     const def = findModule(catalog, entry.moduleId);
     if (!def) {
       throw new UnresolvableLoadoutError(`Módulo desconocido en el catálogo: ${entry.moduleId} (ranura ${entry.slot})`);
     }
-    return toModuleSpec(entry.slot, def);
-  });
+    modules.push(toModuleSpec(entry.slot, def));
+
+    if (def.category === "weapon" && entry.ammo && !explicitModuleIds.has(entry.ammo)) {
+      const ammoDef = findModule(catalog, entry.ammo);
+      if (!ammoDef || ammoDef.category !== "ammo") {
+        throw new UnresolvableLoadoutError(
+          `Munición desconocida o no-munición asignada al arma ${entry.moduleId} (ranura ${entry.slot}): ${entry.ammo}`,
+        );
+      }
+      const ammoSlot = ammoSlotIds[ammoSlotCursor++] ?? `${entry.slot}_ammo`;
+      modules.push(toModuleSpec(ammoSlot, ammoDef));
+    }
+  }
 
   const massKg = chassisDef.massKg + modules.reduce((sum, m) => sum + m.massKg, 0);
 
