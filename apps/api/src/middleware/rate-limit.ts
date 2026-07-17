@@ -7,6 +7,7 @@
  */
 import type { NextFunction, Request, Response } from "express";
 import { tooMany } from "../errors.js";
+import type { RateLimiterLike } from "./shared-rate-limit.js";
 
 interface Bucket {
   hits: number[];
@@ -37,11 +38,18 @@ export class SlidingWindowLimiter {
   }
 }
 
-export function rateLimit(limiter: SlidingWindowLimiter, scope: string) {
-  return (req: Request, _res: Response, next: NextFunction): void => {
-    const key = `${scope}:${req.auth?.userId ?? req.ip}`;
-    if (!limiter.hit(key)) return next(tooMany());
-    next();
+// R2.5 (ERR-SEC-14): acepta cualquier RateLimiterLike — en producción, el
+// SharedRateLimiter sobre api_usage (estado compartido que sobrevive a
+// reinicios); esta variante en memoria queda para tests/entornos de un proceso.
+export function rateLimit(limiter: RateLimiterLike, scope: string) {
+  return async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const key = `${scope}:${req.auth?.userId ?? req.ip}`;
+      if (!(await limiter.hit(key))) return next(tooMany());
+      next();
+    } catch (e) {
+      next(e);
+    }
   };
 }
 

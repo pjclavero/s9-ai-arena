@@ -36,25 +36,39 @@ export interface BotManagerClient {
 }
 
 /**
- * Stub documentado: registra el encolado en `jobs` y deja el build en `queued`.
- * El bot-manager real (E6) consumirá la cola y notificará con completeBuild().
+ * R2.5 (ERR-SEC-12) — encolado REAL: persiste el trabajo en la tabla `jobs`
+ * (kind `bot_build`, patrón durable de las batallas de E9: dedupe_key idempotente,
+ * reintentos limitados) y deja el build en `queued`. El pipeline NO corre en el
+ * proceso de la API: lo consume el worker del bot-manager
+ * (apps/bot-manager/src/build-worker.ts), que ejecuta el pipeline de E6 y
+ * notifica con completeBuild().
  */
-export class StubBotManager implements BotManagerClient {
+export class QueueBotManager implements BotManagerClient {
   constructor(private db: Db) {}
   async enqueueBuild(req: BuildRequest): Promise<void> {
-    await this.db("jobs").insert({
-      kind: "bot_build",
-      payload: JSON.stringify(req),
-      status: "queued",
-    });
+    await this.db("jobs")
+      .insert({
+        kind: "bot_build",
+        payload: JSON.stringify(req),
+        status: "queued",
+        dedupe_key: `bot_build:${req.buildId}`,
+        max_attempts: 3,
+      })
+      .onConflict("dedupe_key")
+      .ignore();
   }
 }
+
+/** Alias histórico (T7.3 lo llamaba "stub"; desde R2.5 es el encolador real). */
+export const StubBotManager = QueueBotManager;
 
 export interface BuildResult {
   status: "passed" | "failed";
   stages: { name: (typeof PIPELINE_STAGES)[number]; status: string; message?: string; logUrl?: string }[];
   artifactHash?: string;
   signature?: string;
+  /** Bytes canónicos del artefacto firmado (R2.5): se persisten para verificar antes de lanzar. */
+  artifactBytes?: Buffer;
   rejectionReason?: string;
 }
 
@@ -90,6 +104,10 @@ export async function completeBuild(db: Db, buildId: string, result: BuildResult
           build_id: buildId,
           hash: result.artifactHash,
           signature: result.signature ?? null,
+          // R2.5 (ERR-SEC-15): sin bytes persistidos no hay verificación posible
+          // antes de lanzar; el guard de lanzamiento RECHAZA artefactos sin bytes.
+          bytes: result.artifactBytes ?? null,
+          size_bytes: result.artifactBytes?.length ?? null,
           storage_ref: `artifacts/${build.bot_id}/${build.version}/${result.artifactHash}`,
         });
       }

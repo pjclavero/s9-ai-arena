@@ -22,7 +22,7 @@
 import { BuildPipeline } from "../../../bot-manager/src/pipeline.js";
 import { InMemoryBuildStore } from "../../../bot-manager/src/store.js";
 import { withConfig } from "../../../bot-manager/src/config.js";
-import { generateServiceKeypair, type ServiceKeypair } from "../../../bot-manager/src/signing.js";
+import { loadServiceKeypair, type ServiceKeypair } from "../../../bot-manager/src/signing.js";
 import type { BotSubmission, SourceFile, Runtime, CandidateAgentFactory } from "../../../bot-manager/src/types.js";
 import type { BotAgent } from "../../../arena-engine/src/sim/battle.js";
 import type { Db } from "../db/connection.js";
@@ -104,7 +104,12 @@ export class E6PipelineBotManager implements BotManagerClient {
       allowUnverifiedSandbox?: boolean;
     } = {},
   ) {
-    this.signer = opts.signer ?? generateServiceKeypair();
+    // R2.5 (ERR-SEC-15): la clave de firma sale del almacén de secretos
+    // (ARTIFACT_SIGNING_KEY_FILE / ARTIFACT_SIGNING_KEY), no de un par efímero:
+    // una clave por proceso invalidaría la verificación entre servicios y
+    // moriría con cada reinicio. Sin clave configurada, loadServiceKeypair
+    // FALLA CERRADO (salvo modo dev explícito).
+    this.signer = opts.signer ?? loadServiceKeypair();
     this.agentResolver = opts.agentResolver;
     this.referenceAgent = opts.referenceAgent;
     this.allowUnverifiedSandbox = opts.allowUnverifiedSandbox ?? false;
@@ -150,6 +155,7 @@ export class E6PipelineBotManager implements BotManagerClient {
       })),
       artifactHash: result.artifactHash,
       signature: result.signature,
+      artifactBytes: result.artifactBytes,
       rejectionReason: result.rejectionReason,
     };
     await completeBuild(this.db, req.buildId, mapped);

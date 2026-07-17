@@ -19,6 +19,7 @@ import {
   validateLoadoutServerSide,
 } from "../services/bots.js";
 import { PIPELINE_STAGES, type BotManagerClient } from "../services/bot-manager.js";
+import { sharedRateLimit, type RateLimiterLike } from "../middleware/shared-rate-limit.js";
 
 const MAX_SOURCE_BYTES = 10 * 1024 * 1024; // 10 MB (E6.M)
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_SOURCE_BYTES } });
@@ -94,8 +95,17 @@ async function getVersionOr404(db: Db, botId: string, version: string) {
   return v;
 }
 
-export function botRoutes(db: Db, botManager: BotManagerClient): Router {
+/** Limitadores por usuario de la creación de versiones y del encolado de builds (R2.5 · ERR-SEC-12). */
+export interface BotBuildLimiters {
+  createVersion: RateLimiterLike;
+  submit: RateLimiterLike;
+}
+
+export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBuildLimiters): Router {
   const router = Router();
+  // Sin limitadores inyectados (tests antiguos), no se limita: la app SIEMPRE los cablea.
+  const limitCreateVersion = limiters ? [sharedRateLimit(limiters.createVersion)] : [];
+  const limitSubmit = limiters ? [sharedRateLimit(limiters.submit)] : [];
 
   // ------------------------------------------------------------------ CRUD
   defineOperation(router, "listBots", async (req, res) => {
@@ -218,6 +228,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient): Router {
         .returning("*");
       res.status(201).json(versionToJson(version));
     },
+    ...limitCreateVersion,
     (req, res, next) => {
       upload.single("source")(req, res, (err: unknown) => {
         if (err && (err as { code?: string }).code === "LIMIT_FILE_SIZE") {
@@ -247,25 +258,32 @@ export function botRoutes(db: Db, botManager: BotManagerClient): Router {
   });
 
   // -------------------------------------------- transiciones (cap. 17.1)
-  defineOperation(router, "submitBotVersion", async (req, res) => {
-    const bot = await getVisibleBot(db, req.auth, req.params.botId);
-    assertOwner(req.auth, bot);
-    const v = await getVersionOr404(db, bot.id as string, req.params.version);
-    await applyTransition(db, req.auth, v, "submit", {}, req.correlationId);
+  defineOperation(
+    router,
+    "submitBotVersion",
+    async (req, res) => {
+      const bot = await getVisibleBot(db, req.auth, req.params.botId);
+      assertOwner(req.auth, bot);
+      const v = await getVersionOr404(db, bot.id as string, req.params.version);
+      await applyTransition(db, req.auth, v, "submit", {}, req.correlationId);
 
-    const [build] = await db("builds")
-      .insert({
-        bot_id: bot.id,
-        version: v.version,
-        status: "queued",
-        stages: JSON.stringify(PIPELINE_STAGES.map((name) => ({ name, status: "pending" }))),
-      })
-      .returning("*");
-    // Delegación en bot-manager (E6/T6.1) — pendiente de reconciliación con E6.
-    await botManager.enqueueBuild({ buildId: build.id, botId: bot.id as string, version: v.version, runtime: v.runtime });
-    const fresh = await db("builds").where({ id: build.id }).first();
-    res.status(202).json(buildToJson(fresh, { includeLogs: true }));
-  });
+      const [build] = await db("builds")
+        .insert({
+          bot_id: bot.id,
+          version: v.version,
+          status: "queued",
+          stages: JSON.stringify(PIPELINE_STAGES.map((name) => ({ name, status: "pending" }))),
+        })
+        .returning("*");
+      // R2.5 (ERR-SEC-12): encolado REAL — el cliente por defecto (QueueBotManager)
+      // solo persiste el trabajo en `jobs`; el pipeline corre en el worker del
+      // bot-manager, no en el proceso de la API. 202 = aceptado, no completado.
+      await botManager.enqueueBuild({ buildId: build.id, botId: bot.id as string, version: v.version, runtime: v.runtime });
+      const fresh = await db("builds").where({ id: build.id }).first();
+      res.status(202).json(buildToJson(fresh, { includeLogs: true }));
+    },
+    ...limitSubmit,
+  );
 
   defineOperation(router, "publishBotVersion", async (req, res) => {
     const bot = await getVisibleBot(db, req.auth, req.params.botId);

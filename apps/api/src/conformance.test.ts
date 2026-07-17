@@ -47,9 +47,9 @@ describe("T7.5 conformidad con el contrato de E1", () => {
     }
   });
 
-  it("las extensiones fuera de contrato están documentadas y son solo de recuperación de cuenta", () => {
+  it("las extensiones fuera de contrato están documentadas: recuperación de cuenta y clave pública de firma (R2.5)", () => {
     const extensions = implementedOperations.filter((o) => o.extension).map((o) => o.operationId);
-    expect(extensions.sort()).toEqual(["recoverAccount", "resetPassword"]);
+    expect(extensions.sort()).toEqual(["getSigningPublicKey", "recoverAccount", "resetPassword"]);
   });
 
   it("cada operación implementada usa el x-min-role del contrato (por construcción)", () => {

@@ -13,6 +13,8 @@ export * from "./smoke-battle.js";
 export * from "./pipeline.js";
 export * from "./container-runner.js";
 export * from "./launch-guard.js";
+export * from "./launch-verify.js";
+export * from "./build-worker.js";
 export * from "./compose-scanner.js";
 export * from "./sandbox-process.js";
 export * from "./audit.js";

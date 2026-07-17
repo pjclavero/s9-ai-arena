@@ -17,7 +17,8 @@ import {
 import { generateRecoveryCodes, generateTotpSecret, totpUri, verifyTotp } from "../auth/totp.js";
 import { audit } from "../audit.js";
 import { badRequest, conflict, forbidden, notFound, tooMany, unauthorized } from "../errors.js";
-import { FailedLoginGuard, SlidingWindowLimiter, rateLimit } from "../middleware/rate-limit.js";
+import { rateLimit } from "../middleware/rate-limit.js";
+import type { LoginGuardLike, RateLimiterLike } from "../middleware/shared-rate-limit.js";
 import { sessionToJson, userToJson } from "../serialize.js";
 import { ROLE_RANK } from "../openapi.js";
 
@@ -25,9 +26,11 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export interface AuthDeps {
   db: Db;
-  loginGuard: FailedLoginGuard;
-  registerLimiter: SlidingWindowLimiter;
-  loginLimiter: SlidingWindowLimiter;
+  // R2.5 (ERR-SEC-14): contratos, no clases en memoria — en producción se
+  // inyectan las variantes sobre api_usage, cuyo estado sobrevive a reinicios.
+  loginGuard: LoginGuardLike;
+  registerLimiter: RateLimiterLike;
+  loginLimiter: RateLimiterLike;
 }
 
 async function createSession(db: Db, userId: string, req: { headers: Record<string, unknown>; ip?: string }) {
@@ -83,14 +86,14 @@ export function authRoutes(deps: AuthDeps): Router {
     if (typeof email !== "string" || typeof password !== "string") throw badRequest("email y password obligatorios");
     const key = `${req.ip}|${email.toLowerCase()}`;
 
-    if (loginGuard.isBlocked(key)) {
+    if (await loginGuard.isBlocked(key)) {
       throw tooMany("Demasiados intentos fallidos: bloqueo temporal");
     }
 
     const user = await db("users").where({ email: email.toLowerCase() }).first();
     const ok = user && (await verifyPassword(user.password_hash, password));
     if (!ok) {
-      const blocked = loginGuard.recordFailure(key);
+      const blocked = await loginGuard.recordFailure(key);
       if (blocked) {
         await audit(db, {
           action: "auth.login.blocked",
@@ -107,12 +110,12 @@ export function authRoutes(deps: AuthDeps): Router {
         (typeof totp === "string" && (await verifyTotp(totp, user.totp_secret))) ||
         (typeof totp === "string" && (await consumeRecoveryCode(db, user, totp)));
       if (!codeOk) {
-        loginGuard.recordFailure(key);
+        await loginGuard.recordFailure(key);
         throw unauthorized("Se requiere un código TOTP válido (2FA activo)");
       }
     }
 
-    loginGuard.recordSuccess(key);
+    await loginGuard.recordSuccess(key);
     res.status(200).json(await createSession(db, user.id, req));
   }, rateLimit(deps.loginLimiter, "login"));
 
