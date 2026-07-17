@@ -1,0 +1,93 @@
+# R6.1 — Publica las imágenes de runtime de bots en GHCR y devuelve sus DIGESTS reales.
+#
+# Por qué existe: un `docker build` local NO produce digest. El `@sha256:` de una imagen
+# es el digest de su manifiesto en un REGISTRY, así que para poder fijar los runtimes por
+# digest (cap. 18.3) hay que publicarlos en uno. GHCR es el estado final elegido: es
+# reproducible desde CI y no obliga a poner credenciales en VM108.
+#
+# No necesita ningún secret: GITHUB_TOKEN ya puede escribir en ghcr.io/<owner>/* con el
+# permiso `packages: write` de abajo. NUNCA metas un PAT aquí.
+#
+# Flujo de uso (R6.1):
+#   1. Se lanza a mano (workflow_dispatch) o al tocar runtimes/ o sdks/.
+#   2. Imprime los digests publicados en el resumen del run.
+#   3. Esos digests se fijan en runtimes/DIGESTS.lock, y a partir de ahí el resto del CI
+#      (e6-security.yml) los DESCARGA por digest en vez de reconstruirlos: lo que se
+#      prueba es exactamente lo que está fijado.
+name: Publicar runtimes de bots (GHCR)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "runtimes/**"
+      - "sdks/**"
+      - ".github/workflows/runtimes-publish.yml"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        runtime: [python, node]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Autenticarse en GHCR (GITHUB_TOKEN, sin secrets)
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Construir y publicar ${{ matrix.runtime }}
+        id: build
+        env:
+          # El nombre va en minúsculas: GHCR rechaza mayúsculas en el repositorio.
+          IMAGE: ghcr.io/${{ github.repository }}/bot-runtime-${{ matrix.runtime }}
+        run: |
+          image="$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')"
+          # El contexto de build es la RAÍZ del repo: los Dockerfile hacen COPY de
+          # sdks/<lang> para construir el SDK propio (nunca se resuelve del registro).
+          # --provenance=false: sin la capa de atestación, el digest publicado es el del
+          # manifiesto de la imagen y no el de un índice con adjuntos.
+          docker buildx build \
+            --provenance=false \
+            -f "runtimes/${{ matrix.runtime }}/Dockerfile" \
+            -t "$image:${{ github.sha }}" \
+            --push .
+          digest="$(docker buildx imagetools inspect "$image:${{ github.sha }}" \
+            --format '{{.Manifest.Digest}}')"
+          echo "$image@$digest"
+          {
+            echo "## Runtime \`${{ matrix.runtime }}\` publicado"
+            echo ""
+            echo "Fija esta línea en \`runtimes/DIGESTS.lock\`:"
+            echo ""
+            echo '```'
+            echo "$image@$digest"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comprobar que el digest publicado es el fijado en DIGESTS.lock
+        # Si DIGESTS.lock ya fija este runtime, el digest recién publicado DEBE coincidir.
+        # Si no coincide, el build dejó de ser reproducible (o alguien cambió el runtime
+        # sin actualizar el lock): eso es un fallo, no un aviso. Mientras el lock aún no
+        # esté fijado (primer arranque de R6.1), se avisa y no se bloquea.
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}/bot-runtime-${{ matrix.runtime }}
+        run: |
+          image="$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')"
+          fijado="$(awk -v r='${{ matrix.runtime }}' '$1 == r { print $3 }' runtimes/DIGESTS.lock | head -1)"
+          publicado="$image@$(docker buildx imagetools inspect "$image:${{ github.sha }}" --format '{{.Manifest.Digest}}')"
+          if [ -z "$fijado" ] || echo "$fijado" | grep -qE 'sha256:(0{64}|1{64}|2{64})'; then
+            echo "::warning::DIGESTS.lock aún no fija ${{ matrix.runtime }}. Publicado: $publicado"
+            exit 0
+          fi
+          if [ "$fijado" != "$publicado" ]; then
+            echo "::error::El digest publicado NO coincide con runtimes/DIGESTS.lock"
+            echo "  fijado en el lock: $fijado"
+            echo "  recién publicado:  $publicado"
+            exit 1
+          fi
+          echo "OK: el digest publicado coincide con DIGESTS.lock ($publicado)"

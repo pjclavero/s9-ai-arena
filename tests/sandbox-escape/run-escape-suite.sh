@@ -70,6 +70,11 @@ for bot in "$HERE"/bots/*.py; do
   echo "=== $name ==="
 
   # Sin `|| true`: el código de salida es parte de la evidencia.
+  # R6.1: el bot se monta en /bot/main.py y NO se pasa comando, igual que hace
+  # DockerContainerRunner.buildRunArgs en produccion (ENTRYPOINT python + CMD
+  # /bot/main.py de la imagen). Antes se pasaba `python /bot.py`, que con el
+  # ENTRYPOINT de la imagen ejecutaba `python python /bot.py` -> el bot nunca
+  # corria y los 7 vectores salian NO PROBADO.
   set +e
   out="$(docker run --rm \
     --name "escape_$name" \
@@ -82,8 +87,8 @@ for bot in "$HERE"/bots/*.py; do
     --network "$NETWORK" \
     --dns 0.0.0.0 \
     --cpus 0.5 --memory 256m --memory-swap 256m --pids-limit 64 \
-    -v "$bot:/bot.py:ro" \
-    "$IMAGE" python /bot.py 2>&1)"
+    -v "$bot:/bot/main.py:ro" \
+    "$IMAGE" 2>&1)"
   rc=$?
   set -e
   echo "$out"

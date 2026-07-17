@@ -58,7 +58,11 @@ export interface PipelineConfig {
 export const DEFAULT_PYTHON_ALLOWLIST = new Set([
   "arena-sdk",
   "numpy",
-  "websockets",
+  // R6.1: es "websocket-client", NO "websockets" (son paquetes DISTINTOS). El SDK
+  // (sdks/python/arena_sdk/bot.py) hace `import websocket`, que lo aporta
+  // websocket-client; el pyproject del SDK declara websocket-client>=1.7,<2. La
+  // allowlist pedia "websockets", que ni el SDK usa ni el runtime instala.
+  "websocket-client",
 ]);
 
 /** Allowlist Node del MVP (ver runtimes/node/ALLOWED-PACKAGES.md). */

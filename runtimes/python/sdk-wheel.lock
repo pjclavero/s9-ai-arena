@@ -1,0 +1,11 @@
+# R6.1 — Hash del wheel del SDK propio (sdks/python), construido DENTRO del build.
+#
+# El wheel es reproducible byte a byte: el toolchain (setuptools 65.5.1 / wheel 0.44.0) lo
+# aporta la imagen base fijada por digest, se construye con --no-index (sin red) y con
+# SOURCE_DATE_EPOCH fijo. Verificado: dos builds independientes dan el mismo sha256.
+#
+# Si cambia el codigo de sdks/python, este hash cambia y el build FALLA hasta actualizarlo.
+# Es deliberado: el contenido del SDK que entra en el runtime queda fijado en el repo.
+
+SOURCE_DATE_EPOCH=1700000000
+arena_sdk-0.1.0-py3-none-any.whl  sha256:9025098809a28181d690bd39190bc846f624296ae4d47bc50de936582327fe81

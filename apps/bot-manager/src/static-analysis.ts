@@ -61,10 +61,20 @@ function normalizePkg(name: string): string {
   return name.trim().toLowerCase().replace(/_/g, "-");
 }
 
+// El nombre del MODULO que se importa no siempre es el del PAQUETE que lo distribuye.
+// R6.1: `import websocket` lo aporta el paquete "websocket-client". Sin esta traduccion,
+// un bot que use el SDK tal y como documenta su README quedaria rechazado por "import de
+// paquete no permitido: websocket", o habria que meter "websocket" en la allowlist, que
+// es peor: la allowlist dejaria de nombrar paquetes instalables y no cuadraria con el lock.
+const PYTHON_IMPORT_TO_DIST = new Map([["websocket", "websocket-client"]]);
+
 // import arena_sdk  → paquete arena-sdk ;  from numpy import x → numpy
 function importToPackage(runtime: Runtime, mod: string): string {
   const top = mod.split(".")[0].split("/")[0];
-  if (runtime === "python") return normalizePkg(top);
+  if (runtime === "python") {
+    const norm = normalizePkg(top);
+    return PYTHON_IMPORT_TO_DIST.get(norm) ?? norm;
+  }
   // node: preservar el scope (@arena/sdk)
   if (mod.startsWith("@")) return mod.split("/").slice(0, 2).join("/");
   return top;

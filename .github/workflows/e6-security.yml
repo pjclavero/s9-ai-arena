@@ -71,7 +71,24 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: "22" }
       - run: npm ci
-      - name: Construir el runtime python fijado en DIGESTS.lock
-        run: docker build -t "${{ needs.digests-gate.outputs.python_image }}" runtimes/python
+      # R6.1: antes esto era `docker build -t "<imagen@sha256:...>" runtimes/python`, que
+      # NO puede funcionar por dos motivos, ocultos mientras el gate saltaba el job:
+      #   1. `-t` no admite una referencia por digest: el digest lo asigna el registry al
+      #      publicar, no se puede imponer a un build local. El paso fallaba en seco.
+      #   2. el contexto era `runtimes/python`, pero el Dockerfile hace COPY de sdks/python
+      #      para construir el SDK propio: el contexto tiene que ser la RAIZ del repo.
+      # Ademas, RECONSTRUIR la imagen contradice el objetivo: lo que hay que probar es la
+      # imagen EXACTA que esta fijada en DIGESTS.lock, no una recien hecha que quiza no sea
+      # bit a bit identica. Asi que se DESCARGA por digest; si no existe, el job falla
+      # (fail-closed), que es justo lo que R1.5/R1.6 exigen.
+      - name: Descargar el runtime python fijado en DIGESTS.lock
+        run: |
+          image="${{ needs.digests-gate.outputs.python_image }}"
+          echo "Descargando $image"
+          if ! docker pull "$image"; then
+            echo "::error::No se pudo descargar $image. La imagen fijada en DIGESTS.lock" \
+                 "tiene que estar publicada en GHCR (workflow runtimes-publish.yml)."
+            exit 1
+          fi
       - name: Suite de escape del sandbox
         run: ./tests/sandbox-escape/run-escape-suite.sh
