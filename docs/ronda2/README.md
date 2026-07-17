@@ -43,6 +43,12 @@ Rama de trabajo: `ronda2/r-p0-bloqueantes`.
 >
 > Quedan de R-P0: **R1.6, R1.7 y R1.8**. El sub-lote de motor (R1.1, R1.2, R1.3, R1.9) sigue cerrado.
 
+## Banda R-P1 · Integración y robustez
+
+| Tarea | Descripción | Estado | Issue | Reporte | Commit |
+|---|---|---|---|---|---|
+| R2.8 | Paridad de SDK: CLI `arena-sim` en JS (deuda de E5) | ✅ Hecho | — | [R2.8-cli-arena-sim-js.md](reportes/R2.8-cli-arena-sim-js.md) | — |
+
 **Leyenda:** ✅ hecho y verificado · 🔜 en curso · ⏳ pendiente.
 
 Línea base del área de motor+catálogo al abrir la rama: **188 tests verdes** (`npx vitest run packages/module-catalog apps/arena-engine`).
