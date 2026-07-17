@@ -18,7 +18,7 @@ Rama de trabajo: `ronda2/r-p0-bloqueantes`.
 | R1.6 | CI del sandbox: no pasar en verde sin probar | ✅ Hecho y verificado (Linux) | — | [R1.6-ci-sandbox.md](reportes/R1.6-ci-sandbox.md) | `a75da48` |
 | R6.1 | Construir los runtimes, fijar digests reales y **probar el sandbox de verdad** | ✅ Hecho y verificado (Docker real) | — | [R6.1-runtimes-digests.md](reportes/R6.1-runtimes-digests.md) | `c1e9a2b`+ |
 | R1.7 | Retirar el montaje de `docker.sock` | ⏸️ Pendiente (pausa) | — | — | — |
-| R1.8 | Rate-limit y bloqueo de login tras proxy | ⏸️ Pendiente (pausa) | — | — | — |
+| R1.8 | Rate-limit y bloqueo de login tras proxy | ✅ Hecho y verificado (Linux) | — | [R1.8-rate-limit-proxy.md](reportes/R1.8-rate-limit-proxy.md) | `ee405c6` |
 
 > **Verificación en Linux · 2026-07-17 (VM108).** La verificación de **R1.4 y R1.5** que quedaba
 > diferida a Linux está **hecha**: los tests que usan PostgreSQL embebido (ERR-GES-04) no se podían
