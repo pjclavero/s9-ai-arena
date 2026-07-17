@@ -175,7 +175,9 @@ jobs:
         if: hashFiles('infrastructure/scripts/scan-compose.mjs') != ''
         run: node infrastructure/scripts/scan-compose.mjs infrastructure/docker-compose.yml
       - name: Escaneo de vulnerabilidades del árbol (Trivy fs)
-        uses: aquasecurity/trivy-action@0.28.0
+        # La 0.28.0 no existe: el job fallaba en seco con "Unable to resolve action"
+        # desde antes de R6.1. Las versiones de esta accion llevan prefijo v.
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
