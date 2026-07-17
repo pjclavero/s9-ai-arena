@@ -47,7 +47,7 @@ Rama de trabajo: `ronda2/r-p0-bloqueantes`.
 
 | Tarea | Descripción | Estado | Issue | Reporte | Commit |
 |---|---|---|---|---|---|
-| R3.1 | El replay interpola como el directo (ERR-VIS-01): reloj de reproducción explícito, `pushSnapshot` por snapshot y `resetTo` solo tras seek | ✅ Hecho (visual en navegador pendiente) | — | [R3.1-replay-interpolado.md](reportes/R3.1-replay-interpolado.md) | — |
+| R3.1 | El replay interpola como el directo (ERR-VIS-01): reloj de reproducción explícito, `pushSnapshot` por snapshot y `resetTo` solo tras seek | ✅ Hecho (visual en navegador pendiente) | — | [R3.1-replay-interpolado.md](reportes/R3.1-replay-interpolado.md) | `7c92e87` |
 
 **Leyenda:** ✅ hecho y verificado · 🔜 en curso · ⏳ pendiente.
 
