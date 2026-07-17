@@ -1,0 +1,14 @@
+{
+  "id": "sensor.proximity",
+  "version": 1,
+  "category": "sensor",
+  "name": "Detector de proximidad",
+  "description": "Anillo activo de corto alcance: da la DIRECCIÓN de cualquier vehículo o mina detectable dentro del radio, incluso quieto o en silencio. Único sensor que revela minas; a cambio, alcance mínimo.",
+  "massKg": 20,
+  "costCredits": 50,
+  "size": "S",
+  "hp": 25,
+  "power": { "passiveEUs": 2 },
+  "sensorType": "proximity",
+  "rangeM": 15
+}
