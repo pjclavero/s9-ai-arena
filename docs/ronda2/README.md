@@ -45,6 +45,18 @@ Rama de trabajo: `ronda2/r-p0-bloqueantes`.
 
 **Leyenda:** ✅ hecho y verificado · 🔜 en curso · ⏳ pendiente.
 
+## Banda R-P1 · Integración, robustez y CI honesta
+
+| Tarea | Descripción | Estado | Issue | Reporte | Commit |
+|---|---|---|---|---|---|
+| R2.7 | Hash de estado y lint de determinismo completos (ERR-ENG-02/04/05/06/07) | ✅ Hecho y verificado (Linux) | — | [R2.7-determinismo.md](reportes/R2.7-determinismo.md) | `17bdc9a`+`b8b5dd3` |
+
+> **R2.7 · nota sobre golden:** el hash canónico incorpora la huella del solver, lo que
+> invalidaba el hash almacenado de `combat_result.json`. Regenerado **deliberadamente** con
+> `UPDATE_GOLDEN=1`; el diff es una línea (`finalStateHash`), con `winner`/`ticks`/`score`
+> idénticos y las trazas físicas (`chase`, `head_on`, `slalom_wall`) intactas. Detalle en el
+> reporte.
+
 Línea base del área de motor+catálogo al abrir la rama: **188 tests verdes** (`npx vitest run packages/module-catalog apps/arena-engine`).
 
 ## R6.1 · la suite de escape ya se ha ejecutado VIVA (2026-07-17)
