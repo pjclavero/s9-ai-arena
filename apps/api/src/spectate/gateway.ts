@@ -23,9 +23,8 @@
  * la entrega). Los tests lo hacen con batallas reales del motor.
  */
 import { randomUUID } from "node:crypto";
-import jwt from "jsonwebtoken";
 import { WebSocket, WebSocketServer } from "ws";
-import { jwtSecret } from "../auth/tokens.js";
+import { verifySpectateTicket, type VerifiedSpectateTicket } from "../auth/tokens.js";
 
 /** Lo que el gateway necesita de una batalla de E2. Estructural: no importa la clase. */
 export interface SpectatableBattle {
@@ -67,14 +66,6 @@ interface SpectatorConnection {
   debug: boolean;
   delayMs: number;
   timers: Set<ReturnType<typeof setTimeout>>;
-}
-
-interface TicketClaims {
-  kind: string;
-  battleId: string;
-  jti?: string;
-  debug?: boolean;
-  exp: number;
 }
 
 export interface SpectateGatewayOptions {
@@ -146,14 +137,14 @@ export class SpectateGateway {
     }
     const battleId = decodeURIComponent(m[1]);
 
-    let claims: TicketClaims;
-    try {
-      claims = jwt.verify(ticket, jwtSecret()) as TicketClaims;
-    } catch {
+    // Verificación completa (secreto de espectador propio, algoritmo fijo,
+    // issuer/audience): un ticket firmado con el secreto de SESIÓN no valida aquí.
+    const claims: VerifiedSpectateTicket | null = verifySpectateTicket(ticket);
+    if (!claims) {
       ws.close(4401, "invalid_ticket");
       return;
     }
-    if (claims.kind !== "spectate" || claims.battleId !== battleId) {
+    if (claims.battleId !== battleId) {
       ws.close(4403, "ticket_battle_mismatch");
       return;
     }

@@ -15,6 +15,11 @@ import EmbeddedPostgres from "embedded-postgres";
 import { createDb, type Db } from "../db/connection.js";
 import { migrateToLatest } from "../db/migrations.js";
 
+// R1.4 (ERR-SEC-01): los tests firman y verifican tokens en el MISMO proceso.
+// En vez de reintroducir un literal de secreto, activamos el modo de desarrollo
+// EXPLÍCITO, que usa un secreto efímero aleatorio por proceso. Nunca en producción.
+process.env.ARENA_DEV_INSECURE_SECRETS ??= "1";
+
 async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const srv = createServer();
