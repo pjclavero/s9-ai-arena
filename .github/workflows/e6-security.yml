@@ -65,7 +65,9 @@ jobs:
       # ejecutado. El script tambien escaneaba una imagen recien construida en vez de la
       # fijada en DIGESTS.lock; ahora descarga la pineada (ver scan-runtime-vulns.sh).
       - name: Instalar Trivy
-        uses: aquasecurity/setup-trivy@v0.2.0
+        uses: aquasecurity/setup-trivy@v0.3.1
+        with:
+          version: v0.72.0
       - name: Escaneo de vulnerabilidades (Trivy, bloquea CRITICAL)
         run: ./scripts/scan-runtime-vulns.sh
 
