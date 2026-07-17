@@ -98,6 +98,26 @@ describe("T7.3 API → pipeline E6 real", () => {
     expect(v.rejection_reason).toBeTruthy();
   });
 
+  it("R2.6 (ERR-SEC-10): un paquete con path ../ o absoluto se RECHAZA en decodificación, sin entrar al pipeline", async () => {
+    const traversal = [...pyGoodFiles(), { path: "../evil.py", content: "print('fuera del paquete')" }];
+    const a = await setupBotWithSource("e6-traversal-bot", traversal);
+    const s1 = await request(app).post(`/bots/${a.botId}/versions/${a.version}/actions/submit`).set(auth);
+    expect(s1.status).toBe(202);
+    expect(s1.body.status).toBe("failed");
+    const v1 = await h.db("bot_versions").where({ bot_id: a.botId, version: a.version }).first();
+    expect(v1.state).toBe("rejected");
+    expect(v1.rejection_reason).toMatch(/\.\./);
+
+    const absolute = [...pyGoodFiles(), { path: "/etc/cron.d/evil", content: "x" }];
+    const b = await setupBotWithSource("e6-absolute-bot", absolute);
+    const s2 = await request(app).post(`/bots/${b.botId}/versions/${b.version}/actions/submit`).set(auth);
+    expect(s2.status).toBe(202);
+    expect(s2.body.status).toBe("failed");
+    const v2 = await h.db("bot_versions").where({ bot_id: b.botId, version: b.version }).first();
+    expect(v2.state).toBe("rejected");
+    expect(v2.rejection_reason).toMatch(/absoluta/);
+  });
+
   it("código 'pegado' de un solo archivo se envuelve en el esqueleto estándar y compila", async () => {
     auth.Authorization = `Bearer ${dev}`;
     const bot = await request(app).post("/bots").set(auth).send({ name: "e6-paste-bot" });

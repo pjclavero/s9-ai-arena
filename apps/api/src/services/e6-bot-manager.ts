@@ -28,46 +28,10 @@ import type { BotAgent } from "../../../arena-engine/src/sim/battle.js";
 import type { Db } from "../db/connection.js";
 import { completeBuild, type BotManagerClient, type BuildRequest, type BuildResult, PIPELINE_STAGES } from "./bot-manager.js";
 import { splitVersioned } from "../../../../packages/module-catalog/types.js";
+// R2.6 (ERR-SEC-10): la decodificación estricta del paquete vive en source-package.ts.
+import { decodePackage, wrapSingleFile, PackageValidationError } from "./source-package.js";
 
-/** Paquete estándar mínimo alrededor de código "pegado" (T7.4: archivo o pegado). */
-export function wrapSingleFile(runtime: Runtime, content: string): SourceFile[] {
-  if (runtime === "python") {
-    return [
-      { path: "manifest.json", content: JSON.stringify({ runtime: "python", entry: "src/bot.py" }, null, 2) },
-      { path: "requirements.txt", content: "arena-sdk==1.0.0\n" },
-      { path: "requirements.lock", content: "arena-sdk==1.0.0\n" },
-      { path: "src/bot.py", content },
-    ];
-  }
-  return [
-    {
-      path: "package.json",
-      content: JSON.stringify({ name: "bot", version: "1.0.0", dependencies: { "@arena/sdk": "1.0.0" } }, null, 2),
-    },
-    { path: "package-lock.json", content: JSON.stringify({ lockfileVersion: 3, packages: {} }, null, 2) },
-    { path: "src/bot.js", content },
-  ];
-}
-
-/**
- * Decodifica el paquete subido: o bien un JSON `{"files":[{"path","content"},…]}`
- * (formato de paquete de la plataforma), o bien un único archivo de código.
- */
-export function decodePackage(source: Buffer, runtime: Runtime): SourceFile[] {
-  const text = source.toString("utf8");
-  try {
-    const parsed = JSON.parse(text);
-    if (parsed && Array.isArray(parsed.files)) {
-      return parsed.files.filter(
-        (f: unknown): f is SourceFile =>
-          !!f && typeof (f as SourceFile).path === "string" && typeof (f as SourceFile).content === "string",
-      );
-    }
-  } catch {
-    // no era JSON: código pegado / archivo único
-  }
-  return wrapSingleFile(runtime, text);
-}
+export { decodePackage, wrapSingleFile };
 
 /** Arquetipo de la partida de humo según el chasis del loadout (ARCHETYPES de E3). */
 export function archetypeForChassis(chassis: string): BotSubmission["archetype"] {
@@ -116,13 +80,34 @@ export class E6PipelineBotManager implements BotManagerClient {
       .where({ bot_id: req.botId, revision: version.loadout_revision })
       .first();
 
+    // R2.6 (ERR-SEC-10): un paquete inválido (rutas ../, absolutas, control,
+    // sin manifiesto en raíz…) se RECHAZA en decodificación — falla cerrado,
+    // el build queda failed y la versión rejected, nunca llega al pipeline.
+    let files: SourceFile[];
+    try {
+      files = decodePackage(version.source, req.runtime);
+    } catch (err) {
+      if (!(err instanceof PackageValidationError)) throw err;
+      const failed: BuildResult = {
+        status: "failed",
+        stages: PIPELINE_STAGES.map((name) => ({
+          name,
+          status: name === "structure" ? ("failed" as const) : ("skipped" as const),
+          ...(name === "structure" ? { message: err.message } : {}),
+        })),
+        rejectionReason: err.message,
+      };
+      await completeBuild(this.db, req.buildId, failed);
+      return;
+    }
+
     const submission: BotSubmission = {
       botId: req.botId,
       version: req.version,
       ownerUserId: (await this.db("bots").where({ id: req.botId }).first()).owner_id,
       runtime: req.runtime,
       archetype: archetypeForChassis(loadout.chassis),
-      files: decodePackage(version.source, req.runtime),
+      files,
     };
 
     const pipeline = new BuildPipeline({
