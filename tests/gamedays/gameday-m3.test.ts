@@ -25,6 +25,7 @@ import { seedDev, DEV_USERS } from "../../apps/api/src/db/seeds/dev.js";
 import { tokenFor } from "../../apps/api/src/testing/helpers.js";
 import { createApp } from "../../apps/api/src/app.js";
 import { E6PipelineBotManager } from "../../apps/api/src/services/e6-bot-manager.js";
+import { goodCandidate, referenceAgent } from "../../apps/bot-manager/tests/fixtures.js";
 import { enqueueJob, claimJob } from "../../apps/tournament-worker/src/queue.js";
 import { TournamentWorker } from "../../apps/tournament-worker/src/worker.js";
 import { makeRunBattleHandler, markBattleForReview, type BattleContext, type BattleExecution } from "../../apps/tournament-worker/src/battle-runner.js";
@@ -72,7 +73,15 @@ beforeAll(async () => {
   await initPhysics();
   h = await startTestDb();
   await seedDev(h.db);
-  app = createApp({ db: h.db, botManager: new E6PipelineBotManager(h.db), anonQuota: { max: 10_000, windowMs: 3600_000 } });
+  // Sandbox EN PROCESO (T6.1): GD-7 necesita que el bot de control SÍ valide para
+  // demostrar que solo el hostil se rechaza. Sin agentResolver, R1.5 falla cerrado
+  // y se rechazarían los dos, que es justo lo que el guion de caos NO prueba.
+  // El hostil sigue cayendo en static_analysis (sockets/subprocess), antes del sandbox.
+  app = createApp({
+    db: h.db,
+    botManager: new E6PipelineBotManager(h.db, { agentResolver: () => goodCandidate, referenceAgent }),
+    anonQuota: { max: 10_000, windowMs: 3600_000 },
+  });
   bots = await createBots(h.db, 4, "gd");
 }, 180_000);
 

@@ -38,6 +38,7 @@ import { createApp } from "../../apps/api/src/app.js";
 import { E6PipelineBotManager } from "../../apps/api/src/services/e6-bot-manager.js";
 import { getCatalog } from "../../apps/api/src/services/catalog.js";
 import { SpectateGateway } from "../../apps/api/src/spectate/gateway.js";
+import { goodCandidate, referenceAgent } from "../../apps/bot-manager/tests/fixtures.js";
 import { pyGoodFiles } from "../../apps/bot-manager/tests/fixtures.js";
 import { generateServiceKeypair, signArtifact } from "../../apps/bot-manager/src/signing.js";
 import { loadRuleset } from "../../packages/game-rules/index.js";
@@ -91,9 +92,13 @@ beforeAll(async () => {
   await initPhysics();
   h = await startTestDb();
   await seedDev(h.db);
+  // Sandbox EN PROCESO (T6.1), igual que apps/api/src/e6-integration.test.ts: sin
+  // agentResolver el pipeline falla cerrado (R1.5) y ninguna versión llega a
+  // validated, así que el paso 2 no podría ejercer el camino feliz. Que SIN
+  // sandbox se rechaza lo cubren e6-integration ("SIN sandbox…") y pipeline.test.ts.
   app = createApp({
     db: h.db,
-    botManager: new E6PipelineBotManager(h.db, { signer }),
+    botManager: new E6PipelineBotManager(h.db, { signer, agentResolver: () => goodCandidate, referenceAgent }),
     anonQuota: { max: 10_000, windowMs: 3600_000 },
   });
   gateway = new SpectateGateway({ port: 0 });
@@ -164,9 +169,12 @@ describe("T12.1 · el MVP funciona (26.1), en 6 pasos con evidencia", () => {
     for (const stage of ["structure", "static_analysis", "dependencies", "build", "secret_scan", "sign", "publish"]) {
       expect(byName[stage], stage).toBe("passed");
     }
-    // Honestidad: etapas containerizadas `skipped` sin Docker (límite de entorno).
+    // Con el sandbox en proceso, las etapas que ejecutan el bot corren DE VERDAD.
+    // Antes de R1.5 este test las esperaba `skipped` y aun así daba la versión por
+    // validated: ese era justo el agujero ERR-SEC-03 (validar sin ejecutar nada).
+    // Que sin sandbox NO se valida lo cubren e6-integration y pipeline.test.ts.
     for (const stage of ["protocol_test", "smoke_battle", "resource_limits"]) {
-      expect(byName[stage], stage).toBe("skipped");
+      expect(byName[stage], stage).toBe("passed");
     }
 
     const v = await h.db("bot_versions").where({ bot_id: state.botId, version: state.botVersion }).first();
