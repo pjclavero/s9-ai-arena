@@ -151,7 +151,7 @@ describe("T12.1 · 6 sabotajes deliberados, uno por paso del criterio 26.1", () 
 
     const closeCode = (ticket: string) =>
       new Promise<number>((resolve, reject) => {
-        const ws = new WebSocket(`ws://127.0.0.1:${gateway.port}/spectate/${battleId}?ticket=${encodeURIComponent(ticket)}`);
+        const ws = new WebSocket(`ws://127.0.0.1:${gateway.port}/spectate/${battleId}`, ["spectate.v1", `ticket.${ticket}`]);
         ws.on("close", (code) => resolve(code));
         ws.on("error", () => {/* el close llega igualmente */});
         setTimeout(() => reject(new Error("sin cierre")), 5000);
@@ -165,7 +165,7 @@ describe("T12.1 · 6 sabotajes deliberados, uno por paso del criterio 26.1", () 
       // Ticket legítimo REUTILIZADO (robado del historial): la 2ª conexión no entra.
       const ticketRes = await request(app).post(`/battles/${battleId}/spectate-ticket`);
       expect(ticketRes.status).toBe(201);
-      const first = new WebSocket(`ws://127.0.0.1:${gateway.port}/spectate/${battleId}?ticket=${encodeURIComponent(ticketRes.body.ticket)}`);
+      const first = new WebSocket(`ws://127.0.0.1:${gateway.port}/spectate/${battleId}`, ["spectate.v1", `ticket.${ticketRes.body.ticket}`]);
       await new Promise<void>((resolve, reject) => {
         first.on("open", () => resolve());
         first.on("error", reject);

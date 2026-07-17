@@ -88,8 +88,11 @@ export class SpectatorClient {
   private async openOnce(): Promise<void> {
     const { ticket, wsUrl } = await this.opts.getTicket();
     const WS = this.opts.WebSocketImpl ?? WebSocket;
-    const sep = wsUrl.includes("?") ? "&" : "?";
-    const ws = new WS(`${wsUrl}${sep}ticket=${encodeURIComponent(ticket)}`);
+    // R2.6 (ERR-SEC-16): el ticket viaja como SUBPROTOCOLO WebSocket
+    // (`Sec-WebSocket-Protocol: spectate.v1, ticket.<jwt>`), nunca en la URL:
+    // las URLs acaban en logs de acceso (Nginx/Loki). El gateway rechaza
+    // cualquier ticket que llegue en la query.
+    const ws = new WS(wsUrl, ["spectate.v1", `ticket.${ticket}`]);
     this.ws = ws;
 
     ws.onopen = () => {

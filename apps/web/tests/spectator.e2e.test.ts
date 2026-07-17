@@ -159,13 +159,13 @@ describe("T8.2 canal de espectador (ticket E7 → gateway E8 → motor E2)", () 
     gateway.attachBattle(dbId, battle, {});
 
     const { ticket, wsUrl } = await ticketVia(app, dbId)();
-    const first = new WsWebSocket(`${wsUrl}?ticket=${encodeURIComponent(ticket)}`);
+    const first = new WsWebSocket(`${wsUrl}`, ["spectate.v1", `ticket.${ticket}`]);
     await new Promise<void>((resolve, reject) => {
       first.once("open", () => resolve());
       first.once("error", reject);
     });
 
-    const second = new WsWebSocket(`${wsUrl}?ticket=${encodeURIComponent(ticket)}`);
+    const second = new WsWebSocket(`${wsUrl}`, ["spectate.v1", `ticket.${ticket}`]);
     const closeCode = await new Promise<number>((resolve) => second.once("close", (code) => resolve(code)));
     expect(closeCode).toBe(4403);
     expect(first.readyState).toBe(WsWebSocket.OPEN); // la primera sigue viva
@@ -178,12 +178,34 @@ describe("T8.2 canal de espectador (ticket E7 → gateway E8 → motor E2)", () 
     gateway.attachBattle(dbId, await makeBattle("wrong-ticket"), {});
     gateway.attachBattle(otherId, await makeBattle("other-battle"), {});
 
-    const basura = new WsWebSocket(`ws://127.0.0.1:${gateway.port}/spectate/${dbId}?ticket=basura`);
+    const basura = new WsWebSocket(`ws://127.0.0.1:${gateway.port}/spectate/${dbId}`, ["spectate.v1", "ticket.basura"]);
     expect(await new Promise<number>((r) => basura.once("close", (c2) => r(c2)))).toBe(4401);
 
     const { ticket } = await ticketVia(app, otherId)(); // ticket legítimo… de OTRA batalla
-    const cruzado = new WsWebSocket(`ws://127.0.0.1:${gateway.port}/spectate/${dbId}?ticket=${encodeURIComponent(ticket)}`);
+    const cruzado = new WsWebSocket(`ws://127.0.0.1:${gateway.port}/spectate/${dbId}`, ["spectate.v1", `ticket.${ticket}`]);
     expect(await new Promise<number>((r) => cruzado.once("close", (c2) => r(c2)))).toBe(4403);
+  });
+
+  it("R2.6 (ERR-SEC-16): el ticket viaja FUERA de la URL — uno VÁLIDO en la query se rechaza (las URLs acaban en logs)", async () => {
+    const dbId = await insertLiveBattle("no-url-ticket");
+    gateway.attachBattle(dbId, await makeBattle("no-url-ticket"), {});
+    const { ticket, wsUrl } = await ticketVia(app, dbId)();
+
+    // Ticket legítimo pero en la query: rechazado ANTES de verificarlo (ya se filtró a los logs).
+    const enUrl = new WsWebSocket(`${wsUrl}?ticket=${encodeURIComponent(ticket)}`);
+    expect(await new Promise<number>((r) => enUrl.once("close", (c) => r(c)))).toBe(4400);
+
+    // Sin subprotocolo de ticket tampoco se entra.
+    const sinTicket = new WsWebSocket(`${wsUrl}`, ["spectate.v1"]);
+    expect(await new Promise<number>((r) => sinTicket.once("close", (c) => r(c)))).toBe(4400);
+
+    // El MISMO ticket (no consumido: la query no lo quemó) entra por subprotocolo.
+    const bien = new WsWebSocket(`${wsUrl}`, ["spectate.v1", `ticket.${ticket}`]);
+    await new Promise<void>((resolve, reject) => {
+      bien.once("open", () => resolve());
+      bien.once("error", reject);
+    });
+    bien.close();
   });
 
   it("FUGAS (criterio cap. 28): el stream real de una batalla completa jamás contiene datos privados", async () => {
@@ -194,7 +216,7 @@ describe("T8.2 canal de espectador (ticket E7 → gateway E8 → motor E2)", () 
     const raw: string[] = [];
     const parsed: any[] = [];
     const { ticket, wsUrl } = await ticketVia(app, dbId)();
-    const ws = new WsWebSocket(`${wsUrl}?ticket=${encodeURIComponent(ticket)}`);
+    const ws = new WsWebSocket(`${wsUrl}`, ["spectate.v1", `ticket.${ticket}`]);
     ws.on("message", (d) => {
       raw.push(String(d));
       parsed.push(JSON.parse(String(d)));
