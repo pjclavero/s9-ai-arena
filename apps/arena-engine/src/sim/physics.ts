@@ -288,6 +288,30 @@ export class PhysicsWorld {
     this.dirty = false;
   }
 
+  /**
+   * Huella del SOLVER para el hash de estado (ERR-ENG-04).
+   *
+   * Las poses cuantizadas no bastan: dos simulaciones pueden divergir dentro del solver
+   * (un cuerpo dormido en una y despierto en la otra, un par de contacto de más) con
+   * posiciones aún idénticas a 1e-5, y esa divergencia sigue viva y explota más tarde.
+   * Contar cuerpos despiertos y pares de contacto la hace visible YA, a coste casi nulo.
+   *
+   * Determinista: los cuerpos se recorren en el orden estable del mapa (orden de alta,
+   * idéntico en toda re-simulación) y solo se cuentan agregados, no se serializan handles.
+   */
+  solverFingerprint(): { awakeBodies: number; contactPairs: number } {
+    let awakeBodies = 0;
+    let contactPairs = 0;
+    for (const h of this.bodies.values()) {
+      if (h.rb.isDynamic() && !h.rb.isSleeping()) awakeBodies++;
+      this.world.contactPairsWith(h.collider, (other) => {
+        // Cada par aparece dos veces (una por cada collider); se cuenta una sola.
+        if (other.handle > h.collider.handle) contactPairs++;
+      });
+    }
+    return { awakeBodies, contactPairs };
+  }
+
   free(): void {
     this.world.free();
   }

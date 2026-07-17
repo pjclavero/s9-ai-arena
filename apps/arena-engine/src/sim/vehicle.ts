@@ -98,6 +98,14 @@ export class Vehicle {
   readonly spec: VehicleSpec;
 
   hullHp: number;
+  /**
+   * Heading del CHASIS, espejo del último conocido por la física (el mundo es la
+   * autoridad; el bucle lo refresca tras cada step). Antes vivía en un WeakMap global
+   * de combat.ts (ERR-ENG-05): estado mutable a nivel de módulo, compartido entre
+   * batallas del proceso, y que devolvía 0 para un vehículo aún no registrado. Es
+   * estado del vehículo y vive aquí.
+   */
+  heading = 0;
   turretHeading = 0;
   energyEU: number;
   alive = true;
@@ -116,6 +124,15 @@ export class Vehicle {
   /** Última orden válida: es la base de la ACCIÓN SEGURA (D2). */
   lastMove = { throttle: 0, steer: 0 };
   lastTurretTarget: number | null = null;
+
+  /**
+   * Rate-limit de radio SIN fuga (ERR-ENG-06): un contador por vehículo que guarda el
+   * segundo de juego al que pertenece y se reinicia al cambiar de segundo. Sustituye al
+   * Map `id:segundo` de Battle, que crecía una entrada por vehículo y segundo y nunca
+   * se purgaba (~2 entradas/s con 2 vehículos durante toda la batalla).
+   */
+  radioSecond = -1;
+  radioSentThisSecond = 0;
 
   constructor(id: string, team: string, botId: string, spec: VehicleSpec) {
     this.id = id;
