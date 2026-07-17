@@ -1,8 +1,9 @@
 # E6 · CI de seguridad (T6.2/T6.3).
 #
-# Verifica lo que NO necesita Docker en cualquier runner, y ejecuta los escaneos que SÍ
-# lo necesitan en un runner con Docker. En la máquina de desarrollo (ia02, sin grupo
-# docker) solo corren los jobs sin Docker; los de Docker esperan a un runner con acceso.
+# Regla de R1.6 (ERR-SEC-04): un job de seguridad NUNCA debe aparecer en verde sin
+# haber probado nada. Mientras los runtimes no estén construidos y fijados por digest
+# real, los jobs que dependen de Docker quedan SKIPPED (gris), no passed: un verde
+# falso oculta ERR-SEC-03 y da una garantía que no existe.
 name: E6 security
 
 on:
@@ -25,8 +26,33 @@ jobs:
       # Los runtimes deben estar fijados por digest, no por tag (T6.3)
       - run: npx tsx scripts/verify-runtime-digests.ts
 
+  # Puerta: ¿hay digests REALES con los que probar algo? Mientras haya placeholders,
+  # los jobs de abajo se saltan en vez de mentir en verde.
+  digests-gate:
+    runs-on: ubuntu-latest
+    outputs:
+      real_digests: ${{ steps.check.outputs.real_digests }}
+      python_image: ${{ steps.check.outputs.python_image }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: npm ci
+      - id: check
+        run: |
+          image="$(awk '$1 == "python" { print $3 }' runtimes/DIGESTS.lock | head -1)"
+          echo "python_image=$image" >> "$GITHUB_OUTPUT"
+          if npx tsx scripts/assert-real-digest.ts "$image" "gate de CI"; then
+            echo "real_digests=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "real_digests=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::runtimes/DIGESTS.lock tiene digests placeholder: los jobs de sandbox y de vulnerabilidades se SALTAN (no se puede probar nada). Tarea R6.1."
+          fi
+
   runtime-vuln-scan:
-    # Requiere Docker: bloquea severidad crítica en las imágenes de runtime (T6.3).
+    # Requiere Docker + imágenes reales: bloquea severidad crítica en los runtimes (T6.3).
+    needs: digests-gate
+    if: needs.digests-gate.outputs.real_digests == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,9 +60,18 @@ jobs:
         run: ./scripts/scan-runtime-vulns.sh
 
   sandbox-escape:
-    # Requiere Docker: ejecuta la suite de bots maliciosos (T6.2).
+    # Requiere Docker + imágenes reales: ejecuta la suite de bots maliciosos (T6.2).
+    # La imagen sale de DIGESTS.lock, no de un literal del workflow: el `@sha256:PENDIENTE`
+    # que había aquí era el origen del verde falso.
+    needs: digests-gate
+    if: needs.digests-gate.outputs.real_digests == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: npm ci
+      - name: Construir el runtime python fijado en DIGESTS.lock
+        run: docker build -t "${{ needs.digests-gate.outputs.python_image }}" runtimes/python
       - name: Suite de escape del sandbox
-        run: ./tests/sandbox-escape/run-escape-suite.sh arena/bot-runtime-python@sha256:PENDIENTE
+        run: ./tests/sandbox-escape/run-escape-suite.sh

@@ -10,14 +10,31 @@ TARGETS = [
     "/run/secrets",          # secretos montados (no debe existir)
     "/var/run/secrets/kubernetes.io/serviceaccount/token",
 ]
+# Rutas que existir es normal y no filtran nada del host: no cuentan como fuga.
+BENIGN = {"/proc/self/status", "/proc/sys/kernel/random/boot_id"}
+
 import os
+leaks = 0
 for p in TARGETS:
     try:
         if os.path.isdir(p):
-            print(f"dir {p} -> {os.listdir(p)}")
+            entries = os.listdir(p)
+            if entries:
+                leaks += 1
+                print(f"LEAK {p} -> {entries}")
+            else:
+                print(f"dir {p} vacío (sin secretos montados)")
             continue
         with open(p, "rb") as f:
             data = f.read(256)
-        print(f"LEAK {p} -> {data[:64]!r}")  # inspeccionar manualmente si hay secretos
+        if p in BENIGN:
+            print(f"legible pero inocuo {p}")
+        else:
+            leaks += 1
+            print(f"LEAK {p} -> {data[:64]!r}")  # NO debería ocurrir
     except Exception as e:
         print(f"blocked {p} -> {type(e).__name__}: {e}")
+
+# Marcador POSITIVO (R1.6): ninguna ruta sensible reveló contenido del host.
+if leaks == 0:
+    print("SANDBOX-BLOCKED 06_read_proc_sensitive")
