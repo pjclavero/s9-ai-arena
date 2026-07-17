@@ -48,6 +48,7 @@ Rama de trabajo: `ronda2/r-p0-bloqueantes`.
 | Tarea | Descripción | Estado | Issue | Reporte | Commit |
 |---|---|---|---|---|---|
 | R2.1 | Tipos en verde (ERR-GES-02/03) + CI bloqueante: tsc sin `continue-on-error`, prettier real, cobertura como artefacto | ✅ Hecho | #11 rel. | [R2.1-tipos-ci.md](reportes/R2.1-tipos-ci.md) | `c110bcb`+ |
+| R2.2 | Semáforo 🟢/🟡/🔴 en la CI (ERR-GES-05): staging omitido = AMARILLO (nunca verde), seguridad en rojo bloquea, gate testeable (`ci-gate.mjs`) + check-run neutral | ✅ Hecho (lógica verificada con tests; run real pendiente del PR) | — | [R2.2-semaforo-ci.md](reportes/R2.2-semaforo-ci.md) | ver PR |
 
 > **R2.1 · 2026-07-17 (VM108, Node 20).** `npx tsc --noEmit` da **0 errores** en el tsconfig raíz
 > (antes 267: ~238 falsos de JSX de `apps/web` + 29 genuinos) y **0** en `apps/web` (proyecto
