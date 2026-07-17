@@ -8,17 +8,23 @@
  *  3) persiste el resultado con completeBuild() (validating → validated|rejected).
  *
  * Reconciliación con E6 (documentada en docs/entrega-E7.md):
- *  - Sin agentResolver, E6 deja protocol_test/smoke_battle/resource_limits en
- *    `skipped` (su ejecución containerizada exige Docker, T6.2).
+ *  - El `agentResolver` (sandbox containerizado con Docker, T6.2) es una DEPENDENCIA
+ *    OBLIGATORIA en PRODUCCIÓN. Sin él, E6 NO puede ejecutar el bot en
+ *    protocol_test/smoke_battle/resource_limits y FALLA CERRADO (R1.5 · ERR-SEC-03):
+ *    el pipeline rechaza la versión como "no verificable" en vez de validarla. Por eso
+ *    la app NO cablea por defecto un resolver falso ni la escotilla dev/test: mientras
+ *    no exista el runner con Docker, la plataforma RECHAZA en vez de validar sin sandbox.
  *  - E6 y E7 aplican ambos el cap. 17.1 (reconciliado en el issue #13): el pase del
  *    pipeline deja la versión en `validated` (también en el Build de E6) y publicar
- *    es una acción EXPLÍCITA del dueño. Aquí completeBuild persiste passed → validated.
+ *    es una acción EXPLÍCITA del dueño. Aquí completeBuild persiste passed → validated
+ *    y failed → rejected (con motivo).
  */
 import { BuildPipeline } from "../../../bot-manager/src/pipeline.js";
 import { InMemoryBuildStore } from "../../../bot-manager/src/store.js";
 import { withConfig } from "../../../bot-manager/src/config.js";
 import { generateServiceKeypair, type ServiceKeypair } from "../../../bot-manager/src/signing.js";
-import type { BotSubmission, SourceFile, Runtime } from "../../../bot-manager/src/types.js";
+import type { BotSubmission, SourceFile, Runtime, CandidateAgentFactory } from "../../../bot-manager/src/types.js";
+import type { BotAgent } from "../../../arena-engine/src/sim/battle.js";
 import type { Db } from "../db/connection.js";
 import { completeBuild, type BotManagerClient, type BuildRequest, type BuildResult, PIPELINE_STAGES } from "./bot-manager.js";
 import { splitVersioned } from "../../../../packages/module-catalog/types.js";
@@ -73,12 +79,35 @@ export function archetypeForChassis(chassis: string): BotSubmission["archetype"]
 
 export class E6PipelineBotManager implements BotManagerClient {
   private signer: ServiceKeypair;
+  private agentResolver?: (submission: BotSubmission) => CandidateAgentFactory | Promise<CandidateAgentFactory>;
+  private referenceAgent?: (botId: string) => BotAgent;
+  private allowUnverifiedSandbox: boolean;
 
   constructor(
     private db: Db,
-    opts: { signer?: ServiceKeypair } = {},
+    opts: {
+      signer?: ServiceKeypair;
+      /**
+       * Resolver del sandbox real (contenedor con Docker, T6.2). DEPENDENCIA
+       * OBLIGATORIA en PRODUCCIÓN: sin él, las etapas protocol_test/smoke_battle/
+       * resource_limits no se ejecutan y el pipeline FALLA CERRADO — rechaza la versión
+       * como "no verificable" (R1.5 · ERR-SEC-03). La app NO lo cablea por defecto.
+       */
+      agentResolver?: (submission: BotSubmission) => CandidateAgentFactory | Promise<CandidateAgentFactory>;
+      /** Bot de referencia de E5 para la partida de humo (parte del sandbox real). */
+      referenceAgent?: (botId: string) => BotAgent;
+      /**
+       * Escotilla dev/test EXPLÍCITA. Si es true, un sandbox no ejecutable NO bloquea
+       * la validación (el bot puede quedar `validated` sin ejecutarse). NUNCA debe
+       * activarse en producción; la app jamás la pone.
+       */
+      allowUnverifiedSandbox?: boolean;
+    } = {},
   ) {
     this.signer = opts.signer ?? generateServiceKeypair();
+    this.agentResolver = opts.agentResolver;
+    this.referenceAgent = opts.referenceAgent;
+    this.allowUnverifiedSandbox = opts.allowUnverifiedSandbox ?? false;
   }
 
   async enqueueBuild(req: BuildRequest): Promise<void> {
@@ -100,8 +129,12 @@ export class E6PipelineBotManager implements BotManagerClient {
       store: new InMemoryBuildStore(),
       config: withConfig(),
       signer: this.signer,
-      // Sin agentResolver: protocol_test/smoke_battle/resource_limits quedan
-      // `skipped` (E6/T6.2 exige contenedores; pendiente de reconciliación).
+      // Sandbox real (T6.2). Si NO se inyecta agentResolver, E6 falla cerrado: las
+      // etapas protocol_test/smoke_battle/resource_limits son "no ejecutables" y el
+      // build se RECHAZA como "no verificable" (R1.5 · ERR-SEC-03) — nunca `validated`.
+      agentResolver: this.agentResolver,
+      referenceAgent: this.referenceAgent,
+      allowUnverifiedSandbox: this.allowUnverifiedSandbox,
     });
     const result = await pipeline.run(submission);
 

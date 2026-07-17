@@ -25,7 +25,13 @@ export interface AppConfig {
   db: Db;
   corsOrigin?: string;
   loginGuard?: FailedLoginGuard;
-  /** Cliente del pipeline de builds. Por defecto, el pipeline REAL de E6 en proceso. */
+  /**
+   * Cliente del pipeline de builds. Por defecto, el pipeline REAL de E6 en proceso
+   * SIN sandbox (sin agentResolver): mientras no exista el runner containerizado
+   * (Docker, T6.2), ese pipeline FALLA CERRADO y RECHAZA las versiones como
+   * "no verificable" en vez de validarlas sin ejecutar el bot (R1.5 · ERR-SEC-03).
+   * En PRODUCCIÓN debe inyectarse un botManager con un agentResolver real.
+   */
   botManager?: BotManagerClient;
   /** Cuota de uso anónimo de los endpoints públicos (T7.5). */
   anonQuota?: AnonQuotaConfig;
@@ -51,6 +57,9 @@ export function createApp(cfg: AppConfig): express.Express {
   );
   app.use(userRoutes(cfg.db));
   app.use(teamRoutes(cfg.db));
+  // Por defecto SIN agentResolver → el pipeline de E6 falla cerrado (rechaza sin
+  // sandbox verificado, R1.5 · ERR-SEC-03). Nunca se cablea aquí un resolver falso ni
+  // la escotilla dev/test: en prod se inyecta cfg.botManager con el sandbox real (T6.2).
   app.use(botRoutes(cfg.db, cfg.botManager ?? new E6PipelineBotManager(cfg.db)));
   app.use(buildRoutes(cfg.db));
   app.use(catalogRoutes(cfg.db));

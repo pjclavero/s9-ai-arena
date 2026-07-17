@@ -151,12 +151,56 @@ describe("T6.1 · pipeline de build y publicación", () => {
     expect(sink.findings.some((f) => f.category === "resource_abuse")).toBe(true);
   });
 
-  it("sin agentResolver, las etapas de ejecución quedan 'skipped' (honesto) y el resto valida", async () => {
-    const build = await new BuildPipeline(deps({ agentResolver: undefined, referenceAgent: undefined })).run(submission(pyGoodFiles()));
-    expect(build.botVersionState).toBe("validated"); // 17.1: publicar es acción explícita del dueño (issue #13)
+  // R1.5 (ERR-SEC-03): SIN agentResolver las etapas que EJECUTAN el bot no pueden correr.
+  // Antes se daban por superadas y el bot llegaba a `validated` sin haberse ejecutado
+  // NUNCA en un sandbox (la única barrera real era el análisis estático de texto). Ahora
+  // FALLA CERRADO: esas etapas se marcan `skipped` (honesto) y BLOQUEAN la transición a
+  // `validated`; el estado terminal honesto es `rejected` ("no verificable").
+  //
+  // (Este test ANTES afirmaba que el build quedaba `validated` — documentaba el bug. Se
+  //  ha reescrito para exigir el comportamiento correcto.)
+  it("sin agentResolver el build queda RECHAZADO (no verificable), NUNCA validated (R1.5, ERR-SEC-03)", async () => {
+    const sink = new CollectingSink();
+    const build = await new BuildPipeline(deps({ audit: sink, agentResolver: undefined, referenceAgent: undefined })).run(submission(pyGoodFiles()));
+    // (a) Un build sin agentResolver NUNCA queda `validated`.
+    expect(build.botVersionState).not.toBe("validated");
+    expect(build.botVersionState).toBe("rejected");
+    expect(build.status).toBe("failed");
+    expect(build.rejectionReason).toMatch(/sandbox no verificado/);
+    // (b) Las tres etapas de ejecución cuentan como bloqueantes: quedan `skipped`
+    //     (honesto, no se ejecutaron) y NINGUNA figura como `passed`.
+    for (const name of ["protocol_test", "smoke_battle", "resource_limits"]) {
+      const s = build.stages.find((st) => st.name === name)!;
+      expect(s.status, name).toBe("skipped");
+      expect(s.status, name).not.toBe("passed");
+      expect(build.rejectionReason).toContain(name);
+    }
+    // (c) Queda rastro de auditoría del rechazo por sandbox no verificado.
+    expect(sink.findings.some((f) => f.category === "sandbox_unverified" && f.severity === "high")).toBe(true);
+  });
+
+  it("con agentResolver pero SIN bot de referencia, la partida de humo es 'no ejecutable' y también bloquea validated (R1.5)", async () => {
+    // agentResolver presente ⇒ protocol_test y resource_limits SÍ corren y pasan;
+    // pero sin referenceAgent la partida de humo no tiene adversario ⇒ not_executable.
+    const build = await new BuildPipeline(deps({ referenceAgent: undefined })).run(submission(pyGoodFiles()));
+    expect(build.botVersionState).toBe("rejected");
+    expect(build.stages.find((s) => s.name === "protocol_test")!.status).toBe("passed");
+    expect(build.stages.find((s) => s.name === "resource_limits")!.status).toBe("passed");
+    expect(build.stages.find((s) => s.name === "smoke_battle")!.status).toBe("skipped");
+    expect(build.rejectionReason).toMatch(/smoke_battle/);
+  });
+
+  it("escotilla dev/test EXPLÍCITA (allowUnverifiedSandbox) sí valida sin sandbox, pero deja rastro y NO es el default", async () => {
+    const sink = new CollectingSink();
+    const build = await new BuildPipeline(
+      deps({ audit: sink, agentResolver: undefined, referenceAgent: undefined, allowUnverifiedSandbox: true }),
+    ).run(submission(pyGoodFiles()));
+    expect(build.botVersionState).toBe("validated");
     for (const name of ["protocol_test", "smoke_battle", "resource_limits"]) {
       expect(build.stages.find((s) => s.name === name)!.status).toBe("skipped");
     }
+    // Rastro explícito de que la validación NO ejercitó el sandbox real (dev/test).
+    expect(sink.events.some((e) => e.type === "build.validated_unverified_dev")).toBe(true);
   });
 
   it("el pipeline completo de un bot Python sencillo termina en < 3 minutos (medido)", async () => {
