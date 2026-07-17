@@ -5,6 +5,9 @@
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
+  "bin": {
+    "arena-sim": "src/arena-sim.ts"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "generate-types": "node generate-types.mjs"
