@@ -24,6 +24,12 @@ import jwt from "jsonwebtoken";
 
 export const ACCESS_TOKEN_TTL_S = 900; // 15 min (cap. 16.1: corta duración)
 export const REFRESH_TOKEN_TTL_S = 14 * 24 * 3600;
+/**
+ * R2.4 (ERR-SEC-08) · Vida MÁXIMA ABSOLUTA de una sesión: la rotación del refresh
+ * renueva la ventana deslizante (REFRESH_TOKEN_TTL_S) pero jamás más allá de este
+ * tope contado desde el login. Sin él, una familia rotada a tiempo viviría para siempre.
+ */
+export const REFRESH_ABSOLUTE_TTL_S = 30 * 24 * 3600;
 
 /** Algoritmo ÚNICO admitido para firmar y verificar (evita `alg:none` y confusión RS/HS). */
 const TOKEN_ALG = "HS256" as const;

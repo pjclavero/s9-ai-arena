@@ -134,8 +134,24 @@ paths:
     delete:
       tags: [auth]
       operationId: disable2fa
+      summary: Desactivar 2FA (exige reautenticación fuerte — contraseña + TOTP o código de recuperación — y revoca el resto de sesiones)
       x-min-role: user
-      responses: { '204': { description: Desactivado } }
+      # R2.4 (ERR-SEC-07): el token NO basta; sin credenciales frescas ⇒ 401 a propósito.
+      x-reauth: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password, totp]
+              properties:
+                password: { type: string, x-private: true }
+                totp: { type: string, description: Código TOTP vigente o código de recuperación, x-private: true }
+      responses:
+        '204': { description: Desactivado (el resto de sesiones quedan revocadas) }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   # ----------------------------------------------------------------- USERS
   /users/me:

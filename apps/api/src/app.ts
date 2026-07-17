@@ -25,6 +25,8 @@ export interface AppConfig {
   db: Db;
   corsOrigin?: string;
   loginGuard?: FailedLoginGuard;
+  /** R2.4: inyectable en tests (límite bajo) — por defecto 60 refresh/min por IP. */
+  refreshLimiter?: SlidingWindowLimiter;
   /**
    * Cliente del pipeline de builds. Por defecto, el pipeline REAL de E6 en proceso
    * SIN sandbox (sin agentResolver): mientras no exista el runner containerizado
@@ -53,6 +55,8 @@ export function createApp(cfg: AppConfig): express.Express {
       // Límites holgados para uso normal, suficientes para frenar abuso por IP.
       registerLimiter: new SlidingWindowLimiter(30, 60_000),
       loginLimiter: new SlidingWindowLimiter(60, 60_000),
+      // R2.4 (ERR-SEC-08): el refresh emite credenciales → rate-limit propio por IP.
+      refreshLimiter: cfg.refreshLimiter ?? new SlidingWindowLimiter(60, 60_000),
     }),
   );
   app.use(userRoutes(cfg.db));

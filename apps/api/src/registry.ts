@@ -62,7 +62,7 @@ export function defineExtension(
   ...pre: RequestHandler[]
 ): void {
   if (!implementedOperations.some((o) => o.operationId === spec.operationId)) {
-    implementedOperations.push({ ...spec, anonymous: spec.minRole === "visitor", tags: ["extension"], extension: true });
+    implementedOperations.push({ ...spec, anonymous: spec.minRole === "visitor", reauth: false, tags: ["extension"], extension: true });
   }
   (router as unknown as Record<string, (p: string, ...h: RequestHandler[]) => void>)[spec.method](
     toExpressPath(spec.path),

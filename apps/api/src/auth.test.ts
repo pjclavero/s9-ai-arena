@@ -113,16 +113,18 @@ describe("T7.2 revocación y expiración (DoD: rechazado en todos los endpoints)
     expect(refresh.status).toBe(401);
   });
 
-  it("el refresh rota: el refresh token anterior deja de valer", async () => {
+  it("el refresh rota; reutilizar el anterior revoca la FAMILIA entera (R2.4 · ERR-SEC-08)", async () => {
     const login = await request(app)
       .post("/auth/login")
       .send({ email: DEV_USERS.organizer, password: DEV_PASSWORD });
     const r1 = await request(app).post("/auth/refresh").send({ refreshToken: login.body.refreshToken });
     expect(r1.status).toBe(200);
+    // Reutilizar el token YA ROTADO = robo detectado → 401 y familia revocada:
     const replay = await request(app).post("/auth/refresh").send({ refreshToken: login.body.refreshToken });
     expect(replay.status).toBe(401);
+    // …así que el token "bueno" de la rotación también queda inservible.
     const r2 = await request(app).post("/auth/refresh").send({ refreshToken: r1.body.refreshToken });
-    expect(r2.status).toBe(200);
+    expect(r2.status).toBe(401);
   });
 });
 
