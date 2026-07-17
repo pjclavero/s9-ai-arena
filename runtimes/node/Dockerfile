@@ -9,14 +9,14 @@
 #
 # Contexto de build = RAÍZ del repo:  docker build -f runtimes/node/Dockerfile .
 
-# node:20.14.0-bookworm-slim — digest real fijado en runtimes/DIGESTS.lock
-ARG NODE_BASE=node@sha256:5e8ac65a0231d76a388683d07ca36a9769ab019a85d85169fe28e206f7a3208e
 
 # --- Etapa 1: compilar el SDK PROPIO desde el repo ------------------------------------
 # sdks/javascript es TypeScript con noEmit:true (nunca se había compilado: los bots de
 # ejemplo lo importaban por ruta relativa del monorepo). Aquí se emite JS + .d.ts para que
 # el runtime pueda instalarlo como paquete real.
-FROM ${NODE_BASE} AS sdk-builder
+# node:20.14.0-bookworm-slim — digest real, el mismo fijado en runtimes/DIGESTS.lock.
+# Literal y no ARG: con --build-arg la base dejaria de estar fijada.
+FROM node@sha256:5e8ac65a0231d76a388683d07ca36a9769ab019a85d85169fe28e206f7a3208e AS sdk-builder
 ARG TS_VERSION=5.8.3
 WORKDIR /src
 COPY sdks/javascript/ ./
@@ -27,7 +27,7 @@ RUN npm install --no-save --ignore-scripts typescript@${TS_VERSION} \
  && test -f /out/dist/index.js || (echo "ERROR R6.1: el SDK no emitio dist/index.js"; exit 1)
 
 # --- Etapa 2: runtime -----------------------------------------------------------------
-FROM ${NODE_BASE} AS base
+FROM node@sha256:5e8ac65a0231d76a388683d07ca36a9769ab019a85d85169fe28e206f7a3208e AS base
 
 ENV NODE_ENV=production \
     NPM_CONFIG_AUDIT=false

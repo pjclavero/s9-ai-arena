@@ -1,13 +1,31 @@
-# E6 · T6.3 — Digests FIJADOS de las imágenes de runtime (cap. 18.3).
+# E6 · T6.3 / R6.1 — Digests FIJADOS de las imágenes de runtime (cap. 18.3).
 #
-# Las imágenes se referencian por DIGEST inmutable, nunca por tag. Estos digests se
-# fijan en el repo y se verifican en CI (scripts/verify-runtime-digests.ts). Un bot solo
-# puede construirse sobre el runtime declarado en su manifiesto, resuelto a estos digests.
+# Las imágenes se referencian por DIGEST inmutable, nunca por tag. Estos digests se fijan
+# en el repo y se verifican en CI (scripts/verify-runtime-digests.ts). Un bot solo puede
+# construirse sobre el runtime declarado en su manifiesto, resuelto a estos digests.
 #
 # Formato: <runtime> <base-image-por-digest> <runtime-image-por-digest>
-# Los sha256 de la BASE (python/node oficiales) se obtienen con `docker buildx imagetools
-# inspect`; los de la IMAGEN de runtime, tras `docker build` reproducible. Placeholders
-# del MVP hasta construir en un entorno con Docker.
+#
+# De dónde sale cada uno:
+#   - La BASE (python/node oficiales de Docker Hub): `docker buildx imagetools inspect`.
+#   - La IMAGEN de runtime: la publica el workflow .github/workflows/runtimes-publish.yml
+#     en GHCR. Un `docker build` local NO produce digest: el @sha256 de una imagen es el
+#     digest de su manifiesto EN UN REGISTRY, así que hay que publicarla para poder
+#     fijarla. GHCR se elige porque el CI lo reproduce y VM108 puede descargar de forma
+#     anónima (el repo es público): ninguna credencial de registro toca el servidor.
+#
+# Cómo se actualiza un runtime:
+#   1. cambiar runtimes/<lang>/ (o el SDK en sdks/<lang>);
+#   2. el workflow runtimes-publish.yml publica y muestra el digest nuevo en su resumen;
+#   3. fijar ese digest aquí. El resto del CI DESCARGA por digest: se prueba exactamente
+#      esta imagen, no una recién construida.
+#
+# NOTA sobre reproducibilidad (medida en R6.1, no supuesta): el CONTENIDO es reproducible
+# —el wheel del SDK sale con el mismo sha256 en builds repetidos—, pero el digest de la
+# IMAGEN no es idéntico entre máquinas distintas: construir el mismo fuente en VM108 y en
+# un runner de GitHub da manifiestos distintos (cambian versión de buildkit y compresión
+# de capas). Por eso el digest se fija desde el registry UNA vez y se verifica
+# descargándolo, en vez de reconstruirlo y comparar.
 
-python  python@sha256:0000000000000000000000000000000000000000000000000000000000000000  arena/bot-runtime-python@sha256:1111111111111111111111111111111111111111111111111111111111111111
-node    node@sha256:0000000000000000000000000000000000000000000000000000000000000000    arena/bot-runtime-node@sha256:2222222222222222222222222222222222222222222222222222222222222222
+python  python@sha256:8fb099199b9f2d70342674bd9dbccd3ed03a258f26bbd1d556822c6dfc60c317  ghcr.io/pjclavero/s9-ai-arena/bot-runtime-python@sha256:4795fa5436a2e5deff4b9fd0029f1c7008f6ae34d83cd4bd54b263ef2a35f3ff
+node    node@sha256:5e8ac65a0231d76a388683d07ca36a9769ab019a85d85169fe28e206f7a3208e    ghcr.io/pjclavero/s9-ai-arena/bot-runtime-node@sha256:5659736266df64f2fc13d812a7a8e85cf9002479c3d03a654405a53b22ab71ee

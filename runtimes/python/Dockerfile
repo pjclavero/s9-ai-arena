@@ -7,14 +7,15 @@
 #
 # Contexto de build = RAIZ del repo:  docker build -f runtimes/python/Dockerfile .
 
-# python:3.11.9-slim-bookworm — digest real fijado en runtimes/DIGESTS.lock
-ARG PY_BASE=python@sha256:8fb099199b9f2d70342674bd9dbccd3ed03a258f26bbd1d556822c6dfc60c317
 
 # --- Etapa 1: construir el wheel del SDK PROPIO desde el repo -------------------------
 # Sin red (--no-index) y sin build isolation: el toolchain (setuptools/wheel) lo aporta la
 # base fijada por digest, asi que el wheel es reproducible byte a byte. Su sha256 se
 # verifica contra sdk-wheel.lock: si el SDK cambia, el build falla hasta actualizar el lock.
-FROM ${PY_BASE} AS sdk-builder
+# python:3.11.9-slim-bookworm — digest real, el mismo fijado en runtimes/DIGESTS.lock.
+# Literal y no ARG: un ARG seria sobrescribible con --build-arg y la base dejaria de
+# estar fijada, que es justo lo que verify-runtime-digests impide.
+FROM python@sha256:8fb099199b9f2d70342674bd9dbccd3ed03a258f26bbd1d556822c6dfc60c317 AS sdk-builder
 ENV SOURCE_DATE_EPOCH=1700000000
 COPY sdks/python /src/sdk
 COPY runtimes/python/sdk-wheel.lock /src/sdk-wheel.lock
@@ -29,7 +30,7 @@ RUN pip wheel --no-deps --no-build-isolation --no-index -w /wheels . && \
     echo "SDK wheel verificado: $actual"
 
 # --- Etapa 2: runtime -----------------------------------------------------------------
-FROM ${PY_BASE} AS base
+FROM python@sha256:8fb099199b9f2d70342674bd9dbccd3ed03a258f26bbd1d556822c6dfc60c317 AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
