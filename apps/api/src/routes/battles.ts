@@ -13,6 +13,7 @@ import { decompress, sha256 } from "../../../replay-service/src/format.js";
 import { verifyLoaded } from "../../../replay-service/src/store.js";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
+import { pathParam } from "../params.js";
 import { ROLE_RANK } from "../openapi.js";
 import { badRequest, conflict, notFound } from "../errors.js";
 import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
@@ -71,7 +72,7 @@ export function battleRoutes(db: Db, quota: AnonQuotaConfig): Router {
   });
 
   defineOperation(router, "getBattle", async (req, res) => {
-    const battle = await getBattleOr404(db, req.params.battleId);
+    const battle = await getBattleOr404(db, pathParam(req, "battleId"));
     res.json(battleToJson(battle, await db("participants").where({ battle_id: battle.id })));
   });
 
@@ -129,7 +130,7 @@ export function battleRoutes(db: Db, quota: AnonQuotaConfig): Router {
     router,
     "getSpectateTicket",
     async (req, res) => {
-      const battle = await getBattleOr404(db, req.params.battleId);
+      const battle = await getBattleOr404(db, pathParam(req, "battleId"));
       // E8/T8.2: jti ⇒ el gateway hace el ticket de UN SOLO USO; debug ⇒ capas de
       // depuración (sensores, rutas, colisiones) solo para roles autorizados: el flag
       // viaja FIRMADO por la API, el visor no puede autoconcedérselo.
@@ -151,7 +152,7 @@ export function battleRoutes(db: Db, quota: AnonQuotaConfig): Router {
   );
 
   defineOperation(router, "getBattleAudit", async (req, res) => {
-    const battle = await getBattleOr404(db, req.params.battleId);
+    const battle = await getBattleOr404(db, pathParam(req, "battleId"));
     const map = await db("map_versions").where({ map_id: battle.map_id, version: battle.map_version }).first();
     const participants = await db("participants").where({ battle_id: battle.id });
     const artifacts = [];
@@ -179,7 +180,7 @@ export function battleRoutes(db: Db, quota: AnonQuotaConfig): Router {
   });
 
   defineOperation(router, "getBattleStats", async (req, res) => {
-    const battle = await getBattleOr404(db, req.params.battleId);
+    const battle = await getBattleOr404(db, pathParam(req, "battleId"));
     const rows = await db("battle_stats").where({ battle_id: battle.id });
     const stats: Record<string, unknown> = {};
     for (const r of rows) stats[r.bot_id] = r.stats;
@@ -192,7 +193,7 @@ export function battleRoutes(db: Db, quota: AnonQuotaConfig): Router {
     router,
     "getReplay",
     async (req, res) => {
-      const battle = await getBattleOr404(db, req.params.battleId);
+      const battle = await getBattleOr404(db, pathParam(req, "battleId"));
       if (!battle.replay_ref) throw notFound("La batalla no tiene replay publicado");
       // Política 23.1: el replay vive en un archivo; la BD solo guarda la referencia.
       let bytes: Buffer;
@@ -221,7 +222,7 @@ export function battleRoutes(db: Db, quota: AnonQuotaConfig): Router {
     router,
     "verifyReplay",
     async (req, res) => {
-      const battle = await getBattleOr404(db, req.params.battleId);
+      const battle = await getBattleOr404(db, pathParam(req, "battleId"));
       if (!battle.replay_ref) throw notFound("La batalla no tiene replay publicado");
       let bytes: Buffer;
       try {

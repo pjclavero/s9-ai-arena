@@ -51,7 +51,9 @@ async function insertMapVersion(
       checksum,
       width_m: map.widthM,
       height_m: map.heightM,
-      supported_modes: JSON.stringify(map.supportedModes ?? []),
+      // R2.1 (ERR-GES-03): los modos viven en meta.supportedModes (InternalMap);
+      // leerlos del nivel raíz siempre daba undefined y persistía [].
+      supported_modes: JSON.stringify(map.meta?.supportedModes ?? []),
       content: JSON.stringify(map),
       ...extra,
     })

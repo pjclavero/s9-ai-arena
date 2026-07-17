@@ -53,7 +53,8 @@ beforeAll(async () => {
     // Agente determinista que DISPARA (los stubs con el loadout de ejemplo no
     // se encuentran: llevan lidar, no radar): así shotsFired/accuracy de la
     // forma canónica tienen datos reales que agregar.
-    agentResolver: () => ({
+    agentResolver: (botId) => ({
+      botId,
       decide(obs: { tick: number }) {
         return { forTick: obs.tick, move: { throttle: 0.6, steer: 0.05 }, fire: ["turret_main"] };
       },
