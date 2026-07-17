@@ -93,6 +93,14 @@ export class Battle {
   private radioQueue: RadioMessage[] = [];
   private radioSentThisSecond = new Map<string, number>();
   private sounds: { position: Vec2; kind: "gunshot" | "engine" | "explosion"; intensity: number }[] = [];
+  /**
+   * DOBLE BÚFER de sonidos (ERR-ENG-01). `observedSounds` conserva los sonidos del ciclo
+   * de decisión ANTERIOR, ya congelados: es lo que oyen las observaciones de este tick.
+   * `sounds` es el acumulador del ciclo EN CURSO, donde empujan física y combate. Se
+   * mantienen separados para que un bot oiga lo que sonó durante el ciclo completo que
+   * acaba de terminar, y para que las dos rutas de observación lean el mismo conjunto.
+   */
+  private observedSounds: { position: Vec2; kind: "gunshot" | "engine" | "explosion"; intensity: number }[] = [];
   private destructibleHp = new Map<string, number>();
 
   private entitySeq = 0;
@@ -190,7 +198,14 @@ export class Battle {
     // --- PASO 1 · Recoger comandos de los bots (solo en tick de decisión)
     const commands = new Map<string, any>();
     if (this.isDecisionTick()) {
-      this.sounds = []; // los sonidos duran un ciclo de decisión
+      // DOBLE BÚFER de sonidos (fix ERR-ENG-01). Durante los 3 ticks del ciclo que ACABA de
+      // terminar, física y combate acumularon disparos, impactos, minas y motores en
+      // `this.sounds`. Ese acumulador se congela ahora en `observedSounds`: es lo que oyen
+      // TODAS las observaciones de este tick (este bucle y observationFor leen el MISMO
+      // búfer, así que ninguna ruta ve un conjunto distinto). El acumulador se vacía DESPUÉS
+      // de construirlas —nunca antes, que era el bug del doble borrado— para recoger los
+      // sonidos del ciclo que arranca ahora.
+      this.observedSounds = this.sounds;
       const objectives = this.mode.objectives();
       for (const v of this.vehicles) {
         if (v.disqualified) continue;
@@ -204,7 +219,7 @@ export class Battle {
             vehicles: this.vehicles,
             poses,
             physics: this.physics,
-            sounds: this.sounds,
+            sounds: this.observedSounds,
             mines: this.mines.map((m) => ({ id: m.id, position: m.position, team: m.team, detectable: m.detectable })),
           },
           this.radioQueue,
@@ -239,6 +254,11 @@ export class Battle {
           }
         }
       }
+      // Intercambio del acumulador: ya servidas TODAS las observaciones con `observedSounds`,
+      // el ciclo nuevo arranca con un búfer vacío. `observedSounds` sigue apuntando al array
+      // anterior (no se muta), de modo que observationFor() y el snapshot ven lo mismo hasta
+      // el próximo tick de decisión.
+      this.sounds = [];
     }
 
     // --- PASO 3 · Validar y aplicar órdenes (energía, munición, cooldown, arco)
@@ -715,7 +735,9 @@ export class Battle {
     return buildObservation(
       v, this.tick,
       {
-        vehicles: this.vehicles, poses: this.poses(), physics: this.physics, sounds: this.sounds,
+        // Mismo búfer de sonidos que sirve el bucle de decisión (ERR-ENG-01): las dos rutas
+        // de observación leen EXACTAMENTE el mismo conjunto para el mismo tick.
+        vehicles: this.vehicles, poses: this.poses(), physics: this.physics, sounds: this.observedSounds,
         mines: this.mines.map((m) => ({ id: m.id, position: m.position, team: m.team, detectable: m.detectable })),
       },
       this.radioQueue, this.mode.score, this.mode.objectives(), this.rng,
