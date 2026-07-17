@@ -11,6 +11,7 @@
  * determinista, o el replay fue manipulado. Ambas cosas son graves y hay que detectarlas.
  */
 import { Battle, type BattleConfig, type BattleResult, type BotAgent } from "./sim/battle.js";
+import { nowIso } from "./wall-clock.js";
 
 export interface ReplayHeader {
   formatVersion: 1;
@@ -113,7 +114,9 @@ export function replayFromBattle(b: Battle, result: BattleResult): Replay {
       map: config.map,
       participants: config.participants,
       versions: result.versions,
-      recordedAt: new Date().toISOString(),
+      // Metadato de pared, NO entra en la simulación ni en el hash. Va vía wall-clock.ts,
+      // el único fichero exento del lint de determinismo para este uso (ERR-ENG-02).
+      recordedAt: nowIso(),
     },
     commands: (b as any).replayCommands,
     events: b.publicEvents,
