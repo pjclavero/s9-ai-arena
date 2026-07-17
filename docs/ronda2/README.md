@@ -13,8 +13,8 @@ Rama de trabajo: `ronda2/r-p0-bloqueantes`.
 | R1.2 | Sensor acústico muerto + test vacuo | ✅ Hecho | — | [R1.2-sensor-acustico.md](reportes/R1.2-sensor-acustico.md) | `e1fa327` |
 | R1.3 | Publicar `sensor.acoustic`/`sensor.proximity` en catálogo | ✅ Hecho | — | [R1.3-sensores-catalogo.md](reportes/R1.3-sensores-catalogo.md) | `67e2c04` |
 | R1.9 | `zone_control` jugable + King of the Hill | ✅ Hecho | — | [R1.9-zone-control-koth.md](reportes/R1.9-zone-control-koth.md) | `a8652fd` |
-| R1.4 | Secreto JWT: fallar cerrado + leer por archivo | 🔜 En curso | — | — | — |
-| R1.5 | Sandbox: fallar cerrado sin runner | ⏳ Pendiente | — | — | — |
+| R1.4 | Secreto JWT: fallar cerrado + leer por archivo | ✅ Hecho (local; BD en CI) | #14 rel. | [R1.4-secreto-jwt.md](reportes/R1.4-secreto-jwt.md) | `7e23a39` |
+| R1.5 | Sandbox: fallar cerrado sin runner | 🔜 En curso | — | — | — |
 | R1.6 | CI del sandbox: no pasar en verde sin probar | ⏳ Pendiente | — | — | — |
 | R1.7 | Retirar el montaje de `docker.sock` | ⏳ Pendiente | — | — | — |
 | R1.8 | Rate-limit y bloqueo de login tras proxy | ⏳ Pendiente | — | — | — |
