@@ -39,5 +39,5 @@
 # probando la imagen anterior sin avisar. Hacer reproducible el build (SOURCE_DATE_EPOCH +
 # rewrite-timestamp de buildkit) cerraría el hueco, y es trabajo aparte de R6.1.
 
-python  python@sha256:8fb099199b9f2d70342674bd9dbccd3ed03a258f26bbd1d556822c6dfc60c317  ghcr.io/pjclavero/s9-ai-arena/bot-runtime-python@sha256:c9b436160cddfed2b9afe9412bf4e53249a6f5afbde84e899a8d2e639364da47
-node    node@sha256:5e8ac65a0231d76a388683d07ca36a9769ab019a85d85169fe28e206f7a3208e    ghcr.io/pjclavero/s9-ai-arena/bot-runtime-node@sha256:84379d8388aa894b92c948f43754c8f1da6501e8433485ee368aed68e538532c
+python  python@sha256:b18992999dbe963a45a8a4da40ac2b1975be1a776d939d098c647482bcad5cba  ghcr.io/pjclavero/s9-ai-arena/bot-runtime-python@sha256:c9b436160cddfed2b9afe9412bf4e53249a6f5afbde84e899a8d2e639364da47
+node    node@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0    ghcr.io/pjclavero/s9-ai-arena/bot-runtime-node@sha256:84379d8388aa894b92c948f43754c8f1da6501e8433485ee368aed68e538532c

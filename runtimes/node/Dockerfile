@@ -9,14 +9,13 @@
 #
 # Contexto de build = RAÍZ del repo:  docker build -f runtimes/node/Dockerfile .
 
+# Runtime Node de bots. Base: node:20-bookworm-slim, fijada por digest en runtimes/DIGESTS.lock.
 
 # --- Etapa 1: compilar el SDK PROPIO desde el repo ------------------------------------
 # sdks/javascript es TypeScript con noEmit:true (nunca se había compilado: los bots de
 # ejemplo lo importaban por ruta relativa del monorepo). Aquí se emite JS + .d.ts para que
 # el runtime pueda instalarlo como paquete real.
-# node:20.14.0-bookworm-slim — digest real, el mismo fijado en runtimes/DIGESTS.lock.
-# Literal y no ARG: con --build-arg la base dejaria de estar fijada.
-FROM node@sha256:5e8ac65a0231d76a388683d07ca36a9769ab019a85d85169fe28e206f7a3208e AS sdk-builder
+FROM node@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS sdk-builder
 ARG TS_VERSION=5.8.3
 WORKDIR /src
 COPY sdks/javascript/ ./
@@ -27,10 +26,20 @@ RUN npm install --no-save --ignore-scripts typescript@${TS_VERSION} \
  && test -f /out/dist/index.js || (echo "ERROR R6.1: el SDK no emitio dist/index.js"; exit 1)
 
 # --- Etapa 2: runtime -----------------------------------------------------------------
-FROM node@sha256:5e8ac65a0231d76a388683d07ca36a9769ab019a85d85169fe28e206f7a3208e AS base
+FROM node@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS base
 
 ENV NODE_ENV=production \
     NPM_CONFIG_AUDIT=false
+
+# Parches de seguridad del SO. R6.1: la base de node, incluso en su ultima version, trae
+# 2 CVE CRITICAS de libgnutls30 (CVE-2026-33845, CVE-2026-42010) que Debian ya tiene
+# corregidas en sus repos pero que la imagen aun no recoge. Sin esto, el runtime las
+# arrastra. El digest de la imagen resultante se fija igual (ver DIGESTS.lock), asi que lo
+# que se despliega sigue siendo exactamente lo pineado.
+RUN apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/runtime
 # Terceros: SOLO la allowlist, con el integrity real del lock verificado por npm ci.

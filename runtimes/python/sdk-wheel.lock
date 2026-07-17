@@ -8,4 +8,4 @@
 # Es deliberado: el contenido del SDK que entra en el runtime queda fijado en el repo.
 
 SOURCE_DATE_EPOCH=1700000000
-arena_sdk-0.1.0-py3-none-any.whl  sha256:9025098809a28181d690bd39190bc846f624296ae4d47bc50de936582327fe81
+arena_sdk-0.1.0-py3-none-any.whl  sha256:55c041a46d3c75c48880341d470fa12487003aded117217ac2d7fa41367fa72e
