@@ -20,12 +20,24 @@
 #   3. fijar ese digest aquí. El resto del CI DESCARGA por digest: se prueba exactamente
 #      esta imagen, no una recién construida.
 #
-# NOTA sobre reproducibilidad (medida en R6.1, no supuesta): el CONTENIDO es reproducible
-# —el wheel del SDK sale con el mismo sha256 en builds repetidos—, pero el digest de la
-# IMAGEN no es idéntico entre máquinas distintas: construir el mismo fuente en VM108 y en
-# un runner de GitHub da manifiestos distintos (cambian versión de buildkit y compresión
-# de capas). Por eso el digest se fija desde el registry UNA vez y se verifica
-# descargándolo, en vez de reconstruirlo y comparar.
+# NOTA sobre reproducibilidad (MEDIDA en R6.1, no supuesta):
+#   - El CONTENIDO propio sí es reproducible: el wheel del SDK sale con el mismo sha256 en
+#     builds repetidos (por eso su hash se puede fijar en python/sdk-wheel.lock).
+#   - El digest de la IMAGEN NO lo es. No ya entre máquinas distintas: el MISMO commit,
+#     publicado dos veces por el MISMO workflow en el mismo tipo de runner, dio
+#     bot-runtime-python@sha256:4795fa54... y luego @sha256:2ffb8119... Las capas llevan
+#     mtimes y metadatos del momento del build.
+#
+# Consecuencia práctica, y es la razón de todo el diseño de arriba: RECONSTRUIR UNA IMAGEN
+# NO SIRVE PARA VERIFICAR NADA. Un digest distinto no prueba que el runtime haya cambiado,
+# ni uno igual que no. Por eso el digest se fija desde el registry UNA sola vez y se
+# verifica DESCARGÁNDOLO, y por eso runtimes-publish.yml se lanza a mano en vez de en cada
+# push (publicar en cada push dejaría este fichero obsoleto al instante).
+#
+# Limitación conocida que esto deja abierta: nada ata criptográficamente el fuente de
+# runtimes/ a la imagen fijada aquí. Si cambias un runtime y NO republicas, el CI seguirá
+# probando la imagen anterior sin avisar. Hacer reproducible el build (SOURCE_DATE_EPOCH +
+# rewrite-timestamp de buildkit) cerraría el hueco, y es trabajo aparte de R6.1.
 
-python  python@sha256:8fb099199b9f2d70342674bd9dbccd3ed03a258f26bbd1d556822c6dfc60c317  ghcr.io/pjclavero/s9-ai-arena/bot-runtime-python@sha256:4795fa5436a2e5deff4b9fd0029f1c7008f6ae34d83cd4bd54b263ef2a35f3ff
-node    node@sha256:5e8ac65a0231d76a388683d07ca36a9769ab019a85d85169fe28e206f7a3208e    ghcr.io/pjclavero/s9-ai-arena/bot-runtime-node@sha256:5659736266df64f2fc13d812a7a8e85cf9002479c3d03a654405a53b22ab71ee
+python  python@sha256:8fb099199b9f2d70342674bd9dbccd3ed03a258f26bbd1d556822c6dfc60c317  ghcr.io/pjclavero/s9-ai-arena/bot-runtime-python@sha256:c9b436160cddfed2b9afe9412bf4e53249a6f5afbde84e899a8d2e639364da47
+node    node@sha256:5e8ac65a0231d76a388683d07ca36a9769ab019a85d85169fe28e206f7a3208e    ghcr.io/pjclavero/s9-ai-arena/bot-runtime-node@sha256:84379d8388aa894b92c948f43754c8f1da6501e8433485ee368aed68e538532c
