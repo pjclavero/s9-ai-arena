@@ -43,6 +43,12 @@ Rama de trabajo: `ronda2/r-p0-bloqueantes`.
 >
 > Quedan de R-P0: **R1.6, R1.7 y R1.8**. El sub-lote de motor (R1.1, R1.2, R1.3, R1.9) sigue cerrado.
 
+## Banda R2 · Remediación de plataforma
+
+| Tarea | Descripción | Estado | Issue | Reporte | Commit |
+|---|---|---|---|---|---|
+| R2.6 | Saneado de subidas y cabeceras (ERR-SEC-09/10/16): paquete con esquema ajv estricto, Content-Disposition RFC 6266/5987, ticket de espectador fuera de la URL + wss en prod, HSTS al gateway; SERVICE_ENTRY de la API ya resuelto en la rama base (`5dba8de`) | ✅ Hecho y verificado (Linux; arranque del contenedor pendiente de R-DEPLOY) | — | [R2.6-subidas-cabeceras.md](reportes/R2.6-subidas-cabeceras.md) | rama `ronda2/r2.6-subidas-cabeceras` |
+
 **Leyenda:** ✅ hecho y verificado · 🔜 en curso · ⏳ pendiente.
 
 Línea base del área de motor+catálogo al abrir la rama: **188 tests verdes** (`npx vitest run packages/module-catalog apps/arena-engine`).
