@@ -336,6 +336,10 @@ export interface OBSERVATIONMotorBot {
    */
   objectives?: {
     kind: "flag" | "zone";
+    /**
+     * Identificador estable del objetivo (p.ej. zona de captura), presente cuando el modo expone varios objetivos distinguibles.
+     */
+    id?: string;
     team: string;
     state: "at_base" | "carried" | "dropped" | "returning" | "captured" | "neutral" | "contested" | "held";
     position?: Vec21;

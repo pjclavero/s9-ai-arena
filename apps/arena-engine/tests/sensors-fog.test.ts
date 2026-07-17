@@ -78,6 +78,47 @@ describe("la observación valida contra el contrato de E1", () => {
     expect(ok, JSON.stringify(validateObservation.errors?.slice(0, 3))).toBe(true);
     b.free();
   });
+
+  it("una observación de zone_control con objetivos (id + posición) valida contra el esquema", () => {
+    // Regresión de ERR-ENG-03: objectives() de zone_control lleva `id` y `position` de cada
+    // zona (públicos por definición del modo). El esquema de E1 declara `id` como opcional.
+    // Antes solo se validaba una observación de team_deathmatch, con objectives VACÍO, así que
+    // una fuga de contrato en objectives pasaba desapercibida. Este test cierra ese hueco.
+    const map = emptyArena();
+    map.zones = [
+      { id: "alpha", position: { x: 40, y: 40 }, radiusM: 8, kind: "capture" },
+      { id: "bravo", position: { x: 80, y: 25 }, radiusM: 8, kind: "capture" },
+    ];
+    const b = new Battle({
+      battleId: "zc_schema",
+      seed: "zc-schema",
+      ruleset: loadRuleset("zc_mvp@1"),
+      map,
+      participants: [
+        { id: "veh_1", botId: "b1", team: "red", spec: scoutLoadout() },
+        { id: "veh_2", botId: "b2", team: "blue", spec: gunnerLoadout() },
+      ],
+    });
+    b.attachBot("veh_1", new IdleBot("b1"));
+    b.attachBot("veh_2", new IdleBot("b2"));
+    for (let i = 0; i < 5; i++) b.step();
+
+    const obs = b.observationFor("veh_1");
+
+    // La observación LLEVA objetivos de zona con id y posición distinguibles.
+    expect(Array.isArray(obs.objectives)).toBe(true);
+    const zone = obs.objectives.find((o: any) => o.kind === "zone" && o.id === "alpha");
+    expect(zone).toBeDefined();
+    expect(zone.id).toBe("alpha");
+    expect(zone.position).toEqual({ x: 40, y: 40 });
+    expect(obs.objectives.some((o: any) => o.id === "bravo")).toBe(true);
+
+    // Y valida contra el contrato de E1 (que ahora admite `id` opcional en objectives).
+    const ok = validateObservation(obs);
+    if (!ok) console.error(validateObservation.errors);
+    expect(ok, JSON.stringify(validateObservation.errors?.slice(0, 3))).toBe(true);
+    b.free();
+  });
 });
 
 describe("FUGA DE NIEBLA DE GUERRA (D8)", () => {

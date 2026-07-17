@@ -125,6 +125,19 @@ export const RULESETS: Record<string, Ruleset> = {
     scoreToWin: 500,
     zone: { pointsPerTickHeld: 1 },
   },
+  /**
+   * King of the Hill: zone_control con UNA sola zona (la aporta el mapa) y puntuación solo
+   * por presencia real (comportamiento por defecto del modo ya corregido). Reutiliza
+   * ZoneControlMode sin lógica nueva; solo cambia la meta a una duración de control razonable
+   * (100 ticks ≈ 3,3 s controlando la colina sin oposición).
+   */
+  "koth_mvp@1": {
+    ...base,
+    rulesetId: "koth_mvp@1",
+    mode: "zone_control",
+    scoreToWin: 100,
+    zone: { pointsPerTickHeld: 1 },
+  },
   /** D7 · demostración de la perilla de presupuesto: misma partida, menos créditos. */
   "skirmish_low@1": {
     ...base,

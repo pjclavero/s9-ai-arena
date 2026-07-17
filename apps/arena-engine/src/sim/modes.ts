@@ -261,14 +261,23 @@ export class CaptureTheFlagMode extends BaseMode {
 }
 
 // ------------------------------------------------------------- zone control
+//
+// También sirve de King of the Hill: KotH es exactamente este modo con UNA sola zona
+// y puntuación por presencia (ruleset koth_mvp@1). No hay lógica duplicada.
 export class ZoneControlMode extends BaseMode {
   readonly id = "zone_control";
-  /** zoneId → equipo que la controla (o null). */
+  /**
+   * Zonas de captura del mapa (id + posición). La posición de una zona de captura es
+   * PÚBLICA por definición del modo —igual que una base—: por eso objectives() la revela.
+   */
+  private readonly zones: { id: string; position: Vec2 }[] = [];
+  /** zoneId → equipo que la controla (o null). Propiedad, separada de la puntuación. */
   private control = new Map<string, string | null>();
 
   constructor(teams: string[], map: ArenaMap) {
     super(teams);
     for (const z of map.zones.filter((z) => z.kind === "capture")) {
+      this.zones.push({ id: z.id, position: { ...z.position } });
       this.control.set(z.id, null);
     }
   }
@@ -288,30 +297,35 @@ export class ZoneControlMode extends BaseMode {
       const teamsInside = new Set(inside.map((v) => v.team));
       const prev = this.control.get(z.id) ?? null;
 
-      // Una zona disputada (dos equipos dentro) no puntúa a nadie y no cambia de dueño.
+      // PROPIEDAD y PUNTUACIÓN están separadas (ERR-ENG-03). Solo con UN equipo realmente
+      // dentro se toma (o mantiene) la propiedad Y se puntúa. Con la zona VACÍA (size 0)
+      // o DISPUTADA (size >= 2) NO puntúa nadie: la propiedad no basta, hace falta presencia
+      // real. Así, "tocar la zona y marcharse" ya no gana la partida sin oposición.
       if (teamsInside.size === 1) {
         const owner = [...teamsInside][0];
         if (owner !== prev) {
           this.control.set(z.id, owner);
           ctx.emit({ kind: "zone_captured", team: owner, position: z.position });
         }
-      }
-
-      // Puntuación continua: quien la controla suma cada tick, aunque salga
-      // (la zona sigue siendo suya hasta que otro la tome).
-      const owner = this.control.get(z.id);
-      if (owner && teamsInside.size <= 1) {
         this.score[owner] = (this.score[owner] ?? 0) + pts;
       }
     }
   }
 
   objectives(): any[] {
-    return [...this.control.entries()].map(([id, team]) => ({
-      kind: "zone",
-      team: team ?? "neutral",
-      state: team ? "held" : "neutral",
-    }));
+    // id + posición de CADA zona: un bot con más de una zona necesita ambos para decidir
+    // a cuál ir. Nada de esto es privado: la posición de una zona de captura es pública
+    // (como una base) y su dueño forma parte del marcador, también público.
+    return this.zones.map((z) => {
+      const team = this.control.get(z.id) ?? null;
+      return {
+        kind: "zone",
+        id: z.id,
+        team: team ?? "neutral",
+        state: team ? "held" : "neutral",
+        position: { ...z.position },
+      };
+    });
   }
 }
 
