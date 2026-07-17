@@ -8,6 +8,8 @@
   ],
   "scripts": {
     "test": "vitest run",
+    "test:pure": "vitest run --config vitest.pure.config.ts",
+    "test:db": "vitest run --config vitest.db.config.ts",
     "lint": "node apps/arena-engine/scripts/lint-determinism.mjs",
     "changeset": "changeset",
     "version-packages": "changeset version"
