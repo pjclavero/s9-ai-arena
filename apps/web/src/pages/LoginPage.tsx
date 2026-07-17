@@ -36,14 +36,25 @@ export function LoginPage(props: { onLogin: (me: Me) => void }) {
       <h2>{mode === "login" ? "Iniciar sesión" : "Crear cuenta"}</h2>
       {mode === "register" && (
         <p>
-          <input aria-label="nombre" placeholder="Nombre visible" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+          <input
+            aria-label="nombre"
+            placeholder="Nombre visible"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+          />
         </p>
       )}
       <p>
         <input aria-label="email" placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
       </p>
       <p>
-        <input aria-label="contraseña" type="password" placeholder="contraseña (≥12)" value={password} onChange={(e) => setPassword(e.target.value)} />
+        <input
+          aria-label="contraseña"
+          type="password"
+          placeholder="contraseña (≥12)"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
       </p>
       {needsTotp && (
         <p>

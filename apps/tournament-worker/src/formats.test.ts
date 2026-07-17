@@ -151,7 +151,11 @@ describe("T9.2 · golden brackets (calendario exacto)", () => {
   });
 
   it("suizo con 8: ronda 1 por puntuación (adyacentes) con lados alternados", () => {
-    const round1 = generateSwissRound(P(8).map((e) => ({ id: e.id, points: 0, seed: e.seed })), new Set(), 1);
+    const round1 = generateSwissRound(
+      P(8).map((e) => ({ id: e.id, points: 0, seed: e.seed })),
+      new Set(),
+      1,
+    );
     expect(round1.map(game)).toEqual([
       ["S1M1", "P1", "P2"],
       ["S1M2", "P4", "P3"],
@@ -163,7 +167,11 @@ describe("T9.2 · golden brackets (calendario exacto)", () => {
   });
 
   it("suizo con 13 (impar): bye para el peor clasificado sin descanso previo", () => {
-    const round1 = generateSwissRound(P(13).map((e) => ({ id: e.id, points: 0, seed: e.seed })), new Set(), 1);
+    const round1 = generateSwissRound(
+      P(13).map((e) => ({ id: e.id, points: 0, seed: e.seed })),
+      new Set(),
+      1,
+    );
     const bye = round1.find((p) => p.bye);
     expect(bye?.home).toBe("P13");
     expect(round1.filter((p) => !p.bye).length).toBe(6);
@@ -233,7 +241,10 @@ describe("T9.2 · propiedades (fast-check)", () => {
         for (const count of seen.values()) expect(count).toBe(1);
         // y nadie juega dos veces en la misma ronda
         for (let r = 1; r <= (n % 2 === 0 ? n - 1 : n); r++) {
-          const inRound = rr.filter((p) => p.round === r).flatMap((p) => [p.home, p.away]).filter(Boolean);
+          const inRound = rr
+            .filter((p) => p.round === r)
+            .flatMap((p) => [p.home, p.away])
+            .filter(Boolean);
           expect(new Set(inRound).size).toBe(inRound.length);
         }
       }),
@@ -271,58 +282,68 @@ describe("T9.2 · propiedades (fast-check)", () => {
 
   it("doble eliminación: NADIE queda fuera con una sola derrota (simulación completa)", () => {
     fc.assert(
-      fc.property(
-        fc.integer({ min: 2, max: 16 }),
-        fc.infiniteStream(fc.boolean()),
-        (n, results) => {
-          const it = results[Symbol.iterator]();
-          const de = generateDoubleElimination(P(n));
-          const losses = new Map<string, number>(P(n).map((e) => [e.id, 0]));
-          const outcome = new Map<string, { winner: string | null; loser: string | null }>();
+      fc.property(fc.integer({ min: 2, max: 16 }), fc.infiniteStream(fc.boolean()), (n, results) => {
+        const it = results[Symbol.iterator]();
+        const de = generateDoubleElimination(P(n));
+        const losses = new Map<string, number>(P(n).map((e) => [e.id, 0]));
+        const outcome = new Map<string, { winner: string | null; loser: string | null }>();
 
-          const pending = [...de];
-          let guard = de.length * 4;
-          let champion: string | null = null;
-          while (pending.length > 0 && guard-- > 0) {
-            const p = pending.shift()!;
-            const home = p.home ?? (p.homeSource ? (outcome.has(p.homeSource.slot) ? outcome.get(p.homeSource.slot)![p.homeSource.take] : undefined) : null);
-            const away = p.away ?? (p.awaySource ? (outcome.has(p.awaySource.slot) ? outcome.get(p.awaySource.slot)![p.awaySource.take] : undefined) : null);
-            if (home === undefined || away === undefined) {
-              pending.push(p); // aún no resuelto
-              continue;
-            }
-            if (p.bye || home === null || away === null) {
-              const solo = home ?? away;
-              outcome.set(p.slot, { winner: solo, loser: null });
-              if (p.final) champion = solo;
-              continue;
-            }
-            // bracket reset condicional: si el invicto ganó la GF, GF2 es formalidad
-            if (p.conditionalOn && outcome.get(p.conditionalOn)?.winner === home) {
-              outcome.set(p.slot, { winner: home, loser: null });
-              if (p.final) champion = home;
-              continue;
-            }
-            const homeWins = it.next().value as boolean;
-            const winner = homeWins ? home : away;
-            const loser = homeWins ? away : home;
-            losses.set(loser, (losses.get(loser) ?? 0) + 1);
-            outcome.set(p.slot, { winner, loser });
-            if (p.final) champion = winner;
+        const pending = [...de];
+        let guard = de.length * 4;
+        let champion: string | null = null;
+        while (pending.length > 0 && guard-- > 0) {
+          const p = pending.shift()!;
+          const home =
+            p.home ??
+            (p.homeSource
+              ? outcome.has(p.homeSource.slot)
+                ? outcome.get(p.homeSource.slot)![p.homeSource.take]
+                : undefined
+              : null);
+          const away =
+            p.away ??
+            (p.awaySource
+              ? outcome.has(p.awaySource.slot)
+                ? outcome.get(p.awaySource.slot)![p.awaySource.take]
+                : undefined
+              : null);
+          if (home === undefined || away === undefined) {
+            pending.push(p); // aún no resuelto
+            continue;
           }
+          if (p.bye || home === null || away === null) {
+            const solo = home ?? away;
+            outcome.set(p.slot, { winner: solo, loser: null });
+            if (p.final) champion = solo;
+            continue;
+          }
+          // bracket reset condicional: si el invicto ganó la GF, GF2 es formalidad
+          if (p.conditionalOn && outcome.get(p.conditionalOn)?.winner === home) {
+            outcome.set(p.slot, { winner: home, loser: null });
+            if (p.final) champion = home;
+            continue;
+          }
+          const homeWins = it.next().value as boolean;
+          const winner = homeWins ? home : away;
+          const loser = homeWins ? away : home;
+          losses.set(loser, (losses.get(loser) ?? 0) + 1);
+          outcome.set(p.slot, { winner, loser });
+          if (p.final) champion = winner;
+        }
 
-          expect(pending.length).toBe(0); // el bracket siempre se resuelve
-          expect(champion).not.toBeNull();
-          for (const [player, count] of losses) {
-            if (player === champion) expect(count).toBeLessThanOrEqual(1);
-            else expect(count).toBeLessThanOrEqual(2); // nadie acumula más de 2
-          }
-          // TODO eliminado (no campeón) tiene EXACTAMENTE 2 derrotas… salvo los
-          // que nunca jugaron contra nadie (n=2 con bye no existe aquí).
-          const eliminated = P(n).map((e) => e.id).filter((id) => id !== champion);
-          for (const id of eliminated) expect(losses.get(id)).toBe(2);
-        },
-      ),
+        expect(pending.length).toBe(0); // el bracket siempre se resuelve
+        expect(champion).not.toBeNull();
+        for (const [player, count] of losses) {
+          if (player === champion) expect(count).toBeLessThanOrEqual(1);
+          else expect(count).toBeLessThanOrEqual(2); // nadie acumula más de 2
+        }
+        // TODO eliminado (no campeón) tiene EXACTAMENTE 2 derrotas… salvo los
+        // que nunca jugaron contra nadie (n=2 con bye no existe aquí).
+        const eliminated = P(n)
+          .map((e) => e.id)
+          .filter((id) => id !== champion);
+        for (const id of eliminated) expect(losses.get(id)).toBe(2);
+      }),
       { numRuns: 30 },
     );
   });

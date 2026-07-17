@@ -26,7 +26,12 @@ export function TeamsPage(props: { me: Me }) {
   return (
     <div className="card">
       <h2>Equipos</h2>
-      <input aria-label="nuevo-equipo" placeholder="nombre del equipo" value={name} onChange={(e) => setName(e.target.value)} />{" "}
+      <input
+        aria-label="nuevo-equipo"
+        placeholder="nombre del equipo"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+      />{" "}
       <button
         onClick={async () => {
           try {
@@ -48,7 +53,9 @@ export function TeamsPage(props: { me: Me }) {
             return (
               <tr key={t.id}>
                 <td>{t.name}</td>
-                <td>{t.memberIds.length} miembros{isCaptain ? " · eres capitán" : ""}</td>
+                <td>
+                  {t.memberIds.length} miembros{isCaptain ? " · eres capitán" : ""}
+                </td>
                 <td>
                   {isCaptain && (
                     <>

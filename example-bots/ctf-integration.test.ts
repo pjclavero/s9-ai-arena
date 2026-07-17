@@ -25,9 +25,13 @@ const PYTHON = join(REPO_ROOT, "sdks", "python", ".venv", "Scripts", "python.exe
 const RUN_BOT_SCRIPT = join(REPO_ROOT, "example-bots", "python", "_run_bot.py");
 
 function spawnPythonBot(file: string, className: string, botId: string, url: string, token: string) {
-  return spawn(PYTHON, [RUN_BOT_SCRIPT, join(REPO_ROOT, "example-bots", "python", file), className, botId, url, token], {
-    stdio: "ignore",
-  });
+  return spawn(
+    PYTHON,
+    [RUN_BOT_SCRIPT, join(REPO_ROOT, "example-bots", "python", file), className, botId, url, token],
+    {
+      stdio: "ignore",
+    },
+  );
 }
 
 // Batalla CTF completa con 2 subprocesos Python (~46 s) + requiere el venv de
@@ -79,10 +83,7 @@ slow("T5.4 · CTF 2v2 con los 4 bots oficiales, sin stubs internos", () => {
 
     const jsGunner = new GunnerBot("bot_gunner");
     const jsMiner = new MinerBot("bot_miner");
-    const jsRuns = Promise.all([
-      jsGunner.run(url, tokenFor("bot_gunner")),
-      jsMiner.run(url, tokenFor("bot_miner")),
-    ]);
+    const jsRuns = Promise.all([jsGunner.run(url, tokenFor("bot_gunner")), jsMiner.run(url, tokenFor("bot_miner"))]);
 
     const result = await server.waitForResult();
     await jsRuns;
@@ -91,7 +92,9 @@ slow("T5.4 · CTF 2v2 con los 4 bots oficiales, sin stubs internos", () => {
     server.stop();
     battle.free();
 
-    console.log(`CTF 2v2: ganador=${result.winner}, ticks=${result.ticks}, marcador=${JSON.stringify(result.score)}, descalificados=${JSON.stringify(result.disqualified)}`);
+    console.log(
+      `CTF 2v2: ganador=${result.winner}, ticks=${result.ticks}, marcador=${JSON.stringify(result.score)}, descalificados=${JSON.stringify(result.disqualified)}`,
+    );
     expect(result.disqualified).toEqual([]);
   }, 180000);
 });

@@ -58,11 +58,26 @@ const valid = {
     vehicle: {
       chassis: { moduleId: "chassis.medium@1", hullHp: 300, radiusM: 1.6 },
       modules: [
-        { slot: "drive", moduleId: "movement.tracks@1", category: "movement", specs: { maxSpeedMs: 9, turnRateRads: 1.2 } },
+        {
+          slot: "drive",
+          moduleId: "movement.tracks@1",
+          category: "movement",
+          specs: { maxSpeedMs: 9, turnRateRads: 1.2 },
+        },
         { slot: "power", moduleId: "power.battery@1", category: "power", specs: { capacityEU: 400 } },
         { slot: "sensor_a", moduleId: "sensor.lidar360@1", category: "sensor", specs: { rangeM: 40, rays: 64 } },
-        { slot: "turret_main", moduleId: "weapon.cannon@1", category: "weapon", specs: { damage: 45, cooldownTicks: 30 } },
-        { slot: "armor_front", moduleId: "armor.steel@1", category: "armor", specs: { sector: "front", reduction: 0.35 } },
+        {
+          slot: "turret_main",
+          moduleId: "weapon.cannon@1",
+          category: "weapon",
+          specs: { damage: 45, cooldownTicks: 30 },
+        },
+        {
+          slot: "armor_front",
+          moduleId: "armor.steel@1",
+          category: "armor",
+          specs: { sector: "front", reduction: 0.35 },
+        },
       ],
       massKg: 2400,
       energy: { capacityEU: 400, generationEUs: 18 },
@@ -241,7 +256,7 @@ const valid = {
         ],
         respawningInTicks: 0,
       },
-      score: { red: 1, blue: 2 }
+      score: { red: 1, blue: 2 },
     },
     { tick: 900 },
   ),
@@ -271,9 +286,21 @@ const valid = {
   ),
 
   // ---------------- EVENT
-  "event-hit-taken": env("EVENT", { tick: 310, kind: "hit_taken", sector: "front", damage: 45, sourceId: "veh_7" }, { tick: 310 }),
-  "event-rejected-action": env("EVENT", { tick: 311, kind: "rejected_action", slot: "turret_main", reason: "cooldown" }, { tick: 311 }),
-  "event-flag-captured": env("EVENT", { tick: 1500, kind: "flag_captured", team: "red", score: { red: 2, blue: 0 } }, { tick: 1500 }),
+  "event-hit-taken": env(
+    "EVENT",
+    { tick: 310, kind: "hit_taken", sector: "front", damage: 45, sourceId: "veh_7" },
+    { tick: 310 },
+  ),
+  "event-rejected-action": env(
+    "EVENT",
+    { tick: 311, kind: "rejected_action", slot: "turret_main", reason: "cooldown" },
+    { tick: 311 },
+  ),
+  "event-flag-captured": env(
+    "EVENT",
+    { tick: 1500, kind: "flag_captured", team: "red", score: { red: 2, blue: 0 } },
+    { tick: 1500 },
+  ),
 
   // ---------------- SHUTDOWN
   "shutdown-finished-win": env("SHUTDOWN", {
@@ -295,7 +322,17 @@ const invalid = {
   // Envelope
   "env-unknown-proto": {
     _why: "proto desconocido: se rechaza sin inspeccionar payload (D5)",
-    doc: { proto: "arena/2", type: "HELLO", seq: 1, payload: { botId: "bot_a", botVersion: "1", sdk: { name: "custom", version: "1" }, battleToken: "btl_0123456789abcdef" } },
+    doc: {
+      proto: "arena/2",
+      type: "HELLO",
+      seq: 1,
+      payload: {
+        botId: "bot_a",
+        botVersion: "1",
+        sdk: { name: "custom", version: "1" },
+        battleToken: "btl_0123456789abcdef",
+      },
+    },
   },
   "env-unknown-type": {
     _why: "type no pertenece a los seis mensajes del contrato",
@@ -303,39 +340,173 @@ const invalid = {
   },
   "env-observation-without-tick": {
     _why: "los mensajes de ciclo de batalla exigen tick en el envelope",
-    doc: { proto: "arena/1", type: "OBSERVATION", seq: 2, payload: { tick: 5, self: { position: { x: 0, y: 0 }, heading: 0, velocity: { x: 0, y: 0 }, hullHp: 1, energy: { storedEU: 0, capacityEU: 1 }, modules: [] } } },
+    doc: {
+      proto: "arena/1",
+      type: "OBSERVATION",
+      seq: 2,
+      payload: {
+        tick: 5,
+        self: {
+          position: { x: 0, y: 0 },
+          heading: 0,
+          velocity: { x: 0, y: 0 },
+          hullHp: 1,
+          energy: { storedEU: 0, capacityEU: 1 },
+          modules: [],
+        },
+      },
+    },
   },
 
   // HELLO
   "hello-missing-token": {
     _why: "sin battleToken: un contenedor no puede conectarse a una batalla ajena (E5.M)",
-    doc: { proto: "arena/1", type: "HELLO", seq: 1, payload: { botId: "bot_a", botVersion: "1.0.0", sdk: { name: "custom", version: "1" } } },
+    doc: {
+      proto: "arena/1",
+      type: "HELLO",
+      seq: 1,
+      payload: { botId: "bot_a", botVersion: "1.0.0", sdk: { name: "custom", version: "1" } },
+    },
   },
   "hello-bad-botid": {
     _why: "botId no cumple el patron bot_*",
-    doc: { proto: "arena/1", type: "HELLO", seq: 1, payload: { botId: "scout", botVersion: "1.0.0", sdk: { name: "custom", version: "1" }, battleToken: "btl_0123456789abcdef" } },
+    doc: {
+      proto: "arena/1",
+      type: "HELLO",
+      seq: 1,
+      payload: {
+        botId: "scout",
+        botVersion: "1.0.0",
+        sdk: { name: "custom", version: "1" },
+        battleToken: "btl_0123456789abcdef",
+      },
+    },
   },
   "hello-extra-field": {
     _why: "additionalProperties: false — un campo no declarado se rechaza",
-    doc: { proto: "arena/1", type: "HELLO", seq: 1, payload: { botId: "bot_a", botVersion: "1.0.0", sdk: { name: "custom", version: "1" }, battleToken: "btl_0123456789abcdef", cheatMode: true } },
+    doc: {
+      proto: "arena/1",
+      type: "HELLO",
+      seq: 1,
+      payload: {
+        botId: "bot_a",
+        botVersion: "1.0.0",
+        sdk: { name: "custom", version: "1" },
+        battleToken: "btl_0123456789abcdef",
+        cheatMode: true,
+      },
+    },
   },
 
   // WELCOME
   "welcome-missing-versions": {
     _why: "sin versions: toda batalla debe registrar sus artefactos exactos (cap. 8)",
-    doc: { proto: "arena/1", type: "WELCOME", seq: 2, payload: { battleId: "b", selfId: "veh_1", team: "red", timing: { tickHz: 30, decisionEveryNTicks: 3, decisionDeadlineMs: 80, maxConsecutiveTimeouts: 20 }, rules: { mode: "deathmatch", rulesetId: "r" }, vehicle: { chassis: { moduleId: "chassis.light@1", hullHp: 1, radiusM: 1 }, modules: [], massKg: 1, energy: { capacityEU: 1, generationEUs: 1 } }, map: { mapId: "m", mapVersion: 1, checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000", widthM: 1, heightM: 1 } } },
+    doc: {
+      proto: "arena/1",
+      type: "WELCOME",
+      seq: 2,
+      payload: {
+        battleId: "b",
+        selfId: "veh_1",
+        team: "red",
+        timing: { tickHz: 30, decisionEveryNTicks: 3, decisionDeadlineMs: 80, maxConsecutiveTimeouts: 20 },
+        rules: { mode: "deathmatch", rulesetId: "r" },
+        vehicle: {
+          chassis: { moduleId: "chassis.light@1", hullHp: 1, radiusM: 1 },
+          modules: [],
+          massKg: 1,
+          energy: { capacityEU: 1, generationEUs: 1 },
+        },
+        map: {
+          mapId: "m",
+          mapVersion: 1,
+          checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          widthM: 1,
+          heightM: 1,
+        },
+      },
+    },
   },
   "welcome-bad-checksum": {
     _why: "checksum del mapa sin el formato sha256:<64 hex>",
-    doc: { proto: "arena/1", type: "WELCOME", seq: 2, payload: { battleId: "b", selfId: "veh_1", team: "red", timing: { tickHz: 30, decisionEveryNTicks: 3, decisionDeadlineMs: 80, maxConsecutiveTimeouts: 20 }, rules: { mode: "deathmatch", rulesetId: "r" }, vehicle: { chassis: { moduleId: "chassis.light@1", hullHp: 1, radiusM: 1 }, modules: [], massKg: 1, energy: { capacityEU: 1, generationEUs: 1 } }, map: { mapId: "m", mapVersion: 1, checksum: "abc", widthM: 1, heightM: 1 }, versions: { engine: "1", rules: "1", catalog: "1", protocol: "arena/1" } } },
+    doc: {
+      proto: "arena/1",
+      type: "WELCOME",
+      seq: 2,
+      payload: {
+        battleId: "b",
+        selfId: "veh_1",
+        team: "red",
+        timing: { tickHz: 30, decisionEveryNTicks: 3, decisionDeadlineMs: 80, maxConsecutiveTimeouts: 20 },
+        rules: { mode: "deathmatch", rulesetId: "r" },
+        vehicle: {
+          chassis: { moduleId: "chassis.light@1", hullHp: 1, radiusM: 1 },
+          modules: [],
+          massKg: 1,
+          energy: { capacityEU: 1, generationEUs: 1 },
+        },
+        map: { mapId: "m", mapVersion: 1, checksum: "abc", widthM: 1, heightM: 1 },
+        versions: { engine: "1", rules: "1", catalog: "1", protocol: "arena/1" },
+      },
+    },
   },
   "welcome-budget-out-of-range": {
     _why: "budgetCredits=50 por debajo de BUDGET_CREDITS_MIN: un ruleset no puede fijar un presupuesto absurdamente bajo",
-    doc: { proto: "arena/1", type: "WELCOME", seq: 2, payload: { battleId: "b", selfId: "veh_1", team: "red", timing: { tickHz: 30, decisionEveryNTicks: 3, decisionDeadlineMs: 80, maxConsecutiveTimeouts: 20 }, rules: { mode: "deathmatch", rulesetId: "r", budgetCredits: 50 }, vehicle: { chassis: { moduleId: "chassis.light@1", hullHp: 1, radiusM: 1 }, modules: [], massKg: 1, energy: { capacityEU: 1, generationEUs: 1 } }, map: { mapId: "m", mapVersion: 1, checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000", widthM: 1, heightM: 1 }, versions: { engine: "1", rules: "1", catalog: "1", protocol: "arena/1" } } },
+    doc: {
+      proto: "arena/1",
+      type: "WELCOME",
+      seq: 2,
+      payload: {
+        battleId: "b",
+        selfId: "veh_1",
+        team: "red",
+        timing: { tickHz: 30, decisionEveryNTicks: 3, decisionDeadlineMs: 80, maxConsecutiveTimeouts: 20 },
+        rules: { mode: "deathmatch", rulesetId: "r", budgetCredits: 50 },
+        vehicle: {
+          chassis: { moduleId: "chassis.light@1", hullHp: 1, radiusM: 1 },
+          modules: [],
+          massKg: 1,
+          energy: { capacityEU: 1, generationEUs: 1 },
+        },
+        map: {
+          mapId: "m",
+          mapVersion: 1,
+          checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          widthM: 1,
+          heightM: 1,
+        },
+        versions: { engine: "1", rules: "1", catalog: "1", protocol: "arena/1" },
+      },
+    },
   },
   "welcome-unknown-mode": {
     _why: "modo de juego fuera del enum del MVP",
-    doc: { proto: "arena/1", type: "WELCOME", seq: 2, payload: { battleId: "b", selfId: "veh_1", team: "red", timing: { tickHz: 30, decisionEveryNTicks: 3, decisionDeadlineMs: 80, maxConsecutiveTimeouts: 20 }, rules: { mode: "battle_royale", rulesetId: "r" }, vehicle: { chassis: { moduleId: "chassis.light@1", hullHp: 1, radiusM: 1 }, modules: [], massKg: 1, energy: { capacityEU: 1, generationEUs: 1 } }, map: { mapId: "m", mapVersion: 1, checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000", widthM: 1, heightM: 1 }, versions: { engine: "1", rules: "1", catalog: "1", protocol: "arena/1" } } },
+    doc: {
+      proto: "arena/1",
+      type: "WELCOME",
+      seq: 2,
+      payload: {
+        battleId: "b",
+        selfId: "veh_1",
+        team: "red",
+        timing: { tickHz: 30, decisionEveryNTicks: 3, decisionDeadlineMs: 80, maxConsecutiveTimeouts: 20 },
+        rules: { mode: "battle_royale", rulesetId: "r" },
+        vehicle: {
+          chassis: { moduleId: "chassis.light@1", hullHp: 1, radiusM: 1 },
+          modules: [],
+          massKg: 1,
+          energy: { capacityEU: 1, generationEUs: 1 },
+        },
+        map: {
+          mapId: "m",
+          mapVersion: 1,
+          checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          widthM: 1,
+          heightM: 1,
+        },
+        versions: { engine: "1", rules: "1", catalog: "1", protocol: "arena/1" },
+      },
+    },
   },
 
   // OBSERVATION
@@ -345,11 +516,44 @@ const invalid = {
   },
   "observation-negative-hp": {
     _why: "hullHp no puede ser negativo",
-    doc: { proto: "arena/1", type: "OBSERVATION", tick: 1, seq: 3, payload: { tick: 1, self: { position: { x: 0, y: 0 }, heading: 0, velocity: { x: 0, y: 0 }, hullHp: -5, energy: { storedEU: 0, capacityEU: 1 }, modules: [] } } },
+    doc: {
+      proto: "arena/1",
+      type: "OBSERVATION",
+      tick: 1,
+      seq: 3,
+      payload: {
+        tick: 1,
+        self: {
+          position: { x: 0, y: 0 },
+          heading: 0,
+          velocity: { x: 0, y: 0 },
+          hullHp: -5,
+          energy: { storedEU: 0, capacityEU: 1 },
+          modules: [],
+        },
+      },
+    },
   },
   "observation-leaks-hidden-entity": {
     _why: "campo no declarado (allEntities): la niebla de guerra prohibe canales alternativos (D8)",
-    doc: { proto: "arena/1", type: "OBSERVATION", tick: 1, seq: 3, payload: { tick: 1, self: { position: { x: 0, y: 0 }, heading: 0, velocity: { x: 0, y: 0 }, hullHp: 10, energy: { storedEU: 0, capacityEU: 1 }, modules: [] }, allEntities: [{ id: "veh_9", x: 100, y: 10 }] } },
+    doc: {
+      proto: "arena/1",
+      type: "OBSERVATION",
+      tick: 1,
+      seq: 3,
+      payload: {
+        tick: 1,
+        self: {
+          position: { x: 0, y: 0 },
+          heading: 0,
+          velocity: { x: 0, y: 0 },
+          hullHp: 10,
+          energy: { storedEU: 0, capacityEU: 1 },
+          modules: [],
+        },
+        allEntities: [{ id: "veh_9", x: 100, y: 10 }],
+      },
+    },
   },
 
   // COMMAND
@@ -359,11 +563,23 @@ const invalid = {
   },
   "command-throttle-out-of-range": {
     _why: "throttle fuera de [-1,1]: la intencion es normalizada (D3)",
-    doc: { proto: "arena/1", type: "COMMAND", tick: 10, seq: 4, payload: { forTick: 12, move: { throttle: 5, steer: 0 } } },
+    doc: {
+      proto: "arena/1",
+      type: "COMMAND",
+      tick: 10,
+      seq: 4,
+      payload: { forTick: 12, move: { throttle: 5, steer: 0 } },
+    },
   },
   "command-turret-both-targets": {
     _why: "targetHeading y targetPoint son excluyentes",
-    doc: { proto: "arena/1", type: "COMMAND", tick: 10, seq: 4, payload: { forTick: 12, turret: { targetHeading: 0.5, targetPoint: { x: 1, y: 1 } } } },
+    doc: {
+      proto: "arena/1",
+      type: "COMMAND",
+      tick: 10,
+      seq: 4,
+      payload: { forTick: 12, turret: { targetHeading: 0.5, targetPoint: { x: 1, y: 1 } } },
+    },
   },
 
   // EVENT
@@ -391,7 +607,12 @@ const invalid = {
   },
   "shutdown-bad-outcome": {
     _why: "outcome fuera del enum",
-    doc: { proto: "arena/1", type: "SHUTDOWN", seq: 6, payload: { reason: "battle_finished", result: { outcome: "almost" } } },
+    doc: {
+      proto: "arena/1",
+      type: "SHUTDOWN",
+      seq: 6,
+      payload: { reason: "battle_finished", result: { outcome: "almost" } },
+    },
   },
 };
 

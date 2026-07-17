@@ -14,21 +14,9 @@
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-  fromJsonl,
-  toJsonl,
-  verify,
-  type Replay,
-  type VerifyResult,
-} from "../../arena-engine/src/replay.js";
+import { fromJsonl, toJsonl, verify, type Replay, type VerifyResult } from "../../arena-engine/src/replay.js";
 import engineDeps from "../../arena-engine/src/engine-deps.json" with { type: "json" };
-import {
-  buildKeyframes,
-  compress,
-  decompress,
-  sha256,
-  type StoredReplayIndex,
-} from "./format.js";
+import { buildKeyframes, compress, decompress, sha256, type StoredReplayIndex } from "./format.js";
 
 /** Retención por defecto de los replays TEMPORALES (prácticas/pruebas): 7 días (23.1). */
 export const DEFAULT_TEMPORARY_TTL_MS = 7 * 24 * 3600_000;
@@ -231,8 +219,7 @@ export function sweepRetention(dir: string, now: () => number = Date.now): Reten
   if (!existsSync(dir)) return report;
   for (const f of readdirSync(dir).filter((f) => f.endsWith(".replay.json"))) {
     const index = JSON.parse(readFileSync(join(dir, f), "utf8")) as StoredReplayIndex;
-    const expired =
-      !index.official && index.expiresAt !== null && now() > Date.parse(index.expiresAt);
+    const expired = !index.official && index.expiresAt !== null && now() > Date.parse(index.expiresAt);
     if (expired) {
       rmSync(replayPath(dir, index.battleId), { force: true });
       rmSync(indexPath(dir, index.battleId), { force: true });

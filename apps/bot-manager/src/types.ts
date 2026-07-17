@@ -35,14 +35,7 @@ export type StageStatus = "pending" | "running" | "passed" | "failed" | "skipped
 
 /** Estado de una versión de bot (OpenAPI BotVersion.state / cap. 17.1). */
 export type BotVersionState =
-  | "draft"
-  | "validating"
-  | "rejected"
-  | "validated"
-  | "published"
-  | "frozen"
-  | "suspended"
-  | "retired";
+  "draft" | "validating" | "rejected" | "validated" | "published" | "frozen" | "suspended" | "retired";
 
 export interface StageResult {
   name: StageName;

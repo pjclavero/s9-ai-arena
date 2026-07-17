@@ -176,19 +176,23 @@ export class SpectateGateway {
 
     // Recuperación de estado por snapshot COMPLETO (DoD de reconexión): los
     // snapshots de E2 son estado íntegro, así que el último basta para pintar.
-    this.sendTo(conn, {
-      type: "init",
-      battleId,
-      spectator: {
-        allowFogView: feed.opts.spectator?.allowFogView === true,
-        delaySeconds: feed.opts.spectator?.delaySeconds ?? 0,
-        debug: conn.debug,
+    this.sendTo(
+      conn,
+      {
+        type: "init",
+        battleId,
+        spectator: {
+          allowFogView: feed.opts.spectator?.allowFogView === true,
+          delaySeconds: feed.opts.spectator?.delaySeconds ?? 0,
+          debug: conn.debug,
+        },
+        meta: feed.opts.meta ?? {},
+        snapshot: feed.battle.snapshots.at(-1) ?? null,
+        finished: feed.battle.isFinished(),
+        result: feed.battle.isFinished() ? feed.battle.getResult() : undefined,
       },
-      meta: feed.opts.meta ?? {},
-      snapshot: feed.battle.snapshots.at(-1) ?? null,
-      finished: feed.battle.isFinished(),
-      result: feed.battle.isFinished() ? feed.battle.getResult() : undefined,
-    }, /*immediate*/ true);
+      /*immediate*/ true,
+    );
   }
 
   private dropClient(feed: Feed, conn: SpectatorConnection, code?: number, reason?: string): void {

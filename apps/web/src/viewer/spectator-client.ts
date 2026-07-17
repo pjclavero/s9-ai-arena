@@ -64,7 +64,10 @@ export class SpectatorClient {
     this.opts = opts;
   }
 
-  on(type: "init" | "snapshot" | "event" | "debug" | "result" | "disconnect" | "reconnected" | "gave_up", fn: Listener): () => void {
+  on(
+    type: "init" | "snapshot" | "event" | "debug" | "result" | "disconnect" | "reconnected" | "gave_up",
+    fn: Listener,
+  ): () => void {
     if (!this.listeners.has(type)) this.listeners.set(type, new Set());
     this.listeners.get(type)!.add(fn);
     return () => this.listeners.get(type)!.delete(fn);

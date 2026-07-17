@@ -89,9 +89,7 @@ export function resolveVehicle(loadout: LoadoutInput, catalog: ModuleDefinition[
   // módulo aparte. El motor, en cambio, la busca en modulesOf("ammo") (combat.ammoFor). Aquí
   // se materializa: cada arma con `ammo` produce un módulo de categoría `ammo` en la bahía
   // de munición del chasis (ammo_main en los chasis del MVP), justo detrás de su arma.
-  const ammoSlotIds = (chassisDef.slots ?? [])
-    .filter((s) => s.accepts.includes("ammo"))
-    .map((s) => s.id);
+  const ammoSlotIds = (chassisDef.slots ?? []).filter((s) => s.accepts.includes("ammo")).map((s) => s.id);
   // Si el loadout ya lista una munición como módulo propio (forma heredada, p. ej. los
   // bancos de balance), se respeta ese módulo explícito y NO se duplica.
   const explicitModuleIds = new Set(loadout.modules.map((m) => m.moduleId));
@@ -134,9 +132,6 @@ export interface ResolvedVehicle {
   catalogVersion: string;
 }
 
-export function resolveVehicleTraced(
-  loadout: LoadoutInput,
-  catalog: ModuleDefinition[],
-): ResolvedVehicle {
+export function resolveVehicleTraced(loadout: LoadoutInput, catalog: ModuleDefinition[]): ResolvedVehicle {
   return { spec: resolveVehicle(loadout, catalog), catalogVersion: loadout.catalogVersion };
 }

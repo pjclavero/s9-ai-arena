@@ -97,17 +97,36 @@ export async function computeBattleStats(replay: Replay): Promise<BattleStatsRes
     for (const m of p.spec?.modules ?? []) {
       mods.set(m.slot, m.moduleId);
       if (m.category === "weapon" || m.category === "mine") weapons.add(m.slot);
-      perModule[m.slot] = { moduleId: m.moduleId, uses: 0, damageDealt: 0, rejections: 0, efficiency: null, finalState: "operational" };
+      perModule[m.slot] = {
+        moduleId: m.moduleId,
+        uses: 0,
+        damageDealt: 0,
+        rejections: 0,
+        efficiency: null,
+        finalState: "operational",
+      };
     }
     moduleIdBySlot.set(p.id, mods);
     weaponSlots.set(p.id, weapons);
     byVehicle.set(p.id, {
       botId: p.botId,
       team: p.team,
-      damageDealt: 0, damageTaken: 0, shotsFired: 0, shotsHit: 0, accuracy: null,
-      kills: 0, died: false, survivedTicks: 0, flagCaptures: 0, flagsTaken: 0,
-      minesDeployed: 0, minesTriggered: 0, decisionTimeouts: 0, disqualified: false,
-      cpuMs: null, perModule,
+      damageDealt: 0,
+      damageTaken: 0,
+      shotsFired: 0,
+      shotsHit: 0,
+      accuracy: null,
+      kills: 0,
+      died: false,
+      survivedTicks: 0,
+      flagCaptures: 0,
+      flagsTaken: 0,
+      minesDeployed: 0,
+      minesTriggered: 0,
+      decisionTimeouts: 0,
+      disqualified: false,
+      cpuMs: null,
+      perModule,
     });
   }
 
@@ -233,7 +252,14 @@ export async function computeBattleStats(replay: Replay): Promise<BattleStatsRes
   // ---- 5 · Por equipo y por mapa.
   const perTeam: Record<string, TeamBattleStats> = {};
   for (const s of byVehicle.values()) {
-    const t = (perTeam[s.team] ??= { team: s.team, score: replay.result.score[s.team] ?? 0, damageDealt: 0, kills: 0, flagCaptures: 0, survivors: 0 });
+    const t = (perTeam[s.team] ??= {
+      team: s.team,
+      score: replay.result.score[s.team] ?? 0,
+      damageDealt: 0,
+      kills: 0,
+      flagCaptures: 0,
+      survivors: 0,
+    });
     t.damageDealt += s.damageDealt;
     t.kills += s.kills;
     t.flagCaptures += s.flagCaptures;
@@ -277,7 +303,12 @@ export interface StatsJobResult {
  * `dbBattleId` es el uuid de la fila `battles`; los participantes del replay
  * llevan el botId de la plataforma (uuid de `bots`) en producción.
  */
-export async function runStatsJob(db: Db, dir: string, dbBattleId: string, replayBattleId?: string): Promise<StatsJobResult> {
+export async function runStatsJob(
+  db: Db,
+  dir: string,
+  dbBattleId: string,
+  replayBattleId?: string,
+): Promise<StatsJobResult> {
   const loaded = loadStored(dir, replayBattleId ?? dbBattleId);
   if (!loaded.valid || !loaded.replay) {
     throw new Error(`No se puede procesar ${dbBattleId}: ${loaded.reason}`);
@@ -336,8 +367,17 @@ export async function aggregateByBotVersion(db: Db): Promise<BotVersionAggregate
   for (const r of rows) {
     const key = `${r.bot_id}:${r.version}`;
     const a = acc.get(key) ?? {
-      botId: r.bot_id, version: r.version, battles: 0, wins: 0, draws: 0,
-      damageDealt: 0, accuracy: null, survivalRate: 0, shots: 0, hits: 0, survived: 0,
+      botId: r.bot_id,
+      version: r.version,
+      battles: 0,
+      wins: 0,
+      draws: 0,
+      damageDealt: 0,
+      accuracy: null,
+      survivalRate: 0,
+      shots: 0,
+      hits: 0,
+      survived: 0,
     };
     const s = typeof r.stats === "string" ? JSON.parse(r.stats) : r.stats;
     a.battles += 1;
@@ -379,8 +419,14 @@ export function aggregateByModule(statsList: BattleStatsResult[]): ModuleAggrega
       for (const pm of Object.values(bot.perModule)) {
         if (!pm.moduleId) continue;
         const a = acc.get(pm.moduleId) ?? {
-          moduleId: pm.moduleId, battles: 0, uses: 0, damageDealt: 0, rejections: 0,
-          efficiency: null, survivalRate: 0, operational: 0,
+          moduleId: pm.moduleId,
+          battles: 0,
+          uses: 0,
+          damageDealt: 0,
+          rejections: 0,
+          efficiency: null,
+          survivalRate: 0,
+          operational: 0,
         };
         a.battles += 1;
         a.uses += pm.uses;

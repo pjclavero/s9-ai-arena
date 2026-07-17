@@ -23,7 +23,15 @@ describe("T6.2 · la suite de escape está completa y es consistente", () => {
 
   it("cubre los vectores exigidos: internet, escritura, fork, memoria, red, /proc, docker.sock", () => {
     const attacks = manifest.bots.map((b: any) => b.id).join(" ");
-    for (const key of ["internet", "write_outside_tmp", "fork_bomb", "memory", "network_scan", "read_proc", "docker_sock"]) {
+    for (const key of [
+      "internet",
+      "write_outside_tmp",
+      "fork_bomb",
+      "memory",
+      "network_scan",
+      "read_proc",
+      "docker_sock",
+    ]) {
       expect(attacks).toContain(key);
     }
   });

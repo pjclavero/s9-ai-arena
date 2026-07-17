@@ -75,9 +75,7 @@ describe("T7.2 registro y login", () => {
 
 describe("T7.2 revocación y expiración (DoD: rechazado en todos los endpoints)", () => {
   it("un token revocado es rechazado en todos los endpoints autenticados", async () => {
-    const login = await request(app)
-      .post("/auth/login")
-      .send({ email: DEV_USERS.admin, password: DEV_PASSWORD });
+    const login = await request(app).post("/auth/login").send({ email: DEV_USERS.admin, password: DEV_PASSWORD });
     const token = login.body.accessToken;
 
     const sessions = await request(app).get("/auth/sessions").set("Authorization", `Bearer ${token}`);
@@ -100,12 +98,13 @@ describe("T7.2 revocación y expiración (DoD: rechazado en todos los endpoints)
   });
 
   it("una sesión expirada rechaza el token y el refresh", async () => {
-    const login = await request(app)
-      .post("/auth/login")
-      .send({ email: DEV_USERS.moderator, password: DEV_PASSWORD });
+    const login = await request(app).post("/auth/login").send({ email: DEV_USERS.moderator, password: DEV_PASSWORD });
     // Expira la sesión por detrás
     const user = await h.db("users").where({ email: DEV_USERS.moderator }).first();
-    await h.db("sessions").where({ user_id: user.id }).update({ expires_at: new Date(Date.now() - 1000) });
+    await h
+      .db("sessions")
+      .where({ user_id: user.id })
+      .update({ expires_at: new Date(Date.now() - 1000) });
 
     const me = await request(app).get("/users/me").set("Authorization", `Bearer ${login.body.accessToken}`);
     expect(me.status).toBe(401);
@@ -114,9 +113,7 @@ describe("T7.2 revocación y expiración (DoD: rechazado en todos los endpoints)
   });
 
   it("el refresh rota: el refresh token anterior deja de valer", async () => {
-    const login = await request(app)
-      .post("/auth/login")
-      .send({ email: DEV_USERS.organizer, password: DEV_PASSWORD });
+    const login = await request(app).post("/auth/login").send({ email: DEV_USERS.organizer, password: DEV_PASSWORD });
     const r1 = await request(app).post("/auth/refresh").send({ refreshToken: login.body.refreshToken });
     expect(r1.status).toBe(200);
     const replay = await request(app).post("/auth/refresh").send({ refreshToken: login.body.refreshToken });
@@ -129,9 +126,7 @@ describe("T7.2 revocación y expiración (DoD: rechazado en todos los endpoints)
 describe("T7.2 fuerza bruta (DoD: 20 fallos ⇒ bloqueo temporal y registro)", () => {
   it("bloquea tras 20 intentos fallidos y lo registra en audit_log", async () => {
     const email = "bruteforce@test.local";
-    await request(app)
-      .post("/auth/register")
-      .send({ email, password: "password-legitima-1", displayName: "BF" });
+    await request(app).post("/auth/register").send({ email, password: "password-legitima-1", displayName: "BF" });
 
     for (let i = 0; i < 20; i++) {
       const r = await request(app).post("/auth/login").send({ email, password: "incorrecta-xxxxx" });

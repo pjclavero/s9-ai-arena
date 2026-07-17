@@ -119,26 +119,38 @@ export class DockerContainerRunner implements ContainerRunner {
     const l = spec.limits;
     return [
       "run",
-      "--name", name,
+      "--name",
+      name,
       "--detach",
       // no root, sin privilegios nuevos
-      "--user", "10001:10001",
-      "--security-opt", "no-new-privileges",
+      "--user",
+      "10001:10001",
+      "--security-opt",
+      "no-new-privileges",
       // todas las capabilities eliminadas
-      "--cap-drop", "ALL",
+      "--cap-drop",
+      "ALL",
       // seccomp restrictivo (NO unconfined)
-      "--security-opt", `seccomp=${spec.seccompProfilePath}`,
+      "--security-opt",
+      `seccomp=${spec.seccompProfilePath}`,
       // filesystem de solo lectura + /tmp limitado por tamaño
       "--read-only",
-      "--tmpfs", `/tmp:rw,noexec,nosuid,nodev,size=${l.tmpfsBytes}`,
+      "--tmpfs",
+      `/tmp:rw,noexec,nosuid,nodev,size=${l.tmpfsBytes}`,
       // red SOLO arena, sin DNS externo, sin Internet
-      "--network", spec.network,
-      "--dns", "0.0.0.0",
+      "--network",
+      spec.network,
+      "--dns",
+      "0.0.0.0",
       // límites estrictos de CPU, memoria y PIDs
-      "--cpus", String(l.cpus),
-      "--memory", String(l.memoryBytes),
-      "--memory-swap", String(l.memoryBytes), // sin swap extra
-      "--pids-limit", String(l.pids),
+      "--cpus",
+      String(l.cpus),
+      "--memory",
+      String(l.memoryBytes),
+      "--memory-swap",
+      String(l.memoryBytes), // sin swap extra
+      "--pids-limit",
+      String(l.pids),
       // sin socket de Docker, sin secretos montados: simplemente NO se añade ningún -v
       // variables de entorno (sin secretos)
       ...Object.entries(spec.env).flatMap(([k, val]) => ["--env", `${k}=${val}`]),

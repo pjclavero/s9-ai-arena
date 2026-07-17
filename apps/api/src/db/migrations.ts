@@ -20,7 +20,16 @@ export interface Migration {
 export const ROLES = ["visitor", "user", "developer", "team_captain", "organizer", "moderator", "admin"] as const;
 export type RoleName = (typeof ROLES)[number];
 
-export const BOT_STATES = ["draft", "validating", "rejected", "validated", "published", "frozen", "suspended", "retired"] as const;
+export const BOT_STATES = [
+  "draft",
+  "validating",
+  "rejected",
+  "validated",
+  "published",
+  "frozen",
+  "suspended",
+  "retired",
+] as const;
 
 const m001_identity: Migration = {
   name: "001_identity",
@@ -569,7 +578,16 @@ const m008_e9_competition: Migration = {
   },
 };
 
-export const MIGRATIONS: Migration[] = [m001_identity, m002_content, m003_bots, m004_competition, m005_results, m006_operations, m007_e9_queue, m008_e9_competition];
+export const MIGRATIONS: Migration[] = [
+  m001_identity,
+  m002_content,
+  m003_bots,
+  m004_competition,
+  m005_results,
+  m006_operations,
+  m007_e9_queue,
+  m008_e9_competition,
+];
 
 class ProgrammaticMigrationSource {
   getMigrations() {

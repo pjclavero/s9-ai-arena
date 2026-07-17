@@ -21,7 +21,10 @@ import { BOT_STATES } from "./db/migrations.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const GOOD_LOADOUT = JSON.parse(
-  readFileSync(join(__dirname, "..", "..", "..", "packages", "module-catalog", "examples", "loadout-medium-gunner.json"), "utf8"),
+  readFileSync(
+    join(__dirname, "..", "..", "..", "packages", "module-catalog", "examples", "loadout-medium-gunner.json"),
+    "utf8",
+  ),
 );
 
 let h: TestDbHandle;
@@ -125,7 +128,8 @@ describe("T7.3 máquina de estados (cap. 17.1)", () => {
 
     // Toda transición legal queda auditada
     for (const action of ["submit", "validated", "publish", "retire"]) {
-      const row = await h.db("audit_log")
+      const row = await h
+        .db("audit_log")
         .where({ target: `bot:${bot.id}@${version}` })
         .whereLike("action", `%${action}%`)
         .first();
@@ -203,7 +207,10 @@ describe("T7.3 inmutabilidad de published/frozen (DoD: ni el admin)", () => {
       artifactHash: "b".repeat(64),
     });
     await request(app).post(`/bots/${bot.id}/versions/${version}/actions/submit`).set(auth(dev));
-    await request(app).post(`/bots/${bot.id}/versions/${version}/actions/publish`).set(auth(dev)).send({ codePublic: true });
+    await request(app)
+      .post(`/bots/${bot.id}/versions/${version}/actions/publish`)
+      .set(auth(dev))
+      .send({ codePublic: true });
 
     // El dueño choca con la máquina de estados (409, cap. 17.1)
     const submit = await request(app).post(`/bots/${bot.id}/versions/${version}/actions/submit`).set(auth(dev));
@@ -256,7 +263,8 @@ describe("T7.3 loadouts (cap. 17.2)", () => {
     });
     await request(app).post(`/bots/${bot.id}/versions/${version}/actions/submit`).set(auth(dev));
     await request(app).post(`/bots/${bot.id}/versions/${version}/actions/publish`).set(auth(dev)).send({});
-    const [t] = await h.db("tournaments")
+    const [t] = await h
+      .db("tournaments")
       .insert({ name: "copa-17-2", format: "round_robin", mode: "deathmatch", ruleset_id: DEFAULT_RULESET_ID })
       .returning("*");
     await h.db("entries").insert({
@@ -334,7 +342,8 @@ describe("T7.3 loadouts (cap. 17.2)", () => {
 
   it("las referencias del loadout impiden borrar módulos del catálogo (integridad T7.1)", async () => {
     await expect(
-      h.db("module_definitions")
+      h
+        .db("module_definitions")
         .where({ catalog_version: "mvp@1", module_id: "weapon.cannon", module_version: 1 })
         .delete(),
     ).rejects.toThrow(/foreign key|viola/i);
@@ -359,7 +368,10 @@ describe("T7.3 autorización de objeto (código y logs privados)", () => {
       artifactHash: "d".repeat(64),
     });
     await request(app).post(`/bots/${bot.id}/versions/${version}/actions/submit`).set(auth(dev));
-    await request(app).post(`/bots/${bot.id}/versions/${version}/actions/publish`).set(auth(dev)).send({ codePublic: true });
+    await request(app)
+      .post(`/bots/${bot.id}/versions/${version}/actions/publish`)
+      .set(auth(dev))
+      .send({ codePublic: true });
     const nowPublic = await request(app).get(`/bots/${bot.id}/versions/${version}/source`).set(auth(other));
     expect(nowPublic.status).toBe(200);
   });
@@ -387,9 +399,7 @@ describe("T7.3 autorización de objeto (código y logs privados)", () => {
     const otherDevLogin = await request(app)
       .post("/auth/login")
       .send({ email: "otrodev@test.local", password: "password-otrodev-1" });
-    const strangerBuild = await request(app)
-      .get(`/builds/${buildId}`)
-      .set(auth(otherDevLogin.body.accessToken));
+    const strangerBuild = await request(app).get(`/builds/${buildId}`).set(auth(otherDevLogin.body.accessToken));
     expect(strangerBuild.status).toBe(404);
 
     // El dueño ve logUrl; un moderador también; la respuesta al dueño la incluye

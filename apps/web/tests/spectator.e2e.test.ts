@@ -55,7 +55,8 @@ async function makeBattle(seed: string, opts: { hunters?: boolean; timeLimitTick
 }
 
 async function insertLiveBattle(id: string): Promise<string> {
-  const [row] = await h.db("battles")
+  const [row] = await h
+    .db("battles")
     .insert({
       status: "running",
       official: false,
@@ -182,7 +183,9 @@ describe("T8.2 canal de espectador (ticket E7 → gateway E8 → motor E2)", () 
     expect(await new Promise<number>((r) => basura.once("close", (c2) => r(c2)))).toBe(4401);
 
     const { ticket } = await ticketVia(app, otherId)(); // ticket legítimo… de OTRA batalla
-    const cruzado = new WsWebSocket(`ws://127.0.0.1:${gateway.port}/spectate/${dbId}?ticket=${encodeURIComponent(ticket)}`);
+    const cruzado = new WsWebSocket(
+      `ws://127.0.0.1:${gateway.port}/spectate/${dbId}?ticket=${encodeURIComponent(ticket)}`,
+    );
     expect(await new Promise<number>((r) => cruzado.once("close", (c2) => r(c2)))).toBe(4403);
   });
 
@@ -204,7 +207,18 @@ describe("T8.2 canal de espectador (ticket E7 → gateway E8 → motor E2)", () 
     expect(parsed.filter((m) => m.type === "snapshot").length).toBeGreaterThan(10);
 
     // 1) Nada del vocabulario privado del motor en TODO el stream (bytes reales).
-    const forbidden = ["sensors", "lidar", "radar", "acoustic", "observation", "radioInbox", '"mines"', "decide", "battleToken", "energyEU"];
+    const forbidden = [
+      "sensors",
+      "lidar",
+      "radar",
+      "acoustic",
+      "observation",
+      "radioInbox",
+      '"mines"',
+      "decide",
+      "battleToken",
+      "energyEU",
+    ];
     for (const line of raw) {
       for (const word of forbidden) {
         expect(line, `fuga de "${word}" en el stream de espectador`).not.toContain(word);
@@ -216,9 +230,18 @@ describe("T8.2 canal de espectador (ticket E7 → gateway E8 → motor E2)", () 
     for (const m of parsed.filter((x) => x.type === "snapshot")) {
       expect(Object.keys(m.snapshot).sort()).toEqual(["objectives", "projectiles", "score", "tick", "vehicles"]);
       for (const v of m.snapshot.vehicles) {
-        expect(Object.keys(v).sort()).toEqual(
-          ["alive", "carryingFlag", "heading", "hullHp", "hullHpMax", "id", "modules", "position", "team", "turretHeading"],
-        );
+        expect(Object.keys(v).sort()).toEqual([
+          "alive",
+          "carryingFlag",
+          "heading",
+          "hullHp",
+          "hullHpMax",
+          "id",
+          "modules",
+          "position",
+          "team",
+          "turretHeading",
+        ]);
       }
     }
   }, 90000);

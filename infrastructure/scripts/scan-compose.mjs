@@ -39,7 +39,9 @@ export function scanCompose(source, name = "compose") {
       const src = typeof v === "string" ? v : (v?.source ?? "");
       if (String(src).includes("docker.sock")) {
         if (!ALLOW[svc]?.dockerSock) {
-          findings.push(`${name}: el servicio "${svc}" monta docker.sock sin ser una excepción documentada (solo bot-manager)`);
+          findings.push(
+            `${name}: el servicio "${svc}" monta docker.sock sin ser una excepción documentada (solo bot-manager)`,
+          );
         }
       }
     }
@@ -63,7 +65,8 @@ if (files.length > 0) {
       console.error("FALLO ·", msg);
       bad = true;
     }
-    if (findings.length === 0) console.log(`OK · ${f}: sin privilegiados, sin docker.sock no autorizado, puertos solo en gateway`);
+    if (findings.length === 0)
+      console.log(`OK · ${f}: sin privilegiados, sin docker.sock no autorizado, puertos solo en gateway`);
   }
   process.exit(bad ? 1 : 0);
 }

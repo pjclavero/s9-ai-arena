@@ -127,7 +127,7 @@ export class BroadcastDirector {
     try {
       const screen = await this.computeScreen();
       this.currentBattleId = screen.kind === "live" ? screen.battle.id : null;
-      const key = `${screen.kind}:${screen.kind === "live" ? screen.battle.id : (screen as any).nextBattle?.id ?? ""}`;
+      const key = `${screen.kind}:${screen.kind === "live" ? screen.battle.id : ((screen as any).nextBattle?.id ?? "")}`;
       if (key !== this.lastKey) {
         this.lastKey = key;
         this.opts.onScreen(screen);

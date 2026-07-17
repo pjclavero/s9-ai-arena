@@ -12,7 +12,9 @@ import type { ModuleDefinition } from "../../../../packages/module-catalog/types
 export class CatalogImmutableError extends Error {}
 
 function contentHash(def: ModuleDefinition): string {
-  return createHash("sha256").update(JSON.stringify(def, Object.keys(def as object).sort())).digest("hex");
+  return createHash("sha256")
+    .update(JSON.stringify(def, Object.keys(def as object).sort()))
+    .digest("hex");
 }
 
 export interface ImportResult {

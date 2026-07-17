@@ -367,7 +367,13 @@ export function generateSwissRound(standings: SwissStanding[], played: ReadonlyS
       const rival = rest[i];
       if (!allowRepeats && played.has(pairKey(first.id, rival.id))) continue;
       result.push([first.id, rival.id]);
-      if (backtrack(rest.filter((_, j) => j !== i), allowRepeats)) return true;
+      if (
+        backtrack(
+          rest.filter((_, j) => j !== i),
+          allowRepeats,
+        )
+      )
+        return true;
       result.pop();
     }
     return false;
@@ -414,12 +420,7 @@ export function generateTeams(teams: TeamEntry[]): Pairing[] {
 // -------------------------------------------------------------- utilidades
 
 export type TournamentFormat =
-  | "league"
-  | "round_robin"
-  | "single_elimination"
-  | "double_elimination"
-  | "swiss"
-  | "teams";
+  "league" | "round_robin" | "single_elimination" | "double_elimination" | "swiss" | "teams";
 
 /**
  * Calendario inicial de un formato individual. El suizo solo genera su
@@ -438,6 +439,10 @@ export function generateInitialSchedule(format: Exclude<TournamentFormat, "teams
     case "double_elimination":
       return generateDoubleElimination(entrants);
     case "swiss":
-      return generateSwissRound(entrants.map((e) => ({ id: e.id, points: 0, seed: e.seed })), new Set(), 1);
+      return generateSwissRound(
+        entrants.map((e) => ({ id: e.id, points: 0, seed: e.seed })),
+        new Set(),
+        1,
+      );
   }
 }

@@ -16,7 +16,14 @@ export interface StreamStats {
 
 export class ProgressParser {
   private buffer = "";
-  private stats: StreamStats = { frames: 0, fps: 0, bitrateKbps: 0, outTimeSeconds: 0, droppedFrames: 0, reporting: false };
+  private stats: StreamStats = {
+    frames: 0,
+    fps: 0,
+    bitrateKbps: 0,
+    outTimeSeconds: 0,
+    droppedFrames: 0,
+    reporting: false,
+  };
   private pending: Record<string, string> = {};
 
   /** Alimenta bytes del stdout de ffmpeg (troceados como lleguen). */

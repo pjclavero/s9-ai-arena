@@ -39,8 +39,22 @@ function symmetricObjectives(widthM: number, heightM: number) {
       { objectId: "sp_blue_2", team: "blue", position: { x: widthM - 10, y: midY + 6 }, heading: Math.PI },
     ],
     bases: [
-      { objectId: "base_red", team: "red", shape: "rect" as const, position: { x: 8, y: midY }, widthM: 8, heightM: 12 },
-      { objectId: "base_blue", team: "blue", shape: "rect" as const, position: { x: widthM - 8, y: midY }, widthM: 8, heightM: 12 },
+      {
+        objectId: "base_red",
+        team: "red",
+        shape: "rect" as const,
+        position: { x: 8, y: midY },
+        widthM: 8,
+        heightM: 12,
+      },
+      {
+        objectId: "base_blue",
+        team: "blue",
+        shape: "rect" as const,
+        position: { x: widthM - 8, y: midY },
+        widthM: 8,
+        heightM: 12,
+      },
     ],
     flags: [
       { objectId: "flag_red", team: "red", position: { x: 8, y: midY } },
@@ -50,7 +64,9 @@ function symmetricObjectives(widthM: number, heightM: number) {
 }
 
 export function sampleValidMap(overrides: Partial<MapWithoutChecksum> = {}): InternalMap {
-  const widthM = 120, heightM = 80, cx = 60;
+  const widthM = 120,
+    heightM = 80,
+    cx = 60;
   const armLen = 24;
   const obj = symmetricObjectives(widthM, heightM);
   return withChecksum({
@@ -80,7 +96,9 @@ export function sampleValidMap(overrides: Partial<MapWithoutChecksum> = {}): Int
 }
 
 export function brokenNoRouteMap(): InternalMap {
-  const widthM = 120, heightM = 80, cx = 60;
+  const widthM = 120,
+    heightM = 80,
+    cx = 60;
   const obj = symmetricObjectives(widthM, heightM);
   return withChecksum({
     schemaVersion: 1,

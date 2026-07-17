@@ -156,7 +156,14 @@ const broken: Broken[] = [
     expected: "geometry",
     // Destructible que se sale del borde derecho del mapa (maxX = 121 > 120).
     map: mutate((m) => {
-      m.layers.destructibles!.push({ objectId: "oob", material: "crate", shape: "rect", position: { x: 119, y: 40 }, widthM: 4, heightM: 2 });
+      m.layers.destructibles!.push({
+        objectId: "oob",
+        material: "crate",
+        shape: "rect",
+        position: { x: 119, y: 40 },
+        widthM: 4,
+        heightM: 2,
+      });
     }),
   },
   {
@@ -226,7 +233,9 @@ beforeAll(() => {
 
 // --------------------------------------------------------------------------- tests
 function errorChecks(map: InternalMap): string[] {
-  return validateMap(map).checks.filter((c) => c.severity === "error").map((c) => c.check);
+  return validateMap(map)
+    .checks.filter((c) => c.severity === "error")
+    .map((c) => c.check);
 }
 
 describe("T4.2 · corpus de mapas rotos", () => {

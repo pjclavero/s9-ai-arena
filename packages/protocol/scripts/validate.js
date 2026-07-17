@@ -41,7 +41,10 @@ function main() {
 
   if (arg) {
     const files = fs.statSync(arg).isDirectory()
-      ? fs.readdirSync(arg).filter((f) => f.endsWith(".json")).map((f) => path.join(arg, f))
+      ? fs
+          .readdirSync(arg)
+          .filter((f) => f.endsWith(".json"))
+          .map((f) => path.join(arg, f))
       : [arg];
     let bad = 0;
     for (const f of files) {

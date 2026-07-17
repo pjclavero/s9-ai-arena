@@ -23,12 +23,7 @@
 import type { Knex } from "knex";
 import { classifyFailure, type FailureCode } from "./errors.js";
 
-export type JobKind =
-  | "generate_schedule"
-  | "run_battle"
-  | "process_result"
-  | "update_standings"
-  | "tournament_dry_run";
+export type JobKind = "generate_schedule" | "run_battle" | "process_result" | "update_standings" | "tournament_dry_run";
 
 export const JOB_KINDS: JobKind[] = [
   "generate_schedule",
@@ -163,7 +158,9 @@ export async function failJobInfrastructure(
   opts: { backoffMs?: number; now?: Date } = {},
 ): Promise<FailResult> {
   if (classifyFailure(code) === "sporting") {
-    throw new Error(`failJobInfrastructure llamado con código deportivo '${code}': una derrota deportiva no se reintenta`);
+    throw new Error(
+      `failJobInfrastructure llamado con código deportivo '${code}': una derrota deportiva no se reintenta`,
+    );
   }
   const now = opts.now ?? new Date();
   const parked = job.attempts >= job.max_attempts;

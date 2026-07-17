@@ -28,7 +28,10 @@ export function standingsRoutes(db: Db): Router {
    */
   defineOperation(router, "getBotRatingHistory", async (req, res) => {
     const botId = pathParam(req, "botId");
-    const bot = await db("bots").where({ id: botId }).first().catch(() => null);
+    const bot = await db("bots")
+      .where({ id: botId })
+      .first()
+      .catch(() => null);
     if (!bot) throw notFound();
     const seasonId = typeof req.query.seasonId === "string" ? req.query.seasonId : "season-1";
     const mode = typeof req.query.mode === "string" ? req.query.mode : "deathmatch";

@@ -15,12 +15,7 @@
  */
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { BroadcastConfig } from "../broadcast/config.js";
-import {
-  BroadcastDirector,
-  createPublicApi,
-  type BattleSummary,
-  type BroadcastScreen,
-} from "../broadcast/director.js";
+import { BroadcastDirector, createPublicApi, type BattleSummary, type BroadcastScreen } from "../broadcast/director.js";
 import { SpectatorClient } from "../viewer/spectator-client.js";
 import type { ViewerScene } from "../viewer/PhaserViewer.js";
 import type { FeedItem, VehicleOverlay } from "../viewer/overlay.js";
@@ -109,7 +104,9 @@ function BroadcastHeader({ config, screen }: { config: BroadcastConfig; screen: 
 
 function CenterCard({ accent, title, subtitle }: { accent: string; title: string; subtitle: string }) {
   return (
-    <section style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+    <section
+      style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}
+    >
       <h1 style={{ fontSize: 64, color: accent, margin: 0 }}>{title}</h1>
       <p style={{ fontSize: 32, opacity: 0.85 }}>{subtitle}</p>
     </section>
@@ -137,7 +134,10 @@ function shortId(id: string): string {
 
 function WaitingScreen({ config, next }: { config: BroadcastConfig; next: BattleSummary | null }) {
   return (
-    <section data-testid="broadcast-waiting" style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+    <section
+      data-testid="broadcast-waiting"
+      style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}
+    >
       <h1 style={{ fontSize: 64, color: config.branding.accentColor, margin: 0 }}>{config.branding.eventName}</h1>
       <p style={{ fontSize: 36 }}>{next ? "La batalla empieza en breve" : "Esperando el inicio del torneo…"}</p>
       {next && (
@@ -149,9 +149,27 @@ function WaitingScreen({ config, next }: { config: BroadcastConfig; next: Battle
   );
 }
 
-function IntermissionScreen({ config, last, next }: { config: BroadcastConfig; last: BattleSummary; next: BattleSummary | null }) {
+function IntermissionScreen({
+  config,
+  last,
+  next,
+}: {
+  config: BroadcastConfig;
+  last: BattleSummary;
+  next: BattleSummary | null;
+}) {
   return (
-    <section data-testid="broadcast-intermission" style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16 }}>
+    <section
+      data-testid="broadcast-intermission"
+      style={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 16,
+      }}
+    >
       <h2 style={{ fontSize: 44, margin: 0 }}>Resultado</h2>
       <p data-testid="broadcast-last-score" style={{ fontSize: 40, color: config.branding.accentColor }}>
         {scoreLine(last) || "batalla terminada"}
@@ -168,7 +186,10 @@ function IntermissionScreen({ config, last, next }: { config: BroadcastConfig; l
 
 function FinishedScreen({ config, last }: { config: BroadcastConfig; last: BattleSummary | null }) {
   return (
-    <section data-testid="broadcast-finished" style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+    <section
+      data-testid="broadcast-finished"
+      style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}
+    >
       <h1 style={{ fontSize: 56, color: config.branding.accentColor, margin: 0 }}>{config.branding.eventName}</h1>
       <p style={{ fontSize: 36 }}>Torneo terminado. ¡Gracias por vernos!</p>
       {last && (
@@ -278,11 +299,12 @@ function LiveScreen({ config, battle }: { config: BroadcastConfig; battle: Battl
         {(overlay ? [...overlay.vehicles.values()] : []).map((v) => (
           <ParticipantRow key={v.id} v={v} accent={accent} />
         ))}
-        {!overlay && battle.participants.map((p) => (
-          <div key={p.botId}>
-            {shortId(p.botId)} v{p.version} · {p.team}
-          </div>
-        ))}
+        {!overlay &&
+          battle.participants.map((p) => (
+            <div key={p.botId}>
+              {shortId(p.botId)} v{p.version} · {p.team}
+            </div>
+          ))}
       </aside>
 
       {/* Ticker de eventos */}
@@ -300,13 +322,11 @@ function LiveScreen({ config, battle }: { config: BroadcastConfig; battle: Battl
           overflow: "hidden",
         }}
       >
-        {(overlay?.feed ?? [])
-          .slice(-TICKER_ITEMS)
-          .map((f: FeedItem, i: number) => (
-            <span key={`${f.tick}-${i}`} style={{ marginRight: 48 }}>
-              <span style={{ color: accent }}>[{f.tick}]</span> {f.text}
-            </span>
-          ))}
+        {(overlay?.feed ?? []).slice(-TICKER_ITEMS).map((f: FeedItem, i: number) => (
+          <span key={`${f.tick}-${i}`} style={{ marginRight: 48 }}>
+            <span style={{ color: accent }}>[{f.tick}]</span> {f.text}
+          </span>
+        ))}
         <span style={{ opacity: 0.6 }}>tick {tick}</span>
       </footer>
     </section>

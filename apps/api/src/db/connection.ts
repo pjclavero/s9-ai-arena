@@ -30,9 +30,7 @@ function dsnFromEnv(): string {
 export function createDb(databaseUrl: string = process.env.DATABASE_URL ?? ""): Db {
   const url = databaseUrl || dsnFromEnv();
   if (!url) {
-    throw new Error(
-      "Sin conexión a PostgreSQL: define DATABASE_URL, o PGHOST + PGPASSWORD_FILE (cap. 6.2)",
-    );
+    throw new Error("Sin conexión a PostgreSQL: define DATABASE_URL, o PGHOST + PGPASSWORD_FILE (cap. 6.2)");
   }
   return knex({
     client: "pg",

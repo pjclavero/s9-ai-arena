@@ -22,13 +22,43 @@ import type { Runtime, SourceFile } from "./types.js";
 
 // Módulos de la stdlib que NO requieren declaración de dependencia.
 const PYTHON_STDLIB = new Set([
-  "sys", "os", "math", "json", "random", "typing", "collections", "itertools",
-  "functools", "dataclasses", "abc", "time", "re", "enum", "heapq", "bisect",
-  "copy", "struct", "array", "statistics", "decimal", "fractions", "queue",
+  "sys",
+  "os",
+  "math",
+  "json",
+  "random",
+  "typing",
+  "collections",
+  "itertools",
+  "functools",
+  "dataclasses",
+  "abc",
+  "time",
+  "re",
+  "enum",
+  "heapq",
+  "bisect",
+  "copy",
+  "struct",
+  "array",
+  "statistics",
+  "decimal",
+  "fractions",
+  "queue",
 ]);
 const NODE_BUILTINS = new Set([
-  "assert", "buffer", "events", "path", "querystring", "string_decoder",
-  "url", "util", "stream", "timers", "console", "process",
+  "assert",
+  "buffer",
+  "events",
+  "path",
+  "querystring",
+  "string_decoder",
+  "url",
+  "util",
+  "stream",
+  "timers",
+  "console",
+  "process",
 ]);
 
 // Builtins peligrosos para un bot sandboxeado (red, procesos, FS crudo): la lista es
@@ -157,7 +187,12 @@ export function analyze(runtime: Runtime, files: SourceFile[], config: PipelineC
   const dangerousImports: string[] = [];
   const disallowedImports: string[] = [];
   const localFileStems = new Set(
-    files.map((f) => f.path.replace(/\.(py|m?js|ts)$/, "").split("/").pop()!),
+    files.map((f) =>
+      f.path
+        .replace(/\.(py|m?js|ts)$/, "")
+        .split("/")
+        .pop()!,
+    ),
   );
   for (const mod of rawImports) {
     if (mod.startsWith(".") || mod.startsWith("/")) continue; // import local relativo

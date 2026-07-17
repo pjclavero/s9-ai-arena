@@ -66,20 +66,26 @@ export const DEFAULT_PYTHON_ALLOWLIST = new Set([
 ]);
 
 /** Allowlist Node del MVP (ver runtimes/node/ALLOWED-PACKAGES.md). */
-export const DEFAULT_NODE_ALLOWLIST = new Set([
-  "@arena/sdk",
-  "ws",
-]);
+export const DEFAULT_NODE_ALLOWLIST = new Set(["@arena/sdk", "ws"]);
 
 /** Builtins peligrosos de la stdlib de Python: red, procesos, FFI (H1, issue #5). */
-export const DEFAULT_PYTHON_DANGEROUS = new Set([
-  "socket", "subprocess", "ctypes", "multiprocessing", "asyncio",
-]);
+export const DEFAULT_PYTHON_DANGEROUS = new Set(["socket", "subprocess", "ctypes", "multiprocessing", "asyncio"]);
 
 /** Builtins peligrosos de Node: red, procesos, FS crudo (H1, issue #5). */
 export const DEFAULT_NODE_DANGEROUS = new Set([
-  "child_process", "net", "http", "https", "dgram", "cluster",
-  "worker_threads", "fs", "dns", "tls", "vm", "os", "crypto",
+  "child_process",
+  "net",
+  "http",
+  "https",
+  "dgram",
+  "cluster",
+  "worker_threads",
+  "fs",
+  "dns",
+  "tls",
+  "vm",
+  "os",
+  "crypto",
 ]);
 
 export const DEFAULT_CONFIG: PipelineConfig = {

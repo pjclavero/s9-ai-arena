@@ -64,7 +64,10 @@ describe("T6.1/T6.3 · análisis estático y dependencias", () => {
     const files = pyGoodFiles();
     const bot = files.find((f) => f.path === "src/bot.py")!;
     bot.content = "import socket\nimport subprocess\n" + bot.content;
-    const cfg = { ...DEFAULT_CONFIG, dangerousBuiltins: { ...DEFAULT_CONFIG.dangerousBuiltins, mode: "audit" as const } };
+    const cfg = {
+      ...DEFAULT_CONFIG,
+      dangerousBuiltins: { ...DEFAULT_CONFIG.dangerousBuiltins, mode: "audit" as const },
+    };
     const res = analyze("python", files, cfg);
     expect(res.dangerousImports).toEqual(expect.arrayContaining(["socket", "subprocess"]));
     expect(res.ok).toBe(true);

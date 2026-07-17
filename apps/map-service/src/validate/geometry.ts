@@ -25,20 +25,26 @@ export function checkGeometry(map: InternalMap): Check[] {
   // 1) Coherencia del grid de terreno.
   const expected = ground.cols * ground.rows;
   if (ground.data.length !== expected) {
-    col.error(`ground.data tiene ${ground.data.length} celdas pero cols*rows = ${ground.cols}*${ground.rows} = ${expected}`);
+    col.error(
+      `ground.data tiene ${ground.data.length} celdas pero cols*rows = ${ground.cols}*${ground.rows} = ${expected}`,
+    );
   }
 
   // 2) Cota de destructibles (mejora E4.M: protege el presupuesto de tick del motor). Es
   //    una restricción estática de recuento, de ahí que viva en la comprobación geométrica.
   if (map.meta.maxDestructibles !== undefined && destructibles.length > map.meta.maxDestructibles) {
-    col.error(`hay ${destructibles.length} destructibles, por encima de meta.maxDestructibles = ${map.meta.maxDestructibles}`);
+    col.error(
+      `hay ${destructibles.length} destructibles, por encima de meta.maxDestructibles = ${map.meta.maxDestructibles}`,
+    );
   }
 
   // 3) Todo dentro de los límites del mapa. Para muros/destructibles compruebo su caja.
   for (let i = 0; i < walls.length; i++) {
     const b = aabb(walls[i]);
     if (b.minX < 0 || b.minY < 0 || b.maxX > map.widthM || b.maxY > map.heightM) {
-      col.error(`el muro #${i} se sale de los límites del mapa (${b.minX.toFixed(1)},${b.minY.toFixed(1)})-(${b.maxX.toFixed(1)},${b.maxY.toFixed(1)})`);
+      col.error(
+        `el muro #${i} se sale de los límites del mapa (${b.minX.toFixed(1)},${b.minY.toFixed(1)})-(${b.maxX.toFixed(1)},${b.maxY.toFixed(1)})`,
+      );
     }
   }
   for (const d of destructibles) {
@@ -60,15 +66,18 @@ export function checkGeometry(map: InternalMap): Check[] {
       if (pointInShape(s.position, walls[i])) col.error(`el spawn "${s.objectId}" está dentro del muro #${i}`);
     }
     for (const d of destructibles) {
-      if (pointInShape(s.position, d)) col.error(`el spawn "${s.objectId}" está dentro del destructible "${d.objectId}"`);
+      if (pointInShape(s.position, d))
+        col.error(`el spawn "${s.objectId}" está dentro del destructible "${d.objectId}"`);
     }
   }
   for (const f of map.layers.flags ?? []) {
     for (let i = 0; i < walls.length; i++) {
-      if (pointInShape(f.position, walls[i])) col.error(`la bandera "${f.objectId}" está dentro del muro #${i} (sería inalcanzable)`);
+      if (pointInShape(f.position, walls[i]))
+        col.error(`la bandera "${f.objectId}" está dentro del muro #${i} (sería inalcanzable)`);
     }
     for (const d of destructibles) {
-      if (pointInShape(f.position, d)) col.error(`la bandera "${f.objectId}" está dentro del destructible "${d.objectId}"`);
+      if (pointInShape(f.position, d))
+        col.error(`la bandera "${f.objectId}" está dentro del destructible "${d.objectId}"`);
     }
   }
 

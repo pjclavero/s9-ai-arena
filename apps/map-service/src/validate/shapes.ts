@@ -48,8 +48,7 @@ export function pointInPolygon(p: Vec2, pts: Vec2[]): boolean {
   for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
     const a = pts[i];
     const b = pts[j];
-    const intersects =
-      a.y > p.y !== b.y > p.y && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x;
+    const intersects = a.y > p.y !== b.y > p.y && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x;
     if (intersects) inside = !inside;
   }
   return inside;

@@ -76,9 +76,7 @@ export async function completeBuild(db: Db, buildId: string, result: BuildResult
         updated_at: trx.fn.now(),
       });
 
-    const version = await trx("bot_versions")
-      .where({ bot_id: build.bot_id, version: build.version })
-      .first();
+    const version = await trx("bot_versions").where({ bot_id: build.bot_id, version: build.version }).first();
     if (version?.state !== "validating") return; // p. ej. suspendida durante el build
 
     if (result.status === "passed") {

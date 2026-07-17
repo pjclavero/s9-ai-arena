@@ -27,10 +27,7 @@ export {
   CHASSIS_COLLISION_RADIUS_M,
 } from "./navigation.js";
 export { MIN_CORRIDOR_WIDTH_M, MIN_SPAWN_OPEN_RADIUS_M } from "./playability.js";
-export {
-  BALANCE_DISTANCE_TOLERANCE,
-  BALANCE_COVERAGE_TOLERANCE,
-} from "./balance.js";
+export { BALANCE_DISTANCE_TOLERANCE, BALANCE_COVERAGE_TOLERANCE } from "./balance.js";
 
 /**
  * Ejecuta las seis comprobaciones en orden fijo y concatena sus hallazgos. El orden es

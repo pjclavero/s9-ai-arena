@@ -75,17 +75,14 @@ describe("T9.2 · torneo eliminatorio de 8 bots de principio a fin", () => {
   let tournamentId: string;
 
   it("se crea, se inscriben 8 bots y el cierre congela versiones (E7/E6)", async () => {
-    const t = await request(app)
-      .post("/tournaments")
-      .set("Authorization", `Bearer ${organizer}`)
-      .send({
-        name: "copa-e2e",
-        format: "single_elimination",
-        mode: "deathmatch",
-        rulesetId: DEFAULT_RULESET_ID,
-        budgetCredits: 900, // presupuesto POR TORNEO (ADR-000/D7)
-        roundsPerPairing: 1,
-      });
+    const t = await request(app).post("/tournaments").set("Authorization", `Bearer ${organizer}`).send({
+      name: "copa-e2e",
+      format: "single_elimination",
+      mode: "deathmatch",
+      rulesetId: DEFAULT_RULESET_ID,
+      budgetCredits: 900, // presupuesto POR TORNEO (ADR-000/D7)
+      roundsPerPairing: 1,
+    });
     expect(t.status).toBe(201);
     tournamentId = t.body.id;
 

@@ -47,8 +47,6 @@ describe("scan-compose (cap. 28)", () => {
     // exit 0
     execFileSync(process.execPath, [SCANNER, REAL_COMPOSE]);
     // exit != 0
-    expect(() =>
-      execFileSync(process.execPath, [SCANNER, join(here, "fixtures", "bad-privileged.yml")]),
-    ).toThrow();
+    expect(() => execFileSync(process.execPath, [SCANNER, join(here, "fixtures", "bad-privileged.yml")])).toThrow();
   });
 });

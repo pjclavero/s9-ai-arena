@@ -62,7 +62,14 @@ export async function startLocalBattle(opts: {
     return { botId: s.botId, vehicleId: `veh_${i + 1}`, battleToken: token };
   });
 
-  const server = new ProtocolServer({ battle, catalogVersion: CATALOG_VERSION, expected, tickIntervalMs: 3, decisionDeadlineMs: 60, port: 0 });
+  const server = new ProtocolServer({
+    battle,
+    catalogVersion: CATALOG_VERSION,
+    expected,
+    tickIntervalMs: 3,
+    decisionDeadlineMs: 60,
+    port: 0,
+  });
   server.start();
 
   return {

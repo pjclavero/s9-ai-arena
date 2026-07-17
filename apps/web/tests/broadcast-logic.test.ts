@@ -50,7 +50,9 @@ describe("T11.1 configuración por query", () => {
   });
 
   it("el branding viaja por parámetros: sin redeploy (DoD)", () => {
-    const c = parseBroadcastConfig("?tournament=t1&event=Copa%20S9&logo=/img/copa.png&primary=%23112233&accent=%23FFB300");
+    const c = parseBroadcastConfig(
+      "?tournament=t1&event=Copa%20S9&logo=/img/copa.png&primary=%23112233&accent=%23FFB300",
+    );
     expect(c.branding).toEqual({
       eventName: "Copa S9",
       logoUrl: "/img/copa.png",

@@ -64,7 +64,10 @@ export function loadoutToJson(l: Record<string, unknown>) {
 }
 
 export function buildToJson(b: Record<string, unknown>, opts: { includeLogs: boolean }) {
-  const stages = (typeof b.stages === "string" ? JSON.parse(b.stages) : (b.stages as unknown[])) as Record<string, unknown>[];
+  const stages = (typeof b.stages === "string" ? JSON.parse(b.stages) : (b.stages as unknown[])) as Record<
+    string,
+    unknown
+  >[];
   return {
     id: b.id,
     botId: b.bot_id,
@@ -102,7 +105,12 @@ export function botRoutes(db: Db, botManager: BotManagerClient): Router {
   defineOperation(router, "listBots", async (req, res) => {
     const limit = parseLimit(req.query.limit);
     const cursor = decodeCursor(req.query.cursor as string | undefined);
-    let q = db("bots").orderBy([{ column: "created_at", order: "desc" }, { column: "id", order: "desc" }]).limit(200);
+    let q = db("bots")
+      .orderBy([
+        { column: "created_at", order: "desc" },
+        { column: "id", order: "desc" },
+      ])
+      .limit(200);
     if (typeof req.query.ownerId === "string") q = q.where({ owner_id: req.query.ownerId });
     if (cursor) q = q.whereRaw("(created_at, id) < (?, ?)", [cursor.createdAt, cursor.id]);
 
@@ -113,7 +121,9 @@ export function botRoutes(db: Db, botManager: BotManagerClient): Router {
       if (visible.length > limit) break;
     }
     const page = visible.slice(0, limit);
-    const items = await Promise.all(page.map(async (b) => botToJson(b, await latestPublishedVersion(db, b.id as string))));
+    const items = await Promise.all(
+      page.map(async (b) => botToJson(b, await latestPublishedVersion(db, b.id as string))),
+    );
     res.json({
       items,
       nextCursor:
@@ -130,7 +140,10 @@ export function botRoutes(db: Db, botManager: BotManagerClient): Router {
       throw badRequest("visibility inválida");
     }
     if (teamId !== undefined) {
-      const member = await db("team_members").where({ team_id: teamId, user_id: req.auth!.userId }).first().catch(() => null);
+      const member = await db("team_members")
+        .where({ team_id: teamId, user_id: req.auth!.userId })
+        .first()
+        .catch(() => null);
       if (!member) throw forbidden("No perteneces a ese equipo");
     }
     if (await db("bots").where({ owner_id: req.auth!.userId, name }).first()) {
@@ -263,7 +276,12 @@ export function botRoutes(db: Db, botManager: BotManagerClient): Router {
       })
       .returning("*");
     // Delegación en bot-manager (E6/T6.1) — pendiente de reconciliación con E6.
-    await botManager.enqueueBuild({ buildId: build.id, botId: bot.id as string, version: v.version, runtime: v.runtime });
+    await botManager.enqueueBuild({
+      buildId: build.id,
+      botId: bot.id as string,
+      version: v.version,
+      runtime: v.runtime,
+    });
     const fresh = await db("builds").where({ id: build.id }).first();
     res.status(202).json(buildToJson(fresh, { includeLogs: true }));
   });
@@ -286,7 +304,10 @@ export function botRoutes(db: Db, botManager: BotManagerClient): Router {
 
   defineOperation(router, "suspendBotVersion", async (req, res) => {
     // x-min-role: moderator (del contrato); no requiere ser dueño.
-    const bot = await db("bots").where({ id: req.params.botId }).first().catch(() => null);
+    const bot = await db("bots")
+      .where({ id: req.params.botId })
+      .first()
+      .catch(() => null);
     if (!bot) throw notFound();
     const v = await getVersionOr404(db, bot.id as string, pathParam(req, "version"));
     const { reason } = req.body ?? {};
@@ -309,7 +330,10 @@ export function botRoutes(db: Db, botManager: BotManagerClient): Router {
 export function buildRoutes(db: Db): Router {
   const router = Router();
   defineOperation(router, "getBuild", async (req, res) => {
-    const build = await db("builds").where({ id: req.params.buildId }).first().catch(() => null);
+    const build = await db("builds")
+      .where({ id: req.params.buildId })
+      .first()
+      .catch(() => null);
     if (!build) throw notFound();
     const bot = await db("bots").where({ id: build.bot_id }).first();
     if (!(await canSeeBot(db, req.auth, bot))) throw notFound();

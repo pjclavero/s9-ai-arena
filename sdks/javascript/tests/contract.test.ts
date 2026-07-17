@@ -67,7 +67,11 @@ class RecordingBot extends ArenaBot {
   onObservation(observation: any) {
     const contacts = (observation.sensors?.radar ?? []).flatMap((r: any) => r.contacts);
     if (contacts.length > 0) {
-      return { move: { throttle: 0.5, steer: 0.1 }, turret: { targetPoint: contacts[0].position }, fire: ["turret_main"] };
+      return {
+        move: { throttle: 0.5, steer: 0.1 },
+        turret: { targetPoint: contacts[0].position },
+        fire: ["turret_main"],
+      };
     }
     return { move: { throttle: 0.7, steer: 0.05 } };
   }

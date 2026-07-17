@@ -134,17 +134,13 @@ export interface VerifiedSpectateTicket {
 }
 
 export function signSpectateTicket(input: SpectateTicketInput, ttlS: number): string {
-  return jwt.sign(
-    { battleId: input.battleId, ...(input.debug ? { debug: true } : {}) },
-    spectateTicketSecret(),
-    {
-      algorithm: TOKEN_ALG,
-      jwtid: input.jti,
-      expiresIn: ttlS,
-      issuer: ISSUER,
-      audience: AUD_SPECTATE,
-    },
-  );
+  return jwt.sign({ battleId: input.battleId, ...(input.debug ? { debug: true } : {}) }, spectateTicketSecret(), {
+    algorithm: TOKEN_ALG,
+    jwtid: input.jti,
+    expiresIn: ttlS,
+    issuer: ISSUER,
+    audience: AUD_SPECTATE,
+  });
 }
 
 export function verifySpectateTicket(token: string): VerifiedSpectateTicket | null {

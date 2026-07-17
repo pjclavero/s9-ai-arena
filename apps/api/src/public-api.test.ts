@@ -22,7 +22,9 @@ import { getStandings, updateStandings, clearStandingsCache } from "./services/s
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = join(__dirname, "..", "..", "..");
-const GOOD_LOADOUT = JSON.parse(readFileSync(join(REPO, "packages", "module-catalog", "examples", "loadout-medium-gunner.json"), "utf8"));
+const GOOD_LOADOUT = JSON.parse(
+  readFileSync(join(REPO, "packages", "module-catalog", "examples", "loadout-medium-gunner.json"), "utf8"),
+);
 
 let h: TestDbHandle;
 let app: Express;
@@ -56,7 +58,8 @@ beforeAll(async () => {
   await request(app).post(`/bots/${botId}/versions/${v.body.version}/actions/publish`).set(auth).send({});
 
   // Batalla en directo + batalla terminada con replay en archivo (política 23.1)
-  const [live] = await h.db("battles")
+  const [live] = await h
+    .db("battles")
     .insert({
       status: "running",
       official: false,
@@ -74,7 +77,8 @@ beforeAll(async () => {
   replayBytes = Buffer.from("replay-comprimido-de-prueba");
   const replayPath = join(replayDir, "battle.replay.zst");
   writeFileSync(replayPath, replayBytes);
-  const [done] = await h.db("battles")
+  const [done] = await h
+    .db("battles")
     .insert({
       status: "finished",
       official: true,
@@ -85,13 +89,23 @@ beforeAll(async () => {
       seed: "seed-done",
       replay_ref: replayPath,
       final_state_hash: "ab".repeat(32),
-      engine_versions: JSON.stringify({ engine: "e2@1", physics: "rapier2d-compat", rules: "1", catalog: "mvp@1", protocol: "arena/1" }),
+      engine_versions: JSON.stringify({
+        engine: "e2@1",
+        physics: "rapier2d-compat",
+        rules: "1",
+        catalog: "mvp@1",
+        protocol: "arena/1",
+      }),
       result: JSON.stringify({ score: { A: 1 }, ticks: 9000 }),
     })
     .returning("*");
   finishedBattleId = done.id;
-  await h.db("participants").insert({ battle_id: finishedBattleId, bot_id: botId, version: 1, team: "A", outcome: "win" });
-  await h.db("battle_stats").insert({ battle_id: finishedBattleId, bot_id: botId, stats: JSON.stringify({ damageDealt: 120 }) });
+  await h
+    .db("participants")
+    .insert({ battle_id: finishedBattleId, bot_id: botId, version: 1, team: "A", outcome: "win" });
+  await h
+    .db("battle_stats")
+    .insert({ battle_id: finishedBattleId, bot_id: botId, stats: JSON.stringify({ damageDealt: 120 }) });
   await updateStandings(h.db, "current", "deathmatch", [{ botId, rank: 1, rating: 1520, wins: 3, losses: 1 }]);
 }, 120000);
 
@@ -111,11 +125,14 @@ describe("T7.5 espectador anónimo (DoD: batalla en directo y replay sin cuenta)
     expect(ticket.body.wsUrl).toContain(liveBattleId);
     expect(new Date(ticket.body.expiresAt).getTime()).toBeGreaterThan(Date.now());
 
-    const replay = await request(app).get(`/replays/${finishedBattleId}`).buffer(true).parse((res, cb) => {
-      const chunks: Buffer[] = [];
-      res.on("data", (c) => chunks.push(c));
-      res.on("end", () => cb(null, Buffer.concat(chunks)));
-    });
+    const replay = await request(app)
+      .get(`/replays/${finishedBattleId}`)
+      .buffer(true)
+      .parse((res, cb) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => cb(null, Buffer.concat(chunks)));
+      });
     expect(replay.status).toBe(200);
     expect(Buffer.compare(replay.body as Buffer, replayBytes)).toBe(0);
     expect(replay.headers["cache-control"]).toContain("max-age=3600");
@@ -157,8 +174,7 @@ describe("T7.5 barrido de fugas por contrato (x-private)", () => {
       if (!op.anonymous || op.extension || op.tags.includes("auth")) continue;
       if (op.method !== "get" && op.operationId !== "getSpectateTicket") continue;
       const path = op.path.replace(/\{([^}]+)\}/g, (_, name: string) => params[name] ?? "1");
-      const r =
-        op.method === "get" ? await request(app).get(path) : await request(app).post(path).send({});
+      const r = op.method === "get" ? await request(app).get(path) : await request(app).post(path).send({});
       if (r.status >= 400 || !r.headers["content-type"]?.includes("json")) continue;
       swept.push(op.operationId);
 
@@ -174,7 +190,17 @@ describe("T7.5 barrido de fugas por contrato (x-private)", () => {
       expect(offenders, `${op.operationId} filtra campos privados: ${offenders.join(",")}`).toEqual([]);
     }
     // El barrido debe haber ejercitado los recursos públicos principales
-    for (const must of ["getUserPublic", "listBots", "getBot", "listBattles", "getBattle", "getBattleAudit", "getStandings", "listMaps", "getSpectateTicket"]) {
+    for (const must of [
+      "getUserPublic",
+      "listBots",
+      "getBot",
+      "listBattles",
+      "getBattle",
+      "getBattleAudit",
+      "getStandings",
+      "listMaps",
+      "getSpectateTicket",
+    ]) {
       expect(swept, `barrido incluye ${must}`).toContain(must);
     }
   });
@@ -251,10 +277,13 @@ describe("T7.5 caché de clasificaciones (DoD: nunca obsoleta >60 s)", () => {
 
 describe("T7.5 torneos (cap. 17.2) y batallas de práctica", () => {
   it("crear torneo (budget por competición, D7) → inscribir → cerrar congela versiones y revela semillas", async () => {
-    const t = await request(app)
-      .post("/tournaments")
-      .set("Authorization", `Bearer ${organizer}`)
-      .send({ name: "liga-skirmish", format: "round_robin", mode: "deathmatch", rulesetId: DEFAULT_RULESET_ID, budgetCredits: 600 });
+    const t = await request(app).post("/tournaments").set("Authorization", `Bearer ${organizer}`).send({
+      name: "liga-skirmish",
+      format: "round_robin",
+      mode: "deathmatch",
+      rulesetId: DEFAULT_RULESET_ID,
+      budgetCredits: 600,
+    });
     expect(t.status).toBe(201);
     expect(t.body.budgetCredits).toBe(600);
     expect(t.body.state).toBe("open");

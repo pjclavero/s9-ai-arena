@@ -7,10 +7,7 @@
  * este helper lo refleja en tipos sin cambiar comportamiento (si llegara un
  * array —imposible en rutas con nombre— se toma el primer segmento).
  */
-export function pathParam(
-  req: { params: Record<string, string | string[] | undefined> },
-  name: string,
-): string {
+export function pathParam(req: { params: Record<string, string | string[] | undefined> }, name: string): string {
   const v = req.params[name];
   return Array.isArray(v) ? (v[0] ?? "") : (v ?? "");
 }

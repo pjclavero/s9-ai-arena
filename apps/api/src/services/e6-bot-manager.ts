@@ -26,7 +26,13 @@ import { generateServiceKeypair, type ServiceKeypair } from "../../../bot-manage
 import type { BotSubmission, SourceFile, Runtime, CandidateAgentFactory } from "../../../bot-manager/src/types.js";
 import type { BotAgent } from "../../../arena-engine/src/sim/battle.js";
 import type { Db } from "../db/connection.js";
-import { completeBuild, type BotManagerClient, type BuildRequest, type BuildResult, PIPELINE_STAGES } from "./bot-manager.js";
+import {
+  completeBuild,
+  type BotManagerClient,
+  type BuildRequest,
+  type BuildResult,
+  PIPELINE_STAGES,
+} from "./bot-manager.js";
 import { splitVersioned } from "../../../../packages/module-catalog/types.js";
 
 /** Paquete estándar mínimo alrededor de código "pegado" (T7.4: archivo o pegado). */

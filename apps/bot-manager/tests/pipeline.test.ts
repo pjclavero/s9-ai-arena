@@ -59,10 +59,24 @@ describe("T6.1 · pipeline de build y publicación", () => {
     const build = await pipe.run(submission(files));
     const artifact = packArtifact(files);
     // verificación previa a ejecución: ok
-    expect(verifyArtifact({ artifactBytes: artifact.bytes, signedHash: build.artifactHash!, signature: build.signature!, publicKey: signer.publicKey }).ok).toBe(true);
+    expect(
+      verifyArtifact({
+        artifactBytes: artifact.bytes,
+        signedHash: build.artifactHash!,
+        signature: build.signature!,
+        publicKey: signer.publicKey,
+      }).ok,
+    ).toBe(true);
     // artefacto manipulado: rechazado
     const tampered = Buffer.concat([artifact.bytes, Buffer.from("x")]);
-    expect(verifyArtifact({ artifactBytes: tampered, signedHash: build.artifactHash!, signature: build.signature!, publicKey: signer.publicKey }).ok).toBe(false);
+    expect(
+      verifyArtifact({
+        artifactBytes: tampered,
+        signedHash: build.artifactHash!,
+        signature: build.signature!,
+        publicKey: signer.publicKey,
+      }).ok,
+    ).toBe(false);
   });
 
   it("build reproducible: el mismo commit Python produce el mismo hash", async () => {
@@ -123,7 +137,9 @@ describe("T6.1 · pipeline de build y publicación", () => {
   });
 
   it("la partida de humo/prueba de protocolo detecta un bot que compila pero incumple protocolo", async () => {
-    const build = await new BuildPipeline(deps({ agentResolver: () => brokenProtocolCandidate })).run(submission(pyGoodFiles()));
+    const build = await new BuildPipeline(deps({ agentResolver: () => brokenProtocolCandidate })).run(
+      submission(pyGoodFiles()),
+    );
     expect(build.botVersionState).toBe("rejected");
     const proto = build.stages.find((s) => s.name === "protocol_test")!;
     expect(proto.status).toBe("failed");
@@ -144,7 +160,9 @@ describe("T6.1 · pipeline de build y publicación", () => {
   it("un bot que agota su cuota de CPU por decisión se rechaza en resource_limits", async () => {
     const cfg = withConfig({ smokeBattleTicks: 30 });
     const sink = new CollectingSink();
-    const build = await new BuildPipeline(deps({ config: cfg, audit: sink, agentResolver: () => slowCandidate })).run(submission(pyGoodFiles()));
+    const build = await new BuildPipeline(deps({ config: cfg, audit: sink, agentResolver: () => slowCandidate })).run(
+      submission(pyGoodFiles()),
+    );
     const rl = build.stages.find((s) => s.name === "resource_limits")!;
     expect(rl.status).toBe("failed");
     expect(build.botVersionState).toBe("rejected");
@@ -161,7 +179,9 @@ describe("T6.1 · pipeline de build y publicación", () => {
   //  ha reescrito para exigir el comportamiento correcto.)
   it("sin agentResolver el build queda RECHAZADO (no verificable), NUNCA validated (R1.5, ERR-SEC-03)", async () => {
     const sink = new CollectingSink();
-    const build = await new BuildPipeline(deps({ audit: sink, agentResolver: undefined, referenceAgent: undefined })).run(submission(pyGoodFiles()));
+    const build = await new BuildPipeline(
+      deps({ audit: sink, agentResolver: undefined, referenceAgent: undefined }),
+    ).run(submission(pyGoodFiles()));
     // (a) Un build sin agentResolver NUNCA queda `validated`.
     expect(build.botVersionState).not.toBe("validated");
     expect(build.botVersionState).toBe("rejected");

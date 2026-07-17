@@ -9,7 +9,13 @@ import { render, screen, waitFor, cleanup } from "@testing-library/react";
 import { AdminPage, isAdmin } from "../src/pages/AdminPage.js";
 import type { Me } from "../src/api.js";
 
-const asUser: Me = { id: "u1", displayName: "User", email: "u@x", roles: ["user", "developer"], twoFactorEnabled: false };
+const asUser: Me = {
+  id: "u1",
+  displayName: "User",
+  email: "u@x",
+  roles: ["user", "developer"],
+  twoFactorEnabled: false,
+};
 const asAdmin: Me = { id: "a1", displayName: "Admin", email: "a@x", roles: ["admin"], twoFactorEnabled: false };
 
 afterEach(() => {
@@ -39,7 +45,15 @@ describe("T7.4 visibilidad del panel de administración", () => {
       headers: { get: () => "application/json" },
       json: async () =>
         String(url).includes("security-findings")
-          ? [{ id: "f1", kind: "secret_in_source", severity: "high", detail: "token AWS", detectedAt: "2026-07-16T00:00:00Z" }]
+          ? [
+              {
+                id: "f1",
+                kind: "secret_in_source",
+                severity: "high",
+                detail: "token AWS",
+                detectedAt: "2026-07-16T00:00:00Z",
+              },
+            ]
           : [],
     }));
     vi.stubGlobal("fetch", fetchSpy);

@@ -28,7 +28,12 @@ import { E6PipelineBotManager } from "../../apps/api/src/services/e6-bot-manager
 import { goodCandidate, referenceAgent } from "../../apps/bot-manager/tests/fixtures.js";
 import { enqueueJob, claimJob } from "../../apps/tournament-worker/src/queue.js";
 import { TournamentWorker } from "../../apps/tournament-worker/src/worker.js";
-import { makeRunBattleHandler, markBattleForReview, type BattleContext, type BattleExecution } from "../../apps/tournament-worker/src/battle-runner.js";
+import {
+  makeRunBattleHandler,
+  markBattleForReview,
+  type BattleContext,
+  type BattleExecution,
+} from "../../apps/tournament-worker/src/battle-runner.js";
 import { InfrastructureFailure } from "../../apps/tournament-worker/src/errors.js";
 import { createBots, insertScheduledBattle, type TestBot } from "../../apps/tournament-worker/src/testing/fixtures.js";
 import { RedisSignal } from "../../apps/tournament-worker/src/redis-signal.js";
@@ -44,7 +49,10 @@ let app: Express;
 let bots: TestBot[];
 
 const LOADOUT = JSON.parse(
-  readFileSync(join(import.meta.dirname, "..", "..", "packages", "module-catalog", "examples", "loadout-medium-gunner.json"), "utf8"),
+  readFileSync(
+    join(import.meta.dirname, "..", "..", "packages", "module-catalog", "examples", "loadout-medium-gunner.json"),
+    "utf8",
+  ),
 );
 
 /** Ejecutor guionizado (equipo A gana); cuenta ejecuciones por batalla. */
@@ -53,8 +61,12 @@ function countingExecutor(log: Map<string, number>, fail?: (ctx: BattleContext) 
     log.set(ctx.battle.id, (log.get(ctx.battle.id) ?? 0) + 1);
     fail?.(ctx);
     return {
-      winner: "A", ticks: 100, score: { A: 3, B: 1 },
-      finalStateHash: `hash-${ctx.battle.id}`, disqualified: [], versions: { engine: "gameday" },
+      winner: "A",
+      ticks: 100,
+      score: { A: 3, B: 1 },
+      finalStateHash: `hash-${ctx.battle.id}`,
+      disqualified: [],
+      versions: { engine: "gameday" },
     };
   };
 }
@@ -155,15 +167,20 @@ describe("Game day M3 · guiones de caos con comportamiento esperado predefinido
     const executor = async (ctx: BattleContext): Promise<BattleExecution> => {
       log.set(ctx.battle.id, (log.get(ctx.battle.id) ?? 0) + 1);
       return {
-        winner: "A", ticks: 10, score: { A: 1, B: 0 },
-        finalStateHash: "h", disqualified: [], versions: { engine: "gameday" },
+        winner: "A",
+        ticks: 10,
+        score: { A: 1, B: 0 },
+        finalStateHash: "h",
+        disqualified: [],
+        versions: { engine: "gameday" },
         replayJsonl: '{"header":{}}\n',
       };
     };
     const id = await insertScheduledBattle(h.db, bots[0], bots[1], { seed: "gd3" });
     await enqueueJob(h.db, "run_battle", { battleId: id }, { dedupeKey: `gd3:${id}` });
     const w = new TournamentWorker({
-      db: h.db, workerId: "gd3-w",
+      db: h.db,
+      workerId: "gd3-w",
       handlers: { run_battle: makeRunBattleHandler({ executor, replaysDir }) },
       onExhausted: (job) => markBattleForReview(h.db, job),
       lockTimeoutMs: 1000,
@@ -201,7 +218,9 @@ describe("Game day M3 · guiones de caos con comportamiento esperado predefinido
     const ruleset = loadRuleset("dm_practice@1", { timeLimitTicks: 400, maxConsecutiveTimeouts: 5 });
     const battle = await Battle.create({
       battleId: "gd6_" + Math.random().toString(36).slice(2),
-      seed: "gd6", ruleset, map: emptyArena(),
+      seed: "gd6",
+      ruleset,
+      map: emptyArena(),
       participants: [
         { id: "veh_1", botId: "bot_lag", team: "red", spec: scoutLoadout() },
         { id: "veh_2", botId: "bot_ok", team: "blue", spec: gunnerLoadout() },
@@ -209,18 +228,39 @@ describe("Game day M3 · guiones de caos con comportamiento esperado predefinido
     });
     battle.attachBot("veh_2", new HunterBot("bot_ok")); // el rival sí responde
     const expected: ExpectedBot[] = [{ botId: "bot_lag", vehicleId: "veh_1", battleToken: "t".repeat(16) }];
-    const server = new ProtocolServer({ battle, catalogVersion: "mvp@1", expected, tickIntervalMs: 2, decisionDeadlineMs: 10 });
+    const server = new ProtocolServer({
+      battle,
+      catalogVersion: "mvp@1",
+      expected,
+      tickIntervalMs: 2,
+      decisionDeadlineMs: 10,
+    });
     server.start();
     try {
       const ws = new WebSocket(`ws://127.0.0.1:${server.port}`);
-      await new Promise<void>((res, rej) => { ws.once("open", () => res()); ws.once("error", rej); });
+      await new Promise<void>((res, rej) => {
+        ws.once("open", () => res());
+        ws.once("error", rej);
+      });
       let welcomed = false;
       ws.on("message", (raw) => {
         const msg = JSON.parse(String(raw));
         if (msg.type === "WELCOME") welcomed = true;
         // Latencia extrema: NUNCA respondemos a las OBSERVATION dentro de la ventana.
       });
-      ws.send(JSON.stringify({ proto: "arena/1", type: "HELLO", seq: 1, payload: { botId: "bot_lag", botVersion: "1.0.0", sdk: { name: "custom", version: "0" }, battleToken: "t".repeat(16) } }));
+      ws.send(
+        JSON.stringify({
+          proto: "arena/1",
+          type: "HELLO",
+          seq: 1,
+          payload: {
+            botId: "bot_lag",
+            botVersion: "1.0.0",
+            sdk: { name: "custom", version: "0" },
+            battleToken: "t".repeat(16),
+          },
+        }),
+      );
 
       const result = await server.waitForResult();
       expect(welcomed).toBe(true);
@@ -274,11 +314,15 @@ describe("Game day M3 · guiones de caos con comportamiento esperado predefinido
     expect(bot.status).toBe(201);
     await request(app).post(`/bots/${bot.body.id}/loadouts`).set(auth).send(LOADOUT);
     const version = await request(app)
-      .post(`/bots/${bot.body.id}/versions`).set(auth)
-      .field("runtime", "python").field("loadoutRevision", "1")
+      .post(`/bots/${bot.body.id}/versions`)
+      .set(auth)
+      .field("runtime", "python")
+      .field("loadoutRevision", "1")
       .attach("source", Buffer.from(JSON.stringify({ files: hostileFiles })), "package.json");
     expect(version.status).toBe(201);
-    const submit = await request(app).post(`/bots/${bot.body.id}/versions/${version.body.version}/actions/submit`).set(auth);
+    const submit = await request(app)
+      .post(`/bots/${bot.body.id}/versions/${version.body.version}/actions/submit`)
+      .set(auth);
     expect(submit.status).toBe(202);
     expect(submit.body.status).toBe("failed"); // rechazado ANTES de ejecutarse
     const byName = Object.fromEntries(submit.body.stages.map((s: any) => [s.name, s.status]));
@@ -296,8 +340,10 @@ describe("Game day M3 · guiones de caos con comportamiento esperado predefinido
     await request(app).post(`/bots/${good.body.id}/loadouts`).set(auth).send(LOADOUT);
     const { pyGoodFiles } = await import("../../apps/bot-manager/tests/fixtures.js");
     const gv = await request(app)
-      .post(`/bots/${good.body.id}/versions`).set(auth)
-      .field("runtime", "python").field("loadoutRevision", "1")
+      .post(`/bots/${good.body.id}/versions`)
+      .set(auth)
+      .field("runtime", "python")
+      .field("loadoutRevision", "1")
       .attach("source", Buffer.from(JSON.stringify({ files: pyGoodFiles() })), "package.json");
     const gs = await request(app).post(`/bots/${good.body.id}/versions/${gv.body.version}/actions/submit`).set(auth);
     expect(gs.body.status).toBe("passed");

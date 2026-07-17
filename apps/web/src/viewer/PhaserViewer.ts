@@ -84,11 +84,21 @@ export class ViewerScene extends Phaser.Scene {
     g.fillStyle(0x18201a).fillRect(0, 0, this.world.widthM * this.pxPerM, this.world.heightM * this.pxPerM);
     g.fillStyle(0x3a4440);
     for (const w of this.world.walls ?? []) {
-      g.fillRect((w.position.x - w.halfW) * this.pxPerM, (w.position.y - w.halfH) * this.pxPerM, w.halfW * 2 * this.pxPerM, w.halfH * 2 * this.pxPerM);
+      g.fillRect(
+        (w.position.x - w.halfW) * this.pxPerM,
+        (w.position.y - w.halfH) * this.pxPerM,
+        w.halfW * 2 * this.pxPerM,
+        w.halfH * 2 * this.pxPerM,
+      );
     }
     g.fillStyle(0x6a5a30);
     for (const d of this.world.destructibles ?? []) {
-      g.fillRect((d.position.x - d.halfW) * this.pxPerM, (d.position.y - d.halfH) * this.pxPerM, d.halfW * 2 * this.pxPerM, d.halfH * 2 * this.pxPerM);
+      g.fillRect(
+        (d.position.x - d.halfW) * this.pxPerM,
+        (d.position.y - d.halfH) * this.pxPerM,
+        d.halfW * 2 * this.pxPerM,
+        d.halfH * 2 * this.pxPerM,
+      );
     }
   }
 
@@ -133,7 +143,10 @@ export class ViewerScene extends Phaser.Scene {
     const team = this.overlay.vehicles.get(id)?.team ?? "red";
     const color = TEAM_COLORS[team] ?? 0xaaaaaa;
     const body = this.add.rectangle(0, 0, 3.2 * this.pxPerM, 2.2 * this.pxPerM, color);
-    const turret = this.add.rectangle(0.8 * this.pxPerM, 0, 2.4 * this.pxPerM, 0.5 * this.pxPerM, 0xffffff, 0.9).setName("turret").setOrigin(0.1, 0.5);
+    const turret = this.add
+      .rectangle(0.8 * this.pxPerM, 0, 2.4 * this.pxPerM, 0.5 * this.pxPerM, 0xffffff, 0.9)
+      .setName("turret")
+      .setOrigin(0.1, 0.5);
     const label = this.add.text(0, -2 * this.pxPerM, id, { fontSize: "10px", color: "#ffffff" }).setOrigin(0.5, 1);
     return this.add.container(0, 0, [body, turret, label]).setDepth(3);
   }

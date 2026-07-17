@@ -28,8 +28,7 @@ type ZstdCapable = {
 const z = zlib as unknown as ZstdCapable;
 
 /** zstd si el runtime lo trae (Node >= 22.15); si no, gzip como reserva documentada. */
-export const PREFERRED_ALGO: CompressionAlgo =
-  typeof z.zstdCompressSync === "function" ? "zstd" : "gzip";
+export const PREFERRED_ALGO: CompressionAlgo = typeof z.zstdCompressSync === "function" ? "zstd" : "gzip";
 
 const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
 const GZIP_MAGIC = Buffer.from([0x1f, 0x8b]);
@@ -94,10 +93,7 @@ export interface StoredReplayIndex {
 /** Un keyframe cada N snapshots (a 10 Hz de snapshot, N=30 ≈ un keyframe cada 3 s). */
 export const KEYFRAME_EVERY_N_SNAPSHOTS = 30;
 
-export function buildKeyframes(
-  snapshots: { tick: number }[],
-  everyN = KEYFRAME_EVERY_N_SNAPSHOTS,
-): Keyframe[] {
+export function buildKeyframes(snapshots: { tick: number }[], everyN = KEYFRAME_EVERY_N_SNAPSHOTS): Keyframe[] {
   const out: Keyframe[] = [];
   for (let i = 0; i < snapshots.length; i += everyN) {
     out.push({ tick: snapshots[i].tick, snapshotIndex: i });

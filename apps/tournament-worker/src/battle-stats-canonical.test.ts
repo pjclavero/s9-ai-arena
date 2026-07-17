@@ -100,10 +100,26 @@ describe("H3 · battle_stats: una única forma canónica (la del job de E8)", ()
     const rows = normalizeRows(await h.db("battle_stats").where({ battle_id: battleId }));
     const CANONICAL_FIELDS = [
       // BotBattleStats de E8 (stats.ts): lo que consume aggregateByBotVersion y el panel.
-      "botId", "team", "damageDealt", "damageTaken", "shotsFired", "shotsHit",
-      "accuracy", "kills", "died", "survivedTicks", "flagCaptures", "flagsTaken",
-      "minesDeployed", "minesTriggered", "decisionTimeouts", "disqualified",
-      "cpuMs", "perModule", "vehicleId", "battle",
+      "botId",
+      "team",
+      "damageDealt",
+      "damageTaken",
+      "shotsFired",
+      "shotsHit",
+      "accuracy",
+      "kills",
+      "died",
+      "survivedTicks",
+      "flagCaptures",
+      "flagsTaken",
+      "minesDeployed",
+      "minesTriggered",
+      "decisionTimeouts",
+      "disqualified",
+      "cpuMs",
+      "perModule",
+      "vehicleId",
+      "battle",
     ];
     for (const r of rows) {
       const keys = Object.keys(r.stats as Record<string, unknown>).sort();

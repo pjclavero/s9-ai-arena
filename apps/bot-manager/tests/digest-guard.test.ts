@@ -63,16 +63,19 @@ function spec(imageDigest: string): SandboxSpec {
 
 describe("issue #12 · el bot-manager no lanza bots con digest placeholder", () => {
   it("buildRunArgs se niega a componer el docker run", () => {
-    expect(() => DockerContainerRunner.buildRunArgs(spec(`arena/bot-runtime-python@sha256:${ZEROS}`), "c1"))
-      .toThrow(/digests placeholder: ejecuta el build real/);
-    expect(() => DockerContainerRunner.buildRunArgs(spec(`arena/bot-runtime-python@sha256:${REAL}`), "c1"))
-      .not.toThrow();
+    expect(() => DockerContainerRunner.buildRunArgs(spec(`arena/bot-runtime-python@sha256:${ZEROS}`), "c1")).toThrow(
+      /digests placeholder: ejecuta el build real/,
+    );
+    expect(() =>
+      DockerContainerRunner.buildRunArgs(spec(`arena/bot-runtime-python@sha256:${REAL}`), "c1"),
+    ).not.toThrow();
   });
 
   it("launch rechaza el placeholder ANTES del error de entorno sin Docker", async () => {
     const runner = new DockerContainerRunner();
-    await expect(runner.launch(spec(`arena/bot-runtime-node@sha256:${ONES}`)))
-      .rejects.toThrow(/digests placeholder: ejecuta el build real/);
+    await expect(runner.launch(spec(`arena/bot-runtime-node@sha256:${ONES}`))).rejects.toThrow(
+      /digests placeholder: ejecuta el build real/,
+    );
   });
 });
 

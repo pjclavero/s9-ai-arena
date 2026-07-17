@@ -22,7 +22,11 @@ beforeAll(async () => {
   await initPhysics();
 });
 
-async function hunterBattle(seed: string, botIds = { red: "bot_red", blue: "bot_blue" }, ticks = 1500): Promise<Replay> {
+async function hunterBattle(
+  seed: string,
+  botIds = { red: "bot_red", blue: "bot_blue" },
+  ticks = 1500,
+): Promise<Replay> {
   return record(
     {
       battleId: seed,
@@ -185,10 +189,15 @@ describe("T8.4 job idempotente contra PostgreSQL real + rendimiento", () => {
     const mkBot = async (name: string) => {
       const [bot] = await h.db("bots").insert({ name, owner_id: owner.id, visibility: "public" }).returning("*");
       await h.db("bot_loadouts").insert({
-        bot_id: bot.id, revision: 1, catalog_version: "mvp@1",
-        chassis: "chassis.medium@1", modules: JSON.stringify([]),
+        bot_id: bot.id,
+        revision: 1,
+        catalog_version: "mvp@1",
+        chassis: "chassis.medium@1",
+        modules: JSON.stringify([]),
       });
-      await h.db("bot_versions").insert({ bot_id: bot.id, version: 1, state: "published", runtime: "python", loadout_revision: 1 });
+      await h
+        .db("bot_versions")
+        .insert({ bot_id: bot.id, version: 1, state: "published", runtime: "python", loadout_revision: 1 });
       return bot.id as string;
     };
     redBotId = await mkBot("stats-red");
@@ -198,14 +207,21 @@ describe("T8.4 job idempotente contra PostgreSQL real + rendimiento", () => {
     const replay = await hunterBattle("stats_job", { red: redBotId, blue: blueBotId });
     ingestReplay(dir, replay, { official: true });
 
-    const [battle] = await h.db("battles")
+    const [battle] = await h
+      .db("battles")
       .insert({
-        status: "finished", official: true, mode: "deathmatch",
-        ruleset_id: DEFAULT_RULESET_ID, map_id: "mvp-arena-01", map_version: 1, seed: "stats_job",
+        status: "finished",
+        official: true,
+        mode: "deathmatch",
+        ruleset_id: DEFAULT_RULESET_ID,
+        map_id: "mvp-arena-01",
+        map_version: 1,
+        seed: "stats_job",
       })
       .returning("*");
     dbBattleId = battle.id;
-    const outcome = (team: string) => (replay.result.winner === "draw" ? "draw" : replay.result.winner === team ? "win" : "loss");
+    const outcome = (team: string) =>
+      replay.result.winner === "draw" ? "draw" : replay.result.winner === team ? "win" : "loss";
     await h.db("participants").insert([
       { battle_id: dbBattleId, bot_id: redBotId, version: 1, team: "red", outcome: outcome("red") },
       { battle_id: dbBattleId, bot_id: blueBotId, version: 1, team: "blue", outcome: outcome("blue") },
