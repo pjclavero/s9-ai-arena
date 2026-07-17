@@ -11,8 +11,8 @@ Rama de trabajo: `ronda2/r-p0-bloqueantes`.
 |---|---|---|---|---|---|
 | R1.1 | Munición: `resolveVehicle` propaga `entry.ammo` | ✅ Hecho | #15 | [R1.1-municion.md](reportes/R1.1-municion.md) | `8935c45` |
 | R1.2 | Sensor acústico muerto + test vacuo | ✅ Hecho | — | [R1.2-sensor-acustico.md](reportes/R1.2-sensor-acustico.md) | `e1fa327` |
-| R1.3 | Publicar `sensor.acoustic`/`sensor.proximity` en catálogo | 🔜 En curso (dep. R1.2 ✅) | — | — | — |
-| R1.9 | `zone_control` jugable + King of the Hill | ⏳ Pendiente | — | — | — |
+| R1.3 | Publicar `sensor.acoustic`/`sensor.proximity` en catálogo | ✅ Hecho | — | [R1.3-sensores-catalogo.md](reportes/R1.3-sensores-catalogo.md) | `67e2c04` |
+| R1.9 | `zone_control` jugable + King of the Hill | 🔜 En curso | — | — | — |
 | R1.4 | Secreto JWT: fallar cerrado + leer por archivo | ⏳ Pendiente | — | — | — |
 | R1.5 | Sandbox: fallar cerrado sin runner | ⏳ Pendiente | — | — | — |
 | R1.6 | CI del sandbox: no pasar en verde sin probar | ⏳ Pendiente | — | — | — |
