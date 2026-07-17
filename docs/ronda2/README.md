@@ -15,7 +15,7 @@ Rama de trabajo: `ronda2/r-p0-bloqueantes`.
 | R1.9 | `zone_control` jugable + King of the Hill | ✅ Hecho | — | [R1.9-zone-control-koth.md](reportes/R1.9-zone-control-koth.md) | `a8652fd` |
 | R1.4 | Secreto JWT: fallar cerrado + leer por archivo | ✅ Hecho y verificado (Linux) | #14 rel. | [R1.4-secreto-jwt.md](reportes/R1.4-secreto-jwt.md) | `7e23a39` |
 | R1.5 | Sandbox: fallar cerrado sin runner | ✅ Hecho y verificado (Linux) | #9 rel. | [R1.5-sandbox-fail-closed.md](reportes/R1.5-sandbox-fail-closed.md) | `80acf8d` |
-| R1.6 | CI del sandbox: no pasar en verde sin probar | ⏸️ Pendiente (pausa) | — | — | — |
+| R1.6 | CI del sandbox: no pasar en verde sin probar | ✅ Hecho y verificado (Linux) | — | [R1.6-ci-sandbox.md](reportes/R1.6-ci-sandbox.md) | `a75da48` |
 | R1.7 | Retirar el montaje de `docker.sock` | ⏸️ Pendiente (pausa) | — | — | — |
 | R1.8 | Rate-limit y bloqueo de login tras proxy | ⏸️ Pendiente (pausa) | — | — | — |
 
@@ -45,3 +45,14 @@ Rama de trabajo: `ronda2/r-p0-bloqueantes`.
 **Leyenda:** ✅ hecho y verificado · 🔜 en curso · ⏳ pendiente.
 
 Línea base del área de motor+catálogo al abrir la rama: **188 tests verdes** (`npx vitest run packages/module-catalog apps/arena-engine`).
+
+## R1.6 · nota sobre la ejecución viva (2026-07-17)
+
+El harness y el CI ya no pueden dar verde sin probar, y eso está verificado. Lo que **no** se
+ha podido ejecutar es la suite de escape **contra el sandbox real**, y no por R1.6: el runtime
+de Python **no es construible** hoy. Se intentó en VM108 con Docker y un registry local — el
+`FROM python@sha256:0000…` no resuelve (se obtuvo el digest real y el build avanzó), pero
+`pip install --require-hashes` falla porque `runtimes/python/allowed-requirements.lock` tiene
+hashes placeholder, como el propio fichero admite. Es **R6.1** íntegro, y es más trabajo del que
+sugiere su enunciado: hay que generar el lock con hashes reales, construir las dos imágenes y
+fijar sus digests. Mientras tanto, el gate deja los jobs en *skipped* y la suite dice la verdad.
