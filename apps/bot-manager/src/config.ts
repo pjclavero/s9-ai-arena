@@ -71,15 +71,34 @@ export const DEFAULT_NODE_ALLOWLIST = new Set([
   "ws",
 ]);
 
-/** Builtins peligrosos de la stdlib de Python: red, procesos, FFI (H1, issue #5). */
+/**
+ * Builtins peligrosos de la stdlib de Python: red, procesos, FFI, serialización
+ * ejecutable y carga dinámica de código (H1, issue #5; ampliado en R2.4 ·
+ * ERR-SEC-06: os, importlib, pickle, marshal, pty, runpy, code, shutil…).
+ */
 export const DEFAULT_PYTHON_DANGEROUS = new Set([
+  // red / procesos / FFI (H1)
   "socket", "subprocess", "ctypes", "multiprocessing", "asyncio",
+  // R2.4: entorno y procesos
+  "os", "pty", "signal", "resource",
+  // R2.4: carga dinámica de código
+  "importlib", "runpy", "code", "codeop", "builtins", "compileall", "py_compile",
+  // R2.4: serialización ejecutable (deserializar = ejecutar código arbitrario)
+  "pickle", "marshal", "shelve", "dill",
+  // R2.4: FS más allá de open() del propio directorio
+  "shutil", "pathlib", "tempfile", "glob",
 ]);
 
-/** Builtins peligrosos de Node: red, procesos, FS crudo (H1, issue #5). */
+/**
+ * Builtins peligrosos de Node: red, procesos, FS crudo (H1, issue #5) más los
+ * equivalentes de R2.4: process (entorno/kill), module (createRequire = import
+ * dinámico), v8 (serialización), repl/inspector (evaluación de código).
+ */
 export const DEFAULT_NODE_DANGEROUS = new Set([
-  "child_process", "net", "http", "https", "dgram", "cluster",
+  "child_process", "net", "http", "https", "http2", "dgram", "cluster",
   "worker_threads", "fs", "dns", "tls", "vm", "os", "crypto",
+  // R2.4 (ERR-SEC-06): equivalentes de proceso/carga dinámica/serialización
+  "process", "module", "v8", "repl", "inspector", "wasi",
 ]);
 
 export const DEFAULT_CONFIG: PipelineConfig = {

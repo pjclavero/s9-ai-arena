@@ -216,6 +216,18 @@ export class BuildPipeline {
       case "static_analysis": {
         const res = analyze(sub.runtime, sub.files, cfg);
         stage.logs.push(`imports: ${res.imports.join(", ") || "(ninguno externo)"}`);
+        // R2.4 (ERR-SEC-06) · FAIL-CLOSED: lo que no se puede parsear no se aprueba,
+        // y las construcciones dinámicas (__import__, eval/exec, require(var),
+        // __builtins__…) bloquean con CUALQUIER política: derrotan al análisis.
+        if (res.parseErrors.length) {
+          stage.message = `fichero(s) no analizables (AST), se rechaza fail-closed: ${res.parseErrors.map((p) => `${p.path} (${p.detail})`).join("; ")}`;
+          return "failed";
+        }
+        if (res.dynamicFindings.length) {
+          stage.message = `construcción(es) dinámica(s) prohibida(s): ${res.dynamicFindings.map((d) => `${d.path}: ${d.detail}`).join("; ")}`;
+          this.audit.finding({ category: "dangerous_import", severity: "high", botId: sub.botId, version: sub.version, userId: sub.ownerUserId, correlationId, summary: `construcciones dinámicas que eluden el análisis estático`, detail: { findings: res.dynamicFindings } });
+          return "failed";
+        }
         if (res.dangerousImports.length) {
           // El hallazgo de auditoría se registra SIEMPRE (con cualquier política).
           stage.logs.push(`imports peligrosos señalados: ${res.dangerousImports.join(", ")}`);

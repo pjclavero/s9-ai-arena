@@ -13,7 +13,8 @@ export function pyGoodFiles(): SourceFile[] {
     {
       path: "src/bot.py",
       content: [
-        "import os",
+        // R2.4: sin `import os` — desde ERR-SEC-06 `os` es un módulo peligroso
+        // bloqueado, y esta fixture representa un bot LEGÍTIMO.
         "import math",
         "import numpy as np",
         "from arena_sdk import Bot",
