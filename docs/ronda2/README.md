@@ -43,6 +43,19 @@ Rama de trabajo: `ronda2/r-p0-bloqueantes`.
 >
 > Quedan de R-P0: **R1.6, R1.7 y R1.8**. El sub-lote de motor (R1.1, R1.2, R1.3, R1.9) sigue cerrado.
 
+## Banda R-P1 · Deuda de gestión y CI
+
+| Tarea | Descripción | Estado | Issue | Reporte | Commit |
+|---|---|---|---|---|---|
+| R2.1 | Tipos en verde (ERR-GES-02/03) + CI bloqueante: tsc sin `continue-on-error`, prettier real, cobertura como artefacto | ✅ Hecho | #11 rel. | [R2.1-tipos-ci.md](reportes/R2.1-tipos-ci.md) | `c110bcb`+ |
+
+> **R2.1 · 2026-07-17 (VM108, Node 20).** `npx tsc --noEmit` da **0 errores** en el tsconfig raíz
+> (antes 267: ~238 falsos de JSX de `apps/web` + 29 genuinos) y **0** en `apps/web` (proyecto
+> propio con jsx). El paso de tipos de la CI ya **rompe** ante un error (demostrado en local con
+> un error deliberado); "Formato" ejecuta `prettier --check` de verdad (ámbito: solo código
+> TS/JS, sin `arena-engine` hasta que se fusione R2.7) y las unitarias publican cobertura V8
+> como artefacto. Suite: **706 ✓ / 1 ✗ (zstd Node 20, preexistente) / 3 skip** — 0 fallos nuevos.
+
 **Leyenda:** ✅ hecho y verificado · 🔜 en curso · ⏳ pendiente.
 
 Línea base del área de motor+catálogo al abrir la rama: **188 tests verdes** (`npx vitest run packages/module-catalog apps/arena-engine`).
