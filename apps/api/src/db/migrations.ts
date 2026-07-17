@@ -84,6 +84,16 @@ const m001_identity: Migration = {
         PRIMARY KEY (team_id, user_id)
       );
     `);
+
+    // La jerarquía de roles (cap. 16) es catálogo del sistema, no datos de
+    // desarrollo: user_roles tiene FK contra roles, así que sin estas filas el
+    // registro de CUALQUIER usuario falla ("Key (role)=(user) is not present in
+    // table roles"). Antes solo las insertaba seedDev, y por eso una instalación
+    // limpia se quedaba sin poder crear el primer usuario.
+    await db("roles")
+      .insert(ROLES.map((name, rank) => ({ name, rank })))
+      .onConflict("name")
+      .ignore();
   },
   async down(db) {
     await db.raw(`
