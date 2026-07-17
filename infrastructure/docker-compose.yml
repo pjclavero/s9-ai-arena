@@ -53,7 +53,7 @@ services:
       context: ..
       dockerfile: infrastructure/docker/gateway/Dockerfile
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/gateway:${TAG:-latest}
-    profiles: [development, production, external-db]
+    profiles: [nucleo, development, production, external-db]
     networks: [public, platform]
     ports:
       - "${HTTP_PORT:-80}:80"
@@ -90,15 +90,11 @@ services:
   web:
     build:
       context: ..
-      dockerfile: infrastructure/docker/node-service/Dockerfile
-      args: { APP_PATH: apps/web }
+      dockerfile: infrastructure/docker/web/Dockerfile
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/web:${TAG:-latest}
-    profiles: [development, production, external-db]
+    profiles: [nucleo, development, production, external-db]
     networks: [platform]
     environment:
-      PORT: "3000"
-      # PENDIENTE (E7): entrypoint real; ver infrastructure/docker/node-service.
-      SERVICE_ENTRY: ${WEB_ENTRY:-apps/web/src/main.ts}
       LOG_FORMAT: json
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
@@ -120,12 +116,12 @@ services:
       dockerfile: infrastructure/docker/node-service/Dockerfile
       args: { APP_PATH: apps/api }
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/api:${TAG:-latest}
-    profiles: [development, production, external-db]
+    profiles: [nucleo, development, production, external-db]
     networks: [platform, data]
     environment:
       <<: *node-db-env
       PORT: "8080"
-      SERVICE_ENTRY: ${API_ENTRY:-apps/api/src/main.ts}
+      SERVICE_ENTRY: ${API_ENTRY:-apps/api/src/server.ts}
       JWT_SECRET_FILE: /run/secrets/jwt_secret
     secrets: [postgres_password, jwt_secret]
     depends_on:
@@ -188,11 +184,13 @@ services:
       dockerfile: infrastructure/docker/node-service/Dockerfile
       args: { APP_PATH: apps/tournament-worker }
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/tournament-worker:${TAG:-latest}
-    profiles: [development, production, external-db]
+    profiles: [nucleo, development, production, external-db]
     networks: [platform, data]
     environment:
       <<: *node-db-env
       SERVICE_ENTRY: ${WORKER_ENTRY:-apps/tournament-worker/src/main.ts}
+      SPECTATE_PORT: "8081"
+      REPLAYS_DIR: /data/replays
     secrets: [postgres_password]
     depends_on:
       queue:
@@ -295,7 +293,7 @@ services:
       dockerfile: infrastructure/docker/node-service/Dockerfile
       args: { APP_PATH: apps/replay-service }
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/replay-service:${TAG:-latest}
-    profiles: [development, production, external-db]
+    profiles: [nucleo, development, production, external-db]
     networks: [platform, data]
     environment:
       <<: *node-db-env
@@ -324,7 +322,7 @@ services:
   # ── queue · Redis para trabajos ──────────────────────────────────────────────
   queue:
     image: redis:7-alpine
-    profiles: [development, production, external-db]
+    profiles: [nucleo, development, production, external-db]
     networks: [platform]
     command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
     volumes:
@@ -344,7 +342,7 @@ services:
   # ── postgres · BD (omitido en el perfil external-db, nota del 6.2) ──────────
   postgres:
     image: postgres:16-alpine
-    profiles: [development, production]
+    profiles: [nucleo, development, production]
     networks: [data]
     environment:
       POSTGRES_USER: arena
