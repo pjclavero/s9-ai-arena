@@ -68,12 +68,22 @@ GATEWAY_CONF=nginx-behind-proxy.conf
 HTTP_PORT=8080          # puerto HTTP hacia la LAN (el que verá VM104)
 HTTPS_PORT=127.0.0.1:8443   # sin uso en este modo; ligado a loopback
 S9_DOMAIN=arena.seccionnueve.duckdns.org
+TRUST_PROXY_HOPS=2      # VM104 + gateway del stack (R1.8 · ERR-SEC-05)
 ```
 
 En VM104, un `server` para `arena.seccionnueve.duckdns.org` con
 `proxy_pass http://<IP-de-la-VM-del-stack>:8080;`, cabeceras `X-Forwarded-Proto https`
+y `X-Forwarded-For $proxy_add_x_forwarded_for` (obligatoria: con
+`TRUST_PROXY_HOPS=2` la API espera que VM104 añada la IP real del cliente),
 y soporte de upgrade WebSocket para `/ws/`. El humo en este modo:
 `smoke.sh https://arena.seccionnueve.duckdns.org`.
+
+> **IP real del cliente (R1.8 · ERR-SEC-05):** la API calcula `req.ip` con una
+> confianza de proxy **acotada** al número de saltos declarado en
+> `TRUST_PROXY_HOPS` (1 en modo (a), por defecto en el Compose; 2 en modo (b)),
+> nunca `trust proxy: true`. La cuota anónima y el bloqueo de fuerza bruta de
+> login se anclan a esa IP; una `X-Forwarded-For` inyectada por un cliente
+> externo se descarta porque queda fuera de los saltos de confianza.
 
 ## PostgreSQL externo (nota del 6.2)
 
