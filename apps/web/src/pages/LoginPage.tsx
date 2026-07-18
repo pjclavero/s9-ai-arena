@@ -1,8 +1,12 @@
-/** T7.4 · Registro, login y 2FA (TOTP en el login cuando la cuenta lo exige). */
-import { useState } from "react";
+/**
+ * T7.4 · Registro, login y 2FA (TOTP en el login cuando la cuenta lo exige).
+ * R3.7: formulario real (onSubmit ⇒ Enter funciona), labels visibles, errores
+ * con role="alert" y aviso de sesión caducada (interceptor de 401 del api.ts).
+ */
+import { useState, type FormEvent } from "react";
 import { api, setToken, type Me } from "../api.js";
 
-export function LoginPage(props: { onLogin: (me: Me) => void }) {
+export function LoginPage(props: { onLogin: (me: Me) => void; notice?: string }) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -11,7 +15,8 @@ export function LoginPage(props: { onLogin: (me: Me) => void }) {
   const [needsTotp, setNeedsTotp] = useState(false);
   const [error, setError] = useState("");
 
-  async function submit() {
+  async function submit(e: FormEvent) {
+    e.preventDefault(); // envío también con Enter (a11y R3.7)
     setError("");
     try {
       if (mode === "register") {
@@ -24,37 +29,66 @@ export function LoginPage(props: { onLogin: (me: Me) => void }) {
       });
       setToken(tokens.accessToken);
       props.onLogin(await api<Me>("GET", "/users/me"));
-    } catch (e) {
-      const err = e as { status?: number; message: string };
-      if (err.status === 401 && /TOTP|2FA/i.test(err.message)) setNeedsTotp(true);
-      setError(err.message);
+    } catch (err) {
+      const e2 = err as { status?: number; message: string };
+      if (e2.status === 401 && /TOTP|2FA/i.test(e2.message)) setNeedsTotp(true);
+      setError(e2.message);
     }
   }
 
   return (
     <div className="card">
       <h2>{mode === "login" ? "Iniciar sesión" : "Crear cuenta"}</h2>
-      {mode === "register" && (
-        <p>
-          <input aria-label="nombre" placeholder="Nombre visible" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+      {props.notice && (
+        <p className="warn" role="alert" data-testid="session-notice">
+          {props.notice}
         </p>
       )}
-      <p>
-        <input aria-label="email" placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-      </p>
-      <p>
-        <input aria-label="contraseña" type="password" placeholder="contraseña (≥12)" value={password} onChange={(e) => setPassword(e.target.value)} />
-      </p>
-      {needsTotp && (
+      <form onSubmit={submit}>
+        {mode === "register" && (
+          <p>
+            <label>
+              Nombre visible{" "}
+              <input aria-label="nombre" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+            </label>
+          </p>
+        )}
         <p>
-          <input aria-label="totp" placeholder="código TOTP" value={totp} onChange={(e) => setTotp(e.target.value)} />
+          <label>
+            Email{" "}
+            <input aria-label="email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          </label>
         </p>
-      )}
-      {error && <p className="error">{error}</p>}
-      <button onClick={submit}>{mode === "login" ? "Entrar" : "Registrarse y entrar"}</button>{" "}
-      <a href="#" onClick={() => setMode(mode === "login" ? "register" : "login")}>
-        {mode === "login" ? "Crear cuenta" : "Ya tengo cuenta"}
-      </a>
+        <p>
+          <label>
+            Contraseña (≥12){" "}
+            <input
+              aria-label="contraseña"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </label>
+        </p>
+        {needsTotp && (
+          <p>
+            <label>
+              Código TOTP{" "}
+              <input aria-label="totp" inputMode="numeric" value={totp} onChange={(e) => setTotp(e.target.value)} />
+            </label>
+          </p>
+        )}
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
+        <button type="submit">{mode === "login" ? "Entrar" : "Registrarse y entrar"}</button>{" "}
+        <button type="button" className="link" onClick={() => setMode(mode === "login" ? "register" : "login")}>
+          {mode === "login" ? "Crear cuenta" : "Ya tengo cuenta"}
+        </button>
+      </form>
     </div>
   );
 }
