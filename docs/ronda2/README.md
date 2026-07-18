@@ -61,6 +61,12 @@ Rama de trabajo: `ronda2/r-p0-bloqueantes`.
 > TS/JS, sin `arena-engine` hasta que se fusione R2.7) y las unitarias publican cobertura V8
 > como artefacto. Suite: **706 ✓ / 1 ✗ (zstd Node 20, preexistente) / 3 skip** — 0 fallos nuevos.
 
+## Banda R-P2 · Visor
+
+| Tarea | Descripción | Estado | Issue | Reporte | Commit |
+|---|---|---|---|---|---|
+| R3.1 | El replay interpola como el directo (ERR-VIS-01): reloj de reproducción explícito, `pushSnapshot` por snapshot y `resetTo` solo tras seek | ✅ Hecho (visual en navegador pendiente) | — | [R3.1-replay-interpolado.md](reportes/R3.1-replay-interpolado.md) | `7c92e87` |
+
 **Leyenda:** ✅ hecho y verificado · 🔜 en curso · ⏳ pendiente.
 
 ## Banda R-P1 · Integración, robustez y CI honesta

@@ -57,6 +57,16 @@ export function httpReplaySource(
 export const MIN_SPEED = 0.5;
 export const MAX_SPEED = 8;
 const TICK_HZ = 30;
+
+/**
+ * Eje temporal de REPRODUCCIÓN (R3.1): convierte ticks de juego a milisegundos de
+ * partida. Es el eje en el que se fechan los snapshots del replay y en el que la
+ * escena muestrea el interpolador — independiente del reloj de pared y de la
+ * velocidad de reproducción.
+ */
+export function tickToMs(tick: number): number {
+  return (tick / TICK_HZ) * 1000;
+}
 /** Tamaño de trozo que se pide al servicio por delante del playhead (~20 s de juego). */
 const CHUNK_TICKS = 600;
 
@@ -95,6 +105,14 @@ export class ReplayPlayer {
 
   get currentTick(): number {
     return Math.floor(this.playhead);
+  }
+
+  /**
+   * Playhead en ms de partida (fraccional): el "ahora" del reloj de reproducción.
+   * La escena muestrea el interpolador con este valor en replay (R3.1).
+   */
+  get playheadMs(): number {
+    return tickToMs(this.playhead);
   }
 
   get finished(): boolean {
