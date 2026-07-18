@@ -75,6 +75,12 @@ Rama de trabajo: `ronda2/r-p0-bloqueantes`.
 
 Línea base del área de motor+catálogo al abrir la rama: **188 tests verdes** (`npx vitest run packages/module-catalog apps/arena-engine`).
 
+## Banda R2 · Endurecimiento (Ronda 2)
+
+| Tarea | Descripción | Estado | Issue | Reporte | Commit |
+|---|---|---|---|---|---|
+| R2.4 | Análisis estático por AST real (Python `ast` + acorn, fail-closed) y auth endurecida: reauth fuerte para 2FA, familias de refresh tokens con detección de reutilización, vida absoluta, anti-enumeración con hash señuelo (ERR-SEC-06/07/08/11) | ✅ Hecho y verificado (Linux, +28 tests) | — | [R2.4-ast-auth.md](reportes/R2.4-ast-auth.md) | rama `ronda2/r2.4-ast-auth` (PR draft) |
+
 ## R6.1 · la suite de escape ya se ha ejecutado VIVA (2026-07-17)
 
 **Resuelto lo que la nota de R1.6 daba por bloqueado.** La suite de escape se ha ejecutado

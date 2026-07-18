@@ -136,6 +136,38 @@ describe("T6.1 · pipeline de build y publicación", () => {
     expect(sink.findings.some((f) => f.category === "dangerous_import")).toBe(true);
   });
 
+  // R2.4 (ERR-SEC-06) · DoD: un bot que importa os o usa __import__ dinámico es
+  // detectado por el AST y bloqueado; lo no parseable se rechaza fail-closed.
+  it("un bot con `import os` o `__import__('os')` queda RECHAZADO en static_analysis (R2.4)", async () => {
+    for (const payload of ["import os", "m = __import__('o' + 's')"]) {
+      const files = pyGoodFiles();
+      files.find((f) => f.path === "src/bot.py")!.content += "\n" + payload + "\n";
+      const build = await new BuildPipeline(deps()).run(submission(files));
+      expect(build.botVersionState, payload).toBe("rejected");
+      const sa = build.stages.find((s) => s.name === "static_analysis")!;
+      expect(sa.status, payload).toBe("failed");
+    }
+  });
+
+  it("las construcciones dinámicas bloquean INCLUSO con la política 'audit' (derrotan al análisis, R2.4)", async () => {
+    const files = pyGoodFiles();
+    files.find((f) => f.path === "src/bot.py")!.content += "\neval('1+1')\n";
+    const cfg = withConfig();
+    const build = await new BuildPipeline(
+      deps({ config: { ...cfg, dangerousBuiltins: { ...cfg.dangerousBuiltins, mode: "audit" } } }),
+    ).run(submission(files));
+    expect(build.botVersionState).toBe("rejected");
+    expect(build.stages.find((s) => s.name === "static_analysis")!.message).toMatch(/dinámica/);
+  });
+
+  it("un bot que NO parsea se rechaza fail-closed en static_analysis (R2.4)", async () => {
+    const files = pyGoodFiles();
+    files.find((f) => f.path === "src/bot.py")!.content = "def rota(:\n  pass";
+    const build = await new BuildPipeline(deps()).run(submission(files));
+    expect(build.botVersionState).toBe("rejected");
+    expect(build.stages.find((s) => s.name === "static_analysis")!.message).toMatch(/fail-closed/);
+  });
+
   it("la partida de humo/prueba de protocolo detecta un bot que compila pero incumple protocolo", async () => {
     const build = await new BuildPipeline(deps({ agentResolver: () => brokenProtocolCandidate })).run(
       submission(pyGoodFiles()),

@@ -9,6 +9,7 @@ import { defineOperation, defineExtension } from "../registry.js";
 import { hashPassword, verifyPassword } from "../auth/passwords.js";
 import {
   ACCESS_TOKEN_TTL_S,
+  REFRESH_ABSOLUTE_TTL_S,
   REFRESH_TOKEN_TTL_S,
   hashToken,
   newRefreshToken,
@@ -28,24 +29,68 @@ export interface AuthDeps {
   loginGuard: FailedLoginGuard;
   registerLimiter: SlidingWindowLimiter;
   loginLimiter: SlidingWindowLimiter;
+  /** R2.4 (ERR-SEC-08): el refresh también se limita — es un endpoint de credenciales. */
+  refreshLimiter: SlidingWindowLimiter;
 }
+
+/**
+ * R2.4 (ERR-SEC-11) · Anti-enumeración: cuando el email NO existe se verifica la
+ * contraseña contra este hash SEÑUELO de Argon2id, de modo que ambas ramas del
+ * login pagan el mismo coste computacional y el tiempo de respuesta no delata si
+ * la cuenta existe. El señuelo es aleatorio por proceso: nunca coincide con nada.
+ */
+const decoyHashPromise: Promise<string> = hashPassword(randomBytes(32).toString("base64url"));
 
 async function createSession(db: Db, userId: string, req: { headers: Record<string, unknown>; ip?: string }) {
   const { token, hash } = newRefreshToken();
+  const now = Date.now();
   const [session] = await db("sessions")
     .insert({
       user_id: userId,
       refresh_token_hash: hash,
       user_agent: String(req.headers["user-agent"] ?? ""),
       ip: req.ip ?? null,
-      expires_at: new Date(Date.now() + REFRESH_TOKEN_TTL_S * 1000),
+      expires_at: new Date(now + REFRESH_TOKEN_TTL_S * 1000),
+      // R2.4 (ERR-SEC-08): tope ABSOLUTO de la familia; la rotación nunca lo mueve.
+      absolute_expires_at: new Date(now + REFRESH_ABSOLUTE_TTL_S * 1000),
     })
     .returning("*");
+  // Cabeza de la familia de refresh tokens (detección de reutilización, R2.4).
+  await db("session_refresh_tokens").insert({ session_id: session.id, token_hash: hash });
   return {
     accessToken: signAccessToken({ sub: userId, sid: session.id }),
     refreshToken: token,
     expiresIn: ACCESS_TOKEN_TTL_S,
   };
+}
+
+/**
+ * R2.4 · Reautenticación FUERTE para operaciones sensibles: contraseña + (si hay
+ * 2FA activo) TOTP o código de recuperación. Un access token robado NO basta.
+ */
+async function requireStrongReauth(
+  db: Db,
+  user: Record<string, unknown>,
+  body: { password?: unknown; totp?: unknown },
+): Promise<void> {
+  if (typeof body.password !== "string" || !(await verifyPassword(String(user.password_hash), body.password))) {
+    throw unauthorized("Reautenticación requerida: contraseña inválida");
+  }
+  if (user.totp_secret) {
+    const codeOk =
+      (typeof body.totp === "string" && (await verifyTotp(body.totp, String(user.totp_secret)))) ||
+      (typeof body.totp === "string" && (await consumeRecoveryCode(db, user, body.totp)));
+    if (!codeOk) throw unauthorized("Reautenticación requerida: código TOTP o de recuperación inválido");
+  }
+}
+
+/** R2.4 · Cambiar el estado del 2FA revoca TODAS las demás sesiones del usuario. */
+async function revokeOtherSessions(db: Db, userId: string, keepSessionId: string): Promise<number> {
+  return db("sessions")
+    .where({ user_id: userId })
+    .whereNot({ id: keepSessionId })
+    .whereNull("revoked_at")
+    .update({ revoked_at: db.fn.now() });
 }
 
 export function authRoutes(deps: AuthDeps): Router {
@@ -96,7 +141,12 @@ export function authRoutes(deps: AuthDeps): Router {
       }
 
       const user = await db("users").where({ email: email.toLowerCase() }).first();
-      const ok = user && (await verifyPassword(user.password_hash, password));
+      // R2.4 (ERR-SEC-11) · Anti-enumeración: Argon2id se ejecuta SIEMPRE. Si el
+      // email no existe se verifica contra el hash señuelo (siempre falla), de modo
+      // que ambas ramas tienen el mismo coste y el timing no delata cuentas.
+      const ok = user
+        ? await verifyPassword(user.password_hash, password)
+        : ((await verifyPassword(await decoyHashPromise, password)), false);
       if (!ok) {
         const blocked = loginGuard.recordFailure(key);
         if (blocked) {
@@ -127,31 +177,64 @@ export function authRoutes(deps: AuthDeps): Router {
   );
 
   // -------------------------------------------------------------- refresh
+  // R2.4 (ERR-SEC-08) · Rotación con FAMILIAS: cada sesión es una familia y cada
+  // hash emitido queda en session_refresh_tokens. Presentar un token YA ROTADO es
+  // señal inequívoca de robo (alguien tiene una copia antigua) → se revoca la
+  // familia ENTERA y se deja registro de auditoría. Además: vida máxima absoluta
+  // (absolute_expires_at) y rate-limit propio.
   defineOperation(router, "refreshToken", async (req, res) => {
     const { refreshToken } = req.body ?? {};
     if (typeof refreshToken !== "string") throw badRequest("refreshToken obligatorio");
-    const session = await db("sessions")
-      .where({ refresh_token_hash: hashToken(refreshToken) })
-      .whereNull("revoked_at")
-      .where("expires_at", ">", db.fn.now())
-      .first();
+    const presented = hashToken(refreshToken);
+
+    const known = await db("session_refresh_tokens").where({ token_hash: presented }).first();
+    if (!known) throw unauthorized("Refresh token inválido, revocado o expirado");
+    const session = await db("sessions").where({ id: known.session_id }).first();
     if (!session) throw unauthorized("Refresh token inválido, revocado o expirado");
 
-    // Rotación: el refresh usado deja de valer.
-    const { token, hash } = newRefreshToken();
-    await db("sessions")
-      .where({ id: session.id })
-      .update({
-        refresh_token_hash: hash,
-        last_seen_at: db.fn.now(),
-        expires_at: new Date(Date.now() + REFRESH_TOKEN_TTL_S * 1000),
+    if (known.rotated_at) {
+      // REUTILIZACIÓN detectada: el token ya fue canjeado. Revocar la familia.
+      if (!session.revoked_at) {
+        await db("sessions").where({ id: session.id }).update({ revoked_at: db.fn.now() });
+      }
+      await audit(db, {
+        actorId: session.user_id,
+        action: "auth.refresh.reuse_detected",
+        target: `session:${session.id}`,
+        detail: { ip: req.ip, reason: "rotated_token_replayed", family: session.id },
+        correlationId: req.correlationId,
       });
+      throw unauthorized("Refresh token reutilizado: la sesión ha sido revocada");
+    }
+
+    const now = Date.now();
+    const absolute = session.absolute_expires_at
+      ? new Date(session.absolute_expires_at).getTime()
+      : new Date(session.created_at).getTime() + REFRESH_ABSOLUTE_TTL_S * 1000;
+    if (session.revoked_at || new Date(session.expires_at).getTime() <= now || absolute <= now) {
+      throw unauthorized("Refresh token inválido, revocado o expirado");
+    }
+
+    // Rotación: el refresh usado deja de valer; la ventana deslizante se renueva
+    // pero SIEMPRE recortada al tope absoluto de la familia.
+    const { token, hash } = newRefreshToken();
+    await db.transaction(async (trx) => {
+      await trx("session_refresh_tokens").where({ id: known.id }).update({ rotated_at: trx.fn.now() });
+      await trx("session_refresh_tokens").insert({ session_id: session.id, token_hash: hash });
+      await trx("sessions")
+        .where({ id: session.id })
+        .update({
+          refresh_token_hash: hash,
+          last_seen_at: trx.fn.now(),
+          expires_at: new Date(Math.min(now + REFRESH_TOKEN_TTL_S * 1000, absolute)),
+        });
+    });
     res.status(200).json({
       accessToken: signAccessToken({ sub: session.user_id, sid: session.id }),
       refreshToken: token,
       expiresIn: ACCESS_TOKEN_TTL_S,
     });
-  });
+  }, rateLimit(deps.refreshLimiter, "refresh"));
 
   // ------------------------------------------------------------- sessions
   defineOperation(router, "listSessions", async (req, res) => {
@@ -189,23 +272,35 @@ export function authRoutes(deps: AuthDeps): Router {
     await db("users")
       .where({ id: user.id })
       .update({ totp_secret: secret, recovery_codes: JSON.stringify(hashes), updated_at: db.fn.now() });
+    // R2.4 · Cambiar el estado del 2FA invalida el resto de sesiones: cualquier
+    // sesión robada anterior al refuerzo deja de valer.
+    const revoked = await revokeOtherSessions(db, user.id, req.auth!.sessionId);
     await audit(db, {
       actorId: user.id,
       action: "auth.2fa.enabled",
       target: `user:${user.id}`,
+      detail: { otherSessionsRevoked: revoked },
       correlationId: req.correlationId,
     });
     res.status(200).json({ otpauthUrl: totpUri(secret, user.email), recoveryCodes: plain });
   });
 
+  // R2.4 (ERR-SEC-07) · Desactivar el 2FA es una operación SENSIBLE: exige
+  // reautenticación fuerte (contraseña + TOTP o código de recuperación) — un
+  // access token robado no basta — y revoca el resto de sesiones.
   defineOperation(router, "disable2fa", async (req, res) => {
+    const user = await db("users").where({ id: req.auth!.userId }).first();
+    if (!user.totp_secret) throw conflict("totp_not_enabled", "El 2FA no está activo");
+    await requireStrongReauth(db, user, req.body ?? {});
     await db("users")
-      .where({ id: req.auth!.userId })
+      .where({ id: user.id })
       .update({ totp_secret: null, recovery_codes: null, updated_at: db.fn.now() });
+    const revoked = await revokeOtherSessions(db, user.id, req.auth!.sessionId);
     await audit(db, {
-      actorId: req.auth!.userId,
+      actorId: user.id,
       action: "auth.2fa.disabled",
-      target: `user:${req.auth!.userId}`,
+      target: `user:${user.id}`,
+      detail: { otherSessionsRevoked: revoked, reauth: "password+totp" },
       correlationId: req.correlationId,
     });
     res.status(204).end();

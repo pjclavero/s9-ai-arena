@@ -60,6 +60,7 @@ export function defineExtension(
     implementedOperations.push({
       ...spec,
       anonymous: spec.minRole === "visitor",
+      reauth: false,
       tags: ["extension"],
       extension: true,
     });
