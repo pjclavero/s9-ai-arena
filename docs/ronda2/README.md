@@ -43,6 +43,12 @@ Rama de trabajo: `ronda2/r-p0-bloqueantes`.
 >
 > Quedan de R-P0: **R1.6, R1.7 y R1.8**. El sub-lote de motor (R1.1, R1.2, R1.3, R1.9) sigue cerrado.
 
+## Banda R-P2 · Visibilidad y panel
+
+| Tarea | Descripción | Estado | Issue | Reporte | Commit |
+|---|---|---|---|---|---|
+| R3.7 | Panel: torneos, batallas, sesión persistente y editor (ERR-VIS-02/03/04/10) | ✅ Hecho (E2E visual pendiente, declarado) | — | [R3.7-panel.md](reportes/R3.7-panel.md) | rama `ronda2/r3.7-panel` |
+
 **Leyenda:** ✅ hecho y verificado · 🔜 en curso · ⏳ pendiente.
 
 Línea base del área de motor+catálogo al abrir la rama: **188 tests verdes** (`npx vitest run packages/module-catalog apps/arena-engine`).
