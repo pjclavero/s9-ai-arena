@@ -274,8 +274,8 @@ describe("smoke-battle-real - contenedores Docker", () => {
       ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: SMOKE_TICK_CAP }),
       map: emptyArena(60, 40),
       participants: [
-        { id: "veh_1", botId: "smoke-red", team: "red", spec: gunnerLoadout() },
-        { id: "veh_2", botId: "smoke-blue", team: "blue", spec: scoutLoadout() },
+        { id: "veh_1", botId: "bot_smokered", team: "red", spec: gunnerLoadout() },
+        { id: "veh_2", botId: "bot_smokeblue", team: "blue", spec: scoutLoadout() },
       ],
       recordReplay: true,
     });
@@ -287,8 +287,8 @@ describe("smoke-battle-real - contenedores Docker", () => {
       battle,
       catalogVersion: "smoke-local",
       expected: [
-        { botId: "smoke-red", vehicleId: "veh_1", battleToken: tokenRed },
-        { botId: "smoke-blue", vehicleId: "veh_2", battleToken: tokenBlue },
+        { botId: "bot_smokered", vehicleId: "veh_1", battleToken: tokenRed },
+        { botId: "bot_smokeblue", vehicleId: "veh_2", battleToken: tokenBlue },
       ],
       tickIntervalMs: TICK_INTERVAL_MS,
       decisionDeadlineMs: DECISION_DEADLINE_MS,
@@ -315,8 +315,8 @@ describe("smoke-battle-real - contenedores Docker", () => {
     let containerBlue: string | null = null;
     try {
       [containerRed, containerBlue] = await Promise.all([
-        launchSmokeBotContainer({ botId: "smoke-red", battleId, battleToken: tokenRed, arenaWsUrl }),
-        launchSmokeBotContainer({ botId: "smoke-blue", battleId, battleToken: tokenBlue, arenaWsUrl }),
+        launchSmokeBotContainer({ botId: "bot_smokered", battleId, battleToken: tokenRed, arenaWsUrl }),
+        launchSmokeBotContainer({ botId: "bot_smokeblue", battleId, battleToken: tokenBlue, arenaWsUrl }),
       ]);
       launchedContainerIds.push(containerRed, containerBlue);
 
@@ -423,7 +423,7 @@ describe("smoke-battle-real - protocolo arena/1 en proceso", () => {
       ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: 30 }),
       map: emptyArena(40, 40),
       participants: [
-        { id: "veh_1", botId: "smoke-proto", team: "red", spec: scoutLoadout() },
+        { id: "veh_1", botId: "bot_smokeproto", team: "red", spec: scoutLoadout() },
         { id: "veh_2", botId: "ref-bot", team: "blue", spec: gunnerLoadout() },
       ],
     });
@@ -432,7 +432,7 @@ describe("smoke-battle-real - protocolo arena/1 en proceso", () => {
     const server = new ProtocolServer({
       battle,
       catalogVersion: "smoke-local",
-      expected: [{ botId: "smoke-proto", vehicleId: "veh_1", battleToken: token }],
+      expected: [{ botId: "bot_smokeproto", vehicleId: "veh_1", battleToken: token }],
       tickIntervalMs: 20,
       decisionDeadlineMs: 300,
       handshakeTimeoutMs: 8000,
@@ -445,7 +445,7 @@ describe("smoke-battle-real - protocolo arena/1 en proceso", () => {
       env: {
         ...process.env,
         ARENA_WS_URL: arenaWsUrl,
-        BOT_ID: "smoke-proto",
+        BOT_ID: "bot_smokeproto",
         BATTLE_TOKEN: token,
         LOG_FORMAT: "text",
         NODE_PATH: join(REPO_ROOT, "node_modules"),
