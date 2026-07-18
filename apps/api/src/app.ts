@@ -22,6 +22,7 @@ import { battleRoutes } from "./routes/battles.js";
 import { standingsRoutes } from "./routes/standings.js";
 import { tournamentRoutes } from "./routes/tournaments.js";
 import { mapRoutes } from "./routes/maps.js";
+import { systemRoutes } from "./routes/system.js";
 import { DEFAULT_ANON_QUOTA, type AnonQuotaConfig } from "./middleware/anon-quota.js";
 import { resolveTrustProxyHops } from "./middleware/proxy-trust.js";
 import type { BotManagerClient } from "./services/bot-manager.js";
@@ -111,6 +112,7 @@ export function createApp(cfg: AppConfig): express.Express {
   app.use(standingsRoutes(cfg.db));
   app.use(tournamentRoutes(cfg.db));
   app.use(mapRoutes(cfg.db));
+  app.use(systemRoutes(cfg.db));
 
   app.use((req: Request, res: Response) => {
     res.status(404).json({ error: "not_found", message: "Ruta no encontrada", correlationId: req.correlationId });

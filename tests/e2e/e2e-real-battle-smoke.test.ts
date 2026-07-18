@@ -13,9 +13,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { AddressInfo } from "node:net";
+import type { Server } from "node:http";
 import { WebSocket } from "ws";
+import express from "express";
 
 import { verify } from "../../apps/arena-engine/src/replay.js";
+import { createReplayServer } from "../../apps/replay-service/src/server.js";
 import type { ContainerHandle, ContainerRunner, SandboxSpec } from "../../apps/bot-manager/src/container-runner.js";
 import { readHarnessConfig, runSmokeHarness } from "../../scripts/e2e-real-battle-smoke.js";
 
@@ -130,4 +134,66 @@ describe("R6.2 · arnés e2e-real-battle-smoke (mock/dry-run)", () => {
     const v = await verify(replay);
     expect(v.recomputedHash).toBe(result.finalStateHash);
   }, 30000);
+});
+
+const httpServers: Server[] = [];
+afterEach(async () => {
+  await Promise.all(httpServers.splice(0).map((s) => new Promise<void>((r) => s.close(() => r()))));
+});
+
+/** Levanta un replay-service REAL en un puerto libre; devuelve su URL y el dir de replays. */
+async function startReplayService(): Promise<{ url: string; dir: string }> {
+  const dir = mkdtempSync(join(tmpdir(), "s9-replaysvc-"));
+  const app = express();
+  app.use(createReplayServer({ dir }));
+  const server = await new Promise<Server>((resolve) => {
+    const s = app.listen(0, "127.0.0.1", () => resolve(s));
+  });
+  httpServers.push(server);
+  const port = (server.address() as AddressInfo).port;
+  return { url: `http://127.0.0.1:${port}`, dir };
+}
+
+describe("R7 · el arnés INGESTA el replay real en el replay-service", () => {
+  it("readHarnessConfig lee REPLAY_SERVICE_URL (opcional)", () => {
+    expect(readHarnessConfig({ SMOKE_BOT_DIGEST: REAL_DIGEST }).replayServiceUrl).toBeUndefined();
+    const cfg = readHarnessConfig({ SMOKE_BOT_DIGEST: REAL_DIGEST, REPLAY_SERVICE_URL: "http://replay-service:8083" });
+    expect(cfg.replayServiceUrl).toBe("http://replay-service:8083");
+  });
+
+  it("con REPLAY_SERVICE_URL, el replay queda almacenado y recuperable (recurso gestionado)", async () => {
+    const svc = await startReplayService();
+    const dir = mkdtempSync(join(tmpdir(), "s9-smoke-"));
+    const cfg = readHarnessConfig({
+      SMOKE_BOT_DIGEST: REAL_DIGEST,
+      ENGINE_HOST: "127.0.0.1",
+      SMOKE_TICKS: "150",
+      SMOKE_TIMEOUT_MS: "20000",
+      REPLAY_OUT: join(dir, "replay.jsonl"),
+      REPLAY_SERVICE_URL: svc.url,
+    });
+
+    const outcome = await runSmokeHarness(cfg, mockRunner());
+
+    // Ingesta OK (201) con sha256.
+    expect(outcome.ingest?.ok).toBe(true);
+    expect(outcome.ingest?.status).toBe(201);
+    expect((outcome.ingest?.body as { sha256?: string }).sha256).toBeTruthy();
+
+    // El replay es recuperable por su battleId (existe GET /replays/:battleId).
+    const battleId = outcome.replay.header.battleId;
+    const got = await fetch(new URL(`/replays/${battleId}`, svc.url));
+    expect(got.status).toBe(200);
+    expect(Number(got.headers.get("content-length"))).toBeGreaterThan(0);
+  }, 30000);
+
+  it("un replay corrupto es rechazado por el servicio (no se declara ingesta OK)", async () => {
+    const svc = await startReplayService();
+    const res = await fetch(new URL("/replays/whatever", svc.url), {
+      method: "POST",
+      headers: { "content-type": "application/x-ndjson" },
+      body: "esto no es un replay jsonl válido",
+    });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
 });
