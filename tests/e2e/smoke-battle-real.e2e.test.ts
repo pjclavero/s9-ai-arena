@@ -364,7 +364,7 @@ describe("smoke-battle-real - contenedores Docker", () => {
       const replay = server.getReplay();
       const verification = await verify(replay);
       expect(verification.matches).toBe(true);
-      console.log(`[smoke] replay verificado: ${replay.frames.length} frames`);
+      console.log(`[smoke] replay verificado: ${replay.stateHashes.length} hashes, ${replay.commands.length} comandos`);
 
       const stored = ingestReplay(replaysDir, replay, { official: false });
       expect(existsSync(stored.path)).toBe(true);
