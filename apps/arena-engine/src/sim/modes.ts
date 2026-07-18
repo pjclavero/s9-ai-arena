@@ -103,6 +103,29 @@ abstract class BaseMode implements GameMode {
 export class DeathmatchMode extends BaseMode {
   readonly id = "deathmatch";
 
+  constructor(teams: string[], participants?: { id: string; team: string }[]) {
+    super(teams);
+    // La premisa del modo es "cada vehículo es su propio equipo" y hay que FORZARLA
+    // en construcción (ERR-ENG-07): con dos vehículos del mismo equipo, onKill filtra
+    // por killerTeam !== victim.team y nadie puntúa nunca — una batalla de 5 minutos
+    // condenada a tablas desde el tick 0, sin ningún error visible.
+    if (participants) {
+      const byTeam = new Map<string, string[]>();
+      for (const p of participants) {
+        if (!byTeam.has(p.team)) byTeam.set(p.team, []);
+        byTeam.get(p.team)!.push(p.id);
+      }
+      const shared = [...byTeam.entries()].filter(([, ids]) => ids.length > 1);
+      if (shared.length > 0) {
+        const detail = shared.map(([t, ids]) => `${t}: ${ids.join(", ")}`).join(" · ");
+        throw new Error(
+          `deathmatch exige que cada vehículo sea su propio equipo; equipos compartidos → ${detail}. ` +
+            `Usa team_deathmatch para jugar por equipos.`,
+        );
+      }
+    }
+  }
+
   tick(_ctx: ModeContext): void {
     // Toda la puntuación ocurre en onKill.
   }
@@ -330,10 +353,16 @@ export class ZoneControlMode extends BaseMode {
 }
 
 // ---------------------------------------------------------------------------
-export function createMode(ruleset: Ruleset, teams: string[], map: ArenaMap): GameMode {
+export function createMode(
+  ruleset: Ruleset,
+  teams: string[],
+  map: ArenaMap,
+  /** Lista completa de participantes: permite al modo rechazar configuraciones inválidas. */
+  participants?: { id: string; team: string }[],
+): GameMode {
   switch (ruleset.mode) {
     case "deathmatch":
-      return new DeathmatchMode(teams);
+      return new DeathmatchMode(teams, participants);
     case "team_deathmatch":
       return new TeamDeathmatchMode(teams);
     case "capture_the_flag":

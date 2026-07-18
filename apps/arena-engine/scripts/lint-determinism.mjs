@@ -1,21 +1,55 @@
 #!/usr/bin/env node
 /**
- * Lint de determinismo (T2.1).
+ * Lint de determinismo (T2.1, endurecido en R2.7 / ERR-ENG-02).
  *
- * Prohíbe en src/sim/ cualquier fuente de no-determinismo. No es un consejo de estilo:
- * una sola llamada a Date.now() dentro de la lógica de juego rompe los replays, la
- * auditoría de torneos y la reproducibilidad del balance, y lo hace SILENCIOSAMENTE —
- * la batalla sigue corriendo, solo que ya no se puede volver a ejecutar igual.
+ * Prohíbe cualquier fuente de no-determinismo en el código del motor. No es un consejo
+ * de estilo: una sola llamada a Date.now() dentro de la lógica de juego rompe los
+ * replays, la auditoría de torneos y la reproducibilidad del balance, y lo hace
+ * SILENCIOSAMENTE — la batalla sigue corriendo, solo que ya no se puede volver a
+ * ejecutar igual.
+ *
+ * CARGA INVERTIDA (ERR-ENG-02): antes se vigilaba solo src/sim/ y quedaban fuera
+ * rng.ts, replay.ts, stubs.ts y fixtures.ts — un Math.random() en el PROPIO RNG
+ * pasaba la CI en verde. Ahora se vigila TODO src/ y lo exento está en una lista de
+ * exclusión explícita y comentada: un fichero nuevo queda vigilado por defecto.
  *
  * Por eso falla el build, y no solo avisa.
  *
- * Uso: node scripts/lint-determinism.mjs [--self-test]
+ * Uso: node scripts/lint-determinism.mjs [--self-test] [--dir <ruta>]
+ *   --dir apunta el lint a otro directorio (lo usan los tests para probar que muerde).
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 
 const ROOT = join(import.meta.dirname, "..");
-const SIM_DIR = join(ROOT, "src", "sim");
+const dirFlag = process.argv.indexOf("--dir");
+const SRC_DIR = dirFlag >= 0 && process.argv[dirFlag + 1]
+  ? process.argv[dirFlag + 1]
+  : join(ROOT, "src");
+
+/**
+ * LISTA DE EXCLUSIÓN. Cada entrada existe por un motivo concreto y auditado; añadir
+ * una nueva exige justificarla aquí mismo. Todo lo que NO esté en esta lista —incluido
+ * cualquier fichero futuro— se vigila.
+ */
+const EXCLUDED_FILES = new Set([
+  // Servidor WebSocket: timeouts de RED (deadline de decisión, grace de desconexión).
+  // Mide el tiempo de la infraestructura, no el de la simulación: el juego avanza en ticks.
+  "protocol-server.ts",
+  // Entrypoint de proceso (CLI): reloj de pared para nombres de archivo y logging.
+  "cli.ts",
+  // Única fuente sancionada de reloj de pared para METADATOS (recordedAt del replay,
+  // ids locales). Nada de lo que exporta puede entrar en la lógica de tick.
+  "wall-clock.ts",
+]);
+
+/** Los tests dentro de src/ (p. ej. protocol-server.test.ts) usan timers legítimamente. */
+const EXCLUDED_PATTERNS = [/\.test\.(ts|js|mjs)$/];
+
+function isExcluded(file) {
+  const name = basename(file);
+  return EXCLUDED_FILES.has(name) || EXCLUDED_PATTERNS.some((p) => p.test(name));
+}
 
 /** Cada regla explica POR QUÉ, para que quien la vea saltar sepa qué hacer. */
 const FORBIDDEN = [
@@ -27,17 +61,17 @@ const FORBIDDEN = [
   {
     pattern: /\bDate\s*\.\s*now\s*\(/g,
     name: "Date.now()",
-    why: "El tiempo de juego se mide en TICKS, no en milisegundos de pared. Usa this.tick.",
+    why: "El tiempo de juego se mide en TICKS, no en milisegundos de pared. Usa this.tick (o wall-clock.ts si es un metadato).",
   },
   {
     pattern: /\bnew\s+Date\s*\(/g,
     name: "new Date()",
-    why: "El reloj del sistema no puede influir en la simulación. Usa this.tick.",
+    why: "El reloj del sistema no puede influir en la simulación. Usa this.tick (o wall-clock.ts si es un metadato).",
   },
   {
     pattern: /\bperformance\s*\.\s*now\s*\(/g,
     name: "performance.now()",
-    why: "Solo para benchmarks, jamás dentro de src/sim. Usa this.tick.",
+    why: "Solo para benchmarks, jamás dentro de src/. Usa this.tick.",
   },
   {
     pattern: /\bprocess\s*\.\s*hrtime\b/g,
@@ -103,14 +137,15 @@ function lintFile(file) {
 async function main() {
   const selfTest = process.argv.includes("--self-test");
 
-  const files = walk(SIM_DIR);
+  const all = walk(SRC_DIR);
+  const files = all.filter((f) => !isExcluded(f));
   const violations = files.flatMap(lintFile);
 
   if (selfTest) {
     // Demuestra que la regla MUERDE: si no detecta código malo, la regla no vale nada.
     const bad = `export function tick() { const r = Math.random(); const t = Date.now(); return r + t; }`;
     const { writeFileSync, unlinkSync } = await import("node:fs");
-    const tmp = join(SIM_DIR, "__lint_self_test__.ts");
+    const tmp = join(SRC_DIR, "__lint_self_test__.ts");
     writeFileSync(tmp, bad);
     const found = lintFile(tmp);
     unlinkSync(tmp);
@@ -122,11 +157,15 @@ async function main() {
   }
 
   if (violations.length === 0) {
-    console.log(`lint de determinismo OK · ${files.length} archivos de src/sim sin fuentes de no-determinismo`);
+    const excluded = all.length - files.length;
+    console.log(
+      `lint de determinismo OK · ${files.length} archivos de src/ sin fuentes de no-determinismo ` +
+        `(${excluded} excluidos por lista explícita)`,
+    );
     process.exit(0);
   }
 
-  console.error(`\nDETERMINISMO ROTO · ${violations.length} violación(es) en src/sim:\n`);
+  console.error(`\nDETERMINISMO ROTO · ${violations.length} violación(es) en src/:\n`);
   for (const v of violations) {
     console.error(`  ${v.file}:${v.line}  ${v.name}`);
     console.error(`      ${v.why}\n`);

@@ -72,6 +72,14 @@ export interface Ruleset {
   };
   /** Solo zone_control: puntos por segundo y por zona controlada. */
   zone?: { pointsPerTickHeld: number };
+  /**
+   * Cada cuántos ticks emite el motor un hash de estado (ERR-ENG-04). Por defecto 30
+   * (1 hash/segundo). Para auditar una impugnación, un ruleset con hashEveryNTicks: 1
+   * produce hash POR TICK y verify() señala el tick exacto de divergencia, no el
+   * múltiplo de 30 más cercano. Viaja en la cabecera del replay (ruleset completo),
+   * así que la re-simulación usa la misma cadencia que la grabación.
+   */
+  hashEveryNTicks?: number;
   /** Categorías de módulo prohibidas en esta competición (usado por el validador de E3). */
   forbiddenCategories?: string[];
   /**

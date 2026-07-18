@@ -15,6 +15,7 @@
  *     --stub-bots botId3:heavy:idle,botId4:scout:hunter   (opcional, corren dentro del motor)
  */
 import { randomUUID } from "node:crypto";
+import { nowMs } from "./wall-clock.js";
 import { loadRuleset } from "../../../packages/game-rules/index.js";
 import { loadCatalog, CATALOG_VERSION } from "../../../packages/module-catalog/loadCatalog.js";
 import { resolveVehicle } from "../../../packages/module-catalog/resolve/index.js";
@@ -72,7 +73,8 @@ async function main(): Promise<void> {
   });
 
   const battle = await Battle.create({
-    battleId: "localsim_" + Date.now(),
+    // Id local, no simulación: el reloj de pared va vía wall-clock.ts (lint ERR-ENG-02).
+    battleId: "localsim_" + nowMs(),
     seed,
     ruleset: loadRuleset(rulesetId, { timeLimitTicks: ticks }),
     map: (MAPS[mapName] ?? emptyArena)(),

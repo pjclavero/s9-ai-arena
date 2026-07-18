@@ -26,7 +26,6 @@ import {
   deployMine,
   explosionFalloff,
   fire,
-  setVehicleHeading,
   type Mine,
   type Projectile,
 } from "./combat.js";
@@ -36,6 +35,13 @@ import { buildObservation, radioReaches, validateRadio, type RadioMessage } from
 import { Vehicle, type VehicleSpec } from "./vehicle.js";
 
 const MAX_MINES_PER_VEHICLE = 3;
+/**
+ * Guard de longitud de la cola de radio (ERR-ENG-06). Con el retardo de entrega actual
+ * la cola es autopurgante, pero un cambio de reglas (retardos largos, más vehículos)
+ * la convertiría en fuga. Techo generoso: a 2 msg/s por vehículo jamás se roza; si se
+ * alcanza, el mensaje se rechaza con evento, no se acumula.
+ */
+const MAX_RADIO_QUEUE = 1024;
 
 export interface Participant {
   id: string;
@@ -91,7 +97,6 @@ export class Battle {
   private projectiles: Projectile[] = [];
   private mines: Mine[] = [];
   private radioQueue: RadioMessage[] = [];
-  private radioSentThisSecond = new Map<string, number>();
   private sounds: { position: Vec2; kind: "gunshot" | "engine" | "explosion"; intensity: number }[] = [];
   /**
    * DOBLE BÚFER de sonidos (ERR-ENG-01). `observedSounds` conserva los sonidos del ciclo
@@ -120,7 +125,10 @@ export class Battle {
     this.rng = new Rng(config.seed);
     this.physics = new PhysicsWorld();
     const teams = [...new Set(config.participants.map((p) => p.team))].sort();
-    this.mode = createMode(config.ruleset, teams, config.map);
+    // El modo puede RECHAZAR la lista de participantes (ERR-ENG-07): deathmatch exige
+    // que cada vehículo sea su propio equipo, y fallar aquí —en construcción— es lo
+    // que evita una batalla de 5 minutos en la que nadie puede puntuar.
+    this.mode = createMode(config.ruleset, teams, config.map, config.participants);
 
     // --- Mundo estático
     for (const w of config.map.walls) {
@@ -138,6 +146,7 @@ export class Battle {
       this.vehicles.push(v);
       const spawn = this.spawnFor(v);
       this.physics.addVehicle(p.id, spawn.position, spawn.heading, p.spec.radiusM, p.spec.massKg);
+      v.heading = spawn.heading;
       v.turretHeading = spawn.heading;
       this.pendingEvents.set(p.id, []);
     }
@@ -192,7 +201,7 @@ export class Battle {
     const poses = this.poses();
     for (const v of this.vehicles) {
       const p = poses.get(v.id);
-      if (p) setVehicleHeading(v, p.heading);
+      if (p) v.heading = p.heading;
     }
 
     // --- PASO 1 · Recoger comandos de los bots (solo en tick de decisión)
@@ -300,16 +309,25 @@ export class Battle {
         if (r !== "ok") this.emit({ kind: "rejected_action", slot: m.slot, reason: r }, v.id);
       }
 
-      // Radio.
+      // Radio. Rate-limit por vehículo con contador que se reinicia al cambiar de
+      // segundo (ERR-ENG-06): memoria O(1) por vehículo, sin claves `id:segundo`
+      // que se acumulen durante toda la batalla.
       for (const r of cmd.radio ?? []) {
-        const sentKey = `${v.id}:${Math.floor(this.tick / TICK_HZ)}`;
-        const sent = this.radioSentThisSecond.get(sentKey) ?? 0;
-        const rej = validateRadio(v, r.slot, r.data ?? "", sent);
+        const second = Math.floor(this.tick / TICK_HZ);
+        if (v.radioSecond !== second) {
+          v.radioSecond = second;
+          v.radioSentThisSecond = 0;
+        }
+        const rej = validateRadio(v, r.slot, r.data ?? "", v.radioSentThisSecond);
         if (rej) {
           this.emit({ kind: "radio_dropped", slot: r.slot, reason: rej }, v.id);
           continue;
         }
-        this.radioSentThisSecond.set(sentKey, sent + 1);
+        if (this.radioQueue.length >= MAX_RADIO_QUEUE) {
+          this.emit({ kind: "radio_dropped", slot: r.slot, reason: "queue_full" }, v.id);
+          continue;
+        }
+        v.radioSentThisSecond++;
         this.radioQueue.push({
           from: v.id,
           team: v.team,
@@ -354,7 +372,7 @@ export class Battle {
     const posesAfter = this.poses();
     for (const v of this.vehicles) {
       const p = posesAfter.get(v.id);
-      if (p) setVehicleHeading(v, p.heading);
+      if (p) v.heading = p.heading;
     }
 
     // --- PASO 5 · Combate: disparos, proyectiles, minas, explosiones, daño
@@ -397,13 +415,18 @@ export class Battle {
     if (this.tick % snapEvery === 0) {
       this.snapshots.push(this.publicSnapshot(posesAfter));
     }
-    const hashEvery = this.config.hashEveryNTicks ?? 30;
+    // Cadencia del hash: config > ruleset > 30. Va en el ruleset (ERR-ENG-04) para que
+    // viaje en la cabecera del replay y una auditoría con hash por tick sea reproducible.
+    const hashEvery = this.config.hashEveryNTicks ?? this.config.ruleset.hashEveryNTicks ?? 30;
     if (this.tick % hashEvery === 0) {
       this.stateHashes.push({ tick: this.tick, hash: this.stateHash() });
     }
 
-    // Purga de radio ya entregada.
-    this.radioQueue = this.radioQueue.filter((m) => m.deliverAtTick >= this.tick);
+    // Purga de radio ya entregada. Solo si hay algo: filter() sobre una cola vacía
+    // reasignaba un array nuevo CADA tick (ERR-ENG-06), basura gratuita para el GC.
+    if (this.radioQueue.length > 0) {
+      this.radioQueue = this.radioQueue.filter((m) => m.deliverAtTick >= this.tick);
+    }
 
     // --- PASO 9 · Condición de fin
     const w = this.mode.winner(ctx);
@@ -664,9 +687,14 @@ export class Battle {
    */
   stateHash(): string {
     const poses = this.poses();
+    // Huella del solver (ERR-ENG-04): cuerpos despiertos + pares de contacto. Una
+    // divergencia interna de Rapier (islas de sueño, contactos) puede ser invisible
+    // en las poses cuantizadas y aun así seguir viva; esto la saca a la luz.
+    const solver = this.physics.solverFingerprint();
     const canonical = {
       tick: this.tick,
       rng: this.rng.getState(),
+      solver: [solver.awakeBodies, solver.contactPairs],
       vehicles: this.vehicles.map((v) => {
         const p = poses.get(v.id);
         return {

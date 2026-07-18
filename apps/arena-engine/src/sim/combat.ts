@@ -161,24 +161,16 @@ export function canFire(
 
   // Arco de torreta: el ángulo de torreta ya está limitado por el motor, pero un
   // arco parcial puede dejar objetivos fuera. Se valida contra el morro del chasis.
+  // v.heading lo mantiene el bucle desde la física (ERR-ENG-05: antes era un WeakMap
+  // global de este módulo que devolvía 0 para vehículos aún no registrados).
   const arc = w.spec.turretArcRad ?? Math.PI * 2;
   if (arc < Math.PI * 2 - 1e-6) {
-    const pose = v.turretHeading;
-    let rel = pose - vehicleHeadingOf(v);
+    let rel = v.turretHeading - v.heading;
     while (rel > Math.PI) rel -= 2 * Math.PI;
     while (rel < -Math.PI) rel += 2 * Math.PI;
     if (Math.abs(rel) > arc / 2) return "out_of_arc";
   }
   return null;
-}
-
-/** El heading del chasis lo guarda el mundo; el vehículo cachea el último conocido. */
-let headingCache = new WeakMap<Vehicle, number>();
-export function setVehicleHeading(v: Vehicle, h: number): void {
-  headingCache.set(v, h);
-}
-function vehicleHeadingOf(v: Vehicle): number {
-  return headingCache.get(v) ?? 0;
 }
 
 export function ammoFor(v: Vehicle, accepts: string[]) {
