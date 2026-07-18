@@ -76,41 +76,88 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
 }
 
-function frameOf(a: any, b: any, t = 1): InterpolatedFrame {
-  const vehicles = new Map<string, Pose & { alive: boolean; team?: string; alpha?: number }>();
-  const aById = new Map<string, any>((a.vehicles ?? []).map((v: any) => [v.id, v]));
-  for (const vb of b.vehicles ?? []) {
-    const va = aById.get(vb.id);
-    if (!va || !va.position || !vb.position) {
-      if (vb.position) {
-        vehicles.set(vb.id, {
-          x: vb.position.x,
-          y: vb.position.y,
-          heading: vb.heading,
-          turretHeading: vb.turretHeading,
-          alive: vb.alive,
-          team: vb.team,
-        });
+type FramePose = Pose & { alive: boolean; team?: string; alpha?: number };
+
+/**
+ * R3.3 (ERR-VIS-09) — Cuaderno de trabajo REUTILIZABLE de la interpolación: el
+ * frame, sus poses, los puntos de proyectil y los índices auxiliares se asignan
+ * UNA vez y se rellenan en cada muestreo. A 60 fps, el `frameOf` original
+ * asignaba dos Maps + un objeto por vehículo + un array y un objeto por
+ * proyectil POR FRAME: miles de asignaciones/s solo para tirar a GC (pausas =
+ * tirones). El frame devuelto por `fill` es válido hasta la siguiente llamada
+ * al MISMO scratch.
+ */
+class FrameScratch {
+  private readonly frame: InterpolatedFrame = { tick: 0, vehicles: new Map(), projectiles: [] };
+  private readonly poseCache = new Map<string, FramePose>();
+  private readonly dotCache: { id: string; x: number; y: number }[] = [];
+  private readonly aVehicles = new Map<string, any>();
+  private readonly aProjectiles = new Map<string, any>();
+
+  fill(a: any, b: any, t = 1): InterpolatedFrame {
+    const out = this.frame;
+    out.tick = b.tick;
+    out.vehicles.clear();
+    this.aVehicles.clear();
+    for (const v of a.vehicles ?? []) this.aVehicles.set(v.id, v);
+    for (const vb of b.vehicles ?? []) {
+      if (!vb.position) continue;
+      const va = this.aVehicles.get(vb.id);
+      const pose = this.pose(vb.id);
+      if (!va || !va.position) {
+        pose.x = vb.position.x;
+        pose.y = vb.position.y;
+        pose.heading = vb.heading;
+        pose.turretHeading = vb.turretHeading;
+      } else {
+        pose.x = lerp(va.position.x, vb.position.x, t);
+        pose.y = lerp(va.position.y, vb.position.y, t);
+        pose.heading = lerpAngle(va.heading, vb.heading, t);
+        pose.turretHeading = lerpAngle(va.turretHeading, vb.turretHeading, t);
       }
-      continue;
+      pose.alive = vb.alive;
+      pose.team = vb.team;
+      out.vehicles.set(vb.id, pose);
     }
-    vehicles.set(vb.id, {
-      x: lerp(va.position.x, vb.position.x, t),
-      y: lerp(va.position.y, vb.position.y, t),
-      heading: lerpAngle(va.heading, vb.heading, t),
-      turretHeading: lerpAngle(va.turretHeading, vb.turretHeading, t),
-      alive: vb.alive,
-      team: vb.team,
-    });
+
+    this.aProjectiles.clear();
+    for (const p of a.projectiles ?? []) this.aProjectiles.set(p.id, p);
+    let n = 0;
+    for (const pb of b.projectiles ?? []) {
+      let dot = this.dotCache[n];
+      if (!dot) {
+        dot = { id: "", x: 0, y: 0 };
+        this.dotCache[n] = dot;
+      }
+      const pa = this.aProjectiles.get(pb.id);
+      dot.id = pb.id;
+      if (pa) {
+        dot.x = lerp(pa.position.x, pb.position.x, t);
+        dot.y = lerp(pa.position.y, pb.position.y, t);
+      } else {
+        dot.x = pb.position.x;
+        dot.y = pb.position.y;
+      }
+      if (out.projectiles[n] !== dot) out.projectiles[n] = dot;
+      n++;
+    }
+    out.projectiles.length = n;
+    return out;
   }
-  const aProj = new Map<string, any>((a.projectiles ?? []).map((p: any) => [p.id, p]));
-  const projectiles = (b.projectiles ?? []).map((pb: any) => {
-    const pa = aProj.get(pb.id);
-    return pa
-      ? { id: pb.id, x: lerp(pa.position.x, pb.position.x, t), y: lerp(pa.position.y, pb.position.y, t) }
-      : { id: pb.id, x: pb.position.x, y: pb.position.y };
-  });
-  return { tick: b.tick, vehicles, projectiles };
+
+  private pose(id: string): FramePose {
+    let p = this.poseCache.get(id);
+    if (!p) {
+      p = { x: 0, y: 0, heading: 0, turretHeading: 0, alive: true };
+      this.poseCache.set(id, p);
+    }
+    return p;
+  }
+}
+
+/** Variante ASIGNADORA (compatibilidad T8.2/tests): un frame nuevo por llamada. */
+function frameOf(a: any, b: any, t = 1): InterpolatedFrame {
+  return new FrameScratch().fill(a, b, t);
 }
 
 // ─────────────────────────────────── R3.2 · buffer sobre delta de ticks (ERR-VIS-06)
@@ -127,6 +174,8 @@ export class InterpolationBuffer {
   /** Ordenado por atMs ascendente. */
   private buf: { snapshot: any; atMs: number }[] = [];
   private readonly maxSnapshots: number;
+  /** R3.3: cuaderno reutilizado — cero asignaciones por frame en el camino caliente. */
+  private readonly scratch = new FrameScratch();
 
   constructor(maxSnapshots = 32) {
     this.maxSnapshots = maxSnapshots;
@@ -164,20 +213,25 @@ export class InterpolationBuffer {
    * t = proporción del delta de ticks; antes del primero devuelve el primero;
    * después del último, se queda en el último (sin extrapolar vehículos — los
    * proyectiles rápidos los extrapola BallisticsTracker, no este buffer).
+   *
+   * R3.3: el frame devuelto se REUTILIZA — es válido hasta el siguiente
+   * sampleAt de este buffer (el consumidor es el bucle de render, que lo dibuja
+   * y lo suelta; nadie retiene frames entre vueltas).
    */
   sampleAt(tMs: number): InterpolatedFrame | null {
     if (this.buf.length === 0) return null;
-    if (tMs <= this.buf[0].atMs || this.buf.length === 1) return frameOf(this.buf[0].snapshot, this.buf[0].snapshot);
+    const fill = (a: any, b: any, t?: number): InterpolatedFrame => this.scratch.fill(a, b, t);
+    if (tMs <= this.buf[0].atMs || this.buf.length === 1) return fill(this.buf[0].snapshot, this.buf[0].snapshot);
     for (let i = this.buf.length - 1; i >= 1; i--) {
       const a = this.buf[i - 1];
       const b = this.buf[i];
-      if (tMs >= b.atMs && i === this.buf.length - 1) return frameOf(b.snapshot, b.snapshot);
+      if (tMs >= b.atMs && i === this.buf.length - 1) return fill(b.snapshot, b.snapshot);
       if (tMs >= a.atMs && tMs <= b.atMs) {
         const span = b.atMs - a.atMs;
         const t = span <= 0 ? 1 : (tMs - a.atMs) / span;
-        return frameOf(a.snapshot, b.snapshot, t);
+        return fill(a.snapshot, b.snapshot, t);
       }
     }
-    return frameOf(this.buf[0].snapshot, this.buf[0].snapshot);
+    return fill(this.buf[0].snapshot, this.buf[0].snapshot);
   }
 }

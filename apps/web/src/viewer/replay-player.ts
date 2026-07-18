@@ -145,14 +145,36 @@ export class ReplayPlayer {
    * Salto por barra temporal (DoD: aterriza en el tick pedido ±1 tick, < 1 s).
    * Usa el keyframe anterior del índice: solo se descarga el trozo necesario.
    */
-  async seekTick(tick: number): Promise<void> {
+  async seekTick(tick: number, signal?: AbortSignal): Promise<void> {
     if (!this.index) throw new Error("init() primero");
+    if (signal?.aborted) throw new DOMException("seek abortado", "AbortError");
     const target = Math.max(0, Math.min(tick, this.index.ticks));
     await this.ensureLoaded(target, target + CHUNK_TICKS);
+    // Un seek posterior (el usuario sigue arrastrando el slider) aborta éste:
+    // no reposicionamos con datos de un tick que ya no interesa (R3.3).
+    if (signal?.aborted) throw new DOMException("seek abortado", "AbortError");
     // Se aterriza en el snapshot MÁS CERCANO al tick pedido: con snapshots cada
     // 3 ticks la distancia máxima es 1 tick (DoD: ±1 tick).
     this.playhead = this.nearestSnapshotTick(target);
     this.lastDeliveredEventIdx = this.eventIndexBefore(this.playhead);
+  }
+
+  /**
+   * R3.3 (ERR-VIS-11) — Prefetch del trozo N+1 FUERA del bucle de RAF. La página
+   * lo llama en un temporizador aparte para que el trozo siguiente esté ya en
+   * memoria cuando el playhead lo alcance y `advance` no bloquee el frame en red.
+   * Silencioso: un fallo de red aquí no interrumpe la reproducción (advance
+   * reintentará el trozo cuando de verdad lo necesite).
+   */
+  async prefetch(): Promise<void> {
+    if (!this.index) return;
+    const nextChunkStart = (Math.floor(this.currentTick / CHUNK_TICKS) + 1) * CHUNK_TICKS;
+    if (nextChunkStart > this.index.ticks) return;
+    try {
+      await this.ensureLoaded(nextChunkStart, nextChunkStart + CHUNK_TICKS);
+    } catch {
+      /* prefetch best-effort: no propaga */
+    }
   }
 
   /**
