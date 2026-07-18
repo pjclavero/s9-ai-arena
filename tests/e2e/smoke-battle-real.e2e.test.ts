@@ -64,6 +64,10 @@ let proxyServer: http.Server | null = null;
 let botManagerServer: http.Server | null = null;
 let botManagerUrl = "";
 let replaysDir = "";
+let registryContainerId: string | null = null;
+let registryPort = 0;
+/** Referencia por digest real (name@sha256:...) del smoke-bot, resuelta tras build+push a un registry local. */
+let resolvedSmokeBotImageRef = "";
 const launchedContainerIds: string[] = [];
 
 // Helpers Docker
@@ -103,6 +107,41 @@ function stopContainer(id: string): void {
   }
 }
 
+/**
+ * docker-proxy solo acepta imágenes por digest real (name@sha256:...). Un build
+ * local NO tiene RepoDigests (eso solo lo registra Docker tras push/pull contra
+ * un registry). Para obtener un digest real sin depender de un registry externo,
+ * levantamos un registry:2 efímero, empujamos la imagen ahí y leemos el
+ * RepoDigest resultante — el propio motor Docker deja la imagen cacheada
+ * localmente bajo ese digest, así que el create posterior no necesita red.
+ */
+function startLocalRegistry(): { containerId: string; port: number } {
+  const containerId = execFileSync("docker", ["run", "-d", "--rm", "-p", "127.0.0.1::5000", "registry:2"], {
+    timeout: 30_000,
+  })
+    .toString()
+    .trim();
+  const portOut = execFileSync("docker", ["port", containerId, "5000/tcp"], { timeout: 5000 }).toString().trim();
+  const port = Number(portOut.split(":").pop());
+  if (!port) throw new Error(`no se pudo determinar el puerto del registry local (${portOut})`);
+  return { containerId, port };
+}
+
+function resolveImageDigestViaRegistry(localTag: string, port: number, repoName: string): string {
+  const pushRef = `localhost:${port}/${repoName}:local`;
+  execFileSync("docker", ["tag", localTag, pushRef], { timeout: 10_000 });
+  execFileSync("docker", ["push", pushRef], { stdio: "ignore", timeout: 60_000 });
+  const inspectOut = execFileSync("docker", ["inspect", "--format", "{{index .RepoDigests 0}}", pushRef], {
+    timeout: 5000,
+  })
+    .toString()
+    .trim();
+  if (!/@sha256:[0-9a-f]{64}$/i.test(inspectOut)) {
+    throw new Error(`digest resuelto con formato inesperado: "${inspectOut}"`);
+  }
+  return inspectOut;
+}
+
 beforeAll(async () => {
   await initPhysics();
   dockerAvailable = checkDockerAvailable();
@@ -115,6 +154,10 @@ beforeAll(async () => {
   }
 
   replaysDir = mkdtempSync(join(tmpdir(), "smoke-battle-replays-"));
+
+  const registry = startLocalRegistry();
+  registryContainerId = registry.containerId;
+  registryPort = registry.port;
 
   // Docker-proxy local con socket real
   const backend = createSocketBackend("/var/run/docker.sock");
@@ -130,13 +173,20 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => botManagerServer!.listen(0, "127.0.0.1", () => resolve()));
   const bmPort = (botManagerServer!.address() as any).port;
   botManagerUrl = `http://127.0.0.1:${bmPort}`;
-}, 30_000);
+}, 60_000);
 
 afterAll(async () => {
   for (const id of launchedContainerIds) stopContainer(id);
   botManagerServer?.close();
   proxyServer?.close();
-}, 15_000);
+  if (registryContainerId) {
+    try {
+      execFileSync("docker", ["stop", "-t", "5", registryContainerId], { stdio: "ignore", timeout: 10_000 });
+    } catch {
+      /* ya parado o no existe */
+    }
+  }
+}, 20_000);
 
 // Helper: lanza contenedor via bot-manager
 async function launchSmokeBotContainer(opts: {
@@ -145,24 +195,15 @@ async function launchSmokeBotContainer(opts: {
   battleToken: string;
   arenaWsUrl: string;
 }): Promise<string> {
-  let imageRef = SMOKE_BOT_IMAGE;
-  if (!imageRef.includes("@sha256:")) {
-    try {
-      const id = execFileSync("docker", ["image", "inspect", imageRef, "--format", "{{.Id}}"], { timeout: 5000 })
-        .toString()
-        .trim()
-        .replace("sha256:", "");
-      imageRef = `${imageRef.split(":")[0]}@sha256:${id}`;
-    } catch {
-      /* usar tag tal cual */
-    }
+  if (!resolvedSmokeBotImageRef) {
+    throw new Error("resolvedSmokeBotImageRef vacío: el test de build/resolución de digest debe correr antes que este");
   }
 
   const res = await fetch(new URL("/internal/containers/run", botManagerUrl), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      imageDigest: imageRef,
+      imageDigest: resolvedSmokeBotImageRef,
       botId: opts.botId,
       version: 1,
       battleId: opts.battleId,
@@ -193,7 +234,7 @@ describe("smoke-battle-real - contenedores Docker", () => {
     expect(dockerAvailable).toBe(true);
   });
 
-  it("imagen smoke-bot existe o se construye", async () => {
+  it("imagen smoke-bot existe o se construye, y se resuelve su digest real", async () => {
     if (!dockerAvailable) return;
 
     if (!imageExists(SMOKE_BOT_IMAGE)) {
@@ -204,6 +245,11 @@ describe("smoke-battle-real - contenedores Docker", () => {
       });
     }
     expect(imageExists(SMOKE_BOT_IMAGE)).toBe(true);
+
+    // docker-proxy exige name@sha256:... real (no un ID local): lo resolvemos
+    // empujando a un registry efímero (ver startLocalRegistry).
+    resolvedSmokeBotImageRef = resolveImageDigestViaRegistry(SMOKE_BOT_IMAGE, registryPort, "s9-smoke-bot");
+    expect(resolvedSmokeBotImageRef).toMatch(/@sha256:[0-9a-f]{64}$/i);
   }, 130_000);
 
   it("red Docker 'arena' existe o se crea", async () => {
