@@ -169,7 +169,6 @@ async function launchSmokeBotContainer(opts: {
       battleToken: opts.battleToken,
       arenaWsUrl: opts.arenaWsUrl,
       network: DOCKER_NETWORK,
-      seccompPath: "unconfined",
       limits: { ...DEFAULT_LIMITS, startupDeadlineMs: 10_000, pids: 64 },
     }),
   });
@@ -194,135 +193,123 @@ describe("smoke-battle-real - contenedores Docker", () => {
     expect(dockerAvailable).toBe(true);
   });
 
-  it(
-    "imagen smoke-bot existe o se construye",
-    async () => {
-      if (!dockerAvailable) return;
+  it("imagen smoke-bot existe o se construye", async () => {
+    if (!dockerAvailable) return;
 
-      if (!imageExists(SMOKE_BOT_IMAGE)) {
-        const smokeBotDir = join(REPO_ROOT, "bots", "s9-smoke-bot");
-        execSync(`docker build -t ${SMOKE_BOT_IMAGE} -f ${smokeBotDir}/Dockerfile ${smokeBotDir}`, {
-          stdio: "inherit",
-          timeout: 120_000,
-        });
-      }
-      expect(imageExists(SMOKE_BOT_IMAGE)).toBe(true);
-    },
-    130_000,
-  );
-
-  it(
-    "red Docker 'arena' existe o se crea",
-    async () => {
-      if (!dockerAvailable) return;
-
-      if (!networkExists(DOCKER_NETWORK)) {
-        execFileSync("docker", ["network", "create", "--internal", DOCKER_NETWORK], {
-          stdio: "ignore",
-          timeout: 10_000,
-        });
-      }
-      expect(networkExists(DOCKER_NETWORK)).toBe(true);
-    },
-    15_000,
-  );
-
-  it(
-    "batalla E2E: 2 smoke-bots en contenedores con replay real",
-    async () => {
-      if (!dockerAvailable) return;
-
-      const battleId = `smoke-battle-${Date.now()}`;
-      const battle = await Battle.create({
-        battleId,
-        seed: "smoke-battle-e2e",
-        ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: SMOKE_TICK_CAP }),
-        map: emptyArena(60, 40),
-        participants: [
-          { id: "veh_1", botId: "smoke-red", team: "red", spec: gunnerLoadout() },
-          { id: "veh_2", botId: "smoke-blue", team: "blue", spec: scoutLoadout() },
-        ],
-        recordReplay: true,
+    if (!imageExists(SMOKE_BOT_IMAGE)) {
+      const smokeBotDir = join(REPO_ROOT, "bots", "s9-smoke-bot");
+      execSync(`docker build -t ${SMOKE_BOT_IMAGE} -f ${smokeBotDir}/Dockerfile ${smokeBotDir}`, {
+        stdio: "inherit",
+        timeout: 120_000,
       });
+    }
+    expect(imageExists(SMOKE_BOT_IMAGE)).toBe(true);
+  }, 130_000);
 
-      const tokenRed = "smoke-token-red-" + Math.random().toString(36).slice(2, 18);
-      const tokenBlue = "smoke-token-blue-" + Math.random().toString(36).slice(2, 18);
+  it("red Docker 'arena' existe o se crea", async () => {
+    if (!dockerAvailable) return;
 
-      const server = new ProtocolServer({
-        battle,
-        catalogVersion: "smoke-local",
-        expected: [
-          { botId: "smoke-red", vehicleId: "veh_1", battleToken: tokenRed },
-          { botId: "smoke-blue", vehicleId: "veh_2", battleToken: tokenBlue },
-        ],
-        tickIntervalMs: TICK_INTERVAL_MS,
-        decisionDeadlineMs: DECISION_DEADLINE_MS,
-        port: 0,
+    if (!networkExists(DOCKER_NETWORK)) {
+      execFileSync("docker", ["network", "create", "--internal", DOCKER_NETWORK], {
+        stdio: "ignore",
+        timeout: 10_000,
       });
+    }
+    expect(networkExists(DOCKER_NETWORK)).toBe(true);
+  }, 15_000);
 
-      const serverPort = server.port;
+  it("batalla E2E: 2 smoke-bots en contenedores con replay real", async () => {
+    if (!dockerAvailable) return;
 
-      // IP del gateway de la red arena (para que los contenedores alcancen el servidor)
-      let hostIp = "127.0.0.1";
-      try {
-        const networkInfo = JSON.parse(
-          execFileSync("docker", ["network", "inspect", DOCKER_NETWORK], { timeout: 5000 }).toString(),
-        );
-        const gateway = networkInfo[0]?.IPAM?.Config?.[0]?.Gateway;
-        if (gateway) hostIp = gateway;
-      } catch {
-        /* continuar con 127.0.0.1 */
-      }
-      const arenaWsUrl = `ws://${hostIp}:${serverPort}`;
+    const battleId = `smoke-battle-${Date.now()}`;
+    const battle = await Battle.create({
+      battleId,
+      seed: "smoke-battle-e2e",
+      ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: SMOKE_TICK_CAP }),
+      map: emptyArena(60, 40),
+      participants: [
+        { id: "veh_1", botId: "smoke-red", team: "red", spec: gunnerLoadout() },
+        { id: "veh_2", botId: "smoke-blue", team: "blue", spec: scoutLoadout() },
+      ],
+      recordReplay: true,
+    });
 
-      let containerRed: string | null = null;
-      let containerBlue: string | null = null;
-      try {
-        [containerRed, containerBlue] = await Promise.all([
-          launchSmokeBotContainer({ botId: "smoke-red", battleId, battleToken: tokenRed, arenaWsUrl }),
-          launchSmokeBotContainer({ botId: "smoke-blue", battleId, battleToken: tokenBlue, arenaWsUrl }),
-        ]);
-        launchedContainerIds.push(containerRed, containerBlue);
+    const tokenRed = "smoke-token-red-" + Math.random().toString(36).slice(2, 18);
+    const tokenBlue = "smoke-token-blue-" + Math.random().toString(36).slice(2, 18);
 
-        // Esperar conexiones antes de arrancar
-        await new Promise<void>((r) => setTimeout(r, Math.min(BOT_CONNECT_TIMEOUT_MS, 8_000)));
+    const server = new ProtocolServer({
+      battle,
+      catalogVersion: "smoke-local",
+      expected: [
+        { botId: "smoke-red", vehicleId: "veh_1", battleToken: tokenRed },
+        { botId: "smoke-blue", vehicleId: "veh_2", battleToken: tokenBlue },
+      ],
+      tickIntervalMs: TICK_INTERVAL_MS,
+      decisionDeadlineMs: DECISION_DEADLINE_MS,
+      port: 0,
+    });
 
-        server.start();
+    const serverPort = server.port;
 
-        const totalMs = SMOKE_TICK_CAP * TICK_INTERVAL_MS + 10_000;
-        const result = await Promise.race([
-          server.waitForResult(),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`batalla no termino en ${totalMs}ms`)), totalMs),
-          ),
-        ]);
+    // IP del gateway de la red arena (para que los contenedores alcancen el servidor)
+    let hostIp = "127.0.0.1";
+    try {
+      const networkInfo = JSON.parse(
+        execFileSync("docker", ["network", "inspect", DOCKER_NETWORK], { timeout: 5000 }).toString(),
+      );
+      const gateway = networkInfo[0]?.IPAM?.Config?.[0]?.Gateway;
+      if (gateway) hostIp = gateway;
+    } catch {
+      /* continuar con 127.0.0.1 */
+    }
+    const arenaWsUrl = `ws://${hostIp}:${serverPort}`;
 
-        expect(result.ticks).toBeGreaterThan(0);
-        expect(result.finalStateHash).toMatch(/^[0-9a-f]{64}$/);
-        console.log(`[smoke] resultado: winner=${result.winner}, ticks=${result.ticks}`);
+    let containerRed: string | null = null;
+    let containerBlue: string | null = null;
+    try {
+      [containerRed, containerBlue] = await Promise.all([
+        launchSmokeBotContainer({ botId: "smoke-red", battleId, battleToken: tokenRed, arenaWsUrl }),
+        launchSmokeBotContainer({ botId: "smoke-blue", battleId, battleToken: tokenBlue, arenaWsUrl }),
+      ]);
+      launchedContainerIds.push(containerRed, containerBlue);
 
-        const replay = server.getReplay();
-        const verification = await verify(replay);
-        expect(verification.matches).toBe(true);
-        console.log(`[smoke] replay verificado: ${replay.frames.length} frames`);
+      // Esperar conexiones antes de arrancar
+      await new Promise<void>((r) => setTimeout(r, Math.min(BOT_CONNECT_TIMEOUT_MS, 8_000)));
 
-        const stored = ingestReplay(replaysDir, replay, { official: false });
-        expect(existsSync(stored.path)).toBe(true);
-        console.log(`[smoke] replay guardado: ${stored.path}`);
+      server.start();
 
-        const dq = result.disqualified ?? [];
-        expect(dq.length).toBeLessThan(2);
+      const totalMs = SMOKE_TICK_CAP * TICK_INTERVAL_MS + 10_000;
+      const result = await Promise.race([
+        server.waitForResult(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`batalla no termino en ${totalMs}ms`)), totalMs),
+        ),
+      ]);
 
-        console.log("[smoke] DICTAMEN: A. BATALLA E2E REAL HABILITADA Y VALIDADA");
-      } finally {
-        server.stop();
-        battle.free();
-        if (containerRed) stopContainer(containerRed);
-        if (containerBlue) stopContainer(containerBlue);
-      }
-    },
-    180_000,
-  );
+      expect(result.ticks).toBeGreaterThan(0);
+      expect(result.finalStateHash).toMatch(/^[0-9a-f]{64}$/);
+      console.log(`[smoke] resultado: winner=${result.winner}, ticks=${result.ticks}`);
+
+      const replay = server.getReplay();
+      const verification = await verify(replay);
+      expect(verification.matches).toBe(true);
+      console.log(`[smoke] replay verificado: ${replay.frames.length} frames`);
+
+      const stored = ingestReplay(replaysDir, replay, { official: false });
+      expect(existsSync(stored.path)).toBe(true);
+      console.log(`[smoke] replay guardado: ${stored.path}`);
+
+      const dq = result.disqualified ?? [];
+      expect(dq.length).toBeLessThan(2);
+
+      console.log("[smoke] DICTAMEN: A. BATALLA E2E REAL HABILITADA Y VALIDADA");
+    } finally {
+      server.stop();
+      battle.free();
+      if (containerRed) stopContainer(containerRed);
+      if (containerBlue) stopContainer(containerBlue);
+    }
+  }, 180_000);
 
   it("seguridad: red arena no tiene acceso a plataforma (postgres/redis/api)", () => {
     if (!dockerAvailable) return;
@@ -332,9 +319,7 @@ describe("smoke-battle-real - contenedores Docker", () => {
         execFileSync("docker", ["network", "inspect", DOCKER_NETWORK], { timeout: 5000 }).toString(),
       );
       expect(info[0]).toBeTruthy();
-      console.log(
-        `[smoke-security] red ${DOCKER_NETWORK}: Internal=${info[0]?.Internal}, Driver=${info[0]?.Driver}`,
-      );
+      console.log(`[smoke-security] red ${DOCKER_NETWORK}: Internal=${info[0]?.Internal}, Driver=${info[0]?.Driver}`);
       // La red arena debe ser interna (sin salida a Internet) segun docker-compose.yml
       // (networks.arena.internal: true). Si se crea manualmente en el test con
       // --internal, tambien cumple. Los contenedores en esta red solo alcanzan al
@@ -355,103 +340,96 @@ describe("smoke-battle-real - protocolo arena/1 en proceso", () => {
    * lo conecta al ProtocolServer real y verifica el handshake HELLO -> WELCOME.
    * Funciona en CI sin Docker.
    */
-  it(
-    "el smoke-bot conecta al ProtocolServer y completa el handshake arena/1",
-    async () => {
-      const { spawn } = await import("node:child_process");
+  it("el smoke-bot conecta al ProtocolServer y completa el handshake arena/1", async () => {
+    const { spawn } = await import("node:child_process");
 
-      const botScript = join(REPO_ROOT, "bots", "s9-smoke-bot", "main.js");
+    const botScript = join(REPO_ROOT, "bots", "s9-smoke-bot", "main.js");
 
-      // Batalla minima: 30 ticks a 20 ms/tick = 600 ms maximo
-      const battle = await Battle.create({
-        battleId: "proto-smoke-" + Date.now(),
-        seed: "proto-smoke",
-        ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: 30 }),
-        map: emptyArena(40, 40),
-        participants: [
-          { id: "veh_1", botId: "smoke-proto", team: "red", spec: scoutLoadout() },
-          { id: "veh_2", botId: "ref-bot", team: "blue", spec: gunnerLoadout() },
-        ],
-      });
+    // Batalla minima: 30 ticks a 20 ms/tick = 600 ms maximo
+    const battle = await Battle.create({
+      battleId: "proto-smoke-" + Date.now(),
+      seed: "proto-smoke",
+      ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: 30 }),
+      map: emptyArena(40, 40),
+      participants: [
+        { id: "veh_1", botId: "smoke-proto", team: "red", spec: scoutLoadout() },
+        { id: "veh_2", botId: "ref-bot", team: "blue", spec: gunnerLoadout() },
+      ],
+    });
 
-      const token = "smoke-proto-token-12345678";
-      const server = new ProtocolServer({
-        battle,
-        catalogVersion: "smoke-local",
-        expected: [{ botId: "smoke-proto", vehicleId: "veh_1", battleToken: token }],
-        tickIntervalMs: 20,
-        decisionDeadlineMs: 300,
-        handshakeTimeoutMs: 8000,
-        port: 0,
-      });
+    const token = "smoke-proto-token-12345678";
+    const server = new ProtocolServer({
+      battle,
+      catalogVersion: "smoke-local",
+      expected: [{ botId: "smoke-proto", vehicleId: "veh_1", battleToken: token }],
+      tickIntervalMs: 20,
+      decisionDeadlineMs: 300,
+      handshakeTimeoutMs: 8000,
+      port: 0,
+    });
 
-      const arenaWsUrl = `ws://127.0.0.1:${server.port}`;
+    const arenaWsUrl = `ws://127.0.0.1:${server.port}`;
 
-      const bot = spawn(process.execPath, [botScript], {
-        env: {
-          ...process.env,
-          ARENA_WS_URL: arenaWsUrl,
-          BOT_ID: "smoke-proto",
-          BATTLE_TOKEN: token,
-          LOG_FORMAT: "text",
-          NODE_PATH: join(REPO_ROOT, "node_modules"),
-        },
-        stdio: ["ignore", "pipe", "pipe"],
-        cwd: REPO_ROOT,
-      });
+    const bot = spawn(process.execPath, [botScript], {
+      env: {
+        ...process.env,
+        ARENA_WS_URL: arenaWsUrl,
+        BOT_ID: "smoke-proto",
+        BATTLE_TOKEN: token,
+        LOG_FORMAT: "text",
+        NODE_PATH: join(REPO_ROOT, "node_modules"),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+      cwd: REPO_ROOT,
+    });
 
-      let botLogs = "";
-      bot.stdout?.on("data", (d: Buffer) => (botLogs += d.toString()));
-      bot.stderr?.on("data", (d: Buffer) => (botLogs += d.toString()));
+    let botLogs = "";
+    bot.stdout?.on("data", (d: Buffer) => (botLogs += d.toString()));
+    bot.stderr?.on("data", (d: Buffer) => (botLogs += d.toString()));
 
-      const botExited = new Promise<number | null>((resolve) => bot.on("exit", (code) => resolve(code)));
+    const botExited = new Promise<number | null>((resolve) => bot.on("exit", (code) => resolve(code)));
 
-      // Dar 500 ms al bot para conectar, luego arrancar la batalla
-      await new Promise<void>((r) => setTimeout(r, 500));
-      server.start();
+    // Dar 500 ms al bot para conectar, luego arrancar la batalla
+    await new Promise<void>((r) => setTimeout(r, 500));
+    server.start();
 
-      // Esperar fin de batalla (30 ticks x 20 ms = ~600 ms) o timeout de 5 s
-      await Promise.race([
-        server.waitForResult(),
-        new Promise<void>((r) => setTimeout(r, 5000)),
-      ]);
+    // Esperar fin de batalla (30 ticks x 20 ms = ~600 ms) o timeout de 5 s
+    await Promise.race([server.waitForResult(), new Promise<void>((r) => setTimeout(r, 5000))]);
 
-      // Parar servidor: envia SHUTDOWN al bot y cierra WS
-      server.stop();
-      battle.free();
+    // Parar servidor: envia SHUTDOWN al bot y cierra WS
+    server.stop();
+    battle.free();
 
-      // Esperar salida del bot con timeout de 3 s
-      await Promise.race([botExited, new Promise<void>((r) => setTimeout(r, 3000))]);
-      if (bot.exitCode === null && !bot.killed) {
-        bot.kill("SIGKILL");
-      }
+    // Esperar salida del bot con timeout de 3 s
+    await Promise.race([botExited, new Promise<void>((r) => setTimeout(r, 3000))]);
+    if (bot.exitCode === null && !bot.killed) {
+      bot.kill("SIGKILL");
+    }
 
-      console.log(`[proto-smoke] logs del bot: "${botLogs.trim().slice(0, 300)}"`);
+    console.log(`[proto-smoke] logs del bot: "${botLogs.trim().slice(0, 300)}"`);
 
-      if (botLogs.includes("WELCOME recibido")) {
-        expect(botLogs).toContain("WELCOME recibido");
-        console.log("[proto-smoke] HANDSHAKE ARENA/1 VERIFICADO: HELLO -> WELCOME completado");
-      } else if (botLogs.includes("conexion abierta") || botLogs.includes("conectando a")) {
-        // Conectó pero no recibió WELCOME: timing issue, aceptable
-        console.log("[proto-smoke] bot inicio conexion (WELCOME no confirmado por timing)");
-      } else {
-        // No conectó: ws posiblemente no instalado o timing. NO fallar:
-        // la verificacion definitiva es el test con Docker real.
-        console.warn(
-          "[proto-smoke] bot no conecto en subproceso. Resultado aceptable en CI sin ws.\n" +
-            "Verificacion definitiva: test con Docker en VM108.",
-        );
-      }
-      // El test pasa siempre: el objetivo es verificar que el archivo main.js
-      // se puede ejecutar sin errores de carga (import/require). Si hubiera un
-      // error de sintaxis o modulo faltante, el bot saldria con codigo != 0 inmediatamente.
-      // Eso si se puede verificar:
-      if (bot.exitCode !== null && bot.exitCode !== 0) {
-        // Exitcode 1 esperado si ws no esta disponible (error de red, no de carga)
-        // Exitcode != 0 inesperado si hay error de parse/carga del modulo
-        console.warn(`[proto-smoke] bot salio con codigo ${bot.exitCode}`);
-      }
-    },
-    20_000,
-  );
+    if (botLogs.includes("WELCOME recibido")) {
+      expect(botLogs).toContain("WELCOME recibido");
+      console.log("[proto-smoke] HANDSHAKE ARENA/1 VERIFICADO: HELLO -> WELCOME completado");
+    } else if (botLogs.includes("conexion abierta") || botLogs.includes("conectando a")) {
+      // Conectó pero no recibió WELCOME: timing issue, aceptable
+      console.log("[proto-smoke] bot inicio conexion (WELCOME no confirmado por timing)");
+    } else {
+      // No conectó: ws posiblemente no instalado o timing. NO fallar:
+      // la verificacion definitiva es el test con Docker real.
+      console.warn(
+        "[proto-smoke] bot no conecto en subproceso. Resultado aceptable en CI sin ws.\n" +
+          "Verificacion definitiva: test con Docker en VM108.",
+      );
+    }
+    // El test pasa siempre: el objetivo es verificar que el archivo main.js
+    // se puede ejecutar sin errores de carga (import/require). Si hubiera un
+    // error de sintaxis o modulo faltante, el bot saldria con codigo != 0 inmediatamente.
+    // Eso si se puede verificar:
+    if (bot.exitCode !== null && bot.exitCode !== 0) {
+      // Exitcode 1 esperado si ws no esta disponible (error de red, no de carga)
+      // Exitcode != 0 inesperado si hay error de parse/carga del modulo
+      console.warn(`[proto-smoke] bot salio con codigo ${bot.exitCode}`);
+    }
+  }, 20_000);
 });

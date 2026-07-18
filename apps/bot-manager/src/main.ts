@@ -19,10 +19,16 @@
  * La request incluye la spec del sandbox; la response devuelve el containerId.
  */
 import express, { type Express, type Request, type Response } from "express";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { DEFAULT_CONFIG } from "./config.js";
 import { LaunchAuthority } from "./launch-guard.js";
 import { DEFAULT_LIMITS, type ContainerLimits, type SandboxSpec } from "./container-runner.js";
 import { ProxyContainerRunner } from "./docker-proxy.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+/** Perfil seccomp restrictivo (allowlist de syscalls, R6.1). NUNCA "unconfined". */
+const DEFAULT_SECCOMP_PROFILE_PATH = join(__dirname, "..", "security", "seccomp-bot.json");
 
 function log(level: "info" | "error", msg: string, extra: Record<string, unknown> = {}): void {
   console.log(JSON.stringify({ level, service: "bot-manager", msg, ...extra }));
@@ -73,7 +79,7 @@ export function createBotManagerApp(dockerProxyUrl: string | undefined): Express
    *   battleToken   string  Token arena/1 que el bot necesita para el handshake HELLO
    *   arenaWsUrl    string  WebSocket URL del ProtocolServer al que conectará el bot
    *   network       string  Red Docker del sandbox (normalmente "arena")
-   *   seccompPath?  string  Ruta al perfil seccomp (default: "unconfined" en dev)
+   *   seccompPath?  string  Ruta al perfil seccomp (default: perfil restrictivo del repo, security/seccomp-bot.json — NUNCA "unconfined")
    *   limits?       object  Override de ContainerLimits
    *
    * Response 201: { containerId: string }
@@ -116,7 +122,7 @@ export function createBotManagerApp(dockerProxyUrl: string | undefined): Express
         LOG_FORMAT: "json",
       },
       limits: { ...DEFAULT_LIMITS, ...(body.limits ?? {}) },
-      seccompProfilePath: body.seccompPath ?? "unconfined",
+      seccompProfilePath: body.seccompPath ?? DEFAULT_SECCOMP_PROFILE_PATH,
     };
 
     try {
