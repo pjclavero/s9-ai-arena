@@ -32,7 +32,7 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
 
     void import("../viewer/PhaserViewer.js").then(async ({ createViewerGame, ViewerScene }) => {
       if (!alive || !hostRef.current) return;
-      game = createViewerGame(hostRef.current);
+      game = createViewerGame(hostRef.current, { targetFps: 60 });
       const scene = (game as any).scene.getScene("viewer") as InstanceType<typeof ViewerScene>;
       sceneRef.current = scene;
 

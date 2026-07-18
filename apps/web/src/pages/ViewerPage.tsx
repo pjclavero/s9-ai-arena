@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
 import { SpectatorClient } from "../viewer/spectator-client.js";
+import { LiveFeed } from "../viewer/live-feed.js";
 import type { ViewerScene } from "../viewer/PhaserViewer.js";
 import type { CameraMode } from "../viewer/camera.js";
 
@@ -30,25 +31,29 @@ export function ViewerPage({ battleId }: { battleId: string }) {
     // Phaser se importa dinámicamente: el resto del panel no carga el motor de render.
     void import("../viewer/PhaserViewer.js").then(({ createViewerGame, ViewerScene }) => {
       if (!alive || !hostRef.current) return;
-      game = createViewerGame(hostRef.current);
+      game = createViewerGame(hostRef.current, { targetFps: 60 });
       const scene = (game as any).scene.getScene("viewer") as InstanceType<typeof ViewerScene>;
       sceneRef.current = scene;
+      // R3.2: LiveFeed fecha los snapshots por su tick (eje de partida) y fija el
+      // reloj de reproducción con delay-buffer de ~2 intervalos (DelayClock).
+      const feed = new LiveFeed(scene);
 
       client = new SpectatorClient({
         getTicket: () => api("POST", `/battles/${battleId}/spectate-ticket`),
       });
+      const c = client;
       client.on("init", (msg) => {
         setStatus("en directo");
         setAllowFog(msg.spectator?.allowFogView === true);
         setDebugAvailable(msg.spectator?.debug === true);
         if (msg.meta?.world) scene.setWorld(msg.meta.world);
-        if (msg.snapshot) scene.resetTo(msg.snapshot);
+        feed.onInit(msg);
       });
       client.on("snapshot", (s) => {
-        scene.pushSnapshot(s);
+        feed.onSnapshot(s, c.state.serverTimeMs ?? undefined);
         setOverlayTick(s.tick);
       });
-      client.on("event", (e) => scene.pushEvent(e));
+      client.on("event", (e) => feed.onEvent(e));
       client.on("debug", (d) => {
         scene.debugLayers = d.layers;
       });
@@ -107,6 +112,9 @@ export function ViewerPage({ battleId }: { battleId: string }) {
           </label>
         )}
       </div>
+      <p style={{ opacity: 0.7, fontSize: 13 }}>
+        Rueda: zoom · arrastre: mover cámara · 1–4: seguir bots · G: vista global
+      </p>
       <div ref={hostRef} style={{ width: "100%", height: 640 }} />
       {overlay && (
         <aside>

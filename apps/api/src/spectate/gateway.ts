@@ -216,6 +216,10 @@ export class SpectateGateway {
       {
         type: "init",
         battleId,
+        // R3.2: reloj del servidor (opcional, compatible hacia atrás). Va a nivel
+        // de MENSAJE, no dentro del snapshot: el snapshot público (D8) conserva su
+        // whitelist estructural exacta (test de fugas) y los replays no cambian.
+        serverTimeMs: Date.now(),
         spectator: {
           allowFogView: feed.opts.spectator?.allowFogView === true,
           delaySeconds: feed.opts.spectator?.delaySeconds ?? 0,
@@ -249,7 +253,8 @@ export class SpectateGateway {
     const { battle } = feed;
     while (feed.sentSnapshots < battle.snapshots.length) {
       const snapshot = battle.snapshots[feed.sentSnapshots++];
-      this.broadcast(feed, { type: "snapshot", snapshot });
+      // serverTimeMs a nivel de mensaje (R3.2): campo opcional, ver init.
+      this.broadcast(feed, { type: "snapshot", snapshot, serverTimeMs: Date.now() });
       if (feed.opts.debugLayers) {
         // Solo la reciben los tickets con debug firmado; ver sendTo().
         this.broadcast(feed, { type: "debug", tick: snapshot.tick, layers: feed.opts.debugLayers() }, true);

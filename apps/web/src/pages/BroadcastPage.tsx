@@ -17,6 +17,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { BroadcastConfig } from "../broadcast/config.js";
 import { BroadcastDirector, createPublicApi, type BattleSummary, type BroadcastScreen } from "../broadcast/director.js";
 import { SpectatorClient } from "../viewer/spectator-client.js";
+import { LiveFeed } from "../viewer/live-feed.js";
 import type { ViewerScene } from "../viewer/PhaserViewer.js";
 import type { FeedItem, VehicleOverlay } from "../viewer/overlay.js";
 
@@ -219,25 +220,30 @@ function LiveScreen({ config, battle }: { config: BroadcastConfig; battle: Battl
     // El MISMO visor de E8 (chunk perezoso): aquí solo se cablea, no se re-renderiza.
     void import("../viewer/PhaserViewer.js").then(({ createViewerGame, ViewerScene }) => {
       if (!alive || !hostRef.current) return;
-      game = createViewerGame(hostRef.current);
+      // FPS objetivo por vista (R3.2): la emisión se captura a 30 fps (streamer);
+      // renderizar a más solo quema CPU del contenedor de Chromium.
+      game = createViewerGame(hostRef.current, { targetFps: 30 });
       const scene = (game as any).scene.getScene("viewer") as InstanceType<typeof ViewerScene>;
       scene.cameraMode = { kind: "global" }; // encuadre fijo de emisión, sin manos
       sceneRef.current = scene;
+      // Mismo reloj de reproducción con delay-buffer que el visor (R3.2).
+      const feed = new LiveFeed(scene);
 
       client = new SpectatorClient({
         // Ticket ANÓNIMO: la vista broadcast jamás lleva sesión (cero datos privados).
         getTicket: () => api.post(`/battles/${battle.id}/spectate-ticket`),
       });
+      const c = client;
       client.on("init", (msg) => {
         setLive(true);
         if (msg.meta?.world) scene.setWorld(msg.meta.world);
-        if (msg.snapshot) scene.resetTo(msg.snapshot);
+        feed.onInit(msg);
       });
       client.on("snapshot", (s) => {
-        scene.pushSnapshot(s);
+        feed.onSnapshot(s, c.state.serverTimeMs ?? undefined);
         setTick(s.tick);
       });
-      client.on("event", (e) => scene.pushEvent(e));
+      client.on("event", (e) => feed.onEvent(e));
       client.on("disconnect", () => setLive(false));
       client.on("reconnected", () => setLive(true));
       void client.connect();

@@ -66,6 +66,7 @@ Rama de trabajo: `ronda2/r-p0-bloqueantes`.
 | Tarea | Descripción | Estado | Issue | Reporte | Commit |
 |---|---|---|---|---|---|
 | R3.1 | El replay interpola como el directo (ERR-VIS-01): reloj de reproducción explícito, `pushSnapshot` por snapshot y `resetTo` solo tras seek | ✅ Hecho (visual en navegador pendiente) | — | [R3.1-replay-interpolado.md](reportes/R3.1-replay-interpolado.md) | `7c92e87` |
+| R3.2 | Interpolación sobre delta de ticks + delay-buffer, balística local, niebla tras interpolar (fundido+histéresis), cámara amortiguada con interacción, transporte con backoff+jitter/watchdog, SwiftShader en streamer (ERR-VIS-06/07/08) | ✅ Hecho (visual en navegador pendiente) | — | [R3.2-interp-camara.md](reportes/R3.2-interp-camara.md) | `1d0691a`+ |
 
 **Leyenda:** ✅ hecho y verificado · 🔜 en curso · ⏳ pendiente.
 
