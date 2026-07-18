@@ -17,13 +17,18 @@ import type { StreamerConfig } from "./config.js";
 
 export function buildChromiumArgs(cfg: StreamerConfig, broadcastUrl: string): string[] {
   return [
-    // Kiosco a pantalla exacta 1920×1080 sobre el Xvfb; sin GPU (framebuffer).
+    // Kiosco a pantalla exacta 1920×1080 sobre el Xvfb; sin GPU física.
     `--window-size=${cfg.width},${cfg.height}`,
     "--window-position=0,0",
     "--kiosk",
     "--no-first-run",
     "--disable-infobars",
-    "--disable-gpu",
+    // R3.2 (ERR-VIS-08): WebGL FORZADO por SwiftShader (rasterizador software de
+    // ANGLE). Con `--disable-gpu` a secas, Phaser caía a Canvas 2D y el render de
+    // la emisión no era el mismo camino que el del visor en un navegador normal.
+    "--use-gl=angle",
+    "--use-angle=swiftshader",
+    "--enable-unsafe-swiftshader",
     "--hide-scrollbars",
     "--autoplay-policy=no-user-gesture-required",
     // El contenedor ya aísla (usuario sin privilegios, no-new-privileges).

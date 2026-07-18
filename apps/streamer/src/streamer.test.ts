@@ -143,6 +143,15 @@ describe("T11.2 líneas de comando", () => {
     expect(args).toContain("--window-size=1920,1080");
     expect(args[args.length - 1]).toBe("--app=http://web:3000/broadcast?tournament=t1");
   });
+
+  it("R3.2: WebGL forzado por SwiftShader (sin caída silenciosa a Canvas 2D)", () => {
+    const args = buildChromiumArgs(cfg(), "http://web:3000/broadcast");
+    expect(args).toContain("--use-gl=angle");
+    expect(args).toContain("--use-angle=swiftshader");
+    expect(args).toContain("--enable-unsafe-swiftshader");
+    // `--disable-gpu` desactivaría también SwiftShader-WebGL en Chromium modernos.
+    expect(args).not.toContain("--disable-gpu");
+  });
 });
 
 // ───────────────────────────────────────────────────────────── métricas
