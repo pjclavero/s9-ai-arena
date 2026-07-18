@@ -65,7 +65,12 @@ export async function verifyTotpDetailed(
       ...(options.epoch !== undefined ? { epoch: options.epoch } : {}),
       ...(options.afterTimeStep !== undefined ? { afterTimeStep: options.afterTimeStep } : {}),
     });
-    if (r.valid === true) return { valid: true, timeStep: r.timeStep, delta: r.delta };
+    if (r.valid === true) {
+      // El resultado es de la estrategia TOTP (la de por defecto): expone
+      // `timeStep`. El tipo union con HOTP no lo garantiza, se estrecha con `in`.
+      const timeStep = "timeStep" in r ? (r.timeStep as number) : undefined;
+      return { valid: true, timeStep, delta: r.delta };
+    }
     return { valid: false };
   } catch {
     return { valid: false };
