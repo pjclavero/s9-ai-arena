@@ -10,6 +10,7 @@ export * from "./static-analysis.js";
 export * from "./store.js";
 export * from "./audit-sink.js";
 export * from "./smoke-battle.js";
+export * from "./container-battle.js";
 export * from "./pipeline.js";
 export * from "./container-runner.js";
 export * from "./docker-proxy.js";
