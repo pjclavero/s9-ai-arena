@@ -18,6 +18,7 @@ import type { BroadcastConfig } from "../broadcast/config.js";
 import { BroadcastDirector, createPublicApi, type BattleSummary, type BroadcastScreen } from "../broadcast/director.js";
 import { SpectatorClient } from "../viewer/spectator-client.js";
 import { LiveFeed } from "../viewer/live-feed.js";
+import { rosterFromMeta } from "../viewer/art-direction.js";
 import type { ViewerScene } from "../viewer/PhaserViewer.js";
 import type { FeedItem, VehicleOverlay } from "../viewer/overlay.js";
 
@@ -237,6 +238,7 @@ function LiveScreen({ config, battle }: { config: BroadcastConfig; battle: Battl
       client.on("init", (msg) => {
         setLive(true);
         if (msg.meta?.world) scene.setWorld(msg.meta.world);
+        if (msg.meta?.roster) scene.setRoster(rosterFromMeta(msg.meta.roster));
         feed.onInit(msg);
       });
       client.on("snapshot", (s) => {

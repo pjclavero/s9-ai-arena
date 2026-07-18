@@ -39,6 +39,15 @@ import { installAtlas, ATLAS_KEY, ATLAS_FONT_KEY, FRAME_SCALE } from "./atlas.js
 import { attachRenderStats, type PerfHandle } from "./render-stats.js";
 import { CameraSnapshotScratch } from "./camera-snapshot.js";
 import { MAX_PROJECTILE_SPRITES, visibleProjectileCount } from "./render-pools.js";
+import {
+  S9_ENV,
+  resolveTeamColors,
+  NEUTRAL_TEAM_COLOR,
+  bodyFrameForChassis,
+  barrelLengthForChassis,
+  vehicleLabel,
+  type ViewerRoster,
+} from "./art-direction.js";
 
 export interface ViewerWorld {
   widthM: number;
@@ -46,8 +55,6 @@ export interface ViewerWorld {
   walls?: { position: { x: number; y: number }; halfW: number; halfH: number }[];
   destructibles?: { position: { x: number; y: number }; halfW: number; halfH: number }[];
 }
-
-const TEAM_COLORS: Record<string, number> = { red: 0xe05555, blue: 0x5588e0 };
 
 export class ViewerScene extends Phaser.Scene {
   readonly interpolator = new InterpolationBuffer();
@@ -63,6 +70,17 @@ export class ViewerScene extends Phaser.Scene {
 
   private world: ViewerWorld = { widthM: 120, heightM: 80 };
   private vehicleGfx = new Map<string, Phaser.GameObjects.Container>();
+  /**
+   * R3.4 · Nómina pública (id de vehículo → bot: nombre, chasis, equipo). Llega en
+   * la CABECERA `init.meta.roster` (directo) o el índice del replay; el visor NO
+   * inventa campos de red. Vacía por defecto: el vehículo cae con elegancia al id
+   * corto y al chasis medio si aún no hay nómina.
+   */
+  private roster: ViewerRoster = new Map();
+  /** Colores por equipo resueltos DESDE game-rules (nunca literales en el render). */
+  private teamColors = new Map<string, number>();
+  /** Firma del conjunto de equipos ya resuelto, para recalcular sólo al cambiar. */
+  private teamsSignature = "";
   /** Pool de sprites de proyectil con TECHO (R3.3): nunca supera MAX_PROJECTILE_SPRITES. */
   private projectilePool: Phaser.GameObjects.Sprite[] = [];
   /** Capa estática HORNEADA (suelo+muros+destructibles): 1 draw call, no O(obstáculos). */
@@ -91,6 +109,37 @@ export class ViewerScene extends Phaser.Scene {
   setWorld(world: ViewerWorld): void {
     this.world = world;
     this.drawStatic();
+  }
+
+  /**
+   * R3.4 · Fija la nómina pública. Reconstruye los vehículos ya dibujados para que
+   * adopten sprite por chasis, tinte de equipo y NOMBRE (no el UUID). Idempotente
+   * y barato: en directo llega una vez, en el init, antes del primer snapshot.
+   */
+  setRoster(roster: ViewerRoster): void {
+    this.roster = roster ?? new Map();
+    this.teamsSignature = ""; // fuerza recálculo de colores con los equipos de la nómina
+    for (const [, c] of this.vehicleGfx) c.destroy();
+    this.vehicleGfx.clear();
+  }
+
+  /**
+   * Color del equipo, resuelto DESDE game-rules (art-direction) sobre el conjunto
+   * de equipos presentes. Recalcula sólo cuando ese conjunto cambia. Nunca hay un
+   * literal de color de equipo en el render: red/blue y cualquier otro equipo
+   * obtienen su tinte propio desde la capa de reglas.
+   */
+  private tintForTeam(team: string): number {
+    const teams = new Set<string>();
+    for (const v of this.overlay.vehicles.values()) teams.add(v.team);
+    for (const e of this.roster.values()) if (e.team) teams.add(e.team);
+    teams.add(team);
+    const sig = [...teams].sort().join("|");
+    if (sig !== this.teamsSignature) {
+      this.teamColors = resolveTeamColors(teams);
+      this.teamsSignature = sig;
+    }
+    return this.teamColors.get(team) ?? NEUTRAL_TEAM_COLOR;
   }
 
   /**
@@ -207,11 +256,11 @@ export class ViewerScene extends Phaser.Scene {
     }
     const rt = this.staticLayer;
     rt.clear();
-    rt.fill(0x18201a, 1, 0, 0, w, h);
+    rt.fill(S9_ENV.ground, 1, 0, 0, w, h);
     // Un único Graphics temporal con TODOS los rects se hornea de un golpe y se
     // descarta: fuera de él no queda ningún objeto de escena por obstáculo.
     const g = this.make.graphics({}, false);
-    g.fillStyle(0x3a4440);
+    g.fillStyle(S9_ENV.wall);
     for (const wall of this.world.walls ?? []) {
       g.fillRect(
         (wall.position.x - wall.halfW) * this.pxPerM,
@@ -220,7 +269,7 @@ export class ViewerScene extends Phaser.Scene {
         wall.halfH * 2 * this.pxPerM,
       );
     }
-    g.fillStyle(0x6a5a30);
+    g.fillStyle(S9_ENV.destructible);
     for (const d of this.world.destructibles ?? []) {
       g.fillRect(
         (d.position.x - d.halfW) * this.pxPerM,
@@ -266,7 +315,7 @@ export class ViewerScene extends Phaser.Scene {
       c.setVisible(true);
       c.setPosition(pose.x * this.pxPerM, pose.y * this.pxPerM);
       c.setRotation(pose.heading);
-      (c.getByName("turret") as Phaser.GameObjects.Sprite | null)?.setRotation(pose.turretHeading - pose.heading);
+      (c.getByName("turret") as Phaser.GameObjects.Container | null)?.setRotation(pose.turretHeading - pose.heading);
       // Fundido de niebla × atenuación de destruido: sin saltos de alfa.
       c.setAlpha((pose.alive ? 1 : 0.25) * pose.alpha);
     }
@@ -282,7 +331,7 @@ export class ViewerScene extends Phaser.Scene {
       const dot = this.add
         .sprite(0, 0, ATLAS_KEY, "projectile")
         .setScale(4 / FRAME_SCALE / 3) // frame 12 px → ~4 px de diámetro en pantalla
-        .setTint(0xffe066)
+        .setTint(S9_ENV.tracer)
         .setDepth(5);
       this.projectilePool.push(dot);
     }
@@ -295,23 +344,35 @@ export class ViewerScene extends Phaser.Scene {
   }
 
   private buildVehicle(id: string): Phaser.GameObjects.Container {
-    const team = this.overlay.vehicles.get(id)?.team ?? "red";
-    const color = TEAM_COLORS[team] ?? 0xaaaaaa;
-    // Sprites del MISMO atlas (frames blancos) tintados por equipo: setTint no
-    // rompe el batch del renderer (cambiar de textura sí). El frame se hornea a
-    // FRAME_SCALE× px, así que el sprite se reduce 1/FRAME_SCALE para su tamaño real.
+    // R3.4 · Sprite MODULAR derivado del loadout (nómina) + tinte por equipo desde
+    // el ruleset + NOMBRE del bot. Todo del MISMO atlas: setTint no rompe el batch
+    // (cambiar de textura sí); los frames se hornean a FRAME_SCALE× px, de ahí el
+    // reescalado 1/FRAME_SCALE.
+    const entry = this.roster.get(id);
+    const team = entry?.team ?? this.overlay.vehicles.get(id)?.team ?? "red";
+    const color = this.tintForTeam(team);
+    // Casco según el arquetipo del chasis: explorador/artillero/pesado a un vistazo.
     const body = this.add
-      .sprite(0, 0, ATLAS_KEY, "body")
+      .sprite(0, 0, ATLAS_KEY, bodyFrameForChassis(entry?.chassis))
       .setScale(1 / FRAME_SCALE)
       .setTint(color);
-    const turret = this.add
-      .sprite(0.8 * this.pxPerM, 0, ATLAS_KEY, "turret")
+    // Torreta = base redonda + cañón; el largo del cañón varía con el arquetipo.
+    const turretBase = this.add
+      .sprite(0, 0, ATLAS_KEY, "turret")
       .setScale(1 / FRAME_SCALE)
-      .setOrigin(0.1, 0.5)
-      .setName("turret");
-    // BitmapText del atlas (RetroFont) en vez de Text: comparte textura, no
-    // genera un canvas de fuente por etiqueta ni rompe el batch.
-    const label = this.add.bitmapText(0, -2 * this.pxPerM, ATLAS_FONT_KEY, id, 10).setOrigin(0.5, 1);
+      .setTint(color);
+    const barrel = this.add
+      .sprite(0, 0, ATLAS_KEY, "barrel")
+      .setScale(barrelLengthForChassis(entry?.chassis) / FRAME_SCALE, 1 / FRAME_SCALE)
+      .setOrigin(0, 0.5)
+      .setTint(color);
+    const turret = this.add.container(0, 0, [turretBase, barrel]).setName("turret");
+    // BitmapText del atlas (RetroFont): el NOMBRE del bot, no el UUID. Comparte
+    // textura, no genera un canvas de fuente por etiqueta ni rompe el batch.
+    const label = this.add
+      .bitmapText(0, -2 * this.pxPerM, ATLAS_FONT_KEY, vehicleLabel(this.roster, id), 10)
+      .setOrigin(0.5, 1)
+      .setTint(S9_ENV.label);
     return this.add.container(0, 0, [body, turret, label]).setDepth(3);
   }
 
@@ -363,7 +424,7 @@ export function createViewerGame(parent: HTMLElement, opts: ViewerGameOptions = 
     parent,
     width: initial.width,
     height: initial.height,
-    backgroundColor: "#101410",
+    backgroundColor: S9_ENV.background,
     // Escala tipo RESIZE con devicePixelRatio (R3.2): Phaser.Scale.RESIZE ignora
     // el dpr (buffer = px CSS ⇒ borroso en HiDPI), así que el "sigue a tu
     // contenedor" se hace con ResizeObserver + scale.resize(css×dpr) y el zoom
