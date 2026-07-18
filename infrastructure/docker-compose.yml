@@ -67,7 +67,13 @@ services:
       # Modo (a) standalone: nginx.conf (TLS en el gateway, 80/443 al exterior).
       # Modo (b) detrás del proxy de VM104: GATEWAY_CONF=nginx-behind-proxy.conf
       # (solo HTTP a la LAN; VM104 termina TLS). Ver docs/despliegue.md.
-      - ./gateway/${GATEWAY_CONF:-nginx.conf}:/etc/nginx/nginx.conf:ro
+      # Sintaxis larga: el default `${VAR:-...}` mete un ':' que la sintaxis corta
+      # confunde con separador bajo `docker compose config --no-interpolate`
+      # ("too many colons"). La forma larga es inmune y equivalente en runtime.
+      - type: bind
+        source: ./gateway/${GATEWAY_CONF:-nginx.conf}
+        target: /etc/nginx/nginx.conf
+        read_only: true
       - ./secrets/tls:/etc/nginx/tls:ro
     depends_on:
       web:
