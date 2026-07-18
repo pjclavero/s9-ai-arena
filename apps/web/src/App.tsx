@@ -22,6 +22,10 @@ import { ReplayPage } from "./pages/ReplayPage.js";
 import { TournamentsPage } from "./pages/TournamentsPage.js";
 import { TournamentDetailPage } from "./pages/TournamentDetailPage.js";
 import { BattlesPage } from "./pages/BattlesPage.js";
+import { MapsPage } from "./pages/MapsPage.js";
+import { SystemPage } from "./pages/SystemPage.js";
+import { AuditPage } from "./pages/AuditPage.js";
+import { RolesPage } from "./pages/RolesPage.js";
 import { parseShareLink } from "./viewer/replay-player.js";
 import { matchBroadcastRoute } from "./broadcast/config.js";
 import { BroadcastPage } from "./pages/BroadcastPage.js";
@@ -163,11 +167,23 @@ export function App() {
         <a href="#/teams">Equipos</a>
         <a href="#/tournaments">Torneos</a>
         <a href="#/battles">Batallas</a>
+        <a href="#/maps">Mapas</a>
         {/* La interfaz solo OCULTA; la autorización la hace la API (cap. 16) */}
         {isAdmin(me) && (
-          <a href="#/admin" data-testid="admin-link">
-            Administración
-          </a>
+          <>
+            <a href="#/admin" data-testid="admin-link">
+              Administración
+            </a>
+            <a href="#/system" data-testid="system-link">
+              Sistema
+            </a>
+            <a href="#/audit" data-testid="audit-link">
+              Auditoría
+            </a>
+            <a href="#/roles" data-testid="roles-link">
+              Roles
+            </a>
+          </>
         )}
         <span style={{ marginLeft: "auto" }}>
           {me.displayName} ({me.roles.join(", ")})
@@ -195,6 +211,14 @@ export function App() {
             <TournamentsPage me={me} />
           ) : route.startsWith("#/teams") ? (
             <TeamsPage me={me} />
+          ) : route.startsWith("#/maps") ? (
+            <MapsPage me={me} />
+          ) : route.startsWith("#/system") ? (
+            <SystemPage me={me} />
+          ) : route.startsWith("#/audit") ? (
+            <AuditPage me={me} />
+          ) : route.startsWith("#/roles") ? (
+            <RolesPage me={me} />
           ) : route.startsWith("#/admin") ? (
             <AdminPage me={me} />
           ) : (
