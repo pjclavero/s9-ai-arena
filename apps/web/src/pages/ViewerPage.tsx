@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
 import { SpectatorClient } from "../viewer/spectator-client.js";
 import { LiveFeed } from "../viewer/live-feed.js";
+import { rosterFromMeta } from "../viewer/art-direction.js";
 import type { ViewerScene } from "../viewer/PhaserViewer.js";
 import type { CameraMode } from "../viewer/camera.js";
 
@@ -47,6 +48,9 @@ export function ViewerPage({ battleId }: { battleId: string }) {
         setAllowFog(msg.spectator?.allowFogView === true);
         setDebugAvailable(msg.spectator?.debug === true);
         if (msg.meta?.world) scene.setWorld(msg.meta.world);
+        // R3.4: nómina pública (nombre + chasis + equipo por vehículo) desde la
+        // cabecera init; el visor pinta sprite por chasis y NOMBRE, no el UUID.
+        if (msg.meta?.roster) scene.setRoster(rosterFromMeta(msg.meta.roster));
         feed.onInit(msg);
       });
       client.on("snapshot", (s) => {

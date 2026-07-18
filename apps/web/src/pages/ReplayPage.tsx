@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ReplayPlayer, buildShareLink, httpReplaySource } from "../viewer/replay-player.js";
 import { ReplayFeed } from "../viewer/replay-feed.js";
+import { rosterFromMeta } from "../viewer/art-direction.js";
 import { ReplayTickPublisher } from "../viewer/ui-throttle.js";
 import type { ViewerScene } from "../viewer/PhaserViewer.js";
 import type { CameraMode } from "../viewer/camera.js";
@@ -55,6 +56,8 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
         return;
       }
       setTotalTicks(player.index!.ticks);
+      // R3.4: si el índice del replay trae nómina, sprite por chasis y NOMBRE.
+      if (player.index?.roster) scene.setRoster(rosterFromMeta(player.index.roster));
       setStatus("listo");
       // R3.1 (ERR-VIS-01): la ReplayFeed fecha los snapshots en tiempo de PARTIDA
       // (derivado del playhead) y usa pushSnapshot por snapshot nuevo + resetTo
