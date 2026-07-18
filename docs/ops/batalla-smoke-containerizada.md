@@ -54,38 +54,48 @@ reales es un paso de VM108.
 |---|---|---|
 | `S9_RUN_REAL_DOCKER_E2E` | — | `1` para ejecutar de verdad (si no, NO-OP). |
 | `DOCKER_PROXY_URL` | `http://docker-proxy.internal:2375` | URL del `s9-docker-proxy`. |
-| `ARENA_NETWORK` | `infrastructure_arena` | red Docker de los bots (`<proyecto>_arena`; el despliegue usa proyecto `infrastructure`). |
-| `ENGINE_HOST` | `arena-engine` | host del ProtocolServer alcanzable desde `ARENA_NETWORK`. |
-| `SMOKE_BOT_DIGEST` | — (**obligatoria**) | imagen del `s9-smoke-bot` fijada por digest (nunca placeholder). |
+| `ARENA_NETWORK` | `arena` | red Docker de los bots. **Debe llamarse EXACTAMENTE `arena`** (lo exige `compliance.mjs`); el Compose la declara con `name: arena`. |
+| `ENGINE_HOST` | `arena-engine` | host del ProtocolServer alcanzable desde `ARENA_NETWORK` (por IP si los bots no tienen DNS). |
+| `SMOKE_BOT_DIGEST` | — (**obligatoria**) | imagen del `s9-smoke-bot` fijada por **repo digest** `name@sha256:…` (nunca tag, nunca placeholder, nunca Image ID pelado). |
 | `SMOKE_TICKS`/`SMOKE_SEED`/`SMOKE_MAP`/`SMOKE_TIMEOUT_MS`/`REPLAY_OUT` | ver script | parámetros de la batalla y ruta del replay. |
+
+## Troubleshooting (bugs reales encontrados en VM108, 2026-07-18)
+
+| Síntoma | Causa | Estado |
+|---|---|---|
+| `start` 500 `Decoding seccomp profile failed: invalid character '/'` | la Docker Engine API exige el **JSON inline** del perfil, no una ruta | **corregido**: `ProxyContainerRunner` inyecta el JSON (`inlineSeccompProfile`) |
+| create 403 `red no permitida: infrastructure_arena` | `compliance.mjs` exige la red literal `arena` | **corregido**: `ARENA_NETWORK=arena` + `name: arena` en el Compose |
+| create 403 `imagen sin digest sha256 fijado (sha256:…)` | el proxy exige repo digest `name@sha256:`, no el Image ID | **corregido**: `build.sh --local`/`--push` imprime el repo digest real |
 
 ## Prerequisitos antes de VM108
 
-- La red `arena` real es **`infrastructure_arena`** (Compose la prefija con el proyecto).
-  Crearla si no existe: `docker network create infrastructure_arena` (o levantar un
-  servicio que la use). ⚠️ NO `s9-ai-arena_arena`.
-- La imagen del `s9-smoke-bot` construida y **publicada** para obtener un digest real:
-  `bash bots/s9-smoke-bot/build.sh --push` → usar el `RepoDigest` como `SMOKE_BOT_DIGEST`.
-- `ENGINE_HOST` debe ser alcanzable por los contenedores desde `arena` (los bots no
-  tienen DNS externo): ejecutar el arnés donde el ProtocolServer sea visible en esa red.
+- **Red `arena`**: nombre exacto `arena` (lo crea el Compose vía `name: arena`, o a mano
+  `docker network create arena`). La red del stack es `internal: true` (bots sin Internet):
+  si ejecutas el arnés en el HOST, su ProtocolServer debe ser alcanzable desde `arena`
+  (usa `ENGINE_HOST` = IP de una interfaz que los contenedores de esa red alcancen, o
+  ejecuta el arnés dentro de un contenedor en `arena`).
+- **Imagen y digest**: `bash bots/s9-smoke-bot/build.sh --local` (registry local, sin GHCR)
+  o `--push` (GHCR). Copia el `RepoDigest` que imprime → `SMOKE_BOT_DIGEST`.
 
-## Ejecución REAL en VM108 (GATEADA — NO en este PR; este PR NO declara A)
+## Ejecución REAL en VM108 · checklist de reintento (GATEADA — NO en este PR; NO declara A)
 
 > Trabajo de seguridad: ejecutar por primera vez código no confiable con el proxy
 > Docker. Hacerlo en ventana controlada, con la red del runner cerrada.
 
-1. Snapshot Proxmox + backup ligero + actualizar a `main` + migrar BD.
-2. **Instalar `s9-docker-proxy`** (systemd, fuera de Compose):
-   `sudo bash infrastructure/scripts/install-docker-proxy.sh install`, ajustar
-   `/etc/s9-ai-arena/docker-proxy.env` (`ARENA_NETWORK=infrastructure_arena`),
-   `validate`. Cerrar el puerto al exterior por firewall (ver `docs/ops/docker-proxy.md`).
-3. **Validar rechazos en vivo**: `privileged`, `network_mode: host`, `docker.sock`,
-   bind peligroso, imagen no allowlisted, verbo fuera de la allowlist → 403.
-4. **Construir/publicar** la imagen del bot (`build.sh --push`) y fijar `SMOKE_BOT_DIGEST`.
-5. `S9_RUN_REAL_DOCKER_E2E=1 ... npx tsx scripts/e2e-real-battle-smoke.ts` con la config real.
-6. Verificar: 2 contenedores reales, 2 handshakes, ticks avanzan, batalla termina,
-   **replay real generado y verificable** (`verify()`), contenedores limpiados, 7/7
-   núcleo sano, logs sin errores. Solo entonces: dictamen A.
+1. Confirmar CI de `main` verde.
+2. Snapshot Proxmox nuevo + backup ligero.
+3. Actualizar VM108 al nuevo `main`; **migrar BD**: `docker exec -w /app infrastructure-api-1 npx tsx apps/api/src/db/cli.ts migrate`.
+4. Validar núcleo 7/7 healthy.
+5. Confirmar `s9-docker-proxy` activo; ajustar `/etc/s9-ai-arena/docker-proxy.env`
+   (`ARENA_NETWORK=arena`) y `systemctl restart s9-docker-proxy`.
+6. Validar rechazos en vivo (privileged / host-net / docker.sock / red no permitida / exec) → 403.
+7. `bash bots/s9-smoke-bot/build.sh --local` → fijar `SMOKE_BOT_DIGEST` con el repo digest.
+8. `S9_RUN_REAL_DOCKER_E2E=1 DOCKER_PROXY_URL=http://172.17.0.1:2375 ARENA_NETWORK=arena
+   ENGINE_HOST=<ip alcanzable desde arena> SMOKE_BOT_DIGEST=<repo digest>
+   npx tsx scripts/e2e-real-battle-smoke.ts`.
+9. Verificar: 2 contenedores reales, 2 handshakes, ticks avanzan, batalla termina,
+   **replay real generado y verificable** (`verify()`), contenedores limpiados, 7/7 núcleo
+   sano, logs sin errores. **Solo entonces: dictamen A.**
 
 ## Qué NO hacer
 
