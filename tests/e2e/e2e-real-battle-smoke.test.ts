@@ -101,9 +101,10 @@ describe("R6.2 · arnés e2e-real-battle-smoke (mock/dry-run)", () => {
     expect(() => readHarnessConfig({})).toThrow(/SMOKE_BOT_DIGEST/);
   });
 
-  it("readHarnessConfig usa infrastructure_arena por defecto (no s9-ai-arena_arena)", () => {
+  it("readHarnessConfig usa la red `arena` por defecto (nombre exacto que exige compliance)", () => {
     const cfg = readHarnessConfig({ SMOKE_BOT_DIGEST: REAL_DIGEST });
-    expect(cfg.arenaNetwork).toBe("infrastructure_arena");
+    expect(cfg.arenaNetwork).toBe("arena");
+    expect(cfg.arenaNetwork).not.toBe("infrastructure_arena");
     expect(cfg.arenaNetwork).not.toBe("s9-ai-arena_arena");
     expect(cfg.dockerProxyUrl).toContain("docker-proxy");
   });

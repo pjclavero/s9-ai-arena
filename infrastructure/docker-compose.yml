@@ -767,6 +767,10 @@ networks:
     driver: bridge
     internal: true
   arena:
+    # Nombre FIJO `arena` (sin prefijo de proyecto): compliance.mjs y el docker-proxy
+    # exigen literalmente "arena" como red de los runners de bots. Sin este `name`,
+    # Compose la prefijaría (p. ej. infrastructure_arena) y el proxy la rechazaría.
+    name: arena
     driver: bridge
     internal: true
   build:

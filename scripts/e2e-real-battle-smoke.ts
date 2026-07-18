@@ -16,7 +16,7 @@
  * Variables de entorno:
  *   S9_RUN_REAL_DOCKER_E2E  "1" para ejecutar de verdad (si no, NO-OP).
  *   DOCKER_PROXY_URL        URL del docker-proxy (def. http://docker-proxy.internal:2375).
- *   ARENA_NETWORK           red Docker de los bots (def. infrastructure_arena).
+ *   ARENA_NETWORK           red Docker de los bots (def. arena; nombre EXACTO exigido por compliance).
  *   ENGINE_HOST             host del ProtocolServer alcanzable desde ARENA_NETWORK
  *                           (def. arena-engine). El puerto lo asigna el server.
  *   SMOKE_BOT_DIGEST        imagen del s9-smoke-bot FIJADA POR DIGEST (obligatoria).
@@ -57,7 +57,7 @@ export function readHarnessConfig(env: NodeJS.ProcessEnv): SmokeHarnessConfig {
   if (!["empty", "mvp", "ctf"].includes(map)) throw new Error(`SMOKE_MAP inválido: ${map}`);
   return {
     dockerProxyUrl: env.DOCKER_PROXY_URL ?? "http://docker-proxy.internal:2375",
-    arenaNetwork: env.ARENA_NETWORK ?? "infrastructure_arena",
+    arenaNetwork: env.ARENA_NETWORK ?? "arena",
     engineHost: env.ENGINE_HOST ?? "arena-engine",
     smokeBotDigest: digest,
     ticks: Number(env.SMOKE_TICKS ?? "300"),
