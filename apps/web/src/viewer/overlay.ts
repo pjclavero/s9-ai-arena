@@ -24,6 +24,22 @@ export interface FeedItem {
   text: string;
 }
 
+/**
+ * R3.6 · Resultado de fin de partida, normalizado desde el `result` del canal de
+ * espectador (o de un evento `match_ended`). Es la fuente para ANUNCIAR el fin
+ * sobre el canvas, no sólo en el feed HTML.
+ */
+export interface MatchResult {
+  /** Equipo ganador, o null en empate. */
+  winner: string | null;
+  /** Marcador final por equipo. */
+  score: Record<string, number>;
+  /** Motivo publicado (p.ej. "score", "timeout", "elimination"), si viene. */
+  reason: string | null;
+  /** Tick en que terminó, si se conoce. */
+  endedTick: number | null;
+}
+
 const FEED_LIMIT = 50;
 
 export class OverlayState {
@@ -36,6 +52,8 @@ export class OverlayState {
   carriers = new Map<string, string>();
   feed: FeedItem[] = [];
   lastTick = 0;
+  /** R3.6 · Resultado de fin de partida (null mientras la batalla sigue viva). */
+  result: MatchResult | null = null;
 
   applySnapshot(s: any): void {
     if (!s) return;
@@ -108,9 +126,39 @@ export class OverlayState {
       case "zone_captured":
         this.push(e, `Zona capturada por ${e.team}`);
         break;
+      // R3.6 · algunos motores/modos anuncian el fin como EVENTO en el propio
+      // stream (no sólo como mensaje `result` del canal). Se normaliza igual.
+      case "match_ended":
+      case "battle_finished":
+        this.applyResult({ winner: e.winner ?? null, score: e.score ?? this.score, reason: e.reason, tick: e.tick });
+        break;
       default:
         this.push(e, e.kind);
     }
+  }
+
+  /**
+   * R3.6 · Registra el fin de partida desde el `result` del canal de espectador o
+   * un evento `match_ended`. Idempotente: el primer resultado manda (los reenvíos
+   * de reconexión no lo pisan) y el marcador final queda fijado. Deja constancia
+   * en el feed para que el fin también viaje por el ticker HTML.
+   */
+  applyResult(result: any): void {
+    if (!result || this.result) return;
+    const score = result.score && typeof result.score === "object" ? { ...result.score } : { ...this.score };
+    const winner = typeof result.winner === "string" ? result.winner : null;
+    const normalized: MatchResult = {
+      winner,
+      score,
+      reason: typeof result.reason === "string" ? result.reason : null,
+      endedTick: Number.isFinite(result.tick) ? result.tick : this.lastTick,
+    };
+    this.result = normalized;
+    this.score = score;
+    this.push(
+      { kind: "match_ended", tick: normalized.endedTick },
+      winner ? `Fin de la partida · gana ${winner}` : "Fin de la partida · empate",
+    );
   }
 
   private push(e: any, text: string): void {
