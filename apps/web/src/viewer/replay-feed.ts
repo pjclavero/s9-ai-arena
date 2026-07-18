@@ -65,9 +65,13 @@ export class ReplayFeed {
     return result;
   }
 
-  /** Salto por barra temporal: reposiciona la escena AHORA, incluso en pausa. */
-  async seek(tick: number): Promise<void> {
-    await this.player.seekTick(tick);
+  /**
+   * Salto por barra temporal: reposiciona la escena AHORA, incluso en pausa. El
+   * `signal` (R3.3) permite que un seek posterior aborte éste: si se abortó
+   * durante la descarga, seekTick lanza AbortError y no tocamos la escena.
+   */
+  async seek(tick: number, signal?: AbortSignal): Promise<void> {
+    await this.player.seekTick(tick, signal);
     this.pendingReset = true;
     this.lastPushedTick = -1;
     await this.frame(0);
