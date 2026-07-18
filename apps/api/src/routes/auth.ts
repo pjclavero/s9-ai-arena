@@ -25,6 +25,46 @@ import { ROLE_RANK } from "../openapi.js";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/**
+ * R3.7 (ERR-VIS-03) · Sesión persistente del panel: el refresh token viaja
+ * además en una cookie httpOnly (inaccesible a JS). El navegador la reenvía en
+ * POST /auth/refresh tras un F5, así el panel recupera la sesión sin guardar
+ * ningún token en localStorage. El body con refreshToken sigue funcionando
+ * (compatibilidad con clientes no-navegador); si vienen ambos, manda el body.
+ */
+const REFRESH_COOKIE = "s9_refresh";
+
+export function refreshTokenFromCookie(req: { headers: Record<string, unknown> }): string | null {
+  const header = req.headers["cookie"];
+  if (typeof header !== "string") return null;
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    if (part.slice(0, eq).trim() === REFRESH_COOKIE) {
+      try {
+        return decodeURIComponent(part.slice(eq + 1).trim());
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+function setRefreshCookie(res: { cookie: (n: string, v: string, o: Record<string, unknown>) => void }, token: string, req: { secure?: boolean }): void {
+  res.cookie(REFRESH_COOKIE, token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: req.secure === true, // tras el gateway TLS el proxy marca la conexión segura
+    path: "/", // el panel llama vía /api/v1/auth/* reescrito por el proxy: path amplio a propósito
+    maxAge: REFRESH_TOKEN_TTL_S * 1000,
+  });
+}
+
+function clearRefreshCookie(res: { cookie: (n: string, v: string, o: Record<string, unknown>) => void }): void {
+  res.cookie(REFRESH_COOKIE, "", { httpOnly: true, sameSite: "lax", path: "/", maxAge: 0 });
+}
+
 export interface AuthDeps {
   db: Db;
   // R2.5 (ERR-SEC-14): contratos, no clases en memoria — en producción se
@@ -174,7 +214,9 @@ export function authRoutes(deps: AuthDeps): Router {
       }
 
       await loginGuard.recordSuccess(key);
-      res.status(200).json(await createSession(db, user.id, req));
+      const session = await createSession(db, user.id, req);
+      setRefreshCookie(res, session.refreshToken, req); // R3.7: sesión persistente del panel
+      res.status(200).json(session);
     },
     rateLimit(deps.loginLimiter, "login"),
   );
@@ -186,9 +228,10 @@ export function authRoutes(deps: AuthDeps): Router {
   // familia ENTERA y se deja registro de auditoría. Además: vida máxima absoluta
   // (absolute_expires_at) y rate-limit propio.
   defineOperation(router, "refreshToken", async (req, res) => {
-    const { refreshToken } = req.body ?? {};
-    if (typeof refreshToken !== "string") throw badRequest("refreshToken obligatorio");
-    const presented = hashToken(refreshToken);
+    // R3.7: acepta el token del body (contrato) o de la cookie httpOnly (panel).
+    const provided = typeof req.body?.refreshToken === "string" ? req.body.refreshToken : refreshTokenFromCookie(req);
+    if (typeof provided !== "string" || !provided) throw badRequest("refreshToken obligatorio (body o cookie)");
+    const presented = hashToken(provided);
 
     const known = await db("session_refresh_tokens").where({ token_hash: presented }).first();
     if (!known) throw unauthorized("Refresh token inválido, revocado o expirado");
@@ -232,12 +275,27 @@ export function authRoutes(deps: AuthDeps): Router {
           expires_at: new Date(Math.min(now + REFRESH_TOKEN_TTL_S * 1000, absolute)),
         });
     });
+    setRefreshCookie(res, token, req); // R3.7: rotación también en la cookie
     res.status(200).json({
       accessToken: signAccessToken({ sub: session.user_id, sid: session.id }),
       refreshToken: token,
       expiresIn: ACCESS_TOKEN_TTL_S,
     });
   }, rateLimit(deps.refreshLimiter, "refresh"));
+
+  // R3.7 · Extensión: cierre de sesión del panel. Revoca la sesión asociada a la
+  // cookie httpOnly (si existe) y la borra; idempotente y accesible sin token.
+  defineExtension(router, { operationId: "logout", method: "post", path: "/auth/logout", minRole: "visitor" }, async (req, res) => {
+    const token = refreshTokenFromCookie(req);
+    if (token) {
+      await db("sessions")
+        .where({ refresh_token_hash: hashToken(token) })
+        .whereNull("revoked_at")
+        .update({ revoked_at: db.fn.now() });
+    }
+    clearRefreshCookie(res);
+    res.status(204).end();
+  });
 
   // ------------------------------------------------------------- sessions
   defineOperation(router, "listSessions", async (req, res) => {

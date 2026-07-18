@@ -6,7 +6,8 @@
 import { Router } from "express";
 import { createHash, randomBytes } from "node:crypto";
 import type { Db } from "../db/connection.js";
-import { defineOperation } from "../registry.js";
+import { defineOperation, defineExtension } from "../registry.js";
+import { battleToJson } from "./battles.js";
 import { audit } from "../audit.js";
 import { badRequest, conflict, forbidden, notFound } from "../errors.js";
 import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
@@ -105,6 +106,42 @@ export function tournamentRoutes(db: Db): Router {
     });
     res.status(201).json(tournamentToJson(t));
   });
+
+  /**
+   * R3.7 (ERR-VIS-02) · Extensiones de lectura para el panel: el contrato de E1
+   * no tenía ni el detalle de un torneo ni sus batallas, así que la UI no podía
+   * "seguir" un torneo (cola, en curso, cuadro) sin teclear UUIDs a mano.
+   */
+  defineExtension(
+    router,
+    { operationId: "getTournament", method: "get", path: "/tournaments/{tournamentId}", minRole: "visitor" },
+    async (req, res) => {
+      const t = await db("tournaments").where({ id: req.params.tournamentId }).first().catch(() => null);
+      if (!t) throw notFound();
+      const entries = await db("entries").where({ tournament_id: t.id }).count("* as n").first();
+      res.json({ ...tournamentToJson(t), entryCount: Number(entries?.n ?? 0) });
+    },
+  );
+
+  defineExtension(
+    router,
+    { operationId: "listTournamentBattles", method: "get", path: "/tournaments/{tournamentId}/battles", minRole: "visitor" },
+    async (req, res) => {
+      const t = await db("tournaments").where({ id: req.params.tournamentId }).first().catch(() => null);
+      if (!t) throw notFound();
+      const battles = await db("battles").where({ tournament_id: t.id }).orderBy("created_at", "asc");
+      const matches = await db("matches").where({ tournament_id: t.id });
+      const roundByMatch = new Map(matches.map((m: Record<string, unknown>) => [m.id as string, Number(m.round)]));
+      const items = await Promise.all(
+        battles.map(async (b: Record<string, unknown>) => ({
+          ...battleToJson(b, await db("participants").where({ battle_id: b.id })),
+          round: b.match_id ? (roundByMatch.get(b.match_id as string) ?? 1) : 1,
+        })),
+      );
+      res.setHeader("Cache-Control", "public, max-age=5");
+      res.json({ items });
+    },
+  );
 
   defineOperation(router, "enterTournament", async (req, res) => {
     const t = await db("tournaments")
