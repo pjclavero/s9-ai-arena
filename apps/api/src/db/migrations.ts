@@ -609,7 +609,48 @@ const m009_r24_refresh_families: Migration = {
   },
 };
 
-export const MIGRATIONS: Migration[] = [m001_identity, m002_content, m003_bots, m004_competition, m005_results, m006_operations, m007_e9_queue, m008_e9_competition, m009_r24_refresh_families];
+// R2.5 (ERR-SEC-12/14/15) — estado de rate-limit/bloqueo en almacén COMPARTIDO
+// (tabla api_usage, sobrevive a reinicios del proceso) y bytes del artefacto
+// firmado para poder verificar la firma ANTES de cada lanzamiento.
+const m010_r25_shared_limits: Migration = {
+  name: "010_r25_shared_limits",
+  async up(db) {
+    await db.raw(`
+      -- Expiración de ventanas (limpieza barata por índice) y estado de bloqueo
+      -- (fuerza bruta de login) persistente entre reinicios (ERR-SEC-14).
+      ALTER TABLE api_usage
+        ADD COLUMN expires_at    timestamptz,
+        ADD COLUMN blocked_until timestamptz;
+      CREATE INDEX api_usage_expiry_idx ON api_usage (expires_at);
+
+      -- Bytes canónicos del artefacto firmado (ERR-SEC-15): sin ellos no hay
+      -- nada que verificar contra la firma antes de lanzar. MVP: bytea en BD
+      -- (límite 200 MB por config del pipeline); un almacén de objetos externo
+      -- puede sustituirlo más adelante vía storage_ref.
+      ALTER TABLE artifacts ADD COLUMN bytes bytea;
+    `);
+  },
+  async down(db) {
+    await db.raw(`
+      ALTER TABLE artifacts DROP COLUMN bytes;
+      DROP INDEX IF EXISTS api_usage_expiry_idx;
+      ALTER TABLE api_usage DROP COLUMN expires_at, DROP COLUMN blocked_until;
+    `);
+  },
+};
+
+export const MIGRATIONS: Migration[] = [
+  m001_identity,
+  m002_content,
+  m003_bots,
+  m004_competition,
+  m005_results,
+  m006_operations,
+  m007_e9_queue,
+  m008_e9_competition,
+  m009_r24_refresh_families,
+  m010_r25_shared_limits,
+];
 
 class ProgrammaticMigrationSource {
   getMigrations() {

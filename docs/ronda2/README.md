@@ -51,6 +51,7 @@ Rama de trabajo: `ronda2/r-p0-bloqueantes`.
 | R2.1 | Tipos en verde (ERR-GES-02/03) + CI bloqueante: tsc sin `continue-on-error`, prettier real, cobertura como artefacto | ✅ Hecho | #11 rel. | [R2.1-tipos-ci.md](reportes/R2.1-tipos-ci.md) | `c110bcb`+ |
 | R2.2 | Semáforo 🟢/🟡/🔴 en la CI (ERR-GES-05): staging omitido = AMARILLO (nunca verde), seguridad en rojo bloquea, gate testeable (`ci-gate.mjs`) + check-run neutral | ✅ Hecho (lógica verificada con tests; run real pendiente del PR) | — | [R2.2-semaforo-ci.md](reportes/R2.2-semaforo-ci.md) | ver PR |
 | R2.3 | Suite ejecutable en Windows: split `test:pure`/`test:db` + fallback `DATABASE_URL` (ERR-GES-04) | ✅ Hecho y verificado (Linux, ambos modos de BD) | — | [R2.3-split-suite.md](reportes/R2.3-split-suite.md) | — |
+| R2.5 | Encolar builds (worker + tabla `jobs`), firma verificable desde secreto y rate-limit compartido (ERR-SEC-12/15/14) | ✅ Hecho y verificado (Linux, 726/1/3) | — | [R2.5-colas-firma.md](reportes/R2.5-colas-firma.md) | rama `ronda2/r2.5-colas-firma` |
 
 > **R2.1 · 2026-07-17 (VM108, Node 20).** `npx tsc --noEmit` da **0 errores** en el tsconfig raíz
 > (antes 267: ~238 falsos de JSX de `apps/web` + 29 genuinos) y **0** en `apps/web` (proyecto

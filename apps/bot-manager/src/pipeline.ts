@@ -338,6 +338,9 @@ export class BuildPipeline {
           return "failed";
         }
         build.artifactHash = artifact.hash;
+        // R2.5: los bytes viajan con el build para persistirse junto a la firma;
+        // sin ellos no habría nada que verificar antes de lanzar (ERR-SEC-15).
+        build.artifactBytes = artifact.bytes;
         stage.logs.push(`artefacto empaquetado (reproducible): sha256=${artifact.hash}`);
         return "passed";
       }
