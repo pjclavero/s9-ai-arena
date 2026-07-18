@@ -1,3 +1,17 @@
+# ============================================================================
+#  ⚠️  COMPOSE LEGACY (v1 — prototipo de tanques). NO ES EL COMPOSE OFICIAL.
+# ----------------------------------------------------------------------------
+#  El stack de producción es  infrastructure/docker-compose.yml  (v2, perfil
+#  `nucleo`), desplegado en VM108. Este fichero define la demo v1 (arena-server,
+#  arena-viewer, bot-red, bot-blue) que fue RETIRADA de VM108 el 2026-07-17.
+#
+#  No usar en producción. Se conserva aquí porque el escáner de seguridad del CI
+#  lo referencia por ruta (scripts/scan-compose.ts,
+#  apps/bot-manager/tests/compose-scan.test.ts, acceptance/criteria.mjs); moverlo
+#  exige actualizar esas rutas en el mismo cambio.
+#
+#  Estado real y despliegue oficial: docs/ESTADO_ACTUAL.md · docs/MIGRACION_V2.md
+# ============================================================================
 services:
   arena-server:
     build:
