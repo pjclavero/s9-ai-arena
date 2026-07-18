@@ -25,6 +25,9 @@
  *   SMOKE_MAP               empty|mvp|ctf (def. empty).
  *   SMOKE_TIMEOUT_MS        timeout global (def. 120000).
  *   REPLAY_OUT              ruta de salida del replay (def. /data/replays/e2e-real-smoke.jsonl).
+ *   REPLAY_SERVICE_URL      (opcional, R7) si se define, ingesta el replay en el
+ *                           replay-service (POST /replays/:battleId) → recurso gestionado
+ *                           visible por el visor y GET /replays/{battleId}.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -47,6 +50,47 @@ export interface SmokeHarnessConfig {
   mapName: "empty" | "mvp" | "ctf";
   timeoutMs: number;
   replayOut: string;
+  /**
+   * R7 · Si se define, el replay real se INGESTA en el replay-service (POST
+   * /replays/:battleId), pasando de fichero suelto a recurso gestionado que el
+   * visor y la API (`GET /replays/{battleId}`) ya saben servir. Opcional: si no se
+   * define, solo se escribe a disco (comportamiento previo). Best-effort: un fallo
+   * de ingesta NO invalida la batalla, solo se reporta.
+   */
+  replayServiceUrl?: string;
+}
+
+export interface ReplayIngestResult {
+  ok: boolean;
+  status: number;
+  /** Cuerpo de respuesta del servicio (sha256/path/official) o el error. */
+  body: unknown;
+}
+
+/**
+ * R7 · Ingesta un replay (JSONL) en el replay-service vía POST /replays/:battleId.
+ * El servicio valida que `header.battleId` coincide y almacena+indexa. El mismo JSONL
+ * que se escribe a disco es el que se envía (Content-Type ndjson).
+ */
+export async function ingestReplayToService(
+  serviceUrl: string,
+  battleId: string,
+  jsonl: string,
+): Promise<ReplayIngestResult> {
+  const url = new URL(`/replays/${encodeURIComponent(battleId)}`, serviceUrl);
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/x-ndjson" },
+    body: jsonl,
+  });
+  const text = await res.text();
+  let body: unknown = text;
+  try {
+    body = text ? JSON.parse(text) : null;
+  } catch {
+    /* deja el texto crudo */
+  }
+  return { ok: res.status === 201, status: res.status, body };
 }
 
 /** Lee y valida la configuración del entorno. Falla cerrado si falta el digest. */
@@ -65,6 +109,7 @@ export function readHarnessConfig(env: NodeJS.ProcessEnv): SmokeHarnessConfig {
     mapName: map,
     timeoutMs: Number(env.SMOKE_TIMEOUT_MS ?? "120000"),
     replayOut: env.REPLAY_OUT ?? "/data/replays/e2e-real-smoke.jsonl",
+    ...(env.REPLAY_SERVICE_URL ? { replayServiceUrl: env.REPLAY_SERVICE_URL } : {}),
   };
 }
 
@@ -72,6 +117,8 @@ export interface SmokeHarnessOutcome {
   result: BattleResult;
   replay: Replay;
   replayPath: string;
+  /** R7 · Resultado de la ingesta en el replay-service, si se configuró. */
+  ingest?: ReplayIngestResult;
 }
 
 /**
@@ -97,9 +144,21 @@ export async function runSmokeHarness(cfg: SmokeHarnessConfig, runner: Container
     engineHost: cfg.engineHost,
     overallTimeoutMs: cfg.timeoutMs,
   });
+  const jsonl = toJsonl(replay);
   mkdirSync(dirname(cfg.replayOut), { recursive: true });
-  writeFileSync(cfg.replayOut, toJsonl(replay), "utf8");
-  return { result, replay, replayPath: cfg.replayOut };
+  writeFileSync(cfg.replayOut, jsonl, "utf8");
+
+  const outcome: SmokeHarnessOutcome = { result, replay, replayPath: cfg.replayOut };
+
+  // R7 · Ingesta best-effort en el replay-service (recurso gestionado + visor).
+  if (cfg.replayServiceUrl) {
+    try {
+      outcome.ingest = await ingestReplayToService(cfg.replayServiceUrl, battleId, jsonl);
+    } catch (e) {
+      outcome.ingest = { ok: false, status: 0, body: (e as Error).message };
+    }
+  }
+  return outcome;
 }
 
 // --------------------------------------------------------------------------- CLI
@@ -116,7 +175,7 @@ if (isMain) {
   const cfg = readHarnessConfig(process.env);
   const runner = new ProxyContainerRunner(cfg.dockerProxyUrl);
   runSmokeHarness(cfg, runner)
-    .then(({ result, replayPath }) => {
+    .then(({ result, replayPath, ingest }) => {
       console.log(
         JSON.stringify({
           event: "result",
@@ -125,6 +184,8 @@ if (isMain) {
           finalStateHash: result.finalStateHash,
           disqualified: result.disqualified,
           replayPath,
+          ingested: ingest ? ingest.ok : undefined,
+          ingestStatus: ingest ? ingest.status : undefined,
         }),
       );
       process.exit(0);
