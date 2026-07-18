@@ -65,12 +65,16 @@ function decideCommand(obs) {
   // Zigzag: alterna steer cada 30 ticks
   const steer = (Math.floor(tickCount / 30) % 2 === 0) ? 0.4 : -0.4;
 
+  // turret solo admite targetHeading/targetPoint (command.schema.json); "turn"
+  // no es un campo válido. Barrido lento y continuo del ángulo absoluto.
+  const targetHeading = ((tickCount * 0.05) % (2 * Math.PI)) - Math.PI;
+
   const command = {
     move: { throttle: 0.6, steer },
-    turret: hasTarget
-      ? { fire: true, turn: 0 }
-      : { turn: 0.15, fire: false },
+    turret: { targetHeading },
   };
+  // "fire" es un array de slotId a nivel del comando, no un campo de turret.
+  if (hasTarget) command.fire = ['turret_main'];
 
   return command;
 }

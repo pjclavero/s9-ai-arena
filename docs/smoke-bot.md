@@ -31,8 +31,8 @@ real. No usa servicios externos, no requiere compilación, arranca en menos de 1
 1. Conecta al WebSocket de `ARENA_WS_URL`.
 2. En `open`: envía `HELLO { botId, battleToken, version }`.
 3. En `WELCOME`: escribe `/tmp/alive` (señal de healthcheck).
-4. En `OBSERVATION`: responde `COMMAND { move: { throttle: 0.6, steer: ±0.4 } }`;
-   si hay contactos radar, también `fire: true`.
+4. En `OBSERVATION`: responde `COMMAND { move: { throttle: 0.6, steer: ±0.4 }, turret: { targetHeading } }`;
+   si hay contactos radar, también `fire: ["turret_main"]`.
 5. En `SHUTDOWN`: cierra el WS y sale con código 0.
 6. En error WS: sale con código 1.
 7. Timeout de arranque de 30 s (sin respuesta = exit 1).
