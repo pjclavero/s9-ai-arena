@@ -46,6 +46,10 @@ import { replayFromBattle, toJsonl } from "../../arena-engine/src/replay.js";
 import { Battle, type BotAgent, type Participant } from "../../arena-engine/src/sim/battle.js";
 import { ProtocolServer, type ExpectedBot } from "../../arena-engine/src/protocol-server.js";
 
+function log(level: "info" | "error", msg: string, extra: Record<string, unknown> = {}): void {
+  console.log(JSON.stringify({ level, service: "tournament-worker", msg, ...extra }));
+}
+
 /** Spec de un bot para el orchestrator. */
 export interface ContainerBotSpec {
   /** ID del bot (debe coincidir con el botId en la BD). */
@@ -137,35 +141,30 @@ async function launchBotContainer(
 
 /**
  * Espera a que todos los bots esperados hayan completado el handshake HELLO/WELCOME
- * dentro del timeout. Sondeo cada 50 ms sobre el estado del ProtocolServer.
+ * dentro del timeout. Sondeo cada 50 ms sobre `server.connectedVehicleIds()`.
+ *
+ * Es importante NO arrancar `server.start()` con bots aún sin agente: esos
+ * primeros ticks de decisión quedarían sin agente, y la re-simulación de
+ * verify() (que sí parte con el agente ya adjunto desde el tick 0) divergiría
+ * del hash real — ver connectedVehicleIds() en protocol-server.ts y T5.1 en
+ * protocol-server.test.ts. No lanzamos error si el timeout expira: la batalla
+ * arranca igual y los bots sin conectar quedan sin agente, lo que provoca
+ * descalificación por timeouts del motor (D2) — pero es preferible avisar que
+ * fallar en silencio, así que devolvemos qué vehicleIds quedaron sin conectar.
  */
 async function waitForAllBotsConnected(
   server: ProtocolServer,
-  expectedBotIds: string[],
+  expectedVehicleIds: string[],
   timeoutMs: number,
-): Promise<void> {
+): Promise<{ missing: string[] }> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    // ProtocolServer no expone estado de conexión directamente; usamos un truco:
-    // pedimos que la batalla "empiece" (en realidad empieza desde afuera) y
-    // monitorizamos si los agentes ya están registrados consultando isFinished.
-    // El método más directo: intentar step() UNA vez. Si algún bot no está
-    // conectado, su agente devolverá null (comportamiento de bot disconnected):
-    // esto es válido porque el motor trata null como "sin comando" (acción segura).
-    //
-    // Para el smoke test y batallas cortas, la conexión suele producirse en <2 s
-    // (imagen local ya descargada). El timeout de 10 s es muy conservador.
+    const connected = server.connectedVehicleIds();
+    if (expectedVehicleIds.every((id) => connected.includes(id))) return { missing: [] };
     await new Promise((r) => setTimeout(r, 50));
-
-    // Verificamos indirectamente: si el servidor ya tiene agentes (peek interno),
-    // estamos listos. Sin acceso al mapa privado agents, nos limitamos a esperar
-    // el tiempo de holgura y continuar: la batalla ya arrancará cuando conecten.
-    //
-    // TODO producción: añadir `server.connectedBots()` que devuelva Set<string>
-    // de botIds con handshake completado.
   }
-  // No lanzamos error: la batalla comienza y los bots que no conectaron quedan
-  // sin agente (null), lo que provoca descalificación por timeouts del motor (D2).
+  const connected = server.connectedVehicleIds();
+  return { missing: expectedVehicleIds.filter((id) => !connected.includes(id)) };
 }
 
 /**
@@ -234,11 +233,14 @@ export async function runContainerBattle(
     );
 
     // 4. Esperar a que los bots conecten (best-effort; el motor maneja timeouts)
-    await waitForAllBotsConnected(
+    const { missing } = await waitForAllBotsConnected(
       server,
-      bots.map((b) => b.botId),
+      bots.map((b) => b.vehicleId),
       connectTimeoutMs,
     );
+    if (missing.length > 0) {
+      log("info", `bots sin handshake tras ${connectTimeoutMs}ms (quedarán descalificados por D2)`, { missing });
+    }
 
     // 5. Arrancar el bucle de batalla del ProtocolServer (real-time)
     server.start();

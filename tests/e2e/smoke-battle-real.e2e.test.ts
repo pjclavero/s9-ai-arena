@@ -319,8 +319,21 @@ describe("smoke-battle-real - contenedores Docker", () => {
       ]);
       launchedContainerIds.push(containerRed, containerBlue);
 
-      // Esperar conexiones antes de arrancar
-      await new Promise<void>((r) => setTimeout(r, Math.min(BOT_CONNECT_TIMEOUT_MS, 8_000)));
+      // Esperar handshake real (no un sleep fijo): si el bucle arranca con algún
+      // bot aún sin agente, esos primeros ticks quedan sin agente y verify()
+      // diverge (ver connectedVehicleIds() en protocol-server.ts, T5.1).
+      const expectedVehicleIds = ["veh_1", "veh_2"];
+      const connectDeadline = Date.now() + BOT_CONNECT_TIMEOUT_MS;
+      while (Date.now() < connectDeadline) {
+        const connected = server.connectedVehicleIds();
+        if (expectedVehicleIds.every((id) => connected.includes(id))) break;
+        await new Promise<void>((r) => setTimeout(r, 100));
+      }
+      const connected = server.connectedVehicleIds();
+      const missing = expectedVehicleIds.filter((id) => !connected.includes(id));
+      if (missing.length > 0) {
+        throw new Error(`bots sin handshake completado tras ${BOT_CONNECT_TIMEOUT_MS}ms: ${missing.join(", ")}`);
+      }
 
       server.start();
 

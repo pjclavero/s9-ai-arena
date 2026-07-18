@@ -506,6 +506,18 @@ export class ProtocolServer {
     return replayFromBattle(this.battle, result);
   }
 
+  /**
+   * vehicleId de los bots que ya completaron el handshake HELLO/WELCOME (agente
+   * adjunto a la batalla). Debe usarse para esperar a que TODOS los bots esperados
+   * estén conectados antes de llamar a start(): si el bucle arranca con algún bot
+   * aún sin agente, esos primeros ticks de decisión quedan sin agente y la
+   * re-simulación de verify() — que sí parte con el agente ya adjunto desde el
+   * tick 0 — diverge del hash real. Ver T5.1 en protocol-server.test.ts.
+   */
+  connectedVehicleIds(): string[] {
+    return [...this.agents.keys()];
+  }
+
   waitForResult(): Promise<BattleResult> {
     const existing = this.battle.getResult();
     if (existing) return Promise.resolve(existing);
