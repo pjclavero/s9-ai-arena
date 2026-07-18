@@ -58,6 +58,18 @@ reales es un paso de VM108.
 | `ENGINE_HOST` | `arena-engine` | host del ProtocolServer alcanzable desde `ARENA_NETWORK` (por IP si los bots no tienen DNS). |
 | `SMOKE_BOT_DIGEST` | — (**obligatoria**) | imagen del `s9-smoke-bot` fijada por **repo digest** `name@sha256:…` (nunca tag, nunca placeholder, nunca Image ID pelado). |
 | `SMOKE_TICKS`/`SMOKE_SEED`/`SMOKE_MAP`/`SMOKE_TIMEOUT_MS`/`REPLAY_OUT` | ver script | parámetros de la batalla y ruta del replay. |
+| `REPLAY_SERVICE_URL` | — (opcional, R7) | si se define, el replay se **ingesta** en el replay-service (`POST /replays/:battleId`) → recurso gestionado, recuperable por `GET /replays/{battleId}` y visible en el visor (`#/replay/<battleId>`). Sin él, solo se escribe a disco. |
+
+### R7 · replay real como recurso gestionado
+
+El arnés ya escribe el replay a disco (`REPLAY_OUT`). Con **`REPLAY_SERVICE_URL`** (p. ej.
+`http://replay-service:8083` desde la red `platform`, o `http://127.0.0.1:8083` si el
+replay-service publica el puerto) hace además `POST /replays/:battleId` con el MISMO JSONL:
+el servicio valida `header.battleId`, lo almacena+indexa y queda disponible en el visor
+existente. La ingesta es **best-effort**: si falla, la batalla no se invalida — el CLI
+reporta `ingested`/`ingestStatus` en su JSON de resultado. Pendiente (no bloqueante): en
+el despliegue VM108 el replay-service no publica el puerto por defecto; para ingestar desde
+el host hay que alcanzarlo por su red interna o exponerlo temporalmente.
 
 ## Troubleshooting (bugs reales encontrados en VM108, 2026-07-18)
 
