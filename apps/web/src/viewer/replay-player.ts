@@ -20,6 +20,12 @@ export interface ReplayIndexData {
   keyframes: { tick: number; snapshotIndex: number }[];
   result: { winner: string; ticks: number; score: Record<string, number>; finalStateHash: string };
   debugOpen: boolean;
+  /**
+   * R3.4 · Nómina pública opcional (id de vehículo → bot). Si el índice del replay
+   * la trae, el reproductor pinta sprite por chasis y NOMBRE en vez del UUID; si no,
+   * cae con elegancia al id corto. Forward-compatible: replays antiguos no la traen.
+   */
+  roster?: { id: string; name?: string; team?: string; chassis?: string; botId?: string }[];
 }
 
 export interface ReplaySegment {

@@ -7,6 +7,9 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
 import { SpectatorClient } from "../viewer/spectator-client.js";
 import { LiveFeed } from "../viewer/live-feed.js";
+import { rosterFromMeta } from "../viewer/art-direction.js";
+import { buildHudModel } from "../viewer/hud-model.js";
+import { HudOverlay } from "../viewer/HudOverlay.js";
 import type { ViewerScene } from "../viewer/PhaserViewer.js";
 import type { CameraMode } from "../viewer/camera.js";
 
@@ -47,6 +50,12 @@ export function ViewerPage({ battleId }: { battleId: string }) {
         setAllowFog(msg.spectator?.allowFogView === true);
         setDebugAvailable(msg.spectator?.debug === true);
         if (msg.meta?.world) scene.setWorld(msg.meta.world);
+        // R3.4: nómina pública (nombre + chasis + equipo por vehículo) desde la
+        // cabecera init; el visor pinta sprite por chasis y NOMBRE, no el UUID.
+        if (msg.meta?.roster) scene.setRoster(rosterFromMeta(msg.meta.roster));
+        // R3.6: si nos conectamos a una batalla YA terminada, arrastramos el
+        // resultado para anunciar el fin sobre el canvas y en el HUD.
+        if (msg.finished && msg.result) scene.applyResult(msg.result);
         feed.onInit(msg);
       });
       client.on("snapshot", (s) => {
@@ -59,7 +68,11 @@ export function ViewerPage({ battleId }: { battleId: string }) {
       });
       client.on("disconnect", () => setStatus("reconectando…"));
       client.on("reconnected", () => setStatus("en directo (reconectado)"));
-      client.on("result", () => setStatus("batalla terminada"));
+      client.on("result", (result) => {
+        setStatus("batalla terminada");
+        // R3.6: el fin de partida entra al overlay → rótulo sobre el canvas + HUD.
+        scene.applyResult(result);
+      });
       client.on("gave_up", () => setStatus("sin conexión"));
       void client.connect();
     });
@@ -115,7 +128,13 @@ export function ViewerPage({ battleId }: { battleId: string }) {
       <p style={{ opacity: 0.7, fontSize: 13 }}>
         Rueda: zoom · arrastre: mover cámara · 1–4: seguir bots · G: vista global
       </p>
-      <div ref={hostRef} style={{ width: "100%", height: 640 }} />
+      {/* R3.6 · El HUD (marcador, reloj/fase, objetivo, panel de equipos con vida y
+          módulos, kill feed, banderas y zonas) se superpone al canvas. El minimapa
+          y el rótulo de fin de partida los dibuja Phaser dentro del canvas. */}
+      <div style={{ position: "relative", width: "100%", height: 640 }}>
+        <div ref={hostRef} style={{ position: "absolute", inset: 0 }} />
+        {overlay && <HudOverlay model={buildHudModel(overlay, { roster: sceneRef.current?.rosterView })} />}
+      </div>
       {overlay && (
         <aside>
           <p data-testid="score">
