@@ -11,10 +11,18 @@ Compose de `infrastructure/docker-compose.yml` contiene TODO lo necesario (gatew
 web, api, motor, workers, bot-manager, Redis y PostgreSQL — este último opcional si
 se usa la instancia existente del servidor vía `DATABASE_URL`). Dosier: capítulo 6.
 
-> **Obsoleto:** el `docker-compose.yml` de la RAÍZ del repo es del prototipo previo
-> (arena-server/arena-viewer/bot-red/bot-blue) y NO es este stack. Se propone
-> retirarlo junto con `pnpm-workspace.yaml`, `apps/arena-server`, `apps/arena-viewer`
-> y `bots/*` en un PR de limpieza aprobado por el operador (ADR-010 D10.1).
+> **Qué Compose usar (R-DEPLOY · R7):**
+> - **Oficial / producción (VM108):** `infrastructure/docker-compose.yml` — este
+>   documento. Es el ÚNICO válido en producción.
+> - **Demo / legado (v1):** `docker-compose.demo.yml` de la RAÍZ (antes
+>   `docker-compose.yml`; renombrado para quitar la ambigüedad). Es el prototipo
+>   de tanques (arena-server/arena-viewer/bot-red/bot-blue). **NO usar en prod.**
+>   Se propone retirarlo junto con `pnpm-workspace.yaml`, `apps/arena-server`,
+>   `apps/arena-viewer` y `bots/*` en un PR de limpieza aprobado por el operador
+>   (ADR-010 D10.1).
+>
+> Validar el oficial sin daemon: `docker compose -f infrastructure/docker-compose.yml
+> --profile production config` (y la suite `infrastructure/tests/compose.test.ts`).
 
 ## Instalación limpia en tres pasos
 
@@ -83,6 +91,12 @@ y `X-Forwarded-For $proxy_add_x_forwarded_for` (obligatoria: con
 `TRUST_PROXY_HOPS=2` la API espera que VM104 añada la IP real del cliente),
 y soporte de upgrade WebSocket para `/ws/`. El humo en este modo:
 `smoke.sh https://s9arena.seccionnueve.duckdns.org`.
+
+> **Dominio (R-DEPLOY · R6):** S9 AI Arena usa **`s9arena.seccionnueve.duckdns.org`**.
+> El subdominio **`arena.seccionnueve.duckdns.org` está RESERVADO por otro
+> proyecto** del homelab y NO debe usarse aquí. VM104 termina el wildcard
+> `*.seccionnueve.duckdns.org`; añade **solo** el `server` de `s9arena` sin tocar
+> los vhosts de otros proyectos.
 
 > **IP real del cliente (R1.8 · ERR-SEC-05):** la API calcula `req.ip` con una
 > confianza de proxy **acotada** al número de saltos declarado en

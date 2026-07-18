@@ -6,7 +6,7 @@
 ## 1. De dónde veníamos
 
 Hasta el 2026-07-17, en VM108 estaba desplegado el **prototipo v1**: los 4 contenedores del
-`docker-compose.yml` de la **raíz** del repo:
+`docker-compose.yml` de la **raíz** del repo (hoy renombrado a `docker-compose.demo.yml`):
 
 - `arena-server` (WebSocket del juego, puerto 8081)
 - `arena-viewer` (visor Phaser 3, nginx en puerto 3000)
@@ -67,10 +67,12 @@ Ver la lista ejecutable en [`CHECKLIST_VALIDACION_V2.md`](CHECKLIST_VALIDACION_V
 
 - El **código** de la v1 (`apps/arena-server`, `apps/arena-viewer`, `bots/`) puede permanecer en
   el repo por historia, pero deja de ser referencia operativa.
-- El `docker-compose.yml` de la **raíz** (v1) está marcado como legacy en cabecera; **no moverlo
-  de sitio** mientras el CI lo escanee como referencia (`scripts/scan-compose.ts`,
-  `apps/bot-manager/tests/compose-scan.test.ts`, `acceptance/criteria.mjs`). La decisión de
-  moverlo a `legacy/` debe ir acompañada de actualizar esas rutas en el mismo cambio.
+- El compose de la v1 se **renombró de `docker-compose.yml` a `docker-compose.demo.yml`**
+  (R-DEPLOY · R7) para eliminar la ambigüedad con el oficial. Las referencias del CI se
+  actualizaron en el mismo cambio: el escáner de la demo (`scripts/scan-compose.ts`,
+  `apps/bot-manager/tests/compose-scan.test.ts`) apunta a `docker-compose.demo.yml`, y el del
+  stack oficial (`acceptance/criteria.mjs` → `scan-compose.mjs`) apunta a
+  `infrastructure/docker-compose.yml`. Está marcado como legacy en su cabecera.
 - En VM108, `/opt/_v1-prototipo-backup-20260717` puede archivarse/comprimirse (no borrar sin backup).
 
 ## 8. Plan de rollback

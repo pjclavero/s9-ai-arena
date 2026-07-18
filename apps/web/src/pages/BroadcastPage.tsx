@@ -18,8 +18,10 @@ import type { BroadcastConfig } from "../broadcast/config.js";
 import { BroadcastDirector, createPublicApi, type BattleSummary, type BroadcastScreen } from "../broadcast/director.js";
 import { SpectatorClient } from "../viewer/spectator-client.js";
 import { LiveFeed } from "../viewer/live-feed.js";
+import { rosterFromMeta } from "../viewer/art-direction.js";
+import { buildHudModel } from "../viewer/hud-model.js";
+import { HudOverlay } from "../viewer/HudOverlay.js";
 import type { ViewerScene } from "../viewer/PhaserViewer.js";
-import type { FeedItem, VehicleOverlay } from "../viewer/overlay.js";
 
 const STAGE = { width: 1920, height: 1080 };
 const TICKER_ITEMS = 6;
@@ -237,6 +239,8 @@ function LiveScreen({ config, battle }: { config: BroadcastConfig; battle: Battl
       client.on("init", (msg) => {
         setLive(true);
         if (msg.meta?.world) scene.setWorld(msg.meta.world);
+        if (msg.meta?.roster) scene.setRoster(rosterFromMeta(msg.meta.roster));
+        if (msg.finished && msg.result) scene.applyResult(msg.result);
         feed.onInit(msg);
       });
       client.on("snapshot", (s) => {
@@ -244,6 +248,8 @@ function LiveScreen({ config, battle }: { config: BroadcastConfig; battle: Battl
         setTick(s.tick);
       });
       client.on("event", (e) => feed.onEvent(e));
+      // R3.6: el fin de partida entra al overlay → rótulo sobre el canvas + HUD.
+      client.on("result", (result) => scene.applyResult(result));
       client.on("disconnect", () => setLive(false));
       client.on("reconnected", () => setLive(true));
       void client.connect();
@@ -259,61 +265,39 @@ function LiveScreen({ config, battle }: { config: BroadcastConfig; battle: Battl
 
   const overlay = sceneRef.current?.overlay;
   const accent = config.branding.accentColor;
+  // R3.6 · El MISMO HUD del visor interactivo, derivado del overlay público, para
+  // que la emisión muestre marcador, reloj/fase, objetivo, panel de equipos con
+  // vida y módulos, kill feed, banderas/zonas y el fin de partida — legible a
+  // 1080p (fontScale mayor). El ticker de eventos se conserva como cinta inferior.
+  const model = overlay ? buildHudModel(overlay, { roster: sceneRef.current?.rosterView }) : null;
   return (
     <section data-testid="broadcast-live" style={{ flex: 1, position: "relative", minHeight: 0 }}>
       {/* Visor E8 a pantalla completa (el canvas llena el hueco). */}
       <div ref={hostRef} style={{ position: "absolute", inset: 0 }} />
 
-      {/* Marcador superpuesto */}
-      <div
-        data-testid="broadcast-score"
-        style={{
-          position: "absolute",
-          top: 16,
-          left: "50%",
-          transform: "translateX(-50%)",
-          padding: "8px 24px",
-          background: "rgba(0,0,0,0.65)",
-          borderRadius: 8,
-          fontSize: 34,
-          color: accent,
-        }}
-      >
-        {overlay && Object.keys(overlay.score).length > 0
-          ? Object.entries(overlay.score)
-              .map(([t, n]) => `${t} ${n}`)
-              .join("   ")
-          : live
-            ? "0 — 0"
-            : "conectando…"}
-      </div>
+      {/* HUD compartido (marcador, reloj, objetivo, equipos, kill feed, fin). */}
+      {model ? (
+        <HudOverlay model={model} accent={accent} fontScale={22} />
+      ) : (
+        <div
+          data-testid="broadcast-score"
+          style={{
+            position: "absolute",
+            top: 16,
+            left: "50%",
+            transform: "translateX(-50%)",
+            padding: "8px 24px",
+            background: "rgba(0,0,0,0.65)",
+            borderRadius: 8,
+            fontSize: 34,
+            color: accent,
+          }}
+        >
+          {live ? "0 — 0" : "conectando…"}
+        </div>
+      )}
 
-      {/* Participantes con loadout resumido (estado de módulos del snapshot público) */}
-      <aside
-        data-testid="broadcast-participants"
-        style={{
-          position: "absolute",
-          top: 16,
-          right: 16,
-          width: 360,
-          background: "rgba(0,0,0,0.55)",
-          borderRadius: 8,
-          padding: 12,
-          fontSize: 18,
-        }}
-      >
-        {(overlay ? [...overlay.vehicles.values()] : []).map((v) => (
-          <ParticipantRow key={v.id} v={v} accent={accent} />
-        ))}
-        {!overlay &&
-          battle.participants.map((p) => (
-            <div key={p.botId}>
-              {shortId(p.botId)} v{p.version} · {p.team}
-            </div>
-          ))}
-      </aside>
-
-      {/* Ticker de eventos */}
+      {/* Ticker de eventos (cinta de emisión) */}
       <footer
         data-testid="broadcast-ticker"
         style={{
@@ -328,7 +312,7 @@ function LiveScreen({ config, battle }: { config: BroadcastConfig; battle: Battl
           overflow: "hidden",
         }}
       >
-        {(overlay?.feed ?? []).slice(-TICKER_ITEMS).map((f: FeedItem, i: number) => (
+        {(overlay?.feed ?? []).slice(-TICKER_ITEMS).map((f, i) => (
           <span key={`${f.tick}-${i}`} style={{ marginRight: 48 }}>
             <span style={{ color: accent }}>[{f.tick}]</span> {f.text}
           </span>
@@ -336,20 +320,5 @@ function LiveScreen({ config, battle }: { config: BroadcastConfig; battle: Battl
         <span style={{ opacity: 0.6 }}>tick {tick}</span>
       </footer>
     </section>
-  );
-}
-
-function ParticipantRow({ v, accent }: { v: VehicleOverlay; accent: string }) {
-  const hp = v.hullHpMax > 0 ? Math.round((100 * v.hullHp) / v.hullHpMax) : 0;
-  // Loadout resumido: slot→estado del módulo, tal y como viaja en el snapshot público.
-  const modules = Object.entries(v.modules)
-    .map(([slot, state]) => (state === "operational" ? slot : `${slot}(${state[0]})`))
-    .join(" ");
-  return (
-    <div style={{ opacity: v.alive ? 1 : 0.45, marginBottom: 6 }}>
-      <strong style={{ color: accent }}>{v.id}</strong> · {v.team} · {v.alive ? `${hp}%` : "KO"}
-      {v.carryingFlag ? " · 🚩" : ""}
-      <div style={{ fontSize: 14, opacity: 0.85 }}>{modules}</div>
-    </div>
   );
 }

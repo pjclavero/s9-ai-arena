@@ -3,7 +3,9 @@
  * E6 · CLI de escaneo de seguridad del Compose (T6.2, criterio cap. 28).
  *
  * Uso (en CI):  npx tsx scripts/scan-compose.ts [ruta1.yml ...]
- * Sin argumentos, escanea docker-compose.yml de la raíz. Sale con código 1 (falla el CI)
+ * Sin argumentos, escanea docker-compose.demo.yml de la raíz (prototipo v1; el
+ * stack oficial infrastructure/docker-compose.yml lo escanea scan-compose.mjs en
+ * la etapa 6 de la CI). Sale con código 1 (falla el CI)
  * si algún servicio monta docker.sock, corre privilegiado, añade cap ALL, usa seccomp/
  * apparmor unconfined, o comparte red/PID del host.
  */
@@ -14,7 +16,7 @@ import { scanCompose } from "../apps/bot-manager/src/compose-scanner.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const files = process.argv.slice(2);
-if (files.length === 0) files.push(join(__dirname, "..", "docker-compose.yml"));
+if (files.length === 0) files.push(join(__dirname, "..", "docker-compose.demo.yml"));
 
 let failed = false;
 for (const file of files) {

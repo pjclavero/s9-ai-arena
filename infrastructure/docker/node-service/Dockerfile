@@ -6,7 +6,7 @@
 # importan entre sí por ruta relativa (el worker usa apps/api/src/db, la API usa
 # apps/arena-engine/src/replay…). Copiar una sola app rompe con
 # ERR_MODULE_NOT_FOUND en el primer import cruzado.
-FROM node:22-alpine
+FROM node:22.15-alpine
 
 WORKDIR /app
 

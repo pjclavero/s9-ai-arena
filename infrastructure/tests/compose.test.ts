@@ -31,7 +31,9 @@ const CORE = [
 ];
 const TABLE_6_2 = [...CORE, "postgres", "streamer", "bot-runtime-template"];
 // Operación (T10.4): cron de backup dentro del stack.
-const OPERATION = ["backup"];
+// R-DEPLOY · R2: bot-build-worker (ejecuta el pipeline de builds, separado del
+// bot-manager API/control). No es de la tabla 6.2 original: se lista aparte.
+const OPERATION = ["backup", "bot-build-worker"];
 const OBSERVABILITY = [
   "prometheus",
   "alertmanager",
@@ -237,9 +239,9 @@ describe("resolución completa con docker compose config (si hay CLI; no requier
     },
   );
 
-  it.skipIf(!hasCompose())("development+bots+streaming resuelve los 12 servicios de la tabla 6.2", () => {
+  it.skipIf(!hasCompose())("development+bots+streaming resuelve la tabla 6.2 más el bot-build-worker (R2)", () => {
     const list = configServices(["development", "bots", "streaming"]);
-    expect(list.sort()).toEqual([...TABLE_6_2].sort());
+    expect(list.sort()).toEqual([...TABLE_6_2, "bot-build-worker"].sort());
   });
 
   it.skipIf(!hasCompose())(

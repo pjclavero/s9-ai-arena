@@ -30,7 +30,7 @@ concurrency:
 
 env:
   # Node >= 22.15: la suite usa zstdCompressSync (falla en Node 20, ver docs/entrega-E10.md).
-  NODE_VERSION: "22"
+  NODE_VERSION: "22.15"
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ghcr.io/${{ github.repository }}
 

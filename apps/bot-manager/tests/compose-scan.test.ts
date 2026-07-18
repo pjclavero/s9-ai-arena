@@ -28,17 +28,21 @@ describe("T6.2 · escaneo de seguridad del Compose (cap. 28)", () => {
     expect(scanCompose(fx("good.yml"))).toEqual([]);
   });
 
-  it("el docker-compose.yml REAL del repo está limpio", () => {
-    const v = scanCompose(readFileSync(join(repoRoot, "docker-compose.yml"), "utf8"));
+  it("el docker-compose.demo.yml REAL del repo está limpio", () => {
+    const v = scanCompose(readFileSync(join(repoRoot, "docker-compose.demo.yml"), "utf8"));
     expect(v).toEqual([]);
   });
 
   it("la CLI scan-compose.ts sale 0 con el compose real y 1 con uno malicioso", () => {
     // real → exit 0
-    execFileSync("npx", ["tsx", join(repoRoot, "scripts", "scan-compose.ts"), join(repoRoot, "docker-compose.yml")], {
-      cwd: repoRoot,
-      stdio: "pipe",
-    });
+    execFileSync(
+      "npx",
+      ["tsx", join(repoRoot, "scripts", "scan-compose.ts"), join(repoRoot, "docker-compose.demo.yml")],
+      {
+        cwd: repoRoot,
+        stdio: "pipe",
+      },
+    );
     // malicioso → exit 1
     let failed = false;
     try {

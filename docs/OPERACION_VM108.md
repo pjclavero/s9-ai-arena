@@ -139,4 +139,4 @@ qm rollback 108 pre-v2-20260717     # vuelve al estado v1 previo al redespliegue
 - ❌ Abrir puertos nuevos en el router.
 - ❌ Modificar el vhost `arena.seccionnueve.duckdns.org` (es otro proyecto, VM107).
 - ❌ Reiniciar la VM sin avisar.
-- ❌ Usar el `docker-compose.yml` de la RAÍZ (es v1 legacy) para producción.
+- ❌ Usar el `docker-compose.demo.yml` de la RAÍZ (es v1 legacy) para producción.

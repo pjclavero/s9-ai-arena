@@ -158,14 +158,15 @@ Proyecto Compose: **`infrastructure`**, fichero **`/opt/s9-ai-arena/infrastructu
 
 ## 6. Diferencias repo ↔ despliegue
 
-1. **Rama/commit:** VM108 en `a5651ff` (`ronda2/entrypoints-servicios`); `main` va 52 commits
-   por delante. R-DEPLOY (entrypoints `bot-manager`/`map-service`, `bot-build-worker`,
-   docker-proxy systemd) **no está en `main`**: vive en `integration/ronda2-ronda3` (PR #38 OPEN).
-2. **Compose:** VM108 usa `infrastructure/docker-compose.yml` (v2). El `docker-compose.yml` de
-   la **raíz es la v1 legacy** y **no** se usa en producción (ver `DESPLIEGUE_DOMINIO.md` y
-   `MIGRACION_V2.md`).
-3. **Dominio en docs:** `docs/despliegue.md` todavía dice `arena.seccionnueve.duckdns.org`
-   (INCORRECTO). El correcto es `s9arena.…`.
+1. **Rama/commit:** VM108 en `a5651ff` (`ronda2/entrypoints-servicios`); `main` va por delante.
+   R-DEPLOY (entrypoints `bot-manager`/`map-service`, `bot-build-worker`, docker-proxy systemd)
+   se integra en `main` mediante **PR #38** (`integration/ronda2-ronda3`). Hasta que VM108 se
+   actualice, el despliegue va por detrás de `main`.
+2. **Compose:** VM108 usa `infrastructure/docker-compose.yml` (v2, stack OFICIAL). El compose de
+   la **raíz es la v1 legacy**, renombrado a `docker-compose.demo.yml` (R-DEPLOY · R7) para
+   eliminar la ambigüedad; **no** se usa en producción (ver `DESPLIEGUE_DOMINIO.md` y `MIGRACION_V2.md`).
+3. **Dominio:** el dominio correcto es `s9arena.seccionnueve.duckdns.org`;
+   `arena.seccionnueve.duckdns.org` está reservado por otro proyecto (VM107) y no se usa aquí.
 4. **Imágenes:** el Compose sugiere GHCR, pero VM108 corre `s9arena/*:local` construidas en la VM.
 
 ---

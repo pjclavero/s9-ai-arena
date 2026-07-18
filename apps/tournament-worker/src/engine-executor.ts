@@ -122,6 +122,12 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
     // --- participantes: loadout CONGELADO (entrada del torneo, cap. 17.2) ----
     const engineParticipants: Participant[] = [];
     const agents = new Map<string, BotAgent>();
+    /**
+     * R3.4 (ERR-VIS-05) · Nómina PÚBLICA para el visor: id de vehículo → bot
+     * (nombre, chasis, equipo). Viaja en la CABECERA `init.meta` (no en el snapshot
+     * público, que no se toca): el visor pinta sprite por chasis y NOMBRE, no UUID.
+     */
+    const roster: { id: string; botId: string; team: string; chassis: string; name?: string }[] = [];
     for (let i = 0; i < participants.length; i++) {
       const p = participants[i];
       if (ctx.adminDisqualified.includes(p.bot_id)) continue; // DQ E6: no se lanza
@@ -151,7 +157,23 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
       const spec = resolveVehicle(loadout, catalog);
       const vehicleId = `veh_${i + 1}`;
       engineParticipants.push({ id: vehicleId, botId: p.bot_id, team: p.team, spec });
+      roster.push({ id: vehicleId, botId: p.bot_id, team: p.team, chassis: loadout.chassis });
       agents.set(vehicleId, resolver(p.bot_id, p.version, vehicleId));
+    }
+
+    // Nombres de bot para la nómina (una consulta batch; best-effort: si falla, el
+    // visor cae al id corto y la batalla sigue). No es camino crítico de simulación.
+    try {
+      const botRows = await db("bots")
+        .whereIn(
+          "id",
+          roster.map((r) => r.botId),
+        )
+        .select("id", "name");
+      const names = new Map<string, string>(botRows.map((b: any) => [b.id, b.name]));
+      for (const r of roster) r.name = names.get(r.botId);
+    } catch {
+      /* la nómina es un adorno del visor: nunca tumba la batalla */
     }
 
     // --- batalla real del motor (con replay T2.6) ----------------------------
@@ -190,6 +212,8 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
             matchId: battle.match_id,
             round,
             official: battle.official,
+            // R3.4 · nómina pública (nombre + chasis + equipo por vehículo).
+            roster,
           },
         });
       }

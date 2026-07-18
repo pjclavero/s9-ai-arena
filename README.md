@@ -22,7 +22,7 @@ streaming. Monorepo TypeScript/Node.
 |---|---|---|
 | Qué es | Demo de tanques de 4 contenedores | Toda la plataforma E1–E12 |
 | Código | `apps/arena-server`, `apps/arena-viewer` (Phaser 3), `bots/bot-red`, `bots/bot-blue` | `apps/api`, `apps/arena-engine`, `apps/web` (Phaser 4), `apps/bot-manager`, `apps/map-service`, `apps/replay-service`, `apps/tournament-worker`, `apps/streamer`, `packages/*`, `sdks/*`, `infrastructure/` |
-| Despliegue | `docker-compose.yml` (raíz) — **LEGACY, ya NO desplegado** (retirado de VM108 el 2026-07-17) | `infrastructure/docker-compose.yml` — **DESPLEGADO en VM108** (perfil `nucleo`, 7 servicios) |
+| Despliegue | `docker-compose.demo.yml` (raíz) — demo/legado, **ya NO desplegado** (retirado de VM108 el 2026-07-17) | `infrastructure/docker-compose.yml` — **stack OFICIAL, DESPLEGADO en VM108** (perfil `nucleo`, 7 servicios) |
 | Estado | **Retirada** — despliegue movido a `/opt/_v1-prototipo-backup-20260717` en VM108 | Canónico y en producción |
 
 La v1 se conserva en el repo solo por historia. **El compose oficial de despliegue es
@@ -60,8 +60,10 @@ npm test
 npm run lint
 ```
 
-> Requiere **Node ≥ 22.15** para la suite completa (la rama zstd de replays usa
-> `zstdCompressSync`, ausente en Node 20). El resto corre en Node 20.
+> Requiere **Node ≥ 22.15** (fijado en `package.json` `engines` y en la CI). La
+> rama zstd de replays usa `zstdCompressSync`, ausente en Node 20: **Node 20 NO
+> está soportado** — la suite falla en `replay-golden.test.ts`. Comprobación
+> rápida antes de build/despliegue: `npm run check:node`.
 
 ## Documentación
 

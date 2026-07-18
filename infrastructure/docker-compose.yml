@@ -67,7 +67,13 @@ services:
       # Modo (a) standalone: nginx.conf (TLS en el gateway, 80/443 al exterior).
       # Modo (b) detrás del proxy de VM104: GATEWAY_CONF=nginx-behind-proxy.conf
       # (solo HTTP a la LAN; VM104 termina TLS). Ver docs/despliegue.md.
-      - ./gateway/${GATEWAY_CONF:-nginx.conf}:/etc/nginx/nginx.conf:ro
+      # Sintaxis larga: el default `${VAR:-...}` mete un ':' que la sintaxis corta
+      # confunde con separador bajo `docker compose config --no-interpolate`
+      # ("too many colons"). La forma larga es inmune y equivalente en runtime.
+      - type: bind
+        source: ./gateway/${GATEWAY_CONF:-nginx.conf}
+        target: /etc/nginx/nginx.conf
+        read_only: true
       - ./secrets/tls:/etc/nginx/tls:ro
     depends_on:
       web:
@@ -259,6 +265,51 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 2G }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # ── bot-build-worker · ejecuta el pipeline de build/análisis/firma (E6/R2.5) ─
+  # R-DEPLOY · R2: proceso SEPARADO del bot-manager (API/control). El proceso de
+  # la API solo ENCOLA builds (tabla `jobs`); ESTE los EJECUTA con el adaptador
+  # real E6PipelineBotManager (apps/bot-manager/src/build-worker-main.ts). No
+  # publica puertos ni monta docker.sock. FALLA CERRADO si falta la clave de
+  # firma (ARTIFACT_SIGNING_KEY_FILE, ERR-SEC-15) o la config de BD. Vive en
+  # platform+build+data: necesita la cola/BD (jobs) y el volumen de fuentes; NO
+  # está en la red arena (no toca contenedores de bots: eso es del bot-manager).
+  bot-build-worker:
+    build:
+      context: ..
+      dockerfile: infrastructure/docker/node-service/Dockerfile
+      args: { APP_PATH: apps/bot-manager }
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/bot-manager:${TAG:-latest}
+    profiles: [development, production, external-db]
+    networks: [platform, build, data]
+    environment:
+      <<: *node-db-env
+      SERVICE_ENTRY: ${BOT_BUILD_WORKER_ENTRY:-apps/bot-manager/src/build-worker-main.ts}
+      # Fallar cerrado en el arranque: sin clave de firma no hay pipeline que firmar.
+      ARTIFACT_SIGNING_KEY_FILE: /run/secrets/artifact_signing_key
+    secrets: [postgres_password, artifact_signing_key]
+    volumes:
+      - arena_bot_sources:/data/bot-sources
+      - arena_build_cache:/data/build-cache
+    depends_on:
+      queue:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+        required: false
+    healthcheck:
+      # Contrato: el worker toca /tmp/heartbeat en cada iteración (< 120 s).
+      test: ["CMD-SHELL", "test $(( $(date +%s) - $(cat /tmp/heartbeat 2>/dev/null || echo 0) )) -lt 120"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     deploy:
       resources:
         limits: { cpus: "2.0", memory: 2G }
@@ -750,6 +801,11 @@ secrets:
     file: ./secrets/postgres_password.txt
   jwt_secret:
     file: ./secrets/jwt_secret.txt
+  # R-DEPLOY · R2: clave ed25519 (PEM PKCS8) con la que el bot-build-worker firma
+  # los artefactos de bots (ERR-SEC-15). La genera init-secrets.sh; sin ella el
+  # worker no arranca (fallo cerrado).
+  artifact_signing_key:
+    file: ./secrets/artifact_signing_key.pem
   stream_key:
     file: ./secrets/stream_key.txt
   grafana_admin_password:

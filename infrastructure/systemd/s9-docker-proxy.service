@@ -1,0 +1,56 @@
+# R-DEPLOY · R2 — proxy de la API de Docker de S9 AI Arena (HOST VM108).
+#
+# ÚNICO proceso autorizado a tocar /var/run/docker.sock. Ningún contenedor del
+# stack monta el socket (R1.7 · ERR-SEC-02): el bot-manager lanza contenedores
+# de bots exclusivamente a través de ESTE proxy, con allowlist estricta
+# (crear/arrancar/parar/inspeccionar; rechaza privileged, bind-mounts, red del
+# host y cambios de usuario). Ver docs/ops/docker-proxy.md.
+#
+# Instalación/validación/rollback: infrastructure/scripts/install-docker-proxy.sh
+
+[Unit]
+Description=S9 AI Arena · proxy de la API de Docker (allowlist, host-only)
+Documentation=file:///opt/s9-ai-arena/docs/ops/docker-proxy.md
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Usuario dedicado SIN privilegios de root; debe pertenecer al grupo `docker`
+# para leer el socket. Lo crea install-docker-proxy.sh.
+User=s9proxy
+Group=docker
+WorkingDirectory=/opt/s9-ai-arena
+# Config del operador (bind, puerto, red arena, usuario del sandbox). El bind por
+# defecto NO es 127.0.0.1: un proceso en loopback del host NO es alcanzable desde
+# los contenedores vía host-gateway. Se usa la IP de la interfaz interna
+# controlada del bridge de Docker (docker0), acotada por firewall a esa red.
+# Ver docs/ops/docker-proxy.md § "Alcance de red".
+EnvironmentFile=/etc/s9-ai-arena/docker-proxy.env
+ExecStart=/usr/bin/npx tsx apps/bot-manager/src/docker-proxy-main.ts
+Restart=always
+RestartSec=2
+# Logs claros por journald (el proxy ya emite JSON por stdout con cada decisión).
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=s9-docker-proxy
+
+# Endurecimiento (defensa en profundidad: este proceso media el acceso a Docker).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+# El socket de Docker vive fuera de WorkingDirectory: se permite explícitamente.
+ReadWritePaths=/var/run/docker.sock
+ReadOnlyPaths=/opt/s9-ai-arena
+
+[Install]
+WantedBy=multi-user.target

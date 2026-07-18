@@ -168,6 +168,12 @@ describe("H2 · el worker cablea el espectador en vivo y las stats ricas de E8",
     expect(attached[0].meta.round).toBe(2);
     expect(attached[0].meta.mode).toBe("deathmatch");
     expect(attached[0].meta.tournamentId).toBe(t.id);
+    // R3.4 (ERR-VIS-05): la cabecera lleva la nómina pública (id de vehículo → bot)
+    // para que el visor pinte sprite por chasis y NOMBRE en vez del UUID.
+    const roster = attached[0].meta.roster as { id: string; team: string; chassis: string }[];
+    expect(Array.isArray(roster)).toBe(true);
+    expect(roster.length).toBeGreaterThan(0);
+    expect(roster.every((r) => typeof r.id === "string" && typeof r.chassis === "string" && !!r.team)).toBe(true);
   }, 120_000);
 
   it("al archivar el replay quedan el almacén de E8 y las stats RICAS de runStatsJob", async () => {
