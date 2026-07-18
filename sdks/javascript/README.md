@@ -51,12 +51,34 @@ Es exactamente `sdks/javascript/tests/tutorial-bot.ts`, y
 `tests/contract.test.ts` lo ejecuta contra una batalla real en cada `npm test`: si
 el README miente, el test falla.
 
+## Simulador local por CLI: `arena-sim` (R2.8)
+
+El equivalente del `arena-sim` del SDK de Python: corre tu bot contra un stub del
+motor, con el motor REAL de E2 y el protocolo real de T5.1, sin Docker ni
+plataforma. Guarda tu bot (un `.ts` o `.js` que exporte una subclase de
+`ArenaBot`, como el de arriba) y, desde la raíz del repo:
+
+```bash
+npx arena-sim example-bots/javascript/gunner.ts --archetype gunner --opponent idle --ticks 1800
+# o equivalente, sin el bin del workspace:
+npx tsx sdks/javascript/src/arena-sim.ts mi_bot.ts --archetype gunner --opponent idle
+```
+
+Mismos flags que el de Python (`--archetype`, `--opponent idle|hunter|circle|forward`,
+`--opponent-archetype`, `--map empty|mvp|ctf`, `--ruleset`, `--ticks`, `--seed`) y la
+misma salida: el `BattleResult` en JSON por stdout. Extra solo de JS:
+`--tick-interval-ms` acelera el bucle (por defecto corre a ritmo real, ~33 ms/tick).
+A diferencia de Python no hay subproceso: motor y bot comparten el proceso Node
+(ver `docs/sdk-paridad.md`).
+
+## Simulador local sin la CLI
+
 Para correrlo tú mismo contra el motor real, en el mismo proceso (sin necesitar
-Docker ni una plataforma — ver `tests/helpers.ts::startLocalBattle` para el
-patrón completo):
+Docker ni una plataforma — ver `src/local-simulator.ts::startLocalBattle`, que es
+lo que usan tanto la CLI como los tests):
 
 ```typescript
-import { startLocalBattle } from "./tests/helpers.js";
+import { startLocalBattle } from "./tests/helpers.js"; // envoltorio con defaults rápidos de test
 import { TutorialBot } from "./tests/tutorial-bot.js";
 
 const bot = new TutorialBot("bot_mio01");

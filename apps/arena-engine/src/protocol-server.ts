@@ -178,15 +178,18 @@ class WebSocketBotAgent implements BotAgent {
 
   /** Llamado por el servidor cuando llega un COMMAND ya validado contra el esquema. */
   receiveCommand(payload: any): void {
-    if (!this.windowOpen) return; // llegó tarde (D2): se descarta, sin evento.
-    if (payload.forTick !== this.expectedForTick) return; // no es para el ciclo que espera.
+    // expectedForTick nunca es null con la ventana abierta (se asigna justo antes de
+    // abrirla); el guard existe para que el narrowing de TS estricto lo sepa también.
+    if (!this.windowOpen || this.expectedForTick === null) return; // llegó tarde (D2): se descarta, sin evento.
+    const expectedForTick = this.expectedForTick;
+    if (payload.forTick !== expectedForTick) return; // no es para el ciclo que espera.
     if (this.pendingCommand !== null) {
       // Ya había un COMMAND válido para este ciclo: el segundo se descarta con evento.
       this.onSend(envelope("EVENT", {
-        tick: this.expectedForTick - DECISION_EVERY_N_TICKS,
+        tick: expectedForTick - DECISION_EVERY_N_TICKS,
         kind: "rejected_action",
         reason: "extra_command_discarded",
-      }, this.expectedForTick - DECISION_EVERY_N_TICKS));
+      }, expectedForTick - DECISION_EVERY_N_TICKS));
       return;
     }
     this.pendingCommand = payload;
