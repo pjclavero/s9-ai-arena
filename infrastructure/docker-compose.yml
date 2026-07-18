@@ -123,6 +123,10 @@ services:
       PORT: "8080"
       SERVICE_ENTRY: ${API_ENTRY:-apps/api/src/server.ts}
       JWT_SECRET_FILE: /run/secrets/jwt_secret
+      # R1.8 · ERR-SEC-05: saltos de proxy de confianza delante de la API.
+      # En el stack SIEMPRE hay al menos el gateway (1). Detrás del Nginx de
+      # VM104 (GATEWAY_CONF=nginx-behind-proxy.conf) son 2. Nunca "true".
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
     secrets: [postgres_password, jwt_secret]
     depends_on:
       queue:

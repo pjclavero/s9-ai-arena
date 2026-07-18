@@ -18,6 +18,7 @@ import { standingsRoutes } from "./routes/standings.js";
 import { tournamentRoutes } from "./routes/tournaments.js";
 import { mapRoutes } from "./routes/maps.js";
 import { DEFAULT_ANON_QUOTA, type AnonQuotaConfig } from "./middleware/anon-quota.js";
+import { resolveTrustProxyHops } from "./middleware/proxy-trust.js";
 import type { BotManagerClient } from "./services/bot-manager.js";
 import { E6PipelineBotManager } from "./services/e6-bot-manager.js";
 
@@ -35,11 +36,23 @@ export interface AppConfig {
   botManager?: BotManagerClient;
   /** Cuota de uso anónimo de los endpoints públicos (T7.5). */
   anonQuota?: AnonQuotaConfig;
+  /**
+   * Saltos de proxy de confianza delante de la API (R1.8 · ERR-SEC-05).
+   * Por defecto se resuelve de TRUST_PROXY_HOPS (0 si no está definida: sin
+   * proxy declarado no se cree ninguna X-Forwarded-For — falla cerrado).
+   * Nunca `trust proxy: true` genérico: siempre un número ACOTADO de saltos.
+   */
+  trustProxyHops?: number;
 }
 
 export function createApp(cfg: AppConfig): express.Express {
   const app = express();
   app.disable("x-powered-by");
+  // R1.8 · ERR-SEC-05: confianza de proxy ACOTADA al número de saltos reales
+  // (gateway del stack = 1; VM104 + gateway = 2). Con esto `req.ip` es la IP
+  // real del cliente para la cuota anónima y la clave `${ip}|${email}` del
+  // bloqueo de login, y una X-Forwarded-For inyectada desde fuera se descarta.
+  app.set("trust proxy", cfg.trustProxyHops ?? resolveTrustProxyHops());
   app.use(express.json({ limit: "1mb" }));
   app.use(requestContext);
   app.use(securityHeaders(cfg.corsOrigin ?? process.env.CORS_ORIGIN ?? "http://localhost:5173"));
