@@ -111,6 +111,12 @@ export class Vehicle {
   alive = true;
   respawnAtTick = 0;
   carryingFlag: string | null = null;
+  /**
+   * R3.8 · Marca de Juggernaut/VIP, al estilo carryingFlag: estado por vehículo que
+   * SOLO el modo juggernaut activa. Entra en el hash canónico de estado y en el
+   * snapshot público (battle.ts): es estado de simulación, no decoración.
+   */
+  juggernaut = false;
 
   /** Salud del blindaje por sector, en fracción 0..1. Sin blindaje = sin entrada. */
   armor: Partial<Record<Sector, { hp: number; hpMax: number; reduction: number; slot: string }>> = {};
@@ -302,6 +308,9 @@ export class Vehicle {
     this.hullHp = this.spec.hullHp;
     this.alive = true;
     this.carryingFlag = null;
+    // La marca de juggernaut NO revive con el vehículo: la reasigna el modo al morir
+    // el marcado (onKill). Limpiarla aquí es la red de seguridad que evita dos marcados.
+    this.juggernaut = false;
     this.energyEU = this.energyCapacity();
     for (const m of this.modules.values()) {
       m.hp = m.spec.hp;

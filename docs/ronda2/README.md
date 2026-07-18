@@ -107,6 +107,12 @@ necesita en Docker 29 → los 7 vectores salían `NO PROBADO`), la suite **no ej
 Suite completa tras R6.1: **707 pasan · 0 fallan · 3 skipped** (eran 702/0/3; +5 tests de
 regresión nuevos).
 
+## Banda R-P2 · Mejoras
+
+| Tarea | Descripción | Estado | Issue | Reporte | Commit |
+|---|---|---|---|---|---|
+| R3.8 | Modos baratos: LMS + nivel match (`rng.fork`), Domination, Juggernaut, registro por metadatos (MEJ-modos) | ✅ Hecho y verificado | — | [R3.8-modos-baratos.md](reportes/R3.8-modos-baratos.md) | rama `ronda2/r3.8-modos-baratos` |
+
 ## R1.6 · nota sobre la ejecución viva (2026-07-17, ya superada por R6.1)
 
 El harness y el CI ya no pueden dar verde sin probar, y eso está verificado. Lo que **no** se

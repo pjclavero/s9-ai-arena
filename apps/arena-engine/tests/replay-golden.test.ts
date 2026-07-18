@@ -254,7 +254,7 @@ describe("replays (T2.6)", () => {
     // no puede aparecer son los DATOS de esos sensores. Comprobamos la estructura.
     const PUBLIC_VEHICLE_KEYS = [
       "id", "team", "alive", "position", "heading", "turretHeading",
-      "hullHp", "hullHpMax", "carryingFlag", "modules",
+      "hullHp", "hullHpMax", "carryingFlag", "juggernaut", "modules",
     ];
 
     for (const snap of replay.snapshots) {
