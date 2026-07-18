@@ -42,6 +42,7 @@ import { MAX_PROJECTILE_SPRITES, visibleProjectileCount } from "./render-pools.j
 import { EffectSystem, sampleEffect, type EffectSpec } from "./effects.js";
 import { damageVisualFor } from "./damage-visuals.js";
 import { buildObjectivesLayer, type ObjectivesLayer } from "./objectives-overlay.js";
+import { MinimapController, type MinimapSceneLike, type MinimapCameraLike } from "./minimap.js";
 import {
   S9_ENV,
   resolveTeamColors,
@@ -106,6 +107,12 @@ export class ViewerScene extends Phaser.Scene {
   /** R3.5 · Última posición conocida por vehículo (para eventos sin campo position). */
   private lastVehiclePos = new Map<string, { x: number; y: number }>();
   private debugGfx: Phaser.GameObjects.Graphics | null = null;
+  /** R3.6 · Segunda cámara del minimapa (setViewport + ignore), sin duplicar entidades. */
+  private minimap: MinimapController | null = null;
+  /** R3.6 · Anuncio de FIN DE PARTIDA sobre el canvas (no sólo en el feed HTML). */
+  private matchEndBanner: Phaser.GameObjects.Container | null = null;
+  private matchEndText: Phaser.GameObjects.BitmapText | null = null;
+  private matchEndSub: Phaser.GameObjects.BitmapText | null = null;
   private perf: PerfHandle | null = null;
   /** Cuaderno reutilizado para computeCamera: cero asignaciones por frame (R3.3). */
   private readonly cameraScratch = new CameraSnapshotScratch();
@@ -129,6 +136,8 @@ export class ViewerScene extends Phaser.Scene {
   setWorld(world: ViewerWorld): void {
     this.world = world;
     this.drawStatic();
+    // R3.6 · el minimapa reencuadra al nuevo tamaño de mapa (mismo viewport).
+    this.minimap?.setWorld({ widthM: world.widthM, heightM: world.heightM }, this.scale.width, this.scale.height);
   }
 
   /**
@@ -136,6 +145,11 @@ export class ViewerScene extends Phaser.Scene {
    * adopten sprite por chasis, tinte de equipo y NOMBRE (no el UUID). Idempotente
    * y barato: en directo llega una vez, en el init, antes del primer snapshot.
    */
+  /** R3.6 · Nómina pública en curso (para que el HUD HTML resuelva nombres de bot). */
+  get rosterView(): ViewerRoster {
+    return this.roster;
+  }
+
   setRoster(roster: ViewerRoster): void {
     this.roster = roster ?? new Map();
     this.teamsSignature = ""; // fuerza recálculo de colores con los equipos de la nómina
@@ -204,6 +218,15 @@ export class ViewerScene extends Phaser.Scene {
     this.trackPositions(snapshot);
   }
 
+  /**
+   * R3.6 · Fin de partida (mensaje `result` del canal de espectador o init
+   * `finished`): lo registra el overlay para que el HUD y el rótulo del canvas lo
+   * anuncien. Puramente lectura del resultado público; no toca la simulación.
+   */
+  applyResult(result: any): void {
+    this.overlay.applyResult(result);
+  }
+
   pushEvent(event: any): void {
     this.overlay.applyEvent(event);
     // R3.5 · el mismo evento público genera su efecto (fogonazo/impacto/explosión).
@@ -240,10 +263,44 @@ export class ViewerScene extends Phaser.Scene {
     const parent = (this.game.canvas?.parentElement as HTMLElement | null) ?? undefined;
     this.perf = attachRenderStats(this.game, parent ? { overlayParent: parent } : {});
     (globalThis as Record<string, unknown>).__s9perf = this.perf;
+    // R3.6 · MINIMAPA: una SEGUNDA cámara que reencuadra al mapa entero y muestra
+    // las MISMAS entidades (mapa, vehículos, objetivos) SIN duplicarlas; sólo
+    // ignora las capas de detalle (decals, depuración) que no aportan de lejos.
+    this.setupMinimap();
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.perf?.dispose();
       this.perf = null;
     });
+  }
+
+  /**
+   * R3.6 · Crea la cámara del minimapa (UNA sola cámara adicional). El anuncio de
+   * fin de partida y las capas de detalle se ignoran en ella (chrome / ruido de
+   * vista de pájaro); todo lo demás se comparte con la cámara principal.
+   */
+  private setupMinimap(): void {
+    const adapter: MinimapSceneLike = {
+      cameras: {
+        add: (x, y, w, h, makeMain, name) =>
+          this.cameras.add(x, y, w, h, makeMain, name) as unknown as MinimapCameraLike,
+      },
+    };
+    const ignore: unknown[] = [];
+    if (this.decalLayer) ignore.push(this.decalLayer);
+    if (this.debugGfx) ignore.push(this.debugGfx);
+    this.minimap = new MinimapController(adapter, {
+      world: { widthM: this.world.widthM, heightM: this.world.heightM },
+      pxPerM: this.pxPerM,
+      layout: { corner: "bottom-left" },
+      backgroundColor: S9_ENV.ground,
+      ignore,
+    });
+    this.minimap.layout(this.scale.width, this.scale.height);
+  }
+
+  /** Añade un objeto a la lista de ignorados del minimapa (chrome/detalle). */
+  private ignoreOnMinimap(obj: unknown): void {
+    this.minimap?.camera.ignore(obj);
   }
 
   /** Rueda = zoom al cursor; arrastre = pan; teclas 1–4 = seguir bots; G = global. */
@@ -354,6 +411,41 @@ export class ViewerScene extends Phaser.Scene {
     this.renderObjectives(faded);
     this.applyCamera(faded, delta);
     this.renderDebug();
+    // R3.6 · fin de partida ANUNCIADO sobre el canvas (no sólo en el feed HTML).
+    this.renderMatchEnd();
+  }
+
+  /**
+   * R3.6 · Anuncia el FIN DE PARTIDA sobre el canvas: un rótulo fijo a la cámara
+   * (scrollFactor 0) con el ganador y el marcador final, en cuanto el overlay
+   * registra el resultado. Se mantiene fijado a la cámara principal e IGNORADO por
+   * el minimapa (es chrome, no entidad del mundo). Sin resultado, permanece oculto.
+   */
+  private renderMatchEnd(): void {
+    const result = this.overlay.result;
+    if (!result) {
+      this.matchEndBanner?.setVisible(false);
+      return;
+    }
+    if (!this.matchEndBanner) {
+      const backdrop = this.add.rectangle(0, 0, 360, 96, 0x000000, 0.72).setOrigin(0.5, 0.5);
+      const headline = this.add.bitmapText(0, -14, ATLAS_FONT_KEY, "", 24).setOrigin(0.5, 0.5).setTint(S9_ENV.tracer);
+      const sub = this.add.bitmapText(0, 16, ATLAS_FONT_KEY, "", 12).setOrigin(0.5, 0.5).setTint(S9_ENV.label);
+      const container = this.add.container(0, 0, [backdrop, headline, sub]).setDepth(20).setScrollFactor(0);
+      this.matchEndBanner = container;
+      this.matchEndText = headline;
+      this.matchEndSub = sub;
+      // Chrome: se ve en la cámara principal, jamás en el minimapa.
+      this.ignoreOnMinimap(container);
+    }
+    const headline = result.winner ? `GANA ${result.winner.toUpperCase()}` : "EMPATE";
+    const scoreLine = Object.entries(result.score)
+      .map(([t, n]) => `${t} ${n}`)
+      .join("   ");
+    this.matchEndText?.setText(headline);
+    this.matchEndSub?.setText(scoreLine);
+    const cam = this.cameras.main;
+    this.matchEndBanner.setVisible(true).setPosition(cam.width / 2, cam.height / 2);
   }
 
   /** Humo creciente del casco: nivel derivado del estado PÚBLICO (damage-visuals). */
@@ -387,6 +479,8 @@ export class ViewerScene extends Phaser.Scene {
       const s = this.add.sprite(0, 0, ATLAS_KEY, "spark").setDepth(6);
       s.setVisible(false);
       this.effectPool.push(s);
+      // R3.6 · las partículas son ruido en vista de pájaro: fuera del minimapa.
+      this.ignoreOnMinimap(s);
     }
     for (let i = 0; i < this.effectPool.length; i++) {
       const s = this.effectPool[i];
