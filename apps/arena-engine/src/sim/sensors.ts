@@ -10,10 +10,7 @@
  * necesita meter un dato nuevo en una observación, tiene que pasar por aquí, y el
  * test de fuga (sensors-fog.test.ts) lo va a mirar con lupa.
  */
-import {
-  RADIO_MAX_MESSAGE_BYTES,
-  moduleActs,
-} from "../../../../packages/game-rules/index.js";
+import { RADIO_MAX_MESSAGE_BYTES, moduleActs } from "../../../../packages/game-rules/index.js";
 import type { Rng } from "../rng.js";
 import type { PhysicsWorld, Vec2 } from "./physics.js";
 import type { Vehicle } from "./vehicle.js";
@@ -79,9 +76,7 @@ export function buildObservation(
 
   const armorEntries = Object.entries(v.armor);
   if (armorEntries.length > 0) {
-    self.armor = Object.fromEntries(
-      armorEntries.map(([sec, a]) => [sec, r6(a!.hp / a!.hpMax)]),
-    );
+    self.armor = Object.fromEntries(armorEntries.map(([sec, a]) => [sec, r6(a!.hp / a!.hpMax)]));
   }
   if (!v.alive && v.respawnAtTick > tick) {
     self.respawningInTicks = v.respawnAtTick - tick;

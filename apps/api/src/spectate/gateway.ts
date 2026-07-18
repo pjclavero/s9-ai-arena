@@ -23,9 +23,25 @@
  * la entrega). Los tests lo hacen con batallas reales del motor.
  */
 import { randomUUID } from "node:crypto";
-import jwt from "jsonwebtoken";
+import type { IncomingMessage } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
-import { jwtSecret } from "../auth/tokens.js";
+import { verifySpectateTicket, type VerifiedSpectateTicket } from "../auth/tokens.js";
+
+/**
+ * R2.6 (ERR-SEC-16): el ticket viaja FUERA de la URL, como subprotocolo
+ * WebSocket (`Sec-WebSocket-Protocol: spectate.v1, ticket.<jwt>`): las URLs
+ * acaban en logs de acceso (Nginx/Loki) y el ticket no debe acabar ahí.
+ * El primer subprotocolo ofrecido es el de la aplicación (el servidor lo
+ * ecoa, requisito del handshake en navegador); el segundo transporta el
+ * ticket (base64url + puntos: caracteres de token válidos en la cabecera).
+ */
+export const SPECTATE_SUBPROTOCOL = "spectate.v1";
+export const TICKET_SUBPROTOCOL_PREFIX = "ticket.";
+
+/** Subprotocolos que debe ofrecer un cliente de espectador. */
+export function spectateProtocols(ticket: string): string[] {
+  return [SPECTATE_SUBPROTOCOL, TICKET_SUBPROTOCOL_PREFIX + ticket];
+}
 
 /** Lo que el gateway necesita de una batalla de E2. Estructural: no importa la clase. */
 export interface SpectatableBattle {
@@ -69,14 +85,6 @@ interface SpectatorConnection {
   timers: Set<ReturnType<typeof setTimeout>>;
 }
 
-interface TicketClaims {
-  kind: string;
-  battleId: string;
-  jti?: string;
-  debug?: boolean;
-  exp: number;
-}
-
 export interface SpectateGatewayOptions {
   wss?: WebSocketServer;
   port?: number;
@@ -97,7 +105,7 @@ export class SpectateGateway {
       this.wss = new WebSocketServer({ port: opts.port ?? 0 });
       this.ownsWss = true;
     }
-    this.wss.on("connection", (ws, req) => this.handleConnection(ws, req?.url ?? ""));
+    this.wss.on("connection", (ws, req) => this.handleConnection(ws, req));
   }
 
   get port(): number {
@@ -135,25 +143,43 @@ export class SpectateGateway {
   }
 
   // ------------------------------------------------------------- conexión
-  private handleConnection(ws: WebSocket, url: string): void {
-    // URL esperada: /spectate/<battleId>?ticket=<jwt>
-    const parsed = new URL(url, "http://gateway.local");
+  private handleConnection(ws: WebSocket, req: IncomingMessage | undefined): void {
+    // URL esperada: /spectate/<battleId> — SIN ticket. El ticket llega como
+    // subprotocolo (`Sec-WebSocket-Protocol: spectate.v1, ticket.<jwt>`),
+    // nunca en la query: las URLs acaban en logs de acceso (R2.6 · ERR-SEC-16).
+    const parsed = new URL(req?.url ?? "", "http://gateway.local");
     const m = /^\/spectate\/([^/]+)$/.exec(parsed.pathname);
-    const ticket = parsed.searchParams.get("ticket");
-    if (!m || !ticket) {
+    if (!m) {
+      ws.close(4400, "bad_request");
+      return;
+    }
+    // Falla cerrado: un ticket en la URL ya se ha filtrado a los logs — se
+    // rechaza aunque fuera válido, para que ningún cliente siga usándola.
+    if (parsed.searchParams.has("ticket")) {
+      ws.close(4400, "ticket_in_url");
+      return;
+    }
+    const rawHeader = req?.headers["sec-websocket-protocol"];
+    const offered = (Array.isArray(rawHeader) ? rawHeader.join(",") : (rawHeader ?? ""))
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean);
+    const ticketProto = offered.find((p) => p.startsWith(TICKET_SUBPROTOCOL_PREFIX));
+    const ticket = ticketProto?.slice(TICKET_SUBPROTOCOL_PREFIX.length);
+    if (!ticket) {
       ws.close(4400, "bad_request");
       return;
     }
     const battleId = decodeURIComponent(m[1]);
 
-    let claims: TicketClaims;
-    try {
-      claims = jwt.verify(ticket, jwtSecret()) as TicketClaims;
-    } catch {
+    // Verificación completa (secreto de espectador propio, algoritmo fijo,
+    // issuer/audience): un ticket firmado con el secreto de SESIÓN no valida aquí.
+    const claims: VerifiedSpectateTicket | null = verifySpectateTicket(ticket);
+    if (!claims) {
       ws.close(4401, "invalid_ticket");
       return;
     }
-    if (claims.kind !== "spectate" || claims.battleId !== battleId) {
+    if (claims.battleId !== battleId) {
       ws.close(4403, "ticket_battle_mismatch");
       return;
     }
@@ -185,19 +211,27 @@ export class SpectateGateway {
 
     // Recuperación de estado por snapshot COMPLETO (DoD de reconexión): los
     // snapshots de E2 son estado íntegro, así que el último basta para pintar.
-    this.sendTo(conn, {
-      type: "init",
-      battleId,
-      spectator: {
-        allowFogView: feed.opts.spectator?.allowFogView === true,
-        delaySeconds: feed.opts.spectator?.delaySeconds ?? 0,
-        debug: conn.debug,
+    this.sendTo(
+      conn,
+      {
+        type: "init",
+        battleId,
+        // R3.2: reloj del servidor (opcional, compatible hacia atrás). Va a nivel
+        // de MENSAJE, no dentro del snapshot: el snapshot público (D8) conserva su
+        // whitelist estructural exacta (test de fugas) y los replays no cambian.
+        serverTimeMs: Date.now(),
+        spectator: {
+          allowFogView: feed.opts.spectator?.allowFogView === true,
+          delaySeconds: feed.opts.spectator?.delaySeconds ?? 0,
+          debug: conn.debug,
+        },
+        meta: feed.opts.meta ?? {},
+        snapshot: feed.battle.snapshots.at(-1) ?? null,
+        finished: feed.battle.isFinished(),
+        result: feed.battle.isFinished() ? feed.battle.getResult() : undefined,
       },
-      meta: feed.opts.meta ?? {},
-      snapshot: feed.battle.snapshots.at(-1) ?? null,
-      finished: feed.battle.isFinished(),
-      result: feed.battle.isFinished() ? feed.battle.getResult() : undefined,
-    }, /*immediate*/ true);
+      /*immediate*/ true,
+    );
   }
 
   private dropClient(feed: Feed, conn: SpectatorConnection, code?: number, reason?: string): void {
@@ -219,7 +253,8 @@ export class SpectateGateway {
     const { battle } = feed;
     while (feed.sentSnapshots < battle.snapshots.length) {
       const snapshot = battle.snapshots[feed.sentSnapshots++];
-      this.broadcast(feed, { type: "snapshot", snapshot });
+      // serverTimeMs a nivel de mensaje (R3.2): campo opcional, ver init.
+      this.broadcast(feed, { type: "snapshot", snapshot, serverTimeMs: Date.now() });
       if (feed.opts.debugLayers) {
         // Solo la reciben los tickets con debug firmado; ver sendTo().
         this.broadcast(feed, { type: "debug", tick: snapshot.tick, layers: feed.opts.debugLayers() }, true);

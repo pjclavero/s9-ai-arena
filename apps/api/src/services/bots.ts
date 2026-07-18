@@ -38,7 +38,10 @@ export async function canSeeBot(db: Db, auth: Auth, bot: Record<string, unknown>
 
 /** 404 si no existe O no es visible (no revelar existencia de bots privados). */
 export async function getVisibleBot(db: Db, auth: Auth, botId: string): Promise<Record<string, unknown>> {
-  const bot = await db("bots").where({ id: botId }).first().catch(() => null);
+  const bot = await db("bots")
+    .where({ id: botId })
+    .first()
+    .catch(() => null);
   if (!bot || !(await canSeeBot(db, auth, bot))) throw notFound();
   return bot;
 }
@@ -53,8 +56,7 @@ export function assertOwner(auth: Auth, bot: Record<string, unknown>, allowStaff
 // -------------------------------------------------------- máquina de estados
 
 export type BotState =
-  | "draft" | "validating" | "rejected" | "validated"
-  | "published" | "frozen" | "suspended" | "retired";
+  "draft" | "validating" | "rejected" | "validated" | "published" | "frozen" | "suspended" | "retired";
 
 /** Transiciones legales del capítulo 17.1. La acción es la clave de la API. */
 export const TRANSITIONS: Record<string, { from: BotState[]; to: BotState }> = {
@@ -147,7 +149,9 @@ export async function validateLoadoutServerSide(
     e3Input,
     catalog,
     ruleset.budget_credits,
-    Array.isArray(ruleset.forbidden_categories) ? ruleset.forbidden_categories : JSON.parse(ruleset.forbidden_categories ?? "[]"),
+    Array.isArray(ruleset.forbidden_categories)
+      ? ruleset.forbidden_categories
+      : JSON.parse(ruleset.forbidden_categories ?? "[]"),
   );
   if (violations.length > 0) return { violations, catalog };
 
@@ -167,7 +171,12 @@ export async function validateLoadoutServerSide(
 export async function createLoadoutRevision(
   db: Db,
   botId: string,
-  input: { name?: string; catalogVersion?: string; chassis: string; modules: { slot: string; moduleId: string; ammo?: string }[] },
+  input: {
+    name?: string;
+    catalogVersion?: string;
+    chassis: string;
+    modules: { slot: string; moduleId: string; ammo?: string }[];
+  },
   summary: { massKg: number; costCredits: number; energyBalanceEUs: number },
 ): Promise<Record<string, unknown>> {
   const catalogVersion = input.catalogVersion ?? CATALOG_VERSION;

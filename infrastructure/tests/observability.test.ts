@@ -28,7 +28,17 @@ describe("prometheus", () => {
 
   it("scrapea todos los servicios instrumentables + cadvisor/node/postgres-exporter", () => {
     const jobs = prometheus.scrape_configs.map((j: any) => j.job_name);
-    for (const j of ["arena-engine", "api", "web", "map-service", "replay-service", "bot-manager", "postgres", "cadvisor", "node"]) {
+    for (const j of [
+      "arena-engine",
+      "api",
+      "web",
+      "map-service",
+      "replay-service",
+      "bot-manager",
+      "postgres",
+      "cadvisor",
+      "node",
+    ]) {
       expect(jobs, `job ${j}`).toContain(j);
     }
   });
@@ -43,24 +53,25 @@ describe("alertas del cap. 24 (motor bloqueado, cola, disco, BD, stream) + backu
   const names = alerts.groups.flatMap((g: any) => g.rules.map((r: any) => r.alert));
 
   it.each([
-    "EngineTickStalled", "QueueBacklog", "DiskAlmostFull",
-    "PostgresDown", "StreamDown", "BackupFailed", "BackupTooOld",
+    "EngineTickStalled",
+    "QueueBacklog",
+    "DiskAlmostFull",
+    "PostgresDown",
+    "StreamDown",
+    "BackupFailed",
+    "BackupTooOld",
   ])("existe la alerta %s", (name) => {
     expect(names).toContain(name);
   });
 
   it("EngineTickStalled dispara en < 30 s: umbral 10 s + for 10 s + scrape 5 s", () => {
-    const rule = alerts.groups
-      .flatMap((g: any) => g.rules)
-      .find((r: any) => r.alert === "EngineTickStalled");
+    const rule = alerts.groups.flatMap((g: any) => g.rules).find((r: any) => r.alert === "EngineTickStalled");
     expect(rule.expr).toContain("arena_engine_last_tick_timestamp_seconds > 10");
     expect(rule.for).toBe("10s");
   });
 
   it("BackupTooOld usa el umbral de 26 h de la DoD de T10.4", () => {
-    const rule = alerts.groups
-      .flatMap((g: any) => g.rules)
-      .find((r: any) => r.alert === "BackupTooOld");
+    const rule = alerts.groups.flatMap((g: any) => g.rules).find((r: any) => r.alert === "BackupTooOld");
     expect(rule.expr).toContain("26 * 3600");
   });
 });
@@ -114,9 +125,12 @@ describe("grafana aprovisionado desde el repo (sin clicks manuales)", () => {
     const plataforma = JSON.parse(readFileSync(obs("grafana", "dashboards", "plataforma.json"), "utf8"));
     const exprs = JSON.stringify(plataforma.panels);
     for (const m of [
-      "arena_engine_ticks_per_second", "arena_engine_tick_delay_seconds",
-      "arena_queue_depth", "s9_build_duration_seconds",
-      "container_cpu_usage_seconds_total", "container_memory_working_set_bytes",
+      "arena_engine_ticks_per_second",
+      "arena_engine_tick_delay_seconds",
+      "arena_queue_depth",
+      "s9_build_duration_seconds",
+      "container_cpu_usage_seconds_total",
+      "container_memory_working_set_bytes",
       "http_requests_total",
     ]) {
       expect(exprs).toContain(m);

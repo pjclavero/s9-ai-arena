@@ -25,6 +25,7 @@ import { ingestReplay } from "../../replay-service/src/store.js";
 import { runStatsJob } from "../../replay-service/src/stats.js";
 import { administrativeDisqualifications } from "../../bot-manager/src/suspension.js";
 import type { SuspensionCheck } from "../../bot-manager/src/launch-guard.js";
+import type { ArtifactLaunchCheck } from "../../bot-manager/src/launch-verify.js";
 import { InfrastructureFailure, SportingFailure } from "./errors.js";
 import { enqueueJob, type JobRow } from "./queue.js";
 import type { HandlerContext, JobHandler } from "./worker.js";
@@ -82,6 +83,12 @@ export interface BattleRunnerDeps {
   executor: BattleExecutor;
   /** Registro de suspensiones REAL de E6; opcional en tests de cola pura. */
   suspensions?: SuspensionCheck;
+  /**
+   * R2.5 (ERR-SEC-15): verificación de firma del artefacto ANTES de lanzar.
+   * Un artefacto ausente, sin firma o manipulado descalifica al bot: se
+   * RECHAZA su lanzamiento (fail closed), la batalla no lo ejecuta.
+   */
+  artifactGuard?: ArtifactLaunchCheck;
   /** Directorio de replays (política 23.1: archivos, no BD). */
   replaysDir?: string;
 }
@@ -119,6 +126,17 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
           deps.suspensions,
         ).map((d) => d.botId)
       : [];
+
+    // R2.5 (ERR-SEC-15) · verificación de firma ANTES de cada lanzamiento: un
+    // artefacto manipulado (o sin firma verificable) NO se lanza — el bot queda
+    // descalificado administrativamente, igual que un suspendido.
+    if (deps.artifactGuard) {
+      for (const p of participants) {
+        if (adminDq.includes(p.bot_id)) continue;
+        const check = await deps.artifactGuard.check(p.bot_id, p.version);
+        if (!check.ok) adminDq.push(p.bot_id);
+      }
+    }
     const activeTeams = new Set(participants.filter((p) => !adminDq.includes(p.bot_id)).map((p) => p.team));
 
     await db("battles").where({ id: battleId }).update({ status: "running", started_at: db.fn.now() });
@@ -126,14 +144,21 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
     // Walkover: si tras las DQ administrativas queda un solo bando, no hay batalla que lanzar.
     if (activeTeams.size < 2) {
       const winner = activeTeams.size === 1 ? [...activeTeams][0] : "draw";
-      await finishBattle(db, battle, participants, {
-        winner,
-        ticks: 0,
-        score: {},
-        finalStateHash: "walkover",
-        disqualified: adminDq,
-        versions: {},
-      }, adminDq, "none");
+      await finishBattle(
+        db,
+        battle,
+        participants,
+        {
+          winner,
+          ticks: 0,
+          score: {},
+          finalStateHash: "walkover",
+          disqualified: adminDq,
+          versions: {},
+        },
+        adminDq,
+        "none",
+      );
       return;
     }
 
@@ -145,14 +170,21 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
         // Derrota deportiva (19.2): el bot culpable pierde; la batalla TERMINA.
         const culpritTeam = participants.find((p) => p.bot_id === err.botId)?.team;
         const rivals = [...new Set(participants.filter((p) => p.team !== culpritTeam).map((p) => p.team))];
-        await finishBattle(db, battle, participants, {
-          winner: rivals.length === 1 ? rivals[0] : "draw",
-          ticks: 0,
-          score: {},
-          finalStateHash: "sporting_failure",
-          disqualified: [...adminDq, err.botId],
-          versions: {},
-        }, adminDq, err.code);
+        await finishBattle(
+          db,
+          battle,
+          participants,
+          {
+            winner: rivals.length === 1 ? rivals[0] : "draw",
+            ticks: 0,
+            score: {},
+            finalStateHash: "sporting_failure",
+            disqualified: [...adminDq, err.botId],
+            versions: {},
+          },
+          adminDq,
+          err.code,
+        );
         throw err; // el worker lo convierte en done + error_class 'sporting'
       }
       // Fallo técnico: la batalla vuelve a scheduled y la cola decide el reintento.
@@ -187,7 +219,10 @@ async function ensureRichStats(db: Knex, battleId: string, deps: BattleRunnerDep
     await runStatsJob(db, deps.replaysDir, battleId);
   } catch (err) {
     // El resultado ya es firme; las stats se reintentan como infraestructura.
-    throw new InfrastructureFailure("storage_unavailable", `stats de ${battleId}: ${err instanceof Error ? err.message : String(err)}`);
+    throw new InfrastructureFailure(
+      "storage_unavailable",
+      `stats de ${battleId}: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 

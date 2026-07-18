@@ -1,7 +1,15 @@
-# E6 · T6.3 — Lockfile de la allowlist Python (con hashes). Fijado en el repo.
-# Los hashes se rellenan al generar la imagen; aquí quedan los placeholders del MVP.
-# Mantener SINCRONIZADO con runtimes/python/ALLOWED-PACKAGES.md y con
-# apps/bot-manager/src/config.ts (DEFAULT_PYTHON_ALLOWLIST).
-arena-sdk==1.0.0 --hash=sha256:0000000000000000000000000000000000000000000000000000000000000000
-numpy==1.26.4 --hash=sha256:0000000000000000000000000000000000000000000000000000000000000000
-websockets==12.0 --hash=sha256:0000000000000000000000000000000000000000000000000000000000000000
+# E6 · T6.3 / R6.1 — Lock de la allowlist Python del runtime de bots.
+#
+# HASHES REALES (R6.1). Se instalan con `pip install --require-hashes --no-deps`.
+#
+# arena-sdk NO aparece aquí a proposito: es el SDK PROPIO del repo (sdks/python), no un
+# paquete de PyPI. Resolverlo por nombre desde PyPI seria DEPENDENCY CONFUSION (un tercero
+# podria publicar "arena-sdk" y entrar en el runtime). Se construye en la etapa `sdk-builder`
+# del Dockerfile y se instala desde el wheel local, con su hash fijado y verificado:
+# ver runtimes/python/sdk-wheel.lock.
+#
+# Estos son los unicos paquetes de TERCEROS del runtime. Actualizar exige: esta tabla,
+# ALLOWED-PACKAGES.md, DEFAULT_PYTHON_ALLOWLIST (config.ts) y reconstruir la imagen.
+
+numpy==1.26.4 --hash=sha256:666dbfb6ec68962c033a450943ded891bed2d54e6755e35e5835d63f4f6931d5
+websocket-client==1.8.0 --hash=sha256:17b44cc997f5c498e809b22cdf2d9c7a9e71c02c8cc2b6c56e7c2d1239bfa526

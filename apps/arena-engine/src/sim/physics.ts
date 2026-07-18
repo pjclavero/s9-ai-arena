@@ -53,13 +53,7 @@ export interface BodyHandle {
   readonly collider: RAPIER.Collider;
 }
 
-export type HitKind =
-  | "vehicle"
-  | "wall"
-  | "destructible"
-  | "projectile"
-  | "mine"
-  | "unknown";
+export type HitKind = "vehicle" | "wall" | "destructible" | "projectile" | "mine" | "unknown";
 
 export interface RayHit {
   distanceM: number;
@@ -115,10 +109,7 @@ export class PhysicsWorld {
     const rb = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.fixed().setTranslation(position.x, position.y).setRotation(rotation),
     );
-    const collider = this.world.createCollider(
-      RAPIER.ColliderDesc.cuboid(halfWidth, halfHeight),
-      rb,
-    );
+    const collider = this.world.createCollider(RAPIER.ColliderDesc.cuboid(halfWidth, halfHeight), rb);
     const handle: BodyHandle = { id, rb, collider };
     this.bodies.set(id, handle);
     this.colliderToId.set(collider.handle, id);
@@ -210,14 +201,7 @@ export class PhysicsWorld {
     const ray = new RAPIER.Ray(origin, dir);
     const ignoreHandle = ignoreId ? this.bodies.get(ignoreId)?.collider : undefined;
 
-    const hit = this.world.castRay(
-      ray,
-      maxDistance,
-      true,
-      undefined,
-      undefined,
-      ignoreHandle,
-    );
+    const hit = this.world.castRay(ray, maxDistance, true, undefined, undefined, ignoreHandle);
     if (!hit) return null;
 
     const id = this.colliderToId.get(hit.collider.handle) ?? null;
@@ -286,6 +270,30 @@ export class PhysicsWorld {
   step(): void {
     this.world.step();
     this.dirty = false;
+  }
+
+  /**
+   * Huella del SOLVER para el hash de estado (ERR-ENG-04).
+   *
+   * Las poses cuantizadas no bastan: dos simulaciones pueden divergir dentro del solver
+   * (un cuerpo dormido en una y despierto en la otra, un par de contacto de más) con
+   * posiciones aún idénticas a 1e-5, y esa divergencia sigue viva y explota más tarde.
+   * Contar cuerpos despiertos y pares de contacto la hace visible YA, a coste casi nulo.
+   *
+   * Determinista: los cuerpos se recorren en el orden estable del mapa (orden de alta,
+   * idéntico en toda re-simulación) y solo se cuentan agregados, no se serializan handles.
+   */
+  solverFingerprint(): { awakeBodies: number; contactPairs: number } {
+    let awakeBodies = 0;
+    let contactPairs = 0;
+    for (const h of this.bodies.values()) {
+      if (h.rb.isDynamic() && !h.rb.isSleeping()) awakeBodies++;
+      this.world.contactPairsWith(h.collider, (other) => {
+        // Cada par aparece dos veces (una por cada collider); se cuenta una sola.
+        if (other.handle > h.collider.handle) contactPairs++;
+      });
+    }
+    return { awakeBodies, contactPairs };
   }
 
   free(): void {

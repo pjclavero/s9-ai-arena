@@ -39,7 +39,12 @@ export function digestViolations(root = runtimesDir): string[] {
     if (!DIGEST_RE.test(d.base)) violations.push(`${d.runtime}: base no fijada por digest: ${d.base}`);
     if (!DIGEST_RE.test(d.image)) violations.push(`${d.runtime}: imagen no fijada por digest: ${d.image}`);
   }
-  // Dockerfiles: FROM debe usar @sha256
+  // Dockerfiles: FROM debe usar @sha256 Y ser la MISMA base que declara DIGESTS.lock.
+  // R6.1: comprobar solo "el FROM lleva un @sha256" dejaba pasar que el lock declarase una
+  // base y el Dockerfile construyera sobre otra. El lock es la fuente de verdad y hasta
+  // ahora nadie ataba las dos cosas: se podia subir la base y olvidar el lock (o al reves)
+  // sin que nada protestase, y el lock estaria describiendo una imagen que no existe.
+  const baseDelLock = new Map(digests.map((d) => [d.runtime, d.base]));
   for (const sub of readdirSync(root, { withFileTypes: true })) {
     if (!sub.isDirectory()) continue;
     const dockerfile = join(root, sub.name, "Dockerfile");
@@ -49,10 +54,17 @@ export function digestViolations(root = runtimesDir): string[] {
     } catch {
       continue;
     }
+    const esperada = baseDelLock.get(sub.name);
     for (const line of content.split(/\r?\n/)) {
       const m = /^FROM\s+(\S+)/i.exec(line.trim());
-      if (m && !/@sha256:[0-9a-f]{64}/.test(m[1])) {
+      if (!m) continue;
+      if (!/@sha256:[0-9a-f]{64}/.test(m[1])) {
         violations.push(`${sub.name}/Dockerfile: FROM sin digest: ${m[1]}`);
+        continue;
+      }
+      // Las etapas intermedias (AS sdk-builder) tambien construyen sobre la base fijada.
+      if (esperada && m[1] !== esperada) {
+        violations.push(`${sub.name}/Dockerfile: FROM ${m[1]} no coincide con la base de DIGESTS.lock (${esperada})`);
       }
     }
   }

@@ -78,6 +78,47 @@ describe("la observación valida contra el contrato de E1", () => {
     expect(ok, JSON.stringify(validateObservation.errors?.slice(0, 3))).toBe(true);
     b.free();
   });
+
+  it("una observación de zone_control con objetivos (id + posición) valida contra el esquema", () => {
+    // Regresión de ERR-ENG-03: objectives() de zone_control lleva `id` y `position` de cada
+    // zona (públicos por definición del modo). El esquema de E1 declara `id` como opcional.
+    // Antes solo se validaba una observación de team_deathmatch, con objectives VACÍO, así que
+    // una fuga de contrato en objectives pasaba desapercibida. Este test cierra ese hueco.
+    const map = emptyArena();
+    map.zones = [
+      { id: "alpha", position: { x: 40, y: 40 }, radiusM: 8, kind: "capture" },
+      { id: "bravo", position: { x: 80, y: 25 }, radiusM: 8, kind: "capture" },
+    ];
+    const b = new Battle({
+      battleId: "zc_schema",
+      seed: "zc-schema",
+      ruleset: loadRuleset("zc_mvp@1"),
+      map,
+      participants: [
+        { id: "veh_1", botId: "b1", team: "red", spec: scoutLoadout() },
+        { id: "veh_2", botId: "b2", team: "blue", spec: gunnerLoadout() },
+      ],
+    });
+    b.attachBot("veh_1", new IdleBot("b1"));
+    b.attachBot("veh_2", new IdleBot("b2"));
+    for (let i = 0; i < 5; i++) b.step();
+
+    const obs = b.observationFor("veh_1");
+
+    // La observación LLEVA objetivos de zona con id y posición distinguibles.
+    expect(Array.isArray(obs.objectives)).toBe(true);
+    const zone = obs.objectives.find((o: any) => o.kind === "zone" && o.id === "alpha");
+    expect(zone).toBeDefined();
+    expect(zone.id).toBe("alpha");
+    expect(zone.position).toEqual({ x: 40, y: 40 });
+    expect(obs.objectives.some((o: any) => o.id === "bravo")).toBe(true);
+
+    // Y valida contra el contrato de E1 (que ahora admite `id` opcional en objectives).
+    const ok = validateObservation(obs);
+    if (!ok) console.error(validateObservation.errors);
+    expect(ok, JSON.stringify(validateObservation.errors?.slice(0, 3))).toBe(true);
+    b.free();
+  });
 });
 
 describe("FUGA DE NIEBLA DE GUERRA (D8)", () => {
@@ -196,7 +237,7 @@ describe("FUGA DE NIEBLA DE GUERRA (D8)", () => {
     phys.get("veh_2")!.rb.setTranslation({ x: 66, y: 62 }, true); // justo a la derecha
     b.step();
 
-    const contactsBlocked = (b.observationFor("veh_1").sensors?.radar?.[0]?.contacts ?? []);
+    const contactsBlocked = b.observationFor("veh_1").sensors?.radar?.[0]?.contacts ?? [];
     expect(contactsBlocked).toHaveLength(0); // el muro tapa: no hay contacto
 
     // Ahora los ponemos en línea de visión limpia, a la misma distancia.
@@ -204,7 +245,7 @@ describe("FUGA DE NIEBLA DE GUERRA (D8)", () => {
     phys.get("veh_2")!.rb.setTranslation({ x: 66, y: 40 }, true);
     b.step();
 
-    const contactsClear = (b.observationFor("veh_1").sensors?.radar?.[0]?.contacts ?? []);
+    const contactsClear = b.observationFor("veh_1").sensors?.radar?.[0]?.contacts ?? [];
     expect(contactsClear.length).toBeGreaterThan(0); // ahora sí
     b.free();
   });
@@ -230,21 +271,57 @@ describe("FUGA DE NIEBLA DE GUERRA (D8)", () => {
     b.free();
   });
 
-  it("el sensor acústico da DIRECCIÓN, nunca posición (cap. 11)", () => {
-    const spec = scoutLoadout();
-    spec.modules = [...spec.modules, { ...MODULES.acoustic }];
+  it("el sensor acústico PERCIBE un disparo cercano y da DIRECCIÓN, nunca posición (cap. 11)", () => {
+    // ERR-ENG-01. El sensor acústico debe OÍR de verdad. Comprobamos la ruta que de
+    // verdad importa: la observación que RECIBE el bot en su decisión (la que el doble
+    // borrado dejaba muda), no solo lo que devuelve observationFor().
+    const listener = scoutLoadout();
+    listener.modules = [...listener.modules, { ...MODULES.acoustic }]; // alcance 60 m
 
-    const b = battleWith({ veh_1: spec, veh_2: gunnerLoadout() }, emptyArena());
-    for (let i = 0; i < 12; i++) b.step();
+    const b = battleWith({ veh_1: listener, veh_2: gunnerLoadout() }, emptyArena());
+    const phys = b.getPhysics();
+    b.step();
+    phys.get("veh_1")!.rb.setTranslation({ x: 60, y: 40 }, true); // oyente
+    phys.get("veh_2")!.rb.setTranslation({ x: 45, y: 40 }, true); // tirador, 15 m al oeste
 
-    const acoustic = b.observationFor("veh_1").sensors?.acoustic?.[0];
-    if (acoustic && acoustic.sources.length > 0) {
-      for (const s of acoustic.sources) {
-        expect(s).toHaveProperty("bearing");
-        expect(s).not.toHaveProperty("position"); // jamás
-        expect(s).not.toHaveProperty("distanceM");
-        expect(s).not.toHaveProperty("entityId");
-      }
+    // Todo lo que el bot OYENTE recibe en cada decisión: aquí es donde se cazaba el bug.
+    const heard: any[] = [];
+    b.attachBot("veh_1", {
+      botId: "bot_veh_1",
+      decide: (obs: any) => {
+        for (const s of obs.sensors?.acoustic?.[0]?.sources ?? []) heard.push(s);
+        return { forTick: obs.tick, move: { throttle: 0, steer: 0 } };
+      },
+    });
+    // El artillero dispara hacia el oeste, LEJOS del oyente: solo el fogonazo (a 15 m)
+    // entra en alcance; el proyectil se aleja y no hiere a nadie.
+    b.attachBot("veh_2", {
+      botId: "bot_veh_2",
+      decide: (obs: any) => ({
+        forTick: obs.tick,
+        move: { throttle: 0, steer: 0 },
+        turret: { targetPoint: { x: 0, y: 40 } },
+        fire: ["turret_main"],
+      }),
+    });
+
+    for (let i = 0; i < 30; i++) {
+      b.step();
+      phys.get("veh_1")!.rb.setTranslation({ x: 60, y: 40 }, true);
+      phys.get("veh_2")!.rb.setTranslation({ x: 45, y: 40 }, true);
+    }
+
+    // EXIGENCIA: el acústico tiene que haber percibido al menos un disparo. (Antes esto
+    // estaba tras `if (sources.length > 0)` y pasaba EN VACÍO: el sensor estaba muerto.)
+    const shots = heard.filter((s) => s.kind === "gunshot");
+    expect(shots.length, "el sensor acústico nunca percibió el disparo (ERR-ENG-01)").toBeGreaterThan(0);
+    for (const s of shots) {
+      expect(s).toHaveProperty("bearing");
+      expect(s).not.toHaveProperty("position"); // jamás
+      expect(s).not.toHaveProperty("distanceM");
+      expect(s).not.toHaveProperty("entityId");
+      // Dirección aproximada: el disparo viene del oeste (bearing ≈ ±π), nunca posición.
+      expect(Math.abs(Math.abs(s.bearing) - Math.PI)).toBeLessThan(0.5);
     }
     b.free();
   });

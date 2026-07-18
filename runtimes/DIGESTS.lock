@@ -1,13 +1,43 @@
-# E6 · T6.3 — Digests FIJADOS de las imágenes de runtime (cap. 18.3).
+# E6 · T6.3 / R6.1 — Digests FIJADOS de las imágenes de runtime (cap. 18.3).
 #
-# Las imágenes se referencian por DIGEST inmutable, nunca por tag. Estos digests se
-# fijan en el repo y se verifican en CI (scripts/verify-runtime-digests.ts). Un bot solo
-# puede construirse sobre el runtime declarado en su manifiesto, resuelto a estos digests.
+# Las imágenes se referencian por DIGEST inmutable, nunca por tag. Estos digests se fijan
+# en el repo y se verifican en CI (scripts/verify-runtime-digests.ts). Un bot solo puede
+# construirse sobre el runtime declarado en su manifiesto, resuelto a estos digests.
 #
 # Formato: <runtime> <base-image-por-digest> <runtime-image-por-digest>
-# Los sha256 de la BASE (python/node oficiales) se obtienen con `docker buildx imagetools
-# inspect`; los de la IMAGEN de runtime, tras `docker build` reproducible. Placeholders
-# del MVP hasta construir en un entorno con Docker.
+#
+# De dónde sale cada uno:
+#   - La BASE (python/node oficiales de Docker Hub): `docker buildx imagetools inspect`.
+#   - La IMAGEN de runtime: la publica el workflow .github/workflows/runtimes-publish.yml
+#     en GHCR. Un `docker build` local NO produce digest: el @sha256 de una imagen es el
+#     digest de su manifiesto EN UN REGISTRY, así que hay que publicarla para poder
+#     fijarla. GHCR se elige porque el CI lo reproduce y VM108 puede descargar de forma
+#     anónima (el repo es público): ninguna credencial de registro toca el servidor.
+#
+# Cómo se actualiza un runtime:
+#   1. cambiar runtimes/<lang>/ (o el SDK en sdks/<lang>);
+#   2. el workflow runtimes-publish.yml publica y muestra el digest nuevo en su resumen;
+#   3. fijar ese digest aquí. El resto del CI DESCARGA por digest: se prueba exactamente
+#      esta imagen, no una recién construida.
+#
+# NOTA sobre reproducibilidad (MEDIDA en R6.1, no supuesta):
+#   - El CONTENIDO propio sí es reproducible: el wheel del SDK sale con el mismo sha256 en
+#     builds repetidos (por eso su hash se puede fijar en python/sdk-wheel.lock).
+#   - El digest de la IMAGEN NO lo es. No ya entre máquinas distintas: el MISMO commit,
+#     publicado dos veces por el MISMO workflow en el mismo tipo de runner, dio
+#     bot-runtime-python@sha256:4795fa54... y luego @sha256:2ffb8119... Las capas llevan
+#     mtimes y metadatos del momento del build.
+#
+# Consecuencia práctica, y es la razón de todo el diseño de arriba: RECONSTRUIR UNA IMAGEN
+# NO SIRVE PARA VERIFICAR NADA. Un digest distinto no prueba que el runtime haya cambiado,
+# ni uno igual que no. Por eso el digest se fija desde el registry UNA sola vez y se
+# verifica DESCARGÁNDOLO, y por eso runtimes-publish.yml se lanza a mano en vez de en cada
+# push (publicar en cada push dejaría este fichero obsoleto al instante).
+#
+# Limitación conocida que esto deja abierta: nada ata criptográficamente el fuente de
+# runtimes/ a la imagen fijada aquí. Si cambias un runtime y NO republicas, el CI seguirá
+# probando la imagen anterior sin avisar. Hacer reproducible el build (SOURCE_DATE_EPOCH +
+# rewrite-timestamp de buildkit) cerraría el hueco, y es trabajo aparte de R6.1.
 
-python  python@sha256:0000000000000000000000000000000000000000000000000000000000000000  arena/bot-runtime-python@sha256:1111111111111111111111111111111111111111111111111111111111111111
-node    node@sha256:0000000000000000000000000000000000000000000000000000000000000000    arena/bot-runtime-node@sha256:2222222222222222222222222222222222222222222222222222222222222222
+python  python@sha256:b18992999dbe963a45a8a4da40ac2b1975be1a776d939d098c647482bcad5cba  ghcr.io/pjclavero/s9-ai-arena/bot-runtime-python@sha256:a337716702a710a5d3497c81e422ab08e07ddfab5186eb824efce9940306e6aa
+node    node@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0    ghcr.io/pjclavero/s9-ai-arena/bot-runtime-node@sha256:b5f0be3b155e8a3f9e63b5684a3ec006ef9392afbd8176307487ddc3c9553a1f

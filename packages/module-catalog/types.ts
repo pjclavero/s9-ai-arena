@@ -7,8 +7,7 @@
  */
 
 export type ModuleCategory =
-  | "chassis" | "movement" | "power" | "sensor" | "weapon"
-  | "ammo" | "mine" | "armor" | "radio" | "utility";
+  "chassis" | "movement" | "power" | "sensor" | "weapon" | "ammo" | "mine" | "armor" | "radio" | "utility";
 
 export type Sector = "front" | "left" | "right" | "rear";
 export type Size = "S" | "M" | "L" | "XL";

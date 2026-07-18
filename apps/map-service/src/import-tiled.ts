@@ -117,14 +117,7 @@ const BASE_MATERIALS: readonly Material[] = [
 ] as const;
 
 // Nombres de object group de Tiled que sabemos mapear a capas del formato interno.
-const KNOWN_OBJECT_GROUPS = new Set([
-  "walls",
-  "destructibles",
-  "zones",
-  "spawns",
-  "bases",
-  "flags",
-]);
+const KNOWN_OBJECT_GROUPS = new Set(["walls", "destructibles", "zones", "spawns", "bases", "flags"]);
 
 // ---------------------------------------------------------------- Utilidades de props
 /** Convierte el array `properties[]` de Tiled en un mapa nombre -> valor. */
@@ -195,13 +188,7 @@ function convertRotation(deg: number | undefined): number | undefined {
  * NOTA: en Tiled (x,y) de un rect/elipse es la esquina SUPERIOR-IZQUIERDA; el formato
  * interno guarda el CENTRO. Convertimos a centro y volteamos Y.
  */
-function toShape(
-  obj: TiledObject,
-  mpp: number,
-  heightM: number,
-  warnings: string[],
-  context: string,
-): Shape {
+function toShape(obj: TiledObject, mpp: number, heightM: number, warnings: string[], context: string): Shape {
   const { toMeters } = makeGeometry(mpp, heightM);
 
   if (obj.polygon && obj.polygon.length >= 3) {
@@ -218,9 +205,7 @@ function toShape(
 
   if (obj.ellipse) {
     if (Math.abs(w - h) > 1e-9) {
-      warnings.push(
-        `Elipse no circular en ${context} (${w}x${h}px): se aproxima con radio = ancho/2.`,
-      );
+      warnings.push(`Elipse no circular en ${context} (${w}x${h}px): se aproxima con radio = ancho/2.`);
     }
     const center = toMeters(obj.x + w / 2, obj.y + h / 2);
     return { shape: "circle" as ShapeKind, position: center, radiusM: round((w / 2) * mpp) };
@@ -256,11 +241,7 @@ function objectId(obj: TiledObject, fallbackPrefix: string): string {
 }
 
 /** Lee la propiedad `team` (obligatoria en spawns/bases/flags) con aviso si falta. */
-function readTeam(
-  props: Map<string, unknown>,
-  context: string,
-  warnings: string[],
-): string {
+function readTeam(props: Map<string, unknown>, context: string, warnings: string[]): string {
   const team = asString(props.get("team"));
   if (!team) {
     warnings.push(`Objeto en ${context} sin propiedad 'team': se asigna 'neutral'.`);
@@ -317,7 +298,9 @@ export function importTiled(tiled: TiledMap, opts: ImportOptions = {}): ImportRe
   for (const group of objectGroups) {
     const kind = group.name;
     if (!KNOWN_OBJECT_GROUPS.has(kind)) {
-      warnings.push(`Object group '${kind}' no reconocido: se ignora (capas válidas: ${[...KNOWN_OBJECT_GROUPS].join(", ")}).`);
+      warnings.push(
+        `Object group '${kind}' no reconocido: se ignora (capas válidas: ${[...KNOWN_OBJECT_GROUPS].join(", ")}).`,
+      );
       continue;
     }
     for (const obj of group.objects ?? []) {
@@ -340,7 +323,9 @@ export function importTiled(tiled: TiledMap, opts: ImportOptions = {}): ImportRe
           const hp = asNumber(props.get("hp"));
           const mat = materials.find((m) => m.id === material);
           if (hp !== undefined && mat && mat.hp !== undefined && mat.hp !== hp) {
-            warnings.push(`Destructible '${objectId(obj, "crate")}' declara hp=${hp} pero el material '${material}' tiene hp=${mat.hp}: se usa el del material.`);
+            warnings.push(
+              `Destructible '${objectId(obj, "crate")}' declara hp=${hp} pero el material '${material}' tiene hp=${mat.hp}: se usa el del material.`,
+            );
           }
           const shape = toShape(obj, mpp, heightM, warnings, ctx);
           destructibles.push({ ...shape, objectId: objectId(obj, "crate"), material });
@@ -394,7 +379,9 @@ export function importTiled(tiled: TiledMap, opts: ImportOptions = {}): ImportRe
 
   // ===== spawns (OBLIGATORIA) =====
   if (spawns.length === 0) {
-    throw new Error("Falta la capa obligatoria 'spawns': ningún object group 'spawns' con objetos. Un mapa sin spawns no es jugable.");
+    throw new Error(
+      "Falta la capa obligatoria 'spawns': ningún object group 'spawns' con objetos. Un mapa sin spawns no es jugable.",
+    );
   }
 
   // --- Metadatos del mapa desde propiedades personalizadas del mapa.
@@ -463,13 +450,7 @@ export function importTiled(tiled: TiledMap, opts: ImportOptions = {}): ImportRe
  * de modo que el tile n-ésimo del tileset corresponde al material n-ésimo de la tabla.
  * Un GID 0 (vacío) se interpreta como `floor` (índice 0).
  */
-function buildGround(
-  layer: TiledLayer,
-  tiled: TiledMap,
-  firstgid: number,
-  materialCount: number,
-  warnings: string[],
-) {
+function buildGround(layer: TiledLayer, tiled: TiledMap, firstgid: number, materialCount: number, warnings: string[]) {
   const cols = tiled.width;
   const rows = tiled.height;
   const raw = layer.data ?? [];

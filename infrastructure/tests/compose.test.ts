@@ -19,15 +19,28 @@ const doc = parse(readFileSync(COMPOSE_PATH, "utf8"), { merge: true });
 const services: Record<string, any> = doc.services;
 
 const CORE = [
-  "gateway", "web", "api", "arena-engine", "tournament-worker",
-  "bot-manager", "map-service", "replay-service", "queue",
+  "gateway",
+  "web",
+  "api",
+  "arena-engine",
+  "tournament-worker",
+  "bot-manager",
+  "map-service",
+  "replay-service",
+  "queue",
 ];
 const TABLE_6_2 = [...CORE, "postgres", "streamer", "bot-runtime-template"];
 // Operación (T10.4): cron de backup dentro del stack.
 const OPERATION = ["backup"];
 const OBSERVABILITY = [
-  "prometheus", "alertmanager", "grafana", "loki", "promtail",
-  "cadvisor", "node-exporter", "postgres-exporter",
+  "prometheus",
+  "alertmanager",
+  "grafana",
+  "loki",
+  "promtail",
+  "cadvisor",
+  "node-exporter",
+  "postgres-exporter",
 ];
 
 function hasCompose(): boolean {
@@ -134,7 +147,14 @@ describe("6.4 · las cinco redes y sus reglas", () => {
 
 describe("6.3 · volúmenes persistentes", () => {
   it("existen los seis volúmenes del dosier", () => {
-    for (const v of ["arena_maps", "arena_replays", "arena_bot_sources", "arena_build_cache", "arena_assets", "arena_logs"]) {
+    for (const v of [
+      "arena_maps",
+      "arena_replays",
+      "arena_bot_sources",
+      "arena_build_cache",
+      "arena_assets",
+      "arena_logs",
+    ]) {
       expect(doc.volumes, `falta el volumen ${v}`).toHaveProperty(v);
     }
   });
@@ -208,21 +228,27 @@ describe("resolución completa con docker compose config (si hay CLI; no requier
     expect(list).not.toContain("bot-runtime-template");
   });
 
-  it.skipIf(!hasCompose())("external-db NO incluye postgres (DoD: con DATABASE_URL externo, postgres no arranca)", () => {
-    const list = configServices(["external-db"]);
-    expect(list).not.toContain("postgres");
-    for (const s of CORE) expect(list).toContain(s);
-  });
+  it.skipIf(!hasCompose())(
+    "external-db NO incluye postgres (DoD: con DATABASE_URL externo, postgres no arranca)",
+    () => {
+      const list = configServices(["external-db"]);
+      expect(list).not.toContain("postgres");
+      for (const s of CORE) expect(list).toContain(s);
+    },
+  );
 
   it.skipIf(!hasCompose())("development+bots+streaming resuelve los 12 servicios de la tabla 6.2", () => {
     const list = configServices(["development", "bots", "streaming"]);
     expect(list.sort()).toEqual([...TABLE_6_2].sort());
   });
 
-  it.skipIf(!hasCompose())("el perfil observability es opcional: production no lo incluye y production+observability sí (DoD T10.3)", () => {
-    const prod = configServices(["production"]);
-    for (const s of OBSERVABILITY) expect(prod).not.toContain(s);
-    const both = configServices(["production", "observability"]);
-    for (const s of OBSERVABILITY) expect(both).toContain(s);
-  });
+  it.skipIf(!hasCompose())(
+    "el perfil observability es opcional: production no lo incluye y production+observability sí (DoD T10.3)",
+    () => {
+      const prod = configServices(["production"]);
+      for (const s of OBSERVABILITY) expect(prod).not.toContain(s);
+      const both = configServices(["production", "observability"]);
+      for (const s of OBSERVABILITY) expect(both).toContain(s);
+    },
+  );
 });

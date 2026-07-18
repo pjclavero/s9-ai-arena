@@ -33,12 +33,7 @@ export function mapVersionToJson(m: Record<string, unknown>) {
   };
 }
 
-async function insertMapVersion(
-  db: Db,
-  map: InternalMap,
-  createdBy: string,
-  extra: Record<string, unknown> = {},
-) {
+async function insertMapVersion(db: Db, map: InternalMap, createdBy: string, extra: Record<string, unknown> = {}) {
   const checksum = map.checksum ?? createHash("sha256").update(JSON.stringify(map)).digest("hex");
   await db("maps").insert({ id: map.mapId, name: map.mapId, created_by: createdBy }).onConflict("id").ignore();
   const max = await db("map_versions").where({ map_id: map.mapId }).max("version as m").first();
@@ -51,7 +46,9 @@ async function insertMapVersion(
       checksum,
       width_m: map.widthM,
       height_m: map.heightM,
-      supported_modes: JSON.stringify(map.supportedModes ?? []),
+      // R2.1 (ERR-GES-03): los modos viven en meta.supportedModes (InternalMap);
+      // leerlos del nivel raíz siempre daba undefined y persistía [].
+      supported_modes: JSON.stringify(map.meta?.supportedModes ?? []),
       content: JSON.stringify(map),
       ...extra,
     })
@@ -66,7 +63,10 @@ export function mapRoutes(db: Db): Router {
     const limit = parseLimit(req.query.limit);
     const cursor = decodeCursor(req.query.cursor as string | undefined);
     let q = db("map_versions")
-      .orderBy([{ column: "created_at", order: "desc" }, { column: "map_id", order: "desc" }])
+      .orderBy([
+        { column: "created_at", order: "desc" },
+        { column: "map_id", order: "desc" },
+      ])
       .limit(limit + 1);
     if (cursor) q = q.whereRaw("(created_at, map_id) < (?, ?)", [cursor.createdAt, cursor.id]);
     const rows = await q;

@@ -7,7 +7,15 @@
  * (packages/module-catalog/resolve/archetypes.ts): chasis medio, cañón, radar,
  * blindaje frontal.
  */
-import { ArenaBot, angleDiff, angleTo, distance, type CommandIntent, type ObservationPayload, type WelcomePayload } from "@arena/sdk";
+import {
+  ArenaBot,
+  angleDiff,
+  angleTo,
+  distance,
+  type CommandIntent,
+  type ObservationPayload,
+  type WelcomePayload,
+} from "@arena/sdk";
 
 const IDEAL_RANGE_M = 35;
 const DEFAULT_PROJECTILE_SPEED_MS = 120;
@@ -43,7 +51,9 @@ export class GunnerBot extends ArenaBot {
       return { move: { throttle: past ? 0.7 : 0.9, steer: past ? 0.5 : Math.max(-1, Math.min(1, toCenter * 1.5)) } };
     }
 
-    const target = contacts.reduce((a, b) => (distance(me.position, a.position) < distance(me.position, b.position) ? a : b));
+    const target = contacts.reduce((a, b) =>
+      distance(me.position, a.position) < distance(me.position, b.position) ? a : b,
+    );
     const aimPoint = this.predictedAimPoint(me.position, target);
 
     const d = distance(me.position, target.position);
@@ -68,7 +78,10 @@ export class GunnerBot extends ArenaBot {
    * iteraciones convergen de sobra para un blanco a velocidad constante y mejoran
    * claramente el acierto contra objetivos que cruzan la línea de tiro.
    */
-  private predictedAimPoint(from: { x: number; y: number }, target: { position: { x: number; y: number }; velocity?: { x: number; y: number } }) {
+  private predictedAimPoint(
+    from: { x: number; y: number },
+    target: { position: { x: number; y: number }; velocity?: { x: number; y: number } },
+  ) {
     if (!target.velocity) return target.position;
     let timeToImpact = distance(from, target.position) / this.projectileSpeedMs;
     for (let i = 0; i < 2; i++) {

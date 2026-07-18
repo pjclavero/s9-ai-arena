@@ -63,16 +63,19 @@ function spec(imageDigest: string): SandboxSpec {
 
 describe("issue #12 · el bot-manager no lanza bots con digest placeholder", () => {
   it("buildRunArgs se niega a componer el docker run", () => {
-    expect(() => DockerContainerRunner.buildRunArgs(spec(`arena/bot-runtime-python@sha256:${ZEROS}`), "c1"))
-      .toThrow(/digests placeholder: ejecuta el build real/);
-    expect(() => DockerContainerRunner.buildRunArgs(spec(`arena/bot-runtime-python@sha256:${REAL}`), "c1"))
-      .not.toThrow();
+    expect(() => DockerContainerRunner.buildRunArgs(spec(`arena/bot-runtime-python@sha256:${ZEROS}`), "c1")).toThrow(
+      /digests placeholder: ejecuta el build real/,
+    );
+    expect(() =>
+      DockerContainerRunner.buildRunArgs(spec(`arena/bot-runtime-python@sha256:${REAL}`), "c1"),
+    ).not.toThrow();
   });
 
   it("launch rechaza el placeholder ANTES del error de entorno sin Docker", async () => {
     const runner = new DockerContainerRunner();
-    await expect(runner.launch(spec(`arena/bot-runtime-node@sha256:${ONES}`)))
-      .rejects.toThrow(/digests placeholder: ejecuta el build real/);
+    await expect(runner.launch(spec(`arena/bot-runtime-node@sha256:${ONES}`))).rejects.toThrow(
+      /digests placeholder: ejecuta el build real/,
+    );
   });
 });
 
@@ -96,14 +99,16 @@ describe("issue #12 · verify-runtime-digests no da OK con placeholders", () => 
     expect(placeholderViolations(root)).toEqual([]);
   });
 
-  // Estado REAL del repo hoy: los placeholders del MVP siguen ahí, así que la
-  // verificación DEBE fallar (ese es el gate del issue #12). Cuando se construyan
-  // las imágenes y se fijen los digests reales, este test pasa a esperar [] —
-  // actualizarlo forma parte de ese cierre.
-  it("el repo actual lleva placeholders y el guard los reporta (gate vivo hasta el build real)", () => {
-    const v = placeholderViolations();
-    expect(v.length).toBeGreaterThan(0);
-    expect(v.join(" ")).toMatch(/DIGESTS\.lock/);
-    expect(v.join(" ")).toMatch(/allowed-requirements\.lock/);
+  // R6.1 cerro el gate del issue #12: las imagenes se construyeron de verdad y sus
+  // digests reales estan fijados, asi que en runtimes/ ya no queda ningun placeholder.
+  // Este test estaba escrito al reves a proposito ("el repo lleva placeholders y el
+  // guard los reporta"), porque mientras existieran era la prueba de que el gate seguia
+  // vivo; su comentario decia que invertirlo formaba parte de este cierre.
+  //
+  // Que el guard SIGUE detectando placeholders si alguien los reintroduce no se deja de
+  // probar: los tests de arriba se los pasan a mano. Lo que se afirma aqui es el estado
+  // del repo, y si alguien vuelve a meter un 000.../111... este test se pone rojo.
+  it("el repo ya no lleva placeholders: los runtimes estan fijados por digest real", () => {
+    expect(placeholderViolations()).toEqual([]);
   });
 });

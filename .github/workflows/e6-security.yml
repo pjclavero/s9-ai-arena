@@ -1,8 +1,9 @@
 # E6 · CI de seguridad (T6.2/T6.3).
 #
-# Verifica lo que NO necesita Docker en cualquier runner, y ejecuta los escaneos que SÍ
-# lo necesitan en un runner con Docker. En la máquina de desarrollo (ia02, sin grupo
-# docker) solo corren los jobs sin Docker; los de Docker esperan a un runner con acceso.
+# Regla de R1.6 (ERR-SEC-04): un job de seguridad NUNCA debe aparecer en verde sin
+# haber probado nada. Mientras los runtimes no estén construidos y fijados por digest
+# real, los jobs que dependen de Docker quedan SKIPPED (gris), no passed: un verde
+# falso oculta ERR-SEC-03 y da una garantía que no existe.
 name: E6 security
 
 on:
@@ -25,18 +26,81 @@ jobs:
       # Los runtimes deben estar fijados por digest, no por tag (T6.3)
       - run: npx tsx scripts/verify-runtime-digests.ts
 
+  # Puerta: ¿hay digests REALES con los que probar algo? Mientras haya placeholders,
+  # los jobs de abajo se saltan en vez de mentir en verde.
+  digests-gate:
+    runs-on: ubuntu-latest
+    outputs:
+      real_digests: ${{ steps.check.outputs.real_digests }}
+      python_image: ${{ steps.check.outputs.python_image }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: npm ci
+      - id: check
+        run: |
+          image="$(awk '$1 == "python" { print $3 }' runtimes/DIGESTS.lock | head -1)"
+          echo "python_image=$image" >> "$GITHUB_OUTPUT"
+          if npx tsx scripts/assert-real-digest.ts "$image" "gate de CI"; then
+            echo "real_digests=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "real_digests=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::runtimes/DIGESTS.lock tiene digests placeholder: los jobs de sandbox y de vulnerabilidades se SALTAN (no se puede probar nada). Tarea R6.1."
+          fi
+
   runtime-vuln-scan:
-    # Requiere Docker: bloquea severidad crítica en las imágenes de runtime (T6.3).
+    # Requiere Docker + imágenes reales: bloquea severidad crítica en los runtimes (T6.3).
+    needs: digests-gate
+    if: needs.digests-gate.outputs.real_digests == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: npm ci
+      # R6.1: este paso NO existia y el job fallaba con `trivy: command not found`
+      # (exit 127). No se vio antes porque el digests-gate saltaba el job mientras hubiera
+      # placeholders: el escaneo de vulnerabilidades de los runtimes nunca se habia
+      # ejecutado. El script tambien escaneaba una imagen recien construida en vez de la
+      # fijada en DIGESTS.lock; ahora descarga la pineada (ver scan-runtime-vulns.sh).
+      - name: Instalar Trivy
+        uses: aquasecurity/setup-trivy@v0.3.1
+        with:
+          version: v0.72.0
       - name: Escaneo de vulnerabilidades (Trivy, bloquea CRITICAL)
         run: ./scripts/scan-runtime-vulns.sh
 
   sandbox-escape:
-    # Requiere Docker: ejecuta la suite de bots maliciosos (T6.2).
+    # Requiere Docker + imágenes reales: ejecuta la suite de bots maliciosos (T6.2).
+    # La imagen sale de DIGESTS.lock, no de un literal del workflow: el `@sha256:PENDIENTE`
+    # que había aquí era el origen del verde falso.
+    needs: digests-gate
+    if: needs.digests-gate.outputs.real_digests == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: npm ci
+      # R6.1: antes esto era `docker build -t "<imagen@sha256:...>" runtimes/python`, que
+      # NO puede funcionar por dos motivos, ocultos mientras el gate saltaba el job:
+      #   1. `-t` no admite una referencia por digest: el digest lo asigna el registry al
+      #      publicar, no se puede imponer a un build local. El paso fallaba en seco.
+      #   2. el contexto era `runtimes/python`, pero el Dockerfile hace COPY de sdks/python
+      #      para construir el SDK propio: el contexto tiene que ser la RAIZ del repo.
+      # Ademas, RECONSTRUIR la imagen contradice el objetivo: lo que hay que probar es la
+      # imagen EXACTA que esta fijada en DIGESTS.lock, no una recien hecha que quiza no sea
+      # bit a bit identica. Asi que se DESCARGA por digest; si no existe, el job falla
+      # (fail-closed), que es justo lo que R1.5/R1.6 exigen.
+      - name: Descargar el runtime python fijado en DIGESTS.lock
+        run: |
+          image="${{ needs.digests-gate.outputs.python_image }}"
+          echo "Descargando $image"
+          if ! docker pull "$image"; then
+            echo "::error::No se pudo descargar $image. La imagen fijada en DIGESTS.lock" \
+                 "tiene que estar publicada en GHCR (workflow runtimes-publish.yml)."
+            exit 1
+          fi
       - name: Suite de escape del sandbox
-        run: ./tests/sandbox-escape/run-escape-suite.sh arena/bot-runtime-python@sha256:PENDIENTE
+        run: ./tests/sandbox-escape/run-escape-suite.sh

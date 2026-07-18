@@ -68,12 +68,22 @@ GATEWAY_CONF=nginx-behind-proxy.conf
 HTTP_PORT=8080          # puerto HTTP hacia la LAN (el que verá VM104)
 HTTPS_PORT=127.0.0.1:8443   # sin uso en este modo; ligado a loopback
 S9_DOMAIN=arena.seccionnueve.duckdns.org
+TRUST_PROXY_HOPS=2      # VM104 + gateway del stack (R1.8 · ERR-SEC-05)
 ```
 
 En VM104, un `server` para `arena.seccionnueve.duckdns.org` con
 `proxy_pass http://<IP-de-la-VM-del-stack>:8080;`, cabeceras `X-Forwarded-Proto https`
+y `X-Forwarded-For $proxy_add_x_forwarded_for` (obligatoria: con
+`TRUST_PROXY_HOPS=2` la API espera que VM104 añada la IP real del cliente),
 y soporte de upgrade WebSocket para `/ws/`. El humo en este modo:
 `smoke.sh https://arena.seccionnueve.duckdns.org`.
+
+> **IP real del cliente (R1.8 · ERR-SEC-05):** la API calcula `req.ip` con una
+> confianza de proxy **acotada** al número de saltos declarado en
+> `TRUST_PROXY_HOPS` (1 en modo (a), por defecto en el Compose; 2 en modo (b)),
+> nunca `trust proxy: true`. La cuota anónima y el bloqueo de fuerza bruta de
+> login se anclan a esa IP; una `X-Forwarded-For` inyectada por un cliente
+> externo se descarta porque queda fuera de los saltos de confianza.
 
 ## PostgreSQL externo (nota del 6.2)
 
@@ -94,10 +104,23 @@ Verificable sin levantar nada: `docker compose -f infrastructure/docker-compose.
   postgres, redis ni api. `bot-manager` (builders) no está en `data`.
 - Secretos **siempre por archivo** (`/run/secrets/*`), generados por
   `init-secrets.sh`; `infrastructure/secrets/` está fuera del control de versiones.
-- Ningún servicio privilegiado ni con `docker.sock`, **salvo bot-manager**
-  (excepción documentada en el propio compose; mitigación a futuro:
-  docker-socket-proxy o builder rootless). Lo vigila
-  `infrastructure/scripts/scan-compose.mjs` (etapa 6 de la CI y tests).
+- Ningún servicio privilegiado ni con `docker.sock` — **sin excepciones**
+  (R1.7/ERR-SEC-02: la antigua excepción de bot-manager se retiró). Lo vigila
+  `infrastructure/scripts/scan-compose.mjs` (etapa 6 de la CI y tests), con
+  `complianceViolations` (`apps/bot-manager/src/compliance.mjs`) como única
+  fuente de verdad.
+- **Proxy de la API de Docker (R1.7).** `bot-manager` lanza contenedores vía
+  `DOCKER_PROXY_URL` contra un proxy con allowlist estricta
+  (crear/arrancar/parar/inspeccionar; rechaza `privileged`, bind-mounts,
+  `--network host` y cambios de usuario). El proxy corre **en el host**, fuera
+  del Compose, como único proceso con acceso al socket:
+  `npx tsx apps/bot-manager/src/docker-proxy-main.ts` (el operador lo
+  encapsula en una unidad systemd en R-DEPLOY; escucha en 127.0.0.1:2375 por
+  defecto y el Compose lo alcanza por el alias `docker-proxy.internal` →
+  `host-gateway`). **Pendiente R-DEPLOY:** verificación viva de la ruta
+  bot-manager → proxy → socket (en el entorno de desarrollo no hay Docker; la
+  lógica del proxy está probada en proceso en
+  `apps/bot-manager/tests/docker-proxy.test.ts`).
 - Todos los servicios con healthcheck, `depends_on` condicionado a
   `service_healthy`, límites de CPU/RAM y `no-new-privileges`.
 

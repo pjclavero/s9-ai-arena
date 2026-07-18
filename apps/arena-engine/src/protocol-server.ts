@@ -85,7 +85,10 @@ function safeSend(ws: WebSocket, msg: unknown): void {
 }
 
 function sendShutdown(ws: WebSocket, reason: string, detail?: string, result?: unknown, gracePeriodMs = 500): void {
-  safeSend(ws, envelope("SHUTDOWN", { reason, ...(detail ? { detail } : {}), ...(result ? { result } : {}), gracePeriodMs }));
+  safeSend(
+    ws,
+    envelope("SHUTDOWN", { reason, ...(detail ? { detail } : {}), ...(result ? { result } : {}), gracePeriodMs }),
+  );
 }
 
 // --------------------------------------------------------------- configuración
@@ -178,15 +181,24 @@ class WebSocketBotAgent implements BotAgent {
 
   /** Llamado por el servidor cuando llega un COMMAND ya validado contra el esquema. */
   receiveCommand(payload: any): void {
-    if (!this.windowOpen) return; // llegó tarde (D2): se descarta, sin evento.
-    if (payload.forTick !== this.expectedForTick) return; // no es para el ciclo que espera.
+    // expectedForTick nunca es null con la ventana abierta (se asigna justo antes de
+    // abrirla); el guard existe para que el narrowing de TS estricto lo sepa también.
+    if (!this.windowOpen || this.expectedForTick === null) return; // llegó tarde (D2): se descarta, sin evento.
+    const expectedForTick = this.expectedForTick;
+    if (payload.forTick !== expectedForTick) return; // no es para el ciclo que espera.
     if (this.pendingCommand !== null) {
       // Ya había un COMMAND válido para este ciclo: el segundo se descarta con evento.
-      this.onSend(envelope("EVENT", {
-        tick: this.expectedForTick - DECISION_EVERY_N_TICKS,
-        kind: "rejected_action",
-        reason: "extra_command_discarded",
-      }, this.expectedForTick - DECISION_EVERY_N_TICKS));
+      this.onSend(
+        envelope(
+          "EVENT",
+          {
+            tick: expectedForTick - DECISION_EVERY_N_TICKS,
+            kind: "rejected_action",
+            reason: "extra_command_discarded",
+          },
+          expectedForTick - DECISION_EVERY_N_TICKS,
+        ),
+      );
       return;
     }
     this.pendingCommand = payload;
@@ -257,7 +269,11 @@ export class ProtocolServer {
 
     const timer = setTimeout(() => {
       if (this.states.get(ws) !== "awaiting_hello") return;
-      sendShutdown(ws, "invalid_message", `No se completó el handshake en ${this.handshakeTimeoutMs} ms (¿HELLO ausente o con forma inválida?)`);
+      sendShutdown(
+        ws,
+        "invalid_message",
+        `No se completó el handshake en ${this.handshakeTimeoutMs} ms (¿HELLO ausente o con forma inválida?)`,
+      );
       ws.close();
     }, this.handshakeTimeoutMs);
     this.handshakeTimers.set(ws, timer);
@@ -448,19 +464,21 @@ export class ProtocolServer {
   private finish(): void {
     const result = this.battle.getResult()!;
     for (const agent of this.agents.values()) {
-      const outcome: string =
-        result.disqualified.includes(this.vehicleIdOf(agent))
-          ? "disqualified"
-          : result.winner === "draw"
-            ? "draw"
-            : this.teamOf(agent) === result.winner
-              ? "win"
-              : "loss";
-      safeSend(agent.ws, envelope("SHUTDOWN", {
-        reason: "battle_finished",
-        result: { outcome, score: result.score, ticks: result.ticks },
-        gracePeriodMs: 500,
-      }));
+      const outcome: string = result.disqualified.includes(this.vehicleIdOf(agent))
+        ? "disqualified"
+        : result.winner === "draw"
+          ? "draw"
+          : this.teamOf(agent) === result.winner
+            ? "win"
+            : "loss";
+      safeSend(
+        agent.ws,
+        envelope("SHUTDOWN", {
+          reason: "battle_finished",
+          result: { outcome, score: result.score, ticks: result.ticks },
+          gracePeriodMs: 500,
+        }),
+      );
     }
     for (const resolve of this.resultResolvers) resolve(result);
     this.resultResolvers = [];

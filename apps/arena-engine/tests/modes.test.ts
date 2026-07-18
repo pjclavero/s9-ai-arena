@@ -8,7 +8,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { loadRuleset } from "../../../packages/game-rules/index.js";
 import { Battle } from "../src/sim/battle.js";
-import { CaptureTheFlagMode } from "../src/sim/modes.js";
+import { CaptureTheFlagMode, ZoneControlMode } from "../src/sim/modes.js";
 import { initPhysics } from "../src/sim/physics.js";
 import { ctfArena, emptyArena, gunnerLoadout, mvpArena, sandbagLoadout, scoutLoadout } from "../src/fixtures.js";
 import { FlagRunnerBot, IdleBot, SeekBot } from "../src/stubs.js";
@@ -57,11 +57,14 @@ describe("CTF · máquina de estados de bandera (cap. 13.1)", () => {
 
   it("emite los eventos de la FSM en orden: flag_taken antes que flag_captured", () => {
     const { b, map } = ctfBattle();
-    b.attachBot("veh_1", new FlagRunnerBot(
-      "b1",
-      map.flags.find((f) => f.team === "blue")!.position,
-      map.bases.find((x) => x.team === "red")!.position,
-    ));
+    b.attachBot(
+      "veh_1",
+      new FlagRunnerBot(
+        "b1",
+        map.flags.find((f) => f.team === "blue")!.position,
+        map.bases.find((x) => x.team === "red")!.position,
+      ),
+    );
     b.attachBot("veh_2", new IdleBot("b2"));
     b.run(9000);
 
@@ -76,11 +79,14 @@ describe("CTF · máquina de estados de bandera (cap. 13.1)", () => {
 
   it("si el portador muere, la bandera CAE (no vuelve a base ni desaparece)", () => {
     const { b, map } = ctfBattle();
-    b.attachBot("veh_1", new FlagRunnerBot(
-      "b1",
-      map.flags.find((f) => f.team === "blue")!.position,
-      map.bases.find((x) => x.team === "red")!.position,
-    ));
+    b.attachBot(
+      "veh_1",
+      new FlagRunnerBot(
+        "b1",
+        map.flags.find((f) => f.team === "blue")!.position,
+        map.bases.find((x) => x.team === "red")!.position,
+      ),
+    );
     b.attachBot("veh_2", new IdleBot("b2"));
 
     const mode = (b as any).mode as CaptureTheFlagMode;
@@ -108,11 +114,14 @@ describe("CTF · máquina de estados de bandera (cap. 13.1)", () => {
 
   it("una bandera caída vuelve sola a su base tras flagReturnTicks", () => {
     const { b, map } = ctfBattle({ ctf: { requireOwnFlagAtBase: true, flagReturnTicks: 30 } });
-    b.attachBot("veh_1", new FlagRunnerBot(
-      "b1",
-      map.flags.find((f) => f.team === "blue")!.position,
-      map.bases.find((x) => x.team === "red")!.position,
-    ));
+    b.attachBot(
+      "veh_1",
+      new FlagRunnerBot(
+        "b1",
+        map.flags.find((f) => f.team === "blue")!.position,
+        map.bases.find((x) => x.team === "red")!.position,
+      ),
+    );
     b.attachBot("veh_2", new IdleBot("b2"));
 
     const mode = (b as any).mode as CaptureTheFlagMode;
@@ -157,11 +166,14 @@ describe("CTF · máquina de estados de bandera (cap. 13.1)", () => {
     mode.flags.get("red")!.position = { x: 60, y: 70 };
 
     // El rojo lleva la bandera azul a su base... pero no debería poder capturar.
-    b.attachBot("veh_1", new FlagRunnerBot(
-      "b1",
-      map.flags.find((f) => f.team === "blue")!.position,
-      map.bases.find((x) => x.team === "red")!.position,
-    ));
+    b.attachBot(
+      "veh_1",
+      new FlagRunnerBot(
+        "b1",
+        map.flags.find((f) => f.team === "blue")!.position,
+        map.bases.find((x) => x.team === "red")!.position,
+      ),
+    );
     b.attachBot("veh_2", new IdleBot("b2"));
 
     const result = b.run(3000);
@@ -194,11 +206,14 @@ describe("CTF · máquina de estados de bandera (cap. 13.1)", () => {
     mode.flags.get("red")!.state = "dropped";
     mode.flags.get("red")!.position = { x: 60, y: 70 };
 
-    b.attachBot("veh_1", new FlagRunnerBot(
-      "b1",
-      map.flags.find((f) => f.team === "blue")!.position,
-      map.bases.find((x) => x.team === "red")!.position,
-    ));
+    b.attachBot(
+      "veh_1",
+      new FlagRunnerBot(
+        "b1",
+        map.flags.find((f) => f.team === "blue")!.position,
+        map.bases.find((x) => x.team === "red")!.position,
+      ),
+    );
     b.attachBot("veh_2", new IdleBot("b2"));
 
     const result = b.run(9000);
@@ -208,11 +223,14 @@ describe("CTF · máquina de estados de bandera (cap. 13.1)", () => {
 
   it("la posición de una bandera transportada NO es pública (hay que verla)", () => {
     const { b, map } = ctfBattle();
-    b.attachBot("veh_1", new FlagRunnerBot(
-      "b1",
-      map.flags.find((f) => f.team === "blue")!.position,
-      map.bases.find((x) => x.team === "red")!.position,
-    ));
+    b.attachBot(
+      "veh_1",
+      new FlagRunnerBot(
+        "b1",
+        map.flags.find((f) => f.team === "blue")!.position,
+        map.bases.find((x) => x.team === "red")!.position,
+      ),
+    );
     b.attachBot("veh_2", new IdleBot("b2"));
 
     const mode = (b as any).mode as CaptureTheFlagMode;
@@ -235,7 +253,11 @@ describe("fuego amigo (configurable por ruleset)", () => {
     const b = new Battle({
       battleId: "ff",
       seed: "ff",
-      ruleset: loadRuleset("tdm_mvp@1", { friendlyFire, timeLimitTicks: 400, respawn: { enabled: false, delayTicks: 0 } }),
+      ruleset: loadRuleset("tdm_mvp@1", {
+        friendlyFire,
+        timeLimitTicks: 400,
+        respawn: { enabled: false, delayTicks: 0 },
+      }),
       map: emptyArena(),
       participants: [
         { id: "veh_1", botId: "b1", team: "red", spec: gunnerLoadout() },
@@ -305,6 +327,145 @@ describe("zone control", () => {
     expect(result.score.blue).toBe(0);
     expect(b.publicEvents.some((e) => e.kind === "zone_captured")).toBe(true);
     b.free();
+  }, 60_000);
+
+  it("TOCAR Y HUIR: quien entra en la zona y se marcha NO sigue puntuando ni gana (ERR-ENG-03)", () => {
+    // Antes del fix: el primer equipo que tocaba la zona quedaba de "dueño" y seguía
+    // sumando cada tick aunque saliera (teamsInside.size <= 1 incluía el caso 0), ganando
+    // en ~500 ticks sin oposición. Ahora la puntuación exige PRESENCIA real.
+    const map = emptyArena();
+    map.zones = [{ id: "z1", position: { x: 60, y: 40 }, radiusM: 8, kind: "capture" }];
+
+    const b = new Battle({
+      battleId: "zc_touch_flee",
+      seed: "z",
+      // scoreToWin alto: si el bug siguiera vivo, el "dueño" ausente llegaría a 500.
+      ruleset: loadRuleset("zc_mvp@1", { scoreToWin: 500, timeLimitTicks: 100000 }),
+      map,
+      participants: [
+        { id: "veh_1", botId: "b1", team: "red", spec: scoutLoadout() },
+        { id: "veh_2", botId: "b2", team: "blue", spec: sandbagLoadout() },
+      ],
+    });
+    b.attachBot("veh_1", new IdleBot("b1"));
+    b.attachBot("veh_2", new IdleBot("b2"));
+
+    const mode = (b as any).mode as ZoneControlMode;
+    const rb = b.getPhysics().get("veh_1")!.rb;
+    const pin = (x: number, y: number) => {
+      rb.setTranslation({ x, y }, true);
+      rb.setLinvel({ x: 0, y: 0 }, true);
+    };
+
+    b.step(); // arranque
+
+    // FASE 1 · red DENTRO de la zona durante 20 ticks: sí debe puntuar.
+    for (let i = 0; i < 20; i++) {
+      pin(60, 40);
+      b.step();
+    }
+    const scoreWhilePresent = mode.score.red;
+    expect(scoreWhilePresent).toBeGreaterThan(0);
+    expect(b.publicEvents.some((e) => e.kind === "zone_captured")).toBe(true);
+
+    // FASE 2 · red SALE y se queda fuera 600 ticks (más que los ~500 con los que el bug
+    // habría ganado). La zona queda VACÍA: nadie debe puntuar.
+    for (let i = 0; i < 600; i++) {
+      pin(5, 5);
+      b.step();
+    }
+
+    expect(mode.score.red).toBe(scoreWhilePresent); // congelado: la zona vacía no puntúa
+    expect(mode.score.blue).toBe(0);
+    expect(b.isFinished()).toBe(false); // nadie ha ganado tocando y huyendo
+    expect(mode.score.red).toBeLessThan(500);
+    b.free();
+  }, 60_000);
+
+  it("con dos zonas, objectives() entrega id y posición DISTINTOS para cada una", () => {
+    const map = emptyArena();
+    map.zones = [
+      { id: "alpha", position: { x: 40, y: 40 }, radiusM: 8, kind: "capture" },
+      { id: "bravo", position: { x: 80, y: 25 }, radiusM: 8, kind: "capture" },
+    ];
+
+    const b = new Battle({
+      battleId: "zc_two_zones",
+      seed: "z2",
+      ruleset: loadRuleset("zc_mvp@1"),
+      map,
+      participants: [
+        { id: "veh_1", botId: "b1", team: "red", spec: scoutLoadout() },
+        { id: "veh_2", botId: "b2", team: "blue", spec: sandbagLoadout() },
+      ],
+    });
+
+    const mode = (b as any).mode as ZoneControlMode;
+    const objs = mode.objectives();
+    expect(objs).toHaveLength(2);
+
+    const alpha = objs.find((o: any) => o.id === "alpha");
+    const bravo = objs.find((o: any) => o.id === "bravo");
+    expect(alpha).toBeDefined();
+    expect(bravo).toBeDefined();
+
+    // id distintos: el bot puede referirse a cada zona sin ambigüedad.
+    expect(alpha.id).not.toBe(bravo.id);
+    // posición pública y distinta: el bot puede decidir a cuál ir.
+    expect(alpha.position).toEqual({ x: 40, y: 40 });
+    expect(bravo.position).toEqual({ x: 80, y: 25 });
+    expect(alpha.position).not.toEqual(bravo.position);
+
+    expect(alpha.kind).toBe("zone");
+    expect(alpha.state).toBe("neutral"); // aún nadie la controla
+    b.free();
+  });
+});
+
+describe("King of the Hill (zone_control · 1 zona · presencia)", () => {
+  function kothBattle(seed = "koth") {
+    // KotH = zone_control con UNA sola zona central.
+    const map = emptyArena();
+    map.zones = [{ id: "hill", position: { x: 60, y: 40 }, radiusM: 8, kind: "capture" }];
+
+    const b = new Battle({
+      battleId: "koth",
+      seed,
+      ruleset: loadRuleset("koth_mvp@1"),
+      map,
+      participants: [
+        { id: "veh_1", botId: "b1", team: "red", spec: scoutLoadout() },
+        { id: "veh_2", botId: "b2", team: "red", spec: scoutLoadout() },
+        { id: "veh_3", botId: "b3", team: "blue", spec: sandbagLoadout() },
+        { id: "veh_4", botId: "b4", team: "blue", spec: sandbagLoadout() },
+      ],
+    });
+    // El equipo rojo sube a la colina; el azul se queda fuera.
+    b.attachBot("veh_1", new SeekBot("b1", { x: 58, y: 40 }));
+    b.attachBot("veh_2", new SeekBot("b2", { x: 62, y: 40 }));
+    b.attachBot("veh_3", new IdleBot("b3"));
+    b.attachBot("veh_4", new IdleBot("b4"));
+    return b;
+  }
+
+  it("2v2: el equipo que controla la colina gana con el marcador exacto y de forma determinista", () => {
+    const a = kothBattle();
+    const r1 = a.run(20000);
+    a.free();
+
+    // Rojo controla la colina en solitario y llega a los 100 puntos de koth_mvp@1.
+    expect(r1.winner).toBe("red");
+    expect(r1.score.red).toBe(100); // +1/tick de presencia hasta scoreToWin, sin doble conteo
+    expect(r1.score.blue).toBe(0); // el azul nunca pisa la zona
+
+    // Determinismo: misma semilla ⇒ mismo resultado y mismo hash de estado final.
+    const bBattle = kothBattle();
+    const r2 = bBattle.run(20000);
+    bBattle.free();
+    expect(r2.winner).toBe(r1.winner);
+    expect(r2.score).toEqual(r1.score);
+    expect(r2.ticks).toBe(r1.ticks);
+    expect(r2.finalStateHash).toBe(r1.finalStateHash);
   }, 60_000);
 });
 

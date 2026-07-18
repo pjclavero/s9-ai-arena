@@ -1,0 +1,14 @@
+{
+  "id": "sensor.acoustic",
+  "version": 1,
+  "category": "sensor",
+  "name": "Escucha acústica",
+  "description": "Micrófonos pasivos: mayor alcance del catálogo pero solo DIRECCIÓN de sonidos (disparos, motores, explosiones), nunca posición ni identidad (cap. 11). Barato y ligero.",
+  "massKg": 15,
+  "costCredits": 40,
+  "size": "S",
+  "hp": 20,
+  "power": { "passiveEUs": 1 },
+  "sensorType": "acoustic",
+  "rangeM": 60
+}

@@ -25,7 +25,7 @@ import type { Logger, StreamerConfig } from "./config.js";
 export interface SpawnedProcess extends EventEmitter {
   stdout?: EventEmitter | null;
   stderr?: EventEmitter | null;
-  kill(signal?: string): boolean | void;
+  kill(signal?: NodeJS.Signals): boolean | void;
 }
 
 export type Spawner = (command: string, args: string[]) => SpawnedProcess;

@@ -38,6 +38,7 @@ import { createApp } from "../../apps/api/src/app.js";
 import { E6PipelineBotManager } from "../../apps/api/src/services/e6-bot-manager.js";
 import { getCatalog } from "../../apps/api/src/services/catalog.js";
 import { SpectateGateway } from "../../apps/api/src/spectate/gateway.js";
+import { goodCandidate, referenceAgent } from "../../apps/bot-manager/tests/fixtures.js";
 import { pyGoodFiles } from "../../apps/bot-manager/tests/fixtures.js";
 import { generateServiceKeypair, signArtifact } from "../../apps/bot-manager/src/signing.js";
 import { loadRuleset } from "../../packages/game-rules/index.js";
@@ -91,9 +92,13 @@ beforeAll(async () => {
   await initPhysics();
   h = await startTestDb();
   await seedDev(h.db);
+  // Sandbox EN PROCESO (T6.1), igual que apps/api/src/e6-integration.test.ts: sin
+  // agentResolver el pipeline falla cerrado (R1.5) y ninguna versión llega a
+  // validated, así que el paso 2 no podría ejercer el camino feliz. Que SIN
+  // sandbox se rechaza lo cubren e6-integration ("SIN sandbox…") y pipeline.test.ts.
   app = createApp({
     db: h.db,
-    botManager: new E6PipelineBotManager(h.db, { signer }),
+    botManager: new E6PipelineBotManager(h.db, { signer, agentResolver: () => goodCandidate, referenceAgent }),
     anonQuota: { max: 10_000, windowMs: 3600_000 },
   });
   gateway = new SpectateGateway({ port: 0 });
@@ -114,9 +119,7 @@ describe("T12.1 · el MVP funciona (26.1), en 6 pasos con evidencia", () => {
   it("paso 1: un usuario se registra, crea un bot, monta un loadout del catálogo MVP y sube código", async () => {
     const email = "jugadora-e12@example.com";
     const password = "una-clave-larga-de-verdad!";
-    const reg = await request(app)
-      .post("/auth/register")
-      .send({ email, password, displayName: "Jugadora E12" });
+    const reg = await request(app).post("/auth/register").send({ email, password, displayName: "Jugadora E12" });
     expect(reg.status).toBe(201);
     state.userId = reg.body.id;
 
@@ -133,7 +136,10 @@ describe("T12.1 · el MVP funciona (26.1), en 6 pasos con evidencia", () => {
     // Loadout REAL del catálogo MVP (ejemplo versionado de E3).
     const { readFileSync } = await import("node:fs");
     const loadout = JSON.parse(
-      readFileSync(join(__dirname, "..", "..", "packages", "module-catalog", "examples", "loadout-medium-gunner.json"), "utf8"),
+      readFileSync(
+        join(__dirname, "..", "..", "packages", "module-catalog", "examples", "loadout-medium-gunner.json"),
+        "utf8",
+      ),
     );
     const lo = await request(app).post(`/bots/${state.botId}/loadouts`).set(auth).send(loadout);
     expect(lo.status).toBe(201);
@@ -164,9 +170,12 @@ describe("T12.1 · el MVP funciona (26.1), en 6 pasos con evidencia", () => {
     for (const stage of ["structure", "static_analysis", "dependencies", "build", "secret_scan", "sign", "publish"]) {
       expect(byName[stage], stage).toBe("passed");
     }
-    // Honestidad: etapas containerizadas `skipped` sin Docker (límite de entorno).
+    // Con el sandbox en proceso, las etapas que ejecutan el bot corren DE VERDAD.
+    // Antes de R1.5 este test las esperaba `skipped` y aun así daba la versión por
+    // validated: ese era justo el agujero ERR-SEC-03 (validar sin ejecutar nada).
+    // Que sin sandbox NO se valida lo cubren e6-integration y pipeline.test.ts.
     for (const stage of ["protocol_test", "smoke_battle", "resource_limits"]) {
-      expect(byName[stage], stage).toBe("skipped");
+      expect(byName[stage], stage).toBe("passed");
     }
 
     const v = await h.db("bot_versions").where({ bot_id: state.botId, version: state.botVersion }).first();
@@ -236,7 +245,8 @@ describe("T12.1 · el MVP funciona (26.1), en 6 pasos con evidencia", () => {
     battle.attachBot("veh_4", new FlagRunnerBot(rivals[2].botId, flagPos.red, flagPos.blue));
 
     // Fila de batalla en la BD ANTES de arrancar: el ticket de espectador es de la API.
-    const [row] = await h.db("battles")
+    const [row] = await h
+      .db("battles")
       .insert({
         status: "running",
         official: true,
@@ -248,9 +258,9 @@ describe("T12.1 · el MVP funciona (26.1), en 6 pasos con evidencia", () => {
       })
       .returning("*");
     state.battleDbId = row.id;
-    await h.db("participants").insert(
-      participants.map((p) => ({ battle_id: row.id, bot_id: p.botId, version: 1, team: p.team })),
-    );
+    await h
+      .db("participants")
+      .insert(participants.map((p) => ({ battle_id: row.id, bot_id: p.botId, version: 1, team: p.team })));
 
     // Espectador ANÓNIMO: ticket vía API pública (sin Authorization) + WS real de E8.
     const ticketRes = await request(app).post(`/battles/${state.battleDbId}/spectate-ticket`);
@@ -259,7 +269,10 @@ describe("T12.1 · el MVP funciona (26.1), en 6 pasos con evidencia", () => {
       pollIntervalMs: 1,
       meta: { mode: "capture_the_flag", mapId: "mvp-arena-01" },
     });
-    const ws = new WebSocket(`ws://127.0.0.1:${gateway.port}/spectate/${state.battleDbId}?ticket=${encodeURIComponent(ticketRes.body.ticket)}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${gateway.port}/spectate/${state.battleDbId}`, [
+      "spectate.v1",
+      `ticket.${ticketRes.body.ticket}`,
+    ]);
     ws.on("message", (data) => state.spectatorMessages.push(JSON.parse(data.toString())));
     await new Promise<void>((resolve, reject) => {
       ws.on("open", () => resolve());
@@ -320,14 +333,17 @@ describe("T12.1 · el MVP funciona (26.1), en 6 pasos con evidencia", () => {
 
     // Ingesta REAL del replay-service (T8.1) + referencia en la BD (política 23.1).
     state.stored = ingestReplay(replaysDir, state.replay, { official: true });
-    await h.db("battles").where({ id: state.battleDbId }).update({
-      status: "finished",
-      replay_ref: state.stored.path,
-      replay_hash: state.stored.index.sha256,
-      final_state_hash: state.result.finalStateHash,
-      engine_versions: JSON.stringify(state.replay.header.versions),
-      result: JSON.stringify({ winner: state.result.winner, score: state.result.score, ticks: state.result.ticks }),
-    });
+    await h
+      .db("battles")
+      .where({ id: state.battleDbId })
+      .update({
+        status: "finished",
+        replay_ref: state.stored.path,
+        replay_hash: state.stored.index.sha256,
+        final_state_hash: state.result.finalStateHash,
+        engine_versions: JSON.stringify(state.replay.header.versions),
+        result: JSON.stringify({ winner: state.result.winner, score: state.result.score, ticks: state.result.ticks }),
+      });
 
     // Re-simulación directa con el motor (verify de E2): coincide tick a tick.
     const direct = await verify(state.replay);

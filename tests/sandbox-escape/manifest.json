@@ -1,13 +1,65 @@
 {
-  "description": "Suite de bots maliciosos deliberados (E6/T6.2). Cada uno intenta un escape del sandbox de la tabla 18.2. En un entorno con Docker, run-escape-suite.sh los lanza con DockerContainerRunner.buildRunArgs y verifica que NINGUNO logra su objetivo (no aparece 'ESCAPE-OK'/'ESCAPE-CRITICAL' en la salida) y que quedan registrados como security_findings. ia02 no tiene grupo docker: aquí la suite está ESCRITA Y LISTA, verificación real pendiente de entorno con Docker.",
+  "description": "Suite de bots maliciosos deliberados (E6/T6.2). Cada uno intenta un escape del sandbox de la tabla 18.2. run-escape-suite.sh los lanza con los flags de DockerContainerRunner.buildRunArgs y exige DOS cosas por vector: que no aparezca ningún escapeMarker, y que aparezca el blockedMarker positivo (o que el contenedor muera con uno de los killExitCodes declarados). El silencio NO cuenta como contención: sin marcador el vector se declara NO PROBADO y la suite falla (R1.6 · ERR-SEC-04).",
   "control": "tabla 18.2",
+  "blockedMarkerFormat": "SANDBOX-BLOCKED <id>",
   "bots": [
-    { "id": "01_internet_connect", "attack": "conexión a Internet", "mitigation": "red solo arena, sin DNS externo", "escapeMarker": "ESCAPE-OK" },
-    { "id": "02_write_outside_tmp", "attack": "escritura fuera de /tmp", "mitigation": "rootfs read-only, solo tmpfs /tmp", "escapeMarker": "ESCAPE-OK" },
-    { "id": "03_fork_bomb", "attack": "fork bomb", "mitigation": "--pids-limit + deadline", "escapeMarker": "ESCAPE-OK" },
-    { "id": "04_memory_exhaustion", "attack": "agotamiento de memoria", "mitigation": "--memory + OOM por contenedor", "escapeMarker": "ESCAPE-OK" },
-    { "id": "05_internal_network_scan", "attack": "escaneo de red interna", "mitigation": "segmentación: solo endpoint del motor", "escapeMarker": "ESCAPE-OK" },
-    { "id": "06_read_proc_sensitive", "attack": "lectura de /proc y secretos", "mitigation": "cap-drop ALL, seccomp, sin secretos montados", "escapeMarker": "LEAK" },
-    { "id": "07_docker_sock", "attack": "abrir docker.sock", "mitigation": "nunca se monta el socket de Docker", "escapeMarker": "ESCAPE-CRITICAL" }
+    {
+      "id": "01_internet_connect",
+      "attack": "conexión a Internet",
+      "mitigation": "red solo arena, sin DNS externo",
+      "escapeMarker": "ESCAPE-OK",
+      "blockedMarker": "SANDBOX-BLOCKED 01_internet_connect",
+      "killExitCodes": []
+    },
+    {
+      "id": "02_write_outside_tmp",
+      "attack": "escritura fuera de /tmp",
+      "mitigation": "rootfs read-only, solo tmpfs /tmp",
+      "escapeMarker": "ESCAPE-OK",
+      "blockedMarker": "SANDBOX-BLOCKED 02_write_outside_tmp",
+      "killExitCodes": []
+    },
+    {
+      "id": "03_fork_bomb",
+      "attack": "fork bomb",
+      "mitigation": "--pids-limit + deadline",
+      "escapeMarker": "ESCAPE-OK",
+      "blockedMarker": "SANDBOX-BLOCKED 03_fork_bomb",
+      "killExitCodes": [137, 139],
+      "killExitCodesWhy": "el contenedor puede morir por el pids-limit antes de imprimir: esa muerte ES la contención"
+    },
+    {
+      "id": "04_memory_exhaustion",
+      "attack": "agotamiento de memoria",
+      "mitigation": "--memory + OOM por contenedor",
+      "escapeMarker": "ESCAPE-OK",
+      "blockedMarker": "SANDBOX-BLOCKED 04_memory_exhaustion",
+      "killExitCodes": [137],
+      "killExitCodesWhy": "137 = SIGKILL del OOM killer: el límite de memoria funcionó"
+    },
+    {
+      "id": "05_internal_network_scan",
+      "attack": "escaneo de red interna",
+      "mitigation": "segmentación: solo endpoint del motor",
+      "escapeMarker": "ESCAPE-OK",
+      "blockedMarker": "SANDBOX-BLOCKED 05_internal_network_scan",
+      "killExitCodes": []
+    },
+    {
+      "id": "06_read_proc_sensitive",
+      "attack": "lectura de /proc y secretos",
+      "mitigation": "cap-drop ALL, seccomp, sin secretos montados",
+      "escapeMarker": "LEAK",
+      "blockedMarker": "SANDBOX-BLOCKED 06_read_proc_sensitive",
+      "killExitCodes": []
+    },
+    {
+      "id": "07_docker_sock",
+      "attack": "abrir docker.sock",
+      "mitigation": "nunca se monta el socket de Docker",
+      "escapeMarker": "ESCAPE-CRITICAL",
+      "blockedMarker": "SANDBOX-BLOCKED 07_docker_sock",
+      "killExitCodes": []
+    }
   ]
 }

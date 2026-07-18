@@ -2,7 +2,18 @@
 #
 # Etapas: 1 lint+formato+tipos · 2 unitarias · 3 esquemas y compatibilidad ·
 # 4 batallas deterministas de regresión · 5 build de imágenes · 6 escaneo ·
-# 7 despliegue a staging · 8 humo y promoción manual a producción.
+# 7 despliegue a staging · 8 humo y promoción manual a producción ·
+# 9 semáforo (R2.2, ERR-GES-05).
+#
+# Semáforo (job `semaforo`, lógica testeable en infrastructure/scripts/ci-gate.mjs):
+#   🟢 VERDE    todo ejecutado y aprobado (y en main, staging con evidencia real).
+#   🟡 AMARILLO pruebas bien pero entorno externo no disponible (p. ej. sin
+#               STAGING_HOST): el trabajo se reporta OMITIDO, nunca aprobado.
+#   🔴 ROJO     fallo funcional o de seguridad → el job semaforo FALLA y la
+#               promoción queda bloqueada.
+# Actions no admite conclusión "neutral" en jobs de workflow, así que el
+# amarillo se materializa como check-run "Semáforo CI" neutral (vía API) +
+# summary + ::warning::; el detalle está en docs/ronda2/reportes/R2.2-semaforo-ci.md.
 #
 # Presupuesto: la CI de un PR (etapas 1–6) debe tardar < 15 min. Las 1000
 # batallas y las suites lentas van a nightly.yml.
@@ -36,19 +47,16 @@ jobs:
       - run: npm ci
       - name: Lint de determinismo (nada de reloj real/Math.random en src/sim)
         run: npm run lint
-      - name: Tipos (tsc --noEmit)
-        # PENDIENTE de bloquear (H7, issue #11): de los 7 errores preexistentes
-        # de E2/E3/E4, quedan 2 en apps/arena-engine/src/sim/battle.ts (los 5 de
-        # map-service/generate y module-catalog se corrigieron el 2026-07-16).
-        # battle.ts es del equipo E2 (src/sim es intocable fuera de ese equipo);
-        # el detalle exacto y la corrección propuesta están en el issue #11.
-        # Cuando E2 los limpie y tsc dé 0, eliminar continue-on-error.
-        continue-on-error: true
-        run: npx tsc --noEmit
-      - name: Formato
-        # PENDIENTE: el repo no tiene formateador configurado (decidir prettier
-        # en ADR con los equipos; reformatear todo ahora generaría conflictos).
-        run: echo "formato - sin formateador configurado todavia (ver ADR-010)"
+      - name: Tipos (tsc --noEmit, BLOQUEANTE — R2.1, cierra H7/issue #11)
+        # ERR-GES-02: apps/web tiene su propio proyecto (jsx) y queda excluido
+        # del tsconfig raíz. ERR-GES-03: los 29 errores genuinos se corrigieron
+        # en R2.1; desde entonces un error de tipos ROMPE la CI (sin
+        # continue-on-error). Ambos proyectos deben dar 0 errores.
+        run: npm run typecheck
+      - name: Formato (prettier --check, BLOQUEANTE — R2.1)
+        # ERR-GES-05: formateador real. Ámbito en .prettierignore (solo código
+        # TS/JS; arena-engine entra cuando se fusione R2.7).
+        run: npm run format:check
 
   # ── Etapa 2: pruebas unitarias ─────────────────────────────────────────────
   unit:
@@ -60,8 +68,19 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
-      - name: Unitarias (apps y packages)
-        run: npx vitest run apps packages --maxWorkers=2
+      - name: Unitarias (apps, packages e infrastructure) con cobertura
+        # R2.1 (ERR-GES-05): cobertura V8 sobre las unitarias; el informe HTML
+        # y el resumen se publican como artefacto de CI.
+        # R2.2: se añade infrastructure/ — sus tests (escáner de Compose,
+        # ci-gate, backup, observabilidad) no corrían en NINGUNA etapa de ci.yml.
+        run: npx vitest run apps packages infrastructure --maxWorkers=2 --coverage.enabled --coverage.provider=v8 --coverage.reporter=text --coverage.reporter=html --coverage.reportsDirectory=coverage
+      - name: Informe de cobertura como artefacto
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          if-no-files-found: warn
 
   # ── Etapa 3: esquemas y compatibilidad de contratos ────────────────────────
   contracts:
@@ -171,11 +190,15 @@ jobs:
       - run: npm ci
       - name: Auditoría de dependencias npm
         run: npm audit --audit-level=high
-      - name: Escaneo del Compose (docker.sock / privilegiado, cap. 28)
-        if: hashFiles('infrastructure/scripts/scan-compose.mjs') != ''
+      - name: Escaneo del Compose (docker.sock / privilegiado, cap. 28) — BLOQUEANTE
+        # R2.2 (fail-closed): antes había un `if: hashFiles(...)` que saltaba el
+        # paso EN SILENCIO si el escáner no existía — un camino no verificable
+        # presentado como verde. Ahora, sin escáner, el job falla (rojo).
         run: node infrastructure/scripts/scan-compose.mjs infrastructure/docker-compose.yml
       - name: Escaneo de vulnerabilidades del árbol (Trivy fs)
-        uses: aquasecurity/trivy-action@0.28.0
+        # La 0.28.0 no existe: el job fallaba en seco con "Unable to resolve action"
+        # desde antes de R6.1. Las versiones de esta accion llevan prefijo v.
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -215,21 +238,32 @@ jobs:
     needs: [scan, e2e-mvp]
     runs-on: ubuntu-latest
     environment: staging
+    # R2.2: el job DECLARA lo que hizo de verdad. `resultado=desplegado` es la
+    # única evidencia que el semáforo acepta como verde; `omitido` → AMARILLO.
+    outputs:
+      resultado: ${{ steps.deploy.outputs.resultado }}
     steps:
       - uses: actions/checkout@v4
-      - name: Desplegar en staging
+      - name: Desplegar en staging (o declararse OMITIDO, nunca verde de mentira)
+        id: deploy
         # PENDIENTE de entorno: requiere una VM de staging accesible y los
         # secretos STAGING_SSH_KEY/STAGING_HOST configurados por el operador
-        # (docs/despliegue.md, sección "CI/CD"). Sin ellos, el paso lo documenta.
+        # (docs/despliegue.md, sección "CI/CD"). R2.2 (ERR-GES-05): sin ellos el
+        # despliegue queda registrado como OMITIDO (semáforo AMARILLO), no como
+        # éxito — antes hacía `exit 0` y el run entero salía en verde.
+        env:
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
         run: |
-          if [ -z "${{ secrets.STAGING_HOST || '' }}" ]; then
-            echo "::warning::STAGING_HOST sin configurar: despliegue a staging pendiente del operador (docs/despliegue.md)."
+          if [ -z "$STAGING_HOST" ]; then
+            echo "resultado=omitido" >> "$GITHUB_OUTPUT"
+            echo "::warning::STAGING_HOST sin configurar: despliegue a staging OMITIDO (semáforo AMARILLO, docs/despliegue.md)."
             exit 0
           fi
-          echo "Desplegando sha-${{ github.sha }} en ${{ secrets.STAGING_HOST }}"
+          echo "Desplegando sha-${{ github.sha }} en $STAGING_HOST"
           # ssh deploy@$STAGING_HOST 'cd /opt/s9-ai-arena && git pull && \
           #   docker compose -f infrastructure/docker-compose.yml --profile production pull && \
           #   docker compose -f infrastructure/docker-compose.yml --profile production up -d'
+          echo "resultado=desplegado" >> "$GITHUB_OUTPUT"
 
   # ── Etapa 8: humo en staging y promoción manual a producción ──────────────
   smoke-and-promote:
@@ -240,13 +274,89 @@ jobs:
     # environment `production` (configuración del repositorio; pasos del
     # operador en docs/despliegue.md). El job queda en espera hasta aprobación.
     environment: production
+    outputs:
+      resultado: ${{ steps.smoke.outputs.resultado }}
     steps:
       - uses: actions/checkout@v4
-      - name: Humo E2E de staging y promoción
+      - name: Humo E2E de staging y promoción (o declararse OMITIDO)
+        id: smoke
+        # R2.2: solo se promociona sobre un despliegue REAL. Si deploy-staging
+        # se declaró omitido (o sin evidencia), el humo también queda OMITIDO
+        # (semáforo AMARILLO) — antes hacía `exit 0` y salía en verde.
+        env:
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+          DEPLOY_RESULTADO: ${{ needs.deploy-staging.outputs.resultado }}
         run: |
-          if [ -z "${{ secrets.STAGING_HOST || '' }}" ]; then
-            echo "::warning::Humo E2E pendiente: sin staging configurado (docs/despliegue.md)."
+          if [ "$DEPLOY_RESULTADO" != "desplegado" ] || [ -z "$STAGING_HOST" ]; then
+            echo "resultado=omitido" >> "$GITHUB_OUTPUT"
+            echo "::warning::Humo y promoción OMITIDOS: no hay despliegue real de staging que probar (deploy=${DEPLOY_RESULTADO:-sin-evidencia}; semáforo AMARILLO, docs/despliegue.md)."
             exit 0
           fi
-          bash infrastructure/scripts/smoke.sh "https://${{ secrets.STAGING_HOST }}"
+          bash infrastructure/scripts/smoke.sh "https://$STAGING_HOST"
           echo "Promoción aprobada manualmente: desplegar en producción (mismo procedimiento que staging)."
+          echo "resultado=promocionado" >> "$GITHUB_OUTPUT"
+
+  # ── Etapa 9: semáforo (R2.2, ERR-GES-05) ───────────────────────────────────
+  # Corre SIEMPRE (if: always()) y es el único veredicto fiable del run:
+  # 🔴 falla el job (bloquea) · 🟡 job verde con check-run "Semáforo CI" en
+  # neutral + warnings + summary (trabajo omitido, jamás contado como aprobado)
+  # · 🟢 todo ejecutado de verdad. Lógica testeable en ci-gate.mjs
+  # (tests: infrastructure/tests/ci-gate.test.ts).
+  semaforo:
+    if: always()
+    needs:
+      [
+        lint-format-types,
+        unit,
+        contracts,
+        regression-battles,
+        build-images,
+        scan,
+        e2e-mvp,
+        deploy-staging,
+        smoke-and-promote,
+      ]
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Evaluar semáforo (rojo = exit 1; amarillo = warnings + output)
+        id: gate
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: node infrastructure/scripts/ci-gate.mjs
+      - name: Publicar check-run "Semáforo CI" (neutral si amarillo)
+        # El amarillo "de verdad" de GitHub: un check-run con conclusión
+        # `neutral` (gris, no verde). Se publica también en verde/rojo para que
+        # el operador tenga UN indicador con el estado real del run.
+        # continue-on-error: la fuente de verdad es el propio job `semaforo`
+        # (exit/summary/warnings); si el token no puede crear checks (p. ej. un
+        # PR de fork, token de solo lectura), el veredicto no se pierde.
+        if: always()
+        continue-on-error: true
+        uses: actions/github-script@v7
+        env:
+          COLOR: ${{ steps.gate.outputs.color || 'rojo' }}
+        with:
+          script: |
+            const color = process.env.COLOR;
+            const conclusion = { verde: "success", amarillo: "neutral", rojo: "failure" }[color] ?? "failure";
+            const titulo = {
+              verde: "VERDE: todo ejecutado y aprobado",
+              amarillo: "AMARILLO: pruebas bien, pero hay trabajo OMITIDO por falta de entorno externo",
+              rojo: "ROJO: fallo funcional o de seguridad — promoción bloqueada",
+            }[color] ?? "ROJO: el gate no pudo evaluarse (fail-closed)";
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head_sha: context.payload.pull_request?.head?.sha ?? context.sha,
+              name: "Semáforo CI",
+              status: "completed",
+              conclusion,
+              output: { title: titulo, summary: `Detalle en el summary del job \`semaforo\` de este run. Lógica: infrastructure/scripts/ci-gate.mjs (R2.2).` },
+            });

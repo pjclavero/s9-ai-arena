@@ -6,5 +6,10 @@ services:
     image: node:22-alpine
   bot-manager:
     image: node:22-alpine
+    environment:
+      # R1.7: sin docker.sock; el bot-manager habla con el proxy del host.
+      DOCKER_PROXY_URL: http://docker-proxy.internal:2375
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - bot_sources:/data/bot-sources
+volumes:
+  bot_sources:

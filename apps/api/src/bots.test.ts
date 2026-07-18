@@ -21,7 +21,10 @@ import { BOT_STATES } from "./db/migrations.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const GOOD_LOADOUT = JSON.parse(
-  readFileSync(join(__dirname, "..", "..", "..", "packages", "module-catalog", "examples", "loadout-medium-gunner.json"), "utf8"),
+  readFileSync(
+    join(__dirname, "..", "..", "..", "packages", "module-catalog", "examples", "loadout-medium-gunner.json"),
+    "utf8",
+  ),
 );
 
 let h: TestDbHandle;
@@ -125,7 +128,8 @@ describe("T7.3 máquina de estados (cap. 17.1)", () => {
 
     // Toda transición legal queda auditada
     for (const action of ["submit", "validated", "publish", "retire"]) {
-      const row = await h.db("audit_log")
+      const row = await h
+        .db("audit_log")
         .where({ target: `bot:${bot.id}@${version}` })
         .whereLike("action", `%${action}%`)
         .first();
@@ -203,7 +207,10 @@ describe("T7.3 inmutabilidad de published/frozen (DoD: ni el admin)", () => {
       artifactHash: "b".repeat(64),
     });
     await request(app).post(`/bots/${bot.id}/versions/${version}/actions/submit`).set(auth(dev));
-    await request(app).post(`/bots/${bot.id}/versions/${version}/actions/publish`).set(auth(dev)).send({ codePublic: true });
+    await request(app)
+      .post(`/bots/${bot.id}/versions/${version}/actions/publish`)
+      .set(auth(dev))
+      .send({ codePublic: true });
 
     // El dueño choca con la máquina de estados (409, cap. 17.1)
     const submit = await request(app).post(`/bots/${bot.id}/versions/${version}/actions/submit`).set(auth(dev));
@@ -256,7 +263,8 @@ describe("T7.3 loadouts (cap. 17.2)", () => {
     });
     await request(app).post(`/bots/${bot.id}/versions/${version}/actions/submit`).set(auth(dev));
     await request(app).post(`/bots/${bot.id}/versions/${version}/actions/publish`).set(auth(dev)).send({});
-    const [t] = await h.db("tournaments")
+    const [t] = await h
+      .db("tournaments")
       .insert({ name: "copa-17-2", format: "round_robin", mode: "deathmatch", ruleset_id: DEFAULT_RULESET_ID })
       .returning("*");
     await h.db("entries").insert({
@@ -334,7 +342,8 @@ describe("T7.3 loadouts (cap. 17.2)", () => {
 
   it("las referencias del loadout impiden borrar módulos del catálogo (integridad T7.1)", async () => {
     await expect(
-      h.db("module_definitions")
+      h
+        .db("module_definitions")
         .where({ catalog_version: "mvp@1", module_id: "weapon.cannon", module_version: 1 })
         .delete(),
     ).rejects.toThrow(/foreign key|viola/i);
@@ -359,9 +368,36 @@ describe("T7.3 autorización de objeto (código y logs privados)", () => {
       artifactHash: "d".repeat(64),
     });
     await request(app).post(`/bots/${bot.id}/versions/${version}/actions/submit`).set(auth(dev));
-    await request(app).post(`/bots/${bot.id}/versions/${version}/actions/publish`).set(auth(dev)).send({ codePublic: true });
+    await request(app)
+      .post(`/bots/${bot.id}/versions/${version}/actions/publish`)
+      .set(auth(dev))
+      .send({ codePublic: true });
     const nowPublic = await request(app).get(`/bots/${bot.id}/versions/${version}/source`).set(auth(other));
     expect(nowPublic.status).toBe(200);
+  });
+
+  it("R2.6 (ERR-SEC-09): la descarga emite Content-Disposition RFC 6266/5987 sin comillas/CRLF y con defecto derivado del id de versión", async () => {
+    const bot = await newBotWithLoadout("header-bot", "public");
+    const version = await newVersion(bot.id);
+
+    // Nombre hostil persistido (fila anterior al saneado de entrada): la cabecera
+    // se sanea igualmente al emitir — sin inyección ni spoofing.
+    await h
+      .db("bot_versions")
+      .where({ bot_id: bot.id, version })
+      .update({ source_filename: 'evil".zip\r\nX-Spoof: 1' });
+    const evil = await request(app).get(`/bots/${bot.id}/versions/${version}/source`).set(auth(dev));
+    expect(evil.status).toBe(200);
+    const header = evil.headers["content-disposition"];
+    expect(header).not.toMatch(/[\r\n]/);
+    expect(header).toMatch(/^attachment; filename="[^"]*"; filename\*=UTF-8''[A-Za-z0-9%._-]*$/);
+    expect(evil.headers["x-spoof"]).toBeUndefined();
+
+    // Sin nombre almacenado: defecto derivado del id de versión, no del cliente.
+    await h.db("bot_versions").where({ bot_id: bot.id, version }).update({ source_filename: null });
+    const fallback = await request(app).get(`/bots/${bot.id}/versions/${version}/source`).set(auth(dev));
+    expect(fallback.status).toBe(200);
+    expect(fallback.headers["content-disposition"]).toContain(`filename="bot-${bot.id}-v${version}-source.bin"`);
   });
 
   it("un bot privado ajeno es 404 (ni existe) y sus builds/logs invisibles", async () => {
@@ -387,9 +423,7 @@ describe("T7.3 autorización de objeto (código y logs privados)", () => {
     const otherDevLogin = await request(app)
       .post("/auth/login")
       .send({ email: "otrodev@test.local", password: "password-otrodev-1" });
-    const strangerBuild = await request(app)
-      .get(`/builds/${buildId}`)
-      .set(auth(otherDevLogin.body.accessToken));
+    const strangerBuild = await request(app).get(`/builds/${buildId}`).set(auth(otherDevLogin.body.accessToken));
     expect(strangerBuild.status).toBe(404);
 
     // El dueño ve logUrl; un moderador también; la respuesta al dueño la incluye

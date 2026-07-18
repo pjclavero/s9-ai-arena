@@ -18,14 +18,7 @@ import { fromJsonl, record, toJsonl, type Replay } from "../../arena-engine/src/
 import { emptyArena, gunnerLoadout, scoutLoadout } from "../../arena-engine/src/fixtures.js";
 import { HunterBot } from "../../arena-engine/src/stubs.js";
 import { PREFERRED_ALGO, buildKeyframes, nearestKeyframe } from "../src/format.js";
-import {
-  ingestReplay,
-  loadStored,
-  replayPath,
-  sweepRetention,
-  validateReplay,
-  verifyStored,
-} from "../src/store.js";
+import { ingestReplay, loadStored, replayPath, sweepRetention, validateReplay, verifyStored } from "../src/store.js";
 import { createReplayServer } from "../src/server.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -238,7 +231,9 @@ describe("T8.1 HTTP: rango, índice y segmentos", () => {
     expect(suffix.status).toBe(206);
     expect((suffix.body as Buffer).length).toBe(5);
 
-    const bad = await request(app).get(`/replays/${id}`).set("Range", `bytes=${stored.index.sizeBytes + 10}-`);
+    const bad = await request(app)
+      .get(`/replays/${id}`)
+      .set("Range", `bytes=${stored.index.sizeBytes + 10}-`);
     expect(bad.status).toBe(416);
 
     const idx = await request(app).get(`/replays/${id}/index`);
@@ -273,7 +268,10 @@ describe("T8.1 HTTP: rango, índice y segmentos", () => {
     const app = createReplayServer({ dir });
     const id = replay.header.battleId;
 
-    const bad = await request(app).post(`/replays/${id}`).set("Content-Type", "application/x-ndjson").send("no es jsonl");
+    const bad = await request(app)
+      .post(`/replays/${id}`)
+      .set("Content-Type", "application/x-ndjson")
+      .send("no es jsonl");
     expect([400, 422]).toContain(bad.status);
 
     const ok = await request(app)

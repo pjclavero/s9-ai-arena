@@ -46,7 +46,17 @@ function minimalTiled(): TiledMap {
         type: "objectgroup",
         name: "spawns",
         objects: [
-          { id: 1, name: "sp_1", x: 5, y: 5, point: true, properties: [{ name: "team", value: "red" }, { name: "heading", value: 0 }] },
+          {
+            id: 1,
+            name: "sp_1",
+            x: 5,
+            y: 5,
+            point: true,
+            properties: [
+              { name: "team", value: "red" },
+              { name: "heading", value: 0 },
+            ],
+          },
         ],
       },
     ],
@@ -141,7 +151,12 @@ describe("importTiled · capas obligatorias ausentes", () => {
 describe("golden · validación de esquema E1", () => {
   it("maps/mvp-arena-01.json valida contra map.schema.json (Ajv 2020)", () => {
     const schema = JSON.parse(readFileSync(SCHEMA_PATH, "utf8"));
-    const ajv = new (Ajv2020 as unknown as new (o: object) => { compile: (s: object) => (d: unknown) => boolean; errorsText: () => string })({
+    const ajv = new (
+      Ajv2020 as unknown as new (o: object) => {
+        compile: (s: object) => (d: unknown) => boolean;
+        errorsText: () => string;
+      }
+    )({
       strict: false,
       allErrors: true,
     });

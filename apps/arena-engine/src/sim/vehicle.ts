@@ -20,8 +20,7 @@ import {
 import { clamp } from "./physics.js";
 
 export type ModuleCategory =
-  | "movement" | "power" | "sensor" | "weapon" | "ammo"
-  | "mine" | "armor" | "radio" | "utility";
+  "movement" | "power" | "sensor" | "weapon" | "ammo" | "mine" | "armor" | "radio" | "utility";
 
 /** Especificación efectiva de un módulo, tal y como la entrega E3 (catálogo congelado). */
 export interface ModuleSpec {
@@ -98,11 +97,25 @@ export class Vehicle {
   readonly spec: VehicleSpec;
 
   hullHp: number;
+  /**
+   * Heading del CHASIS, espejo del último conocido por la física (el mundo es la
+   * autoridad; el bucle lo refresca tras cada step). Antes vivía en un WeakMap global
+   * de combat.ts (ERR-ENG-05): estado mutable a nivel de módulo, compartido entre
+   * batallas del proceso, y que devolvía 0 para un vehículo aún no registrado. Es
+   * estado del vehículo y vive aquí.
+   */
+  heading = 0;
   turretHeading = 0;
   energyEU: number;
   alive = true;
   respawnAtTick = 0;
   carryingFlag: string | null = null;
+  /**
+   * R3.8 · Marca de Juggernaut/VIP, al estilo carryingFlag: estado por vehículo que
+   * SOLO el modo juggernaut activa. Entra en el hash canónico de estado y en el
+   * snapshot público (battle.ts): es estado de simulación, no decoración.
+   */
+  juggernaut = false;
 
   /** Salud del blindaje por sector, en fracción 0..1. Sin blindaje = sin entrada. */
   armor: Partial<Record<Sector, { hp: number; hpMax: number; reduction: number; slot: string }>> = {};
@@ -116,6 +129,15 @@ export class Vehicle {
   /** Última orden válida: es la base de la ACCIÓN SEGURA (D2). */
   lastMove = { throttle: 0, steer: 0 };
   lastTurretTarget: number | null = null;
+
+  /**
+   * Rate-limit de radio SIN fuga (ERR-ENG-06): un contador por vehículo que guarda el
+   * segundo de juego al que pertenece y se reinicia al cambiar de segundo. Sustituye al
+   * Map `id:segundo` de Battle, que crecía una entrada por vehículo y segundo y nunca
+   * se purgaba (~2 entradas/s con 2 vehículos durante toda la batalla).
+   */
+  radioSecond = -1;
+  radioSentThisSecond = 0;
 
   constructor(id: string, team: string, botId: string, spec: VehicleSpec) {
     this.id = id;
@@ -285,6 +307,9 @@ export class Vehicle {
     this.hullHp = this.spec.hullHp;
     this.alive = true;
     this.carryingFlag = null;
+    // La marca de juggernaut NO revive con el vehículo: la reasigna el modo al morir
+    // el marcado (onKill). Limpiarla aquí es la red de seguridad que evita dos marcados.
+    this.juggernaut = false;
     this.energyEU = this.energyCapacity();
     for (const m of this.modules.values()) {
       m.hp = m.spec.hp;

@@ -26,14 +26,15 @@ export function authenticate(db: Db) {
       .first();
     if (!session) return next(unauthorized("Sesión revocada o expirada"));
 
-    const roles = (await db("user_roles").where({ user_id: claims.sub })).map(
-      (r: { role: RoleName }) => r.role,
-    );
+    const roles = (await db("user_roles").where({ user_id: claims.sub })).map((r: { role: RoleName }) => r.role);
     const rank = Math.max(0, ...roles.map((r: RoleName) => ROLE_RANK[r] ?? 0));
     req.auth = { userId: claims.sub, sessionId: claims.sid, roles, rank };
 
     // last_seen_at sin bloquear la petición
-    db("sessions").where({ id: session.id }).update({ last_seen_at: db.fn.now() }).catch(() => {});
+    db("sessions")
+      .where({ id: session.id })
+      .update({ last_seen_at: db.fn.now() })
+      .catch(() => {});
     next();
   };
 }

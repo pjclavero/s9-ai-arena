@@ -83,10 +83,18 @@ describe("H2 · el worker cablea el espectador en vivo y las stats ricas de E8",
 
   it("una batalla de torneo ejecutada por el worker se ve EN DIRECTO con ticket anónimo", async () => {
     // Torneo + match REALES en BD (round 2): el attach debe llevar meta.round.
-    const [t] = await h.db("tournaments")
-      .insert({ name: "h2-live", format: "round_robin", mode: "deathmatch", ruleset_id: "mvp-default", state: "running" })
+    const [t] = await h
+      .db("tournaments")
+      .insert({
+        name: "h2-live",
+        format: "round_robin",
+        mode: "deathmatch",
+        ruleset_id: "mvp-default",
+        state: "running",
+      })
       .returning("id");
-    const [m] = await h.db("matches")
+    const [m] = await h
+      .db("matches")
       .insert({
         tournament_id: t.id,
         round: 2,
@@ -112,9 +120,11 @@ describe("H2 · el worker cablea el espectador en vivo y las stats ricas de E8",
       // Ticket de UN SOLO USO: uno nuevo por intento (el jti se quema al conectar).
       const tk = await request(app).post(`/battles/${battleId}/spectate-ticket`);
       expect(tk.status).toBe(201);
-      const candidate = new WebSocket(
-        `ws://127.0.0.1:${gateway.port}/spectate/${battleId}?ticket=${encodeURIComponent(tk.body.ticket)}`,
-      );
+      // R2.6 (ERR-SEC-16): el ticket viaja como subprotocolo, nunca en la URL.
+      const candidate = new WebSocket(`ws://127.0.0.1:${gateway.port}/spectate/${battleId}`, [
+        "spectate.v1",
+        `ticket.${tk.body.ticket}`,
+      ]);
       const ok = await new Promise<boolean>((resolve) => {
         candidate.once("message", (d) => {
           messages.push(JSON.parse(d.toString()));

@@ -5,6 +5,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { ReplayPlayer, buildShareLink, httpReplaySource } from "../viewer/replay-player.js";
+import { ReplayFeed } from "../viewer/replay-feed.js";
 import type { ViewerScene } from "../viewer/PhaserViewer.js";
 import type { CameraMode } from "../viewer/camera.js";
 
@@ -14,6 +15,7 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<ViewerScene | null>(null);
   const playerRef = useRef<ReplayPlayer | null>(null);
+  const feedRef = useRef<ReplayFeed | null>(null);
   const [status, setStatus] = useState("cargando…");
   const [tick, setTick] = useState(0);
   const [totalTicks, setTotalTicks] = useState(0);
@@ -30,7 +32,7 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
 
     void import("../viewer/PhaserViewer.js").then(async ({ createViewerGame, ViewerScene }) => {
       if (!alive || !hostRef.current) return;
-      game = createViewerGame(hostRef.current);
+      game = createViewerGame(hostRef.current, { targetFps: 60 });
       const scene = (game as any).scene.getScene("viewer") as InstanceType<typeof ViewerScene>;
       sceneRef.current = scene;
 
@@ -45,6 +47,11 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
       }
       setTotalTicks(player.index!.ticks);
       setStatus("listo");
+      // R3.1 (ERR-VIS-01): la ReplayFeed fecha los snapshots en tiempo de PARTIDA
+      // (derivado del playhead) y usa pushSnapshot por snapshot nuevo + resetTo
+      // solo tras seek — misma ruta de interpolación que el directo, sin saltos.
+      const feed = new ReplayFeed(player, scene);
+      feedRef.current = feed;
       player.play();
       setPlaying(true);
 
@@ -52,10 +59,8 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
       const loop = async () => {
         if (!alive) return;
         const now = performance.now();
-        const { snapshot, events, finished } = await player.advance(now - last);
+        const { finished } = await feed.frame(now - last);
         last = now;
-        if (snapshot) scene.resetTo(snapshot, now);
-        for (const e of events) scene.pushEvent(e);
         setTick(player.currentTick);
         if (finished) {
           setPlaying(false);
@@ -133,7 +138,9 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
         data-testid="timeline"
         onChange={(e) => {
           const t = Number(e.target.value);
-          void player?.seekTick(t).then(() => setTick(player.currentTick));
+          // El seek pasa por la ReplayFeed: reposiciona la escena con resetTo
+          // (sin arrastrar interpolación del tramo anterior), incluso en pausa.
+          void feedRef.current?.seek(t).then(() => setTick(player!.currentTick));
         }}
         style={{ width: "100%" }}
       />

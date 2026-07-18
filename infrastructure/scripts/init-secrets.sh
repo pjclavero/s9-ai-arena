@@ -6,6 +6,19 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/secrets"
 mkdir -p "$DIR/tls"
 
+# Los contenedores corren como usuario sin privilegios (USER node, uid 1000) y
+# Compose monta cada secreto con el owner del archivo del host: fuera de swarm
+# ignora uid/gid/mode, así que un 0600 root:root da EACCES al leer
+# /run/secrets/*. El dueño pasa a ser el uid del runtime; el modo sigue 0400.
+RUNTIME_UID="${RUNTIME_UID:-1000}"
+RUNTIME_GID="${RUNTIME_GID:-1000}"
+
+harden() {
+  local f="$DIR/$1"
+  chown "$RUNTIME_UID:$RUNTIME_GID" "$f" 2>/dev/null || true
+  chmod 0400 "$f"
+}
+
 gen() {
   local f="$DIR/$1"
   if [ -s "$f" ]; then
@@ -15,6 +28,7 @@ gen() {
     head -c 32 /dev/urandom | base64 | tr -d '=+/' | head -c 40 > "$f"
     echo "generado:  $1"
   fi
+  harden "$1"
 }
 
 gen postgres_password.txt
@@ -27,6 +41,7 @@ if [ ! -f "$DIR/stream_key.txt" ]; then
   umask 077; : > "$DIR/stream_key.txt"
   echo "creado vacío: stream_key.txt (rellenar con la clave de YouTube si se usa streaming)"
 fi
+harden stream_key.txt
 
 # TLS solo en modo standalone: autofirmado si no hay certificados (docs/despliegue.md).
 if [ ! -f "$DIR/tls/fullchain.pem" ]; then

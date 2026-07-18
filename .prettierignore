@@ -1,0 +1,17 @@
+# R2.1 (ERR-GES-05) · Ámbito del formateador: SOLO código TS/JS del producto.
+#
+# - JSON/MD/YAML fuera: los JSON de mapas/fixtures participan en checksums y
+#   goldens, y la prosa de docs/ no debe churnar por formato.
+# - arena-server/arena-viewer/bots son el prototipo v1 (legado, ya excluido
+#   también del typecheck raíz): no se tocan.
+# - apps/arena-engine entró al formateo al fusionarse R2.7 (integración R2/R3).
+*.json
+*.md
+*.yml
+*.yaml
+docs/
+data/
+maps/
+apps/arena-server/
+apps/arena-viewer/
+bots/

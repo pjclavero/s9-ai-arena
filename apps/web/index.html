@@ -5,19 +5,128 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>S9 AI Arena</title>
     <style>
-      body { font-family: system-ui, sans-serif; margin: 0; background: #10141a; color: #e6e8eb; }
-      nav { display: flex; gap: 1rem; padding: 0.8rem 1.2rem; background: #1a212b; align-items: center; }
-      nav a { color: #7fb4ff; text-decoration: none; }
-      main { max-width: 960px; margin: 1.5rem auto; padding: 0 1rem; }
-      button { background: #2f6fdb; color: white; border: 0; padding: 0.45rem 0.9rem; border-radius: 4px; cursor: pointer; }
-      button:disabled { background: #444c58; cursor: not-allowed; }
-      input, select, textarea { background: #0d1117; color: #e6e8eb; border: 1px solid #333c4a; border-radius: 4px; padding: 0.4rem; }
-      table { border-collapse: collapse; width: 100%; }
-      td, th { border-bottom: 1px solid #2a3340; padding: 0.4rem 0.6rem; text-align: left; }
-      .error { color: #ff8686; }
-      .ok { color: #7fe3a1; }
-      .warn { color: #ffd479; }
-      .card { background: #171d26; border: 1px solid #2a3340; border-radius: 6px; padding: 1rem; margin-bottom: 1rem; }
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 0;
+        background: #10141a;
+        color: #e6e8eb;
+      }
+      nav {
+        display: flex;
+        gap: 1rem;
+        padding: 0.8rem 1.2rem;
+        background: #1a212b;
+        align-items: center;
+      }
+      nav a {
+        color: #7fb4ff;
+        text-decoration: none;
+      }
+      main {
+        max-width: 960px;
+        margin: 1.5rem auto;
+        padding: 0 1rem;
+      }
+      button {
+        background: #2f6fdb;
+        color: white;
+        border: 0;
+        padding: 0.45rem 0.9rem;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      button:disabled {
+        background: #444c58;
+        cursor: not-allowed;
+      }
+      input,
+      select,
+      textarea {
+        background: #0d1117;
+        color: #e6e8eb;
+        border: 1px solid #333c4a;
+        border-radius: 4px;
+        padding: 0.4rem;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+      td,
+      th {
+        border-bottom: 1px solid #2a3340;
+        padding: 0.4rem 0.6rem;
+        text-align: left;
+      }
+      .error {
+        color: #ff8686;
+      }
+      .ok {
+        color: #7fe3a1;
+      }
+      .warn {
+        color: #ffd479;
+      }
+      .card {
+        background: #171d26;
+        border: 1px solid #2a3340;
+        border-radius: 6px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+      }
+      /* R3.7 · a11y y responsive del panel */
+      :focus-visible {
+        outline: 2px solid #7fb4ff;
+        outline-offset: 2px;
+        border-radius: 2px;
+      }
+      button.link {
+        background: none;
+        border: 0;
+        padding: 0;
+        color: #7fb4ff;
+        cursor: pointer;
+        text-decoration: underline;
+        font: inherit;
+      }
+      .bracket {
+        display: flex;
+        gap: 1rem;
+        overflow-x: auto;
+        align-items: flex-start;
+      }
+      .bracket .round {
+        min-width: 200px;
+        background: #10141a;
+        border: 1px solid #2a3340;
+        border-radius: 6px;
+        padding: 0.5rem 0.8rem;
+      }
+      .bracket ul {
+        list-style: none;
+        padding-left: 0;
+      }
+      .bracket li {
+        border-bottom: 1px solid #2a3340;
+        padding: 0.35rem 0;
+      }
+      @media (max-width: 720px) {
+        nav {
+          flex-wrap: wrap;
+          gap: 0.5rem;
+        }
+        main {
+          margin: 0.8rem auto;
+          padding: 0 0.6rem;
+        }
+        table {
+          display: block;
+          overflow-x: auto;
+        }
+        textarea {
+          width: 100%;
+        }
+      }
     </style>
   </head>
   <body>

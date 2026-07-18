@@ -92,7 +92,12 @@ export class OverlayState {
       }
       case "score_changed":
         this.score = { ...e.score };
-        this.push(e, `Marcador: ${Object.entries(e.score).map(([t, n]) => `${t} ${n}`).join(" · ")}`);
+        this.push(
+          e,
+          `Marcador: ${Object.entries(e.score)
+            .map(([t, n]) => `${t} ${n}`)
+            .join(" · ")}`,
+        );
         break;
       case "vehicle_destroyed":
         this.push(e, `${e.targetId} destruido`);

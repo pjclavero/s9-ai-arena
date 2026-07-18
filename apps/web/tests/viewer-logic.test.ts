@@ -48,8 +48,22 @@ describe("interpolación en cliente (snapshots a 10 Hz → render a 60 fps)", ()
 
   it("reset (reconexión) no interpola a través del hueco", () => {
     const itp = new SnapshotInterpolator();
-    itp.push({ tick: 0, vehicles: [{ id: "v1", position: { x: 0, y: 0 }, heading: 0, turretHeading: 0, alive: true }], projectiles: [] }, 0);
-    itp.reset({ tick: 300, vehicles: [{ id: "v1", position: { x: 50, y: 0 }, heading: 0, turretHeading: 0, alive: true }], projectiles: [] }, 10_000);
+    itp.push(
+      {
+        tick: 0,
+        vehicles: [{ id: "v1", position: { x: 0, y: 0 }, heading: 0, turretHeading: 0, alive: true }],
+        projectiles: [],
+      },
+      0,
+    );
+    itp.reset(
+      {
+        tick: 300,
+        vehicles: [{ id: "v1", position: { x: 50, y: 0 }, heading: 0, turretHeading: 0, alive: true }],
+        projectiles: [],
+      },
+      10_000,
+    );
     expect(itp.sampleAt(10_001)!.vehicles.get("v1")!.x).toBe(50);
   });
 });

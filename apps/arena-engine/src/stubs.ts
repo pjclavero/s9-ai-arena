@@ -34,7 +34,10 @@ export class ForwardBot implements BotAgent {
 
 /** Gira en círculo. Prueba de velocidad angular. */
 export class CircleBot implements BotAgent {
-  constructor(readonly botId: string, private steer = 0.6) {}
+  constructor(
+    readonly botId: string,
+    private steer = 0.6,
+  ) {}
   decide(obs: any) {
     return { forTick: obs.tick, move: { throttle: 0.7, steer: this.steer } };
   }
@@ -45,7 +48,10 @@ export class CircleBot implements BotAgent {
  * ejercita torreta, arco, cooldown, munición y energía.
  */
 export class HunterBot implements BotAgent {
-  constructor(readonly botId: string, private weaponSlot = "turret_main") {}
+  constructor(
+    readonly botId: string,
+    private weaponSlot = "turret_main",
+  ) {}
 
   decide(obs: any) {
     const cmd: any = { forTick: obs.tick, move: { throttle: 0.5, steer: 0 } };

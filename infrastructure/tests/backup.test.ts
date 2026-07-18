@@ -101,12 +101,13 @@ describe("restore.sh (dry-run y verificación de integridad reales)", () => {
 describe("secretos fuera del repositorio (revisión automatizada, DoD T10.4)", () => {
   it("ningún archivo de infrastructure/secrets/ (salvo README/.gitignore) está versionado", () => {
     const tracked = execSync("git ls-files infrastructure/secrets/", {
-      cwd: join(here, "..", ".."), encoding: "utf8",
-    }).trim().split("\n").filter(Boolean);
-    expect(tracked.sort()).toEqual([
-      "infrastructure/secrets/.gitignore",
-      "infrastructure/secrets/README.md",
-    ]);
+      cwd: join(here, "..", ".."),
+      encoding: "utf8",
+    })
+      .trim()
+      .split("\n")
+      .filter(Boolean);
+    expect(tracked.sort()).toEqual(["infrastructure/secrets/.gitignore", "infrastructure/secrets/README.md"]);
   });
 });
 
@@ -121,7 +122,12 @@ describe("servicio backup en el Compose", () => {
   });
 
   it("monta los volúmenes de datos SOLO en lectura y los secretos por archivo", () => {
-    for (const v of ["arena_maps:/data/maps:ro", "arena_bot_sources:/data/bot-sources:ro", "arena_replays:/data/replays:ro", "./secrets:/secrets:ro"]) {
+    for (const v of [
+      "arena_maps:/data/maps:ro",
+      "arena_bot_sources:/data/bot-sources:ro",
+      "arena_replays:/data/replays:ro",
+      "./secrets:/secrets:ro",
+    ]) {
       expect(svc.volumes).toContain(v);
     }
     expect(svc.secrets).toContain("restic_password");

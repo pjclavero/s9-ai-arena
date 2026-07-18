@@ -19,16 +19,47 @@
  */
 import type { PipelineConfig } from "./config.js";
 import type { Runtime, SourceFile } from "./types.js";
+import { extractAst, type AstFinding } from "./ast-analysis.js";
 
 // Módulos de la stdlib que NO requieren declaración de dependencia.
+// R2.4 (ERR-SEC-06): `os` y `process` YA NO están aquí — un bot no tiene por qué
+// tocar entorno/procesos, y ambos figuran ahora en las listas de peligrosos.
 const PYTHON_STDLIB = new Set([
-  "sys", "os", "math", "json", "random", "typing", "collections", "itertools",
-  "functools", "dataclasses", "abc", "time", "re", "enum", "heapq", "bisect",
-  "copy", "struct", "array", "statistics", "decimal", "fractions", "queue",
+  "sys",
+  "math",
+  "json",
+  "random",
+  "typing",
+  "collections",
+  "itertools",
+  "functools",
+  "dataclasses",
+  "abc",
+  "time",
+  "re",
+  "enum",
+  "heapq",
+  "bisect",
+  "copy",
+  "struct",
+  "array",
+  "statistics",
+  "decimal",
+  "fractions",
+  "queue",
 ]);
 const NODE_BUILTINS = new Set([
-  "assert", "buffer", "events", "path", "querystring", "string_decoder",
-  "url", "util", "stream", "timers", "console", "process",
+  "assert",
+  "buffer",
+  "events",
+  "path",
+  "querystring",
+  "string_decoder",
+  "url",
+  "util",
+  "stream",
+  "timers",
+  "console",
 ]);
 
 // Builtins peligrosos para un bot sandboxeado (red, procesos, FS crudo): la lista es
@@ -53,6 +84,11 @@ export interface StaticAnalysisResult {
   /** Imports de builtins peligrosos (red/procesos/FS). Siempre son hallazgo de
    *  auditoría; con la política "block" (por defecto) además bloquean (H1, issue #5). */
   dangerousImports: string[];
+  /** R2.4: construcciones dinámicas (__import__, eval/exec, require(var), __builtins__…)
+   *  detectadas en el AST. Bloquean SIEMPRE, con cualquier política: derrotan al análisis. */
+  dynamicFindings: AstFinding[];
+  /** R2.4: ficheros no parseables. Bloquean SIEMPRE (fail-closed). */
+  parseErrors: AstFinding[];
   ok: boolean;
   reasons: string[];
 }
@@ -61,10 +97,20 @@ function normalizePkg(name: string): string {
   return name.trim().toLowerCase().replace(/_/g, "-");
 }
 
+// El nombre del MODULO que se importa no siempre es el del PAQUETE que lo distribuye.
+// R6.1: `import websocket` lo aporta el paquete "websocket-client". Sin esta traduccion,
+// un bot que use el SDK tal y como documenta su README quedaria rechazado por "import de
+// paquete no permitido: websocket", o habria que meter "websocket" en la allowlist, que
+// es peor: la allowlist dejaria de nombrar paquetes instalables y no cuadraria con el lock.
+const PYTHON_IMPORT_TO_DIST = new Map([["websocket", "websocket-client"]]);
+
 // import arena_sdk  → paquete arena-sdk ;  from numpy import x → numpy
 function importToPackage(runtime: Runtime, mod: string): string {
   const top = mod.split(".")[0].split("/")[0];
-  if (runtime === "python") return normalizePkg(top);
+  if (runtime === "python") {
+    const norm = normalizePkg(top);
+    return PYTHON_IMPORT_TO_DIST.get(norm) ?? norm;
+  }
   // node: preservar el scope (@arena/sdk)
   if (mod.startsWith("@")) return mod.split("/").slice(0, 2).join("/");
   return top;
@@ -97,28 +143,13 @@ export function parsePackageJsonDeps(text: string): Dependency[] {
   return deps;
 }
 
+/**
+ * R2.4 (ERR-SEC-06): los imports salen del AST REAL del runtime (ast de CPython /
+ * acorn), no de regexes por línea. Se mantiene la firma histórica: solo imports
+ * ESTÁTICOS; los hallazgos dinámicos y errores de parseo los expone `analyze`.
+ */
 export function extractImports(runtime: Runtime, files: SourceFile[]): string[] {
-  const mods = new Set<string>();
-  for (const f of files) {
-    if (runtime === "python" && !f.path.endsWith(".py")) continue;
-    if (runtime === "node" && !/\.(m?js|ts)$/.test(f.path)) continue;
-    for (const line of f.content.split(/\r?\n/)) {
-      if (runtime === "python") {
-        let m = /^\s*import\s+([A-Za-z0-9_.]+)/.exec(line);
-        if (m) mods.add(m[1]);
-        m = /^\s*from\s+([A-Za-z0-9_.]+)\s+import\b/.exec(line);
-        if (m) mods.add(m[1]);
-      } else {
-        let m = /\bfrom\s+['"]([^'"]+)['"]/.exec(line);
-        if (m) mods.add(m[1]);
-        m = /\brequire\(\s*['"]([^'"]+)['"]\s*\)/.exec(line);
-        if (m) mods.add(m[1]);
-        m = /\bimport\(\s*['"]([^'"]+)['"]\s*\)/.exec(line);
-        if (m) mods.add(m[1]);
-      }
-    }
-  }
-  return [...mods];
+  return [...new Set(extractAst(runtime, files).imports)];
 }
 
 export function analyze(runtime: Runtime, files: SourceFile[], config: PipelineConfig): StaticAnalysisResult {
@@ -141,13 +172,20 @@ export function analyze(runtime: Runtime, files: SourceFile[], config: PipelineC
     config.lockfileNames[runtime].some((name) => f.path === name || f.path.endsWith("/" + name)),
   );
 
-  // Imports reales (relativos "./x" o ".mod" excluidos)
-  const rawImports = extractImports(runtime, files);
+  // Imports reales desde el AST (relativos "./x" o ".mod" excluidos). Fail-closed:
+  // los errores de parseo y las construcciones dinámicas bloquean SIEMPRE (R2.4).
+  const ast = extractAst(runtime, files);
+  const rawImports = [...new Set(ast.imports)];
   const imports: string[] = [];
   const dangerousImports: string[] = [];
   const disallowedImports: string[] = [];
   const localFileStems = new Set(
-    files.map((f) => f.path.replace(/\.(py|m?js|ts)$/, "").split("/").pop()!),
+    files.map((f) =>
+      f.path
+        .replace(/\.(py|m?js|ts)$/, "")
+        .split("/")
+        .pop()!,
+    ),
   );
   for (const mod of rawImports) {
     if (mod.startsWith(".") || mod.startsWith("/")) continue; // import local relativo
@@ -167,6 +205,12 @@ export function analyze(runtime: Runtime, files: SourceFile[], config: PipelineC
   const disallowedDeps = declared.map((d) => d.name).filter((n) => !allowed.has(n));
 
   const reasons: string[] = [];
+  for (const pe of ast.parseErrors) {
+    reasons.push(`fichero no analizable (fail-closed, se rechaza): ${pe.path}: ${pe.detail}`);
+  }
+  for (const df of ast.dynamicFindings) {
+    reasons.push(`construcción dinámica prohibida (elude el análisis estático): ${df.path}: ${df.detail}`);
+  }
   if (!hasLockfile) {
     reasons.push(`falta lockfile obligatorio (uno de: ${config.lockfileNames[runtime].join(", ")})`);
   }
@@ -185,6 +229,8 @@ export function analyze(runtime: Runtime, files: SourceFile[], config: PipelineC
     disallowedDeps,
     disallowedImports: [...new Set(disallowedImports)],
     dangerousImports: [...new Set(dangerousImports)],
+    dynamicFindings: ast.dynamicFindings,
+    parseErrors: ast.parseErrors,
     ok: reasons.length === 0,
     reasons,
   };

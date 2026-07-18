@@ -81,28 +81,15 @@ export interface ContainerRunner {
   launch(spec: SandboxSpec): Promise<ContainerHandle>;
 }
 
-/** Comprueba que una postura cumple TODOS los controles de la tabla 18.2. Devuelve las
- *  violaciones (vacío = cumple). */
-export function complianceViolations(p: SecurityPosture): string[] {
-  const v: string[] = [];
-  if (p.privileged) v.push("contenedor privilegiado");
-  if (p.mountsDockerSock) v.push("monta el socket de Docker (/var/run/docker.sock)");
-  if (!p.user || p.user === "root" || p.user === "0") v.push("corre como root");
-  if (!p.capDropAll) v.push("no elimina todas las capabilities (cap-drop ALL)");
-  if (!p.readonlyRootfs) v.push("filesystem raíz no es de solo lectura");
-  if (!p.noNewPrivileges) v.push("falta no-new-privileges");
-  if (!p.seccompProfile || p.seccompProfile === "unconfined") v.push("seccomp unconfined o ausente");
-  if (p.hasExternalDns) v.push("tiene DNS externo (fuga a Internet)");
-  if (p.networks.some((n) => n !== "arena")) v.push(`conectado a red no permitida: ${p.networks.join(",")}`);
-  if (p.bindMounts.length) v.push(`bind-mounts presentes (posibles secretos): ${p.bindMounts.join(",")}`);
-  if (p.tmpfsMounts.length === 0) v.push("sin /tmp por tmpfs limitado");
-  return v;
-}
-
-export function assertCompliant(p: SecurityPosture): void {
-  const v = complianceViolations(p);
-  if (v.length) throw new Error(`postura de seguridad NO conforme (tabla 18.2): ${v.join("; ")}`);
-}
+/**
+ * Comprueba que una postura cumple TODOS los controles de la tabla 18.2 (vacío = cumple).
+ *
+ * R1.7 (ERR-SEC-02): la implementación vive en compliance.mjs (ESM plano) para que el
+ * escáner del Compose (infrastructure/scripts/scan-compose.mjs) importe LA MISMA función
+ * con `node` a secas: única fuente de verdad, sin allowlists paralelas. Aquí se
+ * re-exporta sin cambio de API.
+ */
+export { complianceViolations, assertCompliant, compliantBasePosture } from "./compliance.mjs";
 
 /**
  * Implementación Docker real. En una máquina con Docker, `launch()` haría spawn de
@@ -119,26 +106,38 @@ export class DockerContainerRunner implements ContainerRunner {
     const l = spec.limits;
     return [
       "run",
-      "--name", name,
+      "--name",
+      name,
       "--detach",
       // no root, sin privilegios nuevos
-      "--user", "10001:10001",
-      "--security-opt", "no-new-privileges",
+      "--user",
+      "10001:10001",
+      "--security-opt",
+      "no-new-privileges",
       // todas las capabilities eliminadas
-      "--cap-drop", "ALL",
+      "--cap-drop",
+      "ALL",
       // seccomp restrictivo (NO unconfined)
-      "--security-opt", `seccomp=${spec.seccompProfilePath}`,
+      "--security-opt",
+      `seccomp=${spec.seccompProfilePath}`,
       // filesystem de solo lectura + /tmp limitado por tamaño
       "--read-only",
-      "--tmpfs", `/tmp:rw,noexec,nosuid,nodev,size=${l.tmpfsBytes}`,
+      "--tmpfs",
+      `/tmp:rw,noexec,nosuid,nodev,size=${l.tmpfsBytes}`,
       // red SOLO arena, sin DNS externo, sin Internet
-      "--network", spec.network,
-      "--dns", "0.0.0.0",
+      "--network",
+      spec.network,
+      "--dns",
+      "0.0.0.0",
       // límites estrictos de CPU, memoria y PIDs
-      "--cpus", String(l.cpus),
-      "--memory", String(l.memoryBytes),
-      "--memory-swap", String(l.memoryBytes), // sin swap extra
-      "--pids-limit", String(l.pids),
+      "--cpus",
+      String(l.cpus),
+      "--memory",
+      String(l.memoryBytes),
+      "--memory-swap",
+      String(l.memoryBytes), // sin swap extra
+      "--pids-limit",
+      String(l.pids),
       // sin socket de Docker, sin secretos montados: simplemente NO se añade ningún -v
       // variables de entorno (sin secretos)
       ...Object.entries(spec.env).flatMap(([k, val]) => ["--env", `${k}=${val}`]),

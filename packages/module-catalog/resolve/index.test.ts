@@ -44,9 +44,9 @@ describe("T3.3 · resolveVehicle — golden files por arquetipo", () => {
 
 describe("T3.3 · resolveVehicle — errores", () => {
   it("lanza UnresolvableLoadoutError si el chasis no existe en el catálogo", () => {
-    expect(() =>
-      resolveVehicle({ ...ARCHETYPES.scout, chassis: "chassis.ghost@1" }, catalog),
-    ).toThrow(UnresolvableLoadoutError);
+    expect(() => resolveVehicle({ ...ARCHETYPES.scout, chassis: "chassis.ghost@1" }, catalog)).toThrow(
+      UnresolvableLoadoutError,
+    );
   });
 
   it("lanza UnresolvableLoadoutError si un módulo no existe en el catálogo", () => {

@@ -33,7 +33,10 @@ export class SuspensionRegistry implements SuspensionCheck {
   private enrollments: Enrollment[] = [];
   private now: () => string;
 
-  constructor(private audit: AuditSink, clock?: () => string) {
+  constructor(
+    private audit: AuditSink,
+    clock?: () => string,
+  ) {
     this.now = clock ?? (() => new Date().toISOString());
   }
 

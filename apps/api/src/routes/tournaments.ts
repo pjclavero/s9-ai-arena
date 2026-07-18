@@ -6,7 +6,8 @@
 import { Router } from "express";
 import { createHash, randomBytes } from "node:crypto";
 import type { Db } from "../db/connection.js";
-import { defineOperation } from "../registry.js";
+import { defineOperation, defineExtension } from "../registry.js";
+import { battleToJson } from "./battles.js";
 import { audit } from "../audit.js";
 import { badRequest, conflict, forbidden, notFound } from "../errors.js";
 import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
@@ -41,25 +42,44 @@ export function tournamentRoutes(db: Db): Router {
   defineOperation(router, "listTournaments", async (req, res) => {
     const limit = parseLimit(req.query.limit);
     const cursor = decodeCursor(req.query.cursor as string | undefined);
-    let q = db("tournaments").orderBy([{ column: "created_at", order: "desc" }, { column: "id", order: "desc" }]).limit(limit + 1);
+    let q = db("tournaments")
+      .orderBy([
+        { column: "created_at", order: "desc" },
+        { column: "id", order: "desc" },
+      ])
+      .limit(limit + 1);
     if (cursor) q = q.whereRaw("(created_at, id) < (?, ?)", [cursor.createdAt, cursor.id]);
     const rows = await q;
     const page = rows.slice(0, limit);
     res.json({
       items: page.map(tournamentToJson),
-      nextCursor: rows.length > limit ? encodeCursor(page[page.length - 1].created_at, page[page.length - 1].id) : undefined,
+      nextCursor:
+        rows.length > limit ? encodeCursor(page[page.length - 1].created_at, page[page.length - 1].id) : undefined,
     });
   });
 
   defineOperation(router, "createTournament", async (req, res) => {
-    const { name, format, mode, rulesetId, budgetCredits, catalogVersion, mapPool, roundsPerPairing, entriesCloseAt, seedCommitment } =
-      req.body ?? {};
+    const {
+      name,
+      format,
+      mode,
+      rulesetId,
+      budgetCredits,
+      catalogVersion,
+      mapPool,
+      roundsPerPairing,
+      entriesCloseAt,
+      seedCommitment,
+    } = req.body ?? {};
     if (typeof name !== "string" || !name || name.length > 64) throw badRequest("name obligatorio (máx. 64)");
     if (!FORMATS.includes(format)) throw badRequest(`format debe ser uno de ${FORMATS.join(", ")}`);
     if (!MODES.includes(mode)) throw badRequest(`mode debe ser uno de ${MODES.join(", ")}`);
     if (!(await db("rulesets").where({ id: rulesetId }).first())) throw badRequest("rulesetId desconocido");
     // ADR-000/D7: presupuesto por competición dentro de [200, 5000]; si se omite, manda el ruleset.
-    if (budgetCredits !== undefined && !(Number.isInteger(budgetCredits) && budgetCredits >= 200 && budgetCredits <= 5000)) {
+    if (
+      budgetCredits !== undefined &&
+      !(Number.isInteger(budgetCredits) && budgetCredits >= 200 && budgetCredits <= 5000)
+    ) {
       throw badRequest("budgetCredits debe ser un entero en [200, 5000]");
     }
     const [t] = await db("tournaments")
@@ -87,12 +107,65 @@ export function tournamentRoutes(db: Db): Router {
     res.status(201).json(tournamentToJson(t));
   });
 
+  /**
+   * R3.7 (ERR-VIS-02) · Extensiones de lectura para el panel: el contrato de E1
+   * no tenía ni el detalle de un torneo ni sus batallas, así que la UI no podía
+   * "seguir" un torneo (cola, en curso, cuadro) sin teclear UUIDs a mano.
+   */
+  defineExtension(
+    router,
+    { operationId: "getTournament", method: "get", path: "/tournaments/{tournamentId}", minRole: "visitor" },
+    async (req, res) => {
+      const t = await db("tournaments")
+        .where({ id: req.params.tournamentId })
+        .first()
+        .catch(() => null);
+      if (!t) throw notFound();
+      const entries = await db("entries").where({ tournament_id: t.id }).count("* as n").first();
+      res.json({ ...tournamentToJson(t), entryCount: Number(entries?.n ?? 0) });
+    },
+  );
+
+  defineExtension(
+    router,
+    {
+      operationId: "listTournamentBattles",
+      method: "get",
+      path: "/tournaments/{tournamentId}/battles",
+      minRole: "visitor",
+    },
+    async (req, res) => {
+      const t = await db("tournaments")
+        .where({ id: req.params.tournamentId })
+        .first()
+        .catch(() => null);
+      if (!t) throw notFound();
+      const battles = await db("battles").where({ tournament_id: t.id }).orderBy("created_at", "asc");
+      const matches = await db("matches").where({ tournament_id: t.id });
+      const roundByMatch = new Map(matches.map((m: Record<string, unknown>) => [m.id as string, Number(m.round)]));
+      const items = await Promise.all(
+        battles.map(async (b: Record<string, unknown>) => ({
+          ...battleToJson(b, await db("participants").where({ battle_id: b.id })),
+          round: b.match_id ? (roundByMatch.get(b.match_id as string) ?? 1) : 1,
+        })),
+      );
+      res.setHeader("Cache-Control", "public, max-age=5");
+      res.json({ items });
+    },
+  );
+
   defineOperation(router, "enterTournament", async (req, res) => {
-    const t = await db("tournaments").where({ id: req.params.tournamentId }).first().catch(() => null);
+    const t = await db("tournaments")
+      .where({ id: req.params.tournamentId })
+      .first()
+      .catch(() => null);
     if (!t) throw notFound();
     if (t.state !== "open") throw conflict("entries_closed", "Las inscripciones no están abiertas");
     const { botId, version } = req.body ?? {};
-    const bot = await db("bots").where({ id: botId }).first().catch(() => null);
+    const bot = await db("bots")
+      .where({ id: botId })
+      .first()
+      .catch(() => null);
     if (!bot) throw badRequest("botId desconocido");
     if (bot.owner_id !== req.auth!.userId) throw forbidden("Solo el dueño inscribe su bot");
     const v = await db("bot_versions").where({ bot_id: botId, version }).first();
@@ -123,7 +196,10 @@ export function tournamentRoutes(db: Db): Router {
   });
 
   defineOperation(router, "closeEntries", async (req, res) => {
-    const t = await db("tournaments").where({ id: req.params.tournamentId }).first().catch(() => null);
+    const t = await db("tournaments")
+      .where({ id: req.params.tournamentId })
+      .first()
+      .catch(() => null);
     if (!t) throw notFound();
     if (t.state !== "open") {
       throw conflict("illegal_transition", `El torneo está en estado ${t.state}`, {
@@ -183,7 +259,10 @@ export function tournamentRoutes(db: Db): Router {
   });
 
   defineOperation(router, "dryRunTournament", async (req, res) => {
-    const t = await db("tournaments").where({ id: req.params.tournamentId }).first().catch(() => null);
+    const t = await db("tournaments")
+      .where({ id: req.params.tournamentId })
+      .first()
+      .catch(() => null);
     if (!t) throw notFound();
     // Simulacro con bots de ejemplo (E9.M): lo consume el tournament-worker de E9.
     await db("jobs").insert({ kind: "tournament_dry_run", payload: JSON.stringify({ tournamentId: t.id }) });
@@ -197,7 +276,10 @@ export function tournamentRoutes(db: Db): Router {
    * quiere tabla por equipos". No se reimplementa: se importa.
    */
   defineOperation(router, "getTeamStandings", async (req, res) => {
-    const t = await db("tournaments").where({ id: req.params.tournamentId }).first().catch(() => null);
+    const t = await db("tournaments")
+      .where({ id: req.params.tournamentId })
+      .first()
+      .catch(() => null);
     if (!t) throw notFound();
     if (t.format !== "teams") {
       throw conflict("not_a_team_tournament", "La clasificación por equipos solo existe en torneos de formato 'teams'");

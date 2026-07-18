@@ -32,7 +32,11 @@ export function main(env: NodeJS.ProcessEnv = process.env): void {
 
   const server = createControlServer({ supervisor, config, logger });
   server.listen(config.controlPort, () => {
-    logger("info", "API de control escuchando", { port: config.controlPort, mode: config.mode, encoder: config.encoder });
+    logger("info", "API de control escuchando", {
+      port: config.controlPort,
+      mode: config.mode,
+      encoder: config.encoder,
+    });
   });
 
   if (env.STREAM_AUTOSTART === "1") supervisor.start();

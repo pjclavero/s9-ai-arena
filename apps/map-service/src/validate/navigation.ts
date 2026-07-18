@@ -85,7 +85,14 @@ export function buildGrid(map: InternalMap, clearance: number, opts: NavOptions 
   const cell = map.navCellSizeM ?? NAV_CELL_SIZE_M;
   const cols = Math.max(1, Math.ceil(map.widthM / cell));
   const rows = Math.max(1, Math.ceil(map.heightM / cell));
-  const grid: NavGrid = { cols, rows, cell, widthM: map.widthM, heightM: map.heightM, blocked: new Uint8Array(cols * rows) };
+  const grid: NavGrid = {
+    cols,
+    rows,
+    cell,
+    widthM: map.widthM,
+    heightM: map.heightM,
+    blocked: new Uint8Array(cols * rows),
+  };
 
   // 1) Bloqueo base: celdas cuyo CENTRO cae dentro de un obstáculo sólido. Solo recorro
   //    las celdas de la caja de cada forma (los obstáculos son escasos) en vez del grid
@@ -257,16 +264,23 @@ export function requiredConnections(map: InternalMap): Connection[] {
     anchors[team] = anchor;
 
     const targets: Array<{ p: Vec2; label: string }> = [];
-    for (let i = 1; i < teamSpawns.length; i++) targets.push({ p: teamSpawns[i].position, label: `spawn ${teamSpawns[i].objectId}` });
-    for (const b of map.layers.bases ?? []) if (b.team === team && b.position) targets.push({ p: b.position, label: `base ${b.objectId}` });
-    for (const f of map.layers.flags ?? []) if (f.team === team) targets.push({ p: f.position, label: `bandera ${f.objectId}` });
+    for (let i = 1; i < teamSpawns.length; i++)
+      targets.push({ p: teamSpawns[i].position, label: `spawn ${teamSpawns[i].objectId}` });
+    for (const b of map.layers.bases ?? [])
+      if (b.team === team && b.position) targets.push({ p: b.position, label: `base ${b.objectId}` });
+    for (const f of map.layers.flags ?? [])
+      if (f.team === team) targets.push({ p: f.position, label: `bandera ${f.objectId}` });
 
     for (const t of targets) conns.push({ from: anchor, to: t.p, label: `equipo ${team}: spawn -> ${t.label}` });
   }
 
   // Conectividad entre lados: encadena los anclas de equipos consecutivos.
   for (let i = 1; i < teams.length; i++) {
-    conns.push({ from: anchors[teams[i - 1]], to: anchors[teams[i]], label: `entre lados: ${teams[i - 1]} <-> ${teams[i]}` });
+    conns.push({
+      from: anchors[teams[i - 1]],
+      to: anchors[teams[i]],
+      label: `entre lados: ${teams[i - 1]} <-> ${teams[i]}`,
+    });
   }
   return conns;
 }
@@ -297,7 +311,9 @@ export function checkNavigation(map: InternalMap): Check[] {
     // cap. 14.3: dejar a un chasis soportado totalmente sin ruta a un objetivo).
     for (const size of sizes) {
       if (distBySize.get(size) === null) {
-        col.error(`sin ruta para chasis "${size}" en la conexión "${conn.label}" (pasillo intransitable para su tamaño)`);
+        col.error(
+          `sin ruta para chasis "${size}" en la conexión "${conn.label}" (pasillo intransitable para su tamaño)`,
+        );
       }
     }
     // Aviso (no error): un chasis mayor SÍ llega pero por un rodeo mucho más largo que el

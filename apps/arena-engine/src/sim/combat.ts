@@ -85,10 +85,7 @@ export function applyDamage(
 
   // El blindaje reduce, pero NUNCA anula: suelo del 10 % (D6).
   const reduction = armor && armor.hp > 0 ? armor.reduction : 0;
-  const effective = Math.max(
-    DMG_MIN_FRACTION * baseDamage,
-    baseDamage * (1 - reduction),
-  );
+  const effective = Math.max(DMG_MIN_FRACTION * baseDamage, baseDamage * (1 - reduction));
 
   // El blindaje se desgasta con lo que absorbe.
   if (armor && armor.hp > 0) {
@@ -102,9 +99,7 @@ export function applyDamage(
 
   // Reparto del 30 % a un módulo del sector: sorteo ponderado por masa (los módulos
   // grandes son más fáciles de acertar). Solo módulos aún no destruidos.
-  const candidates = [...target.modules.values()].filter(
-    (m) => m.hp > 0 && m.spec.category !== "armor",
-  );
+  const candidates = [...target.modules.values()].filter((m) => m.hp > 0 && m.spec.category !== "armor");
   let moduleSlot: string | null = null;
   let moduleDamage = 0;
   let moduleDestroyed = false;
@@ -130,20 +125,9 @@ export function applyDamage(
  * autoritativo: una orden de disparo es una intención, no un hecho.
  */
 export type FireRejection =
-  | "module_destroyed"
-  | "cooldown"
-  | "no_ammo"
-  | "no_energy"
-  | "out_of_arc"
-  | "critical_failure"
-  | null;
+  "module_destroyed" | "cooldown" | "no_ammo" | "no_energy" | "out_of_arc" | "critical_failure" | null;
 
-export function canFire(
-  v: Vehicle,
-  slot: string,
-  tick: number,
-  rng: Rng,
-): FireRejection {
+export function canFire(v: Vehicle, slot: string, tick: number, rng: Rng): FireRejection {
   const w = v.modules.get(slot);
   if (!w || w.spec.category !== "weapon") return "module_destroyed";
 
@@ -161,24 +145,16 @@ export function canFire(
 
   // Arco de torreta: el ángulo de torreta ya está limitado por el motor, pero un
   // arco parcial puede dejar objetivos fuera. Se valida contra el morro del chasis.
+  // v.heading lo mantiene el bucle desde la física (ERR-ENG-05: antes era un WeakMap
+  // global de este módulo que devolvía 0 para vehículos aún no registrados).
   const arc = w.spec.turretArcRad ?? Math.PI * 2;
   if (arc < Math.PI * 2 - 1e-6) {
-    const pose = v.turretHeading;
-    let rel = pose - vehicleHeadingOf(v);
+    let rel = v.turretHeading - v.heading;
     while (rel > Math.PI) rel -= 2 * Math.PI;
     while (rel < -Math.PI) rel += 2 * Math.PI;
     if (Math.abs(rel) > arc / 2) return "out_of_arc";
   }
   return null;
-}
-
-/** El heading del chasis lo guarda el mundo; el vehículo cachea el último conocido. */
-let headingCache = new WeakMap<Vehicle, number>();
-export function setVehicleHeading(v: Vehicle, h: number): void {
-  headingCache.set(v, h);
-}
-function vehicleHeadingOf(v: Vehicle): number {
-  return headingCache.get(v) ?? 0;
 }
 
 export function ammoFor(v: Vehicle, accepts: string[]) {
@@ -195,14 +171,7 @@ export function ammoFor(v: Vehicle, accepts: string[]) {
 }
 
 /** Crea el proyectil. Consume munición, energía y arranca el cooldown. */
-export function fire(
-  v: Vehicle,
-  slot: string,
-  tick: number,
-  origin: Vec2,
-  rng: Rng,
-  seq: number,
-): Projectile | null {
+export function fire(v: Vehicle, slot: string, tick: number, origin: Vec2, rng: Rng, seq: number): Projectile | null {
   const w = v.modules.get(slot)!;
   const ammo = ammoFor(v, w.spec.acceptsAmmo ?? []);
   if (!ammo) return null;
@@ -235,13 +204,7 @@ export function fire(
  * El bot solo solicita. Motivos de rechazo tipificados.
  */
 export type MineRejection =
-  | "module_destroyed"
-  | "cooldown"
-  | "no_charges"
-  | "no_energy"
-  | "invalid_position"
-  | "limit_exceeded"
-  | null;
+  "module_destroyed" | "cooldown" | "no_charges" | "no_energy" | "invalid_position" | "limit_exceeded" | null;
 
 export function canDeployMine(
   v: Vehicle,

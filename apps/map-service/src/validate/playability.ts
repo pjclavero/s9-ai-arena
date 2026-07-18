@@ -38,7 +38,9 @@ export function checkPlayability(map: InternalMap): Check[] {
     const corridorProbe = buildGrid(map, MIN_CORRIDOR_WIDTH_M / 2, { ignoreDestructibles: true });
     for (const conn of conns) {
       if (!gridHasRoute(corridorProbe, conn.from, conn.to)) {
-        col.error(`la conexión "${conn.label}" no admite un pasillo de ${MIN_CORRIDOR_WIDTH_M} m (demasiado estrecha para jugar con soltura)`);
+        col.error(
+          `la conexión "${conn.label}" no admite un pasillo de ${MIN_CORRIDOR_WIDTH_M} m (demasiado estrecha para jugar con soltura)`,
+        );
       }
     }
   }
@@ -57,7 +59,11 @@ export function checkPlayability(map: InternalMap): Check[] {
 }
 
 /** ¿La celda que contiene el punto está bloqueada en este grid? */
-function isBlockedAt(grid: { cols: number; rows: number; cell: number; blocked: Uint8Array }, p: Vec2, cell: number): boolean {
+function isBlockedAt(
+  grid: { cols: number; rows: number; cell: number; blocked: Uint8Array },
+  p: Vec2,
+  cell: number,
+): boolean {
   const c = Math.min(grid.cols - 1, Math.max(0, Math.floor(p.x / cell)));
   const r = Math.min(grid.rows - 1, Math.max(0, Math.floor(p.y / cell)));
   return grid.blocked[r * grid.cols + c] === 1;

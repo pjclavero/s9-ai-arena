@@ -16,8 +16,11 @@
 #   salida a Internet, porque las redes internas no la tienen): streamer
 #   (RTMPS hacia YouTube) y alertmanager (webhook/email del operador).
 #
-# Seguridad (cap. 28): ningún servicio corre privilegiado ni monta docker.sock,
-#   salvo bot-manager (documentado más abajo). Lo verifica
+# Seguridad (cap. 28, R1.7/ERR-SEC-02): NINGÚN servicio corre privilegiado ni
+#   monta docker.sock — sin excepciones. El bot-manager lanza contenedores a
+#   través del proxy de la API de Docker que corre EN EL HOST
+#   (apps/bot-manager/src/docker-proxy-main.ts; ver docs/despliegue.md), con
+#   allowlist estricta (crear/arrancar/parar/inspeccionar). Lo verifica
 #   infrastructure/scripts/scan-compose.mjs en la etapa 6 de la CI.
 #
 # Arranque: ver docs/despliegue.md (instalación limpia en 3 pasos).
@@ -53,7 +56,7 @@ services:
       context: ..
       dockerfile: infrastructure/docker/gateway/Dockerfile
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/gateway:${TAG:-latest}
-    profiles: [development, production, external-db]
+    profiles: [nucleo, development, production, external-db]
     networks: [public, platform]
     ports:
       - "${HTTP_PORT:-80}:80"
@@ -90,15 +93,11 @@ services:
   web:
     build:
       context: ..
-      dockerfile: infrastructure/docker/node-service/Dockerfile
-      args: { APP_PATH: apps/web }
+      dockerfile: infrastructure/docker/web/Dockerfile
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/web:${TAG:-latest}
-    profiles: [development, production, external-db]
+    profiles: [nucleo, development, production, external-db]
     networks: [platform]
     environment:
-      PORT: "3000"
-      # PENDIENTE (E7): entrypoint real; ver infrastructure/docker/node-service.
-      SERVICE_ENTRY: ${WEB_ENTRY:-apps/web/src/main.ts}
       LOG_FORMAT: json
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
@@ -120,13 +119,17 @@ services:
       dockerfile: infrastructure/docker/node-service/Dockerfile
       args: { APP_PATH: apps/api }
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/api:${TAG:-latest}
-    profiles: [development, production, external-db]
+    profiles: [nucleo, development, production, external-db]
     networks: [platform, data]
     environment:
       <<: *node-db-env
       PORT: "8080"
-      SERVICE_ENTRY: ${API_ENTRY:-apps/api/src/main.ts}
+      SERVICE_ENTRY: ${API_ENTRY:-apps/api/src/server.ts}
       JWT_SECRET_FILE: /run/secrets/jwt_secret
+      # R1.8 · ERR-SEC-05: saltos de proxy de confianza delante de la API.
+      # En el stack SIEMPRE hay al menos el gateway (1). Detrás del Nginx de
+      # VM104 (GATEWAY_CONF=nginx-behind-proxy.conf) son 2. Nunca "true".
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
     secrets: [postgres_password, jwt_secret]
     depends_on:
       queue:
@@ -188,11 +191,13 @@ services:
       dockerfile: infrastructure/docker/node-service/Dockerfile
       args: { APP_PATH: apps/tournament-worker }
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/tournament-worker:${TAG:-latest}
-    profiles: [development, production, external-db]
+    profiles: [nucleo, development, production, external-db]
     networks: [platform, data]
     environment:
       <<: *node-db-env
       SERVICE_ENTRY: ${WORKER_ENTRY:-apps/tournament-worker/src/main.ts}
+      SPECTATE_PORT: "8081"
+      REPLAYS_DIR: /data/replays
     secrets: [postgres_password]
     depends_on:
       queue:
@@ -215,13 +220,17 @@ services:
     logging: *default-logging
 
   # ── bot-manager · construye, valida y lanza contenedores de bots (E6) ───────
-  # EXCEPCIÓN DOCUMENTADA (cap. 28 / DoD T10.2): bot-manager monta docker.sock
-  # porque su función es construir imágenes y lanzar contenedores efímeros de
-  # bots. Mitigaciones: API interna restringida (nunca expuesta por el gateway),
-  # redes build+platform sin acceso a data, sin privilegios adicionales y
-  # allowlist explícita en infrastructure/scripts/scan-compose.mjs. La
-  # alternativa a largo plazo (docker-socket-proxy o rootless builder) queda
-  # propuesta en docs/despliegue.md.
+  # R1.7 (ERR-SEC-02): ya NO monta docker.sock (la antigua "excepción
+  # documentada" era RCE→root del host en el servicio que procesa código de
+  # usuario). Lanza contenedores a través del proxy de la API de Docker con
+  # allowlist (crear/arrancar/parar/inspeccionar; rechaza privileged,
+  # bind-mounts, red del host y cambios de usuario), que corre EN EL HOST:
+  # apps/bot-manager/src/docker-proxy-main.ts (ver docs/despliegue.md). El
+  # alias docker-proxy.internal apunta al host vía host-gateway; la
+  # verificación viva de esa ruta queda para R-DEPLOY.
+  # Aislamiento: redes platform+build (sin data → sin ruta a PostgreSQL ni al
+  # backup), sin `secrets:` montados. Lo fija infrastructure/tests/
+  # bot-manager-isolation.test.ts.
   bot-manager:
     build:
       context: ..
@@ -234,8 +243,11 @@ services:
       PORT: "8084"
       SERVICE_ENTRY: ${BOT_MANAGER_ENTRY:-apps/bot-manager/src/main.ts}
       LOG_FORMAT: json
+      # R1.7: única vía hacia Docker; el socket ya no se monta.
+      DOCKER_PROXY_URL: ${DOCKER_PROXY_URL:-http://docker-proxy.internal:2375}
+    extra_hosts:
+      - "docker-proxy.internal:host-gateway"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - arena_bot_sources:/data/bot-sources
       - arena_build_cache:/data/build-cache
     depends_on:
@@ -295,7 +307,7 @@ services:
       dockerfile: infrastructure/docker/node-service/Dockerfile
       args: { APP_PATH: apps/replay-service }
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/replay-service:${TAG:-latest}
-    profiles: [development, production, external-db]
+    profiles: [nucleo, development, production, external-db]
     networks: [platform, data]
     environment:
       <<: *node-db-env
@@ -324,7 +336,7 @@ services:
   # ── queue · Redis para trabajos ──────────────────────────────────────────────
   queue:
     image: redis:7-alpine
-    profiles: [development, production, external-db]
+    profiles: [nucleo, development, production, external-db]
     networks: [platform]
     command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
     volumes:
@@ -344,7 +356,7 @@ services:
   # ── postgres · BD (omitido en el perfil external-db, nota del 6.2) ──────────
   postgres:
     image: postgres:16-alpine
-    profiles: [development, production]
+    profiles: [nucleo, development, production]
     networks: [data]
     environment:
       POSTGRES_USER: arena
@@ -598,7 +610,7 @@ services:
     logging: *default-logging
 
   # Lee los json-file de Docker SOLO con un bind de solo lectura (sin
-  # docker.sock: el escáner del cap. 28 solo lo permite en bot-manager).
+  # docker.sock: el escáner del cap. 28 no lo permite en ningún servicio, R1.7).
   promtail:
     image: grafana/promtail:3.1.0
     profiles: [observability]

@@ -16,7 +16,12 @@ import { seedDev } from "../../api/src/db/seeds/dev.js";
 import { claimJob, completeJob, enqueueJob, type JobRow } from "./queue.js";
 import { TournamentWorker, computeConcurrency } from "./worker.js";
 import { InfrastructureFailure, SportingFailure, classifyFailure } from "./errors.js";
-import { makeRunBattleHandler, markBattleForReview, type BattleContext, type BattleExecution } from "./battle-runner.js";
+import {
+  makeRunBattleHandler,
+  markBattleForReview,
+  type BattleContext,
+  type BattleExecution,
+} from "./battle-runner.js";
 import { createBots, insertScheduledBattle, type TestBot } from "./testing/fixtures.js";
 import { RedisSignal } from "./redis-signal.js";
 
@@ -132,13 +137,20 @@ describe("T9.1 · derrota deportiva (19.2): timeout del bot NO se reintenta", ()
     // El bot A (bots[0]) se cuelga: el ejecutor lo detecta como timeout deportivo.
     const w = workerWith(
       scriptedExecutor(log, (ctx) => {
-        throw new SportingFailure("bot_timeout", ctx.participants[0].bot_id, "el bot no responde (colgado a propósito)");
+        throw new SportingFailure(
+          "bot_timeout",
+          ctx.participants[0].bot_id,
+          "el bot no responde (colgado a propósito)",
+        );
       }),
       "sport-w",
     );
     await w.drain();
 
-    const job = await h.db("jobs").where({ dedupe_key: `timeout:${battleId}` }).first();
+    const job = await h
+      .db("jobs")
+      .where({ dedupe_key: `timeout:${battleId}` })
+      .first();
     expect(job.status).toBe("done"); // completado: NO vuelve a la cola
     expect(job.attempts).toBe(1); // ni un solo reintento
     expect(job.error_class).toBe("sporting");
@@ -175,7 +187,10 @@ describe("T9.1 · fallo de infraestructura: reintentos con límite y revisión m
     }
 
     expect(log.get(battleId)).toBe(3); // exactamente max_attempts ejecuciones
-    const job = await h.db("jobs").where({ dedupe_key: `infra:${battleId}` }).first();
+    const job = await h
+      .db("jobs")
+      .where({ dedupe_key: `infra:${battleId}` })
+      .first();
     expect(job.status).toBe("needs_review"); // revisión manual, nunca reintento infinito
     expect(job.error_class).toBe("infrastructure");
 

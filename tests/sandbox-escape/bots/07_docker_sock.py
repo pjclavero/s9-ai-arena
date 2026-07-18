@@ -6,14 +6,20 @@ import socket
 import os
 
 SOCK = "/var/run/docker.sock"
+sock_usable = False
 if os.path.exists(SOCK):
     print("ESCAPE-CRITICAL docker.sock existe en el contenedor")  # NO debería ocurrir
     try:
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         s.connect(SOCK)
         s.sendall(b"GET /version HTTP/1.0\r\n\r\n")
+        sock_usable = True
         print("ESCAPE-CRITICAL respuesta:", s.recv(256))
     except Exception as e:
         print(f"docker.sock presente pero no usable -> {e}")
 else:
     print("blocked docker.sock ausente (esperado)")
+
+# Marcador POSITIVO (R1.6): el socket no es utilizable desde el contenedor.
+if not sock_usable:
+    print("SANDBOX-BLOCKED 07_docker_sock")

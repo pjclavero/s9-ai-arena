@@ -13,14 +13,7 @@ import express, { type Express } from "express";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { fromJsonl } from "../../arena-engine/src/replay.js";
 import { decompress, nearestKeyframe } from "./format.js";
-import {
-  ingestReplay,
-  loadStored,
-  readIndex,
-  replayPath,
-  sweepRetention,
-  verifyStored,
-} from "./store.js";
+import { ingestReplay, loadStored, readIndex, replayPath, sweepRetention, verifyStored } from "./store.js";
 
 export interface ReplayServerOptions {
   dir: string;
@@ -73,7 +66,12 @@ export function createReplayServer(opts: ReplayServerOptions): Express {
         official: req.query.official === "true",
         now: opts.now,
       });
-      res.status(201).json({ battleId: stored.index.battleId, sha256: stored.index.sha256, path: stored.path, official: stored.index.official });
+      res.status(201).json({
+        battleId: stored.index.battleId,
+        sha256: stored.index.sha256,
+        path: stored.path,
+        official: stored.index.official,
+      });
     } catch (e) {
       res.status(422).json({ error: "invalid_replay", message: (e as Error).message });
     }

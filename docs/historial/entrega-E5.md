@@ -160,7 +160,8 @@ E4.
 
 - **CLI `arena-sim` equivalente en JavaScript**: el SDK Python tiene un entry point
   `arena-sim`; el de JS no tiene el envoltorio de CLI (la lógica sí está en
-  `startLocalBattle`). Ver `docs/sdk-paridad.md`.
+  `startLocalBattle`). Ver `docs/sdk-paridad.md`. *(Cerrado después, en R2.8 de la
+  Ronda 2: `sdks/javascript/src/arena-sim.ts`.)*
 - **Transporte binario (msgpack)**: el envelope reserva `encodings` (D5) pero el MVP
   solo implementa `json`. No se cierra la puerta; no se abre todavía.
 - **Reconexión automática**: deliberadamente ausente en ambos SDKs (lo pide la DoD).

@@ -131,7 +131,12 @@ export async function runSmokeBattle(opts: SmokeBattleOptions): Promise<SmokeBat
   const catalog = loadCatalog();
   const refArche = opts.referenceArchetype ?? "gunner";
   const participants: Participant[] = [
-    { id: "veh_1", botId: opts.candidateBotId, team: "red", spec: resolveVehicle(ARCHETYPES[opts.candidateArchetype], catalog) },
+    {
+      id: "veh_1",
+      botId: opts.candidateBotId,
+      team: "red",
+      spec: resolveVehicle(ARCHETYPES[opts.candidateArchetype], catalog),
+    },
     { id: "veh_2", botId: "ref_bot", team: "blue", spec: resolveVehicle(ARCHETYPES[refArche], catalog) },
   ];
   const battle = await Battle.create({
@@ -148,11 +153,23 @@ export async function runSmokeBattle(opts: SmokeBattleOptions): Promise<SmokeBat
     logs.push(`batalla terminada en ${result.ticks} ticks; ganador ${result.winner}`);
     const dq = result.disqualified ?? [];
     if (dq.includes(opts.candidateBotId) || dq.includes("veh_1")) {
-      return { ok: false, reason: `candidato descalificado en la partida de humo`, logs, ticks: result.ticks, disqualified: dq };
+      return {
+        ok: false,
+        reason: `candidato descalificado en la partida de humo`,
+        logs,
+        ticks: result.ticks,
+        disqualified: dq,
+      };
     }
     return { ok: true, logs, ticks: result.ticks, disqualified: dq };
   } catch (e) {
-    return { ok: false, reason: `la partida de humo lanzó excepción: ${(e as Error).message}`, logs, ticks: 0, disqualified: [] };
+    return {
+      ok: false,
+      reason: `la partida de humo lanzó excepción: ${(e as Error).message}`,
+      logs,
+      ticks: 0,
+      disqualified: [],
+    };
   } finally {
     battle.free();
   }

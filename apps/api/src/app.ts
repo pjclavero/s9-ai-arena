@@ -6,7 +6,12 @@ import type { Db } from "./db/connection.js";
 import { ApiError } from "./errors.js";
 import { requestContext, securityHeaders } from "./middleware/context.js";
 import { authenticate } from "./middleware/authenticate.js";
-import { FailedLoginGuard, SlidingWindowLimiter } from "./middleware/rate-limit.js";
+import {
+  SharedFailedLoginGuard,
+  SharedRateLimiter,
+  type LoginGuardLike,
+  type RateLimiterLike,
+} from "./middleware/shared-rate-limit.js";
 import { authRoutes } from "./routes/auth.js";
 import { userRoutes } from "./routes/users.js";
 import { teamRoutes } from "./routes/teams.js";
@@ -18,41 +23,88 @@ import { standingsRoutes } from "./routes/standings.js";
 import { tournamentRoutes } from "./routes/tournaments.js";
 import { mapRoutes } from "./routes/maps.js";
 import { DEFAULT_ANON_QUOTA, type AnonQuotaConfig } from "./middleware/anon-quota.js";
+import { resolveTrustProxyHops } from "./middleware/proxy-trust.js";
 import type { BotManagerClient } from "./services/bot-manager.js";
-import { E6PipelineBotManager } from "./services/e6-bot-manager.js";
+import { QueueBotManager } from "./services/bot-manager.js";
+import { keyRoutes } from "./routes/keys.js";
+import type { BotBuildLimiters } from "./routes/bots.js";
 
 export interface AppConfig {
   db: Db;
   corsOrigin?: string;
-  loginGuard?: FailedLoginGuard;
-  /** Cliente del pipeline de builds. Por defecto, el pipeline REAL de E6 en proceso. */
+  loginGuard?: LoginGuardLike;
+  /** R2.4: inyectable en tests (límite bajo) — por defecto 60 refresh/min por IP. */
+  refreshLimiter?: RateLimiterLike;
+  /**
+   * Cliente del pipeline de builds. Por defecto (R2.5 · ERR-SEC-12), el ENCOLADOR
+   * real: submitBotVersion persiste el trabajo en la tabla `jobs` y responde 202;
+   * el pipeline de E6 corre en el worker del bot-manager (build-worker), NUNCA en
+   * el proceso de la API. Ese worker sigue fallando cerrado sin sandbox
+   * (R1.5 · ERR-SEC-03): rechaza como "no verificable" en vez de validar.
+   */
   botManager?: BotManagerClient;
   /** Cuota de uso anónimo de los endpoints públicos (T7.5). */
   anonQuota?: AnonQuotaConfig;
+  /**
+   * Saltos de proxy de confianza delante de la API (R1.8 · ERR-SEC-05).
+   * Por defecto se resuelve de TRUST_PROXY_HOPS (0 si no está definida: sin
+   * proxy declarado no se cree ninguna X-Forwarded-For — falla cerrado).
+   * Nunca `trust proxy: true` genérico: siempre un número ACOTADO de saltos.
+   */
+  trustProxyHops?: number;
+  /** Limitadores por usuario de creación de versiones/builds (R2.5 · ERR-SEC-12). */
+  buildLimiters?: BotBuildLimiters;
+  /** Limitadores de registro/login; por defecto, compartidos en BD (ERR-SEC-14). */
+  registerLimiter?: RateLimiterLike;
+  loginLimiter?: RateLimiterLike;
 }
 
 export function createApp(cfg: AppConfig): express.Express {
   const app = express();
   app.disable("x-powered-by");
+  // R1.8 · ERR-SEC-05: confianza de proxy ACOTADA al número de saltos reales
+  // (gateway del stack = 1; VM104 + gateway = 2). Con esto `req.ip` es la IP
+  // real del cliente para la cuota anónima y la clave `${ip}|${email}` del
+  // bloqueo de login, y una X-Forwarded-For inyectada desde fuera se descarta.
+  app.set("trust proxy", cfg.trustProxyHops ?? resolveTrustProxyHops());
   app.use(express.json({ limit: "1mb" }));
   app.use(requestContext);
   app.use(securityHeaders(cfg.corsOrigin ?? process.env.CORS_ORIGIN ?? "http://localhost:5173"));
   app.use(authenticate(cfg.db));
 
-  const loginGuard = cfg.loginGuard ?? new FailedLoginGuard();
+  // R2.5 (ERR-SEC-14): guard y limitadores por defecto sobre api_usage — el estado
+  // de bloqueo/contadores sobrevive a reinicios y se comparte entre réplicas.
+  const loginGuard = cfg.loginGuard ?? new SharedFailedLoginGuard(cfg.db);
   app.use(
     authRoutes({
       db: cfg.db,
       loginGuard,
       // Límites holgados para uso normal, suficientes para frenar abuso por IP.
-      registerLimiter: new SlidingWindowLimiter(30, 60_000),
-      loginLimiter: new SlidingWindowLimiter(60, 60_000),
+      registerLimiter:
+        cfg.registerLimiter ?? new SharedRateLimiter(cfg.db, "auth.register", { max: 30, windowMs: 60_000 }),
+      loginLimiter: cfg.loginLimiter ?? new SharedRateLimiter(cfg.db, "auth.login", { max: 60, windowMs: 60_000 }),
+      // R2.4 (ERR-SEC-08): el refresh emite credenciales → rate-limit propio por IP.
+      refreshLimiter:
+        cfg.refreshLimiter ?? new SharedRateLimiter(cfg.db, "auth.refresh", { max: 60, windowMs: 60_000 }),
     }),
   );
   app.use(userRoutes(cfg.db));
   app.use(teamRoutes(cfg.db));
-  app.use(botRoutes(cfg.db, cfg.botManager ?? new E6PipelineBotManager(cfg.db)));
+  // R2.5 (ERR-SEC-12): por defecto el ENCOLADOR real (tabla jobs): el pipeline de
+  // builds corre en el worker del bot-manager, nunca aquí. El worker sigue fallando
+  // cerrado sin sandbox verificado (R1.5 · ERR-SEC-03).
+  app.use(
+    botRoutes(
+      cfg.db,
+      cfg.botManager ?? new QueueBotManager(cfg.db),
+      cfg.buildLimiters ?? {
+        createVersion: new SharedRateLimiter(cfg.db, "bots.createVersion", { max: 60, windowMs: 60 * 60_000 }),
+        submit: new SharedRateLimiter(cfg.db, "bots.submitVersion", { max: 60, windowMs: 60 * 60_000 }),
+      },
+    ),
+  );
   app.use(buildRoutes(cfg.db));
+  app.use(keyRoutes());
   app.use(catalogRoutes(cfg.db));
   app.use(adminRoutes(cfg.db));
   app.use(battleRoutes(cfg.db, cfg.anonQuota ?? DEFAULT_ANON_QUOTA));
@@ -67,7 +119,9 @@ export function createApp(cfg: AppConfig): express.Express {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
     if (err instanceof ApiError) {
-      res.status(err.status).json({ error: err.code, message: err.message, correlationId: req.correlationId, ...err.extra });
+      res
+        .status(err.status)
+        .json({ error: err.code, message: err.message, correlationId: req.correlationId, ...err.extra });
       return;
     }
     if (err && typeof err === "object" && (err as { type?: string }).type === "entity.parse.failed") {

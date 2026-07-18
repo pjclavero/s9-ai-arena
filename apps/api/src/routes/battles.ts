@@ -8,19 +8,33 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import jwt from "jsonwebtoken";
 import { fromJsonl, type Replay } from "../../../arena-engine/src/replay.js";
 import { decompress, sha256 } from "../../../replay-service/src/format.js";
 import { verifyLoaded } from "../../../replay-service/src/store.js";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
+import { pathParam } from "../params.js";
 import { ROLE_RANK } from "../openapi.js";
-import { badRequest, conflict, notFound } from "../errors.js";
+import { ApiError, badRequest, conflict, notFound } from "../errors.js";
 import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
-import { jwtSecret } from "../auth/tokens.js";
+import { signSpectateTicket } from "../auth/tokens.js";
 import { anonQuota, type AnonQuotaConfig } from "../middleware/anon-quota.js";
 
 const SPECTATE_TICKET_TTL_S = 60;
+
+/**
+ * R2.6 (ERR-SEC-16): base del WebSocket de espectador. En producción es
+ * OBLIGATORIO configurar SPECTATE_WS_URL con esquema wss:// (el ticket viaja
+ * por ese canal); si falta o va en claro, se falla CERRADO con 500 de
+ * configuración en vez de emitir tickets que viajarían sin cifrar.
+ */
+export function spectateWsBase(): string {
+  const wsBase = process.env.SPECTATE_WS_URL ?? "ws://localhost:8081/spectate";
+  if (process.env.NODE_ENV === "production" && !wsBase.startsWith("wss://")) {
+    throw new ApiError(500, "spectate_ws_misconfigured", "SPECTATE_WS_URL debe ser wss:// en producción");
+  }
+  return wsBase;
+}
 
 export function battleToJson(b: Record<string, unknown>, participants: Record<string, unknown>[]) {
   return {
@@ -43,7 +57,10 @@ export function battleToJson(b: Record<string, unknown>, participants: Record<st
 }
 
 async function getBattleOr404(db: Db, id: string) {
-  const battle = await db("battles").where({ id }).first().catch(() => null);
+  const battle = await db("battles")
+    .where({ id })
+    .first()
+    .catch(() => null);
   if (!battle) throw notFound();
   return battle;
 }
@@ -54,7 +71,12 @@ export function battleRoutes(db: Db, quota: AnonQuotaConfig): Router {
   defineOperation(router, "listBattles", async (req, res) => {
     const limit = parseLimit(req.query.limit);
     const cursor = decodeCursor(req.query.cursor as string | undefined);
-    let q = db("battles").orderBy([{ column: "created_at", order: "desc" }, { column: "id", order: "desc" }]).limit(limit + 1);
+    let q = db("battles")
+      .orderBy([
+        { column: "created_at", order: "desc" },
+        { column: "id", order: "desc" },
+      ])
+      .limit(limit + 1);
     if (typeof req.query.status === "string") q = q.where({ status: req.query.status });
     if (cursor) q = q.whereRaw("(created_at, id) < (?, ?)", [cursor.createdAt, cursor.id]);
     const rows = await q;
@@ -67,12 +89,13 @@ export function battleRoutes(db: Db, quota: AnonQuotaConfig): Router {
     res.setHeader("Cache-Control", "public, max-age=5");
     res.json({
       items,
-      nextCursor: rows.length > limit ? encodeCursor(page[page.length - 1].created_at, page[page.length - 1].id) : undefined,
+      nextCursor:
+        rows.length > limit ? encodeCursor(page[page.length - 1].created_at, page[page.length - 1].id) : undefined,
     });
   });
 
   defineOperation(router, "getBattle", async (req, res) => {
-    const battle = await getBattleOr404(db, req.params.battleId);
+    const battle = await getBattleOr404(db, pathParam(req, "battleId"));
     res.json(battleToJson(battle, await db("participants").where({ battle_id: battle.id })));
   });
 
@@ -96,7 +119,10 @@ export function battleRoutes(db: Db, quota: AnonQuotaConfig): Router {
     if (!map) throw badRequest("Mapa inexistente o no publicado");
 
     for (const p of participants) {
-      const v = await db("bot_versions").where({ bot_id: p.botId, version: p.version }).first().catch(() => null);
+      const v = await db("bot_versions")
+        .where({ bot_id: p.botId, version: p.version })
+        .first()
+        .catch(() => null);
       if (!v || !["published", "frozen"].includes(v.state)) {
         throw conflict("bot_not_published", `El bot ${p.botId} v${p.version} no está publicado`);
       }
@@ -130,18 +156,17 @@ export function battleRoutes(db: Db, quota: AnonQuotaConfig): Router {
     router,
     "getSpectateTicket",
     async (req, res) => {
-      const battle = await getBattleOr404(db, req.params.battleId);
+      const battle = await getBattleOr404(db, pathParam(req, "battleId"));
       // E8/T8.2: jti ⇒ el gateway hace el ticket de UN SOLO USO; debug ⇒ capas de
       // depuración (sensores, rutas, colisiones) solo para roles autorizados: el flag
       // viaja FIRMADO por la API, el visor no puede autoconcedérselo.
       const debug = (req.auth?.rank ?? 0) >= ROLE_RANK.moderator;
-      const ticket = jwt.sign(
-        { kind: "spectate", battleId: battle.id, jti: randomUUID(), ...(debug ? { debug: true } : {}) },
-        jwtSecret(),
-        { expiresIn: SPECTATE_TICKET_TTL_S },
-      );
+      const ticket = signSpectateTicket({ battleId: battle.id, jti: randomUUID(), debug }, SPECTATE_TICKET_TTL_S);
       // El canal transporta SOLO snapshots públicos (D8): lo sirve el gateway (E8/E10).
-      const wsBase = process.env.SPECTATE_WS_URL ?? "ws://localhost:8081/spectate";
+      // R2.6 (ERR-SEC-16): en producción se EXIGE wss:// — el defecto en claro
+      // solo vale para dev/test. Falla cerrado: mejor 500 que un ticket que
+      // viajaría sin cifrar (y acabaría en logs de red intermedios).
+      const wsBase = spectateWsBase();
       res.status(201).json({
         ticket,
         wsUrl: `${wsBase}/${battle.id}`,
@@ -153,7 +178,7 @@ export function battleRoutes(db: Db, quota: AnonQuotaConfig): Router {
   );
 
   defineOperation(router, "getBattleAudit", async (req, res) => {
-    const battle = await getBattleOr404(db, req.params.battleId);
+    const battle = await getBattleOr404(db, pathParam(req, "battleId"));
     const map = await db("map_versions").where({ map_id: battle.map_id, version: battle.map_version }).first();
     const participants = await db("participants").where({ battle_id: battle.id });
     const artifacts = [];
@@ -181,7 +206,7 @@ export function battleRoutes(db: Db, quota: AnonQuotaConfig): Router {
   });
 
   defineOperation(router, "getBattleStats", async (req, res) => {
-    const battle = await getBattleOr404(db, req.params.battleId);
+    const battle = await getBattleOr404(db, pathParam(req, "battleId"));
     const rows = await db("battle_stats").where({ battle_id: battle.id });
     const stats: Record<string, unknown> = {};
     for (const r of rows) stats[r.bot_id] = r.stats;
@@ -194,7 +219,7 @@ export function battleRoutes(db: Db, quota: AnonQuotaConfig): Router {
     router,
     "getReplay",
     async (req, res) => {
-      const battle = await getBattleOr404(db, req.params.battleId);
+      const battle = await getBattleOr404(db, pathParam(req, "battleId"));
       if (!battle.replay_ref) throw notFound("La batalla no tiene replay publicado");
       // Política 23.1: el replay vive en un archivo; la BD solo guarda la referencia.
       let bytes: Buffer;
@@ -223,7 +248,7 @@ export function battleRoutes(db: Db, quota: AnonQuotaConfig): Router {
     router,
     "verifyReplay",
     async (req, res) => {
-      const battle = await getBattleOr404(db, req.params.battleId);
+      const battle = await getBattleOr404(db, pathParam(req, "battleId"));
       if (!battle.replay_ref) throw notFound("La batalla no tiene replay publicado");
       let bytes: Buffer;
       try {

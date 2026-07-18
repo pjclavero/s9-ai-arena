@@ -35,12 +35,7 @@ function wrap(handler: Handler): RequestHandler {
 }
 
 /** Registra una operación DEL CONTRATO en el router. */
-export function defineOperation(
-  router: Router,
-  operationId: string,
-  handler: Handler,
-  ...pre: RequestHandler[]
-): void {
+export function defineOperation(router: Router, operationId: string, handler: Handler, ...pre: RequestHandler[]): void {
   const op = loadContract().byOperationId.get(operationId);
   if (!op) throw new Error(`Operación fuera del contrato de E1: ${operationId}`);
   if (!implementedOperations.some((o) => o.operationId === operationId)) {
@@ -62,7 +57,13 @@ export function defineExtension(
   ...pre: RequestHandler[]
 ): void {
   if (!implementedOperations.some((o) => o.operationId === spec.operationId)) {
-    implementedOperations.push({ ...spec, anonymous: spec.minRole === "visitor", tags: ["extension"], extension: true });
+    implementedOperations.push({
+      ...spec,
+      anonymous: spec.minRole === "visitor",
+      reauth: false,
+      tags: ["extension"],
+      extension: true,
+    });
   }
   (router as unknown as Record<string, (p: string, ...h: RequestHandler[]) => void>)[spec.method](
     toExpressPath(spec.path),

@@ -2,6 +2,7 @@
 import { Router } from "express";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
+import { pathParam } from "../params.js";
 import { audit } from "../audit.js";
 import { badRequest, conflict, notFound } from "../errors.js";
 import { CatalogImmutableError, getCatalog, importCatalogVersion, listCatalogVersions } from "../services/catalog.js";
@@ -14,7 +15,7 @@ export function catalogRoutes(db: Db): Router {
   });
 
   defineOperation(router, "listModules", async (req, res) => {
-    const modules = await getCatalog(db, req.params.catalogVersion);
+    const modules = await getCatalog(db, pathParam(req, "catalogVersion"));
     if (modules.length === 0) throw notFound();
     res.json(modules);
   });

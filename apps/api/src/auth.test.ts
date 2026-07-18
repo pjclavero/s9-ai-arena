@@ -75,9 +75,7 @@ describe("T7.2 registro y login", () => {
 
 describe("T7.2 revocación y expiración (DoD: rechazado en todos los endpoints)", () => {
   it("un token revocado es rechazado en todos los endpoints autenticados", async () => {
-    const login = await request(app)
-      .post("/auth/login")
-      .send({ email: DEV_USERS.admin, password: DEV_PASSWORD });
+    const login = await request(app).post("/auth/login").send({ email: DEV_USERS.admin, password: DEV_PASSWORD });
     const token = login.body.accessToken;
 
     const sessions = await request(app).get("/auth/sessions").set("Authorization", `Bearer ${token}`);
@@ -100,12 +98,13 @@ describe("T7.2 revocación y expiración (DoD: rechazado en todos los endpoints)
   });
 
   it("una sesión expirada rechaza el token y el refresh", async () => {
-    const login = await request(app)
-      .post("/auth/login")
-      .send({ email: DEV_USERS.moderator, password: DEV_PASSWORD });
+    const login = await request(app).post("/auth/login").send({ email: DEV_USERS.moderator, password: DEV_PASSWORD });
     // Expira la sesión por detrás
     const user = await h.db("users").where({ email: DEV_USERS.moderator }).first();
-    await h.db("sessions").where({ user_id: user.id }).update({ expires_at: new Date(Date.now() - 1000) });
+    await h
+      .db("sessions")
+      .where({ user_id: user.id })
+      .update({ expires_at: new Date(Date.now() - 1000) });
 
     const me = await request(app).get("/users/me").set("Authorization", `Bearer ${login.body.accessToken}`);
     expect(me.status).toBe(401);
@@ -113,25 +112,23 @@ describe("T7.2 revocación y expiración (DoD: rechazado en todos los endpoints)
     expect(refresh.status).toBe(401);
   });
 
-  it("el refresh rota: el refresh token anterior deja de valer", async () => {
-    const login = await request(app)
-      .post("/auth/login")
-      .send({ email: DEV_USERS.organizer, password: DEV_PASSWORD });
+  it("el refresh rota; reutilizar el anterior revoca la FAMILIA entera (R2.4 · ERR-SEC-08)", async () => {
+    const login = await request(app).post("/auth/login").send({ email: DEV_USERS.organizer, password: DEV_PASSWORD });
     const r1 = await request(app).post("/auth/refresh").send({ refreshToken: login.body.refreshToken });
     expect(r1.status).toBe(200);
+    // Reutilizar el token YA ROTADO = robo detectado → 401 y familia revocada:
     const replay = await request(app).post("/auth/refresh").send({ refreshToken: login.body.refreshToken });
     expect(replay.status).toBe(401);
+    // …así que el token "bueno" de la rotación también queda inservible.
     const r2 = await request(app).post("/auth/refresh").send({ refreshToken: r1.body.refreshToken });
-    expect(r2.status).toBe(200);
+    expect(r2.status).toBe(401);
   });
 });
 
 describe("T7.2 fuerza bruta (DoD: 20 fallos ⇒ bloqueo temporal y registro)", () => {
   it("bloquea tras 20 intentos fallidos y lo registra en audit_log", async () => {
     const email = "bruteforce@test.local";
-    await request(app)
-      .post("/auth/register")
-      .send({ email, password: "password-legitima-1", displayName: "BF" });
+    await request(app).post("/auth/register").send({ email, password: "password-legitima-1", displayName: "BF" });
 
     for (let i = 0; i < 20; i++) {
       const r = await request(app).post("/auth/login").send({ email, password: "incorrecta-xxxxx" });
@@ -213,7 +210,8 @@ describe("T7.2 cabeceras de seguridad y CORS restrictivo", () => {
     const r = await request(app).get("/teams");
     expect(r.headers["x-content-type-options"]).toBe("nosniff");
     expect(r.headers["x-frame-options"]).toBe("DENY");
-    expect(r.headers["strict-transport-security"]).toContain("max-age");
+    // R2.6 (ERR-SEC-16): HSTS lo emite el gateway (terminador TLS), NO la API.
+    expect(r.headers["strict-transport-security"]).toBeUndefined();
 
     const evil = await request(app).get("/teams").set("Origin", "https://evil.example");
     expect(evil.headers["access-control-allow-origin"]).toBeUndefined();

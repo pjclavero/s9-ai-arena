@@ -15,6 +15,7 @@
  *     --stub-bots botId3:heavy:idle,botId4:scout:hunter   (opcional, corren dentro del motor)
  */
 import { randomUUID } from "node:crypto";
+import { nowMs } from "./wall-clock.js";
 import { loadRuleset } from "../../../packages/game-rules/index.js";
 import { loadCatalog, CATALOG_VERSION } from "../../../packages/module-catalog/loadCatalog.js";
 import { resolveVehicle } from "../../../packages/module-catalog/resolve/index.js";
@@ -39,10 +40,13 @@ const STUBS: Record<string, (id: string) => any> = {
 
 function parseBotList(s: string | undefined): { botId: string; archetype: string; kind?: string }[] {
   if (!s) return [];
-  return s.split(",").filter(Boolean).map((entry) => {
-    const [botId, archetype, kind] = entry.split(":");
-    return { botId, archetype, kind };
-  });
+  return s
+    .split(",")
+    .filter(Boolean)
+    .map((entry) => {
+      const [botId, archetype, kind] = entry.split(":");
+      return { botId, archetype, kind };
+    });
 }
 
 async function main(): Promise<void> {
@@ -62,7 +66,8 @@ async function main(): Promise<void> {
   const participants: Participant[] = all.map((s, i) => {
     const archetypeKey = s.archetype as keyof typeof ARCHETYPES;
     const loadout = ARCHETYPES[archetypeKey];
-    if (!loadout) throw new Error(`Arquetipo desconocido: ${s.archetype}. Opciones: ${Object.keys(ARCHETYPES).join(", ")}`);
+    if (!loadout)
+      throw new Error(`Arquetipo desconocido: ${s.archetype}. Opciones: ${Object.keys(ARCHETYPES).join(", ")}`);
     return {
       id: `veh_${i + 1}`,
       botId: s.botId,
@@ -72,7 +77,8 @@ async function main(): Promise<void> {
   });
 
   const battle = await Battle.create({
-    battleId: "localsim_" + Date.now(),
+    // Id local, no simulación: el reloj de pared va vía wall-clock.ts (lint ERR-ENG-02).
+    battleId: "localsim_" + nowMs(),
     seed,
     ruleset: loadRuleset(rulesetId, { timeLimitTicks: ticks }),
     map: (MAPS[mapName] ?? emptyArena)(),

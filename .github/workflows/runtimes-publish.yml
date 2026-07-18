@@ -1,0 +1,88 @@
+# R6.1 — Publica las imágenes de runtime de bots en GHCR y devuelve sus DIGESTS reales.
+#
+# Por qué existe: un `docker build` local NO produce digest. El `@sha256:` de una imagen es
+# el digest de su manifiesto EN UN REGISTRY, así que para poder fijar los runtimes por
+# digest (cap. 18.3) hay que publicarlos en uno. GHCR es el estado final: el CI lo
+# reproduce y VM108 descarga de forma anónima (el repo es público), así que ninguna
+# credencial de registro toca el servidor.
+#
+# No necesita ningún secret: GITHUB_TOKEN ya escribe en ghcr.io/<owner>/* con el permiso
+# `packages: write` de abajo. NUNCA metas un PAT aquí.
+#
+# POR QUÉ SE LANZA A MANO Y NO EN CADA PUSH (medido en R6.1, no supuesto):
+# las imágenes NO son reproducibles bit a bit. Se comprobó que el MISMO commit, publicado
+# dos veces por ESTE MISMO workflow, da digests distintos:
+#   bot-runtime-python -> sha256:4795fa54...  y luego  sha256:2ffb8119...
+# (las capas llevan mtimes y metadatos del momento del build). Es decir: reconstruir no
+# sirve para verificar nada, y publicar en cada push dejaría runtimes/DIGESTS.lock
+# obsoleto en cuanto se tocara cualquier cosa, con un digest fijado que ya nadie prueba.
+#
+# De ahí el modelo: construir UNA vez, FIJAR el digest, y verificar DESCARGÁNDOLO.
+# El resto del CI (e6-security.yml) nunca reconstruye: hace `docker pull` del digest
+# fijado, así que lo que se prueba es exactamente la imagen que está pineada.
+#
+# Flujo cuando cambies un runtime (runtimes/ o sdks/):
+#   1. lanza este workflow a mano sobre tu rama (Actions -> Run workflow, o
+#      `gh workflow run runtimes-publish.yml --ref <rama>`);
+#   2. copia los digests del resumen del run;
+#   3. fíjalos en runtimes/DIGESTS.lock y súbelo en el mismo PR.
+# Si no lo haces, el CI seguirá probando la imagen ANTERIOR: el digest fijado manda.
+name: Publicar runtimes de bots (GHCR)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        runtime: [python, node]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Autenticarse en GHCR (GITHUB_TOKEN, sin secrets)
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Construir y publicar ${{ matrix.runtime }}
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}/bot-runtime-${{ matrix.runtime }}
+        run: |
+          # El nombre va en minúsculas: GHCR rechaza mayúsculas en el repositorio.
+          image="$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')"
+          # El contexto de build es la RAÍZ del repo: los Dockerfile hacen COPY de
+          # sdks/<lang> para construir el SDK propio (nunca se resuelve del registro).
+          # --provenance=false: sin la capa de atestación, el digest publicado es el del
+          # manifiesto de la imagen y no el de un índice con adjuntos.
+          docker buildx build \
+            --provenance=false \
+            -f "runtimes/${{ matrix.runtime }}/Dockerfile" \
+            -t "$image:${{ github.sha }}" \
+            --push .
+          digest="$(docker buildx imagetools inspect "$image:${{ github.sha }}" \
+            --format '{{.Manifest.Digest}}')"
+          linea="$image@$digest"
+          echo "$linea"
+          fijado="$(awk -v r='${{ matrix.runtime }}' '$1 == r { print $3 }' runtimes/DIGESTS.lock | head -1)"
+          {
+            echo "## Runtime \`${{ matrix.runtime }}\` publicado"
+            echo ""
+            echo "Fija esta línea en \`runtimes/DIGESTS.lock\` (3ª columna):"
+            echo ""
+            echo '```'
+            echo "$linea"
+            echo '```'
+            echo ""
+            if [ "$fijado" = "$linea" ]; then
+              echo "El lock ya fijaba este digest exacto."
+            else
+              echo "> El lock fija ahora \`$fijado\`."
+              echo "> Mientras no lo actualices, el CI seguirá probando ESA imagen, no la recién publicada."
+              echo "> (Un digest distinto no significa que el runtime haya cambiado: los builds no son"
+              echo "> reproducibles bit a bit; por eso el digest se fija a mano y una sola vez.)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

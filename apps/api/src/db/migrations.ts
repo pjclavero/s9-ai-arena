@@ -20,7 +20,16 @@ export interface Migration {
 export const ROLES = ["visitor", "user", "developer", "team_captain", "organizer", "moderator", "admin"] as const;
 export type RoleName = (typeof ROLES)[number];
 
-export const BOT_STATES = ["draft", "validating", "rejected", "validated", "published", "frozen", "suspended", "retired"] as const;
+export const BOT_STATES = [
+  "draft",
+  "validating",
+  "rejected",
+  "validated",
+  "published",
+  "frozen",
+  "suspended",
+  "retired",
+] as const;
 
 const m001_identity: Migration = {
   name: "001_identity",
@@ -84,6 +93,16 @@ const m001_identity: Migration = {
         PRIMARY KEY (team_id, user_id)
       );
     `);
+
+    // La jerarquía de roles (cap. 16) es catálogo del sistema, no datos de
+    // desarrollo: user_roles tiene FK contra roles, así que sin estas filas el
+    // registro de CUALQUIER usuario falla ("Key (role)=(user) is not present in
+    // table roles"). Antes solo las insertaba seedDev, y por eso una instalación
+    // limpia se quedaba sin poder crear el primer usuario.
+    await db("roles")
+      .insert(ROLES.map((name, rank) => ({ name, rank })))
+      .onConflict("name")
+      .ignore();
   },
   async down(db) {
     await db.raw(`
@@ -559,7 +578,88 @@ const m008_e9_competition: Migration = {
   },
 };
 
-export const MIGRATIONS: Migration[] = [m001_identity, m002_content, m003_bots, m004_competition, m005_results, m006_operations, m007_e9_queue, m008_e9_competition];
+// R2.4 (ERR-SEC-08/11) · Familias de refresh tokens y vida máxima absoluta.
+//  - sessions.absolute_expires_at: tope ABSOLUTO de la sesión; la rotación del
+//    refresh puede renovar expires_at pero NUNCA más allá de este límite.
+//  - session_refresh_tokens: historial de TODOS los hashes emitidos para una
+//    sesión (= familia). Presentar un hash ya rotado (rotated_at NOT NULL) es
+//    señal inequívoca de robo → se revoca la familia entera y se audita.
+//    token_hash es UNIQUE global: un hash pertenece a una única familia.
+const m009_r24_refresh_families: Migration = {
+  name: "009_r24_refresh_families",
+  async up(db) {
+    await db.raw(`
+      ALTER TABLE sessions ADD COLUMN absolute_expires_at timestamptz;
+
+      CREATE TABLE session_refresh_tokens (
+        id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        session_id uuid NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        token_hash text NOT NULL UNIQUE,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        rotated_at timestamptz
+      );
+      CREATE INDEX session_refresh_tokens_session_idx ON session_refresh_tokens (session_id);
+    `);
+    // Sesiones vivas previas a la migración: se les materializa su token vigente
+    // como cabeza de familia, con el tope absoluto contado desde su creación.
+    await db.raw(`
+      INSERT INTO session_refresh_tokens (session_id, token_hash, created_at)
+        SELECT id, refresh_token_hash, created_at FROM sessions WHERE revoked_at IS NULL
+        ON CONFLICT (token_hash) DO NOTHING;
+      UPDATE sessions SET absolute_expires_at = created_at + interval '30 days'
+        WHERE absolute_expires_at IS NULL;
+    `);
+  },
+  async down(db) {
+    await db.raw(`
+      DROP TABLE IF EXISTS session_refresh_tokens CASCADE;
+      ALTER TABLE sessions DROP COLUMN absolute_expires_at;
+    `);
+  },
+};
+
+// R2.5 (ERR-SEC-12/14/15) — estado de rate-limit/bloqueo en almacén COMPARTIDO
+// (tabla api_usage, sobrevive a reinicios del proceso) y bytes del artefacto
+// firmado para poder verificar la firma ANTES de cada lanzamiento.
+const m010_r25_shared_limits: Migration = {
+  name: "010_r25_shared_limits",
+  async up(db) {
+    await db.raw(`
+      -- Expiración de ventanas (limpieza barata por índice) y estado de bloqueo
+      -- (fuerza bruta de login) persistente entre reinicios (ERR-SEC-14).
+      ALTER TABLE api_usage
+        ADD COLUMN expires_at    timestamptz,
+        ADD COLUMN blocked_until timestamptz;
+      CREATE INDEX api_usage_expiry_idx ON api_usage (expires_at);
+
+      -- Bytes canónicos del artefacto firmado (ERR-SEC-15): sin ellos no hay
+      -- nada que verificar contra la firma antes de lanzar. MVP: bytea en BD
+      -- (límite 200 MB por config del pipeline); un almacén de objetos externo
+      -- puede sustituirlo más adelante vía storage_ref.
+      ALTER TABLE artifacts ADD COLUMN bytes bytea;
+    `);
+  },
+  async down(db) {
+    await db.raw(`
+      ALTER TABLE artifacts DROP COLUMN bytes;
+      DROP INDEX IF EXISTS api_usage_expiry_idx;
+      ALTER TABLE api_usage DROP COLUMN expires_at, DROP COLUMN blocked_until;
+    `);
+  },
+};
+
+export const MIGRATIONS: Migration[] = [
+  m001_identity,
+  m002_content,
+  m003_bots,
+  m004_competition,
+  m005_results,
+  m006_operations,
+  m007_e9_queue,
+  m008_e9_competition,
+  m009_r24_refresh_families,
+  m010_r25_shared_limits,
+];
 
 class ProgrammaticMigrationSource {
   getMigrations() {

@@ -146,7 +146,7 @@ describe("estados de módulo y degradación (cap. 12.2)", () => {
     const v = mkVehicle();
     v.modules.get("drive")!.hp = 0;
 
-    expect(v.movementCaps()).toBeNull();       // inmóvil
+    expect(v.movementCaps()).toBeNull(); // inmóvil
     expect(v.turretRate()).toBeGreaterThan(0); // pero la torreta vive
     expect(v.activeModulesOf("sensor").length).toBeGreaterThan(0); // y los sensores también
   });

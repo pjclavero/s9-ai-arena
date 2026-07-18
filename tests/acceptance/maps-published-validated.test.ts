@@ -27,7 +27,8 @@ afterAll(async () => {
 
 describe("cap. 28 · mapas: todo mapa publicado pasó validación", () => {
   it("query de verificación: no hay map_versions publicadas sin contenido o sin checksum", async () => {
-    const broken = await h.db("map_versions")
+    const broken = await h
+      .db("map_versions")
       .where({ state: "published" })
       .andWhere((q) => q.whereNull("content").orWhereNull("checksum"))
       .select("map_id", "version");

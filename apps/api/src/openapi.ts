@@ -20,6 +20,10 @@ export interface ContractOperation {
   minRole: RoleName;
   /** true si la operación lleva `security: []` (accesible sin token). */
   anonymous: boolean;
+  /** R2.4 (ERR-SEC-07) · true si la operación exige REAUTENTICACIÓN fuerte
+   *  (contraseña + TOTP) además del token: con rol suficiente pero sin
+   *  credenciales frescas responde 401 a propósito (x-reauth en el contrato). */
+  reauth: boolean;
   tags: string[];
 }
 
@@ -30,9 +34,10 @@ export interface Contract {
   privateFieldNames: Set<string>;
 }
 
-export const ROLE_RANK: Record<RoleName, number> = Object.fromEntries(
-  ROLES.map((r, i) => [r, i]),
-) as Record<RoleName, number>;
+export const ROLE_RANK: Record<RoleName, number> = Object.fromEntries(ROLES.map((r, i) => [r, i])) as Record<
+  RoleName,
+  number
+>;
 
 let cached: Contract | undefined;
 
@@ -51,6 +56,7 @@ export function loadContract(): Contract {
         path,
         minRole: (o["x-min-role"] as RoleName) ?? "user",
         anonymous: Array.isArray(o.security) && o.security.length === 0,
+        reauth: o["x-reauth"] === true,
         tags: (o.tags as string[]) ?? [],
       });
     }

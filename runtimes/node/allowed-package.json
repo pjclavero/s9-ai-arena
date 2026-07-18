@@ -1,10 +1,9 @@
 {
   "name": "arena-bot-runtime-node",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "private": true,
-  "description": "E6/T6.3 · allowlist Node preinstalada en el runtime de bots. Sincronizar con ALLOWED-PACKAGES.md y config.ts (DEFAULT_NODE_ALLOWLIST).",
+  "description": "E6/T6.3 · R6.1 — allowlist Node de TERCEROS preinstalada en el runtime de bots. @arena/sdk NO aparece aqui a proposito: es el SDK propio del repo (sdks/javascript) y se construye e instala desde el, nunca desde npmjs (el scope @arena no es nuestro en el registro publico: resolverlo por nombre seria dependency confusion). Sincronizar con ALLOWED-PACKAGES.md y config.ts (DEFAULT_NODE_ALLOWLIST).",
   "dependencies": {
-    "@arena/sdk": "1.0.0",
     "ws": "8.18.0"
   }
 }

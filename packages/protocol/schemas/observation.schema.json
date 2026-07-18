@@ -209,6 +209,10 @@
         "required": ["kind", "team", "state"],
         "properties": {
           "kind": { "enum": ["flag", "zone"] },
+          "id": {
+            "type": "string",
+            "description": "Identificador estable del objetivo (p.ej. zona de captura), presente cuando el modo expone varios objetivos distinguibles."
+          },
           "team": { "$ref": "common.schema.json#/$defs/team" },
           "state": {
             "enum": ["at_base", "carried", "dropped", "returning", "captured", "neutral", "contested", "held"]

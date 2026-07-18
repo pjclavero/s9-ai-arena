@@ -29,7 +29,10 @@ export function securityHeaders(allowedOrigin: string) {
     res.setHeader("X-Frame-Options", "DENY");
     res.setHeader("Referrer-Policy", "no-referrer");
     res.setHeader("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
-    res.setHeader("Strict-Transport-Security", "max-age=63072000; includeSubDomains");
+    // R2.6 (ERR-SEC-16): HSTS ya NO se emite aquí. Es responsabilidad del
+    // terminador TLS (gateway Nginx, infrastructure/gateway/*.conf): la API
+    // habla HTTP plano en la red interna y un HSTS emitido desde aquí miente
+    // sobre quién sirve TLS.
 
     const origin = req.headers.origin;
     if (origin && origin === allowedOrigin) {

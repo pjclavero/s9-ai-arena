@@ -35,14 +35,7 @@ export type StageStatus = "pending" | "running" | "passed" | "failed" | "skipped
 
 /** Estado de una versión de bot (OpenAPI BotVersion.state / cap. 17.1). */
 export type BotVersionState =
-  | "draft"
-  | "validating"
-  | "rejected"
-  | "validated"
-  | "published"
-  | "frozen"
-  | "suspended"
-  | "retired";
+  "draft" | "validating" | "rejected" | "validated" | "published" | "frozen" | "suspended" | "retired";
 
 export interface StageResult {
   name: StageName;
@@ -69,6 +62,11 @@ export interface Build {
   stages: StageResult[];
   /** Hash del artefacto reproducible (sha256), presente si llegó a build. */
   artifactHash?: string;
+  /**
+   * Bytes canónicos del artefacto empaquetado (R2.5 · ERR-SEC-15): se persisten
+   * junto a hash+firma para poder VERIFICAR la firma antes de cada lanzamiento.
+   */
+  artifactBytes?: Buffer;
   /** Firma del servicio sobre artifactHash (hex), presente si llegó a sign. */
   signature?: string;
   /** Motivo de rechazo si botVersionState === "rejected". */

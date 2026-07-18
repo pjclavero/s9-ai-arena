@@ -81,7 +81,11 @@ function outcomeScore(outcome: string | null): number {
  * battle_id: si ya hay eventos en el libro mayor, no-op (DoD: reprocesar una
  * batalla no aplica el rating dos veces).
  */
-export async function applyBattleRating(db: Knex, battleId: string, system: RatingSystem = EloSystem): Promise<boolean> {
+export async function applyBattleRating(
+  db: Knex,
+  battleId: string,
+  system: RatingSystem = EloSystem,
+): Promise<boolean> {
   const battle = await db("battles").where({ id: battleId }).first();
   if (!battle || battle.status !== "finished") return false;
   if (!battle.official) return false; // práctica privada: no puntúa
@@ -160,7 +164,9 @@ export async function revertBattleRating(db: Knex, battleId: string): Promise<bo
     const events = await trx("rating_events").where({ battle_id: battleId, reverted: false }).forUpdate();
     if (events.length === 0) return false;
     const participants = await trx("participants").where({ battle_id: battleId });
-    const scoreByBot = new Map<string, number>(participants.map((p: Record<string, unknown>) => [p.bot_id as string, outcomeScore(p.outcome as string | null)]));
+    const scoreByBot = new Map<string, number>(
+      participants.map((p: Record<string, unknown>) => [p.bot_id as string, outcomeScore(p.outcome as string | null)]),
+    );
     for (const e of events) {
       const score = scoreByBot.get(e.bot_id as string) ?? 0;
       await trx("ratings")
