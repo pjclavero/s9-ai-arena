@@ -1,3 +1,17 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# S9 AI Arena — PROTOTIPO v1 (LEGADO / DEMO). NO usar en producción.
+#
+# R-DEPLOY · R7: este Compose es la demo de tanques de 4 contenedores
+# (arena-server + arena-viewer + bot-red + bot-blue). Se renombró de
+# `docker-compose.yml` a `docker-compose.demo.yml` para eliminar la ambigüedad
+# con el stack OFICIAL de producción, que es `infrastructure/docker-compose.yml`.
+#
+#   Demo local (v1):   docker compose -f docker-compose.demo.yml up
+#   Producción (v2):   docker compose -f infrastructure/docker-compose.yml \
+#                        --env-file infrastructure/.env --profile production up -d
+#
+# Plan de retirada de la v1: ADR-010 (D10.1) y el dosier (Ronda 2). Ver README.
+# ──────────────────────────────────────────────────────────────────────────────
 services:
   arena-server:
     build:

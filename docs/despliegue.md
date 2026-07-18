@@ -5,10 +5,18 @@ Compose de `infrastructure/docker-compose.yml` contiene TODO lo necesario (gatew
 web, api, motor, workers, bot-manager, Redis y PostgreSQL — este último opcional si
 se usa la instancia existente del servidor vía `DATABASE_URL`). Dosier: capítulo 6.
 
-> **Obsoleto:** el `docker-compose.yml` de la RAÍZ del repo es del prototipo previo
-> (arena-server/arena-viewer/bot-red/bot-blue) y NO es este stack. Se propone
-> retirarlo junto con `pnpm-workspace.yaml`, `apps/arena-server`, `apps/arena-viewer`
-> y `bots/*` en un PR de limpieza aprobado por el operador (ADR-010 D10.1).
+> **Qué Compose usar (R-DEPLOY · R7):**
+> - **Oficial / producción (VM108):** `infrastructure/docker-compose.yml` — este
+>   documento. Es el ÚNICO válido en producción.
+> - **Demo / legado (v1):** `docker-compose.demo.yml` de la RAÍZ (antes
+>   `docker-compose.yml`; renombrado para quitar la ambigüedad). Es el prototipo
+>   de tanques (arena-server/arena-viewer/bot-red/bot-blue). **NO usar en prod.**
+>   Se propone retirarlo junto con `pnpm-workspace.yaml`, `apps/arena-server`,
+>   `apps/arena-viewer` y `bots/*` en un PR de limpieza aprobado por el operador
+>   (ADR-010 D10.1).
+>
+> Validar el oficial sin daemon: `docker compose -f infrastructure/docker-compose.yml
+> --profile production config` (y la suite `infrastructure/tests/compose.test.ts`).
 
 ## Instalación limpia en tres pasos
 
