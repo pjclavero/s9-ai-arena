@@ -47,9 +47,20 @@ describe("T7.5 conformidad con el contrato de E1", () => {
     }
   });
 
-  it("las extensiones fuera de contrato están documentadas y son solo de recuperación de cuenta", () => {
+  it("las extensiones fuera de contrato están documentadas y son EXACTAMENTE las conocidas", () => {
     const extensions = implementedOperations.filter((o) => o.extension).map((o) => o.operationId);
-    expect(extensions.sort()).toEqual(["recoverAccount", "resetPassword"]);
+    // recoverAccount/resetPassword: recuperación de cuenta (T7.2).
+    // getTournament/listTournamentBattles/listBotLoadouts/logout: lecturas y
+    // sesión que el panel necesita (R3.7, ERR-VIS-02/03/04); documentadas en
+    // docs/ronda2/reportes/R3.7-panel.md y candidatas a entrar en el contrato 0.3.
+    expect(extensions.sort()).toEqual([
+      "getTournament",
+      "listBotLoadouts",
+      "listTournamentBattles",
+      "logout",
+      "recoverAccount",
+      "resetPassword",
+    ]);
   });
 
   it("cada operación implementada usa el x-min-role del contrato (por construcción)", () => {

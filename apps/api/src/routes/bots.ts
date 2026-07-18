@@ -5,7 +5,7 @@
 import { Router } from "express";
 import multer from "multer";
 import type { Db } from "../db/connection.js";
-import { defineOperation } from "../registry.js";
+import { defineOperation, defineExtension } from "../registry.js";
 import { ApiError, badRequest, conflict, forbidden, notFound } from "../errors.js";
 import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
 import { ROLE_RANK } from "../openapi.js";
@@ -182,6 +182,22 @@ export function botRoutes(db: Db, botManager: BotManagerClient): Router {
     const loadout = await createLoadoutRevision(db, bot.id as string, req.body, result.summary!);
     res.status(201).json(loadoutToJson(loadout));
   });
+
+  /**
+   * R3.7 (ERR-VIS-04) · Extensión: listar las revisiones de loadout de un bot.
+   * El contrato de E1 solo tenía el POST, así que el editor del panel no podía
+   * cargar la revisión vigente (arrancaba siempre vacío). Misma visibilidad que
+   * el propio bot (getVisibleBot); la última revisión es la "vigente".
+   */
+  defineExtension(
+    router,
+    { operationId: "listBotLoadouts", method: "get", path: "/bots/{botId}/loadouts", minRole: "user" },
+    async (req, res) => {
+      const bot = await getVisibleBot(db, req.auth, String(req.params.botId));
+      const rows = await db("bot_loadouts").where({ bot_id: bot.id }).orderBy("revision", "asc");
+      res.json(rows.map(loadoutToJson));
+    },
+  );
 
   // -------------------------------------------------------------- versiones
   defineOperation(router, "listBotVersions", async (req, res) => {
