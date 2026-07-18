@@ -6,12 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 import * as otplib from "otplib";
-import {
-  TOTP_PERIOD_SECONDS,
-  generateTotpSecret,
-  verifyTotp,
-  verifyTotpDetailed,
-} from "./totp.js";
+import { TOTP_PERIOD_SECONDS, generateTotpSecret, verifyTotp, verifyTotpDetailed } from "./totp.js";
 
 const P = TOTP_PERIOD_SECONDS;
 // Instante fijo alineado al inicio de un período (múltiplo de 30) para razonar
