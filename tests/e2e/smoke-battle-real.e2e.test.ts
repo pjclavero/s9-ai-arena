@@ -309,6 +309,7 @@ describe("smoke-battle-real - contenedores Docker", () => {
       /* continuar con 127.0.0.1 */
     }
     const arenaWsUrl = `ws://${hostIp}:${serverPort}`;
+    console.log(`[smoke] arenaWsUrl=${arenaWsUrl} (red=${DOCKER_NETWORK})`);
 
     let containerRed: string | null = null;
     let containerBlue: string | null = null;
@@ -332,6 +333,17 @@ describe("smoke-battle-real - contenedores Docker", () => {
       const connected = server.connectedVehicleIds();
       const missing = expectedVehicleIds.filter((id) => !connected.includes(id));
       if (missing.length > 0) {
+        for (const [label, id] of [
+          ["red", containerRed],
+          ["blue", containerBlue],
+        ] as const) {
+          try {
+            const logs = execFileSync("docker", ["logs", id!], { timeout: 5000 }).toString();
+            console.log(`[smoke] logs contenedor ${label} (${id}):\n${logs}`);
+          } catch (e) {
+            console.log(`[smoke] no se pudieron leer logs de ${label}: ${(e as Error).message}`);
+          }
+        }
         throw new Error(`bots sin handshake completado tras ${BOT_CONNECT_TIMEOUT_MS}ms: ${missing.join(", ")}`);
       }
 
