@@ -2,8 +2,9 @@ openapi: 3.1.0
 info:
   title: S9 AI Arena · API de plataforma
   # 0.2.0 · H6 (issue #10): añade getBotRatingHistory y getTeamStandings.
+  # 0.3.0 · R8 admin ops: añade getSystemStatus y getRbacMatrix (solo lectura, admin).
   # Añadir un endpoint = MINOR (docs/compatibilidad.md, §2 Semver por paquete).
-  version: 0.2.0
+  version: 0.3.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -34,6 +35,7 @@ tags:
   - name: replays
   - name: standings
   - name: admin
+  - name: system
 
 security:
   - bearerAuth: []
@@ -879,6 +881,33 @@ paths:
             application/json:
               schema: { type: array, items: { $ref: '#/components/schemas/AuditEntry' } }
 
+  # --------------------------------------------------------------- SYSTEM (R8)
+  /system/status:
+    get:
+      tags: [system]
+      operationId: getSystemStatus
+      summary: 'R8.6 · Estado agregado de operación (solo lectura): conteos por estado, salud de BD, entorno y política de runtime. No expone secretos ni permite acciones.'
+      x-min-role: admin
+      responses:
+        '200':
+          description: Estado del sistema
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SystemStatus' }
+
+  /system/rbac:
+    get:
+      tags: [system]
+      operationId: getRbacMatrix
+      summary: 'R8.9 · Matriz de roles y permisos derivada del contrato (solo lectura): roles con rango y endpoint→rol mínimo. Sin datos de usuarios.'
+      x-min-role: admin
+      responses:
+        '200':
+          description: Roles y matriz de permisos
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RbacMatrix' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1370,3 +1399,51 @@ components:
         target: { type: string }
         correlationId: { type: string }
         at: { type: string, format: date-time }
+
+    SystemStatus:
+      type: object
+      description: 'Estado agregado de operación. Solo booleanos/conteos; nunca valores secretos.'
+      properties:
+        env: { type: string, description: 'NODE_ENV o "unknown".' }
+        commit: { type: string, description: 'SHA de despliegue si está disponible, o "unknown".' }
+        databaseOk: { type: boolean }
+        realRunnerEnabled:
+          type: boolean
+          description: 'Lectura de S9_RUN_REAL_DOCKER_E2E. Si es false, la ejecución real de batallas no está disponible en este entorno.'
+        smokeDigestConfigured:
+          type: boolean
+          description: 'true si SMOKE_BOT_DIGEST está definido. NO se expone el valor.'
+        battlesByStatus: { type: object, additionalProperties: { type: integer } }
+        buildsByStatus: { type: object, additionalProperties: { type: integer } }
+        botVersionsByState: { type: object, additionalProperties: { type: integer } }
+        readyBots: { type: integer, description: 'Versiones de bot publicadas (jugables).' }
+        publishedMaps: { type: integer }
+        runtimePolicy: { $ref: '#/components/schemas/RuntimePolicyInvariants' }
+    RuntimePolicyInvariants:
+      type: object
+      description: 'Invariantes de seguridad del runtime que la plataforma SIEMPRE exige (solo lectura). Los límites numéricos se configuran en infraestructura (ver docs/ops).'
+      properties:
+        privileged: { type: boolean, description: 'Siempre false.' }
+        dockerSocketMounted: { type: boolean, description: 'Siempre false.' }
+        seccompEnforced: { type: boolean, description: 'Siempre true.' }
+        digestRequired: { type: boolean, description: 'Siempre true.' }
+        signatureRequired: { type: boolean, description: 'Siempre true.' }
+        networkMode: { type: string, description: 'Red dedicada de la arena (nunca host).' }
+
+    RbacMatrix:
+      type: object
+      properties:
+        roles: { type: array, items: { $ref: '#/components/schemas/RbacRole' } }
+        endpoints: { type: array, items: { $ref: '#/components/schemas/RbacEndpoint' } }
+    RbacRole:
+      type: object
+      properties:
+        name: { type: string }
+        rank: { type: integer }
+    RbacEndpoint:
+      type: object
+      properties:
+        operationId: { type: string }
+        method: { type: string }
+        path: { type: string }
+        minRole: { type: string }
