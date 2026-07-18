@@ -6,6 +6,9 @@
 # `docker-compose.yml` a `docker-compose.demo.yml` para eliminar la ambigüedad
 # con el stack OFICIAL de producción, que es `infrastructure/docker-compose.yml`.
 #
+# Ya NO está desplegado: la v1 fue RETIRADA de VM108 el 2026-07-17 (movida a
+# `/opt/_v1-prototipo-backup-20260717`). Estado real: docs/ESTADO_ACTUAL.md.
+#
 #   Demo local (v1):   docker compose -f docker-compose.demo.yml up
 #   Producción (v2):   docker compose -f infrastructure/docker-compose.yml \
 #                        --env-file infrastructure/.env --profile production up -d

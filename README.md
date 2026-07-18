@@ -4,11 +4,17 @@
 web, ejecución aislada de código no confiable, visor, replays, torneos, observabilidad y
 streaming. Monorepo TypeScript/Node.
 
-> **Estado (2026-07-16):** las doce entregas del dosier (**E1–E12**) están implementadas y
-> **verdes en su capa verificable sin Docker** (suite: ~646 tests pasan / 1 fallo de entorno
-> por zstd en Node 20 / 3 skipped). Lo pendiente **no es desarrollo**, sino **verificación en
-> un entorno con Docker y salida a internet, integración final y despliegue de la v2**.
-> El detalle vive en **[docs/estado-proyecto.md](docs/estado-proyecto.md)** (fuente de verdad).
+> **Estado (2026-07-18):** el **núcleo de la v2 está DESPLEGADO** en VM108 (perfil `nucleo`,
+> 7 servicios `healthy`) y sirviendo en **`https://s9arena.seccionnueve.duckdns.org`** tras el
+> proxy de VM104. La **v1 se retiró** de la ruta activa. La fuente de verdad operativa es
+> **[docs/ESTADO_ACTUAL.md](docs/ESTADO_ACTUAL.md)**; para operar la VM,
+> **[docs/OPERACION_VM108.md](docs/OPERACION_VM108.md)**.
+>
+> Las doce entregas del dosier (**E1–E12**) están implementadas. Lo pendiente es completar la
+> integración a `main` (PR #38, incluye R-DEPLOY), actualizar el despliegue y la validación
+> real de extremo a extremo (batalla + visor + WebSocket desde Internet). Detalle histórico de
+> implementación en **[docs/estado-proyecto.md](docs/estado-proyecto.md)** (verificado 2026-07-16,
+> anterior al despliegue).
 
 ## ⚠️ Hay dos versiones en este repo — no confundirlas
 
@@ -16,11 +22,13 @@ streaming. Monorepo TypeScript/Node.
 |---|---|---|
 | Qué es | Demo de tanques de 4 contenedores | Toda la plataforma E1–E12 |
 | Código | `apps/arena-server`, `apps/arena-viewer` (Phaser 3), `bots/bot-red`, `bots/bot-blue` | `apps/api`, `apps/arena-engine`, `apps/web` (Phaser 4), `apps/bot-manager`, `apps/map-service`, `apps/replay-service`, `apps/tournament-worker`, `apps/streamer`, `packages/*`, `sdks/*`, `infrastructure/` |
-| Despliegue | `docker-compose.demo.yml` (raíz) — demo/legado, **lo único desplegado hoy** (VM108, tras el proxy de VM104) | `infrastructure/docker-compose.yml` — **stack OFICIAL**, definido, aún no desplegado de extremo a extremo |
-| Estado | **A retirar** — ver plan de decomisado en el dosier | Canónico |
+| Despliegue | `docker-compose.demo.yml` (raíz) — demo/legado, **ya NO desplegado** (retirado de VM108 el 2026-07-17) | `infrastructure/docker-compose.yml` — **stack OFICIAL, DESPLEGADO en VM108** (perfil `nucleo`, 7 servicios) |
+| Estado | **Retirada** — despliegue movido a `/opt/_v1-prototipo-backup-20260717` en VM108 | Canónico y en producción |
 
-La v1 se mantiene solo porque es lo que está en producción. El objetivo inmediato es
-**desplegar la v2 y sacar la v1 del camino** (plan en el dosier de remediación, Ronda 2).
+La v1 se conserva en el repo solo por historia. **El compose oficial de despliegue es
+`infrastructure/docker-compose.yml`**; el de la raíz es legacy y no debe usarse en producción.
+Estado real y operación: [docs/ESTADO_ACTUAL.md](docs/ESTADO_ACTUAL.md),
+[docs/MIGRACION_V2.md](docs/MIGRACION_V2.md), [docs/DESPLIEGUE_DOMINIO.md](docs/DESPLIEGUE_DOMINIO.md).
 
 ## Arquitectura (v2, resumen)
 

@@ -1,5 +1,11 @@
 # Despliegue de S9 AI Arena
 
+> **⚠️ Estado real (2026-07-18):** el núcleo de la v2 YA está desplegado en VM108. Para el
+> estado vigente y la operación usa **[ESTADO_ACTUAL.md](ESTADO_ACTUAL.md)**,
+> **[OPERACION_VM108.md](OPERACION_VM108.md)** y **[DESPLIEGUE_DOMINIO.md](DESPLIEGUE_DOMINIO.md)**.
+> El dominio correcto es **`s9arena.seccionnueve.duckdns.org`** (NO `arena.…`, que es otro
+> proyecto en VM107). Este documento describe el procedimiento general de despliegue.
+
 La plataforma es **una única aplicación desplegable en una sola máquina**: el stack
 Compose de `infrastructure/docker-compose.yml` contiene TODO lo necesario (gateway,
 web, api, motor, workers, bot-manager, Redis y PostgreSQL — este último opcional si
