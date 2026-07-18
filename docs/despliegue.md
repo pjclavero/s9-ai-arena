@@ -5,10 +5,18 @@ Compose de `infrastructure/docker-compose.yml` contiene TODO lo necesario (gatew
 web, api, motor, workers, bot-manager, Redis y PostgreSQL — este último opcional si
 se usa la instancia existente del servidor vía `DATABASE_URL`). Dosier: capítulo 6.
 
-> **Obsoleto:** el `docker-compose.yml` de la RAÍZ del repo es del prototipo previo
-> (arena-server/arena-viewer/bot-red/bot-blue) y NO es este stack. Se propone
-> retirarlo junto con `pnpm-workspace.yaml`, `apps/arena-server`, `apps/arena-viewer`
-> y `bots/*` en un PR de limpieza aprobado por el operador (ADR-010 D10.1).
+> **Qué Compose usar (R-DEPLOY · R7):**
+> - **Oficial / producción (VM108):** `infrastructure/docker-compose.yml` — este
+>   documento. Es el ÚNICO válido en producción.
+> - **Demo / legado (v1):** `docker-compose.demo.yml` de la RAÍZ (antes
+>   `docker-compose.yml`; renombrado para quitar la ambigüedad). Es el prototipo
+>   de tanques (arena-server/arena-viewer/bot-red/bot-blue). **NO usar en prod.**
+>   Se propone retirarlo junto con `pnpm-workspace.yaml`, `apps/arena-server`,
+>   `apps/arena-viewer` y `bots/*` en un PR de limpieza aprobado por el operador
+>   (ADR-010 D10.1).
+>
+> Validar el oficial sin daemon: `docker compose -f infrastructure/docker-compose.yml
+> --profile production config` (y la suite `infrastructure/tests/compose.test.ts`).
 
 ## Instalación limpia en tres pasos
 
@@ -67,16 +75,22 @@ En `infrastructure/.env` de la VM donde se despliegue el stack:
 GATEWAY_CONF=nginx-behind-proxy.conf
 HTTP_PORT=8080          # puerto HTTP hacia la LAN (el que verá VM104)
 HTTPS_PORT=127.0.0.1:8443   # sin uso en este modo; ligado a loopback
-S9_DOMAIN=arena.seccionnueve.duckdns.org
+S9_DOMAIN=s9arena.seccionnueve.duckdns.org
 TRUST_PROXY_HOPS=2      # VM104 + gateway del stack (R1.8 · ERR-SEC-05)
 ```
 
-En VM104, un `server` para `arena.seccionnueve.duckdns.org` con
+En VM104, un `server` para `s9arena.seccionnueve.duckdns.org` con
 `proxy_pass http://<IP-de-la-VM-del-stack>:8080;`, cabeceras `X-Forwarded-Proto https`
 y `X-Forwarded-For $proxy_add_x_forwarded_for` (obligatoria: con
 `TRUST_PROXY_HOPS=2` la API espera que VM104 añada la IP real del cliente),
 y soporte de upgrade WebSocket para `/ws/`. El humo en este modo:
-`smoke.sh https://arena.seccionnueve.duckdns.org`.
+`smoke.sh https://s9arena.seccionnueve.duckdns.org`.
+
+> **Dominio (R-DEPLOY · R6):** S9 AI Arena usa **`s9arena.seccionnueve.duckdns.org`**.
+> El subdominio **`arena.seccionnueve.duckdns.org` está RESERVADO por otro
+> proyecto** del homelab y NO debe usarse aquí. VM104 termina el wildcard
+> `*.seccionnueve.duckdns.org`; añade **solo** el `server` de `s9arena` sin tocar
+> los vhosts de otros proyectos.
 
 > **IP real del cliente (R1.8 · ERR-SEC-05):** la API calcula `req.ip` con una
 > confianza de proxy **acotada** al número de saltos declarado en

@@ -1,7 +1,7 @@
 # Panel web (E7 · T7.4): SPA de React+Vite. No es un servicio Node — se compila
 # a estáticos y los sirve nginx. Por eso no usa node-service/Dockerfile.
 # Contexto de build: raíz del repo.
-FROM node:22-alpine AS build
+FROM node:22.15-alpine AS build
 
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.json vitest.config.ts ./

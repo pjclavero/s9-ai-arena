@@ -36,6 +36,19 @@ gen jwt_secret.txt
 gen grafana_admin_password.txt
 gen restic_password.txt
 
+# R-DEPLOY · R2: clave de firma de artefactos (ed25519, PEM PKCS8) para el
+# bot-build-worker (ARTIFACT_SIGNING_KEY_FILE, ERR-SEC-15). Idempotente.
+if [ ! -s "$DIR/artifact_signing_key.pem" ]; then
+  if command -v openssl >/dev/null; then
+    umask 077
+    openssl genpkey -algorithm ed25519 -out "$DIR/artifact_signing_key.pem" 2>/dev/null
+    echo "generado:  artifact_signing_key.pem (ed25519)"
+  else
+    echo "AVISO: sin openssl; el bot-build-worker exige artifact_signing_key.pem (ed25519 PEM PKCS8)"
+  fi
+fi
+[ -f "$DIR/artifact_signing_key.pem" ] && harden artifact_signing_key.pem
+
 # stream_key es del proveedor (YouTube): placeholder vacío que el operador rellena.
 if [ ! -f "$DIR/stream_key.txt" ]; then
   umask 077; : > "$DIR/stream_key.txt"
