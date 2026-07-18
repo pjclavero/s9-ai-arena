@@ -1,0 +1,17 @@
+{
+  "name": "s9-smoke-bot",
+  "version": "0.1.0",
+  "description": "Bot mínimo oficial para la batalla E2E de humo (R6.2). Determinista, sin red externa ni IA externa.",
+  "language": "python",
+  "runtime": "python",
+  "sdk": "arena-sdk@0.1.0",
+  "entrypoint": "/bot/main.py",
+  "env": ["WS_URL", "BATTLE_TOKEN", "BOT_ID"],
+  "source": {
+    "main.py": {
+      "algo": "sha256",
+      "digest": "83a41ddaac5c58c01bf266a187e7273b41daf912291968be29cd5890442aba82"
+    }
+  },
+  "notes": "El artefacto firmado y su digest de imagen los produce el bot-build-worker desde estas fuentes; este manifest fija el checksum de la fuente, no la imagen."
+}
