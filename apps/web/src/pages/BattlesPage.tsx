@@ -26,6 +26,9 @@ export function BattlesPage(props: { botFilter?: string }) {
   return (
     <div className="card">
       <h2>Batallas</h2>
+      <p>
+        <a href="#/battles/new">+ Nueva batalla de práctica</a>
+      </p>
       {props.botFilter && (
         <p data-testid="bot-filter">
           Mostrando solo batallas del bot <code>{props.botFilter}</code> <a href="#/battles">(quitar filtro)</a>

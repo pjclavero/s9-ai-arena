@@ -22,6 +22,8 @@ import { ReplayPage } from "./pages/ReplayPage.js";
 import { TournamentsPage } from "./pages/TournamentsPage.js";
 import { TournamentDetailPage } from "./pages/TournamentDetailPage.js";
 import { BattlesPage } from "./pages/BattlesPage.js";
+// R9 · crear batalla de práctica desde la UI (usa POST /battles seguro; ver BattleNewPage).
+import { BattleNewPage } from "./pages/BattleNewPage.js";
 import { MapsPage } from "./pages/MapsPage.js";
 import { SystemPage } from "./pages/SystemPage.js";
 import { AuditPage } from "./pages/AuditPage.js";
@@ -51,9 +53,10 @@ export function matchPublicRoute(
 /** R3.7 · Rutas del panel autenticado (además de #/bots, #/teams y #/admin). */
 export function matchPanelRoute(
   route: string,
-): { kind: "tournament"; id: string } | { kind: "battles"; botFilter?: string } | null {
+): { kind: "tournament"; id: string } | { kind: "battles"; botFilter?: string } | { kind: "battle-new" } | null {
   const detail = /^#\/tournaments\/([^/?]+)/.exec(route);
   if (detail) return { kind: "tournament", id: decodeURIComponent(detail[1]) };
+  if (/^#\/battles\/new/.test(route)) return { kind: "battle-new" }; // R9 (antes del match general de #/battles)
   const battles = /^#\/battles(?:\?bot=([^&]+))?/.exec(route);
   if (battles) return { kind: "battles", botFilter: battles[1] ? decodeURIComponent(battles[1]) : undefined };
   return null;
@@ -205,6 +208,8 @@ export function App() {
         <ErrorBoundary label="esta pantalla">
           {panelRoute?.kind === "tournament" ? (
             <TournamentDetailPage id={panelRoute.id} me={me} />
+          ) : panelRoute?.kind === "battle-new" ? ( // R9
+            <BattleNewPage me={me} />
           ) : panelRoute?.kind === "battles" ? (
             <BattlesPage botFilter={panelRoute.botFilter} />
           ) : route.startsWith("#/tournaments") ? (
