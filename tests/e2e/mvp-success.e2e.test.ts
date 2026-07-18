@@ -269,9 +269,7 @@ describe("T12.1 · el MVP funciona (26.1), en 6 pasos con evidencia", () => {
       pollIntervalMs: 1,
       meta: { mode: "capture_the_flag", mapId: "mvp-arena-01" },
     });
-    const ws = new WebSocket(
-      `ws://127.0.0.1:${gateway.port}/spectate/${state.battleDbId}?ticket=${encodeURIComponent(ticketRes.body.ticket)}`,
-    );
+    const ws = new WebSocket(`ws://127.0.0.1:${gateway.port}/spectate/${state.battleDbId}`, ["spectate.v1", `ticket.${ticketRes.body.ticket}`]);
     ws.on("message", (data) => state.spectatorMessages.push(JSON.parse(data.toString())));
     await new Promise<void>((resolve, reject) => {
       ws.on("open", () => resolve());

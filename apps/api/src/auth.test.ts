@@ -210,7 +210,8 @@ describe("T7.2 cabeceras de seguridad y CORS restrictivo", () => {
     const r = await request(app).get("/teams");
     expect(r.headers["x-content-type-options"]).toBe("nosniff");
     expect(r.headers["x-frame-options"]).toBe("DENY");
-    expect(r.headers["strict-transport-security"]).toContain("max-age");
+    // R2.6 (ERR-SEC-16): HSTS lo emite el gateway (terminador TLS), NO la API.
+    expect(r.headers["strict-transport-security"]).toBeUndefined();
 
     const evil = await request(app).get("/teams").set("Origin", "https://evil.example");
     expect(evil.headers["access-control-allow-origin"]).toBeUndefined();

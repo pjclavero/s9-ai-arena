@@ -146,6 +146,31 @@ describe("T7.5 espectador anónimo (DoD: batalla en directo y replay sin cuenta)
     expect(stats.status).toBe(200);
     expect(stats.body.perBot[botId].damageDealt).toBe(120);
   });
+
+  it("R2.6 (ERR-SEC-16): en producción el ticket exige SPECTATE_WS_URL con wss:// — falla cerrado si va en claro", async () => {
+    const prevEnv = process.env.NODE_ENV;
+    const prevUrl = process.env.SPECTATE_WS_URL;
+    try {
+      process.env.NODE_ENV = "production";
+      delete process.env.SPECTATE_WS_URL; // defecto ws:// en claro ⇒ 500, no ticket
+      const sinUrl = await request(app).post(`/battles/${liveBattleId}/spectate-ticket`);
+      expect(sinUrl.status).toBe(500);
+      expect(sinUrl.body.error ?? sinUrl.body.code).toBe("spectate_ws_misconfigured");
+
+      process.env.SPECTATE_WS_URL = "ws://gateway.interno/spectate"; // en claro ⇒ igual de mal
+      const enClaro = await request(app).post(`/battles/${liveBattleId}/spectate-ticket`);
+      expect(enClaro.status).toBe(500);
+
+      process.env.SPECTATE_WS_URL = "wss://arena.example/spectate";
+      const seguro = await request(app).post(`/battles/${liveBattleId}/spectate-ticket`);
+      expect(seguro.status).toBe(201);
+      expect(seguro.body.wsUrl.startsWith("wss://")).toBe(true);
+    } finally {
+      process.env.NODE_ENV = prevEnv;
+      if (prevUrl === undefined) delete process.env.SPECTATE_WS_URL;
+      else process.env.SPECTATE_WS_URL = prevUrl;
+    }
+  });
 });
 
 describe("T7.5 barrido de fugas por contrato (x-private)", () => {

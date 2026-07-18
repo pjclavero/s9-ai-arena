@@ -15,12 +15,26 @@ import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
 import { pathParam } from "../params.js";
 import { ROLE_RANK } from "../openapi.js";
-import { badRequest, conflict, notFound } from "../errors.js";
+import { ApiError, badRequest, conflict, notFound } from "../errors.js";
 import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
 import { signSpectateTicket } from "../auth/tokens.js";
 import { anonQuota, type AnonQuotaConfig } from "../middleware/anon-quota.js";
 
 const SPECTATE_TICKET_TTL_S = 60;
+
+/**
+ * R2.6 (ERR-SEC-16): base del WebSocket de espectador. En producción es
+ * OBLIGATORIO configurar SPECTATE_WS_URL con esquema wss:// (el ticket viaja
+ * por ese canal); si falta o va en claro, se falla CERRADO con 500 de
+ * configuración en vez de emitir tickets que viajarían sin cifrar.
+ */
+export function spectateWsBase(): string {
+  const wsBase = process.env.SPECTATE_WS_URL ?? "ws://localhost:8081/spectate";
+  if (process.env.NODE_ENV === "production" && !wsBase.startsWith("wss://")) {
+    throw new ApiError(500, "spectate_ws_misconfigured", "SPECTATE_WS_URL debe ser wss:// en producción");
+  }
+  return wsBase;
+}
 
 export function battleToJson(b: Record<string, unknown>, participants: Record<string, unknown>[]) {
   return {
@@ -149,7 +163,10 @@ export function battleRoutes(db: Db, quota: AnonQuotaConfig): Router {
       const debug = (req.auth?.rank ?? 0) >= ROLE_RANK.moderator;
       const ticket = signSpectateTicket({ battleId: battle.id, jti: randomUUID(), debug }, SPECTATE_TICKET_TTL_S);
       // El canal transporta SOLO snapshots públicos (D8): lo sirve el gateway (E8/E10).
-      const wsBase = process.env.SPECTATE_WS_URL ?? "ws://localhost:8081/spectate";
+      // R2.6 (ERR-SEC-16): en producción se EXIGE wss:// — el defecto en claro
+      // solo vale para dev/test. Falla cerrado: mejor 500 que un ticket que
+      // viajaría sin cifrar (y acabaría en logs de red intermedios).
+      const wsBase = spectateWsBase();
       res.status(201).json({
         ticket,
         wsUrl: `${wsBase}/${battle.id}`,

@@ -21,6 +21,7 @@ import {
 } from "../services/bots.js";
 import { PIPELINE_STAGES, type BotManagerClient } from "../services/bot-manager.js";
 import { sharedRateLimit, type RateLimiterLike } from "../middleware/shared-rate-limit.js";
+import { contentDispositionAttachment, sanitizeSourceFilename } from "../services/filenames.js";
 
 const MAX_SOURCE_BYTES = 10 * 1024 * 1024; // 10 MB (E6.M)
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_SOURCE_BYTES } });
@@ -237,7 +238,10 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
           runtime,
           loadout_revision: rev,
           source: file.buffer,
-          source_filename: file.originalname,
+          // R2.6 (ERR-SEC-09): el nombre lo controla el cliente — se normaliza al
+          // recibirlo (base, allowlist, longitud); si no queda nada, null y el
+          // GET aplicará el nombre por defecto derivado del id de versión.
+          source_filename: sanitizeSourceFilename(file.originalname),
         })
         .returning("*");
       res.status(201).json(versionToJson(version));
@@ -264,10 +268,16 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     if (!isOwner && !isTeamMate && !isStaff(req.auth) && !isPublicCode) {
       throw forbidden("El código de un bot es privado salvo publicación explícita (D9)");
     }
+    // R2.6 (ERR-SEC-09): cabecera con codificación estándar de parámetros
+    // (RFC 6266/5987). El nombre almacenado se re-sanea al emitir (defensa en
+    // profundidad frente a filas anteriores al saneado); el defecto deriva del
+    // id de versión (botId + nº de versión), no del cliente.
+    const fallback = `bot-${bot.id}-v${v.version}-source.bin`;
+    const filename = sanitizeSourceFilename(v.source_filename) ?? fallback;
     res
       .status(200)
       .setHeader("Content-Type", "application/octet-stream")
-      .setHeader("Content-Disposition", `attachment; filename="${v.source_filename ?? "source.zip"}"`)
+      .setHeader("Content-Disposition", contentDispositionAttachment(filename))
       .send(v.source);
   });
 
