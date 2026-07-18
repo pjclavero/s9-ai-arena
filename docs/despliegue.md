@@ -104,10 +104,23 @@ Verificable sin levantar nada: `docker compose -f infrastructure/docker-compose.
   postgres, redis ni api. `bot-manager` (builders) no está en `data`.
 - Secretos **siempre por archivo** (`/run/secrets/*`), generados por
   `init-secrets.sh`; `infrastructure/secrets/` está fuera del control de versiones.
-- Ningún servicio privilegiado ni con `docker.sock`, **salvo bot-manager**
-  (excepción documentada en el propio compose; mitigación a futuro:
-  docker-socket-proxy o builder rootless). Lo vigila
-  `infrastructure/scripts/scan-compose.mjs` (etapa 6 de la CI y tests).
+- Ningún servicio privilegiado ni con `docker.sock` — **sin excepciones**
+  (R1.7/ERR-SEC-02: la antigua excepción de bot-manager se retiró). Lo vigila
+  `infrastructure/scripts/scan-compose.mjs` (etapa 6 de la CI y tests), con
+  `complianceViolations` (`apps/bot-manager/src/compliance.mjs`) como única
+  fuente de verdad.
+- **Proxy de la API de Docker (R1.7).** `bot-manager` lanza contenedores vía
+  `DOCKER_PROXY_URL` contra un proxy con allowlist estricta
+  (crear/arrancar/parar/inspeccionar; rechaza `privileged`, bind-mounts,
+  `--network host` y cambios de usuario). El proxy corre **en el host**, fuera
+  del Compose, como único proceso con acceso al socket:
+  `npx tsx apps/bot-manager/src/docker-proxy-main.ts` (el operador lo
+  encapsula en una unidad systemd en R-DEPLOY; escucha en 127.0.0.1:2375 por
+  defecto y el Compose lo alcanza por el alias `docker-proxy.internal` →
+  `host-gateway`). **Pendiente R-DEPLOY:** verificación viva de la ruta
+  bot-manager → proxy → socket (en el entorno de desarrollo no hay Docker; la
+  lógica del proxy está probada en proceso en
+  `apps/bot-manager/tests/docker-proxy.test.ts`).
 - Todos los servicios con healthcheck, `depends_on` condicionado a
   `service_healthy`, límites de CPU/RAM y `no-new-privileges`.
 

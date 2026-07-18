@@ -16,8 +16,11 @@
 #   salida a Internet, porque las redes internas no la tienen): streamer
 #   (RTMPS hacia YouTube) y alertmanager (webhook/email del operador).
 #
-# Seguridad (cap. 28): ningún servicio corre privilegiado ni monta docker.sock,
-#   salvo bot-manager (documentado más abajo). Lo verifica
+# Seguridad (cap. 28, R1.7/ERR-SEC-02): NINGÚN servicio corre privilegiado ni
+#   monta docker.sock — sin excepciones. El bot-manager lanza contenedores a
+#   través del proxy de la API de Docker que corre EN EL HOST
+#   (apps/bot-manager/src/docker-proxy-main.ts; ver docs/despliegue.md), con
+#   allowlist estricta (crear/arrancar/parar/inspeccionar). Lo verifica
 #   infrastructure/scripts/scan-compose.mjs en la etapa 6 de la CI.
 #
 # Arranque: ver docs/despliegue.md (instalación limpia en 3 pasos).
@@ -217,13 +220,17 @@ services:
     logging: *default-logging
 
   # ── bot-manager · construye, valida y lanza contenedores de bots (E6) ───────
-  # EXCEPCIÓN DOCUMENTADA (cap. 28 / DoD T10.2): bot-manager monta docker.sock
-  # porque su función es construir imágenes y lanzar contenedores efímeros de
-  # bots. Mitigaciones: API interna restringida (nunca expuesta por el gateway),
-  # redes build+platform sin acceso a data, sin privilegios adicionales y
-  # allowlist explícita en infrastructure/scripts/scan-compose.mjs. La
-  # alternativa a largo plazo (docker-socket-proxy o rootless builder) queda
-  # propuesta en docs/despliegue.md.
+  # R1.7 (ERR-SEC-02): ya NO monta docker.sock (la antigua "excepción
+  # documentada" era RCE→root del host en el servicio que procesa código de
+  # usuario). Lanza contenedores a través del proxy de la API de Docker con
+  # allowlist (crear/arrancar/parar/inspeccionar; rechaza privileged,
+  # bind-mounts, red del host y cambios de usuario), que corre EN EL HOST:
+  # apps/bot-manager/src/docker-proxy-main.ts (ver docs/despliegue.md). El
+  # alias docker-proxy.internal apunta al host vía host-gateway; la
+  # verificación viva de esa ruta queda para R-DEPLOY.
+  # Aislamiento: redes platform+build (sin data → sin ruta a PostgreSQL ni al
+  # backup), sin `secrets:` montados. Lo fija infrastructure/tests/
+  # bot-manager-isolation.test.ts.
   bot-manager:
     build:
       context: ..
@@ -236,8 +243,11 @@ services:
       PORT: "8084"
       SERVICE_ENTRY: ${BOT_MANAGER_ENTRY:-apps/bot-manager/src/main.ts}
       LOG_FORMAT: json
+      # R1.7: única vía hacia Docker; el socket ya no se monta.
+      DOCKER_PROXY_URL: ${DOCKER_PROXY_URL:-http://docker-proxy.internal:2375}
+    extra_hosts:
+      - "docker-proxy.internal:host-gateway"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - arena_bot_sources:/data/bot-sources
       - arena_build_cache:/data/build-cache
     depends_on:
@@ -600,7 +610,7 @@ services:
     logging: *default-logging
 
   # Lee los json-file de Docker SOLO con un bind de solo lectura (sin
-  # docker.sock: el escáner del cap. 28 solo lo permite en bot-manager).
+  # docker.sock: el escáner del cap. 28 no lo permite en ningún servicio, R1.7).
   promtail:
     image: grafana/promtail:3.1.0
     profiles: [observability]
