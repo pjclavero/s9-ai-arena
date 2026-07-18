@@ -30,9 +30,10 @@ export interface Contract {
   privateFieldNames: Set<string>;
 }
 
-export const ROLE_RANK: Record<RoleName, number> = Object.fromEntries(
-  ROLES.map((r, i) => [r, i]),
-) as Record<RoleName, number>;
+export const ROLE_RANK: Record<RoleName, number> = Object.fromEntries(ROLES.map((r, i) => [r, i])) as Record<
+  RoleName,
+  number
+>;
 
 let cached: Contract | undefined;
 

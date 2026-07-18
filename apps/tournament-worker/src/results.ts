@@ -10,12 +10,7 @@
  * liga se registra como empate (draw) para ambos.
  */
 import type { Knex } from "knex";
-import {
-  generateSwissRound,
-  recommendedSwissRounds,
-  type Pairing,
-  type SwissStanding,
-} from "./formats.js";
+import { generateSwissRound, recommendedSwissRounds, type Pairing, type SwissStanding } from "./formats.js";
 import { buildMaterializeContext, materializeBattles, type MaterializeContext } from "./scheduler.js";
 import { enqueueJob, type JobRow } from "./queue.js";
 import type { HandlerContext } from "./worker.js";
@@ -56,7 +51,7 @@ async function resolveSeries(db: Knex, match: MatchRow, p: Pairing): Promise<Ser
   let homeScore = 0;
   let awayScore = 0;
   for (const b of battles) {
-    const result = typeof b.result === "string" ? JSON.parse(b.result) : b.result ?? {};
+    const result = typeof b.result === "string" ? JSON.parse(b.result) : (b.result ?? {});
     const homeTeam = b.game_index % 2 === 1 ? "A" : "B";
     const awayTeam = b.game_index % 2 === 1 ? "B" : "A";
     if (result.winner === homeTeam) homeWins++;
@@ -87,9 +82,8 @@ async function resolveSeries(db: Knex, match: MatchRow, p: Pairing): Promise<Ser
  */
 export async function resolveDependents(mctx: MaterializeContext, finishedSlot: string): Promise<void> {
   const db = mctx.db;
-  const finished = (await db("matches")
-    .where({ tournament_id: mctx.tournament.id, slot: finishedSlot })
-    .first()) as MatchRow | undefined;
+  const finished = (await db("matches").where({ tournament_id: mctx.tournament.id, slot: finishedSlot }).first()) as
+    MatchRow | undefined;
   if (!finished || finished.state !== "finished") return;
   const fp = pairingOf(finished);
   const isTeams = mctx.tournament.format === "teams";
@@ -97,8 +91,10 @@ export async function resolveDependents(mctx: MaterializeContext, finishedSlot: 
   // El perdedor de la serie es el otro lado (para dobles eliminaciones).
   const loser = fp.home === winner ? fp.away : fp.home;
 
-  const candidates = (await db("matches")
-    .where({ tournament_id: mctx.tournament.id, state: "scheduled" })) as MatchRow[];
+  const candidates = (await db("matches").where({
+    tournament_id: mctx.tournament.id,
+    state: "scheduled",
+  })) as MatchRow[];
   for (const m of candidates) {
     const p = pairingOf(m);
     let changed = false;
@@ -114,18 +110,22 @@ export async function resolveDependents(mctx: MaterializeContext, finishedSlot: 
       }
     }
     if (!changed) continue;
-    await db("matches").where({ id: m.id }).update({ pairing: JSON.stringify(p) });
+    await db("matches")
+      .where({ id: m.id })
+      .update({ pairing: JSON.stringify(p) });
 
     const homePending = p.home === null && p.homeSource !== undefined;
     const awayPending = p.away === null && p.awaySource !== undefined;
     if (homePending || awayPending) continue; // aún falta un resultado
 
     const finishWithout = async (matchWinner: string | null) => {
-      await db("matches").where({ id: m.id }).update({
-        state: "finished",
-        winner_bot_id: !isTeams ? matchWinner : null,
-        winner_team_id: isTeams ? matchWinner : null,
-      });
+      await db("matches")
+        .where({ id: m.id })
+        .update({
+          state: "finished",
+          winner_bot_id: !isTeams ? matchWinner : null,
+          winner_team_id: isTeams ? matchWinner : null,
+        });
       await resolveDependents(mctx, m.slot);
     };
 
@@ -157,13 +157,18 @@ export async function resolveDependents(mctx: MaterializeContext, finishedSlot: 
 // ------------------------------------------------------- suizo: ronda siguiente
 
 /** Puntos de liga: victoria 3, empate 1 (documentado en formats.ts). Bye = victoria. */
-async function swissStandings(db: Knex, tournamentId: string): Promise<{ standings: SwissStanding[]; played: Set<string>; rounds: number }> {
+async function swissStandings(
+  db: Knex,
+  tournamentId: string,
+): Promise<{ standings: SwissStanding[]; played: Set<string>; rounds: number }> {
   const matches = (await db("matches").where({ tournament_id: tournamentId })) as MatchRow[];
   const points = new Map<string, number>();
   const hadBye = new Set<string>();
   const played = new Set<string>();
   const entries = await db("entries").where({ tournament_id: tournamentId }).orderBy("created_at", "asc");
-  const seedByBot = new Map<string, number>(entries.map((e: Record<string, unknown>, i: number) => [e.bot_id as string, i + 1]));
+  const seedByBot = new Map<string, number>(
+    entries.map((e: Record<string, unknown>, i: number) => [e.bot_id as string, i + 1]),
+  );
   for (const e of entries) points.set(e.bot_id as string, 0);
   let rounds = 0;
   for (const m of matches) {
@@ -202,7 +207,14 @@ async function maybeScheduleNextSwissRound(mctx: MaterializeContext): Promise<bo
   const pairings = generateSwissRound(standings, played, rounds + 1);
   for (const p of pairings) {
     const [m] = await db("matches")
-      .insert({ tournament_id: t.id, round: p.round, state: "scheduled", slot: p.slot, final: false, pairing: JSON.stringify(p) })
+      .insert({
+        tournament_id: t.id,
+        round: p.round,
+        state: "scheduled",
+        slot: p.slot,
+        final: false,
+        pairing: JSON.stringify(p),
+      })
       .returning("id");
     if (p.bye) {
       await db("matches").where({ id: m.id }).update({ state: "finished", winner_bot_id: p.home });
@@ -221,7 +233,8 @@ async function maybeScheduleNextSwissRound(mctx: MaterializeContext): Promise<bo
  * (puntos → enfrentamiento directo → diferencia de puntuación → seed).
  */
 async function computeChampion(db: Knex, tournamentId: string, isTeams: boolean): Promise<string | null> {
-  const finalMatch = (await db("matches").where({ tournament_id: tournamentId, final: true }).first()) as MatchRow | undefined;
+  const finalMatch = (await db("matches").where({ tournament_id: tournamentId, final: true }).first()) as
+    MatchRow | undefined;
   if (finalMatch?.state === "finished") return isTeams ? finalMatch.winner_team_id : finalMatch.winner_bot_id;
 
   const table = await leagueTable(db, tournamentId, isTeams);
@@ -250,7 +263,9 @@ export async function leagueTable(db: Knex, tournamentId: string, isTeams: boole
   const ids = isTeams
     ? [...new Set(entries.map((e: Record<string, unknown>) => e.team_id as string))]
     : entries.map((e: Record<string, unknown>) => e.bot_id as string);
-  ids.forEach((id: string, i: number) => rows.set(id, { id, points: 0, wins: 0, losses: 0, draws: 0, scoreDiff: 0, seed: i + 1 }));
+  ids.forEach((id: string, i: number) =>
+    rows.set(id, { id, points: 0, wins: 0, losses: 0, draws: 0, scoreDiff: 0, seed: i + 1 }),
+  );
 
   const headToHead = new Map<string, number>(); // "a|b" → victorias de a sobre b
   for (const m of matches) {
@@ -288,7 +303,7 @@ export async function leagueTable(db: Knex, tournamentId: string, isTeams: boole
     // diferencia de puntuación agregada de la serie
     const battles = await db("battles").where({ match_id: m.id });
     for (const b of battles) {
-      const result = typeof b.result === "string" ? JSON.parse(b.result) : b.result ?? {};
+      const result = typeof b.result === "string" ? JSON.parse(b.result) : (b.result ?? {});
       const homeTeam = b.game_index % 2 === 1 ? "A" : "B";
       const awayTeam = b.game_index % 2 === 1 ? "B" : "A";
       home.scoreDiff += Number(result.score?.[homeTeam] ?? 0) - Number(result.score?.[awayTeam] ?? 0);
@@ -347,7 +362,10 @@ export async function handleProcessResult(job: JobRow, ctx: HandlerContext): Pro
   );
 
   // ¿Torneo completo? (ningún match sin terminar y ninguna batalla pendiente)
-  const openMatch = await db("matches").where({ tournament_id: battle.tournament_id }).whereNot({ state: "finished" }).first();
+  const openMatch = await db("matches")
+    .where({ tournament_id: battle.tournament_id })
+    .whereNot({ state: "finished" })
+    .first();
   const openBattle = await db("battles")
     .where({ tournament_id: battle.tournament_id })
     .whereNotIn("status", ["finished"])

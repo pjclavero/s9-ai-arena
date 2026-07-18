@@ -44,11 +44,7 @@ export function moduleActs(state: ModuleState, roll: number): boolean {
 // Rulesets (D7: budgetCredits es del ruleset, no del motor)
 // ---------------------------------------------------------------------------
 
-export type GameModeId =
-  | "deathmatch"
-  | "team_deathmatch"
-  | "capture_the_flag"
-  | "zone_control";
+export type GameModeId = "deathmatch" | "team_deathmatch" | "capture_the_flag" | "zone_control";
 
 export interface Ruleset {
   rulesetId: string;

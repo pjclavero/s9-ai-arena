@@ -44,7 +44,9 @@ const finished = { ...scheduled, id: "b0", status: "finished", result: { score: 
 describe("T11.1 BroadcastPage (jsdom)", () => {
   it("pantalla de espera con branding por parámetros y sin controles ni cursor", async () => {
     mockBattles([scheduled]);
-    const config = parseBroadcastConfig("?tournament=t1&event=Copa%20S9&logo=/img/copa.png&accent=%2300ff88&primary=%23112233");
+    const config = parseBroadcastConfig(
+      "?tournament=t1&event=Copa%20S9&logo=/img/copa.png&accent=%2300ff88&primary=%23112233",
+    );
     const { container } = render(<BroadcastPage config={config} />);
 
     await waitFor(() => expect(screen.getByTestId("broadcast-waiting")).toBeTruthy());

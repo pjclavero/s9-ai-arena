@@ -36,19 +36,16 @@ jobs:
       - run: npm ci
       - name: Lint de determinismo (nada de reloj real/Math.random en src/sim)
         run: npm run lint
-      - name: Tipos (tsc --noEmit)
-        # PENDIENTE de bloquear (H7, issue #11): de los 7 errores preexistentes
-        # de E2/E3/E4, quedan 2 en apps/arena-engine/src/sim/battle.ts (los 5 de
-        # map-service/generate y module-catalog se corrigieron el 2026-07-16).
-        # battle.ts es del equipo E2 (src/sim es intocable fuera de ese equipo);
-        # el detalle exacto y la corrección propuesta están en el issue #11.
-        # Cuando E2 los limpie y tsc dé 0, eliminar continue-on-error.
-        continue-on-error: true
-        run: npx tsc --noEmit
-      - name: Formato
-        # PENDIENTE: el repo no tiene formateador configurado (decidir prettier
-        # en ADR con los equipos; reformatear todo ahora generaría conflictos).
-        run: echo "formato - sin formateador configurado todavia (ver ADR-010)"
+      - name: Tipos (tsc --noEmit, BLOQUEANTE — R2.1, cierra H7/issue #11)
+        # ERR-GES-02: apps/web tiene su propio proyecto (jsx) y queda excluido
+        # del tsconfig raíz. ERR-GES-03: los 29 errores genuinos se corrigieron
+        # en R2.1; desde entonces un error de tipos ROMPE la CI (sin
+        # continue-on-error). Ambos proyectos deben dar 0 errores.
+        run: npm run typecheck
+      - name: Formato (prettier --check, BLOQUEANTE — R2.1)
+        # ERR-GES-05: formateador real. Ámbito en .prettierignore (solo código
+        # TS/JS; arena-engine entra cuando se fusione R2.7).
+        run: npm run format:check
 
   # ── Etapa 2: pruebas unitarias ─────────────────────────────────────────────
   unit:
@@ -60,8 +57,17 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
-      - name: Unitarias (apps y packages)
-        run: npx vitest run apps packages --maxWorkers=2
+      - name: Unitarias (apps y packages) con cobertura
+        # R2.1 (ERR-GES-05): cobertura V8 sobre las unitarias; el informe HTML
+        # y el resumen se publican como artefacto de CI.
+        run: npx vitest run apps packages --maxWorkers=2 --coverage.enabled --coverage.provider=v8 --coverage.reporter=text --coverage.reporter=html --coverage.reportsDirectory=coverage
+      - name: Informe de cobertura como artefacto
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          if-no-files-found: warn
 
   # ── Etapa 3: esquemas y compatibilidad de contratos ────────────────────────
   contracts:

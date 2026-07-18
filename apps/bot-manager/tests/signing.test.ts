@@ -8,7 +8,12 @@ describe("T6.1 · firma y verificación del artefacto", () => {
     const kp = generateServiceKeypair();
     const artifact = packArtifact(pyGoodFiles());
     const sig = signArtifact(artifact.hash, kp.privateKey);
-    const res = verifyArtifact({ artifactBytes: artifact.bytes, signedHash: artifact.hash, signature: sig, publicKey: kp.publicKey });
+    const res = verifyArtifact({
+      artifactBytes: artifact.bytes,
+      signedHash: artifact.hash,
+      signature: sig,
+      publicKey: kp.publicKey,
+    });
     expect(res.ok).toBe(true);
   });
 
@@ -17,7 +22,12 @@ describe("T6.1 · firma y verificación del artefacto", () => {
     const artifact = packArtifact(pyGoodFiles());
     const sig = signArtifact(artifact.hash, kp.privateKey);
     const tampered = Buffer.concat([artifact.bytes, Buffer.from("evil")]);
-    const res = verifyArtifact({ artifactBytes: tampered, signedHash: artifact.hash, signature: sig, publicKey: kp.publicKey });
+    const res = verifyArtifact({
+      artifactBytes: tampered,
+      signedHash: artifact.hash,
+      signature: sig,
+      publicKey: kp.publicKey,
+    });
     expect(res.ok).toBe(false);
     expect(res.reason).toMatch(/manipulado/);
   });
@@ -27,7 +37,12 @@ describe("T6.1 · firma y verificación del artefacto", () => {
     const attacker = generateServiceKeypair();
     const artifact = packArtifact(pyGoodFiles());
     const sig = signArtifact(artifact.hash, attacker.privateKey);
-    const res = verifyArtifact({ artifactBytes: artifact.bytes, signedHash: artifact.hash, signature: sig, publicKey: kp.publicKey });
+    const res = verifyArtifact({
+      artifactBytes: artifact.bytes,
+      signedHash: artifact.hash,
+      signature: sig,
+      publicKey: kp.publicKey,
+    });
     expect(res.ok).toBe(false);
     expect(res.reason).toMatch(/firma/);
   });

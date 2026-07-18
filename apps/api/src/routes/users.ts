@@ -28,7 +28,10 @@ export function userRoutes(db: Db): Router {
   });
 
   defineOperation(router, "getUserPublic", async (req, res) => {
-    const user = await db("users").where({ id: req.params.userId }).first().catch(() => null);
+    const user = await db("users")
+      .where({ id: req.params.userId })
+      .first()
+      .catch(() => null);
     if (!user) throw notFound();
     res.json(publicProfile(user));
   });
@@ -38,7 +41,10 @@ export function userRoutes(db: Db): Router {
     if (!Array.isArray(roles) || roles.some((r) => !ROLES.includes(r as RoleName))) {
       throw badRequest(`roles debe ser un subconjunto de [${ROLES.join(", ")}]`);
     }
-    const user = await db("users").where({ id: req.params.userId }).first().catch(() => null);
+    const user = await db("users")
+      .where({ id: req.params.userId })
+      .first()
+      .catch(() => null);
     if (!user) throw notFound();
 
     await db.transaction(async (trx) => {

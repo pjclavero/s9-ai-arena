@@ -72,7 +72,7 @@ export class RedisSignal {
       const s = createConnection({ host: u.hostname, port: Number(u.port || 6379) });
       s.once("connect", () => resolve());
       s.once("error", reject);
-      s.on("data", (chunk) => {
+      s.on("data", (chunk: Buffer) => {
         this.buffer = Buffer.concat([this.buffer, chunk]);
         this.drain();
       });

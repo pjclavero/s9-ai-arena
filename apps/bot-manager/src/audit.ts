@@ -80,7 +80,11 @@ export class AuditLog implements AuditSink {
       throw new Forbidden(`rol '${principal.role}' no puede leer el audit_log`);
     }
     return this.entries
-      .filter((e) => (!filter?.botId || e.botId === filter.botId) && (!filter?.correlationId || e.correlationId === filter.correlationId))
+      .filter(
+        (e) =>
+          (!filter?.botId || e.botId === filter.botId) &&
+          (!filter?.correlationId || e.correlationId === filter.correlationId),
+      )
       .map((e) => ({ ...e }));
   }
 
@@ -90,7 +94,9 @@ export class AuditLog implements AuditSink {
       throw new Forbidden(`rol '${principal.role}' no puede leer security_findings (solo admin)`);
     }
     return this.findings
-      .filter((f) => (!filter?.botId || f.botId === filter.botId) && (!filter?.category || f.category === filter.category))
+      .filter(
+        (f) => (!filter?.botId || f.botId === filter.botId) && (!filter?.category || f.category === filter.category),
+      )
       .map((f) => ({ ...f }));
   }
 

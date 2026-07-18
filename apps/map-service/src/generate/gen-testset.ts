@@ -21,7 +21,10 @@ let valid = 0;
 const summary: string[] = [];
 for (let i = 0; i < 20; i++) {
   const seed = `test-${i}`;
-  const res = generateMap({ widthM: 120, heightM: 80, mode: "capture_the_flag", wallDensity: 0.5, mapId: `proc-test-${i}` }, seed);
+  const res = generateMap(
+    { widthM: 120, heightM: 80, mode: "capture_the_flag", wallDensity: 0.5, mapId: `proc-test-${i}` },
+    seed,
+  );
   const ok = isPublishable(validateMap(res.map));
   if (ok) valid++;
   writeFileSync(join(OUT_DIR, `proc-test-${i}.json`), JSON.stringify(res.map, null, 2) + "\n");

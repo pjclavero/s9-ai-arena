@@ -22,9 +22,7 @@ export interface BroadcastBranding {
   accentColor: string;
 }
 
-export type BroadcastTarget =
-  | { kind: "battle"; battleId: string }
-  | { kind: "tournament"; tournamentId: string };
+export type BroadcastTarget = { kind: "battle"; battleId: string } | { kind: "tournament"; tournamentId: string };
 
 export interface BroadcastConfig {
   target: BroadcastTarget | null;

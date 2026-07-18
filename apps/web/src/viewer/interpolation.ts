@@ -77,7 +77,13 @@ function frameOf(a: any, b: any, t = 1): InterpolatedFrame {
     const va = aById.get(vb.id);
     if (!va || !va.position || !vb.position) {
       if (vb.position) {
-        vehicles.set(vb.id, { x: vb.position.x, y: vb.position.y, heading: vb.heading, turretHeading: vb.turretHeading, alive: vb.alive });
+        vehicles.set(vb.id, {
+          x: vb.position.x,
+          y: vb.position.y,
+          heading: vb.heading,
+          turretHeading: vb.turretHeading,
+          alive: vb.alive,
+        });
       }
       continue;
     }

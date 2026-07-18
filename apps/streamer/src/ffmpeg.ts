@@ -38,7 +38,11 @@ export interface FfmpegPlan {
   describeTarget: string;
 }
 
-export function buildFfmpegArgs(cfg: StreamerConfig, streamKey: string | null, now: () => Date = () => new Date()): FfmpegPlan {
+export function buildFfmpegArgs(
+  cfg: StreamerConfig,
+  streamKey: string | null,
+  now: () => Date = () => new Date(),
+): FfmpegPlan {
   const gop = cfg.fps * 2; // keyframe cada 2 s (recomendación de ingesta de YouTube)
   const video =
     cfg.encoder === "nvenc"

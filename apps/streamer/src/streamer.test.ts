@@ -98,7 +98,9 @@ describe("T11.2 secreto por archivo y redacción", () => {
   it("el logger redacta la clave en TODO lo que escribe (revisión automatizada)", () => {
     const lines: string[] = [];
     const log = silentLogger(lines);
-    log("error", `ffmpeg falló abriendo rtmps://a.rtmps.youtube.com/live2/${KEY}`, { argv: `-i x -f flv rtmps://y/${KEY}` });
+    log("error", `ffmpeg falló abriendo rtmps://a.rtmps.youtube.com/live2/${KEY}`, {
+      argv: `-i x -f flv rtmps://y/${KEY}`,
+    });
     expect(lines).toHaveLength(1);
     expect(lines[0]).not.toContain(KEY);
     expect(lines[0]).toContain("***");
@@ -152,7 +154,14 @@ describe("T11.2 métricas de frames/bitrate para E10", () => {
     const p = new ProgressParser();
     p.push("frame=90\nfps=30.0\nbitr");
     p.push("ate=4499.8kbits/s\nout_time_us=3000000\ndrop_frames=2\nprogress=continue\n");
-    expect(p.snapshot()).toMatchObject({ frames: 90, fps: 30, bitrateKbps: 4499.8, outTimeSeconds: 3, droppedFrames: 2, reporting: true });
+    expect(p.snapshot()).toMatchObject({
+      frames: 90,
+      fps: 30,
+      bitrateKbps: 4499.8,
+      outTimeSeconds: 3,
+      droppedFrames: 2,
+      reporting: true,
+    });
   });
 
   it("expone Prometheus con up/frames/bitrate/reintentos", () => {
@@ -272,7 +281,13 @@ describe("T11.2 API de control (start/stop/status/metrics)", () => {
     const { spawner } = fakeSpawner();
     const lines: string[] = [];
     const config = cfg();
-    const supervisor = new StreamSupervisor({ config, streamKey: KEY, spawner, logger: silentLogger(lines), sleep: async () => {} });
+    const supervisor = new StreamSupervisor({
+      config,
+      streamKey: KEY,
+      spawner,
+      logger: silentLogger(lines),
+      sleep: async () => {},
+    });
     const server = createControlServer({ supervisor, config, logger: silentLogger(lines) });
     await new Promise<void>((r) => server.listen(0, r));
     const addr = server.address() as { port: number };

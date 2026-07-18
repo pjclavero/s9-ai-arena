@@ -42,12 +42,8 @@ describe("ADR-000 · coherencia de constantes", () => {
       expect(C.MODULE_STATE_PERFORMANCE[s]).toBeGreaterThanOrEqual(0);
       expect(C.MODULE_STATE_PERFORMANCE[s]).toBeLessThanOrEqual(1);
     }
-    expect(C.MODULE_STATE_PERFORMANCE.operational).toBeGreaterThan(
-      C.MODULE_STATE_PERFORMANCE.damaged,
-    );
-    expect(C.MODULE_STATE_PERFORMANCE.damaged).toBeGreaterThan(
-      C.MODULE_STATE_PERFORMANCE.critical,
-    );
+    expect(C.MODULE_STATE_PERFORMANCE.operational).toBeGreaterThan(C.MODULE_STATE_PERFORMANCE.damaged);
+    expect(C.MODULE_STATE_PERFORMANCE.damaged).toBeGreaterThan(C.MODULE_STATE_PERFORMANCE.critical);
     expect(C.MODULE_STATE_PERFORMANCE.destroyed).toBe(0);
     expect(C.MODULE_STATE_PERFORMANCE.offline).toBe(0);
   });

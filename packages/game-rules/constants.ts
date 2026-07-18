@@ -44,13 +44,7 @@ export const SECTORS = ["front", "left", "right", "rear"] as const;
 export type Sector = (typeof SECTORS)[number];
 
 /** Estados de módulo (cap. 12.2) y su multiplicador de prestaciones. */
-export const MODULE_STATES = [
-  "operational",
-  "damaged",
-  "critical",
-  "destroyed",
-  "offline",
-] as const;
+export const MODULE_STATES = ["operational", "damaged", "critical", "destroyed", "offline"] as const;
 export type ModuleState = (typeof MODULE_STATES)[number];
 
 export const MODULE_STATE_PERFORMANCE: Record<ModuleState, number> = {

@@ -34,11 +34,14 @@ beforeAll(async () => {
 
   // Batalla OFICIAL terminada con outcomes → rating REAL de E9 (T9.3).
   battleId = await insertScheduledBattle(h.db, bots[0], bots[1], { official: true, seed: "h6-rating" });
-  await h.db("battles").where({ id: battleId }).update({
-    status: "finished",
-    finished_at: h.db.fn.now(),
-    result: JSON.stringify({ winner: "A", ticks: 100, score: { A: 1, B: 0 }, disqualified: [] }),
-  });
+  await h
+    .db("battles")
+    .where({ id: battleId })
+    .update({
+      status: "finished",
+      finished_at: h.db.fn.now(),
+      result: JSON.stringify({ winner: "A", ticks: 100, score: { A: 1, B: 0 }, disqualified: [] }),
+    });
   await h.db("participants").where({ battle_id: battleId, bot_id: bots[0].botId }).update({ outcome: "win" });
   await h.db("participants").where({ battle_id: battleId, bot_id: bots[1].botId }).update({ outcome: "loss" });
   const applied = await applyBattleRating(h.db, battleId);
@@ -71,23 +74,17 @@ describe("H6 · getBotRatingHistory (contrato 0.2.0)", () => {
   });
 
   it("?at= reconstruye el rating histórico (ratingAt de E9)", async () => {
-    const res = await request(app)
-      .get(`/bots/${bots[0].botId}/rating-history`)
-      .query({ at: "1970-01-01T00:00:00Z" });
+    const res = await request(app).get(`/bots/${bots[0].botId}/rating-history`).query({ at: "1970-01-01T00:00:00Z" });
     expect(res.status).toBe(200);
     expect(res.body.ratingAt).toBe(INITIAL_RATING); // antes de la batalla: rating inicial
-    const now = await request(app)
-      .get(`/bots/${bots[0].botId}/rating-history`)
-      .query({ at: new Date().toISOString() });
+    const now = await request(app).get(`/bots/${bots[0].botId}/rating-history`).query({ at: new Date().toISOString() });
     expect(now.body.ratingAt).toBe(now.body.rating);
   });
 
   it("validación: bot inexistente → 404, fecha inválida → 400, sin eventos → rating inicial", async () => {
     expect((await request(app).get("/bots/00000000-0000-4000-8000-000000000000/rating-history")).status).toBe(404);
     expect((await request(app).get(`/bots/${bots[0].botId}/rating-history`).query({ at: "ayer" })).status).toBe(400);
-    const other = await request(app)
-      .get(`/bots/${bots[0].botId}/rating-history`)
-      .query({ mode: "capture_the_flag" });
+    const other = await request(app).get(`/bots/${bots[0].botId}/rating-history`).query({ mode: "capture_the_flag" });
     expect(other.status).toBe(200);
     expect(other.body.rating).toBe(INITIAL_RATING);
     expect(other.body.events).toEqual([]);
@@ -108,8 +105,15 @@ describe("H6 · getTeamStandings (contrato 0.2.0)", () => {
     await h.db("bots").where({ id: bots[0].botId }).update({ team_id: teamA });
     await h.db("bots").where({ id: bots[1].botId }).update({ team_id: teamB });
 
-    const [t] = await h.db("tournaments")
-      .insert({ name: "h6-teams", format: "teams", mode: "team_deathmatch", ruleset_id: "mvp-default", state: "running" })
+    const [t] = await h
+      .db("tournaments")
+      .insert({
+        name: "h6-teams",
+        format: "teams",
+        mode: "team_deathmatch",
+        ruleset_id: "mvp-default",
+        state: "running",
+      })
       .returning("id");
     tournamentId = t.id as string;
     for (const b of bots) {
@@ -149,12 +153,21 @@ describe("H6 · getTeamStandings (contrato 0.2.0)", () => {
   });
 
   it("un torneo que NO es de formato teams devuelve 409; inexistente, 404", async () => {
-    const [rr] = await h.db("tournaments")
-      .insert({ name: "h6-individual", format: "round_robin", mode: "deathmatch", ruleset_id: "mvp-default", state: "running" })
+    const [rr] = await h
+      .db("tournaments")
+      .insert({
+        name: "h6-individual",
+        format: "round_robin",
+        mode: "deathmatch",
+        ruleset_id: "mvp-default",
+        state: "running",
+      })
       .returning("id");
     const res = await request(app).get(`/tournaments/${rr.id}/team-standings`);
     expect(res.status).toBe(409);
     expect(res.body.error).toBe("not_a_team_tournament");
-    expect((await request(app).get("/tournaments/00000000-0000-4000-8000-000000000000/team-standings")).status).toBe(404);
+    expect((await request(app).get("/tournaments/00000000-0000-4000-8000-000000000000/team-standings")).status).toBe(
+      404,
+    );
   });
 });

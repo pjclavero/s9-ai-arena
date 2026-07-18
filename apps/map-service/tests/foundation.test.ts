@@ -17,7 +17,8 @@ import { ARCHETYPES } from "../../../packages/module-catalog/resolve/archetypes.
 
 /** Mapa interno mínimo pero completo y bien formado (2 corredores en el muro central). */
 function sampleMap(): InternalMap {
-  const cols = 60, rows = 40;
+  const cols = 60,
+    rows = 40;
   return withChecksum({
     schemaVersion: 1,
     mapId: "foundation-sample",
@@ -42,7 +43,14 @@ function sampleMap(): InternalMap {
         { objectId: "crate_01", material: "crate", shape: "rect", position: { x: 45, y: 55 }, widthM: 2, heightM: 2 },
       ],
       zones: [
-        { objectId: "acid_pool", zoneType: "damage", damagePerSecond: 8, shape: "circle", position: { x: 60, y: 40 }, radiusM: 5 },
+        {
+          objectId: "acid_pool",
+          zoneType: "damage",
+          damagePerSecond: 8,
+          shape: "circle",
+          position: { x: 60, y: 40 },
+          radiusM: 5,
+        },
       ],
       spawns: [
         { objectId: "sp_red_1", team: "red", position: { x: 10, y: 40 }, heading: 0 },

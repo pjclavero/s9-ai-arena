@@ -23,7 +23,9 @@ mkdirSync(OUT_DIR, { recursive: true });
 let count = 0;
 for (const kind of ["valid", "invalid"]) {
   const dir = join(EXAMPLES_DIR, kind);
-  for (const file of readdirSync(dir).filter((f) => f.endsWith(".json")).sort()) {
+  for (const file of readdirSync(dir)
+    .filter((f) => f.endsWith(".json"))
+    .sort()) {
     const doc = JSON.parse(readFileSync(join(dir, file), "utf8"));
     const { _why, ...envelope } = doc;
     const name = file.replace(/\.json$/, "");

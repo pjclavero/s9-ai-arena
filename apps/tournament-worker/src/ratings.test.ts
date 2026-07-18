@@ -43,7 +43,8 @@ async function finishedBattle(
   opts: { winner?: "A" | "B" | "draw"; official?: boolean; tournamentId?: string; mode?: string } = {},
 ): Promise<string> {
   const winner = opts.winner ?? "A";
-  const [battle] = await h.db("battles")
+  const [battle] = await h
+    .db("battles")
     .insert({
       tournament_id: opts.tournamentId ?? null,
       status: "finished",
@@ -53,7 +54,10 @@ async function finishedBattle(
       map_id: "mvp-arena-01",
       map_version: 1,
       seed: "s",
-      result: JSON.stringify({ winner, score: winner === "draw" ? { A: 1, B: 1 } : { A: winner === "A" ? 1 : 0, B: winner === "B" ? 1 : 0 } }),
+      result: JSON.stringify({
+        winner,
+        score: winner === "draw" ? { A: 1, B: 1 } : { A: winner === "A" ? 1 : 0, B: winner === "B" ? 1 : 0 },
+      }),
     })
     .returning("id");
   const out = (team: "A" | "B") => (winner === "draw" ? "draw" : winner === team ? "win" : "loss");
@@ -114,12 +118,18 @@ describe("T9.3 · núcleo Elo puro", () => {
 describe("T9.3 · pipeline sobre la BD (libro mayor)", () => {
   it("DoD · suma conservada en un sistema cerrado de 4 bots tras varias batallas", async () => {
     const before =
-      (await ratingOf(bots[0].botId)) + (await ratingOf(bots[1].botId)) + (await ratingOf(bots[2].botId)) + (await ratingOf(bots[3].botId));
+      (await ratingOf(bots[0].botId)) +
+      (await ratingOf(bots[1].botId)) +
+      (await ratingOf(bots[2].botId)) +
+      (await ratingOf(bots[3].botId));
     await applyBattleRating(h.db, await finishedBattle(bots[0], bots[1], { winner: "A" }));
     await applyBattleRating(h.db, await finishedBattle(bots[2], bots[3], { winner: "B" }));
     await applyBattleRating(h.db, await finishedBattle(bots[0], bots[2], { winner: "draw" }));
     const after =
-      (await ratingOf(bots[0].botId)) + (await ratingOf(bots[1].botId)) + (await ratingOf(bots[2].botId)) + (await ratingOf(bots[3].botId));
+      (await ratingOf(bots[0].botId)) +
+      (await ratingOf(bots[1].botId)) +
+      (await ratingOf(bots[2].botId)) +
+      (await ratingOf(bots[3].botId));
     expect(after).toBeCloseTo(before, 6);
   });
 
@@ -163,7 +173,8 @@ describe("T9.3 · pipeline sobre la BD (libro mayor)", () => {
 
   it("ratings separados por temporada y por modo de juego", async () => {
     // Torneo de otra temporada y con K propio de liga (ADR-E9-002).
-    const [t] = await h.db("tournaments")
+    const [t] = await h
+      .db("tournaments")
       .insert({
         name: "liga-2027",
         format: "league",
@@ -174,7 +185,11 @@ describe("T9.3 · pipeline sobre la BD (libro mayor)", () => {
         elo_k: 40,
       })
       .returning("id");
-    const battleId = await finishedBattle(bots[0], bots[1], { winner: "A", tournamentId: t.id as string, mode: "team_deathmatch" });
+    const battleId = await finishedBattle(bots[0], bots[1], {
+      winner: "A",
+      tournamentId: t.id as string,
+      mode: "team_deathmatch",
+    });
     await applyBattleRating(h.db, battleId);
 
     // La temporada/modo nuevos arrancan de 1000 y aplican K=40 (delta ±20).
@@ -205,7 +220,9 @@ describe("T9.3 · pipeline sobre la BD (libro mayor)", () => {
     const events = await ratingHistory(h.db, bot, "season-1", "deathmatch");
     const upTo = (d: Date) =>
       INITIAL_RATING +
-      events.filter((e) => !e.reverted && e.at <= d && [b1, b2, b3].includes(e.battleId as string)).reduce((acc, e) => acc + e.delta, 0);
+      events
+        .filter((e) => !e.reverted && e.at <= d && [b1, b2, b3].includes(e.battleId as string))
+        .reduce((acc, e) => acc + e.delta, 0);
 
     // Antes de la primera batalla: rating inicial.
     expect(await ratingAt(h.db, bot, "season-1", "deathmatch", new Date("2026-01-01T00:00:00Z"))).toBe(INITIAL_RATING);

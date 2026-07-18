@@ -126,14 +126,21 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
     // Walkover: si tras las DQ administrativas queda un solo bando, no hay batalla que lanzar.
     if (activeTeams.size < 2) {
       const winner = activeTeams.size === 1 ? [...activeTeams][0] : "draw";
-      await finishBattle(db, battle, participants, {
-        winner,
-        ticks: 0,
-        score: {},
-        finalStateHash: "walkover",
-        disqualified: adminDq,
-        versions: {},
-      }, adminDq, "none");
+      await finishBattle(
+        db,
+        battle,
+        participants,
+        {
+          winner,
+          ticks: 0,
+          score: {},
+          finalStateHash: "walkover",
+          disqualified: adminDq,
+          versions: {},
+        },
+        adminDq,
+        "none",
+      );
       return;
     }
 
@@ -145,14 +152,21 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
         // Derrota deportiva (19.2): el bot culpable pierde; la batalla TERMINA.
         const culpritTeam = participants.find((p) => p.bot_id === err.botId)?.team;
         const rivals = [...new Set(participants.filter((p) => p.team !== culpritTeam).map((p) => p.team))];
-        await finishBattle(db, battle, participants, {
-          winner: rivals.length === 1 ? rivals[0] : "draw",
-          ticks: 0,
-          score: {},
-          finalStateHash: "sporting_failure",
-          disqualified: [...adminDq, err.botId],
-          versions: {},
-        }, adminDq, err.code);
+        await finishBattle(
+          db,
+          battle,
+          participants,
+          {
+            winner: rivals.length === 1 ? rivals[0] : "draw",
+            ticks: 0,
+            score: {},
+            finalStateHash: "sporting_failure",
+            disqualified: [...adminDq, err.botId],
+            versions: {},
+          },
+          adminDq,
+          err.code,
+        );
         throw err; // el worker lo convierte en done + error_class 'sporting'
       }
       // Fallo técnico: la batalla vuelve a scheduled y la cola decide el reintento.
@@ -187,7 +201,10 @@ async function ensureRichStats(db: Knex, battleId: string, deps: BattleRunnerDep
     await runStatsJob(db, deps.replaysDir, battleId);
   } catch (err) {
     // El resultado ya es firme; las stats se reintentan como infraestructura.
-    throw new InfrastructureFailure("storage_unavailable", `stats de ${battleId}: ${err instanceof Error ? err.message : String(err)}`);
+    throw new InfrastructureFailure(
+      "storage_unavailable",
+      `stats de ${battleId}: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 

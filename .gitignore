@@ -20,3 +20,6 @@ acceptance/report.json
 
 # Config local del stack (puertos, dominio, perfil): no se versiona.
 infrastructure/.env
+
+# Cobertura de vitest (R2.1: se publica como artefacto de CI, no se versiona)
+coverage/

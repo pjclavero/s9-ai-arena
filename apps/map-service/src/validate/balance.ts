@@ -52,7 +52,9 @@ export function checkBalance(map: InternalMap): Check[] {
       const rel = (max - min) / max;
       if (rel > BALANCE_DISTANCE_TOLERANCE) {
         const detail = [...distByTeam.entries()].map(([t, d]) => `${t}=${d.toFixed(1)}m`).join(", ");
-        col.error(`distancias spawn->objetivo desiguales entre lados (${(rel * 100).toFixed(0)}% > ${BALANCE_DISTANCE_TOLERANCE * 100}%): ${detail}`);
+        col.error(
+          `distancias spawn->objetivo desiguales entre lados (${(rel * 100).toFixed(0)}% > ${BALANCE_DISTANCE_TOLERANCE * 100}%): ${detail}`,
+        );
       }
     }
   }

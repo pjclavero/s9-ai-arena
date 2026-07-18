@@ -41,7 +41,8 @@ let dir: string;
 let battleId: string;
 
 async function insertFinishedBattle(extra: Record<string, unknown> = {}): Promise<string> {
-  const [row] = await h.db("battles")
+  const [row] = await h
+    .db("battles")
     .insert({
       status: "finished",
       official: true,
@@ -118,7 +119,10 @@ describe("T12.1 · 6 sabotajes deliberados, uno por paso del criterio 26.1", () 
     const auth = { Authorization: `Bearer ${dev}` };
     const bot = await request(app).post("/bots").set(auth).send({ name: "sabotaje-secreto" });
     const loadout = JSON.parse(
-      readFileSync(join(import.meta.dirname, "..", "..", "packages", "module-catalog", "examples", "loadout-medium-gunner.json"), "utf8"),
+      readFileSync(
+        join(import.meta.dirname, "..", "..", "packages", "module-catalog", "examples", "loadout-medium-gunner.json"),
+        "utf8",
+      ),
     );
     await request(app).post(`/bots/${bot.body.id}/loadouts`).set(auth).send(loadout);
     const version = await request(app)
@@ -151,9 +155,13 @@ describe("T12.1 · 6 sabotajes deliberados, uno por paso del criterio 26.1", () 
 
     const closeCode = (ticket: string) =>
       new Promise<number>((resolve, reject) => {
-        const ws = new WebSocket(`ws://127.0.0.1:${gateway.port}/spectate/${battleId}?ticket=${encodeURIComponent(ticket)}`);
+        const ws = new WebSocket(
+          `ws://127.0.0.1:${gateway.port}/spectate/${battleId}?ticket=${encodeURIComponent(ticket)}`,
+        );
         ws.on("close", (code) => resolve(code));
-        ws.on("error", () => {/* el close llega igualmente */});
+        ws.on("error", () => {
+          /* el close llega igualmente */
+        });
         setTimeout(() => reject(new Error("sin cierre")), 5000);
       });
 
@@ -165,7 +173,9 @@ describe("T12.1 · 6 sabotajes deliberados, uno por paso del criterio 26.1", () 
       // Ticket legítimo REUTILIZADO (robado del historial): la 2ª conexión no entra.
       const ticketRes = await request(app).post(`/battles/${battleId}/spectate-ticket`);
       expect(ticketRes.status).toBe(201);
-      const first = new WebSocket(`ws://127.0.0.1:${gateway.port}/spectate/${battleId}?ticket=${encodeURIComponent(ticketRes.body.ticket)}`);
+      const first = new WebSocket(
+        `ws://127.0.0.1:${gateway.port}/spectate/${battleId}?ticket=${encodeURIComponent(ticketRes.body.ticket)}`,
+      );
       await new Promise<void>((resolve, reject) => {
         first.on("open", () => resolve());
         first.on("error", reject);
@@ -206,7 +216,9 @@ describe("T12.1 · 6 sabotajes deliberados, uno por paso del criterio 26.1", () 
     const stored2 = ingestReplay(dir2, replay, { official: true });
     rmSync(stored2.path);
     const ghostId = await insertFinishedBattle({ replay_ref: stored2.path });
-    await expect(runStatsJob(h.db, dir2, ghostId, "e12_sabotage_dm")).rejects.toThrow(/replay_not_found|No se puede procesar/);
+    await expect(runStatsJob(h.db, dir2, ghostId, "e12_sabotage_dm")).rejects.toThrow(
+      /replay_not_found|No se puede procesar/,
+    );
     // Y la API sigue sin stats para esa batalla (no hay filas fantasma).
     const res = await request(app).get(`/battles/${ghostId}/stats`);
     expect(res.status).toBe(200);

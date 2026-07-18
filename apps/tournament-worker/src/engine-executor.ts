@@ -79,7 +79,8 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
 
     // --- mapa (E4 real): contenido versionado en BD → ArenaMap del motor ----
     const mapRow = await db("map_versions").where({ map_id: battle.map_id, version: battle.map_version }).first();
-    if (!mapRow?.content) throw new InfrastructureFailure("map_unavailable", `mapa ${battle.map_id}@${battle.map_version} sin contenido`);
+    if (!mapRow?.content)
+      throw new InfrastructureFailure("map_unavailable", `mapa ${battle.map_id}@${battle.map_version} sin contenido`);
     let arenaMap;
     try {
       const doc = (typeof mapRow.content === "string" ? JSON.parse(mapRow.content) : mapRow.content) as InternalMap;
@@ -90,7 +91,9 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
 
     // --- ruleset: presupuesto del torneo/ruleset de BD (ADR-000, congelado) --
     const dbRuleset = battle.ruleset_id ? await db("rulesets").where({ id: battle.ruleset_id }).first() : null;
-    const tournament = battle.tournament_id ? await db("tournaments").where({ id: battle.tournament_id }).first() : null;
+    const tournament = battle.tournament_id
+      ? await db("tournaments").where({ id: battle.tournament_id }).first()
+      : null;
     const budgetCredits = (tournament?.budget_credits ?? dbRuleset?.budget_credits) as number | undefined;
     const engineRulesetId = ENGINE_RULESETS[battle.mode] ?? "dm_practice@1";
     const ruleset = loadRuleset(engineRulesetId, {
@@ -104,7 +107,10 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
     if (catalogVersion) {
       catalog = await getCatalog(db, catalogVersion);
       if (catalog.length === 0) {
-        throw new InfrastructureFailure("artifact_unavailable", `catálogo congelado '${catalogVersion}' vacío o no importado`);
+        throw new InfrastructureFailure(
+          "artifact_unavailable",
+          `catálogo congelado '${catalogVersion}' vacío o no importado`,
+        );
       }
     } else {
       // Batalla de práctica sin torneo: última versión importada.
@@ -130,7 +136,10 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
       }
       const loadoutRow = await db("bot_loadouts").where({ bot_id: p.bot_id, revision: loadoutRevision }).first();
       if (!loadoutRow) {
-        throw new InfrastructureFailure("artifact_unavailable", `bot ${p.bot_id}: loadout rev ${loadoutRevision} inexistente`);
+        throw new InfrastructureFailure(
+          "artifact_unavailable",
+          `bot ${p.bot_id}: loadout rev ${loadoutRevision} inexistente`,
+        );
       }
       const loadout: LoadoutInput = {
         loadoutId: loadoutRow.id,
@@ -170,9 +179,7 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
         // E8.M anti-coaching: retardo del ruleset, salvo que E9 marque la
         // batalla 'visible' (la final se emite sin retardo, migración 008).
         const spectator =
-          battle.spectator_mode === "visible"
-            ? { ...(ruleset.spectator ?? {}), delaySeconds: 0 }
-            : ruleset.spectator;
+          battle.spectator_mode === "visible" ? { ...(ruleset.spectator ?? {}), delaySeconds: 0 } : ruleset.spectator;
         opts.spectate.attachBattle(battle.id, b, {
           spectator,
           meta: {

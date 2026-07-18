@@ -16,5 +16,7 @@ app.get("/healthz", (_req, res) => res.json({ status: "ok", service: "replay-ser
 app.use(createReplayServer({ dir }));
 
 app.listen(port, () => {
-  console.log(JSON.stringify({ level: "info", service: "replay-service", msg: `replay-service escuchando en :${port}`, dir }));
+  console.log(
+    JSON.stringify({ level: "info", service: "replay-service", msg: `replay-service escuchando en :${port}`, dir }),
+  );
 });

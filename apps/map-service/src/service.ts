@@ -41,7 +41,10 @@ export interface AuditEntry {
 }
 
 export class MapServiceError extends Error {
-  constructor(message: string, readonly code: "invalid_map" | "immutable_version" | "not_found") {
+  constructor(
+    message: string,
+    readonly code: "invalid_map" | "immutable_version" | "not_found",
+  ) {
     super(message);
   }
 }
@@ -108,7 +111,12 @@ export class MapService {
     };
     versions.set(map.version, record);
     this.store.set(map.mapId, versions);
-    this.log("import", map.mapId, map.version, `draft (warnings: ${validation.checks.filter((c) => c.severity === "warning").length})`);
+    this.log(
+      "import",
+      map.mapId,
+      map.version,
+      `draft (warnings: ${validation.checks.filter((c) => c.severity === "warning").length})`,
+    );
     return record;
   }
 
@@ -185,7 +193,9 @@ export function makeThumbnail(map: InternalMap): string {
     const x = (wall.position.x - (wall.widthM ?? 0) / 2) * scale;
     // El SVG tiene Y hacia abajo; el mundo, hacia arriba (D1): se voltea.
     const y = (map.heightM - wall.position.y - (wall.heightM ?? 0) / 2) * scale;
-    rects.push(`<rect x="${round(x)}" y="${round(y)}" width="${round((wall.widthM ?? 0) * scale)}" height="${round((wall.heightM ?? 0) * scale)}" fill="#555"/>`);
+    rects.push(
+      `<rect x="${round(x)}" y="${round(y)}" width="${round((wall.widthM ?? 0) * scale)}" height="${round((wall.heightM ?? 0) * scale)}" fill="#555"/>`,
+    );
   }
   for (const base of map.layers.bases ?? []) {
     if (!base.position) continue;

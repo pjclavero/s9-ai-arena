@@ -6,6 +6,7 @@ import { Router } from "express";
 import multer from "multer";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
+import { pathParam } from "../params.js";
 import { ApiError, badRequest, conflict, forbidden, notFound } from "../errors.js";
 import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
 import { ROLE_RANK } from "../openapi.js";
@@ -63,7 +64,10 @@ export function loadoutToJson(l: Record<string, unknown>) {
 }
 
 export function buildToJson(b: Record<string, unknown>, opts: { includeLogs: boolean }) {
-  const stages = (typeof b.stages === "string" ? JSON.parse(b.stages) : (b.stages as unknown[])) as Record<string, unknown>[];
+  const stages = (typeof b.stages === "string" ? JSON.parse(b.stages) : (b.stages as unknown[])) as Record<
+    string,
+    unknown
+  >[];
   return {
     id: b.id,
     botId: b.bot_id,
@@ -101,7 +105,12 @@ export function botRoutes(db: Db, botManager: BotManagerClient): Router {
   defineOperation(router, "listBots", async (req, res) => {
     const limit = parseLimit(req.query.limit);
     const cursor = decodeCursor(req.query.cursor as string | undefined);
-    let q = db("bots").orderBy([{ column: "created_at", order: "desc" }, { column: "id", order: "desc" }]).limit(200);
+    let q = db("bots")
+      .orderBy([
+        { column: "created_at", order: "desc" },
+        { column: "id", order: "desc" },
+      ])
+      .limit(200);
     if (typeof req.query.ownerId === "string") q = q.where({ owner_id: req.query.ownerId });
     if (cursor) q = q.whereRaw("(created_at, id) < (?, ?)", [cursor.createdAt, cursor.id]);
 
@@ -112,7 +121,9 @@ export function botRoutes(db: Db, botManager: BotManagerClient): Router {
       if (visible.length > limit) break;
     }
     const page = visible.slice(0, limit);
-    const items = await Promise.all(page.map(async (b) => botToJson(b, await latestPublishedVersion(db, b.id as string))));
+    const items = await Promise.all(
+      page.map(async (b) => botToJson(b, await latestPublishedVersion(db, b.id as string))),
+    );
     res.json({
       items,
       nextCursor:
@@ -129,7 +140,10 @@ export function botRoutes(db: Db, botManager: BotManagerClient): Router {
       throw badRequest("visibility inválida");
     }
     if (teamId !== undefined) {
-      const member = await db("team_members").where({ team_id: teamId, user_id: req.auth!.userId }).first().catch(() => null);
+      const member = await db("team_members")
+        .where({ team_id: teamId, user_id: req.auth!.userId })
+        .first()
+        .catch(() => null);
       if (!member) throw forbidden("No perteneces a ese equipo");
     }
     if (await db("bots").where({ owner_id: req.auth!.userId, name }).first()) {
@@ -142,12 +156,12 @@ export function botRoutes(db: Db, botManager: BotManagerClient): Router {
   });
 
   defineOperation(router, "getBot", async (req, res) => {
-    const bot = await getVisibleBot(db, req.auth, req.params.botId);
+    const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
     res.json(botToJson(bot, await latestPublishedVersion(db, bot.id as string)));
   });
 
   defineOperation(router, "updateBot", async (req, res) => {
-    const bot = await getVisibleBot(db, req.auth, req.params.botId);
+    const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
     assertOwner(req.auth, bot); // metadatos: SOLO el dueño (contrato)
     const patch: Record<string, unknown> = {};
     const { name, visibility } = req.body ?? {};
@@ -167,7 +181,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient): Router {
 
   // -------------------------------------------------------------- loadouts
   defineOperation(router, "createLoadoutRevision", async (req, res) => {
-    const bot = await getVisibleBot(db, req.auth, req.params.botId);
+    const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
     assertOwner(req.auth, bot);
     const { chassis, modules } = req.body ?? {};
     if (typeof chassis !== "string" || !Array.isArray(modules)) {
@@ -185,7 +199,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient): Router {
 
   // -------------------------------------------------------------- versiones
   defineOperation(router, "listBotVersions", async (req, res) => {
-    const bot = await getVisibleBot(db, req.auth, req.params.botId);
+    const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
     const versions = await db("bot_versions").where({ bot_id: bot.id }).orderBy("version", "asc");
     res.json(versions.map(versionToJson));
   });
@@ -194,7 +208,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient): Router {
     router,
     "createBotVersion",
     async (req, res) => {
-      const bot = await getVisibleBot(db, req.auth, req.params.botId);
+      const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
       assertOwner(req.auth, bot);
       const file = (req as unknown as { file?: { buffer: Buffer; originalname: string } }).file;
       const { runtime, loadoutRevision } = req.body ?? {};
@@ -229,8 +243,8 @@ export function botRoutes(db: Db, botManager: BotManagerClient): Router {
   );
 
   defineOperation(router, "getBotSource", async (req, res) => {
-    const bot = await getVisibleBot(db, req.auth, req.params.botId);
-    const v = await getVersionOr404(db, bot.id as string, req.params.version);
+    const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
+    const v = await getVersionOr404(db, bot.id as string, pathParam(req, "version"));
     const isOwner = req.auth!.userId === bot.owner_id;
     const isTeamMate =
       bot.team_id != null &&
@@ -248,9 +262,9 @@ export function botRoutes(db: Db, botManager: BotManagerClient): Router {
 
   // -------------------------------------------- transiciones (cap. 17.1)
   defineOperation(router, "submitBotVersion", async (req, res) => {
-    const bot = await getVisibleBot(db, req.auth, req.params.botId);
+    const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
     assertOwner(req.auth, bot);
-    const v = await getVersionOr404(db, bot.id as string, req.params.version);
+    const v = await getVersionOr404(db, bot.id as string, pathParam(req, "version"));
     await applyTransition(db, req.auth, v, "submit", {}, req.correlationId);
 
     const [build] = await db("builds")
@@ -262,15 +276,20 @@ export function botRoutes(db: Db, botManager: BotManagerClient): Router {
       })
       .returning("*");
     // Delegación en bot-manager (E6/T6.1) — pendiente de reconciliación con E6.
-    await botManager.enqueueBuild({ buildId: build.id, botId: bot.id as string, version: v.version, runtime: v.runtime });
+    await botManager.enqueueBuild({
+      buildId: build.id,
+      botId: bot.id as string,
+      version: v.version,
+      runtime: v.runtime,
+    });
     const fresh = await db("builds").where({ id: build.id }).first();
     res.status(202).json(buildToJson(fresh, { includeLogs: true }));
   });
 
   defineOperation(router, "publishBotVersion", async (req, res) => {
-    const bot = await getVisibleBot(db, req.auth, req.params.botId);
+    const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
     assertOwner(req.auth, bot);
-    const v = await getVersionOr404(db, bot.id as string, req.params.version);
+    const v = await getVersionOr404(db, bot.id as string, pathParam(req, "version"));
     const codePublic = req.body?.codePublic === true;
     const updated = await applyTransition(
       db,
@@ -285,9 +304,12 @@ export function botRoutes(db: Db, botManager: BotManagerClient): Router {
 
   defineOperation(router, "suspendBotVersion", async (req, res) => {
     // x-min-role: moderator (del contrato); no requiere ser dueño.
-    const bot = await db("bots").where({ id: req.params.botId }).first().catch(() => null);
+    const bot = await db("bots")
+      .where({ id: req.params.botId })
+      .first()
+      .catch(() => null);
     if (!bot) throw notFound();
-    const v = await getVersionOr404(db, bot.id as string, req.params.version);
+    const v = await getVersionOr404(db, bot.id as string, pathParam(req, "version"));
     const { reason } = req.body ?? {};
     if (typeof reason !== "string" || !reason || reason.length > 256) throw badRequest("reason obligatorio (máx. 256)");
     const updated = await applyTransition(db, req.auth, v, "suspend", { suspend_reason: reason }, req.correlationId);
@@ -295,9 +317,9 @@ export function botRoutes(db: Db, botManager: BotManagerClient): Router {
   });
 
   defineOperation(router, "retireBotVersion", async (req, res) => {
-    const bot = await getVisibleBot(db, req.auth, req.params.botId);
+    const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
     assertOwner(req.auth, bot);
-    const v = await getVersionOr404(db, bot.id as string, req.params.version);
+    const v = await getVersionOr404(db, bot.id as string, pathParam(req, "version"));
     const updated = await applyTransition(db, req.auth, v, "retire", {}, req.correlationId);
     res.json(versionToJson(updated));
   });
@@ -308,7 +330,10 @@ export function botRoutes(db: Db, botManager: BotManagerClient): Router {
 export function buildRoutes(db: Db): Router {
   const router = Router();
   defineOperation(router, "getBuild", async (req, res) => {
-    const build = await db("builds").where({ id: req.params.buildId }).first().catch(() => null);
+    const build = await db("builds")
+      .where({ id: req.params.buildId })
+      .first()
+      .catch(() => null);
     if (!build) throw notFound();
     const bot = await db("bots").where({ id: build.bot_id }).first();
     if (!(await canSeeBot(db, req.auth, bot))) throw notFound();

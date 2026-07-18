@@ -53,7 +53,8 @@ beforeAll(async () => {
     // Agente determinista que DISPARA (los stubs con el loadout de ejemplo no
     // se encuentran: llevan lidar, no radar): así shotsFired/accuracy de la
     // forma canónica tienen datos reales que agregar.
-    agentResolver: () => ({
+    agentResolver: (botId) => ({
+      botId,
       decide(obs: { tick: number }) {
         return { forTick: obs.tick, move: { throttle: 0.6, steer: 0.05 }, fire: ["turret_main"] };
       },
@@ -99,10 +100,26 @@ describe("H3 · battle_stats: una única forma canónica (la del job de E8)", ()
     const rows = normalizeRows(await h.db("battle_stats").where({ battle_id: battleId }));
     const CANONICAL_FIELDS = [
       // BotBattleStats de E8 (stats.ts): lo que consume aggregateByBotVersion y el panel.
-      "botId", "team", "damageDealt", "damageTaken", "shotsFired", "shotsHit",
-      "accuracy", "kills", "died", "survivedTicks", "flagCaptures", "flagsTaken",
-      "minesDeployed", "minesTriggered", "decisionTimeouts", "disqualified",
-      "cpuMs", "perModule", "vehicleId", "battle",
+      "botId",
+      "team",
+      "damageDealt",
+      "damageTaken",
+      "shotsFired",
+      "shotsHit",
+      "accuracy",
+      "kills",
+      "died",
+      "survivedTicks",
+      "flagCaptures",
+      "flagsTaken",
+      "minesDeployed",
+      "minesTriggered",
+      "decisionTimeouts",
+      "disqualified",
+      "cpuMs",
+      "perModule",
+      "vehicleId",
+      "battle",
     ];
     for (const r of rows) {
       const keys = Object.keys(r.stats as Record<string, unknown>).sort();

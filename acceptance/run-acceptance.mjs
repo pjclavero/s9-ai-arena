@@ -21,7 +21,10 @@ import { fileURLToPath } from "node:url";
 import { CRITERIA } from "./criteria.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const only = process.argv.find((a) => a.startsWith("--only="))?.slice(7).split(",");
+const only = process.argv
+  .find((a) => a.startsWith("--only="))
+  ?.slice(7)
+  .split(",");
 const jobs = only ? CRITERIA.filter((c) => only.includes(c.id)) : CRITERIA;
 
 const results = [];
@@ -90,5 +93,7 @@ writeFileSync(
   JSON.stringify({ generatedAt: now, allGreen, verdes, total: results.length, results }, null, 2),
 );
 
-process.stdout.write(`\n${allGreen ? "🟢" : "🔴"} ${verdes}/${results.length} criterios en verde. Informe: docs/aceptacion/ultimo-informe.md\n`);
+process.stdout.write(
+  `\n${allGreen ? "🟢" : "🔴"} ${verdes}/${results.length} criterios en verde. Informe: docs/aceptacion/ultimo-informe.md\n`,
+);
 process.exit(allGreen ? 0 : 1);

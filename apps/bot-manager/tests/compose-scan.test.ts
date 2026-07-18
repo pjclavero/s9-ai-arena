@@ -35,11 +35,22 @@ describe("T6.2 · escaneo de seguridad del Compose (cap. 28)", () => {
 
   it("la CLI scan-compose.ts sale 0 con el compose real y 1 con uno malicioso", () => {
     // real → exit 0
-    execFileSync("npx", ["tsx", join(repoRoot, "scripts", "scan-compose.ts"), join(repoRoot, "docker-compose.yml")], { cwd: repoRoot, stdio: "pipe" });
+    execFileSync("npx", ["tsx", join(repoRoot, "scripts", "scan-compose.ts"), join(repoRoot, "docker-compose.yml")], {
+      cwd: repoRoot,
+      stdio: "pipe",
+    });
     // malicioso → exit 1
     let failed = false;
     try {
-      execFileSync("npx", ["tsx", join(repoRoot, "scripts", "scan-compose.ts"), join(__dirname, "fixtures-compose", "bad-dockersock.yml")], { cwd: repoRoot, stdio: "pipe" });
+      execFileSync(
+        "npx",
+        [
+          "tsx",
+          join(repoRoot, "scripts", "scan-compose.ts"),
+          join(__dirname, "fixtures-compose", "bad-dockersock.yml"),
+        ],
+        { cwd: repoRoot, stdio: "pipe" },
+      );
     } catch {
       failed = true;
     }

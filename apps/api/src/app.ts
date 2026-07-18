@@ -89,7 +89,9 @@ export function createApp(cfg: AppConfig): express.Express {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
     if (err instanceof ApiError) {
-      res.status(err.status).json({ error: err.code, message: err.message, correlationId: req.correlationId, ...err.extra });
+      res
+        .status(err.status)
+        .json({ error: err.code, message: err.message, correlationId: req.correlationId, ...err.extra });
       return;
     }
     if (err && typeof err === "object" && (err as { type?: string }).type === "entity.parse.failed") {

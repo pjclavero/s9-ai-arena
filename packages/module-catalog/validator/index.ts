@@ -8,7 +8,14 @@
  * defecto (ver test de constructivos en ../data.test.ts).
  */
 import { MAX_MODULE_COST_FRACTION } from "../../game-rules/index.js";
-import { findModule, splitVersioned, type LoadoutInput, type ModuleCategory, type ModuleDefinition, type Size } from "../types.js";
+import {
+  findModule,
+  splitVersioned,
+  type LoadoutInput,
+  type ModuleCategory,
+  type ModuleDefinition,
+  type Size,
+} from "../types.js";
 
 export interface Violation {
   code:

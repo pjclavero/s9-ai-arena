@@ -48,6 +48,14 @@ Rama de trabajo: `ronda2/r-p0-bloqueantes`.
 | Tarea | Descripción | Estado | Issue | Reporte | Commit |
 |---|---|---|---|---|---|
 | R2.8 | Paridad de SDK: CLI `arena-sim` en JS (deuda de E5) | ✅ Hecho | — | [R2.8-cli-arena-sim-js.md](reportes/R2.8-cli-arena-sim-js.md) | — |
+| R2.1 | Tipos en verde (ERR-GES-02/03) + CI bloqueante: tsc sin `continue-on-error`, prettier real, cobertura como artefacto | ✅ Hecho | #11 rel. | [R2.1-tipos-ci.md](reportes/R2.1-tipos-ci.md) | `c110bcb`+ |
+
+> **R2.1 · 2026-07-17 (VM108, Node 20).** `npx tsc --noEmit` da **0 errores** en el tsconfig raíz
+> (antes 267: ~238 falsos de JSX de `apps/web` + 29 genuinos) y **0** en `apps/web` (proyecto
+> propio con jsx). El paso de tipos de la CI ya **rompe** ante un error (demostrado en local con
+> un error deliberado); "Formato" ejecuta `prettier --check` de verdad (ámbito: solo código
+> TS/JS, sin `arena-engine` hasta que se fusione R2.7) y las unitarias publican cobertura V8
+> como artefacto. Suite: **706 ✓ / 1 ✗ (zstd Node 20, preexistente) / 3 skip** — 0 fallos nuevos.
 
 **Leyenda:** ✅ hecho y verificado · 🔜 en curso · ⏳ pendiente.
 

@@ -76,15 +76,14 @@ export function generateMap(params: GenerateParams, seed: string): GenerateResul
 type ResolvedParams = Required<Omit<GenerateParams, "mapId">> & Pick<GenerateParams, "mapId">;
 
 function canonicalParams(p: ResolvedParams): string {
-  return JSON.stringify(Object.keys(p).sort().map((k) => [k, (p as any)[k]]));
+  return JSON.stringify(
+    Object.keys(p)
+      .sort()
+      .map((k) => [k, (p as any)[k]]),
+  );
 }
 
-function buildSymmetricMap(
-  p: ResolvedParams,
-  rng: Rng,
-  seed: string,
-  attempt: number,
-): InternalMap {
+function buildSymmetricMap(p: ResolvedParams, rng: Rng, seed: string, attempt: number): InternalMap {
   const { widthM, heightM } = p;
   const cx = widthM / 2;
 
@@ -137,7 +136,14 @@ function buildSymmetricMap(
   ];
   const bases: InternalMap["layers"]["bases"] = [
     { objectId: "base_red", team: "red", shape: "rect", position: { x: baseX, y: midY }, widthM: 8, heightM: 12 },
-    { objectId: "base_blue", team: "blue", shape: "rect", position: { x: widthM - baseX, y: midY }, widthM: 8, heightM: 12 },
+    {
+      objectId: "base_blue",
+      team: "blue",
+      shape: "rect",
+      position: { x: widthM - baseX, y: midY },
+      widthM: 8,
+      heightM: 12,
+    },
   ];
   const flags: InternalMap["layers"]["flags"] = [
     { objectId: "flag_red", team: "red", position: { x: baseX, y: midY } },

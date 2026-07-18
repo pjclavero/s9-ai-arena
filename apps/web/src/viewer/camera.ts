@@ -3,10 +3,7 @@
  * equipo. Lógica pura (centro + zoom) que PhaserViewer aplica a su cámara.
  */
 
-export type CameraMode =
-  | { kind: "global" }
-  | { kind: "follow"; vehicleId: string }
-  | { kind: "team"; team: string };
+export type CameraMode = { kind: "global" } | { kind: "follow"; vehicleId: string } | { kind: "team"; team: string };
 
 export interface CameraTarget {
   centerX: number;

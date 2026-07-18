@@ -6,11 +6,7 @@
  */
 import { useMemo, useState } from "react";
 import { validateLoadout, type Violation } from "../../../../packages/module-catalog/validator/index.js";
-import {
-  findModule,
-  type LoadoutInput,
-  type ModuleDefinition,
-} from "../../../../packages/module-catalog/types.js";
+import { findModule, type LoadoutInput, type ModuleDefinition } from "../../../../packages/module-catalog/types.js";
 
 export interface LoadoutDraft {
   catalogVersion: string;
@@ -25,11 +21,7 @@ export interface LiveSummary {
   violations: Violation[];
 }
 
-export function computeLive(
-  draft: LoadoutDraft,
-  catalog: ModuleDefinition[],
-  budgetCredits: number,
-): LiveSummary {
+export function computeLive(draft: LoadoutDraft, catalog: ModuleDefinition[], budgetCredits: number): LiveSummary {
   const input: LoadoutInput = { loadoutId: "editor", revision: 1, ...draft };
   const violations = validateLoadout(input, catalog, budgetCredits);
   const chassisDef = findModule(catalog, draft.chassis);
@@ -114,7 +106,10 @@ export function LoadoutEditor(props: {
             return (
               <tr key={slot.id}>
                 <td>
-                  {slot.id} <small>({slot.accepts.join("/")}, ≤{slot.maxSize})</small>
+                  {slot.id}{" "}
+                  <small>
+                    ({slot.accepts.join("/")}, ≤{slot.maxSize})
+                  </small>
                 </td>
                 <td>
                   <select
@@ -165,7 +160,11 @@ export function LoadoutEditor(props: {
           ))}
         </ul>
       )}
-      {saved && <p className="ok" data-testid="saved">Revisión de loadout guardada.</p>}
+      {saved && (
+        <p className="ok" data-testid="saved">
+          Revisión de loadout guardada.
+        </p>
+      )}
 
       <button
         disabled={blocked}

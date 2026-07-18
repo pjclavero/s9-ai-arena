@@ -38,7 +38,9 @@ async function main(): Promise<number> {
       if (!file) throw new Error("uso: ingest <archivo.jsonl> [--dir <dir>] [--official]");
       const replay = fromJsonl(readFileSync(file, "utf8"));
       const stored = ingestReplay(dir, replay, { official: args.includes("--official") });
-      console.log(JSON.stringify({ battleId: stored.index.battleId, path: stored.path, sha256: stored.index.sha256 }, null, 2));
+      console.log(
+        JSON.stringify({ battleId: stored.index.battleId, path: stored.path, sha256: stored.index.sha256 }, null, 2),
+      );
       return 0;
     }
     case "sweep": {
@@ -58,9 +60,11 @@ async function main(): Promise<number> {
   }
 }
 
-main().then((code) => {
-  if (code >= 0) process.exit(code);
-}).catch((e) => {
-  console.error(e.message);
-  process.exit(2);
-});
+main()
+  .then((code) => {
+    if (code >= 0) process.exit(code);
+  })
+  .catch((e) => {
+    console.error(e.message);
+    process.exit(2);
+  });

@@ -46,7 +46,12 @@ export function validateArenaMap(value: unknown): ArenaMap {
   const map = value as Partial<ArenaMap>;
   if (map.schemaVersion !== MAP_SCHEMA_VERSION) throw new Error("Unsupported map schema version");
   if (!map.id || !map.name) throw new Error("Map id and name are required");
-  if (!Number.isFinite(map.width) || !Number.isFinite(map.height) || Number(map.width) < 300 || Number(map.height) < 300) {
+  if (
+    !Number.isFinite(map.width) ||
+    !Number.isFinite(map.height) ||
+    Number(map.width) < 300 ||
+    Number(map.height) < 300
+  ) {
     throw new Error("Map dimensions are invalid");
   }
   if (!Array.isArray(map.walls) || !Array.isArray(map.obstacles) || !Array.isArray(map.spawns)) {

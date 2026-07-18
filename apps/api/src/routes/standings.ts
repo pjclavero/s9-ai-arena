@@ -3,6 +3,7 @@ import { Router } from "express";
 import type { Db } from "../db/connection.js";
 import { badRequest, notFound } from "../errors.js";
 import { defineOperation } from "../registry.js";
+import { pathParam } from "../params.js";
 import { getStandings } from "../services/standings.js";
 // H6 (issue #10) · Se expone el libro mayor REAL de E9, no una reimplementación.
 import { INITIAL_RATING, ratingAt, ratingHistory } from "../../../tournament-worker/src/ratings.js";
@@ -26,8 +27,11 @@ export function standingsRoutes(db: Db): Router {
    * Funciones listas y probadas desde la entrega de E9; faltaba la ruta.
    */
   defineOperation(router, "getBotRatingHistory", async (req, res) => {
-    const botId = req.params.botId;
-    const bot = await db("bots").where({ id: botId }).first().catch(() => null);
+    const botId = pathParam(req, "botId");
+    const bot = await db("bots")
+      .where({ id: botId })
+      .first()
+      .catch(() => null);
     if (!bot) throw notFound();
     const seasonId = typeof req.query.seasonId === "string" ? req.query.seasonId : "season-1";
     const mode = typeof req.query.mode === "string" ? req.query.mode : "deathmatch";

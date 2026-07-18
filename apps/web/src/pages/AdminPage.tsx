@@ -40,25 +40,47 @@ export function AdminPage(props: { me: Me }) {
 
   useEffect(() => {
     if (!isAdmin(props.me)) return;
-    api<Finding[]>("GET", "/admin/security-findings").then(setFindings).catch((e) => setError(e.message));
-    api<AuditEntry[]>("GET", "/admin/audit-log").then(setAuditLog).catch((e) => setError(e.message));
-    api<CatalogVersion[]>("GET", "/catalog/versions").then(setCatalogs).catch(() => {});
+    api<Finding[]>("GET", "/admin/security-findings")
+      .then(setFindings)
+      .catch((e) => setError(e.message));
+    api<AuditEntry[]>("GET", "/admin/audit-log")
+      .then(setAuditLog)
+      .catch((e) => setError(e.message));
+    api<CatalogVersion[]>("GET", "/catalog/versions")
+      .then(setCatalogs)
+      .catch(() => {});
   }, [props.me]);
 
   if (!isAdmin(props.me)) {
-    return <p className="error" data-testid="admin-denied">Acceso denegado.</p>;
+    return (
+      <p className="error" data-testid="admin-denied">
+        Acceso denegado.
+      </p>
+    );
   }
 
   return (
     <div data-testid="admin-panel">
       <div className="card">
         <h2>Roles de usuario</h2>
-        <input aria-label="rol-userid" placeholder="userId" value={roleEdit.userId} onChange={(e) => setRoleEdit((s) => ({ ...s, userId: e.target.value }))} />{" "}
-        <input aria-label="rol-roles" placeholder="roles separados por coma" value={roleEdit.roles} onChange={(e) => setRoleEdit((s) => ({ ...s, roles: e.target.value }))} />{" "}
+        <input
+          aria-label="rol-userid"
+          placeholder="userId"
+          value={roleEdit.userId}
+          onChange={(e) => setRoleEdit((s) => ({ ...s, userId: e.target.value }))}
+        />{" "}
+        <input
+          aria-label="rol-roles"
+          placeholder="roles separados por coma"
+          value={roleEdit.roles}
+          onChange={(e) => setRoleEdit((s) => ({ ...s, roles: e.target.value }))}
+        />{" "}
         <button
           onClick={async () => {
             try {
-              await api("PUT", `/users/${roleEdit.userId}/roles`, { roles: roleEdit.roles.split(",").map((r) => r.trim()) });
+              await api("PUT", `/users/${roleEdit.userId}/roles`, {
+                roles: roleEdit.roles.split(",").map((r) => r.trim()),
+              });
             } catch (e) {
               setError((e as Error).message);
             }

@@ -35,12 +35,33 @@ describe("T7.1 migraciones", () => {
     await migrateToLatest(h.db);
     const after = await tableNames();
     for (const t of [
-      "users", "roles", "sessions", "teams", "team_members",
-      "bots", "bot_versions", "bot_loadouts", "builds", "artifacts",
-      "maps", "map_versions", "module_definitions", "rulesets",
-      "tournaments", "entries", "matches", "battles", "participants",
-      "battle_stats", "ratings", "standings", "achievements",
-      "jobs", "audit_log", "security_findings", "api_usage",
+      "users",
+      "roles",
+      "sessions",
+      "teams",
+      "team_members",
+      "bots",
+      "bot_versions",
+      "bot_loadouts",
+      "builds",
+      "artifacts",
+      "maps",
+      "map_versions",
+      "module_definitions",
+      "rulesets",
+      "tournaments",
+      "entries",
+      "matches",
+      "battles",
+      "participants",
+      "battle_stats",
+      "ratings",
+      "standings",
+      "achievements",
+      "jobs",
+      "audit_log",
+      "security_findings",
+      "api_usage",
     ]) {
       expect(after, `falta la tabla ${t}`).toContain(t);
     }
@@ -72,10 +93,12 @@ describe("T7.1 migraciones", () => {
 describe("T7.1 restricciones de integridad", () => {
   it("no se puede borrar un módulo referenciado por un loadout congelado", async () => {
     const owner = await h.db("users").where({ email: DEV_USERS.developer }).first();
-    const [bot] = await h.db("bots")
+    const [bot] = await h
+      .db("bots")
       .insert({ name: "integrity-bot", owner_id: owner.id, visibility: "private" })
       .returning("*");
-    const [loadout] = await h.db("bot_loadouts")
+    const [loadout] = await h
+      .db("bot_loadouts")
       .insert({
         bot_id: bot.id,
         revision: 1,
@@ -85,23 +108,45 @@ describe("T7.1 restricciones de integridad", () => {
       })
       .returning("*");
     await h.db("loadout_modules").insert([
-      { loadout_id: loadout.id, slot: "__chassis__", catalog_version: CATALOG_VERSION, module_id: "chassis.light", module_version: 2 },
-      { loadout_id: loadout.id, slot: "movement", catalog_version: CATALOG_VERSION, module_id: "movement.wheels", module_version: 1 },
+      {
+        loadout_id: loadout.id,
+        slot: "__chassis__",
+        catalog_version: CATALOG_VERSION,
+        module_id: "chassis.light",
+        module_version: 2,
+      },
+      {
+        loadout_id: loadout.id,
+        slot: "movement",
+        catalog_version: CATALOG_VERSION,
+        module_id: "movement.wheels",
+        module_version: 1,
+      },
     ]);
 
     // Congelamos la revisión en una inscripción de torneo (cap. 17.2)
     await h.db("bot_versions").insert({
-      bot_id: bot.id, version: 1, state: "published", runtime: "python", loadout_revision: 1,
+      bot_id: bot.id,
+      version: 1,
+      state: "published",
+      runtime: "python",
+      loadout_revision: 1,
     });
-    const [t] = await h.db("tournaments")
+    const [t] = await h
+      .db("tournaments")
       .insert({ name: "integrity-cup", format: "round_robin", mode: "deathmatch", ruleset_id: DEFAULT_RULESET_ID })
       .returning("*");
     await h.db("entries").insert({
-      tournament_id: t.id, bot_id: bot.id, version: 1, loadout_revision: 1, frozen: true,
+      tournament_id: t.id,
+      bot_id: bot.id,
+      version: 1,
+      loadout_revision: 1,
+      frozen: true,
     });
 
     await expect(
-      h.db("module_definitions")
+      h
+        .db("module_definitions")
         .where({ catalog_version: CATALOG_VERSION, module_id: "movement.wheels", module_version: 1 })
         .delete(),
     ).rejects.toThrow(/foreign key|viola/i);
@@ -113,10 +158,10 @@ describe("T7.1 restricciones de integridad", () => {
   });
 
   it("audit_log es de solo inserción: UPDATE y DELETE fallan", async () => {
-    const [row] = await h.db("audit_log")
-      .insert({ action: "test.append_only", target: "audit_log" })
-      .returning("*");
-    await expect(h.db("audit_log").where({ id: row.id }).update({ action: "tamper" })).rejects.toThrow(/solo inserción/);
+    const [row] = await h.db("audit_log").insert({ action: "test.append_only", target: "audit_log" }).returning("*");
+    await expect(h.db("audit_log").where({ id: row.id }).update({ action: "tamper" })).rejects.toThrow(
+      /solo inserción/,
+    );
     await expect(h.db("audit_log").where({ id: row.id }).delete()).rejects.toThrow(/solo inserción/);
   });
 });

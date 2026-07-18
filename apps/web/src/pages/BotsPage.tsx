@@ -27,7 +27,12 @@ interface Build {
   stages: { name: string; status: string; message?: string }[];
 }
 
-export function BotsPage(props: { me: Me; catalog: ModuleDefinition[]; catalogVersion: string; budgetCredits: number }) {
+export function BotsPage(props: {
+  me: Me;
+  catalog: ModuleDefinition[];
+  catalogVersion: string;
+  budgetCredits: number;
+}) {
   const [bots, setBots] = useState<Bot[]>([]);
   const [selected, setSelected] = useState<Bot | null>(null);
   const [versions, setVersions] = useState<BotVersion[]>([]);
@@ -106,11 +111,19 @@ export function BotsPage(props: { me: Me; catalog: ModuleDefinition[]; catalogVe
               <a href="#" onClick={() => selectBot(b)}>
                 {b.name}
               </a>{" "}
-              <small>({b.visibility}{b.latestPublishedVersion ? `, v${b.latestPublishedVersion} publicada` : ""})</small>
+              <small>
+                ({b.visibility}
+                {b.latestPublishedVersion ? `, v${b.latestPublishedVersion} publicada` : ""})
+              </small>
             </li>
           ))}
         </ul>
-        <input aria-label="nuevo-bot" placeholder="nombre del bot" value={newName} onChange={(e) => setNewName(e.target.value)} />{" "}
+        <input
+          aria-label="nuevo-bot"
+          placeholder="nombre del bot"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+        />{" "}
         <button
           onClick={async () => {
             await api("POST", "/bots", { name: newName });
@@ -158,7 +171,13 @@ export function BotsPage(props: { me: Me; catalog: ModuleDefinition[]; catalogVe
               <option value="node">node</option>
             </select>
             <p>
-              <textarea aria-label="codigo" rows={8} cols={70} value={pasted} onChange={(e) => setPasted(e.target.value)} />
+              <textarea
+                aria-label="codigo"
+                rows={8}
+                cols={70}
+                value={pasted}
+                onChange={(e) => setPasted(e.target.value)}
+              />
             </p>
             <button onClick={uploadPasted}>Subir como versión nueva</button>
             {error && <p className="error">{error}</p>}
@@ -172,7 +191,9 @@ export function BotsPage(props: { me: Me; catalog: ModuleDefinition[]; catalogVe
                   {build.stages.map((s) => (
                     <tr key={s.name}>
                       <td>{s.name}</td>
-                      <td className={s.status === "passed" ? "ok" : s.status === "failed" ? "error" : "warn"}>{s.status}</td>
+                      <td className={s.status === "passed" ? "ok" : s.status === "failed" ? "error" : "warn"}>
+                        {s.status}
+                      </td>
                       <td>{s.message ?? ""}</td>
                     </tr>
                   ))}

@@ -431,23 +431,7 @@ export interface COMMANDBotMotor {
            */
           slot: string;
           enabled: boolean;
-        }
-      ]
-    | [
-        {
-          /**
-           * Ranura del chasis en la que está montado el módulo.
-           */
-          slot: string;
-          enabled: boolean;
         },
-        {
-          /**
-           * Ranura del chasis en la que está montado el módulo.
-           */
-          slot: string;
-          enabled: boolean;
-        }
       ]
     | [
         {
@@ -464,13 +448,6 @@ export interface COMMANDBotMotor {
           slot: string;
           enabled: boolean;
         },
-        {
-          /**
-           * Ranura del chasis en la que está montado el módulo.
-           */
-          slot: string;
-          enabled: boolean;
-        }
       ]
     | [
         {
@@ -494,13 +471,6 @@ export interface COMMANDBotMotor {
           slot: string;
           enabled: boolean;
         },
-        {
-          /**
-           * Ranura del chasis en la que está montado el módulo.
-           */
-          slot: string;
-          enabled: boolean;
-        }
       ]
     | [
         {
@@ -531,13 +501,6 @@ export interface COMMANDBotMotor {
           slot: string;
           enabled: boolean;
         },
-        {
-          /**
-           * Ranura del chasis en la que está montado el módulo.
-           */
-          slot: string;
-          enabled: boolean;
-        }
       ]
     | [
         {
@@ -575,13 +538,6 @@ export interface COMMANDBotMotor {
           slot: string;
           enabled: boolean;
         },
-        {
-          /**
-           * Ranura del chasis en la que está montado el módulo.
-           */
-          slot: string;
-          enabled: boolean;
-        }
       ]
     | [
         {
@@ -626,13 +582,6 @@ export interface COMMANDBotMotor {
           slot: string;
           enabled: boolean;
         },
-        {
-          /**
-           * Ranura del chasis en la que está montado el módulo.
-           */
-          slot: string;
-          enabled: boolean;
-        }
       ]
     | [
         {
@@ -684,13 +633,6 @@ export interface COMMANDBotMotor {
           slot: string;
           enabled: boolean;
         },
-        {
-          /**
-           * Ranura del chasis en la que está montado el módulo.
-           */
-          slot: string;
-          enabled: boolean;
-        }
       ]
     | [
         {
@@ -749,13 +691,6 @@ export interface COMMANDBotMotor {
           slot: string;
           enabled: boolean;
         },
-        {
-          /**
-           * Ranura del chasis en la que está montado el módulo.
-           */
-          slot: string;
-          enabled: boolean;
-        }
       ]
     | [
         {
@@ -821,13 +756,6 @@ export interface COMMANDBotMotor {
           slot: string;
           enabled: boolean;
         },
-        {
-          /**
-           * Ranura del chasis en la que está montado el módulo.
-           */
-          slot: string;
-          enabled: boolean;
-        }
       ]
     | [
         {
@@ -900,13 +828,6 @@ export interface COMMANDBotMotor {
           slot: string;
           enabled: boolean;
         },
-        {
-          /**
-           * Ranura del chasis en la que está montado el módulo.
-           */
-          slot: string;
-          enabled: boolean;
-        }
       ]
     | [
         {
@@ -986,13 +907,6 @@ export interface COMMANDBotMotor {
           slot: string;
           enabled: boolean;
         },
-        {
-          /**
-           * Ranura del chasis en la que está montado el módulo.
-           */
-          slot: string;
-          enabled: boolean;
-        }
       ]
     | [
         {
@@ -1079,13 +993,6 @@ export interface COMMANDBotMotor {
           slot: string;
           enabled: boolean;
         },
-        {
-          /**
-           * Ranura del chasis en la que está montado el módulo.
-           */
-          slot: string;
-          enabled: boolean;
-        }
       ]
     | [
         {
@@ -1179,13 +1086,6 @@ export interface COMMANDBotMotor {
           slot: string;
           enabled: boolean;
         },
-        {
-          /**
-           * Ranura del chasis en la que está montado el módulo.
-           */
-          slot: string;
-          enabled: boolean;
-        }
       ]
     | [
         {
@@ -1286,13 +1186,6 @@ export interface COMMANDBotMotor {
           slot: string;
           enabled: boolean;
         },
-        {
-          /**
-           * Ranura del chasis en la que está montado el módulo.
-           */
-          slot: string;
-          enabled: boolean;
-        }
       ]
     | [
         {
@@ -1400,13 +1293,120 @@ export interface COMMANDBotMotor {
           slot: string;
           enabled: boolean;
         },
+      ]
+    | [
         {
           /**
            * Ranura del chasis en la que está montado el módulo.
            */
           slot: string;
           enabled: boolean;
-        }
+        },
+        {
+          /**
+           * Ranura del chasis en la que está montado el módulo.
+           */
+          slot: string;
+          enabled: boolean;
+        },
+        {
+          /**
+           * Ranura del chasis en la que está montado el módulo.
+           */
+          slot: string;
+          enabled: boolean;
+        },
+        {
+          /**
+           * Ranura del chasis en la que está montado el módulo.
+           */
+          slot: string;
+          enabled: boolean;
+        },
+        {
+          /**
+           * Ranura del chasis en la que está montado el módulo.
+           */
+          slot: string;
+          enabled: boolean;
+        },
+        {
+          /**
+           * Ranura del chasis en la que está montado el módulo.
+           */
+          slot: string;
+          enabled: boolean;
+        },
+        {
+          /**
+           * Ranura del chasis en la que está montado el módulo.
+           */
+          slot: string;
+          enabled: boolean;
+        },
+        {
+          /**
+           * Ranura del chasis en la que está montado el módulo.
+           */
+          slot: string;
+          enabled: boolean;
+        },
+        {
+          /**
+           * Ranura del chasis en la que está montado el módulo.
+           */
+          slot: string;
+          enabled: boolean;
+        },
+        {
+          /**
+           * Ranura del chasis en la que está montado el módulo.
+           */
+          slot: string;
+          enabled: boolean;
+        },
+        {
+          /**
+           * Ranura del chasis en la que está montado el módulo.
+           */
+          slot: string;
+          enabled: boolean;
+        },
+        {
+          /**
+           * Ranura del chasis en la que está montado el módulo.
+           */
+          slot: string;
+          enabled: boolean;
+        },
+        {
+          /**
+           * Ranura del chasis en la que está montado el módulo.
+           */
+          slot: string;
+          enabled: boolean;
+        },
+        {
+          /**
+           * Ranura del chasis en la que está montado el módulo.
+           */
+          slot: string;
+          enabled: boolean;
+        },
+        {
+          /**
+           * Ranura del chasis en la que está montado el módulo.
+           */
+          slot: string;
+          enabled: boolean;
+        },
+        {
+          /**
+           * Ranura del chasis en la que está montado el módulo.
+           */
+          slot: string;
+          enabled: boolean;
+        },
       ];
   /**
    * Activación de utilidades (humo, reparación, jammer...). Fuera del catálogo MVP salvo las declaradas en WELCOME.
@@ -1422,23 +1422,7 @@ export interface COMMANDBotMotor {
            */
           slot: string;
           target?: Vec21;
-        }
-      ]
-    | [
-        {
-          /**
-           * Ranura del chasis en la que está montado el módulo.
-           */
-          slot: string;
-          target?: Vec21;
         },
-        {
-          /**
-           * Ranura del chasis en la que está montado el módulo.
-           */
-          slot: string;
-          target?: Vec21;
-        }
       ]
     | [
         {
@@ -1455,13 +1439,6 @@ export interface COMMANDBotMotor {
           slot: string;
           target?: Vec21;
         },
-        {
-          /**
-           * Ranura del chasis en la que está montado el módulo.
-           */
-          slot: string;
-          target?: Vec21;
-        }
       ]
     | [
         {
@@ -1485,13 +1462,6 @@ export interface COMMANDBotMotor {
           slot: string;
           target?: Vec21;
         },
-        {
-          /**
-           * Ranura del chasis en la que está montado el módulo.
-           */
-          slot: string;
-          target?: Vec21;
-        }
       ]
     | [
         {
@@ -1522,13 +1492,6 @@ export interface COMMANDBotMotor {
           slot: string;
           target?: Vec21;
         },
-        {
-          /**
-           * Ranura del chasis en la que está montado el módulo.
-           */
-          slot: string;
-          target?: Vec21;
-        }
       ]
     | [
         {
@@ -1566,13 +1529,6 @@ export interface COMMANDBotMotor {
           slot: string;
           target?: Vec21;
         },
-        {
-          /**
-           * Ranura del chasis en la que está montado el módulo.
-           */
-          slot: string;
-          target?: Vec21;
-        }
       ]
     | [
         {
@@ -1617,13 +1573,6 @@ export interface COMMANDBotMotor {
           slot: string;
           target?: Vec21;
         },
-        {
-          /**
-           * Ranura del chasis en la que está montado el módulo.
-           */
-          slot: string;
-          target?: Vec21;
-        }
       ]
     | [
         {
@@ -1675,13 +1624,64 @@ export interface COMMANDBotMotor {
           slot: string;
           target?: Vec21;
         },
+      ]
+    | [
         {
           /**
            * Ranura del chasis en la que está montado el módulo.
            */
           slot: string;
           target?: Vec21;
-        }
+        },
+        {
+          /**
+           * Ranura del chasis en la que está montado el módulo.
+           */
+          slot: string;
+          target?: Vec21;
+        },
+        {
+          /**
+           * Ranura del chasis en la que está montado el módulo.
+           */
+          slot: string;
+          target?: Vec21;
+        },
+        {
+          /**
+           * Ranura del chasis en la que está montado el módulo.
+           */
+          slot: string;
+          target?: Vec21;
+        },
+        {
+          /**
+           * Ranura del chasis en la que está montado el módulo.
+           */
+          slot: string;
+          target?: Vec21;
+        },
+        {
+          /**
+           * Ranura del chasis en la que está montado el módulo.
+           */
+          slot: string;
+          target?: Vec21;
+        },
+        {
+          /**
+           * Ranura del chasis en la que está montado el módulo.
+           */
+          slot: string;
+          target?: Vec21;
+        },
+        {
+          /**
+           * Ranura del chasis en la que está montado el módulo.
+           */
+          slot: string;
+          target?: Vec21;
+        },
       ];
   /**
    * Mensajes de equipo a emitir. Contenido opaco. Exceder tamaño o frecuencia (D8) descarta el mensaje con evento.
@@ -1704,7 +1704,7 @@ export interface COMMANDBotMotor {
            * Destinatario concreto. Ausente = difusión al equipo.
            */
           to?: string;
-        }
+        },
       ]
     | [
         {
@@ -1734,7 +1734,7 @@ export interface COMMANDBotMotor {
            * Destinatario concreto. Ausente = difusión al equipo.
            */
           to?: string;
-        }
+        },
       ];
   /**
    * Anotaciones del bot para las capas de depuración del visor (rutas, objetivos). El motor las ignora por completo: no afectan a la simulación y solo se conservan en replays privados.
@@ -1853,4 +1853,3 @@ export interface SHUTDOWNMotorBot {
   };
   gracePeriodMs?: number;
 }
-

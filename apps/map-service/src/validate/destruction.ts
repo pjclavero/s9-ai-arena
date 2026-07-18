@@ -37,11 +37,15 @@ export function checkDestruction(map: InternalMap): Check[] {
         // intacta NO existe: eso significa que un destructible es la única barrera. Si ni
         // destruyendo hay ruta, el problema es de muros (lo reporta navigation), no aquí.
         if (routeCleared && !routeIntact) {
-          col.error(`la única ruta de "${conn.label}" (chasis "${size}") atraviesa un destructible, pero destructiblesMayBlockOnlyRoute es false`);
+          col.error(
+            `la única ruta de "${conn.label}" (chasis "${size}") atraviesa un destructible, pero destructiblesMayBlockOnlyRoute es false`,
+          );
         }
       } else {
         if (!routeCleared) {
-          col.error(`no hay ruta en "${conn.label}" (chasis "${size}") ni siquiera destruyendo todos los destructibles`);
+          col.error(
+            `no hay ruta en "${conn.label}" (chasis "${size}") ni siquiera destruyendo todos los destructibles`,
+          );
         }
       }
     }

@@ -11,13 +11,7 @@
  * lanzarlo. En producción la clave privada vive en un secreto del servicio; aquí se
  * genera/inyecta para poder probar la propiedad de verdad.
  */
-import {
-  createHash,
-  generateKeyPairSync,
-  sign as edSign,
-  verify as edVerify,
-  type KeyObject,
-} from "node:crypto";
+import { createHash, generateKeyPairSync, sign as edSign, verify as edVerify, type KeyObject } from "node:crypto";
 
 export interface ServiceKeypair {
   privateKey: KeyObject;

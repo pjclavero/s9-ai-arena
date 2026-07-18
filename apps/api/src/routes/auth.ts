@@ -53,68 +53,78 @@ export function authRoutes(deps: AuthDeps): Router {
   const router = Router();
 
   // ------------------------------------------------------------- register
-  defineOperation(router, "register", async (req, res) => {
-    const { email, password, displayName } = req.body ?? {};
-    if (typeof email !== "string" || !EMAIL_RE.test(email)) throw badRequest("email inválido");
-    if (typeof password !== "string" || password.length < 12) {
-      throw badRequest("La contraseña debe tener al menos 12 caracteres");
-    }
-    if (typeof displayName !== "string" || !displayName || displayName.length > 48) {
-      throw badRequest("displayName obligatorio (máx. 48)");
-    }
-    const normalized = email.toLowerCase();
-    if (await db("users").where({ email: normalized }).first()) {
-      throw conflict("email_taken", "Ya existe una cuenta con ese email");
-    }
-    const [user] = await db("users")
-      .insert({ email: normalized, password_hash: await hashPassword(password), display_name: displayName })
-      .returning("*");
-    // Una cuenta nueva es usuario y desarrolladora: puede crear bots y subir código.
-    await db("user_roles").insert([
-      { user_id: user.id, role: "user" },
-      { user_id: user.id, role: "developer" },
-    ]);
-    res.status(201).json(userToJson(user, ["user", "developer"], { includePrivate: true }));
-  }, rateLimit(deps.registerLimiter, "register"));
+  defineOperation(
+    router,
+    "register",
+    async (req, res) => {
+      const { email, password, displayName } = req.body ?? {};
+      if (typeof email !== "string" || !EMAIL_RE.test(email)) throw badRequest("email inválido");
+      if (typeof password !== "string" || password.length < 12) {
+        throw badRequest("La contraseña debe tener al menos 12 caracteres");
+      }
+      if (typeof displayName !== "string" || !displayName || displayName.length > 48) {
+        throw badRequest("displayName obligatorio (máx. 48)");
+      }
+      const normalized = email.toLowerCase();
+      if (await db("users").where({ email: normalized }).first()) {
+        throw conflict("email_taken", "Ya existe una cuenta con ese email");
+      }
+      const [user] = await db("users")
+        .insert({ email: normalized, password_hash: await hashPassword(password), display_name: displayName })
+        .returning("*");
+      // Una cuenta nueva es usuario y desarrolladora: puede crear bots y subir código.
+      await db("user_roles").insert([
+        { user_id: user.id, role: "user" },
+        { user_id: user.id, role: "developer" },
+      ]);
+      res.status(201).json(userToJson(user, ["user", "developer"], { includePrivate: true }));
+    },
+    rateLimit(deps.registerLimiter, "register"),
+  );
 
   // ---------------------------------------------------------------- login
-  defineOperation(router, "login", async (req, res) => {
-    const { email, password, totp } = req.body ?? {};
-    if (typeof email !== "string" || typeof password !== "string") throw badRequest("email y password obligatorios");
-    const key = `${req.ip}|${email.toLowerCase()}`;
+  defineOperation(
+    router,
+    "login",
+    async (req, res) => {
+      const { email, password, totp } = req.body ?? {};
+      if (typeof email !== "string" || typeof password !== "string") throw badRequest("email y password obligatorios");
+      const key = `${req.ip}|${email.toLowerCase()}`;
 
-    if (loginGuard.isBlocked(key)) {
-      throw tooMany("Demasiados intentos fallidos: bloqueo temporal");
-    }
-
-    const user = await db("users").where({ email: email.toLowerCase() }).first();
-    const ok = user && (await verifyPassword(user.password_hash, password));
-    if (!ok) {
-      const blocked = loginGuard.recordFailure(key);
-      if (blocked) {
-        await audit(db, {
-          action: "auth.login.blocked",
-          target: `email:${email.toLowerCase()}`,
-          detail: { ip: req.ip, reason: "brute_force" },
-          correlationId: req.correlationId,
-        });
+      if (loginGuard.isBlocked(key)) {
+        throw tooMany("Demasiados intentos fallidos: bloqueo temporal");
       }
-      throw unauthorized("Credenciales inválidas");
-    }
 
-    if (user.totp_secret) {
-      const codeOk =
-        (typeof totp === "string" && (await verifyTotp(totp, user.totp_secret))) ||
-        (typeof totp === "string" && (await consumeRecoveryCode(db, user, totp)));
-      if (!codeOk) {
-        loginGuard.recordFailure(key);
-        throw unauthorized("Se requiere un código TOTP válido (2FA activo)");
+      const user = await db("users").where({ email: email.toLowerCase() }).first();
+      const ok = user && (await verifyPassword(user.password_hash, password));
+      if (!ok) {
+        const blocked = loginGuard.recordFailure(key);
+        if (blocked) {
+          await audit(db, {
+            action: "auth.login.blocked",
+            target: `email:${email.toLowerCase()}`,
+            detail: { ip: req.ip, reason: "brute_force" },
+            correlationId: req.correlationId,
+          });
+        }
+        throw unauthorized("Credenciales inválidas");
       }
-    }
 
-    loginGuard.recordSuccess(key);
-    res.status(200).json(await createSession(db, user.id, req));
-  }, rateLimit(deps.loginLimiter, "login"));
+      if (user.totp_secret) {
+        const codeOk =
+          (typeof totp === "string" && (await verifyTotp(totp, user.totp_secret))) ||
+          (typeof totp === "string" && (await consumeRecoveryCode(db, user, totp)));
+        if (!codeOk) {
+          loginGuard.recordFailure(key);
+          throw unauthorized("Se requiere un código TOTP válido (2FA activo)");
+        }
+      }
+
+      loginGuard.recordSuccess(key);
+      res.status(200).json(await createSession(db, user.id, req));
+    },
+    rateLimit(deps.loginLimiter, "login"),
+  );
 
   // -------------------------------------------------------------- refresh
   defineOperation(router, "refreshToken", async (req, res) => {
@@ -202,45 +212,57 @@ export function authRoutes(deps: AuthDeps): Router {
   });
 
   // ------------------------------------- recuperación de cuenta (extensión)
-  defineExtension(router, { operationId: "recoverAccount", method: "post", path: "/auth/recover", minRole: "visitor" }, async (req, res) => {
-    const { email } = req.body ?? {};
-    // Respuesta idéntica exista o no la cuenta (no enumerar emails).
-    if (typeof email === "string") {
-      const user = await db("users").where({ email: email.toLowerCase() }).first();
-      if (user) await createPasswordReset(db, user.id);
-    }
-    res.status(202).json({ status: "accepted" });
-  }, rateLimit(deps.loginLimiter, "recover"));
+  defineExtension(
+    router,
+    { operationId: "recoverAccount", method: "post", path: "/auth/recover", minRole: "visitor" },
+    async (req, res) => {
+      const { email } = req.body ?? {};
+      // Respuesta idéntica exista o no la cuenta (no enumerar emails).
+      if (typeof email === "string") {
+        const user = await db("users").where({ email: email.toLowerCase() }).first();
+        if (user) await createPasswordReset(db, user.id);
+      }
+      res.status(202).json({ status: "accepted" });
+    },
+    rateLimit(deps.loginLimiter, "recover"),
+  );
 
-  defineExtension(router, { operationId: "resetPassword", method: "post", path: "/auth/reset", minRole: "visitor" }, async (req, res) => {
-    const { token, newPassword } = req.body ?? {};
-    if (typeof token !== "string" || typeof newPassword !== "string" || newPassword.length < 12) {
-      throw badRequest("token y newPassword (≥12) obligatorios");
-    }
-    const reset = await db("password_resets")
-      .where({ token_hash: hashToken(token) })
-      .whereNull("used_at")
-      .where("expires_at", ">", db.fn.now())
-      .first();
-    if (!reset) throw unauthorized("Token de recuperación inválido o expirado");
+  defineExtension(
+    router,
+    { operationId: "resetPassword", method: "post", path: "/auth/reset", minRole: "visitor" },
+    async (req, res) => {
+      const { token, newPassword } = req.body ?? {};
+      if (typeof token !== "string" || typeof newPassword !== "string" || newPassword.length < 12) {
+        throw badRequest("token y newPassword (≥12) obligatorios");
+      }
+      const reset = await db("password_resets")
+        .where({ token_hash: hashToken(token) })
+        .whereNull("used_at")
+        .where("expires_at", ">", db.fn.now())
+        .first();
+      if (!reset) throw unauthorized("Token de recuperación inválido o expirado");
 
-    await db.transaction(async (trx) => {
-      await trx("password_resets").where({ id: reset.id }).update({ used_at: trx.fn.now() });
-      // La recuperación cambia la contraseña y revoca sesiones, pero NO toca el
-      // 2FA: el siguiente login sigue exigiendo TOTP (DoD T7.2).
-      await trx("users")
-        .where({ id: reset.user_id })
-        .update({ password_hash: await hashPassword(newPassword), updated_at: trx.fn.now() });
-      await trx("sessions").where({ user_id: reset.user_id }).whereNull("revoked_at").update({ revoked_at: trx.fn.now() });
-    });
-    await audit(db, {
-      actorId: reset.user_id,
-      action: "auth.password.reset",
-      target: `user:${reset.user_id}`,
-      correlationId: req.correlationId,
-    });
-    res.status(204).end();
-  });
+      await db.transaction(async (trx) => {
+        await trx("password_resets").where({ id: reset.id }).update({ used_at: trx.fn.now() });
+        // La recuperación cambia la contraseña y revoca sesiones, pero NO toca el
+        // 2FA: el siguiente login sigue exigiendo TOTP (DoD T7.2).
+        await trx("users")
+          .where({ id: reset.user_id })
+          .update({ password_hash: await hashPassword(newPassword), updated_at: trx.fn.now() });
+        await trx("sessions")
+          .where({ user_id: reset.user_id })
+          .whereNull("revoked_at")
+          .update({ revoked_at: trx.fn.now() });
+      });
+      await audit(db, {
+        actorId: reset.user_id,
+        action: "auth.password.reset",
+        target: `user:${reset.user_id}`,
+        correlationId: req.correlationId,
+      });
+      res.status(204).end();
+    },
+  );
 
   return router;
 }

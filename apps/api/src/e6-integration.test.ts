@@ -18,7 +18,10 @@ import { E6PipelineBotManager } from "./services/e6-bot-manager.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const GOOD_LOADOUT = JSON.parse(
-  readFileSync(join(__dirname, "..", "..", "..", "packages", "module-catalog", "examples", "loadout-medium-gunner.json"), "utf8"),
+  readFileSync(
+    join(__dirname, "..", "..", "..", "packages", "module-catalog", "examples", "loadout-medium-gunner.json"),
+    "utf8",
+  ),
 );
 
 let h: TestDbHandle;
@@ -109,7 +112,9 @@ describe("T7.3 API → pipeline E6 real", () => {
       .field("loadoutRevision", "1")
       .attach(
         "source",
-        Buffer.from("from arena_sdk import Bot\n\nclass MyBot(Bot):\n    def decide(self, obs):\n        return {'forTick': obs['tick']}\n"),
+        Buffer.from(
+          "from arena_sdk import Bot\n\nclass MyBot(Bot):\n    def decide(self, obs):\n        return {'forTick': obs['tick']}\n",
+        ),
         "bot.py",
       );
     const submit = await request(app)
@@ -140,7 +145,9 @@ describe("T7.3 API → pipeline E6 real", () => {
     expect(submit.status).toBe(202);
     // El código es válido, pero sin sandbox NO puede validarse: la versión se RECHAZA.
     expect(submit.body.status).toBe("failed");
-    const byName = Object.fromEntries(submit.body.stages.map((s: { name: string; status: string }) => [s.name, s.status]));
+    const byName = Object.fromEntries(
+      submit.body.stages.map((s: { name: string; status: string }) => [s.name, s.status]),
+    );
     for (const stage of ["protocol_test", "smoke_battle", "resource_limits"]) {
       expect(byName[stage], stage).toBe("skipped"); // honesto: no se ejecutaron
     }

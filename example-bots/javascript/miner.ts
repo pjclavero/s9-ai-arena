@@ -14,7 +14,15 @@
  * deja explícita: sembrar en puntos conocidos de su ruta de avance, cada
  * MINE_INTERVAL_TICKS mientras dure el cooldown del módulo.
  */
-import { ArenaBot, angleDiff, angleTo, distance, type CommandIntent, type ObservationPayload, type WelcomePayload } from "@arena/sdk";
+import {
+  ArenaBot,
+  angleDiff,
+  angleTo,
+  distance,
+  type CommandIntent,
+  type ObservationPayload,
+  type WelcomePayload,
+} from "@arena/sdk";
 
 const MINE_INTERVAL_TICKS = 100; // algo más que el cooldown real (90 ticks) del módulo
 

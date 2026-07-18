@@ -49,7 +49,9 @@ export function verifySeedReveal(commitment: string, seeds: string[]): boolean {
  * cualquiera puede recomputarla a partir de los datos públicos de auditoría.
  */
 export function deriveBattleSeed(seeds: string[], slot: string, gameIndex: number): string {
-  return createHash("sha256").update(`${seeds.join("|")}:${slot}:${gameIndex}`).digest("hex");
+  return createHash("sha256")
+    .update(`${seeds.join("|")}:${slot}:${gameIndex}`)
+    .digest("hex");
 }
 
 // ----------------------------------------------------------------- helpers BD
@@ -135,7 +137,11 @@ export interface MaterializeContext {
  * rounds_per_pairing juegos con INTERCAMBIO DE LADOS en cada juego (T9.4:
  * juego impar → local=A; juego par → local=B) y semilla commit-reveal.
  */
-export async function materializeBattles(mctx: MaterializeContext, matchId: string, pairing: Pairing): Promise<string[]> {
+export async function materializeBattles(
+  mctx: MaterializeContext,
+  matchId: string,
+  pairing: Pairing,
+): Promise<string[]> {
   const { db, tournament: t } = mctx;
   const games = t.rounds_per_pairing ?? 1;
   const isTeams = t.format === "teams";
@@ -335,8 +341,8 @@ export async function handleTournamentDryRun(job: JobRow, ctx: HandlerContext): 
   let guard = pairings.length * 4;
   while (pending.length > 0 && guard-- > 0) {
     const p = pending.shift()!;
-    let home = p.home ?? (p.homeSource ? resolved.get(p.homeSource.slot)?.[p.homeSource.take] ?? null : null);
-    let away = p.away ?? (p.awaySource ? resolved.get(p.awaySource.slot)?.[p.awaySource.take] ?? null : null);
+    let home = p.home ?? (p.homeSource ? (resolved.get(p.homeSource.slot)?.[p.homeSource.take] ?? null) : null);
+    let away = p.away ?? (p.awaySource ? (resolved.get(p.awaySource.slot)?.[p.awaySource.take] ?? null) : null);
     if (p.bye && home) {
       resolved.set(p.slot, { winner: home, loser: home });
       continue;
@@ -358,7 +364,7 @@ export async function handleTournamentDryRun(job: JobRow, ctx: HandlerContext): 
     entrants: entrants.length,
     matches: pairings.length,
     simulatedBattles: simulated,
-    champion: finalPairing ? resolved.get(finalPairing.slot)?.winner ?? null : null,
+    champion: finalPairing ? (resolved.get(finalPairing.slot)?.winner ?? null) : null,
     usedExampleBots: entries.length < 2,
     at: new Date().toISOString(),
   };

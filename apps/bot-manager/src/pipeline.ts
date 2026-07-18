@@ -104,7 +104,14 @@ export class BuildPipeline {
       createdAt: this.now(),
     };
     this.deps.store.save(build);
-    this.audit.record({ type: "build.started", botId: build.botId, version: build.version, userId: build.ownerUserId, correlationId, detail: { buildId: build.id } });
+    this.audit.record({
+      type: "build.started",
+      botId: build.botId,
+      version: build.version,
+      userId: build.ownerUserId,
+      correlationId,
+      detail: { buildId: build.id },
+    });
 
     // Etapas de EJECUCIÓN cuya verificación no se pudo correr (sandbox no disponible).
     // No cuentan como superadas: bloquean la promoción a `validated` (fallar cerrado,
@@ -143,7 +150,14 @@ export class BuildPipeline {
         build.rejectionReason = `${stage.name}: ${stage.message ?? "fallo"}`;
         build.finishedAt = this.now();
         this.deps.store.save(build);
-        this.audit.record({ type: "build.rejected", botId: build.botId, version: build.version, userId: build.ownerUserId, correlationId, detail: { buildId: build.id, stage: stage.name, reason: build.rejectionReason } });
+        this.audit.record({
+          type: "build.rejected",
+          botId: build.botId,
+          version: build.version,
+          userId: build.ownerUserId,
+          correlationId,
+          detail: { buildId: build.id, stage: stage.name, reason: build.rejectionReason },
+        });
         return this.deps.store.get(build.id)!;
       }
     }
@@ -158,8 +172,24 @@ export class BuildPipeline {
       build.rejectionReason = `sandbox no verificado: etapa(s) de ejecución no ejecutable(s) [${unverifiedStages.join(", ")}]. Se requiere un entorno con Docker (agentResolver) para ejecutar el bot; sin él no puede quedar 'validated' (ERR-SEC-03, R1.5).`;
       build.finishedAt = this.now();
       this.deps.store.save(build);
-      this.audit.finding({ category: "sandbox_unverified", severity: "high", botId: build.botId, version: build.version, userId: build.ownerUserId, correlationId, summary: `build rechazado: sandbox no verificado (${unverifiedStages.join(", ")})`, detail: { buildId: build.id, unverifiedStages } });
-      this.audit.record({ type: "build.rejected", botId: build.botId, version: build.version, userId: build.ownerUserId, correlationId, detail: { buildId: build.id, reason: build.rejectionReason, unverifiedStages } });
+      this.audit.finding({
+        category: "sandbox_unverified",
+        severity: "high",
+        botId: build.botId,
+        version: build.version,
+        userId: build.ownerUserId,
+        correlationId,
+        summary: `build rechazado: sandbox no verificado (${unverifiedStages.join(", ")})`,
+        detail: { buildId: build.id, unverifiedStages },
+      });
+      this.audit.record({
+        type: "build.rejected",
+        botId: build.botId,
+        version: build.version,
+        userId: build.ownerUserId,
+        correlationId,
+        detail: { buildId: build.id, reason: build.rejectionReason, unverifiedStages },
+      });
       return this.deps.store.get(build.id)!;
     }
 
@@ -171,11 +201,25 @@ export class BuildPipeline {
     if (unverifiedStages.length > 0) {
       // Solo se llega aquí con la escotilla dev/test EXPLÍCITA activada: deja rastro
       // en auditoría de que la validación NO ejercitó el sandbox real.
-      this.audit.record({ type: "build.validated_unverified_dev", botId: build.botId, version: build.version, userId: build.ownerUserId, correlationId, detail: { buildId: build.id, unverifiedStages, note: "allowUnverifiedSandbox=true (dev/test)" } });
+      this.audit.record({
+        type: "build.validated_unverified_dev",
+        botId: build.botId,
+        version: build.version,
+        userId: build.ownerUserId,
+        correlationId,
+        detail: { buildId: build.id, unverifiedStages, note: "allowUnverifiedSandbox=true (dev/test)" },
+      });
     }
     build.finishedAt = this.now();
     this.deps.store.save(build);
-    this.audit.record({ type: "build.validated", botId: build.botId, version: build.version, userId: build.ownerUserId, correlationId, detail: { buildId: build.id, artifactHash: build.artifactHash } });
+    this.audit.record({
+      type: "build.validated",
+      botId: build.botId,
+      version: build.version,
+      userId: build.ownerUserId,
+      correlationId,
+      detail: { buildId: build.id, artifactHash: build.artifactHash },
+    });
     return this.deps.store.get(build.id)!;
   }
 
@@ -183,7 +227,12 @@ export class BuildPipeline {
     return build.stages.find((s) => s.name === name)!;
   }
 
-  private async runStage(name: StageName, sub: BotSubmission, build: Build, correlationId: string): Promise<StageOutcome> {
+  private async runStage(
+    name: StageName,
+    sub: BotSubmission,
+    build: Build,
+    correlationId: string,
+  ): Promise<StageOutcome> {
     const stage = this.stageOf(build, name);
     const cfg = this.deps.config;
     switch (name) {
@@ -219,7 +268,16 @@ export class BuildPipeline {
         if (res.dangerousImports.length) {
           // El hallazgo de auditoría se registra SIEMPRE (con cualquier política).
           stage.logs.push(`imports peligrosos señalados: ${res.dangerousImports.join(", ")}`);
-          this.audit.finding({ category: "dangerous_import", severity: "medium", botId: sub.botId, version: sub.version, userId: sub.ownerUserId, correlationId, summary: `imports de red/proceso/FS: ${res.dangerousImports.join(", ")}`, detail: { imports: res.dangerousImports, policy: cfg.dangerousBuiltins.mode } });
+          this.audit.finding({
+            category: "dangerous_import",
+            severity: "medium",
+            botId: sub.botId,
+            version: sub.version,
+            userId: sub.ownerUserId,
+            correlationId,
+            summary: `imports de red/proceso/FS: ${res.dangerousImports.join(", ")}`,
+            detail: { imports: res.dangerousImports, policy: cfg.dangerousBuiltins.mode },
+          });
         }
         if (res.disallowedImports.length) {
           stage.message = `import(s) de paquete no permitido: ${res.disallowedImports.join(", ")}`;
@@ -237,14 +295,25 @@ export class BuildPipeline {
       }
       case "dependencies": {
         const res = analyze(sub.runtime, sub.files, cfg);
-        stage.logs.push(`dependencias declaradas: ${res.declared.map((d) => d.name + (d.version ? "@" + d.version : "")).join(", ") || "(ninguna)"}`);
+        stage.logs.push(
+          `dependencias declaradas: ${res.declared.map((d) => d.name + (d.version ? "@" + d.version : "")).join(", ") || "(ninguna)"}`,
+        );
         if (!res.hasLockfile) {
           stage.message = `falta lockfile obligatorio (${cfg.lockfileNames[sub.runtime].join(" o ")})`;
           return "failed";
         }
         if (res.disallowedDeps.length) {
           stage.message = `dependencia(s) fuera de la allowlist: ${res.disallowedDeps.join(", ")}`;
-          this.audit.finding({ category: "disallowed_dependency", severity: "high", botId: sub.botId, version: sub.version, userId: sub.ownerUserId, correlationId, summary: stage.message, detail: { deps: res.disallowedDeps } });
+          this.audit.finding({
+            category: "disallowed_dependency",
+            severity: "high",
+            botId: sub.botId,
+            version: sub.version,
+            userId: sub.ownerUserId,
+            correlationId,
+            summary: stage.message,
+            detail: { deps: res.disallowedDeps },
+          });
           return "failed";
         }
         stage.logs.push("dependencias dentro de allowlist + lockfile presente");
@@ -302,14 +371,25 @@ export class BuildPipeline {
         if (!factory) return "not_executable";
         const m = this.measure(factory, sub.botId);
         stage.metrics = m;
-        stage.logs.push(`arranque ${m.startupMs.toFixed(1)} ms, decisión máx ${m.maxDecisionMs.toFixed(2)} ms, heap Δ ${(m.heapDeltaBytes / 1024).toFixed(0)} KB`);
+        stage.logs.push(
+          `arranque ${m.startupMs.toFixed(1)} ms, decisión máx ${m.maxDecisionMs.toFixed(2)} ms, heap Δ ${(m.heapDeltaBytes / 1024).toFixed(0)} KB`,
+        );
         if (m.startupMs > cfg.limits.maxStartupMs) {
           stage.message = `arranque ${m.startupMs.toFixed(0)} ms > ${cfg.limits.maxStartupMs} ms`;
           return "failed";
         }
         if (m.maxDecisionMs > cfg.limits.maxDecisionMs) {
           stage.message = `decisión ${m.maxDecisionMs.toFixed(0)} ms > ${cfg.limits.maxDecisionMs} ms`;
-          this.audit.finding({ category: "resource_abuse", severity: "medium", botId: sub.botId, version: sub.version, userId: sub.ownerUserId, correlationId, summary: stage.message, detail: m });
+          this.audit.finding({
+            category: "resource_abuse",
+            severity: "medium",
+            botId: sub.botId,
+            version: sub.version,
+            userId: sub.ownerUserId,
+            correlationId,
+            summary: stage.message,
+            detail: m,
+          });
           return "failed";
         }
         stage.logs.push("dentro de límites de recursos (medición en-proceso)");
@@ -321,7 +401,16 @@ export class BuildPipeline {
           stage.message = `secreto(s) detectado(s): ${matches.map((m) => `${m.kind}@${m.file}:${m.line}`).join(", ")}`;
           for (const m of matches) {
             stage.logs.push(`hallazgo: ${m.kind} en ${m.file}:${m.line} (${m.excerpt})`);
-            this.audit.finding({ category: "secret_leak", severity: "critical", botId: sub.botId, version: sub.version, userId: sub.ownerUserId, correlationId, summary: `${m.kind} en ${m.file}:${m.line}`, detail: { kind: m.kind, file: m.file, line: m.line } });
+            this.audit.finding({
+              category: "secret_leak",
+              severity: "critical",
+              botId: sub.botId,
+              version: sub.version,
+              userId: sub.ownerUserId,
+              correlationId,
+              summary: `${m.kind} en ${m.file}:${m.line}`,
+              detail: { kind: m.kind, file: m.file, line: m.line },
+            });
           }
           return "failed";
         }
@@ -341,7 +430,9 @@ export class BuildPipeline {
         // La etapa `publish` del contrato OpenAPI publica el ARTEFACTO (inmutable) en
         // el registro interno; el ESTADO de la versión queda en `validated` (17.1):
         // exponerla públicamente es una acción explícita del dueño vía la API de E7.
-        stage.logs.push(`artefacto de la versión ${sub.version} de ${sub.botId} publicado (inmutable); versión validated`);
+        stage.logs.push(
+          `artefacto de la versión ${sub.version} de ${sub.botId} publicado (inmutable); versión validated`,
+        );
         return "passed";
       }
     }
@@ -362,7 +453,10 @@ export class BuildPipeline {
   }
 
   /** Medición en-proceso de arranque, tiempo de decisión y heap. Proxy honesto del cgroup real. */
-  private measure(factory: CandidateAgentFactory, botId: string): { startupMs: number; maxDecisionMs: number; heapDeltaBytes: number } {
+  private measure(
+    factory: CandidateAgentFactory,
+    botId: string,
+  ): { startupMs: number; maxDecisionMs: number; heapDeltaBytes: number } {
     const t0 = performance.now();
     const agent = factory.create(botId);
     const startupMs = performance.now() - t0;

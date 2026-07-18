@@ -31,9 +31,7 @@ describe("T3.1 · catálogo v1 — validación de esquema", () => {
       // rama !ok (2 errores de tsc de H7, issue #11); misma semántica.
       const ok: boolean = validateModule(m);
       if (!ok) {
-        throw new Error(
-          `${m.id}@${m.version}: ${JSON.stringify(validateModule.errors, null, 2)}`,
-        );
+        throw new Error(`${m.id}@${m.version}: ${JSON.stringify(validateModule.errors, null, 2)}`);
       }
       expect(ok).toBe(true);
     });

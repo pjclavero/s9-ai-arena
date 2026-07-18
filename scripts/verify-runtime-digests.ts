@@ -64,9 +64,7 @@ export function digestViolations(root = runtimesDir): string[] {
       }
       // Las etapas intermedias (AS sdk-builder) tambien construyen sobre la base fijada.
       if (esperada && m[1] !== esperada) {
-        violations.push(
-          `${sub.name}/Dockerfile: FROM ${m[1]} no coincide con la base de DIGESTS.lock (${esperada})`,
-        );
+        violations.push(`${sub.name}/Dockerfile: FROM ${m[1]} no coincide con la base de DIGESTS.lock (${esperada})`);
       }
     }
   }

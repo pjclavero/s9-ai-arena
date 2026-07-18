@@ -91,7 +91,9 @@ describe("T5.4 · GunnerBot: disparo predictivo contra un blanco en movimiento",
         { id: "veh_2", botId: "bot_target", team: "blue", spec: targetSpec },
       ],
     });
-    const gunnerModules = battle.getVehicle("veh_1")!.spec.modules.map((m) => ({ slot: m.slot, moduleId: m.moduleId, category: m.category, specs: m }));
+    const gunnerModules = battle
+      .getVehicle("veh_1")!
+      .spec.modules.map((m) => ({ slot: m.slot, moduleId: m.moduleId, category: m.category, specs: m }));
     battle.attachBot("veh_1", inProcessAgent);
     battle.attachBot("veh_2", new ForwardBot("bot_target"));
 
@@ -134,7 +136,9 @@ describe("T5.4 · GunnerBot: disparo predictivo contra un blanco en movimiento",
 
     battle.free();
 
-    console.log(`GunnerBot precisión (régimen permanente): ${hits}/${shotsFired} disparos = ${shotsFired > 0 ? ((hits / shotsFired) * 100).toFixed(1) : "0"}%`);
+    console.log(
+      `GunnerBot precisión (régimen permanente): ${hits}/${shotsFired} disparos = ${shotsFired > 0 ? ((hits / shotsFired) * 100).toFixed(1) : "0"}%`,
+    );
     expect(shotsFired).toBeGreaterThanOrEqual(30);
     expect(hits / shotsFired).toBeGreaterThanOrEqual(0.6);
   }, 60000);

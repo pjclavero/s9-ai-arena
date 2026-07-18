@@ -32,8 +32,10 @@ function boundingBox(shape: Shape): { position: Vec2; halfW: number; halfH: numb
   const pts = shape.points ?? [];
   const xs = pts.map((p) => p.x);
   const ys = pts.map((p) => p.y);
-  const minX = Math.min(...xs), maxX = Math.max(...xs);
-  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const minX = Math.min(...xs),
+    maxX = Math.max(...xs);
+  const minY = Math.min(...ys),
+    maxY = Math.max(...ys);
   return {
     position: { x: (minX + maxX) / 2, y: (minY + maxY) / 2 },
     halfW: (maxX - minX) / 2,
