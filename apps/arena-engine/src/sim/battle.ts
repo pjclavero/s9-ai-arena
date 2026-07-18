@@ -641,6 +641,7 @@ export class Battle {
           hullHp: round6(v.hullHp),
           hullHpMax: v.spec.hullHp,
           carryingFlag: v.carryingFlag,
+          juggernaut: v.juggernaut,
           modules: [...v.modules.values()].map((m) => ({
             slot: m.spec.slot,
             state: v.stateOf(m.spec.slot),
@@ -680,6 +681,9 @@ export class Battle {
           alive: v.alive,
           dq: v.disqualified,
           flag: v.carryingFlag,
+          // R3.8 · la marca de juggernaut es estado de simulación: va en el hash como
+          // carryingFlag. Añadirla invalida los goldens con hash (regenerados y documentados).
+          jug: v.juggernaut,
           modules: [...v.modules.values()]
             .sort((a, b) => a.spec.slot.localeCompare(b.spec.slot))
             .map((m) => [m.spec.slot, q(m.hp), m.offline, m.ammo, m.charges, m.cooldownUntilTick]),

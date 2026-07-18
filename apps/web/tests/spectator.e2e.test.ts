@@ -217,7 +217,9 @@ describe("T8.2 canal de espectador (ticket E7 → gateway E8 → motor E2)", () 
       expect(Object.keys(m.snapshot).sort()).toEqual(["objectives", "projectiles", "score", "tick", "vehicles"]);
       for (const v of m.snapshot.vehicles) {
         expect(Object.keys(v).sort()).toEqual(
-          ["alive", "carryingFlag", "heading", "hullHp", "hullHpMax", "id", "modules", "position", "team", "turretHeading"],
+          // "juggernaut" (R3.8) es pública por definición del modo: quién es el marcado
+          // forma parte del marcador, igual que carryingFlag. Su POSICIÓN sigue sin regalarse.
+          ["alive", "carryingFlag", "heading", "hullHp", "hullHpMax", "id", "juggernaut", "modules", "position", "team", "turretHeading"],
         );
       }
     }

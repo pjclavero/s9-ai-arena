@@ -329,8 +329,279 @@ export class ZoneControlMode extends BaseMode {
   }
 }
 
+// ------------------------------------------------- last man standing (R3.8)
+//
+// Eliminación: sin respawn (el registro lo EXIGE), gana la ronda el último equipo con
+// vehículos vivos. El marcador de kills existe solo como desempate al agotarse el tiempo;
+// scoreToWin NO termina la ronda. El nivel "match" (N rondas, semillas por rng.fork,
+// cambio de lado) vive en el MatchRunner (src/match.ts), no aquí: una batalla = una ronda.
+export class LastManStandingMode extends BaseMode {
+  readonly id = "last_man_standing";
+
+  tick(_ctx: ModeContext): void {}
+
+  onKill(victim: Vehicle, killerTeam: string | null, ctx: ModeContext): void {
+    if (killerTeam && killerTeam !== victim.team) {
+      this.score[killerTeam] = (this.score[killerTeam] ?? 0) + 1;
+      ctx.emit({ kind: "score_changed", team: killerTeam, score: { ...this.score } });
+    }
+  }
+
+  winner(ctx: ModeContext): string | "draw" | null {
+    // Vivos por equipo, en orden estable de equipos (this.teams está ordenado por el caller).
+    const alive = new Map<string, number>();
+    for (const t of this.teams) alive.set(t, 0);
+    for (const v of ctx.vehicles) {
+      if (v.alive && !v.disqualified) alive.set(v.team, (alive.get(v.team) ?? 0) + 1);
+    }
+    const standing = this.teams.filter((t) => (alive.get(t) ?? 0) > 0);
+    if (standing.length === 1) return standing[0];
+    if (standing.length === 0) return "draw";
+
+    if (ctx.tick >= ctx.ruleset.timeLimitTicks) {
+      // Desempate por metadatos del modo: más vivos; a igualdad, más kills; si no, empate.
+      const sorted = [...standing].sort((a, b) => {
+        const byAlive = (alive.get(b) ?? 0) - (alive.get(a) ?? 0);
+        if (byAlive !== 0) return byAlive;
+        return (this.score[b] ?? 0) - (this.score[a] ?? 0);
+      });
+      const [first, second] = sorted;
+      if (
+        second !== undefined &&
+        (alive.get(first) ?? 0) === (alive.get(second) ?? 0) &&
+        (this.score[first] ?? 0) === (this.score[second] ?? 0)
+      ) {
+        return "draw";
+      }
+      return first;
+    }
+    return null;
+  }
+}
+
+// --------------------------------------------------------- domination (R3.8)
+//
+// Varias zonas PERMANENTES; el ritmo de puntuación es proporcional al nº de zonas en
+// propiedad. Reutiliza la semántica de captura de zone_control corregido (ERR-ENG-03):
+// tomar una zona exige ser el ÚNICO equipo dentro; vacía o disputada, no cambia de dueño.
+// La diferencia deliberada con zone_control es que la PROPIEDAD persiste al marcharse y
+// sigue puntuando: es la definición de Domination, no una regresión del fix (la puntuación
+// aquí depende de la propiedad, y la propiedad solo se gana con presencia real).
+export class DominationMode extends BaseMode {
+  readonly id = "domination";
+  private readonly zones: { id: string; position: Vec2; radiusM: number }[] = [];
+  /** zoneId → equipo propietario (o null). Entra en el hash vía objectives(). */
+  private control = new Map<string, string | null>();
+
+  constructor(teams: string[], map: ArenaMap) {
+    super(teams);
+    for (const z of map.zones.filter((z) => z.kind === "capture")) {
+      this.zones.push({ id: z.id, position: { ...z.position }, radiusM: z.radiusM });
+      this.control.set(z.id, null);
+    }
+  }
+
+  tick(ctx: ModeContext): void {
+    const pts = ctx.ruleset.domination?.pointsPerTickPerZone ?? 1;
+
+    // 1) Capturas: un único equipo dentro toma la propiedad.
+    for (const z of this.zones) {
+      const teamsInside = new Set<string>();
+      for (const v of ctx.vehicles) {
+        if (!v.alive || v.disqualified) continue;
+        const p = ctx.poses.get(v.id);
+        if (p && distance(p.position, z.position) <= z.radiusM) teamsInside.add(v.team);
+      }
+      if (teamsInside.size === 1) {
+        const owner = [...teamsInside][0];
+        if (owner !== this.control.get(z.id)) {
+          this.control.set(z.id, owner);
+          ctx.emit({ kind: "zone_captured", team: owner, position: z.position });
+        }
+      }
+    }
+
+    // 2) Puntuación por PROPIEDAD: pts × nº de zonas de cada equipo, cada tick.
+    for (const t of this.teams) {
+      let owned = 0;
+      for (const z of this.zones) if (this.control.get(z.id) === t) owned++;
+      if (owned > 0) this.score[t] = (this.score[t] ?? 0) + pts * owned;
+    }
+  }
+
+  objectives(): any[] {
+    return this.zones.map((z) => {
+      const team = this.control.get(z.id) ?? null;
+      return {
+        kind: "zone",
+        id: z.id,
+        team: team ?? "neutral",
+        state: team ? "held" : "neutral",
+        position: { ...z.position },
+      };
+    });
+  }
+}
+
+// --------------------------------------------------------- juggernaut (R3.8)
+//
+// Un vehículo MARCADO (campo Vehicle.juggernaut, al estilo carryingFlag) al que el resto
+// puntúa destruir. Al caer el marcado, la marca rota al primer vehículo vivo (orden
+// estable por id) del equipo que lo mató; sin autor (daño ambiental), al primer vivo.
+// El marcado también puntúa por sus kills (pointsPerKillAsJuggernaut). Respawn obligatorio
+// por metadatos: sin respawn el modo degenera en LMS con un objetivo pintado.
+export class JuggernautMode extends BaseMode {
+  readonly id = "juggernaut";
+
+  tick(ctx: ModeContext): void {
+    // Asignación inicial (y red de seguridad si la marca se pierde): primer vivo por id.
+    // Es determinista: el orden de vehículos es estable y la elección no consume RNG.
+    if (!ctx.vehicles.some((v) => v.juggernaut && v.alive && !v.disqualified)) {
+      this.assign(this.aliveSorted(ctx)[0], ctx);
+    }
+    this.refreshObjective(ctx);
+  }
+
+  private aliveSorted(ctx: ModeContext): Vehicle[] {
+    return ctx.vehicles
+      .filter((v) => v.alive && !v.disqualified)
+      .sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  private assign(next: Vehicle | undefined, ctx: ModeContext): void {
+    for (const v of ctx.vehicles) v.juggernaut = false;
+    if (!next) return;
+    next.juggernaut = true;
+    ctx.emit({ kind: "juggernaut_assigned", targetId: next.id, team: next.team });
+  }
+
+  onKill(victim: Vehicle, killerTeam: string | null, ctx: ModeContext): void {
+    const rules = ctx.ruleset.juggernaut ?? { pointsPerJuggernautKill: 3, pointsPerKillAsJuggernaut: 1 };
+
+    if (victim.juggernaut) {
+      victim.juggernaut = false;
+      if (killerTeam && killerTeam !== victim.team) {
+        this.score[killerTeam] = (this.score[killerTeam] ?? 0) + rules.pointsPerJuggernautKill;
+        ctx.emit({ kind: "juggernaut_down", targetId: victim.id, team: killerTeam, score: { ...this.score } });
+      }
+      const pool = this.aliveSorted(ctx);
+      this.assign(pool.find((v) => v.team === killerTeam) ?? pool[0], ctx);
+      this.refreshObjective(ctx);
+      return;
+    }
+
+    // Kill de un no-marcado: solo puntúa si la hizo el EQUIPO del marcado vivo.
+    const jug = ctx.vehicles.find((v) => v.juggernaut && v.alive && !v.disqualified);
+    if (jug && killerTeam === jug.team && killerTeam !== victim.team) {
+      this.score[killerTeam] = (this.score[killerTeam] ?? 0) + rules.pointsPerKillAsJuggernaut;
+      ctx.emit({ kind: "score_changed", team: killerTeam, score: { ...this.score } });
+    }
+  }
+
+  objectives(): any[] {
+    // El marcado es información PÚBLICA (quién es, no dónde está): sin esto el modo no
+    // se puede jugar. La posición sigue exigiendo sensores, como una bandera transportada.
+    return this.jugObjective ? [this.jugObjective] : [];
+  }
+
+  /** Cache del objetivo publicado; lo refrescan tick() y onKill() (tras reasignar). */
+  private jugObjective: any = null;
+
+  /** Refresca el objetivo público con el marcado vivo actual. */
+  private refreshObjective(ctx: ModeContext): void {
+    const jug = ctx.vehicles.find((v) => v.juggernaut && v.alive && !v.disqualified);
+    this.jugObjective = jug ? { kind: "juggernaut", id: jug.id, team: jug.team, state: "held" } : null;
+  }
+}
+
+// ------------------------------------------------- registro de modos (R3.8)
+//
+// METADATOS por modo: qué necesita del mapa, equipos mín/máx, política de respawn y
+// desempate. createMode los aplica SIEMPRE: una combinación mapa/modo incompatible no
+// crea la batalla (falla cerrado), en vez de degenerar en una partida imposible de ganar.
+export interface ModeMetadata {
+  id: string;
+  minTeams: number;
+  maxTeams: number;
+  /** required = el ruleset debe traer respawn activado; forbidden = debe traerlo apagado. */
+  respawn: "required" | "forbidden" | "any";
+  /** Requisitos del mapa. flagsAndBases = una bandera Y una base por equipo. */
+  requires: { flagsAndBases?: boolean; captureZones?: number };
+  /** Desempate al agotar el tiempo. */
+  tiebreak: "draw" | "most_score" | "most_alive_then_kills";
+}
+
+export const MODE_REGISTRY: Record<string, ModeMetadata> = {
+  // minTeams: 1 en dm/tdm por compatibilidad: el motor admite batallas de un solo
+  // equipo (entrenamiento, slalom golden, tests de radio) desde T2.1 y el registro
+  // no puede romperlas. Los modos nuevos sí exigen 2 equipos: sin rival no hay modo.
+  deathmatch: {
+    id: "deathmatch", minTeams: 1, maxTeams: Number.POSITIVE_INFINITY,
+    respawn: "any", requires: {}, tiebreak: "most_score",
+  },
+  team_deathmatch: {
+    id: "team_deathmatch", minTeams: 1, maxTeams: Number.POSITIVE_INFINITY,
+    respawn: "any", requires: {}, tiebreak: "most_score",
+  },
+  capture_the_flag: {
+    id: "capture_the_flag", minTeams: 2, maxTeams: 2,
+    respawn: "any", requires: { flagsAndBases: true }, tiebreak: "most_score",
+  },
+  zone_control: {
+    id: "zone_control", minTeams: 2, maxTeams: Number.POSITIVE_INFINITY,
+    respawn: "any", requires: { captureZones: 1 }, tiebreak: "most_score",
+  },
+  last_man_standing: {
+    id: "last_man_standing", minTeams: 2, maxTeams: Number.POSITIVE_INFINITY,
+    respawn: "forbidden", requires: {}, tiebreak: "most_alive_then_kills",
+  },
+  domination: {
+    id: "domination", minTeams: 2, maxTeams: Number.POSITIVE_INFINITY,
+    respawn: "any", requires: { captureZones: 2 }, tiebreak: "most_score",
+  },
+  juggernaut: {
+    id: "juggernaut", minTeams: 2, maxTeams: Number.POSITIVE_INFINITY,
+    respawn: "required", requires: {}, tiebreak: "most_score",
+  },
+};
+
+/** Incompatibilidades mapa/modo/ruleset. Lista vacía = combinación válida. */
+export function modeMapIncompatibilities(ruleset: Ruleset, teams: string[], map: ArenaMap): string[] {
+  const meta = MODE_REGISTRY[ruleset.mode];
+  if (!meta) return [`modo desconocido: ${ruleset.mode}`];
+  const errs: string[] = [];
+
+  if (teams.length < meta.minTeams) errs.push(`equipos insuficientes: ${teams.length} < ${meta.minTeams}`);
+  if (teams.length > meta.maxTeams) errs.push(`demasiados equipos: ${teams.length} > ${meta.maxTeams}`);
+
+  if (meta.respawn === "required" && !ruleset.respawn.enabled) {
+    errs.push(`el modo ${meta.id} exige respawn activado en el ruleset`);
+  }
+  if (meta.respawn === "forbidden" && ruleset.respawn.enabled) {
+    errs.push(`el modo ${meta.id} exige respawn DESACTIVADO en el ruleset`);
+  }
+
+  if (meta.requires.flagsAndBases) {
+    for (const t of teams) {
+      if (!map.flags.some((f) => f.team === t)) errs.push(`el mapa ${map.mapId} no tiene bandera para el equipo ${t}`);
+      if (!map.bases.some((b) => b.team === t)) errs.push(`el mapa ${map.mapId} no tiene base para el equipo ${t}`);
+    }
+  }
+  const captureZones = map.zones.filter((z) => z.kind === "capture").length;
+  if ((meta.requires.captureZones ?? 0) > captureZones) {
+    errs.push(
+      `el mapa ${map.mapId} tiene ${captureZones} zona(s) de captura y el modo ${meta.id} exige ${meta.requires.captureZones}`,
+    );
+  }
+  return errs;
+}
+
 // ---------------------------------------------------------------------------
 export function createMode(ruleset: Ruleset, teams: string[], map: ArenaMap): GameMode {
+  const problems = modeMapIncompatibilities(ruleset, teams, map);
+  if (problems.length > 0) {
+    throw new Error(`Combinación mapa/modo incompatible (${map.mapId} / ${ruleset.mode}): ${problems.join("; ")}`);
+  }
   switch (ruleset.mode) {
     case "deathmatch":
       return new DeathmatchMode(teams);
@@ -340,6 +611,12 @@ export function createMode(ruleset: Ruleset, teams: string[], map: ArenaMap): Ga
       return new CaptureTheFlagMode(teams, map);
     case "zone_control":
       return new ZoneControlMode(teams, map);
+    case "last_man_standing":
+      return new LastManStandingMode(teams);
+    case "domination":
+      return new DominationMode(teams, map);
+    case "juggernaut":
+      return new JuggernautMode(teams);
     default:
       throw new Error(`Modo desconocido: ${(ruleset as any).mode}`);
   }
