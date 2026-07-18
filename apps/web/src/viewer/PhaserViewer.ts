@@ -39,6 +39,9 @@ import { installAtlas, ATLAS_KEY, ATLAS_FONT_KEY, FRAME_SCALE } from "./atlas.js
 import { attachRenderStats, type PerfHandle } from "./render-stats.js";
 import { CameraSnapshotScratch } from "./camera-snapshot.js";
 import { MAX_PROJECTILE_SPRITES, visibleProjectileCount } from "./render-pools.js";
+import { EffectSystem, sampleEffect, type EffectSpec } from "./effects.js";
+import { damageVisualFor } from "./damage-visuals.js";
+import { buildObjectivesLayer, type ObjectivesLayer } from "./objectives-overlay.js";
 import {
   S9_ENV,
   resolveTeamColors,
@@ -54,12 +57,19 @@ export interface ViewerWorld {
   heightM: number;
   walls?: { position: { x: number; y: number }; halfW: number; halfH: number }[];
   destructibles?: { position: { x: number; y: number }; halfW: number; halfH: number }[];
+  /**
+   * R3.5 · Bases del mapa (cabecera del mundo). Opcional: si la cabecera no las
+   * trae, el visor no pinta bases (degrada con elegancia, sin inventar puntos).
+   */
+  bases?: { team: string; position: { x: number; y: number }; radiusM?: number }[];
 }
 
 export class ViewerScene extends Phaser.Scene {
   readonly interpolator = new InterpolationBuffer();
   readonly ballistics = new BallisticsTracker();
   readonly overlay = new OverlayState();
+  /** R3.5 · Efectos visuales (fogonazos, impactos, explosiones, humo, decals). */
+  readonly effects = new EffectSystem();
   readonly fogFader = new FogFader();
   readonly smoothCamera = new SmoothCamera();
   readonly interaction = new CameraInteraction({ kind: "global" });
@@ -85,6 +95,16 @@ export class ViewerScene extends Phaser.Scene {
   private projectilePool: Phaser.GameObjects.Sprite[] = [];
   /** Capa estática HORNEADA (suelo+muros+destructibles): 1 draw call, no O(obstáculos). */
   private staticLayer: Phaser.GameObjects.RenderTexture | null = null;
+  /** R3.5 · Decals PERSISTENTES (scorch de explosiones) horneados a una RenderTexture. */
+  private decalLayer: Phaser.GameObjects.RenderTexture | null = null;
+  /** R3.5 · Pool de sprites de partícula (chispa/humo), con techo implícito por MAX_LIVE_EFFECTS. */
+  private effectPool: Phaser.GameObjects.Sprite[] = [];
+  /** R3.5 · Graphics para objetivos con forma (bases, zonas, minas). */
+  private objectivesGfx: Phaser.GameObjects.Graphics | null = null;
+  /** R3.5 · Sprites de bandera por team (reutilizados entre frames). */
+  private flagGfx = new Map<string, Phaser.GameObjects.Sprite>();
+  /** R3.5 · Última posición conocida por vehículo (para eventos sin campo position). */
+  private lastVehiclePos = new Map<string, { x: number; y: number }>();
   private debugGfx: Phaser.GameObjects.Graphics | null = null;
   private perf: PerfHandle | null = null;
   /** Cuaderno reutilizado para computeCamera: cero asignaciones por frame (R3.3). */
@@ -169,6 +189,7 @@ export class ViewerScene extends Phaser.Scene {
     this.interpolator.push(snapshot, atMs);
     this.ballistics.observe(snapshot, atMs);
     this.overlay.applySnapshot(snapshot);
+    this.trackPositions(snapshot);
   }
 
   resetTo(snapshot: any, atMs = this.playbackNow()): void {
@@ -177,10 +198,26 @@ export class ViewerScene extends Phaser.Scene {
     this.fogFader.reset();
     this.smoothCamera.reset();
     this.overlay.applySnapshot(snapshot);
+    // Seek/reconexión: no arrastrar partículas ni posiciones a través del hueco.
+    this.effects.reset();
+    this.lastVehiclePos.clear();
+    this.trackPositions(snapshot);
   }
 
   pushEvent(event: any): void {
     this.overlay.applyEvent(event);
+    // R3.5 · el mismo evento público genera su efecto (fogonazo/impacto/explosión).
+    // Puramente visual: sólo LEE el evento; nunca lo muta ni toca la simulación.
+    this.effects.ingestEvent(event, this.playbackNow(), (id) => this.lastVehiclePos.get(id));
+  }
+
+  /** Registra la última pose pública de cada vehículo (para eventos sin position). */
+  private trackPositions(snapshot: any): void {
+    for (const v of snapshot?.vehicles ?? []) {
+      if (v?.position && Number.isFinite(v.position.x)) {
+        this.lastVehiclePos.set(v.id, { x: v.position.x, y: v.position.y });
+      }
+    }
   }
 
   create(): void {
@@ -188,6 +225,14 @@ export class ViewerScene extends Phaser.Scene {
     // renderer batchea sprites y BitmapText en un puñado de draw calls (ERR-VIS-09).
     installAtlas(this);
     this.drawStatic();
+    // R3.5 · capa de DECALS persistentes sobre el suelo (depth 1) y bajo los
+    // vehículos (depth 3): las manchas de explosión perduran sin objetos por decal.
+    this.decalLayer = this.add
+      .renderTexture(0, 0, this.world.widthM * this.pxPerM, this.world.heightM * this.pxPerM)
+      .setOrigin(0, 0)
+      .setDepth(1);
+    // R3.5 · objetivos con forma (bases/zonas/minas): un Graphics reusado por frame.
+    this.objectivesGfx = this.add.graphics().setDepth(2);
     this.debugGfx = this.add.graphics().setDepth(10);
     this.wireInput();
     // Medición de rendimiento (ERR-VIS-11): FPS + draw calls reales del contexto
@@ -280,6 +325,11 @@ export class ViewerScene extends Phaser.Scene {
     }
     rt.draw(g);
     g.destroy();
+    // El lienzo de decals sigue el tamaño del mundo y se limpia al re-hornear el mapa.
+    if (this.decalLayer) {
+      this.decalLayer.setSize(w, h);
+      this.decalLayer.clear();
+    }
   }
 
   update(_time: number, delta: number): void {
@@ -294,8 +344,137 @@ export class ViewerScene extends Phaser.Scene {
       delta,
     );
     this.renderFrame(faded);
+    // R3.5 · efectos: los proyectiles nuevos disparan fogonazos; el casco bajo
+    // humea; se pintan partículas vivas, decals y objetivos. Todo visual, sin
+    // tocar la simulación (los datos de entrada sólo se leen).
+    this.effects.ingestProjectiles(faded.projectiles, now);
+    this.emitHullSmoke(faded, now);
+    this.bakeDecals();
+    this.renderEffects(now);
+    this.renderObjectives(faded);
     this.applyCamera(faded, delta);
     this.renderDebug();
+  }
+
+  /** Humo creciente del casco: nivel derivado del estado PÚBLICO (damage-visuals). */
+  private emitHullSmoke(frame: { vehicles: Map<string, { x: number; y: number; alive: boolean }> }, now: number): void {
+    for (const [id, pose] of frame.vehicles) {
+      const ov = this.overlay.vehicles.get(id);
+      if (!ov) continue;
+      const level = damageVisualFor(ov).smoke;
+      if (level > 0) this.effects.hullSmoke(id, level, pose.x, pose.y, now);
+    }
+  }
+
+  /** Hornea a la RenderTexture los decals nuevos (una sola vez por decal). */
+  private bakeDecals(): void {
+    if (!this.decalLayer) return;
+    const decals = this.effects.drainDecals();
+    if (decals.length === 0) return;
+    const g = this.make.graphics({}, false);
+    for (const d of decals) {
+      g.fillStyle(0x000000, d.alpha);
+      g.fillCircle(d.x * this.pxPerM, d.y * this.pxPerM, d.radiusM * this.pxPerM);
+    }
+    this.decalLayer.draw(g);
+    g.destroy();
+  }
+
+  /** Pinta las partículas vivas con un pool de sprites del atlas (chispa/humo). */
+  private renderEffects(now: number): void {
+    const live = this.effects.active(now);
+    while (this.effectPool.length < live.length) {
+      const s = this.add.sprite(0, 0, ATLAS_KEY, "spark").setDepth(6);
+      s.setVisible(false);
+      this.effectPool.push(s);
+    }
+    for (let i = 0; i < this.effectPool.length; i++) {
+      const s = this.effectPool[i];
+      const e: EffectSpec | undefined = i < live.length ? live[i] : undefined;
+      if (!e) {
+        s.setVisible(false);
+        continue;
+      }
+      const sm = sampleEffect(e, now);
+      s.setFrame(e.frame);
+      s.setTint(e.frame === "smoke" ? S9_ENV.wall : S9_ENV.tracer);
+      s.setVisible(true)
+        .setPosition(sm.x * this.pxPerM, sm.y * this.pxPerM)
+        .setRotation(sm.rotation)
+        .setAlpha(Math.max(0, sm.alpha))
+        // El frame mide (radio·2)·pxPerM·FRAME_SCALE px de textura: reescalar a metros.
+        .setDisplaySize(sm.radiusM * 2 * this.pxPerM, sm.radiusM * 2 * this.pxPerM);
+    }
+  }
+
+  /**
+   * R3.5 · Dibuja los objetivos públicos que hoy se ignoran: bases y zonas de
+   * captura (círculos con su color de equipo/estado) y las banderas CTF con su
+   * estado (en base, o sobre el portador). Deriva TODO de datos públicos vía
+   * objectives-overlay (puro y probado); aquí sólo se colocan formas y sprites.
+   */
+  private renderObjectives(frame: { vehicles: Map<string, { x: number; y: number }> }): void {
+    const g = this.objectivesGfx;
+    if (!g) return;
+    g.clear();
+    const layer: ObjectivesLayer = buildObjectivesLayer({
+      objectives: this.overlay.objectives,
+      bases: this.world.bases,
+      carriers: this.overlay.carriers,
+      mines: (this.debugLayers?.mines as { position: { x: number; y: number } }[]) ?? [],
+      canSeeMines: this.showDebug,
+    });
+
+    // Bases: anillo del color del equipo.
+    for (const b of layer.bases) {
+      g.lineStyle(2, this.tintForTeam(b.team), 0.8);
+      g.strokeCircle(b.at.x * this.pxPerM, b.at.y * this.pxPerM, b.radiusM * this.pxPerM);
+    }
+    // Zonas: disco tenue + anillo; neutral en gris, en control con color de equipo.
+    for (const z of layer.zones) {
+      const owned = z.state !== "neutral" && z.team !== "neutral";
+      const color = owned ? this.tintForTeam(z.team) : NEUTRAL_TEAM_COLOR;
+      g.fillStyle(color, owned ? 0.16 : 0.08);
+      g.fillCircle(z.at.x * this.pxPerM, z.at.y * this.pxPerM, z.radiusM * this.pxPerM);
+      g.lineStyle(2, color, 0.9);
+      g.strokeCircle(z.at.x * this.pxPerM, z.at.y * this.pxPerM, z.radiusM * this.pxPerM);
+    }
+    // Minas (sólo con permiso): aspa roja donde la capa de depuración las revela.
+    g.lineStyle(1.5, 0xff4444, 0.9);
+    for (const m of layer.mines) {
+      const cx = m.at.x * this.pxPerM;
+      const cy = m.at.y * this.pxPerM;
+      g.strokeCircle(cx, cy, 1.2 * this.pxPerM);
+    }
+
+    // Banderas: sprite del atlas por team, tinte de equipo, colocado según estado.
+    const drawn = new Set<string>();
+    for (const f of layer.flags) {
+      let at = f.at;
+      if (!at && f.carrierId) {
+        const pose = frame.vehicles.get(f.carrierId);
+        if (pose) at = { x: pose.x, y: pose.y };
+      }
+      if (!at) continue;
+      drawn.add(f.team);
+      let spr = this.flagGfx.get(f.team);
+      if (!spr) {
+        spr = this.add
+          .sprite(0, 0, ATLAS_KEY, "flag")
+          .setOrigin(0, 1)
+          .setScale(1 / FRAME_SCALE)
+          .setDepth(4);
+        this.flagGfx.set(f.team, spr);
+      }
+      spr
+        .setVisible(true)
+        .setTint(this.tintForTeam(f.team))
+        .setPosition(at.x * this.pxPerM, at.y * this.pxPerM)
+        // Llevada/caída se ven "inclinadas"; en base, erguida.
+        .setRotation(f.state === "carried" ? 0.5 : f.state === "dropped" ? 1.2 : 0)
+        .setAlpha(f.state === "captured" || f.state === "returning" ? 0.5 : 1);
+    }
+    for (const [team, spr] of this.flagGfx) if (!drawn.has(team)) spr.setVisible(false);
   }
 
   private renderFrame(frame: {
@@ -315,7 +494,18 @@ export class ViewerScene extends Phaser.Scene {
       c.setVisible(true);
       c.setPosition(pose.x * this.pxPerM, pose.y * this.pxPerM);
       c.setRotation(pose.heading);
-      (c.getByName("turret") as Phaser.GameObjects.Container | null)?.setRotation(pose.turretHeading - pose.heading);
+      // R3.5 · daño VISIBLE derivado del estado público (damage-visuals): la
+      // torreta BLOQUEADA (arma destruida/offline) se congela y se atenúa; el
+      // casco muy dañado se oscurece. La correspondencia con el motor la prueba
+      // damageVisualFor; aquí sólo se traduce a atributos de dibujo.
+      const ov = this.overlay.vehicles.get(id);
+      const dmg = ov ? damageVisualFor(ov) : null;
+      const turret = c.getByName("turret") as Phaser.GameObjects.Container | null;
+      if (turret) {
+        // Bloqueada: NO gira con la torreta objetivo (se queda como está) y se atenúa.
+        if (!dmg?.turretLocked) turret.setRotation(pose.turretHeading - pose.heading);
+        turret.setAlpha(dmg?.turretLocked ? 0.4 : 1);
+      }
       // Fundido de niebla × atenuación de destruido: sin saltos de alfa.
       c.setAlpha((pose.alive ? 1 : 0.25) * pose.alpha);
     }
@@ -398,12 +588,9 @@ export class ViewerScene extends Phaser.Scene {
   private renderDebug(): void {
     if (!this.debugGfx) return;
     this.debugGfx.clear();
-    if (!this.showDebug || !this.debugLayers) return;
-    const mines = (this.debugLayers.mines as { position: { x: number; y: number } }[]) ?? [];
-    this.debugGfx.lineStyle(1, 0xff4444, 0.9);
-    for (const m of mines) {
-      this.debugGfx.strokeCircle(m.position.x * this.pxPerM, m.position.y * this.pxPerM, 2.5 * this.pxPerM);
-    }
+    // R3.5 · las MINAS pasaron a la capa de objetivos (renderObjectives), donde su
+    // visibilidad se decide por permisos de espectador (objectives-overlay, puro y
+    // probado). Este Graphics queda para futuras capas de depuración autorizadas.
   }
 }
 
