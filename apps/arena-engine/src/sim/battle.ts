@@ -471,15 +471,24 @@ export class Battle {
       if (cmd.deployMine) {
         const mineCount = this.mines.filter((m) => m.ownerId === v.id).length;
         const rej = canDeployMine(
-          v, cmd.deployMine.slot, this.tick, pose.position,
-          this.physics, mineCount, MAX_MINES_PER_VEHICLE,
+          v,
+          cmd.deployMine.slot,
+          this.tick,
+          pose.position,
+          this.physics,
+          mineCount,
+          MAX_MINES_PER_VEHICLE,
         );
         if (rej) {
           this.emit({ kind: "rejected_action", slot: cmd.deployMine.slot, reason: rej }, v.id);
         } else {
           const m = deployMine(
-            v, cmd.deployMine.slot, this.tick, pose.position,
-            finiteClamped(cmd.deployMine.armDelayTicks, 0, 300, 0), this.entitySeq++,
+            v,
+            cmd.deployMine.slot,
+            this.tick,
+            pose.position,
+            finiteClamped(cmd.deployMine.armDelayTicks, 0, 300, 0),
+            this.entitySeq++,
           );
           this.mines.push(m);
           this.emit({ kind: "mine_deployed", position: m.position }, v.id);
@@ -565,7 +574,14 @@ export class Battle {
     this.mines = survivors;
   }
 
-  private explode(center: Vec2, damage: number, radius: number, poses: Map<string, any>, ownerId: string, team: string): void {
+  private explode(
+    center: Vec2,
+    damage: number,
+    radius: number,
+    poses: Map<string, any>,
+    ownerId: string,
+    team: string,
+  ): void {
     for (const v of this.vehicles) {
       if (!v.alive || v.disqualified) continue;
       if (v.team === team && !this.config.ruleset.friendlyFire) continue;
@@ -596,15 +612,26 @@ export class Battle {
           v.alive = false;
           this.emit({ kind: "vehicle_destroyed", targetId: v.id });
           this.mode.onKill?.(v, null, {
-            tick: this.tick, ruleset: this.config.ruleset, vehicles: this.vehicles,
-            poses, map: this.config.map, emit: (e: any) => this.emit(e),
+            tick: this.tick,
+            ruleset: this.config.ruleset,
+            vehicles: this.vehicles,
+            poses,
+            map: this.config.map,
+            emit: (e: any) => this.emit(e),
           });
         }
       }
     }
   }
 
-  private damageVehicle(target: Vehicle, damage: number, from: Vec2, poses: Map<string, any>, ownerId: string, ownerTeam: string): void {
+  private damageVehicle(
+    target: Vehicle,
+    damage: number,
+    from: Vec2,
+    poses: Map<string, any>,
+    ownerId: string,
+    ownerTeam: string,
+  ): void {
     const tp = poses.get(target.id)!;
     const res = applyDamage(target, damage, from, tp.position, tp.heading, this.rng);
 
@@ -638,8 +665,12 @@ export class Battle {
     if (res.killed) {
       this.emit({ kind: "vehicle_destroyed", targetId: target.id });
       this.mode.onKill?.(target, ownerTeam, {
-        tick: this.tick, ruleset: this.config.ruleset, vehicles: this.vehicles,
-        poses, map: this.config.map, emit: (e: any) => this.emit(e),
+        tick: this.tick,
+        ruleset: this.config.ruleset,
+        vehicles: this.vehicles,
+        poses,
+        map: this.config.map,
+        emit: (e: any) => this.emit(e),
       });
     }
   }
@@ -715,7 +746,9 @@ export class Battle {
           modules: [...v.modules.values()]
             .sort((a, b) => a.spec.slot.localeCompare(b.spec.slot))
             .map((m) => [m.spec.slot, q(m.hp), m.offline, m.ammo, m.charges, m.cooldownUntilTick]),
-          armor: Object.entries(v.armor).sort().map(([s, a]) => [s, q(a!.hp)]),
+          armor: Object.entries(v.armor)
+            .sort()
+            .map(([s, a]) => [s, q(a!.hp)]),
         };
       }),
       projectiles: this.projectiles.map((p) => [p.id, q(p.position.x), q(p.position.y), q(p.damage)]),
@@ -765,14 +798,21 @@ export class Battle {
     const v = this.vehicles.find((x) => x.id === vehicleId);
     if (!v) throw new Error(`Vehículo desconocido: ${vehicleId}`);
     return buildObservation(
-      v, this.tick,
+      v,
+      this.tick,
       {
         // Mismo búfer de sonidos que sirve el bucle de decisión (ERR-ENG-01): las dos rutas
         // de observación leen EXACTAMENTE el mismo conjunto para el mismo tick.
-        vehicles: this.vehicles, poses: this.poses(), physics: this.physics, sounds: this.observedSounds,
+        vehicles: this.vehicles,
+        poses: this.poses(),
+        physics: this.physics,
+        sounds: this.observedSounds,
         mines: this.mines.map((m) => ({ id: m.id, position: m.position, team: m.team, detectable: m.detectable })),
       },
-      this.radioQueue, this.mode.score, this.mode.objectives(), this.rng,
+      this.radioQueue,
+      this.mode.score,
+      this.mode.objectives(),
+      this.rng,
     );
   }
 

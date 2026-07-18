@@ -15,7 +15,13 @@ import { Battle, type BattleConfig } from "../src/sim/battle.js";
 import { initPhysics } from "../src/sim/physics.js";
 import { fromJsonl, record, toJsonl, verify } from "../src/replay.js";
 import {
-  ctfArena, emptyArena, gunnerLoadout, minerLoadout, mvpArena, sandbagLoadout, scoutLoadout,
+  ctfArena,
+  emptyArena,
+  gunnerLoadout,
+  minerLoadout,
+  mvpArena,
+  sandbagLoadout,
+  scoutLoadout,
 } from "../src/fixtures.js";
 import { CircleBot, FlagRunnerBot, ForwardBot, HunterBot, IdleBot, SeekBot } from "../src/stubs.js";
 
@@ -253,8 +259,17 @@ describe("replays (T2.6)", () => {
     // "radio_a", y su nombre es público (se ve el hardware montado en el visor). Lo que
     // no puede aparecer son los DATOS de esos sensores. Comprobamos la estructura.
     const PUBLIC_VEHICLE_KEYS = [
-      "id", "team", "alive", "position", "heading", "turretHeading",
-      "hullHp", "hullHpMax", "carryingFlag", "juggernaut", "modules",
+      "id",
+      "team",
+      "alive",
+      "position",
+      "heading",
+      "turretHeading",
+      "hullHp",
+      "hullHpMax",
+      "carryingFlag",
+      "juggernaut",
+      "modules",
     ];
 
     for (const snap of replay.snapshots) {
@@ -283,10 +298,7 @@ describe("replays (T2.6)", () => {
     // El umbral de la DoD se mide sobre lo que REALMENTE se almacena. El formato de
     // replay es JSONL + zstd (T2.6), así que medir el JSONL en crudo mediría un
     // artefacto que no existe en disco. Se comprime, y se mide lo comprimido.
-    const replay = await record(
-      { ...config(), ruleset: loadRuleset("tdm_mvp@1", { timeLimitTicks: 9000 }) },
-      attach,
-    );
+    const replay = await record({ ...config(), ruleset: loadRuleset("tdm_mvp@1", { timeLimitTicks: 9000 }) }, attach);
     const jsonl = toJsonl(replay);
     const raw = Buffer.byteLength(jsonl, "utf8") / 1024 / 1024;
     const compressed = zstdCompressSync(Buffer.from(jsonl)).length / 1024 / 1024;
@@ -311,11 +323,14 @@ describe("replays (T2.6)", () => {
       ],
     };
     const replay = await record(cfg, (b) => {
-      b.attachBot("veh_1", new FlagRunnerBot(
-        "b1",
-        map.flags.find((f) => f.team === "blue")!.position,
-        map.bases.find((x) => x.team === "red")!.position,
-      ));
+      b.attachBot(
+        "veh_1",
+        new FlagRunnerBot(
+          "b1",
+          map.flags.find((f) => f.team === "blue")!.position,
+          map.bases.find((x) => x.team === "red")!.position,
+        ),
+      );
       b.attachBot("veh_2", new IdleBot("b2"));
     });
 

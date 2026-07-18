@@ -40,10 +40,13 @@ const STUBS: Record<string, (id: string) => any> = {
 
 function parseBotList(s: string | undefined): { botId: string; archetype: string; kind?: string }[] {
   if (!s) return [];
-  return s.split(",").filter(Boolean).map((entry) => {
-    const [botId, archetype, kind] = entry.split(":");
-    return { botId, archetype, kind };
-  });
+  return s
+    .split(",")
+    .filter(Boolean)
+    .map((entry) => {
+      const [botId, archetype, kind] = entry.split(":");
+      return { botId, archetype, kind };
+    });
 }
 
 async function main(): Promise<void> {
@@ -63,7 +66,8 @@ async function main(): Promise<void> {
   const participants: Participant[] = all.map((s, i) => {
     const archetypeKey = s.archetype as keyof typeof ARCHETYPES;
     const loadout = ARCHETYPES[archetypeKey];
-    if (!loadout) throw new Error(`Arquetipo desconocido: ${s.archetype}. Opciones: ${Object.keys(ARCHETYPES).join(", ")}`);
+    if (!loadout)
+      throw new Error(`Arquetipo desconocido: ${s.archetype}. Opciones: ${Object.keys(ARCHETYPES).join(", ")}`);
     return {
       id: `veh_${i + 1}`,
       botId: s.botId,

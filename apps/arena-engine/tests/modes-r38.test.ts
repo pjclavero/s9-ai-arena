@@ -31,7 +31,10 @@ beforeAll(async () => {
 
 /** Bot de tiro fijo: apunta SIEMPRE al mismo punto y dispara. Guion, no inteligencia. */
 class FixedGunBot implements BotAgent {
-  constructor(readonly botId: string, private target: { x: number; y: number }) {}
+  constructor(
+    readonly botId: string,
+    private target: { x: number; y: number },
+  ) {}
   decide(obs: any) {
     return {
       forTick: obs.tick,
@@ -247,9 +250,7 @@ describe("nivel match · eliminación por rondas (R3.8)", () => {
 
     expect(b.rounds.map((r) => r.seed)).toEqual(a.rounds.map((r) => r.seed));
     expect(b.rounds.map((r) => r.result.winner)).toEqual(a.rounds.map((r) => r.result.winner));
-    expect(b.rounds.map((r) => r.result.finalStateHash)).toEqual(
-      a.rounds.map((r) => r.result.finalStateHash),
-    );
+    expect(b.rounds.map((r) => r.result.finalStateHash)).toEqual(a.rounds.map((r) => r.result.finalStateHash));
     expect(b.rounds.map((r) => r.result.ticks)).toEqual(a.rounds.map((r) => r.result.ticks));
     expect(b.winner).toBe(a.winner);
 

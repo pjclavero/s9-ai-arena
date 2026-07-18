@@ -86,17 +86,33 @@ async function makeBattle(ruleset = loadRuleset("dm_practice@1", { timeLimitTick
 describe("T5.1 · handshake", () => {
   it("HELLO con proto no soportado recibe SHUTDOWN protocol_version_unsupported y cierra", async () => {
     const battle = await makeBattle();
-    const server = track(new ProtocolServer({
-      battle, catalogVersion: "mvp@1",
-      expected: [makeExpected("bot_ws1", "veh_1")],
-      tickIntervalMs: 3, decisionDeadlineMs: 50,
-    }));
+    const server = track(
+      new ProtocolServer({
+        battle,
+        catalogVersion: "mvp@1",
+        expected: [makeExpected("bot_ws1", "veh_1")],
+        tickIntervalMs: 3,
+        decisionDeadlineMs: 50,
+      }),
+    );
     server.start();
 
     const ws = track(new WebSocket(`ws://127.0.0.1:${server.port}`));
     await waitOpen(ws);
     const q = messageQueue(ws);
-    ws.send(JSON.stringify({ proto: "arena/2", type: "HELLO", seq: 999, payload: { botId: "bot_ws1", botVersion: "1.0.0", sdk: { name: "custom", version: "0" }, battleToken: "t".repeat(16) } }));
+    ws.send(
+      JSON.stringify({
+        proto: "arena/2",
+        type: "HELLO",
+        seq: 999,
+        payload: {
+          botId: "bot_ws1",
+          botVersion: "1.0.0",
+          sdk: { name: "custom", version: "0" },
+          battleToken: "t".repeat(16),
+        },
+      }),
+    );
 
     const msg = await q.next();
     expect(msg.type).toBe("SHUTDOWN");
@@ -109,16 +125,25 @@ describe("T5.1 · handshake", () => {
 
   it("battleToken incorrecto recibe SHUTDOWN handshake_failed", async () => {
     const battle = await makeBattle();
-    const server = track(new ProtocolServer({
-      battle, catalogVersion: "mvp@1",
-      expected: [makeExpected("bot_ws1", "veh_1", "correct-token-16char")],
-      tickIntervalMs: 3, decisionDeadlineMs: 50,
-    }));
+    const server = track(
+      new ProtocolServer({
+        battle,
+        catalogVersion: "mvp@1",
+        expected: [makeExpected("bot_ws1", "veh_1", "correct-token-16char")],
+        tickIntervalMs: 3,
+        decisionDeadlineMs: 50,
+      }),
+    );
     server.start();
     const ws = track(new WebSocket(`ws://127.0.0.1:${server.port}`));
     await waitOpen(ws);
     const q = messageQueue(ws);
-    send(ws, "HELLO", { botId: "bot_ws1", botVersion: "1.0.0", sdk: { name: "custom", version: "0" }, battleToken: "wrong-token-16char!!" });
+    send(ws, "HELLO", {
+      botId: "bot_ws1",
+      botVersion: "1.0.0",
+      sdk: { name: "custom", version: "0" },
+      battleToken: "wrong-token-16char!!",
+    });
     const msg = await q.next();
     expect(msg.type).toBe("SHUTDOWN");
     expect(msg.payload.reason).toBe("handshake_failed");
@@ -127,16 +152,25 @@ describe("T5.1 · handshake", () => {
 
   it("HELLO válido recibe WELCOME con timing/versions/vehicle coherentes", async () => {
     const battle = await makeBattle();
-    const server = track(new ProtocolServer({
-      battle, catalogVersion: "mvp@1",
-      expected: [makeExpected("bot_ws1", "veh_1")],
-      tickIntervalMs: 3, decisionDeadlineMs: 50,
-    }));
+    const server = track(
+      new ProtocolServer({
+        battle,
+        catalogVersion: "mvp@1",
+        expected: [makeExpected("bot_ws1", "veh_1")],
+        tickIntervalMs: 3,
+        decisionDeadlineMs: 50,
+      }),
+    );
     server.start();
     const ws = track(new WebSocket(`ws://127.0.0.1:${server.port}`));
     await waitOpen(ws);
     const q = messageQueue(ws);
-    send(ws, "HELLO", { botId: "bot_ws1", botVersion: "1.0.0", sdk: { name: "arena-sdk-js", version: "0.1.0" }, battleToken: "t".repeat(16) });
+    send(ws, "HELLO", {
+      botId: "bot_ws1",
+      botVersion: "1.0.0",
+      sdk: { name: "arena-sdk-js", version: "0.1.0" },
+      battleToken: "t".repeat(16),
+    });
     const msg = await q.next();
     expect(msg.type).toBe("WELCOME");
     expect(msg.payload.selfId).toBe("veh_1");
@@ -153,16 +187,26 @@ describe("T5.1 · handshake", () => {
     // ^bot_[0-9a-zA-Z]{1,24}$; sin este timeout, el mensaje se descarta (regla 4)
     // y la conexión queda abierta para siempre, sin ninguna señal para el bot.
     const battle = await makeBattle();
-    const server = track(new ProtocolServer({
-      battle, catalogVersion: "mvp@1",
-      expected: [makeExpected("bot_ws1", "veh_1")],
-      tickIntervalMs: 3, decisionDeadlineMs: 50, handshakeTimeoutMs: 100,
-    }));
+    const server = track(
+      new ProtocolServer({
+        battle,
+        catalogVersion: "mvp@1",
+        expected: [makeExpected("bot_ws1", "veh_1")],
+        tickIntervalMs: 3,
+        decisionDeadlineMs: 50,
+        handshakeTimeoutMs: 100,
+      }),
+    );
     server.start();
     const ws = track(new WebSocket(`ws://127.0.0.1:${server.port}`));
     await waitOpen(ws);
     const q = messageQueue(ws);
-    send(ws, "HELLO", { botId: "bot_con_guion_bajo", botVersion: "1.0.0", sdk: { name: "custom", version: "0" }, battleToken: "t".repeat(16) });
+    send(ws, "HELLO", {
+      botId: "bot_con_guion_bajo",
+      botVersion: "1.0.0",
+      sdk: { name: "custom", version: "0" },
+      battleToken: "t".repeat(16),
+    });
 
     const msg = await q.next();
     expect(msg.type).toBe("SHUTDOWN");
@@ -176,16 +220,25 @@ describe("T5.1 · timeouts y descalificación", () => {
     const ruleset = loadRuleset("dm_practice@1", { timeLimitTicks: 400, maxConsecutiveTimeouts: 5 });
     const battle = await makeBattle(ruleset);
     battle.attachBot("veh_2", new HunterBot("bot_2")); // el otro vehículo sí actúa
-    const server = track(new ProtocolServer({
-      battle, catalogVersion: "mvp@1",
-      expected: [makeExpected("bot_ws1", "veh_1")],
-      tickIntervalMs: 2, decisionDeadlineMs: 10,
-    }));
+    const server = track(
+      new ProtocolServer({
+        battle,
+        catalogVersion: "mvp@1",
+        expected: [makeExpected("bot_ws1", "veh_1")],
+        tickIntervalMs: 2,
+        decisionDeadlineMs: 10,
+      }),
+    );
     server.start();
     const ws = track(new WebSocket(`ws://127.0.0.1:${server.port}`));
     await waitOpen(ws);
     const q = messageQueue(ws);
-    send(ws, "HELLO", { botId: "bot_ws1", botVersion: "1.0.0", sdk: { name: "custom", version: "0" }, battleToken: "t".repeat(16) });
+    send(ws, "HELLO", {
+      botId: "bot_ws1",
+      botVersion: "1.0.0",
+      sdk: { name: "custom", version: "0" },
+      battleToken: "t".repeat(16),
+    });
     const welcome = await q.next();
     expect(welcome.type).toBe("WELCOME");
     // A partir de aquí, silencio absoluto: nunca respondemos a ninguna OBSERVATION.
@@ -199,11 +252,15 @@ describe("T5.1 · un COMMAND por ciclo, y solo a tiempo", () => {
   it("un COMMAND que llega DESPUÉS del deadline no se aplica en ese tick", async () => {
     const ruleset = loadRuleset("dm_practice@1", { timeLimitTicks: 60 });
     const battle = await makeBattle(ruleset);
-    const server = track(new ProtocolServer({
-      battle, catalogVersion: "mvp@1",
-      expected: [makeExpected("bot_ws1", "veh_1"), makeExpected("bot_ws2", "veh_2")],
-      tickIntervalMs: 10, decisionDeadlineMs: 10,
-    }));
+    const server = track(
+      new ProtocolServer({
+        battle,
+        catalogVersion: "mvp@1",
+        expected: [makeExpected("bot_ws1", "veh_1"), makeExpected("bot_ws2", "veh_2")],
+        tickIntervalMs: 10,
+        decisionDeadlineMs: 10,
+      }),
+    );
     server.start();
 
     const ws1 = track(new WebSocket(`ws://127.0.0.1:${server.port}`));
@@ -211,8 +268,18 @@ describe("T5.1 · un COMMAND por ciclo, y solo a tiempo", () => {
     await Promise.all([waitOpen(ws1), waitOpen(ws2)]);
     const q1 = messageQueue(ws1);
     const q2 = messageQueue(ws2);
-    send(ws1, "HELLO", { botId: "bot_ws1", botVersion: "1.0.0", sdk: { name: "custom", version: "0" }, battleToken: "t".repeat(16) });
-    send(ws2, "HELLO", { botId: "bot_ws2", botVersion: "1.0.0", sdk: { name: "custom", version: "0" }, battleToken: "t".repeat(16) });
+    send(ws1, "HELLO", {
+      botId: "bot_ws1",
+      botVersion: "1.0.0",
+      sdk: { name: "custom", version: "0" },
+      battleToken: "t".repeat(16),
+    });
+    send(ws2, "HELLO", {
+      botId: "bot_ws2",
+      botVersion: "1.0.0",
+      sdk: { name: "custom", version: "0" },
+      battleToken: "t".repeat(16),
+    });
     await q1.next();
     await q2.next();
 
@@ -267,9 +334,11 @@ describe("T5.1 · fuzzing: 1000 payloads corruptos no rompen el servidor ni desi
     battle.attachBot("veh_2", new HunterBot("bot_2"));
 
     const server = new ProtocolServer({
-      battle, catalogVersion: "mvp@1",
+      battle,
+      catalogVersion: "mvp@1",
       expected: [makeExpected("bot_ws1", "veh_1")],
-      tickIntervalMs: 2, decisionDeadlineMs: 40,
+      tickIntervalMs: 2,
+      decisionDeadlineMs: 40,
     });
 
     // Handshake ANTES de arrancar el bucle: así el agente WebSocket está
@@ -280,7 +349,12 @@ describe("T5.1 · fuzzing: 1000 payloads corruptos no rompen el servidor ni desi
     const ws = new WebSocket(`ws://127.0.0.1:${server.port}`);
     await waitOpen(ws);
     const q = messageQueue(ws);
-    send(ws, "HELLO", { botId: "bot_ws1", botVersion: "1.0.0", sdk: { name: "custom", version: "0" }, battleToken: "t".repeat(16) });
+    send(ws, "HELLO", {
+      botId: "bot_ws1",
+      botVersion: "1.0.0",
+      sdk: { name: "custom", version: "0" },
+      battleToken: "t".repeat(16),
+    });
     await q.next(); // WELCOME
     server.start();
 
@@ -291,7 +365,12 @@ describe("T5.1 · fuzzing: 1000 payloads corruptos no rompen el servidor ni desi
         const msg = await q.next().catch(() => null);
         if (!msg) return;
         if (msg.type === "OBSERVATION") {
-          send(ws, "COMMAND", { forTick: msg.payload.tick + 3, move: { throttle: 0.6, steer: 0.15 } }, msg.payload.tick + 3);
+          send(
+            ws,
+            "COMMAND",
+            { forTick: msg.payload.tick + 3, move: { throttle: 0.6, steer: 0.15 } },
+            msg.payload.tick + 3,
+          );
         }
         if (msg.type === "SHUTDOWN") return;
       }
@@ -301,13 +380,35 @@ describe("T5.1 · fuzzing: 1000 payloads corruptos no rompen el servidor ni desi
       const garbage = [
         () => "not even json {{{",
         () => JSON.stringify({ proto: "arena/1", type: "COMMAND" }), // sin seq/payload
-        () => JSON.stringify({ proto: "arena/1", type: "COMMAND", seq: 1, tick: 1, payload: { forTick: "not-a-number" } }),
+        () =>
+          JSON.stringify({ proto: "arena/1", type: "COMMAND", seq: 1, tick: 1, payload: { forTick: "not-a-number" } }),
         () => JSON.stringify({ proto: "arena/1", type: "UNKNOWN_TYPE", seq: 1, payload: {} }),
-        () => JSON.stringify({ proto: "arena/1", type: "COMMAND", seq: 1, tick: 1, payload: { forTick: 1, move: { throttle: 99 } } }),
-        () => JSON.stringify({ proto: "arena/1", type: "COMMAND", seq: 1, tick: 1, payload: { forTick: 1, turret: { targetHeading: 0, targetPoint: { x: 1, y: 1 } } } }),
+        () =>
+          JSON.stringify({
+            proto: "arena/1",
+            type: "COMMAND",
+            seq: 1,
+            tick: 1,
+            payload: { forTick: 1, move: { throttle: 99 } },
+          }),
+        () =>
+          JSON.stringify({
+            proto: "arena/1",
+            type: "COMMAND",
+            seq: 1,
+            tick: 1,
+            payload: { forTick: 1, turret: { targetHeading: 0, targetPoint: { x: 1, y: 1 } } },
+          }),
         () => JSON.stringify(null),
         () => JSON.stringify(42),
-        () => JSON.stringify({ proto: "arena/1", type: "COMMAND", seq: 1, tick: 1, payload: { forTick: 1, fire: "not-an-array" } }),
+        () =>
+          JSON.stringify({
+            proto: "arena/1",
+            type: "COMMAND",
+            seq: 1,
+            tick: 1,
+            payload: { forTick: 1, fire: "not-an-array" },
+          }),
       ];
       for (let i = 0; i < 1000; i++) {
         if (ws.readyState !== WebSocket.OPEN) break;

@@ -80,10 +80,12 @@ export function createApp(cfg: AppConfig): express.Express {
       db: cfg.db,
       loginGuard,
       // Límites holgados para uso normal, suficientes para frenar abuso por IP.
-      registerLimiter: cfg.registerLimiter ?? new SharedRateLimiter(cfg.db, "auth.register", { max: 30, windowMs: 60_000 }),
+      registerLimiter:
+        cfg.registerLimiter ?? new SharedRateLimiter(cfg.db, "auth.register", { max: 30, windowMs: 60_000 }),
       loginLimiter: cfg.loginLimiter ?? new SharedRateLimiter(cfg.db, "auth.login", { max: 60, windowMs: 60_000 }),
       // R2.4 (ERR-SEC-08): el refresh emite credenciales → rate-limit propio por IP.
-      refreshLimiter: cfg.refreshLimiter ?? new SharedRateLimiter(cfg.db, "auth.refresh", { max: 60, windowMs: 60_000 }),
+      refreshLimiter:
+        cfg.refreshLimiter ?? new SharedRateLimiter(cfg.db, "auth.refresh", { max: 60, windowMs: 60_000 }),
     }),
   );
   app.use(userRoutes(cfg.db));

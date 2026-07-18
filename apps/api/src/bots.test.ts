@@ -382,7 +382,8 @@ describe("T7.3 autorización de objeto (código y logs privados)", () => {
 
     // Nombre hostil persistido (fila anterior al saneado de entrada): la cabecera
     // se sanea igualmente al emitir — sin inyección ni spoofing.
-    await h.db("bot_versions")
+    await h
+      .db("bot_versions")
       .where({ bot_id: bot.id, version })
       .update({ source_filename: 'evil".zip\r\nX-Spoof: 1' });
     const evil = await request(app).get(`/bots/${bot.id}/versions/${version}/source`).set(auth(dev));

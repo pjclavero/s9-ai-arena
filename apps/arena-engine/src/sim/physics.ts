@@ -53,13 +53,7 @@ export interface BodyHandle {
   readonly collider: RAPIER.Collider;
 }
 
-export type HitKind =
-  | "vehicle"
-  | "wall"
-  | "destructible"
-  | "projectile"
-  | "mine"
-  | "unknown";
+export type HitKind = "vehicle" | "wall" | "destructible" | "projectile" | "mine" | "unknown";
 
 export interface RayHit {
   distanceM: number;
@@ -115,10 +109,7 @@ export class PhysicsWorld {
     const rb = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.fixed().setTranslation(position.x, position.y).setRotation(rotation),
     );
-    const collider = this.world.createCollider(
-      RAPIER.ColliderDesc.cuboid(halfWidth, halfHeight),
-      rb,
-    );
+    const collider = this.world.createCollider(RAPIER.ColliderDesc.cuboid(halfWidth, halfHeight), rb);
     const handle: BodyHandle = { id, rb, collider };
     this.bodies.set(id, handle);
     this.colliderToId.set(collider.handle, id);
@@ -210,14 +201,7 @@ export class PhysicsWorld {
     const ray = new RAPIER.Ray(origin, dir);
     const ignoreHandle = ignoreId ? this.bodies.get(ignoreId)?.collider : undefined;
 
-    const hit = this.world.castRay(
-      ray,
-      maxDistance,
-      true,
-      undefined,
-      undefined,
-      ignoreHandle,
-    );
+    const hit = this.world.castRay(ray, maxDistance, true, undefined, undefined, ignoreHandle);
     if (!hit) return null;
 
     const id = this.colliderToId.get(hit.collider.handle) ?? null;

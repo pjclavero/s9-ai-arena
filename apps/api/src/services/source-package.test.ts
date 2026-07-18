@@ -45,9 +45,15 @@ describe("R2.6 decodePackage estricto (ERR-SEC-10)", () => {
   });
 
   it("exige el manifiesto en la raíz EXACTA (anidado no vale)", () => {
-    const nested = [{ path: "sub/requirements.txt", content: "arena-sdk==1.0.0\n" }, { path: "src/bot.py", content: "x" }];
+    const nested = [
+      { path: "sub/requirements.txt", content: "arena-sdk==1.0.0\n" },
+      { path: "src/bot.py", content: "x" },
+    ];
     expect(() => decodePackage(pkg(nested), "python")).toThrow(/manifiesto requirements.txt/);
-    const node = [{ path: "sub/package.json", content: "{}" }, { path: "src/bot.js", content: "x" }];
+    const node = [
+      { path: "sub/package.json", content: "{}" },
+      { path: "src/bot.js", content: "x" },
+    ];
     expect(() => decodePackage(pkg(node), "node")).toThrow(/manifiesto package.json/);
   });
 

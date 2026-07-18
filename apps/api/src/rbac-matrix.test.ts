@@ -79,9 +79,13 @@ describe("T7.2 matriz rol×endpoint desde el contrato", () => {
           // R2.4 (ERR-SEC-07): las operaciones x-reauth exigen credenciales frescas
           // ADEMÁS del rol: con el rol mínimo pero sin contraseña+TOTP el 401/409 es
           // el comportamiento CORRECTO (nunca un 2xx solo con el token).
-          expect([401, 409], `${op.operationId} (x-reauth) con rol mínimo sin credenciales ⇒ ${min.status}`).toContain(min.status);
+          expect([401, 409], `${op.operationId} (x-reauth) con rol mínimo sin credenciales ⇒ ${min.status}`).toContain(
+            min.status,
+          );
         } else {
-          expect([401, 403], `${op.operationId} con rol mínimo ${op.minRole} ⇒ ${min.status}`).not.toContain(min.status);
+          expect([401, 403], `${op.operationId} con rol mínimo ${op.minRole} ⇒ ${min.status}`).not.toContain(
+            min.status,
+          );
         }
       } else {
         const anon = await call(op.method, path);

@@ -4,7 +4,11 @@
  * defaults RÁPIDOS de test: 3 ms/tick y deadline de 60 ms, para no correr las
  * batallas de la suite en tiempo real (~33 ms/tick).
  */
-import { startLocalBattle as startShared, type LocalBattleOptions, type LocalBattleHandle } from "../src/local-simulator.js";
+import {
+  startLocalBattle as startShared,
+  type LocalBattleOptions,
+  type LocalBattleHandle,
+} from "../src/local-simulator.js";
 
 export type { LocalBattleHandle };
 

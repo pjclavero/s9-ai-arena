@@ -15,9 +15,7 @@ import { loadRuleset } from "../../../packages/game-rules/index.js";
 import { Battle, type BattleConfig } from "./sim/battle.js";
 import { initPhysics } from "./sim/physics.js";
 import { fromJsonl, record, toJsonl, verify } from "./replay.js";
-import {
-  ctfArena, emptyArena, gunnerLoadout, minerLoadout, mvpArena, scoutLoadout,
-} from "./fixtures.js";
+import { ctfArena, emptyArena, gunnerLoadout, minerLoadout, mvpArena, scoutLoadout } from "./fixtures.js";
 import { CircleBot, ForwardBot, HunterBot, IdleBot } from "./stubs.js";
 import deps from "./engine-deps.json" with { type: "json" };
 
@@ -98,7 +96,7 @@ function report(result: any, ms: number): void {
   console.log(`  descalificados ${result.disqualified.length ? result.disqualified.join(", ") : "ninguno"}`);
   console.log(`  hash final    ${result.finalStateHash}`);
   console.log(`  versiones     motor ${result.versions.engine} · ${result.versions.physics}`);
-  console.log(`  tiempo real   ${ms.toFixed(0)} ms (${((result.ticks / 30) * 1000 / ms).toFixed(0)}× acelerado)\n`);
+  console.log(`  tiempo real   ${ms.toFixed(0)} ms (${(((result.ticks / 30) * 1000) / ms).toFixed(0)}× acelerado)\n`);
 }
 
 async function cmdVerify(file: string): Promise<void> {
@@ -130,14 +128,18 @@ async function main(): Promise<void> {
   const cmd = process.argv[2];
   try {
     switch (cmd) {
-      case "run": await cmdRun(); break;
+      case "run":
+        await cmdRun();
+        break;
       case "verify": {
         const f = process.argv[3];
         if (!f) throw new Error("Uso: arena-engine verify <replay.jsonl>");
         await cmdVerify(f);
         break;
       }
-      case "deps": cmdDeps(); break;
+      case "deps":
+        cmdDeps();
+        break;
       default:
         console.log(`arena-engine · motor de simulación de S9 AI Arena
 

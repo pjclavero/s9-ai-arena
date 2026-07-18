@@ -115,7 +115,10 @@ describe("R2.4 · ERR-SEC-07: desactivar 2FA exige reautenticación fuerte", () 
     const me = await request(app).get("/users/me").set("Authorization", `Bearer ${access}`);
     expect(me.status).toBe(200);
 
-    const entry = await h.db("audit_log").where({ action: "auth.2fa.disabled", target: `user:${user.id}` }).first();
+    const entry = await h
+      .db("audit_log")
+      .where({ action: "auth.2fa.disabled", target: `user:${user.id}` })
+      .first();
     expect(entry).toBeTruthy();
     expect(entry.detail.otherSessionsRevoked).toBeGreaterThanOrEqual(1);
   });
@@ -170,7 +173,10 @@ describe("R2.4 · ERR-SEC-08: familias de refresh tokens", () => {
     const user = await h.db("users").where({ email }).first();
     const session = await h.db("sessions").where({ user_id: user.id }).first();
     expect(session.revoked_at).toBeTruthy();
-    const entry = await h.db("audit_log").where({ action: "auth.refresh.reuse_detected", target: `session:${session.id}` }).first();
+    const entry = await h
+      .db("audit_log")
+      .where({ action: "auth.refresh.reuse_detected", target: `session:${session.id}` })
+      .first();
     expect(entry).toBeTruthy();
     expect(entry.detail.reason).toBe("rotated_token_replayed");
   });
@@ -181,7 +187,10 @@ describe("R2.4 · ERR-SEC-08: familias de refresh tokens", () => {
     const user = await h.db("users").where({ email }).first();
 
     // Sesión con ventana deslizante vigente pero tope absoluto ya vencido:
-    await h.db("sessions").where({ user_id: user.id }).update({ absolute_expires_at: new Date(Date.now() - 1000) });
+    await h
+      .db("sessions")
+      .where({ user_id: user.id })
+      .update({ absolute_expires_at: new Date(Date.now() - 1000) });
     const r = await request(app).post("/auth/refresh").send({ refreshToken: s.refreshToken });
     expect(r.status).toBe(401);
   });
@@ -203,7 +212,9 @@ describe("R2.4 · ERR-SEC-08: familias de refresh tokens", () => {
   it("el endpoint de refresh tiene rate-limit propio ⇒ 429 al superarlo", async () => {
     let got429 = false;
     for (let i = 0; i < 12; i++) {
-      const r = await request(app).post("/auth/refresh").send({ refreshToken: "token-invalido-" + i });
+      const r = await request(app)
+        .post("/auth/refresh")
+        .send({ refreshToken: "token-invalido-" + i });
       if (r.status === 429) {
         got429 = true;
         break;
@@ -217,7 +228,9 @@ describe("R2.4 · ERR-SEC-08: familias de refresh tokens", () => {
 describe("R2.4 · ERR-SEC-11: anti-enumeración de emails en login", () => {
   it("DoD: el coste es el mismo exista o no el email (Argon2id contra hash señuelo)", async () => {
     const existing = "r24-timing@test.local";
-    await request(app).post("/auth/register").send({ email: existing, password: "password-timing-real-x", displayName: "T" });
+    await request(app)
+      .post("/auth/register")
+      .send({ email: existing, password: "password-timing-real-x", displayName: "T" });
 
     // Calentamiento (JIT, pool de BD) fuera de la medición:
     await request(app).post("/auth/login").send({ email: existing, password: "incorrecta" });

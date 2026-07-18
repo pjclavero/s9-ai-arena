@@ -48,10 +48,7 @@ export interface TestDbHandle {
  * Crea una base de datos efímera de nombre único en ese servidor y la borra en stop().
  * El usuario de la URL necesita permiso CREATEDB.
  */
-async function startExternalTestDb(
-  serverUrl: string,
-  opts: { migrate?: boolean },
-): Promise<TestDbHandle> {
+async function startExternalTestDb(serverUrl: string, opts: { migrate?: boolean }): Promise<TestDbHandle> {
   const dbName = `arena_test_${randomBytes(8).toString("hex")}`;
   const admin = createDb(serverUrl);
   try {

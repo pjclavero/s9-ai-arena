@@ -31,7 +31,14 @@ const SAVED: LoadoutDraft = {
 describe("R3.7 el editor carga la revisión vigente del bot", () => {
   it("arranca desde `initial` (chasis, módulos y munición guardados) e indica la revisión", () => {
     render(
-      <LoadoutEditor catalog={catalog} catalogVersion={CATALOG_VERSION} budgetCredits={BUDGET} initial={SAVED} loadedRevision={3} onSave={vi.fn()} />,
+      <LoadoutEditor
+        catalog={catalog}
+        catalogVersion={CATALOG_VERSION}
+        budgetCredits={BUDGET}
+        initial={SAVED}
+        loadedRevision={3}
+        onSave={vi.fn()}
+      />,
     );
     expect((screen.getByLabelText("chasis") as HTMLSelectElement).value).toBe("chassis.medium@1");
     expect((screen.getByLabelText("slot-turret_main") as HTMLSelectElement).value).toBe("weapon.cannon@1");
@@ -44,7 +51,14 @@ describe("R3.7 el editor carga la revisión vigente del bot", () => {
   it("la munición se ELIGE explícitamente y viaja en el draft guardado", async () => {
     const onSave = vi.fn().mockResolvedValue(null);
     render(
-      <LoadoutEditor catalog={catalog} catalogVersion={CATALOG_VERSION} budgetCredits={BUDGET} initial={SAVED} loadedRevision={3} onSave={onSave} />,
+      <LoadoutEditor
+        catalog={catalog}
+        catalogVersion={CATALOG_VERSION}
+        budgetCredits={BUDGET}
+        initial={SAVED}
+        loadedRevision={3}
+        onSave={onSave}
+      />,
     );
     const ammoSelect = screen.getByLabelText("ammo-turret_main") as HTMLSelectElement;
     // Dos municiones compatibles con el cañón: elección real, no auto-asignación.
@@ -58,7 +72,14 @@ describe("R3.7 el editor carga la revisión vigente del bot", () => {
 
   it("comparar y descartar: el diff contra la revisión cargada se enseña y se puede revertir", async () => {
     render(
-      <LoadoutEditor catalog={catalog} catalogVersion={CATALOG_VERSION} budgetCredits={BUDGET} initial={SAVED} loadedRevision={3} onSave={vi.fn()} />,
+      <LoadoutEditor
+        catalog={catalog}
+        catalogVersion={CATALOG_VERSION}
+        budgetCredits={BUDGET}
+        initial={SAVED}
+        loadedRevision={3}
+        onSave={vi.fn()}
+      />,
     );
     fireEvent.change(screen.getByLabelText("slot-drive"), { target: { value: "movement.wheels@1" } });
     await waitFor(() => {

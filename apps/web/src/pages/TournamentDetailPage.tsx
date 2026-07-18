@@ -150,7 +150,10 @@ export function TournamentDetailPage(props: { id: string; me: Me }) {
                 </form>
               )}
               {entryMsg && (
-                <p className={entryMsg.kind === "ok" ? "ok" : "error"} role={entryMsg.kind === "ok" ? "status" : "alert"}>
+                <p
+                  className={entryMsg.kind === "ok" ? "ok" : "error"}
+                  role={entryMsg.kind === "ok" ? "status" : "alert"}
+                >
                   {entryMsg.text}
                 </p>
               )}

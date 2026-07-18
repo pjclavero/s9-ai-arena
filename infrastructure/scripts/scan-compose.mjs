@@ -21,10 +21,7 @@
  */
 import { readFileSync } from "node:fs";
 import { parse } from "yaml";
-import {
-  complianceViolations,
-  compliantBasePosture,
-} from "../../apps/bot-manager/src/compliance.mjs";
+import { complianceViolations, compliantBasePosture } from "../../apps/bot-manager/src/compliance.mjs";
 
 const PORT_ALLOW = new Set(["gateway"]);
 
@@ -77,7 +74,8 @@ if (files.length > 0) {
       console.error("FALLO ·", msg);
       bad = true;
     }
-    if (findings.length === 0) console.log(`OK · ${f}: sin privilegiados, sin docker.sock (en ningún servicio), puertos solo en gateway`);
+    if (findings.length === 0)
+      console.log(`OK · ${f}: sin privilegiados, sin docker.sock (en ningún servicio), puertos solo en gateway`);
   }
   process.exit(bad ? 1 : 0);
 }

@@ -82,7 +82,10 @@ export interface FadedVehicle {
 
 interface FrameLike {
   tick: number;
-  vehicles: Map<string, { x: number; y: number; heading: number; turretHeading: number; alive: boolean; team?: string }>;
+  vehicles: Map<
+    string,
+    { x: number; y: number; heading: number; turretHeading: number; alive: boolean; team?: string }
+  >;
   projectiles: { id: string; x: number; y: number }[];
 }
 

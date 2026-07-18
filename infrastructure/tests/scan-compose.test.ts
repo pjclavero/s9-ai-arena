@@ -11,10 +11,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 // @ts-expect-error módulo .mjs sin tipos
 import { scanCompose } from "../scripts/scan-compose.mjs";
-import {
-  complianceViolations,
-  compliantBasePosture,
-} from "../../apps/bot-manager/src/compliance.mjs";
+import { complianceViolations, compliantBasePosture } from "../../apps/bot-manager/src/compliance.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = (f: string) => readFileSync(join(here, "fixtures", f), "utf8");
@@ -87,12 +84,8 @@ describe("scan-compose (cap. 28, R1.7)", () => {
     // exit 0
     execFileSync(process.execPath, [SCANNER, REAL_COMPOSE]);
     // exit != 0
-    expect(() =>
-      execFileSync(process.execPath, [SCANNER, join(here, "fixtures", "bad-privileged.yml")]),
-    ).toThrow();
+    expect(() => execFileSync(process.execPath, [SCANNER, join(here, "fixtures", "bad-privileged.yml")])).toThrow();
     // exit != 0 también con docker.sock SOLO en bot-manager (sin excepciones)
-    expect(() =>
-      execFileSync(process.execPath, [SCANNER, join(here, "fixtures", "bad-docker-sock.yml")]),
-    ).toThrow();
+    expect(() => execFileSync(process.execPath, [SCANNER, join(here, "fixtures", "bad-docker-sock.yml")])).toThrow();
   });
 });

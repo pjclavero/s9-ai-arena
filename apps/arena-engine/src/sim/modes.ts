@@ -486,9 +486,7 @@ export class JuggernautMode extends BaseMode {
   }
 
   private aliveSorted(ctx: ModeContext): Vehicle[] {
-    return ctx.vehicles
-      .filter((v) => v.alive && !v.disqualified)
-      .sort((a, b) => a.id.localeCompare(b.id));
+    return ctx.vehicles.filter((v) => v.alive && !v.disqualified).sort((a, b) => a.id.localeCompare(b.id));
   }
 
   private assign(next: Vehicle | undefined, ctx: ModeContext): void {
@@ -559,32 +557,60 @@ export const MODE_REGISTRY: Record<string, ModeMetadata> = {
   // equipo (entrenamiento, slalom golden, tests de radio) desde T2.1 y el registro
   // no puede romperlas. Los modos nuevos sí exigen 2 equipos: sin rival no hay modo.
   deathmatch: {
-    id: "deathmatch", minTeams: 1, maxTeams: Number.POSITIVE_INFINITY,
-    respawn: "any", requires: {}, tiebreak: "most_score",
+    id: "deathmatch",
+    minTeams: 1,
+    maxTeams: Number.POSITIVE_INFINITY,
+    respawn: "any",
+    requires: {},
+    tiebreak: "most_score",
   },
   team_deathmatch: {
-    id: "team_deathmatch", minTeams: 1, maxTeams: Number.POSITIVE_INFINITY,
-    respawn: "any", requires: {}, tiebreak: "most_score",
+    id: "team_deathmatch",
+    minTeams: 1,
+    maxTeams: Number.POSITIVE_INFINITY,
+    respawn: "any",
+    requires: {},
+    tiebreak: "most_score",
   },
   capture_the_flag: {
-    id: "capture_the_flag", minTeams: 2, maxTeams: 2,
-    respawn: "any", requires: { flagsAndBases: true }, tiebreak: "most_score",
+    id: "capture_the_flag",
+    minTeams: 2,
+    maxTeams: 2,
+    respawn: "any",
+    requires: { flagsAndBases: true },
+    tiebreak: "most_score",
   },
   zone_control: {
-    id: "zone_control", minTeams: 2, maxTeams: Number.POSITIVE_INFINITY,
-    respawn: "any", requires: { captureZones: 1 }, tiebreak: "most_score",
+    id: "zone_control",
+    minTeams: 2,
+    maxTeams: Number.POSITIVE_INFINITY,
+    respawn: "any",
+    requires: { captureZones: 1 },
+    tiebreak: "most_score",
   },
   last_man_standing: {
-    id: "last_man_standing", minTeams: 2, maxTeams: Number.POSITIVE_INFINITY,
-    respawn: "forbidden", requires: {}, tiebreak: "most_alive_then_kills",
+    id: "last_man_standing",
+    minTeams: 2,
+    maxTeams: Number.POSITIVE_INFINITY,
+    respawn: "forbidden",
+    requires: {},
+    tiebreak: "most_alive_then_kills",
   },
   domination: {
-    id: "domination", minTeams: 2, maxTeams: Number.POSITIVE_INFINITY,
-    respawn: "any", requires: { captureZones: 2 }, tiebreak: "most_score",
+    id: "domination",
+    minTeams: 2,
+    maxTeams: Number.POSITIVE_INFINITY,
+    respawn: "any",
+    requires: { captureZones: 2 },
+    tiebreak: "most_score",
   },
   juggernaut: {
-    id: "juggernaut", minTeams: 2, maxTeams: Number.POSITIVE_INFINITY,
-    respawn: "required", requires: {}, tiebreak: "most_score",
+    id: "juggernaut",
+    minTeams: 2,
+    maxTeams: Number.POSITIVE_INFINITY,
+    respawn: "required",
+    requires: {},
+    tiebreak: "most_score",
   },
 };
 

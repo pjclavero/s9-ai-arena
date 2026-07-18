@@ -9,9 +9,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { DECISION_EVERY_N_TICKS, TICK_HZ, loadRuleset } from "../../../packages/game-rules/index.js";
 import { Battle } from "../src/sim/battle.js";
 import { initPhysics } from "../src/sim/physics.js";
-import {
-  emptyArena, gunnerLoadout, minerLoadout, mvpArena, sandbagLoadout, scoutLoadout,
-} from "../src/fixtures.js";
+import { emptyArena, gunnerLoadout, minerLoadout, mvpArena, sandbagLoadout, scoutLoadout } from "../src/fixtures.js";
 import { CircleBot, DeadBot, ForwardBot, HunterBot, IdleBot } from "../src/stubs.js";
 
 beforeAll(async () => {
@@ -147,15 +145,15 @@ describe("un bot no puede corromper el motor", () => {
   it("comandos basura (tipos absurdos, NaN, infinitos) no rompen la simulación", () => {
     const garbage = [
       { forTick: 0, move: { throttle: NaN, steer: Infinity } },
-      { forTick: 0, move: { throttle: 999, steer: -999 } },       // fuera de rango
-      { forTick: 0, move: { throttle: "rápido", steer: null } },   // tipos absurdos
-      { forTick: 0, fire: ["ranura_inexistente", "", "drive"] },   // ranuras inválidas
+      { forTick: 0, move: { throttle: 999, steer: -999 } }, // fuera de rango
+      { forTick: 0, move: { throttle: "rápido", steer: null } }, // tipos absurdos
+      { forTick: 0, fire: ["ranura_inexistente", "", "drive"] }, // ranuras inválidas
       { forTick: 0, turret: { targetPoint: { x: NaN, y: -Infinity } } },
       { forTick: 0, modules: [{ slot: "no_existe", enabled: true }] },
       { forTick: 0, deployMine: { slot: "tampoco_existe" } },
       { forTick: 0, radio: [{ slot: "drive", data: "no-es-base64!!!" }] },
-      {},                                                          // vacío
-      null,                                                        // silencio
+      {}, // vacío
+      null, // silencio
     ];
 
     const b = new Battle({
@@ -208,8 +206,7 @@ describe("un bot no puede corromper el motor", () => {
       let i = 0;
       b.attachBot("veh_1", {
         botId: "b1",
-        decide: (obs: any) =>
-          (i++ % 3 === 0 ? null : { forTick: obs.tick, move: { throttle: NaN, steer: 1e9 } }),
+        decide: (obs: any) => (i++ % 3 === 0 ? null : { forTick: obs.tick, move: { throttle: NaN, steer: 1e9 } }),
       });
       b.attachBot("veh_2", new CircleBot("b2"));
       const r = b.run(300);

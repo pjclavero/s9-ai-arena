@@ -23,7 +23,10 @@ import { pyGoodFiles, goodCandidate, referenceAgent } from "../../bot-manager/te
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const GOOD_LOADOUT = JSON.parse(
-  readFileSync(join(__dirname, "..", "..", "..", "packages", "module-catalog", "examples", "loadout-medium-gunner.json"), "utf8"),
+  readFileSync(
+    join(__dirname, "..", "..", "..", "packages", "module-catalog", "examples", "loadout-medium-gunner.json"),
+    "utf8",
+  ),
 );
 
 let h: TestDbHandle;
@@ -71,7 +74,10 @@ describe("R2.5 · submitBotVersion encola de verdad (jobs) y responde 202", () =
     for (const s of submit.body.stages) expect(s.status).toBe("pending");
 
     // Trabajo durable en la tabla jobs (patrón de las batallas de E9).
-    const job = await h.db("jobs").where({ kind: "bot_build", dedupe_key: `bot_build:${submit.body.id}` }).first();
+    const job = await h
+      .db("jobs")
+      .where({ kind: "bot_build", dedupe_key: `bot_build:${submit.body.id}` })
+      .first();
     expect(job).toBeTruthy();
     expect(job.status).toBe("queued");
     expect(job.payload.buildId).toBe(submit.body.id);
@@ -83,7 +89,8 @@ describe("R2.5 · submitBotVersion encola de verdad (jobs) y responde 202", () =
 
   it("encolar dos veces el mismo build es idempotente (dedupe_key)", async () => {
     const q = new QueueBotManager(h.db);
-    const [build] = await h.db("builds")
+    const [build] = await h
+      .db("builds")
       .insert({ bot_id: (await h.db("bots").first()).id, version: 1, status: "queued", stages: "[]" })
       .returning("*");
     const req = { buildId: build.id as string, botId: build.bot_id as string, version: 1, runtime: "python" as const };
@@ -115,7 +122,10 @@ describe("R2.5 · el worker consume la cola y ejecuta el pipeline", () => {
     expect(build.status).toBe("passed");
     const v = await h.db("bot_versions").where({ bot_id: botId, version: 1 }).first();
     expect(v.state).toBe("validated");
-    const job = await h.db("jobs").where({ dedupe_key: `bot_build:${submit.body.id}` }).first();
+    const job = await h
+      .db("jobs")
+      .where({ dedupe_key: `bot_build:${submit.body.id}` })
+      .first();
     expect(job.status).toBe("done");
   }, 60_000);
 
@@ -137,7 +147,11 @@ describe("R2.5 · el worker consume la cola y ejecuta el pipeline", () => {
     await clearQueue();
     const { botId, buildlessSubmit } = await draftVersion("r25-worker-boom");
     const submit = await buildlessSubmit();
-    const boom = { enqueueBuild: async () => { throw new Error("infraestructura rota"); } };
+    const boom = {
+      enqueueBuild: async () => {
+        throw new Error("infraestructura rota");
+      },
+    };
 
     // Tres intentos (max_attempts = 3); `now` avanza para saltar el backoff.
     const t0 = Date.now();
@@ -148,7 +162,10 @@ describe("R2.5 · el worker consume la cola y ejecuta el pipeline", () => {
     const r3 = await runBuildWorkerOnce(h.db, boom, { workerId: "w", now: new Date(t0 + 10 * 60_000) });
     expect(r3.outcome).toBe("needs_review");
 
-    const job = await h.db("jobs").where({ dedupe_key: `bot_build:${submit.body.id}` }).first();
+    const job = await h
+      .db("jobs")
+      .where({ dedupe_key: `bot_build:${submit.body.id}` })
+      .first();
     expect(job.status).toBe("needs_review");
     expect(job.last_error).toMatch(/infraestructura rota/);
     // Fail-closed: nada queda eternamente en cola ni, peor, validado.

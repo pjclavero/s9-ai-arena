@@ -37,10 +37,12 @@ function findBotClass(module: Record<string, unknown>): (new (botId: string) => 
     const proto = (value as { prototype?: unknown }).prototype;
     if (proto instanceof ArenaBot) return value as new (botId: string) => ArenaBot;
     if (
-      proto !== null && typeof proto === "object" &&
+      proto !== null &&
+      typeof proto === "object" &&
       typeof (proto as any).onObservation === "function" &&
       typeof (proto as any).run === "function"
-    ) return value as new (botId: string) => ArenaBot;
+    )
+      return value as new (botId: string) => ArenaBot;
   }
   return null;
 }
@@ -73,7 +75,8 @@ async function main(): Promise<void> {
     process.exit(values.help ? 0 : 1);
   }
 
-  if (!STUBS[values.opponent!]) fail(`--opponent inválido: ${values.opponent}. Opciones: ${Object.keys(STUBS).join(", ")}`);
+  if (!STUBS[values.opponent!])
+    fail(`--opponent inválido: ${values.opponent}. Opciones: ${Object.keys(STUBS).join(", ")}`);
   if (!MAPS[values.map!]) fail(`--map inválido: ${values.map}. Opciones: ${Object.keys(MAPS).join(", ")}`);
   const ticks = Number(values.ticks);
   if (!Number.isInteger(ticks) || ticks <= 0) fail(`--ticks inválido: ${values.ticks}`);
@@ -93,16 +96,16 @@ async function main(): Promise<void> {
   const tickIntervalMs = values["tick-interval-ms"] !== undefined ? Number(values["tick-interval-ms"]) : undefined;
   const handle = await startLocalBattle({
     externalBots: [{ botId: bot.botId, archetype: values.archetype as any }],
-    stubBots: [{ botId: "bot_opp01", archetype: values["opponent-archetype"] as any, kind: values.opponent as StubKind }],
+    stubBots: [
+      { botId: "bot_opp01", archetype: values["opponent-archetype"] as any, kind: values.opponent as StubKind },
+    ],
     ticks,
     seed: values.seed,
     map: values.map,
     ruleset: values.ruleset,
     // Igual que local-sim.ts: si se acelera el tick, la ventana de decisión debe
     // seguir superando el round-trip del WebSocket del bot.
-    ...(tickIntervalMs !== undefined
-      ? { tickIntervalMs, decisionDeadlineMs: Math.max(80, tickIntervalMs * 6) }
-      : {}),
+    ...(tickIntervalMs !== undefined ? { tickIntervalMs, decisionDeadlineMs: Math.max(80, tickIntervalMs * 6) } : {}),
   });
 
   const botDone = bot.run(`ws://127.0.0.1:${handle.port}`, handle.battleTokenFor.get(bot.botId)!);

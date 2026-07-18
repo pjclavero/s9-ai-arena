@@ -145,7 +145,11 @@ export class SharedFailedLoginGuard implements LoginGuardLike {
       const blockedUntil = new Date(now + this.blockMs);
       await this.db("api_usage")
         .where({ actor_key: key, route: LOGIN_FAILURES_ROUTE, window_start: EPOCH })
-        .update({ blocked_until: blockedUntil, count: 0, expires_at: new Date(blockedUntil.getTime() + this.failureTtlMs) });
+        .update({
+          blocked_until: blockedUntil,
+          count: 0,
+          expires_at: new Date(blockedUntil.getTime() + this.failureTtlMs),
+        });
       return true;
     }
     return false;

@@ -38,7 +38,10 @@ import type { JobRow } from "../../tournament-worker/src/queue.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const GOOD_LOADOUT = JSON.parse(
-  readFileSync(join(__dirname, "..", "..", "..", "packages", "module-catalog", "examples", "loadout-medium-gunner.json"), "utf8"),
+  readFileSync(
+    join(__dirname, "..", "..", "..", "packages", "module-catalog", "examples", "loadout-medium-gunner.json"),
+    "utf8",
+  ),
 );
 
 let h: TestDbHandle;
@@ -139,7 +142,8 @@ describe("R2.5 · el pipeline persiste artefacto firmado y el guard lo verifica 
 
     // Firma inválida (de OTRA clave) sobre bytes intactos ⇒ rechazo.
     const otherKey = generateServiceKeypair();
-    await h.db("artifacts")
+    await h
+      .db("artifacts")
       .where({ id: original.id })
       .update({ bytes: original.bytes, signature: signArtifact(original.hash, otherKey.privateKey) });
     const r2 = await guard.check(botId, 1);
@@ -171,7 +175,8 @@ describe("R2.5 · verificación ANTES de cada lanzamiento en batalla", () => {
     const stored = opts.tamper ? Buffer.concat([bytes, Buffer.from("!")]) : bytes;
     await h.db("bot_versions").where({ bot_id: bot.botId, version: bot.version }).update({ artifact_hash: hash });
     const build = await h.db("builds").where({ bot_id: bot.botId, version: bot.version }).first();
-    await h.db("artifacts")
+    await h
+      .db("artifacts")
       .where({ build_id: build.id })
       .update({ hash, signature: signArtifact(hash, signer.privateKey), bytes: stored });
   }

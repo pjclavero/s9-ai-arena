@@ -164,7 +164,11 @@ export class SmoothCamera {
     while (remaining > 0) {
       const h = Math.min(remaining, 0.016);
       remaining -= h;
-      for (const [axis, goalV] of [["cx", goal.centerX], ["cy", goal.centerY], ["logZoom", goalLogZoom]] as const) {
+      for (const [axis, goalV] of [
+        ["cx", goal.centerX],
+        ["cy", goal.centerY],
+        ["logZoom", goalLogZoom],
+      ] as const) {
         const x = this.pos[axis];
         const v = this.vel[axis];
         const accel = this.omega * this.omega * (goalV - x) - 2 * this.omega * v;
@@ -174,10 +178,7 @@ export class SmoothCamera {
     }
 
     // El estado suavizado también se clampa: ni en tránsito se enseña el vacío.
-    const clamped = clampToMap(
-      { centerX: this.pos.cx, centerY: this.pos.cy, zoom: Math.exp(this.pos.logZoom) },
-      cfg,
-    );
+    const clamped = clampToMap({ centerX: this.pos.cx, centerY: this.pos.cy, zoom: Math.exp(this.pos.logZoom) }, cfg);
     this.pos.cx = clamped.centerX;
     this.pos.cy = clamped.centerY;
     return clamped;

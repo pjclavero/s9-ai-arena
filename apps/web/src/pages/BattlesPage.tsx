@@ -28,8 +28,7 @@ export function BattlesPage(props: { botFilter?: string }) {
       <h2>Batallas</h2>
       {props.botFilter && (
         <p data-testid="bot-filter">
-          Mostrando solo batallas del bot <code>{props.botFilter}</code>{" "}
-          <a href="#/battles">(quitar filtro)</a>
+          Mostrando solo batallas del bot <code>{props.botFilter}</code> <a href="#/battles">(quitar filtro)</a>
         </p>
       )}
       <p>
@@ -67,7 +66,10 @@ export function BattlesPage(props: { botFilter?: string }) {
               <tbody>
                 {items.map((b) => (
                   <tr key={b.id}>
-                    <td>{b.participants.map((p) => `${p.botId.slice(0, 8)} v${p.version}`).join(" vs ") || b.id.slice(0, 8)}</td>
+                    <td>
+                      {b.participants.map((p) => `${p.botId.slice(0, 8)} v${p.version}`).join(" vs ") ||
+                        b.id.slice(0, 8)}
+                    </td>
                     <td>{b.mode}</td>
                     <td>{b.mapId}</td>
                     <td>

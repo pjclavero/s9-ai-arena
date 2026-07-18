@@ -35,10 +35,7 @@ export class DbArtifactLaunchGuard implements ArtifactLaunchCheck {
     const v = await this.db("bot_versions").where({ bot_id: botId, version }).first();
     if (!v) return refuse("versión inexistente");
     if (!v.artifact_hash) return refuse("la versión no tiene artefacto firmado");
-    const art = await this.db("artifacts")
-      .where({ hash: v.artifact_hash })
-      .orderBy("created_at", "desc")
-      .first();
+    const art = await this.db("artifacts").where({ hash: v.artifact_hash }).orderBy("created_at", "desc").first();
     if (!art) return refuse(`artefacto ${v.artifact_hash} no registrado`);
     if (!art.signature) return refuse("artefacto sin firma registrada");
     if (!art.bytes) return refuse("artefacto sin bytes persistidos: no hay nada que verificar");

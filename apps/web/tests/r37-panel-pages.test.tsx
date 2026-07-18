@@ -105,9 +105,11 @@ describe("R3.7 seguir un torneo: cola, en curso, cuadro e historial", () => {
 
   function mockDetail(state = "running") {
     apiMock.mockImplementation(async (method: string, path: string) => {
-      if (path === "/tournaments/t1") return { id: "t1", name: "Copa S9", format: "single_elimination", mode: "deathmatch", state, entryCount: 4 };
+      if (path === "/tournaments/t1")
+        return { id: "t1", name: "Copa S9", format: "single_elimination", mode: "deathmatch", state, entryCount: 4 };
       if (path === "/tournaments/t1/battles") return { items: BATTLES };
-      if (path.startsWith("/bots?ownerId=")) return { items: [{ id: "bot1", name: "Atlas", latestPublishedVersion: 3 }] };
+      if (path.startsWith("/bots?ownerId="))
+        return { items: [{ id: "bot1", name: "Atlas", latestPublishedVersion: 3 }] };
       if (method === "POST" && path === "/tournaments/t1/entries") return { id: "e1" };
       throw new Error(`inesperado: ${method} ${path}`);
     });
@@ -152,7 +154,15 @@ describe("R3.7 seguir un torneo: cola, en curso, cuadro e historial", () => {
 
   it("si las batallas no cargan, se dice con role=alert y reintento (nunca cuadro vacío)", async () => {
     apiMock.mockImplementation(async (_m: string, path: string) => {
-      if (path === "/tournaments/t1") return { id: "t1", name: "Copa S9", format: "single_elimination", mode: "deathmatch", state: "running", entryCount: 0 };
+      if (path === "/tournaments/t1")
+        return {
+          id: "t1",
+          name: "Copa S9",
+          format: "single_elimination",
+          mode: "deathmatch",
+          state: "running",
+          entryCount: 0,
+        };
       if (path === "/tournaments/t1/battles") throw new Error("worker caído");
       return { items: [] };
     });

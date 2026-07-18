@@ -183,7 +183,10 @@ describe("T8.2 canal de espectador (ticket E7 → gateway E8 → motor E2)", () 
     expect(await new Promise<number>((r) => basura.once("close", (c2) => r(c2)))).toBe(4401);
 
     const { ticket } = await ticketVia(app, otherId)(); // ticket legítimo… de OTRA batalla
-    const cruzado = new WsWebSocket(`ws://127.0.0.1:${gateway.port}/spectate/${dbId}`, ["spectate.v1", `ticket.${ticket}`]);
+    const cruzado = new WsWebSocket(`ws://127.0.0.1:${gateway.port}/spectate/${dbId}`, [
+      "spectate.v1",
+      `ticket.${ticket}`,
+    ]);
     expect(await new Promise<number>((r) => cruzado.once("close", (c2) => r(c2)))).toBe(4403);
   });
 
@@ -253,7 +256,19 @@ describe("T8.2 canal de espectador (ticket E7 → gateway E8 → motor E2)", () 
         expect(Object.keys(v).sort()).toEqual(
           // "juggernaut" (R3.8) es pública por definición del modo: quién es el marcado
           // forma parte del marcador, igual que carryingFlag. Su POSICIÓN sigue sin regalarse.
-          ["alive", "carryingFlag", "heading", "hullHp", "hullHpMax", "id", "juggernaut", "modules", "position", "team", "turretHeading"],
+          [
+            "alive",
+            "carryingFlag",
+            "heading",
+            "hullHp",
+            "hullHpMax",
+            "id",
+            "juggernaut",
+            "modules",
+            "position",
+            "team",
+            "turretHeading",
+          ],
         );
       }
     }

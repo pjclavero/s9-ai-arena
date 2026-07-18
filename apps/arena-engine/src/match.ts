@@ -120,9 +120,7 @@ export async function runMatch(
   // Ganador del match: más rondas ganadas; empate real ⇒ "draw".
   const sorted = [...teams].sort((a, b) => roundWins[b] - roundWins[a]);
   const winner =
-    sorted.length === 0 || (sorted.length > 1 && roundWins[sorted[0]] === roundWins[sorted[1]])
-      ? "draw"
-      : sorted[0];
+    sorted.length === 0 || (sorted.length > 1 && roundWins[sorted[0]] === roundWins[sorted[1]]) ? "draw" : sorted[0];
 
   return { matchId: config.matchId, seed: config.seed, rounds, roundWins, winner };
 }

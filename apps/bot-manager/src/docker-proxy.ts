@@ -65,15 +65,32 @@ const IMAGE_DIGEST_RE = /@sha256:[0-9a-f]{64}$/i;
 
 /** Campos de primer nivel admitidos en el cuerpo del create. Lo demás = 403. */
 const CREATE_KEYS = new Set([
-  "Image", "Env", "Cmd", "Entrypoint", "User", "Labels", "WorkingDir",
-  "HostConfig", "NetworkingConfig", "StopTimeout",
+  "Image",
+  "Env",
+  "Cmd",
+  "Entrypoint",
+  "User",
+  "Labels",
+  "WorkingDir",
+  "HostConfig",
+  "NetworkingConfig",
+  "StopTimeout",
 ]);
 
 /** Campos admitidos en HostConfig. Privileged/Binds/Mounts/CapAdd/… se
  *  comprueban aparte para dar un motivo específico; NO están aquí. */
 const HOSTCONFIG_KEYS = new Set([
-  "NetworkMode", "CapDrop", "SecurityOpt", "ReadonlyRootfs", "Tmpfs",
-  "Memory", "MemorySwap", "NanoCpus", "PidsLimit", "Dns", "AutoRemove",
+  "NetworkMode",
+  "CapDrop",
+  "SecurityOpt",
+  "ReadonlyRootfs",
+  "Tmpfs",
+  "Memory",
+  "MemorySwap",
+  "NanoCpus",
+  "PidsLimit",
+  "Dns",
+  "AutoRemove",
 ]);
 
 function isPlainObject(x: unknown): x is Record<string, unknown> {
@@ -97,7 +114,9 @@ export function postureFromCreateBody(body: Record<string, unknown>): SecurityPo
   for (const n of Object.keys(isPlainObject(netCfg.EndpointsConfig) ? netCfg.EndpointsConfig : {})) networks.add(n);
   return {
     user: String(body.User ?? "root"),
-    capDropAll: asArray(hc.CapDrop).map((c) => String(c).toUpperCase()).includes("ALL"),
+    capDropAll: asArray(hc.CapDrop)
+      .map((c) => String(c).toUpperCase())
+      .includes("ALL"),
     readonlyRootfs: hc.ReadonlyRootfs === true,
     noNewPrivileges: secOpt.includes("no-new-privileges"),
     seccompProfile: seccomp,
@@ -220,13 +239,21 @@ export function evaluateProxyRequest(
     if (body && body.trim() && body.trim() !== "{}") return deny(`la operación ${op} no admite cuerpo`);
     if (op === "json") {
       if (m !== "GET") return deny(`método ${m} no permitido para inspect`);
-      return { ok: true, action: { kind: "inspect", id }, forwardPath: `/containers/${id}/json`, forwardBody: undefined };
+      return {
+        ok: true,
+        action: { kind: "inspect", id },
+        forwardPath: `/containers/${id}/json`,
+        forwardBody: undefined,
+      };
     }
     if (m !== "POST") return deny(`método ${m} no permitido para ${op}`);
     if (op === "stop") {
       const t = url.searchParams.get("t");
       const timeoutSeconds = t === null ? undefined : Number(t);
-      if (timeoutSeconds !== undefined && !(Number.isInteger(timeoutSeconds) && timeoutSeconds >= 0 && timeoutSeconds <= 300))
+      if (
+        timeoutSeconds !== undefined &&
+        !(Number.isInteger(timeoutSeconds) && timeoutSeconds >= 0 && timeoutSeconds <= 300)
+      )
         return deny(`timeout de stop no válido: ${t}`);
       return {
         ok: true,
@@ -265,7 +292,9 @@ export function createSocketBackend(socketPath = "/var/run/docker.sock"): Docker
           (res) => {
             const chunks: Buffer[] = [];
             res.on("data", (c) => chunks.push(c));
-            res.on("end", () => resolve({ status: res.statusCode ?? 500, body: Buffer.concat(chunks).toString("utf8") }));
+            res.on("end", () =>
+              resolve({ status: res.statusCode ?? 500, body: Buffer.concat(chunks).toString("utf8") }),
+            );
           },
         );
         req.on("error", reject);
@@ -300,7 +329,12 @@ export function createDockerProxyServer(opts: ProxyServerOptions): http.Server {
         res.end(typeof payload === "string" ? payload : JSON.stringify(payload));
       };
       if (overflow) {
-        opts.onDecision?.({ method: req.method ?? "?", path: req.url ?? "?", allowed: false, reason: "cuerpo demasiado grande" });
+        opts.onDecision?.({
+          method: req.method ?? "?",
+          path: req.url ?? "?",
+          allowed: false,
+          reason: "cuerpo demasiado grande",
+        });
         return respond(413, { message: "cuerpo demasiado grande" });
       }
       const body = chunks.length ? Buffer.concat(chunks).toString("utf8") : undefined;
@@ -403,7 +437,9 @@ export class ProxyContainerRunner implements ContainerRunner {
       async posture() {
         const inspected = await call("GET", `/containers/${id}/json`);
         if (inspected.status !== 200) {
-          throw new Error(`el proxy rechazó el inspect (${inspected.status}): ${inspected.json?.message ?? "sin detalle"}`);
+          throw new Error(
+            `el proxy rechazó el inspect (${inspected.status}): ${inspected.json?.message ?? "sin detalle"}`,
+          );
         }
         return DockerContainerRunner.analyzeInspect(inspected.json);
       },

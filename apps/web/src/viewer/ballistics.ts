@@ -53,9 +53,10 @@ export class BallisticsTracker {
       if (!p?.position) continue;
       seen.add(p.id);
       const prev = this.tracked.get(p.id);
-      const fromSnapshot = p.velocity && Number.isFinite(p.velocity.x)
-        ? { vx: p.velocity.x / 1000, vy: p.velocity.y / 1000 } // m/s → m/ms
-        : null;
+      const fromSnapshot =
+        p.velocity && Number.isFinite(p.velocity.x)
+          ? { vx: p.velocity.x / 1000, vy: p.velocity.y / 1000 } // m/s → m/ms
+          : null;
       if (!prev) {
         this.tracked.set(p.id, {
           id: p.id,

@@ -23,13 +23,18 @@ describe("R2.8 · CLI arena-sim (JS)", () => {
     expect(existsSync(TSX)).toBe(true);
     const proc = runCli([
       GUNNER,
-      "--archetype", "gunner",
-      "--opponent", "idle",
-      "--ticks", "900",
-      "--seed", "r28-e2e",
+      "--archetype",
+      "gunner",
+      "--opponent",
+      "idle",
+      "--ticks",
+      "900",
+      "--seed",
+      "r28-e2e",
       // Acelerado como en el resto de la suite; sin este flag el CLI corre en
       // tiempo real (~33 ms/tick), igual que el arena-sim de Python.
-      "--tick-interval-ms", "3",
+      "--tick-interval-ms",
+      "3",
     ]);
 
     expect(proc.error).toBeUndefined();

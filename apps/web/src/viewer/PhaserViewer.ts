@@ -135,12 +135,9 @@ export class ViewerScene extends Phaser.Scene {
       cfg: this.cameraConfig(),
     });
 
-    this.input.on(
-      "wheel",
-      (pointer: Phaser.Input.Pointer, _objs: unknown, _dx: number, deltaY: number) => {
-        this.interaction.onWheel(deltaY, { x: pointer.x, y: pointer.y }, view());
-      },
-    );
+    this.input.on("wheel", (pointer: Phaser.Input.Pointer, _objs: unknown, _dx: number, deltaY: number) => {
+      this.interaction.onWheel(deltaY, { x: pointer.x, y: pointer.y }, view());
+    });
 
     this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => {
       if (!pointer.isDown) return;
@@ -209,7 +206,10 @@ export class ViewerScene extends Phaser.Scene {
   }
 
   private renderFrame(frame: {
-    vehicles: Map<string, { x: number; y: number; heading: number; turretHeading: number; alive: boolean; alpha: number }>;
+    vehicles: Map<
+      string,
+      { x: number; y: number; heading: number; turretHeading: number; alive: boolean; alpha: number }
+    >;
     projectiles: { id: string; x: number; y: number }[];
   }): void {
     // Vehículos: contenedor por id, reutilizado entre frames (cero allocs en caliente).

@@ -60,12 +60,24 @@ export function fromJsonl(jsonl: string): Replay {
     const rec = JSON.parse(line);
     const { t, ...rest } = rec;
     switch (t) {
-      case "header": replay.header = rest as ReplayHeader; break;
-      case "cmd": replay.commands.push(rest as any); break;
-      case "evt": replay.events.push(rest); break;
-      case "snap": replay.snapshots.push(rest); break;
-      case "hash": replay.stateHashes.push(rest as any); break;
-      case "result": replay.result = rest as BattleResult; break;
+      case "header":
+        replay.header = rest as ReplayHeader;
+        break;
+      case "cmd":
+        replay.commands.push(rest as any);
+        break;
+      case "evt":
+        replay.events.push(rest);
+        break;
+      case "snap":
+        replay.snapshots.push(rest);
+        break;
+      case "hash":
+        replay.stateHashes.push(rest as any);
+        break;
+      case "result":
+        replay.result = rest as BattleResult;
+        break;
     }
   }
   if (!replay.header) throw new Error("Replay sin cabecera: archivo corrupto");
@@ -81,7 +93,10 @@ export function fromJsonl(jsonl: string): Replay {
 class ReplayAgent implements BotAgent {
   private byTick = new Map<number, any>();
 
-  constructor(readonly botId: string, commands: { tick: number; command: any }[]) {
+  constructor(
+    readonly botId: string,
+    commands: { tick: number; command: any }[],
+  ) {
     for (const c of commands) this.byTick.set(c.tick, c.command);
   }
 
@@ -127,10 +142,7 @@ export function replayFromBattle(b: Battle, result: BattleResult): Replay {
 }
 
 /** Graba una batalla completa. Los agentes son los reales (o stubs). */
-export async function record(
-  config: BattleConfig,
-  attach: (b: Battle) => void,
-): Promise<Replay> {
+export async function record(config: BattleConfig, attach: (b: Battle) => void): Promise<Replay> {
   const b = await Battle.create({ ...config, recordReplay: true });
   attach(b);
   const result = b.run();
@@ -241,9 +253,7 @@ export async function verify(replay: Replay): Promise<VerifyResult> {
     divergedAtTick = Math.min(official.length, recomputed.length);
   }
 
-  const matches =
-    divergedAtTick === null &&
-    recomputedResult.finalStateHash === replay.result.finalStateHash;
+  const matches = divergedAtTick === null && recomputedResult.finalStateHash === replay.result.finalStateHash;
 
   return {
     matches,

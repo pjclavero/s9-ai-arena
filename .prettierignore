@@ -2,10 +2,9 @@
 #
 # - JSON/MD/YAML fuera: los JSON de mapas/fixtures participan en checksums y
 #   goldens, y la prosa de docs/ no debe churnar por formato.
-# - apps/arena-engine fuera TEMPORALMENTE: R2.7 reescribe batallas en paralelo
-#   sobre esa app; incorporarla al formateo cuando R2.7 se fusione.
 # - arena-server/arena-viewer/bots son el prototipo v1 (legado, ya excluido
 #   también del typecheck raíz): no se tocan.
+# - apps/arena-engine entró al formateo al fusionarse R2.7 (integración R2/R3).
 *.json
 *.md
 *.yml
@@ -13,7 +12,6 @@
 docs/
 data/
 maps/
-apps/arena-engine/
 apps/arena-server/
 apps/arena-viewer/
 bots/

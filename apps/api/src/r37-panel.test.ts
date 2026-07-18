@@ -40,9 +40,7 @@ function refreshCookie(res: request.Response): string {
 
 describe("R3.7 sesión persistente por cookie httpOnly", () => {
   it("login emite cookie httpOnly y el refresh por cookie (sin body) rota la sesión", async () => {
-    const login = await request(app)
-      .post("/auth/login")
-      .send({ email: DEV_USERS.user, password: DEV_PASSWORD });
+    const login = await request(app).post("/auth/login").send({ email: DEV_USERS.user, password: DEV_PASSWORD });
     expect(login.status).toBe(200);
     const setCookie = ((login.headers["set-cookie"] as unknown as string[]) ?? []).find((c) =>
       c.startsWith("s9_refresh="),
@@ -71,9 +69,7 @@ describe("R3.7 sesión persistente por cookie httpOnly", () => {
   });
 
   it("logout revoca la sesión de la cookie y la borra", async () => {
-    const login = await request(app)
-      .post("/auth/login")
-      .send({ email: DEV_USERS.user, password: DEV_PASSWORD });
+    const login = await request(app).post("/auth/login").send({ email: DEV_USERS.user, password: DEV_PASSWORD });
     const cookie = refreshCookie(login);
     const out = await request(app).post("/auth/logout").set("Cookie", cookie);
     expect(out.status).toBe(204);
@@ -102,9 +98,7 @@ describe("R3.7 GET /bots/{id}/loadouts (revisión vigente para el editor)", () =
       .send(draft);
     expect(created.status).toBe(201);
 
-    const list = await request(app)
-      .get(`/bots/${bot.body.id}/loadouts`)
-      .set("Authorization", `Bearer ${userToken}`);
+    const list = await request(app).get(`/bots/${bot.body.id}/loadouts`).set("Authorization", `Bearer ${userToken}`);
     expect(list.status).toBe(200);
     expect(list.body.length).toBe(1);
     expect(list.body[0].revision).toBe(1);

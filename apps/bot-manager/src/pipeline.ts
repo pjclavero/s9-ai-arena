@@ -274,7 +274,16 @@ export class BuildPipeline {
         }
         if (res.dynamicFindings.length) {
           stage.message = `construcción(es) dinámica(s) prohibida(s): ${res.dynamicFindings.map((d) => `${d.path}: ${d.detail}`).join("; ")}`;
-          this.audit.finding({ category: "dangerous_import", severity: "high", botId: sub.botId, version: sub.version, userId: sub.ownerUserId, correlationId, summary: `construcciones dinámicas que eluden el análisis estático`, detail: { findings: res.dynamicFindings } });
+          this.audit.finding({
+            category: "dangerous_import",
+            severity: "high",
+            botId: sub.botId,
+            version: sub.version,
+            userId: sub.ownerUserId,
+            correlationId,
+            summary: `construcciones dinámicas que eluden el análisis estático`,
+            detail: { findings: res.dynamicFindings },
+          });
           return "failed";
         }
         if (res.dangerousImports.length) {

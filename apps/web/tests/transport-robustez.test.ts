@@ -38,11 +38,23 @@ class FakeGateway {
   start(port = 0): Promise<number> {
     this.wss = new WebSocketServer({ port });
     this.wss.on("connection", (ws) => {
-      ws.send(JSON.stringify({ type: "init", serverTimeMs: Date.now(), snapshot: { tick: this.tick, vehicles: [], projectiles: [] }, spectator: { allowFogView: false, delaySeconds: 0, debug: false }, meta: {} }));
+      ws.send(
+        JSON.stringify({
+          type: "init",
+          serverTimeMs: Date.now(),
+          snapshot: { tick: this.tick, vehicles: [], projectiles: [] },
+          spectator: { allowFogView: false, delaySeconds: 0, debug: false },
+          meta: {},
+        }),
+      );
     });
     this.timer = setInterval(() => {
       this.tick += 3;
-      const msg = JSON.stringify({ type: "snapshot", serverTimeMs: Date.now(), snapshot: { tick: this.tick, vehicles: [], projectiles: [] } });
+      const msg = JSON.stringify({
+        type: "snapshot",
+        serverTimeMs: Date.now(),
+        snapshot: { tick: this.tick, vehicles: [], projectiles: [] },
+      });
       for (const c of this.wss?.clients ?? []) c.send(msg);
     }, 30);
     return new Promise((resolve) => this.wss!.once("listening", () => resolve((this.wss!.address() as any).port)));
@@ -63,7 +75,10 @@ afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!();
 });
 
-function makeClient(port: number, opts: Partial<ConstructorParameters<typeof SpectatorClient>[0]> = {}): SpectatorClient {
+function makeClient(
+  port: number,
+  opts: Partial<ConstructorParameters<typeof SpectatorClient>[0]> = {},
+): SpectatorClient {
   const c = new SpectatorClient({
     getTicket: async () => ({ ticket: "t", wsUrl: `ws://127.0.0.1:${port}/spectate/x` }),
     WebSocketImpl: WsWebSocket as unknown as typeof WebSocket,

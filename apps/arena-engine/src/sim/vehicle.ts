@@ -20,8 +20,7 @@ import {
 import { clamp } from "./physics.js";
 
 export type ModuleCategory =
-  | "movement" | "power" | "sensor" | "weapon" | "ammo"
-  | "mine" | "armor" | "radio" | "utility";
+  "movement" | "power" | "sensor" | "weapon" | "ammo" | "mine" | "armor" | "radio" | "utility";
 
 /** Especificación efectiva de un módulo, tal y como la entrega E3 (catálogo congelado). */
 export interface ModuleSpec {

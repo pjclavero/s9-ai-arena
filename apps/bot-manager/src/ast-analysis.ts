@@ -111,7 +111,8 @@ function extractPython(files: SourceFile[]): AstExtraction {
     parsed = JSON.parse(proc.stdout) as PyFileResult[];
     if (!Array.isArray(parsed) || parsed.length !== files.length) throw new Error("salida incompleta");
   } catch (e) {
-    for (const f of files) res.parseErrors.push({ path: f.path, detail: `salida del analizador AST ilegible (${String(e)})` });
+    for (const f of files)
+      res.parseErrors.push({ path: f.path, detail: `salida del analizador AST ilegible (${String(e)})` });
     return res;
   }
   for (const r of parsed) {
@@ -178,7 +179,10 @@ function extractNode(files: SourceFile[]): AstExtraction {
           if (src.type === "Literal" && typeof src.value === "string") {
             res.imports.push(src.value);
           } else {
-            res.dynamicFindings.push({ path: f.path, detail: `línea ${line(n)}: import() dinámico con argumento no literal` });
+            res.dynamicFindings.push({
+              path: f.path,
+              detail: `línea ${line(n)}: import() dinámico con argumento no literal`,
+            });
           }
           break;
         }
@@ -189,7 +193,10 @@ function extractNode(files: SourceFile[]): AstExtraction {
             if (arg && arg.type === "Literal" && typeof arg.value === "string") {
               res.imports.push(arg.value);
             } else {
-              res.dynamicFindings.push({ path: f.path, detail: `línea ${line(n)}: require() con argumento no literal` });
+              res.dynamicFindings.push({
+                path: f.path,
+                detail: `línea ${line(n)}: require() con argumento no literal`,
+              });
             }
           }
           break;

@@ -8,11 +8,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AddressInfo } from "node:net";
-import {
-  DEFAULT_LIMITS,
-  type SandboxSpec,
-  complianceViolations,
-} from "../src/container-runner.js";
+import { DEFAULT_LIMITS, type SandboxSpec, complianceViolations } from "../src/container-runner.js";
 import {
   DEFAULT_POLICY,
   type DockerBackend,
@@ -143,7 +139,9 @@ describe("R1.7 · allowlist de endpoints", () => {
   });
 
   it("admite las cuatro operaciones permitidas (con prefijo de versión incluido)", () => {
-    expect(evaluateProxyRequest("POST", "/v1.44/containers/create?name=bot-x", JSON.stringify(goodBody())).ok).toBe(true);
+    expect(evaluateProxyRequest("POST", "/v1.44/containers/create?name=bot-x", JSON.stringify(goodBody())).ok).toBe(
+      true,
+    );
     expect(evaluateProxyRequest("POST", "/containers/abc123/start", undefined).ok).toBe(true);
     expect(evaluateProxyRequest("POST", "/containers/abc123/stop?t=5", undefined).ok).toBe(true);
     expect(evaluateProxyRequest("GET", "/containers/abc123/json", undefined).ok).toBe(true);

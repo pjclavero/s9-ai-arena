@@ -40,7 +40,8 @@ beforeAll(async () => {
   h = await startTestDb();
   await seedDev(h.db);
   // Batalla en directo: su ticket de espectador es el endpoint público con cuota anónima.
-  const [live] = await h.db("battles")
+  const [live] = await h
+    .db("battles")
     .insert({
       status: "running",
       official: false,

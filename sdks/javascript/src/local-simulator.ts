@@ -61,7 +61,8 @@ export async function startLocalBattle(opts: LocalBattleOptions): Promise<LocalB
   const all = [...opts.externalBots, ...stubBots];
   const participants = all.map((s, i) => {
     const loadout = ARCHETYPES[s.archetype];
-    if (!loadout) throw new Error(`Arquetipo desconocido: ${s.archetype}. Opciones: ${Object.keys(ARCHETYPES).join(", ")}`);
+    if (!loadout)
+      throw new Error(`Arquetipo desconocido: ${s.archetype}. Opciones: ${Object.keys(ARCHETYPES).join(", ")}`);
     return {
       id: `veh_${i + 1}`,
       botId: s.botId,

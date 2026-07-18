@@ -87,12 +87,7 @@ export function TournamentsPage(_props: { me: Me }) {
           <p>
             <label>
               Nombre{" "}
-              <input
-                aria-label="nombre del torneo"
-                required
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
+              <input aria-label="nombre del torneo" required value={name} onChange={(e) => setName(e.target.value)} />
             </label>
           </p>
           <p>
@@ -117,8 +112,7 @@ export function TournamentsPage(_props: { me: Me }) {
               </select>
             </label>{" "}
             <label>
-              Ruleset{" "}
-              <input aria-label="ruleset" value={rulesetId} onChange={(e) => setRulesetId(e.target.value)} />
+              Ruleset <input aria-label="ruleset" value={rulesetId} onChange={(e) => setRulesetId(e.target.value)} />
             </label>
           </p>
           {error && (

@@ -20,7 +20,16 @@ export interface Migration {
 export const ROLES = ["visitor", "user", "developer", "team_captain", "organizer", "moderator", "admin"] as const;
 export type RoleName = (typeof ROLES)[number];
 
-export const BOT_STATES = ["draft", "validating", "rejected", "validated", "published", "frozen", "suspended", "retired"] as const;
+export const BOT_STATES = [
+  "draft",
+  "validating",
+  "rejected",
+  "validated",
+  "published",
+  "frozen",
+  "suspended",
+  "retired",
+] as const;
 
 const m001_identity: Migration = {
   name: "001_identity",

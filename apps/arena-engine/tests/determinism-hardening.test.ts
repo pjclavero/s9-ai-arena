@@ -43,10 +43,7 @@ describe("lint de determinismo invertido (ERR-ENG-02)", () => {
     // Math.random() en el propio RNG pasaba la CI en verde.
     const dir = mkdtempSync(join(tmpdir(), "lint-det-"));
     try {
-      writeFileSync(
-        join(dir, "rng.ts"),
-        `export function next(): number { return Math.random(); }\n`,
-      );
+      writeFileSync(join(dir, "rng.ts"), `export function next(): number { return Math.random(); }\n`);
       const r = runLint(dir);
       expect(r.status).toBe(1);
       expect(r.output).toContain("Math.random()");

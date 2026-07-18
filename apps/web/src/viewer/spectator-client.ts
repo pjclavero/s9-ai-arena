@@ -55,7 +55,12 @@ type Listener = (msg: any) => void;
  * y de ahí se sortea uniformemente en [delay/2, delay] — reintentos crecientes
  * y DESINCRONIZADOS entre clientes (sin estampida).
  */
-export function backoffDelayMs(attempt: number, baseMs: number, capMs: number, random: () => number = Math.random): number {
+export function backoffDelayMs(
+  attempt: number,
+  baseMs: number,
+  capMs: number,
+  random: () => number = Math.random,
+): number {
   const exp = Math.min(capMs, baseMs * Math.pow(2, Math.max(0, attempt - 1)));
   return exp / 2 + random() * (exp / 2);
 }
@@ -240,17 +245,20 @@ export class SpectatorClient {
     this.stopWatchdog();
     const timeout = this.opts.watchdogTimeoutMs ?? 10_000;
     // Se sondea a un cuarto del timeout: detección temprana sin coste apreciable.
-    this.watchdog = setInterval(() => {
-      if (Date.now() - this.lastMessageAt > timeout) {
-        // Conexión zombi: cerrar dispara onclose ⇒ bucle de reconexión.
-        this.stopWatchdog();
-        try {
-          this.ws?.close();
-        } catch {
-          /* ya cerrada */
+    this.watchdog = setInterval(
+      () => {
+        if (Date.now() - this.lastMessageAt > timeout) {
+          // Conexión zombi: cerrar dispara onclose ⇒ bucle de reconexión.
+          this.stopWatchdog();
+          try {
+            this.ws?.close();
+          } catch {
+            /* ya cerrada */
+          }
         }
-      }
-    }, Math.max(50, Math.floor(timeout / 4)));
+      },
+      Math.max(50, Math.floor(timeout / 4)),
+    );
   }
 
   private stopWatchdog(): void {

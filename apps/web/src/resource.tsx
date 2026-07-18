@@ -6,10 +6,7 @@
  */
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
-export type Resource<T> =
-  | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "ready"; data: T };
+export type Resource<T> = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; data: T };
 
 export function useResource<T>(loader: () => Promise<T>, deps: unknown[]): [Resource<T>, () => void] {
   const [state, setState] = useState<Resource<T>>({ status: "loading" });

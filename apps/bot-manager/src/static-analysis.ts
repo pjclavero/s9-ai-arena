@@ -25,13 +25,41 @@ import { extractAst, type AstFinding } from "./ast-analysis.js";
 // R2.4 (ERR-SEC-06): `os` y `process` YA NO están aquí — un bot no tiene por qué
 // tocar entorno/procesos, y ambos figuran ahora en las listas de peligrosos.
 const PYTHON_STDLIB = new Set([
-  "sys", "math", "json", "random", "typing", "collections", "itertools",
-  "functools", "dataclasses", "abc", "time", "re", "enum", "heapq", "bisect",
-  "copy", "struct", "array", "statistics", "decimal", "fractions", "queue",
+  "sys",
+  "math",
+  "json",
+  "random",
+  "typing",
+  "collections",
+  "itertools",
+  "functools",
+  "dataclasses",
+  "abc",
+  "time",
+  "re",
+  "enum",
+  "heapq",
+  "bisect",
+  "copy",
+  "struct",
+  "array",
+  "statistics",
+  "decimal",
+  "fractions",
+  "queue",
 ]);
 const NODE_BUILTINS = new Set([
-  "assert", "buffer", "events", "path", "querystring", "string_decoder",
-  "url", "util", "stream", "timers", "console",
+  "assert",
+  "buffer",
+  "events",
+  "path",
+  "querystring",
+  "string_decoder",
+  "url",
+  "util",
+  "stream",
+  "timers",
+  "console",
 ]);
 
 // Builtins peligrosos para un bot sandboxeado (red, procesos, FS crudo): la lista es
@@ -152,7 +180,12 @@ export function analyze(runtime: Runtime, files: SourceFile[], config: PipelineC
   const dangerousImports: string[] = [];
   const disallowedImports: string[] = [];
   const localFileStems = new Set(
-    files.map((f) => f.path.replace(/\.(py|m?js|ts)$/, "").split("/").pop()!),
+    files.map((f) =>
+      f.path
+        .replace(/\.(py|m?js|ts)$/, "")
+        .split("/")
+        .pop()!,
+    ),
   );
   for (const mod of rawImports) {
     if (mod.startsWith(".") || mod.startsWith("/")) continue; // import local relativo

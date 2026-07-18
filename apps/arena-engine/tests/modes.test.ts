@@ -57,11 +57,14 @@ describe("CTF · máquina de estados de bandera (cap. 13.1)", () => {
 
   it("emite los eventos de la FSM en orden: flag_taken antes que flag_captured", () => {
     const { b, map } = ctfBattle();
-    b.attachBot("veh_1", new FlagRunnerBot(
-      "b1",
-      map.flags.find((f) => f.team === "blue")!.position,
-      map.bases.find((x) => x.team === "red")!.position,
-    ));
+    b.attachBot(
+      "veh_1",
+      new FlagRunnerBot(
+        "b1",
+        map.flags.find((f) => f.team === "blue")!.position,
+        map.bases.find((x) => x.team === "red")!.position,
+      ),
+    );
     b.attachBot("veh_2", new IdleBot("b2"));
     b.run(9000);
 
@@ -76,11 +79,14 @@ describe("CTF · máquina de estados de bandera (cap. 13.1)", () => {
 
   it("si el portador muere, la bandera CAE (no vuelve a base ni desaparece)", () => {
     const { b, map } = ctfBattle();
-    b.attachBot("veh_1", new FlagRunnerBot(
-      "b1",
-      map.flags.find((f) => f.team === "blue")!.position,
-      map.bases.find((x) => x.team === "red")!.position,
-    ));
+    b.attachBot(
+      "veh_1",
+      new FlagRunnerBot(
+        "b1",
+        map.flags.find((f) => f.team === "blue")!.position,
+        map.bases.find((x) => x.team === "red")!.position,
+      ),
+    );
     b.attachBot("veh_2", new IdleBot("b2"));
 
     const mode = (b as any).mode as CaptureTheFlagMode;
@@ -108,11 +114,14 @@ describe("CTF · máquina de estados de bandera (cap. 13.1)", () => {
 
   it("una bandera caída vuelve sola a su base tras flagReturnTicks", () => {
     const { b, map } = ctfBattle({ ctf: { requireOwnFlagAtBase: true, flagReturnTicks: 30 } });
-    b.attachBot("veh_1", new FlagRunnerBot(
-      "b1",
-      map.flags.find((f) => f.team === "blue")!.position,
-      map.bases.find((x) => x.team === "red")!.position,
-    ));
+    b.attachBot(
+      "veh_1",
+      new FlagRunnerBot(
+        "b1",
+        map.flags.find((f) => f.team === "blue")!.position,
+        map.bases.find((x) => x.team === "red")!.position,
+      ),
+    );
     b.attachBot("veh_2", new IdleBot("b2"));
 
     const mode = (b as any).mode as CaptureTheFlagMode;
@@ -157,11 +166,14 @@ describe("CTF · máquina de estados de bandera (cap. 13.1)", () => {
     mode.flags.get("red")!.position = { x: 60, y: 70 };
 
     // El rojo lleva la bandera azul a su base... pero no debería poder capturar.
-    b.attachBot("veh_1", new FlagRunnerBot(
-      "b1",
-      map.flags.find((f) => f.team === "blue")!.position,
-      map.bases.find((x) => x.team === "red")!.position,
-    ));
+    b.attachBot(
+      "veh_1",
+      new FlagRunnerBot(
+        "b1",
+        map.flags.find((f) => f.team === "blue")!.position,
+        map.bases.find((x) => x.team === "red")!.position,
+      ),
+    );
     b.attachBot("veh_2", new IdleBot("b2"));
 
     const result = b.run(3000);
@@ -194,11 +206,14 @@ describe("CTF · máquina de estados de bandera (cap. 13.1)", () => {
     mode.flags.get("red")!.state = "dropped";
     mode.flags.get("red")!.position = { x: 60, y: 70 };
 
-    b.attachBot("veh_1", new FlagRunnerBot(
-      "b1",
-      map.flags.find((f) => f.team === "blue")!.position,
-      map.bases.find((x) => x.team === "red")!.position,
-    ));
+    b.attachBot(
+      "veh_1",
+      new FlagRunnerBot(
+        "b1",
+        map.flags.find((f) => f.team === "blue")!.position,
+        map.bases.find((x) => x.team === "red")!.position,
+      ),
+    );
     b.attachBot("veh_2", new IdleBot("b2"));
 
     const result = b.run(9000);
@@ -208,11 +223,14 @@ describe("CTF · máquina de estados de bandera (cap. 13.1)", () => {
 
   it("la posición de una bandera transportada NO es pública (hay que verla)", () => {
     const { b, map } = ctfBattle();
-    b.attachBot("veh_1", new FlagRunnerBot(
-      "b1",
-      map.flags.find((f) => f.team === "blue")!.position,
-      map.bases.find((x) => x.team === "red")!.position,
-    ));
+    b.attachBot(
+      "veh_1",
+      new FlagRunnerBot(
+        "b1",
+        map.flags.find((f) => f.team === "blue")!.position,
+        map.bases.find((x) => x.team === "red")!.position,
+      ),
+    );
     b.attachBot("veh_2", new IdleBot("b2"));
 
     const mode = (b as any).mode as CaptureTheFlagMode;
@@ -235,7 +253,11 @@ describe("fuego amigo (configurable por ruleset)", () => {
     const b = new Battle({
       battleId: "ff",
       seed: "ff",
-      ruleset: loadRuleset("tdm_mvp@1", { friendlyFire, timeLimitTicks: 400, respawn: { enabled: false, delayTicks: 0 } }),
+      ruleset: loadRuleset("tdm_mvp@1", {
+        friendlyFire,
+        timeLimitTicks: 400,
+        respawn: { enabled: false, delayTicks: 0 },
+      }),
       map: emptyArena(),
       participants: [
         { id: "veh_1", botId: "b1", team: "red", spec: gunnerLoadout() },

@@ -51,7 +51,11 @@ export function refreshTokenFromCookie(req: { headers: Record<string, unknown> }
   return null;
 }
 
-function setRefreshCookie(res: { cookie: (n: string, v: string, o: Record<string, unknown>) => void }, token: string, req: { secure?: boolean }): void {
+function setRefreshCookie(
+  res: { cookie: (n: string, v: string, o: Record<string, unknown>) => void },
+  token: string,
+  req: { secure?: boolean },
+): void {
   res.cookie(REFRESH_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
@@ -189,7 +193,7 @@ export function authRoutes(deps: AuthDeps): Router {
       // que ambas ramas tienen el mismo coste y el timing no delata cuentas.
       const ok = user
         ? await verifyPassword(user.password_hash, password)
-        : ((await verifyPassword(await decoyHashPromise, password)), false);
+        : (await verifyPassword(await decoyHashPromise, password), false);
       if (!ok) {
         const blocked = await loginGuard.recordFailure(key);
         if (blocked) {
@@ -227,75 +231,84 @@ export function authRoutes(deps: AuthDeps): Router {
   // señal inequívoca de robo (alguien tiene una copia antigua) → se revoca la
   // familia ENTERA y se deja registro de auditoría. Además: vida máxima absoluta
   // (absolute_expires_at) y rate-limit propio.
-  defineOperation(router, "refreshToken", async (req, res) => {
-    // R3.7: acepta el token del body (contrato) o de la cookie httpOnly (panel).
-    const provided = typeof req.body?.refreshToken === "string" ? req.body.refreshToken : refreshTokenFromCookie(req);
-    if (typeof provided !== "string" || !provided) throw badRequest("refreshToken obligatorio (body o cookie)");
-    const presented = hashToken(provided);
+  defineOperation(
+    router,
+    "refreshToken",
+    async (req, res) => {
+      // R3.7: acepta el token del body (contrato) o de la cookie httpOnly (panel).
+      const provided = typeof req.body?.refreshToken === "string" ? req.body.refreshToken : refreshTokenFromCookie(req);
+      if (typeof provided !== "string" || !provided) throw badRequest("refreshToken obligatorio (body o cookie)");
+      const presented = hashToken(provided);
 
-    const known = await db("session_refresh_tokens").where({ token_hash: presented }).first();
-    if (!known) throw unauthorized("Refresh token inválido, revocado o expirado");
-    const session = await db("sessions").where({ id: known.session_id }).first();
-    if (!session) throw unauthorized("Refresh token inválido, revocado o expirado");
+      const known = await db("session_refresh_tokens").where({ token_hash: presented }).first();
+      if (!known) throw unauthorized("Refresh token inválido, revocado o expirado");
+      const session = await db("sessions").where({ id: known.session_id }).first();
+      if (!session) throw unauthorized("Refresh token inválido, revocado o expirado");
 
-    if (known.rotated_at) {
-      // REUTILIZACIÓN detectada: el token ya fue canjeado. Revocar la familia.
-      if (!session.revoked_at) {
-        await db("sessions").where({ id: session.id }).update({ revoked_at: db.fn.now() });
-      }
-      await audit(db, {
-        actorId: session.user_id,
-        action: "auth.refresh.reuse_detected",
-        target: `session:${session.id}`,
-        detail: { ip: req.ip, reason: "rotated_token_replayed", family: session.id },
-        correlationId: req.correlationId,
-      });
-      throw unauthorized("Refresh token reutilizado: la sesión ha sido revocada");
-    }
-
-    const now = Date.now();
-    const absolute = session.absolute_expires_at
-      ? new Date(session.absolute_expires_at).getTime()
-      : new Date(session.created_at).getTime() + REFRESH_ABSOLUTE_TTL_S * 1000;
-    if (session.revoked_at || new Date(session.expires_at).getTime() <= now || absolute <= now) {
-      throw unauthorized("Refresh token inválido, revocado o expirado");
-    }
-
-    // Rotación: el refresh usado deja de valer; la ventana deslizante se renueva
-    // pero SIEMPRE recortada al tope absoluto de la familia.
-    const { token, hash } = newRefreshToken();
-    await db.transaction(async (trx) => {
-      await trx("session_refresh_tokens").where({ id: known.id }).update({ rotated_at: trx.fn.now() });
-      await trx("session_refresh_tokens").insert({ session_id: session.id, token_hash: hash });
-      await trx("sessions")
-        .where({ id: session.id })
-        .update({
-          refresh_token_hash: hash,
-          last_seen_at: trx.fn.now(),
-          expires_at: new Date(Math.min(now + REFRESH_TOKEN_TTL_S * 1000, absolute)),
+      if (known.rotated_at) {
+        // REUTILIZACIÓN detectada: el token ya fue canjeado. Revocar la familia.
+        if (!session.revoked_at) {
+          await db("sessions").where({ id: session.id }).update({ revoked_at: db.fn.now() });
+        }
+        await audit(db, {
+          actorId: session.user_id,
+          action: "auth.refresh.reuse_detected",
+          target: `session:${session.id}`,
+          detail: { ip: req.ip, reason: "rotated_token_replayed", family: session.id },
+          correlationId: req.correlationId,
         });
-    });
-    setRefreshCookie(res, token, req); // R3.7: rotación también en la cookie
-    res.status(200).json({
-      accessToken: signAccessToken({ sub: session.user_id, sid: session.id }),
-      refreshToken: token,
-      expiresIn: ACCESS_TOKEN_TTL_S,
-    });
-  }, rateLimit(deps.refreshLimiter, "refresh"));
+        throw unauthorized("Refresh token reutilizado: la sesión ha sido revocada");
+      }
+
+      const now = Date.now();
+      const absolute = session.absolute_expires_at
+        ? new Date(session.absolute_expires_at).getTime()
+        : new Date(session.created_at).getTime() + REFRESH_ABSOLUTE_TTL_S * 1000;
+      if (session.revoked_at || new Date(session.expires_at).getTime() <= now || absolute <= now) {
+        throw unauthorized("Refresh token inválido, revocado o expirado");
+      }
+
+      // Rotación: el refresh usado deja de valer; la ventana deslizante se renueva
+      // pero SIEMPRE recortada al tope absoluto de la familia.
+      const { token, hash } = newRefreshToken();
+      await db.transaction(async (trx) => {
+        await trx("session_refresh_tokens").where({ id: known.id }).update({ rotated_at: trx.fn.now() });
+        await trx("session_refresh_tokens").insert({ session_id: session.id, token_hash: hash });
+        await trx("sessions")
+          .where({ id: session.id })
+          .update({
+            refresh_token_hash: hash,
+            last_seen_at: trx.fn.now(),
+            expires_at: new Date(Math.min(now + REFRESH_TOKEN_TTL_S * 1000, absolute)),
+          });
+      });
+      setRefreshCookie(res, token, req); // R3.7: rotación también en la cookie
+      res.status(200).json({
+        accessToken: signAccessToken({ sub: session.user_id, sid: session.id }),
+        refreshToken: token,
+        expiresIn: ACCESS_TOKEN_TTL_S,
+      });
+    },
+    rateLimit(deps.refreshLimiter, "refresh"),
+  );
 
   // R3.7 · Extensión: cierre de sesión del panel. Revoca la sesión asociada a la
   // cookie httpOnly (si existe) y la borra; idempotente y accesible sin token.
-  defineExtension(router, { operationId: "logout", method: "post", path: "/auth/logout", minRole: "visitor" }, async (req, res) => {
-    const token = refreshTokenFromCookie(req);
-    if (token) {
-      await db("sessions")
-        .where({ refresh_token_hash: hashToken(token) })
-        .whereNull("revoked_at")
-        .update({ revoked_at: db.fn.now() });
-    }
-    clearRefreshCookie(res);
-    res.status(204).end();
-  });
+  defineExtension(
+    router,
+    { operationId: "logout", method: "post", path: "/auth/logout", minRole: "visitor" },
+    async (req, res) => {
+      const token = refreshTokenFromCookie(req);
+      if (token) {
+        await db("sessions")
+          .where({ refresh_token_hash: hashToken(token) })
+          .whereNull("revoked_at")
+          .update({ revoked_at: db.fn.now() });
+      }
+      clearRefreshCookie(res);
+      res.status(204).end();
+    },
+  );
 
   // ------------------------------------------------------------- sessions
   defineOperation(router, "listSessions", async (req, res) => {

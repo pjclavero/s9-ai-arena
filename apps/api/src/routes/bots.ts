@@ -318,7 +318,12 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
       // R2.5 (ERR-SEC-12): encolado REAL — el cliente por defecto (QueueBotManager)
       // solo persiste el trabajo en `jobs`; el pipeline corre en el worker del
       // bot-manager, no en el proceso de la API. 202 = aceptado, no completado.
-      await botManager.enqueueBuild({ buildId: build.id, botId: bot.id as string, version: v.version, runtime: v.runtime });
+      await botManager.enqueueBuild({
+        buildId: build.id,
+        botId: bot.id as string,
+        version: v.version,
+        runtime: v.runtime,
+      });
       const fresh = await db("builds").where({ id: build.id }).first();
       res.status(202).json(buildToJson(fresh, { includeLogs: true }));
     },

@@ -23,7 +23,9 @@ function jsonRes(status: number, body?: unknown) {
   return {
     ok: status >= 200 && status < 300,
     status,
-    headers: { get: (h: string) => (h.toLowerCase() === "content-type" && body !== undefined ? "application/json" : null) },
+    headers: {
+      get: (h: string) => (h.toLowerCase() === "content-type" && body !== undefined ? "application/json" : null),
+    },
     json: async () => body,
   };
 }
@@ -31,7 +33,9 @@ function jsonRes(status: number, body?: unknown) {
 type Handler = (method: string, url: string, init: RequestInit) => ReturnType<typeof jsonRes>;
 let fetchSpy: ReturnType<typeof vi.fn>;
 function installFetch(handler: Handler) {
-  fetchSpy = vi.fn(async (url: string, init?: RequestInit) => handler((init?.method ?? "GET").toUpperCase(), String(url), init ?? {}));
+  fetchSpy = vi.fn(async (url: string, init?: RequestInit) =>
+    handler((init?.method ?? "GET").toUpperCase(), String(url), init ?? {}),
+  );
   vi.stubGlobal("fetch", fetchSpy);
 }
 
@@ -84,7 +88,9 @@ describe("R3.7 interceptor único de 401 (api.ts)", () => {
     setToken("caducado");
     const expired = vi.fn();
     onSessionExpired(expired);
-    installFetch((_m, url) => (url.endsWith("/auth/refresh") ? jsonRes(401, {}) : jsonRes(401, { message: "expirado" })));
+    installFetch((_m, url) =>
+      url.endsWith("/auth/refresh") ? jsonRes(401, {}) : jsonRes(401, { message: "expirado" }),
+    );
     await expect(api("GET", "/bots")).rejects.toThrow();
     expect(expired).toHaveBeenCalledWith(expect.stringContaining("sesión ha caducado"));
   });

@@ -45,23 +45,25 @@ function runBattle(seed: string) {
 }
 
 describe("determinismo del motor", () => {
-  it("la misma semilla produce el mismo hash de estado final (100 ejecuciones)", () => {
-    const reference = runBattle("seed-alpha");
-    expect(reference.result.finalStateHash).toMatch(/^[0-9a-f]{64}$/);
+  it(
+    "la misma semilla produce el mismo hash de estado final (100 ejecuciones)",
+    () => {
+      const reference = runBattle("seed-alpha");
+      expect(reference.result.finalStateHash).toMatch(/^[0-9a-f]{64}$/);
 
-    // 100 en cada PR. La CI nightly sube esto a 1000 (criterio de la DoD)
-    // mediante DETERMINISM_RUNS (.github/workflows/nightly.yml, E10 T10.1).
-    const N = Number(process.env.DETERMINISM_RUNS ?? 100);
-    for (let i = 0; i < N; i++) {
-      const run = runBattle("seed-alpha");
-      expect(run.result.finalStateHash, `divergencia en la ejecución ${i}`).toBe(
-        reference.result.finalStateHash,
-      );
-      expect(run.result.ticks).toBe(reference.result.ticks);
-      expect(run.result.score).toEqual(reference.result.score);
-    }
-    // Timeout proporcional a N para que la nightly (1000 ejecuciones) no aborte.
-  }, Number(process.env.DETERMINISM_RUNS ?? 100) * 1_200 + 60_000);
+      // 100 en cada PR. La CI nightly sube esto a 1000 (criterio de la DoD)
+      // mediante DETERMINISM_RUNS (.github/workflows/nightly.yml, E10 T10.1).
+      const N = Number(process.env.DETERMINISM_RUNS ?? 100);
+      for (let i = 0; i < N; i++) {
+        const run = runBattle("seed-alpha");
+        expect(run.result.finalStateHash, `divergencia en la ejecución ${i}`).toBe(reference.result.finalStateHash);
+        expect(run.result.ticks).toBe(reference.result.ticks);
+        expect(run.result.score).toEqual(reference.result.score);
+      }
+      // Timeout proporcional a N para que la nightly (1000 ejecuciones) no aborte.
+    },
+    Number(process.env.DETERMINISM_RUNS ?? 100) * 1_200 + 60_000,
+  );
 
   it("los hashes intermedios coinciden tick a tick, no solo el final", () => {
     // Un final igual con caminos distintos sería un falso positivo peligroso.

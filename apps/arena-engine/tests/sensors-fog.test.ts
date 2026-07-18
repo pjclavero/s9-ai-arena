@@ -237,7 +237,7 @@ describe("FUGA DE NIEBLA DE GUERRA (D8)", () => {
     phys.get("veh_2")!.rb.setTranslation({ x: 66, y: 62 }, true); // justo a la derecha
     b.step();
 
-    const contactsBlocked = (b.observationFor("veh_1").sensors?.radar?.[0]?.contacts ?? []);
+    const contactsBlocked = b.observationFor("veh_1").sensors?.radar?.[0]?.contacts ?? [];
     expect(contactsBlocked).toHaveLength(0); // el muro tapa: no hay contacto
 
     // Ahora los ponemos en línea de visión limpia, a la misma distancia.
@@ -245,7 +245,7 @@ describe("FUGA DE NIEBLA DE GUERRA (D8)", () => {
     phys.get("veh_2")!.rb.setTranslation({ x: 66, y: 40 }, true);
     b.step();
 
-    const contactsClear = (b.observationFor("veh_1").sensors?.radar?.[0]?.contacts ?? []);
+    const contactsClear = b.observationFor("veh_1").sensors?.radar?.[0]?.contacts ?? [];
     expect(contactsClear.length).toBeGreaterThan(0); // ahora sí
     b.free();
   });

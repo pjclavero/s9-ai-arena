@@ -23,9 +23,7 @@ import { basename, join, relative } from "node:path";
 
 const ROOT = join(import.meta.dirname, "..");
 const dirFlag = process.argv.indexOf("--dir");
-const SRC_DIR = dirFlag >= 0 && process.argv[dirFlag + 1]
-  ? process.argv[dirFlag + 1]
-  : join(ROOT, "src");
+const SRC_DIR = dirFlag >= 0 && process.argv[dirFlag + 1] ? process.argv[dirFlag + 1] : join(ROOT, "src");
 
 /**
  * LISTA DE EXCLUSIÓN. Cada entrada existe por un motivo concreto y auditado; añadir
@@ -101,9 +99,9 @@ const FORBIDDEN = [
  */
 function stripCommentsAndStrings(src) {
   return src
-    .replace(/\/\*[\s\S]*?\*\//g, " ")   // bloque
+    .replace(/\/\*[\s\S]*?\*\//g, " ") // bloque
     .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ") // línea (sin romper las URLs http://)
-    .replace(/`(?:\\.|[^`\\])*`/g, "``")   // plantillas
+    .replace(/`(?:\\.|[^`\\])*`/g, "``") // plantillas
     .replace(/'(?:\\.|[^'\\])*'/g, "''")
     .replace(/"(?:\\.|[^"\\])*"/g, '""');
 }

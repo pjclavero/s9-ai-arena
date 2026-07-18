@@ -116,7 +116,10 @@ export function tournamentRoutes(db: Db): Router {
     router,
     { operationId: "getTournament", method: "get", path: "/tournaments/{tournamentId}", minRole: "visitor" },
     async (req, res) => {
-      const t = await db("tournaments").where({ id: req.params.tournamentId }).first().catch(() => null);
+      const t = await db("tournaments")
+        .where({ id: req.params.tournamentId })
+        .first()
+        .catch(() => null);
       if (!t) throw notFound();
       const entries = await db("entries").where({ tournament_id: t.id }).count("* as n").first();
       res.json({ ...tournamentToJson(t), entryCount: Number(entries?.n ?? 0) });
@@ -125,9 +128,17 @@ export function tournamentRoutes(db: Db): Router {
 
   defineExtension(
     router,
-    { operationId: "listTournamentBattles", method: "get", path: "/tournaments/{tournamentId}/battles", minRole: "visitor" },
+    {
+      operationId: "listTournamentBattles",
+      method: "get",
+      path: "/tournaments/{tournamentId}/battles",
+      minRole: "visitor",
+    },
     async (req, res) => {
-      const t = await db("tournaments").where({ id: req.params.tournamentId }).first().catch(() => null);
+      const t = await db("tournaments")
+        .where({ id: req.params.tournamentId })
+        .first()
+        .catch(() => null);
       if (!t) throw notFound();
       const battles = await db("battles").where({ tournament_id: t.id }).orderBy("created_at", "asc");
       const matches = await db("matches").where({ tournament_id: t.id });

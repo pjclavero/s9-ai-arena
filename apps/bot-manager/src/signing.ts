@@ -46,9 +46,7 @@ export function exportPrivateKeyPem(keypair: ServiceKeypair): string {
 export function keypairFromPrivatePem(pem: string): ServiceKeypair {
   const privateKey = createPrivateKey(pem);
   if (privateKey.asymmetricKeyType !== "ed25519") {
-    throw new Error(
-      `la clave de firma de artefactos debe ser ed25519, no '${privateKey.asymmetricKeyType}'`,
-    );
+    throw new Error(`la clave de firma de artefactos debe ser ed25519, no '${privateKey.asymmetricKeyType}'`);
   }
   // Nota: los tipos de @types/node de este repo no admiten KeyObject directo aquí.
   return { privateKey, publicKey: createPublicKey({ key: privateKey.export({ type: "pkcs8", format: "pem" }) }) };
