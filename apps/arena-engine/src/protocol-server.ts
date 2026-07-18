@@ -231,6 +231,7 @@ export class ProtocolServer {
   private readonly handshakeTimers = new Map<WebSocket, ReturnType<typeof setTimeout>>();
   private loopTimer: ReturnType<typeof setTimeout> | null = null;
   private resultResolvers: ((r: BattleResult) => void)[] = [];
+  private allConnectedResolvers: (() => void)[] = [];
 
   constructor(opts: ProtocolServerOptions) {
     this.battle = opts.battle;
@@ -358,6 +359,37 @@ export class ProtocolServer {
 
     this.states.set(ws, "connected");
     safeSend(ws, envelope("WELCOME", this.buildWelcome(expected)));
+
+    // Señal para whenAllConnected(): todos los bots esperados ya han hecho handshake.
+    if (this.agents.size >= this.expectedByBotId.size) {
+      for (const resolve of this.allConnectedResolvers.splice(0)) resolve();
+    }
+  }
+
+  /**
+   * Resuelve cuando TODOS los bots esperados han completado el handshake (WELCOME
+   * enviado). Permite arrancar el bucle SOLO cuando los agentes están enganchados
+   * desde el tick 0 — necesario para la batalla-en-contenedores, donde el
+   * orquestador no intercepta cada handshake como sí hacen los tests. Rechaza si no
+   * conectan todos dentro de `timeoutMs`.
+   */
+  whenAllConnected(timeoutMs = 15000): Promise<void> {
+    if (this.agents.size >= this.expectedByBotId.size) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () =>
+          reject(
+            new Error(
+              `whenAllConnected: solo ${this.agents.size}/${this.expectedByBotId.size} bots conectaron en ${timeoutMs} ms`,
+            ),
+          ),
+        timeoutMs,
+      );
+      this.allConnectedResolvers.push(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
   }
 
   private handleCommand(ws: WebSocket, command: any): void {
