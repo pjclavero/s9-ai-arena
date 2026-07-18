@@ -1,5 +1,11 @@
 # Despliegue de S9 AI Arena
 
+> **⚠️ Estado real (2026-07-18):** el núcleo de la v2 YA está desplegado en VM108. Para el
+> estado vigente y la operación usa **[ESTADO_ACTUAL.md](ESTADO_ACTUAL.md)**,
+> **[OPERACION_VM108.md](OPERACION_VM108.md)** y **[DESPLIEGUE_DOMINIO.md](DESPLIEGUE_DOMINIO.md)**.
+> El dominio correcto es **`s9arena.seccionnueve.duckdns.org`** (NO `arena.…`, que es otro
+> proyecto en VM107). Este documento describe el procedimiento general de despliegue.
+
 La plataforma es **una única aplicación desplegable en una sola máquina**: el stack
 Compose de `infrastructure/docker-compose.yml` contiene TODO lo necesario (gateway,
 web, api, motor, workers, bot-manager, Redis y PostgreSQL — este último opcional si
@@ -67,16 +73,16 @@ En `infrastructure/.env` de la VM donde se despliegue el stack:
 GATEWAY_CONF=nginx-behind-proxy.conf
 HTTP_PORT=8080          # puerto HTTP hacia la LAN (el que verá VM104)
 HTTPS_PORT=127.0.0.1:8443   # sin uso en este modo; ligado a loopback
-S9_DOMAIN=arena.seccionnueve.duckdns.org
+S9_DOMAIN=s9arena.seccionnueve.duckdns.org
 TRUST_PROXY_HOPS=2      # VM104 + gateway del stack (R1.8 · ERR-SEC-05)
 ```
 
-En VM104, un `server` para `arena.seccionnueve.duckdns.org` con
+En VM104, un `server` para `s9arena.seccionnueve.duckdns.org` con
 `proxy_pass http://<IP-de-la-VM-del-stack>:8080;`, cabeceras `X-Forwarded-Proto https`
 y `X-Forwarded-For $proxy_add_x_forwarded_for` (obligatoria: con
 `TRUST_PROXY_HOPS=2` la API espera que VM104 añada la IP real del cliente),
 y soporte de upgrade WebSocket para `/ws/`. El humo en este modo:
-`smoke.sh https://arena.seccionnueve.duckdns.org`.
+`smoke.sh https://s9arena.seccionnueve.duckdns.org`.
 
 > **IP real del cliente (R1.8 · ERR-SEC-05):** la API calcula `req.ip` con una
 > confianza de proxy **acotada** al número de saltos declarado en
