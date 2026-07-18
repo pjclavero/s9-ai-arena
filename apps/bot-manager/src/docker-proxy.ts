@@ -26,6 +26,7 @@
  */
 
 import http from "node:http";
+import { readFileSync } from "node:fs";
 import { complianceViolations } from "./compliance.mjs";
 import { assertRealDigest } from "./digest-guard.js";
 import type { SecurityPosture } from "./container-runner.js";
@@ -369,17 +370,41 @@ import { DockerContainerRunner } from "./container-runner.js";
 export class ProxyContainerRunner implements ContainerRunner {
   constructor(private proxyUrl: string) {}
 
+  /**
+   * Lee el perfil seccomp del disco y devuelve su contenido JSON. La API del
+   * Engine (a diferencia del CLI `docker`) NO acepta una ruta en
+   * `SecurityOpt: seccomp=...`: espera el JSON del perfil embebido inline. El
+   * CLI hace esa lectura por nosotros; al hablar directo con el socket (vía el
+   * proxy) tenemos que hacerla aquí. Falla cerrado si el fichero no existe o
+   * no es JSON válido — nunca se cae a "unconfined".
+   */
+  private static readSeccompProfileJson(path: string): string {
+    let raw: string;
+    try {
+      raw = readFileSync(path, "utf8");
+    } catch (e) {
+      throw new Error(`no se pudo leer el perfil seccomp en "${path}": ${(e as Error).message}`);
+    }
+    try {
+      JSON.parse(raw);
+    } catch (e) {
+      throw new Error(`el perfil seccomp en "${path}" no es JSON válido: ${(e as Error).message}`);
+    }
+    return raw;
+  }
+
   /** Cuerpo del create equivalente a los flags de la tabla 18.2. */
   static buildCreateBody(spec: SandboxSpec): Record<string, unknown> {
     assertRealDigest(spec.imageDigest, `imagen de runtime para ${spec.botId} v${spec.version}`);
     const l = spec.limits;
+    const seccompProfileJson = ProxyContainerRunner.readSeccompProfileJson(spec.seccompProfilePath);
     return {
       Image: spec.imageDigest,
       User: "10001:10001",
       Env: Object.entries(spec.env).map(([k, v]) => `${k}=${v}`),
       HostConfig: {
         CapDrop: ["ALL"],
-        SecurityOpt: ["no-new-privileges", `seccomp=${spec.seccompProfilePath}`],
+        SecurityOpt: ["no-new-privileges", `seccomp=${seccompProfileJson}`],
         ReadonlyRootfs: true,
         Tmpfs: { "/tmp": `rw,noexec,nosuid,nodev,size=${l.tmpfsBytes}` },
         NetworkMode: spec.network,

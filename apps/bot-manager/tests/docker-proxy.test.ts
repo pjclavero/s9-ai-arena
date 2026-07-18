@@ -8,6 +8,8 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AddressInfo } from "node:net";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { DEFAULT_LIMITS, type SandboxSpec, complianceViolations } from "../src/container-runner.js";
 import {
   DEFAULT_POLICY,
@@ -18,6 +20,8 @@ import {
   evaluateProxyRequest,
   postureFromCreateBody,
 } from "../src/docker-proxy.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const REAL_DIGEST = "arena/bot-runtime-python@sha256:" + "8fb09919".padEnd(64, "a");
 
@@ -30,7 +34,7 @@ const spec: SandboxSpec = {
   engineEndpoint: "ws://arena-engine:8081",
   env: { ARENA_WS_URL: "ws://arena-engine:8081" },
   limits: DEFAULT_LIMITS,
-  seccompProfilePath: "security/seccomp-bot.json",
+  seccompProfilePath: join(__dirname, "..", "security", "seccomp-bot.json"),
 };
 
 const goodBody = () => ProxyContainerRunner.buildCreateBody(spec);
