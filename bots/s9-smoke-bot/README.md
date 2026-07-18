@@ -29,6 +29,8 @@ Conecta con `arena_sdk.ArenaBot.run(WS_URL, BATTLE_TOKEN)`.
 - `main.py` — el bot (entrypoint del contenedor en `/bot/main.py`).
 - `manifest.json` — nombre, versión, runtime, env y checksum sha256 de la fuente.
 - `test_smoke_bot.py` — test de protocolo (contrato de `on_observation`), sin red ni Docker.
+- `Dockerfile` — imagen del bot: `FROM` el runtime fijado **por digest**, `COPY main.py /bot/main.py`.
+- `build.sh` — construye (y con `--push` publica en GHCR e imprime el **digest real** para `SMOKE_BOT_DIGEST`).
 
 ## Cómo se ejecuta de verdad (VM108, gateado)
 
