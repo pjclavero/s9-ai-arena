@@ -14,11 +14,18 @@
  *  - la niebla se aplica DESPUÉS de interpolar, con fundido e histéresis;
  *  - la cámara pasa por SmoothCamera (amortiguación crítica + deadzone + clamp).
  *
- * Presupuesto de render por frame (60 fps ⇒ 16,6 ms): 4 bots + 20 proyectiles +
- * 50 obstáculos = ~74 Graphics/Sprites reutilizados (object pool, cero allocs por
- * frame en el camino caliente); el trabajo por frame es O(entidades) sin física
- * de vehículos en cliente (la balística local es una integración lineal por
- * proyectil). Es el presupuesto del DoD, medible con el guion manual.
+ * R3.3 (ERR-VIS-09/11) — presupuesto de RENDER, no solo de lógica:
+ *  - todas las entidades son Sprites/BitmapText de UN atlas procedural
+ *    (atlas.ts) con setTint por equipo: el renderer los batchea y los draw
+ *    calls por frame bajan de ~35 (Shapes+Text, uno por entidad) a un puñado;
+ *  - la capa estática del mapa (suelo+muros+destructibles) se HORNEA a una
+ *    RenderTexture al recibir el mundo: 1 draw call, no O(obstáculos);
+ *  - el pool de proyectiles tiene TECHO (MAX_PROJECTILE_SPRITES): un snapshot
+ *    hostil no puede crear sprites sin límite;
+ *  - cero asignaciones por frame en el camino caliente: el interpolador
+ *    reutiliza sus mapas (FrameScratch) y applyCamera su snapshotLike;
+ *  - la medición vive en render-stats.ts (FPS + draw calls reales), expuesta en
+ *    `window.__s9perf` para la prueba de rendimiento de CI (Playwright).
  */
 import Phaser from "phaser";
 import { InterpolationBuffer } from "./interpolation.js";
@@ -28,6 +35,10 @@ import { computeCamera, SmoothCamera, type CameraConfig, type CameraMode } from 
 import { CameraInteraction } from "./camera-interaction.js";
 import { FogFader, type FogOptions } from "./fog.js";
 import { canvasSizeFor } from "./viewport.js";
+import { installAtlas, ATLAS_KEY, ATLAS_FONT_KEY, FRAME_SCALE } from "./atlas.js";
+import { attachRenderStats, type PerfHandle } from "./render-stats.js";
+import { CameraSnapshotScratch } from "./camera-snapshot.js";
+import { MAX_PROJECTILE_SPRITES, visibleProjectileCount } from "./render-pools.js";
 
 export interface ViewerWorld {
   widthM: number;
@@ -52,9 +63,14 @@ export class ViewerScene extends Phaser.Scene {
 
   private world: ViewerWorld = { widthM: 120, heightM: 80 };
   private vehicleGfx = new Map<string, Phaser.GameObjects.Container>();
-  private projectilePool: Phaser.GameObjects.Arc[] = [];
-  private staticLayer: Phaser.GameObjects.Graphics | null = null;
+  /** Pool de sprites de proyectil con TECHO (R3.3): nunca supera MAX_PROJECTILE_SPRITES. */
+  private projectilePool: Phaser.GameObjects.Sprite[] = [];
+  /** Capa estática HORNEADA (suelo+muros+destructibles): 1 draw call, no O(obstáculos). */
+  private staticLayer: Phaser.GameObjects.RenderTexture | null = null;
   private debugGfx: Phaser.GameObjects.Graphics | null = null;
+  private perf: PerfHandle | null = null;
+  /** Cuaderno reutilizado para computeCamera: cero asignaciones por frame (R3.3). */
+  private readonly cameraScratch = new CameraSnapshotScratch();
   private readonly pxPerM = 8;
   /** Último encuadre aplicado (para que la interacción parta de lo que se ve). */
   private lastCamera: { centerX: number; centerY: number; zoom: number } | null = null;
@@ -119,9 +135,21 @@ export class ViewerScene extends Phaser.Scene {
   }
 
   create(): void {
+    // Atlas procedural (una textura para todas las entidades) + RetroFont: el
+    // renderer batchea sprites y BitmapText en un puñado de draw calls (ERR-VIS-09).
+    installAtlas(this);
     this.drawStatic();
     this.debugGfx = this.add.graphics().setDepth(10);
     this.wireInput();
+    // Medición de rendimiento (ERR-VIS-11): FPS + draw calls reales del contexto
+    // WebGL, publicados en window.__s9perf para la prueba de rendimiento de CI.
+    const parent = (this.game.canvas?.parentElement as HTMLElement | null) ?? undefined;
+    this.perf = attachRenderStats(this.game, parent ? { overlayParent: parent } : {});
+    (globalThis as Record<string, unknown>).__s9perf = this.perf;
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.perf?.dispose();
+      this.perf = null;
+    });
   }
 
   /** Rueda = zoom al cursor; arrastre = pan; teclas 1–4 = seguir bots; G = global. */
@@ -161,21 +189,35 @@ export class ViewerScene extends Phaser.Scene {
     };
   }
 
+  /**
+   * R3.3 (ERR-VIS-09): la capa estática (suelo + muros + destructibles) se HORNEA
+   * una sola vez a una RenderTexture del tamaño del mapa. Antes era un Graphics
+   * con un fillRect por obstáculo REDIBUJADO — decenas de operaciones por frame;
+   * ahora es una única textura que el visor pinta en 1 draw call. Sólo se re-hornea
+   * cuando cambia el mundo (setWorld), no por frame.
+   */
   private drawStatic(): void {
+    if (!this.sys?.isActive?.()) return;
+    const w = this.world.widthM * this.pxPerM;
+    const h = this.world.heightM * this.pxPerM;
     if (!this.staticLayer) {
-      if (!this.sys?.isActive?.()) return;
-      this.staticLayer = this.add.graphics().setDepth(0);
+      this.staticLayer = this.add.renderTexture(0, 0, w, h).setOrigin(0, 0).setDepth(0);
+    } else {
+      this.staticLayer.setSize(w, h);
     }
-    const g = this.staticLayer;
-    g.clear();
-    g.fillStyle(0x18201a).fillRect(0, 0, this.world.widthM * this.pxPerM, this.world.heightM * this.pxPerM);
+    const rt = this.staticLayer;
+    rt.clear();
+    rt.fill(0x18201a, 1, 0, 0, w, h);
+    // Un único Graphics temporal con TODOS los rects se hornea de un golpe y se
+    // descarta: fuera de él no queda ningún objeto de escena por obstáculo.
+    const g = this.make.graphics({}, false);
     g.fillStyle(0x3a4440);
-    for (const w of this.world.walls ?? []) {
+    for (const wall of this.world.walls ?? []) {
       g.fillRect(
-        (w.position.x - w.halfW) * this.pxPerM,
-        (w.position.y - w.halfH) * this.pxPerM,
-        w.halfW * 2 * this.pxPerM,
-        w.halfH * 2 * this.pxPerM,
+        (wall.position.x - wall.halfW) * this.pxPerM,
+        (wall.position.y - wall.halfH) * this.pxPerM,
+        wall.halfW * 2 * this.pxPerM,
+        wall.halfH * 2 * this.pxPerM,
       );
     }
     g.fillStyle(0x6a5a30);
@@ -187,6 +229,8 @@ export class ViewerScene extends Phaser.Scene {
         d.halfH * 2 * this.pxPerM,
       );
     }
+    rt.draw(g);
+    g.destroy();
   }
 
   update(_time: number, delta: number): void {
@@ -222,7 +266,7 @@ export class ViewerScene extends Phaser.Scene {
       c.setVisible(true);
       c.setPosition(pose.x * this.pxPerM, pose.y * this.pxPerM);
       c.setRotation(pose.heading);
-      (c.getByName("turret") as Phaser.GameObjects.Rectangle | null)?.setRotation(pose.turretHeading - pose.heading);
+      (c.getByName("turret") as Phaser.GameObjects.Sprite | null)?.setRotation(pose.turretHeading - pose.heading);
       // Fundido de niebla × atenuación de destruido: sin saltos de alfa.
       c.setAlpha((pose.alive ? 1 : 0.25) * pose.alpha);
     }
@@ -230,26 +274,44 @@ export class ViewerScene extends Phaser.Scene {
       if (!frame.vehicles.has(id)) c.setVisible(false); // fundido terminado o destruido
     }
 
-    // Proyectiles: pool fijo.
-    while (this.projectilePool.length < frame.projectiles.length) {
-      this.projectilePool.push(this.add.circle(0, 0, 2, 0xffe066).setDepth(5));
+    // Proyectiles: pool de sprites del atlas con TECHO (R3.3). El pool crece bajo
+    // demanda pero nunca por encima de MAX_PROJECTILE_SPRITES; los proyectiles
+    // sobrantes de un snapshot anómalo simplemente no se dibujan.
+    const visible = visibleProjectileCount(frame.projectiles.length, MAX_PROJECTILE_SPRITES);
+    while (this.projectilePool.length < visible) {
+      const dot = this.add
+        .sprite(0, 0, ATLAS_KEY, "projectile")
+        .setScale(4 / FRAME_SCALE / 3) // frame 12 px → ~4 px de diámetro en pantalla
+        .setTint(0xffe066)
+        .setDepth(5);
+      this.projectilePool.push(dot);
     }
-    this.projectilePool.forEach((dot, i) => {
-      const p = frame.projectiles[i];
+    for (let i = 0; i < this.projectilePool.length; i++) {
+      const dot = this.projectilePool[i];
+      const p = i < visible ? frame.projectiles[i] : undefined;
       if (p) dot.setVisible(true).setPosition(p.x * this.pxPerM, p.y * this.pxPerM);
       else dot.setVisible(false);
-    });
+    }
   }
 
   private buildVehicle(id: string): Phaser.GameObjects.Container {
     const team = this.overlay.vehicles.get(id)?.team ?? "red";
     const color = TEAM_COLORS[team] ?? 0xaaaaaa;
-    const body = this.add.rectangle(0, 0, 3.2 * this.pxPerM, 2.2 * this.pxPerM, color);
+    // Sprites del MISMO atlas (frames blancos) tintados por equipo: setTint no
+    // rompe el batch del renderer (cambiar de textura sí). El frame se hornea a
+    // FRAME_SCALE× px, así que el sprite se reduce 1/FRAME_SCALE para su tamaño real.
+    const body = this.add
+      .sprite(0, 0, ATLAS_KEY, "body")
+      .setScale(1 / FRAME_SCALE)
+      .setTint(color);
     const turret = this.add
-      .rectangle(0.8 * this.pxPerM, 0, 2.4 * this.pxPerM, 0.5 * this.pxPerM, 0xffffff, 0.9)
-      .setName("turret")
-      .setOrigin(0.1, 0.5);
-    const label = this.add.text(0, -2 * this.pxPerM, id, { fontSize: "10px", color: "#ffffff" }).setOrigin(0.5, 1);
+      .sprite(0.8 * this.pxPerM, 0, ATLAS_KEY, "turret")
+      .setScale(1 / FRAME_SCALE)
+      .setOrigin(0.1, 0.5)
+      .setName("turret");
+    // BitmapText del atlas (RetroFont) en vez de Text: comparte textura, no
+    // genera un canvas de fuente por etiqueta ni rompe el batch.
+    const label = this.add.bitmapText(0, -2 * this.pxPerM, ATLAS_FONT_KEY, id, 10).setOrigin(0.5, 1);
     return this.add.container(0, 0, [body, turret, label]).setDepth(3);
   }
 
@@ -258,14 +320,9 @@ export class ViewerScene extends Phaser.Scene {
     deltaMs: number,
   ): void {
     const mode = this.interaction.current;
-    const snapshotLike = {
-      vehicles: [...frame.vehicles.entries()].map(([id, p]) => ({
-        id,
-        team: p.team ?? this.overlay.vehicles.get(id)?.team,
-        alive: p.alive,
-        position: { x: p.x, y: p.y },
-      })),
-    };
+    // R3.3: el snapshot que consume computeCamera se REUTILIZA (cameraScratch):
+    // cero asignaciones por frame en el camino caliente de la cámara.
+    const snapshotLike = this.cameraScratch.fill(frame.vehicles, (id) => this.overlay.vehicles.get(id)?.team);
     const cfg = this.cameraConfig();
     const target = computeCamera(mode, snapshotLike, cfg);
     // Amortiguación crítica + deadzone (follow) + clamp al mapa (R3.2 · ERR-VIS-07).
