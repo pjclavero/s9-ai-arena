@@ -1,7 +1,7 @@
-// Evita una regresión real (R6.2/VM108): `ARENA_NETWORK` del proxy DEBE coincidir con
-// la red `arena` del stack tal como Compose la nombra. El despliegue de VM108 usa el
-// proyecto `infrastructure`, así que la red real es `infrastructure_arena`. Un valor
-// erróneo (`s9-ai-arena_arena`) hace que el docker-proxy rechace/aísle mal los bots.
+// Contrato de red de los runners (bug real de VM108): `ARENA_NETWORK` del proxy DEBE
+// ser `arena` — el nombre EXACTO que exige compliance.mjs (fuente de verdad, compartida
+// con el escáner del Compose). El Compose declara la red con `name: arena` para que NO
+// se prefije con el proyecto (evita `infrastructure_arena`, que el proxy rechazaría).
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -11,9 +11,6 @@ import { parse } from "yaml";
 const here = dirname(fileURLToPath(import.meta.url));
 const ENV_PATH = join(here, "..", "systemd", "docker-proxy.env.example");
 const COMPOSE_PATH = join(here, "..", "docker-compose.yml");
-
-/** Proyecto Compose del despliegue de VM108 = nombre del directorio del compose. */
-const COMPOSE_PROJECT = "infrastructure";
 
 function readEnv(): Record<string, string> {
   const out: Record<string, string> = {};
@@ -34,19 +31,16 @@ describe("docker-proxy.env.example · ARENA_NETWORK", () => {
     expect(Object.keys(compose.networks ?? {})).toContain("arena");
   });
 
-  it("ARENA_NETWORK está definido", () => {
-    expect(env.ARENA_NETWORK).toBeTruthy();
+  it("la red `arena` fija `name: arena` (no se prefija con el proyecto)", () => {
+    expect(compose.networks?.arena?.name).toBe("arena");
   });
 
-  it("NO usa el nombre erróneo s9-ai-arena_arena", () => {
+  it("ARENA_NETWORK es exactamente `arena`", () => {
+    expect(env.ARENA_NETWORK).toBe("arena");
+  });
+
+  it("NO usa nombres prefijados ni erróneos", () => {
+    expect(env.ARENA_NETWORK).not.toBe("infrastructure_arena");
     expect(env.ARENA_NETWORK).not.toBe("s9-ai-arena_arena");
-  });
-
-  it("coincide con <proyecto>_arena del despliegue (infrastructure_arena)", () => {
-    // La red `arena` no fija `name:` en el compose, así que Compose la prefija con el
-    // nombre del proyecto. Si algún día se fija un `name:` externo, actualizar aquí.
-    const arenaNet = compose.networks?.arena ?? {};
-    expect(arenaNet.name).toBeUndefined();
-    expect(env.ARENA_NETWORK).toBe(`${COMPOSE_PROJECT}_arena`);
   });
 });

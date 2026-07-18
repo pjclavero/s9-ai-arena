@@ -17,6 +17,8 @@
  */
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { initPhysics } from "../../arena-engine/src/sim/physics.js";
 import { verify } from "../../arena-engine/src/replay.js";
@@ -134,7 +136,7 @@ function specFixture(): SandboxSpec {
     engineEndpoint: "ws://engine:12345",
     env: { WS_URL: "ws://engine:12345", BATTLE_TOKEN: "token-abc", BOT_ID: "bot_a" },
     limits: DEFAULT_LIMITS,
-    seccompProfilePath: "/etc/seccomp/bot.json",
+    seccompProfilePath: join(dirname(fileURLToPath(import.meta.url)), "..", "security", "seccomp-bot.json"),
   };
 }
 

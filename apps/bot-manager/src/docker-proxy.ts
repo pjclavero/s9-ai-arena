@@ -26,9 +26,32 @@
  */
 
 import http from "node:http";
+import { existsSync, readFileSync } from "node:fs";
 import { complianceViolations } from "./compliance.mjs";
 import { assertRealDigest } from "./digest-guard.js";
 import type { SecurityPosture } from "./container-runner.js";
+
+/**
+ * Lee el perfil seccomp del PATH y devuelve su JSON MINIFICADO para inyectarlo
+ * inline en `HostConfig.SecurityOpt` (`seccomp=<json>`).
+ *
+ * La Docker Engine API **no** acepta una ruta de fichero en SecurityOpt: solo el
+ * contenido JSON del perfil (el CLI `docker run --security-opt seccomp=<file>` es
+ * quien lee el fichero). Pasar la ruta hace que el daemon intente parsearla como
+ * JSON y falle ("Decoding seccomp profile failed: invalid character '/'"), que es
+ * justo lo que rompió el arranque del runner en VM108. Falla ANTES de llamar a
+ * Docker si el fichero no existe o no es JSON válido; nunca desactiva seccomp.
+ */
+export function inlineSeccompProfile(path: string): string {
+  if (!existsSync(path)) throw new Error(`perfil seccomp no encontrado: ${path}`);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf8"));
+  } catch (e) {
+    throw new Error(`perfil seccomp no es JSON válido (${path}): ${(e as Error).message}`);
+  }
+  return JSON.stringify(parsed);
+}
 
 // ── política ─────────────────────────────────────────────────────────────────
 
@@ -379,7 +402,8 @@ export class ProxyContainerRunner implements ContainerRunner {
       Env: Object.entries(spec.env).map(([k, v]) => `${k}=${v}`),
       HostConfig: {
         CapDrop: ["ALL"],
-        SecurityOpt: ["no-new-privileges", `seccomp=${spec.seccompProfilePath}`],
+        // seccomp INLINE (JSON), no ruta: la Docker Engine API exige el contenido.
+        SecurityOpt: ["no-new-privileges", `seccomp=${inlineSeccompProfile(spec.seccompProfilePath)}`],
         ReadonlyRootfs: true,
         Tmpfs: { "/tmp": `rw,noexec,nosuid,nodev,size=${l.tmpfsBytes}` },
         NetworkMode: spec.network,

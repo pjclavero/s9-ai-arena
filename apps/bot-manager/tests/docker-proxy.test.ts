@@ -8,6 +8,10 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AddressInfo } from "node:net";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { DEFAULT_LIMITS, type SandboxSpec, complianceViolations } from "../src/container-runner.js";
 import {
   DEFAULT_POLICY,
@@ -16,10 +20,15 @@ import {
   createBodyViolations,
   createDockerProxyServer,
   evaluateProxyRequest,
+  inlineSeccompProfile,
   postureFromCreateBody,
 } from "../src/docker-proxy.js";
 
 const REAL_DIGEST = "arena/bot-runtime-python@sha256:" + "8fb09919".padEnd(64, "a");
+
+// Ruta REAL del perfil seccomp: buildCreateBody ahora lo LEE (JSON inline), así que
+// el spec debe apuntar a un fichero existente y válido.
+const SECCOMP_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "security", "seccomp-bot.json");
 
 const spec: SandboxSpec = {
   imageDigest: REAL_DIGEST,
@@ -30,10 +39,72 @@ const spec: SandboxSpec = {
   engineEndpoint: "ws://arena-engine:8081",
   env: { ARENA_WS_URL: "ws://arena-engine:8081" },
   limits: DEFAULT_LIMITS,
-  seccompProfilePath: "security/seccomp-bot.json",
+  seccompProfilePath: SECCOMP_PATH,
 };
 
 const goodBody = () => ProxyContainerRunner.buildCreateBody(spec);
+
+describe("R6.2 · digest de imagen (soporta registry local; sigue rechazando tag/placeholder)", () => {
+  const withImage = (image: string) => {
+    const b = goodBody();
+    (b as Record<string, unknown>).Image = image;
+    return createBodyViolations(b).filter((v) => /imagen|digest|placeholder/i.test(v));
+  };
+  const HEX = "a1b2c3d4".padEnd(64, "e");
+
+  it("acepta digest de GHCR", () => {
+    expect(withImage(`ghcr.io/pjclavero/s9-ai-arena/s9-smoke-bot@sha256:${HEX}`)).toEqual([]);
+  });
+  it("acepta digest de registry local (127.0.0.1:5000 y localhost:5000)", () => {
+    expect(withImage(`127.0.0.1:5000/s9-smoke-bot@sha256:${HEX}`)).toEqual([]);
+    expect(withImage(`localhost:5000/s9-smoke-bot@sha256:${HEX}`)).toEqual([]);
+  });
+  it("rechaza un tag sin digest", () => {
+    expect(withImage("127.0.0.1:5000/s9-smoke-bot:0.1.0").length).toBeGreaterThan(0);
+    expect(withImage("ghcr.io/pjclavero/s9-ai-arena/s9-smoke-bot:latest").length).toBeGreaterThan(0);
+  });
+  it("rechaza un digest placeholder (mismo carácter repetido)", () => {
+    expect(withImage(`127.0.0.1:5000/s9-smoke-bot@sha256:${"0".repeat(64)}`).length).toBeGreaterThan(0);
+  });
+  it("rechaza un hash mal formado (longitud incorrecta)", () => {
+    expect(withImage("127.0.0.1:5000/s9-smoke-bot@sha256:deadbeef").length).toBeGreaterThan(0);
+  });
+});
+
+describe("R6.2 · seccomp inline (bug VM108: la API exige JSON, no ruta)", () => {
+  function seccompValue(body: Record<string, unknown>): string {
+    const so = ((body.HostConfig as Record<string, unknown>).SecurityOpt as string[]) ?? [];
+    return so.find((o) => o.startsWith("seccomp="))!.slice("seccomp=".length);
+  }
+
+  it("inlineSeccompProfile devuelve JSON minificado del perfil (no la ruta)", () => {
+    const json = inlineSeccompProfile(SECCOMP_PATH);
+    expect(json.startsWith("{")).toBe(true);
+    expect(() => JSON.parse(json)).not.toThrow();
+    expect(JSON.parse(json)).toHaveProperty("defaultAction");
+  });
+
+  it("buildCreateBody pone seccomp=<json>, NUNCA seccomp=<ruta>", () => {
+    const v = seccompValue(goodBody());
+    expect(v.startsWith("{")).toBe(true); // JSON
+    expect(v.startsWith("/")).toBe(false); // no una ruta absoluta
+    expect(v).not.toBe("unconfined");
+  });
+
+  it("falla ANTES de Docker si el perfil no existe", () => {
+    expect(() => inlineSeccompProfile("/no/existe/seccomp.json")).toThrow(/no encontrado/);
+    expect(() => ProxyContainerRunner.buildCreateBody({ ...spec, seccompProfilePath: "/no/existe.json" })).toThrow(
+      /no encontrado/,
+    );
+  });
+
+  it("falla si el perfil no es JSON válido", () => {
+    const dir = mkdtempSync(join(tmpdir(), "seccomp-"));
+    const bad = join(dir, "bad.json");
+    writeFileSync(bad, "{ esto no es json", "utf8");
+    expect(() => inlineSeccompProfile(bad)).toThrow(/no es JSON válido/);
+  });
+});
 
 describe("R1.7 · allowlist del create", () => {
   it("admite el cuerpo que construye el propio runner (postura conforme)", () => {
