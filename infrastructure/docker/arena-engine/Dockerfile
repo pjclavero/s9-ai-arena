@@ -5,7 +5,7 @@
 # existen y están probados; el entrypoint de SERVICIO de larga duración
 # (orquestar una batalla por trabajo de la cola) es de E2/E9 y se fija con
 # SERVICE_ENTRY cuando exista. Mientras tanto la imagen expone la CLI auditable.
-FROM node:22-alpine
+FROM node:22.15-alpine
 
 WORKDIR /app
 

@@ -2,6 +2,9 @@
   "name": "s9-ai-arena",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.15"
+  },
   "workspaces": [
     "packages/*",
     "sdks/javascript"
@@ -11,6 +14,7 @@
     "test:pure": "vitest run --config vitest.pure.config.ts",
     "test:db": "vitest run --config vitest.db.config.ts",
     "lint": "node apps/arena-engine/scripts/lint-determinism.mjs",
+    "check:node": "node scripts/check-node.mjs",
     "typecheck": "tsc --noEmit && tsc --noEmit -p apps/web",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

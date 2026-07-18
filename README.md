@@ -52,8 +52,10 @@ npm test
 npm run lint
 ```
 
-> Requiere **Node ≥ 22.15** para la suite completa (la rama zstd de replays usa
-> `zstdCompressSync`, ausente en Node 20). El resto corre en Node 20.
+> Requiere **Node ≥ 22.15** (fijado en `package.json` `engines` y en la CI). La
+> rama zstd de replays usa `zstdCompressSync`, ausente en Node 20: **Node 20 NO
+> está soportado** — la suite falla en `replay-golden.test.ts`. Comprobación
+> rápida antes de build/despliegue: `npm run check:node`.
 
 ## Documentación
 

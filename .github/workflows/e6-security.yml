@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: "22" }
+        with: { node-version: "22.15" }
       - run: npm ci
       # Tests reales de E6 (pipeline, sandbox flags, compose scan, escape suite completa)
       - run: npx vitest run apps/bot-manager
@@ -36,7 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: "22" }
+        with: { node-version: "22.15" }
       - run: npm ci
       - id: check
         run: |
@@ -57,7 +57,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: "22" }
+        with: { node-version: "22.15" }
       - run: npm ci
       # R6.1: este paso NO existia y el job fallaba con `trivy: command not found`
       # (exit 127). No se vio antes porque el digests-gate saltaba el job mientras hubiera
@@ -81,7 +81,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: "22" }
+        with: { node-version: "22.15" }
       - run: npm ci
       # R6.1: antes esto era `docker build -t "<imagen@sha256:...>" runtimes/python`, que
       # NO puede funcionar por dos motivos, ocultos mientras el gate saltaba el job:
