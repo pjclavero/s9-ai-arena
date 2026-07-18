@@ -77,7 +77,18 @@ export class Rng {
    * el determinismo al añadir o quitar una llamada.
    */
   fork(label: string): Rng {
-    return new Rng(`${this.nextUint32()}:${label}`);
+    return new Rng(this.forkSeed(label));
+  }
+
+  /**
+   * La SEMILLA que fork() usaría, sin construir el Rng. Es la misma derivación (consume
+   * una tirada del padre + etiqueta), expuesta para quien necesita una semilla
+   * serializable en vez de un Rng vivo: el MatchRunner de R3.8 deriva así la semilla de
+   * cada ronda y la guarda en el resultado, de modo que cualquier ronda es reproducible
+   * por sí sola con new Battle({ seed }).
+   */
+  forkSeed(label: string): string {
+    return `${this.nextUint32()}:${label}`;
   }
 
   /** Estado serializable, para incluirlo en snapshots y verificar la reanudación de replays. */
