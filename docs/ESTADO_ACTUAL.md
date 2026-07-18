@@ -2,8 +2,9 @@
 
 > **Fecha de revisión:** 2026-07-18
 > **Revisado por:** auditoría real de VM108 + VM104 (SSH) y del repositorio.
-> **Commit de repo revisado:** `origin/main` = `5cade21` (merge PR #32, integración Ronda 2/3).
+> **Commit de repo revisado:** `origin/main` = `10cd180` (merge PR #38, integración Ronda 2/3).
 > **Commit desplegado en VM108:** `a5651ff` (rama `ronda2/entrypoints-servicios`).
+> **Último PR de código:** E12 smoke-battle wire-up — `ContainerBattleOrchestrator` + `s9-smoke-bot` + `POST /internal/containers/run` en bot-manager + test E2E (pendiente VM108).
 >
 > Este documento **manda** sobre cualquier otro cuando haya contradicción sobre el estado
 > desplegado. Documentos con estado antiguo (`README.md` cabecera 2026-07-16,
@@ -173,13 +174,27 @@ Proyecto Compose: **`infrastructure`**, fichero **`/opt/s9-ai-arena/infrastructu
 
 ## 7. Próximos pasos bloqueantes
 
-1. **Merge de PR #38** (integración Ronda 2/3 + R-DEPLOY) a `main` — con CI en verde. Hoy la
-   CI de esa rama está `UNSTABLE`. Hasta entonces `main` no tiene los entrypoints ni el worker.
-2. **Decidir si VM108 se actualiza a `main`** tras el merge (con backup + snapshot nuevos).
-   Hoy el despliegue va por detrás.
-3. **Prueba real de extremo a extremo** desde Internet y desde navegador (visor + WebSocket +
-   una batalla real). Nunca se ha lanzado una batalla contra el stack desplegado.
-4. **R1.7/R6.2**: containerizar el `agentResolver` para poder desplegar `bot-manager`; hasta
-   entonces el pipeline de bots rechaza por diseño (fail-closed).
+1. **Merge del PR de smoke-battle** a `main` y actualización de VM108 (backup + snapshot primero).
+2. **Prueba real de extremo a extremo** desde VM108 con Docker:
+   - Construir imagen `s9-smoke-bot:local` en VM108.
+   - Desplegar `s9-docker-proxy.service` (systemd, `infrastructure/scripts/install-docker-proxy.sh`).
+   - Activar perfil `development` del Compose (incluye `bot-manager`).
+   - Ejecutar `SMOKE_BOT_IMAGE=s9-smoke-bot:local npx vitest run tests/e2e/smoke-battle-real.e2e.test.ts`.
+3. **R1.7/R6.2**: el cable código está hecho (`ContainerBattleOrchestrator`, `POST /internal/containers/run`).
+   La verificación real contra el socket de Docker requiere VM108 con `s9-docker-proxy` activo.
+4. **Verificación de firma de artefacto** antes del lanzamiento: `DbArtifactLaunchGuard` existe;
+   integrarlo en `ContainerBattleOrchestrator` para el camino de producción (tournament-worker
+   real) es el siguiente paso después de validar el smoke test en VM108.
 
 Ver la lista ejecutable en [`CHECKLIST_VALIDACION_V2.md`](CHECKLIST_VALIDACION_V2.md).
+
+## 8. Smoke battle — estado del cable (nuevo en este PR)
+
+| Componente | Estado |
+|---|---|
+| `bots/s9-smoke-bot/main.js` | Implementado, protocolo arena/1, prueba en proceso: handshake OK |
+| `bots/s9-smoke-bot/Dockerfile` | Implementado, usa runtime-node@sha256 fijado |
+| `apps/bot-manager/src/main.ts` — `POST /internal/containers/run` | Implementado, typecheck OK, tests existentes pasan |
+| `apps/tournament-worker/src/container-executor.ts` | Implementado, typecheck OK |
+| `tests/e2e/smoke-battle-real.e2e.test.ts` | Implementado: 5 tests salteados sin Docker, 1 test in-process pasa |
+| Verificacion real con Docker | **PENDIENTE VM108** |

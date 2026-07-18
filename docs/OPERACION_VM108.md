@@ -130,7 +130,66 @@ qm rollback 108 pre-v2-20260717     # vuelve al estado v1 previo al redespliegue
 > ⚠️ Se pierde TODO lo hecho en VM108 desde 2026-07-17 (datos incluidos). Último recurso.
 > Preferir siempre `git checkout <commit>` + rebuild antes que un rollback de VM.
 
-## 12. Qué NO hacer
+## 12. Smoke battle E2E (primer test real de bots en contenedores)
+
+> Prerequisitos: perfil `development` del Compose activo (añade `bot-manager` y `docker-proxy`
+> en red interna). El `s9-docker-proxy.service` (systemd) debe estar instalado y activo.
+
+### 12.1 Preparar la imagen smoke-bot
+
+```bash
+cd /opt/s9-ai-arena
+
+# Construir (solo la primera vez o cuando cambie bots/s9-smoke-bot/main.js)
+docker build -t s9-smoke-bot:local -f bots/s9-smoke-bot/Dockerfile bots/s9-smoke-bot/
+
+# Verificar que existe
+docker image ls s9-smoke-bot:local
+```
+
+### 12.2 Instalar y activar docker-proxy (systemd, fuera del Compose)
+
+```bash
+# Solo si no está instalado aún:
+sudo bash infrastructure/scripts/install-docker-proxy.sh
+
+# Verificar:
+systemctl status s9-docker-proxy
+```
+
+El proxy escucha en `127.0.0.1:2375` y es el ÚNICO proceso autorizado a hablar con el socket
+Docker. El Compose pasa `DOCKER_PROXY_URL=http://host.docker.internal:2375` al bot-manager.
+
+### 12.3 Levantar perfil development (incluye bot-manager)
+
+```bash
+cd /opt/s9-ai-arena/infrastructure
+docker compose --profile nucleo --profile development up -d
+docker compose ps   # verificar que bot-manager es healthy
+```
+
+### 12.4 Ejecutar el smoke test E2E
+
+```bash
+cd /opt/s9-ai-arena
+# SMOKE_BOT_IMAGE con el digest real de la imagen local:
+SMOKE_BOT_IMAGE="s9-smoke-bot:local@$(docker image inspect s9-smoke-bot:local --format '{{.Id}}' | sed 's/sha256://')" \
+  npx vitest run tests/e2e/smoke-battle-real.e2e.test.ts --reporter=verbose
+```
+
+Resultado esperado: 6/6 tests en verde. Los tests "Docker" se saltan si el entorno no tiene
+Docker disponible; el test "in-process" pasa siempre si el protocolo arena/1 es correcto.
+
+### 12.5 Seguridad verificable
+
+```bash
+# La red "arena" no tiene acceso a la plataforma:
+docker network inspect arena | python3 -c "import sys,json; n=json.load(sys.stdin)[0]; print(n.get('Options',{}).get('com.docker.network.bridge.enable_icc',''))"
+# Verificar que la red es internal (sin gateway externo):
+docker network inspect arena | python3 -c "import sys,json; n=json.load(sys.stdin)[0]; print(n['IPAM']['Config'])"
+```
+
+## 13. Qué NO hacer
 
 - ❌ Ejecutar Docker/Compose como `root`.
 - ❌ `docker compose down -v` / borrar volúmenes.
@@ -140,3 +199,5 @@ qm rollback 108 pre-v2-20260717     # vuelve al estado v1 previo al redespliegue
 - ❌ Modificar el vhost `arena.seccionnueve.duckdns.org` (es otro proyecto, VM107).
 - ❌ Reiniciar la VM sin avisar.
 - ❌ Usar el `docker-compose.demo.yml` de la RAÍZ (es v1 legacy) para producción.
+- ❌ Montar `/var/run/docker.sock` en ningún contenedor del Compose.
+- ❌ Usar `privileged: true` o `network_mode: host` en runners de bots.

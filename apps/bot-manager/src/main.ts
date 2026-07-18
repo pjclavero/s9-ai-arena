@@ -12,10 +12,17 @@
  * Falla CERRADO en el arranque: sin DOCKER_PROXY_URL no hay vía autorizada hacia
  * Docker (el socket ya no se monta, R1.7 · ERR-SEC-02), así que arrancar sin esa
  * URL sería un servicio que no puede lanzar nada y ocultaría el fallo.
+ *
+ * POST /internal/containers/run — lanza un contenedor de bot vía ProxyContainerRunner.
+ * Única vía autorizada para que el tournament-worker (o el orquestador de batallas)
+ * cree contenedores: el tournament-worker NO tiene línea directa al docker-proxy.
+ * La request incluye la spec del sandbox; la response devuelve el containerId.
  */
-import express, { type Express } from "express";
+import express, { type Express, type Request, type Response } from "express";
 import { DEFAULT_CONFIG } from "./config.js";
 import { LaunchAuthority } from "./launch-guard.js";
+import { DEFAULT_LIMITS, type ContainerLimits, type SandboxSpec } from "./container-runner.js";
+import { ProxyContainerRunner } from "./docker-proxy.js";
 
 function log(level: "info" | "error", msg: string, extra: Record<string, unknown> = {}): void {
   console.log(JSON.stringify({ level, service: "bot-manager", msg, ...extra }));
@@ -35,10 +42,13 @@ export function createBotManagerApp(dockerProxyUrl: string | undefined): Express
   // Puerta única de lanzamiento (T6.2/T6.4) y límites del pipeline (E6.M): se
   // instancian como prueba de readiness; el orquestador de batallas los usa.
   const launcher = new LaunchAuthority();
+  const runner = new ProxyContainerRunner(dockerProxyUrl);
 
   const app = express();
   app.disable("x-powered-by");
-  app.get("/healthz", (_req, res) =>
+  app.use(express.json({ limit: "64kb" }));
+
+  app.get("/healthz", (_req: Request, res: Response) =>
     res.json({
       status: "ok",
       service: "bot-manager",
@@ -47,6 +57,79 @@ export function createBotManagerApp(dockerProxyUrl: string | undefined): Express
       maxSourceBytes: DEFAULT_CONFIG.maxSourceBytes,
     }),
   );
+
+  /**
+   * POST /internal/containers/run
+   *
+   * Lanza un contenedor de bot a través del proxy de Docker (R1.7). Es la única
+   * vía autorizada para que el orquestador de batallas (tournament-worker) cree
+   * contenedores: el tournament-worker NO tiene línea directa al docker-proxy.
+   *
+   * Body (JSON):
+   *   imageDigest   string  Imagen de runtime por digest (ej. ghcr.io/…@sha256:…)
+   *   botId         string  Identificador del bot
+   *   version       number  Versión del bot (usada en el nombre del contenedor)
+   *   battleId      string  ID de la batalla (usado en el nombre del contenedor)
+   *   battleToken   string  Token arena/1 que el bot necesita para el handshake HELLO
+   *   arenaWsUrl    string  WebSocket URL del ProtocolServer al que conectará el bot
+   *   network       string  Red Docker del sandbox (normalmente "arena")
+   *   seccompPath?  string  Ruta al perfil seccomp (default: "unconfined" en dev)
+   *   limits?       object  Override de ContainerLimits
+   *
+   * Response 201: { containerId: string }
+   * Response 400: { error: string }
+   * Response 500: { error: string }
+   */
+  app.post("/internal/containers/run", async (req: Request, res: Response) => {
+    const body = req.body as {
+      imageDigest?: string;
+      botId?: string;
+      version?: number;
+      battleId?: string;
+      battleToken?: string;
+      arenaWsUrl?: string;
+      network?: string;
+      seccompPath?: string;
+      limits?: Partial<ContainerLimits>;
+    };
+
+    const { imageDigest, botId, version, battleId, battleToken, arenaWsUrl, network } = body;
+
+    if (!imageDigest || !botId || version === undefined || !battleId || !battleToken || !arenaWsUrl || !network) {
+      res.status(400).json({
+        error: "Faltan campos obligatorios: imageDigest, botId, version, battleId, battleToken, arenaWsUrl, network",
+      });
+      return;
+    }
+
+    const spec: SandboxSpec = {
+      imageDigest,
+      botId,
+      version,
+      battleId,
+      network,
+      engineEndpoint: arenaWsUrl,
+      env: {
+        ARENA_WS_URL: arenaWsUrl,
+        BOT_ID: botId,
+        BATTLE_TOKEN: battleToken,
+        LOG_FORMAT: "json",
+      },
+      limits: { ...DEFAULT_LIMITS, ...(body.limits ?? {}) },
+      seccompProfilePath: body.seccompPath ?? "unconfined",
+    };
+
+    try {
+      const handle = await runner.launch(spec);
+      log("info", "contenedor lanzado", { containerId: handle.id, botId, battleId });
+      res.status(201).json({ containerId: handle.id });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log("error", "fallo al lanzar contenedor", { botId, battleId, error: msg });
+      res.status(500).json({ error: msg });
+    }
+  });
+
   return app;
 }
 

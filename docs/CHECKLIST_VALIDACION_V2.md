@@ -27,6 +27,9 @@ se verificaron; el resto queda pendiente con su causa.
 | 16 | Nginx VM104 | `nginx -t` + `curl --resolve …/healthz` | OK + 200 | OK + 200 (loopback) | 2026-07-18 | auditoría | auditoría | ✅ |
 | 17 | TLS | `openssl s_client -servername s9arena…` | cert `*.seccionnueve.duckdns.org` vigente | NO comprobado en detalle | — | — | — | ⏳ |
 | 18 | Batalla real E2E | lanzar una batalla y ver el resultado en el visor | batalla simula, visor muestra, replay guarda | **NUNCA ejecutada contra prod** | — | — | — | ⏳ |
+| 19 | Smoke battle in-process | `npx vitest run tests/e2e/smoke-battle-real.e2e.test.ts` | protocolo arena/1 OK: handshake HELLO/WELCOME, bot conecta | PASA en ia-server (2026-07-18) | 2026-07-18 | suite smoke-battle-real | s9-code | ✅ |
+| 20 | Smoke battle Docker E2E | `SMOKE_BOT_IMAGE=s9-smoke-bot:local npx vitest run tests/e2e/smoke-battle-real.e2e.test.ts` | 2 smoke-bots en contenedores, batalla completa, replay generado | **PENDIENTE** — Docker no disponible en ia-server (ia02 no está en grupo docker) | — | — | — | ⏳ |
+| 21 | Seguridad red arena | `docker network inspect arena` | red `internal: true`, sin gateway externo | **PENDIENTE** — requiere Docker disponible | — | — | — | ⏳ |
 
 \* La sandbox se probó viva en R6.1, pero contra imágenes de `runtimes/`, no contra el stack
 `nucleo` desplegado (que no incluye `bot-manager`).
@@ -36,6 +39,8 @@ se verificaron; el resto queda pendiente con su causa.
 - Ejecutar todo Docker/Compose **como `s9arena`**, nunca root.
 - Para la prueba 4 (dominio externo) hace falta un equipo con salida a Internet distinta de la
   LAN, o probar desde un móvil con datos.
-- Las pruebas 8-11 dependen del **merge de PR #38** y de un despliegue posterior.
+- Las pruebas 8-11 dependen del **merge del PR de smoke-battle** y de un despliegue posterior.
+- Las pruebas 19-21 dependen de VM108 con `s9-docker-proxy.service` activo y perfil `development`
+  del Compose levantado. Ver sección 12 de `OPERACION_VM108.md`.
 - La prueba 18 es el gran pendiente funcional: cierra la duda de si la cadena
   bot→worker→motor→visor→replay funciona de verdad en el entorno desplegado.

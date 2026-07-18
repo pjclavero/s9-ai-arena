@@ -1,0 +1,19 @@
+{
+  "name": "@s9/smoke-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Smoke bot minimalista para pruebas E2E de arena/1 del proyecto s9-ai-arena.",
+  "main": "main.js",
+  "scripts": {
+    "start": "node main.js",
+    "lint": "echo 'no lint (archivo JS plano)'",
+    "typecheck": "echo 'no typecheck (archivo JS plano)'"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "keywords": ["smoke-bot", "arena-1", "s9-ai-arena"]
+}
