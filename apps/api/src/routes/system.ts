@@ -20,7 +20,10 @@ async function countBy(db: Db, table: string, column: string): Promise<Record<st
   return out;
 }
 
-export function systemRoutes(db: Db): Router {
+export function systemRoutes(
+  db: Db,
+  realBattleRuns: { enabled: boolean; available: boolean } = { enabled: false, available: false },
+): Router {
   const router = Router();
 
   defineOperation(router, "getSystemStatus", async (_req, res) => {
@@ -46,6 +49,9 @@ export function systemRoutes(db: Db): Router {
       // Lectura pura de banderas de operación: nunca se modifican aquí.
       realRunnerEnabled: process.env.S9_RUN_REAL_DOCKER_E2E === "1",
       smokeDigestConfigured: Boolean(process.env.SMOKE_BOT_DIGEST),
+      // R6.2/R9-B · capability para la UI: ¿se puede lanzar una batalla real desde la
+      // UI? (enabled = flag on; available = flag on Y runner cableado). Nunca secretos.
+      realBattleRuns,
       battlesByStatus,
       buildsByStatus,
       botVersionsByState,

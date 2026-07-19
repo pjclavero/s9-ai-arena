@@ -25,6 +25,7 @@ import { BattlesPage } from "./pages/BattlesPage.js";
 // R9 · crear batalla de práctica desde la UI (usa POST /battles seguro; ver BattleNewPage).
 import { BattleNewPage } from "./pages/BattleNewPage.js";
 import { MapsPage } from "./pages/MapsPage.js";
+import { ReplaysPage } from "./pages/ReplaysPage.js"; // R7-A · listado global de replays
 import { SystemPage } from "./pages/SystemPage.js";
 import { AuditPage } from "./pages/AuditPage.js";
 import { RolesPage } from "./pages/RolesPage.js";
@@ -170,6 +171,7 @@ export function App() {
         <a href="#/teams">Equipos</a>
         <a href="#/tournaments">Torneos</a>
         <a href="#/battles">Batallas</a>
+        <a href="#/replays">Replays</a>
         <a href="#/maps">Mapas</a>
         {/* La interfaz solo OCULTA; la autorización la hace la API (cap. 16) */}
         {isAdmin(me) && (
@@ -216,6 +218,8 @@ export function App() {
             <TournamentsPage me={me} />
           ) : route.startsWith("#/teams") ? (
             <TeamsPage me={me} />
+          ) : route.startsWith("#/replays") ? ( // R7-A (con 's'; distinto de #/replay/<id> público)
+            <ReplaysPage />
           ) : route.startsWith("#/maps") ? (
             <MapsPage me={me} />
           ) : route.startsWith("#/system") ? (

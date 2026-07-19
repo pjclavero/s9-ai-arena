@@ -25,8 +25,8 @@ beforeAll(() => {
 });
 
 describe("T7.5 conformidad con el contrato de E1", () => {
-  it("el contrato tiene 57 operaciones (55 + las 2 de R8: getSystemStatus/getRbacMatrix, contrato 0.3.0)", () => {
-    expect(loadContract().operations.length).toBe(57);
+  it("el contrato tiene 58 operaciones (57 + runBattle de R6.2/R9-B, contrato 0.3.0)", () => {
+    expect(loadContract().operations.length).toBe(58);
   });
 
   it("toda operación del contrato está implementada o declarada pendiente con motivo", () => {

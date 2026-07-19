@@ -19,6 +19,7 @@ import { botRoutes, buildRoutes } from "./routes/bots.js";
 import { catalogRoutes } from "./routes/catalog.js";
 import { adminRoutes } from "./routes/admin.js";
 import { battleRoutes } from "./routes/battles.js";
+import { battleRunConfigFromEnv, realBattleRunsCapability, type BattleRunConfig } from "./battle-run.js";
 import { standingsRoutes } from "./routes/standings.js";
 import { tournamentRoutes } from "./routes/tournaments.js";
 import { mapRoutes } from "./routes/maps.js";
@@ -58,6 +59,13 @@ export interface AppConfig {
   /** Limitadores de registro/login; por defecto, compartidos en BD (ERR-SEC-14). */
   registerLimiter?: RateLimiterLike;
   loginLimiter?: RateLimiterLike;
+  /**
+   * R6.2/R9-B · Config de ejecución containerizada REAL. Por defecto se resuelve del
+   * entorno (apagado salvo S9_ENABLE_REAL_BATTLE_RUNS=1) y SIN runner cableado (→ 503
+   * runner_unavailable hasta el paso VM108). El launcher se inyecta aquí; la API nunca
+   * llama a Docker. En tests se inyecta un launcher fake.
+   */
+  realBattleRuns?: BattleRunConfig;
 }
 
 export function createApp(cfg: AppConfig): express.Express {
@@ -108,11 +116,12 @@ export function createApp(cfg: AppConfig): express.Express {
   app.use(keyRoutes());
   app.use(catalogRoutes(cfg.db));
   app.use(adminRoutes(cfg.db));
-  app.use(battleRoutes(cfg.db, cfg.anonQuota ?? DEFAULT_ANON_QUOTA));
+  const realBattleRuns = cfg.realBattleRuns ?? battleRunConfigFromEnv();
+  app.use(battleRoutes(cfg.db, cfg.anonQuota ?? DEFAULT_ANON_QUOTA, realBattleRuns));
   app.use(standingsRoutes(cfg.db));
   app.use(tournamentRoutes(cfg.db));
   app.use(mapRoutes(cfg.db));
-  app.use(systemRoutes(cfg.db));
+  app.use(systemRoutes(cfg.db, realBattleRunsCapability(realBattleRuns)));
 
   app.use((req: Request, res: Response) => {
     res.status(404).json({ error: "not_found", message: "Ruta no encontrada", correlationId: req.correlationId });
