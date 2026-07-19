@@ -33,6 +33,14 @@
     **Mergeada** (`main@bd26b0b`).
 - **PRs abiertas del plan:** ninguna. **#41** (smoke-battle E2E, diseño rival) **cerrada como superseded**
   (cubierta por #42/#43/#44; sin código exclusivo útil).
+- **PR #38** (integración Ronda 2/3 + R-DEPLOY): **ya mergeada** (`10cd180`). Las secciones §6/§7 de
+  despliegue de VM108 (fechadas 2026-07-18) no se han vuelto a auditar tras eso; su mención a #38
+  como "pendiente" es histórica.
+- **CI `nightly`**: estaba en rojo; **reparado en el Bloque 1** (PR #57, `main@32ef49f`). Causa real:
+  `example-bots/ctf-integration.test.ts` hardcodeaba la ruta Windows del venv Python
+  (`.venv/Scripts/python.exe`) y la nightly (Linux, `RUN_SLOW=1`) no lo provisionaba → `spawn ENOENT`.
+  El `::error:: NEEDS_JSON` del log era un **red herring** (de `infrastructure/tests/ci-gate.test.ts`,
+  que pasa probando el fail-closed). Validado con `workflow_dispatch` verde end-to-end.
 - **VM108**: sigue corriendo una foto anterior (ver §2.1); **el despliegue no refleja `main`**. La
   ejecución real de batallas desde UI/torneos sigue **gateada** (R6.2/R9-A) y **no** se ha activado.
 - **No tocar** runner real ni s9-docker-proxy. Invariantes de seguridad en `docs/ROADMAP.md`.
