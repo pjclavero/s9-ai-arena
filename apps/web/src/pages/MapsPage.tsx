@@ -136,6 +136,10 @@ export function MapsPage(_props: { me: Me }) {
       <div className="card">
         <h2>Mapas</h2>
         <p>
+          <a href="#/maps/editor">Abrir editor de mapas (borrador local)</a> — R10, foundation: diseña un mapa y
+          expórtalo a JSON. La importación/validación real sigue haciéndose desde los controles de abajo.
+        </p>
+        <p>
           Importa un mapa (JSON interno o export de Tiled) o genera uno procedural. Ambos pasan por el validador real
           antes de guardarse. Solo un mapa <strong>publicado</strong> puede usarse en una batalla; la ejecución real la
           realiza el pipeline de la arena, no este panel.
