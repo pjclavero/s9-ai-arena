@@ -691,6 +691,24 @@ paths:
       responses:
         '200': { description: Batalla, content: { application/json: { schema: { $ref: '#/components/schemas/Battle' } } } }
 
+  /battles/{battleId}/run:
+    post:
+      tags: [battles]
+      operationId: runBattle
+      summary: |
+        R6.2/R9-B · Lanza la ejecución containerizada REAL de una batalla `scheduled` usando el
+        pipeline seguro (bot-manager → s9-docker-proxy → red arena → replay-service). GATEADO:
+        apagado por defecto → 503. La API no llama a Docker directamente.
+      x-min-role: user
+      parameters: [{ $ref: '#/components/parameters/BattleId' }]
+      responses:
+        '200':
+          description: Lanzada / resultado
+          content: { application/json: { schema: { type: object, additionalProperties: true } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Estado inválido / bot no listo / mapa no publicado, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '503': { description: Ejecución real deshabilitada o runner no disponible, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
   /battles/{battleId}/spectate-ticket:
     post:
       tags: [battles]
