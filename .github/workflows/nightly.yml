@@ -37,7 +37,17 @@ jobs:
         with:
           python-version: "3.12"
       - run: npm ci
+      - name: Provisionar el venv de arena-sdk (Python) para el CTF 2v2 cross-lenguaje
+        # ctf-integration.test.ts (RUN_SLOW) lanza explorer.py/defender.py como
+        # subprocesos reales desde sdks/python/.venv. Sin este venv el spawn daba
+        # ENOENT y la nightly quedaba en rojo. El intérprete se pasa explícito por
+        # PYTHON_BIN para no depender del layout de la plataforma.
+        run: |
+          python -m venv sdks/python/.venv
+          sdks/python/.venv/bin/python -m pip install --upgrade pip
+          sdks/python/.venv/bin/python -m pip install -e sdks/python
       - name: Suite completa con RUN_SLOW (winrate + CTF 2v2)
         env:
           RUN_SLOW: "1"
+          PYTHON_BIN: ${{ github.workspace }}/sdks/python/.venv/bin/python
         run: npm test
