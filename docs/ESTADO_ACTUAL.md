@@ -11,6 +11,31 @@
 
 ---
 
+## 0. Actualización de estado del repo (2026-07-19)
+
+> Esta sección **actualiza el estado del repositorio** por encima del encabezado (que citaba
+> `origin/main = 5cade21`). La auditoría de **despliegue** de VM108/VM104 de las secciones §2–§7
+> conserva su fecha (2026-07-18) y **no se ha re-verificado** en esta pasada: **no se ha tocado
+> VM108/VM104/runner/proxy**.
+
+- **`origin/main` actual: `e9438f9`.**
+- **Hito A**: alcanzado — batalla E2E real en VM108 con runners containerizados + replay real
+  verificado bit a bit. Pipeline seguro bot-manager → s9-docker-proxy → red `arena` → replay-service.
+- **R7 / R8 / R9**: en `main` (replay API/viewer/verify; admin consolidado; creación de batalla
+  prepared/segura).
+- **PRs integradas (2026-07-19):**
+  - **#50 R7-A** — ingesta de replay + `#/replays`. **Mergeada** (CI verde).
+  - **#51 R6.2/R9-B** — ejecución containerizada gateada desde UI (`runBattle`, off por defecto).
+    **Mergeada** (CI verde) tras rebase sobre #50.
+  - **#52 dossier R10/R11/R12** — solo docs. **Mergeada** (CI verde).
+- **PRs abiertas:** **#53** R10 slice 1 (editor de mapas, solo cliente, draft, CI verde); **#41**
+  smoke-battle E2E (otro agente, draft).
+- **VM108**: sigue corriendo una foto anterior (ver §2.1); **el despliegue no refleja `main`**. La
+  ejecución real de batallas desde UI/torneos sigue **gateada** (R6.2/R9-A) y **no** se ha activado.
+- **No tocar** runner real ni s9-docker-proxy. Invariantes de seguridad en `docs/ROADMAP.md`.
+
+---
+
 ## 1. Resumen ejecutivo
 
 - **La v1 (prototipo de tanques) YA NO está desplegada** como stack principal. Se retiró de

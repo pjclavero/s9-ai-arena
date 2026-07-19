@@ -1,5 +1,10 @@
 # Fase siguiente — R10 / R11 / R12 (dossier de coordinación)
 
+> **Nota (2026-07-19):** este dossier cubre **R10/R11/R12**. El orden global del proyecto —que
+> intercala **R13** (motor/runtime), **R16** (visual) y **R14** (WebRTC)— vive en `docs/ROADMAP.md`.
+> Secuencia acordada: #50 → #51 → #52 → **R13.0** → R10 → R13.1 → R11 → R13.2 → R12 → R16 → R14 →
+> R13.5 → save/load·latencia·sharding. R10/R11/R12 siguen en **PRs separadas** de R13/R14/R16.
+>
 > **Naturaleza:** documento de **coordinación y diseño**, NO de implementación. Prepara
 > R10/R11/R12. **No toca VM108/VM104/runner/proxy/seguridad.**
 > **Decisión de alcance del coordinador: Opción A (diseño/documentación).** No se implementa
