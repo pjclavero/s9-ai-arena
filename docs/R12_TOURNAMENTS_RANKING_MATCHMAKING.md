@@ -89,15 +89,16 @@ admin para crear torneo; público read-only para ranking; **no auto-run si
 
 ## Riesgos / dependencias
 
-- **Depende de R6.2/R9-B (#51)** para `prepare/run` y de **R6.2/R9-A (VM108)** para ejecución
-  real. Depende de R7-A (#50) para replays de match. Solape App.tsx/OpenAPI. Riesgo **medio/alto**.
+- **Depende de R6.2/R9-B (#51, ya en main)** para `prepare/run` y de **R6.2/R9-A (VM108)** para
+  ejecución real. Depende de R7-A (#50, ya en main) para replays de match. Solape App.tsx/OpenAPI.
+  Riesgo **medio/alto**.
 
 ## Primer PR recomendado
 
-`feature/r12-tournaments-bracket-ranking-foundation` (tras #50/#51): bracket UI + página ranking
+`feature/r12-tournaments-bracket-ranking-foundation` (#50/#51 ya en main): bracket UI + página ranking
 (sobre standings) + `prepare-battle` (sin auto-run) + matchmaking gateado + tests + docs.
 
 ## Dictamen
 
-**R12-B** — diseño/contrato preparado; ranking/bracket implementables pronto; **run/matchmaking
-reales dependen de #51 y VM108 (R6.2/R9-A)**.
+**R12-B** — diseño/contrato preparado; ranking/bracket implementables pronto (#51 ya en main);
+**la ejecución real de run/matchmaking sigue gateada a VM108 (R6.2/R9-A)**.

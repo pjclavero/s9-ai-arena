@@ -9,18 +9,19 @@
   verificado** (bit a bit). Pipeline seguro: bot-manager → s9-docker-proxy → red `arena` → replay-service.
 - **R7** replay API/viewer/verify · **R8** admin consolidado · **R9** creación de batalla prepared/segura.
 
-## En vuelo (PRs abiertas)
+## Integrado en main (2026-07-19)
 
-- **#50 R7-A** — ingesta operativa del replay + listado global `#/replays` (CI verde, draft).
+- **#50 R7-A** — ingesta operativa del replay + listado global `#/replays`. **Mergeada** (CI verde).
 - **#51 R6.2/R9-B** — ejecución containerizada **gateada** desde UI (`POST /battles/:id/run`,
-  apagado por defecto; UI Run disabled salvo backend available) (CI verde, draft).
+  apagado por defecto; UI Run disabled salvo backend available). **Mergeada** (CI verde) tras
+  rebase sobre #50. `main@6373e19`.
 
 ## Siguiente fase (diseño preparado — ver `docs/NEXT_PHASE_R10_R11_R12.md`)
 
 - **R10** Editor avanzado de mapas (foundation) — independiente. → `R10-B`.
-- **R11** Spectator público interno (foundation, gateado) — depende de #50. → `R11-B`.
-- **R12** Torneos/ranking/matchmaking (foundation) — ranking pronto; run/matchmaking dependen de
-  #51 y de la validación VM108 (R6.2/R9-A). → `R12-B`.
+- **R11** Spectator público interno (foundation, gateado) — dependencia #50 **ya en main**. → `R11-B`.
+- **R12** Torneos/ranking/matchmaking (foundation) — ranking pronto; run/matchmaking usan `runBattle`
+  de #51 (**ya en main**) pero la ejecución real sigue gateada a la validación VM108 (R6.2/R9-A). → `R12-B`.
 
 ## Gates operativos pendientes (VM108, gateados)
 
@@ -36,4 +37,4 @@ obligatorios. Secretos nunca en el frontend. Features experimentales **off** por
 
 ## Orden recomendado
 
-1. Merge #50 → #51. 2. R10. 3. R11. 4. R12. 5. (VM108) R6.2/R9-A + R7-A operativo.
+1. ~~Merge #50 → #51~~ (**hecho**, `main@6373e19`). 2. R10. 3. R11. 4. R12. 5. (VM108) R6.2/R9-A + R7-A operativo.

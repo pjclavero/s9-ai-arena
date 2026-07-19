@@ -1,16 +1,20 @@
 # Fase siguiente — R10 / R11 / R12 (dossier de coordinación)
 
 > **Naturaleza:** documento de **coordinación y diseño**, NO de implementación. Prepara
-> R10/R11/R12 sin bloquear R7-A (#50) ni R6.2/R9-B (#51), ambas draft con CI verde y sin
-> mergear al escribir esto. **No toca VM108/VM104/runner/proxy/seguridad.**
+> R10/R11/R12. **No toca VM108/VM104/runner/proxy/seguridad.**
 > **Decisión de alcance del coordinador: Opción A (diseño/documentación).** No se implementa
-> código de R10/R11/R12 en este PR para no pisar #50/#51 (solapan en `App.tsx` y OpenAPI).
+> código de R10/R11/R12 en este PR.
+>
+> **Actualización 2026-07-19:** #50 (R7-A) y #51 (R6.2/R9-B) **ya están integradas en main**
+> (`main@6373e19`); #51 se rebasó sobre #50 sin conflictos y con CI verde. Este dossier ya no
+> depende de esas PRs como "en vuelo": sus dependencias descritas abajo están disponibles en main.
 
 ## 1. Estado base
 
-- `main@23aba52`. CI verde. Hito A alcanzado (batalla E2E real + replay en VM108).
-- PRs abiertas: **#50 R7-A** (ingesta operativa + `#/replays`, CI verde), **#51 R6.2/R9-B**
-  (ejecución containerizada gateada desde UI, CI verde), **#41** (otro agente, e2e smoke, draft).
+- `main@6373e19`. CI verde. Hito A alcanzado (batalla E2E real + replay en VM108).
+- **Integradas en main (2026-07-19):** **#50 R7-A** (ingesta operativa + `#/replays`) y
+  **#51 R6.2/R9-B** (ejecución containerizada gateada desde UI, `runBattle`). **#41** (otro
+  agente, e2e smoke) sigue en curso, no relacionado con este dossier.
 
 ## 2. Hallazgo clave: NO es greenfield
 
@@ -54,7 +58,7 @@ R12 (torneos/ranking) ── ranking/standings independientes; "prepare/run de m
 
 ## 5. Orden recomendado de implementación (cuando se autorice)
 
-1. **Mergear #50 (R7-A)** y **#51 (R6.2/R9-B)** primero (base para R11 y R12).
+1. ~~Mergear #50 (R7-A) y #51 (R6.2/R9-B)~~ — **hecho** (`main@6373e19`); base para R11 y R12 ya disponible.
 2. **R10 Map Editor Foundation** — el más independiente; mejora mapas → batallas → replays.
 3. **R11 Public Spectator Foundation** — sobre R7-A; gateado por defecto.
 4. **R12 Tournaments/Ranking Foundation** — ranking/bracket UI sobre lo existente; matchmaking
@@ -90,8 +94,9 @@ RTMP/YouTube/Twitch. Greps de seguridad obligatorios en cada PR.
 ## 9. Dictamen
 
 - **R10 → R10-B** (diseño/contrato preparado; implementación pendiente).
-- **R11 → R11-B** (diseño/contrato preparado; depende de #50).
-- **R12 → R12-B** (diseño/contrato preparado; ranking implementable pronto; run/matchmaking
-  dependen de #51/VM108).
+- **R11 → R11-B** (diseño/contrato preparado; dependencia #50 ya en main).
+- **R12 → R12-B** (diseño/contrato preparado; ranking implementable pronto sobre #51 ya en main;
+  ejecución real de run/matchmaking gateada a VM108).
 - **GLOBAL → GLOBAL-B**: diseño y plan multiequipo completos, implementación pendiente y
-  secuenciada tras #50/#51. No GLOBAL-A (no hay código de estas foundations, por decisión).
+  secuenciada. #50/#51 **ya integradas en main** (`6373e19`); R10 es el siguiente en código.
+  No GLOBAL-A (no hay código de estas foundations, por decisión).

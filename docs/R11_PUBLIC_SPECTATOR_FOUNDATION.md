@@ -7,7 +7,7 @@
 - **Gateway de espectador**: `apps/api/src/spectate/gateway.ts` + ticket `getSpectateTicket`
   (un solo uso, canal WS servido por el gateway; SOLO snapshots públicos, nunca observaciones privadas).
 - **Broadcast**: `BroadcastPage` + `broadcast/director` (vista `/broadcast`, E11) — captura interna.
-- **Replays gestionados**: `GET /replays` (R7-A #50, pendiente de merge) + `#/replays`.
+- **Replays gestionados**: `GET /replays` (R7-A #50, **ya en main**) + `#/replays`.
 
 ## Qué falta (gap R11)
 
@@ -64,14 +64,14 @@ enabled; render `#/live`; overlay; error limpio si battle no existe; enlace a re
 
 ## Riesgos / dependencias
 
-- **Depende de R7-A (#50)** para `GET /replays` y el listado. Solape App.tsx (nueva ruta/nav).
+- **Depende de R7-A (#50, ya en main)** para `GET /replays` y el listado. Solape App.tsx (nueva ruta/nav).
 - Reutilizar el gateway/ticket existente evita duplicar el canal WS (riesgo de seguridad).
 
 ## Primer PR recomendado
 
-`feature/r11-public-spectator-foundation` (tras merge de #50): `LivePage` + `routes/public.ts`
+`feature/r11-public-spectator-foundation` (#50 ya en main): `LivePage` + `routes/public.ts`
 gateado + capability en /system/status + tests + docs. Off por defecto.
 
 ## Dictamen
 
-**R11-B** — diseño/contrato preparado; implementación pendiente (depende de #50).
+**R11-B** — diseño/contrato preparado; implementación pendiente (dependencia #50 ya en main).
