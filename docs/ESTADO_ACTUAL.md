@@ -18,18 +18,21 @@
 > conserva su fecha (2026-07-18) y **no se ha re-verificado** en esta pasada: **no se ha tocado
 > VM108/VM104/runner/proxy**.
 
-- **`origin/main` actual: `e9438f9`.**
+- **`origin/main` actual: `bd26b0b`.**
 - **Hito A**: alcanzado — batalla E2E real en VM108 con runners containerizados + replay real
-  verificado bit a bit. Pipeline seguro bot-manager → s9-docker-proxy → red `arena` → replay-service.
+  verificado bit a bit (hash `b2dc4269`). Pipeline seguro bot-manager → s9-docker-proxy → red `arena` → replay-service.
 - **R7 / R8 / R9**: en `main` (replay API/viewer/verify; admin consolidado; creación de batalla
   prepared/segura).
 - **PRs integradas (2026-07-19):**
-  - **#50 R7-A** — ingesta de replay + `#/replays`. **Mergeada** (CI verde).
-  - **#51 R6.2/R9-B** — ejecución containerizada gateada desde UI (`runBattle`, off por defecto).
-    **Mergeada** (CI verde) tras rebase sobre #50.
-  - **#52 dossier R10/R11/R12** — solo docs. **Mergeada** (CI verde).
-- **PRs abiertas:** **#53** R10 slice 1 (editor de mapas, solo cliente, draft, CI verde); **#41**
-  smoke-battle E2E (otro agente, draft).
+  - **#50 R7-A** — ingesta de replay + `#/replays`. **Mergeada**.
+  - **#51 R6.2/R9-B** — ejecución containerizada gateada desde UI (`runBattle`, off por defecto). **Mergeada**.
+  - **#52 dossier R10/R11/R12** — solo docs. **Mergeada**.
+  - **#55 R13.0 Engine Regression Locks** — 15 candados de test (radio/acoustic/ammo/respawn/determinismo),
+    solo tests. **Mergeada** (`main@1fc8cee`).
+  - **#53 R10 slice 1** — editor visual de mapas (solo cliente: SVG, CRUD, validación, import/export JSON).
+    **Mergeada** (`main@bd26b0b`).
+- **PRs abiertas del plan:** ninguna. **#41** (smoke-battle E2E, diseño rival) **cerrada como superseded**
+  (cubierta por #42/#43/#44; sin código exclusivo útil).
 - **VM108**: sigue corriendo una foto anterior (ver §2.1); **el despliegue no refleja `main`**. La
   ejecución real de batallas desde UI/torneos sigue **gateada** (R6.2/R9-A) y **no** se ha activado.
 - **No tocar** runner real ni s9-docker-proxy. Invariantes de seguridad en `docs/ROADMAP.md`.

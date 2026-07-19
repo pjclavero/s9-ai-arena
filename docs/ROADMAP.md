@@ -12,12 +12,16 @@
 - **#50 R7-A** — ingesta operativa del replay + listado global `#/replays`. **Mergeada** (CI verde).
 - **#51 R6.2/R9-B** — ejecución containerizada **gateada** desde UI (`POST /battles/:id/run`, apagado
   por defecto). **Mergeada** (CI verde) tras rebase sobre #50.
-- **#52 dossier R10/R11/R12** — planificación (solo docs). **Mergeada** (CI verde). `main@e9438f9`.
+- **#52 dossier R10/R11/R12** — planificación (solo docs). **Mergeada** (CI verde).
+- **#55 R13.0 Engine Regression Locks** — 3 ficheros de test (radio/acoustic/ammo/respawn/determinismo),
+  15 candados, solo tests. **Mergeada** (`main@1fc8cee`, CI verde).
+- **#53 R10 slice 1** — editor visual de mapas (foundation, **solo cliente**: SVG, CRUD add/select/
+  mover/eliminar, validación cliente, import/export JSON). **Mergeada** (`main@bd26b0b`, CI verde).
 
 ## PRs activas
 
-- **#53 R10 slice 1** — editor visual de mapas (foundation, **solo cliente**). Draft, CI verde.
-- **#41** — smoke-battle E2E (otro agente). Draft.
+- Ninguna del plan multiequipo. **#41** (smoke-battle E2E, diseño rival) **cerrada como superseded**
+  (cubierta por #42/#43/#44 en main; sin código exclusivo útil).
 
 ## Orden de trabajo (secuencia acordada 2026-07-19)
 
@@ -26,14 +30,16 @@
 1. ~~#50 R7-A~~ — **hecho** (en main).
 2. ~~#51 R6.2/R9-B~~ — **hecho** (en main).
 3. ~~#52 dossier R10/R11/R12~~ — **hecho** (en main).
-4. **R13.0 — Engine Regression Locks** ✅ **implementado** (`feature/r13-0-regression-locks`, PR
-   abierta): 3 ficheros de test (radio/acoustic/ammo), 15 candados verdes, **solo tests** (cero
-   cambios de motor), determinismo intacto. Los tres fallos ya estaban corregidos en código; R13.0
-   los blinda. Ver `docs/ENGINE_REGRESSION_LOCKS.md`.
+4. ~~**R13.0 — Engine Regression Locks**~~ ✅ **MERGED** (#55, `main@1fc8cee`): 3 ficheros de test
+   (radio/acoustic/ammo), 15 candados verdes, **solo tests** (cero cambios de motor), determinismo
+   intacto. Los tres fallos ya estaban corregidos en código; R13.0 los blinda. Ver
+   `docs/ENGINE_REGRESSION_LOCKS.md`.
 
 ### Después
 
-5. **R10 — Editor visual de mapas** (primer bloque grande tras los merges; #53 ya abre el slice 1).
+5. ~~**R10 — Editor visual de mapas**~~ **Slice 1 MERGED** (#53, `main@bd26b0b`): editor solo cliente
+   (`#/maps/editor`, SVG, CRUD, validación, import/export JSON). Slice 2 pendiente (persistencia
+   backend: endpoint de draft + validación map-service). Ver `docs/R10_MAP_EDITOR_SLICE1.md`.
 6. **R13.1 — Inspector de estado + slow motion** (depuración, read-only, sin romper determinismo).
 7. **R11 — Spectator público interno** (foundation, gateado). **Depende de R7-A (#50)**.
 8. **R13.2 — Métricas Prometheus** (observabilidad del motor/servicios).
