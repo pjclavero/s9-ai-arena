@@ -9,6 +9,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { loadRuleset } from "../packages/game-rules/index.js";
 import { loadCatalog, CATALOG_VERSION } from "../packages/module-catalog/loadCatalog.js";
@@ -21,7 +22,14 @@ import { GunnerBot } from "./javascript/gunner.js";
 import { MinerBot } from "./javascript/miner.js";
 
 const REPO_ROOT = join(import.meta.dirname, "..");
-const PYTHON = join(REPO_ROOT, "sdks", "python", ".venv", "Scripts", "python.exe");
+// Intérprete del venv de sdks/python, resuelto por plataforma (el layout de venv
+// difiere: `Scripts/python.exe` en Windows, `bin/python` en Linux/macOS). Antes se
+// hardcodeaba la ruta Windows, lo que rompía la nightly de CI en runners Linux con
+// spawn ENOENT. `PYTHON_BIN` permite forzar un intérprete concreto desde el entorno.
+const VENV_DIR = join(REPO_ROOT, "sdks", "python", ".venv");
+const PYTHON =
+  process.env.PYTHON_BIN ??
+  (process.platform === "win32" ? join(VENV_DIR, "Scripts", "python.exe") : join(VENV_DIR, "bin", "python"));
 const RUN_BOT_SCRIPT = join(REPO_ROOT, "example-bots", "python", "_run_bot.py");
 
 function spawnPythonBot(file: string, className: string, botId: string, url: string, token: string) {
@@ -40,6 +48,14 @@ const slow = process.env.RUN_SLOW === "1" ? describe : describe.skip;
 
 slow("T5.4 · CTF 2v2 con los 4 bots oficiales, sin stubs internos", () => {
   it("explorer.py + gunner.ts (red) vs defender.py + miner.ts (blue) terminan sin timeouts ni descalificaciones", async () => {
+    // Fail-closed con mensaje claro si el venv de Python no está provisionado (evita un
+    // spawn ENOENT críptico): la nightly debe crear sdks/python/.venv antes de RUN_SLOW.
+    if (!process.env.PYTHON_BIN) {
+      expect(
+        existsSync(PYTHON),
+        `Intérprete de Python no encontrado en ${PYTHON}. Crea el venv (python -m venv sdks/python/.venv && pip install -e sdks/python) o define PYTHON_BIN.`,
+      ).toBe(true);
+    }
     const catalog = loadCatalog();
     const participants = [
       { id: "veh_1", botId: "bot_explorer", team: "red", spec: resolveVehicle(ARCHETYPES.scout, catalog) },
