@@ -5,8 +5,10 @@ info:
   # 0.3.0 · R8 admin ops: añade getSystemStatus y getRbacMatrix (solo lectura, admin).
   # 0.4.0 · R11 espectador público (slice mínimo): añade listPublicLiveBattles
   # (gateado por S9_PUBLIC_SPECTATE_ENABLED, apagado por defecto).
+  # 0.5.0 · R12 cuadro de torneo (slice 1, solo lectura): añade
+  # listTournamentMatches (público, sin seeds/commitments).
   # Añadir un endpoint = MINOR (docs/compatibilidad.md, §2 Semver por paquete).
-  version: 0.4.0
+  version: 0.5.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -653,6 +655,26 @@ paths:
       parameters: [{ $ref: '#/components/parameters/TournamentId' }]
       responses:
         '202': { description: Simulacro encolado }
+
+  /tournaments/{tournamentId}/matches:
+    get:
+      tags: [tournaments]
+      operationId: listTournamentMatches
+      summary: >-
+        R12 (slice 1, solo lectura) · Cuadro del torneo: matches ordenados por
+        ronda y slot, con su emparejamiento y ganador si ya lo tienen. Proyección
+        explícita de columnas; NUNCA viajan seeds ni seed_commitment (esos son
+        del torneo, no del match, y esta ruta no los toca).
+      x-min-role: visitor
+      security: []
+      parameters: [{ $ref: '#/components/parameters/TournamentId' }]
+      responses:
+        '200':
+          description: Cuadro del torneo (matches por ronda/slot)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TournamentMatches' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   # --------------------------------------------------------------- BATTLES
   /public/battles/live:
@@ -1429,6 +1451,28 @@ components:
         draws: { type: integer }
         scoreDiff: { type: number, description: Diferencia de puntuación agregada de las series }
         seed: { type: integer, description: Orden de inscripción (último desempate) }
+
+    # R12 (slice 1, solo lectura) · Fila del cuadro de torneo (tabla matches,
+    # migración 008_e9_competition). Proyección explícita: nunca seed/seed_commitment
+    # (eso es del torneo, no del match).
+    TournamentMatch:
+      type: object
+      required: [id, round, slot, pairing, state, final]
+      properties:
+        id: { type: string }
+        round: { type: integer }
+        slot: { type: string, nullable: true, description: 'Identificador único del hueco en el cuadro (matches_tournament_slot_idx)' }
+        pairing: { type: object, additionalProperties: true, description: 'Fuentes del emparejamiento (home/away/round/slot), estructura del bracket' }
+        state: { enum: [scheduled, running, finished, failed] }
+        winnerBotId: { type: string, nullable: true }
+        winnerTeamId: { type: string, nullable: true }
+        final: { type: boolean, description: 'true si es la final del torneo (modo visible, cap. 19.1)' }
+
+    TournamentMatches:
+      type: object
+      required: [matches]
+      properties:
+        matches: { type: array, items: { $ref: '#/components/schemas/TournamentMatch' } }
 
     SecurityFinding:
       type: object

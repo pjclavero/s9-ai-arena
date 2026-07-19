@@ -56,8 +56,11 @@
    candados de regresión (ticket caducado, URLs raras). Ver `docs/R13_2_HARDENING.md`.
    **Nota**: la etiqueta original "Métricas Prometheus" queda como slice futuro independiente
    (no implementado en este bloque).
-9. **R12 — Bracket/ranking foundation**. **Depende de #51**; auto-run/matchmaking real **además**
-   de la validación VM108 (R6.2/R9-A).
+9. **R12 — Bracket/ranking foundation** — **Slice 1 (bracket read-only) implementado**
+   (`feature/r12-tournament-bracket`): `GET /tournaments/{id}/matches` (contrato 0.5.0, 60 ops,
+   visitor) + página `#/tournaments/:id/bracket`, solo lectura, cero ejecuciones de batalla.
+   Ver `docs/R12_BRACKET_SLICE1.md`. Pendiente de slices posteriores: prepare-battle, `#/ranking`,
+   matchmaking — auto-run real sigue gateado a #51 + validación VM108 (R6.2/R9-A).
 
 ### Luego (largo plazo)
 
