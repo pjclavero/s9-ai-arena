@@ -58,6 +58,26 @@ describe("UI del editor de mapas", () => {
     expect(screen.getByText(/^Editar/)).toBeTruthy();
   });
 
+  it("mover un objeto por el input x se refleja en el export", () => {
+    render(<MapEditorPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Añadir muro" }));
+    // el muro queda seleccionado → editamos su x
+    fireEvent.change(screen.getByLabelText("x"), { target: { value: "123" } });
+    const exported = screen.getByLabelText("JSON exportado") as HTMLTextAreaElement;
+    expect(exported.value).toContain('"x": 123');
+  });
+
+  it("eliminar el objeto seleccionado lo quita de la lista", () => {
+    render(<MapEditorPage />);
+    const before = screen.getByText(/^Objetos \(/).textContent; // "Objetos (2)"
+    fireEvent.click(screen.getByRole("button", { name: "Añadir muro" }));
+    expect(screen.getByText(/^Objetos \(/).textContent).not.toBe(before);
+    fireEvent.click(screen.getByRole("button", { name: "Eliminar objeto" }));
+    // vuelve al recuento inicial y el fieldset de edición desaparece
+    expect(screen.getByText(/^Objetos \(/).textContent).toBe(before);
+    expect(screen.queryByText(/^Editar/)).toBeNull();
+  });
+
   it("importar JSON carga el mapa (roundtrip por la UI)", () => {
     render(<MapEditorPage />);
     const payload = JSON.stringify({
