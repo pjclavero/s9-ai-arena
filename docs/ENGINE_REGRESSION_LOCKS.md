@@ -1,8 +1,16 @@
 # R13.0 · Engine Regression Locks
 
-> **Siguiente PR de código recomendado** tras #50/#51/#52. Fija con tests los tres fallos críticos
-> auditados y los invariantes de determinismo/replay. **Riesgo bajo.** No toca contrato, seguridad,
-> VM108/VM104/runner/proxy. Verificado contra `main@e9438f9`.
+> **IMPLEMENTADO (2026-07-19)** en `feature/r13-0-regression-locks`. Fija con tests los tres fallos
+> críticos y los invariantes de determinismo/replay. **Solo tests — cero cambios de motor.** No toca
+> contrato, seguridad, VM108/VM104/runner/proxy.
+>
+> **Resultado:** 3 ficheros (`radio-regression`, `acoustic-sensor-regression`,
+> `ammo-loadout-regression`), **15 casos verdes**. Los tres fallos ya estaban corregidos en código
+> (radio: contador por vehículo ERR-ENG-06; acoustic: emisión viva ERR-ENG-01; ammo: init+respawn);
+> R13.0 aporta el **blindaje**. Mutación del motor → el candado correspondiente **falla** (prueba de
+> que no son vacuos); al revertir, 15/15. `typecheck`/`lint`/`format:check` verdes. Determinismo del
+> resto de la suite intacto. (Nota ambiental: `replay-golden` tiene 1 fallo **preexistente** por
+> `zstdCompressSync` no disponible en Node 20 local — builtin de Node ≥22.15; ajeno a R13.0.)
 
 ## Objetivo
 

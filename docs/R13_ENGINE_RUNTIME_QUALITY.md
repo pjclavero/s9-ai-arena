@@ -1,31 +1,34 @@
 # R13 · Calidad y operabilidad del motor (engine runtime quality)
 
-> Documentación y plan. **No implementa** nada por sí mismo. Verificado contra `main@e9438f9`.
-> Bloque separado de R10/R11/R12/R14/R16. No toca VM108/VM104/runner/proxy/seguridad.
+> Documentación y plan. Verificado contra `origin/main` (worktree limpio). Bloque separado de
+> R10/R11/R12/R14/R16. No toca VM108/VM104/runner/proxy/seguridad.
 
-## 0. Auditoría de los tres fallos críticos (Equipo 2)
+## 0. Auditoría de los tres fallos críticos — CERRADA por R13.0 (2026-07-19)
 
-Revisado en `apps/arena-engine/src/sim/{battle,vehicle,sensors,combat}.ts` y
-`apps/arena-engine/tests/*`.
+> **Corrección de la auditoría previa (#54):** aquella pasada leyó una **copia de trabajo stale**
+> del motor y afirmó que el radio "seguía usando un `Map id:segundo`". **Era falso.** En
+> `origin/main` el radio **ya usa un contador por vehículo** (`v.radioSentThisSecond` +
+> `v.radioSecond`, reset por segundo — fix **ERR-ENG-06**), presente desde R2.7. Verificado en el
+> worktree limpio. La tabla siguiente refleja el **estado real** y el candado de R13.0 que lo fija.
 
-| Fallo | Estado en código | Test existente | Documentado | Riesgo residual | Acción recomendada |
-|---|---|---|---|---|---|
-| **1. `radioSentThisSecond` con `Map`** | **Parcial.** Sigue usando `new Map<string,number>()` (`battle.ts:94`) con clave `"${id}:${floor(tick/TICK_HZ)}"` (`:286`,`:292`). **Nunca se limpia**: crece (nº vehículos × segundos) durante la batalla. Determinismo **OK**: acceso por clave, no por iteración. | No hay test de "el spam de radio no crece sin límite". | No. | Fuga acotada por batalla (GC al terminar); no rompe determinismo hoy, pero es frágil. | R13.0: sustituir el `Map` por **contador por vehículo acotado** (guardar `{segundo, cuenta}` por vehículo, reset al cambiar de segundo) + test de no-crecimiento. |
-| **2. Sensor acústico muerto / test vacuo** | **Código VIVO.** `sensors.ts:179-188` lee `world.sounds`, filtra por rango y emite `sources` con `bearing/kind/intensity` (solo dirección, nunca posición, cap. 11). `battle.ts` empuja sonidos: gunshot (`:423`), engine (`:315`), explosion (`:483`,`:517`); se vacían cada ciclo (`:193`). | **VACUO.** `sensors-fog.test.ts:240-243`: `if (acoustic && acoustic.sources.length > 0) {…}` en `emptyArena()` sin disparos ⇒ el `if` es falso y **no se afirma nada**. | No. | **Regresión silenciosa**: si el acústico dejara de emitir, el test seguiría en verde. | R13.0: test **no vacuo** — provocar un disparo/explosión reales y **exigir** `sources.length > 0` con `bearing`; y verificar que un bot **sin** módulo acústico no recibe `acoustic`. |
-| **3. Munición del loadout no propagada / `no_ammo`** | **ARREGLADO.** `vehicle.ts:134` inicializa `ammo: m.rounds ?? 0` y `charges: m.charges ?? 0`; respawn (`:293-294`) restaura `ammo/charges` desde `spec`. `combat.ts:184-187 ammoFor` localiza munición aceptada; `:156-157` devuelve `no_ammo` solo si `ammo<=0`. | **Parcial.** `combat.test.ts:191-192` cubre el **negativo** (`ammo=0 ⇒ no_ammo`). **Falta el positivo** (loadout con `rounds` dispara) y el de **respawn** (restaura munición). | No. | Sin lock del positivo, una regresión de propagación no la detecta la suite. | R13.0: test **positivo** (loadout con `rounds>0` ⇒ `canFire` OK y consume) + test de **respawn** que restaura munición. |
+Revisado en `apps/arena-engine/src/sim/{battle,vehicle,sensors,combat}.ts` y `tests/*`.
 
-**Conclusión de auditoría:** de los tres, **solo ammo está arreglado en código**; **acoustic** funciona
-pero su test es vacuo; **radio** sigue con `Map` sin acotar. **Ninguno de los tres está documentado**
-ni tiene lock de regresión fuerte. → Esto justifica **R13.0** como PR inmediato tras #50/#51/#52.
+| Fallo | Estado real en código | Antes | Candado R13.0 | Estado |
+|---|---|---|---|---|
+| **1. radio rate/fuga** | **YA CORRECTO.** Contador por vehículo `v.radioSentThisSecond`/`v.radioSecond` con reset por segundo (ERR-ENG-06): memoria O(1) por vehículo, **sin** `Map id:segundo` acumulado. Determinismo OK. | sin test de rate/reset ni de aislamiento entre batallas | `radio-regression.test.ts`: sin fuga entre batallas, dirigido vs broadcast, sin auto-recepción, **reset por segundo** y determinismo | **CERRADO** |
+| **2. acústico** | **YA VIVO.** `sensors.ts` emite `sources` (bearing/kind/intensity, solo dirección, cap. 11); `battle.ts` empuja gunshot/engine/explosion con doble-buffer (ERR-ENG-01). | **test VACUO** (`if sources.length>0` en arena sin sonidos) | `acoustic-sensor-regression.test.ts`: disparo real ⇒ detección dentro de rango, silencio fuera, sin fuga de posición, determinismo | **CERRADO** |
+| **3. ammo/loadout** | **YA CORRECTO.** `vehicle.ts` init `ammo: m.rounds ?? 0`; `respawn()` restaura `ammo/charges` desde `spec`. `combat.ts` `no_ammo` si `ammo<=0`. | solo test **negativo** (`ammo=0 ⇒ no_ammo`) | `ammo-loadout-regression.test.ts`: init desde loadout, **positivo** (dispara), consumo, límite y **respawn restaura** | **CERRADO** |
 
-> **No se declara ningún fallo "cerrado".** ammo tiene arreglo pero le falta lock positivo; acoustic
-> y radio no están cerrados.
+**Conclusión:** los tres fallos **ya estaban corregidos en el código** de `origin/main`; lo que
+faltaba era el **blindaje con tests de regresión**, que R13.0 aporta. **Prueba de que los candados
+muerden:** mutación del motor (quitar emisión de gunshot / init ammo a 0 / quitar el reset por
+segundo) hace **fallar** el test correspondiente; al revertir, 15/15 en verde.
 
-## 1. R13.0 — Engine Regression Locks
+## 1. R13.0 — Engine Regression Locks · IMPLEMENTADO
 
-Ver documento dedicado: **`docs/ENGINE_REGRESSION_LOCKS.md`**. Es el **siguiente PR recomendado**.
-Fija con tests los tres fallos + invariantes de determinismo/replay. **Riesgo: bajo** (tests + arreglo
-acotado de radio). No cambia el contrato ni la seguridad.
+Ver **`docs/ENGINE_REGRESSION_LOCKS.md`**. Tres ficheros de test (radio/acoustic/ammo), 15 casos,
+**solo tests** (cero cambios de motor). Determinismo intacto (`finalStateHash` sin cambios; no se
+tocó el formato de replay). **Riesgo: nulo** sobre producción (no cambia contrato ni seguridad).
 
 ## 2. R13.1 — Inspector de estado + slow motion
 
