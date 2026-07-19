@@ -96,29 +96,37 @@ export function battleRoutes(
   // R11 · Slice mínimo de espectador público: gateado por S9_PUBLIC_SPECTATE_ENABLED
   // (apagado por defecto). Responde 200 SIEMPRE, sin cuenta; si está apagado,
   // enabled=false y battles=[] (nunca 403/404).
-  defineOperation(router, "listPublicLiveBattles", async (_req, res) => {
-    if (!publicSpectateEnabled) {
-      res.json({ enabled: false, battles: [] });
-      return;
-    }
-    const rows = await db("battles")
-      .join("maps", "maps.id", "battles.map_id")
-      .where({ "battles.status": "running" })
-      .select(
-        "battles.id as id",
-        "battles.status as status",
-        "battles.mode as mode",
-        "battles.map_id as map_id",
-        "maps.name as map_name",
-        "battles.created_at as created_at",
-        "battles.started_at as started_at",
-        "battles.finished_at as finished_at",
-      )
-      .orderBy("battles.started_at", "desc")
-      .limit(50);
-    res.setHeader("Cache-Control", "public, max-age=5");
-    res.json({ enabled: true, battles: rows.map(publicLiveBattleToJson) });
-  });
+  defineOperation(
+    router,
+    "listPublicLiveBattles",
+    async (_req, res) => {
+      if (!publicSpectateEnabled) {
+        res.json({ enabled: false, battles: [] });
+        return;
+      }
+      const rows = await db("battles")
+        .join("maps", "maps.id", "battles.map_id")
+        .where({ "battles.status": "running" })
+        .select(
+          "battles.id as id",
+          "battles.status as status",
+          "battles.mode as mode",
+          "battles.map_id as map_id",
+          "maps.name as map_name",
+          "battles.created_at as created_at",
+          "battles.started_at as started_at",
+          "battles.finished_at as finished_at",
+        )
+        .orderBy("battles.started_at", "desc")
+        .limit(50);
+      res.setHeader("Cache-Control", "public, max-age=5");
+      res.json({ enabled: true, battles: rows.map(publicLiveBattleToJson) });
+    },
+    // R13.2 · REGRESSION LOCK: cuota anónima (T7.5, DoD) — igual que el resto de
+    // rutas públicas (spectate-ticket, replay, replay-verify). Un listado sin
+    // cuenta y sin cuota es un vector de scraping/DoS barato.
+    (req, res, next) => anonQuota(db, "public-live", quota)(req, res, next),
+  );
 
   defineOperation(router, "listBattles", async (req, res) => {
     const limit = parseLimit(req.query.limit);

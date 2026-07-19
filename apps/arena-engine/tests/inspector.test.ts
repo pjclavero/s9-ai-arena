@@ -8,6 +8,8 @@
  * hace `--speed` en la CLI) no altera el determinismo del motor.
  */
 import { describe, expect, it, beforeAll, afterEach } from "vitest";
+import { connect } from "node:net";
+import { once } from "node:events";
 import { Battle, type BattleConfig } from "../src/sim/battle.js";
 import { initPhysics } from "../src/sim/physics.js";
 import { loadRuleset } from "../../../packages/game-rules/index.js";
@@ -146,6 +148,110 @@ describe("inspector HTTP", () => {
     openInspectors = openInspectors.filter((i) => i !== inspector);
 
     await expect(fetch(`http://127.0.0.1:${port}/health`)).rejects.toBeDefined();
+    b.free();
+  });
+});
+
+/**
+ * R13.2 · REGRESSION LOCK — hardening del inspector (rate/tamaño de exposición,
+ * no lógica de dominio). Cubre: Cache-Control: no-store en las dos rutas,
+ * maxConnections realmente rechazando por encima del límite, timeouts de
+ * servidor realmente cortando una conexión ociosa (con connectionsCheckingInterval
+ * corto inyectado para no ralentizar la suite — Node lo fija en 30 s por
+ * defecto, que anularía en la práctica timeouts de test cortos), y las URLs
+ * raras del punto 8 de la auditoría (query string, `..`, dobles barras, encoding).
+ */
+describe("R13.2 · REGRESSION LOCK — hardening del inspector", () => {
+  it("Cache-Control: no-store en /health y /snapshot (snapshots vivos, nunca cacheables)", async () => {
+    const b = makeBattle("seed-insp-r132-cache");
+    const inspector = await createInspector({ battle: b });
+    openInspectors.push(inspector);
+
+    const health = await fetchJson(inspector.port, "/health");
+    expect(health.headers.get("cache-control")).toBe("no-store");
+    const snapshot = await fetchJson(inspector.port, "/snapshot");
+    expect(snapshot.headers.get("cache-control")).toBe("no-store");
+    b.free();
+  });
+
+  it("maxConnections rechaza conexiones por encima del límite configurado", async () => {
+    const b = makeBattle("seed-insp-r132-maxconn");
+    const inspector = await createInspector({ battle: b, maxConnections: 1 });
+    openInspectors.push(inspector);
+
+    const s1 = connect(inspector.port, "127.0.0.1");
+    await once(s1, "connect");
+    try {
+      const s2 = connect(inspector.port, "127.0.0.1");
+      // Node acepta el socket a nivel TCP y lo destruye de inmediato al superar
+      // maxConnections: se observa como un cierre casi instantáneo.
+      await once(s2, "close");
+      expect(s2.destroyed).toBe(true);
+    } finally {
+      s1.destroy();
+    }
+    b.free();
+  });
+
+  it("una conexión que no envía nada se cierra sola por headersTimeout", async () => {
+    const b = makeBattle("seed-insp-r132-timeout");
+    // Timeouts cortos + barrido rápido inyectados: Node solo revisa timeouts de
+    // cabeceras/petición en cada `connectionsCheckingInterval` (30 s por defecto),
+    // así que sin acortarlo el candado tardaría decenas de segundos en disparar.
+    const inspector = await createInspector({
+      battle: b,
+      requestTimeoutMs: 500,
+      headersTimeoutMs: 300,
+      keepAliveTimeoutMs: 300,
+      connectionsCheckingIntervalMs: 100,
+    });
+    openInspectors.push(inspector);
+
+    const socket = connect(inspector.port, "127.0.0.1");
+    await once(socket, "connect");
+    // El socket crudo debe quedar en modo "flowing" (resume()) para que el
+    // 408 que manda el servidor al expirar el timeout se consuma y el socket
+    // pueda cerrarse del todo — si se deja en pausa (sin `data`/`resume()`),
+    // Node nunca completa el lado legible y `close` no llega aunque el
+    // servidor ya haya respondido y colgado su extremo.
+    socket.resume();
+    // Deliberadamente no se envía ninguna petición: debe cerrarse sola.
+    await once(socket, "close");
+    expect(socket.destroyed).toBe(true);
+    b.free();
+  }, 10_000);
+
+  it("URLs raras: query string sigue sirviendo, .. y %2e%2e normalizan, // y /snapshot/ dan 404", async () => {
+    const b = makeBattle("seed-insp-r132-urls");
+    const inspector = await createInspector({ battle: b });
+    openInspectors.push(inspector);
+
+    const withQuery = await fetchJson(inspector.port, "/health?foo=bar");
+    expect(withQuery.status).toBe(200);
+    const snapWithQuery = await fetchJson(inspector.port, "/snapshot?x=1");
+    expect(snapWithQuery.status).toBe(200);
+
+    // `new URL()` normaliza los segmentos ".." de esquemas especiales (http): esto
+    // acaba sirviendo /snapshot, no un 404 ni un escape de ruta.
+    const dotDot = await fetchJson(inspector.port, "/health/../snapshot");
+    expect(dotDot.status).toBe(200);
+
+    const doubleSlash = await fetchJson(inspector.port, "//snapshot");
+    expect(doubleSlash.status).toBe(404);
+
+    const trailingSlash = await fetchJson(inspector.port, "/snapshot/");
+    expect(trailingSlash.status).toBe(404);
+
+    // `%2e` es equivalente a "." en la normalización de segmentos de WHATWG URL
+    // (case-insensitive, por especificación): "/%2e%2e/snapshot" normaliza igual
+    // que "/../snapshot" ⇒ /snapshot. No es una fuga: el inspector no toca el
+    // sistema de archivos, solo compara `pathname` contra dos rutas fijas, así
+    // que no hay escape posible a ningún otro recurso.
+    const encodedDotDot = await fetchJson(inspector.port, "/%2e%2e/snapshot");
+    expect(encodedDotDot.status).toBe(200);
+
+    const nothingElse = await fetchJson(inspector.port, "/");
+    expect(nothingElse.status).toBe(404);
     b.free();
   });
 });
