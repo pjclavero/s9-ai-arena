@@ -36,7 +36,7 @@ import { pathToFileURL } from "node:url";
 import { runContainerBattle, type ContainerBattleBot } from "../apps/bot-manager/src/container-battle.js";
 import { ProxyContainerRunner } from "../apps/bot-manager/src/docker-proxy.js";
 import type { ContainerRunner } from "../apps/bot-manager/src/container-runner.js";
-import { toJsonl, type Replay } from "../apps/arena-engine/src/replay.js";
+import { toJsonl, verify, type Replay } from "../apps/arena-engine/src/replay.js";
 import type { BattleResult } from "../apps/arena-engine/src/sim/battle.js";
 import { initPhysics } from "../apps/arena-engine/src/sim/physics.js";
 
@@ -58,6 +58,13 @@ export interface SmokeHarnessConfig {
    * de ingesta NO invalida la batalla, solo se reporta.
    */
   replayServiceUrl?: string;
+  /** R7-A · si true, un fallo de ingesta (o un replay que no verifica) hace fallar el
+   *  resultado operativo (modo estricto). Por defecto false (best-effort). */
+  replayIngestRequired: boolean;
+  /** R7-A · reintentos de la ingesta ante fallo transitorio. Def. 2. */
+  replayIngestRetries: number;
+  /** R7-A · timeout por intento de ingesta (ms). Def. 10000. */
+  replayIngestTimeoutMs: number;
 }
 
 export interface ReplayIngestResult {
@@ -65,6 +72,10 @@ export interface ReplayIngestResult {
   status: number;
   /** Cuerpo de respuesta del servicio (sha256/path/official) o el error. */
   body: unknown;
+  /** Nº de intentos realizados (R7-A). */
+  attempts?: number;
+  /** true si el replay verificó localmente antes de ingestar (R7-A). */
+  verified?: boolean;
 }
 
 /**
@@ -76,13 +87,22 @@ export async function ingestReplayToService(
   serviceUrl: string,
   battleId: string,
   jsonl: string,
+  timeoutMs = 10000,
 ): Promise<ReplayIngestResult> {
   const url = new URL(`/replays/${encodeURIComponent(battleId)}`, serviceUrl);
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/x-ndjson" },
-    body: jsonl,
-  });
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/x-ndjson" },
+      body: jsonl,
+      signal: ac.signal,
+    });
+  } finally {
+    clearTimeout(t);
+  }
   const text = await res.text();
   let body: unknown = text;
   try {
@@ -109,7 +129,13 @@ export function readHarnessConfig(env: NodeJS.ProcessEnv): SmokeHarnessConfig {
     mapName: map,
     timeoutMs: Number(env.SMOKE_TIMEOUT_MS ?? "120000"),
     replayOut: env.REPLAY_OUT ?? "/data/replays/e2e-real-smoke.jsonl",
-    ...(env.REPLAY_SERVICE_URL ? { replayServiceUrl: env.REPLAY_SERVICE_URL } : {}),
+    // R7-A · la ingesta se activa con REPLAY_SERVICE_URL, salvo REPLAY_INGEST_ENABLED=0.
+    ...(env.REPLAY_SERVICE_URL && env.REPLAY_INGEST_ENABLED !== "0"
+      ? { replayServiceUrl: env.REPLAY_SERVICE_URL }
+      : {}),
+    replayIngestRequired: env.REPLAY_INGEST_REQUIRED === "1",
+    replayIngestRetries: Number(env.REPLAY_INGEST_RETRIES ?? "2"),
+    replayIngestTimeoutMs: Number(env.REPLAY_INGEST_TIMEOUT_MS ?? "10000"),
   };
 }
 
@@ -150,12 +176,36 @@ export async function runSmokeHarness(cfg: SmokeHarnessConfig, runner: Container
 
   const outcome: SmokeHarnessOutcome = { result, replay, replayPath: cfg.replayOut };
 
-  // R7 · Ingesta best-effort en el replay-service (recurso gestionado + visor).
+  // R7-A · Ingesta en el replay-service (recurso gestionado + visor).
   if (cfg.replayServiceUrl) {
-    try {
-      outcome.ingest = await ingestReplayToService(cfg.replayServiceUrl, battleId, jsonl);
-    } catch (e) {
-      outcome.ingest = { ok: false, status: 0, body: (e as Error).message };
+    // No ingestar un replay que no verifica localmente (verify() re-simula y compara el
+    // hash final): evita meter datos falsos en el servicio.
+    const v = await verify(replay);
+    if (!v.matches) {
+      outcome.ingest = { ok: false, status: 0, body: "replay no verifica (verify_matches=false)", verified: false };
+      if (cfg.replayIngestRequired) {
+        throw new Error("REPLAY_INGEST_REQUIRED=1 y el replay no verifica: resultado operativo FALLIDO");
+      }
+    } else {
+      let last: ReplayIngestResult = { ok: false, status: 0, body: "sin intentos", verified: true };
+      const attempts = Math.max(1, cfg.replayIngestRetries + 1);
+      for (let i = 1; i <= attempts; i++) {
+        try {
+          last = await ingestReplayToService(cfg.replayServiceUrl, battleId, jsonl, cfg.replayIngestTimeoutMs);
+        } catch (e) {
+          last = { ok: false, status: 0, body: (e as Error).message };
+        }
+        last.attempts = i;
+        last.verified = true;
+        if (last.ok) break;
+        if (i < attempts) await new Promise((r) => setTimeout(r, 500 * i));
+      }
+      outcome.ingest = last;
+      if (!last.ok && cfg.replayIngestRequired) {
+        throw new Error(
+          `REPLAY_INGEST_REQUIRED=1 y la ingesta falló tras ${last.attempts} intento(s) (status ${last.status})`,
+        );
+      }
     }
   }
   return outcome;
