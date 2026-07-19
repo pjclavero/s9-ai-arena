@@ -197,3 +197,67 @@ describe("R7 · el arnés INGESTA el replay real en el replay-service", () => {
     expect(res.status).toBeGreaterThanOrEqual(400);
   });
 });
+
+describe("R7-A · modos de ingesta + listado global", () => {
+  it("modo REQUIRED con servicio caído → runSmokeHarness FALLA (resultado operativo)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "s9-smoke-"));
+    const cfg = readHarnessConfig({
+      SMOKE_BOT_DIGEST: REAL_DIGEST,
+      ENGINE_HOST: "127.0.0.1",
+      SMOKE_TICKS: "120",
+      SMOKE_TIMEOUT_MS: "20000",
+      REPLAY_OUT: join(dir, "r.jsonl"),
+      REPLAY_SERVICE_URL: "http://127.0.0.1:59998", // puerto muerto
+      REPLAY_INGEST_REQUIRED: "1",
+      REPLAY_INGEST_RETRIES: "1",
+      REPLAY_INGEST_TIMEOUT_MS: "800",
+    });
+    await expect(runSmokeHarness(cfg, mockRunner())).rejects.toThrow(/REQUIRED/);
+  }, 30000);
+
+  it("modo best-effort con servicio caído → no falla; marca ingest.ok=false con intentos", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "s9-smoke-"));
+    const cfg = readHarnessConfig({
+      SMOKE_BOT_DIGEST: REAL_DIGEST,
+      ENGINE_HOST: "127.0.0.1",
+      SMOKE_TICKS: "120",
+      SMOKE_TIMEOUT_MS: "20000",
+      REPLAY_OUT: join(dir, "r.jsonl"),
+      REPLAY_SERVICE_URL: "http://127.0.0.1:59998",
+      REPLAY_INGEST_RETRIES: "1",
+      REPLAY_INGEST_TIMEOUT_MS: "800",
+    });
+    const outcome = await runSmokeHarness(cfg, mockRunner());
+    expect(outcome.ingest?.ok).toBe(false);
+    expect(outcome.ingest?.attempts).toBeGreaterThanOrEqual(1);
+    expect(outcome.ingest?.verified).toBe(true);
+  }, 30000);
+
+  it("REPLAY_INGEST_ENABLED=0 desactiva la ingesta aunque haya URL", () => {
+    const cfg = readHarnessConfig({
+      SMOKE_BOT_DIGEST: REAL_DIGEST,
+      REPLAY_SERVICE_URL: "http://replay-service:8083",
+      REPLAY_INGEST_ENABLED: "0",
+    });
+    expect(cfg.replayServiceUrl).toBeUndefined();
+  });
+
+  it("tras ingestar, GET /replays lista la batalla", async () => {
+    const svc = await startReplayService();
+    const dir = mkdtempSync(join(tmpdir(), "s9-smoke-"));
+    const cfg = readHarnessConfig({
+      SMOKE_BOT_DIGEST: REAL_DIGEST,
+      ENGINE_HOST: "127.0.0.1",
+      SMOKE_TICKS: "120",
+      SMOKE_TIMEOUT_MS: "20000",
+      REPLAY_OUT: join(dir, "r.jsonl"),
+      REPLAY_SERVICE_URL: svc.url,
+    });
+    const outcome = await runSmokeHarness(cfg, mockRunner());
+    expect(outcome.ingest?.ok).toBe(true);
+    const res = await fetch(new URL("/replays", svc.url));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: { battleId: string }[] };
+    expect(body.items.some((i) => i.battleId === outcome.replay.header.battleId)).toBe(true);
+  }, 30000);
+});
