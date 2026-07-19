@@ -10,9 +10,10 @@ streaming. Monorepo TypeScript/Node.
 > **[docs/ESTADO_ACTUAL.md](docs/ESTADO_ACTUAL.md)**; para operar la VM,
 > **[docs/OPERACION_VM108.md](docs/OPERACION_VM108.md)**.
 >
-> Las doce entregas del dosier (**E1–E12**) están implementadas. Lo pendiente es completar la
-> integración a `main` (PR #38, incluye R-DEPLOY), actualizar el despliegue y la validación
-> real de extremo a extremo (batalla + visor + WebSocket desde Internet). Detalle histórico de
+> Las doce entregas del dosier (**E1–E12**) están implementadas e integradas en `main` (PR #38 y
+> siguientes ya mergeadas). El **núcleo v2 está desplegado en VM108** y el **Hito A** (batalla E2E
+> real con runners containerizados + replay verificado bit a bit) está validado; ver
+> `docs/ESTADO_ACTUAL.md` para el estado operativo vigente. Detalle histórico de
 > implementación en **[docs/estado-proyecto.md](docs/estado-proyecto.md)** (verificado 2026-07-16,
 > anterior al despliegue).
 
@@ -78,8 +79,10 @@ npm run lint
 
 ## Estado de despliegue
 
-Lo único desplegado hoy es el **prototipo v1** (VM108, acceso público vía el Nginx de VM104).
-La **plataforma v2** está implementada y verificada sin Docker, pero **no desplegada de
-extremo a extremo**: el camino crítico es entorno Docker con salida a internet → primer
-despliegue v2 en staging → verificación containerizada del sandbox → cierre de integración
-→ producción. Ver la Ronda 2 del dosier.
+El **núcleo v2 está desplegado en VM108** (dominio `s9arena.seccionnueve.duckdns.org`, vía el
+Nginx de VM104); la v1 (prototipo) fue retirada de la ruta activa. El **Hito A** —batalla E2E
+real con runners containerizados y replay verificado bit a bit— está **validado**. La ejecución
+real de batallas desde la UI/torneos sigue **gateada** (R6.2/R9-A) y no está activada.
+
+> La fuente de verdad operativa (VMs, dominios, gates, PRs integradas) es
+> **[docs/ESTADO_ACTUAL.md](docs/ESTADO_ACTUAL.md)**; este bloque es solo un resumen.
