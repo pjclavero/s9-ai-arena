@@ -44,6 +44,11 @@ export function BattleNewPage(_props: { me: Me }) {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [created, setCreated] = useState<string | null>(null);
+  // R6.2/R9-B · capability de ejecución real (la decide el backend; nunca secretos).
+  const [runCap, setRunCap] = useState<{ enabled: boolean; available: boolean }>({ enabled: false, available: false });
+  const [running, setRunning] = useState(false);
+  const [runResult, setRunResult] = useState<{ status: string; replay?: { ingested?: boolean } | null } | null>(null);
+  const [runErr, setRunErr] = useState("");
 
   useEffect(() => {
     void (async () => {
@@ -57,8 +62,30 @@ export function BattleNewPage(_props: { me: Me }) {
       } catch (e) {
         setLoadErr((e as Error).message);
       }
+      try {
+        const st = await api<{ realBattleRuns?: { enabled: boolean; available: boolean } }>("GET", "/system/status");
+        if (st.realBattleRuns) setRunCap(st.realBattleRuns);
+      } catch {
+        /* si /system/status no responde, Run queda deshabilitado (fail-closed). */
+      }
     })();
   }, []);
+
+  async function runReal(battleId: string) {
+    setRunErr("");
+    setRunning(true);
+    try {
+      const res = await api<{ status: string; replay?: { ingested?: boolean } | null }>(
+        "POST",
+        `/battles/${encodeURIComponent(battleId)}/run`,
+      );
+      setRunResult(res);
+    } catch (e) {
+      setRunErr((e as Error).message);
+    } finally {
+      setRunning(false);
+    }
+  }
 
   function botVersion(id: string): number | undefined {
     const v = bots.find((x) => x.id === id)?.latestPublishedVersion;
@@ -107,8 +134,39 @@ export function BattleNewPage(_props: { me: Me }) {
         <p className="ok">
           Batalla <code>{created}</code> creada y encolada.
         </p>
+
+        <h3>Ejecución real (containerizada)</h3>
+        {runResult ? (
+          <p className="ok" role="status">
+            Ejecución: <strong>{runResult.status}</strong>
+            {runResult.replay?.ingested ? (
+              <>
+                {" · replay ingerido · "}
+                <a href={`#/replay/${encodeURIComponent(created)}`}>ver replay</a>
+              </>
+            ) : null}
+          </p>
+        ) : (
+          <>
+            <button data-testid="run-real" disabled={!runCap.available || running} onClick={() => runReal(created)}>
+              {running ? "Ejecutando…" : "Ejecutar batalla real"}
+            </button>
+            {!runCap.available && (
+              <p className="warn" role="note">
+                Ejecución real no disponible en este entorno
+                {runCap.enabled ? " (runner no configurado)." : " (deshabilitada)."}
+              </p>
+            )}
+            {runErr && (
+              <p className="error" role="alert">
+                {runErr}
+              </p>
+            )}
+          </>
+        )}
+
         <p>
-          <a href="#/battles">Ver batallas</a>
+          <a href="#/battles">Ver batallas</a> · <a href="#/replays">Ver replays</a>
         </p>
       </section>
     );

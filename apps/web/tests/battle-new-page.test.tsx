@@ -31,11 +31,14 @@ const BOTS = [
   { id: "bot_np", name: "NoPub", latestPublishedVersion: null },
 ];
 
-function mockLists(maps: unknown[], bots: unknown[]) {
+function mockLists(maps: unknown[], bots: unknown[], runCap = { enabled: false, available: false }) {
   apiMock.mockImplementation((method: string, path: string) => {
     if (method === "GET" && path === "/maps") return Promise.resolve({ items: maps });
     if (method === "GET" && path === "/bots") return Promise.resolve({ items: bots });
+    if (method === "GET" && path === "/system/status") return Promise.resolve({ realBattleRuns: runCap });
     if (method === "POST" && path === "/battles") return Promise.resolve({ id: "btl_1" });
+    if (method === "POST" && path === "/battles/btl_1/run")
+      return Promise.resolve({ status: "completed", replay: { ingested: true } });
     return Promise.reject(new Error(`unexpected ${method} ${path}`));
   });
 }
@@ -99,5 +102,35 @@ describe("R9 · #/battles/new", () => {
     render(<BattleNewPage me={ME} />);
     const note = await screen.findByRole("note");
     expect(note.textContent ?? "").toMatch(/runner containerizado/i);
+  });
+
+  async function createBattle() {
+    render(<BattleNewPage me={ME} />);
+    await screen.findByLabelText("mapa");
+    await userEvent.selectOptions(screen.getByLabelText("mapa"), "map_a");
+    await userEvent.selectOptions(screen.getByLabelText("bot rojo"), "bot_r");
+    await userEvent.selectOptions(screen.getByLabelText("bot azul"), "bot_b");
+    await userEvent.click(screen.getByText("Crear batalla"));
+    await screen.findByText(/creada y encolada/i);
+  }
+
+  it("R6.2/R9-B · botón Run DESHABILITADO si el backend no lo permite", async () => {
+    mockLists(MAPS, BOTS, { enabled: false, available: false });
+    await createBattle();
+    const run = screen.getByTestId("run-real") as HTMLButtonElement;
+    expect(run.disabled).toBe(true);
+    expect(screen.getByText(/Ejecución real no disponible/i)).toBeTruthy();
+  });
+
+  it("R6.2/R9-B · botón Run HABILITADO y ejecuta cuando el backend dice available", async () => {
+    mockLists(MAPS, BOTS, { enabled: true, available: true });
+    await createBattle();
+    const run = screen.getByTestId("run-real") as HTMLButtonElement;
+    expect(run.disabled).toBe(false);
+    await userEvent.click(run);
+    await screen.findByText(/completed/i);
+    const post = apiMock.mock.calls.find((c) => c[0] === "POST" && c[1] === "/battles/btl_1/run");
+    expect(post).toBeTruthy();
+    expect((screen.getByText("ver replay") as HTMLAnchorElement).getAttribute("href")).toBe("#/replay/btl_1");
   });
 });
