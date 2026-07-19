@@ -19,6 +19,7 @@ import { ctfArena, emptyArena, gunnerLoadout, minerLoadout, mvpArena, scoutLoado
 import { CircleBot, ForwardBot, HunterBot, IdleBot } from "./stubs.js";
 import { createInspector, type Inspector } from "./inspector.js";
 import deps from "./engine-deps.json" with { type: "json" };
+import { fileURLToPath } from "node:url";
 
 function arg(name: string, fallback?: string): string | undefined {
   const i = process.argv.indexOf("--" + name);
@@ -27,6 +28,24 @@ function arg(name: string, fallback?: string): string | undefined {
 
 function flag(name: string): boolean {
   return process.argv.includes("--" + name);
+}
+
+/** Hosts que se consideran loopback (solo la propia máquina puede alcanzarlos). */
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
+
+/**
+ * R13.2 (hardening) · El inspector no tiene CORS ni autenticación (deliberado,
+ * ver cabecera de `inspector.ts`): eso solo es aceptable si se queda en
+ * loopback. Exponerlo en cualquier otro host exige el opt-in EXPLÍCITO
+ * `--inspect-allow-remote`; sin él, se falla con un mensaje claro en vez de
+ * arrancar un servidor sin auth escuchando en la red.
+ */
+export function validateInspectHost(host: string, allowRemote: boolean): void {
+  if (LOOPBACK_HOSTS.has(host) || allowRemote) return;
+  throw new Error(
+    `--inspect-host ${host} no es loopback (127.0.0.1/localhost/::1) y el inspector no tiene CORS ni ` +
+      `autenticación. Añade --inspect-allow-remote si de verdad quieres exponerlo en la red (bajo tu propio riesgo).`,
+  );
 }
 
 /** Corre la batalla tick a tick al ritmo real de `speed` (fuera de sim/, es legítimo:
@@ -117,9 +136,11 @@ async function cmdRun(): Promise<void> {
 
   let inspector: Inspector | undefined;
   if (inspect) {
+    const inspectHost = arg("inspect-host", "127.0.0.1")!;
+    validateInspectHost(inspectHost, flag("inspect-allow-remote"));
     inspector = await createInspector({
       battle: b,
-      host: arg("inspect-host", "127.0.0.1"),
+      host: inspectHost,
       port: Number(arg("inspect-port", "0")),
     });
     console.log(`  inspector escuchando en http://${inspector.host}:${inspector.port}`);
@@ -200,7 +221,9 @@ async function main(): Promise<void> {
 
   run     --seed <s> [--map mvp|ctf|empty] [--ruleset id] [--ticks N] [--out replay.jsonl]
   run     --config <archivo.json> [--out replay.jsonl]
-  run     [--inspect [--inspect-host h] [--inspect-port p]] [--speed n]   inspector HTTP + ritmo real (R13.1)
+  run     [--inspect [--inspect-host h] [--inspect-port p] [--inspect-allow-remote]] [--speed n]
+                              inspector HTTP + ritmo real (R13.1); host no-loopback exige
+                              --inspect-allow-remote (R13.2, sin CORS ni auth)
   verify  <replay.jsonl>     re-simula y comprueba que el resultado oficial es auténtico
   deps                       versiones y checksums fijados (D4)
 `);
@@ -212,4 +235,10 @@ async function main(): Promise<void> {
   }
 }
 
-main();
+// R13.2 (hardening) · guarda de entrypoint: solo ejecuta `main()` cuando el
+// archivo se invoca como script (bin CLI real), NUNCA al importarse (p. ej.
+// para testear `validateInspectHost` sin disparar `process.exit` en el
+// proceso de test). Comportamiento del CLI real sin cambios.
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main();
+}

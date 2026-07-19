@@ -88,7 +88,19 @@ interface SpectatorConnection {
 export interface SpectateGatewayOptions {
   wss?: WebSocketServer;
   port?: number;
+  /**
+   * R13.2 (hardening) · Tope de conexiones simultáneas por batalla, para que un
+   * enjambre de espectadores en una sola batalla no agote memoria/handles del
+   * gateway. Configurable para tests (límites bajos); default 100 en producción.
+   */
+  maxClientsPerBattle?: number;
 }
+
+/** R13.2 (hardening) · frame WS entrante máximo (protege contra floods de payload). */
+const MAX_INCOMING_PAYLOAD_BYTES = 64 * 1024;
+
+/** R13.2 (hardening) · default de conexiones simultáneas por batalla. */
+const DEFAULT_MAX_CLIENTS_PER_BATTLE = 100;
 
 export class SpectateGateway {
   readonly wss: WebSocketServer;
@@ -96,13 +108,18 @@ export class SpectateGateway {
   private readonly feeds = new Map<string, Feed>();
   /** jti ya consumidos → epoch ms de expiración (para poder purgarlos). */
   private readonly usedTickets = new Map<string, number>();
+  private readonly maxClientsPerBattle: number;
 
   constructor(opts: SpectateGatewayOptions = {}) {
+    this.maxClientsPerBattle = opts.maxClientsPerBattle ?? DEFAULT_MAX_CLIENTS_PER_BATTLE;
     if (opts.wss) {
       this.wss = opts.wss;
       this.ownsWss = false;
     } else {
-      this.wss = new WebSocketServer({ port: opts.port ?? 0 });
+      // R13.2 (hardening): maxPayload acota el frame WS entrante — el canal es
+      // de solo lectura para el cliente (no se procesan mensajes suyos), así
+      // que cualquier frame grande es ruido/abuso, nunca protocolo legítimo.
+      this.wss = new WebSocketServer({ port: opts.port ?? 0, maxPayload: MAX_INCOMING_PAYLOAD_BYTES });
       this.ownsWss = true;
     }
     this.wss.on("connection", (ws, req) => this.handleConnection(ws, req));
@@ -196,6 +213,14 @@ export class SpectateGateway {
     const feed = this.feeds.get(battleId);
     if (!feed) {
       ws.close(4404, "battle_not_live");
+      return;
+    }
+    // R13.2 (hardening) · límite de conexiones por batalla: rechaza ANTES de
+    // reservar el ticket (el jti ya se marcó usado arriba a propósito — un
+    // ticket rechazado por saturación no debe poder reintentarse indefinidamente
+    // con el mismo ticket para amplificar el intento).
+    if (feed.clients.size >= this.maxClientsPerBattle) {
+      ws.close(4429, "too_many_spectators");
       return;
     }
 

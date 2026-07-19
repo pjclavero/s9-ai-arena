@@ -168,3 +168,36 @@ describe("R11 · GET /public/battles/live (capability encendida)", () => {
     expect(res.body.publicSpectateEnabled).toBe(true);
   });
 });
+
+/**
+ * R13.2 · REGRESSION LOCK — /public/battles/live SIN cuota anónima era un
+ * vector de scraping/DoS barato: cualquier visitante podía barrer el listado
+ * sin límite ni registro. Igual que el resto de rutas públicas (spectate-ticket,
+ * replay, replay-verify), ahora pasa por `anonQuota` (T7.5): 429 al superarla
+ * y el consumo queda en `api_usage`. Estilo del candado: public-api.test.ts:247-273.
+ */
+describe("R13.2 · GET /public/battles/live respeta la cuota anónima (candado de no-regresión)", () => {
+  it("corta con 429 al superar la cuota y registra el consumo en api_usage", async () => {
+    await h.db("api_usage").where({ route: "public-live" }).delete();
+    const strict = createApp({
+      db: h.db,
+      publicSpectateEnabled: true,
+      anonQuota: { max: 3, windowMs: 3600_000 },
+    });
+    for (let i = 0; i < 3; i++) {
+      const ok = await request(strict).get("/public/battles/live");
+      expect(ok.status).toBe(200);
+    }
+    const blocked = await request(strict).get("/public/battles/live");
+    expect(blocked.status).toBe(429);
+
+    const usage = await h.db("api_usage").where({ route: "public-live" }).first();
+    expect(usage).toBeTruthy();
+    expect(Number(usage.count)).toBeGreaterThanOrEqual(4);
+
+    // Un usuario autenticado no consume cuota anónima.
+    const dev = await tokenFor(h.db, DEV_USERS.developer);
+    const authd = await request(strict).get("/public/battles/live").set("Authorization", `Bearer ${dev}`);
+    expect(authd.status).toBe(200);
+  });
+});

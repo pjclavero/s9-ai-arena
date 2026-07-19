@@ -49,7 +49,13 @@
    gateway WS de espectador existente (sin WS nuevo, sin WebRTC). Sin estado público por batalla
    ni alias de replays todavía. Ver `docs/R11_SPECTATOR.md`. **Dependía de R7-A (#50, ya en
    main)**.
-8. **R13.2 — Métricas Prometheus** (observabilidad del motor/servicios).
+8. **R13.2 — Hardening runtime/espectador** — **implementado**
+   (`feature/r13-2-runtime-spectator-hardening`): cuota anónima en `GET /public/battles/live`
+   (cierra el TODO de R11), timeouts/maxConnections/no-store + opt-in `--inspect-allow-remote`
+   en el inspector R13.1, `maxPayload` y tope de conexiones por batalla en el gateway WS,
+   candados de regresión (ticket caducado, URLs raras). Ver `docs/R13_2_HARDENING.md`.
+   **Nota**: la etiqueta original "Métricas Prometheus" queda como slice futuro independiente
+   (no implementado en este bloque).
 9. **R12 — Bracket/ranking foundation**. **Depende de #51**; auto-run/matchmaking real **además**
    de la validación VM108 (R6.2/R9-A).
 
