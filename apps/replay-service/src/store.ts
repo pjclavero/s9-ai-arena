@@ -121,6 +121,44 @@ export function ingestReplay(dir: string, replay: Replay, opts: IngestOptions): 
   return { index, path, indexPath: idxPath };
 }
 
+/** Resumen de un replay para el listado global (R7-A). */
+export interface ReplaySummary {
+  battleId: string;
+  ticks: number;
+  winner: string;
+  official: boolean;
+  createdAt: string;
+  sizeBytes: number;
+}
+
+/**
+ * R7-A · Lista TODOS los replays gestionados (lee los índices `<battleId>.replay.json`).
+ * Orden por defecto: más recientes primero. `limit` acota el resultado.
+ */
+export function listReplays(dir: string, opts: { limit?: number; order?: "asc" | "desc" } = {}): ReplaySummary[] {
+  if (!existsSync(dir)) return [];
+  const items: ReplaySummary[] = [];
+  for (const f of readdirSync(dir).filter((f) => f.endsWith(".replay.json"))) {
+    try {
+      const ix = JSON.parse(readFileSync(join(dir, f), "utf8")) as StoredReplayIndex;
+      items.push({
+        battleId: ix.battleId,
+        ticks: ix.ticks,
+        winner: ix.result?.winner ?? "unknown",
+        official: ix.official,
+        createdAt: ix.createdAt,
+        sizeBytes: ix.sizeBytes,
+      });
+    } catch {
+      /* índice corrupto: se ignora en el listado (no rompe la lista entera). */
+    }
+  }
+  items.sort((a, b) =>
+    opts.order === "asc" ? a.createdAt.localeCompare(b.createdAt) : b.createdAt.localeCompare(a.createdAt),
+  );
+  return opts.limit && opts.limit > 0 ? items.slice(0, opts.limit) : items;
+}
+
 export function readIndex(dir: string, battleId: string): StoredReplayIndex | null {
   const p = indexPath(dir, battleId);
   if (!existsSync(p)) return null;

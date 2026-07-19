@@ -13,7 +13,7 @@ import express, { type Express } from "express";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { fromJsonl } from "../../arena-engine/src/replay.js";
 import { decompress, nearestKeyframe } from "./format.js";
-import { ingestReplay, loadStored, readIndex, replayPath, sweepRetention, verifyStored } from "./store.js";
+import { ingestReplay, listReplays, loadStored, readIndex, replayPath, sweepRetention, verifyStored } from "./store.js";
 
 export interface ReplayServerOptions {
   dir: string;
@@ -49,6 +49,13 @@ export function createReplayServer(opts: ReplayServerOptions): Express {
   app.use(express.text({ type: ["application/x-ndjson", "text/plain"], limit: "64mb" }));
 
   // ------------------------------------------------------------- ingesta
+  // R7-A · Listado global de replays gestionados (más recientes primero).
+  app.get("/replays", (req, res) => {
+    const limit = Math.min(Math.max(Number(req.query.limit ?? 100) || 100, 1), 500);
+    const order = req.query.order === "asc" ? "asc" : "desc";
+    res.json({ items: listReplays(opts.dir, { limit, order }) });
+  });
+
   app.post("/replays/:battleId", (req, res) => {
     let replay;
     try {
