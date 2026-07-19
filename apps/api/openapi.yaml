@@ -3,8 +3,10 @@ info:
   title: S9 AI Arena · API de plataforma
   # 0.2.0 · H6 (issue #10): añade getBotRatingHistory y getTeamStandings.
   # 0.3.0 · R8 admin ops: añade getSystemStatus y getRbacMatrix (solo lectura, admin).
+  # 0.4.0 · R11 espectador público (slice mínimo): añade listPublicLiveBattles
+  # (gateado por S9_PUBLIC_SPECTATE_ENABLED, apagado por defecto).
   # Añadir un endpoint = MINOR (docs/compatibilidad.md, §2 Semver por paquete).
-  version: 0.3.0
+  version: 0.4.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -653,6 +655,18 @@ paths:
         '202': { description: Simulacro encolado }
 
   # --------------------------------------------------------------- BATTLES
+  /public/battles/live:
+    get:
+      tags: [battles]
+      operationId: listPublicLiveBattles
+      summary: 'R11 · Batallas en directo, SOLO campos públicos, sin cuenta. Gateado por S9_PUBLIC_SPECTATE_ENABLED (apagado por defecto: enabled=false, battles=[]).'
+      x-min-role: visitor
+      security: []
+      responses:
+        '200':
+          description: Estado de la emisión pública y batallas en directo (si está activada)
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/PublicLiveBattles' } }
   /battles:
     get:
       tags: [battles]
@@ -1313,6 +1327,25 @@ components:
         items: { type: array, items: { $ref: '#/components/schemas/Battle' } }
         nextCursor: { type: string }
 
+    PublicLiveBattle:
+      type: object
+      description: 'R11 · Proyección PÚBLICA de una batalla en directo. Nunca incluye seed, tickets ni datos de propietario.'
+      properties:
+        id: { type: string }
+        status: { enum: [running] }
+        mode: { type: string }
+        mapId: { type: string }
+        mapName: { type: string }
+        createdAt: { type: string, format: date-time }
+        startedAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time }
+    PublicLiveBattles:
+      type: object
+      description: 'R11 · Respuesta 200 SIEMPRE. Si la capability está apagada: enabled=false, battles=[].'
+      properties:
+        enabled: { type: boolean, description: 'Lectura de S9_PUBLIC_SPECTATE_ENABLED.' }
+        battles: { type: array, items: { $ref: '#/components/schemas/PublicLiveBattle' } }
+
     BattleAudit:
       type: object
       description: Suficiente para re-simular y verificar la batalla sin revelar código privado.
@@ -1431,6 +1464,9 @@ components:
         smokeDigestConfigured:
           type: boolean
           description: 'true si SMOKE_BOT_DIGEST está definido. NO se expone el valor.'
+        publicSpectateEnabled:
+          type: boolean
+          description: 'R11 · Lectura de S9_PUBLIC_SPECTATE_ENABLED: si es false, /public/battles/live responde enabled=false, battles=[].'
         battlesByStatus: { type: object, additionalProperties: { type: integer } }
         buildsByStatus: { type: object, additionalProperties: { type: integer } }
         botVersionsByState: { type: object, additionalProperties: { type: integer } }

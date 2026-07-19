@@ -23,6 +23,7 @@ async function countBy(db: Db, table: string, column: string): Promise<Record<st
 export function systemRoutes(
   db: Db,
   realBattleRuns: { enabled: boolean; available: boolean } = { enabled: false, available: false },
+  publicSpectateEnabled = false,
 ): Router {
   const router = Router();
 
@@ -52,6 +53,9 @@ export function systemRoutes(
       // R6.2/R9-B · capability para la UI: ¿se puede lanzar una batalla real desde la
       // UI? (enabled = flag on; available = flag on Y runner cableado). Nunca secretos.
       realBattleRuns,
+      // R11 · capability para la UI: ¿la emisión pública de espectador (sin cuenta)
+      // está activada en este entorno? Lectura de S9_PUBLIC_SPECTATE_ENABLED.
+      publicSpectateEnabled,
       battlesByStatus,
       buildsByStatus,
       botVersionsByState,

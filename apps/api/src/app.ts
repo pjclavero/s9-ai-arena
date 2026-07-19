@@ -20,6 +20,7 @@ import { catalogRoutes } from "./routes/catalog.js";
 import { adminRoutes } from "./routes/admin.js";
 import { battleRoutes } from "./routes/battles.js";
 import { battleRunConfigFromEnv, realBattleRunsCapability, type BattleRunConfig } from "./battle-run.js";
+import { publicSpectateEnabledFromEnv } from "./public-spectate.js";
 import { standingsRoutes } from "./routes/standings.js";
 import { tournamentRoutes } from "./routes/tournaments.js";
 import { mapRoutes } from "./routes/maps.js";
@@ -66,6 +67,11 @@ export interface AppConfig {
    * llama a Docker. En tests se inyecta un launcher fake.
    */
   realBattleRuns?: BattleRunConfig;
+  /**
+   * R11 · Capability del slice mínimo de espectador público (S9_PUBLIC_SPECTATE_ENABLED,
+   * apagada por defecto). Inyectable en tests; en producción se resuelve del entorno.
+   */
+  publicSpectateEnabled?: boolean;
 }
 
 export function createApp(cfg: AppConfig): express.Express {
@@ -117,11 +123,12 @@ export function createApp(cfg: AppConfig): express.Express {
   app.use(catalogRoutes(cfg.db));
   app.use(adminRoutes(cfg.db));
   const realBattleRuns = cfg.realBattleRuns ?? battleRunConfigFromEnv();
-  app.use(battleRoutes(cfg.db, cfg.anonQuota ?? DEFAULT_ANON_QUOTA, realBattleRuns));
+  const publicSpectateEnabled = cfg.publicSpectateEnabled ?? publicSpectateEnabledFromEnv();
+  app.use(battleRoutes(cfg.db, cfg.anonQuota ?? DEFAULT_ANON_QUOTA, realBattleRuns, publicSpectateEnabled));
   app.use(standingsRoutes(cfg.db));
   app.use(tournamentRoutes(cfg.db));
   app.use(mapRoutes(cfg.db));
-  app.use(systemRoutes(cfg.db, realBattleRunsCapability(realBattleRuns)));
+  app.use(systemRoutes(cfg.db, realBattleRunsCapability(realBattleRuns), publicSpectateEnabled));
 
   app.use((req: Request, res: Response) => {
     res.status(404).json({ error: "not_found", message: "Ruta no encontrada", correlationId: req.correlationId });

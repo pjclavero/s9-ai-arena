@@ -1,5 +1,11 @@
 # R11 · Spectator / streaming público interno (foundation — diseño)
 
+> **Nota:** el slice mínimo realmente implementado (rama `feature/r11-spectator`) está
+> documentado en `docs/R11_SPECTATOR.md`. Cubre solo `GET /public/battles/live` + `#/live`;
+> el resto del catálogo de endpoints/rutas de este documento (estado público por batalla, alias de
+> replays, `#/live/:battleId`, SSE) sigue sin implementar. Este documento se conserva como diseño
+> de referencia para los slices pendientes.
+
 ## Estado actual / qué existe
 
 - **Visor y reproductor**: `ViewerPage` (directo) y `ReplayPage` (replay con salto por tick),
