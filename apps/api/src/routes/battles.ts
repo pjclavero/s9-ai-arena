@@ -19,6 +19,7 @@ import { ApiError, badRequest, conflict, notFound } from "../errors.js";
 import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
 import { signSpectateTicket } from "../auth/tokens.js";
 import { anonQuota, type AnonQuotaConfig } from "../middleware/anon-quota.js";
+import { isSignedDigest, type BattleRunConfig } from "../battle-run.js";
 
 const SPECTATE_TICKET_TTL_S = 60;
 
@@ -65,7 +66,7 @@ async function getBattleOr404(db: Db, id: string) {
   return battle;
 }
 
-export function battleRoutes(db: Db, quota: AnonQuotaConfig): Router {
+export function battleRoutes(db: Db, quota: AnonQuotaConfig, runCfg?: BattleRunConfig): Router {
   const router = Router();
 
   defineOperation(router, "listBattles", async (req, res) => {
@@ -282,6 +283,76 @@ export function battleRoutes(db: Db, quota: AnonQuotaConfig): Router {
     },
     (req, res, next) => anonQuota(db, "replay-verify", quota)(req, res, next),
   );
+
+  // R6.2/R9-B · Ejecución containerizada REAL (gateada y validada). Delega en un launcher
+  // inyectado; la API nunca llama a Docker. Apagado por defecto → 503.
+  defineOperation(router, "runBattle", async (req, res) => {
+    const battleId = pathParam(req, "battleId");
+
+    if (!runCfg?.enabled) {
+      res
+        .status(503)
+        .json({ error: "real_battle_runs_disabled", message: "Real battle execution is disabled in this environment" });
+      return;
+    }
+
+    const battle = await getBattleOr404(db, battleId);
+    if (battle.status !== "scheduled") {
+      res.status(409).json({ error: "invalid_state", message: `La batalla está en estado ${battle.status}` });
+      return;
+    }
+
+    // Mapa publicado.
+    const map = await db("map_versions")
+      .where({ map_id: battle.map_id, version: battle.map_version, state: "published" })
+      .first();
+    if (!map) {
+      res.status(409).json({ error: "map_not_published", message: "El mapa de la batalla no está publicado" });
+      return;
+    }
+
+    // Bots ready/signed con digest válido.
+    const parts = await db("participants").where({ battle_id: battleId });
+    const participants: { botId: string; version: number; team: string; artifactHash: string }[] = [];
+    for (const p of parts) {
+      const v = await db("bot_versions").where({ bot_id: p.bot_id, version: p.version }).first();
+      if (!v || !["published", "frozen"].includes(v.state)) {
+        res.status(409).json({ error: "bot_not_ready", message: `El bot ${p.bot_id} v${p.version} no está publicado` });
+        return;
+      }
+      if (!isSignedDigest(v.artifact_hash)) {
+        res
+          .status(409)
+          .json({ error: "bot_not_signed", message: `El bot ${p.bot_id} v${p.version} no tiene digest firmado` });
+        return;
+      }
+      participants.push({ botId: p.bot_id, version: p.version, team: p.team, artifactHash: v.artifact_hash });
+    }
+
+    // Runner disponible (aún no cableado en producción → 503 hasta el paso VM108).
+    if (!runCfg.runner) {
+      res
+        .status(503)
+        .json({ error: "runner_unavailable", message: "Battle runner not configured in this environment" });
+      return;
+    }
+
+    const result = await runCfg.runner.launch({
+      battleId,
+      mode: battle.mode,
+      mapId: battle.map_id,
+      mapVersion: battle.map_version,
+      seed: battle.seed ?? null,
+      participants,
+    });
+    res.status(200).json({
+      battleId,
+      status: result.status,
+      runner: result.runner,
+      replay: result.replay ?? null,
+      ...(result.error ? { error: result.error } : {}),
+    });
+  });
 
   return router;
 }
