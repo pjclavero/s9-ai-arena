@@ -40,7 +40,9 @@
 5. ~~**R10 — Editor visual de mapas**~~ **Slice 1 MERGED** (#53, `main@bd26b0b`): editor solo cliente
    (`#/maps/editor`, SVG, CRUD, validación, import/export JSON). Slice 2 pendiente (persistencia
    backend: endpoint de draft + validación map-service). Ver `docs/R10_MAP_EDITOR_SLICE1.md`.
-6. **R13.1 — Inspector de estado + slow motion** (depuración, read-only, sin romper determinismo).
+6. **R13.1 — Inspector de estado + slow motion** — **implementado en rama**
+   `feature/r13-1-engine-runtime-quality` (sin mergear): inspector HTTP read-only (`--inspect`) y
+   `--speed` (solo cadencia de pared, determinismo intacto). Ver `docs/R13_1_RUNTIME_INSPECTOR.md`.
 7. **R11 — Spectator público interno** (foundation, gateado). **Depende de R7-A (#50)**.
 8. **R13.2 — Métricas Prometheus** (observabilidad del motor/servicios).
 9. **R12 — Bracket/ranking foundation**. **Depende de #51**; auto-run/matchmaking real **además**

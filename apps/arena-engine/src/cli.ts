@@ -11,17 +11,35 @@
  * un motor auditable y una caja negra.
  */
 import { readFileSync, writeFileSync } from "node:fs";
-import { loadRuleset } from "../../../packages/game-rules/index.js";
+import { loadRuleset, TICK_DT } from "../../../packages/game-rules/index.js";
 import { Battle, type BattleConfig } from "./sim/battle.js";
 import { initPhysics } from "./sim/physics.js";
 import { fromJsonl, record, toJsonl, verify } from "./replay.js";
 import { ctfArena, emptyArena, gunnerLoadout, minerLoadout, mvpArena, scoutLoadout } from "./fixtures.js";
 import { CircleBot, ForwardBot, HunterBot, IdleBot } from "./stubs.js";
+import { createInspector, type Inspector } from "./inspector.js";
 import deps from "./engine-deps.json" with { type: "json" };
 
 function arg(name: string, fallback?: string): string | undefined {
   const i = process.argv.indexOf("--" + name);
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
+}
+
+function flag(name: string): boolean {
+  return process.argv.includes("--" + name);
+}
+
+/** Corre la batalla tick a tick al ritmo real de `speed` (fuera de sim/, es legítimo:
+ * TICK_DT, la lógica y los hashes no cambian, solo la cadencia del reloj de pared). */
+async function runPaced(b: Battle, maxTicks: number, speed: number): Promise<void> {
+  const tickIntervalMs = (TICK_DT * 1000) / speed;
+  while (!b.isFinished() && b.tick < maxTicks) {
+    const t0 = Date.now();
+    b.step();
+    const elapsed = Date.now() - t0;
+    const wait = Math.max(0, tickIntervalMs - elapsed);
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  }
 }
 
 const MAPS: Record<string, () => any> = { mvp: mvpArena, ctf: ctfArena, empty: emptyArena };
@@ -71,9 +89,22 @@ async function cmdRun(): Promise<void> {
     });
   };
 
+  const inspect = flag("inspect");
+  const speedArg = arg("speed");
+  let speed: number | undefined;
+  if (speedArg !== undefined) {
+    speed = Number(speedArg);
+    if (!Number.isFinite(speed) || speed <= 0) {
+      throw new Error(`--speed inválido: "${speedArg}" (debe ser un número finito > 0)`);
+    }
+  }
+
   const t0 = performance.now();
 
   if (out) {
+    if (inspect || speed !== undefined) {
+      throw new Error("--inspect y --speed no son compatibles con --out (grabación de replay)");
+    }
     const replay = await record(config, attach);
     writeFileSync(out, toJsonl(replay));
     report(replay.result, performance.now() - t0);
@@ -83,7 +114,31 @@ async function cmdRun(): Promise<void> {
 
   const b = await Battle.create(config);
   attach(b);
-  const result = b.run(Number(arg("ticks", "100000")));
+
+  let inspector: Inspector | undefined;
+  if (inspect) {
+    inspector = await createInspector({
+      battle: b,
+      host: arg("inspect-host", "127.0.0.1"),
+      port: Number(arg("inspect-port", "0")),
+    });
+    console.log(`  inspector escuchando en http://${inspector.host}:${inspector.port}`);
+  }
+
+  const maxTicks = Number(arg("ticks", "100000"));
+  let result;
+  try {
+    if (inspect || speed !== undefined) {
+      // --inspect sin --speed corre a ritmo real (1×) para que el inspector tenga
+      // ocasión de servir peticiones mientras la batalla avanza.
+      await runPaced(b, maxTicks, speed ?? 1);
+      result = b.isFinished() ? b.getResult()! : b.run(maxTicks);
+    } else {
+      result = b.run(maxTicks);
+    }
+  } finally {
+    if (inspector) await inspector.close();
+  }
   b.free();
   report(result, performance.now() - t0);
 }
@@ -145,6 +200,7 @@ async function main(): Promise<void> {
 
   run     --seed <s> [--map mvp|ctf|empty] [--ruleset id] [--ticks N] [--out replay.jsonl]
   run     --config <archivo.json> [--out replay.jsonl]
+  run     [--inspect [--inspect-host h] [--inspect-port p]] [--speed n]   inspector HTTP + ritmo real (R13.1)
   verify  <replay.jsonl>     re-simula y comprueba que el resultado oficial es auténtico
   deps                       versiones y checksums fijados (D4)
 `);

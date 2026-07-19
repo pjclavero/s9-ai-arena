@@ -793,6 +793,14 @@ export class Battle {
     return this.finished;
   }
 
+  /**
+   * Snapshot público del estado actual, calculado on-demand. Es EXACTAMENTE lo mismo
+   * que se guarda periódicamente en `this.snapshots` (R13.1 · inspector de solo lectura).
+   */
+  getPublicSnapshot(): any {
+    return this.publicSnapshot(this.poses());
+  }
+
   /** Observación de un bot concreto: la usan el servidor de protocolo (E5) y los tests. */
   observationFor(vehicleId: string): any {
     const v = this.vehicles.find((x) => x.id === vehicleId);

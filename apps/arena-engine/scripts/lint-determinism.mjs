@@ -39,6 +39,10 @@ const EXCLUDED_FILES = new Set([
   // Única fuente sancionada de reloj de pared para METADATOS (recordedAt del replay,
   // ids locales). Nada de lo que exporta puede entrar en la lógica de tick.
   "wall-clock.ts",
+  // Inspector HTTP de solo lectura (R13.1): servidor node:http fuera de sim/, mide
+  // uptime de proceso con reloj de pared para /health. Solo LEE snapshots ya calculados
+  // por el motor (Battle.getPublicSnapshot()); nunca influye en la simulación ni en los hashes.
+  "inspector.ts",
 ]);
 
 /** Los tests dentro de src/ (p. ej. protocol-server.test.ts) usan timers legítimamente. */
