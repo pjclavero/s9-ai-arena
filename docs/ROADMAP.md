@@ -26,9 +26,10 @@
 1. ~~#50 R7-A~~ — **hecho** (en main).
 2. ~~#51 R6.2/R9-B~~ — **hecho** (en main).
 3. ~~#52 dossier R10/R11/R12~~ — **hecho** (en main).
-4. **R13.0 — Engine Regression Locks** ⭐ **siguiente PR recomendado**. Antes de cualquier mejora
-   profunda del motor: fija con tests los tres fallos críticos auditados (radio, acoustic, ammo).
-   Ver `docs/ENGINE_REGRESSION_LOCKS.md`.
+4. **R13.0 — Engine Regression Locks** ✅ **implementado** (`feature/r13-0-regression-locks`, PR
+   abierta): 3 ficheros de test (radio/acoustic/ammo), 15 candados verdes, **solo tests** (cero
+   cambios de motor), determinismo intacto. Los tres fallos ya estaban corregidos en código; R13.0
+   los blinda. Ver `docs/ENGINE_REGRESSION_LOCKS.md`.
 
 ### Después
 
