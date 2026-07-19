@@ -36,6 +36,20 @@ export function tournamentToJson(t: Record<string, unknown>) {
   };
 }
 
+/** R12 (slice 1) · Mapper explícito de una fila de `matches` (proyección pública del cuadro). */
+export function tournamentMatchToJson(m: Record<string, unknown>) {
+  return {
+    id: m.id,
+    round: m.round,
+    slot: m.slot ?? null,
+    pairing: m.pairing ?? {},
+    state: m.state,
+    winnerBotId: m.winner_bot_id ?? null,
+    winnerTeamId: m.winner_team_id ?? null,
+    final: m.final,
+  };
+}
+
 export function tournamentRoutes(db: Db): Router {
   const router = Router();
 
@@ -267,6 +281,28 @@ export function tournamentRoutes(db: Db): Router {
     // Simulacro con bots de ejemplo (E9.M): lo consume el tournament-worker de E9.
     await db("jobs").insert({ kind: "tournament_dry_run", payload: JSON.stringify({ tournamentId: t.id }) });
     res.status(202).json({ status: "queued" });
+  });
+
+  /**
+   * R12 (slice 1, solo lectura) · Cuadro del torneo: matches ordenados por
+   * ronda/slot con su emparejamiento y ganador si ya lo tienen. Proyección
+   * EXPLÍCITA de columnas (nada de SELECT *): sin seeds ni seed_commitment,
+   * eso vive en `tournaments`, no en `matches`, y esta ruta no lo toca.
+   */
+  defineOperation(router, "listTournamentMatches", async (req, res) => {
+    const t = await db("tournaments")
+      .where({ id: req.params.tournamentId })
+      .first()
+      .catch(() => null);
+    if (!t) throw notFound();
+    const rows = await db("matches")
+      .where({ tournament_id: t.id })
+      .orderBy([
+        { column: "round", order: "asc" },
+        { column: "slot", order: "asc" },
+      ])
+      .select("id", "round", "slot", "pairing", "state", "winner_bot_id", "winner_team_id", "final");
+    res.json({ matches: rows.map(tournamentMatchToJson) });
   });
 
   /**

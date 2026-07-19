@@ -118,6 +118,8 @@ export function TournamentDetailPage(props: { id: string; me: Me }) {
     <div>
       <p>
         <a href="#/tournaments">← Todos los torneos</a>
+        {" · "}
+        <a href={`#/tournaments/${encodeURIComponent(props.id)}/bracket`}>Ver cuadro</a>
       </p>
       <div className="card">
         <ResourceView resource={detail} label="el torneo" onRetry={reloadDetail}>

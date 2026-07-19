@@ -22,6 +22,7 @@ import { LivePage } from "./pages/LivePage.js";
 import { ReplayPage } from "./pages/ReplayPage.js";
 import { TournamentsPage } from "./pages/TournamentsPage.js";
 import { TournamentDetailPage } from "./pages/TournamentDetailPage.js";
+import { BracketPage } from "./pages/BracketPage.js"; // R12 (slice 1, solo lectura): #/tournaments/:id/bracket
 import { BattlesPage } from "./pages/BattlesPage.js";
 // R9 · crear batalla de práctica desde la UI (usa POST /battles seguro; ver BattleNewPage).
 import { BattleNewPage } from "./pages/BattleNewPage.js";
@@ -58,7 +59,16 @@ export function matchPublicRoute(
 /** R3.7 · Rutas del panel autenticado (además de #/bots, #/teams y #/admin). */
 export function matchPanelRoute(
   route: string,
-): { kind: "tournament"; id: string } | { kind: "battles"; botFilter?: string } | { kind: "battle-new" } | null {
+):
+  | { kind: "tournamentBracket"; id: string }
+  | { kind: "tournament"; id: string }
+  | { kind: "battles"; botFilter?: string }
+  | { kind: "battle-new" }
+  | null {
+  // R12 (slice 1) · el cuadro va ANTES del detalle: si no, "/tournaments/<id>/bracket"
+  // lo captura el patrón de detalle (que solo mira el primer segmento tras el id).
+  const bracket = /^#\/tournaments\/([^/?]+)\/bracket(?:[/?]|$)/.exec(route);
+  if (bracket) return { kind: "tournamentBracket", id: decodeURIComponent(bracket[1]) };
   const detail = /^#\/tournaments\/([^/?]+)/.exec(route);
   if (detail) return { kind: "tournament", id: decodeURIComponent(detail[1]) };
   if (/^#\/battles\/new/.test(route)) return { kind: "battle-new" }; // R9 (antes del match general de #/battles)
@@ -216,7 +226,9 @@ export function App() {
       </nav>
       <main>
         <ErrorBoundary label="esta pantalla">
-          {panelRoute?.kind === "tournament" ? (
+          {panelRoute?.kind === "tournamentBracket" ? (
+            <BracketPage id={panelRoute.id} />
+          ) : panelRoute?.kind === "tournament" ? (
             <TournamentDetailPage id={panelRoute.id} me={me} />
           ) : panelRoute?.kind === "battle-new" ? ( // R9
             <BattleNewPage me={me} />
