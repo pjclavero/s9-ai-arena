@@ -1,7 +1,9 @@
 # S9 AI Arena — Roadmap
 
 > Estado operativo real: `docs/ESTADO_ACTUAL.md`. Este roadmap resume hitos y el orden de trabajo.
-> **Última actualización: 2026-07-19** (incorpora R13 motor/runtime, R14 WebRTC, R16 visual).
+> **Última actualización: 2026-07-20** (incorpora R13 motor/runtime, R14 WebRTC, R16 visual).
+> Cierre del programa de 9 bloques (R13.1 · R11 · R13.2 · R12 · R16 · R14-ADR · R13.5):
+> `docs/PROGRAMA_9_BLOQUES.md` — índice, dictámenes, decisiones de no hacer y pendientes.
 
 ## Hecho / integrado en `main`
 
