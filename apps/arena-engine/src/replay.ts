@@ -90,7 +90,7 @@ export function fromJsonl(jsonl: string): Replay {
  * (que puede ser privado, o no estar ya disponible). El motor no distingue este agente
  * de uno real: recibe observaciones y devuelve comandos, igual que cualquier otro.
  */
-class ReplayAgent implements BotAgent {
+export class ReplayAgent implements BotAgent {
   private byTick = new Map<number, any>();
 
   constructor(

@@ -74,7 +74,12 @@
     prohibidos. Alternativa aprobada: escalera servidor-side sobre el gateway WS existente.
     Reapertura condicionada a demanda medida + autorización expresa de infraestructura.
 12. **R13.5 — Rapier evaluation** (rama separada, golden replays, comparación de `finalStateHash`).
-13. **save/load, latencia simulada, sharding** — posterior por riesgo de determinismo.
+13. **save/load, latencia simulada, sharding** — **save/load Slice 1 implementado**
+    (`feature/r13-5-save-sharding-slice1`): checkpoint por resimulación determinista
+    (`apps/arena-engine/src/checkpoint.ts`, verificación de hash bit a bit al restaurar).
+    **Sharding intra-batalla: rechazado por decisión** (el sharding real es inter-batalla
+    por `battleId`, ya operativo). Latencia simulada sigue pendiente (no debe alterar el
+    tick lógico). Ver `docs/R13_5_SAVE_SHARDING.md`.
 
 ## Dependencias y bloqueadores (resumen)
 
@@ -89,7 +94,7 @@
 | R16 | nada (puede empezar antes que R14) | rendimiento; sin CDN aún |
 | R14 | — resuelto por ADR (`docs/R14_ADR_WEBRTC.md`): no se implementa | reapertura: demanda medida + autorización expresa de infra (TURN/puertos) |
 | R13.5 | evaluación con golden replays | si cambia el hash ⇒ **cambio de versión física** |
-| save/load · latencia · sharding | R13.0 + R13.2 | sharding: **alto riesgo de determinismo** |
+| save/load · latencia · sharding | R13.0 + R13.2 (en main) | save/load slice 1 hecho; sharding intra-batalla rechazado (`docs/R13_5_SAVE_SHARDING.md`); latencia pendiente |
 
 ## Invariantes permanentes (no negociables)
 
