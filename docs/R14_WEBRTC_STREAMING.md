@@ -2,6 +2,10 @@
 
 > Documentación y plan. **No implementa** nada. Bloque separado. No abre producción, no toca
 > VM108/VM104/runner/proxy, no expone secretos.
+>
+> **RESUELTO (2026-07-20)**: la decisión final es **no implementar WebRTC** — ver
+> `docs/R14_ADR_WEBRTC.md` (dictamen R14-ADR). Este documento se conserva como registro
+> del diseño evaluado y de sus condiciones de reapertura.
 
 ## Orden y dependencias
 

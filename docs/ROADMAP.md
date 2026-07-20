@@ -68,7 +68,11 @@
     torretas por chasis, fogonazo y explosión animada, todo procedural en el atlas existente
     (sin WebGL avanzado, sin CDN, sin assets binarios, sin deps nuevas). Ver
     `docs/R16_VISUAL_SLICE1.md`. Fases R16.3+ pendientes.
-11. **R14 — WebRTC** (streaming P2P para espectadores). **Depende de R11 foundation**.
+11. **R14 — WebRTC** — **RESUELTO POR ADR: no se implementa** (`docs/R14_ADR_WEBRTC.md`):
+    a la escala autorizada (tope 100 espectadores/batalla, R13.2) el fan-out WS es trivial,
+    P2P rompería la autoridad del servidor y TURN/STUN exigiría puertos/infra externa
+    prohibidos. Alternativa aprobada: escalera servidor-side sobre el gateway WS existente.
+    Reapertura condicionada a demanda medida + autorización expresa de infraestructura.
 12. **R13.5 — Rapier evaluation** (rama separada, golden replays, comparación de `finalStateHash`).
 13. **save/load, latencia simulada, sharding** — posterior por riesgo de determinismo.
 
@@ -83,7 +87,7 @@
 | R13.2 | nada | — |
 | R12 | #51 (en main) | **auto-run real → VM108 R6.2/R9-A** (gateado) |
 | R16 | nada (puede empezar antes que R14) | rendimiento; sin CDN aún |
-| R14 | **R11 foundation** + API pública read-only + modelo de eventos estable | sin abrir producción; feature flag |
+| R14 | — resuelto por ADR (`docs/R14_ADR_WEBRTC.md`): no se implementa | reapertura: demanda medida + autorización expresa de infra (TURN/puertos) |
 | R13.5 | evaluación con golden replays | si cambia el hash ⇒ **cambio de versión física** |
 | save/load · latencia · sharding | R13.0 + R13.2 | sharding: **alto riesgo de determinismo** |
 
@@ -98,7 +102,7 @@ experimentales **off** por defecto. No abrir puertos ni cambiar dominios. VM108/
 
 - No activar ejecución real desde UI ni auto-run real de torneos (gateado a VM108/R6.2-R9-A).
 - No implementar RTMP/YouTube/Twitch (mucho después de R14).
-- No adelantar R14 (WebRTC) a R11.
+- No reabrir R14 (WebRTC): resuelto por ADR (`docs/R14_ADR_WEBRTC.md`); reapertura solo con demanda medida + autorización expresa de infraestructura.
 - No empezar R16 por WebGL avanzado/CDN; primero sprites/efectos básicos.
 - No actualizar Rapier directamente; solo evaluación en rama separada (R13.5).
 - No mezclar R10/R11/R12/R13/R14/R16 en una misma PR de código.
