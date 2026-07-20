@@ -25,8 +25,14 @@
 
 export type EffectKind = "muzzle_flash" | "impact" | "explosion" | "smoke" | "decal";
 
-/** Frame del atlas (atlas-geometry.ts) que dibuja cada partícula. */
-export type EffectFrame = "spark" | "smoke" | "pixel";
+/**
+ * Frame del atlas (atlas-geometry.ts) que dibuja cada partícula. "muzzle-flash"
+ * y "explosion" son frames LÓGICOS: el fogonazo mapea 1:1 al frame homónimo
+ * del atlas; la explosión es dinámica — el render (PhaserViewer.ts) resuelve
+ * el frame REAL (explosion-0/1/2) por edad vía `explosionFrameForAge`
+ * (art-direction.ts), así la fase visual no vive en el dato de la partícula.
+ */
+export type EffectFrame = "spark" | "smoke" | "pixel" | "muzzle-flash" | "explosion";
 
 /** Una partícula viva. Todos los campos son datos, no referencias a la entrada. */
 export interface EffectSpec {
@@ -206,9 +212,12 @@ export class EffectSystem {
   // ─────────────────────────── generadores de partícula (deterministas) ──────
 
   private muzzleFlash(x: number, y: number, now: number): void {
+    // R16.1 · fogonazo REAL (frame propio, ya no una chispa genérica). Sin
+    // rotación de cañón: el dato de proyectil no trae heading del disparador,
+    // así que nace en el origen del proyectil (fallback explícito del diseño).
     this.spawn({
       kind: "muzzle_flash",
-      frame: "spark",
+      frame: "muzzle-flash",
       x,
       y,
       vx: 0,
@@ -246,10 +255,11 @@ export class EffectSystem {
 
   private explosion(x: number, y: number, now: number, scale: number): void {
     const s = seedOf(x, y);
-    // Fogonazo central.
+    // Núcleo de la explosión: R16.1 usa la secuencia explosion-0/1/2 (elegida
+    // por edad en el render) en vez de una chispa genérica escalada.
     this.spawn({
       kind: "explosion",
-      frame: "spark",
+      frame: "explosion",
       x,
       y,
       vx: 0,

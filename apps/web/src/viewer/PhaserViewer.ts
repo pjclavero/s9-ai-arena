@@ -49,6 +49,8 @@ import {
   NEUTRAL_TEAM_COLOR,
   bodyFrameForChassis,
   barrelLengthForChassis,
+  turretFrameForChassis,
+  explosionFrameForAge,
   vehicleLabel,
   type ViewerRoster,
 } from "./art-direction.js";
@@ -490,7 +492,11 @@ export class ViewerScene extends Phaser.Scene {
         continue;
       }
       const sm = sampleEffect(e, now);
-      s.setFrame(e.frame);
+      // R16.1 · "explosion" es un frame LÓGICO: la fase real (explosion-0/1/2)
+      // se resuelve aquí, por edad, vía explosionFrameForAge (art-direction.ts,
+      // puro y testeado). El resto de frames mapean 1:1 con el nombre del atlas.
+      const frameName = e.frame === "explosion" ? explosionFrameForAge(now - e.bornMs) : e.frame;
+      s.setFrame(frameName);
       s.setTint(e.frame === "smoke" ? S9_ENV.wall : S9_ENV.tracer);
       s.setVisible(true)
         .setPosition(sm.x * this.pxPerM, sm.y * this.pxPerM)
@@ -642,7 +648,7 @@ export class ViewerScene extends Phaser.Scene {
       .setTint(color);
     // Torreta = base redonda + cañón; el largo del cañón varía con el arquetipo.
     const turretBase = this.add
-      .sprite(0, 0, ATLAS_KEY, "turret")
+      .sprite(0, 0, ATLAS_KEY, turretFrameForChassis(entry?.chassis))
       .setScale(1 / FRAME_SCALE)
       .setTint(color);
     const barrel = this.add
