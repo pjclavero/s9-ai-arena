@@ -124,7 +124,10 @@ describe("EffectSystem R16.1: el fogonazo y la explosión nacen del evento y exp
     expect(live[0].kind).toBe("muzzle_flash");
     expect(live[0].frame).toBe("muzzle-flash");
     expect(effectProgress(live[0], 0)).toBe(0);
-    expect(fx.active(live[0].bornMs + live[0].lifeMs + 1)).toHaveLength(0);
+    // Duración FIJA (no derivada de la instancia, que sería tautológico): el
+    // fogonazo dura 90 ms (effects.ts), así una regresión de vida no pasa.
+    expect(live[0].lifeMs).toBe(90);
+    expect(fx.active(91)).toHaveLength(0);
   });
 
   it("vehicle_destroyed produce un núcleo de explosión con frame lógico 'explosion' (fase resuelta en el render)", () => {
