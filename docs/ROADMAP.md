@@ -64,7 +64,10 @@
 
 ### Luego (largo plazo)
 
-10. **R16 — Visual upgrade básico** (sprites/efectos; empieza por lo básico, NO WebGL avanzado).
+10. **R16 — Visual upgrade básico** — **Slice 1 implementado** (`feature/r16-visual-upgrade`):
+    torretas por chasis, fogonazo y explosión animada, todo procedural en el atlas existente
+    (sin WebGL avanzado, sin CDN, sin assets binarios, sin deps nuevas). Ver
+    `docs/R16_VISUAL_SLICE1.md`. Fases R16.3+ pendientes.
 11. **R14 — WebRTC** (streaming P2P para espectadores). **Depende de R11 foundation**.
 12. **R13.5 — Rapier evaluation** (rama separada, golden replays, comparación de `finalStateHash`).
 13. **save/load, latencia simulada, sharding** — posterior por riesgo de determinismo.

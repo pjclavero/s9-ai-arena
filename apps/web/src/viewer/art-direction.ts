@@ -57,6 +57,39 @@ export function bodyFrameForChassis(chassisId?: string | null): string {
 }
 
 /**
+ * R16.1 · Frame del atlas para la TORRETA según arquetipo (turret-scout /
+ * turret-gunner / turret-heavy en atlas-geometry.ts). Sustituye al antiguo
+ * frame único "turret": cada chasis luce una torreta distinta, igual que ya
+ * ocurre con el casco (BODY_FRAME). Mismo criterio de fallback que
+ * bodyFrameForChassis (chassisKind ya resuelve id ausente/desconocido a
+ * "gunner").
+ */
+export const TURRET_FRAME: Record<ChassisKind, string> = {
+  scout: "turret-scout",
+  gunner: "turret-gunner",
+  heavy: "turret-heavy",
+};
+
+export function turretFrameForChassis(chassisId?: string | null): string {
+  return TURRET_FRAME[chassisKind(chassisId)];
+}
+
+/**
+ * R16.1 · Frame de la secuencia de EXPLOSIÓN (explosion-0/1/2 en
+ * atlas-geometry.ts) según la edad del efecto en ms desde su nacimiento.
+ * Lógica de SELECCIÓN separada del pintado (que vive en drawExplosionFrame,
+ * atlas-geometry.ts) y del sistema de partículas (effects.ts): puro y
+ * testeable sin Phaser. Tramos: núcleo brillante (0-110ms) → estallido
+ * dentado (110-220ms) → anillos difusos hasta el final del efecto (220ms+,
+ * frame estable — el propio EffectSpec decide cuándo el efecto expira).
+ */
+export function explosionFrameForAge(ageMs: number): string {
+  if (ageMs < 110) return "explosion-0";
+  if (ageMs < 220) return "explosion-1";
+  return "explosion-2";
+}
+
+/**
  * Longitud relativa del cañón (arma) por arquetipo: el pesado luce un cañón más
  * largo, el explorador uno corto. Diferenciación modular derivada del loadout.
  */

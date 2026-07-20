@@ -65,6 +65,21 @@ const MAX_ROW_W = 256;
 export const BODY_FRAMES = ["body-scout", "body-gunner", "body-heavy"] as const;
 
 /**
+ * R16.1 · Nombres de frame de TORRETA por arquetipo (deben coincidir con
+ * art-direction.ts, `turretFrameForChassis`). Sustituyen al antiguo frame
+ * único "turret": cada arquetipo luce una torreta distinta, igual que ya
+ * ocurre con el casco (BODY_FRAMES). No queda alias "turret" -- todos los
+ * usos se migraron a estos tres nombres.
+ */
+export const TURRET_FRAMES = ["turret-scout", "turret-gunner", "turret-heavy"] as const;
+
+/** R16.1 · Secuencia corta de frames de explosion, elegidos por edad del efecto. */
+export const EXPLOSION_FRAMES = ["explosion-0", "explosion-1", "explosion-2"] as const;
+
+/** R16.1 · Frame del fogonazo de disparo (boca del canon). */
+export const MUZZLE_FLASH_FRAME = "muzzle-flash";
+
+/**
  * Geometría del atlas (R3.4). Tamaños en px de textura (FRAME_SCALE× los px de
  * pantalla a zoom 1). El apartado artístico añade, sobre la infraestructura de
  * R3.3, un CASCO por arquetipo (siluetas distintas: explorador pequeño y con
@@ -94,7 +109,10 @@ export function buildAtlasLayout(): AtlasLayout {
   put("body-scout", 2.6 * PX_PER_M, 1.8 * PX_PER_M); // ligero y esbelto
   put("body-gunner", 3.2 * PX_PER_M, 2.2 * PX_PER_M); // medio (medida clásica)
   put("body-heavy", 3.8 * PX_PER_M, 2.8 * PX_PER_M); // pesado y ancho
-  put("turret", 1.4 * PX_PER_M, 1.4 * PX_PER_M); // base de torreta (redonda)
+  // Torretas por arquetipo (R16.1): tamaño distinto, igual que los cascos.
+  put("turret-scout", 1.1 * PX_PER_M, 1.1 * PX_PER_M); // torreta ligera y compacta
+  put("turret-gunner", 1.4 * PX_PER_M, 1.4 * PX_PER_M); // torreta media (medida clásica)
+  put("turret-heavy", 1.8 * PX_PER_M, 1.8 * PX_PER_M); // torreta pesada con blindaje lateral
   put("barrel", 2.4 * PX_PER_M, 0.5 * PX_PER_M); // cañón/arma
   put("projectile", 12, 12); // punto de proyectil (círculo blanco)
   put("flag", 1.6 * PX_PER_M, 2.0 * PX_PER_M); // bandera (asta + banderín)
@@ -102,6 +120,13 @@ export function buildAtlasLayout(): AtlasLayout {
   put("smoke", 1.6 * PX_PER_M, 1.6 * PX_PER_M); // partícula de humo (disco suave)
   put("spark", 0.8 * PX_PER_M, 0.8 * PX_PER_M); // partícula de chispa (estrella)
   put("pixel", 4, 4); // blanco 4×4: HUD/efectos sin nueva textura
+  // R16.1 · fogonazo de disparo: forma de llama apuntando a +x (boca del cañón).
+  put("muzzle-flash", 1.6 * PX_PER_M, 1.0 * PX_PER_M);
+  // R16.1 · secuencia corta de explosión (mismo tamaño de frame en las 3 fases,
+  // así el cambio de frame no produce un "salto" de escala en el sprite).
+  put("explosion-0", 2.4 * PX_PER_M, 2.4 * PX_PER_M);
+  put("explosion-1", 2.4 * PX_PER_M, 2.4 * PX_PER_M);
+  put("explosion-2", 2.4 * PX_PER_M, 2.4 * PX_PER_M);
 
   const chars = printableAscii();
   const charsPerRow = 16;
@@ -143,9 +168,26 @@ export function drawAtlas(ctx: CanvasRenderingContext2D, layout: AtlasLayout): v
       case "body-heavy":
         drawHull(ctx, f, "heavy");
         break;
-      case "turret":
-        // Base de torreta: disco con boca hacia +x (donde se ancla el cañón).
-        drawDisc(ctx, f.x + f.w / 2, f.y + f.h / 2, Math.min(f.w, f.h) / 2 - 1);
+      case "turret-scout":
+        drawTurret(ctx, f, "scout");
+        break;
+      case "turret-gunner":
+        drawTurret(ctx, f, "gunner");
+        break;
+      case "turret-heavy":
+        drawTurret(ctx, f, "heavy");
+        break;
+      case "muzzle-flash":
+        drawMuzzleFlash(ctx, f);
+        break;
+      case "explosion-0":
+        drawExplosionFrame(ctx, f, 0);
+        break;
+      case "explosion-1":
+        drawExplosionFrame(ctx, f, 1);
+        break;
+      case "explosion-2":
+        drawExplosionFrame(ctx, f, 2);
         break;
       case "flag":
         drawFlag(ctx, f);
@@ -280,6 +322,111 @@ function drawSmoke(ctx: CanvasRenderingContext2D, f: AtlasFrameSpec): void {
     drawDisc(ctx, cx, cy, (rMax * i) / 4);
   }
   ctx.globalAlpha = 1;
+}
+
+/**
+ * R16.1 · Torreta por arquetipo: base redonda con boca hacia +x (donde se
+ * ancla el cañón, igual que la torreta única anterior), más detalle propio
+ * de cada chasis para distinguirse de un vistazo:
+ *  - explorador: disco pequeño con un nub trasero (periscopio/antena);
+ *  - artillero: disco con una placa trasera rectangular;
+ *  - pesado: octógono con dos pods de blindaje laterales.
+ */
+function drawTurret(ctx: CanvasRenderingContext2D, f: AtlasFrameSpec, kind: "scout" | "gunner" | "heavy"): void {
+  const cx = f.x + f.w / 2;
+  const cy = f.y + f.h / 2;
+  const r = Math.min(f.w, f.h) / 2 - 1;
+  if (kind === "scout") {
+    drawDisc(ctx, cx, cy, r * 0.78);
+    ctx.globalAlpha = 0.75;
+    ctx.fillRect(f.x, cy - r * 0.12, r * 0.55, r * 0.24);
+    ctx.globalAlpha = 1;
+  } else if (kind === "heavy") {
+    drawOctagon(ctx, cx, cy, r);
+    ctx.globalAlpha = 0.6;
+    drawDisc(ctx, cx - r * 0.15, cy - r * 0.55, r * 0.2);
+    drawDisc(ctx, cx - r * 0.15, cy + r * 0.55, r * 0.2);
+    ctx.globalAlpha = 1;
+  } else {
+    drawDisc(ctx, cx, cy, r * 0.82);
+    ctx.globalAlpha = 0.75;
+    ctx.fillRect(f.x, cy - r * 0.38, r * 0.6, r * 0.76);
+    ctx.globalAlpha = 1;
+  }
+}
+
+/** Octógono macizo centrado en (cx, cy) con "radio" r (bisel de esquina fijo). */
+function drawOctagon(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number): void {
+  const k = r * 0.41; // bisel: distancia del vértice recto al vértice biselado
+  ctx.beginPath();
+  ctx.moveTo(cx - k, cy - r);
+  ctx.lineTo(cx + k, cy - r);
+  ctx.lineTo(cx + r, cy - k);
+  ctx.lineTo(cx + r, cy + k);
+  ctx.lineTo(cx + k, cy + r);
+  ctx.lineTo(cx - k, cy + r);
+  ctx.lineTo(cx - r, cy + k);
+  ctx.lineTo(cx - r, cy - k);
+  ctx.closePath();
+  ctx.fill();
+}
+
+/**
+ * R16.1 · Fogonazo de disparo: cometa/llama apuntando a +x, ancho en la base
+ * (boca del cañón) y afilado en la punta. Vida corta en effects.ts.
+ */
+function drawMuzzleFlash(ctx: CanvasRenderingContext2D, f: AtlasFrameSpec): void {
+  const cy = f.y + f.h / 2;
+  ctx.beginPath();
+  ctx.moveTo(f.x, cy - f.h * 0.42);
+  ctx.lineTo(f.x + f.w * 0.55, cy - f.h * 0.12);
+  ctx.lineTo(f.x + f.w, cy);
+  ctx.lineTo(f.x + f.w * 0.55, cy + f.h * 0.12);
+  ctx.lineTo(f.x, cy + f.h * 0.42);
+  ctx.lineTo(f.x + f.w * 0.3, cy);
+  ctx.closePath();
+  ctx.fill();
+}
+
+/**
+ * R16.1 · Fase `stage` (0/1/2) de la secuencia corta de explosión, elegida en
+ * tiempo de render por `explosionFrameForAge` (art-direction.ts) según la
+ * edad del efecto: núcleo brillante pequeño → estallido dentado → anillos
+ * difusos que se apagan. Las tres fases comparten dimensiones de frame (el
+ * layout las reserva del mismo tamaño) para que el cambio de frame no salte
+ * de escala.
+ */
+function drawExplosionFrame(ctx: CanvasRenderingContext2D, f: AtlasFrameSpec, stage: 0 | 1 | 2): void {
+  const cx = f.x + f.w / 2;
+  const cy = f.y + f.h / 2;
+  const rMax = Math.min(f.w, f.h) / 2 - 1;
+  if (stage === 0) {
+    drawDisc(ctx, cx, cy, rMax * 0.4);
+  } else if (stage === 1) {
+    drawBurst(ctx, cx, cy, rMax * 0.85, 8);
+  } else {
+    for (let i = 3; i >= 1; i--) {
+      ctx.globalAlpha = 0.28 * i;
+      drawDisc(ctx, cx, cy, (rMax * i) / 3);
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
+/** Estallido de N puntas alternando radio largo/corto, centrado en (cx, cy). */
+function drawBurst(ctx: CanvasRenderingContext2D, cx: number, cy: number, rOuter: number, points: number): void {
+  const rInner = rOuter * 0.42;
+  ctx.beginPath();
+  for (let i = 0; i < points * 2; i++) {
+    const ang = (Math.PI * i) / points;
+    const r = i % 2 === 0 ? rOuter : rInner;
+    const px = cx + Math.cos(ang) * r;
+    const py = cy + Math.sin(ang) * r;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fill();
 }
 
 /** Chispa: estrella de cuatro puntas (dos husos cruzados). */
