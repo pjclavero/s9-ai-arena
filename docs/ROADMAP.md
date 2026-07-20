@@ -68,7 +68,11 @@
     torretas por chasis, fogonazo y explosión animada, todo procedural en el atlas existente
     (sin WebGL avanzado, sin CDN, sin assets binarios, sin deps nuevas). Ver
     `docs/R16_VISUAL_SLICE1.md`. Fases R16.3+ pendientes.
-11. **R14 — WebRTC** (streaming P2P para espectadores). **Depende de R11 foundation**.
+11. **R14 — WebRTC** — **RESUELTO POR ADR: no se implementa** (`docs/R14_ADR_WEBRTC.md`):
+    a la escala autorizada (tope 100 espectadores/batalla, R13.2) el fan-out WS es trivial,
+    P2P rompería la autoridad del servidor y TURN/STUN exigiría puertos/infra externa
+    prohibidos. Alternativa aprobada: escalera servidor-side sobre el gateway WS existente.
+    Reapertura condicionada a demanda medida + autorización expresa de infraestructura.
 12. **R13.5 — Rapier evaluation** (rama separada, golden replays, comparación de `finalStateHash`).
 13. **save/load, latencia simulada, sharding** — posterior por riesgo de determinismo.
 
