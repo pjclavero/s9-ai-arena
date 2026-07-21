@@ -71,6 +71,27 @@ export interface HudBot {
   mobilityCrippled: boolean;
 }
 
+/**
+ * R16.3 · panel táctico — resumen por equipo, derivado ÍNTEGRAMENTE de los
+ * `HudBot` ya calculados (a su vez derivados de `VehicleOverlay`, sin campos
+ * de red nuevos):
+ *  - botsAlive/botsTotal: recuento de vivos vs. plantilla del equipo.
+ *  - hpPercent: media del `hpRatio` de los bots VIVOS, redondeada a entero
+ *    (0 si no queda ninguno vivo).
+ *  - modulesOffline: suma de `modulesDown` de todos los bots del equipo.
+ * Fuera de alcance (R16.3, no este bloque): daño infligido / precisión no
+ * están en OverlayState hoy; un slice futuro que los quiera debe extender el
+ * snapshot público (decisión de contrato, no de este bloque).
+ */
+export interface HudTeamTactical {
+  botsAlive: number;
+  botsTotal: number;
+  /** Media del hpRatio de los bots vivos, en % entero 0..100 (0 si no queda ninguno). */
+  hpPercent: number;
+  /** Suma de módulos caídos (destruidos/offline) de todo el equipo. */
+  modulesOffline: number;
+}
+
 /** Panel de un equipo: puntuación y sus bots. */
 export interface HudTeamPanel {
   team: string;
@@ -78,6 +99,17 @@ export interface HudTeamPanel {
   bots: HudBot[];
   /** Nº de bots vivos del equipo. */
   aliveCount: number;
+  /** Resumen táctico del equipo (R16.3), derivado de `bots`. */
+  tactical: HudTeamTactical;
+}
+
+/** Deriva el resumen táctico de un equipo a partir de sus bots ya calculados. */
+function buildTactical(bots: HudBot[]): HudTeamTactical {
+  const alive = bots.filter((b) => b.alive);
+  const hpPercent =
+    alive.length > 0 ? Math.round((alive.reduce((sum, b) => sum + b.hpRatio, 0) / alive.length) * 100) : 0;
+  const modulesOffline = bots.reduce((sum, b) => sum + b.modulesDown, 0);
+  return { botsAlive: alive.length, botsTotal: bots.length, hpPercent, modulesOffline };
 }
 
 /** Estado de una bandera para el HUD. */
@@ -197,6 +229,7 @@ function buildTeams(overlay: OverlayState, roster: ViewerRoster | null | undefin
       points: Number(overlay.score[team]) || 0,
       bots,
       aliveCount: bots.filter((b) => b.alive).length,
+      tactical: buildTactical(bots),
     };
   });
 }

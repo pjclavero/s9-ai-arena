@@ -139,9 +139,30 @@ function TeamPanelView({ team, accent }: { team: HudTeamPanel; accent: string })
           {team.points} pts · {team.aliveCount} vivos
         </span>
       </div>
+      <TacticalRow team={team} />
       {team.bots.map((b) => (
         <BotRow key={b.id} bot={b} />
       ))}
+    </div>
+  );
+}
+
+/** Resumen táctico compacto del equipo (R16.3): vivos/total · HP% · módulos caídos. */
+function TacticalRow({ team }: { team: HudTeamPanel }) {
+  const t = team.tactical;
+  return (
+    <div data-testid="hud-team-tactical" style={{ fontSize: "0.85em", opacity: 0.85, marginTop: 2, marginBottom: 2 }}>
+      <span data-testid="hud-team-tactical-alive">
+        vivos {t.botsAlive}/{t.botsTotal}
+      </span>
+      {" · "}
+      <span data-testid="hud-team-tactical-hp">HP {t.hpPercent}%</span>
+      {t.modulesOffline > 0 && (
+        <>
+          {" · "}
+          <span data-testid="hud-team-tactical-modules">{t.modulesOffline} módulos caídos</span>
+        </>
+      )}
     </div>
   );
 }
