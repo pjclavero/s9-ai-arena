@@ -53,6 +53,15 @@ real). Beneficio: corrección garantizada por construcción sobre maquinaria ya 
 nuevo. La estrategia (A) queda como **slice 2 opcional**, gateado a un spike que
 demuestre `solverFingerprint` bit-exacto tras `restoreSnapshot()`; no se promete.
 
+**Spike ejecutado (N3, ver `docs/R13_5_SLICE2_SPIKE.md`)**: el round-trip
+`takeSnapshot()`/`restoreSnapshot()` de Rapier resultó bit-exacto (poses cuantizadas +
+`solverFingerprint`) en todos los casos probados, incluidos contacto activo y cuerpos
+dormidos. La premisa técnica que bloqueaba el slice 2 queda demostrada, pero el slice
+2 NO se implementa: el coste de integración (re-mapeo de handles de `PhysicsWorld`,
+acoplamiento de los checkpoints persistidos a la versión exacta de Rapier) no está
+justificado frente al beneficio (O(1) vs. el O(N) ya barato del slice 1) sin presión
+de rendimiento real. Slice 2 queda cerrado como spike, sin implementación.
+
 ## Slice 1 — entregable concreto
 
 Todo en `apps/arena-engine` (cero cambios en API/web/servicios, cero despliegue):
