@@ -170,6 +170,13 @@ export function mapRoutes(db: Db): Router {
   // N4/R10 slice 2: el editor visual guarda progreso a medias (WIP). A diferencia
   // de importMap, NO gatea con isPublishable: se persiste con warnings o incluso
   // errores, y se devuelven los checks para que el editor los muestre en directo.
+  //
+  // El cuerpo es JSON (el editor tiene el InternalMap en memoria) y cae bajo el
+  // límite global de express.json (1mb, app.ts): AMPLIO a propósito para un mapa
+  // de editor (grid ~120×80 ≈ decenas de KB, holgura de 10×+). No usa el multer de
+  // 20mb de importMap, que existe para imports Tiled arbitrarios (otro caso). Si en
+  // el futuro el editor produjera mapas >1mb, elevar el límite SOLO para esta ruta
+  // (parser específico antes del global), no subir el tope global de la API.
   defineOperation(router, "saveMapDraft", async (req, res) => {
     assertMapShape(req.body);
     const map = req.body as InternalMap;
