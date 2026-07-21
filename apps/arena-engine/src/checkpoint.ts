@@ -76,6 +76,9 @@ export function saveCheckpoint(b: Battle): BattleCheckpoint {
       // Metadato de pared, NO entra en la simulación ni en el hash (vía wall-clock.ts,
       // única fuente sancionada, ERR-ENG-02).
       recordedAt: nowIso(),
+      // N2 · sin esto, restoreCheckpoint() resimularía sin latencia y divergiría del
+      // stateHash guardado en cuanto hubiera un comando aceptado bajo latencia.
+      simulatedLatency: b.config.simulatedLatency,
     },
     tick,
     commands,
@@ -139,6 +142,8 @@ export async function restoreCheckpoint(ckpt: BattleCheckpoint, agents: Record<s
     map: ckpt.header.map,
     participants: ckpt.header.participants,
     recordReplay: true,
+    // N2 · idem saveCheckpoint(): reconstruir la MISMA BattleConfig, latencia incluida.
+    simulatedLatency: ckpt.header.simulatedLatency,
   });
   try {
     const byVehicle = new Map<string, { tick: number; command: any }[]>();

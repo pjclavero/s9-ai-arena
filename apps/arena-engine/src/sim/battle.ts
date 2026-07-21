@@ -61,6 +61,19 @@ export interface BattleConfig {
   /** Cada cuántos ticks se emite un hash de estado para verificar replays. */
   hashEveryNTicks?: number;
   recordReplay?: boolean;
+  /**
+   * N2 · Latencia simulada (DETERMINISTA, off por defecto). Cuando está presente, el
+   * comando aceptado en un ciclo de decisión no surte efecto en ESE ciclo: se retrasa
+   * un número de ciclos de decisión sorteado con el RNG canónico, en [minCycles,
+   * maxCycles]. Mientras el comando está "en vuelo" el vehículo sigue con su última
+   * acción segura (v.lastMove), igual que la rama de timeout.
+   *
+   * GARANTÍA: con este campo ausente/undefined no se consume RNG nuevo y la ejecución
+   * es byte-idéntica a la de antes de N2 (mismo finalStateHash, mismos stateHashes).
+   * El reloj de simulación (tick) NO se altera: solo se difiere QUÉ comando se aplica
+   * en cada tick.
+   */
+  simulatedLatency?: { minCycles: number; maxCycles: number };
 }
 
 export interface BattleResult {
@@ -119,6 +132,13 @@ export class Battle {
   snapshots: any[] = [];
   stateHashes: { tick: number; hash: string }[] = [];
   replayCommands: { tick: number; vehicleId: string; command: any }[] = [];
+  /**
+   * N2 · Comandos "en vuelo" bajo latencia simulada: readyAtTick es el tick de
+   * decisión en el que deben incorporarse al mapa `commands` del step(). Vacía
+   * siempre que `simulatedLatency` esté ausente (nunca se empuja nada), así que
+   * no afecta a stateHash() ni a ningún camino existente cuando la feature está OFF.
+   */
+  private pendingLatencyCommands: { readyAtTick: number; vehicleId: string; command: any }[] = [];
 
   constructor(config: BattleConfig) {
     this.config = config;
@@ -215,6 +235,25 @@ export class Battle {
       // de construirlas —nunca antes, que era el bug del doble borrado— para recoger los
       // sonidos del ciclo que arranca ahora.
       this.observedSounds = this.sounds;
+
+      // N2 · Liberar hacia `commands` los comandos ya vencidos de ciclos de decisión
+      // anteriores, ANTES de recoger las decisiones nuevas de este ciclo. El array
+      // se recorre en orden de inserción (estable: siempre se empujó en el mismo
+      // orden que this.vehicles), así que el orden de liberación es determinista
+      // aunque procedan de distintos ciclos de origen. Si `simulatedLatency` nunca
+      // se activó, este array está y seguirá vacío: coste cero, sin efecto.
+      if (this.pendingLatencyCommands.length > 0) {
+        const stillPending: typeof this.pendingLatencyCommands = [];
+        for (const pc of this.pendingLatencyCommands) {
+          if (pc.readyAtTick <= this.tick) {
+            commands.set(pc.vehicleId, pc.command);
+          } else {
+            stillPending.push(pc);
+          }
+        }
+        this.pendingLatencyCommands = stillPending;
+      }
+
       const objectives = this.mode.objectives();
       for (const v of this.vehicles) {
         if (v.disqualified) continue;
@@ -257,9 +296,36 @@ export class Battle {
           commands.set(v.id, { move: v.lastMove, fire: [] });
         } else {
           v.consecutiveTimeouts = 0;
-          commands.set(v.id, cmd);
+          // El replay graba SIEMPRE en el tick de decisión, tenga o no latencia: es
+          // la "receta" de lo que el bot entregó, no de cuándo surtió efecto. La
+          // resimulación (verify()/checkpoint) vuelve a sortear el mismo retardo
+          // desde el mismo RNG canónico y en el mismo punto de la secuencia, así
+          // que reproduce el mismo tick de efecto sin necesidad de grabarlo aparte.
           if (this.config.recordReplay) {
             this.replayCommands.push({ tick: this.tick, vehicleId: v.id, command: cmd });
+          }
+
+          const latency = this.config.simulatedLatency;
+          if (latency) {
+            // Draw SOLO cuando la latencia está activada (config presente): con el
+            // campo ausente esta rama entera no se ejecuta y no se toca this.rng,
+            // que es la garantía de cero-regresión con latencia OFF.
+            const span = Math.max(0, latency.maxCycles - latency.minCycles) + 1;
+            const d = latency.minCycles + this.rng.int(span);
+            if (d <= 0) {
+              // Sin retardo efectivo: mismo comportamiento que sin latencia.
+              commands.set(v.id, cmd);
+            } else {
+              this.pendingLatencyCommands.push({
+                readyAtTick: this.tick + d * DECISION_EVERY_N_TICKS,
+                vehicleId: v.id,
+                command: cmd,
+              });
+              // No se mete en `commands` este ciclo: el vehículo sigue con su
+              // última acción segura (v.lastMove), exactamente como el timeout.
+            }
+          } else {
+            commands.set(v.id, cmd);
           }
         }
       }
