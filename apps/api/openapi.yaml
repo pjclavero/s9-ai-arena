@@ -7,8 +7,11 @@ info:
   # (gateado por S9_PUBLIC_SPECTATE_ENABLED, apagado por defecto).
   # 0.5.0 · R12 cuadro de torneo (slice 1, solo lectura): añade
   # listTournamentMatches (público, sin seeds/commitments).
+  # 0.6.0 · N4/R10 slice 2 (persistencia backend del editor de mapas): añade
+  # saveMapDraft (POST /maps/drafts) — guarda progreso (WIP) del editor sin
+  # gatear con isPublishable, junto con el feedback del validador de E4.
   # Añadir un endpoint = MINOR (docs/compatibilidad.md, §2 Semver por paquete).
-  version: 0.5.0
+  version: 0.6.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -493,6 +496,41 @@ paths:
       responses:
         '201': { description: Mapa en borrador, content: { application/json: { schema: { $ref: '#/components/schemas/MapVersion' } } } }
         '422': { $ref: '#/components/responses/MapInvalid' }
+
+  /maps/drafts:
+    post:
+      tags: [maps]
+      operationId: saveMapDraft
+      summary: 'Guardar el progreso del editor visual (R10 slice 2) como borrador. Se valida (E4/T4.2) pero NO se gatea: se persiste con warnings o incluso errores, junto con los checks para que el editor los muestre.'
+      x-min-role: user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, description: Mapa interno (InternalMap), additionalProperties: true }
+      responses:
+        '201':
+          description: Borrador guardado, con el feedback de validación
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/MapVersion'
+                  - type: object
+                    properties:
+                      checks:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            check: { enum: [geometry, navigation, playability, balance, mode, destruction] }
+                            severity: { enum: [error, warning] }
+                            message: { type: string }
+        '400':
+          description: El cuerpo no tiene forma de mapa (mapId, dimensiones, layers)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /maps/{mapId}/versions/{version}:
     get:

@@ -408,3 +408,55 @@ describe("T7.5 mapas con el código real de E4", () => {
     expect(c.body.checksum).not.toBe(a.body.checksum);
   });
 });
+
+describe("N4/R10 slice 2: borrador del editor de mapas (saveMapDraft)", () => {
+  const mvpMap = JSON.parse(readFileSync(join(REPO, "maps", "mvp-arena-01.json"), "utf8"));
+
+  it("borrador válido y publicable → 201, state draft, checks presentes", async () => {
+    const draft = { ...mvpMap, mapId: "draft-ok-01" };
+    const r = await request(app).post("/maps/drafts").set("Authorization", `Bearer ${dev}`).send(draft);
+    expect(r.status).toBe(201);
+    expect(r.body.state).toBe("draft");
+    expect(r.body.mapId).toBe("draft-ok-01");
+    expect(Array.isArray(r.body.checks)).toBe(true);
+    expect(r.body.checks.some((c: { severity: string }) => c.severity === "error")).toBe(false);
+  });
+
+  it("borrador NO publicable (sin spawns) → también 201, y los checks reflejan el error", async () => {
+    const draft = { ...mvpMap, mapId: "draft-broken-01", layers: { ...mvpMap.layers, spawns: [] } };
+    const r = await request(app).post("/maps/drafts").set("Authorization", `Bearer ${dev}`).send(draft);
+    expect(r.status).toBe(201);
+    expect(r.body.state).toBe("draft");
+    expect(r.body.checks.some((c: { severity: string }) => c.severity === "error")).toBe(true);
+
+    // Se recupera con getMapVersion y sigue en 'draft' (no se coló como publicable).
+    const got = await request(app).get(`/maps/${r.body.mapId}/versions/${r.body.version}`);
+    expect(got.status).toBe(200);
+    expect(got.body.state).toBe("draft");
+  });
+
+  it("entrada basura (no-mapa) → 400", async () => {
+    const r = await request(app)
+      .post("/maps/drafts")
+      .set("Authorization", `Bearer ${dev}`)
+      .send({ hola: "no soy un mapa" });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe("bad_request");
+  });
+
+  it("sin auth → 401", async () => {
+    const r = await request(app)
+      .post("/maps/drafts")
+      .send({ ...mvpMap, mapId: "draft-noauth" });
+    expect(r.status).toBe(401);
+  });
+
+  it("rol insuficiente (visitor) → 403", async () => {
+    const visitor = await tokenFor(h.db, DEV_USERS.visitor);
+    const r = await request(app)
+      .post("/maps/drafts")
+      .set("Authorization", `Bearer ${visitor}`)
+      .send({ ...mvpMap, mapId: "draft-visitor" });
+    expect(r.status).toBe(403);
+  });
+});
