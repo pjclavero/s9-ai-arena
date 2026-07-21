@@ -110,6 +110,22 @@ describe("N1 · GET /metrics montado en la app Express (createApp)", () => {
     expect(metrics.text).toMatch(/http_requests_total\{service="api",route="\/system\/rbac",status="\d+"\} 2/);
   });
 
+  it('una ruta que no existe en absoluto se agrega bajo route="unmatched", no con su URL cruda', async () => {
+    const app: Express = createApp({ db: h.db, metricsEnabled: true });
+    // Path sin ninguna ruta casada: cae en el 404 genérico y req.route queda
+    // undefined ⇒ templateRoute() debe devolver "unmatched" (no la URL cruda).
+    await request(app).get("/no/existe/esta/ruta/12345");
+    await request(app).get("/otra/inexistente/98765");
+
+    const metrics = await request(app).get("/metrics");
+    expect(metrics.status).toBe(200);
+    // Ambas peticiones no casadas agregan en la ÚNICA serie "unmatched": ni
+    // explosión de cardinalidad ni fuga de la URL cruda en la etiqueta.
+    expect(metrics.text).toMatch(/http_requests_total\{service="api",route="unmatched",status="404"\} 2/);
+    expect(metrics.text).not.toContain("/no/existe/esta/ruta/12345");
+    expect(metrics.text).not.toContain("/otra/inexistente/98765");
+  });
+
   it("cardinalidad: dos ids DISTINTOS de battleId suman en la MISMA serie de ruta plantilla", async () => {
     const app: Express = createApp({ db: h.db, metricsEnabled: true });
     const id1 = randomUUID();

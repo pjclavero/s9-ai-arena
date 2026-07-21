@@ -17,6 +17,12 @@
  * serie `route="/api/v1/battles/:id"`. Las peticiones sin ruta casada (404,
  * rutas fuera de contrato) se agrupan bajo `route="unmatched"` en vez de
  * explotar cardinalidad con URLs arbitrarias.
+ *
+ * ACCESO: `GET /metrics` no se autentica (se monta antes del middleware de auth),
+ * como es habitual para que Prometheus lo raspe sin credenciales en la red interna
+ * (`api:8080`). No expone secretos ni PII, solo agregados; aun así, restringir el
+ * acceso al endpoint (red/firewall/reverse-proxy) es responsabilidad del DESPLIEGUE,
+ * no de la app. Con la flag `S9_METRICS_ENABLED` apagada (default) ni siquiera existe.
  */
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 
