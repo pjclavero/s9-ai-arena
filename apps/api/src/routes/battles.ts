@@ -128,6 +128,46 @@ export function battleRoutes(
     (req, res, next) => anonQuota(db, "public-live", quota)(req, res, next),
   );
 
+  /**
+   * N5/R11 · Estado público de UNA batalla por id (a diferencia de la LISTA,
+   * que responde 200 enabled:false para que la UI muestre el aviso): con la
+   * capability apagada, un recurso por-id responde 404 SIEMPRE, exista o no
+   * la batalla — revelar la existencia/estado de un id concreto cuando la
+   * capability está apagada filtraría más que un listado vacío. Con la
+   * capability encendida, también 404 si la batalla no existe o no está
+   * `running` (no está en directo ⇒ no es públicamente visible por id):
+   * nunca se distingue "no existe" de "no está en directo" a un visitante.
+   */
+  defineOperation(
+    router,
+    "getPublicLiveBattle",
+    async (req, res) => {
+      if (!publicSpectateEnabled) throw notFound();
+      const battleId = pathParam(req, "battleId");
+      const battle = await db("battles")
+        .join("maps", "maps.id", "battles.map_id")
+        .where({ "battles.id": battleId, "battles.status": "running" })
+        .select(
+          "battles.id as id",
+          "battles.status as status",
+          "battles.mode as mode",
+          "battles.map_id as map_id",
+          "maps.name as map_name",
+          "battles.created_at as created_at",
+          "battles.started_at as started_at",
+          "battles.finished_at as finished_at",
+        )
+        .first();
+      if (!battle) throw notFound();
+      res.setHeader("Cache-Control", "public, max-age=5");
+      res.json(publicLiveBattleToJson(battle));
+    },
+    // Igual patrón que listPublicLiveBattles: ruta pública sin cuenta, cuota
+    // anti-scraping/DoS propia (route distinta para no compartir presupuesto
+    // con el listado).
+    (req, res, next) => anonQuota(db, "public-battle", quota)(req, res, next),
+  );
+
   defineOperation(router, "listBattles", async (req, res) => {
     const limit = parseLimit(req.query.limit);
     const cursor = decodeCursor(req.query.cursor as string | undefined);
