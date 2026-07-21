@@ -54,10 +54,11 @@ describe("N6 · RankingPage (#/ranking, GET /standings)", () => {
     render(<RankingPage />);
     const rows = await screen.findAllByTestId("ranking-row");
     expect(rows).toHaveLength(2);
-    expect(rows[0].textContent).toContain("1");
-    expect(rows[0].textContent).toContain("Vector");
-    expect(rows[0].textContent).toContain("1500");
-    expect(rows[0].textContent).toContain("10-2-1");
+    // Celda por celda (igualdad exacta): así un intercambio de columna —p. ej.
+    // pintar rating donde va rank— se caza, cosa que un toContain global no haría
+    // (1500 "contiene" 1). Orden de columnas: rank, botName, rating, V-D-E.
+    const cells = [...rows[0].querySelectorAll("td")].map((td) => td.textContent);
+    expect(cells).toEqual(["1", "Vector", "1500", "10-2-1"]);
     expect(apiMock).toHaveBeenCalledWith("GET", "/standings?mode=deathmatch");
   });
 
