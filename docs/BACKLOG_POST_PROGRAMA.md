@@ -1,10 +1,34 @@
 # Backlog post-programa — Programa de continuación
 
-**Estado: EN CURSO.** Arranca sobre `main@11048d6` (cierre del programa de 9 bloques,
-`docs/PROGRAMA_9_BLOQUES.md`). Ejecutado con las mismas mecánicas: Organizador/Director,
-implementadores especialistas, **Supervisor independiente** (nunca supervisa su propia
-PR) y control de calidad, un ítem por rama/PR, puerta entre bloques, merge automático con
-CI verde + Supervisor CONFORME.
+**Estado: COMPLETADO — 7/7 ítems ejecutables con GATE-PASS (PRs #68–#74).** Veredicto
+global: **PROGRAMA-A**. Arrancó sobre `main@11048d6` (cierre del programa de 9 bloques,
+`docs/PROGRAMA_9_BLOQUES.md`); main al cierre: `8755c24`. Ejecutado con las mismas
+mecánicas: Organizador/Director, implementadores especialistas, **Supervisor
+independiente** (nunca supervisa su propia PR) y control de calidad, un ítem por rama/PR,
+puerta entre bloques, merge automático con CI verde + Supervisor CONFORME.
+
+## Resultado por bloque
+
+| # | Ítem | Dictamen | PR | Merge en main |
+|---|---|---|---|---|
+| N1 | Métricas Prometheus (API) | GATE-PASS | [#68](https://github.com/pjclavero/s9-ai-arena/pull/68) | `3383cd1` |
+| N2 | Latencia simulada (motor) | GATE-PASS | [#69](https://github.com/pjclavero/s9-ai-arena/pull/69) | `7294fb4` |
+| N3 | R13.5 slice 2 — spike Rapier | GATE-PASS (dictamen: viable, no implementar) | [#70](https://github.com/pjclavero/s9-ai-arena/pull/70) | `1501a15` |
+| N4 | R10 slice 2 — borrador de mapas | GATE-PASS | [#71](https://github.com/pjclavero/s9-ai-arena/pull/71) | `a900fe7` |
+| N5 | R11 — estado público por batalla | GATE-PASS | [#72](https://github.com/pjclavero/s9-ai-arena/pull/72) | `2f603cb` |
+| N6 | R12 — `#/ranking` + diseño matchmaking | GATE-PASS | [#73](https://github.com/pjclavero/s9-ai-arena/pull/73) | `b8eac1f` |
+| N7 | R16.3 — panel táctico del HUD | GATE-PASS | [#74](https://github.com/pjclavero/s9-ai-arena/pull/74) | `8755c24` |
+
+Cada bloque llevó Supervisor independiente (6× SUPERVISOR-CONFORME, incluidos los que
+recogieron observaciones no bloqueantes antes del merge) y CI post-merge verde. Defectos
+reales cazados por el ciclo antes de mergear: un byte NUL espurio que hacía binario un
+fichero fuente (N1), un bug de propagación de la cabecera de replay que rompía `verify()`
+con latencia activada (N2, corregido por el propio implementador), y varios huecos de
+cobertura de mutación cerrados con tests reforzados (N1, N2, N6). El único fallo de CI del
+programa (N7) fue un timeout transitorio de Docker Hub ajeno al cambio, resuelto con
+rerun; **ninguna CI roja se mergeó**.
+
+### Mecánicas (referencia)
 
 Cada bloque sigue el ciclo del programa anterior: auditoría de `main` → diseño mínimo →
 rama y worktree propios desde main fresco → implementación → tests → **mutaciones de
@@ -13,17 +37,19 @@ merge sin bypass → CI post-merge verde → checkpoint → siguiente. Un bloque
 mezclados. Se respetan todas las invariantes (sin tocar VM108/VM104, sin desplegar, sin
 abrir puertos, sin `privileged`/`network_mode: host`/`docker.sock`, sin falsear tests).
 
-## Orden de ejecución (ítems ejecutables)
+## Orden de ejecución (ítems ejecutables) — plan original
+
+Todos completados; ver "Resultado por bloque" arriba para el dictamen y el merge.
 
 | # | Ítem | Naturaleza | Estado |
 |---|---|---|---|
-| N1 | Métricas Prometheus (observabilidad) | endpoint off por defecto | pendiente |
-| N2 | Latencia simulada | motor, sin alterar tick lógico | pendiente |
-| N3 | R13.5 slice 2 — spike snapshot Rapier | investigación (gate del propio slice) | pendiente |
-| N4 | R10 slice 2 — persistencia backend del editor de mapas | endpoint + validación | pendiente |
-| N5 | R11 — estado público por batalla (solo lectura) | API + UI, gateado por flag | pendiente |
-| N6 | R12 — `#/ranking` (solo lectura) + diseño prepare-battle | lectura + diseño | pendiente |
-| N7 | R16.3+ — siguiente fase visual | procedural, sin assets/CDN | pendiente |
+| N1 | Métricas Prometheus (observabilidad) | endpoint off por defecto | ✅ hecho |
+| N2 | Latencia simulada | motor, sin alterar tick lógico | ✅ hecho |
+| N3 | R13.5 slice 2 — spike snapshot Rapier | investigación (gate del propio slice) | ✅ hecho (dictamen) |
+| N4 | R10 slice 2 — persistencia backend del editor de mapas | endpoint + validación | ✅ hecho |
+| N5 | R11 — estado público por batalla (solo lectura) | API + UI, gateado por flag | ✅ hecho |
+| N6 | R12 — `#/ranking` (solo lectura) + diseño prepare-battle | lectura + diseño | ✅ hecho |
+| N7 | R16.3+ — siguiente fase visual | procedural, sin assets/CDN | ✅ hecho |
 
 ### N1 · Métricas Prometheus
 Etiqueta original de R13.2 nunca implementada (`docs/R13_2_HARDENING.md` la dejó como
@@ -64,6 +90,9 @@ auditoría del bloque.
 
 ## Bloqueados (NO se ejecutan — requieren autorización o rompen reglas duras)
 
+**Respetados durante todo el programa: ninguno se ejecutó.** Siguen pendientes de una
+autorización explícita y separada del operador.
+
 - **Auto-run real de R11/R12 (torneos/batallas desde UI)** — gateado a validación en
   **VM108**. Regla dura: no se toca VM108 sin autorización expresa. Las flags
   `S9_PUBLIC_SPECTATE_ENABLED` y `S9_ENABLE_REAL_BATTLE_RUNS` siguen off por defecto.
@@ -74,11 +103,15 @@ auditoría del bloque.
 
 ## Higiene (fuera del programa — requieren confirmación explícita del operador)
 
+**No tocada durante el programa; sigue pendiente del OK del operador.**
+
 - **9 worktrees en `/home/ia02/s9-worktrees/`** (dosier E1–E12, otro proyecto): todos en
   `main` y limpios, pero ajenos a este programa y posiblemente en uso por otras sesiones.
   No se borran sin OK explícito.
 - **`package-lock.json` local sucio** en el checkout principal: marcado "no tocar"
-  (ajeno). Bloquea el `git pull` del checkout local; `origin/main` es la fuente de verdad.
+  (ajeno). Bloquea el `git pull` del checkout local (estancado en un commit previo al
+  programa); `origin/main` es la fuente de verdad y todos los worktrees ramifican de ahí,
+  así que la implementación no se vio afectada.
 
 ## Criterio de éxito
 
