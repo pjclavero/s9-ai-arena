@@ -10,8 +10,15 @@ info:
   # 0.6.0 · N4/R10 slice 2 (persistencia backend del editor de mapas): añade
   # saveMapDraft (POST /maps/drafts) — guarda progreso (WIP) del editor sin
   # gatear con isPublishable, junto con el feedback del validador de E4.
+  # 0.7.0 · N5/R11 estado público por batalla: añade getPublicLiveBattle
+  # (GET /public/battles/{battleId}), gateado por S9_PUBLIC_SPECTATE_ENABLED.
+  # A diferencia del listado, un recurso por-id con la capability apagada
+  # responde 404 (no 200 enabled:false): revelar la existencia/estado de un
+  # id concreto filtraría más que un listado vacío. Con la capability
+  # encendida, 404 también si la batalla no existe o no está `running`
+  # (nunca se revela su estado no-running a un visitante anónimo).
   # Añadir un endpoint = MINOR (docs/compatibilidad.md, §2 Semver por paquete).
-  version: 0.6.0
+  version: 0.7.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -727,6 +734,27 @@ paths:
           description: Estado de la emisión pública y batallas en directo (si está activada)
           content:
             application/json: { schema: { $ref: '#/components/schemas/PublicLiveBattles' } }
+  /public/battles/{battleId}:
+    get:
+      tags: [battles]
+      operationId: getPublicLiveBattle
+      summary: >-
+        R11 · Estado público de UNA batalla, SOLO campos públicos, sin cuenta.
+        Gateado por S9_PUBLIC_SPECTATE_ENABLED: apagado → 404 (a diferencia del
+        listado, un recurso por-id no revela enabled:false ni si el id existe).
+        Encendido: 404 si la batalla no existe o no está `running` (una batalla
+        no visible en directo no es públicamente consultable por id); 200 con
+        la proyección pública si está `running`.
+      x-min-role: visitor
+      security: []
+      parameters: [{ $ref: '#/components/parameters/BattleId' }]
+      responses:
+        '200':
+          description: Batalla en directo (proyección pública)
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/PublicLiveBattle' } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /battles:
     get:
       tags: [battles]
