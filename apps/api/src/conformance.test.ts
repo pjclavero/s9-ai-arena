@@ -25,8 +25,8 @@ beforeAll(() => {
 });
 
 describe("T7.5 conformidad con el contrato de E1", () => {
-  it("el contrato tiene 60 operaciones (59 + listTournamentMatches de R12, contrato 0.5.0)", () => {
-    expect(loadContract().operations.length).toBe(60);
+  it("el contrato tiene 61 operaciones (60 + saveMapDraft de N4/R10 slice 2, contrato 0.6.0)", () => {
+    expect(loadContract().operations.length).toBe(61);
   });
 
   it("toda operación del contrato está implementada o declarada pendiente con motivo", () => {

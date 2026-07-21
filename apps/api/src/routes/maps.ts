@@ -19,6 +19,44 @@ import type { InternalMap } from "../../../map-service/src/types.js";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
+/**
+ * Comprobación mínima de forma (no de contenido: eso lo hace `validateMap`). Solo
+ * rechaza basura que haría explotar el validador (campos ausentes con `.` sobre
+ * `undefined`), NO gatea con `isPublishable` — un borrador incompleto se guarda igual.
+ */
+function assertMapShape(doc: unknown): asserts doc is InternalMap {
+  if (typeof doc !== "object" || doc === null || Array.isArray(doc)) {
+    throw badRequest("El borrador debe ser un objeto de mapa (InternalMap)");
+  }
+  const m = doc as Record<string, unknown>;
+  if (typeof m.mapId !== "string" || !m.mapId) {
+    throw badRequest("mapId obligatorio (string no vacío)");
+  }
+  if (typeof m.widthM !== "number" || typeof m.heightM !== "number") {
+    throw badRequest("widthM y heightM obligatorios (number)");
+  }
+  const layers = m.layers as Record<string, unknown> | undefined;
+  if (typeof layers !== "object" || layers === null) {
+    throw badRequest("layers obligatorio");
+  }
+  const ground = layers.ground as Record<string, unknown> | undefined;
+  if (
+    typeof ground !== "object" ||
+    ground === null ||
+    typeof ground.cols !== "number" ||
+    typeof ground.rows !== "number" ||
+    !Array.isArray(ground.data)
+  ) {
+    throw badRequest("layers.ground obligatorio (cols, rows, data)");
+  }
+  if (!Array.isArray(layers.walls)) throw badRequest("layers.walls obligatorio (array)");
+  if (!Array.isArray(layers.spawns)) throw badRequest("layers.spawns obligatorio (array)");
+  const meta = m.meta as Record<string, unknown> | undefined;
+  if (typeof meta !== "object" || meta === null || !Array.isArray(meta.supportedModes)) {
+    throw badRequest("meta.supportedModes obligatorio (array)");
+  }
+}
+
 export function mapVersionToJson(m: Record<string, unknown>) {
   return {
     mapId: m.map_id,
@@ -128,6 +166,23 @@ export function mapRoutes(db: Db): Router {
     },
     (req, res, next) => upload.single("file")(req, res, next),
   );
+
+  // N4/R10 slice 2: el editor visual guarda progreso a medias (WIP). A diferencia
+  // de importMap, NO gatea con isPublishable: se persiste con warnings o incluso
+  // errores, y se devuelven los checks para que el editor los muestre en directo.
+  defineOperation(router, "saveMapDraft", async (req, res) => {
+    assertMapShape(req.body);
+    const map = req.body as InternalMap;
+    const result = validateMap(map);
+    const row = await insertMapVersion(db, map, req.auth!.userId, { state: "draft" });
+    await audit(db, {
+      actorId: req.auth!.userId,
+      action: "map.draft_saved",
+      target: `map:${row.map_id}@${row.version}`,
+      correlationId: req.correlationId,
+    });
+    res.status(201).json({ ...mapVersionToJson(row), checks: result.checks });
+  });
 
   defineOperation(router, "replaceMapVersion", async (req, res) => {
     // SIEMPRE 409: una versión publicada es inmutable (cap. 14.2).
