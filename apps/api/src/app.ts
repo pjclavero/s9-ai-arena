@@ -21,6 +21,7 @@ import { adminRoutes } from "./routes/admin.js";
 import { battleRoutes } from "./routes/battles.js";
 import { battleRunConfigFromEnv, realBattleRunsCapability, type BattleRunConfig } from "./battle-run.js";
 import { publicSpectateEnabledFromEnv } from "./public-spectate.js";
+import { MetricsRegistry, metricsEnabledFromEnv, metricsMiddleware } from "./metrics.js";
 import { standingsRoutes } from "./routes/standings.js";
 import { tournamentRoutes } from "./routes/tournaments.js";
 import { mapRoutes } from "./routes/maps.js";
@@ -72,6 +73,13 @@ export interface AppConfig {
    * apagada por defecto). Inyectable en tests; en producción se resuelve del entorno.
    */
   publicSpectateEnabled?: boolean;
+  /**
+   * N1 · Capability de métricas Prometheus (S9_METRICS_ENABLED, apagada por
+   * defecto). Con la flag apagada, GET /metrics ni se monta ni se instala el
+   * middleware de conteo (sin coste, sin superficie nueva). Inyectable en
+   * tests; en producción se resuelve del entorno.
+   */
+  metricsEnabled?: boolean;
 }
 
 export function createApp(cfg: AppConfig): express.Express {
@@ -84,6 +92,22 @@ export function createApp(cfg: AppConfig): express.Express {
   app.set("trust proxy", cfg.trustProxyHops ?? resolveTrustProxyHops());
   app.use(express.json({ limit: "1mb" }));
   app.use(requestContext);
+
+  // N1 · Métricas Prometheus (S9_METRICS_ENABLED, apagada por defecto): con la
+  // flag apagada NO se instala el middleware de conteo (cero coste) y GET
+  // /metrics no existe (cae en el 404 genérico, como si nunca se hubiera
+  // implementado). Se monta pronto para contar también las respuestas que
+  // cortan en middlewares tempranos (CORS, rate limit...).
+  const metricsEnabled = cfg.metricsEnabled ?? metricsEnabledFromEnv();
+  const metricsRegistry = new MetricsRegistry();
+  if (metricsEnabled) {
+    app.use(metricsMiddleware(metricsRegistry));
+    app.get("/metrics", (_req: Request, res: Response) => {
+      res.setHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
+      res.status(200).send(metricsRegistry.render());
+    });
+  }
+
   app.use(securityHeaders(cfg.corsOrigin ?? process.env.CORS_ORIGIN ?? "http://localhost:5173"));
   app.use(authenticate(cfg.db));
 
