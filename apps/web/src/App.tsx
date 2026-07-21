@@ -19,6 +19,7 @@ import { TeamsPage } from "./pages/TeamsPage.js";
 import { AdminPage, isAdmin } from "./pages/AdminPage.js";
 import { ViewerPage } from "./pages/ViewerPage.js";
 import { LivePage } from "./pages/LivePage.js";
+import { RankingPage } from "./pages/RankingPage.js"; // N6 · #/ranking, solo lectura (GET /standings, público)
 import { ReplayPage } from "./pages/ReplayPage.js";
 import { TournamentsPage } from "./pages/TournamentsPage.js";
 import { TournamentDetailPage } from "./pages/TournamentDetailPage.js";
@@ -44,15 +45,25 @@ const BUDGET_DEFAULT = 1000; // BUDGET_CREDITS_MVP; el ruleset de cada torneo pu
  * E8 · Rutas públicas: #/viewer/<battleId> (directo) y #/replay/<battleId>?t=<tick>
  * (enlace compartible con tick inicial, DoD T8.3).
  */
-export function matchPublicRoute(
-  route: string,
-): ({ kind: "viewer"; battleId: string } | { kind: "replay"; battleId: string; t: number } | { kind: "live" }) | null {
+export function matchPublicRoute(route: string):
+  | (
+      | {
+          kind: "viewer";
+          battleId: string;
+        }
+      | { kind: "replay"; battleId: string; t: number }
+      | { kind: "live" }
+      | { kind: "ranking" }
+    )
+  | null {
   const viewer = /^#\/viewer\/([^/?]+)/.exec(route);
   if (viewer) return { kind: "viewer", battleId: decodeURIComponent(viewer[1]) };
   const replay = parseShareLink(route); // el MISMO parser que genera los enlaces (T8.3)
   if (replay) return { kind: "replay", battleId: replay.battleId, t: replay.t };
   // R11 · #/live: listado público de batallas en directo (slice mínimo, sin cuenta).
   if (/^#\/live(?:[/?]|$)/.test(route)) return { kind: "live" };
+  // N6 · #/ranking: clasificación pública (GET /standings, security: [], solo lectura).
+  if (/^#\/ranking(?:[/?]|$)/.test(route)) return { kind: "ranking" };
   return null;
 }
 
@@ -141,6 +152,8 @@ export function App() {
             <ViewerPage battleId={publicView.battleId} />
           ) : publicView.kind === "live" ? (
             <LivePage />
+          ) : publicView.kind === "ranking" ? (
+            <RankingPage />
           ) : (
             <ReplayPage battleId={publicView.battleId} initialTick={publicView.t} />
           )}
@@ -191,6 +204,8 @@ export function App() {
         <a href="#/maps">Mapas</a>
         {/* R11 · #/live es pública (sin cuenta); el enlace aquí es solo un atajo del panel. */}
         <a href="#/live">En directo</a>
+        {/* N6 · #/ranking es pública (sin cuenta); el enlace aquí es solo un atajo del panel. */}
+        <a href="#/ranking">Ranking</a>
         {/* La interfaz solo OCULTA; la autorización la hace la API (cap. 16) */}
         {isAdmin(me) && (
           <>
