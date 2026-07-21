@@ -23,6 +23,15 @@ export interface ReplayHeader {
   participants: any[];
   versions: Record<string, string>;
   recordedAt: string;
+  /**
+   * N2 · Config de latencia simulada de la batalla original, si la tuvo. Va en la
+   * cabecera (igual que el ruleset o el mapa) porque la re-simulación (verify(),
+   * resimulateWithEvents(), checkpoint) tiene que reconstruir EXACTAMENTE la misma
+   * BattleConfig: sin este campo, la resimulación correría con la latencia
+   * silenciosamente desactivada, el RNG se desincronizaría en el primer ciclo de
+   * decisión con comando aceptado, y verify() divergiría desde el tick 0.
+   */
+  simulatedLatency?: { minCycles: number; maxCycles: number };
 }
 
 export interface Replay {
@@ -132,6 +141,9 @@ export function replayFromBattle(b: Battle, result: BattleResult): Replay {
       // Metadato de pared, NO entra en la simulación ni en el hash. Va vía wall-clock.ts,
       // el único fichero exento del lint de determinismo para este uso (ERR-ENG-02).
       recordedAt: nowIso(),
+      // N2 · imprescindible para que verify()/resimulateWithEvents() reconstruyan la
+      // misma BattleConfig (ver comentario en ReplayHeader).
+      simulatedLatency: config.simulatedLatency,
     },
     commands: (b as any).replayCommands,
     events: b.publicEvents,
@@ -172,6 +184,9 @@ export async function resimulateWithEvents(
     map: replay.header.map,
     participants: replay.header.participants,
     recordReplay: false,
+    // N2 · sin esto, la resimulación correría sin latencia aunque el original la
+    // tuviera activada, y desincronizaría el RNG desde el primer comando aceptado.
+    simulatedLatency: replay.header.simulatedLatency,
   });
   const byVehicle = new Map<string, { tick: number; command: any }[]>();
   for (const c of replay.commands) {
@@ -222,6 +237,9 @@ export async function verify(replay: Replay): Promise<VerifyResult> {
     map: replay.header.map,
     participants: replay.header.participants,
     recordReplay: false,
+    // N2 · idem resimulateWithEvents(): sin esto, verify() divergería desde el
+    // primer comando aceptado en cualquier replay grabado con latencia activada.
+    simulatedLatency: replay.header.simulatedLatency,
   };
 
   const b = await Battle.create(config);
