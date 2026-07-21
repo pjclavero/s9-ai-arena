@@ -159,4 +159,16 @@ describe("N2 · latencia simulada — comportamiento observable (no es vacua)", 
     const on = runBattle("n2-differs-seed", { simulatedLatency: { minCycles: 1, maxCycles: 5 } });
     expect(on.result.finalStateHash).not.toBe(off.result.finalStateHash);
   });
+
+  it("el retardo se SORTEA en el rango con el RNG, no se fija a un extremo (rango ancho ≠ constante)", () => {
+    // Un rango [1,5] real produce retardos VARIADOS sorteados con el RNG; un retardo
+    // constante 5 no. Si el sorteo se sustituyera por `d = maxCycles` (o cualquier
+    // constante), ambas configuraciones darían la MISMA ejecución y este test fallaría.
+    // Así se prueba que el draw del RNG dentro del rango es necesario (no vacuo).
+    const variable = runBattle("n2-range-seed", { simulatedLatency: { minCycles: 1, maxCycles: 5 } });
+    const constanteMax = runBattle("n2-range-seed", { simulatedLatency: { minCycles: 5, maxCycles: 5 } });
+    const constanteMin = runBattle("n2-range-seed", { simulatedLatency: { minCycles: 1, maxCycles: 1 } });
+    expect(variable.result.finalStateHash).not.toBe(constanteMax.result.finalStateHash);
+    expect(variable.result.finalStateHash).not.toBe(constanteMin.result.finalStateHash);
+  });
 });
