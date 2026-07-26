@@ -238,10 +238,13 @@ services:
   # Aislamiento: redes platform+build (sin data → sin ruta a PostgreSQL ni al
   # backup), sin `secrets:` montados. Lo fija infrastructure/tests/
   # bot-manager-isolation.test.ts.
+  # B3: imagen PROPIA (no la genérica node-service) porque el análisis AST de
+  # bots Python necesita python3 (apps/bot-manager/src/ast-analysis.ts). Ver
+  # infrastructure/docker/bot-manager/Dockerfile para el porqué.
   bot-manager:
     build:
       context: ..
-      dockerfile: infrastructure/docker/node-service/Dockerfile
+      dockerfile: infrastructure/docker/bot-manager/Dockerfile
       args: { APP_PATH: apps/bot-manager }
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/bot-manager:${TAG:-latest}
     profiles: [development, production, external-db]
@@ -281,10 +284,12 @@ services:
   # firma (ARTIFACT_SIGNING_KEY_FILE, ERR-SEC-15) o la config de BD. Vive en
   # platform+build+data: necesita la cola/BD (jobs) y el volumen de fuentes; NO
   # está en la red arena (no toca contenedores de bots: eso es del bot-manager).
+  # B3: imagen PROPIA con python3 — es AQUÍ donde corre static_analysis de
+  # verdad (el AST de bots Python). Ver infrastructure/docker/bot-manager/Dockerfile.
   bot-build-worker:
     build:
       context: ..
-      dockerfile: infrastructure/docker/node-service/Dockerfile
+      dockerfile: infrastructure/docker/bot-manager/Dockerfile
       args: { APP_PATH: apps/bot-manager }
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/bot-manager:${TAG:-latest}
     profiles: [development, production, external-db]

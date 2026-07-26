@@ -12,6 +12,21 @@ secretos) y conecta por WebSocket al ProtocolServer del motor:
 Estrategia mínima y determinista (misma del bot tutorial del SDK): apunta al contacto
 más cercano y dispara; si no ve a nadie, patrulla. No usa IA externa ni dependencias
 fuera del SDK. Su único fin es cerrar el primer circuito real de extremo a extremo.
+
+AVISO CRUZADO (B3): apps/api/src/db/seeds/demo-teams.ts deriva de ESTE fichero el
+bot "Artillero" de la plantilla de demo-teams (función deriveArtilleroSource),
+recortando el lanzador de proceso (la función de entrada, el import del módulo
+de entorno, el import de compatibilidad de anotaciones) y quedándose solo con la
+definición de la clase del bot. Esa función depende de dos marcadores TEXTUALES
+exactos de este fichero, que por eso NO se citan aquí letra por letra (citarlos
+haría que el propio texto de este aviso coincidiera con ellos): el inicio de la
+línea "class" + nombre de la clase, y las tres líneas en blanco que separan esa
+clase de la función de entrada del proceso, más abajo en este fichero. Si
+renombras la clase, mueves su función de entrada, o cambias cuántas líneas en
+blanco las separan, revisa y actualiza deriveArtilleroSource en demo-teams.ts.
+La derivación falla EN RUIDOSO si no encuentra los marcadores donde los espera
+(lanza con un mensaje explícito), no en silencio — pero mejor evitar el susto:
+si tocas la forma de este fichero, mira primero quién depende de ella.
 """
 from __future__ import annotations
 

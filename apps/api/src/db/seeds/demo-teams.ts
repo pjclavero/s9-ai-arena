@@ -34,13 +34,84 @@ interface BotSpec {
   archetype: keyof typeof ARCHETYPES;
   runtime: "python" | "node";
   sourcePath: string;
+  /** Transformación opcional del fuente leído de `sourcePath` (ver Artillero, B3). */
+  transform?: (raw: Buffer) => Buffer;
 }
 
-/** Un bot por rol, con el arquetipo que su propio código documenta. */
+/**
+ * Deriva el código del Artillero desde bots/s9-smoke-bot/main.py (B3).
+ *
+ * NO se usa el fichero íntegro tal cual: su wrapper de proceso (`main()`,
+ * `import os`, `from __future__ import annotations`) es el lanzador de esa
+ * imagen FIJA y separada (bots/s9-smoke-bot/Dockerfile, que arranca
+ * `python /bot/main.py` leyendo WS_URL/BATTLE_TOKEN/BOT_ID del entorno) — no es
+ * "lógica de bot", y además hace que static_analysis lo rechace igual que a
+ * gunner.ts, aunque por motivos distintos, verificados de verdad con
+ * `analyze()` (apps/bot-manager/src/static-analysis.ts):
+ *   - `import os` está en la lista de builtins peligrosos por decisión
+ *     deliberada (config.ts DEFAULT_PYTHON_DANGEROUS, R2.4/ERR-SEC-06) y la
+ *     política por defecto BLOQUEA. B3 tiene prohibido tocar esa política para
+ *     que un bot pase, así que no se toca: se evita el import en vez de
+ *     permitirlo.
+ *   - `from __future__ import annotations` NO está en la stdlib reconocida
+ *     (PYTHON_STDLIB de static-analysis.ts) y se rechaza como import no
+ *     permitido. ESTO ES UN HALLAZGO NUEVO de B3, no inventado ni hipotético:
+ *     afecta también a explorer.py y defender.py (los otros dos bots de esta
+ *     misma plantilla, sin tocar), que usan la misma línea. Es un falso
+ *     positivo real (ese import no ejecuta nada, es una directiva del
+ *     compilador) pero tocar la lista de imports permitidos es tocar política
+ *     de seguridad — fuera del alcance de B3. Queda documentado aquí y en el
+ *     informe de entrega para que se corrija en un bloque futuro; NO se corrige
+ *     en este cambio.
+ *
+ * Lo que SÍ se conserva, íntegro: la clase `SmokeBot` — el cerebro real del
+ * bot (perseguir-apuntar-disparar/patrullar), la misma que usa la batalla E2E
+ * de humo (R6.2). Solo se le antepone el import que necesita.
+ */
+export function deriveArtilleroSource(mainPy: Buffer): Buffer {
+  const raw = mainPy.toString("utf8");
+  const start = raw.indexOf("class SmokeBot");
+  const end = raw.indexOf("\n\n\ndef main");
+  if (start === -1 || end === -1) {
+    throw new Error(
+      "bots/s9-smoke-bot/main.py cambió de forma y ya no tiene los marcadores esperados " +
+        "('class SmokeBot' ... '\\n\\n\\ndef main'): revisa deriveArtilleroSource en demo-teams.ts",
+    );
+  }
+  const classBody = raw.slice(start, end).trimEnd();
+  return Buffer.from(`from arena_sdk import ArenaBot, angle_diff, angle_to\n\n\n${classBody}\n`, "utf8");
+}
+
+/**
+ * Un bot por rol. Explorador y Defensor usan el arquetipo que su propio código
+ * documenta (scout/heavy). El Artillero es la excepción, y a propósito (B3):
+ *
+ * El repo NO tiene ningún bot de ejemplo en JavaScript puro — gunner.ts y
+ * miner.ts (example-bots/javascript/) son TypeScript, igual que bots/bot-red y
+ * bots/bot-blue. static_analysis corre ANTES de build (sin transpilación
+ * posible) y acorn no parsea TypeScript, así que un bot sembrado con gunner.ts
+ * queda rechazado fail-closed para SIEMPRE en la etapa 2/10 — el propio
+ * pipeline nunca lo valida. Se sustituye por bots/s9-smoke-bot/main.py (vía
+ * `deriveArtilleroSource`, ver arriba), el bot mínimo oficial (R6.2) que YA usa
+ * la batalla E2E real de humo: es Python de verdad, no un stub, y sí pasa el
+ * análisis estático (verificado con `analyze()`, no solo asumido).
+ * Aviso honesto: ese código NO está escrito ni optimizado para el arquetipo
+ * "gunner" (cañón pesado a distancia) — es una estrategia mínima
+ * perseguir-apuntar-disparar/patrullar, agnóstica de loadout. Se mantiene el
+ * arquetipo "gunner" para el rol solo porque el loadout (chasis+módulos) es
+ * independiente del código del bot; no es una afirmación de que el código esté
+ * ajustado a ese arquetipo.
+ */
 const ROSTER: BotSpec[] = [
   { role: "Explorador", archetype: "scout", runtime: "python", sourcePath: "example-bots/python/explorer.py" },
   { role: "Defensor", archetype: "heavy", runtime: "python", sourcePath: "example-bots/python/defender.py" },
-  { role: "Artillero", archetype: "gunner", runtime: "node", sourcePath: "example-bots/javascript/gunner.ts" },
+  {
+    role: "Artillero",
+    archetype: "gunner",
+    runtime: "python",
+    sourcePath: "bots/s9-smoke-bot/main.py",
+    transform: deriveArtilleroSource,
+  },
 ];
 
 export interface DemoTeamsResult {
@@ -67,9 +138,13 @@ export async function seedDemoTeams(
 
   // Preflight: cargar todo el código ANTES de tocar la BD. Si la imagen no
   // trae example-bots/, esto falla aquí y no deja equipos ni bots a medias.
+  // Clave por role (no por sourcePath): el Artillero aplica `transform` sobre
+  // su fuente (B3, deriveArtilleroSource) y otro spec podría compartir la
+  // misma ruta sin transformar.
   const sources = new Map<string, Buffer>();
   for (const spec of ROSTER) {
-    sources.set(spec.sourcePath, readFileSync(join(REPO_ROOT, spec.sourcePath)));
+    const raw = readFileSync(join(REPO_ROOT, spec.sourcePath));
+    sources.set(spec.role, spec.transform ? spec.transform(raw) : raw);
   }
 
   const result: DemoTeamsResult = { teams: [], bots: [] };
@@ -85,7 +160,7 @@ export async function seedDemoTeams(
         ownerId: owner.id,
         teamName,
         spec,
-        source: sources.get(spec.sourcePath)!,
+        source: sources.get(spec.role)!,
         result,
       });
     }

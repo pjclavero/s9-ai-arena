@@ -24,7 +24,31 @@ import { extractAst, type AstFinding } from "./ast-analysis.js";
 // Módulos de la stdlib que NO requieren declaración de dependencia.
 // R2.4 (ERR-SEC-06): `os` y `process` YA NO están aquí — un bot no tiene por qué
 // tocar entorno/procesos, y ambos figuran ahora en las listas de peligrosos.
+//
+// B3 (falso positivo real, encontrado verificando en producción): `__future__`
+// faltaba aquí y `from __future__ import annotations` — la primera línea de
+// CÓDIGO de los propios bots oficiales del repo, example-bots/python/
+// explorer.py y defender.py — se rechazaba como "import de paquete no
+// permitido". Por qué es seguro añadirlo (no una relajación de política, sino
+// corregir un falso positivo):
+//   - `__future__` no es un módulo con capacidades: es una directiva del
+//     COMPILADOR. Lo único que se puede importar de ahí son banderas de
+//     features del lenguaje (`annotations`, `division`, `print_function`…),
+//     resueltas en tiempo de compilación.
+//   - No puede hacer E/S, red, procesos ni cargar código: no aporta ninguna
+//     capacidad que un bot hostil pueda aprovechar (a diferencia de `os`,
+//     que sigue bloqueado deliberadamente más abajo, sin tocar).
+//   - Es sintaxis estándar y omnipresente en Python moderno.
+//
+// Mismo hallazgo, mismo motivo, con `base64`: example-bots/python/explorer.py
+// (el otro bot oficial) lo usa para codificar un payload de radio compacto y
+// se rechazaba igual, como "import de paquete no permitido". `base64` es
+// transformación de datos pura (bytes↔texto): no abre ficheros, no hace red,
+// no lanza procesos, no carga código. Cero capacidades que un bot hostil
+// pueda aprovechar — misma categoría que `__future__`, no la de `os`.
 const PYTHON_STDLIB = new Set([
+  "__future__",
+  "base64",
   "sys",
   "math",
   "json",

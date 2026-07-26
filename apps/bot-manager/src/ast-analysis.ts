@@ -18,6 +18,22 @@
  * Esto sigue siendo defensa en profundidad: el sandbox (T6.2/R6.1) es la barrera
  * principal. Pero un bot que necesita `__import__` dinámico o `eval` para
  * "funcionar" no tiene sitio en la arena.
+ *
+ * LÍMITE CONOCIDO (documentado a raíz de la revisión del Supervisor en B3, no
+ * un problema nuevo): la detección de `eval`/`exec`/`compile`/`__import__` es
+ * POR NOMBRE en el AST — mira si esos identificadores/atributos APARECEN en el
+ * código, no si son ALCANZABLES ni qué reciben como argumento. Detecta
+ * `eval(x)` igual si `x` está en claro o si es el resultado de
+ * `base64.b64decode(...)`: el nombre peligroso queda escrito en el fichero de
+ * todas formas y por eso se cazaba igual antes de B3 (y sigue igual después:
+ * B3 no tocó esta lógica, solo qué módulos de la stdlib no hace falta
+ * declarar). Lo que este análisis NO hace y no pretende hacer: no evalúa el
+ * CONTENIDO de un `base64.b64decode(...)` para decidir si lo que decodifica es
+ * benigno, ni sigue flujo de datos entre variables. No lo leas como "imposible
+ * de eludir en general" — es un analizador estático de un único fichero, no un
+ * intérprete simbólico. La defensa real contra un bot que SÍ logre esconder
+ * algo de este análisis es el sandbox del contenedor (T6.2/R6.1: sin red
+ * externa, sin acceso a la plataforma, límites de recursos), no este fichero.
  */
 import { spawnSync } from "node:child_process";
 import * as acorn from "acorn";
@@ -142,12 +158,41 @@ function walk(node: unknown, visit: (n: Node) => void): void {
   }
 }
 
+/**
+ * Heurística de diagnóstico (B3, causa 3): NO cambia qué se acepta o rechaza
+ * (fail-closed intacto), solo mejora el MENSAJE cuando ambos intentos de
+ * parseo fallan. Busca construcciones que JS no tiene pero TypeScript sí, para
+ * que el mensaje apunte al problema real en vez de dejar que el usuario
+ * interprete un error de acorn sobre `sourceType`.
+ */
+function looksLikeTypeScript(content: string): boolean {
+  return /:\s*(string|number|boolean|void|any|unknown|never)\b|<[A-Za-z_][\w.]*>\s*\(|\binterface\s+\w|\bimplements\s+\w|\bas\s+const\b|\benum\s+\w|:\s*\w+\[\]|\?\s*:\s*\w/.test(
+    content,
+  );
+}
+
+/**
+ * Parsea JS con acorn: módulo primero, script como respaldo (los bots CJS
+ * legítimos con require + module.exports no parsean como módulo). Si AMBOS
+ * fallan, el fichero no es JS válido en ningún sourceType — se lanza el error
+ * del intento de MÓDULO, que es la causa real casi siempre (p. ej. sintaxis
+ * TypeScript: acorn revienta ahí mismo con "Unexpected token"; el reintento
+ * como script solo añade ruido sobre `import`/`export`, que NO es la causa).
+ * Antes se lanzaba el error del SEGUNDO intento (el de script) y el mensaje
+ * apuntaba al sitio equivocado — bug real reproducido con example-bots/
+ * javascript/gunner.ts (TypeScript): el usuario veía "'import' and 'export'
+ * may appear only with 'sourceType: module'" cuando la causa real era
+ * "Unexpected token" en una anotación de tipo.
+ */
 function parseJs(content: string): acorn.Program {
   try {
     return acorn.parse(content, { ecmaVersion: "latest", sourceType: "module", locations: true });
-  } catch {
-    // Los bots CJS legítimos (require + module.exports) no parsean como módulo.
-    return acorn.parse(content, { ecmaVersion: "latest", sourceType: "script", locations: true });
+  } catch (moduleError) {
+    try {
+      return acorn.parse(content, { ecmaVersion: "latest", sourceType: "script", locations: true });
+    } catch {
+      throw moduleError;
+    }
   }
 }
 
@@ -162,7 +207,11 @@ function extractNode(files: SourceFile[]): AstExtraction {
     try {
       tree = parseJs(f.content);
     } catch (e) {
-      res.parseErrors.push({ path: f.path, detail: e instanceof SyntaxError ? e.message : String(e) });
+      const raw = e instanceof SyntaxError ? e.message : String(e);
+      const hint = looksLikeTypeScript(f.content)
+        ? " (el fichero parece TypeScript: el runtime de bots no lo ejecuta y acorn no lo parsea; entrega JavaScript)"
+        : "";
+      res.parseErrors.push({ path: f.path, detail: raw + hint });
       continue;
     }
     walk(tree, (n) => {
