@@ -15,21 +15,33 @@ import type { CameraMode } from "../viewer/camera.js";
 const PREFETCH_INTERVAL_MS = 500;
 
 /**
- * B6 (hallazgo del supervisor, demostrado en vivo) · Base del replay-service tras
- * el gateway. El gateway (`infrastructure/gateway/nginx.conf` y
- * `nginx-behind-proxy.conf`) define `location /replays/` → proxy directo a
- * `replay-service:8083` — NUNCA ha existido una ruta `/replay-service/` en ningún
- * sitio del gateway. Esta página usaba `/replay-service` (prefijo inexistente):
- * la petición caía en el `location /` genérico del gateway y volvía el SPA en vez
- * del índice del replay, así que el visor NUNCA pudo leer un replay ingerido, por
- * correcta que fuera la ingesta. `ReplaysPage.tsx` (el listado, un fichero al lado
- * de este) ya usaba el prefijo CORRECTO (`fetch("/replays")`) — es la misma base
- * que corresponde aquí. Se corrige aquí, en el cliente (no añadiendo una ruta
- * `/replay-service/` nueva al gateway): `/replays/` ya existe, ya funciona para
- * el listado, y añadir una segunda ruta redundante al mismo servicio solo
- * duplicaría superficie de configuración sin necesidad.
+ * B6 (hallazgo del supervisor, demostrado en vivo — DOS rondas) · Base que se
+ * antepone a las rutas que ya construye `httpReplaySource()`
+ * (`apps/web/src/viewer/replay-player.ts`): esa función YA incluye el prefijo
+ * `/replays/` en cada ruta que pide (`${baseUrl}/replays/${battleId}/index`,
+ * `.../segment`) — el mismo patrón que usa `replay-player.test.ts` contra el
+ * Express real del replay-service con `httpReplaySource("", battleId, ...)`.
+ *
+ * Ronda 1 del supervisor: esta página usaba `baseUrl = "/replay-service"`
+ * (prefijo que NUNCA existió en el gateway) → `/replay-service/replays/...`
+ * caía en el `location /` genérico y volvía el SPA.
+ *
+ * Ronda 2 del supervisor (ejecutando el Express real de replay-service, no
+ * solo leyendo): el "arreglo" de la ronda 1 puso `baseUrl = "/replays"`, que
+ * con el prefijo YA incluido en `httpReplaySource()` componía
+ * `/replays/replays/${battleId}/index` — un prefijo DUPLICADO, 404 igual,
+ * solo que por un motivo distinto. Además, el propio gateway tenía un
+ * `rewrite` en `location /replays/` que quitaba el prefijo antes de reenviar
+ * a replay-service (que SÍ registra sus rutas con `/replays`, ver
+ * `apps/replay-service/src/server.ts`) — roto en las DOS direcciones a la vez.
+ * Ambos arreglados: el `rewrite` se quitó de `nginx.conf`/
+ * `nginx-behind-proxy.conf` (el gateway reenvía la URI íntegra), y aquí la
+ * base queda VACÍA — el origen actual, sin prefijo — porque `/replays/` ya lo
+ * pone `httpReplaySource()`. Cubierto por un test que aplica la MISMA
+ * composición de rutas contra el Express real de replay-service (supertest),
+ * no una comparación de cadenas: `apps/web/tests/replay-page-gateway-path.test.ts`.
  */
-export const REPLAY_SERVICE_GATEWAY_BASE = "/replays";
+export const REPLAY_SERVICE_GATEWAY_BASE = "";
 
 const SPEEDS = [0.5, 1, 2, 4, 8];
 
