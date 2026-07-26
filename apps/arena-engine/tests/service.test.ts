@@ -136,6 +136,36 @@ describe("B1 · arena-engine service", () => {
     expect(res.body.error).toBe("bad_request");
   });
 
+  it("POST /run con solo 1 bot (cuerpo por lo demás válido) responde 400 (una batalla necesita >= 2 bots)", async () => {
+    const app = createArenaEngineService({ runner: inProcessRunner() });
+    const body = { ...runRequestBody("svc_un_solo_bot"), bots: [SMOKE_BOTS[0]] };
+    const res = await request(app).post("/run").send(body);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("bad_request");
+  });
+
+  it("POST /run responde 502 (no 200) cuando el runner falla, sin filtrar el error interno crudo", async () => {
+    const boom = new Error("fallo simulado del runner: detalle interno sensible");
+    const failingRunner: ContainerRunner = {
+      async launch(): Promise<ContainerHandle> {
+        throw boom;
+      },
+    };
+    const app = createArenaEngineService({ runner: failingRunner });
+    const res = await request(app)
+      .post("/run")
+      .send(runRequestBody("svc_runner_falla"));
+
+    expect(res.status).toBe(502);
+    expect(res.status).not.toBe(200);
+    expect(res.body.error).toBe("battle_failed");
+    // El mensaje de error se expone (es el propio mensaje del Error, no un stack
+    // ni detalles de infraestructura), pero la respuesta NUNCA es 200 con un
+    // resultado inventado: el body no debe traer campos de resultado de batalla.
+    expect(res.body.result).toBeUndefined();
+    expect(res.body.replay).toBeUndefined();
+  });
+
   it("POST /run con un runner FAKE inyectado ejecuta runContainerBattle y devuelve el resultado", async () => {
     const app = createArenaEngineService({ runner: inProcessRunner() });
     const res = await request(app)

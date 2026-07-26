@@ -43,7 +43,18 @@ export interface ArenaEngineServiceConfig {
 
 /** Cuerpo aceptado por `POST /run`: la config de la batalla, sin las piezas de infraestructura
  *  (`runner`/`network`/`engineHost`) que aporta el propio servicio; `network`/`engineHost` se
- *  pueden sobreescribir por request si hiciera falta, pero nunca `runner`. */
+ *  pueden sobreescribir por request si hiciera falta, pero nunca `runner`.
+ *
+ *  ATENCIÓN B2: hoy que `network`/`engineHost` se acepten del body es inocuo
+ *  porque sin runner cableado (503 siempre) nunca se usan. En cuanto B2
+ *  cablee `ProxyContainerRunner` aquí, un caller con acceso de red a
+ *  `POST /run` podría forzar una `network` arbitraria (pivotar a otra red
+ *  Docker) o un `engineHost` propio (para que los bots contenedor hablen con
+ *  un ProtocolServer que no es este). Antes de cablear el runner real hace
+ *  falta: (a) autenticación interna en `/run` (hoy no hay ninguna — el
+ *  handler solo valida forma del body), y/o (b) dejar de aceptar
+ *  `network`/`engineHost` del cuerpo y resolverlos siempre desde `cfg`
+ *  (config del propio servicio, no del request). No tocar esto en B1. */
 export type RunBattleRequestBody = Omit<ContainerBattleConfig, "runner" | "network" | "engineHost"> &
   Partial<Pick<ContainerBattleConfig, "network" | "engineHost">>;
 
