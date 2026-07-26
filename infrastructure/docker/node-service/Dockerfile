@@ -21,6 +21,11 @@ COPY maps ./maps
 # Bots de ejemplo: son el código fuente que `cli.ts demo-teams` carga para crear
 # plantillas jugables en una instancia real. Sin ellos el comando falla con ENOENT.
 COPY example-bots ./example-bots
+# bots/s9-smoke-bot/main.py: uno de los tres bots de la plantilla de demo-teams
+# (B3, el rol "Artillero" pasó de TypeScript a este Python real; ver
+# apps/api/src/db/seeds/demo-teams.ts). Solo el código fuente, no su Dockerfile
+# ni el resto de bots/bot-red|bot-blue (esos no los usa este servicio).
+COPY bots/s9-smoke-bot/main.py ./bots/s9-smoke-bot/main.py
 
 ARG APP_PATH
 ENV APP_PATH=${APP_PATH}

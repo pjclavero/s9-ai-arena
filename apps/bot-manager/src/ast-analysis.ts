@@ -142,12 +142,41 @@ function walk(node: unknown, visit: (n: Node) => void): void {
   }
 }
 
+/**
+ * Heurística de diagnóstico (B3, causa 3): NO cambia qué se acepta o rechaza
+ * (fail-closed intacto), solo mejora el MENSAJE cuando ambos intentos de
+ * parseo fallan. Busca construcciones que JS no tiene pero TypeScript sí, para
+ * que el mensaje apunte al problema real en vez de dejar que el usuario
+ * interprete un error de acorn sobre `sourceType`.
+ */
+function looksLikeTypeScript(content: string): boolean {
+  return /:\s*(string|number|boolean|void|any|unknown|never)\b|<[A-Za-z_][\w.]*>\s*\(|\binterface\s+\w|\bimplements\s+\w|\bas\s+const\b|\benum\s+\w|:\s*\w+\[\]|\?\s*:\s*\w/.test(
+    content,
+  );
+}
+
+/**
+ * Parsea JS con acorn: módulo primero, script como respaldo (los bots CJS
+ * legítimos con require + module.exports no parsean como módulo). Si AMBOS
+ * fallan, el fichero no es JS válido en ningún sourceType — se lanza el error
+ * del intento de MÓDULO, que es la causa real casi siempre (p. ej. sintaxis
+ * TypeScript: acorn revienta ahí mismo con "Unexpected token"; el reintento
+ * como script solo añade ruido sobre `import`/`export`, que NO es la causa).
+ * Antes se lanzaba el error del SEGUNDO intento (el de script) y el mensaje
+ * apuntaba al sitio equivocado — bug real reproducido con example-bots/
+ * javascript/gunner.ts (TypeScript): el usuario veía "'import' and 'export'
+ * may appear only with 'sourceType: module'" cuando la causa real era
+ * "Unexpected token" en una anotación de tipo.
+ */
 function parseJs(content: string): acorn.Program {
   try {
     return acorn.parse(content, { ecmaVersion: "latest", sourceType: "module", locations: true });
-  } catch {
-    // Los bots CJS legítimos (require + module.exports) no parsean como módulo.
-    return acorn.parse(content, { ecmaVersion: "latest", sourceType: "script", locations: true });
+  } catch (moduleError) {
+    try {
+      return acorn.parse(content, { ecmaVersion: "latest", sourceType: "script", locations: true });
+    } catch {
+      throw moduleError;
+    }
   }
 }
 
@@ -162,7 +191,11 @@ function extractNode(files: SourceFile[]): AstExtraction {
     try {
       tree = parseJs(f.content);
     } catch (e) {
-      res.parseErrors.push({ path: f.path, detail: e instanceof SyntaxError ? e.message : String(e) });
+      const raw = e instanceof SyntaxError ? e.message : String(e);
+      const hint = looksLikeTypeScript(f.content)
+        ? " (el fichero parece TypeScript: el runtime de bots no lo ejecuta y acorn no lo parsea; entrega JavaScript)"
+        : "";
+      res.parseErrors.push({ path: f.path, detail: raw + hint });
       continue;
     }
     walk(tree, (n) => {
