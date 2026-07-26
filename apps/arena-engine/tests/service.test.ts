@@ -152,9 +152,7 @@ describe("B1 · arena-engine service", () => {
       },
     };
     const app = createArenaEngineService({ runner: failingRunner });
-    const res = await request(app)
-      .post("/run")
-      .send(runRequestBody("svc_runner_falla"));
+    const res = await request(app).post("/run").send(runRequestBody("svc_runner_falla"));
 
     expect(res.status).toBe(502);
     expect(res.status).not.toBe(200);
