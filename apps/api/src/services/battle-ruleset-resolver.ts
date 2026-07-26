@@ -96,8 +96,17 @@ export async function resolveBattleRuleset(db: Db, mode: unknown, rulesetId: unk
     let row: Record<string, unknown> | undefined;
     try {
       row = await db("rulesets").where({ id: rulesetId }).first();
-    } catch {
-      row = undefined;
+    } catch (err) {
+      // NO se cae al defecto por modo: si la BD no responde, no sabemos si esa
+      // fila declaraba `engineRulesetId` — jugar con el defecto sería jugar con
+      // reglas posiblemente distintas a las configuradas. Fail closed.
+      return {
+        ok: false,
+        code: "ruleset_unresolvable",
+        message: `no se pudo consultar el ruleset "${rulesetId}" de la batalla: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      };
     }
     engineRulesetId = engineRulesetIdFromRow(row);
   }
