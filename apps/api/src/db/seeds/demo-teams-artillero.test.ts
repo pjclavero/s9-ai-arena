@@ -68,20 +68,72 @@ describe("B3 · deriveArtilleroSource", () => {
   });
 });
 
-describe("B3 · hallazgo colateral (documentado, NO corregido: fuera de alcance)", () => {
-  it("VERIFICACIÓN REAL: explorer.py y defender.py (los otros dos bots de la plantilla) tampoco pasan static_analysis hoy", () => {
-    // `from __future__ import annotations` no está en la stdlib reconocida de
-    // static-analysis.ts → se rechaza como import no permitido. Es un bug
-    // real, PRE-EXISTENTE (no introducido por B3) y AJENO al alcance de B3
-    // (tocar la lista de imports permitidos es tocar política de seguridad).
-    // Este test deja constancia viva del hallazgo para que no se pierda.
+describe("B3 (ampliado) · los TRES bots de la plantilla validan de verdad", () => {
+  // Hallazgo original (ronda 1): `from __future__ import annotations` — la
+  // primera línea de CÓDIGO de explorer.py y defender.py, los bots oficiales
+  // del repo — no estaba en PYTHON_STDLIB y se rechazaba como import no
+  // permitido. Verificado entonces con analyze() real: los tres bots de la
+  // plantilla (incluido el Artillero derivado) fallaban o dependían de un
+  // fix pendiente. Corregido en static-analysis.ts (PYTHON_STDLIB incluye
+  // ahora `__future__` y `base64`, ambos módulos de la stdlib sin ninguna
+  // capacidad de E/S/red/proceso — no es una relajación de la política
+  // fail-closed ni de la lista de builtins peligrosos, que siguen intactas).
+  it("VERIFICACIÓN REAL: explorer.py pasa static_analysis (antes fallaba por __future__ Y por base64)", () => {
     const explorer = readFileSync("example-bots/python/explorer.py", "utf8");
+    const res = analyze("python", wrapAsPythonPackage(explorer), DEFAULT_CONFIG);
+    expect(res.ok).toBe(true);
+    expect(res.reasons).toEqual([]);
+    expect(res.imports).toEqual(expect.arrayContaining(["__future__", "base64", "math", "arena_sdk"]));
+  });
+
+  it("VERIFICACIÓN REAL: defender.py pasa static_analysis (antes fallaba por __future__)", () => {
     const defender = readFileSync("example-bots/python/defender.py", "utf8");
-    const resExplorer = analyze("python", wrapAsPythonPackage(explorer), DEFAULT_CONFIG);
-    const resDefender = analyze("python", wrapAsPythonPackage(defender), DEFAULT_CONFIG);
-    expect(resExplorer.ok).toBe(false);
-    expect(resExplorer.reasons.join(" ")).toMatch(/__future__/);
-    expect(resDefender.ok).toBe(false);
-    expect(resDefender.reasons.join(" ")).toMatch(/__future__/);
+    const res = analyze("python", wrapAsPythonPackage(defender), DEFAULT_CONFIG);
+    expect(res.ok).toBe(true);
+    expect(res.reasons).toEqual([]);
+  });
+
+  it("VERIFICACIÓN REAL: el Artillero derivado pasa static_analysis", () => {
+    const mainPy = readFileSync("bots/s9-smoke-bot/main.py");
+    const derived = deriveArtilleroSource(mainPy).toString("utf8");
+    const res = analyze("python", wrapAsPythonPackage(derived), DEFAULT_CONFIG);
+    expect(res.ok).toBe(true);
+    expect(res.reasons).toEqual([]);
+  });
+});
+
+describe("B3 (ampliado) · el fix de __future__/base64 es un falso positivo corregido, no un agujero", () => {
+  it("un bot Python con from __future__ import annotations PASA el análisis", () => {
+    const src = [
+      "from __future__ import annotations",
+      "",
+      "from arena_sdk import ArenaBot",
+      "",
+      "class B(ArenaBot):",
+      "    def on_observation(self, o):",
+      "        return {}",
+      "",
+    ].join("\n");
+    const res = analyze("python", wrapAsPythonPackage(src), DEFAULT_CONFIG);
+    expect(res.ok).toBe(true);
+    expect(res.disallowedImports).toEqual([]);
+  });
+
+  it("un import de terceros de verdad SIGUE rechazado (no se ha abierto la puerta a todo)", () => {
+    const src = ["from __future__ import annotations", "", "import requests", "", "class B:", "    pass", ""].join(
+      "\n",
+    );
+    const res = analyze("python", wrapAsPythonPackage(src), DEFAULT_CONFIG);
+    expect(res.ok).toBe(false);
+    expect(res.disallowedImports).toContain("requests");
+    expect(res.reasons.join(" ")).toMatch(/requests/);
+  });
+
+  it("un import realmente peligroso (os) SIGUE bloqueado por política, sin relajarse", () => {
+    const src = ["from __future__ import annotations", "", "import os", "", "class B:", "    pass", ""].join("\n");
+    const res = analyze("python", wrapAsPythonPackage(src), DEFAULT_CONFIG);
+    expect(res.ok).toBe(false);
+    expect(res.dangerousImports).toContain("os");
+    expect(res.reasons.join(" ")).toMatch(/os/);
   });
 });
