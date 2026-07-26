@@ -91,14 +91,31 @@ API --HTTP(red platform)--> arena-engine --HTTP--> s9-docker-proxy --> bots (red
   a B1 (503 en ambos extremos). `S9_ENABLE_REAL_BATTLE_RUNS` sigue sin encenderse en ningún
   fichero de configuración.
 
-**Límites conocidos de esta traducción, documentados y NO resueltos en B2** (no son huecos de
-seguridad; son fidelidad de simulación pendiente): arena-engine solo entiende mapas-fixture
-(`"empty"|"mvp"|"ctf"`, no el catálogo real de mapas — `mapId`/`mapVersion` de
-`BattleRunInput` no se traducen); `rulesetId` se pasa tal cual desde `battle.mode` (sin
-resolver contra el catálogo real de rulesets); `ticks` es un techo fijo configurable, no
-derivado del ruleset; la respuesta no ingiere en replay-service (`replay.ingested` queda
-`false` siempre). Nada de esto se ha probado contra Docker real — ver el informe de entrega
-del bloque B2 para el detalle de qué se verificó con fakes y qué queda pendiente de VM108.
+**Mapa — REQUISITO PENDIENTE, falla cerrado en vez de sustituir en silencio.** arena-engine
+(contrato R6.2) solo entiende mapas-fixture (`"empty"|"mvp"|"ctf"`,
+`apps/arena-engine/src/fixtures.ts`), no el catálogo real de mapas de la API. El launcher
+(`battle-run-http-launcher.ts::FIXTURE_MAP_EQUIVALENTS`) mantiene una allowlist EXPLÍCITA de
+qué `mapId`+`mapVersion` real tiene fixture equivalente; **hoy solo `mvp-arena-01` v1** (el
+fixture `mvpArena()` usa el mismo `mapId`/`version` que el mapa publicado por el seed real).
+Cualquier otro mapa se **rechaza** (`status: "failed"`, sin llegar a llamar a arena-engine) en
+vez de jugarse con el fixture "mvp" por defecto: sustituir el mapa en silencio habría hecho
+que alguien eligiera un mapa en la UI y se jugara otro sin enterarse — un fallo de integridad
+que invalidaría la evidencia de una batalla (bloque B4), no un detalle cosmético. Soportar
+mapas reales arbitrarios (que la batalla juegue la geometría real de cualquier mapa publicado,
+no solo esta única equivalencia) es un **requisito pendiente**, fuera de alcance de B2: exige
+que arena-engine acepte geometría de mapa en el cuerpo de `/run` en vez de un nombre de
+fixture fijo. Nota aparte: incluso para `mvp-arena-01` v1, el fixture está marcado
+"PROVISIONAL POR DISEÑO" en su propio fichero — su geometría puede no ser bit-a-bit idéntica
+al JSON importado de Tiled hasta que E4 lo sustituya; es la mejor equivalencia disponible hoy,
+no una garantía de fidelidad geométrica total.
+
+**Otros límites conocidos de esta traducción, documentados y NO resueltos en B2** (no son
+huecos de seguridad; son fidelidad de simulación pendiente): `rulesetId` se pasa tal cual
+desde `battle.mode` (sin resolver contra el catálogo real de rulesets); `ticks` es un techo
+fijo configurable, no derivado del ruleset; la respuesta no ingiere en replay-service
+(`replay.ingested` queda `false` siempre). Nada de esto se ha probado contra Docker real — ver
+el informe de entrega del bloque B2 para el detalle de qué se verificó con fakes y qué queda
+pendiente de VM108.
 
 ## Validación operativa en VM108 (gateada, NO en este PR)
 
@@ -109,7 +126,9 @@ Para pasar a **R6.2/R9-A** falta, sobre lo que ya cablea B2:
    hoy; encenderlos es una decisión de despliegue, no de este bloque).
 3. Crear una batalla en `#/battles/new` con bots firmados + mapa publicado → **Ejecutar batalla real**.
 4. Verificar: 2 contenedores reales, batalla termina, replay ingerido (`GET /replays`), 7/7 núcleo sano.
-5. Resolver los límites de traducción listados arriba (mapa real, ruleset real, ingesta de replay).
+5. Resolver los límites de traducción listados arriba: mapas reales arbitrarios (hoy solo
+   mvp-arena-01 v1 tiene equivalente y todo lo demás se rechaza en vez de sustituirse),
+   ruleset real, ingesta de replay.
 Solo entonces: **R6.2/R9-A**.
 
 **Dictamen: R6.2/R9-B** — UI y endpoint preparados y seguros; B2 cablea el transporte

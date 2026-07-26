@@ -225,6 +225,41 @@ describe("B2 · autenticación interna de POST /run", () => {
     expect(res.body.error).toBe("unauthorized");
   });
 
+  it("con credencial incorrecta de LA MISMA LONGITUD que el secreto → 401 (guarda contra comparar contra sí mismo)", async () => {
+    // Regresión del supervisor: mutar timingSafeEqual(a, b) → timingSafeEqual(a, a) aceptaría
+    // CUALQUIER credencial de igual longitud que SECRET. El test de "credencial incorrecta"
+    // de arriba usa una cadena de longitud DISTINTA y no lo habría detectado.
+    const sameLengthWrong = SECRET.split("").reverse().join(""); // misma longitud, contenido distinto
+    expect(sameLengthWrong.length).toBe(SECRET.length);
+    expect(sameLengthWrong).not.toBe(SECRET);
+    const app = createArenaEngineService({
+      runner: inProcessRunner(),
+      internalSecret: SECRET,
+      engineHost: "127.0.0.1",
+    });
+    const res = await request(app)
+      .post("/run")
+      .set(AUTH_HEADER, sameLengthWrong)
+      .send(runRequestBody("svc_credencial_mala_misma_longitud"));
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("unauthorized");
+  });
+
+  it("sin credencial Y con cuerpo inválido → 401 (la auth se comprueba ANTES que el cuerpo, nunca 400)", async () => {
+    // Regresión del supervisor: si el orden se invirtiera (cuerpo antes que credencial), quien
+    // no tiene credencial podría distinguir 400 (cuerpo mal formado) de 401/503 (cuerpo bien
+    // formado) — una fuga de forma del contrato a un caller no autenticado.
+    const app = createArenaEngineService({
+      runner: inProcessRunner(),
+      internalSecret: SECRET,
+      engineHost: "127.0.0.1",
+    });
+    const res = await request(app).post("/run").send({ esto: "no es un cuerpo válido de /run" });
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("unauthorized");
+    expect(res.status).not.toBe(400);
+  });
+
   it("sin secreto configurado en el servicio (cfg.internalSecret ausente) → 401 SIEMPRE, incluso con runner cableado", async () => {
     const app = createArenaEngineService({ runner: inProcessRunner(), engineHost: "127.0.0.1" });
     const res = await request(app)
@@ -281,6 +316,21 @@ describe("B2 · serviceConfigFromEnv (gateado por entorno)", () => {
   it("DOCKER_PROXY_URL vacío ('') se trata como NO configurado (sin runner)", () => {
     const cfg = serviceConfigFromEnv({ DOCKER_PROXY_URL: "" });
     expect(cfg.runner).toBeUndefined();
+  });
+
+  it("DOCKER_PROXY_URL mal formado (no es una URL) se trata como NO configurado, no lanza y no instancia el runner", () => {
+    const cfg = serviceConfigFromEnv({ DOCKER_PROXY_URL: "esto-no-es-una-url" });
+    expect(cfg.runner).toBeUndefined();
+  });
+
+  it("DOCKER_PROXY_URL con un esquema que no es http(s) (p. ej. ftp://) se trata como NO configurado", () => {
+    const cfg = serviceConfigFromEnv({ DOCKER_PROXY_URL: "ftp://docker-proxy.internal:2375" });
+    expect(cfg.runner).toBeUndefined();
+  });
+
+  it("DOCKER_PROXY_URL https:// también es válido (además de http://)", () => {
+    const cfg = serviceConfigFromEnv({ DOCKER_PROXY_URL: "https://docker-proxy.internal:2376" });
+    expect(cfg.runner).toBeDefined();
   });
 
   it("internalSecret se resuelve de ARENA_ENGINE_INTERNAL_SECRET (variable en claro, precedencia menor que _FILE)", () => {

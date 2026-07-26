@@ -17,15 +17,36 @@
  * `runner_unavailable` con la flag encendida (fail closed, igual que hoy).
  *
  * LÍMITES CONOCIDOS DE ESTA TRADUCCIÓN (documentados, no resueltos en B2 —
- * ver el informe de entrega): arena-engine (contrato R6.2) solo entiende
- * mapas-fixture ("empty"|"mvp"|"ctf"), no el catálogo real de mapas —
- * `mapId`/`mapVersion` de `BattleRunInput` NO se traducen (se usa `cfg.mapName`,
- * por defecto "mvp"); `rulesetId` se pasa tal cual desde `input.mode` (sin
- * resolver contra el catálogo real de rulesets); `ticks` es un techo fijo
+ * ver el informe de entrega): `rulesetId` se pasa tal cual desde `input.mode`
+ * (sin resolver contra el catálogo real de rulesets); `ticks` es un techo fijo
  * configurable (`cfg.ticks`), no derivado del ruleset real. Nada de esto
  * relaja seguridad (firma/mapa publicado ya se validaron en routes/battles.ts
  * antes de llegar aquí): es fidelidad de simulación pendiente de un bloque
  * posterior.
+ *
+ * MAPA — FALLA CERRADO, NO SUSTITUYE EN SILENCIO (revisión del supervisor de
+ * B2): arena-engine (contrato R6.2) solo entiende mapas-fixture
+ * ("empty"|"mvp"|"ctf", `apps/arena-engine/src/fixtures.ts`), no el catálogo
+ * real de mapas de la API. Jugar SIEMPRE el fixture "mvp" sin mirar
+ * `mapId`/`mapVersion` de `BattleRunInput` habría hecho que alguien eligiera
+ * un mapa en la UI y se jugara otro sin enterarse — un fallo de integridad,
+ * no un detalle cosmético: invalida la evidencia de una batalla (B4). En vez
+ * de eso, `FIXTURE_MAP_EQUIVALENTS` es una allowlist EXPLÍCITA de qué mapId+
+ * mapVersion reales tienen fixture equivalente; cualquier otro mapa se
+ * RECHAZA (`status: "failed"`, sin llamar siquiera a arena-engine) con un
+ * error que dice qué se pidió y que no hay equivalente. Hoy solo hay una
+ * entrada: `mvpArena()` (fixtures.ts) tiene el MISMO mapId+version
+ * ("mvp-arena-01" v1) que el mapa publicado por el seed real
+ * (`maps/mvp-arena-01.json` vía `db/seeds/dev.ts`) — es la misma entidad de
+ * catálogo, no una sustitución arbitraria. Dicho esto, la fixture es
+ * "PROVISIONAL POR DISEÑO" (comentario propio de fixtures.ts): su geometría
+ * exacta puede no ser bit-a-bit idéntica al JSON importado de Tiled hasta que
+ * E4 la sustituya. Soportar mapas reales arbitrarios (que la batalla juegue
+ * la geometría real de CUALQUIER mapa publicado, no solo este) es un
+ * REQUISITO PENDIENTE, fuera de alcance de B2 — requiere que arena-engine
+ * acepte geometría de mapa en el cuerpo de `/run` en vez de un nombre de
+ * fixture fijo (cambio en `container-battle.ts`/`fixtures.ts`, un bloque
+ * propio). Hasta entonces, SOLO se admite mvp-arena-01 v1.
  */
 import { readFileSync } from "node:fs";
 import type { Db } from "../db/connection.js";
@@ -56,8 +77,6 @@ export interface HttpBattleRunLauncherConfig {
   db: Db;
   /** Techo de ticks de las batallas lanzadas por este launcher (def. 20000). */
   ticks?: number;
-  /** Mapa-fixture del motor (arena-engine hoy solo entiende fixtures, ver límites arriba). */
-  mapName?: "empty" | "mvp" | "ctf";
   /** Timeout de la llamada HTTP a arena-engine, ms (def. 30000). */
   timeoutMs?: number;
 }
@@ -66,6 +85,17 @@ const DEFAULT_TICKS = 20_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
 /** Runner declarado en `BattleRunResult.runner` para este launcher (visible en la respuesta). */
 export const HTTP_LAUNCHER_RUNNER_ID = "arena-engine-http";
+
+/**
+ * Allowlist EXPLÍCITA mapId+mapVersion real → fixture equivalente de arena-engine.
+ * Cualquier mapa fuera de esta lista se RECHAZA en `launch()` (ver la nota de
+ * cabecera del fichero) en vez de sustituirse en silencio por un fixture
+ * cualquiera. Ampliar esta lista exige verificar caso a caso que el fixture
+ * represente de verdad el mapa real (no basta con "algo parecido").
+ */
+const FIXTURE_MAP_EQUIVALENTS: Record<string, { mapName: "empty" | "mvp" | "ctf"; mapVersion: number }> = {
+  "mvp-arena-01": { mapName: "mvp", mapVersion: 1 },
+};
 
 function resolveSharedSecretFromEnv(env: NodeJS.ProcessEnv): string | undefined {
   const file = env.ARENA_ENGINE_SHARED_SECRET_FILE;
@@ -127,6 +157,21 @@ export function createHttpBattleRunLauncher(cfg: HttpBattleRunLauncherConfig): B
   const timeoutMs = cfg.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   return {
     async launch(input: BattleRunInput): Promise<BattleRunResult> {
+      // Mapa PRIMERO, sin ni siquiera resolver bots ni llamar a arena-engine:
+      // si no hay fixture equivalente al mapId+mapVersion pedidos, se rechaza
+      // en vez de jugar un mapa distinto al que eligió quien lanzó la batalla.
+      const fixture = FIXTURE_MAP_EQUIVALENTS[input.mapId];
+      if (!fixture || fixture.mapVersion !== input.mapVersion) {
+        return {
+          status: "failed",
+          runner: HTTP_LAUNCHER_RUNNER_ID,
+          error:
+            `mapa no soportado por este launcher: no hay fixture de arena-engine equivalente a ` +
+            `${input.mapId} v${input.mapVersion} (hoy solo mvp-arena-01 v1). Se rechaza la ` +
+            `petición en vez de jugar un mapa distinto al pedido.`,
+        };
+      }
+
       let bots: ResolvedBot[];
       try {
         bots = await Promise.all(input.participants.map((p) => resolveBot(cfg.db, p)));
@@ -143,7 +188,7 @@ export function createHttpBattleRunLauncher(cfg: HttpBattleRunLauncherConfig): B
         seed: input.seed ?? input.battleId,
         rulesetId: input.mode,
         ticks: cfg.ticks ?? DEFAULT_TICKS,
-        mapName: cfg.mapName ?? "mvp",
+        mapName: fixture.mapName,
         bots,
       };
 

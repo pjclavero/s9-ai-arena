@@ -197,24 +197,54 @@ function resolveInternalSecretFromEnv(env: NodeJS.ProcessEnv): string | undefine
   return plain && plain.length > 0 ? plain : undefined;
 }
 
+/** `true` si `value` parsea como URL http(s) (el único transporte que habla
+ *  `ProxyContainerRunner`/`fetch`; cualquier otra cosa —vacío, ruta suelta,
+ *  `ftp://`, JSON roto, etc.— NO es una configuración válida del proxy). */
+function isHttpUrl(value: string): boolean {
+  try {
+    const u = new URL(value);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 /**
  * B2 · Resuelve la config del servicio desde el entorno.
  *
  * El runner (`ProxyContainerRunner`, habla con `s9-docker-proxy`, NUNCA con
- * docker.sock) SOLO se instancia si `DOCKER_PROXY_URL` está presente y no
- * vacío; sin él, el resultado es indistinguible de no pasar `runner` en
- * absoluto (`/run` sigue en 503 `runner_unavailable`). El secreto interno
- * (`ARENA_ENGINE_INTERNAL_SECRET[_FILE]`) se resuelve igual esté o no el
- * runner cableado: sin secreto configurado, `/run` rechaza TODO con 401 (no
- * hay modo "sin autenticación" por omisión, ni siquiera en desarrollo).
+ * docker.sock) SOLO se instancia si `DOCKER_PROXY_URL` está presente y es una
+ * URL http(s) bien formada; si no lo es (ausente, vacía, o mal formada), se
+ * trata como NO CONFIGURADO — nunca se instancia el runner con un valor
+ * inválido que solo fallaría en tiempo de ejecución (al primer `launch()`,
+ * ya en medio de una batalla). El motivo se registra SIN volcar el valor
+ * íntegro (podría llevar userinfo/credenciales embebidas en la URL). El
+ * secreto interno (`ARENA_ENGINE_INTERNAL_SECRET[_FILE]`) se resuelve igual
+ * esté o no el runner cableado: sin secreto configurado, `/run` rechaza TODO
+ * con 401 (no hay modo "sin autenticación" por omisión, ni siquiera en
+ * desarrollo).
  */
 export function serviceConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ArenaEngineServiceConfig {
   const proxyUrl = env.DOCKER_PROXY_URL;
+  let runner: ContainerRunner | undefined;
+  if (proxyUrl) {
+    if (isHttpUrl(proxyUrl)) {
+      runner = new ProxyContainerRunner(proxyUrl);
+    } else {
+      console.error(
+        JSON.stringify({
+          level: "error",
+          service: "arena-engine",
+          msg: "DOCKER_PROXY_URL configurado pero no es una URL http(s) válida: se trata como NO configurado (runner no cableado, /run seguirá en 503).",
+        }),
+      );
+    }
+  }
   return {
     network: env.ARENA_NETWORK || undefined,
     engineHost: env.ARENA_ENGINE_HOST || undefined,
     internalSecret: resolveInternalSecretFromEnv(env),
-    runner: proxyUrl ? new ProxyContainerRunner(proxyUrl) : undefined,
+    runner,
   };
 }
 

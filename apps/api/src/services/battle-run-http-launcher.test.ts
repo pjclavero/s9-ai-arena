@@ -114,10 +114,12 @@ describe("B2 · httpBattleRunLauncherEnvConfig", () => {
 });
 
 describe("B2 · createHttpBattleRunLauncher", () => {
-  it("200 de arena-engine → BattleRunResult completed, con la credencial correcta en la cabecera", async () => {
+  it("200 de arena-engine → BattleRunResult completed, con la credencial correcta y mapName='mvp' (equivalente real de mvp-arena-01 v1)", async () => {
     let receivedAuth: string | undefined;
-    const engine = await startFakeEngine((req) => {
+    let receivedBody: Record<string, unknown> | undefined;
+    const engine = await startFakeEngine((req, rawBody) => {
       receivedAuth = req.headers["x-arena-engine-auth"] as string | undefined;
+      receivedBody = JSON.parse(rawBody);
       return { status: 200, body: { result: { ticks: 10 }, replay: {}, postures: {} } };
     });
     closeEngine = engine.close;
@@ -127,6 +129,7 @@ describe("B2 · createHttpBattleRunLauncher", () => {
     const result = await launcher.launch(sampleInput([bot, bot]));
 
     expect(receivedAuth).toBe("sekret-123");
+    expect(receivedBody?.mapName).toBe("mvp");
     expect(result.status).toBe("completed");
     expect(result.runner).toBe("arena-engine-http");
     expect(result.replay).toEqual({ ingested: false, battleId: expect.any(String) });
@@ -209,5 +212,50 @@ describe("B2 · createHttpBattleRunLauncher", () => {
 
     expect(result.status).toBe("failed");
     expect(result.error).toContain("no respondió");
+  });
+});
+
+describe("B2 · fidelidad del mapa (revisión del supervisor: falla cerrado, no sustituye en silencio)", () => {
+  it("mapId sin fixture equivalente → failed SIN llamar a arena-engine (nadie escuchando en ese puerto y aun así no se cuelga ni lanza)", async () => {
+    const bot = await seedSignedBot("bot_map_desconocido");
+    // Puerto sin nada escuchando: si el launcher intentara llamar a arena-engine
+    // pese al mapa no soportado, este test fallaría por timeout/conexión, no por
+    // el mensaje esperado — confirmando así que el rechazo ocurre ANTES de la llamada HTTP.
+    const launcher = createHttpBattleRunLauncher({ engineUrl: "http://127.0.0.1:1", sharedSecret: "s", db: h.db });
+    const input = { ...sampleInput([bot, bot]), mapId: "un-mapa-que-no-existe-en-fixtures", mapVersion: 1 };
+
+    const result = await launcher.launch(input);
+
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("mapa no soportado");
+    expect(result.error).toContain("un-mapa-que-no-existe-en-fixtures");
+  });
+
+  it("mapId conocido pero mapVersion distinta (mvp-arena-01 v2, aún no existe fixture) → failed, no se sustituye por v1 en silencio", async () => {
+    const bot = await seedSignedBot("bot_map_version_distinta");
+    const launcher = createHttpBattleRunLauncher({ engineUrl: "http://127.0.0.1:1", sharedSecret: "s", db: h.db });
+    const input = { ...sampleInput([bot, bot]), mapId: "mvp-arena-01", mapVersion: 2 };
+
+    const result = await launcher.launch(input);
+
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("mapa no soportado");
+    expect(result.error).toContain("mvp-arena-01 v2");
+  });
+
+  it("mvp-arena-01 v1 (el único con fixture equivalente) SÍ se ejecuta con normalidad", async () => {
+    const engine = await startFakeEngine(() => ({
+      status: 200,
+      body: { result: {}, replay: {}, postures: {} },
+    }));
+    closeEngine = engine.close;
+
+    const bot = await seedSignedBot("bot_map_soportado");
+    const launcher = createHttpBattleRunLauncher({ engineUrl: engine.url, sharedSecret: "s", db: h.db });
+    const input = { ...sampleInput([bot, bot]), mapId: "mvp-arena-01", mapVersion: 1 };
+
+    const result = await launcher.launch(input);
+
+    expect(result.status).toBe("completed");
   });
 });
