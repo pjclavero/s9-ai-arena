@@ -11,7 +11,10 @@
  *    el único estado alcanzable sin pasar por el pipeline de bot-manager.
  *    Marcarlas como `validated`/`published` a mano sería saltarse el control de
  *    seguridad que valida el código en sandbox.
- *  - Idempotente: repetirlo no duplica equipos, bots ni revisiones.
+ *  - Idempotente y REPARADOR: repetirlo no duplica nada, y completa lo que
+ *    hubiera quedado a medias (un bot sin loadout o sin versión).
+ *  - Lee TODOS los fuentes antes de escribir en la BD: si falta un fichero,
+ *    falla sin dejar equipos ni bots a medias.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -62,6 +65,13 @@ export async function seedDemoTeams(
     );
   }
 
+  // Preflight: cargar todo el código ANTES de tocar la BD. Si la imagen no
+  // trae example-bots/, esto falla aquí y no deja equipos ni bots a medias.
+  const sources = new Map<string, Buffer>();
+  for (const spec of ROSTER) {
+    sources.set(spec.sourcePath, readFileSync(join(REPO_ROOT, spec.sourcePath)));
+  }
+
   const result: DemoTeamsResult = { teams: [], bots: [] };
 
   for (const teamName of teamNames) {
@@ -69,7 +79,15 @@ export async function seedDemoTeams(
 
     for (const spec of ROSTER) {
       const botName = `${teamName} · ${spec.role}`;
-      await upsertBot(db, { botName, teamId: team.id, ownerId: owner.id, teamName, spec, result });
+      await upsertBot(db, {
+        botName,
+        teamId: team.id,
+        ownerId: owner.id,
+        teamName,
+        spec,
+        source: sources.get(spec.sourcePath)!,
+        result,
+      });
     }
   }
 
@@ -99,14 +117,23 @@ async function upsertBot(
     ownerId: string;
     teamName: string;
     spec: BotSpec;
+    source: Buffer;
     result: DemoTeamsResult;
   },
 ): Promise<void> {
-  const { botName, teamId, ownerId, teamName, spec, result } = args;
+  const { botName, teamId, ownerId, teamName, spec, source, result } = args;
 
   const existing = await db("bots").where({ owner_id: ownerId, name: botName }).first();
+  // Un bot ya completo no se toca. Uno a medias (sin loadout o sin versión, p.ej.
+  // porque una ejecución anterior se interrumpió) se completa aquí.
   if (existing) {
-    result.bots.push({ name: botName, team: teamName, created: false });
+    const versions = await db("bot_versions").where({ bot_id: existing.id });
+    if (versions.length > 0) {
+      result.bots.push({ name: botName, team: teamName, created: false });
+      return;
+    }
+    await ensureLoadoutAndVersion(db, existing.id, spec, source);
+    result.bots.push({ name: botName, team: teamName, created: true });
     return;
   }
 
@@ -114,6 +141,11 @@ async function upsertBot(
     .insert({ name: botName, owner_id: ownerId, team_id: teamId, visibility: "team" })
     .returning("*");
 
+  await ensureLoadoutAndVersion(db, bot.id, spec, source);
+  result.bots.push({ name: botName, team: teamName, created: true });
+}
+
+async function ensureLoadoutAndVersion(db: Db, botId: string, spec: BotSpec, source: Buffer): Promise<void> {
   // El loadout se valida con el MISMO validador que usa la API: si el catálogo
   // cambiara y el arquetipo dejara de ser legal, esto falla en vez de guardar
   // un loadout inválido.
@@ -131,11 +163,12 @@ async function upsertBot(
         JSON.stringify(validation.violations),
     );
   }
-  const loadout = await createLoadoutRevision(db, bot.id, loadoutInput, validation.summary!);
+  // Reutiliza la revisión existente si el bot ya tenía loadout (caso reparación).
+  const previa = await db("bot_loadouts").where({ bot_id: botId }).orderBy("revision", "desc").first();
+  const loadout = previa ?? (await createLoadoutRevision(db, botId, loadoutInput, validation.summary!));
 
-  const source = readFileSync(join(REPO_ROOT, spec.sourcePath));
   await db("bot_versions").insert({
-    bot_id: bot.id,
+    bot_id: botId,
     version: 1,
     state: "draft",
     runtime: spec.runtime,
@@ -144,8 +177,6 @@ async function upsertBot(
     source_filename: spec.sourcePath.split("/").pop(),
     code_public: false,
   });
-
-  result.bots.push({ name: botName, team: teamName, created: true });
 }
 
 export function formatDemoTeamsResult(r: DemoTeamsResult): string {

@@ -18,6 +18,9 @@ RUN npm ci --ignore-scripts
 
 COPY apps ./apps
 COPY maps ./maps
+# Bots de ejemplo: son el código fuente que `cli.ts demo-teams` carga para crear
+# plantillas jugables en una instancia real. Sin ellos el comando falla con ENOENT.
+COPY example-bots ./example-bots
 
 ARG APP_PATH
 ENV APP_PATH=${APP_PATH}
