@@ -336,6 +336,70 @@ describe("B2 · autenticación interna de POST /run", () => {
   }, 30_000);
 });
 
+// Tercer sitio con el mismo patrón (hallazgo del supervisor): container-battle.ts hace
+// ARCHETYPES[b.archetype] (objeto plano) sobre bots que llegaban SIN validar desde
+// isRunBattleRequestBody — con un archetype "envenenado" reventaba con un TypeError
+// interno sin capturar, filtrado como mensaje 502 al llamador (no 400).
+describe("B2 · validación de bots en POST /run (arquetipo envenenado, tercer sitio del mismo patrón)", () => {
+  for (const pollutedArchetype of ["__proto__", "constructor", "toString", "hasOwnProperty"]) {
+    it(`archetype="${pollutedArchetype}" → 400 bad_request (NUNCA 502 con un TypeError filtrado)`, async () => {
+      const app = createArenaEngineService({
+        runner: inProcessRunner(),
+        internalSecret: SECRET,
+        engineHost: "127.0.0.1",
+      });
+      const body = {
+        ...runRequestBody(`svc_archetype_${pollutedArchetype}`),
+        bots: [{ botId: "bot_a", version: 1, archetype: pollutedArchetype, imageDigest: REAL_DIGEST }, SMOKE_BOTS[1]],
+      };
+      const res = await request(app).post("/run").set(AUTH_HEADER, SECRET).send(body);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("bad_request");
+      expect(res.status).not.toBe(502);
+    });
+  }
+
+  it("los 4 arquetipos reales (scout/gunner/miner/heavy) siguen admitiéndose (no rompe la ruta legítima)", async () => {
+    for (const archetype of ["scout", "gunner", "miner", "heavy"]) {
+      const app = createArenaEngineService({
+        runner: inProcessRunner(),
+        internalSecret: SECRET,
+        engineHost: "127.0.0.1",
+      });
+      const body = {
+        ...runRequestBody(`svc_archetype_valido_${archetype}_${Date.now()}`),
+        bots: [
+          { botId: "bot_a", version: 1, archetype, imageDigest: REAL_DIGEST },
+          { botId: "bot_b", version: 1, archetype: "scout", imageDigest: REAL_DIGEST },
+        ],
+      };
+      const res = await request(app).post("/run").set(AUTH_HEADER, SECRET).send(body);
+      expect(res.status).toBe(200);
+    }
+  }, 30_000);
+
+  it.each([
+    ["botId", { botId: 123 }],
+    ["botId vacío", { botId: "" }],
+    ["version no numérica", { version: "1" }],
+    ["version no entera", { version: 1.5 }],
+    ["version cero", { version: 0 }],
+    ["imageDigest ausente/no-string", { imageDigest: undefined }],
+    ["imageDigest vacío", { imageDigest: "" }],
+  ])("bot con %s inválido → 400 bad_request (no llega a container-battle.ts)", async (_label, overrides) => {
+    const app = createArenaEngineService({
+      runner: inProcessRunner(),
+      internalSecret: SECRET,
+      engineHost: "127.0.0.1",
+    });
+    const badBot = { botId: "bot_a", version: 1, archetype: "scout", imageDigest: REAL_DIGEST, ...overrides };
+    const body = { ...runRequestBody("svc_bot_campo_invalido"), bots: [badBot, SMOKE_BOTS[1]] };
+    const res = await request(app).post("/run").set(AUTH_HEADER, SECRET).send(body);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("bad_request");
+  });
+});
+
 describe("B2 · serviceConfigFromEnv (gateado por entorno)", () => {
   it("sin DOCKER_PROXY_URL, NO se instancia ningún runner (sigue en 503 aunque se despliegue)", () => {
     const cfg = serviceConfigFromEnv({});

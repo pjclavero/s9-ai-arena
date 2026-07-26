@@ -33,6 +33,7 @@ import {
 } from "../../bot-manager/src/container-battle.js";
 import type { ContainerRunner } from "../../bot-manager/src/container-runner.js";
 import { ProxyContainerRunner } from "../../bot-manager/src/docker-proxy.js";
+import { ARCHETYPES } from "../../../packages/module-catalog/resolve/archetypes.js";
 
 export interface ArenaEngineServiceConfig {
   /**
@@ -82,6 +83,42 @@ export type RunBattleRequestBody = Omit<ContainerBattleConfig, "runner" | "netwo
  */
 const VALID_MAP_NAMES: ReadonlySet<string> = new Set(["empty", "mvp", "ctf"]);
 
+/**
+ * Arquetipos reales del catálogo (`ARCHETYPES` de E3: scout/gunner/miner/heavy),
+ * como `Set` — MISMO motivo que `VALID_MAP_NAMES`: `container-battle.ts` hace
+ * `ARCHETYPES[b.archetype]` (objeto plano) SIN validar antes `b.archetype`, así
+ * que un `archetype` "envenenado" (`"__proto__"`, `"constructor"`, `"toString"`,
+ * `"hasOwnProperty"`, ...) llegaba hasta esa indexación y reventaba con un
+ * `TypeError` interno sin capturar, filtrado como mensaje 502 al llamador
+ * (hallazgo del supervisor: tercer sitio con el mismo patrón, tras
+ * `FIXTURE_MAP_EQUIVALENTS` en el launcher de la API y `MAPS`/`mapName` aquí
+ * mismo). `Object.keys(ARCHETYPES)` son las claves reales del catálogo — no una
+ * indexación con datos externos, así que no sufre el mismo problema.
+ */
+const VALID_ARCHETYPES: ReadonlySet<string> = new Set(Object.keys(ARCHETYPES));
+
+/** Valida un bot individual del array `bots` de `/run`: cada campo que
+ *  `container-battle.ts` vaya a usar (indexar, interpolar, pasar a Docker)
+ *  debe tener el tipo correcto ANTES de llegar allí. NO reimplementa la
+ *  validación de digest real (`assertRealDigest`, aguas abajo en
+ *  `docker-proxy.ts`): solo comprueba que `imageDigest` sea una string no
+ *  vacía, para que al menos no llegue `undefined`/un objeto/un array. */
+function isValidBotEntry(bot: unknown): boolean {
+  if (!bot || typeof bot !== "object") return false;
+  const b = bot as Record<string, unknown>;
+  return (
+    typeof b.botId === "string" &&
+    b.botId.length > 0 &&
+    typeof b.version === "number" &&
+    Number.isInteger(b.version) &&
+    b.version >= 1 &&
+    typeof b.archetype === "string" &&
+    VALID_ARCHETYPES.has(b.archetype) &&
+    typeof b.imageDigest === "string" &&
+    b.imageDigest.length > 0
+  );
+}
+
 function isRunBattleRequestBody(body: unknown): body is RunBattleRequestBody {
   if (!body || typeof body !== "object") return false;
   const b = body as Record<string, unknown>;
@@ -93,6 +130,7 @@ function isRunBattleRequestBody(body: unknown): body is RunBattleRequestBody {
     typeof b.ticks === "number" &&
     Array.isArray(b.bots) &&
     b.bots.length >= 2 &&
+    b.bots.every(isValidBotEntry) &&
     (b.mapName === undefined || (typeof b.mapName === "string" && VALID_MAP_NAMES.has(b.mapName)))
   );
 }
