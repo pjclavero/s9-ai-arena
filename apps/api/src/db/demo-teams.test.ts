@@ -81,6 +81,25 @@ describe("seedDemoTeams", () => {
     expect(r.bots.every((b) => !b.created)).toBe(true);
   });
 
+  it("repara un bot que quedó a medias (con loadout pero sin versión)", async () => {
+    // Reproduce el fallo real: una ejecución anterior creó el bot y su loadout
+    // pero murió antes de guardar la versión (el código fuente no estaba en la
+    // imagen). Volver a ejecutar debe completarlo, no dejarlo roto ni duplicarlo.
+    const bot = await h.db("bots").where({ name: "Equipo Rojo · Explorador" }).first();
+    await h.db("bot_versions").where({ bot_id: bot.id }).del();
+    expect(await h.db("bot_versions").where({ bot_id: bot.id })).toHaveLength(0);
+
+    const bots = await count("bots");
+    await seedDemoTeams(h.db, OWNER, ["Equipo Rojo"]);
+
+    expect(await count("bots")).toBe(bots);
+    const versions = await h.db("bot_versions").where({ bot_id: bot.id });
+    expect(versions).toHaveLength(1);
+    expect(versions[0].state).toBe("draft");
+    // No duplica la revisión de loadout: reutiliza la que ya existía.
+    expect(await h.db("bot_loadouts").where({ bot_id: bot.id })).toHaveLength(1);
+  });
+
   it("un equipo adicional se añade sin tocar los existentes", async () => {
     await seedDemoTeams(h.db, OWNER, ["Elimelech"]);
 
