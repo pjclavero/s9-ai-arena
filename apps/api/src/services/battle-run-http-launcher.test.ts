@@ -8,8 +8,11 @@
  * failed sin lanzar), timeout, e inalcanzable (conexión rechazada).
  */
 import { randomUUID } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { startTestDb, type TestDbHandle } from "../testing/test-db.js";
 import { DEV_USERS, seedDev } from "../db/seeds/dev.js";
@@ -21,13 +24,57 @@ import {
 import type { BattleRunInput } from "../battle-run.js";
 import { initPhysics } from "../../../arena-engine/src/sim/physics.js";
 import { record, toJsonl, type Replay } from "../../../arena-engine/src/replay.js";
-import { emptyArena, gunnerLoadout, scoutLoadout } from "../../../arena-engine/src/fixtures.js";
+import { gunnerLoadout, scoutLoadout } from "../../../arena-engine/src/fixtures.js";
 import { HunterBot } from "../../../arena-engine/src/stubs.js";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { createReplayServer } from "../../../replay-service/src/server.js";
 import { listReplays, replayPath } from "../../../replay-service/src/store.js";
+import { validateArenaMap } from "../../../arena-engine/src/arena-map.js";
+import type { ArenaMap } from "../../../arena-engine/src/sim/modes.js";
+import { toEngineMap } from "../../../map-service/src/to-engine-map.js";
+import type { InternalMap } from "../../../map-service/src/types.js";
+import { loadRuleset } from "../../../../packages/game-rules/index.js";
+
+const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
+
+/** Documento REAL de mapa del repo (el mismo que publica el seed de contenido). */
+function repoMap(file: string): InternalMap {
+  return JSON.parse(readFileSync(join(REPO, "maps", file), "utf8"));
+}
+
+/**
+ * B9 · Publica un mapa del repo en el catálogo de la BD de test. `state` y
+ * `content` son parametrizables porque varios tests necesitan justo lo contrario
+ * de lo normal (un borrador sin publicar, un contenido manipulado...).
+ */
+async function publishCatalogMap(
+  doc: InternalMap,
+  opts: { state?: string; content?: unknown; version?: number } = {},
+): Promise<void> {
+  const version = opts.version ?? doc.version;
+  await h.db("maps").insert({ id: doc.mapId, name: doc.mapId }).onConflict("id").ignore();
+  await h
+    .db("map_versions")
+    .insert({
+      map_id: doc.mapId,
+      version,
+      state: opts.state ?? "published",
+      checksum: doc.checksum,
+      width_m: doc.widthM,
+      height_m: doc.heightM,
+      supported_modes: JSON.stringify(doc.meta?.supportedModes ?? []),
+      content: JSON.stringify(opts.content ?? doc),
+      published_at: h.db.fn.now(),
+    })
+    .onConflict(["map_id", "version"])
+    .ignore();
+}
+
+/** Geometría REAL que el motor debería recibir para un mapa del repo (camino
+ *  independiente del código bajo prueba: documento del repo → toEngineMap). */
+function expectedEngineMap(file: string): ArenaMap {
+  return toEngineMap(repoMap(file));
+}
 
 let h: TestDbHandle;
 let adminId: string;
@@ -119,7 +166,10 @@ afterEach(async () => {
  * encontraría bugs de verify()/serialización — este SÍ es el objeto real que
  * arena-engine devolvería en `ContainerBattleOutcome.replay`.
  */
-async function recordRealReplay(battleId: string): Promise<Replay> {
+async function recordRealReplay(
+  battleId: string,
+  map: ArenaMap = expectedEngineMap("mvp-arena-01.json"),
+): Promise<Replay> {
   return record(
     {
       battleId,
@@ -127,7 +177,11 @@ async function recordRealReplay(battleId: string): Promise<Replay> {
       ruleset: (await import("../../../../packages/game-rules/index.js")).loadRuleset("dm_practice@1", {
         timeLimitTicks: 60,
       }),
-      map: emptyArena(),
+      // B9 · el mapa por defecto es el mapa REAL del catálogo que piden estos tests
+      // (`sampleInput` → mvp-arena-01 v1). Antes se grababa con `emptyArena()`: con
+      // la guarda de identidad de mapa de B9, un replay grabado en otro mapa que el
+      // pedido se rechaza — que es exactamente lo que debe pasar.
+      map,
       participants: [
         { id: "v_red", botId: "bot_red", team: "red", spec: gunnerLoadout() },
         { id: "v_blue", botId: "bot_blue", team: "blue", spec: scoutLoadout() },
@@ -185,7 +239,7 @@ describe("B2 · httpBattleRunLauncherEnvConfig", () => {
 });
 
 describe("B2 · createHttpBattleRunLauncher", () => {
-  it("200 de arena-engine → BattleRunResult completed, con la credencial correcta y mapName='mvp' (equivalente real de mvp-arena-01 v1)", async () => {
+  it("200 de arena-engine → BattleRunResult completed, con la credencial correcta y el mapa REAL del catálogo en el cuerpo", async () => {
     let receivedAuth: string | undefined;
     let receivedBody: Record<string, unknown> | undefined;
     const engine = await startFakeEngine((req, rawBody) => {
@@ -200,7 +254,8 @@ describe("B2 · createHttpBattleRunLauncher", () => {
     const result = await launcher.launch(sampleInput([bot, bot]));
 
     expect(receivedAuth).toBe("sekret-123");
-    expect(receivedBody?.mapName).toBe("mvp");
+    expect(receivedBody?.mapName).toBeUndefined();
+    expect((receivedBody?.map as ArenaMap).mapId).toBe("mvp-arena-01");
     expect(result.status).toBe("completed");
     expect(result.runner).toBe("arena-engine-http");
     expect(result.replay).toEqual({ ingested: false, battleId: expect.any(String) });
@@ -286,95 +341,274 @@ describe("B2 · createHttpBattleRunLauncher", () => {
   });
 });
 
-describe("B2 · fidelidad del mapa (revisión del supervisor: falla cerrado, no sustituye en silencio)", () => {
-  it("mapId sin fixture equivalente → failed SIN llamar a arena-engine (nadie escuchando en ese puerto y aun así no se cuelga ni lanza)", async () => {
-    const bot = await seedSignedBot("bot_map_desconocido");
-    // Puerto sin nada escuchando: si el launcher intentara llamar a arena-engine
-    // pese al mapa no soportado, este test fallaría por timeout/conexión, no por
-    // el mensaje esperado — confirmando así que el rechazo ocurre ANTES de la llamada HTTP.
-    const launcher = createHttpBattleRunLauncher({ engineUrl: "http://127.0.0.1:1", sharedSecret: "s", db: h.db });
-    const input = { ...sampleInput([bot, bot]), mapId: "un-mapa-que-no-existe-en-fixtures", mapVersion: 1 };
-
-    const result = await launcher.launch(input);
-
-    expect(result.status).toBe("failed");
-    expect(result.error).toContain("mapa no soportado");
-    expect(result.error).toContain("un-mapa-que-no-existe-en-fixtures");
-  });
-
-  it("mapId conocido pero mapVersion distinta (mvp-arena-01 v2, aún no existe fixture) → failed, no se sustituye por v1 en silencio", async () => {
-    const bot = await seedSignedBot("bot_map_version_distinta");
-    const launcher = createHttpBattleRunLauncher({ engineUrl: "http://127.0.0.1:1", sharedSecret: "s", db: h.db });
-    const input = { ...sampleInput([bot, bot]), mapId: "mvp-arena-01", mapVersion: 2 };
-
-    const result = await launcher.launch(input);
-
-    expect(result.status).toBe("failed");
-    expect(result.error).toContain("mapa no soportado");
-    expect(result.error).toContain("mvp-arena-01 v2");
-  });
-
-  it("mvp-arena-01 v1 (el único con fixture equivalente) SÍ se ejecuta con normalidad", async () => {
-    const engine = await startFakeEngine(() => ({
-      status: 200,
-      body: { result: {}, replay: {}, postures: {} },
-    }));
+describe("B9 · resolución REAL del mapa contra el catálogo (ya no hay allowlist de fixtures)", () => {
+  /** Captura el cuerpo que el launcher envía a `/run` y responde 200 sin replay. */
+  async function launchCapturingBody(input: BattleRunInput): Promise<Record<string, unknown> | undefined> {
+    let received: Record<string, unknown> | undefined;
+    const engine = await startFakeEngine((_req, rawBody) => {
+      received = JSON.parse(rawBody);
+      return { status: 200, body: { result: {}, replay: {}, postures: {} } };
+    });
     closeEngine = engine.close;
-
-    const bot = await seedSignedBot("bot_map_soportado");
     const launcher = createHttpBattleRunLauncher({ engineUrl: engine.url, sharedSecret: "s", db: h.db });
-    const input = { ...sampleInput([bot, bot]), mapId: "mvp-arena-01", mapVersion: 1 };
+    await launcher.launch(input);
+    return received;
+  }
 
-    const result = await launcher.launch(input);
+  it("envía la GEOMETRÍA REAL del mapa publicado (no un nombre de fixture), y esa geometría es válida para el motor", async () => {
+    const bot = await seedSignedBot("bot_b9_geometria");
+    const body = await launchCapturingBody(sampleInput([bot, bot]));
 
-    expect(result.status).toBe("completed");
+    // Ya no viaja `mapName`: viaja el mapa entero.
+    expect(body?.mapName).toBeUndefined();
+    // Comportamiento, no cadenas: el mapa enviado es EXACTAMENTE el que produce el
+    // pipeline real del catálogo (documento del repo → toEngineMap), muro a muro.
+    expect(body?.map).toEqual(expectedEngineMap("mvp-arena-01.json"));
+    // Y lo acepta el MISMO validador que aplicará arena-engine al recibirlo.
+    expect(validateArenaMap(body?.map).ok).toBe(true);
+    // Geometría REAL, no la fixture "mvp" (que llevaba checksum de ceros y 8 muros).
+    const sent = body?.map as ArenaMap;
+    expect(sent.checksum).toBe(repoMap("mvp-arena-01.json").checksum);
+    expect(sent.walls.length).toBeGreaterThan(0);
   });
-});
 
-describe("B2 · fidelidad del mapa: hallazgo del supervisor (indexación de objeto plano / prototype pollution)", () => {
-  // mapId = "__proto__"/"constructor"/"toString" con mapVersion ausente: en un objeto
-  // plano indexado directamente (`FIXTURE_MAP_EQUIVALENTS[input.mapId]`), esto resolvía a
-  // algo truthy heredado de Object.prototype, y `fixture.mapVersion === undefined` no se
-  // distinguía de `input.mapVersion === undefined` (`undefined !== undefined` es `false`):
-  // la guarda no rechazaba, y aguas abajo se jugaba el fixture por defecto EN SILENCIO.
-  // FIXTURE_MAP_EQUIVALENTS ahora es un Map (sin prototipo indexable por string) y además
-  // se exige que mapVersion sea un entero ANTES de mirar el mapa: dos capas independientes.
-  for (const pollutedKey of ["__proto__", "constructor", "toString", "hasOwnProperty"]) {
-    it(`mapId="${pollutedKey}" con mapVersion ausente (undefined) → failed, NUNCA se juega un fixture por defecto`, async () => {
-      const bot = await seedSignedBot(`bot_map_${pollutedKey.replace(/[^a-z]/gi, "")}`);
-      // Puerto sin nada escuchando: si el hueco reapareciera y el launcher llamase a
-      // arena-engine, este test fallaría por timeout/conexión, no por el mensaje esperado.
+  it("un mapa DISTINTO del catálogo (proc-test-0, generado por E4) se juega de verdad: viaja SU geometría, no la de mvp-arena-01", async () => {
+    const doc = repoMap(join("procedural", "proc-test-0.json"));
+    await publishCatalogMap(doc);
+    const bot = await seedSignedBot("bot_b9_otro_mapa");
+    const input = { ...sampleInput([bot, bot]), mapId: doc.mapId, mapVersion: doc.version };
+
+    const body = await launchCapturingBody(input);
+    const sent = body?.map as ArenaMap;
+
+    expect(sent.mapId).toBe("proc-test-0");
+    expect(sent.checksum).toBe(doc.checksum);
+    expect(sent).toEqual(toEngineMap(doc));
+    // Que sea OTRO mapa de verdad: su geometría no coincide con la de mvp-arena-01.
+    const mvp = expectedEngineMap("mvp-arena-01.json");
+    expect(sent.walls).not.toEqual(mvp.walls);
+    expect(validateArenaMap(sent).ok).toBe(true);
+  });
+
+  it("mapa inexistente en el catálogo → failed map_not_published SIN llamar a arena-engine", async () => {
+    const bot = await seedSignedBot("bot_b9_inexistente");
+    // Puerto sin nada escuchando: si el launcher llamara igualmente a arena-engine,
+    // el fallo sería de conexión/timeout, no el código esperado.
+    const launcher = createHttpBattleRunLauncher({ engineUrl: "http://127.0.0.1:1", sharedSecret: "s", db: h.db });
+    const result = await launcher.launch({ ...sampleInput([bot, bot]), mapId: "no-existe-en-el-catalogo" });
+
+    expect(result.status).toBe("failed");
+    expect(result.errorCode).toBe("map_not_published");
+    expect(result.error).toContain("no-existe-en-el-catalogo");
+  });
+
+  it("mapa existente pero en borrador (no publicado) → failed map_not_published (no se juega lo que no está publicado)", async () => {
+    const doc = { ...repoMap(join("procedural", "proc-test-1.json")) };
+    await publishCatalogMap(doc, { state: "draft" });
+    const bot = await seedSignedBot("bot_b9_draft");
+    const launcher = createHttpBattleRunLauncher({ engineUrl: "http://127.0.0.1:1", sharedSecret: "s", db: h.db });
+    const result = await launcher.launch({ ...sampleInput([bot, bot]), mapId: doc.mapId, mapVersion: doc.version });
+
+    expect(result.status).toBe("failed");
+    expect(result.errorCode).toBe("map_not_published");
+  });
+
+  it("versión pedida que no existe (mvp-arena-01 v2) → failed, NUNCA se juega la v1 en su lugar", async () => {
+    const bot = await seedSignedBot("bot_b9_version");
+    const launcher = createHttpBattleRunLauncher({ engineUrl: "http://127.0.0.1:1", sharedSecret: "s", db: h.db });
+    const result = await launcher.launch({ ...sampleInput([bot, bot]), mapId: "mvp-arena-01", mapVersion: 2 });
+
+    expect(result.status).toBe("failed");
+    expect(result.errorCode).toBe("map_not_published");
+    expect(result.error).toContain("v2");
+  });
+
+  it("la fila dice una versión y el documento otra → failed map_content_mismatch (fila y contenido divergen: no se adivina)", async () => {
+    const doc = repoMap(join("procedural", "proc-test-2.json"));
+    // Se publica como v7 pero el documento sigue diciendo v1.
+    await publishCatalogMap(doc, { version: 7 });
+    const bot = await seedSignedBot("bot_b9_mismatch");
+    const launcher = createHttpBattleRunLauncher({ engineUrl: "http://127.0.0.1:1", sharedSecret: "s", db: h.db });
+    const result = await launcher.launch({ ...sampleInput([bot, bot]), mapId: doc.mapId, mapVersion: 7 });
+
+    expect(result.status).toBe("failed");
+    expect(result.errorCode).toBe("map_content_mismatch");
+  });
+
+  it("MUTACIÓN: el documento publicado se manipula después (se mueve un muro) → failed map_checksum_mismatch, no se juega un mapa alterado", async () => {
+    const doc = repoMap(join("procedural", "proc-test-3.json"));
+    const tampered = JSON.parse(JSON.stringify(doc)) as InternalMap;
+    // Un solo muro desplazado 3 m: geometría distinta, checksum canónico ya no cuadra.
+    (tampered.layers.walls[0] as { position?: { x: number; y: number } }).position = { x: 999, y: 999 };
+    await publishCatalogMap(doc, { content: tampered });
+    const bot = await seedSignedBot("bot_b9_tampered");
+    const launcher = createHttpBattleRunLauncher({ engineUrl: "http://127.0.0.1:1", sharedSecret: "s", db: h.db });
+    const result = await launcher.launch({ ...sampleInput([bot, bot]), mapId: doc.mapId, mapVersion: doc.version });
+
+    expect(result.status).toBe("failed");
+    expect(result.errorCode).toBe("map_checksum_mismatch");
+  });
+
+  it("mapa publicado cuyo contenido no es un mapa válido de E4 → failed map_invalid (no se intenta jugar)", async () => {
+    const doc = repoMap(join("procedural", "proc-test-4.json"));
+    // Contenido corrupto pero con identidad correcta: sin `layers`, el validador de
+    // E4 ni siquiera puede ejecutarse (lanza) — debe traducirse en rechazo, no en
+    // una excepción que se escape del launcher.
+    const broken = { mapId: doc.mapId, version: doc.version, checksum: doc.checksum, widthM: 120, heightM: 80 };
+    await publishCatalogMap(doc, { content: broken });
+    const bot = await seedSignedBot("bot_b9_invalido");
+    const launcher = createHttpBattleRunLauncher({ engineUrl: "http://127.0.0.1:1", sharedSecret: "s", db: h.db });
+    const result = await launcher.launch({ ...sampleInput([bot, bot]), mapId: doc.mapId, mapVersion: doc.version });
+
+    expect(result.status).toBe("failed");
+    expect(["map_invalid", "map_checksum_mismatch"]).toContain(result.errorCode);
+  });
+
+  // Séptima aparición del MISMO patrón en este repo: un identificador externo
+  // (mapId) usado para buscar en un diccionario. Aquí la búsqueda va a la BD
+  // parametrizada y a `Map`/`safeLookup`, nunca a `obj[clave]`, así que
+  // "__proto__" es un identificador más que sencillamente no existe.
+  for (const pollutedKey of ["__proto__", "constructor", "toString", "hasOwnProperty", "prototype"]) {
+    it(`mapId="${pollutedKey}" → failed (nunca se juega un mapa por defecto ni se llama a arena-engine)`, async () => {
+      const bot = await seedSignedBot(`bot_b9_${pollutedKey.replace(/[^a-z]/gi, "")}`);
       const launcher = createHttpBattleRunLauncher({ engineUrl: "http://127.0.0.1:1", sharedSecret: "s", db: h.db });
-      const input = {
-        ...sampleInput([bot, bot]),
-        mapId: pollutedKey,
-        mapVersion: undefined,
-      } as unknown as BattleRunInput;
-
-      const result = await launcher.launch(input);
+      const result = await launcher.launch({ ...sampleInput([bot, bot]), mapId: pollutedKey });
 
       expect(result.status).toBe("failed");
-      expect(result.error).toContain("mapa no soportado");
+      expect(result.errorCode).toBe("map_not_published");
+      expect(result.replay ?? null).toBeNull();
     });
   }
 
   it.each([undefined, null, "1", 1.5, NaN])(
-    "mapVersion no-entero (%p) → failed, se rechaza ANTES de mirar el mapa",
+    "mapVersion no-entero (%p) → failed bad_request, se rechaza ANTES de consultar el catálogo",
     async (badVersion) => {
-      const bot = await seedSignedBot("bot_map_version_mala");
+      const bot = await seedSignedBot("bot_b9_version_mala");
       const launcher = createHttpBattleRunLauncher({ engineUrl: "http://127.0.0.1:1", sharedSecret: "s", db: h.db });
       const input = {
         ...sampleInput([bot, bot]),
-        mapId: "mvp-arena-01", // mapId VÁLIDO a propósito: el rechazo debe venir de mapVersion, no del mapId.
+        mapId: "mvp-arena-01", // mapId VÁLIDO a propósito: el rechazo debe venir de mapVersion.
         mapVersion: badVersion,
       } as unknown as BattleRunInput;
 
       const result = await launcher.launch(input);
 
       expect(result.status).toBe("failed");
+      expect(result.errorCode).toBe("bad_request");
       expect(result.error).toContain("mapVersion");
     },
   );
+
+  it("GUARDA DE IDENTIDAD: arena-engine responde 200 con una batalla jugada en OTRO mapa → failed map_identity_mismatch y el replay NO se ingesta", async () => {
+    const otherDoc = repoMap(join("procedural", "proc-test-5.json"));
+    await publishCatalogMap(otherDoc);
+    const bot = await seedSignedBot("bot_b9_identidad");
+    const battleId = "battle_" + randomUUID();
+    // Replay REAL y perfectamente verificable... pero jugado en proc-test-5.
+    const replay = await recordRealReplay(battleId, toEngineMap(otherDoc));
+
+    const rs = await startFakeReplayService(() => ({ status: 201, body: {} }));
+    const engine = await startFakeEngine(() => ({
+      status: 200,
+      body: { result: replay.result, replay, postures: {} },
+    }));
+    closeEngine = async () => {
+      await engine.close();
+      await rs.close();
+    };
+    const launcher = createHttpBattleRunLauncher({
+      engineUrl: engine.url,
+      sharedSecret: "s",
+      db: h.db,
+      replayServiceUrl: rs.url,
+    });
+    // Se pide mvp-arena-01 v1 (sampleInput), pero la batalla se jugó en otro mapa.
+    const result = await launcher.launch({ ...sampleInput([bot, bot]), battleId });
+
+    expect(result.status).toBe("failed");
+    expect(result.errorCode).toBe("map_identity_mismatch");
+    expect(rs.received).toHaveLength(0);
+  }, 30_000);
+});
+
+describe("B9 · resolución REAL del ruleset y de los ticks", () => {
+  async function bodySentFor(input: BattleRunInput): Promise<Record<string, unknown> | undefined> {
+    let received: Record<string, unknown> | undefined;
+    const engine = await startFakeEngine((_req, rawBody) => {
+      received = JSON.parse(rawBody);
+      return { status: 200, body: { result: {}, replay: {}, postures: {} } };
+    });
+    closeEngine = engine.close;
+    const launcher = createHttpBattleRunLauncher({ engineUrl: engine.url, sharedSecret: "s", db: h.db });
+    await launcher.launch(input);
+    return received;
+  }
+
+  it("REGRESIÓN (bug real de B2): el rulesetId enviado existe en el catálogo del motor y juega el modo pedido", async () => {
+    const bot = await seedSignedBot("bot_b9_ruleset");
+    const input = sampleInput([bot, bot]); // mode: "deathmatch"
+    const body = await bodySentFor(input);
+
+    // Comportamiento, no cadena: se CARGA con el cargador real del motor (el mismo
+    // que usa runContainerBattle). Antes se enviaba "deathmatch", que hacía LANZAR
+    // a loadRuleset dentro de la batalla → 502 genérico en toda batalla real.
+    const ruleset = loadRuleset(body?.rulesetId as string);
+    expect(ruleset.mode).toBe(input.mode);
+    // Y los ticks son los del ruleset resuelto, no un número fijo del launcher.
+    expect(body?.ticks).toBe(ruleset.timeLimitTicks);
+  });
+
+  it("un ruleset de BD con config.engineRulesetId manda sobre el defecto del modo", async () => {
+    const rulesetId = `rs_${randomUUID().slice(0, 8)}`;
+    await h.db("rulesets").insert({
+      id: rulesetId,
+      name: "TDM explícito",
+      budget_credits: 1200,
+      forbidden_categories: "[]",
+      config: JSON.stringify({ engineRulesetId: "tdm_mvp@1" }),
+    });
+    const bot = await seedSignedBot("bot_b9_ruleset_db");
+    const input = { ...sampleInput([bot, bot]), mode: "team_deathmatch", rulesetId };
+    const body = await bodySentFor(input);
+
+    expect(body?.rulesetId).toBe("tdm_mvp@1");
+    expect(body?.ticks).toBe(loadRuleset("tdm_mvp@1").timeLimitTicks);
+  });
+
+  it("un ruleset de BD que apunta a reglas de OTRO modo → failed ruleset_mode_mismatch (no se cambia el modo en silencio)", async () => {
+    const rulesetId = `rs_${randomUUID().slice(0, 8)}`;
+    await h.db("rulesets").insert({
+      id: rulesetId,
+      name: "CTF colado en un deathmatch",
+      budget_credits: 1200,
+      forbidden_categories: "[]",
+      config: JSON.stringify({ engineRulesetId: "ctf_mvp@1" }),
+    });
+    const bot = await seedSignedBot("bot_b9_ruleset_modo");
+    const launcher = createHttpBattleRunLauncher({ engineUrl: "http://127.0.0.1:1", sharedSecret: "s", db: h.db });
+    const result = await launcher.launch({ ...sampleInput([bot, bot]), mode: "deathmatch", rulesetId });
+
+    expect(result.status).toBe("failed");
+    expect(result.errorCode).toBe("ruleset_mode_mismatch");
+  });
+
+  it("un modo sin ruleset equivalente en el motor → failed ruleset_unresolvable (nunca 'el primero de la lista')", async () => {
+    const bot = await seedSignedBot("bot_b9_modo_raro");
+    const launcher = createHttpBattleRunLauncher({ engineUrl: "http://127.0.0.1:1", sharedSecret: "s", db: h.db });
+    const result = await launcher.launch({ ...sampleInput([bot, bot]), mode: "modo_inventado" });
+
+    expect(result.status).toBe("failed");
+    expect(result.errorCode).toBe("ruleset_unresolvable");
+  });
+
+  it('mode="__proto__" → failed ruleset_unresolvable (el diccionario modo→ruleset es un Map, no un objeto plano)', async () => {
+    const bot = await seedSignedBot("bot_b9_modo_proto");
+    const launcher = createHttpBattleRunLauncher({ engineUrl: "http://127.0.0.1:1", sharedSecret: "s", db: h.db });
+    const result = await launcher.launch({ ...sampleInput([bot, bot]), mode: "__proto__" });
+
+    expect(result.status).toBe("failed");
+    expect(result.errorCode).toBe("ruleset_unresolvable");
+  });
 });
 
 describe("B6 · replayIngestEnvConfig", () => {
@@ -410,7 +644,13 @@ describe("B6 · createHttpBattleRunLauncher: ingesta del replay real en el repla
   it("sin replayServiceUrl configurado: comportamiento IDÉNTICO a B2 (ingested:false, sin verify_matches)", async () => {
     const engine = await startFakeEngine(() => ({
       status: 200,
-      body: { result: { ticks: 10 }, replay: { header: { formatVersion: 1 } }, postures: {} },
+      // B9 · la cabecera lleva el mapa que se pidió jugar (como hace el motor real):
+      // sin él, la guarda de identidad de mapa rechaza la batalla (test siguiente).
+      body: {
+        result: { ticks: 10 },
+        replay: { header: { formatVersion: 1, map: expectedEngineMap("mvp-arena-01.json") } },
+        postures: {},
+      },
     }));
     closeEngine = engine.close;
     const bot = await seedSignedBot("bot_b6_sin_replayservice");
@@ -418,6 +658,19 @@ describe("B6 · createHttpBattleRunLauncher: ingesta del replay real en el repla
     const result = await launcher.launch(sampleInput([bot, bot]));
     expect(result.status).toBe("completed");
     expect(result.replay).toEqual({ ingested: false, battleId: expect.any(String) });
+  });
+
+  it("B9 · 200 con cabecera de replay SIN mapa → failed: no se puede confirmar en qué mapa se jugó, así que no se da por buena", async () => {
+    const engine = await startFakeEngine(() => ({
+      status: 200,
+      body: { result: { ticks: 10 }, replay: { header: { formatVersion: 1 } }, postures: {} },
+    }));
+    closeEngine = engine.close;
+    const bot = await seedSignedBot("bot_b9_header_sin_mapa");
+    const launcher = createHttpBattleRunLauncher({ engineUrl: engine.url, sharedSecret: "s", db: h.db });
+    const result = await launcher.launch(sampleInput([bot, bot]));
+    expect(result.status).toBe("failed");
+    expect(result.errorCode).toBe("map_identity_mismatch");
   });
 
   it("replay REAL que verifica → se ingesta en el replay-service (POST con el JSONL correcto) y se refleja ingested:true, verify_matches:true", async () => {

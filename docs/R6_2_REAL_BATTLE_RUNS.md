@@ -91,31 +91,45 @@ API --HTTP(red platform)--> arena-engine --HTTP--> s9-docker-proxy --> bots (red
   a B1 (503 en ambos extremos). `S9_ENABLE_REAL_BATTLE_RUNS` sigue sin encenderse en ningún
   fichero de configuración.
 
-**Mapa — REQUISITO PENDIENTE, falla cerrado en vez de sustituir en silencio.** arena-engine
-(contrato R6.2) solo entiende mapas-fixture (`"empty"|"mvp"|"ctf"`,
-`apps/arena-engine/src/fixtures.ts`), no el catálogo real de mapas de la API. El launcher
-(`battle-run-http-launcher.ts::FIXTURE_MAP_EQUIVALENTS`) mantiene una allowlist EXPLÍCITA de
-qué `mapId`+`mapVersion` real tiene fixture equivalente; **hoy solo `mvp-arena-01` v1** (el
-fixture `mvpArena()` usa el mismo `mapId`/`version` que el mapa publicado por el seed real).
-Cualquier otro mapa se **rechaza** (`status: "failed"`, sin llegar a llamar a arena-engine) en
-vez de jugarse con el fixture "mvp" por defecto: sustituir el mapa en silencio habría hecho
-que alguien eligiera un mapa en la UI y se jugara otro sin enterarse — un fallo de integridad
-que invalidaría la evidencia de una batalla (bloque B4), no un detalle cosmético. Soportar
-mapas reales arbitrarios (que la batalla juegue la geometría real de cualquier mapa publicado,
-no solo esta única equivalencia) es un **requisito pendiente**, fuera de alcance de B2: exige
-que arena-engine acepte geometría de mapa en el cuerpo de `/run` en vez de un nombre de
-fixture fijo. Nota aparte: incluso para `mvp-arena-01` v1, el fixture está marcado
-"PROVISIONAL POR DISEÑO" en su propio fichero — su geometría puede no ser bit-a-bit idéntica
-al JSON importado de Tiled hasta que E4 lo sustituya; es la mejor equivalencia disponible hoy,
-no una garantía de fidelidad geométrica total.
+**Mapa — B9: CUALQUIER MAPA PUBLICADO DEL CATÁLOGO, RESUELTO DE VERDAD.** (Hasta B9: el
+launcher solo admitía `mvp-arena-01` v1 vía la allowlist `FIXTURE_MAP_EQUIVALENTS`, que
+traducía ese único mapId a un mapa-fixture del motor; todo lo demás se rechazaba. Rechazar
+era correcto —mejor eso que jugar otro mapa en silencio— pero el catálogo real de mapas del
+proyecto no se usaba, y ni siquiera `mvp-arena-01` se jugaba con su geometría real, sino con
+la fixture "PROVISIONAL POR DISEÑO".)
 
-**Otros límites conocidos de esta traducción, documentados y NO resueltos en B2** (no son
-huecos de seguridad; son fidelidad de simulación pendiente): `rulesetId` se pasa tal cual
-desde `battle.mode` (sin resolver contra el catálogo real de rulesets); `ticks` es un techo
-fijo configurable, no derivado del ruleset; la respuesta no ingiere en replay-service
-(`replay.ingested` queda `false` siempre). Nada de esto se ha probado contra Docker real — ver
-el informe de entrega del bloque B2 para el detalle de qué se verificó con fakes y qué queda
-pendiente de VM108.
+Cadena de B9: `map_versions` (fila `published`, contenido `InternalMap` de E1/E4) →
+`toEngineMap()` (apps/map-service) → `ArenaMap` → campo **`map`** del cuerpo de `POST /run`
+(`apps/api/src/services/battle-map-resolver.ts`). arena-engine valida ese mapa entero como
+entrada externa (`apps/arena-engine/src/arena-map.ts::validateArenaMap`) antes de tocar el
+motor; `map` y `mapName` (fixture) son **excluyentes**.
+
+El invariante no cambia, se refuerza — **fail closed y con código distinguible** en
+`BattleRunResult.errorCode`: `map_not_published` (no existe esa versión EXACTA publicada;
+nunca se coge "la última"), `map_content_mismatch` (fila y documento divergen),
+`map_checksum_mismatch` (el checksum canónico del documento no cuadra con su contenido:
+se manipuló tras publicarse), `map_invalid` (no pasa el validador REAL de E4),
+`map_unplayable` (no es jugable para el motor), y `map_identity_mismatch` — **al volver**, el
+mapa de la cabecera del replay debe ser exactamente el pedido (mapId+versión+checksum); si el
+motor jugó otro mapa, la batalla es `failed` y el replay NO se ingesta.
+
+**Ruleset/ticks — B9: resueltos (y arreglado un bug real).** Hasta B9 el launcher enviaba
+`rulesetId: battle.mode` (`"deathmatch"`), que **no es** un ruleset del motor
+(`dm_practice@1`, `tdm_mvp@1`...): `loadRuleset()` lanzaba dentro de `runContainerBattle` y
+toda batalla real lanzada desde la API acababa en un 502 `battle_failed` genérico. Ahora
+`apps/api/src/services/battle-ruleset-resolver.ts` traduce modo (+ `rulesets.config.engineRulesetId`
+si la fila de BD lo declara) → ruleset REAL del motor, exigiendo que el modo coincida
+(`ruleset_mode_mismatch` si no), y `ticks` sale de `ruleset.timeLimitTicks` en vez de un
+20000 fijo. arena-engine, además, rechaza con **400** un `rulesetId` que no esté en su
+catálogo, en vez de dejarlo explotar a mitad de batalla.
+
+**Límites que siguen abiertos tras B9** (no son huecos de seguridad; son fidelidad y alcance):
+`meta.supportedModes` del mapa NO se comprueba contra el modo de la batalla (el seed publica
+`mvp-arena-01` con `["capture_the_flag","team_deathmatch"]` y las batallas de práctica se
+crean en `deathmatch`: activarlo hoy rompería el camino que funciona); `budget_credits`/
+`forbidden_categories` de la fila de `rulesets` de la BD siguen sin aplicarse al ruleset del
+motor; y nada de esto se ha probado contra Docker real — ver el informe de entrega del bloque
+correspondiente para qué se verificó con fakes y qué queda pendiente de VM108.
 
 ## Validación operativa en VM108 (gateada, NO en este PR)
 
@@ -126,9 +140,9 @@ Para pasar a **R6.2/R9-A** falta, sobre lo que ya cablea B2:
    hoy; encenderlos es una decisión de despliegue, no de este bloque).
 3. Crear una batalla en `#/battles/new` con bots firmados + mapa publicado → **Ejecutar batalla real**.
 4. Verificar: 2 contenedores reales, batalla termina, replay ingerido (`GET /replays`), 7/7 núcleo sano.
-5. Resolver los límites de traducción listados arriba: mapas reales arbitrarios (hoy solo
-   mvp-arena-01 v1 tiene equivalente y todo lo demás se rechaza en vez de sustituirse),
-   ruleset real, ingesta de replay.
+5. Resolver los límites de traducción listados arriba. Mapas reales arbitrarios, ruleset real
+   e ingesta de replay YA están resueltos (B6/B9) en el repo; falta validarlos en VM108 con
+   una batalla real sobre un mapa del catálogo distinto de mvp-arena-01.
 Solo entonces: **R6.2/R9-A**.
 
 **Dictamen: R6.2/R9-B** — UI y endpoint preparados y seguros; B2 cablea el transporte
