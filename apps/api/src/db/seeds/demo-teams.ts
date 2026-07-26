@@ -15,6 +15,39 @@
  *    hubiera quedado a medias (un bot sin loadout o sin versión).
  *  - Lee TODOS los fuentes antes de escribir en la BD: si falta un fichero,
  *    falla sin dejar equipos ni bots a medias.
+ *
+ * B5 — reparación de bots con la ÚLTIMA versión en estado inservible:
+ * `rejected` (y, por el mismo motivo, `suspended`/`retired`) no tienen NINGUNA
+ * transición de vuelta a un estado con el que se pueda seguir trabajando
+ * (`TRANSITIONS` en services/bots.ts: nada transiciona DESDE `suspended` ni
+ * `retired`; `rejected` solo permite reintentar el MISMO código con `submit`,
+ * lo cual no ayuda si lo que falló fue el propio código —como pasó con el
+ * Artillero en B3—, o si se prefiere no reintentar a ciegas). Antes, si el
+ * bot ya tenía alguna versión, la función no hacía nada, así que un bot
+ * `rejected` quedaba inservible para siempre. Ahora, si la ÚLTIMA versión
+ * (la de número más alto) está en uno de esos estados terminales, se crea la
+ * siguiente versión (`version = max + 1`) en `draft` con el código ACTUAL del
+ * repo, sin tocar ni borrar la versión vieja (historial inmutable) y sin
+ * saltarse la sandbox (nace en `draft`, como la v1).
+ *
+ * `draft`, `validating`, `validated`, `published` NO se tocan: son estados
+ * "en curso" dentro del pipeline o del ciclo de vida normal de un bot, y
+ * crear una versión nueva por debajo sin que nadie lo pida sería sorprendente
+ * (además de romper la idempotencia: cada ejecución del seed encontraría una
+ * versión "distinta" y seguiría añadiendo versiones). `frozen` tampoco se
+ * toca: es un bot publicado y bloqueado a propósito por un torneo en curso
+ * (E9), no uno inservible.
+ *
+ * ¿Y si el código del repo cambió pero la última versión SIGUE en un estado
+ * "en curso" (p.ej. `draft` o `published`)? A propósito, NO se crea versión
+ * nueva solo por eso. Esta función es un seed/reparador idempotente, no un
+ * sincronizador de código: una vez que una versión existe y está viva en el
+ * pipeline (o publicada), su ciclo de vida lo controla el pipeline/el dueño
+ * del bot, no una re-ejecución de este script. Lo contrario abriría una
+ * clase de fallo nueva: cada cambio en example-bots/ o en el Artillero
+ * derivado crearía versiones fantasma en cualquier entorno donde se
+ * reejecute el seed. Ver el test "no crea versión nueva solo porque el
+ * código del repo cambió si la última versión sigue siendo utilizable".
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -114,6 +147,14 @@ const ROSTER: BotSpec[] = [
   },
 ];
 
+/**
+ * Estados de `bot_versions` "en curso": si la ÚLTIMA versión de un bot está en
+ * uno de estos, no se toca (ver comentario B5 arriba). Cualquier otro estado
+ * alcanzable en la práctica (`rejected`, `suspended`, `retired`) se considera
+ * inservible y dispara la creación de la siguiente versión.
+ */
+const WORKABLE_STATES = new Set(["draft", "validating", "validated", "published", "frozen"]);
+
 export interface DemoTeamsResult {
   teams: { name: string; created: boolean }[];
   bots: { name: string; team: string; created: boolean }[];
@@ -199,15 +240,24 @@ async function upsertBot(
   const { botName, teamId, ownerId, teamName, spec, source, result } = args;
 
   const existing = await db("bots").where({ owner_id: ownerId, name: botName }).first();
-  // Un bot ya completo no se toca. Uno a medias (sin loadout o sin versión, p.ej.
-  // porque una ejecución anterior se interrumpió) se completa aquí.
+  // Un bot ya completo no se toca... salvo que su última versión esté en un
+  // estado inservible (B5, ver comentario de cabecera): entonces se le añade
+  // la siguiente versión en vez de dejarlo bloqueado para siempre. Uno a
+  // medias (sin loadout o sin versión, p.ej. porque una ejecución anterior se
+  // interrumpió) se completa aquí.
   if (existing) {
-    const versions = await db("bot_versions").where({ bot_id: existing.id });
-    if (versions.length > 0) {
+    const versions = await db("bot_versions").where({ bot_id: existing.id }).orderBy("version", "desc");
+    if (versions.length === 0) {
+      await ensureLoadoutAndVersion(db, existing.id, spec, source, 1);
+      result.bots.push({ name: botName, team: teamName, created: true });
+      return;
+    }
+    const latest = versions[0];
+    if (WORKABLE_STATES.has(latest.state)) {
       result.bots.push({ name: botName, team: teamName, created: false });
       return;
     }
-    await ensureLoadoutAndVersion(db, existing.id, spec, source);
+    await ensureLoadoutAndVersion(db, existing.id, spec, source, latest.version + 1);
     result.bots.push({ name: botName, team: teamName, created: true });
     return;
   }
@@ -216,11 +266,17 @@ async function upsertBot(
     .insert({ name: botName, owner_id: ownerId, team_id: teamId, visibility: "team" })
     .returning("*");
 
-  await ensureLoadoutAndVersion(db, bot.id, spec, source);
+  await ensureLoadoutAndVersion(db, bot.id, spec, source, 1);
   result.bots.push({ name: botName, team: teamName, created: true });
 }
 
-async function ensureLoadoutAndVersion(db: Db, botId: string, spec: BotSpec, source: Buffer): Promise<void> {
+async function ensureLoadoutAndVersion(
+  db: Db,
+  botId: string,
+  spec: BotSpec,
+  source: Buffer,
+  version: number,
+): Promise<void> {
   // El loadout se valida con el MISMO validador que usa la API: si el catálogo
   // cambiara y el arquetipo dejara de ser legal, esto falla en vez de guardar
   // un loadout inválido.
@@ -244,7 +300,7 @@ async function ensureLoadoutAndVersion(db: Db, botId: string, spec: BotSpec, sou
 
   await db("bot_versions").insert({
     bot_id: botId,
-    version: 1,
+    version,
     state: "draft",
     runtime: spec.runtime,
     loadout_revision: loadout.revision,

@@ -109,3 +109,112 @@ describe("seedDemoTeams", () => {
     expect((await h.db("bots").where({ team_id: team.id })).length).toBe(3);
   });
 });
+
+describe("seedDemoTeams · B5 (versión inservible: rejected/suspended/retired)", () => {
+  it("bot con última versión 'rejected' → crea la v2 en draft, y la v1 queda intacta", async () => {
+    const bot = await h.db("bots").where({ name: "Equipo Rojo · Explorador" }).first();
+    const [v1] = await h.db("bot_versions").where({ bot_id: bot.id });
+    await h.db("bot_versions").where({ id: v1.id }).update({ state: "rejected" });
+
+    const loadoutsAntes = await count("bot_loadouts");
+    const r = await seedDemoTeams(h.db, OWNER, ["Equipo Rojo"]);
+
+    const versions = await h.db("bot_versions").where({ bot_id: bot.id }).orderBy("version", "asc");
+    expect(versions).toHaveLength(2);
+    expect(versions[0].version).toBe(1);
+    expect(versions[0].state).toBe("rejected"); // la vieja NO se toca ni se borra
+    expect(versions[0].id).toBe(v1.id);
+    expect(versions[1].version).toBe(2);
+    expect(versions[1].state).toBe("draft");
+    expect(versions[1].source.length).toBeGreaterThan(500);
+
+    // No duplica la revisión de loadout: la reutiliza.
+    expect(await count("bot_loadouts")).toBe(loadoutsAntes);
+    const bots = r.bots.filter((b) => b.name === "Equipo Rojo · Explorador");
+    expect(bots).toEqual([{ name: "Equipo Rojo · Explorador", team: "Equipo Rojo", created: true }]);
+  });
+
+  it("bot con última versión 'draft' → NO se toca (estado utilizable)", async () => {
+    const bot = await h.db("bots").where({ name: "Equipo Rojo · Defensor" }).first();
+    const antes = await h.db("bot_versions").where({ bot_id: bot.id });
+    expect(antes).toHaveLength(1);
+    expect(antes[0].state).toBe("draft");
+
+    await seedDemoTeams(h.db, OWNER, ["Equipo Rojo"]);
+
+    const despues = await h.db("bot_versions").where({ bot_id: bot.id });
+    expect(despues).toHaveLength(1);
+    expect(despues[0].id).toBe(antes[0].id);
+  });
+
+  it("bot con última versión 'published' → NO se toca", async () => {
+    const bot = await h.db("bots").where({ name: "Equipo Rojo · Artillero" }).first();
+    const [v1] = await h.db("bot_versions").where({ bot_id: bot.id });
+    await h.db("bot_versions").where({ id: v1.id }).update({ state: "published" });
+
+    await seedDemoTeams(h.db, OWNER, ["Equipo Rojo"]);
+
+    const versions = await h.db("bot_versions").where({ bot_id: bot.id });
+    expect(versions).toHaveLength(1);
+    expect(versions[0].state).toBe("published");
+  });
+
+  it("bot con última versión 'suspended' → se trata igual que 'rejected': crea v2 en draft", async () => {
+    const bot = await h.db("bots").where({ name: "Equipo Rojo · Explorador" }).first();
+    const [v1] = await h.db("bot_versions").where({ bot_id: bot.id });
+    await h.db("bot_versions").where({ id: v1.id }).update({ state: "suspended" });
+
+    await seedDemoTeams(h.db, OWNER, ["Equipo Rojo"]);
+
+    const versions = await h.db("bot_versions").where({ bot_id: bot.id }).orderBy("version", "asc");
+    expect(versions).toHaveLength(2);
+    expect(versions[0].state).toBe("suspended");
+    expect(versions[1].state).toBe("draft");
+  });
+
+  it("bot con última versión 'retired' → se trata igual que 'rejected': crea v2 en draft", async () => {
+    const bot = await h.db("bots").where({ name: "Equipo Rojo · Defensor" }).first();
+    const [v1] = await h.db("bot_versions").where({ bot_id: bot.id });
+    await h.db("bot_versions").where({ id: v1.id }).update({ state: "retired" });
+
+    await seedDemoTeams(h.db, OWNER, ["Equipo Rojo"]);
+
+    const versions = await h.db("bot_versions").where({ bot_id: bot.id }).orderBy("version", "asc");
+    expect(versions).toHaveLength(2);
+    expect(versions[0].state).toBe("retired");
+    expect(versions[1].state).toBe("draft");
+  });
+
+  it("idempotente tras reparar: repetirlo con la v2 ya en draft no crea una v3", async () => {
+    const bot = await h.db("bots").where({ name: "Equipo Rojo · Artillero" }).first();
+    const [v1] = await h.db("bot_versions").where({ bot_id: bot.id });
+    await h.db("bot_versions").where({ id: v1.id }).update({ state: "rejected" });
+
+    await seedDemoTeams(h.db, OWNER, ["Equipo Rojo"]);
+    expect(await h.db("bot_versions").where({ bot_id: bot.id })).toHaveLength(2);
+
+    const r = await seedDemoTeams(h.db, OWNER, ["Equipo Rojo"]);
+    expect(await h.db("bot_versions").where({ bot_id: bot.id })).toHaveLength(2);
+    const entry = r.bots.find((b) => b.name === "Equipo Rojo · Artillero");
+    expect(entry?.created).toBe(false);
+  });
+
+  it("no crea versión nueva solo porque el código del repo cambió si la última versión sigue siendo utilizable", async () => {
+    // Simula deriva: la versión draft existente tiene un código distinto al
+    // que produciría el repo hoy. La decisión (documentada en demo-teams.ts)
+    // es NO crear una versión nueva por esto: solo el ESTADO dispara la
+    // reparación, nunca una comparación de contenido de código.
+    const bot = await h.db("bots").where({ name: "Equipo Azul · Explorador" }).first();
+    const [v1] = await h.db("bot_versions").where({ bot_id: bot.id });
+    expect(v1.state).toBe("draft");
+    const codigoViejo = Buffer.from("# código antiguo, ya no coincide con el repo\n");
+    await h.db("bot_versions").where({ id: v1.id }).update({ source: codigoViejo });
+
+    await seedDemoTeams(h.db, OWNER, ["Equipo Azul"]);
+
+    const versions = await h.db("bot_versions").where({ bot_id: bot.id });
+    expect(versions).toHaveLength(1);
+    expect(versions[0].id).toBe(v1.id);
+    expect(Buffer.from(versions[0].source).equals(codigoViejo)).toBe(true);
+  });
+});
