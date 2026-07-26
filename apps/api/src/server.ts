@@ -4,7 +4,11 @@ import { createDb } from "./db/connection.js";
 import { createApp } from "./app.js";
 import { resolveTrustProxyHops } from "./middleware/proxy-trust.js";
 import { battleRunConfigFromEnv } from "./battle-run.js";
-import { createHttpBattleRunLauncher, httpBattleRunLauncherEnvConfig } from "./services/battle-run-http-launcher.js";
+import {
+  createHttpBattleRunLauncher,
+  httpBattleRunLauncherEnvConfig,
+  replayIngestEnvConfig,
+} from "./services/battle-run-http-launcher.js";
 
 const db = createDb();
 const port = Number(process.env.PORT ?? 8080);
@@ -18,9 +22,12 @@ const trustProxyHops = resolveTrustProxyHops();
 // (fail closed); `S9_ENABLE_REAL_BATTLE_RUNS` sigue resolviéndose aparte y
 // apagada por defecto — cablear el runner no la enciende.
 const launcherEnvCfg = httpBattleRunLauncherEnvConfig();
+// B6 · ingesta del replay real en el replay-service (ver la nota de cabecera de
+// battle-run-http-launcher.ts). Sin REPLAY_SERVICE_URL, no cambia nada de B2.
+const replayIngestCfg = replayIngestEnvConfig();
 const realBattleRuns = {
   ...battleRunConfigFromEnv(),
-  runner: launcherEnvCfg ? createHttpBattleRunLauncher({ ...launcherEnvCfg, db }) : undefined,
+  runner: launcherEnvCfg ? createHttpBattleRunLauncher({ ...launcherEnvCfg, ...replayIngestCfg, db }) : undefined,
 };
 
 // /healthz va en un Express envolvente, NO en createApp(): el test de
