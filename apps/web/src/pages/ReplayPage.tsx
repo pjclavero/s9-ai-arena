@@ -14,6 +14,23 @@ import type { CameraMode } from "../viewer/camera.js";
 /** Prefetch del trozo N+1 fuera del RAF, a 2 Hz: la red nunca está en el frame. */
 const PREFETCH_INTERVAL_MS = 500;
 
+/**
+ * B6 (hallazgo del supervisor, demostrado en vivo) · Base del replay-service tras
+ * el gateway. El gateway (`infrastructure/gateway/nginx.conf` y
+ * `nginx-behind-proxy.conf`) define `location /replays/` → proxy directo a
+ * `replay-service:8083` — NUNCA ha existido una ruta `/replay-service/` en ningún
+ * sitio del gateway. Esta página usaba `/replay-service` (prefijo inexistente):
+ * la petición caía en el `location /` genérico del gateway y volvía el SPA en vez
+ * del índice del replay, así que el visor NUNCA pudo leer un replay ingerido, por
+ * correcta que fuera la ingesta. `ReplaysPage.tsx` (el listado, un fichero al lado
+ * de este) ya usaba el prefijo CORRECTO (`fetch("/replays")`) — es la misma base
+ * que corresponde aquí. Se corrige aquí, en el cliente (no añadiendo una ruta
+ * `/replay-service/` nueva al gateway): `/replays/` ya existe, ya funciona para
+ * el listado, y añadir una segunda ruta redundante al mismo servicio solo
+ * duplicaría superficie de configuración sin necesidad.
+ */
+export const REPLAY_SERVICE_GATEWAY_BASE = "/replays";
+
 const SPEEDS = [0.5, 1, 2, 4, 8];
 
 export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; initialTick?: number }) {
@@ -46,8 +63,9 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
       const scene = (game as any).scene.getScene("viewer") as InstanceType<typeof ViewerScene>;
       sceneRef.current = scene;
 
-      // El gateway (E10) enruta /replay-service/* al servicio interno.
-      const player = new ReplayPlayer(httpReplaySource("/replay-service", battleId));
+      // El gateway (E10) enruta /replays/* al replay-service (ver la nota de
+      // REPLAY_SERVICE_GATEWAY_BASE más arriba).
+      const player = new ReplayPlayer(httpReplaySource(REPLAY_SERVICE_GATEWAY_BASE, battleId));
       playerRef.current = player;
       try {
         await player.init(initialTick);
