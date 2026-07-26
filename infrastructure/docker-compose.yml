@@ -146,6 +146,16 @@ services:
       ARENA_ENGINE_URL: ${ARENA_ENGINE_URL:-http://arena-engine:8081}
       ARENA_ENGINE_SHARED_SECRET_FILE: /run/secrets/arena_engine_internal_secret
       S9_ENABLE_REAL_BATTLE_RUNS: ${S9_ENABLE_REAL_BATTLE_RUNS:-}
+      # B6 · ingesta del replay REAL de una batalla containerizada en el
+      # replay-service, para que quede visible en el visor web (que habla con
+      # el replay-service vía el gateway, no con esta API). api y replay-service
+      # ya comparten la red `platform` (ver el bloque replay-service más abajo);
+      # no hace falta volumen ni red nuevos, solo esta URL interna. Opt-in: sin
+      # ella, el comportamiento es igual que antes de B6 (replay.ingested: false
+      # siempre). REPLAY_INGEST_REQUIRED en blanco = best-effort (por defecto):
+      # un fallo de ingesta no tumba la batalla, solo se reporta honestamente.
+      REPLAY_SERVICE_URL: ${REPLAY_SERVICE_URL:-http://replay-service:8083}
+      REPLAY_INGEST_REQUIRED: ${REPLAY_INGEST_REQUIRED:-}
     secrets: [postgres_password, jwt_secret, arena_engine_internal_secret]
     depends_on:
       queue:

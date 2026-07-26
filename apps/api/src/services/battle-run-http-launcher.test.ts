@@ -13,8 +13,16 @@ import type { AddressInfo } from "node:net";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { startTestDb, type TestDbHandle } from "../testing/test-db.js";
 import { DEV_USERS, seedDev } from "../db/seeds/dev.js";
-import { createHttpBattleRunLauncher, httpBattleRunLauncherEnvConfig } from "./battle-run-http-launcher.js";
+import {
+  createHttpBattleRunLauncher,
+  httpBattleRunLauncherEnvConfig,
+  replayIngestEnvConfig,
+} from "./battle-run-http-launcher.js";
 import type { BattleRunInput } from "../battle-run.js";
+import { initPhysics } from "../../../arena-engine/src/sim/physics.js";
+import { record, toJsonl, type Replay } from "../../../arena-engine/src/replay.js";
+import { emptyArena, gunnerLoadout, scoutLoadout } from "../../../arena-engine/src/fixtures.js";
+import { HunterBot } from "../../../arena-engine/src/stubs.js";
 
 let h: TestDbHandle;
 let adminId: string;
@@ -26,6 +34,9 @@ beforeAll(async () => {
   await seedDev(h.db);
   adminId = (await h.db("users").where({ email: DEV_USERS.admin }).first()).id;
   catalogVersion = (await h.db("catalog_versions").first()).catalog_version;
+  // B6 · las pruebas de ingesta del replay usan batallas REALES (`record()`, motor
+  // de E2): initPhysics() es requisito de Battle.create para el runtime WASM.
+  await initPhysics();
 }, 120000);
 afterAll(async () => {
   await h.stop();
@@ -96,6 +107,61 @@ afterEach(async () => {
   await closeEngine?.();
   closeEngine = undefined;
 });
+
+/**
+ * B6 · Batalla REAL corta grabada con el motor (misma técnica que
+ * apps/replay-service/tests/replay-service.test.ts): un replay sintético no
+ * encontraría bugs de verify()/serialización — este SÍ es el objeto real que
+ * arena-engine devolvería en `ContainerBattleOutcome.replay`.
+ */
+async function recordRealReplay(battleId: string): Promise<Replay> {
+  return record(
+    {
+      battleId,
+      seed: battleId,
+      ruleset: (await import("../../../../packages/game-rules/index.js")).loadRuleset("dm_practice@1", {
+        timeLimitTicks: 60,
+      }),
+      map: emptyArena(),
+      participants: [
+        { id: "v_red", botId: "bot_red", team: "red", spec: gunnerLoadout() },
+        { id: "v_blue", botId: "bot_blue", team: "blue", spec: scoutLoadout() },
+      ],
+    },
+    (b) => {
+      b.attachBot("v_red", new HunterBot("bot_red"));
+      b.attachBot("v_blue", new HunterBot("bot_blue"));
+    },
+  );
+}
+
+/** B6 · Servidor HTTP fake que hace de replay-service: solo entiende POST /replays/:id. */
+function startFakeReplayService(handler: (battleId: string, ndjson: string) => { status: number; body: unknown }) {
+  const received: { battleId: string; ndjson: string }[] = [];
+  const server = http.createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => {
+      const m = /^\/replays\/([^/?]+)/.exec(req.url ?? "");
+      const battleId = m ? decodeURIComponent(m[1]) : "";
+      const ndjson = Buffer.concat(chunks).toString("utf8");
+      received.push({ battleId, ndjson });
+      const { status, body } = handler(battleId, ndjson);
+      res.writeHead(status, { "content-type": "application/json" });
+      res.end(JSON.stringify(body));
+    });
+  });
+  return new Promise<{ url: string; received: typeof received; close: () => Promise<void> }>((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address() as AddressInfo;
+      resolve({
+        url: `http://127.0.0.1:${port}`,
+        received,
+        close: () => new Promise((r) => server.close(() => r())),
+      });
+    });
+  });
+}
 
 describe("B2 · httpBattleRunLauncherEnvConfig", () => {
   it("null si falta ARENA_ENGINE_URL o el secreto (ninguno de los dos por separado basta)", () => {
@@ -304,4 +370,313 @@ describe("B2 · fidelidad del mapa: hallazgo del supervisor (indexación de obje
       expect(result.error).toContain("mapVersion");
     },
   );
+});
+
+describe("B6 · replayIngestEnvConfig", () => {
+  it("sin REPLAY_SERVICE_URL: ingesta desactivada, best-effort por defecto", () => {
+    expect(replayIngestEnvConfig({})).toEqual({ replayIngestRequired: false, replayIngestTimeoutMs: 10000 });
+  });
+
+  it("con REPLAY_SERVICE_URL y REPLAY_INGEST_REQUIRED=1: ingesta activa y estricta", () => {
+    expect(
+      replayIngestEnvConfig({
+        REPLAY_SERVICE_URL: "http://replay-service:8083",
+        REPLAY_INGEST_REQUIRED: "1",
+        REPLAY_INGEST_TIMEOUT_MS: "5000",
+      }),
+    ).toEqual({
+      replayServiceUrl: "http://replay-service:8083",
+      replayIngestRequired: true,
+      replayIngestTimeoutMs: 5000,
+    });
+  });
+});
+
+describe("B6 · createHttpBattleRunLauncher: ingesta del replay real en el replay-service", () => {
+  let closeReplayService: (() => Promise<void>) | undefined;
+  afterEach(async () => {
+    await closeReplayService?.();
+    closeReplayService = undefined;
+  });
+
+  it("sin replayServiceUrl configurado: comportamiento IDÉNTICO a B2 (ingested:false, sin verify_matches)", async () => {
+    const engine = await startFakeEngine(() => ({
+      status: 200,
+      body: { result: { ticks: 10 }, replay: { header: { formatVersion: 1 } }, postures: {} },
+    }));
+    closeEngine = engine.close;
+    const bot = await seedSignedBot("bot_b6_sin_replayservice");
+    const launcher = createHttpBattleRunLauncher({ engineUrl: engine.url, sharedSecret: "s", db: h.db });
+    const result = await launcher.launch(sampleInput([bot, bot]));
+    expect(result.status).toBe("completed");
+    expect(result.replay).toEqual({ ingested: false, battleId: expect.any(String) });
+  });
+
+  it("replay REAL que verifica → se ingesta en el replay-service (POST con el JSONL correcto) y se refleja ingested:true, verify_matches:true", async () => {
+    const battleId = "battle_" + randomUUID();
+    const realReplay = await recordRealReplay(battleId);
+    const engine = await startFakeEngine(() => ({
+      status: 200,
+      body: { result: realReplay.result, replay: realReplay, postures: {} },
+    }));
+    closeEngine = engine.close;
+
+    const rs = await startFakeReplayService((receivedBattleId) => {
+      expect(receivedBattleId).toBe(battleId);
+      return {
+        status: 201,
+        body: { battleId: receivedBattleId, sha256: "deadbeef", path: "/data/replays/x", official: false },
+      };
+    });
+    closeReplayService = rs.close;
+
+    const bot = await seedSignedBot("bot_b6_verifica_ok");
+    const launcher = createHttpBattleRunLauncher({
+      engineUrl: engine.url,
+      sharedSecret: "s",
+      db: h.db,
+      replayServiceUrl: rs.url,
+    });
+    const result = await launcher.launch({ ...sampleInput([bot, bot]), battleId });
+
+    expect(result.status).toBe("completed");
+    expect(result.replay).toEqual({ ingested: true, battleId, verify_matches: true });
+    expect(rs.received).toHaveLength(1);
+    expect(rs.received[0].ndjson).toBe(toJsonl(realReplay));
+  });
+
+  it("ATAQUE DEL SUPERVISOR 1 — IDENTIDAD: un replay REAL, legítimo y perfectamente verificable, pero grabado para OTRA batalla, se rechaza SIN verificar ni ingestar", async () => {
+    const requestedBattleId = "battle_" + randomUUID();
+    // arena-engine (por un bug de caché, o comprometido) devuelve un replay real de
+    // una batalla DISTINTA a la que se pidió lanzar — mismo escenario que demostró
+    // el supervisor en vivo.
+    const otherBattleReplay = await recordRealReplay("bat_sup_other_battle_entirely");
+    const engine = await startFakeEngine(() => ({
+      status: 200,
+      body: { result: otherBattleReplay.result, replay: otherBattleReplay, postures: {} },
+    }));
+    closeEngine = engine.close;
+
+    let replayServiceCalled = false;
+    const rs = await startFakeReplayService(() => {
+      replayServiceCalled = true;
+      return { status: 201, body: {} };
+    });
+    closeReplayService = rs.close;
+
+    const bot = await seedSignedBot("bot_b6_ataque_identidad");
+    const launcher = createHttpBattleRunLauncher({
+      engineUrl: engine.url,
+      sharedSecret: "s",
+      db: h.db,
+      replayServiceUrl: rs.url,
+    });
+    const result = await launcher.launch({ ...sampleInput([bot, bot]), battleId: requestedBattleId });
+
+    expect(result.status).toBe("completed");
+    // NUNCA se presenta como ingerido bajo el id solicitado, aunque el replay en sí
+    // sea legítimo y verificable — es de OTRA batalla.
+    expect(result.replay).toEqual({ ingested: false, battleId: requestedBattleId, verify_matches: false });
+    expect(replayServiceCalled).toBe(false);
+  });
+
+  it("modo estricto + replay de otra batalla → status failed (nunca se cuela bajo un id que no es el suyo)", async () => {
+    const requestedBattleId = "battle_" + randomUUID();
+    const otherBattleReplay = await recordRealReplay("bat_sup_other_battle_strict");
+    const engine = await startFakeEngine(() => ({
+      status: 200,
+      body: { result: otherBattleReplay.result, replay: otherBattleReplay, postures: {} },
+    }));
+    closeEngine = engine.close;
+    const rs = await startFakeReplayService(() => ({ status: 201, body: {} }));
+    closeReplayService = rs.close;
+
+    const bot = await seedSignedBot("bot_b6_ataque_identidad_strict");
+    const launcher = createHttpBattleRunLauncher({
+      engineUrl: engine.url,
+      sharedSecret: "s",
+      db: h.db,
+      replayServiceUrl: rs.url,
+      replayIngestRequired: true,
+    });
+    const result = await launcher.launch({ ...sampleInput([bot, bot]), battleId: requestedBattleId });
+
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("REPLAY_INGEST_REQUIRED");
+    expect(rs.received).toHaveLength(0);
+  });
+
+  it("ATAQUE DEL SUPERVISOR 2 — EVENTOS/SNAPSHOTS FALSIFICADOS: comandos y hashes intactos (verify() clásico diría matches:true), pero events/snapshots inventados NUNCA llegan al replay-service — se sustituyen por los recomputados", async () => {
+    const battleId = "battle_" + randomUUID();
+    const realReplay = await recordRealReplay(battleId);
+    expect(realReplay.events.length + realReplay.snapshots.length).toBeGreaterThan(0);
+
+    // Exactamente el ataque que demostró el supervisor: inyecta un evento falso y
+    // sobrescribe TODOS los snapshots con posiciones inventadas, dejando `commands`
+    // y `stateHashes`/`result.finalStateHash` intactos — así el `verify()` clásico
+    // (que solo mira hashes) seguiría diciendo `matches: true`.
+    const fakeEvent = { kind: "sup_fake_kill", tick: 1, vehicleId: "veh_ataque_falso" };
+    const tamperedSnapshots = realReplay.snapshots.map((s: any) => ({
+      ...s,
+      vehicles: s.vehicles.map((v: any) => ({
+        ...v,
+        position: v.position ? { x: -999999, y: -999999 } : null,
+      })),
+    }));
+    const tampered: Replay = {
+      ...realReplay,
+      events: [...realReplay.events, fakeEvent],
+      snapshots: tamperedSnapshots,
+    };
+    // Comandos y hashes SIN TOCAR: el ataque solo falsifica lo que el visor pinta.
+    expect(tampered.commands).toEqual(realReplay.commands);
+    expect(tampered.stateHashes).toEqual(realReplay.stateHashes);
+    expect(tampered.result.finalStateHash).toBe(realReplay.result.finalStateHash);
+
+    const engine = await startFakeEngine(() => ({
+      status: 200,
+      body: { result: tampered.result, replay: tampered, postures: {} },
+    }));
+    closeEngine = engine.close;
+
+    const rs = await startFakeReplayService(() => ({ status: 201, body: {} }));
+    closeReplayService = rs.close;
+
+    const bot = await seedSignedBot("bot_b6_ataque_eventos");
+    const launcher = createHttpBattleRunLauncher({
+      engineUrl: engine.url,
+      sharedSecret: "s",
+      db: h.db,
+      replayServiceUrl: rs.url,
+    });
+    const result = await launcher.launch({ ...sampleInput([bot, bot]), battleId });
+
+    // La batalla EN SÍ es real y verifica (comandos+hashes intactos) → se ingesta.
+    expect(result.status).toBe("completed");
+    expect(result.replay).toEqual({ ingested: true, battleId, verify_matches: true });
+    expect(rs.received).toHaveLength(1);
+    // Pero lo que se envía al replay-service es la versión HONESTA (recomputada),
+    // NO la falsificada: nada del ataque llega a lo que el visor va a pintar.
+    expect(rs.received[0].ndjson).not.toContain("sup_fake_kill");
+    expect(rs.received[0].ndjson).not.toContain("-999999");
+    expect(rs.received[0].ndjson).toBe(toJsonl(realReplay));
+  });
+
+  it("MUTACIÓN DE INTEGRIDAD: un replay que NO verifica (finalStateHash manipulado) NUNCA se presenta como ingerido ni se envía al replay-service", async () => {
+    const battleId = "battle_" + randomUUID();
+    const realReplay = await recordRealReplay(battleId);
+    // Manipulación: el hash final oficial no coincide con lo que la re-simulación
+    // de verify() recomputa a partir de los mismos comandos — exactamente el
+    // escenario de un replay falsificado o corrupto.
+    const tampered: Replay = {
+      ...realReplay,
+      result: { ...realReplay.result, finalStateHash: "sha256:tamperedtamperedtamperedtamperedtampered" },
+    };
+    const engine = await startFakeEngine(() => ({
+      status: 200,
+      body: { result: tampered.result, replay: tampered, postures: {} },
+    }));
+    closeEngine = engine.close;
+
+    let replayServiceCalled = false;
+    const rs = await startFakeReplayService(() => {
+      replayServiceCalled = true;
+      return { status: 201, body: {} };
+    });
+    closeReplayService = rs.close;
+
+    const bot = await seedSignedBot("bot_b6_tampered");
+    const launcher = createHttpBattleRunLauncher({
+      engineUrl: engine.url,
+      sharedSecret: "s",
+      db: h.db,
+      replayServiceUrl: rs.url,
+    });
+    const result = await launcher.launch({ ...sampleInput([bot, bot]), battleId });
+
+    // Best-effort por defecto: la batalla en sí no se pierde...
+    expect(result.status).toBe("completed");
+    // ...pero el replay JAMÁS se presenta como válido ni ingerido.
+    expect(result.replay).toEqual({ ingested: false, battleId, verify_matches: false });
+    expect(replayServiceCalled).toBe(false);
+  });
+
+  it("modo estricto (replayIngestRequired) + replay que no verifica → status failed, NUNCA completed con una mentira", async () => {
+    const battleId = "battle_" + randomUUID();
+    const realReplay = await recordRealReplay(battleId);
+    const tampered: Replay = {
+      ...realReplay,
+      result: { ...realReplay.result, finalStateHash: "sha256:otrotamperedotrotamperedotrotampered" },
+    };
+    const engine = await startFakeEngine(() => ({
+      status: 200,
+      body: { result: tampered.result, replay: tampered, postures: {} },
+    }));
+    closeEngine = engine.close;
+    const rs = await startFakeReplayService(() => ({ status: 201, body: {} }));
+    closeReplayService = rs.close;
+
+    const bot = await seedSignedBot("bot_b6_tampered_strict");
+    const launcher = createHttpBattleRunLauncher({
+      engineUrl: engine.url,
+      sharedSecret: "s",
+      db: h.db,
+      replayServiceUrl: rs.url,
+      replayIngestRequired: true,
+    });
+    const result = await launcher.launch({ ...sampleInput([bot, bot]), battleId });
+
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("REPLAY_INGEST_REQUIRED");
+    expect(rs.received).toHaveLength(0);
+  });
+
+  it("replay-service caído/rechaza (500) con replay que SÍ verifica → best-effort: completed con ingested:false, verify_matches:true", async () => {
+    const battleId = "battle_" + randomUUID();
+    const realReplay = await recordRealReplay(battleId);
+    const engine = await startFakeEngine(() => ({
+      status: 200,
+      body: { result: realReplay.result, replay: realReplay, postures: {} },
+    }));
+    closeEngine = engine.close;
+    const rs = await startFakeReplayService(() => ({ status: 500, body: { error: "internal" } }));
+    closeReplayService = rs.close;
+
+    const bot = await seedSignedBot("bot_b6_rs_down");
+    const launcher = createHttpBattleRunLauncher({
+      engineUrl: engine.url,
+      sharedSecret: "s",
+      db: h.db,
+      replayServiceUrl: rs.url,
+    });
+    const result = await launcher.launch({ ...sampleInput([bot, bot]), battleId });
+
+    expect(result.status).toBe("completed");
+    expect(result.replay).toEqual({ ingested: false, battleId, verify_matches: true });
+  });
+
+  it("replay-service caído + modo estricto → status failed", async () => {
+    const battleId = "battle_" + randomUUID();
+    const realReplay = await recordRealReplay(battleId);
+    const engine = await startFakeEngine(() => ({
+      status: 200,
+      body: { result: realReplay.result, replay: realReplay, postures: {} },
+    }));
+    closeEngine = engine.close;
+    const rs = await startFakeReplayService(() => ({ status: 503, body: { error: "unavailable" } }));
+    closeReplayService = rs.close;
+
+    const bot = await seedSignedBot("bot_b6_rs_down_strict");
+    const launcher = createHttpBattleRunLauncher({
+      engineUrl: engine.url,
+      sharedSecret: "s",
+      db: h.db,
+      replayServiceUrl: rs.url,
+      replayIngestRequired: true,
+    });
+    const result = await launcher.launch({ ...sampleInput([bot, bot]), battleId });
+
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("REPLAY_INGEST_REQUIRED");
+  });
 });

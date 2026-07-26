@@ -14,6 +14,35 @@ import type { CameraMode } from "../viewer/camera.js";
 /** Prefetch del trozo N+1 fuera del RAF, a 2 Hz: la red nunca está en el frame. */
 const PREFETCH_INTERVAL_MS = 500;
 
+/**
+ * B6 (hallazgo del supervisor, demostrado en vivo — DOS rondas) · Base que se
+ * antepone a las rutas que ya construye `httpReplaySource()`
+ * (`apps/web/src/viewer/replay-player.ts`): esa función YA incluye el prefijo
+ * `/replays/` en cada ruta que pide (`${baseUrl}/replays/${battleId}/index`,
+ * `.../segment`) — el mismo patrón que usa `replay-player.test.ts` contra el
+ * Express real del replay-service con `httpReplaySource("", battleId, ...)`.
+ *
+ * Ronda 1 del supervisor: esta página usaba `baseUrl = "/replay-service"`
+ * (prefijo que NUNCA existió en el gateway) → `/replay-service/replays/...`
+ * caía en el `location /` genérico y volvía el SPA.
+ *
+ * Ronda 2 del supervisor (ejecutando el Express real de replay-service, no
+ * solo leyendo): el "arreglo" de la ronda 1 puso `baseUrl = "/replays"`, que
+ * con el prefijo YA incluido en `httpReplaySource()` componía
+ * `/replays/replays/${battleId}/index` — un prefijo DUPLICADO, 404 igual,
+ * solo que por un motivo distinto. Además, el propio gateway tenía un
+ * `rewrite` en `location /replays/` que quitaba el prefijo antes de reenviar
+ * a replay-service (que SÍ registra sus rutas con `/replays`, ver
+ * `apps/replay-service/src/server.ts`) — roto en las DOS direcciones a la vez.
+ * Ambos arreglados: el `rewrite` se quitó de `nginx.conf`/
+ * `nginx-behind-proxy.conf` (el gateway reenvía la URI íntegra), y aquí la
+ * base queda VACÍA — el origen actual, sin prefijo — porque `/replays/` ya lo
+ * pone `httpReplaySource()`. Cubierto por un test que aplica la MISMA
+ * composición de rutas contra el Express real de replay-service (supertest),
+ * no una comparación de cadenas: `apps/web/tests/replay-page-gateway-path.test.ts`.
+ */
+export const REPLAY_SERVICE_GATEWAY_BASE = "";
+
 const SPEEDS = [0.5, 1, 2, 4, 8];
 
 export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; initialTick?: number }) {
@@ -46,8 +75,9 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
       const scene = (game as any).scene.getScene("viewer") as InstanceType<typeof ViewerScene>;
       sceneRef.current = scene;
 
-      // El gateway (E10) enruta /replay-service/* al servicio interno.
-      const player = new ReplayPlayer(httpReplaySource("/replay-service", battleId));
+      // El gateway (E10) enruta /replays/* al replay-service (ver la nota de
+      // REPLAY_SERVICE_GATEWAY_BASE más arriba).
+      const player = new ReplayPlayer(httpReplaySource(REPLAY_SERVICE_GATEWAY_BASE, battleId));
       playerRef.current = player;
       try {
         await player.init(initialTick);

@@ -222,14 +222,21 @@ export interface VerifyResult {
   recomputedResult: BattleResult;
 }
 
-/**
- * Re-simula el replay y compara con el resultado oficial.
- *
- * Comprueba los hashes INTERMEDIOS, no solo el final: si dos batallas divergen en el
- * tick 500 y vuelven a converger por casualidad en el final, un test que solo mirara
- * el hash final daría un falso "correcto". Aquí se detecta el tick exacto.
- */
-export async function verify(replay: Replay): Promise<VerifyResult> {
+/** B6 (hallazgo del supervisor) · Todo lo que una re-simulación produce, capturado
+ *  ANTES de `b.free()`. Es la base compartida de `verify()` (solo compara hashes,
+ *  comportamiento sin cambios) y `verifyAndRecompute()` (además devuelve los
+ *  eventos/snapshots recomputados, para quien no pueda confiar en los del replay
+ *  recibido por la red — ver la nota de cabecera de `verifyAndRecompute`). */
+interface Resimulation {
+  result: BattleResult;
+  stateHashes: { tick: number; hash: string }[];
+  events: any[];
+  snapshots: any[];
+}
+
+/** Re-simula un replay reproduciendo sus comandos grabados. Núcleo compartido de
+ *  `verify()`/`verifyAndRecompute()`: UNA sola re-simulación (cara), dos lecturas. */
+async function resimulateReplay(replay: Replay): Promise<Resimulation> {
   const config: BattleConfig = {
     battleId: replay.header.battleId,
     seed: replay.header.seed,
@@ -254,31 +261,111 @@ export async function verify(replay: Replay): Promise<VerifyResult> {
     b.attachBot(p.id, new ReplayAgent(p.botId, byVehicle.get(p.id) ?? []));
   }
 
-  const recomputedResult = b.run();
-  const recomputed = b.stateHashes;
+  const result = b.run();
+  // `snapshots`/`publicEvents` los llena el bucle principal INCONDICIONALMENTE
+  // (sim/battle.ts, PASO 8 y `emit()`), no solo con `recordReplay: true`: están
+  // disponibles aquí igual que `stateHashes`.
+  const stateHashes = b.stateHashes;
+  const events = b.publicEvents;
+  const snapshots = b.snapshots;
   b.free();
 
-  // Primer tick en el que los hashes intermedios difieren.
-  let divergedAtTick: number | null = null;
-  const official = replay.stateHashes;
-  for (let i = 0; i < Math.min(official.length, recomputed.length); i++) {
-    if (official[i].hash !== recomputed[i].hash) {
-      divergedAtTick = official[i].tick;
-      break;
-    }
-  }
-  if (divergedAtTick === null && official.length !== recomputed.length) {
-    divergedAtTick = Math.min(official.length, recomputed.length);
-  }
+  return { result, stateHashes, events, snapshots };
+}
 
-  const matches = divergedAtTick === null && recomputedResult.finalStateHash === replay.result.finalStateHash;
+/** Compara los hashes intermedios oficiales contra los recomputados: primer tick
+ *  en el que divergen, o `null` si son idénticos (mismo criterio que antes). */
+function compareStateHashes(
+  official: { tick: number; hash: string }[],
+  recomputed: { tick: number; hash: string }[],
+): number | null {
+  for (let i = 0; i < Math.min(official.length, recomputed.length); i++) {
+    if (official[i].hash !== recomputed[i].hash) return official[i].tick;
+  }
+  if (official.length !== recomputed.length) return Math.min(official.length, recomputed.length);
+  return null;
+}
+
+/**
+ * Re-simula el replay y compara con el resultado oficial.
+ *
+ * Comprueba los hashes INTERMEDIOS, no solo el final: si dos batallas divergen en el
+ * tick 500 y vuelven a converger por casualidad en el final, un test que solo mirara
+ * el hash final daría un falso "correcto". Aquí se detecta el tick exacto.
+ *
+ * OJO (hallazgo del supervisor, B6): esto compara ÚNICAMENTE `stateHashes`/
+ * `finalStateHash` — NUNCA `events` ni `snapshots`. El motor no incluye esos
+ * arrays en el hash de estado (T2.6: el hash es de la física+reglas, los
+ * eventos/snapshots son una PROYECCIÓN pública derivada, no parte de la verdad
+ * canónica). Por tanto `matches: true` NO garantiza que `replay.events`/
+ * `replay.snapshots` —lo que el visor pinta— coincidan con lo que la
+ * re-simulación produjo: alguien podría entregar comandos+hashes legítimos
+ * junto a eventos/snapshots FALSIFICADOS y `verify()` no lo vería. Quien vaya a
+ * REDISTRIBUIR events/snapshots a un tercero (p. ej. el visor, vía ingesta en
+ * el replay-service) debe usar `verifyAndRecompute()` y sustituir esos campos
+ * por los recomputados — nunca confiar en los recibidos. `verify()` en sí no
+ * cambia de comportamiento (mismos consumidores existentes: replay-service,
+ * la API, los tests golden).
+ */
+export async function verify(replay: Replay): Promise<VerifyResult> {
+  const resim = await resimulateReplay(replay);
+  const divergedAtTick = compareStateHashes(replay.stateHashes, resim.stateHashes);
+  const matches = divergedAtTick === null && resim.result.finalStateHash === replay.result.finalStateHash;
 
   return {
     matches,
     officialHash: replay.result.finalStateHash,
-    recomputedHash: recomputedResult.finalStateHash,
+    recomputedHash: resim.result.finalStateHash,
     divergedAtTick,
     officialResult: replay.result,
-    recomputedResult,
+    recomputedResult: resim.result,
+  };
+}
+
+export interface VerifyAndRecomputeResult {
+  verification: VerifyResult;
+  /** SIEMPRE derivados de la re-simulación, NUNCA de `replay.events`/`replay.snapshots`
+   *  recibidos — ver la nota de `verify()`. Solo tiene sentido usarlos si
+   *  `verification.matches` es `true`; si no, la re-simulación ni siquiera
+   *  corresponde al mismo resultado oficial. */
+  recomputed: {
+    events: any[];
+    snapshots: any[];
+    stateHashes: { tick: number; hash: string }[];
+    result: BattleResult;
+  };
+}
+
+/**
+ * B6 (hallazgo del supervisor) · Como `verify()`, pero además devuelve
+ * `events`/`snapshots` RECOMPUTADOS por la misma re-simulación — nunca los del
+ * replay de entrada. Para quien vaya a persistir/redistribuir un replay a un
+ * tercero que se lo va a CREER (p. ej. ingestarlo en el replay-service para que
+ * el visor lo pinte): sustituir siempre `events`/`snapshots` (y, por prudencia,
+ * `stateHashes`/`result`) por lo que devuelve aquí, nunca por lo recibido por
+ * la red. Así lo que el espectador ve queda cubierto por la MISMA garantía
+ * criptográfica que el hash final, cerrando el hueco que `verify()` por sí solo
+ * deja abierto (comandos+hashes legítimos, eventos/snapshots inventados).
+ */
+export async function verifyAndRecompute(replay: Replay): Promise<VerifyAndRecomputeResult> {
+  const resim = await resimulateReplay(replay);
+  const divergedAtTick = compareStateHashes(replay.stateHashes, resim.stateHashes);
+  const matches = divergedAtTick === null && resim.result.finalStateHash === replay.result.finalStateHash;
+
+  return {
+    verification: {
+      matches,
+      officialHash: replay.result.finalStateHash,
+      recomputedHash: resim.result.finalStateHash,
+      divergedAtTick,
+      officialResult: replay.result,
+      recomputedResult: resim.result,
+    },
+    recomputed: {
+      events: resim.events,
+      snapshots: resim.snapshots,
+      stateHashes: resim.stateHashes,
+      result: resim.result,
+    },
   };
 }

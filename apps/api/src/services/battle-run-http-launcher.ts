@@ -47,10 +47,75 @@
  * acepte geometría de mapa en el cuerpo de `/run` en vez de un nombre de
  * fixture fijo (cambio en `container-battle.ts`/`fixtures.ts`, un bloque
  * propio). Hasta entonces, SOLO se admite mvp-arena-01 v1.
+ *
+ * B6 · INGESTA DEL REPLAY (cierra el circuito hasta el visor): arena-engine
+ * devuelve `{ result, replay, postures }` (`ContainerBattleOutcome`, replay.ts
+ * REAL del motor) en el cuerpo 200, pero hasta B6 este launcher lo descartaba
+ * (`replay: { ingested: false, ... }` siempre) — el replay se perdía al volver
+ * de `/run`, nunca llegaba al replay-service, y el visor web (que habla
+ * DIRECTAMENTE con el replay-service vía el gateway, `apps/web/src/pages/
+ * ReplayPage.tsx` → `/replays/:battleId/index|segment`, NO a través de esta
+ * API) no tenía nada que reproducir.
+ *
+ * Cierre: si `cfg.replayServiceUrl` está configurado, este launcher:
+ *   0. COMPRUEBA LA IDENTIDAD (hallazgo del supervisor de B6, ejecutado en
+ *      vivo: un replay REAL, legítimo y perfectamente verificable, pero
+ *      grabado para OTRA batalla, se ingestaba igual bajo el battleId pedido
+ *      — un fallo de caché en arena-engine, o un arena-engine comprometido,
+ *      bastaría para mostrar la batalla de alguien como si fuera la de otro).
+ *      `replay.header.battleId` DEBE coincidir con `input.battleId` ANTES de
+ *      verificar nada; si no coincide, se rechaza sin re-simular ni ingestar.
+ *   1. VERIFICA el replay localmente y RECOMPUTA `events`/`snapshots`
+ *      (`verifyAndRecompute()`, arena-engine/src/replay.ts — re-simula con el
+ *      motor real) ANTES de ingestarlo. Un replay que no verifica NUNCA se
+ *      envía al replay-service como si fuera bueno. Se refleja con
+ *      `replay.verify_matches: false` y NO se llama al replay-service.
+ *
+ *      HALLAZGO DEL SUPERVISOR (ejecutado en vivo, no solo leído): `verify()`
+ *      SOLO compara `stateHashes`/`finalStateHash` (recomputados desde
+ *      `header`+`commands`) — NUNCA compara `events` ni `snapshots`, que es
+ *      justo lo que el visor pinta directamente sin recomputar nada. El
+ *      supervisor inyectó un evento falso y sobrescribió los snapshots con
+ *      posiciones inventadas, dejando comandos y hashes intactos: `verify()`
+ *      seguía devolviendo `matches: true`. Por eso este launcher usa
+ *      `verifyAndRecompute()` y, al construir el JSONL que se ingesta, IGNORA
+ *      `replay.events`/`replay.snapshots` recibidos por la red y usa SIEMPRE
+ *      los recomputados por la re-simulación (igual que `stateHashes`/
+ *      `result`) — lo que el espectador ve queda cubierto por la misma
+ *      garantía criptográfica que el hash final. Ver la nota de cabecera de
+ *      `verify()`/`verifyAndRecompute()` en replay.ts para el porqué no se
+ *      resolvió ampliando `matches` en el propio motor (bajo riesgo elegido:
+ *      cero cambios en el código de determinismo compartido).
+ *   2. Si verifica y la identidad coincide, serializa a JSONL (mismo formato
+ *      que graba el motor, `toJsonl`) el replay RECONSTRUIDO (header+commands
+ *      originales, events/snapshots/stateHashes/result recomputados) y hace
+ *      `POST /replays/:battleId` al replay-service (HTTP, misma red
+ *      `platform` que ya comparten API y replay-service en
+ *      infrastructure/docker-compose.yml — sin volumen compartido, sin tocar
+ *      el filesystem del contenedor).
+ *   3. Un fallo de ingesta (replay-service caído, timeout, respuesta != 201)
+ *      es BEST-EFFORT por defecto (`replayIngestRequired: false`, igual
+ *      decisión que el arnés E2E): la batalla en sí ya ocurrió y su resultado
+ *      es válido aunque el replay tarde en aparecer en el visor; se refleja
+ *      honestamente en `replay.ingested: false`, nunca se presenta como
+ *      ingerido. Con `REPLAY_INGEST_REQUIRED=1` (modo estricto, mismo nombre
+ *      de variable que el arnés E2E) un fallo de ingesta, un replay que no
+ *      verifica O una identidad que no coincide hace que el `BattleRunResult`
+ *      sea `status: "failed"`.
+ *
+ * Sin `cfg.replayServiceUrl` configurado, el comportamiento es EXACTAMENTE el
+ * de B2: `replay: { ingested: false, battleId }`, sin `verify_matches`. OJO
+ * (corrección del supervisor a la documentación anterior): esto NO es "opt-in"
+ * en el sentido de "hay que activarlo a propósito" — `infrastructure/
+ * docker-compose.yml` le da a `REPLAY_SERVICE_URL` un valor por defecto
+ * (`http://replay-service:8083`) para el servicio `api`, así que en cualquier
+ * despliegue con ese compose la ingesta está activa salvo que se sobrescriba
+ * la variable a vacío explícitamente.
  */
 import { readFileSync } from "node:fs";
 import type { Db } from "../db/connection.js";
 import { splitVersioned } from "../../../../packages/module-catalog/types.js";
+import { toJsonl, verifyAndRecompute, type Replay } from "../../../arena-engine/src/replay.js";
 import type { BattleRunInput, BattleRunLauncher, BattleRunResult } from "../battle-run.js";
 
 /**
@@ -79,10 +144,24 @@ export interface HttpBattleRunLauncherConfig {
   ticks?: number;
   /** Timeout de la llamada HTTP a arena-engine, ms (def. 30000). */
   timeoutMs?: number;
+  /**
+   * B6 · URL base del replay-service (p. ej. http://replay-service:8083). Si se
+   * define, el replay REAL que devuelve arena-engine se verifica e ingesta ahí
+   * (ver la nota de cabecera del fichero). Sin ella, ningún cambio de
+   * comportamiento respecto a B2 (`ingested: false` siempre).
+   */
+  replayServiceUrl?: string;
+  /** B6 · Si true, un replay que no verifica o una ingesta fallida hacen que el
+   *  resultado operativo sea `status: "failed"` (modo estricto). Def. false
+   *  (best-effort: la batalla no se pierde por un fallo de ingesta). */
+  replayIngestRequired?: boolean;
+  /** B6 · Timeout de la llamada HTTP al replay-service, ms (def. 10000). */
+  replayIngestTimeoutMs?: number;
 }
 
 const DEFAULT_TICKS = 20_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_REPLAY_INGEST_TIMEOUT_MS = 10_000;
 /** Runner declarado en `BattleRunResult.runner` para este launcher (visible en la respuesta). */
 export const HTTP_LAUNCHER_RUNNER_ID = "arena-engine-http";
 
@@ -137,6 +216,160 @@ export function httpBattleRunLauncherEnvConfig(
   const sharedSecret = resolveSharedSecretFromEnv(env);
   if (!engineUrl || !sharedSecret) return null;
   return { engineUrl, sharedSecret };
+}
+
+/**
+ * B6 · Config de ingesta del replay resuelta del entorno. `replayServiceUrl`
+ * ausente ⇒ ingesta desactivada (comportamiento B2 sin cambios). Mismos
+ * nombres de variable que `scripts/e2e-real-battle-smoke.ts` a propósito
+ * (mismo concepto, mismo operador que los configura).
+ */
+export function replayIngestEnvConfig(env: NodeJS.ProcessEnv = process.env): {
+  replayServiceUrl?: string;
+  replayIngestRequired: boolean;
+  replayIngestTimeoutMs: number;
+} {
+  return {
+    ...(env.REPLAY_SERVICE_URL ? { replayServiceUrl: env.REPLAY_SERVICE_URL } : {}),
+    replayIngestRequired: env.REPLAY_INGEST_REQUIRED === "1",
+    replayIngestTimeoutMs: Number(env.REPLAY_INGEST_TIMEOUT_MS ?? String(DEFAULT_REPLAY_INGEST_TIMEOUT_MS)),
+  };
+}
+
+/** B6 · Resultado de intentar ingestar el replay en el replay-service. */
+interface ReplayIngestOutcome {
+  ingested: boolean;
+  verifyMatches: boolean;
+  /** Motivo del fallo (no verifica / HTTP / red), para el `error` del BattleRunResult en modo estricto. */
+  reason?: string;
+}
+
+/**
+ * B6 · Verifica el replay REAL devuelto por arena-engine y, solo si es DE ESTA
+ * BATALLA y verifica, lo ingesta en el replay-service (POST /replays/:battleId,
+ * mismo contrato que usa `scripts/e2e-real-battle-smoke.ts`). Dos guardas
+ * independientes, ambas obligatorias, en este orden:
+ *
+ *   1. IDENTIDAD: `replay.header.battleId` debe ser EXACTAMENTE `battleId` (la
+ *      batalla que se pidió lanzar). Sin esto, un replay real y verificable
+ *      pero de OTRA batalla (caché de arena-engine, bug, o un arena-engine
+ *      comprometido) se ingestaría igual bajo el id solicitado — mostraría la
+ *      partida de un tercero como si fuera la tuya. Se comprueba ANTES de
+ *      re-simular nada (más barato, y no hay nada que verificar si ni
+ *      siquiera es la batalla correcta).
+ *   2. INTEGRIDAD, EVENTOS INCLUIDOS: `verifyAndRecompute()` (no `verify()`
+ *      solo) re-simula y devuelve `events`/`snapshots` RECOMPUTADOS. El JSONL
+ *      que de verdad se ingesta se reconstruye con esos campos recomputados
+ *      (nunca con `replay.events`/`replay.snapshots` tal como llegaron por la
+ *      red): lo que el visor pinta queda cubierto por la misma garantía que
+ *      el hash final, no solo la física. Ver la nota de cabecera del fichero.
+ *
+ * Un replay que falla cualquiera de las dos guardas JAMÁS se envía como si
+ * fuera bueno.
+ */
+async function verifyAndIngestReplay(
+  replayServiceUrl: string,
+  battleId: string,
+  replay: Replay,
+  timeoutMs: number,
+): Promise<ReplayIngestOutcome> {
+  // Guarda 1 · identidad — ANTES de re-simular: un replay de otra batalla no
+  // es "casi correcto", es un replay de OTRA batalla, punto.
+  if (replay.header?.battleId !== battleId) {
+    return {
+      ingested: false,
+      verifyMatches: false,
+      reason: `el replay recibido de arena-engine es de otra batalla (header.battleId=${JSON.stringify(replay.header?.battleId)}, se esperaba ${JSON.stringify(battleId)}): se rechaza, no se ingesta`,
+    };
+  }
+
+  let outcome;
+  try {
+    outcome = await verifyAndRecompute(replay);
+  } catch (err) {
+    // El motor no pudo re-simular (cabecera incompleta, etc.): tratamos como "no
+    // verifica" — nunca se ingesta algo que ni siquiera se pudo comprobar.
+    return {
+      ingested: false,
+      verifyMatches: false,
+      reason: `no se pudo verificar el replay: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+  const { verification, recomputed } = outcome;
+  if (!verification.matches) {
+    return {
+      ingested: false,
+      verifyMatches: false,
+      reason: `el replay no verifica (verify_matches=false, divergedAtTick=${verification.divergedAtTick ?? "final"})`,
+    };
+  }
+
+  // Guarda 2 (parte 2) · el JSONL que se ingesta usa SIEMPRE events/snapshots/
+  // stateHashes/result RECOMPUTADOS, nunca los recibidos: header y commands sí
+  // son los originales (son la "receta" que se acaba de comprobar que produce
+  // exactamente estos hashes/eventos/snapshots — no hay nada más que sustituir).
+  const verifiedReplay: Replay = {
+    header: replay.header,
+    commands: replay.commands,
+    events: recomputed.events,
+    snapshots: recomputed.snapshots,
+    stateHashes: recomputed.stateHashes,
+    result: recomputed.result,
+  };
+
+  const jsonl = toJsonl(verifiedReplay);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(new URL(`/replays/${encodeURIComponent(battleId)}`, replayServiceUrl), {
+      method: "POST",
+      headers: { "content-type": "application/x-ndjson" },
+      body: jsonl,
+      signal: controller.signal,
+    });
+    if (res.status !== 201) {
+      // El detalle de la respuesta del replay-service (podría llevar rutas
+      // internas, versiones, etc.) se registra en el log del proceso, no se
+      // devuelve al cliente de la API — este `reason` viaja hasta `error` del
+      // BattleRunResult en modo estricto y ese sí puede ver el llamador.
+      console.error(
+        JSON.stringify({
+          level: "error",
+          service: "api",
+          msg: "replay-service rechazó la ingesta del replay",
+          battleId,
+          status: res.status,
+          body: (await res.text().catch(() => "")).slice(0, 500),
+        }),
+      );
+      return {
+        ingested: false,
+        verifyMatches: true,
+        reason: `la ingesta del replay fue rechazada por el servicio de replays (HTTP ${res.status})`,
+      };
+    }
+    return { ingested: true, verifyMatches: true };
+  } catch (err) {
+    const timedOut = err instanceof Error && err.name === "AbortError";
+    // Igual criterio: el mensaje de red completo (puede llevar el host/puerto
+    // interno del replay-service) se registra, no se expone al llamador.
+    console.error(
+      JSON.stringify({
+        level: "error",
+        service: "api",
+        msg: "no se pudo ingestar el replay en el replay-service",
+        battleId,
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    return {
+      ingested: false,
+      verifyMatches: true,
+      reason: timedOut ? "la ingesta del replay superó el timeout" : "el servicio de replays no está disponible",
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 interface ResolvedBot {
@@ -250,12 +483,47 @@ export function createHttpBattleRunLauncher(cfg: HttpBattleRunLauncherConfig): B
       }
 
       if (res.status === 200) {
-        // arena-engine devuelve { result, replay, postures } (Replay real del motor),
-        // pero NO ingiere en replay-service (eso no está cableado en B2 — ver informe).
+        // arena-engine devuelve { result, replay, postures } (Replay real del motor).
+        if (!json) {
+          return { status: "completed", runner: HTTP_LAUNCHER_RUNNER_ID, replay: null };
+        }
+        // B6 · sin replayServiceUrl configurado, comportamiento IDÉNTICO a B2: no se
+        // toca el replay-service, nunca se afirma "ingested: true" sin haberlo hecho.
+        if (!cfg.replayServiceUrl) {
+          return {
+            status: "completed",
+            runner: HTTP_LAUNCHER_RUNNER_ID,
+            replay: { ingested: false, battleId: input.battleId },
+          };
+        }
+        const replay = (json as { replay?: unknown }).replay as Replay | undefined;
+        if (!replay || typeof replay !== "object" || !replay.header) {
+          // arena-engine respondió 200 sin un replay utilizable: no hay nada que
+          // verificar ni ingestar. Se refleja honestamente, no se inventa un éxito.
+          return {
+            status: "completed",
+            runner: HTTP_LAUNCHER_RUNNER_ID,
+            replay: { ingested: false, battleId: input.battleId, verify_matches: false },
+          };
+        }
+        const outcome = await verifyAndIngestReplay(
+          cfg.replayServiceUrl,
+          input.battleId,
+          replay,
+          cfg.replayIngestTimeoutMs ?? DEFAULT_REPLAY_INGEST_TIMEOUT_MS,
+        );
+        if (!outcome.ingested && cfg.replayIngestRequired) {
+          return {
+            status: "failed",
+            runner: HTTP_LAUNCHER_RUNNER_ID,
+            error: `REPLAY_INGEST_REQUIRED y la ingesta del replay falló: ${outcome.reason ?? "motivo desconocido"}`,
+            replay: { ingested: false, battleId: input.battleId, verify_matches: outcome.verifyMatches },
+          };
+        }
         return {
           status: "completed",
           runner: HTTP_LAUNCHER_RUNNER_ID,
-          replay: json ? { ingested: false, battleId: input.battleId } : null,
+          replay: { ingested: outcome.ingested, battleId: input.battleId, verify_matches: outcome.verifyMatches },
         };
       }
       const message = typeof json?.message === "string" ? json.message : `arena-engine respondió ${res.status}`;
