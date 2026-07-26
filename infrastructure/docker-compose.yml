@@ -166,9 +166,10 @@ services:
     networks: [platform, arena]
     environment:
       PORT: "8081"
-      # PENDIENTE (E2/E9): entrypoint de servicio (ProtocolServer + orquestación
-      # de batalla). El motor y el servidor de protocolo ya existen.
-      SERVICE_ENTRY: ${ENGINE_ENTRY:-apps/arena-engine/src/cli.ts}
+      # B1: entrypoint de SERVICIO (sirve /healthz y expone POST /run sobre
+      # runContainerBattle). Sin ContainerRunner cableado, /run responde 503
+      # runner_unavailable — cablear ProxyContainerRunner es el bloque B2 (VM108).
+      SERVICE_ENTRY: ${ENGINE_ENTRY:-apps/arena-engine/src/service.ts}
       LOG_FORMAT: json
     volumes:
       - arena_maps:/data/maps:ro
