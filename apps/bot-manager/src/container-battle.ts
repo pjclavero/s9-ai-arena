@@ -26,7 +26,7 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { loadRuleset } from "../../../packages/game-rules/index.js";
+import { loadRuleset, safeLookup } from "../../../packages/game-rules/index.js";
 import { loadCatalog, CATALOG_VERSION } from "../../../packages/module-catalog/loadCatalog.js";
 import { resolveVehicle } from "../../../packages/module-catalog/resolve/index.js";
 import { ARCHETYPES } from "../../../packages/module-catalog/resolve/archetypes.js";
@@ -103,10 +103,12 @@ export async function runContainerBattle(cfg: ContainerBattleConfig): Promise<Co
   const seccompProfilePath = cfg.seccompProfilePath ?? DEFAULT_SECCOMP_PROFILE;
   const limits = cfg.limits ?? DEFAULT_LIMITS;
   const catalog = loadCatalog();
-  const mapFactory = MAPS[cfg.mapName ?? "empty"] ?? emptyArena;
+  // safeLookup, no indexación directa (barrido del supervisor de B2: MAPS y
+  // ARCHETYPES son objetos planos indexables con clave externa vía RunBattleRequestBody).
+  const mapFactory = safeLookup(MAPS, cfg.mapName ?? "empty") ?? emptyArena;
 
   const participants: Participant[] = cfg.bots.map((b, i) => {
-    const loadout = ARCHETYPES[b.archetype];
+    const loadout = safeLookup(ARCHETYPES, b.archetype);
     if (!loadout) throw new Error(`runContainerBattle: arquetipo desconocido "${String(b.archetype)}"`);
     return {
       id: `veh_${i + 1}`,

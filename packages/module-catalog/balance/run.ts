@@ -28,7 +28,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Battle, type BattleResult } from "../../../apps/arena-engine/src/sim/battle.js";
 import { emptyArena } from "../../../apps/arena-engine/src/fixtures.js";
-import { loadRuleset } from "../../game-rules/index.js";
+import { loadRuleset, safeLookup } from "../../game-rules/index.js";
 import { HunterBot } from "../../../apps/arena-engine/src/stubs.js";
 import { resolveVehicle } from "../resolve/index.js";
 import { loadCatalog } from "../loadCatalog.js";
@@ -76,8 +76,15 @@ async function runOneBattle(
   archB: ArchetypeName,
   redIsA: boolean,
 ): Promise<{ result: BattleResult; damageDealtRed: number; damageDealtBlue: number }> {
-  const specA = resolveVehicle(BALANCE_ARCHETYPES[archA], catalog);
-  const specB = resolveVehicle(BALANCE_ARCHETYPES[archB], catalog);
+  // safeLookup, no indexación directa (barrido del supervisor de B2: --matrix
+  // carga un JSON de fichero externo, así que archA/archB no son valores
+  // estáticos del propio script).
+  const archADef = safeLookup(BALANCE_ARCHETYPES, archA);
+  const archBDef = safeLookup(BALANCE_ARCHETYPES, archB);
+  if (!archADef) throw new Error(`arquetipo de balance desconocido: "${String(archA)}"`);
+  if (!archBDef) throw new Error(`arquetipo de balance desconocido: "${String(archB)}"`);
+  const specA = resolveVehicle(archADef, catalog);
+  const specB = resolveVehicle(archBDef, catalog);
 
   const battle = await Battle.create({
     battleId: seed,

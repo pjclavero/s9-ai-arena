@@ -35,6 +35,12 @@ gen postgres_password.txt
 gen jwt_secret.txt
 gen grafana_admin_password.txt
 gen restic_password.txt
+# B2 · secreto interno api<->arena-engine (POST /run). Mismo fichero montado
+# en ambos servicios (docker-compose.yml): generarlo aquí basta para que
+# coincidan. Sin este secreto, /battles/:id/run sigue en 503
+# runner_unavailable (aunque S9_ENABLE_REAL_BATTLE_RUNS=1) y POST /run de
+# arena-engine responde 401 a cualquier petición: fail closed por defecto.
+gen arena_engine_internal_secret.txt
 
 # R-DEPLOY · R2: clave de firma de artefactos (ed25519, PEM PKCS8) para el
 # bot-build-worker (ARTIFACT_SIGNING_KEY_FILE, ERR-SEC-15). Idempotente.

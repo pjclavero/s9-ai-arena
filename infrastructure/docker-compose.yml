@@ -136,7 +136,17 @@ services:
       # En el stack SIEMPRE hay al menos el gateway (1). Detrás del Nginx de
       # VM104 (GATEWAY_CONF=nginx-behind-proxy.conf) son 2. Nunca "true".
       TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
-    secrets: [postgres_password, jwt_secret]
+      # B2 · launcher REAL de POST /battles/:id/run (API → arena-engine por HTTP,
+      # red platform, NUNCA Docker). Solo se cablea si arena-engine responde con
+      # AMBAS piezas presentes: URL (default seguro, solo un hostname interno,
+      # sin secreto) y el secreto compartido POR ARCHIVO (patrón Docker secrets,
+      # igual que jwt_secret) — nunca en claro en el entorno. Sin el secreto,
+      # sigue en 503 runner_unavailable aunque S9_ENABLE_REAL_BATTLE_RUNS=1
+      # (que sigue apagada por defecto y NO se enciende aquí).
+      ARENA_ENGINE_URL: ${ARENA_ENGINE_URL:-http://arena-engine:8081}
+      ARENA_ENGINE_SHARED_SECRET_FILE: /run/secrets/arena_engine_internal_secret
+      S9_ENABLE_REAL_BATTLE_RUNS: ${S9_ENABLE_REAL_BATTLE_RUNS:-}
+    secrets: [postgres_password, jwt_secret, arena_engine_internal_secret]
     depends_on:
       queue:
         condition: service_healthy
@@ -167,10 +177,21 @@ services:
     environment:
       PORT: "8081"
       # B1: entrypoint de SERVICIO (sirve /healthz y expone POST /run sobre
-      # runContainerBattle). Sin ContainerRunner cableado, /run responde 503
-      # runner_unavailable — cablear ProxyContainerRunner es el bloque B2 (VM108).
+      # runContainerBattle).
       SERVICE_ENTRY: ${ENGINE_ENTRY:-apps/arena-engine/src/service.ts}
       LOG_FORMAT: json
+      # B2 · ProxyContainerRunner (habla con s9-docker-proxy, NUNCA docker.sock)
+      # SOLO se cablea si DOCKER_PROXY_URL está presente (sin valor por defecto
+      # real aquí a propósito): sin configurar, /run sigue en 503
+      # runner_unavailable. ARENA_NETWORK/ARENA_ENGINE_HOST tienen defaults
+      # seguros (los mismos que ya usaba B1 como fallback en cfg). El secreto
+      # interno de /run va POR ARCHIVO (mismo secreto Docker que usa la API para
+      # llamar aquí — así ambos lados coinciden sin ponerlo en claro).
+      DOCKER_PROXY_URL: ${DOCKER_PROXY_URL:-}
+      ARENA_NETWORK: ${ARENA_NETWORK:-arena}
+      ARENA_ENGINE_HOST: ${ARENA_ENGINE_HOST:-arena-engine}
+      ARENA_ENGINE_INTERNAL_SECRET_FILE: /run/secrets/arena_engine_internal_secret
+    secrets: [arena_engine_internal_secret]
     volumes:
       - arena_maps:/data/maps:ro
       - arena_replays:/data/replays
@@ -822,3 +843,8 @@ secrets:
     file: ./secrets/grafana_admin_password.txt
   restic_password:
     file: ./secrets/restic_password.txt
+  # B2 · secreto interno compartido api<->arena-engine para autenticar POST /run
+  # (cabecera x-arena-engine-auth). El MISMO fichero se monta en ambos
+  # servicios: solo así coinciden sin ponerlo en claro en el entorno.
+  arena_engine_internal_secret:
+    file: ./secrets/arena_engine_internal_secret.txt
