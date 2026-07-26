@@ -69,6 +69,19 @@ export interface ArenaEngineServiceConfig {
  *  request — y además `/run` exige autenticación interna (`cfg.internalSecret`). */
 export type RunBattleRequestBody = Omit<ContainerBattleConfig, "runner" | "network" | "engineHost">;
 
+/**
+ * Nombres de mapa-fixture válidos (`container-battle.ts::MAPS`, ajeno a B2, NO
+ * se toca). `Set`, no el objeto `MAPS` en sí ni ningún otro objeto plano: una
+ * clave venida del exterior como `"__proto__"`/`"constructor"`/`"toString"`
+ * indexada contra un objeto plano (`MAPS[cfg.mapName]`) puede resolver a algo
+ * truthy del prototipo (`Object.prototype`, o peor, `Object.prototype.constructor`
+ * — una función real, `Object`, invocable sin lanzar) en vez de `undefined`. Se
+ * valida aquí, ANTES de que `mapName` llegue a `runContainerBattle`, con un
+ * allowlist fijo que no sufre ese problema (`Set.has` no consulta la cadena de
+ * prototipos por claves de string).
+ */
+const VALID_MAP_NAMES: ReadonlySet<string> = new Set(["empty", "mvp", "ctf"]);
+
 function isRunBattleRequestBody(body: unknown): body is RunBattleRequestBody {
   if (!body || typeof body !== "object") return false;
   const b = body as Record<string, unknown>;
@@ -79,7 +92,8 @@ function isRunBattleRequestBody(body: unknown): body is RunBattleRequestBody {
     typeof b.rulesetId === "string" &&
     typeof b.ticks === "number" &&
     Array.isArray(b.bots) &&
-    b.bots.length >= 2
+    b.bots.length >= 2 &&
+    (b.mapName === undefined || (typeof b.mapName === "string" && VALID_MAP_NAMES.has(b.mapName)))
   );
 }
 

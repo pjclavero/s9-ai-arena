@@ -92,10 +92,23 @@ export const HTTP_LAUNCHER_RUNNER_ID = "arena-engine-http";
  * cabecera del fichero) en vez de sustituirse en silencio por un fixture
  * cualquiera. Ampliar esta lista exige verificar caso a caso que el fixture
  * represente de verdad el mapa real (no basta con "algo parecido").
+ *
+ * `Map`, NO un objeto plano (revisión del supervisor de B2, hallazgo real
+ * confirmado en ejecución): `FIXTURE_MAP_EQUIVALENTS[input.mapId]` con
+ * `input.mapId = "__proto__"` resolvería a `Object.prototype` (truthy) en un
+ * objeto plano, y `Object.prototype.mapVersion === undefined` — si además
+ * `input.mapVersion` llegara `undefined`, la guarda `!== ` no lo detectaría
+ * (`undefined !== undefined` es `false`) y se jugaría el fixture por defecto
+ * de `container-battle.ts`/`MAPS[cfg.mapName ?? "empty"]` en silencio. Lo
+ * mismo con `"constructor"`/`"toString"`/`"hasOwnProperty"`. `Map` no tiene
+ * prototipo contaminable por claves de string, así que esta clase entera de
+ * fallo desaparece de raíz (no depende de que nadie vuelva a indexar sin
+ * pensar). Se refuerza además con la validación explícita de tipo de
+ * `mapVersion` en `launch()`: defensa en dos capas independientes.
  */
-const FIXTURE_MAP_EQUIVALENTS: Record<string, { mapName: "empty" | "mvp" | "ctf"; mapVersion: number }> = {
-  "mvp-arena-01": { mapName: "mvp", mapVersion: 1 },
-};
+const FIXTURE_MAP_EQUIVALENTS: ReadonlyMap<string, { mapName: "empty" | "mvp" | "ctf"; mapVersion: number }> = new Map([
+  ["mvp-arena-01", { mapName: "mvp" as const, mapVersion: 1 }],
+]);
 
 function resolveSharedSecretFromEnv(env: NodeJS.ProcessEnv): string | undefined {
   const file = env.ARENA_ENGINE_SHARED_SECRET_FILE;
@@ -160,7 +173,20 @@ export function createHttpBattleRunLauncher(cfg: HttpBattleRunLauncherConfig): B
       // Mapa PRIMERO, sin ni siquiera resolver bots ni llamar a arena-engine:
       // si no hay fixture equivalente al mapId+mapVersion pedidos, se rechaza
       // en vez de jugar un mapa distinto al que eligió quien lanzó la batalla.
-      const fixture = FIXTURE_MAP_EQUIVALENTS[input.mapId];
+      //
+      // Defensa en dos capas independientes (revisión del supervisor de B2):
+      // (1) `mapVersion` DEBE ser `number` — descarta de raíz cualquier valor
+      //     "raro" (undefined/null/string) ANTES de comparar nada; (2) `Map.get`
+      //     (nunca indexación de objeto plano) — sin prototipo contaminable por
+      //     claves tipo `"__proto__"`/`"constructor"`/`"toString"`.
+      if (typeof input.mapVersion !== "number" || !Number.isInteger(input.mapVersion)) {
+        return {
+          status: "failed",
+          runner: HTTP_LAUNCHER_RUNNER_ID,
+          error: `mapa no soportado por este launcher: mapVersion debe ser un entero (recibido: ${JSON.stringify(input.mapVersion)}).`,
+        };
+      }
+      const fixture = FIXTURE_MAP_EQUIVALENTS.get(input.mapId);
       if (!fixture || fixture.mapVersion !== input.mapVersion) {
         return {
           status: "failed",

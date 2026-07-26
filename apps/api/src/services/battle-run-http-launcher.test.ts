@@ -259,3 +259,49 @@ describe("B2 · fidelidad del mapa (revisión del supervisor: falla cerrado, no 
     expect(result.status).toBe("completed");
   });
 });
+
+describe("B2 · fidelidad del mapa: hallazgo del supervisor (indexación de objeto plano / prototype pollution)", () => {
+  // mapId = "__proto__"/"constructor"/"toString" con mapVersion ausente: en un objeto
+  // plano indexado directamente (`FIXTURE_MAP_EQUIVALENTS[input.mapId]`), esto resolvía a
+  // algo truthy heredado de Object.prototype, y `fixture.mapVersion === undefined` no se
+  // distinguía de `input.mapVersion === undefined` (`undefined !== undefined` es `false`):
+  // la guarda no rechazaba, y aguas abajo se jugaba el fixture por defecto EN SILENCIO.
+  // FIXTURE_MAP_EQUIVALENTS ahora es un Map (sin prototipo indexable por string) y además
+  // se exige que mapVersion sea un entero ANTES de mirar el mapa: dos capas independientes.
+  for (const pollutedKey of ["__proto__", "constructor", "toString", "hasOwnProperty"]) {
+    it(`mapId="${pollutedKey}" con mapVersion ausente (undefined) → failed, NUNCA se juega un fixture por defecto`, async () => {
+      const bot = await seedSignedBot(`bot_map_${pollutedKey.replace(/[^a-z]/gi, "")}`);
+      // Puerto sin nada escuchando: si el hueco reapareciera y el launcher llamase a
+      // arena-engine, este test fallaría por timeout/conexión, no por el mensaje esperado.
+      const launcher = createHttpBattleRunLauncher({ engineUrl: "http://127.0.0.1:1", sharedSecret: "s", db: h.db });
+      const input = {
+        ...sampleInput([bot, bot]),
+        mapId: pollutedKey,
+        mapVersion: undefined,
+      } as unknown as BattleRunInput;
+
+      const result = await launcher.launch(input);
+
+      expect(result.status).toBe("failed");
+      expect(result.error).toContain("mapa no soportado");
+    });
+  }
+
+  it.each([undefined, null, "1", 1.5, NaN])(
+    "mapVersion no-entero (%p) → failed, se rechaza ANTES de mirar el mapa",
+    async (badVersion) => {
+      const bot = await seedSignedBot("bot_map_version_mala");
+      const launcher = createHttpBattleRunLauncher({ engineUrl: "http://127.0.0.1:1", sharedSecret: "s", db: h.db });
+      const input = {
+        ...sampleInput([bot, bot]),
+        mapId: "mvp-arena-01", // mapId VÁLIDO a propósito: el rechazo debe venir de mapVersion, no del mapId.
+        mapVersion: badVersion,
+      } as unknown as BattleRunInput;
+
+      const result = await launcher.launch(input);
+
+      expect(result.status).toBe("failed");
+      expect(result.error).toContain("mapVersion");
+    },
+  );
+});

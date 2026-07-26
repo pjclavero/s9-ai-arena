@@ -300,6 +300,40 @@ describe("B2 · autenticación interna de POST /run", () => {
     // El WS_URL que vio el runner usa SIEMPRE cfg.engineHost ("127.0.0.1"), nunca el del body.
     expect(observedWsHost).toBe("127.0.0.1");
   }, 30_000);
+
+  // Mismo patrón que el hallazgo del supervisor en el launcher HTTP de la API
+  // (FIXTURE_MAP_EQUIVALENTS), pero del lado de arena-engine: container-battle.ts
+  // indexa `MAPS[cfg.mapName ?? "empty"]` sobre un objeto plano. Una clave
+  // "envenenada" como "__proto__"/"constructor" en `mapName` podría resolver a
+  // algo del prototipo en vez de `undefined`. isRunBattleRequestBody ahora
+  // exige que `mapName`, si viene, sea uno de los 3 literales conocidos
+  // (VALID_MAP_NAMES, un Set — no indexación de objeto), así que nunca llega a
+  // container-battle.ts nada fuera de esa allowlist.
+  for (const pollutedKey of ["__proto__", "constructor", "toString", "hasOwnProperty"]) {
+    it(`mapName="${pollutedKey}" → 400 bad_request (nunca llega a runContainerBattle)`, async () => {
+      const app = createArenaEngineService({
+        runner: inProcessRunner(),
+        internalSecret: SECRET,
+        engineHost: "127.0.0.1",
+      });
+      const body = { ...runRequestBody(`svc_mapname_${pollutedKey}`), mapName: pollutedKey };
+      const res = await request(app).post("/run").set(AUTH_HEADER, SECRET).send(body);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("bad_request");
+    });
+  }
+
+  it("mapName ausente sigue admitiéndose (opcional; container-battle.ts aplica su propio default 'empty')", async () => {
+    const app = createArenaEngineService({
+      runner: inProcessRunner(),
+      internalSecret: SECRET,
+      engineHost: "127.0.0.1",
+    });
+    const body = runRequestBody("svc_mapname_ausente");
+    delete (body as { mapName?: string }).mapName;
+    const res = await request(app).post("/run").set(AUTH_HEADER, SECRET).send(body);
+    expect(res.status).toBe(200);
+  }, 30_000);
 });
 
 describe("B2 · serviceConfigFromEnv (gateado por entorno)", () => {
