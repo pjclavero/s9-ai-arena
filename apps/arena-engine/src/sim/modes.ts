@@ -3,7 +3,7 @@
  * 5–6 del bucle. Las condiciones de victoria, límites y respawn se leen del RULESET,
  * nunca están cableadas aquí.
  */
-import type { Ruleset } from "../../../../packages/game-rules/index.js";
+import { safeLookup, type Ruleset } from "../../../../packages/game-rules/index.js";
 import type { Vec2 } from "./physics.js";
 import type { Vehicle } from "./vehicle.js";
 
@@ -616,7 +616,9 @@ export const MODE_REGISTRY: Record<string, ModeMetadata> = {
 
 /** Incompatibilidades mapa/modo/ruleset. Lista vacía = combinación válida. */
 export function modeMapIncompatibilities(ruleset: Ruleset, teams: string[], map: ArenaMap): string[] {
-  const meta = MODE_REGISTRY[ruleset.mode];
+  // safeLookup, no indexación directa (barrido del supervisor de B2; defensa en
+  // profundidad — hoy ruleset.mode solo puede venir de RULESETS, ya con safeLookup).
+  const meta = safeLookup(MODE_REGISTRY, ruleset.mode);
   if (!meta) return [`modo desconocido: ${ruleset.mode}`];
   const errs: string[] = [];
 

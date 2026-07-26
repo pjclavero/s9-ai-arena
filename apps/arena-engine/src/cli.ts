@@ -11,7 +11,7 @@
  * un motor auditable y una caja negra.
  */
 import { readFileSync, writeFileSync } from "node:fs";
-import { loadRuleset, TICK_DT } from "../../../packages/game-rules/index.js";
+import { loadRuleset, safeLookup, TICK_DT } from "../../../packages/game-rules/index.js";
 import { Battle, type BattleConfig } from "./sim/battle.js";
 import { initPhysics } from "./sim/physics.js";
 import { fromJsonl, record, toJsonl, verify } from "./replay.js";
@@ -80,7 +80,7 @@ async function cmdRun(): Promise<void> {
     stubNames = (config as any).stubs ?? ["hunter", "circle", "hunter", "forward"];
   } else {
     const mapName = arg("map", "mvp")!;
-    const mk = MAPS[mapName];
+    const mk = safeLookup(MAPS, mapName); // barrido del supervisor de B2: no indexación directa
     if (!mk) throw new Error(`Mapa desconocido: ${mapName}. Opciones: ${Object.keys(MAPS).join(", ")}`);
 
     config = {

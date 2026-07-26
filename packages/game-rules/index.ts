@@ -4,12 +4,14 @@
  */
 export * from "./constants.js";
 export * from "./art-direction.js";
+export { safeLookup } from "./safe-lookup.js";
 import {
   MODULE_STATE_PERFORMANCE,
   MODULE_STATE_THRESHOLDS,
   BUDGET_CREDITS_MVP,
   type ModuleState,
 } from "./constants.js";
+import { safeLookup } from "./safe-lookup.js";
 
 // ---------------------------------------------------------------------------
 // Degradación por estado de módulo (cap. 12.2 · D6)
@@ -208,7 +210,11 @@ export const RULESETS: Record<string, Ruleset> = {
 };
 
 export function loadRuleset(id: string, overrides: Partial<Ruleset> = {}): Ruleset {
-  const rs = RULESETS[id];
+  // safeLookup, NO indexación directa `RULESETS[id]` (hallazgo del supervisor de
+  // B2, cuarto sitio con el mismo patrón que FIXTURE_MAP_EQUIVALENTS/MAPS/
+  // ARCHETYPES): con id="__proto__" la indexación directa resolvía a
+  // Object.prototype (truthy), así que `if (!rs) throw` no se disparaba.
+  const rs = safeLookup(RULESETS, id);
   if (!rs) throw new Error(`Ruleset desconocido: ${id}`);
   return { ...rs, ...overrides };
 }

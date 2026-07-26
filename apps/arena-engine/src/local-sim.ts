@@ -16,7 +16,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { nowMs } from "./wall-clock.js";
-import { loadRuleset } from "../../../packages/game-rules/index.js";
+import { loadRuleset, safeLookup } from "../../../packages/game-rules/index.js";
 import { loadCatalog, CATALOG_VERSION } from "../../../packages/module-catalog/loadCatalog.js";
 import { resolveVehicle } from "../../../packages/module-catalog/resolve/index.js";
 import { ARCHETYPES } from "../../../packages/module-catalog/resolve/archetypes.js";
@@ -64,8 +64,9 @@ async function main(): Promise<void> {
   const catalog = loadCatalog();
   const all = [...external, ...stubBots];
   const participants: Participant[] = all.map((s, i) => {
-    const archetypeKey = s.archetype as keyof typeof ARCHETYPES;
-    const loadout = ARCHETYPES[archetypeKey];
+    const archetypeKey = s.archetype;
+    // safeLookup, no indexación directa (barrido del supervisor de B2).
+    const loadout = safeLookup(ARCHETYPES, archetypeKey);
     if (!loadout)
       throw new Error(`Arquetipo desconocido: ${s.archetype}. Opciones: ${Object.keys(ARCHETYPES).join(", ")}`);
     return {
@@ -81,7 +82,7 @@ async function main(): Promise<void> {
     battleId: "localsim_" + nowMs(),
     seed,
     ruleset: loadRuleset(rulesetId, { timeLimitTicks: ticks }),
-    map: (MAPS[mapName] ?? emptyArena)(),
+    map: (safeLookup(MAPS, mapName) ?? emptyArena)(),
     participants,
   });
 

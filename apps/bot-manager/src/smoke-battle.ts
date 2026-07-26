@@ -22,7 +22,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
-import { loadRuleset } from "../../../packages/game-rules/index.js";
+import { loadRuleset, safeLookup } from "../../../packages/game-rules/index.js";
 import { loadCatalog } from "../../../packages/module-catalog/loadCatalog.js";
 import { resolveVehicle } from "../../../packages/module-catalog/resolve/index.js";
 import { ARCHETYPES } from "../../../packages/module-catalog/resolve/archetypes.js";
@@ -130,14 +130,19 @@ export async function runSmokeBattle(opts: SmokeBattleOptions): Promise<SmokeBat
   const logs: string[] = [];
   const catalog = loadCatalog();
   const refArche = opts.referenceArchetype ?? "gunner";
+  // safeLookup, no indexación directa (barrido del supervisor de B2).
+  const candidateLoadout = safeLookup(ARCHETYPES, opts.candidateArchetype);
+  if (!candidateLoadout) throw new Error(`runSmokeBattle: arquetipo desconocido "${String(opts.candidateArchetype)}"`);
+  const referenceLoadout = safeLookup(ARCHETYPES, refArche);
+  if (!referenceLoadout) throw new Error(`runSmokeBattle: arquetipo de referencia desconocido "${String(refArche)}"`);
   const participants: Participant[] = [
     {
       id: "veh_1",
       botId: opts.candidateBotId,
       team: "red",
-      spec: resolveVehicle(ARCHETYPES[opts.candidateArchetype], catalog),
+      spec: resolveVehicle(candidateLoadout, catalog),
     },
-    { id: "veh_2", botId: "ref_bot", team: "blue", spec: resolveVehicle(ARCHETYPES[refArche], catalog) },
+    { id: "veh_2", botId: "ref_bot", team: "blue", spec: resolveVehicle(referenceLoadout, catalog) },
   ];
   const battle = await Battle.create({
     battleId: "smoke_" + Date.now(),
