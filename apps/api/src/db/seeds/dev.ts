@@ -3,6 +3,11 @@
  * catálogo E3 importado desde los JSON del repo y mapa MVP publicado.
  *
  * Idempotente: se puede ejecutar varias veces sobre la misma BD.
+ *
+ * `seedContent` (contenido base: ruleset + catálogo + mapa) está separado de
+ * los usuarios de desarrollo a propósito: es lo único apto para un entorno
+ * real, donde crear cuentas con contraseña conocida sería un agujero. El
+ * comando `cli.ts bootstrap` ejecuta SOLO `seedContent`.
  */
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -57,6 +62,17 @@ export async function seedDev(db: Knex): Promise<void> {
     await db("user_roles").insert({ user_id: userId, role }).onConflict(["user_id", "role"]).ignore();
   }
 
+  await seedContent(db);
+}
+
+/**
+ * Contenido base necesario para que la aplicación sea usable: ruleset por
+ * defecto, catálogo de módulos y mapa MVP publicado. NO crea usuarios ni
+ * roles de desarrollo, así que es seguro ejecutarlo en un entorno real.
+ *
+ * Idempotente: todas las escrituras son onConflict-ignore o import idempotente.
+ */
+export async function seedContent(db: Knex): Promise<void> {
   // --- ruleset por defecto (ADR-000/D7: budget configurable por ruleset) -----
   await db("rulesets")
     .insert({
