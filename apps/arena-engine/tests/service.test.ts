@@ -1,17 +1,23 @@
 /**
- * B1 · DoD del entrypoint de servicio de arena-engine (service.ts).
+ * B1/B2 · DoD del entrypoint de servicio de arena-engine (service.ts).
  *
  * Sin Docker en ningún caso: `/healthz` responde 200 siempre, `/run` sin
  * runner responde 503 `runner_unavailable` (nunca ejecuta nada), y `/run` con
  * un runner FAKE inyectado corre una batalla real vía `runContainerBattle`
  * (mismo mecanismo que apps/bot-manager/tests/container-battle.test.ts) y
  * devuelve el resultado+replay.
+ *
+ * B2 añade: `/run` exige autenticación interna (cabecera `x-arena-engine-auth`,
+ * comparada en tiempo constante contra `cfg.internalSecret`) ANTES de mirar si
+ * hay runner — sin credencial válida, 401 siempre, incluso con runner cableado.
+ * `network`/`engineHost` ya NO se aceptan del cuerpo de la petición: solo de
+ * `cfg` (config del servicio).
  */
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import request from "supertest";
 import { WebSocket } from "ws";
 import { initPhysics } from "../src/sim/physics.js";
-import { createArenaEngineService } from "../src/service.js";
+import { createArenaEngineService, serviceConfigFromEnv } from "../src/service.js";
 import type { ContainerHandle, ContainerRunner, SandboxSpec } from "../../bot-manager/src/container-runner.js";
 
 const REAL_DIGEST =
@@ -100,6 +106,9 @@ const SMOKE_BOTS = [
   { botId: "bot_b", version: 1, archetype: "gunner", imageDigest: REAL_DIGEST },
 ];
 
+const SECRET = "test-internal-secret-1234567890";
+const AUTH_HEADER = "x-arena-engine-auth";
+
 function runRequestBody(battleId: string) {
   return {
     battleId,
@@ -110,7 +119,6 @@ function runRequestBody(battleId: string) {
     bots: SMOKE_BOTS,
     tickIntervalMs: 3,
     overallTimeoutMs: 20_000,
-    engineHost: "127.0.0.1",
   };
 }
 
@@ -122,24 +130,32 @@ describe("B1 · arena-engine service", () => {
     expect(res.body).toEqual({ status: "ok", service: "arena-engine" });
   });
 
-  it("POST /run sin runner inyectado responde 503 runner_unavailable (no ejecuta nada)", async () => {
-    const app = createArenaEngineService();
-    const res = await request(app).post("/run").send(runRequestBody("svc_no_runner"));
+  it("POST /run sin runner inyectado (pero con credencial válida) responde 503 runner_unavailable (no ejecuta nada)", async () => {
+    const app = createArenaEngineService({ internalSecret: SECRET, engineHost: "127.0.0.1" });
+    const res = await request(app).post("/run").set(AUTH_HEADER, SECRET).send(runRequestBody("svc_no_runner"));
     expect(res.status).toBe(503);
     expect(res.body.error).toBe("runner_unavailable");
   });
 
-  it("POST /run con cuerpo inválido responde 400 (incluso con runner cableado)", async () => {
-    const app = createArenaEngineService({ runner: inProcessRunner() });
-    const res = await request(app).post("/run").send({ battleId: "solo-esto" });
+  it("POST /run con cuerpo inválido responde 400 (incluso con runner cableado y credencial válida)", async () => {
+    const app = createArenaEngineService({
+      runner: inProcessRunner(),
+      internalSecret: SECRET,
+      engineHost: "127.0.0.1",
+    });
+    const res = await request(app).post("/run").set(AUTH_HEADER, SECRET).send({ battleId: "solo-esto" });
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("bad_request");
   });
 
   it("POST /run con solo 1 bot (cuerpo por lo demás válido) responde 400 (una batalla necesita >= 2 bots)", async () => {
-    const app = createArenaEngineService({ runner: inProcessRunner() });
+    const app = createArenaEngineService({
+      runner: inProcessRunner(),
+      internalSecret: SECRET,
+      engineHost: "127.0.0.1",
+    });
     const body = { ...runRequestBody("svc_un_solo_bot"), bots: [SMOKE_BOTS[0]] };
-    const res = await request(app).post("/run").send(body);
+    const res = await request(app).post("/run").set(AUTH_HEADER, SECRET).send(body);
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("bad_request");
   });
@@ -151,8 +167,8 @@ describe("B1 · arena-engine service", () => {
         throw boom;
       },
     };
-    const app = createArenaEngineService({ runner: failingRunner });
-    const res = await request(app).post("/run").send(runRequestBody("svc_runner_falla"));
+    const app = createArenaEngineService({ runner: failingRunner, internalSecret: SECRET, engineHost: "127.0.0.1" });
+    const res = await request(app).post("/run").set(AUTH_HEADER, SECRET).send(runRequestBody("svc_runner_falla"));
 
     expect(res.status).toBe(502);
     expect(res.status).not.toBe(200);
@@ -165,9 +181,14 @@ describe("B1 · arena-engine service", () => {
   });
 
   it("POST /run con un runner FAKE inyectado ejecuta runContainerBattle y devuelve el resultado", async () => {
-    const app = createArenaEngineService({ runner: inProcessRunner() });
+    const app = createArenaEngineService({
+      runner: inProcessRunner(),
+      internalSecret: SECRET,
+      engineHost: "127.0.0.1",
+    });
     const res = await request(app)
       .post("/run")
+      .set(AUTH_HEADER, SECRET)
       .send(runRequestBody("svc_" + Date.now()));
 
     expect(res.status).toBe(200);
@@ -176,4 +197,105 @@ describe("B1 · arena-engine service", () => {
     expect(res.body.replay.result.finalStateHash).toBe(res.body.result.finalStateHash);
     expect(Object.keys(res.body.postures).sort()).toEqual(["bot_a", "bot_b"]);
   }, 30_000);
+});
+
+describe("B2 · autenticación interna de POST /run", () => {
+  it("sin cabecera de credencial → 401, aunque el runner esté cableado y el cuerpo sea válido", async () => {
+    const app = createArenaEngineService({
+      runner: inProcessRunner(),
+      internalSecret: SECRET,
+      engineHost: "127.0.0.1",
+    });
+    const res = await request(app).post("/run").send(runRequestBody("svc_sin_credencial"));
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("unauthorized");
+  });
+
+  it("con credencial incorrecta → 401 (no ejecuta la batalla)", async () => {
+    const app = createArenaEngineService({
+      runner: inProcessRunner(),
+      internalSecret: SECRET,
+      engineHost: "127.0.0.1",
+    });
+    const res = await request(app)
+      .post("/run")
+      .set(AUTH_HEADER, "credencial-equivocada")
+      .send(runRequestBody("svc_credencial_mala"));
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("unauthorized");
+  });
+
+  it("sin secreto configurado en el servicio (cfg.internalSecret ausente) → 401 SIEMPRE, incluso con runner cableado", async () => {
+    const app = createArenaEngineService({ runner: inProcessRunner(), engineHost: "127.0.0.1" });
+    const res = await request(app)
+      .post("/run")
+      .set(AUTH_HEADER, "cualquier-cosa")
+      .send(runRequestBody("svc_sin_secreto_cfg"));
+    expect(res.status).toBe(401);
+  });
+
+  it("el cuerpo de la petición ya NO puede sobreescribir `network`/`engineHost`: siempre salen de cfg", async () => {
+    // Runner que registra la `network`/`engineHost` que le llegó vía SandboxSpec.env (WS_URL).
+    let observedWsHost: string | undefined;
+    const spyRunner: ContainerRunner = {
+      async launch(spec) {
+        observedWsHost = new URL(spec.env.WS_URL).hostname;
+        const ws = startInProcessBot(spec);
+        return {
+          id: `mock-${spec.botId}`,
+          async stop() {
+            ws.close();
+          },
+          async posture() {
+            return { user: "10001:10001", privileged: false, capDropAll: true } as never;
+          },
+        };
+      },
+    };
+    const app = createArenaEngineService({ runner: spyRunner, internalSecret: SECRET, engineHost: "127.0.0.1" });
+    const body = {
+      ...runRequestBody("svc_sin_override_red"),
+      // Un caller intentando forzar otro host/red desde el cuerpo (B2: ya no es un campo válido de TS,
+      // pero verificamos en runtime que aunque llegue en el JSON crudo, se ignora).
+      engineHost: "attacker-host.invalid",
+      network: "red-atacante",
+    };
+    const res = await request(app).post("/run").set(AUTH_HEADER, SECRET).send(body);
+    expect(res.status).toBe(200);
+    // El WS_URL que vio el runner usa SIEMPRE cfg.engineHost ("127.0.0.1"), nunca el del body.
+    expect(observedWsHost).toBe("127.0.0.1");
+  }, 30_000);
+});
+
+describe("B2 · serviceConfigFromEnv (gateado por entorno)", () => {
+  it("sin DOCKER_PROXY_URL, NO se instancia ningún runner (sigue en 503 aunque se despliegue)", () => {
+    const cfg = serviceConfigFromEnv({});
+    expect(cfg.runner).toBeUndefined();
+  });
+
+  it("con DOCKER_PROXY_URL presente, se instancia el runner (ProxyContainerRunner)", () => {
+    const cfg = serviceConfigFromEnv({ DOCKER_PROXY_URL: "http://docker-proxy.internal:2375" });
+    expect(cfg.runner).toBeDefined();
+  });
+
+  it("DOCKER_PROXY_URL vacío ('') se trata como NO configurado (sin runner)", () => {
+    const cfg = serviceConfigFromEnv({ DOCKER_PROXY_URL: "" });
+    expect(cfg.runner).toBeUndefined();
+  });
+
+  it("internalSecret se resuelve de ARENA_ENGINE_INTERNAL_SECRET (variable en claro, precedencia menor que _FILE)", () => {
+    const cfg = serviceConfigFromEnv({ ARENA_ENGINE_INTERNAL_SECRET: "abc123" });
+    expect(cfg.internalSecret).toBe("abc123");
+  });
+
+  it("sin ningún secreto en el entorno, internalSecret queda undefined (fail closed: /run rechazará todo)", () => {
+    const cfg = serviceConfigFromEnv({});
+    expect(cfg.internalSecret).toBeUndefined();
+  });
+
+  it("network/engineHost por defecto quedan indefinidos (createArenaEngineService aplica sus propios defaults 'arena'/'arena-engine')", () => {
+    const cfg = serviceConfigFromEnv({});
+    expect(cfg.network).toBeUndefined();
+    expect(cfg.engineHost).toBeUndefined();
+  });
 });

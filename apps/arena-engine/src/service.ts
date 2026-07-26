@@ -11,14 +11,20 @@
  *
  * El `ContainerRunner` se INYECTA (`ArenaEngineServiceConfig.runner`). Por
  * defecto NO hay ninguno: `POST /run` responde 503 `runner_unavailable`.
- * Cablear el runner real (`ProxyContainerRunner`, apps/bot-manager/src/docker-proxy.ts,
- * habla con `s9-docker-proxy`, nunca con docker.sock) es el bloque B2 — NO este.
+ *
+ * B2 (este bloque) cablea `ProxyContainerRunner` (apps/bot-manager/src/docker-proxy.ts,
+ * habla con `s9-docker-proxy`, nunca con docker.sock) GATEADO por entorno
+ * (`serviceConfigFromEnv`/`DOCKER_PROXY_URL`): sin configurar, sigue en 503.
+ * También añade la autenticación interna de `/run` (ver `RunBattleRequestBody`
+ * más abajo) que el propio B1 dejó anotada como requisito previo a cablear el
+ * runner real.
  *
  * Igual que `apps/api/src/app.ts`/`server.ts`: `createArenaEngineService()` (la
  * app Express, testeable con supertest sin abrir ningún puerto) está separada
  * de `listen()` (infraestructura, solo se ejecuta como script real).
  */
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
 import express, { type NextFunction, type Request, type Response } from "express";
 import {
   runContainerBattle,
@@ -26,6 +32,7 @@ import {
   type ContainerBattleOutcome,
 } from "../../bot-manager/src/container-battle.js";
 import type { ContainerRunner } from "../../bot-manager/src/container-runner.js";
+import { ProxyContainerRunner } from "../../bot-manager/src/docker-proxy.js";
 
 export interface ArenaEngineServiceConfig {
   /**
@@ -35,28 +42,32 @@ export interface ArenaEngineServiceConfig {
    * tests, un runner fake.
    */
   runner?: ContainerRunner;
-  /** Red interna por defecto de las batallas que no la especifiquen (def. "arena"). */
+  /** Red interna de las batallas (def. "arena"). SIEMPRE de la config del
+   *  servicio: B2 dejó de aceptarla del cuerpo de la petición (ver más abajo). */
   network?: string;
-  /** Host del ProtocolServer alcanzable por los contenedores (def. "arena-engine"). */
+  /** Host del ProtocolServer alcanzable por los contenedores (def. "arena-engine").
+   *  SIEMPRE de la config del servicio, nunca del request (idem `network`). */
   engineHost?: string;
+  /**
+   * B2 · Secreto interno compartido para autenticar `POST /run` (cabecera
+   * `x-arena-engine-auth`, comparación en tiempo constante). Sin él configurado,
+   * NINGUNA petición a `/run` se acepta (401): no hay modo "abierto" por defecto.
+   * Nunca se loguea ni se devuelve en respuestas.
+   */
+  internalSecret?: string;
 }
 
-/** Cuerpo aceptado por `POST /run`: la config de la batalla, sin las piezas de infraestructura
- *  (`runner`/`network`/`engineHost`) que aporta el propio servicio; `network`/`engineHost` se
- *  pueden sobreescribir por request si hiciera falta, pero nunca `runner`.
+/** Cuerpo aceptado por `POST /run`: la config de la batalla, SIN las piezas de
+ *  infraestructura (`runner`/`network`/`engineHost`) que aporta el propio servicio.
  *
- *  ATENCIÓN B2: hoy que `network`/`engineHost` se acepten del body es inocuo
- *  porque sin runner cableado (503 siempre) nunca se usan. En cuanto B2
- *  cablee `ProxyContainerRunner` aquí, un caller con acceso de red a
- *  `POST /run` podría forzar una `network` arbitraria (pivotar a otra red
- *  Docker) o un `engineHost` propio (para que los bots contenedor hablen con
- *  un ProtocolServer que no es este). Antes de cablear el runner real hace
- *  falta: (a) autenticación interna en `/run` (hoy no hay ninguna — el
- *  handler solo valida forma del body), y/o (b) dejar de aceptar
- *  `network`/`engineHost` del cuerpo y resolverlos siempre desde `cfg`
- *  (config del propio servicio, no del request). No tocar esto en B1. */
-export type RunBattleRequestBody = Omit<ContainerBattleConfig, "runner" | "network" | "engineHost"> &
-  Partial<Pick<ContainerBattleConfig, "network" | "engineHost">>;
+ *  B2 · CIERRE DE SEGURIDAD: `network`/`engineHost` YA NO se aceptan del cuerpo
+ *  de la petición (B1 los dejaba pasar porque, sin runner, eran inocuos). Con el
+ *  runner real cableado, un caller con acceso a `POST /run` podría si no forzar
+ *  una `network` arbitraria (pivotar a otra red Docker) o un `engineHost` propio
+ *  (para que los bots contenedor hablen con un ProtocolServer ajeno). Ahora
+ *  SIEMPRE salen de `cfg` (config del servicio, resuelta del entorno), nunca del
+ *  request — y además `/run` exige autenticación interna (`cfg.internalSecret`). */
+export type RunBattleRequestBody = Omit<ContainerBattleConfig, "runner" | "network" | "engineHost">;
 
 function isRunBattleRequestBody(body: unknown): body is RunBattleRequestBody {
   if (!body || typeof body !== "object") return false;
@@ -72,6 +83,24 @@ function isRunBattleRequestBody(body: unknown): body is RunBattleRequestBody {
   );
 }
 
+/**
+ * Compara dos secretos en tiempo constante. `undefined`/vacío SIEMPRE es
+ * inválido (fail closed: sin `configured`, ninguna petición se acepta).
+ * Cuando las longitudes difieren igualmente se hace un `timingSafeEqual`
+ * (contra sí mismo) para no filtrar por timing si el secreto es más largo o
+ * más corto que el proporcionado.
+ */
+function isValidInternalSecret(configured: string | undefined, provided: string | undefined): boolean {
+  if (!configured || !provided) return false;
+  const a = Buffer.from(configured, "utf8");
+  const b = Buffer.from(provided, "utf8");
+  if (a.length !== b.length) {
+    timingSafeEqual(a, a);
+    return false;
+  }
+  return timingSafeEqual(a, b);
+}
+
 /** Crea la app Express del servicio. Testeable sin abrir ningún puerto (supertest). */
 export function createArenaEngineService(cfg: ArenaEngineServiceConfig = {}): express.Express {
   const app = express();
@@ -85,12 +114,20 @@ export function createArenaEngineService(cfg: ArenaEngineServiceConfig = {}): ex
   });
 
   app.post("/run", async (req: Request, res: Response) => {
+    // B2 · autenticación interna PRIMERO: sin credencial válida, ni siquiera se
+    // revela si hay runner cableado o no (misma respuesta 401 en ambos casos).
+    const provided = req.header("x-arena-engine-auth");
+    if (!isValidInternalSecret(cfg.internalSecret, provided)) {
+      res.status(401).json({
+        error: "unauthorized",
+        message: "credencial interna ausente o inválida (cabecera x-arena-engine-auth)",
+      });
+      return;
+    }
     if (!cfg.runner) {
       res.status(503).json({
         error: "runner_unavailable",
-        message:
-          "arena-engine: no hay ContainerRunner cableado en este servicio (pendiente del bloque B2/VM108, " +
-          "ProxyContainerRunner vía s9-docker-proxy).",
+        message: "arena-engine: no hay ContainerRunner cableado en este servicio (DOCKER_PROXY_URL sin configurar).",
       });
       return;
     }
@@ -101,10 +138,12 @@ export function createArenaEngineService(cfg: ArenaEngineServiceConfig = {}): ex
       });
       return;
     }
+    // B2 · `network`/`engineHost` SIEMPRE de la config del servicio (nunca del
+    // cuerpo de la petición): ver la nota de seguridad en `RunBattleRequestBody`.
     const battleConfig: ContainerBattleConfig = {
       ...req.body,
-      network: req.body.network ?? cfg.network ?? "arena",
-      engineHost: req.body.engineHost ?? cfg.engineHost ?? "arena-engine",
+      network: cfg.network ?? "arena",
+      engineHost: cfg.engineHost ?? "arena-engine",
       runner: cfg.runner,
     };
     try {
@@ -139,9 +178,51 @@ export function newBattleId(): string {
 }
 
 /**
+ * Lee un secreto de un fichero (patrón Docker secrets, `*_FILE`) con
+ * precedencia sobre la variable en claro. Fichero declarado pero
+ * ilegible/vacío → sin secreto (fail closed: `/run` rechaza todo con 401,
+ * nunca se degrada a "sin autenticación").
+ */
+function resolveInternalSecretFromEnv(env: NodeJS.ProcessEnv): string | undefined {
+  const file = env.ARENA_ENGINE_INTERNAL_SECRET_FILE;
+  if (file) {
+    try {
+      const raw = readFileSync(file, "utf8").trim();
+      return raw || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  const plain = env.ARENA_ENGINE_INTERNAL_SECRET;
+  return plain && plain.length > 0 ? plain : undefined;
+}
+
+/**
+ * B2 · Resuelve la config del servicio desde el entorno.
+ *
+ * El runner (`ProxyContainerRunner`, habla con `s9-docker-proxy`, NUNCA con
+ * docker.sock) SOLO se instancia si `DOCKER_PROXY_URL` está presente y no
+ * vacío; sin él, el resultado es indistinguible de no pasar `runner` en
+ * absoluto (`/run` sigue en 503 `runner_unavailable`). El secreto interno
+ * (`ARENA_ENGINE_INTERNAL_SECRET[_FILE]`) se resuelve igual esté o no el
+ * runner cableado: sin secreto configurado, `/run` rechaza TODO con 401 (no
+ * hay modo "sin autenticación" por omisión, ni siquiera en desarrollo).
+ */
+export function serviceConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ArenaEngineServiceConfig {
+  const proxyUrl = env.DOCKER_PROXY_URL;
+  return {
+    network: env.ARENA_NETWORK || undefined,
+    engineHost: env.ARENA_ENGINE_HOST || undefined,
+    internalSecret: resolveInternalSecretFromEnv(env),
+    runner: proxyUrl ? new ProxyContainerRunner(proxyUrl) : undefined,
+  };
+}
+
+/**
  * Arranca el servicio escuchando en PORT (def. 8081). El runner es SIEMPRE el
  * que pase el llamador — nunca se resuelve aquí un runner "por defecto real",
- * para que quede explícito y auditable en el punto donde se cablea (B2).
+ * para que quede explícito y auditable en el punto donde se cablea (B2,
+ * `serviceConfigFromEnv`, usado por la guarda de entrypoint más abajo).
  */
 export function listen(cfg: ArenaEngineServiceConfig = {}, port = Number(process.env.PORT ?? 8081)): void {
   const app = createArenaEngineService(cfg);
@@ -158,9 +239,9 @@ export function listen(cfg: ArenaEngineServiceConfig = {}, port = Number(process
 
 // Guarda de entrypoint (mismo patrón que cli.ts): solo arranca el servidor
 // cuando el archivo se ejecuta como script real, NUNCA al importarse desde
-// tests. Sin runner inyectado por defecto: B2 es quien decide cablear
-// ProxyContainerRunner aquí (o en un wrapper que importe `listen`).
+// tests. B2: la config real (runner/secreto/red) se resuelve del entorno aquí,
+// gateada por la presencia de DOCKER_PROXY_URL — sin configurar, sigue en 503.
 import { fileURLToPath } from "node:url";
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  listen();
+  listen(serviceConfigFromEnv());
 }

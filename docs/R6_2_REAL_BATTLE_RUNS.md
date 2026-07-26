@@ -62,15 +62,56 @@ S9_ENABLE_REAL_BATTLE_RUNS=1     # habilita el endpoint (por defecto off → 503
   habilitado + ejecuta + enlace a replay cuando `available`.
 - OpenAPI/conformance: `runBattle` añadido (58 operaciones).
 
+## B2 · cableado real (API → arena-engine → s9-docker-proxy), aún gateado
+
+B2 sustituye el orquestador previsto (bot-manager como proceso aparte) por una cadena más
+corta que reutiliza el servicio HTTP de B1 sin que la API hable nunca con Docker:
+
+```
+API --HTTP(red platform)--> arena-engine --HTTP--> s9-docker-proxy --> bots (red arena)
+```
+
+- **`apps/arena-engine/src/service.ts`**: `POST /run` ahora exige autenticación interna
+  (cabecera `x-arena-engine-auth`, comparación en tiempo constante contra
+  `ARENA_ENGINE_INTERNAL_SECRET[_FILE]`) — sin credencial válida, 401 SIEMPRE, incluso con
+  runner cableado. `network`/`engineHost` YA NO se aceptan del cuerpo de la petición (B1 los
+  dejaba pasar porque eran inocuos sin runner; con el runner real, aceptarlos del body
+  habría permitido a quien alcanzara la red interna forzar una red Docker arbitraria o un
+  `engineHost` propio). El runner (`ProxyContainerRunner`, habla con `s9-docker-proxy`, nunca
+  con `docker.sock`) se cablea vía `serviceConfigFromEnv()`, gateado por `DOCKER_PROXY_URL`:
+  sin configurar, sigue en 503 `runner_unavailable`.
+- **`apps/api/src/services/battle-run-http-launcher.ts`**: implementación real de
+  `BattleRunLauncher` — llama a arena-engine por HTTP con la misma credencial interna, con
+  timeout, y traduce la respuesta a `BattleRunResult`. Se inyecta en `server.ts` solo si
+  `ARENA_ENGINE_URL` y el secreto compartido están AMBOS presentes; si falta alguno, sigue
+  sin runner (503) exactamente igual que antes de B2.
+- **Compose**: ambas piezas de config tienen valores por defecto seguros — sin desplegar el
+  secreto (`arena_engine_internal_secret`, generado por `init-secrets.sh`, montado por
+  archivo en ambos servicios) o sin `DOCKER_PROXY_URL`, el comportamiento no cambia respecto
+  a B1 (503 en ambos extremos). `S9_ENABLE_REAL_BATTLE_RUNS` sigue sin encenderse en ningún
+  fichero de configuración.
+
+**Límites conocidos de esta traducción, documentados y NO resueltos en B2** (no son huecos de
+seguridad; son fidelidad de simulación pendiente): arena-engine solo entiende mapas-fixture
+(`"empty"|"mvp"|"ctf"`, no el catálogo real de mapas — `mapId`/`mapVersion` de
+`BattleRunInput` no se traducen); `rulesetId` se pasa tal cual desde `battle.mode` (sin
+resolver contra el catálogo real de rulesets); `ticks` es un techo fijo configurable, no
+derivado del ruleset; la respuesta no ingiere en replay-service (`replay.ingested` queda
+`false` siempre). Nada de esto se ha probado contra Docker real — ver el informe de entrega
+del bloque B2 para el detalle de qué se verificó con fakes y qué queda pendiente de VM108.
+
 ## Validación operativa en VM108 (gateada, NO en este PR)
 
-Para pasar a **R6.2/R9-A** hay que **cablear el launcher real** (bot-manager como orquestador,
-que ejecuta `runContainerBattle` vía docker-proxy + red arena + ingesta en replay-service) y
-validarlo en VM108. Runbook:
-1. Desplegar bot-manager (perfil `bots`) como orquestador con `DOCKER_PROXY_URL`, red `arena`.
-2. Inyectar el launcher real en la API y `S9_ENABLE_REAL_BATTLE_RUNS=1`.
+Para pasar a **R6.2/R9-A** falta, sobre lo que ya cablea B2:
+1. Desplegar `s9-docker-proxy` en el host (VM108) y definir `DOCKER_PROXY_URL` en
+   arena-engine + el secreto interno compartido (mismo fichero en api y arena-engine).
+2. Definir `ARENA_ENGINE_URL`/`S9_ENABLE_REAL_BATTLE_RUNS=1` para la API (siguen apagados
+   hoy; encenderlos es una decisión de despliegue, no de este bloque).
 3. Crear una batalla en `#/battles/new` con bots firmados + mapa publicado → **Ejecutar batalla real**.
 4. Verificar: 2 contenedores reales, batalla termina, replay ingerido (`GET /replays`), 7/7 núcleo sano.
+5. Resolver los límites de traducción listados arriba (mapa real, ruleset real, ingesta de replay).
 Solo entonces: **R6.2/R9-A**.
 
-**Dictamen: R6.2/R9-B** — UI y endpoint preparados y seguros, pendiente validación operativa real en VM108.
+**Dictamen: R6.2/R9-B** — UI y endpoint preparados y seguros; B2 cablea el transporte
+API→arena-engine→proxy con autenticación interna, gateado y con valores por defecto seguros;
+pendiente validación operativa real en VM108 y la fidelidad de traducción listada arriba.

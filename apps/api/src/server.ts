@@ -3,6 +3,8 @@ import express from "express";
 import { createDb } from "./db/connection.js";
 import { createApp } from "./app.js";
 import { resolveTrustProxyHops } from "./middleware/proxy-trust.js";
+import { battleRunConfigFromEnv } from "./battle-run.js";
+import { createHttpBattleRunLauncher, httpBattleRunLauncherEnvConfig } from "./services/battle-run-http-launcher.js";
 
 const db = createDb();
 const port = Number(process.env.PORT ?? 8080);
@@ -11,13 +13,23 @@ const port = Number(process.env.PORT ?? 8080);
 // futuro montado aquí vea una IP distinta de la de la app principal.
 const trustProxyHops = resolveTrustProxyHops();
 
+// B2 · el launcher REAL (API → arena-engine por HTTP, nunca Docker) solo se
+// inyecta si ARENA_ENGINE_URL y el secreto compartido están AMBOS presentes
+// (fail closed); `S9_ENABLE_REAL_BATTLE_RUNS` sigue resolviéndose aparte y
+// apagada por defecto — cablear el runner no la enciende.
+const launcherEnvCfg = httpBattleRunLauncherEnvConfig();
+const realBattleRuns = {
+  ...battleRunConfigFromEnv(),
+  runner: launcherEnvCfg ? createHttpBattleRunLauncher({ ...launcherEnvCfg, db }) : undefined,
+};
+
 // /healthz va en un Express envolvente, NO en createApp(): el test de
 // conformidad (conformance.test.ts) exige que la app no exponga rutas fuera del
 // contrato de E1 salvo las documentadas. El healthcheck es infraestructura.
 const root = express();
 root.set("trust proxy", trustProxyHops);
 root.get("/healthz", (_req, res) => res.json({ status: "ok", service: "api" }));
-root.use(createApp({ db, trustProxyHops }));
+root.use(createApp({ db, trustProxyHops, realBattleRuns }));
 
 root.listen(port, () => {
   console.log(JSON.stringify({ level: "info", service: "api", msg: `API de plataforma escuchando en :${port}` }));
