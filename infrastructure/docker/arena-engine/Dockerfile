@@ -27,6 +27,14 @@ COPY apps/arena-engine ./apps/arena-engine
 COPY apps/bot-manager ./apps/bot-manager
 COPY maps ./maps
 
+# B7 · Siembra de los directorios de datos que este servicio MONTA en el
+# Compose (`arena_replays` y `arena_logs`, ambos rw). Docker crea el volumen
+# root:root si la ruta no existe en la imagen del primer contenedor que lo
+# monta, y arena-engine arranca antes que el replay-service: sin esta línea
+# este servicio podía dejar `arena_replays` inservible para quien SÍ escribe
+# en él (defecto real de VM108).
+RUN mkdir -p /data/replays /data/logs && chown node:node /data /data/replays /data/logs
+
 USER node
 
 ENV SERVICE_ENTRY=apps/arena-engine/src/cli.ts

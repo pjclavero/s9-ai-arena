@@ -16,7 +16,16 @@ RUN apk add --no-cache chromium ffmpeg xvfb bash nodejs npm \
 COPY tsconfig.json /app/tsconfig.json
 COPY apps/streamer /app/apps/streamer
 COPY infrastructure/docker/streamer/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh && adduser -D streamer
+# uid explícito 1000: el streamer monta `arena_replays` en rw (modo grabación
+# E11.M escribe en /data/replays/video) y debe compartir uid con el `node` de
+# las imágenes node-service, que son las dueñas del volumen (B7). Antes era el
+# uid que le tocara a `adduser -D`.
+RUN chmod +x /entrypoint.sh && adduser -D -u 1000 streamer
+# B7 · Siembra del directorio de datos con la propiedad correcta: si el
+# streamer fuera el primer contenedor en montar `arena_replays`, sin esto el
+# volumen nacería root:root y el replay-service no podría escribir (defecto
+# real de VM108).
+RUN mkdir -p /data/replays/video && chown -R streamer:streamer /data
 USER streamer
 
 ENV DISPLAY=:99 \

@@ -7,9 +7,16 @@
  */
 import express from "express";
 import { createReplayServer } from "./server.js";
+import { requireWritableDataDir } from "./data-dir.js";
 
 const dir = process.env.REPLAYS_DIR ?? "/data/replays";
 const port = Number(process.env.PORT ?? 8083);
+
+// B7 · Preflight ANTES de escuchar: si el volumen de replays no es escribible
+// (el caso real de VM108: `arena_replays` root:root y el proceso como `node`),
+// el servicio se niega a arrancar en vez de aceptar ingestas y perderlas todas
+// con EACCES mientras /healthz sigue diciendo "ok".
+requireWritableDataDir("replay-service", dir);
 
 const app = express();
 app.get("/healthz", (_req, res) => res.json({ status: "ok", service: "replay-service", dir }));
