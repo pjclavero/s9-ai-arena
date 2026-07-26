@@ -18,6 +18,22 @@
  * Esto sigue siendo defensa en profundidad: el sandbox (T6.2/R6.1) es la barrera
  * principal. Pero un bot que necesita `__import__` dinámico o `eval` para
  * "funcionar" no tiene sitio en la arena.
+ *
+ * LÍMITE CONOCIDO (documentado a raíz de la revisión del Supervisor en B3, no
+ * un problema nuevo): la detección de `eval`/`exec`/`compile`/`__import__` es
+ * POR NOMBRE en el AST — mira si esos identificadores/atributos APARECEN en el
+ * código, no si son ALCANZABLES ni qué reciben como argumento. Detecta
+ * `eval(x)` igual si `x` está en claro o si es el resultado de
+ * `base64.b64decode(...)`: el nombre peligroso queda escrito en el fichero de
+ * todas formas y por eso se cazaba igual antes de B3 (y sigue igual después:
+ * B3 no tocó esta lógica, solo qué módulos de la stdlib no hace falta
+ * declarar). Lo que este análisis NO hace y no pretende hacer: no evalúa el
+ * CONTENIDO de un `base64.b64decode(...)` para decidir si lo que decodifica es
+ * benigno, ni sigue flujo de datos entre variables. No lo leas como "imposible
+ * de eludir en general" — es un analizador estático de un único fichero, no un
+ * intérprete simbólico. La defensa real contra un bot que SÍ logre esconder
+ * algo de este análisis es el sandbox del contenedor (T6.2/R6.1: sin red
+ * externa, sin acceso a la plataforma, límites de recursos), no este fichero.
  */
 import { spawnSync } from "node:child_process";
 import * as acorn from "acorn";
