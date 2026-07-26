@@ -63,7 +63,9 @@ async function runPaced(b: Battle, maxTicks: number, speed: number): Promise<voi
 
 const MAPS: Record<string, () => any> = { mvp: mvpArena, ctf: ctfArena, empty: emptyArena };
 
-const STUBS: Record<string, (id: string) => any> = {
+/** Exportado SOLO para test directo de `safeLookup(STUBS, ...)` (mismo patrón
+ *  que `validateInspectHost`: importar el módulo no ejecuta `main()`). */
+export const STUBS: Record<string, (id: string) => any> = {
   hunter: (id) => new HunterBot(id),
   circle: (id) => new CircleBot(id),
   forward: (id) => new ForwardBot(id),
@@ -103,7 +105,7 @@ async function cmdRun(): Promise<void> {
   const out = arg("out");
   const attach = (b: Battle) => {
     config.participants.forEach((p, i) => {
-      const stub = STUBS[stubNames[i % stubNames.length]] ?? STUBS.idle;
+      const stub = safeLookup(STUBS, stubNames[i % stubNames.length]) ?? STUBS.idle;
       b.attachBot(p.id, stub(p.botId));
     });
   };

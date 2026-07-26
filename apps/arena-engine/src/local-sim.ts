@@ -90,7 +90,7 @@ async function main(): Promise<void> {
   for (let i = 0; i < stubBots.length; i++) {
     const s = stubBots[i];
     const vehicleId = `veh_${external.length + i + 1}`;
-    const mk = STUBS[s.kind ?? "idle"] ?? STUBS.idle;
+    const mk = safeLookup(STUBS, s.kind ?? "idle") ?? STUBS.idle;
     battle.attachBot(vehicleId, mk(s.botId));
   }
 
