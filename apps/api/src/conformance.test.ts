@@ -54,10 +54,13 @@ describe("T7.5 conformidad con el contrato de E1", () => {
     // getTournament/listTournamentBattles/listBotLoadouts/logout: lecturas y
     // sesión que el panel necesita (R3.7, ERR-VIS-02/03/04); documentadas en
     // docs/ronda2/reportes/R3.7-panel.md y candidatas a entrar en el contrato 0.3.
+    // listBotVersionBuilds: builds de una versión (B11) — sin esto el panel no
+    // puede saber cómo terminó el pipeline tras recargar la página.
     expect(extensions.sort()).toEqual([
       "getSigningPublicKey",
       "getTournament",
       "listBotLoadouts",
+      "listBotVersionBuilds",
       "listTournamentBattles",
       "logout",
       "recoverAccount",
