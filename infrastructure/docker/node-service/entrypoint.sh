@@ -47,6 +47,29 @@
 #     no-0), no se intenta ningún chown: se ejecuta el servicio tal cual y, si
 #     el directorio no sirve, el preflight del propio servicio
 #     (apps/replay-service/src/data-dir.ts) lo dirá a gritos.
+#
+# INVARIANTE QUE HAY QUE PRESERVAR AL AMPLIAR ARENA_DATA_DIRS
+# ----------------------------------------------------------
+# Entre que se comprueba que un componente no es un enlace (fase 1) y que se le
+# hace mkdir/chown (fase 2) hay una ventana. Hoy NO es explotable, y el motivo
+# es concreto: los dos únicos valores reales son `/data/replays`, una ruta de UN
+# SOLO componente bajo /data, y su padre `/data` vive en la capa de la imagen,
+# no en ningún volumen — nadie de fuera puede sustituirlo, y en ese instante
+# este script es PID 1 y el servicio todavía no existe. El volumen compartido se
+# monta POR DEBAJO del componente validado: otro contenedor con rw puede crear
+# cosas dentro, nunca reemplazar /data ni /data/replays en este namespace.
+#
+# Eso deja de ser cierto en cuanto se declare una ruta de DOS O MÁS componentes
+# dentro de un volumen compartido (el caso obvio: /data/replays/video del
+# streamer). Entonces el componente intermedio sí es escribible por otro
+# contenedor y la carrera pasa a ser alcanzable. Ojo: `chown -h` NO protege de
+# eso, porque `-h` sólo cubre el último componente; un intermedio sustituido por
+# un enlace se seguiría dereferenciando en el `mkdir -p`.
+#
+# Si algún día hace falta una ruta profunda dentro de un volumen compartido, no
+# basta con añadirla: hay que cerrar antes la ventana (crear y validar con el
+# directorio ya abierto, o exigir que el servicio se cree su subdirectorio él
+# mismo una vez sin privilegios).
 set -euf
 
 RAIZ_DATOS=/data

@@ -360,6 +360,56 @@ function correrEnNamespace(dirs: string, escenario: "normal" | "symlink" | "ance
 
 const nsDisponible = correrEnNamespace("/data/replays /data/logs", "normal").disponible;
 
+/**
+ * Devuelve las instrucciones que Docker ejecuta de verdad: descarta comentarios
+ * y líneas en blanco, y une las continuaciones de línea (`\`) en una sola
+ * instrucción. No interpreta nada más: sólo hace falta distinguir "esto se
+ * ejecuta" de "esto es texto muerto".
+ */
+function instruccionesDockerfile(df: string): string[] {
+  const instrucciones: string[] = [];
+  let acumulada: string | null = null;
+  for (const cruda of df.split("\n")) {
+    const linea = cruda.trimEnd();
+    if (acumulada === null && (linea.trim() === "" || linea.trim().startsWith("#"))) continue;
+    const continua = linea.endsWith("\\");
+    const cuerpo = continua ? linea.slice(0, -1) : linea;
+    acumulada = acumulada === null ? cuerpo : `${acumulada}\n${cuerpo}`;
+    if (!continua) {
+      instrucciones.push(acumulada);
+      acumulada = null;
+    }
+  }
+  if (acumulada !== null) instrucciones.push(acumulada);
+  return instrucciones;
+}
+
+/**
+ * D1 · ¿El Dockerfile EJECUTA las evasiones O1-O4 dentro de la imagen?
+ *
+ * Esto se leía sobre el texto crudo del fichero, y por eso un simple comentario
+ * lo engañaba: comentando entero el RUN de las pruebas —con lo que dentro de la
+ * imagen no se ejecuta NADA— las cuatro expresiones seguían encontrándose y el
+ * guard-rail seguía verde. Es decir, el mecanismo que existe para que el guard
+ * no quede sin verificar en silencio permitía exactamente eso. Ahora se miran
+ * las instrucciones RUN reales, no el texto.
+ *
+ * Es una única función a propósito: la usan tanto la comprobación de cobertura
+ * como el test que la audita, de modo que volver a leer el texto crudo rompe el
+ * segundo y no puede colarse.
+ */
+function elDockerfileEjecutaLasPruebas(df: string): boolean {
+  const run = instruccionesDockerfile(df)
+    .filter((i) => /^RUN\s/i.test(i))
+    .join("\n");
+  return (
+    /ln -s \/etc \/data\/probe-enlace/.test(run) &&
+    /ln -s \/etc \/data\/probe-sub/.test(run) &&
+    /ARENA_DATA_DIRS='\/data\/\*'/.test(run) &&
+    /ARENA_DATA_DIRS='\/data\/probe-uno \/etc'/.test(run)
+  );
+}
+
 describe("B7/O1 · el guard de rutas con un /data real (espacios de nombres)", () => {
   it("el guard de enlaces NUNCA queda sin verificar: o aquí, o en el build de la imagen", () => {
     // Los runners de GitHub (Ubuntu 24.04) restringen por AppArmor los espacios
@@ -373,11 +423,7 @@ describe("B7/O1 · el guard de rutas con un /data real (espacios de nombres)", (
     // comportamiento: el comportamiento lo prueban el build y, donde haya
     // espacios de nombres, los tests de abajo.
     const df = readFileSync(join(here, "..", "docker", "node-service", "Dockerfile"), "utf8");
-    const pruebaEnImagen =
-      /ln -s \/etc \/data\/probe-enlace/.test(df) &&
-      /ln -s \/etc \/data\/probe-sub/.test(df) &&
-      /ARENA_DATA_DIRS='\/data\/\*'/.test(df) &&
-      /ARENA_DATA_DIRS='\/data\/probe-uno \/etc'/.test(df);
+    const pruebaEnImagen = elDockerfileEjecutaLasPruebas(df);
     expect(
       nsDisponible || pruebaEnImagen,
       "ni hay espacios de nombres aquí ni el Dockerfile prueba el guard: quedaría sin verificar",
@@ -386,6 +432,25 @@ describe("B7/O1 · el guard de rutas con un /data real (espacios de nombres)", (
     if (process.env.CI) {
       expect(pruebaEnImagen, "el Dockerfile perdió las pruebas O1-O4 dentro de la imagen").toBe(true);
     }
+  });
+
+  it("D1 · un Dockerfile comentado NO puede dar el guard por verificado", () => {
+    const df = readFileSync(join(here, "..", "docker", "node-service", "Dockerfile"), "utf8");
+    expect(elDockerfileEjecutaLasPruebas(df), "el Dockerfile de la rama debe ejecutar las pruebas O1-O4").toBe(true);
+
+    // Mutación: se comenta el fichero entero. Dentro de la imagen no se
+    // ejecutaría absolutamente nada — el fallo silencioso que este mecanismo
+    // existe para impedir.
+    const comentado = df
+      .split("\n")
+      .map((l) => (l.trim() === "" ? l : `# ${l}`))
+      .join("\n");
+
+    // El texto crudo SIGUE conteniendo las cuatro expresiones: así se dejaba
+    // engañar la versión anterior de la comprobación.
+    expect(/ln -s \/etc \/data\/probe-enlace/.test(comentado)).toBe(true);
+    // Leyendo instrucciones reales se detecta que no queda nada vivo.
+    expect(elDockerfileEjecutaLasPruebas(comentado)).toBe(false);
   });
 
   it.runIf(nsDisponible)("caso bueno: con /data real chownea exactamente los directorios pedidos", () => {
