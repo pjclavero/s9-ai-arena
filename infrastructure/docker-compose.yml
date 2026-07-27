@@ -218,10 +218,17 @@ services:
       ARENA_ENGINE_HOST: ${ARENA_ENGINE_HOST:-arena-engine}
       ARENA_ENGINE_INTERNAL_SECRET_FILE: /run/secrets/arena_engine_internal_secret
     secrets: [arena_engine_internal_secret]
-    volumes:
-      - arena_maps:/data/maps:ro
-      - arena_replays:/data/replays
-      - arena_logs:/data/logs
+    # B13 · SIN montajes de datos, a propósito. arena-engine montaba
+    # arena_maps:/data/maps:ro, arena_replays:/data/replays y
+    # arena_logs:/data/logs, y NINGÚN archivo de apps/arena-engine toca /data:
+    # la única variable de entorno que lee su código es PORT (service.ts), los
+    # mapas los sirve `fixtures.ts` / la copia de `maps/` que lleva la imagen, y
+    # los logs salen por stdout (LOG_FORMAT=json, contrato de logging del cap.
+    # 24). El replay de una batalla con contenedores lo devuelve
+    # `runContainerBattle` en memoria y lo ingesta quien corresponde por HTTP.
+    # Eran tres volúmenes rw/ro montados en un servicio que nunca los abre:
+    # superficie para nada y, en el caso de arena_replays, un candidato a crear
+    # el volumen con la propiedad equivocada antes que su dueño real.
     depends_on:
       queue:
         condition: service_healthy
@@ -528,6 +535,23 @@ services:
       STREAM_AUTOSTART: ${STREAM_AUTOSTART:-0}
       STREAMER_CONTROL_PORT: "8090"
       RECORD_DIR: /data/replays/video
+      # B13 · Mismo mecanismo que B7 en replay-service/tournament-worker: el
+      # entrypoint de la imagen (compartido con node-service) asegura la
+      # propiedad del volumen antes de bajar a `streamer`, y el servicio hace
+      # preflight de escritura en modo record. Sin esto, una recreación del
+      # volumen dejaba al streamer grabando contra un directorio ajeno: ffmpeg
+      # moría en bucle y /healthz seguía diciendo "ok" (el patrón que dejó
+      # arena_replays vacío diez días).
+      #
+      # Es /data/replays y NO /data/replays/video (que es donde escribe) a
+      # propósito: la INVARIANTE de la cabecera de entrypoint.sh prohíbe rutas de
+      # más de un componente dentro de un volumen compartido —el componente
+      # intermedio sería escribible por otro contenedor durante la ventana entre
+      # validación y chown—, y el propio entrypoint ahora las RECHAZA. El
+      # subdirectorio `video/` lo crea el servicio, ya sin privilegios, en su
+      # preflight. Que esto funcione depende de que `streamer` sea uid:gid
+      # 1000:1000 igual que `node`: lo comprueba el build de la imagen con `stat`.
+      ARENA_DATA_DIRS: /data/replays
       LOG_FORMAT: json
     volumes:
       # Solo para el modo grabación E11.M (clips a arena_replays/video).
@@ -865,6 +889,11 @@ volumes:
   arena_bot_sources:
   arena_build_cache:
   arena_assets:
+  # B13 · arena_logs se declara porque forma parte de los seis volúmenes del
+  # 6.3, pero HOY no lo monta ningún servicio: el único que lo montaba era
+  # arena-engine, que nunca abre /data/logs (los logs van por stdout, contrato
+  # del cap. 24). Se deja declarado —vacío y sin montar— en vez de montado en un
+  # servicio que no lo usa.
   arena_logs:
   # Operativos (no forman parte de los seis del 6.3).
   postgres_data:

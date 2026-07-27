@@ -179,9 +179,32 @@ Montajes del volumen y por qué (verificado contra el código, no supuesto):
 | `replay-service` | rw | `ingestReplay`/`loadStored` (`apps/replay-service/src/store.ts`). |
 | `tournament-worker` | rw | `finishBattle` → `ingestReplay(replaysDir, …)` y guarda la ruta en `battles.replay_ref` (`apps/tournament-worker/src/battle-runner.ts`). **Añadido en B7: antes no lo montaba**, así que escribía en el sistema de ficheros efímero del contenedor y nadie más veía ese `replay_ref`. |
 | `api` | **ro** | `getReplay`/`verifyReplay` hacen `readFile(battle.replay_ref)` (`apps/api/src/routes/battles.ts`). **Añadido en B7**: sin él, la descarga y la verificación de replays de torneo daban siempre 404 «Replay no disponible». La API no escribe replays: su ingesta va por HTTP al `replay-service`. |
-| `streamer` | rw | modo grabación E11.M escribe clips en `/data/replays/video`. |
+| `streamer` | rw | modo grabación E11.M escribe clips en `/data/replays/video`. **B13**: protegido con el mismo mecanismo (ver abajo). |
 | `backup` | ro | copia de seguridad. |
-| `arena-engine` | rw | **montaje sin uso**: ningún fichero de `apps/arena-engine/src` toca `/data/replays`. Pendiente de retirar fuera de B7 (lo mismo pasa con `arena_maps`/`arena_logs` en `arena-engine` y con `arena_maps` en `map-service`). |
+| `arena-engine` | — | **B13: montaje RETIRADO** (junto con `arena_maps` y `arena_logs`). Ningún fichero de `apps/arena-engine` toca `/data`. |
+
+### B13 · lo que quedaba suelto
+
+1. **`streamer`** (escribe vídeo en `/data/replays/video` en modo `record`):
+   comparte ahora el **mismo** entrypoint que la imagen genérica
+   (`infrastructure/docker/node-service/entrypoint.sh`, parametrizado con
+   `ARENA_SERVICE_USER=streamer`) y declara `ARENA_DATA_DIRS=/data/replays/video`,
+   además de hacer el preflight de escritura al arrancar. Antes podía repetir el
+   fallo de VM108 con el agravante de que quien escribe es FFmpeg: moría en bucle
+   mientras `/healthz` seguía respondiendo 200.
+2. **`map-service`**: verificado que **no escribe** en `/data/maps` — su almacén
+   es en memoria (`apps/map-service/src/service.ts`). **No** se le añade
+   preflight; hay un centinela en `infrastructure/tests/b13-data-volumes.test.ts`
+   que se pone rojo el día que empiece a escribir. Su montaje rw de `arena_maps`
+   sigue ahí y **hoy no lo usa nadie** (queda anotado para quien implemente el
+   almacenamiento real de mapas).
+3. **`arena-engine`**: montajes retirados (ver arriba). `arena_logs` queda
+   declarado pero **sin montar en ningún servicio**: los logs salen por stdout.
+4. **CI**: `streamer`, `backup` y `bot-runtime-python` no las construía ningún
+   job, y `web` se construía con un Dockerfile distinto al del despliegue. La
+   matriz de `build-images` ya cubre las once imágenes del Compose y un test
+   (`infrastructure/tests/ci-image-matrix.test.ts`) impide que vuelva a
+   descuadrarse.
 
 ## 12. Qué NO hacer
 

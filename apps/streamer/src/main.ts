@@ -14,11 +14,27 @@ import { readFileSync } from "node:fs";
 import { createLogger, loadConfig, loadStreamKey } from "./config.js";
 import { StreamSupervisor, type Spawner } from "./supervisor.js";
 import { createControlServer } from "./control.js";
+import { requireWritableDataDir } from "../../../packages/data-dir/index.js";
 
 export function main(env: NodeJS.ProcessEnv = process.env): void {
   const config = loadConfig(env);
   const streamKey = loadStreamKey(env, readFileSync, config.mode);
   const logger = createLogger(streamKey);
+
+  // B13 · Preflight del directorio de grabación (mismo mecanismo que B7 en
+  // replay-service y tournament-worker, no uno paralelo).
+  //
+  // En modo `record` quien escribe es FFmpeg, no Node: si el directorio no es
+  // escribible, ffmpeg muere al abrir el fichero, el supervisor reintenta hasta
+  // maxRetries... y /healthz de la API de control sigue respondiendo "ok"
+  // porque no toca el disco. Es EXACTAMENTE el fallo silencioso que dejó
+  // `arena_replays` vacío diez días en VM108, solo que aquí el que se pierde es
+  // el vídeo. Con el preflight el contenedor muere al arrancar (bucle de
+  // reinicio VISIBLE) en vez de fingir que emite.
+  //
+  // En modo `rtmps` no se escribe nada en disco: no se comprueba nada (un
+  // preflight de más ahí sería un servicio que no arranca sin motivo).
+  if (config.mode === "record") requireWritableDataDir("streamer", config.recordDir);
 
   const spawner: Spawner = (cmd, args) => spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
   const supervisor = new StreamSupervisor({

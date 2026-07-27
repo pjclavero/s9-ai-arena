@@ -124,13 +124,24 @@ jobs:
       packages: write
     strategy:
       matrix:
-        # H4 (issue #8): las 8 imágenes de servicio. gateway y arena-engine tienen
-        # Dockerfile propio; bot-manager tiene el suyo (infrastructure/docker/
-        # bot-manager/Dockerfile, B3: necesita python3 para el análisis AST de
-        # bots Python); los otros 5 usan la imagen genérica node-service con
-        # APP_PATH como build-arg (mismos valores que infrastructure/docker-compose.yml).
+        # H4 (issue #8): TODAS las imágenes que construye el Compose. gateway,
+        # arena-engine, web, streamer, backup y bot-runtime tienen Dockerfile
+        # propio; bot-manager tiene el suyo (infrastructure/docker/bot-manager/
+        # Dockerfile, B3: necesita python3 para el análisis AST de bots Python);
+        # los demás usan la imagen genérica node-service con APP_PATH como
+        # build-arg (mismos valores que infrastructure/docker-compose.yml).
         # El entrypoint (SERVICE_ENTRY) lo fija el Compose en despliegue; la imagen
         # construye igualmente y falla al arrancar con mensaje claro si aún no existe.
+        #
+        # B13 · Esta lista NO puede volver a quedarse corta a mano: el test
+        # infrastructure/tests/ci-image-matrix.test.ts la compara con el
+        # `build:` de cada servicio del Compose (Dockerfile Y build-args) y
+        # falla si alguna imagen se queda sin construir o se construye con un
+        # Dockerfile distinto al de producción. Hasta B13 faltaban `streamer`,
+        # `backup` y `bot-runtime` —nadie validaba sus cambios— y `web` se
+        # construía (y se publicaba en GHCR) desde node-service/Dockerfile
+        # cuando el Compose la construye con docker/web/Dockerfile: la CI
+        # validaba una imagen que no era la de producción.
         include:
           - service: gateway
             dockerfile: infrastructure/docker/gateway/Dockerfile
@@ -139,8 +150,8 @@ jobs:
             dockerfile: infrastructure/docker/arena-engine/Dockerfile
             build_args: ""
           - service: web
-            dockerfile: infrastructure/docker/node-service/Dockerfile
-            build_args: APP_PATH=apps/web
+            dockerfile: infrastructure/docker/web/Dockerfile
+            build_args: ""
           - service: api
             dockerfile: infrastructure/docker/node-service/Dockerfile
             build_args: APP_PATH=apps/api
@@ -156,6 +167,19 @@ jobs:
           - service: replay-service
             dockerfile: infrastructure/docker/node-service/Dockerfile
             build_args: APP_PATH=apps/replay-service
+          # B13 · Las tres que NINGÚN job construía. `streamer` y `backup` se
+          # despliegan en VM108 (perfiles streaming/production) y sus cambios
+          # solo se descubrían en el `docker compose build` de producción;
+          # `bot-runtime` es la plantilla de contenedor de bot del perfil bots.
+          - service: streamer
+            dockerfile: infrastructure/docker/streamer/Dockerfile
+            build_args: ""
+          - service: backup
+            dockerfile: infrastructure/docker/backup/Dockerfile
+            build_args: ""
+          - service: bot-runtime-python
+            dockerfile: infrastructure/docker/bot-runtime/Dockerfile
+            build_args: ""
     steps:
       - uses: actions/checkout@v4
       - name: Login en GHCR (solo main)

@@ -27,13 +27,13 @@ COPY apps/arena-engine ./apps/arena-engine
 COPY apps/bot-manager ./apps/bot-manager
 COPY maps ./maps
 
-# B7 · Siembra de los directorios de datos que este servicio MONTA en el
-# Compose (`arena_replays` y `arena_logs`, ambos rw). Docker crea el volumen
-# root:root si la ruta no existe en la imagen del primer contenedor que lo
-# monta, y arena-engine arranca antes que el replay-service: sin esta línea
-# este servicio podía dejar `arena_replays` inservible para quien SÍ escribe
-# en él (defecto real de VM108).
-RUN mkdir -p /data/replays /data/logs && chown node:node /data /data/replays /data/logs
+# B13 · Aquí NO se siembra ningún directorio de datos, y es deliberado.
+# B7 añadió `mkdir -p /data/replays /data/logs` porque este servicio montaba
+# esos volúmenes y podía ser el primero en crearlos (root:root) para quien sí
+# escribe en ellos. B13 comprobó que arena-engine no toca /data en NINGÚN
+# archivo y le retiró los tres montajes en el Compose: sin montajes, sembrar
+# directorios en la imagen sería código muerto que solo confunde sobre quién es
+# el dueño del volumen.
 
 USER node
 
