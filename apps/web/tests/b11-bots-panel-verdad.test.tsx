@@ -67,6 +67,7 @@ function fakeBackend(init: { versions: VersionRow[]; builds?: BuildRow[]; latenc
     builds: init.builds ?? [],
     calls: [] as string[],
     buildsShouldFail: false,
+    versionsShouldFail: false,
     nextVersionNumber: Math.max(0, ...init.versions.map((v) => v.version)) + 1,
   };
   apiMock.mockImplementation(async (method: string, path: string) => {
@@ -77,7 +78,10 @@ function fakeBackend(init: { versions: VersionRow[]; builds?: BuildRow[]; latenc
     if (method === "GET" && path.startsWith("/bots?")) {
       return { items: [{ id: "b1", name: "Tanque", visibility: "private" }] };
     }
-    if (method === "GET" && path === "/bots/b1/versions") return state.versions.map((v) => ({ ...v }));
+    if (method === "GET" && path === "/bots/b1/versions") {
+      if (state.versionsShouldFail) throw new Error("gateway caído");
+      return state.versions.map((v) => ({ ...v }));
+    }
     if (method === "GET" && path === "/bots/b1/loadouts") return [LOADOUT];
     const m = /^\/bots\/b1\/versions\/(\d+)\/builds$/.exec(path);
     if (method === "GET" && m) {
@@ -542,6 +546,29 @@ describe("B11-fix · el sondeo no desmonta el panel ni tira trabajo del usuario"
     expect(document.activeElement).toBe(area);
     expect(area.value).toBe("sin guardar");
     expect((screen.getByLabelText("chasis") as HTMLSelectElement).value).toBe("chassis.heavy@1");
+  });
+
+  it("si la revalidación de versiones FALLA, se avisa y no se borra lo que ya había", async () => {
+    // Conservar los datos previos no puede convertirse en callar el fallo: se
+    // mantiene lo último bueno Y se dice que puede estar desfasado.
+    const st = fakeBackend({
+      versions: [{ version: 1, state: "validating", runtime: "python", loadoutRevision: 7 }],
+      builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
+      latencyMs: 5,
+    });
+    renderPage({ pollIntervalMs: 10, maxPolls: 40 });
+    await selectBot();
+    await screen.findByTestId("pipeline-running");
+
+    st.versionsShouldFail = true;
+    st.builds = [{ id: "b-1", version: 1, status: "failed", stages: [{ name: "build", status: "failed" }] }];
+
+    const aviso = await screen.findByTestId("versions-stale", {}, { timeout: 3000 });
+    expect(aviso.textContent).toContain("puede estar desfasado");
+    // El panel sigue en pie con lo último que sí se supo (no una pantalla de error).
+    expect(screen.getByTestId("focused-version").textContent).toContain("validating");
+    expect(screen.getByTestId("version-row-1")).toBeTruthy();
+    expect(screen.queryByText(/No se pudo cargar el detalle/)).toBeNull();
   });
 
   it("gasta UNA petición por ciclo, no tres", async () => {
