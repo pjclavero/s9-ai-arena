@@ -18,6 +18,7 @@
  * del Rng con semilla. Los ids de batalla derivan del matchId, no de timestamps.
  */
 import type { Ruleset } from "../../../packages/game-rules/index.js";
+import { emptyDict } from "../../../packages/game-rules/safe-lookup.js";
 import { Rng } from "./rng.js";
 import { Battle, type BattleResult, type Participant } from "./sim/battle.js";
 import type { ArenaMap } from "./sim/modes.js";
@@ -87,7 +88,11 @@ export async function runMatch(
   // no desplaza la secuencia: la ronda i tiene la misma semilla se jueguen 2 o N rondas.
   const seeds = Array.from({ length: plan.rounds }, (_, i) => master.forkSeed(`round-${i + 1}`));
 
-  const roundWins: Record<string, number> = {};
+  // B8 · `emptyDict()`, NO `{}`: los nombres de equipo salen del mapa/config de
+  // la batalla. Con `{}`, un equipo "__proto__" no acumulaba victorias (la
+  // asignación pisa el prototipo) y `roundWins[b] - roundWins[a]` daba NaN al
+  // ordenar, con lo que el ganador del match quedaba indeterminado.
+  const roundWins: Record<string, number> = emptyDict<number>();
   for (const t of teams) roundWins[t] = 0;
   const rounds: RoundResult[] = [];
   const majority = Math.floor(plan.rounds / 2) + 1;

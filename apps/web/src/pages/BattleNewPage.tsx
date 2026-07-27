@@ -11,6 +11,7 @@
  */
 import { useEffect, useState } from "react";
 import { api, type Me } from "../api.js";
+import { safeLookup } from "../../../../packages/game-rules/safe-lookup.js";
 
 /** modo → ruleset por defecto (mismo mapeo que engine-executor). */
 const MODE_RULESET: Record<string, string> = {
@@ -110,7 +111,8 @@ export function BattleNewPage(_props: { me: Me }) {
     try {
       const battle = await api<{ id: string }>("POST", "/battles", {
         mode,
-        rulesetId: MODE_RULESET[mode],
+        // B8 · lectura segura (barrido de la clase __proto__).
+        rulesetId: safeLookup(MODE_RULESET, mode),
         mapId,
         mapVersion: mapVersion(mapId),
         ...(seed ? { seed } : {}),

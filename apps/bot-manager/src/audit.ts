@@ -13,6 +13,7 @@
  * ningún rol. Esa ausencia ES la garantía de inmutabilidad, verificada por el test.
  */
 import { randomUUID } from "node:crypto";
+import { safeLookup } from "../../../packages/game-rules/safe-lookup.js";
 import type { AuditEventInput, AuditSink, SecurityFindingInput } from "./audit-sink.js";
 import type { PrincipalRole } from "./launch-guard.js";
 
@@ -76,7 +77,13 @@ export class AuditLog implements AuditSink {
   // ---- CONSULTA CON RBAC -----------------------------------------------------------
   /** audit_log: moderador/admin/servicio interno. Nunca la web ni la API pública. */
   queryAudit(principal: AuditPrincipal, filter?: { botId?: string; correlationId?: string }): AuditEntry[] {
-    if (!AUDIT_PERMISSIONS[principal.role]?.readAudit) {
+    // B8 · `safeLookup`, NO indexación directa: `principal.role` cruza la
+    // frontera de confianza (viene del llamador). Una clave heredada
+    // ("__proto__", "constructor"…) devolvía algo truthy de `Object.prototype`
+    // en vez de `undefined`; aquí acababa fallando cerrado por casualidad (el
+    // `?.readAudit` daba undefined), pero es la misma clase de fallo y no se
+    // deja viva por suerte. Ahora la clave envenenada es `undefined` de verdad.
+    if (!safeLookup(AUDIT_PERMISSIONS, principal.role)?.readAudit) {
       throw new Forbidden(`rol '${principal.role}' no puede leer el audit_log`);
     }
     return this.entries
@@ -90,7 +97,8 @@ export class AuditLog implements AuditSink {
 
   /** security_findings: SOLO administradores (DoD T6.4). */
   queryFindings(principal: AuditPrincipal, filter?: { botId?: string; category?: string }): SecurityFinding[] {
-    if (!AUDIT_PERMISSIONS[principal.role]?.readFindings) {
+    // B8 · idem `queryAudit`: lectura segura, no indexación directa.
+    if (!safeLookup(AUDIT_PERMISSIONS, principal.role)?.readFindings) {
       throw new Forbidden(`rol '${principal.role}' no puede leer security_findings (solo admin)`);
     }
     return this.findings

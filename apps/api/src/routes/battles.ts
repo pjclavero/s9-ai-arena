@@ -17,6 +17,7 @@ import { pathParam } from "../params.js";
 import { ROLE_RANK } from "../openapi.js";
 import { ApiError, badRequest, conflict, notFound } from "../errors.js";
 import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
+import { emptyDict } from "../../../../packages/game-rules/safe-lookup.js";
 import { signSpectateTicket } from "../auth/tokens.js";
 import { anonQuota, type AnonQuotaConfig } from "../middleware/anon-quota.js";
 import { isSignedDigest, type BattleRunConfig } from "../battle-run.js";
@@ -308,7 +309,8 @@ export function battleRoutes(
   defineOperation(router, "getBattleStats", async (req, res) => {
     const battle = await getBattleOr404(db, pathParam(req, "battleId"));
     const rows = await db("battle_stats").where({ battle_id: battle.id });
-    const stats: Record<string, unknown> = {};
+    // B8 · `emptyDict()`, NO `{}`: `r.bot_id` es un valor de BD usado como clave.
+    const stats: Record<string, unknown> = emptyDict<unknown>();
     for (const r of rows) stats[r.bot_id] = r.stats;
     res.setHeader("Cache-Control", "public, max-age=60");
     res.json({ battleId: battle.id, perBot: stats });

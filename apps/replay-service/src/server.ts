@@ -9,16 +9,38 @@
  * anónimas y el contrato OpenAPI los pone la API de E7 (GET /replays/{battleId} +
  * POST /replays/{battleId}/verify), que lee estos mismos archivos por replay_ref.
  */
-import express, { type Express } from "express";
+import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { fromJsonl } from "../../arena-engine/src/replay.js";
 import { decompress, nearestKeyframe } from "./format.js";
 import { ingestReplay, listReplays, loadStored, readIndex, replayPath, sweepRetention, verifyStored } from "./store.js";
+import { REPLAY_INGEST_AUTH_HEADER, isValidInternalSecret } from "./auth.js";
 
 export interface ReplayServerOptions {
   dir: string;
   /** Reloj inyectable para las pruebas de retención. */
   now?: () => number;
+  /**
+   * B8 · Secreto interno compartido que autentica las rutas de ESCRITURA
+   * (`POST /replays/:battleId` y `POST /retention/sweep`), en la cabecera
+   * `x-replay-ingest-auth` y con comparación en tiempo constante. Sin él
+   * configurado NINGUNA escritura se acepta (401): no hay modo "abierto por
+   * defecto". Nunca se loguea ni se devuelve en las respuestas.
+   *
+   * Las rutas de LECTURA (`GET /replays`, `GET /replays/:id`, `/index`,
+   * `/segment`) NO lo exigen a propósito: las consume el VISOR anónimo a través
+   * del gateway (`infrastructure/gateway/nginx.conf`, `location /replays/`).
+   *
+   * PRECISIÓN (corrección del supervisor de B8): ese `location` hace
+   * `proxy_pass` DIRECTO al replay-service, así que estas lecturas NO pasan por
+   * la API de E7 ni heredan su autorización — son anónimas de verdad. La
+   * decisión de dejarlas abiertas se sostiene igual (un replay publicado es
+   * material público y exigir credencial dejaría el visor a oscuras), pero se
+   * sostiene por eso y no por una autorización aguas arriba que no existe.
+   * La amenaza que cierra B8 es la INYECCIÓN de partidas falsas y el BORRADO
+   * por retención, no la lectura de un replay ya publicado.
+   */
+  internalSecret?: string;
 }
 
 /** Cache de segmentos: decodificar 9000 ticks por cada petición de salto sería absurdo. */
@@ -48,6 +70,36 @@ export function createReplayServer(opts: ReplayServerOptions): Express {
   // La ingesta llega como JSONL crudo del motor/worker; 64 MB cubre batallas largas.
   app.use(express.text({ type: ["application/x-ndjson", "text/plain"], limit: "64mb" }));
 
+  /**
+   * B8 · Guarda de ESCRITURA.
+   *
+   * Se aplica antes de PARSEAR el JSONL, de resolver el `battleId` y de tocar el
+   * disco: sin credencial válida no se revela nada (ni si el replay existe, ni
+   * si el JSONL es válido). Fail-closed — si `opts.internalSecret` no está
+   * configurado, `isValidInternalSecret` devuelve `false` para CUALQUIER
+   * petición y todo camino de escritura responde 401.
+   *
+   * PRECISIÓN (corrección del supervisor de B8, medida): esto NO significa que
+   * el cuerpo no se lea. `express.text({ limit: "64mb" })` está montado ARRIBA y
+   * corre ANTES del enrutado, así que una petición sin credencial se bufferiza
+   * entera y solo después recibe el 401 (medido: 20 MB ⇒ 401 en ~124 ms, cuerpo
+   * leído completo). No es una regresión —antes se bufferizaba Y ADEMÁS se
+   * escribía en disco— pero el límite de 64 MB es el único techo real frente a
+   * un emisor no autenticado. Cerrarlo del todo exigiría mover la comprobación
+   * a un middleware previo al body parser (o al gateway), y eso es un cambio de
+   * cadena que este bloque no acomete: queda anotado como deuda.
+   */
+  const requireWriteAuth = (req: Request, res: Response, next: NextFunction): void => {
+    if (!isValidInternalSecret(opts.internalSecret, req.header(REPLAY_INGEST_AUTH_HEADER))) {
+      res.status(401).json({
+        error: "unauthorized",
+        message: `credencial interna ausente o inválida (cabecera ${REPLAY_INGEST_AUTH_HEADER})`,
+      });
+      return;
+    }
+    next();
+  };
+
   // ------------------------------------------------------------- ingesta
   // R7-A · Listado global de replays gestionados (más recientes primero).
   app.get("/replays", (req, res) => {
@@ -56,7 +108,7 @@ export function createReplayServer(opts: ReplayServerOptions): Express {
     res.json({ items: listReplays(opts.dir, { limit, order }) });
   });
 
-  app.post("/replays/:battleId", (req, res) => {
+  app.post("/replays/:battleId", requireWriteAuth, (req, res) => {
     let replay;
     try {
       replay = fromJsonl(String(req.body ?? ""));
@@ -169,6 +221,14 @@ export function createReplayServer(opts: ReplayServerOptions): Express {
   });
 
   // --------------------------------------------------------------- verify
+  // B8 · SIN credencial a propósito: es POST por convenio (re-simula), pero no
+  // muta nada — solo recomputa y compara hashes de un replay YA almacenado. Es
+  // parte del contrato público de auditabilidad (cualquiera puede comprobar que
+  // una partida publicada es auténtica) y la versión pública con cuota anónima
+  // vive en la API de E7 (`verifyReplay`, apps/api/src/routes/battles.ts).
+  // Riesgo residual conocido y NO cerrado aquí: re-simular es caro, así que por
+  // el gateway es un amplificador de DoS; el control que corresponde es una
+  // cuota en el gateway/API, no una credencial interna (ver informe de B8).
   app.post("/replays/:battleId/verify", async (req, res) => {
     const result = await verifyStored(opts.dir, req.params.battleId);
     if (!result.valid && result.reason === "replay_not_found") {
@@ -187,7 +247,9 @@ export function createReplayServer(opts: ReplayServerOptions): Express {
   });
 
   // ------------------------------------------------------------ retención
-  app.post("/retention/sweep", (_req, res) => {
+  // B8 · autenticada: `sweepRetention` BORRA replays del disco. Es la ruta más
+  // destructiva del servicio y estaba tan abierta como la ingesta.
+  app.post("/retention/sweep", requireWriteAuth, (_req, res) => {
     res.json(sweepRetention(opts.dir, opts.now));
   });
 

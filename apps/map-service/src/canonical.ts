@@ -15,6 +15,7 @@
  */
 import { createHash } from "node:crypto";
 import type { InternalMap, MapWithoutChecksum } from "./types.js";
+import { emptyDict } from "../../../packages/game-rules/safe-lookup.js";
 
 /** JSON canónico de un valor arbitrario: claves de objeto ordenadas recursivamente, sin espacios. */
 export function canonicalize(value: unknown): string {
@@ -24,7 +25,13 @@ export function canonicalize(value: unknown): string {
 function sortValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortValue);
   if (value !== null && typeof value === "object") {
-    const out: Record<string, unknown> = {};
+    // B8 · `emptyDict()` (Object.create(null)), NO `{}`. Las claves vienen de un
+    // DOCUMENTO DE MAPA arbitrario. Con `{}`, `out["__proto__"] = v` no crea una
+    // propiedad propia: reemplaza el prototipo, así que la clave DESAPARECE del
+    // JSON.stringify — dos mapas distintos (uno con `__proto__`, otro sin él)
+    // canonicalizaban a la MISMA cadena y por tanto al MISMO checksum, que es
+    // justo lo que este módulo existe para impedir.
+    const out: Record<string, unknown> = emptyDict<unknown>();
     for (const key of Object.keys(value as Record<string, unknown>).sort()) {
       out[key] = sortValue((value as Record<string, unknown>)[key]);
     }

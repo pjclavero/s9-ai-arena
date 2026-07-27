@@ -15,6 +15,7 @@
  *    (duplicar) con el diff a la vista.
  */
 import { useMemo, useState } from "react";
+import { emptyDict } from "../../../../packages/game-rules/safe-lookup.js";
 import { validateLoadout, type Violation } from "../../../../packages/module-catalog/validator/index.js";
 import { findModule, type LoadoutInput, type ModuleDefinition } from "../../../../packages/module-catalog/types.js";
 
@@ -70,8 +71,9 @@ function slotsFromDraft(d: LoadoutDraft | undefined): {
   modules: Record<string, string>;
   ammo: Record<string, string>;
 } {
-  const modules: Record<string, string> = {};
-  const ammo: Record<string, string> = {};
+  // B8 · `emptyDict()`, NO `{}`: `m.slot` viene de la respuesta del servidor.
+  const modules: Record<string, string> = emptyDict<string>();
+  const ammo: Record<string, string> = emptyDict<string>();
   for (const m of d?.modules ?? []) {
     modules[m.slot] = m.moduleId;
     if (m.ammo) ammo[m.slot] = m.ammo;

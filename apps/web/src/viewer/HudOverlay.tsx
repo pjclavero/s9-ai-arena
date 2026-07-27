@@ -11,6 +11,7 @@
  */
 import type { CSSProperties } from "react";
 import type { HudModel, HudBot, HudTeamPanel } from "./hud-model.js";
+import { safeLookup } from "../../../../packages/game-rules/safe-lookup.js";
 
 const panel: CSSProperties = {
   background: "rgba(0,0,0,0.6)",
@@ -68,7 +69,7 @@ function TopBar({ model, accent }: { model: HudModel; accent: string }) {
           : "0 — 0"}
       </div>
       <div data-testid="hud-clock" style={{ fontSize: "0.9em", opacity: 0.85 }}>
-        {model.clock.label} · {PHASE_LABEL[model.clock.phase] ?? model.clock.phase}
+        {model.clock.label} · {safeLookup(PHASE_LABEL, model.clock.phase) ?? model.clock.phase}
       </div>
     </div>
   );
@@ -112,7 +113,9 @@ const FLAG_LABEL: Record<string, string> = {
   captured: "capturada",
 };
 function flagLabel(state: string): string {
-  return FLAG_LABEL[state] ?? state;
+  // B8 · `safeLookup`: `state` llega del snapshot de la batalla (dato externo);
+  // con la indexación directa un estado "__proto__" pintaba "[object Object]".
+  return safeLookup(FLAG_LABEL, state) ?? state;
 }
 
 // ─────────────────────────── panel de bots por equipo ────────────────────────

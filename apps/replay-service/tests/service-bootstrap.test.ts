@@ -100,11 +100,19 @@ interface Arranque {
  * Lanza el servicio real y espera a que (a) diga que escucha, o (b) muera.
  * No hay terceros caminos: eso es justamente lo que se está probando.
  */
-async function arrancar(replaysDir: string): Promise<Arranque> {
+async function arrancar(replaysDir: string, ingestSecret: string | undefined = INGEST_SECRET): Promise<Arranque> {
   const port = await puertoLibre();
   const proc = spawn(process.execPath, [TSX as string, MAIN], {
     cwd: REPO,
-    env: { ...process.env, REPLAYS_DIR: replaysDir, PORT: String(port) },
+    env: {
+      ...process.env,
+      REPLAYS_DIR: replaysDir,
+      PORT: String(port),
+      // B8 · la ingesta es una ruta autenticada. Se pasa el secreto por entorno,
+      // que es EXACTAMENTE como lo recibe el contenedor real (docker-compose:
+      // REPLAY_INGEST_SECRET_FILE / REPLAY_INGEST_SECRET).
+      ...(ingestSecret === undefined ? {} : { REPLAY_INGEST_SECRET: ingestSecret }),
+    },
     stdio: ["ignore", "pipe", "pipe"],
   }) as ChildProcessWithoutNullStreams;
   vivos.push(proc);
@@ -132,6 +140,9 @@ async function arrancar(replaysDir: string): Promise<Arranque> {
   return { proc, salida, code, port };
 }
 
+/** B8 · secreto de ingesta con el que se arranca el servicio real en estos tests. */
+const INGEST_SECRET = "secreto-ingesta-bootstrap";
+
 describe("B7 · despliegue desde cero: el replay se escribe y se lee de verdad", () => {
   it(
     "sobre un directorio de datos VACÍO, el servicio arranca e ingesta y devuelve un replay real",
@@ -149,7 +160,7 @@ describe("B7 · despliegue desde cero: el replay se escribe y se lee de verdad",
       const base = `http://127.0.0.1:${s.port}`;
       const post = await fetch(`${base}/replays/${replay.header.battleId}`, {
         method: "POST",
-        headers: { "Content-Type": "application/x-ndjson" },
+        headers: { "Content-Type": "application/x-ndjson", "x-replay-ingest-auth": INGEST_SECRET },
         body: jsonl,
       });
       expect(post.status, await post.clone().text()).toBe(201);
@@ -203,4 +214,55 @@ describe("B7 · despliegue desde cero: el replay se escribe y se lee de verdad",
       await expect(fetch(`http://127.0.0.1:${s.port}/healthz`)).rejects.toThrow();
     },
   );
+});
+
+/**
+ * B8 · Fail-closed comprobado sobre el PROCESO REAL, no sobre la app en memoria.
+ *
+ * `ingest-auth.test.ts` prueba `createReplayServer()` con supertest. Esto es un
+ * escalón más arriba y más cerca del contenedor: arranca `src/main.ts` como
+ * proceso (el mismo `SERVICE_ENTRY` que fija el Compose), sin
+ * `REPLAY_INGEST_SECRET` en el entorno — el despiste realista del operador — y
+ * comprueba por HTTP de verdad que:
+ *   - el servicio SÍ arranca y SÍ sirve lecturas (el visor no se queda a oscuras), y
+ *   - la ingesta se rechaza con 401 y NO escribe nada en el disco.
+ *
+ * Esto es lo que cubre el cableado `main.ts` → `resolveIngestSecretFromEnv` →
+ * `createReplayServer({ internalSecret })`, que ningún test de la app en memoria
+ * puede tocar.
+ */
+describe("B8 · el servicio REAL sin secreto configurado: lee pero no deja escribir", () => {
+  it("arranca, sirve lecturas y rechaza la ingesta con 401 sin escribir nada", { timeout: 120_000 }, async () => {
+    const dir = join(mkdtempSync(join(tmpdir(), "b8-boot-")), "replays");
+    const s = await arrancar(dir, undefined);
+    expect(s.code, `el servicio no debe morir por no tener secreto:\n${s.salida}`).toBeNull();
+
+    const base = `http://127.0.0.1:${s.port}`;
+
+    // (1) Las lecturas siguen vivas: el visor no depende de la credencial.
+    const healthz = await fetch(`${base}/healthz`);
+    expect(healthz.status).toBe(200);
+    const lista = await fetch(`${base}/replays`);
+    expect(lista.status).toBe(200);
+
+    // (2) La ingesta se rechaza con CUALQUIER credencial (no hay modo abierto).
+    for (const cred of [undefined, "", "lo-que-sea"]) {
+      const post = await fetch(`${base}/replays/${replay.header.battleId}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-ndjson",
+          ...(cred === undefined ? {} : { "x-replay-ingest-auth": cred }),
+        },
+        body: jsonl,
+      });
+      expect(post.status, `credencial ${JSON.stringify(cred)}`).toBe(401);
+    }
+
+    // (3) El barrido de retención tampoco.
+    const sweep = await fetch(`${base}/retention/sweep`, { method: "POST" });
+    expect(sweep.status).toBe(401);
+
+    // (4) EFECTO observable: el directorio de datos sigue VACÍO.
+    expect(readdirSync(dir)).toEqual([]);
+  });
 });

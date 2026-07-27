@@ -16,7 +16,7 @@
  * la misma interfaz cuando exista el runtime.
  */
 import type { Knex } from "knex";
-import { loadRuleset } from "../../../packages/game-rules/index.js";
+import { loadRuleset, safeLookup } from "../../../packages/game-rules/index.js";
 import { resolveVehicle } from "../../../packages/module-catalog/resolve/index.js";
 import type { LoadoutInput, ModuleDefinition } from "../../../packages/module-catalog/types.js";
 import { getCatalog } from "../../api/src/services/catalog.js";
@@ -95,7 +95,13 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
       ? await db("tournaments").where({ id: battle.tournament_id }).first()
       : null;
     const budgetCredits = (tournament?.budget_credits ?? dbRuleset?.budget_credits) as number | undefined;
-    const engineRulesetId = ENGINE_RULESETS[battle.mode] ?? "dm_practice@1";
+    // B8 · `safeLookup`, NO indexación directa (lo encontró el supervisor de B9
+    // y seguía vivo en main). `battle.mode` es una columna de BD escrita desde la
+    // API: con mode="__proto__" la indexación devolvía `Object.prototype`, el
+    // `?? "dm_practice@1"` NO aplicaba y ese objeto llegaba a `loadRuleset()`
+    // como id de ruleset. Ahora una clave desconocida da `undefined` y el
+    // defecto sí entra.
+    const engineRulesetId = safeLookup(ENGINE_RULESETS, battle.mode) ?? "dm_practice@1";
     const ruleset = loadRuleset(engineRulesetId, {
       ...(budgetCredits ? { budgetCredits } : {}),
       ...(opts.rulesetOverrides ?? {}),

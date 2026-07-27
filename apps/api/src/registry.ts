@@ -7,6 +7,7 @@
 import type { NextFunction, Request, RequestHandler, Response, Router } from "express";
 import { loadContract, toExpressPath, ROLE_RANK, type ContractOperation } from "./openapi.js";
 import { forbidden, unauthorized } from "./errors.js";
+import { safeLookup } from "../../../packages/game-rules/safe-lookup.js";
 import type { RoleName } from "./db/migrations.js";
 
 export interface RegisteredOperation extends ContractOperation {
@@ -17,7 +18,17 @@ export interface RegisteredOperation extends ContractOperation {
 export const implementedOperations: RegisteredOperation[] = [];
 
 function rbacGuard(minRole: RoleName): RequestHandler {
-  const required = ROLE_RANK[minRole];
+  // B8 · `safeLookup` + fallo cerrado. `minRole` sale de `x-min-role` del
+  // OpenAPI (fichero del repo, no del cliente), pero es una clave de string
+  // indexando un objeto plano: un `x-min-role: __proto__` —typo o contrato
+  // manipulado— daba `required = Object.prototype`, y entonces
+  // `req.auth.rank < required` es SIEMPRE false ⇒ la ruta quedaba ABIERTA.
+  // Ahora una clave desconocida lanza al registrar la operación (arranque), que
+  // es donde debe romperse, no en runtime con el RBAC desactivado en silencio.
+  const required = safeLookup(ROLE_RANK, minRole);
+  if (typeof required !== "number") {
+    throw new Error(`x-min-role desconocido en el contrato: ${JSON.stringify(minRole)}`);
+  }
   return (req: Request, _res: Response, next: NextFunction) => {
     if (required <= ROLE_RANK.visitor) return next();
     if (!req.auth) return next(unauthorized());

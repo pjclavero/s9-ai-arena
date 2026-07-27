@@ -37,6 +37,7 @@ import { runContainerBattle, type ContainerBattleBot } from "../apps/bot-manager
 import { ProxyContainerRunner } from "../apps/bot-manager/src/docker-proxy.js";
 import type { ContainerRunner } from "../apps/bot-manager/src/container-runner.js";
 import { toJsonl, verify, type Replay } from "../apps/arena-engine/src/replay.js";
+import { REPLAY_INGEST_AUTH_HEADER, resolveIngestSecretFromEnv } from "../apps/replay-service/src/auth.js";
 import type { BattleResult } from "../apps/arena-engine/src/sim/battle.js";
 import { initPhysics } from "../apps/arena-engine/src/sim/physics.js";
 
@@ -58,6 +59,15 @@ export interface SmokeHarnessConfig {
    * de ingesta NO invalida la batalla, solo se reporta.
    */
   replayServiceUrl?: string;
+  /**
+   * B8 · Credencial interna de escritura del replay-service
+   * (`REPLAY_INGEST_SECRET[_FILE]`, cabecera `x-replay-ingest-auth`). Desde B8 la
+   * ingesta es una ruta AUTENTICADA: sin ella el servicio responde 401 y el
+   * arnés lo reporta como ingesta fallida — nunca como éxito. Va en la config
+   * (no leída de `process.env` a escondidas dentro de la función de ingesta)
+   * para que sea explícita y testeable.
+   */
+  replayIngestSecret?: string;
   /** R7-A · si true, un fallo de ingesta (o un replay que no verifica) hace fallar el
    *  resultado operativo (modo estricto). Por defecto false (best-effort). */
   replayIngestRequired: boolean;
@@ -88,6 +98,8 @@ export async function ingestReplayToService(
   battleId: string,
   jsonl: string,
   timeoutMs = 10000,
+  /** B8 · credencial interna de escritura del replay-service. Sin ella la ingesta responde 401. */
+  ingestSecret?: string,
 ): Promise<ReplayIngestResult> {
   const url = new URL(`/replays/${encodeURIComponent(battleId)}`, serviceUrl);
   const ac = new AbortController();
@@ -96,7 +108,13 @@ export async function ingestReplayToService(
   try {
     res = await fetch(url, {
       method: "POST",
-      headers: { "content-type": "application/x-ndjson" },
+      headers: {
+        "content-type": "application/x-ndjson",
+        // B8 · la ingesta es una ruta AUTENTICADA. Si no hay secreto configurado
+        // se manda la cabecera vacía y el servicio responde 401: el arnés lo
+        // reporta como ingesta fallida, que es la verdad, en vez de fingir éxito.
+        [REPLAY_INGEST_AUTH_HEADER]: ingestSecret ?? "",
+      },
       body: jsonl,
       signal: ac.signal,
     });
@@ -133,6 +151,8 @@ export function readHarnessConfig(env: NodeJS.ProcessEnv): SmokeHarnessConfig {
     ...(env.REPLAY_SERVICE_URL && env.REPLAY_INGEST_ENABLED !== "0"
       ? { replayServiceUrl: env.REPLAY_SERVICE_URL }
       : {}),
+    // B8 · credencial de ingesta (fichero con precedencia sobre la variable).
+    ...(resolveIngestSecretFromEnv(env) ? { replayIngestSecret: resolveIngestSecretFromEnv(env)! } : {}),
     replayIngestRequired: env.REPLAY_INGEST_REQUIRED === "1",
     replayIngestRetries: Number(env.REPLAY_INGEST_RETRIES ?? "2"),
     replayIngestTimeoutMs: Number(env.REPLAY_INGEST_TIMEOUT_MS ?? "10000"),
@@ -191,7 +211,13 @@ export async function runSmokeHarness(cfg: SmokeHarnessConfig, runner: Container
       const attempts = Math.max(1, cfg.replayIngestRetries + 1);
       for (let i = 1; i <= attempts; i++) {
         try {
-          last = await ingestReplayToService(cfg.replayServiceUrl, battleId, jsonl, cfg.replayIngestTimeoutMs);
+          last = await ingestReplayToService(
+            cfg.replayServiceUrl,
+            battleId,
+            jsonl,
+            cfg.replayIngestTimeoutMs,
+            cfg.replayIngestSecret,
+          );
         } catch (e) {
           last = { ok: false, status: 0, body: (e as Error).message };
         }

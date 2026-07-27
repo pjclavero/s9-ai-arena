@@ -4,7 +4,7 @@
  */
 export * from "./constants.js";
 export * from "./art-direction.js";
-export { safeLookup } from "./safe-lookup.js";
+export { safeLookup, emptyDict } from "./safe-lookup.js";
 import {
   MODULE_STATE_PERFORMANCE,
   MODULE_STATE_THRESHOLDS,
@@ -27,7 +27,11 @@ export function stateFromHealth(healthFraction: number): ModuleState {
 
 /** Multiplicador de prestaciones. 0 = el módulo no hace nada. */
 export function performanceOf(state: ModuleState): number {
-  return MODULE_STATE_PERFORMANCE[state];
+  // B8 · `safeLookup` + valor seguro por defecto (defensa en profundidad: hoy
+  // `state` solo puede salir de `stateFromHealth`, pero es una clave de string
+  // indexando un objeto plano y el tipo no lo garantiza en runtime). Un estado
+  // desconocido rinde 0 (el módulo no hace nada), nunca `Object.prototype`.
+  return safeLookup(MODULE_STATE_PERFORMANCE, state) ?? 0;
 }
 
 /**

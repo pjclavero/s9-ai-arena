@@ -13,6 +13,7 @@ import { readFileSync } from "node:fs";
 import { fromJsonl } from "../../arena-engine/src/replay.js";
 import { ingestReplay, sweepRetention, verifyStored } from "./store.js";
 import { createReplayServer } from "./server.js";
+import { resolveIngestSecretFromEnv } from "./auth.js";
 
 function flag(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -49,8 +50,14 @@ async function main(): Promise<number> {
     }
     case "serve": {
       const port = Number(flag(args, "--port") ?? process.env.PORT ?? 8082);
-      createReplayServer({ dir }).listen(port, () => {
-        console.log(`replay-service escuchando en :${port}, dir=${dir}`);
+      // B8 · mismo criterio que el entrypoint de servicio (main.ts): la escritura
+      // exige `REPLAY_INGEST_SECRET[_FILE]`; sin él, 401 (nunca "abierto").
+      const internalSecret = resolveIngestSecretFromEnv(process.env);
+      createReplayServer({ dir, internalSecret }).listen(port, () => {
+        console.log(
+          `replay-service escuchando en :${port}, dir=${dir}` +
+            (internalSecret ? "" : " — SIN secreto de ingesta: la escritura responderá 401"),
+        );
       });
       return -1; // no salir
     }

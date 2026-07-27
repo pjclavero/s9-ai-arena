@@ -28,6 +28,7 @@ import { safeLookup } from "../../../packages/game-rules/safe-lookup.js";
 import type { Db } from "../../api/src/db/connection.js";
 import { resimulateWithEvents, type Replay } from "../../arena-engine/src/replay.js";
 import { loadStored } from "./store.js";
+import { emptyDict } from "../../../packages/game-rules/safe-lookup.js";
 
 export interface ModuleStats {
   moduleId: string | null;
@@ -126,7 +127,9 @@ export async function computeBattleStats(replay: Replay, inputs: BattleStatsInpu
   for (const p of header.participants) {
     const mods = new Map<string, string>();
     const weapons = new Set<string>();
-    const perModule: Record<string, ModuleStats> = {};
+    // B8 · `emptyDict()`, NO `{}`: `m.slot` viene del CONTENIDO DEL REPLAY
+    // (dato externo; hasta B8 cualquiera podía ingestar uno).
+    const perModule: Record<string, ModuleStats> = emptyDict<ModuleStats>();
     for (const m of p.spec?.modules ?? []) {
       mods.set(m.slot, m.moduleId);
       if (m.category === "weapon" || m.category === "mine") weapons.add(m.slot);
@@ -286,7 +289,8 @@ export async function computeBattleStats(replay: Replay, inputs: BattleStatsInpu
   }
 
   // ---- 5 · Por equipo y por mapa.
-  const perTeam: Record<string, TeamBattleStats> = {};
+  // B8 · `emptyDict()`, NO `{}`: `s.team` viene del CONTENIDO DEL REPLAY.
+  const perTeam: Record<string, TeamBattleStats> = emptyDict<TeamBattleStats>();
   for (const s of byVehicle.values()) {
     const t = (perTeam[s.team] ??= {
       team: s.team,

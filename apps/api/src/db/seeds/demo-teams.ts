@@ -54,6 +54,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import type { Knex } from "knex";
 import { ARCHETYPES } from "../../../../../packages/module-catalog/resolve/archetypes.js";
+import { safeLookup } from "../../../../../packages/game-rules/safe-lookup.js";
 import { CATALOG_VERSION } from "../../../../../packages/module-catalog/loadCatalog.js";
 import { createLoadoutRevision, validateLoadoutServerSide } from "../../services/bots.js";
 import type { Db } from "../connection.js";
@@ -280,7 +281,9 @@ async function ensureLoadoutAndVersion(
   // El loadout se valida con el MISMO validador que usa la API: si el catálogo
   // cambiara y el arquetipo dejara de ser legal, esto falla en vez de guardar
   // un loadout inválido.
-  const archetype = ARCHETYPES[spec.archetype];
+  // B8 · lectura segura, no indexación directa (barrido de la clase __proto__).
+  const archetype = safeLookup(ARCHETYPES, spec.archetype);
+  if (!archetype) throw new Error(`Arquetipo desconocido en el seed de demo: ${spec.archetype}`);
   const loadoutInput = {
     name: `${spec.role} (${spec.archetype})`,
     catalogVersion: CATALOG_VERSION,

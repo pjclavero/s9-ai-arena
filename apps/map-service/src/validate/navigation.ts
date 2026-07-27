@@ -13,7 +13,12 @@
  * queda enteramente en destruction.ts. De lo contrario un mismo defecto dispararía dos
  * comprobaciones y sería imposible saber cuál es la causa raíz.
  */
-import { NAV_CELL_SIZE_M, NAV_CLEARANCE_MARGIN_M } from "../../../../packages/game-rules/index.js";
+import {
+  NAV_CELL_SIZE_M,
+  NAV_CLEARANCE_MARGIN_M,
+  safeLookup,
+  emptyDict,
+} from "../../../../packages/game-rules/index.js";
 import type { ChassisSize, InternalMap, Vec2 } from "../types.js";
 import { CheckCollector, type Check } from "./result.js";
 import { aabb, pointInShape } from "./shapes.js";
@@ -32,7 +37,14 @@ export const CHASSIS_COLLISION_RADIUS_M: Record<ChassisSize, number> = {
 
 /** Clearance = radio del chasis + margen del ADR-000. Es el radio del disco a "barrer". */
 export function clearanceFor(size: ChassisSize): number {
-  return CHASSIS_COLLISION_RADIUS_M[size] + NAV_CLEARANCE_MARGIN_M;
+  // B8 · `safeLookup`, NO indexación directa: `size` sale de
+  // `map.meta.supportedChassisSizes`, es decir del DOCUMENTO DE MAPA que sube un
+  // autor. Un tamaño "__proto__" daba `Object.prototype`, y
+  // `Object.prototype + margen` es la string "[object Object]0.3": el clearance
+  // dejaba de ser un número y toda la validación de navegación se volvía basura
+  // sin lanzar. Un tamaño desconocido cae al radio del chasis MAYOR (el más
+  // restrictivo): fail-closed, nunca un mapa aprobado por accidente.
+  return (safeLookup(CHASSIS_COLLISION_RADIUS_M, size) ?? CHASSIS_COLLISION_RADIUS_M.heavy) + NAV_CLEARANCE_MARGIN_M;
 }
 
 /** Los tres tamaños son el valor por defecto cuando el mapa no restringe (schema: opcional). */
@@ -257,7 +269,11 @@ export function requiredConnections(map: InternalMap): Connection[] {
   const spawns = map.layers.spawns;
   const teams = [...new Set(spawns.map((s) => s.team))];
 
-  const anchors: Record<string, Vec2> = {};
+  // B8 · `emptyDict()`, NO `{}`: los nombres de equipo salen del DOCUMENTO DE
+  // MAPA. Con `{}`, `anchors["__proto__"] = pos` sustituye el prototipo en vez
+  // de crear la entrada, y a partir de ahí CUALQUIER otro equipo heredaba
+  // `.x`/`.y` de esa posición: conectividad calculada sobre datos inventados.
+  const anchors: Record<string, Vec2> = emptyDict<Vec2>();
   for (const team of teams) {
     const teamSpawns = spawns.filter((s) => s.team === team);
     const anchor = teamSpawns[0].position;
