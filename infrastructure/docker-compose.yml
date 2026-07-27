@@ -156,7 +156,13 @@ services:
       # un fallo de ingesta no tumba la batalla, solo se reporta honestamente.
       REPLAY_SERVICE_URL: ${REPLAY_SERVICE_URL:-http://replay-service:8083}
       REPLAY_INGEST_REQUIRED: ${REPLAY_INGEST_REQUIRED:-}
-    secrets: [postgres_password, jwt_secret, arena_engine_internal_secret]
+      # B8 · la ingesta de replays pasa a ser una ruta AUTENTICADA. El MISMO
+      # fichero de secreto se monta aquí (productor) y en replay-service
+      # (consumidor): así coinciden sin poner nada en claro en el entorno,
+      # igual que arena_engine_internal_secret. Sin él, la ingesta responde 401
+      # y se reporta `replay.ingested: false` (fail-closed, nunca se finge).
+      REPLAY_INGEST_SECRET_FILE: /run/secrets/replay_ingest_secret
+    secrets: [postgres_password, jwt_secret, arena_engine_internal_secret, replay_ingest_secret]
     depends_on:
       queue:
         condition: service_healthy
@@ -401,7 +407,12 @@ services:
       <<: *node-db-env
       PORT: "8083"
       SERVICE_ENTRY: ${REPLAY_SERVICE_ENTRY:-apps/replay-service/src/main.ts}
-    secrets: [postgres_password]
+      # B8 · secreto que autentica la ESCRITURA (POST /replays/:battleId y
+      # POST /retention/sweep). Las rutas de LECTURA que consume el visor por el
+      # gateway siguen abiertas a propósito. Sin este fichero, el servicio
+      # arranca y sirve lecturas, pero rechaza toda escritura con 401.
+      REPLAY_INGEST_SECRET_FILE: /run/secrets/replay_ingest_secret
+    secrets: [postgres_password, replay_ingest_secret]
     volumes:
       - arena_replays:/data/replays
     depends_on:
@@ -858,3 +869,9 @@ secrets:
   # servicios: solo así coinciden sin ponerlo en claro en el entorno.
   arena_engine_internal_secret:
     file: ./secrets/arena_engine_internal_secret.txt
+  # B8 · secreto interno compartido api<->replay-service para autenticar la
+  # ingesta de replays (cabecera x-replay-ingest-auth) y el barrido de
+  # retención. Mismo criterio que arena_engine_internal_secret: el MISMO fichero
+  # montado en ambos servicios. Lo genera init-secrets.sh.
+  replay_ingest_secret:
+    file: ./secrets/replay_ingest_secret.txt

@@ -7,7 +7,7 @@
  * BUDGET_CREDITS_MVP aquí salvo que el propio llamador decida pasarlo como valor por
  * defecto (ver test de constructivos en ../data.test.ts).
  */
-import { MAX_MODULE_COST_FRACTION } from "../../game-rules/index.js";
+import { MAX_MODULE_COST_FRACTION, safeLookup } from "../../game-rules/index.js";
 import {
   findModule,
   splitVersioned,
@@ -125,7 +125,18 @@ export function validateLoadout(
       continue;
     }
 
-    if (moduleDef.size && SIZE_RANK[moduleDef.size] > SIZE_RANK[slotDef.maxSize]) {
+    // B8 · `safeLookup`, NO indexación directa. `moduleDef.size` y
+    // `slotDef.maxSize` vienen del CATÁLOGO (JSON de datos, editable fuera del
+    // código). Con un `size: "__proto__"` la indexación directa daba
+    // `Object.prototype`, y `Object.prototype > 3` es `false`: la comprobación
+    // de tamaño de ranura se saltaba EN SILENCIO y el loadout pasaba validación.
+    // Una talla desconocida ahora da `undefined` y se trata como violación.
+    const moduleSizeRank = moduleDef.size ? safeLookup(SIZE_RANK, moduleDef.size) : undefined;
+    const slotMaxSizeRank = safeLookup(SIZE_RANK, slotDef.maxSize);
+    if (
+      moduleDef.size &&
+      (moduleSizeRank === undefined || slotMaxSizeRank === undefined || moduleSizeRank > slotMaxSizeRank)
+    ) {
       violations.push({
         code: "slot_size_exceeded",
         slot: entry.slot,

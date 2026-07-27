@@ -18,6 +18,7 @@ import {
 import { getCatalog } from "./catalog.js";
 import { CATALOG_VERSION } from "../../../../packages/module-catalog/loadCatalog.js";
 import { DEFAULT_RULESET_ID } from "../db/seeds/dev.js";
+import { safeLookup } from "../../../../packages/game-rules/safe-lookup.js";
 
 export type Auth = { userId: string; sessionId: string; roles: string[]; rank: number } | undefined;
 
@@ -76,7 +77,15 @@ export function allowedTransitionsFrom(state: BotState): string[] {
 }
 
 export function assertTransition(action: string, current: BotState): BotState {
-  const t = TRANSITIONS[action];
+  // B8 · `safeLookup`, NO `TRANSITIONS[action]`: `action` es la acción que pide
+  // el CLIENTE. Con `action = "__proto__"` la indexación directa de un objeto
+  // plano devuelve `Object.prototype` — TRUTHY, así que la guarda `if (!t)` NO
+  // saltaba y se seguía adelante hasta `t.from.includes(...)`, con `t.from`
+  // undefined: TypeError no capturado ⇒ 500 en vez del 409 `illegal_transition`
+  // del contrato. Lo mismo con "constructor"/"toString"/"hasOwnProperty".
+  // Séptima aparición de esta clase en el proyecto; el barrido completo va en
+  // el mismo commit.
+  const t = safeLookup(TRANSITIONS, action);
   if (!t || !t.from.includes(current)) {
     throw conflict("illegal_transition", `Transición ilegal: ${action} desde ${current}`, {
       currentState: current,

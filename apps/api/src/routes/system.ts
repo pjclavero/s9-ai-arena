@@ -9,13 +9,15 @@ import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
 import { loadContract } from "../openapi.js";
 import { ROLES } from "../db/migrations.js";
+import { emptyDict } from "../../../../packages/game-rules/safe-lookup.js";
 
 /** Cuenta filas agrupadas por una columna y devuelve { valor: n }. */
 async function countBy(db: Db, table: string, column: string): Promise<Record<string, number>> {
   const rows = (await db(table).select(column).count<{ c: string }[]>({ c: "*" }).groupBy(column)) as unknown as Array<
     Record<string, unknown>
   >;
-  const out: Record<string, number> = {};
+  // B8 · `emptyDict()`, NO `{}`: la clave es un VALOR de columna de BD.
+  const out: Record<string, number> = emptyDict<number>();
   for (const r of rows) out[String(r[column])] = Number(r.c);
   return out;
 }

@@ -141,11 +141,18 @@ afterEach(async () => {
   await Promise.all(httpServers.splice(0).map((s) => new Promise<void>((r) => s.close(() => r()))));
 });
 
+/** B8 · credencial interna compartida por el arnés y el replay-service de estos tests. */
+const E2E_INGEST_SECRET = "secreto-ingesta-e2e";
+
 /** Levanta un replay-service REAL en un puerto libre; devuelve su URL y el dir de replays. */
 async function startReplayService(): Promise<{ url: string; dir: string }> {
   const dir = mkdtempSync(join(tmpdir(), "s9-replaysvc-"));
   const app = express();
-  app.use(createReplayServer({ dir }));
+  // B8 · el replay-service real exige credencial para ESCRIBIR. Se le da la del
+  // arnés (E2E_INGEST_SECRET) para poder probar el circuito completo de ingesta;
+  // que una ingesta sin credencial se rechace lo cubre
+  // apps/replay-service/tests/ingest-auth.test.ts.
+  app.use(createReplayServer({ dir, internalSecret: E2E_INGEST_SECRET }));
   const server = await new Promise<Server>((resolve) => {
     const s = app.listen(0, "127.0.0.1", () => resolve(s));
   });
@@ -171,6 +178,7 @@ describe("R7 · el arnés INGESTA el replay real en el replay-service", () => {
       SMOKE_TIMEOUT_MS: "20000",
       REPLAY_OUT: join(dir, "replay.jsonl"),
       REPLAY_SERVICE_URL: svc.url,
+      REPLAY_INGEST_SECRET: E2E_INGEST_SECRET,
     });
 
     const outcome = await runSmokeHarness(cfg, mockRunner());
@@ -189,12 +197,15 @@ describe("R7 · el arnés INGESTA el replay real en el replay-service", () => {
 
   it("un replay corrupto es rechazado por el servicio (no se declara ingesta OK)", async () => {
     const svc = await startReplayService();
+    // B8 · CON credencial válida: lo que se prueba aquí es que el CONTENIDO
+    // inválido se rechaza, no la autenticación (eso va en su propio fichero).
     const res = await fetch(new URL("/replays/whatever", svc.url), {
       method: "POST",
-      headers: { "content-type": "application/x-ndjson" },
+      headers: { "content-type": "application/x-ndjson", "x-replay-ingest-auth": E2E_INGEST_SECRET },
       body: "esto no es un replay jsonl válido",
     });
     expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).not.toBe(401);
   });
 });
 
@@ -252,6 +263,7 @@ describe("R7-A · modos de ingesta + listado global", () => {
       SMOKE_TIMEOUT_MS: "20000",
       REPLAY_OUT: join(dir, "r.jsonl"),
       REPLAY_SERVICE_URL: svc.url,
+      REPLAY_INGEST_SECRET: E2E_INGEST_SECRET,
     });
     const outcome = await runSmokeHarness(cfg, mockRunner());
     expect(outcome.ingest?.ok).toBe(true);

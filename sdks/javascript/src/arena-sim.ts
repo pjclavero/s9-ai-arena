@@ -20,6 +20,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ArenaBot } from "./index.js";
 import { startLocalBattle, MAPS, STUBS, type StubKind } from "./local-simulator.js";
+import { safeLookup } from "../../../packages/game-rules/index.js";
 
 function fail(msg: string): never {
   console.error(msg);
@@ -75,9 +76,12 @@ async function main(): Promise<void> {
     process.exit(values.help ? 0 : 1);
   }
 
-  if (!STUBS[values.opponent!])
+  // B8 · `safeLookup`, NO indexación directa: `--opponent` y `--map` vienen de
+  // argv. Con `--map __proto__` la guarda no saltaba y el error salía mucho
+  // después, dentro del motor, como un TypeError sin relación aparente.
+  if (!safeLookup(STUBS, values.opponent!))
     fail(`--opponent inválido: ${values.opponent}. Opciones: ${Object.keys(STUBS).join(", ")}`);
-  if (!MAPS[values.map!]) fail(`--map inválido: ${values.map}. Opciones: ${Object.keys(MAPS).join(", ")}`);
+  if (!safeLookup(MAPS, values.map!)) fail(`--map inválido: ${values.map}. Opciones: ${Object.keys(MAPS).join(", ")}`);
   const ticks = Number(values.ticks);
   if (!Number.isInteger(ticks) || ticks <= 0) fail(`--ticks inválido: ${values.ticks}`);
 

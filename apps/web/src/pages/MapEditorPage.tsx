@@ -21,6 +21,7 @@
  * sigue siendo el validador de E4/map-service cuando el mapa se importe/publique.
  */
 import { useMemo, useState } from "react";
+import { safeLookup } from "../../../../packages/game-rules/safe-lookup.js";
 
 export type EditorKind = "wall" | "obstacle" | "spawn";
 
@@ -264,7 +265,7 @@ export function MapEditorPage() {
                   cx={o.x}
                   cy={o.y}
                   r={16}
-                  fill={COLORS[o.team] ?? "#555"}
+                  fill={safeLookup(COLORS, o.team) ?? "#555"}
                   stroke={o.id === selectedId ? "#111" : "none"}
                   strokeWidth={4}
                   onClick={() => setSelectedId(o.id)}

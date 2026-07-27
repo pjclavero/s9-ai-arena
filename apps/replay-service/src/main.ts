@@ -7,16 +7,30 @@
  */
 import express from "express";
 import { createReplayServer } from "./server.js";
+import { resolveIngestSecretFromEnv } from "./auth.js";
 
 const dir = process.env.REPLAYS_DIR ?? "/data/replays";
 const port = Number(process.env.PORT ?? 8083);
 
+// B8 · secreto interno de ESCRITURA (ingesta + barrido de retención). Sin él,
+// el servicio SÍ arranca —el visor tiene que poder seguir leyendo replays ya
+// publicados— pero rechaza toda escritura con 401. Fail-closed: no existe modo
+// "sin autenticación". Se avisa por log SIN volcar ningún valor.
+const internalSecret = resolveIngestSecretFromEnv(process.env);
+
 const app = express();
 app.get("/healthz", (_req, res) => res.json({ status: "ok", service: "replay-service", dir }));
-app.use(createReplayServer({ dir }));
+app.use(createReplayServer({ dir, internalSecret }));
 
 app.listen(port, () => {
   console.log(
-    JSON.stringify({ level: "info", service: "replay-service", msg: `replay-service escuchando en :${port}`, dir }),
+    JSON.stringify({
+      level: internalSecret ? "info" : "warn",
+      service: "replay-service",
+      msg: internalSecret
+        ? `replay-service escuchando en :${port} (escritura autenticada)`
+        : `replay-service escuchando en :${port} — SIN secreto de ingesta configurado (REPLAY_INGEST_SECRET[_FILE]): toda escritura responderá 401`,
+      dir,
+    }),
   );
 });

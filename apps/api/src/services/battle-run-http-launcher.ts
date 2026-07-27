@@ -116,6 +116,7 @@ import { readFileSync } from "node:fs";
 import type { Db } from "../db/connection.js";
 import { splitVersioned } from "../../../../packages/module-catalog/types.js";
 import { toJsonl, verifyAndRecompute, type Replay } from "../../../arena-engine/src/replay.js";
+import { REPLAY_INGEST_AUTH_HEADER, resolveIngestSecretFromEnv } from "../../../replay-service/src/auth.js";
 import type { BattleRunInput, BattleRunLauncher, BattleRunResult } from "../battle-run.js";
 
 /**
@@ -151,6 +152,14 @@ export interface HttpBattleRunLauncherConfig {
    * comportamiento respecto a B2 (`ingested: false` siempre).
    */
   replayServiceUrl?: string;
+  /**
+   * B8 · Credencial interna con la que este launcher se autentica ante el
+   * replay-service (cabecera `x-replay-ingest-auth`). Desde B8 la ingesta es
+   * una ruta AUTENTICADA: sin esta credencial el replay-service responde 401 y
+   * la ingesta se reporta honestamente como fallida (nunca `ingested: true`).
+   * Nunca se registra en logs.
+   */
+  replayIngestSecret?: string;
   /** B6 · Si true, un replay que no verifica o una ingesta fallida hacen que el
    *  resultado operativo sea `status: "failed"` (modo estricto). Def. false
    *  (best-effort: la batalla no se pierde por un fallo de ingesta). */
@@ -226,11 +235,17 @@ export function httpBattleRunLauncherEnvConfig(
  */
 export function replayIngestEnvConfig(env: NodeJS.ProcessEnv = process.env): {
   replayServiceUrl?: string;
+  replayIngestSecret?: string;
   replayIngestRequired: boolean;
   replayIngestTimeoutMs: number;
 } {
+  // B8 · misma convención que `ARENA_ENGINE_SHARED_SECRET[_FILE]`: fichero con
+  // precedencia (Docker secrets), variable en claro como respaldo, y ausencia
+  // ⇒ `undefined` (la ingesta fallará con 401 y se reportará, nunca se cuela).
+  const replayIngestSecret = resolveIngestSecretFromEnv(env);
   return {
     ...(env.REPLAY_SERVICE_URL ? { replayServiceUrl: env.REPLAY_SERVICE_URL } : {}),
+    ...(replayIngestSecret ? { replayIngestSecret } : {}),
     replayIngestRequired: env.REPLAY_INGEST_REQUIRED === "1",
     replayIngestTimeoutMs: Number(env.REPLAY_INGEST_TIMEOUT_MS ?? String(DEFAULT_REPLAY_INGEST_TIMEOUT_MS)),
   };
@@ -272,7 +287,22 @@ async function verifyAndIngestReplay(
   battleId: string,
   replay: Replay,
   timeoutMs: number,
+  /** B8 · credencial interna de ingesta. Ausente ⇒ ni se intenta (ver más abajo). */
+  ingestSecret: string | undefined,
 ): Promise<ReplayIngestOutcome> {
+  // B8 · Guarda 0 · sin credencial no se llega ni a re-simular. El replay-service
+  // respondería 401 igualmente (fail-closed a los dos lados), pero re-simular una
+  // batalla entera para que la respuesta sea siempre 401 es puro gasto, y el
+  // motivo que se reporta así es el REAL ("falta credencial") en vez de un
+  // "HTTP 401" que el operador tendría que ir a descifrar al log del otro servicio.
+  if (!ingestSecret) {
+    return {
+      ingested: false,
+      verifyMatches: false,
+      reason:
+        "ingesta del replay no configurada: falta la credencial interna del replay-service (REPLAY_INGEST_SECRET[_FILE])",
+    };
+  }
   // Guarda 1 · identidad — ANTES de re-simular: un replay de otra batalla no
   // es "casi correcto", es un replay de OTRA batalla, punto.
   if (replay.header?.battleId !== battleId) {
@@ -323,7 +353,12 @@ async function verifyAndIngestReplay(
   try {
     const res = await fetch(new URL(`/replays/${encodeURIComponent(battleId)}`, replayServiceUrl), {
       method: "POST",
-      headers: { "content-type": "application/x-ndjson" },
+      headers: {
+        "content-type": "application/x-ndjson",
+        // B8 · credencial interna de escritura. Va en cabecera (no en la URL ni
+        // en el cuerpo) para que no acabe en el access log del gateway.
+        [REPLAY_INGEST_AUTH_HEADER]: ingestSecret,
+      },
       body: jsonl,
       signal: controller.signal,
     });
@@ -511,6 +546,7 @@ export function createHttpBattleRunLauncher(cfg: HttpBattleRunLauncherConfig): B
           input.battleId,
           replay,
           cfg.replayIngestTimeoutMs ?? DEFAULT_REPLAY_INGEST_TIMEOUT_MS,
+          cfg.replayIngestSecret,
         );
         if (!outcome.ingested && cfg.replayIngestRequired) {
           return {

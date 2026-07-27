@@ -41,6 +41,11 @@ gen restic_password.txt
 # runner_unavailable (aunque S9_ENABLE_REAL_BATTLE_RUNS=1) y POST /run de
 # arena-engine responde 401 a cualquier petición: fail closed por defecto.
 gen arena_engine_internal_secret.txt
+# B8 · secreto interno api<->replay-service para la INGESTA de replays y el
+# barrido de retención (cabecera x-replay-ingest-auth). Mismo fichero montado en
+# ambos servicios (docker-compose.yml). Sin él, replay-service responde 401 a
+# toda escritura y la API reporta `replay.ingested: false`: fail closed.
+gen replay_ingest_secret.txt
 
 # R-DEPLOY · R2: clave de firma de artefactos (ed25519, PEM PKCS8) para el
 # bot-build-worker (ARTIFACT_SIGNING_KEY_FILE, ERR-SEC-15). Idempotente.

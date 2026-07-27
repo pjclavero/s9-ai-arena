@@ -20,6 +20,10 @@ import { HunterBot } from "../../arena-engine/src/stubs.js";
 import { PREFERRED_ALGO, buildKeyframes, nearestKeyframe } from "../src/format.js";
 import { ingestReplay, loadStored, replayPath, sweepRetention, validateReplay, verifyStored } from "../src/store.js";
 import { createReplayServer } from "../src/server.js";
+import { REPLAY_INGEST_AUTH_HEADER } from "../src/auth.js";
+
+/** B8 · credencial interna de escritura usada por los tests HTTP de este fichero. */
+const HTTP_INGEST_SECRET = "secreto-ingesta-tests-t81";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = join(__dirname, "..", "..", "..");
@@ -265,18 +269,24 @@ describe("T8.1 HTTP: rango, índice y segmentos", () => {
   it("la ingesta HTTP rechaza basura y acepta un replay real", async () => {
     const replay = await recordBattle("http_ingest");
     const dir = tmp();
-    const app = createReplayServer({ dir });
+    // B8 · la ingesta pasa a exigir credencial interna. Este test comprueba la
+    // VALIDACIÓN DEL CONTENIDO (basura vs replay real), así que se le da una
+    // credencial válida para llegar hasta ella; que la ingesta SIN credencial se
+    // rechace lo cubre tests/ingest-auth.test.ts, no se diluye aquí.
+    const app = createReplayServer({ dir, internalSecret: HTTP_INGEST_SECRET });
     const id = replay.header.battleId;
 
     const bad = await request(app)
       .post(`/replays/${id}`)
       .set("Content-Type", "application/x-ndjson")
+      .set(REPLAY_INGEST_AUTH_HEADER, HTTP_INGEST_SECRET)
       .send("no es jsonl");
     expect([400, 422]).toContain(bad.status);
 
     const ok = await request(app)
       .post(`/replays/${id}?official=true`)
       .set("Content-Type", "application/x-ndjson")
+      .set(REPLAY_INGEST_AUTH_HEADER, HTTP_INGEST_SECRET)
       .send(toJsonl(replay));
     expect(ok.status).toBe(201);
     expect(ok.body.battleId).toBe(id);

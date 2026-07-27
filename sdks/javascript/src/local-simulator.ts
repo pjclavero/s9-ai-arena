@@ -8,7 +8,7 @@
  * en vez de reimplementarla. `tests/helpers.ts` sigue existiendo como envoltorio
  * con los defaults rápidos de test.
  */
-import { loadRuleset } from "../../../packages/game-rules/index.js";
+import { loadRuleset, safeLookup } from "../../../packages/game-rules/index.js";
 import { loadCatalog, CATALOG_VERSION } from "../../../packages/module-catalog/loadCatalog.js";
 import { resolveVehicle } from "../../../packages/module-catalog/resolve/index.js";
 import { ARCHETYPES } from "../../../packages/module-catalog/resolve/archetypes.js";
@@ -60,7 +60,9 @@ export async function startLocalBattle(opts: LocalBattleOptions): Promise<LocalB
   const stubBots = opts.stubBots ?? [];
   const all = [...opts.externalBots, ...stubBots];
   const participants = all.map((s, i) => {
-    const loadout = ARCHETYPES[s.archetype];
+    // B8 · `safeLookup`, NO indexación directa (barrido de la clase __proto__):
+    // `s.archetype` sale de quien llama al SDK / de argv de arena-sim.
+    const loadout = safeLookup(ARCHETYPES, s.archetype);
     if (!loadout)
       throw new Error(`Arquetipo desconocido: ${s.archetype}. Opciones: ${Object.keys(ARCHETYPES).join(", ")}`);
     return {
@@ -72,21 +74,27 @@ export async function startLocalBattle(opts: LocalBattleOptions): Promise<LocalB
   });
 
   const mapName = opts.map ?? "empty";
-  if (!MAPS[mapName]) throw new Error(`Mapa desconocido: ${mapName}. Opciones: ${Object.keys(MAPS).join(", ")}`);
+  // B8 · idem: la guarda `if (!MAPS[mapName])` NO saltaba con "__proto__"
+  // (`Object.prototype` es truthy) y luego `MAPS[mapName]()` reventaba con un
+  // TypeError opaco en vez del error de uso claro que hay aquí.
+  const mapFactory = safeLookup(MAPS, mapName);
+  if (!mapFactory) throw new Error(`Mapa desconocido: ${mapName}. Opciones: ${Object.keys(MAPS).join(", ")}`);
 
   const battle = await Battle.create({
     battleId: "jssdk_" + Math.random().toString(36).slice(2),
     seed: opts.seed ?? "js-sdk-test",
     ruleset: loadRuleset(opts.ruleset ?? "dm_practice@1", { timeLimitTicks: opts.ticks ?? 900 }),
-    map: MAPS[mapName](),
+    map: mapFactory(),
     participants,
   });
 
   for (let i = 0; i < stubBots.length; i++) {
     const s = stubBots[i];
-    if (!STUBS[s.kind]) throw new Error(`Stub desconocido: ${s.kind}. Opciones: ${Object.keys(STUBS).join(", ")}`);
+    // B8 · idem MAPS/ARCHETYPES: lectura segura antes de invocar la factoría.
+    const stubFactory = safeLookup(STUBS, s.kind);
+    if (!stubFactory) throw new Error(`Stub desconocido: ${s.kind}. Opciones: ${Object.keys(STUBS).join(", ")}`);
     const vehicleId = `veh_${opts.externalBots.length + i + 1}`;
-    battle.attachBot(vehicleId, STUBS[s.kind](s.botId));
+    battle.attachBot(vehicleId, stubFactory(s.botId));
   }
 
   const battleTokenFor = new Map<string, string>();

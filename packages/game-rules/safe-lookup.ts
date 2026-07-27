@@ -25,3 +25,26 @@
 export function safeLookup<T>(dict: Record<string, T>, key: string): T | undefined {
   return Object.prototype.hasOwnProperty.call(dict, key) ? dict[key] : undefined;
 }
+
+/**
+ * B8 · La otra mitad de la MISMA clase de fallo: el lado de ESCRITURA.
+ *
+ * `safeLookup` cubre `dict[key]` (lectura). Pero un acumulador construido con
+ * `const out = {}` y rellenado con `out[key] = v` donde `key` viene de fuera
+ * tiene un problema simétrico y menos evidente: con `key = "__proto__"`, la
+ * asignación NO crea una propiedad propia — reemplaza el PROTOTIPO del objeto.
+ * Consecuencias reales encontradas en el barrido de B8:
+ *
+ *  - `map-service/src/canonical.ts`: la clave desaparece del `JSON.stringify`,
+ *    así que dos mapas DISTINTOS canonicalizaban igual ⇒ mismo checksum.
+ *  - `arena-engine/src/match.ts`: `roundWins["__proto__"] = 1` no cuenta, y las
+ *    lecturas posteriores devuelven basura heredada ⇒ `NaN` al ordenar.
+ *
+ * `Object.create(null)` no tiene prototipo, así que `"__proto__"` es una clave
+ * normal y corriente: la asignación es una propiedad propia y todo (incluido
+ * `JSON.stringify`) se comporta como el autor esperaba. Se usa como valor
+ * inicial en vez de `{}` en cualquier acumulador con claves externas.
+ */
+export function emptyDict<T>(): Record<string, T> {
+  return Object.create(null) as Record<string, T>;
+}

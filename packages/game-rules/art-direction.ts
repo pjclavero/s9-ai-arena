@@ -12,6 +12,7 @@
  *
  * Módulo PURO (sin DOM ni Phaser): se prueba con vitest en Node.
  */
+import { safeLookup } from "./safe-lookup.js";
 
 /** Color canónico por NOMBRE de equipo conocido (los habituales tienen identidad fija). */
 const CANONICAL: Record<string, number> = {
@@ -48,7 +49,11 @@ export function resolveTeamColors(teams: Iterable<string>): Map<string, number> 
   const out = new Map<string, number>();
   // 1ª pasada: colores canónicos (identidad fija de los equipos conocidos).
   for (const t of uniq) {
-    const c = CANONICAL[t.toLowerCase()];
+    // B8 · `safeLookup`, NO indexación directa: los nombres de equipo vienen
+    // del mapa/la batalla (dato externo). Un equipo llamado "__proto__" daba
+    // `Object.prototype`, que NO es `undefined`, así que pasaba el
+    // `c !== undefined` y se asignaba un objeto como si fuera un color.
+    const c = safeLookup(CANONICAL, t.toLowerCase());
     if (c !== undefined) {
       out.set(t, c);
       used.add(c);
