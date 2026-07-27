@@ -648,6 +648,29 @@ const m010_r25_shared_limits: Migration = {
   },
 };
 
+// B10 (issue #9) — CPU REAL consumida por el contenedor de cada bot durante una
+// batalla. Va en `participants` (ya está claveada por battle_id+bot_id, que es
+// exactamente la granularidad de la medida) y NO en el replay: el replay es
+// determinista y reproducible, y meterle un tiempo de reloj lo haría irrepetible.
+// NULL = no medida (batalla sin contenedores, o medición no disponible); nunca
+// se rellena con una estimación. La lee runStatsJob (replay-service/src/stats.ts)
+// para poblar `battle_stats.stats.cpuMs`, que hasta ahora era null por diseño.
+const m011_battle_cpu_ms: Migration = {
+  name: "011_battle_cpu_ms",
+  async up(db) {
+    await db.raw(`
+      ALTER TABLE participants
+        ADD COLUMN cpu_ms double precision
+        CHECK (cpu_ms IS NULL OR cpu_ms >= 0);
+    `);
+  },
+  async down(db) {
+    await db.raw(`
+      ALTER TABLE participants DROP COLUMN cpu_ms;
+    `);
+  },
+};
+
 export const MIGRATIONS: Migration[] = [
   m001_identity,
   m002_content,
@@ -659,6 +682,7 @@ export const MIGRATIONS: Migration[] = [
   m008_e9_competition,
   m009_r24_refresh_families,
   m010_r25_shared_limits,
+  m011_battle_cpu_ms,
 ];
 
 class ProgrammaticMigrationSource {

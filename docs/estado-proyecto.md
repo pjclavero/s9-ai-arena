@@ -113,8 +113,10 @@ v20.19.2 (ver nota de zstd más abajo).
 - **H3 (E8/E9, P2):** `battle_stats` se escribe con dos formas según el camino; unificar al
   cerrar H2.
 - **H4 (E10, P2):** la CI construye imágenes de solo 2 de 8 servicios.
-- **H5–H7 (P3):** `cpuMs` null (runner E6/E9), rutas de rating/standings por equipos, 7
-  errores de `tsc --noEmit` preexistentes (typecheck no bloqueante en CI).
+- **H5–H7 (P3):** `cpuMs` null (runner E6/E9 — **cerrado en B10/issue #9**: se mide la CPU
+  real del cgroup de cada contenedor de bot y se persiste en `participants.cpu_ms`; sin
+  medida el campo sigue siendo `null`, nunca estimado), rutas de rating/standings por
+  equipos, 7 errores de `tsc --noEmit` preexistentes (typecheck no bloqueante en CI).
 
 ## Hallazgos / deudas conocidas
 

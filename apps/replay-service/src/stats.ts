@@ -11,13 +11,20 @@
  * las filas de `battle_stats`, nunca acumula.
  *
  * Honestidad sobre dos métricas del dosier:
- *  - "CPU reportada por el motor": el motor NO mide CPU por bot (eso lo hará el
- *    runner containerizado de E6/E9); se persiste `cpuMs: null` como hueco
- *    explícito del esquema. Los "turnos omitidos" sí: eventos decision_timeout.
+ *  - "CPU reportada por el motor": el motor NO mide CPU por bot, y NO se puede
+ *    deducir del replay (el replay es determinista y no lleva tiempos; deducir
+ *    CPU de él sería inventarla). B10 (issue #9): la mide el runner
+ *    containerizado leyendo el cgroup del contenedor de cada bot
+ *    (`cpuMsFromDockerStats`, bot-manager) y llega hasta aquí por un canal
+ *    APARTE del replay: `participants.cpu_ms` en BD, o el parámetro
+ *    `cpuMsByBot` de `computeBattleStats`. Sin medida ⇒ `cpuMs: null`; nunca un
+ *    número estimado. Los "turnos omitidos" sí salen del replay: eventos
+ *    decision_timeout.
  *  - Daño por módulo: hit_dealt no dice qué arma disparó; se atribuye a los
  *    slots de arma proporcionalmente a sus disparos aceptados (exacto con un
  *    arma, aproximado con varias; anotado en la entrega para E2).
  */
+import { safeLookup } from "../../../packages/game-rules/safe-lookup.js";
 import type { Db } from "../../api/src/db/connection.js";
 import { resimulateWithEvents, type Replay } from "../../arena-engine/src/replay.js";
 import { loadStored } from "./store.js";
@@ -55,7 +62,12 @@ export interface BotBattleStats {
   /** Turnos omitidos reportados por el motor (decision_timeout). */
   decisionTimeouts: number;
   disqualified: boolean;
-  /** El motor no mide CPU por bot; hueco explícito hasta el runner de E6/E9. */
+  /**
+   * B10 (issue #9) · CPU consumida por el CONTENEDOR del bot durante la batalla,
+   * en ms (cgroup del contenedor: usuario + sistema, todo el ciclo de vida del
+   * proceso, no solo el `decide()`). `null` = no medida — batalla sin
+   * contenedores (stubs en proceso) o medición no disponible. NUNCA estimada.
+   */
   cpuMs: number | null;
   perModule: Record<string, ModuleStats>;
 }
@@ -83,8 +95,29 @@ export interface BattleStatsResult {
   perTeam: Record<string, TeamBattleStats>;
 }
 
+/**
+ * B10 (issue #9) · Medidas que NO están en el replay y llegan por un canal
+ * aparte (hoy: el runner containerizado). Todo lo que no venga aquí queda en
+ * `null`, nunca estimado.
+ */
+export interface BattleStatsInputs {
+  /**
+   * CPU por bot en ms, indexada por botId (el de la plataforma, el mismo que
+   * `participants.botId` del replay). Origen: `ContainerBattleOutcome.cpuMsByBot`
+   * o `participants.cpu_ms` en BD. Se lee con `safeLookup` y se valida: solo un
+   * número finito ≥ 0 se acepta; cualquier otra cosa (string, negativo, NaN,
+   * clave heredada del prototipo) se trata como no medida.
+   */
+  cpuMsByBot?: Record<string, unknown>;
+}
+
+/** Normaliza una medida de CPU externa: número finito ≥ 0, o `null`. */
+function sanitizeCpuMs(raw: unknown): number | null {
+  return typeof raw === "number" && Number.isFinite(raw) && raw >= 0 ? raw : null;
+}
+
 /** Calcula todas las métricas de una batalla desde su Replay (re-simulando). */
-export async function computeBattleStats(replay: Replay): Promise<BattleStatsResult> {
+export async function computeBattleStats(replay: Replay, inputs: BattleStatsInputs = {}): Promise<BattleStatsResult> {
   const header = replay.header;
   const byVehicle = new Map<string, BotBattleStats>();
   const moduleIdBySlot = new Map<string, Map<string, string>>(); // vehicleId → slot → moduleId
@@ -125,7 +158,10 @@ export async function computeBattleStats(replay: Replay): Promise<BattleStatsRes
       minesTriggered: 0,
       decisionTimeouts: 0,
       disqualified: false,
-      cpuMs: null,
+      // B10 · botId viene del replay (dato externo): safeLookup, no p.botId
+      // indexado a pelo — con botId "__proto__" un `dict[key]` devolvería algo
+      // truthy que no es una medida.
+      cpuMs: inputs.cpuMsByBot ? sanitizeCpuMs(safeLookup(inputs.cpuMsByBot, p.botId)) : null,
       perModule,
     });
   }
@@ -289,6 +325,29 @@ export async function computeBattleStats(replay: Replay): Promise<BattleStatsRes
 
 // -------------------------------------------------------------------- el job
 
+/**
+ * B10 (issue #9) · Medidas de CPU persistidas para una batalla
+ * (`participants.cpu_ms`, escritas por quien ejecutó los contenedores).
+ * Se construye con `Object.fromEntries` sobre un `Map` porque `bot_id` es un
+ * dato de BD que acaba siendo clave de un objeto: `acc[botId] = v` con
+ * "__proto__" no crearía entrada, cambiaría el prototipo del acumulador.
+ */
+async function readMeasuredCpuMs(db: Db, dbBattleId: string): Promise<Record<string, unknown>> {
+  const rows = (await db("participants").where({ battle_id: dbBattleId }).select("bot_id", "cpu_ms")) as Array<{
+    bot_id: string;
+    cpu_ms: number | string | null;
+  }>;
+  const measured = new Map<string, unknown>();
+  for (const r of rows) {
+    if (r.cpu_ms === null || r.cpu_ms === undefined) continue;
+    // `double precision` puede llegar como string según el driver: se convierte
+    // aquí y `sanitizeCpuMs` descarta lo que no sea un número finito.
+    const value = typeof r.cpu_ms === "string" ? Number(r.cpu_ms) : r.cpu_ms;
+    measured.set(String(r.bot_id), value);
+  }
+  return Object.fromEntries(measured);
+}
+
 export interface StatsJobResult {
   battleId: string;
   rowsWritten: number;
@@ -302,6 +361,12 @@ export interface StatsJobResult {
  *
  * `dbBattleId` es el uuid de la fila `battles`; los participantes del replay
  * llevan el botId de la plataforma (uuid de `bots`) en producción.
+ *
+ * B10 (issue #9) · La CPU por bot NO se recalcula (no está en el replay): se lee
+ * de `participants.cpu_ms`, donde la dejó quien SÍ la midió (el lanzador de
+ * batallas en contenedor). Por eso reprocesar es estable — el job sigue siendo
+ * idempotente y una recomputación NO borra la medida ni la sustituye por un
+ * valor inventado; sin medida en BD, `cpuMs` queda `null`.
  */
 export async function runStatsJob(
   db: Db,
@@ -313,7 +378,9 @@ export async function runStatsJob(
   if (!loaded.valid || !loaded.replay) {
     throw new Error(`No se puede procesar ${dbBattleId}: ${loaded.reason}`);
   }
-  const stats = await computeBattleStats(loaded.replay);
+  const stats = await computeBattleStats(loaded.replay, {
+    cpuMsByBot: await readMeasuredCpuMs(db, dbBattleId),
+  });
 
   const rows = Object.entries(stats.perBot).map(([vehicleId, s]) => ({
     battle_id: dbBattleId,

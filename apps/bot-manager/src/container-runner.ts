@@ -75,6 +75,20 @@ export interface ContainerHandle {
   id: string;
   stop(): Promise<void>;
   posture(): Promise<SecurityPosture>;
+  /**
+   * B10 (issue #9) · CPU consumida por el contenedor desde que arrancó, en
+   * MILISEGUNDOS, o `null` si no se ha podido medir.
+   *
+   * OPCIONAL a propósito: un runner que no sepa medir (mocks de test, runners
+   * futuros) simplemente no la implementa y el orquestador registra `null`.
+   * Nunca se sustituye por una estimación: ver `cpuMsFromDockerStats`.
+   */
+  cpuMs?(): Promise<number | null>;
+}
+
+/** Handle que SÍ sabe medir CPU (lo devuelve el runner de producción, B10). */
+export interface MeasuredContainerHandle extends ContainerHandle {
+  cpuMs(): Promise<number | null>;
 }
 
 export interface ContainerRunner {
@@ -90,6 +104,41 @@ export interface ContainerRunner {
  * re-exporta sin cambio de API.
  */
 export { complianceViolations, assertCompliant, compliantBasePosture } from "./compliance.mjs";
+
+/**
+ * B10 (issue #9) · Traduce la respuesta de `GET /containers/{id}/stats?stream=false`
+ * (Docker Engine API) a milisegundos de CPU consumidos por el contenedor.
+ *
+ * QUÉ MIDE EXACTAMENTE (y qué NO):
+ *  - `cpu_stats.cpu_usage.total_usage` es el tiempo de CPU ACUMULADO por TODOS los
+ *    procesos del cgroup del contenedor desde que arrancó, en NANOSEGUNDOS
+ *    (usuario + sistema; con cgroup v2 la Engine lo normaliza desde `usage_usec`).
+ *    Es tiempo de CPU, no tiempo de pared: un bot bloqueado esperando el
+ *    OBSERVATION del motor no suma nada aquí.
+ *  - INCLUYE todo lo que el contenedor hace: arranque del intérprete, imports,
+ *    el SDK, el WebSocket y el `decide()` del bot. NO es "tiempo de decisión"
+ *    aislado; para eso haría falta instrumentar el SDK (fuera de alcance).
+ *  - Es una lectura PUNTUAL: mide hasta el instante de la consulta. El
+ *    orquestador la hace ANTES de parar los contenedores; lo que el bot gaste
+ *    después (nada relevante: se le está matando) no se cuenta.
+ *
+ * HONESTIDAD (lo importante de este issue): cualquier respuesta que no traiga un
+ * `total_usage` numérico ESTRICTAMENTE POSITIVO devuelve `null`, jamás 0 ni un
+ * valor inventado. Docker responde 200 con la estructura a cero para un
+ * contenedor ya parado o sin cgroup: ese 0 sería un número plausible y FALSO
+ * (ningún contenedor que jugó una batalla consumió 0 ns de CPU), así que se
+ * trata como "no medido".
+ */
+export function cpuMsFromDockerStats(statsJson: unknown): number | null {
+  if (typeof statsJson !== "object" || statsJson === null) return null;
+  const cpuStats = (statsJson as { cpu_stats?: unknown }).cpu_stats;
+  if (typeof cpuStats !== "object" || cpuStats === null) return null;
+  const usage = (cpuStats as { cpu_usage?: unknown }).cpu_usage;
+  if (typeof usage !== "object" || usage === null) return null;
+  const totalNs = (usage as { total_usage?: unknown }).total_usage;
+  if (typeof totalNs !== "number" || !Number.isFinite(totalNs) || totalNs <= 0) return null;
+  return totalNs / 1e6;
+}
 
 /**
  * Implementación Docker real. En una máquina con Docker, `launch()` haría spawn de

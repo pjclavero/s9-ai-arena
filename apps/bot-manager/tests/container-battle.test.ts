@@ -223,3 +223,114 @@ describe("R6.2 · orquestador de batalla-en-contenedores", () => {
     expect(stopped).toContain("bot_a");
   }, 20_000);
 });
+
+/**
+ * B10 (issue #9) · El orquestador recoge la CPU de cada contenedor ANTES de
+ * pararlo y la devuelve en el resultado de la batalla. Lo que se prueba es
+ * comportamiento observable de `runContainerBattle`, con batallas REALES (mismo
+ * runner en proceso que arriba), no la forma del objeto.
+ */
+describe("B10 · CPU por bot en el resultado de la batalla", () => {
+  /** Runner mock que además MIDE: cada bot declara su cpuMs y cuándo se leyó. */
+  function measuringRunner(cpuMsByBot: Record<string, number | null>, order: string[]) {
+    const runner: ContainerRunner = {
+      async launch(spec: SandboxSpec): Promise<ContainerHandle> {
+        const ws = startInProcessBot(spec);
+        let stopped = false;
+        return {
+          id: `mock-${spec.botId}`,
+          async stop() {
+            stopped = true;
+            ws.close();
+          },
+          async posture() {
+            return {} as never;
+          },
+          async cpuMs() {
+            // Si esto se llamara DESPUÉS de stop(), en Docker real ya no habría
+            // contadores: se registra el orden para poder afirmarlo.
+            order.push(stopped ? `after-stop:${spec.botId}` : `before-stop:${spec.botId}`);
+            return cpuMsByBot[spec.botId] ?? null;
+          },
+        };
+      },
+    };
+    return runner;
+  }
+
+  it("devuelve la CPU medida de cada bot, leída ANTES de parar los contenedores", async () => {
+    const order: string[] = [];
+    const runner = measuringRunner({ bot_a: 1234.5, bot_b: 42 }, order);
+    const { cpuMsByBot } = await runContainerBattle({
+      battleId: "cbtest_cpu_" + Date.now(),
+      seed: "cpu-seed",
+      rulesetId: "dm_practice@1",
+      ticks: 120,
+      mapName: "empty",
+      bots: SMOKE_BOTS,
+      runner,
+      network: "arena",
+      engineHost: "127.0.0.1",
+      tickIntervalMs: 3,
+      overallTimeoutMs: 20_000,
+    });
+
+    expect(cpuMsByBot).toEqual({ bot_a: 1234.5, bot_b: 42 });
+    // Con el contenedor ya parado Docker devuelve contadores a cero: medir
+    // después sería medir nada. Se comprueba el orden REAL de las llamadas.
+    expect(order.sort()).toEqual(["before-stop:bot_a", "before-stop:bot_b"]);
+  }, 30_000);
+
+  it("un runner que NO sabe medir deja cpuMs en null para TODOS los bots (no inventa)", async () => {
+    // `inProcessRunner()` es el mock original: sus handles no implementan cpuMs.
+    const { runner } = inProcessRunner();
+    const { result, cpuMsByBot } = await runContainerBattle({
+      battleId: "cbtest_nocpu_" + Date.now(),
+      seed: "nocpu-seed",
+      rulesetId: "dm_practice@1",
+      ticks: 120,
+      mapName: "empty",
+      bots: SMOKE_BOTS,
+      runner,
+      network: "arena",
+      engineHost: "127.0.0.1",
+      tickIntervalMs: 3,
+      overallTimeoutMs: 20_000,
+    });
+
+    // La batalla ocurrió de verdad (ticks reales): el null NO es "no hubo batalla".
+    expect(result.ticks).toBeGreaterThan(0);
+    // Hay entrada para cada bot, y todas son null: ni 0, ni un tiempo de pared.
+    expect(Object.keys(cpuMsByBot).sort()).toEqual(["bot_a", "bot_b"]);
+    expect(Object.values(cpuMsByBot)).toEqual([null, null]);
+  }, 30_000);
+
+  it("si la medición de un bot falla, ese bot queda null y el otro conserva su medida", async () => {
+    const order: string[] = [];
+    const base = measuringRunner({ bot_a: 777, bot_b: 0 }, order);
+    const runner: ContainerRunner = {
+      async launch(spec: SandboxSpec): Promise<ContainerHandle> {
+        const handle = await base.launch(spec);
+        if (spec.botId !== "bot_b") return handle;
+        return { ...handle, cpuMs: async () => Promise.reject(new Error("stats no disponible")) };
+      },
+    };
+    const { cpuMsByBot } = await runContainerBattle({
+      battleId: "cbtest_partial_" + Date.now(),
+      seed: "partial-seed",
+      rulesetId: "dm_practice@1",
+      ticks: 120,
+      mapName: "empty",
+      bots: SMOKE_BOTS,
+      runner,
+      network: "arena",
+      engineHost: "127.0.0.1",
+      tickIntervalMs: 3,
+      overallTimeoutMs: 20_000,
+    });
+
+    // Un fallo de medición no tumba la batalla ni contamina al compañero.
+    expect(cpuMsByBot.bot_a).toBe(777);
+    expect(cpuMsByBot.bot_b).toBeNull();
+  }, 30_000);
+});

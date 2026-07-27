@@ -126,7 +126,7 @@ y clasificación, nunca que se dispare. → **ERR-ENG-08.**
 | H2 directo del torneo (`attachBattle`) | **Cerrado** | `tournament-worker/src/engine-executor.ts:162` |
 | H3 `runStatsJob` + `battle_stats` canónico | **Cerrado** | `battle-runner.ts:169`; test guardián `battle-stats-canonical.test.ts` |
 | H4 CI construye 8 imágenes | **Cerrado** | `ci.yml:113` matrix de 8 servicios |
-| H5 `cpuMs` sin rellenar | **Abierto** (P3, depende del runner) | `replay-service/src/stats.ts:110` persiste `null` |
+| H5 `cpuMs` sin rellenar | **Cerrado** (B10, issue #9) | medida real del cgroup del contenedor: `bot-manager/src/container-runner.ts` (`cpuMsFromDockerStats`) → `participants.cpu_ms` → `replay-service/src/stats.ts`. Sin medida sigue siendo `null`, nunca estimada |
 | H6 rutas rating/standings por equipos | **Cerrado** | `routes/standings.ts:29`, `routes/tournaments.ts:199` |
 | H7 errores de tsc | **Abierto de verdad** | ver §2.5 |
 
@@ -257,7 +257,7 @@ seguridad muy por encima de la media para un proyecto de este tamaño.
 | **ERR-GES-04** | Media | 22 ficheros de test fallan en Windows por PostgreSQL embebido (`pg_ctl`). Fallo de entorno, pero bloquea el desarrollo local en Windows. | Documentar el requisito y/o dar una ruta a Postgres en contenedor/servicio para los tests, y una etiqueta para separar los tests que exigen BD. |
 | **ERR-GES-05** | Media | CI permisiva: `continue-on-error` en tsc; paso de "Formato" es un `echo`; sin paso de cobertura; `deploy-staging` y `smoke-and-promote` son **stubs** que salen 0 sin `STAGING_HOST`. | Separar resultados **verde/amarillo/rojo**: no presentar como despliegue exitoso una ejecución que solo omitió staging. Hacer bloqueantes tipos y seguridad. Añadir cobertura y formateador reales. |
 | **ERR-GES-06** | Media | `DIGESTS.lock` con placeholders (`sha256:000…0`, `1111…1`); guard añadido pero digests reales sin fijar (bloqueado por falta de Docker con red). | Construir las imágenes de runtime en un entorno con Docker+red y **fijar los digests reales**; el despliegue debe rechazar placeholders, `latest`, imágenes sin firma ni SBOM. |
-| **ERR-GES-07** | Baja | `cpuMs` persiste `null` (H5): depende del runner containerizado. | Rellenar al medir CPU en el sandbox real (parte de la fase con Docker). Desglosar decisión/bloqueo/mensajes/timeouts. |
+| **ERR-GES-07** | Baja | ~~`cpuMs` persiste `null` (H5)~~ **Resuelto en B10**: se mide la CPU real del cgroup de cada contenedor de bot (`GET /containers/{id}/stats?stream=false` a través del docker-proxy) y se persiste en `participants.cpu_ms`. | Hecho lo esencial. PENDIENTE (no bloqueante): el desglose fino (tiempo de decisión aislado, tiempo bloqueado, tamaño de mensajes, memoria máxima) exige instrumentar el SDK dentro del bot; `cpuMs` mide el contenedor entero, no solo `decide()`. |
 | **ERR-GES-08** | Baja (gobierno) | Sin `SECURITY.md`, sin Dependabot/Renovate, protección de rama por confirmar, IPs/VMs internas en docs públicas. | Añadir política de reporte de vulnerabilidades, actualización automatizada de dependencias, protección de `main` gateada por CI, y separar docs públicas de inventario privado de infraestructura. |
 
 ---

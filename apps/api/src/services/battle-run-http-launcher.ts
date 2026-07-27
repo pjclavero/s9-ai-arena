@@ -114,6 +114,7 @@
  */
 import { readFileSync } from "node:fs";
 import type { Db } from "../db/connection.js";
+import { safeLookup } from "../../../../packages/game-rules/safe-lookup.js";
 import { splitVersioned } from "../../../../packages/module-catalog/types.js";
 import { toJsonl, verifyAndRecompute, type Replay } from "../../../arena-engine/src/replay.js";
 import type { BattleRunInput, BattleRunLauncher, BattleRunResult } from "../battle-run.js";
@@ -372,6 +373,50 @@ async function verifyAndIngestReplay(
   }
 }
 
+/**
+ * B10 (issue #9) · Persiste la CPU REAL medida en los contenedores de los bots
+ * (`ContainerBattleOutcome.cpuMsByBot`, cgroup de cada contenedor) en
+ * `participants.cpu_ms`. De ahí la lee `runStatsJob` (replay-service) para
+ * rellenar `battle_stats.stats.cpuMs`, que hasta B10 era `null` por diseño.
+ *
+ * Reglas, todas por el mismo motivo (una CPU inventada es peor que un hueco):
+ *  - Se ITERA SOBRE LOS PARTICIPANTES QUE PIDIÓ LA API, no sobre las claves del
+ *    objeto recibido por la red: arena-engine no puede escribir medidas de bots
+ *    que no juegan esta batalla, ni colar claves como "__proto__". La lectura va
+ *    por `safeLookup` (nada de `dict[botId]` a pelo).
+ *  - Solo se escribe un número finito ≥ 0. Un `null`, un string o un NaN NO
+ *    escriben nada: la columna se queda como estaba (no medida).
+ *  - BEST-EFFORT: un fallo de BD se registra y NO tumba la batalla, que ya
+ *    ocurrió y cuyo resultado es válido. Lo único que se pierde es la métrica.
+ */
+async function persistMeasuredCpuMs(
+  db: Db,
+  input: BattleRunInput,
+  json: Record<string, unknown> | null,
+): Promise<void> {
+  const raw = json?.cpuMsByBot;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return;
+  const measured = raw as Record<string, unknown>;
+  for (const p of input.participants) {
+    const value = safeLookup(measured, p.botId);
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) continue;
+    try {
+      await db("participants").where({ battle_id: input.battleId, bot_id: p.botId }).update({ cpu_ms: value });
+    } catch (err) {
+      console.error(
+        JSON.stringify({
+          level: "error",
+          service: "api",
+          msg: "no se pudo persistir la CPU medida del bot (la batalla no se ve afectada)",
+          battleId: input.battleId,
+          botId: p.botId,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    }
+  }
+}
+
 interface ResolvedBot {
   botId: string;
   version: number;
@@ -483,7 +528,11 @@ export function createHttpBattleRunLauncher(cfg: HttpBattleRunLauncherConfig): B
       }
 
       if (res.status === 200) {
-        // arena-engine devuelve { result, replay, postures } (Replay real del motor).
+        // arena-engine devuelve { result, replay, postures, cpuMsByBot } (Replay
+        // real del motor). B10 (issue #9): la CPU medida en los contenedores se
+        // persiste ANTES de cualquier retorno — es el único momento en que
+        // existe, y sin persistirla `battle_stats.cpuMs` seguiría siendo null.
+        await persistMeasuredCpuMs(cfg.db, input, json);
         if (!json) {
           return { status: "completed", runner: HTTP_LAUNCHER_RUNNER_ID, replay: null };
         }
