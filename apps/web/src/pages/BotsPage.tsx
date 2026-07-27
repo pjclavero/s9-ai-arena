@@ -27,11 +27,25 @@
  *     "estado desconocido" y se ofrece actualizar. Nunca se inventa un final.
  *  3. Un `draft` sin enviar parecía una versión más. Ahora sale marcado como
  *     SIN ENVIAR con la acción que falta.
+ *
+ * B11 (correcciones del supervisor):
+ *  - el motivo de rechazo SOLO se pinta si la versión está `rejected`. Al
+ *    reenviar una rechazada, la fila conservaba el `rejection_reason` anterior
+ *    (la API ya lo limpia en `submit`, pero el cliente no debe depender de eso)
+ *    y salía "validating" junto al error del intento previo: la misma mentira
+ *    que motivó el bloque, ascendida a la tarjeta destacada;
+ *  - el sondeo REVALIDA EN SILENCIO y solo el recurso de builds. Recargar los
+ *    tres recursos volviendo a "loading" desmontaba el subárbol entero cada 2 s:
+ *    el editor de loadout y el área de código se recreaban, el foco se perdía y
+ *    los cambios sin guardar del usuario se revertían solos. El recurso de
+ *    loadouts NO se sondea nunca (es el que remonta el editor y no hace falta
+ *    para el pipeline); el de versiones se revalida solo cuando el build llega a
+ *    un estado terminal, que es cuando puede haber cambiado.
  */
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, type Me } from "../api.js";
 import { LoadoutEditor, type LoadoutDraft } from "./LoadoutEditor.js";
-import { useResource, ResourceView } from "../resource.js";
+import { useResource, ResourceView, type Resource } from "../resource.js";
 import type { ModuleDefinition } from "../../../../packages/module-catalog/types.js";
 import type { Violation } from "../../../../packages/module-catalog/validator/index.js";
 
@@ -60,16 +74,12 @@ interface Build {
   status: string;
   stages: { name: string; status: string; message?: string }[];
 }
-
-interface BotDetail {
-  versions: BotVersion[];
-  loadouts: Loadout[];
-  /** Versión sobre la que se ha resuelto la vista (la enfocada). */
-  focusedVersion?: number;
-  /** Builds de la versión enfocada, del más reciente al más antiguo. */
-  builds: Build[];
-  /** false si la consulta de builds falló: no se sabe, y así se dice. */
-  buildsKnown: boolean;
+/** Builds de la versión enfocada. `known:false` = no se sabe (y así se dice). */
+interface BuildsView {
+  list: Build[];
+  known: boolean;
+  /** Versión a la que corresponde esta lectura; undefined = ninguna todavía. */
+  forVersion?: number;
 }
 
 /** Estados de versión en los que HAY trabajo del pipeline en curso (cap. 17.1). */
@@ -77,12 +87,24 @@ const VERSION_IN_PROGRESS = ["validating"];
 /** Estados de build no terminales (migración `builds`: queued|running|passed|failed). */
 const BUILD_IN_PROGRESS = ["queued", "running"];
 
+export const isBuildInProgress = (status: string): boolean => BUILD_IN_PROGRESS.includes(status);
+
 /** ¿Queda trabajo en curso sobre la versión enfocada? Decide si merece sondear. */
-export function detailInProgress(d: BotDetail | null): boolean {
-  if (!d || d.focusedVersion === undefined) return false;
-  const v = d.versions.find((x) => x.version === d.focusedVersion);
-  if (v && VERSION_IN_PROGRESS.includes(v.state)) return true;
-  return d.buildsKnown && d.builds.length > 0 && BUILD_IN_PROGRESS.includes(d.builds[0].status);
+export function workInProgress(versionState: string | undefined, builds: BuildsView | null): boolean {
+  if (!versionState) return false;
+  if (VERSION_IN_PROGRESS.includes(versionState)) return true;
+  return !!builds && builds.known && builds.list.length > 0 && isBuildInProgress(builds.list[0].status);
+}
+
+/**
+ * El motivo de rechazo pertenece al estado `rejected` y a ningún otro. La API
+ * guarda `rejection_reason` en la fila de la versión y una versión reenviada
+ * pasa por `validating` — pintarlo ahí es contar el error del intento anterior
+ * como si fuera el actual.
+ */
+export function rejectionToShow(v: { state: string; rejectionReason?: string } | undefined): string | undefined {
+  if (!v || v.state !== "rejected") return undefined;
+  return v.rejectionReason;
 }
 
 /** Qué le falta al usuario por hacer con esta versión (vacío = nada). */
@@ -91,6 +113,14 @@ export function pendingActionFor(state: string): string {
   if (state === "rejected") return "corrige el código y vuelve a enviarla";
   if (state === "validated") return "pendiente de publicar";
   return "";
+}
+
+/** Gating conjunto de dos recursos sin anidar dos ResourceView. */
+function combine<A, B>(a: Resource<A>, b: Resource<B>): Resource<{ a: A; b: B }> {
+  if (a.status === "error") return a;
+  if (b.status === "error") return b;
+  if (a.status === "loading" || b.status === "loading") return { status: "loading" };
+  return { status: "ready", data: { a: a.data, b: b.data } };
 }
 
 export function BotsPage(props: {
@@ -118,31 +148,61 @@ export function BotsPage(props: {
   const [error, setError] = useState("");
   const [polls, setPolls] = useState(0);
   const [pollExhausted, setPollExhausted] = useState(false);
+  // true si la última revalidación silenciosa de versiones falló: lo que se ve
+  // puede estar desfasado y hay que decirlo, no callarlo.
+  const [versionsStale, setVersionsStale] = useState(false);
 
-  // Detalle del bot seleccionado: versiones + revisiones de loadout (la última
-  // es la vigente y alimenta el editor) + builds DE LA VERSIÓN ENFOCADA.
-  const [detail, reloadDetail] = useResource<BotDetail | null>(async () => {
-    if (!selected) return null;
-    const [versions, loadouts] = await Promise.all([
-      api<BotVersion[]>("GET", `/bots/${selected.id}/versions`),
-      api<Loadout[]>("GET", `/bots/${selected.id}/loadouts`),
-    ]);
-    // La enfocada es la pedida explícitamente; si no, la MÁS ALTA (la última
-    // subida). Nunca la primera: ese era el error de v1 pintado sobre v4.
-    const requested = focusRequest !== null && versions.some((v) => v.version === focusRequest) ? focusRequest : null;
-    const focusedVersion = requested ?? (versions.length > 0 ? Math.max(...versions.map((v) => v.version)) : undefined);
-    if (focusedVersion === undefined) return { versions, loadouts, builds: [], buildsKnown: true };
-    // Los builds son un recurso aparte: si esta lectura falla NO se inventa un
-    // pipeline, se marca como desconocido.
-    let builds: Build[] = [];
-    let buildsKnown = true;
+  // ---------------------------------------------------------------- recursos
+  // Tres recursos INDEPENDIENTES a propósito: el sondeo solo toca el de builds
+  // (y el de versiones cuando el build termina). El de loadouts, que es el que
+  // alimenta el editor, no se sondea nunca.
+  const [versionsRes, reloadVersions] = useResource<BotVersion[]>(async () => {
+    if (!selected) return [];
     try {
-      builds = await api<Build[]>("GET", `/bots/${selected.id}/versions/${focusedVersion}/builds`);
-    } catch {
-      buildsKnown = false;
+      const rows = await api<BotVersion[]>("GET", `/bots/${selected.id}/versions`);
+      setVersionsStale(false);
+      return rows;
+    } catch (e) {
+      setVersionsStale(true);
+      throw e;
     }
-    return { versions, loadouts, focusedVersion, builds, buildsKnown };
-  }, [selected?.id, focusRequest]);
+  }, [selected?.id]);
+
+  const [loadoutsRes, reloadLoadouts] = useResource<Loadout[]>(
+    async () => (selected ? api<Loadout[]>("GET", `/bots/${selected.id}/loadouts`) : []),
+    [selected?.id],
+  );
+
+  const versions = versionsRes.status === "ready" ? versionsRes.data : null;
+  // La enfocada es la pedida explícitamente; si no, la MÁS ALTA (la última
+  // subida). Nunca la primera: ese era el error de v1 pintado sobre v4.
+  const focusedVersion =
+    versions && versions.length > 0
+      ? focusRequest !== null && versions.some((v) => v.version === focusRequest)
+        ? focusRequest
+        : Math.max(...versions.map((v) => v.version))
+      : undefined;
+  const focused = versions?.find((v) => v.version === focusedVersion);
+
+  const [buildsRes, reloadBuilds] = useResource<BuildsView>(async () => {
+    if (!selected || focusedVersion === undefined) return { list: [], known: true };
+    try {
+      const list = await api<Build[]>("GET", `/bots/${selected.id}/versions/${focusedVersion}/builds`);
+      return { list, known: true, forVersion: focusedVersion };
+    } catch {
+      // No se inventa un pipeline: se marca como desconocido.
+      return { list: [], known: false, forVersion: focusedVersion };
+    }
+  }, [selected?.id, focusedVersion]);
+  // Solo vale si es la lectura DE ESTA versión: si no, todavía no se sabe nada
+  // (mostrar los builds de otra versión es exactamente el defecto de B11).
+  const builds = buildsRes.status === "ready" && buildsRes.data.forVersion === focusedVersion ? buildsRes.data : null;
+
+  // ----------------------------------------------------------------- sondeo
+  const reloadBuildsRef = useRef(reloadBuilds);
+  reloadBuildsRef.current = reloadBuilds;
+  const reloadVersionsRef = useRef(reloadVersions);
+  reloadVersionsRef.current = reloadVersions;
 
   // Cambiar de bot o de versión enfocada reinicia el presupuesto de sondeos.
   useEffect(() => {
@@ -150,11 +210,10 @@ export function BotsPage(props: {
     setPollExhausted(false);
   }, [selected?.id, focusRequest]);
 
-  // Sondeo ACOTADO: solo mientras haya trabajo en curso y queden intentos.
-  const reloadRef = useRef(reloadDetail);
-  reloadRef.current = reloadDetail;
-  const data = detail.status === "ready" ? detail.data : null;
-  const inProgress = detailInProgress(data);
+  const inProgress = workInProgress(focused?.state, builds);
+  // Caso raro (anomalía de datos): la versión dice `validating` pero no hay
+  // build que seguir. Entonces lo que hay que revalidar es la versión.
+  const needVersionPoll = focused?.state === "validating" && !!builds && (!builds.known || builds.list.length === 0);
   useEffect(() => {
     if (!inProgress) return;
     if (polls >= maxPolls) {
@@ -163,17 +222,38 @@ export function BotsPage(props: {
     }
     const t = setTimeout(() => {
       setPolls((n) => n + 1);
-      reloadRef.current();
+      // SILENCIOSO: revalida sin desmontar el panel (ni el editor, ni el área
+      // de código, ni el foco del usuario).
+      reloadBuildsRef.current({ silent: true });
+      if (needVersionPoll) reloadVersionsRef.current({ silent: true });
     }, pollIntervalMs);
     return () => clearTimeout(t);
-  }, [inProgress, data, polls, maxPolls, pollIntervalMs]);
+  }, [inProgress, builds, polls, maxPolls, pollIntervalMs, needVersionPoll]);
+
+  // Cuando el build llega a un estado TERMINAL, la versión ya ha cambiado en la
+  // misma transacción (completeBuild): una única revalidación silenciosa de
+  // versiones trae el estado final y su motivo de rechazo. Sin esto habría que
+  // sondear versiones cada tick (el triple de peticiones) para nada.
+  const reconciledRef = useRef<string>("");
+  useEffect(() => {
+    const b = builds?.list[0];
+    if (!builds?.known || !b || isBuildInProgress(b.status)) return;
+    if (focused?.state !== "validating") return;
+    const key = `${b.id}:${b.status}`;
+    if (reconciledRef.current === key) return;
+    reconciledRef.current = key;
+    reloadVersionsRef.current({ silent: true });
+  }, [builds, focused?.state]);
 
   function refreshNow() {
     setPolls(0);
     setPollExhausted(false);
-    reloadDetail();
+    reconciledRef.current = "";
+    reloadVersions({ silent: true });
+    reloadBuilds({ silent: true });
   }
 
+  // --------------------------------------------------------------- acciones
   async function onCreateBot(e: FormEvent) {
     e.preventDefault(); // Enter crea el bot (a11y R3.7)
     setError("");
@@ -190,7 +270,7 @@ export function BotsPage(props: {
     if (!selected) return null;
     try {
       await api("POST", `/bots/${selected.id}/loadouts`, draft);
-      reloadDetail(); // la nueva revisión pasa a ser la vigente
+      reloadLoadouts({ silent: true }); // la nueva revisión pasa a ser la vigente
       return null;
     } catch (e) {
       const err = e as { status?: number; body?: { violations?: Violation[] } };
@@ -215,7 +295,7 @@ export function BotsPage(props: {
       setFocusRequest(created?.version ?? null);
       setPolls(0);
       setPollExhausted(false);
-      reloadDetail();
+      reloadVersions({ silent: true });
     } catch (e) {
       setError((e as Error).message);
     }
@@ -229,7 +309,9 @@ export function BotsPage(props: {
       setFocusRequest(v);
       setPolls(0);
       setPollExhausted(false);
-      reloadDetail();
+      reconciledRef.current = "";
+      reloadVersions({ silent: true });
+      reloadBuilds({ silent: true });
     } catch (e) {
       setError((e as Error).message);
     }
@@ -241,11 +323,17 @@ export function BotsPage(props: {
     try {
       await api("POST", `/bots/${selected.id}/versions/${v}/actions/publish`, { codePublic: false });
       setFocusRequest(v);
-      reloadDetail();
+      reloadVersions({ silent: true });
       reloadBots();
     } catch (e) {
       setError((e as Error).message);
     }
+  }
+
+  const detail = combine(versionsRes, loadoutsRes);
+  function retryDetail() {
+    reloadVersions();
+    reloadLoadouts();
   }
 
   return (
@@ -290,13 +378,14 @@ export function BotsPage(props: {
       </div>
 
       {selected && (
-        <ResourceView resource={detail} label={`el detalle de ${selected.name}`} onRetry={reloadDetail}>
+        <ResourceView resource={detail} label={`el detalle de ${selected.name}`} onRetry={retryDetail}>
           {(d) => {
-            if (!d) return null;
-            const current = d.loadouts.length > 0 ? d.loadouts[d.loadouts.length - 1] : undefined;
-            const focused = d.versions.find((v) => v.version === d.focusedVersion);
-            const build = d.builds.length > 0 ? d.builds[0] : undefined;
-            const buildFinished = !!build && !BUILD_IN_PROGRESS.includes(build.status);
+            const loadouts = d.b;
+            const current = loadouts.length > 0 ? loadouts[loadouts.length - 1] : undefined;
+            const build = builds && builds.known && builds.list.length > 0 ? builds.list[0] : undefined;
+            const buildFinished = !!build && !isBuildInProgress(build.status);
+            const unknownPipeline = !!builds && (!builds.known || (pollExhausted && !!build && !buildFinished));
+            const focusedRejection = rejectionToShow(focused);
             return (
               <>
                 {/* key={bot.id}: al cambiar de bot el editor SE REMONTA con su revisión vigente. */}
@@ -325,9 +414,14 @@ export function BotsPage(props: {
                         ? "Validación en curso…"
                         : pendingActionFor(focused.state) || "sin acciones pendientes"}
                     </p>
-                    {focused.rejectionReason && (
+                    {focusedRejection && (
                       <p className="error" data-testid="focused-rejection">
-                        Motivo del rechazo de v{focused.version}: {focused.rejectionReason}
+                        Motivo del rechazo de v{focused.version}: {focusedRejection}
+                      </p>
+                    )}
+                    {versionsStale && (
+                      <p className="warn" data-testid="versions-stale">
+                        No se ha podido actualizar el estado: lo que ves puede estar desfasado.
                       </p>
                     )}
                     <button type="button" onClick={refreshNow}>
@@ -340,18 +434,18 @@ export function BotsPage(props: {
                   <h2>Versiones de {selected.name}</h2>
                   <table>
                     <tbody>
-                      {d.versions.map((v) => (
+                      {d.a.map((v) => (
                         <tr key={v.version} data-testid={`version-row-${v.version}`}>
                           <td>
                             v{v.version}
-                            {v.version === d.focusedVersion ? " ◀ mirando" : ""}
+                            {v.version === focusedVersion ? " ◀ mirando" : ""}
                           </td>
                           <td>
                             {v.state}
                             {v.state === "draft" && <strong className="warn"> · SIN ENVIAR</strong>}
                           </td>
                           <td>{v.runtime}</td>
-                          <td>{v.rejectionReason && <span className="error">{v.rejectionReason}</span>}</td>
+                          <td>{rejectionToShow(v) && <span className="error">{rejectionToShow(v)}</span>}</td>
                           <td>{pendingActionFor(v.state)}</td>
                           <td>
                             {(v.state === "draft" || v.state === "rejected") && (
@@ -364,7 +458,7 @@ export function BotsPage(props: {
                                 Publicar v{v.version}
                               </button>
                             )}
-                            {v.version !== d.focusedVersion && (
+                            {v.version !== focusedVersion && (
                               <button type="button" onClick={() => setFocusRequest(v.version)}>
                                 Ver v{v.version}
                               </button>
@@ -409,33 +503,38 @@ export function BotsPage(props: {
                 </div>
 
                 {/* B11 · Pipeline SIEMPRE rotulado con su versión y leído del servidor. */}
-                {d.focusedVersion !== undefined && (
+                {focusedVersion !== undefined && (
                   <div className="card" data-testid="build-result">
                     <h3>
-                      Pipeline de build · v{d.focusedVersion} ·{" "}
-                      {!d.buildsKnown
-                        ? "estado desconocido"
-                        : !build
-                          ? "sin enviar a validación"
-                          : pollExhausted && !buildFinished
-                            ? "estado desconocido"
+                      Pipeline de build · v{focusedVersion} ·{" "}
+                      {!builds
+                        ? "consultando…"
+                        : unknownPipeline
+                          ? "estado desconocido"
+                          : !build
+                            ? "sin enviar a validación"
                             : build.status}
                     </h3>
-                    {!d.buildsKnown ? (
+                    {!builds ? (
+                      // Aún no ha llegado la respuesta: no se sabe, y tampoco se
+                      // afirma "sin enviar" ni se pinta ninguna etapa.
+                      <p role="status" aria-live="polite">
+                        Consultando el estado del pipeline…
+                      </p>
+                    ) : unknownPipeline ? (
+                      // Sin resultado fiable NO se pinta ni una etapa: una tabla de
+                      // `pending` bajo "estado desconocido" es justo la foto que hizo
+                      // creer al usuario que su subida seguía en cola.
                       <p className="warn" data-testid="pipeline-unknown">
-                        No se ha podido leer el estado del pipeline. No se muestra un resultado inventado.
+                        {builds && !builds.known
+                          ? "No se ha podido leer el estado del pipeline: estado desconocido. No se muestra un resultado inventado."
+                          : `El pipeline sigue sin dar un resultado tras ${maxPolls} comprobaciones: estado desconocido. Pulsa «Actualizar estado» para volver a intentarlo.`}
                       </p>
                     ) : !build ? (
                       <p className="warn">Esta versión todavía no se ha enviado a validación.</p>
                     ) : (
                       <>
-                        {pollExhausted && !buildFinished && (
-                          <p className="warn" data-testid="pipeline-unknown">
-                            El pipeline sigue sin dar un resultado tras {maxPolls} comprobaciones: estado desconocido.
-                            Pulsa «Actualizar estado» para volver a intentarlo.
-                          </p>
-                        )}
-                        {!pollExhausted && !buildFinished && (
+                        {!buildFinished && (
                           <p role="status" aria-live="polite" data-testid="pipeline-running">
                             En curso: comprobando cada {Math.round(pollIntervalMs / 1000) || 1} s…
                           </p>

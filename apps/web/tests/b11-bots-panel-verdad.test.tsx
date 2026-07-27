@@ -26,7 +26,7 @@ vi.mock("../src/api.js", () => ({
 }));
 
 import { api } from "../src/api.js";
-import { BotsPage, detailInProgress, pendingActionFor } from "../src/pages/BotsPage.js";
+import { BotsPage, workInProgress, rejectionToShow, pendingActionFor } from "../src/pages/BotsPage.js";
 import { loadCatalog, CATALOG_VERSION } from "../../../packages/module-catalog/loadCatalog.js";
 
 const apiMock = api as unknown as ReturnType<typeof vi.fn>;
@@ -61,7 +61,7 @@ interface BuildRow {
  * Backend falso con estado mutable: las respuestas cambian con el tiempo, igual
  * que el servidor real cuando el worker del bot-manager termina el pipeline.
  */
-function fakeBackend(init: { versions: VersionRow[]; builds?: BuildRow[] }) {
+function fakeBackend(init: { versions: VersionRow[]; builds?: BuildRow[]; latencyMs?: number }) {
   const state = {
     versions: init.versions,
     builds: init.builds ?? [],
@@ -71,6 +71,9 @@ function fakeBackend(init: { versions: VersionRow[]; builds?: BuildRow[] }) {
   };
   apiMock.mockImplementation(async (method: string, path: string) => {
     state.calls.push(`${method} ${path}`);
+    // Latencia REAL: con un mock instantáneo el remonte del panel es invisible
+    // porque el placeholder de carga no llega a pintarse nunca.
+    if (init.latencyMs) await new Promise((r) => setTimeout(r, init.latencyMs));
     if (method === "GET" && path.startsWith("/bots?")) {
       return { items: [{ id: "b1", name: "Tanque", visibility: "private" }] };
     }
@@ -273,7 +276,12 @@ describe("B11 · el pipeline refleja el resultado final", () => {
       () => expect(screen.getByTestId("build-result").querySelector("h3")?.textContent).toContain("failed"),
       { timeout: 3000 },
     );
-    expect(screen.getByTestId("focused-version").textContent).toContain("rejected");
+    // El estado de la versión llega en la revalidación que dispara el final del
+    // build (una sola, no una por ciclo).
+    await waitFor(() => expect(screen.getByTestId("focused-version").textContent).toContain("rejected"), {
+      timeout: 3000,
+    });
+    expect(screen.getByTestId("focused-rejection").textContent).toContain("static_analysis");
     expect(screen.queryByTestId("pipeline-running")).toBeNull();
   });
 
@@ -344,47 +352,264 @@ describe("B11 · un draft sin enviar es visible como tal", () => {
 });
 
 describe("B11 · lógica pura de apoyo", () => {
-  it("detailInProgress solo es cierto si HAY trabajo en curso", () => {
-    const base = { versions: [], loadouts: [], builds: [], buildsKnown: true };
-    expect(detailInProgress(null)).toBe(false);
-    expect(detailInProgress({ ...base, focusedVersion: undefined })).toBe(false);
-    expect(
-      detailInProgress({
-        ...base,
-        focusedVersion: 1,
-        versions: [{ version: 1, state: "validating", runtime: "python", loadoutRevision: 1 }],
-      }),
-    ).toBe(true);
-    expect(
-      detailInProgress({
-        ...base,
-        focusedVersion: 1,
-        versions: [{ version: 1, state: "rejected", runtime: "python", loadoutRevision: 1 }],
-      }),
-    ).toBe(false);
+  it("workInProgress solo es cierto si HAY trabajo en curso", () => {
+    expect(workInProgress(undefined, null)).toBe(false);
+    expect(workInProgress("validating", null)).toBe(true);
+    expect(workInProgress("rejected", { list: [], known: true })).toBe(false);
     // Build en cola con la versión ya en estado terminal: sigue habiendo trabajo.
-    expect(
-      detailInProgress({
-        ...base,
-        focusedVersion: 1,
-        versions: [{ version: 1, state: "draft", runtime: "python", loadoutRevision: 1 }],
-        builds: [{ id: "b", version: 1, status: "queued", stages: [] }],
-      }),
-    ).toBe(true);
+    expect(workInProgress("draft", { list: [{ id: "b", status: "queued", stages: [] }], known: true })).toBe(true);
+    expect(workInProgress("rejected", { list: [{ id: "b", status: "failed", stages: [] }], known: true })).toBe(false);
     // Si no se conocen los builds no se sondea a ciegas: se dice "desconocido".
-    expect(
-      detailInProgress({
-        ...base,
-        focusedVersion: 1,
-        versions: [{ version: 1, state: "draft", runtime: "python", loadoutRevision: 1 }],
-        buildsKnown: false,
-      }),
-    ).toBe(false);
+    expect(workInProgress("draft", { list: [], known: false })).toBe(false);
+  });
+
+  it("rejectionToShow solo devuelve el motivo cuando la versión está rejected", () => {
+    const reason = "static_analysis: src/bot.js (el fichero parece TypeScript)";
+    expect(rejectionToShow({ state: "rejected", rejectionReason: reason })).toBe(reason);
+    // Una versión REENVIADA conserva el motivo del intento anterior en la fila:
+    // pintarlo mientras valida es contar un error viejo como si fuera el actual.
+    expect(rejectionToShow({ state: "validating", rejectionReason: reason })).toBeUndefined();
+    expect(rejectionToShow({ state: "validated", rejectionReason: reason })).toBeUndefined();
+    expect(rejectionToShow({ state: "draft", rejectionReason: reason })).toBeUndefined();
+    expect(rejectionToShow(undefined)).toBeUndefined();
   });
 
   it("pendingActionFor nombra la acción pendiente de cada estado", () => {
     expect(pendingActionFor("draft")).toContain("Enviar a validación");
     expect(pendingActionFor("validated")).toContain("publicar");
     expect(pendingActionFor("published")).toBe("");
+  });
+});
+
+/* -------------------------------------------------------------------------
+ * Bloqueantes encontrados por el Supervisor sobre la primera versión de B11.
+ * ---------------------------------------------------------------------- */
+
+describe("B11-fix · el motivo de rechazo pertenece SOLO al estado rejected", () => {
+  const REENVIADA: VersionRow[] = [
+    {
+      version: 1,
+      state: "validating",
+      runtime: "node",
+      loadoutRevision: 7,
+      // Residuo del intento anterior (la API lo limpia desde B11, pero el panel
+      // no debe depender de ello: hay filas antiguas con el dato sucio).
+      rejectionReason: "static_analysis: src/bot.js (el fichero parece TypeScript)",
+    },
+  ];
+
+  it("al reenviar una rechazada NO se pinta el error del intento anterior", async () => {
+    fakeBackend({
+      versions: REENVIADA,
+      builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
+    });
+    renderPage({ pollIntervalMs: 5, maxPolls: 2 });
+    await selectBot();
+
+    const resumen = await screen.findByTestId("focused-version");
+    expect(resumen.textContent).toContain("validating");
+    expect(resumen.textContent).toContain("Validación en curso");
+    // La cadena EXACTA que engañó al dueño del proyecto no puede aparecer.
+    expect(within(resumen).queryByTestId("focused-rejection")).toBeNull();
+    expect(document.body.textContent).not.toContain("parece TypeScript");
+    expect(document.body.textContent).not.toContain("Motivo del rechazo");
+  });
+
+  it("tampoco en la fila de la tabla", async () => {
+    fakeBackend({ versions: REENVIADA });
+    renderPage();
+    await selectBot();
+    const fila = await screen.findByTestId("version-row-1");
+    expect(fila.textContent).toContain("validating");
+    expect(fila.textContent).not.toContain("parece TypeScript");
+  });
+
+  it("cuando vuelve a rejected, el motivo NUEVO sí se pinta", async () => {
+    const st = fakeBackend({
+      versions: REENVIADA,
+      builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
+    });
+    renderPage({ pollIntervalMs: 5, maxPolls: 40 });
+    await selectBot();
+    await screen.findByTestId("focused-version");
+
+    st.versions = [
+      { version: 1, state: "rejected", runtime: "node", loadoutRevision: 7, rejectionReason: "dependencies: faltan" },
+    ];
+    st.builds = [{ id: "b-1", version: 1, status: "failed", stages: [{ name: "dependencies", status: "failed" }] }];
+
+    const motivo = await screen.findByTestId("focused-rejection", {}, { timeout: 3000 });
+    expect(motivo.textContent).toContain("dependencies: faltan");
+    expect(motivo.textContent).not.toContain("parece TypeScript");
+  });
+});
+
+describe("B11-fix · el sondeo no desmonta el panel ni tira trabajo del usuario", () => {
+  /** Escenario de sondeo activo con latencia realista de red. */
+  function enCurso() {
+    return fakeBackend({
+      versions: [{ version: 1, state: "validating", runtime: "python", loadoutRevision: 7 }],
+      builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
+      latencyMs: 30,
+    });
+  }
+
+  it("no aparece NUNCA el placeholder de carga durante el sondeo", async () => {
+    enCurso();
+    renderPage({ pollIntervalMs: 10, maxPolls: 8 });
+    await selectBot();
+    await screen.findByTestId("build-result");
+
+    let vistoPlaceholder = false;
+    const observer = new MutationObserver(() => {
+      if (document.body.textContent?.includes("Cargando el detalle de Tanque")) vistoPlaceholder = true;
+    });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    await new Promise((r) => setTimeout(r, 200)); // varios ciclos de sondeo
+    observer.disconnect();
+
+    expect(vistoPlaceholder).toBe(false);
+  });
+
+  it("conserva el foco, el nodo del área de código y los cambios SIN GUARDAR del editor", async () => {
+    enCurso();
+    renderPage({ pollIntervalMs: 10, maxPolls: 8 });
+    await selectBot();
+    await screen.findByTestId("build-result");
+
+    // El usuario cambia el chasis (sin guardar) y escribe código.
+    const chasis = screen.getByLabelText("chasis") as HTMLSelectElement;
+    await userEvent.selectOptions(chasis, "chassis.heavy@1");
+    const area = screen.getByLabelText("codigo") as HTMLTextAreaElement;
+    await userEvent.type(area, "print('hola')");
+    area.focus();
+    expect(document.activeElement).toBe(area);
+
+    await new Promise((r) => setTimeout(r, 200)); // varios ciclos de sondeo
+
+    // Mismo nodo del DOM: el subárbol no se ha remontado.
+    expect(screen.getByLabelText("codigo")).toBe(area);
+    expect(document.activeElement).toBe(area);
+    expect(area.value).toBe("print('hola')");
+    // Y la elección sin guardar del usuario sigue siendo la suya.
+    expect((screen.getByLabelText("chasis") as HTMLSelectElement).value).toBe("chassis.heavy@1");
+  });
+
+  it("el sondeo NO vuelve a pedir los loadouts (es lo que remontaba el editor)", async () => {
+    const st = enCurso();
+    renderPage({ pollIntervalMs: 10, maxPolls: 8 });
+    await selectBot();
+    await screen.findByTestId("build-result");
+
+    const loadoutsAlPrincipio = st.calls.filter((c) => c.endsWith("/loadouts")).length;
+    const buildsAlPrincipio = st.calls.filter((c) => c.includes("/builds")).length;
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(st.calls.filter((c) => c.endsWith("/loadouts")).length).toBe(loadoutsAlPrincipio);
+    // …y sí ha sondeado los builds, que es de lo que se trata.
+    expect(st.calls.filter((c) => c.includes("/builds")).length).toBeGreaterThan(buildsAlPrincipio);
+  });
+
+  it("cuando el build TERMINA, la revalidación de versiones tampoco desmonta el panel", async () => {
+    // El momento crítico: el usuario está escribiendo justo cuando el worker
+    // acaba. Ahí se dispara la revalidación de versiones; si no es silenciosa,
+    // se lleva por delante lo que el usuario tenía a medias.
+    const st = fakeBackend({
+      versions: [{ version: 1, state: "validating", runtime: "python", loadoutRevision: 7 }],
+      builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
+      latencyMs: 30,
+    });
+    renderPage({ pollIntervalMs: 10, maxPolls: 40 });
+    await selectBot();
+    await screen.findByTestId("pipeline-running");
+
+    const chasis = screen.getByLabelText("chasis") as HTMLSelectElement;
+    await userEvent.selectOptions(chasis, "chassis.heavy@1");
+    const area = screen.getByLabelText("codigo") as HTMLTextAreaElement;
+    await userEvent.type(area, "sin guardar");
+    area.focus();
+
+    st.versions = [
+      { version: 1, state: "rejected", runtime: "python", loadoutRevision: 7, rejectionReason: "no compila" },
+    ];
+    st.builds = [{ id: "b-1", version: 1, status: "failed", stages: [{ name: "build", status: "failed" }] }];
+
+    await waitFor(() => expect(screen.getByTestId("focused-version").textContent).toContain("rejected"), {
+      timeout: 3000,
+    });
+    // Mismo nodo, mismo foco, mismo trabajo sin guardar.
+    expect(screen.getByLabelText("codigo")).toBe(area);
+    expect(document.activeElement).toBe(area);
+    expect(area.value).toBe("sin guardar");
+    expect((screen.getByLabelText("chasis") as HTMLSelectElement).value).toBe("chassis.heavy@1");
+  });
+
+  it("gasta UNA petición por ciclo, no tres", async () => {
+    const st = enCurso();
+    renderPage({ pollIntervalMs: 10, maxPolls: 6 });
+    await selectBot();
+    await screen.findByTestId("build-result");
+    st.calls.length = 0;
+
+    await new Promise((r) => setTimeout(r, 250)); // el presupuesto se agota
+    await screen.findByTestId("pipeline-unknown");
+
+    const builds = st.calls.filter((c) => c.includes("/builds")).length;
+    const otras = st.calls.filter((c) => !c.includes("/builds")).length;
+    expect(builds).toBeGreaterThan(0);
+    expect(builds).toBeLessThanOrEqual(6); // presupuesto respetado
+    expect(otras).toBe(0); // ni versiones ni loadouts por ciclo
+  });
+
+  it("al terminar el build revalida las versiones UNA vez y muestra el estado final", async () => {
+    const st = fakeBackend({
+      versions: [{ version: 1, state: "validating", runtime: "python", loadoutRevision: 7 }],
+      builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
+      latencyMs: 5,
+    });
+    renderPage({ pollIntervalMs: 10, maxPolls: 40 });
+    await selectBot();
+    await screen.findByTestId("pipeline-running");
+    st.calls.length = 0;
+
+    st.versions = [
+      { version: 1, state: "rejected", runtime: "python", loadoutRevision: 7, rejectionReason: "no compila" },
+    ];
+    st.builds = [{ id: "b-1", version: 1, status: "failed", stages: [{ name: "build", status: "failed" }] }];
+
+    await waitFor(() => expect(screen.getByTestId("focused-version").textContent).toContain("rejected"), {
+      timeout: 3000,
+    });
+    expect(screen.getByTestId("focused-rejection").textContent).toContain("no compila");
+    // Exactamente una revalidación de versiones, no una por ciclo.
+    expect(st.calls.filter((c) => c.endsWith("/versions")).length).toBe(1);
+  });
+});
+
+describe("B11-fix · sin resultado fiable no se pinta ninguna etapa", () => {
+  it("con el sondeo agotado no queda ni una fila `pending` bajo «estado desconocido»", async () => {
+    fakeBackend({
+      versions: [{ version: 1, state: "validating", runtime: "python", loadoutRevision: 7 }],
+      builds: [
+        {
+          id: "b-1",
+          version: 1,
+          status: "queued",
+          stages: [
+            { name: "structure", status: "pending" },
+            { name: "static_analysis", status: "pending" },
+          ],
+        },
+      ],
+    });
+    renderPage({ pollIntervalMs: 2, maxPolls: 3 });
+    await selectBot();
+
+    const card = await screen.findByTestId("build-result");
+    await within(card).findByTestId("pipeline-unknown", {}, { timeout: 3000 });
+    expect(card.querySelector("h3")?.textContent).toContain("estado desconocido");
+    expect(card.querySelector("table")).toBeNull();
+    expect(card.textContent).not.toContain("pending");
+    expect(within(card).queryByTestId("pipeline-running")).toBeNull();
   });
 });

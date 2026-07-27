@@ -177,6 +177,36 @@ describe("B11 · builds por versión", () => {
     expect(versions.body.find((x: { version: number }) => x.version === v).state).toBe("rejected");
   });
 
+  it("reenviar una versión rechazada LIMPIA el motivo del rechazo anterior", async () => {
+    // Causa raíz del defecto: `submit` (rejected → validating) dejaba el
+    // rejection_reason del intento previo en la fila, y cualquier pantalla que
+    // lo pintara contaba un error viejo como si fuera el actual.
+    const botId = await botWithLoadout("b11-limpia-motivo");
+    const v = await newVersion(botId);
+    fake.nextResult = failing;
+    await request(app).post(`/bots/${botId}/versions/${v}/actions/submit`).set(auth(dev));
+
+    const rechazada = await request(app).get(`/bots/${botId}/versions`).set(auth(dev));
+    const antes = rechazada.body.find((x: { version: number }) => x.version === v);
+    expect(antes.state).toBe("rejected");
+    expect(antes.rejectionReason).toContain("parece TypeScript");
+
+    // Reenvío: mientras valida NO puede quedar el motivo anterior colgando.
+    fake.nextResult = () => ({
+      status: "passed" as const,
+      stages: PIPELINE_STAGES.map((name) => ({ name, status: "passed" })),
+      artifactHash: "c".repeat(64),
+    });
+    const conCola = createApp({ db: h.db, botManager: new QueueBotManager(h.db) });
+    const submit = await request(conCola).post(`/bots/${botId}/versions/${v}/actions/submit`).set(auth(dev));
+    expect(submit.status).toBe(202);
+
+    const validando = await request(conCola).get(`/bots/${botId}/versions`).set(auth(dev));
+    const ahora = validando.body.find((x: { version: number }) => x.version === v);
+    expect(ahora.state).toBe("validating");
+    expect(ahora.rejectionReason).toBeUndefined();
+  });
+
   it("una versión que existe pero nunca se envió devuelve [] (no inventa un build)", async () => {
     const botId = await botWithLoadout("b11-sin-enviar");
     const v = await newVersion(botId);

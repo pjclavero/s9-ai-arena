@@ -335,7 +335,12 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
       const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
       assertOwner(req.auth, bot);
       const v = await getVersionOr404(db, bot.id as string, pathParam(req, "version"));
-      await applyTransition(db, req.auth, v, "submit", {}, req.correlationId);
+      // B11 · `submit` viene de draft O de rejected (cap. 17.1). Al reenviar una
+      // versión rechazada el motivo del rechazo ANTERIOR se quedaba en la fila
+      // (solo se limpiaba al pasar a `validated`): quedaba una versión
+      // `validating` arrastrando el error de su intento previo, y cualquier
+      // pantalla que lo pintase mentía. El dato sucio se limpia en el origen.
+      await applyTransition(db, req.auth, v, "submit", { rejection_reason: null }, req.correlationId);
 
       const [build] = await db("builds")
         .insert({

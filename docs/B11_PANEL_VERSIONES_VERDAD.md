@@ -50,27 +50,62 @@ de extensiones conocidas de `conformance.test.ts`.
   El resumen destacado y el pipeline se leen SIEMPRE de ella y van rotulados con su número
   (`Última subida: v4 · rejected`, `Pipeline de build · v4 · failed`). Cada fila muestra su
   propio motivo de rechazo; hay un botón «Ver vN» para enfocar otra versión.
+- **El motivo de rechazo solo se pinta si la versión está `rejected`** (`rejectionToShow`).
+  Ver más abajo: `submit` arrastraba el motivo del intento anterior.
 - **Sondeo acotado**: solo mientras hay trabajo en curso (versión `validating` o build
   `queued`/`running`), cada 2 s, con un presupuesto **finito** (30 intentos ≈ 60 s).
   Agotado, el panel dice **«estado desconocido»** y ofrece «Actualizar estado». Nunca
   inventa un `passed`/`failed`.
-- **Tres situaciones distinguidas**: *en curso* (aviso `aria-live` con la cadencia),
-  *terminado* (estado real del build), *no se sabe* (sondeo agotado o lectura de builds
-  fallida ⇒ ni una etapa pintada).
+- **Revalidación silenciosa y de un solo recurso**: el sondeo pide únicamente los builds y
+  **sin volver a `loading`**. Ver más abajo: recargar los tres recursos desmontaba el panel.
+- **Cuatro situaciones distinguidas**: *consultando* (aún no ha llegado la primera
+  respuesta), *en curso* (aviso `aria-live` con la cadencia), *terminado* (estado real del
+  build) y *no se sabe* (sondeo agotado o lectura de builds fallida). En "no se sabe" **no
+  se pinta la tabla de etapas**: una tabla de `pending` es justo la foto que hizo creer al
+  usuario que su subida seguía en cola.
 - **`draft` visible**: marca `· SIN ENVIAR` y columna con la acción pendiente
   («pulsa «Enviar a validación»»), botón rotulado con el número de versión.
 - La subida usa la **revisión de loadout vigente** y el botón se deshabilita si el bot aún
   no tiene ninguna.
 
+## Correcciones tras la revisión del Supervisor
+
+1. **El motivo de rechazo sobrevivía al reenvío.** `applyTransition` pone
+   `state = "validating"` y solo se limpiaba `rejection_reason` al pasar a `validated`. Una
+   versión rechazada y reenviada quedaba `validating` **con el error del intento anterior**
+   en la fila, y la tarjeta destacada lo pintaba: exactamente la cadena que engañó al dueño
+   del proyecto, ahora más visible que antes. Arreglado **en el origen** (`submit` limpia
+   `rejection_reason`) y **en el cliente** (`rejectionToShow` exige estado `rejected`, para
+   no depender del dato limpio en filas antiguas).
+2. **El sondeo desmontaba el panel y tiraba trabajo del usuario.** `useResource` volvía a
+   `loading` en cada recarga y `ResourceView` sustituye el subárbol entero: durante los ~60 s
+   posteriores a cada envío el panel se remontaba cada 2 s, el área de código y el editor de
+   loadout se recreaban, **se perdía el foco** y **los cambios sin guardar se revertían
+   solos**. Además cada ciclo pedía tres recursos (~93 peticiones por ventana), incluido
+   `/loadouts`, que es el que remonta el editor y no hace ninguna falta para el pipeline.
+   Ahora `useResource` admite `reload({ silent: true })` (revalida conservando los datos
+   previos) y el ciclo pide **solo** los builds; las versiones se revalidan **una vez**,
+   cuando el build llega a estado terminal —que es cuando pueden haber cambiado, porque
+   `completeBuild` actualiza build y versión en la misma transacción—.
+   Al implementarlo apareció un defecto propio de la revalidación silenciosa: la marca de
+   "silencioso" era un único booleano que consumía el primer efecto, así que dos recargas
+   seguidas hacían que la segunda volviera a `loading` y el panel parpadeara igual. Ahora la
+   marca va **indexada por nonce**.
+3. **Afirmación falsa en esta misma documentación.** Decía "ni una etapa pintada" cuando el
+   sondeo se agotaba, pero se seguían pintando las filas `pending` bajo el rótulo "estado
+   desconocido". Corregido el código (ahora es cierto) y el texto.
+
 ## Verificación
 
-- `apps/web/tests/b11-bots-panel-verdad.test.tsx` (13 tests): montan el escenario exacto de
+- `apps/web/tests/b11-bots-panel-verdad.test.tsx` (24 tests): montan el escenario exacto de
   producción (v1..v4) contra un backend falso **con estado mutable** —el worker termina el
-  pipeline *después*, como en la realidad— y comprueban **qué se renderiza**.
-- `apps/api/src/b11-version-builds.test.ts` (7 tests): endpoint contra PostgreSQL real,
+  pipeline *después*, como en la realidad, y con latencia de red configurable, porque un
+  mock instantáneo esconde el remonte del panel— y comprueban **qué se renderiza**:
+  identidad de los nodos del DOM, foco, valor de los controles y número de peticiones.
+- `apps/api/src/b11-version-builds.test.ts` (8 tests): endpoint contra PostgreSQL real,
   incluido un caso con el encolador **real** (`QueueBotManager`) que reproduce el 202
   `queued`+`pending` y demuestra que solo esta lectura revela el final.
-- Seis mutaciones de no-vacuidad demostradas con salida real (ver informe del bloque),
+- Doce mutaciones de no-vacuidad demostradas con salida real (ver informe del bloque),
   entre ellas la que reproduce el síntoma exacto: enfocar v1 en vez de v4.
 
 ### Lo que NO se ha podido verificar
@@ -83,3 +118,18 @@ de extensiones conocidas de `conformance.test.ts`.
   stub solo para esa verificación, sin tocar la configuración del repo.
 - **No se ha abierto un navegador de verdad** ni se ha probado contra VM108. Todo lo
   afirmado sobre el render proviene de jsdom + Testing Library.
+- La imagen `web` que construye CI (`build-images (web)`) es la **genérica** de
+  `node-service`, no la de `infrastructure/docker/web/Dockerfile` (vite + nginx) que es la
+  que despliega `docker-compose.yml`. Es decir: **CI no construye la SPA que ve el usuario**.
+  Ajeno a este bloque, pero conviene arreglarlo.
+
+## Aumento de superficie a tener en cuenta
+
+`GET /bots/{botId}/versions/{version}/builds` es **enumerable** y `getBuild` no lo era:
+antes hacía falta un identificador de build inadivinable, ahora basta con `bot + versión`.
+Para un bot **público**, cualquier usuario autenticado puede recorrer sus versiones y leer
+los mensajes de etapa del pipeline, que pueden contener rutas del servidor. No es una fuga
+nueva —`getBuild` ya exponía ese mismo contenido a quien tuviera el id, y `logUrl` sigue
+restringido a dueño/staff—, pero sí es más superficie. Si algún día molesta, la vía es
+restringir la lectura de builds a dueño/equipo/staff (los builds de bots públicos no son
+información que el público necesite).
