@@ -9,6 +9,7 @@
  * dentro del proceso y no expone HTTP, así que la señal de vida es un fichero.
  */
 import { writeFileSync } from "node:fs";
+import { requireWritableDataDir } from "../../replay-service/src/data-dir.js";
 import { createDb } from "../../api/src/db/connection.js";
 import { SpectateGateway } from "../../api/src/spectate/gateway.js";
 import { makeRunBattleHandler, markBattleForReview } from "./battle-runner.js";
@@ -32,6 +33,15 @@ function log(msg: string, extra: Record<string, unknown> = {}): void {
 
 const db = createDb();
 const replaysDir = process.env.REPLAYS_DIR ?? "/data/replays";
+
+// B7 · Este worker INGESTA replays en disco (battle-runner.finishBattle →
+// ingestReplay(replaysDir, …)) y guarda la ruta resultante en
+// battles.replay_ref. Hasta B7 el servicio ni siquiera tenía montado
+// `arena_replays`: escribía en el sistema de ficheros efímero del contenedor
+// —cuando podía— y la API, que lee ese replay_ref de otro contenedor, jamás
+// encontraba el archivo. El preflight falla RUIDOSAMENTE si el volumen no es
+// escribible, en vez de tumbar cada batalla al final con un EACCES.
+requireWritableDataDir("tournament-worker", replaysDir);
 
 // Espectador en vivo (E8/T8.2): el gateway vive AQUÍ porque las batallas se
 // simulan en este proceso; attachBattle() necesita el objeto Battle en memoria.

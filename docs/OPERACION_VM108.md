@@ -130,6 +130,59 @@ qm rollback 108 pre-v2-20260717     # vuelve al estado v1 previo al redespliegue
 > ⚠️ Se pierde TODO lo hecho en VM108 desde 2026-07-17 (datos incluidos). Último recurso.
 > Preferir siempre `git checkout <commit>` + rebuild antes que un rollback de VM.
 
+## 11 bis. Volumen `arena_replays`: propiedad y montajes (B7)
+
+Incidencia real (2026-07-17 → 2026-07-27): `arena_replays` se creó `root:root`,
+el `replay-service` corre como `node` (uid 1000) y **cada ingesta moría con
+`EACCES: permission denied, open '/data/replays/...'`**. El contenedor seguía
+`healthy` (su `/healthz` no toca el disco) y el volumen llevaba diez días vacío:
+el servicio **nunca** había guardado un replay. Se desbloqueó a mano con
+`chown 1000:1000` sobre el punto de montaje — un parche que se pierde si el
+volumen se recrea.
+
+Desde B7 no hace falta ninguna intervención manual:
+
+1. Las imágenes que montan el volumen **traen `/data/replays` ya creado y con la
+   propiedad correcta** (uid 1000). Docker copia esa propiedad al volumen la
+   primera vez que se monta vacío, así que un despliegue desde cero nace bien
+   sea cual sea el primer contenedor en montarlo.
+2. La imagen genérica de servicios Node arranca por
+   `infrastructure/docker/node-service/entrypoint.sh`, que **ajusta la propiedad
+   de los directorios listados en `ARENA_DATA_DIRS` y baja a `node` con
+   `su-exec`** antes de ejecutar el servicio. Nada de `privileged`,
+   `docker.sock` ni `network_mode: host`.
+
+   El paso privilegiado está acotado, y conviene saber **exactamente** qué
+   acepta, porque corre como uid 0 y lo gobierna una variable de entorno. Una
+   ruta se admite solo si cumple **todo**: cuelga de `/data/` con al menos un
+   componente propio (nunca `/data` a secas ni `/dataOtraCosa`); todos sus
+   componentes son reales (ni vacíos por `//`, ni `.`, ni `..`); **ningún
+   componente del camino es un enlace simbólico** — el guard de prefijo por sí
+   solo no impide salir de `/data`, porque `chown` sigue los enlaces; no
+   contiene metacaracteres de patrón (`*`, `?`, `[`); y reconstruida componente
+   a componente es idéntica a la recibida (sin barras finales ni formas
+   equivalentes). Además: **la lista se valida entera antes de tocar el disco**
+   (una entrada inválida al final no deja chowneadas las anteriores), la lista
+   no se expande como patrón (`set -f`), y el `chown` no es recursivo y lleva
+   `-h` (no sigue enlaces). Cualquier otra cosa **aborta el arranque**; nunca se
+   ignora en silencio.
+3. `replay-service` y `tournament-worker` **comprueban al arrancar** que su
+   directorio de datos es escribible de verdad (escriben y borran un fichero) y,
+   si no lo es, **se niegan a arrancar** con un diagnóstico accionable
+   (`dir`, `uid`, motivo y remedio) en vez de perder replays en silencio. Un
+   contenedor en bucle de reinicio es visible; un `healthy` que traga EACCES, no.
+
+Montajes del volumen y por qué (verificado contra el código, no supuesto):
+
+| Servicio | Modo | Justificación |
+|---|---|---|
+| `replay-service` | rw | `ingestReplay`/`loadStored` (`apps/replay-service/src/store.ts`). |
+| `tournament-worker` | rw | `finishBattle` → `ingestReplay(replaysDir, …)` y guarda la ruta en `battles.replay_ref` (`apps/tournament-worker/src/battle-runner.ts`). **Añadido en B7: antes no lo montaba**, así que escribía en el sistema de ficheros efímero del contenedor y nadie más veía ese `replay_ref`. |
+| `api` | **ro** | `getReplay`/`verifyReplay` hacen `readFile(battle.replay_ref)` (`apps/api/src/routes/battles.ts`). **Añadido en B7**: sin él, la descarga y la verificación de replays de torneo daban siempre 404 «Replay no disponible». La API no escribe replays: su ingesta va por HTTP al `replay-service`. |
+| `streamer` | rw | modo grabación E11.M escribe clips en `/data/replays/video`. |
+| `backup` | ro | copia de seguridad. |
+| `arena-engine` | rw | **montaje sin uso**: ningún fichero de `apps/arena-engine/src` toca `/data/replays`. Pendiente de retirar fuera de B7 (lo mismo pasa con `arena_maps`/`arena_logs` en `arena-engine` y con `arena_maps` en `map-service`). |
+
 ## 12. Qué NO hacer
 
 - ❌ Ejecutar Docker/Compose como `root`.

@@ -9,6 +9,14 @@ COPY infrastructure/backup/restore.sh /usr/local/bin/restore.sh
 COPY infrastructure/backup/entrypoint.sh /entrypoint.sh
 RUN chmod +x /usr/local/bin/backup.sh /usr/local/bin/restore.sh /entrypoint.sh
 
+# B7 · Siembra del directorio de datos con uid 1000 (el `node` de las imágenes
+# node-service, dueño real del volumen). Este contenedor monta `arena_replays`
+# en SOLO LECTURA, pero es root y arranca dentro del mismo stack: si fuese el
+# primero en montar el volumen, sin esta línea Docker lo crearía root:root y el
+# replay-service se quedaría sin poder escribir — exactamente el defecto de
+# VM108, que estuvo diez días sin guardar un solo replay.
+RUN mkdir -p /data/replays && chown 1000:1000 /data /data/replays
+
 # crond necesita root en alpine; el contenedor va sin privilegios adicionales,
 # sin puertos y solo en las redes data(+public para alcanzar el NAS).
 ENTRYPOINT ["/entrypoint.sh"]

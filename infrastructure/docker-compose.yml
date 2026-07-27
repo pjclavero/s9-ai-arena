@@ -163,6 +163,16 @@ services:
       # y se reporta `replay.ingested: false` (fail-closed, nunca se finge).
       REPLAY_INGEST_SECRET_FILE: /run/secrets/replay_ingest_secret
     secrets: [postgres_password, jwt_secret, arena_engine_internal_secret, replay_ingest_secret]
+    volumes:
+      # B7 · SOLO LECTURA, y justificado por el código: getReplay y
+      # verifyReplay (apps/api/src/routes/battles.ts) hacen
+      # `readFile(battle.replay_ref)` sobre la ruta ABSOLUTA que dejó el
+      # almacén de E8 (`/data/replays/<battleId>.replay`). Sin este montaje esa
+      # lectura es un ENOENT que la API traduce a 404 "Replay no disponible":
+      # la descarga y la verificación de replays de torneo NUNCA han podido
+      # funcionar en el stack. La API no escribe replays (la ingesta va por
+      # HTTP a replay-service, REPLAY_SERVICE_URL), así que `:ro`.
+      - arena_replays:/data/replays:ro
     depends_on:
       queue:
         condition: service_healthy
@@ -242,7 +252,22 @@ services:
       SERVICE_ENTRY: ${WORKER_ENTRY:-apps/tournament-worker/src/main.ts}
       SPECTATE_PORT: "8081"
       REPLAYS_DIR: /data/replays
+      # B7 · directorios de datos cuya propiedad ajusta el entrypoint de la
+      # imagen antes de bajar a `node` (infrastructure/docker/node-service/
+      # entrypoint.sh). Debe coincidir con REPLAYS_DIR.
+      ARENA_DATA_DIRS: /data/replays
     secrets: [postgres_password]
+    volumes:
+      # B7 · ESCRITURA, y justificado por el código: finishBattle
+      # (apps/tournament-worker/src/battle-runner.ts) llama a
+      # `ingestReplay(replaysDir, …)` y guarda la ruta devuelta en
+      # battles.replay_ref. El servicio declaraba REPLAYS_DIR=/data/replays
+      # desde siempre pero NO montaba el volumen: escribía en el sistema de
+      # ficheros efímero del contenedor y la API (otro contenedor) nunca
+      # encontraba ese replay_ref. Mismo volumen y mismo punto de montaje que
+      # api y replay-service: es la condición para que productor y consumidor
+      # se vean.
+      - arena_replays:/data/replays
     depends_on:
       queue:
         condition: service_healthy
@@ -407,6 +432,11 @@ services:
       <<: *node-db-env
       PORT: "8083"
       SERVICE_ENTRY: ${REPLAY_SERVICE_ENTRY:-apps/replay-service/src/main.ts}
+      REPLAYS_DIR: /data/replays
+      # B7 · el entrypoint de la imagen ajusta la propiedad de este directorio
+      # (y SOLO de este) antes de bajar a `node`. Es lo que impide que se
+      # repita el EACCES silencioso de VM108 cuando el volumen se recree.
+      ARENA_DATA_DIRS: /data/replays
       # B8 · secreto que autentica la ESCRITURA (POST /replays/:battleId y
       # POST /retention/sweep). Las rutas de LECTURA que consume el visor por el
       # gateway siguen abiertas a propósito. Sin este fichero, el servicio
