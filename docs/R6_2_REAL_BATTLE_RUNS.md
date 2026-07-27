@@ -161,8 +161,29 @@ duración teórica se registra como aviso).
   columna y documento es trabajo propio del pipeline de mapas.
 - `budget_credits`/`forbidden_categories` de la fila de `rulesets` de la BD siguen sin
   aplicarse al ruleset del motor (afectan a la validación de loadout, otra capa).
+- **`zone_control` y `domination` no son jugables sobre NINGÚN mapa del catálogo actual**:
+  los 21 mapas del repo suman 2 zonas y las dos son de daño — cero de captura, y esos dos
+  modos exigen 1 y 2 zonas de captura respectivamente (`MODE_REGISTRY`, sim/modes.ts). El
+  rechazo es correcto y ahora ocurre en la API (`map_mode_incompatible`, antes reventaba
+  dentro del motor), pero mientras nadie publique un mapa con zonas de captura esos modos
+  están disponibles en la API y no se pueden jugar. (Observación del supervisor de B9; no se
+  arregla aquí: hacen falta mapas nuevos, que es trabajo del pipeline de mapas.)
+- **Techo de recursos sorteable por el camino por defecto**: omitiendo `overallTimeoutMs` en
+  el cuerpo de `/run` y pidiendo `ticks: 1_000_000` (el máximo que acepta la validación), el
+  guard global derivado sale de ~9,45 h. Exige el secreto interno de arena-engine, así que no
+  es un vector desde fuera; acotar el guard derivado, y no solo el que llega en el cuerpo,
+  queda pendiente. (Observación del supervisor de B9.)
+- **La colisión de checksum de `map-service/canonical.ts` sigue viva en `main`** y B9 se
+  apoya en ese checksum para `map_checksum_mismatch`. NO afecta a la identidad del mapa
+  jugado —que desde la revisión del supervisor es estructural, geometría completa— pero sí
+  debilita ese mensaje concreto: un documento manipulado que lograra colisionar pasaría esa
+  comprobación (y seguiría teniendo que pasar el validador de E4 y la comparación de vuelta).
 - Nada de esto se ha probado contra Docker real — ver el informe de entrega del bloque
   correspondiente para qué se verificó con fakes y qué queda pendiente de VM108.
+- **Bloqueo externo conocido (issue #92)**: el `botId` que la API envía en el cuerpo de
+  `/run` es un UUID, mientras el esquema del HELLO del protocolo exige
+  `^bot_[0-9a-zA-Z]{1,24}$`. Es ajeno a este bloque, pero es la razón por la que hoy ninguna
+  batalla lanzada desde la web puede completarse todavía, ni siquiera con B9 dentro.
 
 ## Validación operativa en VM108 (gateada, NO en este PR)
 

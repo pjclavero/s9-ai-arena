@@ -124,7 +124,7 @@ import { splitVersioned } from "../../../../packages/module-catalog/types.js";
 import { toJsonl, verifyAndRecompute, type Replay } from "../../../arena-engine/src/replay.js";
 import { REPLAY_INGEST_AUTH_HEADER, resolveIngestSecretFromEnv } from "../../../replay-service/src/auth.js";
 import { arenaMapLabel, sameArenaMap } from "../../../arena-engine/src/arena-map.js";
-import { runHttpTimeoutMs, theoreticalBattleMs } from "../../../../packages/game-rules/index.js";
+import { MAX_SET_TIMEOUT_MS, runHttpTimeoutMs, theoreticalBattleMs } from "../../../../packages/game-rules/index.js";
 import { modeMapIncompatibilities, type ArenaMap } from "../../../arena-engine/src/sim/modes.js";
 import { resolveBattleMap } from "./battle-map-resolver.js";
 import { resolveBattleRuleset } from "./battle-ruleset-resolver.js";
@@ -215,13 +215,26 @@ export const HTTP_LAUNCHER_RUNNER_ID = "arena-engine-http";
  * El plazo sale de `packages/game-rules/battle-timing.ts`, el mismo módulo que usa
  * el guard global del motor: la API SIEMPRE espera más que el motor, para que quien
  * se rinda primero sea quien puede limpiar los contenedores.
+ *
+ * TECHO OBLIGATORIO (segundo hallazgo del supervisor, sobre el override): el
+ * resultado va a un `setTimeout`, cuyo retardo es un entero de 32 bits con signo.
+ * Un valor mayor que `MAX_SET_TIMEOUT_MS` NO espera más: Node lo trunca a 1 ms y el
+ * temporizador dispara AL INSTANTE. Con `ARENA_ENGINE_RUN_TIMEOUT_MS=99999999999`
+ * se abortaba TODA batalla nada más lanzarla ("arena-engine no respondió en
+ * 99999999999ms", contenedores vivos cinco minutos) — el mismo fallo que este
+ * módulo cierra, reentrando por la puerta del override, y sin más rastro que un
+ * `TimeoutOverflowWarning` de Node que nadie mira. Se acota SIEMPRE, aquí, que es
+ * el único punto por el que pasan todos los caminos (entorno y programático).
  */
 export function resolveRunTimeoutMs(
   cfg: Pick<HttpBattleRunLauncherConfig, "timeoutMs" | "runTimeoutOverheadMs">,
   ticks: number,
 ): number {
-  const derived = runHttpTimeoutMs(ticks, undefined, cfg.runTimeoutOverheadMs);
+  const derived = clampToSetTimeout(runHttpTimeoutMs(ticks, undefined, cfg.runTimeoutOverheadMs), ticks);
   if (cfg.timeoutMs === undefined) return derived;
+  if (cfg.timeoutMs > MAX_SET_TIMEOUT_MS) {
+    return clampToSetTimeout(cfg.timeoutMs, ticks);
+  }
   if (cfg.timeoutMs < theoreticalBattleMs(ticks)) {
     // Se respeta (la config explícita manda) pero NO en silencio: con este valor la
     // batalla se abortará a medias por definición.
@@ -238,6 +251,28 @@ export function resolveRunTimeoutMs(
     );
   }
   return cfg.timeoutMs;
+}
+
+/**
+ * Acota un plazo al máximo que `setTimeout` sabe esperar de verdad. Por encima de
+ * ahí el temporizador dispararía inmediatamente (ver la nota de
+ * `resolveRunTimeoutMs`), así que el techo no es una preferencia: es la diferencia
+ * entre esperar 24,8 días y no esperar nada. Se registra siempre que recorta, con
+ * un log de la APLICACIÓN (el `TimeoutOverflowWarning` de Node no lo es).
+ */
+function clampToSetTimeout(ms: number, ticks: number): number {
+  if (ms <= MAX_SET_TIMEOUT_MS) return ms;
+  console.error(
+    JSON.stringify({
+      level: "warn",
+      service: "api",
+      msg: "timeout HTTP de arena-engine por encima del máximo de setTimeout (2^31-1 ms): se recorta al máximo. Sin recortar, el temporizador dispararía de inmediato y abortaría TODA batalla al lanzarla.",
+      requestedTimeoutMs: ms,
+      appliedTimeoutMs: MAX_SET_TIMEOUT_MS,
+      ticks,
+    }),
+  );
+  return MAX_SET_TIMEOUT_MS;
 }
 
 function resolveSharedSecretFromEnv(env: NodeJS.ProcessEnv): string | undefined {
@@ -711,14 +746,19 @@ export function createHttpBattleRunLauncher(cfg: HttpBattleRunLauncherConfig): B
         // B9 · GUARDA DE IDENTIDAD DEL MAPA (cierra el círculo del invariante). Hasta
         // aquí sabemos qué mapa PEDIMOS; la cabecera del replay dice qué mapa se
         // JUGÓ de verdad (replay.ts la graba desde `config.map` del motor y la
-        // re-simulación parte de ella). Si no coinciden,
-        // la batalla se jugó en otro mapa — da igual que el resto sea perfecto: se
-        // marca `failed` y el replay NO se ingesta. Sin esta guarda, un arena-engine
-        // con un bug de caché, una versión antigua desplegada o comprometido podría
-        // devolver una partida jugada en otro mapa y la API la daría por buena.
-        // Se compara el mapa ENTERO, geometría incluida (`sameArenaMap`), no solo
-        // mapId+version+checksum: un checksum se puede reutilizar y la geometría
-        // es justo lo que un motor comprometido cambiaría (GATE-FAIL de B9).
+        // re-simulación parte de ella). Si no es el mismo mapa, la batalla se jugó en
+        // otro sitio — da igual que el resto sea perfecto: `failed` y el replay NO se
+        // ingesta. Sin esta guarda, un arena-engine con un bug de caché, una versión
+        // antigua desplegada o comprometido devolvería una partida jugada en otro
+        // mapa y la API la daría por buena.
+        //
+        // Se compara el mapa ENTERO, geometría incluida (`sameArenaMap`). NO por
+        // etiqueta `mapId@version#checksum`: ese checksum se copia del documento
+        // origen y no se deriva de la geometría, así que cualquiera puede firmar un
+        // mapa con la identidad de otro — el supervisor de B9 lo hizo con una
+        // batalla real y la versión por etiqueta la aceptó e ingestó. Comparar todo
+        // no da falsos positivos: el motor NO muta `config.map` (el daño a los
+        // destructibles vive en `battle.destructibleHp`, un Map aparte).
         const identityError = playedMapIdentityError(json, arenaMap);
         if (identityError) {
           return {

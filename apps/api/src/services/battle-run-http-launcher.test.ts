@@ -38,6 +38,7 @@ import type { InternalMap } from "../../../map-service/src/types.js";
 import {
   containerBattleOverallTimeoutMs,
   loadRuleset,
+  MAX_SET_TIMEOUT_MS,
   theoreticalBattleMs,
 } from "../../../../packages/game-rules/index.js";
 
@@ -598,7 +599,12 @@ describe("B9 · resolución REAL del mapa contra el catálogo (ya no hay allowli
     expect(result.errorCode).toBe("map_identity_mismatch");
   });
 
-  it("el mapa pedido, jugado de verdad, PASA la guarda (no hay falsos positivos tras una batalla real con daño a destructibles)", async () => {
+  // OJO con el alcance de este test (corrección del supervisor): comprueba que una
+  // batalla REAL sobre el mapa pedido pasa la guarda de extremo a extremo. NO
+  // ejercita daño a destructibles — en esta geometría los bots no llegan a tocar
+  // ninguna caja. Que el daño tampoco mute el mapa se prueba donde sí se provoca:
+  // apps/arena-engine/tests/arena-map.test.ts.
+  it("el mapa pedido, jugado de verdad en una batalla real, PASA la guarda y se ingesta", async () => {
     const bot = await seedSignedBot("bot_b9_sin_falso_positivo");
     const battleId = "battle_" + randomUUID();
     // Batalla real sobre el mapa REAL pedido: el motor no muta `config.map`, así
@@ -733,6 +739,43 @@ describe("B9 · el plazo HTTP cubre la batalla que se lanza (bloqueante del supe
     // Valores absurdos NO se aceptan a medias: se ignoran y se usa el plazo derivado.
     expect(runTimeoutEnvConfig({ ARENA_ENGINE_RUN_TIMEOUT_MS: "0" })).toEqual({});
     expect(runTimeoutEnvConfig({ ARENA_ENGINE_RUN_TIMEOUT_MS: "abc" })).toEqual({});
+  });
+
+  // Segundo hallazgo del supervisor: el override reentraba por la puerta de atrás
+  // en el mismo fallo. `setTimeout` guarda el retardo en un int32 con signo; por
+  // encima de 2^31-1 Node lo trunca a 1 ms y el temporizador dispara AL INSTANTE,
+  // así que ARENA_ENGINE_RUN_TIMEOUT_MS=99999999999 abortaba TODA batalla nada más
+  // lanzarla, con el mensaje "no respondió en 99999999999ms" y los contenedores
+  // vivos cinco minutos. Solo avisaba Node (TimeoutOverflowWarning), no la app.
+  it.each([2_147_483_648, 99_999_999_999, Number.MAX_SAFE_INTEGER])(
+    "un timeout de %p ms se ACOTA al máximo que setTimeout sabe esperar (si no, dispararía en 0 ms)",
+    (timeoutMs) => {
+      const plazo = resolveRunTimeoutMs({ timeoutMs }, 9000);
+      expect(plazo).toBeLessThanOrEqual(MAX_SET_TIMEOUT_MS);
+      // Y lo acotado sigue siendo un plazo ÚTIL: cubre la batalla de sobra.
+      expect(plazo).toBeGreaterThan(theoreticalBattleMs(9000));
+    },
+  );
+
+  it("COMPORTAMIENTO: con un override desbordado, una batalla que responde a tiempo se completa (antes se abortaba al instante)", async () => {
+    const bot = await seedSignedBot("bot_b9_overflow");
+    const engine = await startFakeEngine(() => {
+      return { status: 200, body: { result: {}, replay: {}, postures: {} } };
+    });
+    closeEngine = engine.close;
+    const launcher = createHttpBattleRunLauncher({
+      engineUrl: engine.url,
+      sharedSecret: "s",
+      db: h.db,
+      timeoutMs: 99_999_999_999,
+    });
+    const result = await launcher.launch(sampleInput([bot, bot]));
+    expect(result.status).toBe("completed");
+  });
+
+  it("el plazo derivado también se acota: ticks absurdos no producen un timeout que dispare en 0 ms", () => {
+    // `ticks` sale del ruleset (máx. razonable), pero el techo no debe depender de eso.
+    expect(resolveRunTimeoutMs({}, 100_000_000)).toBe(MAX_SET_TIMEOUT_MS);
   });
 });
 

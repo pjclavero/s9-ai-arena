@@ -49,6 +49,16 @@ export const RUN_HTTP_OVERHEAD_MS = 30_000;
  */
 export const RUN_HTTP_MARGIN_MS = CONTAINER_BATTLE_GRACE_MS + RUN_HTTP_OVERHEAD_MS;
 
+/**
+ * Techo REAL de `setTimeout` en Node: el retardo se guarda en un entero de 32 bits
+ * con signo. Un valor mayor NO espera más — se trunca a 1 ms y el temporizador
+ * dispara de inmediato (Node solo avisa con `TimeoutOverflowWarning`, que no es un
+ * log de la aplicación y pasa desapercibido). Cualquier plazo que vaya a un
+ * `setTimeout` debe acotarse aquí: pasarse de largo invierte el efecto que se
+ * buscaba (hallazgo del supervisor sobre `ARENA_ENGINE_RUN_TIMEOUT_MS`).
+ */
+export const MAX_SET_TIMEOUT_MS = 2_147_483_647;
+
 /** Duración teórica de la batalla: todos los ticks jugados al ritmo real. */
 export function theoreticalBattleMs(ticks: number, tickIntervalMs: number = DEFAULT_TICK_INTERVAL_MS): number {
   return ticks * tickIntervalMs;

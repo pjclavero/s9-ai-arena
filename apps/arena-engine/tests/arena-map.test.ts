@@ -103,23 +103,29 @@ describe("B9 · identidad del mapa (revisión del supervisor: geometría, no eti
     expect(sameArenaMap(JSON.parse(JSON.stringify(m)), m)).toBe(true);
   });
 
-  it("comparar el mapa entero NO da falsos positivos por los destructibles: el motor no muta config.map", async () => {
+  it("un destructible DAÑADO de verdad en una batalla real no altera el mapa: comparar el mapa entero no da falsos positivos", async () => {
     // Corrección del supervisor: el HP de los destructibles vive en
-    // `battle.destructibleHp` (un Map aparte), no en el mapa. Se comprueba con una
-    // batalla REAL de verdad, no razonando sobre el código.
+    // `battle.destructibleHp` (un Map aparte), no en el mapa, así que comparar el
+    // ArenaMap entero es seguro. Se comprueba con una batalla REAL en la que el
+    // destructible RECIBE DAÑO de verdad — una caja plantada justo en la línea de
+    // tiro entre los dos spawns; con la geometría del catálogo los bots se
+    // disparaban entre ellos sin tocar ninguna caja, y el test no probaba nada.
     const { initPhysics } = await import("../src/sim/physics.js");
     const { Battle } = await import("../src/sim/battle.js");
     const { loadRuleset } = await import("../../../packages/game-rules/index.js");
-    const { gunnerLoadout, scoutLoadout } = await import("../src/fixtures.js");
+    const { emptyArena, gunnerLoadout, scoutLoadout } = await import("../src/fixtures.js");
     const { HunterBot } = await import("../src/stubs.js");
     await initPhysics();
 
-    const map = realMap("mvp-arena-01.json");
+    const map = emptyArena(120, 80);
+    const HP_INICIAL = 120;
+    map.destructibles = [{ id: "crate_medio", position: { x: 60, y: 40 }, halfW: 3, halfH: 3, hp: HP_INICIAL }];
     const antes = JSON.parse(JSON.stringify(map));
+
     const battle = await Battle.create({
       battleId: "map-mutacion",
       seed: "map-mutacion",
-      ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: 120 }),
+      ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: 900 }),
       map: map as never,
       participants: [
         { id: "v_red", botId: "bot_red", team: "red", spec: gunnerLoadout() },
@@ -128,10 +134,15 @@ describe("B9 · identidad del mapa (revisión del supervisor: geometría, no eti
     });
     battle.attachBot("v_red", new HunterBot("bot_red"));
     battle.attachBot("v_blue", new HunterBot("bot_blue"));
-    for (let i = 0; i < 120; i++) await battle.step();
+    for (let i = 0; i < 900; i++) await battle.step();
 
+    // 1) El daño OCURRIÓ (si no, el test sería vacuo).
+    const hpInterno = (battle as unknown as { destructibleHp: Map<string, number> }).destructibleHp.get("crate_medio");
+    expect(hpInterno).toBeLessThan(HP_INICIAL);
+    // 2) Y aun así el mapa está intacto, campo a campo.
+    expect(map.destructibles[0].hp).toBe(HP_INICIAL);
     expect(sameArenaMap(map, antes)).toBe(true);
-  }, 30_000);
+  }, 60_000);
 
   it("isSafeExternalKey descarta exactamente las propiedades heredadas de Object.prototype", () => {
     for (const k of ["__proto__", "constructor", "toString", "hasOwnProperty", "valueOf", "isPrototypeOf"]) {
