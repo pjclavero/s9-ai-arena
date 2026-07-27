@@ -10,12 +10,22 @@
  *
  * ¿Por qué hacía falta? Hasta B8 `POST /replays/:battleId` (ingesta) y
  * `POST /retention/sweep` (borrado por retención) se servían SIN ninguna
- * credencial. La suposición de que "está en la red interna" es falsa además
- * de insuficiente: `infrastructure/gateway/nginx.conf` publica
- * `location /replays/ { proxy_pass http://replay-service:8083; }` SIN
- * restricción de método, así que cualquiera en Internet podía hacer
- * `POST /replays/<id>` contra el gateway e inyectar un replay falso que el
- * visor luego presenta como partida auténtica.
+ * credencial.
+ *
+ * ALCANCE, MEDIDO (correcciones del supervisor y del coordinador de B8; la
+ * primera versión de esta nota exageraba y se deja aquí la buena):
+ *
+ *  - La INGESTA sí estaba expuesta más allá del propio contenedor:
+ *    `infrastructure/gateway/nginx.conf` publica
+ *    `location /replays/ { proxy_pass http://replay-service:8083; }` SIN
+ *    restricción de método, así que un `POST /replays/<id>` contra el gateway
+ *    llegaba a la ingesta. Pero el alcance real HOY es la RED LOCAL, no
+ *    Internet: el dominio público no responde y el reenvío del router está
+ *    pendiente. Sigue siendo un control que falta, no una emergencia remota.
+ *  - `POST /retention/sweep` NUNCA fue alcanzable por el gateway: no hay
+ *    ningún `location /retention/` en los ocho bloques del vhost. Se autentica
+ *    igualmente porque borra replays y estaba abierta a todo el que alcanzase
+ *    el puerto interno, pero no era una vía de entrada desde fuera.
  */
 import { timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -32,6 +42,16 @@ export const REPLAY_INGEST_AUTH_HEADER = "x-replay-ingest-auth";
  *   tamaño, así que se hace una comparación señuelo del secreto contra sí mismo
  *   y se devuelve `false`. Así no se filtra por timing (ni por excepción) si el
  *   valor proporcionado es más corto o más largo que el configurado.
+ */
+/*
+ * DEUDA ANOTADA (idea del supervisor de B8, aceptada): ningún test puede
+ * distinguir `timingSafeEqual` de `===` — un canal lateral de tiempo no es
+ * observable funcionalmente y un micro-benchmark sería flaky en CI. La red de
+ * seguridad que sí funcionaría es ESTÁTICA: una regla de lint que prohíba `===`
+ * / `!==` sobre el secreto dentro de los módulos de autenticación, al estilo del
+ * `apps/arena-engine/scripts/lint-determinism.mjs` que ya existe en el repo y ya
+ * corre en CI (`npm run lint`). Fuera del alcance de B8; queda escrito aquí para
+ * que no se pierda.
  */
 export function isValidInternalSecret(configured: string | undefined, provided: string | undefined): boolean {
   if (!configured || !provided) return false;

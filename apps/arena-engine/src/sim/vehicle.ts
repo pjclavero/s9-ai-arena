@@ -18,6 +18,7 @@ import {
   type Sector,
 } from "../../../../packages/game-rules/index.js";
 import { clamp } from "./physics.js";
+import { emptyDict } from "../../../../packages/game-rules/safe-lookup.js";
 
 export type ModuleCategory =
   "movement" | "power" | "sensor" | "weapon" | "ammo" | "mine" | "armor" | "radio" | "utility";
@@ -117,8 +118,23 @@ export class Vehicle {
    */
   juggernaut = false;
 
-  /** Salud del blindaje por sector, en fracción 0..1. Sin blindaje = sin entrada. */
-  armor: Partial<Record<Sector, { hp: number; hpMax: number; reduction: number; slot: string }>> = {};
+  /**
+   * Salud del blindaje por sector, en fracción 0..1. Sin blindaje = sin entrada.
+   *
+   * B8 (barrido, 2ª pasada) · `emptyDict()`, NO `{}`. Se rellena con
+   * `this.armor[m.sector] = ...` y `m.sector` sale del CATÁLOGO de módulos
+   * (JSON de datos, no código). Con `{}`, un `sector: "__proto__"` no crearía la
+   * entrada: reemplazaría el prototipo del objeto, y a partir de ahí la lectura
+   * de CUALQUIER otro sector (`this.armor[s]`, línea ~322) heredaría ese
+   * blindaje. Además `armor` entra en el hash canónico de estado, así que el
+   * daño sería silencioso Y determinista-incompatible.
+   */
+  armor: Partial<Record<Sector, { hp: number; hpMax: number; reduction: number; slot: string }>> = emptyDict<{
+    hp: number;
+    hpMax: number;
+    reduction: number;
+    slot: string;
+  }>();
   modules = new Map<string, ModuleRuntime>();
 
   /** Contabilidad para timeouts y descalificación (D2). */

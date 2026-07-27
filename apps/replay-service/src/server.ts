@@ -27,13 +27,18 @@ export interface ReplayServerOptions {
    * configurado NINGUNA escritura se acepta (401): no hay modo "abierto por
    * defecto". Nunca se loguea ni se devuelve en las respuestas.
    *
-   * Las rutas de LECTURA (`GET /replays`, `GET /replays/:id`,
-   * `/index`, `/segment`) NO lo exigen a propósito: las consume el VISOR
-   * anónimo a través del gateway (`infrastructure/gateway/nginx.conf`,
-   * `location /replays/`) y la autorización pública de ese lado la pone la API
-   * de E7. Exigir credencial ahí dejaría el visor a oscuras sin ganar nada: la
-   * amenaza que cierra B8 es la INYECCIÓN de partidas falsas y el BORRADO por
-   * retención, no la lectura de un replay ya publicado.
+   * Las rutas de LECTURA (`GET /replays`, `GET /replays/:id`, `/index`,
+   * `/segment`) NO lo exigen a propósito: las consume el VISOR anónimo a través
+   * del gateway (`infrastructure/gateway/nginx.conf`, `location /replays/`).
+   *
+   * PRECISIÓN (corrección del supervisor de B8): ese `location` hace
+   * `proxy_pass` DIRECTO al replay-service, así que estas lecturas NO pasan por
+   * la API de E7 ni heredan su autorización — son anónimas de verdad. La
+   * decisión de dejarlas abiertas se sostiene igual (un replay publicado es
+   * material público y exigir credencial dejaría el visor a oscuras), pero se
+   * sostiene por eso y no por una autorización aguas arriba que no existe.
+   * La amenaza que cierra B8 es la INYECCIÓN de partidas falsas y el BORRADO
+   * por retención, no la lectura de un replay ya publicado.
    */
   internalSecret?: string;
 }
@@ -66,11 +71,23 @@ export function createReplayServer(opts: ReplayServerOptions): Express {
   app.use(express.text({ type: ["application/x-ndjson", "text/plain"], limit: "64mb" }));
 
   /**
-   * B8 · Guarda de ESCRITURA. Se aplica ANTES de mirar el cuerpo, el battleId o
-   * el estado del disco: sin credencial válida no se revela nada (ni si el
-   * replay existe, ni si el JSONL parsea). Fail-closed — si
-   * `opts.internalSecret` no está configurado, `isValidInternalSecret` devuelve
-   * `false` para CUALQUIER petición y todo escribe-camino responde 401.
+   * B8 · Guarda de ESCRITURA.
+   *
+   * Se aplica antes de PARSEAR el JSONL, de resolver el `battleId` y de tocar el
+   * disco: sin credencial válida no se revela nada (ni si el replay existe, ni
+   * si el JSONL es válido). Fail-closed — si `opts.internalSecret` no está
+   * configurado, `isValidInternalSecret` devuelve `false` para CUALQUIER
+   * petición y todo camino de escritura responde 401.
+   *
+   * PRECISIÓN (corrección del supervisor de B8, medida): esto NO significa que
+   * el cuerpo no se lea. `express.text({ limit: "64mb" })` está montado ARRIBA y
+   * corre ANTES del enrutado, así que una petición sin credencial se bufferiza
+   * entera y solo después recibe el 401 (medido: 20 MB ⇒ 401 en ~124 ms, cuerpo
+   * leído completo). No es una regresión —antes se bufferizaba Y ADEMÁS se
+   * escribía en disco— pero el límite de 64 MB es el único techo real frente a
+   * un emisor no autenticado. Cerrarlo del todo exigiría mover la comprobación
+   * a un middleware previo al body parser (o al gateway), y eso es un cambio de
+   * cadena que este bloque no acomete: queda anotado como deuda.
    */
   const requireWriteAuth = (req: Request, res: Response, next: NextFunction): void => {
     if (!isValidInternalSecret(opts.internalSecret, req.header(REPLAY_INGEST_AUTH_HEADER))) {

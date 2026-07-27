@@ -3,6 +3,7 @@
  * (bloques clave=valor terminados en `progress=continue|end`) y exposición en
  * formato Prometheus para que E10 las raspe (prometheus.yml, red platform).
  */
+import { emptyDict } from "../../../packages/game-rules/safe-lookup.js";
 
 export interface StreamStats {
   frames: number;
@@ -24,7 +25,14 @@ export class ProgressParser {
     droppedFrames: 0,
     reporting: false,
   };
-  private pending: Record<string, string> = {};
+  /**
+   * B8 (barrido, 2ª pasada) · `emptyDict()`, NO `{}`: la clave se parsea de la
+   * SALIDA DE FFMPEG (`clave=valor`), es decir de un proceso externo. Con `{}`
+   * una línea `__proto__=algo` se perdía en silencio (asignar una string a
+   * `__proto__` ni siquiera lanza: no hace nada), y `constructor=algo` dejaba
+   * una lectura posterior heredando de `Object.prototype`.
+   */
+  private pending: Record<string, string> = emptyDict<string>();
 
   /** Alimenta bytes del stdout de ffmpeg (troceados como lleguen). */
   push(chunk: string | Buffer): void {
@@ -47,7 +55,8 @@ export class ProgressParser {
 
   private commit(): void {
     const p = this.pending;
-    this.pending = {};
+    // B8 · el reseteo también debe ser sin prototipo, o el fix duraría un ciclo.
+    this.pending = emptyDict<string>();
     const num = (v: string | undefined) => {
       const n = parseFloat(v ?? "");
       return Number.isFinite(n) ? n : 0;
@@ -70,7 +79,8 @@ export class ProgressParser {
   /** Al (re)arrancar ffmpeg: conserva acumulados pero exige progreso fresco. */
   markRestart(): void {
     this.stats = { ...this.stats, fps: 0, bitrateKbps: 0, reporting: false };
-    this.pending = {};
+    // B8 · el reseteo también debe ser sin prototipo, o el fix duraría un ciclo.
+    this.pending = emptyDict<string>();
     this.buffer = "";
   }
 }

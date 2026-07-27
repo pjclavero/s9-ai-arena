@@ -3,7 +3,7 @@
  * 5–6 del bucle. Las condiciones de victoria, límites y respawn se leen del RULESET,
  * nunca están cableadas aquí.
  */
-import { safeLookup, type Ruleset } from "../../../../packages/game-rules/index.js";
+import { safeLookup, emptyDict, type Ruleset } from "../../../../packages/game-rules/index.js";
 import type { Vec2 } from "./physics.js";
 import type { Vehicle } from "./vehicle.js";
 
@@ -61,7 +61,27 @@ export interface GameMode {
 // ---------------------------------------------------------------------------
 abstract class BaseMode implements GameMode {
   abstract readonly id: string;
-  score: Record<string, number> = {};
+  /**
+   * B8 (hallazgo BLOQUEANTE del supervisor) · `emptyDict()`, NO `{}`.
+   *
+   * Es el acumulador que decide QUIÉN GANA, y sufría el mismo fallo que
+   * `roundWins` en match.ts — que sí se arregló en este bloque — solo que un
+   * eslabón MÁS ARRIBA: `roundWins` consume `result.winner`, y `result.winner`
+   * sale de `winner()`, que lee este `score`. Arreglar el de abajo sin este no
+   * arreglaba nada.
+   *
+   * Con `{}`, `this.score["__proto__"] = n` NO crea una propiedad propia:
+   * reemplaza el prototipo. Consecuencias medidas por el supervisor sobre un
+   * equipo llamado `__proto__`:
+   *   - nunca puntúa (`Object.entries(this.score)` no lo ve) ⇒ pierde una
+   *     partida que ha ganado;
+   *   - ni siquiera se crea su entrada a 0 en el bucle del constructor;
+   *   - el comparador de desempate de LastManStanding devuelve `NaN`.
+   *
+   * Es alcanzable por cualquier usuario autenticado: `createPracticeBattle`
+   * tiene `x-min-role: user` y acepta `team` como string sin restricción.
+   */
+  score: Record<string, number> = emptyDict<number>();
 
   constructor(protected teams: string[]) {
     for (const t of teams) this.score[t] = 0;
