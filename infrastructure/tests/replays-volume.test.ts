@@ -361,12 +361,31 @@ function correrEnNamespace(dirs: string, escenario: "normal" | "symlink" | "ance
 const nsDisponible = correrEnNamespace("/data/replays /data/logs", "normal").disponible;
 
 describe("B7/O1 · el guard de rutas con un /data real (espacios de nombres)", () => {
-  it("en CI los espacios de nombres sin privilegios DEBEN estar disponibles: si no, este guard no se prueba", () => {
-    // Sin esto, un entorno sin userns convertiría el bloque de abajo en un
-    // agujero silencioso. En local se reporta como omitido y se ve; en CI, no
-    // se tolera.
-    if (process.env.CI) expect(nsDisponible, "unshare -rm no funciona en este runner").toBe(true);
-    else expect(typeof nsDisponible).toBe("boolean");
+  it("el guard de enlaces NUNCA queda sin verificar: o aquí, o en el build de la imagen", () => {
+    // Los runners de GitHub (Ubuntu 24.04) restringen por AppArmor los espacios
+    // de nombres de usuario sin privilegios: allí `unshare -rm` NO funciona
+    // (comprobado: el job `unit` falló con "unshare -rm no funciona en este
+    // runner"), así que los tests de abajo se omiten. Eso sería un agujero
+    // silencioso si nadie más probase el guard — por eso el Dockerfile lleva un
+    // RUN que ejecuta estas mismas evasiones DENTRO de la imagen, como root y
+    // contra un /data real, en cada build de la etapa 5 de la CI.
+    // Esta comprobación es de COBERTURA (¿lo prueba alguien?), no de
+    // comportamiento: el comportamiento lo prueban el build y, donde haya
+    // espacios de nombres, los tests de abajo.
+    const df = readFileSync(join(here, "..", "docker", "node-service", "Dockerfile"), "utf8");
+    const pruebaEnImagen =
+      /ln -s \/etc \/data\/probe-enlace/.test(df) &&
+      /ln -s \/etc \/data\/probe-sub/.test(df) &&
+      /ARENA_DATA_DIRS='\/data\/\*'/.test(df) &&
+      /ARENA_DATA_DIRS='\/data\/probe-uno \/etc'/.test(df);
+    expect(
+      nsDisponible || pruebaEnImagen,
+      "ni hay espacios de nombres aquí ni el Dockerfile prueba el guard: quedaría sin verificar",
+    ).toBe(true);
+    // En CI la verificación viva es SIEMPRE la de la imagen.
+    if (process.env.CI) {
+      expect(pruebaEnImagen, "el Dockerfile perdió las pruebas O1-O4 dentro de la imagen").toBe(true);
+    }
   });
 
   it.runIf(nsDisponible)("caso bueno: con /data real chownea exactamente los directorios pedidos", () => {

@@ -62,16 +62,50 @@ RUN ARENA_DATA_DIRS=/data/replays /entrypoint.sh sh -euc '\
       touch /data/replays/.build-probe && rm /data/replays/.build-probe' \
  && test "$(stat -c %u:%g /data/replays)" = "1000:1000"
 
-# (2) O1 · el guard contra enlaces simbólicos funciona SOBRE ESTA IMAGEN: con un
-#     enlace dentro de /data apuntando a /etc, el entrypoint debe ABORTAR y /etc
-#     debe seguir siendo de root. Sin el guard, `chown` seguiría el enlace y
-#     dejaría /etc en manos del uid 1000 — el escape que reportó el Supervisor.
-RUN ln -s /etc /data/enlace-de-prueba \
- && if ARENA_DATA_DIRS=/data/enlace-de-prueba /entrypoint.sh true; then \
-      echo "el entrypoint aceptó un enlace simbólico dentro de /data"; exit 1; \
-    fi \
- && test "$(stat -c %u:%g /etc)" = "0:0" \
- && rm /data/enlace-de-prueba
+# (2) Las cuatro evasiones que reportó el Supervisor (O1-O4), comprobadas SOBRE
+#     ESTA IMAGEN, como root y contra un /data real. Es la verificación viva del
+#     guard que SÍ corre en la CI: los espacios de nombres sin privilegios
+#     (`unshare -rm`, que usa infrastructure/tests/fixtures/
+#     entrypoint-ns-harness.sh) están restringidos por AppArmor en los runners
+#     de Ubuntu 24.04, así que la suite de vitest no puede probar esto allí.
+#     Cada bloque comprueba que el entrypoint ABORTA y que NADA cambió de dueño.
+#     Sin comentarios `#` dentro del RUN: las continuaciones se unen en UNA
+#     línea antes de llegar al shell, así que un comentario dentro se comería el
+#     resto del comando. Los marcadores van por `echo`, y así el log del build
+#     enseña qué se comprobó. `probe-uno`/`probe-dos` son de root (uid 0) a
+#     propósito: si el guard fallara, pasarían a 1000 y el `test` lo cazaría.
+RUN set -eu; \
+    mkdir -p /data/probe-uno /data/probe-dos; \
+    echo "probe O1a · enlace simbolico en el ultimo componente"; \
+    ln -s /etc /data/probe-enlace; \
+    if ARENA_DATA_DIRS=/data/probe-enlace /entrypoint.sh true; then \
+      echo "FALLO O1a: aceptado un enlace simbolico dentro de /data"; exit 1; fi; \
+    test "$(stat -c %u:%g /etc)" = "0:0"; \
+    rm /data/probe-enlace; \
+    echo "probe O1b · enlace simbolico en un componente intermedio"; \
+    ln -s /etc /data/probe-sub; \
+    if ARENA_DATA_DIRS=/data/probe-sub/x /entrypoint.sh true; then \
+      echo "FALLO O1b: aceptado un enlace intermedio"; exit 1; fi; \
+    test "$(stat -c %u:%g /etc)" = "0:0"; \
+    test ! -e /etc/x; \
+    rm /data/probe-sub; \
+    echo "probe O2 · el patron no se expande contra el disco"; \
+    if ARENA_DATA_DIRS='/data/*' /entrypoint.sh true; then \
+      echo "FALLO O2: patron expandido"; exit 1; fi; \
+    test "$(stat -c %u /data/probe-uno)" = "0"; \
+    test "$(stat -c %u /data/probe-dos)" = "0"; \
+    echo "probe O3 · formas no canonicas"; \
+    if ARENA_DATA_DIRS=/data/probe-uno/. /entrypoint.sh true; then \
+      echo "FALLO O3: aceptado /data/probe-uno/."; exit 1; fi; \
+    if ARENA_DATA_DIRS=/data//probe-uno /entrypoint.sh true; then \
+      echo "FALLO O3: aceptado /data//probe-uno"; exit 1; fi; \
+    test "$(stat -c %u /data/probe-uno)" = "0"; \
+    echo "probe O4 · sin efectos parciales al abortar"; \
+    if ARENA_DATA_DIRS='/data/probe-uno /etc' /entrypoint.sh true; then \
+      echo "FALLO O4: aceptado /etc"; exit 1; fi; \
+    test "$(stat -c %u /data/probe-uno)" = "0"; \
+    rmdir /data/probe-uno /data/probe-dos; \
+    echo "probe OK · el guard del entrypoint resiste O1-O4 dentro de la imagen"
 
 ENTRYPOINT ["/entrypoint.sh"]
 
