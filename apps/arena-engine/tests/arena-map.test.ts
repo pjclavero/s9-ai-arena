@@ -8,7 +8,13 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { validateArenaMap, arenaMapIdentity, MAX_ARENA_MAP_ENTITIES, isSafeExternalKey } from "../src/arena-map.js";
+import {
+  validateArenaMap,
+  arenaMapLabel,
+  sameArenaMap,
+  MAX_ARENA_MAP_ENTITIES,
+  isSafeExternalKey,
+} from "../src/arena-map.js";
 import { toEngineMap } from "../../map-service/src/to-engine-map.js";
 import { emptyArena, mvpArena, ctfArena } from "../src/fixtures.js";
 
@@ -63,18 +69,69 @@ describe("B9 · validateArenaMap rechaza lo que el motor no sabe jugar", () => {
   });
 });
 
-describe("B9 · identidad del mapa", () => {
-  it("mapId+versión+checksum: dos mapas del catálogo distintos NUNCA comparten identidad", () => {
-    expect(arenaMapIdentity(realMap("mvp-arena-01.json"))).not.toBe(
-      arenaMapIdentity(realMap(join("procedural", "proc-test-0.json"))),
+describe("B9 · identidad del mapa (revisión del supervisor: geometría, no etiqueta)", () => {
+  it("dos mapas del catálogo distintos NO son el mismo mapa", () => {
+    expect(sameArenaMap(realMap("mvp-arena-01.json"), realMap(join("procedural", "proc-test-0.json")))).toBe(false);
+    // ...y su etiqueta tampoco coincide (caso fácil, el que ya se detectaba antes).
+    expect(arenaMapLabel(realMap("mvp-arena-01.json"))).not.toBe(
+      arenaMapLabel(realMap(join("procedural", "proc-test-0.json"))),
     );
   });
 
-  it("la identidad NO depende de los destructibles (su hp cambia durante la batalla)", () => {
-    const m = realMap("mvp-arena-01.json");
-    const damaged = { ...m, destructibles: m.destructibles.map((d) => ({ ...d, hp: 1 })) };
-    expect(arenaMapIdentity(damaged)).toBe(arenaMapIdentity(m));
+  it("ATAQUE DEL SUPERVISOR: otra geometría FIRMADA con la etiqueta del mapa pedido NO es el mismo mapa", () => {
+    const pedido = realMap("mvp-arena-01.json");
+    const otro = realMap(join("procedural", "proc-test-7.json"));
+    // El checksum de un ArenaMap se COPIA del documento origen: no protege la
+    // geometría. Un motor comprometido puede firmar lo que quiera.
+    const falsificado = { ...otro, mapId: pedido.mapId, version: pedido.version, checksum: pedido.checksum };
+
+    expect(arenaMapLabel(falsificado)).toBe(arenaMapLabel(pedido)); // la etiqueta engaña...
+    expect(sameArenaMap(falsificado, pedido)).toBe(false); // ...la comparación real, no.
   });
+
+  it("un solo muro movido un metro ya NO es el mismo mapa", () => {
+    const m = realMap("mvp-arena-01.json");
+    const movido = {
+      ...m,
+      walls: m.walls.map((w, i) => (i === 0 ? { ...w, position: { x: w.position.x + 1, y: w.position.y } } : w)),
+    };
+    expect(sameArenaMap(movido, m)).toBe(false);
+  });
+
+  it("el mismo mapa reconstruido desde su JSON (viaje de ida y vuelta por la red) SÍ es el mismo", () => {
+    const m = realMap("mvp-arena-01.json");
+    expect(sameArenaMap(JSON.parse(JSON.stringify(m)), m)).toBe(true);
+  });
+
+  it("comparar el mapa entero NO da falsos positivos por los destructibles: el motor no muta config.map", async () => {
+    // Corrección del supervisor: el HP de los destructibles vive en
+    // `battle.destructibleHp` (un Map aparte), no en el mapa. Se comprueba con una
+    // batalla REAL de verdad, no razonando sobre el código.
+    const { initPhysics } = await import("../src/sim/physics.js");
+    const { Battle } = await import("../src/sim/battle.js");
+    const { loadRuleset } = await import("../../../packages/game-rules/index.js");
+    const { gunnerLoadout, scoutLoadout } = await import("../src/fixtures.js");
+    const { HunterBot } = await import("../src/stubs.js");
+    await initPhysics();
+
+    const map = realMap("mvp-arena-01.json");
+    const antes = JSON.parse(JSON.stringify(map));
+    const battle = await Battle.create({
+      battleId: "map-mutacion",
+      seed: "map-mutacion",
+      ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: 120 }),
+      map: map as never,
+      participants: [
+        { id: "v_red", botId: "bot_red", team: "red", spec: gunnerLoadout() },
+        { id: "v_blue", botId: "bot_blue", team: "blue", spec: scoutLoadout() },
+      ],
+    });
+    battle.attachBot("v_red", new HunterBot("bot_red"));
+    battle.attachBot("v_blue", new HunterBot("bot_blue"));
+    for (let i = 0; i < 120; i++) await battle.step();
+
+    expect(sameArenaMap(map, antes)).toBe(true);
+  }, 30_000);
 
   it("isSafeExternalKey descarta exactamente las propiedades heredadas de Object.prototype", () => {
     for (const k of ["__proto__", "constructor", "toString", "hasOwnProperty", "valueOf", "isPrototypeOf"]) {

@@ -37,8 +37,12 @@
  * verifica, no pasa el validador de E4 o no es jugable, la batalla se rechaza
  * (`status: "failed"` + `errorCode` distinguible) SIN llamar a arena-engine.
  * Y al volver, se comprueba que el mapa de la cabecera del replay es
- * EXACTAMENTE el pedido (mapId+versión+checksum): si el motor jugó otro mapa,
- * `failed` y sin ingestar.
+ * EXACTAMENTE el pedido — el mapa ENTERO, geometría incluida (`sameArenaMap`),
+ * no solo su etiqueta: el `checksum` de un `ArenaMap` viene copiado del
+ * documento origen y no se deriva de la geometría, así que comparar etiquetas
+ * dejaba pasar una batalla jugada en otro mapa con la firma del pedido
+ * (bloqueante del supervisor de B9, demostrado con una batalla real). Si el
+ * motor jugó otro mapa: `failed` y sin ingestar.
  *
  * RULESET/TICKS — B9 · también resueltos (era el otro límite conocido de B2, y
  * además estaba ROTO): el launcher enviaba `rulesetId: input.mode`
@@ -119,8 +123,9 @@ import { safeLookup } from "../../../../packages/game-rules/safe-lookup.js";
 import { splitVersioned } from "../../../../packages/module-catalog/types.js";
 import { toJsonl, verifyAndRecompute, type Replay } from "../../../arena-engine/src/replay.js";
 import { REPLAY_INGEST_AUTH_HEADER, resolveIngestSecretFromEnv } from "../../../replay-service/src/auth.js";
-import { arenaMapIdentity } from "../../../arena-engine/src/arena-map.js";
-import type { ArenaMap } from "../../../arena-engine/src/sim/modes.js";
+import { arenaMapLabel, sameArenaMap } from "../../../arena-engine/src/arena-map.js";
+import { runHttpTimeoutMs, theoreticalBattleMs } from "../../../../packages/game-rules/index.js";
+import { modeMapIncompatibilities, type ArenaMap } from "../../../arena-engine/src/sim/modes.js";
 import { resolveBattleMap } from "./battle-map-resolver.js";
 import { resolveBattleRuleset } from "./battle-ruleset-resolver.js";
 import type { BattleRunInput, BattleRunLauncher, BattleRunResult } from "../battle-run.js";
@@ -151,8 +156,22 @@ export interface HttpBattleRunLauncherConfig {
    *  salen de `timeLimitTicks` del ruleset REAL resuelto para la batalla, no de
    *  un número fijo del launcher. */
   ticks?: number;
-  /** Timeout de la llamada HTTP a arena-engine, ms (def. 30000). */
+  /**
+   * B9 · Override ABSOLUTO del timeout de la llamada HTTP a arena-engine, ms.
+   * SIN ÉL (camino de producción: `server.ts` no lo fija) el plazo se DERIVA de la
+   * duración real de la batalla — ver `resolveRunTimeoutMs`. Un valor fijo aquí
+   * que sea menor que esa duración condena la batalla a abortarse a medias: se
+   * registra un aviso al resolverlo, pero se respeta (la palabra del operador
+   * manda; los tests lo usan para provocar timeouts en milisegundos).
+   */
   timeoutMs?: number;
+  /**
+   * B9 · Margen del cliente HTTP por encima del guard global del motor
+   * (def. `RUN_HTTP_OVERHEAD_MS`, 30 s): arranque de contenedores, serialización
+   * del replay y limpieza. Configurable sobre todo para poder probar el cálculo
+   * del plazo en segundos en vez de en minutos.
+   */
+  runTimeoutOverheadMs?: number;
   /**
    * B6 · URL base del replay-service (p. ej. http://replay-service:8083). Si se
    * define, el replay REAL que devuelve arena-engine se verifica e ingesta ahí
@@ -176,10 +195,50 @@ export interface HttpBattleRunLauncherConfig {
   replayIngestTimeoutMs?: number;
 }
 
-const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_REPLAY_INGEST_TIMEOUT_MS = 10_000;
 /** Runner declarado en `BattleRunResult.runner` para este launcher (visible en la respuesta). */
 export const HTTP_LAUNCHER_RUNNER_ID = "arena-engine-http";
+
+/**
+ * B9 (bloqueante del supervisor) · Plazo de la llamada `POST /run`, DERIVADO de la
+ * duración real de la batalla que se va a lanzar.
+ *
+ * El launcher abortaba a 30 s FIJOS. Mientras enviaba un `rulesetId` inválido eso
+ * daba igual (la batalla moría antes de empezar), pero al resolver el ruleset de
+ * verdad la batalla pasa a durar `ticks × 34 ms`: con los 9000 ticks de
+ * `dm_practice@1` son ~306 s. Y una práctica de 2 bots en deathmatch SIEMPRE llega
+ * al límite de tiempo (`scoreToWin: 5`, sin respawn: nadie hace 5 bajas), así que
+ * el caso NORMAL habría sido abortar a los 30 s, dejar los contenedores corriendo
+ * cuatro minutos más y tirar el replay. Cambiar un 502 por un timeout no es
+ * arreglarlo.
+ *
+ * El plazo sale de `packages/game-rules/battle-timing.ts`, el mismo módulo que usa
+ * el guard global del motor: la API SIEMPRE espera más que el motor, para que quien
+ * se rinda primero sea quien puede limpiar los contenedores.
+ */
+export function resolveRunTimeoutMs(
+  cfg: Pick<HttpBattleRunLauncherConfig, "timeoutMs" | "runTimeoutOverheadMs">,
+  ticks: number,
+): number {
+  const derived = runHttpTimeoutMs(ticks, undefined, cfg.runTimeoutOverheadMs);
+  if (cfg.timeoutMs === undefined) return derived;
+  if (cfg.timeoutMs < theoreticalBattleMs(ticks)) {
+    // Se respeta (la config explícita manda) pero NO en silencio: con este valor la
+    // batalla se abortará a medias por definición.
+    console.error(
+      JSON.stringify({
+        level: "warn",
+        service: "api",
+        msg: "timeout HTTP de arena-engine configurado por debajo de la duración teórica de la batalla: se abortará antes de que termine",
+        configuredTimeoutMs: cfg.timeoutMs,
+        theoreticalBattleMs: theoreticalBattleMs(ticks),
+        derivedTimeoutMs: derived,
+        ticks,
+      }),
+    );
+  }
+  return cfg.timeoutMs;
+}
 
 function resolveSharedSecretFromEnv(env: NodeJS.ProcessEnv): string | undefined {
   const file = env.ARENA_ENGINE_SHARED_SECRET_FILE;
@@ -208,6 +267,30 @@ export function httpBattleRunLauncherEnvConfig(
   const sharedSecret = resolveSharedSecretFromEnv(env);
   if (!engineUrl || !sharedSecret) return null;
   return { engineUrl, sharedSecret };
+}
+
+/**
+ * B9 · Override ABSOLUTO del timeout de `POST /run` por entorno
+ * (`ARENA_ENGINE_RUN_TIMEOUT_MS`). Sin la variable —lo normal— el plazo se DERIVA
+ * de la duración de la batalla (`resolveRunTimeoutMs`). Un valor no numérico o < 1
+ * se IGNORA (no se acepta a medias): mejor el plazo derivado, que siempre es
+ * viable, que un valor mal escrito que aborte batallas buenas.
+ */
+export function runTimeoutEnvConfig(env: NodeJS.ProcessEnv = process.env): { timeoutMs?: number } {
+  const raw = env.ARENA_ENGINE_RUN_TIMEOUT_MS;
+  if (raw === undefined) return {};
+  const ms = Number(raw);
+  if (!Number.isFinite(ms) || ms < 1) {
+    console.error(
+      JSON.stringify({
+        level: "error",
+        service: "api",
+        msg: "ARENA_ENGINE_RUN_TIMEOUT_MS no es un número de ms válido: se ignora y se usa el plazo derivado de la duración de la batalla",
+      }),
+    );
+    return {};
+  }
+  return { timeoutMs: ms };
 }
 
 /**
@@ -436,9 +519,18 @@ async function persistMeasuredCpuMs(
 
 /**
  * B9 · Comprueba que el mapa de la cabecera del replay devuelto por arena-engine es
- * EL MISMO que se pidió jugar. Devuelve `null` si coincide (o si la respuesta no
- * trae cabecera de replay: ese caso ya lo trata el flujo de ingesta, que nunca da
- * por ingerido lo que no ha visto) y el motivo del rechazo si no.
+ * EL MISMO que se pidió jugar, GEOMETRÍA INCLUIDA. Devuelve `null` si coincide (o
+ * si la respuesta no trae cabecera de replay: ese caso ya lo trata el flujo de
+ * ingesta, que nunca da por ingerido lo que no ha visto) y el motivo si no.
+ *
+ * REVISIÓN DEL SUPERVISOR (bloqueante, demostrado con una batalla real): la primera
+ * versión comparaba `mapId@version#checksum`. Ese checksum NO se calcula sobre la
+ * geometría del `ArenaMap`: `toEngineMap()` lo COPIA del documento origen, así que
+ * quien fabrique la cabecera puede firmar cualquier geometría con la identidad de
+ * otro mapa. El supervisor jugó `proc-test-7` firmado como `mvp-arena-01` y la
+ * guarda lo aceptó e ingestó (`muros pedidos vs jugados: 3 vs 6`). Ahora se compara
+ * el mapa ENTERO (`sameArenaMap`), que es barato (los mapas reales del catálogo
+ * ocupan ~1,5 KB) y no da falsos positivos: el motor no muta `config.map`.
  */
 function playedMapIdentityError(json: Record<string, unknown>, expected: ArenaMap): string | null {
   const replay = (json as { replay?: unknown }).replay;
@@ -447,18 +539,25 @@ function playedMapIdentityError(json: Record<string, unknown>, expected: ArenaMa
   if (!header || typeof header !== "object") return null;
   const played = (header as { map?: unknown }).map;
   if (!played || typeof played !== "object" || Array.isArray(played)) {
-    return `la cabecera del replay no trae un mapa: no se puede comprobar que se jugara ${arenaMapIdentity(expected)}`;
+    return `la cabecera del replay no trae un mapa: no se puede comprobar que se jugara ${arenaMapLabel(expected)}`;
   }
+  if (sameArenaMap(played, expected)) return null;
+
   const p = played as Partial<ArenaMap>;
-  if (typeof p.mapId !== "string" || typeof p.version !== "number" || typeof p.checksum !== "string") {
-    return `el mapa de la cabecera del replay no tiene identidad legible (mapId/version/checksum)`;
-  }
-  const playedId = arenaMapIdentity(p as ArenaMap);
-  const expectedId = arenaMapIdentity(expected);
-  if (playedId !== expectedId) {
-    return `la batalla se jugó en ${playedId} pero se pidió ${expectedId}: se rechaza y no se ingesta el replay`;
-  }
-  return null;
+  const playedLabel =
+    typeof p.mapId === "string" && typeof p.version === "number" && typeof p.checksum === "string"
+      ? arenaMapLabel(p as ArenaMap)
+      : "un mapa sin identidad legible";
+  const sameLabel = playedLabel === arenaMapLabel(expected);
+  return (
+    `la batalla NO se jugó en el mapa pedido (${arenaMapLabel(expected)}): la cabecera del replay trae ` +
+    `${playedLabel}` +
+    (sameLabel
+      ? ` con la MISMA etiqueta pero geometría distinta (muros pedidos vs jugados: ` +
+        `${expected.walls.length} vs ${Array.isArray(p.walls) ? p.walls.length : "?"})`
+      : "") +
+    `. Se rechaza y no se ingesta el replay.`
+  );
 }
 
 interface ResolvedBot {
@@ -489,7 +588,6 @@ async function resolveBot(db: Db, p: BattleRunInput["participants"][number]): Pr
 
 /** Launcher real: API → arena-engine por HTTP. La API NUNCA llama a Docker. */
 export function createHttpBattleRunLauncher(cfg: HttpBattleRunLauncherConfig): BattleRunLauncher {
-  const timeoutMs = cfg.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   return {
     async launch(input: BattleRunInput): Promise<BattleRunResult> {
       // B9 · MAPA PRIMERO, sin resolver bots ni llamar a arena-engine: se resuelve
@@ -523,6 +621,26 @@ export function createHttpBattleRunLauncher(cfg: HttpBattleRunLauncherConfig): B
       }
       const ruleset = rulesetResolution.ruleset;
 
+      // B9 (observación del supervisor) · COMPATIBILIDAD MAPA↔MODO, con el
+      // comprobador REAL del motor (`modeMapIncompatibilities`, sim/modes.ts — el
+      // mismo que usa `createMode`), no con una copia. Sin esto, una batalla
+      // `zone_control` sobre un mapa sin zonas de captura (p. ej. mvp-arena-01, que
+      // solo tiene zonas de daño) se acepta por la API, viaja a arena-engine y
+      // revienta dentro del motor como 502 genérico. Los equipos son siempre
+      // red/blue (container-battle.ts los asigna por índice par/impar).
+      const teams = input.participants.length >= 2 ? ["red", "blue"] : ["red"];
+      const incompat = modeMapIncompatibilities(ruleset, teams, arenaMap);
+      if (incompat.length > 0) {
+        return {
+          status: "failed",
+          runner: HTTP_LAUNCHER_RUNNER_ID,
+          errorCode: "map_mode_incompatible",
+          error:
+            `map_mode_incompatible: el mapa ${arenaMapLabel(arenaMap)} no puede jugar el modo "${input.mode}": ` +
+            `${incompat.join("; ")}. Se rechaza antes de lanzar nada.`,
+        };
+      }
+
       let bots: ResolvedBot[];
       try {
         bots = await Promise.all(input.participants.map((p) => resolveBot(cfg.db, p)));
@@ -546,6 +664,10 @@ export function createHttpBattleRunLauncher(cfg: HttpBattleRunLauncherConfig): B
         bots,
       };
 
+      // B9 · el plazo se resuelve POR BATALLA, con los ticks que se acaban de
+      // fijar en el cuerpo: una batalla de 9000 ticks dura ~306 s y un timeout
+      // fijo de 30 s la abortaría siempre a mitad (ver `resolveRunTimeoutMs`).
+      const timeoutMs = resolveRunTimeoutMs(cfg, body.ticks);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       let res: Response;
@@ -589,13 +711,14 @@ export function createHttpBattleRunLauncher(cfg: HttpBattleRunLauncherConfig): B
         // B9 · GUARDA DE IDENTIDAD DEL MAPA (cierra el círculo del invariante). Hasta
         // aquí sabemos qué mapa PEDIMOS; la cabecera del replay dice qué mapa se
         // JUGÓ de verdad (replay.ts la graba desde `config.map` del motor y la
-        // re-simulación parte de ella). Si no coinciden en mapId+versión+checksum,
+        // re-simulación parte de ella). Si no coinciden,
         // la batalla se jugó en otro mapa — da igual que el resto sea perfecto: se
         // marca `failed` y el replay NO se ingesta. Sin esta guarda, un arena-engine
         // con un bug de caché, una versión antigua desplegada o comprometido podría
         // devolver una partida jugada en otro mapa y la API la daría por buena.
-        // Se comparan solo los tres campos INMUTABLES durante la simulación
-        // (`arenaMapIdentity`): `destructibles[].hp` cambia al recibir daño.
+        // Se compara el mapa ENTERO, geometría incluida (`sameArenaMap`), no solo
+        // mapId+version+checksum: un checksum se puede reutilizar y la geometría
+        // es justo lo que un motor comprometido cambiaría (GATE-FAIL de B9).
         const identityError = playedMapIdentityError(json, arenaMap);
         if (identityError) {
           return {

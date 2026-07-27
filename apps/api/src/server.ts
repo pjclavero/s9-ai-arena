@@ -8,6 +8,7 @@ import {
   createHttpBattleRunLauncher,
   httpBattleRunLauncherEnvConfig,
   replayIngestEnvConfig,
+  runTimeoutEnvConfig,
 } from "./services/battle-run-http-launcher.js";
 
 const db = createDb();
@@ -25,9 +26,15 @@ const launcherEnvCfg = httpBattleRunLauncherEnvConfig();
 // B6 · ingesta del replay real en el replay-service (ver la nota de cabecera de
 // battle-run-http-launcher.ts). Sin REPLAY_SERVICE_URL, no cambia nada de B2.
 const replayIngestCfg = replayIngestEnvConfig();
+// B9 · plazo de `POST /run`: por defecto DERIVADO de la duración real de la batalla
+// (ticks del ruleset × ritmo de tick + margen). `ARENA_ENGINE_RUN_TIMEOUT_MS` lo
+// sobrescribe de forma absoluta si un operador lo necesita.
+const runTimeoutCfg = runTimeoutEnvConfig();
 const realBattleRuns = {
   ...battleRunConfigFromEnv(),
-  runner: launcherEnvCfg ? createHttpBattleRunLauncher({ ...launcherEnvCfg, ...replayIngestCfg, db }) : undefined,
+  runner: launcherEnvCfg
+    ? createHttpBattleRunLauncher({ ...launcherEnvCfg, ...replayIngestCfg, ...runTimeoutCfg, db })
+    : undefined,
 };
 
 // /healthz va en un Express envolvente, NO en createApp(): el test de

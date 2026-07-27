@@ -5,6 +5,7 @@
 export * from "./constants.js";
 export * from "./art-direction.js";
 export { safeLookup, emptyDict } from "./safe-lookup.js";
+export * from "./battle-timing.js";
 import {
   MODULE_STATE_PERFORMANCE,
   MODULE_STATE_THRESHOLDS,

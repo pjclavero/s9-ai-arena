@@ -109,9 +109,20 @@ El invariante no cambia, se refuerza — **fail closed y con código distinguibl
 nunca se coge "la última"), `map_content_mismatch` (fila y documento divergen),
 `map_checksum_mismatch` (el checksum canónico del documento no cuadra con su contenido:
 se manipuló tras publicarse), `map_invalid` (no pasa el validador REAL de E4),
-`map_unplayable` (no es jugable para el motor), y `map_identity_mismatch` — **al volver**, el
-mapa de la cabecera del replay debe ser exactamente el pedido (mapId+versión+checksum); si el
-motor jugó otro mapa, la batalla es `failed` y el replay NO se ingesta.
+`map_unplayable` (no es jugable para el motor), `map_mode_incompatible` (el mapa no tiene las
+entidades que el modo exige — comprobado con `modeMapIncompatibilities()`, el mismo código del
+motor que usa `createMode`), y `map_identity_mismatch` — **al volver**, el mapa de la cabecera
+del replay debe ser exactamente el pedido; si el motor jugó otro mapa, la batalla es `failed`
+y el replay NO se ingesta.
+
+> **La comparación de vuelta es del mapa ENTERO, geometría incluida** (`sameArenaMap`), no de
+> `mapId@version#checksum`. El `checksum` de un `ArenaMap` NO se deriva de su geometría:
+> `toEngineMap()` lo copia del documento origen, así que quien fabrique la cabecera de un
+> replay puede firmar cualquier geometría con la identidad del mapa pedido. El supervisor de
+> B9 lo demostró con una batalla real (`proc-test-7` firmado como `mvp-arena-01`: la guarda
+> por etiqueta la aceptó e ingestó, con 3 muros pedidos frente a 6 jugados). Comparar el mapa
+> completo no da falsos positivos: `Battle` no muta `config.map` — el daño a los destructibles
+> vive en `battle.destructibleHp`, un `Map` aparte.
 
 **Ruleset/ticks — B9: resueltos (y arreglado un bug real).** Hasta B9 el launcher enviaba
 `rulesetId: battle.mode` (`"deathmatch"`), que **no es** un ruleset del motor
@@ -123,13 +134,35 @@ si la fila de BD lo declara) → ruleset REAL del motor, exigiendo que el modo c
 20000 fijo. arena-engine, además, rechaza con **400** un `rulesetId` que no esté en su
 catálogo, en vez de dejarlo explotar a mitad de batalla.
 
+**Plazo de la llamada `POST /run` — derivado, no fijo.** El launcher abortaba a 30 s fijos.
+Con el ruleset resuelto de verdad, `ticks = timeLimitTicks = 9000` ⇒ la batalla dura
+`9000 × 34 ms ≈ 306 s`, y una práctica de 2 bots en deathmatch SIEMPRE agota el límite
+(`scoreToWin: 5`, sin respawn: nadie hace 5 bajas). Es decir: con el timeout fijo, el caso
+NORMAL habría sido `failed: "arena-engine no respondió en 30000ms"` con los contenedores vivos
+otros cuatro minutos y el replay perdido — un timeout en lugar del 502, no una batalla que
+funcione (bloqueante del supervisor de B9). El plazo sale ahora de
+`packages/game-rules/battle-timing.ts`, el MISMO módulo del que el motor deriva su guard global
+(`containerBattleOverallTimeoutMs`), de modo que la API siempre espera más que el motor: quien
+se rinde primero es quien puede limpiar los contenedores. `ARENA_ENGINE_RUN_TIMEOUT_MS`
+sobrescribe el plazo de forma absoluta si un operador lo necesita (un valor por debajo de la
+duración teórica se registra como aviso).
+
 **Límites que siguen abiertos tras B9** (no son huecos de seguridad; son fidelidad y alcance):
-`meta.supportedModes` del mapa NO se comprueba contra el modo de la batalla (el seed publica
-`mvp-arena-01` con `["capture_the_flag","team_deathmatch"]` y las batallas de práctica se
-crean en `deathmatch`: activarlo hoy rompería el camino que funciona); `budget_credits`/
-`forbidden_categories` de la fila de `rulesets` de la BD siguen sin aplicarse al ruleset del
-motor; y nada de esto se ha probado contra Docker real — ver el informe de entrega del bloque
-correspondiente para qué se verificó con fakes y qué queda pendiente de VM108.
+
+- `meta.supportedModes` del documento del mapa NO se comprueba contra el modo de la batalla.
+  El motivo real (corregido tras la revisión del supervisor, la versión anterior de este
+  párrafo era falsa): los DOS sitios donde vive esa información se contradicen para el mapa
+  del seed — `db/seeds/dev.ts` guarda en la columna `supported_modes` el valor
+  `mapDoc.supportedModes ?? ["deathmatch"]`, y el documento no tiene ese campo en la raíz
+  (está en `meta.supportedModes`), así que la columna acaba con `["deathmatch"]` mientras el
+  documento declara `["capture_the_flag","team_deathmatch"]`. Gatear con un dato inconsistente
+  consigo mismo no aporta garantía: lo que B9 sí comprueba es la condición REAL y verificable
+  (que el mapa tenga las entidades que el modo exige, `map_mode_incompatible`). Reconciliar
+  columna y documento es trabajo propio del pipeline de mapas.
+- `budget_credits`/`forbidden_categories` de la fila de `rulesets` de la BD siguen sin
+  aplicarse al ruleset del motor (afectan a la validación de loadout, otra capa).
+- Nada de esto se ha probado contra Docker real — ver el informe de entrega del bloque
+  correspondiente para qué se verificó con fakes y qué queda pendiente de VM108.
 
 ## Validación operativa en VM108 (gateada, NO en este PR)
 
@@ -141,8 +174,13 @@ Para pasar a **R6.2/R9-A** falta, sobre lo que ya cablea B2:
 3. Crear una batalla en `#/battles/new` con bots firmados + mapa publicado → **Ejecutar batalla real**.
 4. Verificar: 2 contenedores reales, batalla termina, replay ingerido (`GET /replays`), 7/7 núcleo sano.
 5. Resolver los límites de traducción listados arriba. Mapas reales arbitrarios, ruleset real
-   e ingesta de replay YA están resueltos (B6/B9) en el repo; falta validarlos en VM108 con
-   una batalla real sobre un mapa del catálogo distinto de mvp-arena-01.
+   e ingesta de replay están resueltos EN EL REPO (B6/B9), con motores falsos y batallas
+   grabadas de verdad, pero **NINGUNA batalla real de extremo a extremo ha llegado a
+   completarse desde la API todavía**: antes de B9 moría en un 502 (`rulesetId` inválido) y,
+   con el ruleset ya resuelto, el plazo HTTP derivado (≈350 s para 9000 ticks) solo se ha
+   ejercitado con relojes de test. Validación pendiente en VM108: una práctica completa
+   (~5 min de batalla) que termine con `status: "completed"` y su replay ingerido, y otra
+   sobre un mapa del catálogo distinto de `mvp-arena-01`.
 Solo entonces: **R6.2/R9-A**.
 
 **Dictamen: R6.2/R9-B** — UI y endpoint preparados y seguros; B2 cablea el transporte

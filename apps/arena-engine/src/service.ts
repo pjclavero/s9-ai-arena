@@ -145,6 +145,10 @@ const VALID_RULESET_IDS: ReadonlySet<string> = new Set(Object.keys(RULESETS));
  *  no es una regla de juego, es un límite de recursos del servicio. */
 const MAX_TICKS = 1_000_000;
 
+/** Techo del guard global que se admite del cuerpo (1 h): por encima de eso, un
+ *  llamador podría dejar contenedores vivos indefinidamente. */
+const MAX_OVERALL_TIMEOUT_MS = 3_600_000;
+
 type RunBattleBodyCheck =
   { ok: true; body: RunBattleRequestBody; reason?: undefined } | { ok: false; body?: undefined; reason: string };
 
@@ -171,12 +175,56 @@ function checkRunBattleRequestBody(body: unknown): RunBattleBodyCheck {
   }
   // B9 · mapa REAL del catálogo en el cuerpo. Excluyente con `mapName`: con los dos
   // presentes NO se elige uno (sería jugar un mapa distinto al que alguien pidió).
+  let map: RunBattleRequestBody["map"];
   if (b.map !== undefined) {
     if (b.mapName !== undefined) return { ok: false, reason: "map y mapName son excluyentes" };
     const v = validateArenaMap(b.map);
     if (!v.ok) return { ok: false, reason: `mapa inválido: ${v.reason}` };
+    map = v.map;
   }
-  return { ok: true, body: b as unknown as RunBattleRequestBody };
+
+  // Ritmo/plazo de la batalla: opcionales y ACOTADOS. Son los dos únicos campos de
+  // "ritmo" que se aceptan del cuerpo (el arnés E2E y los tests los usan para correr
+  // batallas en segundos). No tocan seguridad, pero sí recursos: sin cota, un
+  // `overallTimeoutMs` enorme deja contenedores vivos indefinidamente.
+  if (b.tickIntervalMs !== undefined) {
+    if (typeof b.tickIntervalMs !== "number" || !Number.isFinite(b.tickIntervalMs) || b.tickIntervalMs < 1) {
+      return { ok: false, reason: "tickIntervalMs debe ser un número >= 1" };
+    }
+  }
+  if (b.overallTimeoutMs !== undefined) {
+    if (
+      typeof b.overallTimeoutMs !== "number" ||
+      !Number.isFinite(b.overallTimeoutMs) ||
+      b.overallTimeoutMs < 1 ||
+      b.overallTimeoutMs > MAX_OVERALL_TIMEOUT_MS
+    ) {
+      return { ok: false, reason: `overallTimeoutMs debe estar entre 1 y ${MAX_OVERALL_TIMEOUT_MS}` };
+    }
+  }
+
+  // ALLOWLIST EXPLÍCITA (hallazgo del supervisor de B9, demostrado en vivo): antes se
+  // devolvía `b` entero y `/run` hacía `{...req.body}` sobre `ContainerBattleConfig`,
+  // así que CUALQUIER campo extra del cuerpo entraba en la config de la batalla
+  // aunque no estuviera validado: el supervisor coló `seccompProfilePath:
+  // "/app/package.json"` (perfil seccomp inexistente/absurdo para el sandbox) y
+  // `limits: {"memMb":99999,"cpus":64,"pidsLimit":9999}` (recursos del host a
+  // voluntad del llamador). Validar campo a campo no sirve de nada si luego se
+  // copia el objeto entero: ahora solo se construye con los campos de esta lista, y
+  // los de infraestructura (`runner`/`network`/`engineHost`/`seccompProfilePath`/
+  // `limits`) salen SIEMPRE de la config del servicio.
+  const clean: RunBattleRequestBody = {
+    battleId: b.battleId,
+    seed: b.seed,
+    rulesetId: b.rulesetId,
+    ticks: b.ticks,
+    bots: b.bots as RunBattleRequestBody["bots"],
+    ...(map !== undefined ? { map } : {}),
+    ...(b.mapName !== undefined ? { mapName: b.mapName as RunBattleRequestBody["mapName"] } : {}),
+    ...(b.tickIntervalMs !== undefined ? { tickIntervalMs: b.tickIntervalMs as number } : {}),
+    ...(b.overallTimeoutMs !== undefined ? { overallTimeoutMs: b.overallTimeoutMs as number } : {}),
+  };
+  return { ok: true, body: clean };
 }
 
 /**

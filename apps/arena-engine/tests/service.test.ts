@@ -21,6 +21,7 @@ import request from "supertest";
 import { WebSocket } from "ws";
 import { initPhysics } from "../src/sim/physics.js";
 import { createArenaEngineService, serviceConfigFromEnv } from "../src/service.js";
+import { DEFAULT_LIMITS } from "../../bot-manager/src/container-runner.js";
 import type { ContainerHandle, ContainerRunner, SandboxSpec } from "../../bot-manager/src/container-runner.js";
 // Solo en TESTS: el pipeline de mapas de E4 (documento del catálogo → ArenaMap).
 // El código de PRODUCCIÓN de arena-engine NO importa apps/map-service — su imagen
@@ -523,6 +524,51 @@ describe("B9 · POST /run con un mapa REAL del catálogo en el cuerpo", () => {
       expect(res.status).not.toBe(502);
     },
   );
+
+  // Hallazgo del supervisor de B9, demostrado en vivo: la validación era campo a
+  // campo pero luego `/run` hacía `{...req.body}`, así que cualquier campo EXTRA
+  // del cuerpo entraba tal cual en `ContainerBattleConfig`. El supervisor coló
+  // `seccompProfilePath: "/app/package.json"` (el sandbox arrancaba con un "perfil"
+  // que no es un perfil) y `limits: {memMb:99999, cpus:64, pidsLimit:9999}`.
+  it("campos de INFRAESTRUCTURA colados en el cuerpo (seccompProfilePath/limits) NO llegan a la batalla", async () => {
+    let observed: Record<string, unknown> | undefined;
+    const spyRunner: ContainerRunner = {
+      async launch(spec: SandboxSpec): Promise<ContainerHandle> {
+        observed = spec as unknown as Record<string, unknown>;
+        throw new Error("suficiente: ya hemos visto el SandboxSpec");
+      },
+    };
+    const app = createArenaEngineService({ runner: spyRunner, internalSecret: SECRET, engineHost: "127.0.0.1" });
+    const body = {
+      ...runRequestBody("svc_b9_campos_colados"),
+      seccompProfilePath: "/app/package.json",
+      limits: { memMb: 99999, cpus: 64, pidsLimit: 9999 },
+    };
+    await request(app).post("/run").set(AUTH_HEADER, SECRET).send(body);
+
+    // El contenedor se pidió con el perfil y los límites del SERVICIO, no con los
+    // del cuerpo: el perfil es el seccomp real del repo y la memoria, la de DEFAULT_LIMITS.
+    expect(observed).toBeDefined();
+    expect(String(observed!.seccompProfilePath)).toContain("seccomp-bot.json");
+    expect(String(observed!.seccompProfilePath)).not.toContain("package.json");
+    expect(observed!.limits).toEqual(DEFAULT_LIMITS);
+  });
+
+  it("tickIntervalMs/overallTimeoutMs sí se aceptan (arnés E2E) pero ACOTADOS", async () => {
+    const app = createArenaEngineService({
+      runner: inProcessRunner(),
+      internalSecret: SECRET,
+      engineHost: "127.0.0.1",
+    });
+    for (const bad of [{ tickIntervalMs: 0 }, { tickIntervalMs: "rápido" }, { overallTimeoutMs: 99_999_999 }]) {
+      const res = await request(app)
+        .post("/run")
+        .set(AUTH_HEADER, SECRET)
+        .send({ ...runRequestBody("svc_b9_ritmo"), ...bad });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("bad_request");
+    }
+  });
 
   it.each([0, -1, 1.5, Number.NaN, 10_000_000])("ticks inválidos (%p) → 400 bad_request", async (ticks) => {
     const app = createArenaEngineService({

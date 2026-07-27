@@ -202,11 +202,62 @@ export function validateArenaMap(value: unknown): ArenaMapValidation {
 }
 
 /**
- * Identidad de un mapa a efectos de comparación: los tres campos que NO cambian
- * durante una simulación (`destructibles[].hp` sí cambia, así que comparar el
- * objeto entero daría falsos negativos). Sirve para comprobar que el mapa que el
- * motor dice haber jugado (cabecera del replay) es EL MISMO que se le pidió.
+ * Etiqueta LEGIBLE de un mapa (`mapId@version#checksum`). Sirve para MENSAJES de
+ * error, no para decidir si dos mapas son el mismo.
+ *
+ * NO USAR COMO COMPARACIÓN DE IDENTIDAD (hallazgo del supervisor de B9, demostrado
+ * con una batalla real): el `checksum` de un `ArenaMap` no se deriva de su
+ * geometría — se COPIA del documento origen en `toEngineMap()`. Quien construya la
+ * cabecera de un replay puede poner el `mapId`/`version`/`checksum` que quiera
+ * junto a una geometría cualquiera. El supervisor grabó una batalla REAL sobre
+ * `proc-test-7` firmando la cabecera con la identidad de `mvp-arena-01` y la guarda
+ * la dio por buena: `muros pedidos vs jugados: 3 vs 6`, resultado
+ * `{"status":"completed","replay":{"ingested":true}}`. Justo el escenario (motor con
+ * bug de caché o comprometido) que la guarda decía cubrir.
  */
-export function arenaMapIdentity(map: Pick<ArenaMap, "mapId" | "version" | "checksum">): string {
+export function arenaMapLabel(map: Pick<ArenaMap, "mapId" | "version" | "checksum">): string {
   return `${map.mapId}@${map.version}#${map.checksum}`;
+}
+
+/**
+ * ¿Son EL MISMO mapa, geometría incluida? Igualdad estructural completa del
+ * `ArenaMap`: identidad + dimensiones + muros + destructibles + spawns + bases +
+ * banderas + zonas. Es lo único que de verdad demuestra que la batalla se jugó en
+ * el mapa que se pidió.
+ *
+ * Sin falsos positivos: `Battle` NO muta `config.map` — el daño a los destructibles
+ * vive en `this.destructibleHp` (`sim/battle.ts:122`, un `Map` aparte que se
+ * inicializa desde el mapa pero nunca escribe en él). Comprobado con una batalla
+ * real (corrección del supervisor a la justificación anterior de este fichero, que
+ * afirmaba lo contrario y por eso comparaba solo tres campos).
+ *
+ * La comparación es sobre valores JSON (números, cadenas, arrays y objetos planos),
+ * que es exactamente lo que hay dentro de un `ArenaMap` venido de la red.
+ */
+export function sameArenaMap(a: unknown, b: unknown): boolean {
+  return deepEqualJson(a, b);
+}
+
+/** Igualdad estructural de valores JSON. El orden de los arrays SÍ importa (el de
+ *  spawns/muros es significativo para el motor: ver `canonical.ts` de map-service). */
+function deepEqualJson(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== typeof b) return false;
+  if (a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((v, i) => deepEqualJson(v, b[i]));
+  }
+  if (typeof a === "object") {
+    const ao = a as Record<string, unknown>;
+    const bo = b as Record<string, unknown>;
+    // `Object.keys`: solo propiedades PROPIAS (nada heredado del prototipo, que es
+    // por donde entra la clase de fallo que persigue todo este bloque).
+    const ak = Object.keys(ao).sort();
+    const bk = Object.keys(bo).sort();
+    if (ak.length !== bk.length || ak.some((k, i) => k !== bk[i])) return false;
+    return ak.every((k) => deepEqualJson(ao[k], bo[k]));
+  }
+  // Números: `NaN !== NaN`, pero un mapa con NaN ya no pasa `validateArenaMap`.
+  return false;
 }

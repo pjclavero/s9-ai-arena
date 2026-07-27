@@ -20,6 +20,8 @@ import {
   createHttpBattleRunLauncher,
   httpBattleRunLauncherEnvConfig,
   replayIngestEnvConfig,
+  resolveRunTimeoutMs,
+  runTimeoutEnvConfig,
 } from "./battle-run-http-launcher.js";
 import type { BattleRunInput } from "../battle-run.js";
 import { initPhysics } from "../../../arena-engine/src/sim/physics.js";
@@ -33,7 +35,11 @@ import { validateArenaMap } from "../../../arena-engine/src/arena-map.js";
 import type { ArenaMap } from "../../../arena-engine/src/sim/modes.js";
 import { toEngineMap } from "../../../map-service/src/to-engine-map.js";
 import type { InternalMap } from "../../../map-service/src/types.js";
-import { loadRuleset } from "../../../../packages/game-rules/index.js";
+import {
+  containerBattleOverallTimeoutMs,
+  loadRuleset,
+  theoreticalBattleMs,
+} from "../../../../packages/game-rules/index.js";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
 
@@ -529,6 +535,205 @@ describe("B9 · resolución REAL del mapa contra el catálogo (ya no hay allowli
     expect(result.errorCode).toBe("map_identity_mismatch");
     expect(rs.received).toHaveLength(0);
   }, 30_000);
+
+  it("ATAQUE DEL SUPERVISOR (bloqueante B9): batalla REAL en otro mapa FIRMADA con la identidad del pedido → failed y sin ingestar", async () => {
+    // Reproduce el ataque exacto con el que el supervisor derribó la primera
+    // versión de la guarda: el `checksum` de un ArenaMap se copia del documento
+    // origen, NO se deriva de la geometría, así que un motor comprometido (o con
+    // un bug de caché) puede jugar otro mapa y firmar la cabecera con el mapId,
+    // versión y checksum del mapa pedido. Comparando etiquetas, esto pasaba:
+    // `{"status":"completed","replay":{"ingested":true,"verify_matches":true}}`
+    // con "muros pedidos vs jugados: 3 vs 6".
+    const pedido = expectedEngineMap("mvp-arena-01.json");
+    const otro = expectedEngineMap(join("procedural", "proc-test-7.json"));
+    const falsificado = { ...otro, mapId: pedido.mapId, version: pedido.version, checksum: pedido.checksum };
+    expect(falsificado.walls.length).not.toBe(pedido.walls.length); // son mapas distintos de verdad
+
+    const bot = await seedSignedBot("bot_b9_firma_falsa");
+    const battleId = "battle_" + randomUUID();
+    // Batalla REAL (motor de verdad) jugada sobre la geometría falsificada: el
+    // replay verifica perfectamente — lo único que falla es que no es el mapa pedido.
+    const replay = await recordRealReplay(battleId, falsificado as ArenaMap);
+
+    const rs = await startFakeReplayService(() => ({ status: 201, body: {} }));
+    const engine = await startFakeEngine(() => ({
+      status: 200,
+      body: { result: replay.result, replay, postures: {} },
+    }));
+    closeEngine = async () => {
+      await engine.close();
+      await rs.close();
+    };
+    const launcher = createHttpBattleRunLauncher({
+      engineUrl: engine.url,
+      sharedSecret: "s",
+      db: h.db,
+      replayServiceUrl: rs.url,
+    });
+    const result = await launcher.launch({ ...sampleInput([bot, bot]), battleId });
+
+    expect(result.status).toBe("failed");
+    expect(result.errorCode).toBe("map_identity_mismatch");
+    expect(result.replay).toEqual({ ingested: false, battleId, verify_matches: false });
+    expect(rs.received).toHaveLength(0);
+  }, 30_000);
+
+  it("mismo mapa pedido con UN MURO movido en la cabecera → failed (la geometría se compara entera, no por etiqueta)", async () => {
+    const pedido = expectedEngineMap("mvp-arena-01.json");
+    const movido = {
+      ...pedido,
+      walls: pedido.walls.map((w, i) => (i === 0 ? { ...w, position: { x: w.position.x + 1, y: w.position.y } } : w)),
+    };
+    const bot = await seedSignedBot("bot_b9_muro_movido");
+    const battleId = "battle_" + randomUUID();
+    const engine = await startFakeEngine(() => ({
+      status: 200,
+      body: { result: {}, replay: { header: { formatVersion: 1, battleId, map: movido } }, postures: {} },
+    }));
+    closeEngine = engine.close;
+    const launcher = createHttpBattleRunLauncher({ engineUrl: engine.url, sharedSecret: "s", db: h.db });
+    const result = await launcher.launch({ ...sampleInput([bot, bot]), battleId });
+
+    expect(result.status).toBe("failed");
+    expect(result.errorCode).toBe("map_identity_mismatch");
+  });
+
+  it("el mapa pedido, jugado de verdad, PASA la guarda (no hay falsos positivos tras una batalla real con daño a destructibles)", async () => {
+    const bot = await seedSignedBot("bot_b9_sin_falso_positivo");
+    const battleId = "battle_" + randomUUID();
+    // Batalla real sobre el mapa REAL pedido: el motor no muta `config.map`, así
+    // que la comparación completa debe aceptarla.
+    const replay = await recordRealReplay(battleId);
+    const rs = await startFakeReplayService(() => ({ status: 201, body: {} }));
+    const engine = await startFakeEngine(() => ({
+      status: 200,
+      body: { result: replay.result, replay, postures: {} },
+    }));
+    closeEngine = async () => {
+      await engine.close();
+      await rs.close();
+    };
+    const launcher = createHttpBattleRunLauncher({
+      engineUrl: engine.url,
+      sharedSecret: "s",
+      db: h.db,
+      replayServiceUrl: rs.url,
+    });
+    const result = await launcher.launch({ ...sampleInput([bot, bot]), battleId });
+
+    expect(result.status).toBe("completed");
+    expect(result.replay).toEqual({ ingested: true, battleId, verify_matches: true });
+  }, 30_000);
+});
+
+describe("B9 · compatibilidad mapa↔modo (observación del supervisor)", () => {
+  it("zone_control sobre un mapa SIN zonas de captura → failed map_mode_incompatible, sin llamar a arena-engine", async () => {
+    // mvp-arena-01 solo tiene zonas de DAÑO. La API dejaba crear la batalla y el
+    // fallo aparecía dentro del motor (`createMode`), como 502 genérico, después
+    // de haber montado toda la partida.
+    const bot = await seedSignedBot("bot_b9_zc");
+    const launcher = createHttpBattleRunLauncher({ engineUrl: "http://127.0.0.1:1", sharedSecret: "s", db: h.db });
+    const result = await launcher.launch({ ...sampleInput([bot, bot]), mode: "zone_control" });
+
+    expect(result.status).toBe("failed");
+    expect(result.errorCode).toBe("map_mode_incompatible");
+    expect(result.error).toContain("zona(s) de captura");
+  });
+
+  it("capture_the_flag sobre mvp-arena-01 (que SÍ tiene banderas y bases) se acepta", async () => {
+    const bot = await seedSignedBot("bot_b9_ctf");
+    let received: Record<string, unknown> | undefined;
+    const engine = await startFakeEngine((_req, raw) => {
+      received = JSON.parse(raw);
+      return { status: 200, body: { result: {}, replay: {}, postures: {} } };
+    });
+    closeEngine = engine.close;
+    const launcher = createHttpBattleRunLauncher({ engineUrl: engine.url, sharedSecret: "s", db: h.db });
+    const result = await launcher.launch({ ...sampleInput([bot, bot]), mode: "capture_the_flag" });
+
+    expect(result.status).toBe("completed");
+    expect(loadRuleset(received?.rulesetId as string).mode).toBe("capture_the_flag");
+  });
+});
+
+describe("B9 · el plazo HTTP cubre la batalla que se lanza (bloqueante del supervisor)", () => {
+  // El launcher abortaba a 30 s FIJOS. Con el ruleset resuelto de verdad, una
+  // práctica de deathmatch dura ticks×34 ms = 306 s (y SIEMPRE agota el límite:
+  // scoreToWin=5 sin respawn con 2 vehículos). Es decir: la API abortaba SIEMPRE a
+  // los 30 s con los contenedores todavía corriendo y el replay a la basura.
+  it("REGRESIÓN: sin timeout explícito (el camino de producción, server.ts no lo fija), el plazo supera la duración real de la batalla", () => {
+    const ticks = loadRuleset("dm_practice@1").timeLimitTicks;
+    const plazo = resolveRunTimeoutMs({}, ticks);
+
+    // Comportamiento entre módulos: el plazo del cliente HTTP debe cubrir la
+    // duración teórica Y el guard global del propio motor (container-battle.ts),
+    // que es quien limpia los contenedores. Ambos salen de game-rules/battle-timing.
+    expect(plazo).toBeGreaterThan(theoreticalBattleMs(ticks));
+    expect(plazo).toBeGreaterThan(containerBattleOverallTimeoutMs(ticks));
+  });
+
+  it("el plazo escala con los ticks de la batalla (no es una constante)", () => {
+    expect(resolveRunTimeoutMs({}, 20_000)).toBeGreaterThan(resolveRunTimeoutMs({}, 1_000));
+    expect(resolveRunTimeoutMs({}, 20_000) - resolveRunTimeoutMs({}, 1_000)).toBe(theoreticalBattleMs(19_000));
+  });
+
+  it("un motor LENTO pero dentro del presupuesto de la batalla NO se aborta", async () => {
+    const bot = await seedSignedBot("bot_b9_lento_ok");
+    const slow = http.createServer((_req, res) => {
+      setTimeout(() => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ result: {}, replay: {}, postures: {} }));
+      }, 700);
+    });
+    await new Promise<void>((r) => slow.listen(0, "127.0.0.1", () => r()));
+    const { port } = slow.address() as AddressInfo;
+    closeEngine = () => new Promise<void>((r) => slow.close(() => r()));
+
+    // ticks=100 → 3,4 s de batalla; margen HTTP de 400 ms ⇒ plazo ≈ 3,8 s > 700 ms.
+    const launcher = createHttpBattleRunLauncher({
+      engineUrl: `http://127.0.0.1:${port}`,
+      sharedSecret: "s",
+      db: h.db,
+      ticks: 100,
+      runTimeoutOverheadMs: 400,
+    });
+    const result = await launcher.launch(sampleInput([bot, bot]));
+    expect(result.status).toBe("completed");
+  }, 20_000);
+
+  it("un motor que se pasa del presupuesto SÍ se aborta, y el mensaje dice el plazo REAL usado", async () => {
+    const bot = await seedSignedBot("bot_b9_lento_ko");
+    const slow = http.createServer((_req, res) => {
+      setTimeout(() => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end("{}");
+      }, 4000);
+    });
+    await new Promise<void>((r) => slow.listen(0, "127.0.0.1", () => r()));
+    const { port } = slow.address() as AddressInfo;
+    closeEngine = () => new Promise<void>((r) => slow.close(() => r()));
+
+    // ticks=10 → 340 ms de batalla; margen 300 ms ⇒ plazo 640 ms < 4 s de retraso.
+    const launcher = createHttpBattleRunLauncher({
+      engineUrl: `http://127.0.0.1:${port}`,
+      sharedSecret: "s",
+      db: h.db,
+      ticks: 10,
+      runTimeoutOverheadMs: 300,
+    });
+    const result = await launcher.launch(sampleInput([bot, bot]));
+
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain(String(resolveRunTimeoutMs({ runTimeoutOverheadMs: 300 }, 10)));
+  }, 20_000);
+
+  it("ARENA_ENGINE_RUN_TIMEOUT_MS: override absoluto del operador, respetado tal cual", () => {
+    expect(runTimeoutEnvConfig({ ARENA_ENGINE_RUN_TIMEOUT_MS: "12345" })).toEqual({ timeoutMs: 12345 });
+    expect(runTimeoutEnvConfig({})).toEqual({});
+    // Valores absurdos NO se aceptan a medias: se ignoran y se usa el plazo derivado.
+    expect(runTimeoutEnvConfig({ ARENA_ENGINE_RUN_TIMEOUT_MS: "0" })).toEqual({});
+    expect(runTimeoutEnvConfig({ ARENA_ENGINE_RUN_TIMEOUT_MS: "abc" })).toEqual({});
+  });
 });
 
 describe("B9 · resolución REAL del ruleset y de los ticks", () => {

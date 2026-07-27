@@ -26,7 +26,7 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { loadRuleset, safeLookup } from "../../../packages/game-rules/index.js";
+import { containerBattleOverallTimeoutMs, loadRuleset, safeLookup } from "../../../packages/game-rules/index.js";
 import { protocolBotHandle } from "../../../packages/protocol/bot-handle.js";
 import { loadCatalog, CATALOG_VERSION } from "../../../packages/module-catalog/loadCatalog.js";
 import { resolveVehicle } from "../../../packages/module-catalog/resolve/index.js";
@@ -213,8 +213,11 @@ export async function runContainerBattle(cfg: ContainerBattleConfig): Promise<Co
     await server.whenAllConnected(connectTimeoutMs);
     server.start();
 
-    const theoreticalMs = cfg.ticks * (cfg.tickIntervalMs ?? 34);
-    const overallMs = cfg.overallTimeoutMs ?? theoreticalMs + 15_000;
+    // B9 · el plazo sale de packages/game-rules/battle-timing.ts, el MISMO módulo
+    // del que lo deriva el launcher HTTP de la API: dos presupuestos calculados por
+    // separado se desincronizan (y se desincronizaron: 306 s de batalla contra 30 s
+    // de timeout HTTP). Mismo resultado que la fórmula anterior, un solo sitio.
+    const overallMs = cfg.overallTimeoutMs ?? containerBattleOverallTimeoutMs(cfg.ticks, cfg.tickIntervalMs);
     const result = await Promise.race<BattleResult>([
       server.waitForResult(),
       new Promise<BattleResult>((_resolve, reject) => {
