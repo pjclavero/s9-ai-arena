@@ -19,6 +19,14 @@ COPY apps/streamer /app/apps/streamer
 # comparten imágenes distintas. Sin este COPY, main.ts revienta DENTRO de la
 # imagen con ERR_MODULE_NOT_FOUND aunque funcione en el monorepo.
 COPY packages/data-dir /app/packages/data-dir
+# B13 · Mismo motivo, distinto paquete: metrics.ts importa `emptyDict` de
+# packages/game-rules/safe-lookup.js (B8, cierre del patrón `__proto__` en el
+# acumulador que se rellena con claves parseadas de la salida de ffmpeg). Sin
+# este COPY la imagen arranca y revienta con
+# `Cannot find module '../../../packages/game-rules/safe-lookup.js'`.
+# Se copia SOLO ese fichero, no el paquete entero: es autocontenido (cero
+# imports) y el streamer no usa nada más de game-rules.
+COPY packages/game-rules/safe-lookup.ts /app/packages/game-rules/safe-lookup.ts
 COPY infrastructure/docker/streamer/entrypoint.sh /entrypoint.sh
 # B13 · MISMO entrypoint de datos que la imagen genérica (no un mecanismo
 # paralelo): ajusta la propiedad de ARENA_DATA_DIRS como root y baja a
