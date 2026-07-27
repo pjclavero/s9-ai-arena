@@ -212,7 +212,7 @@ describe("B7 · entrypoint: ajusta la propiedad y baja de root SIEMPRE", () => {
     const r = correrEntrypoint({ ARENA_DATA_DIRS: "/data/replays" });
     expect(r.status, r.stderr).toBe(0);
     expect(r.llamadas).toContain("mkdir -p /data/replays");
-    expect(r.llamadas).toContain("chown node:node /data/replays");
+    expect(r.llamadas).toContain("chown -h node:node /data/replays");
     expect(
       r.llamadas.some((l) => l.startsWith("su-exec node:node")),
       "debe bajar a node",
@@ -227,11 +227,18 @@ describe("B7 · entrypoint: ajusta la propiedad y baja de root SIEMPRE", () => {
     }
   });
 
+  it("el chown NO sigue enlaces simbólicos (-h): actúa sobre el enlace, nunca sobre su destino", () => {
+    const r = correrEntrypoint({ ARENA_DATA_DIRS: "/data/replays" });
+    const chowns = r.llamadas.filter((l) => l.startsWith("chown"));
+    expect(chowns).not.toEqual([]);
+    for (const l of chowns) expect(l, "falta -h en el chown").toMatch(/^chown -h /);
+  });
+
   it("admite varios directorios de datos y chownea exactamente esos", () => {
     const r = correrEntrypoint({ ARENA_DATA_DIRS: "/data/replays /data/logs" });
     expect(r.status, r.stderr).toBe(0);
     const chowns = r.llamadas.filter((l) => l.startsWith("chown"));
-    expect(chowns).toEqual(["chown node:node /data/replays", "chown node:node /data/logs"]);
+    expect(chowns).toEqual(["chown -h node:node /data/replays", "chown -h node:node /data/logs"]);
   });
 
   it("sin ARENA_DATA_DIRS no toca NADA, pero sigue bajando a node (api, web, map-service…)", () => {
@@ -252,28 +259,154 @@ describe("B7 · entrypoint: ajusta la propiedad y baja de root SIEMPRE", () => {
 });
 
 describe("B7 · entrypoint: el paso privilegiado está acotado (fail-closed)", () => {
-  for (const malo of ["/etc", "/", "/var/run/docker.sock", "data/replays", "/dataX/replays"]) {
+  /** Rechazo = aborta, no ejecuta el servicio y NO ha tocado el disco. */
+  function esperaRechazo(dirs: string) {
+    const r = correrEntrypoint({ ARENA_DATA_DIRS: dirs });
+    expect(r.status, `debía abortar con '${dirs}'`).not.toBe(0);
+    expect(
+      r.llamadas.filter((l) => l.startsWith("chown")),
+      "no debe chownear nada",
+    ).toEqual([]);
+    expect(
+      r.llamadas.filter((l) => l.startsWith("mkdir")),
+      "no debe crear nada",
+    ).toEqual([]);
+    expect(r.ejecutado, "no debe ejecutar el servicio tras rechazar la configuración").toBe(false);
+    expect(r.stderr).toMatch(/ARENA_DATA_DIRS/);
+    return r;
+  }
+
+  for (const malo of ["/etc", "/", "/data", "/var/run/docker.sock", "data/replays", "/dataX/replays"]) {
     it(`rechaza ARENA_DATA_DIRS=${malo} y NO arranca el servicio`, () => {
-      const r = correrEntrypoint({ ARENA_DATA_DIRS: malo });
-      expect(r.status, `debía abortar con ${malo}`).not.toBe(0);
-      expect(r.llamadas.filter((l) => l.startsWith("chown"))).toEqual([]);
-      expect(r.ejecutado, "no debe ejecutar el servicio tras rechazar la configuración").toBe(false);
-      expect(r.stderr).toMatch(/ARENA_DATA_DIRS/);
+      esperaRechazo(malo);
     });
   }
 
   for (const escape of ["/data/../etc", "/data/replays/../../etc"]) {
     it(`rechaza el escape por '..' (${escape})`, () => {
-      const r = correrEntrypoint({ ARENA_DATA_DIRS: escape });
-      expect(r.status).not.toBe(0);
-      expect(r.llamadas.filter((l) => l.startsWith("chown"))).toEqual([]);
-      expect(r.ejecutado).toBe(false);
+      esperaRechazo(escape);
     });
   }
 
-  it("un solo directorio inválido en la lista aborta TODO el arranque", () => {
-    const r = correrEntrypoint({ ARENA_DATA_DIRS: "/data/replays /etc" });
-    expect(r.status).not.toBe(0);
+  // O3 del Supervisor: `/data/.` y `/data//` choweaban `/data` EN SÍ, dentro del
+  // guard de prefijo. El comentario del script decía "solo rutas bajo /data/" y
+  // era literalmente inexacto.
+  for (const raro of ["/data/.", "/data//", "/data//replays", "/data/./replays", "/data/replays/."]) {
+    it(`rechaza la forma no canónica '${raro}' (chowneaba /data en sí)`, () => {
+      esperaRechazo(raro);
+    });
+  }
+
+  it("rechaza la barra final: se validaría una ruta y se chownearía otra forma de escribirla", () => {
+    esperaRechazo("/data/replays/");
+  });
+
+  // O2 del Supervisor: sin `set -f`, `for d in ${ARENA_DATA_DIRS:-}` EXPANDÍA el
+  // patrón contra el disco. Con `/data/*` chowneaba de golpe todo lo que hubiera
+  // bajo /data — un chown masivo silencioso, no un error.
+  for (const patron of ["/data/*", "/data/rep?ays", "/data/[a-z]*", "/data/*/x"]) {
+    it(`rechaza el metacarácter de patrón en '${patron}' y no expande nada`, () => {
+      const r = esperaRechazo(patron);
+      expect(r.stderr).toMatch(/metacaracteres de patron/);
+    });
+  }
+
+  // O4 del Supervisor: antes abortaba, sí, pero DESPUÉS de haber chowneado las
+  // entradas anteriores. Ahora la validación de la lista entera es una fase
+  // previa: comprobar solo `status != 0` daba por bueno un efecto lateral real.
+  it("una entrada inválida al FINAL de la lista no deja chowneadas las anteriores (dos fases)", () => {
+    const r = esperaRechazo("/data/replays /data/logs /etc");
+    expect(r.stderr).toMatch(/no se ha modificado ningun directorio/);
+  });
+
+  it("una entrada inválida en MEDIO de la lista tampoco deja efectos parciales", () => {
+    esperaRechazo("/data/replays /etc /data/logs");
+  });
+});
+
+// ───────── O1 · el guard contra enlaces, con un /data REAL ──────────────────
+//
+// `[ -L "$prefijo" ]` consulta el sistema de ficheros: probarlo de verdad exige
+// un `/data` real con un enlace dentro. El banco de pruebas lo monta con
+// `unshare -rm` + `chroot` (uid 0 dentro de un espacio de nombres, cero
+// privilegios fuera) — la misma técnica con la que el Supervisor demostró que
+// el guard anterior era evadible: con `/data/replays -> /fuera`, el guard de
+// prefijo pasaba y el `chown` afectaba REALMENTE a `/fuera`.
+
+const NS_HARNESS = join(here, "fixtures", "entrypoint-ns-harness.sh");
+
+interface EjecucionNs {
+  disponible: boolean;
+  rc: number;
+  chowns: string[];
+  ejecutado: boolean;
+  salida: string;
+}
+
+function correrEnNamespace(dirs: string, escenario: "normal" | "symlink" | "ancestro"): EjecucionNs {
+  const r = spawnSync("/bin/sh", [NS_HARNESS, ENTRYPOINT, dirs, escenario], { encoding: "utf8" });
+  const salida = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+  if (r.status === 99) return { disponible: false, rc: -1, chowns: [], ejecutado: false, salida };
+  const lineas = (r.stdout ?? "").split("\n");
+  const rcLinea = lineas.filter((l) => l.startsWith("rc=")).pop();
+  return {
+    disponible: true,
+    rc: rcLinea ? Number(rcLinea.slice(3)) : -1,
+    chowns: lineas.filter((l) => l.startsWith("CHOWN ")),
+    ejecutado: lineas.includes("SERVICIO-EJECUTADO"),
+    salida,
+  };
+}
+
+const nsDisponible = correrEnNamespace("/data/replays /data/logs", "normal").disponible;
+
+describe("B7/O1 · el guard de rutas con un /data real (espacios de nombres)", () => {
+  it("en CI los espacios de nombres sin privilegios DEBEN estar disponibles: si no, este guard no se prueba", () => {
+    // Sin esto, un entorno sin userns convertiría el bloque de abajo en un
+    // agujero silencioso. En local se reporta como omitido y se ve; en CI, no
+    // se tolera.
+    if (process.env.CI) expect(nsDisponible, "unshare -rm no funciona en este runner").toBe(true);
+    else expect(typeof nsDisponible).toBe("boolean");
+  });
+
+  it.runIf(nsDisponible)("caso bueno: con /data real chownea exactamente los directorios pedidos", () => {
+    const r = correrEnNamespace("/data/replays /data/logs", "normal");
+    expect(r.rc, r.salida).toBe(0);
+    expect(r.chowns).toEqual(["CHOWN /data/replays -> /data/replays", "CHOWN /data/logs -> /data/logs"]);
+    expect(r.ejecutado).toBe(true);
+  });
+
+  it.runIf(nsDisponible)("rechaza el ÚLTIMO componente enlazado: /data/replays -> /fuera no escapa", () => {
+    const r = correrEnNamespace("/data/replays", "symlink");
+    expect(r.rc, r.salida).toBe(1);
+    // Lo importante no es el código, es que NADA fuera de /data fue tocado.
+    expect(r.chowns, "el chown habría actuado sobre /fuera").toEqual([]);
+    expect(r.ejecutado).toBe(false);
+    expect(r.salida).toMatch(/enlace simbolico/);
+  });
+
+  it.runIf(nsDisponible)(
+    "rechaza un componente INTERMEDIO enlazado: /data/sub -> /fuera, ruta /data/sub/replays",
+    () => {
+      const r = correrEnNamespace("/data/sub/replays", "ancestro");
+      expect(r.rc, r.salida).toBe(1);
+      expect(r.chowns).toEqual([]);
+      expect(r.ejecutado).toBe(false);
+      expect(r.salida).toMatch(/'\/data\/sub' es un enlace simbolico/);
+    },
+  );
+
+  it.runIf(nsDisponible)("con /data real y tres directorios dentro, '/data/*' NO se expande ni chownea nada", () => {
+    const r = correrEnNamespace("/data/*", "normal");
+    expect(r.rc, r.salida).toBe(1);
+    expect(r.chowns, "un '*' accidental no puede convertirse en un chown masivo").toEqual([]);
+    expect(r.ejecutado).toBe(false);
+  });
+
+  it.runIf(nsDisponible)("con /data real, una entrada inválida al final no deja chowneadas las anteriores", () => {
+    const r = correrEnNamespace("/data/replays /etc", "normal");
+    expect(r.rc, r.salida).toBe(1);
+    expect(r.chowns).toEqual([]);
     expect(r.ejecutado).toBe(false);
   });
 });

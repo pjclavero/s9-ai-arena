@@ -16,6 +16,7 @@
  */
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs";
@@ -30,7 +31,18 @@ import { HunterBot } from "../../arena-engine/src/stubs.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = join(__dirname, "..", "..", "..");
-const TSX = join(REPO, "node_modules", ".bin", "tsx");
+// tsx es el mismo cargador que usa la imagen (`npx tsx "$SERVICE_ENTRY"`). Se
+// localiza con la resolución de módulos de Node en vez de con una ruta fija a
+// `node_modules/` del repo: en un worktree el árbol de dependencias real está
+// en un ancestro, y `node_modules/.bin/tsx` puede no existir aunque el paquete
+// sí. Si no está, el test falla (no se omite).
+const TSX = (() => {
+  try {
+    return join(dirname(createRequire(import.meta.url).resolve("tsx/package.json")), "dist", "cli.mjs");
+  } catch {
+    return undefined;
+  }
+})();
 const MAIN = join(REPO, "apps", "replay-service", "src", "main.ts");
 
 let replay: Replay;
@@ -39,7 +51,8 @@ const vivos: ChildProcessWithoutNullStreams[] = [];
 
 beforeAll(async () => {
   expect(process.getuid?.(), "esta suite debe correr SIN privilegios de root").not.toBe(0);
-  expect(existsSync(TSX), `falta ${TSX}: ¿npm ci?`).toBe(true);
+  expect(TSX, "no se encuentra el cargador tsx: ¿npm ci?").toBeDefined();
+  expect(existsSync(TSX as string), `no existe ${TSX}`).toBe(true);
   await initPhysics();
   replay = await record(
     {
@@ -89,7 +102,7 @@ interface Arranque {
  */
 async function arrancar(replaysDir: string): Promise<Arranque> {
   const port = await puertoLibre();
-  const proc = spawn(process.execPath, [TSX, MAIN], {
+  const proc = spawn(process.execPath, [TSX as string, MAIN], {
     cwd: REPO,
     env: { ...process.env, REPLAYS_DIR: replaysDir, PORT: String(port) },
     stdio: ["ignore", "pipe", "pipe"],

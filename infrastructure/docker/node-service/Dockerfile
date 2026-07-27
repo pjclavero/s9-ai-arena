@@ -49,15 +49,29 @@ RUN mkdir -p /data/replays && chown node:node /data /data/replays
 COPY infrastructure/docker/node-service/entrypoint.sh /entrypoint.sh
 RUN chmod 0755 /entrypoint.sh
 
-# Prueba viva DENTRO de la imagen, no en el monorepo (lección del proyecto:
-# "funciona en el repo, falla en la imagen"). Comprueba de verdad que
-# (1) su-exec existe y el entrypoint baja a `node`, y (2) tras el chown acotado
-# el usuario `node` puede ESCRIBIR en el directorio de datos. Si algo de esto
-# se rompiera, el build falla aquí en vez de fallar callado en producción.
+# Pruebas vivas DENTRO de la imagen, no en el monorepo (lección del proyecto:
+# "funciona en el repo, falla en la imagen"). Se ejecutan en CADA build de la
+# etapa 5 de la CI; si algo de esto se rompiera, el build falla aquí en vez de
+# fallar callado en producción.
+#
+# (1) su-exec existe, el entrypoint baja a `node`, `chown -h` es compatible con
+#     el chown de esta imagen y el usuario `node` puede ESCRIBIR en el
+#     directorio de datos.
 RUN ARENA_DATA_DIRS=/data/replays /entrypoint.sh sh -euc '\
       test "$(id -un)" = node || { echo "el entrypoint no bajó a node: $(id -un)"; exit 1; }; \
       touch /data/replays/.build-probe && rm /data/replays/.build-probe' \
  && test "$(stat -c %u:%g /data/replays)" = "1000:1000"
+
+# (2) O1 · el guard contra enlaces simbólicos funciona SOBRE ESTA IMAGEN: con un
+#     enlace dentro de /data apuntando a /etc, el entrypoint debe ABORTAR y /etc
+#     debe seguir siendo de root. Sin el guard, `chown` seguiría el enlace y
+#     dejaría /etc en manos del uid 1000 — el escape que reportó el Supervisor.
+RUN ln -s /etc /data/enlace-de-prueba \
+ && if ARENA_DATA_DIRS=/data/enlace-de-prueba /entrypoint.sh true; then \
+      echo "el entrypoint aceptó un enlace simbólico dentro de /data"; exit 1; \
+    fi \
+ && test "$(stat -c %u:%g /etc)" = "0:0" \
+ && rm /data/enlace-de-prueba
 
 ENTRYPOINT ["/entrypoint.sh"]
 

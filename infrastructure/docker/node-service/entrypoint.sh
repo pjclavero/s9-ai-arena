@@ -15,41 +15,121 @@
 # `node` con su-exec antes de ejecutar nada del servicio. El proceso del
 # servicio NUNCA es root.
 #
-# LÍMITES DELIBERADOS (esto es un paso privilegiado, así que está acotado):
-#   - solo rutas bajo /data/ y sin ".." — cualquier otra cosa ABORTA el arranque
-#     (fail-closed: no se ignora en silencio, que es el bug que estamos
-#     matando);
-#   - `chown` NO recursivo: el directorio, no su contenido (un `chown -R` sobre
-#     un volumen de replays de meses sería carísimo y no hace falta: los
-#     archivos ya escritos se leen igual);
-#   - sin ARENA_DATA_DIRS no se toca NADA (api, web, map-service… se comportan
+# QUÉ ACEPTA EXACTAMENTE en ARENA_DATA_DIRS (esto corre como uid 0 y lo gobierna
+# una variable de entorno, así que la lista es literal, no tranquilizadora).
+# Una ruta se acepta solo si cumple TODO:
+#   - cuelga de /data/ y tiene al menos un componente propio (nunca /data a
+#     secas, nunca /dataOtraCosa);
+#   - todos sus componentes son reales: ni vacíos ('//'), ni '.', ni '..';
+#   - ningún componente del camino es un ENLACE SIMBÓLICO. Un enlace dentro de
+#     /data apunta fuera de /data y `chown` lo seguiría: el guard de prefijo por
+#     sí solo NO impide salir de /data;
+#   - no contiene metacaracteres de patrón ('*', '?', '[');
+#   - reconstruida componente a componente es IDÉNTICA a la recibida (nada de
+#     barras finales ni formas equivalentes que el chown interpretaría de otro
+#     modo que la validación).
+# Cualquier otra cosa ABORTA el arranque; nunca se ignora en silencio.
+#
+# GARANTÍAS DEL PASO PRIVILEGIADO:
+#   - VALIDACIÓN EN DOS FASES: primero se valida la lista ENTERA y solo después
+#     se toca el disco. Una entrada inválida al final de la lista no deja
+#     efectos a medias de las anteriores.
+#   - `set -f`: la lista NO se expande como patrón. Un '*' accidental sería, si
+#     no, un chown masivo silencioso en vez de un error.
+#   - `chown` NO recursivo y con `-h` (no sigue enlaces): el directorio, no su
+#     contenido ni el destino de ningún enlace. Un `chown -R` sobre un volumen
+#     de replays de meses sería carísimo y no hace falta: los archivos ya
+#     escritos se leen igual.
+#   - sin ARENA_DATA_DIRS no se toca NADA: api, web y map-service se comportan
 #     exactamente igual que antes de B7, solo que bajando de root a node aquí en
-#     vez de en la instrucción USER del Dockerfile);
+#     vez de en la instrucción USER del Dockerfile.
 #   - si el contenedor ya arranca sin privilegios (`user:` en el Compose, uid
 #     no-0), no se intenta ningún chown: se ejecuta el servicio tal cual y, si
 #     el directorio no sirve, el preflight del propio servicio
 #     (apps/replay-service/src/data-dir.ts) lo dirá a gritos.
-set -eu
+set -euf
+
+RAIZ_DATOS=/data
+
+err() {
+  echo "{\"level\":\"error\",\"service\":\"node-service-entrypoint\",\"msg\":\"$1\"}" >&2
+}
+
+# Valida UNA ruta de ARENA_DATA_DIRS. NO modifica nada: la fase de validación es
+# previa y completa. Devuelve 0 si es aceptable, 1 si no (explicando por qué).
+valida_ruta() {
+  ruta=$1
+
+  case $ruta in
+    "$RAIZ_DATOS"/?*) ;;
+    *)
+      err "ARENA_DATA_DIRS: '$ruta' no cuelga de $RAIZ_DATOS/ con un componente propio - rechazada"
+      return 1
+      ;;
+  esac
+
+  case $ruta in
+    *'*'* | *'?'* | *'['*)
+      err "ARENA_DATA_DIRS: '$ruta' contiene metacaracteres de patron - rechazada"
+      return 1
+      ;;
+  esac
+
+  # Troceado por '/'. Las funciones tienen sus propios parámetros posicionales,
+  # así que esto no pisa los argumentos del servicio.
+  OIFS=$IFS
+  IFS=/
+  set -- ${ruta#/}
+  IFS=$OIFS
+
+  prefijo=
+  for componente in "$@"; do
+    if [ -z "$componente" ]; then
+      err "ARENA_DATA_DIRS: '$ruta' tiene un componente vacio ('//') - rechazada"
+      return 1
+    fi
+    case $componente in
+      . | ..)
+        err "ARENA_DATA_DIRS: '$ruta' usa '$componente' como componente - rechazada"
+        return 1
+        ;;
+    esac
+    prefijo=$prefijo/$componente
+    # El guard de prefijo NO basta: se comprueba CADA componente del camino,
+    # no solo el último.
+    if [ -L "$prefijo" ]; then
+      err "ARENA_DATA_DIRS: '$prefijo' es un enlace simbolico y el chown actuaria sobre su destino, fuera de $RAIZ_DATOS - rechazada"
+      return 1
+    fi
+  done
+
+  # La ruta reconstruida debe ser IDÉNTICA a la recibida: si el troceado y la
+  # ruta literal no coinciden, se validaría una cosa y se chownearía otra.
+  if [ "$prefijo" != "$ruta" ]; then
+    err "ARENA_DATA_DIRS: '$ruta' no esta en forma canonica (se valido '$prefijo') - rechazada"
+    return 1
+  fi
+
+  return 0
+}
 
 if [ "$(id -u)" = "0" ]; then
-  # Sin comillas a propósito: ARENA_DATA_DIRS es una lista separada por espacios.
+  # FASE 1 · validar la lista ENTERA antes de tocar el disco.
+  # Sin comillas a propósito: ARENA_DATA_DIRS es una lista separada por
+  # espacios. `set -f` (arriba) impide que se expanda como patrón.
   for d in ${ARENA_DATA_DIRS:-}; do
-    case "$d" in
-      *..*)
-        echo "{\"level\":\"error\",\"msg\":\"ARENA_DATA_DIRS: ruta con '..' rechazada: $d\"}" >&2
-        exit 1
-        ;;
-    esac
-    case "$d" in
-      /data/?*) ;;
-      *)
-        echo "{\"level\":\"error\",\"msg\":\"ARENA_DATA_DIRS solo admite rutas bajo /data/: rechazada $d\"}" >&2
-        exit 1
-        ;;
-    esac
-    mkdir -p "$d"
-    chown node:node "$d"
+    if ! valida_ruta "$d"; then
+      err "arranque abortado: no se ha modificado ningun directorio"
+      exit 1
+    fi
   done
+
+  # FASE 2 · actuar, ya con la lista completa validada.
+  for d in ${ARENA_DATA_DIRS:-}; do
+    mkdir -p "$d"
+    chown -h node:node "$d"
+  done
+
   exec su-exec node:node "$@"
 fi
 

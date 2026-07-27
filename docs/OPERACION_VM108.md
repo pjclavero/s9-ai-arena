@@ -149,10 +149,23 @@ Desde B7 no hace falta ninguna intervención manual:
 2. La imagen genérica de servicios Node arranca por
    `infrastructure/docker/node-service/entrypoint.sh`, que **ajusta la propiedad
    de los directorios listados en `ARENA_DATA_DIRS` y baja a `node` con
-   `su-exec`** antes de ejecutar el servicio. Es un paso privilegiado acotado:
-   solo rutas bajo `/data/`, sin `..`, `chown` no recursivo, y cualquier otra
-   ruta **aborta el arranque**. Nada de `privileged`, `docker.sock` ni
-   `network_mode: host`.
+   `su-exec`** antes de ejecutar el servicio. Nada de `privileged`,
+   `docker.sock` ni `network_mode: host`.
+
+   El paso privilegiado está acotado, y conviene saber **exactamente** qué
+   acepta, porque corre como uid 0 y lo gobierna una variable de entorno. Una
+   ruta se admite solo si cumple **todo**: cuelga de `/data/` con al menos un
+   componente propio (nunca `/data` a secas ni `/dataOtraCosa`); todos sus
+   componentes son reales (ni vacíos por `//`, ni `.`, ni `..`); **ningún
+   componente del camino es un enlace simbólico** — el guard de prefijo por sí
+   solo no impide salir de `/data`, porque `chown` sigue los enlaces; no
+   contiene metacaracteres de patrón (`*`, `?`, `[`); y reconstruida componente
+   a componente es idéntica a la recibida (sin barras finales ni formas
+   equivalentes). Además: **la lista se valida entera antes de tocar el disco**
+   (una entrada inválida al final no deja chowneadas las anteriores), la lista
+   no se expande como patrón (`set -f`), y el `chown` no es recursivo y lleva
+   `-h` (no sigue enlaces). Cualquier otra cosa **aborta el arranque**; nunca se
+   ignora en silencio.
 3. `replay-service` y `tournament-worker` **comprueban al arrancar** que su
    directorio de datos es escribible de verdad (escriben y borran un fichero) y,
    si no lo es, **se niegan a arrancar** con un diagnóstico accionable
