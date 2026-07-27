@@ -11,6 +11,30 @@
  *   POST /containers/{id}/start    arrancar
  *   POST /containers/{id}/stop     parar
  *   GET  /containers/{id}/json     inspeccionar
+ *   GET  /containers/{id}/stats?stream=false   métricas puntuales (B10, issue #9)
+ *
+ * B10 · POR QUÉ SE AMPLÍA LA ALLOWLIST CON `stats` (y por qué no se amplía más):
+ *   - Es el ÚNICO sitio donde la Engine expone la CPU consumida por el cgroup del
+ *     contenedor. El `inspect` ya permitido NO la trae (solo configuración y
+ *     estado), así que sin este endpoint `cpuMs` seguiría siendo null para
+ *     siempre — o, peor, un número estimado desde tiempo de pared, que es
+ *     exactamente lo que este issue prohíbe.
+ *   - Es de SOLO LECTURA y no añade ninguna autoridad nueva: solo se puede pedir
+ *     sobre un id de contenedor que el llamador ya podía inspeccionar y parar.
+ *     No crea, no ejecuta (`exec`), no adjunta (`attach`), no escribe ficheros
+ *     (`archive`), no toca imágenes ni redes: todo eso sigue en 403.
+ *   - `stream=false` es OBLIGATORIO (no un detalle de estilo): con `stream=true`
+ *     la Engine mantiene la conexión abierta emitiendo muestras para siempre, y
+ *     el proxy —que acumula la respuesta del backend antes de contestar— se
+ *     quedaría colgado con la petición viva. Sería un vector de agotamiento de
+ *     recursos abierto por el propio proxy. Se rechaza cualquier query que no
+ *     sea exactamente `stream=false`.
+ *   - Superficie de información: la respuesta trae, además de los contadores del
+ *     contenedor, `system_cpu_usage`/`online_cpus` del host. Es estrictamente
+ *     menos de lo que ya revela el `inspect` permitido (rutas, configuración
+ *     completa), y el cliente del proxy es un servicio de la plataforma
+ *     (arena-engine), nunca un bot: los bots viven en la red `arena` y no tienen
+ *     ruta al proxy.
  *
  * La validación del create NO es una blocklist: es una allowlist de campos
  * (campo desconocido = rechazo, fail closed) y además la postura resultante
@@ -76,7 +100,8 @@ export type ProxyAction =
   | { kind: "create"; name?: string }
   | { kind: "start"; id: string }
   | { kind: "stop"; id: string; timeoutSeconds?: number }
-  | { kind: "inspect"; id: string };
+  | { kind: "inspect"; id: string }
+  | { kind: "stats"; id: string };
 
 export type ProxyDecision =
   | { ok: true; action: ProxyAction; forwardPath: string; forwardBody: string | undefined }
@@ -254,12 +279,31 @@ export function evaluateProxyRequest(
     };
   }
 
-  // POST /containers/{id}/(start|stop) · GET /containers/{id}/json
-  const idMatch = /^\/containers\/([^/]+)\/(start|stop|json)$/.exec(path);
+  // POST /containers/{id}/(start|stop) · GET /containers/{id}/(json|stats)
+  const idMatch = /^\/containers\/([^/]+)\/(start|stop|json|stats)$/.exec(path);
   if (idMatch) {
     const [, id, op] = idMatch;
     if (!CONTAINER_ID_RE.test(id)) return deny(`identificador de contenedor no válido: ${id}`);
     if (body && body.trim() && body.trim() !== "{}") return deny(`la operación ${op} no admite cuerpo`);
+    if (op === "stats") {
+      // B10 · solo lectura puntual: GET y `stream=false` EXPLÍCITO, nada más
+      // (ver la nota de cabecera: `stream=true` cuelga el proxy indefinidamente).
+      if (m !== "GET") return deny(`método ${m} no permitido para stats`);
+      const params = [...url.searchParams.entries()];
+      const onlyStreamFalse = params.length === 1 && params[0][0] === "stream" && params[0][1] === "false";
+      if (!onlyStreamFalse) {
+        return deny(
+          `stats solo se permite con exactamente ?stream=false (recibido: ${url.search || "sin query"}): ` +
+            `el modo streaming dejaría la petición abierta indefinidamente`,
+        );
+      }
+      return {
+        ok: true,
+        action: { kind: "stats", id },
+        forwardPath: `/containers/${id}/stats?stream=false`,
+        forwardBody: undefined,
+      };
+    }
     if (op === "json") {
       if (m !== "GET") return deny(`método ${m} no permitido para inspect`);
       return {
@@ -379,8 +423,8 @@ export function createDockerProxyServer(opts: ProxyServerOptions): http.Server {
 
 // ── runner del bot-manager a través del proxy ────────────────────────────────
 
-import type { ContainerHandle, ContainerRunner, SandboxSpec } from "./container-runner.js";
-import { DockerContainerRunner } from "./container-runner.js";
+import type { ContainerHandle, ContainerRunner, MeasuredContainerHandle, SandboxSpec } from "./container-runner.js";
+import { DockerContainerRunner, cpuMsFromDockerStats } from "./container-runner.js";
 
 /**
  * Runner de producción del bot-manager tras R1.7: SIN docker.sock. Habla con
@@ -437,7 +481,7 @@ export class ProxyContainerRunner implements ContainerRunner {
     return { status: res.status, json };
   }
 
-  async launch(spec: SandboxSpec): Promise<ContainerHandle> {
+  async launch(spec: SandboxSpec): Promise<MeasuredContainerHandle> {
     const body = ProxyContainerRunner.buildCreateBody(spec);
     const name = ProxyContainerRunner.containerName(spec);
     const created = await this.call("POST", `/containers/create?name=${encodeURIComponent(name)}`, body);
@@ -466,6 +510,23 @@ export class ProxyContainerRunner implements ContainerRunner {
           );
         }
         return DockerContainerRunner.analyzeInspect(inspected.json);
+      },
+      /**
+       * B10 (issue #9) · CPU real consumida por ESTE contenedor, en ms.
+       *
+       * Falla en NULL, nunca en un número: si el proxy no responde 200 (403,
+       * contenedor ya parado, backend caído…) o el cuerpo no trae un
+       * `total_usage` positivo, se devuelve `null`. La métrica es diagnóstico;
+       * un valor inventado sería peor que su ausencia (issue #9).
+       */
+      async cpuMs() {
+        try {
+          const stats = await call("GET", `/containers/${id}/stats?stream=false`);
+          if (stats.status !== 200) return null;
+          return cpuMsFromDockerStats(stats.json);
+        } catch {
+          return null;
+        }
       },
     };
   }

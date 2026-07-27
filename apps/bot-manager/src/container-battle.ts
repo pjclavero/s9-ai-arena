@@ -89,6 +89,14 @@ export interface ContainerBattleOutcome {
   replay: Replay;
   /** Postura de seguridad inspeccionada de cada contenedor (por botId), best-effort. */
   postures: Record<string, unknown>;
+  /**
+   * B10 (issue #9) · CPU consumida por el CONTENEDOR de cada bot, en ms, medida
+   * ANTES de pararlos (`cpuMsFromDockerStats`, cgroup del contenedor). `null`
+   * para un bot cuya medida no se pudo obtener: nunca se rellena con una
+   * estimación. SIEMPRE hay una entrada por bot participante, así que "medido y
+   * cero" y "no medido" no se confunden con "ausente".
+   */
+  cpuMsByBot: Record<string, number | null>;
 }
 
 /** DECISION_EVERY_N_TICKS del protocolo (OBSERVATION tick N → COMMAND forTick N+3). */
@@ -194,15 +202,39 @@ export async function runContainerBattle(cfg: ContainerBattleConfig): Promise<Co
 
     const replay = server.getReplay();
 
-    const postures: Record<string, unknown> = {};
+    // Acumuladores por botId: `Map`, NUNCA `obj[botId] = v`. El botId viene de
+    // fuera (cuerpo de /run), y con botId "__proto__" la asignación directa a un
+    // objeto plano no crea una entrada: cambia el PROTOTIPO del acumulador y la
+    // medida se pierde en silencio (misma clase de fallo que cerró safeLookup,
+    // pero en el lado de ESCRITURA). `Object.fromEntries` sí define propiedades
+    // propias, incluida "__proto__", así que la salida es fiel a lo medido.
+    const posturesByBot = new Map<string, unknown>();
+    const cpuMsByBot = new Map<string, number | null>();
     for (let i = 0; i < handles.length; i++) {
+      const botId = cfg.bots[i].botId;
       try {
-        postures[cfg.bots[i].botId] = await handles[i].posture();
+        posturesByBot.set(botId, await handles[i].posture());
       } catch {
         /* best-effort: la postura es diagnóstico, no bloquea el resultado. */
       }
+      // B10 (issue #9) · CPU del contenedor ANTES de pararlo (con el contenedor
+      // parado la Engine devuelve contadores a cero, que serían un número falso).
+      // Runner sin medición o medición fallida ⇒ null explícito, jamás un valor
+      // inventado; y se registra SIEMPRE una entrada por bot.
+      let cpuMs: number | null = null;
+      try {
+        cpuMs = (await handles[i].cpuMs?.()) ?? null;
+      } catch {
+        cpuMs = null;
+      }
+      cpuMsByBot.set(botId, cpuMs);
     }
-    return { result, replay, postures };
+    return {
+      result,
+      replay,
+      postures: Object.fromEntries(posturesByBot),
+      cpuMsByBot: Object.fromEntries(cpuMsByBot),
+    };
   } finally {
     if (timeoutTimer) clearTimeout(timeoutTimer);
     // Limpieza incondicional: parar TODOS los contenedores (no dejar colgados).

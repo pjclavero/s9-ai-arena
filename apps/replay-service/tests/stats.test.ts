@@ -155,6 +155,56 @@ describe("T8.4 golden: batallas guionizadas con valores calculados a mano", () =
   });
 });
 
+/**
+ * B10 (issue #9) · `cpuMs` deja de ser un null perpetuo, pero SOLO cuando hay
+ * una medida real del runner containerizado. La CPU no está —ni puede estar— en
+ * el replay: el replay es determinista y no lleva tiempos. Estos tests fijan la
+ * frontera entre "medido" y "no medido", que es justo lo que pedía el issue.
+ */
+describe("B10 · cpuMs en las estadísticas: medida real o null honesto", () => {
+  it("sin medidas, cpuMs es null para todos los bots (aunque la batalla sea real)", async () => {
+    const replay = await hunterBattle("stats_cpu_none");
+    const s = await computeBattleStats(replay);
+    expect(s.durationTicks).toBeGreaterThan(0); // hubo batalla de verdad
+    expect(s.perBot["v_red"].cpuMs).toBeNull();
+    expect(s.perBot["v_blue"].cpuMs).toBeNull();
+  });
+
+  it("con medidas del runner, cada bot recibe SU cpuMs (y quien no tenga, null)", async () => {
+    const replay = await hunterBattle("stats_cpu_some");
+    const s = await computeBattleStats(replay, { cpuMsByBot: { bot_red: 4321.5 } });
+    // El mapeo es por botId → vehículo, no por orden de participantes.
+    expect(s.perBot["v_red"].cpuMs).toBe(4321.5);
+    expect(s.perBot["v_blue"].cpuMs).toBeNull();
+  });
+
+  it("una medida de 0 ms se distingue de 'no medido' (0 se guarda como 0)", async () => {
+    const replay = await hunterBattle("stats_cpu_zero");
+    const s = await computeBattleStats(replay, { cpuMsByBot: { bot_red: 0 } });
+    expect(s.perBot["v_red"].cpuMs).toBe(0);
+    expect(s.perBot["v_blue"].cpuMs).toBeNull();
+  });
+
+  it("una medida corrupta NO se cuela: string, negativo, NaN o Infinity ⇒ null", async () => {
+    const replay = await hunterBattle("stats_cpu_bad");
+    for (const bad of ["4321.5", -1, Number.NaN, Number.POSITIVE_INFINITY, null, {}, [], true]) {
+      const s = await computeBattleStats(replay, { cpuMsByBot: { bot_red: bad } });
+      expect(s.perBot["v_red"].cpuMs, `valor ${JSON.stringify(bad)}`).toBeNull();
+    }
+  });
+
+  it("una medida HEREDADA del prototipo no se acepta como medida propia", async () => {
+    // Clase `__proto__`, lado LECTURA: `dict[botId]` devolvería 999 aunque este
+    // diccionario no tenga ninguna entrada propia para bot_red — una CPU que
+    // nadie midió para esta batalla. `safeLookup` lo descarta.
+    const replay = await hunterBattle("stats_cpu_proto");
+    const inherited: Record<string, unknown> = Object.create({ bot_red: 999 });
+    expect((inherited as Record<string, unknown>).bot_red).toBe(999); // el peligro existe
+    const s = await computeBattleStats(replay, { cpuMsByBot: inherited });
+    expect(s.perBot["v_red"].cpuMs).toBeNull();
+  });
+});
+
 describe("T8.4 agregados por módulo (insumo del informe de balance de E3)", () => {
   it("agrega uso, daño, fallos, eficiencia y supervivencia por moduleId", async () => {
     const a = await computeBattleStats(await hunterBattle("stats_agg_a"));
@@ -245,6 +295,43 @@ describe("T8.4 job idempotente contra PostgreSQL real + rendimiento", () => {
     // Mismo contenido bit a bit: reprocesar = sobrescribir, jamás acumular.
     expect(JSON.stringify(rows2.map((r) => r.stats))).toBe(JSON.stringify(rows1.map((r) => r.stats)));
   }, 120000);
+
+  it("B10 · runStatsJob lee la CPU medida de participants.cpu_ms y la persiste en battle_stats", async () => {
+    const cpuMsOf = async (botId: string) => {
+      const row = await h.db("battle_stats").where({ battle_id: dbBattleId, bot_id: botId }).first();
+      const stats = typeof row.stats === "string" ? JSON.parse(row.stats) : row.stats;
+      return stats.cpuMs as number | null;
+    };
+
+    // 1 · Sin medida en BD: cpuMs null. El hueco honesto del issue.
+    await h.db("participants").where({ battle_id: dbBattleId }).update({ cpu_ms: null });
+    await runStatsJob(h.db, dir, dbBattleId, "stats_job");
+    expect(await cpuMsOf(redBotId)).toBeNull();
+    expect(await cpuMsOf(blueBotId)).toBeNull();
+
+    // 2 · Con la medida que dejó el lanzador de batallas en contenedor.
+    await h.db("participants").where({ battle_id: dbBattleId, bot_id: redBotId }).update({ cpu_ms: 8123.25 });
+    await runStatsJob(h.db, dir, dbBattleId, "stats_job");
+    expect(await cpuMsOf(redBotId)).toBe(8123.25);
+    // El bot sin medir NO hereda la del compañero ni recibe un valor plausible.
+    expect(await cpuMsOf(blueBotId)).toBeNull();
+
+    // 3 · Reprocesar (el job es idempotente) NO borra la medida. Este es el
+    // fallo real que acecha a una métrica que no está en el replay: recomputar
+    // desde el replay la dejaría en null y nadie se enteraría.
+    await runStatsJob(h.db, dir, dbBattleId, "stats_job");
+    expect(await cpuMsOf(redBotId)).toBe(8123.25);
+
+    // Estado limpio para los tests siguientes (agregados/rendimiento).
+    await h.db("participants").where({ battle_id: dbBattleId }).update({ cpu_ms: null });
+    await runStatsJob(h.db, dir, dbBattleId, "stats_job");
+  }, 120000);
+
+  it("B10 · la columna cpu_ms rechaza medidas negativas (no hay CPU negativa)", async () => {
+    await expect(
+      h.db("participants").where({ battle_id: dbBattleId, bot_id: redBotId }).update({ cpu_ms: -1 }),
+    ).rejects.toThrow();
+  });
 
   it("expone agregados por bot-versión para E9", async () => {
     const agg = await aggregateByBotVersion(h.db);
