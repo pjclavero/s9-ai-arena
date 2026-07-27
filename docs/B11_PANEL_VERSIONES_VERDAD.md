@@ -94,10 +94,21 @@ de extensiones conocidas de `conformance.test.ts`.
 3. **Afirmación falsa en esta misma documentación.** Decía "ni una etapa pintada" cuando el
    sondeo se agotaba, pero se seguían pintando las filas `pending` bajo el rótulo "estado
    desconocido". Corregido el código (ahora es cierto) y el texto.
+4. **(N1) Una lectura obsoleta borraba el aviso de una posterior fallida.** El aviso de
+   "estado desfasado" lo fijaba el *loader* con un `setState` propio, y el guard `alive` de
+   `useResource` no puede proteger un efecto secundario que el loader hace por su cuenta.
+   Con dos lecturas de `/versions` solapadas que resuelven **fuera de orden** —pulsar
+   «Actualizar estado» dos veces seguidas, justo lo que hace el usuario impaciente que
+   originó el bloque— la lectura B fallaba y mostraba el aviso, y a continuación llegaba la
+   lectura A, ya obsoleta, con éxito, y lo **borraba**: `useResource` descartaba
+   correctamente los datos de A, así que quedaban en pantalla los datos anteriores a ambas
+   lecturas y **sin ningún aviso**. El mismo pecado del bloque con otra cara: conservar los
+   datos previos convertido en callar el fallo. La marca vive ahora **dentro del recurso**
+   (`Resource.staleError`), donde solo la lectura vigente puede ponerla o quitarla.
 
 ## Verificación
 
-- `apps/web/tests/b11-bots-panel-verdad.test.tsx` (24 tests): montan el escenario exacto de
+- `apps/web/tests/b11-bots-panel-verdad.test.tsx` (27 tests): montan el escenario exacto de
   producción (v1..v4) contra un backend falso **con estado mutable** —el worker termina el
   pipeline *después*, como en la realidad, y con latencia de red configurable, porque un
   mock instantáneo esconde el remonte del panel— y comprueban **qué se renderiza**:
@@ -105,8 +116,9 @@ de extensiones conocidas de `conformance.test.ts`.
 - `apps/api/src/b11-version-builds.test.ts` (8 tests): endpoint contra PostgreSQL real,
   incluido un caso con el encolador **real** (`QueueBotManager`) que reproduce el 202
   `queued`+`pending` y demuestra que solo esta lectura revela el final.
-- Doce mutaciones de no-vacuidad demostradas con salida real (ver informe del bloque),
-  entre ellas la que reproduce el síntoma exacto: enfocar v1 en vez de v4.
+- Quince mutaciones de no-vacuidad demostradas con salida real (ver informe del bloque),
+  entre ellas la que reproduce el síntoma exacto (enfocar v1 en vez de v4) y la que devuelve
+  la marca de desfase al loader, fuera del guard `alive`.
 
 ### Lo que NO se ha podido verificar
 

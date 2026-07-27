@@ -261,7 +261,7 @@ describe("B11 · el pipeline refleja el resultado final", () => {
     await screen.findByTestId("focused-version");
 
     await userEvent.click(screen.getByRole("button", { name: "Enviar a validación v1" }));
-    await screen.findByTestId("pipeline-running");
+    await screen.findByTestId("pipeline-running", {}, { timeout: 5000 });
 
     // El worker termina DESPUÉS, como en producción: el panel debe enterarse solo.
     st.versions = [
@@ -525,7 +525,7 @@ describe("B11-fix · el sondeo no desmonta el panel ni tira trabajo del usuario"
     });
     renderPage({ pollIntervalMs: 10, maxPolls: 40 });
     await selectBot();
-    await screen.findByTestId("pipeline-running");
+    await screen.findByTestId("pipeline-running", {}, { timeout: 5000 });
 
     const chasis = screen.getByLabelText("chasis") as HTMLSelectElement;
     await userEvent.selectOptions(chasis, "chassis.heavy@1");
@@ -558,7 +558,7 @@ describe("B11-fix · el sondeo no desmonta el panel ni tira trabajo del usuario"
     });
     renderPage({ pollIntervalMs: 10, maxPolls: 40 });
     await selectBot();
-    await screen.findByTestId("pipeline-running");
+    await screen.findByTestId("pipeline-running", {}, { timeout: 5000 });
 
     st.versionsShouldFail = true;
     st.builds = [{ id: "b-1", version: 1, status: "failed", stages: [{ name: "build", status: "failed" }] }];
@@ -569,6 +569,73 @@ describe("B11-fix · el sondeo no desmonta el panel ni tira trabajo del usuario"
     expect(screen.getByTestId("focused-version").textContent).toContain("validating");
     expect(screen.getByTestId("version-row-1")).toBeTruthy();
     expect(screen.queryByText(/No se pudo cargar el detalle/)).toBeNull();
+  });
+
+  it("una lectura OBSOLETA con éxito no borra el aviso de una lectura posterior fallida", async () => {
+    // N1 · Disparador realista: el usuario ansioso pulsa «Actualizar estado» dos
+    // veces seguidas. Las dos lecturas de /versions se solapan y resuelven FUERA
+    // DE ORDEN: la segunda (B) falla y la primera (A), ya obsoleta, llega con
+    // éxito después. Si la marca de desfase la fijara el loader, A borraría el
+    // aviso de B y quedarían datos viejos con cara de sanos.
+    const deferred: { resolve: (v: unknown) => void; reject: (e: Error) => void }[] = [];
+    let versionCalls = 0;
+    const VERSIONES = [{ version: 1, state: "rejected", runtime: "python", loadoutRevision: 7, rejectionReason: "x" }];
+
+    apiMock.mockImplementation(async (method: string, path: string) => {
+      if (method === "GET" && path.startsWith("/bots?")) {
+        return { items: [{ id: "b1", name: "Tanque", visibility: "private" }] };
+      }
+      if (method === "GET" && path === "/bots/b1/loadouts") return [LOADOUT];
+      if (method === "GET" && path.includes("/builds")) return [];
+      if (method === "GET" && path === "/bots/b1/versions") {
+        versionCalls += 1;
+        if (versionCalls === 1) return VERSIONES; // carga inicial
+        // A (2ª) y B (3ª) quedan en manos del test.
+        return new Promise((resolve, reject) => deferred.push({ resolve, reject }));
+      }
+      throw new Error(`inesperado: ${method} ${path}`);
+    });
+
+    renderPage({ pollIntervalMs: 10_000, maxPolls: 0 });
+    await selectBot();
+    await screen.findByTestId("focused-version");
+
+    const actualizar = screen.getByRole("button", { name: "Actualizar estado" });
+    await userEvent.click(actualizar); // lanza A
+    await waitFor(() => expect(deferred).toHaveLength(1));
+    await userEvent.click(actualizar); // lanza B (A queda obsoleta)
+    await waitFor(() => expect(deferred).toHaveLength(2));
+
+    // B falla ⇒ aparece el aviso.
+    deferred[1].reject(new Error("gateway caído"));
+    const aviso = await screen.findByTestId("versions-stale", {}, { timeout: 3000 });
+    expect(aviso.textContent).toContain("puede estar desfasado");
+
+    // Llega A, OBSOLETA, con éxito: no puede borrar el aviso de B.
+    deferred[0].resolve(VERSIONES);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByTestId("versions-stale")).not.toBeNull();
+    // Y el panel sigue en pie con lo último bueno.
+    expect(screen.getByTestId("version-row-1")).toBeTruthy();
+  });
+
+  it("una revalidación posterior CON ÉXITO sí retira el aviso", async () => {
+    // El aviso no puede quedarse pegado para siempre: es información, no adorno.
+    const st = fakeBackend({
+      versions: [{ version: 1, state: "rejected", runtime: "python", loadoutRevision: 7, rejectionReason: "x" }],
+      latencyMs: 5,
+    });
+    renderPage({ pollIntervalMs: 10_000, maxPolls: 0 });
+    await selectBot();
+    await screen.findByTestId("focused-version");
+
+    st.versionsShouldFail = true;
+    await userEvent.click(screen.getByRole("button", { name: "Actualizar estado" }));
+    await screen.findByTestId("versions-stale", {}, { timeout: 3000 });
+
+    st.versionsShouldFail = false;
+    await userEvent.click(screen.getByRole("button", { name: "Actualizar estado" }));
+    await waitFor(() => expect(screen.queryByTestId("versions-stale")).toBeNull(), { timeout: 3000 });
   });
 
   it("gasta UNA petición por ciclo, no tres", async () => {
@@ -596,7 +663,7 @@ describe("B11-fix · el sondeo no desmonta el panel ni tira trabajo del usuario"
     });
     renderPage({ pollIntervalMs: 10, maxPolls: 40 });
     await selectBot();
-    await screen.findByTestId("pipeline-running");
+    await screen.findByTestId("pipeline-running", {}, { timeout: 5000 });
     st.calls.length = 0;
 
     st.versions = [

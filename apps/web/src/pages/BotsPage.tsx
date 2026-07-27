@@ -148,25 +148,21 @@ export function BotsPage(props: {
   const [error, setError] = useState("");
   const [polls, setPolls] = useState(0);
   const [pollExhausted, setPollExhausted] = useState(false);
-  // true si la última revalidación silenciosa de versiones falló: lo que se ve
-  // puede estar desfasado y hay que decirlo, no callarlo.
-  const [versionsStale, setVersionsStale] = useState(false);
 
   // ---------------------------------------------------------------- recursos
   // Tres recursos INDEPENDIENTES a propósito: el sondeo solo toca el de builds
   // (y el de versiones cuando el build termina). El de loadouts, que es el que
   // alimenta el editor, no se sondea nunca.
-  const [versionsRes, reloadVersions] = useResource<BotVersion[]>(async () => {
-    if (!selected) return [];
-    try {
-      const rows = await api<BotVersion[]>("GET", `/bots/${selected.id}/versions`);
-      setVersionsStale(false);
-      return rows;
-    } catch (e) {
-      setVersionsStale(true);
-      throw e;
-    }
-  }, [selected?.id]);
+  const [versionsRes, reloadVersions] = useResource<BotVersion[]>(
+    async () => (selected ? api<BotVersion[]>("GET", `/bots/${selected.id}/versions`) : []),
+    [selected?.id],
+  );
+  // N1: la marca de "desfasado" la lleva el PROPIO recurso, no un estado que
+  // fije el loader. Marcarla desde el loader es una carrera: con dos lecturas
+  // solapadas, la vieja resolvía con éxito después de que la nueva fallara y
+  // borraba el aviso, dejando datos viejos con cara de sanos. Aquí solo la
+  // lectura vigente (la que `useResource` considera viva) puede tocarla.
+  const versionsStale = versionsRes.status === "ready" && versionsRes.staleError !== undefined;
 
   const [loadoutsRes, reloadLoadouts] = useResource<Loadout[]>(
     async () => (selected ? api<Loadout[]>("GET", `/bots/${selected.id}/loadouts`) : []),

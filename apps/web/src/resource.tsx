@@ -12,11 +12,25 @@
  * periódico en segundo plano. Con `silent` se conservan los datos previos
  * mientras llega la respuesta: se actualizan los datos, no se desmonta nada.
  * Un fallo durante una revalidación silenciosa tampoco borra lo que ya había:
- * se mantiene lo último bueno (el llamante decide cómo avisar).
+ * se mantiene lo último bueno Y se marca en `staleError`, para que conservar los
+ * datos previos no se convierta en callar el fallo.
+ *
+ * B11 (N1) · `staleError` vive DENTRO del recurso a propósito. Antes el panel lo
+ * llevaba en un estado propio que fijaba el loader, y eso es una carrera: el
+ * `alive` de este hook protege sus `setState`, pero no puede proteger un efecto
+ * secundario que el loader haga por su cuenta. Con dos lecturas solapadas que
+ * resuelven fuera de orden (dos pulsaciones seguidas de «Actualizar estado»), la
+ * vieja llegaba con éxito DESPUÉS de que la nueva fallara y borraba el aviso:
+ * quedaban datos potencialmente desfasados con cara de sanos. Aquí solo la
+ * lectura vigente puede poner o quitar la marca.
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
-export type Resource<T> = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; data: T };
+export type Resource<T> =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  /** `staleError`: la última revalidación falló; `data` es lo último bueno. */
+  | { status: "ready"; data: T; staleError?: string };
 
 export interface ReloadOptions {
   /** true = revalidar sin volver a "loading" (no desmonta el subárbol). */
@@ -52,14 +66,20 @@ export function useResource<T>(
     if (!silent) setState({ status: "loading" });
     loader().then(
       (data) => {
+        // `alive` es lo ÚNICO que decide: una lectura obsoleta no toca nada, ni
+        // los datos ni la marca de desfase.
         if (alive) setState({ status: "ready", data });
       },
       (e: unknown) => {
         if (!alive) return;
         const message = (e as Error).message ?? "error desconocido";
-        // En silencioso se conserva lo último bueno; solo se degrada a "error"
-        // si no había nada que conservar.
-        setState((prev) => (silent && prev.status === "ready" ? prev : { status: "error", message }));
+        // En silencioso se conserva lo último bueno y se MARCA el desfase; solo
+        // se degrada a "error" si no había nada que conservar.
+        setState((prev) =>
+          silent && prev.status === "ready"
+            ? { status: "ready", data: prev.data, staleError: message }
+            : { status: "error", message },
+        );
       },
     );
     return () => {
