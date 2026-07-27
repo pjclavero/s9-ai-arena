@@ -40,11 +40,15 @@ RUN mkdir -p /data/replays/video && chown -R streamer:streamer /data
 # /data-dir-entrypoint.sh (su-exec), igual que en la imagen genérica: hace falta
 # arrancar como root un instante para poder ajustar la propiedad del directorio
 # de grabación cuando el volumen se recrea.
+# HOME EXPLÍCITO: `su-exec` no cambia el entorno, así que sin esto el proceso se
+# quedaría con HOME=/root —que `streamer` no puede escribir— en vez del que
+# ponía `USER streamer`.
 ENV DISPLAY=:99 \
     CHROMIUM_BIN=/usr/bin/chromium-browser \
     FFMPEG_BIN=/usr/bin/ffmpeg \
     SERVICE_ENTRY=/app/apps/streamer/src/main.ts \
-    ARENA_SERVICE_USER=streamer
+    ARENA_SERVICE_USER=streamer \
+    HOME=/home/streamer
 
 # Prueba VIVA dentro de la imagen (lección del proyecto: "funciona en el
 # monorepo, falla en la imagen"). Comprueba de verdad, en cada build de la CI,
@@ -54,6 +58,7 @@ ENV DISPLAY=:99 \
 # build falla aquí en vez de fallar callado en producción.
 RUN ARENA_DATA_DIRS=/data/replays/video /data-dir-entrypoint.sh sh -euc '\
       test "$(id -un)" = streamer || { echo "el entrypoint no bajo a streamer: $(id -un)"; exit 1; }; \
+      test -w "$HOME" || { echo "HOME=$HOME no es escribible por streamer"; exit 1; }; \
       touch /data/replays/video/.build-probe && rm /data/replays/video/.build-probe; \
       mkdir -p /tmp/probe-ro && chmod 555 /tmp/probe-ro; \
       if salida=$(STREAM_MODE=record RECORD_DIR=/tmp/probe-ro tsx /app/apps/streamer/src/main.ts 2>&1); then \

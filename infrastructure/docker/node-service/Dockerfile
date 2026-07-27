@@ -49,6 +49,15 @@ RUN mkdir -p /data/replays && chown node:node /data /data/replays
 COPY infrastructure/docker/node-service/entrypoint.sh /entrypoint.sh
 RUN chmod 0755 /entrypoint.sh
 
+# B13 · HOME EXPLÍCITO. `su-exec` (a diferencia de `su -`) NO cambia el entorno:
+# al bajar de root a `node` el proceso se quedaba con HOME=/root, que `node` no
+# puede escribir. El CMD arranca con `npx tsx`, y npm/npx escriben en $HOME
+# (~/.npm, ~/.npm/_npx): con HOME=/root eso son avisos EACCES en el mejor caso.
+# Con `USER node` (antes de B7) HOME lo ponía Docker; al mover el drop al
+# entrypoint hay que fijarlo aquí a mano. La prueba de abajo lo comprueba
+# escribiendo de verdad en $HOME como `node`.
+ENV HOME=/home/node
+
 # Pruebas vivas DENTRO de la imagen, no en el monorepo (lección del proyecto:
 # "funciona en el repo, falla en la imagen"). Se ejecutan en CADA build de la
 # etapa 5 de la CI; si algo de esto se rompiera, el build falla aquí en vez de
@@ -59,6 +68,7 @@ RUN chmod 0755 /entrypoint.sh
 #     directorio de datos.
 RUN ARENA_DATA_DIRS=/data/replays /entrypoint.sh sh -euc '\
       test "$(id -un)" = node || { echo "el entrypoint no bajó a node: $(id -un)"; exit 1; }; \
+      test -w "$HOME" || { echo "HOME=$HOME no es escribible por node (npx escribe ahí)"; exit 1; }; \
       touch /data/replays/.build-probe && rm /data/replays/.build-probe' \
  && test "$(stat -c %u:%g /data/replays)" = "1000:1000"
 

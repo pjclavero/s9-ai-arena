@@ -68,6 +68,20 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
+      - name: Espacios de nombres de usuario sin privilegios (los exige el guard del entrypoint)
+        # B13 · infrastructure/tests/{replays-volume,b13-data-volumes}.test.ts
+        # ejecutan el entrypoint COMO uid 0 dentro de `unshare -rm` + chroot: es
+        # la única forma de probar de verdad el guard contra enlaces simbólicos
+        # sin privilegios reales. En las imágenes ubuntu-24.04 de los runners,
+        # AppArmor bloquea los userns sin privilegios, así que esos tests salían
+        # rojos o verdes SEGÚN QUÉ RUNNER TOCARA (el PR #86 pasó; este falló con
+        # el mismo código). Se habilita explícitamente y se COMPRUEBA: si aquí no
+        # hay userns, el job muere con esta causa a la vista en vez de dejar el
+        # guard sin probar. Es el runner efímero de la CI, no un servidor.
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          unshare -rm /bin/true
+          echo "userns sin privilegios: disponible"
       - name: Unitarias (apps, packages e infrastructure) con cobertura
         # R2.1 (ERR-GES-05): cobertura V8 sobre las unitarias; el informe HTML
         # y el resumen se publican como artefacto de CI.
