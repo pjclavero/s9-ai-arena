@@ -188,16 +188,29 @@ Montajes del volumen y por qué (verificado contra el código, no supuesto):
 1. **`streamer`** (escribe vídeo en `/data/replays/video` en modo `record`):
    comparte ahora el **mismo** entrypoint que la imagen genérica
    (`infrastructure/docker/node-service/entrypoint.sh`, parametrizado con
-   `ARENA_SERVICE_USER=streamer`) y declara `ARENA_DATA_DIRS=/data/replays/video`,
+   `ARENA_SERVICE_USER=streamer`) y declara **`ARENA_DATA_DIRS=/data/replays`**,
    además de hacer el preflight de escritura al arrancar. Antes podía repetir el
    fallo de VM108 con el agravante de que quien escribe es FFmpeg: moría en bucle
    mientras `/healthz` seguía respondiendo 200.
+   **Por qué `/data/replays` y no `/data/replays/video`**: la invariante que B7
+   escribió en la cabecera de `entrypoint.sh` prohíbe rutas de más de un
+   componente dentro de un volumen compartido (el componente intermedio sería
+   escribible por otro contenedor durante la ventana entre validar y hacer
+   `chown`, y `chown -h` no cubre los intermedios). B13 **cierra** esa ventana en
+   vez de ensancharla: el entrypoint ahora **rechaza** las rutas profundas y el
+   subdirectorio `video/` lo crea el propio servicio, sin privilegios, en su
+   preflight. Funciona porque `streamer` es uid:gid `1000:1000` igual que `node`,
+   y el build de la imagen lo comprueba con `stat`.
 2. **`map-service`**: verificado que **no escribe** en `/data/maps` — su almacén
    es en memoria (`apps/map-service/src/service.ts`). **No** se le añade
    preflight; hay un centinela en `infrastructure/tests/b13-data-volumes.test.ts`
    que se pone rojo el día que empiece a escribir. Su montaje rw de `arena_maps`
-   sigue ahí y **hoy no lo usa nadie** (queda anotado para quien implemente el
-   almacenamiento real de mapas).
+   sigue ahí y **hoy no lo usa nadie**: por el mismo criterio con el que se
+   retiraron los tres de `arena-engine`, sobra — **no se retira en B13** porque
+   `map-service` es el dueño declarado de ese volumen y su almacenamiento real
+   está pendiente (E10); queda anotado para quien lo implemente. Aviso sobre el
+   centinela: solo ve rutas literales entre comillas, así que una escritura
+   construida desde una variable de entorno le pasaría inadvertida.
 3. **`arena-engine`**: montajes retirados (ver arriba). `arena_logs` queda
    declarado pero **sin montar en ningún servicio**: los logs salen por stdout.
 4. **CI**: `streamer`, `backup` y `bot-runtime-python` no las construía ningún

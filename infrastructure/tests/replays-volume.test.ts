@@ -31,6 +31,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
+import { instruccionesDockerfile } from "./fixtures/dockerfile-instrucciones.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const COMPOSE_PATH = join(here, "..", "docker-compose.yml");
@@ -360,29 +361,10 @@ function correrEnNamespace(dirs: string, escenario: "normal" | "symlink" | "ance
 
 const nsDisponible = correrEnNamespace("/data/replays /data/logs", "normal").disponible;
 
-/**
- * Devuelve las instrucciones que Docker ejecuta de verdad: descarta comentarios
- * y líneas en blanco, y une las continuaciones de línea (`\`) en una sola
- * instrucción. No interpreta nada más: sólo hace falta distinguir "esto se
- * ejecuta" de "esto es texto muerto".
- */
-function instruccionesDockerfile(df: string): string[] {
-  const instrucciones: string[] = [];
-  let acumulada: string | null = null;
-  for (const cruda of df.split("\n")) {
-    const linea = cruda.trimEnd();
-    if (acumulada === null && (linea.trim() === "" || linea.trim().startsWith("#"))) continue;
-    const continua = linea.endsWith("\\");
-    const cuerpo = continua ? linea.slice(0, -1) : linea;
-    acumulada = acumulada === null ? cuerpo : `${acumulada}\n${cuerpo}`;
-    if (!continua) {
-      instrucciones.push(acumulada);
-      acumulada = null;
-    }
-  }
-  if (acumulada !== null) instrucciones.push(acumulada);
-  return instrucciones;
-}
+// B13 · La lectura por instrucciones (D1) vive ahora en fixtures/ porque la
+// comparte el guard-rail de la prueba viva de la imagen del streamer
+// (infrastructure/tests/b13-data-volumes.test.ts). Mismo criterio, una sola
+// copia: si se relajara, se romperían los dos.
 
 /**
  * D1 · ¿El Dockerfile EJECUTA las evasiones O1-O4 dentro de la imagen?

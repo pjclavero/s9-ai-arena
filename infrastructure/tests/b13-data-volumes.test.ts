@@ -29,6 +29,9 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
+import { buildFfmpegArgs } from "../../apps/streamer/src/ffmpeg.js";
+import { loadConfig } from "../../apps/streamer/src/config.js";
+import { instruccionesDockerfile, instruccionesRun } from "./fixtures/dockerfile-instrucciones.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO = join(here, "..", "..");
@@ -75,38 +78,76 @@ function fuentesQueTocanData(appDir: string): string[] {
   return fuentes(join(REPO, appDir)).filter((f) => /["'`]\/data\//.test(readFileSync(f, "utf8")));
 }
 
+const DF_STREAMER = readFileSync(join(here, "..", "docker", "streamer", "Dockerfile"), "utf8");
+
+/**
+ * O2 · ¿La imagen del streamer EJECUTA su prueba viva dentro del build?
+ *
+ * Mismo guard-rail que D1 puso para node-service, por el mismo motivo: aquí no
+ * hay demonio de Docker, así que la única verificación viva del entrypoint
+ * encadenado y del preflight es un `RUN` del Dockerfile — y D1 demostró que un
+ * `RUN` comentado deja esa verificación muerta EN SILENCIO y en verde. Se leen
+ * instrucciones reales (fixtures/dockerfile-instrucciones.ts), no texto.
+ */
+export function elDockerfileDelStreamerEjecutaSuPrueba(df: string): boolean {
+  const run = instruccionesRun(df);
+  return (
+    /test "\$\(id -un\)" = streamer/.test(run) && // baja al usuario correcto
+    /mkdir -p \/data\/replays\/video/.test(run) && // se crea el subdirectorio SIN privilegios
+    /stat -c %u:%g \/data\/replays\/video/.test(run) && // y nace con uid:gid 1000
+    /tsx \/app\/apps\/streamer\/src\/main\.ts/.test(run) && // el preflight se ejecuta de verdad
+    /ERR_MODULE_NOT_FOUND/.test(run) // y se comprueba que el import resuelve
+  );
+}
+
 // ─────────────────── 1 · streamer: protegido de verdad ───────────────────
 
 describe("B13 · streamer (escribe vídeo en /data/replays/video)", () => {
   const streamer = services.streamer;
 
-  it("monta arena_replays en escritura y declara ARENA_DATA_DIRS igual a RECORD_DIR", () => {
+  /** Entorno del Compose forzado a modo grabación (el que escribe en disco). */
+  const entornoRecord = (extra: Record<string, string> = {}) =>
+    ({ ...streamer.environment, STREAM_MODE: "record", ...extra }) as Record<string, string>;
+
+  it("monta arena_replays en escritura y declara ARENA_DATA_DIRS sobre ese montaje", () => {
     const m = montajes(streamer).find((x) => x.source === "arena_replays");
     expect(m, "el modo record escribe en el volumen: debe montarlo").toBeDefined();
     expect(m!.readOnly, "el streamer escribe: no puede ser :ro").toBe(false);
-    expect(streamer.environment.ARENA_DATA_DIRS).toBe(streamer.environment.RECORD_DIR);
+    expect(streamer.environment.ARENA_DATA_DIRS).toBe(m!.target);
   });
 
-  it("el directorio que declara cuelga del punto de montaje real (si no, el chown no sirve de nada)", () => {
-    const m = montajes(streamer).find((x) => x.source === "arena_replays")!;
-    expect(String(streamer.environment.RECORD_DIR).startsWith(`${m.target}/`)).toBe(true);
+  it("con el entorno REAL del Compose, ffmpeg escribiría dentro del directorio protegido", () => {
+    // Comportamiento, no cadenas: se carga la configuración con el entorno tal
+    // cual lo declara el Compose y se llama al CONSTRUCTOR REAL de argumentos de
+    // ffmpeg. El último argumento es el fichero que abre el proceso en
+    // producción; si cayera fuera del directorio cuya propiedad garantiza el
+    // entrypoint, el mecanismo no serviría de nada.
+    const destino = buildFfmpegArgs(loadConfig(entornoRecord()), null).args.at(-1)!;
+    const protegido = String(streamer.environment.ARENA_DATA_DIRS);
+    expect(destino.startsWith(`${protegido}/`), `ffmpeg escribiría en ${destino}, fuera de ${protegido}`).toBe(true);
+    expect(destino.endsWith(".mp4")).toBe(true);
   });
 
-  it("el código que ELIGE el fichero de salida usa ese mismo directorio", () => {
-    // Comportamiento, no cadena suelta: se llama al constructor real de argumentos
-    // de ffmpeg con la config del Compose y se mira dónde acabaría el .mp4.
-    const cfgFuente = readFileSync(join(REPO, "apps", "streamer", "src", "config.ts"), "utf8");
-    expect(cfgFuente).toContain(`recordDir: "${streamer.environment.RECORD_DIR}"`);
+  it("y ese destino está bajo RECORD_DIR, el subdirectorio que el servicio se crea solo", () => {
+    const destino = buildFfmpegArgs(loadConfig(entornoRecord()), null).args.at(-1)!;
+    expect(destino.startsWith(`${streamer.environment.RECORD_DIR}/`)).toBe(true);
+  });
+
+  it("el test anterior no es vacuo: con otro RECORD_DIR el destino se sale del volumen", () => {
+    const destino = buildFfmpegArgs(loadConfig(entornoRecord({ RECORD_DIR: "/tmp/otro-sitio" })), null).args.at(-1)!;
+    expect(destino.startsWith("/tmp/otro-sitio/")).toBe(true);
+    expect(destino.startsWith(`${streamer.environment.ARENA_DATA_DIRS}/`)).toBe(false);
   });
 
   it("su imagen usa el MISMO entrypoint de datos que la genérica, no uno paralelo", () => {
-    const df = readFileSync(join(here, "..", "docker", "streamer", "Dockerfile"), "utf8");
-    expect(df, "el streamer debe copiar el entrypoint compartido").toContain(
+    // Se leen INSTRUCCIONES, no texto (lección D1): un COPY comentado no vale.
+    const vivas = instruccionesDockerfile(DF_STREAMER).join("\n");
+    expect(vivas, "el streamer debe copiar el entrypoint compartido").toContain(
       "COPY infrastructure/docker/node-service/entrypoint.sh /data-dir-entrypoint.sh",
     );
-    expect(df).toContain('ENTRYPOINT ["/data-dir-entrypoint.sh", "/entrypoint.sh"]');
-    expect(df, "sin su-exec el entrypoint no puede bajar de root").toMatch(/apk add[^\n]*su-exec/);
-    expect(df, "el preflight vive en packages/data-dir y DEBE entrar en la imagen").toContain(
+    expect(vivas).toContain('ENTRYPOINT ["/data-dir-entrypoint.sh", "/entrypoint.sh"]');
+    expect(vivas, "sin su-exec el entrypoint no puede bajar de root").toMatch(/apk add[^\n]*su-exec/);
+    expect(vivas, "el preflight vive en packages/data-dir y DEBE entrar en la imagen").toContain(
       "COPY packages/data-dir /app/packages/data-dir",
     );
   });
@@ -115,6 +156,81 @@ describe("B13 · streamer (escribe vídeo en /data/replays/video)", () => {
     const main = readFileSync(join(REPO, "apps", "streamer", "src", "main.ts"), "utf8");
     expect(main).toContain('from "../../../packages/data-dir/index.js"');
     expect(main).toMatch(/requireWritableDataDir\("streamer", config\.recordDir\)/);
+  });
+});
+
+// ───────── O2 · la prueba viva de la imagen del streamer no puede morir sola ─────────
+
+describe("B13/O2 · guard-rail de la prueba viva del streamer (mismo criterio que D1)", () => {
+  it("el Dockerfile del streamer EJECUTA su prueba dentro de la imagen", () => {
+    // Aquí no hay demonio Docker: esta es una comprobación de COBERTURA (¿lo
+    // prueba alguien?). El comportamiento lo prueba el build de la etapa 5.
+    expect(
+      elDockerfileDelStreamerEjecutaSuPrueba(DF_STREAMER),
+      "sin ese RUN, el entrypoint encadenado y el preflight del streamer no los verifica NADIE",
+    ).toBe(true);
+  });
+
+  it("un Dockerfile comentado NO puede dar la prueba por hecha", () => {
+    const comentado = DF_STREAMER.split("\n")
+      .map((l) => (l.trim() === "" ? l : `# ${l}`))
+      .join("\n");
+    // El texto crudo sigue conteniendo todo: así se dejaría engañar una
+    // comprobación sobre el fichero en bruto (el defecto que destapó D1).
+    expect(/tsx \/app\/apps\/streamer\/src\/main\.ts/.test(comentado)).toBe(true);
+    // Leyendo instrucciones reales, no queda nada vivo.
+    expect(elDockerfileDelStreamerEjecutaSuPrueba(comentado)).toBe(false);
+  });
+
+  it("borrar solo el RUN de la prueba (dejando el resto) también se detecta", () => {
+    const sinPrueba = DF_STREAMER.replace(
+      /RUN ARENA_DATA_DIRS=\/data\/replays \/data-dir-entrypoint\.sh[\s\S]*?\n\n/,
+      "",
+    );
+    expect(sinPrueba).not.toBe(DF_STREAMER);
+    expect(elDockerfileDelStreamerEjecutaSuPrueba(sinPrueba)).toBe(false);
+  });
+});
+
+// ─────── BL-2 · la invariante de rutas profundas, fijada por un test ───────
+
+describe("B13/BL-2 · ARENA_DATA_DIRS nunca declara rutas profundas", () => {
+  // Decisión consciente (ver cabecera de infrastructure/docker/node-service/
+  // entrypoint.sh): entre validar un componente y hacerle mkdir/chown hay una
+  // ventana; con rutas de más de un componente dentro de un volumen compartido,
+  // el componente intermedio es escribible por otro contenedor y `chown -h` no
+  // lo cubre. El Supervisor no consiguió explotarla (600 intentos, 0 ganados),
+  // pero eso es ausencia de prueba, no prueba de ausencia: en vez de documentar
+  // la ventana, se cierra. El subdirectorio lo crea el servicio sin privilegios.
+  const declaraciones = Object.entries(services).flatMap(([name, def]) =>
+    String(def.environment?.ARENA_DATA_DIRS ?? "")
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((d) => [name, d] as const),
+  );
+
+  it("hay declaraciones que comprobar (si no, este bloque no probaría nada)", () => {
+    expect(declaraciones.length).toBeGreaterThan(0);
+  });
+
+  it("toda ruta declarada es /data/<un-solo-componente>", () => {
+    for (const [name, d] of declaraciones) {
+      const componentes = d.split("/").filter(Boolean);
+      expect(componentes[0], `${name}: ${d}`).toBe("data");
+      expect(
+        componentes.length,
+        `${name} declara la ruta profunda ${d}: cierra antes la ventana de la carrera (ver INVARIANTE en entrypoint.sh) o que el servicio se cree el subdirectorio él mismo`,
+      ).toBe(2);
+    }
+  });
+
+  it("el streamer escribe MÁS PROFUNDO de lo que declara, y esa diferencia es deliberada", () => {
+    // Es el caso que motiva la invariante: RECORD_DIR es de dos componentes y
+    // ARENA_DATA_DIRS de uno. Quien iguale los dos valores rompe este test.
+    const streamer = services.streamer;
+    expect(String(streamer.environment.RECORD_DIR).split("/").filter(Boolean).length).toBe(3);
+    expect(String(streamer.environment.ARENA_DATA_DIRS).split("/").filter(Boolean).length).toBe(2);
+    expect(String(streamer.environment.RECORD_DIR).startsWith(`${streamer.environment.ARENA_DATA_DIRS}/`)).toBe(true);
   });
 });
 
@@ -203,10 +319,10 @@ describe("B13 · el entrypoint compartido baja al usuario correcto de CADA image
     else expect(typeof nsDisponible).toBe("boolean");
   });
 
-  it.runIf(nsDisponible)("con ARENA_SERVICE_USER=streamer chownea el directorio de vídeo y baja a streamer", () => {
-    const r = correrEnNamespace("/data/replays/video", "normal", "streamer");
+  it.runIf(nsDisponible)("con ARENA_SERVICE_USER=streamer chownea el volumen y baja a streamer", () => {
+    const r = correrEnNamespace("/data/replays", "normal", "streamer");
     expect(r.rc, r.salida).toBe(0);
-    expect(r.chowns).toEqual(["CHOWN /data/replays/video -> /data/replays/video"]);
+    expect(r.chowns).toEqual(["CHOWN /data/replays -> /data/replays"]);
     expect(r.suexec, "el proceso del streamer NO puede acabar corriendo como node ni como root").toEqual([
       "SU-EXEC streamer:streamer",
     ]);
@@ -235,6 +351,22 @@ describe("B13 · el entrypoint compartido baja al usuario correcto de CADA image
     expect(r.chowns).toEqual([]);
     expect(r.ejecutado).toBe(false);
     expect(r.salida).toMatch(/no es un nombre de usuario valido/);
+  });
+
+  it.runIf(nsDisponible)("BL-2 · una ruta profunda se RECHAZA (la invariante es ejecutable, no un párrafo)", () => {
+    // /data/replays/video existe y no es ningún enlace: se rechaza SOLO por ser
+    // profunda. Es el valor que este bloque estuvo a punto de declarar.
+    const r = correrEnNamespace("/data/replays/video", "normal", "streamer");
+    expect(r.rc, r.salida).toBe(1);
+    expect(r.chowns, "no se toca nada").toEqual([]);
+    expect(r.ejecutado).toBe(false);
+    expect(r.salida).toMatch(/ruta profunda/);
+  });
+
+  it.runIf(nsDisponible)("BL-2 · y la ruta de un componente que sí se declara sigue aceptándose", () => {
+    const r = correrEnNamespace("/data/replays", "normal", "streamer");
+    expect(r.rc, r.salida).toBe(0);
+    expect(r.chowns).toEqual(["CHOWN /data/replays -> /data/replays"]);
   });
 
   it.runIf(nsDisponible)("el guard de rutas sigue vivo con el usuario del streamer (no se relajó nada)", () => {

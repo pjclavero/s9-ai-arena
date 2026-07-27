@@ -52,14 +52,19 @@ ENV DISPLAY=:99 \
 
 # Prueba VIVA dentro de la imagen (lección del proyecto: "funciona en el
 # monorepo, falla en la imagen"). Comprueba de verdad, en cada build de la CI,
-# que (1) el entrypoint de datos baja a `streamer`, (2) tras el chown acotado el
-# usuario puede ESCRIBIR en el directorio de grabación, y (3) el preflight de
-# Node RESUELVE su import desde la ruta real de la imagen. Si algo se rompe, el
-# build falla aquí en vez de fallar callado en producción.
-RUN ARENA_DATA_DIRS=/data/replays/video /data-dir-entrypoint.sh sh -euc '\
+# que (1) el entrypoint de datos baja a `streamer` con el HOME correcto, (2) tras
+# el chown acotado del volumen el usuario puede CREARSE `video/` y escribir
+# dentro —que es justo lo que sustituye a declarar la ruta profunda—, y (3) el
+# preflight de Node RESUELVE su import desde la ruta real de la imagen y aborta
+# de verdad. Si algo se rompe, el build falla aquí en vez de fallar callado en
+# producción. `ARENA_DATA_DIRS` es el MISMO valor que declara el Compose.
+RUN ARENA_DATA_DIRS=/data/replays /data-dir-entrypoint.sh sh -euc '\
       test "$(id -un)" = streamer || { echo "el entrypoint no bajo a streamer: $(id -un)"; exit 1; }; \
       test -w "$HOME" || { echo "HOME=$HOME no es escribible por streamer"; exit 1; }; \
+      rm -rf /data/replays/video; \
+      mkdir -p /data/replays/video || { echo "streamer no puede crearse su subdirectorio en el volumen"; exit 1; }; \
       touch /data/replays/video/.build-probe && rm /data/replays/video/.build-probe; \
+      test "$(stat -c %u:%g /data/replays/video)" = "1000:1000" || { echo "video/ no nace con uid:gid 1000"; exit 1; }; \
       mkdir -p /tmp/probe-ro && chmod 555 /tmp/probe-ro; \
       if salida=$(STREAM_MODE=record RECORD_DIR=/tmp/probe-ro tsx /app/apps/streamer/src/main.ts 2>&1); then \
         echo "el preflight NO abortó con un directorio no escribible: $salida"; exit 1; \
@@ -70,6 +75,6 @@ RUN ARENA_DATA_DIRS=/data/replays/video /data-dir-entrypoint.sh sh -euc '\
         *) echo "sin diagnóstico accionable del preflight: $salida"; exit 1 ;; \
       esac; \
       rmdir /tmp/probe-ro' \
- && test "$(stat -c %u:%g /data/replays/video)" = "1000:1000"
+ && test "$(stat -c %u:%g /data/replays)" = "1000:1000"
 
 ENTRYPOINT ["/data-dir-entrypoint.sh", "/entrypoint.sh"]
