@@ -225,6 +225,36 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
   );
 
   // -------------------------------------------------------------- versiones
+  /**
+   * B11 · Extensión: builds de UNA versión concreta, del más reciente al más
+   * antiguo. El contrato solo tenía GET /builds/{buildId}, cuyo id únicamente
+   * conoce quien acaba de hacer submit: tras un F5 el panel se quedaba SIN
+   * forma de saber en qué estado terminó el pipeline y pintaba para siempre
+   * "queued · todas las etapas pending". Misma visibilidad que el bot y misma
+   * regla de logs (x-private) que getBuild.
+   */
+  defineExtension(
+    router,
+    {
+      operationId: "listBotVersionBuilds",
+      method: "get",
+      path: "/bots/{botId}/versions/{version}/builds",
+      minRole: "user",
+    },
+    async (req, res) => {
+      const bot = await getVisibleBot(db, req.auth, String(req.params.botId));
+      const v = await getVersionOr404(db, bot.id as string, String(req.params.version));
+      const includeLogs = req.auth!.userId === bot.owner_id || isStaff(req.auth);
+      const rows = await db("builds")
+        .where({ bot_id: bot.id, version: v.version })
+        .orderBy([
+          { column: "created_at", order: "desc" },
+          { column: "id", order: "desc" },
+        ]);
+      res.json(rows.map((b) => buildToJson(b, { includeLogs })));
+    },
+  );
+
   defineOperation(router, "listBotVersions", async (req, res) => {
     const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
     const versions = await db("bot_versions").where({ bot_id: bot.id }).orderBy("version", "asc");
@@ -305,7 +335,12 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
       const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
       assertOwner(req.auth, bot);
       const v = await getVersionOr404(db, bot.id as string, pathParam(req, "version"));
-      await applyTransition(db, req.auth, v, "submit", {}, req.correlationId);
+      // B11 · `submit` viene de draft O de rejected (cap. 17.1). Al reenviar una
+      // versión rechazada el motivo del rechazo ANTERIOR se quedaba en la fila
+      // (solo se limpiaba al pasar a `validated`): quedaba una versión
+      // `validating` arrastrando el error de su intento previo, y cualquier
+      // pantalla que lo pintase mentía. El dato sucio se limpia en el origen.
+      await applyTransition(db, req.auth, v, "submit", { rejection_reason: null }, req.correlationId);
 
       const [build] = await db("builds")
         .insert({
