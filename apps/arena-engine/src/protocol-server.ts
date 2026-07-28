@@ -38,6 +38,7 @@ import {
 import { Battle, type BattleResult, type BotAgent } from "./sim/battle.js";
 import { replayFromBattle, type Replay } from "./replay.js";
 import deps from "./engine-deps.json" with { type: "json" };
+import { assertBotIdDelCable } from "../../../packages/protocol/bot-handle.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCHEMA_DIR = join(__dirname, "..", "..", "..", "packages", "protocol", "schemas");
@@ -241,6 +242,11 @@ export class ProtocolServer {
     this.handshakeTimeoutMs = opts.handshakeTimeoutMs ?? 5000;
 
     for (const e of opts.expected) {
+      // issue #92 · Falla RUIDOSAMENTE aquí si el botId no puede viajar por el
+      // cable. Antes, un `expected` no conforme (uuid de la BD, o un argumento
+      // suelto de local-sim) no daba error: el motor descartaba el HELLO en
+      // silencio y lo único visible era un timeout de conexión 15 s después.
+      assertBotIdDelCable(e.botId, "ProtocolServer.expected");
       this.expectedByKey.set(`${e.botId}:${e.battleToken}`, e);
       this.expectedByBotId.set(e.botId, e);
     }

@@ -12,10 +12,14 @@
  * que YA cumplen el patrón. El bug solo aparece con identificadores como los
  * que produce la base de datos de verdad. Este test usa uuids reales.
  *
- * El bot en proceso es deliberadamente ESTRICTO: valida su propio HELLO contra
- * el esquema publicado antes de enviarlo, igual que hace el SDK. Así el test
- * falla por la razón correcta —el asa no es conforme— y no por un timeout
- * genérico del que no se aprende nada.
+ * El bot en proceso valida su propio HELLO contra el esquema publicado antes de
+ * enviarlo. Ojo: eso NO es lo que hace el SDK — ni el de JavaScript
+ * (`sdks/javascript/src/index.ts`) ni el de Python (`sdks/python/arena_sdk/bot.py`)
+ * validan nada antes de emitir. Es un extra de este test, y con la corrección
+ * revertida el fallo que se observa PRIMERO no es ese `expect`, sino
+ * `whenAllConnected: solo 0/2 bots conectaron`, porque `runContainerBattle`
+ * rechaza antes. La comprobación estricta sobrevive como red de diagnóstico
+ * para el caso en que alguien alargue ese timeout, no como la señal principal.
  */
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
@@ -117,6 +121,23 @@ describe("issue #92 · el identificador del cable cumple el contrato del HELLO",
 
     // El identificador que el sistema maneja de verdad: así estaba el cable.
     expect(valida({ ...base, botId: randomUUID() })).toBe(false);
+  });
+
+  it("el ProtocolServer RECHAZA un expected no conforme en vez de callarse (obs. 2 del supervisor)", async () => {
+    // Cierra la CLASE, no solo el caso: local-sim.ts y el simulador del SDK
+    // construyen `expected` con identificadores sueltos. Antes eso no daba
+    // error; solo un timeout de conexión 15 s más tarde, sin diagnóstico.
+    const { ProtocolServer } = await import("../../arena-engine/src/protocol-server.js");
+    const battle = { getVehicle: () => undefined } as never;
+    expect(
+      () =>
+        new ProtocolServer({
+          battle,
+          catalogVersion: "x",
+          expected: [{ botId: randomUUID(), vehicleId: "veh_1", battleToken: randomUUID() }],
+          port: 0,
+        }),
+    ).toThrow(/no cumple el patrón del HELLO/);
   });
 
   it("una batalla con botIds uuid (los REALES de la BD) llega a completarse", async () => {

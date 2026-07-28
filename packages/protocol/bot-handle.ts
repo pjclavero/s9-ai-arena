@@ -27,8 +27,45 @@
  * PARTICIPANTE. Adivinar `bot_p2` no sirve de nada sin su token.
  */
 
-/** El patrón exacto de `hello.schema.json`. Ver `assertHandleConforme`. */
-const PATRON_HELLO = /^bot_[0-9a-zA-Z]{1,24}$/;
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+/**
+ * El patrón se LEE del esquema publicado; no se copia aquí.
+ *
+ * Una copia sería una segunda fuente de verdad que puede desincronizarse en
+ * silencio del contrato — exactamente la forma de fallo que este fichero
+ * existe para evitar. Si el esquema cambia, esto cambia con él.
+ */
+function patronDelEsquema(): RegExp {
+  const ruta = join(dirname(fileURLToPath(import.meta.url)), "schemas", "hello.schema.json");
+  const esquema = JSON.parse(readFileSync(ruta, "utf8"));
+  const patron = esquema?.properties?.botId?.pattern;
+  if (typeof patron !== "string") {
+    throw new Error("hello.schema.json ya no declara properties.botId.pattern: el asa no se puede derivar a ciegas");
+  }
+  return new RegExp(patron);
+}
+
+const PATRON_HELLO = patronDelEsquema();
+
+/**
+ * Falla si `botId` no puede viajar por el cable. La usa el ProtocolServer con
+ * TODO lo que entra en `expected`, venga de donde venga (issue #92, obs. 2 del
+ * supervisor): sin esto, un `expected` no conforme —`local-sim.ts`, el
+ * simulador del SDK— reproduce el mismo fallo SILENCIOSO, porque el motor
+ * descarta el HELLO sin decir nada y solo se ve un timeout de conexión.
+ */
+export function assertBotIdDelCable(botId: string, procedencia: string): void {
+  if (!PATRON_HELLO.test(botId)) {
+    throw new Error(
+      `${procedencia}: el botId "${botId}" no cumple el patrón del HELLO (${PATRON_HELLO.source}). ` +
+        `El motor descartaría su HELLO en silencio y el handshake expiraría. ` +
+        `Deriva el asa con protocolBotHandle() en vez de pasar el identificador interno.`,
+    );
+  }
+}
 
 /**
  * Asa de protocolo para el participante en la posición `indice` (0-based).
