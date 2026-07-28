@@ -624,6 +624,11 @@ describe("B9 · resolución REAL del mapa contra el catálogo (ya no hay allowli
       sharedSecret: "s",
       db: h.db,
       replayServiceUrl: rs.url,
+      // B8 (integracion del rebase) · la ingesta es fail-closed desde que el
+      // replay-service exige credencial interna: sin esto el launcher ni
+      // re-simula y devuelve ingested:false. Este test es de B9 y es ANTERIOR
+      // a esa autenticacion.
+      replayIngestSecret: "secreto-de-ingesta-de-test",
     });
     const result = await launcher.launch({ ...sampleInput([bot, bot]), battleId });
 
