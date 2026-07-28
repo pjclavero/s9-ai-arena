@@ -27,6 +27,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadRuleset, safeLookup } from "../../../packages/game-rules/index.js";
+import { protocolBotHandle } from "../../../packages/protocol/bot-handle.js";
 import { loadCatalog, CATALOG_VERSION } from "../../../packages/module-catalog/loadCatalog.js";
 import { resolveVehicle } from "../../../packages/module-catalog/resolve/index.js";
 import { ARCHETYPES } from "../../../packages/module-catalog/resolve/archetypes.js";
@@ -135,8 +136,15 @@ export async function runContainerBattle(cfg: ContainerBattleConfig): Promise<Co
     recordReplay: true,
   });
 
-  const expected: ExpectedBot[] = cfg.bots.map((b, i) => ({
-    botId: b.botId,
+  // issue #92 · El identificador que viaja POR EL CABLE no es el del llamador
+  // (`participants.bot_id` es un uuid y el HELLO exige `^bot_[0-9a-zA-Z]{1,24}$`;
+  // ver packages/protocol/bot-handle.ts). Se deriva UNA sola vez y de aquí salen
+  // tanto `expected` como el `BOT_ID` del contenedor: así no pueden divergir.
+  // Todo lo interno (participants, replay, resultados, cpuMs) sigue con b.botId.
+  const asas = cfg.bots.map((_b, i) => protocolBotHandle(i));
+
+  const expected: ExpectedBot[] = cfg.bots.map((_b, i) => ({
+    botId: asas[i],
     vehicleId: `veh_${i + 1}`,
     battleToken: randomUUID(),
   }));
@@ -172,7 +180,9 @@ export async function runContainerBattle(cfg: ContainerBattleConfig): Promise<Co
         env: {
           WS_URL: wsUrl,
           BATTLE_TOKEN: expected[i].battleToken,
-          BOT_ID: b.botId,
+          // issue #92 · el asa del cable, NO b.botId (que es un uuid y el
+          // esquema del HELLO lo rechaza). Misma fuente que expected[i].botId.
+          BOT_ID: asas[i],
         },
         limits,
         seccompProfilePath,
