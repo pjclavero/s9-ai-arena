@@ -64,12 +64,33 @@ export function theoreticalBattleMs(ticks: number, tickIntervalMs: number = DEFA
   return ticks * tickIntervalMs;
 }
 
-/** Plazo del guard global del motor (`runContainerBattle`) para esa batalla. */
+/**
+ * Techo del guard del MOTOR. Deliberadamente por debajo de `MAX_SET_TIMEOUT_MS`:
+ * si los dos plazos se acotaran al mismo valor, en el techo dejarían de estar
+ * ordenados y el motor ya no se rendiría ANTES que la API — que es justo el
+ * invariante por el que existe este módulo (el motor es quien puede limpiar los
+ * contenedores). Restando el margen propio de la API, el orden se mantiene
+ * incluso en el caso extremo.
+ */
+export const MAX_CONTAINER_BATTLE_TIMEOUT_MS = MAX_SET_TIMEOUT_MS - RUN_HTTP_OVERHEAD_MS;
+
+/**
+ * Plazo del guard global del motor (`runContainerBattle`) para esa batalla.
+ *
+ * ACOTADO: este valor va a un `setTimeout` de verdad (container-battle.ts). Sin
+ * acotar, un `ticks` grande con un `tickIntervalMs` grande —ambos aceptados por
+ * el validador de `/run`— produce un plazo por encima de 2^31-1 ms y el
+ * temporizador dispara A LOS 1-2 ms: la batalla se aborta nada más lanzarla, que
+ * es el fallo OPUESTO al que el guard pretende evitar. Lo encontró el supervisor
+ * de B9 ejecutando el servicio real con `ticks: 1_000_000, tickIntervalMs: 3000`:
+ * 502 en 318 ms con "timeout global tras 3000015000 ms".
+ */
 export function containerBattleOverallTimeoutMs(
   ticks: number,
   tickIntervalMs: number = DEFAULT_TICK_INTERVAL_MS,
 ): number {
-  return theoreticalBattleMs(ticks, tickIntervalMs) + CONTAINER_BATTLE_GRACE_MS;
+  const derivado = theoreticalBattleMs(ticks, tickIntervalMs) + CONTAINER_BATTLE_GRACE_MS;
+  return Math.min(derivado, MAX_CONTAINER_BATTLE_TIMEOUT_MS);
 }
 
 /**

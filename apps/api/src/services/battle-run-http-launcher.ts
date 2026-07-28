@@ -166,10 +166,18 @@ export interface HttpBattleRunLauncherConfig {
    */
   timeoutMs?: number;
   /**
-   * B9 · Margen del cliente HTTP por encima del guard global del motor
-   * (def. `RUN_HTTP_OVERHEAD_MS`, 30 s): arranque de contenedores, serialización
-   * del replay y limpieza. Configurable sobre todo para poder probar el cálculo
-   * del plazo en segundos en vez de en minutos.
+   * B9 · Margen TOTAL del cliente HTTP sobre la DURACIÓN TEÓRICA de la batalla
+   * (def. `RUN_HTTP_MARGIN_MS` = 45 s = los 15 s de gracia del guard del motor
+   * + 30 s propios: arranque de contenedores, serialización del replay y
+   * limpieza). Se pasa tal cual como `marginMs` de `runHttpTimeoutMs`.
+   *
+   * OJO, y por eso este comentario se corrigió (defecto 2 del supervisor): NO es
+   * "margen por encima del guard del motor". Bajarlo de `CONTAINER_BATTLE_GRACE_MS`
+   * (15 s) INVIERTE el invariante del bloque —la API se rendiría antes que el
+   * motor, que es el único que puede limpiar los contenedores—. Con 9000 ticks:
+   * 45 s → 351 000 (correcto); 15 s → 321 000 (empate con el motor); 10 s →
+   * 316 000 (invertido). Configurable sobre todo para probar el cálculo en
+   * segundos en vez de en minutos.
    */
   runTimeoutOverheadMs?: number;
   /**

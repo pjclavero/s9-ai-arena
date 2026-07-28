@@ -180,10 +180,14 @@ duración teórica se registra como aviso).
   comprobación (y seguiría teniendo que pasar el validador de E4 y la comparación de vuelta).
 - Nada de esto se ha probado contra Docker real — ver el informe de entrega del bloque
   correspondiente para qué se verificó con fakes y qué queda pendiente de VM108.
-- **Bloqueo externo conocido (issue #92)**: el `botId` que la API envía en el cuerpo de
-  `/run` es un UUID, mientras el esquema del HELLO del protocolo exige
-  `^bot_[0-9a-zA-Z]{1,24}$`. Es ajeno a este bloque, pero es la razón por la que hoy ninguna
-  batalla lanzada desde la web puede completarse todavía, ni siquiera con B9 dentro.
+- **Bloqueo externo (issue #92) — YA RESUELTO, en la base de esta rama**: el `botId`
+  que la API envía en el cuerpo de `/run` era un UUID, mientras el esquema del HELLO
+  exige `^bot_[0-9a-zA-Z]{1,24}$`; el HELLO se descartaba en silencio y el handshake
+  expiraba. Era ajeno a este bloque y fue la razón por la que durante un tiempo
+  ninguna batalla lanzada desde la web podía completarse. Corregido derivando un asa
+  conforme (`packages/protocol/bot-handle.ts`); `container-battle.ts` ya la usa para
+  `BOT_ID` y para `expected`. Este párrafo se actualizó al rebasar sobre esa
+  corrección: antes afirmaba un bloqueo que la propia rama ya no tenía.
 
 ## Validación operativa en VM108 (gateada, NO en este PR)
 
