@@ -131,9 +131,20 @@ export function BotsPage(props: {
   /** Sondeo del pipeline: parametrizado para poder probarlo sin esperas reales. */
   pollIntervalMs?: number;
   maxPolls?: number;
+  /** Tope de espera por una lectura que no vuelve (issue #95). */
+  maxPollWaitMs?: number;
 }) {
   const pollIntervalMs = props.pollIntervalMs ?? 2000;
   const maxPolls = props.maxPolls ?? 30; // ~60 s: presupuesto FINITO por diseño
+  /**
+   * issue #95 · Tope de ESPERA por una lectura que no vuelve. `api.ts` hace
+   * `fetch` sin plazo ni `AbortController`, así que una lectura puede quedarse
+   * colgada indefinidamente (pasarela colgada, agujero negro TCP). Sin este tope
+   * el sondeo esperaría para siempre sin llegar nunca a agotarse y el panel se
+   * quedaría en «Validación en curso…» eternamente: el mismo bloqueo que este
+   * arreglo persigue, pero por el otro lado (defecto 1 del supervisor).
+   */
+  const maxPollWaitMs = props.maxPollWaitMs ?? 30_000;
 
   const [botsRes, reloadBots] = useResource(
     () => api<{ items: Bot[] }>("GET", `/bots?ownerId=${encodeURIComponent(props.me.id)}`),
@@ -147,6 +158,8 @@ export function BotsPage(props: {
   const [runtime, setRuntime] = useState("python");
   const [error, setError] = useState("");
   const [pollExhausted, setPollExhausted] = useState(false);
+  /** issue #95 · Reanudar el sondeo es CAMBIAR DE ÉPOCA: rearma el bucle. */
+  const [pollEpoch, setPollEpoch] = useState(0);
 
   // ---------------------------------------------------------------- recursos
   // Tres recursos INDEPENDIENTES a propósito: el sondeo solo toca el de builds
@@ -203,8 +216,14 @@ export function BotsPage(props: {
   // El contador de render es para pintar; el que decide si queda presupuesto es
   // este, y se consulta en el instante de disparar. Ver el bucle de abajo.
   const pollsRef = useRef(0);
-  // ¿Hay una lectura de builds en vuelo? Un ciclo no puede solaparse con el
-  // anterior (ver abajo). Se cierra cuando el recurso publica una lectura nueva.
+  // ¿Hay una lectura de builds del SONDEO en vuelo? Se cierra cuando el recurso
+  // publica una lectura nueva.
+  //
+  // OJO, no es exclusión mutua estricta: el liberador se dispara con cualquier
+  // cambio de identidad de `buildsRes` —incluido el `loading` de un cambio de
+  // dependencias—, así que puede haber dos lecturas solapadas (el supervisor
+  // midió 2). Lo que SÍ garantiza es el presupuesto, porque el hueco se reserva
+  // contra `pollsRef` en el instante de disparar, no al publicarse la respuesta.
   const pollInFlightRef = useRef(false);
   useEffect(() => {
     pollInFlightRef.current = false;
@@ -236,17 +255,25 @@ export function BotsPage(props: {
   //     inmediato: nunca salen más de `maxPolls` peticiones, se rendericé lo que
   //     se renderice por el camino.
   //
-  //  2. EL PANEL PODÍA NO ACTUALIZARSE NUNCA. Cada rearme lanzaba una lectura
-  //     aunque la anterior siguiera en vuelo, y `useResource` descarta por
-  //     diseño la lectura vieja: si la pasarela tarda más que el intervalo,
-  //     TODAS las lecturas se cancelaban entre sí y el estado del pipeline se
-  //     quedaba congelado para siempre mientras el cliente machacaba la
-  //     pasarela. Medido: 161 lecturas descartadas y 0 publicadas en 3 s con
-  //     intervalo de 10 ms y latencia de 30 ms. Ahora un ciclo espera al
-  //     anterior, y esperar NO gasta presupuesto (no se ha preguntado nada).
+  //  2. SE MACHACABA LA PASARELA. Cada rearme lanzaba una lectura aunque la
+  //     anterior siguiera en vuelo, y `useResource` descarta por diseño la
+  //     vieja: con la pasarela más lenta que el intervalo, casi todas las
+  //     lecturas se cancelaban entre sí. Medido con la pasarela fallando y
+  //     `maxPolls: 4`: 5 peticiones antes / 4 exactas ahora; con 6 cambios de
+  //     foco a media carrera, 31 sondeos antes / 10 ahora. Un ciclo espera
+  //     ahora al anterior, y esperar NO gasta presupuesto (no se ha preguntado
+  //     nada) pero SÍ tiene tope (ver `maxPollWaitMs`).
+  //
+  //     HONESTIDAD SOBRE EL ALCANCE: la primera versión de este comentario
+  //     afirmaba "161 lecturas descartadas y 0 publicadas, panel congelado para
+  //     siempre". El supervisor independiente NO consiguió reproducir el panel
+  //     congelado —en su banco las lecturas resolvían y el estado final llegaba—,
+  //     así que esa afirmación queda retirada por no demostrada. Lo confirmado
+  //     es el sobre-sondeo y el presupuesto excedido, que es motivo suficiente.
   useEffect(() => {
     if (!inProgress) return;
     let cancelled = false;
+    let waitedMs = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const schedule = () => {
       timer = setTimeout(tick, pollIntervalMs);
@@ -254,9 +281,19 @@ export function BotsPage(props: {
     function tick() {
       if (cancelled) return;
       if (pollInFlightRef.current) {
-        schedule(); // la lectura anterior aún no ha vuelto: se espera, no se gasta
+        // Esperar NO gasta presupuesto (no se ha preguntado nada), pero la espera
+        // es FINITA: una lectura que no vuelve nunca no puede dejar el panel
+        // diciendo «en curso» para siempre. Al agotarse, se declara desconocido,
+        // que es la respuesta honesta.
+        waitedMs += pollIntervalMs;
+        if (waitedMs >= maxPollWaitMs) {
+          setPollExhausted(true);
+          return;
+        }
+        schedule();
         return;
       }
+      waitedMs = 0;
       if (pollsRef.current >= maxPolls) {
         setPollExhausted(true);
         return;
@@ -274,7 +311,7 @@ export function BotsPage(props: {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [inProgress, maxPolls, pollIntervalMs]);
+  }, [inProgress, maxPolls, pollIntervalMs, maxPollWaitMs, pollEpoch]);
 
   // Cuando el build llega a un estado TERMINAL, la versión ya ha cambiado en la
   // misma transacción (completeBuild): una única revalidación silenciosa de
@@ -295,6 +332,14 @@ export function BotsPage(props: {
     pollsRef.current = 0;
     setPollExhausted(false);
     reconciledRef.current = "";
+    // issue #95 (defecto 2 del supervisor) · Apagar el aviso sin REANUDAR el
+    // sondeo es peor que no hacer nada: el bucle había salido sin reprogramarse
+    // y sus dependencias no cambian, así que el usuario se quedaba mirando un
+    // pipeline «en curso» que ya no se iba a actualizar jamás. La época fuerza a
+    // que el efecto se rearme; y se libera la espera, porque cualquier lectura
+    // que siguiera en vuelo pertenece al ciclo anterior.
+    pollInFlightRef.current = false;
+    setPollEpoch((n) => n + 1);
     reloadVersions({ silent: true });
     reloadBuilds({ silent: true });
   }

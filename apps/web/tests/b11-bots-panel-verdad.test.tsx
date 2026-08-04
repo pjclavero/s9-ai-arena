@@ -67,6 +67,9 @@ function fakeBackend(init: { versions: VersionRow[]; builds?: BuildRow[]; latenc
     builds: init.builds ?? [],
     calls: [] as string[],
     buildsShouldFail: false,
+    /** issue #95 · nº de lectura de /builds a partir de la cual NO se responde JAMÁS. */
+    hangBuildsFrom: 0,
+    buildsReads: 0,
     versionsShouldFail: false,
     nextVersionNumber: Math.max(0, ...init.versions.map((v) => v.version)) + 1,
   };
@@ -85,6 +88,12 @@ function fakeBackend(init: { versions: VersionRow[]; builds?: BuildRow[]; latenc
     if (method === "GET" && path === "/bots/b1/loadouts") return [LOADOUT];
     const m = /^\/bots\/b1\/versions\/(\d+)\/builds$/.exec(path);
     if (method === "GET" && m) {
+      state.buildsReads += 1;
+      // Una pasarela colgada no devuelve error: no devuelve NADA. `api.ts` hace
+      // `fetch` sin plazo, así que esta promesa no se resuelve nunca.
+      if (state.hangBuildsFrom && state.buildsReads >= state.hangBuildsFrom) {
+        await new Promise(() => {});
+      }
       if (state.buildsShouldFail) throw new Error("gateway caído");
       const n = Number(m[1]);
       return state.builds.filter((b) => b.version === n).map((b) => ({ ...b }));
@@ -118,7 +127,7 @@ function fakeBackend(init: { versions: VersionRow[]; builds?: BuildRow[]; latenc
   return state;
 }
 
-function renderPage(overrides: { pollIntervalMs?: number; maxPolls?: number } = {}) {
+function renderPage(overrides: { pollIntervalMs?: number; maxPolls?: number; maxPollWaitMs?: number } = {}) {
   return render(
     <BotsPage
       me={ME}
@@ -127,6 +136,7 @@ function renderPage(overrides: { pollIntervalMs?: number; maxPolls?: number } = 
       budgetCredits={1000}
       pollIntervalMs={overrides.pollIntervalMs ?? 5}
       maxPolls={overrides.maxPolls ?? 4}
+      maxPollWaitMs={overrides.maxPollWaitMs}
     />,
   );
 }
@@ -302,6 +312,50 @@ describe("B11 · el pipeline refleja el resultado final", () => {
     expect(screen.getByTestId("build-result").querySelector("h3")?.textContent).toContain("estado desconocido");
     // Y no se ha inventado un "passed"/"failed".
     expect(screen.getByTestId("build-result").querySelector("h3")?.textContent).not.toContain("passed");
+  });
+
+  it("issue #95 · una lectura que NO VUELVE tampoco deja el panel diciendo «en curso» para siempre", async () => {
+    // Defecto 1 del supervisor sobre el arreglo del sondeo. `api.ts` hace `fetch`
+    // sin plazo ni AbortController, así que una pasarela colgada no da error: deja
+    // la promesa viva indefinidamente. Como esperar no gasta presupuesto, el bucle
+    // esperaba sin llegar NUNCA a agotarse y el panel se quedaba en «Validación en
+    // curso…» eternamente — el mismo bloqueo que el arreglo perseguía, por el otro
+    // lado. La espera tiene ahora un tope, y al vencer se dice la verdad.
+    const st = fakeBackend({
+      versions: [{ version: 1, state: "validating", runtime: "python", loadoutRevision: 7 }],
+      builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
+    });
+    st.hangBuildsFrom = 2; // la primera lectura vuelve; la del sondeo se cuelga
+    renderPage({ pollIntervalMs: 5, maxPolls: 100, maxPollWaitMs: 150 });
+    await selectBot();
+
+    const aviso = await screen.findByTestId("pipeline-unknown", {}, { timeout: 5000 });
+    expect(aviso.textContent).toContain("estado desconocido");
+    expect(screen.queryByTestId("pipeline-running")).toBeNull();
+  });
+
+  it("issue #95 · «Actualizar estado» REANUDA el sondeo, no solo apaga el aviso", async () => {
+    // Defecto 2 del supervisor: el bucle salía sin reprogramarse y sus dependencias
+    // no cambiaban, así que pulsar el botón borraba el «estado desconocido» y dejaba
+    // al usuario mirando un pipeline «en curso» que ya no se iba a actualizar jamás.
+    // Apagar el aviso sin reanudar es peor que no hacer nada: quita la única señal
+    // honesta que quedaba.
+    const st = fakeBackend({
+      versions: [{ version: 1, state: "validating", runtime: "python", loadoutRevision: 7 }],
+      builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
+      latencyMs: 1,
+    });
+    renderPage({ pollIntervalMs: 5, maxPolls: 2 });
+    await selectBot();
+    await screen.findByTestId("pipeline-unknown", {}, { timeout: 5000 });
+
+    st.calls.length = 0;
+    await userEvent.click(screen.getByRole("button", { name: "Actualizar estado" }));
+
+    // Vuelve a sondear DE VERDAD: no basta con que desaparezca el aviso.
+    await waitFor(() => expect(st.calls.filter((c) => c.includes("/builds")).length).toBeGreaterThan(1), {
+      timeout: 5000,
+    });
   });
 
   it("si no se pueden leer los builds NO se pinta un pipeline falso", async () => {
