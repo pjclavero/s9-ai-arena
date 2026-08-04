@@ -237,13 +237,24 @@ export const HTTP_LAUNCHER_RUNNER_ID = "arena-engine-http";
 export function resolveRunTimeoutMs(
   cfg: Pick<HttpBattleRunLauncherConfig, "timeoutMs" | "runTimeoutOverheadMs">,
   ticks: number,
+  /**
+   * Cadencia REAL que se manda en el cuerpo de `/run`. Hoy el launcher no la
+   * envía y el motor aplica su defecto, así que omitirla es correcto. Existe
+   * porque la asimetría era peligrosa (obs. 1 del supervisor): el motor SÍ honra
+   * `tickIntervalMs` y la API lo daba por 34 ms fijos, de modo que quien añadiera
+   * ese campo al cuerpo invertiría el invariante sin tocar esta función —con
+   * `tickIntervalMs: 3000` la API se rinde a los 79 s y el motor sigue 50 minutos
+   * con los contenedores vivos—. Pasándola desde el mismo objeto `body` que viaja,
+   * las dos capas no pueden volver a discrepar.
+   */
+  tickIntervalMs?: number,
 ): number {
-  const derived = clampToSetTimeout(runHttpTimeoutMs(ticks, undefined, cfg.runTimeoutOverheadMs), ticks);
+  const derived = clampToSetTimeout(runHttpTimeoutMs(ticks, tickIntervalMs, cfg.runTimeoutOverheadMs), ticks);
   if (cfg.timeoutMs === undefined) return derived;
   if (cfg.timeoutMs > MAX_SET_TIMEOUT_MS) {
     return clampToSetTimeout(cfg.timeoutMs, ticks);
   }
-  if (cfg.timeoutMs < theoreticalBattleMs(ticks)) {
+  if (cfg.timeoutMs < theoreticalBattleMs(ticks, tickIntervalMs)) {
     // Se respeta (la config explícita manda) pero NO en silencio: con este valor la
     // batalla se abortará a medias por definición.
     console.error(
@@ -710,7 +721,9 @@ export function createHttpBattleRunLauncher(cfg: HttpBattleRunLauncherConfig): B
       // B9 · el plazo se resuelve POR BATALLA, con los ticks que se acaban de
       // fijar en el cuerpo: una batalla de 9000 ticks dura ~306 s y un timeout
       // fijo de 30 s la abortaría siempre a mitad (ver `resolveRunTimeoutMs`).
-      const timeoutMs = resolveRunTimeoutMs(cfg, body.ticks);
+      // La cadencia sale del MISMO objeto que viaja en la petición: si algún día
+      // el cuerpo lleva `tickIntervalMs`, el plazo de la API lo honra solo.
+      const timeoutMs = resolveRunTimeoutMs(cfg, body.ticks, (body as { tickIntervalMs?: number }).tickIntervalMs);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       let res: Response;

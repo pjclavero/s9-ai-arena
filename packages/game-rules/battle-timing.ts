@@ -90,7 +90,22 @@ export function containerBattleOverallTimeoutMs(
   tickIntervalMs: number = DEFAULT_TICK_INTERVAL_MS,
 ): number {
   const derivado = theoreticalBattleMs(ticks, tickIntervalMs) + CONTAINER_BATTLE_GRACE_MS;
-  return Math.min(derivado, MAX_CONTAINER_BATTLE_TIMEOUT_MS);
+  if (derivado <= MAX_CONTAINER_BATTLE_TIMEOUT_MS) return derivado;
+  // No se recorta EN SILENCIO (obs. 2 del supervisor): acotar convierte "abortar
+  // al instante" en "el guard tarda 24,85 días en saltar", que sin rastro es otra
+  // forma de no tener guard. El clamp gemelo de la API ya registra; este también.
+  console.error(
+    JSON.stringify({
+      level: "warn",
+      service: "arena-engine",
+      msg: "guard global de la batalla por encima del máximo de setTimeout: se recorta. El guard tardará ~24,85 días en saltar, así que no protege de contenedores colgados: revisa `ticks`/`tickIntervalMs`.",
+      requestedTimeoutMs: derivado,
+      appliedTimeoutMs: MAX_CONTAINER_BATTLE_TIMEOUT_MS,
+      ticks,
+      tickIntervalMs,
+    }),
+  );
+  return MAX_CONTAINER_BATTLE_TIMEOUT_MS;
 }
 
 /**

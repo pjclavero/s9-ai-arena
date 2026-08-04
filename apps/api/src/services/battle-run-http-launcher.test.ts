@@ -782,6 +782,21 @@ describe("B9 · el plazo HTTP cubre la batalla que se lanza (bloqueante del supe
     // `ticks` sale del ruleset (máx. razonable), pero el techo no debe depender de eso.
     expect(resolveRunTimeoutMs({}, 100_000_000)).toBe(MAX_SET_TIMEOUT_MS);
   });
+
+  it("el plazo de la API honra la cadencia REAL, no da por hecha la de por defecto", () => {
+    // obs. 1 del supervisor: el motor SÍ usa `tickIntervalMs` y la API lo daba
+    // por 34 ms fijos. Con 3000 ms de cadencia eso invierte el invariante del
+    // bloque: la API se rendía a los 79 s mientras el motor seguía ~50 minutos
+    // con los contenedores vivos. Hoy el cuerpo de /run no lleva ese campo; esto
+    // es el ancla para que añadirlo no reabra el agujero en silencio.
+    const ticks = 1000;
+    const cadencia = 3000;
+    const motor = containerBattleOverallTimeoutMs(ticks, cadencia);
+
+    expect(resolveRunTimeoutMs({}, ticks, cadencia)).toBeGreaterThan(motor);
+    // Y la regresión concreta: asumir 34 ms daba un plazo MENOR que el del motor.
+    expect(resolveRunTimeoutMs({}, ticks)).toBeLessThan(motor);
+  });
 });
 
 describe("B9 · resolución REAL del ruleset y de los ticks", () => {

@@ -60,6 +60,31 @@ describe("B9 · plazos de batalla acotados al máximo real de setTimeout", () =>
   });
 
   it("por debajo del techo no se toca nada (la acotación no cambia el caso normal)", () => {
-    expect(containerBattleOverallTimeoutMs(9000, 34)).toBe(9000 * 34 + CONTAINER_BATTLE_GRACE_MS);
+    // Literal a propósito (obs. 3 del supervisor): escribir el margen como
+    // `+ CONTAINER_BATTLE_GRACE_MS` hacía el test TAUTOLÓGICO —poner la gracia a
+    // 0 lo dejaba verde— y entonces no protegía el valor del margen, solo su
+    // nombre. 9000 × 34 + 15 000 = 321 000.
+    expect(containerBattleOverallTimeoutMs(9000, 34)).toBe(321_000);
+    expect(CONTAINER_BATTLE_GRACE_MS).toBe(15_000);
+  });
+
+  it("recortar el guard NO es silencioso: 24,85 días sin rastro es no tener guard", () => {
+    // obs. 2 del supervisor. Acotar arregla el "aborta al instante", pero deja un
+    // guard que tarda casi un mes en saltar; si eso no se registra, unos
+    // contenedores colgados no dejan ninguna pista de por qué.
+    const avisos: string[] = [];
+    const original = console.error;
+    console.error = (...a: unknown[]) => void avisos.push(String(a[0]));
+    try {
+      containerBattleOverallTimeoutMs(1_000_000, 3000);
+      expect(containerBattleOverallTimeoutMs(9000, 34)).toBe(321_000); // caso normal: sin ruido
+    } finally {
+      console.error = original;
+    }
+    expect(avisos).toHaveLength(1);
+    const log = JSON.parse(avisos[0]);
+    expect(log.level).toBe("warn");
+    expect(log.appliedTimeoutMs).toBe(MAX_CONTAINER_BATTLE_TIMEOUT_MS);
+    expect(log.requestedTimeoutMs).toBe(3_000_015_000);
   });
 });
