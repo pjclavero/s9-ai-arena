@@ -146,7 +146,6 @@ export function BotsPage(props: {
   const [pasted, setPasted] = useState("");
   const [runtime, setRuntime] = useState("python");
   const [error, setError] = useState("");
-  const [polls, setPolls] = useState(0);
   const [pollExhausted, setPollExhausted] = useState(false);
 
   // ---------------------------------------------------------------- recursos
@@ -200,9 +199,21 @@ export function BotsPage(props: {
   const reloadVersionsRef = useRef(reloadVersions);
   reloadVersionsRef.current = reloadVersions;
 
+  // issue #95 · El presupuesto de sondeos lo lleva un REF, no solo el estado.
+  // El contador de render es para pintar; el que decide si queda presupuesto es
+  // este, y se consulta en el instante de disparar. Ver el bucle de abajo.
+  const pollsRef = useRef(0);
+  // ¿Hay una lectura de builds en vuelo? Un ciclo no puede solaparse con el
+  // anterior (ver abajo). Se cierra cuando el recurso publica una lectura nueva.
+  const pollInFlightRef = useRef(false);
+  useEffect(() => {
+    pollInFlightRef.current = false;
+  }, [buildsRes]);
+  const needVersionPollRef = useRef(false);
+
   // Cambiar de bot o de versión enfocada reinicia el presupuesto de sondeos.
   useEffect(() => {
-    setPolls(0);
+    pollsRef.current = 0;
     setPollExhausted(false);
   }, [selected?.id, focusRequest]);
 
@@ -210,21 +221,60 @@ export function BotsPage(props: {
   // Caso raro (anomalía de datos): la versión dice `validating` pero no hay
   // build que seguir. Entonces lo que hay que revalidar es la versión.
   const needVersionPoll = focused?.state === "validating" && !!builds && (!builds.known || builds.list.length === 0);
+  needVersionPollRef.current = needVersionPoll;
+
+  // issue #95 · UN SOLO bucle de sondeo, que se reprograma a sí mismo. Antes el
+  // efecto se rearmaba con cada cambio de `builds` y de `polls`, y eso rompía
+  // las dos garantías del sondeo:
+  //
+  //  1. EL PRESUPUESTO NO SE RESPETABA. La guarda leía el `polls` del render y
+  //     el incremento era funcional, así que dos ejecuciones del efecto nacidas
+  //     de renders con el MISMO `polls` (la del incremento y la de la respuesta
+  //     que llegaba a la vez) armaban dos temporizadores: dos peticiones para un
+  //     único hueco de presupuesto. Medido: 7 peticiones con `maxPolls: 6`.
+  //     Ahora el hueco se reserva en el disparo contra `pollsRef`, que es
+  //     inmediato: nunca salen más de `maxPolls` peticiones, se rendericé lo que
+  //     se renderice por el camino.
+  //
+  //  2. EL PANEL PODÍA NO ACTUALIZARSE NUNCA. Cada rearme lanzaba una lectura
+  //     aunque la anterior siguiera en vuelo, y `useResource` descarta por
+  //     diseño la lectura vieja: si la pasarela tarda más que el intervalo,
+  //     TODAS las lecturas se cancelaban entre sí y el estado del pipeline se
+  //     quedaba congelado para siempre mientras el cliente machacaba la
+  //     pasarela. Medido: 161 lecturas descartadas y 0 publicadas en 3 s con
+  //     intervalo de 10 ms y latencia de 30 ms. Ahora un ciclo espera al
+  //     anterior, y esperar NO gasta presupuesto (no se ha preguntado nada).
   useEffect(() => {
     if (!inProgress) return;
-    if (polls >= maxPolls) {
-      setPollExhausted(true);
-      return;
-    }
-    const t = setTimeout(() => {
-      setPolls((n) => n + 1);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      timer = setTimeout(tick, pollIntervalMs);
+    };
+    function tick() {
+      if (cancelled) return;
+      if (pollInFlightRef.current) {
+        schedule(); // la lectura anterior aún no ha vuelto: se espera, no se gasta
+        return;
+      }
+      if (pollsRef.current >= maxPolls) {
+        setPollExhausted(true);
+        return;
+      }
+      pollsRef.current += 1;
+      pollInFlightRef.current = true;
       // SILENCIOSO: revalida sin desmontar el panel (ni el editor, ni el área
       // de código, ni el foco del usuario).
       reloadBuildsRef.current({ silent: true });
-      if (needVersionPoll) reloadVersionsRef.current({ silent: true });
-    }, pollIntervalMs);
-    return () => clearTimeout(t);
-  }, [inProgress, builds, polls, maxPolls, pollIntervalMs, needVersionPoll]);
+      if (needVersionPollRef.current) reloadVersionsRef.current({ silent: true });
+      schedule();
+    }
+    schedule();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [inProgress, maxPolls, pollIntervalMs]);
 
   // Cuando el build llega a un estado TERMINAL, la versión ya ha cambiado en la
   // misma transacción (completeBuild): una única revalidación silenciosa de
@@ -242,7 +292,7 @@ export function BotsPage(props: {
   }, [builds, focused?.state]);
 
   function refreshNow() {
-    setPolls(0);
+    pollsRef.current = 0;
     setPollExhausted(false);
     reconciledRef.current = "";
     reloadVersions({ silent: true });
@@ -289,7 +339,7 @@ export function BotsPage(props: {
       // El foco pasa a la versión RECIÉN creada: lo que se enseña a partir de
       // aquí es su estado, no el de ninguna anterior.
       setFocusRequest(created?.version ?? null);
-      setPolls(0);
+      pollsRef.current = 0;
       setPollExhausted(false);
       reloadVersions({ silent: true });
     } catch (e) {
@@ -303,7 +353,7 @@ export function BotsPage(props: {
     try {
       await api<Build>("POST", `/bots/${selected.id}/versions/${v}/actions/submit`);
       setFocusRequest(v);
-      setPolls(0);
+      pollsRef.current = 0;
       setPollExhausted(false);
       reconciledRef.current = "";
       reloadVersions({ silent: true });
