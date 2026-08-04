@@ -9,6 +9,11 @@
 # La clave RTMPS se lee del archivo de secreto (STREAM_KEY_FILE) DENTRO del
 # proceso Node; este script no la toca ni la exporta: no puede acabar en logs
 # ni en `docker inspect`.
+#
+# B13 · Este script ya NO es el ENTRYPOINT de la imagen: lo invoca
+# /data-dir-entrypoint.sh (el mismo de la imagen genérica) DESPUÉS de ajustar la
+# propiedad de ARENA_DATA_DIRS y de bajar a `streamer` con su-exec. O sea: todo
+# lo de aquí abajo —Xvfb incluido— corre sin privilegios, igual que antes.
 set -euo pipefail
 
 : "${DISPLAY:=:99}"

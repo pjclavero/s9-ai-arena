@@ -68,6 +68,20 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
+      - name: Espacios de nombres de usuario sin privilegios (los exige el guard del entrypoint)
+        # B13 · infrastructure/tests/{replays-volume,b13-data-volumes}.test.ts
+        # ejecutan el entrypoint COMO uid 0 dentro de `unshare -rm` + chroot: es
+        # la única forma de probar de verdad el guard contra enlaces simbólicos
+        # sin privilegios reales. En las imágenes ubuntu-24.04 de los runners,
+        # AppArmor bloquea los userns sin privilegios, así que esos tests salían
+        # rojos o verdes SEGÚN QUÉ RUNNER TOCARA (el PR #86 pasó; este falló con
+        # el mismo código). Se habilita explícitamente y se COMPRUEBA: si aquí no
+        # hay userns, el job muere con esta causa a la vista en vez de dejar el
+        # guard sin probar. Es el runner efímero de la CI, no un servidor.
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          unshare -rm /bin/true
+          echo "userns sin privilegios: disponible"
       - name: Unitarias (apps, packages e infrastructure) con cobertura
         # R2.1 (ERR-GES-05): cobertura V8 sobre las unitarias; el informe HTML
         # y el resumen se publican como artefacto de CI.
@@ -124,13 +138,24 @@ jobs:
       packages: write
     strategy:
       matrix:
-        # H4 (issue #8): las 8 imágenes de servicio. gateway y arena-engine tienen
-        # Dockerfile propio; bot-manager tiene el suyo (infrastructure/docker/
-        # bot-manager/Dockerfile, B3: necesita python3 para el análisis AST de
-        # bots Python); los otros 5 usan la imagen genérica node-service con
-        # APP_PATH como build-arg (mismos valores que infrastructure/docker-compose.yml).
+        # H4 (issue #8): TODAS las imágenes que construye el Compose. gateway,
+        # arena-engine, web, streamer, backup y bot-runtime tienen Dockerfile
+        # propio; bot-manager tiene el suyo (infrastructure/docker/bot-manager/
+        # Dockerfile, B3: necesita python3 para el análisis AST de bots Python);
+        # los demás usan la imagen genérica node-service con APP_PATH como
+        # build-arg (mismos valores que infrastructure/docker-compose.yml).
         # El entrypoint (SERVICE_ENTRY) lo fija el Compose en despliegue; la imagen
         # construye igualmente y falla al arrancar con mensaje claro si aún no existe.
+        #
+        # B13 · Esta lista NO puede volver a quedarse corta a mano: el test
+        # infrastructure/tests/ci-image-matrix.test.ts la compara con el
+        # `build:` de cada servicio del Compose (Dockerfile Y build-args) y
+        # falla si alguna imagen se queda sin construir o se construye con un
+        # Dockerfile distinto al de producción. Hasta B13 faltaban `streamer`,
+        # `backup` y `bot-runtime` —nadie validaba sus cambios— y `web` se
+        # construía (y se publicaba en GHCR) desde node-service/Dockerfile
+        # cuando el Compose la construye con docker/web/Dockerfile: la CI
+        # validaba una imagen que no era la de producción.
         include:
           - service: gateway
             dockerfile: infrastructure/docker/gateway/Dockerfile
@@ -139,8 +164,8 @@ jobs:
             dockerfile: infrastructure/docker/arena-engine/Dockerfile
             build_args: ""
           - service: web
-            dockerfile: infrastructure/docker/node-service/Dockerfile
-            build_args: APP_PATH=apps/web
+            dockerfile: infrastructure/docker/web/Dockerfile
+            build_args: ""
           - service: api
             dockerfile: infrastructure/docker/node-service/Dockerfile
             build_args: APP_PATH=apps/api
@@ -156,6 +181,19 @@ jobs:
           - service: replay-service
             dockerfile: infrastructure/docker/node-service/Dockerfile
             build_args: APP_PATH=apps/replay-service
+          # B13 · Las tres que NINGÚN job construía. `streamer` y `backup` se
+          # despliegan en VM108 (perfiles streaming/production) y sus cambios
+          # solo se descubrían en el `docker compose build` de producción;
+          # `bot-runtime` es la plantilla de contenedor de bot del perfil bots.
+          - service: streamer
+            dockerfile: infrastructure/docker/streamer/Dockerfile
+            build_args: ""
+          - service: backup
+            dockerfile: infrastructure/docker/backup/Dockerfile
+            build_args: ""
+          - service: bot-runtime-python
+            dockerfile: infrastructure/docker/bot-runtime/Dockerfile
+            build_args: ""
     steps:
       - uses: actions/checkout@v4
       - name: Login en GHCR (solo main)

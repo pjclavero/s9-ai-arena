@@ -9,7 +9,9 @@
 # dentro) + `chroot` sobre una raíz preparada en un temporal. Es la misma
 # técnica con la que el Supervisor demostró que el guard antiguo era evadible.
 #
-# Uso:  entrypoint-ns-harness.sh <entrypoint.sh> <ARENA_DATA_DIRS> <escenario>
+# Uso:  entrypoint-ns-harness.sh <entrypoint.sh> <ARENA_DATA_DIRS> <escenario> [usuario]
+# [usuario] (B13) es el valor de ARENA_SERVICE_USER: `node` por defecto (imagen
+# genérica), `streamer` en la imagen del streamer, que comparte este entrypoint.
 # Escenarios:
 #   normal    /data/{replays,logs,secretos} reales
 #   symlink   /data/replays es un ENLACE a /fuera (el escape que reportó O1)
@@ -18,6 +20,7 @@
 #
 # Salida (una línea por evento, para que el test la analice):
 #   CHOWN <ruta> -> <destino real>   por cada chown que el entrypoint intenta
+#   SU-EXEC <usuario:grupo>          usuario al que baja antes de ejecutar (B13)
 #   SERVICIO-EJECUTADO               si el entrypoint llega a ejecutar el CMD
 #   rc=<n>                           código de salida del entrypoint
 # Sale con 99 (y no imprime rc=) si el entorno no permite espacios de nombres
@@ -27,6 +30,7 @@ set -eu
 EP=$1
 DIRS=$2
 ESCENARIO=${3:-normal}
+USUARIO=${4:-node}
 
 if ! unshare -rm /bin/true 2>/dev/null; then
   echo "SIN-NAMESPACES" >&2
@@ -61,24 +65,34 @@ esac
 # pueden ejecutar de verdad aquí (no existe el usuario `node` en esta raíz):
 # `chown`, que además delata sobre qué inodo REAL habría actuado, y `su-exec`.
 # `id`, `mkdir` y el propio `[ -L ]` son los de verdad, y el uid ES 0.
+# El usuario llega por ENTORNO, no interpolado en el código del shim: los tests
+# le pasan valores hostiles a propósito (B13) y el shim no debe interpretarlos.
 cat > "$R/shim/chown" <<'SHIM'
 #!/bin/sh
+u=${ARENA_SERVICE_USER:-node}
 for a in "$@"; do
   case "$a" in
     -*) ;;
-    node:node) ;;
-    *) printf 'CHOWN %s -> %s\n' "$a" "$(readlink -f "$a" || echo NOEXISTE)" ;;
+    *)
+      if [ "$a" != "$u:$u" ]; then
+        printf 'CHOWN %s -> %s\n' "$a" "$(readlink -f "$a" || echo NOEXISTE)"
+      fi
+      ;;
   esac
 done
 SHIM
+# B13 · el shim de su-exec DELATA a qué usuario se baja: así el test puede
+# comprobar que la imagen del streamer no acaba corriendo como `node` (ni como
+# root) por reutilizar este entrypoint.
 cat > "$R/shim/su-exec" <<'SHIM'
 #!/bin/sh
+printf 'SU-EXEC %s\n' "$1"
 shift
 exec "$@"
 SHIM
 chmod 0755 "$R/shim/chown" "$R/shim/su-exec"
 
-export R DIRS
+export R DIRS USUARIO
 unshare -rm /bin/sh -c '
   set -eu
   mount --bind /bin "$R/bin"
@@ -89,7 +103,7 @@ unshare -rm /bin/sh -c '
   /usr/sbin/chroot "$R" /bin/sh -c "
      PATH=/shim:/bin:/usr/bin:/sbin:/usr/sbin
      export PATH
-     ARENA_DATA_DIRS=\"$DIRS\" /entrypoint.sh /bin/sh -c \"echo SERVICIO-EJECUTADO\"
+     ARENA_DATA_DIRS=\"$DIRS\" ARENA_SERVICE_USER=\"$USUARIO\" /entrypoint.sh /bin/sh -c \"echo SERVICIO-EJECUTADO\"
      echo rc=\$?
   " || echo "rc=$?"
 '
