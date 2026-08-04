@@ -261,7 +261,7 @@ describe("B11 · el pipeline refleja el resultado final", () => {
     await screen.findByTestId("focused-version");
 
     await userEvent.click(screen.getByRole("button", { name: "Enviar a validación v1" }));
-    await screen.findByTestId("pipeline-running", {}, { timeout: 5000 });
+    await screen.findByTestId("pipeline-running", {}, { timeout: 15_000 });
 
     // El worker termina DESPUÉS, como en producción: el panel debe enterarse solo.
     st.versions = [
@@ -533,7 +533,7 @@ describe("B11-fix · el sondeo no desmonta el panel ni tira trabajo del usuario"
     // ciclo", `maxPolls: 6`), que no se toca.
     renderPage({ pollIntervalMs: 10, maxPolls: 5_000 });
     await selectBot();
-    await screen.findByTestId("pipeline-running", {}, { timeout: 5000 });
+    await screen.findByTestId("pipeline-running", {}, { timeout: 15_000 });
 
     const chasis = screen.getByLabelText("chasis") as HTMLSelectElement;
     await userEvent.selectOptions(chasis, "chassis.heavy@1");
@@ -574,7 +574,7 @@ describe("B11-fix · el sondeo no desmonta el panel ni tira trabajo del usuario"
     // ciclo", `maxPolls: 6`), que no se toca.
     renderPage({ pollIntervalMs: 10, maxPolls: 5_000 });
     await selectBot();
-    await screen.findByTestId("pipeline-running", {}, { timeout: 5000 });
+    await screen.findByTestId("pipeline-running", {}, { timeout: 15_000 });
 
     st.versionsShouldFail = true;
     st.builds = [{ id: "b-1", version: 1, status: "failed", stages: [{ name: "build", status: "failed" }] }];
@@ -661,8 +661,13 @@ describe("B11-fix · el sondeo no desmonta el panel ni tira trabajo del usuario"
     await screen.findByTestId("build-result");
     st.calls.length = 0;
 
-    await new Promise((r) => setTimeout(r, 250)); // el presupuesto se agota
-    await screen.findByTestId("pipeline-unknown");
+    // issue #95 · ANTES: `await new Promise(r => setTimeout(r, 250))`, o sea
+    // apostar a que 6 ciclos de 10 ms caben en 250 ms de RELOJ. Con la CPU en
+    // contención (la CI usa `--maxWorkers=2`) los ciclos van más lentos, el
+    // presupuesto NO se había agotado al vencer la espera y el `findByTestId`
+    // moría con su plazo por defecto. Esperar la CONDICIÓN en vez del reloj
+    // comprueba exactamente lo mismo y no depende de la carga de la máquina.
+    await screen.findByTestId("pipeline-unknown", {}, { timeout: 10_000 });
 
     const builds = st.calls.filter((c) => c.includes("/builds")).length;
     const otras = st.calls.filter((c) => !c.includes("/builds")).length;
@@ -687,7 +692,7 @@ describe("B11-fix · el sondeo no desmonta el panel ni tira trabajo del usuario"
     // ciclo", `maxPolls: 6`), que no se toca.
     renderPage({ pollIntervalMs: 10, maxPolls: 5_000 });
     await selectBot();
-    await screen.findByTestId("pipeline-running", {}, { timeout: 5000 });
+    await screen.findByTestId("pipeline-running", {}, { timeout: 15_000 });
     st.calls.length = 0;
 
     st.versions = [
