@@ -523,7 +523,15 @@ describe("B11-fix · el sondeo no desmonta el panel ni tira trabajo del usuario"
       builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
       latencyMs: 30,
     });
-    renderPage({ pollIntervalMs: 10, maxPolls: 40 });
+    // Presupuesto GRANDE a propósito (issue #95): estos tests afirman qué hace el
+    // sondeo mientras está VIVO, no que se agote. Con `maxPolls: 40` y ciclos de
+    // 10 ms el presupuesto se consumía en ~400 ms de RELOJ, así que bajo contención
+    // —la suite entera en paralelo— se agotaba antes de que el panel llegara a
+    // pintar `pipeline-running`: el estado pasaba a `unknown` y el `findByTestId`
+    // moría a los 5 s, dejando `unit` en rojo sin que nada hubiera cambiado. El
+    // agotamiento del presupuesto tiene su propio test ("gasta UNA petición por
+    // ciclo", `maxPolls: 6`), que no se toca.
+    renderPage({ pollIntervalMs: 10, maxPolls: 5_000 });
     await selectBot();
     await screen.findByTestId("pipeline-running", {}, { timeout: 5000 });
 
@@ -556,7 +564,15 @@ describe("B11-fix · el sondeo no desmonta el panel ni tira trabajo del usuario"
       builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
       latencyMs: 5,
     });
-    renderPage({ pollIntervalMs: 10, maxPolls: 40 });
+    // Presupuesto GRANDE a propósito (issue #95): estos tests afirman qué hace el
+    // sondeo mientras está VIVO, no que se agote. Con `maxPolls: 40` y ciclos de
+    // 10 ms el presupuesto se consumía en ~400 ms de RELOJ, así que bajo contención
+    // —la suite entera en paralelo— se agotaba antes de que el panel llegara a
+    // pintar `pipeline-running`: el estado pasaba a `unknown` y el `findByTestId`
+    // moría a los 5 s, dejando `unit` en rojo sin que nada hubiera cambiado. El
+    // agotamiento del presupuesto tiene su propio test ("gasta UNA petición por
+    // ciclo", `maxPolls: 6`), que no se toca.
+    renderPage({ pollIntervalMs: 10, maxPolls: 5_000 });
     await selectBot();
     await screen.findByTestId("pipeline-running", {}, { timeout: 5000 });
 
@@ -661,7 +677,15 @@ describe("B11-fix · el sondeo no desmonta el panel ni tira trabajo del usuario"
       builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
       latencyMs: 5,
     });
-    renderPage({ pollIntervalMs: 10, maxPolls: 40 });
+    // Presupuesto GRANDE a propósito (issue #95): estos tests afirman qué hace el
+    // sondeo mientras está VIVO, no que se agote. Con `maxPolls: 40` y ciclos de
+    // 10 ms el presupuesto se consumía en ~400 ms de RELOJ, así que bajo contención
+    // —la suite entera en paralelo— se agotaba antes de que el panel llegara a
+    // pintar `pipeline-running`: el estado pasaba a `unknown` y el `findByTestId`
+    // moría a los 5 s, dejando `unit` en rojo sin que nada hubiera cambiado. El
+    // agotamiento del presupuesto tiene su propio test ("gasta UNA petición por
+    // ciclo", `maxPolls: 6`), que no se toca.
+    renderPage({ pollIntervalMs: 10, maxPolls: 5_000 });
     await selectBot();
     await screen.findByTestId("pipeline-running", {}, { timeout: 5000 });
     st.calls.length = 0;
