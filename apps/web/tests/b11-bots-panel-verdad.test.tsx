@@ -334,6 +334,92 @@ describe("B11 · el pipeline refleja el resultado final", () => {
     expect(screen.queryByTestId("pipeline-running")).toBeNull();
   });
 
+  it("issue #95 · rendirse esperando NO se anuncia como «tras N comprobaciones»", async () => {
+    // Defecto 1 del re-supervisor: `pollExhausted` era un booleano con DOS causas
+    // y el mensaje solo sabía contar una. Medido por él: 3 lecturas reales
+    // anunciadas como «tras 100 comprobaciones». En el componente cuyo contrato es
+    // «el panel debe decir LA VERDAD», eso es una cadena falsa.
+    const st = fakeBackend({
+      versions: [{ version: 1, state: "validating", runtime: "python", loadoutRevision: 7 }],
+      builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
+    });
+    st.hangBuildsFrom = 2;
+    renderPage({ pollIntervalMs: 5, maxPolls: 100, maxPollWaitMs: 100 });
+    await selectBot();
+
+    const aviso = await screen.findByTestId("pipeline-unknown", {}, { timeout: 5000 });
+    expect(aviso.textContent).toContain("no respondió");
+    expect(aviso.textContent).not.toContain("100 comprobaciones");
+  });
+
+  it("issue #95 · si la PRIMERA lectura no vuelve nunca, tampoco se deja «Consultando…» eterno", async () => {
+    // Observación 1 del re-supervisor: la guarda `!!builds` dejaba fuera el caso
+    // en que NINGUNA lectura llega, que es precisamente cuando el usuario más
+    // necesita saberlo. `builds` era null para siempre y el panel se quedaba en
+    // «Consultando el estado del pipeline…» sin fin.
+    const st = fakeBackend({
+      versions: [{ version: 1, state: "validating", runtime: "python", loadoutRevision: 7 }],
+      builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
+    });
+    st.hangBuildsFrom = 1; // ni la primera vuelve
+    renderPage({ pollIntervalMs: 5, maxPolls: 100, maxPollWaitMs: 80 });
+    await selectBot();
+
+    const aviso = await screen.findByTestId("pipeline-unknown", {}, { timeout: 5000 });
+    expect(aviso.textContent).toContain("estado desconocido");
+  });
+
+  it("issue #95 · la espera se reinicia con cada lectura buena (no es acumulativa de por vida)", async () => {
+    // Mutación M7 del re-supervisor: quitar `waitedMs = 0` sobrevivía sin que
+    // ningún test lo notara. Sin ese reinicio, una pasarela SANA pero lenta
+    // acabaría declarada «desconocida» al sumar esperas de toda la sesión.
+    const st = fakeBackend({
+      versions: [{ version: 1, state: "validating", runtime: "python", loadoutRevision: 7 }],
+      builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
+      latencyMs: 40, // mucho más lenta que el intervalo: se espera en casi todos los ciclos
+    });
+    // Cada lectura obliga a ~8 ciclos de espera (40 ms / 5 ms). Con reinicio, cada
+    // lectura buena vuelve a poner el contador a cero y nunca se alcanzan los 100 ms
+    // seguidos; SIN reinicio, la espera acumulada los pasa en la 3ª lectura y el
+    // panel diría «no respondió» con una pasarela que responde perfectamente.
+    renderPage({ pollIntervalMs: 5, maxPolls: 6, maxPollWaitMs: 100 });
+    await selectBot();
+
+    // Con reinicio, la pasarela lenta agota el PRESUPUESTO (12 comprobaciones);
+    // sin él, la espera acumulada la mataría antes por «no respondió».
+    const aviso = await screen.findByTestId("pipeline-unknown", {}, { timeout: 10_000 });
+    expect(aviso.textContent).toContain("6 comprobaciones");
+    expect(aviso.textContent).not.toContain("no respondió");
+  });
+
+  it("issue #95 · al desmontar no queda ni un sondeo suelto", async () => {
+    // Mutación M8 del re-supervisor: anular la limpieza (`cancelled` +
+    // `clearTimeout`) sobrevivía porque no hay un solo `unmount()` en el fichero.
+    //
+    // LÍMITE HONESTO DE ESTE TEST: lo he comprobado y **sigue sobreviviendo**, aun
+    // anulando la limpieza ENTERA. No es que el test esté mal escrito: es que tras
+    // desmontar, la recarga ya no llega a pedir nada, así que la limpieza no tiene
+    // efecto observable en peticiones. Lo que protege de verdad es el `setState`
+    // sobre un componente desmontado, y cazarlo exigiría espiar temporizadores —un
+    // test de implementación, que es justo lo que este fichero rechaza—. Se queda
+    // como red contra fugas REALES (si algún día una recarga tardía sí dispara),
+    // no como prueba de la limpieza. La limpieza permanece SIN COBERTURA.
+    const st = fakeBackend({
+      versions: [{ version: 1, state: "validating", runtime: "python", loadoutRevision: 7 }],
+      builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
+    });
+    const { unmount } = renderPage({ pollIntervalMs: 5, maxPolls: 1000 });
+    await selectBot();
+    await waitFor(() => expect(st.calls.filter((c) => c.includes("/builds")).length).toBeGreaterThan(2), {
+      timeout: 5000,
+    });
+
+    unmount();
+    const trasDesmontar = st.calls.filter((c) => c.includes("/builds")).length;
+    await new Promise((r) => setTimeout(r, 120)); // ~24 ciclos de sondeo
+    expect(st.calls.filter((c) => c.includes("/builds")).length).toBe(trasDesmontar);
+  });
+
   it("issue #95 · «Actualizar estado» REANUDA el sondeo, no solo apaga el aviso", async () => {
     // Defecto 2 del supervisor: el bucle salía sin reprogramarse y sus dependencias
     // no cambiaban, así que pulsar el botón borraba el «estado desconocido» y dejaba

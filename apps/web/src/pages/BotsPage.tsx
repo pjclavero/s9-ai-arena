@@ -157,7 +157,16 @@ export function BotsPage(props: {
   const [pasted, setPasted] = useState("");
   const [runtime, setRuntime] = useState("python");
   const [error, setError] = useState("");
-  const [pollExhausted, setPollExhausted] = useState(false);
+  /**
+   * issue #95 (defecto 1 del re-supervisor) · POR QUÉ se dejó de sondear, no solo
+   * "se dejó". Eran dos causas distintas metidas en un booleano, y el mensaje solo
+   * sabía contar una: al vencer la espera decía «tras N comprobaciones» sin haber
+   * hecho N —medido: 3 lecturas reales anunciadas como 100—. En el componente cuyo
+   * contrato es «el panel debe decir LA VERDAD», eso es una cadena falsa.
+   */
+  const [pollStop, setPollStop] = useState<null | "budget" | "wait">(null);
+  const pollExhausted = pollStop !== null;
+  const setPollExhausted = (v: boolean) => setPollStop(v ? "budget" : null);
   /** issue #95 · Reanudar el sondeo es CAMBIAR DE ÉPOCA: rearma el bucle. */
   const [pollEpoch, setPollEpoch] = useState(0);
 
@@ -259,8 +268,11 @@ export function BotsPage(props: {
   //     anterior siguiera en vuelo, y `useResource` descarta por diseño la
   //     vieja: con la pasarela más lenta que el intervalo, casi todas las
   //     lecturas se cancelaban entre sí. Medido con la pasarela fallando y
-  //     `maxPolls: 4`: 5 peticiones antes / 4 exactas ahora; con 6 cambios de
-  //     foco a media carrera, 31 sondeos antes / 10 ahora. Un ciclo espera
+  //     `maxPolls: 4`: 5 peticiones antes / 4 exactas ahora (reproducido por el
+  //     supervisor). NO se apunta aquí ninguna cifra de "sondeos totales con N
+  //     cambios de foco": el re-supervisor midió que ese número no es estable
+  //     —cada cambio de foco reinicia el presupuesto— y en su banco salía incluso
+  //     al revés. Una cifra que no se reproduce no se queda escrita. Un ciclo espera
   //     ahora al anterior, y esperar NO gasta presupuesto (no se ha preguntado
   //     nada) pero SÍ tiene tope (ver `maxPollWaitMs`).
   //
@@ -287,7 +299,7 @@ export function BotsPage(props: {
         // que es la respuesta honesta.
         waitedMs += pollIntervalMs;
         if (waitedMs >= maxPollWaitMs) {
-          setPollExhausted(true);
+          setPollStop("wait");
           return;
         }
         schedule();
@@ -336,9 +348,10 @@ export function BotsPage(props: {
     // sondeo es peor que no hacer nada: el bucle había salido sin reprogramarse
     // y sus dependencias no cambian, así que el usuario se quedaba mirando un
     // pipeline «en curso» que ya no se iba a actualizar jamás. La época fuerza a
-    // que el efecto se rearme; y se libera la espera, porque cualquier lectura
-    // que siguiera en vuelo pertenece al ciclo anterior.
-    pollInFlightRef.current = false;
+    // que el efecto se rearme. (No se toca `pollInFlightRef`: el re-supervisor
+    // demostró que la reanudación funciona igual sin ello —con una lectura colgada
+    // pasó de 3 a 33 lecturas— y una línea que ningún test puede matar es una
+    // línea que sobra.)
     setPollEpoch((n) => n + 1);
     reloadVersions({ silent: true });
     reloadBuilds({ silent: true });
@@ -475,7 +488,14 @@ export function BotsPage(props: {
             const current = loadouts.length > 0 ? loadouts[loadouts.length - 1] : undefined;
             const build = builds && builds.known && builds.list.length > 0 ? builds.list[0] : undefined;
             const buildFinished = !!build && !isBuildInProgress(build.status);
-            const unknownPipeline = !!builds && (!builds.known || (pollExhausted && !!build && !buildFinished));
+            // issue #95 (obs. 1 del re-supervisor) · `!!builds` de guarda dejaba un
+            // hueco: si la PRIMERA lectura no vuelve nunca, `builds` es null para
+            // siempre y el usuario no veía ni «desconocido» ni error — solo un
+            // «Consultando…» eterno, que es la mentira que B11 persigue. Si el sondeo
+            // se rindió, se dice, haya llegado o no una primera lectura.
+            const unknownPipeline =
+              (!!builds && (!builds.known || (pollExhausted && !!build && !buildFinished))) ||
+              (!builds && pollExhausted);
             const focusedRejection = rejectionToShow(focused);
             return (
               <>
@@ -606,9 +626,11 @@ export function BotsPage(props: {
                             ? "sin enviar a validación"
                             : build.status}
                     </h3>
-                    {!builds ? (
+                    {!builds && !unknownPipeline ? (
                       // Aún no ha llegado la respuesta: no se sabe, y tampoco se
-                      // afirma "sin enviar" ni se pinta ninguna etapa.
+                      // afirma "sin enviar" ni se pinta ninguna etapa. Ojo al orden:
+                      // si el sondeo ya se rindió, manda «desconocido» — quedarse en
+                      // «Consultando…» para siempre sería la mentira de B11.
                       <p role="status" aria-live="polite">
                         Consultando el estado del pipeline…
                       </p>
@@ -619,7 +641,12 @@ export function BotsPage(props: {
                       <p className="warn" data-testid="pipeline-unknown">
                         {builds && !builds.known
                           ? "No se ha podido leer el estado del pipeline: estado desconocido. No se muestra un resultado inventado."
-                          : `El pipeline sigue sin dar un resultado tras ${maxPolls} comprobaciones: estado desconocido. Pulsa «Actualizar estado» para volver a intentarlo.`}
+                          : pollStop === "wait"
+                            ? // Rendirse esperando NO es haber comprobado N veces: decirlo
+                              // así era contarle al usuario comprobaciones que no se
+                              // hicieron (defecto 1 del re-supervisor).
+                              `El servidor no respondió a la última consulta en ${Math.round(maxPollWaitMs / 1000) || 1} s: estado desconocido. Pulsa «Actualizar estado» para volver a intentarlo.`
+                            : `El pipeline sigue sin dar un resultado tras ${maxPolls} comprobaciones: estado desconocido. Pulsa «Actualizar estado» para volver a intentarlo.`}
                       </p>
                     ) : !build ? (
                       <p className="warn">Esta versión todavía no se ha enviado a validación.</p>
