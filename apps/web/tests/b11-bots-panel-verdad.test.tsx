@@ -951,18 +951,69 @@ describe("issue #102 · el presupuesto de sondeos es POR BOT", () => {
     await screen.findByTestId("pipeline-unknown", {}, { timeout: 10_000 });
     const lecturasB = st.builds.b2 ?? 0;
 
-    // El bot A: 1 lectura de asentamiento de dependencias + su presupuesto entero.
-    expect(lecturasA, `lecturas del bot A = ${lecturasA}`).toBe(MAX + 1);
-
-    // El bot B: cambiar de selección provoca DOS lecturas de asentamiento en vez
-    // de una (cambia `selected.id` y luego se reasienta la versión enfocada).
-    // Medido 5 veces seguidas: A=4, B=5. Aun así NO se fija el 5 exacto: eso
-    // sería atar el test a una carrera de lecturas iniciales, que es justamente
-    // el error que hizo inestable a «gasta UNA petición por ciclo» (issue #95).
-    // Se acota por los dos lados, y ambas cotas detectan algo real:
-    //   - la inferior cae si el presupuesto NO se reinicia (medido: B baja a 2);
-    //   - la superior cae si B sondea de más.
-    expect(lecturasB, `lecturas del bot B = ${lecturasB} (A hizo ${lecturasA})`).toBeGreaterThanOrEqual(MAX + 1);
+    // NINGUNA cota es exacta, y esta vez de verdad.
+    //
+    // La primera versión de este test fijaba `lecturasA` con `toBe(MAX + 1)`
+    // mientras su propio commit argumentaba que no había que fijar exactos. El
+    // supervisor lo midió: ~6% de fallos en reposo y ~40% con la CPU en
+    // contención, siempre con A=3 en vez de 4. Peor que el 1/40 del issue #95
+    // que ese mismo commit citaba como escarmiento. El número de lecturas de
+    // ASENTAMIENTO (las que dispara `useResource` al cambiar dependencias, que
+    // no gastan presupuesto) depende de cómo se planifiquen los temporizadores:
+    // no es una constante y no se puede afirmar como tal.
+    //
+    // Lo que SÍ es invariante y es lo que este test guarda: cada bot recibe su
+    // presupuesto propio, ni heredado ni multiplicado.
+    expect(lecturasA, `lecturas del bot A = ${lecturasA}`).toBeGreaterThanOrEqual(MAX);
+    expect(lecturasA, `lecturas del bot A = ${lecturasA}`).toBeLessThanOrEqual(MAX + 2);
+    // Sin reinicio del presupuesto, B se queda en 1 lectura (medido por el
+    // supervisor 3/3 y por mí; el `2` que decía este comentario antes NO lo
+    // midió nadie: venía de otro banco de pruebas y no debió escribirse).
+    expect(lecturasB, `lecturas del bot B = ${lecturasB} (A hizo ${lecturasA})`).toBeGreaterThanOrEqual(MAX);
     expect(lecturasB, `lecturas del bot B = ${lecturasB} (A hizo ${lecturasA})`).toBeLessThanOrEqual(MAX + 2);
+  });
+
+  it("al cambiar de VERSIÓN enfocada, la nueva versión recibe su presupuesto entero", async () => {
+    // O1 del supervisor · El efecto reinicia el presupuesto con deps
+    // `[selected?.id, focusRequest]`, pero el test de arriba solo ejercía la
+    // primera mitad: cambiando las deps a `[selected?.id]` sobrevivía 34/34.
+    // La mentira que faltaba por cubrir es la misma: gastas el presupuesto
+    // mirando v2, pulsas «Ver v1», y el panel declara v1 «desconocida» sin
+    // haberla consultado.
+    const MAX = 3;
+    const st = { builds: {} as Record<string, number> };
+    const versiones = [
+      { version: 1, state: "validating", runtime: "python", loadoutRevision: 7 },
+      { version: 2, state: "validating", runtime: "python", loadoutRevision: 7 },
+    ];
+    apiMock.mockImplementation(async (method: string, path: string) => {
+      await new Promise((r) => setTimeout(r, 30));
+      if (method === "GET" && path.startsWith("/bots?")) {
+        return { items: [{ id: "b1", name: "Tanque", visibility: "private" }] };
+      }
+      const m = /^\/bots\/b1\/versions\/(\d+)\/builds$/.exec(path);
+      if (method === "GET" && m) {
+        st.builds[m[1]] = (st.builds[m[1]] ?? 0) + 1;
+        return [{ id: `b-${m[1]}`, version: Number(m[1]), status: "running", stages: [{ name: "structure", status: "running" }] }];
+      }
+      if (method === "GET" && path === "/bots/b1/versions") return versiones.map((x) => ({ ...x }));
+      if (method === "GET" && path === "/bots/b1/loadouts") return [LOADOUT];
+      throw new Error(`inesperado: ${method} ${path}`);
+    });
+
+    renderPage({ pollIntervalMs: 10, maxPolls: MAX });
+    await selectBot();
+    // Arranca enfocada la más alta (v2) y se agota su presupuesto.
+    await screen.findByTestId("pipeline-unknown", {}, { timeout: 10_000 });
+    const lecturasV2 = st.builds["2"] ?? 0;
+
+    // El usuario enfoca v1: pipeline distinto, presupuesto nuevo.
+    await userEvent.click(screen.getByRole("button", { name: "Ver v1" }));
+    await screen.findByTestId("pipeline-unknown", {}, { timeout: 10_000 });
+    const lecturasV1 = st.builds["1"] ?? 0;
+
+    expect(lecturasV2, `lecturas de v2 = ${lecturasV2}`).toBeGreaterThanOrEqual(MAX);
+    expect(lecturasV1, `lecturas de v1 = ${lecturasV1} (v2 hizo ${lecturasV2})`).toBeGreaterThanOrEqual(MAX);
+    expect(lecturasV1, `lecturas de v1 = ${lecturasV1}`).toBeLessThanOrEqual(MAX + 2);
   });
 });
