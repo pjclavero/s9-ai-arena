@@ -26,6 +26,7 @@ export function systemRoutes(
   db: Db,
   realBattleRuns: { enabled: boolean; available: boolean } = { enabled: false, available: false },
   publicSpectateEnabled = false,
+  publicReplaysEnabled = false,
 ): Router {
   const router = Router();
 
@@ -58,6 +59,10 @@ export function systemRoutes(
       // R11 · capability para la UI: ¿la emisión pública de espectador (sin cuenta)
       // está activada en este entorno? Lectura de S9_PUBLIC_SPECTATE_ENABLED.
       publicSpectateEnabled,
+      // R11 · capability para la UI: ¿el acceso público a replay/batalla
+      // finalizada (sin cuenta) está activado en este entorno? Lectura de
+      // S9_PUBLIC_REPLAYS_ENABLED.
+      publicReplaysEnabled,
       battlesByStatus,
       buildsByStatus,
       botVersionsByState,

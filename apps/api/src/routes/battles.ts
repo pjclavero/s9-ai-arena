@@ -22,6 +22,7 @@ import { signSpectateTicket } from "../auth/tokens.js";
 import { anonQuota, type AnonQuotaConfig } from "../middleware/anon-quota.js";
 import { isSignedDigest, type BattleRunConfig } from "../battle-run.js";
 import { publicSpectateEnabledFromEnv } from "../public-spectate.js";
+import { publicReplaysEnabledFromEnv } from "../public-replays.js";
 
 const SPECTATE_TICKET_TTL_S = 60;
 
@@ -77,6 +78,65 @@ function publicLiveBattleToJson(b: Record<string, unknown>): Record<string, unkn
   };
 }
 
+/**
+ * R11 · Proyección PÚBLICA de una batalla FINALIZADA con replay: id, estado,
+ * modo, mapa (id+nombre), timestamps, participantes (SOLO botId/version/team/
+ * outcome deportivo) y resultado agregado (score+ticks). Nunca seed,
+ * seedCommitment, seedRevealProof, tickets, replay_ref (ruta interna del
+ * archivo) ni datos de propietario/cuenta.
+ */
+function publicReplayBattleToJson(b: Record<string, unknown>, participants: Record<string, unknown>[]) {
+  const result = (b.result ?? undefined) as { score?: Record<string, number>; ticks?: number } | undefined;
+  return {
+    id: b.id,
+    status: b.status,
+    mode: b.mode,
+    mapId: b.map_id,
+    mapName: b.map_name,
+    createdAt: (b.created_at as Date).toISOString(),
+    startedAt: b.started_at ? (b.started_at as Date).toISOString() : undefined,
+    finishedAt: b.finished_at ? (b.finished_at as Date).toISOString() : undefined,
+    participants: participants.map((p) => ({
+      botId: p.bot_id,
+      version: p.version,
+      team: p.team,
+      outcome: p.outcome ?? undefined,
+    })),
+    result: result ? { score: result.score, ticks: result.ticks } : undefined,
+    replayAvailable: Boolean(b.replay_ref),
+  };
+}
+
+/** Límite de página del listado público de replays: más estricto que parseLimit (100), tope 50. */
+function parsePublicReplayLimit(raw: unknown): number {
+  const n = Number(raw ?? 20);
+  if (!Number.isInteger(n) || n < 1) return 20;
+  return Math.min(n, 50);
+}
+
+async function getFinishedBattleWithReplayOr404(db: Db, id: string) {
+  const battle = await db("battles")
+    .join("maps", "maps.id", "battles.map_id")
+    .where({ "battles.id": id, "battles.status": "finished" })
+    .whereNotNull("battles.replay_ref")
+    .select(
+      "battles.id as id",
+      "battles.status as status",
+      "battles.mode as mode",
+      "battles.map_id as map_id",
+      "maps.name as map_name",
+      "battles.created_at as created_at",
+      "battles.started_at as started_at",
+      "battles.finished_at as finished_at",
+      "battles.result as result",
+      "battles.replay_ref as replay_ref",
+    )
+    .first()
+    .catch(() => null);
+  if (!battle) throw notFound();
+  return battle;
+}
+
 async function getBattleOr404(db: Db, id: string) {
   const battle = await db("battles")
     .where({ id })
@@ -91,6 +151,7 @@ export function battleRoutes(
   quota: AnonQuotaConfig,
   runCfg?: BattleRunConfig,
   publicSpectateEnabled: boolean = publicSpectateEnabledFromEnv(),
+  publicReplaysEnabled: boolean = publicReplaysEnabledFromEnv(),
 ): Router {
   const router = Router();
 
@@ -167,6 +228,100 @@ export function battleRoutes(
     // anti-scraping/DoS propia (route distinta para no compartir presupuesto
     // con el listado).
     (req, res, next) => anonQuota(db, "public-battle", quota)(req, res, next),
+  );
+
+  // ---------------------------------------------- R11 · replay público
+  // Namespace propio /public/replays* (no /public/battles/{battleId}, ya
+  // ocupado por getPublicLiveBattle para batallas `running`). Gateado por
+  // S9_PUBLIC_REPLAYS_ENABLED, apagado por defecto. Solo batallas `finished`
+  // CON replay publicado: una batalla en curso nunca se expone por esta vía
+  // (para eso está el espectador, con su propio flag).
+  defineOperation(
+    router,
+    "listPublicReplays",
+    async (req, res) => {
+      if (!publicReplaysEnabled) {
+        res.json({ enabled: false, items: [] });
+        return;
+      }
+      const limit = parsePublicReplayLimit(req.query.limit);
+      const cursor = decodeCursor(req.query.cursor as string | undefined);
+      let q = db("battles")
+        .join("maps", "maps.id", "battles.map_id")
+        .where({ "battles.status": "finished" })
+        .whereNotNull("battles.replay_ref")
+        .select(
+          "battles.id as id",
+          "battles.status as status",
+          "battles.mode as mode",
+          "battles.map_id as map_id",
+          "maps.name as map_name",
+          "battles.created_at as created_at",
+          "battles.started_at as started_at",
+          "battles.finished_at as finished_at",
+          "battles.result as result",
+          "battles.replay_ref as replay_ref",
+        )
+        .orderBy([
+          { column: "battles.created_at", order: "desc" },
+          { column: "battles.id", order: "desc" },
+        ])
+        .limit(limit + 1);
+      if (cursor) q = q.whereRaw("(battles.created_at, battles.id) < (?, ?)", [cursor.createdAt, cursor.id]);
+      const rows = await q;
+      const page = rows.slice(0, limit);
+      const items = await Promise.all(
+        page.map(async (b: Record<string, unknown>) =>
+          publicReplayBattleToJson(b, await db("participants").where({ battle_id: b.id })),
+        ),
+      );
+      res.setHeader("Cache-Control", "public, max-age=30");
+      res.json({
+        enabled: true,
+        items,
+        nextCursor:
+          rows.length > limit
+            ? encodeCursor(page[page.length - 1].created_at as Date, page[page.length - 1].id as string)
+            : undefined,
+      });
+    },
+    (req, res, next) => anonQuota(db, "public-replays-list", quota)(req, res, next),
+  );
+
+  defineOperation(
+    router,
+    "getPublicReplay",
+    async (req, res) => {
+      if (!publicReplaysEnabled) throw notFound();
+      const battleId = pathParam(req, "battleId");
+      const battle = await getFinishedBattleWithReplayOr404(db, battleId);
+      const participants = await db("participants").where({ battle_id: battle.id });
+      res.setHeader("Cache-Control", "public, max-age=3600, immutable");
+      res.json(publicReplayBattleToJson(battle, participants));
+    },
+    (req, res, next) => anonQuota(db, "public-replay", quota)(req, res, next),
+  );
+
+  defineOperation(
+    router,
+    "downloadPublicReplay",
+    async (req, res) => {
+      if (!publicReplaysEnabled) throw notFound();
+      const battleId = pathParam(req, "battleId");
+      const battle = await getFinishedBattleWithReplayOr404(db, battleId);
+      let bytes: Buffer;
+      try {
+        bytes = await readFile(battle.replay_ref as string);
+      } catch {
+        throw notFound("Replay no disponible");
+      }
+      res
+        .status(200)
+        .setHeader("Content-Type", "application/octet-stream")
+        .setHeader("Cache-Control", "public, max-age=3600, immutable")
+        .send(bytes);
+    },
+    (req, res, next) => anonQuota(db, "public-replay-download", quota)(req, res, next),
   );
 
   defineOperation(router, "listBattles", async (req, res) => {
