@@ -5,10 +5,15 @@
  * LivePage: un fallo de carga se ANUNCIA (role="alert") con reintento, nunca
  * como lista vacía; una clasificación vacía dice por qué. SIN botones de
  * acción/mutación: página de SOLO LECTURA.
+ *
+ * R16: EmptyState adopta la primitiva de ui/primitives.tsx. El data-testid se
+ * preserva en el elemento raíz del componente para que los tests existentes
+ * sigan encontrándolo.
  */
 import { useState } from "react";
 import { api } from "../api.js";
 import { useResource, ResourceView } from "../resource.js";
+import { EmptyState } from "../ui/primitives.js";
 
 export interface Standing {
   rank: number;
@@ -52,15 +57,15 @@ export function RankingPage() {
       <ResourceView resource={res} label="la clasificación" onRetry={reload}>
         {(standings) =>
           standings.length === 0 ? (
-            <p data-testid="ranking-empty">Todavía no hay clasificación para este modo.</p>
+            <EmptyState message="Todavía no hay clasificación para este modo." data-testid="ranking-empty" />
           ) : (
             <table data-testid="ranking-table">
               <thead>
                 <tr>
-                  <th>#</th>
-                  <th>Bot</th>
-                  <th>Rating</th>
-                  <th>V-D-E</th>
+                  <th scope="col">#</th>
+                  <th scope="col">Bot</th>
+                  <th scope="col">Rating</th>
+                  <th scope="col">V-D-E</th>
                 </tr>
               </thead>
               <tbody>

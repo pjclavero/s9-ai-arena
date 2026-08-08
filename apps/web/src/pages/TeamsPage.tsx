@@ -1,6 +1,16 @@
-/** T7.4 · Gestión de equipos: crear (capitán automático), invitar y expulsar. */
+/**
+ * T7.4 · Gestión de equipos: crear (capitán automático), invitar y expulsar.
+ *
+ * R16: Panel envuelve el .card existente; Button añade type="button" explícito
+ * a los botones que carecían de él (mitigación del riesgo identificado en la
+ * auditoría visual R16, §5). El error inline se mantiene como <p className="error">
+ * sin role="alert" porque no hay reintento asociado: no encaja en el contrato de
+ * ErrorState (que exige un onRetry). Se anota como pendiente para cuando se
+ * añada manejo de errores de carga completo en esta página.
+ */
 import { useEffect, useState } from "react";
 import { api, type Me } from "../api.js";
+import { Panel, Button } from "../ui/primitives.js";
 
 interface Team {
   id: string;
@@ -24,7 +34,7 @@ export function TeamsPage(props: { me: Me }) {
   }, []);
 
   return (
-    <div className="card">
+    <Panel>
       <h2>Equipos</h2>
       <input
         aria-label="nuevo-equipo"
@@ -32,7 +42,7 @@ export function TeamsPage(props: { me: Me }) {
         value={name}
         onChange={(e) => setName(e.target.value)}
       />{" "}
-      <button
+      <Button
         onClick={async () => {
           try {
             await api("POST", "/teams", { name });
@@ -44,7 +54,7 @@ export function TeamsPage(props: { me: Me }) {
         }}
       >
         Crear equipo
-      </button>
+      </Button>
       {error && <p className="error">{error}</p>}
       <table>
         <tbody>
@@ -65,7 +75,7 @@ export function TeamsPage(props: { me: Me }) {
                         value={invite[t.id] ?? ""}
                         onChange={(e) => setInvite((s) => ({ ...s, [t.id]: e.target.value }))}
                       />{" "}
-                      <button
+                      <Button
                         onClick={async () => {
                           try {
                             await api("POST", `/teams/${t.id}/members`, { userId: invite[t.id] });
@@ -76,7 +86,7 @@ export function TeamsPage(props: { me: Me }) {
                         }}
                       >
                         Invitar
-                      </button>
+                      </Button>
                     </>
                   )}
                 </td>
@@ -85,6 +95,6 @@ export function TeamsPage(props: { me: Me }) {
           })}
         </tbody>
       </table>
-    </div>
+    </Panel>
   );
 }
