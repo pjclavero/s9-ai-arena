@@ -240,9 +240,22 @@ export function BotsPage(props: {
   const needVersionPollRef = useRef(false);
 
   // Cambiar de bot o de versión enfocada reinicia el presupuesto de sondeos.
+  //
+  // issue #102 · Y REANUDA EL BUCLE, que es lo que faltaba. Reiniciar el contador
+  // no basta: si el presupuesto ya se había agotado, el bucle salió SIN
+  // reprogramarse, y sus dependencias (`inProgress`, `maxPolls`, `pollIntervalMs`,
+  // `maxPollWaitMs`, `pollEpoch`) no cambian al enfocar otra versión del mismo
+  // bot —`focused.state` sigue siendo `validating`, así que `inProgress` ni
+  // siquiera parpadea—. El panel quedaba diciendo «En curso: comprobando cada N
+  // s…» sin comprobar nada: la mentira de B11 por tercera puerta. El caso de
+  // cambio de BOT se salvaba de casualidad, porque al recargarse el recurso de
+  // versiones `focused` queda indefinido un instante e `inProgress` cae a false,
+  // rearmando el efecto. Con la época, los dos casos reanudan por el mismo
+  // camino y ninguno depende de esa casualidad.
   useEffect(() => {
     pollsRef.current = 0;
     setPollExhausted(false);
+    setPollEpoch((n) => n + 1);
   }, [selected?.id, focusRequest]);
 
   const inProgress = workInProgress(focused?.state, builds);
