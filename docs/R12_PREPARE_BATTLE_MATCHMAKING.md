@@ -37,7 +37,7 @@ implementación)**.
 ### 1.2 El hueco: no hay puente entre "match de torneo" y "battle preparada"
 
 Hoy un `match` (par de bots/equipos + ronda) y una `Battle` (partida ejecutable) son entidades
-sin enlace. `prepare-battle` es ese puente: toma un `match` en estado `pending` y crea (o
+sin enlace. `prepare-battle` es ese puente: toma un `match` en estado `scheduled` y crea (o
 reutiliza) la `Battle` que ese match debe correr, marcándola como oficial (afecta rating) y
 enlazada al match — sin lanzarla.
 
@@ -55,8 +55,7 @@ distinto al del torneo).
 Comportamiento:
 
 1. Carga el `match` por `tournamentId + matchId`. 404 si no existe.
-2. 409 si `match.state !== "pending"` (evita duplicar `prepared` sobre un match ya jugado o
-   cancelado).
+2. 409 si `match.state !== "scheduled"` (evita duplicar sobre un match ya jugado).
 3. Deriva `participants` de `match.pairing` (bot/equipo A vs B), `mode`/`mapId`/`rulesetId` del
    `tournament.ruleset` (D7, `BUDGET_CREDITS_MVP` y demás ya resueltos a nivel de torneo).
 4. Crea la `Battle` reusando el mismo camino interno que `createPracticeBattle` (R9), pero con
@@ -75,36 +74,56 @@ Respuesta (reusa `Battle` existente, sin campos nuevos en el schema):
   "mapId": "...", "participants": [...] }
 ```
 
-### 1.4 Estados y transición de `match` (extiende el `state` ya existente en la tabla `matches`)
+### 1.4 Estados y transición de `match`
+
+> **CORRECCIÓN (issue #102 / auditoría R12).** La primera versión de este diseño describía una
+> máquina de estados que **no existe en la base de datos**. El `CHECK` real de `matches.state`
+> (`apps/api/src/db/migrations.ts:313`) admite exactamente cuatro valores:
+>
+> ```sql
+> state text NOT NULL DEFAULT 'scheduled'
+>   CHECK (state IN ('scheduled','running','finished','failed'))
+> ```
+>
+> La migración `008_e9_competition` (`migrations.ts:530-545`) añade columnas a `matches` pero
+> **no toca ese `CHECK`**. El diseño anterior nombraba `pending`, `prepared`, `completed` y
+> `cancelled`: los cuatro son inventados. De haberse implementado tal cual, el paso 2 del
+> endpoint (`409 si match.state !== "pending"`) habría devuelto **409 siempre**, porque ningún
+> match puede estar en `pending`. El worker de torneos, por su parte, solo usa `scheduled`,
+> `running` y `finished` (`apps/tournament-worker/src/`).
+
+Máquina de estados REAL, sobre la que debe construirse `prepare-battle`:
 
 ```text
-pending → prepared → running → completed
+scheduled → running → finished
                     ↘ failed
-pending → cancelled          (torneo cancelado / bye)
-prepared → cancelled         (rehacer emparejamiento antes de correr)
 ```
 
-- `pending`: estado inicial de siembra (ya existe hoy, sin cambios).
-- `prepared`: **nuevo** — `prepare-battle` lo puso aquí; `match.battle_id` apunta a una
-  `Battle` en `scheduled`. Última parada de este diseño sin `S9_ENABLE_REAL_BATTLE_RUNS`.
-- `running` / `completed` / `failed`: reflejan el estado de la `Battle` enlazada cuando
-  **(gateado, fuera de alcance de implementación)** `runBattle` la ejecuta y el worker
-  actualiza `match.state` en espejo de `battle.status` (`running`→`running`,
-  `finished`→`completed`, `failed`→`failed`) y rellena `winner_bot_id`/`winner_team_id` desde
-  `battle.result` — este último paso de sincronización tampoco se implementa aquí; se deja
-  dibujado porque condiciona el shape de la migración (columna `battle_id` en `matches`).
-- `cancelled`: gestión manual/torneo cancelado, sin relación con el gateo de ejecución.
+- `scheduled`: estado inicial de siembra y **valor por defecto** de la columna. Es el estado
+  del que parte `prepare-battle`.
+- `running` / `finished` / `failed`: reflejan el estado de la `Battle` enlazada cuando
+  **(gateado, fuera de alcance de implementación)** el worker sincroniza `match.state` con
+  `battle.status` y rellena `winner_bot_id`/`winner_team_id` desde `battle.result`.
+
+**Decisión pendiente — no la resuelve este documento.** `prepare-battle` necesita distinguir
+"sembrado" de "ya tiene `Battle` enlazada". Hay dos caminos y ninguno es gratis:
+
+1. **Sin estado nuevo**: la distinción la da `matches.battle_id IS NULL`. No requiere migración
+   del `CHECK`; el 409 pasa a ser "ya tiene batalla" en vez de "estado incorrecto". Es el camino
+   de menor riesgo y el que recomienda esta corrección.
+2. **Con estado `prepared`**: requiere una migración que amplíe el `CHECK`, y obliga a revisar
+   todo el código que hoy asume cuatro estados. Solo se justifica si la UI necesita distinguir
+   visualmente "preparado" de "sembrado" más allá de la presencia de `battle_id`.
 
 Cambio de esquema propuesto (solo diseño): columna `matches.battle_id` (FK nullable a
-`battles.id`), y ampliar el enum de `matches.state` con `prepared` (hoy previsiblemente
-`pending|running|completed|...`; a confirmar contra la migración `008_e9_competition` al
-implementar).
+`battles.id`). La ampliación del enum queda condicionada a la decisión de arriba.
 
 ### 1.5 UI (fuera de alcance de N6, dibujado para R12 completo)
 
 En `TournamentDetailPage`/`BracketPage` (hoy solo lectura), un botón "Preparar batalla" por
-match `pending` (visible solo a admin), que tras `201/200` enlaza a `#/battles/{id}` (ya
-existe `BattlesPage`). Un botón "Lanzar" junto al match `prepared` queda **deshabilitado** con
+match `scheduled` sin `battle_id` (visible solo a admin), que tras `201/200` enlaza a
+`#/battles/{id}` (ya existe `BattlesPage`). Un botón "Lanzar" junto al match ya preparado
+—es decir, con `battle_id` no nulo— queda **deshabilitado** con
 tooltip explicando el gateo, hasta que `S9_ENABLE_REAL_BATTLE_RUNS=1` + VM108 estén validados
 — igual que ya hace el flag de `runBattle` a nivel de API (belt-and-braces: la UI no debe ser
 la única barrera).
