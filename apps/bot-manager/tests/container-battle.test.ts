@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 
 import { initPhysics } from "../../arena-engine/src/sim/physics.js";
 import { verify } from "../../arena-engine/src/replay.js";
+import { mvpArena } from "../../arena-engine/src/fixtures.js";
 import {
   DEFAULT_LIMITS,
   type ContainerHandle,
@@ -169,6 +170,46 @@ describe("R6.2 · orquestador de batalla-en-contenedores", () => {
     expect(Object.keys(postures).sort()).toEqual(["bot_a", "bot_b"]);
     // Limpieza: los dos contenedores se pararon.
     expect(stopped.sort()).toEqual(["bot_a", "bot_b"]);
+  }, 30_000);
+
+  it("B9 · `map` y `mapName` a la vez → lanza (no se adivina cuál de los dos jugar)", async () => {
+    const { runner } = inProcessRunner();
+    await expect(
+      runContainerBattle({
+        battleId: "cbtest_excluyentes",
+        seed: "s",
+        rulesetId: "dm_practice@1",
+        ticks: 30,
+        mapName: "empty",
+        map: mvpArena(),
+        bots: SMOKE_BOTS,
+        runner,
+        network: "arena",
+        engineHost: "127.0.0.1",
+        tickIntervalMs: 3,
+        overallTimeoutMs: 10_000,
+      }),
+    ).rejects.toThrow(/excluyentes/);
+  });
+
+  it("B9 · con `map`, la batalla se juega en ESE mapa (la cabecera del replay lo demuestra)", async () => {
+    const { runner } = inProcessRunner();
+    const map = mvpArena();
+    const { replay } = await runContainerBattle({
+      battleId: "cbtest_map_" + Date.now(),
+      seed: "smoke-seed",
+      rulesetId: "dm_practice@1",
+      ticks: 60,
+      map,
+      bots: SMOKE_BOTS,
+      runner,
+      network: "arena",
+      engineHost: "127.0.0.1",
+      tickIntervalMs: 3,
+      overallTimeoutMs: 20_000,
+    });
+    expect(replay.header.map.mapId).toBe(map.mapId);
+    expect(replay.header.map.walls).toEqual(map.walls);
   }, 30_000);
 
   it("el SandboxSpec se traduce a un create que el docker-proxy ADMITE (postura conforme)", () => {

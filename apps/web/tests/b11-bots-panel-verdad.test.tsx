@@ -67,6 +67,9 @@ function fakeBackend(init: { versions: VersionRow[]; builds?: BuildRow[]; latenc
     builds: init.builds ?? [],
     calls: [] as string[],
     buildsShouldFail: false,
+    /** issue #95 · nº de lectura de /builds a partir de la cual NO se responde JAMÁS. */
+    hangBuildsFrom: 0,
+    buildsReads: 0,
     versionsShouldFail: false,
     nextVersionNumber: Math.max(0, ...init.versions.map((v) => v.version)) + 1,
   };
@@ -85,6 +88,12 @@ function fakeBackend(init: { versions: VersionRow[]; builds?: BuildRow[]; latenc
     if (method === "GET" && path === "/bots/b1/loadouts") return [LOADOUT];
     const m = /^\/bots\/b1\/versions\/(\d+)\/builds$/.exec(path);
     if (method === "GET" && m) {
+      state.buildsReads += 1;
+      // Una pasarela colgada no devuelve error: no devuelve NADA. `api.ts` hace
+      // `fetch` sin plazo, así que esta promesa no se resuelve nunca.
+      if (state.hangBuildsFrom && state.buildsReads >= state.hangBuildsFrom) {
+        await new Promise(() => {});
+      }
       if (state.buildsShouldFail) throw new Error("gateway caído");
       const n = Number(m[1]);
       return state.builds.filter((b) => b.version === n).map((b) => ({ ...b }));
@@ -118,7 +127,7 @@ function fakeBackend(init: { versions: VersionRow[]; builds?: BuildRow[]; latenc
   return state;
 }
 
-function renderPage(overrides: { pollIntervalMs?: number; maxPolls?: number } = {}) {
+function renderPage(overrides: { pollIntervalMs?: number; maxPolls?: number; maxPollWaitMs?: number } = {}) {
   return render(
     <BotsPage
       me={ME}
@@ -127,6 +136,7 @@ function renderPage(overrides: { pollIntervalMs?: number; maxPolls?: number } = 
       budgetCredits={1000}
       pollIntervalMs={overrides.pollIntervalMs ?? 5}
       maxPolls={overrides.maxPolls ?? 4}
+      maxPollWaitMs={overrides.maxPollWaitMs}
     />,
   );
 }
@@ -261,7 +271,7 @@ describe("B11 · el pipeline refleja el resultado final", () => {
     await screen.findByTestId("focused-version");
 
     await userEvent.click(screen.getByRole("button", { name: "Enviar a validación v1" }));
-    await screen.findByTestId("pipeline-running", {}, { timeout: 5000 });
+    await screen.findByTestId("pipeline-running", {}, { timeout: 15_000 });
 
     // El worker termina DESPUÉS, como en producción: el panel debe enterarse solo.
     st.versions = [
@@ -302,6 +312,136 @@ describe("B11 · el pipeline refleja el resultado final", () => {
     expect(screen.getByTestId("build-result").querySelector("h3")?.textContent).toContain("estado desconocido");
     // Y no se ha inventado un "passed"/"failed".
     expect(screen.getByTestId("build-result").querySelector("h3")?.textContent).not.toContain("passed");
+  });
+
+  it("issue #95 · una lectura que NO VUELVE tampoco deja el panel diciendo «en curso» para siempre", async () => {
+    // Defecto 1 del supervisor sobre el arreglo del sondeo. `api.ts` hace `fetch`
+    // sin plazo ni AbortController, así que una pasarela colgada no da error: deja
+    // la promesa viva indefinidamente. Como esperar no gasta presupuesto, el bucle
+    // esperaba sin llegar NUNCA a agotarse y el panel se quedaba en «Validación en
+    // curso…» eternamente — el mismo bloqueo que el arreglo perseguía, por el otro
+    // lado. La espera tiene ahora un tope, y al vencer se dice la verdad.
+    const st = fakeBackend({
+      versions: [{ version: 1, state: "validating", runtime: "python", loadoutRevision: 7 }],
+      builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
+    });
+    st.hangBuildsFrom = 2; // la primera lectura vuelve; la del sondeo se cuelga
+    renderPage({ pollIntervalMs: 5, maxPolls: 100, maxPollWaitMs: 150 });
+    await selectBot();
+
+    const aviso = await screen.findByTestId("pipeline-unknown", {}, { timeout: 5000 });
+    expect(aviso.textContent).toContain("estado desconocido");
+    expect(screen.queryByTestId("pipeline-running")).toBeNull();
+  });
+
+  it("issue #95 · rendirse esperando NO se anuncia como «tras N comprobaciones»", async () => {
+    // Defecto 1 del re-supervisor: `pollExhausted` era un booleano con DOS causas
+    // y el mensaje solo sabía contar una. Medido por él: 3 lecturas reales
+    // anunciadas como «tras 100 comprobaciones». En el componente cuyo contrato es
+    // «el panel debe decir LA VERDAD», eso es una cadena falsa.
+    const st = fakeBackend({
+      versions: [{ version: 1, state: "validating", runtime: "python", loadoutRevision: 7 }],
+      builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
+    });
+    st.hangBuildsFrom = 2;
+    renderPage({ pollIntervalMs: 5, maxPolls: 100, maxPollWaitMs: 100 });
+    await selectBot();
+
+    const aviso = await screen.findByTestId("pipeline-unknown", {}, { timeout: 5000 });
+    expect(aviso.textContent).toContain("no respondió");
+    expect(aviso.textContent).not.toContain("100 comprobaciones");
+  });
+
+  it("issue #95 · si la PRIMERA lectura no vuelve nunca, tampoco se deja «Consultando…» eterno", async () => {
+    // Observación 1 del re-supervisor: la guarda `!!builds` dejaba fuera el caso
+    // en que NINGUNA lectura llega, que es precisamente cuando el usuario más
+    // necesita saberlo. `builds` era null para siempre y el panel se quedaba en
+    // «Consultando el estado del pipeline…» sin fin.
+    const st = fakeBackend({
+      versions: [{ version: 1, state: "validating", runtime: "python", loadoutRevision: 7 }],
+      builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
+    });
+    st.hangBuildsFrom = 1; // ni la primera vuelve
+    renderPage({ pollIntervalMs: 5, maxPolls: 100, maxPollWaitMs: 80 });
+    await selectBot();
+
+    const aviso = await screen.findByTestId("pipeline-unknown", {}, { timeout: 5000 });
+    expect(aviso.textContent).toContain("estado desconocido");
+  });
+
+  it("issue #95 · la espera se reinicia con cada lectura buena (no es acumulativa de por vida)", async () => {
+    // Mutación M7 del re-supervisor: quitar `waitedMs = 0` sobrevivía sin que
+    // ningún test lo notara. Sin ese reinicio, una pasarela SANA pero lenta
+    // acabaría declarada «desconocida» al sumar esperas de toda la sesión.
+    const st = fakeBackend({
+      versions: [{ version: 1, state: "validating", runtime: "python", loadoutRevision: 7 }],
+      builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
+      latencyMs: 40, // mucho más lenta que el intervalo: se espera en casi todos los ciclos
+    });
+    // Cada lectura obliga a ~8 ciclos de espera (40 ms / 5 ms). Con reinicio, cada
+    // lectura buena vuelve a poner el contador a cero y nunca se alcanzan los 100 ms
+    // seguidos; SIN reinicio, la espera acumulada los pasa en la 3ª lectura y el
+    // panel diría «no respondió» con una pasarela que responde perfectamente.
+    renderPage({ pollIntervalMs: 5, maxPolls: 6, maxPollWaitMs: 100 });
+    await selectBot();
+
+    // Con reinicio, la pasarela lenta agota el PRESUPUESTO (12 comprobaciones);
+    // sin él, la espera acumulada la mataría antes por «no respondió».
+    const aviso = await screen.findByTestId("pipeline-unknown", {}, { timeout: 10_000 });
+    expect(aviso.textContent).toContain("6 comprobaciones");
+    expect(aviso.textContent).not.toContain("no respondió");
+  });
+
+  it("issue #95 · al desmontar no queda ni un sondeo suelto", async () => {
+    // Mutación M8 del re-supervisor: anular la limpieza (`cancelled` +
+    // `clearTimeout`) sobrevivía porque no hay un solo `unmount()` en el fichero.
+    //
+    // LÍMITE HONESTO DE ESTE TEST: lo he comprobado y **sigue sobreviviendo**, aun
+    // anulando la limpieza ENTERA. No es que el test esté mal escrito: es que tras
+    // desmontar, la recarga ya no llega a pedir nada, así que la limpieza no tiene
+    // efecto observable en peticiones. Lo que protege de verdad es el `setState`
+    // sobre un componente desmontado, y cazarlo exigiría espiar temporizadores —un
+    // test de implementación, que es justo lo que este fichero rechaza—. Se queda
+    // como red contra fugas REALES (si algún día una recarga tardía sí dispara),
+    // no como prueba de la limpieza. La limpieza permanece SIN COBERTURA.
+    const st = fakeBackend({
+      versions: [{ version: 1, state: "validating", runtime: "python", loadoutRevision: 7 }],
+      builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
+    });
+    const { unmount } = renderPage({ pollIntervalMs: 5, maxPolls: 1000 });
+    await selectBot();
+    await waitFor(() => expect(st.calls.filter((c) => c.includes("/builds")).length).toBeGreaterThan(2), {
+      timeout: 5000,
+    });
+
+    unmount();
+    const trasDesmontar = st.calls.filter((c) => c.includes("/builds")).length;
+    await new Promise((r) => setTimeout(r, 120)); // ~24 ciclos de sondeo
+    expect(st.calls.filter((c) => c.includes("/builds")).length).toBe(trasDesmontar);
+  });
+
+  it("issue #95 · «Actualizar estado» REANUDA el sondeo, no solo apaga el aviso", async () => {
+    // Defecto 2 del supervisor: el bucle salía sin reprogramarse y sus dependencias
+    // no cambiaban, así que pulsar el botón borraba el «estado desconocido» y dejaba
+    // al usuario mirando un pipeline «en curso» que ya no se iba a actualizar jamás.
+    // Apagar el aviso sin reanudar es peor que no hacer nada: quita la única señal
+    // honesta que quedaba.
+    const st = fakeBackend({
+      versions: [{ version: 1, state: "validating", runtime: "python", loadoutRevision: 7 }],
+      builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
+      latencyMs: 1,
+    });
+    renderPage({ pollIntervalMs: 5, maxPolls: 2 });
+    await selectBot();
+    await screen.findByTestId("pipeline-unknown", {}, { timeout: 5000 });
+
+    st.calls.length = 0;
+    await userEvent.click(screen.getByRole("button", { name: "Actualizar estado" }));
+
+    // Vuelve a sondear DE VERDAD: no basta con que desaparezca el aviso.
+    await waitFor(() => expect(st.calls.filter((c) => c.includes("/builds")).length).toBeGreaterThan(1), {
+      timeout: 5000,
+    });
   });
 
   it("si no se pueden leer los builds NO se pinta un pipeline falso", async () => {
@@ -523,9 +663,17 @@ describe("B11-fix · el sondeo no desmonta el panel ni tira trabajo del usuario"
       builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
       latencyMs: 30,
     });
-    renderPage({ pollIntervalMs: 10, maxPolls: 40 });
+    // Presupuesto GRANDE a propósito (issue #95): estos tests afirman qué hace el
+    // sondeo mientras está VIVO, no que se agote. Con `maxPolls: 40` y ciclos de
+    // 10 ms el presupuesto se consumía en ~400 ms de RELOJ, así que bajo contención
+    // —la suite entera en paralelo— se agotaba antes de que el panel llegara a
+    // pintar `pipeline-running`: el estado pasaba a `unknown` y el `findByTestId`
+    // moría a los 5 s, dejando `unit` en rojo sin que nada hubiera cambiado. El
+    // agotamiento del presupuesto tiene su propio test ("gasta UNA petición por
+    // ciclo", `maxPolls: 6`), que no se toca.
+    renderPage({ pollIntervalMs: 10, maxPolls: 5_000 });
     await selectBot();
-    await screen.findByTestId("pipeline-running", {}, { timeout: 5000 });
+    await screen.findByTestId("pipeline-running", {}, { timeout: 15_000 });
 
     const chasis = screen.getByLabelText("chasis") as HTMLSelectElement;
     await userEvent.selectOptions(chasis, "chassis.heavy@1");
@@ -556,9 +704,17 @@ describe("B11-fix · el sondeo no desmonta el panel ni tira trabajo del usuario"
       builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
       latencyMs: 5,
     });
-    renderPage({ pollIntervalMs: 10, maxPolls: 40 });
+    // Presupuesto GRANDE a propósito (issue #95): estos tests afirman qué hace el
+    // sondeo mientras está VIVO, no que se agote. Con `maxPolls: 40` y ciclos de
+    // 10 ms el presupuesto se consumía en ~400 ms de RELOJ, así que bajo contención
+    // —la suite entera en paralelo— se agotaba antes de que el panel llegara a
+    // pintar `pipeline-running`: el estado pasaba a `unknown` y el `findByTestId`
+    // moría a los 5 s, dejando `unit` en rojo sin que nada hubiera cambiado. El
+    // agotamiento del presupuesto tiene su propio test ("gasta UNA petición por
+    // ciclo", `maxPolls: 6`), que no se toca.
+    renderPage({ pollIntervalMs: 10, maxPolls: 5_000 });
     await selectBot();
-    await screen.findByTestId("pipeline-running", {}, { timeout: 5000 });
+    await screen.findByTestId("pipeline-running", {}, { timeout: 15_000 });
 
     st.versionsShouldFail = true;
     st.builds = [{ id: "b-1", version: 1, status: "failed", stages: [{ name: "build", status: "failed" }] }];
@@ -639,20 +795,42 @@ describe("B11-fix · el sondeo no desmonta el panel ni tira trabajo del usuario"
   });
 
   it("gasta UNA petición por ciclo, no tres", async () => {
+    const MAX = 6;
     const st = enCurso();
-    renderPage({ pollIntervalMs: 10, maxPolls: 6 });
+    renderPage({ pollIntervalMs: 10, maxPolls: MAX });
     await selectBot();
-    await screen.findByTestId("build-result");
-    st.calls.length = 0;
-
-    await new Promise((r) => setTimeout(r, 250)); // el presupuesto se agota
-    await screen.findByTestId("pipeline-unknown");
+    // issue #95 · SIN poner el contador a cero, y esa es la corrección.
+    //
+    // Antes se reseteaba al ver `build-result` y se exigía «lecturas <= MAX».
+    // Pero hay UNA lectura de /builds que no la dispara el temporizador: la del
+    // asentamiento de dependencias del recurso (`useResource` recarga cuando
+    // cambia la versión enfocada), y no gasta presupuesto. Esa lectura corre una
+    // CARRERA con el reseteo: normalmente queda fuera de la ventana, y cuando la
+    // perdía caía dentro y el recuento daba 7 contra un presupuesto de 6. Medido
+    // en un banco de 40 repeticiones: fallaba 2 veces, y en las dos los sondeos
+    // disparados eran 6 — el presupuesto NUNCA se rompió. Acusaba al sondeo de
+    // una petición que no era suya.
+    //
+    // Mover el ancla a `pipeline-running` quitaba el flaky pero DEJABA CIEGA la
+    // aserción: comprobado subiendo el presupuesto a MAX+2, el test seguía verde
+    // porque uno o dos sondeos caían antes del ancla. Contar el TOTAL desde el
+    // principio no tiene carrera alguna (la lectura inicial es exactamente una,
+    // porque con la versión aún sin resolver el cargador no pide nada) y además
+    // conserva el poder de detección: con presupuesto MAX+2 el total se va a
+    // MAX+3 y la aserción cae.
+    await screen.findByTestId("pipeline-unknown", {}, { timeout: 10_000 });
 
     const builds = st.calls.filter((c) => c.includes("/builds")).length;
-    const otras = st.calls.filter((c) => !c.includes("/builds")).length;
-    expect(builds).toBeGreaterThan(0);
-    expect(builds).toBeLessThanOrEqual(6); // presupuesto respetado
-    expect(otras).toBe(0); // ni versiones ni loadouts por ciclo
+    const versiones = st.calls.filter((c) => c.endsWith("/versions")).length;
+    const loadouts = st.calls.filter((c) => c.endsWith("/loadouts")).length;
+    // 1 lectura inicial + como mucho el presupuesto. Ni una más.
+    expect(builds, `lecturas de /builds = ${builds}`).toBeLessThanOrEqual(MAX + 1);
+    // Y de verdad ha sondeado (si no, la cota de arriba sería trivial).
+    expect(builds).toBeGreaterThan(1);
+    // Ni versiones ni loadouts POR CICLO: solo sus cargas iniciales. Si se
+    // sondearan, estos números irían a la par de los sondeos.
+    expect(versiones, `lecturas de /versions = ${versiones}`).toBeLessThanOrEqual(1);
+    expect(loadouts, `lecturas de /loadouts = ${loadouts}`).toBeLessThanOrEqual(1);
   });
 
   it("al terminar el build revalida las versiones UNA vez y muestra el estado final", async () => {
@@ -661,9 +839,17 @@ describe("B11-fix · el sondeo no desmonta el panel ni tira trabajo del usuario"
       builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
       latencyMs: 5,
     });
-    renderPage({ pollIntervalMs: 10, maxPolls: 40 });
+    // Presupuesto GRANDE a propósito (issue #95): estos tests afirman qué hace el
+    // sondeo mientras está VIVO, no que se agote. Con `maxPolls: 40` y ciclos de
+    // 10 ms el presupuesto se consumía en ~400 ms de RELOJ, así que bajo contención
+    // —la suite entera en paralelo— se agotaba antes de que el panel llegara a
+    // pintar `pipeline-running`: el estado pasaba a `unknown` y el `findByTestId`
+    // moría a los 5 s, dejando `unit` en rojo sin que nada hubiera cambiado. El
+    // agotamiento del presupuesto tiene su propio test ("gasta UNA petición por
+    // ciclo", `maxPolls: 6`), que no se toca.
+    renderPage({ pollIntervalMs: 10, maxPolls: 5_000 });
     await selectBot();
-    await screen.findByTestId("pipeline-running", {}, { timeout: 5000 });
+    await screen.findByTestId("pipeline-running", {}, { timeout: 15_000 });
     st.calls.length = 0;
 
     st.versions = [

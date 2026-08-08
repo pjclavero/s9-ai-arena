@@ -91,31 +91,103 @@ API --HTTP(red platform)--> arena-engine --HTTP--> s9-docker-proxy --> bots (red
   a B1 (503 en ambos extremos). `S9_ENABLE_REAL_BATTLE_RUNS` sigue sin encenderse en ningún
   fichero de configuración.
 
-**Mapa — REQUISITO PENDIENTE, falla cerrado en vez de sustituir en silencio.** arena-engine
-(contrato R6.2) solo entiende mapas-fixture (`"empty"|"mvp"|"ctf"`,
-`apps/arena-engine/src/fixtures.ts`), no el catálogo real de mapas de la API. El launcher
-(`battle-run-http-launcher.ts::FIXTURE_MAP_EQUIVALENTS`) mantiene una allowlist EXPLÍCITA de
-qué `mapId`+`mapVersion` real tiene fixture equivalente; **hoy solo `mvp-arena-01` v1** (el
-fixture `mvpArena()` usa el mismo `mapId`/`version` que el mapa publicado por el seed real).
-Cualquier otro mapa se **rechaza** (`status: "failed"`, sin llegar a llamar a arena-engine) en
-vez de jugarse con el fixture "mvp" por defecto: sustituir el mapa en silencio habría hecho
-que alguien eligiera un mapa en la UI y se jugara otro sin enterarse — un fallo de integridad
-que invalidaría la evidencia de una batalla (bloque B4), no un detalle cosmético. Soportar
-mapas reales arbitrarios (que la batalla juegue la geometría real de cualquier mapa publicado,
-no solo esta única equivalencia) es un **requisito pendiente**, fuera de alcance de B2: exige
-que arena-engine acepte geometría de mapa en el cuerpo de `/run` en vez de un nombre de
-fixture fijo. Nota aparte: incluso para `mvp-arena-01` v1, el fixture está marcado
-"PROVISIONAL POR DISEÑO" en su propio fichero — su geometría puede no ser bit-a-bit idéntica
-al JSON importado de Tiled hasta que E4 lo sustituya; es la mejor equivalencia disponible hoy,
-no una garantía de fidelidad geométrica total.
+**Mapa — B9: CUALQUIER MAPA PUBLICADO DEL CATÁLOGO, RESUELTO DE VERDAD.** (Hasta B9: el
+launcher solo admitía `mvp-arena-01` v1 vía la allowlist `FIXTURE_MAP_EQUIVALENTS`, que
+traducía ese único mapId a un mapa-fixture del motor; todo lo demás se rechazaba. Rechazar
+era correcto —mejor eso que jugar otro mapa en silencio— pero el catálogo real de mapas del
+proyecto no se usaba, y ni siquiera `mvp-arena-01` se jugaba con su geometría real, sino con
+la fixture "PROVISIONAL POR DISEÑO".)
 
-**Otros límites conocidos de esta traducción, documentados y NO resueltos en B2** (no son
-huecos de seguridad; son fidelidad de simulación pendiente): `rulesetId` se pasa tal cual
-desde `battle.mode` (sin resolver contra el catálogo real de rulesets); `ticks` es un techo
-fijo configurable, no derivado del ruleset; la respuesta no ingiere en replay-service
-(`replay.ingested` queda `false` siempre). Nada de esto se ha probado contra Docker real — ver
-el informe de entrega del bloque B2 para el detalle de qué se verificó con fakes y qué queda
-pendiente de VM108.
+Cadena de B9: `map_versions` (fila `published`, contenido `InternalMap` de E1/E4) →
+`toEngineMap()` (apps/map-service) → `ArenaMap` → campo **`map`** del cuerpo de `POST /run`
+(`apps/api/src/services/battle-map-resolver.ts`). arena-engine valida ese mapa entero como
+entrada externa (`apps/arena-engine/src/arena-map.ts::validateArenaMap`) antes de tocar el
+motor; `map` y `mapName` (fixture) son **excluyentes**.
+
+El invariante no cambia, se refuerza — **fail closed y con código distinguible** en
+`BattleRunResult.errorCode`: `map_not_published` (no existe esa versión EXACTA publicada;
+nunca se coge "la última"), `map_content_mismatch` (fila y documento divergen),
+`map_checksum_mismatch` (el checksum canónico del documento no cuadra con su contenido:
+se manipuló tras publicarse), `map_invalid` (no pasa el validador REAL de E4),
+`map_unplayable` (no es jugable para el motor), `map_mode_incompatible` (el mapa no tiene las
+entidades que el modo exige — comprobado con `modeMapIncompatibilities()`, el mismo código del
+motor que usa `createMode`), y `map_identity_mismatch` — **al volver**, el mapa de la cabecera
+del replay debe ser exactamente el pedido; si el motor jugó otro mapa, la batalla es `failed`
+y el replay NO se ingesta.
+
+> **La comparación de vuelta es del mapa ENTERO, geometría incluida** (`sameArenaMap`), no de
+> `mapId@version#checksum`. El `checksum` de un `ArenaMap` NO se deriva de su geometría:
+> `toEngineMap()` lo copia del documento origen, así que quien fabrique la cabecera de un
+> replay puede firmar cualquier geometría con la identidad del mapa pedido. El supervisor de
+> B9 lo demostró con una batalla real (`proc-test-7` firmado como `mvp-arena-01`: la guarda
+> por etiqueta la aceptó e ingestó, con 3 muros pedidos frente a 6 jugados). Comparar el mapa
+> completo no da falsos positivos: `Battle` no muta `config.map` — el daño a los destructibles
+> vive en `battle.destructibleHp`, un `Map` aparte.
+
+**Ruleset/ticks — B9: resueltos (y arreglado un bug real).** Hasta B9 el launcher enviaba
+`rulesetId: battle.mode` (`"deathmatch"`), que **no es** un ruleset del motor
+(`dm_practice@1`, `tdm_mvp@1`...): `loadRuleset()` lanzaba dentro de `runContainerBattle` y
+toda batalla real lanzada desde la API acababa en un 502 `battle_failed` genérico. Ahora
+`apps/api/src/services/battle-ruleset-resolver.ts` traduce modo (+ `rulesets.config.engineRulesetId`
+si la fila de BD lo declara) → ruleset REAL del motor, exigiendo que el modo coincida
+(`ruleset_mode_mismatch` si no), y `ticks` sale de `ruleset.timeLimitTicks` en vez de un
+20000 fijo. arena-engine, además, rechaza con **400** un `rulesetId` que no esté en su
+catálogo, en vez de dejarlo explotar a mitad de batalla.
+
+**Plazo de la llamada `POST /run` — derivado, no fijo.** El launcher abortaba a 30 s fijos.
+Con el ruleset resuelto de verdad, `ticks = timeLimitTicks = 9000` ⇒ la batalla dura
+`9000 × 34 ms ≈ 306 s`, y una práctica de 2 bots en deathmatch SIEMPRE agota el límite
+(`scoreToWin: 5`, sin respawn: nadie hace 5 bajas). Es decir: con el timeout fijo, el caso
+NORMAL habría sido `failed: "arena-engine no respondió en 30000ms"` con los contenedores vivos
+otros cuatro minutos y el replay perdido — un timeout en lugar del 502, no una batalla que
+funcione (bloqueante del supervisor de B9). El plazo sale ahora de
+`packages/game-rules/battle-timing.ts`, el MISMO módulo del que el motor deriva su guard global
+(`containerBattleOverallTimeoutMs`), de modo que la API siempre espera más que el motor: quien
+se rinde primero es quien puede limpiar los contenedores. `ARENA_ENGINE_RUN_TIMEOUT_MS`
+sobrescribe el plazo de forma absoluta si un operador lo necesita (un valor por debajo de la
+duración teórica se registra como aviso).
+
+**Límites que siguen abiertos tras B9** (no son huecos de seguridad; son fidelidad y alcance):
+
+- `meta.supportedModes` del documento del mapa NO se comprueba contra el modo de la batalla.
+  El motivo real (corregido tras la revisión del supervisor, la versión anterior de este
+  párrafo era falsa): los DOS sitios donde vive esa información se contradicen para el mapa
+  del seed — `db/seeds/dev.ts` guarda en la columna `supported_modes` el valor
+  `mapDoc.supportedModes ?? ["deathmatch"]`, y el documento no tiene ese campo en la raíz
+  (está en `meta.supportedModes`), así que la columna acaba con `["deathmatch"]` mientras el
+  documento declara `["capture_the_flag","team_deathmatch"]`. Gatear con un dato inconsistente
+  consigo mismo no aporta garantía: lo que B9 sí comprueba es la condición REAL y verificable
+  (que el mapa tenga las entidades que el modo exige, `map_mode_incompatible`). Reconciliar
+  columna y documento es trabajo propio del pipeline de mapas.
+- `budget_credits`/`forbidden_categories` de la fila de `rulesets` de la BD siguen sin
+  aplicarse al ruleset del motor (afectan a la validación de loadout, otra capa).
+- **`zone_control` y `domination` no son jugables sobre NINGÚN mapa del catálogo actual**:
+  los 21 mapas del repo suman 2 zonas y las dos son de daño — cero de captura, y esos dos
+  modos exigen 1 y 2 zonas de captura respectivamente (`MODE_REGISTRY`, sim/modes.ts). El
+  rechazo es correcto y ahora ocurre en la API (`map_mode_incompatible`, antes reventaba
+  dentro del motor), pero mientras nadie publique un mapa con zonas de captura esos modos
+  están disponibles en la API y no se pueden jugar. (Observación del supervisor de B9; no se
+  arregla aquí: hacen falta mapas nuevos, que es trabajo del pipeline de mapas.)
+- **Techo de recursos sorteable por el camino por defecto**: omitiendo `overallTimeoutMs` en
+  el cuerpo de `/run` y pidiendo `ticks: 1_000_000` (el máximo que acepta la validación), el
+  guard global derivado sale de ~9,45 h. Exige el secreto interno de arena-engine, así que no
+  es un vector desde fuera; acotar el guard derivado, y no solo el que llega en el cuerpo,
+  queda pendiente. (Observación del supervisor de B9.)
+- **La colisión de checksum de `map-service/canonical.ts` sigue viva en `main`** y B9 se
+  apoya en ese checksum para `map_checksum_mismatch`. NO afecta a la identidad del mapa
+  jugado —que desde la revisión del supervisor es estructural, geometría completa— pero sí
+  debilita ese mensaje concreto: un documento manipulado que lograra colisionar pasaría esa
+  comprobación (y seguiría teniendo que pasar el validador de E4 y la comparación de vuelta).
+- Nada de esto se ha probado contra Docker real — ver el informe de entrega del bloque
+  correspondiente para qué se verificó con fakes y qué queda pendiente de VM108.
+- **Bloqueo externo (issue #92) — YA RESUELTO, en la base de esta rama**: el `botId`
+  que la API envía en el cuerpo de `/run` era un UUID, mientras el esquema del HELLO
+  exige `^bot_[0-9a-zA-Z]{1,24}$`; el HELLO se descartaba en silencio y el handshake
+  expiraba. Era ajeno a este bloque y fue la razón por la que durante un tiempo
+  ninguna batalla lanzada desde la web podía completarse. Corregido derivando un asa
+  conforme (`packages/protocol/bot-handle.ts`); `container-battle.ts` ya la usa para
+  `BOT_ID` y para `expected`. Este párrafo se actualizó al rebasar sobre esa
+  corrección: antes afirmaba un bloqueo que la propia rama ya no tenía.
 
 ## Validación operativa en VM108 (gateada, NO en este PR)
 
@@ -126,9 +198,14 @@ Para pasar a **R6.2/R9-A** falta, sobre lo que ya cablea B2:
    hoy; encenderlos es una decisión de despliegue, no de este bloque).
 3. Crear una batalla en `#/battles/new` con bots firmados + mapa publicado → **Ejecutar batalla real**.
 4. Verificar: 2 contenedores reales, batalla termina, replay ingerido (`GET /replays`), 7/7 núcleo sano.
-5. Resolver los límites de traducción listados arriba: mapas reales arbitrarios (hoy solo
-   mvp-arena-01 v1 tiene equivalente y todo lo demás se rechaza en vez de sustituirse),
-   ruleset real, ingesta de replay.
+5. Resolver los límites de traducción listados arriba. Mapas reales arbitrarios, ruleset real
+   e ingesta de replay están resueltos EN EL REPO (B6/B9), con motores falsos y batallas
+   grabadas de verdad, pero **NINGUNA batalla real de extremo a extremo ha llegado a
+   completarse desde la API todavía**: antes de B9 moría en un 502 (`rulesetId` inválido) y,
+   con el ruleset ya resuelto, el plazo HTTP derivado (≈350 s para 9000 ticks) solo se ha
+   ejercitado con relojes de test. Validación pendiente en VM108: una práctica completa
+   (~5 min de batalla) que termine con `status: "completed"` y su replay ingerido, y otra
+   sobre un mapa del catálogo distinto de `mvp-arena-01`.
 Solo entonces: **R6.2/R9-A**.
 
 **Dictamen: R6.2/R9-B** — UI y endpoint preparados y seguros; B2 cablea el transporte

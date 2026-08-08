@@ -26,13 +26,14 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { loadRuleset, safeLookup } from "../../../packages/game-rules/index.js";
+import { containerBattleOverallTimeoutMs, loadRuleset, safeLookup } from "../../../packages/game-rules/index.js";
 import { protocolBotHandle } from "../../../packages/protocol/bot-handle.js";
 import { loadCatalog, CATALOG_VERSION } from "../../../packages/module-catalog/loadCatalog.js";
 import { resolveVehicle } from "../../../packages/module-catalog/resolve/index.js";
 import { ARCHETYPES } from "../../../packages/module-catalog/resolve/archetypes.js";
 import { Battle, type BattleResult, type Participant } from "../../arena-engine/src/sim/battle.js";
 import { emptyArena, mvpArena, ctfArena } from "../../arena-engine/src/fixtures.js";
+import type { ArenaMap } from "../../arena-engine/src/sim/modes.js";
 import { ProtocolServer, type ExpectedBot } from "../../arena-engine/src/protocol-server.js";
 import type { Replay } from "../../arena-engine/src/replay.js";
 import {
@@ -66,8 +67,17 @@ export interface ContainerBattleConfig {
   rulesetId: string;
   /** Techo de ticks de la batalla. */
   ticks: number;
-  /** Nombre de mapa fixture: "empty" | "mvp" | "ctf". */
+  /** Nombre de mapa fixture: "empty" | "mvp" | "ctf". Excluyente con `map`. */
   mapName?: keyof typeof MAPS;
+  /**
+   * B9 · Mapa REAL del catálogo, ya aplanado a la forma que consume el motor
+   * (`toEngineMap()` de apps/map-service). Excluyente con `mapName`: si llegan
+   * los dos, se LANZA en vez de elegir uno — "los dos a la vez" significa que
+   * el llamador no sabe qué mapa quiere jugar, y adivinar por él es justo la
+   * sustitución silenciosa que este bloque prohíbe. Quien lo pasa (el servicio
+   * de arena-engine) lo ha validado antes con `validateArenaMap()`.
+   */
+  map?: ArenaMap;
   /** Al menos 2 bots. El índice par → equipo red, impar → blue. */
   bots: ContainerBattleBot[];
   /** Runner containerizado inyectado (ProxyContainerRunner en prod, mock en tests). */
@@ -112,9 +122,14 @@ export async function runContainerBattle(cfg: ContainerBattleConfig): Promise<Co
   const seccompProfilePath = cfg.seccompProfilePath ?? DEFAULT_SECCOMP_PROFILE;
   const limits = cfg.limits ?? DEFAULT_LIMITS;
   const catalog = loadCatalog();
+  // B9 · mapa REAL del catálogo (cfg.map) o mapa-fixture por nombre (cfg.mapName).
+  // Nunca los dos: ver la nota de `ContainerBattleConfig.map`.
+  if (cfg.map && cfg.mapName) {
+    throw new Error("runContainerBattle: `map` y `mapName` son excluyentes (no se adivina cuál de los dos jugar)");
+  }
   // safeLookup, no indexación directa (barrido del supervisor de B2: MAPS y
   // ARCHETYPES son objetos planos indexables con clave externa vía RunBattleRequestBody).
-  const mapFactory = safeLookup(MAPS, cfg.mapName ?? "empty") ?? emptyArena;
+  const arenaMap: ArenaMap = cfg.map ?? ((safeLookup(MAPS, cfg.mapName ?? "empty") ?? emptyArena)() as ArenaMap);
 
   const participants: Participant[] = cfg.bots.map((b, i) => {
     const loadout = safeLookup(ARCHETYPES, b.archetype);
@@ -131,7 +146,7 @@ export async function runContainerBattle(cfg: ContainerBattleConfig): Promise<Co
     battleId: cfg.battleId,
     seed: cfg.seed,
     ruleset: loadRuleset(cfg.rulesetId, { timeLimitTicks: cfg.ticks }),
-    map: mapFactory() as never,
+    map: arenaMap as never,
     participants,
     recordReplay: true,
   });
@@ -198,8 +213,11 @@ export async function runContainerBattle(cfg: ContainerBattleConfig): Promise<Co
     await server.whenAllConnected(connectTimeoutMs);
     server.start();
 
-    const theoreticalMs = cfg.ticks * (cfg.tickIntervalMs ?? 34);
-    const overallMs = cfg.overallTimeoutMs ?? theoreticalMs + 15_000;
+    // B9 · el plazo sale de packages/game-rules/battle-timing.ts, el MISMO módulo
+    // del que lo deriva el launcher HTTP de la API: dos presupuestos calculados por
+    // separado se desincronizan (y se desincronizaron: 306 s de batalla contra 30 s
+    // de timeout HTTP). Mismo resultado que la fórmula anterior, un solo sitio.
+    const overallMs = cfg.overallTimeoutMs ?? containerBattleOverallTimeoutMs(cfg.ticks, cfg.tickIntervalMs);
     const result = await Promise.race<BattleResult>([
       server.waitForResult(),
       new Promise<BattleResult>((_resolve, reject) => {
