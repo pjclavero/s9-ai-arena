@@ -14,7 +14,11 @@ import type { ReactNode } from "react";
 
 /** Envuelve `.card` (index.html:70-76): el panel/tarjeta ya usado por ErrorBoundary. */
 export function Panel(props: { children: ReactNode; "data-testid"?: string }) {
-  return <div className="card" data-testid={props["data-testid"]}>{props.children}</div>;
+  return (
+    <div className="card" data-testid={props["data-testid"]}>
+      {props.children}
+    </div>
+  );
 }
 
 export type StatusVariant = "ok" | "warn" | "error" | "neutral";
