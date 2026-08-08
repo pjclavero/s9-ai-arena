@@ -795,25 +795,42 @@ describe("B11-fix · el sondeo no desmonta el panel ni tira trabajo del usuario"
   });
 
   it("gasta UNA petición por ciclo, no tres", async () => {
+    const MAX = 6;
     const st = enCurso();
-    renderPage({ pollIntervalMs: 10, maxPolls: 6 });
+    renderPage({ pollIntervalMs: 10, maxPolls: MAX });
     await selectBot();
-    await screen.findByTestId("build-result");
-    st.calls.length = 0;
-
-    // issue #95 · ANTES: `await new Promise(r => setTimeout(r, 250))`, o sea
-    // apostar a que 6 ciclos de 10 ms caben en 250 ms de RELOJ. Con la CPU en
-    // contención (la CI usa `--maxWorkers=2`) los ciclos van más lentos, el
-    // presupuesto NO se había agotado al vencer la espera y el `findByTestId`
-    // moría con su plazo por defecto. Esperar la CONDICIÓN en vez del reloj
-    // comprueba exactamente lo mismo y no depende de la carga de la máquina.
+    // issue #95 · SIN poner el contador a cero, y esa es la corrección.
+    //
+    // Antes se reseteaba al ver `build-result` y se exigía «lecturas <= MAX».
+    // Pero hay UNA lectura de /builds que no la dispara el temporizador: la del
+    // asentamiento de dependencias del recurso (`useResource` recarga cuando
+    // cambia la versión enfocada), y no gasta presupuesto. Esa lectura corre una
+    // CARRERA con el reseteo: normalmente queda fuera de la ventana, y cuando la
+    // perdía caía dentro y el recuento daba 7 contra un presupuesto de 6. Medido
+    // en un banco de 40 repeticiones: fallaba 2 veces, y en las dos los sondeos
+    // disparados eran 6 — el presupuesto NUNCA se rompió. Acusaba al sondeo de
+    // una petición que no era suya.
+    //
+    // Mover el ancla a `pipeline-running` quitaba el flaky pero DEJABA CIEGA la
+    // aserción: comprobado subiendo el presupuesto a MAX+2, el test seguía verde
+    // porque uno o dos sondeos caían antes del ancla. Contar el TOTAL desde el
+    // principio no tiene carrera alguna (la lectura inicial es exactamente una,
+    // porque con la versión aún sin resolver el cargador no pide nada) y además
+    // conserva el poder de detección: con presupuesto MAX+2 el total se va a
+    // MAX+3 y la aserción cae.
     await screen.findByTestId("pipeline-unknown", {}, { timeout: 10_000 });
 
     const builds = st.calls.filter((c) => c.includes("/builds")).length;
-    const otras = st.calls.filter((c) => !c.includes("/builds")).length;
-    expect(builds).toBeGreaterThan(0);
-    expect(builds).toBeLessThanOrEqual(6); // presupuesto respetado
-    expect(otras).toBe(0); // ni versiones ni loadouts por ciclo
+    const versiones = st.calls.filter((c) => c.endsWith("/versions")).length;
+    const loadouts = st.calls.filter((c) => c.endsWith("/loadouts")).length;
+    // 1 lectura inicial + como mucho el presupuesto. Ni una más.
+    expect(builds, `lecturas de /builds = ${builds}`).toBeLessThanOrEqual(MAX + 1);
+    // Y de verdad ha sondeado (si no, la cota de arriba sería trivial).
+    expect(builds).toBeGreaterThan(1);
+    // Ni versiones ni loadouts POR CICLO: solo sus cargas iniciales. Si se
+    // sondearan, estos números irían a la par de los sondeos.
+    expect(versiones, `lecturas de /versions = ${versiones}`).toBeLessThanOrEqual(1);
+    expect(loadouts, `lecturas de /loadouts = ${loadouts}`).toBeLessThanOrEqual(1);
   });
 
   it("al terminar el build revalida las versiones UNA vez y muestra el estado final", async () => {
