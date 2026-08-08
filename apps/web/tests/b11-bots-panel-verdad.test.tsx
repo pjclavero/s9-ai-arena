@@ -893,3 +893,76 @@ describe("B11-fix · sin resultado fiable no se pinta ninguna etapa", () => {
     expect(within(card).queryByTestId("pipeline-running")).toBeNull();
   });
 });
+
+describe("issue #102 · el presupuesto de sondeos es POR BOT", () => {
+  /**
+   * El presupuesto se reinicia al cambiar de bot (`BotsPage.tsx`, efecto sobre
+   * `[selected?.id, focusRequest]`). Ese reinicio NO tenía ni un test: el
+   * supervisor independiente de la 3ª ronda del PR #87 lo anuló entero y el
+   * fichero seguía en 33/33.
+   *
+   * Y no es un hueco teórico. Sin reinicio, el usuario que gasta el presupuesto
+   * mirando el bot A y abre el bot B recibe un panel que declara «estado
+   * desconocido» para B sin haberlo consultado apenas — el pipeline de B está
+   * vivo y es consultable. Es exactamente la mentira que este fichero existe
+   * para impedir, entrando por otra puerta.
+   */
+  function dosBots(latencyMs = 30) {
+    const st = { builds: {} as Record<string, number> };
+    const versiones = [{ version: 1, state: "validating", runtime: "python", loadoutRevision: 7 }];
+    const build = [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }];
+    apiMock.mockImplementation(async (method: string, path: string) => {
+      if (latencyMs) await new Promise((r) => setTimeout(r, latencyMs));
+      if (method === "GET" && path.startsWith("/bots?")) {
+        return {
+          items: [
+            { id: "b1", name: "Tanque", visibility: "private" },
+            { id: "b2", name: "Escorpión", visibility: "private" },
+          ],
+        };
+      }
+      const m = /^\/bots\/(b1|b2)\/versions\/1\/builds$/.exec(path);
+      if (method === "GET" && m) {
+        st.builds[m[1]] = (st.builds[m[1]] ?? 0) + 1;
+        return build.map((b) => ({ ...b }));
+      }
+      const v = /^\/bots\/(b1|b2)\/versions$/.exec(path);
+      if (method === "GET" && v) return versiones.map((x) => ({ ...x }));
+      if (method === "GET" && /^\/bots\/(b1|b2)\/loadouts$/.test(path)) return [LOADOUT];
+      throw new Error(`inesperado: ${method} ${path}`);
+    });
+    return st;
+  }
+
+  it("al cambiar de bot, el segundo recibe su presupuesto ENTERO (no hereda el gastado)", async () => {
+    const MAX = 3;
+    const st = dosBots();
+    renderPage({ pollIntervalMs: 10, maxPolls: MAX });
+
+    // Bot A: se agota su presupuesto hasta que el panel dice «desconocido».
+    await userEvent.click(await screen.findByRole("button", { name: "Tanque" }));
+    await screen.findByTestId("pipeline-unknown", {}, { timeout: 10_000 });
+    const lecturasA = st.builds.b1 ?? 0;
+
+    // Bot B: el usuario cambia de bot. Su pipeline está vivo y es consultable.
+    await userEvent.click(screen.getByRole("button", { name: "Escorpión" }));
+    // Que llegue a decir «desconocido» prueba que ha SONDEADO hasta agotarse,
+    // no que se haya rendido de entrada con el presupuesto del bot anterior.
+    await screen.findByTestId("pipeline-unknown", {}, { timeout: 10_000 });
+    const lecturasB = st.builds.b2 ?? 0;
+
+    // El bot A: 1 lectura de asentamiento de dependencias + su presupuesto entero.
+    expect(lecturasA, `lecturas del bot A = ${lecturasA}`).toBe(MAX + 1);
+
+    // El bot B: cambiar de selección provoca DOS lecturas de asentamiento en vez
+    // de una (cambia `selected.id` y luego se reasienta la versión enfocada).
+    // Medido 5 veces seguidas: A=4, B=5. Aun así NO se fija el 5 exacto: eso
+    // sería atar el test a una carrera de lecturas iniciales, que es justamente
+    // el error que hizo inestable a «gasta UNA petición por ciclo» (issue #95).
+    // Se acota por los dos lados, y ambas cotas detectan algo real:
+    //   - la inferior cae si el presupuesto NO se reinicia (medido: B baja a 2);
+    //   - la superior cae si B sondea de más.
+    expect(lecturasB, `lecturas del bot B = ${lecturasB} (A hizo ${lecturasA})`).toBeGreaterThanOrEqual(MAX + 1);
+    expect(lecturasB, `lecturas del bot B = ${lecturasB} (A hizo ${lecturasA})`).toBeLessThanOrEqual(MAX + 2);
+  });
+});
