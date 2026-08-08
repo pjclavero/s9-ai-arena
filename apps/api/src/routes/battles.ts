@@ -443,6 +443,9 @@ export function battleRoutes(
       mode: battle.mode,
       mapId: battle.map_id,
       mapVersion: battle.map_version,
+      // B9 · el ruleset de la batalla viaja al launcher, que lo traduce al del
+      // motor (antes se enviaba `mode` como rulesetId y el motor no lo conocía).
+      rulesetId: battle.ruleset_id ?? null,
       seed: battle.seed ?? null,
       participants,
     });
@@ -452,6 +455,7 @@ export function battleRoutes(
       runner: result.runner,
       replay: result.replay ?? null,
       ...(result.error ? { error: result.error } : {}),
+      ...(result.errorCode ? { errorCode: result.errorCode } : {}),
     });
   });
 

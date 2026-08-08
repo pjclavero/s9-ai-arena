@@ -34,6 +34,8 @@ import {
 import type { ContainerRunner } from "../../bot-manager/src/container-runner.js";
 import { ProxyContainerRunner } from "../../bot-manager/src/docker-proxy.js";
 import { ARCHETYPES } from "../../../packages/module-catalog/resolve/archetypes.js";
+import { RULESETS } from "../../../packages/game-rules/index.js";
+import { validateArenaMap } from "./arena-map.js";
 
 export interface ArenaEngineServiceConfig {
   /**
@@ -68,6 +70,12 @@ export interface ArenaEngineServiceConfig {
  *  (para que los bots contenedor hablen con un ProtocolServer ajeno). Ahora
  *  SIEMPRE salen de `cfg` (config del servicio, resuelta del entorno), nunca del
  *  request — y además `/run` exige autenticación interna (`cfg.internalSecret`). */
+/**
+ * B9 · el cuerpo ya puede traer `map`: la GEOMETRÍA REAL de un mapa publicado del
+ * catálogo (`ArenaMap`, la forma que consume el motor) en lugar del nombre de un
+ * mapa-fixture. Es entrada externa y se valida entera con `validateArenaMap()`
+ * (arena-map.ts) antes de tocar el motor; `map` y `mapName` son excluyentes.
+ */
 export type RunBattleRequestBody = Omit<ContainerBattleConfig, "runner" | "network" | "engineHost">;
 
 /**
@@ -119,20 +127,104 @@ function isValidBotEntry(bot: unknown): boolean {
   );
 }
 
-function isRunBattleRequestBody(body: unknown): body is RunBattleRequestBody {
-  if (!body || typeof body !== "object") return false;
+/**
+ * B9 · Rulesets REALES que el motor sabe cargar (`RULESETS` de game-rules), como
+ * `Set` de sus claves propias — mismo criterio que `VALID_MAP_NAMES`/`VALID_ARCHETYPES`.
+ *
+ * Hasta B9 `rulesetId` solo se comprobaba como "string". Un id desconocido llegaba
+ * hasta `loadRuleset()` dentro de `runContainerBattle`, que LANZA, y el servicio lo
+ * devolvía como 502 `battle_failed` — indistinguible de "la batalla se ejecutó y
+ * falló". Es exactamente lo que pasaba con el launcher de la API, que enviaba
+ * `input.mode` ("deathmatch") como `rulesetId` (ver battle-run-http-launcher.ts):
+ * un cuerpo mal formado que solo se detectaba en mitad de la partida. Validado en
+ * la frontera, ahora es un 400 con el motivo.
+ */
+const VALID_RULESET_IDS: ReadonlySet<string> = new Set(Object.keys(RULESETS));
+
+/** Techo de ticks admitido en el cuerpo de `/run` (≈9 h de simulación a 30 Hz):
+ *  no es una regla de juego, es un límite de recursos del servicio. */
+const MAX_TICKS = 1_000_000;
+
+/** Techo del guard global que se admite del cuerpo (1 h): por encima de eso, un
+ *  llamador podría dejar contenedores vivos indefinidamente. */
+const MAX_OVERALL_TIMEOUT_MS = 3_600_000;
+
+type RunBattleBodyCheck =
+  { ok: true; body: RunBattleRequestBody; reason?: undefined } | { ok: false; body?: undefined; reason: string };
+
+/** Valida el cuerpo de `/run` devolviendo el MOTIVO del rechazo (no un booleano
+ *  suelto): un 400 que no dice qué campo está mal obliga a adivinar, y con el mapa
+ *  real en el cuerpo hay muchos más campos que pueden estar mal. */
+function checkRunBattleRequestBody(body: unknown): RunBattleBodyCheck {
+  if (!body || typeof body !== "object") return { ok: false, reason: "el cuerpo debe ser un objeto JSON" };
   const b = body as Record<string, unknown>;
-  return (
-    typeof b.battleId === "string" &&
-    b.battleId.length > 0 &&
-    typeof b.seed === "string" &&
-    typeof b.rulesetId === "string" &&
-    typeof b.ticks === "number" &&
-    Array.isArray(b.bots) &&
-    b.bots.length >= 2 &&
-    b.bots.every(isValidBotEntry) &&
-    (b.mapName === undefined || (typeof b.mapName === "string" && VALID_MAP_NAMES.has(b.mapName)))
-  );
+  if (typeof b.battleId !== "string" || b.battleId.length === 0) {
+    return { ok: false, reason: "battleId obligatorio (cadena no vacía)" };
+  }
+  if (typeof b.seed !== "string") return { ok: false, reason: "seed obligatorio (cadena)" };
+  if (typeof b.rulesetId !== "string" || !VALID_RULESET_IDS.has(b.rulesetId)) {
+    return { ok: false, reason: "rulesetId desconocido: no es un ruleset del catálogo del motor" };
+  }
+  if (typeof b.ticks !== "number" || !Number.isInteger(b.ticks) || b.ticks < 1 || b.ticks > MAX_TICKS) {
+    return { ok: false, reason: `ticks debe ser un entero entre 1 y ${MAX_TICKS}` };
+  }
+  if (!Array.isArray(b.bots) || b.bots.length < 2) return { ok: false, reason: "se requieren al menos 2 bots" };
+  if (!b.bots.every(isValidBotEntry)) return { ok: false, reason: "algún bot tiene campos inválidos" };
+  if (b.mapName !== undefined && !(typeof b.mapName === "string" && VALID_MAP_NAMES.has(b.mapName))) {
+    return { ok: false, reason: "mapName no es un mapa-fixture conocido" };
+  }
+  // B9 · mapa REAL del catálogo en el cuerpo. Excluyente con `mapName`: con los dos
+  // presentes NO se elige uno (sería jugar un mapa distinto al que alguien pidió).
+  let map: RunBattleRequestBody["map"];
+  if (b.map !== undefined) {
+    if (b.mapName !== undefined) return { ok: false, reason: "map y mapName son excluyentes" };
+    const v = validateArenaMap(b.map);
+    if (!v.ok) return { ok: false, reason: `mapa inválido: ${v.reason}` };
+    map = v.map;
+  }
+
+  // Ritmo/plazo de la batalla: opcionales y ACOTADOS. Son los dos únicos campos de
+  // "ritmo" que se aceptan del cuerpo (el arnés E2E y los tests los usan para correr
+  // batallas en segundos). No tocan seguridad, pero sí recursos: sin cota, un
+  // `overallTimeoutMs` enorme deja contenedores vivos indefinidamente.
+  if (b.tickIntervalMs !== undefined) {
+    if (typeof b.tickIntervalMs !== "number" || !Number.isFinite(b.tickIntervalMs) || b.tickIntervalMs < 1) {
+      return { ok: false, reason: "tickIntervalMs debe ser un número >= 1" };
+    }
+  }
+  if (b.overallTimeoutMs !== undefined) {
+    if (
+      typeof b.overallTimeoutMs !== "number" ||
+      !Number.isFinite(b.overallTimeoutMs) ||
+      b.overallTimeoutMs < 1 ||
+      b.overallTimeoutMs > MAX_OVERALL_TIMEOUT_MS
+    ) {
+      return { ok: false, reason: `overallTimeoutMs debe estar entre 1 y ${MAX_OVERALL_TIMEOUT_MS}` };
+    }
+  }
+
+  // ALLOWLIST EXPLÍCITA (hallazgo del supervisor de B9, demostrado en vivo): antes se
+  // devolvía `b` entero y `/run` hacía `{...req.body}` sobre `ContainerBattleConfig`,
+  // así que CUALQUIER campo extra del cuerpo entraba en la config de la batalla
+  // aunque no estuviera validado: el supervisor coló `seccompProfilePath:
+  // "/app/package.json"` (perfil seccomp inexistente/absurdo para el sandbox) y
+  // `limits: {"memMb":99999,"cpus":64,"pidsLimit":9999}` (recursos del host a
+  // voluntad del llamador). Validar campo a campo no sirve de nada si luego se
+  // copia el objeto entero: ahora solo se construye con los campos de esta lista, y
+  // los de infraestructura (`runner`/`network`/`engineHost`/`seccompProfilePath`/
+  // `limits`) salen SIEMPRE de la config del servicio.
+  const clean: RunBattleRequestBody = {
+    battleId: b.battleId,
+    seed: b.seed,
+    rulesetId: b.rulesetId,
+    ticks: b.ticks,
+    bots: b.bots as RunBattleRequestBody["bots"],
+    ...(map !== undefined ? { map } : {}),
+    ...(b.mapName !== undefined ? { mapName: b.mapName as RunBattleRequestBody["mapName"] } : {}),
+    ...(b.tickIntervalMs !== undefined ? { tickIntervalMs: b.tickIntervalMs as number } : {}),
+    ...(b.overallTimeoutMs !== undefined ? { overallTimeoutMs: b.overallTimeoutMs as number } : {}),
+  };
+  return { ok: true, body: clean };
 }
 
 /**
@@ -183,17 +275,18 @@ export function createArenaEngineService(cfg: ArenaEngineServiceConfig = {}): ex
       });
       return;
     }
-    if (!isRunBattleRequestBody(req.body)) {
+    const checked = checkRunBattleRequestBody(req.body);
+    if (!checked.ok) {
       res.status(400).json({
         error: "bad_request",
-        message: "cuerpo de /run inválido: se requieren battleId, seed, rulesetId, ticks y >=2 bots",
+        message: `cuerpo de /run inválido: ${checked.reason}`,
       });
       return;
     }
     // B2 · `network`/`engineHost` SIEMPRE de la config del servicio (nunca del
     // cuerpo de la petición): ver la nota de seguridad en `RunBattleRequestBody`.
     const battleConfig: ContainerBattleConfig = {
-      ...req.body,
+      ...checked.body,
       network: cfg.network ?? "arena",
       engineHost: cfg.engineHost ?? "arena-engine",
       runner: cfg.runner,

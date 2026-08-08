@@ -13,12 +13,22 @@
  * `network`/`engineHost` ya NO se aceptan del cuerpo de la petición: solo de
  * `cfg` (config del servicio).
  */
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import request from "supertest";
 import { WebSocket } from "ws";
 import { initPhysics } from "../src/sim/physics.js";
 import { createArenaEngineService, serviceConfigFromEnv } from "../src/service.js";
+import { DEFAULT_LIMITS } from "../../bot-manager/src/container-runner.js";
 import type { ContainerHandle, ContainerRunner, SandboxSpec } from "../../bot-manager/src/container-runner.js";
+// Solo en TESTS: el pipeline de mapas de E4 (documento del catálogo → ArenaMap).
+// El código de PRODUCCIÓN de arena-engine NO importa apps/map-service — su imagen
+// no lo copia (ver la nota de cabecera de src/arena-map.ts).
+import { toEngineMap } from "../../map-service/src/to-engine-map.js";
+
+const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
 const REAL_DIGEST =
   "ghcr.io/pjclavero/s9-ai-arena/bot-runtime-python@sha256:a337716702a710a5d3497c81e422ab08e07ddfab5186eb824efce9940306e6aa";
@@ -399,6 +409,194 @@ describe("B2 · validación de bots en POST /run (arquetipo envenenado, tercer s
     expect(res.body.error).toBe("bad_request");
   });
 });
+
+/**
+ * B9 · El cuerpo de `/run` acepta la GEOMETRÍA REAL de un mapa del catálogo
+ * (`map`) en vez de un nombre de mapa-fixture. Estos tests comprueban
+ * COMPORTAMIENTO: que la batalla se juega de verdad en el mapa enviado (se lee
+ * del replay que devuelve el motor, no del cuerpo que se envió) y que cualquier
+ * mapa que el motor no sepa jugar se rechaza ANTES de arrancar nada.
+ */
+describe("B9 · POST /run con un mapa REAL del catálogo en el cuerpo", () => {
+  /** Mapa REAL del repo, aplanado con el mismo pipeline que usa la API. */
+  function catalogMap(file: string) {
+    const doc = JSON.parse(readFileSync(join(REPO, "maps", file), "utf8"));
+    return { doc, engine: toEngineMap(doc) };
+  }
+
+  it("la batalla se juega EN EL MAPA ENVIADO: la cabecera del replay devuelto trae esa geometría, no la de un fixture", async () => {
+    const { doc, engine } = catalogMap("mvp-arena-01.json");
+    const app = createArenaEngineService({
+      runner: inProcessRunner(),
+      internalSecret: SECRET,
+      engineHost: "127.0.0.1",
+    });
+    const body = { ...runRequestBody(`svc_b9_map_${Date.now()}`), mapName: undefined, map: engine };
+    delete (body as { mapName?: string }).mapName;
+
+    const res = await request(app).post("/run").set(AUTH_HEADER, SECRET).send(body);
+
+    expect(res.status).toBe(200);
+    const played = res.body.replay.header.map;
+    // Identidad + geometría: el motor simuló ESTE mapa (los muros son los del
+    // documento real del catálogo; con la fixture "mvp" el checksum sería de ceros).
+    expect(played.mapId).toBe("mvp-arena-01");
+    expect(played.checksum).toBe(doc.checksum);
+    expect(played.walls).toEqual(engine.walls);
+    expect(played.spawns).toEqual(engine.spawns);
+  }, 30_000);
+
+  it("dos mapas distintos producen batallas distintas (el mapa no se ignora): otro mapa del catálogo llega íntegro al motor", async () => {
+    const { doc, engine } = catalogMap(join("procedural", "proc-test-0.json"));
+    const app = createArenaEngineService({
+      runner: inProcessRunner(),
+      internalSecret: SECRET,
+      engineHost: "127.0.0.1",
+    });
+    const body = { ...runRequestBody(`svc_b9_map2_${Date.now()}`), map: engine };
+    delete (body as { mapName?: string }).mapName;
+
+    const res = await request(app).post("/run").set(AUTH_HEADER, SECRET).send(body);
+
+    expect(res.status).toBe(200);
+    expect(res.body.replay.header.map.mapId).toBe(doc.mapId);
+    expect(res.body.replay.header.map.walls).toEqual(engine.walls);
+    // Y no es el mapa por defecto ("empty", 4 muros de perímetro y nada más).
+    expect(res.body.replay.header.map.walls.length).not.toBe(4);
+  }, 30_000);
+
+  it("`map` y `mapName` a la vez → 400 (no se elige uno: sería jugar un mapa distinto al pedido)", async () => {
+    const { engine } = catalogMap("mvp-arena-01.json");
+    const app = createArenaEngineService({
+      runner: inProcessRunner(),
+      internalSecret: SECRET,
+      engineHost: "127.0.0.1",
+    });
+    const body = { ...runRequestBody("svc_b9_map_y_mapname"), mapName: "empty", map: engine };
+    const res = await request(app).post("/run").set(AUTH_HEADER, SECRET).send(body);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("bad_request");
+  });
+
+  it.each([
+    ["mapId de Object.prototype", (m: Record<string, unknown>) => ({ ...m, mapId: "__proto__" })],
+    ["checksum falso", (m: Record<string, unknown>) => ({ ...m, checksum: "no-es-un-sha256" })],
+    ["version 0", (m: Record<string, unknown>) => ({ ...m, version: 0 })],
+    ["dimensión no finita", (m: Record<string, unknown>) => ({ ...m, widthM: Number.NaN })],
+    ["muro con coordenada no finita", (m: Record<string, unknown>) => mutateFirstWall(m, { x: Number.NaN, y: 0 })],
+    ["muro con semiancho negativo", (m: Record<string, unknown>) => mutateFirstWallHalf(m, -5)],
+    ["spawns de un solo equipo", (m: Record<string, unknown>) => singleTeamSpawns(m)],
+    ["sin spawns", (m: Record<string, unknown>) => ({ ...m, spawns: [] })],
+    ["zona de tipo inventado", (m: Record<string, unknown>) => withBadZone(m)],
+    ["walls no es un array", (m: Record<string, unknown>) => ({ ...m, walls: "muchos" })],
+  ])("mapa inválido (%s) → 400 bad_request, sin arrancar la batalla", async (_label, mutate) => {
+    const { engine } = catalogMap("mvp-arena-01.json");
+    const app = createArenaEngineService({
+      runner: inProcessRunner(),
+      internalSecret: SECRET,
+      engineHost: "127.0.0.1",
+    });
+    const body = { ...runRequestBody("svc_b9_map_invalido"), map: mutate(engine as never) };
+    delete (body as { mapName?: string }).mapName;
+    const res = await request(app).post("/run").set(AUTH_HEADER, SECRET).send(body);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("bad_request");
+    expect(res.status).not.toBe(502);
+  });
+
+  // REGRESSION LOCK del bug real que destapó B9: el launcher de la API enviaba
+  // `rulesetId: input.mode` ("deathmatch"), que NO es un ruleset del motor. Antes
+  // de B9 eso pasaba la validación del cuerpo y explotaba dentro de
+  // `runContainerBattle` (loadRuleset lanza) → 502 genérico, indistinguible de
+  // "la batalla falló". Ahora se rechaza en la frontera con 400.
+  it.each(["deathmatch", "team_deathmatch", "mvp-default", "__proto__", "no-existe@9"])(
+    'rulesetId="%s" (no es un ruleset del motor) → 400 bad_request, NUNCA 502 a mitad de batalla',
+    async (rulesetId) => {
+      const app = createArenaEngineService({
+        runner: inProcessRunner(),
+        internalSecret: SECRET,
+        engineHost: "127.0.0.1",
+      });
+      const body = { ...runRequestBody("svc_b9_ruleset_malo"), rulesetId };
+      const res = await request(app).post("/run").set(AUTH_HEADER, SECRET).send(body);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("bad_request");
+      expect(res.status).not.toBe(502);
+    },
+  );
+
+  // Hallazgo del supervisor de B9, demostrado en vivo: la validación era campo a
+  // campo pero luego `/run` hacía `{...req.body}`, así que cualquier campo EXTRA
+  // del cuerpo entraba tal cual en `ContainerBattleConfig`. El supervisor coló
+  // `seccompProfilePath: "/app/package.json"` (el sandbox arrancaba con un "perfil"
+  // que no es un perfil) y `limits: {memMb:99999, cpus:64, pidsLimit:9999}`.
+  it("campos de INFRAESTRUCTURA colados en el cuerpo (seccompProfilePath/limits) NO llegan a la batalla", async () => {
+    let observed: Record<string, unknown> | undefined;
+    const spyRunner: ContainerRunner = {
+      async launch(spec: SandboxSpec): Promise<ContainerHandle> {
+        observed = spec as unknown as Record<string, unknown>;
+        throw new Error("suficiente: ya hemos visto el SandboxSpec");
+      },
+    };
+    const app = createArenaEngineService({ runner: spyRunner, internalSecret: SECRET, engineHost: "127.0.0.1" });
+    const body = {
+      ...runRequestBody("svc_b9_campos_colados"),
+      seccompProfilePath: "/app/package.json",
+      limits: { memMb: 99999, cpus: 64, pidsLimit: 9999 },
+    };
+    await request(app).post("/run").set(AUTH_HEADER, SECRET).send(body);
+
+    // El contenedor se pidió con el perfil y los límites del SERVICIO, no con los
+    // del cuerpo: el perfil es el seccomp real del repo y la memoria, la de DEFAULT_LIMITS.
+    expect(observed).toBeDefined();
+    expect(String(observed!.seccompProfilePath)).toContain("seccomp-bot.json");
+    expect(String(observed!.seccompProfilePath)).not.toContain("package.json");
+    expect(observed!.limits).toEqual(DEFAULT_LIMITS);
+  });
+
+  it("tickIntervalMs/overallTimeoutMs sí se aceptan (arnés E2E) pero ACOTADOS", async () => {
+    const app = createArenaEngineService({
+      runner: inProcessRunner(),
+      internalSecret: SECRET,
+      engineHost: "127.0.0.1",
+    });
+    for (const bad of [{ tickIntervalMs: 0 }, { tickIntervalMs: "rápido" }, { overallTimeoutMs: 99_999_999 }]) {
+      const res = await request(app)
+        .post("/run")
+        .set(AUTH_HEADER, SECRET)
+        .send({ ...runRequestBody("svc_b9_ritmo"), ...bad });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("bad_request");
+    }
+  });
+
+  it.each([0, -1, 1.5, Number.NaN, 10_000_000])("ticks inválidos (%p) → 400 bad_request", async (ticks) => {
+    const app = createArenaEngineService({
+      runner: inProcessRunner(),
+      internalSecret: SECRET,
+      engineHost: "127.0.0.1",
+    });
+    const body = { ...runRequestBody("svc_b9_ticks"), ticks };
+    const res = await request(app).post("/run").set(AUTH_HEADER, SECRET).send(body);
+    expect(res.status).toBe(400);
+  });
+});
+
+function mutateFirstWall(m: Record<string, unknown>, position: { x: number; y: number }) {
+  const walls = (m.walls as Record<string, unknown>[]).map((w, i) => (i === 0 ? { ...w, position } : w));
+  return { ...m, walls };
+}
+function mutateFirstWallHalf(m: Record<string, unknown>, halfW: number) {
+  const walls = (m.walls as Record<string, unknown>[]).map((w, i) => (i === 0 ? { ...w, halfW } : w));
+  return { ...m, walls };
+}
+function singleTeamSpawns(m: Record<string, unknown>) {
+  const spawns = (m.spawns as Record<string, unknown>[]).map((s) => ({ ...s, team: "red" }));
+  return { ...m, spawns };
+}
+function withBadZone(m: Record<string, unknown>) {
+  return { ...m, zones: [{ id: "z1", position: { x: 1, y: 1 }, radiusM: 3, kind: "teletransporte" }] };
+}
 
 describe("B2 · serviceConfigFromEnv (gateado por entorno)", () => {
   it("sin DOCKER_PROXY_URL, NO se instancia ningún runner (sigue en 503 aunque se despliegue)", () => {

@@ -23,6 +23,12 @@ export interface BattleRunInput {
   mode: string;
   mapId: string;
   mapVersion: number;
+  /**
+   * B9 · Ruleset de la BD de la batalla (`battles.ruleset_id`, puede ser null).
+   * NO es el ruleset del motor: son catálogos distintos. El launcher lo traduce
+   * (`services/battle-ruleset-resolver.ts`) y rechaza si no hay traducción.
+   */
+  rulesetId?: string | null;
   seed: string | null;
   participants: BattleRunParticipant[];
 }
@@ -32,6 +38,12 @@ export interface BattleRunResult {
   runner: string;
   replay?: { ingested: boolean; battleId: string; verify_matches?: boolean } | null;
   error?: string;
+  /**
+   * B9 · Código estable del motivo de fallo, para poder distinguirlos sin
+   * depender del texto del mensaje (`map_not_published`, `map_checksum_mismatch`,
+   * `map_identity_mismatch`, `ruleset_mode_mismatch`...). Ausente si no aplica.
+   */
+  errorCode?: string;
 }
 
 /** El launcher real vive FUERA de la API (no llama a Docker directamente). */

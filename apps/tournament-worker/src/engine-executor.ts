@@ -16,7 +16,7 @@
  * la misma interfaz cuando exista el runtime.
  */
 import type { Knex } from "knex";
-import { loadRuleset, safeLookup } from "../../../packages/game-rules/index.js";
+import { loadRuleset } from "../../../packages/game-rules/index.js";
 import { resolveVehicle } from "../../../packages/module-catalog/resolve/index.js";
 import type { LoadoutInput, ModuleDefinition } from "../../../packages/module-catalog/types.js";
 import { getCatalog } from "../../api/src/services/catalog.js";
@@ -27,16 +27,24 @@ import { Battle, type BotAgent, type Participant } from "../../arena-engine/src/
 import { HunterBot } from "../../arena-engine/src/stubs.js";
 import type { SpectateGateway } from "../../api/src/spectate/gateway.js";
 import { InfrastructureFailure } from "./errors.js";
+import { MODE_DEFAULT_ENGINE_RULESET } from "../../api/src/services/battle-ruleset-resolver.js";
 import type { BattleContext, BattleExecution, BattleExecutor } from "./battle-runner.js";
 
-/** Modo de la plataforma → ruleset del motor (game-rules). El presupuesto y los
- * límites vienen del torneo/ruleset de BD como overrides (ADR-000). */
-const ENGINE_RULESETS: Record<string, string> = {
-  deathmatch: "dm_practice@1",
-  team_deathmatch: "tdm_mvp@1",
-  capture_the_flag: "ctf_mvp@1",
-  zone_control: "zc_mvp@1",
-};
+/**
+ * Modo de la plataforma → ruleset del motor. El presupuesto y los límites vienen
+ * del torneo/ruleset de BD como overrides (ADR-000).
+ *
+ * B9 (observación del supervisor) · Antes era un OBJETO PLANO indexado con
+ * `battle.mode` (dato de BD) y con caída silenciosa: `ENGINE_RULESETS[battle.mode]
+ * ?? "dm_practice@1"`. Dos fallos en una línea: (1) el patrón `__proto__` —
+ * `battle.mode = "__proto__"` resuelve a `Object.prototype`, truthy, así que el
+ * `??` no salta y `loadRuleset` recibe un objeto; (2) más grave, un modo
+ * desconocido (o uno nuevo del catálogo que nadie añada aquí) se jugaba COMO
+ * DEATHMATCH sin avisar a nadie — la misma sustitución silenciosa que B9 prohíbe
+ * para los mapas, aplicada a las reglas. Ahora la tabla es la ÚNICA del proyecto
+ * (`MODE_DEFAULT_ENGINE_RULESET`, un `Map`) y un modo sin ruleset es un fallo
+ * técnico explícito.
+ */
 
 export type AgentResolver = (botId: string, version: number, vehicleId: string) => BotAgent;
 
@@ -95,13 +103,14 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
       ? await db("tournaments").where({ id: battle.tournament_id }).first()
       : null;
     const budgetCredits = (tournament?.budget_credits ?? dbRuleset?.budget_credits) as number | undefined;
-    // B8 · `safeLookup`, NO indexación directa (lo encontró el supervisor de B9
-    // y seguía vivo en main). `battle.mode` es una columna de BD escrita desde la
-    // API: con mode="__proto__" la indexación devolvía `Object.prototype`, el
-    // `?? "dm_practice@1"` NO aplicaba y ese objeto llegaba a `loadRuleset()`
-    // como id de ruleset. Ahora una clave desconocida da `undefined` y el
-    // defecto sí entra.
-    const engineRulesetId = safeLookup(ENGINE_RULESETS, battle.mode) ?? "dm_practice@1";
+    const engineRulesetId = MODE_DEFAULT_ENGINE_RULESET.get(battle.mode);
+    if (!engineRulesetId) {
+      throw new InfrastructureFailure(
+        "engine_start_failure",
+        `no hay ruleset del motor para el modo "${battle.mode}": se rechaza la batalla en vez de jugarla ` +
+          `con reglas de otro modo`,
+      );
+    }
     const ruleset = loadRuleset(engineRulesetId, {
       ...(budgetCredits ? { budgetCredits } : {}),
       ...(opts.rulesetOverrides ?? {}),
