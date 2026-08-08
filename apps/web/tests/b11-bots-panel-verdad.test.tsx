@@ -994,7 +994,14 @@ describe("issue #102 · el presupuesto de sondeos es POR BOT", () => {
       const m = /^\/bots\/b1\/versions\/(\d+)\/builds$/.exec(path);
       if (method === "GET" && m) {
         st.builds[m[1]] = (st.builds[m[1]] ?? 0) + 1;
-        return [{ id: `b-${m[1]}`, version: Number(m[1]), status: "running", stages: [{ name: "structure", status: "running" }] }];
+        return [
+          {
+            id: `b-${m[1]}`,
+            version: Number(m[1]),
+            status: "running",
+            stages: [{ name: "structure", status: "running" }],
+          },
+        ];
       }
       if (method === "GET" && path === "/bots/b1/versions") return versiones.map((x) => ({ ...x }));
       if (method === "GET" && path === "/bots/b1/loadouts") return [LOADOUT];
