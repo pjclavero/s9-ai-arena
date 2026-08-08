@@ -9,6 +9,19 @@ del servicio `backup` del stack, alerta si falla o si no hay backup en 26 h).
 > desarrollo actual no tiene acceso al daemon). Este runbook está listo para
 > ejecutarse; al hacerlo, registrar los tiempos en la tabla del final y
 > archivar el resultado en este documento.
+>
+> **Auditoría y runbook detallado (no ejecutado):**
+> [`docs/ops/restore-drill-runbook.md`](ops/restore-drill-runbook.md) audita
+> `backup.sh`/`restore.sh` línea a línea, añade salvaguardas explícitas para
+> restaurar SOLO a un destino temporal aislado (nunca producción), pasos de
+> verificación de integridad más profundos (recuento de filas, migraciones,
+> trigger append-only de `audit_log`, consulta de negocio) y cronometraje de
+> RPO/RTO. Documenta también un defecto real encontrado: el manifest de
+> integridad de `backup.sh` usa rutas relativas incompatibles con la
+> estructura de rutas absolutas que deja `restic restore --target`, por lo
+> que `restore.sh --verify` falla el 100 % de las entradas contra un restore
+> real sin un paso previo de reestructuración (ver §0 y §3.6 de ese
+> documento). Sigue sin ejecutarse: la tabla de abajo permanece vacía.
 
 ## Requisitos previos
 
