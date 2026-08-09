@@ -82,6 +82,48 @@ case "${1:---dry-run}" in
     fi
     manifest="$manifests"
     stagedir="$(dirname "$manifest")"
+    manifest_json="$stagedir/manifest.json"
+
+    # D2-R4 (ronda 5, HALLAZGO DEL SUPERVISOR): el cruce con manifest.json
+    # (usado en las dos ramas de abajo) hacía `grep` sobre texto arbitrario
+    # sin comprobar que fuera JSON de verdad ni que tuviera las 6 claves
+    # esperadas. Un manifest.json TRUNCADO —el mismo escenario "disco
+    # lleno" que motiva media PR— convertía el cruce en un no-op silencioso
+    # (ningún `grep` encontraba nada, así que "ninguna fuente declara ok"
+    # parecía cierto por ausencia de datos, no por comprobación real) y
+    # encima el log afirmaba "confirmado contra manifest.json" sobre un
+    # fichero que no es JSON válido. `validate_manifest_json` NO es un
+    # parser JSON completo (este script no tiene jq/python garantizados en
+    # la imagen del contenedor), pero es un chequeo mínimo honesto: llaves
+    # `{`/`}` balanceadas y presencia de las 6 claves de fuente con forma
+    # `"nombre":{"status":"...`. Basta para detectar truncamiento/corrupción
+    # básica, que es exactamente lo que hundía este chequeo antes.
+    validate_manifest_json() {
+      local mj="$1" content nopen nclose src
+      content="$(cat "$mj" 2>/dev/null)" || return 1
+      [ -n "$content" ] || return 1
+      case "$content" in
+        '{'*'}') ;;
+        *) return 1 ;;
+      esac
+      nopen=$(printf '%s' "$content" | tr -cd '{' | wc -c)
+      nclose=$(printf '%s' "$content" | tr -cd '}' | wc -c)
+      [ "$nopen" -eq "$nclose" ] || return 1
+      for src in postgres secrets maps bot_sources replays assets; do
+        printf '%s' "$content" | grep -q "\"$src\":{\"status\":\"[a-z]*\"" || return 1
+      done
+      return 0
+    }
+
+    if [ ! -f "$manifest_json" ]; then
+      log error "manifest.json ausente en $stagedir: no se puede contrastar la cobertura declarada por backup.sh"
+      exit 1
+    fi
+    if ! validate_manifest_json "$manifest_json"; then
+      log error "manifest.json ($manifest_json) no tiene forma válida (JSON truncado/corrupto o faltan claves de fuente): no se puede confiar en su cobertura"
+      exit 1
+    fi
+
     # D1 (ronda 3 de #112): un manifest.sha256 de 0 bytes es el resultado
     # LEGÍTIMO de un backup sano cuando las cuatro fuentes no críticas
     # (maps/bot_sources/assets/replays) están vacías — el estado actual de
@@ -103,21 +145,15 @@ case "${1:---dry-run}" in
     #   1. Ningún fichero de datos (fuera de pgdump-*/manifest.*) en el
     #      árbol restaurado junto al manifest — si lo hay, hay contenido sin
     #      checksum, y eso es sospechoso, no legítimo.
-    #   2. manifest.json (mismo directorio, generado por backup.sh a partir
-    #      de la MISMA clasificación de fuentes) no declara NINGUNA fuente
-    #      `status:"ok"` — si lo hiciera, manifest.sha256 vacío sería
-    #      inconsistente con lo que el propio backup dice haber capturado.
+    #   2. manifest.json no declara NINGUNA fuente `status:"ok"` — si lo
+    #      hiciera, manifest.sha256 vacío sería inconsistente con lo que el
+    #      propio backup dice haber capturado.
     # Sólo si ambas comprobaciones pasan se acepta como cobertura vacía
     # legítima; en cualquier otro caso, FALLA (no se asume nada a favor).
     if [ ! -s "$manifest" ]; then
       stray="$(find "$stagedir" -type f ! -name 'manifest.*' ! -name 'pgdump-*')"
       if [ -n "$stray" ]; then
         log error "manifest.sha256 vacío pero hay ficheros de datos SIN verificar en $stagedir (p.ej. $(printf '%s\n' "$stray" | head -1)): posible backup roto, no cobertura vacía legítima"
-        exit 1
-      fi
-      manifest_json="$stagedir/manifest.json"
-      if [ ! -f "$manifest_json" ]; then
-        log error "manifest.sha256 vacío y manifest.json ausente en $stagedir: no se puede confirmar que la cobertura sea legítimamente vacía"
         exit 1
       fi
       # Acoplado deliberadamente al formato exacto que genera backup.sh
@@ -140,6 +176,35 @@ case "${1:---dry-run}" in
       # sería una afirmación sobre algo que el script nunca ejecutó.
       log info "manifest.sha256 vacío: confirmado contra manifest.json y el árbol restaurado (sin datos residuales, ninguna fuente 'ok'); no había nada que verificar"
     else
+      # D1-R4 (ronda 5, HALLAZGO DEL SUPERVISOR): el chequeo de D1-R3 sólo
+      # vivía en la rama de manifest VACÍO. Esta rama —manifest CON
+      # contenido, la que se usa el 99% de las veces porque es la de un
+      # backup con datos— sólo hacía `sha256sum -c`, que verifica que cada
+      # línea LISTADA coincida, pero NO detecta (a) un manifest truncado a
+      # menos líneas de las que el backup realmente produjo (mismo defecto
+      # que backup.sh ya comprobaba en su propia generación, backup.sh
+      # líneas ~458-484, nunca trasladado aquí), ni (b) un fichero de datos
+      # presente en el árbol restaurado SIN entrada en el manifest
+      # (contenido inyectado después del backup, o un manifest que nunca
+      # llegó a cubrir todo). Mismo rigor que la rama de arriba, en los dos
+      # sentidos: ni de menos (truncado) ni de más (residual sin listar).
+      expected_lines=0
+      for src in maps bot_sources assets replays; do
+        if grep -q "\"$src\":{\"status\":\"ok\",\"files\":" "$manifest_json"; then
+          n="$(grep -o "\"$src\":{\"status\":\"ok\",\"files\":[0-9]*" "$manifest_json" | grep -o '[0-9]*$')"
+          expected_lines=$((expected_lines + n))
+        fi
+      done
+      actual_lines="$(wc -l < "$manifest")"
+      if [ "$actual_lines" -ne "$expected_lines" ]; then
+        log error "manifest.sha256 inconsistente: $actual_lines líneas, manifest.json declara $expected_lines ficheros 'ok' (manifest truncado o corrupto)"
+        exit 1
+      fi
+      total_data_files="$(find "$stagedir" -type f ! -name 'manifest.*' ! -name 'pgdump-*' | wc -l)"
+      if [ "$total_data_files" -ne "$actual_lines" ]; then
+        log error "$stagedir tiene $total_data_files ficheros de datos pero manifest.sha256 sólo cubre $actual_lines: hay contenido SIN entrada en el manifest (posible inyección tras el backup)"
+        exit 1
+      fi
       # El manifest usa rutas maps/… y replays/…: verificar desde su directorio.
       (cd "$stagedir" && sha256sum -c "$manifest")
       log info "integridad verificada: checksums de mapas y replays correctos"

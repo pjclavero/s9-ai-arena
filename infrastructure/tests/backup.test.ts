@@ -226,6 +226,42 @@ function runLogFromScript(scriptPath: string, msg: string): string {
   }
 }
 
+// runLogFromScriptRawBytes: como runLogFromScript, pero el mensaje se
+// EMBEBE en el propio fichero del script (como bytes crudos, vía Buffer),
+// no se pasa por argv. Necesario para probar bytes UTF-8 inválidos de
+// verdad: al pasar una cadena JS por execFileSync, Node la reencuentra
+// como UTF-8 válido (un "\xff" en JS es el carácter U+00FF, dos bytes
+// UTF-8 válidos — NO el byte crudo 0xFF inválido que se quiere probar).
+// Escribiendo el script como Buffer se controla el byte exacto.
+// Devuelve BYTES CRUDOS (Buffer, no string): pedirle a execFileSync
+// `encoding: "utf8"` decodifica el stdout con el decoder tolerante de
+// Node, que reemplaza en SILENCIO cualquier byte inválido por el carácter
+// de reemplazo U+FFFD antes de que el test llegue a verlo — el propio
+// Node neutralizaría la mutación igual que `find`/quotearg lo hacía en
+// D2-R3a. Hay que inspeccionar los bytes tal cual salieron del script.
+function runLogFromScriptRawBytes(scriptPath: string, prefixMsg: string, rawByte: number, suffixMsg: string): Buffer {
+  const content = readFileSync(scriptPath, "utf8");
+  const startIdx = content.indexOf("json_escape() {");
+  const logLineMatch = content.match(/^log\(\) \{ printf.*$/m);
+  if (startIdx === -1 || !logLineMatch) {
+    throw new Error(`no se pudo extraer json_escape()/log() de ${scriptPath}`);
+  }
+  const logLine = logLineMatch[0];
+  const logIdx = content.indexOf(logLine, startIdx);
+  const funcBlock = content.slice(startIdx, logIdx + logLine.length);
+  const head = Buffer.from(`#!/usr/bin/env bash\n${funcBlock}\nlog error "${prefixMsg}`, "utf8");
+  const mid = Buffer.from([rawByte]);
+  const tail = Buffer.from(`${suffixMsg}"\n`, "utf8");
+  const wrapperBuf = Buffer.concat([head, mid, tail]);
+  const wrapperPath = join(tmpdir(), `log-wrapper-raw-${Math.random().toString(36).slice(2)}.sh`);
+  writeFileSync(wrapperPath, wrapperBuf, { mode: 0o755 });
+  try {
+    return execFileSync("bash", [wrapperPath]); // sin `encoding`: Buffer crudo
+  } finally {
+    rmSync(wrapperPath, { force: true });
+  }
+}
+
 // ── Camino real (#110b): clasificación ok/empty/error de fuentes ───────────
 // El backup real nunca se había ejercitado en tests (sólo --dry-run). Aquí
 // se inyectan binarios falsos de restic/pg_dump vía PATH en un directorio
@@ -1007,6 +1043,134 @@ describe("backup.sh → restic falso fiel → restore.sh --restore/--verify (E2E
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  // ── D1-R4 (ronda 5, HALLAZGO DEL SUPERVISOR — bloqueante): el fix de
+  // D1-R3 sólo vivía en la rama de manifest VACÍO. La rama de manifest CON
+  // contenido —la que se usa el 99% de las veces, porque es la de un
+  // backup con datos— sólo hacía `sha256sum -c`, que no detecta un
+  // manifest TRUNCADO (menos líneas de las que el backup realmente
+  // produjo) mientras los datos siguen intactos en el árbol. Demostrado
+  // por el supervisor con backup.sh real: manifest a la mitad, exit 0,
+  // "integridad verificada: checksums de mapas y replays correctos" sobre
+  // un fichero (maps/arena.json) que nunca se comprobó. Reproducido aquí
+  // partiendo de un backup REAL con datos (no un manifest hecho a mano
+  // desde cero): se trunca el manifest generado de verdad por backup.sh,
+  // dejando los datos intactos. ──────────────────────────────────────────
+  it("manifest.sha256 TRUNCADO (menos líneas de las que produjo el backup) con datos intactos: --verify FALLA (D1-R4)", () => {
+    setup(); // datos reales: mvp.json, bot.py, sprite.png, battle-1.jsonl
+    const log = join(root, "restic-calls.log");
+    writeFakeResticFaithful(fakebin, store, log);
+    execFileSync("bash", [BACKUP], { encoding: "utf8", env: backupEnv() });
+    const dest = join(root, "restored-truncated-r4");
+    execFileSync("bash", [RESTORE, "--restore", dest], { encoding: "utf8", env: backupEnv() });
+
+    const manifestPath = execSync(`find "${dest}" -name manifest.sha256`, { encoding: "utf8" }).trim();
+    const original = readFileSync(manifestPath, "utf8");
+    const lines = original.split("\n").filter(Boolean);
+    expect(lines.length).toBeGreaterThan(1); // el fixture tiene varias fuentes con contenido
+    // Trunca a UNA sola línea: los datos de las demás fuentes siguen en el
+    // árbol restaurado, pero el manifest ya no las cubre.
+    writeFileSync(manifestPath, lines[0] + "\n");
+
+    let threw = false;
+    let output = "";
+    try {
+      output = execFileSync("bash", [RESTORE, "--verify", dest], { encoding: "utf8", stdio: "pipe" });
+    } catch (e: any) {
+      threw = true;
+      output = `${e.stdout}${e.stderr}`;
+    }
+    expect(threw).toBe(true); // NUNCA exit 0 con datos sin cubrir por el manifest
+    expect(output).toContain("manifest.sha256 inconsistente");
+    expect(output).not.toContain("integridad verificada");
+  });
+
+  // ── D1-R4 (ronda 5): segundo ángulo — un fichero INYECTADO en el árbol
+  // restaurado (p.ej. `maps/backdoor.json`) que nunca estuvo en el
+  // manifest.sha256 original. `sha256sum -c` no lo detecta porque sólo
+  // recorre las líneas que SÍ están listadas; el chequeo de "residuales"
+  // (ficheros de datos vs líneas del manifest) es lo único que lo caza. ──
+  it("fichero inyectado en el árbol restaurado SIN entrada en el manifest: --verify FALLA (D1-R4)", () => {
+    setup();
+    const log = join(root, "restic-calls.log");
+    writeFakeResticFaithful(fakebin, store, log);
+    execFileSync("bash", [BACKUP], { encoding: "utf8", env: backupEnv() });
+    const dest = join(root, "restored-injected-r4");
+    execFileSync("bash", [RESTORE, "--restore", dest], { encoding: "utf8", env: backupEnv() });
+
+    const manifestPath = execSync(`find "${dest}" -name manifest.sha256`, { encoding: "utf8" }).trim();
+    const mapsDir = join(dirname(manifestPath), "maps");
+    writeFileSync(join(mapsDir, "backdoor.json"), '{"injected":true}\n');
+
+    let threw = false;
+    let output = "";
+    try {
+      output = execFileSync("bash", [RESTORE, "--verify", dest], { encoding: "utf8", stdio: "pipe" });
+    } catch (e: any) {
+      threw = true;
+      output = `${e.stdout}${e.stderr}`;
+    }
+    expect(threw).toBe(true);
+    expect(output).toContain("SIN entrada en el manifest");
+  });
+
+  // ── D2-R4 (ronda 5, hallazgo del supervisor): manifest.json truncado (el
+  // mismo escenario "disco lleno" que justifica media PR) debía FALLAR
+  // `--verify`, no convertirse en un no-op silencioso que además afirma
+  // "confirmado contra manifest.json" sobre algo que no es JSON. ─────────
+  it("manifest.json truncado/corrupto (no JSON válido): --verify FALLA, no se trata como cobertura confirmada (D2-R4)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "e10-d2r4-manifestjson-truncado-"));
+    try {
+      writeFileSync(join(dir, "manifest.sha256"), "");
+      // Truncado a mitad de una clave: llave sin cerrar, ni todas las
+      // fuentes presentes — exactamente lo que dejaría un disco lleno a
+      // mitad de escritura.
+      writeFileSync(join(dir, "manifest.json"), '{"postgres":{"status":"ok","files":1},"secrets":{"stat');
+      let threw = false;
+      let output = "";
+      try {
+        output = execFileSync("bash", [RESTORE, "--verify", dir], { encoding: "utf8", stdio: "pipe" });
+      } catch (e: any) {
+        threw = true;
+        output = `${e.stdout}${e.stderr}`;
+      }
+      expect(threw).toBe(true);
+      expect(output).toContain("no tiene forma válida");
+      expect(output).not.toContain("confirmado contra manifest.json");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // ── D3-R4 (ronda 5, hallazgo del supervisor): el saneado de UTF-8
+  // inválido (`iconv -c`) es la única pieza de json_escape de la ronda 4
+  // sin ningún test — quitarlo rompe el parseo con un byte inválido como
+  // 0xff. Dos precauciones de método, ambas descubiertas verificando la
+  // mutación real antes de dar el test por bueno (no dando por sentado que
+  // "existe un test" basta):
+  //   1. `runLogFromScriptRawBytes` (no `runLogFromScript`): pasar "\xff"
+  //      como cadena JS por argv se reencuentra a UTF-8 válido (dos bytes,
+  //      el carácter U+00FF), no el byte crudo inválido.
+  //   2. Capturar la salida como BUFFER (`encoding` sin especificar) y
+  //      decodificarla con `TextDecoder({ fatal: true })`, no con
+  //      `JSON.parse` sobre una cadena que Node ya decodificó como utf8:
+  //      `execFileSync(..., { encoding: "utf8" })` reemplaza en silencio
+  //      cualquier byte inválido por U+FFFD ANTES de que el test lo vea —
+  //      la mutación (quitar iconv) no fallaba con ese método, igual que
+  //      D2-R3a no fallaba pasando el payload por un nombre de fichero que
+  //      `find` ya citaba. `TextDecoder` con `fatal: true` simula un
+  //      consumidor estricto de verdad (equivalente a `json.loads(strict=
+  //      True)` en Python, que es el que motivó este hallazgo). ─────────
+  it("byte UTF-8 inválido (0xff) en el mensaje no rompe el parseo del log (D3-R4)", () => {
+    const out = runLogFromScriptRawBytes(BACKUP, "fuente ilegible: nombre-", 0xff, "-invalido");
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    let text = "";
+    expect(() => {
+      text = decoder.decode(out).trim();
+    }).not.toThrow();
+    expect(() => JSON.parse(text)).not.toThrow();
+    expect(JSON.parse(text).level).toBe("error");
   });
 
   // ── Mutación M2 (obligatoria, coordinador): "el manifest apunta a una
