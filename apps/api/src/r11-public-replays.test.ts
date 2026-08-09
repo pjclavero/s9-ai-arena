@@ -333,3 +333,81 @@ describe("R11 · límites del listado", () => {
     expect(page2.body.items[0].id).not.toBe(res.body.items[0].id);
   });
 });
+
+/**
+ * Huecos demostrados por el supervisor independiente de #109 con análisis de
+ * mutaciones. En ambos casos el código ÍNTEGRO se comporta bien; lo que faltaba
+ * era el candado, y en un bloque cuyo objetivo declarado es la no-filtración
+ * dejar ciega la mitad de las rutas no es aceptable.
+ */
+describe("R11 · huecos cerrados tras la supervisión de #109", () => {
+  it("el LISTADO también respeta la allowlist: ni un campo privado en items[]", async () => {
+    // MUT-E del supervisor: filtrar `replayRef` SOLO en la rama del listado
+    // (una ruta absoluta del sistema de ficheros) pasaba los 18 tests, porque la
+    // aserción de allowlist existía únicamente para la ruta por id.
+    const app: Express = createApp({ db: h.db, publicReplaysEnabled: true });
+    const { battleId } = await seedFinishedBattleWithReplay();
+
+    const res = await request(app).get("/public/replays?limit=10");
+    expect(res.status).toBe(200);
+    const item = res.body.items.find((b: { id: string }) => b.id === battleId);
+    expect(item, "la batalla sembrada debe aparecer en el listado").toBeTruthy();
+
+    // Exactamente el MISMO contrato de campos que la ruta por id: el listado
+    // reutiliza `publicReplayBattleToJson`, así que la allowlist es una sola y
+    // vale para las dos rutas. (Yo supuse que el listado no servía `result`; el
+    // código dice lo contrario, y es mejor así.)
+    expect(Object.keys(item).sort()).toEqual(
+      [
+        "createdAt",
+        "finishedAt",
+        "id",
+        "mapId",
+        "mapName",
+        "mode",
+        "participants",
+        "replayAvailable",
+        "result",
+        "startedAt",
+        "status",
+      ].sort(),
+    );
+
+    // Y ni rastro de lo privado en el JSON COMPLETO de la respuesta, no solo en
+    // el elemento: una fuga en el sobre (cursor, metadatos) contaría igual.
+    const raw = JSON.stringify(res.body);
+    expect(raw).not.toContain("top-secret-seed-should-never-leak");
+    expect(raw).not.toContain("commit-should-never-leak");
+    expect(raw).not.toContain("reveal-proof-should-never-leak");
+    expect(raw).not.toContain("replayRef");
+    expect(raw).not.toContain("replay_ref");
+    for (const forbidden of ["seed", "seedCommitment", "seedRevealProof", "replayRef", "replayHash", "owner"]) {
+      expect(item[forbidden], `campo privado en el listado: ${forbidden}`).toBeUndefined();
+    }
+  });
+
+  it("una batalla `running` o `failed` CON replay_ref sigue sin exponerse", async () => {
+    // MUT-C del supervisor: quitar `status='finished'` del helper por id daba
+    // 200 para `running` y `failed`. El test previo no lo cazaba porque sembraba
+    // esos estados SIN `replay_ref`: bastaba `whereNotNull(replay_ref)` para
+    // pasarlo, así que el filtro de ESTADO no tenía cobertura real. Y `failed`
+    // no se sembraba en ningún sitio.
+    const app: Express = createApp({ db: h.db, publicReplaysEnabled: true });
+    const { battleId: running } = await seedFinishedBattleWithReplay({
+      status: "running",
+      finished_at: null,
+      result: null,
+    });
+    const { battleId: failed } = await seedFinishedBattleWithReplay({ status: "failed", result: null });
+
+    const list = await request(app).get("/public/replays?limit=50");
+    const ids = list.body.items.map((b: { id: string }) => b.id);
+    expect(ids, "una batalla en curso no se publica aunque ya tenga replay").not.toContain(running);
+    expect(ids, "una batalla fallida no se publica aunque tenga replay").not.toContain(failed);
+
+    for (const id of [running, failed]) {
+      expect((await request(app).get(`/public/replays/${id}`)).status).toBe(404);
+      expect((await request(app).get(`/public/replays/${id}/download`)).status).toBe(404);
+    }
+  });
+});
