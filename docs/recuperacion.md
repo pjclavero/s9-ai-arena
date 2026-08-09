@@ -88,7 +88,12 @@ docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.e
   --profile production up -d
 docker compose -f infrastructure/docker-compose.yml ps          # todo healthy
 
-# Integridad (criterio del cap. 28): checksums de mapas y replays oficiales
+# Integridad (criterio del cap. 28): checksums de mapas y replays oficiales.
+# El manifest usa rutas lógicas (maps/…, official/…) y `restic restore`
+# reconstruye la jerarquía absoluta de origen bajo el destino: --verify resuelve
+# cada entrada dentro de TODO el árbol restaurado, no junto al manifest.
+# Es fail-closed: sin manifest, con manifest vacío, con entradas sin resolver o
+# con cero entradas verificadas, FALLA (nunca da la integridad por buena).
 bash infrastructure/backup/restore.sh --verify /tmp/restore-data
 
 # Migraciones al día (contrato con E7: el api las reporta en /healthz)
@@ -105,7 +110,7 @@ rm -rf /tmp/restore-data   # limpiar restos en claro
 | Verificación | Cómo | Criterio |
 |---|---|---|
 | Healthchecks | `docker compose ps` | todos `healthy` |
-| Integridad de mapas/replays | `restore.sh --verify` (sha256, probado en `infrastructure/tests/backup.test.ts`) | 0 discrepancias |
+| Integridad de mapas/replays | `restore.sh --verify` (sha256, probado en `infrastructure/tests/backup.test.ts`) | `N/N` entradas correctas, 0 discrepancias |
 | Migraciones | `/api/healthz` | al día |
 | Humo E2E | `smoke.sh` | 4/4 OK |
 | Secretos | revisar salida de consola y `docker compose logs` | ningún valor de secreto impreso |

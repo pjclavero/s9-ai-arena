@@ -79,22 +79,117 @@ describe("restore.sh (dry-run y verificación de integridad reales)", () => {
     expect(out).toContain("CONFIG OK");
   });
 
-  it("--verify valida un manifest real y detecta corrupción", () => {
-    // Simula un snapshot restaurado: mapas + replay oficial + manifest.
-    const restored = join(tmp, "restored");
-    mkdirSync(join(restored, "maps"), { recursive: true });
-    mkdirSync(join(restored, "official"), { recursive: true });
-    writeFileSync(join(restored, "maps", "mvp.json"), '{"map":"mvp"}');
-    writeFileSync(join(restored, "official", "battle-1.jsonl"), '{"tick":1}\n');
-    execSync("sha256sum maps/mvp.json official/battle-1.jsonl > manifest.sha256", { cwd: restored });
+  // Issue #107: la verificación comparaba rutas imposibles. El manifest usa
+  // rutas lógicas (maps/…, official/…) pero `restic restore --target D`
+  // reconstruye bajo D la jerarquía ABSOLUTA de origen, de modo que el
+  // manifest queda junto al pgdump y NO junto a maps/ ni official/. Estos
+  // tests parten SIEMPRE de ese layout real, no de uno montado a mano.
+  //
+  //   D/data/maps/…                                     (MAPS_DIR=/data/maps)
+  //   D/data/bot-sources/…                              (BOT_SOURCES_DIR)
+  //   D/tmp/backup-work/replays-official/official/…     (RECENT_OFFICIAL)
+  //   D/tmp/backup-work/pgdump-*.dump
+  //   D/tmp/backup-work/manifest.sha256
+  function makeResticRestoreLayout(name: string) {
+    const dest = join(tmp, name);
+    rmSync(dest, { recursive: true, force: true });
+    const maps = join(dest, "data", "maps");
+    const work = join(dest, "tmp", "backup-work");
+    const official = join(work, "replays-official", "official");
+    mkdirSync(maps, { recursive: true });
+    mkdirSync(official, { recursive: true });
+    mkdirSync(join(dest, "data", "bot-sources"), { recursive: true });
+    writeFileSync(join(maps, "mvp.json"), '{"map":"mvp"}');
+    writeFileSync(join(dest, "data", "bot-sources", "bot.ts"), "export const bot = 1;\n");
+    writeFileSync(join(official, "battle-1.jsonl"), '{"tick":1}\n');
+    writeFileSync(join(work, "pgdump-20260808120000.dump"), "PGDUMP");
+    const manifest = join(work, "manifest.sha256");
+    // Manifest generado igual que en backup.sh (rutas lógicas).
+    execSync(`find . -type f -exec sha256sum {} + | sed 's| \\./| maps/|' > ${manifest}`, { cwd: maps });
+    execSync(`find official -type f -exec sha256sum {} + >> ${manifest}`, {
+      cwd: join(work, "replays-official"),
+    });
+    return { dest, manifest, maps, official };
+  }
 
-    // Íntegro → exit 0.
-    const ok = execFileSync("bash", [RESTORE, "--verify", restored], { encoding: "utf8" });
-    expect(ok).toContain("integridad verificada");
+  function verify(dest: string) {
+    try {
+      return { code: 0, out: execFileSync("bash", [RESTORE, "--verify", dest], { encoding: "utf8" }) };
+    } catch (e: any) {
+      return { code: (e.status as number) ?? -1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+    }
+  }
 
-    // Corrupto (manipulación de un replay) → falla.
-    writeFileSync(join(restored, "official", "battle-1.jsonl"), '{"tick":1,"score":999}\n');
-    expect(() => execFileSync("bash", [RESTORE, "--verify", restored], { stdio: "pipe" })).toThrow();
+  it("--verify: backup ÍNTEGRO en el layout que produce restic restore → éxito", () => {
+    const { dest } = makeResticRestoreLayout("restic-ok");
+    const { code, out } = verify(dest);
+    expect(code).toBe(0);
+    expect(out).toContain("integridad verificada");
+    // No vacuidad: debe declarar cuántas entradas verificó (mapa + replay).
+    expect(out).toContain("2/2");
+  });
+
+  it("--verify: checksum incorrecto (replay manipulado) → fallo", () => {
+    const { dest, official } = makeResticRestoreLayout("restic-corrupto");
+    writeFileSync(join(official, "battle-1.jsonl"), '{"tick":1,"score":999}\n');
+    const { code, out } = verify(dest);
+    expect(code).not.toBe(0);
+    expect(out).not.toContain("integridad verificada");
+  });
+
+  it("--verify: fichero ausente en el árbol restaurado → fallo (no se ignora)", () => {
+    const { dest, maps } = makeResticRestoreLayout("restic-ausente");
+    rmSync(join(maps, "mvp.json"));
+    const { code, out } = verify(dest);
+    expect(code).not.toBe(0);
+    expect(out).not.toContain("integridad verificada");
+  });
+
+  it("--verify: manifest VACÍO → fallo (fail-closed, jamás 'verificado' con cero entradas)", () => {
+    const { dest, manifest } = makeResticRestoreLayout("restic-vacio");
+    writeFileSync(manifest, "");
+    const { code, out } = verify(dest);
+    expect(code).not.toBe(0);
+    expect(out).not.toContain("integridad verificada");
+    expect(out).toContain("sin entradas");
+  });
+
+  it("--verify: manifest con líneas malformadas → fallo (no se saltan en silencio)", () => {
+    const { dest, manifest } = makeResticRestoreLayout("restic-malformado");
+    writeFileSync(manifest, "esto-no-es-un-checksum maps/mvp.json\n");
+    const { code, out } = verify(dest);
+    expect(code).not.toBe(0);
+    expect(out).not.toContain("integridad verificada");
+  });
+
+  it("--verify: sin manifest en el destino → fallo", () => {
+    const { dest, manifest } = makeResticRestoreLayout("restic-sin-manifest");
+    rmSync(manifest);
+    const { code, out } = verify(dest);
+    expect(code).not.toBe(0);
+    expect(out).not.toContain("integridad verificada");
+  });
+
+  it("--verify: destino inexistente → fallo", () => {
+    const { code, out } = verify(join(tmp, "no-existe-este-destino"));
+    expect(code).not.toBe(0);
+    expect(out).not.toContain("integridad verificada");
+  });
+});
+
+describe("backup.sh: el manifest no puede quedar vacío (fail-closed en origen)", () => {
+  it("documenta en el dry-run que el manifest cubre mapas y replays oficiales", () => {
+    const { out } = runDryRun({
+      RESTIC_REPOSITORY: "/mnt/nas/backups/s9-ai-arena",
+      RESTIC_PASSWORD_FILE: join(tmp, "restic_password.txt"),
+    });
+    expect(out).toContain("manifest.sha256");
+  });
+
+  it("el script aborta si MAPS_DIR no existe o si el manifest queda vacío", () => {
+    const src = readFileSync(BACKUP, "utf8");
+    expect(src).toContain("MAPS_DIR inexistente");
+    expect(src).toContain("manifest de integridad vacío");
   });
 });
 

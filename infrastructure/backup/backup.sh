@@ -100,17 +100,35 @@ status=0
   unset PGPASSWORD
 
   log info "2/5 manifest de integridad (sha256 de mapas y replays oficiales)"
+  # El manifest usa rutas LÓGICAS (maps/…, official/…). Ojo: `restic restore`
+  # reconstruye la jerarquía ABSOLUTA de origen bajo el destino, así que el
+  # manifest NO queda junto a los ficheros que describe; restore.sh --verify
+  # resuelve cada entrada por sufijo dentro del árbol restaurado.
   : > "$WORK_DIR/manifest.sha256"
-  [ -d "$MAPS_DIR" ] && (cd "$MAPS_DIR" && find . -type f -exec sha256sum {} + | sed 's| \./| maps/|') >> "$WORK_DIR/manifest.sha256"
-  [ -d "$REPLAYS_DIR/official" ] && (cd "$REPLAYS_DIR" && find official -type f -exec sha256sum {} +) >> "$WORK_DIR/manifest.sha256"
+  if [ ! -d "$MAPS_DIR" ]; then
+    log error "MAPS_DIR inexistente ($MAPS_DIR): sin mapas no hay integridad que verificar; backup abortado"
+    exit 1
+  fi
+  (cd "$MAPS_DIR" && find . -type f -exec sha256sum {} + | sed 's| \./| maps/|') >> "$WORK_DIR/manifest.sha256"
+  if [ -d "$REPLAYS_DIR/official" ]; then
+    (cd "$REPLAYS_DIR" && find official -type f -exec sha256sum {} +) >> "$WORK_DIR/manifest.sha256"
+  fi
+  # Fail-closed: un manifest vacío haría que la verificación posterior fuese
+  # vacua (verificar cero entradas y darlo por bueno).
+  if [ ! -s "$WORK_DIR/manifest.sha256" ]; then
+    log error "manifest de integridad vacío: no habría nada que verificar al restaurar; backup abortado"
+    exit 1
+  fi
 
   log info "3/5 restic backup de datos (mapas, fuentes de bots, replays oficiales, dump)"
-  # Replays: solo official/ dentro de la retención.
+  # Replays: solo official/ dentro de la retención. Se copian con rutas
+  # RELATIVAS a $REPLAYS_DIR para no anidar otra jerarquía absoluta dentro del
+  # área de staging (queda replays-official/official/…).
   RECENT_OFFICIAL="$WORK_DIR/replays-official"
   mkdir -p "$RECENT_OFFICIAL"
   if [ -d "$REPLAYS_DIR/official" ]; then
-    find "$REPLAYS_DIR/official" -type f -mtime "-$REPLAY_RETENTION_DAYS" \
-      -exec cp --parents -t "$RECENT_OFFICIAL" {} + 2>/dev/null || true
+    (cd "$REPLAYS_DIR" && find official -type f -mtime "-$REPLAY_RETENTION_DAYS" \
+      -exec cp --parents -t "$RECENT_OFFICIAL" {} +) 2>/dev/null || true
   fi
   restic backup --tag s9-arena-data "$MAPS_DIR" "$BOT_SOURCES_DIR" "$RECENT_OFFICIAL" "$WORK_DIR"/pgdump-*.dump "$WORK_DIR/manifest.sha256"
 
