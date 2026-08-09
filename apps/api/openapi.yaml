@@ -17,8 +17,16 @@ info:
   # id concreto filtraría más que un listado vacío. Con la capability
   # encendida, 404 también si la batalla no existe o no está `running`
   # (nunca se revela su estado no-running a un visitante anónimo).
+  # 0.8.0 · R11 acceso público a replay y batalla finalizada: añade
+  # listPublicReplays (GET /public/replays), getPublicReplay
+  # (GET /public/replays/{battleId}) y downloadPublicReplay
+  # (GET /public/replays/{battleId}/download), gateadas por
+  # S9_PUBLIC_REPLAYS_ENABLED (apagada por defecto). Solo batallas `finished`;
+  # nunca seed/seedCommitment/seedRevealProof ni datos de propietario. Namespace
+  # propio (no reutiliza /public/battles/{battleId}, que ya está ocupado por
+  # getPublicLiveBattle para batallas `running` bajo S9_PUBLIC_SPECTATE_ENABLED).
   # Añadir un endpoint = MINOR (docs/compatibilidad.md, §2 Semver por paquete).
-  version: 0.7.0
+  version: 0.8.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -755,6 +763,72 @@ paths:
             application/json: { schema: { $ref: '#/components/schemas/PublicLiveBattle' } }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /public/replays:
+    get:
+      tags: [battles]
+      operationId: listPublicReplays
+      summary: >-
+        R11 · Listado de batallas FINALIZADAS con replay publicado, SOLO campos
+        públicos, sin cuenta. Gateado por S9_PUBLIC_REPLAYS_ENABLED (apagado por
+        defecto: enabled=false, items=[], igual que listPublicLiveBattles).
+        Paginado por cursor opaco; límite acotado a 50 por página (más estricto
+        que el límite general de 100) para no dar un vector de scraping barato.
+      x-min-role: visitor
+      security: []
+      parameters:
+        - { $ref: '#/components/parameters/Cursor' }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+      responses:
+        '200':
+          description: Estado de la publicación y batallas finalizadas con replay (si está activada)
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/PublicReplayList' } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /public/replays/{battleId}:
+    get:
+      tags: [battles]
+      operationId: getPublicReplay
+      summary: >-
+        R11 · Datos públicos de UNA batalla FINALIZADA con replay publicado,
+        SOLO campos públicos, sin cuenta. Gateado por S9_PUBLIC_REPLAYS_ENABLED:
+        apagado → 404 siempre (igual patrón que getPublicLiveBattle: un recurso
+        por-id no distingue "capability apagada" de "no existe"). Encendido →
+        404 si la batalla no existe, no está `finished` o no tiene replay
+        publicado (nunca se revela su estado real a un visitante anónimo).
+      x-min-role: visitor
+      security: []
+      parameters: [{ $ref: '#/components/parameters/BattleId' }]
+      responses:
+        '200':
+          description: Batalla finalizada (proyección pública)
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/PublicReplayBattle' } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /public/replays/{battleId}/download:
+    get:
+      tags: [battles]
+      operationId: downloadPublicReplay
+      summary: >-
+        R11 · Descarga del archivo de replay de una batalla FINALIZADA, sin
+        cuenta. Mismo gate y mismas condiciones que getPublicReplay (apagado o
+        batalla no finalizada/sin replay → 404).
+      x-min-role: visitor
+      security: []
+      parameters: [{ $ref: '#/components/parameters/BattleId' }]
+      responses:
+        '200':
+          description: Archivo de replay (binario)
+          content:
+            application/octet-stream: { schema: { type: string, format: binary } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /battles:
     get:
       tags: [battles]
@@ -1434,6 +1508,45 @@ components:
         enabled: { type: boolean, description: 'Lectura de S9_PUBLIC_SPECTATE_ENABLED.' }
         battles: { type: array, items: { $ref: '#/components/schemas/PublicLiveBattle' } }
 
+    PublicReplayBattle:
+      type: object
+      description: >-
+        R11 · Proyección PÚBLICA de una batalla FINALIZADA con replay. Nunca
+        incluye seed, seedCommitment, seedRevealProof, tickets ni datos de
+        propietario. `participants` solo lleva identidad pública del bot y su
+        resultado deportivo, nunca artefactos ni credenciales.
+      properties:
+        id: { type: string }
+        status: { enum: [finished] }
+        mode: { type: string }
+        mapId: { type: string }
+        mapName: { type: string }
+        createdAt: { type: string, format: date-time }
+        startedAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time }
+        participants:
+          type: array
+          items:
+            type: object
+            properties:
+              botId: { type: string }
+              version: { type: integer }
+              team: { type: string }
+              outcome: { enum: [win, loss, draw, disqualified] }
+        result:
+          type: object
+          properties:
+            score: { type: object, additionalProperties: { type: number } }
+            ticks: { type: integer }
+        replayAvailable: { type: boolean }
+    PublicReplayList:
+      type: object
+      description: 'R11 · Respuesta 200 SIEMPRE. Si la capability está apagada: enabled=false, items=[].'
+      properties:
+        enabled: { type: boolean, description: 'Lectura de S9_PUBLIC_REPLAYS_ENABLED.' }
+        items: { type: array, items: { $ref: '#/components/schemas/PublicReplayBattle' } }
+        nextCursor: { type: string }
+
     BattleAudit:
       type: object
       description: Suficiente para re-simular y verificar la batalla sin revelar código privado.
@@ -1577,6 +1690,9 @@ components:
         publicSpectateEnabled:
           type: boolean
           description: 'R11 · Lectura de S9_PUBLIC_SPECTATE_ENABLED: si es false, /public/battles/live responde enabled=false, battles=[].'
+        publicReplaysEnabled:
+          type: boolean
+          description: 'R11 · Lectura de S9_PUBLIC_REPLAYS_ENABLED: si es false, /public/replays responde enabled=false, items=[].'
         battlesByStatus: { type: object, additionalProperties: { type: integer } }
         buildsByStatus: { type: object, additionalProperties: { type: integer } }
         botVersionsByState: { type: object, additionalProperties: { type: integer } }

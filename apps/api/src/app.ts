@@ -21,6 +21,7 @@ import { adminRoutes } from "./routes/admin.js";
 import { battleRoutes } from "./routes/battles.js";
 import { battleRunConfigFromEnv, realBattleRunsCapability, type BattleRunConfig } from "./battle-run.js";
 import { publicSpectateEnabledFromEnv } from "./public-spectate.js";
+import { publicReplaysEnabledFromEnv } from "./public-replays.js";
 import { MetricsRegistry, metricsEnabledFromEnv, metricsMiddleware } from "./metrics.js";
 import { standingsRoutes } from "./routes/standings.js";
 import { tournamentRoutes } from "./routes/tournaments.js";
@@ -73,6 +74,14 @@ export interface AppConfig {
    * apagada por defecto). Inyectable en tests; en producción se resuelve del entorno.
    */
   publicSpectateEnabled?: boolean;
+  /**
+   * R11 · Capability de acceso público a replay/batalla finalizada
+   * (S9_PUBLIC_REPLAYS_ENABLED, apagada por defecto). Inyectable en tests; en
+   * producción se resuelve del entorno. Independiente de publicSpectateEnabled:
+   * gatea /public/replays* (batallas `finished`), no /public/battles/live
+   * (batallas `running`).
+   */
+  publicReplaysEnabled?: boolean;
   /**
    * N1 · Capability de métricas Prometheus (S9_METRICS_ENABLED, apagada por
    * defecto). Con la flag apagada, GET /metrics ni se monta ni se instala el
@@ -148,11 +157,20 @@ export function createApp(cfg: AppConfig): express.Express {
   app.use(adminRoutes(cfg.db));
   const realBattleRuns = cfg.realBattleRuns ?? battleRunConfigFromEnv();
   const publicSpectateEnabled = cfg.publicSpectateEnabled ?? publicSpectateEnabledFromEnv();
-  app.use(battleRoutes(cfg.db, cfg.anonQuota ?? DEFAULT_ANON_QUOTA, realBattleRuns, publicSpectateEnabled));
+  const publicReplaysEnabled = cfg.publicReplaysEnabled ?? publicReplaysEnabledFromEnv();
+  app.use(
+    battleRoutes(
+      cfg.db,
+      cfg.anonQuota ?? DEFAULT_ANON_QUOTA,
+      realBattleRuns,
+      publicSpectateEnabled,
+      publicReplaysEnabled,
+    ),
+  );
   app.use(standingsRoutes(cfg.db));
   app.use(tournamentRoutes(cfg.db));
   app.use(mapRoutes(cfg.db));
-  app.use(systemRoutes(cfg.db, realBattleRunsCapability(realBattleRuns), publicSpectateEnabled));
+  app.use(systemRoutes(cfg.db, realBattleRunsCapability(realBattleRuns), publicSpectateEnabled, publicReplaysEnabled));
 
   app.use((req: Request, res: Response) => {
     res.status(404).json({ error: "not_found", message: "Ruta no encontrada", correlationId: req.correlationId });
