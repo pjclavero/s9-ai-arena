@@ -78,9 +78,27 @@ case "${1:---dry-run}" in
     # #110b: `find | head -1` aceptaba en silencio 0 manifests (verificación
     # que no verifica nada, exit 0 falso) y elegía uno arbitrario si había
     # más de uno (snapshots mezclados). Fallar en cerrado en ambos casos.
-    manifests="$(find "$dir" -name manifest.sha256)"
-    manifest_count=0
-    [ -n "$manifests" ] && manifest_count=$(printf '%s\n' "$manifests" | grep -c .)
+    #
+    # D1-R6/D2-R6 (ronda 7, HALLAZGO DEL SUPERVISOR — el mismo patrón por
+    # sexta vez): este `find` seguía siendo `-name` sin anclar (los otros
+    # tres ya se habían migrado a `-path` en la ronda 6) Y contaba con
+    # `grep -c .` (líneas), el último conteo por líneas superviviente. Un
+    # fichero llamado literalmente "manifest.sha256" DENTRO de maps/,
+    # bot_sources/, assets/ o replays/ se contaba como un SEGUNDO manifest
+    # y disparaba el guard de ambigüedad sobre un backup perfecto —
+    # reproducido 4 de 4, una por fuente. Fix: excluir del `find` cualquier
+    # coincidencia anidada bajo esas cuatro subcarpetas conocidas (el
+    # manifest real de backup.sh SIEMPRE vive en la raíz del staging, nunca
+    # dentro de ellas), y contar con NUL en vez de líneas (una ruta de
+    # destino con un salto de línea en algún componente no debe inflar el
+    # recuento, el mismo defecto de D1-R5/D2-R5 en el otro extremo).
+    mapfile -d '' -t manifest_arr < <(
+      find "$dir" -name manifest.sha256 \
+        ! -path '*/maps/*' ! -path '*/bot_sources/*' \
+        ! -path '*/assets/*' ! -path '*/replays/*' \
+        -print0
+    )
+    manifest_count="${#manifest_arr[@]}"
     if [ "$manifest_count" -eq 0 ]; then
       log error "manifest.sha256 no encontrado en $dir"
       exit 1
@@ -89,7 +107,7 @@ case "${1:---dry-run}" in
       log error "se encontraron $manifest_count manifest.sha256 en $dir (ambiguo; restaura un único snapshot por directorio)"
       exit 1
     fi
-    manifest="$manifests"
+    manifest="${manifest_arr[0]}"
     stagedir="$(dirname "$manifest")"
     manifest_json="$stagedir/manifest.json"
 

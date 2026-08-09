@@ -262,6 +262,43 @@ function runLogFromScriptRawBytes(scriptPath: string, prefixMsg: string, rawByte
   }
 }
 
+// runValidateManifestJson: extrae la función REAL `validate_manifest_json`
+// de restore.sh y la invoca directamente sobre un contenido de fichero
+// dado, devolviendo su exit code. D3-R6 (ronda 7, hallazgo del supervisor):
+// los tests anteriores de esta función pasaban por la cadena completa de
+// --verify, donde OTROS chequeos (claves de fuente) confirmaban el mismo
+// resultado por su cuenta — "mutando uno a uno: llaves balanceadas
+// SOBREVIVE, prefijo/sufijo SOBREVIVE […] sólo el de las 6 claves mata
+// tests". Invocar la función aislada, sin las demás comprobaciones de
+// --verify alrededor, es la única forma de que cada test mate SÓLO su
+// propio sub-chequeo.
+function runValidateManifestJson(jsonContent: string): number {
+  const content = readFileSync(RESTORE, "utf8");
+  const startIdx = content.indexOf("validate_manifest_json() {");
+  if (startIdx === -1) throw new Error("no se pudo extraer validate_manifest_json() de restore.sh");
+  // La función cierra con un "}" en su propia línea (columna 4, mismo
+  // indentado que el "validate_manifest_json() {" de apertura).
+  const closeMatch = content.slice(startIdx).match(/\n {4}\}\n/);
+  if (!closeMatch || closeMatch.index === undefined) {
+    throw new Error("no se pudo encontrar el cierre de validate_manifest_json() en restore.sh");
+  }
+  const funcBlock = content.slice(startIdx, startIdx + closeMatch.index + closeMatch[0].length);
+  const mjPath = join(tmpdir(), `d3r6-manifest-json-${Math.random().toString(36).slice(2)}.json`);
+  writeFileSync(mjPath, jsonContent);
+  const wrapper = `#!/usr/bin/env bash\n${funcBlock}\nvalidate_manifest_json "${mjPath}"\nexit $?\n`;
+  const wrapperPath = join(tmpdir(), `validate-mj-wrapper-${Math.random().toString(36).slice(2)}.sh`);
+  writeFileSync(wrapperPath, wrapper, { mode: 0o755 });
+  try {
+    execFileSync("bash", [wrapperPath], { stdio: "pipe" });
+    return 0;
+  } catch (e: any) {
+    return e.status ?? 1;
+  } finally {
+    rmSync(wrapperPath, { force: true });
+    rmSync(mjPath, { force: true });
+  }
+}
+
 // ── Camino real (#110b): clasificación ok/empty/error de fuentes ───────────
 // El backup real nunca se había ejercitado en tests (sólo --dry-run). Aquí
 // se inyectan binarios falsos de restic/pg_dump vía PATH en un directorio
@@ -1216,6 +1253,48 @@ describe("backup.sh → restic falso fiel → restore.sh --restore/--verify (E2E
     expect(verifyOut).toContain("integridad verificada"); // se verificó de verdad, no se ignoró
   });
 
+  // ── D1-R6/D2-R6 (ronda 7, HALLAZGO DEL SUPERVISOR — el mismo patrón por
+  // sexta vez): el `find` que localiza manifest.sha256 en --verify seguía
+  // siendo `-name` sin anclar (los otros tres `find` ya se habían migrado
+  // a `-path` en la ronda 6) y contaba con `grep -c .` (líneas). Un
+  // fichero llamado literalmente "manifest.sha256" DENTRO de una fuente
+  // (maps/bot_sources/assets/replays) se contaba como un SEGUNDO manifest
+  // y disparaba el guard de ambigüedad sobre un backup perfecto.
+  // Reproducido para las cuatro fuentes, cadena E2E real. ────────────────
+  it.each(["maps", "bot_sources", "assets", "replays"])(
+    "fichero llamado 'manifest.sha256' dentro de %s no rompe --verify (D1-R6)",
+    (source) => {
+      setup();
+      const dirName = source === "bot_sources" ? "bot-sources" : source;
+      writeFileSync(join(root, dirName, "manifest.sha256"), "esto-no-es-el-manifest-real\n");
+      const log = join(root, "restic-calls.log");
+      writeFakeResticFaithful(fakebin, store, log);
+      const backupOut = execFileSync("bash", [BACKUP], { encoding: "utf8", env: backupEnv() });
+      expect(backupOut).toContain("backup SUCCESS");
+      const dest = join(root, `restored-d1r6-${source}`);
+      execFileSync("bash", [RESTORE, "--restore", dest], { encoding: "utf8", env: backupEnv() });
+      const verifyOut = execFileSync("bash", [RESTORE, "--verify", dest], { encoding: "utf8" });
+      expect(verifyOut).toContain("integridad verificada");
+      expect(verifyOut).not.toContain("ambiguo");
+    },
+  );
+
+  // D2-R6: el conteo por líneas (`grep -c .`) también inflaba el recuento
+  // si la propia RUTA DE DESTINO (--restore/--verify <dest>) tenía un
+  // salto de línea en algún componente — sin necesidad de ningún fichero
+  // "raro" dentro del backup. Ahora se cuenta con NUL (mapfile -d '').
+  it("ruta de destino con salto de línea en el nombre no rompe --verify (D2-R6)", () => {
+    setup();
+    const log = join(root, "restic-calls.log");
+    writeFakeResticFaithful(fakebin, store, log);
+    execFileSync("bash", [BACKUP], { encoding: "utf8", env: backupEnv() });
+    const dest = join(root, "restored-con\nsalto-d2r6");
+    execFileSync("bash", [RESTORE, "--restore", dest], { encoding: "utf8", env: backupEnv() });
+    const verifyOut = execFileSync("bash", [RESTORE, "--verify", dest], { encoding: "utf8" });
+    expect(verifyOut).toContain("integridad verificada");
+    expect(verifyOut).not.toContain("ambiguo");
+  });
+
   // ── Ronda 6 (hueco encontrado al enumerar caminos): $dir inexistente en
   // --verify moría por `set -e` sin ninguna línea de log JSON — la
   // alertería no veía nada. Ahora hay un chequeo explícito primero. ──────
@@ -1303,6 +1382,92 @@ describe("backup.sh → restic falso fiel → restore.sh --restore/--verify (E2E
     const { threw, output } = verifyAgainstManifestJson('{"basura":"si","otracosa":123}');
     expect(threw).toBe(true);
     expect(output).toContain("no tiene forma válida");
+  });
+
+  // ── D3-R6 (ronda 7, HALLAZGO DEL SUPERVISOR): los cuatro sub-chequeos de
+  // validate_manifest_json NO tenían cobertura independiente de verdad —
+  // los tests de arriba pasaban por la cadena completa de --verify, donde
+  // el bucle de claves de fuente confirmaba el mismo resultado por su
+  // cuenta y enmascaraba si el prefijo/balance realmente fallaban. Aquí se
+  // invoca `validate_manifest_json` AISLADA (extraída del fichero real,
+  // sin el resto de --verify alrededor), con un payload que pasa TODOS
+  // los demás sub-chequeos salvo el que se quiere aislar. ────────────────
+  const VALID_ALL_SOURCES =
+    '{"postgres":{"status":"ok","files":1},"secrets":{"status":"ok","files":2},"maps":{"status":"empty","files":0},"bot_sources":{"status":"empty","files":0},"replays":{"status":"empty","files":0},"assets":{"status":"empty","files":0}}';
+
+  it("validate_manifest_json aislada: prefijo/sufijo inválido con llaves balanceadas y las 6 claves presentes → return 1 (D3-R6)", () => {
+    // Balance OK (todas las llaves internas cierran), las 6 claves
+    // presentes con forma válida — sólo el string NO empieza por '{' ni
+    // termina por '}' (hay texto extra fuera). Sólo el chequeo de
+    // prefijo/sufijo puede rechazar esto.
+    const payload = `basura-antes${VALID_ALL_SOURCES}basura-despues`;
+    expect(runValidateManifestJson(payload)).not.toBe(0);
+  });
+
+  it("validate_manifest_json aislada: llaves desbalanceadas con prefijo/sufijo y las 6 claves válidas → return 1 (D3-R6)", () => {
+    // Prefijo/sufijo OK ('{'...'}'), las 6 claves presentes con forma
+    // válida (el bucle de claves las encuentra por substring, no le
+    // importa el resto del documento) — pero se añade una llave de
+    // apertura suelta dentro de un valor de cadena, que NO tiene su cierre
+    // correspondiente. Sólo el chequeo de balance (nopen == nclose) puede
+    // rechazar esto.
+    const withExtraBrace = VALID_ALL_SOURCES.replace('"secrets":{"status":"ok"', '"nota":"{","secrets":{"status":"ok"');
+    expect(withExtraBrace.startsWith("{")).toBe(true);
+    expect(withExtraBrace.endsWith("}")).toBe(true);
+    expect(runValidateManifestJson(withExtraBrace)).not.toBe(0);
+  });
+
+  it("validate_manifest_json aislada: JSON con las 6 claves válidas SÍ pasa (control positivo, D3-R6)", () => {
+    // Control: confirma que el helper y el payload base son correctos —
+    // sin esto, los dos tests de arriba podrían estar "pasando" porque
+    // CUALQUIER cosa devuelve 1, no porque aíslen su sub-chequeo.
+    expect(runValidateManifestJson(VALID_ALL_SOURCES)).toBe(0);
+  });
+
+  // El cuarto sub-chequeo que el supervisor señaló ("-ne→-gt en
+  // residuales SOBREVIVE") no vive en validate_manifest_json sino en el
+  // contraste de --verify que compara el nº de ficheros de datos
+  // restaurados con las líneas del manifest. Una entrada DUPLICADA en
+  // manifest.sha256 referenciando el MISMO fichero real dos veces infla
+  // "actual_lines" (2) por encima de los ficheros reales presentes (1)
+  // SIN que sha256sum -c lo detecte (comprueba la misma línea dos veces
+  // con éxito) y SIN disparar el chequeo de líneas-vs-manifest.json (se
+  // ajusta manifest.json para declarar 2 "para que ese chequeo, anterior
+  // en la cadena, no dispare primero y enmascare cuál sub-chequeo es el
+  // que realmente está aislado aquí). Sólo `total_data_files -ne
+  // actual_lines` (no `-gt`, que sólo mira el sentido "de más") lo caza:
+  // aquí total_data_files(1) < actual_lines(2), el sentido "de menos".
+  it("entrada duplicada en manifest.sha256 (mismo fichero real dos veces): --verify FALLA (D3-R6, residual -ne no -gt)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "e10-d3r6-duplicado-"));
+    try {
+      const mapsDir = join(dir, "maps");
+      mkdirSync(mapsDir, { recursive: true });
+      writeFileSync(join(mapsDir, "a.json"), '{"a":1}\n');
+      const hash = execSync(`sha256sum a.json`, { cwd: mapsDir, encoding: "utf8" }).split(" ")[0];
+      // manifest.sha256 con DOS líneas para el MISMO fichero real: 1
+      // fichero de verdad, 2 líneas de manifest.
+      writeFileSync(join(dir, "manifest.sha256"), `${hash}  maps/a.json\n${hash}  maps/a.json\n`);
+      // manifest.json declara maps.files=2 para que el chequeo de
+      // "líneas vs manifest.json" (anterior en la cadena) NO dispare —
+      // aísla el chequeo de residuales, que es el que de verdad debe
+      // notar que sólo hay 1 fichero real por 2 líneas de manifest.
+      writeFileSync(
+        join(dir, "manifest.json"),
+        '{"postgres":{"status":"ok","files":1},"secrets":{"status":"ok","files":2},"maps":{"status":"ok","files":2},"bot_sources":{"status":"empty","files":0},"replays":{"status":"empty","files":0},"assets":{"status":"empty","files":0}}',
+      );
+      let threw = false;
+      let output = "";
+      try {
+        output = execFileSync("bash", [RESTORE, "--verify", dir], { encoding: "utf8", stdio: "pipe" });
+      } catch (e: any) {
+        threw = true;
+        output = `${e.stdout}${e.stderr}`;
+      }
+      expect(threw).toBe(true); // NUNCA exit 0 con una entrada duplicada sin explicar
+      expect(output).toContain("SIN entrada en el manifest");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   // ── D3-R4 (ronda 5, hallazgo del supervisor): el saneado de UTF-8
