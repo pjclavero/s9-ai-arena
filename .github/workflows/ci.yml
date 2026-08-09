@@ -144,10 +144,17 @@ jobs:
         with:
           name: backup-image-tar
           path: /tmp/backup-image
-      - name: Cargarla y etiquetarla con el tag que usa el E2E
+      - name: Cargar la imagen (ya viene etiquetada como s9-ai-arena/backup:e2e-test — no se retagea aquí, fuente única de verdad en build-images)
+        # `docker load` imprime su propia salida ("Loaded image: ...") y aquí
+        # además se lista `docker images` justo después — diagnóstico
+        # permanente (pedido tras el fallo real de tag "No such image: …" en
+        # una vuelta anterior): si el nombre alguna vez no coincidiera, el
+        # log de ESTE paso lo dice de un vistazo, sin tener que reproducirlo.
         run: |
           docker load -i /tmp/backup-image/backup-image.tar
-          docker tag "${{ env.IMAGE_PREFIX }}/backup:sha-${{ github.sha }}" s9-ai-arena/backup:e2e-test
+          echo "--- docker images tras la carga ---"
+          docker images
+          docker image inspect s9-ai-arena/backup:e2e-test >/dev/null
       - name: E2E real - imagen backup (reutilizada) + SFTP con chroot (atmoz/sftp) + postgres
         # Salida SIN búfer: el propio test escribe cada fase con fs.writeSync
         # (síncrono, no se pierde aunque el proceso muera después) para que un
@@ -306,6 +313,19 @@ jobs:
       # para que e2e-backup-sftp la cargue en vez de reconstruirla — más
       # rápido Y más fiel, porque ejercita el artefacto que de verdad se
       # publicaría (misma imagen, no una reconstruida aparte).
+      # FALLO REAL VISTO EN CI (segunda vuelta de este mismo paso): sin
+      # `tags:` aquí, `docker/build-push-action` no le pone NINGÚN nombre a
+      # la imagen dentro del tar (queda "untagged", sólo con su ID de
+      # contenido) — `docker load` la importa igual, pero no hay ningún
+      # "ghcr.io/…/backup:sha-…" al que referirse después, porque ese nombre
+      # nunca se compuso más que EN LA CABEZA de quien escribió el paso
+      # siguiente. FUENTE ÚNICA DE VERDAD: se etiqueta aquí mismo con el tag
+      # EXACTO y literal que infrastructure/tests/backup-sftp-e2e.test.ts usa
+      # como IMAGE_TAG ("s9-ai-arena/backup:e2e-test") — así el paso de carga
+      # de más abajo no tiene que RECOMPONER ningún nombre (ni con
+      # github.sha, que en `pull_request` es el SHA del merge commit, no el
+      # de la rama) ni retagear nada: `docker load` ya deja la imagen con el
+      # nombre que el test espera, sin segunda fuente de verdad.
       - name: Exportar la imagen backup como artefacto (para e2e-backup-sftp; cache-hit, no reconstruye)
         if: matrix.service == 'backup'
         uses: docker/build-push-action@v6
@@ -313,6 +333,7 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           build-args: ${{ matrix.build_args }}
+          tags: s9-ai-arena/backup:e2e-test
           outputs: type=docker,dest=/tmp/backup-image.tar
       - name: Subir la imagen backup como artefacto
         if: matrix.service == 'backup'
