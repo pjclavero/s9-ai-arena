@@ -90,6 +90,36 @@ describe("restore.sh --dry-run (ejecutado de verdad, sin docker)", () => {
     expect(out).toContain("pg_restore");
     expect(out).toContain("CONFIG OK");
   });
+
+  // ── D4-R3c (ronda 4, mutación superviviente cerrada): restore.sh tiene
+  // su PROPIA copia de json_escape (no comparte código con backup.sh), y
+  // nada probaba que la usara de verdad — podía reducirse a la identidad
+  // sin que fallara ningún test. Aquí se fuerza un mensaje de log con
+  // comillas embebidas a través de un argumento real de línea de comandos
+  // ($dir, tal cual lo interpola "manifest.sha256 no encontrado en $dir")
+  // y se comprueba que la línea de log resultante sigue siendo JSON válido.
+  it("restore.sh: --verify con un directorio con comillas en el nombre no rompe el JSON del log (D4-R3c)", () => {
+    // El directorio debe EXISTIR de verdad: con `set -e` activo, un `find`
+    // sobre una ruta inexistente aborta el script antes de llegar al log()
+    // controlado de "no encontrado" (eso probaría otra cosa, no el escape).
+    const parent = mkdtempSync(join(tmpdir(), "e10-d4r3c-"));
+    const evilName = 'pwn", "level":"info", "forged":"si';
+    const evilDir = join(parent, evilName);
+    mkdirSync(evilDir, { recursive: true });
+    let output = "";
+    try {
+      execFileSync("bash", [RESTORE, "--verify", evilDir], { encoding: "utf8", stdio: "pipe" });
+    } catch (e: any) {
+      output = `${e.stdout}${e.stderr}`;
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+    const line = output.split("\n").find((l) => l.includes("no encontrado"));
+    expect(line).toBeDefined();
+    const parsed = JSON.parse(line as string);
+    expect(parsed.level).toBe("error");
+    expect(parsed).not.toHaveProperty("forged");
+  });
 });
 
 describe("secretos fuera del repositorio (revisión automatizada, DoD T10.4)", () => {
@@ -165,6 +195,35 @@ esac
 exit 0
 `;
   writeFileSync(join(fakebin, "restic"), script, { mode: 0o755 });
+}
+
+// runLogFromScript: extrae las definiciones REALES de json_escape()+log() de
+// backup.sh/restore.sh (no una copia en el test) y ejecuta `log error "$1"`
+// con el mensaje pasado como argv — sin pasar por shell quoting ni por el
+// citado (quotearg) que aplica `find` a sus propios mensajes de error.
+// Necesario porque un ataque con el payload dentro de un nombre de fichero
+// listado por `find` puede quedar neutralizado por el citado del propio
+// `find` ANTES de llegar a json_escape (ver D2-R3a más abajo) — lo que
+// produce una cobertura de test falsa: el test "pasa" sin que json_escape
+// haya hecho nada. Esta vía ejercita la función tal cual vive en el script.
+function runLogFromScript(scriptPath: string, msg: string): string {
+  const content = readFileSync(scriptPath, "utf8");
+  const startIdx = content.indexOf("json_escape() {");
+  const logLineMatch = content.match(/^log\(\) \{ printf.*$/m);
+  if (startIdx === -1 || !logLineMatch) {
+    throw new Error(`no se pudo extraer json_escape()/log() de ${scriptPath}`);
+  }
+  const logLine = logLineMatch[0];
+  const logIdx = content.indexOf(logLine, startIdx);
+  const funcBlock = content.slice(startIdx, logIdx + logLine.length);
+  const wrapper = `#!/usr/bin/env bash\n${funcBlock}\nlog error "$1"\n`;
+  const wrapperPath = join(tmpdir(), `log-wrapper-${Math.random().toString(36).slice(2)}.sh`);
+  writeFileSync(wrapperPath, wrapper, { mode: 0o755 });
+  try {
+    return execFileSync("bash", [wrapperPath, msg], { encoding: "utf8" });
+  } finally {
+    rmSync(wrapperPath, { force: true });
+  }
 }
 
 // ── Camino real (#110b): clasificación ok/empty/error de fuentes ───────────
@@ -522,6 +581,63 @@ describe("backup.sh camino real (restic/pg_dump falsos vía PATH)", () => {
     }
   });
 
+  // ── D4-R3c (ronda 4, mutación superviviente cerrada): nada probaba
+  // ESPECÍFICAMENTE el escape de backslash — el test de comillas (D2) no
+  // lo cazaba. `s="${s//\\/\\\\}"` podía borrarse sin que fallara ningún
+  // test: un backslash sin escapar sólo rompe el JSON si cae INMEDIATAMENTE
+  // antes de la comilla de cierre que `log()` añade en su propia plantilla
+  // (entonces esa comilla queda escapada por el backslash del atacante en
+  // vez de cerrar la cadena). Un intento inicial de este test metía el
+  // backslash en un nombre de fichero de `bot_sources` esperando verlo en
+  // el mensaje de `find` — pero el citado (quotearg) de `find` en este
+  // sistema envuelve el nombre en comillas simples, así que el backslash
+  // nunca queda pegado a la comilla doble de cierre del JSON: otro falso
+  // positivo de cobertura, igual que D2-R3a. Se usa `runLogFromScript`
+  // para invocar `log()` (la función REAL del fichero) con un mensaje que
+  // termina en backslash justo antes del cierre, sin intermediarios. ─────
+  it("mensaje que termina en backslash no rompe el cierre de la cadena JSON (D4-R3c)", () => {
+    const out = runLogFromScript(BACKUP, "fuente ilegible: ruta\\con\\backslashes\\");
+    expect(() => JSON.parse(out.trim())).not.toThrow();
+    expect(JSON.parse(out.trim()).level).toBe("error");
+  });
+
+  // ── D2-R3a (ronda 4, hallazgo del supervisor): la primera versión de
+  // json_escape sólo escapaba `\n \r \t`. Bytes de control como 0x0b
+  // (vertical tab) se interpolaban crudos: `JSON.parse` (y cualquier
+  // pipeline estricto, incluido Loki/Promtail) rechaza la línea entera
+  // como inválida — mismo impacto práctico que D2 (el fallo desaparece de
+  // la alertería), pero por malformación en vez de por forja de campos.
+  //
+  // OJO de método: un intento inicial de este test metía el byte de
+  // control en un nombre de fichero de `bot_sources` y esperaba verlo en
+  // el mensaje de error de `find`. Eso NO ejercitaba el escape real: el
+  // `find` de GNU coreutils de este sistema ya cita (quotearg) los
+  // caracteres no imprimibles en SU PROPIO mensaje de error (los convierte
+  // en la secuencia visible `\v`, no el byte crudo 0x0b), así que el test
+  // "pasaba" sin que json_escape hubiera hecho nada — un falso positivo de
+  // cobertura que se habría colado si no se hubiera verificado con la
+  // mutación real (ver ronda de verificación). El byte crudo SÍ llega tal
+  // cual a `log()` cuando viene de un argumento de línea de comandos
+  // ($dir en restore.sh --verify), que no pasa por el citado de `find`. ──
+  it("directorio con byte de control 0x0b (no \\n\\r\\t) en su nombre no rompe el JSON del log (D2-R3a)", () => {
+    const parent = mkdtempSync(join(tmpdir(), "e10-d2r3a-"));
+    const evilName = "pwn\x0bname";
+    const evilDir = join(parent, evilName);
+    mkdirSync(evilDir, { recursive: true });
+    let output = "";
+    try {
+      execFileSync("bash", [RESTORE, "--verify", evilDir], { encoding: "utf8", stdio: "pipe" });
+    } catch (e: any) {
+      output = `${e.stdout}${e.stderr}`;
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+    const line = output.split("\n").find((l) => l.includes("no encontrado"));
+    expect(line).toBeDefined();
+    expect(() => JSON.parse(line as string)).not.toThrow();
+    expect(JSON.parse(line as string).level).toBe("error");
+  });
+
   // ── N1 (supervisor, cobertura nueva): un fallo de `cp` AL STAGING (no de
   // lectura al listar con `find`, que ya se clasifica en `classify_source`)
   // debía degradar la fuente a `error` y marcar PARTIAL — el código ya lo
@@ -600,6 +716,54 @@ describe("backup.sh camino real (restic/pg_dump falsos vía PATH)", () => {
     const manifest = readManifest();
     expect(manifest.replays.status).toBe("ok");
     expect(manifest.replays.files).toBe(1); // official/ ignora la retención
+  });
+
+  // ── D1-R3 (ronda 4, HALLAZGO DEL SUPERVISOR): backup.sh generaba el
+  // manifest con `(cd "$STAGING" && find … -exec sha256sum … | sed …) >
+  // fichero` SIN comprobar el estado de salida de esa subshell — un fallo
+  // de `find`/`sha256sum` (disco lleno, binario ausente, permiso revocado
+  // a mitad de ejecución) podía dejar un manifest.sha256 vacío o truncado
+  // con el staging poblado, y el backup seguía reportando SUCCESS. Se
+  // fuerza el fallo inyectando un `sha256sum` falso que siempre sale con
+  // error, y se comprueba que el backup entero pasa a FULL FAILURE (no
+  // SUCCESS ni PARTIAL) en vez de generar un manifest silenciosamente roto.
+  it("fallo de sha256sum al generar el manifest: FULL FAILURE, no SUCCESS con manifest roto (D1-R3, lado backup.sh)", () => {
+    makeDirs();
+    writeFileSync(join(root, "maps", "m.json"), '{"m":1}');
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+    writeFileSync(
+      join(fakebin, "sha256sum"),
+      `#!/usr/bin/env bash\necho "sha256sum: fallo simulado (disco lleno)" >&2\nexit 1\n`,
+      { mode: 0o755 },
+    );
+    const { code, out } = runReal({});
+    expect(code).toBe(1); // FULL FAILURE, nunca 0 ni 2 con un manifest no fiable
+    expect(out).toContain("fallo generando manifest.sha256");
+    expect(existsSync(join(store, "s9-arena-data"))).toBe(false); // restic no llegó a subir nada
+  });
+
+  // ── D1-R3 (ronda 4): el chequeo anterior cubre "el comando falla". Este
+  // cubre el caso más sutil que el supervisor pidió explícitamente: el
+  // comando puede salir con éxito (exit 0) pero producir MENOS líneas de
+  // las que corresponden — p.ej. un `sed`/pipeline que pierde una línea
+  // sin fallar. Se inyecta un `sed` falso que descarta una línea de cada
+  // dos, y se comprueba que el cruce "líneas del manifest vs. suma de
+  // ficheros 'ok'" detecta la inconsistencia aunque el pipeline entero
+  // haya salido con éxito. ────────────────────────────────────────────────
+  it("manifest con menos líneas de las esperadas (pipeline OK pero incompleto): FULL FAILURE (D1-R3)", () => {
+    makeDirs();
+    writeFileSync(join(root, "maps", "m1.json"), '{"m":1}');
+    writeFileSync(join(root, "maps", "m2.json"), '{"m":2}');
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+    // `sed` falso: deja pasar sólo la primera línea que recibe (simula un
+    // manifest truncado a mitad de escritura, sin que el pipeline falle).
+    writeFileSync(join(fakebin, "sed"), `#!/usr/bin/env bash\nhead -n 1\n`, { mode: 0o755 });
+    const { code, out } = runReal({});
+    expect(code).toBe(1);
+    expect(out).toContain("manifest.sha256 inconsistente");
+    expect(existsSync(join(store, "s9-arena-data"))).toBe(false);
   });
 
   // ── N2 (supervisor, cobertura nueva, menor): el `trap` de limpieza de
@@ -768,7 +932,81 @@ describe("backup.sh → restic falso fiel → restore.sh --restore/--verify (E2E
     // formatted checksum lines found / exit 1, sobre un backup sano.
     const verifyOut = execFileSync("bash", [RESTORE, "--verify", dest], { encoding: "utf8" });
     expect(verifyOut).toContain("vacío");
-    expect(verifyOut).toContain("integridad verificada");
+    expect(verifyOut).toContain("no había nada que verificar");
+    // D3-R3b: NO afirmar "checksums correctos" cuando no se comprobó
+    // ninguno — esa frase sólo debe aparecer cuando sha256sum -c corrió.
+    expect(verifyOut).not.toContain("checksums de mapas y replays correctos");
+  });
+
+  // ── D1-R3 (ronda 4, HALLAZGO DEL SUPERVISOR — bloqueante): la primera
+  // versión de este fix (ronda 3) trataba CUALQUIER manifest.sha256 de 0
+  // bytes como "vacío legítimo" sin comprobar nada más — cambió un falso
+  // positivo (rechazar un backup sano) por un falso NEGATIVO (aceptar un
+  // backup roto). Demostrado por el supervisor: con maps/replays POBLADOS
+  // pero manifest.sha256 en 0 bytes (p.ej. truncado por disco lleno),
+  // `--verify` pasaba con exit 0 y afirmaba "checksums correctos" sin
+  // haber comprobado ni uno. Aquí se reproduce el escenario partiendo de
+  // un backup REAL con datos (no un manifest vacío hecho a mano): se corre
+  // la cadena normal con contenido, y se simula la corrupción post-restore
+  // truncando manifest.sha256 a 0 bytes dejando los datos intactos — el
+  // caso real que un disco lleno o un `sha256sum` interrumpido dejaría. ──
+  it("manifest.sha256 vacío pero con datos poblados en el árbol: --verify FALLA (D1-R3, falso negativo cerrado)", () => {
+    setup(); // datos reales: mvp.json, bot.py, sprite.png, battle-1.jsonl
+    const log = join(root, "restic-calls.log");
+    writeFakeResticFaithful(fakebin, store, log);
+    execFileSync("bash", [BACKUP], { encoding: "utf8", env: backupEnv() });
+    const dest = join(root, "restored-truncated");
+    execFileSync("bash", [RESTORE, "--restore", dest], { encoding: "utf8", env: backupEnv() });
+
+    // Simula el manifest truncado/corrupto que un disco lleno dejaría: los
+    // DATOS siguen ahí (maps, bot_sources, assets, replays), pero el
+    // manifest que debería cubrirlos queda vacío.
+    const manifestPath = execSync(`find "${dest}" -name manifest.sha256`, { encoding: "utf8" }).trim();
+    writeFileSync(manifestPath, "");
+
+    let threw = false;
+    let output = "";
+    try {
+      output = execFileSync("bash", [RESTORE, "--verify", dest], { encoding: "utf8", stdio: "pipe" });
+    } catch (e: any) {
+      threw = true;
+      output = `${e.stdout}${e.stderr}`;
+    }
+    expect(threw).toBe(true); // NUNCA debe salir 0 con datos sin verificar
+    expect(output).toContain("SIN verificar");
+    expect(output).not.toContain("integridad verificada");
+  });
+
+  // ── D1-R3 (ronda 4): segundo ángulo del mismo hallazgo — manifest.json
+  // (que viaja en el mismo directorio) declarando una fuente `ok` mientras
+  // manifest.sha256 está vacío es una inconsistencia real del backup (no
+  // "cobertura vacía legítima"), incluso si no queda NINGÚN fichero de
+  // datos residual en el árbol (p.ej. porque también se perdieron). Este
+  // test aísla específicamente el cruce con manifest.json — construcción
+  // deliberada y adversarial de la entrada para probar el propio guard de
+  // restore.sh, no una fabricación que enmascare un defecto de backup.sh
+  // (ver la nota de la ronda 1 sobre por qué eso sería distinto). ────────
+  it("manifest.json declara una fuente 'ok' mientras manifest.sha256 está vacío: --verify FALLA (D1-R3)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "e10-d1r3-manifestjson-"));
+    try {
+      writeFileSync(join(dir, "manifest.sha256"), "");
+      writeFileSync(
+        join(dir, "manifest.json"),
+        '{"postgres":{"status":"ok","files":1},"secrets":{"status":"ok","files":2},"maps":{"status":"ok","files":9999},"bot_sources":{"status":"empty","files":0},"replays":{"status":"empty","files":0},"assets":{"status":"empty","files":0}}',
+      );
+      let threw = false;
+      let output = "";
+      try {
+        output = execFileSync("bash", [RESTORE, "--verify", dir], { encoding: "utf8", stdio: "pipe" });
+      } catch (e: any) {
+        threw = true;
+        output = `${e.stdout}${e.stderr}`;
+      }
+      expect(threw).toBe(true);
+      expect(output).toContain("declara 'maps' como 'ok'");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   // ── Mutación M2 (obligatoria, coordinador): "el manifest apunta a una
@@ -790,16 +1028,23 @@ describe("backup.sh → restic falso fiel → restore.sh --restore/--verify (E2E
     const mutantPath = join(root, "backup-mutant-M2.sh");
     writeFileSync(mutantPath, mutated, { mode: 0o755 });
 
-    const backupOut = execFileSync("bash", [mutantPath], { encoding: "utf8", env: backupEnv() });
-    // El backup "en sí" puede seguir reportando SUCCESS (restic no sabe que
-    // le faltan los manifests), pero la integridad restaurada está rota:
-    expect(backupOut).toContain("backup SUCCESS");
-
-    const dest = join(root, "restored-mutant");
-    execFileSync("bash", [RESTORE, "--restore", dest], { encoding: "utf8", env: backupEnv() });
-    // Sin manifest dentro del staging subido a restic, no hay nada que
-    // verificar: --verify debe fallar (0 manifests), no colar en silencio.
-    expect(() => execFileSync("bash", [RESTORE, "--verify", dest], { stdio: "pipe" })).toThrow();
+    // D1-R3 (ronda 4) endureció backup.sh: ahora comprueba que el número de
+    // líneas de manifest.sha256 coincide con los ficheros 'ok' esperados.
+    // Con el manifest desviado fuera del staging, esa comprobación falla
+    // en el propio backup.sh — detección MÁS temprana que antes (antes
+    // sólo se cazaba en restore.sh --verify; ahora ni siquiera llega a
+    // subirse a restic un staging con un manifest incompleto).
+    let backupThrew = false;
+    let backupOut = "";
+    try {
+      backupOut = execFileSync("bash", [mutantPath], { encoding: "utf8", env: backupEnv() });
+    } catch (e: any) {
+      backupThrew = true;
+      backupOut = `${e.stdout}${e.stderr}`;
+    }
+    expect(backupThrew).toBe(true);
+    expect(backupOut).toContain("FULL FAILURE");
+    expect(backupOut).not.toContain("backup SUCCESS");
   });
 });
 

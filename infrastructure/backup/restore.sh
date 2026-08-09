@@ -8,17 +8,35 @@
 #   restore.sh --dry-run               plan sin tocar nada (probado por vitest)
 set -euo pipefail
 
-# D2 (ronda 3 de #112, ver backup.sh): mismo escape antes de interpolar en
-# el JSON del log — este script también interpola rutas (p.ej. $dir, que
-# viene de un argumento de línea de comandos) en el mensaje.
+# D2/D2-R3a (rondas 3-4 de #112, ver backup.sh): mismo escape antes de
+# interpolar en el JSON del log — este script también interpola rutas
+# (p.ej. $dir, que viene de un argumento de línea de comandos, o nombres de
+# fichero listados por `find` en --verify) en el mensaje. Saneado de UTF-8
+# inválido con `iconv -c` + escape de TODO carácter de control 0x00–0x1F
+# como \u00XX (no sólo \n \r \t), igual que en backup.sh.
 json_escape() {
   local s="$1"
+  if command -v iconv >/dev/null 2>&1; then
+    s="$(printf '%s' "$s" | iconv -f UTF-8 -t UTF-8 -c 2>/dev/null)"
+  fi
   s="${s//\\/\\\\}"
   s="${s//\"/\\\"}"
   s="${s//$'\n'/\\n}"
   s="${s//$'\r'/\\r}"
   s="${s//$'\t'/\\t}"
-  printf '%s' "$s"
+  s="${s//$'\b'/\\b}"
+  s="${s//$'\f'/\\f}"
+  local LC_ALL=C out="" i len c code
+  len=${#s}
+  for ((i = 0; i < len; i++)); do
+    c="${s:i:1}"
+    printf -v code '%d' "'$c"
+    if [ "$code" -lt 32 ]; then
+      printf -v c '\\u%04x' "$code"
+    fi
+    out+="$c"
+  done
+  printf '%s' "$out"
 }
 log() { printf '{"ts":"%s","level":"%s","service":"restore","msg":"%s"}\n' "$(date -u +%FT%TZ)" "$1" "$(json_escape "$2")"; }
 
@@ -63,24 +81,69 @@ case "${1:---dry-run}" in
       exit 1
     fi
     manifest="$manifests"
+    stagedir="$(dirname "$manifest")"
     # D1 (ronda 3 de #112): un manifest.sha256 de 0 bytes es el resultado
     # LEGÍTIMO de un backup sano cuando las cuatro fuentes no críticas
     # (maps/bot_sources/assets/replays) están vacías — el estado actual de
     # producción (VM108) y el de cualquier instalación recién desplegada.
     # `sha256sum -c` sobre un fichero vacío sale con exit 1 y el mensaje "no
     # properly formatted checksum lines found": un operador siguiendo la
-    # Fase 7 del runbook vería un FALLO DURO sobre un backup perfecto. Un
-    # manifest vacío SÍ existe (a diferencia de "ausente", ya descartado
-    # arriba) y no tiene líneas que puedan estar corruptas: no hay nada que
-    # verificar, y eso es distinto de "algo falló". Se declara éxito
-    # explícitamente, no se omite la comprobación en silencio.
+    # Fase 7 del runbook vería un FALLO DURO sobre un backup perfecto.
+    #
+    # D1-R3 (ronda 4, HALLAZGO DEL SUPERVISOR): la primera versión de este
+    # fix trataba CUALQUIER manifest de 0 bytes como "vacío legítimo" sin
+    # comprobar nada más — cambiaba un falso positivo (rechazar un backup
+    # sano) por un falso NEGATIVO (aceptar un backup roto: datos presentes
+    # sin verificar, o un manifest.json que declara fuentes `ok` mientras
+    # manifest.sha256 no tiene ni una línea). Un falso negativo aquí es
+    # peor: es la única comprobación de integridad que tiene el operador, y
+    # la habría hecho afirmar por escrito "checksums correctos" sin haber
+    # comprobado ni uno. Ahora, con manifest vacío, se exige POSITIVAMENTE
+    # que no haya nada que debiera haberse verificado:
+    #   1. Ningún fichero de datos (fuera de pgdump-*/manifest.*) en el
+    #      árbol restaurado junto al manifest — si lo hay, hay contenido sin
+    #      checksum, y eso es sospechoso, no legítimo.
+    #   2. manifest.json (mismo directorio, generado por backup.sh a partir
+    #      de la MISMA clasificación de fuentes) no declara NINGUNA fuente
+    #      `status:"ok"` — si lo hiciera, manifest.sha256 vacío sería
+    #      inconsistente con lo que el propio backup dice haber capturado.
+    # Sólo si ambas comprobaciones pasan se acepta como cobertura vacía
+    # legítima; en cualquier otro caso, FALLA (no se asume nada a favor).
     if [ ! -s "$manifest" ]; then
-      log info "manifest.sha256 vacío: ninguna fuente no crítica tenía contenido en este backup (cobertura 'empty'); nada que verificar"
+      stray="$(find "$stagedir" -type f ! -name 'manifest.*' ! -name 'pgdump-*')"
+      if [ -n "$stray" ]; then
+        log error "manifest.sha256 vacío pero hay ficheros de datos SIN verificar en $stagedir (p.ej. $(printf '%s\n' "$stray" | head -1)): posible backup roto, no cobertura vacía legítima"
+        exit 1
+      fi
+      manifest_json="$stagedir/manifest.json"
+      if [ ! -f "$manifest_json" ]; then
+        log error "manifest.sha256 vacío y manifest.json ausente en $stagedir: no se puede confirmar que la cobertura sea legítimamente vacía"
+        exit 1
+      fi
+      # Acoplado deliberadamente al formato exacto que genera backup.sh
+      # (sin espacios, ver json_source). OJO: sólo se comprueban las CUATRO
+      # fuentes NO críticas (maps/bot_sources/assets/replays) — postgres y
+      # secrets están SIEMPRE en 'ok' en cualquier backup con éxito (no
+      # forman parte de manifest.sha256 por diseño: el dump se excluye del
+      # manifest —ver D3 más abajo— y los secretos nunca se listan). Si se
+      # comprobara "cualquier fuente ok", esto rechazaría TODO backup sano
+      # con las cuatro fuentes no críticas vacías, reintroduciendo el
+      # falso positivo original de D1.
+      for src in maps bot_sources assets replays; do
+        if grep -q "\"$src\":{\"status\":\"ok\"" "$manifest_json"; then
+          log error "manifest.sha256 vacío pero manifest.json ($manifest_json) declara '$src' como 'ok': inconsistencia real, no se puede confiar en este backup"
+          exit 1
+        fi
+      done
+      # D3-R3b: decir la verdad. No se ha comprobado ningún checksum aquí
+      # (no había ninguno que comprobar) — la frase "checksums correctos"
+      # sería una afirmación sobre algo que el script nunca ejecutó.
+      log info "manifest.sha256 vacío: confirmado contra manifest.json y el árbol restaurado (sin datos residuales, ninguna fuente 'ok'); no había nada que verificar"
     else
       # El manifest usa rutas maps/… y replays/…: verificar desde su directorio.
-      (cd "$(dirname "$manifest")" && sha256sum -c "$manifest")
+      (cd "$stagedir" && sha256sum -c "$manifest")
+      log info "integridad verificada: checksums de mapas y replays correctos"
     fi
-    log info "integridad verificada: checksums de mapas y replays correctos"
     ;;
   *)
     echo "uso: restore.sh --list | --restore <dest> | --restore-secrets <dest> | --verify <dir> | --dry-run" >&2

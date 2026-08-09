@@ -123,17 +123,45 @@ RESTIC_REPOSITORY="${RESTIC_REPOSITORY:-}"
 # `pwn", "level":"info", "forged":"si` produce un JSON "válido" cuyo
 # `level` efectivo deja de ser `error` — un usuario podría ocultar un fallo
 # de backup a la alertería de Loki/Promtail e inyectar campos arbitrarios.
-# json_escape neutraliza backslash, comillas y los caracteres de control más
-# comunes ANTES de interpolar, así que el mensaje viaja siempre como un
-# valor de cadena JSON, nunca como estructura.
+#
+# D2-R3a (ronda 4, hallazgo del supervisor): la primera versión sólo
+# escapaba `\n \r \t` además de `"` y `\`. Los demás caracteres de control
+# (0x01, 0x08, 0x0b, 0x0c, 0x1b…) se interpolaban crudos — `json.loads` en
+# modo estricto (y cualquier pipeline serio de logs) RECHAZA esa línea
+# entera como JSON inválido, así que un nombre de fichero con uno de esos
+# bytes tiene el mismo efecto práctico que D2 (el fallo desaparece de
+# Loki/Promtail), sólo que por malformación en vez de por forja. Y un
+# nombre de fichero puede además no ser UTF-8 válido, lo que rompe JSON por
+# sí solo (JSON exige texto Unicode válido). Aquí se saca la basura en dos
+# pasadas: (1) `iconv -c` descarta cualquier secuencia de bytes que no sea
+# UTF-8 válido (mejor perder esos bytes que producir un documento inválido
+# o reventar el propio log() intentando procesarlos); (2) TODO carácter de
+# control 0x00–0x1F que quede se escapa como \u00XX (con los atajos con
+# nombre — \b \f \n \r \t — donde JSON los define), no sólo los tres de
+# antes.
 json_escape() {
   local s="$1"
+  if command -v iconv >/dev/null 2>&1; then
+    s="$(printf '%s' "$s" | iconv -f UTF-8 -t UTF-8 -c 2>/dev/null)"
+  fi
   s="${s//\\/\\\\}"
   s="${s//\"/\\\"}"
   s="${s//$'\n'/\\n}"
   s="${s//$'\r'/\\r}"
   s="${s//$'\t'/\\t}"
-  printf '%s' "$s"
+  s="${s//$'\b'/\\b}"
+  s="${s//$'\f'/\\f}"
+  local LC_ALL=C out="" i len c code
+  len=${#s}
+  for ((i = 0; i < len; i++)); do
+    c="${s:i:1}"
+    printf -v code '%d' "'$c"
+    if [ "$code" -lt 32 ]; then
+      printf -v c '\\u%04x' "$code"
+    fi
+    out+="$c"
+  done
+  printf '%s' "$out"
 }
 log() { printf '{"ts":"%s","level":"%s","service":"backup","msg":"%s"}\n' "$(date -u +%FT%TZ)" "$1" "$(json_escape "$2")"; }
 
@@ -408,7 +436,52 @@ fi
 # ofrecer una integridad falsa). Se escriben DENTRO del staging para que
 # viajen con los datos en el mismo snapshot. ────────────────────────────────
 log info "4/5 generando manifest (sha256 + cobertura json) dentro del staging"
-(cd "$STAGING" && find . -type f ! -name 'manifest.*' ! -name 'pgdump-*' -exec sha256sum {} + | sed 's| \./| |') > "$STAGING/manifest.sha256"
+# D1-R3 (ronda 4 de #112): la generación del manifest NO comprobaba su
+# propio estado de salida. `pipefail` está activo a nivel de script, así
+# que un fallo de `find` o de `sha256sum` SÍ se propaga al exit code de la
+# subshell — pero nadie miraba ese exit code: `(...) > fichero` descarta el
+# resultado. Un disco lleno al escribir el manifest, un `find` fallido o
+# `sha256sum` ausente producían un manifest.sha256 truncado (o vacío) con
+# el staging poblado, y el backup seguía reportando SUCCESS. Comprobado
+# aquí explícitamente: si falla, es FULL FAILURE (el manifest es la única
+# garantía de integridad que tiene el operador; uno posiblemente truncado
+# es peor que no tenerlo, porque `--verify` lo daría por bueno).
+if ! (cd "$STAGING" && find . -type f ! -name 'manifest.*' ! -name 'pgdump-*' -exec sha256sum {} + | sed 's| \./| |') \
+    > "$STAGING/manifest.sha256" 2>"$WORK_DIR/.err-manifest"; then
+  log error "fallo generando manifest.sha256: $(tail -c 300 "$WORK_DIR/.err-manifest")"
+  dur=$(( $(date +%s) - start ))
+  write_metrics 1 "$dur" 0
+  log error "backup FULL FAILURE (manifest de integridad no fiable) tras ${dur}s"
+  exit 1
+fi
+
+# D1-R3 (ronda 4): además de que el comando no falle, el NÚMERO de líneas
+# del manifest debe coincidir con la suma de ficheros que las fuentes no
+# críticas declararon `ok`. Sin este contraste, un manifest silenciosamente
+# incompleto (p.ej. `sha256sum` interrumpido a mitad de fuente, sin que eso
+# tumbe el exit code por algún motivo no previsto) pasaría por bueno igual.
+expected_manifest_lines=0
+for src in maps bot_sources assets replays; do
+  [ "${SRC_STATUS[$src]:-}" = ok ] && expected_manifest_lines=$((expected_manifest_lines + ${SRC_FILES[$src]:-0}))
+done
+if ! actual_manifest_lines=$(wc -l < "$STAGING/manifest.sha256" 2>"$WORK_DIR/.err-manifest-count"); then
+  # No debería poder pasar (el manifest se acaba de escribir ahí mismo),
+  # pero si pasa, fallar en cerrado explícitamente en vez de dejar que una
+  # variable vacía rompa la comparación aritmética de abajo con un error
+  # de bash poco claro.
+  log error "no se pudo contar manifest.sha256: $(tail -c 300 "$WORK_DIR/.err-manifest-count")"
+  dur=$(( $(date +%s) - start ))
+  write_metrics 1 "$dur" 0
+  log error "backup FULL FAILURE (manifest de integridad no fiable) tras ${dur}s"
+  exit 1
+fi
+if [ "$actual_manifest_lines" -ne "$expected_manifest_lines" ]; then
+  log error "manifest.sha256 inconsistente: $actual_manifest_lines líneas, se esperaban $expected_manifest_lines (suma de ficheros de fuentes 'ok')"
+  dur=$(( $(date +%s) - start ))
+  write_metrics 1 "$dur" 0
+  log error "backup FULL FAILURE (manifest de integridad no fiable) tras ${dur}s"
+  exit 1
+fi
 
 {
   printf '{'
