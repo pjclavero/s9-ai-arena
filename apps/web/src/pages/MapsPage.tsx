@@ -7,9 +7,15 @@
  * de la API se ANUNCIA con role="alert" (nunca se traga), igual que el resto del
  * panel (R3.7). La ejecución real de batallas (mapa publicado ⇒ jugable) vive en
  * el pipeline de VM108 y NO se dispara desde aquí.
+ *
+ * R16: Panel / LoadingState / ErrorState / EmptyState / StatusBadge adoptan las
+ * primitivas de ui/primitives.tsx. El `stateClass` local se reemplaza por
+ * `stateVariant` que devuelve el tipo de StatusBadge; la clase CSS subyacente
+ * (.ok/.warn) la aplica la misma primitiva. Comportamiento visible idéntico.
  */
 import { useEffect, useState } from "react";
 import { api, ApiRequestError, type Me } from "../api.js";
+import { Panel, LoadingState, ErrorState, EmptyState, StatusBadge, type StatusVariant } from "../ui/primitives.js";
 
 interface MapVersion {
   mapId: string;
@@ -37,15 +43,15 @@ function checksOf(e: unknown): ValidationCheck[] {
   return [];
 }
 
-function stateClass(state: MapVersion["state"]): string {
+function stateVariant(state: MapVersion["state"]): StatusVariant {
   if (state === "published") return "ok";
   if (state === "validated") return "warn";
-  return "";
+  return "neutral";
 }
 
 export function MapsPage(_props: { me: Me }) {
   const [maps, setMaps] = useState<MapVersion[] | null>(null);
-  const [loadError, setLoadError] = useState("");
+  const [loadErrorMsg, setLoadErrorMsg] = useState("");
   const [actionError, setActionError] = useState("");
   const [checks, setChecks] = useState<ValidationCheck[]>([]);
   const [notice, setNotice] = useState("");
@@ -55,13 +61,13 @@ export function MapsPage(_props: { me: Me }) {
   const [busy, setBusy] = useState(false);
 
   async function refresh() {
-    setLoadError("");
+    setLoadErrorMsg("");
     try {
       const page = await api<{ items: MapVersion[] }>("GET", "/maps");
       setMaps(page.items);
     } catch (e) {
       setMaps(null);
-      setLoadError(`No se pudo cargar los mapas: ${(e as Error).message}`);
+      setLoadErrorMsg((e as Error).message);
     }
   }
   useEffect(() => {
@@ -133,7 +139,7 @@ export function MapsPage(_props: { me: Me }) {
 
   return (
     <div>
-      <div className="card">
+      <Panel>
         <h2>Mapas</h2>
         <p>
           <a href="#/maps/editor">Abrir editor de mapas (borrador local)</a> — R10, foundation: diseña un mapa y
@@ -205,34 +211,27 @@ export function MapsPage(_props: { me: Me }) {
             )}
           </div>
         )}
-      </div>
+      </Panel>
 
-      <div className="card">
+      <Panel>
         <h3>Mapas registrados</h3>
-        {loadError ? (
-          <div role="alert">
-            <p className="error">{loadError}</p>
-            <button type="button" onClick={() => void refresh()}>
-              Reintentar
-            </button>
-          </div>
+        {loadErrorMsg ? (
+          <ErrorState label="los mapas" message={loadErrorMsg} onRetry={() => void refresh()} />
         ) : maps === null ? (
-          <p role="status" aria-live="polite">
-            Cargando…
-          </p>
+          <LoadingState label="los mapas" />
         ) : maps.length === 0 ? (
-          <p>No hay mapas todavía.</p>
+          <EmptyState message="No hay mapas todavía." />
         ) : (
           <table>
             <thead>
               <tr>
-                <th>Mapa</th>
-                <th>Versión</th>
-                <th>Estado</th>
-                <th>Dimensiones</th>
-                <th>Modos</th>
-                <th>Vista previa</th>
-                <th>Acciones</th>
+                <th scope="col">Mapa</th>
+                <th scope="col">Versión</th>
+                <th scope="col">Estado</th>
+                <th scope="col">Dimensiones</th>
+                <th scope="col">Modos</th>
+                <th scope="col">Vista previa</th>
+                <th scope="col">Acciones</th>
               </tr>
             </thead>
             <tbody>
@@ -240,7 +239,9 @@ export function MapsPage(_props: { me: Me }) {
                 <tr key={`${m.mapId}@${m.version}`}>
                   <td>{m.mapId}</td>
                   <td>v{m.version}</td>
-                  <td className={stateClass(m.state)}>{m.state}</td>
+                  <td>
+                    <StatusBadge variant={stateVariant(m.state)}>{m.state}</StatusBadge>
+                  </td>
                   <td>{m.widthM != null && m.heightM != null ? `${m.widthM}×${m.heightM} m` : "—"}</td>
                   <td>{m.supportedModes.length ? m.supportedModes.join(", ") : "—"}</td>
                   <td>
@@ -257,7 +258,7 @@ export function MapsPage(_props: { me: Me }) {
                   </td>
                   <td>
                     {m.state === "published" ? (
-                      <span className="ok">Disponible para batallas</span>
+                      <StatusBadge variant="ok">Disponible para batallas</StatusBadge>
                     ) : (
                       <button
                         type="button"
@@ -274,7 +275,7 @@ export function MapsPage(_props: { me: Me }) {
             </tbody>
           </table>
         )}
-      </div>
+      </Panel>
     </div>
   );
 }
