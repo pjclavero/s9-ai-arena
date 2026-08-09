@@ -245,6 +245,15 @@ describe("R16 RankingPage — primitivas", () => {
  * Huecos que el supervisor independiente de #108 demostró con mutaciones sobre
  * `9fd6ac2`. En ambos casos el código está bien; lo que faltaba era la red.
  */
+/** Toda cabecera de la tabla debe declarar su ámbito; si no hay ninguna, falla. */
+function esperarScopeEnTodasLasCabeceras(tabla: HTMLElement, pagina: string) {
+  const cabeceras = within(tabla).getAllByRole("columnheader");
+  expect(cabeceras.length, `${pagina}: la tabla no tiene cabeceras`).toBeGreaterThan(1);
+  for (const th of cabeceras) {
+    expect(th.getAttribute("scope"), `${pagina}: cabecera «${th.textContent}» sin scope`).toBe("col");
+  }
+}
+
 describe("R16 · huecos cerrados tras la supervisión de #108", () => {
   it("las cabeceras de tabla llevan scope=col (accesibilidad, mutación M7)", async () => {
     // M7 del supervisor: borrar los 16 `scope="col"` del PR pasaba 335/335. Era
@@ -264,11 +273,27 @@ describe("R16 · huecos cerrados tras la supervisión de #108", () => {
     ]);
     render(<AuditPage me={ME} />);
     const tabla = await screen.findByRole("table");
-    const cabeceras = within(tabla).getAllByRole("columnheader");
-    expect(cabeceras.length).toBeGreaterThan(1);
-    for (const th of cabeceras) {
-      expect(th.getAttribute("scope"), `cabecera «${th.textContent}» sin scope`).toBe("col");
-    }
+    esperarScopeEnTodasLasCabeceras(tabla, "AuditPage");
+  });
+
+  it("MapsPage: sus cabeceras también llevan scope=col (mutación M7b)", async () => {
+    // El supervisor del delta demostró que la primera versión de este candado
+    // solo cubría AuditPage: borrar los `scope` de Maps (7) o de Ranking (4)
+    // pasaba 337/337. Las tres páginas con tabla necesitan su red.
+    apiMock.mockResolvedValue({
+      items: [{ mapId: "a01", version: 1, state: "published", supportedModes: ["deathmatch"] }],
+    });
+    render(<MapsPage me={ME} />);
+    await screen.findByText("a01");
+    esperarScopeEnTodasLasCabeceras(await screen.findByRole("table"), "MapsPage");
+  });
+
+  it("RankingPage: sus cabeceras también llevan scope=col (mutación M7c)", async () => {
+    apiMock.mockResolvedValue([
+      { rank: 1, botId: "b1", botName: "Vector", rating: 1500, wins: 5, losses: 1, draws: 0 },
+    ]);
+    render(<RankingPage />);
+    esperarScopeEnTodasLasCabeceras(await screen.findByTestId("ranking-table"), "RankingPage");
   });
 
   it("el mensaje de carga NOMBRA lo que carga (mutación M6)", async () => {

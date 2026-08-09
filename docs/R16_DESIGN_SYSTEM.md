@@ -180,8 +180,12 @@ Pendiente todavía (requiere tocar el HTML compartido o ficheros de otros
 carriles, fuera de las reglas de este PR):
 - Nav con indicador de ruta activa y colapso móvil (toca `App.tsx`, propiedad
   compartida entre carriles: deliberadamente NO tocado).
-- `scope="col"` en tablas: YA implementado en las cuatro páginas de este PR
-  (16 ocurrencias); queda pendiente en las páginas de otros carriles.
+- `scope="col"` en tablas: YA implementado en las TRES páginas de este PR que
+  tienen tabla con cabeceras — AuditPage (5), MapsPage (7) y RankingPage (4),
+  16 ocurrencias. TeamsPage no aparece porque su tabla no lleva `<thead>`/`<th>`.
+  (La primera versión de esta línea decía «las cuatro páginas»: una imprecisión
+  metida al corregir otra. Señalada por el supervisor del delta de #108.)
+  Queda pendiente en las páginas de otros carriles.
 - Tokens CSS reales (`:root { --color-bg: ... }`) en `index.html` — technically
   aislado (no rompe nada, los `<style>` actuales seguirían funcionando en
   paralelo), pero se decide no tocarlo en este PR porque `index.html` es
