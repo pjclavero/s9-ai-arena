@@ -348,7 +348,10 @@ describe("R11 · huecos cerrados tras la supervisión de #109", () => {
     const app: Express = createApp({ db: h.db, publicReplaysEnabled: true });
     const { battleId } = await seedFinishedBattleWithReplay();
 
-    const res = await request(app).get("/public/replays?limit=10");
+    // limit=50, no 10: cuando corre este test ya hay ~12 batallas finished
+    // sembradas por bloques anteriores del fichero, así que el margen era de ~2
+    // filas y dependía de la resolución de `created_at` (obs. 1 del supervisor).
+    const res = await request(app).get("/public/replays?limit=50");
     expect(res.status).toBe(200);
     const item = res.body.items.find((b: { id: string }) => b.id === battleId);
     expect(item, "la batalla sembrada debe aparecer en el listado").toBeTruthy();
