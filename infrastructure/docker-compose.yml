@@ -620,13 +620,22 @@ services:
       REPLAY_RETENTION_DAYS: ${REPLAY_RETENTION_DAYS:-180}
       RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:-}
       RESTIC_PASSWORD_FILE: /run/secrets/restic_password
+      # fix/backup-sftp-scheduled-runtime: el backend `sftp:` de restic
+      # necesita una clave SSH y un known_hosts propios DENTRO del
+      # contenedor programado (no comparte ~/.ssh del host, que es donde se
+      # hizo a mano el primer backup real). Sólo se usan si RESTIC_REPOSITORY
+      # empieza por "sftp:" (ver setup_ssh en backup.sh); en un repositorio
+      # local no hacen nada. NUNCA StrictHostKeyChecking=no: el known_hosts
+      # es la única verificación de huella del destino del backup.
+      RESTIC_SSH_KEY_FILE: /run/secrets/restic_ssh_key
+      RESTIC_SSH_KNOWN_HOSTS_FILE: /run/secrets/restic_ssh_known_hosts
       PGHOST: postgres
       PGUSER: arena
       PGDATABASE: arena
       PGPASSWORD_FILE: /run/secrets/postgres_password
       METRICS_DIR: /textfile
       WORK_DIR: /tmp/backup-work
-    secrets: [postgres_password, restic_password]
+    secrets: [postgres_password, restic_password, restic_ssh_key, restic_ssh_known_hosts]
     volumes:
       - arena_maps:/data/maps:ro
       - arena_bot_sources:/data/bot-sources:ro
@@ -937,6 +946,17 @@ secrets:
     file: ./secrets/grafana_admin_password.txt
   restic_password:
     file: ./secrets/restic_password.txt
+  # fix/backup-sftp-scheduled-runtime: clave privada SSH (OpenSSH, ed25519)
+  # dedicada al backup, y su known_hosts correspondiente — SÓLO necesarios si
+  # RESTIC_REPOSITORY usa el backend sftp:. La clave la genera
+  # init-secrets.sh; el known_hosts NO se autogenera (requiere que el
+  # operador verifique la huella del host de respaldo fuera de banda, p. ej.
+  # comparándola con la que muestra el propio servidor) y se deja vacío para
+  # que el operador lo complete — ver infrastructure/.env.example.
+  restic_ssh_key:
+    file: ./secrets/restic_ssh_key
+  restic_ssh_known_hosts:
+    file: ./secrets/restic_ssh_known_hosts
   # B2 · secreto interno compartido api<->arena-engine para autenticar POST /run
   # (cabecera x-arena-engine-auth). El MISMO fichero se monta en ambos
   # servicios: solo así coinciden sin ponerlo en claro en el entorno.

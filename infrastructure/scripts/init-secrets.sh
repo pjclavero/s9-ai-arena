@@ -67,6 +67,29 @@ if [ ! -f "$DIR/stream_key.txt" ]; then
 fi
 harden stream_key.txt
 
+# fix/backup-sftp-scheduled-runtime: clave SSH dedicada al backend sftp: de
+# restic. Se puede generar sin intervención del operador (es sólo un par de
+# claves; la parte pública hay que añadirla a authorized_keys en el host de
+# respaldo). El known_hosts NO: aceptar a ciegas la huella del host de
+# respaldo sería StrictHostKeyChecking=no con otro nombre, así que se deja
+# vacío para que el operador lo rellene tras VERIFICAR la huella fuera de
+# banda (ver infrastructure/.env.example).
+if [ ! -s "$DIR/restic_ssh_key" ]; then
+  if command -v ssh-keygen >/dev/null; then
+    umask 077
+    ssh-keygen -t ed25519 -N "" -C "s9-ai-arena-backup" -f "$DIR/restic_ssh_key" >/dev/null
+    echo "generado:  restic_ssh_key (ed25519) — añadir $DIR/restic_ssh_key.pub a authorized_keys del host de respaldo"
+  else
+    echo "AVISO: sin ssh-keygen; el backend sftp exige restic_ssh_key (clave privada OpenSSH)"
+  fi
+fi
+[ -f "$DIR/restic_ssh_key" ] && harden restic_ssh_key
+if [ ! -f "$DIR/restic_ssh_known_hosts" ]; then
+  umask 077; : > "$DIR/restic_ssh_known_hosts"
+  echo "creado vacío: restic_ssh_known_hosts (rellenar con 'ssh-keyscan -t ed25519 <backup-host>' TRAS verificar la huella; NUNCA StrictHostKeyChecking=no)"
+fi
+harden restic_ssh_known_hosts
+
 # TLS solo en modo standalone: autofirmado si no hay certificados (docs/despliegue.md).
 if [ ! -f "$DIR/tls/fullchain.pem" ]; then
   if command -v openssl >/dev/null; then

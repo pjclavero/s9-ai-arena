@@ -27,6 +27,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(here, "..", "..");
 const BACKUP = join(here, "..", "backup", "backup.sh");
 const RESTORE = join(here, "..", "backup", "restore.sh");
+const ENTRYPOINT = join(here, "..", "backup", "entrypoint.sh");
 const SECRET_VALUE = "valor-secreto-que-jamas-debe-aparecer-en-logs";
 
 let tmp: string;
@@ -37,9 +38,16 @@ beforeAll(() => {
 });
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
+// Ruta absoluta de bash: algún test de sftp restringe PATH a propósito (para
+// comprobar que el dry-run detecta 'ssh' ausente); si aquí se invocara
+// "bash" a secas, Node lo resolvería con ESE MISMO PATH restringido y el
+// intérprete ni arrancaría (spawn ENOENT) — un fallo distinto, no el que se
+// quiere probar.
+const BASH_BIN = execFileSync("sh", ["-c", "command -v bash"], { encoding: "utf8" }).trim();
+
 function runDryRun(env: Record<string, string>) {
   try {
-    const out = execFileSync("bash", [BACKUP, "--dry-run"], {
+    const out = execFileSync(BASH_BIN, [BACKUP, "--dry-run"], {
       encoding: "utf8",
       env: { ...process.env, ...env },
     });
@@ -77,6 +85,215 @@ describe("backup.sh --dry-run (ejecutado de verdad, sin docker)", () => {
       RESTIC_PASSWORD_FILE: join(tmp, "restic_password.txt"),
     });
     expect(out).not.toContain(SECRET_VALUE);
+  });
+});
+
+// fix/backup-sftp-scheduled-runtime: el backup PROGRAMADO fallaba en
+// EJECUCIÓN con el backend sftp: por dos defectos que un `restic … snapshots`
+// desde el host jamás reproducía (ver infrastructure/tests/backup-sftp-e2e.test.ts
+// para la demostración con la imagen real). Estos tests cubren la parte de
+// VALIDACIÓN DE CONFIGURACIÓN de ese fix (ejecutable sin Docker); el camino
+// de ejecución real (setup_ssh, restic contra un SFTP con chroot) sólo lo
+// demuestra el E2E con contenedores — un dry-run, por diseño, no toca la red.
+describe("backup.sh --dry-run: backend sftp (fix/backup-sftp-scheduled-runtime)", () => {
+  // Código 3 (no 1): backend sftp CONFIGURADO pero roto es un defecto de
+  // imagen/despliegue, no un estado transitorio de bootstrap — ver el
+  // comentario junto a `sftp_errors` en backup.sh. entrypoint.sh usa
+  // justamente este código para negarse a arrancar el contenedor (probado
+  // más abajo, "entrypoint.sh real: arranque").
+  it("sftp con ssh ausente del PATH: exit 3 y CONFIG INCOMPLETA (defecto real #1, reproducido sin Docker)", () => {
+    // PATH reducido a un único binario (`date`, que log() necesita incluso en
+    // dry-run): sin él la comparación sería injusta (el script fallaría por
+    // otro motivo). `ssh` queda deliberadamente fuera. El intérprete bash se
+    // invoca por su ruta ABSOLUTA (fuera de este PATH restringido) — si se
+    // invocara como "bash" a secas, Node tendría que resolverlo con el MISMO
+    // PATH restringido y el proceso ni siquiera arrancaría (spawn ENOENT),
+    // dando un falso "CONFIG INCOMPLETA" por el motivo equivocado.
+    const dateBin = execFileSync("sh", ["-c", "command -v date"], { encoding: "utf8" }).trim();
+    const fakeBin = mkdtempSync(join(tmpdir(), "e10-nossh-"));
+    execFileSync("ln", ["-s", dateBin, join(fakeBin, "date")]);
+    try {
+      const { code, out } = runDryRun({
+        RESTIC_REPOSITORY: "sftp:backup@example.invalid:/restic",
+        RESTIC_PASSWORD_FILE: join(tmp, "restic_password.txt"),
+        RESTIC_SSH_KEY_FILE: join(tmp, "restic_password.txt"), // presente pero irrelevante: lo que se prueba es ssh ausente
+        RESTIC_SSH_KNOWN_HOSTS_FILE: join(tmp, "restic_password.txt"),
+        PATH: fakeBin,
+      });
+      expect(code).toBe(3);
+      expect(out).toContain("CONFIG INCOMPLETA");
+      expect(out).toContain("openssh-client");
+    } finally {
+      rmSync(fakeBin, { recursive: true, force: true });
+    }
+  });
+
+  it("sftp sin RESTIC_SSH_KEY_FILE ni RESTIC_SSH_KNOWN_HOSTS_FILE: exit 3 con ambos avisos", () => {
+    const { code, out } = runDryRun({
+      RESTIC_REPOSITORY: "sftp:backup@example.invalid:/restic",
+      RESTIC_PASSWORD_FILE: join(tmp, "restic_password.txt"),
+      RESTIC_SSH_KEY_FILE: "",
+      RESTIC_SSH_KNOWN_HOSTS_FILE: "",
+    });
+    expect(code).toBe(3);
+    expect(out).toContain("falta RESTIC_SSH_KEY_FILE");
+    expect(out).toContain("falta RESTIC_SSH_KNOWN_HOSTS_FILE");
+  });
+
+  it("sftp con known_hosts vacío: exit 3 (un known_hosts vacío equivale a no verificar nada)", () => {
+    const emptyKnownHosts = join(tmp, "empty_known_hosts");
+    writeFileSync(emptyKnownHosts, "");
+    const { code, out } = runDryRun({
+      RESTIC_REPOSITORY: "sftp:backup@example.invalid:/restic",
+      RESTIC_PASSWORD_FILE: join(tmp, "restic_password.txt"),
+      RESTIC_SSH_KEY_FILE: join(tmp, "restic_password.txt"),
+      RESTIC_SSH_KNOWN_HOSTS_FILE: emptyKnownHosts,
+    });
+    expect(code).toBe(3);
+    expect(out).toContain("está vacío o no es legible");
+  });
+
+  it("config de bootstrap incompleta (sin sftp:) sigue en exit 1, no 3 — no se penaliza el día 1 del operador", () => {
+    const { code, out } = runDryRun({ RESTIC_REPOSITORY: "", RESTIC_PASSWORD_FILE: "", RESTIC_PASSWORD: "" });
+    expect(code).toBe(1);
+    expect(out).toContain("CONFIG INCOMPLETA");
+  });
+
+  it("sftp con toda la configuración correcta: CONFIG OK y el plan menciona la verificación de huella", () => {
+    const knownHosts = join(tmp, "ok_known_hosts");
+    writeFileSync(knownHosts, "example.invalid ssh-ed25519 AAAAtest");
+    const { code, out } = runDryRun({
+      RESTIC_REPOSITORY: "sftp:backup@example.invalid:/restic",
+      RESTIC_PASSWORD_FILE: join(tmp, "restic_password.txt"),
+      RESTIC_SSH_KEY_FILE: join(tmp, "restic_password.txt"),
+      RESTIC_SSH_KNOWN_HOSTS_FILE: knownHosts,
+    });
+    expect(code).toBe(0);
+    expect(out).toContain("CONFIG OK");
+    expect(out).toContain("ssh presente");
+    expect(out).toContain("StrictHostKeyChecking yes, nunca 'no'");
+  });
+
+  it("repositorio local (no sftp:): no exige ssh ni claves SSH (no regresiona el caso ya soportado)", () => {
+    const { code, out } = runDryRun({
+      RESTIC_REPOSITORY: "/mnt/nas/backups/s9-ai-arena",
+      RESTIC_PASSWORD_FILE: join(tmp, "restic_password.txt"),
+    });
+    expect(code).toBe(0);
+    expect(out).toContain("CONFIG OK");
+    expect(out).not.toContain("SFTP ·");
+  });
+});
+
+// Hallazgo del coordinador tras la primera versión de este fix: un
+// `backup.sh --dry-run` que detecta el fallo no sirve de nada si
+// entrypoint.sh (lo que REALMENTE arranca en el contenedor) se traga el
+// código de salida con `|| true` y deja correr crond igual — "arranca y se
+// cae luego en la primera ejecución del cron", 24 h después, es el mismo
+// silencio que este fix existe para romper. Esta suite ejecuta
+// entrypoint.sh DE VERDAD (bash real, sin Docker: no hace falta para probar
+// SU lógica de arranque, sólo para probar la imagen completa — eso lo cubre
+// backup-sftp-e2e.test.ts), con BACKUP_SH/CRONTAB_FILE apuntando a dobles de
+// prueba controlados, para demostrar que el contenedor se niega a arrancar
+// (no ejecuta `crond`) cuando backup.sh señala sftp_errors (exit 3), y que
+// SÍ arranca con una config de bootstrap simplemente incompleta (exit 1) —
+// el comportamiento preexistente y documentado que no había que romper.
+describe("entrypoint.sh real: arranque del contenedor (fail-closed en sftp, sin Docker)", () => {
+  let tmp2: string;
+  let fakeBin: string;
+  let mockBackupPath: string;
+  let crondMarker: string;
+
+  beforeAll(() => {
+    tmp2 = mkdtempSync(join(tmpdir(), "e10-entrypoint-"));
+    fakeBin = join(tmp2, "bin");
+    mkdirSync(fakeBin);
+    crondMarker = join(tmp2, "crond-invoked");
+
+    // Doble de `crond -f -l 2`: si entrypoint.sh llega a `exec crond`, este
+    // script dejará constancia en crondMarker. No necesita simular `-f`
+    // (foreground) porque el test no espera que el proceso quede colgado:
+    // basta con demostrar que SE INVOCÓ o que NO se invocó.
+    const crondMock = join(fakeBin, "crond");
+    writeFileSync(crondMock, `#!/bin/sh\necho "crond $*" > "${crondMarker}"\nexit 0\n`, { mode: 0o755 });
+  });
+  afterAll(() => rmSync(tmp2, { recursive: true, force: true }));
+
+  function runEntrypoint(backupExitCode: number, extraEnv: Record<string, string> = {}) {
+    mockBackupPath = join(tmp2, `mock-backup-${backupExitCode}-${Date.now()}.sh`);
+    // Doble de backup.sh: ignora sus argumentos (--dry-run) y se limita a
+    // reproducir el código de salida que se quiere probar, con un mensaje
+    // reconocible en la salida — igual que haría backup.sh real al fallar.
+    writeFileSync(
+      mockBackupPath,
+      `#!/bin/sh\necho '{"level":"error","service":"backup","msg":"MOCK dry-run exit ${backupExitCode}"}'\nexit ${backupExitCode}\n`,
+      { mode: 0o755 },
+    );
+    const crontabFile = join(tmp2, `crontab-${backupExitCode}-${Date.now()}`);
+    rmSync(crondMarker, { force: true });
+    try {
+      const out = execFileSync(BASH_BIN, [ENTRYPOINT], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${fakeBin}:${process.env.PATH}`,
+          BACKUP_SH: mockBackupPath,
+          CRONTAB_FILE: crontabFile,
+          BACKUP_CRON: "15 4 * * *",
+          ...extraEnv,
+        },
+      });
+      return { code: 0, out, crontabFile };
+    } catch (e: any) {
+      return { code: e.status as number, out: `${e.stdout ?? ""}${e.stderr ?? ""}`, crontabFile };
+    }
+  }
+
+  it("backup.sh --dry-run devuelve 3 (sftp mal configurado): el contenedor NO arranca crond", () => {
+    const { code, out } = runEntrypoint(3);
+    expect(code).not.toBe(0);
+    expect(out).toContain("ARRANQUE ABORTADO");
+    expect(out).toContain("MOCK dry-run exit 3");
+    expect(existsSync(crondMarker)).toBe(false);
+  });
+
+  it("backup.sh --dry-run devuelve 1 (config de bootstrap incompleta, no sftp): el contenedor SÍ arranca crond (comportamiento preexistente)", () => {
+    const { code, out } = runEntrypoint(1);
+    expect(code).toBe(0);
+    expect(out).not.toContain("ARRANQUE ABORTADO");
+    expect(existsSync(crondMarker)).toBe(true);
+    expect(readFileSync(crondMarker, "utf8")).toContain("crond -f -l 2");
+  });
+
+  it("backup.sh --dry-run devuelve 0 (config completa): el contenedor arranca crond y programa el cron", () => {
+    const { code, crontabFile } = runEntrypoint(0);
+    expect(code).toBe(0);
+    expect(existsSync(crondMarker)).toBe(true);
+    expect(readFileSync(crontabFile, "utf8")).toContain("15 4 * * * /usr/local/bin/backup.sh");
+  });
+
+  // Pregunta directa del coordinador tras la primera versión de este fix:
+  // "comprueba que el arranque del contenedor con known_hosts vacío falla en
+  // cerrado con un mensaje claro, y no que arranca y se cae luego en la
+  // primera ejecución del cron". Las tres pruebas de arriba usan un DOBLE de
+  // backup.sh (para aislar la lógica de entrypoint.sh); esta usa el
+  // backup.sh REAL con BACKUP_SH, cerrando el círculo end-to-end sin mocks
+  // en ninguno de los dos scripts (Docker sólo hace falta para la ejecución
+  // contra un SFTP real, no para demostrar esta decisión de arranque).
+  it("con el backup.sh REAL y RESTIC_SSH_KNOWN_HOSTS_FILE vacío: el contenedor se niega a arrancar (no un fallo diferido al cron)", () => {
+    const emptyKnownHosts = join(tmp2, "real-empty-known-hosstestfile");
+    writeFileSync(emptyKnownHosts, "");
+    const { code, out } = runEntrypoint(/* backupExitCode ignorado, ver abajo */ 0, {
+      BACKUP_SH: BACKUP, // backup.sh real, no el doble
+      RESTIC_REPOSITORY: "sftp:backup@example.invalid:/restic",
+      RESTIC_PASSWORD_FILE: join(tmp, "restic_password.txt"),
+      RESTIC_SSH_KEY_FILE: join(tmp, "restic_password.txt"),
+      RESTIC_SSH_KNOWN_HOSTS_FILE: emptyKnownHosts,
+    });
+    expect(code).not.toBe(0);
+    expect(out).toContain("ARRANQUE ABORTADO");
+    expect(out).toContain("está vacío o no es legible"); // mensaje real de backup.sh, no del mock
+    expect(existsSync(crondMarker)).toBe(false);
   });
 });
 
@@ -1648,6 +1865,19 @@ describe("servicio backup en el Compose", () => {
     }
     expect(svc.secrets).toContain("restic_password");
     expect(svc.environment.RESTIC_PASSWORD_FILE).toBe("/run/secrets/restic_password");
+  });
+
+  // fix/backup-sftp-scheduled-runtime: la clave SSH y el known_hosts del
+  // backend sftp: montados como secretos por archivo (nunca en claro), igual
+  // que el resto — ver infrastructure/tests/backup-sftp-e2e.test.ts para la
+  // demostración de que de verdad funcionan dentro de la imagen real.
+  it("monta la clave SSH y el known_hosts del backend sftp como secretos por archivo", () => {
+    expect(svc.secrets).toContain("restic_ssh_key");
+    expect(svc.secrets).toContain("restic_ssh_known_hosts");
+    expect(svc.environment.RESTIC_SSH_KEY_FILE).toBe("/run/secrets/restic_ssh_key");
+    expect(svc.environment.RESTIC_SSH_KNOWN_HOSTS_FILE).toBe("/run/secrets/restic_ssh_known_hosts");
+    expect(doc.secrets.restic_ssh_key.file).toBe("./secrets/restic_ssh_key");
+    expect(doc.secrets.restic_ssh_known_hosts.file).toBe("./secrets/restic_ssh_known_hosts");
   });
 
   // Punto 7 (no bloqueante, mitigado): WORK_DIR del staging en un volumen

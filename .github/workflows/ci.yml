@@ -87,7 +87,13 @@ jobs:
         # y el resumen se publican como artefacto de CI.
         # R2.2: se añade infrastructure/ — sus tests (escáner de Compose,
         # ci-gate, backup, observabilidad) no corrían en NINGUNA etapa de ci.yml.
-        run: npx vitest run apps packages infrastructure --maxWorkers=2 --coverage.enabled --coverage.provider=v8 --coverage.reporter=text --coverage.reporter=html --coverage.reportsDirectory=coverage
+        # fix/backup-sftp-scheduled-runtime: backup-sftp-e2e.test.ts se EXCLUYE
+        # de aquí a propósito — construye una imagen Docker y levanta 3
+        # contenedores (backup + sftp con chroot + postgres), y correrlo junto
+        # a --coverage.enabled/--maxWorkers=2 de esta etapa lo haría más lento
+        # y más frágil sin aportar nada al informe de cobertura de código TS.
+        # Corre en su propio job obligatorio: e2e-backup-sftp (más abajo).
+        run: npx vitest run apps packages infrastructure --exclude "**/backup-sftp-e2e.test.ts" --maxWorkers=2 --coverage.enabled --coverage.provider=v8 --coverage.reporter=text --coverage.reporter=html --coverage.reportsDirectory=coverage
       - name: Informe de cobertura como artefacto
         if: always()
         uses: actions/upload-artifact@v4
@@ -95,6 +101,32 @@ jobs:
           name: coverage-report
           path: coverage/
           if-no-files-found: warn
+
+  # ── Etapa 2b: E2E real del backup por SFTP con chroot ──────────────────────
+  # fix/backup-sftp-scheduled-runtime: el primer backup real se hizo A MANO
+  # desde el host; el backup PROGRAMADO seguía roto por dos defectos que sólo
+  # aparecían EJECUTANDO LA IMAGEN REAL (openssh-client ausente del
+  # Dockerfile; la ruta del repositorio restic tenía que ser la de DENTRO del
+  # chroot del host de respaldo, no la física). Un `restic … snapshots` a
+  # mano desde el host nunca los reproducía. Job propio y obligatorio (no un
+  # paso más de `unit`) para que sea imposible que se salte en silencio: si
+  # Docker no estuviera disponible en este runner, infrastructure/tests/
+  # backup-sftp-e2e.test.ts hace FALLAR el job a propósito en vez de
+  # reportarse "skipped" (ver ese fichero, guarda en beforeAll con CI=true).
+  e2e-backup-sftp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Docker disponible en este runner (si esto falla, el job de abajo también debe fallar, nunca saltarse)
+        run: docker info
+      - name: E2E real - imagen backup + SFTP con chroot (atmoz/sftp) + postgres
+        run: npx vitest run infrastructure/tests/backup-sftp-e2e.test.ts --maxWorkers=1
 
   # ── Etapa 3: esquemas y compatibilidad de contratos ────────────────────────
   contracts:
@@ -348,6 +380,7 @@ jobs:
       [
         lint-format-types,
         unit,
+        e2e-backup-sftp,
         contracts,
         regression-battles,
         build-images,

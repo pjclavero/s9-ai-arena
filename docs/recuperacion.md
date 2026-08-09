@@ -15,6 +15,16 @@ del servicio `backup` del stack, alerta si falla o si no hay backup en 26 h).
 - Acceso al repositorio restic (`RESTIC_REPOSITORY`, NAS/ZFS del operador) y a
   su contraseña (`restic_password`, custodiada FUERA del servidor: gestor de
   contraseñas del operador; sin ella no hay recuperación posible).
+- **Si el destino es SFTP (fix/backup-sftp-scheduled-runtime):** además hace
+  falta, TAMBIÉN custodiado fuera del servidor, el material para alcanzar el
+  host de respaldo por SSH: la clave privada `restic_ssh_key` y el
+  `restic_ssh_known_hosts` con la huella ya verificada del host. Es el mismo
+  problema del huevo y la gallina que `restic_password`: ambos viajan DENTRO
+  del snapshot de secretos (`s9-arena-secrets`) por comodidad del día a día,
+  pero ese snapshot vive precisamente en el repositorio SFTP al que sólo se
+  llega usando esa misma clave — sin una copia fuera del servidor, Fase 2 no
+  puede arrancar. Ver `infrastructure/.env.example` para el formato de
+  `RESTIC_REPOSITORY` con un host de respaldo confinado (`ChrootDirectory`).
 - Imágenes versionadas en `ghcr.io/pjclavero/s9-ai-arena/*` (las publica la CI
   en cada merge a main, etiquetadas `v<versión>` y `sha-<commit>`).
 
@@ -34,6 +44,11 @@ git clone https://github.com/pjclavero/s9-ai-arena.git && cd s9-ai-arena
 
 ```bash
 export RESTIC_REPOSITORY=<repositorio>   # y RESTIC_PASSWORD por el operador
+# Si RESTIC_REPOSITORY es sftp:..., restore.sh (como backup.sh) necesita
+# 'ssh' instalado y ~/.ssh listo con la clave y el known_hosts custodiados
+# fuera del servidor (ver Requisitos previos) ANTES de este comando — restic
+# no puede alcanzar el repositorio sin ellos, así que no hay forma de
+# "restaurarlos desde el propio backup" en este primer paso.
 bash infrastructure/backup/restore.sh --restore-secrets /tmp/restore-secrets
 # Colocarlos (rutas con permisos 0600; NUNCA volcarlos a pantalla/logs):
 mkdir -p infrastructure/secrets

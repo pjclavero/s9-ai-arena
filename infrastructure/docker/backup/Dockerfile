@@ -2,7 +2,14 @@
 # Contexto de build: raíz del repo.
 FROM alpine:3.20
 
-RUN apk add --no-cache bash restic postgresql16-client coreutils findutils
+# fix/backup-sftp-scheduled-runtime: el backend `sftp:` de restic invoca el
+# binario `ssh` (restic no habla SFTP por su cuenta; delega en el cliente
+# OpenSSH y su subsistema `sftp`). Sin `openssh-client` en la imagen, el
+# backup programado fallaba en EJECUCIÓN con "ssh: command not found" —un
+# fallo que un `restic -r … snapshots` lanzado a mano desde el host NUNCA
+# reproduce, porque el host sí tiene ssh instalado. Sólo se detecta
+# ejecutando esta MISMA imagen (ver infrastructure/tests/backup-sftp-e2e.test.ts).
+RUN apk add --no-cache bash restic postgresql16-client coreutils findutils openssh-client
 
 COPY infrastructure/backup/backup.sh /usr/local/bin/backup.sh
 COPY infrastructure/backup/restore.sh /usr/local/bin/restore.sh
