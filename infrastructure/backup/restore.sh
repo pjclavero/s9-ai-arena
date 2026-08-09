@@ -66,6 +66,15 @@ case "${1:---dry-run}" in
     ;;
   --verify)
     dir="${2:?uso: restore.sh --verify <dir-restaurado>}"
+    # Ronda 6 (hueco encontrado por el supervisor al enumerar caminos): con
+    # `set -euo pipefail` activo, `find` sobre un $dir INEXISTENTE sale con
+    # exit != 0 dentro de `manifests="$(find …)"` y el script moría ahí
+    # mismo, SIN emitir ninguna línea de log JSON — la alertería no ve nada,
+    # sólo el stderr crudo de `find`. Comprobado explícitamente antes.
+    if [ ! -d "$dir" ]; then
+      log error "el directorio $dir no existe: nada que verificar"
+      exit 1
+    fi
     # #110b: `find | head -1` aceptaba en silencio 0 manifests (verificación
     # que no verifica nada, exit 0 falso) y elegía uno arbitrario si había
     # más de uno (snapshots mezclados). Fallar en cerrado en ambos casos.
@@ -151,7 +160,12 @@ case "${1:---dry-run}" in
     # Sólo si ambas comprobaciones pasan se acepta como cobertura vacía
     # legítima; en cualquier otro caso, FALLA (no se asume nada a favor).
     if [ ! -s "$manifest" ]; then
-      stray="$(find "$stagedir" -type f ! -name 'manifest.*' ! -name 'pgdump-*')"
+      # D6-R5 (ronda 6): `! -name` excluía por nombre base en TODO el
+      # árbol; un fichero de usuario como `maps/pgdump-x` escapaba a la
+      # comprobación (ver el mismo fix en backup.sh). `-path` con el
+      # directorio completo sólo excluye la raíz del staging, que es donde
+      # viven de verdad el dump y los manifests.
+      stray="$(find "$stagedir" -type f ! -path "$stagedir/manifest.*" ! -path "$stagedir/pgdump-*")"
       if [ -n "$stray" ]; then
         log error "manifest.sha256 vacío pero hay ficheros de datos SIN verificar en $stagedir (p.ej. $(printf '%s\n' "$stray" | head -1)): posible backup roto, no cobertura vacía legítima"
         exit 1
@@ -160,9 +174,16 @@ case "${1:---dry-run}" in
       # (sin espacios, ver json_source). OJO: sólo se comprueban las CUATRO
       # fuentes NO críticas (maps/bot_sources/assets/replays) — postgres y
       # secrets están SIEMPRE en 'ok' en cualquier backup con éxito (no
-      # forman parte de manifest.sha256 por diseño: el dump se excluye del
-      # manifest —ver D3 más abajo— y los secretos nunca se listan). Si se
-      # comprobara "cualquier fuente ok", esto rechazaría TODO backup sano
+      # forman parte de manifest.sha256 por diseño: el dump de PostgreSQL
+      # se excluye explícitamente de la generación del manifest en
+      # backup.sh (`! -path './pgdump-*'`) y los secretos nunca se listan.
+      # D3 (limitación conocida, documentada y SIN implementar a propósito,
+      # a la espera de decisión del operador — ver docs/recuperacion.md):
+      # esto significa que el dump, el activo más crítico del backup, NO
+      # tiene checksum en ninguna parte; su integridad depende hoy de que
+      # `pg_dump`/`restic` no fallen en silencio, no de un hash verificado
+      # por `--verify`. Si se comprobara "cualquier fuente ok", esto
+      # rechazaría TODO backup sano
       # con las cuatro fuentes no críticas vacías, reintroduciendo el
       # falso positivo original de D1.
       for src in maps bot_sources assets replays; do
@@ -200,13 +221,31 @@ case "${1:---dry-run}" in
         log error "manifest.sha256 inconsistente: $actual_lines líneas, manifest.json declara $expected_lines ficheros 'ok' (manifest truncado o corrupto)"
         exit 1
       fi
-      total_data_files="$(find "$stagedir" -type f ! -name 'manifest.*' ! -name 'pgdump-*' | wc -l)"
+      # D1-R5/D2-R5 (ronda 6, HALLAZGO DEL SUPERVISOR): `find … | wc -l`
+      # cuenta SALTOS DE LÍNEA de la salida de find (una entrada por
+      # fichero, con su nombre completo) mientras `actual_lines` viene de
+      # contar líneas de manifest.sha256, donde sha256sum ya ESCAPA los
+      # saltos de línea internos del nombre a una sola línea por fichero
+      # (formato "portable"). Con un fichero legítimo llamado
+      # "salto\nlinea.json", `wc -l` sobre `find` lo contaba como 2,
+      # mientras el manifest (correctamente) lo cubre en 1 línea: un
+      # backup SANO con ese nombre quedaba denunciado como manipulado. Se
+      # cuenta con NUL como separador (`-print0`), inmune a saltos de
+      # línea en el propio nombre — la misma técnica que ya se usa bien
+      # para `replays` en backup.sh desde la ronda 4, ahora también aquí.
+      # D6-R5: exclusión por `-path`, no por `-name` (ver arriba).
+      total_data_files="$(find "$stagedir" -type f ! -path "$stagedir/manifest.*" ! -path "$stagedir/pgdump-*" -print0 | tr -cd '\0' | wc -c)"
       if [ "$total_data_files" -ne "$actual_lines" ]; then
         log error "$stagedir tiene $total_data_files ficheros de datos pero manifest.sha256 sólo cubre $actual_lines: hay contenido SIN entrada en el manifest (posible inyección tras el backup)"
         exit 1
       fi
-      # El manifest usa rutas maps/… y replays/…: verificar desde su directorio.
-      (cd "$stagedir" && sha256sum -c "$manifest")
+      # D6-R5 (opcional, barato): sha256sum -c con la ruta ABSOLUTA de
+      # $manifest tras el `cd` sería relativa al cwd ORIGINAL si $manifest
+      # no era ya absoluta (p.ej. invocado con una ruta relativa) —
+      # preexistente en main, sin disparador conocido (el runbook siempre
+      # usa rutas absolutas), pero gratis de cerrar: tras el `cd`, usar
+      # sólo el nombre del fichero en el directorio ya correcto.
+      (cd "$stagedir" && sha256sum -c "$(basename "$manifest")")
       log info "integridad verificada: checksums de mapas y replays correctos"
     fi
     ;;

@@ -754,6 +754,64 @@ describe("backup.sh camino real (restic/pg_dump falsos vía PATH)", () => {
     expect(manifest.replays.files).toBe(1); // official/ ignora la retención
   });
 
+  // ── D1-R5 (ronda 6, HALLAZGO DEL SUPERVISOR — bloqueante, ALTA): un
+  // nombre de fichero con salto de línea en maps/bot_sources/assets
+  // ABORTABA EL BACKUP COMPLETO y perdía el dump de PostgreSQL — el mismo
+  // incidente que motiva la cabecera de este fichero, reintroducido por
+  // otra puerta. Causa: `classify_source` contaba con `find … | grep -c .`
+  // (líneas), mientras `sha256sum` emite UNA línea por fichero escapando
+  // el `\n` del nombre; el contraste de backup.sh comparaba dos unidades
+  // distintas. La ronda 4 ya había arreglado esto para `replays`
+  // (`-print0`/`read -d ''`) pero dejó `maps`/`bot_sources`/`assets`
+  // contando por líneas — los tres que pasan por `classify_source`.
+  // `bot_sources` es contenido que suben los usuarios: un usuario podía
+  // tumbar el backup de TODA la plataforma con un solo nombre de fichero. ─
+  it("nombre de fichero con salto de línea en maps: backup SUCCESS, dump preservado (D1-R5)", () => {
+    makeDirs();
+    const evilName = "salto\nlinea.json";
+    writeFileSync(join(root, "maps", evilName), '{"m":1}');
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+    const { code, out } = runReal({});
+    expect(code).toBe(0); // NUNCA FULL FAILURE por un nombre de fichero legítimo
+    expect(out).toContain("backup SUCCESS");
+    expect(out).not.toContain("manifest.sha256 inconsistente");
+    const metrics = readMetrics();
+    expect(metricValue(metrics, "s9_backup_restic_snapshot_created")).toBe("1");
+    expect(metricValue(metrics, "s9_backup_postgres_success")).toBe("1");
+    const manifest = readManifest();
+    expect(manifest.maps.status).toBe("ok");
+    expect(manifest.maps.files).toBe(1);
+  });
+
+  // Mismo defecto, en bot_sources (contenido subido por USUARIOS: el
+  // vector de ataque real que señaló el supervisor) y assets.
+  it("nombre de fichero con salto de línea en bot_sources (contenido de usuario): backup SUCCESS (D1-R5)", () => {
+    makeDirs();
+    writeFileSync(join(root, "bot-sources", "bot\ncon-salto.py"), "print(1)");
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+    const { code, out } = runReal({});
+    expect(code).toBe(0);
+    expect(out).not.toContain("manifest.sha256 inconsistente");
+    const manifest = readManifest();
+    expect(manifest.bot_sources.status).toBe("ok");
+    expect(manifest.bot_sources.files).toBe(1);
+  });
+
+  it("nombre de fichero con salto de línea en assets: backup SUCCESS (D1-R5)", () => {
+    makeDirs();
+    writeFileSync(join(root, "assets", "sprite\ncon-salto.png"), "fake-bytes");
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+    const { code, out } = runReal({});
+    expect(code).toBe(0);
+    expect(out).not.toContain("manifest.sha256 inconsistente");
+    const manifest = readManifest();
+    expect(manifest.assets.status).toBe("ok");
+    expect(manifest.assets.files).toBe(1);
+  });
+
   // ── D1-R3 (ronda 4, HALLAZGO DEL SUPERVISOR): backup.sh generaba el
   // manifest con `(cd "$STAGING" && find … -exec sha256sum … | sed …) >
   // fichero` SIN comprobar el estado de salida de esa subshell — un fallo
@@ -1115,32 +1173,136 @@ describe("backup.sh → restic falso fiel → restore.sh --restore/--verify (E2E
     expect(output).toContain("SIN entrada en el manifest");
   });
 
-  // ── D2-R4 (ronda 5, hallazgo del supervisor): manifest.json truncado (el
-  // mismo escenario "disco lleno" que justifica media PR) debía FALLAR
-  // `--verify`, no convertirse en un no-op silencioso que además afirma
-  // "confirmado contra manifest.json" sobre algo que no es JSON. ─────────
-  it("manifest.json truncado/corrupto (no JSON válido): --verify FALLA, no se trata como cobertura confirmada (D2-R4)", () => {
-    const dir = mkdtempSync(join(tmpdir(), "e10-d2r4-manifestjson-truncado-"));
+  // ── D2-R5 (ronda 6, HALLAZGO DEL SUPERVISOR — bloqueante, ALTA): la
+  // misma premisa rota de D1-R5 se propagó al chequeo de residuales de
+  // restore.sh (`find … | wc -l`): sobre un backup SANO con un nombre de
+  // fichero con salto de línea, --verify denunciaba el backup ÍNTEGRO
+  // como manipulado — la columna de falsos positivos que esta ronda debía
+  // preservar. Cadena E2E real (sin fixtures a mano): backup.sh con datos
+  // reales + un nombre "raro" → restore --restore → restore --verify DEBE
+  // pasar limpio. ─────────────────────────────────────────────────────
+  it("cadena completa: nombre de fichero con salto de línea en un backup SANO → --verify pasa SIN falsos positivos (D2-R5)", () => {
+    setup();
+    writeFileSync(join(root, "maps", "salto\nlinea.json"), '{"m":1}\n');
+    const log = join(root, "restic-calls.log");
+    writeFakeResticFaithful(fakebin, store, log);
+    const backupOut = execFileSync("bash", [BACKUP], { encoding: "utf8", env: backupEnv() });
+    expect(backupOut).toContain("backup SUCCESS");
+    const dest = join(root, "restored-newline-d2r5");
+    execFileSync("bash", [RESTORE, "--restore", dest], { encoding: "utf8", env: backupEnv() });
+    const verifyOut = execFileSync("bash", [RESTORE, "--verify", dest], { encoding: "utf8" });
+    expect(verifyOut).toContain("integridad verificada");
+  });
+
+  // ── D6-R5 (ronda 6, hallazgo del supervisor): un fichero de USUARIO
+  // dentro de maps/ literalmente llamado "pgdump-x" escapaba a la
+  // exclusión `! -name 'pgdump-*'` (coincide por nombre base en TODO el
+  // árbol, no sólo en la raíz del staging) — ni se respaldaba en el
+  // manifest NI se detectaba como residual. Ahora la exclusión es por
+  // `-path` y sólo afecta a la raíz. ───────────────────────────────────
+  it("fichero de usuario llamado 'pgdump-x' dentro de maps/ SÍ se respalda y SÍ se verifica (D6-R5)", () => {
+    setup();
+    writeFileSync(join(root, "maps", "pgdump-x"), '{"no soy el dump real":true}\n');
+    const log = join(root, "restic-calls.log");
+    writeFakeResticFaithful(fakebin, store, log);
+    execFileSync("bash", [BACKUP], { encoding: "utf8", env: backupEnv() });
+    const dest = join(root, "restored-pgdumpx-d6r5");
+    execFileSync("bash", [RESTORE, "--restore", dest], { encoding: "utf8", env: backupEnv() });
+    // Si "pgdump-x" hubiera sido excluido silenciosamente, no aparecería
+    // ni en el manifest ni en el árbol restaurado bajo maps/.
+    const found = execSync(`find "${dest}" -path '*/maps/pgdump-x'`, { encoding: "utf8" }).trim();
+    expect(found).not.toBe("");
+    const verifyOut = execFileSync("bash", [RESTORE, "--verify", dest], { encoding: "utf8" });
+    expect(verifyOut).toContain("integridad verificada"); // se verificó de verdad, no se ignoró
+  });
+
+  // ── Ronda 6 (hueco encontrado al enumerar caminos): $dir inexistente en
+  // --verify moría por `set -e` sin ninguna línea de log JSON — la
+  // alertería no veía nada. Ahora hay un chequeo explícito primero. ──────
+  it("restore.sh --verify con directorio inexistente: exit 1 CON línea de log JSON (no aborta en silencio)", () => {
+    const nonexistent = join(tmpdir(), `e10-no-existe-de-verdad-${Math.random().toString(36).slice(2)}`);
+    let threw = false;
+    let output = "";
+    try {
+      output = execFileSync("bash", [RESTORE, "--verify", nonexistent], { encoding: "utf8", stdio: "pipe" });
+    } catch (e: any) {
+      threw = true;
+      output = `${e.stdout}${e.stderr}`;
+    }
+    expect(threw).toBe(true);
+    const line = output.split("\n").find((l) => l.trim().startsWith("{"));
+    expect(line).toBeDefined(); // hay AL MENOS una línea de log JSON, no sólo stderr crudo
+    const parsed = JSON.parse(line as string);
+    expect(parsed.level).toBe("error");
+  });
+
+  // ── D2-R4 (ronda 5) / D5-R5 (ronda 6, hallazgo del supervisor): manifest.
+  // json truncado (el mismo escenario "disco lleno" que justifica media
+  // PR) debía FALLAR --verify, no convertirse en un no-op silencioso que
+  // además afirma "confirmado contra manifest.json" sobre algo que no es
+  // JSON. El supervisor señaló que un solo test cubría los cuatro
+  // sub-chequeos de `validate_manifest_json` COLECTIVAMENTE, y bastaba el
+  // chequeo de prefijo (`'{'*'}'`) para "pasarlo" sin ejercitar el resto —
+  // la función es correcta, pero la cobertura declarada no lo era. Aquí
+  // cada sub-chequeo tiene su propio test, con un payload que
+  // deliberadamente pasa TODOS los demás sub-chequeos salvo el que se
+  // quiere aislar. ─────────────────────────────────────────────────────
+  function verifyAgainstManifestJson(manifestJsonContent: string): { threw: boolean; output: string } {
+    const dir = mkdtempSync(join(tmpdir(), "e10-d5r5-manifestjson-"));
     try {
       writeFileSync(join(dir, "manifest.sha256"), "");
-      // Truncado a mitad de una clave: llave sin cerrar, ni todas las
-      // fuentes presentes — exactamente lo que dejaría un disco lleno a
-      // mitad de escritura.
-      writeFileSync(join(dir, "manifest.json"), '{"postgres":{"status":"ok","files":1},"secrets":{"stat');
-      let threw = false;
-      let output = "";
+      writeFileSync(join(dir, "manifest.json"), manifestJsonContent);
       try {
-        output = execFileSync("bash", [RESTORE, "--verify", dir], { encoding: "utf8", stdio: "pipe" });
+        const output = execFileSync("bash", [RESTORE, "--verify", dir], { encoding: "utf8", stdio: "pipe" });
+        return { threw: false, output };
       } catch (e: any) {
-        threw = true;
-        output = `${e.stdout}${e.stderr}`;
+        return { threw: true, output: `${e.stdout}${e.stderr}` };
       }
-      expect(threw).toBe(true);
-      expect(output).toContain("no tiene forma válida");
-      expect(output).not.toContain("confirmado contra manifest.json");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  }
+
+  it("manifest.json truncado a mitad de clave (sin llave de cierre): --verify FALLA (D5-R5, sub-chequeo 1/4: prefijo)", () => {
+    // Ni siquiera pasa el chequeo de prefijo '{'*'}': no hay '}' final.
+    const { threw, output } = verifyAgainstManifestJson('{"postgres":{"status":"ok","files":1},"secrets":{"stat');
+    expect(threw).toBe(true);
+    expect(output).toContain("no tiene forma válida");
+    expect(output).not.toContain("confirmado contra manifest.json");
+  });
+
+  it("manifest.json con llaves desbalanceadas pero prefijo '{...}' válido: --verify FALLA (D5-R5, sub-chequeo 2/4: balance)", () => {
+    // Pasa el chequeo de prefijo (empieza por '{', termina por '}') pero
+    // tiene una llave de apertura de más sin cerrar en medio — el chequeo
+    // de balance (nopen == nclose) es el único que lo caza.
+    const { threw, output } = verifyAgainstManifestJson(
+      '{"postgres":{{"status":"ok","files":1},"secrets":{"status":"ok","files":2},"maps":{"status":"empty","files":0},"bot_sources":{"status":"empty","files":0},"replays":{"status":"empty","files":0},"assets":{"status":"empty","files":0}}',
+    );
+    expect(threw).toBe(true);
+    expect(output).toContain("no tiene forma válida");
+  });
+
+  it("manifest.json bien formado pero le falta una clave de fuente ('assets'): --verify FALLA (D5-R5, sub-chequeo 3/4: claves)", () => {
+    // Prefijo OK, llaves balanceadas, pero sólo 5 de las 6 fuentes — el
+    // bucle "for src in postgres secrets maps bot_sources replays assets"
+    // es el único que lo caza.
+    const { threw, output } = verifyAgainstManifestJson(
+      '{"postgres":{"status":"ok","files":1},"secrets":{"status":"ok","files":2},"maps":{"status":"empty","files":0},"bot_sources":{"status":"empty","files":0},"replays":{"status":"empty","files":0}}',
+    );
+    expect(threw).toBe(true);
+    expect(output).toContain("no tiene forma válida");
+  });
+
+  it("manifest.json es basura envuelta en '{...}' balanceado, sin ninguna clave real: --verify FALLA (D5-R5, sub-chequeo 4/4: no basta con prefijo+balance)", () => {
+    // El supervisor lo señaló explícitamente: un chequeo que sólo mirara
+    // prefijo ('{'*'}') + balance de llaves pasaría CUALQUIER JSON válido
+    // arbitrario, aunque no tenga ninguna de las 6 claves de fuente
+    // esperadas. Empieza por '{', termina por '}', UNA sola llave
+    // balanceada — y aun así debe fallar, porque el bucle de claves de
+    // fuente es lo único que comprueba el CONTENIDO real.
+    const { threw, output } = verifyAgainstManifestJson('{"basura":"si","otracosa":123}');
+    expect(threw).toBe(true);
+    expect(output).toContain("no tiene forma válida");
   });
 
   // ── D3-R4 (ronda 5, hallazgo del supervisor): el saneado de UTF-8
@@ -1164,6 +1326,23 @@ describe("backup.sh → restic falso fiel → restore.sh --restore/--verify (E2E
   //      True)` en Python, que es el que motivó este hallazgo). ─────────
   it("byte UTF-8 inválido (0xff) en el mensaje no rompe el parseo del log (D3-R4)", () => {
     const out = runLogFromScriptRawBytes(BACKUP, "fuente ilegible: nombre-", 0xff, "-invalido");
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    let text = "";
+    expect(() => {
+      text = decoder.decode(out).trim();
+    }).not.toThrow();
+    expect(() => JSON.parse(text)).not.toThrow();
+    expect(JSON.parse(text).level).toBe("error");
+  });
+
+  // ── D3-R5 (ronda 6, hallazgo del supervisor — misma familia que D2-R3a/
+  // D4-R3c): restore.sh tiene su PROPIA copia de json_escape (no comparte
+  // código con backup.sh), y el test de iconv de arriba sólo apuntaba a
+  // BACKUP. Quitar `iconv` de restore.sh dejaba la suite en verde con el
+  // bug puesto: no es equivalente probar sólo un script cuando los dos
+  // tienen la misma función duplicada. Mismo test, apuntando a RESTORE. ──
+  it("byte UTF-8 inválido (0xff) en restore.sh no rompe el parseo del log (D3-R5)", () => {
+    const out = runLogFromScriptRawBytes(RESTORE, "fuente ilegible: nombre-", 0xff, "-invalido");
     const decoder = new TextDecoder("utf-8", { fatal: true });
     let text = "";
     expect(() => {

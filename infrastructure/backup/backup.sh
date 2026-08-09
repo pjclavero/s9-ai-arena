@@ -185,22 +185,40 @@ PARTIAL=0
 # FULL FAILURE, contradiciendo la cabecera de este mismo fichero. Aquí el
 # conteo se separa del chequeo de legibilidad para que "cero ficheros" y
 # "no se pudo leer" nunca se confundan.
+#
+# D1-R5 (ronda 6, HALLAZGO DEL SUPERVISOR): el conteo usaba
+# `find … | grep -c .` (líneas de SALIDA de find, una por fichero listado
+# CON SU NOMBRE), pero `sha256sum` —lo que realmente genera manifest.sha256
+# más abajo— emite una línea por fichero ESCAPANDO cualquier `\n` interno
+# del nombre (formato "portable" de sha256sum). Un fichero legítimo llamado
+# literalmente "salto\nlinea.json" contaba como 2 "líneas" aquí pero sigue
+# siendo 1 entrada en el manifest: el contraste de backup.sh (más abajo)
+# veía "6 líneas, se esperaban 7" sobre un backup PERFECTO y abortaba en
+# FULL FAILURE — perdiendo el dump de PostgreSQL ya generado, el mismo
+# incidente que motiva la cabecera de este fichero, reintroducido por otra
+# puerta. La ronda 4 ya había arreglado exactamente este bug para
+# `replays` (ver más abajo, `-print0`/`read -d ''`) pero dejó `maps`,
+# `bot_sources` y `assets` —los tres que pasan por esta función— contando
+# por líneas. `bot_sources` es contenido que suben los usuarios: un
+# usuario podía tumbar el backup de toda la plataforma con un solo nombre
+# de fichero. Se cuenta con NUL como separador (`-print0` + contar bytes
+# NUL), inmune a saltos de línea en el propio nombre.
 classify_source() {
-  local name="$1" dir="$2" critical="$3" files
+  local name="$1" dir="$2" critical="$3"
   if [ ! -d "$dir" ]; then
     SRC_STATUS[$name]=empty
     SRC_FILES[$name]=0
     return 0
   fi
-  if ! files=$(find "$dir" -type f 2>"$WORK_DIR/.err-$name"); then
+  if ! find "$dir" -type f -print0 > "$WORK_DIR/.files-$name" 2>"$WORK_DIR/.err-$name"; then
     log error "fuente '$name' ($dir) ilegible: $(tail -c 300 "$WORK_DIR/.err-$name")"
     SRC_STATUS[$name]=error
     SRC_FILES[$name]=0
     if [ "$critical" = 1 ]; then FULL_FAILURE=1; else PARTIAL=1; fi
     return 1
   fi
-  local count=0
-  [ -n "$files" ] && count=$(printf '%s\n' "$files" | grep -c . || true)
+  local count
+  count=$(tr -cd '\0' < "$WORK_DIR/.files-$name" | wc -c)
   if [ "$count" -eq 0 ]; then
     SRC_STATUS[$name]=empty
     SRC_FILES[$name]=0
@@ -446,7 +464,15 @@ log info "4/5 generando manifest (sha256 + cobertura json) dentro del staging"
 # aquí explícitamente: si falla, es FULL FAILURE (el manifest es la única
 # garantía de integridad que tiene el operador; uno posiblemente truncado
 # es peor que no tenerlo, porque `--verify` lo daría por bueno).
-if ! (cd "$STAGING" && find . -type f ! -name 'manifest.*' ! -name 'pgdump-*' -exec sha256sum {} + | sed 's| \./| |') \
+# D6-R5 (ronda 6): `! -name 'pgdump-*'`/`! -name 'manifest.*'` excluían por
+# NOMBRE BASE en todo el árbol, no sólo en la raíz del staging donde
+# realmente viven el dump y los manifests. Un fichero de usuario dentro de
+# `maps/` literalmente llamado `pgdump-x` (o `manifest.algo`) escapaba por
+# completo al manifest Y al chequeo de residuales de restore.sh —ni se
+# respaldaba ni se detectaba su ausencia—. `-path './pgdump-*'` sólo
+# coincide con la raíz (una ruta como `./maps/pgdump-x` no empieza por
+# "./pgdump-", así que no la excluye).
+if ! (cd "$STAGING" && find . -type f ! -path './manifest.*' ! -path './pgdump-*' -exec sha256sum {} + | sed 's| \./| |') \
     > "$STAGING/manifest.sha256" 2>"$WORK_DIR/.err-manifest"; then
   log error "fallo generando manifest.sha256: $(tail -c 300 "$WORK_DIR/.err-manifest")"
   dur=$(( $(date +%s) - start ))

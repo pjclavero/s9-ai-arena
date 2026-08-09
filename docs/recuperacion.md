@@ -116,6 +116,16 @@ docker compose -f infrastructure/docker-compose.yml ps          # todo healthy
 # assets y replays (manifest.sha256 vive junto a los datos en $STAGE, por
 # eso `--verify` puede apuntar a todo /tmp/restore-data: localiza el único
 # manifest.sha256 igual que en Fase 3 y falla si hay cero o más de uno).
+# LIMITACIÓN CONOCIDA (D3, sin implementar a propósito): el dump de
+# PostgreSQL (pgdump-*.dump) NO está incluido en manifest.sha256 — es el
+# único activo de este backup sin checksum verificado por --verify. Su
+# integridad depende hoy de que pg_dump/restic no fallen en silencio, no de
+# un hash. Opción técnica disponible si se decide cerrar esta laguna: quitar
+# la exclusión `! -path './pgdump-*'` de la generación del manifest en
+# backup.sh (cambio de una línea); contra: el nombre del dump incluye el
+# timestamp de cada ejecución, así que el checksum nunca es comparable
+# entre backups, sólo sirve para detectar corrupción dentro del mismo
+# snapshot.
 bash infrastructure/backup/restore.sh --verify /tmp/restore-data
 
 # Migraciones al día (contrato con E7: el api las reporta en /healthz)
