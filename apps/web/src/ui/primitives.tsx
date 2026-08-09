@@ -3,9 +3,9 @@
  *
  * Envuelven EXACTAMENTE las clases y patrones ya presentes en apps/web/index.html
  * y en apps/web/src/resource.tsx — no introducen estilo nuevo ni tokens
- * nuevos. Ninguna página activa las importa todavía (cero riesgo de romper
- * R11/R12 ni cualquier otra pantalla en producción): se entregan listas para
- * adoptarse página a página en un PR posterior, fuera de este alcance.
+ * nuevos. ADOPTADAS en AuditPage, MapsPage, TeamsPage y RankingPage — las
+ * cuatro páginas autorizadas de este carril. NO se ha tocado ninguna página de
+ * R11/R12, ni BotsPage, ni index.html, ni App.tsx.
  *
  * Regla de docs/R16_DESIGN_SYSTEM.md §1: el color nunca es el único canal de
  * estado. Por eso StatusBadge y EmptyState siempre exigen texto.

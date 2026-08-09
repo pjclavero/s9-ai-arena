@@ -150,30 +150,38 @@ tiene hogar hoy: cada página decide sola cuándo pintar su `<p>No hay
 X</p>` after leer `resource.status === "ready"`. Formalizarlo requeriría
 tocar cada página (`AuditPage.tsx:50`, `BattlesPage.tsx:56`,
 `LivePage.tsx:39`, `MapsPage.tsx:224`) — fuera de alcance de este PR de
-auditoría; se entrega la primitiva aislada y sin consumidores (§8).
+auditoría; la primitiva se entrega en §8 y YA está adoptada (ver estado real ahí).
 
 ## 8. Componentes reutilizables — inventario para R16 posterior
 
-| Componente     | Basado en                              | Estado |
+> **Estado actualizado.** La primera versión de esta tabla decía «sin
+> consumidores» para las seis primitivas y listaba `scope="col"` como no
+> implementado. Era cierto cuando se escribió la auditoría, y dejó de serlo en el
+> mismo PR que la adopta: el supervisor independiente de #108 señaló que la
+> documentación contradecía al código que la acompaña. Corregido aquí.
+
+| Componente     | Basado en                              | Estado real |
 |----------------|------------------------------------------|--------|
-| `Panel`        | `.card` (`index.html:70-76`)             | primitiva nueva entregada, sin consumidores |
-| `StatusBadge`  | `className="ok/warn/error"` (40 usos)    | primitiva nueva entregada, sin consumidores |
-| `EmptyState`   | 4 implementaciones divergentes           | primitiva nueva entregada, sin consumidores |
-| `LoadingState` | `resource.tsx:101-107` (inline)          | primitiva nueva entregada, sin consumidores |
-| `ErrorState`   | `resource.tsx:108-118` (inline)          | primitiva nueva entregada, sin consumidores |
-| `Button`       | `<button>` + `index.html:30-41`          | primitiva nueva entregada, sin consumidores |
+| `Panel`        | `.card` (`index.html:70-76`)             | adoptado en AuditPage, MapsPage, TeamsPage |
+| `StatusBadge`  | `className="ok/warn/error"` (40 usos)    | adoptado en MapsPage |
+| `EmptyState`   | 4 implementaciones divergentes           | adoptado en AuditPage, MapsPage, RankingPage |
+| `LoadingState` | `resource.tsx:101-107` (inline)          | adoptado en AuditPage, MapsPage |
+| `ErrorState`   | `resource.tsx:108-118` (inline)          | adoptado en AuditPage, MapsPage |
+| `Button`       | `<button>` + `index.html:30-41`          | adoptado en TeamsPage |
 
 Todas se implementan en `apps/web/src/ui/` (carpeta nueva, sin colisión con
 nada existente), exportan las mismas clases CSS que ya existen en
 `index.html` (no se inventa estilo nuevo, se envuelve el existente en
-componentes con contrato tipado), y **ninguna página activa las importa
-todavía** — cero riesgo de romper R11/R12 ni cualquier otra página. Se
-adoptan página a página en un PR posterior, fuera de este alcance.
+componentes con contrato tipado). La adopción se ha hecho SOLO en las cuatro
+páginas autorizadas (AuditPage, MapsPage, TeamsPage, RankingPage): no se ha
+tocado ninguna página de R11/R12, ni `BotsPage`, ni `index.html`, ni `App.tsx`.
 
-No se implementan como primitivas aisladas (requieren tocar páginas activas
-o el HTML compartido, fuera de las reglas de este PR):
-- Nav con indicador de ruta activa y colapso móvil (toca `App.tsx`, activo).
-- `scope="col"` en tablas (toca cada página con tabla).
+Pendiente todavía (requiere tocar el HTML compartido o ficheros de otros
+carriles, fuera de las reglas de este PR):
+- Nav con indicador de ruta activa y colapso móvil (toca `App.tsx`, propiedad
+  compartida entre carriles: deliberadamente NO tocado).
+- `scope="col"` en tablas: YA implementado en las cuatro páginas de este PR
+  (16 ocurrencias); queda pendiente en las páginas de otros carriles.
 - Tokens CSS reales (`:root { --color-bg: ... }`) en `index.html` — technically
   aislado (no rompe nada, los `<style>` actuales seguirían funcionando en
   paralelo), pero se decide no tocarlo en este PR porque `index.html` es

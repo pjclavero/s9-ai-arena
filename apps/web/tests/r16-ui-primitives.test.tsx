@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 /**
- * R16 · Tests reales de las primitivas visuales aisladas (apps/web/src/ui/primitives.tsx).
- * Ninguna página activa las consume; este test es la única prueba de que
- * funcionan, dado que no hay integración en producción todavía.
+ * R16 · Tests reales de las primitivas visuales (apps/web/src/ui/primitives.tsx),
+ * probadas EN AISLAMIENTO. Su uso real dentro de las páginas se prueba aparte,
+ * en r16-pages-primitives.test.tsx.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";

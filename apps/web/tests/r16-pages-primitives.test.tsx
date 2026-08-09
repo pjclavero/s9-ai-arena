@@ -240,3 +240,58 @@ describe("R16 RankingPage — primitivas", () => {
     expect(cells).toEqual(["1", "Vector", "1500", "5-1-0"]);
   });
 });
+
+/**
+ * Huecos que el supervisor independiente de #108 demostró con mutaciones sobre
+ * `9fd6ac2`. En ambos casos el código está bien; lo que faltaba era la red.
+ */
+describe("R16 · huecos cerrados tras la supervisión de #108", () => {
+  it("las cabeceras de tabla llevan scope=col (accesibilidad, mutación M7)", async () => {
+    // M7 del supervisor: borrar los 16 `scope="col"` del PR pasaba 335/335. Era
+    // el cambio de accesibilidad más sustantivo del bloque y el único sin test.
+    // Sin `scope`, un lector de pantalla no puede asociar cada celda con su
+    // cabecera en tablas con varias columnas: la tabla se lee como una lista
+    // plana de valores sueltos.
+    apiMock.mockResolvedValue([
+      {
+        id: "e1",
+        at: "2026-08-08T10:00:00Z",
+        actorId: "u1",
+        action: "map.publish",
+        target: "mvp-arena-01",
+        detail: {},
+      },
+    ]);
+    render(<AuditPage me={ME} />);
+    const tabla = await screen.findByRole("table");
+    const cabeceras = within(tabla).getAllByRole("columnheader");
+    expect(cabeceras.length).toBeGreaterThan(1);
+    for (const th of cabeceras) {
+      expect(th.getAttribute("scope"), `cabecera «${th.textContent}» sin scope`).toBe("col");
+    }
+  });
+
+  it("el mensaje de carga NOMBRA lo que carga (mutación M6)", async () => {
+    // M6 del supervisor: dejar la etiqueta vacía («Cargando …») pasaba 335/335.
+    // El texto es el canal principal de este estado, así que vaciarlo degrada
+    // justo lo que la primitiva pretende garantizar.
+    let resolver!: (v: unknown[]) => void;
+    apiMock.mockReturnValue(
+      new Promise<unknown[]>((r) => {
+        resolver = r;
+      }),
+    );
+    render(<AuditPage me={ME} />);
+    try {
+      const cargando = screen.getByRole("status");
+      expect(cargando.textContent).toContain("auditoría");
+      expect(cargando.textContent?.trim()).not.toBe("Cargando …");
+    } finally {
+      // En `finally` a propósito: si la aserción lanza sin resolver la promesa,
+      // la carga queda colgada y la limpieza espera hasta el timeout — el test
+      // tardaba 60 s en dar el rojo (medido). Un test que tarda un minuto en
+      // fallar es un test que se acaba ignorando.
+      resolver([]);
+    }
+  });
+});
