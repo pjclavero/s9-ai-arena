@@ -110,7 +110,7 @@ y soporte de upgrade WebSocket para `/ws/`. El humo en este modo:
 ```bash
 # .env
 COMPOSE_PROFILES=external-db
-DATABASE_URL=postgresql://arena@192.168.1.205:5432/arena
+DATABASE_URL=postgresql://arena@192.0.2.10:5432/arena
 ```
 
 Verificable sin levantar nada: `docker compose -f infrastructure/docker-compose.yml
