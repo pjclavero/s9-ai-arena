@@ -255,6 +255,24 @@ jobs:
             build_args: ""
     steps:
       - uses: actions/checkout@v4
+      # fix/backup-sftp-scheduled-runtime: SÓLO para la variante `backup` de
+      # la matriz. El driver `docker` por defecto (el builder que usa
+      # docker/build-push-action sin este paso) NO soporta el exportador
+      # `type=docker,dest=<tar>` que el paso de más abajo necesita para darle
+      # la imagen a e2e-backup-sftp ("Docker exporter is not supported for
+      # the docker driver" — fallo real visto en CI). `docker-container` sí
+      # lo soporta. Se activa ANTES del build principal (no sólo antes del
+      # de exportar) para que AMBOS pasos compartan builder y caché: si se
+      # activara sólo para el export, ese build sería un cache-miss completo
+      # y reintroduciría el mismo coste que se quería evitar. Acotado a
+      # `matrix.service == 'backup'`: cada variante de la matriz corre en su
+      # propio runner aislado, así que esto NO toca el driver de las otras
+      # diez — nada que perder ahí.
+      - name: Configurar buildx con driver docker-container (sólo backup; necesario para exportar a tar)
+        if: matrix.service == 'backup'
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
       - name: Login en GHCR (solo main)
         if: github.ref == 'refs/heads/main'
         uses: docker/login-action@v3
@@ -284,9 +302,10 @@ jobs:
       # los 15 sin haber emitido una sola línea. Reconstruir la MISMA imagen
       # dos veces en dos jobs también era, en sí, redundante: ya se construye
       # aquí. Este paso la reexporta a un tar (cache-hit inmediato: mismo
-      # builder, mismo contexto, ningún RUN/COPY cambia) para que
-      # e2e-backup-sftp la cargue en vez de reconstruirla — más rápido Y más
-      # fiel, porque ejercita el artefacto que de verdad se publicaría.
+      # builder docker-container, mismo contexto, ningún RUN/COPY cambia)
+      # para que e2e-backup-sftp la cargue en vez de reconstruirla — más
+      # rápido Y más fiel, porque ejercita el artefacto que de verdad se
+      # publicaría (misma imagen, no una reconstruida aparte).
       - name: Exportar la imagen backup como artefacto (para e2e-backup-sftp; cache-hit, no reconstruye)
         if: matrix.service == 'backup'
         uses: docker/build-push-action@v6
