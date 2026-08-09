@@ -490,6 +490,152 @@ describe("backup.sh camino real (restic/pg_dump falsos vía PATH)", () => {
     const metrics = readMetrics();
     expect(metricValue(metrics, "s9_backup_run_success")).toBe("0");
   });
+
+  // ── D2 (ronda 3, seguridad): `log()` interpolaba mensajes sin escapar en
+  // una plantilla JSON. Un nombre de fichero de `bot_sources` (contenido
+  // subido por usuarios) como `pwn", "level":"info", "forged":"si` producía
+  // un JSON "válido" cuyo `level` efectivo dejaba de ser `error` —
+  // ocultando el fallo a Loki/Promtail— e inyectaba campos arbitrarios.
+  // Demostrado aquí con el mismo payload, parseando la línea de log real. ──
+  it("nombre de fichero con comillas/JSON embebido no falsea el log (D2, inyección de campos)", () => {
+    makeDirs();
+    const evilName = 'pwn", "level":"info", "forged":"si';
+    const evilDir = join(root, "bot-sources", evilName);
+    mkdirSync(evilDir, { recursive: true });
+    writeFileSync(join(evilDir, "x.py"), "print(1)");
+    // execFileSync con argv en array: evilDir contiene comillas dobles que
+    // romperían el quoting de una cadena de shell interpolada.
+    execFileSync("chmod", ["000", evilDir]);
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+    try {
+      const { out } = runReal({});
+      const line = out.split("\n").find((l) => l.includes("bot_sources") && l.includes("ilegible"));
+      expect(line).toBeDefined();
+      // Debe seguir siendo JSON válido línea a línea, con level="error" REAL
+      // (no sobrescrito por el payload) y SIN el campo inyectado "forged".
+      const parsed = JSON.parse(line as string);
+      expect(parsed.level).toBe("error");
+      expect(parsed).not.toHaveProperty("forged");
+    } finally {
+      execFileSync("chmod", ["755", evilDir]);
+    }
+  });
+
+  // ── N1 (supervisor, cobertura nueva): un fallo de `cp` AL STAGING (no de
+  // lectura al listar con `find`, que ya se clasifica en `classify_source`)
+  // debía degradar la fuente a `error` y marcar PARTIAL — el código ya lo
+  // hacía, pero no había ningún test que lo demostrara, así que una
+  // regresión futura (p.ej. borrar el chequeo de `stage_source`) no la
+  // cazaría nadie. Se fuerza un fallo de LECTURA DE CONTENIDO (chmod 000 en
+  // el FICHERO, no en el directorio: `find` puede listarlo con sólo permiso
+  // de lectura+ejecución del directorio, pero `cp -a` sí necesita leer el
+  // contenido del fichero) para que `classify_source` marque `ok` y sea
+  // `stage_source` quien detecte el fallo real de copia. ──────────────────
+  it("fallo de cp al copiar al staging degrada la fuente a error y marca PARTIAL (N1)", () => {
+    makeDirs();
+    const mapFile = join(root, "maps", "m1.json");
+    writeFileSync(mapFile, '{"m":1}');
+    execSync(`chmod 000 "${mapFile}"`);
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+    try {
+      const { code, out } = runReal({});
+      expect(code).toBe(2);
+      expect(out).toContain("PARTIAL SUCCESS");
+      expect(out).toContain("fallo copiando 'maps' al staging");
+      const manifest = readManifest();
+      expect(manifest.maps.status).toBe("error"); // NUNCA "ok" con contenido que no llegó a restic
+      const metrics = readMetrics();
+      expect(metricValue(metrics, "s9_backup_source_error", 'source="maps"')).toBe("1");
+      // El staging que restic SÍ guardó no debe contener el fichero que
+      // falló al copiar (no hay "ok" a medias, ni promesas falsas).
+      const staged = join(store, "s9-arena-data", join(root, "work"), "staging", "maps");
+      expect(existsSync(staged) && existsSync(join(staged, "m1.json"))).toBe(false);
+    } finally {
+      execSync(`chmod 644 "${mapFile}"`);
+    }
+  });
+
+  // ── N4 (supervisor, cobertura nueva): REPLAY_RETENTION_DAYS no tenía NI
+  // UN test — era el titular de #110b ("nunca se había copiado ni un solo
+  // replay") y su semántica de ventana temporal quedó completamente sin
+  // ejercitar. Se crean un replay reciente (dentro de retención), uno
+  // antiguo (fuera de retención, y NO bajo official/) y se fija
+  // REPLAY_RETENTION_DAYS a un valor pequeño para no depender de fechas
+  // lejanas. ────────────────────────────────────────────────────────────
+  it("REPLAY_RETENTION_DAYS excluye replays antiguos fuera de official/ (N4)", () => {
+    makeDirs();
+    const replaysDir = join(root, "replays");
+    writeFileSync(join(replaysDir, "reciente.jsonl"), '{"tick":1}\n');
+    writeFileSync(join(replaysDir, "antiguo.jsonl"), '{"tick":0}\n');
+    // 10 días en el pasado; retención de la prueba = 2 días.
+    const oldTime = new Date(Date.now() - 10 * 24 * 3600 * 1000);
+    const touchStamp = `${oldTime.getFullYear()}${String(oldTime.getMonth() + 1).padStart(2, "0")}${String(oldTime.getDate()).padStart(2, "0")}0000`;
+    execSync(`touch -t ${touchStamp} "${join(replaysDir, "antiguo.jsonl")}"`);
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+    const { code } = runReal({ REPLAY_RETENTION_DAYS: "2" });
+    expect([0, 2]).toContain(code);
+    const manifest = readManifest();
+    expect(manifest.replays.status).toBe("ok");
+    expect(manifest.replays.files).toBe(1); // sólo el reciente
+    const staged = join(store, "s9-arena-data", join(root, "work"), "staging", "replays");
+    expect(existsSync(join(staged, "reciente.jsonl"))).toBe(true);
+    expect(existsSync(join(staged, "antiguo.jsonl"))).toBe(false);
+  });
+
+  it("REPLAY_RETENTION_DAYS NO se aplica dentro de official/ (siempre preferente)", () => {
+    makeDirs();
+    const officialDir = join(root, "replays", "official");
+    mkdirSync(officialDir, { recursive: true });
+    writeFileSync(join(officialDir, "muy-viejo.jsonl"), '{"tick":0}\n');
+    const oldTime = new Date(Date.now() - 400 * 24 * 3600 * 1000); // > 1 año
+    const touchStamp = `${oldTime.getFullYear()}${String(oldTime.getMonth() + 1).padStart(2, "0")}${String(oldTime.getDate()).padStart(2, "0")}0000`;
+    execSync(`touch -t ${touchStamp} "${join(officialDir, "muy-viejo.jsonl")}"`);
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+    const { code } = runReal({ REPLAY_RETENTION_DAYS: "1" }); // retención mínima
+    expect([0, 2]).toContain(code);
+    const manifest = readManifest();
+    expect(manifest.replays.status).toBe("ok");
+    expect(manifest.replays.files).toBe(1); // official/ ignora la retención
+  });
+
+  // ── N2 (supervisor, cobertura nueva, menor): el `trap` de limpieza de
+  // $WORK_DIR no tenía test — una regresión que lo quitara dejaría el
+  // staging (con el dump de PostgreSQL sin cifrar) residual en el
+  // contenedor entre ejecuciones. ──────────────────────────────────────────
+  it("el trap de limpieza borra $WORK_DIR (staging con el dump) al terminar (N2)", () => {
+    makeDirs();
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+    const { code } = runReal({});
+    expect(code).toBe(0);
+    expect(existsSync(join(root, "work"))).toBe(false);
+  });
+
+  // ── N3 (supervisor, cobertura nueva, menor): `unset PGPASSWORD` tras
+  // pg_dump no tenía test — una regresión que lo quitara dejaría la
+  // contraseña de PostgreSQL en el entorno de los pasos siguientes
+  // (incluida la invocación real de `restic`). Se instrumenta el `restic`
+  // falso para volcar su propio entorno y se comprueba que PGPASSWORD no
+  // viaja hasta ahí. ────────────────────────────────────────────────────
+  it("PGPASSWORD no sigue en el entorno tras pg_dump (N3, no llega a restic)", () => {
+    makeDirs();
+    writeFakePgDumpOk(fakebin);
+    const envDump = join(root, "restic-env.log");
+    writeFileSync(
+      join(fakebin, "restic"),
+      // "^PGPASSWORD=" a propósito (no "PGPASSWORD_FILE=", que es la ruta de
+      // configuración legítima y SÍ debe seguir presente en el entorno).
+      `#!/usr/bin/env bash\nenv | grep -E '^PGPASSWORD=' >> "${envDump}" || true\nexit 0\n`,
+      { mode: 0o755 },
+    );
+    const { code } = runReal({});
+    expect(code).toBe(0);
+    expect(existsSync(envDump) && readFileSync(envDump, "utf8").trim() !== "").toBe(false);
+  });
 });
 
 // ── Cadena E2E real (exigencia del coordinador tras la revisión del
@@ -576,6 +722,53 @@ describe("backup.sh → restic falso fiel → restore.sh --restore/--verify (E2E
     writeFileSync(mapFile, '{"map":"CORRUPTO"}\n');
 
     expect(() => execFileSync("bash", [RESTORE, "--verify", dest], { stdio: "pipe" })).toThrow();
+  });
+
+  // ── D1 (ronda 3, BLOQUEANTE para el simulacro): reproducido con backup.sh
+  // real que, con las cuatro fuentes no críticas vacías (el estado ACTUAL
+  // de producción en VM108, y el de cualquier instalación recién
+  // desplegada), `manifest.sha256` queda en 0 bytes y `sha256sum -c` sobre
+  // un fichero vacío sale con exit 1 ("no properly formatted checksum
+  // lines found"). Un operador siguiendo la Fase 7 del runbook obtendría un
+  // FALLO DURO sobre un backup perfecto. Es el mismo TIPO de defecto que
+  // hundió la ronda 1 (--verify roto en un escenario real sin test), sólo
+  // que en el extremo opuesto: aquí "no hay nada que verificar" debe ser
+  // éxito, no fallo. ──────────────────────────────────────────────────────
+  it("cadena completa con las CUATRO fuentes no críticas vacías: --verify pasa (D1, estado real de VM108)", () => {
+    root = mkdtempSync(join(tmpdir(), "e10-e2e-empty-"));
+    fakebin = join(root, "bin");
+    store = join(root, "store");
+    workDir = join(root, "work");
+    mkdirSync(fakebin, { recursive: true });
+    mkdirSync(store, { recursive: true });
+    // maps/bot-sources/replays/assets existen (son los volúmenes montados
+    // por el compose) pero están VACÍOS, exactamente como en VM108 hoy.
+    for (const dir of ["maps", "bot-sources", "replays", "assets", "secrets"]) {
+      mkdirSync(join(root, dir), { recursive: true });
+    }
+    writeFileSync(join(root, "secrets", "restic_password.txt"), "s3cr3t-restic-empty", { mode: 0o600 });
+    writeFileSync(join(root, "secrets", "postgres_password.txt"), "s3cr3t-pg-empty", { mode: 0o600 });
+    writeFakePgDumpOk(fakebin);
+    const log = join(root, "restic-calls.log");
+    writeFakeResticFaithful(fakebin, store, log);
+
+    const backupOut = execFileSync("bash", [BACKUP], { encoding: "utf8", env: backupEnv() });
+    expect(backupOut).toContain("backup SUCCESS");
+
+    const dest = join(root, "restored-empty");
+    execFileSync("bash", [RESTORE, "--restore", dest], { encoding: "utf8", env: backupEnv() });
+
+    // El manifest.sha256 restaurado debe existir y estar vacío (cobertura
+    // 'empty' declarada, no ausente ni corrupto).
+    const manifestPath = execSync(`find "${dest}" -name manifest.sha256`, { encoding: "utf8" }).trim();
+    expect(manifestPath).not.toBe("");
+    expect(readFileSync(manifestPath, "utf8")).toBe("");
+
+    // Antes de D1 esto lanzaba: sha256sum: manifest.sha256: no properly
+    // formatted checksum lines found / exit 1, sobre un backup sano.
+    const verifyOut = execFileSync("bash", [RESTORE, "--verify", dest], { encoding: "utf8" });
+    expect(verifyOut).toContain("vacío");
+    expect(verifyOut).toContain("integridad verificada");
   });
 
   // ── Mutación M2 (obligatoria, coordinador): "el manifest apunta a una

@@ -117,7 +117,25 @@ PGDATABASE="${PGDATABASE:-arena}"
 RESTIC_REPOSITORY="${RESTIC_REPOSITORY:-}"
 # RESTIC_PASSWORD_FILE y PGPASSWORD_FILE llegan como secretos montados.
 
-log() { printf '{"ts":"%s","level":"%s","service":"backup","msg":"%s"}\n' "$(date -u +%FT%TZ)" "$1" "$2"; }
+# D2 (ronda 3 de #112): el mensaje de `log()` a menudo interpola nombres de
+# fichero (stderr de `find`/`cp`), y `bot_sources` es contenido subido por
+# usuarios. Sin escapar, un directorio llamado
+# `pwn", "level":"info", "forged":"si` produce un JSON "válido" cuyo
+# `level` efectivo deja de ser `error` — un usuario podría ocultar un fallo
+# de backup a la alertería de Loki/Promtail e inyectar campos arbitrarios.
+# json_escape neutraliza backslash, comillas y los caracteres de control más
+# comunes ANTES de interpolar, así que el mensaje viaja siempre como un
+# valor de cadena JSON, nunca como estructura.
+json_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  printf '%s' "$s"
+}
+log() { printf '{"ts":"%s","level":"%s","service":"backup","msg":"%s"}\n' "$(date -u +%FT%TZ)" "$1" "$(json_escape "$2")"; }
 
 # ── Estado de clasificación por fuente ─────────────────────────────────────
 # Bash asociativos: SRC_STATUS[nombre]=ok|empty|error, SRC_FILES[nombre]=N.

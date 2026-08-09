@@ -8,7 +8,19 @@
 #   restore.sh --dry-run               plan sin tocar nada (probado por vitest)
 set -euo pipefail
 
-log() { printf '{"ts":"%s","level":"%s","service":"restore","msg":"%s"}\n' "$(date -u +%FT%TZ)" "$1" "$2"; }
+# D2 (ronda 3 de #112, ver backup.sh): mismo escape antes de interpolar en
+# el JSON del log — este script también interpola rutas (p.ej. $dir, que
+# viene de un argumento de línea de comandos) en el mensaje.
+json_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  printf '%s' "$s"
+}
+log() { printf '{"ts":"%s","level":"%s","service":"restore","msg":"%s"}\n' "$(date -u +%FT%TZ)" "$1" "$(json_escape "$2")"; }
 
 case "${1:---dry-run}" in
   --dry-run)
@@ -51,8 +63,23 @@ case "${1:---dry-run}" in
       exit 1
     fi
     manifest="$manifests"
-    # El manifest usa rutas maps/… y replays/…: verificar desde su directorio.
-    (cd "$(dirname "$manifest")" && sha256sum -c "$manifest")
+    # D1 (ronda 3 de #112): un manifest.sha256 de 0 bytes es el resultado
+    # LEGÍTIMO de un backup sano cuando las cuatro fuentes no críticas
+    # (maps/bot_sources/assets/replays) están vacías — el estado actual de
+    # producción (VM108) y el de cualquier instalación recién desplegada.
+    # `sha256sum -c` sobre un fichero vacío sale con exit 1 y el mensaje "no
+    # properly formatted checksum lines found": un operador siguiendo la
+    # Fase 7 del runbook vería un FALLO DURO sobre un backup perfecto. Un
+    # manifest vacío SÍ existe (a diferencia de "ausente", ya descartado
+    # arriba) y no tiene líneas que puedan estar corruptas: no hay nada que
+    # verificar, y eso es distinto de "algo falló". Se declara éxito
+    # explícitamente, no se omite la comprobación en silencio.
+    if [ ! -s "$manifest" ]; then
+      log info "manifest.sha256 vacío: ninguna fuente no crítica tenía contenido en este backup (cobertura 'empty'); nada que verificar"
+    else
+      # El manifest usa rutas maps/… y replays/…: verificar desde su directorio.
+      (cd "$(dirname "$manifest")" && sha256sum -c "$manifest")
+    fi
     log info "integridad verificada: checksums de mapas y replays correctos"
     ;;
   *)
