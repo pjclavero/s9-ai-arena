@@ -12,6 +12,18 @@
 # sin que nadie lo guardara, y "no hay mapas todavía" era indistinguible de
 # "el backup se rompió". Este script separa ambos casos.
 #
+# Revisión de un supervisor independiente sobre la primera versión de este
+# rediseño (#112) encontró que `restore.sh --verify` seguía roto en el mundo
+# real: el manifest usaba rutas relativas "maps/…", "replays/…" pero cada
+# fuente se pasaba a restic con su ruta ABSOLUTA de origen (/data/maps,
+# /data/replays…), así que al restaurar, el manifest y los datos NUNCA
+# coincidían en el mismo árbol y `sha256sum -c` fallaba con
+# "FAILED open or read" para todo. Fix aquí: SIEMPRE construir un directorio
+# de "staging" ($WORK_DIR/staging) con la MISMA jerarquía relativa que
+# describe el manifest (maps/, bot_sources/, assets/, replays/, más el dump y
+# los dos manifests), y pasarle a restic ese único directorio. Lo que se
+# restaura es exactamente lo que describe el manifest, en el mismo sitio.
+#
 # Contrato de clasificación (por fuente):
 #   ok       el directorio existe y tiene contenido válido.
 #   empty    el directorio existe y está vacío, O no existe pero su ausencia
@@ -23,7 +35,11 @@
 #
 # Fuentes CRÍTICAS (postgres, secrets): un `error` en ellas es FULL FAILURE:
 # se aborta antes de tocar restic y el backup se marca fallido. Sin el dump
-# de la BD o sin los secretos, un backup "parcial" sería engañoso.
+# de la BD o sin los secretos, un backup "parcial" sería engañoso. OJO: un
+# directorio de secretos VACÍO (0 ficheros, legible) es `empty`, no `error`
+# — un fallo real de lectura es lo único que cuenta como `error` aquí. La
+# primera versión de este script confundía ambos casos por un efecto de
+# `pipefail` sobre `grep -c .` (ver classify_source más abajo).
 #
 # Fuentes NO críticas (maps, bot_sources, replays, assets): un `error` en
 # una de ellas se registra y se emite en métricas, pero `restic backup` SE
@@ -48,14 +64,30 @@
 #      sólo copiaba official/ — un subdirectorio que en producción no
 #      existe, por lo que NUNCA se había copiado ni un solo replay.
 #   4. Secretos (infrastructure/secrets): cifrados por el propio repositorio
-#      restic; sus VALORES no aparecen jamás en logs, manifest ni git.
-#      (crítica)
+#      restic, en su PROPIO snapshot (tag s9-arena-secrets), NUNCA dentro
+#      del staging de datos; sus VALORES no aparecen jamás en logs,
+#      manifest ni git. (crítica)
 #   5. manifest.sha256 (checksums, para restaurar) y manifest.json (cobertura
-#      por fuente: qué se guardó, qué estaba vacío, qué falló). El manifest
+#      por fuente: qué se guardó, qué estaba vacío, qué falló). Ambos viven
+#      DENTRO del staging, junto a los datos que describen. El manifest
 #      NUNCA contiene secretos ni variables de entorno.
 # Destino: RESTIC_REPOSITORY (NAS/ZFS designado por el operador).
 # Métricas: escribe s9_backup_* en METRICS_DIR (textfile collector de
 #   node-exporter) → alertas BackupFailed / BackupTooOld (26 h).
+#
+# RIESGO CONOCIDO (no bloqueante, documentado a petición del supervisor):
+# el staging duplica en $WORK_DIR el contenido de maps/bot_sources/assets/
+# replays antes de subirlo a restic — puede llegar a ser tan grande como la
+# suma de esos cuatro volúmenes. El servicio `backup` del compose NO monta
+# hoy un volumen dedicado para $WORK_DIR (por defecto /tmp/backup-work), así
+# que ese crecimiento cae en la capa de escritura del contenedor, compartida
+# con el resto de /tmp y con límite implícito en el disco del host. Mitigación
+# propuesta (aplicada en infrastructure/docker-compose.yml de este mismo
+# cambio): volumen nombrado `backup_work` montado en /tmp/backup-work, para
+# que el crecimiento se vea y se limite por separado del resto del
+# contenedor, y quede visible con `docker system df -v`. Si el volumen de
+# datos crece mucho, subir REPLAY_RETENTION_DAYS con cuidado o mover
+# $WORK_DIR a un disco con más margen.
 #
 # Modos:
 #   backup.sh            backup real (requiere restic, pg_dump y el repo).
@@ -94,14 +126,22 @@ declare -A SRC_FILES=()
 FULL_FAILURE=0
 PARTIAL=0
 
-# classify_dir NOMBRE DIRECTORIO
-# Clasifica un directorio de datos genérico (no-crítico). Nunca aborta el
-# script: registra el resultado en SRC_STATUS/SRC_FILES y, si hay error,
-# marca PARTIAL=1 (el backup sigue con el resto de fuentes).
-classify_dir() {
-  local name="$1" dir="$2" files
+# classify_source NOMBRE DIRECTORIO CRÍTICA(0/1)
+# Comprueba SOLO legibilidad/tamaño (no copia nada). Nunca aborta el script
+# aquí mismo: registra el resultado y marca FULL_FAILURE o PARTIAL según la
+# criticidad de la fuente, dejando que el llamador decida qué hacer.
+#
+# `grep -c .` devuelve exit 1 cuando cuenta 0 líneas (no es un error de
+# `grep`, es su forma de decir "cero coincidencias"). Antes esta función
+# usaba `if secret_count=$(find … | grep -c .); then …`, y con `pipefail`
+# ese exit 1 de `grep -c .` se propagaba al `if`: un directorio de secretos
+# VACÍO (pero perfectamente legible) se clasificaba como `error` y disparaba
+# FULL FAILURE, contradiciendo la cabecera de este mismo fichero. Aquí el
+# conteo se separa del chequeo de legibilidad para que "cero ficheros" y
+# "no se pudo leer" nunca se confundan.
+classify_source() {
+  local name="$1" dir="$2" critical="$3" files
   if [ ! -d "$dir" ]; then
-    # Ausencia esperable (contenido aún no subido a ese volumen): empty, no error.
     SRC_STATUS[$name]=empty
     SRC_FILES[$name]=0
     return 0
@@ -110,17 +150,37 @@ classify_dir() {
     log error "fuente '$name' ($dir) ilegible: $(tail -c 300 "$WORK_DIR/.err-$name")"
     SRC_STATUS[$name]=error
     SRC_FILES[$name]=0
-    PARTIAL=1
+    if [ "$critical" = 1 ]; then FULL_FAILURE=1; else PARTIAL=1; fi
     return 1
   fi
   local count=0
-  [ -n "$files" ] && count=$(printf '%s\n' "$files" | grep -c .)
+  [ -n "$files" ] && count=$(printf '%s\n' "$files" | grep -c . || true)
   if [ "$count" -eq 0 ]; then
     SRC_STATUS[$name]=empty
     SRC_FILES[$name]=0
   else
     SRC_STATUS[$name]=ok
     SRC_FILES[$name]=$count
+  fi
+  return 0
+}
+
+# stage_source NOMBRE DIRECTORIO_ORIGEN DIRECTORIO_STAGING
+# Copia una fuente ya clasificada como `ok` a su hueco dentro del staging,
+# preservando la jerarquía relativa que describirá el manifest. Si la copia
+# en sí falla (disco lleno, error transitorio), degrada la fuente a `error`
+# a posteriori: mejor un PARTIAL SUCCESS honesto que un manifest que promete
+# datos que no llegaron a subirse.
+stage_source() {
+  local name="$1" src="$2" dst="$3"
+  mkdir -p "$dst"
+  if ! cp -a "$src"/. "$dst"/ 2>"$WORK_DIR/.err-stage-$name"; then
+    log error "fallo copiando '$name' al staging: $(tail -c 300 "$WORK_DIR/.err-stage-$name")"
+    rm -rf "$dst"
+    SRC_STATUS[$name]=error
+    SRC_FILES[$name]=0
+    PARTIAL=1
+    return 1
   fi
   return 0
 }
@@ -149,6 +209,12 @@ write_metrics() { # $1 exit_code $2 duration_s $3 restic_snapshot_created(0/1)
     echo "# HELP s9_backup_duration_seconds Duración del último backup."
     echo "# TYPE s9_backup_duration_seconds gauge"
     echo "s9_backup_duration_seconds $2"
+    # OJO (revisión del supervisor, punto 6/M7): esta marca de tiempo SOLO se
+    # escribe con exit==0 (SUCCESS). Un PARTIAL SUCCESS (2) o un FULL FAILURE
+    # (1) NUNCA la actualizan — se preserva la del último éxito real más
+    # abajo. Así, un PARTIAL sostenido durante 26h+ SÍ dispara BackupTooOld:
+    # no hay hueco entre "backup roto" y "backup silenciosamente caducado".
+    # Cubierto por test (ver backup.test.ts, sección de métricas).
     if [ "$1" = 0 ]; then
       echo "# HELP s9_backup_last_success_timestamp_seconds Época del último backup correcto."
       echo "# TYPE s9_backup_last_success_timestamp_seconds gauge"
@@ -196,11 +262,11 @@ fi
 
 if [ "$DRY_RUN" = 1 ]; then
   log info "DRY-RUN: plan de backup (no se escribe nada)"
-  echo "PLAN 1/5 · pg_dump -Fc -h $PGHOST -U $PGUSER $PGDATABASE -f pgdump-\$(fecha).dump [fuente crítica]"
+  echo "PLAN 1/5 · pg_dump -Fc -h $PGHOST -U $PGUSER $PGDATABASE -f staging/pgdump-\$(fecha).dump [fuente crítica]"
   echo "PLAN 2/5 · clasificar fuentes (ok/empty/error): maps, bot_sources, replays, assets, secrets"
-  echo "PLAN 3/5 · manifest.sha256 + manifest.json (cobertura por fuente, sin secretos)"
-  echo "PLAN 4/5 · restic backup: datos válidos (crítico + no críticos en estado ok/empty) + replays <= $REPLAY_RETENTION_DAYS días (official/ sin límite)"
-  echo "PLAN 5/5 · restic backup de $SECRETS_DIR [fuente crítica] + restic forget --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune && restic check"
+  echo "PLAN 3/5 · construir staging/ (maps/, bot_sources/, assets/, replays/) + manifest.sha256 + manifest.json DENTRO del staging"
+  echo "PLAN 4/5 · restic backup del staging completo <= $REPLAY_RETENTION_DAYS días de replays (official/ sin límite) + restic backup de $SECRETS_DIR [fuente crítica, snapshot separado]"
+  echo "PLAN 5/5 · restic forget --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune && restic check"
   echo "MÉTRICAS · $METRICS_DIR/s9_backup.prom (alerta si falla o si no hay éxito en 26 h)"
   echo "EXIT · 0 SUCCESS / 1 FULL FAILURE (fuente crítica o restic) / 2 PARTIAL SUCCESS (fuente no crítica en error)"
   [ "$errors" = 0 ] && echo "CONFIG OK" || echo "CONFIG INCOMPLETA (ver errores arriba)"
@@ -212,10 +278,14 @@ fi
 start=$(date +%s)
 mkdir -p "$WORK_DIR"
 trap 'rm -rf "$WORK_DIR"' EXIT
+STAGING="$WORK_DIR/staging"
+mkdir -p "$STAGING"
 
-# ── 1/5: PostgreSQL (fuente CRÍTICA) ───────────────────────────────────────
+# ── 1/5: PostgreSQL (fuente CRÍTICA) — el dump se escribe YA dentro del
+# staging, para que quede en el mismo árbol que se sube a restic y que luego
+# se restaura entero de una vez. ────────────────────────────────────────────
 log info "1/5 pg_dump de $PGDATABASE (fuente crítica)"
-PGDUMP_FILE="$WORK_DIR/pgdump-$(date -u +%Y%m%d%H%M%S).dump"
+PGDUMP_FILE="$STAGING/pgdump-$(date -u +%Y%m%d%H%M%S).dump"
 export PGPASSWORD="$(cat "${PGPASSWORD_FILE:?PGPASSWORD_FILE requerido}")"
 if pg_dump -Fc -h "$PGHOST" -U "$PGUSER" "$PGDATABASE" -f "$PGDUMP_FILE" 2>"$WORK_DIR/.err-postgres"; then
   SRC_STATUS[postgres]=ok
@@ -229,19 +299,12 @@ fi
 unset PGPASSWORD
 
 # ── 2/5: secretos (fuente CRÍTICA) — sólo se comprueba legibilidad aquí; el
-# backup real de su CONTENIDO lo hace restic más abajo, y jamás se vuelca a
+# backup real de su CONTENIDO lo hace restic más abajo, en su propio
+# snapshot (nunca dentro del staging de datos), y jamás se vuelca a
 # manifest/log (DoD T10.4: los valores no aparecen jamás fuera de restic). ──
 if [ "$FULL_FAILURE" = 0 ]; then
   log info "2/5 comprobando legibilidad de $SECRETS_DIR (fuente crítica; contenido nunca se lista)"
-  if secret_count=$(find "$SECRETS_DIR" -type f 2>"$WORK_DIR/.err-secrets" | grep -c .); then
-    SRC_STATUS[secrets]=ok
-    SRC_FILES[secrets]=$secret_count
-  else
-    log error "secrets ilegible: $(tail -c 300 "$WORK_DIR/.err-secrets")"
-    SRC_STATUS[secrets]=error
-    SRC_FILES[secrets]=0
-    FULL_FAILURE=1
-  fi
+  classify_source secrets "$SECRETS_DIR" 1
 fi
 
 if [ "$FULL_FAILURE" = 1 ]; then
@@ -255,55 +318,79 @@ if [ "$FULL_FAILURE" = 1 ]; then
   exit 1
 fi
 
-# ── 3/5: fuentes NO críticas — cada una se clasifica de forma independiente;
-# un error aquí NUNCA impide que restic guarde el resto (ver cabecera). ─────
-log info "3/5 clasificando fuentes no críticas: maps, bot_sources, assets, replays"
-classify_dir maps "$MAPS_DIR"
-classify_dir bot_sources "$BOT_SOURCES_DIR"
-classify_dir assets "$ASSETS_DIR"
+# ── 3/5: fuentes NO críticas — cada una se clasifica y se copia al staging
+# de forma independiente; un error aquí NUNCA impide que restic guarde el
+# resto (ver cabecera). ─────────────────────────────────────────────────────
+log info "3/5 clasificando y copiando al staging: maps, bot_sources, assets, replays"
+classify_source maps "$MAPS_DIR" 0
+[ "${SRC_STATUS[maps]}" = ok ] && stage_source maps "$MAPS_DIR" "$STAGING/maps"
+
+classify_source bot_sources "$BOT_SOURCES_DIR" 0
+[ "${SRC_STATUS[bot_sources]}" = ok ] && stage_source bot_sources "$BOT_SOURCES_DIR" "$STAGING/bot_sources"
+
+classify_source assets "$ASSETS_DIR" 0
+[ "${SRC_STATUS[assets]}" = ok ] && stage_source assets "$ASSETS_DIR" "$STAGING/assets"
 
 # Replays: alcance ampliado respecto a la versión anterior (ver cabecera).
 # Se copia TODO $REPLAYS_DIR dentro de la retención; official/, si existe,
 # se trata como preferente y se incluye siempre sin límite de retención.
-RECENT_REPLAYS="$WORK_DIR/replays-recent"
-mkdir -p "$RECENT_REPLAYS"
+#
+# La copia usa `find -print0` + `read -d ''` (NUL como separador) en vez de
+# `find | xargs -I{}` (separador de línea): el supervisor detectó que un
+# solo nombre de fichero con un salto de línea real rompía TODO el listado
+# de `xargs -I{}` — no había inyección de comandos, pero sí denegación de
+# respaldo (la fuente entera se excluía de restic sin ningún error visible).
+STAGING_REPLAYS="$STAGING/replays"
+mkdir -p "$STAGING_REPLAYS"
 if [ ! -d "$REPLAYS_DIR" ]; then
   SRC_STATUS[replays]=empty
   SRC_FILES[replays]=0
-elif ! replay_files=$(find "$REPLAYS_DIR" -type f \
+elif ! find "$REPLAYS_DIR" -type f \
     \( -path "$REPLAYS_DIR/official/*" -o -mtime "-$REPLAY_RETENTION_DAYS" \) \
-    2>"$WORK_DIR/.err-replays"); then
+    -print0 > "$WORK_DIR/.replays.list" 2>"$WORK_DIR/.err-replays"; then
   log error "fuente 'replays' ($REPLAYS_DIR) ilegible: $(tail -c 300 "$WORK_DIR/.err-replays")"
   SRC_STATUS[replays]=error
   SRC_FILES[replays]=0
   PARTIAL=1
 else
   rcount=0
-  [ -n "$replay_files" ] && rcount=$(printf '%s\n' "$replay_files" | grep -c .)
+  copy_ok=1
+  while IFS= read -r -d '' f; do
+    rcount=$((rcount + 1))
+    rel="${f#"$REPLAYS_DIR"/}"
+    destf="$STAGING_REPLAYS/$rel"
+    if ! mkdir -p "$(dirname "$destf")" || ! cp -a "$f" "$destf" 2>>"$WORK_DIR/.err-replays-cp"; then
+      copy_ok=0
+      break
+    fi
+  done < "$WORK_DIR/.replays.list"
   if [ "$rcount" -eq 0 ]; then
     SRC_STATUS[replays]=empty
     SRC_FILES[replays]=0
+  elif [ "$copy_ok" = 1 ]; then
+    SRC_STATUS[replays]=ok
+    SRC_FILES[replays]=$rcount
   else
-    if printf '%s\n' "$replay_files" | xargs -I{} cp --parents -t "$RECENT_REPLAYS" {} 2>"$WORK_DIR/.err-replays-cp"; then
-      SRC_STATUS[replays]=ok
-      SRC_FILES[replays]=$rcount
-    else
-      log error "fallo copiando replays dentro de retención: $(tail -c 300 "$WORK_DIR/.err-replays-cp")"
-      SRC_STATUS[replays]=error
-      SRC_FILES[replays]=0
-      PARTIAL=1
-    fi
+    log error "fallo copiando replays dentro de retención: $(tail -c 300 "$WORK_DIR/.err-replays-cp")"
+    rm -rf "$STAGING_REPLAYS"
+    mkdir -p "$STAGING_REPLAYS"
+    SRC_STATUS[replays]=error
+    SRC_FILES[replays]=0
+    PARTIAL=1
   fi
 fi
+[ "${SRC_STATUS[replays]}" != ok ] && rmdir "$STAGING_REPLAYS" 2>/dev/null || true
 
-# ── 4/5: manifest.sha256 + manifest.json — sólo con fuentes ok (empty no
-# aporta checksums; error se excluye para no ofrecer una integridad falsa). ──
-log info "4/5 generando manifest (sha256 + cobertura json)"
-: > "$WORK_DIR/manifest.sha256"
-[ "${SRC_STATUS[maps]:-}" = ok ] && (cd "$MAPS_DIR" && find . -type f -exec sha256sum {} + | sed 's| \./| maps/|') >> "$WORK_DIR/manifest.sha256"
-[ "${SRC_STATUS[bot_sources]:-}" = ok ] && (cd "$BOT_SOURCES_DIR" && find . -type f -exec sha256sum {} + | sed 's| \./| bot_sources/|') >> "$WORK_DIR/manifest.sha256"
-[ "${SRC_STATUS[assets]:-}" = ok ] && (cd "$ASSETS_DIR" && find . -type f -exec sha256sum {} + | sed 's| \./| assets/|') >> "$WORK_DIR/manifest.sha256"
-[ "${SRC_STATUS[replays]:-}" = ok ] && (cd "$RECENT_REPLAYS" && find . -type f -exec sha256sum {} + | sed 's| \./| replays/|') >> "$WORK_DIR/manifest.sha256"
+# ── 4/5: manifest.sha256 + manifest.json — generados DESDE el staging, así
+# que las rutas del manifest son exactamente las rutas que se van a
+# restaurar (fix del defecto real de #112: antes el manifest usaba rutas
+# relativas "maps/…" mientras los datos se subían a restic con su ruta
+# ABSOLUTA de origen, y `restore.sh --verify` nunca encontraba nada). Sólo
+# con fuentes `ok` (empty no aporta checksums; error se excluye para no
+# ofrecer una integridad falsa). Se escriben DENTRO del staging para que
+# viajen con los datos en el mismo snapshot. ────────────────────────────────
+log info "4/5 generando manifest (sha256 + cobertura json) dentro del staging"
+(cd "$STAGING" && find . -type f ! -name 'manifest.*' ! -name 'pgdump-*' -exec sha256sum {} + | sed 's| \./| |') > "$STAGING/manifest.sha256"
 
 {
   printf '{'
@@ -314,20 +401,16 @@ log info "4/5 generando manifest (sha256 + cobertura json)"
     json_source "$src"
   done
   printf '}\n'
-} > "$WORK_DIR/manifest.json"
+} > "$STAGING/manifest.json"
 
 # ── 5/5: restic — se ejecuta SIEMPRE que las fuentes críticas estén ok,
-# guardando lo que sí se pudo capturar (SUCCESS o PARTIAL SUCCESS). ────────
-log info "5/5 restic backup de datos (crítico + fuentes no críticas disponibles)"
-RESTIC_ARGS=("$PGDUMP_FILE" "$WORK_DIR/manifest.sha256" "$WORK_DIR/manifest.json")
-[ "${SRC_STATUS[maps]:-}" = ok ] && RESTIC_ARGS+=("$MAPS_DIR")
-[ "${SRC_STATUS[bot_sources]:-}" = ok ] && RESTIC_ARGS+=("$BOT_SOURCES_DIR")
-[ "${SRC_STATUS[assets]:-}" = ok ] && RESTIC_ARGS+=("$ASSETS_DIR")
-[ "${SRC_STATUS[replays]:-}" = ok ] && RESTIC_ARGS+=("$RECENT_REPLAYS")
-
+# guardando lo que sí se pudo capturar (SUCCESS o PARTIAL SUCCESS). Un único
+# argumento ($STAGING) porque todo lo que hay que restaurar junto vive ya
+# en el mismo árbol relativo que describe el manifest. ─────────────────────
+log info "5/5 restic backup del staging (crítico + fuentes no críticas disponibles)"
 status=0
 snapshot_created=0
-if restic backup --tag s9-arena-data "${RESTIC_ARGS[@]}"; then
+if restic backup --tag s9-arena-data "$STAGING"; then
   snapshot_created=1
 else
   status=1

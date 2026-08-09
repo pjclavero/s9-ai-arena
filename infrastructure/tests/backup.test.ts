@@ -4,6 +4,17 @@
 // el cableado del servicio backup en el Compose. El simulacro completo de
 // recuperación (VM vacía → plataforma, < 2 h) queda pendiente de entorno con
 // Docker (runbook y cronómetro en docs/recuperacion.md).
+//
+// #112 → revisión del supervisor → #112 (continuación): la primera versión
+// de esta suite probaba `restore.sh --verify` contra un directorio MONTADO A
+// MANO (mkdir + writeFileSync + sha256sum manual), con una jerarquía que
+// `backup.sh` no produce jamás. Eso enmascaró el defecto real: el manifest
+// usaba rutas relativas mientras los datos se subían con su ruta absoluta de
+// origen, así que `--verify` estaba roto en el mundo real aunque el test
+// pasara. La cadena obligatoria ahora es SIEMPRE:
+//   datos fixture → backup.sh (real) → restic falso FIEL (preserva rutas
+//   absolutas como el real) → restore.sh --restore → restore.sh --verify.
+// Ver el describe "cadena E2E real" más abajo.
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { execFileSync, execSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
@@ -13,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 
 const here = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = join(here, "..", "..");
 const BACKUP = join(here, "..", "backup", "backup.sh");
 const RESTORE = join(here, "..", "backup", "restore.sh");
 const SECRET_VALUE = "valor-secreto-que-jamas-debe-aparecer-en-logs";
@@ -68,7 +80,7 @@ describe("backup.sh --dry-run (ejecutado de verdad, sin docker)", () => {
   });
 });
 
-describe("restore.sh (dry-run y verificación de integridad reales)", () => {
+describe("restore.sh --dry-run (ejecutado de verdad, sin docker)", () => {
   it("--dry-run: plan completo con configuración", () => {
     const out = execFileSync("bash", [RESTORE, "--dry-run"], {
       encoding: "utf8",
@@ -77,24 +89,6 @@ describe("restore.sh (dry-run y verificación de integridad reales)", () => {
     expect(out).toContain("restic restore latest");
     expect(out).toContain("pg_restore");
     expect(out).toContain("CONFIG OK");
-  });
-
-  it("--verify valida un manifest real y detecta corrupción", () => {
-    // Simula un snapshot restaurado: mapas + replay oficial + manifest.
-    const restored = join(tmp, "restored");
-    mkdirSync(join(restored, "maps"), { recursive: true });
-    mkdirSync(join(restored, "official"), { recursive: true });
-    writeFileSync(join(restored, "maps", "mvp.json"), '{"map":"mvp"}');
-    writeFileSync(join(restored, "official", "battle-1.jsonl"), '{"tick":1}\n');
-    execSync("sha256sum maps/mvp.json official/battle-1.jsonl > manifest.sha256", { cwd: restored });
-
-    // Íntegro → exit 0.
-    const ok = execFileSync("bash", [RESTORE, "--verify", restored], { encoding: "utf8" });
-    expect(ok).toContain("integridad verificada");
-
-    // Corrupto (manipulación de un replay) → falla.
-    writeFileSync(join(restored, "official", "battle-1.jsonl"), '{"tick":1,"score":999}\n');
-    expect(() => execFileSync("bash", [RESTORE, "--verify", restored], { stdio: "pipe" })).toThrow();
   });
 });
 
@@ -111,6 +105,68 @@ describe("secretos fuera del repositorio (revisión automatizada, DoD T10.4)", (
   });
 });
 
+// ── Fakes fieles de restic/pg_dump ──────────────────────────────────────────
+// `pg_dump` falso: crea el fichero de salida (-f es el argumento anterior al
+// valor) y sale con éxito, simulando un dump correcto. `writeFakePgDumpFail`
+// simula un fallo real de conexión.
+function writeFakePgDumpOk(fakebin: string) {
+  writeFileSync(
+    join(fakebin, "pg_dump"),
+    `#!/usr/bin/env bash\nfor ((i=1;i<=$#;i++)); do if [ "\${!i}" = "-f" ]; then j=$((i+1)); : > "\${!j}"; fi; done\nexit 0\n`,
+    { mode: 0o755 },
+  );
+}
+function writeFakePgDumpFail(fakebin: string) {
+  writeFileSync(join(fakebin, "pg_dump"), `#!/usr/bin/env bash\necho "pg_dump: conexion rechazada" >&2\nexit 1\n`, {
+    mode: 0o755,
+  });
+}
+
+// `restic` falso FIEL (exigencia del coordinador tras la revisión del
+// supervisor): preserva la ruta ABSOLUTA de origen al "guardar", igual que
+// el restic real, y sabe "restaurar" esa misma estructura bajo --target. Es
+// justo el comportamiento donde estaba el defecto real de #112 (el manifest
+// no coincidía con la ruta restaurada) — un fake que no lo reprodujera no
+// serviría para probar el fix. Registra cada invocación en `log` para poder
+// comprobar qué se le pasó a "backup" (p.ej. que el dump SÍ llegó).
+function writeFakeResticFaithful(fakebin: string, store: string, log: string, opts: { failBackup?: boolean } = {}) {
+  const failBackup = opts.failBackup ? "1" : "0";
+  const script = `#!/usr/bin/env bash
+echo "$@" >> "${log}"
+case "$1" in
+  backup)
+    if [ "${failBackup}" = "1" ]; then
+      echo "restic: fake backend unreachable" >&2
+      exit 7
+    fi
+    tag=""
+    for a in "$@"; do case "$a" in s9-arena-*) tag="$a" ;; esac; done
+    src="\${@: -1}"
+    destdir="${store}/$tag$(dirname "$src")"
+    mkdir -p "$destdir"
+    cp -a "$src" "$destdir/"
+    ;;
+  restore)
+    tag=""
+    target=""
+    prev=""
+    for a in "$@"; do
+      [ "$prev" = "--tag" ] && tag="$a"
+      [ "$prev" = "--target" ] && target="$a"
+      prev="$a"
+    done
+    mkdir -p "$target"
+    cp -a "${store}/$tag/." "$target/"
+    ;;
+  forget|check)
+    :
+    ;;
+esac
+exit 0
+`;
+  writeFileSync(join(fakebin, "restic"), script, { mode: 0o755 });
+}
+
 // ── Camino real (#110b): clasificación ok/empty/error de fuentes ───────────
 // El backup real nunca se había ejercitado en tests (sólo --dry-run). Aquí
 // se inyectan binarios falsos de restic/pg_dump vía PATH en un directorio
@@ -120,44 +176,22 @@ describe("backup.sh camino real (restic/pg_dump falsos vía PATH)", () => {
   let root: string;
   let fakebin: string;
   let resticLog: string;
+  let store: string;
+  let metricsDir: string;
 
   function makeDirs() {
     root = mkdtempSync(join(tmpdir(), "e10-real-"));
     fakebin = join(root, "bin");
+    store = join(root, "store");
+    metricsDir = join(root, "metrics");
     mkdirSync(fakebin, { recursive: true });
+    mkdirSync(store, { recursive: true });
     resticLog = join(root, "restic-calls.log");
     for (const dir of ["maps", "bot-sources", "replays", "assets", "secrets", "work"]) {
       mkdirSync(join(root, dir), { recursive: true });
     }
     writeFileSync(join(root, "secrets", "restic_password.txt"), "s3cr3t-restic", { mode: 0o600 });
     writeFileSync(join(root, "secrets", "postgres_password.txt"), "s3cr3t-pg", { mode: 0o600 });
-  }
-
-  // pg_dump falso: crea el fichero de salida (-f es el último argumento
-  // relevante) y sale con éxito, simulando un dump correcto.
-  function writeFakePgDumpOk() {
-    writeFileSync(
-      join(fakebin, "pg_dump"),
-      `#!/usr/bin/env bash\nfor ((i=1;i<=$#;i++)); do if [ "\${!i}" = "-f" ]; then j=$((i+1)); : > "\${!j}"; fi; done\nexit 0\n`,
-      { mode: 0o755 },
-    );
-  }
-  function writeFakePgDumpFail() {
-    writeFileSync(join(fakebin, "pg_dump"), `#!/usr/bin/env bash\necho "pg_dump: conexion rechazada" >&2\nexit 1\n`, {
-      mode: 0o755,
-    });
-  }
-
-  // restic falso: registra en un log cada invocación (subcomando + args) y
-  // siempre sale con éxito, para poder comprobar QUÉ se le pasó a "backup".
-  // También copia manifest.json fuera de $WORK_DIR ANTES de que el trap EXIT
-  // del script real lo borre, para poder inspeccionarlo tras la ejecución.
-  function writeFakeResticOk() {
-    writeFileSync(
-      join(fakebin, "restic"),
-      `#!/usr/bin/env bash\necho "$@" >> "${resticLog}"\nfor a in "$@"; do case "$a" in *manifest.json) cp "$a" "${join(root, "manifest.json")}" ;; esac; done\nexit 0\n`,
-      { mode: 0o755 },
-    );
   }
 
   function runReal(env: Record<string, string>) {
@@ -176,7 +210,7 @@ describe("backup.sh camino real (restic/pg_dump falsos vía PATH)", () => {
           ASSETS_DIR: join(root, "assets"),
           SECRETS_DIR: join(root, "secrets"),
           WORK_DIR: join(root, "work"),
-          METRICS_DIR: join(root, "metrics"),
+          METRICS_DIR: metricsDir,
           ...env,
         },
       });
@@ -186,29 +220,44 @@ describe("backup.sh camino real (restic/pg_dump falsos vía PATH)", () => {
     }
   }
 
+  // El manifest.json ya no se copia aparte: vive DENTRO del staging que
+  // restic "almacena" de verdad, así que se lee desde el store fiel.
+  function readManifest() {
+    const path = join(store, "s9-arena-data", join(root, "work"), "staging", "manifest.json");
+    return JSON.parse(readFileSync(path, "utf8"));
+  }
+  function readMetrics() {
+    return readFileSync(join(metricsDir, "s9_backup.prom"), "utf8");
+  }
+  function metricValue(metrics: string, name: string, labels = "") {
+    const re = new RegExp(`^${name}${labels ? `\\{${labels}\\}` : ""} (\\S+)$`, "m");
+    const m = metrics.match(re);
+    return m ? m[1] : undefined;
+  }
+
   it("todas las fuentes no críticas vacías: exit 0 (SUCCESS) y restic SE EJECUTA", () => {
     makeDirs();
-    writeFakePgDumpOk();
-    writeFakeResticOk();
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
     const { code, out } = runReal({});
     expect(code).toBe(0);
     expect(out).toContain("backup SUCCESS");
     const calls = readFileSync(resticLog, "utf8");
     expect(calls).toContain("backup --tag s9-arena-data");
     expect(calls).toContain("backup --tag s9-arena-secrets");
-    const manifest = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8"));
+    const manifest = readManifest();
     expect(manifest.maps.status).toBe("empty");
   });
 
   it("fuente inexistente (directorio nunca creado): empty, no aborta", () => {
     makeDirs();
     rmSync(join(root, "assets"), { recursive: true, force: true }); // no existe de verdad
-    writeFakePgDumpOk();
-    writeFakeResticOk();
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
     const { code, out } = runReal({});
     expect(code).toBe(0);
     expect(out).not.toContain("error");
-    const manifest = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8"));
+    const manifest = readManifest();
     expect(manifest.assets.status).toBe("empty");
   });
 
@@ -216,15 +265,15 @@ describe("backup.sh camino real (restic/pg_dump falsos vía PATH)", () => {
     makeDirs();
     writeFileSync(join(root, "maps", "mapa.json"), '{"ok":true}');
     execSync(`chmod 000 ${join(root, "maps")}`);
-    writeFakePgDumpOk();
-    writeFakeResticOk();
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
     try {
       const { code, out } = runReal({});
       expect(code).toBe(2);
       expect(out).toContain("PARTIAL SUCCESS");
       const calls = readFileSync(resticLog, "utf8");
       expect(calls).toContain("backup --tag s9-arena-data"); // restic SÍ corrió
-      const manifest = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8"));
+      const manifest = readManifest();
       expect(manifest.maps.status).toBe("error");
     } finally {
       execSync(`chmod 755 ${join(root, "maps")}`); // permite que rmSync limpie después
@@ -233,8 +282,8 @@ describe("backup.sh camino real (restic/pg_dump falsos vía PATH)", () => {
 
   it("pg_dump falla (fuente crítica): exit 1 (FULL FAILURE) y restic NO se ejecuta", () => {
     makeDirs();
-    writeFakePgDumpFail();
-    writeFakeResticOk();
+    writeFakePgDumpFail(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
     const { code, out } = runReal({});
     expect(code).toBe(1);
     expect(out).toContain("FULL FAILURE");
@@ -244,17 +293,14 @@ describe("backup.sh camino real (restic/pg_dump falsos vía PATH)", () => {
   it("el dump de PostgreSQL sobrevive a un error de fuente secundaria: restic recibe el dump", () => {
     makeDirs();
     execSync(`chmod 000 ${join(root, "replays")}`);
-    // Truco: para forzar un error de lectura real en un directorio "replays"
-    // sin permisos, find fallará con "Permission denied" al listarlo.
-    writeFakePgDumpOk();
-    writeFakeResticOk();
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
     try {
       const { code } = runReal({});
       expect(code).toBe(2);
-      const calls = readFileSync(resticLog, "utf8");
-      const dataCall = calls.split("\n").find((l) => l.startsWith("backup --tag s9-arena-data"));
-      expect(dataCall).toBeDefined();
-      expect(dataCall).toMatch(/pgdump-\d+\.dump/); // el dump SÍ llegó a restic
+      const staged = join(store, "s9-arena-data", join(root, "work"), "staging");
+      const dumpFiles = execSync(`find "${staged}" -maxdepth 1 -name 'pgdump-*.dump'`, { encoding: "utf8" }).trim();
+      expect(dumpFiles).not.toBe(""); // el dump SÍ llegó al staging que restic guardó
     } finally {
       execSync(`chmod 755 ${join(root, "replays")}`);
     }
@@ -263,11 +309,11 @@ describe("backup.sh camino real (restic/pg_dump falsos vía PATH)", () => {
   it("manifest.json refleja la clasificación correcta de cada fuente", () => {
     makeDirs();
     writeFileSync(join(root, "bot-sources", "bot.py"), "print(1)");
-    writeFakePgDumpOk();
-    writeFakeResticOk();
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
     const { code } = runReal({});
     expect(code).toBe(0);
-    const manifest = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8"));
+    const manifest = readManifest();
     expect(manifest.postgres.status).toBe("ok");
     expect(manifest.secrets.status).toBe("ok");
     expect(manifest.bot_sources).toEqual({ status: "ok", files: 1 });
@@ -276,25 +322,336 @@ describe("backup.sh camino real (restic/pg_dump falsos vía PATH)", () => {
 
   it("ningún valor de secreto aparece en la salida, logs ni manifest", () => {
     makeDirs();
-    writeFakePgDumpOk();
-    writeFakeResticOk();
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
     const { out } = runReal({});
     expect(out).not.toContain("s3cr3t-restic");
     expect(out).not.toContain("s3cr3t-pg");
-    const manifest = readFileSync(join(root, "manifest.json"), "utf8");
+    const manifest = JSON.stringify(readManifest());
     expect(manifest).not.toContain("s3cr3t");
+  });
+
+  // ── M1 (supervisor): secrets vacío se clasificaba como `error` por un
+  // efecto de `pipefail` sobre `grep -c .`, contradiciendo la cabecera del
+  // propio script (empty nunca aborta). Un directorio de secretos vacío
+  // pero LEGIBLE debe seguir siendo SUCCESS. ──────────────────────────────
+  it("secrets vacío (legible, 0 ficheros): NO es error, SUCCESS (issue 5 / M1)", () => {
+    makeDirs();
+    // makeDirs() ya deja 2 ficheros de secretos; para este caso se necesita
+    // el directorio vacío pero existente y legible.
+    rmSync(join(root, "secrets", "restic_password.txt"));
+    rmSync(join(root, "secrets", "postgres_password.txt"));
+    // RESTIC_PASSWORD_FILE/PGPASSWORD_FILE deben apuntar a algo legible para
+    // pasar la validación de configuración previa; se ponen fuera de
+    // SECRETS_DIR para no repoblarlo.
+    writeFileSync(join(root, "restic_password_out.txt"), "s3cr3t-restic-out");
+    writeFileSync(join(root, "pg_password_out.txt"), "s3cr3t-pg-out");
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+    const { code, out } = runReal({
+      RESTIC_PASSWORD_FILE: join(root, "restic_password_out.txt"),
+      PGPASSWORD_FILE: join(root, "pg_password_out.txt"),
+    });
+    expect(code).toBe(0);
+    expect(out).toContain("backup SUCCESS");
+    const manifest = readManifest();
+    expect(manifest.secrets.status).toBe("empty");
+  });
+
+  // ── M1 (supervisor), caso crítico real: secrets ILEGIBLE (permiso
+  // denegado) sí debe ser FULL FAILURE — la criticidad de `secrets` no se
+  // ha invertido, sólo se corrigió el falso positivo de "vacío". ──────────
+  it("secrets ilegible (permiso denegado): FULL FAILURE exit 1, restic NO se ejecuta", () => {
+    makeDirs();
+    execSync(`chmod 000 ${join(root, "secrets")}`);
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+    try {
+      const { code, out } = runReal({});
+      expect(code).toBe(1);
+      expect(out).toContain("FULL FAILURE");
+      expect(existsSync(resticLog)).toBe(false);
+    } finally {
+      execSync(`chmod 755 ${join(root, "secrets")}`);
+    }
+  });
+
+  // ── M9 (supervisor): si `restic backup` falla, el backup completo NO
+  // puede reportar SUCCESS ni "snapshot creado". Antes de este test, nada
+  // ejercitaba una fuga real de restic — sólo el camino feliz. ───────────
+  it("restic backup falla: exit 1 (FULL FAILURE), snapshot NO creado, métricas reflejan el fallo (M9)", () => {
+    makeDirs();
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog, { failBackup: true });
+    const { code, out } = runReal({});
+    expect(code).toBe(1);
+    expect(out).toContain("FULL FAILURE");
+    const metrics = readMetrics();
+    expect(metricValue(metrics, "s9_backup_run_success")).toBe("0");
+    expect(metricValue(metrics, "s9_backup_restic_snapshot_created")).toBe("0");
+    expect(metricValue(metrics, "s9_backup_last_exit_code")).toBe("1");
+    // El store fiel no debe contener nada bajo s9-arena-data: no se guardó.
+    expect(existsSync(join(store, "s9-arena-data"))).toBe(false);
+  });
+
+  // ── M6 (supervisor): `find | xargs -I{}` (separador de línea) excluía la
+  // fuente ENTERA de restic si algún nombre de fichero rompía la iteración.
+  // Se sustituyó por `find -print0` + `read -d ''`. Aquí se prueba que,
+  // dentro del mismo directorio, un fichero con un nombre "raro" no hace
+  // desaparecer al resto de replays del backup. ──────────────────────────
+  it("un nombre de fichero con salto de línea no excluye toda la fuente replays (M6)", () => {
+    makeDirs();
+    const officialDir = join(root, "replays", "official");
+    mkdirSync(officialDir, { recursive: true });
+    writeFileSync(join(officialDir, "normal.jsonl"), '{"tick":1}\n');
+    // Nombre de fichero con un salto de línea literal embebido: rompe la
+    // lectura línea-a-línea de `xargs -I{}`, no la de `-print0`/`read -d ''`.
+    writeFileSync(join(officialDir, "raro\nnombre.jsonl"), '{"tick":2}\n');
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+    const { code } = runReal({});
+    expect([0, 2]).toContain(code); // SUCCESS o PARTIAL, nunca FULL FAILURE
+    const manifest = readManifest();
+    expect(manifest.replays.status).toBe("ok");
+    expect(manifest.replays.files).toBe(2); // los DOS ficheros, no 0 ni 1
+    // `wc -l` cuenta SALTOS DE LÍNEA, y uno de los dos ficheros tiene un
+    // salto de línea embebido en su propio nombre: contar líneas de `find`
+    // infla el recuento en un asterisco falso. Se cuentan entradas NUL-
+    // delimitadas (`-print0`) para que el propio nombre "raro" no falsee la
+    // cuenta, igual que hace el script real al copiarlas.
+    const staged = join(store, "s9-arena-data", join(root, "work"), "staging", "replays", "official");
+    const nulCount = execSync(`find "${staged}" -type f -print0 | tr -cd '\\0' | wc -c`, {
+      encoding: "utf8",
+    }).trim();
+    expect(nulCount).toBe("2"); // ambos llegaron de verdad a lo que restic guardó
+  });
+
+  // ── M3 (supervisor): ningún test leía el fichero de métricas; por eso
+  // podía sobrevivir una mutación que dejara `s9_backup_source_error`
+  // siempre a 0. Aquí se lee el fichero .prom real, no sólo exit/stdout. ──
+  it("fichero de métricas: s9_backup_source_error/_empty/_files por fuente son correctos (M3)", () => {
+    makeDirs();
+    writeFileSync(join(root, "maps", "m.json"), "{}");
+    execSync(`chmod 000 ${join(root, "maps")}`);
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+    try {
+      const { code } = runReal({});
+      expect(code).toBe(2);
+      const metrics = readMetrics();
+      expect(metricValue(metrics, "s9_backup_source_error", 'source="maps"')).toBe("1");
+      expect(metricValue(metrics, "s9_backup_source_empty", 'source="maps"')).toBe("0");
+      expect(metricValue(metrics, "s9_backup_source_error", 'source="assets"')).toBe("0");
+      expect(metricValue(metrics, "s9_backup_source_empty", 'source="assets"')).toBe("1");
+    } finally {
+      execSync(`chmod 755 ${join(root, "maps")}`);
+    }
+  });
+
+  // ── M7 (supervisor): `s9_backup_last_success_timestamp_seconds` sólo debe
+  // avanzar con exit==0. Se comprueba con ejecuciones reales encadenadas:
+  // SUCCESS fija el valor; un PARTIAL posterior debe conservarlo intacto
+  // (si avanzara, BackupTooOld jamás dispararía con un PARTIAL sostenido). ─
+  it("timestamp de último éxito NO avanza en una ejecución PARTIAL posterior a un SUCCESS (M7)", () => {
+    makeDirs();
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+
+    const first = runReal({});
+    expect(first.code).toBe(0);
+    const tsAfterSuccess = metricValue(readMetrics(), "s9_backup_last_success_timestamp_seconds");
+    expect(tsAfterSuccess).toBeDefined();
+
+    // `date +%s` sólo tiene resolución de 1s: sin esperar, una mutación que
+    // reescribiera el timestamp en CADA ejecución podría "colar" si ambas
+    // corridas caen en el mismo segundo de reloj. Se espera de verdad para
+    // que la comparación de igualdad sea una prueba real, no una coincidencia.
+    execSync("sleep 1.1");
+
+    // Segunda ejecución: fuente no crítica en error → PARTIAL SUCCESS.
+    writeFileSync(join(root, "maps", "m.json"), "{}");
+    execSync(`chmod 000 ${join(root, "maps")}`);
+    try {
+      const second = runReal({});
+      expect(second.code).toBe(2);
+      const tsAfterPartial = metricValue(readMetrics(), "s9_backup_last_success_timestamp_seconds");
+      expect(tsAfterPartial).toBe(tsAfterSuccess); // congelado, no avanza
+    } finally {
+      execSync(`chmod 755 ${join(root, "maps")}`);
+    }
+  });
+
+  it("con RESTIC_REPOSITORY sin configurar: exit 1 y s9_backup_run_success=0 (destaparía el incidente de VM108)", () => {
+    makeDirs();
+    writeFakePgDumpOk(fakebin);
+    writeFakeResticFaithful(fakebin, store, resticLog);
+    const { code } = runReal({ RESTIC_REPOSITORY: "", RESTIC_PASSWORD_FILE: "", RESTIC_PASSWORD: "" });
+    expect(code).toBe(1);
+    const metrics = readMetrics();
+    expect(metricValue(metrics, "s9_backup_run_success")).toBe("0");
   });
 });
 
-describe("restore.sh --verify: manifest ambiguo o ausente (OBS-1)", () => {
-  it("sufijo ambiguo (nombre de fichero parecido pero no manifest.sha256): falla porque no hay manifest real", () => {
-    const dir = mkdtempSync(join(tmpdir(), "e10-restore-ambig-"));
+// ── Cadena E2E real (exigencia del coordinador tras la revisión del
+// supervisor): backup.sh real → restic falso FIEL (preserva rutas absolutas)
+// → restore.sh --restore → restore.sh --verify. NINGÚN directorio se monta
+// a mano: todo lo que verifica `--verify` lo produjo `backup.sh`. ─────────
+describe("backup.sh → restic falso fiel → restore.sh --restore/--verify (E2E real)", () => {
+  let root: string;
+  let fakebin: string;
+  let store: string;
+  let workDir: string;
+
+  function setup() {
+    root = mkdtempSync(join(tmpdir(), "e10-e2e-"));
+    fakebin = join(root, "bin");
+    store = join(root, "store");
+    workDir = join(root, "work");
+    mkdirSync(fakebin, { recursive: true });
+    mkdirSync(store, { recursive: true });
+    for (const dir of ["maps", "bot-sources", "replays/official", "assets", "secrets"]) {
+      mkdirSync(join(root, dir), { recursive: true });
+    }
+    writeFileSync(join(root, "maps", "mvp.json"), '{"map":"mvp"}\n');
+    writeFileSync(join(root, "bot-sources", "bot.py"), "print('hola')\n");
+    writeFileSync(join(root, "assets", "sprite.png"), "fake-png-bytes\n");
+    writeFileSync(join(root, "replays", "official", "battle-1.jsonl"), '{"tick":1}\n');
+    writeFileSync(join(root, "secrets", "restic_password.txt"), "s3cr3t-restic-e2e", { mode: 0o600 });
+    writeFileSync(join(root, "secrets", "postgres_password.txt"), "s3cr3t-pg-e2e", { mode: 0o600 });
+    writeFakePgDumpOk(fakebin);
+  }
+
+  function backupEnv(extra: Record<string, string> = {}) {
+    return {
+      ...process.env,
+      PATH: `${fakebin}:${process.env.PATH}`,
+      RESTIC_REPOSITORY: "/tmp/fake-repo",
+      RESTIC_PASSWORD_FILE: join(root, "secrets", "restic_password.txt"),
+      PGPASSWORD_FILE: join(root, "secrets", "postgres_password.txt"),
+      MAPS_DIR: join(root, "maps"),
+      BOT_SOURCES_DIR: join(root, "bot-sources"),
+      REPLAYS_DIR: join(root, "replays"),
+      ASSETS_DIR: join(root, "assets"),
+      SECRETS_DIR: join(root, "secrets"),
+      WORK_DIR: workDir,
+      METRICS_DIR: join(root, "metrics"),
+      ...extra,
+    } as Record<string, string>;
+  }
+
+  it("cadena completa: backup real → restore --restore → restore --verify pasa con datos genuinos", () => {
+    setup();
+    const log = join(root, "restic-calls.log");
+    writeFakeResticFaithful(fakebin, store, log);
+
+    const backupOut = execFileSync("bash", [BACKUP], { encoding: "utf8", env: backupEnv() });
+    expect(backupOut).toContain("backup SUCCESS");
+
+    const dest = join(root, "restored");
+    execFileSync("bash", [RESTORE, "--restore", dest], { encoding: "utf8", env: backupEnv() });
+
+    // El manifest y los datos deben convivir en el MISMO árbol restaurado
+    // (el defecto real de #112: antes esto era imposible de cumplir).
+    const verifyOut = execFileSync("bash", [RESTORE, "--verify", dest], { encoding: "utf8" });
+    expect(verifyOut).toContain("integridad verificada");
+    expect(verifyOut).toContain("mvp.json");
+    expect(verifyOut).toContain("bot.py");
+    expect(verifyOut).toContain("sprite.png"); // assets llega hasta la verificación (punto 6)
+    expect(verifyOut).toContain("battle-1.jsonl");
+
+    // Los datos realmente están ahí, no sólo "el comando no lanzó excepción".
+    const found = execSync(`find "${dest}" -name mvp.json -o -name sprite.png`, { encoding: "utf8" }).trim();
+    expect(found.split("\n").length).toBe(2);
+  });
+
+  it("cadena completa con corrupción tras restaurar: --verify falla (sha256 no coincide)", () => {
+    setup();
+    const log = join(root, "restic-calls.log");
+    writeFakeResticFaithful(fakebin, store, log);
+    execFileSync("bash", [BACKUP], { encoding: "utf8", env: backupEnv() });
+    const dest = join(root, "restored");
+    execFileSync("bash", [RESTORE, "--restore", dest], { encoding: "utf8", env: backupEnv() });
+
+    const mapFile = execSync(`find "${dest}" -name mvp.json`, { encoding: "utf8" }).trim();
+    writeFileSync(mapFile, '{"map":"CORRUPTO"}\n');
+
+    expect(() => execFileSync("bash", [RESTORE, "--verify", dest], { stdio: "pipe" })).toThrow();
+  });
+
+  // ── Mutación M2 (obligatoria, coordinador): "el manifest apunta a una
+  // ruta incorrecta → --verify falla". Se reintroduce EXACTAMENTE el
+  // defecto real de #112 (manifest escrito en $WORK_DIR en vez de dentro
+  // del $STAGING que sube restic) sobre una COPIA de backup.sh, ejecutando
+  // la cadena completa igual que en el test de arriba, para demostrar con
+  // salida real que sin el fix la cadena E2E falla. ──────────────────────
+  it("mutación M2: manifest fuera del staging (bug original de #112) → --verify falla en la cadena real", () => {
+    setup();
+    const log = join(root, "restic-calls.log");
+    writeFakeResticFaithful(fakebin, store, log);
+
+    const original = readFileSync(BACKUP, "utf8");
+    const mutated = original
+      .replace('> "$STAGING/manifest.sha256"', '> "$WORK_DIR/manifest.sha256"')
+      .replace('} > "$STAGING/manifest.json"', '} > "$WORK_DIR/manifest.json"');
+    expect(mutated).not.toBe(original); // la sustitución realmente se aplicó
+    const mutantPath = join(root, "backup-mutant-M2.sh");
+    writeFileSync(mutantPath, mutated, { mode: 0o755 });
+
+    const backupOut = execFileSync("bash", [mutantPath], { encoding: "utf8", env: backupEnv() });
+    // El backup "en sí" puede seguir reportando SUCCESS (restic no sabe que
+    // le faltan los manifests), pero la integridad restaurada está rota:
+    expect(backupOut).toContain("backup SUCCESS");
+
+    const dest = join(root, "restored-mutant");
+    execFileSync("bash", [RESTORE, "--restore", dest], { encoding: "utf8", env: backupEnv() });
+    // Sin manifest dentro del staging subido a restic, no hay nada que
+    // verificar: --verify debe fallar (0 manifests), no colar en silencio.
+    expect(() => execFileSync("bash", [RESTORE, "--verify", dest], { stdio: "pipe" })).toThrow();
+  });
+});
+
+// ── Punto 5 del coordinador: docs/recuperacion.md desincronizado con el
+// script real (nombres viejos, bucle sin assets). Test de regresión sobre
+// el runbook en sí, para que una futura reescritura de backup.sh no lo
+// desincronice otra vez en silencio. ────────────────────────────────────
+describe("docs/recuperacion.md sincronizado con backup.sh/restore.sh (#110b)", () => {
+  const runbook = readFileSync(join(REPO_ROOT, "docs", "recuperacion.md"), "utf8");
+
+  it("no referencia el nombre obsoleto 'replays-official' (el alcance de replays ya no se limita a official/)", () => {
+    expect(runbook).not.toContain("replays-official");
+  });
+
+  it("el bucle de restauración de volúmenes incluye 'assets' (backup.sh lo captura desde #110b)", () => {
+    expect(runbook).toMatch(/for name in maps bot_sources replays assets/);
+    expect(runbook).toContain("arena_assets");
+  });
+
+  it("localiza el staging real vía manifest.sha256, no una ruta fija a mano", () => {
+    expect(runbook).toContain("find /tmp/restore-data -name manifest.sha256");
+  });
+});
+
+describe("restore.sh --verify: manifest ambiguo o ausente (OBS-1 / M4)", () => {
+  // M4 (supervisor): el test anterior sólo comprobaba "lanza excepción",
+  // que también sería cierto si el guard de "0 manifests" se borrara y el
+  // fallo viniera de `sha256sum -c ""` por otro motivo. Aquí se comprueba
+  // el MENSAJE concreto que sólo emite el guard explícito.
+  it("cero manifests: falla con 'no encontrado', no con un error genérico de sha256sum", () => {
+    const dir = mkdtempSync(join(tmpdir(), "e10-restore-none-"));
     try {
-      // Un fichero cuyo nombre "contiene" el sufijo pero no es manifest.sha256
-      // exacto no debe colar como manifest válido (find -name es literal, pero
-      // se prueba explícitamente el caso "cero manifests reales").
       writeFileSync(join(dir, "not-a-manifest.sha256.bak"), "deadbeef  maps/x.json\n");
-      expect(() => execFileSync("bash", [RESTORE, "--verify", dir], { stdio: "pipe" })).toThrow();
+      let threw = false;
+      let output = "";
+      try {
+        output = execFileSync("bash", [RESTORE, "--verify", dir], { encoding: "utf8", stdio: "pipe" });
+      } catch (e: any) {
+        threw = true;
+        output = `${e.stdout}${e.stderr}`;
+      }
+      expect(threw).toBe(true);
+      expect(output).toContain("no encontrado");
+      expect(output).not.toContain("sha256sum: WARNING");
+      expect(output).not.toContain("no properly formatted");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -345,5 +702,12 @@ describe("servicio backup en el Compose", () => {
     }
     expect(svc.secrets).toContain("restic_password");
     expect(svc.environment.RESTIC_PASSWORD_FILE).toBe("/run/secrets/restic_password");
+  });
+
+  // Punto 7 (no bloqueante, mitigado): WORK_DIR del staging en un volumen
+  // dedicado, no en la capa de escritura del contenedor.
+  it("monta un volumen dedicado para el staging temporal (WORK_DIR), no la capa de escritura del contenedor", () => {
+    expect(svc.volumes).toContain("backup_work:/tmp/backup-work");
+    expect(doc.volumes).toHaveProperty("backup_work");
   });
 });

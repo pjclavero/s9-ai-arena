@@ -625,6 +625,7 @@ services:
       PGDATABASE: arena
       PGPASSWORD_FILE: /run/secrets/postgres_password
       METRICS_DIR: /textfile
+      WORK_DIR: /tmp/backup-work
     secrets: [postgres_password, restic_password]
     volumes:
       - arena_maps:/data/maps:ro
@@ -633,6 +634,14 @@ services:
       - arena_assets:/data/assets:ro
       - ./secrets:/secrets:ro
       - backup_metrics:/textfile
+      # #110b: backup.sh construye un "staging" en $WORK_DIR con una copia de
+      # maps/bot_sources/assets/replays (para que el manifest y los datos
+      # queden en el mismo árbol al restaurar). Sin este volumen, ese
+      # crecimiento caía en la capa de escritura del contenedor, compartida
+      # con el resto de /tmp y sin límite ni visibilidad propia. Con el
+      # volumen aparte, `docker system df -v` lo muestra por separado y se
+      # puede vigilar/purgar sin tocar el resto del contenedor.
+      - backup_work:/tmp/backup-work
     depends_on:
       postgres:
         condition: service_healthy
@@ -904,6 +913,10 @@ volumes:
   loki_data:
   promtail_positions:
   backup_metrics:
+  # #110b: staging temporal de backup.sh (mitigación del riesgo de espacio
+  # documentado en infrastructure/backup/backup.sh; separa ese crecimiento
+  # de la capa de escritura del contenedor).
+  backup_work:
 
 secrets:
   # Secretos por archivo (nunca variables en claro). Se generan con

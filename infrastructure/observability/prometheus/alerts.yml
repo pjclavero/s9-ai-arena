@@ -85,11 +85,11 @@ groups:
         annotations:
           summary: "Sin backup completado en las últimas 26 h (DoD T10.4)"
 
-      # #110b: exit 2 (PARTIAL SUCCESS) NO dispara BackupFailed (que exige
-      # exit != 0 sostenido; aquí sí, ojo) — se separa a propósito para no
-      # tratar como crítico un backup que SÍ guardó lo importante (postgres +
-      # secretos) pero con una fuente secundaria (maps/bot_sources/replays/
-      # assets) en error. Alerta de menor severidad para revisar esa fuente.
+      # #110b: exit 2 (PARTIAL SUCCESS) NO dispara BackupFailed —su expr es
+      # "== 1", no "!= 0"— a propósito, para no tratar como crítico un
+      # backup que SÍ guardó lo importante (postgres + secretos) pero con
+      # una fuente secundaria (maps/bot_sources/replays/assets) en error.
+      # Alerta de menor severidad para revisar esa fuente.
       - alert: BackupPartialSuccess
         expr: s9_backup_last_exit_code == 2
         for: 5m
