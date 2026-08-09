@@ -60,6 +60,7 @@ describe("alertas del cap. 24 (motor bloqueado, cola, disco, BD, stream) + backu
     "StreamDown",
     "BackupFailed",
     "BackupTooOld",
+    "BackupPartialSuccess",
   ])("existe la alerta %s", (name) => {
     expect(names).toContain(name);
   });
@@ -73,6 +74,24 @@ describe("alertas del cap. 24 (motor bloqueado, cola, disco, BD, stream) + backu
   it("BackupTooOld usa el umbral de 26 h de la DoD de T10.4", () => {
     const rule = alerts.groups.flatMap((g: any) => g.rules).find((r: any) => r.alert === "BackupTooOld");
     expect(rule.expr).toContain("26 * 3600");
+  });
+
+  // #110b (M10, supervisor): alerts.yml no tenía NINGÚN test. BackupFailed
+  // debe disparar SOLO en FULL FAILURE (exit==1), nunca en PARTIAL SUCCESS
+  // (exit==2) — un PARTIAL sí guardó lo crítico (postgres+secretos) y no es
+  // una emergencia. BackupPartialSuccess cubre el exit==2 con severidad
+  // menor. Antes del fix, BackupFailed usaba "!= 0" y disparaba crítico
+  // también en PARTIAL.
+  it("BackupFailed dispara SOLO en FULL FAILURE (exit==1), no en PARTIAL SUCCESS (exit==2)", () => {
+    const rule = alerts.groups.flatMap((g: any) => g.rules).find((r: any) => r.alert === "BackupFailed");
+    expect(rule.expr.trim()).toBe("s9_backup_last_exit_code == 1");
+    expect(rule.labels.severity).toBe("critical");
+  });
+
+  it("BackupPartialSuccess dispara en exit==2 con severidad menor que BackupFailed", () => {
+    const rule = alerts.groups.flatMap((g: any) => g.rules).find((r: any) => r.alert === "BackupPartialSuccess");
+    expect(rule.expr.trim()).toBe("s9_backup_last_exit_code == 2");
+    expect(rule.labels.severity).toBe("warning");
   });
 });
 

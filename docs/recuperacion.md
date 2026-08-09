@@ -49,6 +49,20 @@ bash infrastructure/backup/restore.sh --list
 bash infrastructure/backup/restore.sh --restore /tmp/restore-data
 ```
 
+> **#110b:** `backup.sh` sube UN ÚNICO directorio de "staging" a restic (tag
+> `s9-arena-data`) con la jerarquía `maps/`, `bot_sources/`, `assets/`,
+> `replays/`, el dump de PostgreSQL y los dos manifests, todo junto y en las
+> mismas rutas relativas que describe `manifest.sha256` — así el manifest y
+> los datos que verifica quedan SIEMPRE en el mismo árbol (antes no era así:
+> el manifest usaba rutas relativas y los datos se restauraban con su ruta
+> absoluta de origen, y `restore.sh --verify` no encontraba nada). `restic
+> restore` conserva la ruta absoluta original del staging dentro de
+> `--target`, así que localízalo así antes de seguir:
+> ```bash
+> STAGE="$(dirname "$(find /tmp/restore-data -name manifest.sha256)")"
+> echo "STAGE=$STAGE"   # debe apuntar a .../staging
+> ```
+
 ### Fase 4 · Recrear contenedores desde imágenes versionadas (≈10 min)
 
 ```bash
@@ -64,7 +78,8 @@ docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.e
 ### Fase 5 · Restaurar la base de datos (≈10–20 min)
 
 ```bash
-DUMP=$(find /tmp/restore-data -name 'pgdump-*.dump' | sort | tail -1)
+# El dump vive directamente en la raíz del staging (ver Fase 3).
+DUMP=$(find "$STAGE" -maxdepth 1 -name 'pgdump-*.dump' | sort | tail -1)
 docker compose -f infrastructure/docker-compose.yml cp "$DUMP" postgres:/tmp/restore.dump
 docker compose -f infrastructure/docker-compose.yml exec postgres \
   sh -c 'pg_restore -c --if-exists -U arena -d arena /tmp/restore.dump && rm /tmp/restore.dump'
@@ -73,10 +88,19 @@ docker compose -f infrastructure/docker-compose.yml exec postgres \
 ### Fase 6 · Restaurar volúmenes (≈10 min)
 
 ```bash
-for v in maps bot-sources replays; do
-  src=$(find /tmp/restore-data -type d -name "$v" -o -type d -name "replays-official" | head -1)
-  # Copia al volumen con un contenedor auxiliar del propio stack:
-  docker run --rm -v "s9-ai-arena_arena_${v//-/_}:/dst" -v "$src:/src:ro" alpine \
+# #110b: nombres de staging (guion bajo, como en manifest.json/métricas) →
+# volúmenes reales del compose (arena_<nombre>). "assets" se incluye porque
+# backup.sh lo captura desde #110b — antes de este cambio se perdía en la
+# restauración aunque SÍ estuviera en el backup. Si una fuente estaba
+# `empty` o `error` en el backup, su carpeta no existe en el staging: se
+# salta sin copiar nada. El directorio especial que antes limitaba los
+# replays copiados a un único subárbol ya no existe como tal: el alcance de
+# replays se amplió a todo el volumen (ver Fase 3).
+declare -A VOLUME_FOR=( [maps]=arena_maps [bot_sources]=arena_bot_sources [replays]=arena_replays [assets]=arena_assets )
+for name in maps bot_sources replays assets; do
+  src="$STAGE/$name"
+  [ -d "$src" ] || { echo "skip $name (vacío o en error en este backup)"; continue; }
+  docker run --rm -v "s9-ai-arena_${VOLUME_FOR[$name]}:/dst" -v "$src:/src:ro" alpine \
     sh -c 'cp -a /src/. /dst/'
 done
 ```
@@ -88,7 +112,20 @@ docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.e
   --profile production up -d
 docker compose -f infrastructure/docker-compose.yml ps          # todo healthy
 
-# Integridad (criterio del cap. 28): checksums de mapas y replays oficiales
+# Integridad (criterio del cap. 28): checksums de mapas, bot-sources,
+# assets y replays (manifest.sha256 vive junto a los datos en $STAGE, por
+# eso `--verify` puede apuntar a todo /tmp/restore-data: localiza el único
+# manifest.sha256 igual que en Fase 3 y falla si hay cero o más de uno).
+# LIMITACIÓN CONOCIDA (D3, sin implementar a propósito): el dump de
+# PostgreSQL (pgdump-*.dump) NO está incluido en manifest.sha256 — es el
+# único activo de este backup sin checksum verificado por --verify. Su
+# integridad depende hoy de que pg_dump/restic no fallen en silencio, no de
+# un hash. Opción técnica disponible si se decide cerrar esta laguna: quitar
+# la exclusión `! -path './pgdump-*'` de la generación del manifest en
+# backup.sh (cambio de una línea); contra: el nombre del dump incluye el
+# timestamp de cada ejecución, así que el checksum nunca es comparable
+# entre backups, sólo sirve para detectar corrupción dentro del mismo
+# snapshot.
 bash infrastructure/backup/restore.sh --verify /tmp/restore-data
 
 # Migraciones al día (contrato con E7: el api las reporta en /healthz)
@@ -105,7 +142,7 @@ rm -rf /tmp/restore-data   # limpiar restos en claro
 | Verificación | Cómo | Criterio |
 |---|---|---|
 | Healthchecks | `docker compose ps` | todos `healthy` |
-| Integridad de mapas/replays | `restore.sh --verify` (sha256, probado en `infrastructure/tests/backup.test.ts`) | 0 discrepancias |
+| Integridad de mapas/bot-sources/assets/replays | `restore.sh --verify` (sha256, probado en `infrastructure/tests/backup.test.ts` con un snapshot generado por `backup.sh` real, no montado a mano) | 0 discrepancias |
 | Migraciones | `/api/healthz` | al día |
 | Humo E2E | `smoke.sh` | 4/4 OK |
 | Secretos | revisar salida de consola y `docker compose logs` | ningún valor de secreto impreso |
@@ -120,8 +157,17 @@ rm -rf /tmp/restore-data   # limpiar restos en claro
 
 - La contraseña de restic es el único secreto no recuperable desde el propio
   backup: debe custodiarse fuera del servidor (doble custodia recomendada).
-- Replays no oficiales y `arena_build_cache` NO se copian (decisión de
-  retención del dosier 23.1): se regeneran.
+- `arena_build_cache` NO se copia (decisión de retención del dosier 23.1): se
+  regenera. Los replays SÍ se copian en su totalidad desde #110b (antes sólo
+  se copiaba `official/`, un subdirectorio que en producción no existe, así
+  que nunca se había copiado ni un solo replay); quedan sujetos a
+  `REPLAY_RETENTION_DAYS`, salvo `official/` que se conserva sin límite.
+- El staging temporal de `backup.sh` ($WORK_DIR, por defecto
+  `/tmp/backup-work`) puede llegar a pesar como la suma de
+  maps+bot_sources+assets+replays retenidos: está en el volumen dedicado
+  `backup_work` del compose (ver `infrastructure/docker-compose.yml`) para
+  que ese crecimiento no comparta cupo con el resto del contenedor y se
+  pueda vigilar con `docker system df -v`.
 - Si se usa PostgreSQL externo (perfil `external-db`), la Fase 5 se ejecuta
   contra esa instancia (`pg_restore -h <host externo>`) y la Fase 4 no levanta
   postgres.
