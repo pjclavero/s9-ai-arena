@@ -36,9 +36,22 @@ case "${1:---dry-run}" in
     ;;
   --verify)
     dir="${2:?uso: restore.sh --verify <dir-restaurado>}"
-    manifest="$(find "$dir" -name manifest.sha256 | head -1)"
-    [ -n "$manifest" ] || { log error "manifest.sha256 no encontrado en $dir"; exit 1; }
-    # El manifest usa rutas maps/… y official/…: verificar desde su directorio.
+    # #110b: `find | head -1` aceptaba en silencio 0 manifests (verificación
+    # que no verifica nada, exit 0 falso) y elegía uno arbitrario si había
+    # más de uno (snapshots mezclados). Fallar en cerrado en ambos casos.
+    manifests="$(find "$dir" -name manifest.sha256)"
+    manifest_count=0
+    [ -n "$manifests" ] && manifest_count=$(printf '%s\n' "$manifests" | grep -c .)
+    if [ "$manifest_count" -eq 0 ]; then
+      log error "manifest.sha256 no encontrado en $dir"
+      exit 1
+    fi
+    if [ "$manifest_count" -gt 1 ]; then
+      log error "se encontraron $manifest_count manifest.sha256 en $dir (ambiguo; restaura un único snapshot por directorio)"
+      exit 1
+    fi
+    manifest="$manifests"
+    # El manifest usa rutas maps/… y replays/…: verificar desde su directorio.
     (cd "$(dirname "$manifest")" && sha256sum -c "$manifest")
     log info "integridad verificada: checksums de mapas y replays correctos"
     ;;

@@ -67,12 +67,16 @@ groups:
     rules:
       # T10.4: el backup escribe s9_backup_* vía textfile collector de
       # node-exporter (volumen backup_metrics).
+      # #110b: exit 1 = FULL FAILURE (fuente crítica o restic rotos, sin
+      # snapshot fiable). exit 2 = PARTIAL SUCCESS (ver BackupPartialSuccess
+      # más abajo): se excluye aquí a propósito para no tratar como crítico
+      # un backup que sí guardó postgres+secretos.
       - alert: BackupFailed
-        expr: s9_backup_last_exit_code != 0
+        expr: s9_backup_last_exit_code == 1
         for: 5m
         labels: { severity: critical }
         annotations:
-          summary: "El último backup terminó con error (exit {{ $value }})"
+          summary: "El último backup terminó en FULL FAILURE (exit {{ $value }})"
 
       - alert: BackupTooOld
         expr: time() - s9_backup_last_success_timestamp_seconds > 26 * 3600
@@ -80,6 +84,18 @@ groups:
         labels: { severity: critical }
         annotations:
           summary: "Sin backup completado en las últimas 26 h (DoD T10.4)"
+
+      # #110b: exit 2 (PARTIAL SUCCESS) NO dispara BackupFailed (que exige
+      # exit != 0 sostenido; aquí sí, ojo) — se separa a propósito para no
+      # tratar como crítico un backup que SÍ guardó lo importante (postgres +
+      # secretos) pero con una fuente secundaria (maps/bot_sources/replays/
+      # assets) en error. Alerta de menor severidad para revisar esa fuente.
+      - alert: BackupPartialSuccess
+        expr: s9_backup_last_exit_code == 2
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "El último backup fue parcial (exit 2): revisar s9_backup_source_error por fuente"
 
       - alert: BackupMetricsMissing
         expr: absent(s9_backup_last_success_timestamp_seconds)

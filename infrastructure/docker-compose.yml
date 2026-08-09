@@ -630,6 +630,7 @@ services:
       - arena_maps:/data/maps:ro
       - arena_bot_sources:/data/bot-sources:ro
       - arena_replays:/data/replays:ro
+      - arena_assets:/data/assets:ro
       - ./secrets:/secrets:ro
       - backup_metrics:/textfile
     depends_on:
