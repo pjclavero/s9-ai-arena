@@ -30,7 +30,7 @@
 // (.github/workflows/ci.yml), en ubuntu-latest con daemon Docker
 // preinstalado — deliberadamente FUERA del job `unit` (que también corre
 // infrastructure/, pero excluye este fichero explícitamente: construir una
-// imagen y levantar 3 contenedores no pinta en un informe de cobertura de
+// imagen y levantar contenedores no pinta en un informe de cobertura de
 // TypeScript, y merece su propio veredicto en el semáforo de ci-gate.mjs).
 // Localmente, si Docker no está disponible (p. ej. un entorno de agente sin
 // permiso sobre /var/run/docker.sock, como el que escribió esta suite), los
@@ -38,9 +38,30 @@
 // la ausencia de Docker hace fallar el job a propósito). No se sustituye por
 // una comprobación que no ejerza la imagen real, porque eso sería
 // reintroducir exactamente el defecto que este fichero existe para atrapar.
+//
+// PRIMER INTENTO DE ESTE FICHERO (registro para el próximo que lo toque): la
+// primera versión localizaba la IP del contenedor SFTP con
+// `docker inspect -f '{{.NetworkSettings.Networks.<red>.IPAddress}}'`. Los
+// nombres de red de este fichero llevan guiones ("s9-backup-e2e-net"), y el
+// motor de plantillas de Go (`text/template`, el que usa `docker inspect -f`)
+// NO permite guiones en el acceso `.Campo` — el guion se interpreta como
+// resta y la plantilla ni siquiera parsea. `docker inspect` devolvía un
+// error de parseo por stderr, `sh()` lo capturaba como si fuera la IP, y
+// `ssh-keyscan` se quedaba resolviendo ese "host" hasta agotar el timeout:
+// en la CI real esto falló con "timeout esperando: sshd del SFTP de prueba"
+// sin ninguna pista de la causa real. Esta versión ya NO depende de esa
+// plantilla en absoluto: comprueba que sshd escucha leyendo
+// /proc/net/tcp DENTRO del propio contenedor SFTP (verdad de kernel, no
+// depende de mensajes de log ni de resolución de nombres), y para capturar
+// el known_hosts ejecuta `ssh-keyscan` con un contenedor efímero de la
+// PROPIA imagen bajo prueba, en la misma red — exactamente el mismo camino
+// (DNS del contenedor, mismo binario ssh) que usará después el contenedor de
+// backup real, así que no hay una segunda ruta de red que pueda comportarse
+// distinto. Si algo vuelve a fallar aquí, waitFor() vuelca `docker logs`,
+// `docker ps -a` y el estado del contenedor ANTES de lanzar la excepción.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, chmodSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -48,6 +69,9 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(here, "..", "..");
 const DOCKERFILE = join(REPO_ROOT, "infrastructure", "docker", "backup", "Dockerfile");
+const BACKUP_SH_PATH = join(REPO_ROOT, "infrastructure", "backup", "backup.sh");
+const RESTORE_SH_PATH = join(REPO_ROOT, "infrastructure", "backup", "restore.sh");
+const ENTRYPOINT_SH_PATH = join(REPO_ROOT, "infrastructure", "backup", "entrypoint.sh");
 const IMAGE_TAG = "s9-ai-arena/backup:e2e-test";
 const NET = "s9-backup-e2e-net";
 const SFTP_CONTAINER = "s9-backup-e2e-sftp";
@@ -112,11 +136,70 @@ function dockerExec(container: string, args: string[]) {
   return sh("docker", ["exec", container, ...args]);
 }
 
+// Verdad de kernel, no de logs: ¿hay algo escuchando en el puerto 22 (hex
+// 0016) DENTRO del contenedor SFTP? /proc/net/tcp existe en cualquier
+// contenedor Linux, así que esto no depende de que atmoz/sftp emita un
+// mensaje de log concreto ni de resolución de nombres desde el host.
+function sftpListening(): boolean {
+  const r = dockerExec(SFTP_CONTAINER, ["sh", "-c", "cat /proc/net/tcp 2>/dev/null"]);
+  if (r.code !== 0) return false;
+  // Formato de /proc/net/tcp: "sl local_address rem_address st ...", con
+  // local_address como IP:PUERTO en hex. ":0016" = puerto 22; st "0A" = LISTEN.
+  return /: [0-9A-F]{8}:0016 [0-9A-F]{8}:[0-9A-F]{4} 0A/.test(r.out);
+}
+
+// waitFor con diagnóstico real: si se agota el timeout, vuelca docker logs +
+// docker ps -a ANTES de lanzar — hallazgo del coordinador tras el primer
+// fallo real en CI ("timeout esperando: sshd del SFTP de prueba" sin ninguna
+// pista). Así el PRÓXIMO fallo (si lo hay) es diagnosticable de un vistazo
+// en el log del job, sin tener que reproducirlo.
+function waitFor(cond: () => boolean, what: string, timeoutMs = 60_000, stepMs = 500) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (cond()) return;
+    execFileSync("sleep", [(stepMs / 1000).toString()]);
+  }
+  // eslint-disable-next-line no-console
+  console.error(`\n[backup-sftp-e2e] TIMEOUT esperando "${what}" — diagnóstico:\n`);
+  // eslint-disable-next-line no-console
+  console.error("--- docker ps -a ---\n" + sh("docker", ["ps", "-a"]).out);
+  for (const c of [SFTP_CONTAINER, PG_CONTAINER, BACKUP_CONTAINER]) {
+    const inspect = sh("docker", ["inspect", "-f", "{{.State.Status}} (exit={{.State.ExitCode}})", c]);
+    // eslint-disable-next-line no-console
+    console.error(`--- estado de ${c}: ${inspect.out.trim() || "(no existe / " + inspect.out.trim() + ")"} ---`);
+    // eslint-disable-next-line no-console
+    console.error(`--- docker logs ${c} ---\n` + sh("docker", ["logs", c]).out);
+  }
+  throw new Error(`timeout esperando: ${what}`);
+}
+
+// Construye un contexto de build MÍNIMO (no todo el monorepo) con backup.sh
+// parcheado, para las pruebas de mutación de setup_ssh() de más abajo. Copia
+// sólo lo que el Dockerfile realmente necesita (mismas rutas relativas que
+// espera infrastructure/docker/backup/Dockerfile, así el Dockerfile original
+// no necesita tocarse para nada).
+function buildMutant(tag: string, patch: (original: string) => string) {
+  const root = mkdtempSync(join(tmpdir(), "s9-backup-mutant-"));
+  const backupDir = join(root, "infrastructure", "backup");
+  const dockerDir = join(root, "infrastructure", "docker", "backup");
+  mkdirSync(backupDir, { recursive: true });
+  mkdirSync(dockerDir, { recursive: true });
+  writeFileSync(join(backupDir, "backup.sh"), patch(readFileSync(BACKUP_SH_PATH, "utf8")));
+  copyFileSync(RESTORE_SH_PATH, join(backupDir, "restore.sh"));
+  copyFileSync(ENTRYPOINT_SH_PATH, join(backupDir, "entrypoint.sh"));
+  copyFileSync(DOCKERFILE, join(dockerDir, "Dockerfile"));
+  const build = sh("docker", ["build", "-f", join(dockerDir, "Dockerfile"), "-t", tag, root]);
+  if (build.code !== 0) {
+    rmSync(root, { recursive: true, force: true });
+    throw new Error(`build del mutante ${tag} falló:\n${build.out}`);
+  }
+  return root;
+}
+
 describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
   "backup.sh dentro de la imagen real + servidor SFTP con chroot (E2E)",
   () => {
     let tmp: string;
-    let sftpIp = "";
 
     beforeAll(() => {
       // Guarda explícita (hallazgo del coordinador): en CI este describe NUNCA
@@ -139,7 +222,8 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
       // Limpieza defensiva de una ejecución anterior interrumpida.
       for (const c of [SFTP_CONTAINER, PG_CONTAINER, BACKUP_CONTAINER]) sh("docker", ["rm", "-f", c]);
       sh("docker", ["network", "rm", NET]);
-      sh("docker", ["network", "create", NET]);
+      const netCreate = sh("docker", ["network", "create", NET]);
+      if (netCreate.code !== 0) throw new Error(`no se pudo crear la red de prueba ${NET}:\n${netCreate.out}`);
 
       // 1) Construir la imagen REAL de backup — el mismo Dockerfile que build-images
       // en ci.yml, con el mismo contexto (raíz del repo).
@@ -188,30 +272,44 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
       if (runPg.code !== 0) throw new Error(`no se pudo levantar postgres de prueba:\n${runPg.out}`);
 
       // Esperar a que ambos servicios acepten conexiones (sin sleeps fijos: se
-      // reintenta con backoff corto y se falla con el motivo si no arrancan).
+      // reintenta con backoff corto y se falla con diagnóstico si no arrancan).
       waitFor(() => dockerExec(PG_CONTAINER, ["pg_isready", "-U", "arena"]).code === 0, "postgres de prueba");
-      // El host key de atmoz/sftp se genera al primer arranque; hay que esperar
-      // a que sshd esté escuchando antes de poder capturarlo con ssh-keyscan.
-      waitFor(() => sh("docker", ["exec", SFTP_CONTAINER, "true"]).code === 0, "contenedor SFTP arrancado");
-      const ipInspect = sh("docker", [
-        "inspect",
-        "-f",
-        `{{.NetworkSettings.Networks.${NET}.IPAddress}}`,
-        SFTP_CONTAINER,
-      ]);
-      sftpIp = ipInspect.out.trim();
-      waitFor(
-        () => sh("ssh-keyscan", ["-t", "ed25519", sftpIp]).out.includes("ssh-ed25519"),
-        "sshd del SFTP de prueba",
-      );
+      // Verdad de kernel (/proc/net/tcp), no un mensaje de log concreto de
+      // atmoz/sftp: el host key se genera al primer arranque, así que hay que
+      // esperar a que sshd esté realmente escuchando antes de usarlo.
+      waitFor(sftpListening, "sshd del SFTP de prueba (puerto 22 en LISTEN, verdad de /proc/net/tcp)");
 
       // 5) known_hosts REAL: se captura la huella del servidor de prueba con
-      // ssh-keyscan y se guarda — el equivalente exacto de lo que un operador
-      // haría a mano UNA VEZ, verificando la huella fuera de banda, nunca con
-      // StrictHostKeyChecking=no. Este es el fichero que se monta como el
-      // secreto restic_ssh_known_hosts.
-      const knownHosts = sh("ssh-keyscan", ["-t", "ed25519", sftpIp]).out;
-      if (!knownHosts.includes("ssh-ed25519")) throw new Error("no se pudo capturar la huella del SFTP de prueba");
+      // ssh-keyscan ejecutado DESDE la propia imagen bajo prueba, en la MISMA
+      // red — el mismo camino de red y el mismo binario ssh que usará después
+      // el contenedor de backup real (nunca una IP inspeccionada desde el host
+      // con una plantilla frágil, ver la nota de cabecera del fichero). Es el
+      // equivalente exacto de lo que un operador haría a mano UNA VEZ,
+      // verificando la huella fuera de banda, nunca con StrictHostKeyChecking=no.
+      let knownHosts = "";
+      waitFor(
+        () => {
+          const r = sh("docker", [
+            "run",
+            "--rm",
+            "--network",
+            NET,
+            IMAGE_TAG,
+            "ssh-keyscan",
+            "-t",
+            "ed25519",
+            SFTP_CONTAINER,
+          ]);
+          if (r.out.includes("ssh-ed25519")) {
+            knownHosts = r.out;
+            return true;
+          }
+          return false;
+        },
+        "captura de known_hosts con ssh-keyscan (mismo contenedor, misma imagen que el backup real)",
+        30_000,
+        1_000,
+      );
       writeFileSync(join(tmp, "known_hosts"), knownHosts, { mode: 0o644 });
 
       writeFileSync(join(tmp, "restic_password"), "e2e-restic-password", { mode: 0o600 });
@@ -288,7 +386,8 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
       expect(run.out).toContain("backup SUCCESS");
       expect(run.code).toBe(0);
 
-      // Clave usable, permisos correctos (rechazados por ssh si no son 600).
+      // Clave usable, permisos correctos (rechazados por ssh si no son 600;
+      // ver la prueba de mutación más abajo, que demuestra esto de verdad).
       const perms = dockerExec(BACKUP_CONTAINER, ["sh", "-c", "stat -c %a /root/.ssh/id_backup"]);
       expect(perms.out.trim()).toBe("600");
 
@@ -334,14 +433,196 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
       expect(attempt.code).not.toBe(0);
       expect(attempt.out.toLowerCase()).toMatch(/host key verification failed|remote host identification has changed/);
     });
+
+    // Pregunta directa del coordinador, confirmada ya sin Docker en
+    // backup.test.ts (con backup.sh real + entrypoint.sh real, pero sin
+    // contenedor) — aquí se repite CON el contenedor real, arrancado con su
+    // ENTRYPOINT sin overrides, exactamente como lo arrancaría el compose:
+    // "que el arranque del contenedor con known_hosts vacío falla en cerrado
+    // con un mensaje claro, y no que arranca bien y se cae luego en la
+    // primera ejecución del cron".
+    it("con known_hosts VACÍO, el contenedor (ENTRYPOINT real, sin overrides) se niega a arrancar — no arranca y falla después", () => {
+      const emptyKnownHosts = join(tmp, "known_hosts_empty_for_startup_test");
+      writeFileSync(emptyKnownHosts, "");
+      const containerName = "s9-backup-e2e-startup-fail";
+      sh("docker", ["rm", "-f", containerName]);
+      // docker run SIN -d: el proceso principal es el ENTRYPOINT real
+      // (entrypoint.sh sin argumentos ni overrides); si aborta el arranque
+      // (exit 1, ver entrypoint.sh), `docker run` en primer plano devuelve
+      // ese mismo código de salida — no hace falta encuestar el estado del
+      // contenedor por separado.
+      const run = sh("docker", [
+        "run",
+        "--rm",
+        "--name",
+        containerName,
+        "--network",
+        NET,
+        "-v",
+        `${tmp}/id_backup:/run/secrets/restic_ssh_key:ro`,
+        "-v",
+        `${emptyKnownHosts}:/run/secrets/restic_ssh_known_hosts:ro`,
+        "-v",
+        `${tmp}/restic_password:/run/secrets/restic_password:ro`,
+        "-v",
+        `${tmp}/postgres_password:/run/secrets/postgres_password:ro`,
+        "-e",
+        `RESTIC_REPOSITORY=sftp:${SFTP_USER}@${SFTP_CONTAINER}:${CHROOT_PATH}`,
+        "-e",
+        "RESTIC_PASSWORD_FILE=/run/secrets/restic_password",
+        "-e",
+        "RESTIC_SSH_KEY_FILE=/run/secrets/restic_ssh_key",
+        "-e",
+        "RESTIC_SSH_KNOWN_HOSTS_FILE=/run/secrets/restic_ssh_known_hosts",
+        "-e",
+        "PGHOST=" + PG_CONTAINER,
+        "-e",
+        "PGUSER=arena",
+        "-e",
+        "PGDATABASE=arena",
+        "-e",
+        "PGPASSWORD_FILE=/run/secrets/postgres_password",
+        "-e",
+        "METRICS_DIR=/textfile",
+        IMAGE_TAG,
+        // Sin argumentos: usa el ENTRYPOINT de la imagen tal cual (entrypoint.sh).
+      ]);
+      expect(run.code).not.toBe(0);
+      expect(run.out).toContain("ARRANQUE ABORTADO");
+      expect(run.out).toContain("está vacío o no es legible");
+      // No debe haber llegado a "cron programado" seguido de crond en marcha
+      // sin más: el mensaje de error es la ÚLTIMA cosa que pasa, no algo que
+      // conviva con un contenedor sano en segundo plano.
+      const stillRunning = sh("docker", ["inspect", "-f", "{{.State.Running}}", containerName]);
+      expect(stillRunning.out.trim()).not.toBe("true");
+    });
+
+    // ── Mutaciones sobre setup_ssh() aplicadas de verdad, DENTRO de la imagen ──
+    // real (pedido explícito del coordinador: hasta ahora sólo se habían
+    // razonado, nunca ejecutado, porque no había entorno con Docker). Cada una
+    // construye un contenedor MUTANTE (mismo Dockerfile, backup.sh parcheado
+    // con `sed`-equivalente en JS) y demuestra que, sin la línea real, pasa
+    // justo lo que esa línea existe para impedir.
+    describe("mutaciones sobre setup_ssh() (backup.sh) — controles de seguridad, no cosmética", () => {
+      it("MUTACIÓN chmod 600→644 de la clave privada: ssh la RECHAZA (el permiso no es decorativo)", () => {
+        const tag = "s9-ai-arena/backup:e2e-mutant-chmod";
+        const root = buildMutant(tag, (src) => {
+          const needle = 'chmod 600 "$HOME/.ssh/id_backup"';
+          if (!src.includes(needle))
+            throw new Error("no se encontró la línea a mutar (chmod 600 id_backup) — ¿cambió backup.sh?");
+          return src.replace(needle, 'chmod 644 "$HOME/.ssh/id_backup"');
+        });
+        try {
+          const run = sh("docker", [
+            "run",
+            "--rm",
+            "--network",
+            NET,
+            "-v",
+            `${tmp}/id_backup:/run/secrets/restic_ssh_key:ro`,
+            "-v",
+            `${tmp}/known_hosts:/run/secrets/restic_ssh_known_hosts:ro`,
+            "-v",
+            `${tmp}/restic_password:/run/secrets/restic_password:ro`,
+            "-v",
+            `${tmp}/postgres_password:/run/secrets/postgres_password:ro`,
+            "-e",
+            `RESTIC_REPOSITORY=sftp:${SFTP_USER}@${SFTP_CONTAINER}:${CHROOT_PATH}`,
+            "-e",
+            "RESTIC_PASSWORD_FILE=/run/secrets/restic_password",
+            "-e",
+            "RESTIC_SSH_KEY_FILE=/run/secrets/restic_ssh_key",
+            "-e",
+            "RESTIC_SSH_KNOWN_HOSTS_FILE=/run/secrets/restic_ssh_known_hosts",
+            "-e",
+            "PGHOST=" + PG_CONTAINER,
+            "-e",
+            "PGUSER=arena",
+            "-e",
+            "PGDATABASE=arena",
+            "-e",
+            "PGPASSWORD_FILE=/run/secrets/postgres_password",
+            "-e",
+            "METRICS_DIR=/textfile",
+            tag,
+            "/usr/local/bin/backup.sh",
+          ]);
+          // Con la clave en 644, OpenSSH se niega a usarla ("UNPROTECTED
+          // PRIVATE KEY FILE") y la conexión sftp falla: el backup NO puede
+          // llegar a SUCCESS. Si este test pasara con "backup SUCCESS", el
+          // chmod 600 real sería cosmético — y no lo es.
+          expect(run.out).not.toContain("backup SUCCESS");
+          expect(run.code).not.toBe(0);
+        } finally {
+          sh("docker", ["image", "rm", "-f", tag]);
+          rmSync(root, { recursive: true, force: true });
+        }
+      }, 120_000);
+
+      it("MUTACIÓN StrictHostKeyChecking yes→no: con known_hosts INCORRECTO, la conexión se ACEPTA igualmente (la vulnerabilidad exacta que el operador prohibió)", () => {
+        const tag = "s9-ai-arena/backup:e2e-mutant-stricthostkey";
+        const root = buildMutant(tag, (src) => {
+          const needle = "printf '  StrictHostKeyChecking yes\\n'";
+          if (!src.includes(needle))
+            throw new Error("no se encontró la línea a mutar (StrictHostKeyChecking yes) — ¿cambió backup.sh?");
+          return src.replace(needle, "printf '  StrictHostKeyChecking no\\n'");
+        });
+        // known_hosts DELIBERADAMENTE incorrecto (huella de otro host, igual
+        // que en la prueba negativa de arriba). Con el código real
+        // (StrictHostKeyChecking yes) esto rompe la conexión; el objetivo
+        // aquí es demostrar que, con el mutante, NO la rompe.
+        const wrongKnownHosts = join(tmp, "known_hosts_wrong_for_mutant");
+        writeFileSync(
+          wrongKnownHosts,
+          `${SFTP_CONTAINER} ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINVALIDHOSTKEYFORTESTINGPURPOSESONLY\n`,
+        );
+        try {
+          const run = sh("docker", [
+            "run",
+            "--rm",
+            "--network",
+            NET,
+            "-v",
+            `${tmp}/id_backup:/run/secrets/restic_ssh_key:ro`,
+            "-v",
+            `${wrongKnownHosts}:/run/secrets/restic_ssh_known_hosts:ro`,
+            "-v",
+            `${tmp}/restic_password:/run/secrets/restic_password:ro`,
+            "-v",
+            `${tmp}/postgres_password:/run/secrets/postgres_password:ro`,
+            "-e",
+            `RESTIC_REPOSITORY=sftp:${SFTP_USER}@${SFTP_CONTAINER}:${CHROOT_PATH}`,
+            "-e",
+            "RESTIC_PASSWORD_FILE=/run/secrets/restic_password",
+            "-e",
+            "RESTIC_SSH_KEY_FILE=/run/secrets/restic_ssh_key",
+            "-e",
+            "RESTIC_SSH_KNOWN_HOSTS_FILE=/run/secrets/restic_ssh_known_hosts",
+            "-e",
+            "PGHOST=" + PG_CONTAINER,
+            "-e",
+            "PGUSER=arena",
+            "-e",
+            "PGDATABASE=arena",
+            "-e",
+            "PGPASSWORD_FILE=/run/secrets/postgres_password",
+            "-e",
+            "METRICS_DIR=/textfile",
+            tag,
+            "/usr/local/bin/backup.sh",
+          ]);
+          // Con el mutante, un known_hosts que NO coincide con el host real
+          // no impide la conexión: el backup llega a SUCCESS igual. Esto es
+          // EXACTAMENTE lo que el operador prohibió ("NUNCA
+          // StrictHostKeyChecking=no") — este test documenta, con la imagen
+          // real, qué se rompe si alguien quita esa línea.
+          expect(run.out).toContain("backup SUCCESS");
+          expect(run.code).toBe(0);
+        } finally {
+          sh("docker", ["image", "rm", "-f", tag]);
+          rmSync(root, { recursive: true, force: true });
+        }
+      }, 120_000);
+    });
   },
 );
-
-function waitFor(cond: () => boolean, what: string, timeoutMs = 60_000, stepMs = 500) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (cond()) return;
-    execFileSync("sleep", [(stepMs / 1000).toString()]);
-  }
-  throw new Error(`timeout esperando: ${what}`);
-}
