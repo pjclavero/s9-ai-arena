@@ -799,8 +799,17 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
                 "PGPASSWORD_FILE=/run/secrets/postgres_password",
                 "-e",
                 "METRICS_DIR=/textfile",
-                tag,
+                // --entrypoint OBLIGATORIO: la imagen declara
+                // ENTRYPOINT ["/entrypoint.sh"]. Sin él, "backup.sh" era un
+                // ARGUMENTO que el entrypoint ignoraba, y el contenedor se
+                // quedaba en `exec crond -f` hasta agotar el timeout de 60s.
+                // Como las dos comprobaciones de abajo son NEGATIVAS, el
+                // timeout las satisfacía y esta mutación de seguridad pasaba
+                // EN FALSO: nunca llegó a ejecutar el backup. La pista
+                // estaba en el tiempo (62s ≈ el timeout), no en el veredicto.
+                "--entrypoint",
                 "/usr/local/bin/backup.sh",
+                tag,
               ],
               { timeoutMs: 60_000 },
             ),
@@ -811,6 +820,12 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
           // chmod 600 real sería cosmético — y no lo es.
           expect(run.out).not.toContain("backup SUCCESS");
           expect(run.code).not.toBe(0);
+          // Comprobaciones POSITIVAS, obligatorias porque las dos de arriba
+          // son negativas y un timeout (o un contenedor que ni arranca) las
+          // satisface sin haber probado nada. Esto exige que el backup se
+          // ejecutara DE VERDAD y fallara por el motivo alegado.
+          expect(run.timedOut).toBe(false);
+          expect(run.out).toContain("backup FULL FAILURE");
         } finally {
           await sh("docker", ["image", "rm", "-f", tag]);
           rmSync(root, { recursive: true, force: true });
@@ -875,8 +890,14 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
                 "PGPASSWORD_FILE=/run/secrets/postgres_password",
                 "-e",
                 "METRICS_DIR=/textfile",
-                tag,
+                // --entrypoint OBLIGATORIO: ver la nota de la mutación
+                // anterior. Aquí el síntoma sí era visible (la salida
+                // recibida eran las líneas de arranque "cron programado" y
+                // "DRY-RUN", nunca un backup), porque la comprobación es
+                // POSITIVA y un timeout no puede satisfacerla.
+                "--entrypoint",
                 "/usr/local/bin/backup.sh",
+                tag,
               ],
               { timeoutMs: 60_000 },
             ),
