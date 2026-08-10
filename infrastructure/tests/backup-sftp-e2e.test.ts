@@ -461,15 +461,39 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
       await phase("captura de known_hosts (ssh-keyscan desde la propia imagen)", () =>
         waitFor(
           async () => {
+            // `--entrypoint` es OBLIGATORIO aquí: la imagen declara
+            // ENTRYPOINT ["/entrypoint.sh"], así que sin él los argumentos
+            // NO se ejecutan — se le pasan al entrypoint, que los ignora,
+            // instala el crontab y termina en `exec crond -f`. El contenedor
+            // se queda vivo sirviendo cron y ssh-keyscan no llega a correr
+            // NUNCA: se agota el timeout con la salida vacía y el síntoma
+            // (fase muda de 32s) no se parece en nada a la causa.
             const r = await sh(
               "docker",
-              ["run", "--rm", "--network", NET, IMAGE_TAG, "ssh-keyscan", "-t", "ed25519", SFTP_CONTAINER],
+              [
+                "run",
+                "--rm",
+                "--network",
+                NET,
+                "--entrypoint",
+                "ssh-keyscan",
+                IMAGE_TAG,
+                "-t",
+                "ed25519",
+                SFTP_CONTAINER,
+              ],
               { timeoutMs: 15_000 },
             );
             if (r.out.includes("ssh-ed25519")) {
               knownHosts = r.out;
               return true;
             }
+            // Sin esto el reintento es mudo y un fallo real es indistinguible
+            // de "aún no está listo" — el modo de fallo que ya costó una
+            // vuelta entera de CI.
+            logLine(
+              `  ssh-keyscan aún sin huella (code=${r.code}, timedOut=${r.timedOut}): ${r.out.trim().slice(0, 300) || "(salida vacía)"}`,
+            );
             return false;
           },
           "captura de known_hosts con ssh-keyscan (mismo contenedor, misma imagen que el backup real)",
