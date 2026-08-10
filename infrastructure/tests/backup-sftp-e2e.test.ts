@@ -318,6 +318,9 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
   "backup.sh dentro de la imagen real + servidor SFTP con chroot (E2E)",
   () => {
     let tmp: string;
+    // Fuente crítica `secrets`, compartida por el contenedor principal y por
+    // los mutantes que también ejecutan backup.sh hasta el final.
+    let secretsDir: string;
 
     beforeAll(async () => {
       // Guarda explícita (hallazgo del coordinador): en CI este describe NUNCA
@@ -507,6 +510,13 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
       writeFileSync(join(tmp, "postgres_password"), "arena-e2e-test", { mode: 0o600 });
       chmodSync(keyPath, 0o600);
 
+      // Fuente crítica `secrets`: en producción el compose monta
+      // `./secrets:/secrets:ro`. Aquí se fabrica un directorio equivalente
+      // con contenido INVENTADO — nunca material real.
+      secretsDir = join(tmp, "secrets");
+      mkdirSync(secretsDir, { recursive: true });
+      writeFileSync(join(secretsDir, "ejemplo.txt"), "contenido-de-mentira-para-el-e2e\n", { mode: 0o600 });
+
       // 7) Contenedor de backup con su ENTRYPOINT REAL, sin overrides — el
       // mismo binario que arrancaría el servicio `backup` del compose en
       // producción. Los secretos se montan como Docker los monta de verdad
@@ -530,6 +540,15 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
             `${tmp}/restic_password:/run/secrets/restic_password:ro`,
             "-v",
             `${tmp}/postgres_password:/run/secrets/postgres_password:ro`,
+            // SECRETS_DIR (/secrets) es fuente CRÍTICA y en el compose de
+            // producción se monta `./secrets:/secrets:ro`. Sin este montaje,
+            // `restic backup --tag s9-arena-secrets /secrets` muere con
+            // "Fatal: all target directories/files do not exist" y todo el
+            // backup termina en FULL FAILURE. Contenido de mentira: este
+            // directorio sólo existe para que la fuente crítica esté
+            // presente, jamás secretos reales.
+            "-v",
+            `${secretsDir}:/secrets:ro`,
             "-e",
             `RESTIC_REPOSITORY=sftp:${SFTP_USER}@${SFTP_CONTAINER}:${CHROOT_PATH}`,
             "-e",
@@ -832,6 +851,12 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
                 `${tmp}/restic_password:/run/secrets/restic_password:ro`,
                 "-v",
                 `${tmp}/postgres_password:/run/secrets/postgres_password:ro`,
+                // Esta mutación llega hasta el final del backup (demuestra
+                // que con StrictHostKeyChecking=no la conexión se acepta
+                // pese al known_hosts incorrecto), así que necesita la
+                // fuente crítica `secrets` igual que el contenedor real.
+                "-v",
+                `${secretsDir}:/secrets:ro`,
                 "-e",
                 `RESTIC_REPOSITORY=sftp:${SFTP_USER}@${SFTP_CONTAINER}:${CHROOT_PATH}`,
                 "-e",
