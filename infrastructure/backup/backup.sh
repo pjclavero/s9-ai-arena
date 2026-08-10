@@ -93,6 +93,9 @@
 #   backup.sh            backup real (requiere restic, pg_dump y el repo).
 #   backup.sh --dry-run  imprime el plan y valida configuración SIN escribir
 #                        nada ni requerir docker (probado por vitest).
+#   backup.sh --init-repo  crea el repositorio restic si no existe (paso
+#                        explícito de puesta en marcha, idempotente, NUNCA
+#                        automático: ver la nota junto a INIT_REPO).
 set -uo pipefail
 # Nota: NO usamos `set -e` a nivel de script. La clasificación de fuentes
 # necesita distinguir "esta fuente falló" de "el script entero debe morir";
@@ -101,6 +104,20 @@ set -uo pipefail
 
 DRY_RUN=0
 [ "${1:-}" = "--dry-run" ] && DRY_RUN=1
+# --init-repo: crea el repositorio restic si no existe. Paso EXPLÍCITO y de
+# una sola vez, nunca automático dentro del backup: si `restic backup`
+# inicializase el repo al no encontrarlo, una errata en RESTIC_REPOSITORY
+# crearía en silencio un repositorio nuevo y vacío, y el backup "tendría
+# éxito" mientras el histórico real queda huérfano en la ruta correcta. Ese
+# fallo es peor que no hacer backup, porque además apaga la alerta.
+#
+# Este modo existe porque en la primera puesta en marcha el repositorio se
+# creó A MANO y ese paso no quedó ni en el código ni en las pruebas: el E2E
+# le pedía a backup.sh que escribiera en un repositorio que nadie había
+# creado. Tenerlo aquí evita además duplicar setup_ssh dentro del test,
+# donde se desviaría de la configuración SSH real con el tiempo.
+INIT_REPO=0
+[ "${1:-}" = "--init-repo" ] && INIT_REPO=1
 
 # ── Configuración (sobreescribible por entorno; valores del contenedor backup) ─
 MAPS_DIR="${MAPS_DIR:-/data/maps}"
@@ -455,6 +472,32 @@ if [ "$DRY_RUN" = 1 ]; then
     exit 3
   fi
   exit "$errors"
+fi
+
+# ── --init-repo: creación explícita del repositorio (no escribe métricas: no
+# es una ejecución de backup y no debe tocar s9_backup_last_success_*). ──────
+if [ "$INIT_REPO" = 1 ]; then
+  if [ "$errors" != 0 ]; then
+    log error "--init-repo: configuración incompleta (ver errores arriba); no se inicializa nada"
+    exit 1
+  fi
+  if ! setup_ssh; then
+    log error "--init-repo: no se pudo preparar ~/.ssh para el backend sftp"
+    exit 1
+  fi
+  # Idempotente: si ya hay repositorio, NO se toca. `restic cat config` es la
+  # comprobación barata de existencia; su fallo distingue "no hay repo" de
+  # "hay repo" sin escribir nada.
+  if restic cat config >/dev/null 2>&1; then
+    log info "--init-repo: el repositorio ya existe; no se hace nada"
+    exit 0
+  fi
+  if restic init; then
+    log info "--init-repo: repositorio creado"
+    exit 0
+  fi
+  log error "--init-repo: restic init falló"
+  exit 1
 fi
 
 [ "$errors" = 0 ] || { write_metrics 1 0 0; exit 1; }

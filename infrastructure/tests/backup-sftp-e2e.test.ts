@@ -564,6 +564,23 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
         ),
       );
 
+      // 8) Inicialización EXPLÍCITA del repositorio restic, con el mismo
+      // binario, la misma clave y la misma ruta con chroot que usará el
+      // backup. En producción este paso se hizo a mano y no estaba ni en el
+      // código ni en las pruebas: por eso este E2E le pedía a backup.sh que
+      // escribiera en un repositorio inexistente y restic respondía
+      // "unable to open config file / Is there a repository at ...".
+      // No se hace dentro de backup.sh en cada ejecución a propósito: ver la
+      // nota junto a INIT_REPO en backup.sh (una errata en RESTIC_REPOSITORY
+      // crearía un repositorio vacío y el backup "tendría éxito").
+      await phase("restic init (repositorio del E2E, vía SFTP con chroot)", async () => {
+        const init = await dockerExec(BACKUP_CONTAINER, ["/usr/local/bin/backup.sh", "--init-repo"], {
+          timeoutMs: 120_000,
+        });
+        if (init.code !== 0) throw new Error(`restic init falló (code=${init.code}):\n${init.out}`);
+        logLine(`  init: ${init.out.trim().slice(0, 300)}`);
+      });
+
       dumpPhaseTimings();
     }, 300_000); // 5 min: con la imagen reutilizada (sin reconstruirla) sobra margen; ver desglose por fase en los logs.
 

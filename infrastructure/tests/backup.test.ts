@@ -1887,3 +1887,87 @@ describe("servicio backup en el Compose", () => {
     expect(doc.volumes).toHaveProperty("backup_work");
   });
 });
+
+// ── --init-repo ────────────────────────────────────────────────────────────
+// El repositorio de producción se creó A MANO y ese paso no estaba ni en el
+// código ni en las pruebas: el E2E de SFTP le pedía a backup.sh que
+// escribiera en un repositorio inexistente y restic contestaba "unable to
+// open config file / Is there a repository at ...". Estas pruebas fijan las
+// tres propiedades que hacen seguro el modo: no inicializa con configuración
+// incompleta, crea el repo cuando falta, y NO lo toca cuando ya existe. La
+// tercera es la que importa de verdad: si `restic backup` inicializase solo
+// al no encontrar repositorio, una errata en RESTIC_REPOSITORY crearía un
+// repositorio vacío, el backup "tendría éxito", el histórico real quedaría
+// huérfano en la ruta correcta y además se apagaría la alerta.
+describe("backup.sh --init-repo", () => {
+  function runInitRepo(env: Record<string, string>, fakebin: string) {
+    try {
+      const out = execFileSync(BASH_BIN, [BACKUP, "--init-repo"], {
+        encoding: "utf8",
+        env: { ...process.env, ...env, PATH: `${fakebin}:${process.env.PATH}` },
+      });
+      return { code: 0, out };
+    } catch (e: any) {
+      return { code: e.status as number, out: `${e.stdout}${e.stderr}` };
+    }
+  }
+
+  // restic falso que registra cada invocación y cuya respuesta a
+  // `cat config` (la comprobación de existencia) se controla con un fichero.
+  function writeFakeResticInit(fakebin: string, log: string, repoExistsMarker: string) {
+    writeFileSync(
+      join(fakebin, "restic"),
+      `#!/usr/bin/env bash\necho "$@" >> "${log}"\ncase "$1" in\n  cat) [ -f "${repoExistsMarker}" ] && exit 0 || exit 1 ;;\n  init) touch "${repoExistsMarker}"; exit 0 ;;\nesac\nexit 0\n`,
+      { mode: 0o755 },
+    );
+  }
+
+  function fixture() {
+    const dir = mkdtempSync(join(tmpdir(), "e10-init-"));
+    const fakebin = join(dir, "bin");
+    mkdirSync(fakebin);
+    const log = join(dir, "restic.log");
+    const marker = join(dir, "repo-existe");
+    writeFakeResticInit(fakebin, log, marker);
+    writeFileSync(join(dir, "restic_password.txt"), SECRET_VALUE, { mode: 0o600 });
+    return { dir, fakebin, log, marker, pwd: join(dir, "restic_password.txt") };
+  }
+
+  it("con configuración incompleta: exit 1 y NO invoca restic siquiera", () => {
+    const f = fixture();
+    // Sin RESTIC_REPOSITORY: justo el estado de bootstrap del día 1.
+    const { code, out } = runInitRepo({ RESTIC_REPOSITORY: "", RESTIC_PASSWORD_FILE: f.pwd }, f.fakebin);
+    expect(code).toBe(1);
+    expect(out).toContain("configuración incompleta");
+    expect(existsSync(f.log)).toBe(false);
+    rmSync(f.dir, { recursive: true, force: true });
+  });
+
+  it("si el repositorio no existe: lo crea", () => {
+    const f = fixture();
+    const { code, out } = runInitRepo(
+      { RESTIC_REPOSITORY: join(f.dir, "repo"), RESTIC_PASSWORD_FILE: f.pwd },
+      f.fakebin,
+    );
+    expect(code).toBe(0);
+    expect(out).toContain("repositorio creado");
+    expect(readFileSync(f.log, "utf8")).toContain("init");
+    rmSync(f.dir, { recursive: true, force: true });
+  });
+
+  it("si el repositorio YA existe: no lo vuelve a inicializar (idempotente)", () => {
+    const f = fixture();
+    writeFileSync(f.marker, "");
+    const { code, out } = runInitRepo(
+      { RESTIC_REPOSITORY: join(f.dir, "repo"), RESTIC_PASSWORD_FILE: f.pwd },
+      f.fakebin,
+    );
+    expect(code).toBe(0);
+    expect(out).toContain("ya existe");
+    // La distinción que importa: consultó, pero NO inicializó.
+    const invocaciones = readFileSync(f.log, "utf8");
+    expect(invocaciones).toContain("cat config");
+    expect(invocaciones).not.toContain("init");
+    rmSync(f.dir, { recursive: true, force: true });
+  });
+});

@@ -28,6 +28,35 @@ del servicio `backup` del stack, alerta si falla o si no hay backup en 26 h).
 - Imágenes versionadas en `ghcr.io/pjclavero/s9-ai-arena/*` (las publica la CI
   en cada merge a main, etiquetadas `v<versión>` y `sha-<commit>`).
 
+## Puesta en marcha del repositorio (una sola vez, ANTES del primer backup)
+
+Un repositorio restic no existe hasta que se crea. Mientras no exista, cada
+ejecución de `backup.sh` termina en `FULL FAILURE` con este mensaje, que es
+el síntoma exacto de que falta este paso y no otra cosa:
+
+```
+Fatal: unable to open config file: Lstat: file does not exist
+Is there a repository at the following location?
+```
+
+Creación, desde el propio contenedor de backup (mismo binario, misma clave y
+misma ruta que usará el backup programado):
+
+```bash
+docker compose -f infrastructure/docker-compose.yml exec backup \
+  /usr/local/bin/backup.sh --init-repo
+```
+
+Es **idempotente**: si el repositorio ya existe lo dice y no toca nada.
+
+Este paso es explícito a propósito, y `backup.sh` NO lo hace por su cuenta
+durante un backup. Si `restic backup` inicializase el repositorio al no
+encontrarlo, una errata en `RESTIC_REPOSITORY` crearía en silencio un
+repositorio nuevo y vacío: el backup reportaría éxito, la alerta
+`BackupTooOld` se apagaría y el histórico real quedaría huérfano en la ruta
+correcta. Ese fallo es peor que no tener backup, porque además oculta que no
+lo hay.
+
 ## Procedimiento
 
 Cronometrar cada fase (`date` antes y después).
