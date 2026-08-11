@@ -47,6 +47,12 @@ export const ROJO = "rojo";
 export const JOBS_CI = [
   { id: "lint-format-types", clase: "obligatorio" },
   { id: "unit", clase: "obligatorio" },
+  // fix/backup-sftp-scheduled-runtime: E2E real (imagen Docker + SFTP con
+  // chroot + postgres) del backup programado. "obligatorio", no "solo-main":
+  // si este job faltara en `needs` o quedara skipped/cancelled, el semáforo
+  // debe ir a rojo en CUALQUIER run, no sólo en main — es precisamente el
+  // job pensado para que un "se saltó en silencio" no pueda colarse.
+  { id: "e2e-backup-sftp", clase: "obligatorio" },
   { id: "contracts", clase: "obligatorio" },
   { id: "regression-battles", clase: "obligatorio" },
   { id: "build-images", clase: "obligatorio" },

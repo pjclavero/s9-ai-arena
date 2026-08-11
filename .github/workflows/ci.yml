@@ -87,7 +87,13 @@ jobs:
         # y el resumen se publican como artefacto de CI.
         # R2.2: se añade infrastructure/ — sus tests (escáner de Compose,
         # ci-gate, backup, observabilidad) no corrían en NINGUNA etapa de ci.yml.
-        run: npx vitest run apps packages infrastructure --maxWorkers=2 --coverage.enabled --coverage.provider=v8 --coverage.reporter=text --coverage.reporter=html --coverage.reportsDirectory=coverage
+        # fix/backup-sftp-scheduled-runtime: backup-sftp-e2e.test.ts se EXCLUYE
+        # de aquí a propósito — construye una imagen Docker y levanta 3
+        # contenedores (backup + sftp con chroot + postgres), y correrlo junto
+        # a --coverage.enabled/--maxWorkers=2 de esta etapa lo haría más lento
+        # y más frágil sin aportar nada al informe de cobertura de código TS.
+        # Corre en su propio job obligatorio: e2e-backup-sftp (más abajo).
+        run: npx vitest run apps packages infrastructure --exclude "**/backup-sftp-e2e.test.ts" --maxWorkers=2 --coverage.enabled --coverage.provider=v8 --coverage.reporter=text --coverage.reporter=html --coverage.reportsDirectory=coverage
       - name: Informe de cobertura como artefacto
         if: always()
         uses: actions/upload-artifact@v4
@@ -95,6 +101,66 @@ jobs:
           name: coverage-report
           path: coverage/
           if-no-files-found: warn
+
+  # ── Etapa 2b: E2E real del backup por SFTP con chroot ──────────────────────
+  # fix/backup-sftp-scheduled-runtime: el primer backup real se hizo A MANO
+  # desde el host; el backup PROGRAMADO seguía roto por dos defectos que sólo
+  # aparecían EJECUTANDO LA IMAGEN REAL (openssh-client ausente del
+  # Dockerfile; la ruta del repositorio restic tenía que ser la de DENTRO del
+  # chroot del host de respaldo, no la física). Un `restic … snapshots` a
+  # mano desde el host nunca los reproducía. Job propio y obligatorio (no un
+  # paso más de `unit`) para que sea imposible que se salte en silencio: si
+  # Docker no estuviera disponible en este runner, infrastructure/tests/
+  # backup-sftp-e2e.test.ts hace FALLAR el job a propósito en vez de
+  # reportarse "skipped" (ver ese fichero, guarda en beforeAll con CI=true).
+  # needs: build-images — REUTILIZA la imagen backup que ya construye la
+  # etapa 5 (matrix.service == 'backup', exportada arriba como artefacto) en
+  # vez de reconstruirla desde cero: más rápido (evita un segundo `apk add`
+  # completo) y más fiel (ejercita el mismo artefacto que build-images ya
+  # validó). scan también depende de build-images, así que esto no alarga el
+  # camino crítico del pipeline.
+  e2e-backup-sftp:
+    needs: [unit, build-images]
+    runs-on: ubuntu-latest
+    # Medido en la primera ejecución real: con la imagen reutilizada (sin
+    # reconstruirla) el E2E completo (pulls de atmoz/sftp + postgres, arranque,
+    # entrypoint real, restic, 2 mutaciones sobre setup_ssh) debe caber
+    # holgadamente en unos pocos minutos. 10 min de margen sobre eso; si algún
+    # día hiciera falta más, que sea una decisión explícita con datos de
+    # infrastructure/tests/backup-sftp-e2e.test.ts (imprime tiempos por fase),
+    # no un número subido a ciegas.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Docker disponible en este runner (si esto falla, el job de abajo también debe fallar, nunca saltarse)
+        run: docker info
+      - name: Descargar la imagen backup ya construida por build-images
+        uses: actions/download-artifact@v4
+        with:
+          name: backup-image-tar
+          path: /tmp/backup-image
+      - name: Cargar la imagen (ya viene etiquetada como s9-ai-arena/backup:e2e-test — no se retagea aquí, fuente única de verdad en build-images)
+        # `docker load` imprime su propia salida ("Loaded image: ...") y aquí
+        # además se lista `docker images` justo después — diagnóstico
+        # permanente (pedido tras el fallo real de tag "No such image: …" en
+        # una vuelta anterior): si el nombre alguna vez no coincidiera, el
+        # log de ESTE paso lo dice de un vistazo, sin tener que reproducirlo.
+        run: |
+          docker load -i /tmp/backup-image/backup-image.tar
+          echo "--- docker images tras la carga ---"
+          docker images
+          docker image inspect s9-ai-arena/backup:e2e-test >/dev/null
+      - name: E2E real - imagen backup (reutilizada) + SFTP con chroot (atmoz/sftp) + postgres
+        # Salida SIN búfer: el propio test escribe cada fase con fs.writeSync
+        # (síncrono, no se pierde aunque el proceso muera después) para que un
+        # futuro cuelgue diga EN QUÉ FASE se quedó, en vez de cancelarse en
+        # silencio como pasó en la primera ejecución real (15 min, cero líneas).
+        run: npx vitest run infrastructure/tests/backup-sftp-e2e.test.ts --maxWorkers=1
 
   # ── Etapa 3: esquemas y compatibilidad de contratos ────────────────────────
   contracts:
@@ -196,6 +262,24 @@ jobs:
             build_args: ""
     steps:
       - uses: actions/checkout@v4
+      # fix/backup-sftp-scheduled-runtime: SÓLO para la variante `backup` de
+      # la matriz. El driver `docker` por defecto (el builder que usa
+      # docker/build-push-action sin este paso) NO soporta el exportador
+      # `type=docker,dest=<tar>` que el paso de más abajo necesita para darle
+      # la imagen a e2e-backup-sftp ("Docker exporter is not supported for
+      # the docker driver" — fallo real visto en CI). `docker-container` sí
+      # lo soporta. Se activa ANTES del build principal (no sólo antes del
+      # de exportar) para que AMBOS pasos compartan builder y caché: si se
+      # activara sólo para el export, ese build sería un cache-miss completo
+      # y reintroduciría el mismo coste que se quería evitar. Acotado a
+      # `matrix.service == 'backup'`: cada variante de la matriz corre en su
+      # propio runner aislado, así que esto NO toca el driver de las otras
+      # diez — nada que perder ahí.
+      - name: Configurar buildx con driver docker-container (sólo backup; necesario para exportar a tar)
+        if: matrix.service == 'backup'
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
       - name: Login en GHCR (solo main)
         if: github.ref == 'refs/heads/main'
         uses: docker/login-action@v3
@@ -216,6 +300,48 @@ jobs:
           tags: |
             ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:sha-${{ github.sha }}
             ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:v${{ steps.ver.outputs.version }}
+      # fix/backup-sftp-scheduled-runtime: el E2E de infrastructure/tests/
+      # backup-sftp-e2e.test.ts (job e2e-backup-sftp) necesita EXACTAMENTE
+      # esta imagen. Su primera versión la reconstruía desde cero en su
+      # propio job (FROM alpine + apk add restic/postgresql16-client/
+      # openssh-client sin caché entre runs) y eso — sumado a los pulls de
+      # atmoz/sftp y postgres — se llevaba minutos; la CI real lo canceló a
+      # los 15 sin haber emitido una sola línea. Reconstruir la MISMA imagen
+      # dos veces en dos jobs también era, en sí, redundante: ya se construye
+      # aquí. Este paso la reexporta a un tar (cache-hit inmediato: mismo
+      # builder docker-container, mismo contexto, ningún RUN/COPY cambia)
+      # para que e2e-backup-sftp la cargue en vez de reconstruirla — más
+      # rápido Y más fiel, porque ejercita el artefacto que de verdad se
+      # publicaría (misma imagen, no una reconstruida aparte).
+      # FALLO REAL VISTO EN CI (segunda vuelta de este mismo paso): sin
+      # `tags:` aquí, `docker/build-push-action` no le pone NINGÚN nombre a
+      # la imagen dentro del tar (queda "untagged", sólo con su ID de
+      # contenido) — `docker load` la importa igual, pero no hay ningún
+      # "ghcr.io/…/backup:sha-…" al que referirse después, porque ese nombre
+      # nunca se compuso más que EN LA CABEZA de quien escribió el paso
+      # siguiente. FUENTE ÚNICA DE VERDAD: se etiqueta aquí mismo con el tag
+      # EXACTO y literal que infrastructure/tests/backup-sftp-e2e.test.ts usa
+      # como IMAGE_TAG ("s9-ai-arena/backup:e2e-test") — así el paso de carga
+      # de más abajo no tiene que RECOMPONER ningún nombre (ni con
+      # github.sha, que en `pull_request` es el SHA del merge commit, no el
+      # de la rama) ni retagear nada: `docker load` ya deja la imagen con el
+      # nombre que el test espera, sin segunda fuente de verdad.
+      - name: Exportar la imagen backup como artefacto (para e2e-backup-sftp; cache-hit, no reconstruye)
+        if: matrix.service == 'backup'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          build-args: ${{ matrix.build_args }}
+          tags: s9-ai-arena/backup:e2e-test
+          outputs: type=docker,dest=/tmp/backup-image.tar
+      - name: Subir la imagen backup como artefacto
+        if: matrix.service == 'backup'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backup-image-tar
+          path: /tmp/backup-image.tar
+          retention-days: 1
 
   # ── Etapa 6: escaneo de dependencias, imágenes y Compose ──────────────────
   scan:
@@ -348,6 +474,7 @@ jobs:
       [
         lint-format-types,
         unit,
+        e2e-backup-sftp,
         contracts,
         regression-battles,
         build-images,

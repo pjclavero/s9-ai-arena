@@ -93,6 +93,9 @@
 #   backup.sh            backup real (requiere restic, pg_dump y el repo).
 #   backup.sh --dry-run  imprime el plan y valida configuración SIN escribir
 #                        nada ni requerir docker (probado por vitest).
+#   backup.sh --init-repo  crea el repositorio restic si no existe (paso
+#                        explícito de puesta en marcha, idempotente, NUNCA
+#                        automático: ver la nota junto a INIT_REPO).
 set -uo pipefail
 # Nota: NO usamos `set -e` a nivel de script. La clasificación de fuentes
 # necesita distinguir "esta fuente falló" de "el script entero debe morir";
@@ -101,6 +104,20 @@ set -uo pipefail
 
 DRY_RUN=0
 [ "${1:-}" = "--dry-run" ] && DRY_RUN=1
+# --init-repo: crea el repositorio restic si no existe. Paso EXPLÍCITO y de
+# una sola vez, nunca automático dentro del backup: si `restic backup`
+# inicializase el repo al no encontrarlo, una errata en RESTIC_REPOSITORY
+# crearía en silencio un repositorio nuevo y vacío, y el backup "tendría
+# éxito" mientras el histórico real queda huérfano en la ruta correcta. Ese
+# fallo es peor que no hacer backup, porque además apaga la alerta.
+#
+# Este modo existe porque en la primera puesta en marcha el repositorio se
+# creó A MANO y ese paso no quedó ni en el código ni en las pruebas: el E2E
+# le pedía a backup.sh que escribiera en un repositorio que nadie había
+# creado. Tenerlo aquí evita además duplicar setup_ssh dentro del test,
+# donde se desviaría de la configuración SSH real con el tiempo.
+INIT_REPO=0
+[ "${1:-}" = "--init-repo" ] && INIT_REPO=1
 
 # ── Configuración (sobreescribible por entorno; valores del contenedor backup) ─
 MAPS_DIR="${MAPS_DIR:-/data/maps}"
@@ -116,6 +133,12 @@ PGUSER="${PGUSER:-arena}"
 PGDATABASE="${PGDATABASE:-arena}"
 RESTIC_REPOSITORY="${RESTIC_REPOSITORY:-}"
 # RESTIC_PASSWORD_FILE y PGPASSWORD_FILE llegan como secretos montados.
+# RESTIC_SSH_KEY_FILE / RESTIC_SSH_KNOWN_HOSTS_FILE: sólo aplican al backend
+# `sftp:` (ver setup_ssh más abajo, fix/backup-sftp-scheduled-runtime).
+RESTIC_SSH_KEY_FILE="${RESTIC_SSH_KEY_FILE:-}"
+RESTIC_SSH_KNOWN_HOSTS_FILE="${RESTIC_SSH_KNOWN_HOSTS_FILE:-}"
+: "${HOME:=/root}"
+export HOME
 
 # D2 (ronda 3 de #112): el mensaje de `log()` a menudo interpola nombres de
 # fichero (stderr de `find`/`cp`), y `bot_sources` es contenido subido por
@@ -259,6 +282,59 @@ json_source() {
   fi
 }
 
+# setup_ssh — prepara ~/.ssh para el backend `sftp:` de restic.
+#
+# INCIDENTE que motiva esta función (fix/backup-sftp-scheduled-runtime): el
+# primer backup real se hizo A MANO desde el host, con la clave y el
+# known_hosts ya colocados en ~/.ssh por el operador. El backup PROGRAMADO
+# corre dentro de ESTE contenedor, que no comparte ~/.ssh del host: sin esta
+# función no había clave ni fingerprint verificado disponibles para el
+# proceso de cron, y `restic backup` fallaba (o, peor, alguien habría tenido
+# la tentación de "arreglarlo" con StrictHostKeyChecking=no, que es
+# EXACTAMENTE lo que no se debe hacer: sin verificación de huella, un
+# MITM/DNS spoofing en la red del backup podría suplantar el destino y
+# recibir el dump completo de la base de datos).
+#
+# Los secretos de Docker se montan SIEMPRE de sólo lectura y con permisos
+# 0444 (root:root) en /run/secrets/*: `ssh` rechaza una clave privada con
+# permisos de grupo/otros ("UNPROTECTED PRIVATE KEY FILE"), así que la clave
+# NO puede usarse directamente desde /run/secrets — hay que copiarla a un
+# sitio escribible del contenedor (la capa de escritura, efímera) con 0600
+# antes de invocarla. known_hosts no tiene esa restricción de permisos, pero
+# se copia igual para mantener todo en un único ~/.ssh gestionado aquí.
+#
+# `IdentitiesOnly yes` evita que ssh pruebe otras identidades (agent, claves
+# por defecto) que no existen en este contenedor pero cuyo intento ralentiza
+# o, en teoría, podría filtrar información en un ssh-agent reenviado por
+# error. `StrictHostKeyChecking yes` + `UserKnownHostsFile` explícito es la
+# verificación de huella exigida por el operador: sin una entrada que
+# coincida en known_hosts, ssh aborta la conexión en vez de aceptar
+# silenciosamente cualquier host.
+setup_ssh() {
+  [[ "$RESTIC_REPOSITORY" == sftp:* ]] || return 0
+  mkdir -p "$HOME/.ssh"
+  chmod 700 "$HOME/.ssh"
+  if ! cp "$RESTIC_SSH_KEY_FILE" "$HOME/.ssh/id_backup" 2>/dev/null; then
+    log error "no se pudo copiar la clave SSH desde RESTIC_SSH_KEY_FILE=$RESTIC_SSH_KEY_FILE"
+    return 1
+  fi
+  chmod 600 "$HOME/.ssh/id_backup"
+  if ! cp "$RESTIC_SSH_KNOWN_HOSTS_FILE" "$HOME/.ssh/known_hosts" 2>/dev/null; then
+    log error "no se pudo copiar known_hosts desde RESTIC_SSH_KNOWN_HOSTS_FILE=$RESTIC_SSH_KNOWN_HOSTS_FILE"
+    return 1
+  fi
+  chmod 644 "$HOME/.ssh/known_hosts"
+  {
+    printf 'Host *\n'
+    printf '  IdentityFile %s/.ssh/id_backup\n' "$HOME"
+    printf '  IdentitiesOnly yes\n'
+    printf '  UserKnownHostsFile %s/.ssh/known_hosts\n' "$HOME"
+    printf '  StrictHostKeyChecking yes\n'
+  } > "$HOME/.ssh/config"
+  chmod 600 "$HOME/.ssh/config"
+  return 0
+}
+
 write_metrics() { # $1 exit_code $2 duration_s $3 restic_snapshot_created(0/1)
   [ "$DRY_RUN" = 1 ] && return 0
   mkdir -p "$METRICS_DIR"
@@ -324,6 +400,55 @@ if [ -z "${RESTIC_PASSWORD_FILE:-}" ] && [ -z "${RESTIC_PASSWORD:-}" ]; then
   errors=1
 fi
 
+# fix/backup-sftp-scheduled-runtime: el backend `sftp:` fallaba en EJECUCIÓN
+# (ssh ausente de la imagen) de un modo que un `restic -r … snapshots` a mano
+# desde el host jamás reproducía, porque el host SÍ tiene ssh. Estas
+# comprobaciones mueven ese fallo de "silencioso a las 4:15 de la madrugada"
+# a "visible en el dry-run de arranque del entrypoint" (ver entrypoint.sh) y
+# en la validación de cada ejecución programada. NUNCA se acepta
+# StrictHostKeyChecking=no como sustituto de RESTIC_SSH_KNOWN_HOSTS_FILE: sin
+# huella verificada, cualquiera en la red del backup podría suplantar el
+# destino sftp y recibir el dump completo de PostgreSQL.
+#
+# sftp_errors se lleva SEPARADO de errors (revisión del operador tras el
+# primer intento de este fix): "RESTIC_REPOSITORY sin definir" es un estado
+# de arranque ESPERABLE el día 1, antes de que el operador termine de
+# configurar `.env` — por eso el entrypoint no aborta el contenedor por eso
+# (comentario histórico "no falla el arranque: la alerta BackupTooOld
+# avisará"). Pero "RESTIC_REPOSITORY=sftp:… configurado y aun así falta ssh,
+# la clave o un known_hosts con contenido" NO es un estado transitorio de
+# bootstrap: es un defecto de imagen/despliegue —el mismo que motivó este
+# fix— y dejarlo correr 24 h hasta que el cron lo descubra es exactamente el
+# fallo silencioso que el operador quiere cerrado. El entrypoint usa
+# sftp_errors para decidir si el CONTENEDOR debe negarse a arrancar (ver
+# entrypoint.sh).
+sftp_errors=0
+if [[ "$RESTIC_REPOSITORY" == sftp:* ]]; then
+  if ! command -v ssh >/dev/null 2>&1; then
+    log error "RESTIC_REPOSITORY usa el backend sftp pero 'ssh' (openssh-client) no está instalado en esta imagen"
+    errors=1
+    sftp_errors=1
+  fi
+  if [ -z "$RESTIC_SSH_KEY_FILE" ]; then
+    log error "backend sftp: falta RESTIC_SSH_KEY_FILE (secreto con la clave privada SSH)"
+    errors=1
+    sftp_errors=1
+  elif [ ! -r "$RESTIC_SSH_KEY_FILE" ]; then
+    log error "backend sftp: RESTIC_SSH_KEY_FILE=$RESTIC_SSH_KEY_FILE no es legible"
+    errors=1
+    sftp_errors=1
+  fi
+  if [ -z "$RESTIC_SSH_KNOWN_HOSTS_FILE" ]; then
+    log error "backend sftp: falta RESTIC_SSH_KNOWN_HOSTS_FILE (huella verificada; NUNCA StrictHostKeyChecking=no)"
+    errors=1
+    sftp_errors=1
+  elif [ ! -s "$RESTIC_SSH_KNOWN_HOSTS_FILE" ]; then
+    log error "backend sftp: RESTIC_SSH_KNOWN_HOSTS_FILE=$RESTIC_SSH_KNOWN_HOSTS_FILE está vacío o no es legible"
+    errors=1
+    sftp_errors=1
+  fi
+fi
+
 if [ "$DRY_RUN" = 1 ]; then
   log info "DRY-RUN: plan de backup (no se escribe nada)"
   echo "PLAN 1/5 · pg_dump -Fc -h $PGHOST -U $PGUSER $PGDATABASE -f staging/pgdump-\$(fecha).dump [fuente crítica]"
@@ -331,10 +456,48 @@ if [ "$DRY_RUN" = 1 ]; then
   echo "PLAN 3/5 · construir staging/ (maps/, bot_sources/, assets/, replays/) + manifest.sha256 + manifest.json DENTRO del staging"
   echo "PLAN 4/5 · restic backup del staging completo <= $REPLAY_RETENTION_DAYS días de replays (official/ sin límite) + restic backup de $SECRETS_DIR [fuente crítica, snapshot separado]"
   echo "PLAN 5/5 · restic forget --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune && restic check"
+  if [[ "$RESTIC_REPOSITORY" == sftp:* ]]; then
+    echo "SFTP · ssh $(command -v ssh >/dev/null 2>&1 && echo presente || echo AUSENTE), known_hosts verificado (StrictHostKeyChecking yes, nunca 'no')"
+  fi
   echo "MÉTRICAS · $METRICS_DIR/s9_backup.prom (alerta si falla o si no hay éxito en 26 h)"
   echo "EXIT · 0 SUCCESS / 1 FULL FAILURE (fuente crítica o restic) / 2 PARTIAL SUCCESS (fuente no crítica en error)"
   [ "$errors" = 0 ] && echo "CONFIG OK" || echo "CONFIG INCOMPLETA (ver errores arriba)"
+  # Código de salida del --dry-run (distinto del de una ejecución real):
+  #   0 config completa · 1 config incompleta "de bootstrap" (esperable el
+  #   día 1, p.ej. RESTIC_REPOSITORY todavía sin definir) · 3 backend sftp
+  #   mal configurado (defecto de imagen/despliegue, NO transitorio) — el
+  #   entrypoint distingue 3 para negarse a arrancar el contenedor en vez de
+  #   dejar que el cron lo descubra 24 h después.
+  if [ "$sftp_errors" = 1 ]; then
+    exit 3
+  fi
   exit "$errors"
+fi
+
+# ── --init-repo: creación explícita del repositorio (no escribe métricas: no
+# es una ejecución de backup y no debe tocar s9_backup_last_success_*). ──────
+if [ "$INIT_REPO" = 1 ]; then
+  if [ "$errors" != 0 ]; then
+    log error "--init-repo: configuración incompleta (ver errores arriba); no se inicializa nada"
+    exit 1
+  fi
+  if ! setup_ssh; then
+    log error "--init-repo: no se pudo preparar ~/.ssh para el backend sftp"
+    exit 1
+  fi
+  # Idempotente: si ya hay repositorio, NO se toca. `restic cat config` es la
+  # comprobación barata de existencia; su fallo distingue "no hay repo" de
+  # "hay repo" sin escribir nada.
+  if restic cat config >/dev/null 2>&1; then
+    log info "--init-repo: el repositorio ya existe; no se hace nada"
+    exit 0
+  fi
+  if restic init; then
+    log info "--init-repo: repositorio creado"
+    exit 0
+  fi
+  log error "--init-repo: restic init falló"
+  exit 1
 fi
 
 [ "$errors" = 0 ] || { write_metrics 1 0 0; exit 1; }
@@ -527,7 +690,15 @@ fi
 log info "5/5 restic backup del staging (crítico + fuentes no críticas disponibles)"
 status=0
 snapshot_created=0
-if restic backup --tag s9-arena-data "$STAGING"; then
+if ! setup_ssh; then
+  # La clave/known_hosts se validaron legibles arriba, pero copiarlos a
+  # ~/.ssh puede fallar igualmente (disco lleno, formato inesperado). Sin
+  # ~/.ssh listo, restic fallaría de todas formas al invocar ssh: se corta
+  # aquí con el mismo tratamiento que un fallo de restic (FULL FAILURE),
+  # en vez de dejar que el error salga confuso desde dentro de restic.
+  status=1
+fi
+if [ "$status" = 0 ] && restic backup --tag s9-arena-data "$STAGING"; then
   snapshot_created=1
 else
   status=1

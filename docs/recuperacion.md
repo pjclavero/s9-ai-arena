@@ -15,8 +15,47 @@ del servicio `backup` del stack, alerta si falla o si no hay backup en 26 h).
 - Acceso al repositorio restic (`RESTIC_REPOSITORY`, NAS/ZFS del operador) y a
   su contraseña (`restic_password`, custodiada FUERA del servidor: gestor de
   contraseñas del operador; sin ella no hay recuperación posible).
+- **Si el destino es SFTP (fix/backup-sftp-scheduled-runtime):** además hace
+  falta, TAMBIÉN custodiado fuera del servidor, el material para alcanzar el
+  host de respaldo por SSH: la clave privada `restic_ssh_key` y el
+  `restic_ssh_known_hosts` con la huella ya verificada del host. Es el mismo
+  problema del huevo y la gallina que `restic_password`: ambos viajan DENTRO
+  del snapshot de secretos (`s9-arena-secrets`) por comodidad del día a día,
+  pero ese snapshot vive precisamente en el repositorio SFTP al que sólo se
+  llega usando esa misma clave — sin una copia fuera del servidor, Fase 2 no
+  puede arrancar. Ver `infrastructure/.env.example` para el formato de
+  `RESTIC_REPOSITORY` con un host de respaldo confinado (`ChrootDirectory`).
 - Imágenes versionadas en `ghcr.io/pjclavero/s9-ai-arena/*` (las publica la CI
   en cada merge a main, etiquetadas `v<versión>` y `sha-<commit>`).
+
+## Puesta en marcha del repositorio (una sola vez, ANTES del primer backup)
+
+Un repositorio restic no existe hasta que se crea. Mientras no exista, cada
+ejecución de `backup.sh` termina en `FULL FAILURE` con este mensaje, que es
+el síntoma exacto de que falta este paso y no otra cosa:
+
+```
+Fatal: unable to open config file: Lstat: file does not exist
+Is there a repository at the following location?
+```
+
+Creación, desde el propio contenedor de backup (mismo binario, misma clave y
+misma ruta que usará el backup programado):
+
+```bash
+docker compose -f infrastructure/docker-compose.yml exec backup \
+  /usr/local/bin/backup.sh --init-repo
+```
+
+Es **idempotente**: si el repositorio ya existe lo dice y no toca nada.
+
+Este paso es explícito a propósito, y `backup.sh` NO lo hace por su cuenta
+durante un backup. Si `restic backup` inicializase el repositorio al no
+encontrarlo, una errata en `RESTIC_REPOSITORY` crearía en silencio un
+repositorio nuevo y vacío: el backup reportaría éxito, la alerta
+`BackupTooOld` se apagaría y el histórico real quedaría huérfano en la ruta
+correcta. Ese fallo es peor que no tener backup, porque además oculta que no
+lo hay.
 
 ## Procedimiento
 
@@ -34,6 +73,11 @@ git clone https://github.com/pjclavero/s9-ai-arena.git && cd s9-ai-arena
 
 ```bash
 export RESTIC_REPOSITORY=<repositorio>   # y RESTIC_PASSWORD por el operador
+# Si RESTIC_REPOSITORY es sftp:..., restore.sh (como backup.sh) necesita
+# 'ssh' instalado y ~/.ssh listo con la clave y el known_hosts custodiados
+# fuera del servidor (ver Requisitos previos) ANTES de este comando — restic
+# no puede alcanzar el repositorio sin ellos, así que no hay forma de
+# "restaurarlos desde el propio backup" en este primer paso.
 bash infrastructure/backup/restore.sh --restore-secrets /tmp/restore-secrets
 # Colocarlos (rutas con permisos 0600; NUNCA volcarlos a pantalla/logs):
 mkdir -p infrastructure/secrets
