@@ -740,13 +740,15 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
       expect(run.code).not.toBe(0);
       expect(run.out).toContain("ARRANQUE ABORTADO");
       expect(run.out).toContain("está vacío o no es legible");
-      // No debe haber llegado a "cron programado" seguido de crond en marcha
-      // sin más: el mensaje de error es la ÚLTIMA cosa que pasa, no algo que
-      // conviva con un contenedor sano en segundo plano.
-      const stillRunning = await sh("docker", ["inspect", "-f", "{{.State.Running}}", containerName], {
-        timeoutMs: 10_000,
-      });
-      expect(stillRunning.out.trim()).not.toBe("true");
+      // El contenedor debe haber TERMINADO, no quedarse sirviendo cron. La
+      // comprobación anterior (`docker inspect` del contenedor) era incapaz
+      // de fallar: se lanza con `--rm`, así que al terminar ya no existe e
+      // `inspect` devolvía "Error: No such object", que nunca es "true" —
+      // verde tanto si el contenedor murió como si seguía vivo. Hallazgo del
+      // supervisor independiente. `timedOut === false` sí discrimina: si el
+      // arranque NO abortara y quedara en `exec crond -f`, `docker run`
+      // seguiría bloqueado hasta agotar los 30 s y esto se pondría rojo.
+      expect(run.timedOut).toBe(false);
     }, 45_000);
 
     // ── Mutaciones sobre setup_ssh() aplicadas de verdad, DENTRO de la imagen ──
@@ -799,6 +801,15 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
                 "PGPASSWORD_FILE=/run/secrets/postgres_password",
                 "-e",
                 "METRICS_DIR=/textfile",
+                // /secrets es fuente CRÍTICA. Sin este montaje, el código
+                // SANO también termina en `exit 1` + "backup FULL FAILURE"
+                // (backup.sh:707 → restic sobre un directorio inexistente),
+                // así que las cuatro aserciones de abajo se satisfarían con
+                // la mutación REVERTIDA: el test no podría distinguir el
+                // mutante del código sano. Hallazgo del supervisor
+                // independiente sobre 747dcfd.
+                "-v",
+                `${secretsDir}:/secrets:ro`,
                 // --entrypoint OBLIGATORIO: la imagen declara
                 // ENTRYPOINT ["/entrypoint.sh"]. Sin él, "backup.sh" era un
                 // ARGUMENTO que el entrypoint ignoraba, y el contenedor se
@@ -826,6 +837,11 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
           // ejecutara DE VERDAD y fallara por el motivo alegado.
           expect(run.timedOut).toBe(false);
           expect(run.out).toContain("backup FULL FAILURE");
+          // LA aserción que discrimina: el mensaje de OpenSSH rechazando la
+          // clave por permisos. Es la ÚNICA señal que produce el mutante y no
+          // el código sano; "FULL FAILURE" por sí solo lo produce cualquier
+          // fallo (p. ej. una fuente crítica ausente), y por eso no basta.
+          expect(run.out).toMatch(/UNPROTECTED PRIVATE KEY|Permissions .* too open/i);
         } finally {
           await sh("docker", ["image", "rm", "-f", tag]);
           rmSync(root, { recursive: true, force: true });
