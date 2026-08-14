@@ -420,6 +420,22 @@ if [ -z "${RESTIC_PASSWORD_FILE:-}" ] && [ -z "${RESTIC_PASSWORD:-}" ]; then
   log error "RESTIC_PASSWORD_FILE sin definir (secreto restic_password)"
   errors=1
 fi
+# fix/restic-stable-hostname (revisión del supervisor, hallazgo M8/M10): un
+# RESTIC_HOSTNAME vacío o compuesto sólo de espacios pasaba la validación en
+# silencio porque `${RESTIC_HOSTNAME:-arena-backup-host}` sólo aplica el
+# valor por defecto cuando la variable está SIN DEFINIR, no cuando está
+# definida pero vacía (`RESTIC_HOSTNAME=` en .env deja pasar la cadena
+# vacía tal cual). Con `--host ""` restic trataría el argumento como
+# ausente/una cadena vacía real, lo que reabre justo el defecto que motiva
+# este fix (agrupación inestable), sólo que ahora por config explícita en
+# vez de por hostname ambiental. Igual de inválido: un hostname compuesto
+# sólo de espacios ("   ") no es vacío para `-z` pero tampoco es un
+# identificador de host utilizable. Se valida en el mismo bloque, con el
+# mismo estilo y el mismo contrato de exit code, que RESTIC_REPOSITORY.
+if [ -z "${RESTIC_HOSTNAME// /}" ]; then
+  log error "RESTIC_HOSTNAME vacío o en blanco (infrastructure/.env): debe ser un hostname estable no vacío (ver docker-compose.yml, servicio backup)"
+  errors=1
+fi
 
 # fix/backup-sftp-scheduled-runtime: el backend `sftp:` fallaba en EJECUCIÓN
 # (ssh ausente de la imagen) de un modo que un `restic -r … snapshots` a mano
@@ -476,7 +492,7 @@ if [ "$DRY_RUN" = 1 ]; then
   echo "PLAN 2/5 · clasificar fuentes (ok/empty/error): maps, bot_sources, replays, assets, secrets"
   echo "PLAN 3/5 · construir staging/ (maps/, bot_sources/, assets/, replays/) + manifest.sha256 + manifest.json DENTRO del staging"
   echo "PLAN 4/5 · restic backup --host $RESTIC_HOSTNAME del staging completo <= $REPLAY_RETENTION_DAYS días de replays (official/ sin límite) + restic backup de $SECRETS_DIR [fuente crítica, snapshot separado]"
-  echo "PLAN 5/5 · restic forget --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune --host $RESTIC_HOSTNAME && restic check"
+  echo "PLAN 5/5 · restic forget --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune --host $RESTIC_HOSTNAME --group-by host,tags && restic check"
   if [[ "$RESTIC_REPOSITORY" == sftp:* ]]; then
     echo "SFTP · ssh $(command -v ssh >/dev/null 2>&1 && echo presente || echo AUSENTE), known_hosts verificado (StrictHostKeyChecking yes, nunca 'no')"
   fi
@@ -730,7 +746,20 @@ if [ "$status" = 0 ]; then
   fi
 fi
 if [ "$status" = 0 ]; then
-  restic forget --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune --host "$RESTIC_HOSTNAME" || status=1
+  # --group-by host,tags (revisión del supervisor, mutación M12): sin
+  # fijarlo, restic decide la agrupación con el DEFAULT del binario
+  # (host,paths). Eso ata la retención a la RUTA absoluta del staging
+  # ($WORK_DIR/staging), que hoy es estable sólo porque docker-compose.yml
+  # fija WORK_DIR — una coincidencia de configuración, no una garantía. Si
+  # WORK_DIR cambiase o el staging se generase con un componente variable
+  # en la ruta (p.ej. "$WORK_DIR/staging-$RANDOM"), cada ejecución volvería
+  # a abrir un grupo de retención nuevo aunque el HOST fuera estable —
+  # exactamente la misma patología de crecimiento sin límite que motiva
+  # este fix, reabierta por otra puerta. Agrupar explícitamente por
+  # host,tags (los --tag s9-arena-data/s9-arena-secrets son estables por
+  # construcción, a diferencia de la ruta) hace que la retención dependa
+  # SÓLO de RESTIC_HOSTNAME + el tag, nunca de rutas del contenedor.
+  restic forget --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune --host "$RESTIC_HOSTNAME" --group-by host,tags || status=1
   restic check || status=1
 fi
 
