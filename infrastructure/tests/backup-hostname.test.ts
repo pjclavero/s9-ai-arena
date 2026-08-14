@@ -169,87 +169,96 @@ function readSnapshots(snapFile: string): Array<{ host: string; tag: string; id:
 }
 
 describe("backup.sh: hostname restic estable (fix/restic-stable-hostname)", () => {
-  it("backup 1 (contenedor A) + backup 2 (contenedor B recreado) con el MISMO RESTIC_HOSTNAME: " +
-      "forget ve un solo grupo por tag y poda el snapshot antiguo", () => {
-    const root = mkdtempSync(join(tmpdir(), "e10-hostname-"));
-    const fakebin = join(root, "bin");
-    mkdirSync(fakebin, { recursive: true });
-    writeFakePgDumpOk(fakebin);
-    const snapFile = join(root, "snapshots.db");
-    const log = join(root, "restic-calls.log");
-    writeFakeResticGrouping(fakebin, snapFile, log);
+  it(
+    "backup 1 (contenedor A) + backup 2 (contenedor B recreado) con el MISMO RESTIC_HOSTNAME: " +
+      "forget ve un solo grupo por tag y poda el snapshot antiguo",
+    () => {
+      const root = mkdtempSync(join(tmpdir(), "e10-hostname-"));
+      const fakebin = join(root, "bin");
+      mkdirSync(fakebin, { recursive: true });
+      writeFakePgDumpOk(fakebin);
+      const snapFile = join(root, "snapshots.db");
+      const log = join(root, "restic-calls.log");
+      writeFakeResticGrouping(fakebin, snapFile, log);
 
-    // "Contenedor A": primera ejecución del servicio backup.
-    const r1 = runBackup(root, fakebin, snapFile, { RESTIC_HOSTNAME: "s9-arena-backup" });
-    expect(r1.code).toBe(0);
-    const afterFirst = readSnapshots(snapFile);
-    const firstDataSnapshot = afterFirst.find((s) => s.tag === "s9-arena-data");
-    expect(firstDataSnapshot).toBeDefined();
-    const firstId = firstDataSnapshot!.id;
+      // "Contenedor A": primera ejecución del servicio backup.
+      const r1 = runBackup(root, fakebin, snapFile, { RESTIC_HOSTNAME: "s9-arena-backup" });
+      expect(r1.code).toBe(0);
+      const afterFirst = readSnapshots(snapFile);
+      const firstDataSnapshot = afterFirst.find((s) => s.tag === "s9-arena-data");
+      expect(firstDataSnapshot).toBeDefined();
+      const firstId = firstDataSnapshot!.id;
 
-    // "Contenedor B recreado": mismo despliegue, mismo RESTIC_HOSTNAME (por
-    // ser una propiedad de la INSTALACIÓN, no del contenedor efímero), pero
-    // un WORK_DIR/directorios de datos completamente nuevos — exactamente
-    // lo que pasa cuando Docker sustituye el contenedor.
-    const r2 = runBackup(root, fakebin, snapFile, { RESTIC_HOSTNAME: "s9-arena-backup" });
-    expect(r2.code).toBe(0);
+      // "Contenedor B recreado": mismo despliegue, mismo RESTIC_HOSTNAME (por
+      // ser una propiedad de la INSTALACIÓN, no del contenedor efímero), pero
+      // un WORK_DIR/directorios de datos completamente nuevos — exactamente
+      // lo que pasa cuando Docker sustituye el contenedor.
+      const r2 = runBackup(root, fakebin, snapFile, { RESTIC_HOSTNAME: "s9-arena-backup" });
+      expect(r2.code).toBe(0);
 
-    const finalSnapshots = readSnapshots(snapFile);
-    const dataGroup = finalSnapshots.filter((s) => s.tag === "s9-arena-data" && s.host === "s9-arena-backup");
-    const secretsGroup = finalSnapshots.filter((s) => s.tag === "s9-arena-secrets" && s.host === "s9-arena-backup");
+      const finalSnapshots = readSnapshots(snapFile);
+      const dataGroup = finalSnapshots.filter((s) => s.tag === "s9-arena-data" && s.host === "s9-arena-backup");
+      const secretsGroup = finalSnapshots.filter((s) => s.tag === "s9-arena-secrets" && s.host === "s9-arena-backup");
 
-    // El corazón de la prueba: DOS ejecuciones de backup produjeron dos
-    // snapshots "s9-arena-data", pero tras el `forget` de la SEGUNDA
-    // ejecución sólo sobrevive UNO — la política agrupó ambos backups como
-    // el MISMO host+tag y pudo podar el antiguo. Sin la corrección, cada
-    // ejecución habría abierto su propio grupo (un snapshot cada uno) y
-    // `forget` jamás habría tenido más de un snapshot por grupo que podar
-    // (ver la prueba de calibración: la misma aserción se rompe con la
-    // mutación que reintroduce el hostname efímero).
-    expect(dataGroup.length).toBe(1);
-    expect(dataGroup[0].id).not.toBe(firstId); // el snapshot VIEJO fue podado, sobrevive el nuevo
-    // DATA y SECRETS siguen siendo dos grupos separados y estables (mismo
-    // host, tags/paths distintos) — el requisito explícito de la tarea.
-    expect(secretsGroup.length).toBe(1);
-    expect(dataGroup[0].host).toBe("s9-arena-backup");
-    expect(secretsGroup[0].host).toBe("s9-arena-backup");
-  });
+      // El corazón de la prueba: DOS ejecuciones de backup produjeron dos
+      // snapshots "s9-arena-data", pero tras el `forget` de la SEGUNDA
+      // ejecución sólo sobrevive UNO — la política agrupó ambos backups como
+      // el MISMO host+tag y pudo podar el antiguo. Sin la corrección, cada
+      // ejecución habría abierto su propio grupo (un snapshot cada uno) y
+      // `forget` jamás habría tenido más de un snapshot por grupo que podar
+      // (ver la prueba de calibración: la misma aserción se rompe con la
+      // mutación que reintroduce el hostname efímero).
+      expect(dataGroup.length).toBe(1);
+      expect(dataGroup[0].id).not.toBe(firstId); // el snapshot VIEJO fue podado, sobrevive el nuevo
+      // DATA y SECRETS siguen siendo dos grupos separados y estables (mismo
+      // host, tags/paths distintos) — el requisito explícito de la tarea.
+      expect(secretsGroup.length).toBe(1);
+      expect(dataGroup[0].host).toBe("s9-arena-backup");
+      expect(secretsGroup[0].host).toBe("s9-arena-backup");
+    },
+  );
 
-  it("dos hosts DISTINTOS (migración deliberada vía RESTIC_HOSTNAME) nunca se mezclan: " +
-      "cada uno conserva su propio snapshot", () => {
-    const root = mkdtempSync(join(tmpdir(), "e10-hostname-migra-"));
-    const fakebin = join(root, "bin");
-    mkdirSync(fakebin, { recursive: true });
-    writeFakePgDumpOk(fakebin);
-    const snapFile = join(root, "snapshots.db");
-    const log = join(root, "restic-calls.log");
-    writeFakeResticGrouping(fakebin, snapFile, log);
+  it(
+    "dos hosts DISTINTOS (migración deliberada vía RESTIC_HOSTNAME) nunca se mezclan: " +
+      "cada uno conserva su propio snapshot",
+    () => {
+      const root = mkdtempSync(join(tmpdir(), "e10-hostname-migra-"));
+      const fakebin = join(root, "bin");
+      mkdirSync(fakebin, { recursive: true });
+      writeFakePgDumpOk(fakebin);
+      const snapFile = join(root, "snapshots.db");
+      const log = join(root, "restic-calls.log");
+      writeFakeResticGrouping(fakebin, snapFile, log);
 
-    runBackup(root, fakebin, snapFile, { RESTIC_HOSTNAME: "s9-arena-backup" });
-    runBackup(root, fakebin, snapFile, { RESTIC_HOSTNAME: "s9-arena-backup-nuevo" });
+      runBackup(root, fakebin, snapFile, { RESTIC_HOSTNAME: "s9-arena-backup" });
+      runBackup(root, fakebin, snapFile, { RESTIC_HOSTNAME: "s9-arena-backup-nuevo" });
 
-    const finalSnapshots = readSnapshots(snapFile);
-    const oldHostData = finalSnapshots.filter((s) => s.host === "s9-arena-backup" && s.tag === "s9-arena-data");
-    const newHostData = finalSnapshots.filter((s) => s.host === "s9-arena-backup-nuevo" && s.tag === "s9-arena-data");
-    expect(oldHostData.length).toBe(1);
-    expect(newHostData.length).toBe(1);
-  });
+      const finalSnapshots = readSnapshots(snapFile);
+      const oldHostData = finalSnapshots.filter((s) => s.host === "s9-arena-backup" && s.tag === "s9-arena-data");
+      const newHostData = finalSnapshots.filter((s) => s.host === "s9-arena-backup-nuevo" && s.tag === "s9-arena-data");
+      expect(oldHostData.length).toBe(1);
+      expect(newHostData.length).toBe(1);
+    },
+  );
 
-  it("RESTIC_HOSTNAME por defecto (sin configurar en el entorno) es 'arena-backup-host', " +
-      "estable y no depende del contenedor", () => {
-    const root = mkdtempSync(join(tmpdir(), "e10-hostname-default-"));
-    const fakebin = join(root, "bin");
-    mkdirSync(fakebin, { recursive: true });
-    writeFakePgDumpOk(fakebin);
-    const snapFile = join(root, "snapshots.db");
-    const log = join(root, "restic-calls.log");
-    writeFakeResticGrouping(fakebin, snapFile, log);
+  it(
+    "RESTIC_HOSTNAME por defecto (sin configurar en el entorno) es 'arena-backup-host', " +
+      "estable y no depende del contenedor",
+    () => {
+      const root = mkdtempSync(join(tmpdir(), "e10-hostname-default-"));
+      const fakebin = join(root, "bin");
+      mkdirSync(fakebin, { recursive: true });
+      writeFakePgDumpOk(fakebin);
+      const snapFile = join(root, "snapshots.db");
+      const log = join(root, "restic-calls.log");
+      writeFakeResticGrouping(fakebin, snapFile, log);
 
-    // Ni RESTIC_HOSTNAME, ni ninguna otra pista de identidad de contenedor:
-    // sólo lo que trae backup.sh por defecto.
-    const r = runBackup(root, fakebin, snapFile, {});
-    expect(r.code).toBe(0);
-    const snapshots = readSnapshots(snapFile);
-    expect(snapshots.every((s) => s.host === "arena-backup-host")).toBe(true);
-  });
+      // Ni RESTIC_HOSTNAME, ni ninguna otra pista de identidad de contenedor:
+      // sólo lo que trae backup.sh por defecto.
+      const r = runBackup(root, fakebin, snapFile, {});
+      expect(r.code).toBe(0);
+      const snapshots = readSnapshots(snapFile);
+      expect(snapshots.every((s) => s.host === "arena-backup-host")).toBe(true);
+    },
+  );
 });
