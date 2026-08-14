@@ -618,6 +618,15 @@ services:
     environment:
       BACKUP_CRON: ${BACKUP_CRON:-15 4 * * *}
       REPLAY_RETENTION_DAYS: ${REPLAY_RETENTION_DAYS:-180}
+      # fix/restic-stable-hostname: hostname LÓGICO y ESTABLE de la
+      # instalación que se pasa a `restic backup`/`forget --host`. Sin esto,
+      # restic usa por defecto el hostname del contenedor (su ID corto),
+      # que cambia en cada recreación del servicio y hace que `forget`
+      # agrupe cada ejecución como un host distinto: la retención nunca poda
+      # nada (ver backup.sh, junto a RESTIC_HOSTNAME, para el incidente real
+      # que motiva este cambio). Configurable para permitir una migración
+      # deliberada de host sin perder el historial de retención existente.
+      RESTIC_HOSTNAME: ${RESTIC_HOSTNAME:-arena-backup-host}
       RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:-}
       RESTIC_PASSWORD_FILE: /run/secrets/restic_password
       # fix/backup-sftp-scheduled-runtime: el backend `sftp:` de restic

@@ -128,6 +128,27 @@ SECRETS_DIR="${SECRETS_DIR:-/secrets}"
 METRICS_DIR="${METRICS_DIR:-/textfile}"
 WORK_DIR="${WORK_DIR:-/tmp/backup-work}"
 REPLAY_RETENTION_DAYS="${REPLAY_RETENTION_DAYS:-180}"
+# RESTIC_HOSTNAME (fix/restic-stable-hostname): `restic forget` agrupa la
+# retención por host+paths, y ese "host" es, por defecto, el hostname del
+# SISTEMA (`--host`, o el propio `hostname` si no se pasa). Dentro de un
+# contenedor Docker sin `hostname:` fijado en el compose, ese valor es el ID
+# corto del contenedor — que cambia CADA VEZ que el servicio `backup` se
+# recrea (despliegue, reinicio, `docker compose up` tras cambiar la imagen).
+# Cada recreación creaba así un grupo de retención nuevo con un único
+# snapshot, que por tanto era simultáneamente el diario/semanal/mensual y se
+# conservaba SIEMPRE: `forget` no borraba nunca nada y el repositorio crecía
+# sin límite, mientras cada ejecución individual reportaba SUCCESS y
+# `restic check` pasaba (correcto en lo pequeño, roto en lo agregado; visto
+# en producción el 2026-08-14, log real con un grupo de retención por cada
+# ID de contenedor distinto). Aquí se fija un hostname ESTABLE de la
+# instalación, pasado explícitamente a restic con `--host` en `backup` y en
+# `forget` (nunca se depende del hostname ambiental de `uname`/`hostname`,
+# que seguiría siendo el ID del contenedor si algo se lo pasara por alto).
+# Configurable por entorno (ver infrastructure/docker-compose.yml, servicio
+# `backup`) para permitir migraciones deliberadas de host sin perder el
+# historial; con un valor por defecto sensato para que un despliegue nuevo
+# ya nazca con retención correcta sin configuración adicional.
+RESTIC_HOSTNAME="${RESTIC_HOSTNAME:-arena-backup-host}"
 PGHOST="${PGHOST:-postgres}"
 PGUSER="${PGUSER:-arena}"
 PGDATABASE="${PGDATABASE:-arena}"
@@ -454,8 +475,8 @@ if [ "$DRY_RUN" = 1 ]; then
   echo "PLAN 1/5 · pg_dump -Fc -h $PGHOST -U $PGUSER $PGDATABASE -f staging/pgdump-\$(fecha).dump [fuente crítica]"
   echo "PLAN 2/5 · clasificar fuentes (ok/empty/error): maps, bot_sources, replays, assets, secrets"
   echo "PLAN 3/5 · construir staging/ (maps/, bot_sources/, assets/, replays/) + manifest.sha256 + manifest.json DENTRO del staging"
-  echo "PLAN 4/5 · restic backup del staging completo <= $REPLAY_RETENTION_DAYS días de replays (official/ sin límite) + restic backup de $SECRETS_DIR [fuente crítica, snapshot separado]"
-  echo "PLAN 5/5 · restic forget --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune && restic check"
+  echo "PLAN 4/5 · restic backup --host $RESTIC_HOSTNAME del staging completo <= $REPLAY_RETENTION_DAYS días de replays (official/ sin límite) + restic backup de $SECRETS_DIR [fuente crítica, snapshot separado]"
+  echo "PLAN 5/5 · restic forget --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune --host $RESTIC_HOSTNAME && restic check"
   if [[ "$RESTIC_REPOSITORY" == sftp:* ]]; then
     echo "SFTP · ssh $(command -v ssh >/dev/null 2>&1 && echo presente || echo AUSENTE), known_hosts verificado (StrictHostKeyChecking yes, nunca 'no')"
   fi
@@ -698,18 +719,18 @@ if ! setup_ssh; then
   # en vez de dejar que el error salga confuso desde dentro de restic.
   status=1
 fi
-if [ "$status" = 0 ] && restic backup --tag s9-arena-data "$STAGING"; then
+if [ "$status" = 0 ] && restic backup --tag s9-arena-data --host "$RESTIC_HOSTNAME" "$STAGING"; then
   snapshot_created=1
 else
   status=1
 fi
 if [ "$status" = 0 ]; then
-  if ! restic backup --tag s9-arena-secrets "$SECRETS_DIR"; then
+  if ! restic backup --tag s9-arena-secrets --host "$RESTIC_HOSTNAME" "$SECRETS_DIR"; then
     status=1
   fi
 fi
 if [ "$status" = 0 ]; then
-  restic forget --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune || status=1
+  restic forget --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune --host "$RESTIC_HOSTNAME" || status=1
   restic check || status=1
 fi
 
