@@ -82,6 +82,16 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           unshare -rm /bin/true
           echo "userns sin privilegios: disponible"
+      - name: Dependencias de infrastructure/tests/restore-sftp-bootstrap.test.ts (sshd + sftp-server + restic)
+        # fix/restore-sftp-bootstrap: esta suite levanta un sshd real sin
+        # privilegios (mismo unshare -rm de arriba) y un repositorio restic
+        # real sobre sftp — sin Docker (backup-sftp-e2e.test.ts ya cubre la
+        # imagen completa en su propio job). ubuntu-latest trae el cliente
+        # ssh pero NO el servidor ni restic; sin esto la suite se OMITIRÍA
+        # aquí y correría en la máquina de nadie. openssh-server no arranca
+        # el servicio systemd (no hace falta, el test lanza su propio sshd
+        # manualmente en un puerto alto) — sólo se necesitan los binarios.
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends openssh-server openssh-sftp-server restic
       - name: Unitarias (apps, packages e infrastructure) con cobertura
         # R2.1 (ERR-GES-05): cobertura V8 sobre las unitarias; el informe HTML
         # y el resumen se publican como artefacto de CI.

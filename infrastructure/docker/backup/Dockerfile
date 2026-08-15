@@ -11,8 +11,14 @@ FROM alpine:3.20
 # ejecutando esta MISMA imagen (ver infrastructure/tests/backup-sftp-e2e.test.ts).
 RUN apk add --no-cache bash restic postgresql16-client coreutils findutils openssh-client
 
+# fix/restore-sftp-bootstrap: setup_ssh vive en lib/ para que backup.sh y
+# restore.sh compartan exactamente el mismo bootstrap SSH (ver ese fichero).
+# Mismo directorio relativo que en el repo (infrastructure/backup/lib) para
+# que la resolución de ruta de cada script (relativa a su propio
+# BASH_SOURCE) funcione igual dentro y fuera de la imagen.
 COPY infrastructure/backup/backup.sh /usr/local/bin/backup.sh
 COPY infrastructure/backup/restore.sh /usr/local/bin/restore.sh
+COPY infrastructure/backup/lib/ /usr/local/bin/lib/
 COPY infrastructure/backup/entrypoint.sh /entrypoint.sh
 RUN chmod +x /usr/local/bin/backup.sh /usr/local/bin/restore.sh /entrypoint.sh
 
