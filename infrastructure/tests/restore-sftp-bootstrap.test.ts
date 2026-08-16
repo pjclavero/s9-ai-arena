@@ -492,7 +492,37 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
       dumpPhaseTimings();
       for (const c of [SFTP_CONTAINER, PG_CONTAINER]) await sh("docker", ["rm", "-f", c]);
       await sh("docker", ["network", "rm", NET]);
-      if (tmp) rmSync(tmp, { recursive: true, force: true });
+      if (tmp) {
+        // El mutante "snapshot corrupto" hace que restic restaure ficheros
+        // DENTRO de un contenedor (root del contenedor, uid 0 real — no el
+        // uid sin privilegios del runner) sobre `${tmp}/restore-target-corrupt`,
+        // bind-montado desde el host. El runner no es dueño de esos ficheros
+        // y `fs.rmSync` falla con EACCES al intentar borrarlos. Se borran
+        // PRIMERO desde un contenedor con el mismo montaje (mismo uid que
+        // los creó, real root dentro de Docker, no sujeto a los permisos
+        // Unix del host) — la misma imagen ya cargada, sin pull adicional.
+        const cleanup = await sh(
+          "docker",
+          ["run", "--rm", "-v", `${tmp}:/cleanup`, "--entrypoint", "/bin/sh", IMAGE_TAG, "-c", "rm -rf /cleanup/*"],
+          { timeoutMs: 30_000 },
+        );
+        if (cleanup.code !== 0) {
+          logLine(
+            `⚠ limpieza vía contenedor de ${tmp} salió con code=${cleanup.code} (se intenta igual la limpieza final):\n${cleanup.out}`,
+          );
+        }
+        try {
+          rmSync(tmp, { recursive: true, force: true });
+        } catch (e) {
+          // NUNCA se traga en silencio, pero tampoco debe tumbar un gate
+          // que ya evaluó sus 7 tests: queda registrado en el log del job
+          // (el operador pidió explícitamente enterarse, sin que un fallo
+          // de limpieza posterior invalide un resultado ya obtenido).
+          logLine(
+            `⚠ limpieza final de ${tmp} incompleta tras el contenedor de limpieza: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      }
     }, 60_000);
 
     // runRestore: SIEMPRE un `docker run --rm` NUEVO — el "contenedor de
