@@ -82,16 +82,6 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           unshare -rm /bin/true
           echo "userns sin privilegios: disponible"
-      - name: Dependencias de infrastructure/tests/restore-sftp-bootstrap.test.ts (sshd + sftp-server + restic)
-        # fix/restore-sftp-bootstrap: esta suite levanta un sshd real sin
-        # privilegios (mismo unshare -rm de arriba) y un repositorio restic
-        # real sobre sftp — sin Docker (backup-sftp-e2e.test.ts ya cubre la
-        # imagen completa en su propio job). ubuntu-latest trae el cliente
-        # ssh pero NO el servidor ni restic; sin esto la suite se OMITIRÍA
-        # aquí y correría en la máquina de nadie. openssh-server no arranca
-        # el servicio systemd (no hace falta, el test lanza su propio sshd
-        # manualmente en un puerto alto) — sólo se necesitan los binarios.
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends openssh-server openssh-sftp-server restic
       - name: Unitarias (apps, packages e infrastructure) con cobertura
         # R2.1 (ERR-GES-05): cobertura V8 sobre las unitarias; el informe HTML
         # y el resumen se publican como artefacto de CI.
@@ -103,7 +93,16 @@ jobs:
         # a --coverage.enabled/--maxWorkers=2 de esta etapa lo haría más lento
         # y más frágil sin aportar nada al informe de cobertura de código TS.
         # Corre en su propio job obligatorio: e2e-backup-sftp (más abajo).
-        run: npx vitest run apps packages infrastructure --exclude "**/backup-sftp-e2e.test.ts" --maxWorkers=2 --coverage.enabled --coverage.provider=v8 --coverage.reporter=text --coverage.reporter=html --coverage.reportsDirectory=coverage
+        # fix/restore-sftp-bootstrap: restore-sftp-bootstrap.test.ts se
+        # EXCLUYE por el mismo motivo exacto (imagen Docker + SFTP con
+        # chroot + postgres) — corre en su propio job obligatorio:
+        # e2e-restore-sftp-bootstrap (más abajo). Una primera versión de esa
+        # suite intentó evitar Docker levantando un sshd suelto sin
+        # privilegios directamente en este job; el propio runner de CI no
+        # soporta el subsistema sftp de un sshd sin privilegios (confirmado
+        # con diagnóstico real, ver ese fichero) — de ahí que use el mismo
+        # arnés que ya funciona aquí en vez de reinventar uno nuevo.
+        run: npx vitest run apps packages infrastructure --exclude "**/backup-sftp-e2e.test.ts" --exclude "**/restore-sftp-bootstrap.test.ts" --maxWorkers=2 --coverage.enabled --coverage.provider=v8 --coverage.reporter=text --coverage.reporter=html --coverage.reportsDirectory=coverage
       - name: Informe de cobertura como artefacto
         if: always()
         uses: actions/upload-artifact@v4
@@ -171,6 +170,57 @@ jobs:
         # futuro cuelgue diga EN QUÉ FASE se quedó, en vez de cancelarse en
         # silencio como pasó en la primera ejecución real (15 min, cero líneas).
         run: npx vitest run infrastructure/tests/backup-sftp-e2e.test.ts --maxWorkers=1
+
+  # ── Etapa 2c: E2E real del bootstrap SSH de restore.sh por SFTP con chroot ──
+  # fix/restore-sftp-bootstrap: restore.sh no sabía nada del backend sftp
+  # (contenedor de recuperación nuevo, que nunca ejecutó backup.sh, sin
+  # ~/.ssh → "Host key verification failed"). Mismo arnés EXACTO que
+  # e2e-backup-sftp de arriba (mismo motivo: probarlo sin la imagen real y
+  # sin un SFTP real es "funciona en el repo, falla en la imagen"). Una
+  # primera versión de este job instalaba openssh-server/openssh-sftp-server
+  # en el job `unit` y levantaba un sshd suelto sin privilegios en el propio
+  # runner — funcionaba el namespace, funcionaba SSH, pero el subsistema
+  # sftp de ESE sshd sin privilegios no arrancaba en este runner concreto de
+  # GitHub Actions (confirmado con diagnóstico real: dpkg -L con la ruta
+  # correcta, sftp -v autenticando y validando la huella, EOF sólo al pedir
+  # el subsistema). Entorno del runner, no del código — se abandonó ese
+  # camino en vez de insistir, y se movió aquí, al mismo arnés de Docker que
+  # YA funciona en este repo para el mismo problema de fondo.
+  # needs: build-images — REUTILIZA la MISMA imagen backup que e2e-backup-sftp
+  # (mismo artefacto backup-image-tar), nunca la reconstruye.
+  e2e-restore-sftp-bootstrap:
+    needs: [unit, build-images]
+    runs-on: ubuntu-latest
+    # Mismo margen que e2e-backup-sftp: pulls de atmoz/sftp + postgres
+    # (probablemente ya en caché de capas del runner tras e2e-backup-sftp,
+    # pero no se asume), backup.sh real para producir un snapshot + 6
+    # mutaciones sobre restore.sh, cada una con un `docker run --rm` nuevo.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Docker disponible en este runner (si esto falla, el job de abajo también debe fallar, nunca saltarse)
+        run: docker info
+      - name: Descargar la imagen backup ya construida por build-images
+        uses: actions/download-artifact@v4
+        with:
+          name: backup-image-tar
+          path: /tmp/backup-image
+      - name: Cargar la imagen (ya viene etiquetada como s9-ai-arena/backup:e2e-test — no se retagea aquí, fuente única de verdad en build-images)
+        run: |
+          docker load -i /tmp/backup-image/backup-image.tar
+          echo "--- docker images tras la carga ---"
+          docker images
+          docker image inspect s9-ai-arena/backup:e2e-test >/dev/null
+      - name: E2E real - restore.sh en un contenedor de recuperación limpio (nunca ejecutó backup.sh) + SFTP con chroot (atmoz/sftp) + postgres
+        # Mismo patrón de salida sin búfer que e2e-backup-sftp (fs.writeSync
+        # síncrono) — ver el comentario de ese job para el incidente real que
+        # lo motivó.
+        run: npx vitest run infrastructure/tests/restore-sftp-bootstrap.test.ts --maxWorkers=1
 
   # ── Etapa 3: esquemas y compatibilidad de contratos ────────────────────────
   contracts:
@@ -485,6 +535,7 @@ jobs:
         lint-format-types,
         unit,
         e2e-backup-sftp,
+        e2e-restore-sftp-bootstrap,
         contracts,
         regression-battles,
         build-images,
