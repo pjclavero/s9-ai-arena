@@ -6,6 +6,35 @@
 #   restore.sh --restore-secrets <destino>
 #   restore.sh --verify <dir>          verifica manifest.sha256 restaurado
 #   restore.sh --dry-run               plan sin tocar nada (probado por vitest)
+#
+# fix/restore-sftp-bootstrap: hasta esta rama, este script no sabía NADA del
+# backend `sftp:` de restic — cero menciones a ssh/sftp/setup_ssh. En
+# producción "funcionaba" de rebote porque el contenedor de backup PROGRAMADO
+# ya había dejado ~/.ssh listo (lo prepara backup.sh, ver setup_ssh en
+# lib/setup-ssh.sh) en la capa de escritura de ESE contenedor. Un contenedor
+# de RECUPERACIÓN nuevo — el escenario real de docs/recuperacion.md, que
+# nunca ejecutó backup.sh — no tiene ~/.ssh, ningún known_hosts y ninguna
+# clave: `restic snapshots`/`restore`/`--restore-secrets` fallaban con
+# "Host key verification failed" hasta hacer el bootstrap SSH a mano, algo
+# que el runbook automatizado no puede exigir en un simulacro cronometrado.
+#
+# Contrato de entrada para el backend sftp: (mismo patrón que backup.sh)
+#   RESTIC_REPOSITORY             sftp:usuario@host:<backup-path>
+#   RESTIC_PASSWORD / RESTIC_PASSWORD_FILE   contraseña del repositorio restic
+#   RESTIC_SSH_KEY_FILE           ruta a la clave privada SSH (secreto, NUNCA
+#                                  argv; p.ej. /run/secrets/restic_ssh_key)
+#   RESTIC_SSH_KNOWN_HOSTS_FILE   ruta al known_hosts con la huella YA
+#                                  verificada del host de respaldo (p.ej.
+#                                  /run/secrets/restic_ssh_known_hosts)
+#
+# RIESGO DE CUSTODIA (documentado, NO resuelto aquí — ver docs/recuperacion.md
+# "Riesgos conocidos"): este script recibe la clave privada, nunca la genera
+# ni la custodia. Si esa clave viviera ÚNICAMENTE dentro de VM108 (o del host
+# que sea, en cada despliegue), un desastre que se lleve por delante esa
+# máquina se lleva también el único medio de alcanzar el backup — "el backup
+# existe" y "el backup es alcanzable" dejan de ser la misma afirmación. La
+# custodia fuera del servidor (gestor de secretos del operador, doble
+# custodia) es un problema OPERATIVO independiente de este script.
 set -euo pipefail
 
 # D2/D2-R3a (rondas 3-4 de #112, ver backup.sh): mismo escape antes de
@@ -40,6 +69,67 @@ json_escape() {
 }
 log() { printf '{"ts":"%s","level":"%s","service":"restore","msg":"%s"}\n' "$(date -u +%FT%TZ)" "$1" "$(json_escape "$2")"; }
 
+# ── Configuración (mismos nombres de variable que backup.sh, D0 deliberado:
+# un contenedor de recuperación recibe los secretos por la MISMA vía que el
+# contenedor de backup programado — ver docs/recuperacion.md Fase 2). ──────
+RESTIC_REPOSITORY="${RESTIC_REPOSITORY:-}"
+RESTIC_SSH_KEY_FILE="${RESTIC_SSH_KEY_FILE:-}"
+RESTIC_SSH_KNOWN_HOSTS_FILE="${RESTIC_SSH_KNOWN_HOSTS_FILE:-}"
+: "${HOME:=/root}"
+export HOME
+
+# fix/restore-sftp-bootstrap: setup_ssh compartida con backup.sh — ver
+# lib/setup-ssh.sh para el incidente, el contrato de entrada y por qué NUNCA
+# se sustituye StrictHostKeyChecking por "no".
+# shellcheck source=lib/setup-ssh.sh
+# Expansión de parámetros pura de bash: ver el mismo comentario en backup.sh.
+_s9_restore_dir="${BASH_SOURCE[0]%/*}"
+[ "$_s9_restore_dir" = "${BASH_SOURCE[0]}" ] && _s9_restore_dir="."
+source "$_s9_restore_dir/lib/setup-ssh.sh"
+unset _s9_restore_dir
+
+# preflight_sftp — mismo chequeo que backup.sh antes de tocar restic: en un
+# contenedor de recuperación FRESCO, "RESTIC_REPOSITORY=sftp:… configurado
+# pero sin ssh/clave/known_hosts" no es un estado transitorio de arranque,
+# es un defecto de preparación del propio simulacro — mejor fallar aquí, con
+# un mensaje que dice exactamente qué falta, que dejar que ssh/restic fallen
+# más abajo con un error genérico.
+preflight_sftp() {
+  [[ "$RESTIC_REPOSITORY" == sftp:* ]] || return 0
+  if ! command -v ssh >/dev/null 2>&1; then
+    log error "RESTIC_REPOSITORY usa el backend sftp pero 'ssh' (openssh-client) no está instalado en esta imagen"
+    return 1
+  fi
+  if [ -z "$RESTIC_SSH_KEY_FILE" ]; then
+    log error "backend sftp: falta RESTIC_SSH_KEY_FILE (secreto con la clave privada SSH)"
+    return 1
+  elif [ ! -r "$RESTIC_SSH_KEY_FILE" ]; then
+    log error "backend sftp: RESTIC_SSH_KEY_FILE=$RESTIC_SSH_KEY_FILE no es legible"
+    return 1
+  fi
+  if [ -z "$RESTIC_SSH_KNOWN_HOSTS_FILE" ]; then
+    log error "backend sftp: falta RESTIC_SSH_KNOWN_HOSTS_FILE (huella verificada; NUNCA StrictHostKeyChecking=no)"
+    return 1
+  elif [ ! -s "$RESTIC_SSH_KNOWN_HOSTS_FILE" ]; then
+    log error "backend sftp: RESTIC_SSH_KNOWN_HOSTS_FILE=$RESTIC_SSH_KNOWN_HOSTS_FILE está vacío o no es legible"
+    return 1
+  fi
+  return 0
+}
+
+# bootstrap_sftp — preflight + setup_ssh, en ese orden, para las tres
+# subórdenes que invocan restic directamente contra el repositorio remoto
+# (--list, --restore, --restore-secrets). --verify NO la necesita: opera
+# sobre un directorio YA restaurado en local, sin tocar la red.
+bootstrap_sftp() {
+  preflight_sftp || return 1
+  if ! setup_ssh; then
+    log error "no se pudo preparar ~/.ssh para el backend sftp"
+    return 1
+  fi
+  return 0
+}
+
 case "${1:---dry-run}" in
   --dry-run)
     log info "DRY-RUN: plan de restauración"
@@ -49,17 +139,28 @@ case "${1:---dry-run}" in
     echo "PLAN 4 · copiar mapas/fuentes/replays a los volúmenes y restic restore --tag s9-arena-secrets"
     echo "PLAN 5 · restore.sh --verify <destino> (manifest.sha256) + migraciones al día"
     echo "CONFIG $( [ -n "${RESTIC_REPOSITORY:-}" ] && echo OK || echo "INCOMPLETA: falta RESTIC_REPOSITORY" )"
+    if [[ "${RESTIC_REPOSITORY:-}" == sftp:* ]]; then
+      echo "SFTP · ssh $(command -v ssh >/dev/null 2>&1 && echo presente || echo AUSENTE), known_hosts verificado (StrictHostKeyChecking yes, nunca 'no')"
+      if preflight_sftp; then
+        echo "SFTP CONFIG OK"
+      else
+        echo "SFTP CONFIG INCOMPLETA (ver el error de log JSON justo arriba para el detalle exacto)"
+      fi
+    fi
     ;;
   --list)
+    bootstrap_sftp || exit 1
     restic snapshots
     ;;
   --restore)
     dest="${2:?uso: restore.sh --restore <destino>}"
+    bootstrap_sftp || exit 1
     restic restore latest --tag s9-arena-data --target "$dest"
     log info "datos restaurados en $dest; siga el runbook docs/recuperacion.md"
     ;;
   --restore-secrets)
     dest="${2:?uso: restore.sh --restore-secrets <destino>}"
+    bootstrap_sftp || exit 1
     umask 077
     restic restore latest --tag s9-arena-secrets --target "$dest"
     log info "secretos restaurados en $dest (permisos restrictivos; NO volcarlos a logs)"

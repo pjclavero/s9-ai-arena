@@ -99,6 +99,11 @@ const DOCKERFILE = join(REPO_ROOT, "infrastructure", "docker", "backup", "Docker
 const BACKUP_SH_PATH = join(REPO_ROOT, "infrastructure", "backup", "backup.sh");
 const RESTORE_SH_PATH = join(REPO_ROOT, "infrastructure", "backup", "restore.sh");
 const ENTRYPOINT_SH_PATH = join(REPO_ROOT, "infrastructure", "backup", "entrypoint.sh");
+// fix/restore-sftp-bootstrap: setup_ssh() se factorizó de backup.sh a este
+// fichero compartido con restore.sh. Las mutaciones de seguridad de más
+// abajo (chmod de la clave, StrictHostKeyChecking) viven AHORA aquí, no en
+// backup.sh — reapuntadas tras esa refactorización (ver buildMutant).
+const LIB_SETUP_SSH_PATH = join(REPO_ROOT, "infrastructure", "backup", "lib", "setup-ssh.sh");
 // Debe coincidir con el tag que ci.yml pone a la imagen reutilizada de
 // build-images (`docker tag ... s9-ai-arena/backup:e2e-test`).
 const IMAGE_TAG = "s9-ai-arena/backup:e2e-test";
@@ -287,22 +292,32 @@ async function waitFor(cond: () => Promise<boolean>, what: string, timeoutMs = 6
   throw new Error(`timeout esperando: ${what} (${(timeoutMs / 1000).toFixed(0)}s)`);
 }
 
-// Construye un contexto de build MÍNIMO (no todo el monorepo) con backup.sh
-// parcheado, para las pruebas de mutación de setup_ssh() de más abajo. Copia
-// sólo lo que el Dockerfile realmente necesita (mismas rutas relativas que
-// espera infrastructure/docker/backup/Dockerfile, así el Dockerfile original
-// no necesita tocarse para nada). Al compartir base (`FROM alpine` + el
-// mismo `apk add`) con la imagen principal ya cargada, Docker reutiliza esa
-// capa por caché de contenido — sólo reconstruye la capa COPY de backup.sh.
+// Construye un contexto de build MÍNIMO (no todo el monorepo) con
+// lib/setup-ssh.sh parcheado, para las pruebas de mutación de setup_ssh() de
+// más abajo. Copia sólo lo que el Dockerfile realmente necesita (mismas
+// rutas relativas que espera infrastructure/docker/backup/Dockerfile, así el
+// Dockerfile original no necesita tocarse para nada). Al compartir base
+// (`FROM alpine` + el mismo `apk add`) con la imagen principal ya cargada,
+// Docker reutiliza esa capa por caché de contenido — sólo reconstruye la
+// capa COPY de lib/.
+//
+// fix/restore-sftp-bootstrap: setup_ssh() se factorizó de backup.sh a
+// lib/setup-ssh.sh (compartida con restore.sh). Antes de esa rama, `patch`
+// se aplicaba a backup.sh, que contenía la función inline; ahora se aplica
+// al fichero donde la función vive de verdad — backup.sh y restore.sh se
+// copian SIN tocar, tal cual están en el repo.
 async function buildMutant(tag: string, patch: (original: string) => string) {
   const root = mkdtempSync(join(tmpdir(), "s9-backup-mutant-"));
   const backupDir = join(root, "infrastructure", "backup");
+  const libDir = join(backupDir, "lib");
   const dockerDir = join(root, "infrastructure", "docker", "backup");
   mkdirSync(backupDir, { recursive: true });
+  mkdirSync(libDir, { recursive: true });
   mkdirSync(dockerDir, { recursive: true });
-  writeFileSync(join(backupDir, "backup.sh"), patch(readFileSync(BACKUP_SH_PATH, "utf8")));
+  copyFileSync(BACKUP_SH_PATH, join(backupDir, "backup.sh"));
   copyFileSync(RESTORE_SH_PATH, join(backupDir, "restore.sh"));
   copyFileSync(ENTRYPOINT_SH_PATH, join(backupDir, "entrypoint.sh"));
+  writeFileSync(join(libDir, "setup-ssh.sh"), patch(readFileSync(LIB_SETUP_SSH_PATH, "utf8")));
   copyFileSync(DOCKERFILE, join(dockerDir, "Dockerfile"));
   const build = await phase(`build mutante ${tag}`, () =>
     sh("docker", ["build", "-f", join(dockerDir, "Dockerfile"), "-t", tag, root], { timeoutMs: 120_000, stream: true }),
@@ -757,13 +772,13 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
     // construye un contenedor MUTANTE (mismo Dockerfile, backup.sh parcheado
     // con `sed`-equivalente en JS) y demuestra que, sin la línea real, pasa
     // justo lo que esa línea existe para impedir.
-    describe("mutaciones sobre setup_ssh() (backup.sh) — controles de seguridad, no cosmética", () => {
+    describe("mutaciones sobre setup_ssh() (lib/setup-ssh.sh) — controles de seguridad, no cosmética", () => {
       it("MUTACIÓN chmod 600→644 de la clave privada: ssh la RECHAZA (el permiso no es decorativo)", async () => {
         const tag = "s9-ai-arena/backup:e2e-mutant-chmod";
         const root = await buildMutant(tag, (src) => {
           const needle = 'chmod 600 "$HOME/.ssh/id_backup"';
           if (!src.includes(needle))
-            throw new Error("no se encontró la línea a mutar (chmod 600 id_backup) — ¿cambió backup.sh?");
+            throw new Error("no se encontró la línea a mutar (chmod 600 id_backup) — ¿cambió lib/setup-ssh.sh?");
           return src.replace(needle, 'chmod 644 "$HOME/.ssh/id_backup"');
         });
         try {
@@ -853,7 +868,7 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
         const root = await buildMutant(tag, (src) => {
           const needle = "printf '  StrictHostKeyChecking yes\\n'";
           if (!src.includes(needle))
-            throw new Error("no se encontró la línea a mutar (StrictHostKeyChecking yes) — ¿cambió backup.sh?");
+            throw new Error("no se encontró la línea a mutar (StrictHostKeyChecking yes) — ¿cambió lib/setup-ssh.sh?");
           return src.replace(needle, "printf '  StrictHostKeyChecking no\\n'");
         });
         // known_hosts DELIBERADAMENTE incorrecto (huella de otro host, igual

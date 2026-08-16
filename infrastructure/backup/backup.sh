@@ -305,56 +305,23 @@ json_source() {
 
 # setup_ssh — prepara ~/.ssh para el backend `sftp:` de restic.
 #
-# INCIDENTE que motiva esta función (fix/backup-sftp-scheduled-runtime): el
-# primer backup real se hizo A MANO desde el host, con la clave y el
-# known_hosts ya colocados en ~/.ssh por el operador. El backup PROGRAMADO
-# corre dentro de ESTE contenedor, que no comparte ~/.ssh del host: sin esta
-# función no había clave ni fingerprint verificado disponibles para el
-# proceso de cron, y `restic backup` fallaba (o, peor, alguien habría tenido
-# la tentación de "arreglarlo" con StrictHostKeyChecking=no, que es
-# EXACTAMENTE lo que no se debe hacer: sin verificación de huella, un
-# MITM/DNS spoofing en la red del backup podría suplantar el destino y
-# recibir el dump completo de la base de datos).
-#
-# Los secretos de Docker se montan SIEMPRE de sólo lectura y con permisos
-# 0444 (root:root) en /run/secrets/*: `ssh` rechaza una clave privada con
-# permisos de grupo/otros ("UNPROTECTED PRIVATE KEY FILE"), así que la clave
-# NO puede usarse directamente desde /run/secrets — hay que copiarla a un
-# sitio escribible del contenedor (la capa de escritura, efímera) con 0600
-# antes de invocarla. known_hosts no tiene esa restricción de permisos, pero
-# se copia igual para mantener todo en un único ~/.ssh gestionado aquí.
-#
-# `IdentitiesOnly yes` evita que ssh pruebe otras identidades (agent, claves
-# por defecto) que no existen en este contenedor pero cuyo intento ralentiza
-# o, en teoría, podría filtrar información en un ssh-agent reenviado por
-# error. `StrictHostKeyChecking yes` + `UserKnownHostsFile` explícito es la
-# verificación de huella exigida por el operador: sin una entrada que
-# coincida en known_hosts, ssh aborta la conexión en vez de aceptar
-# silenciosamente cualquier host.
-setup_ssh() {
-  [[ "$RESTIC_REPOSITORY" == sftp:* ]] || return 0
-  mkdir -p "$HOME/.ssh"
-  chmod 700 "$HOME/.ssh"
-  if ! cp "$RESTIC_SSH_KEY_FILE" "$HOME/.ssh/id_backup" 2>/dev/null; then
-    log error "no se pudo copiar la clave SSH desde RESTIC_SSH_KEY_FILE=$RESTIC_SSH_KEY_FILE"
-    return 1
-  fi
-  chmod 600 "$HOME/.ssh/id_backup"
-  if ! cp "$RESTIC_SSH_KNOWN_HOSTS_FILE" "$HOME/.ssh/known_hosts" 2>/dev/null; then
-    log error "no se pudo copiar known_hosts desde RESTIC_SSH_KNOWN_HOSTS_FILE=$RESTIC_SSH_KNOWN_HOSTS_FILE"
-    return 1
-  fi
-  chmod 644 "$HOME/.ssh/known_hosts"
-  {
-    printf 'Host *\n'
-    printf '  IdentityFile %s/.ssh/id_backup\n' "$HOME"
-    printf '  IdentitiesOnly yes\n'
-    printf '  UserKnownHostsFile %s/.ssh/known_hosts\n' "$HOME"
-    printf '  StrictHostKeyChecking yes\n'
-  } > "$HOME/.ssh/config"
-  chmod 600 "$HOME/.ssh/config"
-  return 0
-}
+# fix/restore-sftp-bootstrap: factorizada a lib/setup-ssh.sh para que
+# restore.sh use EXACTAMENTE el mismo bootstrap SSH que backup.sh (antes
+# restore.sh no tenía ninguno: un contenedor de recuperación nuevo, que
+# nunca había ejecutado backup.sh, no tenía forma de alcanzar un
+# repositorio sftp:). Ver ese fichero para el incidente que motivó esta
+# función, el contrato de entrada y por qué NUNCA se sustituye
+# StrictHostKeyChecking por "no".
+# shellcheck source=lib/setup-ssh.sh
+# Expansión de parámetros pura de bash (${VAR%/*}), NO `dirname`/`cd`/`pwd`
+# externos: esta línea se ejecuta ANTES de saber si el PATH de la imagen
+# está completo, y algún test de este mismo repo restringe el PATH a
+# propósito para probar "falta una herramienta" — no debe arrastrar a este
+# `source` a un fallo distinto del que esa prueba quiere ejercitar.
+_s9_backup_dir="${BASH_SOURCE[0]%/*}"
+[ "$_s9_backup_dir" = "${BASH_SOURCE[0]}" ] && _s9_backup_dir="."
+source "$_s9_backup_dir/lib/setup-ssh.sh"
+unset _s9_backup_dir
 
 write_metrics() { # $1 exit_code $2 duration_s $3 restic_snapshot_created(0/1)
   [ "$DRY_RUN" = 1 ] && return 0

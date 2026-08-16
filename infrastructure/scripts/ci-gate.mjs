@@ -53,6 +53,12 @@ export const JOBS_CI = [
   // debe ir a rojo en CUALQUIER run, no sólo en main — es precisamente el
   // job pensado para que un "se saltó en silencio" no pueda colarse.
   { id: "e2e-backup-sftp", clase: "obligatorio" },
+  // fix/restore-sftp-bootstrap: mismo motivo que e2e-backup-sftp de arriba
+  // — E2E real (misma imagen Docker + SFTP con chroot + postgres) del
+  // bootstrap SSH de restore.sh en un contenedor de recuperación limpio.
+  // "obligatorio" por la misma razón: nunca debe poder saltarse en
+  // silencio.
+  { id: "e2e-restore-sftp-bootstrap", clase: "obligatorio" },
   { id: "contracts", clase: "obligatorio" },
   { id: "regression-battles", clase: "obligatorio" },
   { id: "build-images", clase: "obligatorio" },

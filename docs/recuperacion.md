@@ -15,16 +15,27 @@ del servicio `backup` del stack, alerta si falla o si no hay backup en 26 h).
 - Acceso al repositorio restic (`RESTIC_REPOSITORY`, NAS/ZFS del operador) y a
   su contraseña (`restic_password`, custodiada FUERA del servidor: gestor de
   contraseñas del operador; sin ella no hay recuperación posible).
-- **Si el destino es SFTP (fix/backup-sftp-scheduled-runtime):** además hace
-  falta, TAMBIÉN custodiado fuera del servidor, el material para alcanzar el
-  host de respaldo por SSH: la clave privada `restic_ssh_key` y el
-  `restic_ssh_known_hosts` con la huella ya verificada del host. Es el mismo
-  problema del huevo y la gallina que `restic_password`: ambos viajan DENTRO
-  del snapshot de secretos (`s9-arena-secrets`) por comodidad del día a día,
-  pero ese snapshot vive precisamente en el repositorio SFTP al que sólo se
-  llega usando esa misma clave — sin una copia fuera del servidor, Fase 2 no
-  puede arrancar. Ver `infrastructure/.env.example` para el formato de
-  `RESTIC_REPOSITORY` con un host de respaldo confinado (`ChrootDirectory`).
+- **Si el destino es SFTP (fix/backup-sftp-scheduled-runtime,
+  fix/restore-sftp-bootstrap):** además hace falta, TAMBIÉN custodiado fuera
+  del servidor, el material para alcanzar el host de respaldo por SSH: la
+  clave privada `restic_ssh_key` y el `restic_ssh_known_hosts` con la huella
+  ya verificada del host. Es el mismo problema del huevo y la gallina que
+  `restic_password`: ambos viajan DENTRO del snapshot de secretos
+  (`s9-arena-secrets`) por comodidad del día a día, pero ese snapshot vive
+  precisamente en el repositorio SFTP al que sólo se llega usando esa misma
+  clave — sin una copia fuera del servidor, Fase 2 no puede arrancar. Ver
+  `infrastructure/.env.example` para el formato de `RESTIC_REPOSITORY` con
+  un host de respaldo confinado (`ChrootDirectory`).
+  - `restore.sh` (desde fix/restore-sftp-bootstrap) prepara ~/.ssh por sí
+    mismo a partir de `RESTIC_SSH_KEY_FILE`/`RESTIC_SSH_KNOWN_HOSTS_FILE` —
+    ya NO hace falta colocar la clave a mano en un contenedor de
+    recuperación nuevo (antes de esta rama, `restore.sh` no sabía nada del
+    backend sftp y "funcionaba" sólo por rebote, en el MISMO contenedor
+    donde ya había corrido `backup.sh`; un contenedor de recuperación
+    recién creado fallaba con "Host key verification failed"). Sigue
+    haciendo falta que esos dos ficheros existan y sean legibles ANTES de
+    invocar `restore.sh` — eso es exactamente lo que dice el riesgo de
+    custodia justo abajo.
 - Imágenes versionadas en `ghcr.io/pjclavero/s9-ai-arena/*` (las publica la CI
   en cada merge a main, etiquetadas `v<versión>` y `sha-<commit>`).
 
@@ -73,11 +84,14 @@ git clone https://github.com/pjclavero/s9-ai-arena.git && cd s9-ai-arena
 
 ```bash
 export RESTIC_REPOSITORY=<repositorio>   # y RESTIC_PASSWORD por el operador
-# Si RESTIC_REPOSITORY es sftp:..., restore.sh (como backup.sh) necesita
-# 'ssh' instalado y ~/.ssh listo con la clave y el known_hosts custodiados
-# fuera del servidor (ver Requisitos previos) ANTES de este comando — restic
-# no puede alcanzar el repositorio sin ellos, así que no hay forma de
-# "restaurarlos desde el propio backup" en este primer paso.
+# Si RESTIC_REPOSITORY es sftp:..., restore.sh prepara ~/.ssh POR SU CUENTA
+# (fix/restore-sftp-bootstrap, mismo bootstrap que usa backup.sh) a partir
+# de estas dos variables — deben apuntar a ficheros ya presentes y legibles
+# ANTES de este comando (custodiados fuera del servidor, ver Requisitos
+# previos): restic no puede alcanzar el repositorio sin ellos, así que no
+# hay forma de "restaurarlos desde el propio backup" en este primer paso.
+export RESTIC_SSH_KEY_FILE=<ruta a la clave privada custodiada>
+export RESTIC_SSH_KNOWN_HOSTS_FILE=<ruta al known_hosts con la huella verificada>
 bash infrastructure/backup/restore.sh --restore-secrets /tmp/restore-secrets
 # Colocarlos (rutas con permisos 0600; NUNCA volcarlos a pantalla/logs):
 mkdir -p infrastructure/secrets
@@ -201,6 +215,21 @@ rm -rf /tmp/restore-data   # limpiar restos en claro
 
 - La contraseña de restic es el único secreto no recuperable desde el propio
   backup: debe custodiarse fuera del servidor (doble custodia recomendada).
+- **Custodia de la clave SSH del backend sftp (fix/restore-sftp-bootstrap,
+  NO resuelto por este cambio — es un problema OPERATIVO, no de código):**
+  `restore.sh` recibe `RESTIC_SSH_KEY_FILE`/`RESTIC_SSH_KNOWN_HOSTS_FILE`,
+  nunca los genera ni los custodia. Si esa clave viviera ÚNICAMENTE dentro
+  de VM108 (o de la máquina que sea, en cada despliegue) — por ejemplo,
+  guardada sólo en un fichero local del host o en un volumen que también
+  desaparece con él — un desastre que se lleve por delante esa máquina se
+  lleva también el ÚNICO medio de alcanzar el backup: "el backup existe" y
+  "el backup es alcanzable" dejarían de ser la misma afirmación. Es
+  exactamente el mismo problema del huevo y la gallina que ya tiene
+  `restic_password` (arriba), aplicado a la clave SSH. Mitigación: la misma
+  doble custodia fuera del servidor que ya exige `restic_password` — un
+  gestor de secretos del operador, NUNCA sólo el propio servidor que se
+  quiere poder recuperar. Pendiente de decisión/verificación explícita del
+  operador; no se resuelve con código.
 - `arena_build_cache` NO se copia (decisión de retención del dosier 23.1): se
   regenera. Los replays SÍ se copian en su totalidad desde #110b (antes sólo
   se copiaba `official/`, un subdirectorio que en producción no existe, así
