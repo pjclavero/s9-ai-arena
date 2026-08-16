@@ -74,11 +74,29 @@ function which(bin: string): string | null {
 
 const SSHD_BIN = existsSync("/usr/sbin/sshd") ? "/usr/sbin/sshd" : which("sshd");
 const RESTIC_BIN = process.env.RESTIC_BIN || which("restic");
-const SFTP_SERVER = [
-  "/usr/lib/openssh/sftp-server",
-  "/usr/libexec/openssh/sftp-server",
-  "/usr/lib/ssh/sftp-server",
-].find((p) => existsSync(p));
+
+// Resolución de sftp-server: verdad de dpkg PRIMERO (el paquete
+// openssh-sftp-server declara su propia ruta; en Debian y Ubuntu HISTÓRICAMENTE
+// coincide con /usr/lib/openssh/sftp-server, pero "coincide siempre" es
+// justo la clase de suposición que un runner de CI puede desmentir sin
+// avisar — así que no se da por hecha). La lista fija sólo es un fallback
+// para sistemas sin dpkg (no Debian/Ubuntu).
+function resolveSftpServer(): string | undefined {
+  try {
+    const out = execFileSync("dpkg", ["-L", "openssh-sftp-server"], { encoding: "utf8" });
+    const fromDpkg = out
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l.endsWith("/sftp-server") && existsSync(l));
+    if (fromDpkg) return fromDpkg;
+  } catch {
+    /* dpkg ausente o paquete no instalado por ese gestor: cae al fallback */
+  }
+  return ["/usr/lib/openssh/sftp-server", "/usr/libexec/openssh/sftp-server", "/usr/lib/ssh/sftp-server"].find((p) =>
+    existsSync(p),
+  );
+}
+const SFTP_SERVER = resolveSftpServer();
 
 function unshareWorks(): boolean {
   try {
@@ -230,6 +248,84 @@ describe.skipIf(SKIP_LOCALLY)("restore.sh — bootstrap SSH real contra sftp: (s
       await sleep(300);
     }
     if (!existsSync(knownHostsRealPath)) throw new Error("ssh-keyscan no devolvió ninguna clave tras varios intentos");
+
+    // ── Prueba de humo del subsistema sftp EN CRUDO, con el cliente `sftp`
+    // real, SIN restic y SIN el namespace de setup_ssh de por medio — aísla
+    // "¿el sshd de este runner sirve sftp de verdad?" de cualquier otra capa
+    // (namespace, restic, setup_ssh). Si el binario de `Subsystem sftp` no
+    // es el correcto en este runner, o el sshd de este sistema no puede
+    // servir sftp sin privilegios por el motivo que sea, esto falla AQUÍ,
+    // con la salida cruda de `sftp -v`, en vez de disfrazarse más tarde
+    // detrás del mensaje genérico de restic ("unable to start the sftp
+    // session … unexpected EOF"), que no dice CUÁL de las capas falló.
+    const batchFile = join(root, "sftp-smoke-batch");
+    writeFileSync(batchFile, "pwd\nquit\n");
+    let smoke: { code: number; out: string };
+    try {
+      const out = execFileSync(
+        "sftp",
+        [
+          "-v",
+          "-P",
+          String(port),
+          "-i",
+          clientKeyPath,
+          "-o",
+          `UserKnownHostsFile=${knownHostsRealPath}`,
+          "-o",
+          "StrictHostKeyChecking=yes",
+          "-o",
+          "BatchMode=yes",
+          "-b",
+          batchFile,
+          "ia02@127.0.0.1",
+        ],
+        { encoding: "utf8", timeout: 10_000 },
+      );
+      smoke = { code: 0, out };
+    } catch (e: any) {
+      smoke = { code: typeof e.status === "number" ? e.status : 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+    }
+    if (smoke.code !== 0) {
+      // Diagnóstico máximo de una sola vez: si esto vuelve a fallar, el
+      // PRÓXIMO mensaje debe bastar para saber la causa exacta sin otra
+      // ronda de CI. Captura verdad de dpkg, el log acumulado del propio
+      // sshd (con -e ya iba a stderr, aquí también) y cualquier DENEGACIÓN
+      // de AppArmor/seccomp del kernel para este proceso — hipótesis
+      // explícita del coordinador de que un módulo de seguridad del runner
+      // podría bloquear el fork/exec del subproceso sftp-server, no sólo el
+      // unshare de espacios de nombres (que ya se comprobó por separado y
+      // funcionó: ver el paso previo "userns sin privilegios: disponible").
+      let dpkgRaw = "(dpkg no disponible o paquete no encontrado)";
+      try {
+        dpkgRaw = execFileSync("dpkg", ["-L", "openssh-sftp-server"], { encoding: "utf8" });
+      } catch (e: any) {
+        dpkgRaw = `dpkg -L falló: ${e.message}`;
+      }
+      let denials = "(sin dmesg accesible o sin sudo sin contraseña)";
+      try {
+        denials =
+          execFileSync(
+            "sh",
+            ["-c", "sudo -n dmesg 2>/dev/null | grep -iE 'apparmor|audit|denied|seccomp' | tail -80"],
+            {
+              encoding: "utf8",
+            },
+          ) || "(dmesg accesible pero sin líneas de apparmor/audit/denied/seccomp)";
+      } catch {
+        /* deja el valor por defecto */
+      }
+      throw new Error(
+        "el subsistema sftp de este sshd de prueba NO responde (prueba de humo con el cliente `sftp` " +
+          "real, sin restic ni namespace de por medio) — esto no es un defecto de restore.sh/setup_ssh, " +
+          `es el entorno del runner. SFTP_SERVER resuelto=${SFTP_SERVER} (existe=${SFTP_SERVER ? existsSync(SFTP_SERVER) : false}).\n` +
+          `Subsystem configurado en sshd_config: "Subsystem sftp ${SFTP_SERVER}".\n` +
+          `--- dpkg -L openssh-sftp-server ---\n${dpkgRaw}\n` +
+          `--- dmesg | grep apparmor/audit/denied/seccomp ---\n${denials}\n` +
+          `--- log acumulado del sshd de prueba (stdout+stderr, -e) ---\n${sshdLog}\n` +
+          `--- salida completa de \`sftp -v\` ---\n${smoke.out}`,
+      );
+    }
 
     // "Secretos" tal y como llegan montados por Docker: sólo lectura, 0400.
     secretKeyPath = join(root, "secret_restic_ssh_key");
