@@ -128,6 +128,27 @@ SECRETS_DIR="${SECRETS_DIR:-/secrets}"
 METRICS_DIR="${METRICS_DIR:-/textfile}"
 WORK_DIR="${WORK_DIR:-/tmp/backup-work}"
 REPLAY_RETENTION_DAYS="${REPLAY_RETENTION_DAYS:-180}"
+# RESTIC_HOSTNAME (fix/restic-stable-hostname): `restic forget` agrupa la
+# retención por host+paths, y ese "host" es, por defecto, el hostname del
+# SISTEMA (`--host`, o el propio `hostname` si no se pasa). Dentro de un
+# contenedor Docker sin `hostname:` fijado en el compose, ese valor es el ID
+# corto del contenedor — que cambia CADA VEZ que el servicio `backup` se
+# recrea (despliegue, reinicio, `docker compose up` tras cambiar la imagen).
+# Cada recreación creaba así un grupo de retención nuevo con un único
+# snapshot, que por tanto era simultáneamente el diario/semanal/mensual y se
+# conservaba SIEMPRE: `forget` no borraba nunca nada y el repositorio crecía
+# sin límite, mientras cada ejecución individual reportaba SUCCESS y
+# `restic check` pasaba (correcto en lo pequeño, roto en lo agregado; visto
+# en producción el 2026-08-14, log real con un grupo de retención por cada
+# ID de contenedor distinto). Aquí se fija un hostname ESTABLE de la
+# instalación, pasado explícitamente a restic con `--host` en `backup` y en
+# `forget` (nunca se depende del hostname ambiental de `uname`/`hostname`,
+# que seguiría siendo el ID del contenedor si algo se lo pasara por alto).
+# Configurable por entorno (ver infrastructure/docker-compose.yml, servicio
+# `backup`) para permitir migraciones deliberadas de host sin perder el
+# historial; con un valor por defecto sensato para que un despliegue nuevo
+# ya nazca con retención correcta sin configuración adicional.
+RESTIC_HOSTNAME="${RESTIC_HOSTNAME:-arena-backup-host}"
 PGHOST="${PGHOST:-postgres}"
 PGUSER="${PGUSER:-arena}"
 PGDATABASE="${PGDATABASE:-arena}"
@@ -399,6 +420,35 @@ if [ -z "${RESTIC_PASSWORD_FILE:-}" ] && [ -z "${RESTIC_PASSWORD:-}" ]; then
   log error "RESTIC_PASSWORD_FILE sin definir (secreto restic_password)"
   errors=1
 fi
+# fix/restic-stable-hostname (revisión del supervisor, hallazgo M8/M10, y
+# ronda 2 H1): un RESTIC_HOSTNAME vacío o compuesto sólo de espacio en
+# blanco pasaba la validación en silencio porque
+# `${RESTIC_HOSTNAME:-arena-backup-host}` sólo aplica el valor por defecto
+# cuando la variable está SIN DEFINIR, no cuando está definida pero vacía
+# (`RESTIC_HOSTNAME=` en .env deja pasar la cadena vacía tal cual). Con
+# `--host ""` restic trataría el argumento como ausente/una cadena vacía
+# real, lo que reabre justo el defecto que motiva este fix (agrupación
+# inestable), sólo que ahora por config explícita en vez de por hostname
+# ambiental. Igual de inválido: un hostname compuesto sólo de espacio en
+# blanco no es un identificador de host utilizable.
+#
+# H1 (ronda 2 del supervisor, demostrado con `--dry-run` real): la primera
+# versión de esta comprobación usaba `${RESTIC_HOSTNAME// /}`, que sólo
+# sustituye el carácter ESPACIO ASCII (0x20). Un RESTIC_HOSTNAME compuesto
+# de tabuladores ($'\t\t') o saltos de línea ($'\n') no contiene ningún
+# 0x20, así que sobrevivía intacto a esa sustitución y la validación decía
+# "CONFIG OK" con `--host <TAB><TAB>` — exactamente la clase de fallo que
+# esta comprobación decía cerrar. La expresión regular de bash
+# `^[[:space:]]*$` cubre TODO carácter de espacio en blanco POSIX (espacio,
+# tab, salto de línea, retorno de carro, form feed, vertical tab), no sólo
+# el espacio simple — y es un builtin de bash (`[[ =~ ]]`), sin invocar un
+# binario externo (`tr`) que podría no estar en el PATH de una imagen
+# mínima. Se valida en el mismo bloque, con el mismo estilo y el mismo
+# contrato de exit code, que RESTIC_REPOSITORY.
+if [[ "$RESTIC_HOSTNAME" =~ ^[[:space:]]*$ ]]; then
+  log error "RESTIC_HOSTNAME vacío o en blanco (infrastructure/.env): debe ser un hostname estable no vacío (ver docker-compose.yml, servicio backup)"
+  errors=1
+fi
 
 # fix/backup-sftp-scheduled-runtime: el backend `sftp:` fallaba en EJECUCIÓN
 # (ssh ausente de la imagen) de un modo que un `restic -r … snapshots` a mano
@@ -454,8 +504,8 @@ if [ "$DRY_RUN" = 1 ]; then
   echo "PLAN 1/5 · pg_dump -Fc -h $PGHOST -U $PGUSER $PGDATABASE -f staging/pgdump-\$(fecha).dump [fuente crítica]"
   echo "PLAN 2/5 · clasificar fuentes (ok/empty/error): maps, bot_sources, replays, assets, secrets"
   echo "PLAN 3/5 · construir staging/ (maps/, bot_sources/, assets/, replays/) + manifest.sha256 + manifest.json DENTRO del staging"
-  echo "PLAN 4/5 · restic backup del staging completo <= $REPLAY_RETENTION_DAYS días de replays (official/ sin límite) + restic backup de $SECRETS_DIR [fuente crítica, snapshot separado]"
-  echo "PLAN 5/5 · restic forget --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune && restic check"
+  echo "PLAN 4/5 · restic backup --host $RESTIC_HOSTNAME del staging completo <= $REPLAY_RETENTION_DAYS días de replays (official/ sin límite) + restic backup de $SECRETS_DIR [fuente crítica, snapshot separado]"
+  echo "PLAN 5/5 · restic forget --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune --host $RESTIC_HOSTNAME --group-by host,tags && restic check"
   if [[ "$RESTIC_REPOSITORY" == sftp:* ]]; then
     echo "SFTP · ssh $(command -v ssh >/dev/null 2>&1 && echo presente || echo AUSENTE), known_hosts verificado (StrictHostKeyChecking yes, nunca 'no')"
   fi
@@ -698,18 +748,31 @@ if ! setup_ssh; then
   # en vez de dejar que el error salga confuso desde dentro de restic.
   status=1
 fi
-if [ "$status" = 0 ] && restic backup --tag s9-arena-data "$STAGING"; then
+if [ "$status" = 0 ] && restic backup --tag s9-arena-data --host "$RESTIC_HOSTNAME" "$STAGING"; then
   snapshot_created=1
 else
   status=1
 fi
 if [ "$status" = 0 ]; then
-  if ! restic backup --tag s9-arena-secrets "$SECRETS_DIR"; then
+  if ! restic backup --tag s9-arena-secrets --host "$RESTIC_HOSTNAME" "$SECRETS_DIR"; then
     status=1
   fi
 fi
 if [ "$status" = 0 ]; then
-  restic forget --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune || status=1
+  # --group-by host,tags (revisión del supervisor, mutación M12): sin
+  # fijarlo, restic decide la agrupación con el DEFAULT del binario
+  # (host,paths). Eso ata la retención a la RUTA absoluta del staging
+  # ($WORK_DIR/staging), que hoy es estable sólo porque docker-compose.yml
+  # fija WORK_DIR — una coincidencia de configuración, no una garantía. Si
+  # WORK_DIR cambiase o el staging se generase con un componente variable
+  # en la ruta (p.ej. "$WORK_DIR/staging-$RANDOM"), cada ejecución volvería
+  # a abrir un grupo de retención nuevo aunque el HOST fuera estable —
+  # exactamente la misma patología de crecimiento sin límite que motiva
+  # este fix, reabierta por otra puerta. Agrupar explícitamente por
+  # host,tags (los --tag s9-arena-data/s9-arena-secrets son estables por
+  # construcción, a diferencia de la ruta) hace que la retención dependa
+  # SÓLO de RESTIC_HOSTNAME + el tag, nunca de rutas del contenedor.
+  restic forget --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune --host "$RESTIC_HOSTNAME" --group-by host,tags || status=1
   restic check || status=1
 fi
 
