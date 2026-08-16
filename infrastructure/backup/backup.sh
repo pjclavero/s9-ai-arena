@@ -420,19 +420,32 @@ if [ -z "${RESTIC_PASSWORD_FILE:-}" ] && [ -z "${RESTIC_PASSWORD:-}" ]; then
   log error "RESTIC_PASSWORD_FILE sin definir (secreto restic_password)"
   errors=1
 fi
-# fix/restic-stable-hostname (revisión del supervisor, hallazgo M8/M10): un
-# RESTIC_HOSTNAME vacío o compuesto sólo de espacios pasaba la validación en
-# silencio porque `${RESTIC_HOSTNAME:-arena-backup-host}` sólo aplica el
-# valor por defecto cuando la variable está SIN DEFINIR, no cuando está
-# definida pero vacía (`RESTIC_HOSTNAME=` en .env deja pasar la cadena
-# vacía tal cual). Con `--host ""` restic trataría el argumento como
-# ausente/una cadena vacía real, lo que reabre justo el defecto que motiva
-# este fix (agrupación inestable), sólo que ahora por config explícita en
-# vez de por hostname ambiental. Igual de inválido: un hostname compuesto
-# sólo de espacios ("   ") no es vacío para `-z` pero tampoco es un
-# identificador de host utilizable. Se valida en el mismo bloque, con el
-# mismo estilo y el mismo contrato de exit code, que RESTIC_REPOSITORY.
-if [ -z "${RESTIC_HOSTNAME// /}" ]; then
+# fix/restic-stable-hostname (revisión del supervisor, hallazgo M8/M10, y
+# ronda 2 H1): un RESTIC_HOSTNAME vacío o compuesto sólo de espacio en
+# blanco pasaba la validación en silencio porque
+# `${RESTIC_HOSTNAME:-arena-backup-host}` sólo aplica el valor por defecto
+# cuando la variable está SIN DEFINIR, no cuando está definida pero vacía
+# (`RESTIC_HOSTNAME=` en .env deja pasar la cadena vacía tal cual). Con
+# `--host ""` restic trataría el argumento como ausente/una cadena vacía
+# real, lo que reabre justo el defecto que motiva este fix (agrupación
+# inestable), sólo que ahora por config explícita en vez de por hostname
+# ambiental. Igual de inválido: un hostname compuesto sólo de espacio en
+# blanco no es un identificador de host utilizable.
+#
+# H1 (ronda 2 del supervisor, demostrado con `--dry-run` real): la primera
+# versión de esta comprobación usaba `${RESTIC_HOSTNAME// /}`, que sólo
+# sustituye el carácter ESPACIO ASCII (0x20). Un RESTIC_HOSTNAME compuesto
+# de tabuladores ($'\t\t') o saltos de línea ($'\n') no contiene ningún
+# 0x20, así que sobrevivía intacto a esa sustitución y la validación decía
+# "CONFIG OK" con `--host <TAB><TAB>` — exactamente la clase de fallo que
+# esta comprobación decía cerrar. La expresión regular de bash
+# `^[[:space:]]*$` cubre TODO carácter de espacio en blanco POSIX (espacio,
+# tab, salto de línea, retorno de carro, form feed, vertical tab), no sólo
+# el espacio simple — y es un builtin de bash (`[[ =~ ]]`), sin invocar un
+# binario externo (`tr`) que podría no estar en el PATH de una imagen
+# mínima. Se valida en el mismo bloque, con el mismo estilo y el mismo
+# contrato de exit code, que RESTIC_REPOSITORY.
+if [[ "$RESTIC_HOSTNAME" =~ ^[[:space:]]*$ ]]; then
   log error "RESTIC_HOSTNAME vacío o en blanco (infrastructure/.env): debe ser un hostname estable no vacío (ver docker-compose.yml, servicio backup)"
   errors=1
 fi
