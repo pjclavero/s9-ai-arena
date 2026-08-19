@@ -287,8 +287,80 @@ describe("manifest.sha256 incluye el pg_dump (D3, #112)", () => {
     expect(threw, `--verify debió fallar; salida real:\n${output}`).toBe(true);
     expect(output).not.toContain("no había nada que verificar");
     expect(output).not.toContain("integridad verificada");
-    // El mensaje debe ser honesto sobre POR QUÉ falla: el contrato de este
-    // backup (schema>=2) exige que postgres tenga entrada.
+    // Exigencia explícita del operador: el mensaje NO puede volver a decir
+    // "ninguna fuente 'ok'" (falso: manifest.json declara postgres/secrets
+    // 'ok') — tiene que señalar la CONTRADICCIÓN real entre lo declarado y
+    // los checksums ausentes.
+    expect(output).not.toContain("ninguna fuente");
     expect(output).toContain("schema=2");
+    expect(output).toMatch(/postgres.*'ok'|'ok'.*postgres/);
+  });
+
+  // ── Caso hostil #3 aislado (operador, ronda de re-supervisión): el
+  // ataque de arriba combina "manifest vacío" + "dump sustituido". Este
+  // test aísla SÓLO la primera mitad — manifest.sha256 vaciado, dump
+  // INTACTO en el árbol — para confirmar que el gate de schema>=2 rechaza
+  // el manifest vacío por sí solo, sin depender de que el dump también
+  // esté corrupto.
+  it("snapshot NUEVO (schema>=2) con manifest.sha256 vacío y dump INTACTO: --verify FALLA igual", () => {
+    const { dest, env, manifestPath } = setupRealBackupAndRestore(DUMP_CONTENT);
+    writeFileSync(manifestPath, "");
+
+    let threw = false;
+    let output = "";
+    try {
+      output = execFileSync("bash", [RESTORE, "--verify", dest], { encoding: "utf8", stdio: "pipe", env });
+    } catch (e: any) {
+      threw = true;
+      output = `${e.stdout}${e.stderr}`;
+    }
+    expect(threw, `--verify debió fallar; salida real:\n${output}`).toBe(true);
+    expect(output).not.toContain("integridad verificada");
+    expect(output).toContain("schema=2");
+  });
+
+  // ── Caso hostil #5 (operador, ronda de re-supervisión): snapshot LEGACY
+  // real y representativo — la forma EXACTA del restore drill del 18-ago:
+  // manifest.json sin "schema" (backup.sh anterior a este fix nunca lo
+  // escribió), manifest.sha256 con líneas de maps/replays pero SIN el
+  // dump, y el dump presente en el árbol (backup.sh legacy lo genera, sólo
+  // no lo hashea). Comportamiento exigido y documentado en
+  // docs/recuperacion.md: --verify PASA, verifica maps/replays de verdad,
+  // y dice EXPLÍCITAMENTE que el dump no tiene checksum en ese manifest —
+  // nunca aborta con un diagnóstico de "truncado/corrupto" falso.
+  it("snapshot LEGACY real (sin schema, dump fuera del manifest, forma del restore drill 18-ago): --verify PASA y documenta la cobertura real", () => {
+    const root = mkdtempSync(join(tmpdir(), "e-pgdump-legacy-"));
+    const dest = join(root, "restored");
+    mkdirSync(join(dest, "maps"), { recursive: true });
+    mkdirSync(join(dest, "replays", "official"), { recursive: true });
+    writeFileSync(join(dest, "maps", "mvp.json"), '{"map":"mvp"}\n');
+    writeFileSync(join(dest, "replays", "official", "battle-1.jsonl"), '{"tick":1}\n');
+    const hMaps = execSync(`sha256sum "${join(dest, "maps", "mvp.json")}"`, { encoding: "utf8" }).split(/\s+/)[0];
+    const hReplays = execSync(`sha256sum "${join(dest, "replays", "official", "battle-1.jsonl")}"`, {
+      encoding: "utf8",
+    }).split(/\s+/)[0];
+    writeFileSync(
+      join(dest, "manifest.sha256"),
+      `${hMaps}  maps/mvp.json\n${hReplays}  replays/official/battle-1.jsonl\n`,
+    );
+    // Legacy real: SIN "schema" — exactamente lo que backup.sh escribía
+    // antes de este fix (postgres 'ok' declarado, pero sin línea propia).
+    writeFileSync(
+      join(dest, "manifest.json"),
+      '{"postgres":{"status":"ok","files":1},"secrets":{"status":"ok","files":1},"maps":{"status":"ok","files":1},"bot_sources":{"status":"empty","files":0},"replays":{"status":"ok","files":1},"assets":{"status":"empty","files":0}}',
+    );
+    // El dump SIGUE presente en el árbol (backup.sh legacy sí lo genera,
+    // sólo no lo incluye en el manifest) — no debe contarse como residual.
+    writeFileSync(join(dest, "pgdump-20250101000000.dump"), "dump-legacy-sin-checksum\n");
+
+    const verifyOut = execFileSync("bash", [RESTORE, "--verify", dest], { encoding: "utf8" });
+    // PASA (no aborta con "truncado o corrupto", el defecto 2 reportado).
+    expect(verifyOut).toContain("integridad verificada");
+    // Cobertura real: mapas y replays SÍ verificados.
+    expect(verifyOut).toContain("mapas");
+    expect(verifyOut).toContain("replays");
+    // Honestidad exigida por el operador: dice EXPLÍCITAMENTE qué NO cubrió.
+    expect(verifyOut).toContain("legacy");
+    expect(verifyOut.toLowerCase()).toContain("no tiene checksum");
   });
 });
