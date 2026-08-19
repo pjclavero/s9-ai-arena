@@ -170,20 +170,23 @@ docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.e
   --profile production up -d
 docker compose -f infrastructure/docker-compose.yml ps          # todo healthy
 
-# Integridad (criterio del cap. 28): checksums de mapas, bot-sources,
-# assets y replays (manifest.sha256 vive junto a los datos en $STAGE, por
-# eso `--verify` puede apuntar a todo /tmp/restore-data: localiza el único
-# manifest.sha256 igual que en Fase 3 y falla si hay cero o más de uno).
-# LIMITACIÓN CONOCIDA (D3, sin implementar a propósito): el dump de
-# PostgreSQL (pgdump-*.dump) NO está incluido en manifest.sha256 — es el
-# único activo de este backup sin checksum verificado por --verify. Su
-# integridad depende hoy de que pg_dump/restic no fallen en silencio, no de
-# un hash. Opción técnica disponible si se decide cerrar esta laguna: quitar
-# la exclusión `! -path './pgdump-*'` de la generación del manifest en
-# backup.sh (cambio de una línea); contra: el nombre del dump incluye el
-# timestamp de cada ejecución, así que el checksum nunca es comparable
-# entre backups, sólo sirve para detectar corrupción dentro del mismo
-# snapshot.
+# Integridad (criterio del cap. 28): checksums de postgres (pg_dump), mapas,
+# bot-sources, assets y replays (manifest.sha256 vive junto a los datos en
+# $STAGE, por eso `--verify` puede apuntar a todo /tmp/restore-data: localiza
+# el único manifest.sha256 igual que en Fase 3 y falla si hay cero o más de
+# uno). D3 (#112) CERRADO: el dump de PostgreSQL (pgdump-*.dump) SÍ está
+# incluido en manifest.sha256 desde este cambio — ya no es el único activo
+# del backup sin checksum verificado por --verify; su corrupción se detecta
+# igual que la de cualquier otra fuente.
+# NOTA OPERATIVA (snapshots antiguos): esto sólo aplica a backups generados
+# DESPUÉS de este cambio. Un snapshot tomado ANTES seguirá teniendo el dump
+# fuera del manifest — su restore.sh --verify verificará mapas/bot-sources/
+# assets/replays pero no el dump, y la integridad de éste dependerá de que
+# pg_dump/restic no fallaran en silencio en su momento, no de un hash. Por
+# eso restore.sh conserva la rama de "manifest.sha256 vacío" (con la
+# exclusión de pgdump-* en esa rama) tal cual: sigue siendo necesaria para
+# restaurar y verificar esos snapshots viejos con las cuatro fuentes no
+# críticas vacías.
 bash infrastructure/backup/restore.sh --verify /tmp/restore-data
 
 # Migraciones al día (contrato con E7: el api las reporta en /healthz)
