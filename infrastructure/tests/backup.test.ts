@@ -1246,7 +1246,16 @@ describe("backup.sh → restic falso fiel → restore.sh --restore/--verify (E2E
   // hundió la ronda 1 (--verify roto en un escenario real sin test), sólo
   // que en el extremo opuesto: aquí "no hay nada que verificar" debe ser
   // éxito, no fallo. ──────────────────────────────────────────────────────
-  it("cadena completa con las CUATRO fuentes no críticas vacías: --verify pasa (D1, estado real de VM108)", () => {
+  // D3 (#112, aplicado): antes de este fix, con las cuatro fuentes no
+  // críticas vacías el manifest quedaba a 0 bytes (el dump se excluía a
+  // propósito). Desde D3 el pg_dump SIEMPRE deja una línea en el manifest
+  // cuando postgres está 'ok' — y postgres siempre está 'ok' si el script
+  // llega a generar el manifest (si pg_dump falla, aborta antes en FULL
+  // FAILURE) — así que "las cuatro fuentes vacías" ya NO produce un
+  // manifest vacío: produce un manifest de UNA línea (el dump), y --verify
+  // debe recorrer la rama de `sha256sum -c` normal, no la de "vacío
+  // legítimo". Se actualiza el contrato de este test para reflejar eso.
+  it("cadena completa con las CUATRO fuentes no críticas vacías: --verify pasa con el dump como única entrada del manifest (D1+D3)", () => {
     root = mkdtempSync(join(tmpdir(), "e10-e2e-empty-"));
     fakebin = join(root, "bin");
     store = join(root, "store");
@@ -1270,20 +1279,22 @@ describe("backup.sh → restic falso fiel → restore.sh --restore/--verify (E2E
     const dest = join(root, "restored-empty");
     execFileSync("bash", [RESTORE, "--restore", dest], { encoding: "utf8", env: backupEnv() });
 
-    // El manifest.sha256 restaurado debe existir y estar vacío (cobertura
-    // 'empty' declarada, no ausente ni corrupto).
+    // El manifest.sha256 restaurado debe existir y tener EXACTAMENTE una
+    // línea: la del pg_dump (única fuente 'ok' con contenido cuando las
+    // cuatro no críticas están vacías). Ya NO está vacío desde D3.
     const manifestPath = execSync(`find "${dest}" -name manifest.sha256`, { encoding: "utf8" }).trim();
     expect(manifestPath).not.toBe("");
-    expect(readFileSync(manifestPath, "utf8")).toBe("");
+    const manifestLines = readFileSync(manifestPath, "utf8").split("\n").filter(Boolean);
+    expect(manifestLines.length).toBe(1);
+    expect(manifestLines[0]).toMatch(/pgdump-\d+\.dump$/);
 
-    // Antes de D1 esto lanzaba: sha256sum: manifest.sha256: no properly
-    // formatted checksum lines found / exit 1, sobre un backup sano.
+    // Con contenido en el manifest, --verify recorre la rama normal de
+    // sha256sum -c (ya NO la rama de "manifest vacío legítimo" de D1) y
+    // debe afirmar la integridad del dump de verdad. Las cuatro fuentes no
+    // críticas están vacías (`status:"empty"`, no "ok"), así que el mensaje
+    // dinámico de cobertura sólo debe listar 'postgres'.
     const verifyOut = execFileSync("bash", [RESTORE, "--verify", dest], { encoding: "utf8" });
-    expect(verifyOut).toContain("vacío");
-    expect(verifyOut).toContain("no había nada que verificar");
-    // D3-R3b: NO afirmar "checksums correctos" cuando no se comprobó
-    // ninguno — esa frase sólo debe aparecer cuando sha256sum -c corrió.
-    expect(verifyOut).not.toContain("checksums de mapas y replays correctos");
+    expect(verifyOut).toContain("integridad verificada: checksums de postgres correctos");
   });
 
   // ── D1-R3 (ronda 4, HALLAZGO DEL SUPERVISOR — bloqueante): la primera
@@ -1320,8 +1331,13 @@ describe("backup.sh → restic falso fiel → restore.sh --restore/--verify (E2E
       threw = true;
       output = `${e.stdout}${e.stderr}`;
     }
+    // D3-R2 (supervisión independiente de #119): con backup.sh real el
+    // manifest.json lleva "schema":2, así que el gate de contrato dispara
+    // ANTES de llegar al chequeo de residuales que daba "SIN verificar" —
+    // motivo más fundamental (postgres 'ok' bajo schema>=2 excluye por
+    // completo que un manifest vacío sea legítimo), incluso más estricto.
     expect(threw).toBe(true); // NUNCA debe salir 0 con datos sin verificar
-    expect(output).toContain("SIN verificar");
+    expect(output).toContain("no es una cobertura vacía legítima");
     expect(output).not.toContain("integridad verificada");
   });
 
@@ -1668,6 +1684,17 @@ describe("backup.sh → restic falso fiel → restore.sh --restore/--verify (E2E
       // "líneas vs manifest.json" (anterior en la cadena) NO dispare —
       // aísla el chequeo de residuales, que es el que de verdad debe
       // notar que sólo hay 1 fichero real por 2 líneas de manifest.
+      // D3 (#112, aplicado) / D3-R2 (supervisión independiente): esta
+      // fixture no incluye un pg_dump real (no hay pgdump-*.dump en el
+      // árbol ni línea suya en manifest.sha256), así que representa un
+      // manifest LEGACY genuino — sin el campo "schema" (backup.sh sólo lo
+      // escribe desde este fix; su ausencia es exactamente lo que un
+      // backup anterior a D3 produce de verdad). `postgres` se declara
+      // 'ok' como haría cualquier backup real, legacy o no — es
+      // precisamente la ausencia de "schema" (no el status de postgres) lo
+      // que le dice a restore.sh que NO debe sumar `postgres` en
+      // `expected_lines`, dejando aislado el chequeo de residuales que
+      // este test quiere ejercitar.
       writeFileSync(
         join(dir, "manifest.json"),
         '{"postgres":{"status":"ok","files":1},"secrets":{"status":"ok","files":2},"maps":{"status":"ok","files":2},"bot_sources":{"status":"empty","files":0},"replays":{"status":"empty","files":0},"assets":{"status":"empty","files":0}}',
@@ -1680,8 +1707,13 @@ describe("backup.sh → restic falso fiel → restore.sh --restore/--verify (E2E
         threw = true;
         output = `${e.stdout}${e.stderr}`;
       }
+      // D3-R2 (supervisión independiente de #119): el mensaje ahora es
+      // direccional — aquí faltan ficheros reales frente a lo declarado
+      // (1 fichero real, 2 líneas de manifest), no al revés, así que ya
+      // no dice "SIN entrada en el manifest" (esa frase es para el
+      // sentido opuesto, ver el test "fichero inyectado" de arriba).
       expect(threw).toBe(true); // NUNCA exit 0 con una entrada duplicada sin explicar
-      expect(output).toContain("SIN entrada en el manifest");
+      expect(output).toContain("faltan ficheros que el manifest declara");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -252,10 +252,36 @@ case "${1:---dry-run}" in
       exit 1
     fi
 
+    # D3-R2 (supervisión independiente de #119, BLOQUEANTE, corregido): la
+    # rama de "manifest vacío legítimo" de abajo (D1) no distinguía un
+    # snapshot LEGACY (anterior a D3, dump siempre fuera del manifest) de
+    # uno NUEVO degradado (schema>=2, al que se le vació manifest.sha256 y
+    # se le sustituyó el dump) — ambos manifest.json declaran postgres
+    # 'ok' por igual y esa rama nunca consultaba `postgres`. Resultado
+    # reproducido por el supervisor: vaciar manifest.sha256 + sustituir el
+    # dump por basura pasaba con EXIT=0 y "ninguna fuente ok", una
+    # afirmación falsa (manifest.json SÍ declara postgres/secrets 'ok').
+    # `schema` (ver backup.sh, generación de manifest.json) es la versión
+    # de CONTRATO: >=2 significa "postgres DEBE tener línea en
+    # manifest.sha256 si está 'ok'"; ausente (backups anteriores a este
+    # fix) significa "postgres NUNCA tiene línea, sea cual sea su status".
+    # Bajo schema>=2 un manifest.sha256 vacío NUNCA es legítimo (postgres
+    # siempre está 'ok' si backup.sh llegó a escribir el manifest — ver
+    # comentario en backup.sh), así que esa rama queda reservada
+    # EXCLUSIVAMENTE a schema<2 (legacy real).
+    # `|| true`: bajo `set -e`, un manifest.json LEGACY (sin campo
+    # "schema" — el caso normal para snapshots anteriores a este fix) hace
+    # que `grep -o` no encuentre nada y salga con exit 1; sin el `|| true`
+    # esa asignación mataba el script entero SIN log alguno (comprobado:
+    # exit 1 con stdout/stderr vacíos), el mismo tipo de fallo silencioso
+    # que otras partes de este script evitan explícitamente.
+    schema="$( { grep -o '"schema":[0-9]*' "$manifest_json" | head -1 | grep -o '[0-9]*$'; } || true )"
+    schema="${schema:-1}"
+
     # D1 (ronda 3 de #112): un manifest.sha256 de 0 bytes es el resultado
     # LEGÍTIMO de un backup sano cuando las cuatro fuentes no críticas
-    # (maps/bot_sources/assets/replays) están vacías — el estado actual de
-    # producción (VM108) y el de cualquier instalación recién desplegada.
+    # (maps/bot_sources/assets/replays) están vacías — el estado de un
+    # snapshot LEGACY (schema<2, anterior a D3) recién desplegado.
     # `sha256sum -c` sobre un fichero vacío sale con exit 1 y el mensaje "no
     # properly formatted checksum lines found": un operador siguiendo la
     # Fase 7 del runbook vería un FALLO DURO sobre un backup perfecto.
@@ -270,41 +296,45 @@ case "${1:---dry-run}" in
     # la habría hecho afirmar por escrito "checksums correctos" sin haber
     # comprobado ni uno. Ahora, con manifest vacío, se exige POSITIVAMENTE
     # que no haya nada que debiera haberse verificado:
+    #   0. (D3-R2) El propio CONTRATO admite un manifest vacío — sólo
+    #      schema<2. Bajo schema>=2 nunca es legítimo: FALLA sin mirar nada
+    #      más, porque postgres 'ok' es obligatorio y siempre exigiría una
+    #      línea.
     #   1. Ningún fichero de datos (fuera de pgdump-*/manifest.*) en el
     #      árbol restaurado junto al manifest — si lo hay, hay contenido sin
     #      checksum, y eso es sospechoso, no legítimo.
-    #   2. manifest.json no declara NINGUNA fuente `status:"ok"` — si lo
-    #      hiciera, manifest.sha256 vacío sería inconsistente con lo que el
-    #      propio backup dice haber capturado.
-    # Sólo si ambas comprobaciones pasan se acepta como cobertura vacía
+    #   2. manifest.json no declara NINGUNA fuente no crítica `status:"ok"`
+    #      — si lo hiciera, manifest.sha256 vacío sería inconsistente con
+    #      lo que el propio backup dice haber capturado.
+    # Sólo si TODAS las comprobaciones pasan se acepta como cobertura vacía
     # legítima; en cualquier otro caso, FALLA (no se asume nada a favor).
     if [ ! -s "$manifest" ]; then
+      if [ "$schema" -ge 2 ]; then
+        log error "manifest.sha256 vacío pero manifest.json declara schema=$schema (postgres/secrets 'ok' obligan a que el dump tenga entrada en manifest.sha256): inconsistente con el contrato de este backup, no es una cobertura vacía legítima"
+        exit 1
+      fi
       # D6-R5 (ronda 6): `! -name` excluía por nombre base en TODO el
       # árbol; un fichero de usuario como `maps/pgdump-x` escapaba a la
       # comprobación (ver el mismo fix en backup.sh). `-path` con el
       # directorio completo sólo excluye la raíz del staging, que es donde
-      # viven de verdad el dump y los manifests.
+      # viven de verdad el dump y los manifests. La exclusión de
+      # `pgdump-*` aquí sigue siendo correcta PORQUE ya estamos en la rama
+      # schema<2: en un legacy real, el dump vive en el árbol pero nunca
+      # tuvo línea propia en el manifest, así que no debe contarse como
+      # "residual sin checksum".
       stray="$(find "$stagedir" -type f ! -path "$stagedir/manifest.*" ! -path "$stagedir/pgdump-*")"
       if [ -n "$stray" ]; then
         log error "manifest.sha256 vacío pero hay ficheros de datos SIN verificar en $stagedir (p.ej. $(printf '%s\n' "$stray" | head -1)): posible backup roto, no cobertura vacía legítima"
         exit 1
       fi
       # Acoplado deliberadamente al formato exacto que genera backup.sh
-      # (sin espacios, ver json_source). OJO: sólo se comprueban las CUATRO
-      # fuentes NO críticas (maps/bot_sources/assets/replays) — postgres y
-      # secrets están SIEMPRE en 'ok' en cualquier backup con éxito (no
-      # forman parte de manifest.sha256 por diseño: el dump de PostgreSQL
-      # se excluye explícitamente de la generación del manifest en
-      # backup.sh (`! -path './pgdump-*'`) y los secretos nunca se listan.
-      # D3 (limitación conocida, documentada y SIN implementar a propósito,
-      # a la espera de decisión del operador — ver docs/recuperacion.md):
-      # esto significa que el dump, el activo más crítico del backup, NO
-      # tiene checksum en ninguna parte; su integridad depende hoy de que
-      # `pg_dump`/`restic` no fallen en silencio, no de un hash verificado
-      # por `--verify`. Si se comprobara "cualquier fuente ok", esto
-      # rechazaría TODO backup sano
-      # con las cuatro fuentes no críticas vacías, reintroduciendo el
-      # falso positivo original de D1.
+      # (sin espacios, ver json_source). Sólo se comprueban las CUATRO
+      # fuentes NO críticas (maps/bot_sources/assets/replays) — secrets
+      # nunca se lista, y postgres NO se comprueba aquí a propósito: en un
+      # legacy real (schema<2, la única forma de llegar a esta rama)
+      # postgres SIEMPRE declara 'ok' sin que eso implique una línea en el
+      # manifest, así que exigir "postgres no-ok" aquí rechazaría TODO
+      # legacy sano, reintroduciendo el falso positivo original de D1.
       for src in maps bot_sources assets replays; do
         if grep -q "\"$src\":{\"status\":\"ok\"" "$manifest_json"; then
           log error "manifest.sha256 vacío pero manifest.json ($manifest_json) declara '$src' como 'ok': inconsistencia real, no se puede confiar en este backup"
@@ -314,7 +344,7 @@ case "${1:---dry-run}" in
       # D3-R3b: decir la verdad. No se ha comprobado ningún checksum aquí
       # (no había ninguno que comprobar) — la frase "checksums correctos"
       # sería una afirmación sobre algo que el script nunca ejecutó.
-      log info "manifest.sha256 vacío: confirmado contra manifest.json y el árbol restaurado (sin datos residuales, ninguna fuente 'ok'); no había nada que verificar"
+      log info "manifest.sha256 vacío: confirmado contra manifest.json y el árbol restaurado (sin datos residuales, ninguna fuente no crítica 'ok'; snapshot legacy anterior a D3, dump de PostgreSQL sin checksum en este manifest); no había nada que verificar"
     else
       # D1-R4 (ronda 5, HALLAZGO DEL SUPERVISOR): el chequeo de D1-R3 sólo
       # vivía en la rama de manifest VACÍO. Esta rama —manifest CON
@@ -328,8 +358,18 @@ case "${1:---dry-run}" in
       # (contenido inyectado después del backup, o un manifest que nunca
       # llegó a cubrir todo). Mismo rigor que la rama de arriba, en los dos
       # sentidos: ni de menos (truncado) ni de más (residual sin listar).
+      # D3 (#112, decisión del operador aplicada en backup.sh): el pg_dump
+      # sólo se excluye del manifest en snapshots LEGACY (schema<2);
+      # `postgres` entra en esta cuenta igual que las fuentes no críticas
+      # SÓLO cuando schema>=2 (ver el mismo cambio en backup.sh). D3-R2:
+      # esto es justo lo que faltaba para el defecto 2 — un legacy CON
+      # datos (dump fuera del manifest desde antes de D3) ya NO suma
+      # postgres aquí, así que `expected_lines` vuelve a coincidir con las
+      # líneas reales que ese backup antiguo generó.
       expected_lines=0
-      for src in maps bot_sources assets replays; do
+      count_srcs="maps bot_sources assets replays"
+      [ "$schema" -ge 2 ] && count_srcs="postgres $count_srcs"
+      for src in $count_srcs; do
         if grep -q "\"$src\":{\"status\":\"ok\",\"files\":" "$manifest_json"; then
           n="$(grep -o "\"$src\":{\"status\":\"ok\",\"files\":[0-9]*" "$manifest_json" | grep -o '[0-9]*$')"
           expected_lines=$((expected_lines + n))
@@ -337,7 +377,7 @@ case "${1:---dry-run}" in
       done
       actual_lines="$(wc -l < "$manifest")"
       if [ "$actual_lines" -ne "$expected_lines" ]; then
-        log error "manifest.sha256 inconsistente: $actual_lines líneas, manifest.json declara $expected_lines ficheros 'ok' (manifest truncado o corrupto)"
+        log error "manifest.sha256 inconsistente: $actual_lines líneas, manifest.json declara $expected_lines ficheros 'ok' (schema=$schema; manifest truncado o corrupto)"
         exit 1
       fi
       # D1-R5/D2-R5 (ronda 6, HALLAZGO DEL SUPERVISOR): `find … | wc -l`
@@ -352,10 +392,29 @@ case "${1:---dry-run}" in
       # cuenta con NUL como separador (`-print0`), inmune a saltos de
       # línea en el propio nombre — la misma técnica que ya se usa bien
       # para `replays` en backup.sh desde la ronda 4, ahora también aquí.
-      # D6-R5: exclusión por `-path`, no por `-name` (ver arriba).
-      total_data_files="$(find "$stagedir" -type f ! -path "$stagedir/manifest.*" ! -path "$stagedir/pgdump-*" -print0 | tr -cd '\0' | wc -c)"
+      # D6-R5: exclusión por `-path`, no por `-name` (ver arriba). D3
+      # (#112)/D3-R2: `pgdump-*` sólo se excluye aquí cuando schema<2
+      # (legacy: el dump está en el árbol pero nunca tuvo línea propia, así
+      # que no cuenta como "residual"). Con schema>=2 el dump SÍ tiene
+      # línea, así que ya no se excluye — si se siguiera excluyendo,
+      # `total_data_files` quedaría sistemáticamente una unidad por debajo
+      # de `actual_lines` y esta rama denunciaría "inyección" en todo
+      # backup sano con dump.
+      pgdump_excl_args=()
+      [ "$schema" -lt 2 ] && pgdump_excl_args=(! -path "$stagedir/pgdump-*")
+      total_data_files="$(find "$stagedir" -type f ! -path "$stagedir/manifest.*" "${pgdump_excl_args[@]}" -print0 | tr -cd '\0' | wc -c)"
       if [ "$total_data_files" -ne "$actual_lines" ]; then
-        log error "$stagedir tiene $total_data_files ficheros de datos pero manifest.sha256 sólo cubre $actual_lines: hay contenido SIN entrada en el manifest (posible inyección tras el backup)"
+        # D3-R2 (observación menor del supervisor): el mensaje decía
+        # siempre "hay contenido SIN entrada en el manifest (posible
+        # inyección)" incluso cuando ocurría lo CONTRARIO — un fichero
+        # declarado en el manifest que ya no está en el árbol (p.ej. el
+        # dump borrado tras generarse el manifest). Mensaje según el
+        # sentido real de la discrepancia.
+        if [ "$total_data_files" -gt "$actual_lines" ]; then
+          log error "$stagedir tiene $total_data_files ficheros de datos pero manifest.sha256 sólo cubre $actual_lines: hay contenido SIN entrada en el manifest (posible inyección tras el backup)"
+        else
+          log error "$stagedir tiene $total_data_files ficheros de datos pero manifest.sha256 cubre $actual_lines: faltan ficheros que el manifest declara (posible borrado/pérdida tras el backup)"
+        fi
         exit 1
       fi
       # D6-R5 (opcional, barato): sha256sum -c con la ruta ABSOLUTA de
@@ -365,7 +424,36 @@ case "${1:---dry-run}" in
       # usa rutas absolutas), pero gratis de cerrar: tras el `cd`, usar
       # sólo el nombre del fichero en el directorio ya correcto.
       (cd "$stagedir" && sha256sum -c "$(basename "$manifest")")
-      log info "integridad verificada: checksums de mapas y replays correctos"
+      # D3 (#112)/D3-R2 (observación menor del supervisor): el mensaje fijo
+      # "postgres, mapas y replays" no mencionaba bot_sources/assets (que
+      # también se cubren cuando tienen contenido) y afirmaba "postgres"
+      # incluso en un legacy que nunca lo verificó. Se compone dinámicamente
+      # a partir de las fuentes que de verdad aportaron líneas al manifest.
+      covered=""
+      for src in postgres maps bot_sources assets replays; do
+        # postgres sólo cuenta como "cubierto" si el contrato de este
+        # manifest realmente le dio línea propia (schema>=2); el resto de
+        # fuentes cuenta si backup.sh las declaró 'ok' (con 'files', que
+        # 'ok' siempre lleva — a diferencia de 'empty'/'error').
+        if [ "$src" = postgres ] && [ "$schema" -lt 2 ]; then
+          continue
+        fi
+        if grep -q "\"$src\":{\"status\":\"ok\",\"files\":" "$manifest_json"; then
+          case "$src" in
+            postgres) label=postgres ;;
+            maps) label=mapas ;;
+            bot_sources) label=bot-sources ;;
+            assets) label=assets ;;
+            replays) label=replays ;;
+          esac
+          covered="${covered:+$covered, }$label"
+        fi
+      done
+      if [ "$schema" -lt 2 ]; then
+        log info "integridad verificada: checksums de ${covered:-ninguna fuente con contenido} correctos (snapshot legacy anterior a D3: el dump de PostgreSQL NO tiene checksum en este manifest)"
+      else
+        log info "integridad verificada: checksums de ${covered:-ninguna fuente con contenido} correctos"
+      fi
     fi
     ;;
   *)

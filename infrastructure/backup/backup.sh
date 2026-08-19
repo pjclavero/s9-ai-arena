@@ -652,7 +652,19 @@ log info "4/5 generando manifest (sha256 + cobertura json) dentro del staging"
 # respaldaba ni se detectaba su ausencia—. `-path './pgdump-*'` sólo
 # coincide con la raíz (una ruta como `./maps/pgdump-x` no empieza por
 # "./pgdump-", así que no la excluye).
-if ! (cd "$STAGING" && find . -type f ! -path './manifest.*' ! -path './pgdump-*' -exec sha256sum {} + | sed 's| \./| |') \
+# D3 (#112, decisión del operador aplicada): el pg_dump ya NO se excluye del
+# manifest. Se dejó fuera desde la ronda 6 porque en aquel momento no se
+# había verificado que el dump estuviera completo y cerrado antes de este
+# punto — pero el paso 1/5 hace `pg_dump ... -f "$PGDUMP_FILE"` de forma
+# SÍNCRONA y bloqueante; si esa línea ha terminado (con `SRC_STATUS[postgres]
+# = ok`) el fichero ya está escrito y cerrado del todo, así que calcular su
+# checksum aquí, en el paso 4/5, es seguro y nunca coge un dump a medias. El
+# activo crítico (la base de datos) pasa a tener el mismo checksum propio
+# que maps/bot_sources/replays/assets, y `restore.sh --verify` lo cubre
+# automáticamente al no tener ya ninguna exclusión especial para él. Sólo
+# `manifest.*` sigue excluido (el propio manifest no puede incluirse a sí
+# mismo).
+if ! (cd "$STAGING" && find . -type f ! -path './manifest.*' -exec sha256sum {} + | sed 's| \./| |') \
     > "$STAGING/manifest.sha256" 2>"$WORK_DIR/.err-manifest"; then
   log error "fallo generando manifest.sha256: $(tail -c 300 "$WORK_DIR/.err-manifest")"
   dur=$(( $(date +%s) - start ))
@@ -662,12 +674,15 @@ if ! (cd "$STAGING" && find . -type f ! -path './manifest.*' ! -path './pgdump-*
 fi
 
 # D1-R3 (ronda 4): además de que el comando no falle, el NÚMERO de líneas
-# del manifest debe coincidir con la suma de ficheros que las fuentes no
-# críticas declararon `ok`. Sin este contraste, un manifest silenciosamente
+# del manifest debe coincidir con la suma de ficheros que las fuentes
+# declararon `ok`. Sin este contraste, un manifest silenciosamente
 # incompleto (p.ej. `sha256sum` interrumpido a mitad de fuente, sin que eso
 # tumbe el exit code por algún motivo no previsto) pasaría por bueno igual.
+# `postgres` entra en la cuenta desde D3 (#112): ahora el pg_dump también
+# deja una línea en el manifest, así que también debe cuadrar en este
+# contraste como cualquier otra fuente `ok`.
 expected_manifest_lines=0
-for src in maps bot_sources assets replays; do
+for src in postgres maps bot_sources assets replays; do
   [ "${SRC_STATUS[$src]:-}" = ok ] && expected_manifest_lines=$((expected_manifest_lines + ${SRC_FILES[$src]:-0}))
 done
 if ! actual_manifest_lines=$(wc -l < "$STAGING/manifest.sha256" 2>"$WORK_DIR/.err-manifest-count"); then
@@ -689,8 +704,22 @@ if [ "$actual_manifest_lines" -ne "$expected_manifest_lines" ]; then
   exit 1
 fi
 
+# D3-R2 (supervisión independiente de #119): sin un marcador explícito,
+# restore.sh no puede distinguir un manifest.json de un backup NUEVO (con
+# el dump incluido en manifest.sha256) de uno LEGACY (anterior a este fix,
+# dump excluido) — ambos declaran "postgres":{"status":"ok",...} por
+# igual. Esa ambigüedad permitía dos falsos negativos reales, demostrados
+# por el supervisor: (a) vaciar manifest.sha256 y sustituir el dump por
+# basura pasaba por "cobertura vacía legítima" con EXIT=0, porque nada
+# obligaba a esa rama a exigir la entrada de postgres; (b) un legacy CON
+# datos (dump fuera del manifest desde antes de D3) fallaba con "manifest
+# truncado o corrupto", un diagnóstico falso — el manifest está perfecto,
+# sólo es de un contrato anterior. `"schema":2` es el marcador mínimo que
+# resuelve ambos: restore.sh lo lee para decidir si `postgres` debe contar
+# en manifest.sha256 (schema>=2) o no (ausente => legacy, schema 1
+# implícito). Es la versión del CONTRATO del manifest, no del backup.
 {
-  printf '{'
+  printf '{"schema":2,'
   first=1
   for src in postgres secrets maps bot_sources replays assets; do
     [ "$first" = 1 ] || printf ','
