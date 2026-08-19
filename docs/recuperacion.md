@@ -179,14 +179,18 @@ docker compose -f infrastructure/docker-compose.yml ps          # todo healthy
 # del backup sin checksum verificado por --verify; su corrupción se detecta
 # igual que la de cualquier otra fuente.
 # NOTA OPERATIVA (snapshots antiguos): esto sólo aplica a backups generados
-# DESPUÉS de este cambio. Un snapshot tomado ANTES seguirá teniendo el dump
-# fuera del manifest — su restore.sh --verify verificará mapas/bot-sources/
-# assets/replays pero no el dump, y la integridad de éste dependerá de que
-# pg_dump/restic no fallaran en silencio en su momento, no de un hash. Por
-# eso restore.sh conserva la rama de "manifest.sha256 vacío" (con la
-# exclusión de pgdump-* en esa rama) tal cual: sigue siendo necesaria para
-# restaurar y verificar esos snapshots viejos con las cuatro fuentes no
-# críticas vacías.
+# DESPUÉS de este cambio. manifest.json lleva un marcador de contrato
+# ("schema") que restore.sh usa para distinguirlos automáticamente — no
+# hace falta que el operador haga nada distinto al restaurar uno u otro.
+# Un snapshot tomado ANTES de este cambio (sin "schema", o con datos, o con
+# las cuatro fuentes no críticas vacías) seguirá teniendo el dump fuera del
+# manifest: su restore.sh --verify verificará mapas/bot-sources/assets/
+# replays pero NO el dump, y lo dirá explícitamente ("snapshot legacy
+# anterior a D3: el dump de PostgreSQL NO tiene checksum en este
+# manifest"); la integridad del dump en ese caso depende de que pg_dump/
+# restic no fallaran en silencio en su momento, no de un hash. Un snapshot
+# NUEVO (con "schema") exige siempre la entrada del dump — si falta o el
+# manifest aparece vacío, --verify falla en vez de darlo por bueno.
 bash infrastructure/backup/restore.sh --verify /tmp/restore-data
 
 # Migraciones al día (contrato con E7: el api las reporta en /healthz)

@@ -212,24 +212,83 @@ describe("manifest.sha256 incluye el pg_dump (D3, #112)", () => {
     const { dest, env } = setupRealBackupAndRestore(DUMP_CONTENT);
 
     const verifyOut = execFileSync("bash", [RESTORE, "--verify", dest], { encoding: "utf8", env });
-    expect(verifyOut).toContain("integridad verificada: checksums de postgres, mapas y replays correctos");
+    // D3-R2: el mensaje enumera dinámicamente las fuentes con contenido
+    // real cubiertas por el manifest, separadas por coma.
+    expect(verifyOut).toContain("integridad verificada: checksums de postgres, mapas, replays correctos");
   });
 
-  // ── Calibración obligatoria: la mutación evidente es reponer la
-  // exclusión `! -path './pgdump-*'` que este ticket quita de backup.sh.
-  // Si estas aserciones no se pusieran ROJAS con esa mutación, estarían
-  // vacías (no prueban nada del cambio real). Ejecutado manualmente contra
-  // el fuente mutado (ver informe): con la exclusión repuesta, "el
-  // manifest CONTIENE una línea para pgdump-*.dump" falla porque no hay
-  // ninguna línea que termine en el basename del dump, y las demás
-  // aserciones de esta suite fallan en cascada por la misma causa. No se
-  // deja la mutación aplicada en el repo: esto sólo documenta el
-  // resultado observado de la calibración.
-  it("(documentación) la mutación '! -path ./pgdump-*' repuesta en backup.sh pone ROJO el primer test de este fichero", () => {
-    const backupSrc = readFileSync(join(here, "..", "backup", "backup.sh"), "utf8");
-    // Comprobación de que el fix realmente vive en el fuente que se acaba
-    // de ejercitar arriba (si esto fallara, las cuatro aserciones previas
-    // podrían estar pasando por otra vía y no por el fix real).
-    expect(backupSrc).not.toContain("! -path './pgdump-*'");
+  // ── D3-R2 (supervisión independiente de #119, DEFECTO 1, BLOQUEANTE,
+  // corregido): reproduce EXACTAMENTE el ataque demostrado por el
+  // supervisor sobre la cadena real, con las cuatro fuentes no críticas
+  // vacías — el estado real de producción hoy: (1) backup nuevo sano
+  // (schema>=2); (2) se vacía manifest.sha256 Y se sustituye el dump por
+  // basura, dejando manifest.json intacto (sigue declarando postgres/
+  // secrets 'ok'); (3) --verify debe FALLAR, nunca EXIT=0. Antes de la
+  // corrección de este defecto, la rama de "manifest vacío legítimo" (D1)
+  // no distinguía este caso de un snapshot legacy auténtico y aceptaba el
+  // ataque con el mensaje falso "ninguna fuente 'ok'". El marcador
+  // "schema" en manifest.json es lo que ahora permite distinguirlos.
+  it("D3-R2: manifest.sha256 vaciado + dump sustituido en backup NUEVO (schema>=2) — --verify FALLA, nunca EXIT=0", () => {
+    const root = mkdtempSync(join(tmpdir(), "e-pgdump-d3r2-"));
+    const fakebin = join(root, "bin");
+    const store = join(root, "store");
+    const workDir = join(root, "work");
+    mkdirSync(fakebin, { recursive: true });
+    mkdirSync(store, { recursive: true });
+    // Las CUATRO fuentes no críticas existen pero están vacías — el
+    // estado real de producción citado por el supervisor.
+    for (const dir of ["maps", "bot-sources", "replays", "assets", "secrets"]) {
+      mkdirSync(join(root, dir), { recursive: true });
+    }
+    writeFileSync(join(root, "secrets", "restic_password.txt"), "s3cr3t-restic-d3r2", { mode: 0o600 });
+    writeFileSync(join(root, "secrets", "postgres_password.txt"), "s3cr3t-pg-d3r2", { mode: 0o600 });
+    writeFakePgDumpWithContent(fakebin, DUMP_CONTENT);
+    writeFakeResticFaithful(fakebin, store);
+
+    const env = {
+      ...process.env,
+      PATH: `${fakebin}:${process.env.PATH}`,
+      RESTIC_REPOSITORY: "/tmp/fake-repo",
+      RESTIC_PASSWORD_FILE: join(root, "secrets", "restic_password.txt"),
+      PGPASSWORD_FILE: join(root, "secrets", "postgres_password.txt"),
+      MAPS_DIR: join(root, "maps"),
+      BOT_SOURCES_DIR: join(root, "bot-sources"),
+      REPLAYS_DIR: join(root, "replays"),
+      ASSETS_DIR: join(root, "assets"),
+      SECRETS_DIR: join(root, "secrets"),
+      WORK_DIR: workDir,
+      METRICS_DIR: join(root, "metrics"),
+    } as Record<string, string>;
+
+    // 1. Backup nuevo sano: manifest de 1 línea (el dump), --verify EXIT=0.
+    const backupOut = execFileSync("bash", [BACKUP], { encoding: "utf8", env });
+    expect(backupOut).toContain("backup SUCCESS");
+    const dest = join(root, "restored");
+    execFileSync("bash", [RESTORE, "--restore", dest], { encoding: "utf8", env });
+    const sanityOut = execFileSync("bash", [RESTORE, "--verify", dest], { encoding: "utf8", env });
+    expect(sanityOut).toContain("integridad verificada");
+
+    // 2. Se vacía manifest.sha256 y se SUSTITUYE el dump por basura.
+    //    manifest.json NO se toca: sigue declarando postgres/secrets 'ok'.
+    const manifestPath = execSync(`find "${dest}" -name manifest.sha256`, { encoding: "utf8" }).trim();
+    const dumpPath = execSync(`find "${dest}" -name 'pgdump-*.dump'`, { encoding: "utf8" }).trim();
+    writeFileSync(manifestPath, "");
+    writeFileSync(dumpPath, "BASURA-SUSTITUIDA-TRAS-VACIAR-EL-MANIFEST\n");
+
+    // 3. --verify sobre la copia degradada: NUNCA EXIT=0.
+    let threw = false;
+    let output = "";
+    try {
+      output = execFileSync("bash", [RESTORE, "--verify", dest], { encoding: "utf8", stdio: "pipe", env });
+    } catch (e: any) {
+      threw = true;
+      output = `${e.stdout}${e.stderr}`;
+    }
+    expect(threw, `--verify debió fallar; salida real:\n${output}`).toBe(true);
+    expect(output).not.toContain("no había nada que verificar");
+    expect(output).not.toContain("integridad verificada");
+    // El mensaje debe ser honesto sobre POR QUÉ falla: el contrato de este
+    // backup (schema>=2) exige que postgres tenga entrada.
+    expect(output).toContain("schema=2");
   });
 });

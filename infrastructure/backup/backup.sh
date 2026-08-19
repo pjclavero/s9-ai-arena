@@ -704,8 +704,22 @@ if [ "$actual_manifest_lines" -ne "$expected_manifest_lines" ]; then
   exit 1
 fi
 
+# D3-R2 (supervisión independiente de #119): sin un marcador explícito,
+# restore.sh no puede distinguir un manifest.json de un backup NUEVO (con
+# el dump incluido en manifest.sha256) de uno LEGACY (anterior a este fix,
+# dump excluido) — ambos declaran "postgres":{"status":"ok",...} por
+# igual. Esa ambigüedad permitía dos falsos negativos reales, demostrados
+# por el supervisor: (a) vaciar manifest.sha256 y sustituir el dump por
+# basura pasaba por "cobertura vacía legítima" con EXIT=0, porque nada
+# obligaba a esa rama a exigir la entrada de postgres; (b) un legacy CON
+# datos (dump fuera del manifest desde antes de D3) fallaba con "manifest
+# truncado o corrupto", un diagnóstico falso — el manifest está perfecto,
+# sólo es de un contrato anterior. `"schema":2` es el marcador mínimo que
+# resuelve ambos: restore.sh lo lee para decidir si `postgres` debe contar
+# en manifest.sha256 (schema>=2) o no (ausente => legacy, schema 1
+# implícito). Es la versión del CONTRATO del manifest, no del backup.
 {
-  printf '{'
+  printf '{"schema":2,'
   first=1
   for src in postgres secrets maps bot_sources replays assets; do
     [ "$first" = 1 ] || printf ','
