@@ -42,6 +42,17 @@ function writeFakePgDumpWithContent(fakebin: string, content: string) {
 // sabe "restaurar" esa misma estructura bajo --target, igual que el
 // restic real (mismo patrón que backup.test.ts, reimplementado aquí para
 // mantener este fichero autónomo).
+//
+// fix/restore-snapshot-selection (rebase sobre #119): restore.sh ahora
+// resuelve un ID de snapshot ANTES de restaurar (`restic snapshots --tag …
+// --latest 1 --json`) y llama a `restic restore <id> --target <dest>` — ya
+// no pasa `--tag`. Este fake, igual que su gemelo en backup.test.ts, usa el
+// propio NOMBRE DEL TAG como "ID" fake (short_id=tag), consistente con
+// `store/<tag>/`: así `snapshots --tag X --latest 1 --json` devuelve
+// short_id=X y `restore X --target dest` encuentra `store/X/` sin tabla
+// id→tag aparte. Este fichero es DELIBERADAMENTE autónomo (no importa el
+// fixture de backup.test.ts) — ver cabecera — así que el fix se replica
+// aquí en vez de compartir código entre ficheros de test.
 function writeFakeResticFaithful(fakebin: string, store: string) {
   const script = `#!/usr/bin/env bash
 case "$1" in
@@ -53,17 +64,34 @@ case "$1" in
     mkdir -p "$destdir"
     cp -a "$src" "$destdir/"
     ;;
+  snapshots)
+    if [ "$2" = "--tag" ]; then
+      tag="$3"
+      if [ -d "${store}/$tag" ]; then
+        echo "[{\\"short_id\\":\\"$tag\\",\\"tags\\":[\\"$tag\\"]}]"
+      else
+        echo "[]"
+      fi
+      exit 0
+    fi
+    id="$2"
+    if [ -d "${store}/$id" ]; then
+      echo "[{\\"short_id\\":\\"$id\\",\\"tags\\":[\\"$id\\"]}]"
+    else
+      echo "no matching ID found" >&2
+      exit 1
+    fi
+    ;;
   restore)
-    tag=""
+    id="$2"
     target=""
     prev=""
     for a in "$@"; do
-      [ "$prev" = "--tag" ] && tag="$a"
       [ "$prev" = "--target" ] && target="$a"
       prev="$a"
     done
     mkdir -p "$target"
-    cp -a "${store}/$tag/." "$target/"
+    cp -a "${store}/$id/." "$target/"
     ;;
   forget|check)
     :

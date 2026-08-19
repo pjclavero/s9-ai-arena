@@ -16,7 +16,7 @@
 // restaurar. El E2E real contra un backend sftp (restore-sftp-bootstrap.test.ts)
 // no toca esta selección — carril separado, no se modifica aquí.
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { execFileSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -261,5 +261,223 @@ describe("restore.sh --restore --snapshot <id> (selección explícita)", () => {
     expect(calls.some((c) => c.startsWith("restore 76a13494"))).toBe(true);
     expect(calls.some((c) => c.startsWith("restore 4fac59f8"))).toBe(false);
     expect(out).toContain("snapshot=76a13494");
+  });
+});
+
+// ── Integración con #119 (fix/manifest-pgdump-checksum): dos lógicas que
+// NUNCA habían convivido en un test. resolve_snapshot() (esta rama) vive
+// ÍNTEGRAMENTE en --restore/--restore-secrets; la bifurcación por `schema`
+// (#119) vive ÍNTEGRAMENTE en --verify — no comparten ninguna variable ni
+// estado del script (cada invocación de restore.sh es un proceso bash
+// nuevo). El único punto de contacto real es de DATOS, no de código: lo
+// que --restore --snapshot <id> trae al disco es justo lo que --verify lee
+// después. El escenario que de verdad importa en una recuperación
+// histórica: seleccionar EXPLÍCITAMENTE un snapshot viejo (anterior a #112/
+// #119, contrato legacy — manifest.json SIN "schema", dump de PostgreSQL
+// NUNCA con línea propia en manifest.sha256) y comprobar que --verify
+// aplica la rama legacy correctamente: verifica lo que puede (maps/
+// bot_sources/assets/replays) y declara EXPLÍCITAMENTE lo que no puede
+// (el dump, sin checksum en ese manifest) — nunca lo oculta ni lo trata
+// como si fuera schema>=2.
+describe("Integración: --snapshot explícito + contrato LEGACY (schema<2) — #119 x fix/restore-snapshot-selection", () => {
+  // writeFakeResticStore: variante de writeFakeRestic que además sabe
+  // "restaurar" contenido de fichero REAL por ID (cp -a desde
+  // store/<id>/), a diferencia del writeFakeRestic de arriba (que sólo
+  // deja un marcador con el ID — suficiente para probar QUÉ ID se pide,
+  // pero no para que --verify tenga algo real que leer). Necesario aquí
+  // porque el test ejercita --restore seguido de un --verify real sobre lo
+  // restaurado, con un manifest.json/manifest.sha256/dump construidos a
+  // mano para representar fielmente un snapshot LEGACY genuino (mismo
+  // criterio que usan los fixtures legacy de backup.test.ts: ausencia del
+  // campo "schema", nunca "schema":1 explícito — así es como backup.sh
+  // anterior a #119 lo produce de verdad).
+  function writeFakeResticStore(
+    fb: string,
+    log: string,
+    known: Record<string, string[]>,
+    store: string,
+    latestId: string,
+    latestTag: string,
+  ) {
+    const knownCases = Object.entries(known)
+      .map(([id, tags]) => `    "${id}") echo '[{"short_id":"${id}","tags":${JSON.stringify(tags)}}]'; exit 0 ;;`)
+      .join("\n");
+    const script = `#!/usr/bin/env bash
+echo "$@" >> "${log}"
+case "$1" in
+  snapshots)
+    if [ "$2" = "--tag" ]; then
+      tag="$3"
+      if [ "$tag" = "${latestTag}" ]; then
+        echo '[{"short_id":"${latestId}","tags":["${latestTag}"]}]'
+      else
+        echo '[]'
+      fi
+      exit 0
+    fi
+    id="$2"
+    case "$id" in
+${knownCases}
+      *) echo "no matching ID found" >&2; exit 1 ;;
+    esac
+    ;;
+  restore)
+    id="$2"
+    target=""
+    prev=""
+    for a in "$@"; do
+      [ "$prev" = "--target" ] && target="$a"
+      prev="$a"
+    done
+    mkdir -p "$target"
+    cp -a "${store}/$id/." "$target/"
+    ;;
+esac
+exit 0
+`;
+    writeFileSync(join(fb, "restic"), script, { mode: 0o755 });
+  }
+
+  // Construye, a mano, la staging directory de un snapshot LEGACY genuino
+  // (anterior a #112/#119): un dump de PostgreSQL presente en el árbol
+  // pero SIN línea en manifest.sha256, y manifest.json SIN el campo
+  // "schema" — exactamente lo que backup.sh producía antes de estos dos
+  // fixes. `maps/a.json` es la única fuente con contenido, para poder
+  // afirmar checksums reales tras --verify.
+  function buildLegacySnapshotStore(store: string, id: string) {
+    const staging = join(store, id, "work", "staging");
+    const mapsDir = join(staging, "maps");
+    mkdirSync(mapsDir, { recursive: true });
+    writeFileSync(join(mapsDir, "a.json"), '{"legacy":true}\n');
+    const hash = execSync("sha256sum a.json", { cwd: mapsDir, encoding: "utf8" }).split(" ")[0];
+    writeFileSync(join(staging, "manifest.sha256"), `${hash}  maps/a.json\n`);
+    // El dump SÍ existe en el árbol (backup.sh siempre lo escribió) pero
+    // NUNCA tuvo línea en manifest.sha256 en un legacy real — eso es
+    // precisamente lo que hace a este snapshot "legacy" y no "schema>=2
+    // con manifest vacío": aquí hay contenido en manifest.sha256 (maps), a
+    // diferencia del caso "cuatro fuentes vacías" ya cubierto en
+    // backup.test.ts.
+    writeFileSync(join(staging, "pgdump-20250101120000.dump"), "contenido-de-dump-legacy-sin-checksum\n");
+    // Manifest LEGACY genuino: SIN "schema" (backup.sh sólo empezó a
+    // escribirlo desde #119) — postgres/secrets declaran 'ok' como
+    // cualquier backup real, legacy o no; es la AUSENCIA de "schema" lo
+    // que le dice a restore.sh que no debe exigir línea propia para el
+    // dump.
+    writeFileSync(
+      join(staging, "manifest.json"),
+      JSON.stringify({
+        postgres: { status: "ok" },
+        secrets: { status: "ok", files: 1 },
+        maps: { status: "ok", files: 1 },
+        bot_sources: { status: "empty", files: 0 },
+        replays: { status: "empty", files: 0 },
+        assets: { status: "empty", files: 0 },
+      }),
+    );
+    return staging;
+  }
+
+  it("snapshot ANTIGUO (legacy) seleccionado con --snapshot explícito, aunque exista uno POSTERIOR con schema>=2: --restore trae el legacy, --verify aplica la rama legacy correctamente", () => {
+    const store = join(root, "legacy-store");
+    buildLegacySnapshotStore(store, "legacy-old-001");
+    // Snapshot POSTERIOR (schema>=2) también "existe" en el repositorio —
+    // es el que --latest elegiría — para probar que --snapshot explícito
+    // lo ignora deliberadamente, igual que el test de snapshot
+    // anterior/posterior de más arriba, ahora con contratos DISTINTOS a
+    // cada lado.
+    writeFakeResticStore(
+      fakebin,
+      resticLog,
+      { "legacy-old-001": ["s9-arena-data"], "nuevo-002": ["s9-arena-data"] },
+      store,
+      "nuevo-002",
+      "s9-arena-data",
+    );
+
+    // 1. --restore --snapshot <legacy> — nunca --latest, es la decisión
+    // explícita de una recuperación histórica real.
+    const restoreR = runRestore(["--restore", dest, "--snapshot", "legacy-old-001"]);
+    expect(restoreR.code).toBe(0);
+    expect(restoreR.out).toContain("snapshot solicitado: legacy-old-001 (tag=s9-arena-data)");
+    expect(restoreR.out).toContain("snapshot resuelto: legacy-old-001 (tag=s9-arena-data)");
+    expect(restoreR.out).toContain("snapshot=legacy-old-001");
+    // Lo restaurado es EXACTAMENTE el legacy: el dump legacy está presente
+    // en disco (backup.sh siempre lo escribió), aunque sin checksum propio.
+    const dumpFound = execSync(`find "${dest}" -name 'pgdump-*.dump'`, { encoding: "utf8" }).trim();
+    expect(dumpFound).toContain("pgdump-20250101120000.dump");
+
+    // 2. --verify sobre lo restaurado: el schema (#119) se lee del
+    // manifest.json RESTAURADO por el paso 1, no de nada que
+    // resolve_snapshot() dejara en variables — son procesos bash
+    // distintos, no hay estado compartido posible. Debe aplicar la rama
+    // LEGACY: verificar maps de verdad, y declarar EXPLÍCITAMENTE que el
+    // dump no tiene checksum en este manifest — nunca fallar exigiendo el
+    // contrato schema>=2 (eso sería tratar un legacy real como si fuera
+    // nuevo, el defecto D3-R2 que #119 tuvo que cerrar bajo NO APTO).
+    const verifyR = (() => {
+      try {
+        return { code: 0, out: execFileSync(BASH_BIN, [RESTORE, "--verify", dest], { encoding: "utf8" }) };
+      } catch (e: any) {
+        return { code: e.status as number, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+      }
+    })();
+    expect(verifyR.code, verifyR.out).toBe(0);
+    expect(verifyR.out).toContain("integridad verificada");
+    expect(verifyR.out).toContain("mapas");
+    // La frase que declara explícitamente el hueco de cobertura conocido —
+    // el punto central de D3-R2: nunca ocultarlo, nunca darlo por bueno.
+    expect(verifyR.out).toContain("snapshot legacy anterior a D3");
+    expect(verifyR.out).toContain("el dump de PostgreSQL NO tiene checksum en este manifest");
+    // Nunca debe aparecer "postgres" entre las fuentes CUBIERTAS (sería
+    // afirmar un checksum que este manifest legacy nunca tuvo).
+    expect(verifyR.out).not.toMatch(/integridad verificada: checksums de[^"]*postgres/);
+
+    const calls = resticCalls();
+    expect(calls.some((c) => c.startsWith("restore legacy-old-001"))).toBe(true);
+    expect(calls.some((c) => c.startsWith("restore nuevo-002"))).toBe(false);
+  });
+
+  // ── Orden y ausencia de enmascaramiento ─────────────────────────────────
+  // Si resolve_snapshot() falla (ID inválido), --restore debe salir ANTES
+  // de escribir nada en $dest — así, un --verify posterior sobre ese mismo
+  // destino nunca llega a ejecutar la lógica de `schema` con datos a
+  // medias: falla por su propio motivo ("directorio no existe" o "manifest
+  // no encontrado"), nunca por un fallo de contrato disfrazado. Un fallo
+  // de selección de snapshot no debe poder ENMASCARARSE como un fallo de
+  // verificación de contrato, ni al revés.
+  it("un --snapshot inválido en --restore no deja NADA en destino: --verify posterior falla por 'no encontrado', nunca por lógica de schema", () => {
+    const store = join(root, "legacy-store-2");
+    buildLegacySnapshotStore(store, "legacy-old-001");
+    writeFakeResticStore(
+      fakebin,
+      resticLog,
+      { "legacy-old-001": ["s9-arena-data"] },
+      store,
+      "legacy-old-001",
+      "s9-arena-data",
+    );
+
+    const restoreR = runRestore(["--restore", dest, "--snapshot", "id-que-no-existe"]);
+    expect(restoreR.code).not.toBe(0);
+    expect(restoreR.out).toContain("no existe en el repositorio");
+    // $dest sigue vacío: resolve_snapshot() falló ANTES de invocar
+    // `restic restore`.
+    expect(readdirSync(dest)).toEqual([]);
+
+    const verifyR = (() => {
+      try {
+        return { code: 0, out: execFileSync(BASH_BIN, [RESTORE, "--verify", dest], { encoding: "utf8" }) };
+      } catch (e: any) {
+        return { code: e.status as number, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+      }
+    })();
+    expect(verifyR.code).not.toBe(0);
+    // Falla por AUSENCIA de manifest, no por nada relacionado con `schema`
+    // — la lógica de contrato de #119 ni siquiera llega a ejecutarse
+    // porque no hay manifest.json que leer.
+    expect(verifyR.out).toContain("manifest.sha256 no encontrado");
+    expect(verifyR.out).not.toContain("schema");
+    const calls = resticCalls();
+    expect(calls.some((c) => c.startsWith("restore "))).toBe(false);
   });
 });
