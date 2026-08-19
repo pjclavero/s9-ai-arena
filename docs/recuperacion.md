@@ -72,6 +72,36 @@ lo hay.
 
 Cronometrar cada fase (`date` antes y después).
 
+> **fix/restore-snapshot-selection — usa siempre `--snapshot <id>`, nunca la
+> ausencia de argumento, para una recuperación de desastre real.** En el
+> simulacro del 2026-08-18 se decidió restaurar el snapshot `76a13494`;
+> pasaron dos días hasta ejecutar la recuperación, el cron nocturno subió
+> snapshots nuevos, y `restore.sh` (que entonces sólo sabía pedir `latest`)
+> restauró `4fac59f8` — un snapshot DISTINTO al decidido, sin que nada lo
+> avisara salvo revisar el ID a mano después. `--restore`/`--restore-secrets`
+> ahora aceptan `--snapshot <id>` para fijar exactamente el snapshot
+> conocido-bueno que se decidió restaurar, y siguen aceptando `--latest`
+> (o ningún selector, que se comporta igual, por compatibilidad con scripts
+> existentes) para el caso de "el más reciente sirve". En una recuperación
+> real:
+>   1. `bash infrastructure/backup/restore.sh --list` — anota el ID EXACTO
+>      del snapshot que decides restaurar, en el momento en que lo decides.
+>   2. Usa `--snapshot <ese-id>` en `--restore`/`--restore-secrets`, no
+>      `--latest` ni la ausencia de selector — entre la decisión y la
+>      ejecución puede pasar tiempo suficiente para que el cron nocturno
+>      cambie cuál es el "más reciente", exactamente como pasó en el
+>      simulacro. `--latest` sólo es aceptable cuando la decisión y la
+>      ejecución son el mismo instante (p.ej. un smoke test rutinario, no
+>      una recuperación de desastre).
+>   3. El ID resuelto queda siempre en el log JSON de `restore.sh`
+>      (`"snapshot solicitado"` antes de tocar el repositorio,
+>      `"snapshot resuelto"` justo después) — archívalo junto con el resto
+>      de la evidencia del simulacro/incidente.
+> Un `--snapshot` con un ID que no existe, o que existe pero pertenece al
+> otro tag (p.ej. pedir un snapshot de secretos para `--restore`), falla
+> cerrado con un mensaje claro y no restaura nada — nunca cae en silencio a
+> `latest`.
+
 ### Fase 1 · VM limpia (≈15 min)
 
 ```bash
@@ -92,7 +122,10 @@ export RESTIC_REPOSITORY=<repositorio>   # y RESTIC_PASSWORD por el operador
 # hay forma de "restaurarlos desde el propio backup" en este primer paso.
 export RESTIC_SSH_KEY_FILE=<ruta a la clave privada custodiada>
 export RESTIC_SSH_KNOWN_HOSTS_FILE=<ruta al known_hosts con la huella verificada>
-bash infrastructure/backup/restore.sh --restore-secrets /tmp/restore-secrets
+# ID EXACTO decidido al revisar --list (nunca --latest en una recuperación
+# real: ver el aviso al principio de "## Procedimiento").
+bash infrastructure/backup/restore.sh --restore-secrets /tmp/restore-secrets \
+  --snapshot <id-de-secrets-decidido-con---list>
 # Colocarlos (rutas con permisos 0600; NUNCA volcarlos a pantalla/logs):
 mkdir -p infrastructure/secrets
 cp -a /tmp/restore-secrets/secrets/. infrastructure/secrets/
@@ -104,7 +137,11 @@ cp infrastructure/.env.example infrastructure/.env   # reponer configuración
 
 ```bash
 bash infrastructure/backup/restore.sh --list
-bash infrastructure/backup/restore.sh --restore /tmp/restore-data
+# ID EXACTO del snapshot de DATOS decidido en el paso anterior — no
+# --latest: es el mismo motivo que en Fase 2, y el mismo defecto real
+# que el simulacro del 2026-08-18 reprodujo.
+bash infrastructure/backup/restore.sh --restore /tmp/restore-data \
+  --snapshot <id-de-datos-decidido-con---list>
 ```
 
 > **#110b:** `backup.sh` sube UN ÚNICO directorio de "staging" a restic (tag

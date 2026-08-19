@@ -303,7 +303,7 @@ describe("restore.sh --dry-run (ejecutado de verdad, sin docker)", () => {
       encoding: "utf8",
       env: { ...process.env, RESTIC_REPOSITORY: "/mnt/nas/backups" },
     });
-    expect(out).toContain("restic restore latest");
+    expect(out).toContain("restic restore <snapshot resuelto: --snapshot <id> o latest> --target <destino>");
     expect(out).toContain("pg_restore");
     expect(out).toContain("CONFIG OK");
   });
@@ -376,6 +376,17 @@ function writeFakePgDumpFail(fakebin: string) {
 // no coincidía con la ruta restaurada) — un fake que no lo reprodujera no
 // serviría para probar el fix. Registra cada invocación en `log` para poder
 // comprobar qué se le pasó a "backup" (p.ej. que el dump SÍ llegó).
+// fix/restore-snapshot-selection: restore.sh ahora resuelve un ID de
+// snapshot ANTES de restaurar (vía `restic snapshots --tag … --latest 1
+// --json`, o `restic snapshots <id> --json` cuando se pide uno explícito
+// con --snapshot) y llama a `restic restore <id> --target <dest>` — ya no
+// pasa `--tag`, el ID ya identifica el snapshot. Este fake, fiel en cuanto a
+// preservar rutas absolutas (ver cabecera de fichero), no simula IDs de
+// snapshot reales: usa el propio NOMBRE DEL TAG como "ID" (short_id=tag),
+// consistente con cómo ya organiza `store/` (una carpeta por tag). Así
+// `snapshots --tag X --latest 1 --json` devuelve short_id=X, y
+// `restore X --target dest` encuentra exactamente `store/X/`, sin tener que
+// inventar una tabla id→tag por separado.
 function writeFakeResticFaithful(fakebin: string, store: string, log: string, opts: { failBackup?: boolean } = {}) {
   const failBackup = opts.failBackup ? "1" : "0";
   const script = `#!/usr/bin/env bash
@@ -393,17 +404,34 @@ case "$1" in
     mkdir -p "$destdir"
     cp -a "$src" "$destdir/"
     ;;
+  snapshots)
+    if [ "$2" = "--tag" ]; then
+      tag="$3"
+      if [ -d "${store}/$tag" ]; then
+        echo "[{\\"short_id\\":\\"$tag\\",\\"tags\\":[\\"$tag\\"]}]"
+      else
+        echo "[]"
+      fi
+      exit 0
+    fi
+    id="$2"
+    if [ -d "${store}/$id" ]; then
+      echo "[{\\"short_id\\":\\"$id\\",\\"tags\\":[\\"$id\\"]}]"
+    else
+      echo "no matching ID found" >&2
+      exit 1
+    fi
+    ;;
   restore)
-    tag=""
+    id="$2"
     target=""
     prev=""
     for a in "$@"; do
-      [ "$prev" = "--tag" ] && tag="$a"
       [ "$prev" = "--target" ] && target="$a"
       prev="$a"
     done
     mkdir -p "$target"
-    cp -a "${store}/$tag/." "$target/"
+    cp -a "${store}/$id/." "$target/"
     ;;
   forget|check)
     :
