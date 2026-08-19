@@ -291,20 +291,20 @@ case "${1:---dry-run}" in
       fi
       # Acoplado deliberadamente al formato exacto que genera backup.sh
       # (sin espacios, ver json_source). OJO: sólo se comprueban las CUATRO
-      # fuentes NO críticas (maps/bot_sources/assets/replays) — postgres y
-      # secrets están SIEMPRE en 'ok' en cualquier backup con éxito (no
-      # forman parte de manifest.sha256 por diseño: el dump de PostgreSQL
-      # se excluye explícitamente de la generación del manifest en
-      # backup.sh (`! -path './pgdump-*'`) y los secretos nunca se listan.
-      # D3 (limitación conocida, documentada y SIN implementar a propósito,
-      # a la espera de decisión del operador — ver docs/recuperacion.md):
-      # esto significa que el dump, el activo más crítico del backup, NO
-      # tiene checksum en ninguna parte; su integridad depende hoy de que
-      # `pg_dump`/`restic` no fallen en silencio, no de un hash verificado
-      # por `--verify`. Si se comprobara "cualquier fuente ok", esto
-      # rechazaría TODO backup sano
-      # con las cuatro fuentes no críticas vacías, reintroduciendo el
-      # falso positivo original de D1.
+      # fuentes NO críticas (maps/bot_sources/assets/replays) — secrets nunca
+      # se lista, y postgres ya NO cabe en esta rama en absoluto: desde D3
+      # (#112, aplicado), backup.sh mete siempre una línea de pgdump en el
+      # manifest cuando postgres está 'ok', y postgres SIEMPRE está 'ok' si
+      # el script llega a generar el manifest (si pg_dump falla, backup.sh
+      # aborta en FULL FAILURE antes de este punto). Esta rama de manifest
+      # VACÍO es entonces inalcanzable para backups nuevos; se conserva tal
+      # cual (con su exclusión de `pgdump-*` en el `find` de arriba) sólo
+      # para poder seguir restaurando/verificando snapshots ANTIGUOS,
+      # tomados antes de este fix, en los que el dump de verdad quedaba
+      # fuera del manifest. Si se comprobara "cualquier fuente ok" aquí
+      # también con postgres, esto rechazaría TODO backup legacy sano con
+      # las cuatro fuentes no críticas vacías, reintroduciendo el falso
+      # positivo original de D1.
       for src in maps bot_sources assets replays; do
         if grep -q "\"$src\":{\"status\":\"ok\"" "$manifest_json"; then
           log error "manifest.sha256 vacío pero manifest.json ($manifest_json) declara '$src' como 'ok': inconsistencia real, no se puede confiar en este backup"
@@ -328,8 +328,11 @@ case "${1:---dry-run}" in
       # (contenido inyectado después del backup, o un manifest que nunca
       # llegó a cubrir todo). Mismo rigor que la rama de arriba, en los dos
       # sentidos: ni de menos (truncado) ni de más (residual sin listar).
+      # D3 (#112, decisión del operador aplicada en backup.sh): el pg_dump ya
+      # no se excluye del manifest, así que `postgres` entra en esta cuenta
+      # igual que las fuentes no críticas (ver el mismo cambio en backup.sh).
       expected_lines=0
-      for src in maps bot_sources assets replays; do
+      for src in postgres maps bot_sources assets replays; do
         if grep -q "\"$src\":{\"status\":\"ok\",\"files\":" "$manifest_json"; then
           n="$(grep -o "\"$src\":{\"status\":\"ok\",\"files\":[0-9]*" "$manifest_json" | grep -o '[0-9]*$')"
           expected_lines=$((expected_lines + n))
@@ -352,8 +355,13 @@ case "${1:---dry-run}" in
       # cuenta con NUL como separador (`-print0`), inmune a saltos de
       # línea en el propio nombre — la misma técnica que ya se usa bien
       # para `replays` en backup.sh desde la ronda 4, ahora también aquí.
-      # D6-R5: exclusión por `-path`, no por `-name` (ver arriba).
-      total_data_files="$(find "$stagedir" -type f ! -path "$stagedir/manifest.*" ! -path "$stagedir/pgdump-*" -print0 | tr -cd '\0' | wc -c)"
+      # D6-R5: exclusión por `-path`, no por `-name` (ver arriba). D3 (#112):
+      # `pgdump-*` ya NO se excluye aquí — desde que backup.sh lo incluye en
+      # el manifest, es un fichero de datos cubierto como cualquier otro; si
+      # se siguiera excluyendo, `total_data_files` quedaría sistemáticamente
+      # una unidad por debajo de `actual_lines` y ESTA rama denunciaría
+      # "inyección" en todo backup sano con dump.
+      total_data_files="$(find "$stagedir" -type f ! -path "$stagedir/manifest.*" -print0 | tr -cd '\0' | wc -c)"
       if [ "$total_data_files" -ne "$actual_lines" ]; then
         log error "$stagedir tiene $total_data_files ficheros de datos pero manifest.sha256 sólo cubre $actual_lines: hay contenido SIN entrada en el manifest (posible inyección tras el backup)"
         exit 1
@@ -365,7 +373,12 @@ case "${1:---dry-run}" in
       # usa rutas absolutas), pero gratis de cerrar: tras el `cd`, usar
       # sólo el nombre del fichero en el directorio ya correcto.
       (cd "$stagedir" && sha256sum -c "$(basename "$manifest")")
-      log info "integridad verificada: checksums de mapas y replays correctos"
+      # D3 (#112): el mensaje decía "mapas y replays" desde que ésas eran las
+      # únicas fuentes con checksum propio; ahora el dump de postgres también
+      # lo tiene, así que la frase que sólo mencionaba mapas/replays dejaba
+      # de ser cierta (peor: sugería que el activo crítico seguía sin
+      # verificar, cuando `sha256sum -c` de arriba ya lo cubre).
+      log info "integridad verificada: checksums de postgres, mapas y replays correctos"
     fi
     ;;
   *)

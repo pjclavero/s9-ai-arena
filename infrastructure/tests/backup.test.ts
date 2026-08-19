@@ -1246,7 +1246,16 @@ describe("backup.sh → restic falso fiel → restore.sh --restore/--verify (E2E
   // hundió la ronda 1 (--verify roto en un escenario real sin test), sólo
   // que en el extremo opuesto: aquí "no hay nada que verificar" debe ser
   // éxito, no fallo. ──────────────────────────────────────────────────────
-  it("cadena completa con las CUATRO fuentes no críticas vacías: --verify pasa (D1, estado real de VM108)", () => {
+  // D3 (#112, aplicado): antes de este fix, con las cuatro fuentes no
+  // críticas vacías el manifest quedaba a 0 bytes (el dump se excluía a
+  // propósito). Desde D3 el pg_dump SIEMPRE deja una línea en el manifest
+  // cuando postgres está 'ok' — y postgres siempre está 'ok' si el script
+  // llega a generar el manifest (si pg_dump falla, aborta antes en FULL
+  // FAILURE) — así que "las cuatro fuentes vacías" ya NO produce un
+  // manifest vacío: produce un manifest de UNA línea (el dump), y --verify
+  // debe recorrer la rama de `sha256sum -c` normal, no la de "vacío
+  // legítimo". Se actualiza el contrato de este test para reflejar eso.
+  it("cadena completa con las CUATRO fuentes no críticas vacías: --verify pasa con el dump como única entrada del manifest (D1+D3)", () => {
     root = mkdtempSync(join(tmpdir(), "e10-e2e-empty-"));
     fakebin = join(root, "bin");
     store = join(root, "store");
@@ -1270,20 +1279,20 @@ describe("backup.sh → restic falso fiel → restore.sh --restore/--verify (E2E
     const dest = join(root, "restored-empty");
     execFileSync("bash", [RESTORE, "--restore", dest], { encoding: "utf8", env: backupEnv() });
 
-    // El manifest.sha256 restaurado debe existir y estar vacío (cobertura
-    // 'empty' declarada, no ausente ni corrupto).
+    // El manifest.sha256 restaurado debe existir y tener EXACTAMENTE una
+    // línea: la del pg_dump (única fuente 'ok' con contenido cuando las
+    // cuatro no críticas están vacías). Ya NO está vacío desde D3.
     const manifestPath = execSync(`find "${dest}" -name manifest.sha256`, { encoding: "utf8" }).trim();
     expect(manifestPath).not.toBe("");
-    expect(readFileSync(manifestPath, "utf8")).toBe("");
+    const manifestLines = readFileSync(manifestPath, "utf8").split("\n").filter(Boolean);
+    expect(manifestLines.length).toBe(1);
+    expect(manifestLines[0]).toMatch(/pgdump-\d+\.dump$/);
 
-    // Antes de D1 esto lanzaba: sha256sum: manifest.sha256: no properly
-    // formatted checksum lines found / exit 1, sobre un backup sano.
+    // Con contenido en el manifest, --verify recorre la rama normal de
+    // sha256sum -c (ya NO la rama de "manifest vacío legítimo" de D1) y
+    // debe afirmar la integridad del dump de verdad.
     const verifyOut = execFileSync("bash", [RESTORE, "--verify", dest], { encoding: "utf8" });
-    expect(verifyOut).toContain("vacío");
-    expect(verifyOut).toContain("no había nada que verificar");
-    // D3-R3b: NO afirmar "checksums correctos" cuando no se comprobó
-    // ninguno — esa frase sólo debe aparecer cuando sha256sum -c corrió.
-    expect(verifyOut).not.toContain("checksums de mapas y replays correctos");
+    expect(verifyOut).toContain("integridad verificada: checksums de postgres, mapas y replays correctos");
   });
 
   // ── D1-R3 (ronda 4, HALLAZGO DEL SUPERVISOR — bloqueante): la primera
@@ -1668,9 +1677,17 @@ describe("backup.sh → restic falso fiel → restore.sh --restore/--verify (E2E
       // "líneas vs manifest.json" (anterior en la cadena) NO dispare —
       // aísla el chequeo de residuales, que es el que de verdad debe
       // notar que sólo hay 1 fichero real por 2 líneas de manifest.
+      // D3 (#112, aplicado): esta fixture no incluye un pg_dump real (no
+      // hay pgdump-*.dump en el árbol ni línea suya en manifest.sha256),
+      // así que postgres se declara 'error' (sin campo "files", igual que
+      // el backup.sh real cuando pg_dump falla) para que el nuevo bucle de
+      // `expected_lines` de restore.sh (que desde D3 también cuenta
+      // 'postgres' cuando está 'ok') no sume una entrada inexistente y
+      // dispare el chequeo de líneas ANTES de llegar al de residuales que
+      // este test quiere aislar.
       writeFileSync(
         join(dir, "manifest.json"),
-        '{"postgres":{"status":"ok","files":1},"secrets":{"status":"ok","files":2},"maps":{"status":"ok","files":2},"bot_sources":{"status":"empty","files":0},"replays":{"status":"empty","files":0},"assets":{"status":"empty","files":0}}',
+        '{"postgres":{"status":"error"},"secrets":{"status":"ok","files":2},"maps":{"status":"ok","files":2},"bot_sources":{"status":"empty","files":0},"replays":{"status":"empty","files":0},"assets":{"status":"empty","files":0}}',
       );
       let threw = false;
       let output = "";
