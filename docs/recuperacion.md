@@ -122,8 +122,9 @@ export RESTIC_REPOSITORY=<repositorio>   # y RESTIC_PASSWORD por el operador
 # hay forma de "restaurarlos desde el propio backup" en este primer paso.
 export RESTIC_SSH_KEY_FILE=<ruta a la clave privada custodiada>
 export RESTIC_SSH_KNOWN_HOSTS_FILE=<ruta al known_hosts con la huella verificada>
-# ID EXACTO decidido al revisar --list (nunca --latest en una recuperación
-# real: ver el aviso al principio de "## Procedimiento").
+bash infrastructure/backup/restore.sh --list
+# ID EXACTO decidido al revisar el --list de arriba (nunca --latest en una
+# recuperación real: ver el aviso al principio de "## Procedimiento").
 bash infrastructure/backup/restore.sh --restore-secrets /tmp/restore-secrets \
   --snapshot <id-de-secrets-decidido-con---list>
 # Colocarlos (rutas con permisos 0600; NUNCA volcarlos a pantalla/logs):

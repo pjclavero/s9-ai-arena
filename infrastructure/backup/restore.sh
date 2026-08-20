@@ -178,16 +178,11 @@ bootstrap_sftp() {
 #      (repositorio vacío o tag inexistente no es "nada que restaurar en
 #      silencio": es un estado que el operador debe ver).
 resolve_snapshot() {
-  local tag="$1" requested="$2" json id
+  local tag="$1" requested="$2" json count obj id tags_field
   log info "snapshot solicitado: $requested (tag=$tag)"
   if [ "$requested" = "latest" ]; then
     if ! json="$(restic snapshots --tag "$tag" --latest 1 --json 2>&1)"; then
       log error "no se pudo listar snapshots para tag=$tag: $(printf '%s' "$json" | tr '\n' ' ')"
-      return 1
-    fi
-    id="$(printf '%s' "$json" | grep -o '"short_id":"[^"]*"' | head -1 | cut -d'"' -f4)"
-    if [ -z "$id" ]; then
-      log error "no hay ningún snapshot con tag=$tag en el repositorio: nada que restaurar"
       return 1
     fi
   else
@@ -195,12 +190,66 @@ resolve_snapshot() {
       log error "el snapshot '$requested' no existe en el repositorio (restic: $(printf '%s' "$json" | tr '\n' ' '))"
       return 1
     fi
-    if ! printf '%s' "$json" | grep -q "\"$tag\""; then
-      log error "el snapshot '$requested' existe pero no tiene el tag '$tag': se niega a restaurar (posible mezcla de datos y secretos)"
-      return 1
-    fi
-    id="$requested"
   fi
+
+  # Supervisión hostil de #118 (HALLAZGOS 1+2, misma causa): la versión
+  # anterior hacía `grep -q "\"$tag\""` sobre el JSON COMPLETO devuelto por
+  # `restic snapshots`, y en la rama explícita devolvía literalmente
+  # "$requested" como ID resuelto sin leer nada del JSON. Dos roturas
+  # reales de restic tumbaban ambas cosas a la vez:
+  #   (a) IDs abreviados: restic acepta un PREFIJO de short_id. Un prefijo
+  #       que casa a la vez con un snapshot de datos Y uno de secretos hace
+  #       que `restic snapshots <prefijo> --json` devuelva un array de DOS
+  #       objetos — el `grep` sobre el JSON entero encontraba "s9-arena-data"
+  #       en cualquiera de los dos y aceptaba, aunque el snapshot que restic
+  #       fuera a restaurar de verdad con ese mismo prefijo pudiera ser el
+  #       de secretos.
+  #   (b) subcadena, no campo: un snapshot con tags:["s9-arena-secrets"]
+  #       cuyo hostname (u otro campo cualquiera) contuviera literalmente
+  #       "s9-arena-data" como subcadena pasaba el `grep` igual — el
+  #       chequeo nunca miraba el campo `tags`, miraba el documento entero.
+  #   (c) (HALLAZGO 2) con un ID abreviado, el log archivaba el PREFIJO
+  #       tecleado por el operador, no el short_id real que restic resolvió
+  #       — la misma ambigüedad del simulacro del 2026-08-18 ("¿qué se
+  #       restauró de verdad?"), reaparecida por otra puerta.
+  #
+  # Fix único para los tres: aislar cada objeto TOP-LEVEL del array JSON
+  # (`restic snapshots --json` no anida objetos — sólo escalares y arrays
+  # de escalares en sus campos, cierto en todas las versiones probadas; el
+  # mismo tipo de parseo mínimo honesto que ya usa validate_manifest_json()
+  # más abajo, no un parser JSON completo) y exigir EXACTAMENTE UNO. Con
+  # exactamente un objeto, leer `short_id` (nunca lo tecleado) y comprobar
+  # el tag SÓLO dentro del campo `"tags":[...]` de ESE objeto.
+  mapfile -t snap_objs < <(printf '%s' "$json" | grep -o '{[^{}]*}')
+  count="${#snap_objs[@]}"
+  if [ "$count" -eq 0 ]; then
+    if [ "$requested" = "latest" ]; then
+      log error "no hay ningún snapshot con tag=$tag en el repositorio: nada que restaurar"
+    else
+      log error "'$requested' no devolvió ningún snapshot (respuesta vacía o formato inesperado): se niega a restaurar"
+    fi
+    return 1
+  fi
+  if [ "$count" -gt 1 ]; then
+    log error "'$requested' es AMBIGUO: coincide con $count snapshots distintos (prefijo compartido, posiblemente entre datos y secretos); usa un ID más largo o el ID completo — nunca se adivina cuál restaurar"
+    return 1
+  fi
+  obj="${snap_objs[0]}"
+
+  id="$(printf '%s' "$obj" | grep -o '"short_id":"[^"]*"' | head -1 | cut -d'"' -f4)"
+  if [ -z "$id" ]; then
+    log error "no se pudo extraer short_id del snapshot devuelto por restic (formato inesperado): $obj"
+    return 1
+  fi
+
+  # El campo tags DE ESTE snapshot, no una búsqueda de subcadena sobre todo
+  # el objeto (ver (b) arriba).
+  tags_field="$(printf '%s' "$obj" | grep -o '"tags":\[[^]]*\]')"
+  if ! printf '%s' "$tags_field" | grep -q "\"$tag\""; then
+    log error "el snapshot '$id' existe pero no tiene el tag '$tag' (tags reales: ${tags_field:-ninguno}): se niega a restaurar (posible mezcla de datos y secretos)"
+    return 1
+  fi
+
   log info "snapshot resuelto: $id (tag=$tag)"
   RESOLVED_SNAPSHOT="$id"
 }
@@ -214,13 +263,43 @@ resolve_snapshot() {
 # $3 = texto de uso para el mensaje de error.
 # Deja el selector resuelto ("latest" o el ID pedido) en SNAPSHOT_SELECTOR.
 snapshot_selector_or_die() {
-  local opt="$1" val="$2" usage="$3"
+  local opt="$1" val="$2" extra="$3" usage="$4"
   case "$opt" in
-    "" | --latest)
+    "")
+      # Sin selector: "$val"/"$extra" no deberían poder tener nada aquí
+      # (no hay $3/$4 tras el destino), pero se comprueba igual — silencio
+      # ante argumentos sobrantes es justo lo que este script no se puede
+      # permitir (HALLAZGO 3 del supervisor de #118).
+      if [ -n "$val" ]; then
+        echo "$usage" >&2
+        exit 2
+      fi
+      SNAPSHOT_SELECTOR="latest"
+      ;;
+    --latest)
+      # HALLAZGO 3 (supervisor #118): `--latest <basura>` aceptaba en
+      # silencio y restauraba el más reciente IGNORANDO lo que viniera
+      # detrás — `restore.sh --restore <dest> --latest 76a13494` restauraba
+      # el snapshot más nuevo, no 76a13494, con EXIT=0 y ningún aviso. Un
+      # operador que mezclara las dos formas de invocación se llevaba un
+      # snapshot distinto del que creía haber nombrado. `--latest` no
+      # acepta ID: cualquier cosa después es un error de uso, nunca datos
+      # ignorados en silencio.
+      if [ -n "$val" ]; then
+        echo "$usage" >&2
+        exit 2
+      fi
       SNAPSHOT_SELECTOR="latest"
       ;;
     --snapshot)
       if [ -z "$val" ]; then
+        echo "$usage" >&2
+        exit 2
+      fi
+      # Misma lógica que --latest: basura tras el ID (p.ej. un segundo
+      # argumento sobrante) es un error de uso, no algo que se descarta
+      # callado.
+      if [ -n "$extra" ]; then
         echo "$usage" >&2
         exit 2
       fi
@@ -257,7 +336,7 @@ case "${1:---dry-run}" in
     ;;
   --restore)
     dest="${2:?uso: restore.sh --restore <destino> [--snapshot <id> | --latest]}"
-    snapshot_selector_or_die "${3:-}" "${4:-}" \
+    snapshot_selector_or_die "${3:-}" "${4:-}" "${5:-}" \
       "uso: restore.sh --restore <destino> [--snapshot <id> | --latest]"
     bootstrap_sftp || exit 1
     resolve_snapshot s9-arena-data "$SNAPSHOT_SELECTOR" || exit 1
@@ -266,7 +345,7 @@ case "${1:---dry-run}" in
     ;;
   --restore-secrets)
     dest="${2:?uso: restore.sh --restore-secrets <destino> [--snapshot <id> | --latest]}"
-    snapshot_selector_or_die "${3:-}" "${4:-}" \
+    snapshot_selector_or_die "${3:-}" "${4:-}" "${5:-}" \
       "uso: restore.sh --restore-secrets <destino> [--snapshot <id> | --latest]"
     bootstrap_sftp || exit 1
     umask 077

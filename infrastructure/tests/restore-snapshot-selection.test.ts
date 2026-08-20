@@ -481,3 +481,209 @@ exit 0
     expect(calls.some((c) => c.startsWith("restore "))).toBe(false);
   });
 });
+
+// ── Supervisión hostil de #118: hallazgos 1+2 (misma causa) ─────────────────
+// El `writeFakeRestic` de arriba (y el de la integración con #119) usa
+// short_id == tag: estructuralmente NO PUEDE reproducir un prefijo
+// abreviado que case a la vez con un snapshot de datos y uno de secretos,
+// ni un snapshot cuyo hostname contenga el nombre del tag como subcadena
+// — el propio fake ya garantiza short_id/tags 1:1 con el tag pedido. Este
+// describe usa un fake NUEVO que modela IDs y tags POR SEPARADO (como hizo
+// el supervisor), para poder reproducir de verdad:
+//   (1) un ID abreviado (restic soporta prefijos) que `restic snapshots
+//       <prefijo> --json` resuelve a DOS objetos — uno con tag de datos,
+//       otro con tag de secretos — y que el `grep` sobre el JSON completo
+//       aceptaba con que CUALQUIERA de los dos llevara el tag pedido.
+//   (2) un snapshot de secretos cuyo `hostname` contiene literalmente
+//       "s9-arena-data" como subcadena, que el `grep` de subcadena sobre
+//       todo el objeto aceptaba como si fuera un snapshot de datos.
+//   Ambos se cerraron con el mismo cambio: aislar cada objeto JSON
+//   top-level, exigir EXACTAMENTE UNO, leer `short_id` del objeto (nunca
+//   lo tecleado) y comprobar el tag SÓLO dentro de su campo "tags".
+// También cubre el HALLAZGO 3 (`--latest <basura>` / `--snapshot <id>
+// <basura>` aceptados en silencio).
+describe("Supervision #118: prefijos ambiguos, subcadena de tag, argumentos sobrantes", () => {
+  type FakeSnap = { shortId: string; tags: string[]; hostname?: string };
+
+  // objLiteral: JSON.stringify produce comillas dobles sin comillas
+  // simples dentro (los valores de prueba nunca las llevan) — se puede
+  // envolver en un `echo '...'` de bash de una pieza, exactamente el mismo
+  // patron ya probado en writeFakeRestic() de mas arriba (single-quoted,
+  // sin interpolacion de variables de shell dentro del JSON: cada
+  // respuesta es estatica por caso de prueba).
+  function objLiteral(snap: FakeSnap): string {
+    return JSON.stringify({ short_id: snap.shortId, tags: snap.tags, hostname: snap.hostname ?? "backup-host" });
+  }
+
+  // writeFakeResticSeparate: "known" mapea ID-tecleado (prefijo o
+  // completo) -> lista de snapshots que ese prefijo resuelve, cada uno con
+  // SU PROPIO short_id, tags y hostname -- a diferencia de writeFakeRestic
+  // (arriba), que no puede expresar "un prefijo casa dos snapshots
+  // distintos" porque fuerza short_id == la clave del map.
+  function writeFakeResticSeparate(
+    fb: string,
+    log: string,
+    known: Record<string, FakeSnap[]>,
+    latest: (FakeSnap & { tag: string }) | null,
+  ) {
+    const knownCases = Object.entries(known)
+      .map(([id, snaps]) => {
+        const arr = `[${snaps.map(objLiteral).join(",")}]`;
+        return `    "${id}") echo '${arr}'; exit 0 ;;`;
+      })
+      .join("\n");
+    const latestBlock = latest
+      ? `      if [ "$tag" = "${latest.tag}" ]; then
+        echo '[${objLiteral(latest)}]'
+      else
+        echo '[]'
+      fi`
+      : `      echo '[]'`;
+    const script = `#!/usr/bin/env bash
+echo "$@" >> "${log}"
+case "$1" in
+  snapshots)
+    if [ "$2" = "--tag" ]; then
+      tag="$3"
+${latestBlock}
+      exit 0
+    fi
+    id="$2"
+    case "$id" in
+${knownCases}
+      *) echo "no matching ID found" >&2; exit 1 ;;
+    esac
+    ;;
+  restore)
+    id="$2"
+    target=""
+    prev=""
+    for a in "$@"; do
+      [ "$prev" = "--target" ] && target="$a"
+      prev="$a"
+    done
+    mkdir -p "$target"
+    echo "$id" > "$target/restored-snapshot-id.txt"
+    ;;
+esac
+exit 0
+`;
+    writeFileSync(join(fb, "restic"), script, { mode: 0o755 });
+  }
+
+  it("HALLAZGO 1 - prefijo AMBIGUO que casa un snapshot de datos y uno de secretos a la vez: FALLA, nunca restaura", () => {
+    writeFakeResticSeparate(
+      fakebin,
+      resticLog,
+      {
+        ab: [
+          { shortId: "ab111111", tags: ["s9-arena-data"] },
+          { shortId: "ab222222", tags: ["s9-arena-secrets"] },
+        ],
+      },
+      null,
+    );
+    const { code, out } = runRestore(["--restore", dest, "--snapshot", "ab"]);
+    expect(code).not.toBe(0);
+    expect(out).toContain("es AMBIGUO");
+    expect(out).toContain("2 snapshots");
+    expect(restoredId()).toBeUndefined();
+    const calls = resticCalls();
+    expect(calls.some((c) => c.startsWith("restore "))).toBe(false);
+  });
+
+  it("HALLAZGO 1 (variante trivial) - snapshot de SECRETOS cuyo hostname vale EXACTAMENTE 's9-arena-data': FALLA al pedirlo como datos, nunca lo confunde por el hostname", () => {
+    // hostname EXACTO (no una subcadena mas larga): asi, en el JSON real,
+    // el campo aparece como `"hostname":"s9-arena-data"` -- una coincidencia
+    // de subcadena entre comillas IDENTICA a la que el grep original sobre
+    // el objeto ENTERO (sin restringirse al campo "tags") aceptaba. Es el
+    // ataque trivial que describe el supervisor: "un snapshot con
+    // tags:[\"s9-arena-secrets\"] cuyo hostname valga s9-arena-data se
+    // acepta como datos".
+    writeFakeResticSeparate(
+      fakebin,
+      resticLog,
+      {
+        trampa: [
+          {
+            shortId: "trampa01",
+            tags: ["s9-arena-secrets"],
+            hostname: "s9-arena-data",
+          },
+        ],
+      },
+      null,
+    );
+    const { code, out } = runRestore(["--restore", dest, "--snapshot", "trampa"]);
+    expect(code).not.toBe(0);
+    expect(out).toContain("existe pero no tiene el tag 's9-arena-data'");
+    expect(restoredId()).toBeUndefined();
+    const calls = resticCalls();
+    expect(calls.some((c) => c.startsWith("restore "))).toBe(false);
+  });
+
+  it("HALLAZGO 2 - con un ID abreviado valido, el log registra el short_id REAL devuelto por restic, no el prefijo tecleado", () => {
+    writeFakeResticSeparate(
+      fakebin,
+      resticLog,
+      {
+        pref: [{ shortId: "prefijo-resuelto-a-esto", tags: ["s9-arena-data"] }],
+      },
+      null,
+    );
+    const { code, out } = runRestore(["--restore", dest, "--snapshot", "pref"]);
+    expect(code).toBe(0);
+    expect(restoredId()).toBe("prefijo-resuelto-a-esto");
+    expect(restoredId()).not.toBe("pref");
+    expect(out).toContain("snapshot resuelto: prefijo-resuelto-a-esto (tag=s9-arena-data)");
+    expect(out).toContain("snapshot=prefijo-resuelto-a-esto");
+    const calls = resticCalls();
+    expect(calls.some((c) => c.startsWith("restore prefijo-resuelto-a-esto"))).toBe(true);
+    expect(calls.some((c) => c.startsWith("restore pref "))).toBe(false);
+  });
+
+  it("HALLAZGO 3 - `--latest <id-sobrante>` FALLA con mensaje de uso, nunca ignora el ID en silencio", () => {
+    writeFakeResticSeparate(
+      fakebin,
+      resticLog,
+      {},
+      {
+        tag: "s9-arena-data",
+        shortId: "4fac59f8",
+        tags: ["s9-arena-data"],
+      },
+    );
+    const { code, out } = runRestore(["--restore", dest, "--latest", "76a13494"]);
+    expect(code).toBe(2);
+    expect(out).toContain("uso: restore.sh --restore");
+    expect(restoredId()).toBeUndefined();
+    const calls = resticCalls();
+    expect(calls.length).toBe(0);
+  });
+
+  it("HALLAZGO 3 (variante) - `--snapshot <id> <basura>` FALLA con mensaje de uso, no restaura con el ID valido ignorando el resto", () => {
+    writeFakeResticSeparate(fakebin, resticLog, { goodid: [{ shortId: "goodid00", tags: ["s9-arena-data"] }] }, null);
+    const { code, out } = runRestore(["--restore", dest, "--snapshot", "goodid", "basura-sobrante"]);
+    expect(code).toBe(2);
+    expect(out).toContain("uso: restore.sh --restore");
+    expect(restoredId()).toBeUndefined();
+    const calls = resticCalls();
+    expect(calls.length).toBe(0);
+  });
+
+  it("control positivo - --latest sin argumentos y --snapshot <id> sin basura SIGUEN funcionando con este fake nuevo", () => {
+    writeFakeResticSeparate(
+      fakebin,
+      resticLog,
+      { goodid: [{ shortId: "goodid00", tags: ["s9-arena-data"] }] },
+      { tag: "s9-arena-data", shortId: "aaaa1111", tags: ["s9-arena-data"] },
+    );
+    const latestR = runRestore(["--restore", dest, "--latest"]);
+    expect(latestR.code).toBe(0);
+    expect(restoredId()).toBe("aaaa1111");
+
+    const explicitR = runRestore(["--restore", dest, "--snapshot", "goodid"]);
+    expect(explicitR.code).toBe(0);
+    expect(restoredId()).toBe("goodid00");
+  });
+});
