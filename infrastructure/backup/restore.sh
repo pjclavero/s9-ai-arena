@@ -238,7 +238,23 @@ resolve_snapshot() {
 
   id="$(printf '%s' "$obj" | grep -o '"short_id":"[^"]*"' | head -1 | cut -d'"' -f4)"
   if [ -z "$id" ]; then
-    log error "no se pudo extraer short_id del snapshot devuelto por restic (formato inesperado): $obj"
+    # Supervisión hostil de #118 (ronda 2): este parseo asume objetos de
+    # snapshot PLANOS (ver el comentario junto a `apk add … restic=…` en
+    # infrastructure/docker/backup/Dockerfile, donde se fija la versión de
+    # restic exactamente por esto). Si `restic snapshots --json` anida un
+    # objeto (p.ej. el campo "summary" que restic ≥0.17 añadió),
+    # `grep -o '{[^{}]*}'` casa el objeto MÁS INTERNO en vez del snapshot
+    # completo — "$obj" nunca tendrá "short_id" en ese caso, aunque
+    # "$json" SÍ lo tenga en alguna parte. Distinguir ese caso concreto
+    # (probable versión de restic no soportada por este parseo) de un
+    # "formato inesperado" genérico: mismo fallo cerrado en ambos (nunca se
+    # asume un short_id que no se pudo leer), pero con una causa que un
+    # operador puede accionar sin tener que leer el propio script.
+    if printf '%s' "$json" | grep -q '"short_id"'; then
+      log error "no se pudo extraer short_id: el snapshot devuelto por restic tiene un objeto anidado que este parseo no soporta (posible versión de restic no soportada por este parseo, p.ej. el campo 'summary' de restic >=0.17) — revisar resolve_snapshot() en restore.sh y la versión de restic fijada en infrastructure/docker/backup/Dockerfile antes de continuar"
+    else
+      log error "no se pudo extraer short_id del snapshot devuelto por restic (formato inesperado): $obj"
+    fi
     return 1
   fi
 

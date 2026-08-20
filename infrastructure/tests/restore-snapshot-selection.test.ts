@@ -687,3 +687,121 @@ exit 0
     expect(restoredId()).toBe("goodid00");
   });
 });
+
+// ── Segunda ronda de supervisión hostil de #118 ─────────────────────────────
+// El parseo `grep -o '{[^{}]*}'` de resolve_snapshot() asume que los
+// objetos de `restic snapshots --json` son PLANOS. El supervisor demostró
+// que eso deja de ser cierto si restic (>=0.17) añade un campo anidado
+// como "summary":{...}: el grep casa el objeto MAS INTERNO, no el
+// snapshot completo. La garantía real no es "el parseo nunca se rompe" —
+// es "cuando se rompe, falla cerrado con una causa clara, y nunca usa lo
+// que tecleo el operador como sustituto del short_id que no pudo leer"
+// (ese sustituto silencioso es exactamente el HALLAZGO 2 original, y es la
+// mutacion R2 que el supervisor senalo como la mas peligrosa: cambiar el
+// `return 1` de la rama de extraccion fallida por `id="$requested"`).
+describe("Supervision #118 (ronda 2): objetos JSON anidados (restic >=0.17)", () => {
+  // writeFakeResticRawJson: a diferencia de writeFakeResticSeparate (que
+  // construye JSON piano a partir de campos tipados), esta variante
+  // inyecta un texto JSON LITERAL tal cual, para poder representar la
+  // forma exacta de restic >=0.17 (con "summary" anidado) sin que el
+  // helper de arriba lo "aplane" por construccion.
+  function writeFakeResticRawJson(
+    fb: string,
+    log: string,
+    known: Record<string, string>, // ID tecleado -> texto JSON crudo de la respuesta
+  ) {
+    const knownCases = Object.entries(known)
+      .map(([id, json]) => `    "${id}") echo '${json}'; exit 0 ;;`)
+      .join("\n");
+    const script = `#!/usr/bin/env bash
+echo "$@" >> "${log}"
+case "$1" in
+  snapshots)
+    if [ "$2" = "--tag" ]; then
+      echo '[]'
+      exit 0
+    fi
+    id="$2"
+    case "$id" in
+${knownCases}
+      *) echo "no matching ID found" >&2; exit 1 ;;
+    esac
+    ;;
+  restore)
+    id="$2"
+    target=""
+    prev=""
+    for a in "$@"; do
+      [ "$prev" = "--target" ] && target="$a"
+      prev="$a"
+    done
+    mkdir -p "$target"
+    echo "$id" > "$target/restored-snapshot-id.txt"
+    ;;
+esac
+exit 0
+`;
+    writeFileSync(join(fb, "restic"), script, { mode: 0o755 });
+  }
+
+  // Forma real de restic >=0.17: mismos campos que antes MAS "summary"
+  // anidado (files_new/data_added/etc, un objeto DENTRO del objeto de
+  // snapshot). El short_id sigue presente en el objeto real -- el
+  // problema es que el parseo nunca llega a verlo.
+  const NESTED_SUMMARY_JSON =
+    '[{"time":"2026-01-01T00:00:00Z","tree":"abc","paths":["/staging"],"hostname":"backup-host","username":"root","tags":["s9-arena-data"],"id":"aaaa1111bbbb2222","short_id":"aaaa1111","summary":{"files_new":3,"data_added":123,"total_bytes_processed":456}}]';
+
+  it("restic >=0.17 con 'summary' anidado: FALLA con mensaje que senala la causa (version de restic no soportada), nunca restaura", () => {
+    writeFakeResticRawJson(fakebin, resticLog, { pref: NESTED_SUMMARY_JSON });
+    const { code, out } = runRestore(["--restore", dest, "--snapshot", "pref"]);
+    expect(code).not.toBe(0);
+    expect(out).toContain("no se pudo extraer short_id");
+    expect(out).toContain("objeto anidado");
+    expect(out).toContain("no soportada por este parseo");
+    expect(restoredId()).toBeUndefined();
+  });
+
+  // ── Calibracion directa de la mutacion R2 del supervisor ────────────────
+  // La mutacion peligrosa: sustituir el `return 1` de la rama de
+  // extraccion fallida por `id="$requested"` (una "tolerancia" de buena
+  // fe que reintroduce el nucleo del HALLAZGO 2 -- restaurar con el ID
+  // TECLEADO, nunca verificado, cuando el parseo no pudo confirmar que
+  // fuera un snapshot real).
+  //
+  // El fixture NESTED_SUMMARY_JSON de arriba NO sirve para calibrar esta
+  // mutacion: al extraer el objeto MAS INTERNO (el "summary" anidado), ese
+  // fragmento tampoco tiene campo "tags" -- el chequeo de tag POSTERIOR
+  // (`tags_field`) tambien falla y la mutacion queda enmascarada por esa
+  // segunda guarda, aunque por el motivo EQUIVOCADO. Para aislar de verdad
+  // la rama de extraccion de short_id (como ya hace runValidateManifestJson
+  // en backup.test.ts para aislar sub-chequeos de --verify), hace falta un
+  // objeto PLANO (sin anidar, count=1, ninguna ambiguedad de parseo) al que
+  // sencillamente le falte el campo "short_id" pero SI tenga un "tags" que
+  // coincide con el tag pedido -- asi la guarda de tag NO protege, y sólo
+  // sobrevive si de verdad nunca se usa "$requested" como sustituto.
+  const FLAT_NO_SHORT_ID_JSON = '[{"tags":["s9-arena-data"],"hostname":"backup-host"}]';
+
+  it("objeto PLANO sin campo 'short_id' (aunque el tag coincida): FALLA, nunca restaura, nunca usa el ID tecleado", () => {
+    writeFakeResticRawJson(fakebin, resticLog, { pref: FLAT_NO_SHORT_ID_JSON });
+    const { code, out } = runRestore(["--restore", dest, "--snapshot", "pref"]);
+    expect(code).not.toBe(0);
+    expect(out).toContain("no se pudo extraer short_id");
+    expect(restoredId()).toBeUndefined();
+  });
+
+  // Calibra la mutacion R2 en sentido estricto: estas aserciones estan
+  // pensadas para caer SI Y SOLO SI la rama de extraccion fallida deja de
+  // devolver 1 y sustituye `id` por "$requested". Con el fix real, la
+  // ejecucion nunca llega a invocar `restic restore`, nunca registra
+  // "snapshot resuelto: pref" ni "snapshot=pref".
+  it("ante short_id ausente en un objeto PLANO cuyo tag SI coincide, NUNCA usa el ID tecleado como sustituto (calibra la mutacion R2)", () => {
+    writeFakeResticRawJson(fakebin, resticLog, { pref: FLAT_NO_SHORT_ID_JSON });
+    const { code, out } = runRestore(["--restore", dest, "--snapshot", "pref"]);
+    expect(code).not.toBe(0);
+    expect(out).not.toContain("snapshot resuelto: pref");
+    expect(out).not.toContain("snapshot=pref");
+    const calls = resticCalls();
+    expect(calls.some((c) => c.startsWith("restore pref"))).toBe(false);
+    expect(calls.some((c) => c.startsWith("restore "))).toBe(false);
+  });
+});
