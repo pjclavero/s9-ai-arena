@@ -12,7 +12,7 @@
  * desarrollo. `bootstrap` aplica únicamente el contenido base (ruleset,
  * catálogo y mapa) y es el comando apto para un entorno real.
  *
- * `rollback:1` revierte SOLO la última migración aplicada (un lote/batch).
+ * `rollback:1` revierte SOLO la última migración aplicada (exactamente una migración, no un lote).
  * `rollback:all` revierte TODAS las migraciones: es DESTRUCTIVA, borra el
  * esquema entero (todas las tablas), no solo la última. No hay `rollback`
  * a secas: un operador debe elegir explícitamente cuál de las dos quiere,
@@ -36,7 +36,7 @@ try {
     console.log("Migraciones aplicadas.");
   } else if (cmd === "rollback:1") {
     await rollbackLast(db);
-    console.log("Última migración revertida (1 lote).");
+    console.log("Última migración revertida (una migración, no un lote).");
   } else if (cmd === "rollback:all") {
     console.warn("ATENCIÓN: rollback:all revierte TODAS las migraciones y destruye el esquema completo.");
     await rollbackAll(db);

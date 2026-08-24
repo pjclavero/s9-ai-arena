@@ -3,7 +3,7 @@
  *
  * Knex Migrate con una MigrationSource programática (ADR-E7-001): las migraciones
  * viven como módulos TypeScript en este archivo, se aplican con `migrateToLatest(db)`
- * y se revierten con `rollbackAll(db)`. SQL escrito para PostgreSQL real: en
+ * y se revierten con `rollbackAll(db)` (todas) o `rollbackLast(db)` (solo la última). SQL escrito para PostgreSQL real: en
  * producción se ejecuta contra el PostgreSQL del servidor vía DATABASE_URL.
  *
  * Política 23.1: los eventos masivos de batalla NO viven en la BD. `battles`
@@ -711,7 +711,7 @@ export async function rollbackAll(db: Knex): Promise<void> {
   await db.migrate.rollback(config, true);
 }
 
-/** Revierte SOLO la última migración aplicada (down de un único lote/batch). */
+/** Revierte SOLO la última migración aplicada (exactamente una migración, no un lote). */
 export async function rollbackLast(db: Knex): Promise<void> {
   await db.migrate.down(config);
 }

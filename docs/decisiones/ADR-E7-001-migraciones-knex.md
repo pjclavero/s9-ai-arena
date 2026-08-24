@@ -16,7 +16,7 @@ aplicadas con `migrateToLatest(db)`. CLI:
 
 **Rollback: dos comandos inequívocos, no uno ambiguo.** `rollbackLast(db)` (CLI
 `rollback:1`) llama a `db.migrate.down(config)` y revierte **solo la última migración
-aplicada** (un lote). `rollbackAll(db)` (CLI `rollback:all`) llama a
+aplicada** (exactamente una migración, no un lote). `rollbackAll(db)` (CLI `rollback:all`) llama a
 `db.migrate.rollback(config, true)` y revierte **TODAS** las migraciones: deja el esquema
 reducido a las tablas internas de Knex, destruyendo todos los datos. No hay `rollback` a
 secas: el CLI lo rechaza explícitamente pidiendo elegir uno de los dos, para que un
