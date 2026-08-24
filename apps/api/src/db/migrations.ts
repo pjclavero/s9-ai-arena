@@ -661,9 +661,12 @@ const m011_battle_cpu_ms: Migration = {
     await db.raw(`
       ALTER TABLE participants
         ADD COLUMN cpu_ms double precision
-        CHECK (cpu_ms IS NULL OR cpu_ms >= 0);
+        CHECK (cpu_ms IS NULL OR (cpu_ms >= 0 AND cpu_ms < 'Infinity'::float8));
     `);
   },
+  // ATENCIÓN: destructivo para los datos de cpu_ms. DROP COLUMN borra las
+  // medidas ya guardadas; un down→up posterior deja la columna presente pero
+  // vacía (no hay forma de recuperar los valores previos al down).
   async down(db) {
     await db.raw(`
       ALTER TABLE participants DROP COLUMN cpu_ms;
@@ -706,4 +709,9 @@ export async function migrateToLatest(db: Knex): Promise<void> {
 /** Revierte TODAS las migraciones (test up/down del DoD T7.1). */
 export async function rollbackAll(db: Knex): Promise<void> {
   await db.migrate.rollback(config, true);
+}
+
+/** Revierte SOLO la última migración aplicada (down de un único lote/batch). */
+export async function rollbackLast(db: Knex): Promise<void> {
+  await db.migrate.down(config);
 }
