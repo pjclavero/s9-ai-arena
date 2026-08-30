@@ -35,6 +35,7 @@ import type { ContainerRunner } from "../../bot-manager/src/container-runner.js"
 import { ProxyContainerRunner } from "../../bot-manager/src/docker-proxy.js";
 import { ARCHETYPES } from "../../../packages/module-catalog/resolve/archetypes.js";
 import { RULESETS } from "../../../packages/game-rules/index.js";
+import { mountVersionEndpoint } from "../../../packages/build-info/index.js";
 import { validateArenaMap } from "./arena-map.js";
 
 export interface ArenaEngineServiceConfig {
@@ -256,6 +257,9 @@ export function createArenaEngineService(cfg: ArenaEngineServiceConfig = {}): ex
     // healthcheck del Compose: 200 = el proceso está vivo y sirve HTTP).
     res.status(200).json({ status: "ok", service: "arena-engine" });
   });
+
+  // ADR-016 · identidad de build embebida en la imagen, observable en ejecución.
+  mountVersionEndpoint(app, "arena-engine");
 
   app.post("/run", async (req: Request, res: Response) => {
     // B2 · autenticación interna PRIMERO: sin credencial válida, ni siquiera se

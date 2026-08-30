@@ -28,6 +28,9 @@ import { parse } from "yaml";
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO = join(here, "..", "..");
 const COMPOSE_PATH = join(REPO, "infrastructure", "docker-compose.yml");
+
+/** ADR-016 · build-args de identidad, exigidos a todas las imágenes. */
+const ARGS_IDENTIDAD = ["BUILD_COMMIT", "BUILD_DATE", "SERVICE_NAME"];
 const CI_PATH = join(REPO, ".github", "workflows", "ci.yml");
 
 interface Construccion {
@@ -36,6 +39,8 @@ interface Construccion {
   dockerfile: string;
   /** build-args normalizados a "CLAVE=valor", ordenados. */
   args: string[];
+  /** Nombres de los build-args de identidad declarados (ADR-016). */
+  identidad: string[];
   /** Servicios del Compose que comparten esta construcción. */
   servicios: string[];
 }
@@ -48,9 +53,17 @@ export function construccionesDelCompose(compose: string): Construccion[] {
   for (const [nombre, def] of Object.entries(doc.services ?? {})) {
     if (!def?.build) continue;
     const dockerfile = String(def.build.dockerfile ?? "");
-    const args = Object.entries(def.build.args ?? {})
-      .map(([k, v]) => `${k}=${String(v)}`)
+    // ADR-016 · los tres args de identidad de build (BUILD_COMMIT, BUILD_DATE,
+    // SERVICE_NAME) se comparan APARTE: en el Compose son ${BUILD_COMMIT:-...}
+    // y en la CI son expresiones de Actions (github.sha), así que compararlos
+    // literalmente solo mediría que dos textos distintos son distintos. Lo que
+    // sí se exige, más abajo, es que AMBAS fuentes los pasen SIEMPRE.
+    const todos = Object.entries(def.build.args ?? {}).map(([k, v]) => [k, String(v)] as const);
+    const args = todos
+      .filter(([k]) => !ARGS_IDENTIDAD.includes(k))
+      .map(([k, v]) => `${k}=${v}`)
       .sort();
+    const identidad = todos.filter(([k]) => ARGS_IDENTIDAD.includes(k)).map(([k]) => k);
     // `image:` es del tipo ${IMAGE_PREFIX:-...}/<imagen>:${TAG:-latest}
     const m = /\/([a-z0-9][a-z0-9._-]*):\$\{TAG/.exec(String(def.image ?? ""));
     expect(m, `${nombre}: no se pudo extraer el nombre de imagen de "${def.image}"`).not.toBeNull();
@@ -65,7 +78,7 @@ export function construccionesDelCompose(compose: string): Construccion[] {
       previo.servicios.push(nombre);
       continue;
     }
-    porImagen.set(imagen, { imagen, dockerfile, args, servicios: [nombre] });
+    porImagen.set(imagen, { imagen, dockerfile, args, identidad, servicios: [nombre] });
   }
   return [...porImagen.values()].sort((a, b) => a.imagen.localeCompare(b.imagen));
 }
@@ -83,6 +96,7 @@ export function matrizDeLaCi(ci: string): Construccion[] {
         .split(/\s+/)
         .filter(Boolean)
         .sort(),
+      identidad: [],
       servicios: [],
     }))
     .sort((a, b) => a.imagen.localeCompare(b.imagen));
@@ -173,5 +187,29 @@ describe("B13 · el emparejador detecta los desajustes que se le escaparon a la 
     const imagenes = construccionesDelCompose(ampliado).map((c) => c.imagen);
     expect(imagenes).toContain("servicio-nuevo");
     expect(deLaCi.map((c) => c.imagen)).not.toContain("servicio-nuevo");
+  });
+  it("ADR-016 · TODA imagen del Compose recibe los tres build-args de identidad", () => {
+    // El incidente que motiva esto (build del árbol viejo etiquetado con el
+    // commit nuevo) fue invisible porque NADA dentro de la imagen decía de qué
+    // código salió. Si alguien añade una imagen sin estos args, su /version y
+    // su LABEL dirán "unknown" y el gate la rechazará: mejor verlo aquí.
+    for (const c of delCompose) {
+      expect([...c.identidad].sort(), `${c.imagen}: le faltan build-args de identidad`).toEqual(
+        [...ARGS_IDENTIDAD].sort(),
+      );
+    }
+  });
+
+  it("ADR-016 · el paso de build de la CI pasa los tres build-args de identidad", () => {
+    const doc = parse(ci) as any;
+    const pasos: any[] = doc?.jobs?.["build-images"]?.steps ?? [];
+    const build = pasos.find((p) => String(p?.uses ?? "").startsWith("docker/build-push-action"));
+    expect(build, "la CI ya no tiene un paso docker/build-push-action en build-images").toBeDefined();
+    const buildArgs = String(build.with?.["build-args"] ?? "");
+    for (const arg of ARGS_IDENTIDAD) {
+      expect(buildArgs, `la CI no pasa ${arg}: publicaría imágenes sin procedencia`).toContain(`${arg}=`);
+    }
+    // Y el commit tiene que ser el del run, no un literal escrito a mano.
+    expect(buildArgs).toContain("github.sha");
   });
 });

@@ -9,6 +9,7 @@
  * dentro del proceso y no expone HTTP, así que la señal de vida es un fichero.
  */
 import { writeFileSync } from "node:fs";
+import { versionPayload } from "../../../packages/build-info/index.js";
 import { requireWritableDataDir } from "../../replay-service/src/data-dir.js";
 import { createDb } from "../../api/src/db/connection.js";
 import { SpectateGateway } from "../../api/src/spectate/gateway.js";
@@ -20,8 +21,17 @@ import { handleProcessResult } from "./results.js";
 import { handleUpdateStandings } from "./standings.js";
 import { TournamentWorker } from "./worker.js";
 
+// ADR-016 · el worker NO expone HTTP (su señal de vida es un fichero), así que
+// su identidad de build se publica igual: como fichero, con el MISMO cuerpo del
+// contrato de /version. El gate lo lee con `docker exec … cat`.
+const VERSION_PATH = process.env.VERSION_PATH ?? "/tmp/version.json";
+
 const HEARTBEAT_PATH = process.env.HEARTBEAT_PATH ?? "/tmp/heartbeat";
 const HEARTBEAT_MS = 30_000;
+
+function publicarIdentidadDeBuild(): void {
+  writeFileSync(VERSION_PATH, JSON.stringify(versionPayload(process.env, "tournament-worker")));
+}
 
 function beat(): void {
   writeFileSync(HEARTBEAT_PATH, String(Math.floor(Date.now() / 1000)));
@@ -77,6 +87,7 @@ const worker = new TournamentWorker({
   onExhausted: (job, ctx) => markBattleForReview(ctx.db, job),
 });
 
+publicarIdentidadDeBuild();
 beat();
 const heartbeat = setInterval(beat, HEARTBEAT_MS);
 worker.start();

@@ -26,6 +26,16 @@
 # Arranque: ver docs/despliegue.md (instalación limpia en 3 pasos).
 # ──────────────────────────────────────────────────────────────────────────────
 
+# ADR-016 · identidad de build: los tres valores viajan DENTRO de cada imagen
+# (ARG -> ENV + LABEL OCI) y se sirven en /version. BUILD_COMMIT lo fija quien
+# construye (CI: github.sha; a mano: `git rev-parse HEAD`); si no se pasa, la
+# imagen queda marcada "unknown" y el gate de despliegue la rechaza — nunca se
+# hereda un commit por descuido, que es exactamente lo que dejó pasar un build
+# del árbol viejo etiquetado con el commit nuevo.
+x-build-identity: &build-identity
+  BUILD_COMMIT: ${BUILD_COMMIT:-unknown}
+  BUILD_DATE: ${BUILD_DATE:-unknown}
+
 x-logging: &default-logging
   driver: json-file
   options:
@@ -55,6 +65,9 @@ services:
     build:
       context: ..
       dockerfile: infrastructure/docker/gateway/Dockerfile
+      args:
+        <<: *build-identity
+        SERVICE_NAME: gateway
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/gateway:${TAG:-latest}
     profiles: [nucleo, development, production, external-db]
     networks: [public, platform]
@@ -100,6 +113,9 @@ services:
     build:
       context: ..
       dockerfile: infrastructure/docker/web/Dockerfile
+      args:
+        <<: *build-identity
+        SERVICE_NAME: web
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/web:${TAG:-latest}
     profiles: [nucleo, development, production, external-db]
     networks: [platform]
@@ -123,7 +139,10 @@ services:
     build:
       context: ..
       dockerfile: infrastructure/docker/node-service/Dockerfile
-      args: { APP_PATH: apps/api }
+      args:
+        <<: *build-identity
+        SERVICE_NAME: api
+        APP_PATH: apps/api
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/api:${TAG:-latest}
     profiles: [nucleo, development, production, external-db]
     networks: [platform, data]
@@ -197,6 +216,9 @@ services:
     build:
       context: ..
       dockerfile: infrastructure/docker/arena-engine/Dockerfile
+      args:
+        <<: *build-identity
+        SERVICE_NAME: arena-engine
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/arena-engine:${TAG:-latest}
     profiles: [development, production, external-db]
     networks: [platform, arena]
@@ -250,7 +272,10 @@ services:
     build:
       context: ..
       dockerfile: infrastructure/docker/node-service/Dockerfile
-      args: { APP_PATH: apps/tournament-worker }
+      args:
+        <<: *build-identity
+        SERVICE_NAME: tournament-worker
+        APP_PATH: apps/tournament-worker
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/tournament-worker:${TAG:-latest}
     profiles: [nucleo, development, production, external-db]
     networks: [platform, data]
@@ -314,7 +339,10 @@ services:
     build:
       context: ..
       dockerfile: infrastructure/docker/bot-manager/Dockerfile
-      args: { APP_PATH: apps/bot-manager }
+      args:
+        <<: *build-identity
+        SERVICE_NAME: bot-manager
+        APP_PATH: apps/bot-manager
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/bot-manager:${TAG:-latest}
     profiles: [development, production, external-db]
     networks: [platform, build]
@@ -359,7 +387,10 @@ services:
     build:
       context: ..
       dockerfile: infrastructure/docker/bot-manager/Dockerfile
-      args: { APP_PATH: apps/bot-manager }
+      args:
+        <<: *build-identity
+        SERVICE_NAME: bot-manager
+        APP_PATH: apps/bot-manager
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/bot-manager:${TAG:-latest}
     profiles: [development, production, external-db]
     networks: [platform, build, data]
@@ -397,7 +428,10 @@ services:
     build:
       context: ..
       dockerfile: infrastructure/docker/node-service/Dockerfile
-      args: { APP_PATH: apps/map-service }
+      args:
+        <<: *build-identity
+        SERVICE_NAME: map-service
+        APP_PATH: apps/map-service
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/map-service:${TAG:-latest}
     profiles: [development, production, external-db]
     networks: [platform, data]
@@ -431,7 +465,10 @@ services:
     build:
       context: ..
       dockerfile: infrastructure/docker/node-service/Dockerfile
-      args: { APP_PATH: apps/replay-service }
+      args:
+        <<: *build-identity
+        SERVICE_NAME: replay-service
+        APP_PATH: apps/replay-service
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/replay-service:${TAG:-latest}
     profiles: [nucleo, development, production, external-db]
     networks: [platform, data]
@@ -521,6 +558,9 @@ services:
     build:
       context: ..
       dockerfile: infrastructure/docker/streamer/Dockerfile
+      args:
+        <<: *build-identity
+        SERVICE_NAME: streamer
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/streamer:${TAG:-latest}
     profiles: [streaming]
     networks: [platform, public]
@@ -581,6 +621,9 @@ services:
     build:
       context: ..
       dockerfile: infrastructure/docker/bot-runtime/Dockerfile
+      args:
+        <<: *build-identity
+        SERVICE_NAME: bot-runtime-python
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/bot-runtime-python:${TAG:-latest}
     profiles: [bots]
     networks: [arena]
@@ -612,6 +655,9 @@ services:
     build:
       context: ..
       dockerfile: infrastructure/docker/backup/Dockerfile
+      args:
+        <<: *build-identity
+        SERVICE_NAME: backup
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/backup:${TAG:-latest}
     profiles: [production, external-db]
     networks: [data, public]

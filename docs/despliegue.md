@@ -162,6 +162,61 @@ Falta configuración del repositorio en GitHub que E10 NO aplica por sí mismo:
    verde: el informe está en `docs/aceptacion/ultimo-informe.md` y como
    artefacto `acceptance-report`. Un criterio en rojo = NO se promociona.
 
+## Identidad de build y gate de procedencia (ADR-016)
+
+Toda imagen del stack lleva DENTRO el commit del que salió: `BUILD_COMMIT`,
+`BUILD_DATE` y `SERVICE_NAME` como `ARG` -> `ENV` y como etiquetas OCI
+(`org.opencontainers.image.revision/created/title/source`), y lo expone en
+`GET /version`:
+
+```json
+{ "service": "replay-service", "commit": "4d469dc" }
+```
+
+`/version` no lleva autenticación (no contiene nada que proteger; el motivo
+completo está en el ADR) y el gateway **no** lo enruta hacia fuera: cada
+servicio lo sirve en su puerto, en las redes internas.
+
+**Construir a mano SIEMPRE con la identidad.** Si no se pasa, la imagen queda
+marcada `unknown` y el gate la rechaza:
+
+```bash
+BUILD_COMMIT=$(git rev-parse HEAD) BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+  docker compose -f infrastructure/docker-compose.yml --profile production build
+```
+
+> Y **nunca** con `--project-directory` apuntando al directorio de producción
+> mientras se construye desde otro árbol: el `build.context: ..` se resuelve
+> contra ese directorio y se construye el árbol equivocado. Ocurrió: se compiló
+> `98f381ec` y se etiquetó `4d469dc`.
+
+**Gate antes de dar por bueno un despliegue.** Para cada servicio deben cumplirse
+las CUATRO, no tres:
+
+1. el `tag` de la imagen nombra el commit desplegado;
+2. `org.opencontainers.image.revision` de la imagen = ese commit;
+3. `/version` del contenedor EN MARCHA = ese commit;
+4. la image ID en ejecución EXISTE todavía en el daemon.
+
+```bash
+# (1)(2)(3)
+node infrastructure/scripts/verify-image-provenance.mjs \
+  --image <ref> --commit <sha> --service <nombre> --port <puerto>
+
+# (4) sobre el daemon entero
+node infrastructure/scripts/check-running-image-id.mjs
+```
+
+(1) por sí sola es una tautología: comparar "imagen declarada" con "imagen
+desplegada" no dice nada cuando la etiqueta miente. (4) es el otro incidente
+real: un contenedor corriendo sobre una image ID ya borrada del daemon. Si (4)
+falla es **DRIFT CRÍTICO**: el estado no es reproducible, un restart no lo
+recupera y **el baseline no sirve para rollback** — hay que reconstruir o volver
+a bajar la imagen del registro antes de tocar nada.
+
+El `tournament-worker` no expone HTTP: su identidad está en `/tmp/version.json`
+dentro del contenedor (`docker exec … cat /tmp/version.json`).
+
 ## Actualización en caliente (E10.M)
 
 Despliegue por servicio: `docker compose -f infrastructure/docker-compose.yml

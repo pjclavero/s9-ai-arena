@@ -9,6 +9,7 @@ import express from "express";
 import { createReplayServer } from "./server.js";
 import { resolveIngestSecretFromEnv } from "./auth.js";
 import { requireWritableDataDir } from "./data-dir.js";
+import { mountVersionEndpoint } from "../../../packages/build-info/index.js";
 
 const dir = process.env.REPLAYS_DIR ?? "/data/replays";
 const port = Number(process.env.PORT ?? 8083);
@@ -27,6 +28,8 @@ const internalSecret = resolveIngestSecretFromEnv(process.env);
 
 const app = express();
 app.get("/healthz", (_req, res) => res.json({ status: "ok", service: "replay-service", dir }));
+// ADR-016 · identidad de build embebida en la imagen, observable en ejecución.
+mountVersionEndpoint(app, "replay-service");
 app.use(createReplayServer({ dir, internalSecret }));
 
 app.listen(port, () => {

@@ -27,6 +27,11 @@ COPY packages/data-dir /app/packages/data-dir
 # Se copia SOLO ese fichero, no el paquete entero: es autocontenido (cero
 # imports) y el streamer no usa nada más de game-rules.
 COPY packages/game-rules/safe-lookup.ts /app/packages/game-rules/safe-lookup.ts
+# ADR-016 · control.ts sirve GET /version con el cuerpo compartido de
+# packages/build-info. Mismo motivo que los dos COPY de arriba: sin esto la
+# imagen arranca y muere con ERR_MODULE_NOT_FOUND aunque funcione en el repo
+# (lo caza infrastructure/tests/image-package-imports.test.ts, que ya lo cazó).
+COPY packages/build-info /app/packages/build-info
 COPY infrastructure/docker/streamer/entrypoint.sh /entrypoint.sh
 # B13 · MISMO entrypoint de datos que la imagen genérica (no un mecanismo
 # paralelo): ajusta la propiedad de ARENA_DATA_DIRS como root y baja a
@@ -86,3 +91,25 @@ RUN ARENA_DATA_DIRS=/data/replays /data-dir-entrypoint.sh sh -euc '\
  && test "$(stat -c %u:%g /data/replays)" = "1000:1000"
 
 ENTRYPOINT ["/data-dir-entrypoint.sh", "/entrypoint.sh"]
+
+# -- ADR-016 - IDENTIDAD DE BUILD (procedencia de imagen) ---------------------
+# Va AL FINAL a proposito: un ARG invalida la cache de todas las capas que le
+# siguen, y estos tres valores cambian en CADA build. Puestos aqui, cambiar de
+# commit no obliga a repetir `npm ci` ni los COPY.
+#
+# Por que existe: dos incidentes reales (docs/decisiones/ADR-016-identidad-de-build.md).
+# Uno construyo el arbol VIEJO y lo etiqueto con el commit NUEVO; el gate de
+# entonces solo comparaba "imagen declarada == imagen desplegada", una
+# tautologia cuando la etiqueta miente. Con esto el commit VIAJA DENTRO de la
+# imagen: como ENV (lo lee el proceso y lo sirve en /version) y como LABEL OCI
+# (lo lee `docker image inspect` sin arrancar nada).
+ARG BUILD_COMMIT=unknown
+ARG BUILD_DATE=unknown
+ARG SERVICE_NAME=streamer
+ENV BUILD_COMMIT=${BUILD_COMMIT} \
+    BUILD_DATE=${BUILD_DATE} \
+    SERVICE_NAME=${SERVICE_NAME}
+LABEL org.opencontainers.image.revision="${BUILD_COMMIT}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.title="${SERVICE_NAME}" \
+      org.opencontainers.image.source="https://github.com/pjclavero/s9-ai-arena"

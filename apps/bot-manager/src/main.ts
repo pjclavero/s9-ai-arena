@@ -16,6 +16,7 @@
 import express, { type Express } from "express";
 import { DEFAULT_CONFIG } from "./config.js";
 import { LaunchAuthority } from "./launch-guard.js";
+import { mountVersionEndpoint } from "../../../packages/build-info/index.js";
 
 function log(level: "info" | "error", msg: string, extra: Record<string, unknown> = {}): void {
   console.log(JSON.stringify({ level, service: "bot-manager", msg, ...extra }));
@@ -47,6 +48,8 @@ export function createBotManagerApp(dockerProxyUrl: string | undefined): Express
       maxSourceBytes: DEFAULT_CONFIG.maxSourceBytes,
     }),
   );
+  // ADR-016 · identidad de build embebida en la imagen, observable en ejecución.
+  mountVersionEndpoint(app, "bot-manager");
   return app;
 }
 

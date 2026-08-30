@@ -2,6 +2,7 @@
 import express from "express";
 import { createDb } from "./db/connection.js";
 import { createApp } from "./app.js";
+import { mountVersionEndpoint } from "../../../packages/build-info/index.js";
 import { resolveTrustProxyHops } from "./middleware/proxy-trust.js";
 import { battleRunConfigFromEnv } from "./battle-run.js";
 import {
@@ -43,6 +44,10 @@ const realBattleRuns = {
 const root = express();
 root.set("trust proxy", trustProxyHops);
 root.get("/healthz", (_req, res) => res.json({ status: "ok", service: "api" }));
+// ADR-016 · /version va en el MISMO envolvente que /healthz, no en createApp():
+// es señal de infraestructura y el test de conformidad prohíbe rutas fuera del
+// contrato de E1 dentro de la app.
+mountVersionEndpoint(root, "api");
 root.use(createApp({ db, trustProxyHops, realBattleRuns }));
 
 root.listen(port, () => {
