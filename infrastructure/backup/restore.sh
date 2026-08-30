@@ -315,7 +315,30 @@ resolve_snapshot() {
   local tag="$1" requested="$2" json count obj id tags_field
   log info "snapshot solicitado: $requested (tag=$tag)"
   if [ "$requested" = "latest" ]; then
-    if ! json="$(restic snapshots --tag "$tag" --latest 1 --json 2>&1)"; then
+    # fix/restic-json-nested-parser (defecto reproducido contra el
+    # repositorio REAL, 2026-08-30): `restic snapshots --latest 1` NO
+    # devuelve un snapshot — devuelve el más reciente DE CADA GRUPO
+    # (host,paths). El repositorio de producción acumula tres hostnames
+    # históricos (el hostname del sistema del primer backup manual y dos
+    # IDs de contenedor, de antes de fix/restic-stable-hostname), así que
+    # esa misma orden devuelve HOY dos objetos para tag=s9-arena-data — y
+    # resolve_snapshot los rechazaba con "'latest' es AMBIGUO". Es decir:
+    # `restore.sh --restore <dest>` SIN selector, la ruta por defecto del
+    # runbook, estaba rota contra el repositorio de verdad, y ningún test
+    # lo veía porque el restic falso siempre devuelve un único elemento.
+    #
+    # Fallaba en CERRADO (nunca restauró el snapshot equivocado), que es lo
+    # correcto, pero con un mensaje que culpaba al operador de un prefijo
+    # ambiguo que no había escrito. Se acota la búsqueda al host de ESTA
+    # instalación cuando RESTIC_HOSTNAME está definido — el mismo `--host`
+    # que backup.sh pasa a `backup` y a `forget` (ver
+    # fix/restic-stable-hostname), así que "el último backup de esta
+    # instalación" es exactamente lo que se quiere decir con "latest".
+    local -a host_args=()
+    if [ -n "${RESTIC_HOSTNAME:-}" ]; then
+      host_args=(--host "$RESTIC_HOSTNAME")
+    fi
+    if ! json="$(restic snapshots --tag "$tag" "${host_args[@]}" --latest 1 --json 2>&1)"; then
       log error "no se pudo listar snapshots para tag=$tag: $(printf '%s' "$json" | tr '\n' ' ')"
       return 1
     fi
@@ -371,7 +394,22 @@ resolve_snapshot() {
     return 1
   fi
   if [ "$count" -gt 1 ]; then
-    log error "'$requested' es AMBIGUO: coincide con $count snapshots distintos (prefijo compartido, posiblemente entre datos y secretos); usa un ID más largo o el ID completo — nunca se adivina cuál restaurar"
+    if [ "$requested" = "latest" ]; then
+      # Con `--host` acotado esto ya no debería ocurrir; si ocurre, es que
+      # el repositorio tiene VARIOS grupos (host,paths) para el mismo tag
+      # dentro del mismo host — o que RESTIC_HOSTNAME no está definido en
+      # el entorno de recuperación. Decir cuáles son, para que el operador
+      # pueda elegir con --snapshot en vez de adivinar. Sigue siendo fallo
+      # cerrado: "el más reciente de varios grupos" no es "el más
+      # reciente".
+      local o
+      for o in "${snap_objs[@]}"; do
+        log error "candidato a 'latest' (tag=$tag): id=$(printf '%s' "$o" | json_top_level_field short_id) host=$(printf '%s' "$o" | json_top_level_field hostname)"
+      done
+      log error "'latest' es AMBIGUO para tag=$tag: restic devuelve $count snapshots (uno por grupo host,paths). Elige uno con --snapshot <id> de la lista de arriba, o define RESTIC_HOSTNAME con el host de esta instalación — nunca se adivina cuál restaurar"
+    else
+      log error "'$requested' es AMBIGUO: coincide con $count snapshots distintos (prefijo compartido, posiblemente entre datos y secretos); usa un ID más largo o el ID completo — nunca se adivina cuál restaurar"
+    fi
     return 1
   fi
   obj="${snap_objs[0]}"

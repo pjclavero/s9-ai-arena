@@ -356,6 +356,17 @@ vía de custodia convierte un olvido en una pérdida total.
   break-glass y de su frase de paso" más arriba. Una única copia guardada en
   el host de respaldo NO cumple esa condición: se pierde con el mismo suceso
   que se lleva el repositorio.
+- **`--latest` con varios hosts en el repositorio (fix/restic-json-nested-parser):**
+  `restic snapshots --latest 1` devuelve el más reciente **de cada grupo
+  (host,paths)**, no uno solo. Un repositorio con hostnames históricos —el del
+  primer backup manual y los IDs de contenedor anteriores a
+  fix/restic-stable-hostname— hace que `--latest` sea ambiguo, y `restore.sh`
+  falla en cerrado listando los candidatos. Desde este cambio, `restore.sh`
+  acota con `--host $RESTIC_HOSTNAME` cuando esa variable está definida (el
+  mismo host que `backup.sh` pasa a `backup` y a `forget`), así que en el
+  entorno de recuperación hay que definirla igual que en producción. En una
+  recuperación real, de todas formas, se elige el snapshot con `--snapshot
+  <id>` tras revisar `--list`: `--latest` no es el camino recomendado.
 - **Versión de restic (fix/restic-json-nested-parser):** `resolve_snapshot()`
   ya no depende de que los objetos de `restic snapshots --json` sean planos,
   así que `restic` vuelve a instalarse sin versión fijada en
