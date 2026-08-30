@@ -891,20 +891,12 @@ exit 0
 // por `--host` cuando se le pasa.
 describe("`--latest 1` con varios hosts en el repositorio (defecto real, 2026-08-30)", () => {
   // known: host -> short_id del ultimo snapshot de ese host con el tag.
-  function writeFakeResticMultiHost(
-    fb: string,
-    log: string,
-    tag: string,
-    byHost: Record<string, string>,
-  ) {
+  function writeFakeResticMultiHost(fb: string, log: string, tag: string, byHost: Record<string, string>) {
     const objs = Object.entries(byHost)
       .map(([host, id]) => `{"short_id":"${id}","hostname":"${host}","tags":["${tag}"]}`)
       .join(",");
     const perHostCases = Object.entries(byHost)
-      .map(
-        ([host, id]) =>
-          `        "${host}") echo '[{"short_id":"${id}","hostname":"${host}","tags":["${tag}"]}]' ;;`,
-      )
+      .map(([host, id]) => `        "${host}") echo '[{"short_id":"${id}","hostname":"${host}","tags":["${tag}"]}]' ;;`)
       .join("\n");
     const script = `#!/usr/bin/env bash
 echo "$@" >> "${log}"
@@ -963,9 +955,7 @@ exit 1
     expect(out).toContain("snapshot resuelto: aaaa1111");
     expect(restoredId()).toBe("aaaa1111");
     // El --host tiene que llegar de verdad a restic, no solo "funcionar".
-    expect(
-      resticCalls().some((c) => c.startsWith("snapshots") && c.includes("--host arena-backup-host")),
-    ).toBe(true);
+    expect(resticCalls().some((c) => c.startsWith("snapshots") && c.includes("--host arena-backup-host"))).toBe(true);
   });
 
   it("sin RESTIC_HOSTNAME y con varios hosts: FALLA cerrado, LISTA los candidatos y no restaura", () => {
