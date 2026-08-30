@@ -751,14 +751,74 @@ exit 0
   const NESTED_SUMMARY_JSON =
     '[{"time":"2026-01-01T00:00:00Z","tree":"abc","paths":["/staging"],"hostname":"backup-host","username":"root","tags":["s9-arena-data"],"id":"aaaa1111bbbb2222","short_id":"aaaa1111","summary":{"files_new":3,"data_added":123,"total_bytes_processed":456}}]';
 
-  it("restic >=0.17 con 'summary' anidado: FALLA con mensaje que senala la causa (version de restic no soportada), nunca restaura", () => {
+  // fix/restic-json-nested-parser: hasta este cambio, este mismo fixture
+  // hacia FALLAR la resolucion ("objeto anidado ... no soportada por este
+  // parseo") y esa era la razon UNICA por la que restic estaba fijado a
+  // 0.16.4 en el Dockerfile del servicio backup. Con el escaneo por
+  // profundidad, la forma de restic >=0.17 se resuelve igual que la de
+  // 0.16: mismo short_id, mismo tag, misma restauracion.
+  it("restic >=0.17 con 'summary' anidado: RESUELVE el short_id real y restaura ESE snapshot", () => {
     writeFakeResticRawJson(fakebin, resticLog, { pref: NESTED_SUMMARY_JSON });
     const { code, out } = runRestore(["--restore", dest, "--snapshot", "pref"]);
+    expect(code).toBe(0);
+    expect(out).toContain("snapshot resuelto: aaaa1111");
+    expect(restoredId()).toBe("aaaa1111");
+  });
+
+  // El anidamiento no es solo un estorbo para el troceado: es una via de
+  // SUPLANTACION. Un objeto anidado que contenga su propio "short_id" no
+  // debe poder sustituir al del snapshot. Se lee el de PRIMER NIVEL.
+  const NESTED_IMPOSTOR_JSON =
+    '[{"time":"2026-01-01T00:00:00Z","tree":"abc","paths":["/staging"],"hostname":"backup-host","tags":["s9-arena-data"],"id":"aaaa1111bbbb2222","short_id":"aaaa1111","summary":{"short_id":"9999impostor","tags":["s9-arena-secrets"],"files_new":3}}]';
+
+  it("un 'short_id' (y un 'tags') ANIDADOS no suplantan a los de primer nivel", () => {
+    writeFakeResticRawJson(fakebin, resticLog, { pref: NESTED_IMPOSTOR_JSON });
+    const { code, out } = runRestore(["--restore", dest, "--snapshot", "pref"]);
+    expect(code).toBe(0);
+    expect(out).toContain("snapshot resuelto: aaaa1111");
+    expect(out).not.toContain("9999impostor");
+    expect(restoredId()).toBe("aaaa1111");
+  });
+
+  // Ambiguedad CON anidamiento: dos snapshots (datos y secretos), cada uno
+  // con su propio "summary". El troceado por profundidad tiene que contar
+  // DOS elementos de primer nivel, no cuatro objetos sueltos: la guarda de
+  // ambiguedad debe seguir disparandose, y por el motivo correcto.
+  const NESTED_AMBIGUOUS_JSON =
+    '[{"tags":["s9-arena-data"],"short_id":"pref1111","summary":{"files_new":1}},' +
+    '{"tags":["s9-arena-secrets"],"short_id":"pref2222","summary":{"files_new":2}}]';
+
+  it("prefijo AMBIGUO con objetos anidados: sigue contando 2 snapshots y FALLA, nunca restaura", () => {
+    writeFakeResticRawJson(fakebin, resticLog, { pref: NESTED_AMBIGUOUS_JSON });
+    const { code, out } = runRestore(["--restore", dest, "--snapshot", "pref"]);
     expect(code).not.toBe(0);
-    expect(out).toContain("no se pudo extraer short_id");
-    expect(out).toContain("objeto anidado");
-    expect(out).toContain("no soportada por este parseo");
+    expect(out).toContain("AMBIGUO");
+    expect(out).toContain("coincide con 2 snapshots");
     expect(restoredId()).toBeUndefined();
+  });
+
+  // JSON indentado y multilinea (restic lo emite en una linea, pero el
+  // parseo no debe depender de eso: un `restic snapshots --json` pasado
+  // por un formateador, o una version futura que indente, no puede
+  // cambiar que se restaure).
+  const NESTED_PRETTY_JSON = [
+    "[",
+    "  {",
+    '    "tags": ["s9-arena-data"],',
+    '    "short_id": "aaaa1111",',
+    '    "summary": {',
+    '      "files_new": 3',
+    "    }",
+    "  }",
+    "]",
+  ].join("\n");
+
+  it("JSON indentado y multilinea con objeto anidado: resuelve igual", () => {
+    writeFakeResticRawJson(fakebin, resticLog, { pref: NESTED_PRETTY_JSON });
+    const { code, out } = runRestore(["--restore", dest, "--snapshot", "pref"]);
+    expect(code).toBe(0);
+    expect(out).toContain("snapshot resuelto: aaaa1111");
+    expect(restoredId()).toBe("aaaa1111");
   });
 
   // ── Calibracion directa de la mutacion R2 del supervisor ────────────────
@@ -769,10 +829,11 @@ exit 0
   // fuera un snapshot real).
   //
   // El fixture NESTED_SUMMARY_JSON de arriba NO sirve para calibrar esta
-  // mutacion: al extraer el objeto MAS INTERNO (el "summary" anidado), ese
-  // fragmento tampoco tiene campo "tags" -- el chequeo de tag POSTERIOR
-  // (`tags_field`) tambien falla y la mutacion queda enmascarada por esa
-  // segunda guarda, aunque por el motivo EQUIVOCADO. Para aislar de verdad
+  // mutacion: desde fix/restic-json-nested-parser ese caso RESUELVE bien,
+  // asi que ni siquiera entra en la rama de extraccion fallida (y antes
+  // del fix tampoco servia: se extraia el "summary", que tampoco tiene
+  // "tags", y la mutacion quedaba enmascarada por la guarda de tag
+  // POSTERIOR, aunque por el motivo EQUIVOCADO). Para aislar de verdad
   // la rama de extraccion de short_id (como ya hace runValidateManifestJson
   // en backup.test.ts para aislar sub-chequeos de --verify), hace falta un
   // objeto PLANO (sin anidar, count=1, ninguna ambiguedad de parseo) al que

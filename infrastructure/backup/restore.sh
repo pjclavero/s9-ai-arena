@@ -156,6 +156,140 @@ bootstrap_sftp() {
   return 0
 }
 
+# ── Parseo JSON mínimo pero CONSCIENTE DEL ANIDAMIENTO ────────────────────
+# fix/restic-json-nested-parser: hasta este cambio, resolve_snapshot()
+# troceaba la salida de `restic snapshots --json` con
+# `grep -o '{[^{}]*}'`, que por construcción sólo casa objetos SIN llaves
+# dentro. Eso obligó a fijar `restic=0.16.4-r5` en
+# infrastructure/docker/backup/Dockerfile: restic >=0.17 añadió el campo
+# `"summary":{…}` a cada snapshot, y ese grep habría casado el objeto MÁS
+# INTERNO (el summary) en vez del snapshot, dejando --snapshot/--latest
+# fallando en cerrado. El pin evitaba el fallo silencioso, pero convertía
+# la capacidad de restaurar un snapshot ELEGIDO en rehén de que Alpine
+# siguiera publicando esa versión exacta: el día que `restic=0.16.4-r5`
+# desaparezca del índice de apk, la imagen de backup deja de construirse
+# —y eso ocurre en la reconstrucción, no en la restauración, así que se
+# descubre en el peor momento posible.
+#
+# Estas dos funciones sustituyen el grep por un escaneo por PROFUNDIDAD,
+# consciente de cadenas y escapes. Siguen sin ser un parser JSON completo
+# (no interpretan números, ni \u, ni validan el documento) — son
+# deliberadamente lo mínimo para lo único que hace falta aquí: separar los
+# elementos del array raíz y leer campos del PRIMER nivel de cada
+# elemento. Lo que se gana: un objeto anidado (summary, o cualquier otro
+# que restic añada mañana) deja de romper el troceado, y un campo anidado
+# que se llame igual que uno de primer nivel ya no puede suplantarlo.
+#
+# json_top_level_elements — lee un array JSON por stdin y escribe cada
+# elemento del PRIMER nivel en UNA línea (el espacio en blanco fuera de
+# cadenas se descarta: es insignificante en JSON, y una cadena JSON nunca
+# contiene saltos de línea crudos).
+json_top_level_elements() {
+  awk '
+    { all = all $0 "\n" }
+    END {
+      depth = 0; instr = 0; esc = 0; buf = ""; started = 0
+      n = length(all)
+      for (i = 1; i <= n; i++) {
+        c = substr(all, i, 1)
+        if (instr) {
+          if (started) buf = buf c
+          if (esc) { esc = 0 }
+          else if (c == "\\") { esc = 1 }
+          else if (c == "\"") { instr = 0 }
+          continue
+        }
+        # Espacio en blanco FUERA de cadena: insignificante en JSON. Se
+        # descarta aqui para que cada elemento salga en UNA sola linea
+        # (dentro de una cadena JSON no puede haber saltos de linea
+        # crudos: van escapados como \n, y esos no se tocan). Asi el
+        # troceado no necesita separador NUL, que `printf "%c", 0` no
+        # emite de forma portable en el awk de busybox (Alpine).
+        if (c == " " || c == "\t" || c == "\n" || c == "\r") continue
+        if (c == "\"") { instr = 1; if (started) buf = buf c; continue }
+        if (c == "{" || c == "[") {
+          depth++
+          if (depth == 2) { started = 1; buf = c }
+          else if (depth > 2 && started) { buf = buf c }
+          continue
+        }
+        if (c == "}" || c == "]") {
+          depth--
+          if (depth == 1 && started) { print buf c; buf = ""; started = 0 }
+          else if (depth >= 2 && started) { buf = buf c }
+          continue
+        }
+        if (started) buf = buf c
+      }
+    }
+  '
+}
+
+# json_top_level_field CLAVE — lee UN objeto JSON por stdin y escribe el
+# valor de CLAVE si aparece en su PRIMER nivel: sin las comillas
+# delimitadoras si es cadena, literal (corchetes/llaves incluidos) si es
+# array u objeto. No escribe nada si la clave solo existe dentro de un
+# valor anidado — que es exactamente el punto: un `"short_id"` que viva
+# dentro de `"summary"` no puede hacerse pasar por el del snapshot.
+#
+# Los escapes JSON dentro de una cadena se devuelven TAL CUAL (`\n` sigue
+# siendo la secuencia de dos caracteres, no un salto de linea). Los campos
+# que este script lee — short_id, tags — son hexadecimal y etiquetas
+# ASCII, asi que no hay nada que desescapar; y devolverlos crudos garantiza
+# que el valor nunca introduce saltos de linea en la sustitucion de
+# comandos que lo captura.
+json_top_level_field() {
+  awk -v want="$1" '
+    { all = all $0 "\n" }
+    END {
+      depth = 0; instr = 0; esc = 0
+      tok = ""; key = ""; expectval = 0
+      n = length(all)
+      for (i = 1; i <= n; i++) {
+        c = substr(all, i, 1)
+        if (instr) {
+          if (esc) { esc = 0; tok = tok c; continue }
+          if (c == "\\") { esc = 1; tok = tok c; continue }
+          if (c == "\"") {
+            instr = 0
+            if (expectval && depth == 1) { print tok; exit }
+            if (depth == 1) { key = tok }
+            continue
+          }
+          tok = tok c
+          continue
+        }
+        if (c == "\"") { instr = 1; tok = ""; continue }
+        if (c == "{" || c == "[") {
+          if (expectval && depth == 1) {
+            d = 0; out = ""; instr2 = 0; esc2 = 0
+            for (j = i; j <= n; j++) {
+              cc = substr(all, j, 1)
+              if (instr2) {
+                out = out cc
+                if (esc2) { esc2 = 0 }
+                else if (cc == "\\") { esc2 = 1 }
+                else if (cc == "\"") { instr2 = 0 }
+                continue
+              }
+              if (cc == " " || cc == "\t" || cc == "\n" || cc == "\r") continue
+              out = out cc
+              if (cc == "\"") { instr2 = 1; continue }
+              if (cc == "{" || cc == "[") { d++ }
+              else if (cc == "}" || cc == "]") { d--; if (d == 0) break }
+            }
+            print out; exit
+          }
+          depth++; continue
+        }
+        if (c == "}" || c == "]") { depth--; expectval = 0; continue }
+        if (c == ":") { if (depth == 1 && key == want) { expectval = 1 }; continue }
+        if (c == ",") { if (depth == 1) { expectval = 0; key = "" }; continue }
+      }
+    }
+  '
+}
+
 # resolve_snapshot — fix/restore-snapshot-selection: resuelve "$2" (tag
 # restic, p.ej. s9-arena-data) + "$3" (ID solicitado, o el literal "latest")
 # al ID de snapshot que se va a restaurar de verdad, dejando constancia en el
@@ -213,14 +347,20 @@ resolve_snapshot() {
   #       — la misma ambigüedad del simulacro del 2026-08-18 ("¿qué se
   #       restauró de verdad?"), reaparecida por otra puerta.
   #
-  # Fix único para los tres: aislar cada objeto TOP-LEVEL del array JSON
-  # (`restic snapshots --json` no anida objetos — sólo escalares y arrays
-  # de escalares en sus campos, cierto en todas las versiones probadas; el
-  # mismo tipo de parseo mínimo honesto que ya usa validate_manifest_json()
-  # más abajo, no un parser JSON completo) y exigir EXACTAMENTE UNO. Con
-  # exactamente un objeto, leer `short_id` (nunca lo tecleado) y comprobar
-  # el tag SÓLO dentro del campo `"tags":[...]` de ESE objeto.
-  mapfile -t snap_objs < <(printf '%s' "$json" | grep -o '{[^{}]*}')
+  # Fix único para los tres: aislar cada elemento TOP-LEVEL del array JSON
+  # y exigir EXACTAMENTE UNO. Con exactamente un objeto, leer `short_id`
+  # (nunca lo tecleado) y comprobar el tag SÓLO dentro del campo
+  # `"tags":[...]` de ESE objeto, ambos leídos del PRIMER NIVEL.
+  #
+  # fix/restic-json-nested-parser: el troceado ya no es
+  # `grep -o '{[^{}]*}'` (que sólo casaba objetos sin llaves dentro y por
+  # eso obligaba a fijar restic a 0.16.4), sino
+  # json_top_level_elements/json_top_level_field — escaneo por
+  # profundidad, consciente de cadenas y escapes. Un `"summary":{…}`
+  # (restic >=0.17) o cualquier otro campo anidado que restic añada en el
+  # futuro deja de romper la selección de snapshot, y un `"short_id"`
+  # ANIDADO no puede suplantar al del snapshot.
+  mapfile -t snap_objs < <(printf '%s' "$json" | json_top_level_elements)
   count="${#snap_objs[@]}"
   if [ "$count" -eq 0 ]; then
     if [ "$requested" = "latest" ]; then
@@ -236,31 +376,23 @@ resolve_snapshot() {
   fi
   obj="${snap_objs[0]}"
 
-  id="$(printf '%s' "$obj" | grep -o '"short_id":"[^"]*"' | head -1 | cut -d'"' -f4)"
+  id="$(printf '%s' "$obj" | json_top_level_field short_id)"
   if [ -z "$id" ]; then
-    # Supervisión hostil de #118 (ronda 2): este parseo asume objetos de
-    # snapshot PLANOS (ver el comentario junto a `apk add … restic=…` en
-    # infrastructure/docker/backup/Dockerfile, donde se fija la versión de
-    # restic exactamente por esto). Si `restic snapshots --json` anida un
-    # objeto (p.ej. el campo "summary" que restic ≥0.17 añadió),
-    # `grep -o '{[^{}]*}'` casa el objeto MÁS INTERNO en vez del snapshot
-    # completo — "$obj" nunca tendrá "short_id" en ese caso, aunque
-    # "$json" SÍ lo tenga en alguna parte. Distinguir ese caso concreto
-    # (probable versión de restic no soportada por este parseo) de un
-    # "formato inesperado" genérico: mismo fallo cerrado en ambos (nunca se
-    # asume un short_id que no se pudo leer), pero con una causa que un
-    # operador puede accionar sin tener que leer el propio script.
-    if printf '%s' "$json" | grep -q '"short_id"'; then
-      log error "no se pudo extraer short_id: el snapshot devuelto por restic tiene un objeto anidado que este parseo no soporta (posible versión de restic no soportada por este parseo, p.ej. el campo 'summary' de restic >=0.17) — revisar resolve_snapshot() en restore.sh y la versión de restic fijada en infrastructure/docker/backup/Dockerfile antes de continuar"
-    else
-      log error "no se pudo extraer short_id del snapshot devuelto por restic (formato inesperado): $obj"
-    fi
+    # fix/restic-json-nested-parser: antes, un objeto anidado en la salida
+    # de restic (el `summary` de restic >=0.17) hacía que el troceado por
+    # grep devolviera el objeto MÁS INTERNO y este `if` se disparara
+    # SIEMPRE con esa versión de restic. Ya no: json_top_level_elements
+    # separa el snapshot completo aunque anide, y json_top_level_field lee
+    # el `short_id` del PRIMER NIVEL. Llegar aquí ya sólo significa lo que
+    # dice: ese snapshot no trae `short_id` de primer nivel. Fallo cerrado
+    # igual — nunca se sustituye por el ID tecleado.
+    log error "no se pudo extraer short_id del snapshot devuelto por restic (formato inesperado, sin 'short_id' de primer nivel): $obj"
     return 1
   fi
 
   # El campo tags DE ESTE snapshot, no una búsqueda de subcadena sobre todo
   # el objeto (ver (b) arriba).
-  tags_field="$(printf '%s' "$obj" | grep -o '"tags":\[[^]]*\]')"
+  tags_field="$(printf '%s' "$obj" | json_top_level_field tags)"
   if ! printf '%s' "$tags_field" | grep -q "\"$tag\""; then
     log error "el snapshot '$id' existe pero no tiene el tag '$tag' (tags reales: ${tags_field:-ninguno}): se niega a restaurar (posible mezcla de datos y secretos)"
     return 1
