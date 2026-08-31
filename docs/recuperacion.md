@@ -256,10 +256,125 @@ rm -rf /tmp/restore-data   # limpiar restos en claro
 |---|---|---|---|---|---|---|---|---|---|
 | _pendiente de entorno con Docker_ | | | | | | | | | |
 
+## Custodia del paquete break-glass y de su frase de paso
+
+El paquete *break-glass* es un único fichero cifrado
+(`s9-ai-arena-break-glass.tar.gz.gpg`, GPG simétrico AES256, 0600 root:root)
+que contiene todo lo que hace falta para arrancar la Fase 2 desde cero:
+contraseña del repositorio restic, clave SSH del backend sftp, `known_hosts`
+con la huella ya verificada, el procedimiento impreso y un binario estático de
+restic. Su frase de paso NO está en ninguna máquina: la custodia el operador.
+
+Ese diseño cierra el problema del huevo y la gallina de "Requisitos previos".
+Lo que NO cierra por sí solo es **dónde vive el paquete**, y ahí hay una
+condición que debe cumplirse siempre:
+
+> Perder la máquina de producción **y** el host de respaldo no puede equivaler
+> a perder el acceso al backup. Si la única copia del paquete vive en el host
+> de respaldo, comparte dominio de fallo con el repositorio restic: el mismo
+> incendio, el mismo robo, el mismo fallo de la fuente de alimentación o el
+> mismo `zfs destroy` se llevan las dos cosas a la vez, y el backup pasa a ser
+> irrecuperable aunque los datos siguieran existiendo en otro sitio.
+
+### Regla de las tres copias
+
+1. **Copia operativa** — en el host de respaldo, junto a
+   `verify-break-glass.sh`. Es la que se usa en un simulacro rutinario.
+2. **Copia fría fuera de línea** — en un soporte que NO esté conectado a
+   ninguna de las dos máquinas ni a la red: una llave USB (idealmente dos, de
+   fabricantes distintos) guardada físicamente lejos, en un sobre firmado y
+   fechado.
+3. **Copia remota** — fuera del edificio: otra ubicación física del operador,
+   o almacenamiento de un tercero. Como el paquete ya va cifrado con GPG
+   simétrico y la frase de paso no viaja con él, un almacenamiento no
+   confiable es aceptable para el blob; lo que nunca puede acompañarlo es la
+   frase de paso.
+
+Opciones concretas para un homelab, con su compromiso:
+
+| Opción | Dominio de fallo | Compromiso |
+|---|---|---|
+| USB cifrada en otro edificio | Independiente | Hay que refrescarla a mano; la memoria flash se degrada sin alimentar (revisar al menos una vez al año) |
+| Copia en un equipo de escritorio del operador | Independiente del rack, no del domicilio | Cómoda y verificable a menudo; no protege contra un siniestro del domicilio |
+| Almacenamiento de un tercero (nube, cuenta ajena al proyecto) | Totalmente independiente | El blob es opaco (GPG), pero el proveedor sabe que existe; jamás subir la frase de paso al mismo sitio |
+| Copia impresa en papel del blob | Independiente | Descartada: 9 MB no son transcribibles. **Sí** tiene sentido imprimir el procedimiento y la huella SHA-256 del blob |
+
+### Procedimiento (lo ejecuta el OPERADOR, en persona, en un TTY)
+
+Ningún agente ejecuta estos pasos: mueven material de recuperación y exigen la
+frase de paso, que sólo el operador conoce.
+
+1. En el host de respaldo, anotar la huella del blob actual:
+   `sha256sum <backup-path>/recovery-secrets/s9-ai-arena/s9-ai-arena-break-glass.tar.gz.gpg`
+2. Copiar el blob al soporte externo **por un canal que no lo deje en un
+   tercer sitio**: montar la USB en el host de respaldo y `cp` directo, o
+   `scp` a un equipo del operador. Nunca a un directorio compartido ni a un
+   correo.
+3. `chmod 600` en el destino y volver a calcular la huella. Debe coincidir con
+   la del paso 1, carácter a carácter. Si no coincide, la copia no vale.
+4. Guardar junto a la copia — **en papel**, no en el mismo soporte — la fecha,
+   la huella SHA-256 y una línea que diga dónde está la frase de paso (no la
+   frase).
+5. Repetir para la tercera copia, en otra ubicación.
+6. Registrar la fecha en el "Registro del simulacro" de este documento.
+
+### Verificación (obligatoria, y en el sitio correcto)
+
+Una copia no verificada no cuenta. Al menos una vez por trimestre, y siempre
+tras regenerar el paquete, el operador ejecuta `verify-break-glass.sh` **desde
+la copia externa, en una máquina que no sea ni producción ni el host de
+respaldo**. Ese script descifra el paquete en un temporal, contrasta los
+SHA-256 de su contenido y muestra la huella de la clave SSH recuperada; no
+restaura datos, no toca el repositorio, no toca sshd. Una verificación hecha
+sólo sobre la copia operativa demuestra que la copia operativa está bien, que
+es justamente la que se supone que se ha perdido en el escenario que importa.
+
+### Custodia de la frase de paso
+
+La frase de paso es el único elemento que **no** debe estar en ninguna de las
+tres copias, ni en producción, ni en el host de respaldo, ni en este
+repositorio, ni en una transcripción de un agente. Opciones, con su
+compromiso:
+
+| Opción | Compromiso |
+|---|---|
+| Gestor de contraseñas del operador con copia de seguridad propia | Lo más práctico; su propia contraseña maestra pasa a ser el único punto de fallo, así que necesita a su vez una vía de recuperación |
+| Papel sellado en dos ubicaciones físicas distintas | Inmune a fallos digitales; hay que protegerlo del extravío y de la lectura casual |
+| Reparto Shamir (p. ej. 2 de 3 fragmentos) entre personas o ubicaciones | Ninguna copia suelta sirve por sí sola; añade el riesgo de no poder reunir el quórum en una urgencia — sólo tiene sentido con más de una persona de confianza |
+| Derivarla de un secreto que el operador ya memoriza | Descartada: si se olvida, no hay reserva; y si se apunta, es la opción de papel con peor disciplina |
+
+Recomendación para este homelab: gestor de contraseñas **y** una copia en
+papel sellada en una ubicación distinta de las tres copias del blob. Una sola
+vía de custodia convierte un olvido en una pérdida total.
+
 ## Riesgos conocidos
 
 - La contraseña de restic es el único secreto no recuperable desde el propio
   backup: debe custodiarse fuera del servidor (doble custodia recomendada).
+  El paquete break-glass resuelve el arranque en frío, pero sólo si existe una
+  copia FUERA del dominio de fallo del repositorio — ver "Custodia del paquete
+  break-glass y de su frase de paso" más arriba. Una única copia guardada en
+  el host de respaldo NO cumple esa condición: se pierde con el mismo suceso
+  que se lleva el repositorio.
+- **`--latest` con varios hosts en el repositorio (fix/restic-json-nested-parser):**
+  `restic snapshots --latest 1` devuelve el más reciente **de cada grupo
+  (host,paths)**, no uno solo. Un repositorio con hostnames históricos —el del
+  primer backup manual y los IDs de contenedor anteriores a
+  fix/restic-stable-hostname— hace que `--latest` sea ambiguo, y `restore.sh`
+  falla en cerrado listando los candidatos. Desde este cambio, `restore.sh`
+  acota con `--host $RESTIC_HOSTNAME` cuando esa variable está definida (el
+  mismo host que `backup.sh` pasa a `backup` y a `forget`), así que en el
+  entorno de recuperación hay que definirla igual que en producción. En una
+  recuperación real, de todas formas, se elige el snapshot con `--snapshot
+  <id>` tras revisar `--list`: `--latest` no es el camino recomendado.
+- **Versión de restic (fix/restic-json-nested-parser):** `resolve_snapshot()`
+  ya no depende de que los objetos de `restic snapshots --json` sean planos,
+  así que `restic` vuelve a instalarse sin versión fijada en
+  `infrastructure/docker/backup/Dockerfile`. Lo que sigue siendo un contrato
+  OBSERVADO y no garantizado por restic es el agrupamiento de `forget`
+  (`--group-by host,tags`): antes de dar por buena una versión nueva en
+  producción hay que reconstruir la imagen, pasar `infrastructure/tests` y
+  repetir el simulacro de este documento contra el repositorio real.
 - **Custodia de la clave SSH del backend sftp (fix/restore-sftp-bootstrap,
   NO resuelto por este cambio — es un problema OPERATIVO, no de código):**
   `restore.sh` recibe `RESTIC_SSH_KEY_FILE`/`RESTIC_SSH_KNOWN_HOSTS_FILE`,

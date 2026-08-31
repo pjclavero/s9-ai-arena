@@ -104,11 +104,16 @@ exit 1
   writeFileSync(join(fb, "restic"), script, { mode: 0o755 });
 }
 
-function runRestore(args: string[]) {
+function runRestore(args: string[], extraEnv: Record<string, string> = {}) {
   try {
     const out = execFileSync(BASH_BIN, [RESTORE, ...args], {
       encoding: "utf8",
-      env: { ...process.env, PATH: `${fakebin}:${process.env.PATH}`, RESTIC_REPOSITORY: "/tmp/fake-repo" },
+      env: {
+        ...process.env,
+        PATH: `${fakebin}:${process.env.PATH}`,
+        RESTIC_REPOSITORY: "/tmp/fake-repo",
+        ...extraEnv,
+      },
     });
     return { code: 0, out };
   } catch (e: any) {
@@ -751,14 +756,74 @@ exit 0
   const NESTED_SUMMARY_JSON =
     '[{"time":"2026-01-01T00:00:00Z","tree":"abc","paths":["/staging"],"hostname":"backup-host","username":"root","tags":["s9-arena-data"],"id":"aaaa1111bbbb2222","short_id":"aaaa1111","summary":{"files_new":3,"data_added":123,"total_bytes_processed":456}}]';
 
-  it("restic >=0.17 con 'summary' anidado: FALLA con mensaje que senala la causa (version de restic no soportada), nunca restaura", () => {
+  // fix/restic-json-nested-parser: hasta este cambio, este mismo fixture
+  // hacia FALLAR la resolucion ("objeto anidado ... no soportada por este
+  // parseo") y esa era la razon UNICA por la que restic estaba fijado a
+  // 0.16.4 en el Dockerfile del servicio backup. Con el escaneo por
+  // profundidad, la forma de restic >=0.17 se resuelve igual que la de
+  // 0.16: mismo short_id, mismo tag, misma restauracion.
+  it("restic >=0.17 con 'summary' anidado: RESUELVE el short_id real y restaura ESE snapshot", () => {
     writeFakeResticRawJson(fakebin, resticLog, { pref: NESTED_SUMMARY_JSON });
     const { code, out } = runRestore(["--restore", dest, "--snapshot", "pref"]);
+    expect(code).toBe(0);
+    expect(out).toContain("snapshot resuelto: aaaa1111");
+    expect(restoredId()).toBe("aaaa1111");
+  });
+
+  // El anidamiento no es solo un estorbo para el troceado: es una via de
+  // SUPLANTACION. Un objeto anidado que contenga su propio "short_id" no
+  // debe poder sustituir al del snapshot. Se lee el de PRIMER NIVEL.
+  const NESTED_IMPOSTOR_JSON =
+    '[{"time":"2026-01-01T00:00:00Z","tree":"abc","paths":["/staging"],"hostname":"backup-host","tags":["s9-arena-data"],"id":"aaaa1111bbbb2222","short_id":"aaaa1111","summary":{"short_id":"9999impostor","tags":["s9-arena-secrets"],"files_new":3}}]';
+
+  it("un 'short_id' (y un 'tags') ANIDADOS no suplantan a los de primer nivel", () => {
+    writeFakeResticRawJson(fakebin, resticLog, { pref: NESTED_IMPOSTOR_JSON });
+    const { code, out } = runRestore(["--restore", dest, "--snapshot", "pref"]);
+    expect(code).toBe(0);
+    expect(out).toContain("snapshot resuelto: aaaa1111");
+    expect(out).not.toContain("9999impostor");
+    expect(restoredId()).toBe("aaaa1111");
+  });
+
+  // Ambiguedad CON anidamiento: dos snapshots (datos y secretos), cada uno
+  // con su propio "summary". El troceado por profundidad tiene que contar
+  // DOS elementos de primer nivel, no cuatro objetos sueltos: la guarda de
+  // ambiguedad debe seguir disparandose, y por el motivo correcto.
+  const NESTED_AMBIGUOUS_JSON =
+    '[{"tags":["s9-arena-data"],"short_id":"pref1111","summary":{"files_new":1}},' +
+    '{"tags":["s9-arena-secrets"],"short_id":"pref2222","summary":{"files_new":2}}]';
+
+  it("prefijo AMBIGUO con objetos anidados: sigue contando 2 snapshots y FALLA, nunca restaura", () => {
+    writeFakeResticRawJson(fakebin, resticLog, { pref: NESTED_AMBIGUOUS_JSON });
+    const { code, out } = runRestore(["--restore", dest, "--snapshot", "pref"]);
     expect(code).not.toBe(0);
-    expect(out).toContain("no se pudo extraer short_id");
-    expect(out).toContain("objeto anidado");
-    expect(out).toContain("no soportada por este parseo");
+    expect(out).toContain("AMBIGUO");
+    expect(out).toContain("coincide con 2 snapshots");
     expect(restoredId()).toBeUndefined();
+  });
+
+  // JSON indentado y multilinea (restic lo emite en una linea, pero el
+  // parseo no debe depender de eso: un `restic snapshots --json` pasado
+  // por un formateador, o una version futura que indente, no puede
+  // cambiar que se restaure).
+  const NESTED_PRETTY_JSON = [
+    "[",
+    "  {",
+    '    "tags": ["s9-arena-data"],',
+    '    "short_id": "aaaa1111",',
+    '    "summary": {',
+    '      "files_new": 3',
+    "    }",
+    "  }",
+    "]",
+  ].join("\n");
+
+  it("JSON indentado y multilinea con objeto anidado: resuelve igual", () => {
+    writeFakeResticRawJson(fakebin, resticLog, { pref: NESTED_PRETTY_JSON });
+    const { code, out } = runRestore(["--restore", dest, "--snapshot", "pref"]);
+    expect(code).toBe(0);
+    expect(out).toContain("snapshot resuelto: aaaa1111");
+    expect(restoredId()).toBe("aaaa1111");
   });
 
   // ── Calibracion directa de la mutacion R2 del supervisor ────────────────
@@ -769,10 +834,11 @@ exit 0
   // fuera un snapshot real).
   //
   // El fixture NESTED_SUMMARY_JSON de arriba NO sirve para calibrar esta
-  // mutacion: al extraer el objeto MAS INTERNO (el "summary" anidado), ese
-  // fragmento tampoco tiene campo "tags" -- el chequeo de tag POSTERIOR
-  // (`tags_field`) tambien falla y la mutacion queda enmascarada por esa
-  // segunda guarda, aunque por el motivo EQUIVOCADO. Para aislar de verdad
+  // mutacion: desde fix/restic-json-nested-parser ese caso RESUELVE bien,
+  // asi que ni siquiera entra en la rama de extraccion fallida (y antes
+  // del fix tampoco servia: se extraia el "summary", que tampoco tiene
+  // "tags", y la mutacion quedaba enmascarada por la guarda de tag
+  // POSTERIOR, aunque por el motivo EQUIVOCADO). Para aislar de verdad
   // la rama de extraccion de short_id (como ya hace runValidateManifestJson
   // en backup.test.ts para aislar sub-chequeos de --verify), hace falta un
   // objeto PLANO (sin anidar, count=1, ninguna ambiguedad de parseo) al que
@@ -803,5 +869,124 @@ exit 0
     const calls = resticCalls();
     expect(calls.some((c) => c.startsWith("restore pref"))).toBe(false);
     expect(calls.some((c) => c.startsWith("restore "))).toBe(false);
+  });
+});
+
+// ── `--latest 1` devuelve UNO POR GRUPO, no uno ────────────────────────────
+// Defecto reproducido contra el repositorio REAL de produccion el
+// 2026-08-30, no contra un fake: `restic snapshots --tag s9-arena-data
+// --latest 1` devolvio DOS snapshots, porque `--latest N` es "los N mas
+// recientes DE CADA GRUPO (host,paths)" y ese repositorio acumula tres
+// hostnames historicos (el hostname del sistema del primer backup manual y
+// dos IDs de contenedor, de antes de fix/restic-stable-hostname).
+//
+// Consecuencia: resolve_snapshot contaba 2 elementos y rechazaba con
+// "'latest' es AMBIGUO", asi que `restore.sh --restore <dest>` SIN selector
+// —la ruta por defecto del runbook— estaba ROTA contra el repositorio de
+// verdad. Fallaba en cerrado (nunca restauro el snapshot equivocado), pero
+// ningun test lo veia: el restic falso de arriba siempre devuelve un unico
+// elemento para `--latest 1`, sea cual sea el repositorio simulado.
+//
+// Este fake modela el comportamiento REAL: un snapshot por host, y filtra
+// por `--host` cuando se le pasa.
+describe("`--latest 1` con varios hosts en el repositorio (defecto real, 2026-08-30)", () => {
+  // known: host -> short_id del ultimo snapshot de ese host con el tag.
+  function writeFakeResticMultiHost(fb: string, log: string, tag: string, byHost: Record<string, string>) {
+    const objs = Object.entries(byHost)
+      .map(([host, id]) => `{"short_id":"${id}","hostname":"${host}","tags":["${tag}"]}`)
+      .join(",");
+    const perHostCases = Object.entries(byHost)
+      .map(([host, id]) => `        "${host}") echo '[{"short_id":"${id}","hostname":"${host}","tags":["${tag}"]}]' ;;`)
+      .join("\n");
+    const script = `#!/usr/bin/env bash
+echo "$@" >> "${log}"
+case "$1" in
+  snapshots)
+    if [ "$2" = "--tag" ]; then
+      want_host=""
+      prev=""
+      for a in "$@"; do
+        [ "$prev" = "--host" ] && want_host="$a"
+        prev="$a"
+      done
+      if [ -n "$want_host" ]; then
+        case "$want_host" in
+${perHostCases}
+          *) echo '[]' ;;
+        esac
+      else
+        # Sin --host: uno por grupo, que es lo que hace restic de verdad.
+        echo '[${objs}]'
+      fi
+      exit 0
+    fi
+    echo "no matching ID found" >&2; exit 1
+    ;;
+  restore)
+    id="$2"
+    target=""
+    prev=""
+    for a in "$@"; do
+      [ "$prev" = "--target" ] && target="$a"
+      prev="$a"
+    done
+    mkdir -p "$target"
+    echo "$id" > "$target/restored-snapshot-id.txt"
+    exit 0
+    ;;
+esac
+exit 1
+`;
+    writeFileSync(join(fb, "restic"), script, { mode: 0o755 });
+  }
+
+  const HOSTS = {
+    "arena-backup-host": "aaaa1111",
+    a834a832b86e: "bbbb2222",
+    "s9-arena": "cccc3333",
+  };
+
+  it("con RESTIC_HOSTNAME definido: acota con --host y resuelve el latest de ESTA instalacion", () => {
+    writeFakeResticMultiHost(fakebin, resticLog, "s9-arena-data", HOSTS);
+    const { code, out } = runRestore(["--restore", dest], {
+      RESTIC_HOSTNAME: "arena-backup-host",
+    });
+    expect(code).toBe(0);
+    expect(out).toContain("snapshot resuelto: aaaa1111");
+    expect(restoredId()).toBe("aaaa1111");
+    // El --host tiene que llegar de verdad a restic, no solo "funcionar".
+    expect(resticCalls().some((c) => c.startsWith("snapshots") && c.includes("--host arena-backup-host"))).toBe(true);
+  });
+
+  it("sin RESTIC_HOSTNAME y con varios hosts: FALLA cerrado, LISTA los candidatos y no restaura", () => {
+    writeFakeResticMultiHost(fakebin, resticLog, "s9-arena-data", HOSTS);
+    const { code, out } = runRestore(["--restore", dest], { RESTIC_HOSTNAME: "" });
+    expect(code).not.toBe(0);
+    expect(out).toContain("'latest' es AMBIGUO");
+    expect(out).toContain("uno por grupo host,paths");
+    // Los tres candidatos, con su host, para poder elegir con --snapshot.
+    for (const [host, id] of Object.entries(HOSTS)) {
+      expect(out).toContain(`id=${id} host=${host}`);
+    }
+    expect(restoredId()).toBeUndefined();
+  });
+
+  it("sin RESTIC_HOSTNAME pero con UN SOLO host en el repositorio: sigue resolviendo (no se rompe el caso sano)", () => {
+    writeFakeResticMultiHost(fakebin, resticLog, "s9-arena-data", {
+      "arena-backup-host": "aaaa1111",
+    });
+    const { code, out } = runRestore(["--restore", dest], { RESTIC_HOSTNAME: "" });
+    expect(code).toBe(0);
+    expect(out).toContain("snapshot resuelto: aaaa1111");
+    expect(restoredId()).toBe("aaaa1111");
+    expect(resticCalls().some((c) => c.includes("--host"))).toBe(false);
+  });
+
+  it("con RESTIC_HOSTNAME que no tiene ningun snapshot: FALLA cerrado, nunca cae al de otro host", () => {
+    writeFakeResticMultiHost(fakebin, resticLog, "s9-arena-data", HOSTS);
+    const { code, out } = runRestore(["--restore", dest], { RESTIC_HOSTNAME: "otro-host" });
+    expect(code).not.toBe(0);
+    expect(out).toContain("no hay ningún snapshot con tag=s9-arena-data");
+    expect(restoredId()).toBeUndefined();
   });
 });
