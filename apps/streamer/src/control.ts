@@ -8,11 +8,13 @@
  *   GET  /status                          → estado + métricas (SIN clave)
  *   GET  /metrics                         → Prometheus para E10
  *   GET  /healthz                         → healthcheck del Compose
+ *   GET  /version                         → identidad de build (ADR-016)
  *
  * Ninguna respuesta ni log contiene la clave RTMPS: /status describe el
  * destino redactado y el body de /control/start solo admite broadcastUrl.
  */
 import { createServer, type Server } from "node:http";
+import { versionPayload } from "../../../packages/build-info/index.js";
 import type { StreamSupervisor } from "./supervisor.js";
 import type { Logger, StreamerConfig } from "./config.js";
 import { renderPrometheus } from "./metrics.js";
@@ -35,6 +37,14 @@ export function createControlServer(opts: {
 
     if (req.method === "GET" && url === "/healthz") {
       return respond(200, { ok: true, state: supervisor.state });
+    }
+
+    // ADR-016 · identidad de build embebida en la imagen. Este servidor es http
+    // nativo (no Express), así que se sirve el MISMO cuerpo del contrato con el
+    // helper compartido en vez de duplicar la forma del JSON.
+    if (req.method === "GET" && url === "/version") {
+      res.setHeader("cache-control", "no-store");
+      return respond(200, versionPayload(process.env, "streamer"));
     }
 
     if (req.method === "GET" && url === "/status") {

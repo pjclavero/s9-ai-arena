@@ -347,15 +347,24 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Versión del paquete
+      - name: Versión del paquete e identidad de build (ADR-016)
         id: ver
-        run: echo "version=$(node -p "require('./package.json').version ?? '0.0.0'")" >> "$GITHUB_OUTPUT"
+        # BUILD_DATE se calcula AQUÍ, una vez por job, y no dentro del
+        # Dockerfile: si se generase en el build, dos builds del mismo árbol
+        # darían imágenes distintas y la caché no acertaría nunca.
+        run: |
+          echo "version=$(node -p "require('./package.json').version ?? '0.0.0'")" >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
       - name: Build (y push etiquetado por versión y sha en main; digest lo publica el registro)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          build-args: ${{ matrix.build_args }}
+          build-args: |
+            ${{ matrix.build_args }}
+            BUILD_COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ steps.ver.outputs.date }}
+            SERVICE_NAME=${{ matrix.service }}
           push: ${{ github.ref == 'refs/heads/main' }}
           tags: |
             ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:sha-${{ github.sha }}
@@ -392,7 +401,11 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          build-args: ${{ matrix.build_args }}
+          build-args: |
+            ${{ matrix.build_args }}
+            BUILD_COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ steps.ver.outputs.date }}
+            SERVICE_NAME=${{ matrix.service }}
           tags: s9-ai-arena/backup:e2e-test
           outputs: type=docker,dest=/tmp/backup-image.tar
       - name: Subir la imagen backup como artefacto
@@ -402,6 +415,107 @@ jobs:
           name: backup-image-tar
           path: /tmp/backup-image.tar
           retention-days: 1
+
+  # ── Etapa 5b: procedencia de imagen (ADR-016) ──────────────────────────────
+  # El gate de despliegue anterior comparaba "imagen declarada == imagen
+  # desplegada": una TAUTOLOGÍA cuando la etiqueta miente. Ocurrió: un
+  # `docker compose --project-directory <producción>` con `context: ..`
+  # construyó el árbol VIEJO (98f381ec) y lo etiquetó con el commit NUEVO
+  # (4d469dc), y cuatro servicios "pasaron" el gate desplegando código antiguo.
+  #
+  # Este job comprueba la cadena entera sobre imágenes construidas de verdad:
+  #   tag = commit  AND  LABEL OCI de la imagen = commit  AND  /version = commit
+  # y lo hace con CONTROL POSITIVO y CONTROL NEGATIVO en el mismo run: la misma
+  # imagen construida con un commit distinto tiene que hacer FALLAR al
+  # verificador. Sin ese negativo, un verificador que devolviera 0 siempre
+  # pasaría por bueno.
+  image-provenance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Docker disponible en este runner (si falta, este job FALLA; no se salta)
+        run: docker info
+      - name: Identidad de build de este run
+        id: id
+        run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      # web: imagen nginx (sin Node). Su /version es el fichero estático que
+      # genera el build y publica `location = /version`; ejercita el camino
+      # "imagen que no ejecuta Node" del contrato.
+      # Se usa `web` y NO `gateway` por una razón medida, no por gusto: la conf
+      # por defecto del gateway es la standalone, con `ssl_certificate` a
+      # /etc/nginx/tls/... El gateway suelto, sin los certificados que le monta
+      # el Compose, muere al arrancar — comprobado. `web` arranca sola.
+      - name: Construir web con el commit de este run
+        run: |
+          docker build -f infrastructure/docker/web/Dockerfile \
+            --build-arg BUILD_COMMIT=${{ github.sha }} \
+            --build-arg BUILD_DATE=${{ steps.id.outputs.date }} \
+            --build-arg SERVICE_NAME=web \
+            -t s9-ai-arena/web:sha-${{ github.sha }} .
+      - name: CONTROL POSITIVO · tag = LABEL = /version (web)
+        run: |
+          node infrastructure/scripts/verify-image-provenance.mjs \
+            --image s9-ai-arena/web:sha-${{ github.sha }} \
+            --commit ${{ github.sha }} --service web --port 3000
+
+      # replay-service: camino Node real (mismo Dockerfile genérico que api,
+      # map-service y tournament-worker). Su /version lo sirve el proceso.
+      - name: Construir replay-service con el commit de este run
+        run: |
+          docker build -f infrastructure/docker/node-service/Dockerfile \
+            --build-arg APP_PATH=apps/replay-service \
+            --build-arg BUILD_COMMIT=${{ github.sha }} \
+            --build-arg BUILD_DATE=${{ steps.id.outputs.date }} \
+            --build-arg SERVICE_NAME=replay-service \
+            -t s9-ai-arena/replay-service:sha-${{ github.sha }} .
+      - name: CONTROL POSITIVO · tag = LABEL = /version (replay-service)
+        run: |
+          node infrastructure/scripts/verify-image-provenance.mjs \
+            --image s9-ai-arena/replay-service:sha-${{ github.sha }} \
+            --commit ${{ github.sha }} --service replay-service --port 8083 \
+            --env SERVICE_ENTRY=apps/replay-service/src/main.ts
+
+      # ── CONTROL NEGATIVO (la mutación) ──────────────────────────────────────
+      # Se reconstruye la MISMA imagen con el commit del árbol VIEJO y se le pone
+      # la etiqueta del commit NUEVO: exactamente el incidente. El verificador
+      # TIENE que salir con rc != 0. Si saliera 0, este paso falla y con él la CI.
+      - name: CONTROL NEGATIVO · árbol etiquetado con un commit que no es el suyo
+        run: |
+          set -u
+          # Reconstrucción barata: sólo cambian las últimas capas (ARG/ENV/LABEL
+          # y el printf del version.json); todo lo anterior sale de la caché.
+          docker build -f infrastructure/docker/web/Dockerfile \
+            --build-arg BUILD_COMMIT=98f381ecdeadbeef00000000000000000000cafe \
+            --build-arg BUILD_DATE=${{ steps.id.outputs.date }} \
+            --build-arg SERVICE_NAME=web \
+            -t s9-ai-arena/web:sha-${{ github.sha }} .
+          set +e
+          node infrastructure/scripts/verify-image-provenance.mjs \
+            --image s9-ai-arena/web:sha-${{ github.sha }} \
+            --commit ${{ github.sha }} --service web --port 3000
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::el verificador aprobó una imagen con la etiqueta correcta y el contenido equivocado: NO detecta el incidente"
+            exit 1
+          fi
+          echo "control negativo OK: el verificador salió con rc=$rc ante etiqueta correcta + contenido equivocado"
+
+      # ── DRIFT CRÍTICO · la image ID en ejecución debe existir en el daemon ──
+      # Segundo incidente real: un contenedor de producción corría una image ID
+      # ya BORRADA del daemon (`docker inspect` del contenedor la reportaba,
+      # `docker image inspect` decía "No such image"). El contenedor vivía sobre
+      # sus capas, pero ese estado NO era reproducible tras un restart y el
+      # baseline no servía para rollback. Aquí se prueba que la detección
+      # funciona, contra un caso fabricado a propósito.
+      - name: CONTROL · se detecta un contenedor cuya imagen ya no existe
+        run: node infrastructure/scripts/check-running-image-id.mjs --self-test
 
   # ── Etapa 6: escaneo de dependencias, imágenes y Compose ──────────────────
   scan:
@@ -539,6 +653,7 @@ jobs:
         contracts,
         regression-battles,
         build-images,
+        image-provenance,
         scan,
         e2e-mvp,
         deploy-staging,

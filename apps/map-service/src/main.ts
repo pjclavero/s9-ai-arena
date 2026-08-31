@@ -11,6 +11,7 @@
  */
 import express, { type Express } from "express";
 import { MapService, MapServiceError } from "./service.js";
+import { mountVersionEndpoint } from "../../../packages/build-info/index.js";
 
 function log(level: "info" | "error", msg: string, extra: Record<string, unknown> = {}): void {
   console.log(JSON.stringify({ level, service: "map-service", msg, ...extra }));
@@ -23,6 +24,8 @@ export function createMapServiceApp(maps: MapService = new MapService()): Expres
   app.use(express.json({ limit: "8mb" }));
 
   app.get("/healthz", (_req, res) => res.json({ status: "ok", service: "map-service", maps: maps.listMaps().length }));
+  // ADR-016 · identidad de build embebida en la imagen, observable en ejecución.
+  mountVersionEndpoint(app, "map-service");
 
   // Lecturas mínimas sobre la librería existente (sin nueva lógica de negocio).
   app.get("/maps", (_req, res) => res.json(maps.listMaps()));

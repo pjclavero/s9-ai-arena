@@ -62,6 +62,12 @@ export const JOBS_CI = [
   { id: "contracts", clase: "obligatorio" },
   { id: "regression-battles", clase: "obligatorio" },
   { id: "build-images", clase: "obligatorio" },
+  // ADR-016 · procedencia de imagen. "obligatorio" y NUNCA "solo-main": el
+  // incidente que motiva el job (árbol viejo etiquetado con el commit nuevo)
+  // se coló por un gate que solo comparaba etiquetas. Si este job faltara en
+  // `needs` o quedara skipped, el semáforo va a ROJO: un skipped no es un
+  // check aprobado.
+  { id: "image-provenance", clase: "obligatorio" },
   { id: "scan", clase: "seguridad" },
   { id: "e2e-mvp", clase: "obligatorio" },
   { id: "deploy-staging", clase: "solo-main", evidencia: ["desplegado"] },
