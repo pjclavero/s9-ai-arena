@@ -10,33 +10,38 @@ FROM alpine:3.20
 # reproduce, porque el host sí tiene ssh instalado. Sólo se detecta
 # ejecutando esta MISMA imagen (ver infrastructure/tests/backup-sftp-e2e.test.ts).
 #
-# fix/restore-snapshot-selection (supervisión hostil de #118): `restic`
-# fijado a una versión EXACTA, a propósito — el resto de paquetes de esta
-# línea siguen sin fijar. `resolve_snapshot()` en restore.sh parsea la
-# salida de `restic snapshots --json` con un `grep -o '{[^{}]*}'` que
-# asume que los objetos de snapshot son PLANOS (sólo escalares y arrays de
-# escalares en sus campos, nunca un objeto anidado) — verificado contra el
-# restic real de producción (VM108, 0.16.4): hoy es cierto. Pero restic
-# ≥0.17 añadió un campo `"summary":{…}` (objeto anidado) a la salida de
-# `snapshots --json`, y `apk add --no-cache restic` SIN versión fijada
-# habría quedado a merced de lo que trajera Alpine en la siguiente
-# reconstrucción de esta imagen: una subida de versión de restic (aunque
-# fuera un parche menor de Alpine, no una decisión de este repo) haría que
-# ese `grep` casara el objeto MÁS INTERNO (`summary`) en vez del snapshot
-# completo, y `resolve_snapshot()` fallaría cerrado con "no se pudo
-# extraer short_id … (formato inesperado)" — --snapshot y --latest, la
-# funcionalidad que este PR añade, dejarían de funcionar por completo, sin
-# que nadie lo hubiera decidido ni se hubiera enterado hasta el primer
-# intento real de restauración.
+# fix/restic-json-nested-parser: `restic` vuelve a instalarse SIN versión
+# fijada, y esta vez la ausencia de pin es una decisión, no un descuido.
 #
-# Subir esta versión exige, ANTES de tocar esta línea: (1) comprobar si la
-# nueva versión de restic anida objetos en `snapshots --json` (el
-# CHANGELOG de restic lo documenta por versión), y (2) si los anida,
-# revisar/reescribir el parseo de resolve_snapshot() en restore.sh (ver
-# infrastructure/tests/restore-snapshot-selection.test.ts, describe
-# "Supervision #118 (ronda 2): objetos JSON anidados") ANTES de fijar la
-# nueva versión aquí — nunca al revés.
-RUN apk add --no-cache bash restic=0.16.4-r5 postgresql16-client coreutils findutils openssh-client
+# El pin `restic=0.16.4-r5` lo introdujo fix/restore-snapshot-selection por
+# una razón concreta: `resolve_snapshot()` en restore.sh troceaba
+# `restic snapshots --json` con `grep -o '{[^{}]*}'`, que sólo casa objetos
+# SIN llaves dentro. restic >=0.17 añadió `"summary":{…}` a cada snapshot,
+# así que con esa versión el grep habría devuelto el objeto MÁS INTERNO y
+# --snapshot/--latest habrían dejado de funcionar. El pin evitaba ese fallo
+# silencioso, pero a cambio ataba la capacidad de restaurar un snapshot
+# ELEGIDO a que Alpine 3.20 siguiera publicando esa revisión EXACTA: el día
+# que `restic=0.16.4-r5` salga del índice de apk, esta imagen deja de
+# construirse — y eso se descubre reconstruyendo, es decir, típicamente
+# durante una recuperación.
+#
+# Ese acoplamiento ya no existe: resolve_snapshot() usa
+# json_top_level_elements/json_top_level_field (escaneo por profundidad,
+# consciente de cadenas y escapes), que separa el snapshot completo aunque
+# anide y lee `short_id`/`tags` del PRIMER nivel. Los tests
+# "Supervision #118 (ronda 2): objetos JSON anidados (restic >=0.17)" de
+# infrastructure/tests/restore-snapshot-selection.test.ts fijan ese
+# contrato con la forma real de restic >=0.17 (incluido un `short_id`
+# anidado que intenta suplantar al de primer nivel).
+#
+# Lo que sigue siendo cierto y hay que respetar al cambiar de versión de
+# restic: el AGRUPAMIENTO de `restic forget` (--group-by host,tags, ver
+# backup.sh y infrastructure/tests/backup-hostname.test.ts) y el formato de
+# `snapshots --json` son contratos observados, no garantizados por restic.
+# Antes de dar por buena una versión nueva en producción: reconstruir esta
+# imagen, ejecutar la suite de infrastructure/tests y el simulacro de
+# docs/recuperacion.md contra el repositorio real.
+RUN apk add --no-cache bash restic postgresql16-client coreutils findutils openssh-client
 
 # fix/restore-sftp-bootstrap: setup_ssh vive en lib/ para que backup.sh y
 # restore.sh compartan exactamente el mismo bootstrap SSH (ver ese fichero).
