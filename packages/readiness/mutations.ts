@@ -206,6 +206,33 @@ export const MUTATIONS: readonly ReadinessMutation[] = [
   },
   {
     checkId: "security.deployed_version",
+    name: "la etiqueta se movió: hoy resuelve a otra imagen distinta de la que corre",
+    apply: (c) => {
+      c.probes.deployedVersion = async () => ({
+        imageTag: "ghcr.io/<owner>/<image>:4d469dc",
+        taggedCommit: "4d469dc",
+        builtFromCommit: "4d469dc",
+        runningImageId: "sha256:aaaa",
+        imageIdPresentInDaemon: true,
+        tagResolvesToRunningId: false,
+      });
+    },
+  },
+  {
+    checkId: "security.deployed_version",
+    name: "imagen sin identidad de build embebida: sólo la etiqueta afirma la procedencia",
+    apply: (c) => {
+      c.probes.deployedVersion = async () => ({
+        imageTag: "ghcr.io/<owner>/<image>:4d469dc",
+        taggedCommit: "4d469dc",
+        builtFromCommit: null,
+        runningImageId: "sha256:aaaa",
+        imageIdPresentInDaemon: true,
+      });
+    },
+  },
+  {
+    checkId: "security.deployed_version",
     name: "contenedor corriendo una image ID ya borrada del daemon",
     apply: (c) => {
       c.probes.deployedVersion = async () => ({

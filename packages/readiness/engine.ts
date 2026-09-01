@@ -109,6 +109,12 @@ export interface ReadinessProbes {
     builtFromCommit: string | null;
     runningImageId: string | null;
     imageIdPresentInDaemon: boolean;
+    /**
+     * ¿La etiqueta resuelve HOY a la misma image ID que corre el contenedor?
+     * `false` = la etiqueta se movió bajo los pies del contenedor: un restart
+     * traería otra imagen. `undefined` = la sonda no lo miró.
+     */
+    tagResolvesToRunningId?: boolean;
     reason?: string;
   }>;
   /** Un secreto concreto: existir en el host no es estar montado en el proceso. */
