@@ -39,7 +39,17 @@ beforeAll(async () => {
   h = await startTestDb();
   await seedDev(h.db);
   clearStandingsCache();
-  app = createApp({ db: h.db, botManager: new FakeBotManager(h.db), anonQuota: { max: 1000, windowMs: 3600_000 } });
+  // Carril J · este archivo cubre el DoD del espectador/replay PÚBLICOS ANÓNIMOS
+  // (T7.5), que viven detrás de S9_PUBLIC_SPECTATE_ENABLED. Se enciende
+  // EXPLÍCITAMENTE (inyectada, nunca del entorno real): con la puerta apagada la
+  // API no emite ticket anónimo. Son controles POSITIVOS del camino público; el
+  // negativo está en apps/api/src/j-fail-closed-ticket.test.ts.
+  app = createApp({
+    db: h.db,
+    botManager: new FakeBotManager(h.db),
+    anonQuota: { max: 1000, windowMs: 3600_000 },
+    publicSpectateEnabled: true,
+  });
   dev = await tokenFor(h.db, DEV_USERS.developer);
   organizer = await tokenFor(h.db, DEV_USERS.organizer);
 
@@ -252,6 +262,7 @@ describe("T7.5 cuotas anónimas (DoD: 429 y registro en api_usage)", () => {
       db: h.db,
       botManager: new FakeBotManager(h.db),
       anonQuota: { max: 3, windowMs: 3600_000 },
+      publicSpectateEnabled: true, // Carril J: la cuota se mide sobre el camino público REAL
     });
     for (let i = 0; i < 3; i++) {
       const ok = await request(strict).post(`/battles/${liveBattleId}/spectate-ticket`);
