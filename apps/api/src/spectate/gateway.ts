@@ -26,6 +26,7 @@ import { randomUUID } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 import { verifySpectateTicket, type VerifiedSpectateTicket } from "../auth/tokens.js";
+import { publicSpectateEnabledFromEnv } from "../public-spectate.js";
 
 /**
  * R2.6 (ERR-SEC-16): el ticket viaja FUERA de la URL, como subprotocolo
@@ -94,6 +95,18 @@ export interface SpectateGatewayOptions {
    * gateway. Configurable para tests (límites bajos); default 100 en producción.
    */
   maxClientsPerBattle?: number;
+  /**
+   * Carril J · capability de espectador PÚBLICO (S9_PUBLIC_SPECTATE_ENABLED),
+   * apagada por defecto. Segunda línea de defensa, en OTRO proceso que el de la
+   * API: con la capability apagada, un ticket ANÓNIMO criptográficamente válido
+   * NO abre el canal. Los tickets de sesión autenticada no dependen de ella (el
+   * espectador interno del producto no es "espectador público").
+   *
+   * Que la API deje de emitir tickets anónimos y que el gateway rechace los
+   * anónimos son dos controles independientes A PROPÓSITO: un despliegue con la
+   * variable puesta en un servicio y no en el otro falla CERRADO en el canal.
+   */
+  publicSpectateEnabled?: boolean;
 }
 
 /** R13.2 (hardening) · frame WS entrante máximo (protege contra floods de payload). */
@@ -109,9 +122,11 @@ export class SpectateGateway {
   /** jti ya consumidos → epoch ms de expiración (para poder purgarlos). */
   private readonly usedTickets = new Map<string, number>();
   private readonly maxClientsPerBattle: number;
+  private readonly publicSpectateEnabled: boolean;
 
   constructor(opts: SpectateGatewayOptions = {}) {
     this.maxClientsPerBattle = opts.maxClientsPerBattle ?? DEFAULT_MAX_CLIENTS_PER_BATTLE;
+    this.publicSpectateEnabled = opts.publicSpectateEnabled ?? publicSpectateEnabledFromEnv();
     if (opts.wss) {
       this.wss = opts.wss;
       this.ownsWss = false;
@@ -198,6 +213,16 @@ export class SpectateGateway {
     }
     if (claims.battleId !== battleId) {
       ws.close(4403, "ticket_battle_mismatch");
+      return;
+    }
+    // Carril J · FAIL-CLOSED del espectador PÚBLICO: con S9_PUBLIC_SPECTATE_ENABLED
+    // apagada, un ticket ANÓNIMO no abre el canal aunque su firma sea válida y la
+    // batalla esté en directo. Se comprueba ANTES de quemar el jti y ANTES de mirar
+    // los feeds: el rechazo no distingue "batalla en directo" de "batalla
+    // inexistente" (no filtra la existencia de un id concreto, igual que
+    // getPublicLiveBattle responde 404 con la capability apagada).
+    if (claims.anon === true && !this.publicSpectateEnabled) {
+      ws.close(4403, "public_spectate_disabled");
       return;
     }
     // Un solo uso: el jti se quema en la primera conexión (los tickets antiguos

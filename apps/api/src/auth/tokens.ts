@@ -130,23 +130,36 @@ export interface SpectateTicketInput {
   jti: string;
   /** Capas de depuración: solo si la API lo firma según el rol (T8.2). */
   debug?: boolean;
+  /**
+   * Carril J · el ticket se emitió a un VISITANTE ANÓNIMO (sin sesión). Lo firma
+   * la API; el gateway lo usa para aplicar la capability de espectador PÚBLICO
+   * (S9_PUBLIC_SPECTATE_ENABLED) sin tener que consultar la BD ni confiar en el
+   * cliente. Un ticket sin este flag es de sesión autenticada.
+   */
+  anon?: boolean;
 }
 
 export interface VerifiedSpectateTicket {
   battleId: string;
   jti?: string;
   debug?: boolean;
+  /** Carril J · ticket emitido a un visitante anónimo (ver SpectateTicketInput.anon). */
+  anon?: boolean;
   exp: number;
 }
 
 export function signSpectateTicket(input: SpectateTicketInput, ttlS: number): string {
-  return jwt.sign({ battleId: input.battleId, ...(input.debug ? { debug: true } : {}) }, spectateTicketSecret(), {
-    algorithm: TOKEN_ALG,
-    jwtid: input.jti,
-    expiresIn: ttlS,
-    issuer: ISSUER,
-    audience: AUD_SPECTATE,
-  });
+  return jwt.sign(
+    { battleId: input.battleId, ...(input.debug ? { debug: true } : {}), ...(input.anon ? { anon: true } : {}) },
+    spectateTicketSecret(),
+    {
+      algorithm: TOKEN_ALG,
+      jwtid: input.jti,
+      expiresIn: ttlS,
+      issuer: ISSUER,
+      audience: AUD_SPECTATE,
+    },
+  );
 }
 
 export function verifySpectateTicket(token: string): VerifiedSpectateTicket | null {
@@ -157,7 +170,7 @@ export function verifySpectateTicket(token: string): VerifiedSpectateTicket | nu
       audience: AUD_SPECTATE,
     }) as jwt.JwtPayload;
     if (typeof p.battleId !== "string" || typeof p.exp !== "number") return null;
-    return { battleId: p.battleId, jti: p.jti, debug: p.debug === true, exp: p.exp };
+    return { battleId: p.battleId, jti: p.jti, debug: p.debug === true, anon: p.anon === true, exp: p.exp };
   } catch {
     return null;
   }
