@@ -165,9 +165,9 @@ const backupLastSnapshotVerified: ReadinessCheck = {
   block: "copias",
   title: "La última copia dejó un snapshot reciente y con bytes en el repositorio",
   proves:
-    "Que el repositorio de copias contiene un snapshot fechado dentro de la ventana y con tamaño mayor que cero, leído del propio repositorio y no del proceso que dijo haberlo creado.",
+    "Que el repositorio de copias contiene, CON LA ETIQUETA DE DATOS, un snapshot fechado dentro de la ventana y con tamaño mayor que cero, leído del propio repositorio y no del proceso que dijo haberlo creado.",
   doesNotProve:
-    "Que el snapshot sea íntegro (eso sería una verificación de repositorio, que NO es de solo lectura), ni que su contenido sea el correcto, ni que se pueda restaurar.",
+    "Que el snapshot sea íntegro (eso sería una verificación de repositorio, que NO es de solo lectura), ni que su contenido sea el correcto, ni que se pueda restaurar. Tampoco dice nada de los snapshots de OTRAS etiquetas del mismo repositorio: el recuento que juzga es el del subconjunto de datos, no el del repositorio entero.",
   required: true,
   async run(ctx: ReadinessContext) {
     const r = await ctx.probes.backupLastSnapshot();
@@ -181,7 +181,11 @@ const backupLastSnapshotVerified: ReadinessCheck = {
     if (r.snapshotCount === 0 || r.latestSnapshotAt === null) {
       return {
         status: "failed" as const,
-        evidence: "se consultó el repositorio de copias y no hay ningún snapshot",
+        // Se nombra el subconjunto vacío Y lo que sí hay en el repositorio: un
+        // repositorio con snapshots de otras etiquetas y ninguno de datos es un
+        // diagnóstico MUY distinto de un repositorio vacío, y confundirlos
+        // manda al operador a mirar donde no es.
+        evidence: `se consultó el repositorio de copias y no hay ningún snapshot con la etiqueta de datos (${r.repositorySnapshotCount} snapshots en total en el repositorio)`,
         remedy: "La ejecución pudo salir con código 0 sin dejar nada: el repositorio es la fuente de verdad.",
       };
     }
@@ -189,7 +193,7 @@ const backupLastSnapshotVerified: ReadinessCheck = {
       // Se leyó el repositorio y el snapshot mide cero: condición comprobada y
       // no cumplida. Una copia vacía no es una copia.
       status: "failed" as const,
-      evidence: `el último snapshot (${r.latestSnapshotAt}) existe pero mide 0 bytes (${r.snapshotCount} snapshots)`,
+      evidence: `el último snapshot con la etiqueta de datos (${r.latestSnapshotAt}) existe pero mide 0 bytes (${r.snapshotCount} de datos, ${r.repositorySnapshotCount} en el repositorio)`,
       remedy: "EXIT 0 != BEHAVIOR EXERCISED: una copia vacía no es una copia.",
     });
     if (empty) return empty;
@@ -202,7 +206,7 @@ const backupLastSnapshotVerified: ReadinessCheck = {
     }
     return {
       status: "verified" as const,
-      evidence: `último snapshot ${r.latestSnapshotAt}, ${r.latestSnapshotBytes} B, ${r.snapshotCount} snapshots en el repositorio`,
+      evidence: `último snapshot de datos ${r.latestSnapshotAt}, ${r.latestSnapshotBytes} B; ${r.snapshotCount} snapshots con la etiqueta de datos de ${r.repositorySnapshotCount} en el repositorio`,
     };
   },
 };

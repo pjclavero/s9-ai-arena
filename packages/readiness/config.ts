@@ -41,6 +41,18 @@ export interface ConfigEntry {
   /** Valores que jamás deben aceptarse en una instalación real. */
   forbiddenValues?: string[];
   /**
+   * Servicios que APORTAN esta clave en la instalación.
+   *
+   * El modelo describe el contrato de la INSTALACIÓN, pero `process.env` es el
+   * de UN proceso: ningún servicio tiene todas las claves, ni debe tenerlas —
+   * la firma de sesiones la monta la API, el repositorio de copias el servicio
+   * de copias. Sin esto, resolver el modelo contra un solo contenedor produce
+   * "falta JWT_SECRET_FILE", que se lee como "el servicio no está" cuando lo
+   * único cierto es que se miró el proceso equivocado. (Pasó: se dio por caída
+   * una API que llevaba tres días sana con sus cuatro secretos montados.)
+   */
+  providedBy?: readonly string[];
+  /**
    * Puertas: el operador de ESTE despliegue las ha bloqueado. Encenderlas no es
    * un aviso, es un fallo de configuración.
    */
@@ -86,27 +98,32 @@ export const CONFIG_MODEL: readonly ConfigEntry[] = [
   {
     key: "REPLAYS_DIR",
     kind: "required",
+    providedBy: ["replay-service", "tournament-worker"],
     purpose: "Directorio de replays dentro del servicio (volumen persistente montado, no /tmp).",
     forbiddenValues: ["/tmp", "/tmp/", "/var/tmp"],
   },
   {
     key: "PGHOST",
     kind: "required",
+    providedBy: ["api", "replay-service", "map-service", "tournament-worker", "bot-build-worker", "backup"],
     purpose: "Host de PostgreSQL en la red interna (nombre de servicio, nunca una IP en el repo).",
   },
   {
     key: "PGUSER",
     kind: "required",
+    providedBy: ["api", "replay-service", "map-service", "tournament-worker", "bot-build-worker", "backup"],
     purpose: "Usuario de PostgreSQL con el que se conectan los servicios.",
   },
   {
     key: "PGDATABASE",
     kind: "required",
+    providedBy: ["api", "replay-service", "map-service", "tournament-worker", "bot-build-worker", "backup"],
     purpose: "Base de datos de la arena.",
   },
   {
     key: "PGPASSWORD_FILE",
     kind: "required",
+    providedBy: ["api", "replay-service", "map-service", "tournament-worker", "bot-build-worker", "backup"],
     secret: true,
     pathToSecret: true,
     purpose: "Ruta al secreto montado con la contraseña de PostgreSQL (/run/secrets/<secret-name>).",
@@ -122,6 +139,7 @@ export const CONFIG_MODEL: readonly ConfigEntry[] = [
   {
     key: "JWT_SECRET_FILE",
     kind: "required",
+    providedBy: ["api"],
     secret: true,
     pathToSecret: true,
     purpose: "Ruta al secreto montado de firma de sesiones (/run/secrets/<secret-name>).",
@@ -129,6 +147,7 @@ export const CONFIG_MODEL: readonly ConfigEntry[] = [
   {
     key: "ARENA_ENGINE_SHARED_SECRET_FILE",
     kind: "required",
+    providedBy: ["api"],
     secret: true,
     pathToSecret: true,
     purpose: "Ruta al secreto compartido con el motor de arena, montado como fichero.",
@@ -136,6 +155,7 @@ export const CONFIG_MODEL: readonly ConfigEntry[] = [
   {
     key: "REPLAY_INGEST_SECRET_FILE",
     kind: "required",
+    providedBy: ["api", "replay-service"],
     secret: true,
     pathToSecret: true,
     purpose: "Ruta al secreto de ingesta de replays, montado como fichero.",
@@ -194,11 +214,13 @@ export const CONFIG_MODEL: readonly ConfigEntry[] = [
   {
     key: "RESTIC_REPOSITORY",
     kind: "required",
+    providedBy: ["backup"],
     purpose: "Repositorio de copias (p. ej. sftp:<usuario>@<backup-host>:/<repo>). Sin él no hay bloque de copias.",
   },
   {
     key: "RESTIC_PASSWORD_FILE",
     kind: "required",
+    providedBy: ["backup"],
     secret: true,
     pathToSecret: true,
     purpose: "Ruta al secreto montado con la clave del repositorio de copias.",
@@ -206,6 +228,7 @@ export const CONFIG_MODEL: readonly ConfigEntry[] = [
   {
     key: "RESTIC_SSH_KEY_FILE",
     kind: "required",
+    providedBy: ["backup"],
     secret: true,
     pathToSecret: true,
     purpose: "Ruta a la llave SSH montada para llegar al repositorio remoto.",
@@ -213,6 +236,7 @@ export const CONFIG_MODEL: readonly ConfigEntry[] = [
   {
     key: "RESTIC_SSH_KNOWN_HOSTS_FILE",
     kind: "required",
+    providedBy: ["backup"],
     pathToSecret: true,
     purpose:
       "Ruta al known_hosts montado: sin él la copia aceptaría cualquier host remoto que responda en esa dirección.",
@@ -239,6 +263,7 @@ export const CONFIG_MODEL: readonly ConfigEntry[] = [
   {
     key: "S9_DOMAIN",
     kind: "required",
+    providedBy: ["gateway"],
     purpose: "Dominio público que sirve el gateway. Declarado en el .env de la instalación.",
   },
   {
@@ -336,7 +361,11 @@ export function resolveConfig(
           code: "missing_required",
           key: entry.key,
           severity: "error",
-          message: `Falta ${entry.key}: ${entry.purpose}`,
+          message:
+            `Falta ${entry.key}: ${entry.purpose}` +
+            (entry.providedBy && entry.providedBy.length > 0
+              ? ` (lo aporta ${entry.providedBy.join("/")}: si estás resolviendo el modelo contra otro proceso, esto NO significa que ese servicio esté caído)`
+              : ""),
         });
       }
       continue;

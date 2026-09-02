@@ -177,17 +177,19 @@ export interface SnapshotRestic {
  * Núcleo puro. Elige el snapshot de datos MÁS RECIENTE.
  *
  * Se acota por ETIQUETA, no por host, y esto viene de una observación real: en
- * esta instalación `RESTIC_HOSTNAME` llega vacío al contenedor, así que restic
- * etiqueta cada snapshot con el hostname del contenedor — que cambia en cada
- * recreación. Filtrar por un host fijo devolvería CERO snapshots en un
- * repositorio lleno de ellos, y "cero snapshots" es una acusación grave que
- * aquí sería falsa. Si el operador fija `RESTIC_HOSTNAME`, se puede acotar
- * además por host y se hace.
+ * el contenedor de copias que corre hoy `RESTIC_HOSTNAME` está AUSENTE de su
+ * entorno — no es que llegue vacía: no la declara el compose con el que se
+ * levantó ese contenedor. Así que restic etiqueta cada snapshot con el
+ * hostname del contenedor — que cambia en cada recreación, y por eso conviven
+ * varios hostnames en el mismo repositorio. Filtrar por un host fijo devolvería
+ * CERO snapshots en un repositorio lleno de ellos, y "cero snapshots" es una
+ * acusación grave que aquí sería falsa. Si el operador fija `RESTIC_HOSTNAME`,
+ * se puede acotar además por host y se hace.
  */
 export function elegirUltimoSnapshot(
   snapshots: readonly SnapshotRestic[],
   opciones: { tag?: string; host?: string } = {},
-): { total: number; ultimo: SnapshotRestic | null } {
+): { total: number; totalRepositorio: number; ultimo: SnapshotRestic | null } {
   const tag = opciones.tag ?? TAG_SNAPSHOT_DATOS;
   const host = (opciones.host ?? "").trim();
   const candidatos = snapshots.filter((s) => (s.tags ?? []).includes(tag) && (host === "" || s.hostname === host));
@@ -196,7 +198,12 @@ export function elegirUltimoSnapshot(
     if (!s.time) continue;
     if (ultimo === null || Date.parse(s.time) > Date.parse(ultimo.time!)) ultimo = s;
   }
-  return { total: candidatos.length, ultimo };
+  // `total` es el subconjunto que se juzga; `totalRepositorio` es lo que hay.
+  // Devolver sólo el primero y llamarlo "snapshots del repositorio" describe un
+  // subconjunto filtrado como si fuera el todo: en la instalación real son 17
+  // de datos frente a 35 en el repositorio (17 de datos, 17 de secretos y 1 de
+  // la primera copia).
+  return { total: candidatos.length, totalRepositorio: snapshots.length, ultimo };
 }
 
 /** `restic snapshots --json` devuelve un array plano de objetos. */
@@ -229,6 +236,7 @@ export function backupLastSnapshotProbe(
     const vacio = {
       probed: false,
       snapshotCount: 0,
+      repositorySnapshotCount: 0,
       latestSnapshotAt: null as string | null,
       latestSnapshotBytes: 0,
       ageHours: null as number | null,
@@ -245,11 +253,13 @@ export function backupLastSnapshotProbe(
     if (snapshots === null) {
       return { ...vacio, reason: "la salida de restic snapshots no es JSON interpretable" };
     }
-    const { total, ultimo } = elegirUltimoSnapshot(snapshots, { host: env.RESTIC_HOSTNAME ?? "" });
+    const { total, totalRepositorio, ultimo } = elegirUltimoSnapshot(snapshots, {
+      host: env.RESTIC_HOSTNAME ?? "",
+    });
     if (ultimo === null || !ultimo.time) {
       // Se consultó el repositorio de verdad: cero snapshots de datos es un
       // hecho observado, no una comprobación pendiente.
-      return { ...vacio, probed: true, snapshotCount: total };
+      return { ...vacio, probed: true, snapshotCount: total, repositorySnapshotCount: totalRepositorio };
     }
 
     const id = ultimo.id ?? ultimo.short_id ?? "latest";
@@ -258,6 +268,7 @@ export function backupLastSnapshotProbe(
     return {
       probed: true,
       snapshotCount: total,
+      repositorySnapshotCount: totalRepositorio,
       latestSnapshotAt: new Date(Date.parse(ultimo.time)).toISOString(),
       latestSnapshotBytes: bytes,
       ageHours: Math.round(((ahora() - Date.parse(ultimo.time)) / 3_600_000) * 10) / 10,

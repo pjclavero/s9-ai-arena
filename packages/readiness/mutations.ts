@@ -51,6 +51,7 @@ export function nominalProbes(): ReadinessProbes {
       return {
         probed: true,
         snapshotCount: 14,
+        repositorySnapshotCount: 29,
         latestSnapshotAt: "2026-08-30T02:00:05Z",
         latestSnapshotBytes: 4_194_304,
         ageHours: 6,
@@ -213,6 +214,9 @@ export const MUTATIONS: readonly ReadinessMutation[] = [
       c.probes.backupLastSnapshot = async () => ({
         probed: true,
         snapshotCount: 0,
+        // Repositorio con snapshots de OTRAS etiquetas y ninguno de datos: no
+        // es un repositorio vacío, y el diagnóstico no debe decir que lo es.
+        repositorySnapshotCount: 18,
         latestSnapshotAt: null,
         latestSnapshotBytes: 0,
         ageHours: null,
@@ -226,6 +230,7 @@ export const MUTATIONS: readonly ReadinessMutation[] = [
       c.probes.backupLastSnapshot = async () => ({
         probed: true,
         snapshotCount: 5,
+        repositorySnapshotCount: 11,
         latestSnapshotAt: "2026-08-30T02:00:05Z",
         latestSnapshotBytes: 0,
         ageHours: 2,
@@ -239,6 +244,7 @@ export const MUTATIONS: readonly ReadinessMutation[] = [
       c.probes.backupLastSnapshot = async () => ({
         probed: true,
         snapshotCount: 35,
+        repositorySnapshotCount: 71,
         latestSnapshotAt: "2026-07-17T04:15:00Z",
         latestSnapshotBytes: 6126,
         ageHours: 1000,
@@ -252,6 +258,7 @@ export const MUTATIONS: readonly ReadinessMutation[] = [
       c.probes.backupLastSnapshot = async () => ({
         probed: false,
         snapshotCount: 0,
+        repositorySnapshotCount: 0,
         latestSnapshotAt: null,
         latestSnapshotBytes: 0,
         ageHours: null,

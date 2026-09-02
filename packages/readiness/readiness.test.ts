@@ -355,6 +355,7 @@ describe("semántica de los tres estados", () => {
           c.probes.backupLastSnapshot = async () => ({
             probed: true,
             snapshotCount: 3,
+            repositorySnapshotCount: 7,
             latestSnapshotAt: "2026-08-30T02:00:05Z",
             latestSnapshotBytes: 0,
             ageHours: 2,
@@ -456,6 +457,7 @@ describe("el motivo del rojo también se calibra", () => {
     ctx.probes.backupLastSnapshot = async () => ({
       probed: true,
       snapshotCount: 0,
+      repositorySnapshotCount: 18,
       latestSnapshotAt: null,
       latestSnapshotBytes: 0,
       ageHours: null,
@@ -469,6 +471,7 @@ describe("el motivo del rojo también se calibra", () => {
     ctx.probes.backupLastSnapshot = async () => ({
       probed: true,
       snapshotCount: 4,
+      repositorySnapshotCount: 9,
       latestSnapshotAt: "2026-09-02T04:15:01Z",
       latestSnapshotBytes: 0,
       ageHours: 2,
@@ -494,5 +497,84 @@ describe("el motivo del rojo también se calibra", () => {
     )!.outcome;
     expect(o.status).toBe("not_exercised");
     expect(o.evidence).toContain("no se intentó escribir");
+  });
+});
+
+/**
+ * Defectos encontrados por el coordinador verificando el informe contra la
+ * máquina. Ninguno de los dos era un número mal copiado: los dos son la misma
+ * clase de fallo que R17 existe para no cometer — describir un SUBCONJUNTO como
+ * si fuera el todo, y leer una AUSENCIA de una vista parcial.
+ */
+describe("un subconjunto no se describe como el todo", () => {
+  const conSnapshots = async (probe: ReadinessContext["probes"]["backupLastSnapshot"]) => {
+    const ctx = nominalContext();
+    ctx.probes.backupLastSnapshot = probe;
+    return (await runReadiness(READINESS_CHECKS, ctx)).results.find(
+      (r) => r.check.id === "backup.last_snapshot_verified",
+    )!.outcome;
+  };
+
+  it("el recuento verde nombra el subconjunto de datos Y el total del repositorio", async () => {
+    // En la instalación real son 17 snapshots con la etiqueta de datos de 35 en
+    // el repositorio (17 de datos + 17 de secretos + 1 de la primera copia).
+    // Decir "17 snapshots en el repositorio" es falso, y esa frase salió del
+    // informe a un humano que tuvo que ir a desmentirla a mano.
+    const o = await conSnapshots(async () => ({
+      probed: true,
+      snapshotCount: 17,
+      repositorySnapshotCount: 35,
+      latestSnapshotAt: "2026-09-02T04:15:01Z",
+      latestSnapshotBytes: 108_979,
+      ageHours: 6,
+    }));
+    expect(o.status).toBe("verified");
+    expect(o.evidence).toContain("17");
+    expect(o.evidence).toContain("35");
+    expect(o.evidence).toContain("etiqueta de datos");
+  });
+
+  it("cero de datos con el repositorio lleno NO se cuenta como repositorio vacío", async () => {
+    const o = await conSnapshots(async () => ({
+      probed: true,
+      snapshotCount: 0,
+      repositorySnapshotCount: 18,
+      latestSnapshotAt: null,
+      latestSnapshotBytes: 0,
+      ageHours: null,
+    }));
+    expect(o.status).toBe("failed");
+    // El operador tiene que poder distinguir "la copia de datos no está
+    // llegando" de "no hay repositorio", que se arreglan en sitios distintos.
+    expect(o.evidence).toContain("etiqueta de datos");
+    expect(o.evidence).toContain("18");
+  });
+});
+
+describe("una clave que falta no acusa a un servicio de estar caído", () => {
+  it("el modelo declara QUÉ servicio aporta cada clave obligatoria", () => {
+    for (const e of CONFIG_MODEL.filter((x) => x.kind === "required")) {
+      expect(e.providedBy, `${e.key} no declara quién la aporta`).toBeDefined();
+      expect(e.providedBy!.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("el aviso de clave ausente dice quién la aporta y que eso no es un servicio caído", () => {
+    // Resolver el modelo de la INSTALACIÓN contra el entorno de UN proceso
+    // siempre echará en falta las claves de los demás. Sin este texto, "falta
+    // JWT_SECRET_FILE" se leyó como "la API no está en marcha" — y la API
+    // llevaba tres días sana con sus cuatro secretos montados.
+    const soloCopias = {
+      RESTIC_REPOSITORY: "sftp:<usuario>@<backup-host>:/<repo>",
+      RESTIC_PASSWORD_FILE: "/run/secrets/<secret-name>",
+      RESTIC_SSH_KEY_FILE: "/run/secrets/<secret-name>",
+      RESTIC_SSH_KNOWN_HOSTS_FILE: "/run/secrets/<secret-name>",
+    };
+    const problema = resolveConfig(soloCopias).problems.find(
+      (p) => p.code === "missing_required" && p.key === "JWT_SECRET_FILE",
+    );
+    expect(problema).toBeDefined();
+    expect(problema!.message).toContain("api");
+    expect(problema!.message).toContain("NO significa que ese servicio esté caído");
   });
 });

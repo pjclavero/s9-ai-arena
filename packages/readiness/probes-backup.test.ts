@@ -224,3 +224,40 @@ describe("una salida de restic ilegible no se lee como repositorio vacío", () =
     expect(r.reason).toContain("JSON");
   });
 });
+
+describe("el recuento filtrado nunca se confunde con el del repositorio", () => {
+  /** Forma REAL del repositorio de la instalación: 17 + 17 + 1 = 35. */
+  const repositorioReal = [
+    ...Array.from({ length: 17 }, (_, i) => ({
+      time: `2026-08-${String(i + 10).padStart(2, "0")}T04:15:01Z`,
+      id: `d${i}`,
+      hostname: "contenedor-a",
+      tags: [TAG_SNAPSHOT_DATOS],
+    })),
+    ...Array.from({ length: 17 }, (_, i) => ({
+      time: `2026-08-${String(i + 10).padStart(2, "0")}T04:15:03Z`,
+      id: `s${i}`,
+      hostname: "contenedor-a",
+      tags: ["s9-arena-secrets"],
+    })),
+    { time: "2026-08-09T17:04:45Z", id: "p0", hostname: "otro-host", tags: ["s9-arena-primer-backup"] },
+  ];
+
+  it("separa los 17 de datos de los 35 del repositorio", () => {
+    const { total, totalRepositorio } = elegirUltimoSnapshot(repositorioReal);
+    expect(total).toBe(17);
+    expect(totalRepositorio).toBe(35);
+    expect(total).not.toBe(totalRepositorio);
+  });
+
+  it("la sonda propaga ambos recuentos, no sólo el filtrado", async () => {
+    const { run } = ejecutorFalso({
+      snapshots: { rc: 0, out: JSON.stringify(repositorioReal) },
+      stats: { rc: 0, out: '{"total_size":108979}' },
+    });
+    const r = await backupLastSnapshotProbe("svc", run, () => Date.parse("2026-08-26T10:15:01Z"), {})();
+    expect(r.probed).toBe(true);
+    expect(r.snapshotCount).toBe(17);
+    expect(r.repositorySnapshotCount).toBe(35);
+  });
+});

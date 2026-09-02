@@ -123,7 +123,15 @@ export interface ReadinessProbes {
   /** El snapshot que dejó esa ejecución: que exista, sea reciente y tenga bytes. */
   backupLastSnapshot(): Promise<{
     probed: boolean;
+    /** Snapshots que llevan la etiqueta de datos: el subconjunto que se juzga. */
     snapshotCount: number;
+    /**
+     * Snapshots TOTALES del repositorio. Se informa aparte porque decir "N
+     * snapshots en el repositorio" cuando N es un recuento filtrado es
+     * describir un subconjunto como si fuera el todo — y en la instalación real
+     * la diferencia es 17 frente a 35.
+     */
+    repositorySnapshotCount: number;
     latestSnapshotAt: string | null;
     latestSnapshotBytes: number;
     ageHours: number | null;
