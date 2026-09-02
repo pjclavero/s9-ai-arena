@@ -1,0 +1,593 @@
+{
+  "schema": "s9-ai-arena/runtime-drift-facts/v1",
+  "_nota": "Hechos REALES capturados del daemon de produccion (12 contenedores Compose) con --collect, ya saneados de topologia por el propio recolector: sin IPs, sin nombres de anfitrion y sin rutas absolutas (los binds salen como origen logico repo:...). Congelado como fixture para que la suite se ejercite contra el estado real y no contra un invento.",
+  "_captura": "stack de produccion, aplicacion en 4d469dc y backup en 11b36a7 (baseline legitimo)",
+  "services": [
+    {
+      "service": "gateway",
+      "compose_managed": true,
+      "declared_ref": "s9arena/gateway:4d469dc",
+      "running_image_id": "sha256:ef55dd070012e899b946a592b738b8f9bd5cbf6bcd29e3a059435297172d2351",
+      "running_image_exists": true,
+      "declared_ref_current_id": "sha256:ef55dd070012e899b946a592b738b8f9bd5cbf6bcd29e3a059435297172d2351",
+      "declared_ref_runtime": {
+        "NGINX_VERSION": "1.27.5"
+      },
+      "running_image_repo_tags": [
+        "s9arena/gateway:4d469dc"
+      ],
+      "repo_digests": [
+        "s9arena/gateway@sha256:ef55dd070012e899b946a592b738b8f9bd5cbf6bcd29e3a059435297172d2351"
+      ],
+      "build_commit": null,
+      "runtime": {
+        "NGINX_VERSION": "1.27.5"
+      },
+      "mounts": [
+        {
+          "tipo": "bind",
+          "destino": "/etc/nginx/nginx.conf",
+          "origen": "repo:infrastructure/gateway/nginx-behind-proxy.conf",
+          "rw": false
+        },
+        {
+          "tipo": "bind",
+          "destino": "/etc/nginx/tls",
+          "origen": "repo:infrastructure/secrets/tls",
+          "rw": false
+        }
+      ],
+      "secrets": [],
+      "env_names": [
+        "DYNPKG_RELEASE",
+        "NGINX_VERSION",
+        "NJS_RELEASE",
+        "NJS_VERSION",
+        "PATH",
+        "PKG_RELEASE",
+        "S9_DOMAIN"
+      ]
+    },
+    {
+      "service": "web",
+      "compose_managed": true,
+      "declared_ref": "s9arena/web:4d469dc",
+      "running_image_id": "sha256:560489c50906a4fa29596bfa1668fc5ce35333b358ebef4ac85c099516dec61e",
+      "running_image_exists": true,
+      "declared_ref_current_id": "sha256:560489c50906a4fa29596bfa1668fc5ce35333b358ebef4ac85c099516dec61e",
+      "declared_ref_runtime": {
+        "NGINX_VERSION": "1.27.5"
+      },
+      "running_image_repo_tags": [
+        "s9arena/web:4d469dc"
+      ],
+      "repo_digests": [
+        "s9arena/web@sha256:560489c50906a4fa29596bfa1668fc5ce35333b358ebef4ac85c099516dec61e"
+      ],
+      "build_commit": null,
+      "runtime": {
+        "NGINX_VERSION": "1.27.5"
+      },
+      "mounts": [],
+      "secrets": [],
+      "env_names": [
+        "DYNPKG_RELEASE",
+        "LOG_FORMAT",
+        "NGINX_VERSION",
+        "NJS_RELEASE",
+        "NJS_VERSION",
+        "PATH",
+        "PKG_RELEASE"
+      ]
+    },
+    {
+      "service": "api",
+      "compose_managed": true,
+      "declared_ref": "s9arena/api:4d469dc",
+      "running_image_id": "sha256:35f312eb69ff27d4e46c441e2d28493de4668827e07e4e6dba7f626f6595ce3c",
+      "running_image_exists": true,
+      "declared_ref_current_id": "sha256:35f312eb69ff27d4e46c441e2d28493de4668827e07e4e6dba7f626f6595ce3c",
+      "declared_ref_runtime": {
+        "NODE_VERSION": "22.15.1"
+      },
+      "running_image_repo_tags": [
+        "s9arena/api:4d469dc"
+      ],
+      "repo_digests": [
+        "s9arena/api@sha256:35f312eb69ff27d4e46c441e2d28493de4668827e07e4e6dba7f626f6595ce3c"
+      ],
+      "build_commit": null,
+      "runtime": {
+        "NODE_VERSION": "22.15.1"
+      },
+      "mounts": [
+        {
+          "tipo": "volume",
+          "destino": "/data/replays",
+          "origen": "arena_replays",
+          "rw": false
+        }
+      ],
+      "secrets": [
+        "arena_engine_internal_secret",
+        "jwt_secret",
+        "postgres_password",
+        "replay_ingest_secret"
+      ],
+      "env_names": [
+        "APP_PATH",
+        "ARENA_ENGINE_SHARED_SECRET_FILE",
+        "ARENA_ENGINE_URL",
+        "DATABASE_URL",
+        "HOME",
+        "JWT_SECRET_FILE",
+        "LOG_FORMAT",
+        "NODE_VERSION",
+        "PATH",
+        "PGDATABASE",
+        "PGHOST",
+        "PGPASSWORD_FILE",
+        "PGUSER",
+        "PORT",
+        "REDIS_URL",
+        "REPLAY_INGEST_REQUIRED",
+        "REPLAY_INGEST_SECRET_FILE",
+        "REPLAY_SERVICE_URL",
+        "S9_ENABLE_REAL_BATTLE_RUNS",
+        "SERVICE_ENTRY",
+        "TRUST_PROXY_HOPS",
+        "YARN_VERSION"
+      ]
+    },
+    {
+      "service": "tournament-worker",
+      "compose_managed": true,
+      "declared_ref": "s9arena/tournament-worker:4d469dc",
+      "running_image_id": "sha256:8b5ee63f554d68c30ebea08773e974c7704a6fb642afb51776b1b45d54a4bfae",
+      "running_image_exists": true,
+      "declared_ref_current_id": "sha256:8b5ee63f554d68c30ebea08773e974c7704a6fb642afb51776b1b45d54a4bfae",
+      "declared_ref_runtime": {
+        "NODE_VERSION": "22.15.1"
+      },
+      "running_image_repo_tags": [
+        "s9arena/tournament-worker:4d469dc"
+      ],
+      "repo_digests": [
+        "s9arena/tournament-worker@sha256:8b5ee63f554d68c30ebea08773e974c7704a6fb642afb51776b1b45d54a4bfae"
+      ],
+      "build_commit": null,
+      "runtime": {
+        "NODE_VERSION": "22.15.1"
+      },
+      "mounts": [
+        {
+          "tipo": "volume",
+          "destino": "/data/replays",
+          "origen": "arena_replays",
+          "rw": true
+        }
+      ],
+      "secrets": [
+        "postgres_password"
+      ],
+      "env_names": [
+        "APP_PATH",
+        "ARENA_DATA_DIRS",
+        "DATABASE_URL",
+        "HOME",
+        "LOG_FORMAT",
+        "NODE_VERSION",
+        "PATH",
+        "PGDATABASE",
+        "PGHOST",
+        "PGPASSWORD_FILE",
+        "PGUSER",
+        "REDIS_URL",
+        "REPLAYS_DIR",
+        "SERVICE_ENTRY",
+        "SPECTATE_PORT",
+        "YARN_VERSION"
+      ]
+    },
+    {
+      "service": "replay-service",
+      "compose_managed": true,
+      "declared_ref": "s9arena/replay-service:4d469dc",
+      "running_image_id": "sha256:087761580df380252a410f6233a2bfb93c5ae02a5c0d2ae280149deef20fd8f5",
+      "running_image_exists": true,
+      "declared_ref_current_id": "sha256:087761580df380252a410f6233a2bfb93c5ae02a5c0d2ae280149deef20fd8f5",
+      "declared_ref_runtime": {
+        "NODE_VERSION": "22.15.1"
+      },
+      "running_image_repo_tags": [
+        "s9arena/replay-service:4d469dc"
+      ],
+      "repo_digests": [
+        "s9arena/replay-service@sha256:087761580df380252a410f6233a2bfb93c5ae02a5c0d2ae280149deef20fd8f5"
+      ],
+      "build_commit": null,
+      "runtime": {
+        "NODE_VERSION": "22.15.1"
+      },
+      "mounts": [
+        {
+          "tipo": "volume",
+          "destino": "/data/replays",
+          "origen": "arena_replays",
+          "rw": true
+        }
+      ],
+      "secrets": [
+        "postgres_password",
+        "replay_ingest_secret"
+      ],
+      "env_names": [
+        "APP_PATH",
+        "ARENA_DATA_DIRS",
+        "DATABASE_URL",
+        "HOME",
+        "LOG_FORMAT",
+        "NODE_VERSION",
+        "PATH",
+        "PGDATABASE",
+        "PGHOST",
+        "PGPASSWORD_FILE",
+        "PGUSER",
+        "PORT",
+        "REDIS_URL",
+        "REPLAYS_DIR",
+        "REPLAY_INGEST_SECRET_FILE",
+        "SERVICE_ENTRY",
+        "YARN_VERSION"
+      ]
+    },
+    {
+      "service": "arena-engine",
+      "compose_managed": true,
+      "declared_ref": "s9arena/arena-engine:4d469dc",
+      "running_image_id": "sha256:44b97003009cff5ee2dba808fe29c789ded72b5ed6e21a4cc6d05b04a518a17d",
+      "running_image_exists": true,
+      "declared_ref_current_id": "sha256:44b97003009cff5ee2dba808fe29c789ded72b5ed6e21a4cc6d05b04a518a17d",
+      "declared_ref_runtime": {
+        "NODE_VERSION": "22.15.1"
+      },
+      "running_image_repo_tags": [
+        "s9arena/arena-engine:4d469dc"
+      ],
+      "repo_digests": [
+        "s9arena/arena-engine@sha256:44b97003009cff5ee2dba808fe29c789ded72b5ed6e21a4cc6d05b04a518a17d"
+      ],
+      "build_commit": null,
+      "runtime": {
+        "NODE_VERSION": "22.15.1"
+      },
+      "mounts": [],
+      "secrets": [
+        "arena_engine_internal_secret"
+      ],
+      "env_names": [
+        "ARENA_ENGINE_HOST",
+        "ARENA_ENGINE_INTERNAL_SECRET_FILE",
+        "ARENA_NETWORK",
+        "DOCKER_PROXY_URL",
+        "LOG_FORMAT",
+        "NODE_VERSION",
+        "PATH",
+        "PORT",
+        "SERVICE_ENTRY",
+        "YARN_VERSION"
+      ]
+    },
+    {
+      "service": "bot-build-worker",
+      "compose_managed": true,
+      "declared_ref": "s9arena/bot-manager:4d469dc",
+      "running_image_id": "sha256:38a196601c8767c1d2865e26db8bf73beb0e034a7d2a4fb7e8018ed349f8e890",
+      "running_image_exists": true,
+      "declared_ref_current_id": "sha256:38a196601c8767c1d2865e26db8bf73beb0e034a7d2a4fb7e8018ed349f8e890",
+      "declared_ref_runtime": {
+        "NODE_VERSION": "22.15.1"
+      },
+      "running_image_repo_tags": [
+        "s9arena/bot-manager:4d469dc"
+      ],
+      "repo_digests": [
+        "s9arena/bot-manager@sha256:38a196601c8767c1d2865e26db8bf73beb0e034a7d2a4fb7e8018ed349f8e890"
+      ],
+      "build_commit": null,
+      "runtime": {
+        "NODE_VERSION": "22.15.1"
+      },
+      "mounts": [
+        {
+          "tipo": "volume",
+          "destino": "/data/bot-sources",
+          "origen": "arena_bot_sources",
+          "rw": true
+        },
+        {
+          "tipo": "volume",
+          "destino": "/data/build-cache",
+          "origen": "arena_build_cache",
+          "rw": true
+        }
+      ],
+      "secrets": [
+        "artifact_signing_key",
+        "postgres_password"
+      ],
+      "env_names": [
+        "APP_PATH",
+        "ARTIFACT_SIGNING_KEY_FILE",
+        "DATABASE_URL",
+        "LOG_FORMAT",
+        "NODE_VERSION",
+        "PATH",
+        "PGDATABASE",
+        "PGHOST",
+        "PGPASSWORD_FILE",
+        "PGUSER",
+        "REDIS_URL",
+        "SERVICE_ENTRY",
+        "YARN_VERSION"
+      ]
+    },
+    {
+      "service": "bot-manager",
+      "compose_managed": true,
+      "declared_ref": "s9arena/bot-manager:4d469dc",
+      "running_image_id": "sha256:38a196601c8767c1d2865e26db8bf73beb0e034a7d2a4fb7e8018ed349f8e890",
+      "running_image_exists": true,
+      "declared_ref_current_id": "sha256:38a196601c8767c1d2865e26db8bf73beb0e034a7d2a4fb7e8018ed349f8e890",
+      "declared_ref_runtime": {
+        "NODE_VERSION": "22.15.1"
+      },
+      "running_image_repo_tags": [
+        "s9arena/bot-manager:4d469dc"
+      ],
+      "repo_digests": [
+        "s9arena/bot-manager@sha256:38a196601c8767c1d2865e26db8bf73beb0e034a7d2a4fb7e8018ed349f8e890"
+      ],
+      "build_commit": null,
+      "runtime": {
+        "NODE_VERSION": "22.15.1"
+      },
+      "mounts": [
+        {
+          "tipo": "volume",
+          "destino": "/data/build-cache",
+          "origen": "arena_build_cache",
+          "rw": true
+        },
+        {
+          "tipo": "volume",
+          "destino": "/data/bot-sources",
+          "origen": "arena_bot_sources",
+          "rw": true
+        }
+      ],
+      "secrets": [],
+      "env_names": [
+        "APP_PATH",
+        "DOCKER_PROXY_URL",
+        "LOG_FORMAT",
+        "NODE_VERSION",
+        "PATH",
+        "PORT",
+        "SERVICE_ENTRY",
+        "YARN_VERSION"
+      ]
+    },
+    {
+      "service": "map-service",
+      "compose_managed": true,
+      "declared_ref": "s9arena/map-service:4d469dc",
+      "running_image_id": "sha256:92f15e965d4ad0acdfe8f685d316d963863576d90d22bb54d94429c6071171ff",
+      "running_image_exists": true,
+      "declared_ref_current_id": "sha256:92f15e965d4ad0acdfe8f685d316d963863576d90d22bb54d94429c6071171ff",
+      "declared_ref_runtime": {
+        "NODE_VERSION": "22.15.1"
+      },
+      "running_image_repo_tags": [
+        "s9arena/map-service:4d469dc"
+      ],
+      "repo_digests": [
+        "s9arena/map-service@sha256:92f15e965d4ad0acdfe8f685d316d963863576d90d22bb54d94429c6071171ff"
+      ],
+      "build_commit": null,
+      "runtime": {
+        "NODE_VERSION": "22.15.1"
+      },
+      "mounts": [
+        {
+          "tipo": "volume",
+          "destino": "/data/maps",
+          "origen": "arena_maps",
+          "rw": true
+        },
+        {
+          "tipo": "volume",
+          "destino": "/data/assets",
+          "origen": "arena_assets",
+          "rw": false
+        }
+      ],
+      "secrets": [
+        "postgres_password"
+      ],
+      "env_names": [
+        "APP_PATH",
+        "DATABASE_URL",
+        "HOME",
+        "LOG_FORMAT",
+        "NODE_VERSION",
+        "PATH",
+        "PGDATABASE",
+        "PGHOST",
+        "PGPASSWORD_FILE",
+        "PGUSER",
+        "PORT",
+        "REDIS_URL",
+        "SERVICE_ENTRY",
+        "YARN_VERSION"
+      ]
+    },
+    {
+      "service": "backup",
+      "compose_managed": true,
+      "declared_ref": "s9arena/backup:11b36a7",
+      "running_image_id": "sha256:feb305c788c5d21d18735102973dbc6fd4dfca7e2e99239b2dd962db7125e4ad",
+      "running_image_exists": true,
+      "declared_ref_current_id": "sha256:feb305c788c5d21d18735102973dbc6fd4dfca7e2e99239b2dd962db7125e4ad",
+      "declared_ref_runtime": {},
+      "running_image_repo_tags": [
+        "s9arena/backup:11b36a7"
+      ],
+      "repo_digests": [
+        "s9arena/backup@sha256:feb305c788c5d21d18735102973dbc6fd4dfca7e2e99239b2dd962db7125e4ad"
+      ],
+      "build_commit": null,
+      "runtime": {},
+      "mounts": [
+        {
+          "tipo": "volume",
+          "destino": "/data/maps",
+          "origen": "arena_maps",
+          "rw": false
+        },
+        {
+          "tipo": "bind",
+          "destino": "/secrets",
+          "origen": "repo:infrastructure/secrets",
+          "rw": false
+        },
+        {
+          "tipo": "volume",
+          "destino": "/textfile",
+          "origen": "backup_metrics",
+          "rw": true
+        },
+        {
+          "tipo": "volume",
+          "destino": "/tmp/backup-work",
+          "origen": "backup_work",
+          "rw": true
+        },
+        {
+          "tipo": "volume",
+          "destino": "/data/assets",
+          "origen": "arena_assets",
+          "rw": false
+        },
+        {
+          "tipo": "volume",
+          "destino": "/data/bot-sources",
+          "origen": "arena_bot_sources",
+          "rw": false
+        },
+        {
+          "tipo": "volume",
+          "destino": "/data/replays",
+          "origen": "arena_replays",
+          "rw": false
+        }
+      ],
+      "secrets": [
+        "postgres_password",
+        "restic_password",
+        "restic_ssh_key",
+        "restic_ssh_known_hosts"
+      ],
+      "env_names": [
+        "BACKUP_CRON",
+        "METRICS_DIR",
+        "PATH",
+        "PGDATABASE",
+        "PGHOST",
+        "PGPASSWORD_FILE",
+        "PGUSER",
+        "REPLAY_RETENTION_DAYS",
+        "RESTIC_PASSWORD_FILE",
+        "RESTIC_REPOSITORY",
+        "RESTIC_SSH_KEY_FILE",
+        "RESTIC_SSH_KNOWN_HOSTS_FILE",
+        "WORK_DIR"
+      ]
+    },
+    {
+      "service": "postgres",
+      "compose_managed": true,
+      "declared_ref": "postgres:16-alpine",
+      "running_image_id": "sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777",
+      "running_image_exists": true,
+      "declared_ref_current_id": "sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+      "declared_ref_runtime": {
+        "PG_VERSION": "16.15"
+      },
+      "running_image_repo_tags": [],
+      "repo_digests": [],
+      "build_commit": null,
+      "runtime": {
+        "PG_VERSION": "16.14"
+      },
+      "mounts": [
+        {
+          "tipo": "volume",
+          "destino": "/var/lib/postgresql/data",
+          "origen": "postgres_data",
+          "rw": true
+        }
+      ],
+      "secrets": [
+        "postgres_password"
+      ],
+      "env_names": [
+        "DOCKER_PG_LLVM_DEPS",
+        "GOSU_VERSION",
+        "LANG",
+        "PATH",
+        "PGDATA",
+        "PG_MAJOR",
+        "PG_SHA256",
+        "PG_VERSION",
+        "POSTGRES_DB",
+        "POSTGRES_PASSWORD_FILE",
+        "POSTGRES_USER"
+      ]
+    },
+    {
+      "service": "queue",
+      "compose_managed": true,
+      "declared_ref": "redis:7-alpine",
+      "running_image_id": "sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99",
+      "running_image_exists": true,
+      "declared_ref_current_id": "sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99",
+      "declared_ref_runtime": {
+        "REDIS_VERSION": "7.4.9"
+      },
+      "running_image_repo_tags": [
+        "redis:7-alpine"
+      ],
+      "repo_digests": [
+        "redis@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99"
+      ],
+      "build_commit": null,
+      "runtime": {
+        "REDIS_VERSION": "7.4.9"
+      },
+      "mounts": [
+        {
+          "tipo": "volume",
+          "destino": "/data",
+          "origen": "queue_data",
+          "rw": true
+        }
+      ],
+      "secrets": [],
+      "env_names": [
+        "PATH",
+        "REDIS_VERSION"
+      ]
+    }
+  ]
+}
