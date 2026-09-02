@@ -3,8 +3,13 @@
  *
  * Por qué esta y no otra: es la única de las ocho sondas pendientes que se
  * puede ejercer contra la instalación real SIN escribir nada — sólo
- * `docker inspect` / `docker images`, lectura pura — y ataca una de las siete
- * confusiones de R17 con dos incidentes reales detrás (ver ADR-016):
+ * `docker inspect` / `docker image inspect`, lectura pura — y ataca una de las
+ * siete confusiones de R17 con tres incidentes reales detrás (ver ADR-016).
+ *
+ * El modelo de drift (cuatro estados) vive en
+ * `infrastructure/scripts/lib/image-drift.mjs` y se comparte con el script de
+ * operación: dos copias del mismo criterio es cómo se consigue que el gate y la
+ * sonda discrepen sin que nadie se entere. Los tres incidentes:
  *
  *   1. Un build del árbol VIEJO etiquetado con el commit NUEVO: la etiqueta
  *      miente y comparar "etiqueta declarada == etiqueta desplegada" es una
@@ -13,12 +18,14 @@
  *      el que anuncia la etiqueta.
  *   2. Un contenedor corriendo sobre una image ID ya BORRADA del daemon: vivo,
  *      "healthy", y no reproducible tras un restart.
+ *   3. La ETIQUETA SE MOVIÓ bajo un contenedor vivo: la image ID que corre es
+ *      válida, pero la referencia declarada resuelve HOY a otra distinta.
  *
  * Reglas que respeta:
  *  - Sólo lectura. Ningún comando de esta sonda modifica el daemon.
- *  - Además detecta un tercer caso visto en VM108: la ETIQUETA SE MOVIÓ y ya
- *    resuelve a otra imagen distinta de la que corre el contenedor, así que un
- *    restart cambiaría de versión sin que nadie lo decidiera.
+ *  - La EXISTENCIA de la image ID se prueba con `docker image inspect`, jamás
+ *    con `docker images -q`: ese listado omite las imágenes sin etiqueta y
+ *    produce a la vez un falso "no existe" y ceguera al drift real.
  *  - Efecto observado, no exit code: si no se puede consultar al daemon se
  *    devuelve `reason` y la comprobación queda `not_exercised`, jamás verde.
  *  - Núcleo puro (`interpretarVersionDesplegada`) separado de la ejecución, para
