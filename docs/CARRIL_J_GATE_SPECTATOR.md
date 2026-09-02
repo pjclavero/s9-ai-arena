@@ -186,10 +186,34 @@ apagada.
   sea válida. Un despliegue que ponga la variable en un servicio y no en el otro
   **falla cerrado en el canal**.
 
-Rutas revisadas y descartadas como agujero: `/replays/` (gateado por
-`S9_PUBLIC_REPLAYS_ENABLED` en la API; `replay-service` sirve su propio prefijo y
-merece una revisión propia), `/grafana/` (perfil opcional, no activo), el puerto
-8081 (no publicado; sólo alcanzable dentro de la red Docker).
+### 6.b · Segundo agujero, con datos reales: `/replays/`
+
+**HALLAZGO BLOQUEANTE (NO corregido en esta rama: requiere una decisión previa).**
+
+Buscando la "ruta olvidada" apareció una segunda, y esta sí sirve datos hoy:
+
+```
+GET /api/v1/public/replays   →  {"enabled":false,"items":[]}     ← la puerta
+GET /replays/                →  200 {"items":[{"battleId":"…","ticks":300, …}]}
+```
+
+Ambas peticiones son **anónimas y por el mismo gateway**. `nginx` enruta
+`/replays/` **directamente a `replay-service`**, sin pasar por la API: el
+`S9_PUBLIC_REPLAYS_ENABLED` que gatea `/api/v1/public/replays*` no gobierna nada
+de ese camino. `replay-service` no tiene capability ni autenticación de lectura —
+su único secreto (`x-replay-ingest-auth`) protege la **ingesta**, no el `GET`.
+Están accesibles el listado, el manifiesto, los segmentos y la descarga.
+
+No se corrige aquí a propósito: gatear `replay-service` sin más rompería también
+al usuario autenticado, porque ese servicio no tiene ninguna noción de sesión. La
+corrección exige decidir antes cómo se autentica la lectura de replays (proxy por
+la API, ticket firmado como el de espectador, o auth propia). Es carril aparte, y
+es **previo** a abrir el reenvío del router.
+
+### Rutas revisadas y descartadas
+
+`/grafana/` (perfil opcional, no activo) y el puerto 8081 (no publicado; sólo
+alcanzable dentro de la red Docker).
 
 ## 7. Pruebas y mutaciones
 
@@ -215,6 +239,7 @@ Condiciones verificables antes de encender `S9_PUBLIC_SPECTATE_ENABLED`.
 
 | # | condición | evidencia |
 |---|---|---|
+| G0 | `/replays/` deja de servir datos a un anónimo con `S9_PUBLIC_REPLAYS_ENABLED` apagada (§6.b) | `GET /replays/` por el gateway sin sesión, con la puerta apagada |
 | G1 | La corrección de fail-closed está mergeada y **desplegada en las imágenes que corren** | `/version` de api y worker = el commit del merge (ADR-016) |
 | G2 | TLS real en el borde: `:443` con `LISTEN` dentro del gateway | `ss -lntp` en el contenedor + handshake TLS correcto |
 | G3 | `nginx.conf` desplegado == `nginx.conf` del repositorio | diff del fichero dentro del contenedor contra el del repo |
