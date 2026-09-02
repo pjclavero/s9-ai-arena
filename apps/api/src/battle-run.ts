@@ -58,13 +58,34 @@ export interface BattleRunConfig {
   runner?: BattleRunLauncher;
   /** Si true, la ingesta del replay es obligatoria para considerar la batalla válida. */
   replayServiceRequired?: boolean;
+  /**
+   * CARRIL I · Techo de batallas REALES simultáneas (filas `battles` en
+   * `running`). Límite de recursos del host: cada batalla ocupa contenedores,
+   * CPU y RAM durante minutos. Ausente ⇒ el default conservador de la ruta (1).
+   */
+  maxConcurrentRuns?: number;
+}
+
+/**
+ * CARRIL I · Lee el techo de concurrencia del entorno. Solo un ENTERO >= 1 vale:
+ * un valor basura ("dos", "0", "-3", "1e9999") se trata como AUSENTE y manda el
+ * default conservador de la ruta — nunca como "sin límite", que es justo lo que
+ * un typo produciría si se hiciera `Number(x) || Infinity`.
+ */
+export function parseMaxConcurrentRuns(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) return undefined;
+  return n;
 }
 
 /** Construye la config desde el entorno (apagado por defecto). El runner se inyecta aparte. */
 export function battleRunConfigFromEnv(env: NodeJS.ProcessEnv = process.env): BattleRunConfig {
+  const maxConcurrentRuns = parseMaxConcurrentRuns(env.S9_MAX_CONCURRENT_REAL_BATTLE_RUNS);
   return {
     enabled: env.S9_ENABLE_REAL_BATTLE_RUNS === "1",
     replayServiceRequired: env.REPLAY_INGEST_REQUIRED === "1",
+    ...(maxConcurrentRuns !== undefined ? { maxConcurrentRuns } : {}),
   };
 }
 
