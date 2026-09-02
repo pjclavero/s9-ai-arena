@@ -25,6 +25,14 @@
  *    que los tests puedan ponerlo rojo sin daemon.
  */
 import { spawnSync } from "node:child_process";
+import {
+  clasificarDrift,
+  commitDeReferencia,
+  commitEmbebido,
+  mismoCommit,
+  type Clasificacion,
+  type EstadoDrift,
+} from "../../infrastructure/scripts/lib/image-drift.mjs";
 
 /** Ejecutor inyectable: devuelve rc EXPLÍCITO, nunca el `$?` de una tubería. */
 export interface EjecutorComando {
@@ -38,6 +46,14 @@ export interface DeployedVersionResult {
   runningImageId: string | null;
   imageIdPresentInDaemon: boolean;
   tagResolvesToRunningId?: boolean;
+  /**
+   * Estado explícito del modelo de drift de ADR-016. Los booleanos de arriba se
+   * conservan como OBSERVACIONES separadas (existencia, resolución de la
+   * referencia), pero la decisión se toma sobre el estado, no combinándolos a
+   * mano en cada consumidor: eso es lo que mezclaba cosas distintas.
+   */
+  driftState: EstadoDrift | null;
+  driftExplanation?: string;
   reason?: string;
 }
 
@@ -59,70 +75,38 @@ export interface ObservacionImagen {
   reason?: string;
 }
 
-/** Un sufijo de etiqueta que parece un commit: hex de 7 a 40, nada más. */
-const RE_COMMIT = /^[0-9a-f]{7,40}$/;
+// El modelo (qué es un commit de etiqueta, qué cuenta como identidad embebida,
+// cómo se comparan dos commits) vive UNA sola vez, en el clasificador de
+// ADR-016. Aquí sólo se reexporta: dos copias del mismo criterio es cómo se
+// consigue que el gate y la sonda discrepen sin que nadie se entere.
+export { mismoCommit, commitEmbebido };
+export const commitDeEtiqueta = commitDeReferencia;
 
-/** Commit que ANUNCIA la etiqueta, si es que anuncia alguno. */
-export function commitDeEtiqueta(tag: string | null): string | null {
-  if (!tag) return null;
-  const sufijo = tag
-    .slice(tag.lastIndexOf(":") + 1)
-    .trim()
-    .toLowerCase();
-  return RE_COMMIT.test(sufijo) ? sufijo : null;
-}
-
-/** Commit EMBEBIDO en la imagen. `unknown` no es un commit: es ausencia. */
-export function commitEmbebido(
-  env: Readonly<Record<string, string>>,
-  labels: Readonly<Record<string, string>>,
-): string | null {
-  const candidatos = [env.BUILD_COMMIT, labels["org.opencontainers.image.revision"]];
-  for (const c of candidatos) {
-    const v = (c ?? "").trim().toLowerCase();
-    if (v !== "" && v !== "unknown") return v;
-  }
-  return null;
-}
-
-/**
- * Núcleo puro. Compara sólo commits COMPARABLES: si uno es prefijo del otro
- * (short sha frente a sha completo) no hay discrepancia, y si la imagen no trae
- * identidad embebida se devuelve `builtFromCommit: null` — que la comprobación
- * lee como "no se puede afirmar", no como "coincide".
- */
 export function interpretarVersionDesplegada(obs: ObservacionImagen): DeployedVersionResult {
-  if (!obs.runningImageId || !obs.imageTag) {
-    return {
-      imageTag: obs.imageTag,
-      taggedCommit: commitDeEtiqueta(obs.imageTag),
-      builtFromCommit: null,
-      runningImageId: obs.runningImageId,
-      imageIdPresentInDaemon: false,
-      reason: obs.reason ?? "no se pudo leer la identidad de imagen del contenedor",
-    };
-  }
-
-  const taggedCommit = commitDeEtiqueta(obs.imageTag);
-  const embebido = commitEmbebido(obs.envImagen, obs.labelsImagen);
-  const builtFromCommit = embebido === null ? null : mismoCommit(embebido, taggedCommit) ? taggedCommit : embebido;
+  const c: Clasificacion = clasificarDrift({
+    nombre: obs.imageTag ?? "(contenedor)",
+    runningImageId: obs.runningImageId,
+    referencia: obs.imageTag,
+    imagenResoluble: obs.imagenResoluble,
+    idDeLaReferencia: obs.idDeLaEtiqueta,
+    envImagen: obs.envImagen,
+    labelsImagen: obs.labelsImagen,
+    ...(obs.reason ? { reason: obs.reason } : {}),
+  });
 
   return {
-    imageTag: obs.imageTag,
-    taggedCommit,
-    builtFromCommit,
-    runningImageId: obs.runningImageId,
-    imageIdPresentInDaemon: obs.imagenResoluble,
-    // Sólo se afirma si se pudo resolver la etiqueta; si no, se deja sin mirar.
-    ...(obs.idDeLaEtiqueta === null ? {} : { tagResolvesToRunningId: obs.idDeLaEtiqueta === obs.runningImageId }),
-    ...(obs.reason ? { reason: obs.reason } : {}),
+    imageTag: c.referencia,
+    taggedCommit: c.commitEtiqueta,
+    // `null` cuando la imagen no trae identidad embebida: la comprobación lo lee
+    // como "no se puede afirmar", nunca como "coincide".
+    builtFromCommit: c.procedencia === "verified" ? c.commitEmbebido : null,
+    runningImageId: c.runningImageId,
+    imageIdPresentInDaemon: c.runtimeImageExists,
+    ...(c.tagPointsToRuntime === null ? {} : { tagResolvesToRunningId: c.tagPointsToRuntime }),
+    driftState: c.estado,
+    driftExplanation: c.explicacion,
+    ...(c.reason ? { reason: c.reason } : {}),
   };
-}
-
-/** Dos commits son el mismo si uno es prefijo del otro (short sha vs completo). */
-export function mismoCommit(a: string | null, b: string | null): boolean {
-  if (!a || !b) return false;
-  return a.startsWith(b) || b.startsWith(a);
 }
 
 function ejecutorReal(): EjecutorComando {
@@ -243,6 +227,7 @@ export function deployedVersionProbe(contenedor: string, run?: EjecutorComando) 
         builtFromCommit: null,
         runningImageId: null,
         imageIdPresentInDaemon: false,
+        driftState: null,
         reason: "S9_READINESS_CONTAINER sin definir: no se ha mirado ningún contenedor",
       };
     }
