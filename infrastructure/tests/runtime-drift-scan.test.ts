@@ -223,6 +223,12 @@ describe("secretos y entorno", () => {
     });
   });
 
+  it("un contenedor fuera del proyecto Compose es drift del inventario", () => {
+    const r = escanearServicio(sano({ compose_managed: false }), OBJETIVO);
+    expect(r.result).toBe(ESTADOS.SPEC_DRIFT);
+    expect(r.motivos.join(" ")).toMatch(/FUERA del proyecto Compose/);
+  });
+
   it("el drift de secretos llega al resultado del servicio", () => {
     expect(escanearServicio(sano({ secrets: [] }), OBJETIVO).result).toBe(ESTADOS.SPEC_DRIFT);
   });

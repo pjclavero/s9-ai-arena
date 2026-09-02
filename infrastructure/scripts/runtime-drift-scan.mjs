@@ -317,6 +317,13 @@ export function escanearServicio(hecho, objetivo = null) {
     motivos.push("sin especificación objetivo: el drift de montajes/secretos/entorno NO se ha ejercido");
   }
 
+  // Contenedor que corre en el anfitrión sin pertenecer al proyecto Compose: no
+  // lo declara ninguna especificación, así que es drift del propio inventario.
+  if (hecho.compose_managed === false) {
+    estados.push(ESTADOS.SPEC_DRIFT);
+    motivos.push("contenedor FUERA del proyecto Compose: ninguna especificación lo declara");
+  }
+
   const result = PRECEDENCIA.find((e) => estados.includes(e)) ?? ESTADOS.OK;
 
   return {
