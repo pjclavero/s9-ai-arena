@@ -517,6 +517,35 @@ jobs:
       - name: CONTROL · se detecta un contenedor cuya imagen ya no existe
         run: node infrastructure/scripts/check-running-image-id.mjs --self-test
 
+      # ── ADR-017 · contrato de release ────────────────────────────────────────
+      # Calibración del gate que separa BUILD de DEPLOY. Va aquí, y no en un job
+      # nuevo, porque es el mismo veredicto: "este despliegue es lo que dice
+      # ser". Si alguna de sus garantías dejara de poder ponerse roja, este paso
+      # falla y con él un job OBLIGATORIO del semáforo.
+      - name: CONTROL · las garantías del contrato de release saben ponerse rojas
+        run: node infrastructure/scripts/release-gate.mjs --self-test
+
+      # El incidente literal, como control negativo de la fase: la invocación de
+      # despliegue SIN --no-build (project-directory de producción sobre un
+      # compose cuyo build.context resuelve contra él) TIENE que rechazarse.
+      - name: CONTROL NEGATIVO · un DEPLOY sin --no-build se rechaza
+        run: |
+          set +e
+          node infrastructure/scripts/release-gate.mjs --invocacion deploy -- \
+            docker compose -f infrastructure/docker-compose.yml \
+            --project-directory /opt/s9-ai-arena/infrastructure up -d
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::el gate aprobó un DEPLOY que puede construir: no impide el incidente del árbol viejo"
+            exit 1
+          fi
+          echo "control negativo OK: el gate salió con rc=$rc ante un DEPLOY sin --no-build"
+          # Y el control POSITIVO: la misma invocación bien formada pasa.
+          node infrastructure/scripts/release-gate.mjs --invocacion deploy -- \
+            docker compose -f infrastructure/docker-compose.yml \
+            --project-directory /opt/s9-ai-arena/infrastructure up -d --no-build
+
   # ── Etapa 6: escaneo de dependencias, imágenes y Compose ──────────────────
   scan:
     needs: [build-images]
