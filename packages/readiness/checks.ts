@@ -185,7 +185,29 @@ const deployedVersionMatches: ReadinessCheck = {
         remedy: "No se puede reproducir ni reiniciar con lo mismo: reconstruye y redespliega.",
       };
     }
-    if (r.taggedCommit && r.builtFromCommit && r.taggedCommit !== r.builtFromCommit) {
+    if (r.tagResolvesToRunningId === false) {
+      // La etiqueta se movió bajo los pies del contenedor: el proceso vivo y la
+      // etiqueta con la que arrancó ya no son la misma imagen. Un restart
+      // traería OTRA versión sin que nadie lo hubiera decidido.
+      return {
+        status: "failed" as const,
+        evidence: `${r.imageTag} resuelve hoy a otra imagen distinta de la que corre el contenedor`,
+        remedy: "Un restart cambiaría la versión sin decisión: fija la imagen por digest o retagea a la que está viva.",
+      };
+    }
+    if (!r.builtFromCommit) {
+      // La imagen no lleva el commit dentro (ADR-016): sin identidad embebida no
+      // se ha OBSERVADO de qué árbol salió, sólo lo que dice la etiqueta — que es
+      // exactamente lo que puede mentir. Aprobar aquí sería IMAGE TAG leído como
+      // DEPLOYED VERSION.
+      return {
+        status: "not_exercised" as const,
+        evidence: `la imagen ${r.imageTag} existe en el daemon pero no lleva identidad de build embebida: la procedencia no se ha comprobado`,
+        remedy:
+          "Reconstruye con BUILD_COMMIT/org.opencontainers.image.revision (ADR-016): sin commit dentro, la etiqueta es la única fuente y puede mentir.",
+      };
+    }
+    if (r.taggedCommit && r.taggedCommit !== r.builtFromCommit) {
       return {
         status: "failed" as const,
         evidence: `la etiqueta dice ${r.taggedCommit} y la imagen se construyó desde ${r.builtFromCommit}`,
@@ -194,7 +216,7 @@ const deployedVersionMatches: ReadinessCheck = {
     }
     return {
       status: "verified" as const,
-      evidence: `imagen ${r.imageTag} presente en el daemon y construida desde ${r.builtFromCommit ?? "commit declarado"}`,
+      evidence: `imagen ${r.imageTag} presente en el daemon y construida desde ${r.builtFromCommit}`,
     };
   },
 };
