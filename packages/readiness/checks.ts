@@ -23,17 +23,28 @@ const storageWritable: ReadinessCheck = {
     "Que haya espacio para la carga real, que el volumen sea persistente ni que esté respaldado. STORAGE EXISTS != STORAGE WRITABLE, y writable != duradero.",
   required: true,
   async run(ctx: ReadinessContext) {
-    const dir = (ctx.env.S9_DATA_DIR ?? "").trim();
+    const dir = (ctx.env.REPLAYS_DIR ?? "").trim();
     if (dir === "") {
       return {
         status: "not_exercised" as const,
-        evidence: "S9_DATA_DIR sin definir: no se ha escrito en ningún sitio.",
-        remedy: "Define S9_DATA_DIR apuntando al volumen de datos.",
+        evidence: "REPLAYS_DIR sin definir: no se ha escrito en ningún sitio.",
+        remedy: "Define REPLAYS_DIR apuntando al volumen de replays (en el despliegue real, /data/replays).",
       };
     }
     const r = await ctx.probes.dataDirWrite(dir);
+    if (!r.attempted) {
+      // No se intentó escribir: eso NO es un volumen de solo lectura, es una
+      // comprobación que no se ha hecho.
+      return {
+        status: "not_exercised" as const,
+        evidence: `no se intentó escribir en ${dir}${r.reason ? ` (${r.reason})` : ""}`,
+        remedy: "Ejecuta el motor donde el volumen esté montado: sin intentar la escritura no se sabe nada.",
+      };
+    }
     const empty = requireEffect(r.bytesWritten, {
-      evidence: `no se escribió ni un byte en ${dir}${r.reason ? ` (${r.reason})` : ""}`,
+      // Se intentó y el volumen lo rechazó: condición comprobada y NO cumplida.
+      status: "failed" as const,
+      evidence: `se intentó escribir en ${dir} y no entró ni un byte${r.reason ? ` (${r.reason})` : ""}`,
       remedy: "Comprueba propiedad del volumen (uid del proceso) y que el montaje no sea de solo lectura.",
     });
     if (empty) return empty;
@@ -52,21 +63,80 @@ const storageWritable: ReadinessCheck = {
 };
 
 // ── Bloque: copias de seguridad ──────────────────────────────────────────────
-const backupRan: ReadinessCheck = {
-  id: "backup.last_run_succeeded",
+//
+// Por qué CINCO comprobaciones y no una: el healthcheck real del servicio de
+// copias en este despliegue es `pgrep crond`. Ese healthcheck pasa en verde con
+// la copia fallando todas las noches — que es literalmente el incidente que R17
+// existe para evitar. "Cron vivo" y "copia lista" son afirmaciones distintas y
+// se miden por separado, cada una diciendo qué NO demuestra:
+//
+//   backup.process_alive             hay quien dispare la copia          (NO bloqueante)
+//   backup.last_run_success          la última ejecución terminó bien    (bloqueante)
+//   backup.last_snapshot_verified    dejó un snapshot reciente con bytes (bloqueante)
+//   backup.pg_dump_checksum_verified el volcado releído cuadra con su hash (bloqueante)
+//   backup.restore_verified          restaurar devuelve el canario       (bloqueante)
+//
+// La cadena es acumulativa: cada una es necesaria para la siguiente y ninguna
+// implica la siguiente. `process_alive` es la única NO bloqueante, y a
+// propósito: es la señal que engaña, así que puede informar pero nunca puede
+// ser el motivo por el que una instalación se declara lista. Las tres últimas
+// son las que separan BACKED_UP de RECOVERY_VERIFIED; si el entorno no permite
+// ejercerlas, quedan `not_exercised` CON MOTIVO y bloquean — nunca aprobadas
+// por omisión.
+
+const backupProcessAlive: ReadinessCheck = {
+  id: "backup.process_alive",
   block: "copias",
-  title: "La última copia se ejecutó, terminó bien y escribió datos",
-  proves: "Que existe una ejecución reciente de la copia con código 0 y con bytes en el último snapshot.",
+  title: "Hay un proceso vivo que puede disparar la copia",
+  proves: "Que el planificador (cron/temporizador) del servicio de copias está corriendo AHORA.",
   doesNotProve:
-    "Que esos datos se puedan restaurar. BACKED_UP != RECOVERY_VERIFIED. Tampoco prueba que el contenido sea el correcto.",
+    "Que la copia se haya ejecutado nunca, ni que la última saliera bien, ni que haya datos. Es el healthcheck que pasa en verde con la copia fallando cada noche: por eso esta comprobación NO es bloqueante.",
+  required: false,
+  async run(ctx: ReadinessContext) {
+    const r = await ctx.probes.backupProcessAlive();
+    if (!r.probed) {
+      return {
+        status: "not_exercised" as const,
+        evidence: `no se pudo mirar si el planificador de copias está vivo${r.reason ? ` (${r.reason})` : ""}`,
+        remedy: "Sin observar el proceso no se afirma nada: ni vivo ni muerto.",
+      };
+    }
+    if (!r.processRunning) {
+      return {
+        status: "failed" as const,
+        evidence: "se miró el servicio de copias y no hay planificador corriendo",
+        remedy: "Nadie va a disparar la copia esta noche: revisa el servicio (no lo reinicies sin autorización).",
+      };
+    }
+    return {
+      status: "verified" as const,
+      evidence: "planificador de copias vivo (esto NO dice nada del resultado de la última copia)",
+    };
+  },
+};
+
+const backupLastRunSuccess: ReadinessCheck = {
+  id: "backup.last_run_success",
+  block: "copias",
+  title: "La última copia se ejecutó, terminó con código 0 y es reciente",
+  proves: "Que existe una ejecución registrada de la copia, con su código de salida y su antigüedad.",
+  doesNotProve:
+    "Que esa ejecución escribiera datos, ni que el snapshot exista, ni que se pueda restaurar. EXIT 0 != BEHAVIOR EXERCISED.",
   required: true,
   async run(ctx: ReadinessContext) {
     const r = await ctx.probes.backupLastRun();
-    if (r.ranAt === null || r.exitCode === null) {
+    if (!r.probed) {
       return {
         status: "not_exercised" as const,
-        evidence: `no consta ninguna ejecución de la copia${r.reason ? ` (${r.reason})` : ""}`,
-        remedy: "El temporizador puede estar sano y no haber ejecutado nada: revisa su última salida.",
+        evidence: `no se pudo leer el resultado de la última copia${r.reason ? ` (${r.reason})` : ""}`,
+        remedy: "Expón las métricas/registro de la última ejecución donde el motor pueda leerlos.",
+      };
+    }
+    if (r.ranAt === null || r.exitCode === null) {
+      return {
+        status: "failed" as const,
+        evidence: "se miró el registro de copias y NO consta ninguna ejecución",
+        remedy: "El temporizador puede estar sano y no haber ejecutado nada nunca: eso no es una copia.",
       };
     }
     if (r.exitCode !== 0) {
@@ -76,11 +146,6 @@ const backupRan: ReadinessCheck = {
         remedy: "Contenedor 'healthy' con su único trabajo fallando: el healthcheck no mira esto.",
       };
     }
-    const empty = requireEffect(r.lastSnapshotBytes, {
-      evidence: `la copia salió con código 0 pero el último snapshot tiene 0 bytes (${r.snapshotCount} snapshots)`,
-      remedy: "EXIT 0 != BEHAVIOR EXERCISED: una copia vacía no es una copia.",
-    });
-    if (empty) return empty;
     if (r.ageHours !== null && r.ageHours > BACKUP_MAX_AGE_HOURS) {
       return {
         status: "failed" as const,
@@ -90,13 +155,99 @@ const backupRan: ReadinessCheck = {
     }
     return {
       status: "verified" as const,
-      evidence: `copia de ${r.ranAt}, código 0, ${r.lastSnapshotBytes} B en el último de ${r.snapshotCount} snapshots`,
+      evidence: `última copia ${r.ranAt}, código 0, ${r.ageHours ?? "?"} h de antigüedad`,
     };
   },
 };
 
-const backupRestorable: ReadinessCheck = {
-  id: "backup.restore_drill",
+const backupLastSnapshotVerified: ReadinessCheck = {
+  id: "backup.last_snapshot_verified",
+  block: "copias",
+  title: "La última copia dejó un snapshot reciente y con bytes en el repositorio",
+  proves:
+    "Que el repositorio de copias contiene un snapshot fechado dentro de la ventana y con tamaño mayor que cero, leído del propio repositorio y no del proceso que dijo haberlo creado.",
+  doesNotProve:
+    "Que el snapshot sea íntegro (eso sería una verificación de repositorio, que NO es de solo lectura), ni que su contenido sea el correcto, ni que se pueda restaurar.",
+  required: true,
+  async run(ctx: ReadinessContext) {
+    const r = await ctx.probes.backupLastSnapshot();
+    if (!r.probed) {
+      return {
+        status: "not_exercised" as const,
+        evidence: `no se pudo consultar el repositorio de copias${r.reason ? ` (${r.reason})` : ""}`,
+        remedy: "Sin mirar el repositorio, 'se creó un snapshot' es sólo lo que dice quien lo creó.",
+      };
+    }
+    if (r.snapshotCount === 0 || r.latestSnapshotAt === null) {
+      return {
+        status: "failed" as const,
+        evidence: "se consultó el repositorio de copias y no hay ningún snapshot",
+        remedy: "La ejecución pudo salir con código 0 sin dejar nada: el repositorio es la fuente de verdad.",
+      };
+    }
+    const empty = requireEffect(r.latestSnapshotBytes, {
+      // Se leyó el repositorio y el snapshot mide cero: condición comprobada y
+      // no cumplida. Una copia vacía no es una copia.
+      status: "failed" as const,
+      evidence: `el último snapshot (${r.latestSnapshotAt}) existe pero mide 0 bytes (${r.snapshotCount} snapshots)`,
+      remedy: "EXIT 0 != BEHAVIOR EXERCISED: una copia vacía no es una copia.",
+    });
+    if (empty) return empty;
+    if (r.ageHours !== null && r.ageHours > BACKUP_MAX_AGE_HOURS) {
+      return {
+        status: "failed" as const,
+        evidence: `el último snapshot tiene ${r.ageHours} h (> ${BACKUP_MAX_AGE_HOURS} h)`,
+        remedy: "Puede haber ejecuciones con código 0 que ya no añaden snapshots: mira el repositorio, no el proceso.",
+      };
+    }
+    return {
+      status: "verified" as const,
+      evidence: `último snapshot ${r.latestSnapshotAt}, ${r.latestSnapshotBytes} B, ${r.snapshotCount} snapshots en el repositorio`,
+    };
+  },
+};
+
+const backupPgDumpChecksumVerified: ReadinessCheck = {
+  id: "backup.pg_dump_checksum_verified",
+  block: "copias",
+  title: "El volcado de PostgreSQL guardado cuadra con su checksum",
+  proves:
+    "Que el volcado ALMACENADO se releyó y su hash coincide con el del manifest: la copia contiene el fichero que dice contener y no se ha corrompido en el camino.",
+  doesNotProve:
+    "Que el volcado sea restaurable ni que el esquema esté al día. Un dump íntegro de una base equivocada sigue siendo íntegro.",
+  required: true,
+  async run(ctx: ReadinessContext) {
+    const r = await ctx.probes.backupPgDumpChecksum();
+    if (!r.probed) {
+      return {
+        status: "not_exercised" as const,
+        evidence: `no se releyó el volcado almacenado${r.reason ? ` (${r.reason})` : ""}`,
+        remedy:
+          "Que el productor anote 'pg_dump correcto' no es contrastarlo: hace falta releer el fichero de la copia y recalcular su hash.",
+      };
+    }
+    const empty = requireEffect(r.dumpBytes, {
+      status: "failed" as const,
+      evidence: "se leyó el volcado almacenado y tiene 0 bytes",
+      remedy: "Un dump vacío pasa cualquier 'pg_dump exit 0': exige bytes.",
+    });
+    if (empty) return empty;
+    if (!r.checksumMatches) {
+      return {
+        status: "failed" as const,
+        evidence: `el volcado almacenado (${r.dumpBytes} B) NO coincide con su checksum del manifest`,
+        remedy: "La copia contiene algo distinto de lo que promete el manifest: no la des por buena.",
+      };
+    }
+    return {
+      status: "verified" as const,
+      evidence: `volcado de ${r.dumpBytes} B releído y coincidente con su checksum`,
+    };
+  },
+};
+
+const backupRestoreVerified: ReadinessCheck = {
+  id: "backup.restore_verified",
   block: "copias",
   title: "Un simulacro de restauración recupera el canario",
   proves: "Que una restauración a destino desechable devuelve bytes y contiene el canario sembrado antes de la copia.",
@@ -113,7 +264,9 @@ const backupRestorable: ReadinessCheck = {
       };
     }
     const empty = requireEffect(r.restoredBytes, {
-      evidence: "la restauración se ejecutó pero recuperó 0 bytes",
+      // Se intentó restaurar y volvió la nada: fallo observado.
+      status: "failed" as const,
+      evidence: "la restauración se ejecutó y recuperó 0 bytes",
       remedy: "Restaurar la nada devuelve éxito: exige bytes y canario.",
     });
     if (empty) return empty;
@@ -141,15 +294,28 @@ const secretMounted: ReadinessCheck = {
     "Que el secreto sea fuerte, ni que sea el mismo que usan los demás servicios. SECRET EXISTS != SECRET MOUNTED, y montado != correcto.",
   required: true,
   async run(ctx: ReadinessContext) {
-    const r = await ctx.probes.secretMounted("S9_JWT_SECRET");
+    const r = await ctx.probes.secretMounted("JWT_SECRET_FILE");
+    if (!r.probed) {
+      // FALSO FALLO CORREGIDO: la sonda que devuelve "no disponible en este
+      // entorno" NO ha mirado el espacio de montaje. Decir `failed` ahí es
+      // afirmar que el secreto no está montado habiendo mirado nada, y cuatro
+      // falsos rojos entierran los rojos de verdad.
+      return {
+        status: "not_exercised" as const,
+        evidence: `no se pudo mirar el espacio de montaje del proceso${r.reason ? ` (${r.reason})` : ""}`,
+        remedy: "Ejecuta el motor dentro del proceso que monta el secreto: desde fuera no se observa su montaje.",
+      };
+    }
     if (!r.mountedInProcess) {
       return {
         status: "failed" as const,
-        evidence: `el secreto ${r.existsOnHost ? "existe en el host pero" : "no existe y"} no está montado en el proceso`,
+        evidence: `se miró el proceso: el secreto ${r.existsOnHost ? "existe en el host pero" : "no existe y"} no está montado`,
         remedy: "Añade el montaje al servicio: el fichero en el host no viaja solo al contenedor.",
       };
     }
     const empty = requireEffect(r.readableBytes, {
+      // Montado y con cero bytes: se miró y no se cumple.
+      status: "failed" as const,
       evidence: "el secreto está montado pero se leen 0 bytes",
       remedy: "Montaje presente y fichero vacío: el arranque parecería correcto y firmaría con nada.",
     });
@@ -295,6 +461,10 @@ const dbCanaryCheck: ReadinessCheck = {
       };
     }
     const empty = requireEffect(r.canaryRowsSeen, {
+      // La consulta SÍ se ejecutó y el canario no apareció: se comprobó y no se
+      // cumple. (Cuando ni siquiera se ejecuta, la rama de arriba ya devuelve
+      // `not_exercised`.)
+      status: "failed" as const,
       evidence: `la consulta se ejecutó y devolvió 0 filas de canario (rowsAffected=${r.rowsAffected})`,
       remedy: "Sin canario, 0 filas es ambiguo: puede ser correcto-y-vacío o no haber ejercido nada.",
     });
@@ -323,6 +493,8 @@ const diagnosticsRedacted: ReadinessCheck = {
       };
     }
     const empty = requireEffect(r.bytes, {
+      // Se generó y pesa cero: observado y no cumplido.
+      status: "failed" as const,
       evidence: "el paquete se generó con 0 bytes",
       remedy: "Un fichero vacío con exit 0 no es diagnóstico.",
     });
@@ -340,8 +512,11 @@ const diagnosticsRedacted: ReadinessCheck = {
 
 export const READINESS_CHECKS: readonly ReadinessCheck[] = [
   storageWritable,
-  backupRan,
-  backupRestorable,
+  backupProcessAlive,
+  backupLastRunSuccess,
+  backupLastSnapshotVerified,
+  backupPgDumpChecksumVerified,
+  backupRestoreVerified,
   secretMounted,
   deployedVersionMatches,
   realBattleGate,

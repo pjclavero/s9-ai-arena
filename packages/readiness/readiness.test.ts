@@ -28,10 +28,48 @@ describe("modelo de configuración", () => {
 
   it("faltar una clave obligatoria es error, no aviso", () => {
     const env = nominalEnv();
-    delete env.S9_BACKUP_TARGET;
+    delete env.RESTIC_REPOSITORY;
     const r = resolveConfig(env);
     expect(r.ok).toBe(false);
-    expect(r.problems.some((p) => p.code === "missing_required" && p.key === "S9_BACKUP_TARGET")).toBe(true);
+    expect(r.problems.some((p) => p.code === "missing_required" && p.key === "RESTIC_REPOSITORY")).toBe(true);
+  });
+
+  // El modelo describe el DESPLIEGUE REAL. Estas cuatro claves no existen en
+  // ningún sitio de la instalación y producían cuatro bloqueantes permanentes
+  // que ninguna configuración podía satisfacer.
+  it("no exige claves que no existen en el despliegue", () => {
+    const declaradas = new Set(CONFIG_MODEL.map((e) => e.key));
+    for (const fantasma of ["S9_DATA_DIR", "S9_DB_URL", "S9_JWT_SECRET", "S9_BACKUP_TARGET"]) {
+      expect(declaradas.has(fantasma)).toBe(false);
+    }
+  });
+
+  it("el contrato real de secretos son las claves *_FILE con ruta montada", () => {
+    for (const key of [
+      "JWT_SECRET_FILE",
+      "PGPASSWORD_FILE",
+      "RESTIC_PASSWORD_FILE",
+      "ARENA_ENGINE_SHARED_SECRET_FILE",
+      "REPLAY_INGEST_SECRET_FILE",
+    ]) {
+      const entry = CONFIG_MODEL.find((e) => e.key === key);
+      expect(entry, `${key} debe estar en el modelo`).toBeDefined();
+      expect(entry!.pathToSecret).toBe(true);
+    }
+  });
+
+  it("un secreto puesto en la clave *_FILE en vez de su ruta es ERROR", () => {
+    const r = resolveConfig({ ...nominalEnv(), JWT_SECRET_FILE: "un-secreto-en-claro" });
+    expect(r.ok).toBe(false);
+    expect(r.problems.some((p) => p.code === "forbidden_value" && p.key === "JWT_SECRET_FILE")).toBe(true);
+  });
+
+  it("las dos claves S9_* que se conservan siguen en el modelo, con justificación de uso real", () => {
+    const declaradas = new Set(CONFIG_MODEL.map((e) => e.key));
+    // S9_DOMAIN está en el .env de la instalación; las puertas las lee apps/api.
+    for (const real of ["S9_DOMAIN", "S9_ENABLE_REAL_BATTLE_RUNS", "S9_PUBLIC_SPECTATE_ENABLED"]) {
+      expect(declaradas.has(real)).toBe(true);
+    }
   });
 
   it("encender una puerta bloqueada por el operador es ERROR", () => {
@@ -50,17 +88,22 @@ describe("modelo de configuración", () => {
     expect(resolveConfig(env).gatesOn).toEqual([]);
   });
 
-  it("un secreto débil conocido se rechaza sin imprimir el valor", () => {
-    const r = resolveConfig({ ...nominalEnv(), S9_JWT_SECRET: "changeme" });
-    const problem = r.problems.find((p) => p.code === "forbidden_value" && p.key === "S9_JWT_SECRET");
+  it("un secreto por entorno nunca se imprime", () => {
+    const r = resolveConfig({ ...nominalEnv(), DATABASE_URL: "postgres://u:changeme@h/db" });
+    const problem = r.problems.find((p) => p.code === "secret_inline" && p.key === "DATABASE_URL");
     expect(problem).toBeDefined();
     expect(problem!.message).not.toContain("changeme");
-    expect(r.effective.S9_JWT_SECRET).not.toContain("changeme");
+    expect(r.effective.DATABASE_URL).not.toContain("changeme");
   });
 
   it("un secreto por entorno en claro genera aviso a favor de *_FILE", () => {
-    const r = resolveConfig({ ...nominalEnv(), S9_DB_URL: "postgres://u:p@<internal-db-host>/db" });
-    expect(r.problems.some((p) => p.code === "secret_inline" && p.key === "S9_DB_URL")).toBe(true);
+    const r = resolveConfig({ ...nominalEnv(), DATABASE_URL: "postgres://u:p@<internal-db-host>/db" });
+    expect(r.problems.some((p) => p.code === "secret_inline" && p.key === "DATABASE_URL")).toBe(true);
+  });
+
+  it("una clave fantasma de las familias del proyecto también se señala", () => {
+    const r = resolveConfig({ ...nominalEnv(), RESTIC_TURBO: "1" });
+    expect(r.problems.some((p) => p.code === "unknown_key" && p.key === "RESTIC_TURBO")).toBe(true);
   });
 
   it("una clave S9_* desconocida se señala como configuración fantasma", () => {
@@ -68,8 +111,8 @@ describe("modelo de configuración", () => {
     expect(r.problems.some((p) => p.code === "unknown_key" && p.key === "S9_TURBO_MODE")).toBe(true);
   });
 
-  it("S9_DATA_DIR en /tmp es un valor prohibido", () => {
-    const r = resolveConfig({ ...nominalEnv(), S9_DATA_DIR: "/tmp" });
+  it("REPLAYS_DIR en /tmp es un valor prohibido", () => {
+    const r = resolveConfig({ ...nominalEnv(), REPLAYS_DIR: "/tmp" });
     expect(r.ok).toBe(false);
   });
 
@@ -146,7 +189,7 @@ describe("motor", () => {
   it("las sondas locales sí ejercen de verdad la escritura en disco", async () => {
     const dir = mkdtempSync(join(tmpdir(), "r17-"));
     try {
-      const ctx: ReadinessContext = { env: { S9_DATA_DIR: dir }, probes: localProbes() };
+      const ctx: ReadinessContext = { env: { REPLAYS_DIR: dir }, probes: localProbes() };
       const check = READINESS_CHECKS.find((c) => c.id === "storage.writable")!;
       const ok = await check.run(ctx);
       expect(ok.status).toBe("verified");
@@ -156,10 +199,13 @@ describe("motor", () => {
       chmodSync(dir, 0o500);
       const denied = await check.run(ctx);
       if (process.getuid?.() === 0) {
-        expect(["verified", "not_exercised"]).toContain(denied.status);
+        // root ignora los permisos: no se puede provocar el fallo así.
+        expect(["verified", "failed"]).toContain(denied.status);
       } else {
-        expect(denied.status).toBe("not_exercised");
-        expect(denied.evidence).toContain("no se escribió");
+        // Se INTENTÓ escribir y el sistema de ficheros lo rechazó: eso es un
+        // fallo comprobado, no una comprobación pendiente.
+        expect(denied.status).toBe("failed");
+        expect(denied.evidence).toContain("se intentó escribir");
       }
     } finally {
       try {
@@ -202,8 +248,8 @@ describe("asistente de primer arranque", () => {
     const plan = planFirstRun({});
     expect(plan.canProceed).toBe(false);
     const pendientes = plan.steps.filter((s) => s.mandatory && s.state !== "done").map((s) => s.id);
-    expect(pendientes).toContain("config.S9_DATA_DIR");
-    expect(pendientes).toContain("config.S9_JWT_SECRET");
+    expect(pendientes).toContain("config.REPLAYS_DIR");
+    expect(pendientes).toContain("config.JWT_SECRET_FILE");
   });
 
   it("con el nominal y sin readiness ejecutado, los pasos de config quedan hechos", () => {
@@ -239,9 +285,214 @@ describe("informe", () => {
   });
 
   it("nunca imprime el valor de un secreto", async () => {
-    const env = { ...nominalEnv(), S9_JWT_SECRET: "valor-super-secreto-42" };
+    const env = { ...nominalEnv(), DATABASE_URL: "postgres://u:valor-super-secreto-42@h/db" };
     const report = await runReadiness(READINESS_CHECKS, { env, probes: nominalContext().probes });
     const texto = renderReport(report, resolveConfig(env), planFirstRun(env, report));
     expect(texto).not.toContain("valor-super-secreto-42");
+  });
+});
+
+/**
+ * La frontera de los tres estados. Estos tests son el gate de la corrección que
+ * motivó este carril: `security.secret_mounted` devolvía `failed` cuando la
+ * sonda decía "no disponible en este entorno" — un FALSO FALLO que afirmaba
+ * "no está montado" sin haber mirado nada. Cuatro rojos falsos entierran los
+ * rojos de verdad, así que la distinción se prueba comprobación a comprobación.
+ */
+describe("semántica de los tres estados", () => {
+  const conSonda = async (id: string, mutar: (ctx: ReadinessContext) => void) => {
+    const ctx = nominalContext();
+    mutar(ctx);
+    const report = await runReadiness(READINESS_CHECKS, ctx);
+    return report.results.find((r) => r.check.id === id)!.outcome;
+  };
+
+  it("no haber mirado el montaje del secreto es NO EJERCIDA, nunca FALLIDA", async () => {
+    const o = await conSonda("security.secret_mounted", (c) => {
+      c.probes.secretMounted = async () => ({
+        probed: false,
+        existsOnHost: false,
+        mountedInProcess: false,
+        readableBytes: 0,
+        reason: "sonda no disponible en este entorno",
+      });
+    });
+    expect(o.status).toBe("not_exercised");
+    expect(o.evidence).toContain("no se pudo mirar");
+  });
+
+  it("haber mirado y no estar montado SÍ es FALLIDA", async () => {
+    const o = await conSonda("security.secret_mounted", (c) => {
+      c.probes.secretMounted = async () => ({
+        probed: true,
+        existsOnHost: true,
+        mountedInProcess: false,
+        readableBytes: 0,
+      });
+    });
+    expect(o.status).toBe("failed");
+  });
+
+  it("un efecto nulo OBSERVADO es FALLIDA, no una comprobación pendiente", async () => {
+    // Cada uno de estos casos se miró de verdad y salió a cero. Antes los seis
+    // se contaban como `not_exercised`, que es "ya lo miraremos".
+    expect(
+      (
+        await conSonda("storage.writable", (c) => {
+          c.probes.dataDirWrite = async () => ({
+            attempted: true,
+            bytesWritten: 0,
+            readBack: false,
+            sameContent: false,
+            reason: "EACCES",
+          });
+        })
+      ).status,
+    ).toBe("failed");
+    expect(
+      (
+        await conSonda("backup.last_snapshot_verified", (c) => {
+          c.probes.backupLastSnapshot = async () => ({
+            probed: true,
+            snapshotCount: 3,
+            latestSnapshotAt: "2026-08-30T02:00:05Z",
+            latestSnapshotBytes: 0,
+            ageHours: 2,
+          });
+        })
+      ).status,
+    ).toBe("failed");
+    expect(
+      (
+        await conSonda("backup.restore_verified", (c) => {
+          c.probes.backupRestoreDrill = async () => ({
+            attempted: true,
+            restoredBytes: 0,
+            canaryFound: false,
+          });
+        })
+      ).status,
+    ).toBe("failed");
+    expect(
+      (
+        await conSonda("diagnostics.db_canary", (c) => {
+          c.probes.dbCanary = async () => ({ queryExecuted: true, canaryRowsSeen: 0, rowsAffected: 0 });
+        })
+      ).status,
+    ).toBe("failed");
+    expect(
+      (
+        await conSonda("diagnostics.bundle_redacted", (c) => {
+          c.probes.diagnosticsBundle = async () => ({ generated: true, bytes: 0, secretLikeMatches: 0 });
+        })
+      ).status,
+    ).toBe("failed");
+    expect(
+      (
+        await conSonda("backup.pg_dump_checksum_verified", (c) => {
+          c.probes.backupPgDumpChecksum = async () => ({ probed: true, checksumMatches: true, dumpBytes: 0 });
+        })
+      ).status,
+    ).toBe("failed");
+  });
+
+  it("no haber mirado NUNCA se convierte en FALLIDA en ninguna comprobación", async () => {
+    // Con las sondas locales (que no observan infraestructura), ninguna
+    // comprobación puede afirmar un fallo: o mira de verdad, o dice que no.
+    const report = await runReadiness(READINESS_CHECKS, { env: nominalEnv(), probes: localProbes() });
+    for (const { check, outcome } of report.results) {
+      if (outcome.status !== "failed") continue;
+      expect(outcome.evidence, `${check.id} afirma un fallo sin haber observado nada`).not.toContain(
+        "no disponible en este entorno",
+      );
+    }
+  });
+});
+
+/**
+ * Descomposición del bloque de copias. "Cron vivo" no es "backup listo": el
+ * healthcheck real del servicio es `pgrep crond` y pasa en verde con la copia
+ * fallando todas las noches.
+ */
+describe("copias descompuestas", () => {
+  it("el planificador vivo NO alcanza para declarar readiness", async () => {
+    const ctx = nominalContext();
+    // Cron vivo, pero la copia de anoche falló.
+    ctx.probes.backupLastRun = async () => ({
+      probed: true,
+      ranAt: "2026-08-30T02:00:00Z",
+      exitCode: 2,
+      ageHours: 6,
+    });
+    const report = await runReadiness(READINESS_CHECKS, ctx);
+    const vivo = report.results.find((r) => r.check.id === "backup.process_alive")!;
+    expect(vivo.outcome.status).toBe("verified");
+    expect(report.verdict).toBe("NOT_READY");
+    expect(report.blockers.some((b) => b.startsWith("backup.last_run_success"))).toBe(true);
+  });
+
+  it("las cinco comprobaciones de copias existen y sólo process_alive no bloquea", () => {
+    const copias = READINESS_CHECKS.filter((c) => c.block === "copias");
+    expect(copias.map((c) => c.id).sort()).toEqual([
+      "backup.last_run_success",
+      "backup.last_snapshot_verified",
+      "backup.pg_dump_checksum_verified",
+      "backup.process_alive",
+      "backup.restore_verified",
+    ]);
+    expect(copias.filter((c) => !c.required).map((c) => c.id)).toEqual(["backup.process_alive"]);
+  });
+});
+
+/**
+ * Huecos encontrados por la propia calibración: tres mutaciones al código de
+ * producción sobrevivían porque las comprobaciones se ponían rojas por el
+ * motivo EQUIVOCADO. Un rojo con la causa cambiada manda al operador a arreglar
+ * lo que no está roto, así que aquí se ata el motivo, no sólo el color.
+ */
+describe("el motivo del rojo también se calibra", () => {
+  it("repositorio vacío y snapshot de 0 bytes son diagnósticos DISTINTOS", async () => {
+    const ctx = nominalContext();
+    ctx.probes.backupLastSnapshot = async () => ({
+      probed: true,
+      snapshotCount: 0,
+      latestSnapshotAt: null,
+      latestSnapshotBytes: 0,
+      ageHours: null,
+    });
+    const vacio = (await runReadiness(READINESS_CHECKS, ctx)).results.find(
+      (r) => r.check.id === "backup.last_snapshot_verified",
+    )!.outcome;
+    expect(vacio.status).toBe("failed");
+    expect(vacio.evidence).toContain("no hay ningún snapshot");
+
+    ctx.probes.backupLastSnapshot = async () => ({
+      probed: true,
+      snapshotCount: 4,
+      latestSnapshotAt: "2026-09-02T04:15:01Z",
+      latestSnapshotBytes: 0,
+      ageHours: 2,
+    });
+    const cero = (await runReadiness(READINESS_CHECKS, ctx)).results.find(
+      (r) => r.check.id === "backup.last_snapshot_verified",
+    )!.outcome;
+    expect(cero.status).toBe("failed");
+    expect(cero.evidence).toContain("0 bytes");
+  });
+
+  it("no intentar la escritura NO se convierte en 'volumen que rechaza'", async () => {
+    const ctx = nominalContext();
+    ctx.probes.dataDirWrite = async () => ({
+      attempted: false,
+      bytesWritten: 0,
+      readBack: false,
+      sameContent: false,
+      reason: "el volumen no está montado en este proceso",
+    });
+    const o = (await runReadiness(READINESS_CHECKS, ctx)).results.find(
+      (r) => r.check.id === "storage.writable",
+    )!.outcome;
+    expect(o.status).toBe("not_exercised");
+    expect(o.evidence).toContain("no se intentó escribir");
   });
 });

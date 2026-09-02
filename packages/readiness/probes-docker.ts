@@ -125,7 +125,8 @@ export function mismoCommit(a: string | null, b: string | null): boolean {
   return a.startsWith(b) || b.startsWith(a);
 }
 
-function ejecutorReal(): EjecutorComando {
+/** Ejecutor real compartido por las sondas de infraestructura (solo lectura). */
+export function ejecutorRealDocker(): EjecutorComando {
   return (cmd, args) => {
     const r = spawnSync(cmd, args, { encoding: "utf8" });
     return { rc: r.status ?? 1, out: (r.stdout ?? "").trim(), err: (r.stderr ?? "").trim() };
@@ -164,7 +165,7 @@ function parseKeyValueList(json: string): Record<string, string> {
  * superior, así que un contenedor perfectamente reproducible aparecería como
  * huérfano (falso positivo observado en VM108 con postgres).
  */
-export function observarImagen(contenedor: string, run: EjecutorComando = ejecutorReal()): ObservacionImagen {
+export function observarImagen(contenedor: string, run: EjecutorComando = ejecutorRealDocker()): ObservacionImagen {
   const vacio = Object.create(null) as Record<string, string>;
   const insp = run("docker", ["inspect", "-f", "{{.Image}}\t{{.Config.Image}}", contenedor]);
   if (insp.rc !== 0) {
@@ -246,6 +247,6 @@ export function deployedVersionProbe(contenedor: string, run?: EjecutorComando) 
         reason: "S9_READINESS_CONTAINER sin definir: no se ha mirado ningún contenedor",
       };
     }
-    return interpretarVersionDesplegada(observarImagen(nombre, run ?? ejecutorReal()));
+    return interpretarVersionDesplegada(observarImagen(nombre, run ?? ejecutorRealDocker()));
   };
 }
