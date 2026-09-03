@@ -12,10 +12,11 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ReadinessProbes } from "./engine.ts";
+import { deployedVersionProbe } from "./probes-docker.ts";
 
 const NEEDS_INFRA = "sonda no disponible en este entorno (requiere infraestructura)";
 
-export function localProbes(): ReadinessProbes {
+export function localProbes(env: Record<string, string | undefined> = process.env): ReadinessProbes {
   return {
     async dataDirWrite(dir: string) {
       const probe = join(dir, `.r17-readiness-${process.pid}`);
@@ -57,16 +58,9 @@ export function localProbes(): ReadinessProbes {
     async backupRestoreDrill() {
       return { attempted: false, restoredBytes: 0, canaryFound: false, reason: NEEDS_INFRA };
     },
-    async deployedVersion() {
-      return {
-        imageTag: null,
-        taggedCommit: null,
-        builtFromCommit: null,
-        runningImageId: null,
-        imageIdPresentInDaemon: false,
-        reason: NEEDS_INFRA,
-      };
-    },
+    // Única sonda de infraestructura ya implementada de verdad: lee el daemon
+    // en SOLO LECTURA. Sin `S9_READINESS_CONTAINER` no observa nada y lo dice.
+    deployedVersion: deployedVersionProbe(env.S9_READINESS_CONTAINER ?? ""),
     async secretMounted() {
       return {
         existsOnHost: false,

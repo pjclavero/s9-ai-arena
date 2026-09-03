@@ -109,6 +109,20 @@ export interface ReadinessProbes {
     builtFromCommit: string | null;
     runningImageId: string | null;
     imageIdPresentInDaemon: boolean;
+    /**
+     * ¿La etiqueta resuelve HOY a la misma image ID que corre el contenedor?
+     * `false` = la etiqueta se movió bajo los pies del contenedor: un restart
+     * traería otra imagen. `undefined` = la sonda no lo miró.
+     */
+    tagResolvesToRunningId?: boolean;
+    /**
+     * Estado explícito del modelo de drift de ADR-016 (cuatro estados):
+     * `IMAGE_MISSING` · `TAG_CONTENT_MISMATCH` · `TAG_MOVED` · `RUNTIME_MATCH`.
+     * `null` = no se pudo observar. La comprobación decide sobre esto, no
+     * combinando los booleanos de arriba a mano.
+     */
+    driftState: "TAG_CONTENT_MISMATCH" | "IMAGE_MISSING" | "TAG_MOVED" | "RUNTIME_MATCH" | null;
+    driftExplanation?: string;
     reason?: string;
   }>;
   /** Un secreto concreto: existir en el host no es estar montado en el proceso. */
