@@ -446,12 +446,26 @@ export function battleRoutes(
     router,
     "getSpectateTicket",
     async (req, res) => {
+      // Carril J · FAIL-CLOSED del espectador PÚBLICO. Este endpoint es
+      // `security: []` (x-min-role visitor): antes emitía un ticket de espectador
+      // a CUALQUIER visitante anónimo aunque S9_PUBLIC_SPECTATE_ENABLED estuviera
+      // apagada, así que la puerta pública NO gobernaba el canal WebSocket — solo
+      // los endpoints REST /public/*. Con la capability apagada el ticket anónimo
+      // ya no se emite: 404 (mismo trato que getPublicLiveBattle, para no revelar
+      // si el id existe). Una sesión autenticada sigue pudiendo espectar: el
+      // espectador interno del producto no es "espectador público".
+      if (!publicSpectateEnabled && !req.auth) throw notFound();
       const battle = await getBattleOr404(db, pathParam(req, "battleId"));
       // E8/T8.2: jti ⇒ el gateway hace el ticket de UN SOLO USO; debug ⇒ capas de
       // depuración (sensores, rutas, colisiones) solo para roles autorizados: el flag
       // viaja FIRMADO por la API, el visor no puede autoconcedérselo.
       const debug = (req.auth?.rank ?? 0) >= ROLE_RANK.moderator;
-      const ticket = signSpectateTicket({ battleId: battle.id, jti: randomUUID(), debug }, SPECTATE_TICKET_TTL_S);
+      // `anon` viaja FIRMADO por la API para que el gateway (otro proceso) pueda
+      // aplicar la capability sin consultar la BD ni creerse al cliente.
+      const ticket = signSpectateTicket(
+        { battleId: battle.id, jti: randomUUID(), debug, anon: !req.auth },
+        SPECTATE_TICKET_TTL_S,
+      );
       // El canal transporta SOLO snapshots públicos (D8): lo sirve el gateway (E8/E10).
       // R2.6 (ERR-SEC-16): en producción se EXIGE wss:// — el defecto en claro
       // solo vale para dev/test. Falla cerrado: mejor 500 que un ticket que

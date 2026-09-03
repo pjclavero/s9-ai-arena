@@ -908,6 +908,7 @@ paths:
                   ticket: { type: string }
                   wsUrl: { type: string }
                   expiresAt: { type: string, format: date-time }
+        '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /battles/{battleId}/audit:

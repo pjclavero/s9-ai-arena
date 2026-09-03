@@ -23,7 +23,15 @@ let battleId: string;
 
 /** App con cuota anónima estricta (1 petición por IP) y N saltos de confianza. */
 function quotaApp(trustProxyHops: number | undefined): Express {
-  return createApp({ db: h.db, trustProxyHops, anonQuota: { max: 1, windowMs: 3600_000 } });
+  // Carril J · la ruta que mide la cuota aquí es el ticket de espectador ANÓNIMO,
+  // que exige S9_PUBLIC_SPECTATE_ENABLED. Se enciende explícitamente (inyectada)
+  // para que este test siga midiendo lo suyo: el keying por IP, no la puerta.
+  return createApp({
+    db: h.db,
+    trustProxyHops,
+    anonQuota: { max: 1, windowMs: 3600_000 },
+    publicSpectateEnabled: true,
+  });
 }
 
 async function clearUsage(): Promise<void> {

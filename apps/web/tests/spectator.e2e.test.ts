@@ -110,9 +110,16 @@ beforeAll(async () => {
   await initPhysics();
   h = await startTestDb();
   await seedDev(h.db);
-  app = createApp({ db: h.db, botManager: new FakeBotManager(h.db), anonQuota: { max: 10000, windowMs: 3600_000 } });
+  // Carril J · este e2e recorre el camino del espectador PÚBLICO anónimo: se
+  // enciende la capability explícitamente (inyectada, nunca del entorno real).
+  app = createApp({
+    db: h.db,
+    botManager: new FakeBotManager(h.db),
+    anonQuota: { max: 10000, windowMs: 3600_000 },
+    publicSpectateEnabled: true,
+  });
   moderatorToken = await tokenFor(h.db, DEV_USERS.moderator);
-  gateway = new SpectateGateway({ port: 0 });
+  gateway = new SpectateGateway({ port: 0, publicSpectateEnabled: true });
   // La API emite wsUrl apuntando AL gateway real de este test.
   process.env.SPECTATE_WS_URL = `ws://127.0.0.1:${gateway.port}/spectate`;
 }, 120000);

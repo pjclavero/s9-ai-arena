@@ -100,8 +100,13 @@ beforeAll(async () => {
     db: h.db,
     botManager: new E6PipelineBotManager(h.db, { signer, agentResolver: () => goodCandidate, referenceAgent }),
     anonQuota: { max: 10_000, windowMs: 3600_000 },
+    // Carril J · el camino de espectador que recorre este e2e es el PÚBLICO
+    // anónimo, gateado por S9_PUBLIC_SPECTATE_ENABLED. Se enciende
+    // EXPLÍCITAMENTE aquí (inyectada, nunca del entorno real): con la puerta
+    // apagada la API no emite ticket anónimo y el gateway no abre el canal.
+    publicSpectateEnabled: true,
   });
-  gateway = new SpectateGateway({ port: 0 });
+  gateway = new SpectateGateway({ port: 0, publicSpectateEnabled: true });
   replaysDir = mkdtempSync(join(tmpdir(), "e12-mvp-replays-"));
 }, 180_000);
 

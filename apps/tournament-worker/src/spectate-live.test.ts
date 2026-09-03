@@ -44,11 +44,21 @@ const attached: { battleId: string; meta: Record<string, unknown> }[] = [];
 beforeAll(async () => {
   h = await startTestDb();
   await seedDev(h.db);
-  app = createApp({ db: h.db, botManager: new FakeBotManager(h.db), anonQuota: { max: 10_000, windowMs: 3600_000 } });
+  // Carril J · este test recorre el camino del espectador PÚBLICO anónimo, que
+  // vive detrás de S9_PUBLIC_SPECTATE_ENABLED: se enciende EXPLÍCITAMENTE aquí
+  // (inyectada, nunca del entorno real). Es el control POSITIVO de la puerta; el
+  // negativo — con la puerta apagada no hay canal — está en
+  // apps/api/src/spectate/j-fail-closed.test.ts.
+  app = createApp({
+    db: h.db,
+    botManager: new FakeBotManager(h.db),
+    anonQuota: { max: 10_000, windowMs: 3600_000 },
+    publicSpectateEnabled: true,
+  });
   bots = await createBots(h.db, 2, "h2");
   replaysDir = mkdtempSync(join(tmpdir(), "h2-replays-"));
 
-  gateway = new SpectateGateway(); // WS real en puerto efímero
+  gateway = new SpectateGateway({ publicSpectateEnabled: true }); // WS real en puerto efímero
   const wired = await makeDefaultHandlers({
     db: h.db,
     // Sin muerte súbita: la batalla dura timeLimitTicks para que el espectador
