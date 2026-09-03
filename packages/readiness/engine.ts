@@ -167,6 +167,14 @@ export interface ReadinessProbes {
      * traería otra imagen. `undefined` = la sonda no lo miró.
      */
     tagResolvesToRunningId?: boolean;
+    /**
+     * Estado explícito del modelo de drift de ADR-016 (cuatro estados):
+     * `IMAGE_MISSING` · `TAG_CONTENT_MISMATCH` · `TAG_MOVED` · `RUNTIME_MATCH`.
+     * `null` = no se pudo observar. La comprobación decide sobre esto, no
+     * combinando los booleanos de arriba a mano.
+     */
+    driftState: "TAG_CONTENT_MISMATCH" | "IMAGE_MISSING" | "TAG_MOVED" | "RUNTIME_MATCH" | null;
+    driftExplanation?: string;
     reason?: string;
   }>;
   /**

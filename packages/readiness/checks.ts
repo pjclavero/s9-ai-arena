@@ -331,6 +331,49 @@ const secretMounted: ReadinessCheck = {
   },
 };
 
+/**
+ * Contrato ESTADO DE DRIFT → READINESS, declarado como dato para que se pueda
+ * leer, probar y mutar de una pieza en vez de tener que reconstruirlo siguiendo
+ * las ramas de un `switch`.
+ *
+ * Dos ejes, y NO se colapsan:
+ *
+ *   - El estado de drift responde "¿es reproducible este estado?" — si la image
+ *     ID existe, si la referencia sigue apuntando a ella.
+ *   - La procedencia responde "¿es el código que creo?" — si la imagen lleva
+ *     dentro el commit del que se construyó (ADR-016).
+ *
+ * Por eso `RUNTIME_MATCH` NO alcanza para `verified`: sólo dice que lo que
+ * corre es lo que la referencia resuelve hoy, y la referencia es exactamente lo
+ * que puede mentir. Colapsar los ejes es volver a aprobar por etiqueta, que es
+ * el incidente original del proyecto. Medido en la instalación: los 12
+ * contenedores dan `RUNTIME_MATCH` y NINGUNO lleva identidad embebida — si
+ * `RUNTIME_MATCH` bastara, R17 daría verde a doce procedencias sin comprobar.
+ */
+export const ESTADO_DRIFT_A_READINESS = {
+  /** No se pudo observar (UNKNOWN). No se aprueba por omisión. */
+  UNKNOWN: "not_exercised",
+  /** Reproducible; la procedencia decide aparte si llega a `verified`. */
+  RUNTIME_MATCH: "requiere_procedencia",
+  /** La referencia resuelve hoy a otra imagen: un restart cambiaría de versión. */
+  TAG_MOVED: "failed",
+  /** La image ID en ejecución ya no existe: estado no reproducible. */
+  IMAGE_MISSING: "failed",
+  /** La etiqueta existe y contiene código distinto del que anuncia. */
+  TAG_CONTENT_MISMATCH: "failed",
+} as const;
+
+export type ResultadoDrift = (typeof ESTADO_DRIFT_A_READINESS)[keyof typeof ESTADO_DRIFT_A_READINESS];
+
+/**
+ * Aplica el contrato. `null` (no observado) entra como `UNKNOWN`.
+ * Un estado que no esté en la tabla NO se aprueba: se trata como no observado.
+ */
+export function resultadoDeDrift(estado: string | null | undefined): ResultadoDrift {
+  const clave = (estado ?? "UNKNOWN") as keyof typeof ESTADO_DRIFT_A_READINESS;
+  return ESTADO_DRIFT_A_READINESS[clave] ?? "not_exercised";
+}
+
 const deployedVersionMatches: ReadinessCheck = {
   id: "security.deployed_version",
   block: "seguridad",
@@ -341,30 +384,58 @@ const deployedVersionMatches: ReadinessCheck = {
   required: true,
   async run(ctx: ReadinessContext) {
     const r = await ctx.probes.deployedVersion();
-    if (!r.runningImageId || !r.imageTag) {
+
+    // Se decide sobre el ESTADO de drift (ADR-016) y, POR SEPARADO, sobre la
+    // procedencia. Ver ESTADO_DRIFT_A_READINESS: son dos ejes, y el segundo no
+    // se deduce del primero.
+    switch (r.driftState) {
+      case null:
+        return {
+          status: "not_exercised" as const,
+          evidence: `no se pudo determinar la versión en ejecución${r.reason ? ` (${r.reason})` : ""}`,
+          remedy: "Sin identidad de imagen no se puede afirmar qué está corriendo.",
+        };
+      case "IMAGE_MISSING":
+        return {
+          status: "failed" as const,
+          evidence: `IMAGE_MISSING · el contenedor corre una image ID que ya no existe en el daemon (${r.imageTag})`,
+          remedy: "No se puede reproducir ni reiniciar con lo mismo: reconstruye y redespliega.",
+        };
+      case "TAG_MOVED":
+        // La etiqueta se movió bajo los pies del contenedor: el proceso vivo y
+        // la referencia con la que arrancó ya no son la misma imagen. Un restart
+        // traería OTRA versión sin que nadie lo hubiera decidido.
+        return {
+          status: "failed" as const,
+          evidence: `TAG_MOVED · ${r.imageTag} resuelve hoy a otra imagen distinta de la que corre el contenedor`,
+          remedy:
+            "Un restart cambiaría la versión sin decisión: fija la imagen por digest o retagea a la que está viva.",
+        };
+      case "TAG_CONTENT_MISMATCH":
+        return {
+          status: "failed" as const,
+          evidence: `TAG_CONTENT_MISMATCH · la etiqueta dice ${r.taggedCommit} y la imagen se construyó desde ${r.builtFromCommit}`,
+          remedy: "Etiqueta mentirosa: el despliegue no es el commit que crees.",
+        };
+      case "RUNTIME_MATCH":
+        break;
+    }
+
+    // Red de seguridad del contrato: si el estado que llega no es uno de los
+    // cinco declarados, NO se cae al camino de `RUNTIME_MATCH`. Un estado nuevo
+    // añadido al clasificador y no mapeado aquí quedaría sin observar, nunca
+    // aprobado por omisión.
+    if (resultadoDeDrift(r.driftState) !== "requiere_procedencia") {
       return {
         status: "not_exercised" as const,
-        evidence: `no se pudo determinar la versión en ejecución${r.reason ? ` (${r.reason})` : ""}`,
-        remedy: "Sin identidad de imagen no se puede afirmar qué está corriendo.",
+        evidence: `estado de drift no contemplado por el contrato (${r.driftState ?? "UNKNOWN"}): no se ha juzgado nada`,
+        remedy: "Añade el estado a ESTADO_DRIFT_A_READINESS antes de usarlo como gate.",
       };
     }
-    if (!r.imageIdPresentInDaemon) {
-      return {
-        status: "failed" as const,
-        evidence: `el contenedor corre una image ID que ya no existe en el daemon (${r.imageTag})`,
-        remedy: "No se puede reproducir ni reiniciar con lo mismo: reconstruye y redespliega.",
-      };
-    }
-    if (r.tagResolvesToRunningId === false) {
-      // La etiqueta se movió bajo los pies del contenedor: el proceso vivo y la
-      // etiqueta con la que arrancó ya no son la misma imagen. Un restart
-      // traería OTRA versión sin que nadie lo hubiera decidido.
-      return {
-        status: "failed" as const,
-        evidence: `${r.imageTag} resuelve hoy a otra imagen distinta de la que corre el contenedor`,
-        remedy: "Un restart cambiaría la versión sin decisión: fija la imagen por digest o retagea a la que está viva.",
-      };
-    }
+
+    // SEGUNDO EJE. `RUNTIME_MATCH` dice que el estado es reproducible; NO dice
+    // de qué árbol salió la imagen. Sin identidad embebida lo único mirado
+    // sería la etiqueta — exactamente lo que puede mentir (ADR-016).
     if (!r.builtFromCommit) {
       // La imagen no lleva el commit dentro (ADR-016): sin identidad embebida no
       // se ha OBSERVADO de qué árbol salió, sólo lo que dice la etiqueta — que es
@@ -372,21 +443,14 @@ const deployedVersionMatches: ReadinessCheck = {
       // DEPLOYED VERSION.
       return {
         status: "not_exercised" as const,
-        evidence: `la imagen ${r.imageTag} existe en el daemon pero no lleva identidad de build embebida: la procedencia no se ha comprobado`,
+        evidence: `RUNTIME_MATCH pero la imagen ${r.imageTag} no lleva identidad de build embebida: la procedencia no se ha comprobado`,
         remedy:
           "Reconstruye con BUILD_COMMIT/org.opencontainers.image.revision (ADR-016): sin commit dentro, la etiqueta es la única fuente y puede mentir.",
       };
     }
-    if (r.taggedCommit && r.taggedCommit !== r.builtFromCommit) {
-      return {
-        status: "failed" as const,
-        evidence: `la etiqueta dice ${r.taggedCommit} y la imagen se construyó desde ${r.builtFromCommit}`,
-        remedy: "Etiqueta mentirosa: el despliegue no es el commit que crees.",
-      };
-    }
     return {
       status: "verified" as const,
-      evidence: `imagen ${r.imageTag} presente en el daemon y construida desde ${r.builtFromCommit}`,
+      evidence: `RUNTIME_MATCH · imagen ${r.imageTag} presente en el daemon y construida desde ${r.builtFromCommit}`,
     };
   },
 };

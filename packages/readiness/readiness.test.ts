@@ -11,10 +11,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { CONFIG_MODEL, resolveConfig, isEnabled } from "./config.ts";
-import { READINESS_CHECKS } from "./checks.ts";
+import { ESTADO_DRIFT_A_READINESS, READINESS_CHECKS, resultadoDeDrift } from "./checks.ts";
 import { runReadiness, type ReadinessContext } from "./engine.ts";
 import { planFirstRun } from "./first-run.ts";
 import { MUTATIONS, nominalContext, nominalEnv } from "./mutations.ts";
+import { interpretarVersionDesplegada } from "./probes-docker.ts";
 import { localProbes } from "./probes-local.ts";
 import { renderReport } from "./report.ts";
 
@@ -576,5 +577,112 @@ describe("una clave que falta no acusa a un servicio de estar caído", () => {
     expect(problema).toBeDefined();
     expect(problema!.message).toContain("api");
     expect(problema!.message).toContain("NO significa que ese servicio esté caído");
+  });
+});
+
+/**
+ * CONTRATO: estado de drift (ADR-016) → readiness.
+ *
+ * Los estados NO se escriben a mano: se producen pasando OBSERVACIONES del
+ * daemon por el clasificador único (`infrastructure/scripts/lib/image-drift.mjs`)
+ * a través del intérprete de la sonda. Si el clasificador y la comprobación
+ * discreparan, estos tests lo verían — que es justo lo que no se ve cuando cada
+ * lado tiene su propia copia del criterio.
+ */
+describe("contrato estado de drift → readiness", () => {
+  const REF = "ghcr.io/<owner>/<image>:4d469dc";
+  const VIVA = "sha256:" + "a".repeat(64);
+  const OTRA = "sha256:" + "b".repeat(64);
+  const CON_IDENTIDAD = { BUILD_COMMIT: "4d469dc" };
+
+  const estadoDe = (obs: Parameters<typeof interpretarVersionDesplegada>[0]) => interpretarVersionDesplegada(obs);
+
+  const readiness = async (r: ReturnType<typeof interpretarVersionDesplegada>) => {
+    const ctx = nominalContext();
+    ctx.probes.deployedVersion = async () => r;
+    return (await runReadiness(READINESS_CHECKS, ctx)).results.find((x) => x.check.id === "security.deployed_version")!
+      .outcome;
+  };
+
+  const observacion = (extra: Record<string, unknown>) => ({
+    runningImageId: VIVA,
+    imageTag: REF,
+    imagenResoluble: true,
+    idDeLaEtiqueta: VIVA,
+    envImagen: {},
+    labelsImagen: {},
+    ...extra,
+  });
+
+  it("RUNTIME_MATCH + identidad embebida coincidente → VERIFIED", async () => {
+    const r = estadoDe(observacion({ envImagen: CON_IDENTIDAD }));
+    expect(r.driftState).toBe("RUNTIME_MATCH");
+    expect((await readiness(r)).status).toBe("verified");
+  });
+
+  /**
+   * EL PUNTO CRÍTICO. Hoy los 12 contenedores de la instalación dan
+   * RUNTIME_MATCH y NINGUNO lleva identidad embebida: si este caso diera verde,
+   * R17 aprobaría doce procedencias sin haber mirado ninguna, que es el
+   * incidente original del proyecto (aprobar por etiqueta).
+   */
+  it("RUNTIME_MATCH SIN identidad embebida → NOT_EXERCISED, jamás VERIFIED", async () => {
+    const r = estadoDe(observacion({ envImagen: {} }));
+    expect(r.driftState).toBe("RUNTIME_MATCH");
+    const o = await readiness(r);
+    expect(o.status).toBe("not_exercised");
+    expect(o.status).not.toBe("verified");
+    expect(o.evidence).toContain("identidad de build embebida");
+  });
+
+  it("TAG_MOVED → FAILED (aunque la imagen que corre exista y sea sana)", async () => {
+    // El caso real de postgres en la instalación: la referencia se republicó.
+    const r = estadoDe(observacion({ idDeLaEtiqueta: OTRA, envImagen: CON_IDENTIDAD }));
+    expect(r.driftState).toBe("TAG_MOVED");
+    expect((await readiness(r)).status).toBe("failed");
+  });
+
+  it("IMAGE_MISSING → FAILED", async () => {
+    const r = estadoDe(observacion({ imagenResoluble: false, idDeLaEtiqueta: null }));
+    expect(r.driftState).toBe("IMAGE_MISSING");
+    expect((await readiness(r)).status).toBe("failed");
+  });
+
+  it("TAG_CONTENT_MISMATCH → FAILED", async () => {
+    const r = estadoDe(observacion({ envImagen: { BUILD_COMMIT: "0badc0d" } }));
+    expect(r.driftState).toBe("TAG_CONTENT_MISMATCH");
+    expect((await readiness(r)).status).toBe("failed");
+  });
+
+  it("UNKNOWN (no observado) → NOT_EXERCISED", async () => {
+    const r = estadoDe(observacion({ runningImageId: null, imageTag: null }));
+    expect(r.driftState).toBeNull();
+    expect((await readiness(r)).status).toBe("not_exercised");
+  });
+
+  it("la tabla del contrato es la que se aplica, y ningún estado de fallo aprueba", () => {
+    expect(ESTADO_DRIFT_A_READINESS.RUNTIME_MATCH).toBe("requiere_procedencia");
+    expect(ESTADO_DRIFT_A_READINESS.UNKNOWN).toBe("not_exercised");
+    for (const malo of ["TAG_MOVED", "IMAGE_MISSING", "TAG_CONTENT_MISMATCH"] as const) {
+      expect(ESTADO_DRIFT_A_READINESS[malo]).toBe("failed");
+      expect(resultadoDeDrift(malo)).toBe("failed");
+    }
+    // Un estado nuevo del clasificador que nadie haya mapeado no cae en el
+    // camino permisivo.
+    expect(resultadoDeDrift("ESTADO_QUE_NO_EXISTE")).toBe("not_exercised");
+    expect(resultadoDeDrift(null)).toBe("not_exercised");
+  });
+
+  it("ningún estado de drift distinto de RUNTIME_MATCH puede acabar en VERIFIED", async () => {
+    for (const obs of [
+      observacion({ idDeLaEtiqueta: OTRA, envImagen: CON_IDENTIDAD }),
+      observacion({ imagenResoluble: false, idDeLaEtiqueta: null }),
+      observacion({ envImagen: { BUILD_COMMIT: "0badc0d" } }),
+      observacion({ runningImageId: null, imageTag: null }),
+    ]) {
+      const r = estadoDe(obs);
+      expect(r.driftState).not.toBe("RUNTIME_MATCH");
+      expect((await readiness(r)).status).not.toBe("verified");
+    }
   });
 });

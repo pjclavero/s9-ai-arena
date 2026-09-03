@@ -10,7 +10,35 @@
  * Este fichero es producto, no utillaje de test: el runner de producción puede
  * ejecutar el escenario nominal como autodiagnóstico del propio motor.
  */
+import { interpretarVersionDesplegada } from "./probes-docker.js";
 import type { ReadinessContext, ReadinessProbes } from "./engine.ts";
+
+/**
+ * Fixture de `deployedVersion` construida desde una OBSERVACIÓN del daemon y
+ * pasada por el intérprete real (ADR-016), no escrita a mano. Así una mutación
+ * describe el estado del daemon —que es lo observable— y el estado de drift lo
+ * decide el mismo código que decide en producción.
+ */
+function versionDesplegada(obs: {
+  runningImageId: string | null;
+  referencia: string | null;
+  imagenResoluble: boolean;
+  idDeLaReferencia: string | null;
+  envImagen?: Record<string, string>;
+}) {
+  return interpretarVersionDesplegada({
+    runningImageId: obs.runningImageId,
+    imageTag: obs.referencia,
+    imagenResoluble: obs.imagenResoluble,
+    idDeLaEtiqueta: obs.idDeLaReferencia,
+    envImagen: obs.envImagen ?? {},
+    labelsImagen: {},
+  });
+}
+
+const REF = "ghcr.io/<owner>/<image>:4d469dc";
+const ID_VIVA = "sha256:" + "a".repeat(64);
+const ID_OTRA = "sha256:" + "b".repeat(64);
 
 /**
  * Entorno nominal: las claves del CONTRATO REAL de instalación, con los valores
@@ -64,13 +92,13 @@ export function nominalProbes(): ReadinessProbes {
       return { attempted: true, restoredBytes: 65_536, canaryFound: true };
     },
     async deployedVersion() {
-      return {
-        imageTag: "ghcr.io/<owner>/<image>:4d469dc",
-        taggedCommit: "4d469dc",
-        builtFromCommit: "4d469dc",
-        runningImageId: "sha256:aaaa",
-        imageIdPresentInDaemon: true,
-      };
+      return versionDesplegada({
+        runningImageId: ID_VIVA,
+        referencia: REF,
+        imagenResoluble: true,
+        idDeLaReferencia: ID_VIVA,
+        envImagen: { BUILD_COMMIT: "4d469dc" },
+      });
     },
     async secretMounted() {
       return { probed: true, existsOnHost: true, mountedInProcess: true, readableBytes: 64 };
@@ -370,53 +398,54 @@ export const MUTATIONS: readonly ReadinessMutation[] = [
     checkId: "security.deployed_version",
     name: "la etiqueta se movió: hoy resuelve a otra imagen distinta de la que corre",
     apply: (c) => {
-      c.probes.deployedVersion = async () => ({
-        imageTag: "ghcr.io/<owner>/<image>:4d469dc",
-        taggedCommit: "4d469dc",
-        builtFromCommit: "4d469dc",
-        runningImageId: "sha256:aaaa",
-        imageIdPresentInDaemon: true,
-        tagResolvesToRunningId: false,
-      });
+      c.probes.deployedVersion = async () =>
+        versionDesplegada({
+          runningImageId: ID_VIVA,
+          referencia: REF,
+          imagenResoluble: true,
+          idDeLaReferencia: ID_OTRA,
+          envImagen: { BUILD_COMMIT: "4d469dc" },
+        });
     },
   },
   {
     checkId: "security.deployed_version",
     name: "imagen sin identidad de build embebida: sólo la etiqueta afirma la procedencia",
     apply: (c) => {
-      c.probes.deployedVersion = async () => ({
-        imageTag: "ghcr.io/<owner>/<image>:4d469dc",
-        taggedCommit: "4d469dc",
-        builtFromCommit: null,
-        runningImageId: "sha256:aaaa",
-        imageIdPresentInDaemon: true,
-      });
+      c.probes.deployedVersion = async () =>
+        versionDesplegada({
+          runningImageId: ID_VIVA,
+          referencia: REF,
+          imagenResoluble: true,
+          idDeLaReferencia: ID_VIVA,
+        });
     },
   },
   {
     checkId: "security.deployed_version",
     name: "contenedor corriendo una image ID ya borrada del daemon",
     apply: (c) => {
-      c.probes.deployedVersion = async () => ({
-        imageTag: "ghcr.io/<owner>/<image>:4d469dc",
-        taggedCommit: "4d469dc",
-        builtFromCommit: "4d469dc",
-        runningImageId: "sha256:bbbb",
-        imageIdPresentInDaemon: false,
-      });
+      c.probes.deployedVersion = async () =>
+        versionDesplegada({
+          runningImageId: ID_OTRA,
+          referencia: REF,
+          imagenResoluble: false,
+          idDeLaReferencia: null,
+        });
     },
   },
   {
     checkId: "security.deployed_version",
     name: "etiqueta con un commit, imagen construida desde otro",
     apply: (c) => {
-      c.probes.deployedVersion = async () => ({
-        imageTag: "ghcr.io/<owner>/<image>:4d469dc",
-        taggedCommit: "4d469dc",
-        builtFromCommit: "0badc0d",
-        runningImageId: "sha256:aaaa",
-        imageIdPresentInDaemon: true,
-      });
+      c.probes.deployedVersion = async () =>
+        versionDesplegada({
+          runningImageId: ID_VIVA,
+          referencia: REF,
+          imagenResoluble: true,
+          idDeLaReferencia: ID_VIVA,
+          envImagen: { BUILD_COMMIT: "0badc0d" },
+        });
     },
   },
   {

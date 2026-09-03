@@ -514,8 +514,20 @@ jobs:
       # sus capas, pero ese estado NO era reproducible tras un restart y el
       # baseline no servía para rollback. Aquí se prueba que la detección
       # funciona, contra un caso fabricado a propósito.
-      - name: CONTROL · se detecta un contenedor cuya imagen ya no existe
+      # ── Los CUATRO estados de drift (ADR-016) ───────────────────────────────
+      # Tercer incidente real, medido en producción: la ETIQUETA SE MOVIÓ bajo un
+      # contenedor vivo, y el detector anterior ni lo veía ni podía verlo, porque
+      # decidía la existencia de la image ID con `docker images -q` — un listado
+      # que OMITE las imágenes sin etiqueta de nivel superior. Daba a la vez un
+      # DRIFT CRÍTICO falso y ceguera al drift verdadero.
+      - name: CONTROL · los cuatro estados se clasifican (incluida la imagen sin RepoTags)
         run: node infrastructure/scripts/check-running-image-id.mjs --self-test
+
+      # Calibración por MUTACIÓN: cada garantía tiene que poder verse ROJA. La
+      # primera mutación reintroduce `docker images -q` como prueba de
+      # existencia; si sobreviviera, el arreglo no estaría probado, sólo escrito.
+      - name: CALIBRACIÓN · las mutaciones del clasificador de drift mueren
+        run: node infrastructure/scripts/mutate-image-drift.mjs
 
   # ── Etapa 6: escaneo de dependencias, imágenes y Compose ──────────────────
   scan:
