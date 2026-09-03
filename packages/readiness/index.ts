@@ -9,6 +9,7 @@
 export * from "./config.ts";
 export * from "./engine.ts";
 export * from "./checks.ts";
+export * from "./backup-evidence.ts";
 export * from "./first-run.ts";
 export * from "./report.ts";
 export * from "./mutations.ts";
