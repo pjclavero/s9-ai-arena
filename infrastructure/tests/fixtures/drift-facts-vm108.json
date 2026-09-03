@@ -46,7 +46,18 @@
         "PATH",
         "PKG_RELEASE",
         "S9_DOMAIN"
-      ]
+      ],
+      "compose_project": "infrastructure",
+      "ports": [
+        "8080->80/tcp",
+        "8443->443/tcp"
+      ],
+      "compose_config_files_hash": "#c6c811d20f69",
+      "compose_working_dir_hash": "#33451859b85d",
+      "compose_config_en_working_dir": false,
+      "command_hash": "#f573873c6ad0",
+      "entrypoint_hash": "#050b043b84a4",
+      "healthcheck_test_hash": "#2f55ffd4c1a6"
     },
     {
       "service": "web",
@@ -78,7 +89,15 @@
         "NJS_VERSION",
         "PATH",
         "PKG_RELEASE"
-      ]
+      ],
+      "compose_project": "infrastructure",
+      "ports": [],
+      "compose_config_files_hash": "#c6c811d20f69",
+      "compose_working_dir_hash": "#33451859b85d",
+      "compose_config_en_working_dir": false,
+      "command_hash": "#f573873c6ad0",
+      "entrypoint_hash": "#050b043b84a4",
+      "healthcheck_test_hash": "#fcb164d993b8"
     },
     {
       "service": "api",
@@ -137,7 +156,15 @@
         "SERVICE_ENTRY",
         "TRUST_PROXY_HOPS",
         "YARN_VERSION"
-      ]
+      ],
+      "compose_project": "infrastructure",
+      "ports": [],
+      "compose_config_files_hash": "#c6c811d20f69",
+      "compose_working_dir_hash": "#33451859b85d",
+      "compose_config_en_working_dir": false,
+      "command_hash": "#8150cfaf8a11",
+      "entrypoint_hash": "#ea155f580218",
+      "healthcheck_test_hash": "#e29cf4ee2250"
     },
     {
       "service": "tournament-worker",
@@ -187,7 +214,15 @@
         "SERVICE_ENTRY",
         "SPECTATE_PORT",
         "YARN_VERSION"
-      ]
+      ],
+      "compose_project": "infrastructure",
+      "ports": [],
+      "compose_config_files_hash": "#c6c811d20f69",
+      "compose_working_dir_hash": "#33451859b85d",
+      "compose_config_en_working_dir": false,
+      "command_hash": "#8150cfaf8a11",
+      "entrypoint_hash": "#ea155f580218",
+      "healthcheck_test_hash": "#fd8b215bdc48"
     },
     {
       "service": "replay-service",
@@ -239,7 +274,15 @@
         "REPLAY_INGEST_SECRET_FILE",
         "SERVICE_ENTRY",
         "YARN_VERSION"
-      ]
+      ],
+      "compose_project": "infrastructure",
+      "ports": [],
+      "compose_config_files_hash": "#c6c811d20f69",
+      "compose_working_dir_hash": "#33451859b85d",
+      "compose_config_en_working_dir": false,
+      "command_hash": "#8150cfaf8a11",
+      "entrypoint_hash": "#ea155f580218",
+      "healthcheck_test_hash": "#c7af669ebd50"
     },
     {
       "service": "arena-engine",
@@ -276,7 +319,15 @@
         "PORT",
         "SERVICE_ENTRY",
         "YARN_VERSION"
-      ]
+      ],
+      "compose_project": "infrastructure",
+      "ports": [],
+      "compose_config_files_hash": "#c6c811d20f69",
+      "compose_working_dir_hash": "#33451859b85d",
+      "compose_config_en_working_dir": false,
+      "command_hash": "#43baa0fc1866",
+      "entrypoint_hash": "#85af29400a81",
+      "healthcheck_test_hash": "#ad5a17a8bfec"
     },
     {
       "service": "bot-build-worker",
@@ -330,7 +381,15 @@
         "REDIS_URL",
         "SERVICE_ENTRY",
         "YARN_VERSION"
-      ]
+      ],
+      "compose_project": "infrastructure",
+      "ports": [],
+      "compose_config_files_hash": "#c6c811d20f69",
+      "compose_working_dir_hash": "#33451859b85d",
+      "compose_config_en_working_dir": false,
+      "command_hash": "#8150cfaf8a11",
+      "entrypoint_hash": "#85af29400a81",
+      "healthcheck_test_hash": "#fd8b215bdc48"
     },
     {
       "service": "bot-manager",
@@ -376,7 +435,15 @@
         "PORT",
         "SERVICE_ENTRY",
         "YARN_VERSION"
-      ]
+      ],
+      "compose_project": "infrastructure",
+      "ports": [],
+      "compose_config_files_hash": "#c6c811d20f69",
+      "compose_working_dir_hash": "#33451859b85d",
+      "compose_config_en_working_dir": false,
+      "command_hash": "#8150cfaf8a11",
+      "entrypoint_hash": "#85af29400a81",
+      "healthcheck_test_hash": "#7f697a4c83af"
     },
     {
       "service": "map-service",
@@ -430,7 +497,15 @@
         "REDIS_URL",
         "SERVICE_ENTRY",
         "YARN_VERSION"
-      ]
+      ],
+      "compose_project": "infrastructure",
+      "ports": [],
+      "compose_config_files_hash": "#c6c811d20f69",
+      "compose_working_dir_hash": "#33451859b85d",
+      "compose_config_en_working_dir": false,
+      "command_hash": "#8150cfaf8a11",
+      "entrypoint_hash": "#ea155f580218",
+      "healthcheck_test_hash": "#4c1f70a4e22b"
     },
     {
       "service": "backup",
@@ -512,7 +587,15 @@
         "RESTIC_SSH_KEY_FILE",
         "RESTIC_SSH_KNOWN_HOSTS_FILE",
         "WORK_DIR"
-      ]
+      ],
+      "compose_project": "infrastructure",
+      "ports": [],
+      "compose_config_files_hash": "#b2517233459f",
+      "compose_working_dir_hash": "#33451859b85d",
+      "compose_config_en_working_dir": false,
+      "command_hash": null,
+      "entrypoint_hash": "#ea155f580218",
+      "healthcheck_test_hash": "#b8835ea13e04"
     },
     {
       "service": "postgres",
@@ -553,7 +636,15 @@
         "POSTGRES_DB",
         "POSTGRES_PASSWORD_FILE",
         "POSTGRES_USER"
-      ]
+      ],
+      "compose_project": "infrastructure",
+      "ports": [],
+      "compose_config_files_hash": "#3d460c5e0031",
+      "compose_working_dir_hash": "#33451859b85d",
+      "compose_config_en_working_dir": true,
+      "command_hash": "#66911f262dea",
+      "entrypoint_hash": "#85af29400a81",
+      "healthcheck_test_hash": "#40a244a987e3"
     },
     {
       "service": "queue",
@@ -587,7 +678,15 @@
       "env_names": [
         "PATH",
         "REDIS_VERSION"
-      ]
+      ],
+      "compose_project": "infrastructure",
+      "ports": [],
+      "compose_config_files_hash": "#3d460c5e0031",
+      "compose_working_dir_hash": "#33451859b85d",
+      "compose_config_en_working_dir": true,
+      "command_hash": "#004e130119c9",
+      "entrypoint_hash": "#85af29400a81",
+      "healthcheck_test_hash": "#2099c0a93941"
     }
   ]
 }

@@ -451,6 +451,55 @@ function servicioDe(c) {
   return c?.Config?.Labels?.["com.docker.compose.service"] ?? String(c?.Name ?? "").replace(/^\//, "");
 }
 
+/**
+ * Puertos PUBLICADOS, en forma canónica y comparable `[ip:]host->contenedor/proto`.
+ * Un puerto expuesto sin publicar no aparece: lo que decide si el `up` recrea el
+ * contenedor —y lo que abre superficie— es la publicación, no el EXPOSE.
+ */
+export function puertosPublicados(c) {
+  const bindings = c?.HostConfig?.PortBindings ?? {};
+  const out = [];
+  for (const [contenedor, lista] of Object.entries(bindings)) {
+    for (const b of lista ?? []) {
+      // Una publicación atada a una IP concreta del anfitrión NO sale en claro:
+      // esa IP es topología. Sale opaca y estable, que es lo que hace falta para
+      // compararla con la que declare el compose.
+      out.push(`${ipLogica(b?.HostIp)}${b?.HostPort ?? ""}->${contenedor}`);
+    }
+  }
+  return out.sort();
+}
+
+/** `""` → sin prefijo; cualquier IP → `ip:#<hash>:` (nunca la IP en claro). */
+export function ipLogica(ip) {
+  return ip ? `ip:#${hash(String(ip))}:` : "";
+}
+
+/**
+ * Procedencia lógica de un servicio Compose, sin publicar ninguna ruta.
+ *
+ * `config_files` puede traer VARIOS ficheros separados por comas (overrides);
+ * se hashea la lista entera, porque un stack levantado con override distinto no
+ * es el mismo stack aunque el fichero base coincida.
+ */
+export function procedencia(labels = {}) {
+  const cf = labels["com.docker.compose.project.config_files"] ?? null;
+  const wd = labels["com.docker.compose.project.working_dir"] ?? null;
+  return {
+    compose_config_files_hash: cf === null ? null : `#${hash(cf)}`,
+    compose_working_dir_hash: wd === null ? null : `#${hash(wd)}`,
+    // ¿TODOS los ficheros de configuración viven bajo el directorio de
+    // despliegue? Si alguno no, ese servicio lo rindió un árbol ajeno.
+    compose_config_en_working_dir:
+      cf === null || wd === null ? null : cf.split(",").every((f) => f.trim().startsWith(wd.replace(/\/$/, "") + "/")),
+  };
+}
+
+/** Huella estable de una lista de argumentos; `null` si no la hay. */
+export function huella(x) {
+  return x === null || x === undefined ? null : `#${hash(JSON.stringify(x))}`;
+}
+
 /** Convierte el inspect crudo del daemon en HECHOS ya saneados de topología. */
 export function hechosDesdeInspect(contenedores, { existe, resolver, runtimeDeRef, anclaRepo = "infrastructure/" }) {
   return contenedores.map((c) => {
@@ -467,6 +516,32 @@ export function hechosDesdeInspect(contenedores, { existe, resolver, runtimeDeRe
     return {
       service: servicioDe(c),
       compose_managed: Boolean(c?.Config?.Labels?.["com.docker.compose.service"]),
+      // CARRIL COMPOSE CANÓNICO · PROCEDENCIA declarada. Es lo único que
+      // distingue "a este contenedor lo reproduce el compose que digo" de "lo
+      // levantó otro árbol que ya ni existe", y es invisible para `docker ps` y
+      // para el drift de imágenes: todas las imágenes pueden existir y todas las
+      // etiquetas cuadrar mientras el conjunto es irreproducible.
+      //
+      // `config_files` y `working_dir` son RUTAS DE ANFITRIÓN y no salen en
+      // claro. Salen sus dos propiedades comprobables, que es lo que se necesita:
+      //   · la huella, que permite AGRUPAR servicios por procedencia y detectar
+      //     que un mismo proyecto se levantó desde varios árboles;
+      //   · si el compose usado vive DENTRO del directorio de despliegue, que es
+      //     la definición operativa de "fuente única de verdad" en este stack.
+      compose_project: c?.Config?.Labels?.["com.docker.compose.project"] ?? null,
+      ...procedencia(c?.Config?.Labels ?? {}),
+      // Especificación efectiva que Compose NO expone en `mounts`/`secrets` y
+      // que sin embargo decide si un `up` recrea el contenedor.
+      ports: puertosPublicados(c),
+      // command / entrypoint / healthcheck van HASHEADOS, no literales. Estos
+      // hechos viajan del anfitrión de producción al repositorio y a CI, y una
+      // línea de arranque puede llevar un hostname, una ruta física o la ruta de
+      // un secreto. Lo que el comprobador necesita de ellos es la IGUALDAD con
+      // lo que renderiza el compose, y un hash la conserva entera; el literal,
+      // cuando hace falta enseñarlo, se saca del compose público, nunca de aquí.
+      command_hash: huella(c?.Config?.Cmd ?? null),
+      entrypoint_hash: huella(c?.Config?.Entrypoint ?? null),
+      healthcheck_test_hash: huella(c?.Config?.Healthcheck?.Test ?? null),
       declared_ref: declarada,
       running_image_id: id,
       running_image_exists: id ? existe(id) : false,
