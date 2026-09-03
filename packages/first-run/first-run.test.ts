@@ -17,7 +17,7 @@ import { describe, expect, it } from "vitest";
 import { resolveConfig } from "../readiness/config.ts";
 import { READINESS_CHECKS } from "../readiness/checks.ts";
 import { runReadiness, type ReadinessCheck } from "../readiness/engine.ts";
-import { FIRST_RUN_CHECKS, resolveStorageDir, type FirstRunContext } from "./checks.ts";
+import { FIRST_RUN_CHECKS, resolveStorageDir, STORAGE_DIR_KEYS, type FirstRunContext } from "./checks.ts";
 import { CONFUSIONS } from "./confusions.ts";
 import { CHECK_COVERAGE, CHECKS_SIN_COBERTURA, DOMAINS } from "./domains.ts";
 import { FIRST_RUN_MUTATIONS, nominalFirstRunContext, nominalFirstRunEnv } from "./mutations.ts";
@@ -124,10 +124,14 @@ describe("sonda de almacenamiento REAL (no simulada)", () => {
       expect(r.reason ?? "").not.toBe("");
 
       const ctx = nominalFirstRunContext();
-      ctx.env.S9_REPLAYS_DIR = file;
+      ctx.env[STORAGE_DIR_KEYS.replays] = file;
       ctx.probes.storageWriteAsProcess = async (kind, d) => localStorageWrite(kind, d);
       const check = FIRST_RUN_CHECKS.find((c) => c.id === "storage.replays.writable_by_process")!;
-      expect((await check.run(ctx)).status).not.toBe("verified");
+      const outcome = await check.run(ctx);
+      // Se intentó sobre una ruta real y el sistema de ficheros lo rechazó:
+      // FALLO observado, y la evidencia nombra el directorio de verdad.
+      expect(outcome.status).toBe("failed");
+      expect(outcome.evidence).toContain(file);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -212,12 +216,12 @@ describe("sonda de almacenamiento REAL (no simulada)", () => {
     expect(outcome.evidence).toContain("QUÉ PROCESO");
   });
 
-  it("resolveStorageDir separa bots y replays y no inventa ruta sin datos", () => {
+  it("resolveStorageDir usa las claves REALES y no inventa ruta cuando faltan", () => {
+    expect(STORAGE_DIR_KEYS).toEqual({ bots: "BOT_SOURCES_DIR", replays: "REPLAYS_DIR" });
     const env = nominalFirstRunEnv();
-    delete env.S9_BOTS_DIR;
-    delete env.S9_REPLAYS_DIR;
     expect(resolveStorageDir(env, "bots")).not.toBe(resolveStorageDir(env, "replays"));
-    expect(resolveStorageDir({}, "bots")).toBe("");
+    // Sin claves no se deriva ninguna ruta de una base imaginaria.
+    for (const kind of ["bots", "replays"] as const) expect(resolveStorageDir({}, kind)).toBe("");
   });
 });
 
