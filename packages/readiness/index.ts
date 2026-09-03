@@ -13,5 +13,6 @@ export * from "./backup-evidence.ts";
 export * from "./first-run.ts";
 export * from "./report.ts";
 export * from "./mutations.ts";
+export * from "./probes-backup.ts";
 export * from "./probes-docker.ts";
 export * from "./probes-local.ts";

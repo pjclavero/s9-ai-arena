@@ -116,7 +116,8 @@ export function interpretarVersionDesplegada(obs: ObservacionImagen): DeployedVe
   };
 }
 
-function ejecutorReal(): EjecutorComando {
+/** Ejecutor real compartido por las sondas de infraestructura (solo lectura). */
+export function ejecutorRealDocker(): EjecutorComando {
   return (cmd, args) => {
     const r = spawnSync(cmd, args, { encoding: "utf8" });
     return { rc: r.status ?? 1, out: (r.stdout ?? "").trim(), err: (r.stderr ?? "").trim() };
@@ -155,7 +156,7 @@ function parseKeyValueList(json: string): Record<string, string> {
  * superior, así que un contenedor perfectamente reproducible aparecería como
  * huérfano (falso positivo observado en VM108 con postgres).
  */
-export function observarImagen(contenedor: string, run: EjecutorComando = ejecutorReal()): ObservacionImagen {
+export function observarImagen(contenedor: string, run: EjecutorComando = ejecutorRealDocker()): ObservacionImagen {
   const vacio = Object.create(null) as Record<string, string>;
   const insp = run("docker", ["inspect", "-f", "{{.Image}}\t{{.Config.Image}}", contenedor]);
   if (insp.rc !== 0) {
@@ -224,10 +225,49 @@ export function observarImagen(contenedor: string, run: EjecutorComando = ejecut
  * `contenedor` vacío ⇒ `not_exercised` con motivo: sin saber QUÉ contenedor
  * mirar no se ha observado nada, y eso no se aprueba por omisión.
  */
+/**
+ * Severidad de un resultado, de peor a mejor. El orden NO es estético: decide
+ * cuál de varios contenedores manda en el veredicto.
+ *
+ * `RUNTIME_MATCH` sin identidad embebida va PEOR que `RUNTIME_MATCH` con ella
+ * porque son dos preguntas distintas y la segunda no se ha respondido: es
+ * "no lo sé", y no lo sé no puede ganarle a un dato observado.
+ */
+function severidad(r: DeployedVersionResult): number {
+  switch (r.driftState) {
+    case null:
+      return 4;
+    case "IMAGE_MISSING":
+      return 5;
+    case "TAG_CONTENT_MISMATCH":
+      return 5;
+    case "TAG_MOVED":
+      return 5;
+    case "RUNTIME_MATCH":
+      return r.builtFromCommit ? 0 : 3;
+  }
+}
+
+/**
+ * Sonda lista para inyectar en `ReadinessProbes.deployedVersion`.
+ *
+ * `contenedor` admite VARIOS nombres separados por comas, y devuelve el PEOR
+ * resultado, nombrando de quién es. Antes miraba uno solo, elegido a mano, y
+ * eso hace que el veredicto dependa de a cuál apuntó quien configuró: medido en
+ * la instalación, 11 de 12 contenedores dan `RUNTIME_MATCH` y uno da
+ * `TAG_MOVED`; apuntando a cualquiera de los 11, readiness no vería el drift
+ * real y diría exactamente lo mismo que si no existiera.
+ *
+ * Vacío ⇒ `not_exercised` con motivo: sin saber QUÉ contenedores mirar no se ha
+ * observado nada, y eso no se aprueba por omisión.
+ */
 export function deployedVersionProbe(contenedor: string, run?: EjecutorComando) {
   return async (): Promise<DeployedVersionResult> => {
-    const nombre = contenedor.trim();
-    if (nombre === "") {
+    const nombres = contenedor
+      .split(",")
+      .map((n) => n.trim())
+      .filter((n) => n !== "");
+    if (nombres.length === 0) {
       return {
         imageTag: null,
         taggedCommit: null,
@@ -238,6 +278,21 @@ export function deployedVersionProbe(contenedor: string, run?: EjecutorComando) 
         reason: "S9_READINESS_CONTAINER sin definir: no se ha mirado ningún contenedor",
       };
     }
-    return interpretarVersionDesplegada(observarImagen(nombre, run ?? ejecutorReal()));
+    const ejec = run ?? ejecutorRealDocker();
+    let peor: DeployedVersionResult | null = null;
+    let nombrePeor = "";
+    for (const nombre of nombres) {
+      const r = interpretarVersionDesplegada(observarImagen(nombre, ejec));
+      if (peor === null || severidad(r) > severidad(peor)) {
+        peor = r;
+        nombrePeor = nombre;
+      }
+    }
+    const resultado = peor!;
+    // La evidencia tiene que decir DE QUIÉN es el peor estado: "hay un
+    // TAG_MOVED" sin nombre no es accionable.
+    return nombres.length > 1
+      ? { ...resultado, imageTag: `${resultado.imageTag ?? "(sin etiqueta)"} [${nombrePeor}]` }
+      : resultado;
   };
 }

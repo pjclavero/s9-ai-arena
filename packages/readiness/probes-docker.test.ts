@@ -189,3 +189,58 @@ describe("sonda de versión desplegada · controles NEGATIVOS (se pone ROJA)", (
     expect(await estado(run)).toBe("not_exercised");
   });
 });
+
+/**
+ * El veredicto no puede depender de a qué contenedor apuntó quien configuró.
+ * Medido en la instalación: 11 de 12 dan RUNTIME_MATCH y `postgres` da
+ * TAG_MOVED. Mirando uno solo, readiness diría lo mismo con drift que sin él.
+ */
+describe("varios contenedores: manda el PEOR estado", () => {
+  const ID_A = "sha256:" + "a".repeat(64);
+  const ID_B = "sha256:" + "b".repeat(64);
+
+  /** Daemon simulado con la forma real: sanos + un `postgres` con la etiqueta movida. */
+  // La forma de los argumentos se copia de `observarImagen`, no se inventa: un
+  // doble que no reproduce las llamadas reales da verdes que no dicen nada.
+  const daemon = (): EjecutorComando => (_cmd, args) => {
+    if (args[0] === "inspect") {
+      // `docker inspect -f "{{.Image}}\t{{.Config.Image}}" <contenedor>`
+      const contenedor = args[args.length - 1];
+      return contenedor === "postgres"
+        ? { rc: 0, out: `${ID_A}\tpostgres:16-alpine`, err: "" }
+        : { rc: 0, out: `${ID_A}\ts9arena/api:4d469dc`, err: "" };
+    }
+    // `docker image inspect <id> -f "{{json .Config.Env}}\t{{json .Config.Labels}}"`
+    if (args.some((a) => a.includes(".Config.Env"))) {
+      return { rc: 0, out: "[]\t{}", err: "" };
+    }
+    // `docker image inspect <referencia> -f "{{.Id}}"`: a qué resuelve HOY.
+    // La de postgres se republicó y resuelve a otra imagen distinta.
+    return args[2] === "postgres:16-alpine" ? { rc: 0, out: ID_B, err: "" } : { rc: 0, out: ID_A, err: "" };
+  };
+
+  it("un TAG_MOVED entre once sanos NO se pierde, y se dice de quién es", async () => {
+    const r = await deployedVersionProbe("api,replay-service,postgres,queue", daemon())();
+    expect(r.driftState).toBe("TAG_MOVED");
+    expect(r.imageTag).toContain("postgres");
+  });
+
+  it("mirando sólo los sanos, el mismo daemon no da TAG_MOVED", async () => {
+    // Control positivo del test anterior: si esto también diera TAG_MOVED, el
+    // primero no probaría nada.
+    const r = await deployedVersionProbe("api,queue", daemon())();
+    expect(r.driftState).toBe("RUNTIME_MATCH");
+  });
+
+  it("el peor estado gana aunque llegue el último o el primero", async () => {
+    for (const lista of ["postgres,api,queue", "api,queue,postgres"]) {
+      expect((await deployedVersionProbe(lista, daemon())()).driftState).toBe("TAG_MOVED");
+    }
+  });
+
+  it("sin contenedores declarados no se observa nada", async () => {
+    const r = await deployedVersionProbe("  ,  ", daemon())();
+    expect(r.driftState).toBeNull();
+    expect(r.reason).toContain("no se ha mirado ningún contenedor");
+  });
+});
