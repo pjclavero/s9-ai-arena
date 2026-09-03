@@ -533,7 +533,25 @@ services:
 
   # ── postgres · BD (omitido en el perfil external-db, nota del 6.2) ──────────
   postgres:
-    image: postgres:16-alpine
+    # IMAGEN INMUTABLE (anclada por digest). `postgres:16-alpine` es una
+    # etiqueta FLOTANTE: upstream la mueve en cada release menor. Se comprobó
+    # en el entorno real que la etiqueta ya se había movido bajo el contenedor
+    # vivo (corría 16.14; la etiqueta apuntaba a 16.15), de modo que un
+    # `compose up` "sin cambios" habría subido de versión la base de datos
+    # SIN que ningún commit lo dijera. Anclar por digest hace que el compose
+    # describa lo que realmente corre y que cualquier cambio de versión sea un
+    # diff revisable.
+    #
+    # Digest actual = índice OCI de `postgres:16.14-alpine` (PostgreSQL 16.14),
+    # que es exactamente la imagen en producción hoy.
+    #
+    # SUBIR DE VERSIÓN (p. ej. a 16.15, release de seguridad) es cambiar ESTA
+    # línea por el digest de la nueva versión, y se despliega SÓLO en una
+    # ventana de base de datos autorizada (copia fresca verificada + rollback
+    # ensayado). 16.14 → 16.15 es reversible: mismo formato en disco
+    # (pg_control 1300, catálogo 202307071), verificado en un clúster de
+    # prueba desechable, incluso tras una parada sucia.
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
     profiles: [nucleo, development, production]
     networks: [data]
     environment:
@@ -715,12 +733,25 @@ services:
       postgres:
         condition: service_healthy
         required: false
+    # CARRIL E: el healthcheck MIRA LA COPIA, no el demonio.
+    #
+    # Antes era `pgrep crond >/dev/null`. Ese comando pasa —y deja el
+    # contenedor `healthy`— con la copia fallando todas las noches, que es
+    # literalmente el incidente que este servicio existe para evitar y que
+    # este proyecto ya pagó una vez. `cron alive != backup working`.
+    #
+    # healthcheck.sh sigue exigiendo crond vivo, pero degradado a lo que es:
+    # condición NECESARIA y NO SUFICIENTE. Lo que decide el color es la última
+    # ejecución registrada en el textfile collector: exit 0, fuente crítica
+    # postgres en ok, snapshot declarado y marca de éxito reciente (26 h).
+    # Lo que NO comprueba, a propósito: el repositorio remoto — eso es
+    # evidence.sh, que no debe correr cada 60 s por sftp.
     healthcheck:
-      test: ["CMD-SHELL", "pgrep crond >/dev/null"]
+      test: ["CMD-SHELL", "/usr/local/bin/healthcheck.sh"]
       interval: 60s
-      timeout: 5s
+      timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 30s
     deploy:
       resources:
         limits: { cpus: "1.0", memory: 512M }
