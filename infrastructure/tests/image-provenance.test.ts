@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 import { comprobarCoherencia, LABEL_REVISION, LABEL_TITULO } from "../scripts/verify-image-provenance.mjs";
 import { mountVersionEndpoint, readBuildInfo, versionPayload } from "../../packages/build-info/index.js";
 // @ts-expect-error — script .mjs sin tipos.
-import { huerfanos } from "../scripts/check-running-image-id.mjs";
+import { clasificarDrift, IMAGE_MISSING, RUNTIME_MATCH } from "../scripts/lib/image-drift.mjs";
 import { createMapServiceApp } from "../../apps/map-service/src/main.js";
 import { createBotManagerApp } from "../../apps/bot-manager/src/main.js";
 import { createArenaEngineService } from "../../apps/arena-engine/src/service.js";
@@ -170,20 +170,30 @@ describe("ADR-016 · los servicios reales del monorepo sirven /version", () => {
 describe("ADR-016 · DRIFT CRÍTICO: image ID en ejecución que ya no existe", () => {
   const idViva = "sha256:" + "a".repeat(64);
   const idBorrada = "sha256:" + "b".repeat(64);
-  const contenedores = [
-    { nombre: "/api", imageId: idViva, etiqueta: "s9-ai-arena/api:sha-nuevo" },
-    { nombre: "/replay-service", imageId: idBorrada, etiqueta: "s9-ai-arena/replay-service:sha-nuevo" },
-  ];
 
-  it("control positivo: todas las imágenes existen → no hay huérfanos", () => {
-    expect(huerfanos([contenedores[0]], [idViva])).toEqual([]);
+  it("control positivo: la imagen existe → RUNTIME_MATCH, no hay huérfano", () => {
+    const c = clasificarDrift({
+      nombre: "api",
+      runningImageId: idViva,
+      referencia: "s9-ai-arena/api:sha-nuevo",
+      imagenResoluble: true,
+      idDeLaReferencia: idViva,
+    });
+    expect(c.estado).toBe(RUNTIME_MATCH);
   });
 
-  it("MUTACIÓN · la imagen del contenedor se borró del daemon → se detecta", () => {
+  it("MUTACIÓN · la imagen del contenedor se borró del daemon → IMAGE_MISSING", () => {
     // Es el segundo incidente literal: `docker inspect` del contenedor la
     // reporta, `docker image inspect` dice "No such image". Ese estado no es
     // reproducible tras un restart y el baseline no sirve para rollback.
-    const sueltos = huerfanos(contenedores, [idViva]);
-    expect(sueltos.map((c: { nombre: string }) => c.nombre)).toEqual(["/replay-service"]);
+    const c = clasificarDrift({
+      nombre: "replay-service",
+      runningImageId: idBorrada,
+      referencia: "s9-ai-arena/replay-service:sha-nuevo",
+      imagenResoluble: false,
+      idDeLaReferencia: null,
+    });
+    expect(c.estado).toBe(IMAGE_MISSING);
+    expect(c.runtimeImageExists).toBe(false);
   });
 });
