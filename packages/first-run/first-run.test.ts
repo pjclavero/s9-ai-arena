@@ -19,7 +19,7 @@ import { READINESS_CHECKS } from "../readiness/checks.ts";
 import { runReadiness, type ReadinessCheck } from "../readiness/engine.ts";
 import { FIRST_RUN_CHECKS, resolveStorageDir, type FirstRunContext } from "./checks.ts";
 import { CONFUSIONS } from "./confusions.ts";
-import { CHECK_COVERAGE, DOMAINS } from "./domains.ts";
+import { CHECK_COVERAGE, CHECKS_SIN_COBERTURA, DOMAINS } from "./domains.ts";
 import { FIRST_RUN_MUTATIONS, nominalFirstRunContext, nominalFirstRunEnv } from "./mutations.ts";
 import { localStorageWrite } from "./probes-local.ts";
 import { coveredConfusions, planWizard, renderWizard, type WizardPlan } from "./wizard.ts";
@@ -48,6 +48,23 @@ describe("modelo de dominios y confusiones", () => {
     expect(CONFUSIONS).toHaveLength(7);
     const claimed = new Set(Object.values(CHECK_COVERAGE).flat());
     for (const c of CONFUSIONS) expect(claimed.has(c.id)).toBe(true);
+  });
+
+  it("todo id de CHECK_COVERAGE existe HOY: un check que ya no existe no cubre nada", () => {
+    // Esta suite se rompió una vez porque `CHECK_COVERAGE` seguía nombrando
+    // `backup.last_run_succeeded` y `backup.restore_drill` después de que el
+    // catálogo los renombrara. Nombrar a un muerto no es cobertura.
+    const existentes = new Set(ALL_CHECKS.map((c) => c.id));
+    for (const id of Object.keys(CHECK_COVERAGE)) expect([id, existentes.has(id)]).toEqual([id, true]);
+    for (const id of CHECKS_SIN_COBERTURA) expect([id, existentes.has(id)]).toEqual([id, true]);
+    for (const d of DOMAINS) for (const id of d.evidence) expect([id, existentes.has(id)]).toEqual([id, true]);
+  });
+
+  it("`backup.process_alive` NO cubre ninguna confusión: es la señal que engaña", () => {
+    expect(CHECK_COVERAGE["backup.process_alive"]).toBeUndefined();
+    expect(CHECKS_SIN_COBERTURA).toContain("backup.process_alive");
+    const copias = DOMAINS.find((d) => d.id === "copias")!;
+    expect(copias.evidence).not.toContain("backup.process_alive");
   });
 
   it("toda comprobación declara qué NO demuestra", () => {
@@ -137,13 +154,14 @@ describe("sonda de almacenamiento REAL (no simulada)", () => {
     }
   });
 
-  it("escribir CERO bytes no es 'escribible': es no ejercido, aunque la relectura diga que sí", async () => {
+  it("intentar y escribir CERO bytes es FALLO observado, no 'ya lo miraremos'", async () => {
     // La forma exacta de EXIT 0 != EFFECT VERIFIED: la operación no da error y
-    // la relectura 'coincide', pero no se escribió nada. Debe quedar
-    // `not_exercised`, nunca `verified`.
+    // la relectura 'coincide', pero no entró nada. Se MIRÓ, así que es `failed`;
+    // llamarlo `not_exercised` sería un fallo real disfrazado de pendiente.
     const ctx = nominalFirstRunContext();
     ctx.probes.storageWriteAsProcess = async (_kind, dir) => ({
       dir,
+      attempted: true,
       uid: 1000,
       gid: 1000,
       bytesWritten: 0,
@@ -153,8 +171,45 @@ describe("sonda de almacenamiento REAL (no simulada)", () => {
     });
     for (const id of ["storage.bots.writable_by_process", "storage.replays.writable_by_process"]) {
       const outcome = await FIRST_RUN_CHECKS.find((c) => c.id === id)!.run(ctx);
-      expect([id, outcome.status]).toEqual([id, "not_exercised"]);
+      expect([id, outcome.status]).toEqual([id, "failed"]);
     }
+  });
+
+  it("no haber INTENTADO escribir no es 'el volumen falló': es que no se miró", async () => {
+    // La frontera del contrato nuevo. Marcar esto como `failed` sería un falso
+    // fallo que entierra los fallos de verdad.
+    const ctx = nominalFirstRunContext();
+    ctx.probes.storageWriteAsProcess = async (_kind, dir) => ({
+      dir,
+      attempted: false,
+      uid: 1000,
+      gid: 1000,
+      bytesWritten: 0,
+      readBack: false,
+      sameContent: false,
+      cleanedUp: false,
+      reason: "el volumen no está montado en este entorno",
+    });
+    const outcome = await FIRST_RUN_CHECKS.find((c) => c.id === "storage.replays.writable_by_process")!.run(ctx);
+    expect(outcome.status).toBe("not_exercised");
+    expect(outcome.evidence).toContain("no se intentó");
+  });
+
+  it("escribir bien pero sin saber QUÉ PROCESO lo hizo no es 'verificado': falta el sujeto", async () => {
+    const ctx = nominalFirstRunContext();
+    ctx.probes.storageWriteAsProcess = async (_kind, dir) => ({
+      dir,
+      attempted: true,
+      uid: null,
+      gid: null,
+      bytesWritten: 128,
+      readBack: true,
+      sameContent: true,
+      cleanedUp: true,
+    });
+    const outcome = await FIRST_RUN_CHECKS.find((c) => c.id === "storage.bots.writable_by_process")!.run(ctx);
+    expect(outcome.status).toBe("not_exercised");
+    expect(outcome.evidence).toContain("QUÉ PROCESO");
   });
 
   it("resolveStorageDir separa bots y replays y no inventa ruta sin datos", () => {
@@ -196,13 +251,13 @@ describe("asistente: nada se aprueba por omisión", () => {
   it("una comprobación AUSENTE deja el dominio en unknown, nunca satisfecho", async () => {
     const ctx = nominalFirstRunContext();
     const report = await runReadiness(
-      ALL_CHECKS.filter((c) => c.id !== "backup.restore_drill"),
+      ALL_CHECKS.filter((c) => c.id !== "backup.restore_verified"),
       ctx,
     );
     const plan = planWizard({ resolution: resolveConfig(ctx.env), report });
     const restauracion = plan.stages.find((s) => s.domain.id === "restauracion")!;
     expect(restauracion.state).toBe("unknown");
-    expect(plan.missingChecks).toContain("backup.restore_drill");
+    expect(plan.missingChecks).toContain("backup.restore_verified");
     expect(plan.verdict).toBe("NOT_READY");
   });
 
@@ -238,13 +293,15 @@ describe("asistente: nada se aprueba por omisión", () => {
   it("un fallo en un cimiento BLOQUEA el piso de arriba aunque su evidencia esté verde", async () => {
     const ctx = nominalFirstRunContext();
     ctx.probes.dataDirWrite = async () => ({
+      attempted: true,
       bytesWritten: 0,
       readBack: false,
       sameContent: false,
       reason: "EACCES",
     });
     const plan = planWizard({ resolution: resolveConfig(ctx.env), report: await runReadiness(ALL_CHECKS, ctx) });
-    expect(plan.stages.find((s) => s.domain.id === "almacenamiento")!.state).toBe("unknown");
+    // Se intentó y el volumen lo rechazó: FAILED, no "pendiente".
+    expect(plan.stages.find((s) => s.domain.id === "almacenamiento")!.state).toBe("failed");
     for (const id of ["almacenamiento-bots", "almacenamiento-replays"]) {
       const stage = plan.stages.find((s) => s.domain.id === id)!;
       expect(stage.state).toBe("blocked");
@@ -254,7 +311,7 @@ describe("asistente: nada se aprueba por omisión", () => {
 
   it("un error de configuración hace fallar preflight y arrastra readiness", async () => {
     const ctx = nominalFirstRunContext();
-    ctx.env.S9_DATA_DIR = "/tmp";
+    ctx.env.REPLAYS_DIR = "/tmp";
     const plan = planWizard({ resolution: resolveConfig(ctx.env), report: await runReadiness(ALL_CHECKS, ctx) });
     expect(plan.stages.find((s) => s.domain.id === "preflight")!.state).toBe("failed");
     expect(plan.verdict).toBe("NOT_READY");
@@ -275,18 +332,47 @@ describe("asistente: nada se aprueba por omisión", () => {
     expect(plan.blockers.every((b) => b.startsWith("confusión sin cubrir"))).toBe(true);
   });
 
+  it("RUNTIME_MATCH a secas NO cubre TAG != DEPLOYED VERSION (hace falta identidad embebida)", async () => {
+    // Contrato ESTADO_DRIFT_A_READINESS: RUNTIME_MATCH vale
+    // "requiere_procedencia", no `verified`. Es el estado que dan HOY los 12
+    // contenedores de la instalación, ninguno con identidad de build embebida:
+    // si esto cubriera la confusión, el asistente daría por comprobada la
+    // procedencia de doce imágenes sin haber mirado ninguna.
+    const ctx = nominalFirstRunContext();
+    ctx.probes.deployedVersion = async () => ({
+      imageTag: "<referencia>",
+      taggedCommit: "4d469dc",
+      builtFromCommit: null,
+      runningImageId: "sha256:viva",
+      imageIdPresentInDaemon: true,
+      tagResolvesToRunningId: true,
+      driftState: "RUNTIME_MATCH" as const,
+    });
+    const report = await runReadiness(ALL_CHECKS, ctx);
+    const deployed = report.results.find((r) => r.check.id === "security.deployed_version")!;
+    expect(deployed.outcome.status).toBe("not_exercised");
+
+    const plan = planWizard({ resolution: resolveConfig(ctx.env), report });
+    expect(plan.unresolvedConfusions).toContain("tag_vs_deployed_version");
+    expect(plan.stages.find((s) => s.domain.id === "sistema")!.state).toBe("unknown");
+    expect(plan.verdict).toBe("NOT_READY");
+  });
+
   it("cada una de las siete confusiones, si se rompe, aparece sin cubrir y quita el READY", async () => {
     const breakers: Array<[string, (c: FirstRunContext) => void]> = [
       [
         "healthy_vs_ready",
-        (c) =>
-          (c.probes.backupLastRun = async () => ({
+        // El proceso disparador sigue vivo (healthcheck en verde) y el trabajo
+        // falló: el caso exacto del incidente.
+        (c) => {
+          c.probes.backupProcessAlive = async () => ({ probed: true, processRunning: true });
+          c.probes.backupLastRun = async () => ({
+            probed: true,
             ranAt: "2026-08-30T02:00:00Z",
             exitCode: 1,
-            snapshotCount: 0,
-            lastSnapshotBytes: 0,
             ageHours: 1,
-          })),
+          });
+        },
       ],
       [
         "backed_up_vs_recovery_verified",
@@ -295,24 +381,33 @@ describe("asistente: nada se aprueba por omisión", () => {
       ],
       [
         "tag_vs_deployed_version",
+        // Estado de drift del clasificador único (ADR-016), no booleanos a mano.
         (c) =>
           (c.probes.deployedVersion = async () => ({
-            imageTag: "t",
-            taggedCommit: "aaa",
-            builtFromCommit: "bbb",
+            imageTag: "<referencia>",
+            taggedCommit: "aaaaaaa",
+            builtFromCommit: "bbbbbbb",
             runningImageId: "sha256:x",
             imageIdPresentInDaemon: true,
+            tagResolvesToRunningId: true,
+            driftState: "TAG_CONTENT_MISMATCH" as const,
           })),
       ],
       [
         "secret_exists_vs_mounted",
         (c) =>
-          (c.probes.secretMounted = async () => ({ existsOnHost: true, mountedInProcess: false, readableBytes: 0 })),
+          (c.probes.secretMounted = async () => ({
+            probed: true,
+            existsOnHost: true,
+            mountedInProcess: false,
+            readableBytes: 0,
+          })),
       ],
       [
         "storage_exists_vs_writable",
         (c) => {
           c.probes.dataDirWrite = async () => ({
+            attempted: true,
             bytesWritten: 0,
             readBack: false,
             sameContent: false,
@@ -320,6 +415,7 @@ describe("asistente: nada se aprueba por omisión", () => {
           });
           c.probes.storageWriteAsProcess = async (_k, dir) => ({
             dir,
+            attempted: true,
             uid: 1000,
             gid: 1000,
             bytesWritten: 0,
@@ -332,15 +428,18 @@ describe("asistente: nada se aprueba por omisión", () => {
       ],
       [
         "process_alive_vs_job_success",
-        (c) =>
-          (c.probes.backupLastRun = async () => ({
+        // Planificador vivo y NINGUNA ejecución registrada: `pgrep crond` en
+        // verde sobre la nada.
+        (c) => {
+          c.probes.backupProcessAlive = async () => ({ probed: true, processRunning: true });
+          c.probes.backupLastRun = async () => ({
+            probed: true,
             ranAt: null,
             exitCode: null,
-            snapshotCount: 0,
-            lastSnapshotBytes: 0,
             ageHours: null,
             reason: "el planificador vive, nunca lanzó nada",
-          })),
+          });
+        },
       ],
       [
         "exit_zero_vs_effect_verified",
@@ -349,6 +448,7 @@ describe("asistente: nada se aprueba por omisión", () => {
           c.probes.adminIdentity = async () => ({ queried: true, adminCount: 0, seededWithRepoCredentials: 0 });
           c.probes.storageWriteAsProcess = async (_k, dir) => ({
             dir,
+            attempted: true,
             uid: 1000,
             gid: 1000,
             bytesWritten: 0,
@@ -356,13 +456,16 @@ describe("asistente: nada se aprueba por omisión", () => {
             sameContent: false,
             cleanedUp: false,
           });
-          c.probes.backupLastRun = async () => ({
-            ranAt: "2026-08-30T02:00:00Z",
-            exitCode: 0,
+          // Copia con exit 0 y snapshot de 0 bytes, y volcado que no cuadra.
+          c.probes.backupLastSnapshot = async () => ({
+            probed: true,
             snapshotCount: 1,
-            lastSnapshotBytes: 0,
+            repositorySnapshotCount: 3,
+            latestSnapshotAt: "2026-08-30T02:00:05Z",
+            latestSnapshotBytes: 0,
             ageHours: 1,
           });
+          c.probes.backupPgDumpChecksum = async () => ({ probed: true, checksumMatches: false, dumpBytes: 0 });
         },
       ],
     ];

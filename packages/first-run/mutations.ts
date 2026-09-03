@@ -12,13 +12,24 @@ import { nominalEnv, nominalProbes } from "../readiness/mutations.ts";
 import type { FirstRunContext, FirstRunProbes } from "./checks.ts";
 
 export function nominalFirstRunEnv(): Record<string, string | undefined> {
-  return { ...nominalEnv(), S9_BOTS_DIR: "/data/bots", S9_REPLAYS_DIR: "/data/replays" };
+  // `REPLAYS_DIR` ya viene del escenario nominal del motor; el árbol de bots
+  // es el volumen `arena_bot_sources` del compose.
+  return { ...nominalEnv(), BOT_SOURCES_DIR: "/data/bot-sources" };
 }
 
 export function nominalFirstRunProbes(): FirstRunProbes {
   return {
     async storageWriteAsProcess(kind, dir) {
-      return { dir, uid: 1000, gid: 1000, bytesWritten: 48, readBack: true, sameContent: true, cleanedUp: true };
+      return {
+        dir,
+        attempted: true,
+        uid: 1000,
+        gid: 1000,
+        bytesWritten: 48,
+        readBack: true,
+        sameContent: true,
+        cleanedUp: true,
+      };
     },
     async adminIdentity() {
       return { queried: true, adminCount: 1, seededWithRepoCredentials: 0 };
@@ -47,6 +58,7 @@ export const FIRST_RUN_MUTATIONS: readonly FirstRunMutation[] = [
     apply: (c) => {
       c.probes.storageWriteAsProcess = async (kind, dir) => ({
         dir,
+        attempted: true,
         uid: 1000,
         gid: 1000,
         bytesWritten: 0,
@@ -59,10 +71,14 @@ export const FIRST_RUN_MUTATIONS: readonly FirstRunMutation[] = [
   },
   {
     checkId: "storage.bots.writable_by_process",
-    name: "no se puede decir QUÉ PROCESO escribió (sin uid/gid)",
+    name: "se escribió de verdad pero no se sabe QUÉ PROCESO lo hizo (sin uid/gid)",
     apply: (c) => {
+      // El intento existió y hasta salió bien: lo que falta es el SUJETO. Sin
+      // uid/gid, "el volumen es escribible" no dice por quién, que es la mitad
+      // que importa.
       c.probes.storageWriteAsProcess = async (_kind, dir) => ({
         dir,
+        attempted: true,
         uid: null,
         gid: null,
         bytesWritten: 128,
@@ -74,10 +90,9 @@ export const FIRST_RUN_MUTATIONS: readonly FirstRunMutation[] = [
   },
   {
     checkId: "storage.bots.writable_by_process",
-    name: "sin directorio de bots: no se escribió en ninguna parte",
+    name: "sin BOT_SOURCES_DIR: no se escribió en ninguna parte",
     apply: (c) => {
-      c.env.S9_BOTS_DIR = "";
-      c.env.S9_DATA_DIR = "";
+      c.env.BOT_SOURCES_DIR = "";
     },
   },
   {
@@ -86,6 +101,7 @@ export const FIRST_RUN_MUTATIONS: readonly FirstRunMutation[] = [
     apply: (c) => {
       c.probes.storageWriteAsProcess = async (_kind, dir) => ({
         dir,
+        attempted: true,
         uid: 1000,
         gid: 1000,
         bytesWritten: 48,
@@ -101,6 +117,7 @@ export const FIRST_RUN_MUTATIONS: readonly FirstRunMutation[] = [
     apply: (c) => {
       c.probes.storageWriteAsProcess = async (_kind, dir) => ({
         dir,
+        attempted: true,
         uid: 1000,
         gid: 1000,
         bytesWritten: 48,
@@ -108,6 +125,23 @@ export const FIRST_RUN_MUTATIONS: readonly FirstRunMutation[] = [
         sameContent: true,
         cleanedUp: false,
         reason: "EPERM al borrar el fichero de prueba",
+      });
+    },
+  },
+  {
+    checkId: "storage.bots.writable_by_process",
+    name: "intento real rechazado por el volumen (debe ser FAILED, no 'ya lo miraremos')",
+    apply: (c) => {
+      c.probes.storageWriteAsProcess = async (_kind, dir) => ({
+        dir,
+        attempted: true,
+        uid: 1000,
+        gid: 1000,
+        bytesWritten: 0,
+        readBack: false,
+        sameContent: false,
+        cleanedUp: false,
+        reason: "EROFS: read-only file system",
       });
     },
   },

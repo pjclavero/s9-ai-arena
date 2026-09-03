@@ -22,6 +22,7 @@ export function localStorageWrite(kind: StorageKind, dir: string): StorageWriteE
   const { uid, gid } = processIds();
   const base: StorageWriteEffect = {
     dir,
+    attempted: false,
     uid,
     gid,
     bytesWritten: 0,
@@ -29,6 +30,8 @@ export function localStorageWrite(kind: StorageKind, dir: string): StorageWriteE
     sameContent: false,
     cleanedUp: false,
   };
+  // Sin sujeto no se intenta siquiera: "escribible" sin uid/gid no es una
+  // afirmación comprobable, y decir que el volumen falló sería mentir.
   if (uid === null || gid === null) return { ...base, reason: "el sistema no expone uid/gid del proceso" };
 
   const probe = join(dir, `.r17-first-run-${kind}-${process.pid}`);
@@ -36,6 +39,8 @@ export function localStorageWrite(kind: StorageKind, dir: string): StorageWriteE
   try {
     mkdirSync(dir, { recursive: true });
     writeFileSync(probe, payload, { encoding: "utf8", mode: 0o600 });
+    // A partir de aquí el intento existió: cualquier fallo posterior es un
+    // efecto observado, no una comprobación pendiente.
     const written = statSync(probe).size;
     const readBack = readFileSync(probe, "utf8");
     let cleanedUp = false;
@@ -45,6 +50,7 @@ export function localStorageWrite(kind: StorageKind, dir: string): StorageWriteE
     } catch (err) {
       return {
         ...base,
+        attempted: true,
         bytesWritten: written,
         readBack: true,
         sameContent: readBack === payload,
@@ -54,6 +60,7 @@ export function localStorageWrite(kind: StorageKind, dir: string): StorageWriteE
     }
     return {
       ...base,
+      attempted: true,
       bytesWritten: written,
       readBack: true,
       sameContent: readBack === payload,
@@ -65,7 +72,8 @@ export function localStorageWrite(kind: StorageKind, dir: string): StorageWriteE
     } catch {
       /* el fichero de prueba no manda sobre el veredicto */
     }
-    return { ...base, reason: (err as Error).message };
+    // mkdir/write fallaron: se INTENTÓ y el sistema de ficheros lo rechazó.
+    return { ...base, attempted: true, reason: (err as Error).message };
   }
 }
 

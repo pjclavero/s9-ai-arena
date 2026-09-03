@@ -19,6 +19,11 @@ export type StorageKind = "bots" | "replays";
 export interface StorageWriteEffect {
   /** Directorio realmente usado (ya resuelto). */
   dir: string;
+  /**
+   * ¿Se llegó a INTENTAR la escritura? `false` no es "el volumen la rechazó":
+   * es "no se miró". Misma frontera que `dataDirWrite` en el motor.
+   */
+  attempted: boolean;
   /** uid/gid del proceso que escribió. `null` = no se pudo determinar el sujeto. */
   uid: number | null;
   gid: number | null;
@@ -49,16 +54,23 @@ export interface FirstRunContext extends ReadinessContext {
 }
 
 /**
- * Resuelve el directorio de cada almacenamiento. Se admite override explícito
- * (`S9_BOTS_DIR`, `S9_REPLAYS_DIR`); si no, cuelgan de `S9_DATA_DIR`. Declarar
- * esas claves en el modelo de configuración es trabajo del carril de
- * configuración, no de éste: aquí sólo se leen.
+ * Claves REALES de cada almacenamiento en este despliegue. No se inventan
+ * nombres ni se derivan rutas de una base imaginaria: si la clave no está
+ * definida, no hay directorio que mirar y la comprobación queda `not_exercised`
+ * — que es distinto de "el volumen no es escribible".
+ *
+ * `REPLAYS_DIR` está en el modelo de configuración; `BOT_SOURCES_DIR` es la
+ * clave con la que el trabajo de copia nombra el árbol de bots
+ * (`arena_bot_sources`, montado en /data/bot-sources). Declararla en
+ * `CONFIG_MODEL` es trabajo del carril de configuración, no de éste.
  */
+export const STORAGE_DIR_KEYS: Readonly<Record<StorageKind, string>> = {
+  bots: "BOT_SOURCES_DIR",
+  replays: "REPLAYS_DIR",
+};
+
 export function resolveStorageDir(env: Record<string, string | undefined>, kind: StorageKind): string {
-  const override = (env[kind === "bots" ? "S9_BOTS_DIR" : "S9_REPLAYS_DIR"] ?? "").trim();
-  if (override !== "") return override;
-  const base = (env.S9_DATA_DIR ?? "").trim();
-  return base === "" ? "" : `${base.replace(/\/+$/, "")}/${kind}`;
+  return (env[STORAGE_DIR_KEYS[kind]] ?? "").trim();
 }
 
 function storageCheck(kind: StorageKind, title: string): ReadinessCheck<FirstRunContext> {
@@ -75,11 +87,18 @@ function storageCheck(kind: StorageKind, title: string): ReadinessCheck<FirstRun
       if (dir === "") {
         return {
           status: "not_exercised",
-          evidence: `no hay directorio de ${kind}: no se ha escrito en ningún sitio`,
-          remedy: `Define S9_DATA_DIR (o S9_${kind.toUpperCase()}_DIR) antes de afirmar nada sobre este almacenamiento.`,
+          evidence: `${STORAGE_DIR_KEYS[kind]} sin definir: no se ha escrito en ningún sitio`,
+          remedy: `Define ${STORAGE_DIR_KEYS[kind]} antes de afirmar nada sobre este almacenamiento.`,
         };
       }
       const r = await ctx.probes.storageWriteAsProcess(kind, dir);
+      if (!r.attempted) {
+        return {
+          status: "not_exercised",
+          evidence: `no se intentó escribir en ${dir}${r.reason ? ` (${r.reason})` : ""}`,
+          remedy: "Ejecuta el asistente donde el volumen esté montado: sin intentarlo no se sabe nada.",
+        };
+      }
       if (r.uid === null || r.gid === null) {
         return {
           status: "not_exercised",
@@ -88,7 +107,9 @@ function storageCheck(kind: StorageKind, title: string): ReadinessCheck<FirstRun
         };
       }
       const empty = requireEffect(r.bytesWritten, {
-        evidence: `uid=${r.uid} gid=${r.gid} no escribió ni un byte en ${dir}${r.reason ? ` (${r.reason})` : ""}`,
+        // Se intentó y no entró nada: condición MIRADA y no cumplida.
+        status: "failed",
+        evidence: `uid=${r.uid} gid=${r.gid} intentó escribir en ${dir} y no entró ni un byte${r.reason ? ` (${r.reason})` : ""}`,
         remedy: "Revisa propiedad del volumen y que el montaje no sea de solo lectura para ESE uid.",
       });
       if (empty) return empty;
@@ -136,6 +157,10 @@ export const adminIdentityCheck: ReadinessCheck<FirstRunContext> = {
       };
     }
     const empty = requireEffect(r.adminCount, {
+      // La consulta SÍ se ejecutó: cero administradores es un hecho observado,
+      // no una comprobación pendiente. Ésta es exactamente la frontera que el
+      // `UPDATE 0` borró en su día.
+      status: "failed",
       evidence: "la consulta se ejecutó y no hay ninguna cuenta administrativa (0 filas)",
       remedy:
         "Crea el administrador con el bootstrap del operador. Un comando que termina con éxito sobre 0 filas no creó nada.",

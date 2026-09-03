@@ -111,9 +111,10 @@ export const DOMAINS: readonly Domain[] = [
     id: "copias",
     order: 7,
     title: "Copias de seguridad",
-    purpose: "La ÚLTIMA ejecución del trabajo de copia terminó bien, escribió bytes y no es rancia.",
+    purpose:
+      "La ÚLTIMA ejecución del trabajo terminó bien, dejó un snapshot reciente con bytes y el volcado releído cuadra con su hash. `backup.process_alive` NO cuenta: es la señal que engaña.",
     requires: ["almacenamiento", "base-de-datos"],
-    evidence: ["backup.last_run_succeeded"],
+    evidence: ["backup.last_run_success", "backup.last_snapshot_verified", "backup.pg_dump_checksum_verified"],
     mustResolve: ["healthy_vs_ready", "process_alive_vs_job_success", "exit_zero_vs_effect_verified"],
   },
   {
@@ -122,7 +123,7 @@ export const DOMAINS: readonly Domain[] = [
     title: "Restauración",
     purpose: "Un simulacro devuelve bytes y el canario: tener copia no es poder volver.",
     requires: ["copias"],
-    evidence: ["backup.restore_drill"],
+    evidence: ["backup.restore_verified"],
     mustResolve: ["backed_up_vs_recovery_verified"],
   },
   {
@@ -194,12 +195,26 @@ export const CHECK_COVERAGE: Readonly<Record<string, readonly ConfusionId[]>> = 
   "storage.writable": ["storage_exists_vs_writable"],
   "storage.bots.writable_by_process": ["storage_exists_vs_writable", "exit_zero_vs_effect_verified"],
   "storage.replays.writable_by_process": ["storage_exists_vs_writable", "exit_zero_vs_effect_verified"],
-  "backup.last_run_succeeded": ["healthy_vs_ready", "process_alive_vs_job_success", "exit_zero_vs_effect_verified"],
-  "backup.restore_drill": ["backed_up_vs_recovery_verified"],
+  // `backup.last_run_success` mira el TRABAJO: cuándo corrió y con qué código.
+  // Es lo único que separa "cron vivo" de "copia hecha".
+  "backup.last_run_success": ["healthy_vs_ready", "process_alive_vs_job_success"],
+  "backup.last_snapshot_verified": ["exit_zero_vs_effect_verified"],
+  "backup.pg_dump_checksum_verified": ["exit_zero_vs_effect_verified"],
+  "backup.restore_verified": ["backed_up_vs_recovery_verified"],
   "security.secret_mounted": ["secret_exists_vs_mounted"],
+  // Sólo llega a `verified` con identidad de build embebida: `RUNTIME_MATCH` a
+  // secas se queda en `not_exercised` y por tanto NO cubre esta confusión.
   "security.deployed_version": ["tag_vs_deployed_version"],
   "diagnostics.db_canary": ["exit_zero_vs_effect_verified"],
   "admin.bootstrap_identity": ["exit_zero_vs_effect_verified"],
 };
+
+/**
+ * Comprobaciones que existen y a propósito NO cubren ninguna confusión.
+ * `backup.process_alive` es la señal que engañó al proyecto: pasa en verde con
+ * la copia fallando cada noche. Está en el catálogo para informar, y aquí para
+ * dejar dicho que informar no es demostrar.
+ */
+export const CHECKS_SIN_COBERTURA: readonly string[] = ["backup.process_alive", "diagnostics.bundle_redacted"];
 
 export const DOMAIN_BY_ID: ReadonlyMap<DomainId, Domain> = new Map(DOMAINS.map((d) => [d.id, d]));

@@ -60,6 +60,12 @@ const MUTANTS = [
     to: "      if (false) {",
   },
   {
+    name: "no intentar la escritura pasa a leerse como fallo del volumen",
+    file: "packages/first-run/checks.ts",
+    from: "      if (!r.attempted) {",
+    to: "      if (false) {",
+  },
+  {
     name: "cero administradores pasa a ser aceptable",
     file: "packages/first-run/checks.ts",
     from: "    const empty = requireEffect(r.adminCount, {",
