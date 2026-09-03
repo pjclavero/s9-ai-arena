@@ -13,8 +13,18 @@
  *     NO demuestra, no es una comprobación: es una opinión.
  *  2. Toda comprobación devuelve un EFECTO OBSERVADO. Terminar sin error no es
  *     aprobar: si el efecto es nulo (0 filas, 0 bytes, nada montado) el estado
- *     es `not_exercised`, nunca `verified`.
+ *     jamás es `verified`.
  *  3. `not_exercised` NO es aprobado. Un "skipped" cuenta como no listo.
+ *  3.bis Los tres estados NO son intercambiables y su frontera es SI SE MIRÓ:
+ *       - `verified`      se miró y la condición SE CUMPLE (con evidencia).
+ *       - `failed`        se miró y la condición NO se cumple.
+ *       - `not_exercised` NO se miró (o no se pudo mirar).
+ *     Confundirlos en cualquiera de los dos sentidos rompe el gate: un
+ *     `failed` por "no disponible en este entorno" es un FALSO FALLO que
+ *     entierra los fallos de verdad, y un `not_exercised` sobre un efecto que
+ *     SÍ se observó nulo es un fallo real disfrazado de "ya lo miraremos".
+ *     Por eso toda sonda distingue "no se pudo observar" (`probed: false` /
+ *     `attempted: false`) de "se observó y salió mal".
  *  4. Una comprobación que no puede ponerse roja no cuenta: cada una registra
  *     mutaciones (`mutations.ts`) y un test comprueba que cada mutación la pone
  *     roja de verdad.
@@ -79,20 +89,62 @@ export interface ReadinessContext {
  * es exactamente el fallo que costó más caro en este proyecto.
  */
 export interface ReadinessProbes {
-  /** Escribe y relee un fichero de prueba en el directorio de datos. */
+  /**
+   * Escribe y relee un fichero de prueba en el directorio de datos.
+   * `attempted: false` = ni se intentó (no hay directorio que mirar);
+   * `attempted: true` con `bytesWritten: 0` = se intentó y el volumen lo
+   * rechazó, que es un FALLO observado, no una comprobación pendiente.
+   */
   dataDirWrite(dir: string): Promise<{
+    attempted: boolean;
     bytesWritten: number;
     readBack: boolean;
     sameContent: boolean;
     reason?: string;
   }>;
-  /** Última ejecución REAL de la copia de seguridad. */
+  /**
+   * ¿Está vivo el proceso que dispara la copia (cron/temporizador)?
+   * Es EXACTAMENTE el healthcheck que engaña: pasa con la copia fallando todas
+   * las noches. Por eso vive separado y no es bloqueante.
+   */
+  backupProcessAlive(): Promise<{
+    probed: boolean;
+    processRunning: boolean;
+    reason?: string;
+  }>;
+  /** Última ejecución REAL de la copia: cuándo corrió y con qué resultado. */
   backupLastRun(): Promise<{
+    probed: boolean;
     ranAt: string | null;
     exitCode: number | null;
-    snapshotCount: number;
-    lastSnapshotBytes: number;
     ageHours: number | null;
+    reason?: string;
+  }>;
+  /** El snapshot que dejó esa ejecución: que exista, sea reciente y tenga bytes. */
+  backupLastSnapshot(): Promise<{
+    probed: boolean;
+    /** Snapshots que llevan la etiqueta de datos: el subconjunto que se juzga. */
+    snapshotCount: number;
+    /**
+     * Snapshots TOTALES del repositorio. Se informa aparte porque decir "N
+     * snapshots en el repositorio" cuando N es un recuento filtrado es
+     * describir un subconjunto como si fuera el todo — y en la instalación real
+     * la diferencia es 17 frente a 35.
+     */
+    repositorySnapshotCount: number;
+    latestSnapshotAt: string | null;
+    latestSnapshotBytes: number;
+    ageHours: number | null;
+    reason?: string;
+  }>;
+  /**
+   * Contraste del volcado de PostgreSQL contra su checksum en el manifest.
+   * Exige LEER el dump ya almacenado, no creer al productor que lo escribió.
+   */
+  backupPgDumpChecksum(): Promise<{
+    probed: boolean;
+    checksumMatches: boolean;
+    dumpBytes: number;
     reason?: string;
   }>;
   /** Restauración de prueba a un destino desechable, con canario. */
@@ -109,10 +161,30 @@ export interface ReadinessProbes {
     builtFromCommit: string | null;
     runningImageId: string | null;
     imageIdPresentInDaemon: boolean;
+    /**
+     * ¿La etiqueta resuelve HOY a la misma image ID que corre el contenedor?
+     * `false` = la etiqueta se movió bajo los pies del contenedor: un restart
+     * traería otra imagen. `undefined` = la sonda no lo miró.
+     */
+    tagResolvesToRunningId?: boolean;
+    /**
+     * Estado explícito del modelo de drift de ADR-016 (cuatro estados):
+     * `IMAGE_MISSING` · `TAG_CONTENT_MISMATCH` · `TAG_MOVED` · `RUNTIME_MATCH`.
+     * `null` = no se pudo observar. La comprobación decide sobre esto, no
+     * combinando los booleanos de arriba a mano.
+     */
+    driftState: "TAG_CONTENT_MISMATCH" | "IMAGE_MISSING" | "TAG_MOVED" | "RUNTIME_MATCH" | null;
+    driftExplanation?: string;
     reason?: string;
   }>;
-  /** Un secreto concreto: existir en el host no es estar montado en el proceso. */
+  /**
+   * Un secreto concreto: existir en el host no es estar montado en el proceso.
+   * `probed: false` = la sonda NO pudo mirar el espacio de montaje. Eso NO es
+   * "no está montado": es "no lo sé", y confundirlo fue el falso fallo que
+   * dejó `security.secret_mounted` en rojo sin haber mirado nada.
+   */
   secretMounted(logicalName: string): Promise<{
+    probed: boolean;
     existsOnHost: boolean;
     mountedInProcess: boolean;
     readableBytes: number;
@@ -177,11 +249,20 @@ export async function runReadiness(checks: readonly ReadinessCheck[], ctx: Readi
   };
 }
 
-/** Ayuda: un efecto nulo nunca es verde. Codifica "EXIT 0 != BEHAVIOR EXERCISED". */
+/**
+ * Ayuda: un efecto nulo nunca es verde. Codifica "EXIT 0 != BEHAVIOR EXERCISED".
+ *
+ * El `status` es OBLIGATORIO y sin defecto a propósito: cada sitio que llama
+ * tiene que declarar si el efecto nulo significa "lo miré y salió a cero"
+ * (`failed`) o "no llegué a mirar" (`not_exercised`). Cuando el defecto era
+ * siempre `not_exercised`, media docena de fallos reales —una copia con exit 0
+ * y 0 bytes, un secreto montado y vacío, una restauración que recupera nada—
+ * se contaban como comprobaciones pendientes en vez de como lo que son.
+ */
 export function requireEffect(
   effectMagnitude: number,
-  onEmpty: { evidence: string; remedy: string },
+  onEmpty: { evidence: string; remedy: string; status: CheckStatus },
 ): CheckOutcome | null {
   if (effectMagnitude > 0) return null;
-  return { status: "not_exercised", evidence: onEmpty.evidence, remedy: onEmpty.remedy };
+  return { status: onEmpty.status, evidence: onEmpty.evidence, remedy: onEmpty.remedy };
 }

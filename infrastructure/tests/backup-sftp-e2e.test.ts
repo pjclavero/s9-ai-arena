@@ -317,6 +317,12 @@ async function buildMutant(tag: string, patch: (original: string) => string) {
   copyFileSync(BACKUP_SH_PATH, join(backupDir, "backup.sh"));
   copyFileSync(RESTORE_SH_PATH, join(backupDir, "restore.sh"));
   copyFileSync(ENTRYPOINT_SH_PATH, join(backupDir, "entrypoint.sh"));
+  // CARRIL E: el Dockerfile instala también healthcheck.sh y evidence.sh, así
+  // que el contexto de build del mutante debe traerlos o el `docker build`
+  // falla con "not found" — un fallo de UTILLAJE que no dice nada sobre la
+  // mutación de seguridad que este test quiere ejercer.
+  copyFileSync(join(REPO_ROOT, "infrastructure", "backup", "healthcheck.sh"), join(backupDir, "healthcheck.sh"));
+  copyFileSync(join(REPO_ROOT, "infrastructure", "backup", "evidence.sh"), join(backupDir, "evidence.sh"));
   writeFileSync(join(libDir, "setup-ssh.sh"), patch(readFileSync(LIB_SETUP_SSH_PATH, "utf8")));
   copyFileSync(DOCKERFILE, join(dockerDir, "Dockerfile"));
   const build = await phase(`build mutante ${tag}`, () =>
