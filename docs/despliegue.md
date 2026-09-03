@@ -230,6 +230,44 @@ dentro, lo único mirado sería la etiqueta, que es lo que puede mentir.
 El `tournament-worker` no expone HTTP: su identidad está en `/tmp/version.json`
 dentro del contenedor (`docker exec … cat /tmp/version.json`).
 
+## Contrato de release: BUILD y DEPLOY son fases distintas (ADR-017)
+
+El procedimiento formal, con los incidentes que lo justifican, está en
+**[ADR-017](decisiones/ADR-017-contrato-de-release.md)**. Lo esencial:
+
+```
+BUILD   árbol fuente correcto · commit correcto · contexto correcto ·
+        BUILD_COMMIT embebido · etiquetas de imagen · verificación de CONTENIDO
+DEPLOY  --no-build OBLIGATORIO · project-directory productivo · imagen ya construida ·
+        image ID en ejecución · spec diff · health · smoke · verificación de versión
+```
+
+`--project-directory` controla **tres** cosas a la vez —contexto de
+construcción, rutas relativas y **secretos**—, así que en despliegue va el de
+producción **y además `--no-build`**: los secretos resuelven bien y no se puede
+construir.
+
+**Prohibido como evidencia única**: la etiqueta, un `docker compose` con salida
+0 y un contenedor `healthy`. Todo despliegue debe poder responder con evidencia
+**qué código, qué imagen, qué SPEC y qué runtime**.
+
+```bash
+node infrastructure/scripts/release-gate.mjs --invocacion build \
+  --arbol-fuente /tmp/arbol-<sha> -- <invocación de build>
+node infrastructure/scripts/release-gate.mjs --invocacion deploy -- <invocación de deploy>
+node infrastructure/scripts/release-gate.mjs --evidencia despliegue.json
+node infrastructure/scripts/release-gate.mjs --self-test   # calibración
+```
+
+Reglas asociadas, todas con incidente detrás: nada de `git clone` de ruta local
+sin `--no-hardlinks` (un clon hardlinkeado vació 384 objetos del repo
+productivo); limpiar con `rm -rf`, nunca con `shred`; ninguna operación
+destructiva como prueba de humo en producción (una sonda de retención sin
+autenticación borró replays reales); los invariantes se miden sobre el
+**proyecto Compose**, no sobre el host; y la CI se lee por **recuento de
+conclusiones de todos los checks**, jamás por el final de un `--watch`
+(`skipped`/`neutral`/`not_exercised` no son éxito).
+
 ## Actualización en caliente (E10.M)
 
 Despliegue por servicio: `docker compose -f infrastructure/docker-compose.yml
