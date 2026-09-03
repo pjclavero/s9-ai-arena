@@ -551,7 +551,15 @@ services:
     # ensayado). 16.14 → 16.15 es reversible: mismo formato en disco
     # (pg_control 1300, catálogo 202307071), verificado en un clúster de
     # prueba desechable, incluso tras una parada sucia.
-    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    #
+    # INCOHERENCIA DECLARATIVA CORREGIDA: esta línea decía
+    # `postgres:16-alpine@sha256:57c7…`, emparejando una etiqueta que HOY
+    # resuelve a 16.15 (`sha256:cf78e766…`) con el digest de 16.14. Docker
+    # resuelve por digest e ignora la etiqueta, así que funcionaba; pero
+    # `docker manifest inspect postgres:16-alpine@sha256:57c7…` responde
+    # «manifest verification failed» y quien lo lea entiende 16.15. El digest
+    # NO cambia: sólo la etiqueta pasa a nombrar la versión que el digest es.
+    image: postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
     profiles: [nucleo, development, production]
     networks: [data]
     environment:

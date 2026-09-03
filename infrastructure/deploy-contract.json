@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "descripcion": "Contrato de despliegue reproducible: fija de una vez proyecto, ficheros compose, perfil(es), TAG, prefijo de imagen, ficheros de entorno y ruta de secretos. Lo consume infrastructure/scripts/deploy-contract-gate.mjs; nadie tiene que recordar cinco flags.",
+  "proyecto": "infrastructure",
+  "compose_files": ["infrastructure/docker-compose.yml"],
+  "env_files": ["infrastructure/.env"],
+  "secrets_dir": "/run/secrets/<secret-name>",
+  "perfiles": ["development"],
+  "perfiles_rechazados": {
+    "": "sin COMPOSE_PROFILES el compose renderiza CERO servicios: el peor falso negativo posible",
+    "nucleo": "conjunto incompleto (faltan arena-engine, bot-manager, bot-build-worker, map-service)",
+    "external-db": "excluye postgres: el stack no puede desplegarse asi contra la base de datos gestionada aqui",
+    "production": "arrastra backup, que se gestiona APARTE (ventana propia, ver gestionados_aparte)"
+  },
+  "entorno": {
+    "TAG": "4d469dc",
+    "IMAGE_PREFIX": "s9arena"
+  },
+  "servicios_esperados": [
+    "api",
+    "arena-engine",
+    "bot-build-worker",
+    "bot-manager",
+    "gateway",
+    "map-service",
+    "postgres",
+    "queue",
+    "replay-service",
+    "tournament-worker",
+    "web"
+  ],
+  "gestionados_aparte": {
+    "backup": "unidad con ventana propia; su alineacion es un carril posterior. No entra en el conjunto canonico."
+  },
+  "imagenes_esperadas": {
+    "api": "s9arena/api:4d469dc",
+    "arena-engine": "s9arena/arena-engine:4d469dc",
+    "bot-build-worker": "s9arena/bot-manager:4d469dc",
+    "bot-manager": "s9arena/bot-manager:4d469dc",
+    "gateway": "s9arena/gateway:4d469dc",
+    "map-service": "s9arena/map-service:4d469dc",
+    "postgres": "postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777",
+    "queue": "redis:7-alpine",
+    "replay-service": "s9arena/replay-service:4d469dc",
+    "tournament-worker": "s9arena/tournament-worker:4d469dc",
+    "web": "s9arena/web:4d469dc"
+  },
+  "imagenes_pinneadas": [
+    {
+      "servicio": "postgres",
+      "ref": "postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777",
+      "plataformas": ["linux/amd64"],
+      "version_esperada": { "variable": "PG_VERSION", "valor": "16.14" }
+    }
+  ],
+  "servicios_con_estado": {
+    "postgres": {
+      "volumen": "postgres_data",
+      "destino": "/var/lib/postgresql/data",
+      "durabilidad": "estado durable irreemplazable (datos de la plataforma)",
+      "politica_recreacion": "NO RECREATE / NO RESTART sin autorizacion explicita del operador y copia verificada previa",
+      "politica_persistencia": "volumen nombrado postgres_data; copia gestionada por el servicio backup (restic, ventana propia)",
+      "copia_verificada": true
+    },
+    "queue": {
+      "volumen": "queue_data",
+      "destino": "/data",
+      "durabilidad": "Redis con appendonly yes: estado durable, NO es infraestructura inocua",
+      "politica_recreacion": "solo en ventana con cola vacia; una recreacion con trabajos en vuelo los pierde",
+      "politica_persistencia": "volumen nombrado queue_data con AOF",
+      "copia_verificada": false,
+      "deuda": "DEUDA-QUEUE-BACKUP: no hay backup/restore disenado ni probado para queue_data. Declarado, no resuelto: disenarlo es un carril propio."
+    }
+  }
+}

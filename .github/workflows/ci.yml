@@ -529,6 +529,42 @@ jobs:
       - name: CALIBRACIÓN · las mutaciones del clasificador de drift mueren
         run: node infrastructure/scripts/mutate-image-drift.mjs
 
+      # ── CONTRATO DE DESPLIEGUE REPRODUCIBLE ─────────────────────────────────
+      # Tres defectos medidos en el entorno real: (1) el compose emparejaba la
+      # etiqueta `16-alpine` (hoy 16.15) con el digest de 16.14; (2) TAG=local
+      # en el entorno de despliegue mientras corrían imágenes `:4d469dc`, de
+      # modo que un `up --no-build` habría revertido el rollout entero; (3) el
+      # perfil productivo no estaba declarado en ninguna parte, y sin él el
+      # compose renderiza CERO servicios. Las cuatro garantías del gate
+      # (referencia en 3 niveles, tag por efecto, perfil por conjunto exacto y
+      # servicios con estado) tienen que saber ponerse ROJAS aquí.
+      - name: CONTROL · las garantías del contrato de despliegue saben ponerse rojas
+        run: node infrastructure/scripts/deploy-contract-gate.mjs --self-test
+
+      # CONTROL NEGATIVO del propio gate: SIN --registro los niveles 2 y 3 no se
+      # ejercen, y el gate NO puede salir en verde. Un "no comprobado" que
+      # aprobara sería exactamente el fallo que este carril existe para impedir.
+      - name: CONTROL NEGATIVO · sin consultar el registro, el gate no aprueba
+        run: |
+          set +e
+          node infrastructure/scripts/deploy-contract-gate.mjs > /tmp/gate-deploy.txt 2>&1
+          rc=$?
+          set -e
+          cat /tmp/gate-deploy.txt
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::el gate aprobó sin ejercer los niveles 2 y 3: no comprobado no puede ser aprobado"
+            exit 1
+          fi
+          grep -q "NO_EJERCIDO" /tmp/gate-deploy.txt
+          echo "control negativo OK: rc=$rc con los niveles 2 y 3 declarados NO_EJERCIDO"
+
+      # Calibración por mutación de las cuatro garantías. La primera devuelve la
+      # autoridad del nivel 2 al almacén LOCAL de Docker, que es el error real
+      # que motivó este carril (`docker image inspect` dijo "No such image" de
+      # un digest que existe perfectamente en el registro).
+      - name: CALIBRACIÓN · las mutaciones del contrato de despliegue mueren
+        run: node infrastructure/scripts/deploy-contract-mutations.mjs
+
       # ── ADR-017 · contrato de release ────────────────────────────────────────
       # Calibración del gate que separa BUILD de DEPLOY. Va aquí, y no en un job
       # nuevo, porque es el mismo veredicto: "este despliegue es lo que dice

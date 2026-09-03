@@ -1,0 +1,59 @@
+{
+  "descripcion": "Salida REAL de `docker compose config --services` por perfil, medida sobre el compose del repositorio. Calibra el renderizador offline del gate: si el renderizador se aparta de lo que Docker hace de verdad, el gate de perfil compararía contra una ficción.",
+  "medido_con": "COMPOSE_PROFILES=<perfil> docker compose config --services",
+  "servicios_por_perfil": {
+    "": [],
+    "nucleo": ["api", "gateway", "postgres", "queue", "replay-service", "tournament-worker", "web"],
+    "development": [
+      "api",
+      "arena-engine",
+      "bot-build-worker",
+      "bot-manager",
+      "gateway",
+      "map-service",
+      "postgres",
+      "queue",
+      "replay-service",
+      "tournament-worker",
+      "web"
+    ],
+    "production": [
+      "api",
+      "arena-engine",
+      "backup",
+      "bot-build-worker",
+      "bot-manager",
+      "gateway",
+      "map-service",
+      "postgres",
+      "queue",
+      "replay-service",
+      "tournament-worker",
+      "web"
+    ],
+    "external-db": [
+      "api",
+      "arena-engine",
+      "backup",
+      "bot-build-worker",
+      "bot-manager",
+      "gateway",
+      "map-service",
+      "queue",
+      "replay-service",
+      "tournament-worker",
+      "web"
+    ]
+  },
+  "registro_postgres": {
+    "descripcion": "Hechos consultados contra el REGISTRO (docker buildx imagetools inspect), no contra el almacen local.",
+    "postgres:16-alpine": "sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+    "postgres:16.15-alpine": "sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+    "postgres:16.14-alpine": "sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777",
+    "pg_version_por_digest": {
+      "sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777": "16.14",
+      "sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685": "16.15"
+    },
+    "almacen_local": "docker image inspect postgres:16-alpine@sha256:57c7... => 'No such image' (la imagen local no tiene RepoDigests). El digest SI existe en el registro: el almacen local no es autoridad."
+  }
+}
