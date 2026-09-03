@@ -11,9 +11,13 @@
  * Reparto con los carriles hermanos (aquí no se reimplementa nada de ellos):
  *   - la coherencia etiqueta/LABEL//version de UNA imagen es de
  *     infrastructure/scripts/verify-image-provenance.mjs (ADR-016);
- *   - la existencia de la image ID en ejecución, el commit embebido y el estado
- *     de "la etiqueta se movió" son de packages/readiness/probes-docker.ts
- *     (`interpretarVersionDesplegada`, `observarImagen`, PR #125);
+ *   - la existencia de la image ID en ejecución, el commit embebido y los CUATRO
+ *     estados de deriva (IMAGE_MISSING, TAG_CONTENT_MISMATCH, TAG_MOVED,
+ *     RUNTIME_MATCH) son del clasificador único
+ *     infrastructure/scripts/lib/image-drift.mjs (`clasificarDrift`), consumido
+ *     por packages/readiness/probes-docker.ts y check-running-image-id.mjs; su
+ *     traducción a readiness es ESTADO_DRIFT_A_READINESS, donde RUNTIME_MATCH a
+ *     secas NO es "verificado";
  *   - AQUÍ vive lo que nadie más mira: la FASE (build frente a deploy), la
  *     forma de la invocación, el ámbito de los invariantes, la coherencia de la
  *     clasificación del cambio, qué cuenta como evidencia y qué cuenta como CI

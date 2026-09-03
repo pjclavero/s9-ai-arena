@@ -196,15 +196,18 @@ las CUATRO, no tres:
 1. el `tag` de la imagen nombra el commit desplegado;
 2. `org.opencontainers.image.revision` de la imagen = ese commit;
 3. `/version` del contenedor EN MARCHA = ese commit;
-4. la image ID en ejecución EXISTE todavía en el daemon.
+4. la image ID en ejecución EXISTE todavía en el daemon (`docker image inspect`,
+   nunca `docker images -q`: ese listado omite las imágenes sin etiqueta);
+5. la referencia declarada SIGUE resolviendo a la image ID que corre.
 
 ```bash
 # (1)(2)(3)
 node infrastructure/scripts/verify-image-provenance.mjs \
   --image <ref> --commit <sha> --service <nombre> --port <puerto>
 
-# (4) sobre el daemon entero
-node infrastructure/scripts/check-running-image-id.mjs
+# (4)(5) sobre el daemon entero: cada contenedor cae en uno de los cuatro
+# estados de ADR-016 (IMAGE_MISSING · TAG_CONTENT_MISMATCH · TAG_MOVED · RUNTIME_MATCH)
+node infrastructure/scripts/check-running-image-id.mjs [--json]
 ```
 
 (1) por sí sola es una tautología: comparar "imagen declarada" con "imagen
@@ -213,6 +216,16 @@ real: un contenedor corriendo sobre una image ID ya borrada del daemon. Si (4)
 falla es **DRIFT CRÍTICO**: el estado no es reproducible, un restart no lo
 recupera y **el baseline no sirve para rollback** — hay que reconstruir o volver
 a bajar la imagen del registro antes de tocar nada.
+
+(5) es un tercer incidente, visto en producción: la etiqueta se movió bajo un
+contenedor vivo (upstream republicó la misma etiqueta). El contenedor está sano,
+pero un `restart` traería otra versión sin que nadie lo hubiera decidido; sale
+como `TAG_MOVED`. El clasificador **no corrige nada**: anclar un digest es una
+decisión del operador, con su ventana.
+
+Ojo con la procedencia: una imagen sin identidad de build embebida (todas las
+anteriores a ADR-016) sale `not_exercised`, **nunca "verificada"**. Sin el commit
+dentro, lo único mirado sería la etiqueta, que es lo que puede mentir.
 
 El `tournament-worker` no expone HTTP: su identidad está en `/tmp/version.json`
 dentro del contenedor (`docker exec … cat /tmp/version.json`).

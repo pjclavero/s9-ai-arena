@@ -52,7 +52,12 @@ COPY infrastructure/backup/backup.sh /usr/local/bin/backup.sh
 COPY infrastructure/backup/restore.sh /usr/local/bin/restore.sh
 COPY infrastructure/backup/lib/ /usr/local/bin/lib/
 COPY infrastructure/backup/entrypoint.sh /entrypoint.sh
-RUN chmod +x /usr/local/bin/backup.sh /usr/local/bin/restore.sh /entrypoint.sh
+# CARRIL E: healthcheck.sh (mira la copia, no el demonio) y evidence.sh
+# (recolector de evidencia de solo lectura sobre el repositorio restic).
+COPY infrastructure/backup/healthcheck.sh /usr/local/bin/healthcheck.sh
+COPY infrastructure/backup/evidence.sh /usr/local/bin/evidence.sh
+RUN chmod +x /usr/local/bin/backup.sh /usr/local/bin/restore.sh \
+             /usr/local/bin/healthcheck.sh /usr/local/bin/evidence.sh /entrypoint.sh
 
 # B7 · Siembra del directorio de datos con uid 1000 (el `node` de las imágenes
 # node-service, dueño real del volumen). Este contenedor monta `arena_replays`

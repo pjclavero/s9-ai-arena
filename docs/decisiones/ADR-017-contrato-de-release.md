@@ -114,11 +114,19 @@ Y dos reglas de medida:
   con la pertenencia a `docker images -q`: ese listado omite las imágenes sin
   etiqueta de nivel superior (incidente 6, reproducido hoy con postgres).
 - **La etiqueta que resuelve hoy debe ser la image ID que corre.** Si difieren,
-  un restart cambia de versión sin decisión de nadie (incidente 3). Esa
-  comprobación **ya existe** y no se reimplementa aquí: vive en
-  `packages/readiness/probes-docker.ts` (`interpretarVersionDesplegada`,
-  `observarImagen`; PR #125), con `imageIdPresentInDaemon` y
-  `tagResolvesToRunningId`.
+  un restart cambia de versión sin decisión de nadie (incidente 3).
+
+Ninguna de esas dos se reimplementa aquí. La **autoridad de identidad** es
+`BUILD_COMMIT` + `/version` + image ID que **existe**, nunca la etiqueta, y el
+clasificador único de los **cuatro estados** de ADR-016
+(`IMAGE_MISSING`, `TAG_CONTENT_MISMATCH`, `TAG_MOVED`, `RUNTIME_MATCH`) vive en
+`infrastructure/scripts/lib/image-drift.mjs` (`clasificarDrift`), consumido por
+`packages/readiness/probes-docker.ts` y por `check-running-image-id.mjs`.
+
+Y `RUNTIME_MATCH` **a secas no es "verificado"**: la matriz
+`ESTADO_DRIFT_A_READINESS` de `packages/readiness/checks.ts` lo mapea a
+`requiere_procedencia`, porque que la image ID sea la esperada no dice de qué
+árbol salió. El §6 de este contrato es lo que cierra esa mitad.
 
 ## 6. Todo despliegue responde cuatro preguntas
 
@@ -205,5 +213,7 @@ desde fuera, que es donde se coló el error.
 - Un despliegue que no puede responder las cuatro preguntas no se afirma.
 - El coste es una invocación más (`release-gate.mjs`) por fase.
 - Lo que este ADR **no** hace: no comprueba la coherencia interna de una imagen
-  (eso es ADR-016) ni el estado de deriva de una etiqueta contra el daemon (eso
-  es la sonda de PR #125). Los consume; no los reimplementa.
+  ni clasifica los cuatro estados de drift (eso es ADR-016, con el clasificador
+  único en `infrastructure/scripts/lib/image-drift.mjs`), ni traduce esos estados
+  a un veredicto de readiness (eso es `ESTADO_DRIFT_A_READINESS`). Los consume;
+  no los reimplementa.
