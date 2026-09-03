@@ -882,7 +882,8 @@ paths:
           description: Lanzada / resultado
           content: { application/json: { schema: { type: object, additionalProperties: true } } }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: Estado inválido / bot no listo / mapa no publicado, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: Estado inválido / bot no listo / mapa no publicado / reserva perdida en una carrera, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '429': { description: Techo de batallas reales simultáneas alcanzado (S9_MAX_CONCURRENT_REAL_BATTLE_RUNS), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '503': { description: Ejecución real deshabilitada o runner no disponible, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /battles/{battleId}/spectate-ticket:
