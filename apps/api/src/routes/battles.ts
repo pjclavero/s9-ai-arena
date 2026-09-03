@@ -13,6 +13,7 @@ import { decompress, sha256 } from "../../../replay-service/src/format.js";
 import { verifyLoaded } from "../../../replay-service/src/store.js";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
+import { audit } from "../audit.js";
 import { pathParam } from "../params.js";
 import { ROLE_RANK } from "../openapi.js";
 import { ApiError, badRequest, conflict, notFound } from "../errors.js";
@@ -38,6 +39,39 @@ export function spectateWsBase(): string {
     throw new ApiError(500, "spectate_ws_misconfigured", "SPECTATE_WS_URL debe ser wss:// en producción");
   }
   return wsBase;
+}
+
+/**
+ * CARRIL I · Techo por defecto de batallas reales simultáneas. UNA. Es un límite
+ * de RECURSOS del host, no una regla de juego: subirlo es una decisión de
+ * operación medida, no un default cómodo.
+ */
+export const DEFAULT_MAX_CONCURRENT_RUNS = 1;
+
+/**
+ * CARRIL I · RESERVA ATÓMICA de una batalla para ejecutarla: `scheduled` →
+ * `running` en UN SOLO UPDATE condicionado. Devuelve `true` solo a quien de
+ * verdad se la llevó.
+ *
+ * Está aquí, exportada y aparte de la ruta, porque la atomicidad es la propiedad
+ * que hay que poder poner a prueba: con dos peticiones HTTP casi nunca se
+ * reproduce la carrera real (la comprobación de estado previa suele bastar para
+ * frenar a la segunda), y una guarda que solo se sostiene por el orden de lectura
+ * es una guarda no demostrada. El test la llama en paralelo directamente.
+ */
+export async function claimBattleForRun(db: Db, battleId: string): Promise<boolean> {
+  const claimed = await db("battles").where({ id: battleId, status: "scheduled" }).update({
+    status: "running",
+    started_at: db.fn.now(),
+  });
+  return claimed === 1;
+}
+
+/** CARRIL I · Devuelve la batalla a `scheduled` liberando la reserva. Condicionado
+ *  a `status='running'`: si otro camino (el tournament-worker, un operador) ya la
+ *  movió, NO se le pisa el estado. */
+async function releaseBattleClaim(db: Db, battleId: string): Promise<void> {
+  await db("battles").where({ id: battleId, status: "running" }).update({ status: "scheduled", started_at: null });
 }
 
 export function battleToJson(b: Record<string, unknown>, participants: Record<string, unknown>[]) {
@@ -593,16 +627,117 @@ export function battleRoutes(
       return;
     }
 
-    const result = await runCfg.runner.launch({
-      battleId,
-      mode: battle.mode,
-      mapId: battle.map_id,
-      mapVersion: battle.map_version,
-      // B9 · el ruleset de la batalla viaja al launcher, que lo traduce al del
-      // motor (antes se enviaba `mode` como rulesetId y el motor no lo conocía).
-      rulesetId: battle.ruleset_id ?? null,
-      seed: battle.seed ?? null,
-      participants,
+    // ── CARRIL I · PREPARACIÓN DEL GATE DE EJECUCIÓN ──────────────────────────
+    // Hasta aquí la ruta validaba muy bien la ENTRADA (flag, estado, mapa
+    // publicado, bots firmados) pero no gobernaba nada de lo que ocurre DESPUÉS:
+    // no reservaba la batalla, no acotaba cuántas se ejecutan a la vez y no
+    // dejaba rastro. Las tres cosas solo importan con la ejecución encendida, y
+    // por eso se arreglan ANTES de encenderla.
+
+    // 1 · TECHO DE CONCURRENCIA. Cada batalla real ocupa contenedores, CPU y RAM
+    // del host durante minutos, y la petición HTTP se queda abierta todo ese
+    // tiempo. Sin techo, N usuarios autenticados lanzan N batallas simultáneas y
+    // tumban la máquina. El contador es `battles.status='running'` en la BD (no
+    // un contador en memoria): así el techo es GLOBAL y lo comparten esta ruta y
+    // el tournament-worker, que consumen el mismo host.
+    const cap = runCfg.maxConcurrentRuns ?? DEFAULT_MAX_CONCURRENT_RUNS;
+    const runningRows = (await db("battles").where({ status: "running" }).count({ count: "*" })) as Array<{
+      count: string | number;
+    }>;
+    const running = Number(runningRows[0]?.count ?? 0);
+    if (running >= cap) {
+      await audit(db, {
+        actorId: req.auth?.userId ?? null,
+        action: "battle.run_rejected",
+        target: `battle:${battleId}`,
+        detail: { reason: "too_many_running_battles", running, cap },
+        correlationId: req.correlationId,
+      });
+      res.status(429).json({
+        error: "too_many_running_battles",
+        message: `Ya hay ${running} batalla(s) en ejecución (techo ${cap})`,
+      });
+      return;
+    }
+
+    // 2 · RESERVA ATÓMICA `scheduled` → `running`. Antes, la batalla seguía
+    // `scheduled` durante TODA la ejecución: dos POST simultáneos pasaban los dos
+    // el chequeo de estado y se ejecutaban DOS batallas contra el mismo battleId,
+    // ambas escribiendo `participants.cpu_ms` e ingestando un replay bajo el
+    // mismo id. El UPDATE condicionado lo resuelve en la BD; quien pierde la
+    // carrera recibe 409.
+    if (!(await claimBattleForRun(db, battleId))) {
+      res.status(409).json({
+        error: "invalid_state",
+        message: "La batalla ya no está en estado scheduled (¿lanzada en paralelo?)",
+      });
+      return;
+    }
+
+    // 3 · AUDITORÍA. Ejecutar código de terceros en el host es la acción más
+    // sensible del producto y era la única que no dejaba rastro: sin esto, un
+    // incidente no tiene ni quién lo lanzó ni cuándo.
+    await audit(db, {
+      actorId: req.auth?.userId ?? null,
+      action: "battle.run_started",
+      target: `battle:${battleId}`,
+      detail: {
+        mode: battle.mode,
+        mapId: battle.map_id,
+        mapVersion: battle.map_version,
+        participants: participants.map((p) => ({ botId: p.botId, version: p.version, team: p.team })),
+      },
+      correlationId: req.correlationId,
+    });
+
+    let result;
+    try {
+      result = await runCfg.runner.launch({
+        battleId,
+        mode: battle.mode,
+        mapId: battle.map_id,
+        mapVersion: battle.map_version,
+        // B9 · el ruleset de la batalla viaja al launcher, que lo traduce al del
+        // motor (antes se enviaba `mode` como rulesetId y el motor no lo conocía).
+        rulesetId: battle.ruleset_id ?? null,
+        seed: battle.seed ?? null,
+        participants,
+      });
+    } catch (err) {
+      // El launcher REVENTÓ (no devolvió un `failed` ordenado). La reserva se
+      // libera para que la batalla siga siendo lanzable: dejarla `running` para
+      // siempre por un fallo técnico la bloquearía sin que nadie la ejecutara.
+      await releaseBattleClaim(db, battleId);
+      await audit(db, {
+        actorId: req.auth?.userId ?? null,
+        action: "battle.run_error",
+        target: `battle:${battleId}`,
+        detail: { error: err instanceof Error ? err.message : String(err) },
+        correlationId: req.correlationId,
+      });
+      throw err;
+    }
+
+    // Un `failed` es un rechazo ordenado (mapa, ruleset, motor inalcanzable...):
+    // no se ejecutó nada que valga, así que la batalla vuelve a `scheduled`. Un
+    // `completed` la deja en `running`: SE JUGÓ, y el cierre del ciclo de vida
+    // (resultado, ganador, `finished`) NO lo escribe este camino todavía — es una
+    // de las condiciones del gate, no algo que esta ruta pueda inventarse.
+    if (result.status !== "completed") {
+      await releaseBattleClaim(db, battleId);
+    }
+    await audit(db, {
+      actorId: req.auth?.userId ?? null,
+      action: "battle.run_finished",
+      target: `battle:${battleId}`,
+      detail: {
+        status: result.status,
+        runner: result.runner,
+        ...(result.errorCode ? { errorCode: result.errorCode } : {}),
+        ...(result.error ? { error: result.error } : {}),
+        replayIngested: result.replay?.ingested ?? false,
+      },
+      correlationId: req.correlationId,
     });
     res.status(200).json({
       battleId,
