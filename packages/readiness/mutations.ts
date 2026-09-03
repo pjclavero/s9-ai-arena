@@ -10,15 +10,55 @@
  * Este fichero es producto, no utillaje de test: el runner de producción puede
  * ejecutar el escenario nominal como autodiagnóstico del propio motor.
  */
+import { interpretarVersionDesplegada } from "./probes-docker.js";
 import type { ReadinessContext, ReadinessProbes } from "./engine.ts";
 
+/**
+ * Fixture de `deployedVersion` construida desde una OBSERVACIÓN del daemon y
+ * pasada por el intérprete real (ADR-016), no escrita a mano. Así una mutación
+ * describe el estado del daemon —que es lo observable— y el estado de drift lo
+ * decide el mismo código que decide en producción.
+ */
+function versionDesplegada(obs: {
+  runningImageId: string | null;
+  referencia: string | null;
+  imagenResoluble: boolean;
+  idDeLaReferencia: string | null;
+  envImagen?: Record<string, string>;
+}) {
+  return interpretarVersionDesplegada({
+    runningImageId: obs.runningImageId,
+    imageTag: obs.referencia,
+    imagenResoluble: obs.imagenResoluble,
+    idDeLaEtiqueta: obs.idDeLaReferencia,
+    envImagen: obs.envImagen ?? {},
+    labelsImagen: {},
+  });
+}
+
+const REF = "ghcr.io/<owner>/<image>:4d469dc";
+const ID_VIVA = "sha256:" + "a".repeat(64);
+const ID_OTRA = "sha256:" + "b".repeat(64);
+
+/**
+ * Entorno nominal: las claves del CONTRATO REAL de instalación, con los valores
+ * que tiene el despliegue (topología escrita con marcadores, nunca literal).
+ */
 export function nominalEnv(): Record<string, string | undefined> {
   return {
-    S9_DATA_DIR: "/data/replays",
-    S9_DB_URL: undefined,
-    S9_DB_URL_FILE: "/run/secrets/<secret-name>",
-    S9_JWT_SECRET_FILE: "/run/secrets/<secret-name>",
-    S9_BACKUP_TARGET: "sftp://<backup-host>/<repo>",
+    REPLAYS_DIR: "/data/replays",
+    PGHOST: "<internal-db-host>",
+    PGUSER: "arena",
+    PGDATABASE: "arena",
+    PGPASSWORD_FILE: "/run/secrets/<secret-name>",
+    JWT_SECRET_FILE: "/run/secrets/<secret-name>",
+    ARENA_ENGINE_SHARED_SECRET_FILE: "/run/secrets/<secret-name>",
+    REPLAY_INGEST_SECRET_FILE: "/run/secrets/<secret-name>",
+    RESTIC_REPOSITORY: "sftp:<usuario>@<backup-host>:/<repo>",
+    RESTIC_PASSWORD_FILE: "/run/secrets/<secret-name>",
+    RESTIC_SSH_KEY_FILE: "/run/secrets/<secret-name>",
+    RESTIC_SSH_KNOWN_HOSTS_FILE: "/run/secrets/<secret-name>",
+    S9_DOMAIN: "<dominio-publico>",
     S9_ENABLE_REAL_BATTLE_RUNS: "0",
     S9_PUBLIC_SPECTATE_ENABLED: "0",
   };
@@ -27,31 +67,41 @@ export function nominalEnv(): Record<string, string | undefined> {
 export function nominalProbes(): ReadinessProbes {
   return {
     async dataDirWrite() {
-      return { bytesWritten: 32, readBack: true, sameContent: true };
+      return { attempted: true, bytesWritten: 32, readBack: true, sameContent: true };
+    },
+    async backupProcessAlive() {
+      return { probed: true, processRunning: true };
     },
     async backupLastRun() {
+      return { probed: true, ranAt: "2026-08-30T02:00:00Z", exitCode: 0, ageHours: 6 };
+    },
+    async backupLastSnapshot() {
       return {
-        ranAt: "2026-08-30T02:00:00Z",
-        exitCode: 0,
+        probed: true,
         snapshotCount: 14,
-        lastSnapshotBytes: 4_194_304,
+        repositorySnapshotCount: 29,
+        latestSnapshotAt: "2026-08-30T02:00:05Z",
+        latestSnapshotBytes: 4_194_304,
         ageHours: 6,
       };
+    },
+    async backupPgDumpChecksum() {
+      return { probed: true, checksumMatches: true, dumpBytes: 108_979 };
     },
     async backupRestoreDrill() {
       return { attempted: true, restoredBytes: 65_536, canaryFound: true };
     },
     async deployedVersion() {
-      return {
-        imageTag: "ghcr.io/<owner>/<image>:4d469dc",
-        taggedCommit: "4d469dc",
-        builtFromCommit: "4d469dc",
-        runningImageId: "sha256:aaaa",
-        imageIdPresentInDaemon: true,
-      };
+      return versionDesplegada({
+        runningImageId: ID_VIVA,
+        referencia: REF,
+        imagenResoluble: true,
+        idDeLaReferencia: ID_VIVA,
+        envImagen: { BUILD_COMMIT: "4d469dc" },
+      });
     },
     async secretMounted() {
-      return { existsOnHost: true, mountedInProcess: true, readableBytes: 64 };
+      return { probed: true, existsOnHost: true, mountedInProcess: true, readableBytes: 64 };
     },
     async dbCanary() {
       return { queryExecuted: true, canaryRowsSeen: 1, rowsAffected: 1 };
@@ -83,6 +133,7 @@ export const MUTATIONS: readonly ReadinessMutation[] = [
     name: "volumen root:root, el uid del proceso no puede escribir",
     apply: (c) => {
       c.probes.dataDirWrite = async () => ({
+        attempted: true,
         bytesWritten: 0,
         readBack: false,
         sameContent: false,
@@ -95,6 +146,7 @@ export const MUTATIONS: readonly ReadinessMutation[] = [
     name: "escritura aceptada pero la relectura no coincide",
     apply: (c) => {
       c.probes.dataDirWrite = async () => ({
+        attempted: true,
         bytesWritten: 32,
         readBack: true,
         sameContent: false,
@@ -103,65 +155,177 @@ export const MUTATIONS: readonly ReadinessMutation[] = [
   },
   {
     checkId: "storage.writable",
-    name: "S9_DATA_DIR sin definir: no se escribe en ninguna parte",
+    name: "REPLAYS_DIR sin definir: no se escribe en ninguna parte",
     apply: (c) => {
-      c.env.S9_DATA_DIR = "";
+      c.env.REPLAYS_DIR = "";
     },
   },
   {
-    checkId: "backup.last_run_succeeded",
+    checkId: "storage.writable",
+    name: "ni se intentó la escritura (no mirar no es un volumen roto)",
+    apply: (c) => {
+      c.probes.dataDirWrite = async () => ({
+        attempted: false,
+        bytesWritten: 0,
+        readBack: false,
+        sameContent: false,
+        reason: "el volumen no está montado en este proceso",
+      });
+    },
+  },
+  {
+    checkId: "backup.process_alive",
+    name: "el planificador de la copia no está corriendo: nadie la disparará",
+    apply: (c) => {
+      c.probes.backupProcessAlive = async () => ({ probed: true, processRunning: false });
+    },
+  },
+  {
+    checkId: "backup.process_alive",
+    name: "no se pudo mirar el servicio de copias",
+    apply: (c) => {
+      c.probes.backupProcessAlive = async () => ({
+        probed: false,
+        processRunning: false,
+        reason: "el daemon no responde",
+      });
+    },
+  },
+  {
+    checkId: "backup.last_run_success",
     name: "contenedor healthy con la copia nocturna fallando cada noche",
     apply: (c) => {
       c.probes.backupLastRun = async () => ({
+        probed: true,
         ranAt: "2026-08-30T02:00:00Z",
         exitCode: 1,
-        snapshotCount: 0,
-        lastSnapshotBytes: 0,
         ageHours: 6,
       });
     },
   },
   {
-    checkId: "backup.last_run_succeeded",
-    name: "exit 0 con snapshot de 0 bytes (EXIT 0 != BEHAVIOR EXERCISED)",
-    apply: (c) => {
-      c.probes.backupLastRun = async () => ({
-        ranAt: "2026-08-30T02:00:00Z",
-        exitCode: 0,
-        snapshotCount: 1,
-        lastSnapshotBytes: 0,
-        ageHours: 2,
-      });
-    },
-  },
-  {
-    checkId: "backup.last_run_succeeded",
+    checkId: "backup.last_run_success",
     name: "copia rancia: última con éxito hace semanas",
     apply: (c) => {
       c.probes.backupLastRun = async () => ({
+        probed: true,
         ranAt: "2026-07-17T02:00:00Z",
         exitCode: 0,
-        snapshotCount: 3,
-        lastSnapshotBytes: 1024,
         ageHours: 1000,
       });
     },
   },
   {
-    checkId: "backup.last_run_succeeded",
+    checkId: "backup.last_run_success",
     name: "no consta ninguna ejecución (temporizador sano que nunca corrió)",
     apply: (c) => {
+      c.probes.backupLastRun = async () => ({ probed: true, ranAt: null, exitCode: null, ageHours: null });
+    },
+  },
+  {
+    checkId: "backup.last_run_success",
+    name: "no se pudo leer el registro de la última copia",
+    apply: (c) => {
       c.probes.backupLastRun = async () => ({
+        probed: false,
         ranAt: null,
         exitCode: null,
+        ageHours: null,
+        reason: "métricas ilegibles",
+      });
+    },
+  },
+  {
+    checkId: "backup.last_snapshot_verified",
+    name: "exit 0 sin snapshot: la ejecución dijo que sí y el repositorio está vacío",
+    apply: (c) => {
+      c.probes.backupLastSnapshot = async () => ({
+        probed: true,
         snapshotCount: 0,
-        lastSnapshotBytes: 0,
+        // Repositorio con snapshots de OTRAS etiquetas y ninguno de datos: no
+        // es un repositorio vacío, y el diagnóstico no debe decir que lo es.
+        repositorySnapshotCount: 18,
+        latestSnapshotAt: null,
+        latestSnapshotBytes: 0,
         ageHours: null,
       });
     },
   },
   {
-    checkId: "backup.restore_drill",
+    checkId: "backup.last_snapshot_verified",
+    name: "snapshot creado con 0 bytes (una copia vacía no es una copia)",
+    apply: (c) => {
+      c.probes.backupLastSnapshot = async () => ({
+        probed: true,
+        snapshotCount: 5,
+        repositorySnapshotCount: 11,
+        latestSnapshotAt: "2026-08-30T02:00:05Z",
+        latestSnapshotBytes: 0,
+        ageHours: 2,
+      });
+    },
+  },
+  {
+    checkId: "backup.last_snapshot_verified",
+    name: "ejecuciones con éxito que ya no añaden snapshots: el último es rancio",
+    apply: (c) => {
+      c.probes.backupLastSnapshot = async () => ({
+        probed: true,
+        snapshotCount: 35,
+        repositorySnapshotCount: 71,
+        latestSnapshotAt: "2026-07-17T04:15:00Z",
+        latestSnapshotBytes: 6126,
+        ageHours: 1000,
+      });
+    },
+  },
+  {
+    checkId: "backup.last_snapshot_verified",
+    name: "no se pudo consultar el repositorio de copias",
+    apply: (c) => {
+      c.probes.backupLastSnapshot = async () => ({
+        probed: false,
+        snapshotCount: 0,
+        repositorySnapshotCount: 0,
+        latestSnapshotAt: null,
+        latestSnapshotBytes: 0,
+        ageHours: null,
+        reason: "repositorio inalcanzable",
+      });
+    },
+  },
+  {
+    checkId: "backup.pg_dump_checksum_verified",
+    name: "el volcado almacenado no cuadra con su checksum del manifest",
+    apply: (c) => {
+      c.probes.backupPgDumpChecksum = async () => ({
+        probed: true,
+        checksumMatches: false,
+        dumpBytes: 108_979,
+      });
+    },
+  },
+  {
+    checkId: "backup.pg_dump_checksum_verified",
+    name: "volcado de 0 bytes con pg_dump 'correcto'",
+    apply: (c) => {
+      c.probes.backupPgDumpChecksum = async () => ({ probed: true, checksumMatches: true, dumpBytes: 0 });
+    },
+  },
+  {
+    checkId: "backup.pg_dump_checksum_verified",
+    name: "nadie releyó el volcado: creer al productor no es contrastar",
+    apply: (c) => {
+      c.probes.backupPgDumpChecksum = async () => ({
+        probed: false,
+        checksumMatches: false,
+        dumpBytes: 0,
+        reason: "no se releyó el volcado almacenado",
+      });
+    },
+  },
+  {
+    checkId: "backup.restore_verified",
     name: "existe copia pero nunca se ha intentado restaurar",
     apply: (c) => {
       c.probes.backupRestoreDrill = async () => ({
@@ -172,7 +336,7 @@ export const MUTATIONS: readonly ReadinessMutation[] = [
     },
   },
   {
-    checkId: "backup.restore_drill",
+    checkId: "backup.restore_verified",
     name: "restauración con éxito que recupera datos sin el canario",
     apply: (c) => {
       c.probes.backupRestoreDrill = async () => ({
@@ -183,10 +347,22 @@ export const MUTATIONS: readonly ReadinessMutation[] = [
     },
   },
   {
+    checkId: "backup.restore_verified",
+    name: "restauración que se ejecuta y devuelve la nada",
+    apply: (c) => {
+      c.probes.backupRestoreDrill = async () => ({
+        attempted: true,
+        restoredBytes: 0,
+        canaryFound: false,
+      });
+    },
+  },
+  {
     checkId: "security.secret_mounted",
     name: "el secreto existe en el host pero el contenedor no lo monta",
     apply: (c) => {
       c.probes.secretMounted = async () => ({
+        probed: true,
         existsOnHost: true,
         mountedInProcess: false,
         readableBytes: 0,
@@ -198,6 +374,7 @@ export const MUTATIONS: readonly ReadinessMutation[] = [
     name: "montado pero vacío: se firmaría con nada",
     apply: (c) => {
       c.probes.secretMounted = async () => ({
+        probed: true,
         existsOnHost: true,
         mountedInProcess: true,
         readableBytes: 0,
@@ -205,29 +382,70 @@ export const MUTATIONS: readonly ReadinessMutation[] = [
     },
   },
   {
+    checkId: "security.secret_mounted",
+    name: "no se miró el espacio de montaje (esto NO es 'no está montado')",
+    apply: (c) => {
+      c.probes.secretMounted = async () => ({
+        probed: false,
+        existsOnHost: false,
+        mountedInProcess: false,
+        readableBytes: 0,
+        reason: "sonda no disponible en este entorno",
+      });
+    },
+  },
+  {
+    checkId: "security.deployed_version",
+    name: "la etiqueta se movió: hoy resuelve a otra imagen distinta de la que corre",
+    apply: (c) => {
+      c.probes.deployedVersion = async () =>
+        versionDesplegada({
+          runningImageId: ID_VIVA,
+          referencia: REF,
+          imagenResoluble: true,
+          idDeLaReferencia: ID_OTRA,
+          envImagen: { BUILD_COMMIT: "4d469dc" },
+        });
+    },
+  },
+  {
+    checkId: "security.deployed_version",
+    name: "imagen sin identidad de build embebida: sólo la etiqueta afirma la procedencia",
+    apply: (c) => {
+      c.probes.deployedVersion = async () =>
+        versionDesplegada({
+          runningImageId: ID_VIVA,
+          referencia: REF,
+          imagenResoluble: true,
+          idDeLaReferencia: ID_VIVA,
+        });
+    },
+  },
+  {
     checkId: "security.deployed_version",
     name: "contenedor corriendo una image ID ya borrada del daemon",
     apply: (c) => {
-      c.probes.deployedVersion = async () => ({
-        imageTag: "ghcr.io/<owner>/<image>:4d469dc",
-        taggedCommit: "4d469dc",
-        builtFromCommit: "4d469dc",
-        runningImageId: "sha256:bbbb",
-        imageIdPresentInDaemon: false,
-      });
+      c.probes.deployedVersion = async () =>
+        versionDesplegada({
+          runningImageId: ID_OTRA,
+          referencia: REF,
+          imagenResoluble: false,
+          idDeLaReferencia: null,
+        });
     },
   },
   {
     checkId: "security.deployed_version",
     name: "etiqueta con un commit, imagen construida desde otro",
     apply: (c) => {
-      c.probes.deployedVersion = async () => ({
-        imageTag: "ghcr.io/<owner>/<image>:4d469dc",
-        taggedCommit: "4d469dc",
-        builtFromCommit: "0badc0d",
-        runningImageId: "sha256:aaaa",
-        imageIdPresentInDaemon: true,
-      });
+      c.probes.deployedVersion = async () =>
+        versionDesplegada({
+          runningImageId: ID_VIVA,
+          referencia: REF,
+          imagenResoluble: true,
+          idDeLaReferencia: ID_VIVA,
+          envImagen: { BUILD_COMMIT: "0badc0d" },
+        });
     },
   },
   {

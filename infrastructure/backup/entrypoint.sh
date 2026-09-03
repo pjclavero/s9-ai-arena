@@ -15,6 +15,18 @@ set -euo pipefail
 : "${BACKUP_SH:=/usr/local/bin/backup.sh}"
 
 echo "$BACKUP_CRON /usr/local/bin/backup.sh >> /proc/1/fd/1 2>&1" > "$CRONTAB_FILE"
+
+# CARRIL E: marca de arranque para healthcheck.sh. Sin ella, un contenedor
+# recién creado (que aún no ha ejecutado su primer cron) no se puede
+# distinguir de uno que lleva días sin hacer una sola copia — y el segundo es
+# exactamente el fallo que el healthcheck debe ver. No sirve `/proc/uptime`:
+# dentro del contenedor es el del HOST. Se escribe con `|| true` porque no
+# poder fechar el arranque no debe impedir arrancar: healthcheck.sh falla en
+# cerrado si la marca no está, que es la respuesta segura.
+: "${METRICS_DIR:=/textfile}"
+: "${BACKUP_BOOT_MARKER:=$METRICS_DIR/.container_started}"
+mkdir -p "$METRICS_DIR" 2>/dev/null || true
+date +%s > "$BACKUP_BOOT_MARKER" 2>/dev/null || true
 printf '{"level":"info","service":"backup","msg":"cron programado: %s"}\n' "$BACKUP_CRON"
 
 # Validación temprana de arranque.
