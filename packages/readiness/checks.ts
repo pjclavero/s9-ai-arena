@@ -171,30 +171,58 @@ const deployedVersionMatches: ReadinessCheck = {
   required: true,
   async run(ctx: ReadinessContext) {
     const r = await ctx.probes.deployedVersion();
-    if (!r.runningImageId || !r.imageTag) {
+
+    // Se decide sobre el ESTADO de drift (ADR-016), no combinando booleanos:
+    // "existe la imagen" y "la etiqueta apunta a la imagen que corre" son dos
+    // observaciones distintas y mezclarlas fue el defecto original.
+    switch (r.driftState) {
+      case null:
+        return {
+          status: "not_exercised" as const,
+          evidence: `no se pudo determinar la versión en ejecución${r.reason ? ` (${r.reason})` : ""}`,
+          remedy: "Sin identidad de imagen no se puede afirmar qué está corriendo.",
+        };
+      case "IMAGE_MISSING":
+        return {
+          status: "failed" as const,
+          evidence: `IMAGE_MISSING · el contenedor corre una image ID que ya no existe en el daemon (${r.imageTag})`,
+          remedy: "No se puede reproducir ni reiniciar con lo mismo: reconstruye y redespliega.",
+        };
+      case "TAG_MOVED":
+        // La etiqueta se movió bajo los pies del contenedor: el proceso vivo y
+        // la referencia con la que arrancó ya no son la misma imagen. Un restart
+        // traería OTRA versión sin que nadie lo hubiera decidido.
+        return {
+          status: "failed" as const,
+          evidence: `TAG_MOVED · ${r.imageTag} resuelve hoy a otra imagen distinta de la que corre el contenedor`,
+          remedy:
+            "Un restart cambiaría la versión sin decisión: fija la imagen por digest o retagea a la que está viva.",
+        };
+      case "TAG_CONTENT_MISMATCH":
+        return {
+          status: "failed" as const,
+          evidence: `TAG_CONTENT_MISMATCH · la etiqueta dice ${r.taggedCommit} y la imagen se construyó desde ${r.builtFromCommit}`,
+          remedy: "Etiqueta mentirosa: el despliegue no es el commit que crees.",
+        };
+      case "RUNTIME_MATCH":
+        break;
+    }
+
+    if (!r.builtFromCommit) {
+      // La imagen no lleva el commit dentro (ADR-016): sin identidad embebida no
+      // se ha OBSERVADO de qué árbol salió, sólo lo que dice la etiqueta — que es
+      // exactamente lo que puede mentir. Aprobar aquí sería IMAGE TAG leído como
+      // DEPLOYED VERSION.
       return {
         status: "not_exercised" as const,
-        evidence: `no se pudo determinar la versión en ejecución${r.reason ? ` (${r.reason})` : ""}`,
-        remedy: "Sin identidad de imagen no se puede afirmar qué está corriendo.",
-      };
-    }
-    if (!r.imageIdPresentInDaemon) {
-      return {
-        status: "failed" as const,
-        evidence: `el contenedor corre una image ID que ya no existe en el daemon (${r.imageTag})`,
-        remedy: "No se puede reproducir ni reiniciar con lo mismo: reconstruye y redespliega.",
-      };
-    }
-    if (r.taggedCommit && r.builtFromCommit && r.taggedCommit !== r.builtFromCommit) {
-      return {
-        status: "failed" as const,
-        evidence: `la etiqueta dice ${r.taggedCommit} y la imagen se construyó desde ${r.builtFromCommit}`,
-        remedy: "Etiqueta mentirosa: el despliegue no es el commit que crees.",
+        evidence: `RUNTIME_MATCH pero la imagen ${r.imageTag} no lleva identidad de build embebida: la procedencia no se ha comprobado`,
+        remedy:
+          "Reconstruye con BUILD_COMMIT/org.opencontainers.image.revision (ADR-016): sin commit dentro, la etiqueta es la única fuente y puede mentir.",
       };
     }
     return {
       status: "verified" as const,
-      evidence: `imagen ${r.imageTag} presente en el daemon y construida desde ${r.builtFromCommit ?? "commit declarado"}`,
+      evidence: `RUNTIME_MATCH · imagen ${r.imageTag} presente en el daemon y construida desde ${r.builtFromCommit}`,
     };
   },
 };

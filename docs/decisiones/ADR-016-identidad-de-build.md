@@ -4,7 +4,7 @@
 - **Ámbito**: todas las imágenes que construye `infrastructure/docker-compose.yml`
 - **Reemplaza a**: nada. Añade una garantía que no existía.
 
-## Contexto: dos incidentes reales
+## Contexto: tres incidentes reales
 
 ### Incidente 1 — la etiqueta mintió, y el gate lo bendijo
 
@@ -31,6 +31,23 @@ Un contenedor de producción seguía ejecutándose sobre una image ID que había
 contenedor vive sobre sus capas mientras no se pare), pero `docker image inspect <id>`
 respondía `No such image`. El estado en marcha **no era reproducible**: un restart no lo
 recuperaba y el baseline no servía para rollback. Nadie lo vio porque nada lo miraba.
+
+### Incidente 3 — la etiqueta se movió bajo un contenedor vivo
+
+Medido en producción (VM108, 12 contenedores): `infrastructure-postgres-1` corre una
+image ID que **existe** y que `docker image inspect` resuelve, pero la referencia con la
+que arrancó, `postgres:16-alpine`, resuelve **hoy** a otra imagen distinta — upstream
+republicó la etiqueta, y la que corre es PostgreSQL 16.14 mientras la etiqueta ya es
+16.15. El contenedor está sano; lo que no es sano es que **un `restart` cambiaría la
+versión de la base de datos sin que nadie lo hubiera decidido**.
+
+Este modo de fallo no estaba contemplado en la primera versión de este ADR, y su
+detector tenía además un defecto propio: la existencia de la image ID se comprobaba con
+`docker images --no-trunc -q`, un listado que **omite las imágenes sin etiqueta de nivel
+superior**. La imagen de postgres se había quedado sin `RepoTags`, así que el verificador
+daba a la vez un **DRIFT CRÍTICO falso** ("la imagen no existe") y **ceguera al drift
+verdadero**. La existencia se comprueba con `docker image inspect <image-id>`, nunca con
+un listado.
 
 ## Decisión
 
@@ -85,6 +102,47 @@ recuperaba y el baseline no servía para rollback. Nadie lo vio porque nada lo m
    correcta sería dejar de publicar tags con el sha en un registro público, no poner una
    contraseña a `/version`.
 
+## El modelo de drift: CUATRO estados, no booleanos sueltos
+
+Los tres incidentes son tres modos de fallo **distintos**, y mezclarlos en flags sueltos
+("¿existe?", "¿coincide el tag?") es lo que produjo el defecto: que una imagen EXISTA no
+dice que sea la que la etiqueta nombra hoy, y que la etiqueta nombre un commit no dice
+que la imagen contenga ese commit. Se modelan como estados explícitos
+(`infrastructure/scripts/lib/image-drift.mjs`):
+
+| Estado                 | Qué significa                                                                      | Incidente |
+| ---------------------- | ---------------------------------------------------------------------------------- | --------- |
+| `TAG_CONTENT_MISMATCH` | la etiqueta existe pero contiene código distinto                                     | 1         |
+| `IMAGE_MISSING`        | el contenedor corre una image ID ya inexistente                                       | 2         |
+| `TAG_MOVED`            | la image ID que corre es válida, pero la referencia declarada resuelve hoy a otra     | 3         |
+| `RUNTIME_MATCH`        | la image ID en ejecución es la esperada/pinchada                                      | —         |
+
+Y cuatro observaciones que se comparan **por separado**, sin combinarlas a mano:
+
+- **(a)** image ID que corre — `.Image` del contenedor;
+- **(b)** referencia/etiqueta declarada — `.Config.Image`;
+- **(c)** image ID a la que resuelve **hoy** (b) — `docker image inspect <ref> -f {{.Id}}`;
+- **(d)** digest esperado, si el despliegue lo tiene anclado.
+
+Orden de decisión: `IMAGE_MISSING` primero (sin (a) no hay contenido que comparar), luego
+`TAG_CONTENT_MISMATCH` (el fallo de contenido pesa más que a dónde apunte la referencia),
+luego `TAG_MOVED`, y `RUNTIME_MATCH` si no aplica ninguno.
+
+**La procedencia nunca se aprueba por omisión.** Una imagen sin identidad embebida sale
+`not_exercised`, no "verificada": sin el commit dentro lo único mirado sería la etiqueta,
+que es exactamente lo que puede mentir. Las imágenes hoy en producción son anteriores a
+este ADR, así que todas salen `not_exercised` en procedencia — y eso es la respuesta
+correcta, no un aprobado.
+
+Salida del clasificador sobre el caso real, tal cual:
+
+```
+container                 = <servicio de base de datos>
+runtime image exists      = YES
+tag still points to runtime image = NO
+drift = TAG_MOVED
+```
+
 ## El gate futuro de despliegue
 
 Un despliegue solo es válido si, **para cada servicio**, se cumple todo esto:
@@ -94,10 +152,12 @@ Un despliegue solo es válido si, **para cada servicio**, se cumple todo esto:
 | 1 | `tag` de la imagen = commit desplegado                                | nombre de la referencia                                     |
 | 2 | `org.opencontainers.image.revision` de la imagen = commit desplegado   | `docker image inspect` (sin arrancar nada)                  |
 | 3 | `/version` del contenedor **en marcha** = commit desplegado            | `docker exec … wget -qO- 127.0.0.1:<puerto>/version`        |
-| 4 | la **image ID en ejecución EXISTE** en el daemon                       | `.Image` del contenedor ∈ `docker images --no-trunc -q`     |
+| 4 | la **image ID en ejecución EXISTE** en el daemon                       | `docker image inspect <image-id>` (NUNCA `docker images -q`) |
+| 5 | la **referencia declarada sigue resolviendo** a la image ID que corre  | `docker image inspect <ref> -f {{.Id}}`                      |
 
 - (1) sola es la tautología que falló. (2) la rompe sin coste. (3) prueba que lo que corre
   es esa imagen y no otra cosa que se le parece.
+- (5) es el incidente 3: la etiqueta se movió y un restart traería otra versión.
 - (4) es el incidente 2: si la image ID en ejecución **no existe**, es **DRIFT CRÍTICO**.
   El estado no es reproducible, un restart no lo recupera y **el baseline no es reutilizable
   para rollback**. Hay que reconstruir o volver a bajar la imagen del registro **antes** de
@@ -112,8 +172,11 @@ node infrastructure/scripts/verify-image-provenance.mjs \
   --commit <sha> --service replay-service --port 8083 \
   --env SERVICE_ENTRY=apps/replay-service/src/main.ts
 
-# (4) sobre un daemon entero
-node infrastructure/scripts/check-running-image-id.mjs
+# (4)(5) sobre un daemon entero: clasifica cada contenedor en uno de los cuatro estados
+node infrastructure/scripts/check-running-image-id.mjs [--json]
+
+# calibración por mutación del clasificador (cada garantía se ve ROJA)
+node infrastructure/scripts/mutate-image-drift.mjs
 ```
 
 Ambos salen con `rc != 0` ante el defecto, con el motivo en una línea. No hay "amarillo":
@@ -130,7 +193,14 @@ check aprobado) construye imágenes de verdad y comprueba, en el mismo run:
   `BUILD_COMMIT` y etiquetada con el commit del run. El verificador **tiene que fallar**;
   si saliera 0, el paso falla y con él la CI. Sin ese negativo, un verificador que
   devolviera 0 siempre pasaría por bueno;
-- **calibración de (4)** — `check-running-image-id.mjs --self-test`.
+- **calibración de (4)(5)** — `check-running-image-id.mjs --self-test`, que fabrica los
+  cuatro estados y exige que cada uno se clasifique como el suyo, incluido el caso de una
+  imagen sin `RepoTags` (la que `docker images -q` omite), que debe salir con la imagen
+  **existente**;
+- **calibración por mutación** — `mutate-image-drift.mjs` aplica siete mutaciones al
+  código de producción y exige que cada una deje roja la suite. La primera reintroduce
+  `docker images -q` como prueba de existencia: si sobreviviera, el arreglo no estaría
+  probado.
 
 ## Consecuencias
 
@@ -139,6 +209,9 @@ check aprobado) construye imágenes de verdad y comprueba, en el mismo run:
 - Cambiar de commit ya no invalida la caché de `npm ci` ni de los `COPY` (el bloque va al
   final): el coste en tiempo de build es despreciable.
 - Una imagen construida sin los build-args no miente: dice `unknown`, y el gate la rechaza.
+- El drift de la etiqueta de la base de datos en VM108 queda **detectado y nombrado**, no
+  corregido: anclar un digest es una decisión del operador con su propia ventana de base
+  de datos. Este ADR sólo garantiza que el sistema **sabe decir** que ese drift existe.
 - **Este ADR no cambia el rollout en curso**, que se verifica con marcadores de contenido y
   sus controles positivo y negativo. Sirve para que el **siguiente** release no necesite esa
   artesanía.

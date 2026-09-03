@@ -74,6 +74,13 @@ export const CONFIG_MODEL: readonly ConfigEntry[] = [
     purpose: "Destino de copias (p. ej. sftp://<backup-host>/<repo>). Sin él no hay bloque de copias.",
   },
   {
+    key: "S9_READINESS_CONTAINER",
+    kind: "safeDefault",
+    default: "",
+    purpose:
+      "Contenedor al que la sonda de readiness pregunta la versión desplegada (solo lectura). Vacío = esa comprobación queda NO EJERCIDA.",
+  },
+  {
     key: "S9_LOG_LEVEL",
     kind: "safeDefault",
     default: "info",
