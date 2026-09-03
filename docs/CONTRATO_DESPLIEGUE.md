@@ -129,6 +129,28 @@ compararía el stack contra una ficción.
 `backup` queda fuera del conjunto canónico a propósito (`gestionados_aparte`):
 tiene ventana propia y su alineación es un carril posterior.
 
+#### Discrepancia declarada (no resuelta aquí)
+
+Tres cosas dicen tres perfiles distintos, y conviene no taparlo:
+
+| Fuente | Perfil / conjunto |
+| --- | --- |
+| `docs/despliegue.md` | `--profile production` (12 servicios) |
+| El stack vivo | 12 servicios, `backup` incluido — coincide con `production` |
+| Este contrato | `development` (11) + `backup` gestionado aparte |
+
+El contrato elige `development` porque `backup` **hoy no se despliega con el
+resto**: corre una imagen de otra versión (`11b36a7` frente a `4d469dc`) y viene
+de otro árbol de construcción, es decir, ya está gestionado aparte de hecho, no
+sólo de derecho. Declararlo dentro del conjunto canónico haría que el gate
+aprobara un `up` que lo recrearía junto a los demás.
+
+**Consecuencia:** mientras `backup` no se alinee (carril posterior), el conjunto
+canónico y el stack vivo difieren en ese servicio **a propósito y por escrito**.
+Cuando ese carril cierre, el contrato pasa a `production` y el conjunto a 12; el
+gate D lo hará fallar hasta que ambas cosas se cambien a la vez, que es
+exactamente lo que se quiere.
+
 ### E · Servicios con estado
 
 `STATEFUL_SERVICES = { postgres, queue }`. Ambos deben declarar volumen,
