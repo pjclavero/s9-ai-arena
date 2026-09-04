@@ -668,11 +668,12 @@ jobs:
       # que ADR-018 corrige en `scan`, ya corregido en su sitio.
       - name: CONTROL · el gate de los dos bloques no depende de ninguna fuente externa
         run: |
+          NODE=$(command -v node)
+          # Entorno vacío y PATH inexistente: sin `docker`, sin `git`, sin nada
+          # que un subproceso pueda usar para salir a la red.
           set +e
-          # Sin PATH no hay `docker`, ni `git`, ni red utilizable por subproceso.
-          # Si el gate consultara el registro, aquí se caería; tiene que salir 0.
-          env -i PATH=/nonexistent HOME="$HOME" "$(command -v node)" \
-            infrastructure/scripts/backup-stack-gate.mjs > /tmp/gate-sin-fuentes.txt 2>&1
+          env -i PATH=/nonexistent "$NODE" infrastructure/scripts/backup-stack-gate.mjs \
+            > /tmp/gate-sin-fuentes.txt 2>&1
           rc=$?
           set -e
           cat /tmp/gate-sin-fuentes.txt
@@ -681,7 +682,23 @@ jobs:
             exit 1
           fi
           grep -q "TOTAL         12" /tmp/gate-sin-fuentes.txt
-          echo "control OK: veredicto idéntico sin PATH; el gate no tiene fuente externa que pueda caerse"
+
+          # MITAD NEGATIVA, sin la cual esto no probaría nada: la MISMA sonda
+          # sobre un gate que SÍ consulta el registro tiene que ponerse roja. Si
+          # no distinguiera, el verde de arriba sería el de una sonda ciega.
+          set +e
+          env -i PATH=/nonexistent "$NODE" infrastructure/scripts/deploy-contract-gate.mjs --registro \
+            > /tmp/gate-con-fuentes.txt 2>&1
+          rc_neg=$?
+          set -e
+          if [ "$rc_neg" -eq 0 ]; then
+            echo "::error::la sonda no distingue: un gate que consulta el registro pasó igual"
+            exit 1
+          fi
+          # Y su motivo tiene que ser «no pude preguntar», no «el digest no existe»
+          # (ADR-018 aplicado al cliente ausente, no sólo a la red).
+          grep -q "N2_REGISTRO_INACCESIBLE" /tmp/gate-con-fuentes.txt
+          echo "control OK: el gate de bloques sale 0 sin entorno y el que consulta el registro sale $rc_neg por N2_REGISTRO_INACCESIBLE"
 
       # ── ADR-017 · contrato de release ────────────────────────────────────────
       # Calibración del gate que separa BUILD de DEPLOY. Va aquí, y no en un job

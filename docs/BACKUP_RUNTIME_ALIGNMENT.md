@@ -275,6 +275,29 @@ el `ENV BUILD_COMMIT` que el Dockerfile promueve desde el `ARG`.
 `printenv` no es opcional: sin él, la procedencia queda verificada sobre una
 imagen que podría no ser la que el contenedor está ejecutando.
 
+### Si el registro no responde (ADR-018 aplicado a este carril)
+
+Los dos primeros eslabones consultan GHCR, así que pueden fallar por red, por
+rate-limit o porque falte el cliente. **Ese fallo NO se lee como «la imagen es
+incorrecta»**: es *no comprobado*, bloquea igual, y se reintenta. No se duplica
+aquí ninguna tabla de estados: la distinción vive donde le toca, en el gate de
+despliegue, que separa «el registro dice que no» (`N2_DIGEST_NO_RESUELVE`) de
+«no pude preguntar» (`N2_REGISTRO_INACCESIBLE`).
+
+Este carril amplía esa segunda clase con un caso medido: ejecutando el gate con
+`--registro` **sin `docker` en el PATH**, el error `spawnSync docker ENOENT` se
+clasificaba como `N2_DIGEST_NO_RESUELVE`, es decir «ese digest no existe» —
+falso, existe y lo que faltaba era el cliente. Ahora sale
+`N2_REGISTRO_INACCESIBLE`. Sigue siendo rojo (no comprobado no es aprobado),
+pero deja de mandar a nadie a reconstruir una imagen que está bien. Es el mismo
+error que ADR-018 corrige en `scan`, aplicado a la herramienta en vez de a la
+red.
+
+En la práctica, para este procedimiento: si `docker manifest inspect` o
+`buildx imagetools inspect` fallan, **no se pasa al Camino B automáticamente**
+—eso sería tratar una fuente caída como un veredicto—; se reintenta, y sólo si
+el registro responde de verdad que la referencia no existe se cambia de camino.
+
 ## 4. Comando de recreación · RENDERIZADO, sin ejecutar
 
 Renderizado con `docker compose config` (que sólo renderiza) sobre el árbol de
