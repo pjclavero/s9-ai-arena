@@ -29,6 +29,7 @@
  */
 import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import { READINESS, motivoDeScan, readinessDeScan } from "../../packages/readiness/scan-status.mjs";
 
 export const VERDE = "verde";
 export const AMARILLO = "amarillo";
@@ -37,8 +38,11 @@ export const ROJO = "rojo";
 /**
  * Jobs de ci.yml que el semáforo espera. `clase`:
  *   - "obligatorio": debe ejecutarse y aprobar SIEMPRE; skipped/cancelled → rojo.
- *   - "seguridad":   igual que obligatorio, pero el motivo se marca como fallo
- *                    de seguridad (escáner de Compose, Trivy, npm audit).
+ *   - "escaneo":     job de escáneres de seguridad. NO se juzga por su código
+ *                    de salida: se juzga por el ESTADO que declara en
+ *                    `outputs.estado` (los cinco de scan-status.mjs) pasado por
+ *                    la tabla ESTADO_SCAN_A_READINESS. Hallazgo y
+ *                    no-comprobado bloquean los dos, con nombre distinto.
  *   - "solo-main":   solo corre en push a main. En PR su skipped es "no aplica".
  *                    En main: skipped u output `resultado=omitido` → amarillo;
  *                    éxito sin evidencia (sin output) → amarillo (fail-closed);
@@ -68,7 +72,14 @@ export const JOBS_CI = [
   // `needs` o quedara skipped, el semáforo va a ROJO: un skipped no es un
   // check aprobado.
   { id: "image-provenance", clase: "obligatorio" },
-  { id: "scan", clase: "seguridad" },
+  // SEMÁNTICA DEL SCAN: `escaneo`, no `obligatorio`. El job DECLARA en
+  // `outputs.estado` cuál de los cinco estados alcanzó (CLEAN / FINDINGS /
+  // NOT_EXERCISED / SCAN_ERROR / SOURCE_UNAVAILABLE) y el semáforo aplica la
+  // tabla de `packages/readiness/scan-status.mjs`. Antes se juzgaba por el
+  // `result` del job, y eso convertía una caída del endpoint de npm en «FALLO
+  // DE SEGURIDAD» — y, en el sentido simétrico y peligroso, habría convertido
+  // una respuesta vacía en un verde sin haber auditado nada.
+  { id: "scan", clase: "escaneo" },
   { id: "e2e-mvp", clase: "obligatorio" },
   { id: "deploy-staging", clase: "solo-main", evidencia: ["desplegado"] },
   { id: "smoke-and-promote", clase: "solo-main", evidencia: ["promocionado"] },
@@ -111,15 +122,16 @@ export function evaluarSemaforo(needs, ctx = {}, jobs = JOBS_CI) {
       continue;
     }
 
-    // obligatorio / seguridad
+    if (job.clase === "escaneo") {
+      filas.push(juzgarEscaneo(job, resultado, entrada.outputs));
+      continue;
+    }
+
+    // obligatorio
     if (resultado === "success") {
       filas.push(fila(job.id, resultado, VERDE, "ejecutado y aprobado"));
     } else if (resultado === "failure" || resultado === "cancelled") {
-      const motivo =
-        job.clase === "seguridad"
-          ? "FALLO DE SEGURIDAD (escáner de Compose / Trivy crítico / npm audit): bloquea la promoción"
-          : `fallo funcional (${resultado})`;
-      filas.push(fila(job.id, resultado, ROJO, motivo));
+      filas.push(fila(job.id, resultado, ROJO, `fallo funcional (${resultado})`));
     } else if (resultado === "skipped") {
       filas.push(
         fila(job.id, resultado, ROJO, "job obligatorio sin ejecutar: no puede contar como aprobado (fail-closed)"),
@@ -135,6 +147,59 @@ export function evaluarSemaforo(needs, ctx = {}, jobs = JOBS_CI) {
     else if (f.color === AMARILLO && color !== ROJO) color = AMARILLO;
   }
   return { color, filas };
+}
+
+/**
+ * Juzga un job de ESCANEO por el estado que declara, no por su código de
+ * salida. Reglas, y ninguna admite excepción:
+ *
+ *   - `CLEAN` (y sólo `CLEAN`) puede ser verde.
+ *   - `FINDINGS` es rojo y se llama HALLAZGOS.
+ *   - `SOURCE_UNAVAILABLE`, `SCAN_ERROR` y `NOT_EXERCISED` son rojo y se llaman
+ *     NO COMPROBADO — bloquean igual, pero con nombre distinto, y el de la
+ *     fuente caída se marca como reintentable.
+ *   - Sin `outputs.estado` (job en `skipped`, `cancelled`, o un `success` mudo)
+ *     el semáforo NO deduce nada: fail-closed, rojo, no comprobado.
+ *
+ * Un estado que no esté en la tabla NO cae al camino permisivo: `readinessDeScan`
+ * lo lleva a `not_exercised`.
+ */
+function juzgarEscaneo(job, resultado, outputs) {
+  const declarado = outputs?.estado;
+
+  if (typeof declarado !== "string" || declarado.trim() === "") {
+    const causa =
+      resultado === "success"
+        ? "el job terminó bien pero no declaró qué escaneó"
+        : `el job terminó en ${resultado} sin declarar estado`;
+    return fila(
+      job.id,
+      resultado,
+      ROJO,
+      `SEGURIDAD NO COMPROBADA (fail-closed): ${causa}. Sin estado declarado no hay auditoría que contar como aprobada`,
+    );
+  }
+
+  const readiness = readinessDeScan(declarado, { herramienta: outputs?.herramienta ?? job.id });
+  const motivo = motivoDeScan(declarado, outputs?.detalle ?? "");
+
+  if (readiness === READINESS.VERIFIED) {
+    // Sólo CLEAN llega aquí, y sólo si el job además salió bien: un CLEAN
+    // declarado por un job que se cayó no es una auditoría completa.
+    if (resultado !== "success") {
+      return fila(
+        job.id,
+        resultado,
+        ROJO,
+        `SEGURIDAD NO COMPROBADA: se declaró ${declarado} pero el job terminó en ${resultado} (fail-closed)`,
+      );
+    }
+    return fila(job.id, resultado, VERDE, `${declarado} · ${motivo.texto}`);
+  }
+
+  const etiqueta = motivo.clase === "hallazgos" ? "HALLAZGOS DE SEGURIDAD" : "SEGURIDAD NO COMPROBADA";
+  const reintento = motivo.reintentable ? " · procede REINTENTAR el escaneo" : "";
+  return fila(job.id, resultado, ROJO, `${etiqueta} (${declarado} → ${readiness}): ${motivo.texto}${reintento}`);
 }
 
 function juzgarSoloMain(job, resultado, outputs) {

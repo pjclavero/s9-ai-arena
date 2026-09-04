@@ -46,8 +46,29 @@ for runtime in python node; do
     exit 1
   fi
 
-  echo "== trivy $runtime (bloquea CRITICAL) =="
-  trivy image --exit-code 1 --severity CRITICAL --ignore-unfixed "$image"
+  # SEMÁNTICA DEL SCAN (ADR-018). Antes: `trivy image --exit-code 1`. Ese código
+  # de salida vale 1 tanto por una vulnerabilidad crítica como porque no se pudo
+  # descargar la base de datos de Trivy — y, en el sentido peligroso, un exit 0
+  # con un informe sin objetivos habría impreso "sin vulnerabilidades críticas"
+  # sin haber analizado nada. Ahora el veredicto sale del INFORME y se nombra:
+  # CLEAN sale con 0; FINDINGS, SCAN_ERROR y SOURCE_UNAVAILABLE bloquean, cada
+  # uno con su nombre (y sólo el de la fuente caída invita a reintentar).
+  echo "== trivy $runtime (el veredicto sale del informe, no del código de salida) =="
+  informe="$(mktemp -t trivy-"$runtime"-XXXXXX.json)"
+  set +e
+  trivy image --exit-code 0 --severity CRITICAL --ignore-unfixed --format json --output "$informe" "$image"
+  rc_trivy=$?
+  set -e
+  if [ "$rc_trivy" -ne 0 ]; then
+    export S9_TRIVY_OUTCOME=failure
+  else
+    export S9_TRIVY_OUTCOME=success
+  fi
+  if ! node "$HERE/infrastructure/scripts/scan-gate.mjs" clasificar trivy "$informe" --exigir; then
+    rm -f "$informe"
+    exit 1
+  fi
+  rm -f "$informe"
 done
 
-echo "✓ imágenes de runtime sin vulnerabilidades críticas"
+echo "✓ imágenes de runtime: escaneo EJECUTADO y sin vulnerabilidades críticas"
