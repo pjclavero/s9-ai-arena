@@ -529,6 +529,49 @@ jobs:
       - name: CALIBRACIÓN · las mutaciones del clasificador de drift mueren
         run: node infrastructure/scripts/mutate-image-drift.mjs
 
+      # ── COMPOSE CANÓNICO · fuente única de verdad del stack ─────────────────
+      # Cuarto incidente real: los 12 contenedores del MISMO proyecto Compose
+      # declaraban TRES `config_files` distintos (dos árboles de construcción
+      # temporales y el directorio de despliegue), porque cada servicio se
+      # desplegó desde el árbol de SU versión con --project-directory de
+      # producción. Servicio a servicio funcionó; el conjunto quedó
+      # irreproducible y nadie lo veía: `docker ps` no lo enseña y el drift de
+      # imágenes tampoco, porque todas las imágenes existían y las etiquetas
+      # cuadraban. Ver docs/COMPOSE_CANONICO.md.
+      - name: CONTROL · el comprobador de compose canónico se pone ROJO ante el stack real
+        run: |
+          set +e
+          node infrastructure/scripts/compose-canonical-check.mjs \
+            --facts infrastructure/tests/fixtures/drift-facts-vm108.json \
+            --contract infrastructure/deploy-contract.json \
+            --compose-env GATEWAY_CONF=nginx-behind-proxy.conf \
+            --compose-env HTTP_PORT=8080 --compose-env HTTPS_PORT=8443 > /dev/null
+          rc=$?
+          set -e
+          # Los hechos del fixture son los del stack IRREPRODUCIBLE: el
+          # comprobador TIENE que salir con rc=1. Un rc=0 aquí significa que
+          # dejó de detectar el incidente que motiva el carril.
+          if [ "$rc" -ne 1 ]; then
+            echo "::error::el comprobador NO detecta el stack irreproducible (rc=$rc, se esperaba 1)"
+            exit 1
+          fi
+          echo "control OK: rc=1 ante tres procedencias distintas"
+
+      - name: CONTROL · sin --compose no se concluye (la ausencia no es aprobado)
+        run: |
+          set +e
+          node infrastructure/scripts/compose-canonical-check.mjs \
+            --facts infrastructure/tests/fixtures/drift-facts-vm108.json > /dev/null 2>&1
+          rc=$?
+          set -e
+          if [ "$rc" -ne 2 ]; then
+            echo "::error::sin especificación el comprobador debe salir con rc=2, no con $rc"
+            exit 1
+          fi
+
+      - name: CALIBRACIÓN · las mutaciones del comprobador de compose canónico mueren
+        run: node infrastructure/scripts/compose-canonical-mutations.mjs
+
       # ── CONTRATO DE DESPLIEGUE REPRODUCIBLE ─────────────────────────────────
       # Tres defectos medidos en el entorno real: (1) el compose emparejaba la
       # etiqueta `16-alpine` (hoy 16.15) con el digest de 16.14; (2) TAG=local
