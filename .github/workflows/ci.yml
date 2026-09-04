@@ -608,6 +608,14 @@ jobs:
       - name: CALIBRACIÓN · las mutaciones del contrato de despliegue mueren
         run: node infrastructure/scripts/deploy-contract-mutations.mjs
 
+      # SEMÁNTICA DEL SCAN · calibración del contrato de los cinco estados.
+      # Va en ESTE job (obligatorio) y no en `scan`: si viviera dentro del
+      # propio job de escaneo, una calibración roja convivía con un `resumir`
+      # que igualmente declararía CLEAN. Aquí, una garantía que deja de poder
+      # ponerse roja tumba un job obligatorio del semáforo.
+      - name: CALIBRACIÓN · las mutaciones de la semántica del scan mueren
+        run: node infrastructure/scripts/scan-status-mutations.mjs
+
       # ── ADR-017 · contrato de release ────────────────────────────────────────
       # Calibración del gate que separa BUILD de DEPLOY. Va aquí, y no en un job
       # nuevo, porque es el mismo veredicto: "este despliegue es lo que dice
@@ -638,9 +646,23 @@ jobs:
             --project-directory /opt/s9-ai-arena/infrastructure up -d --no-build
 
   # ── Etapa 6: escaneo de dependencias, imágenes y Compose ──────────────────
+  # SEMÁNTICA DEL SCAN (ADR-018): el job ya no vale «success/failure». Cada
+  # escáner declara uno de los CINCO estados (CLEAN / FINDINGS / NOT_EXERCISED /
+  # SCAN_ERROR / SOURCE_UNAVAILABLE) y el job los publica en `outputs.estado` /
+  # `outputs.readiness`. Motivo medido: el endpoint de auditoría de npm devolvió
+  # un error y el semáforo lo llamó «FALLO DE SEGURIDAD»; la misma tirada, sin
+  # cambiar una línea, salió verde. Y el fallo simétrico —un 200 vacío leído
+  # como «0 vulnerabilidades»— habría dado verde sin auditar nada.
   scan:
     needs: [build-images]
     runs-on: ubuntu-latest
+    outputs:
+      estado: ${{ steps.resumen.outputs.estado }}
+      readiness: ${{ steps.resumen.outputs.readiness }}
+      clase: ${{ steps.resumen.outputs.clase }}
+      reintentable: ${{ steps.resumen.outputs.reintentable }}
+    env:
+      S9_SCAN_ESTADOS: ${{ github.workspace }}/scan-estados.jsonl
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -648,23 +670,53 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
-      - name: Auditoría de dependencias npm
-        run: npm audit --audit-level=high
+      - name: Auditoría de dependencias npm (declara estado; reintenta sólo la fuente caída)
+        # `npm audit --json` (endpoint BULK de avisos, no el `quick audit` que
+        # npm está retirando) y el veredicto sale del INFORME, no del código de
+        # salida —que vale 1 tanto por vulnerabilidad como por caída del
+        # endpoint—. Un informe vacío o degradado es SCAN_ERROR, nunca CLEAN.
+        run: node infrastructure/scripts/scan-gate.mjs ejecutar npm-audit
       - name: Escaneo del Compose (docker.sock / privilegiado, cap. 28) — BLOQUEANTE
         # R2.2 (fail-closed): antes había un `if: hashFiles(...)` que saltaba el
         # paso EN SILENCIO si el escáner no existía — un camino no verificable
-        # presentado como verde. Ahora, sin escáner, el job falla (rojo).
-        run: node infrastructure/scripts/scan-compose.mjs infrastructure/docker-compose.yml
+        # presentado como verde. Ahora, sin escáner, el estado es NOT_EXERCISED
+        # y bloquea igual (con nombre distinto de un hallazgo).
+        if: always()
+        run: node infrastructure/scripts/scan-gate.mjs ejecutar compose infrastructure/docker-compose.yml
       - name: Escaneo de vulnerabilidades del árbol (Trivy fs)
-        # La 0.28.0 no existe: el job fallaba en seco con "Unable to resolve action"
-        # desde antes de R6.1. Las versiones de esta accion llevan prefijo v.
+        # `exit-code: "0"` a propósito: el código de salida deja de ser el
+        # veredicto y el veredicto sale del informe JSON. `continue-on-error`
+        # porque una caída de la base de datos de Trivy (rate-limit de su
+        # registro) es SOURCE_UNAVAILABLE, no «árbol limpio» ni «vulnerable».
+        id: trivy
+        continue-on-error: true
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
           severity: CRITICAL,HIGH
-          exit-code: "1"
+          exit-code: "0"
           ignore-unfixed: true
+          format: json
+          output: trivy-fs.json
+      - name: Clasificar el informe de Trivy (informe ausente o vacío != limpio)
+        if: always()
+        env:
+          S9_TRIVY_OUTCOME: ${{ steps.trivy.outcome }}
+        run: node infrastructure/scripts/scan-gate.mjs clasificar trivy trivy-fs.json
+      - name: Veredicto del escaneo (estado declarado para el semáforo)
+        id: resumen
+        if: always()
+        run: node infrastructure/scripts/scan-gate.mjs resumir
+      - name: Estados declarados por cada escáner (evidencia)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-estados
+          path: |
+            scan-estados.jsonl
+            trivy-fs.json
+          if-no-files-found: warn
 
   # ── E12/T12.1: suite E2E del criterio de éxito del MVP (26.1) ─────────────
   # Definición operativa de "el MVP funciona": 6 pasos con evidencia (ids,

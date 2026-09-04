@@ -21,6 +21,10 @@ type Needs = Record<string, { result?: string; outputs?: Record<string, string> 
 function baseNeeds(overrides: Needs = {}): Needs {
   const needs: Needs = {};
   for (const job of JOBS_CI) needs[job.id] = { result: "success", outputs: {} };
+  // SEMÁNTICA DEL SCAN: el job `scan` ya no se juzga por su `result` sino por el
+  // ESTADO que declara. El escenario nominal es un escaneo que corrió y no
+  // encontró nada; un `success` mudo es fail-closed y tiene su propio test.
+  needs["scan"] = { result: "success", outputs: { estado: "CLEAN", readiness: "verified" } };
   return { ...needs, ...overrides };
 }
 
@@ -84,7 +88,7 @@ describe("ci-gate · semáforo verde/amarillo/rojo (R2.2)", () => {
   it("DoD: fallo del job de seguridad (scan) → ROJO con motivo de seguridad, aunque staging esté amarillo", () => {
     const v = evaluarSemaforo(
       baseNeeds({
-        scan: { result: "failure" },
+        scan: { result: "failure", outputs: { estado: "FINDINGS", detalle: "1 CRITICAL" } },
         "deploy-staging": { result: "skipped" },
         "smoke-and-promote": { result: "skipped" },
       }),
@@ -204,7 +208,7 @@ describe("ci-gate · CLI (como lo invoca el job semaforo de ci.yml)", () => {
   });
 
   it("rojo por seguridad: exit 1 y anotación ::error::", () => {
-    const r = runCli(baseNeeds({ scan: { result: "failure" } }), {
+    const r = runCli(baseNeeds({ scan: { result: "failure", outputs: { estado: "FINDINGS" } } }), {
       GITHUB_EVENT_NAME: "pull_request",
       GITHUB_REF: "refs/pull/23/merge",
     });
@@ -227,5 +231,77 @@ describe("ci-gate · CLI (como lo invoca el job semaforo de ci.yml)", () => {
       status = e.status ?? 1;
     }
     expect(status).toBe(1);
+  });
+});
+
+describe("ci-gate · SEMÁNTICA DEL SCAN: el job `scan` se juzga por el estado que declara", () => {
+  // En PR, staging y promoción no corren: se declaran skipped como en el resto
+  // de la suite, para que el color del run lo decida SÓLO el job `scan`.
+  const conScan = (outputs: Record<string, string>, result = "success") =>
+    baseNeeds({
+      scan: { result, outputs },
+      "deploy-staging": { result: "skipped" },
+      "smoke-and-promote": { result: "skipped" },
+    });
+
+  it("control POSITIVO: CLEAN declarado y job en success → VERDE", () => {
+    const v = evaluarSemaforo(conScan({ estado: "CLEAN", readiness: "verified" }), PR);
+    expect(v.color).toBe("verde");
+    expect(v.filas.find((f: any) => f.id === "scan").color).toBe("verde");
+  });
+
+  it("EL INCIDENTE: SOURCE_UNAVAILABLE ya NO se llama «fallo de seguridad»", () => {
+    const v = evaluarSemaforo(
+      conScan({ estado: "SOURCE_UNAVAILABLE", detalle: "audit endpoint returned an error" }, "failure"),
+      PR,
+    );
+    const scan = v.filas.find((f: any) => f.id === "scan");
+    expect(v.color).toBe("rojo"); // bloquea igual...
+    expect(scan.motivo).toMatch(/SEGURIDAD NO COMPROBADA/); // ...pero con otro nombre
+    expect(scan.motivo).not.toMatch(/HALLAZGOS DE SEGURIDAD/);
+    expect(scan.motivo).toMatch(/REINTENTAR/);
+  });
+
+  it("EL FALLO SIMÉTRICO: SCAN_ERROR (respuesta degradada) NO puede salir verde", () => {
+    const v = evaluarSemaforo(conScan({ estado: "SCAN_ERROR", detalle: "informe vacío" }), PR);
+    expect(v.color).toBe("rojo");
+    expect(v.filas.find((f: any) => f.id === "scan").motivo).toMatch(/NO COMPROBADA/);
+  });
+
+  it("garantía 5: hallazgo y no-comprobado bloquean los dos, con motivos DISTINTOS", () => {
+    const hallazgo = evaluarSemaforo(conScan({ estado: "FINDINGS" }, "failure"), PR).filas.find(
+      (f: any) => f.id === "scan",
+    );
+    const caida = evaluarSemaforo(conScan({ estado: "SOURCE_UNAVAILABLE" }, "failure"), PR).filas.find(
+      (f: any) => f.id === "scan",
+    );
+    expect(hallazgo.color).toBe("rojo");
+    expect(caida.color).toBe("rojo");
+    expect(hallazgo.motivo).toMatch(/HALLAZGOS DE SEGURIDAD/);
+    expect(hallazgo.motivo).not.toBe(caida.motivo);
+  });
+
+  it("fail-closed: `success` sin declarar estado → ROJO (no se deduce un verde del código de salida)", () => {
+    const v = evaluarSemaforo(conScan({}), PR);
+    expect(v.color).toBe("rojo");
+    expect(v.filas.find((f: any) => f.id === "scan").motivo).toMatch(/no declaró/);
+  });
+
+  it("fail-closed: CLEAN declarado por un job que se cayó → ROJO", () => {
+    const v = evaluarSemaforo(conScan({ estado: "CLEAN" }, "failure"), PR);
+    expect(v.color).toBe("rojo");
+  });
+
+  it("fail-closed: `skipped` → ROJO por no comprobado, no por hallazgo", () => {
+    const v = evaluarSemaforo(conScan({}, "skipped"), PR);
+    expect(v.color).toBe("rojo");
+    expect(v.filas.find((f: any) => f.id === "scan").motivo).toMatch(/NO COMPROBADA/);
+  });
+
+  it("garantía 4: un estado inventado NO cae al camino permisivo", () => {
+    for (const estado of ["OK", "clean", "PASSED", ""]) {
+      const v = evaluarSemaforo(conScan({ estado }), PR);
+      expect(v.color, `estado=${estado}`).toBe("rojo");
+    }
   });
 });
