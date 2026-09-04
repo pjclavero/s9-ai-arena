@@ -158,9 +158,22 @@ export function nivel1Sintaxis(ref) {
  * estuviera duplicada, estropear una copia dejaría la otra tapando el agujero
  * y la mutación sobreviviría sin que nadie se enterara.
  */
-/** ¿El error es «no pude preguntar» y no «el registro dice que no»? */
+/**
+ * ¿El error es «no pude preguntar» y no «el registro dice que no»?
+ *
+ * ENOENT / «command not found» entran aquí desde 2026-09-04, y no por teoría:
+ * ejecutando este mismo gate con `--registro` y sin `docker` en el PATH, el
+ * resolvedor devolvió `spawnSync docker ENOENT` y el nivel 2 lo clasificó como
+ * N2_DIGEST_NO_RESUELVE, es decir «ese digest no existe en el registro». Falso:
+ * el digest está perfectamente publicado; lo que faltaba era el CLIENTE. Es
+ * exactamente la confusión que ADR-018 corrige en `scan` —fuente caída leída
+ * como veredicto— aplicada a la herramienta en vez de a la red. Las dos siguen
+ * siendo ROJAS (no comprobado no es aprobado), pero confundirlas haría creer
+ * que un artefacto bueno se ha esfumado, y mandaría a alguien a reconstruir una
+ * imagen que no tiene nada de malo.
+ */
 export function registroInaccesible(error) {
-  return /429|too many requests|timeout|temporary failure|connection refused|no such host|i\/o timeout|EAI_AGAIN/i.test(
+  return /429|too many requests|timeout|temporary failure|connection refused|no such host|i\/o timeout|EAI_AGAIN|ENOENT|command not found|no such file or directory/i.test(
     String(error ?? ""),
   );
 }

@@ -88,6 +88,10 @@ const MUTACIONES = {
     desc: "un registro inaccesible (429) se confunde con «el digest no existe»",
     cambios: [["  if (registroInaccesible(porDigest.error))", "  if (false)"]],
   },
+  M14: {
+    desc: "la herramienta ausente (ENOENT) vuelve a leerse como «el digest no existe» (el defecto medido)",
+    cambios: [["|ENOENT|command not found|no such file or directory", ""]],
+  },
   M12: {
     desc: "un contrato ausente deja de ser rc=2 y pasa por aprobado",
     cambios: [["    return e.rc ?? 2;", "    return 0;"]],

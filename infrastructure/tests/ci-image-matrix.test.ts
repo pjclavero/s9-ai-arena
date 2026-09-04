@@ -64,8 +64,14 @@ export function construccionesDelCompose(compose: string): Construccion[] {
       .map(([k, v]) => `${k}=${v}`)
       .sort();
     const identidad = todos.filter(([k]) => ARGS_IDENTIDAD.includes(k)).map(([k]) => k);
-    // `image:` es del tipo ${IMAGE_PREFIX:-...}/<imagen>:${TAG:-latest}
-    const m = /\/([a-z0-9][a-z0-9._-]*):\$\{TAG/.exec(String(def.image ?? ""));
+    // `image:` es del tipo ${IMAGE_PREFIX:-...}/<imagen>:${<VAR>:-latest}.
+    // La variable de versión NO es siempre TAG: `backup` se versiona con
+    // BACKUP_TAG porque es un bloque de despliegue aparte (ver deploy-contract.json,
+    // clave `bloques`, y backup-stack-gate.mjs). Lo que aquí importa es el
+    // NOMBRE de la imagen, no de qué variable cuelga su etiqueta; atar el
+    // extractor a TAG hacía que dar a un servicio su propia variable rompiera
+    // esta comprobación por un motivo que no es el suyo.
+    const m = /\/([a-z0-9][a-z0-9._-]*):\$\{[A-Z_]*TAG/.exec(String(def.image ?? ""));
     expect(m, `${nombre}: no se pudo extraer el nombre de imagen de "${def.image}"`).not.toBeNull();
     const imagen = m![1];
 

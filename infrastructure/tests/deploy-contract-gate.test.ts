@@ -23,6 +23,7 @@ import {
   nivel1Sintaxis,
   nivel2Registro,
   nivel3Version,
+  registroInaccesible,
   renderizar,
   resolvedorFalso,
   verificarEstado,
@@ -49,6 +50,39 @@ const pinBueno = {
   plataformas: ["linux/amd64"],
   version_esperada: { variable: "PG_VERSION", valor: "16.14" },
 };
+
+describe("herramienta ausente != el registro dice que no (ADR-018 aplicado al cliente)", () => {
+  // Medido: `node deploy-contract-gate.mjs --registro` sin docker en el PATH
+  // devolvía `spawnSync docker ENOENT` y el nivel 2 lo llamaba
+  // N2_DIGEST_NO_RESUELVE — «ese digest no existe». Falso: el digest existe y
+  // lo que faltaba era el cliente. Las dos siguen bloqueando; confundirlas
+  // manda a reconstruir una imagen que no tiene nada malo.
+  const ausencias = [
+    "spawnSync docker ENOENT",
+    "docker: command not found",
+    "spawn docker ENOENT: no such file or directory",
+  ];
+  const negativas = ["manifest unknown", "not found", "unauthorized", "denied"];
+
+  for (const e of ausencias) {
+    it(`"${e}" es NO PUDE PREGUNTAR`, () => {
+      expect(registroInaccesible(e)).toBe(true);
+    });
+  }
+
+  for (const e of negativas) {
+    it(`"${e}" sigue siendo EL REGISTRO DICE QUE NO`, () => {
+      expect(registroInaccesible(e)).toBe(false);
+    });
+  }
+
+  it("con la herramienta ausente el nivel 2 da N2_REGISTRO_INACCESIBLE, y bloquea igual", () => {
+    const resolver = () => ({ fuente: "registro", error: "spawnSync docker ENOENT" });
+    const r = nivel2Registro(`postgres:16.14-alpine@${DIGEST_1614}`, resolver);
+    expect(r.ok).toBe(false);
+    expect(r.codigo).toBe(CODIGOS.N2_REGISTRO_INACCESIBLE);
+  });
+});
 
 describe("B · gate de referencia de imagen · NIVEL 1 sintaxis", () => {
   it("acepta una referencia con @sha256:<64 hex>", () => {
