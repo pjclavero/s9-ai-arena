@@ -25,44 +25,61 @@ La deriva es invisible para `docker ps` y para el escáner de imágenes —todas
 imágenes existen y todas las etiquetas cuadran—. Vive sólo en la etiqueta de
 procedencia.
 
-### 1.1 Tres defectos que agravan el cuadro
+### 1.1 Estado de los defectos que agravaban el cuadro
 
-**(a) El directorio de despliegue está en un commit viejo.** Su
-`docker-compose.yml` no tiene `RESTIC_HOSTNAME`, `ARENA_DATA_DIRS`, el secreto
-`replay_ingest_secret`, el pin de `postgres`, ni el healthcheck de `backup`.
+Tres cosas agravaban el cuadro cuando se abrió este carril. **Dos ya están
+resueltas en producción** (hoy, y sin tocar el runtime), y la tercera resultó
+ser en parte un error de diagnóstico de este mismo documento. Se dejan escritas
+porque el matiz importa.
 
-**(b) `TAG` vale `local` en el `.env` de producción.** Los contenedores corren
-`…:4d469dc`. Un `docker compose up --no-build` desde el directorio de despliegue
-buscaría hoy `s9arena/api:local` y compañía: **recrearía los doce servicios
-contra imágenes que no son las desplegadas**, o fallaría por imagen inexistente.
-Antes de cualquier canonización, `TAG` tiene que apuntar a la versión desplegada.
+**(a) El directorio de despliegue estaba en un commit viejo — RESUELTO.**
+Avanzado de `98f381e` a `ad0a42b` con `merge --ff-only`; `.env` y `secrets/`
+intactos, verificado por sha256. Ya trae `RESTIC_HOSTNAME`, `ARENA_DATA_DIRS`,
+`replay_ingest_secret`, el pin de `postgres` y el healthcheck de `backup`.
 
-**(c) El pin de `postgres` es irresoluble.** El compose de `main` declara
-`postgres:16-alpine@sha256:57c72fd2a128…`, pero ese sha256 es el **image ID
-local** del contenedor en marcha, no un digest de registro:
+**(b) `TAG` valía `local` en el `.env` de producción — RESUELTO.** Ahora vale
+`4d469dc`, la versión desplegada. Mientras valía `local`, un `up --no-build`
+desde el despliegue habría buscado `s9arena/api:local` y habría revertido el
+rollout entero. Render actual: 11 servicios (perfil `development`), `postgres`
+con su digest, `backup` ausente a propósito, 0 condiciones peligrosas.
+
+**(c) El pin de `postgres`: el defecto era la coherencia etiqueta↔digest, no el
+digest.** Este documento afirmó que el digest `sha256:57c72fd2a128…` «no
+resolvía» porque era el image ID local y no un digest de registro. **Era
+incorrecto.** Medido contra el REGISTRO:
 
 ```
-docker image inspect 'postgres:16-alpine@sha256:57c72fd2a128…'
-  → Error response from daemon: No such image
+docker buildx imagetools inspect postgres:16.14-alpine
+  Digest: sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+docker buildx imagetools inspect postgres@sha256:57c72fd2…
+  → resuelve; índice OCI multiplataforma, PG_VERSION=16.14
 ```
 
-Además, la imagen en marcha (`57c72fd2a128…`) está **sin etiquetas y sin
-RepoDigests**: no se la puede nombrar por ninguna referencia. Y la etiqueta
-`postgres:16-alpine` apunta hoy a **otra** imagen (`cf78e766…`, PG 16.15 frente
-al 16.14 que corre). Consecuencias:
+El digest siempre fue válido y coincide con el índice OCI de `16.14-alpine`. Lo
+que fallaba era otra cosa, y hay que distinguir las tres:
 
-- un `up` de `postgres` desde `main` **falla**: la referencia no resuelve;
-- si se «arreglara» el pin poniendo la etiqueta a secas, el `up` **recrearía**
-  `postgres` sobre una versión distinta de PostgreSQL — lo que DO NOT RESTART
-  existe para impedir.
+1. **Resolución LOCAL**: `docker image inspect postgres:16-alpine@sha256:57c7…`
+   → `No such image`. Cierto, pero es un hecho del almacén local: esa imagen no
+   tiene `RepoDigests` (está sin etiquetar), así que la búsqueda local por
+   digest no la encuentra. **No dice nada sobre el registro.**
+2. **Coherencia etiqueta↔digest**: el compose emparejaba la etiqueta
+   `16-alpine` (que hoy apunta a 16.15) con el digest de `16.14-alpine`. *Ése*
+   era el defecto real, y #138 lo corrigió a `postgres:16.14-alpine@sha256:57c7…`.
+3. **Nombrabilidad de la imagen en marcha**: sigue sin `RepoTags` ni
+   `RepoDigests` en el almacén local. Es una molestia operativa, no un
+   impedimento para reproducirla: la referencia del contrato resuelve contra el
+   registro.
 
-**No hay hoy ninguna referencia con la que un compose pueda reproducir el
-`postgres` en marcha.** La única razón de que siga vivo es que nadie lo recrea.
+> **La lección, que es el motivo de dejar esto escrito:** concluir sobre el
+> REGISTRO desde un fallo del ALMACÉN LOCAL. #138 convirtió exactamente ese
+> error en un control ejecutable (`N2_FUENTE_NO_AUTORIZADA`): el nivel 2 sólo
+> acepta como autoridad una respuesta del registro. Cuando la evidencia venga
+> del almacén local, la conclusión no puede pasar de ahí.
 
 ## 2. Diferencia entre lo desplegado y `main`
 
-Renderizando `main` con el perfil `production` y las variables reales del
-despliegue, y comparando con la spec real de cada contenedor vivo (montajes por
+Renderizando `main` con el conjunto canónico del contrato (perfil `development`
+más `backup` por nombre) y las variables reales del despliegue, y comparando con la spec real de cada contenedor vivo (montajes por
 destino + origen lógico + rw/ro + tipo, entorno, secretos, command/entrypoint,
 healthcheck, puertos publicados):
 
@@ -79,7 +96,7 @@ healthcheck, puertos publicados):
 | `queue` | Sí | — |
 | `api` | **No** | añade `S9_MAX_CONCURRENT_REAL_BATTLE_RUNS` |
 | `backup` | **No** | imagen `11b36a7` → `4d469dc`; añade `RESTIC_HOSTNAME`; healthcheck `pgrep crond` → `/usr/local/bin/healthcheck.sh` |
-| `postgres` | **No** | referencia de imagen; **irresoluble**, ver 1.1(c) |
+| `postgres` | **No** | referencia de imagen: el despliegue vivo declara `postgres:16-alpine`, el contrato `postgres:16.14-alpine@sha256:57c7…`. Misma imagen (el digest resuelve y coincide con la que corre), distinta cadena: un `up` lo recrearía |
 
 Los nueve primeros ya coinciden en spec con `main`: sólo arrastran una
 procedencia equivocada. **Ocho de ellos son inocuos de recrear** (`queue` no,
@@ -101,35 +118,39 @@ directorio de despliegue**, y todo despliegue lo invoca desde ahí, con
    ```
    node infrastructure/scripts/compose-canonical-check.mjs \
      --facts hechos.json --compose <despliegue>/infrastructure/docker-compose.yml \
-     --profile production --compose-env TAG=<versión desplegada> …
+     --contract infrastructure/deploy-contract.json
    ```
    Anotar la lista `Recrear al canonizar`. **Esa lista es el alcance del cambio.**
    Si aparece un servicio que no se esperaba, el procedimiento se para.
-3. Comprobar que el render no está vacío: `COMPOSE_PROFILES=production docker
-   compose config --services` tiene que listar los 12. Sin perfil lista **cero**
-   (todos los servicios llevan `profiles:`), y comparar contra el conjunto vacío
-   daría un falso verde.
+3. Comprobar que el render no está vacío. El conjunto canónico lo fija
+   `infrastructure/deploy-contract.json`: **APP_STACK** (perfil `development`,
+   11 servicios) más **`backup`** nombrado explícitamente — 12 en total. El
+   perfil no se ensancha a 12 a propósito, para que ningún perfil pueda arrancar
+   `backup` por accidente: tiene ventana propia. Sin perfil, el compose de este
+   stack renderiza **cero** servicios (todos llevan `profiles:`), y comparar
+   contra el conjunto vacío daría un falso verde; el comprobador sale con rc=2
+   si el contrato no declara perfiles.
 
 ### Aplicación
 
-4. **Corregir `TAG` en el `.env` del despliegue** para que valga la versión
-   desplegada, no `local`. Sin esto, cualquier `up` recrea los doce servicios
-   contra imágenes equivocadas. Verificar con `docker compose config --images`:
-   la lista tiene que coincidir con `docker ps --format '{{.Image}}'`.
-5. **Resolver el pin de `postgres` antes de tocar nada más.** Opciones, por orden
-   de preferencia:
-   - a) reetiquetar localmente la imagen en marcha para poder nombrarla
-     (`docker tag <image-id> <etiqueta local estable>`) y referenciar esa
-     etiqueta en el compose. No recrea el contenedor y hace el estado
-     nombrable — hoy no lo es.
-   - b) dejar `postgres` fuera del alcance y documentarlo (`--no-deps` en todo
-     `up`, nunca `up` del proyecto entero).
-   La opción (a) es la que devuelve reproducibilidad; la (b) sólo aplaza.
-6. **Actualizar el árbol de despliegue a `main`**. Cuidado: ese árbol es también
-   el contexto de construcción de algunos flujos. Como el operador exige
-   `--no-build` en todo despliegue, el contexto no debería ejercitarse nunca;
-   verificarlo explícitamente antes (`release-gate.mjs` ya rechaza un DEPLOY sin
-   `--no-build`). Preservar `.env` y `secrets/`, que no están en el repositorio.
+Los pasos 4 y 6 **ya están hechos** (§1.1): `TAG=4d469dc` y el árbol de
+despliegue en `ad0a42b`. Se dejan descritos porque forman parte del
+procedimiento y hay que rehacerlos en cualquier despliegue futuro.
+
+4. ~~Corregir `TAG`~~ **hecho**. Verificar siempre con `docker compose config
+   --images` que la lista coincide con `docker ps --format '{{.Image}}'`.
+5. **`postgres` no necesita arreglo de pin**: el contrato lo fija a
+   `postgres:16.14-alpine@sha256:57c7…`, que resuelve en el registro y es la
+   imagen que corre. Lo que sí queda es que **un `up` lo recrearía igualmente**,
+   porque la cadena declarada en el contenedor vivo (`postgres:16-alpine`) no es
+   la del contrato. Por eso `postgres` va con `--no-deps` y fuera del alcance de
+   cualquier `up` del proyecto entero, hasta que el operador autorice su ventana.
+6. ~~Actualizar el árbol de despliegue~~ **hecho** (`merge --ff-only`, `.env` y
+   `secrets/` preservados y verificados por sha256). Nota para futuras
+   actualizaciones: ese árbol es también el contexto de construcción de algunos
+   flujos; como el operador exige `--no-build` en todo despliegue, el contexto no
+   debería ejercitarse nunca, y `release-gate.mjs` ya rechaza un DEPLOY sin
+   `--no-build`.
 7. **Reetiquetar la procedencia sin recrear** los ocho servicios cuya spec ya
    coincide. `docker compose up --no-build --no-recreate <servicios>` desde el
    directorio canónico reconcilia las etiquetas sin tocar los contenedores
@@ -155,7 +176,7 @@ directorio de despliegue**, y todo despliegue lo invoca desde ahí, con
 | `api` | Con ventana | corta la sesión de los usuarios conectados |
 | `queue` | **Con cuidado** | Redis con `appendonly yes` sobre el volumen `queue_data`: los trabajos encolados sobreviven al reinicio, pero recrearlo con trabajos en vuelo los deja a medias. Ventana de cola vacía |
 | `backup` | Con ventana propia | no recrear durante una ejecución de `restic`; además su alineación es un carril aparte, posterior a éste |
-| `postgres` | **NO** | DO NOT RESTART. Y, además, hoy **no es reproducible**: su imagen no tiene etiqueta ni digest, y el pin del compose no resuelve (§1.1c) |
+| `postgres` | **NO** | DO NOT RESTART: estado durable irreemplazable. La imagen SÍ es reproducible (el digest del contrato resuelve en el registro y es la que corre, §1.1c); lo que no puede hacerse es recrear el contenedor |
 
 `postgres` es el único con estado durable irreemplazable. `queue` es el segundo
 con estado y suele pasarse por alto: tiene persistencia activada.
@@ -182,8 +203,40 @@ nada por inercia.
 Calibración: `infrastructure/tests/compose-canonical-check.test.ts` (control
 positivo + control negativo por cada garantía, sobre hechos REALES de
 producción) y `infrastructure/scripts/compose-canonical-mutations.mjs`, que
-estropea el comprobador de ocho maneras distintas y exige que la suite se ponga
+estropea el comprobador de diez maneras distintas y exige que la suite se ponga
 roja con cada una.
+
+### 5.1 Superficie para construir encima
+
+El conjunto canónico NO se decide aquí: se lee de
+`infrastructure/deploy-contract.json` (#138), y el contrato se carga con el
+`cargar()` de `deploy-contract-gate.mjs`, no con un lector propio, para que un
+contrato que aquel rechace tampoco valga aquí.
+
+```
+node infrastructure/scripts/compose-canonical-check.mjs \
+  --facts hechos.json --contract infrastructure/deploy-contract.json [--json]
+```
+
+Lo que un carril que construya encima puede consumir sin duplicar nada:
+
+| Export | Qué da |
+| --- | --- |
+| `comprobar(hechos, specs, {canonica})` | veredicto completo: `{reproducible, procedencias, hallazgos, recrear, reetiquetar}` |
+| `comprobarServicio(hecho, spec)` | los hallazgos de UN servicio; sirve para mirar sólo `backup` |
+| `comprobarProcedencia(hechos, {canonica})` | únicamente la fuente de verdad, sin spec |
+| `specDesdeCompose(doc, {vars, profiles, incluir})` | spec renderizada; `incluir` es lo que mete a `backup` por nombre |
+| `CODIGOS` | los códigos de hallazgo, para filtrar por tipo |
+| `puertoDesdeCompose`, `healthcheckDesdeCompose` | traducción Compose → forma del daemon |
+
+Y del carril G (`runtime-drift-scan.mjs`), ya extendido por este carril:
+`procedencia(labels)`, `puertosPublicados(c)`, `huella(x)`, `ipLogica(ip)`.
+
+Para el carril de `backup` en concreto: `backup` sale hoy en `recrear` con tres
+hallazgos (`IMAGEN_DIVERGENTE`, `ENV_FALTA` de `RESTIC_HOSTNAME`,
+`HEALTHCHECK_DIVERGENTE`). Cuando su alineación esté hecha, esos tres tienen que
+desaparecer y `backup` debe pasar a `reetiquetar` o salir limpio — eso es un
+criterio de aceptación ejecutable, no una impresión.
 
 ### Topología
 

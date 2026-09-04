@@ -24,10 +24,13 @@
  *     spec coincida: la coincidencia de hoy no es una garantía, es una
  *     casualidad que el próximo `up` deshace.
  *
- *  2. COBERTURA. El conjunto de servicios vivos y el que renderiza el compose
- *     canónico (con su perfil) deben coincidir exactamente. Un servicio vivo que
- *     el compose no renderiza no lo recrearía nadie; uno renderizado que no vive
- *     es un `up` a medias.
+ *  2. COBERTURA. El conjunto de servicios vivos y el canónico deben coincidir
+ *     exactamente. Un servicio vivo que el compose no renderiza no lo recrearía
+ *     nadie; uno renderizado que no vive es un `up` a medias. El conjunto
+ *     canónico NO se decide aquí: lo fija `infrastructure/deploy-contract.json`
+ *     (#138) como APP_STACK (perfil `development`, 11 servicios) más `backup`
+ *     nombrado explícitamente — el perfil no se ensancha a 12 para que ninguno
+ *     pueda arrancar `backup` por accidente.
  *
  *  3. SPEC POR SERVICIO. Montajes (por DESTINO + origen lógico + rw/ro + tipo),
  *     secretos, variables de entorno exigidas, puertos PUBLICADOS, command,
@@ -43,22 +46,26 @@
  * decide una recreación (puertos, command, entrypoint, healthcheck).
  *
  * ── Topología ───────────────────────────────────────────────────────────────
- * Este comprobador NUNCA emite una ruta de anfitrión. El `config_files` no
- * canónico sale como `ruta-no-canonica:#<sha256[0..11]>`, estable entre
- * ejecuciones y suficiente para agrupar servicios por procedencia.
+ * Este comprobador NUNCA emite una ruta de anfitrión. La procedencia llega ya en
+ * forma lógica desde los hechos (huella + "¿vive el compose dentro del
+ * directorio de despliegue?") y sale como `despliegue:#<hash>` o
+ * `arbol-ajeno:#<hash>`: estable entre ejecuciones y suficiente para agrupar.
  *
  * ── Uso ─────────────────────────────────────────────────────────────────────
  *   node infrastructure/scripts/runtime-drift-scan.mjs --collect > hechos.json
  *   node infrastructure/scripts/compose-canonical-check.mjs \
- *        --facts hechos.json \
- *        --compose infrastructure/docker-compose.yml \
- *        --canonical-config-files /ruta/de/produccion/infrastructure/docker-compose.yml \
- *        --profile production --compose-env TAG=… [--json]
+ *        --facts hechos.json --contract infrastructure/deploy-contract.json \
+ *        [--canonical-config-files <ruta del compose del despliegue>] [--json]
+ *
+ * El contrato aporta perfiles, TAG y prefijo de imagen, y trae el compose ya
+ * fusionado; `--compose` y `--profile` siguen disponibles para comprobar un
+ * árbol suelto.
  *
  * rc=0 sólo si el stack es REPRODUCIBLE desde el compose canónico.
  * rc=1 si NO lo es (procedencia divergente, cobertura o spec).
  * rc=2 error de adquisición o de argumentos. La ausencia de comprobación NUNCA
- * es un aprobado: sin `--compose` no se puede concluir y se sale con rc=2.
+ * es un aprobado: sin especificación —ni `--compose` ni `--contract`— no se
+ * puede concluir, y un contrato sin perfiles tampoco vale.
  */
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -73,6 +80,7 @@ import {
   montajeDesdeCompose,
   normalizarMontaje,
 } from "./runtime-drift-scan.mjs";
+import { cargar } from "./deploy-contract-gate.mjs";
 
 /** Códigos de hallazgo. Cada uno es una razón distinta para NO ser reproducible. */
 export const CODIGOS = {
@@ -154,12 +162,24 @@ function comoLista(x) {
  * llevan `profiles:`, así que un compose sin perfil seleccionado renderiza CERO
  * servicios. Un comprobador que no lo exigiera daría verde comparando el stack
  * vivo contra el conjunto vacío — el peor falso negativo posible.
+ *
+ * `incluir` añade servicios POR NOMBRE, al margen del perfil. Existe por una
+ * decisión de contrato del operador (ADR de #138): el conjunto canónico es
+ * APP_STACK (perfil `development`, 11 servicios) MÁS `backup` nombrado
+ * explícitamente, en vez de un perfil ensanchado a 12. El motivo es que un
+ * perfil demasiado amplio no pueda arrancar `backup` por accidente: `backup`
+ * tiene ventana propia. Renderizarlo por nombre conserva esa separación y a la
+ * vez permite comprobarlo, que son dos cosas distintas.
  */
-export function specDesdeCompose(doc, { vars = {}, profile = null } = {}) {
+export function specDesdeCompose(doc, { vars = {}, profile = null, profiles = null, incluir = [] } = {}) {
   const out = {};
+  // `profile` (singular) se mantiene por compatibilidad; el contrato trae lista.
+  const seleccion = profiles ?? (profile === null ? null : [profile]);
+  const porNombre = new Set(incluir);
   for (const [nombre, s] of Object.entries(doc?.services ?? {})) {
     const perfiles = s.profiles ?? [];
-    if (profile !== null && perfiles.length > 0 && !perfiles.includes(profile)) continue;
+    const porPerfil = seleccion === null || perfiles.length === 0 || perfiles.some((p) => seleccion.includes(p));
+    if (!porPerfil && !porNombre.has(nombre)) continue;
     out[nombre] = {
       image: s.image ? interpolar(s.image, vars) : null,
       mounts: (s.volumes ?? []).map((v) => montajeDesdeCompose(v, { vars })),
@@ -375,29 +395,55 @@ function arg(argv, nombre) {
 export function main(argv) {
   const ficheroHechos = arg(argv, "--facts");
   const ficheroCompose = arg(argv, "--compose");
-  if (!ficheroHechos || !ficheroCompose) {
+  const ficheroContrato = arg(argv, "--contract");
+  // El contrato ya trae el compose fusionado, así que basta con uno de los dos.
+  if (!ficheroHechos || (!ficheroCompose && !ficheroContrato)) {
     console.error(
-      "uso: --facts <hechos.json> --compose <docker-compose.yml> [--canonical-config-files <ruta>] [--profile <p>] [--compose-env K=V]… [--json]",
+      "uso: --facts <hechos.json> --compose <docker-compose.yml> [--contract infrastructure/deploy-contract.json] [--canonical-config-files <ruta>] [--profile <p>] [--compose-env K=V]… [--json]",
     );
     return 2;
   }
+  // El CONTRATO (infrastructure/deploy-contract.json, de #138) es la fuente de
+  // perfiles, TAG y prefijo de imagen: aquí no se vuelven a decidir. Se carga
+  // con `cargar` del propio gate del contrato —que además devuelve el compose ya
+  // fusionado— y no con un lector propio, para que un contrato que aquel rechace
+  // tampoco valga aquí.
   let hechos;
-  let doc;
+  let doc = null;
+  let contrato = null;
   try {
     hechos = JSON.parse(readFileSync(ficheroHechos, "utf8"));
-    doc = parseYaml(readFileSync(ficheroCompose, "utf8"));
+    if (ficheroContrato) ({ contrato, doc } = cargar(ficheroContrato));
+    if (ficheroCompose) doc = parseYaml(readFileSync(ficheroCompose, "utf8"));
   } catch (e) {
     console.error(`adquisición: ${e.message}`);
     return 2;
   }
-  const vars = {};
+  // Un contrato sin perfiles dejaría la selección en `null` y renderizaría TODO
+  // el compose —observabilidad y streaming incluidos—, que es la vía silenciosa
+  // a un informe lleno de ruido y a un veredicto que no significa nada. Es un
+  // error de entrada, no un resultado.
+  if (contrato && (contrato.perfiles ?? []).length === 0) {
+    console.error("contrato: no declara `perfiles`; sin perfil el compose de este stack no rinde el conjunto esperado");
+    return 2;
+  }
+  // Orden de precedencia: contrato primero, y --compose-env por encima (permite
+  // comprobar un despliegue con un TAG distinto sin editar el contrato).
+  const vars = { ...(contrato?.entorno ?? {}) };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] !== "--compose-env") continue;
     const v = String(argv[i + 1] ?? "");
     const j = v.indexOf("=");
     if (j > 0) vars[v.slice(0, j)] = v.slice(j + 1);
   }
-  const specs = specDesdeCompose(doc, { vars, profile: arg(argv, "--profile") ?? null });
+  const specs = specDesdeCompose(doc, {
+    vars,
+    profile: arg(argv, "--profile") ?? null,
+    profiles: contrato?.perfiles ?? null,
+    // Los servicios "gestionados aparte" (hoy `backup`) NO entran por perfil, a
+    // propósito, pero sí se comprueban: son parte del stack vivo.
+    incluir: Object.keys(contrato?.gestionados_aparte ?? {}),
+  });
   const r = comprobar(hechos, specs, { canonica: arg(argv, "--canonical-config-files") ?? null });
   console.log(argv.includes("--json") ? JSON.stringify(r, null, 2) : informeTexto(r));
   return r.reproducible ? 0 : 1;

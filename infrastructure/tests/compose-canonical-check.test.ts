@@ -13,7 +13,8 @@
  * tres procedencias, que es lo que se está probando.
  */
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
@@ -26,6 +27,7 @@ import {
   etiquetaProcedencia,
   healthcheckDesdeCompose,
   informeTexto,
+  main,
   puertoDesdeCompose,
   specDesdeCompose,
 } from "../scripts/compose-canonical-check.mjs";
@@ -201,6 +203,61 @@ describe("COBERTURA · el perfil no es un detalle", () => {
   it("un servicio renderizado que no está desplegado también es rojo", () => {
     const r = comprobar({ services: [] }, { api: specSana() });
     expect(codigos(r.hallazgos)).toContain(CODIGOS.SERVICIO_NO_DESPLEGADO);
+  });
+});
+
+describe("CONTRATO · el conjunto canónico lo fija deploy-contract.json, no este módulo", () => {
+  const CONTRATO = JSON.parse(readFileSync(join(REPO, "infrastructure", "deploy-contract.json"), "utf8"));
+
+  /**
+   * Decisión de contrato del operador: NO se ensancha `development` a 12. El
+   * conjunto canónico es APP_STACK (perfil `development`, 11 servicios) MÁS
+   * `backup` nombrado explícitamente, para que ningún perfil pueda arrancar
+   * `backup` por accidente — tiene ventana propia.
+   */
+  const specsContrato = () =>
+    specDesdeCompose(COMPOSE, {
+      vars: { ...CONTRATO.entorno, GATEWAY_CONF: "nginx-behind-proxy.conf", HTTP_PORT: "8080", HTTPS_PORT: "8443" },
+      profiles: CONTRATO.perfiles,
+      incluir: Object.keys(CONTRATO.gestionados_aparte ?? {}),
+    });
+
+  it("el perfil del contrato rinde los 11 de APP_STACK, sin backup", () => {
+    const soloPerfil = specDesdeCompose(COMPOSE, { vars: CONTRATO.entorno, profiles: CONTRATO.perfiles });
+    expect(Object.keys(soloPerfil).sort()).toEqual([...CONTRATO.servicios_esperados].sort());
+    expect(Object.keys(soloPerfil)).not.toContain("backup");
+  });
+
+  it("`backup` entra por NOMBRE, no por perfil: 11 + 1 = los 12 desplegados", () => {
+    const specs = specsContrato();
+    expect(Object.keys(specs).sort()).toEqual(FIXTURE.services.map((s: any) => s.service).sort());
+    expect(Object.keys(specs)).toContain("backup");
+  });
+
+  it("con el contrato, la cobertura del stack real cuadra exactamente", () => {
+    const res = comprobar(FIXTURE, specsContrato());
+    expect(codigos(res.hallazgos)).not.toContain(CODIGOS.SERVICIO_NO_RENDERIZADO);
+    expect(codigos(res.hallazgos)).not.toContain(CODIGOS.SERVICIO_NO_DESPLEGADO);
+    // Y la partición sigue siendo la medida: sólo tres cambian de spec.
+    expect(res.recrear).toEqual(["api", "backup", "postgres"]);
+  });
+
+  it("el TAG y el prefijo salen del contrato: nadie los vuelve a decidir aquí", () => {
+    const specs = specsContrato();
+    expect(specs.api.image).toBe(CONTRATO.imagenes_esperadas.api);
+    expect(specs.postgres.image).toBe(CONTRATO.imagenes_esperadas.postgres);
+  });
+
+  it("un contrato sin `perfiles` es rc=2, no un render de TODO el compose", () => {
+    // Sin selección se renderiría observabilidad y streaming incluidos: un
+    // informe lleno de ruido y un veredicto que no significaría nada.
+    const tmp = join(tmpdir(), `contrato-sin-perfiles-${process.pid}.json`);
+    writeFileSync(tmp, JSON.stringify({ ...CONTRATO, perfiles: [] }));
+    try {
+      expect(main(["--facts", join(here, "fixtures", "drift-facts-vm108.json"), "--contract", tmp])).toBe(2);
+    } finally {
+      rmSync(tmp, { force: true });
+    }
   });
 });
 

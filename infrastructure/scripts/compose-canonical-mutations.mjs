@@ -22,6 +22,12 @@
  *        está en DO NOT RESTART, sin ninguna necesidad)
  *   M7 · el healthcheck deja de compararse (la deriva del backup pasaría)
  *   M8 · los puertos publicados dejan de compararse
+ *   M9 · los servicios "gestionados aparte" del contrato dejan de renderizarse
+ *        (`backup` quedaría fuera del conjunto comprobado, que es justo el
+ *        servicio que el carril hermano tiene que alinear)
+ *  M10 · la selección de perfiles del contrato se ignora y se renderiza TODO el
+ *        compose (observabilidad y streaming incluidos): informe lleno de ruido
+ *        y veredicto que no significa nada
  *
  * Uso: node infrastructure/scripts/compose-canonical-mutations.mjs
  * rc=0 si TODAS se ponen rojas; rc=1 si alguna sobrevive o no se pudo aplicar.
@@ -50,12 +56,7 @@ const MUTACIONES = {
   },
   M3: {
     desc: "el filtro por perfil descarta TODO (comparación contra el conjunto vacío)",
-    cambios: [
-      [
-        "    if (profile !== null && perfiles.length > 0 && !perfiles.includes(profile)) continue;",
-        "    if (profile !== null) continue;",
-      ],
-    ],
+    cambios: [["    if (!porPerfil && !porNombre.has(nombre)) continue;", "    if (seleccion !== null) continue;"]],
   },
   M4: {
     desc: "un servicio vivo sin spec deja de ser un hallazgo",
@@ -92,6 +93,19 @@ const MUTACIONES = {
     desc: "los puertos publicados dejan de compararse",
     cambios: [
       ["  if (!igual((hecho.ports ?? []).slice().sort(), (spec.ports ?? []).slice().sort())) {", "  if (false) {"],
+    ],
+  },
+  M9: {
+    desc: "los servicios gestionados aparte del contrato dejan de renderizarse",
+    cambios: [["  const porNombre = new Set(incluir);", "  const porNombre = new Set();"]],
+  },
+  M10: {
+    desc: "la selección de perfiles del contrato se ignora (se renderiza todo)",
+    cambios: [
+      [
+        "  const seleccion = profiles ?? (profile === null ? null : [profile]);",
+        "  const seleccion = profile === null ? null : [profile];",
+      ],
     ],
   },
 };
