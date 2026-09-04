@@ -2,10 +2,16 @@
   "version": 1,
   "descripcion": "Contrato de despliegue reproducible: fija de una vez proyecto, ficheros compose, perfil(es), TAG, prefijo de imagen, ficheros de entorno y ruta de secretos. Lo consume infrastructure/scripts/deploy-contract-gate.mjs; nadie tiene que recordar cinco flags.",
   "proyecto": "infrastructure",
-  "compose_files": ["infrastructure/docker-compose.yml"],
-  "env_files": ["infrastructure/.env"],
+  "compose_files": [
+    "infrastructure/docker-compose.yml"
+  ],
+  "env_files": [
+    "infrastructure/.env"
+  ],
   "secrets_dir": "/run/secrets/<secret-name>",
-  "perfiles": ["development"],
+  "perfiles": [
+    "development"
+  ],
   "perfiles_rechazados": {
     "": "sin COMPOSE_PROFILES el compose renderiza CERO servicios: el peor falso negativo posible",
     "nucleo": "conjunto incompleto (faltan arena-engine, bot-manager, bot-build-worker, map-service)",
@@ -32,6 +38,29 @@
   "gestionados_aparte": {
     "backup": "unidad con ventana propia; su alineacion es un carril posterior. No entra en el conjunto canonico."
   },
+  "bloques": {
+    "descripcion": "Dos bloques SEPARADOS a proposito. APP_STACK se despliega por PERFIL; BACKUP_STACK se despliega nombrando el servicio EXPLICITAMENTE, con --no-deps y su propia ventana. El motivo es de seguridad operativa, no de estetica: si el bloque de aplicacion se declarara con un perfil lo bastante ancho como para incluir `backup`, un `up` rutinario del stack recrearia el servicio de copia fuera de su ventana y sin autorizacion. Lo comprueba infrastructure/scripts/backup-stack-gate.mjs.",
+    "total_esperado": 12,
+    "APP_STACK": {
+      "modo": "perfil",
+      "perfil": "development",
+      "n_esperado": 11,
+      "servicios": "los de `servicios_esperados` de este mismo contrato; NO se duplican aqui para que no puedan divergir"
+    },
+    "BACKUP_STACK": {
+      "modo": "servicio_explicito",
+      "servicios": [
+        "backup"
+      ],
+      "n_esperado": 1,
+      "perfil_de_render": "production",
+      "flags_obligatorias": [
+        "--no-build",
+        "--no-deps"
+      ],
+      "motivo_no_deps": "depends_on apunta a postgres, que es NO RESTART: sin --no-deps un `up backup` puede arrastrarlo"
+    }
+  },
   "imagenes_esperadas": {
     "api": "s9arena/api:4d469dc",
     "arena-engine": "s9arena/arena-engine:4d469dc",
@@ -49,8 +78,13 @@
     {
       "servicio": "postgres",
       "ref": "postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777",
-      "plataformas": ["linux/amd64"],
-      "version_esperada": { "variable": "PG_VERSION", "valor": "16.14" }
+      "plataformas": [
+        "linux/amd64"
+      ],
+      "version_esperada": {
+        "variable": "PG_VERSION",
+        "valor": "16.14"
+      }
     }
   ],
   "servicios_con_estado": {

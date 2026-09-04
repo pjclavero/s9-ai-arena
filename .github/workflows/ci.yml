@@ -616,6 +616,73 @@ jobs:
       - name: CALIBRACIÓN · las mutaciones de la semántica del scan mueren
         run: node infrastructure/scripts/scan-status-mutations.mjs
 
+      # ── CONTRATO DE LOS DOS BLOQUES (APP_STACK / BACKUP_STACK) ──────────────
+      # `backup` lleva `profiles: [production, external-db]`: medido sobre el
+      # compose real, `development` renderiza 11 servicios y `production` 12.
+      # Es decir que elegir un perfil un poco más ancho ARRANCA la copia de
+      # seguridad fuera de su ventana. El contrato declara los dos bloques por
+      # separado (11 + 1 = 12) y este gate lo verifica, incluida la mitad que
+      # mira al futuro: cualquier perfil del compose que renderice `backup`
+      # tiene que estar declarado como rechazado.
+      - name: CONTROL · las garantías de los dos bloques saben ponerse rojas
+        run: node infrastructure/scripts/backup-stack-gate.mjs --self-test
+
+      - name: CONTROL · el contrato real renderiza 11 + 1 = 12
+        run: node infrastructure/scripts/backup-stack-gate.mjs
+
+      # CONTROL NEGATIVO: un contrato ausente es rc=2 (no comprobado), jamás un
+      # aprobado. La ausencia nunca es verde.
+      - name: CONTROL NEGATIVO · un contrato ausente no aprueba
+        run: |
+          set +e
+          node infrastructure/scripts/backup-stack-gate.mjs --contrato /no/existe.json > /tmp/gate-bloques.txt 2>&1
+          rc=$?
+          set -e
+          cat /tmp/gate-bloques.txt
+          if [ "$rc" -ne 2 ]; then
+            echo "::error::se esperaba rc=2 (no comprobado) y salió rc=$rc"
+            exit 1
+          fi
+          echo "control negativo OK: rc=2 con NO COMPROBADO"
+
+      - name: CALIBRACIÓN · las mutaciones de los dos bloques mueren
+        run: node infrastructure/scripts/backup-stack-mutations.mjs
+
+      # ADR-018 · POR QUÉ ESTOS PASOS NO DECLARAN `outputs.estado`.
+      # El contrato de los cinco estados es de los jobs de clase `escaneo`
+      # (hoy sólo `scan`, ver JOBS_CI en infrastructure/scripts/ci-gate.mjs), y
+      # ESCANERES_ESPERADOS es ["npm-audit","compose","trivy"]. Estos pasos
+      # viven en el job `image-provenance` (comprobado parseando el workflow, no
+      # suponiéndolo), que en JOBS_CI es de clase `obligatorio` y se juzga por su
+      # código de salida; declarar aquí un estado metería un escáner
+      # fantasma en un contrato que no es el suyo. Y no hay nada que declarar:
+      # el gate de los dos bloques NO consulta ninguna fuente externa —lee el
+      # contrato y el compose del propio repositorio y nada más—, así que no
+      # puede tener un SOURCE_UNAVAILABLE. El paso siguiente lo demuestra en vez
+      # de afirmarlo.
+      #
+      # Dónde SÍ vive esa distinción, y por qué no se duplica aquí: las
+      # consultas al registro (GHCR/Docker Hub) del procedimiento de alineación
+      # las hace el gate de despliegue, que ya separa «el registro dice que no»
+      # de «no pude preguntar» con N2_REGISTRO_INACCESIBLE. Es el mismo error
+      # que ADR-018 corrige en `scan`, ya corregido en su sitio.
+      - name: CONTROL · el gate de los dos bloques no depende de ninguna fuente externa
+        run: |
+          set +e
+          # Sin PATH no hay `docker`, ni `git`, ni red utilizable por subproceso.
+          # Si el gate consultara el registro, aquí se caería; tiene que salir 0.
+          env -i PATH=/nonexistent HOME="$HOME" "$(command -v node)" \
+            infrastructure/scripts/backup-stack-gate.mjs > /tmp/gate-sin-fuentes.txt 2>&1
+          rc=$?
+          set -e
+          cat /tmp/gate-sin-fuentes.txt
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::el gate necesitó algo del entorno: no es puramente offline (rc=$rc)"
+            exit 1
+          fi
+          grep -q "TOTAL         12" /tmp/gate-sin-fuentes.txt
+          echo "control OK: veredicto idéntico sin PATH; el gate no tiene fuente externa que pueda caerse"
+
       # ── ADR-017 · contrato de release ────────────────────────────────────────
       # Calibración del gate que separa BUILD de DEPLOY. Va aquí, y no en un job
       # nuevo, porque es el mismo veredicto: "este despliegue es lo que dice
