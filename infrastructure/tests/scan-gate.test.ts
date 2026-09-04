@@ -146,6 +146,12 @@ describe("scan-gate · informe de Trivy ausente o degradado", () => {
     expect(clasificarInformeTrivy({ fichero: f, outcome: "failure" }).estado).toBe("SCAN_ERROR");
   });
 
+  it("DoD: el paso ni corrió (outcome=skipped) → NOT_EXERCISED, no SOURCE_UNAVAILABLE ni CLEAN", () => {
+    expect(clasificarInformeTrivy({ fichero: join(dir, "no-existe.json"), outcome: "skipped" }).estado).toBe(
+      "NOT_EXERCISED",
+    );
+  });
+
   it("informe vacío (0 bytes) tratado como ausente, no como limpio", () => {
     const f = join(dir, "vacio.json");
     writeFileSync(f, "");

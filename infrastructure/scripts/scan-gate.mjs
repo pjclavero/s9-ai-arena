@@ -130,6 +130,11 @@ export function ejecutarScanCompose(ficheros) {
  * reintentable, y jamás «0 vulnerabilidades».
  */
 export function clasificarInformeTrivy({ fichero, outcome = "success", severidades }) {
+  // `outcome` viene de `steps.<id>.outcome`: vale "skipped" cuando el paso ni
+  // llegó a correr. Eso no es una fuente caída, es un escaneo que no se hizo.
+  if (outcome === "skipped") {
+    return { estado: ESTADO_SCAN.NOT_EXERCISED, detalle: "el paso de Trivy no llegó a ejecutarse" };
+  }
   const existe = fichero && existsSync(fichero);
   const stdout = existe ? readFileSync(fichero, "utf8") : "";
   if (!existe || stdout.trim() === "") {
