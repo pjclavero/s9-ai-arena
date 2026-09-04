@@ -80,5 +80,37 @@
     },
     "almacen_local": "docker image inspect postgres:16-alpine@sha256:57c7... => 'No such image' (la imagen local no tiene RepoDigests). El digest SI existe en el registro: el almacen local no es autoridad."
   },
-  "remedido": "2026-09-04, VM108, arbol de despliegue en ad0a42b: development 11, production 12, external-db 11, sin perfil 0 (identicos a la medicion anterior). Se anaden `bots`, `observability` y `streaming`, que faltaban: el compose declara SIETE perfiles y la fixture solo media cuatro, asi que la calibracion tenia un hueco. Ninguno de los dos renderiza `backup`. Ninguno de los tres renderiza `backup`."
+  "remedido": "2026-09-04, VM108, arbol de despliegue en ad0a42b: development 11, production 12, external-db 11, sin perfil 0 (identicos a la medicion anterior). Se anaden `bots`, `observability` y `streaming`, que faltaban: el compose declara SIETE perfiles y la fixture solo media cuatro, asi que la calibracion tenia un hueco. Ninguno de los dos renderiza `backup`. Ninguno de los tres renderiza `backup`.",
+  "interpolacion_medida": {
+    "descripcion": "Salida REAL de `docker compose config --images` (VM108, 2026-09-04) sobre un compose minimo con las dos formas de etiqueta: api con ${TAG:-latest} y backup con ${BACKUP_TAG:-latest}. Calibra que el renderizador offline reproduce la semantica de Docker para la variable propia del bloque de copia, incluido el defecto fail-closed y el hecho de que mover TAG NO mueve backup.",
+    "medido_con": "TAG=<t> BACKUP_TAG=<b> IMAGE_PREFIX=s9arena docker compose --profile production config --images",
+    "casos": [
+      {
+        "vars": {
+          "TAG": "4d469dc",
+          "IMAGE_PREFIX": "s9arena"
+        },
+        "api": "s9arena/api:4d469dc",
+        "backup": "s9arena/backup:latest"
+      },
+      {
+        "vars": {
+          "TAG": "4d469dc",
+          "IMAGE_PREFIX": "s9arena",
+          "BACKUP_TAG": "ad0a42b"
+        },
+        "api": "s9arena/api:4d469dc",
+        "backup": "s9arena/backup:ad0a42b"
+      },
+      {
+        "vars": {
+          "TAG": "CENTINELA",
+          "IMAGE_PREFIX": "s9arena",
+          "BACKUP_TAG": "ad0a42b"
+        },
+        "api": "s9arena/api:CENTINELA",
+        "backup": "s9arena/backup:ad0a42b"
+      }
+    ]
+  }
 }

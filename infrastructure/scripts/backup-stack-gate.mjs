@@ -24,7 +24,7 @@
  *   BACKUP_STACK  modo servicio explícito  `backup`, --no-deps        1 servicio
  *   TOTAL ESPERADO                                                   12
  *
- * Las cinco garantías, cada una con su código propio (nunca un booleano suelto:
+ * Las SEIS garantías, cada una con su código propio (nunca un booleano suelto:
  * "el conjunto no cuadra" y "el perfil elegido arrastra backup" son defectos
  * DISTINTOS y se informan por separado):
  *
@@ -52,6 +52,15 @@
  *                        construye el ÁRBOL EQUIVOCADO (ADR-016, incidente 1).
  *                        `--no-deps` porque `depends_on` apunta a postgres, que
  *                        es NO RESTART.
+ *   G6 VERSIÓN PROPIA    la imagen del bloque de copia es la declarada en
+ *                        `imagen_esperada`, y **mover el TAG global NO la
+ *                        cambia**. Se comprueba por EFECTO, renderizando con un
+ *                        TAG centinela: leer del YAML que pone `${BACKUP_TAG}`
+ *                        no vale, porque una interpolación anidada
+ *                        (`${BACKUP_TAG:-${TAG:-latest}}`) sería cierta en el
+ *                        texto y falsa en el render. Sin esta garantía, alinear
+ *                        la copia obligaba a pasar TAG en la línea de comandos,
+ *                        que mueve la referencia de los otros ONCE servicios.
  *
  * El renderizador NO se reimplementa aquí: se importa el de
  * `deploy-contract-gate.mjs` (#138), que ya está calibrado contra la salida
@@ -60,7 +69,7 @@
  *
  * Uso:
  *   node infrastructure/scripts/backup-stack-gate.mjs --self-test
- *       Controles positivos y negativos de las cinco garantías, offline.
+ *       Controles positivos y negativos de las seis garantías, offline.
  *   node infrastructure/scripts/backup-stack-gate.mjs [--contrato F] [--compose F] [--json]
  *   node infrastructure/scripts/backup-stack-gate.mjs --invocacion
  *       Imprime las DOS invocaciones (bloque de aplicación y bloque de copia).
@@ -93,6 +102,8 @@ export const CODIGOS = Object.freeze({
   CONTAMINACION_APP: "CONTAMINACION_APP",
   PERFIL_ANCHO_NO_DECLARADO: "PERFIL_ANCHO_NO_DECLARADO",
   FLAG_OBLIGATORIA_AUSENTE: "FLAG_OBLIGATORIA_AUSENTE",
+  BACKUP_IMAGEN_DISTINTA: "BACKUP_IMAGEN_DISTINTA",
+  TAG_GLOBAL_ARRASTRA_BACKUP: "TAG_GLOBAL_ARRASTRA_BACKUP",
 });
 
 const conjunto = (xs) => [...new Set(xs)].sort();
@@ -183,7 +194,31 @@ export function verificarBackup(contrato, doc) {
         detalle: `BACKUP_STACK no declara ${flag} como obligatoria`,
       });
 
-  return { ok: fallos.length === 0, fallos, servicios: declarados };
+  // G6 · la imagen del bloque de copia es la DECLARADA, y su versión NO cuelga
+  // del TAG global. Sin esto, alinear la copia obligaba a mover TAG en la línea
+  // de comandos, lo que cambia la referencia de los otros once servicios a la
+  // vez: un descuido de argv recreaba el stack entero. La segunda mitad se
+  // comprueba por EFECTO —se renderiza con un TAG centinela— y no leyendo la
+  // cadena `${BACKUP_TAG}` del YAML: una interpolación anidada la haría cierta
+  // en el texto y falsa en el render.
+  const conVars = (vars) => renderizar(doc, { perfiles: bk.perfil_de_render ? [bk.perfil_de_render] : [], vars });
+  const base = conVars(contrato?.entorno ?? {});
+  for (const svc of declarados) {
+    const imagen = base[svc]?.imagen;
+    if (bk.imagen_esperada !== undefined && imagen !== bk.imagen_esperada)
+      fallos.push({
+        codigo: CODIGOS.BACKUP_IMAGEN_DISTINTA,
+        detalle: `${svc} renderiza ${imagen} y BACKUP_STACK declara ${bk.imagen_esperada}`,
+      });
+    const centinela = conVars({ ...(contrato?.entorno ?? {}), TAG: "TAG-CENTINELA-QUE-NO-DEBE-APARECER" });
+    if (centinela[svc]?.imagen !== imagen)
+      fallos.push({
+        codigo: CODIGOS.TAG_GLOBAL_ARRASTRA_BACKUP,
+        detalle: `mover el TAG global cambia la imagen de ${svc} (${imagen} → ${centinela[svc]?.imagen}): el bloque de copia tiene que versionarse con ${bk.variable_de_version ?? "su propia variable"}, no con el de los otros once servicios`,
+      });
+  }
+
+  return { ok: fallos.length === 0, fallos, servicios: declarados, imagen: base[declarados[0]]?.imagen ?? null };
 }
 
 /** G3+G4 · total, disjunción y contaminación por perfil ancho. */
@@ -317,12 +352,13 @@ const COMPOSE_FALSO = {
   services: {
     api: { profiles: ["development", "production"] },
     postgres: { profiles: ["development", "production"] },
-    backup: { profiles: ["production", "external-db"] },
+    backup: { profiles: ["production", "external-db"], image: "s9arena/backup:${BACKUP_TAG:-latest}" },
   },
 };
 
 const CONTRATO_FALSO = {
   proyecto: "infraestructura",
+  entorno: { TAG: "t1", IMAGE_PREFIX: "s9arena", BACKUP_TAG: "b1" },
   compose_files: ["c.yml"],
   env_files: [".env"],
   servicios_esperados: ["api", "postgres"],
@@ -336,6 +372,8 @@ const CONTRATO_FALSO = {
       servicios: ["backup"],
       n_esperado: 1,
       perfil_de_render: "production",
+      variable_de_version: "BACKUP_TAG",
+      imagen_esperada: "s9arena/backup:b1",
       flags_obligatorias: ["--no-build", "--no-deps"],
     },
   },
@@ -402,6 +440,14 @@ export const CASOS_NEGATIVOS = Object.freeze([
     },
   },
   {
+    nombre: "la imagen del bloque de copia no es la declarada",
+    codigo: CODIGOS.BACKUP_IMAGEN_DISTINTA,
+    mutar: (c) => {
+      c.entorno.BACKUP_TAG = "otra";
+      return c;
+    },
+  },
+  {
     nombre: "el contrato no declara bloques",
     codigo: CODIGOS.BLOQUES_NO_DECLARADOS,
     mutar: (c) => {
@@ -418,6 +464,14 @@ export const CASOS_NEGATIVOS_COMPOSE = Object.freeze([
     codigo: CODIGOS.CONTAMINACION_APP,
     mutar: (d) => {
       d.services.backup.profiles = ["development", "production", "external-db"];
+      return d;
+    },
+  },
+  {
+    nombre: "backup vuelve a colgar del TAG global (mover TAG arrastraría la copia)",
+    codigo: CODIGOS.TAG_GLOBAL_ARRASTRA_BACKUP,
+    mutar: (d) => {
+      d.services.backup.image = "s9arena/backup:${TAG:-latest}";
       return d;
     },
   },

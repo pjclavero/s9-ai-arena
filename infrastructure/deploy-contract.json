@@ -20,7 +20,8 @@
   },
   "entorno": {
     "TAG": "4d469dc",
-    "IMAGE_PREFIX": "s9arena"
+    "IMAGE_PREFIX": "s9arena",
+    "BACKUP_TAG": "ad0a42b"
   },
   "servicios_esperados": [
     "api",
@@ -58,7 +59,10 @@
         "--no-build",
         "--no-deps"
       ],
-      "motivo_no_deps": "depends_on apunta a postgres, que es NO RESTART: sin --no-deps un `up backup` puede arrastrarlo"
+      "motivo_no_deps": "depends_on apunta a postgres, que es NO RESTART: sin --no-deps un `up backup` puede arrastrarlo",
+      "variable_de_version": "BACKUP_TAG",
+      "imagen_esperada": "s9arena/backup:ad0a42b",
+      "divergencia_esperada": "BACKUP_TAG declara el OBJETIVO del bloque de copia, no lo que corre hoy (s9arena/backup:11b36a7). Es deliberado: hace que IMAGEN_DIVERGENTE de compose-canonical-check este ROJO ANTES de la alineacion y VERDE despues, que es lo que convierte la alineacion en algo medible. Mientras no se ejecute, esa divergencia es el estado correcto."
     }
   },
   "imagenes_esperadas": {

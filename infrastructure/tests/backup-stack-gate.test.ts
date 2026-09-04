@@ -22,6 +22,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 // @ts-expect-error módulo .mjs sin tipos
+import { renderizar as renderizarDoc } from "../scripts/deploy-contract-gate.mjs";
+// @ts-expect-error módulo .mjs sin tipos
 import {
   CASOS_NEGATIVOS,
   CASOS_NEGATIVOS_COMPOSE,
@@ -72,6 +74,27 @@ describe("los dos bloques, sobre el contrato y el compose reales", () => {
     const r = verificarBackup(contrato, doc);
     expect(r.fallos).toEqual([]);
     expect(r.servicios).toEqual(["backup"]);
+  });
+
+  it("BACKUP_STACK se versiona con su PROPIA variable: mover el TAG global no cambia su imagen", () => {
+    const r = verificarBackup(contrato, doc);
+    expect(r.fallos).toEqual([]);
+    expect(r.imagen).toBe(contrato.bloques.BACKUP_STACK.imagen_esperada);
+    expect(contrato.bloques.BACKUP_STACK.variable_de_version).toBe("BACKUP_TAG");
+    // Por EFECTO, no por leer la cadena del YAML.
+    const c = clon(contrato);
+    c.entorno.TAG = "TAG-QUE-NO-DEBE-APARECER";
+    expect(verificarBackup(c, doc).imagen).toBe(r.imagen);
+  });
+
+  it("los ONCE del bloque de aplicación SÍ cuelgan del TAG global (control positivo del contraste)", () => {
+    // Si mover TAG no cambiara nada en ningún sitio, la garantía anterior sería
+    // vacua: pasaría con un compose que ignorase las dos variables.
+    const conTag = (t: string) =>
+      Object.entries(renderizarDoc(doc, { perfiles: ["development"], vars: { ...contrato.entorno, TAG: t } })).map(
+        ([svc, v]: any) => `${svc}=${v.imagen}`,
+      );
+    expect(conTag("uno")).not.toEqual(conTag("dos"));
   });
 
   it("el total esperado es 12 = 11 + 1, y los bloques son disjuntos", () => {
@@ -232,5 +255,36 @@ describe("la envoltura: dos invocaciones, no una", () => {
 
   it("los servicios del bloque de copia salen del contrato, no de una constante", () => {
     expect(serviciosBackup(contrato)).toEqual(Object.keys(contrato.gestionados_aparte).sort());
+  });
+});
+
+describe("calibración: la variable propia del bloque de copia, contra Docker real", () => {
+  // Medido en VM108 (fixture `interpolacion_medida`) sobre un compose mínimo con
+  // las dos formas de etiqueta. Sin esta calibración, G6 estaría comprobando la
+  // semántica que el renderizador offline CREE, no la que Docker aplica.
+  const casos = JSON.parse(readFileSync(join(here, "fixtures", "compose-profiles-medido.json"), "utf8"))
+    .interpolacion_medida.casos as Array<{ vars: Record<string, string>; api: string; backup: string }>;
+  const docMini = {
+    services: {
+      api: { profiles: ["production"], image: "${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/api:${TAG:-latest}" },
+      backup: {
+        profiles: ["production"],
+        image: "${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/backup:${BACKUP_TAG:-latest}",
+      },
+    },
+  };
+
+  for (const caso of casos) {
+    it(`con ${JSON.stringify(caso.vars)} el render coincide con lo medido`, () => {
+      const r = renderizarDoc(docMini, { perfiles: ["production"], vars: caso.vars }) as any;
+      expect(r.backup.imagen).toBe(caso.backup);
+      expect(r.api.imagen).toBe(caso.api);
+    });
+  }
+
+  it("sin BACKUP_TAG el defecto es `latest`, que falla en CERRADO (imagen inexistente)", () => {
+    const sinVar = casos.find((c) => c.vars.BACKUP_TAG === undefined)!;
+    expect(sinVar.backup).toBe("s9arena/backup:latest");
+    expect(sinVar.backup).not.toBe(`s9arena/backup:${sinVar.vars.TAG}`);
   });
 });

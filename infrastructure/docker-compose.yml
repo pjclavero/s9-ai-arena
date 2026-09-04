@@ -689,7 +689,21 @@ services:
       args:
         <<: *build-identity
         SERVICE_NAME: backup
-    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/backup:${TAG:-latest}
+    # BACKUP_TAG, y no TAG: `backup` es un BLOQUE APARTE (ver deploy-contract.json,
+    # clave `bloques`), con su propia ventana y su propio ciclo de versión. Con
+    # `${TAG}` la única forma de desplegar una versión distinta de la copia era
+    # pasar TAG en la línea de comandos, lo que mueve la referencia de los OTROS
+    # ONCE servicios a la vez: una alineación del backup podía recrear el stack
+    # entero por un descuido de argv. Con una variable propia, el bloque de
+    # aplicación y el de copia se versionan por separado y un solo render es
+    # coherente para los doce.
+    #
+    # El defecto `latest` es DELIBERADO y falla en cerrado: sin BACKUP_TAG el
+    # compose pide una imagen que no existe en el daemon y `up --no-build` se
+    # niega en seco, en vez de crear un contenedor sobre una imagen equivocada.
+    # No se anida `${BACKUP_TAG:-${TAG:-latest}}` a propósito: heredar TAG en
+    # silencio es justo el acoplamiento que esta variable existe para romper.
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/backup:${BACKUP_TAG:-latest}
     profiles: [production, external-db]
     networks: [data, public]
     environment:

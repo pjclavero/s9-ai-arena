@@ -76,6 +76,14 @@ const MUTACIONES = {
     desc: "BACKUP_STACK deja de tener que coincidir con `gestionados_aparte` (dos verdades sobre lo mismo)",
     cambios: [["  if (!mismoConjunto(declarados, aparte))", "  if (false)"]],
   },
+  M13: {
+    desc: "la imagen del bloque de copia deja de tener que ser la declarada",
+    cambios: [["    if (bk.imagen_esperada !== undefined && imagen !== bk.imagen_esperada)", "    if (false)"]],
+  },
+  M14: {
+    desc: "backup puede volver a colgar del TAG global (mover TAG arrastraría la copia con los otros once)",
+    cambios: [["    if (centinela[svc]?.imagen !== imagen)", "    if (false)"]],
+  },
   M12: {
     desc: "un contrato ausente deja de ser rc=2 y pasa por aprobado",
     cambios: [["    return e.rc ?? 2;", "    return 0;"]],

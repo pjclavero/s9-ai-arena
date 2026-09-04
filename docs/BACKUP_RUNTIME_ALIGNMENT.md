@@ -94,13 +94,35 @@ commit nuevo).
 
 ### Camino A (preferido): usar el artefacto que ya construyó la CI
 
-La CI construye y publica `backup` en cada `main`. Comprobado contra el
-**registro** (no contra el almacén local, que no es autoridad):
+**La etiqueta NO es el commit corto.** La CI publica con el prefijo `sha-` y el
+sha **completo** (`.github/workflows/ci.yml`, job `build-images`:
+`tags: <prefijo>/<servicio>:sha-${{ github.sha }}` y `:v<version>`, con
+`push: github.ref == 'refs/heads/main'`). Por eso
+`…/backup:ad0a42b` devuelve `not found`: esa etiqueta no existe y nunca
+existió. La referencia literal verificada es:
 
 ```
-docker buildx imagetools inspect \
-  ghcr.io/pjclavero/s9-ai-arena/backup:sha-ad0a42b79503ede4d726be9899960d817b70ce97
+ghcr.io/pjclavero/s9-ai-arena/backup:sha-ad0a42b79503ede4d726be9899960d817b70ce97
 ```
+
+Comprobada con estos dos comandos, ambos contra el **registro** (el almacén
+local de Docker no es autoridad):
+
+```
+docker manifest inspect \
+  ghcr.io/pjclavero/s9-ai-arena/backup:sha-ad0a42b79503ede4d726be9899960d817b70ce97
+# → resuelve (EXISTE)
+
+docker buildx imagetools inspect \
+  ghcr.io/pjclavero/s9-ai-arena/backup:sha-ad0a42b79503ede4d726be9899960d817b70ce97 \
+  --format '{{.Manifest.Digest}}'
+# → sha256:79cb2eb34660c922c4a036862f6c5b9d6a5a946a61b07dadb73efac4fcc89b1b
+```
+
+Para constancia: `ghcr.io/pjclavero/s9-ai-arena/backup:main` **no existe**
+(`manifest unknown`) — no se publica etiqueta de rama. Publica por etiqueta
+`sha-<sha completo>` y por `v<version>`; el digest lo asigna el registro y es lo
+que se usa para descargar.
 
 - digest: `sha256:79cb2eb34660c922c4a036862f6c5b9d6a5a946a61b07dadb73efac4fcc89b1b`
 - `org.opencontainers.image.revision` = `ad0a42b79503ede4d726be9899960d817b70ce97`
@@ -110,7 +132,6 @@ docker buildx imagetools inspect \
 Procedimiento (para cuando se autorice):
 
 ```
-S=ad0a42b79503ede4d726be9899960d817b70ce97
 D=sha256:79cb2eb34660c922c4a036862f6c5b9d6a5a946a61b07dadb73efac4fcc89b1b
 docker pull ghcr.io/pjclavero/s9-ai-arena/backup@$D
 docker tag  ghcr.io/pjclavero/s9-ai-arena/backup@$D s9arena/backup:ad0a42b
@@ -118,6 +139,50 @@ docker tag  ghcr.io/pjclavero/s9-ai-arena/backup@$D s9arena/backup:ad0a42b
 
 Se descarga **por digest**, no por etiqueta: una etiqueta puede moverse bajo los
 pies (incidente 3 de ADR-016).
+
+### El nombre local y su encaje con `TAG`: `BACKUP_TAG`
+
+La pregunta era legítima y la respuesta anterior era ambigua, así que el compose
+deja de permitir la ambigüedad. Antes, `backup` derivaba su imagen de
+`${TAG}`, y eso dejaba sólo dos salidas, las dos malas:
+
+- **retaguear a `s9arena/backup:4d469dc`** — una etiqueta que dice `4d469dc`
+  sobre contenido `ad0a42b`. Es **exactamente** el incidente 1 de ADR-016, y
+  `verify-image-provenance.mjs` lo pondría rojo con razón;
+- **mover `TAG` en la línea de comandos** — cambia la referencia de los **otros
+  once** servicios en el mismo render.
+
+Este PR implementa la tercera salida, la que quedó propuesta y ahora ya no lo
+está (era territorio de #137, ya mergeado):
+
+```yaml
+image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/backup:${BACKUP_TAG:-latest}
+```
+
+Medido con Docker real, no deducido (`docker compose config --images` sobre un
+compose mínimo con las dos formas; fixture `interpolacion_medida`):
+
+| Variables | `api` | `backup` |
+| --- | --- | --- |
+| `TAG=4d469dc` (sin `BACKUP_TAG`) | `s9arena/api:4d469dc` | `s9arena/backup:latest` ← **fail-closed** |
+| `TAG=4d469dc`, `BACKUP_TAG=ad0a42b` | `s9arena/api:4d469dc` | `s9arena/backup:ad0a42b` |
+| `TAG=CENTINELA`, `BACKUP_TAG=ad0a42b` | `s9arena/api:CENTINELA` | `s9arena/backup:ad0a42b` ← **no se mueve** |
+
+**Respuesta directa: el retag local es `s9arena/backup:ad0a42b`, y la alineación
+NO exige tocar `TAG`.** El `TAG=4d469dc` de los otros once servicios se queda
+donde está. No se anida `${BACKUP_TAG:-${TAG:-latest}}` a propósito: heredar
+`TAG` en silencio reintroduciría el acoplamiento que la variable existe para
+romper.
+
+El contrato declara `entorno.BACKUP_TAG = "ad0a42b"` y
+`bloques.BACKUP_STACK.imagen_esperada = "s9arena/backup:ad0a42b"`. Eso es el
+**objetivo**, no lo que corre: mientras no se ejecute la alineación,
+`IMAGEN_DIVERGENTE` para `backup` está ROJO **a propósito**, y ponerse verde es
+la señal de que la alineación ocurrió. El gate lo comprueba con dos garantías
+(`BACKUP_IMAGEN_DISTINTA` y `TAG_GLOBAL_ARRASTRA_BACKUP`), la segunda **por
+efecto**: renderiza con un TAG centinela y exige que la imagen de `backup` no se
+mueva. Leer del YAML que pone `${BACKUP_TAG}` no valdría — una interpolación
+anidada sería cierta en el texto y falsa en el render.
 
 ### Camino B (respaldo): construir desde un clon del REMOTO
 
@@ -240,16 +305,24 @@ backup:
     dockerfile: infrastructure/docker/backup/Dockerfile
 ```
 
-El comando (**no ejecutado**):
+El comando (**no ejecutado**), literal y sin ambigüedad:
 
 ```
-TAG=ad0a42b IMAGE_PREFIX=s9arena docker compose \
+BACKUP_TAG=ad0a42b IMAGE_PREFIX=s9arena docker compose \
   -f infrastructure/docker-compose.yml \
   --env-file infrastructure/.env \
   -p infrastructure \
   --project-directory <dir-de-produccion> \
   --profile production \
   up -d --no-build --no-deps --force-recreate backup
+```
+
+`TAG` **no aparece**: lo aporta el `.env` y sigue valiendo `4d469dc` para los
+otros once servicios. Antes de ejecutarlo, el render tiene que confirmarlo:
+
+```
+BACKUP_TAG=ad0a42b IMAGE_PREFIX=s9arena docker compose … --profile production config --images
+# los 11 servicios de aplicación en :4d469dc y SÓLO backup en :ad0a42b
 ```
 
 Qué hace cada pieza, y qué pasaría sin ella:
@@ -265,12 +338,17 @@ Qué hace cada pieza, y qué pasaría sin ella:
 - **`--project-directory` de producción** — es donde viven `.env`, `secrets/` y
   los `./secrets:ro`. Con otro directorio, los secretos no resuelven.
 
-**Riesgo declarado:** `TAG=ad0a42b` en la línea de comandos afecta a **todos**
-los servicios del render, no sólo a `backup`. La única protección es nombrar el
-servicio. Una alternativa más segura para el futuro —`image: …/backup:${BACKUP_TAG:-${TAG:-latest}}`—
-se deja **propuesta y no implementada**: toca el compose, que es territorio de
-la canonización (#137), y hacerlo aquí crearía dos verdades sobre el mismo
-fichero.
+**Riesgo que ESTE PR elimina:** en la versión anterior del compose había que
+pasar `TAG=ad0a42b`, que afecta a **todos** los servicios del render y dejaba
+como única protección el nombrar el servicio. Con `BACKUP_TAG` esa clase de
+accidente deja de existir: aunque alguien olvide el argumento `backup` final, el
+render de los otros once sigue en `:4d469dc` y `--no-deps` impide arrastrar
+`postgres`.
+
+**Barrera adicional confirmada (y ahora explicada):** hoy, sin `BACKUP_TAG` en
+el `.env`, el compose pide `s9arena/backup:latest`, imagen que no existe en el
+daemon. Con `--no-build`, un intento falla **en seco** en lugar de crear un
+contenedor roto. El defecto `latest` es deliberado por eso mismo.
 
 ## 5. Guion de verificación posterior (para cuando se autorice)
 
@@ -281,14 +359,39 @@ debe imprimir `ad0a42b79503ede4d726be9899960d817b70ce97`.
 *Demuestra:* el proceso corre la imagen construida desde ese commit.
 *No demuestra:* que el backup funcione.
 
+**V0 · captura previa (obligatoria, ANTES de recrear)** — sin esto, V2 no es
+verificable:
+
+```
+docker exec infrastructure-backup-1 \
+  grep '^s9_backup_last_success_timestamp_seconds' /textfile/s9_backup.prom
+# anotar el valor: T_ANTES
+```
+
 **V2 · healthcheck real** —
 `docker inspect infrastructure-backup-1 --format '{{json .Config.Healthcheck}}'`
 debe contener `/usr/local/bin/healthcheck.sh`, **no** `pgrep crond`.
 *Demuestra:* el contenedor se juzga por la copia, no por el demonio.
-*No demuestra:* que esté sano por el motivo correcto — **ojo**: el volumen
-`backup_metrics` persiste entre recreaciones, así que un `healthy` inmediato
-está leyendo el registro de la copia **anterior** (la del 04:15 con la imagen
-vieja). Un verde aquí no dice nada de la imagen nueva hasta V4.
+*No demuestra:* **nada sobre la imagen nueva.** Confirmado leyendo
+`infrastructure/backup/healthcheck.sh`: decide el color a partir de
+`$METRICS_DIR/s9_backup.prom`, que vive en el volumen **nombrado**
+`backup_metrics` y por tanto **sobrevive a la recreación**. Un `healthy`
+inmediato está leyendo la ejecución **anterior** —la del 04:15 hecha por la
+imagen vieja— y sería verde aunque la imagen nueva estuviera rota.
+
+> **CRITERIO DE ACEPTACIÓN V2 (no es una nota):** un `healthy` sólo se acepta si
+> `s9_backup_last_success_timestamp_seconds` es **estrictamente mayor** que
+> `T_ANTES`. Mientras valga `T_ANTES`, el estado del contenedor es
+> **NO CONCLUYENTE**, se registre como se registre, y la alineación no se da por
+> buena. Es decir: **V2 no se cierra hasta que V4 haya producido una ejecución
+> nueva.**
+>
+> Caso límite, también comprobado en el guion: si alguien vaciara el volumen de
+> métricas, `healthcheck.sh` no falla de inmediato — hay una ventana de arranque
+> (`BACKUP_HEALTH_GRACE_HOURS`, por defecto 26 h) en la que la ausencia de
+> métricas sale `BACKUP STARTING` con **exit 0**. Otra razón por la que el color
+> del contenedor no sirve como prueba de la alineación: hay que mirar la marca
+> de tiempo, no el semáforo.
 
 **V3 · ejecución en seco** —
 `docker exec infrastructure-backup-1 /usr/local/bin/backup.sh --dry-run`.
@@ -300,7 +403,17 @@ configurado. **`3` es de despliegue, no transitorio: se para aquí.**
 nada. *No demuestra:* que restic alcance el destino ni que el `pg_dump` salga.
 
 **V4 · ejecución real** — `docker exec infrastructure-backup-1 /usr/local/bin/backup.sh`.
-Sólo tras V1–V3 en verde y dentro de la ventana (§6). Después:
+Sólo tras V1 y V3 en verde y dentro de la ventana (§6); V2 queda abierto hasta
+aquí por construcción. Después, lo primero es cerrar V2:
+
+```
+docker exec infrastructure-backup-1 \
+  grep '^s9_backup_last_success_timestamp_seconds' /textfile/s9_backup.prom
+# tiene que ser > T_ANTES; si no lo es, la copia NO se ha ejecutado y el healthy
+# que hubiera es del registro viejo: PARAR y hacer rollback (§7).
+```
+
+Y a continuación:
 
 ```
 # snapshot nuevo bajo el hostname LÓGICO
@@ -384,6 +497,20 @@ seguirá declarando `healthcheck: /usr/local/bin/healthcheck.sh`, que **no exist
 en `:11b36a7`** (§0). Tras un rollback el contenedor quedará `unhealthy` aunque
 la copia funcione. Es un rollback de imagen, no de contrato; hay que saberlo
 antes, no descubrirlo a las 04:15.
+
+### Criterio de aceptación ejecutable (#137, ya en `main`)
+
+Los tres códigos de `compose-canonical-check.mjs` que hoy salen ROJOS para
+`backup` y que la alineación tiene que apagar, medibles antes y después:
+
+| Código | Por qué está rojo hoy | Cuándo se apaga |
+| --- | --- | --- |
+| `IMAGEN_DIVERGENTE` | canónico `s9arena/backup:ad0a42b` (declarado en `entorno.BACKUP_TAG`) frente a vivo `s9arena/backup:11b36a7` | al recrear con la imagen nueva |
+| `ENV_FALTA(RESTIC_HOSTNAME)` | el contenedor vivo no tiene la variable | al recrear con el compose de `main` |
+| `HEALTHCHECK_DIVERGENTE` | vivo `pgrep crond` frente a canónico `healthcheck.sh` | al recrear (y sólo entonces el fichero existe en la imagen) |
+
+Los tres se apagan **con la misma recreación**, que es otra forma de decir lo
+del §0: imagen y compose se alinean a la vez.
 
 ## 8. Efecto sobre la retención
 
