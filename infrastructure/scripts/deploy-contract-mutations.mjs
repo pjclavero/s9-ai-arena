@@ -73,7 +73,7 @@ const MUTACIONES = {
   },
   M10: {
     desc: "la deuda no declarada deja de exigirse (aprobar por omisión)",
-    cambios: [["    if (d.copia_verificada !== true && !d.deuda)", "    if (false)"]],
+    cambios: [["    } else if (d.copia_verificada !== true && !d.deuda)", "    } else if (false)"]],
   },
   M11: {
     desc: "sin --registro el gate aprueba igual (NO_EJERCIDO tratado como éxito)",
@@ -91,6 +91,31 @@ const MUTACIONES = {
   M14: {
     desc: "la herramienta ausente (ENOENT) vuelve a leerse como «el digest no existe» (el defecto medido)",
     cambios: [["|ENOENT|command not found|no such file or directory", ""]],
+  },
+  M15: {
+    desc: "declararse EPHEMERAL exime sin decir dónde está la autoridad ni con qué se midió",
+    cambios: [['      for (const campo of ["origen_autoritativo", "evidencia"])', "      for (const campo of [])"]],
+  },
+  M16: {
+    desc: "un 429 al resolver la ETIQUETA vuelve a cantarse como «etiqueta incoherente» (el defecto medido al pinear redis)",
+    cambios: [["    if (registroInaccesible(porEtiqueta.error))", "    if (false)"]],
+  },
+  M17: {
+    desc: "un 429 al listar plataformas vuelve a cantarse como «el índice no publica esa plataforma»",
+    cambios: [["  if (presentes.size === 0 && registroInaccesible(porDigest.plataformasError))", "  if (false)"]],
+  },
+  M18: {
+    desc: "el resolvedor real se traga el motivo de la caída al listar plataformas (no queda nada que clasificar)",
+    cambios: [["        plataformasError = mensajeDeError(e);", "        plataformasError = null;"]],
+  },
+  M19: {
+    desc: "el resolvedor vuelve a quedarse solo con error.message y pierde el 429 que venia por stderr",
+    cambios: [
+      [
+        '  const partes = [String(e?.message ?? e), String(e?.stderr ?? "")]',
+        "  const partes = [String(e?.message ?? e)]",
+      ],
+    ],
   },
   M12: {
     desc: "un contrato ausente deja de ser rc=2 y pasa por aprobado",

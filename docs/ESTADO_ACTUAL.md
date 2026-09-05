@@ -102,9 +102,19 @@ Proyecto Compose: **`infrastructure`**, fichero **`/opt/s9-ai-arena/infrastructu
 | `infrastructure-tournament-worker-1` | `s9arena/tournament-worker:local` | Up, healthy | interno (WS espectador :8081) |
 | `infrastructure-replay-service-1` | `s9arena/replay-service:local` | Up, healthy | interno |
 | `infrastructure-postgres-1` | `postgres:16-alpine` | Up, healthy | interno (5432) |
-| `infrastructure-queue-1` | `redis:7-alpine` | Up, healthy | interno (6379) |
+| `infrastructure-queue-1` | `redis:7-alpine` (vivo) → el Compose ya lo ancla a `redis:7.4.9-alpine@sha256:6ab0b6e…` | Up, healthy | interno (6379) |
 
 - **Único servicio expuesto al exterior de la VM: el `gateway`** (8080 → 80, 8443 → 443).
+- **`queue` es EPHEMERAL** (medido, no supuesto): `DBSIZE=0`, `SCAN` sin claves, `commandstats`
+  con `blpop`/`ping` y **cero escrituras en 13 días**, AOF incremental de 0 bytes desde el 17-jul y
+  el volumen entero = 8.456 B de un RDB vacío. **El origen autoritativo de los trabajos es
+  PostgreSQL** (tabla `jobs`, claim por fila con `FOR UPDATE SKIP LOCKED`, ADR-E9-001); Redis sólo
+  recorta latencia. Recuperarse de perder `queue` es **rehidratar por polling desde PostgreSQL**,
+  no restaurar Redis → `BACKUP_REQUIRED=NO`. Se recrea **vacío**, en su propia ventana.
+  La clasificación vive en el inventario de estado (`infrastructure/deploy-contract.json`,
+  `servicios_con_estado.queue`), junto al **`NO RECREATE / NO RESTART`** de `postgres`.
+- **Imágenes ancladas por digest**: `postgres` y `queue`. La etiqueta `redis:7-alpine` ya se movió
+  (hoy resuelve a 7.4.11); el Compose describe ahora lo que **de verdad** corre (7.4.9).
 - Imágenes de aplicación: `s9arena/*:local`, **construidas en la propia VM108** (no vienen de GHCR).
 - **Política de reinicio:** `unless-stopped` en los 7 → sobreviven a reinicio de la VM.
 - **No hay unidad systemd**: el stack se levantó **manualmente** (`docker compose --profile nucleo up -d`
