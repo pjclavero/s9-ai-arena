@@ -84,6 +84,18 @@ const worker = new TournamentWorker({
     tournament_dry_run: handleTournamentDryRun,
   },
   signal,
+  // Degradar NO es hacerlo en silencio: si Redis se cae con el worker ya en
+  // marcha, el bucle sigue trabajando por polling de la BD (la autoridad de los
+  // trabajos es PostgreSQL) y lo DICE, igual que dice que no lo encontró al
+  // arrancar. Sin esta línea, la única señal de que el canal de aviso murió
+  // sería la latencia.
+  onSignalError: (err, estado) =>
+    log(
+      err === null
+        ? "Redis recuperado: vuelve el aviso por señal"
+        : "Redis no disponible: el worker degrada a polling de la BD",
+      { err: err === null ? undefined : String(err), ...estado },
+    ),
   onExhausted: (job, ctx) => markBattleForReview(ctx.db, job),
 });
 

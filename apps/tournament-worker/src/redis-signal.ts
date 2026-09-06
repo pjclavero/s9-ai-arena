@@ -6,6 +6,7 @@
  *  - notify(): LPUSH a una lista cuando se encola trabajo, para despertar
  *    workers sin esperar al siguiente poll de la BD.
  *  - wait(): BLPOP con timeout; si no hay Redis, el worker degrada a polling.
+ *    Si el socket muere, wait() RECHAZA (no se queda esperando): ver cerrar().
  *  - tryLock()/unlock(): candado SET NX PX por batalla, como cinturón extra
  *    sobre el bloqueo por fila de PostgreSQL (nunca en sustitución).
  *
@@ -59,6 +60,14 @@ function parseReply(buf: Buffer, at = 0): [unknown, number] | null {
   }
 }
 
+/** Error de canal: la conexión se fue, la respuesta que se esperaba no llegará. */
+export class RedisSignalDesconectado extends Error {
+  constructor(motivo: string) {
+    super(`RedisSignal: conexión perdida (${motivo})`);
+    this.name = "RedisSignalDesconectado";
+  }
+}
+
 export class RedisSignal {
   private socket: Socket | null = null;
   private buffer = Buffer.alloc(0);
@@ -66,18 +75,57 @@ export class RedisSignal {
 
   constructor(private readonly url: string) {}
 
+  /** ¿Hay socket vivo? El worker lo usa para saber si degradar a polling. */
+  get conectado(): boolean {
+    return this.socket !== null;
+  }
+
   async connect(): Promise<void> {
+    // Reconectar sobre una conexión anterior no debe dejarla colgando ni dejar
+    // waiters de la sesión vieja esperando una respuesta que ya no vendrá.
+    this.cerrar(new RedisSignalDesconectado("reconexión"));
     const u = new URL(this.url);
     await new Promise<void>((resolve, reject) => {
       const s = createConnection({ host: u.hostname, port: Number(u.port || 6379) });
-      s.once("connect", () => resolve());
-      s.once("error", reject);
+      const fallaInicial = (e: Error) => {
+        s.destroy();
+        if (this.socket === s) this.socket = null;
+        reject(e);
+      };
+      s.once("error", fallaInicial);
+      s.once("connect", () => {
+        s.off("error", fallaInicial);
+        // A PARTIR DE AQUÍ el socket puede morir en cualquier momento, y ESO era
+        // el agujero medido: sin estos dos manejadores, matar el Redis dejaba a
+        // los waiters de BLPOP esperando PARA SIEMPRE. El bucle del worker se
+        // quedaba parado —sin girar, sin salir, sin recuperarse al volver
+        // Redis— mientras el heartbeat (un setInterval aparte) seguía pintando
+        // el healthcheck en verde. Un error de canal tiene que RECHAZAR, para
+        // que quien espera pueda degradar.
+        s.on("error", (e: Error) => this.cerrar(new RedisSignalDesconectado(e.message)));
+        s.on("close", () => this.cerrar(new RedisSignalDesconectado("socket cerrado")));
+        resolve();
+      });
       s.on("data", (chunk: Buffer) => {
         this.buffer = Buffer.concat([this.buffer, chunk]);
         this.drain();
       });
       this.socket = s;
     });
+  }
+
+  /** Cierra el socket y rechaza a TODO el que estuviera esperando respuesta. */
+  private cerrar(motivo: Error): void {
+    const s = this.socket;
+    this.socket = null;
+    this.buffer = Buffer.alloc(0);
+    const pendientes = this.waiters;
+    this.waiters = [];
+    for (const w of pendientes) w.reject(motivo);
+    if (s) {
+      s.removeAllListeners();
+      s.destroy();
+    }
   }
 
   private drain(): void {
@@ -93,9 +141,14 @@ export class RedisSignal {
   }
 
   private send(args: string[]): Promise<unknown> {
-    if (!this.socket) throw new Error("RedisSignal: no conectado");
+    const s = this.socket;
+    // Promesa RECHAZADA, no excepción síncrona: quien llama hace `await` y
+    // espera poder capturarlo con .catch() como cualquier otro fallo de canal.
+    if (!s) return Promise.reject(new RedisSignalDesconectado("no conectado"));
     const p = new Promise<unknown>((resolve, reject) => this.waiters.push({ resolve, reject }));
-    this.socket.write(encodeCommand(args));
+    s.write(encodeCommand(args), (err) => {
+      if (err) this.cerrar(new RedisSignalDesconectado(err.message));
+    });
     return p;
   }
 
@@ -123,7 +176,6 @@ export class RedisSignal {
   }
 
   async quit(): Promise<void> {
-    this.socket?.destroy();
-    this.socket = null;
+    this.cerrar(new RedisSignalDesconectado("quit()"));
   }
 }
