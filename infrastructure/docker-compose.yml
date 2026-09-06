@@ -513,7 +513,26 @@ services:
 
   # ── queue · Redis para trabajos ──────────────────────────────────────────────
   queue:
-    image: redis:7-alpine
+    # IMAGEN INMUTABLE (anclada por digest), por el MISMO motivo que postgres:
+    # `redis:7-alpine` es una etiqueta FLOTANTE y ya se movió bajo el contenedor
+    # vivo. Medido contra el REGISTRO (no contra el almacén local, que no es
+    # autoridad — ver cabecera de infrastructure/scripts/deploy-contract-gate.mjs):
+    #
+    #   redis:7-alpine      → sha256:ff02b58f971e…  (hoy 7.4.11)
+    #   redis:7.4-alpine    → sha256:ff02b58f971e…
+    #   redis:7.4.9-alpine  → sha256:6ab0b6e73817…  ← lo que corre de verdad
+    #
+    # Procedencia RECONSTRUIBLE, no supuesta: el contenedor vivo declara
+    # RepoDigests=["redis@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99"]
+    # y REDIS_VERSION=7.4.9, y ese digest es exactamente el índice OCI que el
+    # registro publica para la etiqueta `redis:7.4.9-alpine`. La etiqueta del pin
+    # es la de la versión que el digest ES (7.4.9): declarar `7-alpine@<digest de
+    # 7.4.9>` sería incoherente y el nivel 2 del gate lo rechaza.
+    #
+    # SUBIR DE VERSIÓN es cambiar ESTA línea por el digest de la nueva y
+    # desplegarlo en su ventana. Este commit es DECLARATIVO: no recrea el
+    # servicio (la recreación es una ventana propia).
+    image: redis:7.4.9-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
     profiles: [nucleo, development, production, external-db]
     networks: [platform]
     command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]

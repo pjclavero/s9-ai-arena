@@ -238,8 +238,12 @@ describe("CONTRATO · el conjunto canónico lo fija deploy-contract.json, no est
     const res = comprobar(FIXTURE, specsContrato());
     expect(codigos(res.hallazgos)).not.toContain(CODIGOS.SERVICIO_NO_RENDERIZADO);
     expect(codigos(res.hallazgos)).not.toContain(CODIGOS.SERVICIO_NO_DESPLEGADO);
-    // Y la partición sigue siendo la medida: sólo tres cambian de spec.
-    expect(res.recrear).toEqual(["api", "backup", "postgres"]);
+    // Y la partición sigue siendo la medida. `queue` entra en `recrear` DESDE
+    // que su imagen se ancla por digest (redis:7.4.9-alpine@sha256:6ab0b6e…):
+    // el contenedor vivo se creó desde la etiqueta flotante `redis:7-alpine`,
+    // así que la spec canónica y la viva ya no coinciden. Es un cambio
+    // DECLARATIVO: la recreación es una ventana propia, no este commit.
+    expect(res.recrear).toEqual(["api", "backup", "postgres", "queue"]);
   });
 
   it("el TAG y el prefijo salen del contrato: nadie los vuelve a decidir aquí", () => {
@@ -441,8 +445,10 @@ describe("HECHOS REALES de VM108 · el incidente que motiva el carril", () => {
 
   it("la partición recrear/reetiquetar es exactamente la medida", () => {
     const res = r();
-    // Estos tres cambian de SPEC: recrearlos aplica un cambio real.
-    expect(res.recrear).toEqual(["api", "backup", "postgres"]);
+    // Estos cuatro cambian de SPEC: recrearlos aplica un cambio real. `queue`
+    // se une a la lista al anclarse por digest (antes: `redis:7-alpine`, la
+    // etiqueta flotante desde la que se creó el contenedor vivo).
+    expect(res.recrear).toEqual(["api", "backup", "postgres", "queue"]);
     // Estos ocho sólo arrastran una procedencia equivocada: su spec ya coincide
     // con el canónico, así que canonizar no les cambia nada.
     expect(res.reetiquetar).toEqual([

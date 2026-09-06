@@ -114,6 +114,7 @@ export const CODIGOS = Object.freeze({
   ESTADO_VOLUMEN_AUSENTE: "ESTADO_VOLUMEN_AUSENTE",
   ESTADO_SIN_MONTAJE: "ESTADO_SIN_MONTAJE",
   ESTADO_DEUDA_SIN_DECLARAR: "ESTADO_DEUDA_SIN_DECLARAR",
+  ESTADO_EFIMERO_SIN_AUTORIDAD: "ESTADO_EFIMERO_SIN_AUTORIDAD",
 });
 
 // ── Referencias de imagen ────────────────────────────────────────────────────
@@ -173,7 +174,7 @@ export function nivel1Sintaxis(ref) {
  * imagen que no tiene nada de malo.
  */
 export function registroInaccesible(error) {
-  return /429|too many requests|timeout|temporary failure|connection refused|no such host|i\/o timeout|EAI_AGAIN|ENOENT|command not found|no such file or directory/i.test(
+  return /429|too ?many ?requests|timeout|temporary failure|connection refused|no such host|i\/o timeout|EAI_AGAIN|ENOENT|command not found|no such file or directory/i.test(
     String(error ?? ""),
   );
 }
@@ -216,6 +217,17 @@ export function nivel2Registro(ref, resolver, { plataformas = [] } = {}) {
         codigo: CODIGOS.N2_FUENTE_NO_AUTORIZADA,
         detalle: `${sinDigest}: la resolución de la etiqueta no vino del registro`,
       };
+    // MISMA regla que arriba, y aquí faltaba: medido de verdad al pinear redis,
+    // Docker Hub devolvió 429 al resolver la ETIQUETA y el gate lo cantó como
+    // N2_ETIQUETA_INCOHERENTE — «la etiqueta apunta a otro sitio». Falso: no se
+    // pudo preguntar. Las dos son ROJAS, pero una manda a corregir un pin que
+    // está bien. Fuente caída ≠ veredicto (ADR-018).
+    if (registroInaccesible(porEtiqueta.error))
+      return {
+        ok: false,
+        codigo: CODIGOS.N2_REGISTRO_INACCESIBLE,
+        detalle: `${sinDigest}: no se pudo consultar el registro para la etiqueta (${porEtiqueta.error}); NO comprobado`,
+      };
     if (porEtiqueta.error || porEtiqueta.digest !== porDigest.digest)
       return {
         ok: false,
@@ -225,6 +237,16 @@ export function nivel2Registro(ref, resolver, { plataformas = [] } = {}) {
   }
 
   const presentes = new Set((porDigest.plataformas ?? []).map((p) => p.plataforma));
+  // La consulta de plataformas/entorno es una SEGUNDA llamada al registro y
+  // puede caerse por su cuenta (429 medido). Si se cayó, la lista sale vacía y
+  // «no publica linux/amd64» sería una mentira sobre un índice perfectamente
+  // bueno: se informa como NO COMPROBADO, que también bloquea.
+  if (presentes.size === 0 && registroInaccesible(porDigest.plataformasError))
+    return {
+      ok: false,
+      codigo: CODIGOS.N2_REGISTRO_INACCESIBLE,
+      detalle: `${ref}: no se pudieron consultar las plataformas (${porDigest.plataformasError}); NO comprobado`,
+    };
   for (const p of plataformas)
     if (!presentes.has(p))
       return {
@@ -376,8 +398,20 @@ export function verificarEstado(contrato, doc) {
     for (const campo of ["politica_persistencia", "politica_recreacion", "durabilidad", "volumen", "destino"])
       if (!d[campo] || String(d[campo]).trim() === "")
         fallos.push({ codigo: CODIGOS.ESTADO_SIN_POLITICA, detalle: `${svc}: sin ${campo} explícita` });
-    // Sin copia verificada, la deuda se DECLARA; callarla sí es aprobar por omisión.
-    if (d.copia_verificada !== true && !d.deuda)
+    // Declararse EPHEMERAL es EXIMIRSE de la copia, así que hay que decir dónde
+    // vive la autoridad real y con qué se midió que aquí no hay estado. Sin esas
+    // dos cosas, «no hace falta backup» es una opinión, y una opinión no exime.
+    // (`queue`: la autoridad es la tabla `jobs` de PostgreSQL —ADR-E9-001—; el
+    // Redis es canal de aviso. La recuperación es rehidratar por polling.)
+    if (d.clase === "EPHEMERAL") {
+      for (const campo of ["origen_autoritativo", "evidencia"])
+        if (!d[campo] || String(d[campo]).trim() === "")
+          fallos.push({
+            codigo: CODIGOS.ESTADO_EFIMERO_SIN_AUTORIDAD,
+            detalle: `${svc}: declarado EPHEMERAL sin ${campo}; eximirse de la copia exige decir dónde está la autoridad y con qué se midió`,
+          });
+    } else if (d.copia_verificada !== true && !d.deuda)
+      // Sin copia verificada, la deuda se DECLARA; callarla sí es aprobar por omisión.
       fallos.push({
         codigo: CODIGOS.ESTADO_DEUDA_SIN_DECLARAR,
         detalle: `${svc}: sin copia verificada y sin deuda declarada`,
@@ -431,11 +465,30 @@ export function invocacion(contrato, { accion = "up" } = {}) {
  * Único resolvedor autorizado: consulta el REGISTRO con buildx imagetools.
  * No descarga la imagen y no mira el almacén local. Declara `fuente:"registro"`.
  */
+/**
+ * El motivo REAL de un fallo de `docker buildx` no está en `error.message`
+ * —que dice sólo «Command failed: docker buildx imagetools inspect …»— sino en
+ * su STDERR. Medido al pinear redis: Docker Hub devolvió
+ *   `toomanyrequests: You have reached your unauthenticated pull rate limit`
+ * por stderr, el resolvedor sólo se quedó con `message`, y el nivel 2 clasificó
+ * un digest perfectamente publicado como N2_DIGEST_NO_RESUELVE, «ese digest no
+ * existe». Tirar el stderr convierte «no pude preguntar» en un veredicto: la
+ * misma confusión de ADR-018, esta vez por perder la evidencia por el camino.
+ */
+export function mensajeDeError(e) {
+  const partes = [String(e?.message ?? e), String(e?.stderr ?? "")].map((t) => t.trim()).filter((t) => t !== "");
+  return partes
+    .join(" · ")
+    .replace(/\s*\n\s*/g, " · ")
+    .slice(0, 600);
+}
+
 export function resolvedorRegistro(ejecutar = (args) => execFileSync("docker", args, { encoding: "utf8" })) {
   return (ref) => {
     try {
       const digest = ejecutar(["buildx", "imagetools", "inspect", ref, "--format", "{{.Manifest.Digest}}"]).trim();
       let plataformas = [];
+      let plataformasError = null;
       try {
         const crudo = ejecutar([
           "buildx",
@@ -457,12 +510,13 @@ export function resolvedorRegistro(ejecutar = (args) => execFileSync("docker", a
             }
             return { plataforma: plataforma.trim(), env: vars };
           });
-      } catch {
+      } catch (e) {
         plataformas = [];
+        plataformasError = mensajeDeError(e);
       }
-      return { fuente: "registro", digest, plataformas };
+      return { fuente: "registro", digest, plataformas, plataformasError };
     } catch (e) {
-      return { fuente: "registro", error: String(e?.message ?? e).split("\n")[0] };
+      return { fuente: "registro", error: mensajeDeError(e) };
     }
   };
 }
@@ -471,6 +525,13 @@ export function resolvedorRegistro(ejecutar = (args) => execFileSync("docker", a
 
 const DIGEST_1614 = "sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777";
 const DIGEST_1615 = "sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685";
+// Redis · medido contra el registro real (buildx imagetools inspect), no supuesto:
+//   redis:7.4.9-alpine  → 6ab0b6e73817…  (REDIS_VERSION=7.4.9)  ← el que corre
+//   redis:7.4.10-alpine → e7723ff73d96…  (REDIS_VERSION=7.4.10)
+//   redis:7-alpine y 7.4-alpine → ff02b58f971e…  la etiqueta flotante YA se movió
+const DIGEST_REDIS_749 = "sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99";
+const DIGEST_REDIS_7410 = "sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2";
+const DIGEST_REDIS_FLOTANTE = "sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf";
 
 /** Registro simulado con los HECHOS medidos contra el registro real. */
 export function resolvedorFalso({ fuente = "registro" } = {}) {
@@ -494,6 +555,34 @@ export function resolvedorFalso({ fuente = "registro" } = {}) {
     "postgres:16-alpine": {
       digest: DIGEST_1615,
       plataformas: [{ plataforma: "linux/amd64", env: { PG_VERSION: "16.15" } }],
+    },
+    [`redis@${DIGEST_REDIS_749}`]: {
+      digest: DIGEST_REDIS_749,
+      plataformas: [{ plataforma: "linux/amd64", env: { REDIS_VERSION: "7.4.9" } }],
+    },
+    [`redis@${DIGEST_REDIS_7410}`]: {
+      digest: DIGEST_REDIS_7410,
+      plataformas: [{ plataforma: "linux/amd64", env: { REDIS_VERSION: "7.4.10" } }],
+    },
+    [`redis@${DIGEST_REDIS_FLOTANTE}`]: {
+      digest: DIGEST_REDIS_FLOTANTE,
+      plataformas: [{ plataforma: "linux/amd64", env: { REDIS_VERSION: "7.4.11" } }],
+    },
+    "redis:7.4.9-alpine": {
+      digest: DIGEST_REDIS_749,
+      plataformas: [{ plataforma: "linux/amd64", env: { REDIS_VERSION: "7.4.9" } }],
+    },
+    "redis:7.4.10-alpine": {
+      digest: DIGEST_REDIS_7410,
+      plataformas: [{ plataforma: "linux/amd64", env: { REDIS_VERSION: "7.4.10" } }],
+    },
+    "redis:7-alpine": {
+      digest: DIGEST_REDIS_FLOTANTE,
+      plataformas: [{ plataforma: "linux/amd64", env: { REDIS_VERSION: "7.4.11" } }],
+    },
+    "redis:7.4-alpine": {
+      digest: DIGEST_REDIS_FLOTANTE,
+      plataformas: [{ plataforma: "linux/amd64", env: { REDIS_VERSION: "7.4.11" } }],
     },
   };
   return (ref) => {
@@ -553,6 +642,56 @@ export const CASOS_AUTOPRUEBA = [
     },
     esperado: CODIGOS.N1_SIN_DIGEST,
   },
+  {
+    nombre: "PASS · redis tag 7.4.9-alpine + digest de 7.4.9 (lo que corre)",
+    pin: {
+      servicio: "queue",
+      ref: `redis:7.4.9-alpine@${DIGEST_REDIS_749}`,
+      plataformas: ["linux/amd64"],
+      version_esperada: { variable: "REDIS_VERSION", valor: "7.4.9" },
+    },
+    esperado: null,
+  },
+  {
+    nombre: "FAIL · redis digest inexistente",
+    pin: {
+      servicio: "queue",
+      ref: "redis:7.4.9-alpine@sha256:" + "1".repeat(64),
+      plataformas: ["linux/amd64"],
+      version_esperada: { variable: "REDIS_VERSION", valor: "7.4.9" },
+    },
+    esperado: CODIGOS.N2_DIGEST_NO_RESUELVE,
+  },
+  {
+    nombre: "FAIL · redis digest válido de OTRA versión (7.4.10)",
+    pin: {
+      servicio: "queue",
+      ref: `redis:7.4.10-alpine@${DIGEST_REDIS_7410}`,
+      plataformas: ["linux/amd64"],
+      version_esperada: { variable: "REDIS_VERSION", valor: "7.4.9" },
+    },
+    esperado: CODIGOS.N3_VERSION_DISTINTA,
+  },
+  {
+    nombre: "FAIL · redis etiqueta FLOTANTE 7-alpine con el digest de 7.4.9 (el error de postgres, repetido)",
+    pin: {
+      servicio: "queue",
+      ref: `redis:7-alpine@${DIGEST_REDIS_749}`,
+      plataformas: ["linux/amd64"],
+      version_esperada: { variable: "REDIS_VERSION", valor: "7.4.9" },
+    },
+    esperado: CODIGOS.N2_ETIQUETA_INCOHERENTE,
+  },
+  {
+    nombre: "FAIL · redis sin digest (nivel 1)",
+    pin: {
+      servicio: "queue",
+      ref: "redis:7-alpine",
+      plataformas: ["linux/amd64"],
+      version_esperada: { variable: "REDIS_VERSION", valor: "7.4.9" },
+    },
+    esperado: CODIGOS.N1_SIN_DIGEST,
+  },
 ];
 
 export function autoprueba() {
@@ -575,6 +714,43 @@ export function autoprueba() {
   anota(
     !local.ok && local.fallo.codigo === CODIGOS.N2_FUENTE_NO_AUTORIZADA,
     `el mismo pin BUENO resuelto contra el almacén local → ${local.ok ? "PASS (¡no lo caza!)" : local.fallo.codigo}`,
+  );
+
+  const localRedis = verificarPin(
+    CASOS_AUTOPRUEBA.find((c) => c.nombre.startsWith("PASS · redis")).pin,
+    resolvedorFalso({ fuente: "almacen-local" }),
+  );
+  anota(
+    !localRedis.ok && localRedis.fallo.codigo === CODIGOS.N2_FUENTE_NO_AUTORIZADA,
+    `el pin BUENO de redis resuelto contra el almacén local → ${localRedis.ok ? "PASS (¡no lo caza!)" : localRedis.fallo.codigo}`,
+  );
+
+  // Los dos «no pude preguntar» que ANTES se cantaban como veredicto.
+  const buenoRedis = CASOS_AUTOPRUEBA.find((c) => c.nombre.startsWith("PASS · redis")).pin;
+  const base = resolvedorFalso();
+  const etiqueta429 = (ref) => (ref.includes("@") ? base(ref) : { fuente: "registro", error: "429 Too Many Requests" });
+  const r429 = verificarPin(buenoRedis, etiqueta429);
+  anota(
+    !r429.ok && r429.fallo.codigo === CODIGOS.N2_REGISTRO_INACCESIBLE,
+    `429 al resolver la ETIQUETA → ${r429.ok ? "PASS (¡no lo caza!)" : r429.fallo.codigo} (antes: N2_ETIQUETA_INCOHERENTE)`,
+  );
+  const sinPlataformas = (ref) => {
+    const r = base(ref);
+    return r.error ? r : { ...r, plataformas: [], plataformasError: "429 Too Many Requests" };
+  };
+  const rPlat = verificarPin(buenoRedis, sinPlataformas);
+  anota(
+    !rPlat.ok && rPlat.fallo.codigo === CODIGOS.N2_REGISTRO_INACCESIBLE,
+    `429 al listar PLATAFORMAS → ${rPlat.ok ? "PASS (¡no lo caza!)" : rPlat.fallo.codigo} (antes: N2_PLATAFORMA_AUSENTE)`,
+  );
+  const platRealmenteAusente = (ref) => {
+    const r = base(ref);
+    return r.error ? r : { ...r, plataformas: [{ plataforma: "linux/arm64", env: {} }] };
+  };
+  const rAusente = verificarPin(buenoRedis, platRealmenteAusente);
+  anota(
+    !rAusente.ok && rAusente.fallo.codigo === CODIGOS.N2_PLATAFORMA_AUSENTE,
+    `plataforma REALMENTE ausente sigue siendo N2_PLATAFORMA_AUSENTE → ${rAusente.ok ? "PASS (¡no lo caza!)" : rAusente.fallo.codigo}`,
   );
 
   // C, D y E contra el compose y el contrato reales.
@@ -610,6 +786,22 @@ export function autoprueba() {
   anota(
     !sinQueue.ok,
     `queue sin declarar como STATEFUL → ${sinQueue.ok ? "PASS (¡no lo caza!)" : sinQueue.fallos[0].codigo}`,
+  );
+
+  const efimeroSinAutoridad = verificarEstado(
+    {
+      ...contrato,
+      servicios_con_estado: {
+        ...contrato.servicios_con_estado,
+        queue: { ...contrato.servicios_con_estado.queue, origen_autoritativo: "" },
+      },
+    },
+    doc,
+  );
+  anota(
+    !efimeroSinAutoridad.ok &&
+      efimeroSinAutoridad.fallos.some((f) => f.codigo === CODIGOS.ESTADO_EFIMERO_SIN_AUTORIDAD),
+    `queue EPHEMERAL sin origen autoritativo → ${efimeroSinAutoridad.ok ? "PASS (¡no lo caza!)" : CODIGOS.ESTADO_EFIMERO_SIN_AUTORIDAD}`,
   );
 
   return { rc: fallo, lineas };

@@ -73,7 +73,7 @@
     "gateway": "s9arena/gateway:4d469dc",
     "map-service": "s9arena/map-service:4d469dc",
     "postgres": "postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777",
-    "queue": "redis:7-alpine",
+    "queue": "redis:7.4.9-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99",
     "replay-service": "s9arena/replay-service:4d469dc",
     "tournament-worker": "s9arena/tournament-worker:4d469dc",
     "web": "s9arena/web:4d469dc"
@@ -89,6 +89,18 @@
         "variable": "PG_VERSION",
         "valor": "16.14"
       }
+    },
+    {
+      "servicio": "queue",
+      "ref": "redis:7.4.9-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99",
+      "plataformas": [
+        "linux/amd64"
+      ],
+      "version_esperada": {
+        "variable": "REDIS_VERSION",
+        "valor": "7.4.9"
+      },
+      "procedencia": "el contenedor vivo declara RepoDigests=[redis@sha256:6ab0b6e73817...] y REDIS_VERSION=7.4.9; ese digest es el indice OCI que el registro publica para redis:7.4.9-alpine. La etiqueta flotante 7-alpine YA se movio (resuelve a sha256:ff02b58f971e..., 7.4.11)"
     }
   ],
   "servicios_con_estado": {
@@ -103,11 +115,14 @@
     "queue": {
       "volumen": "queue_data",
       "destino": "/data",
-      "durabilidad": "Redis con appendonly yes: estado durable, NO es infraestructura inocua",
-      "politica_recreacion": "solo en ventana con cola vacia; una recreacion con trabajos en vuelo los pierde",
-      "politica_persistencia": "volumen nombrado queue_data con AOF",
+      "durabilidad": "estado EFIMERO medido: la autoridad de los trabajos es PostgreSQL (tabla jobs, claim por fila con FOR UPDATE SKIP LOCKED, ADR-E9-001). Redis es solo canal de aviso de baja latencia; perderlo no pierde ningun trabajo",
+      "politica_recreacion": "se recrea VACIO en su propia ventana; BACKUP_REQUIRED=NO (decision del operador sobre la evidencia de arriba). NO se recrea en el commit que cambia la declaracion",
+      "politica_persistencia": "volumen nombrado queue_data con AOF; la AOF no aporta durabilidad util porque no hay escrituras (ver evidencia). Cambiar appendonly es un carril APARTE: toca comportamiento de runtime",
       "copia_verificada": false,
-      "deuda": "DEUDA-QUEUE-BACKUP: no hay backup/restore disenado ni probado para queue_data. Declarado, no resuelto: disenarlo es un carril propio."
+      "deuda": "DEUDA-QUEUE-BACKUP CERRADA por medicion: no hay estado que copiar (clase EPHEMERAL, origen autoritativo PostgreSQL). Si algun dia queue guardara estado propio, la deuda se reabre y esta linea deja de ser cierta",
+      "clase": "EPHEMERAL",
+      "origen_autoritativo": "PostgreSQL, tabla jobs (apps/tournament-worker/src/queue.ts). La recuperacion tras perder queue es rehidratar por polling de la BD, no restaurar Redis",
+      "evidencia": "auditoria del contenedor vivo: DBSIZE=0, SCAN sin claves, commandstats con blpop=1.123.997 y ping=112.290 y CERO comandos de escritura en 13 dias, appendonly.aof.1.incr.aof de 0 bytes desde 2026-07-17, volumen entero = 8.456 B de un RDB vacio"
     }
   }
 }

@@ -26,6 +26,8 @@ import {
   registroInaccesible,
   renderizar,
   resolvedorFalso,
+  mensajeDeError,
+  resolvedorRegistro,
   verificarEstado,
   verificarPerfil,
   verificarPin,
@@ -347,6 +349,10 @@ describe("E · servicios con estado", () => {
 
   it("sin copia verificada y SIN deuda declarada falla: callar la deuda es aprobar por omisión", () => {
     const roto = JSON.parse(JSON.stringify(contrato));
+    // `queue` ya se declara EPHEMERAL (su exención se comprueba por otra vía,
+    // ver el bloque de EPHEMERAL); aquí se ejerce la vía de la DEUDA, que sigue
+    // viva para cualquier servicio con estado que no se declare efímero.
+    delete roto.servicios_con_estado.queue.clase;
     delete roto.servicios_con_estado.queue.deuda;
     const r = verificarEstado(roto, doc);
     expect(r.ok).toBe(false);
@@ -391,6 +397,269 @@ describe("envoltura ejecutable/declarativa", () => {
     expect(crudo).not.toMatch(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
     expect(crudo).not.toMatch(/\/opt\//);
     expect(crudo).toContain("/run/secrets/<secret-name>");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REDIS · INMUTABILIDAD DE LA IMAGEN DE `queue`
+//
+// Hechos MEDIDOS (no supuestos), y de dos sitios distintos:
+//   · contenedor vivo: RepoDigests=["redis@sha256:6ab0b6e73817…"], REDIS_VERSION=7.4.9
+//   · REGISTRO (docker buildx imagetools inspect, que consulta y no descarga):
+//       redis:7.4.9-alpine  → sha256:6ab0b6e73817…   ← el que corre
+//       redis:7.4.10-alpine → sha256:e7723ff73d96…
+//       redis:7-alpine      → sha256:ff02b58f971e…   la etiqueta flotante YA se movió
+//
+// Ojo con el atajo: el image ID local NO tiene por qué ser el digest del índice.
+// Aquí coincide porque el daemon pulló ese índice, pero la procedencia queda
+// atada por el REGISTRO, no por esa coincidencia.
+// ─────────────────────────────────────────────────────────────────────────────
+const DIGEST_REDIS_749 = "sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99";
+const DIGEST_REDIS_7410 = "sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2";
+const DIGEST_REDIS_FLOTANTE = "sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf";
+const REF_REDIS = `redis:7.4.9-alpine@${DIGEST_REDIS_749}`;
+const pinRedis = {
+  servicio: "queue",
+  ref: REF_REDIS,
+  plataformas: ["linux/amd64"],
+  version_esperada: { variable: "REDIS_VERSION", valor: "7.4.9" },
+};
+
+describe("REDIS · el pin declarado es EL de lo que corre, y el compose y el contrato lo dicen igual", () => {
+  it("el compose ancla `queue` por digest, con la etiqueta de la versión que ese digest ES", () => {
+    expect(doc.services.queue.image).toBe(REF_REDIS);
+  });
+
+  it("el contrato declara la MISMA referencia y la registra como pin verificable", () => {
+    expect(contrato.imagenes_esperadas.queue).toBe(REF_REDIS);
+    const pin = contrato.imagenes_pinneadas.find((x: any) => x.servicio === "queue");
+    expect(pin.ref).toBe(REF_REDIS);
+    expect(pin.version_esperada).toEqual({ variable: "REDIS_VERSION", valor: "7.4.9" });
+    expect(pin.plataformas).toContain("linux/amd64");
+  });
+
+  it("ya no queda ninguna etiqueta FLOTANTE de redis en el compose ni en el contrato", () => {
+    expect(readFileSync(COMPOSE, "utf8")).not.toMatch(/image:\s*redis:7-alpine\s*$/m);
+    expect(contrato.imagenes_esperadas.queue).not.toBe("redis:7-alpine");
+  });
+
+  it("CONTROL POSITIVO · el pin real pasa los tres niveles", () => {
+    const r = verificarPin(pinRedis, resolvedorFalso());
+    expect(r.ok).toBe(true);
+    expect(r.niveles.sintaxis.ok && r.niveles.registro.ok && r.niveles.version.ok).toBe(true);
+  });
+
+  it("NEGATIVO 1 · digest inexistente", () => {
+    const r = verificarPin({ ...pinRedis, ref: `redis:7.4.9-alpine@sha256:${"1".repeat(64)}` }, resolvedorFalso());
+    expect(r.ok).toBe(false);
+    expect(r.fallo.codigo).toBe(CODIGOS.N2_DIGEST_NO_RESUELVE);
+  });
+
+  it("NEGATIVO 2 · digest válido de OTRA versión (7.4.10 resuelve perfectamente)", () => {
+    const r = verificarPin({ ...pinRedis, ref: `redis:7.4.10-alpine@${DIGEST_REDIS_7410}` }, resolvedorFalso());
+    expect(r.ok).toBe(false);
+    expect(r.fallo.codigo).toBe(CODIGOS.N3_VERSION_DISTINTA);
+  });
+
+  it("NEGATIVO 3 · etiqueta incoherente con el digest (el error de `postgres:16-alpine@<16.14>`)", () => {
+    for (const etiqueta of ["7-alpine", "7.4-alpine", "7.4.10-alpine"]) {
+      const r = verificarPin({ ...pinRedis, ref: `redis:${etiqueta}@${DIGEST_REDIS_749}` }, resolvedorFalso());
+      expect(r.ok, etiqueta).toBe(false);
+      expect(r.fallo.codigo, etiqueta).toBe(CODIGOS.N2_ETIQUETA_INCOHERENTE);
+    }
+  });
+
+  it("NEGATIVO 4 · resolver contra el ALMACÉN LOCAL en vez del registro, con datos correctos", () => {
+    const r = verificarPin(pinRedis, resolvedorFalso({ fuente: "almacen-local" }));
+    expect(r.ok).toBe(false);
+    expect(r.fallo.codigo).toBe(CODIGOS.N2_FUENTE_NO_AUTORIZADA);
+  });
+
+  it("el digest de la etiqueta flotante NO es el de 7.4.9: anclar por `7-alpine` habría subido de versión", () => {
+    expect(DIGEST_REDIS_FLOTANTE).not.toBe(DIGEST_REDIS_749);
+    const r = verificarPin({ ...pinRedis, ref: `redis:7-alpine@${DIGEST_REDIS_FLOTANTE}` }, resolvedorFalso());
+    expect(r.ok).toBe(false);
+    expect(r.fallo.codigo).toBe(CODIGOS.N3_VERSION_DISTINTA);
+  });
+});
+
+describe("NIVEL 2 · fuente caída ≠ veredicto, TAMBIÉN al resolver la etiqueta y las plataformas", () => {
+  // Defecto MEDIDO al pinear redis: Docker Hub devolvió 429 resolviendo la
+  // ETIQUETA y el gate lo cantó como N2_ETIQUETA_INCOHERENTE, es decir «tu pin
+  // apunta a otra cosa». Falso: no se pudo preguntar. Manda a arreglar un pin
+  // que está bien, que es justo lo que ADR-018 prohíbe.
+  const base = resolvedorFalso();
+
+  it("429 al resolver la ETIQUETA es N2_REGISTRO_INACCESIBLE, no N2_ETIQUETA_INCOHERENTE", () => {
+    const resolver = (ref: string) =>
+      ref.includes("@") ? base(ref) : { fuente: "registro", error: "429 Too Many Requests" };
+    const r = verificarPin(pinRedis, resolver);
+    expect(r.ok).toBe(false);
+    expect(r.fallo.codigo).toBe(CODIGOS.N2_REGISTRO_INACCESIBLE);
+    expect(r.fallo.codigo).not.toBe(CODIGOS.N2_ETIQUETA_INCOHERENTE);
+  });
+
+  it("una etiqueta que de verdad apunta a otro digest SIGUE siendo N2_ETIQUETA_INCOHERENTE", () => {
+    const r = verificarPin({ ...pinRedis, ref: `redis:7.4.10-alpine@${DIGEST_REDIS_749}` }, base);
+    expect(r.fallo.codigo).toBe(CODIGOS.N2_ETIQUETA_INCOHERENTE);
+  });
+
+  it("429 al listar PLATAFORMAS es N2_REGISTRO_INACCESIBLE, no N2_PLATAFORMA_AUSENTE", () => {
+    const resolver = (ref: string) => {
+      const r: any = base(ref);
+      return r.error ? r : { ...r, plataformas: [], plataformasError: "429 Too Many Requests" };
+    };
+    const r = verificarPin(pinRedis, resolver);
+    expect(r.ok).toBe(false);
+    expect(r.fallo.codigo).toBe(CODIGOS.N2_REGISTRO_INACCESIBLE);
+  });
+
+  it("un índice que REALMENTE no publica la plataforma sigue siendo N2_PLATAFORMA_AUSENTE", () => {
+    const resolver = (ref: string) => {
+      const r: any = base(ref);
+      return r.error ? r : { ...r, plataformas: [{ plataforma: "linux/arm64", env: {} }] };
+    };
+    const r = verificarPin(pinRedis, resolver);
+    expect(r.fallo.codigo).toBe(CODIGOS.N2_PLATAFORMA_AUSENTE);
+  });
+});
+
+describe("E · `queue` es EPHEMERAL, y declararlo obliga a decir dónde está la autoridad", () => {
+  const q = contrato.servicios_con_estado.queue;
+
+  it("el inventario de estado clasifica `queue` y nombra el origen autoritativo", () => {
+    expect(q.clase).toBe("EPHEMERAL");
+    expect(q.origen_autoritativo).toMatch(/PostgreSQL/i);
+    expect(q.origen_autoritativo).toMatch(/jobs/);
+    expect(q.evidencia).toMatch(/DBSIZE=0/);
+  });
+
+  it("`postgres` NO es EPHEMERAL y conserva su NO RECREATE / NO RESTART", () => {
+    const pg = contrato.servicios_con_estado.postgres;
+    expect(pg.clase).toBeUndefined();
+    expect(pg.politica_recreacion).toMatch(/NO RECREATE \/ NO RESTART/);
+    expect(pg.copia_verificada).toBe(true);
+  });
+
+  it("CONTROL POSITIVO · el contrato real pasa la garantía E", () => {
+    expect(verificarEstado(contrato, doc).ok).toBe(true);
+  });
+
+  for (const campo of ["origen_autoritativo", "evidencia"]) {
+    it(`NEGATIVO · EPHEMERAL sin ${campo} no exime de nada`, () => {
+      const roto = {
+        ...contrato,
+        servicios_con_estado: {
+          ...contrato.servicios_con_estado,
+          queue: { ...q, [campo]: "" },
+        },
+      };
+      const r = verificarEstado(roto, doc);
+      expect(r.ok).toBe(false);
+      expect(r.fallos.map((f: any) => f.codigo)).toContain(CODIGOS.ESTADO_EFIMERO_SIN_AUTORIDAD);
+    });
+  }
+
+  it("NEGATIVO · un servicio NO efímero sin copia ni deuda sigue cazándose por la vía de siempre", () => {
+    const roto = {
+      ...contrato,
+      servicios_con_estado: {
+        ...contrato.servicios_con_estado,
+        queue: { ...q, clase: undefined, copia_verificada: false, deuda: "" },
+      },
+    };
+    const r = verificarEstado(roto, doc);
+    expect(r.fallos.map((f: any) => f.codigo)).toContain(CODIGOS.ESTADO_DEUDA_SIN_DECLARAR);
+  });
+
+  it("EPHEMERAL no degrada la clase operativa: `queue` sigue en STATEFUL_SERVICES y con su volumen montado", () => {
+    expect(STATEFUL_SERVICES).toContain("queue");
+    expect(doc.services.queue.volumes).toContain("queue_data:/data");
+  });
+
+  it("este PR NO toca la persistencia de runtime: `appendonly yes` sigue intacto (va en un carril aparte)", () => {
+    expect(doc.services.queue.command.join(" ")).toContain("--appendonly yes");
+  });
+});
+
+describe("resolvedorRegistro · el unico autorizado, y lo que hace cuando la SEGUNDA consulta se cae", () => {
+  const DIGEST = "sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99";
+
+  it("declara fuente registro y parsea plataformas y entorno del indice", () => {
+    const ejecutar = (args: string[]) =>
+      args.includes("{{.Manifest.Digest}}")
+        ? `${DIGEST}\n`
+        : "linux/amd64\tPATH=/usr/bin REDIS_VERSION=7.4.9 \nlinux/arm64\tREDIS_VERSION=7.4.9 \n";
+    const r: any = resolvedorRegistro(ejecutar)("redis:7.4.9-alpine");
+    expect(r.fuente).toBe("registro");
+    expect(r.digest).toBe(DIGEST);
+    expect(r.plataformas.map((p: any) => p.plataforma)).toEqual(["linux/amd64", "linux/arm64"]);
+    expect(r.plataformas[0].env.REDIS_VERSION).toBe("7.4.9");
+    expect(r.plataformasError).toBe(null);
+  });
+
+  it("si la consulta de plataformas se cae, CONSERVA el motivo en vez de tragarselo", () => {
+    // Sin el motivo, «plataformas: []» es indistinguible de un indice que de
+    // verdad no publica linux/amd64, y el nivel 2 acusaria a una imagen buena.
+    const ejecutar = (args: string[]) => {
+      if (args.includes("{{.Manifest.Digest}}")) return `${DIGEST}\n`;
+      throw new Error("ERROR: ... 429 Too Many Requests");
+    };
+    const r: any = resolvedorRegistro(ejecutar)("redis:7.4.9-alpine");
+    expect(r.plataformas).toEqual([]);
+    expect(r.plataformasError).toMatch(/429/);
+    expect(registroInaccesible(r.plataformasError)).toBe(true);
+  });
+
+  it("un fallo de la PRIMERA consulta sale como error del resolvedor, con la fuente declarada", () => {
+    const r: any = resolvedorRegistro(() => {
+      throw new Error("manifest unknown");
+    })("redis:noexiste");
+    expect(r.fuente).toBe("registro");
+    expect(r.error).toMatch(/manifest unknown/);
+  });
+});
+
+describe("el motivo real viene por STDERR: tirarlo convierte «no pude preguntar» en veredicto", () => {
+  // MEDIDO al pinear redis: `docker buildx imagetools inspect` falló con
+  // message="Command failed: docker buildx …" y el 429 SOLO en stderr. El
+  // resolvedor se quedaba con message, registroInaccesible() no veia el 429 y
+  // el gate declaraba N2_DIGEST_NO_RESUELVE sobre un digest publicado.
+  const errorReal = Object.assign(new Error("Command failed: docker buildx imagetools inspect redis@sha256:…"), {
+    stderr:
+      "ERROR: httpReadSeeker: failed open: unexpected status ...: 429 Too Many Requests\n" +
+      "toomanyrequests: You have reached your unauthenticated pull rate limit.\n",
+  });
+
+  it("mensajeDeError junta message y stderr, y el 429 sobrevive", () => {
+    const m = mensajeDeError(errorReal);
+    expect(m).toMatch(/Command failed/);
+    expect(m).toMatch(/429 Too Many Requests/);
+    expect(registroInaccesible(m)).toBe(true);
+  });
+
+  it("el mensaje se acota: no vuelca un stderr sin fin al informe", () => {
+    const m = mensajeDeError(Object.assign(new Error("x"), { stderr: "y".repeat(5000) }));
+    expect(m.length).toBeLessThanOrEqual(600);
+  });
+
+  it("«manifest unknown» por stderr sigue siendo EL REGISTRO DICE QUE NO", () => {
+    const m = mensajeDeError(Object.assign(new Error("Command failed: docker buildx"), { stderr: "manifest unknown" }));
+    expect(registroInaccesible(m)).toBe(false);
+  });
+
+  it("el resolvedor real clasifica ese fallo como INACCESIBLE, no como «el digest no existe»", () => {
+    const resolver = resolvedorRegistro(() => {
+      throw errorReal;
+    });
+    const r = verificarPin(pinRedis, resolver);
+    expect(r.ok).toBe(false);
+    expect(r.fallo.codigo).toBe(CODIGOS.N2_REGISTRO_INACCESIBLE);
+    expect(r.fallo.codigo).not.toBe(CODIGOS.N2_DIGEST_NO_RESUELVE);
+  });
+
+  it("el «toomanyrequests» literal de Docker Hub también es no-pude-preguntar", () => {
+    expect(registroInaccesible("toomanyrequests: You have reached your unauthenticated pull rate limit")).toBe(true);
   });
 });
 
