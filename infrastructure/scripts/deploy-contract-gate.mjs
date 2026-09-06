@@ -304,14 +304,20 @@ export function verificarPin(pin, resolver) {
 
 // ── Render del compose (offline, sin daemon) ─────────────────────────────────
 
-/** Interpolación de ${VAR}, ${VAR:-def} y ${VAR-def}, como hace Compose. */
-export function interpolar(texto, vars = {}) {
-  return String(texto).replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::?-([^}]*))?\}/g, (_, nombre, def) => {
-    const v = vars[nombre];
-    if (v === undefined || v === "") return def ?? "";
-    return v;
-  });
-}
+/**
+ * Interpolación de Compose. La implementación vive en `lib/interpolar.mjs` y se
+ * REEXPORTA aquí para no romper a quien la importa de este módulo.
+ *
+ * Se movió porque la versión que vivía en este fichero (una sola pasada de
+ * `String.replace` con `[^}]*` como defecto) NO resolvía defectos anidados: con
+ * el patrón de override por servicio `${API_TAG:-${TAG:-latest}}` devolvía la
+ * cadena literal `${TAG:-latest}` como si fuera una etiqueta. El gate habría
+ * comparado nombres con llaves dentro mientras Compose desplegaba otra cosa.
+ * Además había una segunda copia en `runtime-drift-scan.mjs` con el mismo
+ * defecto: dos implementaciones eran dos verdades, y las dos equivocadas.
+ */
+import { interpolar } from "./lib/interpolar.mjs";
+export { interpolar };
 
 /** Servicios que un conjunto de perfiles selecciona, con su imagen renderizada. */
 export function renderizar(doc, { perfiles = [], vars = {} } = {}) {

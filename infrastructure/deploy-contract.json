@@ -21,7 +21,8 @@
   "entorno": {
     "TAG": "4d469dc",
     "IMAGE_PREFIX": "s9arena",
-    "BACKUP_TAG": "ad0a42b"
+    "BACKUP_TAG": "ad0a42b",
+    "TOURNAMENT_WORKER_TAG": "82c74a8"
   },
   "servicios_esperados": [
     "api",
@@ -65,6 +66,36 @@
       "divergencia_esperada": "BACKUP_TAG declara el OBJETIVO del bloque de copia, no lo que corre hoy (s9arena/backup:11b36a7). Es deliberado: hace que IMAGEN_DIVERGENTE de compose-canonical-check este ROJO ANTES de la alineacion y VERDE despues, que es lo que convierte la alineacion en algo medible. Mientras no se ejecute, esa divergencia es el estado correcto."
     }
   },
+  "overrides_de_version": {
+    "descripcion": "Override SELECTIVO de version por servicio. Los servicios de aplicacion siguen a TAG por defecto (patron `<SERVICIO>_TAG` con TAG como defecto anidado); la variable por servicio es una EXCEPCION TEMPORAL que adelanta UNO sin arrastrar a los demas. Semantica CONTRARIA a la de `backup`, que NO sigue a TAG y no se anida (ver `bloques.BACKUP_STACK` y la cabecera del compose): no es una incoherencia, son dos bloques con ciclos distintos. Lo verifica infrastructure/scripts/tag-override-gate.mjs.",
+    "variable_global": "TAG",
+    "variables_por_servicio": {
+      "api": "API_TAG",
+      "arena-engine": "ARENA_ENGINE_TAG",
+      "bot-build-worker": "BOT_MANAGER_TAG",
+      "bot-manager": "BOT_MANAGER_TAG",
+      "gateway": "GATEWAY_TAG",
+      "map-service": "MAP_SERVICE_TAG",
+      "replay-service": "REPLAY_SERVICE_TAG",
+      "tournament-worker": "TOURNAMENT_WORKER_TAG",
+      "web": "WEB_TAG"
+    },
+    "variables_compartidas": {
+      "BOT_MANAGER_TAG": "`bot-manager` y `bot-build-worker` son DOS ROLES DEL MISMO ARTEFACTO (misma referencia en `imagenes_esperadas`). Una variable por servicio haria EXPRESABLE que la misma imagen tuviera dos etiquetas distintas; con una sola, ese estado no se puede escribir. Adelantar uno adelanta los dos, y el gate lo cuenta como dos imagenes cambiadas."
+    },
+    "destino": "volver a un unico TAG comun en la alineacion completa. Cada entrada de `activos` es deuda con fecha de cierre, no una configuracion estable. `activos` VACIO es el estado sano.",
+    "activos": {
+      "tournament-worker": {
+        "variable": "TOURNAMENT_WORKER_TAG",
+        "tag": "82c74a8",
+        "commit": "82c74a80043997b162dba6a0caad8e944be143ce",
+        "motivo": "RIESGO VIVO: el runtime de 4d469dc se paraliza EN SILENCIO si Redis muere despues de arrancar (el waiter nunca se rechaza) y el healthcheck sigue verde porque es un setInterval ajeno al bucle de trabajo. PR #142 lo arregla y ya esta en main; el runtime desplegado sigue siendo el defectuoso.",
+        "procedencia": "ghcr.io/pjclavero/s9-ai-arena/tournament-worker:sha-82c74a80043997b162dba6a0caad8e944be143ce (manifest sha256:24165b4d944722483c57ed5ab9e34fb259a7106a9cab8d8eac28f22c666f2831, Image ID sha256:b61209b159b465975db074e1baaef63755bbfa74a654d7bb92bb29793bc9298c, BUILD_COMMIT y org.opencontainers.image.revision = el commit completo). Se retagea a s9arena/... sin reconstruir: el Image ID no cambia y por eso se puede verificar despues.",
+        "cierre": "se retira esta entrada cuando TAG global pase a 82c74a8 o posterior"
+      }
+    },
+    "divergencia_esperada": "`imagenes_esperadas` declara el OBJETIVO, no lo que corre hoy (s9arena/tournament-worker:4d469dc). Mismo criterio que BACKUP_TAG en #139 y por la misma razon: hace que compose-canonical-check este ROJO ANTES de la recreacion y VERDE despues, que es lo que convierte el despliegue en algo medible. Mientras no se ejecute, esa divergencia es el estado correcto."
+  },
   "imagenes_esperadas": {
     "api": "s9arena/api:4d469dc",
     "arena-engine": "s9arena/arena-engine:4d469dc",
@@ -75,7 +106,7 @@
     "postgres": "postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777",
     "queue": "redis:7.4.9-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99",
     "replay-service": "s9arena/replay-service:4d469dc",
-    "tournament-worker": "s9arena/tournament-worker:4d469dc",
+    "tournament-worker": "s9arena/tournament-worker:82c74a8",
     "web": "s9arena/web:4d469dc"
   },
   "imagenes_pinneadas": [

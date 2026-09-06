@@ -336,6 +336,14 @@ export function escanearServicio(hecho, objetivo = null) {
     build_commit: commit ? corto(commit) : DESCONOCIDO,
     runtime_version: runtimeTexto,
     spec_drift: specDrift,
+    // OVERRIDE DE VERSIÓN VISIBLE. No es un juicio de readiness (eso es de R17),
+    // es un HECHO del objetivo: este servicio NO sigue al TAG global del stack.
+    // Va en la fila porque el requisito del operador es literal —«no volver a
+    // caer en el .env dice X pero el runtime es otra cosa sin que el sistema lo
+    // declare»— y un escáner que enseña la referencia sin decir que viene de una
+    // excepción deja al lector deduciendo. `-` = sin override; DESCONOCIDO = no
+    // se ejerció (no se pasó de dónde sacar los overrides), que NO es "no hay".
+    version_override: objetivo?.version_override === undefined ? DESCONOCIDO : (objetivo.version_override ?? "-"),
     result,
     estados: [...new Set(estados)],
     motivos,
@@ -366,6 +374,7 @@ const COLUMNAS = [
   ["build_commit", "build_commit"],
   ["runtime_version", "runtime_version"],
   ["spec_drift", "spec_drift"],
+  ["version_override", "override"],
   ["result", "result"],
 ];
 
@@ -399,6 +408,22 @@ export function informeTexto(filas) {
         .join(" ") || "sin servicios"
     }`,
   );
+  // Los overrides se resumen APARTE del resultado del drift. Un stack con un
+  // override activo puede estar perfectamente OK en todas sus filas y aun así
+  // NO estar en un único TAG: son dos cosas distintas y colapsarlas devolvería
+  // el override al terreno del estado invisible.
+  const conOverride = filas.filter((f) => f.version_override && !["-", DESCONOCIDO].includes(f.version_override));
+  const noEjercido = filas.filter((f) => f.version_override === DESCONOCIDO);
+  if (conOverride.length > 0)
+    out.push(
+      `OVERRIDES DE VERSIÓN ACTIVOS (${conOverride.length}): ${conOverride
+        .map((f) => `${f.service}=${f.version_override}`)
+        .join(" ")}`,
+      "  el stack NO corre un único TAG; el destino declarado es volver a uno solo (ver overrides_de_version en deploy-contract.json)",
+    );
+  else if (noEjercido.length === filas.length && filas.length > 0)
+    out.push("overrides de versión: NO EJERCIDO (sin --overrides-from-contract no se ha mirado; eso no es «no hay»)");
+  else out.push("overrides de versión: ninguno activo (el stack corre un único TAG)");
   out.push("nota: NOT_EXERCISED NO es éxito — es evidencia que falta, no evidencia a favor.");
   return out.join("\n");
 }
@@ -590,12 +615,19 @@ function recolectar() {
 
 // ── Objetivo derivado de Compose ─────────────────────────────────────────────
 
-/** Interpola `${VAR}` y `${VAR:-defecto}` con las variables que da el operador. */
-export function interpolar(texto, vars = {}) {
-  return String(texto).replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g, (_, v, def) =>
-    vars[v] !== undefined ? vars[v] : (def ?? ""),
-  );
-}
+/**
+ * Interpolación de Compose. Antes vivía aquí una SEGUNDA implementación, con el
+ * mismo defecto que la de `deploy-contract-gate.mjs`: una pasada de
+ * `String.replace` cuyo grupo de defecto (`[^}]*`) se paraba en la primera
+ * llave de cierre. Sobre el patrón de override por servicio
+ * `${TOURNAMENT_WORKER_TAG:-${TAG:-latest}}` devolvía `declared_ref` con llaves
+ * dentro, y `escanearServicio` lo habría comparado contra la referencia real
+ * del contenedor emitiendo TAG_MISMATCH por un defecto del escáner, no del
+ * despliegue: un rojo que no significa lo que dice es tan inútil como un verde
+ * que no significa lo que dice. Una sola implementación, en `lib/interpolar.mjs`.
+ */
+import { interpolar } from "./lib/interpolar.mjs";
+export { interpolar };
 
 /** Un item de `volumes:` de Compose (cadena corta o forma larga) → montaje lógico. */
 export function montajeDesdeCompose(item, { anclaRepo = "infrastructure/", vars = {} } = {}) {
@@ -628,16 +660,39 @@ export function montajeDesdeCompose(item, { anclaRepo = "infrastructure/", vars 
  * su origen LÓGICO (sin prefijo de proyecto, sin ruta de anfitrión) y secretos.
  * Nada aquí se lee del daemon, así que no puede "confirmar" lo que ya hay.
  */
-export function objetivosDesdeCompose(doc, { anclaRepo = "infrastructure/", vars = {}, tag = null } = {}) {
+export function objetivosDesdeCompose(
+  doc,
+  { anclaRepo = "infrastructure/", vars = {}, tag = null, varsOverride = [] } = {},
+) {
+  // Línea base = las mismas variables SIN las de override. Comparar contra ella
+  // es lo que convierte «hay una variable puesta» en «esa variable cambia lo que
+  // se despliega»: una variable puesta al mismo valor que TAG no es un override,
+  // y una que el compose ignorase tampoco lo sería aunque estuviera en el .env.
+  const varsBase = { ...vars };
+  for (const v of varsOverride) delete varsBase[v];
+
   const out = {};
   for (const [nombre, s] of Object.entries(doc?.services ?? {})) {
     const mounts = (s.volumes ?? []).map((v) => montajeDesdeCompose(v, { anclaRepo, vars }));
     const secrets = (s.secrets ?? []).map((x) => (typeof x === "string" ? x : x.source)).sort();
     const objetivo = { mounts_spec: { mounts }, secrets };
-    if (tag) objetivo.declared_ref = interpolar(s.image ?? "", { ...vars, TAG: tag });
+    if (tag) {
+      objetivo.declared_ref = interpolar(s.image ?? "", { ...vars, TAG: tag });
+      if (varsOverride.length > 0) {
+        const base = interpolar(s.image ?? "", { ...varsBase, TAG: tag });
+        objetivo.version_override = base === objetivo.declared_ref ? null : etiquetaDeRef(objetivo.declared_ref);
+      }
+    }
     out[nombre] = objetivo;
   }
   return out;
+}
+
+/** Etiqueta de `repo/nombre:etiqueta`, sin confundir el `:` de un puerto. */
+export function etiquetaDeRef(ref) {
+  const s = String(ref ?? "");
+  const i = s.lastIndexOf(":");
+  return i > s.lastIndexOf("/") ? s.slice(i + 1) : "";
 }
 
 /** Fusiona el objetivo derivado de Compose con las anulaciones del operador. */
@@ -693,6 +748,39 @@ function autoprueba() {
     escanearServicio({ ...sano, declared_ref: "s9arena/api:otra" }, objetivo).result === ESTADOS.TAG_MISMATCH,
     "control NEGATIVO: etiqueta incorrecta no dispara TAG_MISMATCH",
   );
+  // OVERRIDE VISIBLE · control POSITIVO y NEGATIVO. El escáner tiene que
+  // DISTINGUIR tres cosas que se confunden con facilidad: hay override, no hay
+  // override, y no se ha mirado. Sin los tres, «-» y «no comprobado» acabarían
+  // significando lo mismo, que es como un override se vuelve invisible.
+  {
+    const docJuguete = {
+      services: {
+        api: { image: "s9arena/api:${API_TAG:-${TAG:-latest}}" },
+        web: { image: "s9arena/web:${WEB_TAG:-${TAG:-latest}}" },
+      },
+    };
+    const conOv = objetivosDesdeCompose(docJuguete, {
+      vars: { API_TAG: "nueva" },
+      tag: "base",
+      varsOverride: ["API_TAG", "WEB_TAG"],
+    });
+    ok(conOv.api.version_override === "nueva", "control POSITIVO: un override con efecto no se hace visible");
+    ok(conOv.web.version_override === null, "control NEGATIVO: un servicio sin override se marca como si lo tuviera");
+    const sinMirar = objetivosDesdeCompose(docJuguete, { vars: { API_TAG: "nueva" }, tag: "base" });
+    ok(
+      sinMirar.api.version_override === undefined,
+      "control NEGATIVO: no haber mirado los overrides se confunde con no haberlos",
+    );
+    const fila = escanearServicio({ service: "api", running_image_exists: true }, conOv.api);
+    ok(fila.version_override === "nueva", "el override no llega a la fila del informe");
+    const filaSinMirar = escanearServicio({ service: "api", running_image_exists: true }, sinMirar.api);
+    ok(filaSinMirar.version_override === DESCONOCIDO, "no ejercido no se distingue de «sin override» en la fila");
+    // Y el override tiene que salir IMPRESO: una fila que lo lleva y un informe
+    // que no lo enseña vuelve a dejarlo invisible.
+    ok(/OVERRIDES DE VERSIÓN ACTIVOS \(1\): api=nueva/.test(informeTexto([fila])), "el informe no imprime el override");
+    ok(/NO EJERCIDO/.test(informeTexto([filaSinMirar])), "el informe no distingue «no ejercido» de «ninguno»");
+  }
+
   // Negativo 4 · runtime distinto.
   ok(
     escanearServicio({ ...sano, runtime: { NODE_VERSION: "18.0.0" } }, objetivo).result === ESTADOS.RUNTIME_DRIFT,
@@ -768,9 +856,21 @@ export function main(argv) {
       const j = String(argv[i + 1] ?? "").indexOf("=");
       if (j > 0) vars[argv[i + 1].slice(0, j)] = argv[i + 1].slice(j + 1);
     }
+    // `--overrides-from-contract` NO reimplementa el contrato de overrides: lee
+    // la ÚNICA declaración que existe (deploy-contract.json) y toma de ella las
+    // variables y su valor. Sin la bandera, el escáner NO afirma que no haya
+    // overrides: los deja en «no ejercido», porque no haber mirado no es no haber.
+    const contratoOv = arg(argv, "--overrides-from-contract");
+    let varsOverride = [];
+    if (contratoOv) {
+      const c = JSON.parse(readFileSync(contratoOv, "utf8"));
+      varsOverride = [...new Set(Object.values(c?.overrides_de_version?.variables_por_servicio ?? {}))];
+      for (const v of varsOverride) if (vars[v] === undefined && c?.entorno?.[v] !== undefined) vars[v] = c.entorno[v];
+    }
     objetivos = objetivosDesdeCompose(parseYaml(readFileSync(compose, "utf8")), {
       vars,
       tag: arg(argv, "--tag") ?? null,
+      varsOverride,
     });
   }
   const ficheroObjetivo = arg(argv, "--target");

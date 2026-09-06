@@ -100,6 +100,10 @@ export function nominalProbes(): ReadinessProbes {
         envImagen: { BUILD_COMMIT: "4d469dc" },
       });
     },
+    async versionOverrides() {
+      // Nominal = el estado SANO declarado: un único TAG para todo el stack.
+      return { probed: true, globalTag: "4d469dc", active: [], undeclared: [] };
+    },
     async secretMounted() {
       return { probed: true, existsOnHost: true, mountedInProcess: true, readableBytes: 64 };
     },
@@ -446,6 +450,43 @@ export const MUTATIONS: readonly ReadinessMutation[] = [
           idDeLaReferencia: ID_VIVA,
           envImagen: { BUILD_COMMIT: "0badc0d" },
         });
+    },
+  },
+  {
+    checkId: "security.version_overrides",
+    name: "un servicio adelantado: el stack ya no corre un único TAG",
+    apply: (c) => {
+      c.probes.versionOverrides = async () => ({
+        probed: true,
+        globalTag: "4d469dc",
+        active: [{ service: "tournament-worker", tag: "82c74a8" }],
+        undeclared: [],
+      });
+    },
+  },
+  {
+    checkId: "security.version_overrides",
+    name: "nadie miró los overrides (no haber mirado no es «no hay»)",
+    apply: (c) => {
+      c.probes.versionOverrides = async () => ({
+        probed: false,
+        globalTag: null,
+        active: [],
+        undeclared: [],
+        reason: "el gate de overrides no se ejecutó",
+      });
+    },
+  },
+  {
+    checkId: "security.version_overrides_declared",
+    name: "override con efecto y SIN declarar: «el .env dice X pero el runtime es otra cosa»",
+    apply: (c) => {
+      c.probes.versionOverrides = async () => ({
+        probed: true,
+        globalTag: "4d469dc",
+        active: [{ service: "api", tag: "sorpresa" }],
+        undeclared: ["api"],
+      });
     },
   },
   {

@@ -154,6 +154,27 @@ export interface ReadinessProbes {
     canaryFound: boolean;
     reason?: string;
   }>;
+  /**
+   * Overrides de versión POR SERVICIO activos en el stack (#143).
+   *
+   * Un override es estado que cambia lo que se despliega: `TAG=4d469dc` con
+   * `TOURNAMENT_WORKER_TAG=82c74a8` significa que un servicio NO corre la
+   * versión que el TAG global anuncia. Si eso vive sólo en un `.env`, R17
+   * aprobaría un stack describiéndolo por su TAG global — «el .env dice X pero
+   * el runtime es otra cosa», con el sistema callado.
+   *
+   * `probed: false` = NO se ha mirado. Eso NO es «no hay overrides»: confundir
+   * las dos cosas es la forma exacta en que un override se vuelve invisible.
+   */
+  versionOverrides(): Promise<{
+    probed: boolean;
+    globalTag: string | null;
+    /** Servicios cuya imagen NO sale del TAG global, por EFECTO del render. */
+    active: Array<{ service: string; tag: string }>;
+    /** De esos, los que el contrato NO declara en `overrides_de_version.activos`. */
+    undeclared: string[];
+    reason?: string;
+  }>;
   /** Versión realmente desplegada, según el daemon, no según la etiqueta. */
   deployedVersion(): Promise<{
     imageTag: string | null;

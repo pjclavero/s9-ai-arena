@@ -248,7 +248,25 @@ describe("C · gate de TAG · por EFECTO, no por cadena", () => {
     const r = verificarTag({ ...contrato, entorno: { ...contrato.entorno, TAG: "local" } }, doc);
     expect(r.ok).toBe(false);
     expect(r.fallos.every((f: any) => f.codigo === CODIGOS.TAG_DERIVA)).toBe(true);
-    expect(r.fallos.length).toBeGreaterThanOrEqual(9);
+    // Ocho, y no nueve: `tournament-worker` lleva un override activo
+    // (TOURNAMENT_WORKER_TAG, #143) y por eso NO cae con el TAG global. Que la
+    // cuenta baje al activar un override no es una regresión, es la prueba de
+    // que el override aísla; la línea de abajo lo dice explícitamente para que
+    // el número no se pueda "arreglar" sin entender por qué cambió.
+    const afectados = r.fallos.map((f: any) => f.detalle.split(":")[0]);
+    expect(afectados).not.toContain("tournament-worker");
+    expect(r.fallos.length).toBeGreaterThanOrEqual(8);
+  });
+
+  it("con el override activo, mover el TAG global NO arrastra al servicio adelantado", () => {
+    // Mitad POSITIVA de la de arriba: no basta con que no aparezca en la lista
+    // de fallos —podría no aparecer por no renderizarse—; tiene que renderizar
+    // EXACTAMENTE la imagen objetivo aunque el TAG global se mueva a cualquier
+    // cosa. Se comprueba por efecto del render, no por el texto del YAML.
+    const movido = { ...contrato, entorno: { ...contrato.entorno, TAG: "local" } };
+    const render = renderizar(doc, { perfiles: movido.perfiles, vars: movido.entorno });
+    expect(render["tournament-worker"].imagen).toBe(contrato.imagenes_esperadas["tournament-worker"]);
+    expect(render.api.imagen).toContain(":local");
   });
 
   it("OTRA variable que produce el mismo drift también falla (no se prohíbe una palabra)", () => {

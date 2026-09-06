@@ -210,11 +210,30 @@ export function verificarBackup(contrato, doc) {
         codigo: CODIGOS.BACKUP_IMAGEN_DISTINTA,
         detalle: `${svc} renderiza ${imagen} y BACKUP_STACK declara ${bk.imagen_esperada}`,
       });
-    const centinela = conVars({ ...(contrato?.entorno ?? {}), TAG: "TAG-CENTINELA-QUE-NO-DEBE-APARECER" });
+    const CENTINELA = "TAG-CENTINELA-QUE-NO-DEBE-APARECER";
+    const centinela = conVars({ ...(contrato?.entorno ?? {}), TAG: CENTINELA });
     if (centinela[svc]?.imagen !== imagen)
       fallos.push({
         codigo: CODIGOS.TAG_GLOBAL_ARRASTRA_BACKUP,
         detalle: `mover el TAG global cambia la imagen de ${svc} (${imagen} → ${centinela[svc]?.imagen}): el bloque de copia tiene que versionarse con ${bk.variable_de_version ?? "su propia variable"}, no con el de los otros once servicios`,
+      });
+
+    // SEGUNDA SONDA, y sin ella la primera tiene un punto ciego que se midió al
+    // introducir los overrides por servicio (#143): con `BACKUP_TAG` PUESTA en
+    // el entorno, un `${BACKUP_TAG:-${TAG:-latest}}` anidado da el mismo render
+    // que el correcto y la sonda de arriba no ve nada. El anidamiento sólo se
+    // manifiesta cuando la variable propia NO está — que es justo el día en que
+    // alguien la quita del `.env`, o la deja vacía para "retirar" el pin. Ese
+    // día el bloque de copia empezaría a seguir al TAG global en silencio.
+    // Se prueba, pues, el caso que la revela: variable propia AUSENTE y TAG
+    // centinela. Sin anidar el render da el defecto declarado (`latest`) y no
+    // el centinela; anidado, sale el centinela.
+    const sinSuVariable = { ...(contrato?.entorno ?? {}), TAG: CENTINELA };
+    delete sinSuVariable[bk.variable_de_version ?? "BACKUP_TAG"];
+    if (String(conVars(sinSuVariable)[svc]?.imagen ?? "").includes(CENTINELA))
+      fallos.push({
+        codigo: CODIGOS.TAG_GLOBAL_ARRASTRA_BACKUP,
+        detalle: `sin ${bk.variable_de_version ?? "BACKUP_TAG"} en el entorno, ${svc} CAE al TAG global (${conVars(sinSuVariable)[svc]?.imagen}): la referencia está anidada como las de aplicación y basta con quitar una línea del .env para que la copia siga al stack`,
       });
   }
 
@@ -472,6 +491,17 @@ export const CASOS_NEGATIVOS_COMPOSE = Object.freeze([
     codigo: CODIGOS.TAG_GLOBAL_ARRASTRA_BACKUP,
     mutar: (d) => {
       d.services.backup.image = "s9arena/backup:${TAG:-latest}";
+      return d;
+    },
+  },
+  {
+    // El punto ciego que la primera sonda no veía: con BACKUP_TAG puesta, este
+    // compose rinde EXACTAMENTE lo mismo que el correcto. Lo delata la sonda
+    // que quita la variable propia.
+    nombre: "backup ANIDADO como los de aplicación (invisible mientras BACKUP_TAG esté puesta)",
+    codigo: CODIGOS.TAG_GLOBAL_ARRASTRA_BACKUP,
+    mutar: (d) => {
+      d.services.backup.image = "s9arena/backup:${BACKUP_TAG:-${TAG:-latest}}";
       return d;
     },
   },

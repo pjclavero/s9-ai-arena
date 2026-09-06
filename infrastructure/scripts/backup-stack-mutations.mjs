@@ -80,9 +80,24 @@ const MUTACIONES = {
     desc: "la imagen del bloque de copia deja de tener que ser la declarada",
     cambios: [["    if (bk.imagen_esperada !== undefined && imagen !== bk.imagen_esperada)", "    if (false)"]],
   },
+  // La garantía G6 la vigilan DOS sondas, y hay una mutación por sonda. M14
+  // apaga las dos a la vez porque es la garantía entera la que se pierde: la
+  // segunda sonda subsume a la primera en los casos que hoy existen (con la
+  // variable propia PUESTA, la nidificación no se nota; sin ella, sí), así que
+  // apagar sólo la primera dejaría la suite verde y M14 «sobreviviría» sin que
+  // nada estuviera realmente desprotegido. Eso sería una calibración que miente
+  // en la dirección ruidosa. M15 apaga sólo la segunda, y ahí sí hay un caso
+  // —`${BACKUP_TAG:-${TAG:-latest}}`— que NINGUNA otra comprobación ve.
   M14: {
     desc: "backup puede volver a colgar del TAG global (mover TAG arrastraría la copia con los otros once)",
-    cambios: [["    if (centinela[svc]?.imagen !== imagen)", "    if (false)"]],
+    cambios: [
+      ["    if (centinela[svc]?.imagen !== imagen)", "    if (false)"],
+      ['    if (String(conVars(sinSuVariable)[svc]?.imagen ?? "").includes(CENTINELA))', "    if (false)"],
+    ],
+  },
+  M15: {
+    desc: "la referencia de backup puede ANIDARSE como las de aplicación (invisible mientras BACKUP_TAG esté puesta)",
+    cambios: [['    if (String(conVars(sinSuVariable)[svc]?.imagen ?? "").includes(CENTINELA))', "    if (false)"]],
   },
   M12: {
     desc: "un contrato ausente deja de ser rc=2 y pasa por aprobado",
