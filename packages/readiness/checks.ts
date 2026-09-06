@@ -578,6 +578,86 @@ const diagnosticsRedacted: ReadinessCheck = {
   },
 };
 
+/**
+ * VISIBILIDAD del override de versión (#143). NO bloqueante a propósito: un
+ * override es una herramienta legítima de transición —adelantar `tournament-worker`
+ * sin mover los otros diez— y bloquear la readiness por usarla empujaría a no
+ * declararlo, que es el resultado contrario al que se busca. Lo que sí hace es
+ * NEGARSE a decir «verde» mientras el stack no corra un único TAG: el destino
+ * declarado es volver a uno solo, y una transición que dura para siempre deja de
+ * ser una transición.
+ */
+const versionOverridesVisible: ReadinessCheck = {
+  id: "security.version_overrides",
+  block: "seguridad",
+  title: "El stack corre un único TAG, o dice exactamente cuál no",
+  proves: "Que se ha MIRADO si algún servicio se aparta del TAG global, y cuál, con qué etiqueta.",
+  doesNotProve:
+    "Que la versión adelantada sea correcta, ni que esté desplegada. Sólo dice qué declara el stack, no qué corre: eso es security.deployed_version.",
+  required: false,
+  async run(ctx: ReadinessContext) {
+    const r = await ctx.probes.versionOverrides();
+    if (!r.probed)
+      return {
+        status: "not_exercised" as const,
+        evidence: `no se han mirado los overrides de versión${r.reason ? ` (${r.reason})` : ""}`,
+        remedy:
+          "Ejecuta infrastructure/scripts/tag-override-gate.mjs. No haber mirado NO es «no hay»: un override no visto es indistinguible de un stack coherente.",
+      };
+    if (r.active.length === 0)
+      return {
+        status: "verified" as const,
+        evidence: `sin overrides: los servicios de aplicación siguen al TAG global (${r.globalTag ?? "sin declarar"})`,
+      };
+    return {
+      status: "failed" as const,
+      evidence: `TAG global ${r.globalTag ?? "sin declarar"} y ${r.active.length} servicio(s) apartados: ${r.active
+        .map((o) => `${o.service}=${o.tag}`)
+        .join(" ")}`,
+      remedy:
+        "Estado de TRANSICIÓN, no defecto: el stack no corre un único TAG. Se cierra alineando TAG global a la versión adelantada y retirando la entrada de overrides_de_version.activos.",
+    };
+  },
+};
+
+/**
+ * La mitad BLOQUEANTE, y la que responde al requisito literal del operador. Lo
+ * que no puede pasar no es que haya un override: es que haya uno que el sistema
+ * no declare. Un override con efecto y sin declaración es exactamente «el .env
+ * dice X pero el runtime es otra cosa».
+ */
+const versionOverridesDeclared: ReadinessCheck = {
+  id: "security.version_overrides_declared",
+  block: "seguridad",
+  title: "Ningún override de versión sin declarar",
+  proves: "Que todo servicio apartado del TAG global está declarado en el contrato de despliegue.",
+  doesNotProve: "Que la declaración sea acertada; sólo que existe y coincide con el render.",
+  required: true,
+  async run(ctx: ReadinessContext) {
+    const r = await ctx.probes.versionOverrides();
+    if (!r.probed)
+      return {
+        status: "not_exercised" as const,
+        evidence: `no se ha comprobado si hay overrides sin declarar${r.reason ? ` (${r.reason})` : ""}`,
+        remedy: "Sin mirar el render no se puede afirmar que no haya estado invisible.",
+      };
+    if (r.undeclared.length > 0)
+      return {
+        status: "failed" as const,
+        evidence: `override(s) con efecto y SIN declarar: ${r.undeclared.join(", ")}`,
+        remedy:
+          "Declara cada uno en overrides_de_version.activos (variable, etiqueta, motivo, procedencia y condición de cierre) o retíralo del entorno.",
+      };
+    return {
+      status: "verified" as const,
+      evidence:
+        r.active.length === 0
+          ? "no hay overrides activos: no hay nada que declarar"
+          : `los ${r.active.length} override(s) activos están declarados en el contrato`,
+    };
+  },
+};
+
 export const READINESS_CHECKS: readonly ReadinessCheck[] = [
   storageWritable,
   backupProcessAlive,
@@ -587,6 +667,8 @@ export const READINESS_CHECKS: readonly ReadinessCheck[] = [
   backupRestoreVerified,
   secretMounted,
   deployedVersionMatches,
+  versionOverridesVisible,
+  versionOverridesDeclared,
   realBattleGate,
   spectateGate,
   dbCanaryCheck,

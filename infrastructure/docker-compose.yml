@@ -59,6 +59,40 @@ x-node-env: &node-db-env
   REDIS_URL: redis://queue:6379
   LOG_FORMAT: json
 
+# ══════════════════════════════════════════════════════════════════════════════
+# VERSIONADO DE IMÁGENES · DOS SEMÁNTICAS DISTINTAS, A PROPÓSITO
+#
+# Quien venga a "unificar" esto creyendo que hay una incoherencia: no la hay.
+# Son dos reglas contrarias porque los dos bloques son contrarios.
+#
+#   1) SERVICIOS DE APLICACIÓN  → `${<SERVICIO>_TAG:-${TAG:-latest}}`
+#      SIGUEN A `TAG` POR DEFECTO. `TAG` es la línea base del stack: mover TAG
+#      mueve los once a la vez, que es lo que se quiere en una alineación.
+#      La variable por servicio es una EXCEPCIÓN TEMPORAL, no un régimen: sirve
+#      para adelantar UN servicio sin arrastrar a los otros diez. El destino
+#      declarado es volver a un único TAG común; mientras haya un override
+#      activo, el stack está en transición y así lo declara el contrato
+#      (`overrides_de_version.activos` en deploy-contract.json) y lo imprime
+#      `infrastructure/scripts/tag-override-gate.mjs`.
+#
+#   2) `backup`  → `${BACKUP_TAG:-latest}`, SIN ANIDAR
+#      NO sigue a `TAG`, y es deliberado (#139). Es un BLOQUE APARTE con su
+#      propia ventana y su propio ciclo. Anidarlo como los de aplicación
+#      reintroduciría justo el defecto que aquel carril cerró: una alineación
+#      del bloque de copia movería de rebote los once servicios de aplicación.
+#      Lo verifica POR EFECTO `backup-stack-gate.mjs` (G6), renderizando con un
+#      TAG centinela: si alguien anida `${BACKUP_TAG:-${TAG:-latest}}`, ese gate
+#      se pone ROJO. La comprobación no lee el texto del YAML — leerlo sería
+#      cierto en el texto y falso en el render.
+#
+# Regla para el futuro: un servicio nuevo de aplicación anida; un bloque nuevo
+# con ventana propia NO anida y se declara en `gestionados_aparte`. La elección
+# se justifica en el contrato, no en la costumbre.
+#
+# `bot-build-worker` comparte `BOT_MANAGER_TAG` con `bot-manager` — ver el
+# comentario en ese servicio.
+# ══════════════════════════════════════════════════════════════════════════════
+
 services:
   # ── gateway · Nginx, HTTPS, rutas y WebSocket. Único con puertos al exterior ─
   gateway:
@@ -68,7 +102,7 @@ services:
       args:
         <<: *build-identity
         SERVICE_NAME: gateway
-    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/gateway:${TAG:-latest}
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/gateway:${GATEWAY_TAG:-${TAG:-latest}}
     profiles: [nucleo, development, production, external-db]
     networks: [public, platform]
     ports:
@@ -116,7 +150,7 @@ services:
       args:
         <<: *build-identity
         SERVICE_NAME: web
-    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/web:${TAG:-latest}
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/web:${WEB_TAG:-${TAG:-latest}}
     profiles: [nucleo, development, production, external-db]
     networks: [platform]
     environment:
@@ -143,7 +177,7 @@ services:
         <<: *build-identity
         SERVICE_NAME: api
         APP_PATH: apps/api
-    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/api:${TAG:-latest}
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/api:${API_TAG:-${TAG:-latest}}
     profiles: [nucleo, development, production, external-db]
     networks: [platform, data]
     environment:
@@ -224,7 +258,7 @@ services:
       args:
         <<: *build-identity
         SERVICE_NAME: arena-engine
-    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/arena-engine:${TAG:-latest}
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/arena-engine:${ARENA_ENGINE_TAG:-${TAG:-latest}}
     profiles: [development, production, external-db]
     networks: [platform, arena]
     environment:
@@ -281,7 +315,7 @@ services:
         <<: *build-identity
         SERVICE_NAME: tournament-worker
         APP_PATH: apps/tournament-worker
-    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/tournament-worker:${TAG:-latest}
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/tournament-worker:${TOURNAMENT_WORKER_TAG:-${TAG:-latest}}
     profiles: [nucleo, development, production, external-db]
     networks: [platform, data]
     environment:
@@ -348,7 +382,7 @@ services:
         <<: *build-identity
         SERVICE_NAME: bot-manager
         APP_PATH: apps/bot-manager
-    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/bot-manager:${TAG:-latest}
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/bot-manager:${BOT_MANAGER_TAG:-${TAG:-latest}}
     profiles: [development, production, external-db]
     networks: [platform, build]
     environment:
@@ -396,7 +430,21 @@ services:
         <<: *build-identity
         SERVICE_NAME: bot-manager
         APP_PATH: apps/bot-manager
-    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/bot-manager:${TAG:-latest}
+    # MISMA VARIABLE que `bot-manager`, y no un `BOT_BUILD_WORKER_TAG` propio.
+    # Motivo: los dos servicios NO son dos artefactos, son DOS ROLES DEL MISMO
+    # ARTEFACTO (`s9arena/bot-manager:<tag>`; el contrato lo declara así en
+    # `imagenes_esperadas`, con la misma referencia para ambos). Una variable
+    # por servicio permitiría escribir BOT_MANAGER_TAG=a y
+    # BOT_BUILD_WORKER_TAG=b, es decir DOS etiquetas distintas para la misma
+    # imagen: o una de las dos no existe en el registro, o existen y entonces
+    # el gestor y su trabajador de construcción corren código distinto sobre el
+    # mismo contrato interno. Ese estado no lo quiere nadie y ninguna
+    # comprobación de nombres lo vería. Con una sola variable ese estado es
+    # INEXPRESABLE, que es más barato que detectarlo.
+    # Consecuencia aceptada y explícita: adelantar `bot-manager` adelanta
+    # también `bot-build-worker`. El gate lo cuenta como DOS imágenes cambiadas
+    # y lo dice; no es una excepción silenciosa.
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/bot-manager:${BOT_MANAGER_TAG:-${TAG:-latest}}
     profiles: [development, production, external-db]
     networks: [platform, build, data]
     environment:
@@ -437,7 +485,7 @@ services:
         <<: *build-identity
         SERVICE_NAME: map-service
         APP_PATH: apps/map-service
-    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/map-service:${TAG:-latest}
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/map-service:${MAP_SERVICE_TAG:-${TAG:-latest}}
     profiles: [development, production, external-db]
     networks: [platform, data]
     environment:
@@ -474,7 +522,7 @@ services:
         <<: *build-identity
         SERVICE_NAME: replay-service
         APP_PATH: apps/replay-service
-    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/replay-service:${TAG:-latest}
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/replay-service:${REPLAY_SERVICE_TAG:-${TAG:-latest}}
     profiles: [nucleo, development, production, external-db]
     networks: [platform, data]
     environment:
@@ -611,7 +659,7 @@ services:
       args:
         <<: *build-identity
         SERVICE_NAME: streamer
-    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/streamer:${TAG:-latest}
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/streamer:${STREAMER_TAG:-${TAG:-latest}}
     profiles: [streaming]
     networks: [platform, public]
     environment:
@@ -674,7 +722,7 @@ services:
       args:
         <<: *build-identity
         SERVICE_NAME: bot-runtime-python
-    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/bot-runtime-python:${TAG:-latest}
+    image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/bot-runtime-python:${BOT_RUNTIME_TAG:-${TAG:-latest}}
     profiles: [bots]
     networks: [arena]
     environment:

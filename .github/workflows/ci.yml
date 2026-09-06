@@ -648,6 +648,86 @@ jobs:
       - name: CALIBRACIÓN · las mutaciones de los dos bloques mueren
         run: node infrastructure/scripts/backup-stack-mutations.mjs
 
+      # ── OVERRIDE SELECTIVO DE VERSIÓN POR SERVICIO (#143) ───────────────────
+      # `tournament-worker` corre en producción un runtime que se paraliza en
+      # silencio si Redis muere después de arrancar (el healthcheck sigue verde:
+      # es un setInterval ajeno al bucle de trabajo). Hay que adelantar ESE
+      # servicio sin mover los otros diez, validados en 4d469dc. El mecanismo es
+      # `${<SERVICIO>_TAG:-${TAG:-latest}}`, y estos pasos vigilan que siga
+      # siendo selectivo, visible y limitado a la imagen.
+      #
+      # Cuidado con la tensión que NO hay que "arreglar": los de aplicación
+      # SIGUEN a TAG por defecto y `backup` NO (bloque aparte, #139). Son dos
+      # semánticas contrarias a propósito, y el gate comprueba las dos.
+      - name: CONTROL · las garantías del override saben ponerse rojas
+        run: node infrastructure/scripts/tag-override-gate.mjs --self-test
+
+      - name: CONTROL · el override del repositorio es selectivo, visible y sólo toca la imagen
+        run: node infrastructure/scripts/tag-override-gate.mjs --gate
+
+      # CONTROL NEGATIVO: un contrato ausente es rc=2 (no comprobado), jamás un
+      # aprobado. La ausencia nunca es verde.
+      - name: CONTROL NEGATIVO · sin contrato no se concluye
+        run: |
+          set +e
+          node infrastructure/scripts/tag-override-gate.mjs --contrato /no/existe.json > /tmp/gate-ovr.txt 2>&1
+          rc=$?
+          set -e
+          cat /tmp/gate-ovr.txt
+          if [ "$rc" -ne 2 ]; then
+            echo "::error::se esperaba rc=2 (no comprobado) y salió rc=$rc"
+            exit 1
+          fi
+          grep -q "NO COMPROBADO" /tmp/gate-ovr.txt
+
+      # CONTROL NEGATIVO por EFECTO: se inyecta un override NO declarado en una
+      # copia del contrato y el gate tiene que parar. Es el escenario literal
+      # que el operador pidió no volver a permitir: «el .env dice X pero el
+      # runtime es otra cosa» sin que el sistema lo declare.
+      - name: CONTROL NEGATIVO · un override sin declarar NO pasa el gate
+        run: |
+          node -e '
+            const fs = require("fs");
+            const c = JSON.parse(fs.readFileSync("infrastructure/deploy-contract.json", "utf8"));
+            c.entorno.WEB_TAG = "colada-sin-declarar";
+            fs.writeFileSync("/tmp/contrato-colado.json", JSON.stringify(c));
+          '
+          set +e
+          node infrastructure/scripts/tag-override-gate.mjs --gate --contrato /tmp/contrato-colado.json \
+            > /tmp/gate-colado.txt 2>&1
+          rc=$?
+          set -e
+          cat /tmp/gate-colado.txt
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::un override sin declarar pasó el gate: el estado invisible sigue siendo posible"
+            exit 1
+          fi
+          grep -q "OVERRIDE_NO_DECLARADO" /tmp/gate-colado.txt
+
+      # El gate es puramente offline, como el de los dos bloques: lee el
+      # contrato y el compose del propio repositorio y nada más. Se demuestra en
+      # vez de afirmarse. La mitad negativa de esta sonda (un gate que SÍ
+      # consulta el registro tiene que ponerse rojo con el mismo entorno vacío)
+      # ya está más abajo, sobre deploy-contract-gate --registro: no se duplica.
+      - name: CONTROL · el gate del override no depende de ninguna fuente externa
+        run: |
+          NODE=$(command -v node)
+          set +e
+          env -i PATH=/nonexistent "$NODE" infrastructure/scripts/tag-override-gate.mjs --gate \
+            > /tmp/gate-ovr-sin-fuentes.txt 2>&1
+          rc=$?
+          set -e
+          cat /tmp/gate-ovr-sin-fuentes.txt
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::el gate necesitó algo del entorno: no es puramente offline (rc=$rc)"
+            exit 1
+          fi
+          grep -q "changed_images                  1" /tmp/gate-ovr-sin-fuentes.txt
+          grep -q "changed_specs_other_than_image  0" /tmp/gate-ovr-sin-fuentes.txt
+
+      - name: CALIBRACIÓN · las mutaciones del override mueren
+        run: node infrastructure/scripts/tag-override-mutations.mjs
+
       # ADR-018 · POR QUÉ ESTOS PASOS NO DECLARAN `outputs.estado`.
       # El contrato de los cinco estados es de los jobs de clase `escaneo`
       # (hoy sólo `scan`, ver JOBS_CI en infrastructure/scripts/ci-gate.mjs), y

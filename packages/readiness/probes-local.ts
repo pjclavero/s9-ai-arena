@@ -14,6 +14,7 @@ import { join } from "node:path";
 import type { ReadinessProbes } from "./engine.ts";
 import { backupLastRunProbe, backupLastSnapshotProbe, backupProcessAliveProbe } from "./probes-backup.ts";
 import { deployedVersionProbe } from "./probes-docker.ts";
+import { versionOverridesProbe } from "./probes-overrides.ts";
 
 const NEEDS_INFRA = "sonda no disponible en este entorno (requiere infraestructura)";
 
@@ -80,6 +81,10 @@ export function localProbes(env: Record<string, string | undefined> = process.en
     // Única sonda de infraestructura ya implementada de verdad: lee el daemon
     // en SOLO LECTURA. Sin `S9_READINESS_CONTAINER` no observa nada y lo dice.
     deployedVersion: deployedVersionProbe(env.S9_READINESS_CONTAINER ?? ""),
+    // Overrides de versión: se ejecuta el gate del repositorio, que es la única
+    // autoridad. Sin `S9_READINESS_REPO` no observa nada y lo dice — «no hay
+    // overrides» y «no he mirado» son afirmaciones distintas.
+    versionOverrides: versionOverridesProbe(env.S9_READINESS_REPO ?? ""),
     async secretMounted() {
       // `probed: false`: NO se ha mirado el espacio de montaje. Antes esto
       // producía un `failed` — un falso fallo que afirmaba "no está montado"
