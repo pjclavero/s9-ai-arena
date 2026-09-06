@@ -243,7 +243,14 @@ describe("CONTRATO · el conjunto canónico lo fija deploy-contract.json, no est
     // el contenedor vivo se creó desde la etiqueta flotante `redis:7-alpine`,
     // así que la spec canónica y la viva ya no coinciden. Es un cambio
     // DECLARATIVO: la recreación es una ventana propia, no este commit.
-    expect(res.recrear).toEqual(["api", "backup", "postgres", "queue"]);
+    // `tournament-worker` se une DESDE que lleva override activo
+    // (TOURNAMENT_WORKER_TAG=82c74a8, #143) y el stack vivo sigue en 4d469dc.
+    // Es la MISMA divergencia deliberada que la de `backup` con BACKUP_TAG: el
+    // contrato declara el OBJETIVO, no lo que corre hoy, y por eso esto está
+    // ROJO antes de la recreación y VERDE después — que es lo que convierte el
+    // despliegue en algo medible. Si desapareciera de la lista sin que nadie
+    // hubiera desplegado nada, lo perdido sería la declaración del objetivo.
+    expect(res.recrear).toEqual(["api", "backup", "postgres", "queue", "tournament-worker"]);
   });
 
   it("el TAG y el prefijo salen del contrato: nadie los vuelve a decidir aquí", () => {
@@ -450,7 +457,10 @@ describe("HECHOS REALES de VM108 · el incidente que motiva el carril", () => {
     // etiqueta flotante desde la que se creó el contenedor vivo).
     expect(res.recrear).toEqual(["api", "backup", "postgres", "queue"]);
     // Estos ocho sólo arrastran una procedencia equivocada: su spec ya coincide
-    // con el canónico, así que canonizar no les cambia nada.
+    // con el canónico, así que canonizar no les cambia nada. Ocho, y no siete:
+    // este bloque renderiza con VARS_PROD, que NO lleva TOURNAMENT_WORKER_TAG,
+    // así que aquí el worker sigue en 4d469dc y sólo arrastra procedencia. El
+    // override vive en el CONTRATO, y es el bloque de arriba el que lo mide.
     expect(res.reetiquetar).toEqual([
       "arena-engine",
       "bot-build-worker",
