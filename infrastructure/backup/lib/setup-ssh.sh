@@ -70,3 +70,83 @@ setup_ssh() {
   chmod 600 "$HOME/.ssh/config"
   return 0
 }
+
+# ── classify_ssh_endpoint — SEÑAL ESTRUCTURADA DE NUESTRO PROPIO ARNÉS ─────
+#
+# POR QUÉ EXISTE (defecto real, CI de main del 2026-09-06, run 34042429827):
+# el E2E de restore.sh comprobaba la verificación de huella buscando el TEXTO
+# de OpenSSH ("Host key verification failed" / "REMOTE HOST IDENTIFICATION
+# HAS CHANGED") en la salida de `restic`. Ese texto NO lo emite restic: lo
+# emite `ssh`, y restic lo reenvía desde una goroutine que copia el stderr
+# del subproceso mientras el hilo principal aborta con `Fatal:` y sale. En un
+# runner cargado, restic sale ANTES de que esa goroutine termine de copiar:
+# en el fallo real llegó UNA sola línea de las trece del bloque (el marco de
+# arrobas) y se perdió justo la que la aserción buscaba. La garantía seguía
+# intacta —la restauración NO ocurrió, rc=1— pero la PRUEBA era frágil
+# porque dependía del texto de un tercero y de una carrera de escritura.
+#
+# Aceptar cualquier rc!=0 habría degradado la garantía (un corte de red
+# pasaría por "verificación de huella"), así que la prueba necesita una señal
+# que digamos NOSOTROS, no OpenSSH, y que distinga la CONDICIÓN REAL. Esta
+# función la produce comparando ESTRUCTURA, no frases:
+#
+#   NETWORK_FAILURE   el endpoint no entrega ninguna clave de host
+#                     (inalcanzable, sin sshd, puerto cerrado)
+#   HOST_KEY_MISMATCH la clave que presenta el endpoint NO está entre las que
+#                     known_hosts tiene verificadas para ese host (incluye el
+#                     caso "no hay ninguna entrada para ese host")
+#   AUTH_FAILURE      la huella coincide, pero el servidor rechaza nuestra
+#                     autenticación (clave equivocada, usuario equivocado)
+#   OK                huella verificada Y sesión sftp negociada de verdad;
+#                     cualquier fallo posterior es del repositorio restic
+#   UNKNOWN_ENDPOINT  RESTIC_REPOSITORY no tiene forma sftp analizable
+#
+# ES ADVISORIA A PROPÓSITO: imprime y registra, y SIEMPRE devuelve 0. Quien
+# impone la verificación de huella sigue siendo `ssh` con
+# StrictHostKeyChecking yes (setup_ssh, arriba); esta función no concede ni
+# deniega acceso. Si un día se equivocase al clasificar, NO puede bloquear
+# una recuperación real — que es exactamente lo que no queremos añadirle a un
+# runbook de desastre.
+#
+# La invoca restore.sh (bootstrap_sftp). backup.sh NO la llama: el camino
+# programado de producción se deja intacto a propósito.
+classify_ssh_endpoint() {
+  local result="UNKNOWN_ENDPOINT" spec userhost user host port
+  if [[ "$RESTIC_REPOSITORY" == sftp:* ]]; then
+    spec="${RESTIC_REPOSITORY#sftp:}"
+    spec="${spec#//}"
+    userhost="${spec%%:*}"   # user@host  (la ruta va tras el primer ':')
+    [[ "$userhost" == */* ]] && userhost="${userhost%%/*}"
+    if [[ "$userhost" == *@* ]]; then
+      user="${userhost%@*}"
+      host="${userhost##*@}"
+    else
+      user=""
+      host="$userhost"
+    fi
+    port=22
+    if [ -n "$host" ]; then
+      local scanned expected blob match=0
+      scanned="$(ssh-keyscan -T 5 -p "$port" "$host" 2>/dev/null | awk '$2 ~ /^(ssh|ecdsa)-/ {print $3}')"
+      if [ -z "$scanned" ]; then
+        result="NETWORK_FAILURE"
+      else
+        expected="$(ssh-keygen -F "$host" -f "$HOME/.ssh/known_hosts" 2>/dev/null | awk '$1 !~ /^#/ && NF >= 3 {print $3}')"
+        for blob in $scanned; do
+          case " $expected " in *" $blob "*) match=1 ;; esac
+        done
+        if [ "$match" -eq 0 ]; then
+          result="HOST_KEY_MISMATCH"
+        elif ssh -o BatchMode=yes -o ConnectTimeout=5 -p "$port" -n \
+             -s "${user:+$user@}$host" sftp </dev/null >/dev/null 2>&1; then
+          result="OK"
+        else
+          result="AUTH_FAILURE"
+        fi
+      fi
+    fi
+  fi
+  printf 'SSH_BOOTSTRAP_RESULT=%s\n' "$result"
+  log info "sonda del endpoint sftp: SSH_BOOTSTRAP_RESULT=$result"
+  return 0
+}

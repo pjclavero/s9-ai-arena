@@ -193,9 +193,15 @@ jobs:
     runs-on: ubuntu-latest
     # Mismo margen que e2e-backup-sftp: pulls de atmoz/sftp + postgres
     # (probablemente ya en caché de capas del runner tras e2e-backup-sftp,
-    # pero no se asume), backup.sh real para producir un snapshot + 6
+    # pero no se asume), backup.sh real para producir un snapshot + 8
     # mutaciones sobre restore.sh, cada una con un `docker run --rm` nuevo.
-    timeout-minutes: 10
+    # +5 minutos respecto del original: la prueba de CALIBRACIÓN construye una
+    # imagen MUTANTE (StrictHostKeyChecking yes→no) para demostrar que la
+    # prueba de huella se pone roja cuando la garantía se rompe de verdad.
+    # Debería reutilizar por caché las capas de la imagen que este job ya
+    # cargó del artefacto (mismo FROM y mismo apk add), pero el margen no se
+    # asume.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
