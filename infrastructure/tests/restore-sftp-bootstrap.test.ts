@@ -59,7 +59,16 @@
 // backup-sftp-e2e.test.ts.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, writeSync, chmodSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync,
+  readFileSync,
+  writeSync,
+  chmodSync,
+  copyFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -69,6 +78,42 @@ const here = dirname(fileURLToPath(import.meta.url));
 // build-images (idéntico al que usa backup-sftp-e2e.test.ts — es la MISMA
 // imagen, reutilizada, no una copia).
 const IMAGE_TAG = "s9-ai-arena/backup:e2e-test";
+const REPO_ROOT = join(here, "..", "..");
+
+// ── POR QUÉ ESTE FICHERO YA NO BUSCA FRASES DE OpenSSH ────────────────────
+// La aserción de la mutación de huella era
+//   expect(r.out.toLowerCase()).toMatch(/host key verification failed|…/)
+// y puso `main` en rojo el 2026-09-06 (run 34042429827) SIN que la garantía
+// se hubiese roto: rc=1, la restauración NO ocurrió. Lo que se rompió fue la
+// PRUEBA. Medido, no razonado:
+//   · el job `e2e-restore-sftp-bootstrap` es byte a byte idéntico entre el
+//     commit verde y el rojo (mismo sha de definición);
+//   · restore.sh, lib/setup-ssh.sh, este fichero y el Dockerfile de backup
+//     son idénticos entre ambos commits;
+//   · las DOS imágenes publicadas en GHCR (sha-82c74a8… verde y sha-178ddbc…
+//     rojo) tienen el MISMO conjunto de paquetes instalado, restic 0.16.4-r5
+//     y openssh 9.7_p1-r5 incluidos → no hubo deriva de paquetes ni caché de
+//     capas (el workflow ni siquiera declara cache-from/cache-to).
+// La causa real está en el propio log del fallo: de las TRECE líneas del
+// bloque "REMOTE HOST IDENTIFICATION HAS CHANGED" llegó UNA, el marco de
+// arrobas, y detrás el `Fatal:` de restic. Ese texto lo escribe `ssh`, y
+// restic lo reenvía desde una goroutine que copia el stderr del subproceso;
+// cuando el hilo principal aborta y sale, la copia se trunca por donde le
+// pille. La aserción dependía de ganar esa carrera.
+//
+// Aflojarla a "cualquier rc!=0" habría DEGRADADO la garantía: un corte de
+// red pasaría por "verificación de huella". Así que la comprobación pasa a
+// una señal ESTRUCTURADA que emite NUESTRO propio arnés
+// (classify_ssh_endpoint en infrastructure/backup/lib/setup-ssh.sh):
+// `SSH_BOOTSTRAP_RESULT=<CLASE>`, una sola línea, escrita por restore.sh
+// antes de invocar restic, que distingue HOST_KEY_MISMATCH de
+// NETWORK_FAILURE, AUTH_FAILURE y del caso "ssh perfecto, repositorio
+// inexistente". Sigue siendo `ssh` con StrictHostKeyChecking yes quien
+// IMPONE la verificación; la señal sólo la observa.
+function sshResult(out: string): string | null {
+  const all = [...out.matchAll(/SSH_BOOTSTRAP_RESULT=([A-Z_]+)/g)];
+  return all.length === 0 ? null : all[all.length - 1][1];
+}
 const NET = "s9-restore-e2e-net";
 const SFTP_CONTAINER = "s9-restore-e2e-sftp";
 const PG_CONTAINER = "s9-restore-e2e-pg";
@@ -539,6 +584,7 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
         repository?: string; // override de RESTIC_REPOSITORY
         extraMounts?: string[]; // más -v host:container[:ro]
         resticAusente?: boolean; // simula "restic ausente de la imagen"
+        image?: string; // imagen alternativa (sólo la prueba de CALIBRACIÓN, que usa un mutante)
       } = {},
     ) {
       const mounts: string[] = [];
@@ -578,7 +624,7 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
           ...env,
           "--entrypoint",
           entrypointCmd[0],
-          IMAGE_TAG,
+          opts.image ?? IMAGE_TAG,
           ...entrypointCmd.slice(1),
         ],
         { timeoutMs: 30_000 },
@@ -591,6 +637,9 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
       logLine(`[caso base] exit=${r.code}\n${r.out}`);
       expect(r.code).toBe(0);
       expect(r.out).toMatch(/snapshots|ID\s+Time/i);
+      // Con huella correcta y clave correcta la sonda dice OK — y sólo OK:
+      // es la referencia contra la que las mutaciones de abajo discriminan.
+      expect(sshResult(r.out)).toBe("OK");
     });
 
     // ── Mutaciones ───────────────────────────────────────────────────────
@@ -621,8 +670,37 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
       writeFileSync(badKnownHosts, `${SFTP_CONTAINER} ${otherPub}\n`);
       const r = await runRestore(["--list"], { knownHostsFile: badKnownHosts });
       logLine(`[fingerprint malo] exit=${r.code}\n${r.out}`);
+      // EFECTO, no texto: (a) la restauración NO ocurre, y (b) la condición
+      // que la impidió es exactamente la de huella —no un corte de red, no un
+      // fallo de autenticación, no un repositorio inexistente—, según la
+      // señal que emite nuestro propio arnés. Las dos aserciones juntas son
+      // la garantía: sólo con `rc != 0` un corte de red pasaría por
+      // verificación de huella; sólo con la señal, un StrictHostKeyChecking=no
+      // pasaría desapercibido (la sonda seguiría diciendo MISMATCH mientras
+      // restic restaura tan tranquilo). Ver la prueba de CALIBRACIÓN de más
+      // abajo, que rompe la garantía de verdad y comprueba que esto se pone
+      // rojo.
       expect(r.code).not.toBe(0);
-      expect(r.out.toLowerCase()).toMatch(/host key verification failed|remote host identification has changed/);
+      expect(sshResult(r.out)).toBe("HOST_KEY_MISMATCH");
+    });
+
+    it("MUTACIÓN endpoint inalcanzable → NETWORK_FAILURE, NUNCA confundido con verificación de huella", async () => {
+      const r = await runRestore(["--list"], {
+        repository: `sftp:${SFTP_USER}@s9-restore-e2e-host-que-no-existe:${CHROOT_PATH}`,
+      });
+      logLine(`[endpoint inalcanzable] exit=${r.code}\n${r.out}`);
+      expect(r.code).not.toBe(0);
+      expect(sshResult(r.out)).toBe("NETWORK_FAILURE");
+    });
+
+    it("MUTACIÓN clave privada de OTRO par → AUTH_FAILURE (huella BUENA), NUNCA confundido con verificación de huella", async () => {
+      // La huella del host es la correcta; lo que no vale es nuestra clave.
+      // Antes, este caso y el de huella mala eran indistinguibles desde el
+      // test (ambos "rc != 0" y ambos podían acabar en "unexpected EOF").
+      const r = await runRestore(["--list"], { keyFile: otherKeyPath });
+      logLine(`[clave equivocada] exit=${r.code}\n${r.out}`);
+      expect(r.code).not.toBe(0);
+      expect(sshResult(r.out)).toBe("AUTH_FAILURE");
     });
 
     it("MUTACIÓN repository incorrecto → FAIL porque el repositorio no existe en esa ruta (ssh/huella SÍ correctos)", async () => {
@@ -632,7 +710,10 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
       logLine(`[repository incorrecto] exit=${r.code}\n${r.out}`);
       expect(r.code).not.toBe(0);
       expect(r.out).toMatch(/unable to open repository|Is there a repository|unable to open config file/i);
-      expect(r.out.toLowerCase()).not.toMatch(/host key verification failed|remote host identification has changed/);
+      // SSH y huella SON correctos: la sonda dice OK y el fallo es del
+      // repositorio. Esto es lo que separa REPOSITORY_FAILURE de
+      // HOST_KEY_MISMATCH sin mirar ni una frase de OpenSSH.
+      expect(sshResult(r.out)).toBe("OK");
     });
 
     it("MUTACIÓN restic no accesible → FAIL con 'orden no encontrada' (nunca un fallo de red disfrazado)", async () => {
@@ -663,5 +744,61 @@ describe.skipIf(SKIP_LOCALLY_WITHOUT_DOCKER)(
       expect(verifyR.code).not.toBe(0);
       expect(verifyR.out).toMatch(/FAILED|sha256sum|no coincide/i);
     });
+
+    // ── CALIBRACIÓN: la prueba de huella debe ponerse ROJA si la garantía se
+    // rompe de verdad ─────────────────────────────────────────────────────
+    // Sin esto, cambiar una aserción de texto por una señal propia sería
+    // sospechoso: una señal que emitimos nosotros podría ser complaciente.
+    // Aquí se construye una imagen MUTANTE con
+    // `StrictHostKeyChecking yes` → `no` en lib/setup-ssh.sh (la
+    // vulnerabilidad exacta que el operador prohibió) y se demuestra que,
+    // con el MISMO known_hosts incorrecto que usa la prueba de arriba, la
+    // restauración SÍ ocurre (rc=0): es decir, que la prueba de arriba
+    // FALLARÍA —su `expect(r.code).not.toBe(0)`— sobre este mutante. La
+    // señal, por su parte, sigue diciendo HOST_KEY_MISMATCH: es una
+    // observación estructural del endpoint, independiente de la config, y
+    // por eso no puede tapar la mutación.
+    it("CALIBRACIÓN StrictHostKeyChecking yes→no: con la MISMA huella mala la restauración SÍ ocurre (la prueba de huella se pondría roja)", async () => {
+      const tag = "s9-ai-arena/backup:e2e-restore-mutant-stricthostkey";
+      const ctx = mkdtempSync(join(tmpdir(), "s9-restore-mutant-"));
+      const backupDir = join(ctx, "infrastructure", "backup");
+      const libDir = join(backupDir, "lib");
+      const dockerDir = join(ctx, "infrastructure", "docker", "backup");
+      mkdirSync(libDir, { recursive: true });
+      mkdirSync(dockerDir, { recursive: true });
+      const src = join(REPO_ROOT, "infrastructure", "backup");
+      for (const f of ["backup.sh", "restore.sh", "entrypoint.sh", "healthcheck.sh", "evidence.sh"]) {
+        copyFileSync(join(src, f), join(backupDir, f));
+      }
+      copyFileSync(join(REPO_ROOT, "infrastructure", "docker", "backup", "Dockerfile"), join(dockerDir, "Dockerfile"));
+      const lib = readFileSync(join(src, "lib", "setup-ssh.sh"), "utf8");
+      const needle = "printf '  StrictHostKeyChecking yes\\n'";
+      if (!lib.includes(needle))
+        throw new Error("no se encontró la línea a mutar (StrictHostKeyChecking yes) — ¿cambió lib/setup-ssh.sh?");
+      writeFileSync(join(libDir, "setup-ssh.sh"), lib.replace(needle, "printf '  StrictHostKeyChecking no\\n'"));
+      try {
+        const build = await phase("build del mutante StrictHostKeyChecking", () =>
+          sh("docker", ["build", "-f", join(dockerDir, "Dockerfile"), "-t", tag, ctx], { timeoutMs: 300_000 }),
+        );
+        if (build.code !== 0) throw new Error(`build del mutante falló:\n${build.out}`);
+
+        const badKnownHosts = join(tmp, "known_hosts_bad_calibracion");
+        const otherPub = readFileSync(`${otherKeyPath}.pub`, "utf8").trim().split(" ").slice(0, 2).join(" ");
+        writeFileSync(badKnownHosts, `${SFTP_CONTAINER} ${otherPub}\n`, { mode: 0o644 });
+        const r = await runRestore(["--list"], { knownHostsFile: badKnownHosts, image: tag });
+        logLine(`[calibración: mutante Strict=no + huella mala] exit=${r.code}\n${r.out}`);
+        // ESTE es el punto: con la garantía rota, la restauración ocurre.
+        // rc=0 ⇒ restic ABRIÓ el repositorio a través de un endpoint cuya
+        // huella NO estaba verificada: exactamente el MITM que el operador
+        // prohibió. La prueba de huella de arriba exige `rc != 0`, luego
+        // sobre este mutante se pondría ROJA. Eso es la calibración.
+        expect(r.code).toBe(0);
+        // …y la señal NO se deja engañar por la config relajada.
+        expect(sshResult(r.out)).toBe("HOST_KEY_MISMATCH");
+      } finally {
+        await sh("docker", ["image", "rm", "-f", tag]);
+        rmSync(ctx, { recursive: true, force: true });
+      }
+    }, 360_000);
   },
 );

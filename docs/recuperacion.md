@@ -36,6 +36,20 @@ del servicio `backup` del stack, alerta si falla o si no hay backup en 26 h).
     haciendo falta que esos dos ficheros existan y sean legibles ANTES de
     invocar `restore.sh` — eso es exactamente lo que dice el riesgo de
     custodia justo abajo.
+  - `restore.sh` imprime, ANTES de invocar `restic`, una línea
+    `SSH_BOOTSTRAP_RESULT=<CLASE>` con lo que de verdad ocurre en el
+    endpoint sftp: `OK`, `HOST_KEY_MISMATCH` (la clave que presenta el host
+    no está entre las verificadas en `known_hosts`), `AUTH_FAILURE` (huella
+    correcta, nuestra clave rechazada), `NETWORK_FAILURE` (el host no
+    entrega ninguna clave: inalcanzable, sin `sshd`, puerto cerrado) o
+    `UNKNOWN_ENDPOINT`. **Léala primero**: cuando la huella no cuadra,
+    `restic` acaba imprimiendo `unexpected EOF` —el mensaje de `ssh` se
+    pierde en una carrera de su propio reenvío de stderr— y ese texto es
+    indistinguible de un corte de red justo cuando menos conviene
+    confundirlos. La sonda es SOLO INFORMATIVA: no concede ni deniega nada
+    (quien impone la verificación sigue siendo `ssh` con
+    `StrictHostKeyChecking yes`), así que nunca puede bloquear una
+    recuperación por equivocarse.
 - Imágenes versionadas en `ghcr.io/pjclavero/s9-ai-arena/*` (las publica la CI
   en cada merge a main, etiquetadas `v<versión>` y `sha-<commit>`).
 
