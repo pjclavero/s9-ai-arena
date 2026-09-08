@@ -153,6 +153,16 @@ bootstrap_sftp() {
     log error "no se pudo preparar ~/.ssh para el backend sftp"
     return 1
   fi
+  # Sonda ADVISORIA del endpoint (ver lib/setup-ssh.sh): emite una única
+  # línea SSH_BOOTSTRAP_RESULT=<CLASE> que dice QUÉ CONDICIÓN hay de verdad
+  # antes de invocar restic. No decide nada —siempre devuelve 0— y no
+  # sustituye a StrictHostKeyChecking: existe porque, cuando la huella no
+  # cuadra, el error que restic acaba imprimiendo es "unexpected EOF" (el
+  # mensaje de ssh se pierde en una carrera de su propio reenvío de stderr),
+  # y ese mensaje es indistinguible de un corte de red para el operador que
+  # está en mitad de una recuperación. También es la señal sobre la que el
+  # E2E comprueba EFECTO en vez de TEXTO ajeno.
+  classify_ssh_endpoint || true
   return 0
 }
 
