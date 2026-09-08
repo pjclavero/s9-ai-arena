@@ -25,7 +25,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer, type Server, type Socket } from "node:net";
 import { AddressInfo } from "node:net";
-import { RedisSignal, RedisSignalDesconectado } from "./redis-signal.js";
+import { clasificarEspera, RedisSignal, RedisSignalDesconectado } from "./redis-signal.js";
 import { conVencimiento, TournamentWorker } from "./worker.js";
 
 /** BD de mentira: sólo cuenta los claims. `claimJob` no necesita nada más. */
@@ -48,6 +48,15 @@ const dormir = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // afterEach los para SIEMPRE, fallen o no las aserciones.
 const vivos: TournamentWorker[] = [];
 function nuevoWorker(cfg: any): TournamentWorker {
+  // Los dobles de estos tests describen el CANAL (`wait`/`connect`); la
+  // clasificación del desenlace NO se reimplementa aquí: se usa la misma
+  // `clasificarEspera` que usa RedisSignal en producción, para que una mutación
+  // de la regla no pueda sobrevivir escondida en el doble.
+  if (cfg.signal && !cfg.signal.esperarTrabajo) {
+    const doble = cfg.signal;
+    doble.esperarTrabajo = (queue: string, timeoutS: number, guardMs: number) =>
+      clasificarEspera(Promise.resolve(doble.wait(queue, timeoutS)), guardMs, () => doble.conectado ?? true);
+  }
   const w = new TournamentWorker(cfg);
   vivos.push(w);
   return w;
@@ -124,6 +133,27 @@ describe("FRENO · una señal que RECHAZA no puede convertir el bucle en un giro
     expect(estado.claims).toBeLessThanOrEqual(20);
     expect(estado.claims).toBeGreaterThanOrEqual(1);
     expect(intentos).toBeLessThanOrEqual(120);
+  });
+
+  it("un NORMAL_IDLE que vuelve AL INSTANTE tampoco suelta el freno", async () => {
+    // Encontrado al mutar: separar «no hay trabajo» de «Redis caído» invita a
+    // salir de la pausa en cuanto la espera dice «idle»… y una espera que ni
+    // llega a bloquear (canal que responde al instante) devolvería el bucle al
+    // giro libre contra la BD, justo lo que el freno existe para impedir.
+    const { db, estado } = dbContador();
+    const signal: any = {
+      esperarTrabajo: async () => ({ tipo: "NORMAL_IDLE", motivo: "blpop-vencido" }),
+      wait: async () => false,
+      connect: () => Promise.resolve(),
+    };
+    const worker = nuevoWorker({ db, handlers: {}, signal, concurrency: 1, pollMs: 200 });
+    worker.start();
+    await dormir(1000);
+    await worker.stop();
+
+    expect(worker.degradado).toBe(false); // idle NO es degradación
+    expect(estado.claims).toBeLessThanOrEqual(15); // …y sigue frenado
+    expect(estado.claims).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -231,7 +261,7 @@ describe("NO EN SILENCIO · degradar se notifica y se cuenta", () => {
     expect(conexiones).toBe(0); // el reintento no ha entrado en juego
     expect(onSignalError).toHaveBeenCalledTimes(1);
     expect(String(onSignalError.mock.calls[0][0])).toMatch(/conexión perdida/);
-    expect(onSignalError.mock.calls[0][1]).toEqual({ degradado: true, fallos: 1 });
+    expect(onSignalError.mock.calls[0][1]).toEqual({ degradado: true, fallos: 1, degradaciones: 1, recuperaciones: 0 });
   });
 });
 

@@ -68,10 +68,60 @@ export class RedisSignalDesconectado extends Error {
   }
 }
 
+/**
+ * Desenlace de una espera de trabajo. Existe para que NADIE tenga que deducir
+ * de un booleano o de un mensaje de error si Redis está caído: el vencimiento
+ * normal y la caída real son cosas distintas y se nombran distinto.
+ */
+export type SignalOutcome =
+  | { tipo: "SIGNALED" }
+  | { tipo: "NORMAL_IDLE"; motivo: "blpop-vencido" | "guardian" | "conexion-ocupada" }
+  | { tipo: "REDIS_UNAVAILABLE"; error: Error };
+
+const GUARDIAN = Symbol("guardian");
+
+/**
+ * LA REGLA DE CLASIFICACIÓN, en un solo sitio (worker y pruebas comparten esta
+ * misma función: un doble de prueba no puede clasificar «a su manera»).
+ *
+ *   resuelve true    -> SIGNALED           hay trabajo
+ *   resuelve false   -> NORMAL_IDLE        BLPOP vencido: NO hay trabajo, Redis sano
+ *   rechaza          -> REDIS_UNAVAILABLE  el canal falló de verdad
+ *   guardián vencido -> lo dice el SOCKET, no el reloj: vivo = NORMAL_IDLE,
+ *                       muerto = REDIS_UNAVAILABLE
+ */
+export async function clasificarEspera(
+  huboTrabajo: Promise<boolean>,
+  guardMs: number,
+  socketVivo: () => boolean,
+): Promise<SignalOutcome> {
+  huboTrabajo.catch(() => undefined);
+  let temporizador: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const guardian = new Promise<typeof GUARDIAN>((resolve) => {
+      temporizador = setTimeout(() => resolve(GUARDIAN), guardMs);
+    });
+    const resultado = await Promise.race([huboTrabajo.then((v) => ({ valor: v })), guardian]);
+    if (resultado === GUARDIAN) {
+      if (socketVivo()) return { tipo: "NORMAL_IDLE", motivo: "guardian" };
+      return { tipo: "REDIS_UNAVAILABLE", error: new RedisSignalDesconectado("guardián sin socket vivo") };
+    }
+    return resultado.valor ? { tipo: "SIGNALED" } : { tipo: "NORMAL_IDLE", motivo: "blpop-vencido" };
+  } catch (err) {
+    return { tipo: "REDIS_UNAVAILABLE", error: comoError(err) };
+  } finally {
+    if (temporizador) clearTimeout(temporizador);
+  }
+}
+const dormirMs = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+const comoError = (e: unknown): Error => (e instanceof Error ? e : new Error(String(e)));
+
 export class RedisSignal {
   private socket: Socket | null = null;
   private buffer = Buffer.alloc(0);
   private waiters: { resolve: (v: unknown) => void; reject: (e: Error) => void }[] = [];
+  /** BLPOP en curso: sólo uno por conexión (ver esperarTrabajo). */
+  private blpopEnVuelo: Promise<unknown> | null = null;
 
   constructor(private readonly url: string) {}
 
@@ -119,6 +169,7 @@ export class RedisSignal {
     const s = this.socket;
     this.socket = null;
     this.buffer = Buffer.alloc(0);
+    this.blpopEnVuelo = null;
     const pendientes = this.waiters;
     this.waiters = [];
     for (const w of pendientes) w.reject(motivo);
@@ -161,6 +212,64 @@ export class RedisSignal {
   async wait(queue: string, timeoutS: number): Promise<boolean> {
     const reply = await this.send(["BLPOP", `s9:wake:${queue}`, String(timeoutS)]);
     return reply !== null;
+  }
+
+  /**
+   * ESPERA CLASIFICADA — el contrato que faltaba.
+   *
+   * `wait()` sólo dice true/false y deja al que llama adivinar qué significa un
+   * rechazo o un vencimiento del guardián. Medido en producción: el worker
+   * clasificaba el vencimiento NORMAL del BLPOP (cola vacía, Redis sano) como
+   * «Redis no disponible», con 379 degradaciones y 126 recuperaciones en media
+   * hora con Redis sano TODO el tiempo. Una alarma que grita siempre no
+   * distingue la caída real.
+   *
+   * Aquí se separan los tres desenlaces de una vez:
+   *   SIGNALED          hay trabajo
+   *   NORMAL_IDLE       no hay trabajo (BLPOP vencido, o guardián con socket
+   *                     VIVO, o otra espera ya ocupaba la conexión)
+   *   REDIS_UNAVAILABLE el canal falló de verdad (rechazo, o guardián con el
+   *                     socket ya muerto)
+   *
+   * Y se SERIALIZA el BLPOP por conexión: con varios bucles compartiendo un
+   * socket, Redis atiende los BLPOP pipelineados DE UNO EN UNO, así que el
+   * tercero tardaba 3·timeoutS y vencía el guardián sin que nada estuviera
+   * roto. Ése era el generador del ruido en producción.
+   */
+  async esperarTrabajo(queue: string, timeoutS: number, guardMs: number): Promise<SignalOutcome> {
+    const enVuelo = this.blpopEnVuelo;
+    if (enVuelo) {
+      // Otra espera ya tiene el turno de BLPOP: no se apila otro comando.
+      // Se acompaña su desenlace (acotado) y se vuelve a esperar normalmente.
+      const fin = await Promise.race([
+        enVuelo.then(
+          () => "fin" as const,
+          (err: unknown) => ({ err }),
+        ),
+        dormirMs(timeoutS * 1000).then(() => "tiempo" as const),
+      ]);
+      if (typeof fin === "object") return { tipo: "REDIS_UNAVAILABLE", error: comoError(fin.err) };
+      return { tipo: "NORMAL_IDLE", motivo: "conexion-ocupada" };
+    }
+
+    const peticion = this.send(["BLPOP", `s9:wake:${queue}`, String(timeoutS)]);
+    // Si vence el guardián, esta promesa puede rechazar más tarde: se neutraliza
+    // aquí para no dejar un unhandledRejection suelto.
+    peticion.catch(() => undefined);
+    this.blpopEnVuelo = peticion;
+    const liberar = () => {
+      if (this.blpopEnVuelo === peticion) this.blpopEnVuelo = null;
+    };
+    peticion.then(liberar, liberar);
+    try {
+      return await clasificarEspera(
+        peticion.then((reply) => reply !== null),
+        guardMs,
+        () => this.conectado,
+      );
+    } finally {
+      liberar();
+    }
   }
 
   /** Candado de batalla (cinturón extra sobre el lock por fila de PostgreSQL). */

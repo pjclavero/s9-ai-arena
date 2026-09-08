@@ -89,6 +89,13 @@ const worker = new TournamentWorker({
   // trabajos es PostgreSQL) y lo DICE, igual que dice que no lo encontró al
   // arrancar. Sin esta línea, la única señal de que el canal de aviso murió
   // sería la latencia.
+  //
+  // Este aviso sale SÓLO en las transiciones de estado del canal. Que la cola
+  // esté vacía (BLPOP vencido) no llega aquí: medido en VM108, clasificar ese
+  // vencimiento como caída producía 379 «Redis no disponible» en media hora con
+  // Redis sano, y una alarma que grita siempre no distingue la caída real.
+  // `degradaciones`/`recuperaciones` cuentan transiciones, no intentos: una
+  // caída de 30 s es 1 degradación y 1 recuperación, no 30.
   onSignalError: (err, estado) =>
     log(
       err === null
