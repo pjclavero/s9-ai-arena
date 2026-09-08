@@ -53,8 +53,17 @@ export interface WorkerConfig {
   signalGraceMs?: number;
   /** Cada cuánto se reintenta la señal una vez degradado a polling. */
   signalRetryMs?: number;
-  /** Se llama en cada fallo del canal de aviso: degradar NO es hacerlo en silencio. */
-  onSignalError?: (err: unknown, estado: { degradado: boolean; fallos: number }) => void;
+  /**
+   * Se llama SÓLO en las TRANSICIONES de estado del canal de aviso:
+   * disponible -> degradado (err) y degradado -> disponible (err === null).
+   * Degradar no es hacerlo en silencio; pero avisar en cada intento convierte
+   * la alarma en ruido y tapa la caída de verdad (medido: 379 avisos con Redis
+   * sano). El vencimiento normal del BLPOP NO es un fallo y no llega aquí.
+   */
+  onSignalError?: (
+    err: unknown,
+    estado: { degradado: boolean; fallos: number; degradaciones: number; recuperaciones: number },
+  ) => void;
   /** Al agotar reintentos de infraestructura (needs_review): marcado manual. */
   onExhausted?: (job: JobRow, ctx: HandlerContext) => Promise<void>;
 }
@@ -94,7 +103,20 @@ export class TournamentWorker {
   private signalDegradado = false;
   private ultimoReintentoSignal = 0;
   /** Observable a propósito: una degradación silenciosa es una degradación que nadie ve. */
-  readonly signalStats = { fallos: 0, vencimientos: 0, pausasDegradadas: 0, reconexiones: 0 };
+  readonly signalStats = {
+    /** Intentos que acabaron en error de canal (no transiciones). */
+    fallos: 0,
+    /** Esperas que terminaron SIN trabajo con Redis sano: operación normal. */
+    idles: 0,
+    /** Compatibilidad: vencimientos del guardián, ya contados como idle. */
+    vencimientos: 0,
+    pausasDegradadas: 0,
+    /** TRANSICIONES disponible -> degradado. Una por caída, no una por intento. */
+    degradaciones: 0,
+    /** TRANSICIONES degradado -> disponible. Una por vuelta de Redis. */
+    recuperaciones: 0,
+    reconexiones: 0,
+  };
 
   /** ¿El bucle está degradado a polling ahora mismo? */
   get degradado(): boolean {
@@ -200,20 +222,26 @@ export class TournamentWorker {
 
     if (signal && !this.signalDegradado) {
       const timeoutS = Math.max(1, Math.ceil(pollMs / 1000));
-      const espera = signal.wait("jobs", timeoutS);
-      // Si vence, la promesa de abajo puede rechazar más tarde: se neutraliza
-      // aquí para no dejar un unhandledRejection suelto.
-      espera.catch(() => undefined);
-      try {
-        await conVencimiento(espera, timeoutS * 1000 + (this.config.signalGraceMs ?? 2000), "signal.wait vencido");
+      const guardMs = timeoutS * 1000 + (this.config.signalGraceMs ?? 2000);
+      const desenlace = await signal.esperarTrabajo("jobs", timeoutS, guardMs);
+      if (desenlace.tipo === "SIGNALED") return;
+      if (desenlace.tipo === "NORMAL_IDLE") {
+        // NO hay trabajo. Eso no es una caída de Redis: no se degrada, no se
+        // cuenta degradación ni recuperación, y se vuelve a esperar normal.
+        //
+        // Pero NO se sale por aquí sin pasar por el freno de abajo: un idle que
+        // vuelve al instante (una espera que ni siquiera llegó a bloquear)
+        // convertiría el bucle en un giro libre contra la BD. Normalmente la
+        // espera ya consumió la pausa entera y el `restante` es cero, así que
+        // el freno no cuesta nada; cuando no la consumió, es imprescindible.
+        this.signalStats.idles++;
+        if (desenlace.motivo === "guardian") this.signalStats.vencimientos++;
+        const sobra = pollMs - (Date.now() - inicio);
+        if (sobra > 0) await dormir(sobra);
         return;
-      } catch (err) {
-        this.signalDegradado = true;
-        this.signalStats.fallos++;
-        if (String((err as Error)?.message).includes("vencido")) this.signalStats.vencimientos++;
-        this.ultimoReintentoSignal = Date.now();
-        this.config.onSignalError?.(err, { degradado: true, fallos: this.signalStats.fallos });
       }
+      this.signalStats.fallos++;
+      this.degradar(desenlace.error);
     }
 
     if (signal && this.signalDegradado) {
@@ -232,12 +260,40 @@ export class TournamentWorker {
     this.ultimoReintentoSignal = Date.now();
     try {
       await conVencimiento(signal.connect(), cada, "signal.connect vencido");
-      this.signalDegradado = false;
       this.signalStats.reconexiones++;
-      this.config.onSignalError?.(null, { degradado: false, fallos: this.signalStats.fallos });
-    } catch (err) {
-      this.config.onSignalError?.(err, { degradado: true, fallos: this.signalStats.fallos });
+      this.recuperar();
+    } catch {
+      // Sigue caído: NO se vuelve a avisar. La degradación ya se anunció en su
+      // transición; repetirla en cada reintento es el ruido que tapa la caída.
+      this.signalStats.fallos++;
     }
+  }
+
+  /** AVAILABLE -> DEGRADED: se cuenta y se avisa UNA vez por transición. */
+  private degradar(err: unknown): void {
+    this.ultimoReintentoSignal = Date.now();
+    if (this.signalDegradado) return;
+    this.signalDegradado = true;
+    this.signalStats.degradaciones++;
+    this.config.onSignalError?.(err, {
+      degradado: true,
+      fallos: this.signalStats.fallos,
+      degradaciones: this.signalStats.degradaciones,
+      recuperaciones: this.signalStats.recuperaciones,
+    });
+  }
+
+  /** DEGRADED -> AVAILABLE: se cuenta y se avisa UNA vez por transición. */
+  private recuperar(): void {
+    if (!this.signalDegradado) return;
+    this.signalDegradado = false;
+    this.signalStats.recuperaciones++;
+    this.config.onSignalError?.(null, {
+      degradado: false,
+      fallos: this.signalStats.fallos,
+      degradaciones: this.signalStats.degradaciones,
+      recuperaciones: this.signalStats.recuperaciones,
+    });
   }
 
   async stop(): Promise<void> {
