@@ -1,6 +1,7 @@
 # Operación de VM108 — S9 AI Arena (runbook)
 
 > Estado real y contexto: ver [`ESTADO_ACTUAL.md`](ESTADO_ACTUAL.md).
+> Apagar o encender la VM entera: ver [`ops/APAGADO_Y_ENCENDIDO_VM108.md`](ops/APAGADO_Y_ENCENDIDO_VM108.md).
 > **Regla de oro:** los comandos de Docker/Compose se ejecutan **como el usuario `s9arena`**,
 > nunca como `root` (el PostgreSQL embebido se niega a correr como root, y `s9arena` es el
 > dueño de `/opt/s9-ai-arena`).
