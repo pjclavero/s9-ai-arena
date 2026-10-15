@@ -297,7 +297,7 @@ Estados posibles:
 - **Detectado:** 2026-10-15
 - **Evidencia:**
   - `apps/api/src/routes/auth.ts:147-175`: el registro está abierto, sin interruptor, y concede `user` + `developer`.
-  - En producción `TRUST_PROXY_HOPS=1` (por defecto en `infrastructure/docker-compose.yml:192`), aunque detrás de un proxy inverso externo hay dos saltos. Las sesiones registran la IP del proxy.
+  - En producción `TRUST_PROXY_HOPS=1` (por defecto en `infrastructure/docker-compose.yml:191`), aunque detrás de un proxy inverso externo hay dos saltos. Las sesiones registran la IP del proxy.
   - No existe operación de cambio de contraseña. La recuperación no tiene canal (email) ni UI.
 - **Problema:** los limitadores y el bloqueo de login usan la clave `req.ip` o `ip|email`. Con un salto de menos, todos los clientes externos comparten la misma IP, así que:
   - el bloqueo tras 20 fallos (`apps/api/src/middleware/shared-rate-limit.ts:118-119`) y el límite por minuto se aplican de forma global;
@@ -624,7 +624,7 @@ Estados posibles:
 | Participantes sin comprobación de propiedad | CODE_VERIFIED | `battles.ts:411-419` |
 | Phaser `getScene` antes de `READY` | CODE_VERIFIED | `ReplayPage.tsx:75`, `ViewerPage.tsx:38`, `BroadcastPage.tsx:228` |
 | Umbral de bloqueo de login = 20 | CODE_VERIFIED | `apps/api/src/middleware/shared-rate-limit.ts:118-119` |
-| `TRUST_PROXY_HOPS` por defecto 1 | CODE_VERIFIED | `infrastructure/docker-compose.yml:192` |
+| `TRUST_PROXY_HOPS` por defecto 1 | CODE_VERIFIED | `infrastructure/docker-compose.yml:191` |
 | `restore.sh --snapshot` existe | CODE_VERIFIED | `infrastructure/backup/restore.sh:5`; incluido en la imagen `ad0a42b` (`git merge-base --is-ancestor 2c72ff3 ad0a42b`) |
 | `notify()` sólo en tests | CODE_VERIFIED | `grep -rn "notify(" apps packages` |
 | Worker sin secreto de ticket | CODE_VERIFIED + RUNTIME_VERIFIED (sólo nombres de variables) | compose bloque `tournament-worker`; `docker inspect` de nombres de variables, 2026-10-15 |
