@@ -1,5 +1,10 @@
 # Runtime drift scanner
 
+> **Estado:** vigente, revisado contra `27f70bb`. Herramienta de **solo lectura** que compara lo
+> declarado (compose y contrato) con lo que corre. Se usa antes y después de cada actualización
+> ([upgrades.md](upgrades.md)) y en diagnóstico ([diagnostics.md](diagnostics.md)). Índice de
+> operación: [index.md](index.md).
+
 `infrastructure/scripts/runtime-drift-scan.mjs`
 
 ## Qué es y qué NO es
@@ -106,7 +111,9 @@ anfitrión, sin rutas absolutas. De los secretos solo sale el nombre lógico del
 montaje bajo `/run/secrets`; de las variables de entorno, solo los **nombres**,
 nunca los valores. Un test de la suite lo comprueba sobre la salida real.
 
-## Estado medido en producción (solo lectura, 12 contenedores)
+## Estado medido en producción (registro de 2026-09, solo lectura, 12 contenedores)
+
+> Registro puntual; el estado vigente lo da una ejecución nueva del escáner. Resumen de la deuda: [TD-006](../roadmap/technical-debt.md#td-006).
 
 - **11 servicios `NOT_EXERCISED`**: las imágenes son anteriores a ADR-016 y no
   llevan identidad de build embebida. Su procedencia queda **desconocida**, no
@@ -131,3 +138,16 @@ Estropea el escáner de verdad y exige que la suite se ponga **roja** con cada
 mutación: existencia siempre cierta, etiqueta siempre coincidente,
 `IMAGE_MISSING` como PASS, `TAG_MOVED` como PASS y montajes comparados por nombre
 físico. Una mutación que sobrevive es una garantía que no comprueba nadie.
+
+## Documentación relacionada
+
+[upgrades.md](upgrades.md) · [diagnostics.md](diagnostics.md) · [readiness.md](readiness.md) ·
+[ADR-016](../adr/ADR-016-identidad-de-build.md) · [ADR-017](../adr/ADR-017-contrato-de-release.md).
+
+## Verificación
+
+| Afirmación | Estado | Evidencia |
+|---|---|---|
+| Modos `--collect`, `--facts`, `--target-from-compose`, `--self-test` | CODE_VERIFIED | `infrastructure/scripts/runtime-drift-scan.mjs:49-61,834` |
+| Calibración por mutantes | CODE_VERIFIED | `infrastructure/scripts/runtime-drift-mutations.mjs`; `infrastructure/tests/runtime-drift-scan.test.ts` |
+| Estado medido en producción | RUNTIME_VERIFIED en su fecha (histórico) | registro anterior a esta consolidación |

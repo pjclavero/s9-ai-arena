@@ -1,4 +1,10 @@
-# Proxy de la API de Docker — runbook del host (<host-arena>)
+# Proxy de la API de Docker (host)
+
+> **Estado:** vigente, revisado contra `27f70bb`. El proxy se instala en el host como unidad
+> systemd. En la instalación de referencia está instalado, pero la **ejecución real de bots está
+> apagada**: `DOCKER_PROXY_URL` del `arena-engine` está vacío y toda batalla la ejecuta el
+> `tournament-worker` con un bot stub ([TD-002](../roadmap/technical-debt.md#td-002)). Índice de
+> operación: [index.md](index.md) · Seguridad: [../technical/security.md](../technical/security.md).
 
 R-DEPLOY · R2 (R1.7 · ERR-SEC-02). Este documento describe el **único proceso
 autorizado a tocar `/var/run/docker.sock`** en el host. Ningún contenedor del
@@ -84,12 +90,45 @@ docker compose -f infrastructure/docker-compose.yml exec bot-manager \
 
 ```bash
 sudo bash infrastructure/scripts/install-docker-proxy.sh rollback
-# Para y retira la unidad; conserva config y usuario. Borrado total:
+# Para y retira la unidad; conserva config y usuario.
+```
+
+> **DANGER** — borrado total del proxy
+>
+> **PRECONDITION:** el proxy ya está parado (`rollback`) y no se va a reinstalar con la misma
+> configuración.
+>
+> **EFFECT:** elimina `/etc/s9-ai-arena` (configuración del proxy) y el usuario de sistema `s9proxy`.
+>
+> **ROLLBACK:** reinstalar con `install-docker-proxy.sh install` y rehacer la configuración.
+
+```bash
 sudo rm -rf /etc/s9-ai-arena && sudo userdel s9proxy
 ```
 
-## Estado en este entorno
+## Estado actual
 
-**NO EJECUTADO** en <host-dev> (sin daemon de Docker ni sudo): la unidad, la config
-de ejemplo, el instalador y este runbook quedan listos. La verificación viva
-(proxy ↔ socket ↔ bot-manager) es un paso de operador en <host-arena>.
+- **FUNCIONA ACTUALMENTE:** instalador `install|validate|rollback`, unidad endurecida, política con
+  allowlist probada en tests (`apps/bot-manager/tests/docker-proxy.test.ts`).
+- **PARCIAL:** el `bot-manager` alcanza el proxy (`DOCKER_PROXY_URL` por defecto), pero el build de
+  bots no llega a `published` ([TD-001](../roadmap/technical-debt.md#td-001)).
+- **PENDIENTE:** cablear el motor (`DOCKER_PROXY_URL` del `arena-engine`) forma parte de la puerta
+  de ejecución real, descrita en [../technical/battles.md](../technical/battles.md); no activarla
+  sin resolver la doble ejecución ([TD-002](../roadmap/technical-debt.md#td-002)).
+
+## Documentación relacionada
+
+[docker.md](docker.md#otros-servicios) · [networking.md](networking.md#puertos-lógicos) ·
+[configuration.md](configuration.md) · [../technical/bots.md](../technical/bots.md) ·
+[../technical/security.md](../technical/security.md) · Informe de origen (R1.7):
+[../history/rondas/ronda2/reportes/R1.7-docker-sock.md](../history/rondas/ronda2/reportes/R1.7-docker-sock.md).
+
+## Verificación
+
+| Afirmación | Estado | Evidencia |
+|---|---|---|
+| `install|validate|rollback`, `APP_DIR`, `/etc/s9-ai-arena`, usuario `s9proxy` | CODE_VERIFIED | `infrastructure/scripts/install-docker-proxy.sh` |
+| Bind por defecto en la IP de `docker0` (`DOCKER_PROXY_BIND`), puerto 2375 | CODE_VERIFIED | `install-docker-proxy.sh:47`; `infrastructure/systemd/docker-proxy.env.example:8-9` |
+| `bot-manager` usa `docker-proxy.internal:host-gateway` | CODE_VERIFIED | compose, servicio `bot-manager` (`extra_hosts`, `DOCKER_PROXY_URL`) |
+| `arena-engine` con `DOCKER_PROXY_URL` vacío por defecto | CODE_VERIFIED | compose, servicio `arena-engine` |
+| Unidad presente en la instalación de referencia | RUNTIME_VERIFIED (auditoría 2026-10-15, sólo lectura) | `s9-docker-proxy.service` |
