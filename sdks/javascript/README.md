@@ -156,4 +156,4 @@ real, todos validados contra `packages/protocol/schemas/*.json`.
 
 ## Diferencias reales con el SDK de Python
 
-Ver [`docs/sdk-paridad.md`](../../docs/sdk-paridad.md).
+Ver [`docs/sdk-paridad.md`](../../docs/history/disenos/sdk-paridad.md).

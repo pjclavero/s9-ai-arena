@@ -2,7 +2,7 @@
 
 > Rellenar "Resultado real / Fecha / Evidencia / Responsable / Estado" al ejecutar.
 > Estado: ✅ pasa · ❌ falla · ⏳ pendiente · ⚠️ parcial.
-> Contexto: [`ESTADO_ACTUAL.md`](ESTADO_ACTUAL.md) · Operación: [`OPERACION_VM108.md`](OPERACION_VM108.md).
+> Contexto: [`ESTADO_ACTUAL.md`](../../history/status/ESTADO_ACTUAL.md) · Operación: [`OPERACION_VM108.md`](../../history/operaciones/OPERACION_HOST_ARENA.md).
 
 Última pasada de referencia: **2026-07-18** (auditoría). Las pruebas 1-3, 7 y parte del dominio
 se verificaron; el resto queda pendiente con su causa.

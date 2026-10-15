@@ -1,8 +1,8 @@
 # Despliegue de S9 AI Arena
 
 > **⚠️ Estado real (2026-07-18):** el núcleo de la v2 YA está desplegado en VM108. Para el
-> estado vigente y la operación usa **[ESTADO_ACTUAL.md](ESTADO_ACTUAL.md)**,
-> **[OPERACION_VM108.md](OPERACION_VM108.md)** y **[DESPLIEGUE_DOMINIO.md](DESPLIEGUE_DOMINIO.md)**.
+> estado vigente y la operación usa **[ESTADO_ACTUAL.md](../status/ESTADO_ACTUAL.md)**,
+> **[OPERACION_VM108.md](OPERACION_HOST_ARENA.md)** y **[DESPLIEGUE_DOMINIO.md](DESPLIEGUE_DOMINIO.md)**.
 > El dominio correcto es **`s9arena.seccionnueve.duckdns.org`** (NO `arena.…`, que es otro
 > proyecto en VM107). Este documento describe el procedimiento general de despliegue.
 
@@ -233,7 +233,7 @@ dentro del contenedor (`docker exec … cat /tmp/version.json`).
 ## Contrato de release: BUILD y DEPLOY son fases distintas (ADR-017)
 
 El procedimiento formal, con los incidentes que lo justifican, está en
-**[ADR-017](decisiones/ADR-017-contrato-de-release.md)**. Lo esencial:
+**[ADR-017](../../adr/ADR-017-contrato-de-release.md)**. Lo esencial:
 
 ```
 BUILD   árbol fuente correcto · commit correcto · contexto correcto ·

@@ -1,6 +1,6 @@
 # Apagar y encender VM108 sin perder trabajo
 
-> Runbook operativo. Para el día a día del stack, ver [`../OPERACION_VM108.md`](../OPERACION_VM108.md).
+> Runbook operativo. Para el día a día del stack, ver [`../OPERACION_VM108.md`](OPERACION_HOST_ARENA.md).
 
 ## Qué se pierde y qué no
 

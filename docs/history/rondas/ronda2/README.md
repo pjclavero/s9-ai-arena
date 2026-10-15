@@ -1,6 +1,6 @@
 # Ronda 2 — registro de ejecución
 
-Historial legible del avance de la [Ronda 2 del dosier](../Dosier_tareas_S9_AI_Arena.md#15-ronda-2--remediación-integración-evolución-y-retirada-de-v1).
+Historial legible del avance de la [Ronda 2 del dosier](../../planes/Dosier_tareas_S9_AI_Arena.md#15-ronda-2--remediación-integración-evolución-y-retirada-de-v1).
 Cada apartado se implementa, se verifica, se documenta en `reportes/` y se commitea+empuja por separado.
 
 Ramas de trabajo: `ronda2/r-p0-bloqueantes` → `ronda2/entrypoints-servicios` (PR #17) →

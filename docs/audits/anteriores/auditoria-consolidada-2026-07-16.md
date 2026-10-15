@@ -13,7 +13,7 @@
 >   por áreas y plan P0–P3.
 >
 > Las **tareas ejecutables** derivadas de este documento viven en el dosier, parte nueva
-> **[Ronda 2](Dosier_tareas_S9_AI_Arena.md#15-ronda-2--remediación-integración-evolución-y-retirada-de-v1)**.
+> **[Ronda 2](../../history/planes/Dosier_tareas_S9_AI_Arena.md#15-ronda-2--remediación-integración-evolución-y-retirada-de-v1)**.
 > Aquí están los **hechos, los errores y la corrección técnica**; allí, quién hace qué y cómo se prueba.
 
 ---
@@ -400,4 +400,4 @@ auditorías coinciden en ello. La síntesis operativa es:
 
 El plan de ejecución — tareas por equipo, priorizadas, con pruebas, con lo dependiente de
 despliegue al final y la retirada de v1 — está en la
-**[Ronda 2 del dosier](Dosier_tareas_S9_AI_Arena.md#15-ronda-2--remediación-integración-evolución-y-retirada-de-v1)**.
+**[Ronda 2 del dosier](../../history/planes/Dosier_tareas_S9_AI_Arena.md#15-ronda-2--remediación-integración-evolución-y-retirada-de-v1)**.

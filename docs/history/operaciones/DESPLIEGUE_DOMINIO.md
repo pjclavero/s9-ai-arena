@@ -1,6 +1,6 @@
 # Despliegue del dominio — S9 AI Arena
 
-> Estado verificado: 2026-07-18. Ver [`ESTADO_ACTUAL.md`](ESTADO_ACTUAL.md).
+> Estado verificado: 2026-07-18. Ver [`ESTADO_ACTUAL.md`](../status/ESTADO_ACTUAL.md).
 
 ## 1. Dominio correcto
 

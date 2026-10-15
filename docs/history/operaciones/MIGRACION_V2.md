@@ -1,6 +1,6 @@
 # Migración v1 → v2 (runbook)
 
-> Contexto y estado real: ver [`ESTADO_ACTUAL.md`](ESTADO_ACTUAL.md).
+> Contexto y estado real: ver [`ESTADO_ACTUAL.md`](../status/ESTADO_ACTUAL.md).
 > Fecha de este documento: 2026-07-18.
 
 ## 1. De dónde veníamos
@@ -55,7 +55,7 @@ Antes del redespliegue se hizo el snapshot Proxmox **`pre-v2-20260717`** (2026-0
 
 ## 6. Cómo validar la v2
 
-Ver la lista ejecutable en [`CHECKLIST_VALIDACION_V2.md`](CHECKLIST_VALIDACION_V2.md). Mínimo:
+Ver la lista ejecutable en [`CHECKLIST_VALIDACION_V2.md`](../../testing/validacion/CHECKLIST_VALIDACION_V2.md). Mínimo:
 - 7 servicios `healthy` (`docker compose ps`).
 - `GET /healthz` = `ok`, `GET /` = 200 en LAN, Tailscale y dominio.
 - `GET /api/v1/…` responde (no el fallback del SPA).

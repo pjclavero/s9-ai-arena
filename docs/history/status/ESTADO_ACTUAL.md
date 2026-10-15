@@ -228,4 +228,4 @@ Proyecto Compose: **`infrastructure`**, fichero **`/opt/s9-ai-arena/infrastructu
 4. **R1.7/R6.2**: containerizar el `agentResolver` para poder desplegar `bot-manager`; hasta
    entonces el pipeline de bots rechaza por diseño (fail-closed).
 
-Ver la lista ejecutable en [`CHECKLIST_VALIDACION_V2.md`](CHECKLIST_VALIDACION_V2.md).
+Ver la lista ejecutable en [`CHECKLIST_VALIDACION_V2.md`](../../testing/validacion/CHECKLIST_VALIDACION_V2.md).

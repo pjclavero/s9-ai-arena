@@ -1084,7 +1084,7 @@ trabajo que va **después** de tener E1–E12 implementados: corregir los errore
 cerrar la integración, mejorar producto y gráficos, añadir modos de combate, retirar el
 prototipo v1 y, en último lugar, todo lo que solo puede probarse con la plataforma desplegada.*
 
-**Documento hermano obligatorio:** [auditoria-consolidada-2026-07-16.md](auditoria-consolidada-2026-07-16.md).
+**Documento hermano obligatorio:** [auditoria-consolidada-2026-07-16.md](../../audits/anteriores/auditoria-consolidada-2026-07-16.md).
 Cada tarea de aquí cita los `ERR-*`/`MEJ` de ese documento, donde está el detalle técnico y el
 `archivo:línea`. Este dosier dice **quién lo hace y cómo se prueba**; el otro, **qué está mal y
 por qué**.

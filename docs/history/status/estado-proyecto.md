@@ -5,7 +5,7 @@
 > ejecuciones reales) y qué falta, siguiendo el dosier `docs/Dosier_tareas_S9_AI_Arena.md`.
 
 > **Corrección 2026-07-17 (auditoría consolidada).** La auditoría de
-> [`auditoria-consolidada-2026-07-16.md`](auditoria-consolidada-2026-07-16.md) matiza tres
+> [`auditoria-consolidada-2026-07-16.md`](../../audits/anteriores/auditoria-consolidada-2026-07-16.md) matiza tres
 > cifras de este documento con verificación en código: **(1)** `tsc --noEmit` no da "2 errores"
 > sino **268** (≈230 son un fallo de configuración del tsconfig raíz con `apps/web`, y **38 son
 > genuinos**, varios introducidos por los fixes de H6; H7 **no** está cerrado). **(2)** Hay **dos
