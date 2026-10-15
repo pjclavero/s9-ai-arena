@@ -1,5 +1,14 @@
 # Runbook de recuperación total — S9 AI Arena
 
+> **HISTÓRICO — NO SEGUIR ESTE DOCUMENTO.** El procedimiento vigente es
+> [operations/restore.md](operations/restore.md) (y [operations/backup.md](operations/backup.md)).
+> Este fichero se conserva en esta ruta sólo porque `infrastructure/tests/backup.test.ts` lo lee.
+> Contiene errores conocidos y **peligrosos**: la Fase 6 escribe en volúmenes `s9-ai-arena_*` que no
+> existen (crea volúmenes vacíos en silencio; los reales son `infrastructure_*`), la Fase 2 pisa la
+> configuración con `.env.example` (`TAG=latest`), la Fase 4 usa `v0.0.0` (etiqueta móvil) como
+> «versión conocida», y la Fase 7 da por buenos `/api/healthz` (lo sirve la web) y `smoke.sh` (nunca
+> pasa). Ver [DOC-MIGRATION-MAP.md](DOC-MIGRATION-MAP.md).
+
 Objetivo (DoD T10.4): desde una **VM vacía + el último backup** hasta la
 plataforma funcional con datos en **menos de 2 horas**, con verificación de
 integridad. Estrategia de copias: ADR-010 D10.4 (pg_dump + restic, cron diario
@@ -393,7 +402,7 @@ vía de custodia convierte un olvido en una pérdida total.
   NO resuelto por este cambio — es un problema OPERATIVO, no de código):**
   `restore.sh` recibe `RESTIC_SSH_KEY_FILE`/`RESTIC_SSH_KNOWN_HOSTS_FILE`,
   nunca los genera ni los custodia. Si esa clave viviera ÚNICAMENTE dentro
-  de VM108 (o de la máquina que sea, en cada despliegue) — por ejemplo,
+  de <host-arena> (o de la máquina que sea, en cada despliegue) — por ejemplo,
   guardada sólo en un fichero local del host o en un volumen que también
   desaparece con él — un desastre que se lleve por delante esa máquina se
   lleva también el ÚNICO medio de alcanzar el backup: "el backup existe" y

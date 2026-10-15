@@ -2,8 +2,8 @@
 
 Contrato de comunicación entre el motor y los bots. Familia `arena/1`.
 
-Fuente de verdad de las decisiones que lo sustentan: [`docs/decisiones/ADR-000`](../../docs/decisiones/ADR-000-decisiones-fundacionales.md).
-Política de versionado: [`docs/compatibilidad.md`](../../docs/compatibilidad.md).
+Fuente de verdad de las decisiones que lo sustentan: [`docs/decisiones/ADR-000`](../../docs/adr/ADR-000-decisiones-fundacionales.md).
+Política de versionado: [`docs/compatibilidad.md`](../../docs/development/contract-compatibility.md).
 
 ## Ciclo de vida de una conexión
 
