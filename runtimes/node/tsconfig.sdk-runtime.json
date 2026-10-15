@@ -1,0 +1,11 @@
+{
+  "//": "Compilación del @arena/sdk para el runtime de bots. Parte del punto de entrada (main) y sigue sus imports, en vez de compilar todo src/**: el CLI arena-sim (src/arena-sim.ts, src/local-simulator.ts) importa el motor y los paquetes del monorepo, no forma parte de la librería que el runtime instala y rompía el build desde R2.8.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "outDir": "/out/dist"
+  },
+  "include": [],
+  "files": ["src/index.ts"]
+}
