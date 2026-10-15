@@ -120,6 +120,6 @@ standalone. La configuración de red del despliegue está en
 | Cabeceras | CODE_VERIFIED | `nginx-behind-proxy.conf`, bloque `http` (`proxy_set_header`, `add_header`) |
 | Sin `limit_req` | CODE_VERIFIED | `grep limit_req infrastructure/gateway/*.conf` (vacío) |
 | `fetch("/replays")` | CODE_VERIFIED | `apps/web/src/pages/ReplaysPage.tsx:28` |
-| 301 a http bloqueado en producción | BROWSER (auditoría, interna) | pasada 2 del agente B |
+| 301 a http bloqueado en producción | BROWSER (auditoría, interna) | auditoría del 2026-10-15, pasada 2 ([resumen](../audits/2026-10-15/README.md)) |
 | `/api/healthz` devuelve la SPA | RUNTIME_VERIFIED (en la auditoría) | GET al gateway |
 | Escrituras de replay con secreto | CODE_VERIFIED | `apps/replay-service/src/server.ts:111,252` (`requireWriteAuth`) |

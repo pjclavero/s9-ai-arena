@@ -134,4 +134,4 @@ cambiado: sólo los arranca.
 | Preflight: qué comprueba y códigos 0/1/2; escribe `/tmp/preflight-snaps.json` | CODE_VERIFIED | `infrastructure/scripts/preflight-apagado.sh:1-120` |
 | `stop` no elimina contenedores; `unless-stopped` no relanza los parados a mano | CODE_VERIFIED (semántica de Docker) | documentación de Docker Engine |
 | Backup a las 04:15 UTC y umbral de 26 h | CODE_VERIFIED | compose `BACKUP_CRON`; `infrastructure/backup/healthcheck.sh:40` |
-| Sin snapshots de VM | RUNTIME_VERIFIED (supervisor) | baseline de la consolidación |
+| Sin snapshots de VM | RUNTIME_VERIFIED | verificación de la consolidación, 2026-10-15 (listado de snapshots del hipervisor) |

@@ -219,4 +219,4 @@ Históricos: [../history/operaciones/OVERRIDE_VERSION_POR_SERVICIO.md](../histor
 | postgres/queue por digest | CODE_VERIFIED | compose |
 | Estado mezclado 4d469dc / 0daa500 / ad0a42b y dos orígenes de config | RUNTIME_VERIFIED (auditoría 2026-10-15, sólo lectura) | `docker inspect`, `docker compose ls` |
 | La CI publica `sha-<commit>` para los 11 repos de imagen | RUNTIME_VERIFIED | GHCR anónimo, `sha-27f70bb…` → 200 en todos |
-| Sin snapshots de VM | RUNTIME_VERIFIED (supervisor) | baseline de la consolidación |
+| Sin snapshots de VM | RUNTIME_VERIFIED | verificación de la consolidación, 2026-10-15 (listado de snapshots del hipervisor) |

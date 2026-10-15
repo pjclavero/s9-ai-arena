@@ -11,7 +11,7 @@ El directo de una batalla se sirve por WebSocket desde el **gateway de espectado
 Estado actual:
 
 - el visor web no llega a pedir el ticket porque Phaser falla al arrancar ([TD-009](../roadmap/technical-debt.md#td-009));
-- el worker no recibe el secreto para verificar tickets, así que todo ticket se rechazaría con `4401` ([TD-028](../roadmap/technical-debt.md#td-028), hallazgo de A);
+- el worker no recibe el secreto para verificar tickets, así que todo ticket se rechazaría con `4401` ([TD-028](../roadmap/technical-debt.md#td-028));
 - las batallas duran segundos, así que casi nunca hay nada «en directo».
 
 ## Índice
@@ -152,5 +152,5 @@ Verificado contra `27f70bb`.
 | Mensajes `init`/`snapshot`/`event`/`debug`/`result` | CODE_VERIFIED | `gateway.ts:264-283,302-320` |
 | `attachBattle` y `detachBattle` a los 3 s | CODE_VERIFIED | `apps/tournament-worker/src/engine-executor.ts:208-254` |
 | Visor roto en navegador (main y producción) | RUNTIME_VERIFIED | Auditoría 2026-10-15, B pasada 2 §1b/§4 |
-| Worker sin secreto de tickets | CODE_VERIFIED (por A) | `COORD.md` [A] TD-028 |
+| Worker sin secreto de tickets | CODE_VERIFIED | `apps/api/src/auth/tokens.ts:73-97,165-177`; bloque `tournament-worker` de `infrastructure/docker-compose.yml` ([TD-028](../roadmap/technical-debt.md#td-028)) |
 | En producción `/ws/` responde 426 | RUNTIME_VERIFIED | Auditoría B pasada 1 (GET anónimos) |

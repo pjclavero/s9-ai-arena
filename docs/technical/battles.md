@@ -27,7 +27,7 @@ Una **batalla** es una simulación del motor 2D ([engine.md](engine.md)) entre 1
 
 ## Arquitectura
 
-Componentes que intervienen (la vista de despliegue es de A: [services.md](services.md), [architecture.md](architecture.md)):
+Componentes que intervienen (la vista de despliegue está en [services.md](services.md) y [architecture.md](architecture.md)):
 
 | Componente | Código | Papel en la batalla |
 |---|---|---|

@@ -207,4 +207,4 @@ Mutaciones medidas en la auditoría:
 | Secretos y consumidores | CODE_VERIFIED | `infrastructure/docker-compose.yml` (`secrets:` de cada servicio y bloque `secrets:`) |
 | Clave HKDF de tickets | CODE_VERIFIED | `apps/api/src/auth/tokens.ts:92-97` |
 | `/run` 503 con la flag apagada | CODE_VERIFIED | `apps/api/src/routes/battles.ts:595-600` |
-| Mutaciones | RUNTIME_VERIFIED (en la auditoría) | logs internos de la pasada 2 (agente A) |
+| Mutaciones | RUNTIME_VERIFIED (en la auditoría) | auditoría del 2026-10-15, pasada 2 (evidencia interna; [resumen](../audits/2026-10-15/README.md)) |

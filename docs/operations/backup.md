@@ -175,5 +175,5 @@ Históricos: [../history/operaciones/BACKUP_RUNTIME_ALIGNMENT.md](../history/ope
 | El entrypoint aborta si el SFTP está mal configurado | CODE_VERIFIED | `infrastructure/backup/entrypoint.sh` (dry-run rc=3 → exit 1) |
 | Criterios y umbral de 26 h del healthcheck | CODE_VERIFIED | `infrastructure/backup/healthcheck.sh:36-107` |
 | `evidence.sh` sólo lectura (`--no-lock`) y sin preparación SSH propia | CODE_VERIFIED | `infrastructure/backup/evidence.sh:1-30,99`; `grep setup_ssh evidence.sh` → 0 |
-| Última copia 2026-10-15 04:15 UTC correcta, `restic check` sin errores | RUNTIME_VERIFIED (supervisor, sólo lectura) | baseline de la consolidación |
+| Última copia 2026-10-15 04:15 UTC correcta, `restic check` sin errores | RUNTIME_VERIFIED (sólo lectura) | verificación de la consolidación, 2026-10-15 (logs y health del contenedor `backup`) |
 | Sin alertas desplegadas | RUNTIME_VERIFIED (auditoría) | perfil `observability` no en ejecución |

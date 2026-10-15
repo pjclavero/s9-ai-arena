@@ -164,7 +164,7 @@ Proyecto Compose: **`infrastructure`**, fichero **`/opt/s9-ai-arena/infrastructu
 
 - vhost **`arena.example.internal.conf`** (habilitado): 80 → 301 https;
   443 → `proxy_pass http://192.0.2.10:8080`, con `location /ws/` para WebSocket y
-  `client_max_body_size 64m`. Copia previa: `/root/s9arena-vhost-v1-backup-20260717.conf`.
+  `client_max_body_size 64m`. Copia previa: `<ruta-copia-vhost-v1>`.
 - `nginx -t` → **OK**. `curl` por loopback (SNI) a `s9arena…/` y `/healthz` → **200**;
   `/ws/` → **426** (Upgrade Required, correcto).
 - vhost **`otro-proyecto.example.internal.conf`**: proyecto DISTINTO → `proxy_pass
