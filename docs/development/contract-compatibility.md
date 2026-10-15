@@ -1,5 +1,10 @@
 # Compatibilidad y proceso de cambio de contratos
 
+> **Estado:** política vigente (antes `docs/compatibilidad.md`). Describe el proceso acordado; las
+> referencias a equipos (E1…E12) son los roles del dosier original. Revisado contra `27f70bb` en
+> lo que se cita en `## Verificación`; el resto es política (DESIGN_ONLY: no hay herramienta que la
+> imponga automáticamente salvo los tests de contrato). Índice de desarrollo: [index.md](index.md).
+
 Mantenido por **E1**. Cubre la mejora E1.M del dosier de tareas: el dosier técnico exige contratos versionados pero no define ni la política de versionado ni el proceso de cambio.
 
 ## 1. Qué es un contrato
@@ -66,3 +71,17 @@ Nada se elimina sin aviso:
 - Un campo marcado deprecado sobrevive **al menos una temporada completa** y sigue emitiéndose.
 - La API HTTP sirve bajo `/api/v1`; una `v2` convive con `v1` un mínimo de 6 meses (pensando en la "API pública para ligas de terceros" del capítulo 29).
 - Una familia de protocolo retirada (`arena/1` → `arena/2`) exige que el motor soporte ambas mientras haya bots publicados que hablen la vieja.
+
+## Documentación relacionada
+
+[workflow.md](workflow.md) · [contributing.md](contributing.md) · [../technical/api.md](../technical/api.md) ·
+[../technical/websocket.md](../technical/websocket.md) · [../technical/equipment.md](../technical/equipment.md) ·
+[../technical/maps.md](../technical/maps.md) · `packages/protocol/README.md`.
+
+## Verificación
+
+| Afirmación | Estado | Evidencia |
+|---|---|---|
+| Esquemas del protocolo `arena/1` (envelope + mensajes) | CODE_VERIFIED | `packages/protocol/schemas/*.schema.json` (envelope, common, hello, welcome, observation, command, event, shutdown) |
+| Contrato HTTP en `apps/api/openapi.yaml`, con extensiones fuera del contrato | CODE_VERIFIED | `apps/api/openapi.yaml`; `defineExtension` en `apps/api/src/routes/*` (ver [../technical/api.md](../technical/api.md)) |
+| Proceso de cambio, congelación y deprecación | DESIGN_ONLY | política; sin automatización propia |
