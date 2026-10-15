@@ -40,13 +40,13 @@ lanzados si uno falla.
 | Modo | Runner | Docker | Dónde | Declara |
 |---|---|---|---|---|
 | **Mock CI** | mock en proceso (WS real) | no | CI normal (`container-battle.test.ts`, `tests/e2e/e2e-real-battle-smoke.test.ts`) | nada de prod |
-| **Arnés real (opt-in)** | `ProxyContainerRunner` | **sí** | VM108, `scripts/e2e-real-battle-smoke.ts` con `S9_RUN_REAL_DOCKER_E2E=1` | evidencia real |
-| **Ejecución VM108** | igual que arnés, dentro del bloque gateado | sí | VM108 en ventana controlada | dictamen A |
+| **Arnés real (opt-in)** | `ProxyContainerRunner` | **sí** | <host-arena>, `scripts/e2e-real-battle-smoke.ts` con `S9_RUN_REAL_DOCKER_E2E=1` | evidencia real |
+| **Ejecución <host-arena>** | igual que arnés, dentro del bloque gateado | sí | <host-arena> en ventana controlada | dictamen A |
 
 El **arnés** `scripts/e2e-real-battle-smoke.ts` es OPT-IN y **no corre en el CI normal**:
 sin `S9_RUN_REAL_DOCKER_E2E=1` es un NO-OP. Su lógica (config + orquestación + escritura
 del replay) se prueba en CI con un runner mock; solo la ejecución con contenedores
-reales es un paso de VM108.
+reales es un paso de <host-arena>.
 
 ### Variables del arnés
 
@@ -68,10 +68,10 @@ replay-service publica el puerto) hace además `POST /replays/:battleId` con el 
 el servicio valida `header.battleId`, lo almacena+indexa y queda disponible en el visor
 existente. La ingesta es **best-effort**: si falla, la batalla no se invalida — el CLI
 reporta `ingested`/`ingestStatus` en su JSON de resultado. Pendiente (no bloqueante): en
-el despliegue VM108 el replay-service no publica el puerto por defecto; para ingestar desde
+el despliegue <host-arena> el replay-service no publica el puerto por defecto; para ingestar desde
 el host hay que alcanzarlo por su red interna o exponerlo temporalmente.
 
-## Troubleshooting (bugs reales encontrados en VM108, 2026-07-18)
+## Troubleshooting (bugs reales encontrados en <host-arena>, 2026-07-18)
 
 | Síntoma | Causa | Estado |
 |---|---|---|
@@ -79,7 +79,7 @@ el host hay que alcanzarlo por su red interna o exponerlo temporalmente.
 | create 403 `red no permitida: infrastructure_arena` | `compliance.mjs` exige la red literal `arena` | **corregido**: `ARENA_NETWORK=arena` + `name: arena` en el Compose |
 | create 403 `imagen sin digest sha256 fijado (sha256:…)` | el proxy exige repo digest `name@sha256:`, no el Image ID | **corregido**: `build.sh --local`/`--push` imprime el repo digest real |
 
-## Prerequisitos antes de VM108
+## Prerequisitos antes de <host-arena>
 
 - **Red `arena`**: nombre exacto `arena` (lo crea el Compose vía `name: arena`, o a mano
   `docker network create arena`). La red del stack es `internal: true` (bots sin Internet):
@@ -89,20 +89,20 @@ el host hay que alcanzarlo por su red interna o exponerlo temporalmente.
 - **Imagen y digest**: `bash bots/s9-smoke-bot/build.sh --local` (registry local, sin GHCR)
   o `--push` (GHCR). Copia el `RepoDigest` que imprime → `SMOKE_BOT_DIGEST`.
 
-## Ejecución REAL en VM108 · checklist de reintento (GATEADA — NO en este PR; NO declara A)
+## Ejecución REAL en <host-arena> · checklist de reintento (GATEADA — NO en este PR; NO declara A)
 
 > Trabajo de seguridad: ejecutar por primera vez código no confiable con el proxy
 > Docker. Hacerlo en ventana controlada, con la red del runner cerrada.
 
 1. Confirmar CI de `main` verde.
 2. Snapshot Proxmox nuevo + backup ligero.
-3. Actualizar VM108 al nuevo `main`; **migrar BD**: `docker exec -w /app infrastructure-api-1 npx tsx apps/api/src/db/cli.ts migrate`.
+3. Actualizar <host-arena> al nuevo `main`; **migrar BD**: `docker exec -w /app infrastructure-api-1 npx tsx apps/api/src/db/cli.ts migrate`.
 4. Validar núcleo 7/7 healthy.
 5. Confirmar `s9-docker-proxy` activo; ajustar `/etc/s9-ai-arena/docker-proxy.env`
    (`ARENA_NETWORK=arena`) y `systemctl restart s9-docker-proxy`.
 6. Validar rechazos en vivo (privileged / host-net / docker.sock / red no permitida / exec) → 403.
 7. `bash bots/s9-smoke-bot/build.sh --local` → fijar `SMOKE_BOT_DIGEST` con el repo digest.
-8. `S9_RUN_REAL_DOCKER_E2E=1 DOCKER_PROXY_URL=http://172.17.0.1:2375 ARENA_NETWORK=arena
+8. `S9_RUN_REAL_DOCKER_E2E=1 DOCKER_PROXY_URL=http://<ip-docker0>:2375 ARENA_NETWORK=arena
    ENGINE_HOST=<ip alcanzable desde arena> SMOKE_BOT_DIGEST=<repo digest>
    npx tsx scripts/e2e-real-battle-smoke.ts`.
 9. Verificar: 2 contenedores reales, 2 handshakes, ticks avanzan, batalla termina,
@@ -113,5 +113,5 @@ el host hay que alcanzarlo por su red interna o exponerlo temporalmente.
 
 No montar `/var/run/docker.sock` en contenedores de app. No activar runners
 permanentes. No abrir puertos en el router. No relajar la postura de seguridad del
-`SandboxSpec`. Recordatorio: tras actualizar VM108, `docker exec -w /app
+`SandboxSpec`. Recordatorio: tras actualizar <host-arena>, `docker exec -w /app
 infrastructure-api-1 npx tsx apps/api/src/db/cli.ts migrate`.

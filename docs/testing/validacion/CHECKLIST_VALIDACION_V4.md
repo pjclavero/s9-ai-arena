@@ -14,7 +14,7 @@
 | C5 | seguridad | greps docker.sock/privileged/host/unconfined | 0 en config productiva | ⏳ |
 | C6 | frontend sin secretos | grep DOCKER_PROXY_URL/SECRET/TOKEN en apps/web | 0 | ⏳ |
 | C7 | flags off | feature-flag experimental | disabled por defecto | 🔒 |
-| C8 | no VM108 | — | VM108/runner/proxy intactos | ⏳ |
+| C8 | no <host-arena> | — | <host-arena>/runner/proxy intactos | ⏳ |
 
 ## R10 — Editor de mapas
 
@@ -50,9 +50,9 @@
 | 12.6 | Run tournament disabled si `S9_ENABLE_REAL_BATTLE_RUNS=0` | botón disabled | 🔒 |
 | 12.7 | NO auto-run real | ninguna batalla real automática | ⏳ |
 
-## Gates VM108 (no en esta fase)
+## Gates <host-arena> (no en esta fase)
 
 | # | Prueba | Esperado | Estado |
 |---|---|---|---|
-| V1 | R6.2/R9-A: ejecución real desde UI/torneo en VM108 | batalla+replay reales | ⏳ (gateado) |
-| V2 | R7-A operativo: ingesta desde host VM108 + `GET /replays` | replay visible en `#/replays` | ⏳ (gateado) |
+| V1 | R6.2/R9-A: ejecución real desde UI/torneo en <host-arena> | batalla+replay reales | ⏳ (gateado) |
+| V2 | R7-A operativo: ingesta desde host <host-arena> + `GET /replays` | replay visible en `#/replays` | ⏳ (gateado) |

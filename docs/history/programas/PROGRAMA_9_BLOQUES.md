@@ -112,7 +112,7 @@ perfiles reales y una prueba de equivalencia de hash.
 
 ## Invariantes respetadas
 
-Durante los nueve bloques no se tocó VM108 ni VM104, no se desplegó nada, no se abrieron
+Durante los nueve bloques no se tocó <host-arena> ni <proxy-host>, no se desplegó nada, no se abrieron
 puertos ni se cambiaron dominios. No se introdujo `privileged: true`, `network_mode: host`
 ni montaje de `/var/run/docker.sock`. No hubo `git push --force`, ni merges con CI roja,
 ni bypass administrativo, ni tests falseados con skips o catches vacíos.
@@ -131,7 +131,7 @@ Ninguno de estos puntos bloquea nada; son continuaciones con diseño propio.
 
 - **R10 slice 2**: persistencia backend del editor de mapas.
 - **R11/R12**: estado público por batalla, `#/ranking`, matchmaking y prepare-battle. La
-  ejecución automática real sigue gateada a validación en VM108.
+  ejecución automática real sigue gateada a validación en <host-arena>.
 - **R13.5 slice 2 (opcional)**: serialización nativa del mundo Rapier, condicionada a un
   spike que demuestre que `solverFingerprint()` se reproduce bit-exacto tras
   `restoreSnapshot()`. No se promete.

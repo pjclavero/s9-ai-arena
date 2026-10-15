@@ -1,6 +1,6 @@
 # Integración Ronda 2 y Ronda 3 — PR #17–#31
 
-Rama: `integration/ronda2-ronda3` · Fecha: 2026-07-18 · Entorno de integración: ia-server (VM102), Linux, Node v20.19.2, sin Docker daemon, sin navegador.
+Rama: `integration/ronda2-ronda3` · Fecha: 2026-07-18 · Entorno de integración: <host-dev> (<host-dev>), Linux, Node v20.19.2, sin Docker daemon, sin navegador.
 
 ## Estado inicial
 
@@ -90,7 +90,7 @@ Ejecutado dentro de la suite (equivalente a E2E de proceso, con API+BD+gateway+m
 - actualización de una base de datos anterior REAL de producción (solo probado el backfill sintético de 009);
 - visor/replay/broadcast renderizando en navegador (Phaser) y ausencia de errores en consola web;
 - run real de la CI con el semáforo (primer run del PR será la verificación viva);
-- ejecución del sandbox real de contenedores (cubierta antes en VM108 por R6.1, no re-ejecutada aquí).
+- ejecución del sandbox real de contenedores (cubierta antes en <host-arena> por R6.1, no re-ejecutada aquí).
 
 ## Riesgos pendientes
 
@@ -98,7 +98,7 @@ Ejecutado dentro de la suite (equivalente a E2E de proceso, con API+BD+gateway+m
 2. Los dos daemons nuevos de bot-manager (docker-proxy y build-worker) no tienen servicio en el Compose (dejado fuera a propósito por R2.5/R1.7 para no chocar) — R-DEPLOY.
 3. Verificación visual del visor/panel pendiente de navegador.
 4. Flaky TOTP bajo carga (ventana de 30 s) — candidato a `otplib` con ventana ±1 en tests.
-5. El fallo del zstd desaparece con Node ≥ 22.15 (VM108 lo tiene); en Node 20 seguirá rojo.
+5. El fallo del zstd desaparece con Node ≥ 22.15 (<host-arena> lo tiene); en Node 20 seguirá rojo.
 
 ## Recomendación de merge
 

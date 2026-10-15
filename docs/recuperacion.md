@@ -393,7 +393,7 @@ vía de custodia convierte un olvido en una pérdida total.
   NO resuelto por este cambio — es un problema OPERATIVO, no de código):**
   `restore.sh` recibe `RESTIC_SSH_KEY_FILE`/`RESTIC_SSH_KNOWN_HOSTS_FILE`,
   nunca los genera ni los custodia. Si esa clave viviera ÚNICAMENTE dentro
-  de VM108 (o de la máquina que sea, en cada despliegue) — por ejemplo,
+  de <host-arena> (o de la máquina que sea, en cada despliegue) — por ejemplo,
   guardada sólo en un fichero local del host o en un volumen que también
   desaparece con él — un desastre que se lleve por delante esa máquina se
   lleva también el ÚNICO medio de alcanzar el backup: "el backup existe" y

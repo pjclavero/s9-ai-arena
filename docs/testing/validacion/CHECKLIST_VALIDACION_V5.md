@@ -31,7 +31,7 @@ grep -R "TOKEN" apps/web || true
 
 - [x] Esta PR **no** toca código: no añade sock/privileged/host-net/unconfined.
 - [x] No expone `DOCKER_PROXY_URL` ni secretos en frontend.
-- [x] No abre puertos ni cambia dominios. VM108/VM104/runner/proxy intactos.
+- [x] No abre puertos ni cambia dominios. <host-arena>/<proxy-host>/runner/proxy intactos.
 
 ## C. Checklist de no solapes
 

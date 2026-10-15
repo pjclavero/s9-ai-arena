@@ -11,7 +11,7 @@
 **La EJECUCIÓN real de batallas (`runBattle` / `POST /battles/:id/run`, R6.2/R9-B) y de
 torneos/matchmaking (auto-run) está GATEADA a `S9_ENABLE_REAL_BATTLE_RUNS` (hoy `0`/apagado,
 ver `apps/api/src/battle-run.ts:43,54` y `apps/api/src/app.ts:66`) y a la validación en
-**VM108**. Ninguna pieza de este diseño se implementa en este bloque (N6) ni en ningún bloque
+**<host-arena>**. Ninguna pieza de este diseño se implementa en este bloque (N6) ni en ningún bloque
 posterior de este programa de continuación sin una autorización explícita y separada que
 active esa validación.** Todo lo que sigue —prepare-battle y matchmaking— se diseña para
 llegar exactamente hasta la creación de recursos en estado `prepared` / tickets en cola, nunca
@@ -124,7 +124,7 @@ En `TournamentDetailPage`/`BracketPage` (hoy solo lectura), un botón "Preparar 
 match `scheduled` sin `battle_id` (visible solo a admin), que tras `201/200` enlaza a
 `#/battles/{id}` (ya existe `BattlesPage`). Un botón "Lanzar" junto al match ya preparado
 —es decir, con `battle_id` no nulo— queda **deshabilitado** con
-tooltip explicando el gateo, hasta que `S9_ENABLE_REAL_BATTLE_RUNS=1` + VM108 estén validados
+tooltip explicando el gateo, hasta que `S9_ENABLE_REAL_BATTLE_RUNS=1` + <host-arena> estén validados
 — igual que ya hace el flag de `runBattle` a nivel de API (belt-and-braces: la UI no debe ser
 la única barrera).
 
@@ -227,7 +227,7 @@ igual que el flujo de prepare-battle de la sección 1.
 | Pieza                                   | Estado tras este diseño        | Qué falta para activarla                        |
 |------------------------------------------|---------------------------------|--------------------------------------------------|
 | `prepare-battle` (match → `Battle prepared`) | Diseñado, no implementado  | Migración `matches.battle_id` + endpoint + tests |
-| `runBattle` sobre esa battle              | Ya existe, gateado (`503` hoy) | `S9_ENABLE_REAL_BATTLE_RUNS=1` + validación VM108 |
+| `runBattle` sobre esa battle              | Ya existe, gateado (`503` hoy) | `S9_ENABLE_REAL_BATTLE_RUNS=1` + validación <host-arena> |
 | Matchmaking (colas/tickets)               | Diseñado, no implementado      | Migraciones nuevas + endpoints + scheduler + tests |
 | Auto-emparejar → `Battle prepared`        | Diseñado, no implementado      | Igual que matchmaking; sigue sin tocar `runBattle` |
 | Auto-run de matchmaking/torneo            | **Fuera de alcance permanente de este programa** | Autorización explícita separada, no cubierta aquí |

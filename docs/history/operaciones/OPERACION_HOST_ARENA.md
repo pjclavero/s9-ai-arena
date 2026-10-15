@@ -1,7 +1,7 @@
-# Operación de VM108 — S9 AI Arena (runbook)
+# Operación de <host-arena> — S9 AI Arena (runbook)
 
 > Estado real y contexto: ver [`ESTADO_ACTUAL.md`](../status/ESTADO_ACTUAL.md).
-> Apagar o encender la VM entera: ver [`ops/APAGADO_Y_ENCENDIDO_VM108.md`](APAGADO_Y_ENCENDIDO.md).
+> Apagar o encender la VM entera: ver [`APAGADO_Y_ENCENDIDO.md`](APAGADO_Y_ENCENDIDO.md).
 > **Regla de oro:** los comandos de Docker/Compose se ejecutan **como el usuario `s9arena`**,
 > nunca como `root` (el PostgreSQL embebido se niega a correr como root, y `s9arena` es el
 > dueño de `/opt/s9-ai-arena`).
@@ -10,7 +10,7 @@
 
 | | |
 |---|---|
-| Host | `s9-arena` — LAN `192.168.1.208` — Tailscale `100.81.2.105` |
+| Host | `<host-arena>` — LAN `192.0.2.10` — Tailscale `198.51.100.10` |
 | Ruta | `/opt/s9-ai-arena` |
 | Compose oficial | `infrastructure/docker-compose.yml` |
 | Perfil desplegado | `nucleo` (7 servicios) |
@@ -19,7 +19,7 @@
 
 Entrar como `s9arena`:
 ```bash
-ssh root@192.168.1.208        # o el mecanismo habitual
+ssh root@192.0.2.10        # o el mecanismo habitual
 su - s9arena
 cd /opt/s9-ai-arena/infrastructure
 ```
@@ -73,29 +73,29 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/api/v1/
 
 ## 6. Probar el visor / panel
 
-- Abrir en navegador `http://192.168.1.208:8080/` (LAN) → SPA "S9 AI Arena".
+- Abrir en navegador `http://192.0.2.10:8080/` (LAN) → SPA "S9 AI Arena".
 - Debe cargar `/assets/index-*.js` y renderizar el panel.
 
 ## 7. Probar Tailscale
 
 ```bash
-tailscale status | grep s9-arena
-curl -s -o /dev/null -w '%{http_code}\n' http://100.81.2.105:8080/healthz   # -> 200
+tailscale status | grep <host-arena>
+curl -s -o /dev/null -w '%{http_code}\n' http://198.51.100.10:8080/healthz   # -> 200
 ```
 
 ## 8. Probar el dominio
 
-Desde VM104 (proxy) por loopback, sin depender del hairpin NAT:
+Desde <proxy-host> (proxy) por loopback, sin depender del hairpin NAT:
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' \
-  --resolve s9arena.seccionnueve.duckdns.org:443:127.0.0.1 \
-  https://s9arena.seccionnueve.duckdns.org/healthz          # -> 200
+  --resolve arena.example.internal:443:127.0.0.1 \
+  https://arena.example.internal/healthz          # -> 200
 ```
-Desde Internet (equipo externo): `https://s9arena.seccionnueve.duckdns.org/`.
+Desde Internet (equipo externo): `https://arena.example.internal/`.
 
 ## 9. Actualizar desde Git (paso deliberado, con backup)
 
-> Hoy VM108 corre `a5651ff` (rama `ronda2/entrypoints-servicios`), por detrás de `main`.
+> Hoy <host-arena> corre `a5651ff` (rama `ronda2/entrypoints-servicios`), por detrás de `main`.
 > Actualizar es una decisión consciente. **Antes**: sección 10 (backup) + snapshot nuevo.
 
 ```bash
@@ -112,8 +112,8 @@ docker compose ps                              # verificar healthy
 ## 10. Backup antes de un despliegue
 
 ```bash
-# 1) Snapshot Proxmox NUEVO (desde el host 192.168.1.152):
-qm snapshot 108 pre-deploy-$(date +%Y%m%d) --description "antes de actualizar a main"
+# 1) Snapshot Proxmox NUEVO (desde el host 192.0.2.2):
+qm snapshot <vmid> pre-deploy-$(date +%Y%m%d) --description "antes de actualizar a main"
 
 # 2) Dump de PostgreSQL (dentro de la VM, como s9arena):
 docker exec infrastructure-postgres-1 pg_dumpall -U postgres > ~/pg-backup-$(date +%Y%m%d).sql
@@ -124,11 +124,11 @@ cp -a /opt/s9-ai-arena/infrastructure/.env ~/env-backup-$(date +%Y%m%d)
 
 ## 11. Volver al snapshot (rollback)
 
-Desde el host Proxmox `192.168.1.152`:
+Desde el host Proxmox `192.0.2.2`:
 ```bash
-qm rollback 108 pre-v2-20260717     # vuelve al estado v1 previo al redespliegue
+qm rollback <vmid> pre-v2-20260717     # vuelve al estado v1 previo al redespliegue
 ```
-> ⚠️ Se pierde TODO lo hecho en VM108 desde 2026-07-17 (datos incluidos). Último recurso.
+> ⚠️ Se pierde TODO lo hecho en <host-arena> desde 2026-07-17 (datos incluidos). Último recurso.
 > Preferir siempre `git checkout <commit>` + rebuild antes que un rollback de VM.
 
 ## 11 bis. Volumen `arena_replays`: propiedad y montajes (B7)
@@ -191,7 +191,7 @@ Montajes del volumen y por qué (verificado contra el código, no supuesto):
    (`infrastructure/docker/node-service/entrypoint.sh`, parametrizado con
    `ARENA_SERVICE_USER=streamer`) y declara **`ARENA_DATA_DIRS=/data/replays`**,
    además de hacer el preflight de escritura al arrancar. Antes podía repetir el
-   fallo de VM108 con el agravante de que quien escribe es FFmpeg: moría en bucle
+   fallo de <host-arena> con el agravante de que quien escribe es FFmpeg: moría en bucle
    mientras `/healthz` seguía respondiendo 200.
    **Por qué `/data/replays` y no `/data/replays/video`**: la invariante que B7
    escribió en la cabecera de `entrypoint.sh` prohíbe rutas de más de un
@@ -225,8 +225,8 @@ Montajes del volumen y por qué (verificado contra el código, no supuesto):
 - ❌ Ejecutar Docker/Compose como `root`.
 - ❌ `docker compose down -v` / borrar volúmenes.
 - ❌ `docker system prune` (global).
-- ❌ Tocar otros proyectos del host o de VM104.
+- ❌ Tocar otros proyectos del host o de <proxy-host>.
 - ❌ Abrir puertos nuevos en el router.
-- ❌ Modificar el vhost `arena.seccionnueve.duckdns.org` (es otro proyecto, VM107).
+- ❌ Modificar el vhost `otro-proyecto.example.internal` (es otro proyecto, <host-otro-proyecto>).
 - ❌ Reiniciar la VM sin avisar.
 - ❌ Usar el `docker-compose.demo.yml` de la RAÍZ (es v1 legacy) para producción.

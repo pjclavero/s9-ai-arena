@@ -57,7 +57,7 @@ DELETE /matchmaking/tickets/:id
 
 - **No auto-run real**: ni torneo ni matchmaking lanzan batallas reales automáticamente.
 - `prepare-battle` crea `prepared`; la ejecución real usa `POST /battles/:id/run` (**#51,
-  gateado por `S9_ENABLE_REAL_BATTLE_RUNS`, hoy off**) y requiere **R6.2/R9-A validado en VM108**.
+  gateado por `S9_ENABLE_REAL_BATTLE_RUNS`, hoy off**) y requiere **R6.2/R9-A validado en <host-arena>**.
 - Matchmaking: cola **disabled por defecto**; botón "Run tournament" **disabled** hasta que
   la ejecución real esté habilitada. Ranking oficial irreversible: NO (el motor aún cambia).
 
@@ -89,7 +89,7 @@ admin para crear torneo; público read-only para ranking; **no auto-run si
 
 ## Riesgos / dependencias
 
-- **Depende de R6.2/R9-B (#51, ya en main)** para `prepare/run` y de **R6.2/R9-A (VM108)** para
+- **Depende de R6.2/R9-B (#51, ya en main)** para `prepare/run` y de **R6.2/R9-A (<host-arena>)** para
   ejecución real. Depende de R7-A (#50, ya en main) para replays de match. Solape App.tsx/OpenAPI.
   Riesgo **medio/alto**.
 
@@ -101,4 +101,4 @@ admin para crear torneo; público read-only para ranking; **no auto-run si
 ## Dictamen
 
 **R12-B** — diseño/contrato preparado; ranking/bracket implementables pronto (#51 ya en main);
-**la ejecución real de run/matchmaking sigue gateada a VM108 (R6.2/R9-A)**.
+**la ejecución real de run/matchmaking sigue gateada a <host-arena> (R6.2/R9-A)**.

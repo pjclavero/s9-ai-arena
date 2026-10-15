@@ -23,11 +23,11 @@ entorno donde ejecutar Docker con salida a internet.**
 
 ### 2.1 Decisión de infraestructura (bloquea el resto)
 
-- VM108 tiene Docker pero sin salida a internet para pulls (detectado 2026-07-16;
+- <host-arena> tiene Docker pero sin salida a internet para pulls (detectado 2026-07-16;
   probable DNS/firewall/router — diagnóstico pendiente). Alternativas: repararla,
   crear una VM de staging separada (el checklist final exige staging y producción
   separadas), o usar la CI de GitHub Actions que E10 dejó definida.
-- En ia-server (VM102): añadir `ia02` al grupo docker; subir Node a ≥22.15.
+- En <host-dev> (<host-dev>): añadir `<usuario-dev>` al grupo docker; subir Node a ≥22.15.
 
 ### 2.2 Cola de verificación con Docker (guionizada en las entregas)
 
@@ -70,11 +70,11 @@ entorno donde ejecutar Docker con salida a internet.**
 
 - Ratificar ADR-010 (npm workspaces, Elo, Prometheus+restic). *(Ratificado por el
   operador el 2026-07-16 — ver ADR-010.)*
-- Declarar `engines: node >=22.15` en el package.json raíz y alinear ia-server.
+- Declarar `engines: node >=22.15` en el package.json raíz y alinear <host-dev>.
 - Protección de rama en GitHub (ADR-010 D10.5): main gateada por CI; el flujo por PR
   ya es el vigente.
 - Limpieza del prototipo v1 del repo (compose raíz + arena-server/viewer antiguos)
-  cuando VM108 migre a la v2.
+  cuando <host-arena> migre a la v2.
 - Gestionar H1–H7 y las reconciliaciones como issues de GitHub (asignables, no se
   pierden en markdown).
 - Provisionar en Vaultwarden los secretos con nombre (BD, firma de artefactos, RTMPS)

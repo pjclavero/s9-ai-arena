@@ -9,7 +9,7 @@ E1–E10 + E8/E9).
 
 ## Estado de la suite (cifras reales)
 
-Entorno: ia02, 2026-07-16, Node v20.19.2, sin grupo docker ni sudo, sin
+Entorno: <usuario-dev>, 2026-07-16, Node v20.19.2, sin grupo docker ni sudo, sin
 navegador. PostgreSQL 18 embebido (harness de E7, ADR-E7-002); prohibido y no
 usado ningún servicio de producción del homelab.
 

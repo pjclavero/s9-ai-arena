@@ -1,4 +1,4 @@
-# Proxy de la API de Docker — runbook del host (VM108)
+# Proxy de la API de Docker — runbook del host (<host-arena>)
 
 R-DEPLOY · R2 (R1.7 · ERR-SEC-02). Este documento describe el **único proceso
 autorizado a tocar `/var/run/docker.sock`** en el host. Ningún contenedor del
@@ -33,7 +33,7 @@ entrypoint `apps/bot-manager/src/docker-proxy-main.ts`. Probada en proceso en
 El bind por defecto **no es `127.0.0.1`**: un proceso en loopback del host **no
 es alcanzable** desde un contenedor vía `host-gateway`. El proxy escucha en la
 **interfaz interna controlada** del bridge de Docker (`docker0`, típicamente
-`172.17.0.1`) y se acota por firewall a esa red. Desde el Compose, el
+`<ip-docker0>`) y se acota por firewall a esa red. Desde el Compose, el
 `bot-manager` lo alcanza con:
 
 ```yaml
@@ -90,6 +90,6 @@ sudo rm -rf /etc/s9-ai-arena && sudo userdel s9proxy
 
 ## Estado en este entorno
 
-**NO EJECUTADO** en VM102 (sin daemon de Docker ni sudo): la unidad, la config
+**NO EJECUTADO** en <host-dev> (sin daemon de Docker ni sudo): la unidad, la config
 de ejemplo, el instalador y este runbook quedan listos. La verificación viva
-(proxy ↔ socket ↔ bot-manager) es un paso de operador en VM108.
+(proxy ↔ socket ↔ bot-manager) es un paso de operador en <host-arena>.

@@ -30,20 +30,20 @@ S9_VISUAL_BASE_URL=http://localhost:3000 \
 Evidencia: `acceptance/visual/evidence/visor.png` y, si algo falla,
 `acceptance/visual/playwright-report/`.
 
-## Modo validación manual VM108
+## Modo validación manual <host-arena>
 
 Contra el dominio/IP reales (recuerda R6: **s9arena**, no arena):
 
 ```bash
-S9_VISUAL_BASE_URL=https://s9arena.seccionnueve.duckdns.org \
+S9_VISUAL_BASE_URL=https://arena.example.internal \
   npx playwright test -c acceptance/visual/playwright.config.ts
-# o por IP LAN detrás de VM104:
-S9_VISUAL_BASE_URL=http://192.168.1.208:8080 \
+# o por IP LAN detrás de <proxy-host>:
+S9_VISUAL_BASE_URL=http://192.0.2.10:8080 \
   npx playwright test -c acceptance/visual/playwright.config.ts
 ```
 
 ## Estado en este entorno
 
-**NO EJECUTADA** en VM102: no hay navegador. La suite y su runbook quedan listos;
+**NO EJECUTADA** en <host-dev>: no hay navegador. La suite y su runbook quedan listos;
 la ejecución es un paso de operador (o de la CI con un runner que tenga navegador)
 en un entorno con el visor servido.

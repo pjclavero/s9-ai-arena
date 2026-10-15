@@ -17,7 +17,7 @@ tournament-worker ya genera (E9). No inventa nada nuevo de dominio: expone lo qu
 
 - **Cero ejecuciones de batalla**: ningún POST nuevo, nada encola jobs del worker
   (`generate_schedule`, `run_battle`, `dry_run` intactos y sin nuevos llamadores), sin auto-run.
-- No toca `S9_ENABLE_REAL_BATTLE_RUNS` (sigue gateado a VM108/R6.2-R9-A, ver
+- No toca `S9_ENABLE_REAL_BATTLE_RUNS` (sigue gateado a <host-arena>/R6.2-R9-A, ver
   `docs/R12_TOURNAMENTS_RANKING_MATCHMAKING.md`).
 - No implementa `prepare-battle`, `#/ranking` ni matchmaking (slices posteriores del catálogo R12).
 - Sin botones de acción en la página: solo lectura.
@@ -83,4 +83,4 @@ columna no listada (test de claves exactas con `Object.keys(...).sort()`).
 
 `prepare-battle` desde un match (crea batalla `prepared`, sin ejecutar), página `#/ranking`
 sobre standings, matchmaking gateado (cola + tickets), botón de ejecución real —
-**todo ello sigue gateado** a `S9_ENABLE_REAL_BATTLE_RUNS` y a la validación VM108 (R6.2/R9-A).
+**todo ello sigue gateado** a `S9_ENABLE_REAL_BATTLE_RUNS` y a la validación <host-arena> (R6.2/R9-A).

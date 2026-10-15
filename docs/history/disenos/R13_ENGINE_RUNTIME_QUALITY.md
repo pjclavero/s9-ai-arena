@@ -1,7 +1,7 @@
 # R13 · Calidad y operabilidad del motor (engine runtime quality)
 
 > Documentación y plan. Verificado contra `origin/main` (worktree limpio). Bloque separado de
-> R10/R11/R12/R14/R16. No toca VM108/VM104/runner/proxy/seguridad.
+> R10/R11/R12/R14/R16. No toca <host-arena>/<proxy-host>/runner/proxy/seguridad.
 
 ## 0. Auditoría de los tres fallos críticos — CERRADA por R13.0 (2026-07-19)
 

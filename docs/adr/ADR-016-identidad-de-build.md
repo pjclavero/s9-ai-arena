@@ -34,7 +34,7 @@ recuperaba y el baseline no servía para rollback. Nadie lo vio porque nada lo m
 
 ### Incidente 3 — la etiqueta se movió bajo un contenedor vivo
 
-Medido en producción (VM108, 12 contenedores): `infrastructure-postgres-1` corre una
+Medido en producción (<host-arena>, 12 contenedores): `infrastructure-postgres-1` corre una
 image ID que **existe** y que `docker image inspect` resuelve, pero la referencia con la
 que arrancó, `postgres:16-alpine`, resuelve **hoy** a otra imagen distinta — upstream
 republicó la etiqueta, y la que corre es PostgreSQL 16.14 mientras la etiqueta ya es
@@ -209,7 +209,7 @@ check aprobado) construye imágenes de verdad y comprueba, en el mismo run:
 - Cambiar de commit ya no invalida la caché de `npm ci` ni de los `COPY` (el bloque va al
   final): el coste en tiempo de build es despreciable.
 - Una imagen construida sin los build-args no miente: dice `unknown`, y el gate la rechaza.
-- El drift de la etiqueta de la base de datos en VM108 queda **detectado y nombrado**, no
+- El drift de la etiqueta de la base de datos en <host-arena> queda **detectado y nombrado**, no
   corregido: anclar un digest es una decisión del operador con su propia ventana de base
   de datos. Este ADR sólo garantiza que el sistema **sabe decir** que ese drift existe.
 - **Este ADR no cambia el rollout en curso**, que se verifica con marcadores de contenido y

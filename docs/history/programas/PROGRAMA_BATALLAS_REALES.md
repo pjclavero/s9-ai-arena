@@ -1,7 +1,7 @@
 # Programa · Ejecución real de batallas (R6.2/R9 → A)
 
 Cierra el último hueco entre "la plataforma está desplegada" y "se puede lanzar una
-batalla". Arranca sobre `main@f66ddb7`, con la instancia de VM108 ya poblada
+batalla". Arranca sobre `main@f66ddb7`, con la instancia de <host-arena> ya poblada
 (catálogo, ruleset, mapa y nueve bots en tres equipos).
 
 ## Estado de partida (auditado, no supuesto)
@@ -10,7 +10,7 @@ batalla". Arranca sobre `main@f66ddb7`, con la instancia de VM108 ya poblada
 
 | Pieza | Estado |
 |---|---|
-| `s9-docker-proxy` (allowlist, host-only) | activo en VM108, escuchando en `172.17.0.1:2375` |
+| `s9-docker-proxy` (allowlist, host-only) | activo en <host-arena>, escuchando en `<ip-docker0>:2375` |
 | Red Docker `arena` | creada, nombre exacto exigido por `compliance.mjs` |
 | Imágenes de runtime de bots (python/node) y `s9-smoke-bot` | construidas |
 | Orquestador `runContainerBattle()` + `ProtocolServer` + `ProxyContainerRunner` | implementados y probados en CI con runner mock |
@@ -61,7 +61,7 @@ bypass → CI post-merge → checkpoint.
 | **B1** | Servicio `arena-engine` | Entrypoint HTTP real: `/healthz` + endpoint interno de ejecución. Runner **inyectado**; por defecto ninguno. Arregla el `Restarting (0)`. | no |
 | **B2** | Launcher cableado | `ProxyContainerRunner` real en el servicio (gateado por env) + implementación de `BattleRunLauncher` en la API que habla con `arena-engine` por HTTP, e inyección en `createApp`. Flag sigue **off**. | no |
 | **B3** | Bots firmados | Llevar los bots de `draft` a `published` con `artifact_hash` real por el pipeline de bot-manager. Sin saltarse la sandbox. | no |
-| **B4** | Validación operativa | Ejecución real en VM108: snapshot previo, rechazos del proxy verificados en vivo, batalla smoke con contenedores reales, replay verificable. | **sí — requiere autorización explícita** |
+| **B4** | Validación operativa | Ejecución real en <host-arena>: snapshot previo, rechazos del proxy verificados en vivo, batalla smoke con contenedores reales, replay verificable. | **sí — requiere autorización explícita** |
 
 ## Invariantes (no negociables)
 

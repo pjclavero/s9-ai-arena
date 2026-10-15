@@ -2,7 +2,7 @@
 
 Endpoint + UI **preparados y gateados** para lanzar una batalla real con el pipeline seguro
 validado (bot-manager → s9-docker-proxy → red arena → replay-service). **Apagado por defecto.**
-La **validación operativa real** (ejecución con contenedores en VM108) queda pendiente — este
+La **validación operativa real** (ejecución con contenedores en <host-arena>) queda pendiente — este
 bloque es **R6.2/R9-B**, no A.
 
 ## Endpoint
@@ -16,7 +16,7 @@ Respuestas:
 - **404** batalla inexistente.
 - **409** `invalid_state` (no `scheduled`), `map_not_published`, `bot_not_ready`, `bot_not_signed`
   (versión sin `artifact_hash` firmado).
-- **503 `runner_unavailable`** si el launcher no está cableado (aún no lo está → paso VM108).
+- **503 `runner_unavailable`** si el launcher no está cableado (aún no lo está → paso <host-arena>).
 - **200** `{ battleId, status, runner, replay }` cuando el launcher inyectado ejecuta.
 
 La API **NO llama a Docker**: delega en un `BattleRunLauncher` **inyectado** (`AppConfig.realBattleRuns.runner`).
@@ -179,7 +179,7 @@ duración teórica se registra como aviso).
   debilita ese mensaje concreto: un documento manipulado que lograra colisionar pasaría esa
   comprobación (y seguiría teniendo que pasar el validador de E4 y la comparación de vuelta).
 - Nada de esto se ha probado contra Docker real — ver el informe de entrega del bloque
-  correspondiente para qué se verificó con fakes y qué queda pendiente de VM108.
+  correspondiente para qué se verificó con fakes y qué queda pendiente de <host-arena>.
 - **Bloqueo externo (issue #92) — YA RESUELTO, en la base de esta rama**: el `botId`
   que la API envía en el cuerpo de `/run` era un UUID, mientras el esquema del HELLO
   exige `^bot_[0-9a-zA-Z]{1,24}$`; el HELLO se descartaba en silencio y el handshake
@@ -189,10 +189,10 @@ duración teórica se registra como aviso).
   `BOT_ID` y para `expected`. Este párrafo se actualizó al rebasar sobre esa
   corrección: antes afirmaba un bloqueo que la propia rama ya no tenía.
 
-## Validación operativa en VM108 (gateada, NO en este PR)
+## Validación operativa en <host-arena> (gateada, NO en este PR)
 
 Para pasar a **R6.2/R9-A** falta, sobre lo que ya cablea B2:
-1. Desplegar `s9-docker-proxy` en el host (VM108) y definir `DOCKER_PROXY_URL` en
+1. Desplegar `s9-docker-proxy` en el host (<host-arena>) y definir `DOCKER_PROXY_URL` en
    arena-engine + el secreto interno compartido (mismo fichero en api y arena-engine).
 2. Definir `ARENA_ENGINE_URL`/`S9_ENABLE_REAL_BATTLE_RUNS=1` para la API (siguen apagados
    hoy; encenderlos es una decisión de despliegue, no de este bloque).
@@ -203,11 +203,11 @@ Para pasar a **R6.2/R9-A** falta, sobre lo que ya cablea B2:
    grabadas de verdad, pero **NINGUNA batalla real de extremo a extremo ha llegado a
    completarse desde la API todavía**: antes de B9 moría en un 502 (`rulesetId` inválido) y,
    con el ruleset ya resuelto, el plazo HTTP derivado (≈350 s para 9000 ticks) solo se ha
-   ejercitado con relojes de test. Validación pendiente en VM108: una práctica completa
+   ejercitado con relojes de test. Validación pendiente en <host-arena>: una práctica completa
    (~5 min de batalla) que termine con `status: "completed"` y su replay ingerido, y otra
    sobre un mapa del catálogo distinto de `mvp-arena-01`.
 Solo entonces: **R6.2/R9-A**.
 
 **Dictamen: R6.2/R9-B** — UI y endpoint preparados y seguros; B2 cablea el transporte
 API→arena-engine→proxy con autenticación interna, gateado y con valores por defecto seguros;
-pendiente validación operativa real en VM108 y la fidelidad de traducción listada arriba.
+pendiente validación operativa real en <host-arena> y la fidelidad de traducción listada arriba.

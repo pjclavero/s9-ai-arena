@@ -46,11 +46,11 @@ consumido ⇒ rechazado) / código de período posterior sí aceptado.
   2. En el login, tras un TOTP válido: rechazar si
      `res.timeStep <= user.totp_last_step`; si pasa, `update totp_last_step`.
   No se cablea en este PR para no alterar el camino de auth desplegado sin poder
-  ejecutar `test:db` (embedded-postgres, sin red en VM102). Es un cambio pequeño
+  ejecutar `test:db` (embedded-postgres, sin red en <host-dev>). Es un cambio pequeño
   y aislado que debe validarse contra la suite de BD antes de fusionar.
 
 ## NO EJECUTADO aquí
 
 `npm run test:db` (auth E2E con PostgreSQL embebido) requiere descarga de binario
-sin red disponible en VM102. Los tests de la librería TOTP (`test:pure`) sí se
+sin red disponible en <host-dev>. Los tests de la librería TOTP (`test:pure`) sí se
 ejecutan y pasan.

@@ -1,10 +1,10 @@
 # R8 · Gestión/Admin ampliada (ops)
 
 Estado del bloque **R8 — gestión/admin ampliada** sobre `main@da71bf7`
-(PR #43 y **PR #44 mergeadas**; #44 arregló el runner real de VM108: seccomp
+(PR #43 y **PR #44 mergeadas**; #44 arregló el runner real de <host-arena>: seccomp
 inline, red `arena`, digest vía registry local).
 
-> Este bloque **NO** toca VM108/VM104, **NO** instala ni modifica `s9-docker-proxy`,
+> Este bloque **NO** toca <host-arena>/<proxy-host>, **NO** instala ni modifica `s9-docker-proxy`,
 > **NO** toca el arnés real ni el runner, **NO** lanza contenedores, **NO** declara A
 > y **NO** interfiere con el reintento operativo B+ → A. Todo lo añadido es
 > **solo lectura** salvo lo que ya existía.
@@ -79,7 +79,7 @@ un fallo (patrón R3.7).
 ## 4. Ejecución real de batallas (por qué NO hay botón Run)
 
 `createPracticeBattle` existe, pero **encolar/ejecutar** depende del runner real
-(bloque B+ → A, aún en reintento en VM108). Para no fingir éxito operativo,
+(bloque B+ → A, aún en reintento en <host-arena>). Para no fingir éxito operativo,
 **esta rama no añade un flujo de creación/ejecución de batalla**. El dashboard de
 sistema informa del estado (`realRunnerEnabled`) y, cuando esté validado A, se
 podrá añadir la pantalla `#/battles/new` que cree la batalla en `prepared` sin
@@ -90,7 +90,7 @@ disparar ejecución hasta que el operador lo autorice.
 ## 5. Dependencias externas
 
 - **Ejecución real** → `s9-docker-proxy` + arnés #43/#44 + `SMOKE_BOT_DIGEST` en
-  VM108. R8 no lo instala ni lo dispara.
+  <host-arena>. R8 no lo instala ni lo dispara.
 - **Visor de replay avanzado** → R7.
 
 ---

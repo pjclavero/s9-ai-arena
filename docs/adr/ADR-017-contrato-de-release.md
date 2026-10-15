@@ -21,10 +21,10 @@
 | 3 | **Etiqueta movida bajo un contenedor vivo**: `infrastructure-postgres-1` corre PostgreSQL **16.14** mientras `postgres:16-alpine` ya resuelve a **16.15**. Un restart cambiaría la versión de la base de datos sin decisión de nadie. | La etiqueta no es una identidad: es un puntero mutable, y otro carril del mismo host lo movió. | §5, §6 |
 | 4 | Gate que **se contradecía a sí mismo**: imprimía "intercambio de imagen puro" justo debajo de haber clasificado un cambio de montajes. | El texto y el diff se calculaban por separado. | §4 |
 | 5 | Invariante medido sobre un **host compartido**: un recuento de contenedores del host dio fallo espurio porque otro carril corría uno efímero. | El invariante era del stack; la medida, del host. | §6 |
-| 6 | `docker images -q` usado como **prueba de existencia**: omite imágenes sin etiqueta de nivel superior. | Hoy en VM108 la imagen que realmente corre en postgres **no aparece** en ese listado. | §5 |
+| 6 | `docker images -q` usado como **prueba de existencia**: omite imágenes sin etiqueta de nivel superior. | Hoy en <host-arena> la imagen que realmente corre en postgres **no aparece** en ese listado. | §5 |
 | 7 | Un `git clone` de **ruta local** hardlinkeó `.git/objects`; un borrado posterior vació **384 objetos** del repositorio productivo. | El clon no era una copia: era el mismo inodo. | §8 |
 
-Estado medido en VM108 el 2026-09-02 (solo lectura), que da fe de 3, 5 y 6 y
+Estado medido en <host-arena> el 2026-09-02 (solo lectura), que da fe de 3, 5 y 6 y
 añade un hallazgo:
 
 - `postgres:16-alpine` resuelve hoy a un digest distinto del que corre → **16.15
@@ -153,7 +153,7 @@ contenedor efímero de otro carril ni falta ni sobra — es de otro (incidente 5
 
 Los contenedores de un mismo proyecto deben declarar **el mismo**
 `com.docker.compose.project.config_files`. Tres orígenes distintos, como hay hoy
-en VM108, no son un stack desplegado: son despliegues parciales solapados que
+en <host-arena>, no son un stack desplegado: son despliegues parciales solapados que
 ningún `docker compose` posterior reproduce. Lo comprueba `composeCanonicoUnico`.
 
 ## 8. Entornos temporales

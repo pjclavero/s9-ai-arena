@@ -13,7 +13,7 @@ npm test -- --maxWorkers=2                 # suite completa del monorepo
 npx vitest run apps/tournament-worker      # solo E9: 48 tests, ~7 s
 ```
 
-Cifras medidas en este entorno (2026-07-16, Node v20.19.2, ia02 sin docker/sudo):
+Cifras medidas en este entorno (2026-07-16, Node v20.19.2, <usuario-dev> sin docker/sudo):
 
 - Suite completa del repo: **540 pasan, 1 falla, 3 skipped** (544 tests, 56
   archivos, 60 s). El único fallo es el PREEXISTENTE de entorno (`zstdCompressSync`

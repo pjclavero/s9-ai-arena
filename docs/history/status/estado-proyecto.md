@@ -1,6 +1,6 @@
 # Estado del proyecto S9 AI Arena
 
-> Última actualización: 2026-07-16, verificado ejecutando las suites reales en ia-server (VM 102).
+> Última actualización: 2026-07-16, verificado ejecutando las suites reales en <host-dev> (<host-dev>).
 > Este documento existe para entender de un vistazo qué hay hecho DE VERDAD (verificado con
 > ejecuciones reales) y qué falta, siguiendo el dosier `docs/Dosier_tareas_S9_AI_Arena.md`.
 
@@ -29,23 +29,23 @@
 | Plataforma web y API (E7) | `apps/api/` (Express + Knex/PostgreSQL), `apps/web/` (React+Vite) |
 | DevOps: stack Compose, CI, observabilidad, backups (E10) | `infrastructure/`, `.github/workflows/`, `docs/despliegue.md`, `docs/recuperacion.md` |
 | Entregas por equipo (archivadas) | `docs/historial/entrega-E1.md` … `docs/historial/entrega-E12.md` |
-| Copia local de trabajo | `~/s9-ai-arena` en ia-server (VM 102, 192.168.1.157) |
+| Copia local de trabajo | `~/s9-ai-arena` en <host-dev> (<host-dev>, 192.0.2.5) |
 | Repo remoto | `github.com/pjclavero/s9-ai-arena` (público) |
 
 ## Estado de despliegue (2026-07-16)
 
 **Del trabajo del dosier no hay nada desplegado.** Lo único desplegado es la PRIMERA
 versión (prototipo): los 4 contenedores del `docker-compose.yml` de la raíz
-(arena-server:8081 WS, arena-viewer:3000, bot-red, bot-blue) corriendo en **VM108**,
-con acceso web público vía el proxy Nginx de VM104 (confirmado por el usuario 2026-07-16;
-ficha en el repo `s9-server`, `servicios/s9-ai-arena.md`).
+(arena-server:8081 WS, arena-viewer:3000, bot-red, bot-blue) corriendo en **<host-arena>**,
+con acceso web público vía el proxy Nginx de <proxy-host> (confirmado por el usuario 2026-07-16;
+ficha en el repo `<repo-infra-privado>`, `servicios/s9-ai-arena.md`).
 
 El stack v2 del capítulo 6 ya existe en `infrastructure/` (E10) pero **no está desplegado**.
 Requisito de diseño: debe poder desplegarse autocontenido en UNA SOLA máquina, con el
-acceso web público dado por el Nginx de VM104 como proxy inverso — `docs/despliegue.md`
-documenta ambos modos (standalone con TLS propio y detrás del proxy de VM104).
+acceso web público dado por el Nginx de <proxy-host> como proxy inverso — `docs/despliegue.md`
+documenta ambos modos (standalone con TLS propio y detrás del proxy de <proxy-host>).
 
-**Limitación de entorno relevante:** en ia-server el usuario `ia02` no pertenece al grupo
+**Limitación de entorno relevante:** en <host-dev> el usuario `<usuario-dev>` no pertenece al grupo
 `docker` y no hay `sudo`, así que no se puede construir ni lanzar contenedores desde esta
 sesión. Afecta a la verificación real de E6 (sandbox) y E10 (Compose/CI). El Node local es
 v20.19.2 (ver nota de zstd más abajo).
@@ -59,15 +59,15 @@ v20.19.2 (ver nota de zstd más abajo).
 | E3 Módulos | T3.1–T3.4 | `packages/module-catalog/` (datos, validador, resolver, bench) | Incluido en `npm test` + validador CLI | **Verde** | fixtures.ts del motor cableado al catálogo real |
 | E4 Mapas | T4.1–T4.4 | `apps/map-service/`, `maps/`, `tests/maps-broken/` | Incluido en `npm test` | **Verde** | Import Tiled, validador, servicio, procedural |
 | E5 Protocolo+SDKs | T5.1–T5.4 | protocol-server + `sdks/python` + `sdks/javascript` + `example-bots/` | `npm test` + `pytest` en `sdks/python` | **Verde**: SDK Python 45/45 (60 s); JS/protocolo en vitest | El test flaky de T5.1 (comparaba 2 ejecuciones en vivo) se reescribió como autoconsistencia vía replay — ver `docs/historial/entrega-E5.md` |
-| E6 Seguridad | T6.1–T6.4 | `apps/bot-manager/`, `runtimes/`, `tests/sandbox-escape/`, `scripts/scan-compose.ts`, `scripts/verify-runtime-digests.ts` | Incluido en `npm test` (66 tests E6) | **Verde en la capa verificable** (pipeline, firma, análisis, prueba de protocolo + partida de humo en proceso, secret-scan, audit_log RBAC, suspensión, escáner de Compose, digests) | Capa Docker (lanzar contenedores, suite de escape viva, `docker inspect`, Trivy) **implementada pero pendiente de entorno con Docker** — ia02 sin grupo docker ni sudo. Ver `docs/historial/entrega-E6.md` |
+| E6 Seguridad | T6.1–T6.4 | `apps/bot-manager/`, `runtimes/`, `tests/sandbox-escape/`, `scripts/scan-compose.ts`, `scripts/verify-runtime-digests.ts` | Incluido en `npm test` (66 tests E6) | **Verde en la capa verificable** (pipeline, firma, análisis, prueba de protocolo + partida de humo en proceso, secret-scan, audit_log RBAC, suspensión, escáner de Compose, digests) | Capa Docker (lanzar contenedores, suite de escape viva, `docker inspect`, Trivy) **implementada pero pendiente de entorno con Docker** — <usuario-dev> sin grupo docker ni sudo. Ver `docs/historial/entrega-E6.md` |
 | E7 Plataforma | T7.1–T7.5 | `apps/api/` (26 tablas cap. 23, migraciones Knex, auth Argon2id+TOTP, RBAC desde OpenAPI, bots 17.1, API espectador, cuotas), `apps/web/` (React+Vite, editor con validador E3) | Incluido en `npm test` (60 tests E7 contra **PostgreSQL 18.4 real embebido**) + `vite build` | **Verde en la capa verificable**: 52/53 operaciones del OpenAPI implementadas y conformes | Integra el `BuildPipeline` REAL de E6 (no reimplementado). Pendiente: `verifyReplay` (E8), jobs (E9), etapas containerizadas del pipeline sin Docker. Ver `docs/historial/entrega-E7.md` |
 | E8 Visor/Replays | T8.1–T8.4 | `apps/replay-service/` (formato zstd/gzip+sha256+keyframes, retención 23.1, CLI verify), `apps/api/src/spectate/`, `apps/web/src/viewer/` (Phaser, reproductor 0,5×–8×), pipeline de stats | Incluido en `npm test` (52 tests E8) + `vite build` | **Verde en la capa verificable**: completa las **53/53 operaciones** del OpenAPI (`verifyReplay`) | Cifras: replay 5 min 2,23→0,06 MB (37×); verify 390 ms; stats 313 ms; 50/50 batallas de regresión. Pendiente: E2E con navegador real y rama zstd (Node ≥22). Ver `docs/historial/entrega-E8.md` |
 | E9 Torneos | T9.1–T9.4 | `apps/tournament-worker/` (cola durable sobre `jobs` de E7, SKIP LOCKED, clasificación 19.2), 6 formatos de torneo, Elo con libro mayor `rating_events`, commit-reveal + auditoría E2E con `verify()` | Incluido en `npm test` (48 tests E9) | **Verde en la capa verificable**: torneo E2E de 8 bots con 7 batallas reales del motor en ~0,9 s | budgetCredits congelado por torneo (ADR-000/D7). Redis solo probado contra stub RESP (cola es PostgreSQL-primero, ADR-E9-001). Ver `docs/historial/entrega-E9.md` |
-| E10 DevOps | T10.1–T10.4 | `infrastructure/` (Compose 12 servicios, perfiles, 5 redes, secretos, observabilidad Prometheus+Grafana+Loki, backups pg_dump+restic), `.github/workflows/` (CI 8 etapas + nightly), `docs/despliegue.md`, `docs/recuperacion.md` | Incluido en `npm test` (56 tests E10: `docker compose config` sin daemon, escáner, backups dry-run) | **Verde en la capa verificable** | Sin Docker no se pudo levantar el stack ni ejecutar CI real (ia02 sin grupo docker). CI fija Node 22. Ver `docs/historial/entrega-E10.md` |
+| E10 DevOps | T10.1–T10.4 | `infrastructure/` (Compose 12 servicios, perfiles, 5 redes, secretos, observabilidad Prometheus+Grafana+Loki, backups pg_dump+restic), `.github/workflows/` (CI 8 etapas + nightly), `docs/despliegue.md`, `docs/recuperacion.md` | Incluido en `npm test` (56 tests E10: `docker compose config` sin daemon, escáner, backups dry-run) | **Verde en la capa verificable** | Sin Docker no se pudo levantar el stack ni ejecutar CI real (<usuario-dev> sin grupo docker). CI fija Node 22. Ver `docs/historial/entrega-E10.md` |
 | E11 Streaming | T11.1–T11.2 | `apps/web/src/broadcast/` (vista 1080p sobre el visor E8, BroadcastDirector, branding por query), `apps/streamer/` + `infrastructure/docker/streamer/` (Xvfb+Chromium+FFmpeg, supervisor con reintentos, API interna, métricas), `docs/streaming-runbook.md` | Incluido en `npm test` (35 tests E11) + `vite build` | **Verde en la capa verificable** (clave RTMPS solo por archivo, redacción verificada en tests) | El streaming no toca el motor: consume el canal de espectador. [PENDIENTE]: emisión real de 30 min a YouTube y Chromium/FFmpeg vivos (requiere Docker; runbook §7). Ver `docs/historial/entrega-E11.md` |
 | E12 QA | T12.1–T12.3 | `tests/e2e/` (criterio 26.1: 6 pasos + 6 sabotajes), `acceptance/` (pipeline cap. 28: 10 criterios + informe), `tests/gamedays/` + `docs/gamedays/` (7 guiones de caos, game day M3 6/6) | Incluido en `npm test` (19 tests E12) + pipeline de aceptación 10/10 VERDE | **Verde en la capa verificable** | Detectó los hallazgos H1–H7 (abajo). GD-5 y ejecución containerizada [PENDIENTE de staging]. Ver `docs/historial/entrega-E12.md` |
 
-### Cifras de la última verificación completa (2026-07-16, ia-server, Node v20.19.2)
+### Cifras de la última verificación completa (2026-07-16, <host-dev>, Node v20.19.2)
 
 - `npm test` (línea base al clonar): **309 pasan, 2 fallan, 3 skipped** (314). Los 2 fallos:
   1. Flaky de E5 (`protocol-server.test.ts:306`) — **resuelto**: el test estaba mal planteado,
@@ -94,11 +94,11 @@ v20.19.2 (ver nota de zstd más abajo).
   592 pasan, 1 falla, 3 skipped (596).** El único fallo sigue siendo el zstd de entorno,
   reverificado en aislado. +52 tests E8 y +48 tests E9; los merges de `e8-visor` y
   `e9-torneos` entraron sin conflictos.
-- **Verificación con Docker real en VM108 (2026-07-16, autorizada por el operador):**
+- **Verificación con Docker real en <host-arena> (2026-07-16, autorizada por el operador):**
   suite E6 66/66 y E10 51/51 (ejecutables) verdes dentro de un contenedor `node:22`;
   `docker compose config` real de todos los perfiles correcto (10/11/19 servicios);
   escáner de Compose 0 infracciones. La v1 en producción quedó intacta y el entorno de
-  prueba se limpió. **No se pudo levantar el stack v2 ni construir runtimes**: VM108 no
+  prueba se limpió. **No se pudo levantar el stack v2 ni construir runtimes**: <host-arena> no
   tiene salida a internet para Docker (ver deudas). Addenda en `docs/historial/entrega-E6.md` y
   `docs/historial/entrega-E10.md`.
 
@@ -121,10 +121,10 @@ v20.19.2 (ver nota de zstd más abajo).
 ## Hallazgos / deudas conocidas
 
 - **Node 20 vs 22**: el repo asume Node ≥ 22.15 para el test de compresión zstd de replays.
-  Decidir: subir Node en ia-server o declarar `engines` en package.json.
-- **Docker inaccesible para `ia02`**: añadir el usuario al grupo `docker` (o dar acceso
+  Decidir: subir Node en <host-dev> o declarar `engines` en package.json.
+- **Docker inaccesible para `<usuario-dev>`**: añadir el usuario al grupo `docker` (o dar acceso
   equivalente) antes de E6/E10 si se quiere verificación real y no solo por inspección.
-- **VM108 sin salida a internet para Docker** (detectado 2026-07-16): no puede hacer pull
+- **<host-arena> sin salida a internet para Docker** (detectado 2026-07-16): no puede hacer pull
   de docker.io/ghcr.io, lo que bloquea builds y `compose up` allí. Llamativo porque la v1
   se desplegó en esa VM en su día — probable cambio posterior de DNS/firewall/router.
   Diagnóstico pendiente (operador o s9-sysadmin). Alternativa: GitHub Actions (la CI de

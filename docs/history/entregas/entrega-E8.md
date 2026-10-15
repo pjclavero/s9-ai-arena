@@ -135,5 +135,5 @@ packages/game-rules/index.ts      T8.2 · Ruleset.spectator {allowFogView, delay
   visor 100 % probada fuera de Phaser, integración WS/HTTP real, `vite build` en verde y
   guion manual. El E2E de navegador queda para cuando la CI (E10) tenga navegador.
 - **zstd real**: rama escrita pero no ejecutable en Node 20 (ver decisión 1).
-- **Docker/producción**: ia02 no tiene docker ni sudo; nada se ha desplegado ni tocado
+- **Docker/producción**: <usuario-dev> no tiene docker ni sudo; nada se ha desplegado ni tocado
   en producción. Los tests de BD usan PostgreSQL embebido (ADR-E7-002), jamás el homelab.

@@ -23,7 +23,7 @@ ramas `ronda2/rX.Y-*` por tarea (PR #18–#31) → **`integration/ronda2-ronda3`
 | R1.7 | Retirar el montaje de `docker.sock` | ✅ Hecho y verificado (sin Docker; ruta viva → R-DEPLOY) | — | [R1.7-docker-sock.md](reportes/R1.7-docker-sock.md) | PR #19 |
 | R1.8 | Rate-limit y bloqueo de login tras proxy | ✅ Hecho y verificado (Linux) | — | [R1.8-rate-limit-proxy.md](reportes/R1.8-rate-limit-proxy.md) | PR #18 |
 
-> **Verificación en Linux · 2026-07-17 (VM108).** La verificación de **R1.4 y R1.5** que quedaba
+> **Verificación en Linux · 2026-07-17 (<host-arena>).** La verificación de **R1.4 y R1.5** que quedaba
 > diferida a Linux está **hecha**: los tests que usan PostgreSQL embebido (ERR-GES-04) no se podían
 > ejecutar en Windows y aquí sí corren.
 >
@@ -57,7 +57,7 @@ ramas `ronda2/rX.Y-*` por tarea (PR #18–#31) → **`integration/ronda2-ronda3`
 | R2.5 | Encolar builds (worker + tabla `jobs`), firma verificable desde secreto y rate-limit compartido (ERR-SEC-12/15/14) | ✅ Hecho y verificado (Linux, 726/1/3) | — | [R2.5-colas-firma.md](reportes/R2.5-colas-firma.md) | PR #26 |
 | R2.6 | Saneado de subidas y cabeceras (ERR-SEC-09/10/16): paquete con esquema ajv estricto, Content-Disposition RFC 6266/5987, ticket de espectador fuera de la URL + wss en prod, HSTS al gateway; SERVICE_ENTRY de la API ya resuelto en la rama base (`5dba8de`) | ✅ Hecho y verificado (Linux; arranque del contenedor pendiente de R-DEPLOY) | — | [R2.6-subidas-cabeceras.md](reportes/R2.6-subidas-cabeceras.md) | PR #27 |
 
-> **R2.1 · 2026-07-17 (VM108, Node 20).** `npx tsc --noEmit` da **0 errores** en el tsconfig raíz
+> **R2.1 · 2026-07-17 (<host-arena>, Node 20).** `npx tsc --noEmit` da **0 errores** en el tsconfig raíz
 > (antes 267: ~238 falsos de JSX de `apps/web` + 29 genuinos) y **0** en `apps/web` (proyecto
 > propio con jsx). El paso de tipos de la CI ya **rompe** ante un error (demostrado en local con
 > un error deliberado); "Formato" ejecuta `prettier --check` de verdad (ámbito: solo código
@@ -106,7 +106,7 @@ regresión nuevos).
 
 El harness y el CI ya no pueden dar verde sin probar, y eso está verificado. Lo que **no** se
 ha podido ejecutar es la suite de escape **contra el sandbox real**, y no por R1.6: el runtime
-de Python **no es construible** hoy. Se intentó en VM108 con Docker y un registry local — el
+de Python **no es construible** hoy. Se intentó en <host-arena> con Docker y un registry local — el
 `FROM python@sha256:0000…` no resuelve (se obtuvo el digest real y el build avanzó), pero
 `pip install --require-hashes` falla porque `runtimes/python/allowed-requirements.lock` tiene
 hashes placeholder, como el propio fichero admite. Es **R6.1** íntegro, y es más trabajo del que

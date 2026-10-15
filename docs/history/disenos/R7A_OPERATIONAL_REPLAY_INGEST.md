@@ -43,7 +43,7 @@ battleId/resultado/ticks/oficial/fecha y enlaza a `#/viewer/:battleId` y `#/repl
   reintentos, `REPLAY_INGEST_ENABLED=0`, y **`GET /replays` lista la batalla ingerida** end-to-end.
 - `apps/web/tests/replays-page.test.tsx`: lista, vacío, error.
 
-## Cómo validar en VM108 (gateado, NO en este PR)
+## Cómo validar en <host-arena> (gateado, NO en este PR)
 
 1. Asegurar que el arnés alcanza el replay-service (red `platform` o exponer su puerto):
    `REPLAY_SERVICE_URL=http://<replay-service>:8083`.
@@ -54,9 +54,9 @@ battleId/resultado/ticks/oficial/fecha y enlaza a `#/viewer/:battleId` y `#/repl
 ## Estado / dictamen
 
 Ingesta endurecida + listado + página **implementados y testados**. La **validación operativa
-en VM108** (replay real ingerido desde una ejecución real y visible en el listado) queda
-gateada. **Dictamen R7-B+** (implementado, pendiente validación operativa VM108); pasa a R7-A
-cuando se valide en VM108.
+en <host-arena>** (replay real ingerido desde una ejecución real y visible en el listado) queda
+gateada. **Dictamen R7-B+** (implementado, pendiente validación operativa <host-arena>); pasa a R7-A
+cuando se valide en <host-arena>.
 
 ## Riesgos residuales / pendientes
 
@@ -64,4 +64,4 @@ cuando se valide en VM108.
   sigue disponible por replay vía `POST /replays/:battleId/verify`. Añadirlo al índice en la
   ingesta es una mejora incremental.
 - Enrutado gateway de `GET /replays` (sin `battleId`): confirmar que el gateway enruta `/replays`
-  al replay-service en VM108 (hoy enruta `/replays/`); ajuste de nginx documentado si hace falta.
+  al replay-service en <host-arena> (hoy enruta `/replays/`); ajuste de nginx documentado si hace falta.

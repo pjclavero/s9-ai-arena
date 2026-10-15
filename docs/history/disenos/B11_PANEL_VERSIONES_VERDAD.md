@@ -128,7 +128,7 @@ de extensiones conocidas de `conformance.test.ts`.
   código nuevo está en el chunk emitido. `phaser` (declarado en `package.json`) no está
   instalado en este entorno, fallo **preexistente** ajeno a este cambio; se alias-eó a un
   stub solo para esa verificación, sin tocar la configuración del repo.
-- **No se ha abierto un navegador de verdad** ni se ha probado contra VM108. Todo lo
+- **No se ha abierto un navegador de verdad** ni se ha probado contra <host-arena>. Todo lo
   afirmado sobre el render proviene de jsdom + Testing Library.
 - La imagen `web` que construye CI (`build-images (web)`) es la **genérica** de
   `node-service`, no la de `infrastructure/docker/web/Dockerfile` (vite + nginx) que es la

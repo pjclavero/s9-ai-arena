@@ -7,8 +7,8 @@
 
 ## Hecho / integrado en `main`
 
-- **Núcleo v2** desplegado en VM108 (7 servicios), dominio `s9arena.seccionnueve.duckdns.org`.
-- **Hito A**: batalla E2E real validada en VM108 con **runners containerizados** + **replay real
+- **Núcleo v2** desplegado en <host-arena> (7 servicios), dominio `arena.example.internal`.
+- **Hito A**: batalla E2E real validada en <host-arena> con **runners containerizados** + **replay real
   verificado** (bit a bit). Pipeline seguro: bot-manager → s9-docker-proxy → red `arena` → replay-service.
 - **R7** replay API/viewer/verify · **R8** admin consolidado · **R9** creación de batalla prepared/segura.
 - **#50 R7-A** — ingesta operativa del replay + listado global `#/replays`. **Mergeada** (CI verde).
@@ -62,7 +62,7 @@
    (`feature/r12-tournament-bracket`): `GET /tournaments/{id}/matches` (contrato 0.5.0, 60 ops,
    visitor) + página `#/tournaments/:id/bracket`, solo lectura, cero ejecuciones de batalla.
    Ver `docs/R12_BRACKET_SLICE1.md`. Pendiente de slices posteriores: prepare-battle, `#/ranking`,
-   matchmaking — auto-run real sigue gateado a #51 + validación VM108 (R6.2/R9-A).
+   matchmaking — auto-run real sigue gateado a #51 + validación <host-arena> (R6.2/R9-A).
 
 ### Luego (largo plazo)
 
@@ -92,7 +92,7 @@
 | R13.1 | R13.0 recomendable | no debe alterar el tick lógico |
 | R11 | R7-A (#50, en main) | flag `S9_PUBLIC_SPECTATE_ENABLED=0` |
 | R13.2 | nada | — |
-| R12 | #51 (en main) | **auto-run real → VM108 R6.2/R9-A** (gateado) |
+| R12 | #51 (en main) | **auto-run real → <host-arena> R6.2/R9-A** (gateado) |
 | R16 | nada (puede empezar antes que R14) | rendimiento; sin CDN aún |
 | R14 | — resuelto por ADR (`docs/R14_ADR_WEBRTC.md`): no se implementa | reapertura: demanda medida + autorización expresa de infra (TURN/puertos) |
 | R13.5 | evaluación con golden replays | si cambia el hash ⇒ **cambio de versión física** |
@@ -103,11 +103,11 @@
 Sin `docker.sock`/`privileged`/`network_mode: host`/`seccomp=unconfined` en config productiva.
 Ejecución de código no confiable siempre en contenedores aislados vía s9-docker-proxy. Firma/digest
 obligatorios. Secretos nunca en el frontend; `DOCKER_PROXY_URL` jamás en frontend. Features
-experimentales **off** por defecto. No abrir puertos ni cambiar dominios. VM108/VM104/runner/proxy: no tocar.
+experimentales **off** por defecto. No abrir puertos ni cambiar dominios. <host-arena>/<proxy-host>/runner/proxy: no tocar.
 
 ## Qué NO se debe hacer todavía
 
-- No activar ejecución real desde UI ni auto-run real de torneos (gateado a VM108/R6.2-R9-A).
+- No activar ejecución real desde UI ni auto-run real de torneos (gateado a <host-arena>/R6.2-R9-A).
 - No implementar RTMP/YouTube/Twitch (mucho después de R14).
 - No reabrir R14 (WebRTC): resuelto por ADR (`docs/R14_ADR_WEBRTC.md`); reapertura solo con demanda medida + autorización expresa de infraestructura.
 - No empezar R16 por WebGL avanzado/CDN; primero sprites/efectos básicos.

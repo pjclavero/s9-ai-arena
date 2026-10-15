@@ -1,6 +1,6 @@
-# Apagar y encender VM108 sin perder trabajo
+# Apagar y encender <host-arena> sin perder trabajo
 
-> Runbook operativo. Para el día a día del stack, ver [`../OPERACION_VM108.md`](OPERACION_HOST_ARENA.md).
+> Runbook operativo. Para el día a día del stack, ver [`OPERACION_HOST_ARENA.md`](OPERACION_HOST_ARENA.md).
 
 ## Qué se pierde y qué no
 
@@ -23,7 +23,7 @@ en `running` en la tabla `jobs` sigue ahí después del apagado; lo que desapare
 ## 1 · Preflight (obligatorio)
 
 ```bash
-ssh root@192.168.1.208
+ssh root@192.0.2.10
 bash /opt/s9-ai-arena/infrastructure/scripts/preflight-apagado.sh
 ```
 
@@ -93,7 +93,7 @@ segundo. Si vieras el contador subiendo continuamente con Redis sano, *eso* sí 
 **El backup diario corre a las 04:15 UTC.** Si la VM sigue apagada a esa hora, ese día no hay
 copia. No pasa nada por un día, pero conviene saberlo si el apagado se alarga.
 
-**VM108 vive en `Hvergelmir` (192.168.1.152), que es también el host del repositorio de
+**<host-arena> vive en `<hipervisor>` (192.0.2.2), que es también el host del repositorio de
 backup.** Apagar la VM no afecta a las copias; apagar el hipervisor se lleva las dos cosas por
 delante. Es un punto único de fallo conocido y pendiente de resolver: mientras siga así, las
 copias no protegen de que ese equipo falle.

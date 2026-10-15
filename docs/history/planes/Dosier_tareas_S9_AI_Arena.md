@@ -876,7 +876,7 @@ Implementa la estrategia de copias del capítulo 24: backup lógico diario de Po
 
 - El dosier no fija stack de observabilidad ni herramienta de backup: se proponen Prometheus+Grafana+Loki y pg_dump/pgBackRest+restic, a ratificar por ADR.
 - No se mencionan healthchecks ni orden de arranque en Compose: se añaden como requisito de T10.2.
-- Se recomienda que producción viva en una VM dedicada del Proxmox (yggdrasil) separada de staging, alineado con la mitigación de sandbox del cap. 27; el dimensionamiento (CPU/RAM para N batallas concurrentes) debe medirse en M3 y documentarse.
+- Se recomienda que producción viva en una VM dedicada del Proxmox (<hipervisor>) separada de staging, alineado con la mitigación de sandbox del cap. 27; el dimensionamiento (CPU/RAM para N batallas concurrentes) debe medirse en M3 y documentarse.
 - Falta una política de actualización del stack en caliente: se propone despliegue por servicio (compose up -d servicio) con drenado de batallas en curso del motor antes de reiniciarlo, coordinado por la cola de E9.
 
 ---
@@ -1056,7 +1056,7 @@ Streaming operativo, criterios de aceptación completos y despliegue de producci
 
 ## 14. Checklist final de despliegue en producción
 
-Verificación final sobre el servidor de producción (VM dedicada en el Proxmox yggdrasil). Se ejecuta una sola vez, tras la puerta M5, y se archiva firmada en docs/despliegue/acta-produccion.md.
+Verificación final sobre el servidor de producción (VM dedicada en el Proxmox <hipervisor>). Se ejecuta una sola vez, tras la puerta M5, y se archiva firmada en docs/despliegue/acta-produccion.md.
 
 - [ ] VM de producción creada y dimensionada según las mediciones de M3; separada de staging.
 - [ ] DNS y certificados TLS activos en el gateway; HTTPS forzado y solo 80/443 expuestos (escaneo externo adjunto).
@@ -1277,7 +1277,7 @@ nodo de build/ejecución de bots sin acceso a PostgreSQL, backups, secretos ni r
 ```
 Configura la confianza de proxy en Express de forma ACOTADA (declarando el salto/rango del
 gateway, no genérica) para que req.ip sea la IP real del cliente y no la del gateway. Verifica la
-coherencia con el modo "detrás del proxy de VM104" (dos saltos). Asegura que la cuota anónima y
+coherencia con el modo "detrás del proxy de <proxy-host>" (dos saltos). Asegura que la cuota anónima y
 la clave de bloqueo de fuerza bruta (${ip}|${email}) usan la IP real. Añade un test que confirme
 que una X-Forwarded-For inyectada por un cliente externo NO altera la clave de límite.
 ```
@@ -1748,8 +1748,8 @@ servicio v2 depende de arena-server/arena-viewer.
 **Prompt de ejecución**
 
 ```
-Redacta y prepara el runbook de corte de la v1 en producción (VM108, tras el proxy de VM104): qué
-URL/puertos deja de servir arena-server/arena-viewer, cómo el proxy de VM104 pasa a apuntar al
+Redacta y prepara el runbook de corte de la v1 en producción (<host-arena>, tras el proxy de <proxy-host>): qué
+URL/puertos deja de servir arena-server/arena-viewer, cómo el proxy de <proxy-host> pasa a apuntar al
 gateway de la v2, y el orden de arranque/parada para que no haya ventana de doble sistema activo.
 La ejecución real del corte pertenece a R-DEPLOY (requiere la v2 desplegada y verificada); esta
 tarea deja el plan escrito, revisado y con criterio de rollback a v1 si la v2 falla el humo.
@@ -1801,7 +1801,7 @@ promoción a producción exige el pipeline de aceptación (T12.2) 10/10 en verde
 
 #### R6.5 — Ejecutar el corte v1 → v2 en producción (R5.2) · Equipo E10
 
-**Prompt · DoD:** Ejecutar el runbook de corte: el proxy de VM104 apunta al gateway v2, se para
+**Prompt · DoD:** Ejecutar el runbook de corte: el proxy de <proxy-host> apunta al gateway v2, se para
 el prototipo v1, sin ventana de doble sistema. **DoD:** producción sirve solo la v2; healthchecks
 verdes 24 h; rollback disponible; acta firmada.
 

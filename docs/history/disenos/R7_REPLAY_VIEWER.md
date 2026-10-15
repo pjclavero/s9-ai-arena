@@ -1,6 +1,6 @@
 # R7 · Replay real como recurso gestionado + visor
 
-> Tras el **hito A** (batalla E2E real validada en VM108 con replay real verificado bit a
+> Tras el **hito A** (batalla E2E real validada en <host-arena> con replay real verificado bit a
 > bit), R7 convierte ese replay de **fichero suelto** en **recurso gestionado** por el
 > replay-service, servible por la API y el visor existentes.
 
@@ -30,7 +30,7 @@ libre, ejecuta el arnés (runner mock por WebSocket) con `REPLAY_SERVICE_URL`, y
 ingesta 201 con sha256, replay recuperable por `GET /replays/:battleId`, y rechazo de replay
 corrupto. `npx vitest run tests/e2e/e2e-real-battle-smoke.test.ts`.
 
-## Cómo se valida en VM108 (gateado, no en este PR)
+## Cómo se valida en <host-arena> (gateado, no en este PR)
 
 `REPLAY_SERVICE_URL` alcanzable desde donde corre el arnés (el replay-service es un servicio
 de la red `platform`). Tras la batalla real, `GET /replays/{battleId}` en la API devuelve el
@@ -40,9 +40,9 @@ replay y `#/replay/<battleId>` lo reproduce.
 
 - Viewer + API + verify: **existen y funcionan con replay real** (hito A).
 - Ingesta arnés→servicio: **añadida y testada**.
-- **Pendiente (no bloqueante)**: exponer/alcanzar el replay-service desde el host en VM108
+- **Pendiente (no bloqueante)**: exponer/alcanzar el replay-service desde el host en <host-arena>
   para la ingesta operativa; endpoint de LISTA global de replays (`GET /replays`) y página
   `#/replays` de listado (hoy se accede por `battleId`) — mejora incremental.
 
 **Dictamen R7: R7-B → cerca de R7-A.** El replay real ya es gestionable y visible; queda la
-ingesta operativa en VM108 y el listado global como mejoras.
+ingesta operativa en <host-arena> y el listado global como mejoras.

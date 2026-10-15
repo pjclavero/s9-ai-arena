@@ -34,7 +34,7 @@ Cada bloque sigue el ciclo del programa anterior: auditoría de `main` → dise�
 rama y worktree propios desde main fresco → implementación → tests → **mutaciones de
 no-vacuidad** → Supervisor independiente → corrección de observaciones → PR con CI verde →
 merge sin bypass → CI post-merge verde → checkpoint → siguiente. Un bloque por PR, nunca
-mezclados. Se respetan todas las invariantes (sin tocar VM108/VM104, sin desplegar, sin
+mezclados. Se respetan todas las invariantes (sin tocar <host-arena>/<proxy-host>, sin desplegar, sin
 abrir puertos, sin `privileged`/`network_mode: host`/`docker.sock`, sin falsear tests).
 
 ## Orden de ejecución (ítems ejecutables) — plan original
@@ -81,7 +81,7 @@ Solo lectura. El auto-run real sigue fuera de alcance (ver bloqueados).
 ### N6 · R12 — `#/ranking` (solo lectura) + diseño de prepare-battle
 Página `#/ranking` de solo lectura sobre datos ya disponibles + **documento de diseño**
 de prepare-battle/matchmaking. La ejecución real de prepare-battle NO se implementa aquí:
-depende de la validación en VM108 (ver bloqueados).
+depende de la validación en <host-arena> (ver bloqueados).
 
 ### N7 · R16.3+ — siguiente fase visual
 Siguiente fase del upgrade visual, procedural dentro del atlas existente, sin assets
@@ -94,7 +94,7 @@ auditoría del bloque.
 autorización explícita y separada del operador.
 
 - **Auto-run real de R11/R12 (torneos/batallas desde UI)** — gateado a validación en
-  **VM108**. Regla dura: no se toca VM108 sin autorización expresa. Las flags
+  **<host-arena>**. Regla dura: no se toca <host-arena> sin autorización expresa. Las flags
   `S9_PUBLIC_SPECTATE_ENABLED` y `S9_ENABLE_REAL_BATTLE_RUNS` siguen off por defecto.
 - **Upgrade directo de Rapier** — prohibido; solo rama de evaluación separada, sin merge
   (`docs/R13_ENGINE_RUNTIME_QUALITY.md`).
@@ -105,7 +105,7 @@ autorización explícita y separada del operador.
 
 **No tocada durante el programa; sigue pendiente del OK del operador.**
 
-- **9 worktrees en `/home/ia02/s9-worktrees/`** (dosier E1–E12, otro proyecto): todos en
+- **9 worktrees en `/home/<usuario-dev>/s9-worktrees/`** (dosier E1–E12, otro proyecto): todos en
   `main` y limpios, pero ajenos a este programa y posiblemente en uso por otras sesiones.
   No se borran sin OK explícito.
 - **`package-lock.json` local sucio** en el checkout principal: marcado "no tocar"

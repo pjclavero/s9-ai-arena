@@ -2,7 +2,7 @@
 
 > **IMPLEMENTADO (2026-07-19)** en `feature/r13-0-regression-locks`. Fija con tests los tres fallos
 > críticos y los invariantes de determinismo/replay. **Solo tests — cero cambios de motor.** No toca
-> contrato, seguridad, VM108/VM104/runner/proxy.
+> contrato, seguridad, <host-arena>/<proxy-host>/runner/proxy.
 >
 > **Resultado:** 3 ficheros (`radio-regression`, `acoustic-sensor-regression`,
 > `ammo-loadout-regression`), **15 casos verdes**. Los tres fallos ya estaban corregidos en código

@@ -9,7 +9,7 @@ nada** de esos equipos (importa `Battle`, los stubs de bot y el esquema real del
 
 ## Limitación de entorno (condiciona toda la verificación)
 
-La máquina de desarrollo (`ia02`) **no tiene acceso a Docker** (no está en el grupo
+La máquina de desarrollo (`<usuario-dev>`) **no tiene acceso a Docker** (no está en el grupo
 `docker`, sin `sudo`). No se pueden construir ni lanzar contenedores aquí. Por eso E6 se
 entrega en **dos capas**, y la tabla de DoD distingue explícitamente cada ítem entre
 **«verificado ejecutando X»** y **«implementado, verificación real pendiente de entorno
@@ -33,7 +33,7 @@ npm test                              # suite completa del monorepo
 npx vitest run apps/bot-manager       # solo E6: 66 tests, ~13 s
 npx tsx scripts/scan-compose.ts       # escáner del Compose (cap. 28)
 npx tsx scripts/verify-runtime-digests.ts   # runtimes fijados por digest (T6.3)
-# Requieren Docker (NO ejecutables en ia02):
+# Requieren Docker (NO ejecutables en <usuario-dev>):
 ./tests/sandbox-escape/run-escape-suite.sh <imagen@digest>   # T6.2
 ./scripts/scan-runtime-vulns.sh                              # T6.3 (Trivy)
 ```
@@ -77,7 +77,7 @@ scripts/
 
 Leyenda: **[EJECUTADO]** = verificado corriendo tests/CLI reales en esta máquina ·
 **[INSPECCIÓN]** = implementado con código completo, verificación real pendiente de un
-entorno con Docker (ia02 sin grupo docker ni sudo).
+entorno con Docker (<usuario-dev> sin grupo docker ni sudo).
 
 ### T6.1 — Pipeline de build y publicación
 
@@ -119,7 +119,7 @@ entorno con Docker (ia02 sin grupo docker ni sudo).
 | Código con clave AWS de ejemplo bloqueado con hallazgo registrado | **[EJECUTADO]** `audit.test.ts` + `secret-scan.test.ts` + `pipeline.test.ts`. |
 | audit_log de solo inserción: sin endpoint ni permiso de borrado/edición | **[EJECUTADO]** `audit.test.ts`: `AuditLog` no expone `delete`/`update`/`remove` y `AUDIT_PERMISSIONS` no concede borrado a ningún rol. |
 
-## Cifras reales medidas (2026-07-16, ia-server, Node v20.19.2)
+## Cifras reales medidas (2026-07-16, <host-dev>, Node v20.19.2)
 
 - **E6 (`apps/bot-manager`): 66 tests, 13 ficheros, 100 % verdes** (~13 s).
 - **Suite completa (`npm test --maxWorkers=2`): 376 pasan, 1 falla, 3 skipped (380).**
@@ -176,9 +176,9 @@ inspeccionar la config real con `docker inspect`, medir el impacto en el tick de
 batalla concurrente, y el escaneo de vulnerabilidades con Trivy. La recomendación del
 dosier de una **VM dedicada** para el stack de bots aplica también a ese runner.
 
-## Addendum 2026-07-16 · Verificación con Docker real en VM108
+## Addendum 2026-07-16 · Verificación con Docker real en <host-arena>
 
-Con autorización explícita del operador se verificó E6 en VM108 (Docker CE 29.6.1,
+Con autorización explícita del operador se verificó E6 en <host-arena> (Docker CE 29.6.1,
 4 vCPU/8 GB), sin tocar la v1 en producción (intacta antes y después):
 
 - **[EJECUTADO]** Suite E6 completa dentro de un contenedor `node:22`: **66/66 tests
@@ -188,10 +188,10 @@ Con autorización explícita del operador se verificó E6 en VM108 (Docker CE 29
 - **[EJECUTADO]** `verify-runtime-digests.ts` y estructura de la suite de escape (7/7
   vectores presentes y consistentes con su manifiesto).
 - **[BLOQUEADO POR ENTORNO]** Build real de runtimes, suite de escape contra contenedores
-  vivos, `docker inspect` en vivo y Trivy: **VM108 no tiene salida a internet para
+  vivos, `docker inspect` en vivo y Trivy: **<host-arena> no tiene salida a internet para
   Docker** (no puede hacer pull de docker.io/ghcr.io), así que no se pudieron construir
   ni lanzar las imágenes. Los digests de `DIGESTS.lock` siguen siendo placeholders.
-  Vías: restaurar la salida a internet de Docker en VM108 (hallazgo de infraestructura,
+  Vías: restaurar la salida a internet de Docker en <host-arena> (hallazgo de infraestructura,
   la v1 se desplegó allí en su día) o ejecutar los jobs de CI de `e6-security.yml` en
   GitHub Actions.
 

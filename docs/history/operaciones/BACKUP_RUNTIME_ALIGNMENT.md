@@ -312,7 +312,7 @@ backup:
     test: [CMD-SHELL, /usr/local/bin/healthcheck.sh]   # hoy: pgrep crond
     interval: 1m0s  timeout: 10s  retries: 3  start_period: 30s
   environment:
-    RESTIC_HOSTNAME: arena-backup-host   # hoy: AUSENTE
+    RESTIC_HOSTNAME: <backup-host>   # hoy: AUSENTE
     BACKUP_CRON: 15 4 * * *
     REPLAY_RETENTION_DAYS: "180"
     RESTIC_REPOSITORY: sftp:<backup-host>:<backup-path>
@@ -418,8 +418,8 @@ imagen vieja— y sería verde aunque la imagen nueva estuviera rota.
 
 **V3 · ejecución en seco** —
 `docker exec infrastructure-backup-1 /usr/local/bin/backup.sh --dry-run`.
-Debe imprimir `PLAN 4/5 … --host arena-backup-host`, `PLAN 5/5 … --host
-arena-backup-host --group-by host,tags`, `SFTP · ssh presente` y `CONFIG OK`.
+Debe imprimir `PLAN 4/5 … --host <backup-host>`, `PLAN 5/5 … --host
+<backup-host> --group-by host,tags`, `SFTP · ssh presente` y `CONFIG OK`.
 Códigos: `0` config completa, `1` config incompleta, `3` backend sftp mal
 configurado. **`3` es de despliegue, no transitorio: se para aquí.**
 *Demuestra:* configuración, hostname estable y cliente ssh presentes; no escribe
@@ -440,7 +440,7 @@ Y a continuación:
 
 ```
 # snapshot nuevo bajo el hostname LÓGICO
-docker exec infrastructure-backup-1 restic --no-lock snapshots --host arena-backup-host --json
+docker exec infrastructure-backup-1 restic --no-lock snapshots --host <backup-host> --json
 
 # manifest de esquema 2 y pg_dump dentro del snapshot
 docker exec infrastructure-backup-1 restic --no-lock dump <snapshot> \
@@ -541,7 +541,7 @@ Estado medido hoy en el repositorio (35 snapshots):
 
 | hostname | tags | n | último |
 | --- | --- | --- | --- |
-| `s9-arena` | `s9-arena-primer-backup` | 1 | 2026-08-09 |
+| `<host-arena>` | `s9-arena-primer-backup` | 1 | 2026-08-09 |
 | `9b22f5959ea2` | `s9-arena-data` / `s9-arena-secrets` | 1 + 1 | 2026-08-13 |
 | `a834a832b86e` | `s9-arena-data` / `s9-arena-secrets` | 16 + 16 | 2026-09-04 |
 
@@ -566,13 +566,13 @@ La versión alineada ejecuta:
 
 ```
 restic forget --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune \
-  --host arena-backup-host --group-by host,tags
+  --host <backup-host> --group-by host,tags
 ```
 
-Aparece un **cuarto hostname**, `arena-backup-host`. Efecto de la primera poda
+Aparece un **cuarto hostname**, `<backup-host>`. Efecto de la primera poda
 alineada, y por qué:
 
-1. **`--host arena-backup-host` es un FILTRO de candidatos.** Los snapshots de
+1. **`--host <backup-host>` es un FILTRO de candidatos.** Los snapshots de
    los otros tres hostnames dejan de ser siquiera considerados: no se pueden
    borrar. No es que "sobrevivan a la política": es que no entran en ella.
 2. **Dentro del hostname nuevo habrá 2 snapshots** (uno `s9-arena-data`, uno
@@ -585,7 +585,7 @@ filtro, y lo nuevo está muy por debajo del mínimo que se conserva.
 
 **Lo que sí cambia, y hay que declararlo:** a partir de la alineación, los 35
 snapshots legados quedan **permanentemente exentos de retención**. Ningún
-`forget` con `--host arena-backup-host` volverá a mirarlos, así que el
+`forget` con `--host <backup-host>` volverá a mirarlos, así que el
 repositorio conserva ese lastre para siempre salvo que alguien lo pode
 deliberadamente. Eso es una decisión del operador, con dos opciones y ninguna
 inocua:

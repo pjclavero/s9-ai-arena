@@ -6,7 +6,7 @@ líneas 808–881) contra los capítulos 6, 22 y 24 del dosier técnico.
 
 ## Limitación del entorno de desarrollo (leer primero)
 
-El usuario `ia02` de esta máquina **no tiene acceso al daemon de Docker** (sin
+El usuario `<usuario-dev>` de esta máquina **no tiene acceso al daemon de Docker** (sin
 grupo `docker`, sin `sudo`) y Node es v20.19.2. En consecuencia:
 
 - **Verificado ejecutando de verdad:** parseo/estructura de todos los YAML,
@@ -51,7 +51,7 @@ infrastructure/
                                         observabilidad; perfiles, 5 redes (6.4), 6 volúmenes (6.3)
   .env.example                  T10.2 · documentado (dominio, modos, BD externa, backup…)
   gateway/nginx.conf            T10.2 · standalone TLS; correlation_id; log JSON
-  gateway/nginx-behind-proxy.conf T10.2 · modo detrás del Nginx de VM104
+  gateway/nginx-behind-proxy.conf T10.2 · modo detrás del Nginx de <proxy-host>
   docker/…/Dockerfile           T10.2 · gateway, arena-engine, node-service genérico,
                                         streamer (esqueleto E11), bot-runtime, backup
   scripts/scan-compose.mjs      T10.2 · escáner cap. 28 (docker.sock/privileged/puertos)
@@ -130,8 +130,8 @@ entorno con Docker/GitHub · con el comando exacto entre paréntesis.
    bot-manager/streamer: **pendientes de E7/E9/E6/E11** (la infraestructura
    los espera vía `SERVICE_ENTRY`; imágenes construibles ya).
 7. Requisito del operador aplicado: la plataforma es **autocontenida en una
-   máquina**; el acceso web público puede darlo el Nginx de VM104
-   (`*.seccionnueve.duckdns.org`) como proxy inverso — dos modos documentados y
+   máquina**; el acceso web público puede darlo el Nginx de <proxy-host>
+   (`*.example.internal`) como proxy inverso — dos modos documentados y
    soportados (`GATEWAY_CONF`), ver docs/despliegue.md.
 8. El fallo zstd es de Node 20 local; la CI fija Node 22 y la nightly lo cubrirá.
 
@@ -142,9 +142,9 @@ Checklist consolidado en `docs/despliegue.md` (§ Verificación pendiente),
 CODEOWNERS). Test de caos de la alerta de motor: pausar el bucle de tick
 (SIGSTOP al proceso del motor) y medir hasta `ALERTS{alertname="EngineTickStalled",alertstate="firing"}`.
 
-## Addendum 2026-07-16 · Verificación con Docker real en VM108
+## Addendum 2026-07-16 · Verificación con Docker real en <host-arena>
 
-Con autorización explícita del operador se verificó E10 en VM108 (Docker CE 29.6.1 +
+Con autorización explícita del operador se verificó E10 en <host-arena> (Docker CE 29.6.1 +
 Compose + Buildx), sin tocar la v1 en producción (intacta antes y después):
 
 - **[EJECUTADO]** `docker compose config` con el CLI real de Docker 29.6.1 sobre
@@ -157,7 +157,7 @@ Compose + Buildx), sin tocar la v1 en producción (intacta antes y después):
 - **[EJECUTADO]** Suite E10 dentro de un contenedor `node:22`: 51/51 tests ejecutables
   verdes (5 skipped por falta de `git` en `node:22-slim`, no es fallo de código).
 - **[BLOQUEADO POR ENTORNO]** `docker compose up` del stack, healthchecks en vivo,
-  conectividad de bots y simulacro de recuperación: **VM108 no tiene salida a internet
+  conectividad de bots y simulacro de recuperación: **<host-arena> no tiene salida a internet
   para Docker** (no puede hacer pull de imágenes base). Vías: restaurar esa salida
   (hallazgo de infraestructura a diagnosticar) o el runner de GitHub Actions que la CI
   de T10.1 ya define (Node 22 + Docker).

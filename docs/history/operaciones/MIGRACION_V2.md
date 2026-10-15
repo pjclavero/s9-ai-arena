@@ -5,7 +5,7 @@
 
 ## 1. De dónde veníamos
 
-Hasta el 2026-07-17, en VM108 estaba desplegado el **prototipo v1**: los 4 contenedores del
+Hasta el 2026-07-17, en <host-arena> estaba desplegado el **prototipo v1**: los 4 contenedores del
 `docker-compose.yml` de la **raíz** del repo (hoy renombrado a `docker-compose.demo.yml`):
 
 - `arena-server` (WebSocket del juego, puerto 8081)
@@ -26,20 +26,20 @@ La plataforma completa (E1–E12): `apps/api`, `apps/arena-engine`, `apps/web` (
 ## 3. Qué se desplegó (2026-07-17)
 
 - Se **retiró la v1** de la ruta activa: su despliegue se movió a
-  `/opt/_v1-prototipo-backup-20260717` en VM108.
+  `/opt/_v1-prototipo-backup-20260717` en <host-arena>.
 - Se levantó la v2 en **perfil `nucleo`** (7 servicios): `gateway`, `web`, `api`,
   `tournament-worker`, `replay-service`, `postgres`, `queue`. Todos `healthy`.
-- El vhost de VM104 se reapuntó de la v1 (arena-viewer:3000 / arena-server:8081) al **gateway
-  de la v2** (`192.168.1.208:8080`). Copia previa en `/root/s9arena-vhost-v1-backup-20260717.conf`.
+- El vhost de <proxy-host> se reapuntó de la v1 (arena-viewer:3000 / arena-server:8081) al **gateway
+  de la v2** (`192.0.2.10:8080`). Copia previa en `/root/s9arena-vhost-v1-backup-20260717.conf`.
 
 > **Por qué "desplegar la v2" fue en realidad terminar E6/E7/E9:** el Compose de E10 se escribió
 > sin Docker y nunca se había ejecutado; faltaban entrypoints de servicio de varias apps. Eso se
-> resolvió en la rama `ronda2/entrypoints-servicios` (la que corre hoy VM108) y en R-DEPLOY.
+> resolvió en la rama `ronda2/entrypoints-servicios` (la que corre hoy <host-arena>) y en R-DEPLOY.
 
 ## 4. Snapshot previo
 
 Antes del redespliegue se hizo el snapshot Proxmox **`pre-v2-20260717`** (2026-07-17 09:58:36,
-"Antes de redespliegue v2 limpio"). Es el punto de rollback de VM (ver `OPERACION_VM108.md` §11).
+"Antes de redespliegue v2 limpio"). Es el punto de rollback de VM (ver `OPERACION_HOST_ARENA.md` §11).
 
 ## 5. Qué falta para completar la v2
 
@@ -47,7 +47,7 @@ Antes del redespliegue se hizo el snapshot Proxmox **`pre-v2-20260717`** (2026-0
    Ronda 2/3 **y** R-DEPLOY (entrypoints reales de `bot-manager`/`map-service`, `bot-build-worker`
    en el Compose, unidad systemd `s9-docker-proxy`, TOTP con reloj fake, `check-node`≥22.15,
    dominio `s9arena`, aclaración del compose legacy). Hoy la CI de esa rama está `UNSTABLE`.
-2. **Actualizar VM108 a `main`** tras el merge (hoy corre `a5651ff`, 52 commits por detrás).
+2. **Actualizar <host-arena> a `main`** tras el merge (hoy corre `a5651ff`, 52 commits por detrás).
 3. **Desplegar los servicios que faltan del núcleo ampliado** cuando toque: `bot-manager`
    (bloqueado hasta R1.7/R6.2 — containerizar `agentResolver`), `map-service`, observabilidad.
 4. **Prueba real de extremo a extremo**: batalla real contra el stack desplegado, visor en
@@ -73,12 +73,12 @@ Ver la lista ejecutable en [`CHECKLIST_VALIDACION_V2.md`](../../testing/validaci
   `apps/bot-manager/tests/compose-scan.test.ts`) apunta a `docker-compose.demo.yml`, y el del
   stack oficial (`acceptance/criteria.mjs` → `scan-compose.mjs`) apunta a
   `infrastructure/docker-compose.yml`. Está marcado como legacy en su cabecera.
-- En VM108, `/opt/_v1-prototipo-backup-20260717` puede archivarse/comprimirse (no borrar sin backup).
+- En <host-arena>, `/opt/_v1-prototipo-backup-20260717` puede archivarse/comprimirse (no borrar sin backup).
 
 ## 8. Plan de rollback
 
 | Escenario | Acción |
 |---|---|
 | El nuevo despliegue de la v2 falla al arrancar | `git checkout a5651ff` + `docker compose --profile nucleo up -d --build` (volver al commit que hoy funciona) |
-| Corrupción/estado irrecuperable de la VM | `qm rollback 108 pre-v2-20260717` desde el host Proxmox (pierde datos desde 2026-07-17) |
-| El vhost de VM104 queda mal | restaurar `/root/s9arena-vhost-v1-backup-20260717.conf` y `nginx -t && systemctl reload nginx` |
+| Corrupción/estado irrecuperable de la VM | `qm rollback <vmid> pre-v2-20260717` desde el host Proxmox (pierde datos desde 2026-07-17) |
+| El vhost de <proxy-host> queda mal | restaurar `/root/s9arena-vhost-v1-backup-20260717.conf` y `nginx -t && systemctl reload nginx` |

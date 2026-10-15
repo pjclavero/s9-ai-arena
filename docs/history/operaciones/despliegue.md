@@ -1,10 +1,10 @@
 # Despliegue de S9 AI Arena
 
-> **⚠️ Estado real (2026-07-18):** el núcleo de la v2 YA está desplegado en VM108. Para el
+> **⚠️ Estado real (2026-07-18):** el núcleo de la v2 YA está desplegado en <host-arena>. Para el
 > estado vigente y la operación usa **[ESTADO_ACTUAL.md](../status/ESTADO_ACTUAL.md)**,
-> **[OPERACION_VM108.md](OPERACION_HOST_ARENA.md)** y **[DESPLIEGUE_DOMINIO.md](DESPLIEGUE_DOMINIO.md)**.
-> El dominio correcto es **`s9arena.seccionnueve.duckdns.org`** (NO `arena.…`, que es otro
-> proyecto en VM107). Este documento describe el procedimiento general de despliegue.
+> **[OPERACION_HOST_ARENA.md](OPERACION_HOST_ARENA.md)** y **[DESPLIEGUE_DOMINIO.md](DESPLIEGUE_DOMINIO.md)**.
+> El dominio correcto es **`arena.example.internal`** (NO `arena.…`, que es otro
+> proyecto en <host-otro-proyecto>). Este documento describe el procedimiento general de despliegue.
 
 La plataforma es **una única aplicación desplegable en una sola máquina**: el stack
 Compose de `infrastructure/docker-compose.yml` contiene TODO lo necesario (gateway,
@@ -12,7 +12,7 @@ web, api, motor, workers, bot-manager, Redis y PostgreSQL — este último opcio
 se usa la instancia existente del servidor vía `DATABASE_URL`). Dosier: capítulo 6.
 
 > **Qué Compose usar (R-DEPLOY · R7):**
-> - **Oficial / producción (VM108):** `infrastructure/docker-compose.yml` — este
+> - **Oficial / producción (<host-arena>):** `infrastructure/docker-compose.yml` — este
 >   documento. Es el ÚNICO válido en producción.
 > - **Demo / legado (v1):** `docker-compose.demo.yml` de la RAÍZ (antes
 >   `docker-compose.yml`; renombrado para quitar la ambigüedad). Es el prototipo
@@ -69,33 +69,33 @@ El gateway del stack termina TLS y expone 80/443 directamente
 `infrastructure/secrets/tls/` (`fullchain.pem`, `privkey.pem`);
 `init-secrets.sh` genera uno autofirmado si no hay.
 
-### (b) Detrás del proxy de VM104 (modo real de este homelab)
+### (b) Detrás del proxy de <proxy-host> (modo real de este homelab)
 
-El Nginx de **vm104-web-hosting (192.168.1.204)** hace de proxy inverso con el
-wildcard `*.seccionnueve.duckdns.org` y termina TLS; el gateway del stack solo
+El Nginx de **<proxy-host> (192.0.2.4)** hace de proxy inverso con el
+wildcard `*.example.internal` y termina TLS; el gateway del stack solo
 expone HTTP interno a la LAN.
 
 En `infrastructure/.env` de la VM donde se despliegue el stack:
 
 ```bash
 GATEWAY_CONF=nginx-behind-proxy.conf
-HTTP_PORT=8080          # puerto HTTP hacia la LAN (el que verá VM104)
+HTTP_PORT=8080          # puerto HTTP hacia la LAN (el que verá <proxy-host>)
 HTTPS_PORT=127.0.0.1:8443   # sin uso en este modo; ligado a loopback
-S9_DOMAIN=s9arena.seccionnueve.duckdns.org
-TRUST_PROXY_HOPS=2      # VM104 + gateway del stack (R1.8 · ERR-SEC-05)
+S9_DOMAIN=arena.example.internal
+TRUST_PROXY_HOPS=2      # <proxy-host> + gateway del stack (R1.8 · ERR-SEC-05)
 ```
 
-En VM104, un `server` para `s9arena.seccionnueve.duckdns.org` con
+En <proxy-host>, un `server` para `arena.example.internal` con
 `proxy_pass http://<IP-de-la-VM-del-stack>:8080;`, cabeceras `X-Forwarded-Proto https`
 y `X-Forwarded-For $proxy_add_x_forwarded_for` (obligatoria: con
-`TRUST_PROXY_HOPS=2` la API espera que VM104 añada la IP real del cliente),
+`TRUST_PROXY_HOPS=2` la API espera que <proxy-host> añada la IP real del cliente),
 y soporte de upgrade WebSocket para `/ws/`. El humo en este modo:
-`smoke.sh https://s9arena.seccionnueve.duckdns.org`.
+`smoke.sh https://arena.example.internal`.
 
-> **Dominio (R-DEPLOY · R6):** S9 AI Arena usa **`s9arena.seccionnueve.duckdns.org`**.
-> El subdominio **`arena.seccionnueve.duckdns.org` está RESERVADO por otro
-> proyecto** del homelab y NO debe usarse aquí. VM104 termina el wildcard
-> `*.seccionnueve.duckdns.org`; añade **solo** el `server` de `s9arena` sin tocar
+> **Dominio (R-DEPLOY · R6):** S9 AI Arena usa **`arena.example.internal`**.
+> El subdominio **`otro-proyecto.example.internal` está RESERVADO por otro
+> proyecto** del homelab y NO debe usarse aquí. <proxy-host> termina el wildcard
+> `*.example.internal`; añade **solo** el `server` de `s9arena` sin tocar
 > los vhosts de otros proyectos.
 
 > **IP real del cliente (R1.8 · ERR-SEC-05):** la API calcula `req.ip` con una

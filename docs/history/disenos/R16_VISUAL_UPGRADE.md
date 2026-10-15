@@ -1,7 +1,7 @@
 # R16 · Visual upgrade (mejoras gráficas)
 
 > Documentación y plan por fases. **No implementa** nada todavía. **Empieza por lo básico**, NO por
-> WebGL avanzado ni CDN. Bloque separado. No toca motor/determinismo, seguridad ni VM108.
+> WebGL avanzado ni CDN. Bloque separado. No toca motor/determinismo, seguridad ni <host-arena>.
 
 ## Principio
 

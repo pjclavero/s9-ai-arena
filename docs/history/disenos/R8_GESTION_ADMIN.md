@@ -2,9 +2,9 @@
 
 Estado del bloque **R8 — capa de gestión/administración** sobre `main@8251565`
 (PR #43 mergeada, dictamen del proyecto **B+**: código y arnés real listos, la
-validación real en VM108 la ejecuta OTRO equipo — bloque **B+ → A**).
+validación real en <host-arena> la ejecuta OTRO equipo — bloque **B+ → A**).
 
-> **Este bloque NO toca la operación de VM108** ni el arnés real de #43 (solo
+> **Este bloque NO toca la operación de <host-arena>** ni el arnés real de #43 (solo
 > lectura), NO instala `s9-docker-proxy`, NO monta `docker.sock`, NO declara A.
 
 ---
@@ -56,7 +56,7 @@ eran gestionables por API). Eso es lo que añade esta rama.
 - Cableado en **`apps/web/src/App.tsx`**: enlace de nav `#/maps` + ruteo.
 - Test **`apps/web/tests/maps-page.test.tsx`** (5 casos).
 
-No se ha tocado el backend, las migraciones, el arnés #43 ni la operación VM108.
+No se ha tocado el backend, las migraciones, el arnés #43 ni la operación <host-arena>.
 
 ---
 
@@ -72,7 +72,7 @@ No se ha tocado el backend, las migraciones, el arnés #43 ni la operación VM10
    seleccionarse para una batalla.
 
 La ejecución de la batalla en sí (correr el mapa publicado con bots reales)
-**no se dispara desde aquí**: depende del pipeline real (VM108, bloque B+ → A).
+**no se dispara desde aquí**: depende del pipeline real (<host-arena>, bloque B+ → A).
 
 ---
 
@@ -99,7 +99,7 @@ rol se muestra como alerta accesible, sin filtrar detalle sensible.
 ## 4. Dependencias externas (lo que R8 NO resuelve)
 
 - **Ejecución real de batallas** → depende de `s9-docker-proxy` + arnés #43 +
-  `SMOKE_BOT_DIGEST` en VM108 (bloque B+ → A). R8 no lo instala ni lo dispara.
+  `SMOKE_BOT_DIGEST` en <host-arena> (bloque B+ → A). R8 no lo instala ni lo dispara.
 - **Replay real** → `battles.replay_ref` + `/replays/{id}/verify`; el visor
   avanzado es R7.1. R8 solo deja la estructura de histórico lista.
 
@@ -124,5 +124,5 @@ rol se muestra como alerta accesible, sin filtrar detalle sensible.
 - Regresión panel (`r37-panel-pages`, `r37-session`, `admin-visibility`): **21/21**.
 - `prettier --check` sobre los archivos tocados: OK.
 - grep de seguridad sobre el footprint (docker.sock, `privileged: true`,
-  `network_mode: host`, dominio antiguo `arena.seccionnueve.duckdns.org`): sin
+  `network_mode: host`, dominio antiguo `otro-proyecto.example.internal`): sin
   coincidencias.

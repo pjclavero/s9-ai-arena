@@ -1,7 +1,7 @@
 # R10 · Editor visual de mapas — Slice 1 (foundation, solo cliente)
 
 Primer PR de la rama `feature/r10-map-editor-foundation`. Implementa la **base del editor**
-como herramienta de autoría **solo en cliente**, sin tocar backend, OpenAPI, seguridad ni VM108.
+como herramienta de autoría **solo en cliente**, sin tocar backend, OpenAPI, seguridad ni <host-arena>.
 
 ## Qué entrega este slice
 

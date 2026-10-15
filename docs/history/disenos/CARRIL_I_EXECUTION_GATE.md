@@ -87,7 +87,7 @@ supervisor que coló `limits: {memMb:99999, cpus:64}`).
 **NO implementado (queda como condición del gate):**
 
 - Los contenedores de bot no llevan `AutoRemove`: al terminar se paran pero **no se
-  borran**. En VM108 quedan contenedores `Exited` de pruebas de hace semanas.
+  borran**. En <host-arena> quedan contenedores `Exited` de pruebas de hace semanas.
 - No hay cuota por usuario ni rate limit en la ruta (`runBattle` es la única ruta de
   escritura pesada sin `anonQuota`), y `x-min-role` es `user`: **cualquier usuario
   autenticado** puede lanzar la ejecución de cualquier batalla `scheduled`, no solo su

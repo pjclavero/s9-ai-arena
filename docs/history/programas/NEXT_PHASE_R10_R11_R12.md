@@ -6,7 +6,7 @@
 > R13.5 → save/load·latencia·sharding. R10/R11/R12 siguen en **PRs separadas** de R13/R14/R16.
 >
 > **Naturaleza:** documento de **coordinación y diseño**, NO de implementación. Prepara
-> R10/R11/R12. **No toca VM108/VM104/runner/proxy/seguridad.**
+> R10/R11/R12. **No toca <host-arena>/<proxy-host>/runner/proxy/seguridad.**
 > **Decisión de alcance del coordinador: Opción A (diseño/documentación).** No se implementa
 > código de R10/R11/R12 en este PR.
 >
@@ -16,7 +16,7 @@
 
 ## 1. Estado base
 
-- `main@6373e19`. CI verde. Hito A alcanzado (batalla E2E real + replay en VM108).
+- `main@6373e19`. CI verde. Hito A alcanzado (batalla E2E real + replay en <host-arena>).
 - **Integradas en main (2026-07-19):** **#50 R7-A** (ingesta operativa + `#/replays`) y
   **#51 R6.2/R9-B** (ejecución containerizada gateada desde UI, `runBattle`). **#41** (otro
   agente, e2e smoke) sigue en curso, no relacionado con este dossier.
@@ -54,12 +54,12 @@ merge de #50/#51 y reconciliar App.tsx/OpenAPI en el mismo PR.
 R10 (editor) ── independiente de #50/#51. Depende de R8 maps (ya en main).
 R11 (spectator) ── depende de R7-A (#50) para GET /replays y del listado; gate propio.
 R12 (torneos/ranking) ── ranking/standings independientes; "prepare/run de match" DEPENDE de
-                          R6.2/R9-B (#51, endpoint runBattle gateado) y de R6.2/R9-A (VM108)
+                          R6.2/R9-B (#51, endpoint runBattle gateado) y de R6.2/R9-A (<host-arena>)
                           para ejecución real. Matchmaking real DEPENDE de R6.2/R9-A.
 ```
 
 **Regla dura:** ningún torneo/matchmaking puede **auto-lanzar** batallas reales hasta que
-**R6.2/R9-A** esté validado en VM108. En esta fase todo eso queda **gateado y apagado**.
+**R6.2/R9-A** esté validado en <host-arena>. En esta fase todo eso queda **gateado y apagado**.
 
 ## 5. Orden recomendado de implementación (cuando se autorice)
 
@@ -101,7 +101,7 @@ RTMP/YouTube/Twitch. Greps de seguridad obligatorios en cada PR.
 - **R10 → R10-B** (diseño/contrato preparado; implementación pendiente).
 - **R11 → R11-B** (diseño/contrato preparado; dependencia #50 ya en main).
 - **R12 → R12-B** (diseño/contrato preparado; ranking implementable pronto sobre #51 ya en main;
-  ejecución real de run/matchmaking gateada a VM108).
+  ejecución real de run/matchmaking gateada a <host-arena>).
 - **GLOBAL → GLOBAL-B**: diseño y plan multiequipo completos, implementación pendiente y
   secuenciada. #50/#51 **ya integradas en main** (`6373e19`); R10 es el siguiente en código.
   No GLOBAL-A (no hay código de estas foundations, por decisión).
