@@ -231,14 +231,21 @@ export function clasificarNpmAudit(obs) {
   if (obs?.timedOut) {
     return res(ESTADO_SCAN.SOURCE_UNAVAILABLE, "npm audit agotó el tiempo de espera contra el registro");
   }
-  if (pareceFuenteCaida(stderr) || pareceFuenteCaida(stdout)) {
+  if (pareceFuenteCaida(stderr)) {
     return res(ESTADO_SCAN.SOURCE_UNAVAILABLE, "el registro de npm no respondió una auditoría utilizable");
   }
 
+  // Las señales de fuente caída se buscan en stdout SÓLO si no es un informe:
+  // dentro de un informe JSON, el texto son DATOS de los avisos (títulos como
+  // «… rate limiting …» o «… network …»), y leerlos como señal convertiría un
+  // hallazgo real en «fuente caída, reintentable».
   let informe;
   try {
     informe = JSON.parse(stdout);
   } catch {
+    if (pareceFuenteCaida(stdout)) {
+      return res(ESTADO_SCAN.SOURCE_UNAVAILABLE, "el registro de npm no respondió una auditoría utilizable");
+    }
     // Salida ilegible (incluye la cadena vacía): la herramienta falló. Y NO se
     // lee como limpio, que es la mutación que este carril tiene que matar.
     return res(ESTADO_SCAN.SCAN_ERROR, "npm audit no devolvió JSON interpretable");
@@ -293,14 +300,20 @@ export function clasificarTrivy(obs) {
   const severidades = (obs?.severidades ?? ["CRITICAL", "HIGH"]).map((s) => s.toUpperCase());
 
   if (obs?.timedOut) return res(ESTADO_SCAN.SOURCE_UNAVAILABLE, "trivy agotó el tiempo de espera");
-  if (pareceFuenteCaida(stderr) || pareceFuenteCaida(stdout)) {
+  if (pareceFuenteCaida(stderr)) {
     return res(ESTADO_SCAN.SOURCE_UNAVAILABLE, "trivy no pudo obtener la base de datos de vulnerabilidades");
   }
 
+  // Igual que en npm: dentro de un informe JSON, las descripciones de los CVE
+  // son datos. La de CVE-2026-90711 (proxy-addr) dice «… rate limiting …» y
+  // hacía pasar un CRITICAL real por «base de datos no disponible».
   let informe;
   try {
     informe = JSON.parse(stdout);
   } catch {
+    if (pareceFuenteCaida(stdout)) {
+      return res(ESTADO_SCAN.SOURCE_UNAVAILABLE, "trivy no pudo obtener la base de datos de vulnerabilidades");
+    }
     return res(ESTADO_SCAN.SCAN_ERROR, "trivy no devolvió JSON interpretable");
   }
   if (informe === null || typeof informe !== "object" || Array.isArray(informe)) {

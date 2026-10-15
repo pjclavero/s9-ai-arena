@@ -131,6 +131,23 @@ describe("clasificarNpmAudit · el informe manda, no el código de salida", () =
     expect(readinessDeScan(r.estado)).toBe("failed");
   });
 
+  it("REGRESIÓN: un informe con una crítica cuyo aviso menciona «rate limit»/«network» es FINDINGS, no fuente caída", () => {
+    const conTexto = JSON.stringify({
+      auditReportVersion: 2,
+      vulnerabilities: {
+        "proxy-addr": {
+          name: "proxy-addr",
+          severity: "critical",
+          via: [{ title: "IP spoofing defeats rate limiting and network ACLs (502 on retry)" }],
+        },
+      },
+      metadata: { vulnerabilities: { ...CERO, critical: 1, total: 1 } },
+    });
+    const r = clasificarNpmAudit({ exitCode: 1, stdout: conTexto });
+    expect(r.estado).toBe("FINDINGS");
+    expect(motivoDeScan(r.estado).reintentable).toBe(false);
+  });
+
   it("EL INCIDENTE: «audit endpoint returned an error» → SOURCE_UNAVAILABLE, no FINDINGS", () => {
     const r = clasificarNpmAudit({
       exitCode: 1,
@@ -232,6 +249,32 @@ describe("clasificarTrivy · informe sin objetivos no es árbol limpio", () => {
       clasificarTrivy({ exitCode: 1, stdout: "", stderr: "failed to download vulnerability DB: TOOMANYREQUESTS" })
         .estado,
     ).toBe("SOURCE_UNAVAILABLE");
+  });
+
+  it("una salida que NO es JSON con la señal de caída sigue siendo SOURCE_UNAVAILABLE", () => {
+    expect(clasificarTrivy({ exitCode: 1, stdout: "FATAL db download error: TOOMANYREQUESTS" }).estado).toBe(
+      "SOURCE_UNAVAILABLE",
+    );
+  });
+
+  it("REGRESIÓN CVE-2026-90711: un CRITICAL cuya descripción dice «rate limiting» es FINDINGS, no fuente caída", () => {
+    // Texto real del aviso de proxy-addr: el clasificador buscaba señales de
+    // caída DENTRO del informe y lo declaraba «base de datos no disponible».
+    const r = clasificarTrivy({
+      exitCode: 0,
+      stdout: conObjetivo([
+        {
+          VulnerabilityID: "CVE-2026-90711",
+          PkgName: "proxy-addr",
+          Severity: "CRITICAL",
+          Description:
+            "a trust subnet written in IPv4-mapped IPv6 form … which defeats IP-based access control, rate limiting, geolocation, and audit logging",
+        },
+        { Severity: "HIGH", Title: "failed to fetch remote config over the network returns 503" },
+      ]),
+    });
+    expect(r.estado).toBe("FINDINGS");
+    expect(motivoDeScan(r.estado).reintentable).toBe(false);
   });
 });
 
