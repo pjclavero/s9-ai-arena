@@ -220,7 +220,7 @@ Más comprobaciones en [diagnostics.md](diagnostics.md) y [readiness.md](readine
 
 | Afirmación | Estado | Evidencia |
 |---|---|---|
-| Pasos 3, 5, 6, 7, 8, 10 ejecutados en un entorno aislado (Docker rootless, proyecto distinto, puerto 18080, imágenes `sha-27f70bb…`) | RUNTIME_VERIFIED | `.c-tools/verify-stack.sh` (fuera del repo); resultado resumido en el informe de la consolidación |
+| Pasos 3, 5, 6, 7, 8, 10 ejecutados en un entorno aislado (Docker rootless, proyecto distinto, puerto 18080, imágenes `sha-27f70bb…`) | RUNTIME_VERIFIED | script de verificación de la consolidación (no versionado): `bootstrap` ×2 rc=0, gateway `/healthz` ok, `/api/v1/healthz` JSON, registro 201, promoción SQL, login, `pg_roles` = sólo `arena` |
 | `init-secrets.sh` genera esos ficheros con `0400` y dueño 1000:1000 | CODE_VERIFIED + RUNTIME_VERIFIED | `infrastructure/scripts/init-secrets.sh:28-107` |
 | La CI etiqueta `sha-<commit>` y `v<version ?? 0.0.0>`; no `latest` | CODE_VERIFIED + RUNTIME_VERIFIED | `.github/workflows/ci.yml:362,375-377`; GHCR: `latest` 404, `sha-27f70bb…` 200 en los 11 repos de imagen |
 | `.env.example` trae `TAG=latest` y `BACKUP_TAG=latest` | CODE_VERIFIED | `infrastructure/.env.example` sección Imágenes |

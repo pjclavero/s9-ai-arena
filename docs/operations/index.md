@@ -101,7 +101,7 @@ documenta [TD-023](../roadmap/technical-debt.md#td-023).
 - Desarrollo: [../development/index.md](../development/index.md).
 - Decisiones: [../adr/index.md](../adr/index.md) (ADR-010 copias, ADR-016 identidad de build,
   ADR-017 contrato de release, ADR-018 semántica del escaneo).
-- Runbooks anteriores (históricos, no vigentes): [../history/operaciones/](../history/operaciones/index.md).
+- Runbooks anteriores (históricos, no vigentes): [../history/index.md](../history/index.md#operaciones).
 
 ## Verificación
 

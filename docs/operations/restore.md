@@ -174,7 +174,7 @@ criterio ([TD-020](../roadmap/technical-debt.md#td-020)). Lanza después una cop
 
 El ensayo se hace en un **host aislado**, nunca sobre la instalación productiva, y se registra con
 fecha, snapshot restaurado, tiempos por fase y resultado de `--verify`. El último ensayo completo
-documentado es de agosto de 2026 (evidencia en [../history/operaciones/](../history/index.md));
+documentado es de agosto de 2026 (citado en [../recuperacion.md](../recuperacion.md) y en la cabecera de `restore.sh`);
 no hay uno posterior ([TD-025](../roadmap/technical-debt.md#td-025)).
 
 ## Errores / limitaciones
@@ -214,7 +214,10 @@ Runbook anterior (histórico, con errores conocidos): [../recuperacion.md](../re
 | Rol `arena`; `postgres` no existe | CODE_VERIFIED + RUNTIME_VERIFIED | compose `POSTGRES_USER: arena`; `pg_roles` en el entorno aislado y en la auditoría |
 | `/api/v1/healthz` no informa de migraciones | CODE_VERIFIED | `apps/api/src/server.ts:46` |
 | `.env` no está en el backup | CODE_VERIFIED | `backup.sh` copia `SECRETS_DIR` (`infrastructure/secrets`), no `infrastructure/.env` |
-| `$DC create --no-build` crea los volúmenes del proyecto | RUNTIME_VERIFIED | entorno aislado (ver informe de la consolidación) |
+| `$DC create --no-build` crea los volúmenes del proyecto (y `up` de un subconjunto sólo los de ese subconjunto) | RUNTIME_VERIFIED | entorno aislado: tras `up` de 5 servicios había 3 volúmenes; tras `create --no-build`, los 9 del perfil |
+| Bucle de la fase 6 (copia a volumen, `skip` de fuentes ausentes, detección de volumen inexistente) | RUNTIME_VERIFIED | entorno aislado con un staging sintético |
+| `restore.sh --dry-run` imprime el plan sin tocar nada | RUNTIME_VERIFIED | ejecutado en la máquina de desarrollo (rc=0) |
+| `pg_dump -Fc -U arena arena` funciona con el rol `arena` | RUNTIME_VERIFIED | entorno aislado |
 
 Nota: el resumen de la auditoría 2026-10-15 indica «`restore.sh` solo `latest`»; el código de
 `27f70bb` (y el de la imagen desplegada) **sí** admite `--snapshot <id>`. Lo que es cierto es que,
