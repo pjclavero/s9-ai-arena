@@ -60,7 +60,7 @@ VEREDICTO:      NO funcional como producto: recorrido de usuario de extremo a ex
 | Torneos | `round_robin` con bracket y Elo (**con stub**) | `mapPool`; `failed` bloquea el cierre | [TD-015](technical-debt.md#td-015) |
 | Replays | generación, persistencia en disco, `replay_ref` | reproducción rota en navegador; `#/replays` falla tras TLS | [TD-009](technical-debt.md#td-009), [TD-014](technical-debt.md#td-014) |
 | Visor en directo | emisión de ticket y canal WebSocket en código | roto en navegador; el worker no puede verificar tickets | [TD-009](technical-debt.md#td-009), [TD-028](technical-debt.md#td-028) |
-| Ranking y estadísticas | cálculo, persistencia y API | en la web sólo el ranking; sin datos en producción | [TD-022](technical-debt.md#td-022) |
+| Ranking y estadísticas | cálculo, persistencia y API | en la web sólo el ranking, y sale vacío por un desajuste de temporada; sin datos en producción | [TD-022](technical-debt.md#td-022), [TD-029](technical-debt.md#td-029) |
 | Administración | web: roles, mapas, equipos, auditoría | backup, restore, readiness y drift sólo por SSH | [TD-023](technical-debt.md#td-023) |
 | Instalación / readiness | compose, `cli.ts bootstrap`, paquete readiness en código | instalación limpia no reproducible; readiness no desplegado | [TD-024](technical-debt.md#td-024) |
 | Recuperación | drill de restore de agosto; `restore.sh --snapshot` | sin ensayo reciente; nightly de restore en rojo | [TD-025](technical-debt.md#td-025) |
@@ -141,9 +141,9 @@ Funciones pendientes de diseño: [pending-features.md](pending-features.md).
 
 | Afirmación | Estado | Fuente |
 |---|---|---|
-| Base `27f70bb`, 0 commits nuevos | CODE_VERIFIED | `git rev-parse HEAD`; baseline del supervisor |
+| Base `27f70bb`, 0 commits nuevos | CODE_VERIFIED | `git rev-parse origin/main` y `git rev-list --count 27f70bb..origin/main` = 0 (2026-10-15) |
 | Perfil `production` = 12 servicios | CODE_VERIFIED | `infrastructure/docker-compose.yml` (`profiles:` de gateway, web, api, arena-engine, tournament-worker, bot-manager, bot-build-worker, map-service, replay-service, queue, postgres, backup) |
-| Runtime con 3 commits | RUNTIME_VERIFIED (en la auditoría) | `docker image inspect`; sin cambios de imagen desde entonces (baseline) |
+| Runtime con 3 commits | RUNTIME_VERIFIED (en la auditoría) | `docker image inspect`; las 12 image ID se volvieron a medir el 2026-10-15 y no habían cambiado |
 | Backup operando | RUNTIME_VERIFIED | estado de salud y logs del servicio backup, 2026-10-15 21:01 UTC |
 | Build fail-closed | CODE_VERIFIED | `apps/bot-manager/src/build-worker-main.ts:31` |
 | 400 de ruleset | CODE_VERIFIED | `apps/api/src/routes/battles.ts:400-401` |

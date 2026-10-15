@@ -4,7 +4,7 @@
 
 **«Ranking»** (`#/ranking`) es una página pública, sin cuenta, con la clasificación por modo de juego: posición, bot, rating y victorias-derrotas-empates. El rating sigue el sistema Elo (1000 de partida) y **sólo lo mueven las batallas de torneo**; las de práctica no cuentan.
 
-**Hoy la página sale vacía**, con el mensaje «Todavía no hay clasificación para este modo.», incluso después de jugar torneos. La página pide una temporada distinta de aquella en la que se guardan los resultados. Es un hallazgo de esta documentación y su deuda está pendiente de id (ver [tournaments.md](../technical/tournaments.md#clasificación-y-rating)).
+**Hoy la página sale vacía**, con el mensaje «Todavía no hay clasificación para este modo.», incluso después de jugar torneos. La página pide una temporada distinta de aquella en la que se guardan los resultados. Es un problema conocido: [TD-029](../roadmap/technical-debt.md#td-029). Detalle técnico en [tournaments.md](../technical/tournaments.md#clasificación-y-rating).
 
 ## Índice
 

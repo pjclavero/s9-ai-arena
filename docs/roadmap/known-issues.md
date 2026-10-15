@@ -28,6 +28,7 @@ Base: `27f70bb`, verificado el 2026-10-15.
 | Un doble clic en «Crear bot» da un error sin aviso | la carrera se traduce en 500 y la UI no lo muestra | no repetir el clic; recargar | [TD-013](technical-debt.md#td-013), [TD-022](technical-debt.md#td-022) |
 | Una ruta inexistente muestra «Mis bots»; «Cargando…» puede no terminar nunca | sin página 404 ni timeouts en el cliente | recargar | [TD-022](technical-debt.md#td-022) |
 | Equipos aparece vacío cuando la API falla | la página se traga el error | recargar | [TD-022](technical-debt.md#td-022) |
+| «Ranking» dice «Todavía no hay clasificación para este modo.» incluso después de jugar torneos | la página consulta una temporada distinta de aquella en la que se guardan los resultados | ninguna desde la web; la API devuelve datos con `?seasonId=season-1` | [TD-029](technical-debt.md#td-029) |
 | La lista de batallas no muestra el ganador; `finished (none)` sale en rojo | presentación de estados internos | consultar la API | [TD-022](technical-debt.md#td-022) |
 | Un bot usado en un torneo no puede inscribirse en otro | la versión pasa a `frozen` y una versión nueva nunca se valida | ninguna | [TD-013](technical-debt.md#td-013), [TD-001](technical-debt.md#td-001) |
 | No hay opción para cambiar la contraseña ni para recuperarla por email | no implementado | ninguna documentada | [TD-012](technical-debt.md#td-012) |

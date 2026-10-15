@@ -105,7 +105,7 @@ La ejecución de cada batalla es la descrita en [battles.md](battles.md). El loa
 - El worker escribe con `tournaments.season_id`, que por defecto es `'season-1'`. La web `#/ranking` nunca envía `seasonId`, así que **la clasificación pública sale vacía aunque haya torneos terminados**.
 - Los tests de la API usan `"current"` en los dos extremos y no detectan el desajuste.
 
-Hallazgo nuevo de esta consolidación, a la espera de id de A (TD-? / propuesto TD-029). La auditoría vio la clasificación vacía y lo atribuyó a la caché.
+Es un hallazgo nuevo de esta consolidación: [TD-029](../roadmap/technical-debt.md#td-029). La auditoría vio la clasificación vacía, pero no encontró la causa.
 
 `GET /bots/{id}/rating-history?seasonId=&mode=` usa `season-1` por defecto. Devuelve los eventos Elo y el rating actual, también de bots privados ajenos ([TD-005](../roadmap/technical-debt.md#td-005)).
 

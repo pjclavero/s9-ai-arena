@@ -89,7 +89,7 @@ Ponerlas en `infrastructure/.env` **no tiene efecto**: haría falta un fichero c
 
 | Variable | Lee | Por defecto en código | Efecto hoy |
 |---|---|---|---|
-| `CORS_ORIGIN` | api (`app.ts:120`) | `http://localhost:5173` | el origen permitido en producción es ese valor por defecto; la web es same-origin a través del gateway |
+| `CORS_ORIGIN` | api (`app.ts:120`) | `http://localhost:5173` | el origen permitido en producción es ese valor por defecto; la web es same-origin a través del gateway. El compose no la entrega ([TD-030](../roadmap/technical-debt.md#td-030)) |
 | `S9_PUBLIC_SPECTATE_ENABLED` | api | apagado | espectador público apagado |
 | `S9_PUBLIC_REPLAYS_ENABLED` | api | apagado | replays públicos de la API apagados (pero `/replays/*` del replay-service es anónimo por el gateway, [TD-004](../roadmap/technical-debt.md#td-004)) |
 | `S9_METRICS_ENABLED` | api | apagado | sin `/metrics` |

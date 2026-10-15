@@ -16,7 +16,7 @@ El único cambio observado está en el runtime: el backup programado volvió a e
 | REGRESSED | 0 | — |
 | UNKNOWN | 1 | exposición del espectador anónimo en producción (no medible sin POST) |
 
-Además, la verificación encontró un hallazgo **nuevo**, registrado como [TD-028](../../roadmap/technical-debt.md#td-028).
+Además, la verificación encontró cuatro hallazgos **nuevos** (NEW-1 a NEW-4: [TD-028](../../roadmap/technical-debt.md#td-028), [TD-026](../../roadmap/technical-debt.md#td-026), [TD-029](../../roadmap/technical-debt.md#td-029), [TD-030](../../roadmap/technical-debt.md#td-030)) y tres errores de la propia auditoría, que se corrigen en [Hallazgo nuevo](#hallazgo-nuevo).
 
 ## Índice
 
@@ -115,6 +115,14 @@ Estados posibles:
 |---|---|---|---|---|
 | NEW-1 | El `tournament-worker` aloja el gateway WebSocket de espectador, pero no recibe el secreto con el que se verifican los tickets. Todo ticket se rechaza (falla cerrado). | `apps/api/src/auth/tokens.ts:73-97,165-177`; compose (`tournament-worker` sólo monta `postgres_password`); nombres de variables del contenedor leídos el 2026-10-15 | ABIERTO | [TD-028](../../roadmap/technical-debt.md#td-028) |
 | NEW-2 | El aviso Redis del worker no tiene productor: la cola avanza por polling (~1 s). | `redis-signal.ts:207-215`; `notify(` sólo aparece en tests | ABIERTO (bajo) | [TD-026](../../roadmap/technical-debt.md#td-026) |
+| NEW-3 | La clasificación pública consulta la temporada `"current"` y el worker escribe en `season-1`, así que sale vacía aunque haya torneos. La auditoría vio el síntoma, pero no la causa. | `apps/api/src/routes/standings.ts:17` frente a `:36`; `apps/tournament-worker/src/ratings.ts:94`; `RankingPage.tsx:38` | ABIERTO | [TD-029](../../roadmap/technical-debt.md#td-029) |
+| NEW-4 | El compose no entrega a la API `CORS_ORIGIN`, `S9_PUBLIC_*`, `S9_METRICS_ENABLED`, `SPECTATE_WS_URL` ni `NODE_ENV`, y no usa `env_file:`: ponerlas en `.env` no tiene efecto. | lecturas en `app.ts:120`, `public-spectate.ts:12`, `public-replays.ts:20`, `metrics.ts:31`, `routes/battles.ts:37-38`; 0 apariciones en el compose | ABIERTO | [TD-030](../../roadmap/technical-debt.md#td-030) |
+
+Correcciones a la propia auditoría (hechas en esta verificación, sin tocar el informe original):
+
+- La API usa **Express 5**, no Fastify como dice el informe final ([technologies.md](../../overview/technologies.md)).
+- «Sin límite de intentos de login»: el límite existe (bloqueo tras 20 fallos); el defecto real es que la clave colapsa a la IP del proxy (fila SUPERSEDED de P1-4).
+- «`restore.sh` sólo `latest`»: admite `--snapshot <id>` en main y en la imagen desplegada (fila SUPERSEDED).
 
 ## Documentación relacionada
 

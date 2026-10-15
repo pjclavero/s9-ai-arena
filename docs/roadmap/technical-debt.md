@@ -11,8 +11,8 @@ usuario o el operador van en [known-issues.md](known-issues.md).
 - **BASE COMMIT:** `27f70bb` (origin/main, 2026-09-13). Desde la auditoría del 2026-10-15 hay 0 commits nuevos.
 - **LAST VERIFIED:** 2026-10-15.
 - **Origen:** auditoría del 2026-10-15 ([resumen público](../audits/2026-10-15/README.md),
-  [delta](../audits/2026-10-15/AUDIT-DELTA-2026-10.md)). Hay una excepción: TD-028 salió de la
-  verificación de esta consolidación.
+  [delta](../audits/2026-10-15/AUDIT-DELTA-2026-10.md)). Las excepciones son TD-026, TD-028,
+  TD-029 y TD-030, que salieron de la verificación de esta consolidación.
 
 Prioridades:
 - **P0:** bloquea el producto o es un riesgo de seguridad u operación grave.
@@ -58,6 +58,8 @@ Estados posibles:
 | [TD-026](#td-026) | Canal Redis sin productor | P4 | Cola | ABIERTA |
 | [TD-027](#td-027) | Artefactos de despliegue fuera del repo | P4 | Operación | ABIERTA |
 | [TD-028](#td-028) | Espectador en directo sin secreto en el worker | P1 | Espectador | ABIERTA |
+| [TD-029](#td-029) | Clasificación pública vacía por desajuste de temporada | P1 | Ranking | ABIERTA |
+| [TD-030](#td-030) | Variables de la API que el compose no entrega | P2 | Configuración | ABIERTA |
 
 ---
 
@@ -602,6 +604,45 @@ Estados posibles:
   - Falla cerrado: no es una fuga, sino una función inutilizable.
 - **Solución prevista:** montar en el worker el mismo secreto (o un `SPECTATE_TICKET_SECRET_FILE` compartido con la API) y añadir un test de compose que exija la coherencia entre el emisor y el verificador del ticket.
 - **Condición de cierre:** un ticket emitido por la API abre el canal del worker en el stack real, y hay un test de compose que se pone rojo si falta el secreto.
+
+<a id="td-029"></a>
+
+## TD-029 — Clasificación pública siempre vacía por desajuste de temporada
+
+- **Estado:** ABIERTA
+- **Prioridad:** P1
+- **Área:** Ranking (`api` ↔ `tournament-worker`)
+- **Detectado:** 2026-10-15, en la verificación de esta consolidación. La auditoría vio la clasificación vacía, pero no encontró la causa.
+- **Evidencia:**
+  - `GET /standings` usa por defecto la temporada `"current"` si no se le pasa `seasonId` (`apps/api/src/routes/standings.ts:17`).
+  - El worker escribe ratings y clasificación con `tournaments.season_id`, que vale `'season-1'` por defecto (`apps/tournament-worker/src/ratings.ts:94`; `apps/api/src/db/migrations.ts:543`).
+  - La página `#/ranking` sólo envía `mode` (`apps/web/src/pages/RankingPage.tsx:38`).
+  - `GET /bots/{id}/rating-history` sí usa `season-1` por defecto (`routes/standings.ts:36`), así que las dos rutas de la misma API no coinciden.
+  - CODE_VERIFIED.
+- **Problema:** la API busca la clasificación en una temporada en la que nunca se escribe nada.
+- **Impacto:** aunque haya torneos terminados, la clasificación pública se ve vacía. Los tests de la API usan `"current"` en los dos lados y no lo detectan.
+- **Solución prevista:** una única fuente de la temporada activa (constante compartida o temporada vigente en BD) que usen la API, el worker y la web, y un test que cruce la escritura del worker con la lectura pública.
+- **Condición de cierre:** un torneo terminado aparece en `#/ranking` sin pasar `seasonId`, y un test que mezcle temporadas entre el escritor y el lector se pone rojo.
+
+<a id="td-030"></a>
+
+## TD-030 — Variables de la API que el compose no entrega
+
+- **Estado:** ABIERTA
+- **Prioridad:** P2
+- **Área:** Configuración (`api`, `infrastructure/docker-compose.yml`)
+- **Detectado:** 2026-10-15, en la verificación de esta consolidación.
+- **Evidencia:**
+  - La API lee `CORS_ORIGIN` (`apps/api/src/app.ts:120`), `S9_PUBLIC_*` (`public-spectate.ts:12`, `public-replays.ts:20`), `S9_METRICS_ENABLED` (`metrics.ts:31`), `SPECTATE_WS_URL` y `NODE_ENV` (`routes/battles.ts:37-38`).
+  - Ninguna de ellas aparece en el bloque `api` del compose, y el compose no usa `env_file:`.
+  - CODE_VERIFIED ([configuration.md](../operations/configuration.md#verificación)).
+- **Problema:** si un operador pone esas variables en `infrastructure/.env`, no tienen ningún efecto y no se avisa. La API funciona siempre con los valores por defecto del código.
+- **Impacto:**
+  - El ticket de espectador apunta a `ws://localhost:8081/spectate`.
+  - Sin `NODE_ENV=production` no se exige `wss://`.
+  - Las capacidades públicas no pueden activarse por configuración aunque se quisiera.
+- **Solución prevista:** declarar en el compose las variables que la API admite (con valores por defecto explícitos) y un test de contrato entre las lecturas `process.env` de la API y el bloque `environment` del servicio.
+- **Condición de cierre:** cada variable que la API lee está declarada en el compose o documentada como interna, y el test de contrato se pone rojo si aparece una lectura nueva sin declarar.
 
 ## Documentación relacionada
 
