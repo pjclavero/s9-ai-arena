@@ -111,4 +111,20 @@ describe("TD-005 · propiedad/visibilidad de los participantes", () => {
       .send(body(mine, foreignPublic, ["red", "<script>"]));
     expect(r.status).toBe(400);
   });
+
+  it("rating-history de un bot PRIVADO AJENO ⇒ 404; el dueño y los públicos ⇒ 200", async () => {
+    const devTok = await tokenFor(h.db, DEV_USERS.developer);
+    const alien = await request(app)
+      .get(`/bots/${foreignPrivate.botId}/rating-history`)
+      .set("Authorization", `Bearer ${userTok}`);
+    expect(alien.status).toBe(404);
+    const anon = await request(app).get(`/bots/${foreignPrivate.botId}/rating-history`);
+    expect(anon.status).toBe(404);
+    const own = await request(app)
+      .get(`/bots/${foreignPrivate.botId}/rating-history`)
+      .set("Authorization", `Bearer ${devTok}`);
+    expect(own.status).toBe(200);
+    const pub = await request(app).get(`/bots/${foreignPublic.botId}/rating-history`);
+    expect(pub.status).toBe(200);
+  });
 });
