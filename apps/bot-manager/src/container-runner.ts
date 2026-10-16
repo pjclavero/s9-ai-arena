@@ -53,6 +53,38 @@ export interface SandboxSpec {
   limits: ContainerLimits;
   /** Ruta al perfil seccomp restrictivo. */
   seccompProfilePath: string;
+  /**
+   * DEV-A · TD-001 · Argumentos tras el ENTRYPOINT de la imagen de runtime
+   * (`python`/`node`): el bootstrap que descarga y arranca el código de usuario
+   * (ver bot-launch.ts). Sin él se usa el CMD de la imagen (bots horneados).
+   */
+  cmd?: string[];
+  /** Borrar el contenedor al pararse (HostConfig.AutoRemove). */
+  autoRemove?: boolean;
+}
+
+/** Estado de ejecución de un contenedor (de `docker inspect`). */
+export interface ContainerRunState {
+  running: boolean;
+  exitCode: number | null;
+  oomKilled: boolean;
+  /** El contenedor ya no existe (p. ej. AutoRemove tras salir). */
+  gone: boolean;
+}
+
+/** Traduce `GET /containers/{id}/json` (o un 404) a ContainerRunState. */
+export function runStateFromInspect(status: number, inspectJson: unknown): ContainerRunState | null {
+  if (status === 404) return { running: false, exitCode: null, oomKilled: false, gone: true };
+  if (status !== 200) return null;
+  const c = (Array.isArray(inspectJson) ? inspectJson[0] : inspectJson) as { State?: Record<string, unknown> } | null;
+  const st = c?.State;
+  if (!st || typeof st !== "object") return null;
+  return {
+    running: st.Running === true,
+    exitCode: typeof st.ExitCode === "number" ? st.ExitCode : null,
+    oomKilled: st.OOMKilled === true,
+    gone: false,
+  };
 }
 
 /** Postura de seguridad normalizada, para inspección/aserción. */
@@ -84,6 +116,8 @@ export interface ContainerHandle {
    * Nunca se sustituye por una estimación: ver `cpuMsFromDockerStats`.
    */
   cpuMs?(): Promise<number | null>;
+  /** DEV-A · estado de ejecución (salida, OOM). `null` si no se pudo medir. */
+  state?(): Promise<ContainerRunState | null>;
 }
 
 /** Handle que SÍ sabe medir CPU (lo devuelve el runner de producción, B10). */
@@ -190,7 +224,9 @@ export class DockerContainerRunner implements ContainerRunner {
       // sin socket de Docker, sin secretos montados: simplemente NO se añade ningún -v
       // variables de entorno (sin secretos)
       ...Object.entries(spec.env).flatMap(([k, val]) => ["--env", `${k}=${val}`]),
+      ...(spec.autoRemove ? ["--rm"] : []),
       spec.imageDigest,
+      ...(spec.cmd ?? []),
     ];
   }
 
