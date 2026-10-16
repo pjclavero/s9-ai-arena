@@ -166,7 +166,7 @@ vive en `roadmap/technical-debt.md`. Los documentos funcionales la enlazan, no l
 
 | Documento | Contenido |
 |---|---|
-| [technical-debt.md](../roadmap/technical-debt.md) | 30 entradas confirmadas (TD-001 a TD-030): 8 P0, 11 P1, 6 P2, 2 P3, 3 P4 |
+| [technical-debt.md](../roadmap/technical-debt.md) | 30 entradas confirmadas al cerrar la consolidación (TD-001 a TD-030): 8 P0, 11 P1, 6 P2, 2 P3, 3 P4. Después se añadió TD-031 (P1), que salió del refresco de dependencias de PR #151 |
 | [pending-features.md](../roadmap/pending-features.md) | 27 entradas: diseñadas sin implementar, mejoras previstas e ideas |
 | [known-issues.md](../roadmap/known-issues.md) | 27 síntomas visibles para usuario u operador, con su solución temporal y su deuda |
 | [current-status.md](../roadmap/current-status.md) | fuente única del estado; sustituye a `estado-proyecto.md` y `ESTADO_ACTUAL.md`, ahora en `history/status/` |

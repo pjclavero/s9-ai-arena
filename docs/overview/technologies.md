@@ -111,7 +111,7 @@ Ninguno de estos servicios está desplegado hoy.
 | supertest | 7.2.2 | tests de la API | HTTP en proceso |
 | Playwright | sin declarar en `package.json` | `acceptance/visual/` (`npm run test:visual`) | prueba visual; no forma parte de la suite ni de `npm ci` |
 | Prettier | 3.9.5 | `npm run format:check` | formato |
-| Changesets | 2.31.0 | `.changeset` | versionado de paquetes |
+| Changesets | 3.0.3 | `.changeset` | versionado de paquetes |
 | GitHub Actions | `actions/checkout@v4`, `setup-node@v4`, `setup-python@v5`, `docker/build-push-action@v6`, `aquasecurity/trivy-action@v0.36.0` | `.github/workflows/{ci,e6-security,nightly,acceptance,runtimes-publish}.yml` | CI, seguridad, nightly y publicación de runtimes |
 
 Más detalle en [docs/development/ci.md](../development/ci.md) y [docs/development/testing.md](../development/testing.md).

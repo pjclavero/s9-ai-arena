@@ -12,7 +12,8 @@ usuario o el operador van en [known-issues.md](known-issues.md).
 - **LAST VERIFIED:** 2026-10-15.
 - **Origen:** auditoría del 2026-10-15 ([resumen público](../audits/2026-10-15/README.md),
   [delta](../audits/2026-10-15/AUDIT-DELTA-2026-10.md)). Las excepciones son TD-026, TD-028,
-  TD-029 y TD-030, que salieron de la verificación de esta consolidación.
+  TD-029 y TD-030, que salieron de la verificación de esta consolidación, y TD-031, que salió del
+  refresco de dependencias de PR #151.
 
 Prioridades:
 - **P0:** bloquea el producto o es un riesgo de seguridad u operación grave.
@@ -60,6 +61,7 @@ Estados posibles:
 | [TD-028](#td-028) | Espectador en directo sin secreto en el worker | P1 | Espectador | ABIERTA |
 | [TD-029](#td-029) | Clasificación pública vacía por desajuste de temporada | P1 | Ranking | ABIERTA |
 | [TD-030](#td-030) | Variables de la API que el compose no entrega | P2 | Configuración | ABIERTA |
+| [TD-031](#td-031) | Imágenes de servicio vulnerables y sin escaneo | P1 | Seguridad / imágenes | ABIERTA |
 
 ---
 
@@ -643,6 +645,33 @@ Estados posibles:
   - Las capacidades públicas no pueden activarse por configuración aunque se quisiera.
 - **Solución prevista:** declarar en el compose las variables que la API admite (con valores por defecto explícitos) y un test de contrato entre las lecturas `process.env` de la API y el bloque `environment` del servicio.
 - **Condición de cierre:** cada variable que la API lee está declarada en el compose o documentada como interna, y el test de contrato se pone rojo si aparece una lectura nueva sin declarar.
+
+<a id="td-031"></a>
+
+## TD-031 — Imágenes de servicio vulnerables y sin escaneo
+
+- **Estado:** ABIERTA
+- **Prioridad:** P1
+- **Área:** Seguridad / imágenes Docker de los servicios Node (`infrastructure/docker/node-service/Dockerfile` y afines)
+- **Detectado:** 2026-10-16, durante el refresco de dependencias de PR #151.
+- **Evidencia:**
+  - Trivy (`HIGH,CRITICAL`, `--ignore-unfixed`) sobre la imagen de la API construida desde `main` encuentra **74 hallazgos con fix publicado**:
+    - en la base: OpenSSL (`libcrypto3`/`libssl3`, uno CRITICAL), `musl` y `zlib`;
+    - en el CLI de npm que la imagen incluye: `tar` (uno CRITICAL), `minimatch`, `glob`, `brace-expansion`, `pacote`, `sigstore` e `ip-address`;
+    - en un binario Go de una dependencia de desarrollo de TypeScript.
+    - RUNTIME_VERIFIED en entorno aislado, nunca en producción.
+  - La base es `node:22.15-alpine`, fijada por etiqueta y no por digest (`node-service/Dockerfile:9`).
+  - La imagen instala dependencias con `npm ci --ignore-scripts`, sin `--omit=dev`, así que las devDependencies están dentro de la imagen. Verificado con `npm ls` en la imagen construida.
+  - Ningún gate escanea estas imágenes:
+    - `scan` analiza el lockfile del repositorio;
+    - `runtime-vuln-scan` sólo analiza las imágenes de runtime de bots.
+- **Problema:** las seis imágenes Node de servicio se construyen sobre una base antigua y llevan herramientas de desarrollo y el CLI de npm, sin que la CI lo vea.
+- **Impacto:** superficie vulnerable en todos los servicios Node. El verde de `scan` no cubre lo que se despliega.
+- **Solución prevista:**
+  - base Alpine reciente fijada por digest;
+  - etapa final con `npm ci --omit=dev` y sin el CLI de npm;
+  - un gate que escanee las imágenes de servicio construidas (como `runtime-vuln-scan` con los runtimes), probado con un control negativo.
+- **Condición de cierre:** el gate nuevo escanea las imágenes de servicio de la CI y da CLEAN, y se pone rojo si se reintroduce una base vulnerable.
 
 ## Documentación relacionada
 

@@ -100,6 +100,8 @@ PostgreSQL 16.14 y Redis 7.4.9 están fijados por digest. Ver [TD-006](technical
 | Batallas con bots privados ajenos; `rating-history` ajeno | ABIERTO | [TD-005](technical-debt.md#td-005) |
 | Runtime sin el Carril I/J ni el parche de dependencias de `main` | ABIERTO | [TD-006](technical-debt.md#td-006) |
 | Registro abierto (rol developer); clave de límites colapsada a la IP del proxy | ABIERTO | [TD-012](technical-debt.md#td-012) |
+| Imágenes de servicio con vulnerabilidades HIGH/CRITICAL corregibles, sin gate que las escanee | ABIERTO | [TD-031](technical-debt.md#td-031) |
+| Dependencias npm y runtimes de bots | **corregido en `main`** (PR #151): `npm audit` sin hallazgos `high`/`critical`, runtimes sin CRITICAL | — |
 | Topología de infraestructura en el repositorio público | ABIERTO; la consolidación documental lo reduce en `docs/` | [TD-008](technical-debt.md#td-008) |
 | Ejecución real y espectador público | **apagados por defecto**, con su gate de activación | [docs/technical/security.md](../technical/security.md) |
 
