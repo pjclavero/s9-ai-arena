@@ -25,8 +25,8 @@ beforeAll(() => {
 });
 
 describe("T7.5 conformidad con el contrato de E1", () => {
-  it("el contrato tiene 65 operaciones (62 + listPublicReplays/getPublicReplay/downloadPublicReplay de R11, contrato 0.8.0)", () => {
-    expect(loadContract().operations.length).toBe(65);
+  it("el contrato tiene 72 operaciones (65 de R11 + listRulesets/getMapVersionContent/getTeam/updateTeam/deleteTeam/addTeamBot/removeTeamBot de FC-C)", () => {
+    expect(loadContract().operations.length).toBe(72);
   });
 
   it("toda operación del contrato está implementada o declarada pendiente con motivo", () => {

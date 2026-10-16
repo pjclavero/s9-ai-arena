@@ -376,11 +376,18 @@ describe("T7.5 torneos (cap. 17.2) y batallas de práctica", () => {
 
 describe("T7.5 mapas con el código real de E4", () => {
   it("importar el mapa MVP → publicar (miniatura) → PUT siempre 409 (inmutable)", async () => {
-    const mapDoc = readFileSync(join(REPO, "maps", "mvp-arena-01.json"));
+    // FC-C · mvp-arena-01 es contenido base (sin dueño): solo un admin le añade
+    // versiones. Se importa una COPIA con mapId propio del developer.
+    const mapDoc = Buffer.from(
+      JSON.stringify({
+        ...JSON.parse(readFileSync(join(REPO, "maps", "mvp-arena-01.json"), "utf8")),
+        mapId: "mvp-arena-copia",
+      }),
+    );
     const imported = await request(app)
       .post("/maps")
       .set("Authorization", `Bearer ${dev}`)
-      .attach("file", mapDoc, "mvp-arena-01.json");
+      .attach("file", mapDoc, "mvp-arena-copia.json");
     expect(imported.status).toBe(201);
     expect(imported.body.state).toBe("validated");
     const { mapId, version } = imported.body;
@@ -410,13 +417,25 @@ describe("T7.5 mapas con el código real de E4", () => {
       .set("Authorization", `Bearer ${organizer}`)
       .send({ params: { ...params, mapId: "gen-a" }, seed: "semilla-42" });
     expect(b.status).toBe(201);
-    expect(a.body.checksum).toBe(b.body.checksum);
+    // FC-C · el documento guardado se normaliza a su fila (version = la asignada,
+    // checksum canónico), así que v1 y v2 del mismo mapa tienen checksums distintos
+    // por construcción. El determinismo se comprueba sobre la GEOMETRÍA generada.
+    const geometry = async (r: { body: { mapId: string; version: number } }) => {
+      const got = await request(app)
+        .get(`/maps/${r.body.mapId}/versions/${r.body.version}/content`)
+        .set("Authorization", `Bearer ${organizer}`);
+      expect(got.status).toBe(200);
+      const { version: _v, checksum: _c, ...rest } = got.body;
+      return rest;
+    };
+    expect(b.body.version).toBe(a.body.version + 1);
+    expect(await geometry(b)).toEqual(await geometry(a));
 
     const c = await request(app)
       .post("/maps/generate")
       .set("Authorization", `Bearer ${organizer}`)
       .send({ params: { ...params, mapId: "gen-a" }, seed: "semilla-43" });
-    expect(c.body.checksum).not.toBe(a.body.checksum);
+    expect(await geometry(c)).not.toEqual(await geometry(a));
   });
 });
 
@@ -441,7 +460,10 @@ describe("N4/R10 slice 2: borrador del editor de mapas (saveMapDraft)", () => {
     expect(r.body.checks.some((c: { severity: string }) => c.severity === "error")).toBe(true);
 
     // Se recupera con getMapVersion y sigue en 'draft' (no se coló como publicable).
-    const got = await request(app).get(`/maps/${r.body.mapId}/versions/${r.body.version}`);
+    // FC-C · un borrador solo lo ve su dueño: se pide con su sesión.
+    const got = await request(app)
+      .get(`/maps/${r.body.mapId}/versions/${r.body.version}`)
+      .set("Authorization", `Bearer ${dev}`);
     expect(got.status).toBe(200);
     expect(got.body.state).toBe("draft");
   });
