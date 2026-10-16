@@ -13,6 +13,7 @@ import { test, expect, type Page } from "@playwright/test";
 
 const EMAIL = `fc-c-${Date.now()}@example.internal`;
 const PASSWORD = "fc-c-e2e-password-largo!";
+const TEAM = `E2E Rojos ${Date.now().toString(36)}`;
 const MAP_ID = `fc-c-e2e-${Date.now().toString(36)}`;
 
 async function register(page: Page) {
@@ -71,11 +72,11 @@ test("C8 · usuario → equipamiento → equipo → mapa → logout/login → nu
 
   // --- equipo ------------------------------------------------------------
   await page.goto("/#/teams");
-  await page.getByLabel("nuevo-equipo").fill("E2E Rojos");
+  await page.getByLabel("nuevo-equipo").fill(TEAM);
   await page.getByRole("button", { name: "Crear equipo" }).click();
-  const team = page.getByRole("region", { name: "equipo E2E Rojos" });
+  const team = page.getByRole("region", { name: `equipo ${TEAM}` });
   await expect(team).toBeVisible();
-  await team.getByLabel("añadir-bot-E2E Rojos").selectOption({ label: "e2e-rojo" });
+  await team.getByLabel(`añadir-bot-${TEAM}`).selectOption({ label: "e2e-rojo" });
   await team.getByRole("button", { name: "Añadir bot" }).click();
   await expect(team.getByText("e2e-rojo")).toBeVisible();
 
@@ -109,14 +110,14 @@ test("C8 · usuario → equipamiento → equipo → mapa → logout/login → nu
   await page.goto("/#/maps");
   await expect(page.getByRole("cell", { name: new RegExp(`Mapa E2E final · ${MAP_ID} \\(tuyo\\)`) })).toBeVisible();
   await page.goto("/#/teams");
-  await expect(page.getByRole("region", { name: "equipo E2E Rojos" }).getByText("e2e-rojo")).toBeVisible();
+  await expect(page.getByRole("region", { name: `equipo ${TEAM}` }).getByText("e2e-rojo")).toBeVisible();
 
   // --- nueva batalla: TODO elegido en el formulario ----------------------
   await page.goto("/#/battles/new");
   await expect(page.getByLabel("modo")).toHaveValue("deathmatch");
   await expect(page.getByLabel("ruleset")).toHaveValue("deathmatch-mvp"); // id de la BD, servido por /rulesets
   await page.getByLabel("mapa").selectOption(`${MAP_ID}@1`);
-  await page.getByLabel("equipo rojo").selectOption({ label: "E2E Rojos" });
+  await page.getByLabel("equipo rojo").selectOption({ label: TEAM });
   await page.getByLabel("bot rojo").selectOption({ label: "e2e-rojo (v1)" });
   await page.getByLabel("bot azul").selectOption({ label: "e2e-azul (v1)" });
   const created = page.waitForResponse((r) => r.url().endsWith("/api/v1/battles") && r.request().method() === "POST");
