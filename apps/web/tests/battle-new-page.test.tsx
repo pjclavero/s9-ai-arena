@@ -22,9 +22,18 @@ afterEach(() => {
 });
 
 const MAPS = [
-  { mapId: "map_a", version: 2, state: "published" },
-  { mapId: "map_draft", version: 1, state: "draft" },
+  { mapId: "map_a", version: 2, state: "published", supportedModes: ["deathmatch"] },
+  { mapId: "map_draft", version: 1, state: "draft", supportedModes: ["deathmatch"] },
+  { mapId: "map_ctf", version: 1, state: "published", supportedModes: ["capture_the_flag"] },
 ];
+// FC-C · lo que sirve GET /rulesets: ids de la tabla `rulesets` (no los del motor).
+const RULESETS = {
+  modes: ["deathmatch", "team_deathmatch", "capture_the_flag", "zone_control"],
+  items: [
+    { id: "deathmatch-mvp", name: "DM", mode: "deathmatch", budgetCredits: 1000 },
+    { id: "capture-the-flag-mvp", name: "CTF", mode: "capture_the_flag", budgetCredits: 1000 },
+  ],
+};
 const BOTS = [
   { id: "bot_r", name: "Red", latestPublishedVersion: 3 },
   { id: "bot_b", name: "Blue", latestPublishedVersion: 1 },
@@ -33,8 +42,10 @@ const BOTS = [
 
 function mockLists(maps: unknown[], bots: unknown[], runCap = { enabled: false, available: false }) {
   apiMock.mockImplementation((method: string, path: string) => {
-    if (method === "GET" && path === "/maps") return Promise.resolve({ items: maps });
-    if (method === "GET" && path === "/bots") return Promise.resolve({ items: bots });
+    if (method === "GET" && path === "/maps?limit=100") return Promise.resolve({ items: maps });
+    if (method === "GET" && path === "/bots?limit=100") return Promise.resolve({ items: bots });
+    if (method === "GET" && path === "/rulesets") return Promise.resolve(RULESETS);
+    if (method === "GET" && path === "/teams?limit=100") return Promise.resolve({ items: [] });
     if (method === "GET" && path === "/system/status") return Promise.resolve({ realBattleRuns: runCap });
     if (method === "POST" && path === "/battles") return Promise.resolve({ id: "btl_1" });
     if (method === "POST" && path === "/battles/btl_1/run")
@@ -48,7 +59,7 @@ describe("R9 · #/battles/new", () => {
     mockLists(MAPS, BOTS);
     render(<BattleNewPage me={ME} />);
     await screen.findByLabelText("mapa");
-    await userEvent.selectOptions(screen.getByLabelText("mapa"), "map_a");
+    await userEvent.selectOptions(screen.getByLabelText("mapa"), "map_a@2");
     await userEvent.selectOptions(screen.getByLabelText("bot rojo"), "bot_r");
     await userEvent.selectOptions(screen.getByLabelText("bot azul"), "bot_b");
     await userEvent.click(screen.getByText("Crear batalla"));
@@ -58,7 +69,7 @@ describe("R9 · #/battles/new", () => {
     expect(post).toBeTruthy();
     expect(post![2]).toMatchObject({
       mode: "deathmatch",
-      rulesetId: "dm_practice@1",
+      rulesetId: "deathmatch-mvp", // el id que sirvió la API, no uno hardcodeado
       mapId: "map_a",
       mapVersion: 2,
       participants: [
@@ -73,8 +84,22 @@ describe("R9 · #/battles/new", () => {
     render(<BattleNewPage me={ME} />);
     const mapSel = (await screen.findByLabelText("mapa")) as HTMLSelectElement;
     const values = Array.from(mapSel.options).map((o) => o.value);
-    expect(values).toContain("map_a");
-    expect(values).not.toContain("map_draft");
+    expect(values).toContain("map_a@2");
+    expect(values).not.toContain("map_draft@1");
+    // FC-C · y solo los que soportan el modo elegido
+    expect(values).not.toContain("map_ctf@1");
+  });
+
+  it("FC-C · modos y rulesets vienen de GET /rulesets; al cambiar de modo cambian ruleset y mapas", async () => {
+    mockLists(MAPS, BOTS);
+    render(<BattleNewPage me={ME} />);
+    const modeSel = (await screen.findByLabelText("modo")) as HTMLSelectElement;
+    await screen.findByRole("option", { name: "zone_control" });
+    expect(Array.from(modeSel.options).map((o) => o.value)).toEqual(RULESETS.modes);
+    await userEvent.selectOptions(modeSel, "capture_the_flag");
+    expect((screen.getByLabelText("ruleset") as HTMLSelectElement).value).toBe("capture-the-flag-mvp");
+    const maps = Array.from((screen.getByLabelText("mapa") as HTMLSelectElement).options).map((o) => o.value);
+    expect(maps).toEqual(["", "map_ctf@1"]);
   });
 
   it("rechaza crear sin mapa", async () => {
@@ -107,7 +132,7 @@ describe("R9 · #/battles/new", () => {
   async function createBattle() {
     render(<BattleNewPage me={ME} />);
     await screen.findByLabelText("mapa");
-    await userEvent.selectOptions(screen.getByLabelText("mapa"), "map_a");
+    await userEvent.selectOptions(screen.getByLabelText("mapa"), "map_a@2");
     await userEvent.selectOptions(screen.getByLabelText("bot rojo"), "bot_r");
     await userEvent.selectOptions(screen.getByLabelText("bot azul"), "bot_b");
     await userEvent.click(screen.getByText("Crear batalla"));

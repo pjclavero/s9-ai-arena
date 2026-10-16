@@ -258,6 +258,77 @@ paths:
       responses:
         '201': { description: Creado, content: { application/json: { schema: { $ref: '#/components/schemas/Team' } } } }
 
+  /teams/{teamId}:
+    get:
+      tags: [teams]
+      operationId: getTeam
+      summary: 'FC-C · Un equipo. Anónimo/ajeno: solo nombre y recuentos (sin UUID de usuarios); miembro o staff: miembros y bots.'
+      x-min-role: visitor
+      security: []
+      parameters: [{ $ref: '#/components/parameters/TeamId' }]
+      responses:
+        '200': { description: Equipo, content: { application/json: { schema: { $ref: '#/components/schemas/Team' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [teams]
+      operationId: updateTeam
+      summary: 'FC-C · Renombrar el equipo (solo su capitán o admin).'
+      x-min-role: team_captain
+      parameters: [{ $ref: '#/components/parameters/TeamId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties: { name: { type: string, maxLength: 48 } }
+      responses:
+        '200': { description: Actualizado, content: { application/json: { schema: { $ref: '#/components/schemas/Team' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Nombre en uso, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    delete:
+      tags: [teams]
+      operationId: deleteTeam
+      summary: 'FC-C · Borrar el equipo (solo su capitán o admin). Sus bots NO se borran: quedan sin equipo.'
+      x-min-role: team_captain
+      parameters: [{ $ref: '#/components/parameters/TeamId' }]
+      responses:
+        '204': { description: Borrado }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Referenciado por una competición, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /teams/{teamId}/bots:
+    post:
+      tags: [teams]
+      operationId: addTeamBot
+      summary: 'FC-C · Asignar un bot al equipo. Solo su dueño (que debe ser miembro) o admin; un bot ajeno es 404.'
+      x-min-role: user
+      parameters: [{ $ref: '#/components/parameters/TeamId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [botId]
+              properties: { botId: { type: string } }
+      responses:
+        '201': { description: Bot asignado, content: { application/json: { schema: { $ref: '#/components/schemas/Team' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /teams/{teamId}/bots/{botId}:
+    delete:
+      tags: [teams]
+      operationId: removeTeamBot
+      summary: 'FC-C · Quitar un bot del equipo (su dueño, el capitán o admin). El bot no se borra.'
+      x-min-role: user
+      parameters: [{ $ref: '#/components/parameters/TeamId' }, { $ref: '#/components/parameters/BotId' }]
+      responses:
+        '204': { description: Quitado }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /teams/{teamId}/members:
     post:
       tags: [teams]
@@ -270,10 +341,12 @@ paths:
           application/json:
             schema:
               type: object
-              required: [userId]
-              properties: { userId: { type: string } }
+              description: 'FC-C · basta con email O userId (el email evita teclear UUID).'
+              properties:
+                userId: { type: string }
+                email: { type: string, format: email }
       responses:
-        '201': { description: Miembro añadido }
+        '201': { description: Miembro añadido, content: { application/json: { schema: { $ref: '#/components/schemas/Team' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
   /teams/{teamId}/members/{userId}:
     delete:
@@ -593,9 +666,13 @@ paths:
     get:
       tags: [maps]
       operationId: listMaps
+      summary: 'Versiones de mapa. FC-C · los borradores solo aparecen para su dueño (o admin); mine=true filtra los del solicitante.'
       x-min-role: visitor
       security: []
-      parameters: [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      parameters:
+        - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/Limit' }
+        - { name: mine, in: query, required: false, schema: { type: string, enum: ['true'] } }
       responses:
         '200': { description: Mapas, content: { application/json: { schema: { $ref: '#/components/schemas/MapPage' } } } }
     post:
@@ -620,7 +697,7 @@ paths:
     post:
       tags: [maps]
       operationId: saveMapDraft
-      summary: 'Guardar el progreso del editor visual (R10 slice 2) como borrador. Se valida (E4/T4.2) pero NO se gatea: se persiste con warnings o incluso errores, junto con los checks para que el editor los muestre.'
+      summary: 'Guardar el progreso del editor visual (R10 slice 2) como borrador. Se valida (E4/T4.2) pero NO se gatea: se persiste con warnings o incluso errores, junto con los checks para que el editor los muestre. FC-C · si la última versión del mapa es un borrador se reescribe EN SITIO (200); si no, se crea una versión nueva en draft (201). Solo el dueño del mapa (o admin): un mapa ajeno es 403.'
       x-min-role: user
       requestBody:
         required: true
@@ -628,6 +705,11 @@ paths:
           application/json:
             schema: { type: object, description: Mapa interno (InternalMap), additionalProperties: true }
       responses:
+        '200':
+          description: Borrador existente reescrito en sitio (misma versión), con el feedback de validación
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MapVersion' }
         '201':
           description: Borrador guardado, con el feedback de validación
           content:
@@ -660,6 +742,7 @@ paths:
       parameters: [{ $ref: '#/components/parameters/MapId' }, { $ref: '#/components/parameters/Version' }]
       responses:
         '200': { description: Mapa, content: { application/json: { schema: { $ref: '#/components/schemas/MapVersion' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
     put:
       tags: [maps]
       operationId: replaceMapVersion
@@ -669,15 +752,28 @@ paths:
       responses:
         '409': { $ref: '#/components/responses/Immutable' }
 
+  /maps/{mapId}/versions/{version}/content:
+    get:
+      tags: [maps]
+      operationId: getMapVersionContent
+      summary: 'FC-C · Documento completo (InternalMap) de una versión, para reabrirla en el editor o exportarla. Misma visibilidad que getMapVersion (un borrador ajeno es 404).'
+      x-min-role: visitor
+      security: []
+      parameters: [{ $ref: '#/components/parameters/MapId' }, { $ref: '#/components/parameters/Version' }]
+      responses:
+        '200': { description: Mapa interno, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /maps/{mapId}/versions/{version}/actions/publish:
     post:
       tags: [maps]
       operationId: publishMapVersion
-      summary: Congela contenido y checksum, y genera miniatura. Solo si la validación pasó sin errores.
-      x-min-role: organizer
+      summary: 'Congela contenido y checksum, y genera miniatura. Solo si la validación pasó sin errores. FC-C · la publica el dueño del mapa; organizer+ puede publicar cualquiera (curación).'
+      x-min-role: user
       parameters: [{ $ref: '#/components/parameters/MapId' }, { $ref: '#/components/parameters/Version' }]
       responses:
         '200': { description: Publicado, content: { application/json: { schema: { $ref: '#/components/schemas/MapVersion' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/IllegalTransition' }
 
   /maps/generate:
@@ -730,6 +826,42 @@ paths:
       responses:
         '201': { description: Importado }
         '409': { $ref: '#/components/responses/Immutable' }
+
+  /rulesets:
+    get:
+      tags: [catalog]
+      operationId: listRulesets
+      summary: 'FC-C (TD-003) · Rulesets REALES de la tabla rulesets y modos de plataforma. La web elige de aquí (sin ids hardcodeados). ?mode=X devuelve los de ese modo y los agnósticos (mode null).'
+      x-min-role: visitor
+      security: []
+      parameters:
+        - name: mode
+          in: query
+          required: false
+          schema: { enum: [deathmatch, team_deathmatch, capture_the_flag, zone_control] }
+      responses:
+        '200':
+          description: Rulesets y modos
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [modes, items]
+                properties:
+                  modes: { type: array, items: { enum: [deathmatch, team_deathmatch, capture_the_flag, zone_control] } }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name, mode, budgetCredits]
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        mode: { type: string, nullable: true }
+                        engineRulesetId: { type: string, nullable: true }
+                        budgetCredits: { type: integer }
+                        forbiddenCategories: { type: array, items: { type: string } }
+        '400': { description: mode inválido, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /catalog/{catalogVersion}/modules:
     get:
@@ -1367,11 +1499,30 @@ components:
 
     Team:
       type: object
+      description: 'FC-C (TD-011) · sin identificadores de usuarios para anónimos o ajenos; members/bots solo para miembros o staff.'
       properties:
         id: { type: string }
         name: { type: string }
-        captainId: { type: string }
-        memberIds: { type: array, items: { type: string } }
+        memberCount: { type: integer }
+        botCount: { type: integer }
+        isCaptain: { type: boolean, description: Relativo al solicitante autenticado }
+        isMember: { type: boolean, description: Relativo al solicitante autenticado }
+        members:
+          type: array
+          items:
+            type: object
+            properties:
+              userId: { type: string }
+              displayName: { type: string }
+              role: { enum: [captain, member] }
+        bots:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              name: { type: string }
+              mine: { type: boolean }
     TeamPage:
       type: object
       properties:
@@ -1491,6 +1642,8 @@ components:
       type: object
       properties:
         mapId: { type: string }
+        name: { type: string, description: 'FC-C · meta.name del documento' }
+        mine: { type: boolean, description: 'FC-C · true si el solicitante es el dueño del mapa' }
         version: { type: integer }
         state: { enum: [draft, validated, published] }
         checksum: { type: string }

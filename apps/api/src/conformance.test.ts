@@ -25,10 +25,13 @@ beforeAll(() => {
 });
 
 describe("T7.5 conformidad con el contrato de E1", () => {
-  // DEV-A (cierre funcional 2026-10, A9) añade 5: getBotVersion, getBotVersionFiles,
-  // getBotVersionArtifact, diffBotVersions, cloneBotVersion.
-  it("el contrato tiene 70 operaciones (62 + 3 de R11, contrato 0.8.0, + 5 de versionado de bots A9)", () => {
-    expect(loadContract().operations.length).toBe(70);
+  // Cierre funcional 2026-10 (integración REVIEW): 65 de R11 (contrato 0.8.0)
+  // + 5 de versionado de bots (DEV-A: getBotVersion, getBotVersionFiles,
+  // getBotVersionArtifact, diffBotVersions, cloneBotVersion)
+  // + 7 de contenido (DEV-C: listRulesets, getMapVersionContent, getTeam,
+  // updateTeam, deleteTeam, addTeamBot, removeTeamBot).
+  it("el contrato tiene 77 operaciones (65 de R11 + 5 de versionado A9 + 7 de contenido FC-C)", () => {
+    expect(loadContract().operations.length).toBe(77);
   });
 
   it("toda operación del contrato está implementada o declarada pendiente con motivo", () => {

@@ -176,18 +176,36 @@ describe("R16 TeamsPage — primitivas", () => {
     expect(btn.getAttribute("type")).toBe("button");
   });
 
-  it("Button: el botón 'Invitar' del capitán tiene type=button explícito", async () => {
-    apiMock.mockResolvedValue({
-      items: [{ id: "t1", name: "Equipo Alpha", captainId: "u1", memberIds: ["u1"] }],
-    });
+  it("Button: el botón 'Añadir miembro' del capitán tiene type=button explícito", async () => {
+    // FC-C (TD-011) · forma nueva de Team: sin captainId/memberIds, con isCaptain/members.
+    const teamAlpha = {
+      items: [
+        {
+          id: "t1",
+          name: "Equipo Alpha",
+          memberCount: 1,
+          botCount: 0,
+          isCaptain: true,
+          isMember: true,
+          members: [{ userId: "u1", displayName: "Yo", role: "captain" }],
+          bots: [],
+        },
+      ],
+    };
+    apiMock.mockImplementation((...args: unknown[]) =>
+      Promise.resolve(String(args[1] ?? "").startsWith("/bots") ? { items: [] } : teamAlpha),
+    );
     render(<TeamsPage me={ME} />);
-    await screen.findByText("Equipo Alpha");
-    const btn = screen.getByRole("button", { name: "Invitar" });
+    await screen.findByRole("region", { name: "equipo Equipo Alpha" });
+    const btn = screen.getByRole("button", { name: "Añadir miembro" });
     expect(btn.getAttribute("type")).toBe("button");
   });
 
   it("error inline se muestra con clase .error y texto visible", async () => {
-    apiMock.mockResolvedValueOnce({ items: [] }).mockRejectedValueOnce(new Error("nombre ya en uso"));
+    // FC-C · la carga hace GET /teams y GET /bots; solo el POST falla.
+    apiMock.mockImplementation((...args: unknown[]) =>
+      args[0] === "POST" ? Promise.reject(new Error("nombre ya en uso")) : Promise.resolve({ items: [] }),
+    );
     render(<TeamsPage me={ME} />);
     await screen.findByText("Equipos");
     // Escribir nombre y crear equipo que falla

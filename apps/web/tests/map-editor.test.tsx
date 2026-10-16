@@ -1,108 +1,132 @@
 // @vitest-environment jsdom
 /**
- * R10 · Editor de mapas (foundation, solo cliente). Cubre el DoD del slice 1:
- * CRUD de objetos, validación en cliente, y roundtrip export→import.
+ * R10 + FC-C · Editor de mapas: funciones puras del formato interno y cableado con la
+ * API (guardar = POST /maps/drafts; reabrir desde la URL tras F5 = GET .../content).
+ * La API se mockea aquí (prueba de componente); el recorrido real contra API + BD
+ * está en apps/api/src/routes/fc-c-content.test.ts y en el E2E de navegador.
  */
-import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+vi.mock("../src/api.js", () => ({
+  api: vi.fn(),
+  ApiRequestError: class extends Error {
+    constructor(
+      public status: number,
+      public body: Record<string, unknown>,
+    ) {
+      super(String(body?.message ?? status));
+    }
+  },
+}));
+import { api } from "../src/api.js";
 import {
   MapEditorPage,
-  defaultDraft,
-  toAuthoringJson,
-  fromAuthoringJson,
+  newMap,
+  parseImport,
+  resize,
+  toDocument,
+  toggleMode,
   validateDraft,
-  type DraftMap,
 } from "../src/pages/MapEditorPage.js";
 
-afterEach(cleanup);
+const apiMock = api as unknown as ReturnType<typeof vi.fn>;
+const REPO = join(__dirname, "..", "..", "..");
 
-describe("modelo del editor de mapas", () => {
-  it("roundtrip export→import preserva objetos", () => {
-    const m = defaultDraft();
-    m.objects.push({ id: "w1", kind: "wall", x: 100, y: 100, width: 40, height: 20 });
-    m.objects.push({ id: "c1", kind: "obstacle", x: 200, y: 200, width: 30, height: 30, health: 60 });
-    const back = fromAuthoringJson(toAuthoringJson(m));
-    expect(back.objects).toHaveLength(m.objects.length);
-    expect(back.objects.find((o) => o.id === "w1")).toMatchObject({ kind: "wall", x: 100, width: 40 });
-    expect(back.objects.find((o) => o.id === "c1")).toMatchObject({ kind: "obstacle", health: 60 });
-    expect(back.objects.filter((o) => o.kind === "spawn")).toHaveLength(2);
+afterEach(() => {
+  cleanup();
+  apiMock.mockReset();
+  window.location.hash = "";
+});
+
+describe("formato interno del editor", () => {
+  it("un mapa nuevo es un InternalMap con rejilla coherente y dos spawns", () => {
+    const m = newMap("mi-mapa", "Mío");
+    expect(m.layers.ground.data).toHaveLength(m.layers.ground.cols * m.layers.ground.rows);
+    expect(m.layers.spawns).toHaveLength(2);
+    expect(validateDraft(m)).toEqual([]);
+    const r = resize(m, 60, 40);
+    expect(r.layers.ground.data).toHaveLength(r.layers.ground.cols * r.layers.ground.rows);
   });
 
-  it("el export usa el formato de autoría (walls/obstacles/spawns)", () => {
-    const json = toAuthoringJson(defaultDraft()) as Record<string, unknown>;
-    expect(json).toHaveProperty("walls");
-    expect(json).toHaveProperty("obstacles");
-    expect(json).toHaveProperty("spawns");
-    expect((json.spawns as unknown[]).length).toBe(2);
+  it("export → import es simétrico (lo exportado se vuelve a abrir igual)", () => {
+    const m = toggleMode(newMap("ida-vuelta", "x"), "capture_the_flag");
+    const back = parseImport(JSON.stringify(toDocument(m)));
+    expect(back).toEqual(toDocument(m));
   });
 
-  it("la validación detecta fuera de límites, ids duplicados y falta de spawn", () => {
-    const oob: DraftMap = {
-      ...defaultDraft(),
-      objects: [{ id: "x", kind: "wall", x: 9999, y: 0, width: 10, height: 10 }],
-    };
-    const errs = validateDraft(oob);
-    expect(errs.some((e) => /límites/.test(e))).toBe(true);
-    expect(errs.some((e) => /spawn/.test(e))).toBe(true);
+  it("importa el mapa interno real del repo y el JSON de autoría antiguo (convertido a metros)", () => {
+    const mvp = parseImport(readFileSync(join(REPO, "maps", "mvp-arena-01.json"), "utf8"));
+    expect(mvp.mapId).toBe("mvp-arena-01");
+    const legacy = parseImport(readFileSync(join(REPO, "maps", "training-yard.json"), "utf8"));
+    expect(legacy.widthM).toBe(120);
+    expect(legacy.layers.walls.length).toBeGreaterThan(0);
+    expect(legacy.layers.ground.data).toHaveLength(legacy.layers.ground.cols * legacy.layers.ground.rows);
+  });
+
+  it("rechaza JSON que no es mapa", () => {
+    expect(() => parseImport('{"hola":1}')).toThrow(/no reconocido/);
+  });
+
+  it("la validación de cliente avisa de id inválido, sin spawns y sin modos", () => {
+    const m = newMap("X X", "x");
+    const bad = { ...m, meta: { ...m.meta, supportedModes: [] }, layers: { ...m.layers, spawns: [] } };
+    const errs = validateDraft(bad).join(" | ");
+    expect(errs).toMatch(/id de mapa/);
+    expect(errs).toMatch(/spawn/);
+    expect(errs).toMatch(/modo/);
   });
 });
 
-describe("UI del editor de mapas", () => {
-  it("añade un muro y aparece en la lista de objetos", () => {
-    render(<MapEditorPage />);
-    const before = screen.getByText(/^Objetos \(/).textContent;
-    fireEvent.click(screen.getByRole("button", { name: "Añadir muro" }));
-    const after = screen.getByText(/^Objetos \(/).textContent;
-    expect(after).not.toBe(before);
-    // el nuevo objeto queda seleccionado → aparece el fieldset de edición
-    expect(screen.getByText(/^Editar/)).toBeTruthy();
-  });
-
-  it("mover un objeto por el input x se refleja en el export", () => {
-    render(<MapEditorPage />);
-    fireEvent.click(screen.getByRole("button", { name: "Añadir muro" }));
-    // el muro queda seleccionado → editamos su x
-    fireEvent.change(screen.getByLabelText("x"), { target: { value: "123" } });
-    const exported = screen.getByLabelText("JSON exportado") as HTMLTextAreaElement;
-    expect(exported.value).toContain('"x": 123');
-  });
-
-  it("eliminar el objeto seleccionado lo quita de la lista", () => {
-    render(<MapEditorPage />);
-    const before = screen.getByText(/^Objetos \(/).textContent; // "Objetos (2)"
-    fireEvent.click(screen.getByRole("button", { name: "Añadir muro" }));
-    expect(screen.getByText(/^Objetos \(/).textContent).not.toBe(before);
-    fireEvent.click(screen.getByRole("button", { name: "Eliminar objeto" }));
-    // vuelve al recuento inicial y el fieldset de edición desaparece
-    expect(screen.getByText(/^Objetos \(/).textContent).toBe(before);
-    expect(screen.queryByText(/^Editar/)).toBeNull();
-  });
-
-  it("importar JSON carga el mapa (roundtrip por la UI)", () => {
-    render(<MapEditorPage />);
-    const payload = JSON.stringify({
-      schemaVersion: 1,
-      id: "imp",
-      name: "Importado",
-      width: 500,
-      height: 500,
-      seed: 7,
-      walls: [{ id: "muro", kind: "wall", x: 10, y: 10, width: 20, height: 20 }],
-      obstacles: [],
-      spawns: [{ id: "s", team: "blue", x: 250, y: 250, heading: 0 }],
+describe("cableado con la API", () => {
+  it("Guardar envía el InternalMap a POST /maps/drafts y fija la URL para reabrir", async () => {
+    apiMock.mockImplementation((method: string, path: string, body?: unknown) => {
+      if (method === "GET" && path.startsWith("/maps?mine=true")) return Promise.resolve({ items: [] });
+      if (method === "POST" && path === "/maps/drafts")
+        return Promise.resolve({ mapId: (body as { mapId: string }).mapId, version: 1, state: "draft", checks: [] });
+      return Promise.reject(new Error(`unexpected ${method} ${path}`));
     });
-    fireEvent.change(screen.getByLabelText("JSON a importar"), { target: { value: payload } });
-    fireEvent.click(screen.getByRole("button", { name: "Importar" }));
-    const exported = screen.getByLabelText("JSON exportado") as HTMLTextAreaElement;
-    expect(exported.value).toContain('"muro"');
-    expect(exported.value).toContain('"imp"');
+    render(<MapEditorPage />);
+    fireEvent.change(screen.getByLabelText("id del mapa"), { target: { value: "guardado-1" } });
+    fireEvent.click(screen.getByTestId("editor-save"));
+    await screen.findByText(/Guardado en el servidor/);
+    const post = apiMock.mock.calls.find((c) => c[0] === "POST" && c[1] === "/maps/drafts")!;
+    expect(post[2]).toMatchObject({ mapId: "guardado-1", layers: { spawns: expect.any(Array) } });
+    expect(window.location.hash).toBe("#/maps/editor?map=guardado-1&v=1");
   });
 
-  it("import de JSON inválido anuncia error sin romper", () => {
+  it("F5: con #/maps/editor?map=..&v=.. reabre el mapa DESDE la API", async () => {
+    window.location.hash = "#/maps/editor?map=reabierto&v=3";
+    const content = { ...newMap("reabierto", "Reabierto desde BD"), version: 3 };
+    apiMock.mockImplementation((method: string, path: string) => {
+      if (path === "/maps/reabierto/versions/3")
+        return Promise.resolve({ mapId: "reabierto", version: 3, state: "draft" });
+      if (path === "/maps/reabierto/versions/3/content") return Promise.resolve(content);
+      if (path.startsWith("/maps?mine=true")) return Promise.resolve({ items: [] });
+      return Promise.reject(new Error(`unexpected ${method} ${path}`));
+    });
     render(<MapEditorPage />);
-    fireEvent.change(screen.getByLabelText("JSON a importar"), { target: { value: "{ no json" } });
-    fireEvent.click(screen.getByRole("button", { name: "Importar" }));
-    const alerts = screen.getAllByRole("alert");
-    expect(within(alerts[alerts.length - 1]).getByText(/JSON inválido/)).toBeTruthy();
+    await waitFor(() =>
+      expect((screen.getByLabelText("nombre del mapa") as HTMLInputElement).value).toBe("Reabierto desde BD"),
+    );
+    expect(screen.getByTestId("editor-current").textContent).toBe("reabierto v3");
+  });
+
+  it("un 403 al guardar (mapa ajeno) se anuncia, no se traga", async () => {
+    const { ApiRequestError } = await import("../src/api.js");
+    apiMock.mockImplementation((method: string, path: string) => {
+      if (path.startsWith("/maps?mine=true")) return Promise.resolve({ items: [] });
+      if (method === "POST")
+        return Promise.reject(
+          new ApiRequestError(403, { error: "forbidden", message: "Ese mapa pertenece a otro usuario" }),
+        );
+      return Promise.reject(new Error("x"));
+    });
+    render(<MapEditorPage />);
+    fireEvent.click(screen.getByTestId("editor-save"));
+    const err = await screen.findByTestId("editor-error");
+    expect(err.textContent).toMatch(/otro usuario/);
   });
 });

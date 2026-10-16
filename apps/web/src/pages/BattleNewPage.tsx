@@ -8,21 +8,30 @@
  * `e2e-real-battle-smoke`) y NO se dispara desde aquí.
  *
  * Solo permite mapas PUBLICADOS y bots con versión PUBLICADA (ready/signed).
+ *
+ * FC-C (TD-003) · los modos y los rulesets salen de la API (GET /rulesets: ids REALES
+ * de la tabla `rulesets`); aquí no hay ningún id de ruleset. Los mapas se filtran por
+ * el modo elegido (supportedModes) y cada bando puede tomar sus bots de un equipo.
  */
 import { useEffect, useState } from "react";
 import { api, type Me } from "../api.js";
-import { safeLookup } from "../../../../packages/game-rules/safe-lookup.js";
 
-/** modo → ruleset por defecto (mismo mapeo que engine-executor). */
-const MODE_RULESET: Record<string, string> = {
-  deathmatch: "dm_practice@1",
-  team_deathmatch: "tdm_mvp@1",
-  capture_the_flag: "ctf_mvp@1",
-  zone_control: "zc_mvp@1",
-};
+export interface RulesetOption {
+  id: string;
+  name: string;
+  mode: string | null;
+  budgetCredits: number;
+}
+interface TeamOption {
+  id: string;
+  name: string;
+  isMember?: boolean;
+  bots?: { id: string; name: string }[];
+}
 
 interface MapVersion {
   mapId: string;
+  name?: string;
   version: number;
   state: string;
   supportedModes?: string[];
@@ -37,8 +46,14 @@ export function BattleNewPage(_props: { me: Me }) {
   const [maps, setMaps] = useState<MapVersion[]>([]);
   const [bots, setBots] = useState<BotSummary[]>([]);
   const [loadErr, setLoadErr] = useState("");
-  const [mode, setMode] = useState("deathmatch");
-  const [mapId, setMapId] = useState("");
+  const [modes, setModes] = useState<string[]>([]);
+  const [rulesets, setRulesets] = useState<RulesetOption[]>([]);
+  const [teams, setTeams] = useState<TeamOption[]>([]);
+  const [mode, setMode] = useState("");
+  const [rulesetId, setRulesetId] = useState("");
+  const [redTeam, setRedTeam] = useState("");
+  const [blueTeam, setBlueTeam] = useState("");
+  const [mapKey, setMapKey] = useState(""); // `${mapId}@${version}`
   const [seed, setSeed] = useState("");
   const [redBot, setRedBot] = useState("");
   const [blueBot, setBlueBot] = useState("");
@@ -54,12 +69,18 @@ export function BattleNewPage(_props: { me: Me }) {
   useEffect(() => {
     void (async () => {
       try {
-        const [m, b] = await Promise.all([
-          api<{ items: MapVersion[] }>("GET", "/maps"),
-          api<{ items: BotSummary[] }>("GET", "/bots"),
+        const [m, b, r, t] = await Promise.all([
+          api<{ items: MapVersion[] }>("GET", "/maps?limit=100"),
+          api<{ items: BotSummary[] }>("GET", "/bots?limit=100"),
+          api<{ modes: string[]; items: RulesetOption[] }>("GET", "/rulesets"),
+          api<{ items: TeamOption[] }>("GET", "/teams?limit=100"),
         ]);
         setMaps((m.items ?? []).filter((x) => x.state === "published"));
         setBots((b.items ?? []).filter((x) => x.latestPublishedVersion != null));
+        setModes(r.modes ?? []);
+        setRulesets(r.items ?? []);
+        setTeams((t.items ?? []).filter((x) => x.isMember));
+        if (r.modes?.length) setMode(r.modes[0]);
       } catch (e) {
         setLoadErr((e as Error).message);
       }
@@ -92,16 +113,26 @@ export function BattleNewPage(_props: { me: Me }) {
     const v = bots.find((x) => x.id === id)?.latestPublishedVersion;
     return v == null ? undefined : v;
   }
-  function mapVersion(id: string): number | undefined {
-    return maps.find((x) => x.mapId === id)?.version;
-  }
+  // Opciones REALES derivadas del modo elegido.
+  const modeRulesets = rulesets.filter((r) => r.mode === mode || r.mode === null);
+  const modeMaps = maps.filter((m) => (m.supportedModes ?? []).includes(mode));
+  const selectedMap = modeMaps.find((m) => `${m.mapId}@${m.version}` === mapKey);
+  const effectiveRuleset = modeRulesets.some((r) => r.id === rulesetId)
+    ? rulesetId
+    : ((modeRulesets.find((r) => r.mode === mode) ?? modeRulesets[0])?.id ?? "");
+  const botsOf = (teamId: string) => {
+    if (!teamId) return bots;
+    const ids = new Set((teams.find((t) => t.id === teamId)?.bots ?? []).map((x) => x.id));
+    return bots.filter((x) => ids.has(x.id));
+  };
 
   const notEnoughBots = bots.length < 2;
-  const notEnoughMaps = maps.length < 1;
+  const notEnoughMaps = modeMaps.length < 1;
 
   async function submit() {
     setError("");
-    if (!mapId) return setError("Elige un mapa publicado.");
+    if (!effectiveRuleset) return setError("No hay ningún ruleset para este modo.");
+    if (!selectedMap) return setError("Elige un mapa publicado que soporte el modo.");
     if (!redBot || !blueBot) return setError("Elige dos bots con versión publicada.");
     if (redBot === blueBot) return setError("Elige dos bots distintos.");
     const rv = botVersion(redBot);
@@ -111,10 +142,9 @@ export function BattleNewPage(_props: { me: Me }) {
     try {
       const battle = await api<{ id: string }>("POST", "/battles", {
         mode,
-        // B8 · lectura segura (barrido de la clase __proto__).
-        rulesetId: safeLookup(MODE_RULESET, mode),
-        mapId,
-        mapVersion: mapVersion(mapId),
+        rulesetId: effectiveRuleset, // id de la tabla `rulesets`, servido por GET /rulesets
+        mapId: selectedMap.mapId,
+        mapVersion: selectedMap.version,
         ...(seed ? { seed } : {}),
         participants: [
           { botId: redBot, version: rv, team: "red" },
@@ -195,8 +225,16 @@ export function BattleNewPage(_props: { me: Me }) {
 
       <label>
         Modo{" "}
-        <select aria-label="modo" value={mode} onChange={(e) => setMode(e.target.value)}>
-          {Object.keys(MODE_RULESET).map((m) => (
+        <select
+          aria-label="modo"
+          value={mode}
+          onChange={(e) => {
+            setMode(e.target.value);
+            setMapKey("");
+            setRulesetId("");
+          }}
+        >
+          {modes.map((m) => (
             <option key={m} value={m}>
               {m}
             </option>
@@ -204,11 +242,22 @@ export function BattleNewPage(_props: { me: Me }) {
         </select>
       </label>
       <label>
+        Ruleset{" "}
+        <select aria-label="ruleset" value={effectiveRuleset} onChange={(e) => setRulesetId(e.target.value)}>
+          {modeRulesets.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.name} ({r.id}, {r.budgetCredits} cr)
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
         Mapa publicado{" "}
-        <select aria-label="mapa" value={mapId} onChange={(e) => setMapId(e.target.value)}>
+        <select aria-label="mapa" value={mapKey} onChange={(e) => setMapKey(e.target.value)}>
           <option value="">— elige —</option>
-          {maps.map((m) => (
-            <option key={`${m.mapId}@${m.version}`} value={m.mapId}>
+          {modeMaps.map((m) => (
+            <option key={`${m.mapId}@${m.version}`} value={`${m.mapId}@${m.version}`}>
+              {m.name ? `${m.name} · ` : ""}
               {m.mapId} v{m.version}
             </option>
           ))}
@@ -217,22 +266,62 @@ export function BattleNewPage(_props: { me: Me }) {
       <label>
         Semilla (opcional) <input aria-label="semilla" value={seed} onChange={(e) => setSeed(e.target.value)} />
       </label>
+      {teams.length > 0 && (
+        <label>
+          Equipo rojo (opcional){" "}
+          <select
+            aria-label="equipo rojo"
+            value={redTeam}
+            onChange={(e) => {
+              setRedTeam(e.target.value);
+              setRedBot("");
+            }}
+          >
+            <option value="">— cualquiera —</option>
+            {teams.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <label>
         Bot rojo{" "}
         <select aria-label="bot rojo" value={redBot} onChange={(e) => setRedBot(e.target.value)}>
           <option value="">— elige —</option>
-          {bots.map((b) => (
+          {botsOf(redTeam).map((b) => (
             <option key={b.id} value={b.id}>
               {b.name} (v{b.latestPublishedVersion})
             </option>
           ))}
         </select>
       </label>
+      {teams.length > 0 && (
+        <label>
+          Equipo azul (opcional){" "}
+          <select
+            aria-label="equipo azul"
+            value={blueTeam}
+            onChange={(e) => {
+              setBlueTeam(e.target.value);
+              setBlueBot("");
+            }}
+          >
+            <option value="">— cualquiera —</option>
+            {teams.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <label>
         Bot azul{" "}
         <select aria-label="bot azul" value={blueBot} onChange={(e) => setBlueBot(e.target.value)}>
           <option value="">— elige —</option>
-          {bots.map((b) => (
+          {botsOf(blueTeam).map((b) => (
             <option key={b.id} value={b.id}>
               {b.name} (v{b.latestPublishedVersion})
             </option>
@@ -244,7 +333,7 @@ export function BattleNewPage(_props: { me: Me }) {
         Crear batalla
       </button>
       {notEnoughBots && <p className="warn">Necesitas al menos 2 bots con versión publicada.</p>}
-      {notEnoughMaps && <p className="warn">No hay mapas publicados disponibles.</p>}
+      {notEnoughMaps && <p className="warn">No hay mapas publicados que soporten el modo {mode}.</p>}
     </section>
   );
 }
