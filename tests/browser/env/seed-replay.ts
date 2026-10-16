@@ -48,4 +48,6 @@ const replay = await record(
   },
 );
 const stored = ingestReplay(dir, replay, { official: false });
-console.log(JSON.stringify({ msg: "replay sembrado", battleId, ticks: stored.index.ticks, sha256: stored.index.sha256 }));
+console.log(
+  JSON.stringify({ msg: "replay sembrado", battleId, ticks: stored.index.ticks, sha256: stored.index.sha256 }),
+);

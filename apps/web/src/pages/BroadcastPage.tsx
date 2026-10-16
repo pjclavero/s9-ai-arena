@@ -221,51 +221,53 @@ function LiveScreen({ config, battle }: { config: BroadcastConfig; battle: Battl
     const api = createPublicApi();
 
     // El MISMO visor de E8 (chunk perezoso): aquí solo se cablea, no se re-renderiza.
-    void import("../viewer/PhaserViewer.js").then(async ({ createViewerGame, waitForViewerScene }) => {
-      if (!alive || !hostRef.current) return;
-      // FPS objetivo por vista (R3.2): la emisión se captura a 30 fps (streamer);
-      // renderizar a más solo quema CPU del contenedor de Chromium.
-      game = createViewerGame(hostRef.current, { targetFps: 30 });
-      // FC-D (D3, TD-009): esperar al READY de Phaser y al create de la escena.
-      let scene: ViewerScene;
-      try {
-        scene = await waitForViewerScene(game as any);
-      } catch (e) {
-        if (alive) setInitError((e as Error).message);
-        return;
-      }
-      if (!alive) return;
-      scene.cameraMode = { kind: "global" }; // encuadre fijo de emisión, sin manos
-      sceneRef.current = scene;
-      // Mismo reloj de reproducción con delay-buffer que el visor (R3.2).
-      const feed = new LiveFeed(scene);
+    void import("../viewer/PhaserViewer.js")
+      .then(async ({ createViewerGame, waitForViewerScene }) => {
+        if (!alive || !hostRef.current) return;
+        // FPS objetivo por vista (R3.2): la emisión se captura a 30 fps (streamer);
+        // renderizar a más solo quema CPU del contenedor de Chromium.
+        game = createViewerGame(hostRef.current, { targetFps: 30 });
+        // FC-D (D3, TD-009): esperar al READY de Phaser y al create de la escena.
+        let scene: ViewerScene;
+        try {
+          scene = await waitForViewerScene(game as any);
+        } catch (e) {
+          if (alive) setInitError((e as Error).message);
+          return;
+        }
+        if (!alive) return;
+        scene.cameraMode = { kind: "global" }; // encuadre fijo de emisión, sin manos
+        sceneRef.current = scene;
+        // Mismo reloj de reproducción con delay-buffer que el visor (R3.2).
+        const feed = new LiveFeed(scene);
 
-      client = new SpectatorClient({
-        // Ticket ANÓNIMO: la vista broadcast jamás lleva sesión (cero datos privados).
-        getTicket: () => api.post(`/battles/${battle.id}/spectate-ticket`),
+        client = new SpectatorClient({
+          // Ticket ANÓNIMO: la vista broadcast jamás lleva sesión (cero datos privados).
+          getTicket: () => api.post(`/battles/${battle.id}/spectate-ticket`),
+        });
+        const c = client;
+        client.on("init", (msg) => {
+          setLive(true);
+          if (msg.meta?.world) scene.setWorld(msg.meta.world);
+          if (msg.meta?.roster) scene.setRoster(rosterFromMeta(msg.meta.roster));
+          if (msg.finished && msg.result) scene.applyResult(msg.result);
+          feed.onInit(msg);
+        });
+        client.on("snapshot", (s) => {
+          feed.onSnapshot(s, c.state.serverTimeMs ?? undefined);
+          setTick(s.tick);
+        });
+        client.on("event", (e) => feed.onEvent(e));
+        // R3.6: el fin de partida entra al overlay → rótulo sobre el canvas + HUD.
+        client.on("result", (result) => scene.applyResult(result));
+        client.on("disconnect", () => setLive(false));
+        client.on("reconnected", () => setLive(true));
+        client.on("rejected", (r) => setInitError(`directo no disponible (${r.code ?? r.status ?? "?"})`));
+        void client.connect();
+      })
+      .catch((e: unknown) => {
+        if (alive) setInitError((e as Error).message);
       });
-      const c = client;
-      client.on("init", (msg) => {
-        setLive(true);
-        if (msg.meta?.world) scene.setWorld(msg.meta.world);
-        if (msg.meta?.roster) scene.setRoster(rosterFromMeta(msg.meta.roster));
-        if (msg.finished && msg.result) scene.applyResult(msg.result);
-        feed.onInit(msg);
-      });
-      client.on("snapshot", (s) => {
-        feed.onSnapshot(s, c.state.serverTimeMs ?? undefined);
-        setTick(s.tick);
-      });
-      client.on("event", (e) => feed.onEvent(e));
-      // R3.6: el fin de partida entra al overlay → rótulo sobre el canvas + HUD.
-      client.on("result", (result) => scene.applyResult(result));
-      client.on("disconnect", () => setLive(false));
-      client.on("reconnected", () => setLive(true));
-      client.on("rejected", (r) => setInitError(`directo no disponible (${r.code ?? r.status ?? "?"})`));
-      void client.connect();
-    }).catch((e: unknown) => {
-      if (alive) setInitError((e as Error).message);
-    });
 
     return () => {
       alive = false;

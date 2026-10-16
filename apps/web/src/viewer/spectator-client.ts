@@ -386,7 +386,10 @@ export function isTerminalCloseCode(code: number): boolean {
  * relativa se ancla al origen de la página con `wss:` si la página es https
  * (nunca se degrada a `ws:` bajo TLS: sería contenido mixto).
  */
-export function resolveWsUrl(wsUrl: string, loc: { protocol: string; host: string } | undefined = globalThis.location): string {
+export function resolveWsUrl(
+  wsUrl: string,
+  loc: { protocol: string; host: string } | undefined = globalThis.location,
+): string {
   if (/^wss?:\/\//i.test(wsUrl) || !loc) return wsUrl;
   const proto = loc.protocol === "https:" ? "wss:" : "ws:";
   return `${proto}//${loc.host}${wsUrl.startsWith("/") ? "" : "/"}${wsUrl}`;

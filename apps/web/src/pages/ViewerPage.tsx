@@ -19,10 +19,17 @@ import type { CameraMode } from "../viewer/camera.js";
  * init (Phaser arrancando) → connecting (ticket + socket) → live → finished, o
  * reconnecting / rejected (rechazo definitivo con motivo) / offline (agotó reintentos) / error.
  */
-export type ViewerState = "init" | "connecting" | "live" | "reconnecting" | "finished" | "rejected" | "offline" | "error";
+export type ViewerState =
+  "init" | "connecting" | "live" | "reconnecting" | "finished" | "rejected" | "offline" | "error";
 
 /** Texto para el usuario de cada rechazo definitivo del canal de espectador. */
-export function describeSpectateRejection(r: { kind: string; status?: number; code?: number; reason?: string; error?: unknown }): {
+export function describeSpectateRejection(r: {
+  kind: string;
+  status?: number;
+  code?: number;
+  reason?: string;
+  error?: unknown;
+}): {
   text: string;
   showReplay: boolean;
 } {
@@ -43,7 +50,10 @@ export function describeSpectateRejection(r: { kind: string; status?: number; co
     case 4403:
       return { text: `El servidor de directo denegó el acceso (${r.reason || "acceso denegado"}).`, showReplay: true };
     default:
-      return { text: `El servidor de directo cerró la conexión (${r.code ?? "?"} ${r.reason ?? ""}).`, showReplay: false };
+      return {
+        text: `El servidor de directo cerró la conexión (${r.code ?? "?"} ${r.reason ?? ""}).`,
+        showReplay: false,
+      };
   }
 }
 
@@ -81,80 +91,82 @@ export function ViewerPage({ battleId }: { battleId: string }) {
       setStatus(`${prefix}: ${d.title} — ${d.detail}`);
     };
 
-    void import("../viewer/PhaserViewer.js").then(async ({ createViewerGame, waitForViewerScene }) => {
-      if (!alive || !hostRef.current) return;
-      game = createViewerGame(hostRef.current, { targetFps: 60 });
-      // FC-D (D3, TD-009): la escena no existe hasta el READY de Phaser. Antes se
-      // pedía aquí con getScene → null → TypeError y el visor se quedaba en
-      // «conectando…» sin pedir siquiera el ticket.
-      let scene: ViewerScene;
-      try {
-        scene = await waitForViewerScene(game as any);
-      } catch (e) {
-        fail("el visor no pudo arrancar", e);
-        return;
-      }
-      if (!alive) return;
-      sceneRef.current = scene;
-      setState("connecting");
-      setStatus("conectando…");
-      // R3.2: LiveFeed fecha los snapshots por su tick (eje de partida) y fija el
-      // reloj de reproducción con delay-buffer de ~2 intervalos (DelayClock).
-      const feed = new LiveFeed(scene);
+    void import("../viewer/PhaserViewer.js")
+      .then(async ({ createViewerGame, waitForViewerScene }) => {
+        if (!alive || !hostRef.current) return;
+        game = createViewerGame(hostRef.current, { targetFps: 60 });
+        // FC-D (D3, TD-009): la escena no existe hasta el READY de Phaser. Antes se
+        // pedía aquí con getScene → null → TypeError y el visor se quedaba en
+        // «conectando…» sin pedir siquiera el ticket.
+        let scene: ViewerScene;
+        try {
+          scene = await waitForViewerScene(game as any);
+        } catch (e) {
+          fail("el visor no pudo arrancar", e);
+          return;
+        }
+        if (!alive) return;
+        sceneRef.current = scene;
+        setState("connecting");
+        setStatus("conectando…");
+        // R3.2: LiveFeed fecha los snapshots por su tick (eje de partida) y fija el
+        // reloj de reproducción con delay-buffer de ~2 intervalos (DelayClock).
+        const feed = new LiveFeed(scene);
 
-      client = new SpectatorClient({
-        getTicket: () => api("POST", `/battles/${battleId}/spectate-ticket`),
-      });
-      const c = client;
-      client.on("init", (msg) => {
-        setState(msg.finished ? "finished" : "live");
-        setStatus(msg.finished ? "batalla terminada" : "en directo");
-        setAllowFog(msg.spectator?.allowFogView === true);
-        setDebugAvailable(msg.spectator?.debug === true);
-        if (msg.meta?.world) scene.setWorld(msg.meta.world);
-        // R3.4: nómina pública (nombre + chasis + equipo por vehículo) desde la
-        // cabecera init; el visor pinta sprite por chasis y NOMBRE, no el UUID.
-        if (msg.meta?.roster) scene.setRoster(rosterFromMeta(msg.meta.roster));
-        // R3.6: si nos conectamos a una batalla YA terminada, arrastramos el
-        // resultado para anunciar el fin sobre el canvas y en el HUD.
-        if (msg.finished && msg.result) scene.applyResult(msg.result);
-        feed.onInit(msg);
-      });
-      client.on("snapshot", (s) => {
-        feed.onSnapshot(s, c.state.serverTimeMs ?? undefined);
-        setOverlayTick(s.tick);
-      });
-      client.on("event", (e) => feed.onEvent(e));
-      client.on("debug", (d) => {
-        scene.debugLayers = d.layers;
-      });
-      client.on("disconnect", () => {
-        setState("reconnecting");
-        setStatus("reconectando…");
-      });
-      client.on("reconnected", () => {
-        setState("live");
-        setStatus("en directo (reconectado)");
-      });
-      client.on("rejected", (r) => {
-        const d = describeSpectateRejection(r);
-        setState("rejected");
-        setRejectCode(String(r.code ?? r.status ?? ""));
-        setShowReplay(d.showReplay);
-        setStatus(d.text);
-      });
-      client.on("result", (result) => {
-        setState("finished");
-        setStatus("batalla terminada");
-        // R3.6: el fin de partida entra al overlay → rótulo sobre el canvas + HUD.
-        scene.applyResult(result);
-      });
-      client.on("gave_up", () => {
-        setState("offline");
-        setStatus("sin conexión con el servidor de directo tras varios intentos");
-      });
-      void client.connect();
-    }).catch((e: unknown) => fail("no se pudo cargar el visor", e));
+        client = new SpectatorClient({
+          getTicket: () => api("POST", `/battles/${battleId}/spectate-ticket`),
+        });
+        const c = client;
+        client.on("init", (msg) => {
+          setState(msg.finished ? "finished" : "live");
+          setStatus(msg.finished ? "batalla terminada" : "en directo");
+          setAllowFog(msg.spectator?.allowFogView === true);
+          setDebugAvailable(msg.spectator?.debug === true);
+          if (msg.meta?.world) scene.setWorld(msg.meta.world);
+          // R3.4: nómina pública (nombre + chasis + equipo por vehículo) desde la
+          // cabecera init; el visor pinta sprite por chasis y NOMBRE, no el UUID.
+          if (msg.meta?.roster) scene.setRoster(rosterFromMeta(msg.meta.roster));
+          // R3.6: si nos conectamos a una batalla YA terminada, arrastramos el
+          // resultado para anunciar el fin sobre el canvas y en el HUD.
+          if (msg.finished && msg.result) scene.applyResult(msg.result);
+          feed.onInit(msg);
+        });
+        client.on("snapshot", (s) => {
+          feed.onSnapshot(s, c.state.serverTimeMs ?? undefined);
+          setOverlayTick(s.tick);
+        });
+        client.on("event", (e) => feed.onEvent(e));
+        client.on("debug", (d) => {
+          scene.debugLayers = d.layers;
+        });
+        client.on("disconnect", () => {
+          setState("reconnecting");
+          setStatus("reconectando…");
+        });
+        client.on("reconnected", () => {
+          setState("live");
+          setStatus("en directo (reconectado)");
+        });
+        client.on("rejected", (r) => {
+          const d = describeSpectateRejection(r);
+          setState("rejected");
+          setRejectCode(String(r.code ?? r.status ?? ""));
+          setShowReplay(d.showReplay);
+          setStatus(d.text);
+        });
+        client.on("result", (result) => {
+          setState("finished");
+          setStatus("batalla terminada");
+          // R3.6: el fin de partida entra al overlay → rótulo sobre el canvas + HUD.
+          scene.applyResult(result);
+        });
+        client.on("gave_up", () => {
+          setState("offline");
+          setStatus("sin conexión con el servidor de directo tras varios intentos");
+        });
+        void client.connect();
+      })
+      .catch((e: unknown) => fail("no se pudo cargar el visor", e));
 
     return () => {
       alive = false;

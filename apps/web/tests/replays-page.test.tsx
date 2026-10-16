@@ -54,7 +54,11 @@ describe("R7-A · #/replays", () => {
   });
 
   it("un 502 del gateway es un error visible con reintento, nunca lista vacía (FC-D D2)", async () => {
-    mockFetch(() => Promise.resolve(new Response("<html>bad gateway</html>", { status: 502, headers: { "content-type": "text/html" } })));
+    mockFetch(() =>
+      Promise.resolve(
+        new Response("<html>bad gateway</html>", { status: 502, headers: { "content-type": "text/html" } }),
+      ),
+    );
     render(<ReplaysPage />);
     const alert = await screen.findByRole("alert");
     expect(alert.textContent ?? "").toMatch(/Servicio no disponible \(502\)/);

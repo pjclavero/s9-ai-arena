@@ -41,7 +41,13 @@ const compose = parse(readFileSync(join(REPO, "infrastructure/docker-compose.yml
   secrets: Record<string, unknown>;
 };
 
-const KEY_VARS = ["SPECTATE_TICKET_SECRET_FILE", "SPECTATE_TICKET_SECRET", "JWT_SECRET_FILE", "JWT_SECRET", "ARENA_DEV_INSECURE_SECRETS"];
+const KEY_VARS = [
+  "SPECTATE_TICKET_SECRET_FILE",
+  "SPECTATE_TICKET_SECRET",
+  "JWT_SECRET_FILE",
+  "JWT_SECRET",
+  "ARENA_DEV_INSECURE_SECRETS",
+];
 
 function entryOf(svc: any): string | null {
   const raw = svc?.environment?.SERVICE_ENTRY;

@@ -748,10 +748,5 @@ export const PHASER_SCENE_READY = {
  * scene-ready.ts). Las páginas DEBEN usar esto en lugar de `getScene` directo.
  */
 export function waitForViewerScene(game: Phaser.Game, timeoutMs?: number): Promise<ViewerScene> {
-  return waitForScene<ViewerScene>(
-    game as unknown as GameLike<ViewerScene>,
-    "viewer",
-    PHASER_SCENE_READY,
-    timeoutMs,
-  );
+  return waitForScene<ViewerScene>(game as unknown as GameLike<ViewerScene>, "viewer", PHASER_SCENE_READY, timeoutMs);
 }

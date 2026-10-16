@@ -72,10 +72,18 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
     return await fetch(url, { ...init, signal: ctrl.signal });
   } catch (e) {
     if (timedOut) {
-      throw new ApiRequestError(0, { message: `el servidor no respondió en ${Math.round(timeoutMs / 1000)} s` }, "timeout");
+      throw new ApiRequestError(
+        0,
+        { message: `el servidor no respondió en ${Math.round(timeoutMs / 1000)} s` },
+        "timeout",
+      );
     }
     if (outer?.aborted) throw e;
-    throw new ApiRequestError(0, { message: `sin conexión con el servidor (${(e as Error)?.message ?? e})` }, "network");
+    throw new ApiRequestError(
+      0,
+      { message: `sin conexión con el servidor (${(e as Error)?.message ?? e})` },
+      "network",
+    );
   } finally {
     clearTimeout(timer);
     outer?.removeEventListener("abort", onOuterAbort);

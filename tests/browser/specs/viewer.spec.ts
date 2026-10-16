@@ -11,7 +11,9 @@ import { test, expect } from "@playwright/test";
 import { REPLAY_ID, registerNewUser, shot, watchProblems } from "./helpers.js";
 
 test.describe("@fase1 Visor", () => {
-  test("con sesión: pide UN ticket, la API dice 404 y el visor lo explica con enlace al replay", async ({ page }, info) => {
+  test("con sesión: pide UN ticket, la API dice 404 y el visor lo explica con enlace al replay", async ({
+    page,
+  }, info) => {
     const problems = watchProblems(page);
     await registerNewUser(page);
     let tickets = 0;

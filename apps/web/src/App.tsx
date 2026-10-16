@@ -107,16 +107,7 @@ export function matchPanelRoute(
  * Las rutas con parámetros siguen en `matchPanelRoute` / `matchPublicRoute`.
  */
 export type StaticPanelRoute =
-  | "bots"
-  | "teams"
-  | "tournaments"
-  | "replays"
-  | "mapEditor"
-  | "maps"
-  | "system"
-  | "audit"
-  | "roles"
-  | "admin";
+  "bots" | "teams" | "tournaments" | "replays" | "mapEditor" | "maps" | "system" | "audit" | "roles" | "admin";
 
 export const STATIC_PANEL_ROUTES: ReadonlyArray<{ name: StaticPanelRoute; pattern: RegExp }> = [
   { name: "bots", pattern: /^(?:#?\/?|#\/bots(?:[/?].*)?)$/ },

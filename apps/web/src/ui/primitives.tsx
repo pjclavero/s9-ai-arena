@@ -100,7 +100,8 @@ export function FormError(props: { error: unknown; "data-testid"?: string }) {
   if (Array.isArray(details)) {
     for (const x of details.slice(0, 10)) extra.push(typeof x === "string" ? x : JSON.stringify(x));
   } else if (details && typeof details === "object") {
-    for (const [k, v] of Object.entries(details as Record<string, unknown>).slice(0, 10)) extra.push(`${k}: ${String(v)}`);
+    for (const [k, v] of Object.entries(details as Record<string, unknown>).slice(0, 10))
+      extra.push(`${k}: ${String(v)}`);
   }
   return (
     <div role="alert" className="error" data-testid={props["data-testid"] ?? "form-error"} data-error-kind={d.kind}>

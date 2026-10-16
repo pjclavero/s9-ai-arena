@@ -47,7 +47,9 @@ test.describe("@fase1 Replays", () => {
     const total = Number(await tickEl.getAttribute("data-total"));
     expect(total).toBeGreaterThan(0);
     // El tick AVANZA (antes: «tick 0 / N» inmóvil con el lienzo vacío).
-    await expect.poll(async () => Number(await tickEl.getAttribute("data-tick")), { timeout: 10_000 }).toBeGreaterThan(30);
+    await expect
+      .poll(async () => Number(await tickEl.getAttribute("data-tick")), { timeout: 10_000 })
+      .toBeGreaterThan(30);
     const a = await canvas.screenshot();
     await page.waitForTimeout(700);
     const b = await canvas.screenshot();

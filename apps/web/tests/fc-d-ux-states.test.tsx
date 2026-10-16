@@ -34,7 +34,9 @@ function jsonRes(status: number, body?: unknown) {
   return {
     ok: status >= 200 && status < 300,
     status,
-    headers: { get: (h: string) => (h.toLowerCase() === "content-type" && body !== undefined ? "application/json" : null) },
+    headers: {
+      get: (h: string) => (h.toLowerCase() === "content-type" && body !== undefined ? "application/json" : null),
+    },
     json: async () => body,
     text: async () => JSON.stringify(body),
   };
@@ -46,7 +48,9 @@ describe("FC-D · plazo del cliente HTTP", () => {
       "fetch",
       vi.fn(
         (_u: string, init: RequestInit) =>
-          new Promise((_r, rej) => init.signal?.addEventListener("abort", () => rej(new DOMException("abort", "AbortError")))),
+          new Promise((_r, rej) =>
+            init.signal?.addEventListener("abort", () => rej(new DOMException("abort", "AbortError"))),
+          ),
       ),
     );
     const p = api("GET", "/bots", undefined, { timeoutMs: 30 });
@@ -57,7 +61,10 @@ describe("FC-D · plazo del cliente HTTP", () => {
   });
 
   it("un fallo de red es kind=network (no un 'HTTP 0' ambiguo)", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new TypeError("Failed to fetch"))));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Promise.reject(new TypeError("Failed to fetch"))),
+    );
     await expect(api("GET", "/bots")).rejects.toMatchObject({ kind: "network" });
   });
 
@@ -126,7 +133,10 @@ describe("FC-D · arranque con la API caída (TD-022)", () => {
   });
 
   it("refresh 401 (sin sesión) sí lleva al login", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => jsonRes(401, { message: "no" })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonRes(401, { message: "no" })),
+    );
     render(<App />);
     expect(await screen.findByLabelText("email")).toBeTruthy();
     expect(screen.queryByTestId("boot-error")).toBeNull();
@@ -251,7 +261,9 @@ describe("FC-D · SpectatorClient: rechazos terminales y wsUrl (D4)", () => {
     expect(resolveWsUrl("/ws/spectate/b1", { protocol: "http:", host: "192.0.2.10:8080" })).toBe(
       "ws://192.0.2.10:8080/ws/spectate/b1",
     );
-    expect(resolveWsUrl("wss://x.example.internal/s", { protocol: "http:", host: "h" })).toBe("wss://x.example.internal/s");
+    expect(resolveWsUrl("wss://x.example.internal/s", { protocol: "http:", host: "h" })).toBe(
+      "wss://x.example.internal/s",
+    );
   });
 
   it("un cierre 4404 tras abrir emite `rejected` UNA vez y no reconecta (no pide más tickets)", async () => {
@@ -314,14 +326,28 @@ describe("FC-D · resumen de resultado (D7)", () => {
       failureKind: "none",
       result: { winner: "red", ticks: 900, score: { red: 2, blue: 1 }, disqualified: [] },
     });
-    expect(v).toMatchObject({ outcome: "gana red", duration: "0:30", score: "red: 2 · blue: 1", failure: null, hasReplay: true });
+    expect(v).toMatchObject({
+      outcome: "gana red",
+      duration: "0:30",
+      score: "red: 2 · blue: 1",
+      failure: null,
+      hasReplay: true,
+    });
   });
   it("contrato battle-result/v1 de B: endReason, agents y replayAvailable", () => {
     const v = summarizeBattle({
       id: "b",
       status: "finished",
       replayAvailable: false,
-      result: { schema: "battle-result/v1", winner: "blue", ticks: 60, score: {}, disqualified: ["x"], endReason: "walkover", agents: "in_process_stub" },
+      result: {
+        schema: "battle-result/v1",
+        winner: "blue",
+        ticks: 60,
+        score: {},
+        disqualified: ["x"],
+        endReason: "walkover",
+        agents: "in_process_stub",
+      },
     });
     expect(v).toMatchObject({
       outcome: "gana blue",
@@ -330,16 +356,24 @@ describe("FC-D · resumen de resultado (D7)", () => {
       hasReplay: false,
       disqualified: ["x"],
     });
-    expect(summarizeBattle({ id: "b", status: "finished", result: { winner: "red", endReason: "completed", agents: "container" } })).toMatchObject({
+    expect(
+      summarizeBattle({
+        id: "b",
+        status: "finished",
+        result: { winner: "red", endReason: "completed", agents: "container" },
+      }),
+    ).toMatchObject({
       endReason: null,
       agentsNote: null,
     });
   });
   it("empate, fallo real y sin replay", () => {
-    expect(summarizeBattle({ id: "b", status: "finished", result: { winner: "draw" }, replayRef: null })).toMatchObject({
-      outcome: "empate",
-      hasReplay: false,
-    });
+    expect(summarizeBattle({ id: "b", status: "finished", result: { winner: "draw" }, replayRef: null })).toMatchObject(
+      {
+        outcome: "empate",
+        hasReplay: false,
+      },
+    );
     expect(summarizeBattle({ id: "b", status: "failed", failureKind: "bot_crash" }).failure).toBe("un bot se cayó");
   });
 });

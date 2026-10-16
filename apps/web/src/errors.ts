@@ -52,8 +52,10 @@ export interface DescribedError {
 export function describeApiError(e: unknown): DescribedError {
   const err = e as { status?: unknown; kind?: unknown; message?: unknown } | null | undefined;
   const detail = err && typeof err.message === "string" && err.message ? err.message : String(e ?? "error desconocido");
-  if (err && err.kind === "timeout") return { kind: "timeout", title: "El servidor tarda demasiado", detail, retryable: true };
-  if (err && err.kind === "network") return { kind: "network", title: "Sin conexión con el servidor", detail, retryable: true };
+  if (err && err.kind === "timeout")
+    return { kind: "timeout", title: "El servidor tarda demasiado", detail, retryable: true };
+  if (err && err.kind === "network")
+    return { kind: "network", title: "Sin conexión con el servidor", detail, retryable: true };
   if (err && typeof err.status === "number" && err.status > 0) {
     const s = err.status;
     const base = { status: s, detail };
@@ -62,7 +64,8 @@ export function describeApiError(e: unknown): DescribedError {
     if (s === 403) return { ...base, kind: "forbidden", title: "No tienes permiso para esto", retryable: false };
     if (s === 404) return { ...base, kind: "notFound", title: "No existe o no está disponible", retryable: false };
     if (s === 409) return { ...base, kind: "conflict", title: "Conflicto con el estado actual", retryable: false };
-    if (s === 429) return { ...base, kind: "unavailable", title: "Demasiadas peticiones; espera un momento", retryable: true };
+    if (s === 429)
+      return { ...base, kind: "unavailable", title: "Demasiadas peticiones; espera un momento", retryable: true };
     if (s === 502 || s === 503 || s === 504)
       return { ...base, kind: "unavailable", title: `Servicio no disponible (${s})`, retryable: true };
     if (s >= 500) return { ...base, kind: "server", title: `Error del servidor (${s})`, retryable: true };

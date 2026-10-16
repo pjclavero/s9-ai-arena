@@ -98,85 +98,87 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
     setState("loading");
     setErrorKind(undefined);
     setStatus("cargando…");
-    void import("../viewer/PhaserViewer.js").then(async ({ createViewerGame, waitForViewerScene }) => {
-      if (!alive || !hostRef.current) return;
-      // Primero el índice: si el replay no existe no se arranca el motor de render.
-      // El gateway (E10) enruta /replays/* al replay-service (ver la nota de
-      // REPLAY_SERVICE_GATEWAY_BASE más arriba).
-      const player = new ReplayPlayer(httpReplaySource(REPLAY_SERVICE_GATEWAY_BASE, battleId, replayFetch));
-      playerRef.current = player;
-      try {
-        await player.init(initialTick);
-      } catch (e) {
-        fail("replay no disponible", e);
-        return;
-      }
-      if (!alive || !hostRef.current) return;
-      setTotalTicks(player.index!.ticks);
-      setState("init");
-      setStatus("inicializando visor…");
-      game = createViewerGame(hostRef.current, { targetFps: 60 });
-      // FC-D (D3, TD-009): la escena NO existe hasta el READY de Phaser; se espera
-      // a esa señal (y al create de la escena), nunca a un sleep.
-      let scene: ViewerScene;
-      try {
-        scene = await waitForViewerScene(game as any);
-      } catch (e) {
-        fail("el visor no pudo arrancar", e);
-        return;
-      }
-      if (!alive) return;
-      sceneRef.current = scene;
-
-      // R3.4: si el índice del replay trae nómina, sprite por chasis y NOMBRE.
-      if (player.index?.roster) scene.setRoster(rosterFromMeta(player.index.roster));
-      setStatus("listo");
-      // R3.1 (ERR-VIS-01): la ReplayFeed fecha los snapshots en tiempo de PARTIDA
-      // (derivado del playhead) y usa pushSnapshot por snapshot nuevo + resetTo
-      // solo tras seek — misma ruta de interpolación que el directo, sin saltos.
-      const feed = new ReplayFeed(player, scene);
-      feedRef.current = feed;
-      player.play();
-      setPlaying(true);
-      setState("playing");
-      setStatus("reproduciendo");
-
-      // R3.3 (ERR-VIS-11): el tick se guarda en un ref en CADA frame (para el
-      // slider en pausa) pero sólo se publica al estado de React a ~4 Hz — antes
-      // React re-renderizaba la página entera a 60 fps sólo para mover un número.
-      const publisher = new ReplayTickPublisher((t) => setTick(t));
-
-      let last = performance.now();
-      const loop = async () => {
-        if (!alive) return;
-        const now = performance.now();
-        let finished: boolean;
+    void import("../viewer/PhaserViewer.js")
+      .then(async ({ createViewerGame, waitForViewerScene }) => {
+        if (!alive || !hostRef.current) return;
+        // Primero el índice: si el replay no existe no se arranca el motor de render.
+        // El gateway (E10) enruta /replays/* al replay-service (ver la nota de
+        // REPLAY_SERVICE_GATEWAY_BASE más arriba).
+        const player = new ReplayPlayer(httpReplaySource(REPLAY_SERVICE_GATEWAY_BASE, battleId, replayFetch));
+        playerRef.current = player;
         try {
-          ({ finished } = await feed.frame(now - last));
+          await player.init(initialTick);
         } catch (e) {
-          // Un segmento que no llega (red, 5xx) se DICE; antes el bucle moría en silencio.
-          fail("error al cargar el replay", e);
+          fail("replay no disponible", e);
           return;
         }
-        last = now;
-        tickRef.current = player.currentTick;
-        publisher.onFrame(now, player.currentTick, finished);
-        if (finished && player.playing) {
-          player.pause();
-          setPlaying(false);
-          setState("finished");
-          setStatus("fin del replay");
+        if (!alive || !hostRef.current) return;
+        setTotalTicks(player.index!.ticks);
+        setState("init");
+        setStatus("inicializando visor…");
+        game = createViewerGame(hostRef.current, { targetFps: 60 });
+        // FC-D (D3, TD-009): la escena NO existe hasta el READY de Phaser; se espera
+        // a esa señal (y al create de la escena), nunca a un sleep.
+        let scene: ViewerScene;
+        try {
+          scene = await waitForViewerScene(game as any);
+        } catch (e) {
+          fail("el visor no pudo arrancar", e);
+          return;
         }
-        raf = requestAnimationFrame(() => void loop());
-      };
-      raf = requestAnimationFrame(() => void loop());
+        if (!alive) return;
+        sceneRef.current = scene;
 
-      // Prefetch del trozo N+1 FUERA del bucle de RAF: la descarga nunca compite
-      // con el render del frame (R3.3).
-      prefetchTimer = setInterval(() => {
-        if (alive) void player.prefetch();
-      }, PREFETCH_INTERVAL_MS);
-    }).catch((e: unknown) => fail("no se pudo cargar el visor", e));
+        // R3.4: si el índice del replay trae nómina, sprite por chasis y NOMBRE.
+        if (player.index?.roster) scene.setRoster(rosterFromMeta(player.index.roster));
+        setStatus("listo");
+        // R3.1 (ERR-VIS-01): la ReplayFeed fecha los snapshots en tiempo de PARTIDA
+        // (derivado del playhead) y usa pushSnapshot por snapshot nuevo + resetTo
+        // solo tras seek — misma ruta de interpolación que el directo, sin saltos.
+        const feed = new ReplayFeed(player, scene);
+        feedRef.current = feed;
+        player.play();
+        setPlaying(true);
+        setState("playing");
+        setStatus("reproduciendo");
+
+        // R3.3 (ERR-VIS-11): el tick se guarda en un ref en CADA frame (para el
+        // slider en pausa) pero sólo se publica al estado de React a ~4 Hz — antes
+        // React re-renderizaba la página entera a 60 fps sólo para mover un número.
+        const publisher = new ReplayTickPublisher((t) => setTick(t));
+
+        let last = performance.now();
+        const loop = async () => {
+          if (!alive) return;
+          const now = performance.now();
+          let finished: boolean;
+          try {
+            ({ finished } = await feed.frame(now - last));
+          } catch (e) {
+            // Un segmento que no llega (red, 5xx) se DICE; antes el bucle moría en silencio.
+            fail("error al cargar el replay", e);
+            return;
+          }
+          last = now;
+          tickRef.current = player.currentTick;
+          publisher.onFrame(now, player.currentTick, finished);
+          if (finished && player.playing) {
+            player.pause();
+            setPlaying(false);
+            setState("finished");
+            setStatus("fin del replay");
+          }
+          raf = requestAnimationFrame(() => void loop());
+        };
+        raf = requestAnimationFrame(() => void loop());
+
+        // Prefetch del trozo N+1 FUERA del bucle de RAF: la descarga nunca compite
+        // con el render del frame (R3.3).
+        prefetchTimer = setInterval(() => {
+          if (alive) void player.prefetch();
+        }, PREFETCH_INTERVAL_MS);
+      })
+      .catch((e: unknown) => fail("no se pudo cargar el visor", e));
 
     return () => {
       alive = false;
@@ -299,7 +301,11 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
       <p data-testid="replay-tick" data-tick={tick} data-total={totalTicks}>
         tick {tick} / {totalTicks} · {speed}×
       </p>
-      <div ref={hostRef} data-testid="replay-canvas-host" style={{ width: "100%", maxWidth: "100%", height: 640, overflow: "hidden" }} />
+      <div
+        ref={hostRef}
+        data-testid="replay-canvas-host"
+        style={{ width: "100%", maxWidth: "100%", height: 640, overflow: "hidden" }}
+      />
       {sceneRef.current && (
         <aside>
           <p data-testid="score">
