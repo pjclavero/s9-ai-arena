@@ -109,7 +109,7 @@ Estados posibles:
 <a id="td-003"></a>
 ## TD-003 — Costura rulesetId entre web y base de datos
 
-- **Estado:** ABIERTA
+- **Estado:** CERRADA
 - **Prioridad:** P0 (auditoría P0-3)
 - **Área:** Batallas (`web` ↔ `api`)
 - **Detectado:** 2026-10-15
@@ -124,6 +124,12 @@ Estados posibles:
   - que el contenido base siembre los rulesets que usa la web;
   - que la web use ids que existan en la BD (a través de un catálogo servido por la API).
 - **Condición de cierre:** crear una batalla desde la UI devuelve 202, y lo demuestra un test de contrato web ↔ API **sin mocks**.
+- **Evidencia de cierre (FC-C, rama `fc/dev-c-maps-teams`):**
+  - El contenido base (`seedContent` = `cli.ts bootstrap`, idempotente, sin usuarios) siembra un ruleset de BD por modo: `deathmatch-mvp`, `team-deathmatch-mvp`, `capture-the-flag-mvp` y `zone-control-mvp`, con `config.mode` y `config.engineRulesetId`.
+  - `GET /rulesets` los sirve, y `BattleNewPage` ya no tiene ids de ruleset.
+  - Un E2E de Chromium contra API, PostgreSQL y SPA reales (`tests/fc-c-browser/c8-flow.spec.ts`) crea la batalla desde la UI y recibe **202**: rc=0.
+  - Mutación «volver al id hardcodeado»: E2E rc=1 (`400` en vez de `202`) y `apps/web/tests/battle-new-page.test.tsx` rc=1.
+  - Residual, área de B: `POST /battles` aún no rechaza un ruleset de otro modo. `checkBattleContent` está lista para que la llame.
 
 <a id="td-004"></a>
 ## TD-004 — Replays servidos a anónimos por el gateway
@@ -258,7 +264,7 @@ Estados posibles:
 <a id="td-010"></a>
 ## TD-010 — Editor de mapas sólo en cliente e import incompatible
 
-- **Estado:** ABIERTA
+- **Estado:** CERRADA
 - **Prioridad:** P1 (auditoría P1-2)
 - **Área:** Mapas (`web`, `api`)
 - **Detectado:** 2026-10-15
@@ -271,11 +277,21 @@ Estados posibles:
 - **Impacto:** un usuario no puede tener un mapa propio en una batalla ni en un torneo.
 - **Solución prevista:** cablear el editor a `saveMapDraft`, unificar el formato de exportación e import, permitir reabrir y duplicar, y comprobar la propiedad por mapa.
 - **Condición de cierre:** el flujo editor → guardar → reabrir → publicar → usar en batalla funciona en navegador real.
+- **Evidencia de cierre (FC-C):**
+  - El editor trabaja sobre InternalMap y guarda con `POST /maps/drafts`; el borrador es mutable en sitio.
+  - Reabre desde la API (`GET …/content`) tras F5 o tras logout y login. Export e import son simétricos: la autoría antigua da `400`, ya no `500`.
+  - Hay propiedad por mapa (sólo dueño o admin) y los borradores son privados. El contenido se normaliza (versión y checksum canónico), así que el mapa publicado es jugable por `resolveBattleMap`.
+  - Navegador real: editor → guardar → F5 → editar → guardar → publicar → batalla 202, rc=0.
+  - Mutaciones:
+    - persistencia rota: E2E rc=1, API rc=1;
+    - mapa ajeno editable: rc=1;
+    - borradores públicos: rc=1.
+  - Residual, área de B: `POST /battles` no cruza modo ↔ `supported_modes`. La web ya filtra y `checkBattleContent` existe.
 
 <a id="td-011"></a>
 ## TD-011 — Equipos incompletos y listado anónimo con identificadores
 
-- **Estado:** ABIERTA
+- **Estado:** CERRADA
 - **Prioridad:** P1 (auditoría P1-3)
 - **Área:** Equipos (`api`, `web`)
 - **Detectado:** 2026-10-15
@@ -291,6 +307,13 @@ Estados posibles:
 - **Impacto:** los equipos sólo se pueblan por CLI (`demo-teams`) y se filtran identificadores.
 - **Solución prevista:** gestión completa de miembros y bots desde la UI, borrado de equipos y un listado anónimo sin identificadores de usuarios.
 - **Condición de cierre:** un usuario gestiona su equipo entero desde la web, y el listado anónimo no contiene UUID de usuarios.
+- **Evidencia de cierre (FC-C):**
+  - Nuevas operaciones: `GET/PATCH/DELETE /teams/{id}`, `POST /teams/{id}/bots` y `DELETE /teams/{id}/bots/{botId}`. `addTeamMember` acepta `email`.
+  - `TeamsPage` gestiona el equipo entero, y el formulario de batalla elige bots por equipo.
+  - `GET /teams` anónimo y de ajenos sin UUID de usuarios: `apps/api/src/routes/fc-c-content.test.ts`, que contiene la mutación de fuga, rc=1.
+  - Mutación «equipo ajeno editable»: rc=1.
+  - E2E de navegador: crear equipo, añadir bot, recuperarlo tras logout y login, usarlo en la batalla.
+  - Fuera de alcance: el formato de torneo `teams` (B).
 
 <a id="td-012"></a>
 ## TD-012 — Autenticación: registro abierto, IP de cliente colapsada y gestión de cuenta incompleta
@@ -379,7 +402,7 @@ Estados posibles:
 <a id="td-016"></a>
 ## TD-016 — Loadout y catálogo con efecto parcial en batalla
 
-- **Estado:** ABIERTA
+- **Estado:** PARCIAL
 - **Prioridad:** P1
 - **Área:** Motor / equipamiento
 - **Detectado:** 2026-10-15
@@ -395,11 +418,16 @@ Estados posibles:
 - **Impacto:** el usuario configura cosas que no cambian la batalla.
 - **Solución prevista:** llevar el loadout completo al camino real, dar efecto a los campos o retirarlos del catálogo, e implementar el alcance y el filtro de la radio.
 - **Condición de cierre:** hay un test por campo que demuestra su efecto en la simulación, y el test de radio exige el filtro de equipo.
+- **Avance (FC-C):**
+  - Auditoría por propiedad, ACTIVE/PARTIAL/FUTURE, en `packages/module-catalog/effect-status.ts`, con un test de completitud.
+  - Hallazgo: en el camino real sólo viaja la familia del chasis (`battle-run-http-launcher.ts:141-146,638`).
+  - La UI (`LoadoutEditor`, comprobada en el E2E) y la documentación ya no presentan como funcional lo que el motor ignora.
+  - Pendiente, motor/launcher (B): llevar el loadout al camino real, dar efecto a `rangeM`/`terrain`/radio o retirarlos, y un test por campo.
 
 <a id="td-017"></a>
 ## TD-017 — map-service desplegado sin uso
 
-- **Estado:** ABIERTA
+- **Estado:** PARCIAL
 - **Prioridad:** P2
 - **Área:** Arquitectura
 - **Detectado:** 2026-10-15
@@ -411,6 +439,9 @@ Estados posibles:
 - **Impacto:** confunde al operador y a quien desarrolla; el healthcheck verde no significa nada.
 - **Solución prevista:** decidir entre retirarlo del perfil `production` o convertirlo en la autoridad real de mapas.
 - **Condición de cierre:** decisión registrada en un ADR y compose coherente con ella.
+- **Avance (FC-C):**
+  - Decisión documentada en `docs/technical/maps.md#map-service-servicio-decisión`: la autoridad es la API; `apps/map-service` se mantiene como librería y el **servicio** se retira del perfil `production`.
+  - Pendiente: el ADR y el cambio de compose, que hace REVIEW (propuesto en el informe DEV-C).
 
 <a id="td-018"></a>
 ## TD-018 — Pruebas que no detectan regresiones de producto y seguridad
