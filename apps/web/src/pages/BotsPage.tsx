@@ -45,6 +45,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, type Me } from "../api.js";
 import { LoadoutEditor, type LoadoutDraft } from "./LoadoutEditor.js";
+import { BotDetailPage } from "./BotDetailPage.js";
 import { useResource, ResourceView, type Resource } from "../resource.js";
 import type { ModuleDefinition } from "../../../../packages/module-catalog/types.js";
 import type { Violation } from "../../../../packages/module-catalog/validator/index.js";
@@ -123,7 +124,19 @@ function combine<A, B>(a: Resource<A>, b: Resource<B>): Resource<{ a: A; b: B }>
   return { status: "ready", data: { a: a.data, b: b.data } };
 }
 
-export function BotsPage(props: {
+/** DEV-A · A9.19 · `#/bots/<botId>` → vista de detalle del bot (Overview/Code/Equipment/Versions). */
+export function matchBotDetailRoute(hash: string): string | null {
+  const m = /^#\/bots\/([^/?#]+)/.exec(hash);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+export function BotsPage(props: Parameters<typeof BotsListPage>[0]) {
+  const detailId = matchBotDetailRoute(typeof window !== "undefined" ? window.location.hash : "");
+  if (detailId) return <BotDetailPage key={detailId} botId={detailId} meId={props.me.id} />;
+  return <BotsListPage {...props} />;
+}
+
+function BotsListPage(props: {
   me: Me;
   catalog: ModuleDefinition[];
   catalogVersion: string;
@@ -479,7 +492,10 @@ export function BotsPage(props: {
                       ({b.visibility}
                       {b.latestPublishedVersion ? `, v${b.latestPublishedVersion} publicada` : ""})
                     </small>{" "}
-                    <a href={`#/battles?bot=${encodeURIComponent(b.id)}`}>batallas</a>
+                    <a href={`#/battles?bot=${encodeURIComponent(b.id)}`}>batallas</a>{" "}
+                    <a href={`#/bots/${encodeURIComponent(b.id)}`} data-testid={`bot-detail-link-${b.id}`}>
+                      detalle y versiones
+                    </a>
                   </li>
                 ))}
               </ul>

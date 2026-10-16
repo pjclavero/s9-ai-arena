@@ -64,7 +64,16 @@ export const StubBotManager = QueueBotManager;
 
 export interface BuildResult {
   status: "passed" | "failed";
-  stages: { name: (typeof PIPELINE_STAGES)[number]; status: string; message?: string; logUrl?: string }[];
+  stages: {
+    name: (typeof PIPELINE_STAGES)[number];
+    status: string;
+    message?: string;
+    logUrl?: string;
+    logs?: string[];
+    metrics?: Record<string, number>;
+    startedAt?: string;
+    finishedAt?: string;
+  }[];
   artifactHash?: string;
   signature?: string;
   /** Bytes canónicos del artefacto firmado (R2.5): se persisten para verificar antes de lanzar. */
@@ -96,7 +105,14 @@ export async function completeBuild(db: Db, buildId: string, result: BuildResult
     if (result.status === "passed") {
       await trx("bot_versions")
         .where({ id: version.id })
-        .update({ state: "validated", artifact_hash: result.artifactHash ?? null, rejection_reason: null });
+        .update({
+          state: "validated",
+          artifact_hash: result.artifactHash ?? null,
+          // A9 · el build que produjo el artefacto queda ligado a la versión:
+          // la unión versión→artefacto ya no depende sólo del hash.
+          validated_build_id: buildId,
+          rejection_reason: null,
+        });
       if (result.artifactHash) {
         await trx("artifacts").insert({
           build_id: buildId,

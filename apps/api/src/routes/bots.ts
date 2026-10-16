@@ -22,6 +22,10 @@ import {
 import { PIPELINE_STAGES, type BotManagerClient } from "../services/bot-manager.js";
 import { sharedRateLimit, type RateLimiterLike } from "../middleware/shared-rate-limit.js";
 import { contentDispositionAttachment, sanitizeSourceFilename } from "../services/filenames.js";
+import { decodePackage, PackageValidationError } from "../services/source-package.js";
+import { diffFiles } from "../services/bot-version-diff.js";
+import { findVersionArtifact } from "../../../bot-manager/src/launch-verify.js";
+import type { Auth } from "../services/bots.js";
 
 const MAX_SOURCE_BYTES = 10 * 1024 * 1024; // 10 MB (E6.M)
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_SOURCE_BYTES } });
@@ -50,7 +54,78 @@ export function versionToJson(v: Record<string, unknown>) {
     codePublic: v.code_public,
     rejectionReason: v.rejection_reason ?? undefined,
     createdAt: (v.created_at as Date).toISOString(),
+    // DEV-A · A9: identidad y procedencia de la versión.
+    id: v.id,
+    parentVersion: v.parent_version ?? undefined,
+    validatedBuildId: v.validated_build_id ?? undefined,
+    publishedAt: v.published_at ? (v.published_at as Date).toISOString() : undefined,
   };
+}
+
+export function artifactToJson(botId: string, version: number, a: Record<string, unknown>) {
+  return {
+    botId,
+    version,
+    hash: a.hash,
+    signature: a.signature ?? undefined,
+    sizeBytes: a.size_bytes != null ? Number(a.size_bytes) : undefined,
+    buildId: a.build_id,
+    createdAt: (a.created_at as Date).toISOString(),
+  };
+}
+
+/**
+ * A9.16 · ¿Puede `auth` leer el CÓDIGO de esta versión? Única regla para
+ * source, files y diff: dueño, compañero del equipo del bot, staff, o versión
+ * published con code_public (D9). Quien no ve el bot ya recibió 404 antes.
+ */
+export async function canReadSource(
+  db: Db,
+  auth: Auth,
+  bot: Record<string, unknown>,
+  v: Record<string, unknown>,
+): Promise<boolean> {
+  if (!auth) return v.state === "published" && v.code_public === true;
+  if (auth.userId === bot.owner_id || isStaff(auth)) return true;
+  if (bot.team_id != null && (await db("team_members").where({ team_id: bot.team_id, user_id: auth.userId }).first())) {
+    return true;
+  }
+  return v.state === "published" && v.code_public === true;
+}
+
+function decodeVersionFiles(v: Record<string, unknown>) {
+  const raw = v.source ? Buffer.from(v.source as Buffer) : Buffer.alloc(0);
+  let packaged = false;
+  try {
+    const parsed = JSON.parse(raw.toString("utf8"));
+    packaged = !!parsed && typeof parsed === "object" && !Array.isArray(parsed) && "files" in parsed;
+  } catch {
+    packaged = false;
+  }
+  try {
+    return { packaged, files: decodePackage(raw, v.runtime as "python" | "node") };
+  } catch (e) {
+    if (e instanceof PackageValidationError) {
+      throw new ApiError(422, "source_package_invalid", e.message);
+    }
+    throw e;
+  }
+}
+
+/** Inserta la versión siguiente; reintenta si otra petición tomó el número (UNIQUE). */
+async function insertNextVersion(db: Db, botId: string, row: Record<string, unknown>) {
+  for (let attempt = 0; ; attempt++) {
+    const max = await db("bot_versions").where({ bot_id: botId }).max("version as m").first();
+    try {
+      const [version] = await db("bot_versions")
+        .insert({ ...row, bot_id: botId, version: Number(max?.m ?? 0) + 1, state: "draft" })
+        .returning("*");
+      return version;
+    } catch (e) {
+      if ((e as { code?: string }).code === "23505" && attempt < 4) continue;
+      throw e;
+    }
+  }
 }
 
 export function loadoutToJson(l: Record<string, unknown>) {
@@ -81,9 +156,15 @@ export function buildToJson(b: Record<string, unknown>, opts: { includeLogs: boo
       message: s.message ?? undefined,
       // logUrl es x-private: solo dueño, moderador o admin (contrato E1).
       ...(opts.includeLogs && s.logUrl ? { logUrl: s.logUrl } : {}),
+      // DEV-A · A4: logs persistidos (x-private) y métricas de la etapa.
+      ...(opts.includeLogs && Array.isArray(s.logs) ? { logs: s.logs } : {}),
+      ...(s.metrics ? { metrics: s.metrics } : {}),
+      ...(s.startedAt ? { startedAt: s.startedAt } : {}),
+      ...(s.finishedAt ? { finishedAt: s.finishedAt } : {}),
     })),
     artifactHash: b.artifact_hash ?? undefined,
     createdAt: (b.created_at as Date).toISOString(),
+    updatedAt: b.updated_at ? (b.updated_at as Date).toISOString() : undefined,
   };
 }
 
@@ -275,21 +356,26 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
       const loadout = await db("bot_loadouts").where({ bot_id: bot.id, revision: rev }).first();
       if (!loadout) throw badRequest(`loadoutRevision ${loadoutRevision} no existe para este bot`);
 
-      const max = await db("bot_versions").where({ bot_id: bot.id }).max("version as m").first();
-      const [version] = await db("bot_versions")
-        .insert({
-          bot_id: bot.id,
-          version: Number(max?.m ?? 0) + 1,
-          state: "draft",
-          runtime,
-          loadout_revision: rev,
-          source: file.buffer,
-          // R2.6 (ERR-SEC-09): el nombre lo controla el cliente — se normaliza al
-          // recibirlo (base, allowlist, longitud); si no queda nada, null y el
-          // GET aplicará el nombre por defecto derivado del id de versión.
-          source_filename: sanitizeSourceFilename(file.originalname),
-        })
-        .returning("*");
+      // A9.13 · «nueva versión desde X»: la versión de partida queda registrada.
+      let parentVersion: number | null = null;
+      if (req.body?.parentVersion !== undefined && req.body.parentVersion !== "") {
+        const pv = Number(req.body.parentVersion);
+        const parent = Number.isInteger(pv)
+          ? await db("bot_versions").where({ bot_id: bot.id, version: pv }).first()
+          : undefined;
+        if (!parent) throw badRequest(`parentVersion ${req.body.parentVersion} no existe para este bot`);
+        parentVersion = pv;
+      }
+      const version = await insertNextVersion(db, bot.id as string, {
+        runtime,
+        loadout_revision: rev,
+        source: file.buffer,
+        // R2.6 (ERR-SEC-09): el nombre lo controla el cliente — se normaliza al
+        // recibirlo (base, allowlist, longitud); si no queda nada, null y el
+        // GET aplicará el nombre por defecto derivado del id de versión.
+        source_filename: sanitizeSourceFilename(file.originalname),
+        parent_version: parentVersion,
+      });
       res.status(201).json(versionToJson(version));
     },
     ...limitCreateVersion,
@@ -306,12 +392,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
   defineOperation(router, "getBotSource", async (req, res) => {
     const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
     const v = await getVersionOr404(db, bot.id as string, pathParam(req, "version"));
-    const isOwner = req.auth!.userId === bot.owner_id;
-    const isTeamMate =
-      bot.team_id != null &&
-      !!(await db("team_members").where({ team_id: bot.team_id, user_id: req.auth!.userId }).first());
-    const isPublicCode = v.state === "published" && v.code_public === true;
-    if (!isOwner && !isTeamMate && !isStaff(req.auth) && !isPublicCode) {
+    if (!(await canReadSource(db, req.auth, bot, v))) {
       throw forbidden("El código de un bot es privado salvo publicación explícita (D9)");
     }
     // R2.6 (ERR-SEC-09): cabecera con codificación estándar de parámetros
@@ -326,6 +407,98 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
       .setHeader("Content-Disposition", contentDispositionAttachment(filename))
       .send(v.source);
   });
+
+  // ------------------------------------- DEV-A · A9: versionado real
+  defineOperation(router, "getBotVersion", async (req, res) => {
+    const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
+    const v = await getVersionOr404(db, bot.id as string, pathParam(req, "version"));
+    const readable = await canReadSource(db, req.auth, bot, v);
+    const includeLogs = !!req.auth && (req.auth.userId === bot.owner_id || isStaff(req.auth));
+    const latest = await db("builds")
+      .where({ bot_id: bot.id, version: v.version })
+      .orderBy([
+        { column: "created_at", order: "desc" },
+        { column: "id", order: "desc" },
+      ])
+      .first();
+    const art = await findVersionArtifact(db, v);
+    const children = await db("bot_versions")
+      .where({ bot_id: bot.id, parent_version: v.version })
+      .orderBy("version", "asc")
+      .pluck("version");
+    res.json({
+      ...versionToJson(v),
+      ...(readable ? { sourceSha256: v.source_sha256 ?? undefined } : {}),
+      canReadSource: readable,
+      latestBuild: latest ? buildToJson(latest, { includeLogs }) : undefined,
+      artifact: art ? artifactToJson(bot.id as string, v.version, art) : undefined,
+      childVersions: children,
+    });
+  });
+
+  defineOperation(router, "getBotVersionFiles", async (req, res) => {
+    const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
+    const v = await getVersionOr404(db, bot.id as string, pathParam(req, "version"));
+    if (!(await canReadSource(db, req.auth, bot, v))) {
+      throw forbidden("El código de un bot es privado salvo publicación explícita (D9)");
+    }
+    const { packaged, files } = decodeVersionFiles(v);
+    res.json({ botId: bot.id, version: v.version, sourceSha256: v.source_sha256 ?? undefined, packaged, files });
+  });
+
+  defineOperation(router, "getBotVersionArtifact", async (req, res) => {
+    const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
+    const v = await getVersionOr404(db, bot.id as string, pathParam(req, "version"));
+    const art = await findVersionArtifact(db, v);
+    if (!art) throw notFound("Esta versión no tiene artefacto (no ha pasado el pipeline)");
+    res.json(artifactToJson(bot.id as string, v.version, art));
+  });
+
+  defineOperation(router, "diffBotVersions", async (req, res) => {
+    const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
+    const to = await getVersionOr404(db, bot.id as string, pathParam(req, "version"));
+    const againstRaw = req.query.against;
+    if (typeof againstRaw !== "string" || !/^[1-9][0-9]*$/.test(againstRaw)) {
+      throw badRequest("against obligatorio (número de versión)");
+    }
+    const from = await getVersionOr404(db, bot.id as string, againstRaw);
+    for (const v of [from, to]) {
+      if (!(await canReadSource(db, req.auth, bot, v))) {
+        throw forbidden("El código de un bot es privado salvo publicación explícita (D9)");
+      }
+    }
+    res.json({
+      botId: bot.id,
+      from: from.version,
+      to: to.version,
+      files: diffFiles(decodeVersionFiles(from).files, decodeVersionFiles(to).files),
+    });
+  });
+
+  defineOperation(
+    router,
+    "cloneBotVersion",
+    async (req, res) => {
+      const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
+      assertOwner(req.auth, bot);
+      const src = await getVersionOr404(db, bot.id as string, pathParam(req, "version"));
+      let rev = src.loadout_revision as number;
+      if (req.body?.loadoutRevision !== undefined) {
+        rev = Number(req.body.loadoutRevision);
+        const loadout = await db("bot_loadouts").where({ bot_id: bot.id, revision: rev }).first();
+        if (!loadout) throw badRequest(`loadoutRevision ${req.body.loadoutRevision} no existe para este bot`);
+      }
+      const version = await insertNextVersion(db, bot.id as string, {
+        runtime: src.runtime,
+        loadout_revision: rev,
+        source: src.source,
+        source_filename: src.source_filename,
+        parent_version: src.version,
+      });
+      res.status(201).json(versionToJson(version));
+    },
+    ...limitCreateVersion,
+  );
 
   // -------------------------------------------- transiciones (cap. 17.1)
   defineOperation(
