@@ -316,6 +316,25 @@ describe("FC-D · resumen de resultado (D7)", () => {
     });
     expect(v).toMatchObject({ outcome: "gana red", duration: "0:30", score: "red: 2 · blue: 1", failure: null, hasReplay: true });
   });
+  it("contrato battle-result/v1 de B: endReason, agents y replayAvailable", () => {
+    const v = summarizeBattle({
+      id: "b",
+      status: "finished",
+      replayAvailable: false,
+      result: { schema: "battle-result/v1", winner: "blue", ticks: 60, score: {}, disqualified: ["x"], endReason: "walkover", agents: "in_process_stub" },
+    });
+    expect(v).toMatchObject({
+      outcome: "gana blue",
+      endReason: "por incomparecencia",
+      agentsNote: "bots simulados (stub)",
+      hasReplay: false,
+      disqualified: ["x"],
+    });
+    expect(summarizeBattle({ id: "b", status: "finished", result: { winner: "red", endReason: "completed", agents: "container" } })).toMatchObject({
+      endReason: null,
+      agentsNote: null,
+    });
+  });
   it("empate, fallo real y sin replay", () => {
     expect(summarizeBattle({ id: "b", status: "finished", result: { winner: "draw" }, replayRef: null })).toMatchObject({
       outcome: "empate",

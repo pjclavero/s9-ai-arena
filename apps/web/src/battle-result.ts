@@ -1,13 +1,15 @@
 /**
  * FC-D (D7) · Lectura TOLERANTE del contrato BATTLE_RESULT para la UI.
  *
- * Fuente: `battles.result` (jsonb) que escribe el tournament-worker
- * (apps/tournament-worker/src/battle-runner.ts: `{ winner, ticks, score,
- * disqualified }`), `participants[].outcome` (win|loss|draw|disqualified),
- * `failureKind` (none|bot_timeout|bot_crash|infrastructure) y, si la API los
- * expone, `startedAt`/`finishedAt` y `replayRef`/`replayHash`. DEV-B fija el
- * shape exacto en docs/technical/battles.md; aquí sólo se LEE lo que haya y se
- * omite lo que falte: la UI nunca inventa un ganador.
+ * Fuente (contrato de DEV-B, COORD 2026-10-16): `battles.result` =
+ * `{ schema:"battle-result/v1", winner:<team>|"draw", ticks, score:{<team>:n},
+ * disqualified:[botId], endReason:"completed"|"walkover"|"sporting_failure",
+ * agents:"container"|"in_process_stub"|"scripted" }`; `participants[].outcome`
+ * (win|loss|draw|disqualified) y `cpuMs`; `failureKind`
+ * (none|bot_timeout|bot_crash|infrastructure); `startedAt`, `finishedAt`,
+ * `replayAvailable`, `replayHash`. La base 0b8c12b aún escribe la forma previa
+ * `{ winner, ticks, score, disqualified }` sin esos campos: se LEE lo que haya y
+ * se omite lo que falte. La UI nunca inventa un ganador.
  */
 
 export interface BattleLike {
@@ -20,6 +22,8 @@ export interface BattleLike {
   finishedAt?: string | null;
   replayRef?: string | null;
   replayHash?: string | null;
+  /** B: true/false cuando la API lo expone. */
+  replayAvailable?: boolean;
 }
 
 export interface BattleSummaryView {
@@ -35,6 +39,10 @@ export interface BattleSummaryView {
   disqualified: string[];
   /** Hay replay que abrir. */
   hasReplay: boolean;
+  /** Motivo de fin distinto de una partida normal (walkover, fallo deportivo). */
+  endReason: string | null;
+  /** Aviso cuando los bots NO fueron contenedores reales (stub/scripted). */
+  agentsNote: string | null;
 }
 
 const TICK_HZ = 30;
@@ -45,6 +53,16 @@ const FAILURE_TEXT: Record<string, string> = {
   infrastructure: "fallo de infraestructura",
 };
 
+const END_REASON_TEXT: Record<string, string> = {
+  walkover: "por incomparecencia",
+  sporting_failure: "por fallo deportivo",
+};
+
+const AGENTS_TEXT: Record<string, string> = {
+  in_process_stub: "bots simulados (stub)",
+  scripted: "bots guionizados",
+};
+
 function fmtSeconds(totalS: number): string {
   const s = Math.max(0, Math.round(totalS));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -52,7 +70,7 @@ function fmtSeconds(totalS: number): string {
 
 export function summarizeBattle(b: BattleLike): BattleSummaryView {
   const r = (b.result && typeof b.result === "object" ? b.result : {}) as Record<string, unknown>;
-  const winner = (r.winner ?? r.winnerTeam ?? null) as string | null;
+  const winner = (r.winner ?? null) as string | null;
   let outcome: string | null = null;
   if (b.status === "finished") {
     if (winner && winner !== "draw") outcome = `gana ${winner}`;
@@ -68,7 +86,7 @@ export function summarizeBattle(b: BattleLike): BattleSummaryView {
     if (entries.length > 0) score = entries.map(([t, n]) => `${t}: ${String(n)}`).join(" · ");
   }
   let duration: string | null = null;
-  const ticks = Number(r.ticks ?? r.durationTicks);
+  const ticks = Number(r.ticks);
   if (Number.isFinite(ticks) && ticks > 0) duration = fmtSeconds(ticks / TICK_HZ);
   else if (b.startedAt && b.finishedAt) {
     const ms = Date.parse(b.finishedAt) - Date.parse(b.startedAt);
@@ -77,8 +95,13 @@ export function summarizeBattle(b: BattleLike): BattleSummaryView {
   const fk = b.failureKind ?? null;
   const failure = fk && fk !== "none" ? (FAILURE_TEXT[fk] ?? fk) : null;
   const disqualified = Array.isArray(r.disqualified) ? (r.disqualified as unknown[]).map(String) : [];
-  // `replayRef` ausente (la API aún no lo expone) ⇒ se ofrece el enlace y el
-  // reproductor dirá si no existe; `null` explícito ⇒ no hay replay.
-  const hasReplay = b.status === "finished" && b.replayRef !== null;
-  return { outcome, score, duration, failure, disqualified, hasReplay };
+  // `replayAvailable` (B) manda; si la API no lo expone, `replayRef` null ⇒ no
+  // hay replay; ausente ⇒ se ofrece el enlace y el reproductor dirá si no existe.
+  const hasReplay =
+    b.status === "finished" && (typeof b.replayAvailable === "boolean" ? b.replayAvailable : b.replayRef !== null);
+  const er = typeof r.endReason === "string" ? r.endReason : null;
+  const endReason = er && er !== "completed" ? (END_REASON_TEXT[er] ?? er) : null;
+  const ag = typeof r.agents === "string" ? r.agents : null;
+  const agentsNote = ag && ag !== "container" ? (AGENTS_TEXT[ag] ?? ag) : null;
+  return { outcome, score, duration, failure, disqualified, hasReplay, endReason, agentsNote };
 }

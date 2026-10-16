@@ -108,6 +108,8 @@ export function BattlesPage(props: { botFilter?: string }) {
                       <td data-testid="battle-outcome">
                         {v.outcome ?? "—"}
                         {v.score ? <small> · {v.score}</small> : null}
+                        {v.endReason ? <small> · {v.endReason}</small> : null}
+                        {v.agentsNote ? <small className="warn"> · {v.agentsNote}</small> : null}
                         {v.disqualified.length > 0 ? (
                           <small className="warn"> · descalificados: {v.disqualified.length}</small>
                         ) : null}
