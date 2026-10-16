@@ -35,15 +35,31 @@ afterEach(() => {
 });
 
 describe("R7-A · #/replays", () => {
-  it("renderiza la lista con enlaces a visor y reproductor", async () => {
-    mockFetch(() => Promise.resolve(new Response(JSON.stringify({ items: ITEMS }), { status: 200 })));
+  it("renderiza la lista con enlace al reproductor, resultado y duración (FC-D)", async () => {
+    const urls: string[] = [];
+    mockFetch((u) => {
+      urls.push(u);
+      return Promise.resolve(new Response(JSON.stringify({ items: ITEMS }), { status: 200 }));
+    });
     render(<ReplaysPage />);
     const rows = await screen.findAllByTestId("replay-row");
     expect(rows.length).toBe(2);
     const first = within(rows[0]);
     expect(first.getByText("btl_a")).toBeTruthy();
-    expect((first.getByText("visor") as HTMLAnchorElement).getAttribute("href")).toBe("#/viewer/btl_a");
-    expect((first.getByText("reproductor") as HTMLAnchorElement).getAttribute("href")).toBe("#/replay/btl_a");
+    expect((first.getByText("Ver replay") as HTMLAnchorElement).getAttribute("href")).toBe("#/replay/btl_a?t=0");
+    expect(within(rows[1]).getByText("gana red")).toBeTruthy();
+    expect(within(rows[0]).getByText(/0:10/)).toBeTruthy(); // 300 ticks a 30/s
+    // FC-D (D6, TD-014): CON barra final; sin ella nginx redirigía 301 a http://.
+    expect(urls).toEqual(["/replays/"]);
+  });
+
+  it("un 502 del gateway es un error visible con reintento, nunca lista vacía (FC-D D2)", async () => {
+    mockFetch(() => Promise.resolve(new Response("<html>bad gateway</html>", { status: 502, headers: { "content-type": "text/html" } })));
+    render(<ReplaysPage />);
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent ?? "").toMatch(/Servicio no disponible \(502\)/);
+    expect(within(alert).getByRole("button", { name: "Reintentar" })).toBeTruthy();
+    expect(screen.queryByTestId("replays-empty")).toBeNull();
   });
 
   it("estado vacío", async () => {

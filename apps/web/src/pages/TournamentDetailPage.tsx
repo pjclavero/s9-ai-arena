@@ -38,6 +38,8 @@ export function BattleLink({ battle }: { battle: TournamentBattle }) {
   if (battle.status === "finished") {
     return <a href={`#/replay/${encodeURIComponent(battle.id)}?t=0`}>Ver replay</a>;
   }
+  // FC-D: una batalla fallida no está «en cola» (antes se pintaba igual).
+  if (battle.status === "failed") return <span className="error">fallida</span>;
   return <span>en cola</span>;
 }
 
@@ -60,7 +62,7 @@ export function TournamentDetailPage(props: { id: string; me: Me }) {
         );
         setBattles({ status: "ready", data: page.items });
       } catch (e) {
-        if (!silent) setBattles({ status: "error", message: (e as Error).message ?? "error desconocido" });
+        if (!silent) setBattles({ status: "error", message: (e as Error).message ?? "error desconocido", error: e });
       }
     },
     [props.id],

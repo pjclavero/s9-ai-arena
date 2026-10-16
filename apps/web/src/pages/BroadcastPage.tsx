@@ -211,6 +211,7 @@ function LiveScreen({ config, battle }: { config: BroadcastConfig; battle: Battl
   const sceneRef = useRef<ViewerScene | null>(null);
   const [live, setLive] = useState(false);
   const [tick, setTick] = useState(0);
+  const [initError, setInitError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -220,12 +221,20 @@ function LiveScreen({ config, battle }: { config: BroadcastConfig; battle: Battl
     const api = createPublicApi();
 
     // El MISMO visor de E8 (chunk perezoso): aquí solo se cablea, no se re-renderiza.
-    void import("../viewer/PhaserViewer.js").then(({ createViewerGame, ViewerScene }) => {
+    void import("../viewer/PhaserViewer.js").then(async ({ createViewerGame, waitForViewerScene }) => {
       if (!alive || !hostRef.current) return;
       // FPS objetivo por vista (R3.2): la emisión se captura a 30 fps (streamer);
       // renderizar a más solo quema CPU del contenedor de Chromium.
       game = createViewerGame(hostRef.current, { targetFps: 30 });
-      const scene = (game as any).scene.getScene("viewer") as InstanceType<typeof ViewerScene>;
+      // FC-D (D3, TD-009): esperar al READY de Phaser y al create de la escena.
+      let scene: ViewerScene;
+      try {
+        scene = await waitForViewerScene(game as any);
+      } catch (e) {
+        if (alive) setInitError((e as Error).message);
+        return;
+      }
+      if (!alive) return;
       scene.cameraMode = { kind: "global" }; // encuadre fijo de emisión, sin manos
       sceneRef.current = scene;
       // Mismo reloj de reproducción con delay-buffer que el visor (R3.2).
@@ -252,7 +261,10 @@ function LiveScreen({ config, battle }: { config: BroadcastConfig; battle: Battl
       client.on("result", (result) => scene.applyResult(result));
       client.on("disconnect", () => setLive(false));
       client.on("reconnected", () => setLive(true));
+      client.on("rejected", (r) => setInitError(`directo no disponible (${r.code ?? r.status ?? "?"})`));
       void client.connect();
+    }).catch((e: unknown) => {
+      if (alive) setInitError((e as Error).message);
     });
 
     return () => {
@@ -293,7 +305,7 @@ function LiveScreen({ config, battle }: { config: BroadcastConfig; battle: Battl
             color: accent,
           }}
         >
-          {live ? "0 — 0" : "conectando…"}
+          {initError ? initError : live ? "0 — 0" : "conectando…"}
         </div>
       )}
 

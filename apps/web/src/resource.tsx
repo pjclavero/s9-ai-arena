@@ -25,10 +25,12 @@
  * lectura vigente puede poner o quitar la marca.
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { ErrorState, LoadingState } from "./ui/primitives.js";
 
 export type Resource<T> =
   | { status: "loading" }
-  | { status: "error"; message: string }
+  /** FC-D · `error`: el fallo original (ApiRequestError…) para clasificarlo en la UI. */
+  | { status: "error"; message: string; error?: unknown }
   /** `staleError`: la última revalidación falló; `data` es lo último bueno. */
   | { status: "ready"; data: T; staleError?: string };
 
@@ -78,7 +80,7 @@ export function useResource<T>(
         setState((prev) =>
           silent && prev.status === "ready"
             ? { status: "ready", data: prev.data, staleError: message }
-            : { status: "error", message },
+            : { status: "error", message, error: e },
         );
       },
     );
@@ -98,24 +100,11 @@ export function ResourceView<T>(props: {
   children: (data: T) => ReactNode;
 }) {
   const { resource, label, onRetry } = props;
-  if (resource.status === "loading") {
-    return (
-      <p role="status" aria-live="polite">
-        Cargando {label}…
-      </p>
-    );
-  }
+  if (resource.status === "loading") return <LoadingState label={label} />;
   if (resource.status === "error") {
-    return (
-      <div role="alert" data-testid={`resource-error-${label.replace(/\s+/g, "-")}`}>
-        <p className="error">
-          No se pudo cargar {label}: {resource.message}
-        </p>
-        <button type="button" onClick={onRetry}>
-          Reintentar
-        </button>
-      </div>
-    );
+    // FC-D · mismo componente común que usan todas las páginas: título según el
+    // tipo de fallo (403/404/500/502/timeout/red), detalle real y «Reintentar».
+    return <ErrorState label={label} message={resource.message} error={resource.error} onRetry={onRetry} />;
   }
   return <>{props.children(resource.data)}</>;
 }

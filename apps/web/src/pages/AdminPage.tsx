@@ -48,7 +48,7 @@ export function AdminPage(props: { me: Me }) {
       .catch((e) => setError(e.message));
     api<CatalogVersion[]>("GET", "/catalog/versions")
       .then(setCatalogs)
-      .catch(() => {});
+      .catch((e) => setError(e.message));
   }, [props.me]);
 
   if (!isAdmin(props.me)) {

@@ -152,7 +152,8 @@ export class SpectatorClient {
       | "disconnect"
       | "reconnected"
       | "reconnect_scheduled"
-      | "gave_up",
+      | "gave_up"
+      | "rejected",
     fn: Listener,
   ): () => void {
     if (!this.listeners.has(type)) this.listeners.set(type, new Set());
@@ -173,9 +174,37 @@ export class SpectatorClient {
     this.stopped = false;
     try {
       await this.openOnce();
-    } catch {
+    } catch (e) {
+      if (this.rejectIfTerminal(e)) return;
       void this.reconnectLoop();
     }
+  }
+
+  /**
+   * FC-D (D4) · Rechazos DEFINITIVOS: reintentar no los arregla y hacerlo deja al
+   * visor en «reconectando…» indefinidamente. Son: un 4xx al pedir el ticket
+   * (salvo 429), y un cierre del gateway con código 44xx (salvo 4429). Se para el
+   * cliente y se emite `rejected` con el código y el motivo, para que la página
+   * diga QUÉ pasó (batalla no en directo, ticket inválido, espectador público
+   * desactivado…).
+   */
+  private rejectIfTerminal(e: unknown): boolean {
+    const err = e as { status?: number; closeCode?: number; message?: string } | null;
+    const status = err?.status;
+    const httpTerminal = typeof status === "number" && status >= 400 && status < 500 && status !== 429;
+    const code = err?.closeCode;
+    const wsTerminal = typeof code === "number" && isTerminalCloseCode(code);
+    if (!httpTerminal && !wsTerminal) return false;
+    this.stopped = true;
+    this.stopWatchdog();
+    this.emit("rejected", {
+      kind: httpTerminal ? "ticket" : "socket",
+      status: httpTerminal ? status : undefined,
+      code: wsTerminal ? code : undefined,
+      reason: err?.message ?? "",
+      error: e,
+    });
+    return true;
   }
 
   stop(): void {
@@ -198,7 +227,7 @@ export class SpectatorClient {
     // (`Sec-WebSocket-Protocol: spectate.v1, ticket.<jwt>`), nunca en la URL:
     // las URLs acaban en logs de acceso (Nginx/Loki). El gateway rechaza
     // cualquier ticket que llegue en la query.
-    const ws = new WS(wsUrl, ["spectate.v1", `ticket.${ticket}`]);
+    const ws = new WS(resolveWsUrl(wsUrl), ["spectate.v1", `ticket.${ticket}`]);
     this.ws = ws;
 
     await new Promise<void>((resolve, reject) => {
@@ -219,10 +248,18 @@ export class SpectatorClient {
         this.lastMessageAt = Date.now();
         this.handleMessage(String(ev.data));
       };
-      ws.onclose = () => {
+      ws.onclose = (ev?: CloseEvent) => {
         const wasConnected = this.state.connected;
         this.state.connected = false;
         this.stopWatchdog();
+        const code = typeof ev?.code === "number" ? ev.code : undefined;
+        if (code !== undefined && isTerminalCloseCode(code)) {
+          // El gateway rechazó la conexión (ticket, batalla, capability): no se reintenta.
+          const terminal = Object.assign(new Error(ev?.reason || `cierre ${code}`), { closeCode: code });
+          if (opened) this.rejectIfTerminal(terminal);
+          else reject(terminal);
+          return;
+        }
         this.emit("disconnect", { wasConnected });
         if (!opened) {
           // El intento ni llegó a abrirse: se lo comunicamos al bucle (backoff)
@@ -283,7 +320,8 @@ export class SpectatorClient {
         try {
           await this.openOnce();
           return; // el init repondrá el estado
-        } catch {
+        } catch (e) {
+          if (this.rejectIfTerminal(e)) return;
           // La API puede estar caída también; se sigue intentando hasta el límite.
         }
       }
@@ -329,4 +367,27 @@ export class SpectatorClient {
         break; // tipos futuros: tolerancia hacia delante
     }
   }
+}
+
+/**
+ * FC-D (D4) · Códigos de cierre del gateway de espectador
+ * (apps/api/src/spectate/gateway.ts) que NO se arreglan reintentando: 4400
+ * petición mal formada, 4401 ticket inválido, 4403 ticket de otra batalla /
+ * ya usado / espectador público desactivado, 4404 batalla no en directo.
+ * 4429 (aforo) sí es transitorio.
+ */
+export function isTerminalCloseCode(code: number): boolean {
+  return code >= 4400 && code < 4500 && code !== 4429;
+}
+
+/**
+ * FC-D (D4/D6) · Resuelve el `wsUrl` del ticket. La API puede devolver una URL
+ * absoluta (`wss://…`) o una RELATIVA al origen (`/ws/spectate/<id>`); la
+ * relativa se ancla al origen de la página con `wss:` si la página es https
+ * (nunca se degrada a `ws:` bajo TLS: sería contenido mixto).
+ */
+export function resolveWsUrl(wsUrl: string, loc: { protocol: string; host: string } | undefined = globalThis.location): string {
+  if (/^wss?:\/\//i.test(wsUrl) || !loc) return wsUrl;
+  const proto = loc.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${loc.host}${wsUrl.startsWith("/") ? "" : "/"}${wsUrl}`;
 }

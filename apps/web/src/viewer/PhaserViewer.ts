@@ -35,6 +35,7 @@ import { computeCamera, SmoothCamera, type CameraConfig, type CameraMode } from 
 import { CameraInteraction } from "./camera-interaction.js";
 import { FogFader, type FogOptions } from "./fog.js";
 import { canvasSizeFor } from "./viewport.js";
+import { waitForScene, type GameLike } from "./scene-ready.js";
 import { installAtlas, ATLAS_KEY, ATLAS_FONT_KEY, FRAME_SCALE } from "./atlas.js";
 import { attachRenderStats, type PerfHandle } from "./render-stats.js";
 import { CameraSnapshotScratch } from "./camera-snapshot.js";
@@ -731,4 +732,26 @@ export function createViewerGame(parent: HTMLElement, opts: ViewerGameOptions = 
     game.events.once(Phaser.Core.Events.DESTROY, () => observer.disconnect());
   }
   return game;
+}
+
+/** Constantes REALES de Phaser 4 que usa la espera de escena (scene-ready.ts). */
+export const PHASER_SCENE_READY = {
+  gameReadyEvent: Phaser.Core.Events.READY,
+  gameDestroyEvent: Phaser.Core.Events.DESTROY,
+  sceneCreateEvent: Phaser.Scenes.Events.CREATE,
+  runningStatus: Phaser.Scenes.RUNNING,
+} as const;
+
+/**
+ * FC-D (D3, TD-009) · Devuelve la escena del visor cuando EXISTE y ya ejecutó
+ * su `create()`: espera al `READY` del juego y al `CREATE` de la escena (ver
+ * scene-ready.ts). Las páginas DEBEN usar esto en lugar de `getScene` directo.
+ */
+export function waitForViewerScene(game: Phaser.Game, timeoutMs?: number): Promise<ViewerScene> {
+  return waitForScene<ViewerScene>(
+    game as unknown as GameLike<ViewerScene>,
+    "viewer",
+    PHASER_SCENE_READY,
+    timeoutMs,
+  );
 }

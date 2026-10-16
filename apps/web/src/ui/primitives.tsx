@@ -11,6 +11,7 @@
  * estado. Por eso StatusBadge y EmptyState siempre exigen texto.
  */
 import type { ReactNode } from "react";
+import { describeApiError, type DescribedError } from "../errors.js";
 
 /** Envuelve `.card` (index.html:70-76): el panel/tarjeta ya usado por ErrorBoundary. */
 export function Panel(props: { children: ReactNode; "data-testid"?: string }) {
@@ -53,16 +54,64 @@ export function LoadingState(props: { label: string }) {
   );
 }
 
-/** Envuelve el `role="alert"` + botón "Reintentar" ya usado en resource.tsx:108-118. */
-export function ErrorState(props: { label: string; message: string; onRetry: () => void }) {
+/**
+ * Estado de ERROR común (FC-D, D1/D2). Envuelve el `role="alert"` + «Reintentar»
+ * de resource.tsx y, si recibe el fallo original (`error`), lo CLASIFICA con
+ * `describeApiError`: el usuario ve qué pasó (permiso, inexistente, servidor,
+ * servicio caído, plazo, red), el detalle real y la acción posible. Mantiene la
+ * frase «No se pudo cargar <label>: <detalle>» y el data-testid históricos.
+ */
+export function ErrorState(props: { label: string; message?: string; error?: unknown; onRetry?: () => void }) {
+  const d: DescribedError | null = props.error !== undefined ? describeApiError(props.error) : null;
+  const detail = d?.detail ?? props.message ?? "error desconocido";
   return (
-    <div role="alert" data-testid={`resource-error-${props.label.replace(/\s+/g, "-")}`}>
+    <div
+      role="alert"
+      data-testid={`resource-error-${props.label.replace(/\s+/g, "-")}`}
+      data-error-kind={d?.kind ?? "unknown"}
+    >
+      {d && <strong data-testid="error-title">{d.title}</strong>}
       <p className="error">
-        No se pudo cargar {props.label}: {props.message}
+        No se pudo cargar {props.label}: {detail}
       </p>
-      <button type="button" onClick={props.onRetry}>
-        Reintentar
-      </button>
+      {d?.kind === "unauthorized" && <a href="#/bots">Inicia sesión de nuevo</a>}
+      {d?.kind === "notFound" && <a href="#/bots">Volver al inicio</a>}
+      {props.onRetry && (
+        <button type="button" onClick={() => props.onRetry?.()}>
+          Reintentar
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Error de FORMULARIO común (FC-D). Para acciones (crear, publicar, enviar):
+ * muestra el título según el tipo (validación/permiso/conflicto/servidor/plazo)
+ * y el mensaje real del servidor, con `details`/`fieldErrors` si los trae. Nunca
+ * silencio: si `error` es null/undefined no pinta nada.
+ */
+export function FormError(props: { error: unknown; "data-testid"?: string }) {
+  if (props.error === null || props.error === undefined) return null;
+  const d = describeApiError(props.error);
+  const body = (props.error as { body?: Record<string, unknown> })?.body ?? {};
+  const extra: string[] = [];
+  const details = body.details ?? body.fieldErrors ?? body.errors;
+  if (Array.isArray(details)) {
+    for (const x of details.slice(0, 10)) extra.push(typeof x === "string" ? x : JSON.stringify(x));
+  } else if (details && typeof details === "object") {
+    for (const [k, v] of Object.entries(details as Record<string, unknown>).slice(0, 10)) extra.push(`${k}: ${String(v)}`);
+  }
+  return (
+    <div role="alert" className="error" data-testid={props["data-testid"] ?? "form-error"} data-error-kind={d.kind}>
+      <strong>{d.title}</strong>: {d.detail}
+      {extra.length > 0 && (
+        <ul>
+          {extra.map((x, i) => (
+            <li key={i}>{x}</li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

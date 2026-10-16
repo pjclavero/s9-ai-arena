@@ -12,6 +12,7 @@
  */
 import { useEffect, useState } from "react";
 import { api, bootstrapSession, logout, onSessionExpired, getToken, type Me } from "./api.js";
+import { describeApiError } from "./errors.js";
 import type { ModuleDefinition } from "../../../packages/module-catalog/types.js";
 import { LoginPage } from "./pages/LoginPage.js";
 import { BotsPage } from "./pages/BotsPage.js";
@@ -38,6 +39,7 @@ import { matchBroadcastRoute } from "./broadcast/config.js";
 import { BroadcastPage } from "./pages/BroadcastPage.js";
 import { ErrorBoundary } from "./ErrorBoundary.js";
 import { useResource, ResourceView } from "./resource.js";
+import { NotFoundPage } from "./pages/NotFoundPage.js";
 
 const BUDGET_DEFAULT = 1000; // BUDGET_CREDITS_MVP; el ruleset de cada torneo puede cambiarlo (D7)
 
@@ -83,8 +85,55 @@ export function matchPanelRoute(
   const detail = /^#\/tournaments\/([^/?]+)/.exec(route);
   if (detail) return { kind: "tournament", id: decodeURIComponent(detail[1]) };
   if (/^#\/battles\/new/.test(route)) return { kind: "battle-new" }; // R9 (antes del match general de #/battles)
-  const battles = /^#\/battles(?:\?bot=([^&]+))?/.exec(route);
-  if (battles) return { kind: "battles", botFilter: battles[1] ? decodeURIComponent(battles[1]) : undefined };
+  // FC-D (D8): anclado — `#/battles/<basura>` es 404, no la lista.
+  const battles = /^#\/battles\/?(?:\?(.*))?$/.exec(route);
+  if (battles) {
+    const bot = new URLSearchParams(battles[1] ?? "").get("bot");
+    return { kind: "battles", botFilter: bot ? bot : undefined };
+  }
+  return null;
+}
+
+/**
+ * FC-D (D8) · TABLA de rutas estáticas del panel, en orden de prioridad (la más
+ * específica primero). Cada patrón se ancla al segmento completo: `#/teamsX` ya
+ * no cae en Equipos ni un hash desconocido en «Mis bots» (antes no había 404).
+ *
+ * CÓMO REGISTRAR UNA RUTA NUEVA (A/C la piden en COORD.md; la registra D o REVIEW):
+ *  1. añadir el nombre a `StaticPanelRoute` y una entrada aquí con su patrón;
+ *  2. añadir el caso en `renderStaticPanel` (App) con el componente;
+ *  3. si debe verse en la barra, un `<a>` en la `<nav>`;
+ *  4. test en apps/web/tests/fc-d-navigation.test.tsx (ruta → componente).
+ * Las rutas con parámetros siguen en `matchPanelRoute` / `matchPublicRoute`.
+ */
+export type StaticPanelRoute =
+  | "bots"
+  | "teams"
+  | "tournaments"
+  | "replays"
+  | "mapEditor"
+  | "maps"
+  | "system"
+  | "audit"
+  | "roles"
+  | "admin";
+
+export const STATIC_PANEL_ROUTES: ReadonlyArray<{ name: StaticPanelRoute; pattern: RegExp }> = [
+  { name: "bots", pattern: /^(?:#?\/?|#\/bots(?:[/?].*)?)$/ },
+  { name: "teams", pattern: /^#\/teams(?:[/?].*)?$/ },
+  { name: "tournaments", pattern: /^#\/tournaments(?:\?.*)?$/ },
+  { name: "replays", pattern: /^#\/replays\/?(?:\?.*)?$/ },
+  { name: "mapEditor", pattern: /^#\/maps\/editor(?:[/?].*)?$/ },
+  { name: "maps", pattern: /^#\/maps\/?(?:\?.*)?$/ },
+  { name: "system", pattern: /^#\/system(?:[/?].*)?$/ },
+  { name: "audit", pattern: /^#\/audit(?:[/?].*)?$/ },
+  { name: "roles", pattern: /^#\/roles(?:[/?].*)?$/ },
+  { name: "admin", pattern: /^#\/admin(?:[/?].*)?$/ },
+];
+
+/** Ruta estática del panel o `null` (⇒ página 404). */
+export function matchStaticPanelRoute(route: string): StaticPanelRoute | null {
+  for (const r of STATIC_PANEL_ROUTES) if (r.pattern.test(route)) return r.name;
   return null;
 }
 
@@ -92,6 +141,9 @@ export function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [booting, setBooting] = useState(true);
   const [notice, setNotice] = useState("");
+  /** FC-D (TD-022) · API caída al arrancar: NO es «sin sesión» (antes mandaba al login). */
+  const [bootError, setBootError] = useState<unknown>(null);
+  const [bootAttempt, setBootAttempt] = useState(0);
   const [route, setRoute] = useState(window.location.hash || "#/bots");
 
   useEffect(() => {
@@ -113,9 +165,14 @@ export function App() {
   // R3.7 · F5 mantiene la sesión: refresh desde la cookie httpOnly al arrancar.
   useEffect(() => {
     let alive = true;
+    setBooting(true);
+    setBootError(null);
     bootstrapSession()
       .then((who) => {
         if (alive && who) setMe(who);
+      })
+      .catch((e: unknown) => {
+        if (alive) setBootError(e);
       })
       .finally(() => {
         if (alive) setBooting(false);
@@ -123,7 +180,7 @@ export function App() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [bootAttempt]);
 
   // R3.7 (ERR-VIS-10) · El catálogo es un RECURSO: si su carga falla, la página
   // de bots lo dice y ofrece reintentar (antes se quedaba en "Cargando…" eterno).
@@ -173,6 +230,28 @@ export function App() {
     );
   }
 
+  if (bootError && !me) {
+    const d = describeApiError(bootError);
+    return (
+      <main>
+        <h1>S9 AI Arena</h1>
+        <div className="card" role="alert" data-testid="boot-error" data-error-kind={d.kind}>
+          <h2>No se puede contactar con la plataforma</h2>
+          <p className="error">
+            {d.title}: {d.detail}
+          </p>
+          <p>Tu sesión no se ha cerrado; vuelve a intentarlo cuando el servicio responda.</p>
+          <button type="button" onClick={() => setBootAttempt((n) => n + 1)}>
+            Reintentar
+          </button>{" "}
+          <button type="button" className="link" onClick={() => setBootError(null)}>
+            Ir al inicio de sesión
+          </button>
+        </div>
+      </main>
+    );
+  }
+
   if (!me || !getToken()) {
     return (
       <main>
@@ -191,6 +270,39 @@ export function App() {
   }
 
   const panelRoute = matchPanelRoute(route);
+
+  function renderStaticPanel(name: StaticPanelRoute | null) {
+    switch (name) {
+      case "tournaments":
+        return <TournamentsPage me={me!} />;
+      case "teams":
+        return <TeamsPage me={me!} />;
+      case "replays": // R7-A (con 's'; distinto de #/replay/<id> público)
+        return <ReplaysPage />;
+      case "mapEditor": // R10 (antes del match general de #/maps)
+        return <MapEditorPage />;
+      case "maps":
+        return <MapsPage me={me!} />;
+      case "system":
+        return <SystemPage me={me!} />;
+      case "audit":
+        return <AuditPage me={me!} />;
+      case "roles":
+        return <RolesPage me={me!} />;
+      case "admin":
+        return <AdminPage me={me!} />;
+      case "bots":
+        return (
+          <ResourceView resource={catalogRes} label="el catálogo" onRetry={reloadCatalog}>
+            {(cat) => (
+              <BotsPage me={me!} catalog={cat.modules} catalogVersion={cat.version} budgetCredits={BUDGET_DEFAULT} />
+            )}
+          </ResourceView>
+        );
+      default:
+        return <NotFoundPage route={route} />;
+    }
+  }
 
   return (
     <ErrorBoundary label="el panel">
@@ -249,30 +361,8 @@ export function App() {
             <BattleNewPage me={me} />
           ) : panelRoute?.kind === "battles" ? (
             <BattlesPage botFilter={panelRoute.botFilter} />
-          ) : route.startsWith("#/tournaments") ? (
-            <TournamentsPage me={me} />
-          ) : route.startsWith("#/teams") ? (
-            <TeamsPage me={me} />
-          ) : route.startsWith("#/replays") ? ( // R7-A (con 's'; distinto de #/replay/<id> público)
-            <ReplaysPage />
-          ) : route.startsWith("#/maps/editor") ? ( // R10 (antes del match general de #/maps)
-            <MapEditorPage />
-          ) : route.startsWith("#/maps") ? (
-            <MapsPage me={me} />
-          ) : route.startsWith("#/system") ? (
-            <SystemPage me={me} />
-          ) : route.startsWith("#/audit") ? (
-            <AuditPage me={me} />
-          ) : route.startsWith("#/roles") ? (
-            <RolesPage me={me} />
-          ) : route.startsWith("#/admin") ? (
-            <AdminPage me={me} />
           ) : (
-            <ResourceView resource={catalogRes} label="el catálogo" onRetry={reloadCatalog}>
-              {(cat) => (
-                <BotsPage me={me} catalog={cat.modules} catalogVersion={cat.version} budgetCredits={BUDGET_DEFAULT} />
-              )}
-            </ResourceView>
+            renderStaticPanel(matchStaticPanelRoute(route))
           )}
         </ErrorBoundary>
       </main>
