@@ -31,7 +31,7 @@ Estados posibles:
 
 | Id | Título | Prioridad | Área | Estado |
 |---|---|---|---|---|
-| [TD-001](#td-001) | Build de bots sin sandbox real | P0 | Bots / build | ABIERTA |
+| [TD-001](#td-001) | Build de bots sin sandbox real | P0 | Bots / build | PARCIAL |
 | [TD-002](#td-002) | Stub HunterBot y doble camino de ejecución | P0 | Batallas | ABIERTA |
 | [TD-003](#td-003) | Costura `rulesetId` web ↔ BD | P0 | Batallas | ABIERTA |
 | [TD-004](#td-004) | Replays a anónimos por el gateway | P0 | Seguridad | ABIERTA |
@@ -68,7 +68,7 @@ Estados posibles:
 <a id="td-001"></a>
 ## TD-001 — Build de bots sin sandbox real: ningún bot llega a published
 
-- **Estado:** ABIERTA
+- **Estado:** PARCIAL (código cerrado en `fc/dev-a-bots`; falta el despliegue)
 - **Prioridad:** P0 (auditoría P0-1)
 - **Área:** Bots / build (`bot-build-worker`)
 - **Detectado:** 2026-10-15
@@ -80,6 +80,17 @@ Estados posibles:
 - **Impacto:** ninguna versión pasa a `validated`, así que ninguna llega a `published`. Sin bots publicados no hay batallas ni torneos con bots de usuario. Ocurre en cualquier entorno y no depende de tener Docker.
 - **Solución prevista:** cablear un `agentResolver` real que ejecute el bot en el sandbox de contenedor (a través del proxy Docker del host), manteniendo el comportamiento fail-closed si falta.
 - **Condición de cierre:** un bot de ejemplo llega a `published` sin tocar la BD, y un E2E de build real en CI (con Docker) lo demuestra.
+- **Avance (cierre funcional 2026-10, DEV-A):**
+  - `ContainerBuildSandbox` (`apps/bot-manager/src/build-sandbox.ts`) ejecuta las etapas 5-7 en un contenedor real, a través de `s9-docker-proxy`. Lo cablea `build-worker-wiring.ts` y lo usan `build-worker-main.ts` y el E2E. Sin `DOCKER_PROXY_URL`/`BUILD_SANDBOX_HOST`, sigue fallando cerrado.
+  - **Cumplido en local** (Docker rootless, no producción):
+    - `apps/api/src/fc-a-bot-pipeline-e2e.test.ts`: código pegado → `published` sin UPDATE manual, 5/5, rc=0;
+    - `apps/bot-manager/tests/build-sandbox-docker.test.ts`: 9/9, rc=0, con los negativos.
+  - Mutación «quitar el sandbox del cableado» → 3 tests en rojo.
+- **Falta para CERRAR:**
+  1. Compose del `bot-build-worker`: red `arena`, `DOCKER_PROXY_URL`, `extra_hosts: docker-proxy.internal:host-gateway` y `BUILD_SANDBOX_HOST=bot-build-worker`.
+  2. Imagen del bot-manager con `runtimes/DIGESTS.lock` (o `RUNTIME_DIGESTS_LOCK`).
+  3. `s9-docker-proxy` operativo en el host.
+  4. Job de CI con Docker que ejecute `S9_RUN_DOCKER_SANDBOX_E2E=1`.
 
 <a id="td-002"></a>
 ## TD-002 — Batallas ejecutadas con stub HunterBot y doble camino de ejecución

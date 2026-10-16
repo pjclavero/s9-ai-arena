@@ -13,7 +13,15 @@ Para jugar, una versión tiene que pasar por tres pasos:
 2. la **publicación**, que el dueño hace a mano y la deja `published`;
 3. la ejecución en una batalla.
 
-**Estado actual: el pipeline rechaza toda versión por construcción** (`rejected`, «sandbox no verificado»). El worker de builds no inyecta el `agentResolver` que ejecuta el bot en un sandbox ([TD-001](../roadmap/technical-debt.md#td-001)). Sin `validated` no hay `published`, y sin `published` no hay batallas ni torneos. Y aun con una versión publicada (por ejemplo, forzada en una BD de pruebas), las batallas de plataforma no ejecutan su código: las conduce `HunterBot` ([TD-002](../roadmap/technical-debt.md#td-002)).
+**Estado actual (rama `fc/dev-a-bots`):**
+
+- **Pipeline.** El código del usuario se ejecuta de verdad en un **contenedor** durante el build. Tres etapas lo hacen: `protocol_test`, `smoke_battle` y `resource_limits` (`ContainerBuildSandbox`).
+  - Un bot válido llega a `validated` y, publicado por su dueño, a `published`.
+  - Lo demuestra un E2E con Docker, sin tocar la BD.
+  - El worker cablea el sandbox desde `DOCKER_PROXY_URL` y `BUILD_SANDBOX_HOST`. Sin ellos sigue fallando cerrado, como antes.
+  - En el despliegue hacen falta cambios de compose ([Errores / limitaciones](#errores--limitaciones)).
+- **Batallas.** Siguen sin ejecutar el código del usuario hasta que el carril de batallas consuma `resolveBotLaunch` ([TD-002](../roadmap/technical-debt.md#td-002)).
+- **Versionado.** Ver [bot-versioning.md](bot-versioning.md).
 
 ## Índice
 
@@ -50,7 +58,11 @@ El bot «habla» el protocolo `arena/1` a 10 Hz de decisión: recibe una observa
 | Worker de builds | `apps/bot-manager/src/build-worker-main.ts`, `build-worker.ts` | Reclama `bot_build` y ejecuta el pipeline |
 | Adaptador | `apps/api/src/services/e6-bot-manager.ts` (`E6PipelineBotManager`) | Decodifica el paquete, ejecuta `BuildPipeline` y persiste con `completeBuild` |
 | Pipeline | `apps/bot-manager/src/pipeline.ts`, `static-analysis.ts`, `secret-scan.ts`, `signing.ts`, `smoke-battle.ts` | Las 10 etapas |
-| Sandbox | `apps/bot-manager/src/container-runner.ts`, `docker-proxy*.ts`, `container-battle.ts`, `runtimes/{python,node}/Dockerfile` | Ejecución aislada (sólo en el camino real) |
+| Cableado del worker | `apps/bot-manager/src/build-worker-wiring.ts` | Construye el executor con el sandbox real a partir del entorno. Lo comparten `build-worker-main.ts` y el E2E |
+| Sandbox del build | `apps/bot-manager/src/build-sandbox.ts` (`ContainerBuildSandbox`) | Una sesión de contenedor por build alimenta las etapas 5 a 7 |
+| Anfitrión del sandbox | `apps/bot-manager/src/sandbox-host.ts` (`SandboxHost`) | HTTP y WebSocket en un mismo puerto: sirve el artefacto con token y aloja el ProtocolServer |
+| Arranque del código | `apps/bot-manager/src/bot-launch.ts`, `sandbox-bootstrap/bootstrap.{py,mjs}` | Imagen de runtime (DIGESTS.lock), bootstrap, `launchSpecForBot` y `resolveBotLaunch` (batallas) |
+| Runner y proxy | `apps/bot-manager/src/container-runner.ts`, `docker-proxy*.ts`, `container-battle.ts`, `runtimes/{python,node}/Dockerfile` | Ejecución aislada; única vía hacia Docker |
 | Ejecutor de plataforma | `apps/tournament-worker/src/engine-executor.ts` | Batallas con `HunterBot` ([battles.md](battles.md)) |
 
 ## Estados de versión
@@ -105,30 +117,76 @@ La web sólo ofrece pegar texto (no hay selector de archivo), lo envía como `bo
 Comportamiento ante un fallo:
 
 - **Fallo en una etapa**: el build queda `failed` y la versión `rejected` con `"<etapa>: <mensaje>"`.
-- **Etapa sin entorno de ejecución**: queda `skipped` y bloquea. Al final el build queda `failed` y la versión `rejected` con: «sandbox no verificado: etapa(s) de ejecución no ejecutable(s) [protocol_test, smoke_battle, resource_limits]. Se requiere un entorno con Docker (agentResolver)…».
+- **Etapa sin entorno de ejecución** (worker sin sandbox configurado): queda `skipped` y bloquea. Al final el build queda `failed` y la versión `rejected` con «sandbox no verificado: …».
+- **Fallo de la plataforma del sandbox** (`SandboxInfrastructureError`: proxy caído, imagen ausente, postura no conforme, motor colgado): **no es culpa del bot**.
+  - El pipeline lo propaga y el worker reintenta con backoff, hasta 3 intentos.
+  - Agotados los intentos, el trabajo queda `needs_review` y la versión `rejected` con «build no verificable: …». Nunca queda `validated`.
+- **Progreso**: mientras corre, el build está `running`. Al terminar, cada etapa guarda en `builds.stages` lo siguiente:
+  - `message`, `startedAt` y `finishedAt`;
+  - `logs`, privados para el dueño y el staff;
+  - `metrics`.
 
-**Por qué siempre se rechaza hoy**: `build-worker-main.ts:31` construye `new E6PipelineBotManager(db, { signer })` sin `agentResolver` ni `referenceAgent`. Ningún código de producción los construye. La escotilla `allowUnverifiedSandbox` existe sólo para pruebas y la app no la activa. Tener o no Docker no cambia el resultado: el worker no lo usa.
+### Etapas de ejecución en el sandbox
+
+Una sola sesión por build (`ContainerBuildSandbox.verify`):
+
+1. **Anfitrión.** Se abre un `SandboxHost` en un puerto libre. Se ofrece el artefacto empaquetado en la etapa `build` (los bytes canónicos `arena-artifact/v1`) con un token aleatorio.
+2. **Contenedor.** Se lanza con `ProxyContainerRunner` a través de `s9-docker-proxy`, con esta configuración:
+   - imagen de runtime `python|node` fijada por digest en `runtimes/DIGESTS.lock`;
+   - usuario 10001, `cap-drop ALL` y `no-new-privileges`;
+   - seccomp `security/seccomp-bot.json`;
+   - rootfs de solo lectura y `/tmp` tmpfs de 32 MiB (`noexec`);
+   - red `arena` sin DNS;
+   - 0,5 CPU, 256 MiB sin swap y 64 PIDs;
+   - `AutoRemove`.
+3. **Bootstrap.** Corre como `Cmd` tras el `ENTRYPOINT` del runtime:
+   - descarga el artefacto con el token y verifica el sha256;
+   - lo materializa en `/tmp/bot`;
+   - carga el fichero de entrada: `manifest.entry` o `src/bot.py` en Python; `package.json main` o `src/bot.js` en Node;
+   - instancia la subclase de `ArenaBot` (en Python, `Bot` o la única definida; en Node, `export default`, `Bot` o la única exportada);
+   - llama a `run(WS_URL, BATTLE_TOKEN)`.
+
+   Si algo falla, informa a `ARTIFACT_URL/report` y sale con un código distinto de 0. Ese informe llega al motivo de rechazo.
+4. **Postura.** Se inspecciona la postura real del contenedor con `complianceViolations`. Si no es conforme, es un fallo de plataforma.
+5. **Partida de humo.** El candidato hace el handshake y juega en el motor real (`dm_practice@1`, `emptyArena`, `smokeBattleTicks` ticks) contra el bot de referencia `HunterBot` (E5).
+
+Veredictos:
+
+| Etapa | Pasa si | Falla con |
+|---|---|---|
+| `protocol_test` | HELLO dentro de `maxStartupMs` + margen de plataforma (20 s), todo mensaje valida contra `envelope.schema.json` y hay ≥1 `COMMAND` válido | «el bot no completó el handshake…», «mensaje(s) fuera de protocolo…», «ningún COMMAND válido…» más la traza del bootstrap |
+| `smoke_battle` | la batalla termina y el candidato no está descalificado | «candidato descalificado en la partida de humo…» |
+| `resource_limits` | arranque ≤ `maxStartupMs` (5000 ms, medido desde `State.StartedAt` del contenedor), p95 de decisión ≤ `maxDecisionMs` (100 ms) y sin OOM | «arranque …», «decisión p95 …», «OOM» |
+
+Los límites duros de CPU, memoria y PIDs los impone el cgroup. Las métricas (`startupMs`, `launchMs`,
+`p95DecisionMs`, `maxDecisionMs`, `validCommands`, `cpuMs`…) quedan en la etapa `resource_limits`.
 
 ## Artefacto y firma
 
-Con un build `passed`, `completeBuild` pone la versión en `validated` con `artifact_hash` e inserta `artifacts` (`hash`, `signature`, `bytes`, `storage_ref=artifacts/<bot>/<v>/<hash>`). Hoy esto no ocurre en producción. La clave de firma la carga `loadServiceKeypair()` desde el almacén de secretos; sin clave, el worker no arranca. La clave pública se publica en `GET /api/v1/keys/artifact-signing` (extensión).
+Con un build `passed`, `completeBuild` hace dos cosas:
+
+- pone la versión en `validated` con `artifact_hash` y `validated_build_id`;
+- inserta `artifacts`: `hash`, `signature`, `bytes` y `storage_ref=artifacts/<bot>/<v>/<hash>`. Es único por `build_id`.
+
+El artefacto es el paquete canónico `arena-artifact/v1`, cuyo sha256 se firma. **No es un digest de imagen Docker.** La clave de firma la carga `loadServiceKeypair()` desde el almacén de secretos; sin clave, el worker no arranca. La clave pública se publica en `GET /api/v1/keys/artifact-signing` (extensión).
 
 ## Sandbox y ejecución real
 
-Las piezas de ejecución aislada existen y se ejercitan en el arnés operativo `scripts/e2e-real-battle-smoke.ts`:
+El sandbox lo usa el **pipeline de build** ([Etapas de ejecución](#etapas-de-ejecución-en-el-sandbox)).
 
-- `DockerContainerRunner` con los flags de aislamiento de la tabla 18.2 del dosier;
-- `s9-docker-proxy` como única vía a Docker;
-- imágenes de runtime con digest fijado (`runtimes/DIGESTS.lock`);
-- `container-battle.ts`.
+Para las **batallas**, el contrato para arrancar una versión publicada es `resolveBotLaunch(db, botId, version)` más `launchSpecForBot(...)` en `bot-launch.ts`. Devuelve:
 
-En la plataforma sólo las usaría el camino `POST /battles/{id}/run` → arena-engine `POST /run`, que hoy está **apagado** (ver [battles.md](battles.md#los-dos-caminos-de-ejecución)). El pipeline de build no las usa.
+- la imagen de runtime;
+- el bootstrap;
+- el artefacto firmado y verificado.
+
+El proceso que aloja el ProtocolServer ofrece el artefacto con `SandboxHost` y pasa su `wss` al ProtocolServer. Hasta que el carril de batallas lo consuma, el camino de batallas sigue como describe [battles.md](battles.md#los-dos-caminos-de-ejecución). Ojo: `battle-run-http-launcher.ts` usa `artifact_hash` como `imageDigest`, y eso no arranca nada.
 
 Antes de lanzar, el camino real comprueba que cada bot está `published|frozen` y tiene digest firmado (`409 bot_not_ready` / `bot_not_signed`). El worker de plataforma tiene una guarda de firma (`artifactGuard`) que **no está cableada** ([TD-015](../roadmap/technical-debt.md#td-015)).
 
 ## Persistencia
 
-Tablas `bots`, `bot_loadouts`, `loadout_modules`, `bot_versions`, `builds`, `artifacts` y `jobs` (detalle de esquema en [database.md](database.md)). La versión guarda el código **en la BD** (`bot_versions.source`, bytea).
+Tablas `bots`, `bot_loadouts`, `loadout_modules`, `bot_versions`, `builds`, `artifacts` y `jobs` (detalle de esquema en [database.md](database.md)). La versión guarda el código **en la BD** (`bot_versions.source`, bytea). Desde `012_a_bot_versioning`, la BD impide modificarla fuera de `draft`. Historial, diff y clonado: [bot-versioning.md](bot-versioning.md).
 
 ## Seguridad
 
@@ -141,7 +199,14 @@ Tablas `bots`, `bot_loadouts`, `loadout_modules`, `bot_versions`, `builds`, `art
 
 ## Errores / limitaciones
 
-- Ninguna versión llega a `validated` ([TD-001](../roadmap/technical-debt.md#td-001)). El botón «Reenviar» de la web no sirve: el rechazo es de la plataforma, no del código.
+- **Despliegue pendiente** ([TD-001](../roadmap/technical-debt.md#td-001)). Para que el `bot-build-worker` desplegado tenga sandbox hacen falta tres cosas, que REVIEW/operador tienen que aplicar:
+  - en el compose: red `arena`, `DOCKER_PROXY_URL`, `extra_hosts: docker-proxy.internal:host-gateway` y `BUILD_SANDBOX_HOST=bot-build-worker`;
+  - que la imagen del bot-manager incluya `runtimes/DIGESTS.lock`;
+  - el `s9-docker-proxy` corriendo en el host.
+
+  Sin ello, el worker arranca y lo anuncia en el log («sin sandbox: todo build se rechazará»).
+- **Superficie nueva**: el worker de builds escucha, en la red `arena`, un puerto efímero con token mientras dura cada build. Ese mismo proceso tiene credenciales de BD (red `data`). Ver la deuda propuesta en el informe DEV-A.
+- **Red del E2E local**: la red `arena` del Docker rootless no es `internal`, porque el worker es el proceso de test en el host. En compose sí lo es.
 - El código subido nunca se ejecuta en batallas de plataforma ([TD-002](../roadmap/technical-debt.md#td-002)).
 - Bot↔equipo: sólo se asigna con `teamId` al crear el bot por API. `PATCH /bots/{id}` sólo acepta `name` y `visibility` ([TD-011](../roadmap/technical-debt.md#td-011)).
 - No existe borrado de bots ni de versiones.
@@ -151,7 +216,12 @@ Tablas `bots`, `bot_loadouts`, `loadout_modules`, `bot_versions`, `builds`, `art
 
 - **FUNCIONA ACTUALMENTE**: crear bot, guardar y recuperar loadouts (validación 422 con violaciones legibles), subir versiones, encolar y ejecutar el pipeline, y rechazos con motivo visible.
 - **PARCIAL**: visibilidad y edición sólo por API; código fuente sólo por API.
-- **PENDIENTE**: `agentResolver` real en el build, ejecución del código del bot en batallas, asignación de bot a equipo y borrado.
+- **FUNCIONA ACTUALMENTE (rama `fc/dev-a-bots`, verificado con Docker rootless local)**:
+  - sandbox real en el build;
+  - E2E crear → código → build → artefacto → `validated` → `published`;
+  - controles negativos: source inválido, timeout de arranque, protocolo, crash, artefacto alterado, proxy caído y sin sandbox.
+- **PARCIAL**: el despliegue necesita los cambios de compose e imagen citados.
+- **PENDIENTE**: ejecución del código del bot en batallas (carril de batallas con `resolveBotLaunch`), asignación de bot a equipo y borrado.
 
 ## Documentación relacionada
 
@@ -163,12 +233,19 @@ Tablas `bots`, `bot_loadouts`, `loadout_modules`, `bot_versions`, `builds`, `art
 
 ## Verificación
 
-Verificado contra `27f70bb`.
+Verificado contra `27f70bb`; filas del sandbox y del versionado, contra la rama `fc/dev-a-bots` (base `0b8c12b`).
 
 | Afirmación | Estado | Evidencia |
 |---|---|---|
-| El worker de builds no inyecta `agentResolver` | CODE_VERIFIED | `apps/bot-manager/src/build-worker-main.ts:31` |
-| Sin `agentResolver`, las etapas 5-7 quedan `skipped` y la versión `rejected` | CODE_VERIFIED | `apps/bot-manager/src/pipeline.ts:116-194,457-463` |
+| El worker cablea el sandbox real desde el entorno | CODE_VERIFIED | `apps/bot-manager/src/build-worker-main.ts:33`; `build-worker-wiring.ts:35,55` |
+| Las etapas 5-7 se ejecutan en el contenedor | CODE_VERIFIED / RUNTIME_VERIFIED (Docker rootless local) | `apps/bot-manager/src/pipeline.ts:396,409,435`; `build-sandbox.ts:177`; `apps/bot-manager/tests/build-sandbox-docker.test.ts` (9/9) |
+| E2E API → cola → worker → contenedor → `published` | RUNTIME_VERIFIED (Docker rootless local) | `apps/api/src/fc-a-bot-pipeline-e2e.test.ts` (5/5). Mutación M1 (quitar el sandbox del cableado) → 3 rojos |
+| Postura real del contenedor conforme | RUNTIME_VERIFIED | `build-sandbox.ts:259` (log «postura del contenedor conforme») |
+| El bootstrap rechaza un artefacto alterado | RUNTIME_VERIFIED | `sandbox-bootstrap/bootstrap.py:94`. Mutación M8 → rojo |
+| Fallo de plataforma ⇒ reintento ⇒ «no verificable» | RUNTIME_VERIFIED | `pipeline.ts:139`; E2E «proxy caído» |
+| Sin sandbox configurado sigue fallando cerrado | RUNTIME_VERIFIED | E2E «SIN sandbox» |
+| seccomp permite `mkdir`/`mkdirat` (para materializar en el tmpfs) | CODE_VERIFIED | `apps/bot-manager/security/seccomp-bot.json:150` |
+| Rechazo determinista antes del cambio (main y producción) | RUNTIME_VERIFIED (histórico) | Auditoría 2026-10-15, B pasada 2 §1c |
 | Rechazo determinista en navegador real (main y runtime de producción) | RUNTIME_VERIFIED | Auditoría 2026-10-15, B pasada 2 §1c |
 | En producción, las 12 versiones `rejected` y los 22 builds `failed` | RUNTIME_VERIFIED | Auditoría 2026-10-15, A pasada 1 (lectura de BD) |
 | Orden de las 10 etapas | CODE_VERIFIED | `apps/bot-manager/src/types.ts:19-30`; `apps/api/src/services/bot-manager.ts:13-24` |
