@@ -90,6 +90,8 @@ export interface ContainerAgentsOptions {
   connectTimeoutMs?: number;
   /** Margen del guard global sobre la duración teórica. Def. 15 s. */
   graceMs?: number;
+  /** Cada cuánto se muestrea la CPU de los contenedores durante la batalla. Def. 500 ms. */
+  cpuSampleMs?: number;
 }
 
 export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
@@ -131,6 +133,7 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
       const handles: (ContainerHandle | null)[] = vehicles.map(() => null);
       let guard: ReturnType<typeof setTimeout> | undefined;
       let onAbort: (() => void) | undefined;
+      let cpuSampler: ReturnType<typeof setInterval> | undefined;
 
       try {
         for (let i = 0; i < vehicles.length; i++) {
@@ -206,6 +209,28 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
           );
         }
 
+        // CPU: el contador del cgroup es ACUMULADO y monótono, pero Docker lo
+        // devuelve a cero en cuanto el contenedor termina — y el bot termina solo
+        // al recibir SHUTDOWN, justo cuando la batalla acaba (medido en el E2E: la
+        // lectura final llegaba siempre tarde, null). Se muestrea durante la
+        // batalla y se guarda la última lectura positiva: es la CPU consumida
+        // hasta esa muestra (cota inferior, nunca una estimación inventada).
+        const lastCpu: (number | null)[] = handles.map(() => null);
+        const sampleCpu = async () => {
+          await Promise.all(
+            handles.map(async (h, i) => {
+              try {
+                const v = (await h?.cpuMs?.()) ?? null;
+                if (typeof v === "number" && v > 0 && (lastCpu[i] === null || v > lastCpu[i]!)) lastCpu[i] = v;
+              } catch {
+                /* muestra perdida: se queda la anterior */
+              }
+            }),
+          );
+        };
+        cpuSampler = setInterval(() => void sampleCpu(), opts.cpuSampleMs ?? 500);
+        cpuSampler.unref?.();
+
         server.start();
         const overallMs =
           engine.config.ruleset.timeLimitTicks * tickIntervalMs + (opts.graceMs ?? CONTAINER_BATTLE_GRACE_MS);
@@ -221,21 +246,16 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
         ]);
         const replay = server.getReplay();
 
-        // CPU del contenedor ANTES de pararlo (con el contenedor parado los
-        // contadores vuelven a cero). null = no medida; nunca una estimación.
+        // Última muestra (por si el contenedor aún vive) y se fija la medida.
+        clearInterval(cpuSampler);
+        cpuSampler = undefined;
+        await sampleCpu();
         const cpuMsByBot = new Map<string, number | null>();
-        for (let i = 0; i < handles.length; i++) {
-          let cpu: number | null = null;
-          try {
-            cpu = (await handles[i]!.cpuMs?.()) ?? null;
-          } catch {
-            cpu = null;
-          }
-          cpuMsByBot.set(vehicles[i].botId, cpu);
-        }
+        for (let i = 0; i < handles.length; i++) cpuMsByBot.set(vehicles[i].botId, lastCpu[i]);
         return { result, replay, cpuMsByBot: Object.fromEntries(cpuMsByBot) };
       } finally {
         if (guard) clearTimeout(guard);
+        if (cpuSampler) clearInterval(cpuSampler);
         if (onAbort) signal?.removeEventListener("abort", onAbort);
         await Promise.allSettled(handles.filter((h): h is ContainerHandle => h !== null).map((h) => h.stop()));
         server.stop();
