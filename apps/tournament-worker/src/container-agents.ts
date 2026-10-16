@@ -1,0 +1,272 @@
+/**
+ * DEV-B · Driver de agentes de PRODUCCIÓN: el CÓDIGO REAL de cada bot, en su
+ * contenedor del sandbox, conduce su vehículo (TD-002).
+ *
+ * Mismo esquema que `runContainerBattle` (bot-manager/container-battle.ts, R6.2),
+ * pero sobre la batalla que ya preparó el engine-executor del worker (mapa REAL de
+ * la BD, ruleset resuelto, loadout CONGELADO de cada bot, catálogo del torneo) en
+ * vez de arquetipos y mapas-fixture:
+ *
+ *   1. `provider.openBattle()` abre el "host" de la batalla (contrato con DEV-A,
+ *      `BattleLaunchHost`): opcionalmente un WebSocketServer propio que sirve
+ *      también el artefacto firmado; si no, el ProtocolServer abre el suyo.
+ *   2. Por cada vehículo: `host.plan()` dice QUÉ lanzar (imagen fijada por
+ *      digest, env y cmd extra) y se lanza por el `ContainerRunner` inyectado
+ *      (ProxyContainerRunner → s9-docker-proxy; nunca docker.sock).
+ *   3. Se espera el handshake de TODOS y sólo entonces arranca el bucle (los
+ *      agentes enganchados desde el tick 0, requisito del replay).
+ *   4. Se comprueba la postura de cada contenedor con `complianceViolations`
+ *      (tabla 18.2): una postura no conforme aborta la batalla (fail closed).
+ *   5. Al terminar: CPU de cada contenedor (cgroup) ANTES de pararlo, replay del
+ *      ProtocolServer y limpieza incondicional de contenedores y sockets.
+ *
+ * Clasificación de fallos (19.2):
+ *  - no se pudo lanzar un contenedor / ningún bot conectó → infraestructura;
+ *  - unos bots conectan y otro no → `SportingFailure(bot_crash)` del ausente;
+ *  - timeout global o pérdida de la reserva (signal) → se aborta y se limpia.
+ */
+import { randomUUID } from "node:crypto";
+import type { WebSocketServer } from "ws";
+import { CONTAINER_BATTLE_GRACE_MS, DEFAULT_TICK_INTERVAL_MS } from "../../../packages/game-rules/index.js";
+import { protocolBotHandle } from "../../../packages/protocol/bot-handle.js";
+import { ProtocolServer, type ExpectedBot } from "../../arena-engine/src/protocol-server.js";
+import { DEFAULT_SECCOMP_PROFILE } from "../../bot-manager/src/container-battle.js";
+import {
+  DEFAULT_LIMITS,
+  complianceViolations,
+  type ContainerHandle,
+  type ContainerLimits,
+  type ContainerRunner,
+  type SandboxSpec,
+} from "../../bot-manager/src/container-runner.js";
+import type { AgentDriver, AgentDriverInput, AgentDriverOutput } from "./engine-executor.js";
+import { InfrastructureFailure, SportingFailure } from "./errors.js";
+
+/** Qué arrancar para UN bot (lo decide el proveedor; contrato con DEV-A). */
+export interface BotLaunchPlan {
+  /** Imagen FIJADA POR DIGEST (`name@sha256:<64hex>`): runtime de DIGESTS.lock o imagen por versión. */
+  imageDigest: string;
+  /** Variables extra (p. ej. ARTIFACT_URL/ARTIFACT_TOKEN/ARTIFACT_SHA256). Nunca secretos de plataforma. */
+  env?: Record<string, string>;
+  /** Cmd del contenedor (bootstrap del runtime), si el runner lo soporta. */
+  cmd?: string[];
+}
+
+/** Lo que el host de una batalla sabe hacer (contrato B↔A, ver COORD.md). */
+export interface BattleLaunchHost {
+  /** WebSocketServer compartido (HTTP del artefacto + WS del protocolo en el mismo puerto). */
+  wss?: WebSocketServer;
+  /** Puerto de `wss` (obligatorio si hay `wss`). */
+  port?: number;
+  plan(bot: {
+    botId: string;
+    version: number;
+    vehicleId: string;
+    /** Identificador del cable (HELLO) que usará el contenedor (`BOT_ID`). */
+    wireBotId: string;
+    battleToken: string;
+    /** `ws://<engineHost>:<port>` que recibirá el contenedor como WS_URL. */
+    wsUrl: string;
+  }): Promise<BotLaunchPlan>;
+  close(): Promise<void> | void;
+}
+
+export interface BotLaunchProvider {
+  openBattle(battleId: string): Promise<BattleLaunchHost>;
+}
+
+export interface ContainerAgentsOptions {
+  runner: ContainerRunner;
+  provider: BotLaunchProvider;
+  /** Red de los bots (compliance exige literalmente "arena"). */
+  network: string;
+  /** Host de ESTE proceso alcanzable desde `network` (p. ej. el nombre del servicio). */
+  engineHost: string;
+  limits?: ContainerLimits;
+  seccompProfilePath?: string;
+  /** ms reales por tick; por defecto el ritmo real del motor (~34 ms). */
+  tickIntervalMs?: number;
+  /** Plazo para que TODOS los bots completen el handshake. Def. 20 s. */
+  connectTimeoutMs?: number;
+  /** Margen del guard global sobre la duración teórica. Def. 15 s. */
+  graceMs?: number;
+  /** Cada cuánto se muestrea la CPU de los contenedores durante la batalla. Def. 500 ms. */
+  cpuSampleMs?: number;
+}
+
+export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
+  return {
+    kind: "container",
+    async run(input: AgentDriverInput): Promise<AgentDriverOutput> {
+      const { engine, vehicles, signal } = input;
+      if (signal?.aborted) throw new Error(`batalla abortada antes de lanzar: ${String(signal.reason)}`);
+      const tickIntervalMs = opts.tickIntervalMs ?? DEFAULT_TICK_INTERVAL_MS;
+
+      let host: BattleLaunchHost;
+      try {
+        host = await opts.provider.openBattle(input.battleId);
+      } catch (err) {
+        throw new InfrastructureFailure(
+          "container_unavailable",
+          `no se pudo abrir el host de la batalla: ${String(err)}`,
+        );
+      }
+
+      const wire = vehicles.map((_v, i) => protocolBotHandle(i));
+      const expected: ExpectedBot[] = vehicles.map((v, i) => ({
+        botId: wire[i],
+        vehicleId: v.vehicleId,
+        battleToken: randomUUID(),
+      }));
+      const server = new ProtocolServer({
+        battle: engine,
+        catalogVersion: input.catalogVersion,
+        expected,
+        ...(host.wss ? { wss: host.wss } : { port: 0 }),
+        tickIntervalMs,
+        decisionDeadlineMs: Math.max(80, tickIntervalMs * 6),
+      });
+      const port = host.wss ? host.port : server.port;
+      if (!port) {
+        server.stop();
+        await host.close();
+        throw new InfrastructureFailure("container_unavailable", "el host de la batalla no declaró puerto");
+      }
+      const wsUrl = `ws://${opts.engineHost}:${port}`;
+      const handles: (ContainerHandle | null)[] = vehicles.map(() => null);
+      let guard: ReturnType<typeof setTimeout> | undefined;
+      let onAbort: (() => void) | undefined;
+      let cpuSampler: ReturnType<typeof setInterval> | undefined;
+
+      try {
+        for (let i = 0; i < vehicles.length; i++) {
+          const v = vehicles[i];
+          let plan: BotLaunchPlan;
+          try {
+            plan = await host.plan({
+              botId: v.botId,
+              version: v.version,
+              vehicleId: v.vehicleId,
+              wireBotId: wire[i],
+              battleToken: expected[i].battleToken,
+              wsUrl,
+            });
+          } catch (err) {
+            throw new InfrastructureFailure(
+              "artifact_unavailable",
+              `bot ${v.botId} v${v.version}: no se pudo resolver qué lanzar: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+          const spec: SandboxSpec & { cmd?: string[] } = {
+            imageDigest: plan.imageDigest,
+            botId: v.botId,
+            version: v.version,
+            battleId: input.battleId,
+            network: opts.network,
+            engineEndpoint: wsUrl,
+            env: { ...(plan.env ?? {}), WS_URL: wsUrl, BATTLE_TOKEN: expected[i].battleToken, BOT_ID: wire[i] },
+            limits: opts.limits ?? DEFAULT_LIMITS,
+            seccompProfilePath: opts.seccompProfilePath ?? DEFAULT_SECCOMP_PROFILE,
+            ...(plan.cmd ? { cmd: plan.cmd } : {}),
+          };
+          try {
+            handles[i] = await opts.runner.launch(spec);
+          } catch (err) {
+            throw new InfrastructureFailure(
+              "container_unavailable",
+              `no se pudo lanzar el contenedor de ${v.botId} v${v.version}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+
+        // Postura de seguridad REAL de cada contenedor (tabla 18.2): fail closed.
+        for (let i = 0; i < handles.length; i++) {
+          const posture = await handles[i]!.posture().catch((err: unknown) => {
+            throw new InfrastructureFailure(
+              "container_unavailable",
+              `no se pudo inspeccionar el contenedor: ${String(err)}`,
+            );
+          });
+          const violations = complianceViolations(posture);
+          if (violations.length > 0) {
+            throw new InfrastructureFailure(
+              "container_unavailable",
+              `postura de seguridad NO conforme del contenedor de ${vehicles[i].botId}: ${violations.join("; ")}`,
+            );
+          }
+        }
+
+        try {
+          await server.whenAllConnected(opts.connectTimeoutMs ?? 20_000);
+        } catch (err) {
+          const connected = new Set(server.connectedVehicleIds());
+          if (connected.size === 0) {
+            throw new InfrastructureFailure(
+              "container_unavailable",
+              `ningún bot completó el handshake (¿red/host del motor?): ${String(err)}`,
+            );
+          }
+          const absent = vehicles.find((v) => !connected.has(v.vehicleId))!;
+          throw new SportingFailure(
+            "bot_crash",
+            absent.botId,
+            "su contenedor arrancó pero no completó el handshake del protocolo",
+            "container",
+          );
+        }
+
+        // CPU: el contador del cgroup es ACUMULADO y monótono, pero Docker lo
+        // devuelve a cero en cuanto el contenedor termina — y el bot termina solo
+        // al recibir SHUTDOWN, justo cuando la batalla acaba (medido en el E2E: la
+        // lectura final llegaba siempre tarde, null). Se muestrea durante la
+        // batalla y se guarda la última lectura positiva: es la CPU consumida
+        // hasta esa muestra (cota inferior, nunca una estimación inventada).
+        const lastCpu: (number | null)[] = handles.map(() => null);
+        const sampleCpu = async () => {
+          await Promise.all(
+            handles.map(async (h, i) => {
+              try {
+                const v = (await h?.cpuMs?.()) ?? null;
+                if (typeof v === "number" && v > 0 && (lastCpu[i] === null || v > lastCpu[i]!)) lastCpu[i] = v;
+              } catch {
+                /* muestra perdida: se queda la anterior */
+              }
+            }),
+          );
+        };
+        cpuSampler = setInterval(() => void sampleCpu(), opts.cpuSampleMs ?? 500);
+        cpuSampler.unref?.();
+
+        server.start();
+        const overallMs =
+          engine.config.ruleset.timeLimitTicks * tickIntervalMs + (opts.graceMs ?? CONTAINER_BATTLE_GRACE_MS);
+        const result = await Promise.race([
+          server.waitForResult(),
+          new Promise<never>((_r, reject) => {
+            guard = setTimeout(() => reject(new Error(`timeout global de la batalla tras ${overallMs} ms`)), overallMs);
+          }),
+          new Promise<never>((_r, reject) => {
+            onAbort = () => reject(new Error(`batalla abortada: ${String(signal?.reason)}`));
+            signal?.addEventListener("abort", onAbort, { once: true });
+          }),
+        ]);
+        const replay = server.getReplay();
+
+        // Última muestra (por si el contenedor aún vive) y se fija la medida.
+        clearInterval(cpuSampler);
+        cpuSampler = undefined;
+        await sampleCpu();
+        const cpuMsByBot = new Map<string, number | null>();
+        for (let i = 0; i < handles.length; i++) cpuMsByBot.set(vehicles[i].botId, lastCpu[i]);
+        return { result, replay, cpuMsByBot: Object.fromEntries(cpuMsByBot) };
+      } finally {
+        if (guard) clearTimeout(guard);
+        if (cpuSampler) clearInterval(cpuSampler);
+        if (onAbort) signal?.removeEventListener("abort", onAbort);
+        await Promise.allSettled(handles.filter((h): h is ContainerHandle => h !== null).map((h) => h.stop()));
+        server.stop();
+        await Promise.resolve(host.close()).catch(() => undefined);
+      }
+    },
+  };
+}

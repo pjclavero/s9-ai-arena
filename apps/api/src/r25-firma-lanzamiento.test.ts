@@ -173,7 +173,7 @@ describe("R2.5 · verificación ANTES de cada lanzamiento en batalla", () => {
     const bytes = Buffer.from(`artefacto-canonico-${bot.name}`);
     const hash = createHash("sha256").update(bytes).digest("hex");
     const stored = opts.tamper ? Buffer.concat([bytes, Buffer.from("!")]) : bytes;
-    // DEV-A · 012_a: el artefacto de una versión publicada es INMUTABLE en BD
+    // DEV-A · 012_bot_versioning: el artefacto de una versión publicada es INMUTABLE en BD
     // (trigger bot_versions_guard). Esta fixture simula un almacén manipulado
     // por fuera de la aplicación, así que escribe con los triggers desactivados
     // en SU transacción (session_replication_role, sólo superusuario de test).

@@ -30,6 +30,7 @@ import { TournamentWorker } from "./worker.js";
 import { makeDefaultHandlers } from "./engine-executor.js";
 import { enqueueJob } from "./queue.js";
 import { createBots, insertScheduledBattle, type TestBot } from "./testing/fixtures.js";
+import { testStubAgents } from "./testing/stub-agents.js";
 
 let h: TestDbHandle;
 let app: Express;
@@ -61,6 +62,8 @@ beforeAll(async () => {
   gateway = new SpectateGateway({ publicSpectateEnabled: true }); // WS real en puerto efímero
   const wired = await makeDefaultHandlers({
     db: h.db,
+    // TD-002 · sin agente por defecto: los stubs se piden EXPLÍCITAMENTE (sólo tests).
+    agents: testStubAgents(),
     // Sin muerte súbita: la batalla dura timeLimitTicks para que el espectador
     // tenga tiempo real de conectarse EN VIVO (el motor cede el bucle por ticks).
     rulesetOverrides: { timeLimitTicks: 4800, scoreToWin: 999 },

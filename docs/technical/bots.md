@@ -186,7 +186,7 @@ Antes de lanzar, el camino real comprueba que cada bot está `published|frozen` 
 
 ## Persistencia
 
-Tablas `bots`, `bot_loadouts`, `loadout_modules`, `bot_versions`, `builds`, `artifacts` y `jobs` (detalle de esquema en [database.md](database.md)). La versión guarda el código **en la BD** (`bot_versions.source`, bytea). Desde `012_a_bot_versioning`, la BD impide modificarla fuera de `draft`. Historial, diff y clonado: [bot-versioning.md](bot-versioning.md).
+Tablas `bots`, `bot_loadouts`, `loadout_modules`, `bot_versions`, `builds`, `artifacts` y `jobs` (detalle de esquema en [database.md](database.md)). La versión guarda el código **en la BD** (`bot_versions.source`, bytea). Desde `012_bot_versioning`, la BD impide modificarla fuera de `draft`. Historial, diff y clonado: [bot-versioning.md](bot-versioning.md).
 
 ## Seguridad
 

@@ -11,7 +11,7 @@
 
 Una batalla se define por su semilla, ruleset, mapa y participantes, más los comandos de los bots. Con eso se reproduce bit a bit. Esa propiedad es la base de los replays y de su verificación ([replays.md](replays.md)).
 
-El motor no tiene servicio propio en el camino activo: lo ejecuta **dentro de su proceso** el `tournament-worker` ([battles.md](battles.md)). Existe además un servicio HTTP `POST /run` (`service.ts`) para el camino de ejecución real con contenedores, hoy apagado.
+El motor no tiene servicio propio en el camino activo: lo ejecuta **dentro de su proceso** el `tournament-worker` ([battles.md](battles.md)), que también aloja el `ProtocolServer` (protocolo arena/1) al que se conectan los contenedores de los bots. El servicio HTTP `POST /run` (`service.ts`) es un camino **legado** que la API ya no usa. `ProtocolServer.connectedVehicleIds()` (nuevo) permite al worker distinguir «ningún bot conectó» (infraestructura) de «uno no conectó» (derrota deportiva).
 
 ## Índice
 
@@ -46,7 +46,7 @@ El motor no tiene servicio propio en el camino activo: lo ejecuta **dentro de su
 | `src/checkpoint.ts` | Guardado y restauración del estado de una batalla (R13.5) |
 | `src/inspector.ts`, `src/cli.ts` | Inspector HTTP de sólo lectura y CLI |
 | `src/protocol-server.ts`, `src/service.ts` | Protocolo `arena/1` con bots externos y servicio `POST /run` |
-| `src/stubs.ts` | Bots internos deterministas (`HunterBot`, `SeekBot`…) |
+| `src/stubs.ts` | Bots internos deterministas (`HunterBot`, `SeekBot`…). **Sólo tests/demo**: el worker de producción no los usa |
 | `src/engine-deps.json` | Versión del motor, versión de Rapier y sha256 del WASM, protocolo |
 
 Constantes globales (`packages/game-rules/constants.ts`):
@@ -184,7 +184,7 @@ El catálogo de candados está en el histórico `ENGINE_REGRESSION_LOCKS`; ver [
 ## Estado actual
 
 - **FUNCIONA ACTUALMENTE**: simulación determinista, 7 modos, replays verificables y estadísticas por re-simulación.
-- **PARCIAL**: radio (sin alcance ni equipo) y campos del catálogo sin efecto ([equipment.md](equipment.md#campos-sin-efecto-en-el-motor)). En la plataforma los agentes son siempre `HunterBot` ([TD-002](../roadmap/technical-debt.md#td-002)). `MatchRunner` y `checkpoint` no se usan.
+- **PARCIAL**: radio (sin alcance ni equipo) y campos del catálogo sin efecto ([equipment.md](equipment.md#campos-sin-efecto-en-el-motor)). En la plataforma los vehículos los conduce el código de cada bot en su contenedor; la activación en producción está pendiente ([TD-002](../roadmap/technical-debt.md#td-002)). Ojo: `BattleResult.disqualified` lista **vehículos** (`veh_N`), no bots; el worker los traduce. `MatchRunner` y `checkpoint` no se usan.
 - **PENDIENTE**: ejecución de bots reales por `protocol-server` dentro de la plataforma (camino `/run`, apagado).
 
 ## Documentación relacionada
@@ -209,6 +209,6 @@ Verificado contra `27f70bb`.
 | Snapshot público cada 3 ticks y hash cada 30 | CODE_VERIFIED | `battle.ts:479-489` |
 | PRNG xoshiro128** y prohibición de `Math.random` | CODE_VERIFIED | `src/rng.ts:1-25`; `scripts/lint-determinism.mjs` |
 | Formato JSONL y `verify` | CODE_VERIFIED | `src/replay.ts:16-60,310-350` |
-| El worker ejecuta el motor en proceso con `HunterBot` | CODE_VERIFIED | `apps/tournament-worker/src/engine-executor.ts:194-247` |
+| El worker ejecuta el motor en proceso con agentes en contenedor (`containerAgents`) | CODE_VERIFIED + RUNTIME_VERIFIED (aislado) | `apps/tournament-worker/src/container-agents.ts:97`; `container-battle-e2e.test.ts` |
 | Inspector en loopback por defecto | CODE_VERIFIED | `src/inspector.ts:1-20`; `src/cli.ts:24-42` |
 | Los tests del motor pasan en main | RUNTIME_VERIFIED | Auditoría 2026-10-15, A pasada 1 (suite completa con rc=0) |

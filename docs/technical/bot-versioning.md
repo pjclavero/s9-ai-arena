@@ -4,7 +4,7 @@
 
 El versionado de bots vive **en la base de datos de la plataforma**, sin Git:
 `bots` → `bot_versions` → `builds` → `artifacts`. Cada versión guarda su propio código, el
-build que la validó y el artefacto firmado de ese build. Desde la migración `012_a_bot_versioning`,
+build que la validó y el artefacto firmado de ese build. Desde la migración `012_bot_versioning`,
 una versión que ya no es `draft` **no se puede modificar ni borrar**: lo impide un trigger de
 PostgreSQL. La API permite listar versiones y ver el detalle, el código, el artefacto y el diff
 entre dos versiones. También permite crear una versión nueva a partir de otra. Una batalla
@@ -66,7 +66,7 @@ BD con una migración pequeña. Por eso no se añade Git.
 | `artifacts` | `build_id` (UNIQUE), `hash`, `signature`, `bytes`, `size_bytes` | el paquete canónico `arena-artifact/v1` firmado de UN build |
 | `participants` | `(bot_id, version)` FK `ON DELETE RESTRICT` | qué versión jugó cada batalla |
 
-Columnas añadidas por `012_a_bot_versioning`:
+Columnas añadidas por `012_bot_versioning`:
 
 - `source_sha256`: la calcula la BD (trigger) con `sha256(source)`.
 - `parent_version`: «nueva versión desde X». Tiene una FK a `(bot_id, version)` y un `CHECK parent_version < version`.

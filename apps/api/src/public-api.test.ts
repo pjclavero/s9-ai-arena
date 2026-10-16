@@ -19,6 +19,7 @@ import { FakeBotManager } from "./services/bot-manager.js";
 import { loadContract } from "./openapi.js";
 import { implementedOperations } from "./registry.js";
 import { getStandings, updateStandings, clearStandingsCache } from "./services/standings.js";
+import { ACTIVE_SEASON_ID } from "../../tournament-worker/src/season.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = join(__dirname, "..", "..", "..");
@@ -286,13 +287,16 @@ describe("T7.5 cuotas anónimas (DoD: 429 y registro en api_usage)", () => {
 describe("T7.5 caché de clasificaciones (DoD: nunca obsoleta >60 s)", () => {
   it("sirve desde caché dentro del TTL y se invalida INMEDIATAMENTE al actualizar", async () => {
     clearStandingsCache();
-    const first = await getStandings(h.db, "current", "deathmatch");
+    const first = await getStandings(h.db, ACTIVE_SEASON_ID, "deathmatch");
     expect(first.fromCache).toBe(false);
-    const second = await getStandings(h.db, "current", "deathmatch");
+    const second = await getStandings(h.db, ACTIVE_SEASON_ID, "deathmatch");
     expect(second.fromCache).toBe(true);
 
     // Actualización de ratings ⇒ la siguiente lectura ya ve el dato nuevo
-    await updateStandings(h.db, "current", "deathmatch", [{ botId, rank: 1, rating: 1600, wins: 4, losses: 1 }]);
+    // TD-029 · el writer (worker) escribe en la temporada ACTIVA real; "current" es
+    // sólo el alias de lectura de la API (antes este test escribía "current" a mano,
+    // justo la temporada que en producción nadie escribe).
+    await updateStandings(h.db, ACTIVE_SEASON_ID, "deathmatch", [{ botId, rank: 1, rating: 1600, wins: 4, losses: 1 }]);
     const after = await request(app).get("/standings?seasonId=current&mode=deathmatch");
     expect(after.status).toBe(200);
     expect(after.headers["cache-control"]).toBe("public, max-age=60");

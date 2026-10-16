@@ -4,15 +4,17 @@
 
 Documento central del ciclo de batalla de S9 AI Arena: desde que alguien la pide hasta que se ve su replay. Cubre cada paso con su servicio, los datos que entran y salen, las tablas y estados reales de PostgreSQL y los errores posibles.
 
-Estado actual, en una línea: **la cadena existe de punta a punta, pero hoy no ejecuta el código de ningún usuario**. Ninguna versión de bot llega a `published` ([TD-001](../roadmap/technical-debt.md#td-001)). Desde la web, crear una batalla falla siempre con `400 rulesetId desconocido` ([TD-003](../roadmap/technical-debt.md#td-003)). Las batallas que sí se crean (por API o dentro de un torneo) las juega el `tournament-worker`, con el bot de prueba `HunterBot` en todos los vehículos ([TD-002](../roadmap/technical-debt.md#td-002)). Además, el reproductor y el visor web no arrancan en navegador ([TD-009](../roadmap/technical-debt.md#td-009)).
+Estado actual, en una línea: **hay UN solo camino de ejecución y ejecuta el código real de cada bot** (cierre funcional 2026-10, DEV-B). La API agenda; el `tournament-worker` reserva la batalla de forma atómica, lanza un contenedor por bot con su código sobre el runtime fijado, aloja el motor y el `ProtocolServer` y cierra la batalla **exactamente una vez**. El stub `HunterBot` ya no es seleccionable en producción. Verificado de punta a punta en un entorno aislado con Docker rootless ([Verificación](#verificación)). En producción **no está activado**: falta integrar el proveedor de artefactos de DEV-A ([TD-001](../roadmap/technical-debt.md#td-001)) y aplicar los cambios de compose; mientras tanto el worker **no reclama** `run_battle` (las batallas quedan `scheduled`) en vez de jugarlas con un stub.
 
 ## Índice
 
 - [Qué es](#qué-es)
 - [Arquitectura](#arquitectura)
 - [Flujo de datos paso a paso](#flujo-de-datos-paso-a-paso)
-- [Los dos caminos de ejecución](#los-dos-caminos-de-ejecución)
+- [Autoridad única de ejecución](#autoridad-única-de-ejecución)
 - [Persistencia y estados](#persistencia-y-estados)
+- [BATTLE_RESULT: forma de `battles.result`](#battle_result-forma-de-battlesresult)
+- [Uso](#uso)
 - [Errores / limitaciones](#errores--limitaciones)
 - [Estado actual](#estado-actual)
 - [Documentación relacionada](#documentación-relacionada)
@@ -20,192 +22,228 @@ Estado actual, en una línea: **la cadena existe de punta a punta, pero hoy no e
 
 ## Qué es
 
-Una **batalla** es una simulación del motor 2D ([engine.md](engine.md)) entre 1 y 8 vehículos. Se juega en un mapa publicado ([maps.md](maps.md)) con las reglas de un *ruleset* del motor ([game-modes.md](game-modes.md)). Cada vehículo sale del *loadout* de una versión de bot ([equipment.md](equipment.md), [bots.md](bots.md)). Hay dos orígenes:
+Una **batalla** es una simulación del motor 2D ([engine.md](engine.md)) entre 1 y 8 vehículos. Se juega en un mapa publicado ([maps.md](maps.md)) con las reglas de un *ruleset* del motor ([game-modes.md](game-modes.md)). Cada vehículo sale del *loadout* de una versión de bot ([equipment.md](equipment.md)) y lo **conduce el código de esa versión** ([bots.md](bots.md)). Hay dos orígenes:
 
-- **Práctica**: `POST /api/v1/battles` (rol mínimo `user`). Se crea con `official=false` y no afecta al rating.
-- **Torneo**: el `tournament-worker` la crea al materializar el calendario ([tournaments.md](tournaments.md)). Se crea con `official=true` y afecta al rating Elo.
+- **Práctica**: `POST /api/v1/battles` (rol mínimo `user`). `official=false`, no afecta al rating.
+- **Torneo**: el `tournament-worker` la crea al materializar el calendario ([tournaments.md](tournaments.md)). `official=true`, afecta al rating Elo.
 
 ## Arquitectura
-
-Componentes que intervienen (la vista de despliegue está en [services.md](services.md) y [architecture.md](architecture.md)):
 
 | Componente | Código | Papel en la batalla |
 |---|---|---|
 | Web (SPA) | `apps/web/src/pages/BattleNewPage.tsx`, `BattlesPage.tsx` | Formulario de práctica y listado |
-| API | `apps/api/src/routes/battles.ts` | Valida, persiste, encola y expone resultados |
-| PostgreSQL | `apps/api/src/db/migrations.ts` | Fuente de verdad: `battles`, `participants`, `jobs`… ([database.md](database.md)) |
-| Cola | tabla `jobs` + aviso opcional por Redis | Despacho de `run_battle` ([queue.md](queue.md)) |
-| tournament-worker | `apps/tournament-worker/src/{worker,battle-runner,engine-executor}.ts` | Ejecuta el motor **en su propio proceso** y aloja el WebSocket de espectador ([workers.md](workers.md)) |
-| Motor | `apps/arena-engine/src/sim/*` | Simulación determinista |
-| replay-service | `apps/replay-service/src/*` | Almacén de replays en disco + estadísticas ([replays.md](replays.md)) |
-| Camino real (apagado) | `apps/api/src/battle-run.ts`, `services/battle-run-http-launcher.ts`, `apps/arena-engine/src/service.ts` | `POST /battles/{id}/run` → arena-engine → contenedores de bots |
+| API | `apps/api/src/routes/battles.ts` | Valida (incluida la propiedad de los bots), persiste y **encola**; nunca ejecuta |
+| PostgreSQL | `apps/api/src/db/migrations.ts` | Fuente de verdad: `battles`, `participants`, `jobs`, `battle_stats` ([database.md](database.md)) |
+| Cola | tabla `jobs` (+ aviso opcional por Redis) | `run_battle` con `dedupe_key = run_battle:<battleId>` ([queue.md](queue.md)) |
+| tournament-worker | `apps/tournament-worker/src/{battle-runner,engine-executor,container-agents}.ts` | **Autoridad única**: reserva, ejecuta, cierra; aloja `ProtocolServer` y espectador ([workers.md](workers.md)) |
+| Sandbox de bots | `apps/bot-manager/src/{docker-proxy,container-runner}.ts` | `ProxyContainerRunner` → `s9-docker-proxy` → un contenedor por bot (tabla 18.2) |
+| Proveedor de lanzamiento | `apps/tournament-worker/src/bot-launch-provider.ts` → `apps/bot-manager/src/bot-launch.ts` (DEV-A) | Dice QUÉ lanzar por (bot, versión): imagen fijada, env, cmd (artefacto firmado) |
+| Motor | `apps/arena-engine/src/sim/*`, `protocol-server.ts` | Simulación determinista + protocolo arena/1 por WebSocket |
+| replay-service | `apps/replay-service/src/*` | Almacén de replays + estadísticas re-simuladas ([replays.md](replays.md)) |
+| Camino legado | `apps/api/src/battle-run.ts`, `services/battle-run-http-launcher.ts`, `apps/arena-engine/src/service.ts` | **Ya no lo usa nadie**: `POST /battles/{id}/run` delega en la cola. Queda como librería probada |
 
 ## Flujo de datos paso a paso
 
 ### 1. El usuario la pide (web)
 
-- **Servicio**: SPA, `#/battles/new`.
-- **Datos**: modo (`deathmatch`, `team_deathmatch`, `capture_the_flag`, `zone_control`), mapa publicado, semilla opcional, bot rojo y bot azul (cada uno con su `latestPublishedVersion`).
-- **Envía**: `POST /api/v1/battles` con `{mode, rulesetId, mapId, mapVersion, seed?, participants:[{botId,version,team:"red"},{…,team:"blue"}]}`. El `rulesetId` sale de la tabla `MODE_RULESET` de la página (`dm_practice@1`, `tdm_mvp@1`, `ctf_mvp@1`, `zc_mvp@1`).
-- **Además**: `GET /system/status` (rol `admin`) para saber si mostrar el botón «Ejecutar batalla real». Un usuario normal recibe 403, el error se ignora y el botón queda deshabilitado.
-- **Errores en cliente**: «Elige un mapa publicado.», «Elige dos bots con versión publicada.», «Elige dos bots distintos.». Con menos de 2 bots publicados o 0 mapas publicados, el botón «Crear batalla» está deshabilitado.
+- `#/battles/new` → `POST /api/v1/battles` con `{mode, rulesetId, mapId, mapVersion?, seed?, participants:[{botId, version, team}]}` (contrato BATTLE_CREATE).
+- El `rulesetId` y su catálogo son de DEV-C ([TD-003](../roadmap/technical-debt.md#td-003)).
 
-### 2. La API valida
+### 2. La API valida (`createPracticeBattle`)
 
-- **Servicio**: API, operación `createPracticeBattle` (`routes/battles.ts:392-443`).
-- **Validaciones, en orden**:
-  1. `mode` ∈ los 4 modos de arriba; si no, `400 mode inválido`.
-  2. Entre 1 y 8 `participants`; si no, `400 participants: entre 1 y 8`.
-  3. `rulesetId` existe en la **tabla `rulesets` de la BD**; si no, `400 rulesetId desconocido`. **Aquí se corta hoy la web**: `seedContent` sólo inserta `mvp-default` y la web envía ids del motor ([TD-003](../roadmap/technical-debt.md#td-003)).
-  4. Existe `map_versions` publicada para `mapId` (y `mapVersion` si se pasa); si no, `400 Mapa inexistente o no publicado`.
-  5. Cada `(botId, version)` está en estado `published` o `frozen`; si no, `409 bot_not_published`.
-- **No valida** (estado actual, [TD-005](../roadmap/technical-debt.md#td-005)):
-  - que los bots sean del solicitante (se pueden usar bots privados ajenos);
-  - que el mapa declare el modo (`supported_modes`);
-  - el formato de `team`;
-  - la composición que exige el modo. Por ejemplo, deathmatch con dos vehículos en el mismo equipo se acepta y luego falla en el worker.
+En orden:
 
-### 3. Persistencia
+1. `mode` ∈ `deathmatch`, `team_deathmatch`, `capture_the_flag`, `zone_control` → si no, `400 mode inválido`.
+2. Entre 1 y 8 `participants` → si no, `400`.
+3. `rulesetId` existe en `rulesets` → si no, `400 rulesetId desconocido`.
+4. Hay `map_versions` publicada → si no, `400 Mapa inexistente o no publicado`.
+5. **Forma de cada participante**: `botId` cadena, `version` entero ≥ 1, `team` `[A-Za-z0-9_-]{1,32}`, y **cada bot una sola vez** → si no, `400` (antes un bot repetido daba `500` por la PK).
+6. **Propiedad / visibilidad** ([TD-005](../roadmap/technical-debt.md#td-005)): el bot debe ser propio, `public`, o `team` de un equipo del que el solicitante es miembro (un `admin`, cualquiera). Si no → **`404 bot_not_found`, idéntico al de un bot inexistente** (no se revela que existe).
+7. Cada `(botId, version)` en `published`/`frozen` → si no, `409 bot_not_published`.
 
-En una secuencia sin transacción explícita:
+**No valida todavía** que el mapa declare el modo ni la composición por modo (ver [Errores](#errores--limitaciones)).
 
-- `INSERT battles` con `status='scheduled'`, `official=false`, `mode`, `ruleset_id`, `map_id`, `map_version`, `seed`.
-- `INSERT participants` con `(battle_id, bot_id, version, team)`.
-- `INSERT jobs` con `kind='run_battle'`, `payload={battleId}`, sin `dedupe_key`.
-- Respuesta `202` con la batalla serializada (`battleToJson`).
+### 3. Persistencia (una transacción)
+
+`INSERT battles (status='scheduled', official=false, …)` + `INSERT participants` + `INSERT jobs (kind='run_battle', dedupe_key='run_battle:<id>')`, en **una sola transacción** (antes eran tres escrituras sueltas). Respuesta `202` con la batalla (`battleToJson`).
 
 ### 4. Cola
 
-- El `tournament-worker` reclama trabajos de la tabla `jobs` con `UPDATE … WHERE id = (SELECT … FOR UPDATE SKIP LOCKED)`, filtrando por `kind ∈ {generate_schedule, run_battle, process_result, update_standings, tournament_dry_run}` (`tournament-worker/src/queue.ts`).
-- Sin Redis el worker hace sondeo de la BD. Redis sólo acelera el aviso ([queue.md](queue.md), [TD-026](../roadmap/technical-debt.md#td-026)).
-- **Reintentos**: sólo los fallos clasificados como infraestructura. Hay hasta `max_attempts=3` con *backoff* exponencial (`min(60 s, 1 s·2^intentos)`). Agotados, el trabajo pasa a `needs_review` y la batalla a `status='failed'`, `failure_kind='infrastructure'` (`markBattleForReview`).
+El `tournament-worker` reclama trabajos con `UPDATE … WHERE id = (SELECT … FOR UPDATE SKIP LOCKED)` ([queue.md](queue.md)). Mientras la batalla corre, el worker **renueva `jobs.locked_at`** para que el trabajo no parezca huérfano (una batalla real dura minutos y el umbral de huérfano es 60 s).
 
-### 5. Worker: preparación
+### 5. Worker: reserva atómica (`claimBattle`)
 
-- **Servicio**: `makeRunBattleHandler` (`battle-runner.ts`).
-- **Idempotencia**: si la batalla ya está `finished`, no se re-ejecuta (sólo rellena estadísticas si faltan).
-- **Descalificaciones administrativas**: el handler admite `suspensions` y `artifactGuard`, pero **`main.ts` no los cablea**. Hoy no se descalifica a nadie antes de lanzar ([TD-015](../roadmap/technical-debt.md#td-015)).
-- `UPDATE battles SET status='running', started_at=now()` **sin condición de estado**. Esto es relevante para la doble ejecución: [ver abajo](#los-dos-caminos-de-ejecución).
-- Si tras las descalificaciones queda un solo bando, se cierra por *walkover* (`finalStateHash='walkover'`).
+```sql
+UPDATE battles SET status='running', started_at=now(), finished_at=NULL,
+       claimed_by=:owner, lease_expires_at=now()+:lease, run_attempts=run_attempts+1
+ WHERE id=:battleId
+   AND (status='scheduled' OR (status='running' AND (lease_expires_at IS NULL OR lease_expires_at < now())))
+RETURNING *
+```
 
-### 6. Worker: motor
+- `owner = <workerId>:<jobId>:<attempts>`. El lease (45 s por defecto, por debajo del umbral de huérfano de la cola) se renueva cada `lease/3`.
+- Si no se gana la reserva: batalla `finished` → sólo completa estadísticas que falten; `failed` → nada; `running` con lease vivo de otro → `InfrastructureFailure battle_busy` (es un trabajo duplicado; el reintento la verá `finished`).
+- Si el worker **pierde** la reserva a mitad (no puede renovar: otro la recuperó tras caducar), se aborta la ejecución (`AbortSignal`), se paran los contenedores y no se escribe nada.
 
-- **Servicio**: `makeEngineExecutor` (`engine-executor.ts`).
-- **Mapa**: `map_versions.content` → `toEngineMap()` → `ArenaMap`. Si no hay contenido o no convierte, `InfrastructureFailure map_unavailable`.
-- **Reglas**: `MODE_DEFAULT_ENGINE_RULESET.get(battle.mode)` → `loadRuleset(...)`. **El `ruleset_id` de la BD sólo aporta `budget_credits`** (o el del torneo); su `config.engineRulesetId` no se lee en este camino. Un modo sin ruleset del motor da `InfrastructureFailure engine_start_failure`.
-- **Catálogo**: el congelado del torneo (`tournaments.catalog_version`) o, en práctica, la última versión importada.
-- **Vehículos**: se lee el loadout de cada participante. En torneo es `entries.loadout_revision`; si no, `bot_versions.loadout_revision`. Después `resolveVehicle(loadout, catalog)` produce el `VehicleSpec` e ids `veh_1…veh_N`.
-- **Agentes**: `defaultAgentResolver = (botId) => new HunterBot(botId)` (`engine-executor.ts:51`). **Todos los vehículos los conduce el stub `HunterBot`, no el código subido** ([TD-002](../roadmap/technical-debt.md#td-002)). El equipamiento sí cuenta: chasis, armas, blindaje, movilidad, energía y sensores que lee `HunterBot` (radar, lidar). Radio, minas, acústica y proximidad no se usan porque el stub no las usa ([TD-016](../roadmap/technical-debt.md#td-016)).
-- **Simulación**: `Battle.create(...)` y bucle `step()` hasta `isFinished()` o 100 000 ticks. Cede el *event loop* cada 25 ticks (`setImmediate`) para que el gateway de espectador emita. **No hay ritmo de tiempo real**: una batalla de 9 000 ticks termina en segundos.
-- **Espectador**: `spectate.attachBattle(battle.id, b, {spectator, meta:{mode, mapId, roster…}})` al empezar y `detachBattle` 3 s después de terminar ([websocket.md](websocket.md)).
-- **Produce**: `{winner, ticks, score, finalStateHash, disqualified, versions, replayJsonl}`.
+### 6. Descalificaciones administrativas (antes de lanzar)
 
-### 7. Resultado
+- Versión que ya no está `published`/`frozen` (p. ej. `suspended` tras agendar) → descalificada.
+- `suspensions` (registro E6) y `artifactGuard` (firma) si se inyectan.
+- Si queda un solo bando → cierre por *walkover* (`endReason: "walkover"`).
 
-`finishBattle` (`battle-runner.ts:229-282`):
+### 7. Worker: motor y agentes
 
-1. Ingiere el replay con la librería del replay-service. Escribe `<battleId>.replay` y `<battleId>.replay.json` en `REPLAYS_DIR`; ver [replays.md](replays.md).
-2. En una transacción:
-   - `battles`: `status='finished'`, `finished_at`, `failure_kind='none'`, `result={winner,ticks,score,disqualified}`, `final_state_hash`, `engine_versions`, `replay_ref` (ruta del fichero), `replay_hash`;
-   - `participants.outcome` ∈ `win|loss|draw|disqualified`.
-3. Encola `process_result` (deduplicado por batalla).
+`makeEngineExecutor` (`engine-executor.ts`):
 
-### 8. Estadísticas
+- **Mapa**: `map_versions.content` → `toEngineMap()`; sin contenido → `InfrastructureFailure map_unavailable`.
+- **Reglas**: `resolveBattleRuleset` (el mismo resolutor que usaba el launcher: `rulesets.config.engineRulesetId` o el defecto del modo, exigiendo que el modo coincida) + `budget_credits` del torneo/ruleset. Antes el worker ignoraba `config.engineRulesetId`.
+- **Catálogo** congelado del torneo o el último importado; **vehículos** del loadout congelado (`entries.loadout_revision` o `bot_versions.loadout_revision`).
+- **Agentes**: el `AgentDriver` es **obligatorio**; sin él `makeEngineExecutor` lanza. En producción, `containerAgents()` (`container-agents.ts`):
+  1. abre el host de la batalla del proveedor (contrato B↔A `createBattleLaunchHost`, ver `bot-launch-provider.ts`);
+  2. crea el `ProtocolServer` (con el `wss` del host si lo da) y, por vehículo, pide al proveedor el plan `{imageDigest, env, cmd}` y lanza el contenedor por `ProxyContainerRunner` con `WS_URL`, `BATTLE_TOKEN`, `BOT_ID` (asa del cable, no el uuid), límites `DEFAULT_LIMITS` y seccomp restrictivo;
+  3. **inspecciona la postura** de cada contenedor y aborta si `complianceViolations` no está vacío;
+  4. espera el handshake de TODOS (tick 0 con todos enganchados) y arranca el bucle a ritmo real (34 ms/tick por defecto);
+  5. muestrea la **CPU del cgroup** de cada contenedor durante la batalla (Docker la devuelve a 0 en cuanto el bot sale tras `SHUTDOWN`);
+  6. al terminar, replay del `ProtocolServer` y limpieza incondicional.
+- **Descalificaciones del motor**: el motor descalifica **vehículos** (`veh_N`); el ejecutor las traduce a **bots** (antes no: un bot descalificado por timeouts nunca quedaba `disqualified`).
+- **Espectador**: `attachBattle` al empezar, `detachBattle` 3 s después ([websocket.md](websocket.md)).
 
-- `ensureRichStats` → `runStatsJob` (replay-service, `stats.ts`). Re-simula el replay y escribe `battle_stats(battle_id, bot_id, stats jsonb)` con borrado e inserción idempotentes.
-- Datos: daño, disparos, aciertos, precisión, kills, banderas, minas, *timeouts*, `perModule` y `cpuMs`. `cpuMs` es `null` en este camino porque sólo lo mide el runner de contenedores.
-- `process_result`: en práctica no hace nada. En torneo cierra la serie del *match*, avanza el cuadro y encola `update_standings`, que aplica el Elo y la clasificación ([tournaments.md](tournaments.md)).
+### 8. Cierre exactamente una vez (`finishBattle`)
+
+En **una transacción**:
+
+1. `UPDATE battles SET status='finished', finished_at, failure_kind, result, final_state_hash, engine_versions, lease_expires_at=NULL WHERE id AND status='running' AND claimed_by=:owner`. **Si no es exactamente 1 fila → rollback y no se escribe nada** (otro titular la cerró o recuperó).
+2. Ingesta del replay (`ingestReplay`) **dentro** de la transacción, con la fila bloqueada: un finalizador perdedor nunca pisa `<battleId>.replay`. `replay_ref`, `replay_hash`.
+3. `participants.outcome` (`win|loss|draw|disqualified`) y `participants.cpu_ms` (sólo si se midió; nunca una estimación).
+4. `jobs.process_result` con `dedupe_key=process_result:<id>`.
+
+Después, `runStatsJob` (re-simulación del replay) escribe `battle_stats` (forma canónica: daño, disparos, aciertos, precisión, kills, banderas, minas, timeouts, `perModule`, `cpuMs` desde `participants.cpu_ms`).
 
 ### 9. Replay y visor
 
-- **API**: `GET /api/v1/battles/{id}` (resultado), `GET /api/v1/battles/{id}/stats`, `GET /api/v1/replays/{id}` (fichero) y `POST /api/v1/replays/{id}/verify`.
-- **Gateway**: `/replays/*` va directo al replay-service y es **anónimo** ([TD-004](../roadmap/technical-debt.md#td-004)).
-- **Web**: `#/battles` enlaza «Ver replay» (`#/replay/<id>?t=0`). El reproductor descarga índice y segmentos, pero **falla al arrancar Phaser** (`getScene("viewer")` antes del boot, [TD-009](../roadmap/technical-debt.md#td-009)). Ver [frontend.md](frontend.md).
+`GET /api/v1/battles/{id}` (con `result`, `startedAt`, `finishedAt`, `replayAvailable`, `replayHash`, `participants[].outcome/cpuMs`), `GET /battles/{id}/stats`, `GET /replays/{id}`, `POST /replays/{id}/verify`. Visor y reproductor: [frontend.md](frontend.md) (DEV-D).
 
-## Los dos caminos de ejecución
+## Autoridad única de ejecución
 
-**Estado ACTUAL, no deseado.** Hay dos rutas de código que pueden ejecutar la misma batalla:
-
-| | Camino A — worker (activo) | Camino B — `/run` real (apagado) |
+| Paso | Quién | Dónde |
 |---|---|---|
-| Disparo | Automático: `POST /battles` inserta `jobs.run_battle` | Manual: `POST /api/v1/battles/{id}/run` (rol `user`) |
-| Ejecutor | `tournament-worker`, motor en proceso | API → `arena-engine` `POST /run` → contenedores vía `s9-docker-proxy` |
-| Agentes | `HunterBot` para todos | Código real del bot, artefacto firmado |
-| Reserva | `UPDATE status='running'` sin condición | `claimBattleForRun`: `UPDATE … WHERE status='scheduled'` atómico |
-| Cierre | Escribe `finished`, resultado, replay, stats | Con `completed` la deja `running`: **no escribe `finished` ni resultado**. Ingiere el replay si hay replay-service |
-| Activación | Siempre | `S9_ENABLE_REAL_BATTLE_RUNS=1` **y** launcher cableado (`ARENA_ENGINE_URL` + secreto). En arena-engine también `DOCKER_PROXY_URL` |
-| Hoy | Ejecuta todas las batallas | `503 real_battle_runs_disabled` |
+| Crea (agenda) | API | `createPracticeBattle` / scheduler de torneos |
+| Encola | API / scheduler | `jobs.run_battle`, dedupe `run_battle:<id>` |
+| Reserva | tournament-worker | `claimBattle` (UPDATE condicionado + lease) |
+| Ejecuta | tournament-worker | `makeEngineExecutor` + `containerAgents` → contenedores de los bots |
+| Finaliza y escribe result, outcome, replay_ref/hash, cpu_ms | tournament-worker | `finishBattle` (condicionado al titular) |
+| Stats | tournament-worker (librería del replay-service) | `runStatsJob` |
+| Rating / standings | tournament-worker | `process_result` → `update_standings` |
 
-**Riesgo de doble ejecución** si se encendiera B tal cual ([TD-002](../roadmap/technical-debt.md#td-002)):
+`POST /api/v1/battles/{id}/run` **ya no ejecuta**: si la batalla está `scheduled`, se asegura de que su trabajo está encolado (idempotente) y responde `202 {delegatedTo:"tournament-worker"}`; si no, `409 invalid_state`. La API ya no tiene reserva propia ni techo de concurrencia: el techo es el número de huecos del worker (`computeConcurrency`).
 
-- **El worker gana la carrera**: `POST /battles` ya encoló `run_battle`. El worker suele reclamarlo en segundos y pone `running`, así que `/run` responde `409 invalid_state`. El usuario nunca vería su código ejecutado.
-- **`/run` gana la carrera**: reserva `scheduled→running`. El job del worker sigue en la cola. `loadBattle` no ve `finished` y vuelve a ejecutar la batalla con `HunterBot`, escribe `finished` y un replay bajo el mismo `battleId`.
-- **El techo de concurrencia** de `/run` (`S9_MAX_CONCURRENT_REAL_BATTLE_RUNS`, 1 por defecto) cuenta filas `running` de ambos caminos, pero el worker no lo respeta.
-
-Activar B exige antes un único dueño de la ejecución (ver [pending-features.md](../roadmap/pending-features.md) y [readiness.md](../operations/readiness.md)).
+Garantías (cada una con test que se pone rojo, ver Verificación): doble POST `/run` → un trabajo; trabajos duplicados + dos workers → una ejecución; worker muerto → otro recupera tras caducar el lease; titular caducado → no puede cerrar; sin driver → no hay HunterBot implícito.
 
 ## Persistencia y estados
 
 | Tabla | Columnas relevantes | Estados (CHECK) |
 |---|---|---|
-| `battles` | `status`, `official`, `mode`, `ruleset_id`, `map_id`, `map_version`, `seed`, `seed_commitment`, `seed_reveal_proof`, `result`, `failure_kind`, `replay_ref`, `replay_hash`, `final_state_hash`, `engine_versions`, `tournament_id`, `match_id`, `spectator_mode`, `started_at`, `finished_at` | `status ∈ scheduled, running, finished, failed`. `failure_kind ∈ none, bot_timeout, bot_crash, infrastructure`. `spectator_mode ∈ delayed, visible` |
-| `participants` | `battle_id`, `bot_id`, `version`, `team`, `outcome`, `cpu_ms` | `outcome ∈ win, loss, draw, disqualified` (NULL hasta terminar) |
-| `jobs` | `kind`, `payload`, `status`, `attempts`, `max_attempts`, `run_after`, `locked_by`, `locked_at`, `last_error`, `error_class`, `dedupe_key` | `status ∈ queued, running, done, failed, needs_review`. `error_class ∈ sporting, infrastructure` |
+| `battles` | `status`, `official`, `mode`, `ruleset_id`, `map_id`, `map_version`, `seed`, `result`, `failure_kind`, `replay_ref`, `replay_hash`, `final_state_hash`, `engine_versions`, `started_at`, `finished_at`, **`claimed_by`, `lease_expires_at`, `run_attempts`** (migración `013_battle_claim`) | `status ∈ scheduled, running, finished, failed`; `failure_kind ∈ none, bot_timeout, bot_crash, infrastructure` |
+| `participants` | `battle_id`, `bot_id`, `version`, `team`, `outcome`, `cpu_ms` | `outcome ∈ win, loss, draw, disqualified` |
+| `jobs` | `kind`, `payload`, `status`, `attempts`, `locked_by`, `locked_at`, `dedupe_key`, `last_error`, `error_class` | `queued, running, done, failed, needs_review` |
 | `battle_stats` | `battle_id`, `bot_id`, `stats` | — |
 
-Transiciones de `battles.status` en el camino A:
+Transiciones de `battles.status` (BATTLE_STATUS):
 
-- `scheduled → running → finished`.
-- Ante un fallo técnico, `running → scheduled` y reintento. Agotados los reintentos, `→ failed`.
+- `scheduled → running` sólo por `claimBattle`; `running → running` (nuevo titular) sólo con el lease caducado.
+- `running → finished` sólo por el titular vigente (`finishBattle`).
+- `running → scheduled` ante fallo técnico, sólo si la reserva sigue siendo del que falla.
+- `scheduled|running(lease caducado) → failed (infrastructure)` al agotar reintentos (`markBattleForReview`); nunca toca una `finished` ni una con lease vivo de otro.
 
-Hay un caso que se ve como error sin serlo: `failure_kind='none'` se pinta en `#/battles` como «finished (none)» en rojo ([TD-022](../roadmap/technical-debt.md#td-022)).
+**PK de `participants` = (battle_id, bot_id)**: un mismo bot no puede estar en dos bandos ni dos veces en la misma batalla. La API lo rechaza con 400. No impide nada útil hoy (un bot contra sí mismo se juega con dos versiones distintas… que también comparten `bot_id`, así que **tampoco** es posible enfrentar v1 contra v2 del mismo bot). Si se quisiera, haría falta cambiar la PK a `(battle_id, bot_id, version)` o a un id de participante.
+
+## BATTLE_RESULT: forma de `battles.result`
+
+```json
+{
+  "schema": "battle-result/v1",
+  "winner": "red",
+  "ticks": 726,
+  "score": { "red": 1, "blue": 0 },
+  "disqualified": [],
+  "endReason": "completed",
+  "agents": "container"
+}
+```
+
+| Campo | Significado |
+|---|---|
+| `schema` | Versión de la forma (`battle-result/v1`) |
+| `winner` | Equipo ganador o `"draw"`. El ganador **por bot** es `participants.outcome` |
+| `ticks`, `score` | Del motor |
+| `disqualified` | botIds descalificados (motor + administrativos + culpable deportivo) |
+| `endReason` | `completed`, `walkover` (un solo bando tras DQ administrativas), `sporting_failure` (bot culpable, sin simulación) |
+| `agents` | Quién condujo los vehículos: `container` (código real, producción), `in_process_stub` (tests), `scripted` (tests de cola) |
+
+Los campos `winner/ticks/score/disqualified` son los históricos (los leen `results.ts`, la API pública y la web); el resto es aditivo. Junto al resultado: `started_at`, `finished_at`, `replay_ref`, `replay_hash`, `final_state_hash`, `engine_versions` (incluye `rulesetEngine`) y `participants.cpu_ms`.
+
+## Uso
+
+Crear y seguir una batalla por API:
+
+```bash
+curl -X POST https://arena.example.internal/api/v1/battles -H "Authorization: Bearer $TOKEN" \
+  -d '{"mode":"deathmatch","rulesetId":"mvp-default","mapId":"mvp-arena-01",
+       "participants":[{"botId":"<mi-bot>","version":1,"team":"red"},{"botId":"<bot-publico>","version":3,"team":"blue"}]}'
+# 202 {id, status:"scheduled", …}
+curl https://arena.example.internal/api/v1/battles/<id>        # status, result, participants[].outcome
+curl https://arena.example.internal/api/v1/battles/<id>/stats  # battle_stats por bot
+```
 
 ## Errores / limitaciones
 
 | Situación | Dónde | Lo que se ve |
 |---|---|---|
-| Web crea batalla en cualquier modo | API paso 2.3 | `400` «rulesetId desconocido» en rojo |
-| Versión no publicada (todas, hoy) | API paso 2.5 | `409 bot_not_published` |
-| Deathmatch con equipos compartidos, `zone_control` en un mapa sin zonas de captura, CTF sin banderas/bases | Motor (`createMode`) | El worker lo clasifica como **infraestructura**. Reintenta 3 veces y deja la batalla `failed (infrastructure)`, aunque el error es de configuración del usuario |
-| Batalla muy rápida | Worker | Casi nunca se llega a verla `running` en directo |
-| Ejecución real pedida | API `/run` | `503 real_battle_runs_disabled` / `runner_unavailable` |
-| Carreras de doble envío | API | Algunas rutas devuelven `500` en lugar de `409` ([TD-013](../roadmap/technical-debt.md#td-013)) |
+| Bot privado ajeno o inexistente | API | `404 bot_not_found` |
+| Bot repetido / `team` inválido | API | `400` |
+| Versión no publicada | API | `409 bot_not_published` |
+| Sandbox no configurado en el worker (`DOCKER_PROXY_URL`, `ARENA_ENGINE_HOST` o proveedor de DEV-A ausentes) | worker | Log «EJECUCIÓN DE BATALLAS DESACTIVADA»; las batallas quedan `scheduled` |
+| No se puede lanzar un contenedor, ningún bot conecta, postura no conforme | worker | Infraestructura: reintento ×3 y `failed (infrastructure)` |
+| Un bot conecta y otro no | worker | Derrota deportiva del ausente (`bot_crash`, `endReason: sporting_failure`) |
+| Bot que deja de responder | motor | Descalificado por timeouts → `participants.outcome = disqualified` |
+| Deathmatch con equipos compartidos, ZC sin zonas, CTF sin banderas | motor | `failed (infrastructure)` tras 3 reintentos (error de configuración del usuario clasificado como infraestructura; pendiente validarlo en la API) |
+| Trabajo duplicado de una batalla en curso | worker | `needs_review` con `[battle_busy]`; la batalla no se toca |
+
+Limitaciones:
+
+- **CPU**: es la última muestra (cada 500 ms) del contador del cgroup antes de que el bot salga: cota inferior de lo consumido, incluye arranque del intérprete y SDK.
+- La batalla corre a **ritmo real** (≈5 min para 9 000 ticks); el `tickIntervalMs` sólo se acelera en tests.
+- Los contenedores parados no se borran (el proxy no expone `DELETE`): limpieza operativa pendiente (ver deuda propuesta en el informe de DEV-B).
+- La API no valida modo↔mapa ni composición por modo.
 
 ## Estado actual
 
-- **FUNCIONA ACTUALMENTE**: la API crea batallas con un `rulesetId` presente en la BD (`mvp-default`), siempre que los bots tengan una versión `published`/`frozen`; esa versión sólo existe en datos de prueba. El worker las juega y escribe resultado, replay y estadísticas.
-- **PARCIAL**: el torneo es la única vía de la UI que llega a jugar batallas, y requiere rol `organizer` y bots publicados ([tournaments.md](tournaments.md)).
-- **PENDIENTE**: ejecución del código real de los bots; un único camino de ejecución; validación de propiedad, modo↔mapa y composición; ganador y estadísticas en la web.
+- **FUNCIONA (entorno aislado, RUNTIME_VERIFIED)**: API → cola → worker → contenedores con el código real de dos bots → motor → resultado, outcome, replay verificable, stats y CPU reales.
+- **PARCIAL (producción)**: el código está, pero no se activa hasta integrar el proveedor de artefactos de DEV-A y aplicar los cambios de compose (worker en la red `arena`, `DOCKER_PROXY_URL`, `ARENA_ENGINE_HOST`).
+- **PENDIENTE**: validación modo↔mapa y composición en la API; borrado de contenedores parados.
 
 ## Documentación relacionada
 
-- Usuario: [Batallas](../user/battles.md), [Visor](../user/viewer.md), [Replays](../user/replays.md)
-- Técnica: [api.md](api.md), [engine.md](engine.md), [game-modes.md](game-modes.md), [bots.md](bots.md), [replays.md](replays.md), [websocket.md](websocket.md), [tournaments.md](tournaments.md)
-- Arquitectura (A): [data-flow.md](data-flow.md), [queue.md](queue.md), [workers.md](workers.md), [database.md](database.md), [security.md](security.md)
-- Operación (C): [readiness.md](../operations/readiness.md), [configuration.md](../operations/configuration.md), [diagnostics.md](../operations/diagnostics.md)
-- Deuda: [TD-001](../roadmap/technical-debt.md#td-001), [TD-002](../roadmap/technical-debt.md#td-002), [TD-003](../roadmap/technical-debt.md#td-003), [TD-005](../roadmap/technical-debt.md#td-005), [TD-009](../roadmap/technical-debt.md#td-009), [TD-015](../roadmap/technical-debt.md#td-015), [TD-016](../roadmap/technical-debt.md#td-016)
-- Histórico absorbido: R9 (creación de batallas), R6.2 (ejecución real), Carril I (gate de ejecución), R12 (preparación de batallas) y el smoke containerizado, en `docs/history/disenos/` y `docs/testing/smoke/` (ver [DOC-MIGRATION-MAP](../DOC-MIGRATION-MAP.md)).
+- Usuario: [Batallas](../user/battles.md), [Estadísticas](../user/statistics.md), [Visor](../user/viewer.md), [Replays](../user/replays.md)
+- Técnica: [workers.md](workers.md), [queue.md](queue.md), [engine.md](engine.md), [tournaments.md](tournaments.md), [bots.md](bots.md), [replays.md](replays.md), [websocket.md](websocket.md)
+- Deuda: [TD-001](../roadmap/technical-debt.md#td-001), [TD-002](../roadmap/technical-debt.md#td-002), [TD-005](../roadmap/technical-debt.md#td-005), [TD-013](../roadmap/technical-debt.md#td-013), [TD-015](../roadmap/technical-debt.md#td-015)
 
 ## Verificación
 
-Verificado contra `27f70bb`.
+Verificado sobre la rama `fc/dev-b-battles` (base `0b8c12b`).
 
 | Afirmación | Estado | Evidencia |
 |---|---|---|
-| La web envía `rulesetId` del motor (`dm_practice@1`…) | CODE_VERIFIED | `apps/web/src/pages/BattleNewPage.tsx:17-22,112-123` |
-| La API busca `rulesetId` en la tabla `rulesets` y devuelve 400 | CODE_VERIFIED | `apps/api/src/routes/battles.ts:400-401` |
-| El contenido base sólo crea el ruleset `mvp-default` | CODE_VERIFIED | `apps/api/src/db/seeds/dev.ts:37,75-85` |
-| 400 en los 4 modos desde la web, en navegador real | RUNTIME_VERIFIED | Auditoría 2026-10-15, B pasada 2 §1b (entorno aislado) |
-| Modos aceptados en práctica: 4; participantes 1..8 | CODE_VERIFIED | `routes/battles.ts:394-399` |
-| No se valida propiedad de bots ni modo↔mapa | CODE_VERIFIED | `routes/battles.ts:392-443` (ausencia); auditoría B p2 §5 |
-| Se encola `run_battle` sin `dedupe_key` | CODE_VERIFIED | `routes/battles.ts:441` |
-| El worker usa `HunterBot` para todos los vehículos | CODE_VERIFIED | `apps/tournament-worker/src/engine-executor.ts:51,82,176`; `main.ts:65` |
-| El worker resuelve el ruleset por modo e ignora `rulesets.config` | CODE_VERIFIED | `engine-executor.ts:101-117` |
-| `suspensions`/`artifactGuard` no se cablean | CODE_VERIFIED | `apps/tournament-worker/src/main.ts:77-107` |
-| El worker marca `running` sin condición | CODE_VERIFIED | `apps/tournament-worker/src/battle-runner.ts:142` |
-| `/run` reserva atómicamente y no escribe `finished` | CODE_VERIFIED | `routes/battles.ts:62-68,683-689,735-742` |
-| `/run` apagado por flag | CODE_VERIFIED / RUNTIME_VERIFIED | `apps/api/src/battle-run.ts:83-90`; auditoría B p1 (503) |
-| Reintentos 3, backoff exponencial, `needs_review` | CODE_VERIFIED | `apps/tournament-worker/src/queue.ts:150-176`; `battle-runner.ts:285-292` |
-| Error de composición tratado como infraestructura | CODE_VERIFIED / RUNTIME_VERIFIED | `apps/arena-engine/src/sim/modes.ts:132-146`, `engine-executor.ts:271-274`; auditoría B p1 §B7 |
-| Batallas de 0,2–2,6 s, sin ritmo real | RUNTIME_VERIFIED | Auditoría B p1 §B7/B10; `engine-executor.ts:240-243` |
-| Activar `/run` provocaría doble ejecución | DESIGN_ONLY (derivado del código, no ejecutado) | `battle-runner.ts:117-142` + `routes/battles.ts:683` |
+| La API encola con dedupe en la misma transacción que la batalla | CODE_VERIFIED | `apps/api/src/routes/battles.ts:52`, `:468` |
+| Propiedad/visibilidad de participantes; 404 indistinguible | CODE_VERIFIED + test | `routes/battles.ts:416`; `apps/api/src/battles-create-ownership.test.ts` |
+| `/run` delega y no ejecuta | CODE_VERIFIED + test | `routes/battles.ts:626`; `apps/api/src/battle-run.test.ts` |
+| Reserva atómica con lease | CODE_VERIFIED + test | `apps/tournament-worker/src/battle-runner.ts:164`; `battle-lifecycle.test.ts` («8 reservas…», «trabajos DUPLICADOS…») |
+| Cierre sólo por el titular vigente | CODE_VERIFIED + test | `battle-runner.ts:470`; `battle-lifecycle.test.ts` («titular cuya reserva caducó…») |
+| `markBattleForReview` no toca batallas con lease vivo | CODE_VERIFIED | `battle-runner.ts:522` |
+| Sin driver de agentes no hay ejecutor | CODE_VERIFIED + test | `engine-executor.ts:133`; `battle-lifecycle.test.ts` («sin driver LANZA») |
+| Ruleset resuelto con `resolveBattleRuleset` | CODE_VERIFIED | `engine-executor.ts:155` |
+| DQ del motor traducida a bot | CODE_VERIFIED + test | `engine-executor.ts:310`; `battle-lifecycle.test.ts` («B6…») |
+| Postura de contenedor verificada; no-show = deportivo | CODE_VERIFIED | `container-agents.ts:190`, `:210` |
+| Producción: worker con `containerAgents`, sin stub, no reclama `run_battle` sin sandbox | CODE_VERIFIED | `apps/tournament-worker/src/main.ts:72`, `:115` |
+| E2E real: código de dos bots en contenedores, ganador y stats lo prueban | RUNTIME_VERIFIED (aislado, Docker rootless) | `apps/tournament-worker/src/container-battle-e2e.test.ts` con `S9_RUN_REAL_DOCKER_E2E=1`: Artillero `win` (1 kill, 13 disparos aceptados, 122 intentos, 461,7 de daño), Pacifista `loss` (0 intentos), `agents:"container"`, CPU 570/537 ms, `verify.matches=true` |
+| Producción sin activar | DESIGN_ONLY | depende de DEV-A (`bot-launch.ts`) y de compose (REVIEW) |

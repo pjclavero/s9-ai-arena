@@ -32,7 +32,7 @@ a polling de la BD y lo dice en sus logs.
 
 | `kind` | Productor | Consumidor | Payload |
 |---|---|---|---|
-| `run_battle` | api (`POST /battles`, siempre); tournament-worker (calendario de torneo, con `dedupe_key`) | tournament-worker | `{ battleId }` |
+| `run_battle` | api (`POST /battles`, en la misma transacción que la batalla; `POST /battles/{id}/run` sólo re-encola) y tournament-worker (calendario de torneo); SIEMPRE con `dedupe_key = run_battle:<battleId>` | tournament-worker (sólo si tiene sandbox configurado) | `{ battleId }` |
 | `generate_schedule` | api (cerrar inscripciones de un torneo) | tournament-worker | `{ tournamentId }` |
 | `tournament_dry_run` | api | tournament-worker | `{ tournamentId }` |
 | `process_result` | tournament-worker (al terminar una batalla; `dedupe_key = process_result:<battleId>`) | tournament-worker | `{ battleId }` |
@@ -52,7 +52,7 @@ queued ──claim──► running ──ok────────────
 
 - Backoff: `min(60 s, 1 s × 2^attempts)` (`apps/tournament-worker/src/queue.ts:167`).
 - Un `running` cuyo worker murió se vuelve a reclamar cuando vence el bloqueo.
-- **Idempotencia:** `run_battle` no re-ejecuta una batalla ya `finished`. Pero **sí** puede ejecutar una batalla que esté `running` por otro camino ([TD-002](../roadmap/technical-debt.md#td-002)).
+- **Idempotencia:** `run_battle` no re-ejecuta una batalla ya `finished`, y la **reserva atómica** de la batalla (`claimBattle`, con lease) impide ejecutarla dos veces aunque haya trabajos duplicados o dos workers. Un duplicado cuya batalla está `running` con lease vivo termina en `needs_review` con `[battle_busy]` sin tocar la batalla. Mientras corre una batalla, el worker renueva `jobs.locked_at` para que su trabajo no se considere huérfano ([battles.md](battles.md#autoridad-única-de-ejecución)).
 
 ## Redis: claves y uso real
 
