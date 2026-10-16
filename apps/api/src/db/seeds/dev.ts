@@ -157,43 +157,48 @@ export async function seedContent(db: Knex): Promise<void> {
     .where({ map_id: mapDoc.mapId, version: mapDoc.version })
     .update({ supported_modes: JSON.stringify(mapDoc.meta?.supportedModes ?? []) });
 
-  // --- FC-C · mvp-arena-01 v2: MISMA geometría, declarando los modos que el mapa
-  //     soporta DE VERDAD según checkMode de E4 (4 spawns de 2 equipos + bases y
-  //     banderas de 2 equipos ⇒ deathmatch, team_deathmatch y capture_the_flag; sin
-  //     zona de captura ⇒ NO zone_control). La v1 es inmutable: se publica una v2.
-  const v2 = mvpArenaV2(mapDoc);
+  // --- FC-C · mvp-arena-02: MISMA geometría que mvp-arena-01, declarando los modos
+  //     que esa arena soporta DE VERDAD según checkMode de E4 (4 spawns de 2 equipos +
+  //     bases y banderas de 2 equipos ⇒ deathmatch, team_deathmatch y capture_the_flag;
+  //     sin zona de captura ⇒ NO zone_control). Es un mapa aparte (no una v2 de
+  //     mvp-arena-01): la v1 es inmutable y otros carriles usan "mvp-arena-01 v2" como
+  //     versión inexistente en sus pruebas de fail-closed.
+  const arena02 = mvpArena02(mapDoc);
+  await db("maps").insert({ id: arena02.mapId, name: arena02.meta.name }).onConflict("id").ignore();
   await db("map_versions")
     .insert({
-      map_id: v2.mapId,
-      version: v2.version,
+      map_id: arena02.mapId,
+      version: arena02.version,
       state: "published",
-      checksum: v2.checksum,
-      width_m: v2.widthM,
-      height_m: v2.heightM,
-      supported_modes: JSON.stringify(v2.meta.supportedModes),
-      content: JSON.stringify(v2),
+      checksum: arena02.checksum,
+      width_m: arena02.widthM,
+      height_m: arena02.heightM,
+      supported_modes: JSON.stringify(arena02.meta.supportedModes),
+      content: JSON.stringify(arena02),
       published_at: db.fn.now(),
     })
     .onConflict(["map_id", "version"])
     .ignore();
 }
 
-/** Modos que mvp-arena-01 soporta realmente (ver comentario en seedContent). */
-export const MVP_ARENA_V2_MODES = ["deathmatch", "team_deathmatch", "capture_the_flag"] as const;
+export const MVP_ARENA_02_ID = "mvp-arena-02";
+/** Modos que la geometría de mvp-arena-01 soporta realmente (ver comentario en seedContent). */
+export const MVP_ARENA_02_MODES = ["deathmatch", "team_deathmatch", "capture_the_flag"] as const;
 
-/** v2 derivada de la v1 del repo: solo cambia `version` y `meta.supportedModes`; checksum canónico. */
-export function mvpArenaV2(v1: Record<string, any>) {
-  const { checksum: _drop, ...rest } = v1;
+/** mvp-arena-02 derivado de mvp-arena-01: otro id/nombre y los modos reales; checksum canónico. */
+export function mvpArena02(base: Record<string, any>) {
+  const { checksum: _drop, ...rest } = base;
   return withChecksum({
     ...rest,
-    version: 2,
-    meta: { ...v1.meta, supportedModes: [...MVP_ARENA_V2_MODES] },
+    mapId: MVP_ARENA_02_ID,
+    version: 1,
+    meta: { ...base.meta, name: "Arena MVP 02", supportedModes: [...MVP_ARENA_02_MODES] },
   } as never) as unknown as {
     mapId: string;
     version: number;
     checksum: string;
     widthM: number;
     heightM: number;
-    meta: { supportedModes: string[] };
+    meta: { name: string; supportedModes: string[] };
   };
 }

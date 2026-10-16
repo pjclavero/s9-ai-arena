@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 import request from "supertest";
 import type { Express } from "express";
 import { startTestDb, type TestDbHandle } from "../testing/test-db.js";
-import { seedDev, seedContent, DEV_USERS, PLATFORM_RULESETS, MVP_ARENA_V2_MODES } from "../db/seeds/dev.js";
+import { seedDev, seedContent, DEV_USERS, PLATFORM_RULESETS, MVP_ARENA_02_ID, MVP_ARENA_02_MODES } from "../db/seeds/dev.js";
 import { tokenFor } from "../testing/helpers.js";
 import { createApp } from "../app.js";
 import { FakeBotManager } from "../services/bot-manager.js";
@@ -196,9 +196,9 @@ describe("C6 · propiedad y visibilidad de mapas (tests negativos reales)", () =
   });
 
   it("nadie salvo admin añade versiones al contenido base (mapa sin dueño)", async () => {
-    const asDev = await request(app).post("/maps/drafts").set(auth(alice)).send(editorMap("mvp-arena-01", "x"));
+    const asDev = await request(app).post("/maps/drafts").set(auth(alice)).send(editorMap(MVP_ARENA_02_ID, "x"));
     expect(asDev.status).toBe(403);
-    const asAdmin = await request(app).post("/maps/drafts").set(auth(admin)).send(editorMap("mvp-arena-01", "x"));
+    const asAdmin = await request(app).post("/maps/drafts").set(auth(admin)).send(editorMap(MVP_ARENA_02_ID, "x"));
     expect(asAdmin.status).toBe(201);
   });
 
@@ -273,20 +273,22 @@ describe("C7 · rulesets reales y compatibilidad modo ↔ ruleset ↔ mapa", () 
     expect(draft).toMatchObject({ ok: false, code: "map_not_published" });
   });
 
-  it("el mapa de serie declara los modos que soporta de verdad (v1 corregida, v2 con deathmatch, jugable)", async () => {
+  it("los mapas de serie declaran los modos que soportan de verdad (v1 corregida, mvp-arena-02 con deathmatch, jugable)", async () => {
     const v1 = await h.db("map_versions").where({ map_id: "mvp-arena-01", version: 1 }).first();
     expect(v1.supported_modes).toEqual(MVP.meta.supportedModes);
-    const v2 = await h.db("map_versions").where({ map_id: "mvp-arena-01", version: 2 }).first();
-    expect(v2.state).toBe("published");
-    expect(v2.supported_modes).toEqual([...MVP_ARENA_V2_MODES]);
-    const resolved = await resolveBattleMap(h.db, "mvp-arena-01", 2);
+    // mvp-arena-01 sigue teniendo SOLO la v1 (otros carriles usan "v2" como inexistente)
+    expect(await h.db("map_versions").where({ map_id: "mvp-arena-01", version: 2 }).first()).toBeUndefined();
+    const a2 = await h.db("map_versions").where({ map_id: MVP_ARENA_02_ID, version: 1 }).first();
+    expect(a2.state).toBe("published");
+    expect(a2.supported_modes).toEqual([...MVP_ARENA_02_MODES]);
+    const resolved = await resolveBattleMap(h.db, MVP_ARENA_02_ID, 1);
     expect(resolved.ok, resolved.message).toBe(true);
-    for (const mode of MVP_ARENA_V2_MODES) {
+    for (const mode of MVP_ARENA_02_MODES) {
       const rs = PLATFORM_RULESETS.find((r) => r.mode === mode)!;
-      expect((await checkBattleContent(h.db, { mode, rulesetId: rs.id, mapId: "mvp-arena-01", mapVersion: 2 })).ok).toBe(true);
+      expect((await checkBattleContent(h.db, { mode, rulesetId: rs.id, mapId: MVP_ARENA_02_ID, mapVersion: 1 })).ok).toBe(true);
     }
-    // zone_control NO: el mapa no tiene zona de captura
-    const zc = await checkBattleContent(h.db, { mode: "zone_control", rulesetId: "zone-control-mvp", mapId: "mvp-arena-01", mapVersion: 2 });
+    // zone_control NO: la arena no tiene zona de captura
+    const zc = await checkBattleContent(h.db, { mode: "zone_control", rulesetId: "zone-control-mvp", mapId: MVP_ARENA_02_ID, mapVersion: 1 });
     expect(zc.ok).toBe(false);
   });
 
