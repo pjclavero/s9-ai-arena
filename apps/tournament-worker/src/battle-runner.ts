@@ -374,6 +374,11 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
       await finishBattle(db, battle, participants, execution, adminDq, "none", owner, "completed", deps.replaysDir);
     } catch (err) {
       if (err instanceof LostBattleClaim) throw new InfrastructureFailure("battle_busy", err.message);
+      // Cualquier otro fallo NO deportivo tras reservar (p. ej. no se pudo escribir
+      // el replay dentro de la transacción de cierre, que hizo rollback): se libera
+      // la reserva si sigue siendo nuestra, para que el reintento o la revisión
+      // manual (markBattleForReview) la vean; nunca queda `running` huérfana.
+      if (!(err instanceof SportingFailure)) await releaseBattleClaim(db, battleId, owner).catch(() => undefined);
       throw err;
     } finally {
       clearInterval(timer);

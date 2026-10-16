@@ -19,6 +19,7 @@ import { seedDev } from "../../api/src/db/seeds/dev.js";
 import { makeEngineExecutor } from "./engine-executor.js";
 import { InfrastructureFailure } from "./errors.js";
 import { createBots, insertScheduledBattle, type TestBot } from "./testing/fixtures.js";
+import { testStubAgents } from "./testing/stub-agents.js";
 
 let h: TestDbHandle;
 let bots: TestBot[];
@@ -44,7 +45,7 @@ describe("B9 · el worker no sustituye las reglas en silencio", () => {
   it.each(["modo_inventado", "__proto__", "constructor", "toString"])(
     'mode="%s" → fallo técnico explícito, NUNCA se juega como deathmatch',
     async (mode) => {
-      const executor = makeEngineExecutor({ db: h.db });
+      const executor = makeEngineExecutor({ db: h.db, agents: testStubAgents() });
       const ctx = await contextForMode(mode);
 
       await expect(executor(ctx)).rejects.toBeInstanceOf(InfrastructureFailure);
@@ -57,7 +58,7 @@ describe("B9 · el worker no sustituye las reglas en silencio", () => {
     // No se ejecuta la batalla entera: basta con comprobar que la resolución del
     // ruleset NO es lo que falla — si el modo se resolviera mal, el rechazo sería
     // el mismo mensaje del test anterior.
-    const executor = makeEngineExecutor({ db: h.db, rulesetOverrides: { timeLimitTicks: 30 } });
+    const executor = makeEngineExecutor({ db: h.db, agents: testStubAgents(), rulesetOverrides: { timeLimitTicks: 30 } });
     const ctx = await contextForMode("team_deathmatch");
     let error: unknown;
     try {

@@ -124,6 +124,9 @@ export interface EngineExecutorOptions {
 }
 
 export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor {
+  if (opts.agents && opts.agentResolver) {
+    throw new Error("makeEngineExecutor: `agents` y `agentResolver` son excluyentes (no se adivina cuál usar)");
+  }
   const driver = opts.agents ?? (opts.agentResolver ? inProcessAgents(opts.agentResolver) : undefined);
   if (!driver) {
     throw new Error(

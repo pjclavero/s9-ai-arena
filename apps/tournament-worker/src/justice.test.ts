@@ -25,6 +25,7 @@ import { TournamentWorker } from "./worker.js";
 import { makeDefaultHandlers } from "./engine-executor.js";
 import { commitSeedBatch, deriveBattleSeed } from "./scheduler.js";
 import { createBots, type TestBot } from "./testing/fixtures.js";
+import { testStubAgents } from "./testing/stub-agents.js";
 
 let h: TestDbHandle;
 let app: Express;
@@ -48,6 +49,8 @@ beforeAll(async () => {
 
   const wired = await makeDefaultHandlers({
     db: h.db,
+    // TD-002 · sin agente por defecto: los stubs se piden EXPLÍCITAMENTE (sólo tests).
+    agents: testStubAgents(),
     rulesetOverrides: { timeLimitTicks: 360, scoreToWin: 1 },
     replaysDir: mkdtempSync(join(tmpdir(), "e9-justice-")),
   });
