@@ -25,8 +25,10 @@ beforeAll(() => {
 });
 
 describe("T7.5 conformidad con el contrato de E1", () => {
-  it("el contrato tiene 65 operaciones (62 + listPublicReplays/getPublicReplay/downloadPublicReplay de R11, contrato 0.8.0)", () => {
-    expect(loadContract().operations.length).toBe(65);
+  // DEV-A (cierre funcional 2026-10, A9) añade 5: getBotVersion, getBotVersionFiles,
+  // getBotVersionArtifact, diffBotVersions, cloneBotVersion.
+  it("el contrato tiene 70 operaciones (62 + 3 de R11, contrato 0.8.0, + 5 de versionado de bots A9)", () => {
+    expect(loadContract().operations.length).toBe(70);
   });
 
   it("toda operación del contrato está implementada o declarada pendiente con motivo", () => {
