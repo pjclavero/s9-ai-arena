@@ -20,8 +20,11 @@ ARG TS_VERSION=5.8.3
 WORKDIR /src
 COPY sdks/javascript/ ./
 COPY runtimes/node/sdk-package.mjs /sdk-package.mjs
+# Sólo la librería que exporta el paquete (main = src/index.ts y sus imports), no el CLI
+# arena-sim, que depende del monorepo: ver runtimes/node/tsconfig.sdk-runtime.json.
+COPY runtimes/node/tsconfig.sdk-runtime.json ./tsconfig.sdk-runtime.json
 RUN npm install --no-save --ignore-scripts typescript@${TS_VERSION} \
- && npx tsc -p tsconfig.json --noEmit false --outDir /out/dist --declaration \
+ && npx tsc -p tsconfig.sdk-runtime.json \
  && node /sdk-package.mjs /src/package.json /out/package.json \
  && test -f /out/dist/index.js || (echo "ERROR R6.1: el SDK no emitio dist/index.js"; exit 1)
 
