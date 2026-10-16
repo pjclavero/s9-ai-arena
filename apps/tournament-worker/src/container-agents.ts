@@ -106,7 +106,10 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
       try {
         host = await opts.provider.openBattle(input.battleId);
       } catch (err) {
-        throw new InfrastructureFailure("container_unavailable", `no se pudo abrir el host de la batalla: ${String(err)}`);
+        throw new InfrastructureFailure(
+          "container_unavailable",
+          `no se pudo abrir el host de la batalla: ${String(err)}`,
+        );
       }
 
       const wire = vehicles.map((_v, i) => protocolBotHandle(i));
@@ -179,7 +182,10 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
         // Postura de seguridad REAL de cada contenedor (tabla 18.2): fail closed.
         for (let i = 0; i < handles.length; i++) {
           const posture = await handles[i]!.posture().catch((err: unknown) => {
-            throw new InfrastructureFailure("container_unavailable", `no se pudo inspeccionar el contenedor: ${String(err)}`);
+            throw new InfrastructureFailure(
+              "container_unavailable",
+              `no se pudo inspeccionar el contenedor: ${String(err)}`,
+            );
           });
           const violations = complianceViolations(posture);
           if (violations.length > 0) {

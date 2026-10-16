@@ -12,9 +12,9 @@ Un torneo pasa por estos pasos:
 **Hoy es la única vía de la web que llega a jugar batallas**, porque usa el ruleset `mvp-default` de la BD. Aun así:
 
 - necesita bots publicados, que el build no produce ([TD-001](../roadmap/technical-debt.md#td-001));
-- se juega con `HunterBot` ([TD-002](../roadmap/technical-debt.md#td-002));
+- sus batallas las ejecuta el worker con el código de cada bot en contenedores (verificado en aislado; activación en producción pendiente, [TD-002](../roadmap/technical-debt.md#td-002));
 - siempre en `mvp-arena-01`, porque la web no envía pool de mapas ([TD-015](../roadmap/technical-debt.md#td-015));
-- la clasificación pública de la web lee otra temporada distinta de la que escribe el worker (hallazgo nuevo; ver [abajo](#clasificación-y-rating)).
+- la temporada de la clasificación tiene ya una sola fuente (`STAT_SEASON`, ver [abajo](#clasificación-y-rating)).
 
 ## Índice
 
@@ -101,13 +101,13 @@ La ejecución de cada batalla es la descrita en [battles.md](battles.md). El loa
 
 ## Clasificación y rating
 
-- `GET /standings?mode=&seasonId=` es anónimo y tiene caché de 60 s. **Si no se pasa `seasonId`, la API usa `"current"`** (`routes/standings.ts:17`).
-- El worker escribe con `tournaments.season_id`, que por defecto es `'season-1'`. La web `#/ranking` nunca envía `seasonId`, así que **la clasificación pública sale vacía aunque haya torneos terminados**.
-- Los tests de la API usan `"current"` en los dos extremos y no detectan el desajuste.
+- **STAT_SEASON** (TD-029): la temporada activa es `ACTIVE_SEASON_ID = "season-1"` en `apps/tournament-worker/src/season.ts`, única fuente que usan API y worker; coincide con el `DEFAULT` de `tournaments.season_id` (un test lo compara).
+- `GET /standings?mode=&seasonId=` es anónimo, con caché de 60 s. `seasonId` ausente, vacío o `"current"` ⇒ la temporada activa; la respuesta la indica en la cabecera `X-S9-Season`. La web `#/ranking` no envía `seasonId` y ya ve lo que escribe el worker.
+- El worker puntúa en `tournaments.season_id` resuelto con la misma función (`ratings.ts`).
 
 Es un hallazgo nuevo de esta consolidación: [TD-029](../roadmap/technical-debt.md#td-029). La auditoría vio la clasificación vacía, pero no encontró la causa.
 
-`GET /bots/{id}/rating-history?seasonId=&mode=` usa `season-1` por defecto. Devuelve los eventos Elo y el rating actual, también de bots privados ajenos ([TD-005](../roadmap/technical-debt.md#td-005)).
+`GET /bots/{id}/rating-history?seasonId=&mode=` usa la temporada activa por defecto. Devuelve los eventos Elo y el rating actual; para un bot **no público** sólo al dueño, a un miembro de su equipo (`team`) o a un admin; al resto, `404` ([TD-005](../roadmap/technical-debt.md#td-005)).
 
 ## API
 
@@ -136,12 +136,11 @@ Tablas `tournaments`, `entries` (`UNIQUE(tournament_id, bot_id)`, FK a versión 
 - **Botones sin rol**: «Cerrar inscripciones» se muestra a cualquiera y sin rol responde `403 Requiere rol organizer`.
 - **Cierre concurrente**: `close-entries` en paralelo puede dar `200` + `500` ([TD-013](../roadmap/technical-debt.md#td-013)).
 - **Fallos de infraestructura**: una batalla `failed (infrastructure)` deja su serie sin cerrar. Ver [TD-015](../roadmap/technical-debt.md#td-015).
-- **Clasificación vacía** en la web por el desajuste de temporada (arriba).
 
 ## Estado actual
 
 - **FUNCIONA ACTUALMENTE**: crear, inscribir y cerrar (con `organizer`); generación del calendario; ejecución automática; cuadro; Elo; commit-reveal de semillas. Verificado de punta a punta en navegador real en un entorno aislado, con versiones publicadas forzadas en la BD (auditoría).
-- **PARCIAL**: clasificación (se calcula y se guarda, pero la web lee otra temporada); formato `teams` (sin forma de asignar bots a equipos).
+- **PARCIAL**: formato `teams` (sin forma de asignar bots a equipos).
 - **PENDIENTE**: pool de mapas y resto de parámetros en la web, clasificación por torneo en la web, inscripción de versiones nuevas tras un torneo.
 
 ## Documentación relacionada
@@ -166,7 +165,7 @@ Verificado contra `27f70bb`.
 | `process_result` no hace nada en práctica | CODE_VERIFIED | `apps/tournament-worker/src/results.ts:328-333` |
 | Elo y `updateStandings` con `t.season_id` | CODE_VERIFIED | `apps/tournament-worker/src/standings.ts:16-45` |
 | `season_id` por defecto `season-1` | CODE_VERIFIED | `apps/api/src/db/migrations.ts:543` |
-| `GET /standings` usa `"current"` por defecto | CODE_VERIFIED | `apps/api/src/routes/standings.ts:17` |
+| `GET /standings` resuelve la temporada con STAT_SEASON | CODE_VERIFIED + test | `apps/api/src/routes/standings.ts:22`; `apps/tournament-worker/src/season.ts:24`; `apps/api/src/stat-season.test.ts` |
 | La web no envía `seasonId` | CODE_VERIFIED | `apps/web/src/pages/RankingPage.tsx:38` |
 | Torneo `round_robin` completo desde la UI (organizer) | RUNTIME_VERIFIED | Auditoría 2026-10-15, B pasada 2 §1b (entorno aislado, versiones forzadas) |
 | La clasificación sale vacía en la web | RUNTIME_VERIFIED (síntoma) / CODE_VERIFIED (causa propuesta) | Auditoría B p2 §1b («Todavía no hay clasificación»); causa por los ficheros anteriores |

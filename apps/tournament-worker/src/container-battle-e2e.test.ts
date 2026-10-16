@@ -333,15 +333,15 @@ describe.skipIf(!ENABLED)("B8 · batalla REAL con el código de dos bots en cont
     const rerun = await request(app).post(`/battles/${battleId}/run`).set("Authorization", `Bearer ${token}`);
     expect(rerun.status).toBe(409);
     const evidence = JSON.stringify({
-        e2e: "fc-b",
-        battleId,
-        result: battle.result,
-        outcomes: { artillero: pA.outcome, pacifista: pP.outcome },
-        cpuMs: { artillero: Number(pA.cpu_ms), pacifista: Number(pP.cpu_ms) },
-        shots: { artillero: sA.shotsFired, pacifista: sP.shotsFired },
-        tries: { artillero: triesA, pacifista: triesP },
-        damage: { artillero: sA.damageDealt, pacifista: sP.damageDealt },
-        kills: { artillero: sA.kills, pacifista: sP.kills },
+      e2e: "fc-b",
+      battleId,
+      result: battle.result,
+      outcomes: { artillero: pA.outcome, pacifista: pP.outcome },
+      cpuMs: { artillero: Number(pA.cpu_ms), pacifista: Number(pP.cpu_ms) },
+      shots: { artillero: sA.shotsFired, pacifista: sP.shotsFired },
+      tries: { artillero: triesA, pacifista: triesP },
+      damage: { artillero: sA.damageDealt, pacifista: sP.damageDealt },
+      kills: { artillero: sA.kills, pacifista: sP.kills },
     });
     // Evidencia legible para el informe (fuera del repo).
     if (process.env.S9_E2E_EVIDENCE) writeFileSync(process.env.S9_E2E_EVIDENCE, evidence + "\n");

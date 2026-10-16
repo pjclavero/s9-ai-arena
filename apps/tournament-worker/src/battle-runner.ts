@@ -528,7 +528,9 @@ export async function markBattleForReview(db: Knex, job: JobRow): Promise<void> 
       q
         .where({ status: "scheduled" })
         .orWhere((r) =>
-          r.where({ status: "running" }).andWhere((s) => s.whereNull("lease_expires_at").orWhere("lease_expires_at", "<", db.fn.now())),
+          r
+            .where({ status: "running" })
+            .andWhere((s) => s.whereNull("lease_expires_at").orWhere("lease_expires_at", "<", db.fn.now())),
         ),
     )
     .update({ status: "failed", failure_kind: "infrastructure", claimed_by: null, lease_expires_at: null });

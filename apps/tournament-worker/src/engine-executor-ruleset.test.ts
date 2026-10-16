@@ -58,7 +58,11 @@ describe("B9 · el worker no sustituye las reglas en silencio", () => {
     // No se ejecuta la batalla entera: basta con comprobar que la resolución del
     // ruleset NO es lo que falla — si el modo se resolviera mal, el rechazo sería
     // el mismo mensaje del test anterior.
-    const executor = makeEngineExecutor({ db: h.db, agents: testStubAgents(), rulesetOverrides: { timeLimitTicks: 30 } });
+    const executor = makeEngineExecutor({
+      db: h.db,
+      agents: testStubAgents(),
+      rulesetOverrides: { timeLimitTicks: 30 },
+    });
     const ctx = await contextForMode("team_deathmatch");
     let error: unknown;
     try {

@@ -84,7 +84,7 @@ Estados posibles:
 <a id="td-002"></a>
 ## TD-002 — Batallas ejecutadas con stub HunterBot y doble camino de ejecución
 
-- **Estado:** ABIERTA
+- **Estado:** PARCIAL (rama `fc/dev-b-battles`, sin integrar ni desplegar)
 - **Prioridad:** P0 (auditoría P0-2)
 - **Área:** Batallas (`api`, `tournament-worker`, `arena-engine`)
 - **Detectado:** 2026-10-15
@@ -105,6 +105,12 @@ Estados posibles:
   - Sacar el stub de producción.
   - Que la transición de estado sea idempotente y condicionada al estado anterior.
 - **Condición de cierre:** una batalla entre dos bots de usuario da el resultado de **su** código, se ejecuta una sola vez y queda `finished` con estadísticas. Un test de carrera lo demuestra.
+- **Avance (cierre funcional 2026-10, DEV-B):**
+  - Autoridad única: la API sólo agenda (`jobs.run_battle`, dedupe `run_battle:<id>`, en la misma transacción); `POST /battles/{id}/run` delega en la cola y ya no ejecuta (`apps/api/src/routes/battles.ts:626`).
+  - Reserva atómica con lease (`apps/tournament-worker/src/battle-runner.ts:164`) y cierre condicionado al titular (`:470`); sin `UPDATE running` incondicional.
+  - Sin stub por defecto: `makeEngineExecutor` exige un `AgentDriver` (`engine-executor.ts:133`); `HunterBot` sólo en `testing/stub-agents.ts`, que lanza con `NODE_ENV=production`; `main.ts` usa `containerAgents` o no reclama `run_battle`.
+  - RUNTIME_VERIFIED en aislado (Docker rootless): batalla creada por la API, ejecutada por el worker con el código de dos bots en contenedores (runtime Python de `runtimes/DIGESTS.lock`); el Artillero gana con 1 kill y 13 disparos, el Pacifista hace 0 intentos de disparo (`container-battle-e2e.test.ts`). Mutaciones «volver a HunterBot», «quitar la reserva atómica» y «permitir segunda finalización» ponen los tests en rojo.
+  - **Falta para CERRADA:** integrar el proveedor de artefactos de DEV-A (`createBattleLaunchHost` en `apps/bot-manager/src/bot-launch.ts`, TD-001) y los cambios de compose (worker en red `arena`, `DOCKER_PROXY_URL`, `ARENA_ENGINE_HOST`); activarlo en producción con su gate.
 
 <a id="td-003"></a>
 ## TD-003 — Costura rulesetId entre web y base de datos
@@ -148,7 +154,7 @@ Estados posibles:
 <a id="td-005"></a>
 ## TD-005 — Autorización de participantes y datos de bots ajenos
 
-- **Estado:** ABIERTA
+- **Estado:** CERRADA (en rama `fc/dev-b-battles`, pendiente de integrar)
 - **Prioridad:** P0 (auditoría P0-5)
 - **Área:** Seguridad (`api`)
 - **Detectado:** 2026-10-15
@@ -160,6 +166,7 @@ Estados posibles:
 - **Impacto:** se usa el trabajo de otros sin su consentimiento y se filtran metadatos de bots privados.
 - **Solución prevista:** autorizar a cada participante por propiedad o visibilidad, y acotar `rating-history` a la visibilidad del bot.
 - **Condición de cierre:** con un bot privado ajeno, la batalla responde 403/404 y `rating-history` también. Lo cubren tests negativos.
+- **Cierre (DEV-B, 2026-10):** `POST /battles` sólo admite bots propios, públicos o de un equipo del que el solicitante es miembro (admin: cualquiera); un privado ajeno da `404 bot_not_found`, indistinguible de uno inexistente (`apps/api/src/routes/battles.ts:416`). `GET /bots/{id}/rating-history` de un bot no público: `404` salvo dueño/equipo/admin (`apps/api/src/routes/standings.ts:42`). Tests negativos en `apps/api/src/battles-create-ownership.test.ts`; las mutaciones «aceptar bot privado ajeno» y «rating-history sin control» los ponen en rojo.
 
 <a id="td-006"></a>
 ## TD-006 — Runtime con versiones mezcladas y sin identidad de build
@@ -326,7 +333,7 @@ Estados posibles:
 <a id="td-013"></a>
 ## TD-013 — Carreras de doble envío y reglas de integridad
 
-- **Estado:** ABIERTA
+- **Estado:** PARCIAL (parte batallas, DEV-B)
 - **Prioridad:** P1 (auditoría P1-5)
 - **Área:** API
 - **Detectado:** 2026-10-15
@@ -340,6 +347,7 @@ Estados posibles:
 - **Impacto:** el usuario ve errores internos con un doble clic, y las reglas de ciclo de vida son incoherentes.
 - **Solución prevista:** mapear las violaciones de unicidad a 409, hacer idempotentes las transiciones de torneo y decidir la política de `frozen`.
 - **Condición de cierre:** los tests concurrentes devuelven 409 en lugar de 500 y la política de `frozen` es coherente en batallas y torneos.
+- **Avance (DEV-B, parte batallas):** `POST /battles` con un bot repetido o `team` inválido da `400` (antes `500` por la PK de `participants`); el alta es una transacción (batalla + participantes + trabajo); doble `POST /run` = un único trabajo. **Pendiente:** la política de `frozen` (sigue aceptándose en práctica) y el resto de rutas (registro, bots, `close-entries`).
 
 <a id="td-014"></a>
 ## TD-014 — Redirección 301 a http en la lista de replays
@@ -360,7 +368,7 @@ Estados posibles:
 <a id="td-015"></a>
 ## TD-015 — Torneos: sin pool de mapas, cierre bloqueado por failed y guardas no cableadas
 
-- **Estado:** ABIERTA
+- **Estado:** PARCIAL (DEV-B)
 - **Prioridad:** P1 (auditoría P1-7)
 - **Área:** Torneos (`tournament-worker`, `web`)
 - **Detectado:** 2026-10-15
@@ -375,6 +383,7 @@ Estados posibles:
 - **Impacto:** los torneos son frágiles y faltan las garantías documentadas de la Ronda 2.
 - **Solución prevista:** selector de `mapPool`, tratamiento de `failed` en el cierre y cableado de las dos guardas.
 - **Condición de cierre:** un torneo con una batalla fallida termina, y un artefacto manipulado queda descalificado en el camino del worker.
+- **Avance (DEV-B):** el worker descalifica administrativamente, siempre, una versión que ya no está `published|frozen` (p. ej. `suspended` tras agendar) (`battle-runner.ts:232`, test «SUSPENDIDA…»). El artefacto se verifica (firma + sha256) en el proveedor de lanzamiento de DEV-A, que falla cerrado. **Pendiente:** cablear `artifactGuard`/`suspensions` en `main.ts` (necesita la clave pública en el worker), tratar `failed` en el cierre de match/torneo, y `mapPool` (web, DEV-C).
 
 <a id="td-016"></a>
 ## TD-016 — Loadout y catálogo con efecto parcial en batalla
@@ -611,7 +620,7 @@ Estados posibles:
 
 ## TD-029 — Clasificación pública siempre vacía por desajuste de temporada
 
-- **Estado:** ABIERTA
+- **Estado:** CERRADA (en rama `fc/dev-b-battles`, pendiente de integrar)
 - **Prioridad:** P1
 - **Área:** Ranking (`api` ↔ `tournament-worker`)
 - **Detectado:** 2026-10-15, en la verificación de esta consolidación. La auditoría vio la clasificación vacía, pero no encontró la causa.
@@ -625,6 +634,7 @@ Estados posibles:
 - **Impacto:** aunque haya torneos terminados, la clasificación pública se ve vacía. Los tests de la API usan `"current"` en los dos lados y no lo detectan.
 - **Solución prevista:** una única fuente de la temporada activa (constante compartida o temporada vigente en BD) que usen la API, el worker y la web, y un test que cruce la escritura del worker con la lectura pública.
 - **Condición de cierre:** un torneo terminado aparece en `#/ranking` sin pasar `seasonId`, y un test que mezcle temporadas entre el escritor y el lector se pone rojo.
+- **Cierre (DEV-B, 2026-10):** STAT_SEASON = `ACTIVE_SEASON_ID` en `apps/tournament-worker/src/season.ts`, única fuente para API y worker; `seasonId` ausente/`current` ⇒ temporada activa (`routes/standings.ts:22`, cabecera `X-S9-Season`); el worker resuelve con la misma función (`ratings.ts:96`). `apps/api/src/stat-season.test.ts` cruza la escritura (temporada del worker) con la lectura pública sin `seasonId` y compara la constante con el DEFAULT de la columna; la mutación «quitar el alias current» lo pone en rojo. La web no necesita cambios.
 
 <a id="td-030"></a>
 

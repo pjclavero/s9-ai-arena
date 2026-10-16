@@ -4,7 +4,7 @@
 
 **«Ranking»** (`#/ranking`) es una página pública, sin cuenta, con la clasificación por modo de juego: posición, bot, rating y victorias-derrotas-empates. El rating sigue el sistema Elo (1000 de partida) y **sólo lo mueven las batallas de torneo**; las de práctica no cuentan.
 
-**Hoy la página sale vacía**, con el mensaje «Todavía no hay clasificación para este modo.», incluso después de jugar torneos. La página pide una temporada distinta de aquella en la que se guardan los resultados. Es un problema conocido: [TD-029](../roadmap/technical-debt.md#td-029). Detalle técnico en [tournaments.md](../technical/tournaments.md#clasificación-y-rating).
+La página muestra la **temporada activa** (hoy `season-1`), la misma en la que se guardan los resultados de los torneos ([TD-029](../roadmap/technical-debt.md#td-029), corregido). Si sale «Todavía no hay clasificación para este modo.», es que aún no se ha jugado ningún torneo en ese modo. Detalle técnico en [tournaments.md](../technical/tournaments.md#clasificación-y-rating).
 
 ## Índice
 
@@ -28,7 +28,7 @@
 
 ## Errores / limitaciones
 
-- **Sale vacía**: siempre, hoy (ver Resumen). Antes se atribuía sólo a la caché de un minuto.
+- Tras un torneo, la clasificación puede tardar hasta un minuto en verse (caché).
 - **PENDIENTE**:
   - clasificación de un torneo concreto;
   - clasificación por equipos (existe en la plataforma sin pantalla);
@@ -37,7 +37,7 @@
 
 ## Estado actual
 
-**PARCIAL**: la página funciona; los datos no llegan.
+**FUNCIONA ACTUALMENTE** la lectura de la temporada correcta; **PARCIAL** porque sólo hay datos cuando se juegan torneos, y la ejecución de batallas aún no está activada en este servidor ([TD-002](../roadmap/technical-debt.md#td-002)).
 
 ## Documentación relacionada
 

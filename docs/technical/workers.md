@@ -6,10 +6,10 @@ Hay dos procesos sin HTTP de negocio que reclaman trabajos de la tabla `jobs` (v
 
 | Worker | Qué hace | Estado |
 |---|---|---|
-| **tournament-worker** | ejecuta las batallas (en proceso, **con el stub HunterBot**), procesa resultados, calendarios y clasificaciones, y aloja el WebSocket de espectador | **PARCIAL** |
+| **tournament-worker** | **autoridad única de ejecución**: reserva cada batalla, lanza un contenedor por bot con su código, aloja motor + `ProtocolServer` + espectador, cierra la batalla una vez; procesa resultados, calendarios y clasificaciones | **PARCIAL** (verificado en aislado; en producción no reclama `run_battle` hasta tener sandbox y proveedor de DEV-A) |
 | **bot-build-worker** | ejecuta el pipeline de validación de versiones de bot | **falla cerrado siempre**: no hay sandbox |
 
-Ninguno ejecuta hoy código de usuario. Ver [TD-001](../roadmap/technical-debt.md#td-001) y [TD-002](../roadmap/technical-debt.md#td-002).
+El tournament-worker ejecuta el código de usuario en contenedores cuando tiene configurado el sandbox; sin él **no ejecuta batallas** (ya no cae al stub). Ver [TD-001](../roadmap/technical-debt.md#td-001) y [TD-002](../roadmap/technical-debt.md#td-002).
 
 ## Índice
 
@@ -34,35 +34,20 @@ Ninguno ejecuta hoy código de usuario. Ver [TD-001](../roadmap/technical-debt.m
 
 ### Ciclo de `run_battle`
 
-1. Carga la batalla y sus participantes. Si ya está `finished`, sólo completa las estadísticas que falten y termina (idempotencia frente a re-entregas).
-2. Calcula las descalificaciones administrativas. **No se aplican en producción**: `suspensions` y `artifactGuard` no se cablean en `main.ts` ([TD-015](../roadmap/technical-debt.md#td-015)).
-3. `UPDATE battles SET status='running'`, **sin comprobar el estado previo** ([TD-002](../roadmap/technical-debt.md#td-002)).
-4. Ejecuta el motor **en el propio proceso** (`engine-executor.ts`):
-   - el mapa sale de `map_versions.content`;
-   - el ruleset del motor sale del modo;
-   - cada participante recibe su **loadout completo** (`resolveVehicle`);
-   - el comportamiento lo pone `defaultAgentResolver = (botId) => new HunterBot(botId)`.
+Detalle paso a paso en [battles.md](battles.md#flujo-de-datos-paso-a-paso). Resumen:
 
-   Si hay espectadores conectados, se adjunta la batalla al gateway de espectador.
-5. `finishBattle`, que hace lo siguiente:
-   - escribe el replay en `/data/replays` (`ingestReplay`);
-   - marca la batalla `finished` con resultado, ganador, hashes y `replay_ref`/`replay_hash`;
-   - escribe el `outcome` de cada participante;
-   - calcula `battle_stats`;
-   - encola `process_result` (con `dedupe_key`).
-6. Clasificación de fallos:
-   - **`SportingFailure`** (timeout o crash del bot): la batalla termina con derrota del culpable y no se reintenta.
-   - **`InfrastructureFailure`**: la batalla vuelve a `scheduled` y la cola reintenta con backoff. Agotados los intentos, `markBattleForReview` la deja `failed` con `failure_kind = 'infrastructure'`, y el trabajo pasa a `needs_review`.
+1. **Reserva atómica** `claimBattle`: `UPDATE battles … WHERE status='scheduled'` (o `running` con lease caducado) `RETURNING *`, con `claimed_by` y `lease_expires_at`. Si no la gana: `finished` → sólo stats que falten; `failed` → nada; `running` con lease vivo → `battle_busy` (duplicado).
+2. **Lease** renovado cada `lease/3` (def. 45 s) junto con `jobs.locked_at`; si no se puede renovar, la ejecución se aborta y no se escribe nada.
+3. **Descalificaciones administrativas**: versión fuera de `published|frozen`, `suspensions`, `artifactGuard` (estos dos, si se inyectan).
+4. **Motor + agentes** (`engine-executor.ts`): mapa, ruleset (`resolveBattleRuleset`), catálogo y loadout reales; el `AgentDriver` es obligatorio. En producción `containerAgents` (`container-agents.ts`): contenedores por `ProxyContainerRunner`, postura comprobada, handshake de todos, ritmo real, CPU muestreada.
+5. **Cierre** `finishBattle` en una transacción condicionada al titular: resultado (`battle-result/v1`), replay, `participants.outcome`/`cpu_ms`, `process_result`. Después `runStatsJob`.
+6. **Fallos**: `SportingFailure` → derrota del culpable, sin reintento. `InfrastructureFailure` → la batalla vuelve a `scheduled` (si sigue siendo nuestra) y la cola reintenta; agotado, `failed (infrastructure)`. Error no clasificado tras reservar → se libera la reserva y el trabajo va a `needs_review`.
 
-Una batalla `failed` impide que el match o el torneo se cierren ([TD-015](../roadmap/technical-debt.md#td-015)).
-El detalle paso a paso, junto con el camino real `/run`, está en [battles.md](battles.md).
+Una batalla `failed` sigue impidiendo que el match o el torneo se cierren ([TD-015](../roadmap/technical-debt.md#td-015)).
 
-### El stub HunterBot
+### Sin stub en producción
 
-`HunterBot` es un agente determinista del motor (`apps/arena-engine/src/stubs.ts`). Hoy juega
-**todas** las batallas en nombre de cada bot. El vehículo (chasis, armas, blindaje, sensores) sí
-es el del loadout del usuario. El resultado, por tanto, depende del equipamiento y de la semilla,
-**no del código** del bot. Esto vale también para los torneos y para el ranking.
+`HunterBot` sólo existe ya en `testing/stub-agents.ts`, se pide explícitamente y **lanza con `NODE_ENV=production`**. `main.ts` construye `containerAgents` si hay `DOCKER_PROXY_URL` + `ARENA_ENGINE_HOST` y el proveedor de DEV-A carga; si falta algo, registra «EJECUCIÓN DE BATALLAS DESACTIVADA» y **no registra el handler** `run_battle` (las batallas quedan `scheduled`, visibles como pendientes). Un test comprueba que `main.ts` no importa stubs.
 
 ### Concurrencia
 
@@ -71,7 +56,7 @@ bucle procesa un trabajo a la vez. Sin trabajo, espera `pollMs` (1 s) en `BLPOP`
 
 ### Espectador en directo
 
-El worker crea un `SpectateGateway` en `SPECTATE_PORT`, porque la batalla vive en su memoria. El
+El worker crea un `SpectateGateway` en `SPECTATE_PORT`, porque la batalla vive en su memoria (también ahora que la conducen contenedores: el `ProtocolServer` y el motor están en este proceso). El
 gateway verifica el ticket con un secreto que **este contenedor no recibe**, así que hoy rechaza
 todos los tickets ([TD-028](../roadmap/technical-debt.md#td-028)). Protocolo: [websocket.md](websocket.md).
 
@@ -113,7 +98,7 @@ vivo, **no** que avance. Para ver el avance hay que consultar `jobs` (ver [docs/
 ## Errores / limitaciones
 
 - [TD-001](../roadmap/technical-debt.md#td-001): ningún build puede aprobarse.
-- [TD-002](../roadmap/technical-debt.md#td-002): el stub y la carrera con `/run`.
+- [TD-002](../roadmap/technical-debt.md#td-002): PARCIAL — camino único y código real verificados en aislado; falta activarlo en producción.
 - [TD-015](../roadmap/technical-debt.md#td-015): guardas no cableadas; `failed` bloquea los torneos.
 - [TD-026](../roadmap/technical-debt.md#td-026): el aviso Redis no tiene productor.
 - [TD-028](../roadmap/technical-debt.md#td-028): espectador sin secreto.
@@ -122,7 +107,8 @@ vivo, **no** que avance. Para ver el avance hay que consultar `jobs` (ver [docs/
 
 - tournament-worker: `tournament-e2e.test.ts` (BD real, torneo completo con stub), `queue.test.ts`, `worker-degradation.test.ts`, `ratings.test.ts`, `battle-stats-canonical.test.ts`, `spectate-live.test.ts`, `redis-signal-semantics.test.ts` (requiere `REDIS_TEST_URL`; sin ella se omite).
 - bot-build-worker: `apps/bot-manager/tests/pipeline.test.ts`, `static-analysis.test.ts`, `ast-analysis.test.ts`; `apps/api/src/r25-cola-builds.test.ts`.
-- **No hay** test con un `agentResolver` real en CI. El E2E Docker real sólo se ejecuta con `S9_RUN_REAL_DOCKER_E2E=1`.
+- `battle-lifecycle.test.ts` (reserva, lease, cierre único, sin driver por defecto, DQ del motor).
+- `container-battle-e2e.test.ts`: batalla REAL con el código de dos bots en contenedores (opt-in `S9_RUN_REAL_DOCKER_E2E=1`, necesita Docker; no corre en el CI normal).
 
 ## Documentación relacionada
 
@@ -133,12 +119,12 @@ vivo, **no** que avance. Para ver el avance hay que consultar `jobs` (ver [docs/
 | Afirmación | Estado | Fuente |
 |---|---|---|
 | Handlers del worker | CODE_VERIFIED | `apps/tournament-worker/src/main.ts:78-85` |
-| Idempotencia sobre `finished` | CODE_VERIFIED | `battle-runner.ts:116-119` |
-| `running` sin condición | CODE_VERIFIED | `battle-runner.ts:142` |
-| Guardas no cableadas | CODE_VERIFIED | `battle-runner.ts:122-139`; `main.ts:80` |
-| HunterBot y loadout completo | CODE_VERIFIED | `engine-executor.ts:51,172` |
-| Cierre y `process_result` | CODE_VERIFIED | `battle-runner.ts:229-281` |
-| Revisión manual al agotar | CODE_VERIFIED | `battle-runner.ts:285-292` |
+| Idempotencia sobre `finished` | CODE_VERIFIED | `battle-runner.ts:275` |
+| Reserva atómica con lease | CODE_VERIFIED + test | `battle-runner.ts:164`; `battle-lifecycle.test.ts` |
+| Versión no jugable ⇒ DQ administrativa (siempre); `suspensions`/`artifactGuard` siguen sin cablearse en `main.ts` | CODE_VERIFIED + test | `battle-runner.ts:232`; `battle-lifecycle.test.ts` («SUSPENDIDA…») |
+| Driver obligatorio; contenedores en producción | CODE_VERIFIED + RUNTIME_VERIFIED (aislado) | `engine-executor.ts:133`; `main.ts:72`; `container-battle-e2e.test.ts` |
+| Cierre condicionado y `process_result` en la misma transacción | CODE_VERIFIED + test | `battle-runner.ts:452-515` |
+| Revisión manual al agotar (sin tocar leases vivos) | CODE_VERIFIED | `battle-runner.ts:522` |
 | Concurrencia | CODE_VERIFIED | `apps/tournament-worker/src/worker.ts:71-80,178-183` |
 | Etapas del pipeline | CODE_VERIFIED | `apps/bot-manager/src/pipeline.ts:239-453` |
 | Rechazo sin `agentResolver` | CODE_VERIFIED | `pipeline.ts:172,467-473`; `build-worker-main.ts:31` |

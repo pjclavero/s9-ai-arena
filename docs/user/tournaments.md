@@ -8,7 +8,7 @@ Hoy es la **única vía de la web que llega a jugar batallas**, pero:
 
 - necesita bots publicados, que no se pueden obtener ([TD-001](../roadmap/technical-debt.md#td-001));
 - se juega siempre en el mapa `mvp-arena-01` ([TD-015](../roadmap/technical-debt.md#td-015));
-- los vehículos los conduce el bot de prueba de la plataforma ([TD-002](../roadmap/technical-debt.md#td-002)).
+- los vehículos los conduce el código de cada bot inscrito, en su contenedor; en este servidor la ejecución aún no está activada y las batallas quedan en cola ([TD-002](../roadmap/technical-debt.md#td-002)).
 
 ## Índice
 

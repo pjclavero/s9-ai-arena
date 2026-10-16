@@ -119,7 +119,10 @@ describe("B5 · finalización EXACTAMENTE una vez", () => {
       if (r.status === "running") break;
       await new Promise((r) => setTimeout(r, 20));
     }
-    await h.db("battles").where({ id }).update({ lease_expires_at: h.db.raw("now() - interval '1 second'") });
+    await h
+      .db("battles")
+      .where({ id })
+      .update({ lease_expires_at: h.db.raw("now() - interval '1 second'") });
     await handlerB(fakeJob(id, "00000000-0000-0000-0000-00000000000b"), { db: h.db, workerId: "B" });
     openA();
     await expect(runA).rejects.toThrow(/battle_busy/);
