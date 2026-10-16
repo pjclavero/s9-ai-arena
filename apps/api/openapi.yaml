@@ -396,6 +396,7 @@ paths:
                 source: { type: string, format: binary, description: 'Archivo comprimido del código. Límite 10 MB (E6.M).' }
                 runtime: { $ref: '#/components/schemas/Runtime' }
                 loadoutRevision: { type: integer }
+                parentVersion: { type: integer, description: 'DEV-A · A9.13: versión de la que parte (nueva versión desde X); queda registrada' }
       responses:
         '201': { description: Versión creada, content: { application/json: { schema: { $ref: '#/components/schemas/BotVersion' } } } }
         '413': { description: Código demasiado grande, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
@@ -412,6 +413,109 @@ paths:
       responses:
         '200': { description: Código, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  # -------- DEV-A · A9: versionado real (historial, detalle, código, artefacto, diff, clonado)
+  /bots/{botId}/versions/{version}:
+    get:
+      tags: [bots]
+      operationId: getBotVersion
+      summary: |
+        Detalle de UNA versión: estado, build que la validó, último build, artefacto y versión padre.
+        Misma visibilidad que el bot. sourceSha256 sólo si quien pregunta puede leer el código.
+      x-min-role: visitor
+      security: []
+      parameters: [{ $ref: '#/components/parameters/BotId' }, { $ref: '#/components/parameters/Version' }]
+      responses:
+        '200': { description: Versión, content: { application/json: { schema: { $ref: '#/components/schemas/BotVersionDetail' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /bots/{botId}/versions/{version}/files:
+    get:
+      tags: [bots]
+      operationId: getBotVersionFiles
+      summary: Código de la versión decodificado en ficheros (mismas reglas que getBotSource).
+      x-min-role: user
+      parameters: [{ $ref: '#/components/parameters/BotId' }, { $ref: '#/components/parameters/Version' }]
+      responses:
+        '200':
+          description: Ficheros
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  botId: { type: string }
+                  version: { type: integer }
+                  sourceSha256: { type: string }
+                  packaged: { type: boolean, description: 'false si el código se pegó como un único fichero y se envolvió en el esqueleto' }
+                  files: { type: array, items: { type: object, properties: { path: { type: string }, content: { type: string } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /bots/{botId}/versions/{version}/artifact:
+    get:
+      tags: [bots]
+      operationId: getBotVersionArtifact
+      summary: Metadatos del artefacto firmado DE ESTA versión (sin los bytes). Misma visibilidad que el bot.
+      x-min-role: visitor
+      security: []
+      parameters: [{ $ref: '#/components/parameters/BotId' }, { $ref: '#/components/parameters/Version' }]
+      responses:
+        '200': { description: Artefacto, content: { application/json: { schema: { $ref: '#/components/schemas/BotArtifact' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /bots/{botId}/versions/{version}/diff:
+    get:
+      tags: [bots]
+      operationId: diffBotVersions
+      summary: Diff unificado por fichero entre la versión `against` y esta. Exige poder leer el código de ambas.
+      x-min-role: user
+      parameters:
+        - { $ref: '#/components/parameters/BotId' }
+        - { $ref: '#/components/parameters/Version' }
+        - { name: against, in: query, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        '200':
+          description: Diff
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  botId: { type: string }
+                  from: { type: integer }
+                  to: { type: integer }
+                  files:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        path: { type: string }
+                        status: { enum: [added, removed, modified, unchanged] }
+                        additions: { type: integer }
+                        deletions: { type: integer }
+                        diff: { type: string, description: 'Diff unificado (vacío si unchanged)' }
+        '400': { description: 'against ausente o inválido', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /bots/{botId}/versions/{version}/actions/clone:
+    post:
+      tags: [bots]
+      operationId: cloneBotVersion
+      summary: |
+        «Nueva versión desde ésta»: crea la versión siguiente en draft con el MISMO código y runtime
+        (y el loadout de origen o `loadoutRevision`), con parentVersion = version. La original no cambia.
+      x-min-role: developer
+      parameters: [{ $ref: '#/components/parameters/BotId' }, { $ref: '#/components/parameters/Version' }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { loadoutRevision: { type: integer } } }
+      responses:
+        '201': { description: Versión creada, content: { application/json: { schema: { $ref: '#/components/schemas/BotVersion' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   # -------- Transiciones de estado del capítulo 17.1 (acciones explícitas)
   /bots/{botId}/versions/{version}/actions/submit:
@@ -1303,6 +1407,32 @@ components:
         codePublic: { type: boolean, description: 'Irreversible una vez publicada (D9).' }
         rejectionReason: { type: string }
         createdAt: { type: string, format: date-time }
+        id: { type: string, description: 'bot_versions.id (uuid); la clave natural es (botId, version)' }
+        parentVersion: { type: integer, description: 'Versión de la que se creó (clonado), si aplica' }
+        validatedBuildId: { type: string, description: 'Build que produjo el artefacto de esta versión' }
+        publishedAt: { type: string, format: date-time }
+
+    BotArtifact:
+      type: object
+      properties:
+        botId: { type: string }
+        version: { type: integer }
+        hash: { type: string, description: 'sha256 del paquete canónico arena-artifact/v1 (NO es un digest de imagen)' }
+        signature: { type: string, description: 'Firma ed25519 del servicio sobre hash' }
+        sizeBytes: { type: integer }
+        buildId: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    BotVersionDetail:
+      allOf:
+        - { $ref: '#/components/schemas/BotVersion' }
+        - type: object
+          properties:
+            sourceSha256: { type: string, description: 'Sólo si quien pregunta puede leer el código' }
+            canReadSource: { type: boolean }
+            latestBuild: { $ref: '#/components/schemas/Build' }
+            artifact: { $ref: '#/components/schemas/BotArtifact' }
+            childVersions: { type: array, items: { type: integer } }
 
     LoadoutInput:
       type: object
