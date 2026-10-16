@@ -128,10 +128,18 @@ export function teamRoutes(db: Db): Router {
       const [t] = await trx("teams").insert({ name, captain_id: userId }).returning("*");
       await trx("team_members").insert({ team_id: t.id, user_id: userId, role: "captain" });
       // Jerarquía acumulativa del cap. 16: crear un equipo te hace team_captain.
-      await trx("user_roles").insert({ user_id: userId, role: "team_captain" }).onConflict(["user_id", "role"]).ignore();
+      await trx("user_roles")
+        .insert({ user_id: userId, role: "team_captain" })
+        .onConflict(["user_id", "role"])
+        .ignore();
       return t;
     });
-    await audit(db, { actorId: userId, action: "team.created", target: `team:${team.id}`, correlationId: req.correlationId });
+    await audit(db, {
+      actorId: userId,
+      action: "team.created",
+      target: `team:${team.id}`,
+      correlationId: req.correlationId,
+    });
     res.status(201).json(await teamToJson(db, team, req.auth));
   });
 
@@ -207,8 +215,7 @@ export function teamRoutes(db: Db): Router {
       throw forbidden("Solo el capitán del equipo gestiona sus miembros");
     }
     const target = pathParam(req, "userId");
-    if (target === team.captain_id)
-      throw conflict("captain_required", "El capitán no puede salir de su propio equipo");
+    if (target === team.captain_id) throw conflict("captain_required", "El capitán no puede salir de su propio equipo");
     if (!UUID_RE.test(target)) throw notFound();
     await db.transaction(async (trx) => {
       await trx("team_members").where({ team_id: team.id, user_id: target }).delete();

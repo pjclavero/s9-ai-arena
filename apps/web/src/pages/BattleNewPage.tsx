@@ -119,7 +119,7 @@ export function BattleNewPage(_props: { me: Me }) {
   const selectedMap = modeMaps.find((m) => `${m.mapId}@${m.version}` === mapKey);
   const effectiveRuleset = modeRulesets.some((r) => r.id === rulesetId)
     ? rulesetId
-    : (modeRulesets.find((r) => r.mode === mode) ?? modeRulesets[0])?.id ?? "";
+    : ((modeRulesets.find((r) => r.mode === mode) ?? modeRulesets[0])?.id ?? "");
   const botsOf = (teamId: string) => {
     if (!teamId) return bots;
     const ids = new Set((teams.find((t) => t.id === teamId)?.bots ?? []).map((x) => x.id));

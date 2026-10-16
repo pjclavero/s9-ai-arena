@@ -45,7 +45,9 @@ export function EffectBadge(props: { status: EffectStatus; title?: string; testI
 }
 
 /** Propiedades de juego de un módulo con su efecto real (para el detalle bajo la ranura). */
-export function moduleEffects(def: ModuleDefinition): { prop: string; value: string; status: EffectStatus; note: string }[] {
+export function moduleEffects(
+  def: ModuleDefinition,
+): { prop: string; value: string; status: EffectStatus; note: string }[] {
   const out: { prop: string; value: string; status: EffectStatus; note: string }[] = [];
   const add = (prop: string, value: unknown) => {
     const e = effectOf(def.category, prop);
@@ -212,9 +214,9 @@ export function LoadoutEditor(props: {
         </p>
       )}
       <p className="warn" role="note" data-testid="effect-note">
-        Efecto real en batalla: hoy solo la <strong>familia del chasis</strong> cambia la batalla (decide el
-        arquetipo que se juega). Los módulos elegidos cuentan para el presupuesto, la masa y la energía, pero en la
-        ejecución real se usan los módulos fijos del arquetipo. Cada ranura indica su efecto.
+        Efecto real en batalla: hoy solo la <strong>familia del chasis</strong> cambia la batalla (decide el arquetipo
+        que se juega). Los módulos elegidos cuentan para el presupuesto, la masa y la energía, pero en la ejecución real
+        se usan los módulos fijos del arquetipo. Cada ranura indica su efecto.
       </p>
       <label>
         Chasis{" "}
@@ -235,7 +237,6 @@ export function LoadoutEditor(props: {
         </select>
       </label>{" "}
       <EffectBadge status={CHASSIS_CHOICE_EFFECT.status} title={CHASSIS_CHOICE_EFFECT.note} testId="effect-chassis" />
-
       <table>
         <tbody>
           {(chassisDef.slots ?? []).map((slot) => {
@@ -325,7 +326,6 @@ export function LoadoutEditor(props: {
           })}
         </tbody>
       </table>
-
       <p>
         <span className={live.costCredits > props.budgetCredits ? "error" : "ok"} data-testid="live-cost">
           Coste: {live.costCredits}/{props.budgetCredits} cr
@@ -336,7 +336,6 @@ export function LoadoutEditor(props: {
           {live.energyBalanceEUs} EU/s
         </span>
       </p>
-
       {diff.length > 0 && (
         <div data-testid="draft-diff">
           <h3>Cambios respecto a la revisión {props.loadedRevision ?? "cargada"}</h3>
@@ -360,7 +359,6 @@ export function LoadoutEditor(props: {
           </button>
         </div>
       )}
-
       {live.violations.length > 0 && (
         <ul data-testid="violations" role="alert">
           {live.violations.map((v, i) => (
@@ -384,7 +382,6 @@ export function LoadoutEditor(props: {
           Revisión de loadout guardada.
         </p>
       )}
-
       <button
         disabled={blocked}
         data-testid="save-loadout"

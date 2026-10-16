@@ -18,7 +18,14 @@ import { fileURLToPath } from "node:url";
 import request from "supertest";
 import type { Express } from "express";
 import { startTestDb, type TestDbHandle } from "../testing/test-db.js";
-import { seedDev, seedContent, DEV_USERS, PLATFORM_RULESETS, MVP_ARENA_02_ID, MVP_ARENA_02_MODES } from "../db/seeds/dev.js";
+import {
+  seedDev,
+  seedContent,
+  DEV_USERS,
+  PLATFORM_RULESETS,
+  MVP_ARENA_02_ID,
+  MVP_ARENA_02_MODES,
+} from "../db/seeds/dev.js";
 import { tokenFor } from "../testing/helpers.js";
 import { createApp } from "../app.js";
 import { FakeBotManager } from "../services/bot-manager.js";
@@ -93,9 +100,18 @@ afterAll(async () => {
 describe("C1/C3 · mapa persistente: crear → editar → guardar → cerrar → reabrir → editar → guardar → usar", () => {
   it("el borrador vive en BD, se reescribe en sitio y, publicado, es jugable por el resolver real", async () => {
     // crear + guardar
-    const first = await request(app).post("/maps/drafts").set(auth(alice)).send(editorMap("fc-c-mapa", "Mapa de Alice"));
+    const first = await request(app)
+      .post("/maps/drafts")
+      .set(auth(alice))
+      .send(editorMap("fc-c-mapa", "Mapa de Alice"));
     expect(first.status).toBe(201);
-    expect(first.body).toMatchObject({ mapId: "fc-c-mapa", version: 1, state: "draft", mine: true, name: "Mapa de Alice" });
+    expect(first.body).toMatchObject({
+      mapId: "fc-c-mapa",
+      version: 1,
+      state: "draft",
+      mine: true,
+      name: "Mapa de Alice",
+    });
 
     // editar + guardar: MISMA versión (borrador mutable), no una v2
     const edited = editorMap("fc-c-mapa", "Mapa de Alice (editado)");
@@ -220,12 +236,8 @@ describe("C6 · propiedad y visibilidad de mapas (tests negativos reales)", () =
       .set(auth(alice))
       .attach("file", Buffer.from(JSON.stringify(editorMap("fc-c-validado", "v"))), "v.json")
       .expect(201);
-    expect((await request(app).post("/maps/fc-c-validado/versions/1/actions/publish").set(auth(bob))).status).toBe(
-      403,
-    );
-    expect((await request(app).post("/maps/fc-c-validado/versions/1/actions/publish").set(auth(org))).status).toBe(
-      200,
-    );
+    expect((await request(app).post("/maps/fc-c-validado/versions/1/actions/publish").set(auth(bob))).status).toBe(403);
+    expect((await request(app).post("/maps/fc-c-validado/versions/1/actions/publish").set(auth(org))).status).toBe(200);
   });
 });
 
@@ -244,9 +256,9 @@ describe("C7 · rulesets reales y compatibilidad modo ↔ ruleset ↔ mapa", () 
       }
     }
     const filtered = await request(app).get("/rulesets?mode=zone_control");
-    expect(filtered.body.items.every((i: { mode: string | null }) => i.mode === null || i.mode === "zone_control")).toBe(
-      true,
-    );
+    expect(
+      filtered.body.items.every((i: { mode: string | null }) => i.mode === null || i.mode === "zone_control"),
+    ).toBe(true);
     expect((await request(app).get("/rulesets?mode=__proto__")).status).toBe(400);
   });
 
@@ -258,7 +270,11 @@ describe("C7 · rulesets reales y compatibilidad modo ↔ ruleset ↔ mapa", () 
       mapVersion: 1,
     });
     expect(ok.ok).toBe(true);
-    const wrongRs = await checkBattleContent(h.db, { mode: "deathmatch", rulesetId: "zone-control-mvp", mapId: "fc-c-mapa" });
+    const wrongRs = await checkBattleContent(h.db, {
+      mode: "deathmatch",
+      rulesetId: "zone-control-mvp",
+      mapId: "fc-c-mapa",
+    });
     expect(wrongRs).toMatchObject({ ok: false, status: 409, code: "ruleset_mode_mismatch" });
     const wrongMap = await checkBattleContent(h.db, {
       mode: "capture_the_flag",
@@ -267,9 +283,18 @@ describe("C7 · rulesets reales y compatibilidad modo ↔ ruleset ↔ mapa", () 
       mapVersion: 1,
     });
     expect(wrongMap).toMatchObject({ ok: false, status: 409, code: "map_mode_unsupported" });
-    const unknown = await checkBattleContent(h.db, { mode: "deathmatch", rulesetId: "dm_practice@1", mapId: "fc-c-mapa" });
+    const unknown = await checkBattleContent(h.db, {
+      mode: "deathmatch",
+      rulesetId: "dm_practice@1",
+      mapId: "fc-c-mapa",
+    });
     expect(unknown).toMatchObject({ ok: false, code: "ruleset_unknown" });
-    const draft = await checkBattleContent(h.db, { mode: "deathmatch", rulesetId: "deathmatch-mvp", mapId: "fc-c-mapa", mapVersion: 2 });
+    const draft = await checkBattleContent(h.db, {
+      mode: "deathmatch",
+      rulesetId: "deathmatch-mvp",
+      mapId: "fc-c-mapa",
+      mapVersion: 2,
+    });
     expect(draft).toMatchObject({ ok: false, code: "map_not_published" });
   });
 
@@ -285,10 +310,17 @@ describe("C7 · rulesets reales y compatibilidad modo ↔ ruleset ↔ mapa", () 
     expect(resolved.ok, resolved.message).toBe(true);
     for (const mode of MVP_ARENA_02_MODES) {
       const rs = PLATFORM_RULESETS.find((r) => r.mode === mode)!;
-      expect((await checkBattleContent(h.db, { mode, rulesetId: rs.id, mapId: MVP_ARENA_02_ID, mapVersion: 1 })).ok).toBe(true);
+      expect(
+        (await checkBattleContent(h.db, { mode, rulesetId: rs.id, mapId: MVP_ARENA_02_ID, mapVersion: 1 })).ok,
+      ).toBe(true);
     }
     // zone_control NO: la arena no tiene zona de captura
-    const zc = await checkBattleContent(h.db, { mode: "zone_control", rulesetId: "zone-control-mvp", mapId: MVP_ARENA_02_ID, mapVersion: 1 });
+    const zc = await checkBattleContent(h.db, {
+      mode: "zone_control",
+      rulesetId: "zone-control-mvp",
+      mapId: MVP_ARENA_02_ID,
+      mapVersion: 1,
+    });
     expect(zc.ok).toBe(false);
   });
 
@@ -327,9 +359,13 @@ describe("C5/C6 · equipos completos y sin fuga de identificadores", () => {
   it("añadir y quitar bots: solo el dueño (miembro) añade; bot ajeno 404; no-miembro 403", async () => {
     aliceBot = await publishedBot(alice, "fc-c-alice-bot");
     bobBot = await publishedBot(bob, "fc-c-bob-bot");
-    expect((await request(app).post(`/teams/${teamId}/bots`).set(auth(alice)).send({ botId: aliceBot })).status).toBe(201);
+    expect((await request(app).post(`/teams/${teamId}/bots`).set(auth(alice)).send({ botId: aliceBot })).status).toBe(
+      201,
+    );
     // Alice no puede meter el bot de Bob (aunque sea público)
-    expect((await request(app).post(`/teams/${teamId}/bots`).set(auth(alice)).send({ botId: bobBot })).status).toBe(404);
+    expect((await request(app).post(`/teams/${teamId}/bots`).set(auth(alice)).send({ botId: bobBot })).status).toBe(
+      404,
+    );
     expect((await request(app).post(`/teams/${teamId}/bots`).set(auth(bob)).send({ botId: bobBot })).status).toBe(201);
     const t = await request(app).get(`/teams/${teamId}`).set(auth(bob));
     expect(t.body.bots.map((b: { id: string }) => b.id).sort()).toEqual([aliceBot, bobBot].sort());
@@ -345,7 +381,9 @@ describe("C5/C6 · equipos completos y sin fuga de identificadores", () => {
   it("equipo ajeno: ni renombrar, ni borrar, ni gestionar miembros (403); el estado no cambia", async () => {
     expect((await request(app).patch(`/teams/${teamId}`).set(auth(org)).send({ name: "robado" })).status).toBe(403);
     expect((await request(app).delete(`/teams/${teamId}`).set(auth(org))).status).toBe(403);
-    expect((await request(app).post(`/teams/${teamId}/members`).set(auth(org)).send({ email: DEV_USERS.organizer })).status).toBe(403);
+    expect(
+      (await request(app).post(`/teams/${teamId}/members`).set(auth(org)).send({ email: DEV_USERS.organizer })).status,
+    ).toBe(403);
     expect((await request(app).delete(`/teams/${teamId}/members/${bobId}`).set(auth(org))).status).toBe(403);
     // Bob es miembro pero no capitán
     expect((await request(app).patch(`/teams/${teamId}`).set(auth(bob)).send({ name: "robado" })).status).toBe(403);
@@ -361,7 +399,9 @@ describe("C5/C6 · equipos completos y sin fuga de identificadores", () => {
     }
     expect(JSON.stringify(anon.body)).not.toContain(aliceId);
     expect(JSON.stringify(anon.body)).not.toContain(bobId);
-    const outsider = await request(app).get(`/teams/${teamId}`).set(auth(await tokenFor(h.db, DEV_USERS.user)));
+    const outsider = await request(app)
+      .get(`/teams/${teamId}`)
+      .set(auth(await tokenFor(h.db, DEV_USERS.user)));
     expect(JSON.stringify(outsider.body)).not.toContain(aliceId);
     expect(outsider.body.members).toBeUndefined();
   });

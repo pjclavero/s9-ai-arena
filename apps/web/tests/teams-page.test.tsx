@@ -37,7 +37,8 @@ function mock(extra?: (m: string, p: string, b?: unknown) => unknown) {
   apiMock.mockImplementation((m: string, p: string, b?: unknown) => {
     const r = extra?.(m, p, b);
     if (r !== undefined) return Promise.resolve(r);
-    if (m === "GET" && p.startsWith("/teams")) return Promise.resolve({ items: [TEAM, { id: "t2", name: "Ajeno", memberCount: 3, botCount: 0 }] });
+    if (m === "GET" && p.startsWith("/teams"))
+      return Promise.resolve({ items: [TEAM, { id: "t2", name: "Ajeno", memberCount: 3, botCount: 0 }] });
     if (m === "GET" && p.startsWith("/bots")) return Promise.resolve({ items: [{ id: "b9", name: "explorador" }] });
     return Promise.resolve({});
   });

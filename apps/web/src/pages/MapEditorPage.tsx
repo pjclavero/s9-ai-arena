@@ -42,12 +42,27 @@ export interface EditorMap {
   widthM: number;
   heightM: number;
   navCellSizeM?: number;
-  materials: { id: string; name?: string; blocksMovement: boolean; blocksVision: boolean; hp?: number; damagePerSecond?: number }[];
+  materials: {
+    id: string;
+    name?: string;
+    blocksMovement: boolean;
+    blocksVision: boolean;
+    hp?: number;
+    damagePerSecond?: number;
+  }[];
   layers: {
     ground: { tileSizeM: number; cols: number; rows: number; data: number[] };
     walls: RectShape[];
     destructibles?: (RectShape & { objectId: string; material: string })[];
-    zones?: { shape: "circle"; position: Vec2; radiusM: number; objectId: string; zoneType: "capture" | "damage"; damagePerSecond?: number; team?: string }[];
+    zones?: {
+      shape: "circle";
+      position: Vec2;
+      radiusM: number;
+      objectId: string;
+      zoneType: "capture" | "damage";
+      damagePerSecond?: number;
+      team?: string;
+    }[];
     spawns: { objectId: string; team: string; position: Vec2; heading: number }[];
     bases?: (RectShape & { objectId: string; team: string })[];
     flags?: { objectId: string; team: string; position: Vec2 }[];
@@ -124,7 +139,11 @@ export function fromLegacyAuthoring(raw: Record<string, unknown>): EditorMap {
   const arr = (v: unknown) => (Array.isArray(v) ? (v as Record<string, unknown>[]) : []);
   const widthM = Math.round(num(raw.width, 800) / PX_PER_M);
   const heightM = Math.round(num(raw.height, 600) / PX_PER_M);
-  const slug = str(raw.id, "importado").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "importado";
+  const slug =
+    str(raw.id, "importado")
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "importado";
   const m = newMap(slug.length >= 2 ? slug : `${slug}-mapa`, str(raw.name, "Mapa importado"));
   const rect = (r: Record<string, unknown>): RectShape => ({
     shape: "rect",
@@ -137,7 +156,11 @@ export function fromLegacyAuthoring(raw: Record<string, unknown>): EditorMap {
     layers: {
       ...resize(m, widthM, heightM).layers,
       walls: arr(raw.walls).map(rect),
-      destructibles: arr(raw.obstacles).map((r, i) => ({ ...rect(r), objectId: str(r.id, `crate-${i}`), material: "crate" })),
+      destructibles: arr(raw.obstacles).map((r, i) => ({
+        ...rect(r),
+        objectId: str(r.id, `crate-${i}`),
+        material: "crate",
+      })),
       spawns: arr(raw.spawns).map((r, i) => ({
         objectId: str(r.id, `spawn-${i}`),
         team: str(r.team, "red"),
@@ -285,7 +308,9 @@ export function MapEditorPage() {
       await loadMine();
     } catch (e) {
       const body = e instanceof ApiRequestError ? e.body : {};
-      setError(`No se pudo guardar: ${(e as Error).message}${body.error === "forbidden" ? " (el mapa es de otro usuario: duplícalo con otro id)" : ""}`);
+      setError(
+        `No se pudo guardar: ${(e as Error).message}${body.error === "forbidden" ? " (el mapa es de otro usuario: duplícalo con otro id)" : ""}`,
+      );
     } finally {
       setBusy(false);
     }
@@ -319,11 +344,17 @@ export function MapEditorPage() {
       const L = { ...m.layers };
       const rect = (w: number, h: number): RectShape => ({ shape: "rect", position: { ...c }, widthM: w, heightM: h });
       if (kind === "wall") L.walls = [...L.walls, rect(4, 12)];
-      if (kind === "destructible") L.destructibles = [...(L.destructibles ?? []), { ...rect(2, 2), objectId: `crate-${seq}`, material: "crate" }];
-      if (kind === "spawn") L.spawns = [...L.spawns, { objectId: `sp-${seq}`, team: "red", position: { ...c }, heading: 0 }];
+      if (kind === "destructible")
+        L.destructibles = [...(L.destructibles ?? []), { ...rect(2, 2), objectId: `crate-${seq}`, material: "crate" }];
+      if (kind === "spawn")
+        L.spawns = [...L.spawns, { objectId: `sp-${seq}`, team: "red", position: { ...c }, heading: 0 }];
       if (kind === "base") L.bases = [...(L.bases ?? []), { ...rect(8, 12), objectId: `base-${seq}`, team: "red" }];
       if (kind === "flag") L.flags = [...(L.flags ?? []), { objectId: `flag-${seq}`, team: "red", position: { ...c } }];
-      if (kind === "zone") L.zones = [...(L.zones ?? []), { shape: "circle", position: { ...c }, radiusM: 6, objectId: `zone-${seq}`, zoneType: "capture" }];
+      if (kind === "zone")
+        L.zones = [
+          ...(L.zones ?? []),
+          { shape: "circle", position: { ...c }, radiusM: 6, objectId: `zone-${seq}`, zoneType: "capture" },
+        ];
       return { ...m, layers: L };
     });
   }
@@ -331,8 +362,18 @@ export function MapEditorPage() {
   const listOf = (kind: ObjKind): { position: Vec2; [k: string]: unknown }[] => {
     const L = map.layers;
     return (
-      kind === "wall" ? L.walls : kind === "destructible" ? L.destructibles : kind === "spawn" ? L.spawns : kind === "base" ? L.bases : kind === "flag" ? L.flags : L.zones
-    ) as never ?? [];
+      ((kind === "wall"
+        ? L.walls
+        : kind === "destructible"
+          ? L.destructibles
+          : kind === "spawn"
+            ? L.spawns
+            : kind === "base"
+              ? L.bases
+              : kind === "flag"
+                ? L.flags
+                : L.zones) as never) ?? []
+    );
   };
   const layerKey: Record<ObjKind, string> = {
     wall: "walls",
@@ -361,8 +402,10 @@ export function MapEditorPage() {
 
   const sel = selected ? (listOf(selected.kind)[selected.index] as Record<string, unknown> | undefined) : undefined;
   const scale = Math.min(640 / map.widthM, 480 / map.heightM);
-  const allObjects: (ObjRef & { label: string })[] = (["wall", "destructible", "spawn", "base", "flag", "zone"] as ObjKind[]).flatMap(
-    (kind) => listOf(kind).map((o, index) => ({ kind, index, label: `${kind} · ${(o.objectId as string) ?? index + 1}` })),
+  const allObjects: (ObjRef & { label: string })[] = (
+    ["wall", "destructible", "spawn", "base", "flag", "zone"] as ObjKind[]
+  ).flatMap((kind) =>
+    listOf(kind).map((o, index) => ({ kind, index, label: `${kind} · ${(o.objectId as string) ?? index + 1}` })),
   );
 
   return (
@@ -373,8 +416,11 @@ export function MapEditorPage() {
         {saved ? (
           <>
             {" "}
-            Abierto: <code data-testid="editor-current">{saved.mapId} v{saved.version}</code> ({saved.state})
-            {dirty ? " · cambios sin guardar" : " · guardado"}
+            Abierto:{" "}
+            <code data-testid="editor-current">
+              {saved.mapId} v{saved.version}
+            </code>{" "}
+            ({saved.state}){dirty ? " · cambios sin guardar" : " · guardado"}
           </>
         ) : (
           " Mapa nuevo, aún sin guardar."
@@ -390,12 +436,15 @@ export function MapEditorPage() {
           {notice}
         </p>
       )}
-
       <fieldset>
         <legend>Mapa</legend>
         <label>
           Id{" "}
-          <input aria-label="id del mapa" value={map.mapId} onChange={(e) => edit((m) => ({ ...m, mapId: e.target.value }))} />
+          <input
+            aria-label="id del mapa"
+            value={map.mapId}
+            onChange={(e) => edit((m) => ({ ...m, mapId: e.target.value }))}
+          />
         </label>{" "}
         <label>
           Nombre{" "}
@@ -407,11 +456,21 @@ export function MapEditorPage() {
         </label>{" "}
         <label>
           Ancho (m){" "}
-          <input type="number" aria-label="ancho del mapa" value={map.widthM} onChange={(e) => edit((m) => resize(m, Number(e.target.value), m.heightM))} />
+          <input
+            type="number"
+            aria-label="ancho del mapa"
+            value={map.widthM}
+            onChange={(e) => edit((m) => resize(m, Number(e.target.value), m.heightM))}
+          />
         </label>{" "}
         <label>
           Alto (m){" "}
-          <input type="number" aria-label="alto del mapa" value={map.heightM} onChange={(e) => edit((m) => resize(m, m.widthM, Number(e.target.value)))} />
+          <input
+            type="number"
+            aria-label="alto del mapa"
+            value={map.heightM}
+            onChange={(e) => edit((m) => resize(m, m.widthM, Number(e.target.value)))}
+          />
         </label>
         <div role="group" aria-label="modos soportados">
           Modos:{" "}
@@ -428,15 +487,28 @@ export function MapEditorPage() {
           ))}
         </div>
       </fieldset>
-
       <div role="toolbar" aria-label="Herramientas">
-        <button type="button" onClick={() => { setMap(newMap()); setSaved(null); setDirty(false); setChecks([]); window.history.replaceState(null, "", "#/maps/editor"); }}>
+        <button
+          type="button"
+          onClick={() => {
+            setMap(newMap());
+            setSaved(null);
+            setDirty(false);
+            setChecks([]);
+            window.history.replaceState(null, "", "#/maps/editor");
+          }}
+        >
           Nuevo
         </button>
         <button type="button" disabled={busy} data-testid="editor-save" onClick={() => void save()}>
           Guardar en el servidor
         </button>
-        <button type="button" disabled={busy || !saved || dirty || saved.state === "published"} data-testid="editor-publish" onClick={() => void publish()}>
+        <button
+          type="button"
+          disabled={busy || !saved || dirty || saved.state === "published"}
+          data-testid="editor-publish"
+          onClick={() => void publish()}
+        >
           Publicar
         </button>
         {" | "}
@@ -446,7 +518,6 @@ export function MapEditorPage() {
           </button>
         ))}
       </div>
-
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
         <svg
           role="img"
@@ -457,22 +528,71 @@ export function MapEditorPage() {
           style={{ border: "1px solid #888", background: "#f4f4f0" }}
         >
           {map.layers.walls.map((w, i) => (
-            <rect key={`w${i}`} x={w.position.x - w.widthM / 2} y={w.position.y - w.heightM / 2} width={w.widthM} height={w.heightM} fill="#666" onClick={() => setSelected({ kind: "wall", index: i })} />
+            <rect
+              key={`w${i}`}
+              x={w.position.x - w.widthM / 2}
+              y={w.position.y - w.heightM / 2}
+              width={w.widthM}
+              height={w.heightM}
+              fill="#666"
+              onClick={() => setSelected({ kind: "wall", index: i })}
+            />
           ))}
           {(map.layers.destructibles ?? []).map((d, i) => (
-            <rect key={`d${i}`} x={d.position.x - d.widthM / 2} y={d.position.y - d.heightM / 2} width={d.widthM} height={d.heightM} fill="#a0642d" onClick={() => setSelected({ kind: "destructible", index: i })} />
+            <rect
+              key={`d${i}`}
+              x={d.position.x - d.widthM / 2}
+              y={d.position.y - d.heightM / 2}
+              width={d.widthM}
+              height={d.heightM}
+              fill="#a0642d"
+              onClick={() => setSelected({ kind: "destructible", index: i })}
+            />
           ))}
           {(map.layers.zones ?? []).map((z, i) => (
-            <circle key={`z${i}`} cx={z.position.x} cy={z.position.y} r={z.radiusM} fill={z.zoneType === "capture" ? "#f1c40f55" : "#27ae6055"} onClick={() => setSelected({ kind: "zone", index: i })} />
+            <circle
+              key={`z${i}`}
+              cx={z.position.x}
+              cy={z.position.y}
+              r={z.radiusM}
+              fill={z.zoneType === "capture" ? "#f1c40f55" : "#27ae6055"}
+              onClick={() => setSelected({ kind: "zone", index: i })}
+            />
           ))}
           {(map.layers.bases ?? []).map((b, i) => (
-            <rect key={`b${i}`} x={b.position.x - b.widthM / 2} y={b.position.y - b.heightM / 2} width={b.widthM} height={b.heightM} fill="none" stroke={safeLookup(TEAM_COLORS, b.team) ?? "#555"} strokeWidth={0.6} onClick={() => setSelected({ kind: "base", index: i })} />
+            <rect
+              key={`b${i}`}
+              x={b.position.x - b.widthM / 2}
+              y={b.position.y - b.heightM / 2}
+              width={b.widthM}
+              height={b.heightM}
+              fill="none"
+              stroke={safeLookup(TEAM_COLORS, b.team) ?? "#555"}
+              strokeWidth={0.6}
+              onClick={() => setSelected({ kind: "base", index: i })}
+            />
           ))}
           {(map.layers.flags ?? []).map((f, i) => (
-            <rect key={`f${i}`} x={f.position.x - 0.8} y={f.position.y - 0.8} width={1.6} height={1.6} fill={safeLookup(TEAM_COLORS, f.team) ?? "#555"} onClick={() => setSelected({ kind: "flag", index: i })} />
+            <rect
+              key={`f${i}`}
+              x={f.position.x - 0.8}
+              y={f.position.y - 0.8}
+              width={1.6}
+              height={1.6}
+              fill={safeLookup(TEAM_COLORS, f.team) ?? "#555"}
+              onClick={() => setSelected({ kind: "flag", index: i })}
+            />
           ))}
           {map.layers.spawns.map((s, i) => (
-            <circle key={`s${i}`} cx={s.position.x} cy={s.position.y} r={1.6} fill={safeLookup(TEAM_COLORS, s.team) ?? "#555"} onClick={() => setSelected({ kind: "spawn", index: i })} aria-label={`spawn ${s.objectId} (${s.team})`} />
+            <circle
+              key={`s${i}`}
+              cx={s.position.x}
+              cy={s.position.y}
+              r={1.6}
+              fill={safeLookup(TEAM_COLORS, s.team) ?? "#555"}
+              onClick={() => setSelected({ kind: "spawn", index: i })}
+              aria-label={`spawn ${s.objectId} (${s.team})`}
+            />
           ))}
         </svg>
 
@@ -481,7 +601,11 @@ export function MapEditorPage() {
           <ul>
             {allObjects.map((o) => (
               <li key={`${o.kind}-${o.index}`}>
-                <button type="button" aria-pressed={selected?.kind === o.kind && selected.index === o.index} onClick={() => setSelected({ kind: o.kind, index: o.index })}>
+                <button
+                  type="button"
+                  aria-pressed={selected?.kind === o.kind && selected.index === o.index}
+                  onClick={() => setSelected({ kind: o.kind, index: o.index })}
+                >
                   {o.label}
                 </button>
               </li>
@@ -491,30 +615,68 @@ export function MapEditorPage() {
             <fieldset>
               <legend>Editar {selected.kind}</legend>
               <label>
-                x <input type="number" aria-label="x" value={(sel.position as Vec2).x} onChange={(e) => patch(selected, (o) => ({ ...o, position: { ...(o.position as Vec2), x: Number(e.target.value) } }))} />
+                x{" "}
+                <input
+                  type="number"
+                  aria-label="x"
+                  value={(sel.position as Vec2).x}
+                  onChange={(e) =>
+                    patch(selected, (o) => ({ ...o, position: { ...(o.position as Vec2), x: Number(e.target.value) } }))
+                  }
+                />
               </label>
               <label>
-                y <input type="number" aria-label="y" value={(sel.position as Vec2).y} onChange={(e) => patch(selected, (o) => ({ ...o, position: { ...(o.position as Vec2), y: Number(e.target.value) } }))} />
+                y{" "}
+                <input
+                  type="number"
+                  aria-label="y"
+                  value={(sel.position as Vec2).y}
+                  onChange={(e) =>
+                    patch(selected, (o) => ({ ...o, position: { ...(o.position as Vec2), y: Number(e.target.value) } }))
+                  }
+                />
               </label>
               {"widthM" in sel && (
                 <>
                   <label>
-                    ancho <input type="number" aria-label="ancho" value={sel.widthM as number} onChange={(e) => patch(selected, (o) => ({ ...o, widthM: Number(e.target.value) }))} />
+                    ancho{" "}
+                    <input
+                      type="number"
+                      aria-label="ancho"
+                      value={sel.widthM as number}
+                      onChange={(e) => patch(selected, (o) => ({ ...o, widthM: Number(e.target.value) }))}
+                    />
                   </label>
                   <label>
-                    alto <input type="number" aria-label="alto" value={sel.heightM as number} onChange={(e) => patch(selected, (o) => ({ ...o, heightM: Number(e.target.value) }))} />
+                    alto{" "}
+                    <input
+                      type="number"
+                      aria-label="alto"
+                      value={sel.heightM as number}
+                      onChange={(e) => patch(selected, (o) => ({ ...o, heightM: Number(e.target.value) }))}
+                    />
                   </label>
                 </>
               )}
               {"radiusM" in sel && (
                 <label>
-                  radio <input type="number" aria-label="radio" value={sel.radiusM as number} onChange={(e) => patch(selected, (o) => ({ ...o, radiusM: Number(e.target.value) }))} />
+                  radio{" "}
+                  <input
+                    type="number"
+                    aria-label="radio"
+                    value={sel.radiusM as number}
+                    onChange={(e) => patch(selected, (o) => ({ ...o, radiusM: Number(e.target.value) }))}
+                  />
                 </label>
               )}
               {"team" in sel && (
                 <label>
                   equipo{" "}
-                  <select aria-label="equipo" value={sel.team as string} onChange={(e) => patch(selected, (o) => ({ ...o, team: e.target.value }))}>
+                  <select
+                    aria-label="equipo"
+                    value={sel.team as string}
+                    onChange={(e) => patch(selected, (o) => ({ ...o, team: e.target.value }))}
+                  >
                     <option value="red">red</option>
                     <option value="blue">blue</option>
                   </select>
@@ -523,7 +685,11 @@ export function MapEditorPage() {
               {"zoneType" in sel && (
                 <label>
                   tipo{" "}
-                  <select aria-label="tipo de zona" value={sel.zoneType as string} onChange={(e) => patch(selected, (o) => ({ ...o, zoneType: e.target.value }))}>
+                  <select
+                    aria-label="tipo de zona"
+                    value={sel.zoneType as string}
+                    onChange={(e) => patch(selected, (o) => ({ ...o, zoneType: e.target.value }))}
+                  >
                     <option value="capture">captura</option>
                     <option value="damage">daño</option>
                   </select>
@@ -558,7 +724,6 @@ export function MapEditorPage() {
           )}
         </div>
       </div>
-
       <h2>Mis mapas</h2>
       {mine === null ? (
         <p>Cargando…</p>
@@ -568,7 +733,11 @@ export function MapEditorPage() {
         <ul data-testid="editor-mine">
           {mine.map((m) => (
             <li key={`${m.mapId}@${m.version}`}>
-              <button type="button" aria-label={`abrir-${m.mapId}-v${m.version}`} onClick={() => void open(m.mapId, m.version)}>
+              <button
+                type="button"
+                aria-label={`abrir-${m.mapId}-v${m.version}`}
+                onClick={() => void open(m.mapId, m.version)}
+              >
                 Abrir
               </button>{" "}
               {m.name ?? m.mapId} · {m.mapId} v{m.version} ({m.state})
@@ -576,13 +745,16 @@ export function MapEditorPage() {
           ))}
         </ul>
       )}
-
       <h2>Duplicar</h2>
-      <input aria-label="id de la copia" placeholder="nuevo-id" value={copyId} onChange={(e) => setCopyId(e.target.value)} />{" "}
+      <input
+        aria-label="id de la copia"
+        placeholder="nuevo-id"
+        value={copyId}
+        onChange={(e) => setCopyId(e.target.value)}
+      />{" "}
       <button type="button" disabled={busy || !copyId} onClick={() => void save({ ...map, mapId: copyId, version: 1 })}>
         Guardar como copia
       </button>
-
       <h2>Exportar JSON (mapa interno)</h2>
       <textarea aria-label="JSON exportado" readOnly rows={8} cols={60} value={exportJson} />
       <div>
@@ -595,9 +767,14 @@ export function MapEditorPage() {
         </a>{" "}
         <small>(se puede importar tal cual en «Mapas»)</small>
       </div>
-
       <h2>Importar JSON</h2>
-      <textarea aria-label="JSON a importar" rows={6} cols={60} value={importText} onChange={(e) => setImportText(e.target.value)} />
+      <textarea
+        aria-label="JSON a importar"
+        rows={6}
+        cols={60}
+        value={importText}
+        onChange={(e) => setImportText(e.target.value)}
+      />
       <div>
         <button
           type="button"

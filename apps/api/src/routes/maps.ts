@@ -89,8 +89,7 @@ function safeValidate(map: InternalMap) {
 
 export function mapVersionToJson(m: Record<string, unknown>, viewer?: { userId: string } | undefined) {
   const content = (typeof m.content === "string" ? safeParse(m.content) : m.content) as
-    | { meta?: { name?: unknown } }
-    | undefined;
+    { meta?: { name?: unknown } } | undefined;
   const name = typeof content?.meta?.name === "string" ? content.meta.name : undefined;
   return {
     mapId: m.map_id,
@@ -255,7 +254,8 @@ export function mapRoutes(db: Db): Router {
       if (!auth) throw badRequest("mine=true exige sesión");
       q = q.where("maps.created_by", auth.userId);
     }
-    if (cursor) q = q.whereRaw("(map_versions.created_at, map_versions.map_id) < (?, ?)", [cursor.createdAt, cursor.id]);
+    if (cursor)
+      q = q.whereRaw("(map_versions.created_at, map_versions.map_id) < (?, ?)", [cursor.createdAt, cursor.id]);
     const rows = await q;
     const page = rows.slice(0, limit);
     res.json({

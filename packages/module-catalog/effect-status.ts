@@ -112,7 +112,11 @@ export const PROPERTY_EFFECTS: Record<ModuleCategory, Record<string, PropertyEff
   radio: {
     maxMessageBytes: p("PARTIAL", false, ARQ),
     maxMessagesPerSecond: p("PARTIAL", false, ARQ),
-    rangeM: p("FUTURE", false, "radioReaches no se llama nunca (sensors.ts:227): la radio no tiene alcance ni filtro de equipo."),
+    rangeM: p(
+      "FUTURE",
+      false,
+      "radioReaches no se llama nunca (sensors.ts:227): la radio no tiene alcance ni filtro de equipo.",
+    ),
   },
   utility: {
     effect: p("FUTURE", false, NONE),
@@ -122,7 +126,16 @@ export const PROPERTY_EFFECTS: Record<ModuleCategory, Record<string, PropertyEff
 };
 
 /** Claves de identidad/descripción: no son propiedades de juego. */
-export const NON_GAMEPLAY_KEYS = new Set(["id", "version", "category", "name", "description", "tags", "requiresChassis", "power"]);
+export const NON_GAMEPLAY_KEYS = new Set([
+  "id",
+  "version",
+  "category",
+  "name",
+  "description",
+  "tags",
+  "requiresChassis",
+  "power",
+]);
 
 /** Efecto de una propiedad (o undefined si es una clave sin efecto de juego). */
 export function effectOf(category: ModuleCategory, prop: string): PropertyEffect | undefined {

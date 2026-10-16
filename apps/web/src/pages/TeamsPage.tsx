@@ -122,7 +122,6 @@ export function TeamsPage(props: { me: Me }) {
         </div>
       )}
       {teams === null && !loadError && <p>Cargando equipos…</p>}
-
       {mine.map((t) => (
         <section key={t.id} className="card" data-testid={`team-${t.name}`} aria-label={`equipo ${t.name}`}>
           <h3>
@@ -246,7 +245,6 @@ export function TeamsPage(props: { me: Me }) {
           </p>
         </section>
       ))}
-
       {others.length > 0 && (
         <>
           <h3>Otros equipos</h3>

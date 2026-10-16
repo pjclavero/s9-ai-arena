@@ -101,7 +101,8 @@ describe("cableado con la API", () => {
     window.location.hash = "#/maps/editor?map=reabierto&v=3";
     const content = { ...newMap("reabierto", "Reabierto desde BD"), version: 3 };
     apiMock.mockImplementation((method: string, path: string) => {
-      if (path === "/maps/reabierto/versions/3") return Promise.resolve({ mapId: "reabierto", version: 3, state: "draft" });
+      if (path === "/maps/reabierto/versions/3")
+        return Promise.resolve({ mapId: "reabierto", version: 3, state: "draft" });
       if (path === "/maps/reabierto/versions/3/content") return Promise.resolve(content);
       if (path.startsWith("/maps?mine=true")) return Promise.resolve({ items: [] });
       return Promise.reject(new Error(`unexpected ${method} ${path}`));
@@ -117,7 +118,10 @@ describe("cableado con la API", () => {
     const { ApiRequestError } = await import("../src/api.js");
     apiMock.mockImplementation((method: string, path: string) => {
       if (path.startsWith("/maps?mine=true")) return Promise.resolve({ items: [] });
-      if (method === "POST") return Promise.reject(new ApiRequestError(403, { error: "forbidden", message: "Ese mapa pertenece a otro usuario" }));
+      if (method === "POST")
+        return Promise.reject(
+          new ApiRequestError(403, { error: "forbidden", message: "Ese mapa pertenece a otro usuario" }),
+        );
       return Promise.reject(new Error("x"));
     });
     render(<MapEditorPage />);

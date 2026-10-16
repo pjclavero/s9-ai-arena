@@ -38,7 +38,13 @@ root.use("/api/v1", api);
 // Endpoints de inspección SOLO del E2E (comprobar en BD lo que dice la UI). Lectura.
 root.get("/__e2e/db/map/:mapId", async (req, res) => {
   const rows = await h.db("map_versions").where({ map_id: req.params.mapId }).orderBy("version");
-  res.json(rows.map((r: Record<string, unknown>) => ({ version: r.version, state: r.state, name: (r.content as { meta?: { name?: string } }).meta?.name })));
+  res.json(
+    rows.map((r: Record<string, unknown>) => ({
+      version: r.version,
+      state: r.state,
+      name: (r.content as { meta?: { name?: string } }).meta?.name,
+    })),
+  );
 });
 root.get("/__e2e/db/battle/:id", async (req, res) => {
   res.json((await h.db("battles").where({ id: req.params.id }).first()) ?? null);
