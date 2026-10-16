@@ -52,7 +52,11 @@ export function createSandboxFromEnv(
   return { sandbox };
 }
 
-export function createBuildExecutor(db: Knex, signer: ServiceKeypair, env: NodeJS.ProcessEnv = process.env): BuildExecutorWiring {
+export function createBuildExecutor(
+  db: Knex,
+  signer: ServiceKeypair,
+  env: NodeJS.ProcessEnv = process.env,
+): BuildExecutorWiring {
   const { sandbox, reason } = createSandboxFromEnv(env);
   const executor = new E6PipelineBotManager(db, { signer, ...(sandbox ? { sandbox } : {}) });
   return { executor, sandbox, reason };

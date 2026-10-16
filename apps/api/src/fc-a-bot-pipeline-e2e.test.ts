@@ -21,13 +21,21 @@ import { runBuildWorkerOnce } from "../../bot-manager/src/build-worker.js";
 import { createBuildExecutor } from "../../bot-manager/src/build-worker-wiring.js";
 import { generateServiceKeypair, verifyArtifact } from "../../bot-manager/src/signing.js";
 import { resolveBotLaunch } from "../../bot-manager/src/bot-launch.js";
-import { DOCKER_E2E, startDockerSandboxEnv, leftoverBotContainers, type DockerSandboxEnv } from "../../bot-manager/tests/docker-sandbox-env.js";
+import {
+  DOCKER_E2E,
+  startDockerSandboxEnv,
+  leftoverBotContainers,
+  type DockerSandboxEnv,
+} from "../../bot-manager/tests/docker-sandbox-env.js";
 import { PY_GOOD, PY_CRASH } from "../../bot-manager/tests/sandbox-bots.js";
 import { initPhysics } from "../../arena-engine/src/sim/physics.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const GOOD_LOADOUT = JSON.parse(
-  readFileSync(join(__dirname, "..", "..", "..", "packages", "module-catalog", "examples", "loadout-medium-gunner.json"), "utf8"),
+  readFileSync(
+    join(__dirname, "..", "..", "..", "packages", "module-catalog", "examples", "loadout-medium-gunner.json"),
+    "utf8",
+  ),
 );
 
 let h: TestDbHandle;
@@ -101,7 +109,14 @@ describe.skipIf(!DOCKER_E2E)("A5 · E2E real: código de usuario → published (
 
     const row = await h.db("bot_versions").where({ bot_id: botId, version }).first();
     const art = await h.db("artifacts").where({ build_id: row.validated_build_id }).first();
-    expect(verifyArtifact({ artifactBytes: Buffer.from(art.bytes), signedHash: art.hash, signature: art.signature, publicKey: signer.publicKey }).ok).toBe(true);
+    expect(
+      verifyArtifact({
+        artifactBytes: Buffer.from(art.bytes),
+        signedHash: art.hash,
+        signature: art.signature,
+        publicKey: signer.publicKey,
+      }).ok,
+    ).toBe(true);
     const launch = await resolveBotLaunch(h.db, botId, version, { publicKey: signer.publicKey });
     expect(launch.artifactHash).toBe(row.artifact_hash);
   });

@@ -118,7 +118,9 @@ export class E6PipelineBotManager implements BotManagerClient {
     }
 
     // DEV-A · A4: el build deja de figurar `queued` mientras el pipeline corre.
-    await this.db("builds").where({ id: req.buildId, status: "queued" }).update({ status: "running", updated_at: this.db.fn.now() });
+    await this.db("builds")
+      .where({ id: req.buildId, status: "queued" })
+      .update({ status: "running", updated_at: this.db.fn.now() });
 
     const submission: BotSubmission = {
       botId: req.botId,

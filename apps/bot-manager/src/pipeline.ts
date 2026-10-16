@@ -39,7 +39,12 @@ import {
   type StageResult,
 } from "./types.js";
 import type { BotAgent } from "../../arena-engine/src/sim/battle.js";
-import { SandboxInfrastructureError, type BuildSandbox, type SandboxVerification, type StageVerdict } from "./build-sandbox.js";
+import {
+  SandboxInfrastructureError,
+  type BuildSandbox,
+  type SandboxVerification,
+  type StageVerdict,
+} from "./build-sandbox.js";
 
 export interface PipelineDeps {
   store: BuildStore;

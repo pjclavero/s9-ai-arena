@@ -25,7 +25,14 @@ import { BotDetailPage } from "../src/pages/BotDetailPage.js";
 import { matchBotDetailRoute } from "../src/pages/BotsPage.js";
 
 const apiMock = api as unknown as ReturnType<typeof vi.fn>;
-const BOT = { id: "b1", name: "Ana-bot", ownerId: "u1", visibility: "private", latestPublishedVersion: 1, createdAt: "2026-10-01T10:00:00Z" };
+const BOT = {
+  id: "b1",
+  name: "Ana-bot",
+  ownerId: "u1",
+  visibility: "private",
+  latestPublishedVersion: 1,
+  createdAt: "2026-10-01T10:00:00Z",
+};
 const V = (version: number, state: string, extra: Record<string, unknown> = {}) => ({
   botId: "b1",
   version,
@@ -52,7 +59,12 @@ const detail = (v: ReturnType<typeof V>) => ({
           status: v.version === 1 ? "passed" : "failed",
           createdAt: v.createdAt,
           stages: [
-            { name: "protocol_test", status: v.version === 1 ? "passed" : "failed", message: v.version === 1 ? undefined : "ningún COMMAND válido", logs: ["contenedor lanzado"] },
+            {
+              name: "protocol_test",
+              status: v.version === 1 ? "passed" : "failed",
+              message: v.version === 1 ? undefined : "ningún COMMAND válido",
+              logs: ["contenedor lanzado"],
+            },
             { name: "resource_limits", status: "passed", metrics: { startupMs: 412, p95DecisionMs: 2.5 } },
           ],
         },
@@ -69,15 +81,32 @@ beforeEach(() => {
     calls.push({ method, path, body });
     if (method === "GET" && path === "/bots/b1") return BOT;
     if (method === "GET" && path === "/bots/b1/versions") return VERSIONS;
-    if (method === "GET" && path === "/bots/b1/loadouts") return [{ revision: 1, chassis: "chassis.medium@1", modules: [{ slot: "drive", moduleId: "movement.tracks@1" }] }];
+    if (method === "GET" && path === "/bots/b1/loadouts")
+      return [
+        { revision: 1, chassis: "chassis.medium@1", modules: [{ slot: "drive", moduleId: "movement.tracks@1" }] },
+      ];
     const m = /^\/bots\/b1\/versions\/(\d+)$/.exec(path);
     if (method === "GET" && m) return detail(VERSIONS[Number(m[1]) - 1]);
     if (method === "GET" && /\/files$/.test(path)) {
       if (filesForbidden) throw new ApiRequestError(403, { message: "privado" });
-      return { version: 1, packaged: false, files: [{ path: "src/bot.py", content: "class Bot(ArenaBot): pass\n" }, { path: "requirements.txt", content: "arena-sdk==1.0.0\n" }] };
+      return {
+        version: 1,
+        packaged: false,
+        files: [
+          { path: "src/bot.py", content: "class Bot(ArenaBot): pass\n" },
+          { path: "requirements.txt", content: "arena-sdk==1.0.0\n" },
+        ],
+      };
     }
     if (method === "GET" && /\/diff\?against=/.test(path)) {
-      return { from: 2, to: 3, files: [{ path: "src/bot.py", status: "modified", additions: 1, deletions: 1, diff: "@@ -1,1 +1,1 @@\n-a\n+b" }, { path: "requirements.txt", status: "unchanged", additions: 0, deletions: 0, diff: "" }] };
+      return {
+        from: 2,
+        to: 3,
+        files: [
+          { path: "src/bot.py", status: "modified", additions: 1, deletions: 1, diff: "@@ -1,1 +1,1 @@\n-a\n+b" },
+          { path: "requirements.txt", status: "unchanged", additions: 0, deletions: 0, diff: "" },
+        ],
+      };
     }
     if (method === "POST" && /actions\/clone$/.test(path)) return V(4, "draft", { parentVersion: 1 });
     throw new Error(`ruta no simulada: ${method} ${path}`);

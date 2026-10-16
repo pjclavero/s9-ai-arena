@@ -28,7 +28,10 @@ import { createPublishedBot, insertScheduledBattle } from "../../tournament-work
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const GOOD_LOADOUT = JSON.parse(
-  readFileSync(join(__dirname, "..", "..", "..", "packages", "module-catalog", "examples", "loadout-medium-gunner.json"), "utf8"),
+  readFileSync(
+    join(__dirname, "..", "..", "..", "packages", "module-catalog", "examples", "loadout-medium-gunner.json"),
+    "utf8",
+  ),
 );
 const PY_GOOD_V3 = PY_GOOD.replace('"throttle": 0.6', '"throttle": 0.5');
 
@@ -115,7 +118,9 @@ describe("A9.10 · inmutabilidad garantizada por la BD", () => {
     const q = () => h.db("bot_versions").where({ bot_id: botId, version: 1 });
     await expect(q().update({ source: Buffer.from("print('pisado')") })).rejects.toThrow(/bot_version_immutable/);
     await expect(q().update({ runtime: "node" })).rejects.toThrow(/bot_version_immutable/);
-    await expect(q().update({ loadout_revision: 1, source_filename: "otro.py" })).rejects.toThrow(/bot_version_immutable/);
+    await expect(q().update({ loadout_revision: 1, source_filename: "otro.py" })).rejects.toThrow(
+      /bot_version_immutable/,
+    );
     await expect(q().update({ artifact_hash: "e".repeat(64) })).rejects.toThrow(/bot_version_immutable/);
     await expect(q().update({ version: 99 })).rejects.toThrow(/bot_version_immutable/);
     await expect(q().del()).rejects.toThrow(/bot_version_immutable/);
@@ -126,7 +131,10 @@ describe("A9.10 · inmutabilidad garantizada por la BD", () => {
 
   it("un draft sí es editable (todavía no es historia)", async () => {
     const d = await newVersion("# borrador\n");
-    await h.db("bot_versions").where({ bot_id: botId, version: d.body.version }).update({ source: Buffer.from("# editado\n") });
+    await h
+      .db("bot_versions")
+      .where({ bot_id: botId, version: d.body.version })
+      .update({ source: Buffer.from("# editado\n") });
     const row = await h.db("bot_versions").where({ bot_id: botId, version: d.body.version }).first();
     expect(Buffer.from(row.source).toString()).toBe("# editado\n");
   });
@@ -167,7 +175,8 @@ describe("A9.12 · diff entre versiones almacenadas", () => {
     expect(bot.diff).toMatch(/^@@ -\d+,\d+ \+\d+,\d+ @@/);
     expect(bot.diff).toContain('-            return {"move": {"throttle": 0.8, "steer": 0.2}}');
     expect(bot.diff).toContain('+            return {"move": {"throttle": 0.9, "steer": -0.3}}');
-    for (const f of r.body.files.filter((x: { path: string }) => x.path !== "src/bot.py")) expect(f.status).toBe("unchanged");
+    for (const f of r.body.files.filter((x: { path: string }) => x.path !== "src/bot.py"))
+      expect(f.status).toBe("unchanged");
     const bad = await request(app).get(`/bots/${botId}/versions/2/diff`).set(hdr(owner));
     expect(bad.status).toBe(400);
   });
@@ -175,12 +184,16 @@ describe("A9.12 · diff entre versiones almacenadas", () => {
 
 describe("A9.14/15 · la batalla referencia la versión EXACTA", () => {
   it("batalla con v1; se publica v2; la batalla sigue en v1 y su código/artefacto son los de v1", async () => {
-    expect((await request(app).post(`/bots/${botId}/versions/1/actions/publish`).set(hdr(owner)).send({})).status).toBe(200);
+    expect((await request(app).post(`/bots/${botId}/versions/1/actions/publish`).set(hdr(owner)).send({})).status).toBe(
+      200,
+    );
     const rival = await createPublishedBot(h.db, "fc-a-rival");
     const battleId = await insertScheduledBattle(h.db, { ...rival, botId, version: 1, name: "fc-a" } as never, rival);
     const before = await battleCodeProvenance(h.db, battleId);
 
-    expect((await request(app).post(`/bots/${botId}/versions/2/actions/publish`).set(hdr(owner)).send({})).status).toBe(200);
+    expect((await request(app).post(`/bots/${botId}/versions/2/actions/publish`).set(hdr(owner)).send({})).status).toBe(
+      200,
+    );
 
     const part = await h.db("participants").where({ battle_id: battleId, bot_id: botId }).first();
     expect(part.version).toBe(1);
@@ -206,7 +219,14 @@ describe("A9.14/15 · la batalla referencia la versión EXACTA", () => {
 
 describe("A9.16 · el historial de código es privado", () => {
   it("usuario B no ve las versiones ni el código del bot privado de A (404)", async () => {
-    for (const path of ["versions", "versions/1", "versions/1/source", "versions/1/files", "versions/1/artifact", "versions/2/diff?against=1"]) {
+    for (const path of [
+      "versions",
+      "versions/1",
+      "versions/1/source",
+      "versions/1/files",
+      "versions/1/artifact",
+      "versions/2/diff?against=1",
+    ]) {
       const r = await request(app).get(`/bots/${botId}/${path}`).set(hdr(other));
       expect(r.status, path).toBe(404);
     }
@@ -227,7 +247,9 @@ describe("A9.16 · el historial de código es privado", () => {
       const r = await request(app).get(`/bots/${botId}/${path}`).set(hdr(other));
       expect(r.status, path).toBe(403);
     }
-    expect((await request(app).post(`/bots/${botId}/versions/1/actions/clone`).set(hdr(other)).send({})).status).toBe(403);
+    expect((await request(app).post(`/bots/${botId}/versions/1/actions/clone`).set(hdr(other)).send({})).status).toBe(
+      403,
+    );
     await request(app).patch(`/bots/${botId}`).set(hdr(owner)).send({ visibility: "private" });
   });
 });

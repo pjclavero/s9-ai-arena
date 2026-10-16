@@ -33,7 +33,11 @@ const signer = loadServiceKeypair();
 const { executor, sandbox, reason } = createBuildExecutor(db, signer);
 if (!sandbox) {
   console.error(
-    JSON.stringify({ level: "error", service: "bot-build-worker", msg: `sin sandbox: todo build se rechazará (${reason})` }),
+    JSON.stringify({
+      level: "error",
+      service: "bot-build-worker",
+      msg: `sin sandbox: todo build se rechazará (${reason})`,
+    }),
   );
 }
 

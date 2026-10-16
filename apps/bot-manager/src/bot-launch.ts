@@ -135,12 +135,18 @@ export async function resolveBotLaunch(
   const allowed = opts.allowedStates ?? ["published", "frozen"];
   const v = await db("bot_versions").where({ bot_id: botId, version }).first();
   if (!v) throw new BotLaunchRefused(`versión inexistente: ${botId} v${version}`);
-  if (!allowed.includes(v.state)) throw new BotLaunchRefused(`${botId} v${version} está ${v.state}, no ${allowed.join("|")}`);
+  if (!allowed.includes(v.state))
+    throw new BotLaunchRefused(`${botId} v${version} está ${v.state}, no ${allowed.join("|")}`);
   const art = await findVersionArtifact(db, v);
   if (!art) throw new BotLaunchRefused(`${botId} v${version} sin artefacto de su build`);
   if (!art.bytes || !art.signature) throw new BotLaunchRefused(`${botId} v${version}: artefacto sin bytes o sin firma`);
   const bytes = Buffer.from(art.bytes);
-  const check = verifyArtifact({ artifactBytes: bytes, signedHash: art.hash, signature: art.signature, publicKey: opts.publicKey });
+  const check = verifyArtifact({
+    artifactBytes: bytes,
+    signedHash: art.hash,
+    signature: art.signature,
+    publicKey: opts.publicKey,
+  });
   if (!check.ok) throw new BotLaunchRefused(`${botId} v${version}: ${check.reason}`);
   const images = opts.runtimeImages ?? loadRuntimeImages();
   const runtime = v.runtime as Runtime;

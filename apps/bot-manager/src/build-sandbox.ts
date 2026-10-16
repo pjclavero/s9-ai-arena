@@ -69,7 +69,11 @@ export interface SandboxVerification {
 
 /** Lo que el pipeline necesita del sandbox: una verificación por build. */
 export interface BuildSandbox {
-  verify(sub: BotSubmission, artifact: { bytes: Buffer; hash: string }, cfg: PipelineConfig): Promise<SandboxVerification>;
+  verify(
+    sub: BotSubmission,
+    artifact: { bytes: Buffer; hash: string },
+    cfg: PipelineConfig,
+  ): Promise<SandboxVerification>;
 }
 
 export interface ContainerBuildSandboxOptions {
@@ -249,7 +253,9 @@ export class ContainerBuildSandbox implements BuildSandbox {
       // cuánto tardó la plataforma en crearlo/arrancarlo (no es culpa del bot).
       const t0 = performance.now();
       const launchMs = t0 - tLaunch;
-      logs.push(`contenedor ${container.id.slice(0, 12)} lanzado en ${launchMs.toFixed(0)} ms (${image.split("@")[0]})`);
+      logs.push(
+        `contenedor ${container.id.slice(0, 12)} lanzado en ${launchMs.toFixed(0)} ms (${image.split("@")[0]})`,
+      );
 
       // Defensa en profundidad: la postura REAL del contenedor (inspect) debe
       // cumplir la tabla 18.2. Si el contenedor ya desapareció (salió al
@@ -262,7 +268,8 @@ export class ContainerBuildSandbox implements BuildSandbox {
       } catch (e) {
         if (e instanceof SandboxInfrastructureError) throw e;
         const st = await container.state?.();
-        if (!st?.gone) throw new SandboxInfrastructureError(`no se pudo inspeccionar el sandbox: ${(e as Error).message}`);
+        if (!st?.gone)
+          throw new SandboxInfrastructureError(`no se pudo inspeccionar el sandbox: ${(e as Error).message}`);
         logs.push("contenedor ya terminado antes de inspeccionarlo (la postura la validó el proxy al crearlo)");
       }
 
@@ -272,7 +279,11 @@ export class ContainerBuildSandbox implements BuildSandbox {
       if (connected.ok === false) {
         const reason = `el bot no completó el handshake (HELLO) en ${waitMs} ms${this.describeExit(connected.state, offer.reports)}`;
         return {
-          protocol: { outcome: "failed", message: reason, logs: [...logs, `descargas del artefacto: ${offer.fetches}`] },
+          protocol: {
+            outcome: "failed",
+            message: reason,
+            logs: [...logs, `descargas del artefacto: ${offer.fetches}`],
+          },
           smoke: notRun("no ejecutada: el bot no arrancó"),
           resources: notRun("no ejecutada: el bot no arrancó"),
         };
@@ -289,8 +300,7 @@ export class ContainerBuildSandbox implements BuildSandbox {
 
       // 2) Partida de humo real (bucle de ticks del ProtocolServer).
       server.start();
-      const overallMs =
-        cfg.smokeBattleTicks * (this.o.tickIntervalMs ?? 1000 / 30) * 2 + 30_000;
+      const overallMs = cfg.smokeBattleTicks * (this.o.tickIntervalMs ?? 1000 / 30) * 2 + 30_000;
       let timer: ReturnType<typeof setTimeout> | undefined;
       let result: BattleResult;
       try {
@@ -360,9 +370,19 @@ export class ContainerBuildSandbox implements BuildSandbox {
       ];
       let resources: StageVerdict = { outcome: "passed", logs: resLogs, metrics };
       if (state?.oomKilled) {
-        resources = { outcome: "failed", message: "el contenedor superó su límite de memoria (OOM)", logs: resLogs, metrics };
+        resources = {
+          outcome: "failed",
+          message: "el contenedor superó su límite de memoria (OOM)",
+          logs: resLogs,
+          metrics,
+        };
       } else if (startupMs > cfg.limits.maxStartupMs) {
-        resources = { outcome: "failed", message: `arranque ${startupMs.toFixed(0)} ms > ${cfg.limits.maxStartupMs} ms`, logs: resLogs, metrics };
+        resources = {
+          outcome: "failed",
+          message: `arranque ${startupMs.toFixed(0)} ms > ${cfg.limits.maxStartupMs} ms`,
+          logs: resLogs,
+          metrics,
+        };
       } else if (p95 > cfg.limits.maxDecisionMs) {
         resources = {
           outcome: "failed",
@@ -401,7 +421,10 @@ export class ContainerBuildSandbox implements BuildSandbox {
       }
       return null;
     })();
-    const first = await Promise.race([connected.then((ok) => ({ kind: "conn" as const, ok })), exited.then((st) => ({ kind: "exit" as const, st }))]);
+    const first = await Promise.race([
+      connected.then((ok) => ({ kind: "conn" as const, ok })),
+      exited.then((st) => ({ kind: "exit" as const, st })),
+    ]);
     done = true;
     if (first.kind === "conn" && first.ok) return { ok: true };
     const st = first.kind === "exit" ? first.st : ((await container.state?.().catch(() => null)) ?? null);

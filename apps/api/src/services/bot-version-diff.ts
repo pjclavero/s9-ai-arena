@@ -79,7 +79,9 @@ function unified(ops: Op[]): string {
     const slice = ops.slice(start, end);
     const aCount = slice.filter((o) => o.kind !== "+").length;
     const bCount = slice.filter((o) => o.kind !== "-").length;
-    out.push(`@@ -${aCount ? posA[start] : posA[start] - 1},${aCount} +${bCount ? posB[start] : posB[start] - 1},${bCount} @@`);
+    out.push(
+      `@@ -${aCount ? posA[start] : posA[start] - 1},${aCount} +${bCount ? posB[start] : posB[start] - 1},${bCount} @@`,
+    );
     for (const o of slice) out.push(`${o.kind}${o.line}`);
     k = end;
   }
@@ -97,10 +99,17 @@ export function diffFiles(from: SourceFile[], to: SourceFile[]): FileDiff[] {
     const y = b.get(path);
     const la = x === undefined ? [] : lines(x);
     const lb = y === undefined ? [] : lines(y);
-    const status: FileDiff["status"] = x === undefined ? "added" : y === undefined ? "removed" : x === y ? "unchanged" : "modified";
+    const status: FileDiff["status"] =
+      x === undefined ? "added" : y === undefined ? "removed" : x === y ? "unchanged" : "modified";
     if (status === "unchanged") return { path, status, additions: 0, deletions: 0, diff: "" };
     if (la.length > MAX_DIFF_LINES || lb.length > MAX_DIFF_LINES) {
-      return { path, status, additions: lb.length, deletions: la.length, diff: "(fichero demasiado grande para diff en línea)" };
+      return {
+        path,
+        status,
+        additions: lb.length,
+        deletions: la.length,
+        diff: "(fichero demasiado grande para diff en línea)",
+      };
     }
     const ops = lineOps(la, lb);
     return {

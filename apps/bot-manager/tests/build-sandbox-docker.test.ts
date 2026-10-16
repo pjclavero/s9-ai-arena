@@ -17,8 +17,22 @@ import { packArtifact } from "../src/artifact.js";
 import { createSandboxFromEnv } from "../src/build-worker-wiring.js";
 import { SandboxInfrastructureError, type ContainerBuildSandbox } from "../src/build-sandbox.js";
 import { submission } from "./fixtures.js";
-import { DOCKER_E2E, startDockerSandboxEnv, leftoverBotContainers, type DockerSandboxEnv } from "./docker-sandbox-env.js";
-import { PY_GOOD, PY_BAD_PROTOCOL, PY_HANG, PY_CRASH, PY_SYNTAX_ERROR, JS_GOOD, pyFiles, jsFiles } from "./sandbox-bots.js";
+import {
+  DOCKER_E2E,
+  startDockerSandboxEnv,
+  leftoverBotContainers,
+  type DockerSandboxEnv,
+} from "./docker-sandbox-env.js";
+import {
+  PY_GOOD,
+  PY_BAD_PROTOCOL,
+  PY_HANG,
+  PY_CRASH,
+  PY_SYNTAX_ERROR,
+  JS_GOOD,
+  pyFiles,
+  jsFiles,
+} from "./sandbox-bots.js";
 import type { SourceFile } from "../src/types.js";
 import { initPhysics } from "../../arena-engine/src/sim/physics.js";
 
@@ -27,7 +41,12 @@ let sandbox: ContainerBuildSandbox;
 const signer = generateServiceKeypair();
 
 function pipeline(sb = sandbox, ticks = 300) {
-  return new BuildPipeline({ store: new InMemoryBuildStore(), config: withConfig({ smokeBattleTicks: ticks }), signer, sandbox: sb });
+  return new BuildPipeline({
+    store: new InMemoryBuildStore(),
+    config: withConfig({ smokeBattleTicks: ticks }),
+    signer,
+    sandbox: sb,
+  });
 }
 
 const stage = (b: { stages: { name: string; status: string; message?: string }[] }, n: string) =>
@@ -56,7 +75,9 @@ describe.skipIf(!DOCKER_E2E)("TD-001 · sandbox REAL en el pipeline (Docker)", (
     expect(b.status).toBe("passed");
     expect(b.botVersionState).toBe("validated");
     for (const s of b.stages) expect(s.status, `${s.name}: ${s.message}`).toBe("passed");
-    expect(b.stages.find((s) => s.name === "protocol_test")!.logs.join("\n")).toMatch(/postura del contenedor conforme/);
+    expect(b.stages.find((s) => s.name === "protocol_test")!.logs.join("\n")).toMatch(
+      /postura del contenedor conforme/,
+    );
     const m = b.stages.find((s) => s.name === "resource_limits")!.metrics!;
     expect(m.validCommands).toBeGreaterThan(50);
     expect(m.startupMs).toBeLessThan(5000);

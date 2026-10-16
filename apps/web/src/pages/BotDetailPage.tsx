@@ -172,7 +172,9 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
     fd.append("source", new Blob([edited], { type: "text/plain" }), base.runtime === "python" ? "bot.py" : "bot.js");
     try {
       const created = await api<VersionInfo>("POST", `/bots/${botId}/versions`, undefined, { formData: fd });
-      setNotice(`Guardado como v${created.version} (draft) desde v${base.version}. Envíala a validación desde «Mis bots».`);
+      setNotice(
+        `Guardado como v${created.version} (draft) desde v${base.version}. Envíala a validación desde «Mis bots».`,
+      );
       await reload();
     } catch (e) {
       setNotice(`No se pudo guardar: ${errText(e)}`);
@@ -225,7 +227,9 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
       {tab === "overview" && (
         <div className="card" data-testid="panel-overview">
           <p>Visibilidad: {bot.visibility}</p>
-          <p>Versión publicada más reciente: {bot.latestPublishedVersion ? `v${bot.latestPublishedVersion}` : "ninguna"}</p>
+          <p>
+            Versión publicada más reciente: {bot.latestPublishedVersion ? `v${bot.latestPublishedVersion}` : "ninguna"}
+          </p>
           <p>Versiones: {versions.length}</p>
           <p>Creado: {when(bot.createdAt)}</p>
           <p>
@@ -357,7 +361,11 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
                         Ver build
                       </button>{" "}
                       {isOwner && (
-                        <button type="button" data-testid={`clone-${v.version}`} onClick={() => void cloneFrom(v.version)}>
+                        <button
+                          type="button"
+                          data-testid={`clone-${v.version}`}
+                          onClick={() => void cloneFrom(v.version)}
+                        >
                           Nueva versión desde ésta
                         </button>
                       )}{" "}
@@ -391,9 +399,11 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
                       {s.metrics ? (
                         <small>
                           {" "}
-                          ({Object.entries(s.metrics)
+                          (
+                          {Object.entries(s.metrics)
                             .map(([k, val]) => `${k}=${Math.round(val * 10) / 10}`)
-                            .join(", ")})
+                            .join(", ")}
+                          )
                         </small>
                       ) : null}
                       {s.logs && s.logs.length > 0 && (
