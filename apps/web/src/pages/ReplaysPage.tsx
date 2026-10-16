@@ -1,11 +1,22 @@
 /**
  * R7-A · Listado global de replays gestionados por el replay-service.
  *
- * Consume `GET /replays` (servido por el replay-service tras el gateway). Muestra todos
- * los replays (no solo abrir uno conocido) y enlaza al visor/reproductor existentes
- * (`#/viewer/:battleId`, `#/replay/:battleId`). No expone secretos ni rutas internas.
+ * Consume `GET /replays/` (servido por el replay-service tras el gateway). Muestra todos
+ * los replays (no solo abrir uno conocido) y enlaza al reproductor (`#/replay/:battleId`).
+ * No expone secretos ni rutas internas.
+ *
+ * FC-D (D6, TD-014) · La ruta lleva BARRA FINAL: `fetch("/replays")` (sin barra) caía en
+ * la redirección 301 de nginx hacia `location /replays/`, y detrás del proxy TLS esa
+ * redirección era ABSOLUTA a `http://` → el navegador la bloqueaba como contenido
+ * mixto. Además el gateway ya no redirige (`absolute_redirect off` + `location =
+ * /replays`), así que ni un cliente antiguo recibe un `http://`.
+ *
+ * FC-D (D1/D2) · Estados con los componentes comunes: carga, error clasificado
+ * (502 del gateway, timeout, red) con «Reintentar», vacío con siguiente paso.
  */
-import { useEffect, useState } from "react";
+import { fetchJson } from "../api.js";
+import { useResource, ResourceView } from "../resource.js";
+import { EmptyState } from "../ui/primitives.js";
 
 interface ReplaySummary {
   battleId: string;
@@ -16,90 +27,69 @@ interface ReplaySummary {
   sizeBytes: number;
 }
 
-type State = { kind: "loading" } | { kind: "error"; message: string } | { kind: "ok"; items: ReplaySummary[] };
+/** Ruta del listado tras el gateway. CON barra final (ver cabecera). */
+export const REPLAYS_LIST_URL = "/replays/";
+
+/** Duración aproximada de un replay a 30 ticks/s (motor E2). */
+export function formatTicksAsDuration(ticks: number): string {
+  const s = Math.round(ticks / 30);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
 
 export function ReplaysPage() {
-  const [state, setState] = useState<State>({ kind: "loading" });
-
-  useEffect(() => {
-    let alive = true;
-    void (async () => {
-      try {
-        const res = await fetch("/replays");
-        if (!res.ok) throw new Error(`replay-service respondió ${res.status}`);
-        const body = (await res.json()) as { items: ReplaySummary[] };
-        if (alive) setState({ kind: "ok", items: body.items ?? [] });
-      } catch (e) {
-        if (alive) setState({ kind: "error", message: (e as Error).message });
-      }
-    })();
-    return () => {
-      alive = false;
-    };
+  const [list, reload] = useResource(async () => {
+    const body = await fetchJson<{ items?: ReplaySummary[] }>(REPLAYS_LIST_URL);
+    if (!body || !Array.isArray(body.items)) throw new Error("respuesta del servicio de replays sin `items`");
+    return body.items;
   }, []);
-
-  if (state.kind === "loading") {
-    return (
-      <section>
-        <h2>Replays</h2>
-        <p role="status" aria-live="polite">
-          Cargando replays…
-        </p>
-      </section>
-    );
-  }
-  if (state.kind === "error") {
-    return (
-      <section>
-        <h2>Replays</h2>
-        <p role="alert" className="error">
-          Servicio de replays no disponible: {state.message}
-        </p>
-      </section>
-    );
-  }
-  if (state.items.length === 0) {
-    return (
-      <section>
-        <h2>Replays</h2>
-        <p>No hay replays todavía. Se crean al ejecutar batallas (arnés real o ejecución containerizada).</p>
-      </section>
-    );
-  }
 
   return (
     <section>
       <h2>Replays</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Batalla</th>
-            <th>Resultado</th>
-            <th>Ticks</th>
-            <th>Oficial</th>
-            <th>Fecha</th>
-            <th>Ver</th>
-          </tr>
-        </thead>
-        <tbody>
-          {state.items.map((r) => (
-            <tr key={r.battleId} data-testid="replay-row">
-              <td>
-                <code>{r.battleId}</code>
-              </td>
-              <td>{r.winner}</td>
-              <td>{r.ticks}</td>
-              <td>{r.official ? "sí" : "no"}</td>
-              <td>{new Date(r.createdAt).toLocaleString()}</td>
-              <td>
-                <a href={`#/viewer/${encodeURIComponent(r.battleId)}`}>visor</a>
-                {" · "}
-                <a href={`#/replay/${encodeURIComponent(r.battleId)}`}>reproductor</a>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <ResourceView resource={list} label="los replays" onRetry={reload}>
+        {(items) =>
+          items.length === 0 ? (
+            <EmptyState
+              data-testid="replays-empty"
+              message="No hay replays todavía. Se crean al terminar una batalla."
+              action={<a href="#/battles">Ir a Batallas</a>}
+            />
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Batalla</th>
+                  <th>Resultado</th>
+                  <th>Duración</th>
+                  <th>Oficial</th>
+                  <th>Fecha</th>
+                  <th>Ver</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((r) => (
+                  <tr key={r.battleId} data-testid="replay-row" data-battle-id={r.battleId}>
+                    <td>
+                      <code title={r.battleId}>{r.battleId.slice(0, 8)}</code>
+                    </td>
+                    <td>{r.winner === "draw" ? "empate" : r.winner ? `gana ${r.winner}` : "—"}</td>
+                    <td>
+                      {formatTicksAsDuration(r.ticks)} ({r.ticks} ticks)
+                    </td>
+                    <td>{r.official ? "sí" : "no"}</td>
+                    <td>{new Date(r.createdAt).toLocaleString()}</td>
+                    <td>
+                      <a href={`#/replay/${encodeURIComponent(r.battleId)}?t=0`} data-testid="replay-open">
+                        Ver replay
+                      </a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )
+        }
+      </ResourceView>
     </section>
   );
 }

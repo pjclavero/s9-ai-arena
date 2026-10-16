@@ -10,8 +10,8 @@ El directo de una batalla se sirve por WebSocket desde el **gateway de espectado
 
 Estado actual:
 
-- el visor web no llega a pedir el ticket porque Phaser falla al arrancar ([TD-009](../roadmap/technical-debt.md#td-009));
-- el worker no recibe el secreto para verificar tickets, así que todo ticket se rechazaría con `4401` ([TD-028](../roadmap/technical-debt.md#td-028));
+- el visor web arranca Phaser correctamente y pide el ticket ([TD-009](../roadmap/technical-debt.md#td-009), corregido en `fc/dev-d-frontend`);
+- el worker recibe el MISMO secreto que la API (`jwt_secret` por fichero) y verifica los tickets; un test de compose exige esa coherencia ([TD-028](../roadmap/technical-debt.md#td-028), corregido en la rama, pendiente de despliegue);
 - las batallas duran segundos, así que casi nunca hay nada «en directo».
 
 ## Índice
@@ -93,10 +93,11 @@ Si el ruleset declara `spectator.delaySeconds` (anti-*coaching*), los mensajes s
 
 - obtiene el ticket con `api("POST", …/spectate-ticket)`;
 - abre `new WebSocket(wsUrl, ["spectate.v1", "ticket.<jwt>"])`;
-- reconecta con *backoff* exponencial (1 s a 30 s, con *jitter*), pidiendo **un ticket nuevo** en cada intento;
-- emite `init`, `snapshot`, `event`, `debug`, `result`, `disconnect`, `reconnected` y `gave_up`.
+- resuelve un `wsUrl` relativo (`/ws/spectate/<id>`) contra el origen de la página, con `wss:` si la página es https (`resolveWsUrl`);
+- reconecta con *backoff* exponencial (1 s a 30 s, con *jitter*), pidiendo **un ticket nuevo** en cada intento, **salvo** ante un rechazo definitivo: 4xx al pedir el ticket (excepto 429) o cierre 4400/4401/4403/4404 (4429 sí es transitorio). Entonces emite `rejected` `{kind, status?, code?, reason}` una sola vez y se detiene;
+- emite `init`, `snapshot`, `event`, `debug`, `result`, `disconnect`, `reconnected`, `gave_up` y `rejected`.
 
-`ViewerPage` traduce esos eventos a los textos «conectando…», «en directo», «reconectando…», «batalla terminada» y «sin conexión» ([frontend.md](frontend.md)).
+`ViewerPage` traduce esos eventos a estados (`data-state`: init, connecting, live, reconnecting, finished, rejected, offline, error) y textos explicativos por código ([frontend.md](frontend.md#visor-reproductor-y-phaser), [Visor de usuario](../user/viewer.md)).
 
 ## Configuración
 
@@ -104,10 +105,10 @@ Los valores concretos están en [configuration.md](../operations/configuration.m
 
 | Variable | Servicio | Efecto |
 |---|---|---|
-| `SPECTATE_WS_URL` | API | Base del `wsUrl`; `wss://` obligatorio en producción |
+| `SPECTATE_WS_URL` | API | Base del `wsUrl`; `wss://` obligatorio en producción. El compose no la entrega hoy ([TD-030](../roadmap/technical-debt.md#td-030)) y el valor por defecto `ws://localhost:8081/spectate` no sirve a un navegador: propuesta (para B/REVIEW) un valor relativo `/ws/spectate`, que el cliente ya admite |
 | `S9_PUBLIC_SPECTATE_ENABLED` | API y worker | Espectador anónimo (apagado por defecto). Son dos controles independientes |
 | `SPECTATE_PORT` | worker | Puerto del gateway |
-| Secreto de tickets | API (firma) y worker (verificación) | Sin él en el worker, `4401` siempre ([TD-028](../roadmap/technical-debt.md#td-028)) |
+| `JWT_SECRET_FILE` (o `SPECTATE_TICKET_SECRET_FILE`) | API (firma) y worker (verificación) | La clave del ticket se deriva por HKDF del mismo secreto: ambos montan `jwt_secret`. Lo exige `apps/api/src/spectate/ticket-secret-compose.test.ts` ([TD-028](../roadmap/technical-debt.md#td-028)) |
 
 ## Seguridad
 
@@ -120,16 +121,17 @@ Detalle transversal en [security.md](security.md) (A).
 
 ## Errores / limitaciones
 
-- **Visor roto en navegador**: `ViewerPage.tsx:38` llama a `game.scene.getScene("viewer")` justo después de `new Phaser.Game(...)`. Devuelve `null`, `new LiveFeed(null)` lanza `TypeError … setPlaybackClock` y el cliente nunca se crea. Resultado: «conectando…» para siempre, sin petición de ticket ([TD-009](../roadmap/technical-debt.md#td-009)).
-- **Sin secreto en el worker**: ningún ticket abriría el canal ([TD-028](../roadmap/technical-debt.md#td-028)).
+- **Privilegio del worker**: para verificar tickets el worker recibe el secreto de SESIÓN (con él podría firmar tokens de sesión). Mejor: un `spectate_ticket_secret` dedicado montado en API y worker (`SPECTATE_TICKET_SECRET_FILE`); requiere tocar el bloque `api`, el `secrets:` de primer nivel e `init-secrets.sh` (propiedad de REVIEW; propuesto como deuda nueva).
+- **Despliegue**: el cambio de compose exige **recrear** el `tournament-worker` (lo refleja `compose-canonical-check.test.ts`).
 - **Directo casi imposible**: el worker simula sin ritmo de tiempo real (0,2–2,6 s por batalla en la auditoría) y desconecta a los 3 s.
 - **`#/live`**: depende de `GET /public/battles/live`, que con la bandera apagada responde `{enabled:false}` («La emisión pública está desactivada»).
 
 ## Estado actual
 
 - **FUNCIONA ACTUALMENTE**: emisión de tickets con sesión, protocolo del gateway y reconexión (cubiertos por tests: `spectator.e2e`, `gateway-hardening`, `j-fail-closed`).
-- **PARCIAL / ROTO**: visor en navegador y verificación del ticket en el worker desplegado.
-- **PENDIENTE**: ritmo de tiempo real (o retardo) para que el directo tenga sentido; arranque correcto de Phaser.
+- **FUNCIONA ACTUALMENTE (rama `fc/dev-d-frontend`, entorno aislado)**: ticket firmado por la API verificado por el worker a través de TLS → gateway real → worker (sonda: `4404 battle_not_live` con el secreto compartido, `4401` con uno ajeno); el visor pide un ticket y explica el rechazo sin bucle.
+- **PARCIAL**: directo con una batalla viva en navegador (falta una batalla ejecutándose: carriles A/B); el despliegue en producción no se ha tocado.
+- **PENDIENTE**: ritmo de tiempo real (o retardo) para que el directo tenga sentido.
 
 ## Documentación relacionada
 
@@ -140,7 +142,7 @@ Detalle transversal en [security.md](security.md) (A).
 
 ## Verificación
 
-Verificado contra `27f70bb`.
+Verificado contra `27f70bb`; filas FC-D contra `fc/dev-d-frontend` (base `0b8c12b`).
 
 | Afirmación | Estado | Evidencia |
 |---|---|---|
@@ -151,6 +153,8 @@ Verificado contra `27f70bb`.
 | Códigos de cierre 4400–4429 | CODE_VERIFIED | `gateway.ts:185-248` |
 | Mensajes `init`/`snapshot`/`event`/`debug`/`result` | CODE_VERIFIED | `gateway.ts:264-283,302-320` |
 | `attachBattle` y `detachBattle` a los 3 s | CODE_VERIFIED | `apps/tournament-worker/src/engine-executor.ts:208-254` |
-| Visor roto en navegador (main y producción) | RUNTIME_VERIFIED | Auditoría 2026-10-15, B pasada 2 §1b/§4 |
-| Worker sin secreto de tickets | CODE_VERIFIED | `apps/api/src/auth/tokens.ts:73-97,165-177`; bloque `tournament-worker` de `infrastructure/docker-compose.yml` ([TD-028](../roadmap/technical-debt.md#td-028)) |
+| Visor roto en navegador en la base (main y producción) | RUNTIME_VERIFIED | Auditoría 2026-10-15, B pasada 2 §1b/§4 |
+| Worker con `jwt_secret` (FC-D) | CODE_VERIFIED | `infrastructure/docker-compose.yml:338-339`; test `apps/api/src/spectate/ticket-secret-compose.test.ts` (rc=0; quitar el secreto ⇒ 2 rojos, secreto ajeno ⇒ 1 rojo) |
+| Ticket verificado en la cadena real TLS→gateway→worker | RUNTIME_VERIFIED | `tests/browser/env/ticket-probe.ts` desde `run.sh`: compartido `{"code":4404}`, ajeno `{"code":4401}` (TD028_PROBE_RC=0) |
+| Rechazos terminales sin reconexión | RUNTIME_VERIFIED | `tests/browser/specs/viewer.spec.ts` (1 sola petición de ticket); `apps/web/src/viewer/spectator-client.ts:191,379` |
 | En producción `/ws/` responde 426 | RUNTIME_VERIFIED | Auditoría B pasada 1 (GET anónimos) |

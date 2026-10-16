@@ -4,7 +4,7 @@
 
 El **visor** (`#/viewer/<batalla>`) muestra una batalla en directo: vehículos, disparos, marcador, reloj y equipos, con varias cámaras. **«En directo»** (`#/live`) lista las batallas en curso para cualquier visitante. Hay también una vista de emisión (`/broadcast?battle=…`) pensada para retransmitir.
 
-**Hoy el visor no funciona en el navegador**: se queda en «conectando…» y no dibuja nada ([TD-009](../roadmap/technical-debt.md#td-009)). La emisión pública está desactivada. Además, las batallas duran segundos, así que casi nunca hay nada en directo que ver.
+Desde el cierre funcional de 2026-10 el visor **arranca de verdad en el navegador** (espera a que el motor gráfico esté listo), **pide el pase de espectador** y, si la batalla no se puede ver, **lo dice y se detiene** en lugar de quedarse en «conectando…». Ver una batalla en curso de punta a punta todavía depende de que haya batallas ejecutándose con bots publicados (ver [Estado actual](#estado-actual)).
 
 ## Índice
 
@@ -19,23 +19,27 @@ El **visor** (`#/viewer/<batalla>`) muestra una batalla en directo: vehículos, 
 
 ## Abrir el visor
 
-Desde «Batallas» o desde el detalle de un torneo, el enlace **«Ver en directo»** aparece mientras la batalla está `running`. Desde «Replays», el enlace «visor».
+Desde «Batallas» o desde el detalle de un torneo, el enlace **«Ver en directo»** aparece mientras la batalla está en curso. Una batalla terminada enlaza a **«Ver replay»**.
 
 Estados que muestra el visor:
 
-| Estado | Significado |
-|---|---|
-| «conectando…» | Esperando la conexión. **Hoy se queda aquí** |
-| «en directo» | Recibiendo la batalla |
-| «reconectando…» / «en directo (reconectado)» | Corte de red y recuperación automática |
-| «batalla terminada» | Fin, con el resultado sobre el lienzo |
-| «sin conexión» | Se agotaron los reintentos |
+| Estado | Significado | Qué puedes hacer |
+|---|---|---|
+| «inicializando visor…» | El motor gráfico arranca | Esperar (segundos) |
+| «conectando…» | Pidiendo el pase y abriendo la conexión | Esperar |
+| «en directo» | Recibiendo la batalla | — |
+| «reconectando…» / «en directo (reconectado)» | Corte de red y recuperación automática | — |
+| «batalla terminada» | Fin, con el resultado sobre el lienzo | Enlace «Ver el replay de esta batalla» |
+| «La batalla no está en directo…» | Ya terminó o aún no empezó | Enlace al replay |
+| «Esta batalla no existe o no se puede ver en directo sin cuenta.» | Identificador incorrecto, o visitante sin cuenta con la emisión pública desactivada | Iniciar sesión o abrir el replay |
+| «El servidor de directo rechazó el pase…» | Pase inválido o caducado (fallo de configuración del servidor) | Avisar al administrador |
+| «sin conexión con el servidor de directo tras varios intentos» | Se agotaron los reintentos | «Reintentar» |
 
-Sin iniciar sesión, el visor no puede conectarse mientras la emisión pública esté desactivada. No explica que el motivo es ese.
+Un rechazo definitivo **no** se reintenta en bucle: el visor pide un solo pase y explica el motivo.
 
 ## Qué muestra
 
-**PENDIENTE (no se dibuja hoy).** Implementado:
+**FUNCIONA ACTUALMENTE** el dibujo (verificado con el reproductor, que usa la misma escena):
 
 - vehículos con su nombre y chasis, y disparos con su trayectoria;
 - daño y minas al explotar;
@@ -52,22 +56,21 @@ Sin iniciar sesión, el visor no puede conectarse mientras la emisión pública 
 
 ## En directo
 
-**PENDIENTE.** `#/live` lista las batallas en curso. Hoy muestra **«La emisión pública está desactivada en este entorno.»**. Es una página pública: no requiere cuenta.
+**PARCIAL.** `#/live` lista las batallas en curso. Con la emisión pública desactivada muestra **«La emisión pública está desactivada en este entorno.»**. Es una página pública: no requiere cuenta.
 
 ## Vista de emisión
 
-**PENDIENTE.** `/broadcast?battle=<id>` o `?tournament=<id>`: composición a pantalla completa para retransmitir. Tiene el mismo problema de dibujo que el visor.
+**PARCIAL.** `/broadcast?battle=<id>` o `?tournament=<id>`: composición a pantalla completa para retransmitir. Usa la misma espera del motor gráfico que el visor; si el directo se rechaza, el marcador lo indica en lugar de «conectando…».
 
 ## Errores / limitaciones
 
-- **Lienzo vacío y «conectando…» para siempre**: el componente gráfico se inicializa mal ([TD-009](../roadmap/technical-debt.md#td-009)). Además, el servicio que emite el directo no puede verificar las entradas de espectador ([TD-028](../roadmap/technical-debt.md#td-028)).
 - **Batallas demasiado rápidas**: la plataforma simula sin ritmo de tiempo real, así que es difícil llegar a verlas en curso.
-- **Batalla inexistente**: el visor no lo dice; también se queda en «conectando…».
+- **Directo con batalla viva no probado en navegador** dentro de este carril: necesita bots publicados y batallas ejecutándose (carriles de bots y batallas). El pase de espectador sí se ha probado en la cadena real (ver [websocket.md](../technical/websocket.md#verificación)).
 - **Móvil**: el lienzo es de ancho fijo.
 
 ## Estado actual
 
-**PENDIENTE**: implementado, pero no utilizable en navegador.
+**PARCIAL**: el visor arranca, pide el pase y explica cada rechazo en navegador real; el directo con una batalla en curso queda pendiente de la integración de los carriles de bots y batallas.
 
 ## Documentación relacionada
 

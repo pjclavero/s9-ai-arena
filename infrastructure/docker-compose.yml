@@ -327,7 +327,16 @@ services:
       # imagen antes de bajar a `node` (infrastructure/docker/node-service/
       # entrypoint.sh). Debe coincidir con REPLAYS_DIR.
       ARENA_DATA_DIRS: /data/replays
-    secrets: [postgres_password]
+      # FC-D · TD-028: este proceso aloja el gateway WebSocket de espectador
+      # (apps/api/src/spectate/gateway.ts) y VERIFICA los tickets que firma la
+      # API. Ambos derivan la clave del ticket por HKDF del MISMO secreto de
+      # sesión (apps/api/src/auth/tokens.ts, spectateTicketSecret), así que el
+      # verificador necesita el mismo fichero que el emisor — por archivo, nunca
+      # en claro. Sin él, todo ticket se rechazaba con 4401 invalid_ticket. La
+      # coherencia emisor/verificador la exige
+      # apps/api/src/spectate/ticket-secret-compose.test.ts.
+      JWT_SECRET_FILE: /run/secrets/jwt_secret
+    secrets: [postgres_password, jwt_secret]
     volumes:
       # B7 · ESCRITURA, y justificado por el código: finishBattle
       # (apps/tournament-worker/src/battle-runner.ts) llama a

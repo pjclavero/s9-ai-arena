@@ -9,7 +9,15 @@
  *  - cualquier 401 de la API pasa por UN solo camino: intento de refresh
  *    (single-flight) + reintento de la petición; si el refresh falla, se limpia
  *    la sesión y se avisa al App para redirigir al login con mensaje.
+ *
+ * FC-D (TD-022) · Toda petición tiene PLAZO (`API_TIMEOUT_MS`) y todo fallo se
+ * clasifica en un único sitio (`describeApiError`): validación, permisos,
+ * inexistente, servidor, servicio caído, plazo y red. Ninguna pantalla debe
+ * convertir un fallo en «lista vacía».
  */
+import { ApiRequestError, describeApiError } from "./errors.js";
+export { ApiRequestError, describeApiError } from "./errors.js";
+export type { ApiErrorKind, ApiErrorClass, DescribedError } from "./errors.js";
 
 export interface Me {
   id: string;
@@ -20,6 +28,13 @@ export interface Me {
 }
 
 const BASE = "/api/v1";
+
+/**
+ * Plazo por defecto de TODA petición del panel. Antes `fetch` no tenía timeout:
+ * una API que no responde dejaba «Cargando…» para siempre. Al vencer se aborta
+ * la petición y se lanza `ApiRequestError` con `kind:"timeout"`.
+ */
+export const API_TIMEOUT_MS = 15_000;
 
 let accessToken: string | null = null;
 export function setToken(t: string | null): void {
@@ -35,16 +50,53 @@ export function onSessionExpired(handler: ((reason: string) => void) | null): vo
   sessionExpiredHandler = handler;
 }
 
-export class ApiRequestError extends Error {
-  constructor(
-    public status: number,
-    public body: Record<string, unknown>,
-  ) {
-    super(String(body?.message ?? `HTTP ${status}`));
+/**
+ * `fetch` con plazo. Traduce el aborto por plazo y el fallo de red a
+ * `ApiRequestError` (status 0) para que TODAS las pantallas los clasifiquen igual.
+ * Un aborto pedido por el llamante (señal externa) se propaga tal cual.
+ */
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const ctrl = new AbortController();
+  const outer = init.signal ?? undefined;
+  const onOuterAbort = () => ctrl.abort(outer?.reason);
+  if (outer) {
+    if (outer.aborted) ctrl.abort(outer.reason);
+    else outer.addEventListener("abort", onOuterAbort, { once: true });
+  }
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    ctrl.abort();
+  }, timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } catch (e) {
+    if (timedOut) {
+      throw new ApiRequestError(
+        0,
+        { message: `el servidor no respondió en ${Math.round(timeoutMs / 1000)} s` },
+        "timeout",
+      );
+    }
+    if (outer?.aborted) throw e;
+    throw new ApiRequestError(
+      0,
+      { message: `sin conexión con el servidor (${(e as Error)?.message ?? e})` },
+      "network",
+    );
+  } finally {
+    clearTimeout(timer);
+    outer?.removeEventListener("abort", onOuterAbort);
   }
 }
 
-async function rawFetch(method: string, path: string, body?: unknown, opts: { formData?: FormData } = {}) {
+export interface ApiOptions {
+  formData?: FormData;
+  /** Plazo de la petición en ms (por defecto API_TIMEOUT_MS). */
+  timeoutMs?: number;
+}
+
+async function rawFetch(method: string, path: string, body?: unknown, opts: ApiOptions = {}) {
   const headers: Record<string, string> = {};
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
   let payload: BodyInit | undefined;
@@ -56,34 +108,86 @@ async function rawFetch(method: string, path: string, body?: unknown, opts: { fo
   }
   // credentials: la cookie httpOnly de sesión debe viajar también si el panel
   // se sirve desde otro origen que el gateway (en dev el proxy lo hace mismo-origen).
-  return fetch(`${BASE}${path}`, { method, headers, body: payload, credentials: "include" });
+  return fetchWithTimeout(
+    `${BASE}${path}`,
+    { method, headers, body: payload, credentials: "include" },
+    opts.timeoutMs ?? API_TIMEOUT_MS,
+  );
 }
 
-async function parseResponse<T>(res: Response): Promise<T> {
-  const isJson = res.headers.get("content-type")?.includes("application/json");
-  const data = isJson ? await res.json() : undefined;
-  if (!res.ok) throw new ApiRequestError(res.status, (data as Record<string, unknown>) ?? {});
+async function parseResponse<T>(res: Response, opts: { lenient?: boolean } = {}): Promise<T> {
+  const contentType = res.headers.get("content-type") ?? "";
+  const isJson = contentType.includes("application/json");
+  let data: unknown;
+  if (isJson) {
+    try {
+      data = await res.json();
+    } catch {
+      data = undefined;
+    }
+  } else if (opts.lenient && !contentType.includes("text/html")) {
+    // Servicios fuera de la API (replay-service) o proxies que no ponen el
+    // content-type: se intenta JSON; si no lo es, `data` queda indefinido.
+    try {
+      data = JSON.parse(await res.text());
+    } catch {
+      data = undefined;
+    }
+  }
+  if (!res.ok) {
+    const body = { ...((data as Record<string, unknown>) ?? {}) };
+    // Un 502/504 del gateway llega como HTML: sin cuerpo JSON el mensaje sería
+    // sólo «HTTP 502». Se nombra el estado para que el usuario sepa qué pasó.
+    if (body.message === undefined) body.message = `el servidor respondió ${res.status}`;
+    throw new ApiRequestError(res.status, body);
+  }
+  if (!isJson && contentType.includes("text/html")) {
+    // 200 con HTML donde se esperaba JSON = una ruta que no llega a su servicio
+    // (el gateway sirve el SPA). Es un fallo, no "datos vacíos".
+    throw new ApiRequestError(res.status, { message: "respuesta inesperada (HTML en lugar de JSON)" });
+  }
   return data as T;
+}
+
+/**
+ * GET JSON fuera de /api/v1 (replay-service tras el gateway) con el MISMO plazo y
+ * la MISMA clasificación de errores que `api()`. Rutas públicas: sin token.
+ */
+export async function fetchJson<T>(url: string, opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<T> {
+  const res = await fetchWithTimeout(url, { method: "GET", signal: opts.signal }, opts.timeoutMs ?? API_TIMEOUT_MS);
+  return parseResponse<T>(res, { lenient: true });
 }
 
 /** Refresh single-flight: N peticiones con 401 simultáneas ⇒ UN solo refresh. */
 let refreshInFlight: Promise<boolean> | null = null;
+/**
+ * Motivo del último refresh fallido por SERVIDOR o RED. `null` = el servidor
+ * contestó "no hay sesión" (400/401/403), que no es lo mismo que "API caída".
+ */
+let lastRefreshFailure: ApiRequestError | null = null;
 function refreshSession(): Promise<boolean> {
   if (!refreshInFlight) {
+    lastRefreshFailure = null;
     refreshInFlight = (async () => {
       try {
-        const res = await fetch(`${BASE}/auth/refresh`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: "{}",
-          credentials: "include",
-        });
-        if (!res.ok) return false;
+        const res = await fetchWithTimeout(
+          `${BASE}/auth/refresh`,
+          { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", credentials: "include" },
+          API_TIMEOUT_MS,
+        );
+        if (!res.ok) {
+          if (res.status >= 500) {
+            lastRefreshFailure = new ApiRequestError(res.status, { message: `el servidor respondió ${res.status}` });
+          }
+          return false;
+        }
         const data = (await res.json()) as { accessToken?: string };
         if (!data.accessToken) return false;
         accessToken = data.accessToken;
         return true;
-      } catch {
+      } catch (e) {
+        lastRefreshFailure =
+          e instanceof ApiRequestError ? e : new ApiRequestError(0, { message: String(e) }, "network");
         return false;
       }
     })().finally(() => {
@@ -102,7 +206,7 @@ export async function api<T = unknown>(
   method: string,
   path: string,
   body?: unknown,
-  opts: { formData?: FormData } = {},
+  opts: ApiOptions = {},
 ): Promise<T> {
   const res = await rawFetch(method, path, body, opts);
   // Interceptor único de 401 (los endpoints de auth quedan fuera: un 401 de
@@ -116,12 +220,22 @@ export async function api<T = unknown>(
   return parseResponse<T>(res);
 }
 
-/** Arranque del panel (y F5): intenta recuperar la sesión desde la cookie. */
+/**
+ * Arranque del panel (y F5): intenta recuperar la sesión desde la cookie.
+ * Devuelve `null` si NO hay sesión. FC-D (TD-022): si la API está caída (red,
+ * plazo, 5xx) LANZA `ApiRequestError`, para que el App diga «API no disponible»
+ * y ofrezca reintentar en vez de mandar al login a quien tiene sesión válida.
+ */
 export async function bootstrapSession(): Promise<Me | null> {
-  if (!(await refreshSession())) return null;
+  if (!(await refreshSession())) {
+    if (lastRefreshFailure) throw lastRefreshFailure;
+    return null;
+  }
   try {
     return await api<Me>("GET", "/users/me");
-  } catch {
+  } catch (e) {
+    const d = describeApiError(e);
+    if (d.kind === "timeout" || d.kind === "network" || d.kind === "server" || d.kind === "unavailable") throw e;
     return null;
   }
 }
@@ -129,7 +243,7 @@ export async function bootstrapSession(): Promise<Me | null> {
 /** Cierre de sesión: revoca en servidor (borra la cookie) y limpia memoria. */
 export async function logout(): Promise<void> {
   try {
-    await fetch(`${BASE}/auth/logout`, { method: "POST", credentials: "include" });
+    await fetchWithTimeout(`${BASE}/auth/logout`, { method: "POST", credentials: "include" }, API_TIMEOUT_MS);
   } catch {
     // sin red igualmente limpiamos el estado local
   }

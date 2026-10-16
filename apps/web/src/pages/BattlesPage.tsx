@@ -2,19 +2,31 @@
  * R3.7 (ERR-VIS-02) · Batallas e historial: listado global con filtro por
  * estado y filtro por bot (enlace bot → batallas → replay/directo). El estado
  * de carga/error es por recurso: un fallo NUNCA se pinta como lista vacía.
+ *
+ * FC-D (D7, TD-022) · Cada batalla muestra RESULTADO (ganador/empate), marcador,
+ * duración y fallo real; `failureKind = none` ya no se pinta como error.
  */
 import { useState } from "react";
 import { api } from "../api.js";
 import { useResource, ResourceView } from "../resource.js";
-import { BattleLink, type TournamentBattle } from "./TournamentDetailPage.js";
+import { EmptyState } from "../ui/primitives.js";
+import { summarizeBattle, type BattleLike } from "../battle-result.js";
+import { BattleLink } from "./TournamentDetailPage.js";
 
-interface Battle extends Omit<TournamentBattle, "round"> {
+interface Battle extends BattleLike {
   tournamentId?: string;
+  mode: string;
   mapId: string;
-  failureKind?: string | null;
+  participants: { botId: string; version: number; team?: string; outcome?: string }[];
 }
 
 const STATUSES = ["", "scheduled", "running", "finished", "failed"];
+const STATUS_TEXT: Record<string, string> = {
+  scheduled: "en cola",
+  running: "en curso",
+  finished: "terminada",
+  failed: "fallida",
+};
 
 export function BattlesPage(props: { botFilter?: string }) {
   const [status, setStatus] = useState("");
@@ -40,7 +52,7 @@ export function BattlesPage(props: { botFilter?: string }) {
           <select aria-label="filtro de estado" value={status} onChange={(e) => setStatus(e.target.value)}>
             {STATUSES.map((s) => (
               <option key={s} value={s}>
-                {s === "" ? "todas" : s}
+                {s === "" ? "todas" : (STATUS_TEXT[s] ?? s)}
               </option>
             ))}
           </select>
@@ -53,7 +65,16 @@ export function BattlesPage(props: { botFilter?: string }) {
           const items = props.botFilter
             ? page.items.filter((b) => b.participants.some((p) => p.botId === props.botFilter))
             : page.items;
-          if (items.length === 0) return <p>No hay batallas que casen con el filtro.</p>;
+          if (items.length === 0)
+            return (
+              <EmptyState
+                data-testid="battles-empty"
+                message={
+                  props.botFilter || status ? "No hay batallas que casen con el filtro." : "Aún no hay batallas."
+                }
+                action={<a href="#/battles/new">Crear una batalla de práctica</a>}
+              />
+            );
           return (
             <table>
               <thead>
@@ -62,29 +83,49 @@ export function BattlesPage(props: { botFilter?: string }) {
                   <th>Modo</th>
                   <th>Mapa</th>
                   <th>Estado</th>
+                  <th>Resultado</th>
+                  <th>Duración</th>
                   <th>Torneo</th>
                   <th>Ver</th>
                 </tr>
               </thead>
               <tbody>
-                {items.map((b) => (
-                  <tr key={b.id}>
-                    <td>
-                      {b.participants.map((p) => `${p.botId.slice(0, 8)} v${p.version}`).join(" vs ") ||
-                        b.id.slice(0, 8)}
-                    </td>
-                    <td>{b.mode}</td>
-                    <td>{b.mapId}</td>
-                    <td>
-                      {b.status}
-                      {b.failureKind ? <span className="error"> ({b.failureKind})</span> : null}
-                    </td>
-                    <td>{b.tournamentId ? <a href={`#/tournaments/${b.tournamentId}`}>torneo</a> : "—"}</td>
-                    <td>
-                      <BattleLink battle={{ ...b, round: 1 }} />
-                    </td>
-                  </tr>
-                ))}
+                {items.map((b) => {
+                  const v = summarizeBattle(b);
+                  return (
+                    <tr key={b.id} data-testid="battle-row" data-battle-id={b.id} data-status={b.status}>
+                      <td>
+                        {b.participants
+                          .map((p) => `${p.botId.slice(0, 8)} v${p.version}${p.team ? ` (${p.team})` : ""}`)
+                          .join(" vs ") || b.id.slice(0, 8)}
+                      </td>
+                      <td>{b.mode}</td>
+                      <td>{b.mapId}</td>
+                      <td>
+                        {STATUS_TEXT[b.status] ?? b.status}
+                        {v.failure ? <span className="error"> ({v.failure})</span> : null}
+                      </td>
+                      <td data-testid="battle-outcome">
+                        {v.outcome ?? "—"}
+                        {v.score ? <small> · {v.score}</small> : null}
+                        {v.endReason ? <small> · {v.endReason}</small> : null}
+                        {v.agentsNote ? <small className="warn"> · {v.agentsNote}</small> : null}
+                        {v.disqualified.length > 0 ? (
+                          <small className="warn"> · descalificados: {v.disqualified.length}</small>
+                        ) : null}
+                      </td>
+                      <td>{v.duration ?? "—"}</td>
+                      <td>{b.tournamentId ? <a href={`#/tournaments/${b.tournamentId}`}>torneo</a> : "—"}</td>
+                      <td>
+                        {b.status === "finished" && !v.hasReplay ? (
+                          <span>sin replay</span>
+                        ) : (
+                          <BattleLink battle={{ ...b, round: 1 }} />
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           );

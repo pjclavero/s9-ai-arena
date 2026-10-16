@@ -263,7 +263,7 @@ Estados posibles:
 <a id="td-009"></a>
 ## TD-009 — Reproductor y visor rotos en navegador por arranque de Phaser
 
-- **Estado:** ABIERTA
+- **Estado:** PARCIAL — código corregido y E2E de Chromium real en verde en la rama `fc/dev-d-frontend`; falta que el E2E corra en CI (condición de cierre)
 - **Prioridad:** P1 (auditoría P1-1)
 - **Área:** Web (`apps/web`)
 - **Detectado:** 2026-10-15
@@ -278,6 +278,11 @@ Estados posibles:
   - Los tests (jsdom con Phaser simulado) no lo ven.
 - **Solución prevista:** esperar al evento `ready` del juego antes de obtener la escena en las tres páginas.
 - **Condición de cierre:** un replay se reproduce en un navegador real y un E2E con Chromium en CI lo demuestra.
+- **Cierre (FC-D, 2026-10-16):**
+  - Las tres páginas esperan `waitForViewerScene(game)`: `READY` del juego + `CREATE` de la escena, sin `sleep` (`apps/web/src/viewer/scene-ready.ts`, `PhaserViewer.ts`; `ReplayPage.tsx`, `ViewerPage.tsx`, `BroadcastPage.tsx`).
+  - RUNTIME_VERIFIED: `tests/browser/specs/replay.spec.ts` en Chromium 130 real tras TLS (lista → abrir → canvas → ticks que avanzan → pausa → fin), fase 1 rc=0.
+  - Mutación: `getScene` directo en `ReplayPage` ⇒ 2 specs rojas (rc=1). Unitario con juego falso que reproduce el orden de eventos de Phaser: saltarse la espera de `READY` ⇒ rojo (rc=1).
+  - Resta para el cierre definitivo según la condición: ejecutar `npm run test:browser` en CI (REVIEW decide el job).
 
 <a id="td-010"></a>
 ## TD-010 — Editor de mapas sólo en cliente e import incompatible
@@ -386,7 +391,7 @@ Estados posibles:
 <a id="td-014"></a>
 ## TD-014 — Redirección 301 a http en la lista de replays
 
-- **Estado:** ABIERTA
+- **Estado:** CERRADA en la rama `fc/dev-d-frontend` (pendiente de integración y despliegue)
 - **Prioridad:** P1 (auditoría P1-6)
 - **Área:** Gateway / web
 - **Detectado:** 2026-10-15
@@ -398,6 +403,12 @@ Estados posibles:
 - **Impacto:** el usuario con sesión ve «Servicio de replays no disponible».
 - **Solución prevista:** usar `/replays/` en el cliente, o una redirección relativa (o una `location` exacta) en el gateway.
 - **Condición de cierre:** `#/replays` lista los replays detrás de TLS en navegador real.
+- **Cierre (FC-D, 2026-10-16):**
+  - Cliente: `fetchJson("/replays/")` con barra final (`ReplaysPage.tsx`).
+  - Gateway (`nginx.conf` y `nginx-behind-proxy.conf`): `location = /replays` sin redirección y `absolute_redirect off` en cada `server`.
+  - RUNTIME_VERIFIED tras TLS: `GET /replays` sin barra ⇒ 200 sin redirección; la página registra 0 peticiones `http://` y 0 avisos de contenido mixto (`replay.spec.ts`).
+  - Mutación (quitar ambas reglas del gateway) ⇒ `Location=http://127.0.0.1:…/replays/`, spec roja (rc=1).
+  - Pendiente fuera de D: `infrastructure/docker/web/nginx.conf` (`try_files $uri/`) también podría emitir redirecciones absolutas; propuesto `absolute_redirect off` allí (propiedad de REVIEW).
 
 <a id="td-015"></a>
 ## TD-015 — Torneos: sin pool de mapas, cierre bloqueado por failed y guardas no cableadas
@@ -538,7 +549,7 @@ Estados posibles:
 <a id="td-022"></a>
 ## TD-022 — Errores y estados de la web sin resolver
 
-- **Estado:** ABIERTA
+- **Estado:** PARCIAL
 - **Prioridad:** P2
 - **Área:** Web
 - **Detectado:** 2026-10-15
@@ -555,6 +566,10 @@ Estados posibles:
 - **Impacto:** un usuario nuevo no sabe qué hacer ni qué ha fallado.
 - **Solución prevista:** página 404, timeouts en el cliente, errores visibles, ganador y estadísticas por batalla, y onboarding.
 - **Condición de cierre:** los estados de la tabla B12 de la auditoría se comportan como se espera en navegador real.
+- **Avance (FC-D, 2026-10-16):**
+  - HECHO (navegador real): página 404; timeout del cliente (`API_TIMEOUT_MS`); F5 con la API caída ⇒ «No se puede contactar» con «Reintentar», no login (`degraded.spec.ts` @fase3, API parada de verdad); 502 real del replay-service visible con «Reintentar» (@fase2); 403 real clasificado (`ux.spec.ts`); `failure_kind=none` ya no se pinta como error; ganador, marcador, duración y motivo en `#/battles` (unitarios; sin batallas reales en el E2E todavía).
+  - Componentes comunes publicados (`ErrorState` con `error`, `FormError`, `describeApiError`, `fetchJson`) para A y C (COORD.md).
+  - PENDIENTE (otros carriles): error de «Crear bot» fuera del detalle (A, `BotsPage.tsx`); `TeamsPage` traga el error (C); `BattleNewPage` traga el 403 (C); onboarding/enlace al SDK.
 
 <a id="td-023"></a>
 ## TD-023 — Administración operativa sólo por SSH
@@ -642,7 +657,7 @@ Estados posibles:
 <a id="td-028"></a>
 ## TD-028 — Espectador en directo sin secreto de verificación en el worker
 
-- **Estado:** ABIERTA
+- **Estado:** PARCIAL — contrato y test de compose cerrados en la rama `fc/dev-d-frontend`; falta ver un ticket EMITIDO POR LA RUTA de la API abrir el canal de una batalla viva en el stack de compose (necesita batallas reales, carriles A/B)
 - **Prioridad:** P1
 - **Área:** Espectador (`tournament-worker`)
 - **Detectado:** 2026-10-15, en la verificación de esta consolidación; no figuraba en la auditoría.
@@ -657,6 +672,13 @@ Estados posibles:
   - Falla cerrado: no es una fuga, sino una función inutilizable.
 - **Solución prevista:** montar en el worker el mismo secreto (o un `SPECTATE_TICKET_SECRET_FILE` compartido con la API) y añadir un test de compose que exija la coherencia entre el emisor y el verificador del ticket.
 - **Condición de cierre:** un ticket emitido por la API abre el canal del worker en el stack real, y hay un test de compose que se pone rojo si falta el secreto.
+- **Cierre (FC-D, 2026-10-16):**
+  - Compose (bloque `tournament-worker`): `JWT_SECRET_FILE: /run/secrets/jwt_secret` y `secrets: [postgres_password, jwt_secret]`: mismo secreto por fichero que la API; nada en claro.
+  - Test de compose `apps/api/src/spectate/ticket-secret-compose.test.ts`: descubre el verificador por su entrypoint (`new SpectateGateway`), comprueba montaje y declaración del secreto y EJECUTA firma (entorno de la API) y verificación (entorno del worker). Mutaciones: sin secreto ⇒ 2 rojos; secreto ajeno ⇒ 1 rojo (rc=1 ambas).
+  - RUNTIME_VERIFIED en entorno aislado: ticket → TLS → gateway real → worker: `4404 battle_not_live` (verificado) con el secreto compartido, `4401 invalid_ticket` con uno ajeno.
+  - Consecuencia: desplegar exige recrear `tournament-worker` (`compose-canonical-check.test.ts` actualizado).
+  - La sonda firma con `signSpectateTicket` y el MISMO fichero de secreto que la API (no por la ruta HTTP, que exige una batalla existente); el visor en navegador sí pide el ticket a la ruta real (404 sin batalla).
+  - Mejora propuesta (deuda nueva, REVIEW): secreto de ticket dedicado para no dar al worker el secreto de sesión.
 
 <a id="td-029"></a>
 
