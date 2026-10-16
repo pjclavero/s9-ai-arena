@@ -48,6 +48,7 @@ describe("R7-A · #/replays", () => {
     expect(first.getByText("btl_a")).toBeTruthy();
     expect((first.getByText("Ver replay") as HTMLAnchorElement).getAttribute("href")).toBe("#/replay/btl_a?t=0");
     expect(within(rows[1]).getByText("gana red")).toBeTruthy();
+    expect(within(rows[0]).getByText("empate")).toBeTruthy(); // winner "draw"
     expect(within(rows[0]).getByText(/0:10/)).toBeTruthy(); // 300 ticks a 30/s
     // FC-D (D6, TD-014): CON barra final; sin ella nginx redirigía 301 a http://.
     expect(urls).toEqual(["/replays/"]);

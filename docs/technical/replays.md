@@ -9,7 +9,7 @@ Lo escribe el `tournament-worker` usando la librería del replay-service. Lo sir
 - el **replay-service** por el gateway (`/replays/*`, **anónimo**);
 - la **API** (`/api/v1/replays/{id}`, `/verify`, y `/api/v1/public/replays*` detrás de una bandera apagada).
 
-**Gobernanza actual**: la API anuncia los replays públicos como apagados (`enabled:false`), pero el gateway sirve inventario y ficheros completos a cualquiera ([TD-004](../roadmap/technical-debt.md#td-004)). La lista web sufre una redirección 301 a `http://` ([TD-014](../roadmap/technical-debt.md#td-014)) y el reproductor web no arranca en navegador ([TD-009](../roadmap/technical-debt.md#td-009)).
+**Gobernanza actual**: la API anuncia los replays públicos como apagados (`enabled:false`), pero el gateway sirve inventario y ficheros completos a cualquiera ([TD-004](../roadmap/technical-debt.md#td-004)). En la rama `fc/dev-d-frontend` la lista web ya no sufre la redirección 301 a `http://` ([TD-014](../roadmap/technical-debt.md#td-014)) y el reproductor web arranca y reproduce en navegador real ([TD-009](../roadmap/technical-debt.md#td-009)).
 
 ## Índice
 
@@ -103,20 +103,19 @@ Estado actual, no deseado:
 - **Apertura anónima**: el gateway publica `/replays/` (inventario) y `/replays/{id}`, `/index` y `/segment` a cualquiera ([TD-004](../roadmap/technical-debt.md#td-004)). En producción se observó 200 anónimo mientras `GET /api/v1/public/replays` decía `enabled:false`.
 - **Replays privados accesibles**: el replay de una batalla privada se descarga por id desde la API sin autenticación.
 - **Dependencia del reproductor**: la web cuenta con esa apertura; `ReplayPage` no envía token.
-- **Degradación de esquema**: `GET /replays` (sin barra) responde **301 a `http://…/replays/`**. Desde la página HTTPS es contenido mixto y el navegador lo bloquea, así que `#/replays` muestra «Servicio de replays no disponible» ([TD-014](../roadmap/technical-debt.md#td-014)).
+- **Degradación de esquema (corregida en la rama)**: en la base, `GET /replays` (sin barra) respondía **301 a `http://…/replays/`** (redirección automática y absoluta de nginx hacia `location /replays/`, con el esquema http del gateway tras el proxy TLS), que el navegador bloqueaba como contenido mixto. Ahora: el cliente pide `/replays/`; el gateway tiene `location = /replays` (sin redirección) y `absolute_redirect off` en cada `server` ([TD-014](../roadmap/technical-debt.md#td-014)).
 - **Escritura**: la ingesta y el barrido sí están autenticados. El cuerpo se lee entero (hasta 64 MB) antes del 401.
 
 ## Errores / limitaciones
 
-- Reproductor y visor rotos en navegador: `getScene("viewer")` devuelve `null` antes del arranque de Phaser ([TD-009](../roadmap/technical-debt.md#td-009), [frontend.md](frontend.md)).
-- Un replay sin fila de batalla (por ejemplo, el de un arnés) aparece en el inventario. El enlace «visor» acaba en «sin conexión».
+- Un replay sin fila de batalla (por ejemplo, el de un arnés) aparece en el inventario. La lista ya sólo enlaza al reproductor.
 - La caché de segmentos es por proceso y no tiene límite de tamaño.
 - No hay retención programada.
 
 ## Estado actual
 
 - **FUNCIONA ACTUALMENTE**: generación e ingesta, índice, segmentos, descarga con `Range` y verificación por re-simulación (`matches:true` en la auditoría).
-- **PARCIAL**: la cadena HTTP llega al navegador, pero el render no arranca. La lista web falla en producción por el 301.
+- **FUNCIONA ACTUALMENTE (rama `fc/dev-d-frontend`, entorno aislado tras TLS)**: listar → abrir → cargar → canvas → ticks → pausa → fin en Chromium real; 502 del replay-service visible con «Reintentar».
 - **PENDIENTE**: gobernanza de acceso coherente con la bandera pública, retención programada y apertura de `debugOpen` por el dueño (no hay pantalla).
 
 ## Documentación relacionada
@@ -129,7 +128,7 @@ Estado actual, no deseado:
 
 ## Verificación
 
-Verificado contra `27f70bb`.
+Verificado contra `27f70bb`; filas FC-D contra `fc/dev-d-frontend` (base `0b8c12b`).
 
 | Afirmación | Estado | Evidencia |
 |---|---|---|
@@ -141,6 +140,8 @@ Verificado contra `27f70bb`.
 | Rutas de la API y bandera pública | CODE_VERIFIED | `apps/api/src/routes/battles.ts:273-359,523-589` |
 | 7 días de TTL; barrido sin programar | CODE_VERIFIED | `store.ts:22,255-270`; búsqueda de `retention/sweep` (sólo ruta, CLI y comentario de compose) |
 | Lecturas anónimas 200 en producción con `enabled:false` | RUNTIME_VERIFIED | Auditoría 2026-10-15, B pasada 1 (GET anónimos) |
-| 301 a http y bloqueo por contenido mixto | RUNTIME_VERIFIED | Auditoría B pasada 2 §4 (navegador real) |
+| 301 a http y bloqueo por contenido mixto (base) | RUNTIME_VERIFIED | Auditoría B pasada 2 §4 (navegador real) |
+| Sin redirección en `/replays` (FC-D) | RUNTIME_VERIFIED | `infrastructure/gateway/nginx-behind-proxy.conf:52,100`; `tests/browser/specs/replay.spec.ts` (200 sin redirección; mutación ⇒ `Location=http://…/replays/`) |
+| Reproducción completa en navegador (FC-D) | RUNTIME_VERIFIED | `tests/browser/specs/replay.spec.ts` (fase1 rc=0) |
 | Verificación con `matches:true` | RUNTIME_VERIFIED | Auditoría B pasada 1 §B9 (entorno aislado) |
-| La web lista con `fetch("/replays")` | CODE_VERIFIED | `apps/web/src/pages/ReplaysPage.tsx:28` |
+| La web lista con `fetchJson("/replays/")` | CODE_VERIFIED | `apps/web/src/pages/ReplaysPage.tsx:31` |

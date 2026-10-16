@@ -68,7 +68,8 @@ Los roles de organizador o superiores sólo los concede un administrador ([Admin
 - **PENDIENTE**: **cambiar la contraseña**. No existe la opción.
 - **PENDIENTE**: **recuperar la contraseña** desde la web. La plataforma no envía correos.
 - **PENDIENTE**: activar la verificación en dos pasos, ver tus sesiones abiertas o cambiar el nombre visible. Existen en la plataforma, pero no hay pantalla.
-- Si la plataforma está caída y recargas la página, aparece el login aunque tu sesión siga siendo válida. Vuelve a intentarlo más tarde.
+- Si la plataforma está caída y recargas la página, ya **no** aparece el login: verás «No se puede contactar con la plataforma» con «Reintentar» (y la opción de ir al inicio de sesión). Tu sesión sigue siendo válida. **FUNCIONA ACTUALMENTE** en la rama de cierre funcional ([TD-022](../roadmap/technical-debt.md#td-022)).
+- Si la contraseña es incorrecta verás el mensaje del servidor; si el servidor no responde, «El servidor tarda demasiado» o «Servicio no disponible», nunca «credenciales incorrectas».
 - El registro está abierto a cualquiera.
 
 Deuda relacionada: [TD-012](../roadmap/technical-debt.md#td-012).

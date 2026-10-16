@@ -29,7 +29,7 @@ Tu bot es un programa en Python o JavaScript (Node). Diez veces por segundo reci
 | 6 | Publicar la versión | «Publicar vN» | **PENDIENTE**: el botón sólo aparece en versiones `validated`, y hoy ninguna llega a ese estado |
 | 7 | Jugar una batalla de práctica | «Batallas» → «+ Nueva batalla de práctica» | **PENDIENTE**: 400 «rulesetId desconocido» ([TD-003](../roadmap/technical-debt.md#td-003)) |
 | 8 | Inscribirse en un torneo | «Torneos» | **PARCIAL**: requiere una versión publicada |
-| 9 | Ver la batalla | Visor / replay | **PENDIENTE**: no se dibuja ([TD-009](../roadmap/technical-debt.md#td-009)) |
+| 9 | Ver la batalla | Visor / replay | Replay **FUNCIONA ACTUALMENTE**; directo **PARCIAL** ([viewer.md](viewer.md), [replays.md](replays.md)) |
 | 10 | Ver tu posición | «Ranking» | **PARCIAL**: sale vacío |
 
 ## Uso: tu primera sesión
@@ -52,7 +52,8 @@ Hasta que se resuelva ese punto, no puedes avanzar más con tus propios bots. Pu
 
 - La web no explica el ciclo ni muestra ayuda dentro de las pantallas. Términos como `loadout`, `runtime` o los nombres de las etapas del pipeline aparecen tal cual.
 - Algunos formularios se muestran a todos aunque exigen permisos de organizador (crear torneo, generar o publicar mapa). Fallan con «Requiere rol organizer».
-- Si escribes una dirección que no existe (por ejemplo, `#/loquesea`), vuelves a «Mis bots» sin aviso.
+- Si escribes una dirección que no existe (por ejemplo, `#/loquesea`), verás «Página no encontrada» con «Volver» y enlaces a las pantallas principales.
+- Cuando algo falla, la pantalla lo dice (permiso, inexistente, servidor caído, sin respuesta) y ofrece «Reintentar»: ver [Si algo falla](index.md#si-algo-falla).
 
 Lista completa: [known-issues.md](../roadmap/known-issues.md).
 

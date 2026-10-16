@@ -72,7 +72,7 @@ export function ReplaysPage() {
                     <td>
                       <code title={r.battleId}>{r.battleId.slice(0, 8)}</code>
                     </td>
-                    <td>{r.winner ? `gana ${r.winner}` : "—"}</td>
+                    <td>{r.winner === "draw" ? "empate" : r.winner ? `gana ${r.winner}` : "—"}</td>
                     <td>
                       {formatTicksAsDuration(r.ticks)} ({r.ticks} ticks)
                     </td>

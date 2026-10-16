@@ -39,10 +39,27 @@ Recomendamos leer en este orden, porque es el orden del ciclo real de un bot:
 | Mapas | **PARCIAL**: importar sí; el editor no guarda | [TD-010](../roadmap/technical-debt.md#td-010) |
 | Batallas | **PENDIENTE desde la web**: 400 al crear | [TD-003](../roadmap/technical-debt.md#td-003) |
 | Torneos | **PARCIAL**: funcionan para organizadores con bots publicados | [TD-001](../roadmap/technical-debt.md#td-001), [TD-015](../roadmap/technical-debt.md#td-015) |
-| Visor y replays | **PENDIENTE**: no se dibujan en el navegador | [TD-009](../roadmap/technical-debt.md#td-009) |
+| Replays | **FUNCIONA ACTUALMENTE** (rama de cierre funcional): lista tras HTTPS, reproductor que dibuja y avanza | [TD-009](../roadmap/technical-debt.md#td-009), [TD-014](../roadmap/technical-debt.md#td-014) |
+| Visor en directo | **PARCIAL**: arranca y explica cada rechazo; ver una batalla viva depende de que haya batallas con bots publicados | [TD-028](../roadmap/technical-debt.md#td-028) |
 | Ranking | **PARCIAL**: la página existe pero sale vacía | [tournaments.md](../technical/tournaments.md#clasificación-y-rating) |
 
 Además: aunque una batalla llegue a jugarse, **los vehículos no ejecutan tu código**. Los conduce un bot de prueba interno de la plataforma ([TD-002](../roadmap/technical-debt.md#td-002)).
+
+## Si algo falla
+
+La web ya no enseña pantallas vacías cuando algo va mal. Verás uno de estos avisos, con el detalle real y, cuando tiene sentido, un botón **«Reintentar»**:
+
+| Aviso | Qué significa |
+|---|---|
+| «Datos no válidos» | El formulario tiene un error; el mensaje dice cuál |
+| «No tienes permiso para esto» | Tu rol no permite esa acción o pantalla |
+| «No existe o no está disponible» | El elemento no existe (o no es visible para ti) |
+| «Error del servidor (500)» | Fallo interno; reintenta o avisa al administrador |
+| «Servicio no disponible (502/503/504)» | Un servicio de la plataforma está caído |
+| «El servidor tarda demasiado» | No hubo respuesta en 15 s |
+| «Sin conexión con el servidor» | Tu red o la plataforma no responden |
+| «Página no encontrada» | La dirección no corresponde a ninguna pantalla; usa «Volver» |
+| «No se puede contactar con la plataforma» | Al recargar, la API no respondía; **tu sesión no se ha cerrado** |
 
 ## Documentación relacionada
 

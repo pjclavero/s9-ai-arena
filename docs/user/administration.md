@@ -38,7 +38,7 @@ Un usuario sin el rol ve «Acceso denegado.».
 
 ## Sistema (`#/system`)
 
-**FUNCIONA ACTUALMENTE.** «Estado del sistema» muestra:
+**FUNCIONA ACTUALMENTE.** Un usuario sin rol de administrador que abra `#/system` ve «No tienes permiso para esto» (403 real de la API), con «Reintentar». «Estado del sistema» muestra:
 
 - entorno, commit y base de datos (OK / no accesible);
 - **Runner real**: habilitado o deshabilitado. Hoy está deshabilitado y lo indica con «Battle execution unavailable in this environment (runner real no habilitado).»;
@@ -70,7 +70,7 @@ No son pantallas de administración, pero exigen roles altos:
 ## Errores / limitaciones
 
 - **Identificadores manuales**: para asignar roles hay que conocer el identificador del usuario, y la web no lo muestra en ningún sitio.
-- **Errores tragados**: si la carga del catálogo falla, la página no lo indica.
+- **Errores de carga**: si la carga del catálogo, los hallazgos o el registro de auditoría fallan, la página lo indica con el mensaje del servidor (antes el fallo del catálogo se tragaba).
 - **PENDIENTE**:
   - listar o buscar usuarios;
   - bloquear cuentas;
