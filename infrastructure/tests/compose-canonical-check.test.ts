@@ -455,8 +455,11 @@ describe("HECHOS REALES de VM108 · el incidente que motiva el carril", () => {
     // Estos cuatro cambian de SPEC: recrearlos aplica un cambio real. `queue`
     // se une a la lista al anclarse por digest (antes: `redis:7-alpine`, la
     // etiqueta flotante desde la que se creó el contenedor vivo).
-    expect(res.recrear).toEqual(["api", "backup", "postgres", "queue"]);
-    // Estos ocho sólo arrastran una procedencia equivocada: su spec ya coincide
+    // FC-D (TD-028): `tournament-worker` se une a la lista porque su spec
+    // canónica ahora monta `jwt_secret` + JWT_SECRET_FILE (verificador del
+    // ticket de espectador). Desplegarlo EXIGE recrear el worker.
+    expect(res.recrear).toEqual(["api", "backup", "postgres", "queue", "tournament-worker"]);
+    // Estos siete (antes ocho; el worker pasó a `recrear`, ver arriba) sólo arrastran una procedencia equivocada: su spec ya coincide
     // con el canónico, así que canonizar no les cambia nada. Ocho, y no siete:
     // este bloque renderiza con VARS_PROD, que NO lleva TOURNAMENT_WORKER_TAG,
     // así que aquí el worker sigue en 4d469dc y sólo arrastra procedencia. El
@@ -468,7 +471,6 @@ describe("HECHOS REALES de VM108 · el incidente que motiva el carril", () => {
       "gateway",
       "map-service",
       "replay-service",
-      "tournament-worker",
       "web",
     ]);
   });
