@@ -64,7 +64,16 @@ export const StubBotManager = QueueBotManager;
 
 export interface BuildResult {
   status: "passed" | "failed";
-  stages: { name: (typeof PIPELINE_STAGES)[number]; status: string; message?: string; logUrl?: string }[];
+  stages: {
+    name: (typeof PIPELINE_STAGES)[number];
+    status: string;
+    message?: string;
+    logUrl?: string;
+    logs?: string[];
+    metrics?: Record<string, number>;
+    startedAt?: string;
+    finishedAt?: string;
+  }[];
   artifactHash?: string;
   signature?: string;
   /** Bytes canónicos del artefacto firmado (R2.5): se persisten para verificar antes de lanzar. */

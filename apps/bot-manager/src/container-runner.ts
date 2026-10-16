@@ -70,6 +70,8 @@ export interface ContainerRunState {
   oomKilled: boolean;
   /** El contenedor ya no existe (p. ej. AutoRemove tras salir). */
   gone: boolean;
+  /** Instante (ms epoch) en que la Engine arrancó el proceso (State.StartedAt). */
+  startedAtMs?: number;
 }
 
 /** Traduce `GET /containers/{id}/json` (o un 404) a ContainerRunState. */
@@ -79,11 +81,13 @@ export function runStateFromInspect(status: number, inspectJson: unknown): Conta
   const c = (Array.isArray(inspectJson) ? inspectJson[0] : inspectJson) as { State?: Record<string, unknown> } | null;
   const st = c?.State;
   if (!st || typeof st !== "object") return null;
+  const started = typeof st.StartedAt === "string" ? Date.parse(st.StartedAt) : NaN;
   return {
     running: st.Running === true,
     exitCode: typeof st.ExitCode === "number" ? st.ExitCode : null,
     oomKilled: st.OOMKilled === true,
     gone: false,
+    ...(Number.isFinite(started) && started > 0 ? { startedAtMs: started } : {}),
   };
 }
 

@@ -145,6 +145,14 @@
         "setgid",
         "setgroups"
       ]
+    },
+    {
+      "comment": "DEV-A · TD-001: el bootstrap materializa el artefacto del usuario en /tmp/bot (tmpfs noexec,nosuid,nodev; rootfs de solo lectura), lo que exige crear directorios. mkdir/mkdirat no dan ninguna capacidad fuera del tmpfs.",
+      "names": [
+        "mkdir",
+        "mkdirat"
+      ],
+      "action": "SCMP_ACT_ALLOW"
     }
   ]
 }

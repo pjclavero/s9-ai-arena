@@ -39,6 +39,7 @@ import {
   type StageResult,
 } from "./types.js";
 import type { BotAgent } from "../../arena-engine/src/sim/battle.js";
+import { SandboxInfrastructureError, type BuildSandbox, type SandboxVerification, type StageVerdict } from "./build-sandbox.js";
 
 export interface PipelineDeps {
   store: BuildStore;
@@ -49,6 +50,12 @@ export interface PipelineDeps {
   agentResolver?: (submission: BotSubmission) => CandidateAgentFactory | Promise<CandidateAgentFactory>;
   /** Bot de referencia de E5 para la partida de humo. */
   referenceAgent?: (botId: string) => BotAgent;
+  /**
+   * DEV-A · TD-001 · Sandbox REAL (contenedor). Si está, las etapas
+   * protocol_test/smoke_battle/resource_limits se ejecutan en él (una sola
+   * sesión) y tiene prioridad sobre `agentResolver` (en proceso, sólo tests).
+   */
+  sandbox?: BuildSandbox;
   /**
    * ESCOTILLA dev/test EXPLÍCITA (R1.5 · ERR-SEC-03). Si es `true`, una etapa de
    * ejecución que no pudo correr (sandbox no disponible) se trata como skip NO
@@ -117,6 +124,7 @@ export class BuildPipeline {
     // No cuentan como superadas: bloquean la promoción a `validated` (fallar cerrado,
     // ERR-SEC-03). Se anotan aquí y se resuelven al final del pipeline.
     const unverifiedStages: StageName[] = [];
+    this.sandboxRun = undefined;
 
     for (const stage of build.stages) {
       stage.status = "running";
@@ -126,6 +134,9 @@ export class BuildPipeline {
       try {
         outcome = await this.runStage(stage.name, submission, build, correlationId);
       } catch (e) {
+        // Un fallo de PLATAFORMA del sandbox no es culpa del bot: se propaga para
+        // que el worker reintente y, agotado, cierre fail-closed (no verificable).
+        if (e instanceof SandboxInfrastructureError) throw e;
         stage.message = `error interno en etapa: ${(e as Error).message}`;
         outcome = "failed";
       }
@@ -221,6 +232,34 @@ export class BuildPipeline {
       detail: { buildId: build.id, artifactHash: build.artifactHash },
     });
     return this.deps.store.get(build.id)!;
+  }
+
+  private sandboxRun?: Promise<SandboxVerification>;
+
+  /** Una sesión de sandbox por build, compartida por las tres etapas de ejecución. */
+  private async sandboxVerdict(
+    sub: BotSubmission,
+    build: Build,
+    stage: StageResult,
+    pick: (v: SandboxVerification) => StageVerdict,
+  ): Promise<StageOutcome> {
+    if (!build.artifactBytes || !build.artifactHash) {
+      stage.message = "no hay artefacto que ejecutar";
+      return "failed";
+    }
+    this.sandboxRun ??= this.deps.sandbox!.verify(
+      sub,
+      { bytes: build.artifactBytes, hash: build.artifactHash },
+      this.deps.config,
+    );
+    const verdict = pick(await this.sandboxRun);
+    stage.logs.push(...verdict.logs);
+    if (verdict.metrics) stage.metrics = verdict.metrics;
+    if (verdict.outcome === "failed") {
+      stage.message = verdict.message ?? "fallo";
+      return "failed";
+    }
+    return "passed";
   }
 
   private stageOf(build: Build, name: StageName): StageResult {
@@ -354,6 +393,7 @@ export class BuildPipeline {
         return "passed";
       }
       case "protocol_test": {
+        if (this.deps.sandbox) return this.sandboxVerdict(sub, build, stage, (v) => v.protocol);
         const factory = await this.resolveAgent(sub, stage);
         if (!factory) return "not_executable";
         const res = runProtocolTest(factory, sub.botId);
@@ -366,6 +406,7 @@ export class BuildPipeline {
         return "passed";
       }
       case "smoke_battle": {
+        if (this.deps.sandbox) return this.sandboxVerdict(sub, build, stage, (v) => v.smoke);
         const factory = await this.resolveAgent(sub, stage);
         if (!factory) return "not_executable";
         if (!this.deps.referenceAgent) {
@@ -391,6 +432,7 @@ export class BuildPipeline {
         return "passed";
       }
       case "resource_limits": {
+        if (this.deps.sandbox) return this.sandboxVerdict(sub, build, stage, (v) => v.resources);
         const factory = await this.resolveAgent(sub, stage);
         if (!factory) return "not_executable";
         const m = this.measure(factory, sub.botId);

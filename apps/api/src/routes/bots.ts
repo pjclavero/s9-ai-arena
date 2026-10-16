@@ -81,9 +81,15 @@ export function buildToJson(b: Record<string, unknown>, opts: { includeLogs: boo
       message: s.message ?? undefined,
       // logUrl es x-private: solo dueño, moderador o admin (contrato E1).
       ...(opts.includeLogs && s.logUrl ? { logUrl: s.logUrl } : {}),
+      // DEV-A · A4: logs persistidos (x-private) y métricas de la etapa.
+      ...(opts.includeLogs && Array.isArray(s.logs) ? { logs: s.logs } : {}),
+      ...(s.metrics ? { metrics: s.metrics } : {}),
+      ...(s.startedAt ? { startedAt: s.startedAt } : {}),
+      ...(s.finishedAt ? { finishedAt: s.finishedAt } : {}),
     })),
     artifactHash: b.artifact_hash ?? undefined,
     createdAt: (b.created_at as Date).toISOString(),
+    updatedAt: b.updated_at ? (b.updated_at as Date).toISOString() : undefined,
   };
 }
 

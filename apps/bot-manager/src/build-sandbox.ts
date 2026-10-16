@@ -86,6 +86,13 @@ export interface ContainerBuildSandboxOptions {
   seccompProfilePath?: string;
   /** ms reales por tick (por defecto el del motor). */
   tickIntervalMs?: number;
+  /**
+   * Margen de PLATAFORMA para el handshake (crear/arrancar el contenedor en la
+   * Engine puede tardar segundos bajo carga; no es tiempo del bot). El
+   * arranque del BOT se mide desde State.StartedAt y se juzga contra
+   * maxStartupMs en resource_limits. Def. 20000 ms.
+   */
+  platformGraceMs?: number;
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -105,6 +112,8 @@ function envelopeValidator() {
 /** Lo que el sandbox observa del tráfico del candidato (sin tocar el ProtocolServer). */
 class WireTap {
   helloAt: number | null = null;
+  /** Reloj de pared del HELLO (comparable con State.StartedAt del contenedor). */
+  helloWallMs: number | null = null;
   validCommands = 0;
   invalid: string[] = [];
   observationsSent = 0;
@@ -142,7 +151,10 @@ class WireTap {
       this.invalid.push(`${String(msg?.type ?? "?")} no cumple el esquema arena/1: ${detail.join("; ")}`);
       return;
     }
-    if (msg.type === "HELLO" && this.helloAt === null) this.helloAt = performance.now();
+    if (msg.type === "HELLO" && this.helloAt === null) {
+      this.helloAt = performance.now();
+      this.helloWallMs = Date.now();
+    }
     if (msg.type === "COMMAND") {
       this.validCommands++;
       const t = this.sentAt.get(msg.payload.forTick - DECISION_EVERY_N_TICKS);
@@ -226,13 +238,18 @@ export class ContainerBuildSandbox implements BuildSandbox {
         limits,
         seccompProfilePath: this.o.seccompProfilePath,
       });
+      const tLaunch = performance.now();
       try {
         container = await this.o.runner.launch(spec);
       } catch (e) {
         throw new SandboxInfrastructureError(`el sandbox no pudo lanzar el contenedor: ${(e as Error).message}`);
       }
+      // El bot puede arrancar mientras la Engine aún responde al `start`: el
+      // arranque se mide desde que el contenedor existe, y se informa aparte
+      // cuánto tardó la plataforma en crearlo/arrancarlo (no es culpa del bot).
       const t0 = performance.now();
-      logs.push(`contenedor ${container.id.slice(0, 12)} lanzado (${image.split("@")[0]})`);
+      const launchMs = t0 - tLaunch;
+      logs.push(`contenedor ${container.id.slice(0, 12)} lanzado en ${launchMs.toFixed(0)} ms (${image.split("@")[0]})`);
 
       // Defensa en profundidad: la postura REAL del contenedor (inspect) debe
       // cumplir la tabla 18.2. Si el contenedor ya desapareció (salió al
@@ -249,17 +266,25 @@ export class ContainerBuildSandbox implements BuildSandbox {
         logs.push("contenedor ya terminado antes de inspeccionarlo (la postura la validó el proxy al crearlo)");
       }
 
-      // 1) Handshake dentro del plazo de arranque (o salida temprana del bot).
-      const connected = await this.waitHandshake(server, container, cfg.limits.maxStartupMs);
-      if (!connected.ok) {
-        const reason = `el bot no completó el handshake (HELLO) en ${cfg.limits.maxStartupMs} ms${this.describeExit(connected.state, offer.reports)}`;
+      // 1) Handshake: plazo del bot + margen de plataforma (o salida temprana).
+      const waitMs = cfg.limits.maxStartupMs + (this.o.platformGraceMs ?? 20_000);
+      const connected = await this.waitHandshake(server, container, waitMs);
+      if (connected.ok === false) {
+        const reason = `el bot no completó el handshake (HELLO) en ${waitMs} ms${this.describeExit(connected.state, offer.reports)}`;
         return {
           protocol: { outcome: "failed", message: reason, logs: [...logs, `descargas del artefacto: ${offer.fetches}`] },
           smoke: notRun("no ejecutada: el bot no arrancó"),
           resources: notRun("no ejecutada: el bot no arrancó"),
         };
       }
-      const startupMs = (tap.helloAt ?? performance.now()) - t0;
+      // Arranque del BOT = HELLO − arranque del proceso en la Engine
+      // (State.StartedAt). Sin StartedAt (contenedor ya inspeccionable no), desde
+      // que la Engine devolvió el contenedor arrancado.
+      const startedAtMs = (await container.state?.().catch(() => null))?.startedAtMs;
+      const startupMs =
+        startedAtMs !== undefined && tap.helloWallMs !== null
+          ? Math.max(0, tap.helloWallMs - startedAtMs)
+          : Math.max(0, (tap.helloAt ?? performance.now()) - t0);
       logs.push(`handshake completado en ${startupMs.toFixed(0)} ms (artefacto descargado ${offer.fetches} vez/veces)`);
 
       // 2) Partida de humo real (bucle de ticks del ProtocolServer).
@@ -289,6 +314,7 @@ export class ContainerBuildSandbox implements BuildSandbox {
       const max = tap.latencies.length ? Math.max(...tap.latencies) : 0;
       const metrics: Record<string, number> = {
         startupMs,
+        launchMs,
         p95DecisionMs: p95,
         maxDecisionMs: max,
         decisions: tap.latencies.length,
