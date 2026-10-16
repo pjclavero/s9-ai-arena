@@ -7,6 +7,8 @@ import { pathParam } from "../params.js";
 import { getStandings } from "../services/standings.js";
 // H6 (issue #10) · Se expone el libro mayor REAL de E9, no una reimplementación.
 import { INITIAL_RATING, ratingAt, ratingHistory } from "../../../tournament-worker/src/ratings.js";
+// TD-029 · STAT_SEASON: ÚNICA fuente de la temporada activa (la comparte el worker).
+import { resolveSeasonId } from "../../../tournament-worker/src/season.js";
 
 const MODES = ["deathmatch", "team_deathmatch", "capture_the_flag", "zone_control"];
 
@@ -14,10 +16,13 @@ export function standingsRoutes(db: Db): Router {
   const router = Router();
 
   defineOperation(router, "getStandings", async (req, res) => {
-    const seasonId = typeof req.query.seasonId === "string" ? req.query.seasonId : "current";
+    // Antes: `?? "current"`, una temporada que nadie escribe ⇒ clasificación SIEMPRE
+    // vacía. Ahora ausente/"current" ⇒ la temporada activa real.
+    const seasonId = resolveSeasonId(req.query.seasonId);
     const mode = typeof req.query.mode === "string" ? req.query.mode : undefined;
     const { standings } = await getStandings(db, seasonId, mode);
     res.setHeader("Cache-Control", "public, max-age=60");
+    res.setHeader("X-S9-Season", seasonId);
     res.json(standings);
   });
 
@@ -33,7 +38,7 @@ export function standingsRoutes(db: Db): Router {
       .first()
       .catch(() => null);
     if (!bot) throw notFound();
-    const seasonId = typeof req.query.seasonId === "string" ? req.query.seasonId : "season-1";
+    const seasonId = resolveSeasonId(req.query.seasonId);
     const mode = typeof req.query.mode === "string" ? req.query.mode : "deathmatch";
     if (!MODES.includes(mode)) throw badRequest(`mode debe ser uno de: ${MODES.join(", ")}`);
 
@@ -52,6 +57,7 @@ export function standingsRoutes(db: Db): Router {
       body.ratingAt = await ratingAt(db, botId, seasonId, mode, at);
     }
     res.setHeader("Cache-Control", "public, max-age=60");
+    res.setHeader("X-S9-Season", seasonId);
     res.json(body);
   });
 

@@ -142,6 +142,14 @@ describe("rollback:1 (011 → 010)", () => {
   });
 
   it("revierte solo la última migración: knex_migrations baja exactamente 1 fila y participants pierde cpu_ms", async () => {
+    // Cierre funcional (DEV-B): tras 011 vienen migraciones nuevas (012_*). El caso
+    // prueba el down de 011, así que primero se revierten las posteriores, una a
+    // una, hasta que 011 sea la última aplicada (antes daba por hecho que lo era).
+    for (;;) {
+      const applied = await h.db("knex_migrations").select("name").orderBy("id");
+      if (applied.at(-1)?.name === "011_battle_cpu_ms" || applied.length === 0) break;
+      await rollbackLast(h.db);
+    }
     const before = await h.db("knex_migrations").select("name").orderBy("id");
     expect(before.at(-1)?.name).toBe("011_battle_cpu_ms");
 

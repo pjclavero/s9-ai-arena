@@ -15,6 +15,7 @@
  *  - Suma conservada: los deltas son intercambios por pareja (suma cero por
  *    construcción), también en batallas por equipos.
  */
+import { resolveSeasonId } from "./season.js";
 import type { Knex } from "knex";
 
 export const INITIAL_RATING = 1000;
@@ -91,7 +92,8 @@ export async function applyBattleRating(
   if (!battle.official) return false; // práctica privada: no puntúa
 
   const tournament = battle.tournament_id ? await db("tournaments").where({ id: battle.tournament_id }).first() : null;
-  const seasonId = (tournament?.season_id as string) ?? "season-1";
+  // TD-029 · STAT_SEASON: la temporada sale de la ÚNICA fuente (season.ts).
+  const seasonId = resolveSeasonId(tournament?.season_id);
   const mode = battle.mode as string;
   const k = (tournament?.elo_k as number) ?? DEFAULT_K;
 

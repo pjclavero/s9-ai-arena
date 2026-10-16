@@ -674,6 +674,34 @@ const m011_battle_cpu_ms: Migration = {
   },
 };
 
+// DEV-B (cierre funcional) — RESERVA ATÓMICA y LEASE de la ejecución de una
+// batalla. El tournament-worker es la ÚNICA autoridad de ejecución: reclama la
+// batalla con `UPDATE … WHERE status='scheduled' RETURNING` y escribe aquí quién
+// la ejecuta (`claimed_by`) y hasta cuándo vale su reserva (`lease_expires_at`,
+// renovada mientras corre). Sólo el titular vigente puede finalizarla
+// (`UPDATE … WHERE status='running' AND claimed_by=:yo`): una batalla se
+// ejecuta y se cierra EXACTAMENTE una vez aunque haya trabajos duplicados,
+// reintentos, dos workers o un worker que muere a mitad (su lease caduca y otro
+// la recupera). `run_attempts` cuenta las reservas (diagnóstico).
+const m012_b_battle_claim: Migration = {
+  name: "012_b_battle_claim",
+  async up(db) {
+    await db.raw(`
+      ALTER TABLE battles
+        ADD COLUMN claimed_by       text,
+        ADD COLUMN lease_expires_at timestamptz,
+        ADD COLUMN run_attempts     integer NOT NULL DEFAULT 0 CHECK (run_attempts >= 0);
+      CREATE INDEX battles_running_lease_idx ON battles (lease_expires_at) WHERE status = 'running';
+    `);
+  },
+  async down(db) {
+    await db.raw(`
+      DROP INDEX IF EXISTS battles_running_lease_idx;
+      ALTER TABLE battles DROP COLUMN claimed_by, DROP COLUMN lease_expires_at, DROP COLUMN run_attempts;
+    `);
+  },
+};
+
 export const MIGRATIONS: Migration[] = [
   m001_identity,
   m002_content,
@@ -686,6 +714,7 @@ export const MIGRATIONS: Migration[] = [
   m009_r24_refresh_families,
   m010_r25_shared_limits,
   m011_battle_cpu_ms,
+  m012_b_battle_claim,
 ];
 
 class ProgrammaticMigrationSource {
