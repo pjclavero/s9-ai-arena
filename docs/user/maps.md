@@ -2,102 +2,112 @@
 
 ## Resumen
 
-Hay dos pantallas de mapas que **no están conectadas entre sí**:
+Hay dos pantallas, y ahora trabajan sobre los **mismos mapas, guardados en la plataforma**:
 
-- **«Mapas»** (`#/maps`) trabaja con mapas guardados en la plataforma: listar, importar un fichero, generar uno procedural y publicar.
-- **«Editor de mapas»** (`#/maps/editor`) dibuja un mapa **sólo en tu navegador**: no lo guarda y lo que exporta no se puede importar.
+- **«Editor de mapas»** (`#/maps/editor`): dibujas tu mapa, lo **guardas en el servidor**, lo reabres cuando quieras (también tras recargar o volver a entrar) y lo publicas.
+- **«Mapas»** (`#/maps`): lista los mapas, importa un fichero, genera uno procedural y publica. Cada fila tiene «Editar» o «Abrir en el editor».
 
-Sólo los mapas **publicados** se usan en batallas, y publicar exige el rol de organizador ([TD-010](../roadmap/technical-debt.md#td-010)).
+Sólo los mapas **publicados** se usan en batallas. Tus mapas sólo los puedes cambiar tú.
 
 ## Índice
 
-- [Ver los mapas](#ver-los-mapas)
-- [Importar un mapa](#importar-un-mapa)
-- [Generar un mapa procedural](#generar-un-mapa-procedural)
+- [Crear y guardar un mapa en el editor](#crear-y-guardar-un-mapa-en-el-editor)
+- [Reabrir, seguir editando y duplicar](#reabrir-seguir-editando-y-duplicar)
 - [Publicar](#publicar)
-- [El editor visual](#el-editor-visual)
-- [Guardar, recuperar y duplicar](#guardar-recuperar-y-duplicar)
+- [Exportar e importar](#exportar-e-importar)
+- [Ver los mapas](#ver-los-mapas)
+- [Generar un mapa procedural](#generar-un-mapa-procedural)
 - [Usar un mapa en batalla](#usar-un-mapa-en-batalla)
+- [Quién puede hacer qué](#quién-puede-hacer-qué)
 - [Errores / limitaciones](#errores--limitaciones)
 - [Estado actual](#estado-actual)
 - [Documentación relacionada](#documentación-relacionada)
 
-## Ver los mapas
+## Crear y guardar un mapa en el editor
 
-**FUNCIONA ACTUALMENTE.** La tabla «Mapas registrados» muestra para cada versión:
+**FUNCIONA ACTUALMENTE.**
 
-- mapa y versión;
-- estado: `draft`, `validated` o `published`;
-- dimensiones en metros;
-- modos;
-- vista previa;
-- acciones: «Publicar», o «Disponible para batallas» si ya está publicada.
+1. «Mapas» → «Abrir el editor de mapas» (o «Nuevo» dentro del editor). Empiezas con una arena de 120×80 m y dos spawns, rojo y azul.
+2. En «Mapa» pon el **id** (minúsculas, dígitos y guiones), el **nombre**, el ancho, el alto y los **modos** que soporta.
+3. Añade objetos: muro, destructible, spawn, base, bandera y zona (de captura o de daño). Selecciona uno en «Objetos» para cambiar su posición, tamaño o radio, equipo o tipo, o para eliminarlo.
+4. Pulsa **«Guardar en el servidor»**. Verás «Guardado en el servidor: `<id>` v1 (borrador).».
 
-La tabla incluye las versiones de todos los usuarios. El mapa de serie es `mvp-arena-01` (120×80 m). Ojo: su columna «Modos» muestra `deathmatch`, aunque el mapa está preparado para captura de bandera y combate por equipos (ver [Modos de juego](game-modes.md)).
+Debajo aparece la **validación del servidor**: geometría, navegación, jugabilidad, equilibrio, requisitos de cada modo y destructibles. Puedes guardar con avisos o errores. Para publicar no puede quedar ningún error.
 
-## Importar un mapa
+Mientras el mapa siga siendo borrador, guardar **reescribe la misma versión**.
 
-**FUNCIONA ACTUALMENTE** con ficheros en el formato interno de la plataforma o exportados de Tiled en JSON.
+## Reabrir, seguir editando y duplicar
 
-1. En «Importar un mapa existente» elige el fichero `.json` y pulsa **«Importar mapa»**.
-2. La plataforma lo valida con 6 comprobaciones: geometría, navegación, jugabilidad, equilibrio, requisitos de cada modo y destructibles.
-3. Si pasa, verás «Mapa "X" importado y validado (vN, borrador).» y la versión aparece como `validated`.
-4. Si no pasa, verás «No se pudo importar el mapa: …» con la lista de comprobaciones fallidas, por ejemplo `[mode] el modo capture_the_flag no tiene banderas`.
+**FUNCIONA ACTUALMENTE.**
 
-Formato de referencia: el fichero `maps/mvp-arena-01.json` del repositorio. Detalle en [maps.md técnico](../technical/maps.md#formato-interno-internalmap).
-
-## Generar un mapa procedural
-
-**PARCIAL: sólo para organizadores.** En «Generar un mapa procedural» escribe una **semilla** y los **parámetros** en JSON (por ejemplo `{ "widthM": 40, "heightM": 40, "modes": ["deathmatch"] }`) y pulsa **«Generar mapa»**. La misma semilla siempre produce el mismo mapa. Un usuario sin el rol recibe «No se pudo generar el mapa: Requiere rol organizer».
+- **Recargar (F5)**: la dirección del editor (`#/maps/editor?map=<id>&v=<n>`) recuerda qué mapa tienes abierto, y al recargar se vuelve a cargar desde la plataforma.
+- **Mis mapas**: lista lo que has guardado; «Abrir» lo carga. También funciona tras cerrar sesión y volver a entrar.
+- **Desde «Mapas»**: «Editar» en cualquiera de tus mapas.
+- **Duplicar**: en «Duplicar» escribe un id nuevo y pulsa «Guardar como copia». Sirve también para partir de un mapa de otra persona.
 
 ## Publicar
 
-**PARCIAL: sólo para organizadores.** Pulsa **«Publicar»** en una versión `validated`. Verás «Mapa "X" vN publicado: ya es jugable en batallas.» y se genera la vista previa. Una versión publicada no se puede modificar: para cambiarla hay que crear otra versión.
+**FUNCIONA ACTUALMENTE.** Con el mapa guardado y sin cambios pendientes, pulsa **«Publicar»** en el editor, o «Publicar» en su fila de «Mapas».
 
-## El editor visual
+- Si no tiene errores, verás «Publicado …: ya se puede usar en batallas» y se genera la vista previa.
+- Una versión publicada **no cambia nunca**. Si sigues editando y guardas, se crea la versión siguiente como borrador.
 
-**PARCIAL (sólo en el navegador).** En «Mapas» → «Abrir editor de mapas (borrador local)»:
+## Exportar e importar
 
-- **Herramientas**: «Añadir muro», «Añadir obstáculo» (destructible, con salud) y «Añadir spawn» (equipo rojo o azul).
-- **Edición**: selecciona un objeto en la lista «Objetos (N)» para editar su posición, tamaño, salud o equipo, o «Eliminar objeto».
-- **Validación local**: «Avisos de validación (cliente)» detecta ids duplicados, objetos fuera de límites, tamaños no positivos y la falta de spawns.
-- **Exportar JSON / Importar JSON**: copia y pega el texto del mapa entre sesiones.
+**FUNCIONA ACTUALMENTE.**
 
-Lo que **no** permite: suelo o terrenos, zonas, bases, banderas, ni la orientación del spawn.
+- **Exportar**: el editor muestra el JSON del mapa y ofrece «Descargar `<id>`.json». Es el formato de la plataforma.
+- **Importar en «Mapas»**: el fichero exportado se importa tal cual en «Importar un mapa existente». Si tiene el id de un mapa tuyo, se añade como versión nueva; si quieres un mapa aparte, cambia el id.
+- **Importar en el editor**: pega un JSON en «Importar JSON». Acepta el formato de la plataforma y el formato antiguo del editor (`id`, `width`, `walls`…), que convierte a metros.
+- «Mapas» rechaza el formato antiguo con un mensaje que te manda al editor, en lugar del antiguo «Error interno».
 
-## Guardar, recuperar y duplicar
+## Ver los mapas
 
-**PENDIENTE.**
+**FUNCIONA ACTUALMENTE.** «Mapas registrados» muestra nombre, id, «(tuyo)», versión, estado, dimensiones, modos, vista previa y acciones.
 
-- **Guardar**: el editor no guarda en la plataforma (lo dice él mismo). Si recargas la página **pierdes lo editado**. La única forma de conservarlo es copiar el texto de «Exportar JSON».
-- **Llevarlo a «Mapas»**: si importas ese texto en «Importar un mapa existente», el resultado es **«No se pudo importar el mapa: Error interno»**. El editor usa otro formato ([TD-010](../roadmap/technical-debt.md#td-010)).
-- **Recuperar**: no se puede reabrir un mapa ya guardado en la plataforma para seguir editándolo.
-- **Duplicar**: no existe; como alternativa, importa de nuevo el mismo fichero cambiando su `mapId`.
+- Los **borradores sólo los ves tú**.
+- Mapas de serie:
+  - `mvp-arena-01`: captura de bandera y combate por equipos;
+  - `mvp-arena-02`: la misma arena, que además declara deathmatch.
+
+## Generar un mapa procedural
+
+**PARCIAL: sólo para organizadores.** Escribe una semilla y los parámetros en JSON y pulsa «Generar mapa». La misma semilla produce siempre la misma geometría.
 
 ## Usar un mapa en batalla
 
-- **En una batalla de práctica**: el selector «Mapa publicado» muestra los mapas publicados. **PENDIENTE**, porque crear la batalla falla ([Batallas](battles.md)).
-- **En un torneo**: la web no deja elegir mapa; se juega siempre `mvp-arena-01` ([Torneos](tournaments.md)).
-- **Modo y mapa**: la plataforma no comprueba que el mapa soporte el modo elegido.
+**FUNCIONA ACTUALMENTE** en batallas de práctica. En «Nueva batalla» eliges el **modo** y el selector «Mapa publicado» sólo ofrece mapas que soportan ese modo, incluidos los tuyos publicados. Ver [Batallas](battles.md) y [Modos de juego](game-modes.md).
+
+## Quién puede hacer qué
+
+| Acción | Quién |
+|---|---|
+| Crear un mapa | Cualquier usuario (queda como dueño) |
+| Editar, guardar o añadir versiones | Sólo su dueño (o un admin). Otro usuario recibe «Ese mapa pertenece a otro usuario…» y puede duplicarlo |
+| Publicar | Su dueño, o un organizador |
+| Ver borradores | Sólo su dueño |
+| Ver mapas publicados | Todo el mundo, sin cuenta |
 
 ## Errores / limitaciones
 
 | Situación | Lo que ves |
 |---|---|
-| Importar el JSON del editor | «No se pudo importar el mapa: Error interno» |
-| Generar o publicar sin ser organizador | «… Requiere rol organizer» (el formulario se muestra igual) |
-| Parámetros mal escritos | «Los parámetros deben ser JSON válido.» |
-| Recargar el editor | Se pierde lo editado |
-| Editor en móvil | El lienzo se sale de la pantalla |
+| Guardar sobre un mapa ajeno | «No se pudo guardar: … pertenece a otro usuario (… duplícalo con otro id)» |
+| Publicar con errores de validación | «No se pudo publicar: …» y la lista de comprobaciones |
+| Id con mayúsculas o espacios | Aviso en «Avisos (cliente)»; el servidor responde 400 |
+| Generar sin ser organizador | «… Requiere rol organizer» |
 
-Lista completa: [known-issues.md](../roadmap/known-issues.md).
+Además:
+
+- No se pueden borrar mapas ni versiones.
+- No hay polígonos ni edición de materiales. Los objetos se mueven con los campos numéricos, no arrastrando.
 
 ## Estado actual
 
-**PARCIAL**: importar y listar funcionan; generar y publicar, sólo con organizador; el editor no se conecta con la plataforma.
+**FUNCIONA ACTUALMENTE**: crear, guardar, reabrir, editar, publicar y usar en batalla, con export e import compatibles. Comprobado con un navegador real. **PARCIAL**: generar (sólo organizador).
 
 ## Documentación relacionada
 
-- Usuario: [Modos de juego](game-modes.md), [Batallas](battles.md), [Torneos](tournaments.md)
-- Técnica: [maps.md](../technical/maps.md), [game-modes.md](../technical/game-modes.md#compatibilidad-con-mapas)
+- Usuario: [Modos de juego](game-modes.md), [Batallas](battles.md), [Equipos](teams.md)
+- Técnica: [maps.md](../technical/maps.md), [game-modes.md](../technical/game-modes.md)
 - Deuda: [TD-010](../roadmap/technical-debt.md#td-010), [TD-017](../roadmap/technical-debt.md#td-017)

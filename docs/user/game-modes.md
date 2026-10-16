@@ -6,13 +6,14 @@ Desde la web puedes elegir **4 modos**: combate libre (`deathmatch`), combate po
 
 Hoy:
 
-- crear una batalla de práctica falla en cualquier modo ([TD-003](../roadmap/technical-debt.md#td-003)), así que los modos sólo se juegan dentro de torneos;
+- en «Nueva batalla» eliges el **modo** y un **ruleset** (las reglas: límite de tiempo, puntos y presupuesto), que salen de la plataforma; el selector de mapas sólo muestra los que admiten ese modo, y la batalla se crea ([TD-003](../roadmap/technical-debt.md#td-003));
 - los vehículos los conduce un bot de prueba que no persigue banderas ni zonas ([TD-002](../roadmap/technical-debt.md#td-002)).
 
 ## Índice
 
 - [Modos disponibles](#modos-disponibles)
 - [Modos sólo del motor](#modos-sólo-del-motor)
+- [Rulesets](#rulesets)
 - [Mapas compatibles](#mapas-compatibles)
 - [Errores / limitaciones](#errores--limitaciones)
 - [Estado actual](#estado-actual)
@@ -67,23 +68,40 @@ Reglas comunes:
 - **Dominación** (`domination`): varias zonas; una zona sigue siendo tuya al salir de ella. Necesita al menos 2 zonas.
 - **Juggernaut** (`juggernaut`): un vehículo marcado al que todos quieren abatir. 3 puntos por abatirlo.
 
+## Rulesets
+
+**FUNCIONA ACTUALMENTE.** La plataforma trae uno por modo:
+
+| Ruleset | Modo |
+|---|---|
+| Deathmatch (práctica) | combate libre |
+| Team deathmatch (MVP) | por equipos |
+| Captura la bandera (MVP) | bandera |
+| Control de zona (MVP) | zonas |
+
+También trae «Ruleset MVP por defecto», válido para cualquier modo. Al cambiar de modo, el formulario elige el ruleset de ese modo.
+
 ## Mapas compatibles
 
-| Mapa | Combate libre | Por equipos | Bandera | Zonas |
-|---|---|---|---|---|
-| `mvp-arena-01` (de serie) | sí | sí | sí | **no** (sólo tiene zonas de ácido, que hacen daño) |
+Cada mapa **declara** sus modos, y el validador comprueba que tenga lo necesario: spawns, banderas y bases, o zonas de captura.
 
-La plataforma **no te avisa** si eliges un modo que el mapa no admite. Una batalla de control de zonas en `mvp-arena-01` se acepta, pero luego falla y queda como «failed (infrastructure)».
+| Mapa | Modos declarados | Combate libre | Por equipos | Bandera | Zonas |
+|---|---|---|---|---|---|
+| `mvp-arena-01` (de serie) | bandera, por equipos | — | sí | sí | **no** (sólo tiene zonas de ácido, que hacen daño) |
+| `mvp-arena-02` (de serie, misma arena) | libre, por equipos, bandera | sí | sí | sí | **no** |
+
+- En «Nueva batalla» **sólo aparecen los mapas que admiten el modo elegido**.
+- Para jugar a control de zonas, crea un mapa en el editor con al menos una zona de captura y marca el modo.
 
 ## Errores / limitaciones
 
-- **Crear batalla**: devuelve «rulesetId desconocido» en cualquiera de los 4 modos ([TD-003](../roadmap/technical-debt.md#td-003)).
+- **Por API**, `POST /battles` todavía acepta un modo que el mapa no admite; la web no lo permite. Esa batalla acaba fallando.
 - **Bandera y zonas**: con el bot de prueba de la plataforma, estas partidas suelen acabar en empate por tiempo, porque ese bot no persigue objetivos.
-- **Columna «Modos» de «Mapas»**: puede no coincidir con lo que el mapa realmente admite.
+- Ningún mapa de serie admite control de zonas.
 
 ## Estado actual
 
-**PARCIAL**: los 4 modos existen y se juegan en torneos; la creación directa está rota; 3 modos son sólo del motor.
+**FUNCIONA ACTUALMENTE**: los 4 modos, con rulesets reales, se eligen al crear una batalla de práctica (202, comprobado en un navegador real). **PARCIAL**: el bot de prueba no persigue objetivos. **PENDIENTE**: 3 modos sólo existen en el motor.
 
 ## Documentación relacionada
 
