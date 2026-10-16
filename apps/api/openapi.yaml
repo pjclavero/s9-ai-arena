@@ -855,7 +855,10 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/PracticeBattleInput' }
       responses:
-        '202': { description: Encolada, content: { application/json: { schema: { $ref: '#/components/schemas/Battle' } } } }
+        '202': { description: Encolada (la ejecuta el tournament-worker con el código real de cada bot), content: { application/json: { schema: { $ref: '#/components/schemas/Battle' } } } }
+        '400': { description: Modo/participantes/team/ruleset/mapa inválidos o bot repetido, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: 'bot_not_found · un bot inexistente o privado ajeno (TD-005); indistinguibles a propósito', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: bot_not_published, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /battles/{battleId}:
     get:
@@ -872,19 +875,17 @@ paths:
       tags: [battles]
       operationId: runBattle
       summary: |
-        R6.2/R9-B · Lanza la ejecución containerizada REAL de una batalla `scheduled` usando el
-        pipeline seguro (bot-manager → s9-docker-proxy → red arena → replay-service). GATEADO:
-        apagado por defecto → 503. La API no llama a Docker directamente.
+        DEV-B (TD-002) · DEPRECADO como ejecutor: ya NO ejecuta. Delega en la autoridad única de
+        ejecución (tournament-worker): se asegura de que el trabajo `run_battle` está encolado
+        (idempotente, dedupe_key `run_battle:<id>`) y responde 202. POST /battles ya lo encola.
       x-min-role: user
       parameters: [{ $ref: '#/components/parameters/BattleId' }]
       responses:
-        '200':
-          description: Lanzada / resultado
+        '202':
+          description: Delegada en la cola del tournament-worker
           content: { application/json: { schema: { type: object, additionalProperties: true } } }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: Estado inválido / bot no listo / mapa no publicado / reserva perdida en una carrera, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
-        '429': { description: Techo de batallas reales simultáneas alcanzado (S9_MAX_CONCURRENT_REAL_BATTLE_RUNS), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
-        '503': { description: Ejecución real deshabilitada o runner no disponible, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: La batalla no está scheduled, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /battles/{battleId}/spectate-ticket:
     post:
@@ -983,6 +984,7 @@ paths:
       parameters:
         - name: seasonId
           in: query
+          description: 'STAT_SEASON (TD-029) · ausente o "current" = temporada activa (season.ts); la respuesta la indica en X-S9-Season.'
           schema: { type: string }
         - name: mode
           in: query
@@ -1009,7 +1011,8 @@ paths:
         - $ref: '#/components/parameters/BotId'
         - name: seasonId
           in: query
-          schema: { type: string, default: season-1 }
+          description: 'STAT_SEASON (TD-029) · ausente o "current" = temporada activa.'
+          schema: { type: string, default: current }
         - name: mode
           in: query
           schema: { enum: [deathmatch, team_deathmatch, capture_the_flag, zone_control], default: deathmatch }
@@ -1477,14 +1480,25 @@ components:
               version: { type: integer }
               team: { type: string }
               outcome: { enum: [win, loss, draw, disqualified] }
+              cpuMs: { type: number, nullable: true, description: 'CPU real del contenedor del bot (ms, cgroup). null = no medida.' }
         result:
           type: object
+          description: 'BATTLE_RESULT v1 (docs/technical/battles.md). El ganador POR BOT es participants[].outcome.'
           properties:
+            schema: { enum: [battle-result/v1] }
+            winner: { type: string, description: 'Equipo ganador o "draw".' }
             score: { type: object, additionalProperties: { type: number } }
             ticks: { type: integer }
+            disqualified: { type: array, items: { type: string } }
+            endReason: { enum: [completed, walkover, sporting_failure] }
+            agents: { enum: [container, in_process_stub, scripted], description: 'Quién condujo los vehículos (container = código real del bot).' }
         failureKind:
           enum: [none, bot_timeout, bot_crash, infrastructure]
           description: 'Distingue derrota deportiva de fallo técnico (cap. 19.2). Solo infrastructure se reintenta.'
+        startedAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time }
+        replayAvailable: { type: boolean }
+        replayHash: { type: string }
     BattlePage:
       type: object
       properties:

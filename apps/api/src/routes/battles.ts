@@ -72,9 +72,14 @@ export function battleToJson(b: Record<string, unknown>, participants: Record<st
       version: p.version,
       team: p.team,
       outcome: p.outcome ?? undefined,
+      cpuMs: p.cpu_ms === null || p.cpu_ms === undefined ? null : Number(p.cpu_ms),
     })),
     result: b.result ?? undefined,
     failureKind: b.failure_kind,
+    startedAt: b.started_at ? new Date(b.started_at as string).toISOString() : undefined,
+    finishedAt: b.finished_at ? new Date(b.finished_at as string).toISOString() : undefined,
+    replayAvailable: Boolean(b.replay_ref),
+    replayHash: b.replay_hash ?? undefined,
   };
 }
 
