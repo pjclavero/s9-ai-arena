@@ -8,16 +8,22 @@
  * humo en el motor real contra el bot de referencia. Una sola sesión alimenta
  * las tres etapas:
  *
- *   protocol_test    HELLO dentro del plazo; todo mensaje del bot valida contra
- *                    envelope.schema.json; al menos un COMMAND válido.
+ *   protocol_test    HELLO dentro del reloj del bot; todo mensaje del bot valida
+ *                    contra envelope.schema.json; al menos un COMMAND válido.
  *   smoke_battle     la batalla termina y el candidato NO queda descalificado.
- *   resource_limits  arranque ≤ maxStartupMs, p95 de decisión ≤ maxDecisionMs,
- *                    sin OOM (los límites duros los aplica el cgroup).
+ *   resource_limits  p95 de decisión ≤ maxDecisionMs, sin OOM (los límites
+ *                    duros los aplica el cgroup); métricas de arranque.
+ *
+ * TD-034 · DOS relojes (startup-clock.ts): SANDBOX_STARTUP_TIMEOUT_MS para la
+ * plataforma (lanzamiento → señal `ready` del bootstrap) y
+ * BOT_EXECUTION_TIMEOUT_MS para el código del bot (`ready` → HELLO). La carga del
+ * host o una Engine lenta sólo pueden agotar el primero, que es infraestructura.
  *
  * Fallos de PLATAFORMA (proxy caído, imagen ausente, postura no conforme, motor
- * colgado) lanzan SandboxInfrastructureError: NO son culpa del bot. El pipeline
- * los propaga, el worker reintenta y, agotado, cierra el build fail-closed
- * («build no verificable»), nunca `validated`.
+ * colgado, arranque lento, artefacto no descargable o corrupto) lanzan
+ * SandboxInfrastructureError: NO son culpa del bot. El pipeline los propaga, el
+ * worker reintenta y, agotado, cierra el build fail-closed («build no
+ * verificable»), nunca `validated`.
  */
 import { randomUUID } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
@@ -46,6 +52,16 @@ import {
 } from "./container-runner.js";
 import { SandboxHost } from "./sandbox-host.js";
 import { launchSpecForBot, type RuntimeImages } from "./bot-launch.js";
+import {
+  DEFAULT_STARTUP_TIMEOUTS,
+  SandboxLaunchError,
+  awaitAgentReady,
+  launchWithinStartup,
+  startupMetrics,
+  type StartupTimeline,
+  type StartupTimeouts,
+} from "./startup-clock.js";
+import type { Runtime } from "./types.js";
 
 export class SandboxInfrastructureError extends Error {
   constructor(message: string) {
@@ -91,12 +107,16 @@ export interface ContainerBuildSandboxOptions {
   /** ms reales por tick (por defecto el del motor). */
   tickIntervalMs?: number;
   /**
-   * Margen de PLATAFORMA para el handshake (crear/arrancar el contenedor en la
-   * Engine puede tardar segundos bajo carga; no es tiempo del bot). El
-   * arranque del BOT se mide desde State.StartedAt y se juzga contra
-   * maxStartupMs en resource_limits. Def. 20000 ms.
+   * TD-034 · los dos relojes del arranque (startupTimeoutsFromEnv en el
+   * cableado). Def. DEFAULT_STARTUP_TIMEOUTS (30000 / 5000 ms).
    */
-  platformGraceMs?: number;
+  timeouts?: StartupTimeouts;
+  /**
+   * Sólo tests: argumentos del ENTRYPOINT del runtime (el bootstrap). Permite un
+   * «runtime de prueba» que retrasa de verdad la plataforma antes de `ready`.
+   * Producción usa siempre el bootstrap del repo.
+   */
+  bootstrapCmd?: (runtime: Runtime) => string[];
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -178,6 +198,11 @@ const notRun = (why: string): StageVerdict => ({ outcome: "failed", message: why
 export class ContainerBuildSandbox implements BuildSandbox {
   constructor(private readonly o: ContainerBuildSandboxOptions) {}
 
+  /** Plazos EFECTIVOS que aplica esta instancia (declarada = efectiva, SAN-4). */
+  get timeouts(): StartupTimeouts {
+    return this.o.timeouts ?? DEFAULT_STARTUP_TIMEOUTS;
+  }
+
   async verify(
     sub: BotSubmission,
     artifact: { bytes: Buffer; hash: string },
@@ -220,7 +245,8 @@ export class ContainerBuildSandbox implements BuildSandbox {
       expected: [{ botId: handle0, vehicleId: "veh_1", battleToken }],
       wss: host.wss,
       ...(this.o.tickIntervalMs !== undefined ? { tickIntervalMs: this.o.tickIntervalMs } : {}),
-      handshakeTimeoutMs: cfg.limits.maxStartupMs,
+      // Conexión → HELLO: tramo del bot, mismo plazo que su reloj.
+      handshakeTimeoutMs: this.timeouts.botExecutionMs,
     });
     battle.attachBot("veh_2", this.o.referenceAgent("ref_bot"));
     const offer = host.offerArtifact(artifact.bytes, artifact.hash);
@@ -228,6 +254,7 @@ export class ContainerBuildSandbox implements BuildSandbox {
     const logs: string[] = [];
     let container: ContainerHandle | undefined;
     try {
+      const timeouts = this.timeouts;
       const spec = launchSpecForBot({
         runtime: sub.runtime,
         imageDigest: image,
@@ -242,17 +269,17 @@ export class ContainerBuildSandbox implements BuildSandbox {
         limits,
         seccompProfilePath: this.o.seccompProfilePath,
       });
-      const tLaunch = performance.now();
+      if (this.o.bootstrapCmd) spec.cmd = this.o.bootstrapCmd(sub.runtime);
+      // Reloj de PLATAFORMA: arranca al PEDIR el contenedor.
+      const timeline: StartupTimeline = { launchRequestedAt: performance.now() };
       try {
-        container = await this.o.runner.launch(spec);
+        container = await launchWithinStartup(this.o.runner, spec, timeouts, timeline.launchRequestedAt);
       } catch (e) {
-        throw new SandboxInfrastructureError(`el sandbox no pudo lanzar el contenedor: ${(e as Error).message}`);
+        const reason = e instanceof SandboxLaunchError ? e.reason : "sandbox_start_failed";
+        throw new SandboxInfrastructureError(`[${reason}] el sandbox no pudo lanzar el contenedor: ${(e as Error).message}`);
       }
-      // El bot puede arrancar mientras la Engine aún responde al `start`: el
-      // arranque se mide desde que el contenedor existe, y se informa aparte
-      // cuánto tardó la plataforma en crearlo/arrancarlo (no es culpa del bot).
-      const t0 = performance.now();
-      const launchMs = t0 - tLaunch;
+      timeline.launchedAt = performance.now();
+      const launchMs = timeline.launchedAt - timeline.launchRequestedAt;
       logs.push(
         `contenedor ${container.id.slice(0, 12)} lanzado en ${launchMs.toFixed(0)} ms (${image.split("@")[0]})`,
       );
@@ -273,30 +300,53 @@ export class ContainerBuildSandbox implements BuildSandbox {
         logs.push("contenedor ya terminado antes de inspeccionarlo (la postura la validó el proxy al crearlo)");
       }
 
-      // 1) Handshake: plazo del bot + margen de plataforma (o salida temprana).
-      const waitMs = cfg.limits.maxStartupMs + (this.o.platformGraceMs ?? 20_000);
-      const connected = await this.waitHandshake(server, container, waitMs);
-      if (connected.ok === false) {
-        const reason = `el bot no completó el handshake (HELLO) en ${waitMs} ms${this.describeExit(connected.state, offer.reports)}`;
+      // 1) Readiness con DOS relojes (TD-034): plataforma hasta `ready`, bot
+      //    desde `ready` hasta su HELLO. Señales reales, nunca un sleep.
+      const handle = container;
+      const startup = await awaitAgentReady({
+        timeouts,
+        launchRequestedAt: timeline.launchRequestedAt,
+        launchedAt: timeline.launchedAt,
+        signals: offer.signals,
+        helloAt: () => server.helloAt("veh_1"),
+        onHello: (cb) => server.onHello(() => cb()),
+        ...(handle.state ? { containerState: () => handle.state!() } : {}),
+      });
+      Object.assign(timeline, startup.timeline);
+      if (startup.ok === false) {
+        const exit = this.describeExit(startup.state, []);
+        const metrics = startupMetrics(timeline, timeouts);
+        if (startup.fault === "infrastructure") {
+          throw new SandboxInfrastructureError(
+            `[${startup.reason}] ${startup.detail}${exit}; descargas del artefacto: ${offer.fetches} (${formatTimeline(timeline)})`,
+          );
+        }
         return {
           protocol: {
             outcome: "failed",
-            message: reason,
-            logs: [...logs, `descargas del artefacto: ${offer.fetches}`],
+            message: `el bot no completó el handshake (HELLO): ${startup.detail}${exit} [timeout_reason=${startup.reason}]`,
+            logs: [...logs, `descargas del artefacto: ${offer.fetches}`, formatTimeline(timeline)],
+            metrics,
           },
           smoke: notRun("no ejecutada: el bot no arrancó"),
           resources: notRun("no ejecutada: el bot no arrancó"),
         };
       }
-      // Arranque del BOT = HELLO − arranque del proceso en la Engine
-      // (State.StartedAt). Sin StartedAt (contenedor ya inspeccionable no), desde
-      // que la Engine devolvió el contenedor arrancado.
+      // Informativo: el tramo que juzgaba el código anterior (StartedAt → HELLO,
+      // reloj de pared de la Engine frente al del anfitrión).
       const startedAtMs = (await container.state?.().catch(() => null))?.startedAtMs;
-      const startupMs =
-        startedAtMs !== undefined && tap.helloWallMs !== null
-          ? Math.max(0, tap.helloWallMs - startedAtMs)
-          : Math.max(0, (tap.helloAt ?? performance.now()) - t0);
-      logs.push(`handshake completado en ${startupMs.toFixed(0)} ms (artefacto descargado ${offer.fetches} vez/veces)`);
+      const startedAtToHelloMs =
+        startedAtMs !== undefined && tap.helloWallMs !== null ? Math.max(0, tap.helloWallMs - startedAtMs) : undefined;
+      const sm = startupMetrics(timeline, timeouts);
+      logs.push(
+        `agente listo en ${(sm.startupMs ?? 0).toFixed(0)} ms (plataforma, ≤ ${timeouts.sandboxStartupMs} ms); HELLO ` +
+          (startup.readyLost
+            ? "sin señal ready (tramo del bot no medible aparte)"
+            : `${(sm.botReadyToHelloMs ?? 0).toFixed(0)} ms después (bot, ≤ ${timeouts.botExecutionMs} ms)`) +
+          `; artefacto descargado ${offer.fetches} vez/veces`,
+      );
+      logs.push(formatTimeline(timeline));
+      const tExec = performance.now();
 
       // 2) Partida de humo real (bucle de ticks del ProtocolServer).
       server.start();
@@ -316,6 +366,7 @@ export class ContainerBuildSandbox implements BuildSandbox {
       } finally {
         if (timer) clearTimeout(timer);
       }
+      const executionMs = performance.now() - tExec;
       const cpuMs = (await container.cpuMs?.().catch(() => null)) ?? null;
       const state = (await container.state?.().catch(() => null)) ?? null;
 
@@ -323,8 +374,9 @@ export class ContainerBuildSandbox implements BuildSandbox {
       const p95 = percentile(tap.latencies, 95);
       const max = tap.latencies.length ? Math.max(...tap.latencies) : 0;
       const metrics: Record<string, number> = {
-        startupMs,
-        launchMs,
+        ...sm,
+        executionMs,
+        ...(startedAtToHelloMs !== undefined ? { startedAtToHelloMs } : {}),
         p95DecisionMs: p95,
         maxDecisionMs: max,
         decisions: tap.latencies.length,
@@ -365,7 +417,7 @@ export class ContainerBuildSandbox implements BuildSandbox {
           : { outcome: "passed", logs: smokeLogs };
 
       const resLogs = [
-        `arranque ${startupMs.toFixed(0)} ms, decisión p95 ${p95.toFixed(1)} ms (máx ${max.toFixed(1)} ms), CPU ${cpuMs === null ? "no medida" : cpuMs.toFixed(0) + " ms"}`,
+        `arranque: plataforma ${(sm.startupMs ?? 0).toFixed(0)} ms, bot ${(sm.botReadyToHelloMs ?? 0).toFixed(0)} ms; ejecución ${executionMs.toFixed(0)} ms; decisión p95 ${p95.toFixed(1)} ms (máx ${max.toFixed(1)} ms), CPU ${cpuMs === null ? "no medida" : cpuMs.toFixed(0) + " ms"}`,
         `límites del contenedor: ${limits.cpus} CPU, ${Math.round(limits.memoryBytes / 1048576)} MiB, ${limits.pids} PIDs`,
       ];
       let resources: StageVerdict = { outcome: "passed", logs: resLogs, metrics };
@@ -373,13 +425,6 @@ export class ContainerBuildSandbox implements BuildSandbox {
         resources = {
           outcome: "failed",
           message: "el contenedor superó su límite de memoria (OOM)",
-          logs: resLogs,
-          metrics,
-        };
-      } else if (startupMs > cfg.limits.maxStartupMs) {
-        resources = {
-          outcome: "failed",
-          message: `arranque ${startupMs.toFixed(0)} ms > ${cfg.limits.maxStartupMs} ms`,
           logs: resLogs,
           metrics,
         };
@@ -401,38 +446,6 @@ export class ContainerBuildSandbox implements BuildSandbox {
     }
   }
 
-  /** Espera el handshake; deja de esperar si el contenedor muere antes. */
-  private async waitHandshake(
-    server: ProtocolServer,
-    container: ContainerHandle,
-    timeoutMs: number,
-  ): Promise<{ ok: true } | { ok: false; state: ContainerRunState | null }> {
-    let done = false;
-    const connected = server.whenAllConnected(timeoutMs).then(
-      () => true,
-      () => false,
-    );
-    const exited = (async () => {
-      while (!done) {
-        await new Promise((r) => setTimeout(r, 250));
-        if (done) break;
-        const st = await container.state?.().catch(() => null);
-        if (st && !st.running) return st;
-      }
-      return null;
-    })();
-    const first = await Promise.race([
-      connected.then((ok) => ({ kind: "conn" as const, ok })),
-      exited.then((st) => ({ kind: "exit" as const, st })),
-    ]);
-    done = true;
-    if (first.kind === "conn" && first.ok) return { ok: true };
-    const st = first.kind === "exit" ? first.st : ((await container.state?.().catch(() => null)) ?? null);
-    // Dar al bootstrap un instante para que su informe llegue.
-    await new Promise((r) => setTimeout(r, 300));
-    return { ok: false, state: st };
-  }
-
   private describeExit(state: ContainerRunState | null, reports: { kind: string; detail: string }[]): string {
     const parts: string[] = [];
     if (state && !state.running && state.exitCode !== null) parts.push(`el proceso salió con código ${state.exitCode}`);
@@ -445,4 +458,12 @@ export class ContainerBuildSandbox implements BuildSandbox {
     }
     return parts.length ? ` (${parts.join("; ")})` : "";
   }
+}
+
+function formatTimeline(tl: StartupTimeline): string {
+  const rel = (t: number | undefined) => (t === undefined ? "—" : `+${(t - tl.launchRequestedAt).toFixed(0)} ms`);
+  return (
+    `cronología: lanzamiento pedido +0 · contenedor arrancado ${rel(tl.launchedAt)} · artefacto servido ${rel(tl.artifactFetchedAt)}` +
+    ` · ready ${rel(tl.readyAt)} · HELLO ${rel(tl.helloAt)}`
+  );
 }

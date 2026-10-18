@@ -233,6 +233,9 @@ export class ProtocolServer {
   private loopTimer: ReturnType<typeof setTimeout> | null = null;
   private resultResolvers: ((r: BattleResult) => void)[] = [];
   private allConnectedResolvers: (() => void)[] = [];
+  /** TD-034 · instante (performance.now()) del PRIMER HELLO aceptado de cada vehículo. */
+  private readonly helloAtByVehicle = new Map<string, number>();
+  private readonly helloListeners = new Set<(vehicleId: string) => void>();
 
   constructor(opts: ProtocolServerOptions) {
     this.battle = opts.battle;
@@ -365,6 +368,10 @@ export class ProtocolServer {
 
     this.states.set(ws, "connected");
     safeSend(ws, envelope("WELCOME", this.buildWelcome(expected)));
+    if (!this.helloAtByVehicle.has(expected.vehicleId)) {
+      this.helloAtByVehicle.set(expected.vehicleId, performance.now());
+      for (const l of [...this.helloListeners]) l(expected.vehicleId);
+    }
 
     // Señal para whenAllConnected(): todos los bots esperados ya han hecho handshake.
     if (this.agents.size >= this.expectedByBotId.size) {
@@ -386,6 +393,22 @@ export class ProtocolServer {
    */
   connectedVehicleIds(): string[] {
     return [...this.agents.keys()];
+  }
+
+  /**
+   * TD-034 · readiness REAL de un vehículo: instante (performance.now() de este
+   * proceso) en que su bot completó el handshake (HELLO aceptado, WELCOME
+   * enviado), o null. Es la señal con la que se para el reloj de arranque del
+   * bot (BOT_EXECUTION_TIMEOUT_MS); nunca un sleep.
+   */
+  helloAt(vehicleId: string): number | null {
+    return this.helloAtByVehicle.get(vehicleId) ?? null;
+  }
+
+  /** TD-034 · aviso en cada primer HELLO aceptado; devuelve la desuscripción. */
+  onHello(cb: (vehicleId: string) => void): () => void {
+    this.helloListeners.add(cb);
+    return () => this.helloListeners.delete(cb);
   }
 
   whenAllConnected(timeoutMs = 15000): Promise<void> {

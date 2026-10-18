@@ -12,6 +12,9 @@
  * Superficie (todo lo demás → 404):
  *   GET  /s9/artifact/<id>          bytes del artefacto (token obligatorio)
  *   POST /s9/artifact/<id>/report   informe de fallo del bootstrap (≤ 8 KB)
+ *   POST /s9/artifact/<id>/ready    señal `ready` del bootstrap (TD-034): runtime,
+ *                                   artefacto verificado y SDK cargados; lo
+ *                                   siguiente es el código del usuario
  *   upgrade WebSocket en cualquier ruta → ProtocolServer (pásale `wss`)
  *
  * Seguridad: el token es aleatorio (32 bytes) por oferta y se compara en tiempo
@@ -21,6 +24,7 @@
 import http from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { WebSocketServer } from "ws";
+import type { BootstrapSignals } from "./startup-clock.js";
 
 export const ARTIFACT_TOKEN_HEADER = "x-s9-artifact-token";
 const MAX_REPORT_BYTES = 8 * 1024;
@@ -34,6 +38,12 @@ export interface ArtifactOffer {
   fetches: number;
   /** Informes de fallo enviados por el bootstrap ({kind, detail}). */
   reports: { kind: string; detail: string }[];
+  /** TD-034 · instante (performance.now() del anfitrión) de la primera descarga servida. */
+  fetchedAt: number | null;
+  /** TD-034 · instante (performance.now() del anfitrión) de la señal `ready` del bootstrap. */
+  readyAt: number | null;
+  /** TD-034 · las mismas señales, con suscripción (lo que consume awaitAgentReady). */
+  signals: BootstrapSignals;
   revoke(): void;
 }
 
@@ -56,6 +66,7 @@ export class SandboxHost {
   readonly server: http.Server;
   readonly wss: WebSocketServer;
   private readonly offers = new Map<string, OfferState>();
+  private readonly notify = new Map<string, () => void>();
 
   private constructor(private readonly opts: SandboxHostOptions) {
     this.server = http.createServer((req, res) => this.handle(req, res));
@@ -86,6 +97,8 @@ export class SandboxHost {
     const id = randomBytes(12).toString("hex");
     const token = randomBytes(32).toString("hex");
     const offers = this.offers;
+    const notify = this.notify;
+    const listeners = new Set<() => void>();
     const offer: ArtifactOffer = {
       id,
       url: `http://${this.opts.advertiseHost}:${this.port}/s9/artifact/${id}`,
@@ -93,8 +106,25 @@ export class SandboxHost {
       sha256,
       fetches: 0,
       reports: [],
-      revoke: () => offers.delete(id),
+      fetchedAt: null,
+      readyAt: null,
+      signals: {
+        fetchedAt: () => offer.fetchedAt,
+        readyAt: () => offer.readyAt,
+        failure: () => offer.reports[0] ?? null,
+        onChange(cb) {
+          listeners.add(cb);
+          return () => listeners.delete(cb);
+        },
+      },
+      revoke: () => {
+        offers.delete(id);
+        notify.delete(id);
+      },
     };
+    this.notify.set(id, () => {
+      for (const l of [...listeners]) l();
+    });
     this.offers.set(id, { bytes, offer, tokenBuf: Buffer.from(token) });
     return offer;
   }
@@ -107,7 +137,7 @@ export class SandboxHost {
   }
 
   private handle(req: http.IncomingMessage, res: http.ServerResponse): void {
-    const m = /^\/s9\/artifact\/([0-9a-f]{24})(\/report)?$/.exec(req.url ?? "");
+    const m = /^\/s9\/artifact\/([0-9a-f]{24})(\/report|\/ready)?$/.exec(req.url ?? "");
     const state = m ? this.offers.get(m[1]) : undefined;
     if (!m || !state) {
       res.writeHead(404).end();
@@ -117,13 +147,30 @@ export class SandboxHost {
       res.writeHead(403).end();
       return;
     }
+    const changed = () => this.notify.get(m[1])?.();
     if (!m[2] && req.method === "GET") {
       state.offer.fetches++;
+      if (state.offer.fetchedAt === null) {
+        state.offer.fetchedAt = performance.now();
+        changed();
+      }
       res.writeHead(200, { "content-type": "application/octet-stream", "content-length": state.bytes.length });
       res.end(state.bytes);
       return;
     }
-    if (m[2] && req.method === "POST") {
+    if (m[2] === "/ready" && req.method === "POST") {
+      // Se registra al RECIBIR la petición (reloj del anfitrión): el bootstrap
+      // espera la respuesta antes de tocar el código del usuario, así que todo
+      // lo anterior es de la plataforma y todo lo posterior, del bot.
+      if (state.offer.readyAt === null) {
+        state.offer.readyAt = performance.now();
+        changed();
+      }
+      req.resume();
+      res.writeHead(204).end();
+      return;
+    }
+    if (m[2] === "/report" && req.method === "POST") {
       const chunks: Buffer[] = [];
       let size = 0;
       req.on("data", (c: Buffer) => {
@@ -137,6 +184,7 @@ export class SandboxHost {
         } catch {
           state.offer.reports.push({ kind: "unknown", detail: "informe ilegible" });
         }
+        changed();
         res.writeHead(204).end();
       });
       return;
@@ -146,6 +194,7 @@ export class SandboxHost {
 
   async close(): Promise<void> {
     this.offers.clear();
+    this.notify.clear();
     for (const c of this.wss.clients) c.terminate();
     await new Promise<void>((r) => this.wss.close(() => r()));
     this.server.closeAllConnections();
