@@ -821,10 +821,10 @@ Estados posibles:
   - Plataforma lenta real (7 s antes de `ready`) + bot de ~500 ms ⇒ `validated`; `startedAtToHelloMs` = 9062 ms (la regla anterior lo habría rechazado).
   - Bot de 4 s tras `ready` con `BOT_EXECUTION_TIMEOUT_MS=1500` ⇒ `rejected` (`bot_execution_timeout`); bot infinito ⇒ `rejected`.
   - Plataforma que no llega a `ready` en 3000 ms y runtime ausente ⇒ `SandboxInfrastructureError`, nunca `rejected`.
-  - Saturación acotada: 20 builds (6 y 8 en paralelo, Python y Node, con 3 y 8 procesos ocupando CPU del host): 20/20 `validated`; `launchMs` hasta 7,6 s, `startupMs` hasta 8,3 s, `botReadyToHelloMs` máx. 619 ms.
+  - Saturación acotada: 44 builds en 4 ejecuciones (6 y 8 en paralelo, Python y Node, con 3 y 8 procesos ocupando CPU del host): 44/44 `validated`; `launchMs` hasta 7,6 s, `startupMs` hasta 8,3 s, `botReadyToHelloMs` máx. 619 ms.
   - Mutaciones: reloj del bot desde el lanzamiento, sin timeout del bot, «nunca ready» como culpa del bot, informes de plataforma como culpa del bot, informe falseado tras `ready` como plataforma, entorno ignorado, cableado sin plazos y bootstrap sin `ready` ⇒ rojo.
 - **Límite que queda:** el reloj del bot sigue siendo de pared (no CPU): un import muy pesado con 0,5 CPU y el host saturado puede acercarse a 5 s. Bajo la saturación probada, el máximo fue 619 ms.
-- **Condición de cierre:** Ningún rechazo de un bot válido por carga en N ejecuciones bajo estrés controlado. Cumplida (N = 20 bajo estrés + plataforma lenta real), y slow-start/slow-execution distinguen los dos límites.
+- **Condición de cierre:** Ningún rechazo de un bot válido por carga en N ejecuciones bajo estrés controlado. Cumplida (N = 44 bajo estrés + plataforma lenta real), y slow-start/slow-execution distinguen los dos límites.
 
 <a id="td-035"></a>
 ## TD-035 — Volúmenes `arena_bot_sources` y `arena_build_cache` sin uso
