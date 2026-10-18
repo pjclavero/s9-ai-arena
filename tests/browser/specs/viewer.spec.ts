@@ -8,7 +8,11 @@
  * en la cadena real lo prueba la sonda de run.sh (TD-028: 4404 vs 4401).
  */
 import { test, expect } from "@playwright/test";
-import { REPLAY_ID, registerNewUser, shot, watchProblems } from "./helpers.js";
+import { registerNewUser, shot, watchProblems } from "./helpers.js";
+
+/** Batalla INEXISTENTE a propósito: estas specs prueban el rechazo explicado (404). El
+ *  visor con una batalla VIVA lo prueba golden-path.spec.ts (REVIEW). */
+const NO_BATTLE = "fcrev-sin-batalla";
 
 test.describe("@fase1 Visor", () => {
   test("con sesión: pide UN ticket, la API dice 404 y el visor lo explica con enlace al replay", async ({
@@ -20,7 +24,7 @@ test.describe("@fase1 Visor", () => {
     page.on("request", (r) => {
       if (r.method() === "POST" && r.url().includes("/spectate-ticket")) tickets++;
     });
-    await page.evaluate((id) => (window.location.hash = `#/viewer/${id}`), REPLAY_ID || "sin-id");
+    await page.evaluate((id) => (window.location.hash = `#/viewer/${id}`), NO_BATTLE);
     const status = page.getByTestId("viewer-status");
     await expect(status).toHaveAttribute("data-state", "rejected", { timeout: 20_000 });
     await expect(status).toContainText("no existe");
@@ -32,7 +36,7 @@ test.describe("@fase1 Visor", () => {
   });
 
   test("anónimo con el espectador público apagado: rechazo explicado, no «conectando…»", async ({ page }, info) => {
-    await page.goto(`/#/viewer/${encodeURIComponent(REPLAY_ID || "sin-id")}`);
+    await page.goto(`/#/viewer/${encodeURIComponent(NO_BATTLE)}`);
     const status = page.getByTestId("viewer-status");
     await expect(status).toHaveAttribute("data-state", "rejected", { timeout: 20_000 });
     await shot(page, info, "viewer-anonimo");

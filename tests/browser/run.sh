@@ -3,7 +3,10 @@
 #
 # Levanta un entorno AISLADO y efímero (nunca producción), sin mocks de la API:
 #   API real + PostgreSQL embebido (tests/browser/env/api-env.ts)
-#   tournament-worker real (gateway WebSocket de espectador)
+#   tournament-worker real: EJECUTA las batallas (contenedores reales vía el
+#     s9-docker-proxy local del repo) y aloja el gateway WebSocket de espectador
+#   bot-build-worker real: builds en el sandbox (contenedor real) y firma
+#   s9-docker-proxy LOCAL (apps/bot-manager/src/docker-proxy-main.ts) → Docker rootless
 #   replay-service real
 #   SPA construida con `vite build` servida con la conf REAL del contenedor web
 #   gateway nginx con la conf REAL infrastructure/gateway/nginx-behind-proxy.conf
@@ -12,6 +15,10 @@
 # en el Docker local (rootless en ia02). Todo escucha en 127.0.0.1.
 #
 # Fases (cada una con su rc):
+#   G · @golden golden path (REVIEW, R6): registro → bots → build real → equipo → mapa
+#               → batalla REAL → visor en directo → stats → replay. Su batalla es la
+#               que usan después la fase 1 (replay) y la sonda TD-028 (sustituye al
+#               atajo seed-replay de DEV-D).
 #   1 · @fase1  todo vivo: UX, navegación, 404, replay, visor
 #   2 · @fase2  replay-service PARADO de verdad ⇒ 502 real del gateway
 #   3 · @fase3  API PARADA de verdad ⇒ arranque con la API caída
@@ -22,8 +29,11 @@
 #   S9_E2E_STATE      directorio de estado (por defecto mktemp en /tmp); logs, capturas, informe
 #   S9_E2E_PORT_BASE  primer puerto (por defecto 38080; usa base..base+8 y base+363)
 #   S9_E2E_GREP       filtro extra de Playwright para la fase 1
+#   S9_E2E_SKIP_GOLDEN=1  no ejecutar la fase golden (sin Docker para bots); la fase 1
+#                     de replay fallará por falta de batalla (no hay atajo)
+#   S9_SANDBOX_ADVERTISE_HOST  IP de este host alcanzable desde los contenedores
 #   S9_E2E_KEEP=1     no parar el entorno al terminar (depuración)
-# Salida: rc 0 sólo si TODAS las fases y la sonda pasan. Resumen en $STATE/out/summary.txt.
+# Salida: rc 0 sólo si TODAS las fases (golden incluida) y la sonda pasan. Resumen en $STATE/out/summary.txt.
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -32,7 +42,7 @@ NGINX_IMAGE="${S9_E2E_NGINX_IMAGE:-nginxinc/nginx-unprivileged:1.27-alpine}"
 STATE="${S9_E2E_STATE:-$(mktemp -d /tmp/s9-browser-e2e.XXXXXX)}"
 OUT="$STATE/out"
 B="${S9_E2E_PORT_BASE:-38080}"
-P_API=$B P_WS=$((B + 1)) P_REPLAY=$((B + 2)) P_WEB=$((B + 3)) P_GW=$((B + 8)) P_TLS=$((B + 363))
+P_API=$B P_WS=$((B + 1)) P_REPLAY=$((B + 2)) P_WEB=$((B + 3)) P_PROXY=$((B + 4)) P_GW=$((B + 8)) P_TLS=$((B + 363))
 TAG="s9e2e-$$"
 CACHE="${HOME}/.cache/s9-browser-e2e/$(sha256sum "$REPO/tests/browser/package-lock.json" | cut -c1-16)"
 TSX="$REPO/node_modules/.bin/tsx"
@@ -78,6 +88,24 @@ head -c 32 /dev/urandom | base64 >"$STATE/secrets/jwt_secret_ajeno"
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=127.0.0.1" \
   -keyout "$STATE/certs/tls.key" -out "$STATE/certs/tls.crt" >"$STATE/logs/openssl.log" 2>&1 || { log "openssl falló"; exit 2; }
 chmod 644 "$STATE/certs/tls.key" "$STATE/certs/tls.crt"
+# Firma de artefactos (ed25519): la privada SÓLO para el bot-build-worker; el
+# tournament-worker recibe la PÚBLICA (ARTIFACT_VERIFY_KEY_FILE), igual que en Compose.
+openssl genpkey -algorithm ed25519 -out "$STATE/secrets/artifact_signing_key.pem" >>"$STATE/logs/openssl.log" 2>&1 &&
+  openssl pkey -in "$STATE/secrets/artifact_signing_key.pem" -pubout -out "$STATE/secrets/artifact_verify_key.pem" \
+    >>"$STATE/logs/openssl.log" 2>&1 || { log "openssl (ed25519) falló"; exit 2; }
+
+# ── Docker para los bots: red `arena` (COMPARTIDA: se crea si falta, NUNCA se borra)
+docker network inspect arena >/dev/null 2>&1 || docker network create arena >/dev/null
+DOCKER_SOCK="${DOCKER_SOCKET:-/run/user/$(id -u)/docker.sock}"
+ADVERTISE="${S9_SANDBOX_ADVERTISE_HOST:-$(node -e '
+  const os = require("os");
+  for (const [n, a] of Object.entries(os.networkInterfaces())) {
+    if (/^(docker|br-|veth|tailscale|lo)/.test(n)) continue;
+    const v = (a || []).find((x) => x.family === "IPv4" && !x.internal);
+    if (v) { console.log(v.address); process.exit(0); }
+  }
+  process.exit(1);')}"
+[ -n "$ADVERTISE" ] || { log "sin IPv4 alcanzable desde los contenedores (S9_SANDBOX_ADVERTISE_HOST)"; exit 2; }
 
 # ── SPA (igual que el Dockerfile del web: vite build) ────────────────────────
 log "vite build…"
@@ -98,18 +126,19 @@ DATABASE_URL="$(cat "$STATE/db.url")"
 export DATABASE_URL
 PIDS+=("$(start worker env JWT_SECRET_FILE="$STATE/secrets/jwt_secret" REPLAYS_DIR="$STATE/replays" \
   SPECTATE_PORT=$P_WS VERSION_PATH="$STATE/worker-version.json" HEARTBEAT_PATH="$STATE/worker-heartbeat" \
+  DOCKER_PROXY_URL="http://127.0.0.1:$P_PROXY" ARENA_ENGINE_HOST="$ADVERTISE" ARENA_NETWORK=arena \
+  ARTIFACT_VERIFY_KEY_FILE="$STATE/secrets/artifact_verify_key.pem" \
   "$TSX" apps/tournament-worker/src/main.ts)")
+PIDS+=("$(start build-worker env DOCKER_PROXY_URL="http://127.0.0.1:$P_PROXY" BUILD_SANDBOX_HOST="$ADVERTISE" \
+  ARENA_NETWORK=arena ARTIFACT_SIGNING_KEY_FILE="$STATE/secrets/artifact_signing_key.pem" \
+  HEARTBEAT_PATH="$STATE/build-heartbeat" "$TSX" apps/bot-manager/src/build-worker-main.ts)")
 unset DATABASE_URL
 PIDS+=("$(start replay env REPLAYS_DIR="$STATE/replays" PORT=$P_REPLAY "$TSX" apps/replay-service/src/main.ts)")
-REPLAY_PID=${PIDS[2]}
+REPLAY_PID=${PIDS[3]}
 API_PID=${PIDS[0]}
-
-REPLAY_ID="fcd-e2e-$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-REPLAYS_DIR="$STATE/replays" "$TSX" tests/browser/env/seed-replay.ts "$REPLAY_ID" 900 >"$STATE/logs/seed.log" 2>&1 || {
-  log "seed del replay falló"
-  exit 1
-}
-log "replay sembrado (atajo declarado, sin BD): $REPLAY_ID"
+# s9-docker-proxy LOCAL (el del repo, no el del host de producción): único proceso que toca el socket.
+PIDS+=("$(start docker-proxy env DOCKER_PROXY_BIND=127.0.0.1 DOCKER_PROXY_PORT=$P_PROXY DOCKER_SOCKET="$DOCKER_SOCK" \
+  ARENA_NETWORK=arena "$TSX" apps/bot-manager/src/docker-proxy-main.ts)")
 
 # ── nginx: web, gateway y TLS con las confs REALES transformadas ─────────────
 node tests/browser/env/gen-nginx-confs.mjs "$REPO" "$STATE/confs" $P_API $P_WS $P_REPLAY $P_WEB $P_GW $P_TLS >>"$STATE/logs/confs.log" 2>&1 || {
@@ -131,21 +160,17 @@ wait_http "$BASE/healthz" 30 || {
   exit 1
 }
 for _ in $(seq 1 30); do [ -s "$STATE/worker-heartbeat" ] && break; sleep 1; done
-log "entorno listo en $BASE"
-
-# ── sonda TD-028 (ticket → TLS → gateway → worker) ───────────────────────────
-PROBE_OK=$(JWT_SECRET_FILE="$STATE/secrets/jwt_secret" "$TSX" tests/browser/env/ticket-probe.ts "wss://127.0.0.1:$P_TLS/ws/spectate" "$REPLAY_ID" 2>>"$STATE/logs/probe.log")
-PROBE_BAD=$(JWT_SECRET_FILE="$STATE/secrets/jwt_secret_ajeno" "$TSX" tests/browser/env/ticket-probe.ts "wss://127.0.0.1:$P_TLS/ws/spectate" "$REPLAY_ID" 2>>"$STATE/logs/probe.log")
-echo "{\"sharedSecret\":$PROBE_OK,\"foreignSecret\":$PROBE_BAD}" >"$OUT/ticket-probe.json"
-PROBE_RC=1
-if echo "$PROBE_OK" | grep -q '"code":4404' && echo "$PROBE_BAD" | grep -q '"code":4401'; then PROBE_RC=0; fi
-log "TD028_PROBE_RC=$PROBE_RC compartido=$PROBE_OK ajeno=$PROBE_BAD"
+for _ in $(seq 1 30); do grep -q '"battleExecution"' "$STATE/logs/worker.log" && break; sleep 1; done
+grep -q '"battleExecution":"container"' "$STATE/logs/worker.log" || {
+  log "el tournament-worker NO ejecuta batallas (ver logs/worker.log)"
+  exit 1
+}
+log "entorno listo en $BASE · bots anunciados en $ADVERTISE"
 
 # ── Playwright en la imagen oficial ──────────────────────────────────────────
 {
   echo "S9_E2E_BASE=$BASE"
   echo "S9_E2E_OUT=/out"
-  echo "S9_E2E_REPLAY_ID=$REPLAY_ID"
   echo "S9_E2E_DEV_EMAIL=organizer@dev.arena.local"
   # contraseña de la semilla de desarrollo (BD efímera); por fichero, no en argv
   echo "S9_E2E_DEV_PASSWORD=$(grep -oP 'DEV_PASSWORD = "\K[^"]+' apps/api/src/db/seeds/dev.ts)"
@@ -174,6 +199,28 @@ pw() { # pw <fase> <grep>
   echo $rc
 }
 
+# ── fase GOLDEN: batalla REAL creada desde la UI (REVIEW, R6) ────────────────
+RCG=1
+REPLAY_ID=""
+if [ "${S9_E2E_SKIP_GOLDEN:-0}" != "1" ]; then
+  RCG=$(pw golden "@golden")
+  log "PLAYWRIGHT_GOLDEN_RC=$RCG ($(grep -Eo '[0-9]+ (passed|failed|skipped|flaky)' "$OUT/golden/playwright.log" | tr '\n' ' '))"
+  [ -s "$OUT/golden/battle.json" ] &&
+    REPLAY_ID=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).battleId)' "$OUT/golden/battle.json")
+else
+  log "PLAYWRIGHT_GOLDEN_RC=SKIPPED (S9_E2E_SKIP_GOLDEN=1): no cuenta como verde"
+fi
+log "batalla del golden path (replay de la fase 1 y sonda): ${REPLAY_ID:-ninguna}"
+echo "S9_E2E_REPLAY_ID=$REPLAY_ID" >>"$STATE/pw.env"
+
+# ── sonda TD-028 (ticket → TLS → gateway → worker) ───────────────────────────
+PROBE_OK=$(JWT_SECRET_FILE="$STATE/secrets/jwt_secret" "$TSX" tests/browser/env/ticket-probe.ts "wss://127.0.0.1:$P_TLS/ws/spectate" "$REPLAY_ID" 2>>"$STATE/logs/probe.log")
+PROBE_BAD=$(JWT_SECRET_FILE="$STATE/secrets/jwt_secret_ajeno" "$TSX" tests/browser/env/ticket-probe.ts "wss://127.0.0.1:$P_TLS/ws/spectate" "$REPLAY_ID" 2>>"$STATE/logs/probe.log")
+echo "{\"sharedSecret\":$PROBE_OK,\"foreignSecret\":$PROBE_BAD}" >"$OUT/ticket-probe.json"
+PROBE_RC=1
+if echo "$PROBE_OK" | grep -q '"code":4404' && echo "$PROBE_BAD" | grep -q '"code":4401'; then PROBE_RC=0; fi
+log "TD028_PROBE_RC=$PROBE_RC compartido=$PROBE_OK ajeno=$PROBE_BAD"
+
 GREP1="@fase1${S9_E2E_GREP:+.*$S9_E2E_GREP}"
 RC1=$(pw fase1 "$GREP1")
 log "PLAYWRIGHT_FASE1_RC=$RC1 ($(grep -Eo '[0-9]+ (passed|failed|skipped|flaky)' "$OUT/fase1/playwright.log" | tr '\n' ' '))"
@@ -190,6 +237,6 @@ log "PLAYWRIGHT_FASE3_RC=$RC3 ($(grep -Eo '[0-9]+ (passed|failed|skipped|flaky)'
 
 docker logs "$TAG-gw" >"$STATE/logs/gw.log" 2>&1
 docker logs "$TAG-tls" >"$STATE/logs/tls.log" 2>&1
-TOTAL=$((RC1 | RC2 | RC3 | PROBE_RC))
-log "BROWSER_E2E_RC=$TOTAL (fase1=$RC1 fase2=$RC2 fase3=$RC3 sonda=$PROBE_RC) · capturas en $OUT/shots"
+TOTAL=$((RCG | RC1 | RC2 | RC3 | PROBE_RC))
+log "BROWSER_E2E_RC=$TOTAL (golden=$RCG fase1=$RC1 fase2=$RC2 fase3=$RC3 sonda=$PROBE_RC) · capturas en $OUT/shots"
 exit $TOTAL
