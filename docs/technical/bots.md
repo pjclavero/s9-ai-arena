@@ -118,7 +118,7 @@ Comportamiento ante un fallo:
 
 - **Fallo en una etapa**: el build queda `failed` y la versión `rejected` con `"<etapa>: <mensaje>"`.
 - **Etapa sin entorno de ejecución** (worker sin sandbox configurado): queda `skipped` y bloquea. Al final el build queda `failed` y la versión `rejected` con «sandbox no verificado: …».
-- **Fallo de la plataforma del sandbox** (`SandboxInfrastructureError`: proxy caído, imagen ausente, postura no conforme, motor colgado, arranque de la plataforma por encima de `SANDBOX_STARTUP_TIMEOUT_MS`, artefacto no descargable o con sha256 distinto): **no es culpa del bot**. El mensaje empieza por `[sandbox_start_timeout]` o `[sandbox_start_failed]` cuando falla el arranque.
+- **Fallo de la plataforma del sandbox** (`SandboxInfrastructureError`: proxy caído, imagen ausente, postura no conforme, motor colgado, arranque de la plataforma por encima de `SANDBOX_STARTUP_TIMEOUT_MS`, artefacto no descargable o con sha256 distinto): **no es culpa del bot**. Cuando falla el arranque, el mensaje lleva la etiqueta `[sandbox_start_timeout]` o `[sandbox_start_failed]`.
   - El pipeline lo propaga y el worker reintenta con backoff, hasta 3 intentos.
   - Agotados los intentos, el trabajo queda `needs_review` y la versión `rejected` con «build no verificable: …». Nunca queda `validated`.
 - **Progreso**: mientras corre, el build está `running`. Al terminar, cada etapa guarda en `builds.stages` lo siguiente:

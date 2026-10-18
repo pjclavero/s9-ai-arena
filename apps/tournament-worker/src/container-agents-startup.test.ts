@@ -123,7 +123,7 @@ describe("TD-034 · batalla: dos relojes por bot", () => {
     const { agents } = driver((i) => (i === 0 ? { launchDelayMs: 3000 } : {}), T);
     const err = await agents.run(await input()).catch((e) => e);
     expect(err).toBeInstanceOf(InfrastructureFailure);
-    expect(String(err.message)).toMatch(/\[sandbox_start_timeout\].*Docker no creó/);
+    expect(String(err.message)).toMatch(/Docker no creó.*\[sandbox_start_timeout\]/);
   }, 20_000);
 
   it("SAN-6 · código de un bot lento tras `ready` → SportingFailure(bot_timeout) de ESE bot", async () => {

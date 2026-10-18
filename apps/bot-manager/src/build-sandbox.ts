@@ -277,7 +277,7 @@ export class ContainerBuildSandbox implements BuildSandbox {
       } catch (e) {
         const reason = e instanceof SandboxLaunchError ? e.reason : "sandbox_start_failed";
         throw new SandboxInfrastructureError(
-          `[${reason}] el sandbox no pudo lanzar el contenedor: ${(e as Error).message}`,
+          `el sandbox no pudo lanzar el contenedor: ${(e as Error).message} [${reason}]`,
         );
       }
       timeline.launchedAt = performance.now();

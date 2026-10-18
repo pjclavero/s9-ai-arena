@@ -322,6 +322,6 @@ export async function launchWithinStartup(
   }
   throw new SandboxLaunchError(
     "sandbox_start_failed",
-    `no se pudo lanzar el contenedor: ${outcome.e instanceof Error ? outcome.e.message : String(outcome.e)}`,
+    outcome.e instanceof Error ? outcome.e.message : String(outcome.e),
   );
 }

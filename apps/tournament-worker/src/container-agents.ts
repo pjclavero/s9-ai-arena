@@ -218,7 +218,7 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
             const reason = err instanceof SandboxLaunchError ? err.reason : "sandbox_start_failed";
             throw new InfrastructureFailure(
               "container_unavailable",
-              `[${reason}] no se pudo lanzar el contenedor de ${v.botId} v${v.version}: ${err instanceof Error ? err.message : String(err)}`,
+              `no se pudo lanzar el contenedor de ${v.botId} v${v.version}: ${err instanceof Error ? err.message : String(err)} [${reason}]`,
             );
           }
           launchedAt[i] = performance.now();
