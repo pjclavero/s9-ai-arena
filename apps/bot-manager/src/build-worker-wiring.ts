@@ -58,6 +58,6 @@ export function createBuildExecutor(
   env: NodeJS.ProcessEnv = process.env,
 ): BuildExecutorWiring {
   const { sandbox, reason } = createSandboxFromEnv(env);
-  const executor = new E6PipelineBotManager(db, { signer, ...(sandbox ? { sandbox } : {}) });
+  const executor = new E6PipelineBotManager(db, { signer }); // CALIBRACIÓN: sandbox fuera del pipeline
   return { executor, sandbox, reason };
 }
