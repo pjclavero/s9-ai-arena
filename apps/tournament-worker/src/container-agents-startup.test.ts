@@ -153,3 +153,24 @@ describe("TD-034 · batalla: dos relojes por bot", () => {
     expect(String(err.message)).toMatch(/\[sandbox_start_failed\] .*fetch: HTTP 503/);
   }, 20_000);
 });
+
+describe("TD-034 · SAN-4 · el worker de PRODUCCIÓN aplica los plazos configurados", () => {
+  it("main.ts pasa startupTimeoutsFromEnv(process.env) al containerAgents real", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(new URL("./main.ts", import.meta.url), "utf8");
+    const call = src.slice(src.indexOf("containerAgents({"), src.indexOf("})", src.indexOf("containerAgents({")));
+    expect(call).toMatch(/timeouts:\s*startupTimeoutsFromEnv\(process\.env\)/);
+  });
+
+  it("el plazo configurado es el que se aplica en el lanzamiento de batalla", async () => {
+    const { startupTimeoutsFromEnv } = await import("../../bot-manager/src/startup-clock.js");
+    const timeouts = startupTimeoutsFromEnv({ SANDBOX_STARTUP_TIMEOUT_MS: "5000", BOT_EXECUTION_TIMEOUT_MS: "1234" });
+    const { agents, runner } = driver((i) => (i === 1 ? { hangAfterReady: true } : {}), timeouts);
+    const err = await agents.run(await input()).catch((e) => e);
+    const waited = performance.now() - runner.launches[1].marks.ready;
+    expect(err).toBeInstanceOf(SportingFailure);
+    expect(String(err.message)).toMatch(/en 1234 ms desde que el agente estuvo listo/);
+    expect(waited).toBeGreaterThanOrEqual(1200);
+    expect(waited).toBeLessThan(2500);
+  }, 20_000);
+});
