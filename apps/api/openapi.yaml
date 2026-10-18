@@ -1094,7 +1094,7 @@ paths:
         '202': { description: Encolada (la ejecuta el tournament-worker con el código real de cada bot), content: { application/json: { schema: { $ref: '#/components/schemas/Battle' } } } }
         '400': { description: Modo/participantes/team/ruleset/mapa inválidos o bot repetido, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '404': { description: 'bot_not_found · un bot inexistente o privado ajeno (TD-005); indistinguibles a propósito', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
-        '409': { description: bot_not_published, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: 'bot_not_published · ruleset_mode_mismatch · map_mode_unsupported (checkBattleContent, misma regla que la web)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /battles/{battleId}:
     get:
