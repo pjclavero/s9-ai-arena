@@ -109,7 +109,7 @@ La web sólo ofrece pegar texto (no hay selector de archivo), lo envía como `bo
 | 4 | `build` | Empaqueta un artefacto reproducible (≤200 MB) y calcula su sha256 | Lógica pura |
 | 5 | `protocol_test` | Handshake y comandos válidos | **Necesita `agentResolver`** |
 | 6 | `smoke_battle` | Partida de humo (600 ticks) contra un bot de referencia | **Necesita `agentResolver` + `referenceAgent`** |
-| 7 | `resource_limits` | Arranque ≤5000 ms, decisión ≤100 ms | **Necesita `agentResolver`** |
+| 7 | `resource_limits` | Decisión ≤100 ms, sin OOM, métricas de arranque (TD-034) | **Necesita `agentResolver`** |
 | 8 | `secret_scan` | Secretos en el código | Lógica pura |
 | 9 | `sign` | Firma ed25519 del hash | Lógica pura (clave del servicio) |
 | 10 | `publish` | Marca el artefacto como inmutable (la versión queda `validated`, no `published`) | Lógica pura |
@@ -118,7 +118,7 @@ Comportamiento ante un fallo:
 
 - **Fallo en una etapa**: el build queda `failed` y la versión `rejected` con `"<etapa>: <mensaje>"`.
 - **Etapa sin entorno de ejecución** (worker sin sandbox configurado): queda `skipped` y bloquea. Al final el build queda `failed` y la versión `rejected` con «sandbox no verificado: …».
-- **Fallo de la plataforma del sandbox** (`SandboxInfrastructureError`: proxy caído, imagen ausente, postura no conforme, motor colgado): **no es culpa del bot**.
+- **Fallo de la plataforma del sandbox** (`SandboxInfrastructureError`: proxy caído, imagen ausente, postura no conforme, motor colgado, arranque de la plataforma por encima de `SANDBOX_STARTUP_TIMEOUT_MS`, artefacto no descargable o con sha256 distinto): **no es culpa del bot**. Cuando falla el arranque, el mensaje lleva la etiqueta `[sandbox_start_timeout]` o `[sandbox_start_failed]`.
   - El pipeline lo propaga y el worker reintenta con backoff, hasta 3 intentos.
   - Agotados los intentos, el trabajo queda `needs_review` y la versión `rejected` con «build no verificable: …». Nunca queda `validated`.
 - **Progreso**: mientras corre, el build está `running`. Al terminar, cada etapa guarda en `builds.stages` lo siguiente:
@@ -142,24 +142,54 @@ Una sola sesión por build (`ContainerBuildSandbox.verify`):
 3. **Bootstrap.** Corre como `Cmd` tras el `ENTRYPOINT` del runtime:
    - descarga el artefacto con el token y verifica el sha256;
    - lo materializa en `/tmp/bot`;
+   - carga el SDK (`arena_sdk` / `@arena/sdk`) de la imagen de runtime;
+   - envía la señal **`ready`** (`POST ARTIFACT_URL/ready`, con el token) y espera la respuesta: a partir de aquí todo lo que se ejecuta es código del usuario ([TD-034](#arranque-dos-relojes-td-034));
    - carga el fichero de entrada: `manifest.entry` o `src/bot.py` en Python; `package.json main` o `src/bot.js` en Node;
    - instancia la subclase de `ArenaBot` (en Python, `Bot` o la única definida; en Node, `export default`, `Bot` o la única exportada);
    - llama a `run(WS_URL, BATTLE_TOKEN)`.
 
-   Si algo falla, informa a `ARTIFACT_URL/report` y sale con un código distinto de 0. Ese informe llega al motivo de rechazo.
+   Si algo falla, informa a `ARTIFACT_URL/report` (`kind` + traza) y sale con un código distinto de 0. Antes de `ready`, los `kind` de plataforma (`config`, `fetch`, `integrity`, `materialize`, `sdk`) son infraestructura y los del paquete (`manifest`, `entry`) son del bot. Después de `ready`, **cualquier** informe es del bot: su código ve `ARTIFACT_URL`/`ARTIFACT_TOKEN` y podría falsear un `kind` de plataforma. Los del bot llegan al motivo de rechazo.
 4. **Postura.** Se inspecciona la postura real del contenedor con `complianceViolations`. Si no es conforme, es un fallo de plataforma.
-5. **Partida de humo.** El candidato hace el handshake y juega en el motor real (`dm_practice@1`, `emptyArena`, `smokeBattleTicks` ticks) contra el bot de referencia `HunterBot` (E5).
+5. **Readiness.** `awaitAgentReady` (`startup-clock.ts`) espera la señal `ready` y el HELLO aceptado por el ProtocolServer con los dos relojes de abajo; despierta con cada señal y sondea el estado real del contenedor (salida temprana). Nunca duerme a ciegas.
+6. **Partida de humo.** El candidato hace el handshake y juega en el motor real (`dm_practice@1`, `emptyArena`, `smokeBattleTicks` ticks) contra el bot de referencia `HunterBot` (E5).
 
 Veredictos:
 
 | Etapa | Pasa si | Falla con |
 |---|---|---|
-| `protocol_test` | HELLO dentro de `maxStartupMs` + margen de plataforma (20 s), todo mensaje valida contra `envelope.schema.json` y hay ≥1 `COMMAND` válido | «el bot no completó el handshake…», «mensaje(s) fuera de protocolo…», «ningún COMMAND válido…» más la traza del bootstrap |
+| `protocol_test` | la plataforma deja el agente `ready` en `SANDBOX_STARTUP_TIMEOUT_MS` (si no, infraestructura), el código del bot hace HELLO en `BOT_EXECUTION_TIMEOUT_MS` desde `ready`, todo mensaje valida contra `envelope.schema.json` y hay ≥1 `COMMAND` válido | «el bot no completó el handshake (HELLO): … [timeout_reason=bot_execution_timeout\|bot_crash]», «mensaje(s) fuera de protocolo…», «ningún COMMAND válido…» más la traza del bootstrap |
 | `smoke_battle` | la batalla termina y el candidato no está descalificado | «candidato descalificado en la partida de humo…» |
-| `resource_limits` | arranque ≤ `maxStartupMs` (5000 ms, medido desde `State.StartedAt` del contenedor), p95 de decisión ≤ `maxDecisionMs` (100 ms) y sin OOM | «arranque …», «decisión p95 …», «OOM» |
+| `resource_limits` | p95 de decisión ≤ `maxDecisionMs` (100 ms) y sin OOM | «decisión p95 …», «OOM» |
 
-Los límites duros de CPU, memoria y PIDs los impone el cgroup. Las métricas (`startupMs`, `launchMs`,
-`p95DecisionMs`, `maxDecisionMs`, `validCommands`, `cpuMs`…) quedan en la etapa `resource_limits`.
+Los límites duros de CPU, memoria y PIDs los impone el cgroup. Las métricas quedan en la etapa `resource_limits` (y, si el bot no arrancó, en `protocol_test`):
+
+| Métrica | Qué mide | Reloj |
+|---|---|---|
+| `launchMs` | create + start en la Engine (petición → contenedor devuelto) | plataforma |
+| `artifactFetchMs` | petición de lanzamiento → primera descarga servida del artefacto | plataforma |
+| `startupMs` | petición de lanzamiento → señal `ready` | plataforma (`SANDBOX_STARTUP_TIMEOUT_MS`) |
+| `botReadyToHelloMs` | `ready` → HELLO aceptado | bot (`BOT_EXECUTION_TIMEOUT_MS`) |
+| `executionMs` | HELLO → fin de la partida de humo | ejecución (decisiones con `maxDecisionMs`) |
+| `startedAtToHelloMs` | `State.StartedAt` → HELLO; informativo, es el tramo que juzgaba el código anterior | mezcla |
+| `sandboxStartupTimeoutMs`, `botExecutionTimeoutMs` | plazos **efectivos** aplicados en esa sesión | — |
+| `p95DecisionMs`, `maxDecisionMs`, `validCommands`, `cpuMs`… | como antes | ejecución |
+
+### Arranque: dos relojes (TD-034)
+
+Antes, `resource_limits` exigía ≤ 5000 ms desde `State.StartedAt` hasta el HELLO. Ese tramo incluye trabajo de la plataforma (init del intérprete, descarga y verificación del artefacto, carga del SDK), así que bajo carga del host un bot válido quedaba `rejected`. Ahora (`apps/bot-manager/src/startup-clock.ts`, compartido con el worker de batallas):
+
+| Reloj | Variable (def.) | Desde → hasta | Si se agota |
+|---|---|---|---|
+| Plataforma | `SANDBOX_STARTUP_TIMEOUT_MS` (30000) | petición de lanzamiento → señal `ready` del bootstrap (incluye create/start de la Engine) | **infraestructura**: `SandboxInfrastructureError [sandbox_start_timeout]` → reintento → «build no verificable». Nunca rechazo del bot |
+| Bot | `BOT_EXECUTION_TIMEOUT_MS` (5000) | `ready` → HELLO (import del código del usuario, constructor, conexión) | **bot**: `protocol_test` falla con `timeout_reason=bot_execution_timeout` |
+
+Clasificación de fallos de arranque:
+
+- **Infraestructura** (`[sandbox_start_failed]`): la Engine no crea o arranca el contenedor (p. ej. imagen de runtime ausente), el contenedor muere antes de `ready` sin informe, o el bootstrap informa `config`/`fetch`/`integrity`/`materialize`/`sdk`.
+- **Bot** (`timeout_reason=bot_crash`): informe `manifest`/`entry` antes de `ready`, o cualquier informe o salida del proceso después de `ready` (incluido un `fetch` falseado por el código del usuario).
+- Si la señal `ready` se pierde pero el HELLO llega a tiempo, el bot pasa (el HELLO prueba la readiness); el tramo del bot no se mide aparte y lo dice el log.
+
+Los plazos se parsean una vez (`startupTimeoutsFromEnv`); un valor que no sea un entero de 1 a 600000 ms hace fallar el arranque del servicio. El `handshakeTimeoutMs` del ProtocolServer (conexión → HELLO) usa `BOT_EXECUTION_TIMEOUT_MS`. `maxStartupMs` de `PipelineConfig` sólo se usa en la medición en proceso (sin sandbox).
 
 ## Artefacto y firma
 
@@ -201,7 +231,7 @@ Tablas `bots`, `bot_loadouts`, `loadout_modules`, `bot_versions`, `builds`, `art
 - **Despliegue pendiente** ([TD-001](../roadmap/technical-debt.md#td-001)). Integrado por REVIEW: el compose ya da al `bot-build-worker` la red `arena`, `DOCKER_PROXY_URL`, `extra_hosts` y `BUILD_SANDBOX_HOST`, y las imágenes copian `runtimes/DIGESTS.lock`. Falta desplegarlo (recrear el servicio) con el `s9-docker-proxy` corriendo en el host. Sin proxy, el worker arranca y lo anuncia («sin sandbox: todo build se rechazará»).
 - **Lanzamiento en batalla**: `createBattleLaunchHost` (`apps/bot-manager/src/bot-launch.ts`) es el contrato con el tournament-worker: verifica con la clave PÚBLICA (`ARTIFACT_VERIFY_KEY_FILE`) y sirve el artefacto firmado de la versión exacta. Ver [battles.md](battles.md#7-worker-motor-y-agentes).
 - **Superficie nueva** ([TD-033](../roadmap/technical-debt.md#td-033)): el worker de builds (y el de batallas) escucha, en la red `arena`, un puerto efímero con token mientras dura cada sesión, y ese mismo proceso tiene credenciales de BD (red `data`). Deuda aceptada.
-- **Arranque medido en pared** ([TD-034](../roadmap/technical-debt.md#td-034)): bajo carga, un bot Python válido puede superar los 5 s de `resource_limits` y quedar `rejected` (observado 1 vez de 2 en la integración).
+- **Arranque** ([TD-034](../roadmap/technical-debt.md#td-034), cerrado en la integración `integration/production-readiness`, verificado por REVIEW y en CI real; sin desplegar): dos relojes separados por la señal `ready` del bootstrap ([detalle](#arranque-dos-relojes-td-034)). Límite que queda: el reloj del bot sigue siendo de pared, así que un bot cuyo import consume mucha CPU puede acercarse a los 5 s con 0,5 CPU y el host saturado (en la prueba de saturación, `botReadyToHelloMs` máx. 619 ms).
 - **Red del E2E local**: la red `arena` del Docker rootless no es `internal`, porque el worker es el proceso de test en el host. En compose sí lo es.
 - El código subido se ejecuta en batallas de plataforma (integración REVIEW, [TD-002](../roadmap/technical-debt.md#td-002)) en entorno aislado; en producción, al desplegar.
 - Bot↔equipo: sólo se asigna con `teamId` al crear el bot por API. `PATCH /bots/{id}` sólo acepta `name` y `visibility` ([TD-011](../roadmap/technical-debt.md#td-011)).
@@ -215,7 +245,8 @@ Tablas `bots`, `bot_loadouts`, `loadout_modules`, `bot_versions`, `builds`, `art
 - **FUNCIONA ACTUALMENTE (integración `integration/functional-closure`, verificado con Docker rootless local)**:
   - sandbox real en el build;
   - E2E crear → código → build → artefacto → `validated` → `published`;
-  - controles negativos: source inválido, timeout de arranque, protocolo, crash, artefacto alterado, proxy caído y sin sandbox.
+  - controles negativos: source inválido, timeout de arranque, protocolo, crash, artefacto alterado, proxy caído y sin sandbox;
+  - TD-034: plataforma lenta (7 s reales antes de `ready`) → `validated`; bot lento o infinito tras `ready` → `rejected`; plataforma que no llega o runtime ausente → infraestructura; saturación acotada sin rechazos (`apps/bot-manager/tests/build-sandbox-timing-docker.test.ts`, opt-in).
 - **PARCIAL**: el despliegue necesita los cambios de compose e imagen citados.
 - **PENDIENTE**: ejecución del código del bot en batallas (carril de batallas con `resolveBotLaunch`), asignación de bot a equipo y borrado.
 
@@ -246,6 +277,8 @@ Verificado contra `27f70bb`; filas del sandbox y del versionado, contra la integ
 | En producción, las 12 versiones `rejected` y los 22 builds `failed` | RUNTIME_VERIFIED | Auditoría 2026-10-15, A pasada 1 (lectura de BD) |
 | Orden de las 10 etapas | CODE_VERIFIED | `apps/bot-manager/src/types.ts:19-30`; `apps/api/src/services/bot-manager.ts:13-24` |
 | Límites: 10 MB, 500 ficheros, 200 MB, 100 ms, 5000 ms, 600 ticks | CODE_VERIFIED | `apps/bot-manager/src/config.ts:138-162` |
+| TD-034 · dos relojes: plataforma (`SANDBOX_STARTUP_TIMEOUT_MS`) hasta `ready`, bot (`BOT_EXECUTION_TIMEOUT_MS`) desde `ready` | RUNTIME_VERIFIED (Docker rootless local y GitHub Actions, `integration/production-readiness`) | `apps/bot-manager/src/startup-clock.ts`; `apps/bot-manager/tests/build-sandbox-timing-docker.test.ts` (7/7); `startup-clock.test.ts` (20/20). Mutación «reloj del bot desde el lanzamiento» → rojo (también con Docker) |
+| TD-034 · plataforma lenta ⇒ infraestructura; código del bot ⇒ rechazo | RUNTIME_VERIFIED (Docker rootless local y GitHub Actions, `integration/production-readiness`) | SAN-9 del test con Docker (plataforma que no llega, runtime ausente); mutaciones de clasificación → rojo |
 | Código pegado se envuelve en esqueleto con lockfile | CODE_VERIFIED | `apps/api/src/services/source-package.ts:94-134` |
 | Transiciones de estado y 409 | CODE_VERIFIED | `apps/api/src/services/bots.ts:63-96` |
 | `completeBuild` → `validated` + `artifacts` | CODE_VERIFIED | `apps/api/src/services/bot-manager.ts:79-124` |

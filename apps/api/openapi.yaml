@@ -25,8 +25,15 @@ info:
   # nunca seed/seedCommitment/seedRevealProof ni datos de propietario. Namespace
   # propio (no reutiliza /public/battles/{battleId}, que ya está ocupado por
   # getPublicLiveBattle para batallas `running` bajo S9_PUBLIC_SPECTATE_ENABLED).
+  # 0.9.0 · PRC (TD-004) autorización de replays: añade listReplays
+  # (GET /replays), getReplayIndex (GET /replays/{battleId}/index) y
+  # getReplaySegment (GET /replays/{battleId}/segment), que sustituyen a las
+  # lecturas anónimas del replay-service por el gateway. getReplay, verifyReplay
+  # y las nuevas aplican la política de acceso (staff, dueño o equipo de un bot
+  # participante, o replay público por S9_PUBLIC_REPLAYS_ENABLED); el resto
+  # recibe 404, igual que un id inexistente.
   # Añadir un endpoint = MINOR (docs/compatibilidad.md, §2 Semver por paquete).
-  version: 0.8.0
+  version: 0.9.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -1174,11 +1181,49 @@ paths:
         '200': { description: Estadísticas, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
 
   # --------------------------------------------------------------- REPLAYS
+  # PRC (TD-004) · Política de acceso (apps/api/src/replay-access.ts), común a
+  # todas las rutas /replays*: staff (rol >= organizer) · dueño de un bot
+  # participante · miembro del equipo de un bot participante no privado ·
+  # cualquiera SÓLO si S9_PUBLIC_REPLAYS_ENABLED y la batalla está finished sin
+  # bots no públicos. Fuera de eso, 404 idéntico al de un id inexistente.
+  # Respuestas con Cache-Control: private, no-store.
+  /replays:
+    get:
+      tags: [replays]
+      operationId: listReplays
+      summary: Replays que el solicitante puede ver (más recientes primero); sustituye al inventario anónimo del replay-service
+      x-min-role: user
+      parameters:
+        - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200':
+          description: Replays visibles para el solicitante
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        battleId: { type: string }
+                        ticks: { type: integer }
+                        winner: { type: string }
+                        official: { type: boolean }
+                        createdAt: { type: string, format: date-time }
+                        sizeBytes: { type: integer }
+                  nextCursor: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /replays/{battleId}:
     get:
       tags: [replays]
       operationId: getReplay
-      summary: Replay de datos (no vídeo), comprimido, con índice de keyframes para salto temporal
+      summary: Replay de datos (no vídeo), comprimido. Sujeto a la política de acceso a replays (404 si no es visible)
       x-min-role: visitor
       security: []
       parameters: [{ $ref: '#/components/parameters/BattleId' }]
@@ -1190,11 +1235,39 @@ paths:
               schema: { type: string, format: binary }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /replays/{battleId}/index:
+    get:
+      tags: [replays]
+      operationId: getReplayIndex
+      summary: Índice del replay (keyframes, resultado, nómina) para el reproductor. Sujeto a la política de acceso a replays
+      x-min-role: visitor
+      security: []
+      parameters: [{ $ref: '#/components/parameters/BattleId' }]
+      responses:
+        '200': { description: Índice del replay, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /replays/{battleId}/segment:
+    get:
+      tags: [replays]
+      operationId: getReplaySegment
+      summary: Segmento decodificado por rango de ticks (salto temporal). Sujeto a la política de acceso a replays
+      x-min-role: visitor
+      security: []
+      parameters:
+        - { $ref: '#/components/parameters/BattleId' }
+        - { name: fromTick, in: query, schema: { type: integer, minimum: 0 } }
+        - { name: toTick, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200': { description: Segmento, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '400': { description: rango de ticks inválido, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /replays/{battleId}/verify:
     post:
       tags: [replays]
       operationId: verifyReplay
-      summary: Re-simula el replay con la versión registrada del motor y compara resultado y hashes
+      summary: Re-simula el replay con la versión registrada del motor y compara resultado y hashes. Sujeto a la política de acceso a replays
       x-min-role: visitor
       security: []
       parameters: [{ $ref: '#/components/parameters/BattleId' }]
@@ -1209,6 +1282,7 @@ paths:
                   matches: { type: boolean }
                   officialHash: { type: string }
                   recomputedHash: { type: string }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   # ------------------------------------------------------------- STANDINGS
   /standings:

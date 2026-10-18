@@ -80,7 +80,10 @@ describe.skipIf(!DOCKER_E2E)("TD-001 · sandbox REAL en el pipeline (Docker)", (
     );
     const m = b.stages.find((s) => s.name === "resource_limits")!.metrics!;
     expect(m.validCommands).toBeGreaterThan(50);
-    expect(m.startupMs).toBeLessThan(5000);
+    // TD-034: el reloj del bot (ready → HELLO) es el que se juzga; el de la
+    // plataforma (lanzamiento → ready) tiene su propio plazo.
+    expect(m.botReadyToHelloMs).toBeLessThan(5000);
+    expect(m.startupMs).toBeLessThan(30_000);
     // El proxy fue la ÚNICA vía y aceptó create/start del contenedor del bot.
     expect(env.decisions.some((d) => d.allowed && d.path.startsWith("/containers/create"))).toBe(true);
   });
@@ -123,13 +126,14 @@ describe.skipIf(!DOCKER_E2E)("TD-001 · sandbox REAL en el pipeline (Docker)", (
     const files: SourceFile[] = pyFiles(PY_GOOD);
     const good = packArtifact(files);
     const tampered = Buffer.concat([good.bytes, Buffer.from("x")]);
-    const v = await sandbox.verify(
-      submission(files),
-      { bytes: tampered, hash: good.hash },
-      withConfig({ smokeBattleTicks: 300 }),
-    );
-    expect(v.protocol.outcome).toBe("failed");
-    expect(v.protocol.message).toMatch(/integrity/);
+    // TD-034 · SAN-9: el artefacto lo empaqueta y sirve la PLATAFORMA; si no
+    // cuadra con su sha256 no es culpa del código del bot → infraestructura
+    // (el worker reintenta y cierra «no verificable»), nunca `validated`.
+    const err = await sandbox
+      .verify(submission(files), { bytes: tampered, hash: good.hash }, withConfig({ smokeBattleTicks: 300 }))
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(SandboxInfrastructureError);
+    expect(String(err.message)).toMatch(/\[sandbox_start_failed\] integrity/);
   });
 
   it("NEGATIVO · fallo del sandbox (proxy inaccesible): SandboxInfrastructureError, NUNCA validated", async () => {

@@ -11,6 +11,8 @@
  *   BUILD_SANDBOX_BIND   interfaz de escucha del anfitrión (def. 0.0.0.0)
  *   ARENA_NETWORK        red de los bots (def. arena)
  *   RUNTIME_DIGESTS_LOCK ruta a runtimes/DIGESTS.lock (def. la del repo)
+ *   SANDBOX_STARTUP_TIMEOUT_MS  reloj de plataforma hasta `ready` (def. 30000, TD-034)
+ *   BOT_EXECUTION_TIMEOUT_MS    reloj del bot desde `ready` hasta HELLO (def. 5000, TD-034)
  *
  * Si falta DOCKER_PROXY_URL o BUILD_SANDBOX_HOST no se inventa nada: no hay
  * sandbox y el pipeline FALLA CERRADO (rechaza «sandbox no verificado»), que
@@ -24,6 +26,7 @@ import { ProxyContainerRunner } from "./docker-proxy.js";
 import { ContainerBuildSandbox } from "./build-sandbox.js";
 import { loadRuntimeImages } from "./bot-launch.js";
 import type { ContainerRunner } from "./container-runner.js";
+import { startupTimeoutsFromEnv } from "./startup-clock.js";
 
 export interface BuildExecutorWiring {
   executor: E6PipelineBotManager;
@@ -41,6 +44,8 @@ export function createSandboxFromEnv(
   if (!proxyUrl || !advertiseHost) {
     return { sandbox: null, reason: "DOCKER_PROXY_URL o BUILD_SANDBOX_HOST sin definir: sandbox no configurado" };
   }
+  // TD-034 · parser único; un valor inválido hace fallar el arranque del servicio.
+  const timeouts = startupTimeoutsFromEnv(env);
   const sandbox = new ContainerBuildSandbox({
     runner: opts.runner ?? new ProxyContainerRunner(proxyUrl),
     network: env.ARENA_NETWORK || "arena",
@@ -48,6 +53,7 @@ export function createSandboxFromEnv(
     bindHost: env.BUILD_SANDBOX_BIND || "0.0.0.0",
     runtimeImages: loadRuntimeImages(env),
     referenceAgent: (id) => new HunterBot(id),
+    timeouts,
   });
   return { sandbox };
 }

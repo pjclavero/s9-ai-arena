@@ -178,7 +178,11 @@ describe("T9.4 · commit-reveal de semillas", () => {
 
       // Re-simulación: el replay descargado se verifica (replay-service verify
       // = verify() real del motor E2, hashes intermedios incluidos).
-      const replayRes = await request(app).get(`/replays/${b.id}`).buffer(true);
+      // PRC (TD-004): replay de bots no públicos ⇒ lo descarga el staff (organizer).
+      const replayRes = await request(app)
+        .get(`/replays/${b.id}`)
+        .set("Authorization", `Bearer ${organizer}`)
+        .buffer(true);
       expect(replayRes.status).toBe(200);
       // H2: el worker archiva por el almacén de E8 (comprimido); se descomprime como el visor.
       const replay = fromJsonl(decompress(Buffer.from(replayRes.body)).toString("utf8"));

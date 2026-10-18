@@ -12,7 +12,7 @@
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { fromJsonl } from "../../arena-engine/src/replay.js";
-import { decompress, nearestKeyframe } from "./format.js";
+import { sliceSegment } from "./segment.js";
 import { ingestReplay, listReplays, loadStored, readIndex, replayPath, sweepRetention, verifyStored } from "./store.js";
 import { REPLAY_INGEST_AUTH_HEADER, isValidInternalSecret } from "./auth.js";
 
@@ -28,17 +28,18 @@ export interface ReplayServerOptions {
    * defecto". Nunca se loguea ni se devuelve en las respuestas.
    *
    * Las rutas de LECTURA (`GET /replays`, `GET /replays/:id`, `/index`,
-   * `/segment`) NO lo exigen a propósito: las consume el VISOR anónimo a través
-   * del gateway (`infrastructure/gateway/nginx.conf`, `location /replays/`).
+   * `/segment`, `POST /verify`) NO lo exigen.
    *
-   * PRECISIÓN (corrección del supervisor de B8): ese `location` hace
-   * `proxy_pass` DIRECTO al replay-service, así que estas lecturas NO pasan por
-   * la API de E7 ni heredan su autorización — son anónimas de verdad. La
-   * decisión de dejarlas abiertas se sostiene igual (un replay publicado es
-   * material público y exigir credencial dejaría el visor a oscuras), pero se
-   * sostiene por eso y no por una autorización aguas arriba que no existe.
-   * La amenaza que cierra B8 es la INYECCIÓN de partidas falsas y el BORRADO
-   * por retención, no la lectura de un replay ya publicado.
+   * PRC (TD-004) · ESTAS LECTURAS YA NO SON PÚBLICAS. Hasta TD-004 el gateway
+   * hacía `proxy_pass` directo a este servicio en `location /replays/`, así que
+   * cualquier anónimo podía bajar inventario, índice y segmentos de replays
+   * PRIVADOS. Ahora el gateway responde 404 en `/replays*`
+   * (`infrastructure/gateway/nginx*.conf`) y el navegador lee los replays por
+   * la API (`/api/v1/replays/...`, `apps/api/src/routes/replays.ts`), que es la
+   * única autoridad: aplica la política de acceso ANTES de entregar bytes. Este
+   * servicio queda alcanzable sólo desde la red interna (`platform`), para la
+   * ingesta del worker y para diagnóstico de operador. Lo cubre el test sobre
+   * la conf REAL de nginx `infrastructure/gateway/tests/replay-gateway.test.ts`.
    */
   internalSecret?: string;
 }
@@ -147,7 +148,7 @@ export function createReplayServer(opts: ReplayServerOptions): Express {
     const index = readIndex(opts.dir, req.params.battleId);
     res.setHeader("Accept-Ranges", "bytes");
     res.setHeader("Content-Type", "application/octet-stream");
-    res.setHeader("Cache-Control", "public, max-age=3600, immutable");
+    res.setHeader("Cache-Control", "private, no-store");
     if (index) res.setHeader("X-Replay-Sha256", index.sha256);
 
     const range = req.headers.range;
@@ -180,7 +181,7 @@ export function createReplayServer(opts: ReplayServerOptions): Express {
       res.status(404).json({ error: "not_found" });
       return;
     }
-    res.setHeader("Cache-Control", "public, max-age=3600, immutable");
+    res.setHeader("Cache-Control", "private, no-store");
     res.json(index);
   });
 
@@ -192,32 +193,14 @@ export function createReplayServer(opts: ReplayServerOptions): Express {
       res.status(404).json({ error: "not_found" });
       return;
     }
-    const fromTick = Number(req.query.fromTick ?? 0);
-    const toTick = Number(req.query.toTick ?? index.ticks);
-    if (!Number.isFinite(fromTick) || !Number.isFinite(toTick) || fromTick > toTick) {
+    // PRC (TD-004) · misma función que usa la API autorizada (segment.ts).
+    const seg = sliceSegment(index, decoded, req.query.fromTick, req.query.toTick);
+    if (!seg.ok) {
       res.status(400).json({ error: "bad_range" });
       return;
     }
-    // Se arranca del keyframe anterior: el reproductor aterriza con estado completo.
-    const kf = nearestKeyframe(index.keyframes, fromTick);
-    const startIdx = kf ? kf.snapshotIndex : 0;
-    const snapshots: any[] = [];
-    for (let i = startIdx; i < decoded.snapshots.length && decoded.snapshots[i].tick <= toTick; i++) {
-      snapshots.push(decoded.snapshots[i]);
-    }
-    const events = decoded.events.filter((e: any) => e.tick >= (kf?.tick ?? 0) && e.tick <= toTick);
-    res.setHeader("Cache-Control", "public, max-age=3600, immutable");
-    res.json({
-      battleId: index.battleId,
-      fromKeyframeTick: kf?.tick ?? 0,
-      snapshots,
-      events,
-      // T8.3: capas de depuración en replay (comandos grabados) SOLO si el dueño
-      // del replay lo permitió al publicarlo (debugOpen). Nunca por defecto.
-      ...(index.debugOpen
-        ? { commands: decoded.commands.filter((c: any) => c.tick >= (kf?.tick ?? 0) && c.tick <= toTick) }
-        : {}),
-    });
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json(seg.body);
   });
 
   // --------------------------------------------------------------- verify

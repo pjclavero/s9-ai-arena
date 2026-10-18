@@ -16,6 +16,10 @@ Veredicto: **FUNCTIONAL_CORE_VERIFIED** en entorno aislado, con una salvedad doc
 de arranque del sandbox mide tiempo de pared y, con la máquina cargada, rechaza a veces un bot
 válido ([TD-034](../roadmap/technical-debt.md#td-034)).
 
+> **Actualización (Production Readiness Closure, 2026-10-18):** TD-034 y TD-004 quedan cerradas y
+> TD-045 con el gate activo y calibrado en `integration/production-readiness`, construida sobre el
+> HEAD de esta integración. Ver [production-readiness-report.md](production-readiness-report.md).
+
 ## Índice
 
 - [Qué es](#qué-es)

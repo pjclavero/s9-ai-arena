@@ -114,6 +114,27 @@ let mod;
 let ArenaBot;
 try {
   ({ ArenaBot } = await import("@arena/sdk"));
+} catch (e) {
+  // El SDK es de la imagen de runtime: si no carga, es la plataforma (TD-034).
+  await fail("sdk", e?.stack ?? String(e), 10);
+}
+
+// TD-034 · señal `ready`: runtime, artefacto verificado y SDK cargados. Se ESPERA
+// la respuesta antes de tocar el código del usuario: todo lo anterior cuenta en
+// el reloj de la plataforma (SANDBOX_STARTUP_TIMEOUT_MS) y lo posterior en el del
+// bot (BOT_EXECUTION_TIMEOUT_MS). Sin canal, se sigue: el anfitrión no lo verá y
+// lo tratará como plataforma (nunca culpa del bot).
+try {
+  await fetch(env.ARTIFACT_URL + "/ready", {
+    method: "POST",
+    headers: { "x-s9-artifact-token": env.ARTIFACT_TOKEN ?? "" },
+    signal: AbortSignal.timeout(5000),
+  });
+} catch {
+  /* sin canal de señal */
+}
+
+try {
   process.chdir(ROOT);
   mod = await import(pathToFileURL(safePath(entry)).href);
 } catch (e) {

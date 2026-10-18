@@ -170,8 +170,10 @@ describe("T9.2 · torneo eliminatorio de 8 bots de principio a fin", () => {
       expect(b.final_state_hash).toBeTruthy();
     }
 
-    // El replay se descarga por la API pública de E7 sin cuenta (visitante).
-    const replay = await request(app).get(`/replays/${battles[0].id}`);
+    // PRC (TD-004): el replay de bots no públicos NO es anónimo (404, como
+    // inexistente); el organizador (staff) lo descarga por la API de E7.
+    expect((await request(app).get(`/replays/${battles[0].id}`)).status).toBe(404);
+    const replay = await request(app).get(`/replays/${battles[0].id}`).set("Authorization", `Bearer ${organizer}`);
     expect(replay.status).toBe(200);
     expect(replay.body.length).toBeGreaterThan(0);
 

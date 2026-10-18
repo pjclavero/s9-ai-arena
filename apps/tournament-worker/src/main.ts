@@ -16,6 +16,7 @@ import { SpectateGateway } from "../../api/src/spectate/gateway.js";
 import { makeRunBattleHandler, markBattleForReview } from "./battle-runner.js";
 import { makeEngineExecutor } from "./engine-executor.js";
 import { containerAgents } from "./container-agents.js";
+import { startupTimeoutsFromEnv } from "../../bot-manager/src/startup-clock.js";
 import { artifactLaunchProvider } from "./bot-launch-provider.js";
 import { loadArtifactVerifyKey } from "../../bot-manager/src/bot-launch.js";
 import { DbArtifactLaunchGuard } from "../../bot-manager/src/launch-verify.js";
@@ -95,6 +96,9 @@ async function buildExecutor() {
         provider,
         network: process.env.ARENA_NETWORK || "arena",
         engineHost,
+        // TD-034 · dos relojes del arranque (SANDBOX_STARTUP_TIMEOUT_MS /
+        // BOT_EXECUTION_TIMEOUT_MS); valor inválido ⇒ el worker no ejecuta batallas y lo anuncia.
+        timeouts: startupTimeoutsFromEnv(process.env),
       }),
     });
     return { executor, reason: undefined };

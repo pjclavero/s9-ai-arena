@@ -1,20 +1,19 @@
 /**
- * R7-A · Listado global de replays gestionados por el replay-service.
+ * R7-A · Listado de los replays que el usuario puede ver.
  *
- * Consume `GET /replays/` (servido por el replay-service tras el gateway). Muestra todos
- * los replays (no solo abrir uno conocido) y enlaza al reproductor (`#/replay/:battleId`).
- * No expone secretos ni rutas internas.
+ * PRC (TD-004) · Consume `GET /api/v1/replays` (listReplays): SÓLO los replays que el
+ * usuario puede ver (staff, dueño o equipo de un bot participante, o públicos si
+ * S9_PUBLIC_REPLAYS_ENABLED). Antes leía `GET /replays/` del replay-service a
+ * través del gateway: el inventario de TODOS los ficheros, también para anónimos.
+ * Enlaza al reproductor (`#/replay/:battleId`). No expone secretos ni rutas internas.
  *
- * FC-D (D6, TD-014) · La ruta lleva BARRA FINAL: `fetch("/replays")` (sin barra) caía en
- * la redirección 301 de nginx hacia `location /replays/`, y detrás del proxy TLS esa
- * redirección era ABSOLUTA a `http://` → el navegador la bloqueaba como contenido
- * mixto. Además el gateway ya no redirige (`absolute_redirect off` + `location =
- * /replays`), así que ni un cliente antiguo recibe un `http://`.
+ * TD-014 sigue cerrada: la ruta es de la API (`/api/v1/replays`), sin barra final
+ * ni redirección; el gateway ya no tiene `location /replays/` que redirigir.
  *
  * FC-D (D1/D2) · Estados con los componentes comunes: carga, error clasificado
  * (502 del gateway, timeout, red) con «Reintentar», vacío con siguiente paso.
  */
-import { fetchJson } from "../api.js";
+import { api } from "../api.js";
 import { useResource, ResourceView } from "../resource.js";
 import { EmptyState } from "../ui/primitives.js";
 
@@ -27,8 +26,8 @@ interface ReplaySummary {
   sizeBytes: number;
 }
 
-/** Ruta del listado tras el gateway. CON barra final (ver cabecera). */
-export const REPLAYS_LIST_URL = "/replays/";
+/** Ruta del listado en la API (relativa a /api/v1, la antepone `api()`). */
+export const REPLAYS_LIST_PATH = "/replays";
 
 /** Duración aproximada de un replay a 30 ticks/s (motor E2). */
 export function formatTicksAsDuration(ticks: number): string {
@@ -38,8 +37,8 @@ export function formatTicksAsDuration(ticks: number): string {
 
 export function ReplaysPage() {
   const [list, reload] = useResource(async () => {
-    const body = await fetchJson<{ items?: ReplaySummary[] }>(REPLAYS_LIST_URL);
-    if (!body || !Array.isArray(body.items)) throw new Error("respuesta del servicio de replays sin `items`");
+    const body = await api<{ items?: ReplaySummary[] }>("GET", REPLAYS_LIST_PATH);
+    if (!body || !Array.isArray(body.items)) throw new Error("respuesta de la API de replays sin `items`");
     return body.items;
   }, []);
 

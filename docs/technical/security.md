@@ -25,6 +25,7 @@ explotación. Los gates de activación de la ejecución real (Carril I) y del es
 - [Código no confiable: pipeline y sandbox](#código-no-confiable-pipeline-y-sandbox)
 - [Secretos](#secretos)
 - [Funciones gateadas](#funciones-gateadas)
+- [Autorización de replays](#autorización-de-replays)
 - [Superficies abiertas conocidas](#superficies-abiertas-conocidas)
 - [Tests de seguridad](#tests-de-seguridad)
 - [Verificación](#verificación)
@@ -111,6 +112,18 @@ Todas las claves usan `req.ip`. Con un salto de proxy sin contar, colapsan en un
 | Acceso a Docker | ningún contenedor monta `docker.sock`. El proxy del host (`s9-docker-proxy`, en loopback por defecto) sólo permite crear, arrancar, parar, inspeccionar y ver estadísticas, y rechaza `privileged`, bind-mounts, red del host y cambio de usuario | definido; sin uso activo |
 | Verificación de no-privilegios | `infrastructure/scripts/scan-compose.mjs` en CI; `sandbox-escape-suite.test.ts`; job `sandbox-escape` en `e6-security.yml` | FUNCIONA en CI |
 
+**Señal `ready` del sandbox ([TD-034](../roadmap/technical-debt.md#td-034)).** `SandboxHost` expone, además de
+`GET /s9/artifact/<id>` y `POST …/report`, `POST /s9/artifact/<id>/ready`. Exige el mismo token aleatorio de
+la oferta (32 bytes, comparación en tiempo constante): sin token o con un token ajeno responde 403; con la
+oferta revocada, 404. No tiene cuerpo, registra sólo la primera señal y no concede nada: sólo marca el paso
+del reloj de plataforma al del bot. Como la envía el bootstrap de la plataforma antes de ejecutar código del
+usuario, ese código no puede adelantarla ni retrasarla en su favor.
+
+**Informes falseados.** El código del usuario ve `ARTIFACT_URL`/`ARTIFACT_TOKEN` y puede hacer POST a
+`/report`; por eso, tras `ready`, todo informe se atribuye al bot y no puede disfrazar su fallo de
+infraestructura. Riesgo residual: si la señal `ready` se pierde, un informe falseado con `kind` de plataforma
+antes del HELLO contaría como infraestructura; aun así falla cerrado (nunca `validated` ni victoria).
+
 ## Secretos
 
 Todos los secretos son ficheros de Docker secrets bajo `infrastructure/secrets/`, que git ignora.
@@ -140,17 +153,29 @@ Procedimientos: [docs/operations/configuration.md](../operations/configuration.m
 |---|---|---|---|
 | `S9_ENABLE_REAL_BATTLE_RUNS` | apagada ⇒ `/run` responde 503 `real_battle_runs_disabled` | Carril I: reserva atómica `scheduled→running`, techo de concurrencia (`S9_MAX_CONCURRENT_REAL_BATTLE_RUNS`, por defecto 1), auditoría y liberación en caso de error. **Pendientes:** I-8 (cierre del ciclo de vida) e I-9 (autorización por propiedad) | **no activar** antes de resolver [TD-002](../roadmap/technical-debt.md#td-002) |
 | `S9_PUBLIC_SPECTATE_ENABLED` | apagada | Carril J: la API no emite tickets anónimos y el gateway de espectador rechaza los marcados `anon` | en `main`; **no desplegado** ([TD-006](../roadmap/technical-debt.md#td-006)) |
-| `S9_PUBLIC_REPLAYS_ENABLED` | apagada | sólo gobierna la ruta pública de la API | no cubre `/replays/*` ([TD-004](../roadmap/technical-debt.md#td-004)) |
+| `S9_PUBLIC_REPLAYS_ENABLED` | apagada | encendida, hace públicos (anónimos incluidos) **sólo** los replays de batallas `finished` cuyos bots son todos `public`, en todas las rutas de replay de la API; el gateway ya no sirve `/replays/*` ([TD-004](../roadmap/technical-debt.md#td-004)) | integración `integration/production-readiness`, **no desplegado** |
 | `S9_METRICS_ENABLED` | apagada ⇒ `/metrics` no existe | — | — |
 
 La activación es una decisión de operación con sus precondiciones. Ver
 [docs/operations/readiness.md](../operations/readiness.md).
 
+## Autorización de replays
+
+[TD-004](../roadmap/technical-debt.md#td-004), integración `integration/production-readiness`, **sin desplegar**.
+
+- **Una autoridad**: la API (`apps/api/src/replay-access.ts`) decide **antes** de leer el fichero. Leen el replay de una batalla: staff (rol ≥ `organizer`), el dueño de un bot participante, los miembros del equipo de un bot participante no `private`, y cualquiera sólo si `S9_PUBLIC_REPLAYS_ENABLED` está encendida y todos los bots de la batalla son públicos.
+- **Sin enumeración**: «no autorizado», «no existe» e «id inválido» responden el mismo 404 (código, `error` y mensaje).
+- **Borde cerrado**: el gateway responde 404 en `/replays` y `/replays/*` (cualquier método). El replay-service sólo es alcanzable por la red interna `platform`; su ingesta sigue autenticada con `replay_ingest_secret`.
+- **Sin caché compartida**: las respuestas autorizadas llevan `Cache-Control: private, no-store`.
+- **Riesgo residual**: las lecturas del replay-service no exigen credencial dentro de `platform`.
+
+Detalle en [replays.md](replays.md#autorización-de-acceso-td-004).
+
 ## Superficies abiertas conocidas
 
 | Clase de problema | Estado | Deuda |
 |---|---|---|
-| Lectura anónima de replays a través del borde, al margen de la política de visibilidad | ABIERTO | [TD-004](../roadmap/technical-debt.md#td-004) |
+| Lectura anónima de replays a través del borde, al margen de la política de visibilidad | CERRADO en la integración `integration/production-readiness`; abierto en producción hasta desplegar | [TD-004](../roadmap/technical-debt.md#td-004) |
 | Autorización de participantes en batallas y lectura de datos de bots privados ajenos | ABIERTO | [TD-005](../roadmap/technical-debt.md#td-005) |
 | Runtime con versiones anteriores a parches de seguridad y a los gates I/J | ABIERTO | [TD-006](../roadmap/technical-debt.md#td-006) |
 | Registro abierto con rol de desarrollador; límites por IP debilitados; sin cambio de contraseña | ABIERTO | [TD-012](../roadmap/technical-debt.md#td-012) |
@@ -169,6 +194,8 @@ Las vulnerabilidades se reportan al responsable del repositorio, no en issues p�
 | Límites compartidos | `r25-rate-limit-compartido.test.ts` |
 | Fallo cerrado del ticket | `j-fail-closed-ticket.test.ts` |
 | Rutas públicas | `h6-public-routes.test.ts` |
+| Autorización de replays (matriz actor × batalla × recurso, enumeración, bandera pública) | `apps/api/src/td004-replay-access.test.ts` |
+| Bypass del gateway con nginx real (conf del repo, API y replay-service reales) | `infrastructure/gateway/tests/replay-gateway.test.ts` (opt-in `S9_RUN_GATEWAY_SECURITY_E2E=1`, Docker; obligatorio en el job `functional-e2e / docker-e2e` de CI) |
 | Sandbox | `apps/bot-manager/tests/sandbox-escape-suite.test.ts` y `tests/sandbox-escape/` |
 | Análisis estático y secretos | `static-analysis`, `secret-scan` |
 | Proxy de Docker y lanzamiento | `docker-proxy`, `launch-guard`, `digest-guard` |
@@ -176,7 +203,7 @@ Las vulnerabilidades se reportan al responsable del repositorio, no en issues p�
 | Escaneo del compose | `scan-compose.test.ts` |
 
 Mutaciones medidas en la auditoría:
-- cerrar `/replays/` en nginx: **0 rojos**;
+- cerrar `/replays/` en nginx: **0 rojos** (en la base; desde TD-004 la mutación pertinente es la inversa, re-exponerlo con `proxy_pass`: **5 rojos**, rc=1, en `replay-gateway.test.ts` y `replay-page-gateway-path.test.ts`);
 - rebajar el rol de mapas: **0 rojos**;
 - reserva y techo del Carril I: con rojos.
 
@@ -207,4 +234,5 @@ Mutaciones medidas en la auditoría:
 | Secretos y consumidores | CODE_VERIFIED | `infrastructure/docker-compose.yml` (`secrets:` de cada servicio y bloque `secrets:`) |
 | Clave HKDF de tickets | CODE_VERIFIED | `apps/api/src/auth/tokens.ts:92-97` |
 | `/run` 503 con la flag apagada | CODE_VERIFIED | `apps/api/src/routes/battles.ts:595-600` |
+| Autorización de replays (TD-004) | TEST_VERIFIED / RUNTIME_VERIFIED (entorno aislado) | `apps/api/src/replay-access.ts`; `td004-replay-access.test.ts`; `infrastructure/gateway/tests/replay-gateway.test.ts` |
 | Mutaciones | RUNTIME_VERIFIED (en la auditoría) | auditoría del 2026-10-15, pasada 2 (evidencia interna; [resumen](../audits/2026-10-15/README.md)) |

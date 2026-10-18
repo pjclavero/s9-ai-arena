@@ -81,6 +81,11 @@ export const JOBS_CI = [
   // una respuesta vacía en un verde sin haber auditado nada.
   { id: "scan", clase: "escaneo" },
   { id: "e2e-mvp", clase: "obligatorio" },
+  // TD-045 (PRC DEV-CI): golden path funcional REAL (navegador + build en sandbox
+  // Docker + batalla real + replay) y E2E Docker de vitest. "obligatorio" en
+  // CUALQUIER run (PR y main): skipped/cancelled/ausente ⇒ ROJO. Es el job que
+  // convierte «CI verde» en «el núcleo funcional real sigue funcionando».
+  { id: "functional-e2e", clase: "obligatorio" },
   { id: "deploy-staging", clase: "solo-main", evidencia: ["desplegado"] },
   { id: "smoke-and-promote", clase: "solo-main", evidencia: ["promocionado"] },
 ];
