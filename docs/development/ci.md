@@ -2,15 +2,18 @@
 
 ## Resumen
 
-Los cinco workflows de `.github/workflows/`, cuándo se disparan, qué jobs tienen y qué significa
+Los seis workflows de `.github/workflows/`, cuándo se disparan, qué jobs tienen y qué significa
 su resultado. Incluye los dos puntos que más confunden: la **nightly está en rojo crónico** y
-**`deploy-staging` no despliega nada** aunque salga en verde.
+**`deploy-staging` no despliega nada** aunque salga en verde. Desde TD-045 el golden path funcional
+real (`functional-e2e`) es un job obligatorio del semáforo.
 
 ## Índice
 
 - [Workflows](#workflows)
 - [`ci.yml`](#ciyml)
 - [El semáforo](#el-semáforo)
+- [Gate funcional: `functional-e2e`](#gate-funcional-functional-e2e)
+- [Protección de rama (pendiente del operador)](#protección-de-rama-pendiente-del-operador)
 - [`deploy-staging` y `smoke-and-promote`](#deploy-staging-y-smoke-and-promote)
 - [`nightly.yml`](#nightlyyml)
 - [`e6-security.yml`](#e6-securityyml)
@@ -24,6 +27,7 @@ su resultado. Incluye los dos puntos que más confunden: la **nightly está en r
 | Workflow | Disparadores | Propósito |
 |---|---|---|
 | `ci.yml` (`ci`) | `pull_request`; `push` a `main` | calidad, tests, imágenes, gates, escaneo, E2E, semáforo |
+| `functional-e2e.yml` | `workflow_call` desde `ci.yml` (todo PR y push a `main`); `workflow_dispatch` (gate manual de release) | golden path real en navegador + E2E Docker (TD-045) |
 | `nightly.yml` | cron `30 3 * * *` (UTC) + manual | determinismo ×1000 y suites lentas |
 | `e6-security.yml` (`E6 security`) | `pull_request`; `push` a `main` | chequeos estáticos de seguridad, digests, escaneo de runtimes, escape del sandbox |
 | `acceptance.yml` | cron `45 4 * * *` + manual | criterios de aceptación; publica `docs/aceptacion/ultimo-informe.md` como artefacto |
@@ -47,6 +51,7 @@ Node `22.15` en todos los jobs (`NODE_VERSION`).
 | `image-provenance` | — | ADR-016: control positivo y negativo de procedencia de imagen, deriva de image ID, compose canónico, contrato de despliegue, backup-stack, override de versión, release-gate (con sus mutantes) |
 | `scan` | build-images | `npm audit`, escaneo del compose y Trivy, clasificados por `scan-gate.mjs` (ADR-018) |
 | `e2e-mvp` | — | `vitest run tests/e2e` |
+| `functional-e2e` | — | reusable `functional-e2e.yml`: jobs `golden` y `docker-e2e` ([abajo](#gate-funcional-functional-e2e)); sin `if:` ni `continue-on-error` |
 | `deploy-staging` | scan, e2e-mvp | sólo en `main`; ver abajo |
 | `smoke-and-promote` | deploy-staging | sólo en `main`; environment `production` con aprobación manual |
 | `semaforo` | todos | `if: always()`; veredicto del run |
@@ -63,6 +68,93 @@ y en la nightly).
 - 🟡 hubo trabajo **omitido** (p. ej. staging sin configurar) → job verde, check «Semáforo CI» en
   `neutral`, avisos y resumen; lo omitido **no** cuenta como aprobado;
 - 🟢 todo ejecutado de verdad.
+
+`functional-e2e` es clase `obligatorio`: `skipped`, `cancelled`, `failure` o ausente en `needs` ⇒ 🔴
+en PR y en `main` (tests G2 de `infrastructure/tests/functional-e2e-gate.test.ts`, y calibración 4
+en CI real, abajo).
+
+## Gate funcional: `functional-e2e`
+
+Objetivo (TD-045): que **CI verde implique que el núcleo funcional real sigue funcionando**. Nada de
+mocks internos de S9. Definido en `.github/workflows/functional-e2e.yml`, en `ubuntu-24.04` (Docker
+rootful del runner). Corre en paralelo con el resto de `ci.yml`.
+
+| Job | Qué ejecuta | Veredicto |
+|---|---|---|
+| `golden` | `npm run test:browser` completo (`tests/browser/run.sh`): fase golden (registro → bot A con build REAL en el sandbox → `published` → bot B → `published` → equipo → mapa → batalla → ejecución con los artefactos firmados en contenedores → visor en directo → `finished` → ganador → stats → replay reproducido), fases 1-3 y sonda TD-028 | rc de `run.sh` **y** `scripts/ci/assert-functional-e2e.mjs browser`: cada fase con ≥1 test y 0 `skipped`/`flaky`/fallidos; `agents=container`, gana `red`, el Artillero dispara y el Pacifista no; sonda 4404/4401 |
+| `docker-e2e` | `vitest run` de `build-sandbox-docker.test.ts`, `fc-a-bot-pipeline-e2e.test.ts` y `container-battle-e2e.test.ts` con `S9_RUN_DOCKER_SANDBOX_E2E=1` y `S9_RUN_REAL_DOCKER_E2E=1` | `assert-functional-e2e.mjs vitest`: los 3 ficheros presentes, `passed`, todos sus tests `passed` (un `describe.skipIf` sin opt-in ⇒ FALLA) |
+
+Entorno del job `golden` (todo en el runner, `127.0.0.1`, `$RUNNER_TEMP`):
+
+- PostgreSQL `16.14-alpine` y Redis `7.4.9-alpine` como *services*, **las mismas imágenes fijadas
+  por digest que `infrastructure/docker-compose.yml`**, con healthcheck; `run.sh` además espera a
+  que PostgreSQL acepte consultas (`S9_E2E_PG_URL`) y el worker usa Redis (`S9_E2E_REDIS_URL`).
+- API, tournament-worker (motor `arena-engine` en proceso, como en producción la ejecución de
+  batallas, y gateway WS de espectador), bot-build-worker, `s9-docker-proxy` LOCAL, replay-service:
+  procesos reales del repo. El servicio HTTP `arena-engine` (`POST /run`) no está en el camino del
+  golden path y no se arranca.
+- Web (`vite build`) con la conf nginx real del contenedor web; gateway con
+  `infrastructure/gateway/nginx-behind-proxy.conf`; TLS delante. nginx fijado por digest.
+- Chromium 130 de `mcr.microsoft.com/playwright:v1.48.2-jammy@sha256:96dc47…` (fijado). Node
+  `22.15.0` exacto.
+- Orden de arranque por healthchecks (`run.sh`): PostgreSQL → API `/healthz` → replay-service →
+  cadena TLS→gateway → heartbeat y `battleExecution=container` del worker → docker-proxy escuchando
+  → bot-build-worker con `sandbox=container`.
+
+Relojes (CI-7): cada paso tiene su `timeout-minutes` (deps 10, imágenes 15, E2E 35, veredicto 2,
+evidencia 3, limpieza 3; job 60) y Playwright conserva los suyos por fase (build 240 s por bot,
+golden 900 s). Las imágenes de runtime se descargan en un paso propio **antes** del E2E: el límite de
+arranque del bot (TD-034, código de DEV-SANDBOX) nunca mide un `docker pull`. No se ha subido ningún
+límite del código.
+
+Evidencia (CI-8), artifact `functional-e2e-golden-<intento>` (también en verde, 14 días):
+`logs/` de cada servicio, `logs/containers/` (`docker ps -a` y `docker logs` de los contenedores
+propios y de bots antes de borrarlos), `out/summary.txt` con el rc por fase, `report.json` y
+`playwright.log` por fase, `test-results/` (trace y capturas de Playwright en fallo), `shots/`,
+`golden/evidence.json` (resultado de la batalla) y `db-evidence.json` (builds con sus etapas = logs
+de build, versiones, batallas, jobs). `scripts/ci/collect-functional-evidence.sh` nunca copia
+`secrets/`, `certs/`, `pw.env` ni `db.url` y busca el contenido de cada secreto efímero en lo que
+copia: si aparece, retira el fichero y el paso falla. `docker-e2e` sube el informe JSON de vitest.
+
+Limpieza (CI-9): `scripts/ci/cleanup-functional-e2e.sh` con `if: always()` borra los contenedores
+con el prefijo del run (`s9ci-<run>-<intento>-*`), los de bot residuales, sus volúmenes anónimos y
+el estado temporal; los services los retira el runner. Pensado para el runner efímero: en una
+máquina compartida no lo uses (borra todos los `bot-*`).
+
+### Gate manual de release
+
+Antes de etiquetar o desplegar un commit: *Actions → functional-e2e → Run workflow* sobre ese
+commit (o `gh workflow run functional-e2e.yml --ref <rama-o-tag>`), y exigir `success` en ambos
+jobs. En `main` el mismo gate ya corre en cada push.
+
+### Ejecutarlo como en CI (REVIEW, integración)
+
+```bash
+npm ci
+export S9_E2E_STATE=$(mktemp -d /tmp/prcci-review.XXXXXX)
+S9_E2E_TAG=prcci-review S9_E2E_PORT_BASE=47080 npm run test:browser
+node scripts/ci/assert-functional-e2e.mjs browser "$S9_E2E_STATE/out"
+S9_RUN_DOCKER_SANDBOX_E2E=1 S9_RUN_REAL_DOCKER_E2E=1 npx vitest run \
+  apps/bot-manager/tests/build-sandbox-docker.test.ts apps/api/src/fc-a-bot-pipeline-e2e.test.ts \
+  apps/tournament-worker/src/container-battle-e2e.test.ts --maxWorkers=1
+```
+
+Sobre la rama de integración basta con que los cambios de SEC/SANDBOX estén mergeados: el job no
+necesita variables nuevas salvo que alguna rama las introduzca (se anotan en COORD).
+
+## Protección de rama (pendiente del operador)
+
+Hoy `main` **no tiene protección de rama ni rulesets** (`gh api repos/pjclavero/s9-ai-arena/branches/main/protection`
+→ 404): ningún check bloquea un merge. El gate está **listo**; el bloqueo efectivo lo activa el
+operador (no la CI):
+
+- Rama: `main`. *Settings → Branches → Add rule* (o un ruleset) con «Require status checks to pass
+  before merging» y «Require branches to be up to date».
+- Check obligatorio: **`semaforo`** (job de `ci.yml`; agrega todo, incluido `functional-e2e`, y
+  falla con un `skipped`). Opcionalmente, también `functional-e2e / golden (navegador real + build y
+  batalla reales)` y `functional-e2e / docker-e2e (sandbox real + build → published + batalla A+B)`.
+- No usar como obligatorio el check-run «Semáforo CI»: se crea por API y en PRs de fork puede no
+  existir.
 
 ## `deploy-staging` y `smoke-and-promote`
 
@@ -124,7 +216,9 @@ vacío no es verde (ADR-017 §10). No uses el final de `gh run watch` como vered
 
 | Afirmación | Estado | Evidencia |
 |---|---|---|
-| Disparadores y jobs de los 5 workflows | CODE_VERIFIED | `.github/workflows/*.yml` parseados (`on:`, `jobs:`, `needs:`, `if:`) |
+| Disparadores y jobs de los 6 workflows | CODE_VERIFIED | `.github/workflows/*.yml` parseados (`on:`, `jobs:`, `needs:`, `if:`) |
+| `functional-e2e` obligatorio y exigido por el semáforo; skipped ⇒ ROJO | CODE_VERIFIED + RUNTIME_VERIFIED | `infrastructure/tests/functional-e2e-gate.test.ts` (G1-G5); PR #153 (PASS) y calibraciones #154-#157 (ROJO) |
+| `main` sin protección de rama | RUNTIME_VERIFIED (2026-10-18) | `gh api …/branches/main/protection` → 404 |
 | `unit` habilita userns y excluye los E2E SFTP | CODE_VERIFIED | `ci.yml:72-105` |
 | Matriz de 11 imágenes; push sólo en `main`; etiquetas | CODE_VERIFIED | `ci.yml:290-377` |
 | `deploy-staging` con `ssh` comentado y `resultado=desplegado` | CODE_VERIFIED | `ci.yml:930-947` |
