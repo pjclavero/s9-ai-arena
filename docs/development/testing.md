@@ -30,7 +30,7 @@ son Vitest salvo el SDK Python (pytest) y la aceptación visual/perf (Playwright
 | `npm run format:check` | Prettier |
 | `npm run test:visual` | aceptación visual Playwright (requiere instalar Playwright y navegador; no está en `package.json`) |
 | `cd sdks/python && python -m pytest tests/ -q` | SDK Python |
-| `npm run test:browser` | E2E de navegador real (`tests/browser/run.sh`): entorno aislado, fase **golden** (recorrido completo con build y batalla reales en Docker) y fases 1-3; Node ≥ 22.15 y Docker local ([frontend.md](../technical/frontend.md#e2e-de-navegador)) |
+| `npm run test:browser` | E2E de navegador real (`tests/browser/run.sh`): entorno aislado, fase **golden** (recorrido completo con build y batalla reales en Docker) y fases 1-3; Node ≥ 22.15 y Docker local ([frontend.md](../technical/frontend.md#e2e-de-navegador)). En CI: job obligatorio `functional-e2e` ([ci.md](ci.md#gate-funcional-functional-e2e)) |
 
 Timeout por test: 180 s; hooks: 60 s.
 
@@ -67,6 +67,8 @@ libre (ADR-E7-002). Con `DATABASE_URL` definida se usa ese servidor con bases ef
 | `PYTHON_BIN` | intérprete con `arena-sdk` para el CTF 2v2 (por defecto `sdks/python/.venv`) |
 | `DETERMINISM_RUNS` | repeticiones del test de determinismo (la nightly usa 1000) |
 | `REDIS_TEST_URL` | activa el contrato contra un **Redis real** en `redis-signal-semantics.test.ts`; sin ella se usa un doble |
+| `S9_E2E_STATE`, `S9_E2E_PORT_BASE`, `S9_E2E_TAG` | `run.sh`: directorio de estado, primer puerto y prefijo de los contenedores propios |
+| `S9_E2E_PG_URL`, `S9_E2E_REDIS_URL` | `run.sh`: PostgreSQL externo (BD efímera con CREATEDB) en lugar del embebido, y Redis para el worker; los usa la CI |
 | `S9_RUN_REAL_DOCKER_E2E` | habilita los E2E de batalla real con contenedores: `tests/e2e/e2e-real-battle-smoke.test.ts` y `apps/tournament-worker/src/container-battle-e2e.test.ts` (build real + artefacto firmado + batalla, cierre funcional) |
 | `S9_RUN_DOCKER_SANDBOX_E2E` | habilita los E2E del sandbox de build (`apps/bot-manager/tests/build-sandbox-docker.test.ts`, `apps/api/src/fc-a-bot-pipeline-e2e.test.ts`) |
 | `S9_SANDBOX_ADVERTISE_HOST` | IP de este host alcanzable desde los contenedores de bots (por defecto, la primera IPv4 no interna) |
@@ -84,8 +86,10 @@ Los gates de infraestructura tienen `--self-test` (controles positivo y negativo
 - **Web con API simulada**: los tests de `apps/web` no ejercen la API real; defectos de costura
   (p. ej. `rulesetId` de modo frente al `mvp-default` de la BD) pasan en verde
   ([TD-003](../roadmap/technical-debt.md#td-003), [TD-018](../roadmap/technical-debt.md#td-018)).
-- **Sin E2E de navegador real** en CI: el visor y el reproductor fallan en navegador por el
-  arranque de Phaser y ningún test lo detecta ([TD-009](../roadmap/technical-debt.md#td-009)).
+- **E2E con Docker fuera de `unit`**: los E2E opt-in (`S9_RUN_*`) quedan `skipped` en `npm test`
+  y en el job `unit`; **sólo** cuentan porque el job `functional-e2e` los activa y exige 0 `skipped`
+  ([ci.md](ci.md#gate-funcional-functional-e2e), TD-045). `tests/e2e/e2e-real-battle-smoke.test.ts`
+  (smoke contra el despliegue real, paso de operación) sigue fuera de CI a propósito.
 - **E2E del MVP en proceso**: usa los bots stub del motor; la ejecución de código de usuario en
   contenedores queda `skipped` y así se declara ([TD-002](../roadmap/technical-debt.md#td-002)).
 - La matriz RBAC tiene tests tautológicos (comparan la matriz consigo misma)
@@ -111,4 +115,5 @@ Los gates de infraestructura tienen `--self-test` (controles positivo y negativo
 | Tests de web con `vi.mock` / `fetch` sustituido | CODE_VERIFIED | `apps/web/tests/admin-ops-pages.test.tsx:12`; `admin-visibility.test.tsx:34-35` |
 | E2E MVP en proceso con stubs | CODE_VERIFIED | cabecera de `tests/e2e/mvp-success.e2e.test.ts` |
 | Playwright no está en `package.json` | CODE_VERIFIED | `package.json` (sin `@playwright/test`) |
+| Inventario de E2E opt-in y su activación en CI | CODE_VERIFIED | `grep -rn S9_RUN_` (5 ficheros); `.github/workflows/functional-e2e.yml` |
 | Suites no ejecutadas en esta consolidación (Node 20 en la máquina de trabajo) | — | las cifras de verde/rojo vienen de la auditoría y de la CI |

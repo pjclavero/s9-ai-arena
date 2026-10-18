@@ -1,0 +1,186 @@
+# PRC DEV-CI · TD-045 — golden path FUNCIONAL como gate de CI.
+#
+# Qué demuestra: que el núcleo funcional REAL sigue vivo. Sin mocks internos de S9:
+#   job `golden`     → `npm run test:browser` COMPLETO (tests/browser/run.sh):
+#                      registro → bot A con build REAL en el sandbox Docker → published
+#                      → bot B → published → equipo → mapa → batalla → ejecución REAL
+#                      con los artefactos firmados → visor en directo → finished →
+#                      ganador → stats → replay reproducido en Chromium; después las
+#                      fases 1-3 (UX/replay/visor, replay-service caído, API caída) y
+#                      la sonda TD-028.
+#                      Piezas: PostgreSQL 16.14 y Redis 7.4.9 (las MISMAS imágenes
+#                      fijadas por digest que infrastructure/docker-compose.yml) como
+#                      services del runner; API, tournament-worker (motor arena-engine
+#                      en proceso + gateway WS de espectador), bot-build-worker,
+#                      s9-docker-proxy LOCAL y replay-service reales; web (vite build)
+#                      servida con la conf nginx REAL; gateway con
+#                      infrastructure/gateway/nginx-behind-proxy.conf; TLS delante;
+#                      Chromium 130 de la imagen Playwright fijada por digest.
+#   job `docker-e2e` → los E2E de vitest que hoy sólo corren a mano porque son
+#                      opt-in (S9_RUN_DOCKER_SANDBOX_E2E / S9_RUN_REAL_DOCKER_E2E):
+#                      sandbox real del pipeline, código pegado → published y batalla
+#                      A+B con artefactos firmados. Aquí se ACTIVAN, y un `skipped`
+#                      hace FALLAR el job (scripts/ci/assert-functional-e2e.mjs).
+#
+# Disparadores:
+#   - workflow_call: lo llama ci.yml (job `functional-e2e`) en TODO pull_request y en
+#     push a main. El semáforo lo trata como OBLIGATORIO: skipped/cancelled ⇒ ROJO.
+#   - workflow_dispatch: gate MANUAL de release sobre el commit candidato
+#     (docs/development/ci.md, «Gate funcional de release»).
+#
+# Relojes: un timeout por FASE (pasos con timeout-minutes propio), no uno global
+# corto. Los límites de arranque/handshake del bot (TD-034) son del código, NO se
+# tocan aquí: las imágenes de runtime se descargan ANTES (paso propio), así el
+# reloj de arranque del sandbox nunca incluye un `docker pull`.
+#
+# Producción: CERO. Todo vive en el runner efímero (127.0.0.1, $RUNNER_TEMP); no hay
+# secretos del repositorio: los del entorno (JWT, clave de firma, TLS) los genera
+# run.sh en ficheros 0600 y NUNCA se suben como artefacto.
+name: functional-e2e
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Exacto (no "22.15" flotante): determinismo del entorno del gate (CI-6).
+  NODE_VERSION: "22.15.0"
+  PW_IMAGE: mcr.microsoft.com/playwright:v1.48.2-jammy@sha256:96dc479be9a603227fafc7126bd7d5e8152ae3e63749f377b2c49a4314b28ae1
+  S9_E2E_NGINX_IMAGE: nginxinc/nginx-unprivileged:1.27-alpine@sha256:65e3e85dbaed8ba248841d9d58a899b6197106c23cb0ff1a132b7bfe0547e4c0
+
+jobs:
+  golden:
+    name: golden (navegador real + build y batalla reales)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+        env:
+          # Runner efímero y puerto sólo en loopback: sin contraseña que versionar.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["127.0.0.1:55432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 3s --health-timeout 3s --health-retries 40
+      redis:
+        image: redis:7.4.9-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+        ports: ["127.0.0.1:56379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 3s --health-timeout 3s --health-retries 40
+    env:
+      S9_E2E_PORT_BASE: "38080"
+      S9_E2E_TAG: s9ci-${{ github.run_id }}-${{ github.run_attempt }}
+      S9_E2E_PG_URL: postgres://postgres@127.0.0.1:55432/postgres
+      S9_E2E_REDIS_URL: redis://127.0.0.1:56379
+      DOCKER_SOCKET: /var/run/docker.sock
+    steps:
+      - uses: actions/checkout@v4
+      - name: Estado temporal del E2E en $RUNNER_TEMP (nada fuera del runner)
+        run: echo "S9_E2E_STATE=$RUNNER_TEMP/s9-e2e" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Dependencias (npm ci)
+        timeout-minutes: 10
+        run: npm ci
+      - name: Docker del runner disponible (sin Docker el gate FALLA, nunca se salta)
+        timeout-minutes: 2
+        run: |
+          docker info --format 'Docker {{.ServerVersion}} · {{.OperatingSystem}} · cgroup {{.CgroupVersion}}'
+          test -S "$DOCKER_SOCKET"
+      - name: Imágenes fijadas por digest (Playwright, nginx, runtimes de bots)
+        # Fase propia con su reloj: la descarga NUNCA cuenta dentro del arranque del bot.
+        timeout-minutes: 15
+        run: |
+          docker pull -q "$PW_IMAGE"
+          docker pull -q "$S9_E2E_NGINX_IMAGE"
+          grep -v '^#' runtimes/DIGESTS.lock | awk 'NF==3 {print $3}' | while read -r img; do docker pull -q "$img"; done
+      - name: Golden path + fases 1-3 + sonda TD-028 (npm run test:browser)
+        timeout-minutes: 35
+        run: npm run test:browser
+      - name: Veredicto independiente (skipped / 0 tests / sin batalla real ⇒ FALLA)
+        if: always()
+        timeout-minutes: 2
+        run: node scripts/ci/assert-functional-e2e.mjs browser "$S9_E2E_STATE/out"
+      - name: Preparar evidencia SIN secretos
+        if: always()
+        timeout-minutes: 3
+        run: bash scripts/ci/collect-functional-evidence.sh "$S9_E2E_STATE" "${{ runner.temp }}/functional-e2e-evidence"
+      - name: Evidencia (logs de servicios y contenedores, capturas, traces, batalla, builds)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: functional-e2e-golden-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/functional-e2e-evidence/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Limpieza (contenedores, volúmenes y estado temporales)
+        if: always()
+        timeout-minutes: 3
+        run: bash scripts/ci/cleanup-functional-e2e.sh "$S9_E2E_TAG" "$S9_E2E_STATE"
+
+  docker-e2e:
+    name: docker-e2e (sandbox real + build → published + batalla A+B)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      S9_RUN_DOCKER_SANDBOX_E2E: "1"
+      S9_RUN_REAL_DOCKER_E2E: "1"
+      DOCKER_SOCKET: /var/run/docker.sock
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Dependencias (npm ci)
+        timeout-minutes: 10
+        run: npm ci
+      - name: Docker del runner disponible
+        timeout-minutes: 2
+        run: |
+          docker info --format 'Docker {{.ServerVersion}} · {{.OperatingSystem}}'
+          test -S "$DOCKER_SOCKET"
+      - name: Runtimes de bots fijados por digest (fase propia, fuera del reloj de arranque)
+        timeout-minutes: 10
+        run: grep -v '^#' runtimes/DIGESTS.lock | awk 'NF==3 {print $3}' | while read -r img; do docker pull -q "$img"; done
+      - name: E2E Docker de vitest (opt-in ACTIVADO)
+        timeout-minutes: 25
+        run: >-
+          npx vitest run
+          apps/bot-manager/tests/build-sandbox-docker.test.ts
+          apps/api/src/fc-a-bot-pipeline-e2e.test.ts
+          apps/tournament-worker/src/container-battle-e2e.test.ts
+          --maxWorkers=1 --reporter=default --reporter=json
+          --outputFile.json="${{ runner.temp }}/docker-e2e/vitest.json"
+      - name: Veredicto independiente (los 3 ficheros ejecutados, 0 skipped)
+        if: always()
+        timeout-minutes: 2
+        run: >-
+          node scripts/ci/assert-functional-e2e.mjs vitest "${{ runner.temp }}/docker-e2e/vitest.json"
+          apps/bot-manager/tests/build-sandbox-docker.test.ts
+          apps/api/src/fc-a-bot-pipeline-e2e.test.ts
+          apps/tournament-worker/src/container-battle-e2e.test.ts
+      - name: Evidencia (informe de vitest y contenedores)
+        if: always()
+        timeout-minutes: 2
+        run: |
+          mkdir -p "${{ runner.temp }}/docker-e2e"
+          docker ps -a --format '{{.Names}}\t{{.Image}}\t{{.Status}}' > "${{ runner.temp }}/docker-e2e/docker-ps.txt" 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: functional-e2e-docker-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/docker-e2e/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Limpieza de contenedores de bot residuales
+        if: always()
+        timeout-minutes: 2
+        run: |
+          docker ps -aq --filter 'name=^bot-' | xargs -r docker rm -f
+          rm -rf "${{ runner.temp }}/docker-e2e"

@@ -76,7 +76,7 @@ Estados posibles:
 | [TD-042](#td-042) | Sin borrado de mapas ni versiones, ni cesión de capitanía | P3 | Mapas / equipos | ABIERTA |
 | [TD-043](#td-043) | El worker recibe el secreto de sesión raíz para verificar tickets | P2 | Seguridad / espectador | ABIERTA |
 | [TD-044](#td-044) | `SPECTATE_WS_URL` inservible para el navegador | P1 | Configuración / espectador | CERRADA |
-| [TD-045](#td-045) | E2E de navegador y E2E con Docker fuera de CI | P1 | CI | ABIERTA |
+| [TD-045](#td-045) | E2E de navegador y E2E con Docker fuera de CI | P1 | CI | GATE LISTO (bloqueo pendiente de protección de rama) |
 | [TD-046](#td-046) | `absolute_redirect off` falta en la conf del contenedor web | P3 | Gateway / web | ABIERTA |
 | [TD-047](#td-047) | Batallas y estadísticas exponen participantes de bots privados | P1 | Seguridad / batallas | ABIERTA |
 | [TD-048](#td-048) | `NODE_ENV` no se fija en las imágenes | P2 | Configuración | ABIERTA |
@@ -955,7 +955,7 @@ Estados posibles:
 <a id="td-045"></a>
 ## TD-045 — E2E de navegador y E2E con Docker fuera de CI
 
-- **Estado:** ABIERTA
+- **Estado:** GATE LISTO; bloqueo efectivo pendiente de protección de rama (decisión del operador)
 - **Prioridad:** P1
 - **Área:** CI
 - **Detectado:** 2026-10-18, cierre funcional (REVIEW)
@@ -963,6 +963,11 @@ Estados posibles:
 - **Problema:** Las garantías más fuertes del cierre no protegen `main`.
 - **Solución prevista:** Job de CI con Docker (rootless o runner propio) para ambos.
 - **Condición de cierre:** Job obligatorio en `ci.yml` con rc real.
+- **Avance (Production Readiness Closure 2026-10, DEV-CI):**
+  - Job `functional-e2e` en `ci.yml` (reusable `.github/workflows/functional-e2e.yml`) en todo PR y push a `main`, más `workflow_dispatch` como gate manual de release. Dos jobs: `golden` (`npm run test:browser` completo: golden + fases 1-3 + sonda TD-028, con PostgreSQL 16.14 y Redis 7.4.9 fijados, Docker real del runner, Chromium fijado) y `docker-e2e` (los tres E2E de vitest con `S9_RUN_DOCKER_SANDBOX_E2E=1`/`S9_RUN_REAL_DOCKER_E2E=1`).
+  - Veredicto independiente `scripts/ci/assert-functional-e2e.mjs`: `skipped`, 0 tests, batalla sin contenedores o bots que no corrieron su código ⇒ rojo. El semáforo lo exige como `obligatorio` (skipped/cancelled/ausente ⇒ ROJO). Tests: `infrastructure/tests/functional-e2e-gate.test.ts`.
+  - RUNTIME_VERIFIED en GitHub Actions: PASS en el PR #153; ROJO en las cuatro calibraciones (PR #154 sandbox fuera del pipeline, #155 executor de batalla roto, #156 reproducción de replay sin esperar a READY, #157 `functional-e2e` skipped). En #154 y #156 **sólo** `functional-e2e` detectó la regresión (`unit` en verde).
+- **Falta para CERRAR:** que una regresión del golden **bloquee** el merge: el operador debe activar la protección de `main` con el check obligatorio `semaforo` ([ci.md](../development/ci.md#protección-de-rama-pendiente-del-operador)). Hasta entonces el gate informa pero no impide.
 
 <a id="td-046"></a>
 ## TD-046 — `absolute_redirect off` falta en la conf del contenedor web

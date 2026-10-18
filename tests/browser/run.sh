@@ -33,17 +33,24 @@
 #                     de replay fallará por falta de batalla (no hay atajo)
 #   S9_SANDBOX_ADVERTISE_HOST  IP de este host alcanzable desde los contenedores
 #   S9_E2E_KEEP=1     no parar el entorno al terminar (depuración)
+#   S9_E2E_TAG        prefijo de los contenedores propios (def. s9e2e-<pid>); la CI usa s9ci-<run>
+#   S9_E2E_PG_URL     servidor PostgreSQL EXTERNO (p. ej. el service de la CI) en vez del
+#                     embebido; la API crea en él una BD efímera de nombre único (CREATEDB)
+#   S9_E2E_REDIS_URL  Redis del tournament-worker (aviso de trabajos); sin ella, polling de BD
+#   DOCKER_SOCKET     socket de Docker (def. el rootless del usuario; la CI: /var/run/docker.sock)
+# Las imágenes de runtime de bots (runtimes/DIGESTS.lock) se descargan ANTES de arrancar
+# nada si faltan: el reloj de arranque del sandbox nunca incluye un `docker pull`.
 # Salida: rc 0 sólo si TODAS las fases (golden incluida) y la sonda pasan. Resumen en $STATE/out/summary.txt.
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PW_IMAGE="mcr.microsoft.com/playwright:v1.48.2-jammy@sha256:96dc479be9a603227fafc7126bd7d5e8152ae3e63749f377b2c49a4314b28ae1"
-NGINX_IMAGE="${S9_E2E_NGINX_IMAGE:-nginxinc/nginx-unprivileged:1.27-alpine}"
+NGINX_IMAGE="${S9_E2E_NGINX_IMAGE:-nginxinc/nginx-unprivileged:1.27-alpine@sha256:65e3e85dbaed8ba248841d9d58a899b6197106c23cb0ff1a132b7bfe0547e4c0}"
 STATE="${S9_E2E_STATE:-$(mktemp -d /tmp/s9-browser-e2e.XXXXXX)}"
 OUT="$STATE/out"
 B="${S9_E2E_PORT_BASE:-38080}"
 P_API=$B P_WS=$((B + 1)) P_REPLAY=$((B + 2)) P_WEB=$((B + 3)) P_PROXY=$((B + 4)) P_GW=$((B + 8)) P_TLS=$((B + 363))
-TAG="s9e2e-$$"
+TAG="${S9_E2E_TAG:-s9e2e-$$}"
 CACHE="${HOME}/.cache/s9-browser-e2e/$(sha256sum "$REPO/tests/browser/package-lock.json" | cut -c1-16)"
 TSX="$REPO/node_modules/.bin/tsx"
 
@@ -58,7 +65,17 @@ node -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(
 }
 
 PIDS=()
+# Evidencia de contenedores (PRC DEV-CI, TD-045): estado y logs de los contenedores
+# propios y de bots ANTES de borrarlos, siempre (también en verde).
+docker_evidence() {
+  mkdir -p "$STATE/logs/containers"
+  docker ps -a --format '{{.Names}}\t{{.Image}}\t{{.Status}}' >"$STATE/logs/containers/docker-ps.txt" 2>&1
+  for c in $(docker ps -a --format '{{.Names}}' | grep -E "^($TAG-|bot-)" || true); do
+    docker logs "$c" >"$STATE/logs/containers/$c.log" 2>&1
+  done
+}
 cleanup() {
+  docker_evidence
   [ "${S9_E2E_KEEP:-0}" = "1" ] && { log "S9_E2E_KEEP=1: entorno vivo en $STATE"; return; }
   for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill -TERM -- "-$p" 2>/dev/null; done
   sleep 2
@@ -106,6 +123,12 @@ ADVERTISE="${S9_SANDBOX_ADVERTISE_HOST:-$(node -e '
   }
   process.exit(1);')}"
 [ -n "$ADVERTISE" ] || { log "sin IPv4 alcanzable desde los contenedores (S9_SANDBOX_ADVERTISE_HOST)"; exit 2; }
+# Runtimes fijados por digest presentes ANTES del primer build (fuera del reloj de arranque).
+for img in $(grep -v '^#' "$REPO/runtimes/DIGESTS.lock" | awk 'NF==3 {print $3}'); do
+  docker image inspect "$img" >/dev/null 2>&1 && continue
+  log "descargando runtime $img"
+  docker pull -q "$img" >>"$STATE/logs/docker-pull.log" 2>&1 || { log "no se pudo descargar $img"; exit 2; }
+done
 
 # ── SPA (igual que el Dockerfile del web: vite build) ────────────────────────
 log "vite build…"
@@ -117,14 +140,36 @@ chmod -R a+rX "$STATE/dist"
 
 # ── servicios reales ─────────────────────────────────────────────────────────
 cd "$REPO"
-PIDS+=("$(start api env -u DATABASE_URL PORT=$P_API DBURL_FILE="$STATE/db.url" \
+# API: PostgreSQL embebido por defecto; con S9_E2E_PG_URL, BD efímera en ese servidor.
+API_DB=(-u DATABASE_URL)
+PG_MODE=embebido
+if [ -n "${S9_E2E_PG_URL:-}" ]; then
+  API_DB=(DATABASE_URL="$S9_E2E_PG_URL")
+  PG_MODE="externo (BD efímera)"
+  # Healthcheck: el servidor acepta consultas de verdad (no basta con el puerto abierto:
+  # la imagen oficial reinicia tras su init). La URL va por entorno, nunca por argv.
+  PG_OK=0
+  for _ in $(seq 1 60); do
+    if PGURL="$S9_E2E_PG_URL" node -e '
+      const { Client } = require("pg");
+      const c = new Client({ connectionString: process.env.PGURL });
+      c.connect().then(() => c.query("select 1")).then(() => c.end()).then(() => process.exit(0), () => process.exit(1));
+    ' >/dev/null 2>&1; then PG_OK=1; break; fi
+    sleep 1
+  done
+  [ $PG_OK -eq 1 ] || { log "PostgreSQL externo no responde (S9_E2E_PG_URL)"; exit 1; }
+fi
+log "postgres: $PG_MODE · redis: $([ -n "${S9_E2E_REDIS_URL:-}" ] && echo 'sí (aviso de trabajos)' || echo 'no (polling de BD)')"
+PIDS+=("$(start api env "${API_DB[@]}" PORT=$P_API DBURL_FILE="$STATE/db.url" \
   JWT_SECRET_FILE="$STATE/secrets/jwt_secret" SPECTATE_WS_URL=/ws/spectate \
   "$TSX" tests/browser/env/api-env.ts)")
 for _ in $(seq 1 120); do [ -s "$STATE/db.url" ] && break; sleep 1; done
 [ -s "$STATE/db.url" ] || { log "la API no arrancó (ver logs/api.log)"; exit 1; }
 DATABASE_URL="$(cat "$STATE/db.url")"
 export DATABASE_URL
-PIDS+=("$(start worker env JWT_SECRET_FILE="$STATE/secrets/jwt_secret" REPLAYS_DIR="$STATE/replays" \
+WORKER_REDIS=()
+[ -n "${S9_E2E_REDIS_URL:-}" ] && WORKER_REDIS=(REDIS_URL="$S9_E2E_REDIS_URL")
+PIDS+=("$(start worker env "${WORKER_REDIS[@]}" JWT_SECRET_FILE="$STATE/secrets/jwt_secret" REPLAYS_DIR="$STATE/replays" \
   SPECTATE_PORT=$P_WS VERSION_PATH="$STATE/worker-version.json" HEARTBEAT_PATH="$STATE/worker-heartbeat" \
   DOCKER_PROXY_URL="http://127.0.0.1:$P_PROXY" ARENA_ENGINE_HOST="$ADVERTISE" ARENA_NETWORK=arena \
   ARTIFACT_VERIFY_KEY_FILE="$STATE/secrets/artifact_verify_key.pem" \
@@ -163,6 +208,17 @@ for _ in $(seq 1 30); do [ -s "$STATE/worker-heartbeat" ] && break; sleep 1; don
 for _ in $(seq 1 30); do grep -q '"battleExecution"' "$STATE/logs/worker.log" && break; sleep 1; done
 grep -q '"battleExecution":"container"' "$STATE/logs/worker.log" || {
   log "el tournament-worker NO ejecuta batallas (ver logs/worker.log)"
+  exit 1
+}
+# Orden por healthchecks: el proxy de Docker escucha y el worker de builds tiene sandbox.
+for _ in $(seq 1 30); do grep -q 'proxy de Docker escuchando' "$STATE/logs/docker-proxy.log" && break; sleep 1; done
+grep -q 'proxy de Docker escuchando' "$STATE/logs/docker-proxy.log" || {
+  log "s9-docker-proxy local no escucha (ver logs/docker-proxy.log)"
+  exit 1
+}
+for _ in $(seq 1 30); do grep -q '"sandbox"' "$STATE/logs/build-worker.log" && break; sleep 1; done
+grep -q '"sandbox":"container"' "$STATE/logs/build-worker.log" || {
+  log "el bot-build-worker NO tiene sandbox real (ver logs/build-worker.log)"
   exit 1
 }
 log "entorno listo en $BASE · bots anunciados en $ADVERTISE"
@@ -211,6 +267,10 @@ else
   log "PLAYWRIGHT_GOLDEN_RC=SKIPPED (S9_E2E_SKIP_GOLDEN=1): no cuenta como verde"
 fi
 log "batalla del golden path (replay de la fase 1 y sonda): ${REPLAY_ID:-ninguna}"
+# Evidencia de BD (builds con sus etapas, versiones, batallas, jobs; sin secretos) mientras
+# la API (y con ella el PostgreSQL embebido) sigue viva.
+DATABASE_URL="$(cat "$STATE/db.url")" "$TSX" tests/browser/env/dump-evidence.ts "$OUT/db-evidence.json" \
+  >>"$STATE/logs/dump-evidence.log" 2>&1 || log "aviso: no se pudo volcar la evidencia de BD (logs/dump-evidence.log)"
 echo "S9_E2E_REPLAY_ID=$REPLAY_ID" >>"$STATE/pw.env"
 
 # ── sonda TD-028 (ticket → TLS → gateway → worker) ───────────────────────────
