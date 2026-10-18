@@ -43,15 +43,22 @@ Ningún valor secreto aparece aquí.
 | `GATEWAY_CONF` | `gateway` (fichero montado) | `nginx.conf` | no | `nginx-behind-proxy.conf` detrás de proxy ([networking.md](networking.md)) |
 | `TRUST_PROXY_HOPS` | `api` | `1` | no | entero `0..8`; inválido → la API no arranca; `2` detrás de un proxy inverso |
 | `DATABASE_URL` | `api`, `tournament-worker`, `bot-build-worker`, `map-service`, `replay-service` | vacío | no | vacío = Postgres del stack vía `PGHOST`; con perfil `external-db` apunta a un PostgreSQL externo |
-| `ARENA_ENGINE_URL` | `api` | `http://arena-engine:8081` | no | runner HTTP de `/run` |
-| `S9_ENABLE_REAL_BATTLE_RUNS` | `api` | vacío (apagado) | no | `1` activa `/run` real; **no activar**: ver nota de doble ejecución abajo |
+| `ARENA_ENGINE_URL` | `api` | `http://arena-engine:8081` | no | **legado**: la API ya no cablea el runner HTTP de `/run` (cierre funcional; `server.ts`) |
+| `S9_ENABLE_REAL_BATTLE_RUNS` | `api` | vacío (apagado) | no | **legado**: sólo cambia `realBattleRuns.enabled` en `/system/status`; `POST /battles/{id}/run` ya sólo delega en la cola |
 | `S9_MAX_CONCURRENT_REAL_BATTLE_RUNS` | `api` | vacío | no | límite de `/run` concurrentes |
 | `REPLAY_SERVICE_URL` | `api` | `http://replay-service:8083` | no | ingesta del replay del camino `/run` |
 | `REPLAY_INGEST_REQUIRED` | `api` | vacío | no | `1` = la batalla falla si la ingesta falla |
-| `DOCKER_PROXY_URL` | `arena-engine` | vacío | no | vacío = el motor no lanza contenedores de bots (estado de producción) |
+| `DOCKER_PROXY_URL` | `tournament-worker` | vacío (sin defecto a propósito) | **sí** para ejecutar batallas | vacío = el worker NO reclama `run_battle` y lo anuncia al arrancar (`battleExecution: disabled`); con valor, ejecuta cada batalla con el artefacto firmado de cada bot |
+| `DOCKER_PROXY_URL` | `bot-build-worker` | `http://docker-proxy.internal:2375` | **sí** para validar bots | sin proxy, todo build se rechaza «sandbox no verificado» |
+| `DOCKER_PROXY_URL` | `arena-engine` | vacío | no | camino legado; vacío = el motor no lanza contenedores |
 | `DOCKER_PROXY_URL` | `bot-manager` | `http://docker-proxy.internal:2375` | no | el proxy vive en el host ([docker-proxy.md](docker-proxy.md)) |
 | `ARENA_NETWORK` | `arena-engine` | `arena` | no | red de los contenedores de bots (nombre fijo) |
 | `ARENA_ENGINE_HOST` | `arena-engine` | `arena-engine` | no | nombre con el que los bots alcanzan al motor |
+| `SPECTATE_WS_URL` | `api` | `/ws/spectate` | no | base del WebSocket de espectador para el NAVEGADOR: ruta del mismo origen (el cliente la ancla a `wss://` bajo https) o `wss://…`; `ws://` en claro se rechaza con `NODE_ENV=production` |
+| `CORS_ORIGIN` | `api` | `http://localhost:5173` | no | mismo defecto que el código; la web es same-origin por el gateway |
+| `S9_PUBLIC_SPECTATE_ENABLED` | `api`, `tournament-worker` | vacío (apagado) | no | espectador público; el gateway del worker aplica la MISMA capability |
+| `S9_PUBLIC_REPLAYS_ENABLED` | `api` | vacío (apagado) | no | replays públicos de la API ([TD-004](../roadmap/technical-debt.md#td-004) sigue abierta en el gateway) |
+| `S9_METRICS_ENABLED` | `api` | vacío (apagado) | no | `/metrics` |
 | `API_ENTRY`, `ENGINE_ENTRY`, `WORKER_ENTRY`, `BOT_MANAGER_ENTRY`, `BOT_BUILD_WORKER_ENTRY`, `MAP_SERVICE_ENTRY`, `REPLAY_SERVICE_ENTRY` | servicios Node (`SERVICE_ENTRY`) | el `main`/`server` de cada app | no | no tocar salvo depuración |
 | `RESTIC_REPOSITORY` | `backup` | vacío | **sí** para tener copias | `sftp:usuario@host:/ruta` (ruta dentro del chroot) o ruta montada |
 | `RESTIC_HOSTNAME` | `backup` | un nombre lógico fijo | **sí** (vacío aborta el arranque) | agrupa la retención; no cambiarlo en producción |
@@ -61,10 +68,10 @@ Ningún valor secreto aparece aquí.
 | `BROADCAST_URL`, `RTMPS_URL`, `STREAM_MODE`, `STREAM_ENCODER`, `STREAM_AUTOSTART` | `streamer` (perfil `streaming`) | ver compose | no | fuera del perfil `production` |
 | `ALERT_WEBHOOK_URL`, `ALERT_EMAIL`, `PG_EXPORTER_URI` | perfil `observability` | — | no | observabilidad no desplegada en producción |
 
-> **Doble ejecución.** Hoy toda batalla la ejecuta `tournament-worker`. Encender
-> `S9_ENABLE_REAL_BATTLE_RUNS=1` con `DOCKER_PROXY_URL` del motor configurado añadiría un segundo
-> camino de ejecución sobre las mismas batallas ([TD-002](../roadmap/technical-debt.md#td-002)).
-> La puerta de activación está descrita en [../technical/battles.md](../technical/battles.md).
+> **Una sola autoridad de ejecución.** Toda batalla la ejecuta `tournament-worker` (reserva
+> atómica + lease + cierre exactamente una vez). La API ya no construye el runner HTTP de `/run`,
+> así que `S9_ENABLE_REAL_BATTLE_RUNS` no abre un segundo camino
+> ([battles.md](../technical/battles.md#autoridad-única-de-ejecución)).
 
 ## Variables fijadas por el compose dentro de los contenedores
 
@@ -83,21 +90,18 @@ No se configuran en `.env`; se documentan para diagnóstico.
 
 ## Variables que el código lee pero el compose NO pasa
 
-Ponerlas en `infrastructure/.env` **no tiene efecto**: haría falta un fichero compose adicional
-(override) que las añada al `environment:` del servicio, con el procedimiento de
-[upgrades.md](upgrades.md).
+Desde el cierre funcional (REVIEW, [TD-030](../roadmap/technical-debt.md#td-030)) el contrato lo
+fija `infrastructure/tests/service-env-contract.test.ts`: para `api`, `tournament-worker` y
+`bot-build-worker` recorre el grafo de imports real y exige que cada lectura de entorno esté en el
+bloque `environment` o en una lista interna con motivo. Las que siguen sin pasarse, a propósito:
 
-| Variable | Lee | Por defecto en código | Efecto hoy |
+| Variable | Lee | Por defecto en código | Por qué no se pasa |
 |---|---|---|---|
-| `CORS_ORIGIN` | api (`app.ts:120`) | `http://localhost:5173` | el origen permitido en producción es ese valor por defecto; la web es same-origin a través del gateway. El compose no la entrega ([TD-030](../roadmap/technical-debt.md#td-030)) |
-| `S9_PUBLIC_SPECTATE_ENABLED` | api | apagado | espectador público apagado |
-| `S9_PUBLIC_REPLAYS_ENABLED` | api | apagado | replays públicos de la API apagados (pero `/replays/*` del replay-service es anónimo por el gateway, [TD-004](../roadmap/technical-debt.md#td-004)) |
-| `S9_METRICS_ENABLED` | api | apagado | sin `/metrics` |
-| `SPECTATE_WS_URL` | api (`routes/battles.ts:37`) | `ws://localhost:8081/spectate` | el ticket de espectador apunta a localhost; sin `NODE_ENV=production` no se exige `wss://` ([TD-028](../roadmap/technical-debt.md#td-028)) |
-| `SPECTATE_TICKET_SECRET_FILE` | api | derivado de `jwt_secret` (HKDF) | — |
-| `NODE_ENV` | api (`/system/status`, chequeo `wss://`) | sin definir | `/system/status` informa `unknown` |
-| `GIT_COMMIT` / `COMMIT_SHA` | api (`/system/status`) | `unknown` | el panel no muestra la versión ADR-016 ([TD-020](../roadmap/technical-debt.md#td-020)) |
-| `ARENA_ENGINE_RUN_TIMEOUT_MS`, `REPLAY_INGEST_TIMEOUT_MS` | api | derivado / `10000` | — |
+| `NODE_ENV` | api (`/system/status`, chequeo `wss://`) | sin definir | no se fija en las imágenes: el rechazo de `ws://` en claro sólo se activa con `production`. Como el compose pasa `SPECTATE_WS_URL=/ws/spectate`, el valor efectivo ya es seguro (deuda registrada en el informe de cierre) |
+| `GIT_COMMIT` / `COMMIT_SHA` | api (`/system/status`) | `unknown` | identidad de build del Dockerfile ([TD-020](../roadmap/technical-debt.md#td-020)) |
+| `SPECTATE_TICKET_SECRET_FILE` | api, tournament-worker | derivado de `jwt_secret` (HKDF) | secreto dedicado del ticket propuesto como deuda (el worker recibe hoy `jwt_secret`) |
+| `ARENA_ENGINE_RUN_TIMEOUT_MS`, `REPLAY_INGEST_TIMEOUT_MS`, `REPLAY_INGEST_REQUIRED` | api | derivado / `10000` | ajustes del camino legado `/run` |
+| `RUNTIME_DIGESTS_LOCK` | tournament-worker, bot-build-worker | `runtimes/DIGESTS.lock` copiado en la imagen | sólo para una ruta distinta |
 | `S9_READINESS_CONTAINER`, `S9_READINESS_BACKUP_CONTAINER`, `S9_READINESS_REPO` | `scripts/readiness.ts` (host) | vacío | se pasan en la línea de comandos del host ([readiness.md](readiness.md)) |
 
 ## Secretos
@@ -108,10 +112,11 @@ Ficheros en `infrastructure/secrets/` (generados por `init-secrets.sh`), montado
 | Secreto | Servicios | Variable que lo lee |
 |---|---|---|
 | `postgres_password` | postgres, api, tournament-worker, bot-build-worker, map-service, replay-service, backup (y postgres-exporter en `observability`) | `POSTGRES_PASSWORD_FILE` / `PGPASSWORD_FILE` |
-| `jwt_secret` | api | `JWT_SECRET_FILE` |
+| `jwt_secret` | api, tournament-worker (verifica el ticket de espectador, TD-028) | `JWT_SECRET_FILE` |
 | `arena_engine_internal_secret` | api, arena-engine | `ARENA_ENGINE_SHARED_SECRET_FILE` / `ARENA_ENGINE_INTERNAL_SECRET_FILE` |
 | `replay_ingest_secret` | api, replay-service | `REPLAY_INGEST_SECRET_FILE` |
-| `artifact_signing_key` | bot-build-worker | `ARTIFACT_SIGNING_KEY_FILE` |
+| `artifact_signing_key` | bot-build-worker (firma) | `ARTIFACT_SIGNING_KEY_FILE` |
+| `artifact_verify_key` (pública, PEM SPKI; la deriva `init-secrets.sh` de la anterior) | api (`/keys/artifact-signing`), tournament-worker (verifica antes de lanzar) | `ARTIFACT_VERIFY_KEY_FILE` |
 | `restic_password`, `restic_ssh_key`, `restic_ssh_known_hosts` | backup | `RESTIC_PASSWORD_FILE`, `RESTIC_SSH_KEY_FILE`, `RESTIC_SSH_KNOWN_HOSTS_FILE` |
 | `stream_key` | streamer | `STREAM_KEY_FILE` |
 | `grafana_admin_password` | grafana (perfil `observability`) | — |
@@ -150,9 +155,10 @@ las lee sólo `scripts/e2e-real-battle-smoke.ts`, no la API). Ver
 |---|---|---|
 | Valores por defecto de la tabla de interpolación | CODE_VERIFIED | `infrastructure/docker-compose.yml` (bloques `environment:`/`image:`/`ports:`), renderizado con `docker compose config` |
 | El compose no usa `env_file:` | CODE_VERIFIED | `grep env_file infrastructure/docker-compose.yml` → 0 |
-| `CORS_ORIGIN`, `S9_PUBLIC_*`, `S9_METRICS_ENABLED`, `SPECTATE_WS_URL`, `NODE_ENV` no están en el compose | CODE_VERIFIED | `grep` sobre el compose → 0; lecturas en `apps/api/src/app.ts:120`, `public-spectate.ts:12`, `public-replays.ts:20`, `metrics.ts:31`, `routes/battles.ts:37-38` |
+| Toda lectura de entorno de api, tournament-worker y bot-build-worker está en su `environment` o es interna con motivo; toda interpolación está en `.env.example` (TD-030) | CODE_VERIFIED | `infrastructure/tests/service-env-contract.test.ts` (rc=0; mutación «quitar `SPECTATE_WS_URL` del compose» ⇒ rc=1) |
+| `SPECTATE_WS_URL` relativa aceptada; `ws://` y `//host` rechazadas en producción | CODE_VERIFIED | `apps/api/src/routes/battles.ts` (`spectateWsBase`); `apps/api/src/public-api.test.ts` (R2.6) |
 | `TRUST_PROXY_HOPS`: compose `1`, código `0` si falta, `0..8`, inválido no arranca | CODE_VERIFIED | `apps/api/src/middleware/proxy-trust.ts:15-27`; `server.ts:20` |
-| `S9_ENABLE_REAL_BATTLE_RUNS === "1"` activa `/run` | CODE_VERIFIED | `apps/api/src/battle-run.ts:84-87` |
+| `/run` ya no ejecuta; la API no cablea el launcher HTTP | CODE_VERIFIED | `apps/api/src/server.ts`; `apps/api/src/server-wiring.test.ts` (AST) |
 | `REPLAY_INGEST_ENABLED/RETRIES` sólo en el smoke | CODE_VERIFIED | `scripts/e2e-real-battle-smoke.ts:151,157`; `battle-run-http-launcher.ts:367-370` |
 | `/system/status` lee `GIT_COMMIT`/`COMMIT_SHA` | CODE_VERIFIED | `apps/api/src/routes/system.ts:50-51` |
 | Secreto de ticket derivado por HKDF | CODE_VERIFIED | `apps/api/src/auth/tokens.ts:84-97` |

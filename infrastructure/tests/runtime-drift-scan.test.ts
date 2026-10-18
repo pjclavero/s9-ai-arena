@@ -282,7 +282,10 @@ describe("hechos reales de producción (fixture capturado del daemon)", () => {
     // Si la normalización del prefijo estuviera mal, `backup` (7 volúmenes) y
     // `api` (arena_replays en ro) saldrían con spec_drift. Salen limpios.
     expect(por("backup").spec_drift).toBe("ninguno");
-    expect(por("api").spec_drift).toBe("ninguno");
+    // REVIEW (cierre funcional): la única deriva de `api` es el secreto NUEVO de la
+    // clave pública de verificación (aún no desplegado). Los VOLÚMENES casan, que es
+    // lo que este caso protege (normalización del prefijo).
+    expect(por("api").spec_drift).toBe("secreto ausente: artifact_verify_key");
   });
 
   it("la salida no lleva topología real al repositorio público", () => {

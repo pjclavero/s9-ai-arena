@@ -25,11 +25,11 @@ La plataforma calcula muchas estadísticas de cada batalla: daño, disparos, aci
 | Banderas tomadas y capturadas | Sí | Sólo en el marcador del visor (que hoy no se dibuja) |
 | Minas puestas y activadas | Sí | **No** |
 | Turnos sin respuesta del bot | Sí | **No** |
-| Tiempo de CPU del bot | Sólo en ejecución real | **No** (hoy siempre vacío) |
+| Tiempo de CPU del bot | Sí: CPU real del contenedor de tu bot (aprox., cota inferior) | **No** |
 | Clasificación por equipos de un torneo | Sí (formato `teams`) | **No** |
 | Ganador de cada enfrentamiento de torneo | Sí | Sí, en el cuadro |
 
-En las batallas de hoy, el uso de algunos módulos sale a 0: los vehículos los conduce el bot de prueba de la plataforma ([TD-002](../roadmap/technical-debt.md#td-002)).
+Las estadísticas reflejan **lo que hizo tu código**: si tu bot nunca dispara, sus disparos salen a 0 (comprobado con dos bots de comportamiento distinto en un entorno de pruebas, [TD-002](../roadmap/technical-debt.md#td-002)). El historial de rating de un bot privado sólo lo ves tú (o tu equipo).
 
 ## Dónde verlo
 
@@ -57,4 +57,4 @@ En las batallas de hoy, el uso de algunos módulos sale a 0: los vehículos los 
 ## Documentación relacionada
 
 - Usuario: [Clasificaciones](rankings.md), [Batallas](battles.md), [Replays](replays.md)
-- Técnica: [battles.md — estadísticas](../technical/battles.md#8-estadísticas), [replays.md](../technical/replays.md)
+- Técnica: [battles.md — estadísticas](../technical/battles.md#8-cierre-exactamente-una-vez-finishbattle), [replays.md](../technical/replays.md)

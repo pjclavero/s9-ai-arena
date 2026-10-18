@@ -24,6 +24,10 @@ export const INFRASTRUCTURE_FAILURE_CODES = [
   "artifact_unavailable", // el artefacto firmado del bot no está disponible
   "container_unavailable", // el bot-manager no pudo proporcionar el contenedor
   "storage_unavailable", // no se pudo persistir replay/resultado
+  // DEV-B · la batalla la tiene reservada OTRO titular con el lease vivo (trabajo
+  // duplicado) o este worker perdió la reserva a mitad: no se ejecuta ni se
+  // finaliza dos veces; el reintento la verá `finished` si el titular la cierra.
+  "battle_busy",
 ] as const;
 
 export type SportingFailureCode = (typeof SPORTING_FAILURE_CODES)[number];
@@ -58,6 +62,8 @@ export class SportingFailure extends Error {
     /** bot responsable: pierde la batalla */
     readonly botId: string,
     message: string,
+    /** Quién conducía los vehículos (queda en battles.result.agents). */
+    readonly agents?: "container" | "in_process_stub" | "scripted",
   ) {
     super(`[${code}] bot ${botId}: ${message}`);
     this.name = "SportingFailure";

@@ -674,6 +674,142 @@ const m011_battle_cpu_ms: Migration = {
   },
 };
 
+// DEV-A (cierre funcional 2026-10) · A9 — versionado REAL de bots sobre el
+// modelo de BD existente (VERSIONING_BACKEND = EXISTING_DB_MODEL, sin Git).
+//
+// Qué faltaba en 003_bots y aquí se completa:
+//  - INMUTABILIDAD en BD, no sólo por convención de la API: una versión con
+//    state ≠ draft no puede cambiar source/source_filename/runtime/
+//    loadout_revision; la identidad (bot_id, version, parent_version,
+//    created_at) no cambia nunca; artifact_hash/validated_build_id sólo se
+//    fijan en el paso validating → validated (completeBuild) y code_public es
+//    irreversible (D9). Una versión no-draft no se puede borrar.
+//  - build y artefacto LIGADOS a su versión: `validated_build_id` dice qué
+//    build produjo el artefacto de la versión; `artifacts.build_id` es UNIQUE.
+//    Antes la única unión versión→artefacto era el hash (`artifacts.hash`), y
+//    dos versiones con el mismo código compartían hash sin saber cuál era cuál.
+//  - `parent_version`: «nueva versión desde X» (clonado) deja rastro.
+//  - `source_sha256`: huella del código almacenado, calculada por la BD.
+const m012_bot_versioning: Migration = {
+  name: "012_bot_versioning",
+  async up(db) {
+    await db.raw(`
+      ALTER TABLE bot_versions
+        ADD COLUMN source_sha256      text,
+        ADD COLUMN parent_version     integer,
+        ADD COLUMN validated_build_id uuid REFERENCES builds(id) ON DELETE RESTRICT;
+      ALTER TABLE bot_versions
+        ADD CONSTRAINT bot_versions_parent_fk
+          FOREIGN KEY (bot_id, parent_version) REFERENCES bot_versions(bot_id, version) ON DELETE RESTRICT,
+        ADD CONSTRAINT bot_versions_parent_before CHECK (parent_version IS NULL OR parent_version < version);
+
+      UPDATE bot_versions SET source_sha256 = encode(sha256(source), 'hex') WHERE source IS NOT NULL;
+      -- Backfill: el build 'passed' más reciente de la versión cuyo hash coincide.
+      UPDATE bot_versions v SET validated_build_id = b.id
+        FROM (
+          SELECT DISTINCT ON (bot_id, version) id, bot_id, version, artifact_hash
+          FROM builds WHERE status = 'passed'
+          ORDER BY bot_id, version, created_at DESC, id DESC
+        ) b
+        WHERE v.bot_id = b.bot_id AND v.version = b.version
+          AND v.artifact_hash IS NOT DISTINCT FROM b.artifact_hash
+          AND v.artifact_hash IS NOT NULL;
+
+      ALTER TABLE artifacts ADD CONSTRAINT artifacts_build_unique UNIQUE (build_id);
+      CREATE INDEX IF NOT EXISTS builds_version_idx ON builds (bot_id, version, created_at DESC);
+
+      CREATE FUNCTION s9_bot_version_guard() RETURNS trigger LANGUAGE plpgsql AS $fn$
+      BEGIN
+        IF TG_OP = 'DELETE' THEN
+          IF OLD.state <> 'draft' THEN
+            RAISE EXCEPTION 'bot_version_immutable: la versión % del bot % está en % y no se puede borrar',
+              OLD.version, OLD.bot_id, OLD.state USING ERRCODE = 'integrity_constraint_violation';
+          END IF;
+          RETURN OLD;
+        END IF;
+
+        IF TG_OP = 'INSERT' THEN
+          NEW.source_sha256 := CASE WHEN NEW.source IS NULL THEN NULL ELSE encode(sha256(NEW.source), 'hex') END;
+          RETURN NEW;
+        END IF;
+
+        -- UPDATE
+        IF NEW.id IS DISTINCT FROM OLD.id OR NEW.bot_id IS DISTINCT FROM OLD.bot_id
+           OR NEW.version IS DISTINCT FROM OLD.version OR NEW.parent_version IS DISTINCT FROM OLD.parent_version
+           OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+          RAISE EXCEPTION 'bot_version_immutable: la identidad de la versión % del bot % no se puede cambiar',
+            OLD.version, OLD.bot_id USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+        IF OLD.state <> 'draft' AND (
+             NEW.source IS DISTINCT FROM OLD.source OR NEW.source_filename IS DISTINCT FROM OLD.source_filename
+             OR NEW.runtime IS DISTINCT FROM OLD.runtime OR NEW.loadout_revision IS DISTINCT FROM OLD.loadout_revision) THEN
+          RAISE EXCEPTION 'bot_version_immutable: la versión % del bot % está en % y su código/runtime/loadout no se puede cambiar (crea una versión nueva)',
+            OLD.version, OLD.bot_id, OLD.state USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+        IF OLD.state <> 'validating' AND (
+             NEW.artifact_hash IS DISTINCT FROM OLD.artifact_hash
+             OR NEW.validated_build_id IS DISTINCT FROM OLD.validated_build_id) THEN
+          RAISE EXCEPTION 'bot_version_immutable: el artefacto de la versión % del bot % sólo se fija al validar',
+            OLD.version, OLD.bot_id USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+        IF OLD.code_public AND NOT NEW.code_public THEN
+          RAISE EXCEPTION 'bot_version_immutable: code_public es irreversible (D9)'
+            USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+        NEW.source_sha256 := CASE WHEN NEW.source IS NULL THEN NULL ELSE encode(sha256(NEW.source), 'hex') END;
+        RETURN NEW;
+      END
+      $fn$;
+
+      CREATE TRIGGER bot_versions_guard
+        BEFORE INSERT OR UPDATE OR DELETE ON bot_versions
+        FOR EACH ROW EXECUTE FUNCTION s9_bot_version_guard();
+    `);
+  },
+  async down(db) {
+    await db.raw(`
+      DROP TRIGGER IF EXISTS bot_versions_guard ON bot_versions;
+      DROP FUNCTION IF EXISTS s9_bot_version_guard();
+      DROP INDEX IF EXISTS builds_version_idx;
+      ALTER TABLE artifacts DROP CONSTRAINT IF EXISTS artifacts_build_unique;
+      ALTER TABLE bot_versions
+        DROP CONSTRAINT IF EXISTS bot_versions_parent_before,
+        DROP CONSTRAINT IF EXISTS bot_versions_parent_fk,
+        DROP COLUMN IF EXISTS validated_build_id,
+        DROP COLUMN IF EXISTS parent_version,
+        DROP COLUMN IF EXISTS source_sha256;
+    `);
+  },
+};
+
+// DEV-B (cierre funcional) — RESERVA ATÓMICA y LEASE de la ejecución de una
+// batalla. El tournament-worker es la ÚNICA autoridad de ejecución: reclama la
+// batalla con `UPDATE … WHERE status='scheduled' RETURNING` y escribe aquí quién
+// la ejecuta (`claimed_by`) y hasta cuándo vale su reserva (`lease_expires_at`,
+// renovada mientras corre). Sólo el titular vigente puede finalizarla
+// (`UPDATE … WHERE status='running' AND claimed_by=:yo`): una batalla se
+// ejecuta y se cierra EXACTAMENTE una vez aunque haya trabajos duplicados,
+// reintentos, dos workers o un worker que muere a mitad (su lease caduca y otro
+// la recupera). `run_attempts` cuenta las reservas (diagnóstico).
+const m013_battle_claim: Migration = {
+  name: "013_battle_claim",
+  async up(db) {
+    await db.raw(`
+      ALTER TABLE battles
+        ADD COLUMN claimed_by       text,
+        ADD COLUMN lease_expires_at timestamptz,
+        ADD COLUMN run_attempts     integer NOT NULL DEFAULT 0 CHECK (run_attempts >= 0);
+      CREATE INDEX battles_running_lease_idx ON battles (lease_expires_at) WHERE status = 'running';
+    `);
+  },
+  async down(db) {
+    await db.raw(`
+      DROP INDEX IF EXISTS battles_running_lease_idx;
+      ALTER TABLE battles DROP COLUMN claimed_by, DROP COLUMN lease_expires_at, DROP COLUMN run_attempts;
+    `);
+  },
+};
+
 export const MIGRATIONS: Migration[] = [
   m001_identity,
   m002_content,
@@ -686,6 +822,8 @@ export const MIGRATIONS: Migration[] = [
   m009_r24_refresh_families,
   m010_r25_shared_limits,
   m011_battle_cpu_ms,
+  m012_bot_versioning,
+  m013_battle_claim,
 ];
 
 class ProgrammaticMigrationSource {

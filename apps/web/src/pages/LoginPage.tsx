@@ -5,6 +5,7 @@
  */
 import { useState, type FormEvent } from "react";
 import { api, setToken, type Me } from "../api.js";
+import { describeApiError } from "../errors.js";
 
 export function LoginPage(props: { onLogin: (me: Me) => void; notice?: string }) {
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -32,7 +33,14 @@ export function LoginPage(props: { onLogin: (me: Me) => void; notice?: string })
     } catch (err) {
       const e2 = err as { status?: number; message: string };
       if (e2.status === 401 && /TOTP|2FA/i.test(e2.message)) setNeedsTotp(true);
-      setError(e2.message);
+      // FC-D (D2): API caída, plazo o 5xx se nombran como tales (no como
+      // «credenciales incorrectas»); el resto muestra el mensaje real del servidor.
+      const d = describeApiError(err);
+      setError(
+        d.kind === "timeout" || d.kind === "network" || d.kind === "server" || d.kind === "unavailable"
+          ? `${d.title}: ${d.detail}. Inténtalo de nuevo en un momento.`
+          : e2.message,
+      );
     }
   }
 
@@ -86,7 +94,7 @@ export function LoginPage(props: { onLogin: (me: Me) => void; notice?: string })
           </p>
         )}
         {error && (
-          <p className="error" role="alert">
+          <p className="error" role="alert" data-testid="login-error">
             {error}
           </p>
         )}

@@ -27,6 +27,7 @@ import { clearStandingsCache } from "../../api/src/services/standings.js";
 import { TournamentWorker } from "./worker.js";
 import { makeDefaultHandlers } from "./engine-executor.js";
 import { createBots, type TestBot } from "./testing/fixtures.js";
+import { testStubAgents } from "./testing/stub-agents.js";
 
 let h: TestDbHandle;
 let app: Express;
@@ -55,6 +56,8 @@ beforeAll(async () => {
   replaysDir = mkdtempSync(join(tmpdir(), "e9-replays-"));
   const wired = await makeDefaultHandlers({
     db: h.db,
+    // TD-002 · sin agente por defecto: los stubs se piden EXPLÍCITAMENTE (sólo tests).
+    agents: testStubAgents(),
     // Batallas cortas para el E2E: la justicia del resultado es del motor.
     rulesetOverrides: { timeLimitTicks: 360, scoreToWin: 1 },
     replaysDir,

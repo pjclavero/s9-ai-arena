@@ -3,15 +3,22 @@
 ## Resumen
 
 Esta es la **fuente única del estado del proyecto**. Sustituye a los antiguos `docs/estado-proyecto.md`
-y `docs/ESTADO_ACTUAL.md`, que quedan archivados en `docs/history/status/` y ya no son vigentes:
-se contradecían entre sí y describían el estado de julio.
+y `docs/ESTADO_ACTUAL.md`, que quedan archivados en `docs/history/status/` y ya no son vigentes.
+
+Hay dos planos y no se mezclan:
+- **Código (integración del cierre funcional):** rama `integration/functional-closure`, que une los cuatro carriles DEV-A…D sobre `0b8c12b` y se verificó en un entorno aislado (PostgreSQL embebido, Docker rootless local, navegador real). **No está en `main` hasta que se fusione.**
+- **Producción:** no ha cambiado. El cierre funcional no despliega nada.
 
 ```
-BASE COMMIT:    27f70bb (origin/main, 2026-09-13; 0 commits desde la auditoría del 2026-10-15)
-LAST VERIFIED:  2026-10-15 (código en 27f70bb; runtime de backup re-medido 2026-10-15 21:01 UTC)
-RUNTIME:        perfil compose `production`, 12 servicios, imágenes de 3 commits distintos (ver Operations)
-VEREDICTO:      NO funcional como producto: recorrido de usuario de extremo a extremo = 0 %
+BASE COMMIT:    0b8c12b (origin/main; tras #151 y #150)
+INTEGRACIÓN:    integration/functional-closure (sin push; ver functional-closure-report.md)
+LAST VERIFIED:  2026-10-18 (código, suites y navegador en entorno aislado)
+RUNTIME:        sin cambios desde la auditoría: perfil `production`, 12 servicios, imágenes de 3 commits
+VEREDICTO CÓDIGO:     el recorrido de usuario completo funciona en aislado (golden path en navegador real)
+VEREDICTO PRODUCCIÓN: NO funcional como producto hasta desplegar la integración
 ```
+
+Informe del cierre: [functional-closure-report.md](../development/functional-closure-report.md).
 
 ## Índice
 
@@ -22,31 +29,20 @@ VEREDICTO:      NO funcional como producto: recorrido de usuario de extremo a ex
 - [Security](#security)
 - [Known issues](#known-issues)
 - [Next priorities](#next-priorities)
+- [Documentación relacionada](#documentación-relacionada)
 - [Verificación](#verificación)
 
 ## Functional
 
-**FUNCIONA ACTUALMENTE.** Lo que sigue está verificado con tests o en runtime, sin depender de stubs:
+**FUNCIONA ACTUALMENTE (integración, entorno aislado).** Verificado con tests que se ponen rojos con su mutación y con el golden path en Chromium real, sin mocks de servicios de S9:
 
-- **Motor de simulación:**
-  - movimiento y colisión (Rapier 2D);
-  - armas, daño y blindaje por sector;
-  - sensores (lidar, radar, proximidad) y acústica;
-  - modos deathmatch, team deathmatch, CTF y control de zona;
-  - determinismo por semilla y hash de estado;
-  - replay del motor.
-
-  Ver [docs/technical/engine.md](../technical/engine.md).
-- **Cuentas:**
-  - registro, login y logout;
-  - refresh con rotación y revocación de la familia si se reutiliza;
-  - 2FA y sesiones, sólo por API;
-  - RBAC por dueño en bots, loadouts, versiones y código fuente.
-- **Bots:** crear, pegar el código, versionar y guardar el loadout validado contra el catálogo (31 módulos, 5 chasis).
-- **Mapas:** importar, generar y publicar desde la web con rol organizer. Persisten en `maps`/`map_versions`.
-- **Cola de trabajos:** tabla `jobs` en PostgreSQL con `FOR UPDATE SKIP LOCKED`, reintentos con backoff y `needs_review`.
-- **Backup:** cron diario con restic sobre SFTP y `pg_dump`, con un healthcheck que mira la copia y no el demonio. Hay una copia correcta del 2026-10-15.
-- **CI principal:** `ci.yml` y `e6-security.yml` en verde sobre `27f70bb`.
+- **Recorrido completo de usuario** (golden path, `tests/browser/specs/golden-path.spec.ts`): registro → bot con código pegado → build en el sandbox real (contenedor por `s9-docker-proxy`) → `published` → segundo bot → equipo → mapa (importar, guardar, F5, reabrir, publicar) → batalla en el mapa propio → la ejecuta el `tournament-worker` con el **artefacto firmado** de la versión exacta de cada bot → visor en directo → `finished` con ganador → estadísticas → replay reproducido en la web. Los bots son distinguibles (uno dispara, otro nunca): el resultado prueba que corrió SU código.
+- **Bots y versionado:** sandbox real del build ([bots.md](../technical/bots.md)); versión inmutable en BD; historial, diff, clonado y procedencia ([bot-versioning.md](../technical/bot-versioning.md)).
+- **Batallas:** una sola autoridad de ejecución (reserva atómica + lease + cierre exactamente una vez); validación modo ↔ ruleset ↔ mapa en la API; resultado `battle-result/v1`, outcome por bot, CPU real, replay verificable ([battles.md](../technical/battles.md)).
+- **Mapas, equipos y rulesets:** editor que guarda y reabre desde la API, borradores privados, equipos completos, rulesets servidos por la API ([maps.md](../technical/maps.md), [game-modes.md](../technical/game-modes.md)).
+- **Web:** estados de error comunes (timeout, red, 403/404/5xx, API caída al arrancar), 404, reproductor y visor con Phaser real, resultados de batalla ([frontend.md](../technical/frontend.md)).
+- **Ranking:** temporada activa única entre API y worker (TD-029).
+- **Motor, cuentas, cola de trabajos, backup y CI principal:** como en la auditoría ([engine.md](../technical/engine.md), [backup.md](../operations/backup.md)).
 
 ## Partial
 
@@ -54,28 +50,26 @@ VEREDICTO:      NO funcional como producto: recorrido de usuario de extremo a ex
 
 | Área | Qué funciona | Qué no | Deuda |
 |---|---|---|---|
-| Equipamiento | catálogo, validación, persistencia | efecto parcial en batalla; campos sin efecto | [TD-016](technical-debt.md#td-016) |
-| Equipos | crear, invitar (por UUID) | asignar un bot desde la UI, borrar; formato `teams` | [TD-011](technical-debt.md#td-011) |
-| Mapas | importar, generar, publicar | el editor no guarda; su export no se importa | [TD-010](technical-debt.md#td-010) |
-| Torneos | `round_robin` con bracket y Elo (**con stub**) | `mapPool`; `failed` bloquea el cierre | [TD-015](technical-debt.md#td-015) |
-| Replays | generación, persistencia en disco, `replay_ref` | reproducción rota en navegador; `#/replays` falla tras TLS | [TD-009](technical-debt.md#td-009), [TD-014](technical-debt.md#td-014) |
-| Visor en directo | emisión de ticket y canal WebSocket en código | roto en navegador; el worker no puede verificar tickets | [TD-009](technical-debt.md#td-009), [TD-028](technical-debt.md#td-028) |
-| Ranking y estadísticas | cálculo, persistencia y API | en la web sólo el ranking, y sale vacío por un desajuste de temporada; sin datos en producción | [TD-022](technical-debt.md#td-022), [TD-029](technical-debt.md#td-029) |
+| Build de bots | sandbox real en aislado y en navegador | proxy del host sin operar; E2E con Docker fuera de CI; rechazos espurios por arranque bajo carga | [TD-001](technical-debt.md#td-001), [TD-034](technical-debt.md#td-034), [TD-045](technical-debt.md#td-045) |
+| Equipamiento | catálogo, validación, persistencia; la UI dice qué campos tienen efecto | efecto parcial en batalla | [TD-016](technical-debt.md#td-016) |
+| Torneos | `round_robin` con el código real de los bots (worker integrado) | `mapPool`; `failed` bloquea el cierre | [TD-015](technical-debt.md#td-015) |
+| Visor / emisión | visor en directo con batalla viva (aislado) | emisión (`#/broadcast`) sin E2E | [TD-009](technical-debt.md#td-009) |
+| Web | estados y errores comunes en todas las páginas de A, C y D | onboarding / enlace al SDK | [TD-022](technical-debt.md#td-022) |
 | Administración | web: roles, mapas, equipos, auditoría | backup, restore, readiness y drift sólo por SSH | [TD-023](technical-debt.md#td-023) |
-| Instalación / readiness | compose, `cli.ts bootstrap`, paquete readiness en código | instalación limpia no reproducible; readiness no desplegado | [TD-024](technical-debt.md#td-024) |
-| Recuperación | drill de restore de agosto; `restore.sh --snapshot` | sin ensayo reciente; nightly de restore en rojo | [TD-025](technical-debt.md#td-025) |
+| Instalación / readiness | compose preparado para la ejecución real | instalación limpia no reproducible; readiness no desplegado | [TD-024](technical-debt.md#td-024) |
+| Recuperación | drill de restore de agosto; `restore.sh --snapshot` | sin ensayo reciente | [TD-025](technical-debt.md#td-025) |
 
 ## Blocked
 
-**PENDIENTE / BLOQUEADO.** Estas tres cosas, juntas, anulan el recorrido de producto:
+**PENDIENTE / BLOQUEADO en producción.** Los tres bloqueos de la auditoría (publicar un bot, crear una batalla, ejecutar código de usuario) están resueltos **en el código integrado**, no en producción. Para verlos en producción hace falta, con una ventana autorizada por el operador:
 
-1. **Publicar un bot.** El build falla cerrado porque falta el sandbox real. Ver [TD-001](technical-debt.md#td-001).
-2. **Crear una batalla desde la web.** Da `400 rulesetId desconocido` en los cuatro modos. Ver [TD-003](technical-debt.md#td-003).
-3. **Ejecutar código de usuario.** Toda batalla la juega el worker con el stub HunterBot. El camino real está apagado, y activarlo hoy provocaría una doble ejecución. Ver [TD-002](technical-debt.md#td-002).
+1. Fusionar la integración en `main` y construir las imágenes.
+2. Generar `artifact_verify_key.pem` (`init-secrets.sh` lo deriva de la clave de firma) y operar el `s9-docker-proxy` en el host.
+3. Recrear `api`, `tournament-worker` y `bot-build-worker` (más `backup`/`postgres`/`queue` según el contrato de despliegue) y aplicar las migraciones `012_bot_versioning` y `013_battle_claim`.
 
 ## Operations
 
-**Runtime** (medido en la auditoría; las imágenes siguen siendo las mismas):
+**Runtime** (medido en la auditoría; sin cambios):
 
 | Commit | Servicios | Identidad de build |
 |---|---|---|
@@ -85,70 +79,56 @@ VEREDICTO:      NO funcional como producto: recorrido de usuario de extremo a ex
 
 PostgreSQL 16.14 y Redis 7.4.9 están fijados por digest. Ver [TD-006](technical-debt.md#td-006).
 
-- **Perfil:** `production`, con 12 servicios. Los documentos antiguos que hablan de otro perfil con 7 servicios están obsoletos. Ver [docs/operations/docker.md](../operations/docker.md).
-- **Backup:**
-  - **Opera.** `backup SUCCESS` el 2026-10-15 a las 04:15 UTC, `restic check` sin errores, healthcheck `healthy`.
-  - Sigue abierto: no hay alertas (el perfil de observabilidad no corre), no hay **ningún snapshot de la VM** y el apagado limpio de PostgreSQL no está garantizado. Ver [TD-007](technical-debt.md#td-007) y [docs/operations/backup.md](../operations/backup.md).
-- **CI:** `nightly.yml` está en rojo crónico, y `deploy-staging` daría un verde falso si se configurara. Ver [TD-019](technical-debt.md#td-019).
-- **Árbol desplegado en el host:** es ancestro de `main` y va 12 commits por detrás. Lo que le falta son documentación, CI, tests y el parche de dependencias.
+- **Perfil:** `production`, con 12 servicios ([docker.md](../operations/docker.md)). `map-service` sigue en él ([TD-017](technical-debt.md#td-017)).
+- **Despliegue de la integración:** exige recrear `api`, `bot-build-worker` y `tournament-worker` (lo mide `infrastructure/tests/compose-canonical-check.test.ts`) y un secreto nuevo, `artifact_verify_key` ([configuration.md](../operations/configuration.md#secretos)).
+- **Backup:** opera; sin alertas, sin snapshot de la VM y sin apagado limpio garantizado ([TD-007](technical-debt.md#td-007)).
+- **CI:** `nightly.yml` en rojo crónico ([TD-019](technical-debt.md#td-019)); los E2E con Docker y de navegador no corren en CI ([TD-045](technical-debt.md#td-045)).
 
 ## Security
 
 | Problema | Estado | Deuda |
 |---|---|---|
-| Replays legibles por anónimos a través del gateway | ABIERTO | [TD-004](technical-debt.md#td-004) |
-| Batallas con bots privados ajenos; `rating-history` ajeno | ABIERTO | [TD-005](technical-debt.md#td-005) |
+| Replays legibles por anónimos a través del gateway | ABIERTO (re-verificado en la integración) | [TD-004](technical-debt.md#td-004) |
+| Batallas con bots privados ajenos; `rating-history` ajeno | **CERRADO en la integración** | [TD-005](technical-debt.md#td-005) |
+| Batallas y stats exponen participantes de bots privados | ABIERTO | [TD-047](technical-debt.md#td-047) |
+| Anfitrión de bots con credenciales de BD en la red `arena` | ABIERTO (aceptado) | [TD-033](technical-debt.md#td-033) |
+| Worker con el secreto de sesión raíz | ABIERTO | [TD-043](technical-debt.md#td-043) |
+| Altas de equipo por email: oráculo de cuentas | ABIERTO | [TD-041](technical-debt.md#td-041) |
 | Runtime sin el Carril I/J ni el parche de dependencias de `main` | ABIERTO | [TD-006](technical-debt.md#td-006) |
-| Registro abierto (rol developer); clave de límites colapsada a la IP del proxy | ABIERTO | [TD-012](technical-debt.md#td-012) |
-| Imágenes de servicio con vulnerabilidades HIGH/CRITICAL corregibles, sin gate que las escanee | ABIERTO | [TD-031](technical-debt.md#td-031) |
-| Dependencias npm y runtimes de bots | **corregido en `main`** (PR #151): `npm audit` sin hallazgos `high`/`critical`, runtimes sin CRITICAL | — |
-| Topología de infraestructura en el repositorio público | ABIERTO; la consolidación documental lo reduce en `docs/` | [TD-008](technical-debt.md#td-008) |
-| Ejecución real y espectador público | **apagados por defecto**, con su gate de activación | [docs/technical/security.md](../technical/security.md) |
-
-Modelo de seguridad completo: [docs/technical/security.md](../technical/security.md).
+| Registro abierto; clave de límites colapsada a la IP del proxy | ABIERTO | [TD-012](technical-debt.md#td-012) |
+| Imágenes de servicio con vulnerabilidades HIGH/CRITICAL | ABIERTO | [TD-031](technical-debt.md#td-031) |
+| Topología de infraestructura en el repositorio público | ABIERTO | [TD-008](technical-debt.md#td-008) |
+| Ejecución real y espectador público | en producción, **apagados** hasta desplegar con su gate | [docs/technical/security.md](../technical/security.md) |
 
 ## Known issues
 
-Los síntomas que ven el usuario y el operador están en [known-issues.md](known-issues.md). Los
-principales:
-- no se puede publicar un bot;
-- crear una batalla da error;
-- el replay y el visor no se reproducen;
-- el editor de mapas no guarda;
-- `#/replays` falla tras HTTPS;
-- los errores de la UI son silenciosos.
+Síntomas vigentes en [known-issues.md](known-issues.md).
 
 ## Next priorities
 
-Orden derivado de la auditoría (seguridad > falsa confirmación > primer bloqueo de producto):
-
-1. [TD-001](technical-debt.md#td-001): sandbox real en el build.
-2. [TD-002](technical-debt.md#td-002): un único camino de ejecución, con idempotencia.
-3. [TD-003](technical-debt.md#td-003): costura de ruleset.
-4. [TD-009](technical-debt.md#td-009) y [TD-010](technical-debt.md#td-010): reproductor y visor; guardado del editor.
-5. [TD-004](technical-debt.md#td-004), [TD-005](technical-debt.md#td-005) y [TD-012](technical-debt.md#td-012), antes de abrir a terceros.
-6. [TD-006](technical-debt.md#td-006) y [TD-007](technical-debt.md#td-007): alinear el runtime, alertas del backup, snapshot de la VM y apagado limpio. Requiere una ventana autorizada por el operador.
-7. [TD-018](technical-debt.md#td-018): E2E de navegador y pruebas que se pongan rojas con las mutaciones de seguridad.
+1. Revisar y fusionar `integration/functional-closure`; desplegar con su gate ([Blocked](#blocked)).
+2. [TD-045](technical-debt.md#td-045): E2E de navegador y con Docker en CI.
+3. [TD-004](technical-debt.md#td-004), [TD-047](technical-debt.md#td-047), [TD-041](technical-debt.md#td-041), [TD-012](technical-debt.md#td-012): antes de abrir a terceros.
+4. [TD-033](technical-debt.md#td-033) y [TD-043](technical-debt.md#td-043): reducir el privilegio de los procesos que hablan con bots.
+5. [TD-034](technical-debt.md#td-034): arranque de bots estable bajo carga.
+6. [TD-006](technical-debt.md#td-006) y [TD-007](technical-debt.md#td-007): runtime y backup (ventana del operador).
 
 Funciones pendientes de diseño: [pending-features.md](pending-features.md).
 
 ## Documentación relacionada
 
 - [technical-debt.md](technical-debt.md) · [known-issues.md](known-issues.md) · [pending-features.md](pending-features.md)
+- [Informe del cierre funcional](../development/functional-closure-report.md)
 - [Auditoría 2026-10-15](../audits/2026-10-15/README.md) · [AUDIT-DELTA](../audits/2026-10-15/AUDIT-DELTA-2026-10.md)
-- [Visión general](../overview/project.md) · [Arquitectura](../overview/architecture.md)
-- [Operación](../operations/index.md)
+- [Visión general](../overview/project.md) · [Arquitectura](../overview/architecture.md) · [Operación](../operations/index.md)
 
 ## Verificación
 
 | Afirmación | Estado | Fuente |
 |---|---|---|
-| Base `27f70bb`, 0 commits nuevos | CODE_VERIFIED | `git rev-parse origin/main` y `git rev-list --count 27f70bb..origin/main` = 0 (2026-10-15) |
-| Perfil `production` = 12 servicios | CODE_VERIFIED | `infrastructure/docker-compose.yml` (`profiles:` de gateway, web, api, arena-engine, tournament-worker, bot-manager, bot-build-worker, map-service, replay-service, queue, postgres, backup) |
-| Runtime con 3 commits | RUNTIME_VERIFIED (en la auditoría) | `docker image inspect`; las 12 image ID se volvieron a medir el 2026-10-15 y no habían cambiado |
-| Backup operando | RUNTIME_VERIFIED | estado de salud y logs del servicio backup, 2026-10-15 21:01 UTC |
-| Build fail-closed | CODE_VERIFIED | `apps/bot-manager/src/build-worker-main.ts:31` |
-| 400 de ruleset | CODE_VERIFIED | `apps/api/src/routes/battles.ts:400-401` |
-| Stub HunterBot | CODE_VERIFIED | `apps/tournament-worker/src/engine-executor.ts:51` |
-| Cola en PostgreSQL | CODE_VERIFIED | `apps/tournament-worker/src/queue.ts:26-179` |
-| Motor verificado | CODE_VERIFIED + TEST (en la auditoría) | suites de `apps/arena-engine`; resultado de la suite: 2625 passed, rc=0 |
+| Base `0b8c12b` = `origin/main` al integrar | CODE_VERIFIED | `git rev-parse origin/main` (2026-10-17) |
+| Golden path completo en navegador real | RUNTIME_VERIFIED (aislado) | `npm run test:browser`: golden rc=0, fase1 14/14, fase2 2/2, fase3 1/1, sonda TD-028 rc=0 |
+| El worker ejecuta el artefacto firmado de la versión exacta | RUNTIME_VERIFIED (aislado) | `apps/tournament-worker/src/container-battle-e2e.test.ts` (`S9_RUN_REAL_DOCKER_E2E=1`, 3/3) |
+| Mutaciones del cierre en rojo | CODE_VERIFIED | HunterBot disfrazado (golden rc=1), READY de Phaser (golden y replay rc=1), sandbox fuera (rc=1), cierre doble (rc=1), bot privado ajeno (rc=1), persistencia del mapa (rc=1); ver el informe |
+| Perfil `production` = 12 servicios | CODE_VERIFIED | `infrastructure/tests/compose.test.ts`, `deploy-contract-gate.test.ts` |
+| Runtime de producción sin cambios | DESIGN_ONLY | el cierre funcional no despliega (sin SSH ni compose contra producción) |

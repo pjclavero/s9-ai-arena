@@ -45,7 +45,9 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, type Me } from "../api.js";
 import { LoadoutEditor, type LoadoutDraft } from "./LoadoutEditor.js";
+import { BotDetailPage } from "./BotDetailPage.js";
 import { useResource, ResourceView, type Resource } from "../resource.js";
+import { FormError } from "../ui/primitives.js";
 import type { ModuleDefinition } from "../../../../packages/module-catalog/types.js";
 import type { Violation } from "../../../../packages/module-catalog/validator/index.js";
 
@@ -123,7 +125,19 @@ function combine<A, B>(a: Resource<A>, b: Resource<B>): Resource<{ a: A; b: B }>
   return { status: "ready", data: { a: a.data, b: b.data } };
 }
 
-export function BotsPage(props: {
+/** DEV-A · A9.19 · `#/bots/<botId>` → vista de detalle del bot (Overview/Code/Equipment/Versions). */
+export function matchBotDetailRoute(hash: string): string | null {
+  const m = /^#\/bots\/([^/?#]+)/.exec(hash);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+export function BotsPage(props: Parameters<typeof BotsListPage>[0]) {
+  const detailId = matchBotDetailRoute(typeof window !== "undefined" ? window.location.hash : "");
+  if (detailId) return <BotDetailPage key={detailId} botId={detailId} meId={props.me.id} />;
+  return <BotsListPage {...props} />;
+}
+
+function BotsListPage(props: {
   me: Me;
   catalog: ModuleDefinition[];
   catalogVersion: string;
@@ -157,6 +171,9 @@ export function BotsPage(props: {
   const [pasted, setPasted] = useState("");
   const [runtime, setRuntime] = useState("python");
   const [error, setError] = useState("");
+  // REVIEW (R4.8) · el error de «Crear bot» se pinta JUNTO al formulario (antes
+  // sólo se veía con un bot abierto) con el componente común de D.
+  const [createErr, setCreateErr] = useState<unknown>(null);
   /**
    * issue #95 (defecto 1 del re-supervisor) · POR QUÉ se dejó de sondear, no solo
    * "se dejó". Eran dos causas distintas metidas en un booleano, y el mensaje solo
@@ -373,13 +390,13 @@ export function BotsPage(props: {
   // --------------------------------------------------------------- acciones
   async function onCreateBot(e: FormEvent) {
     e.preventDefault(); // Enter crea el bot (a11y R3.7)
-    setError("");
+    setCreateErr(null);
     try {
       await api("POST", "/bots", { name: newName });
       setNewName("");
       reloadBots();
     } catch (err) {
-      setError((err as Error).message);
+      setCreateErr(err ?? new Error("error desconocido"));
     }
   }
 
@@ -479,7 +496,10 @@ export function BotsPage(props: {
                       ({b.visibility}
                       {b.latestPublishedVersion ? `, v${b.latestPublishedVersion} publicada` : ""})
                     </small>{" "}
-                    <a href={`#/battles?bot=${encodeURIComponent(b.id)}`}>batallas</a>
+                    <a href={`#/battles?bot=${encodeURIComponent(b.id)}`}>batallas</a>{" "}
+                    <a href={`#/bots/${encodeURIComponent(b.id)}`} data-testid={`bot-detail-link-${b.id}`}>
+                      detalle y versiones
+                    </a>
                   </li>
                 ))}
               </ul>
@@ -492,6 +512,7 @@ export function BotsPage(props: {
           </label>{" "}
           <button type="submit">Crear bot</button>
         </form>
+        <FormError error={createErr} data-testid="create-bot-error" />
       </div>
 
       {selected && (

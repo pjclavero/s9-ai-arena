@@ -19,6 +19,8 @@ import { Panel, LoadingState, ErrorState, EmptyState, StatusBadge, type StatusVa
 
 interface MapVersion {
   mapId: string;
+  name?: string;
+  mine?: boolean;
   version: number;
   state: "draft" | "validated" | "published";
   checksum?: string;
@@ -142,8 +144,8 @@ export function MapsPage(_props: { me: Me }) {
       <Panel>
         <h2>Mapas</h2>
         <p>
-          <a href="#/maps/editor">Abrir editor de mapas (borrador local)</a> — R10, foundation: diseña un mapa y
-          expórtalo a JSON. La importación/validación real sigue haciéndose desde los controles de abajo.
+          <a href="#/maps/editor">Abrir el editor de mapas</a> — diseña un mapa, guárdalo en el servidor como borrador,
+          reábrelo cuando quieras y publícalo. Lo que exporta el editor (mapa interno) se puede importar aquí.
         </p>
         <p>
           Importa un mapa (JSON interno o export de Tiled) o genera uno procedural. Ambos pasan por el validador real
@@ -237,7 +239,11 @@ export function MapsPage(_props: { me: Me }) {
             <tbody>
               {maps.map((m) => (
                 <tr key={`${m.mapId}@${m.version}`}>
-                  <td>{m.mapId}</td>
+                  <td>
+                    {m.name ? `${m.name} · ` : ""}
+                    {m.mapId}
+                    {m.mine ? " (tuyo)" : ""}
+                  </td>
                   <td>v{m.version}</td>
                   <td>
                     <StatusBadge variant={stateVariant(m.state)}>{m.state}</StatusBadge>
@@ -257,6 +263,12 @@ export function MapsPage(_props: { me: Me }) {
                     )}
                   </td>
                   <td>
+                    <a
+                      href={`#/maps/editor?map=${encodeURIComponent(m.mapId)}&v=${m.version}`}
+                      aria-label={`editar-${m.mapId}-v${m.version}`}
+                    >
+                      {m.mine ? "Editar" : "Abrir en el editor"}
+                    </a>{" "}
                     {m.state === "published" ? (
                       <StatusBadge variant="ok">Disponible para batallas</StatusBadge>
                     ) : (

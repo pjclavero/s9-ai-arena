@@ -1,22 +1,35 @@
-# Mapas: formato, versionado, validación y editor
+# Mapas: formato, versionado, propiedad, validación y editor
 
 ## Resumen
 
-Los mapas se guardan en PostgreSQL. Las tablas `maps` y `map_versions` las escribe **la API**, que importa como librería el código de `apps/map-service` (validador, generador procedural, importador Tiled y miniaturas). El **servicio** `map-service` desplegado es un almacén en memoria vacío que nadie consulta ([TD-017](../roadmap/technical-debt.md#td-017)).
+La API guarda los mapas en PostgreSQL, en las tablas `maps` y `map_versions`. Para validar, generar, importar Tiled y hacer miniaturas importa como librería el código de `apps/map-service`.
 
-El editor visual de la web trabaja sólo en el navegador. Su JSON tiene **otro formato**: importarlo en «Mapas» da `500 Error interno` y el endpoint de borradores lo rechaza con `400` ([TD-010](../roadmap/technical-debt.md#td-010)).
+Desde el cierre funcional FC-C:
+
+- el editor web trabaja sobre el **mismo formato** que guarda la API (InternalMap);
+- **guarda en el servidor** (`POST /maps/drafts`) y reabre desde la API tras F5 o tras cerrar sesión;
+- lo que exporta se importa en «Mapas» sin error;
+- cada mapa tiene **dueño**: sólo él (o un admin) le añade versiones, edita sus borradores o lo publica.
+
+Un organizer puede publicar mapas ajenos para curarlos, pero no editarlos.
+
+El **servicio** `map-service` desplegado sigue sin uso. La decisión es retirarlo ([TD-017](../roadmap/technical-debt.md#td-017)).
 
 ## Índice
 
 - [Qué es](#qué-es)
-- [Formato interno (InternalMap)](#formato-interno-internalmap)
-- [Versionado y estados](#versionado-y-estados)
-- [Validación](#validación)
-- [API](#api)
-- [Conversión al motor](#conversión-al-motor)
-- [map-service (servicio)](#map-service-servicio)
-- [Editor web y su formato](#editor-web-y-su-formato)
-- [Compatibilidad con modos](#compatibilidad-con-modos)
+- [Cómo funciona](#cómo-funciona)
+  - [Formato interno (InternalMap)](#formato-interno-internalmap)
+  - [Versionado, estados y normalización](#versionado-estados-y-normalización)
+  - [Propiedad y visibilidad](#propiedad-y-visibilidad)
+  - [Validación](#validación)
+  - [API](#api)
+  - [Conversión al motor](#conversión-al-motor)
+  - [Editor web](#editor-web)
+  - [Compatibilidad con modos](#compatibilidad-con-modos)
+  - [map-service (servicio): decisión](#map-service-servicio-decisión)
+- [Uso](#uso)
+- [Ejemplo](#ejemplo)
 - [Errores / limitaciones](#errores--limitaciones)
 - [Estado actual](#estado-actual)
 - [Documentación relacionada](#documentación-relacionada)
@@ -24,147 +37,172 @@ El editor visual de la web trabaja sólo en el navegador. Su JSON tiene **otro f
 
 ## Qué es
 
-Un mapa es una arena 2D en metros. Tiene suelo por baldosas, muros, destructibles, zonas, spawns, bases y banderas. Un **mapa** (`maps.id`) tiene **versiones inmutables** (`map_versions`). Sólo las versiones `published` se pueden usar en batallas y torneos.
+Un mapa es una arena 2D en metros. Tiene suelo por baldosas, muros, destructibles, zonas, spawns, bases y banderas.
 
-## Formato interno (InternalMap)
+- Un **mapa** (`maps.id`, con dueño `maps.created_by`) tiene **versiones** (`map_versions`).
+- Una versión en `draft` es un borrador editable.
+- Las versiones `validated` y `published` son inmutables.
+- Sólo una versión `published` se puede usar en batallas y torneos.
+
+## Cómo funciona
+
+### Formato interno (InternalMap)
 
 Es el espejo TypeScript (`apps/map-service/src/types.ts`) del esquema `packages/map-schema/map.schema.json`:
 
 ```text
 { schemaVersion: 1, mapId, version, checksum, widthM, heightM, navCellSizeM?,
-  generation?: {generator, seed, params, attempts?},
-  materials: [{id, name?, blocksMovement, blocksVision, hp?, damagePerSecond?, speedFactor?}],
-  layers: {
-    ground: {tileSizeM, cols, rows, data[]},
-    walls: Shape[],                  // rect | circle | polygon
-    destructibles?: [{objectId, material, …Shape}],
-    zones?: [{objectId, zoneType: damage|capture|no_entry|cover, team?, damagePerSecond?, captureTimeTicks?, …Shape}],
-    spawns: [{objectId, team, position, heading, maxChassisSize?}],
-    bases?: [{objectId, team, …Shape}],
-    flags?: [{objectId, team, position}],
-    navigation?: {cellSizeM, cols, rows, blocked}
-  },
-  meta: {name?, author, license, supportedModes[], supportedChassisSizes?, maxDestructibles?, destructiblesMayBlockOnlyRoute?} }
+  generation?, materials: [...],
+  layers: { ground: {tileSizeM, cols, rows, data[]}, walls: Shape[], destructibles?, zones?,
+            spawns: [{objectId, team, position, heading}], bases?, flags?, navigation? },
+  meta: { name?, author, license, supportedModes[], ... } }
 ```
 
-Ejemplo real: `maps/mvp-arena-01.json`. Es una arena de 120×80 m con 3 muros, 4 destructibles, 2 zonas de daño (ácido, 8 HP/s), 4 spawns, 2 bases y 2 banderas. `meta.supportedModes` declara `capture_the_flag` y `team_deathmatch`. También se importa el formato JSON de Tiled (`import-tiled.ts`; ver el histórico «formato TMX» en [DOC-MIGRATION-MAP](../DOC-MIGRATION-MAP.md)).
+`mapId` sigue el patrón del esquema (`^[a-z0-9][a-z0-9-]{1,62}$`); la API lo comprueba en import, borrador y generación. Ejemplo real: `maps/mvp-arena-01.json`.
 
-## Versionado y estados
+### Versionado, estados y normalización
 
-`map_versions.state ∈ draft | validated | published` (CHECK). Columnas: `checksum`, `width_m`, `height_m`, `supported_modes` (jsonb), `thumbnail_url`, `generation`, `content` (el documento completo), `created_at` y `published_at`. La clave primaria es `(map_id, version)`.
+`map_versions.state ∈ draft | validated | published`, con clave primaria `(map_id, version)`.
 
-- Cada importación, generación o borrador crea la **versión siguiente** (`max(version)+1`), aunque el documento traiga su propio `version`.
-- `maps.created_by` registra quién creó el mapa la primera vez. **No hay propiedad por mapa**: cualquiera con rol suficiente puede añadir versiones a un `mapId` ajeno.
-- Una versión publicada es inmutable: `PUT …/versions/{v}` responde **siempre** `409 immutable`.
+| Operación | Efecto |
+|---|---|
+| `POST /maps` (import) y `POST /maps/generate` | Versión nueva `max+1` en `validated`. Sólo si es publicable |
+| `POST /maps/drafts` | Si la **última** versión del mapa es `draft`, se **reescribe en sitio** (misma versión, `200`). Si no, se crea `max+1` en `draft` (`201`). Se guarda aunque tenga errores, y devuelve los `checks` |
+| `POST …/actions/publish` | Revalida y congela (`published` + miniatura). Publicada = inmutable |
+| `PUT …/versions/{v}` | Siempre `409 immutable` |
 
-## Validación
+**Normalización (FC-C).** Al guardar, la API reescribe en el documento `mapId` y `version`, para que sean los de la fila, y pone `checksum` = checksum **canónico** (`sha256:` del JSON con claves ordenadas, `apps/map-service/src/canonical.ts`).
 
-`validateMap(map)` ejecuta seis comprobaciones puras y deterministas (`apps/map-service/src/validate/`), en este orden:
+Es exactamente lo que exige `resolveBattleMap`, el resolver del launcher. Antes, un mapa importado o guardado se podía publicar pero **no era jugable** (`map_content_mismatch` o `map_checksum_mismatch`).
 
-1. `geometry`: formas válidas y dentro de límites.
-2. `navigation`: rutas entre spawns por chasis.
-3. `playability`: anchura de pasillos y espacio libre en los spawns.
-4. `balance`: simetría de distancias y cobertura.
-5. `mode`: que el mapa tenga lo que exige cada modo de `meta.supportedModes`.
-6. `destruction`: destructibles.
+Consecuencia: dos versiones del mismo mapa tienen checksums distintos aunque su geometría sea igual, porque la versión forma parte del documento.
 
-`isPublishable` es verdadero si no hay ningún hallazgo con severidad `error`.
+El guardado bloquea la fila del mapa (`SELECT … FOR UPDATE`), de modo que dos guardados concurrentes no compiten por el número de versión.
 
-`validateMap` **no comprueba la forma** antes de recorrer `layers`. Un documento sin `layers` revienta con `TypeError` en `geometry.ts` y la API lo devuelve como `500` en `importMap`.
+### Propiedad y visibilidad
 
-## API
+| Acción | Quién |
+|---|---|
+| Añadir versiones (import, generar, borrador) a un mapa existente | Su dueño (`maps.created_by`) o admin. Un mapa **sin dueño** (contenido base) sólo lo versiona un admin |
+| Crear un mapa nuevo | Cualquier `user` (queda como dueño). `generateMap` exige `organizer` |
+| Publicar | El dueño, u organizer+ (curación). Otro usuario recibe `403` |
+| Ver un borrador (`GET`, contenido, listado) | Su dueño o admin. Para el resto **no existe** (`404`, y no sale en `GET /maps`) |
+| Ver `validated` / `published` | Cualquiera, también anónimo |
+
+`GET /maps` no expone UUID de usuarios: devuelve `mine: true|false`, relativo al solicitante. `?mine=true` filtra los mapas propios.
+
+### Validación
+
+`validateMap(map)` ejecuta seis comprobaciones puras: `geometry`, `navigation`, `playability`, `balance`, `mode` y `destruction`. `isPublishable` es verdadero si ningún hallazgo tiene severidad `error`.
+
+La API comprueba primero la **forma** (`assertMapShape`) y traduce cualquier excepción del validador a `400`. Un documento malformado ya no da `500`.
+
+### API
 
 | Método y ruta | Rol | Comportamiento |
 |---|---|---|
-| `GET /maps` | anónimo | Lista **todas las versiones** de todos los mapas, incluidos borradores ajenos (metadatos, sin contenido) |
-| `GET /maps/{mapId}/versions/{v}` | anónimo | **Sólo metadatos**; no devuelve `content` |
-| `POST /maps` (multipart `file`) | `user` | JSON de Tiled (`type:"map"` o `tiledversion`) → `importTiled`; si no, se trata como InternalMap. `validateMap`: con errores `422 map_invalid {checks}`, sin errores `201` con estado **`validated`** |
-| `POST /maps/drafts` (JSON) | `user` | `assertMapShape` (exige `mapId`, `widthM/heightM`, `layers.ground{cols,rows,data}`, `layers.walls[]`, `layers.spawns[]`, `meta.supportedModes[]`; si falta algo, `400`). Guarda en `draft` **aunque tenga errores** y devuelve `{…, checks}`. **La web no lo usa** |
-| `POST /maps/generate` `{params, seed}` | `organizer` | Generador determinista (misma semilla, mismo checksum). Si no es publicable, `422`. Si lo es, `201` en `validated` con `generation` |
-| `POST /maps/{id}/versions/{v}/actions/publish` | `organizer` | Revalida. Ya publicada o con errores: `409 illegal_transition`. Si no, `published` con miniatura SVG en `data:` |
-| `PUT /maps/{id}/versions/{v}` | `admin` | Siempre `409 immutable` |
+| `GET /maps[?mine=true]` | anónimo | Versiones visibles (sin borradores ajenos) con `name` y `mine` |
+| `GET /maps/{mapId}/versions/{v}` | anónimo | Metadatos (`404` si es un borrador ajeno) |
+| `GET /maps/{mapId}/versions/{v}/content` | anónimo | **Nuevo.** El InternalMap completo, para reabrir o exportar. Misma visibilidad |
+| `POST /maps` (multipart `file`) | `user` | Admite JSON de Tiled o InternalMap. El **formato de autoría antiguo** del editor (`id`/`width`/`walls`) da `400` con un mensaje que remite al editor. Si no es publicable, `422 map_invalid` |
+| `POST /maps/drafts` (JSON) | `user` | Ver la tabla de [versionado](#versionado-estados-y-normalización). `403` si el mapa es ajeno |
+| `POST /maps/generate` | `organizer` | Generador determinista. `403` si el `mapId` resultante es de otro |
+| `POST /maps/{id}/versions/{v}/actions/publish` | `user` | Dueño u organizer+. `409` si ya está publicado o tiene errores (incluye los `checks`) |
+| `PUT /maps/{id}/versions/{v}` | `admin` | Siempre `409` |
 
-`supported_modes` se persiste desde `meta.supportedModes` (`insertMapVersion`). Excepción: el contenido base (`seedContent`) lo lee de la raíz del documento y guarda `["deathmatch"]` para `mvp-arena-01`.
+### Conversión al motor
 
-## Conversión al motor
+`toEngineMap(InternalMap) → ArenaMap` (`apps/map-service/src/to-engine-map.ts`):
 
-`toEngineMap(InternalMap) → ArenaMap` (`apps/map-service/src/to-engine-map.ts`) la usan el worker y el camino real:
+- muros y destructibles se convierten en cajas;
+- bases y zonas, en círculos;
+- de las zonas, sólo `damage` y `capture` llegan al motor;
+- `ground`, `materials.speedFactor`, `blocksVision`, `navigation` y `captureTimeTicks` no tienen efecto en la simulación.
 
-- **Muros y destructibles**: se convierten en cajas. Un polígono se aproxima por su caja envolvente alineada a los ejes y un círculo por su caja. La vida de un destructible es la de su material (100 por defecto).
-- **Bases y zonas**: se convierten en círculos de radio equivalente (el inscrito).
-- **Zonas que llegan al motor**: sólo `damage` y `capture`. `no_entry` y `cover` sólo sirven al validador.
-- **Sin efecto en la simulación**: la capa `ground`, `materials.speedFactor` y `blocksVision`, `navigation`, `maxChassisSize` de los spawns y `captureTimeTicks`.
-
-## map-service (servicio)
-
-`apps/map-service/src/main.ts` expone `GET /healthz` (`{maps:N}`), `GET /maps` y `GET /maps/{id}/{v}` sobre `new MapService()` en memoria, sin persistencia y de sólo lectura. Ningún componente le llama: no hay `MAP_SERVICE_URL` en `apps/`. En la auditoría respondía `{"maps":0}` y `[]` mientras la API servía mapas publicados ([TD-017](../roadmap/technical-debt.md#td-017)).
-
-## Editor web y su formato
+### Editor web
 
 `#/maps/editor` (`apps/web/src/pages/MapEditorPage.tsx`):
 
-- **Edición**:
-  - modelo local `DraftMap` en píxeles: `{schemaVersion, id, name, width, height, seed, objects[]}`;
-  - herramientas «Añadir muro», «Añadir obstáculo» y «Añadir spawn», con edición de x, y, ancho, alto, salud o equipo;
-  - validación en cliente: ids únicos, objetos dentro de límites, tamaños positivos y al menos un spawn.
-- **Exportar**: produce el formato de **autoría** `{schemaVersion, id, name, width, height, seed, walls[], obstacles[], spawns[]}`, igual que `maps/training-yard.json`.
-- **Persistencia**: **ninguna**. No hay botón Guardar, F5 pierde lo editado y no se llama a la API.
+- **Modelo**: InternalMap en metros (mapa nuevo: 120×80 m, rejilla de suelo coherente, dos spawns y los modos `deathmatch` y `team_deathmatch`).
+- **Herramientas**: muro, destructible, spawn, base, bandera y zona (captura o daño), con posición, tamaño o radio, equipo y tipo editables. También id, nombre, dimensiones (regenera la rejilla) y casillas de modos soportados.
+- **Guardar en el servidor**: `POST /maps/drafts`. Pinta los `checks` de E4 y fija la URL `#/maps/editor?map=<id>&v=<n>`.
+- **Reabrir**: al cargar con esa URL (F5, o volver tras logout y login), pide `GET …/versions/{v}` y `…/content` a la API. Nada sale de la memoria del navegador.
+- **Mis mapas**: `GET /maps?mine=true`, con botón «Abrir».
+- **Publicar**: se habilita con el borrador guardado y sin cambios pendientes.
+- **Duplicar**: «Guardar como copia» con otro id.
+- **Exportar**: el InternalMap sin `version`/`checksum`, en un textarea y como descarga `.json`, importable tal cual en «Mapas».
+- **Importar**: un InternalMap, o el JSON de autoría antiguo, que se convierte a 10 px = 1 m.
+- **«Mapas»** (`MapsPage.tsx`): cada fila enlaza a «Editar» o «Abrir en el editor».
 
-Incompatibilidades, estado actual ([TD-010](../roadmap/technical-debt.md#td-010)):
+### Compatibilidad con modos
 
-| Destino | Resultado | Por qué |
-|---|---|---|
-| `POST /maps` (Importar en «Mapas») | **500 Error interno** | No es Tiled y se trata como InternalMap; `validateMap` lee `map.layers.ground` sobre `undefined` |
-| `POST /maps/drafts` | `400 mapId obligatorio` | `assertMapShape` exige el formato interno |
-| Motor | — | Unidades (px y m), sin capas ni `meta` |
+`checkBattleContent` (`apps/api/src/routes/catalog.ts`) cruza el modo con `supported_modes` de la versión publicada (`map_mode_unsupported`, 409). Ver [game-modes.md](game-modes.md).
 
-Ningún conversor `DraftMap → InternalMap` existe en el código.
+El formulario de nueva batalla sólo ofrece mapas que soportan el modo elegido. **El endpoint `POST /battles` (B) todavía no llama a `checkBattleContent`**: está propuesto en el informe DEV-C y en COORD.
 
-## Compatibilidad con modos
+El mapa de serie `mvp-arena-01`:
 
-Ver [game-modes.md](game-modes.md#compatibilidad-con-mapas). En resumen:
+- **v1**: declara `capture_the_flag` y `team_deathmatch`. La columna `supported_modes`, que antes decía `["deathmatch"]` por un fallo del seed, ahora se deriva de `meta`.
 
-- el validador comprueba los 4 modos de plataforma que declara el mapa;
-- el motor rechaza combinaciones imposibles al crear la batalla;
-- **la API no cruza el modo pedido con `supported_modes`**.
+El contenido base añade **`mvp-arena-02` v1**: la **misma geometría**, que declara también `deathmatch`. Según `checkMode` lo soporta (4 spawns). `zone_control` no, porque no tiene zona de captura.
+
+Es un mapa aparte, y no una v2 de `mvp-arena-01`, por dos motivos: la v1 es inmutable, y las pruebas de fail-closed de B usan «mvp-arena-01 v2» como versión inexistente.
+
+### map-service (servicio): decisión
+
+`apps/map-service/src/main.ts` sirve un `MapService` en memoria, vacío, que nadie consulta. La autoridad de los mapas es la API (persistencia, propiedad, validación). **Decisión:** se mantiene `apps/map-service` como **librería**, se retira el **servicio** del perfil `production` del compose y no se crea una frontera de red que no aporta nada.
+
+El cambio de compose lo hace REVIEW; está propuesto en el informe DEV-C. Hasta entonces, su healthcheck verde no significa nada ([TD-017](../roadmap/technical-debt.md#td-017)).
+
+## Uso
+
+1. Editor → «Nuevo» → id y nombre → objetos → «Guardar en el servidor».
+2. Corrige los avisos de E4 → guarda otra vez (misma versión) → «Publicar».
+3. Nueva batalla → elige el modo → aparece tu mapa.
+
+## Ejemplo
+
+```text
+POST /api/v1/maps/drafts {mapId:"mi-arena", ..., meta:{name:"Mi arena", supportedModes:["deathmatch"]}}
+  → 201 {mapId:"mi-arena", version:1, state:"draft", mine:true, checks:[...]}
+POST /api/v1/maps/drafts (mismo mapId, editado)          → 200 {version:1, ...}   (en sitio)
+POST /api/v1/maps/mi-arena/versions/1/actions/publish    → 200 {state:"published"}
+POST /api/v1/maps/drafts (mismo mapId)                   → 201 {version:2, state:"draft"}
+POST /api/v1/maps/drafts (mapId de otro, como organizer) → 403 forbidden
+```
 
 ## Errores / limitaciones
 
-- Importar un JSON del editor da `500` ([TD-010](../roadmap/technical-debt.md#td-010)).
-- No hay reapertura: la API no devuelve el contenido de una versión, así que no se puede seguir editando un mapa guardado.
-- No hay duplicado (sólo reimportando con otro `mapId`) ni borrado.
-- La web muestra «Generar» y «Publicar» a todos, pero exigen `organizer`: un usuario normal recibe `403 Requiere rol organizer`.
-- Al importar, el aviso de la web dice «(…, borrador)» aunque el estado guardado es `validated`.
-- El listado anónimo expone los borradores de todos.
+- `POST /battles` valida modo ↔ ruleset ↔ mapa con `checkBattleContent` (integración REVIEW, [TD-032](../roadmap/technical-debt.md#td-032)); la web además filtra.
+- No hay borrado de mapas ni de versiones.
+- `generateMap` sigue exigiendo `organizer`.
+- El editor no edita polígonos, materiales, la capa de navegación ni `maxChassisSize`, aunque los conserva si vienen en el documento. Los objetos se mueven con campos numéricos, no arrastrando.
+- La v1 de `mvp-arena-01` en una BD ya sembrada: `bootstrap` corrige sólo su columna `supported_modes`, sin tocar el contenido. Hacerlo en producción es decisión del operador.
 
 ## Estado actual
 
-- **FUNCIONA ACTUALMENTE**: importar InternalMap o Tiled válido; validación de 6 comprobaciones; generar y publicar (`organizer`); versionado inmutable; uso de un mapa publicado en batalla por API y en torneo (este último sólo con `mvp-arena-01`, ver [tournaments.md](tournaments.md)).
-- **PARCIAL**: editor (sólo cliente); borradores (sólo API).
-- **PENDIENTE**: guardado y reapertura desde el editor, conversor de formatos, edición de capas (suelo, zonas, bases, banderas), duplicado, propiedad por mapa, validación modo↔mapa al crear batalla, retirada o uso real del servicio map-service.
+- **FUNCIONA ACTUALMENTE**: crear, editar y guardar en servidor, reabrir tras F5 o tras logout y login, editar, publicar y usar en una batalla (E2E de navegador); export e import simétricos; propiedad por mapa; borradores privados; mapa publicado jugable por `resolveBattleMap`.
+- **PARCIAL**: validación modo ↔ mapa (función lista y web filtrando; falta que `POST /battles` la llame).
+- **PENDIENTE**: borrado; edición de polígonos y materiales; retirar el servicio map-service del compose (REVIEW).
 
 ## Documentación relacionada
 
-- Usuario: [Mapas](../user/maps.md)
-- Técnica: [game-modes.md](game-modes.md), [engine.md](engine.md), [api.md](api.md), [frontend.md](frontend.md)
-- Arquitectura (A): [services.md](services.md), [database.md](database.md)
-- Histórico absorbido: R10 (editor, foundation y slice 1) y formato TMX (ver [DOC-MIGRATION-MAP](../DOC-MIGRATION-MAP.md))
+- Usuario: [Mapas](../user/maps.md), [Modos de juego](../user/game-modes.md)
+- Técnica: [game-modes.md](game-modes.md), [engine.md](engine.md), [api.md](api.md), [frontend.md](frontend.md), [battles.md](battles.md)
 
 ## Verificación
 
-Verificado contra `27f70bb`.
+Verificado la integración del cierre funcional (`integration/functional-closure`), base `0b8c12b`.
 
 | Afirmación | Estado | Evidencia |
 |---|---|---|
-| La API persiste mapas usando la librería de map-service | CODE_VERIFIED | `apps/api/src/routes/maps.ts:14-18,74-95` |
-| El servicio map-service es un almacén en memoria sin consumidores | CODE_VERIFIED / RUNTIME_VERIFIED | `apps/map-service/src/main.ts:22-41`; auditoría B pasada 2 §3 |
-| Importar da `validated`; borrador da `draft`; versión `max+1` | CODE_VERIFIED | `routes/maps.ts:74-95,164,184` |
-| `GET /maps/{id}/versions/{v}` sin contenido | CODE_VERIFIED | `routes/maps.ts:60-72,119-126` |
-| PUT siempre 409 | CODE_VERIFIED | `routes/maps.ts:194-199` |
-| Generar y publicar exigen `organizer` | CODE_VERIFIED | `apps/api/openapi.yaml` (`x-min-role` de `generateMap` y `publishMapVersion`) |
-| Seis comprobaciones del validador | CODE_VERIFIED | `apps/map-service/src/validate/index.ts:37-53` |
-| El JSON del editor da 500 al importarlo | RUNTIME_VERIFIED | Auditoría B pasada 1 §B6 y pasada 2 §1a (navegador real) |
-| Formato del editor y ausencia de persistencia | CODE_VERIFIED | `apps/web/src/pages/MapEditorPage.tsx:1-110,235-238` |
-| Zonas `no_entry`/`cover` y suelo no llegan al motor | CODE_VERIFIED | `apps/map-service/src/to-engine-map.ts` (`zones.filter`, sin `ground`) |
-| Seed: `supported_modes` desde la raíz | CODE_VERIFIED | `apps/api/src/db/seeds/dev.ts:102` |
-| Sin propiedad por mapa | CODE_VERIFIED / RUNTIME_VERIFIED | `routes/maps.ts:76-78`; auditoría B p2 §3 |
+| Propiedad por mapa (dueño o admin; sin dueño, sólo admin) | CODE_VERIFIED / RUNTIME_VERIFIED | `apps/api/src/routes/maps.ts:127-134`; `apps/api/src/routes/fc-c-content.test.ts:176,198` |
+| Contenido normalizado (versión y checksum canónico) y mapa jugable | CODE_VERIFIED / RUNTIME_VERIFIED | `routes/maps.ts:142-145`; `fc-c-content.test.ts:94,146` (`resolveBattleMap` ok) |
+| Borrador mutable en sitio; tras publicar, versión nueva | CODE_VERIFIED / RUNTIME_VERIFIED | `routes/maps.ts:181-207`; `fc-c-content.test.ts:94` |
+| Borradores invisibles para otros | CODE_VERIFIED / RUNTIME_VERIFIED | `routes/maps.ts:214-219,235-262`; `fc-c-content.test.ts:205` |
+| `GET …/content` | CODE_VERIFIED | `routes/maps.ts:277-282` |
+| Import sin 500 (autoría antigua y documento sin capas: 400) | CODE_VERIFIED / RUNTIME_VERIFIED | `routes/maps.ts:82-88,311`; `fc-c-content.test.ts:159,166` |
+| Publicar: dueño u organizer+ | CODE_VERIFIED / RUNTIME_VERIFIED | `routes/maps.ts:364-374`; `fc-c-content.test.ts:214` |
+| Editor guarda, reabre tras F5, publica y se usa en batalla (navegador real) | RUNTIME_VERIFIED | `tests/browser/specs/golden-path.spec.ts` (Chromium 1.48.2, fase golden de `npm run test:browser`, rc=0) |
+| Modos del mapa de serie (v1 corregida; mvp-arena-02 con deathmatch) | CODE_VERIFIED / RUNTIME_VERIFIED | `apps/api/src/db/seeds/dev.ts` (`seedContent`, `mvpArena02`); `fc-c-content.test.ts:276` |
+| El servicio map-service no tiene consumidores | CODE_VERIFIED | `apps/map-service/src/main.ts:22-41`; ningún `MAP_SERVICE_URL` en `apps/` |

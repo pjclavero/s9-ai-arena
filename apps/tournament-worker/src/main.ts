@@ -15,6 +15,11 @@ import { createDb } from "../../api/src/db/connection.js";
 import { SpectateGateway } from "../../api/src/spectate/gateway.js";
 import { makeRunBattleHandler, markBattleForReview } from "./battle-runner.js";
 import { makeEngineExecutor } from "./engine-executor.js";
+import { containerAgents } from "./container-agents.js";
+import { artifactLaunchProvider } from "./bot-launch-provider.js";
+import { loadArtifactVerifyKey } from "../../bot-manager/src/bot-launch.js";
+import { DbArtifactLaunchGuard } from "../../bot-manager/src/launch-verify.js";
+import { ProxyContainerRunner } from "../../bot-manager/src/docker-proxy.js";
 import { RedisSignal } from "./redis-signal.js";
 import { handleGenerateSchedule, handleTournamentDryRun } from "./scheduler.js";
 import { handleProcessResult } from "./results.js";
@@ -59,10 +64,50 @@ requireWritableDataDir("tournament-worker", replaysDir);
 const spectatePort = Number(process.env.SPECTATE_PORT ?? 8081);
 const spectate = new SpectateGateway({ port: spectatePort });
 
-// run_battle: el motor se ejecuta EN ESTE proceso (engine-executor), no en un
-// servicio aparte. Sin agentResolver containerizado (R6.2 pendiente), el
-// ejecutor usa los stubs deterministas del motor para las batallas del sistema.
-const executor = makeEngineExecutor({ db, spectate });
+// run_battle (DEV-B · TD-002): AUTORIDAD ÚNICA de ejecución. El motor corre EN
+// ESTE proceso (aloja el ProtocolServer y el espectador) y los vehículos los
+// conduce el CÓDIGO REAL de cada bot, en su contenedor, lanzado a través de
+// s9-docker-proxy (nunca docker.sock). Ya NO hay stub por defecto: si falta la
+// configuración del sandbox, este worker NO reclama `run_battle` (las batallas
+// se quedan `scheduled`, visibles como pendientes) en vez de jugarlas con
+// HunterBot. Lo dice al arrancar.
+let artifactGuard: DbArtifactLaunchGuard | undefined;
+async function buildExecutor() {
+  const proxyUrl = process.env.DOCKER_PROXY_URL;
+  const engineHost = process.env.ARENA_ENGINE_HOST;
+  if (!proxyUrl || !engineHost) {
+    return { executor: undefined, reason: "faltan DOCKER_PROXY_URL y/o ARENA_ENGINE_HOST" };
+  }
+  try {
+    // REVIEW (R4.1) · clave PÚBLICA (ARTIFACT_VERIFY_KEY_FILE) y digests de runtime
+    // se cargan aquí: si faltan, el worker lo anuncia y no reclama run_battle.
+    const publicKey = loadArtifactVerifyKey();
+    const provider = artifactLaunchProvider(db, engineHost, { publicKey });
+    // R2.5 · verificación previa por participante: un artefacto manipulado
+    // DESCALIFICA a ese bot (walkover del íntegro) en vez de tumbar la batalla
+    // como fallo de infraestructura; el proveedor vuelve a verificar al lanzar.
+    artifactGuard = new DbArtifactLaunchGuard(db, publicKey);
+    const executor = makeEngineExecutor({
+      db,
+      spectate,
+      agents: containerAgents({
+        runner: new ProxyContainerRunner(proxyUrl),
+        provider,
+        network: process.env.ARENA_NETWORK || "arena",
+        engineHost,
+      }),
+    });
+    return { executor, reason: undefined };
+  } catch (err) {
+    return { executor: undefined, reason: `proveedor de lanzamiento no disponible: ${String(err)}` };
+  }
+}
+const { executor, reason: executionDisabledReason } = await buildExecutor();
+if (!executor) {
+  log("EJECUCIÓN DE BATALLAS DESACTIVADA: este worker no reclamará run_battle", {
+    reason: executionDisabledReason,
+  });
+}
 
 // Sin Redis el bucle hace polling de la BD; el aviso solo recorta la latencia.
 let signal: RedisSignal | undefined;
@@ -77,7 +122,7 @@ if (process.env.REDIS_URL) {
 const worker = new TournamentWorker({
   db,
   handlers: {
-    run_battle: makeRunBattleHandler({ executor, replaysDir }),
+    ...(executor ? { run_battle: makeRunBattleHandler({ executor, replaysDir, artifactGuard }) } : {}),
     generate_schedule: handleGenerateSchedule,
     process_result: handleProcessResult,
     update_standings: handleUpdateStandings,
@@ -110,7 +155,12 @@ publicarIdentidadDeBuild();
 beat();
 const heartbeat = setInterval(beat, HEARTBEAT_MS);
 worker.start();
-log(`worker ${worker.workerId} en marcha`, { replaysDir, signal: Boolean(signal), spectatePort });
+log(`worker ${worker.workerId} en marcha`, {
+  replaysDir,
+  signal: Boolean(signal),
+  spectatePort,
+  battleExecution: executor ? "container" : "disabled",
+});
 
 async function shutdown(sig: string): Promise<void> {
   log(`${sig}: parando`);

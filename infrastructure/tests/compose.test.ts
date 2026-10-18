@@ -129,12 +129,22 @@ describe("6.4 · las cinco redes y sus reglas", () => {
 
   it("los bots solo están en arena: sin ruta a postgres, redis ni api", () => {
     expect(services["bot-runtime-template"].networks).toEqual(["arena"]);
-    // Nadie más que el motor comparte la red arena con los bots.
+    // Sólo los ANFITRIONES de bots comparten la red arena con ellos: el motor
+    // legado, el tournament-worker (aloja el ProtocolServer de las batallas, DEV-B)
+    // y el bot-build-worker (sandbox del build, DEV-A). REVIEW (cierre funcional):
+    // los dos workers también están en `data` — deuda aceptada TD-033 (proceso con
+    // credenciales de BD que expone puertos a la red de los bots). La red sigue
+    // sin dar RUTA a postgres/redis/api: ninguno de ellos está en arena.
+    const ARENA_HOSTS = ["arena-engine", "bot-runtime-template", "tournament-worker", "bot-build-worker"];
     for (const [name, def] of Object.entries(services)) {
       if (def.networks?.includes("arena")) {
-        expect(["arena-engine", "bot-runtime-template"]).toContain(name);
+        expect(ARENA_HOSTS).toContain(name);
       }
     }
+    for (const forbidden of ["postgres", "queue", "api", "gateway", "replay-service"]) {
+      expect(services[forbidden].networks ?? [], forbidden).not.toContain("arena");
+    }
+    expect(doc.networks.arena.internal).toBe(true);
   });
 
   it("builders sin acceso a datos: bot-manager no está en la red data", () => {

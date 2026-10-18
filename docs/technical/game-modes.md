@@ -4,7 +4,9 @@
 
 El motor implementa **7 modos** (`GameModeId`), configurados por **9 rulesets** del motor (`RULESETS`). La plataforma (API, BD, web y validador de mapas) sólo conoce **4** de esos modos: `deathmatch`, `team_deathmatch`, `capture_the_flag` y `zone_control`. `last_man_standing`, `domination` y `juggernaut` existen sólo en el motor (tests, CLI, simulador local y SDK). No hay forma de jugarlos desde la API ni desde la web.
 
-Además, la plataforma tiene un **segundo catálogo de rulesets** en la tabla `rulesets` de la BD, con un único registro, `mvp-default`. Los dos catálogos no comparten nombres. Ese desajuste es la causa del `400 rulesetId desconocido` de la web ([TD-003](../roadmap/technical-debt.md#td-003)).
+Además, la plataforma tiene un **segundo catálogo de rulesets**: la tabla `rulesets` de la BD. Desde FC-C, el contenido base siembra **uno por cada modo de plataforma**, enlazado explícitamente con el motor (`config.engineRulesetId`) y con su modo (`config.mode`).
+
+La web ya **no tiene ids de ruleset**: los pide a `GET /rulesets`. Eso cierra el `400 rulesetId desconocido` de la web ([TD-003](../roadmap/technical-debt.md#td-003)).
 
 ## Índice
 
@@ -141,16 +143,38 @@ Correspondencia **modo → ruleset por defecto** usada por la plataforma (`MODE_
 
 | | Rulesets del motor | Tabla `rulesets` (BD) |
 |---|---|---|
-| Dónde | `packages/game-rules/index.ts` | migración `002`, columnas `id, name, budget_credits, forbidden_categories, config` |
-| Contenido | 9 ids `*@1` | `mvp-default` (insertado por `seedContent`) |
-| Quién lo usa | El worker (por modo) y el launcher real | La API: `POST /battles` y `POST /tournaments` exigen que `rulesetId` exista aquí |
-| Para qué sirve | Reglas de juego | Presupuesto (`budget_credits`) y, opcionalmente, `config.engineRulesetId` para el camino real |
+| Dónde | `packages/game-rules/index.ts` | Migración `002`. El modo y el enlace al motor van en `config` (jsonb); no hace falta migración nueva |
+| Contenido base | 9 ids `*@1` | `deathmatch-mvp`, `team-deathmatch-mvp`, `capture-the-flag-mvp`, `zone-control-mvp` (con `config.mode` + `config.engineRulesetId` = `dm_practice@1`, `tdm_mvp@1`, `ctf_mvp@1`, `zc_mvp@1`) y `mvp-default` (agnóstico, `mode: null`) |
+| Quién lo siembra | — | `seedContent` = `cli.ts bootstrap`. Es idempotente (`onConflict ignore`), **no crea usuarios** y no sobrescribe un ruleset que un operador haya ajustado |
+| Quién lo usa | Worker (por modo) y launcher real | La API: `GET /rulesets` (web), `POST /battles` y `POST /tournaments` (el id debe existir), `resolveBattleRuleset` (`config.engineRulesetId`) y `checkBattleContent` (`config.mode`) |
 
-Consecuencias, estado actual:
+Los ids de la BD son **de la plataforma** y, a propósito, distintos de los del motor. El enlace va en `config.engineRulesetId`. Así, si la web volviera a enviar un id del motor, la API respondería `400` y el E2E se pondría rojo (mutación comprobada).
 
-- **Web → batalla**: la web envía ids del motor y la API los busca en la BD, así que la respuesta es `400` ([TD-003](../roadmap/technical-debt.md#td-003)).
-- **Torneo**: la web envía `mvp-default` (campo de texto libre) y funciona. Las reglas reales salen del **modo** del torneo.
-- **`config.engineRulesetId`**: sólo lo lee el camino `/run` (`resolveBattleRuleset`). El worker no lo consulta.
+### `GET /rulesets`
+
+`x-min-role visitor`, anónimo. Acepta `?mode=<modo>` (con un modo que no es de plataforma, `400`).
+
+```json
+{ "modes": ["deathmatch","team_deathmatch","capture_the_flag","zone_control"],
+  "items": [ { "id": "deathmatch-mvp", "name": "Deathmatch (práctica)", "mode": "deathmatch",
+               "engineRulesetId": "dm_practice@1", "budgetCredits": 1000, "forbiddenCategories": [] } ] }
+```
+
+Con `?mode=X` devuelve los de ese modo y los agnósticos (`mode: null`).
+
+### `checkBattleContent` (para quien crea batallas)
+
+`apps/api/src/routes/catalog.ts`: `checkBattleContent(db, {mode, rulesetId, mapId, mapVersion?})`. Es fail-closed y devuelve:
+
+| Código | Estado | Cuándo |
+|---|---|---|
+| `mode_invalid` | 400 | El modo no es de plataforma |
+| `ruleset_unknown` | 400 | El ruleset no existe en la BD |
+| `ruleset_mode_mismatch` | 409 | `config.mode` es otro modo |
+| `map_not_published` | 400 | El mapa o la versión no están publicados |
+| `map_mode_unsupported` | 409 | El modo no está en `supported_modes` |
+
+**Pendiente de B:** `createPracticeBattle` (`battles.ts`, área de B) todavía hace sus propias consultas y no comprueba ni el modo del ruleset ni el del mapa. La propuesta está en COORD y en el informe DEV-C.
 
 ## Compatibilidad con mapas
 
@@ -158,24 +182,27 @@ Hay tres comprobaciones distintas, que no se coordinan entre sí:
 
 1. **Validador de mapas** (`apps/map-service/src/validate/mode.ts`). Revisa cada modo de `meta.supportedModes`, pero **sólo conoce los 4 modos de plataforma**.
 2. **Motor** (`modeMapIncompatibilities`). Al crear la batalla comprueba equipos, respawn, banderas y bases, y número de zonas `capture`.
-3. **API**: **no comprueba** `supported_modes` al crear una batalla práctica ni un torneo.
+3. **API**: `checkBattleContent` comprueba `supported_modes` y el modo del ruleset, pero `POST /battles` y los torneos **aún no la llaman** (B). La web de nueva batalla sólo ofrece los mapas que soportan el modo elegido.
 
 Mapas del repositorio:
 
 | Mapa | `meta.supportedModes` | Banderas/bases | Zonas `capture` | Juega en (motor) |
 |---|---|---|---|---|
-| `maps/mvp-arena-01.json` | capture_the_flag, team_deathmatch | 2/2 | 0 (2 zonas de daño) | deathmatch, team_deathmatch, capture_the_flag. **No** zone_control ni domination |
+| `maps/mvp-arena-01.json` (v1) | capture_the_flag, team_deathmatch | 2/2 | 0 (2 zonas de daño) | deathmatch, team_deathmatch, capture_the_flag. **No** zone_control ni domination |
+| `mvp-arena-02` v1 (contenido base, misma geometría) | deathmatch, team_deathmatch, capture_the_flag | 2/2 | 0 | Igual que la fila anterior |
 
-Nota: en la BD, `mvp-arena-01` queda con `supported_modes=["deathmatch"]`. `seedContent` lee un `supportedModes` de la raíz del documento que no existe (`seeds/dev.ts:102`), así que la web muestra modos que no son los del mapa. Lo hemos comunicado a A como hallazgo nuevo; relacionado con [TD-010](../roadmap/technical-debt.md#td-010).
+Corregido en FC-C: el seed guardaba `supported_modes=["deathmatch"]` para `mvp-arena-01`, porque leía de la raíz del documento. Ahora lo deriva de `meta.supportedModes`, y `bootstrap` corrige esa columna en BD ya sembradas.
+
+Ningún mapa de serie soporta `zone_control`. Para jugarlo hay que crear un mapa con una zona de captura en el editor.
 
 ## Estado de implementación por capa
 
 | Modo | Motor | API práctica | Torneos (API/BD) | Web (crear batalla) | Web (torneo) | Validador mapas |
 |---|---|---|---|---|---|---|
-| deathmatch | Sí | Sí | Sí | Sí, pero 400 | Sí | Sí |
-| team_deathmatch | Sí | Sí | Sí | Sí, pero 400 | Sí | Sí |
-| capture_the_flag | Sí | Sí | Sí | Sí, pero 400 | Sí | Sí |
-| zone_control | Sí | Sí | Sí | Sí, pero 400 | Sí | Sí |
+| deathmatch | Sí | Sí | Sí | Sí (202, E2E de navegador) | Sí | Sí |
+| team_deathmatch | Sí | Sí | Sí | Sí (ruleset de la BD) | Sí | Sí |
+| capture_the_flag | Sí | Sí | Sí | Sí (ruleset de la BD) | Sí | Sí |
+| zone_control | Sí | Sí | Sí | Sí, con un mapa que tenga zona de captura | Sí | Sí |
 | last_man_standing | Sí | No (`400 mode inválido`) | No (CHECK de BD) | No | No | No |
 | domination | Sí | No | No | No | No | No |
 | juggernaut | Sí | No | No | No | No | No |
@@ -196,7 +223,7 @@ En el visor, el HUD reconoce objetivos de bandera, zona y juggernaut (`apps/web/
 
 ## Verificación
 
-Verificado contra `27f70bb`.
+Verificado contra `27f70bb`. Las filas FC-C, la integración del cierre funcional (`integration/functional-closure`) (base `0b8c12b`).
 
 | Afirmación | Estado | Evidencia |
 |---|---|---|
@@ -206,12 +233,15 @@ Verificado contra `27f70bb`.
 | Deathmatch rechaza equipos compartidos | CODE_VERIFIED | `modes.ts:126-147` |
 | API práctica: 4 modos | CODE_VERIFIED | `apps/api/src/routes/battles.ts:394` |
 | Torneos: 4 modos en API y CHECK de BD | CODE_VERIFIED | `apps/api/src/routes/tournaments.ts:19`; `apps/api/src/db/migrations.ts:280` |
-| Web: 4 modos con ruleset del motor | CODE_VERIFIED | `apps/web/src/pages/BattleNewPage.tsx:17-22`; `TournamentsPage.tsx:20` |
+| Web de nueva batalla: modos y rulesets desde `GET /rulesets`, sin ids hardcodeados | CODE_VERIFIED / RUNTIME_VERIFIED | `apps/web/src/pages/BattleNewPage.tsx` (`/rulesets`, `effectiveRuleset`); `tests/browser/specs/golden-path.spec.ts` (Chromium 1.48.2, fase golden de `npm run test:browser`, rc=0) |
+| `GET /rulesets` y los 4 rulesets sembrados, resolubles por `resolveBattleRuleset` | CODE_VERIFIED / RUNTIME_VERIFIED | `apps/api/src/routes/catalog.ts:133-140`; `apps/api/src/db/seeds/dev.ts:48`; `apps/api/src/routes/fc-c-content.test.ts:233` |
+| `checkBattleContent` rechaza ruleset y mapa incompatibles | CODE_VERIFIED / RUNTIME_VERIFIED | `catalog.ts:71-130`; `fc-c-content.test.ts:253` |
+| Web de torneo: campo de ruleset de texto libre | CODE_VERIFIED | `TournamentsPage.tsx:20` (área de B/D) |
 | Validador de mapas: 4 modos | CODE_VERIFIED | `apps/map-service/src/validate/mode.ts:13-63`; `apps/map-service/src/types.ts:11` |
 | Worker: modo → ruleset, sin leer `rulesets.config` | CODE_VERIFIED | `apps/tournament-worker/src/engine-executor.ts:101-117` |
 | `MatchRunner` sólo lo usa el banco de balance | CODE_VERIFIED | búsqueda de `runMatch`: `apps/arena-engine/src/match.ts`, `packages/module-catalog/balance/run.ts` |
 | `disconnectGraceTicks` sin lector; `sharedTeamVision` sólo en protocolo | CODE_VERIFIED | búsqueda en `apps/` y `packages/`; `apps/arena-engine/src/protocol-server.ts:444` |
 | `mvp-arena-01` tiene banderas/bases y 0 zonas capture | CODE_VERIFIED | `maps/mvp-arena-01.json` (`layers.flags`, `layers.bases`, `layers.zones[].zoneType`) |
-| `supported_modes` del seed = `["deathmatch"]` | CODE_VERIFIED | `apps/api/src/db/seeds/dev.ts:102` |
+| `supported_modes` del seed derivado de `meta` (corregido) | CODE_VERIFIED / RUNTIME_VERIFIED | `apps/api/src/db/seeds/dev.ts:150,158`; `fc-c-content.test.ts:276` |
 | CTF en mvp-arena-01 termina en empate por tiempo | RUNTIME_VERIFIED | Auditoría 2026-10-15, B pasada 1 §B6 (entorno aislado) |
 | `zone_control` en mapa sin zonas acaba `failed (infrastructure)` | DESIGN_ONLY (derivado del código, no ejecutado) | `modes.ts:661-680`; `engine-executor.ts:271-274`; `battle-runner.ts:190-193` |

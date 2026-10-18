@@ -379,6 +379,15 @@ export class ProtocolServer {
    * orquestador no intercepta cada handshake como sí hacen los tests. Rechaza si no
    * conectan todos dentro de `timeoutMs`.
    */
+  /**
+   * DEV-B · vehículos cuyos bots YA completaron el handshake. Lo usa el worker
+   * para clasificar un fallo de conexión: si no conecta NINGUNO, es infraestructura
+   * (red, imagen); si conectan unos sí y otros no, es fallo deportivo del ausente.
+   */
+  connectedVehicleIds(): string[] {
+    return [...this.agents.keys()];
+  }
+
   whenAllConnected(timeoutMs = 15000): Promise<void> {
     if (this.agents.size >= this.expectedByBotId.size) return Promise.resolve();
     return new Promise((resolve, reject) => {

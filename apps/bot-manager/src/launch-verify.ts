@@ -23,6 +23,30 @@ export interface ArtifactLaunchCheck {
   check(botId: string, version: number): Promise<LaunchCheckResult>;
 }
 
+/**
+ * A9 · Artefacto DE ESTA versión. Nunca «el último artefacto con ese hash»: eso
+ * podía devolver la fila de otro bot u otra versión con el mismo código.
+ *  1. Si la versión registra el build que la validó (`validated_build_id`, desde
+ *     012_a), el artefacto es el de ese build y su hash debe coincidir.
+ *  2. Filas anteriores a 012_a: el artefacto de un build DE ESTA MISMA
+ *     (bot_id, version) con ese hash. Nunca uno de otra versión.
+ */
+export async function findVersionArtifact(
+  db: Knex,
+  v: { bot_id: string; version: number; artifact_hash: string | null; validated_build_id?: string | null },
+): Promise<Record<string, any> | undefined> {
+  if (!v.artifact_hash) return undefined;
+  if (v.validated_build_id) {
+    const art = await db("artifacts").where({ build_id: v.validated_build_id }).first();
+    return art && art.hash === v.artifact_hash ? art : undefined;
+  }
+  return db("artifacts")
+    .join("builds", "builds.id", "artifacts.build_id")
+    .where({ "builds.bot_id": v.bot_id, "builds.version": v.version, "artifacts.hash": v.artifact_hash })
+    .orderBy("artifacts.created_at", "desc")
+    .first("artifacts.*");
+}
+
 /** Verificador real contra las tablas bot_versions/artifacts de la plataforma. */
 export class DbArtifactLaunchGuard implements ArtifactLaunchCheck {
   constructor(
@@ -35,8 +59,8 @@ export class DbArtifactLaunchGuard implements ArtifactLaunchCheck {
     const v = await this.db("bot_versions").where({ bot_id: botId, version }).first();
     if (!v) return refuse("versión inexistente");
     if (!v.artifact_hash) return refuse("la versión no tiene artefacto firmado");
-    const art = await this.db("artifacts").where({ hash: v.artifact_hash }).orderBy("created_at", "desc").first();
-    if (!art) return refuse(`artefacto ${v.artifact_hash} no registrado`);
+    const art = await findVersionArtifact(this.db, v);
+    if (!art) return refuse(`artefacto ${v.artifact_hash} no registrado para ${botId} v${version}`);
     if (!art.signature) return refuse("artefacto sin firma registrada");
     if (!art.bytes) return refuse("artefacto sin bytes persistidos: no hay nada que verificar");
     const res = verifyArtifact({

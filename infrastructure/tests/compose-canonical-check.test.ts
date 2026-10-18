@@ -250,7 +250,10 @@ describe("CONTRATO · el conjunto canónico lo fija deploy-contract.json, no est
     // ROJO antes de la recreación y VERDE después — que es lo que convierte el
     // despliegue en algo medible. Si desapareciera de la lista sin que nadie
     // hubiera desplegado nada, lo perdido sería la declaración del objetivo.
-    expect(res.recrear).toEqual(["api", "backup", "postgres", "queue", "tournament-worker"]);
+    // REVIEW (cierre funcional): `bot-build-worker` se une DESDE que su spec
+    // canónica cablea el sandbox real (red arena, DOCKER_PROXY_URL,
+    // BUILD_SANDBOX_HOST, extra_hosts). Desplegarlo EXIGE recrearlo.
+    expect(res.recrear).toEqual(["api", "backup", "bot-build-worker", "postgres", "queue", "tournament-worker"]);
   });
 
   it("el TAG y el prefijo salen del contrato: nadie los vuelve a decidir aquí", () => {
@@ -455,29 +458,43 @@ describe("HECHOS REALES de VM108 · el incidente que motiva el carril", () => {
     // Estos cuatro cambian de SPEC: recrearlos aplica un cambio real. `queue`
     // se une a la lista al anclarse por digest (antes: `redis:7-alpine`, la
     // etiqueta flotante desde la que se creó el contenedor vivo).
-    expect(res.recrear).toEqual(["api", "backup", "postgres", "queue"]);
-    // Estos ocho sólo arrastran una procedencia equivocada: su spec ya coincide
+    // FC-D (TD-028): `tournament-worker` se une a la lista porque su spec
+    // canónica ahora monta `jwt_secret` + JWT_SECRET_FILE (verificador del
+    // ticket de espectador). Desplegarlo EXIGE recrear el worker.
+    // REVIEW (cierre funcional): `bot-build-worker` también pasa a `recrear`
+    // (sandbox real del build: red arena, proxy, host anunciado). El worker suma
+    // además la red arena, el proxy y la clave pública de verificación.
+    expect(res.recrear).toEqual(["api", "backup", "bot-build-worker", "postgres", "queue", "tournament-worker"]);
+    // Estos seis (antes ocho; el worker y el bot-build-worker pasaron a `recrear`, ver arriba) sólo arrastran una procedencia equivocada: su spec ya coincide
     // con el canónico, así que canonizar no les cambia nada. Ocho, y no siete:
     // este bloque renderiza con VARS_PROD, que NO lleva TOURNAMENT_WORKER_TAG,
     // así que aquí el worker sigue en 4d469dc y sólo arrastra procedencia. El
     // override vive en el CONTRATO, y es el bloque de arriba el que lo mide.
-    expect(res.reetiquetar).toEqual([
-      "arena-engine",
-      "bot-build-worker",
-      "bot-manager",
-      "gateway",
-      "map-service",
-      "replay-service",
-      "tournament-worker",
-      "web",
-    ]);
+    expect(res.reetiquetar).toEqual(["arena-engine", "bot-manager", "gateway", "map-service", "replay-service", "web"]);
   });
 
-  it("api sólo diverge en la variable nueva de concurrencia", () => {
+  it("api sólo diverge en lo declarado por el cierre funcional (TD-030) y la concurrencia", () => {
     const res = r();
     const api = res.hallazgos.filter((x: any) => x.service === "api" && x.code !== CODIGOS.CONFIG_FILES_DIVERGENTE);
-    expect(codigos(api)).toEqual([CODIGOS.ENV_FALTA]);
-    expect(api[0].detail).toContain("S9_MAX_CONCURRENT_REAL_BATTLE_RUNS");
+    // REVIEW (cierre funcional): la API recibe ahora las variables que LEÍA y el
+    // compose no entregaba (TD-030) y la clave PÚBLICA de verificación de artefactos.
+    // Desplegarlo exige recrear la API (ya estaba en `recrear`).
+    const envFalta = api.filter((x: any) => x.code === CODIGOS.ENV_FALTA).map((x: any) => String(x.detail));
+    const esperadas = [
+      "S9_MAX_CONCURRENT_REAL_BATTLE_RUNS",
+      "SPECTATE_WS_URL",
+      "CORS_ORIGIN",
+      "S9_PUBLIC_SPECTATE_ENABLED",
+      "S9_PUBLIC_REPLAYS_ENABLED",
+      "S9_METRICS_ENABLED",
+      "ARTIFACT_VERIFY_KEY_FILE",
+    ];
+    const todo = envFalta.join(" | ");
+    for (const v of esperadas) expect(todo, v).toContain(v);
+    expect(envFalta.length).toBe(esperadas.length);
+    const otros = api.filter((x: any) => x.code !== CODIGOS.ENV_FALTA);
+    expect(codigos(otros)).toEqual([CODIGOS.SECRETO_FALTA]);
+    expect(String(otros[0].detail)).toContain("artifact_verify_key");
   });
 
   it("backup diverge en imagen, hostname de restic y healthcheck", () => {

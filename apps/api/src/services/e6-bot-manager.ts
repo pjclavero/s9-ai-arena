@@ -25,6 +25,7 @@ import { withConfig } from "../../../bot-manager/src/config.js";
 import { loadServiceKeypair, type ServiceKeypair } from "../../../bot-manager/src/signing.js";
 import type { BotSubmission, SourceFile, Runtime, CandidateAgentFactory } from "../../../bot-manager/src/types.js";
 import type { BotAgent } from "../../../arena-engine/src/sim/battle.js";
+import type { BuildSandbox } from "../../../bot-manager/src/build-sandbox.js";
 import type { Db } from "../db/connection.js";
 import {
   completeBuild,
@@ -52,6 +53,7 @@ export class E6PipelineBotManager implements BotManagerClient {
   private agentResolver?: (submission: BotSubmission) => CandidateAgentFactory | Promise<CandidateAgentFactory>;
   private referenceAgent?: (botId: string) => BotAgent;
   private allowUnverifiedSandbox: boolean;
+  private sandbox?: BuildSandbox;
 
   constructor(
     private db: Db,
@@ -72,6 +74,8 @@ export class E6PipelineBotManager implements BotManagerClient {
        * activarse en producción; la app jamás la pone.
        */
       allowUnverifiedSandbox?: boolean;
+      /** DEV-A · TD-001 · sandbox REAL en contenedor (ContainerBuildSandbox). */
+      sandbox?: BuildSandbox;
     } = {},
   ) {
     // R2.5 (ERR-SEC-15): la clave de firma sale del almacén de secretos
@@ -83,6 +87,7 @@ export class E6PipelineBotManager implements BotManagerClient {
     this.agentResolver = opts.agentResolver;
     this.referenceAgent = opts.referenceAgent;
     this.allowUnverifiedSandbox = opts.allowUnverifiedSandbox ?? false;
+    this.sandbox = opts.sandbox;
   }
 
   async enqueueBuild(req: BuildRequest): Promise<void> {
@@ -112,6 +117,11 @@ export class E6PipelineBotManager implements BotManagerClient {
       return;
     }
 
+    // DEV-A · A4: el build deja de figurar `queued` mientras el pipeline corre.
+    await this.db("builds")
+      .where({ id: req.buildId, status: "queued" })
+      .update({ status: "running", updated_at: this.db.fn.now() });
+
     const submission: BotSubmission = {
       botId: req.botId,
       version: req.version,
@@ -130,6 +140,7 @@ export class E6PipelineBotManager implements BotManagerClient {
       // build se RECHAZA como "no verificable" (R1.5 · ERR-SEC-03) — nunca `validated`.
       agentResolver: this.agentResolver,
       referenceAgent: this.referenceAgent,
+      sandbox: this.sandbox,
       allowUnverifiedSandbox: this.allowUnverifiedSandbox,
     });
     const result = await pipeline.run(submission);
@@ -143,6 +154,12 @@ export class E6PipelineBotManager implements BotManagerClient {
         // Los logs de etapa de E6 se guardan con el build; getBuild los expone
         // solo a dueño/moderador/admin (x-private del contrato).
         ...(s.logs.length > 0 ? { logUrl: `build-logs:${req.buildId}/${s.name}` } : {}),
+        // DEV-A · A4: los logs y métricas de etapa se PERSISTEN con el build (antes
+        // sólo había un logUrl que no apuntaba a nada). Logs = x-private (dueño/staff).
+        ...(s.logs.length > 0 ? { logs: s.logs.slice(0, 50).map((l) => l.slice(0, 2000)) } : {}),
+        ...(s.metrics ? { metrics: s.metrics } : {}),
+        ...(s.startedAt ? { startedAt: s.startedAt } : {}),
+        ...(s.finishedAt ? { finishedAt: s.finishedAt } : {}),
       })),
       artifactHash: result.artifactHash,
       signature: result.signature,

@@ -4,13 +4,6 @@ import { createDb } from "./db/connection.js";
 import { createApp } from "./app.js";
 import { mountVersionEndpoint } from "../../../packages/build-info/index.js";
 import { resolveTrustProxyHops } from "./middleware/proxy-trust.js";
-import { battleRunConfigFromEnv } from "./battle-run.js";
-import {
-  createHttpBattleRunLauncher,
-  httpBattleRunLauncherEnvConfig,
-  replayIngestEnvConfig,
-  runTimeoutEnvConfig,
-} from "./services/battle-run-http-launcher.js";
 
 const db = createDb();
 const port = Number(process.env.PORT ?? 8080);
@@ -19,24 +12,13 @@ const port = Number(process.env.PORT ?? 8080);
 // futuro montado aquí vea una IP distinta de la de la app principal.
 const trustProxyHops = resolveTrustProxyHops();
 
-// B2 · el launcher REAL (API → arena-engine por HTTP, nunca Docker) solo se
-// inyecta si ARENA_ENGINE_URL y el secreto compartido están AMBOS presentes
-// (fail closed); `S9_ENABLE_REAL_BATTLE_RUNS` sigue resolviéndose aparte y
-// apagada por defecto — cablear el runner no la enciende.
-const launcherEnvCfg = httpBattleRunLauncherEnvConfig();
-// B6 · ingesta del replay real en el replay-service (ver la nota de cabecera de
-// battle-run-http-launcher.ts). Sin REPLAY_SERVICE_URL, no cambia nada de B2.
-const replayIngestCfg = replayIngestEnvConfig();
-// B9 · plazo de `POST /run`: por defecto DERIVADO de la duración real de la batalla
-// (ticks del ruleset × ritmo de tick + margen). `ARENA_ENGINE_RUN_TIMEOUT_MS` lo
-// sobrescribe de forma absoluta si un operador lo necesita.
-const runTimeoutCfg = runTimeoutEnvConfig();
-const realBattleRuns = {
-  ...battleRunConfigFromEnv(),
-  runner: launcherEnvCfg
-    ? createHttpBattleRunLauncher({ ...launcherEnvCfg, ...replayIngestCfg, ...runTimeoutCfg, db })
-    : undefined,
-};
+// REVIEW (cierre funcional, R4.1) · la API YA NO cablea el launcher HTTP de
+// `POST /battles/{id}/run` (services/battle-run-http-launcher.ts): usaba
+// `artifact_hash` como si fuera un digest de imagen y no arrancaba el código del
+// bot. La autoridad única de ejecución es el tournament-worker (DEV-B), que lanza
+// el ARTEFACTO FIRMADO de cada versión (createBattleLaunchHost, DEV-A). `/run`
+// sólo delega en la cola. Sin runner, /system/status anuncia
+// realBattleRuns.available=false (y la web ya no ofrece el botón).
 
 // /healthz va en un Express envolvente, NO en createApp(): el test de
 // conformidad (conformance.test.ts) exige que la app no exponga rutas fuera del
@@ -48,7 +30,7 @@ root.get("/healthz", (_req, res) => res.json({ status: "ok", service: "api" }));
 // es señal de infraestructura y el test de conformidad prohíbe rutas fuera del
 // contrato de E1 dentro de la app.
 mountVersionEndpoint(root, "api");
-root.use(createApp({ db, trustProxyHops, realBattleRuns }));
+root.use(createApp({ db, trustProxyHops }));
 
 root.listen(port, () => {
   console.log(JSON.stringify({ level: "info", service: "api", msg: `API de plataforma escuchando en :${port}` }));

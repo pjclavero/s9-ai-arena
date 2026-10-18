@@ -5,6 +5,7 @@
  * ejecutar batallas: si el runner real no está habilitado, se avisa claramente.
  */
 import { useEffect, useState } from "react";
+import { ErrorState } from "../ui/primitives.js";
 import { api, type Me } from "../api.js";
 
 interface RuntimePolicyInvariants {
@@ -51,15 +52,15 @@ function Counts({ label, data }: { label: string; data: Record<string, number> }
 
 export function SystemPage(_props: { me: Me }) {
   const [status, setStatus] = useState<SystemStatus | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
 
   async function refresh() {
-    setError("");
+    setError(null);
     try {
       setStatus(await api<SystemStatus>("GET", "/system/status"));
     } catch (e) {
       setStatus(null);
-      setError(`No se pudo cargar el estado del sistema: ${(e as Error).message}`);
+      setError(e);
     }
   }
   useEffect(() => {
@@ -67,12 +68,10 @@ export function SystemPage(_props: { me: Me }) {
   }, []);
 
   if (error) {
+    // FC-D · componente común: 403 «No tienes permiso», 5xx, timeout… con detalle real.
     return (
-      <div className="card" role="alert">
-        <p className="error">{error}</p>
-        <button type="button" onClick={() => void refresh()}>
-          Reintentar
-        </button>
+      <div className="card">
+        <ErrorState label="el estado del sistema" error={error} onRetry={() => void refresh()} />
       </div>
     );
   }

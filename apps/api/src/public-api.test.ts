@@ -19,6 +19,7 @@ import { FakeBotManager } from "./services/bot-manager.js";
 import { loadContract } from "./openapi.js";
 import { implementedOperations } from "./registry.js";
 import { getStandings, updateStandings, clearStandingsCache } from "./services/standings.js";
+import { ACTIVE_SEASON_ID } from "../../tournament-worker/src/season.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = join(__dirname, "..", "..", "..");
@@ -171,6 +172,16 @@ describe("T7.5 espectador anónimo (DoD: batalla en directo y replay sin cuenta)
       const enClaro = await request(app).post(`/battles/${liveBattleId}/spectate-ticket`);
       expect(enClaro.status).toBe(500);
 
+      process.env.SPECTATE_WS_URL = "//otro.example/spectate"; // protocol-relative ⇒ también 500
+      const relProto = await request(app).post(`/battles/${liveBattleId}/spectate-ticket`);
+      expect(relProto.status).toBe(500);
+
+      // REVIEW (TD-030) · ruta del MISMO ORIGEN: el navegador la ancla a wss bajo https.
+      process.env.SPECTATE_WS_URL = "/ws/spectate";
+      const rel = await request(app).post(`/battles/${liveBattleId}/spectate-ticket`);
+      expect(rel.status).toBe(201);
+      expect(rel.body.wsUrl).toBe(`/ws/spectate/${liveBattleId}`);
+
       process.env.SPECTATE_WS_URL = "wss://arena.example/spectate";
       const seguro = await request(app).post(`/battles/${liveBattleId}/spectate-ticket`);
       expect(seguro.status).toBe(201);
@@ -286,13 +297,16 @@ describe("T7.5 cuotas anónimas (DoD: 429 y registro en api_usage)", () => {
 describe("T7.5 caché de clasificaciones (DoD: nunca obsoleta >60 s)", () => {
   it("sirve desde caché dentro del TTL y se invalida INMEDIATAMENTE al actualizar", async () => {
     clearStandingsCache();
-    const first = await getStandings(h.db, "current", "deathmatch");
+    const first = await getStandings(h.db, ACTIVE_SEASON_ID, "deathmatch");
     expect(first.fromCache).toBe(false);
-    const second = await getStandings(h.db, "current", "deathmatch");
+    const second = await getStandings(h.db, ACTIVE_SEASON_ID, "deathmatch");
     expect(second.fromCache).toBe(true);
 
     // Actualización de ratings ⇒ la siguiente lectura ya ve el dato nuevo
-    await updateStandings(h.db, "current", "deathmatch", [{ botId, rank: 1, rating: 1600, wins: 4, losses: 1 }]);
+    // TD-029 · el writer (worker) escribe en la temporada ACTIVA real; "current" es
+    // sólo el alias de lectura de la API (antes este test escribía "current" a mano,
+    // justo la temporada que en producción nadie escribe).
+    await updateStandings(h.db, ACTIVE_SEASON_ID, "deathmatch", [{ botId, rank: 1, rating: 1600, wins: 4, losses: 1 }]);
     const after = await request(app).get("/standings?seasonId=current&mode=deathmatch");
     expect(after.status).toBe(200);
     expect(after.headers["cache-control"]).toBe("public, max-age=60");
@@ -363,7 +377,7 @@ describe("T7.5 torneos (cap. 17.2) y batallas de práctica", () => {
       .send({
         mode: "deathmatch",
         rulesetId: DEFAULT_RULESET_ID,
-        mapId: "mvp-arena-01",
+        mapId: "mvp-arena-02",
         participants: [{ botId, version: 1, team: "A" }],
       });
     expect(r.status).toBe(202);
@@ -376,11 +390,18 @@ describe("T7.5 torneos (cap. 17.2) y batallas de práctica", () => {
 
 describe("T7.5 mapas con el código real de E4", () => {
   it("importar el mapa MVP → publicar (miniatura) → PUT siempre 409 (inmutable)", async () => {
-    const mapDoc = readFileSync(join(REPO, "maps", "mvp-arena-01.json"));
+    // FC-C · mvp-arena-01 es contenido base (sin dueño): solo un admin le añade
+    // versiones. Se importa una COPIA con mapId propio del developer.
+    const mapDoc = Buffer.from(
+      JSON.stringify({
+        ...JSON.parse(readFileSync(join(REPO, "maps", "mvp-arena-01.json"), "utf8")),
+        mapId: "mvp-arena-copia",
+      }),
+    );
     const imported = await request(app)
       .post("/maps")
       .set("Authorization", `Bearer ${dev}`)
-      .attach("file", mapDoc, "mvp-arena-01.json");
+      .attach("file", mapDoc, "mvp-arena-copia.json");
     expect(imported.status).toBe(201);
     expect(imported.body.state).toBe("validated");
     const { mapId, version } = imported.body;
@@ -410,13 +431,25 @@ describe("T7.5 mapas con el código real de E4", () => {
       .set("Authorization", `Bearer ${organizer}`)
       .send({ params: { ...params, mapId: "gen-a" }, seed: "semilla-42" });
     expect(b.status).toBe(201);
-    expect(a.body.checksum).toBe(b.body.checksum);
+    // FC-C · el documento guardado se normaliza a su fila (version = la asignada,
+    // checksum canónico), así que v1 y v2 del mismo mapa tienen checksums distintos
+    // por construcción. El determinismo se comprueba sobre la GEOMETRÍA generada.
+    const geometry = async (r: { body: { mapId: string; version: number } }) => {
+      const got = await request(app)
+        .get(`/maps/${r.body.mapId}/versions/${r.body.version}/content`)
+        .set("Authorization", `Bearer ${organizer}`);
+      expect(got.status).toBe(200);
+      const { version: _v, checksum: _c, ...rest } = got.body;
+      return rest;
+    };
+    expect(b.body.version).toBe(a.body.version + 1);
+    expect(await geometry(b)).toEqual(await geometry(a));
 
     const c = await request(app)
       .post("/maps/generate")
       .set("Authorization", `Bearer ${organizer}`)
       .send({ params: { ...params, mapId: "gen-a" }, seed: "semilla-43" });
-    expect(c.body.checksum).not.toBe(a.body.checksum);
+    expect(await geometry(c)).not.toEqual(await geometry(a));
   });
 });
 
@@ -441,7 +474,10 @@ describe("N4/R10 slice 2: borrador del editor de mapas (saveMapDraft)", () => {
     expect(r.body.checks.some((c: { severity: string }) => c.severity === "error")).toBe(true);
 
     // Se recupera con getMapVersion y sigue en 'draft' (no se coló como publicable).
-    const got = await request(app).get(`/maps/${r.body.mapId}/versions/${r.body.version}`);
+    // FC-C · un borrador solo lo ve su dueño: se pide con su sesión.
+    const got = await request(app)
+      .get(`/maps/${r.body.mapId}/versions/${r.body.version}`)
+      .set("Authorization", `Bearer ${dev}`);
     expect(got.status).toBe(200);
     expect(got.body.state).toBe("draft");
   });

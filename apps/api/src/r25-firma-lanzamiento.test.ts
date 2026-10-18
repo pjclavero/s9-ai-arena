@@ -173,7 +173,14 @@ describe("R2.5 · verificación ANTES de cada lanzamiento en batalla", () => {
     const bytes = Buffer.from(`artefacto-canonico-${bot.name}`);
     const hash = createHash("sha256").update(bytes).digest("hex");
     const stored = opts.tamper ? Buffer.concat([bytes, Buffer.from("!")]) : bytes;
-    await h.db("bot_versions").where({ bot_id: bot.botId, version: bot.version }).update({ artifact_hash: hash });
+    // DEV-A · 012_bot_versioning: el artefacto de una versión publicada es INMUTABLE en BD
+    // (trigger bot_versions_guard). Esta fixture simula un almacén manipulado
+    // por fuera de la aplicación, así que escribe con los triggers desactivados
+    // en SU transacción (session_replication_role, sólo superusuario de test).
+    await h.db.transaction(async (trx) => {
+      await trx.raw("SET LOCAL session_replication_role = replica");
+      await trx("bot_versions").where({ bot_id: bot.botId, version: bot.version }).update({ artifact_hash: hash });
+    });
     const build = await h.db("builds").where({ bot_id: bot.botId, version: bot.version }).first();
     await h
       .db("artifacts")

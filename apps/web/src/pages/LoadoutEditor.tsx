@@ -18,6 +18,48 @@ import { useMemo, useState } from "react";
 import { emptyDict } from "../../../../packages/game-rules/safe-lookup.js";
 import { validateLoadout, type Violation } from "../../../../packages/module-catalog/validator/index.js";
 import { findModule, type LoadoutInput, type ModuleDefinition } from "../../../../packages/module-catalog/types.js";
+import {
+  CHASSIS_CHOICE_EFFECT,
+  NON_GAMEPLAY_KEYS,
+  categoryEffect,
+  effectOf,
+  type EffectStatus,
+} from "../../../../packages/module-catalog/effect-status.js";
+
+/**
+ * FC-C (TD-016) · Insignia de efecto REAL en batalla (packages/module-catalog/effect-status.ts).
+ * No se presenta como funcional lo que el motor ignora.
+ */
+const EFFECT_LABEL: Record<EffectStatus, string> = {
+  ACTIVE: "cambia la batalla",
+  PARTIAL: "efecto parcial",
+  FUTURE: "sin efecto en batalla",
+};
+export function EffectBadge(props: { status: EffectStatus; title?: string; testId?: string }) {
+  const cls = props.status === "ACTIVE" ? "ok" : props.status === "PARTIAL" ? "warn" : "error";
+  return (
+    <small className={cls} title={props.title} data-testid={props.testId} data-effect={props.status}>
+      [{props.status} · {EFFECT_LABEL[props.status]}]
+    </small>
+  );
+}
+
+/** Propiedades de juego de un módulo con su efecto real (para el detalle bajo la ranura). */
+export function moduleEffects(
+  def: ModuleDefinition,
+): { prop: string; value: string; status: EffectStatus; note: string }[] {
+  const out: { prop: string; value: string; status: EffectStatus; note: string }[] = [];
+  const add = (prop: string, value: unknown) => {
+    const e = effectOf(def.category, prop);
+    if (e) out.push({ prop, value: JSON.stringify(value), status: e.status, note: e.note });
+  };
+  for (const [k, v] of Object.entries(def)) {
+    if (k === "power" && v && typeof v === "object") {
+      for (const [sk, sv] of Object.entries(v)) add(`power.${sk}`, sv);
+    } else if (!NON_GAMEPLAY_KEYS.has(k)) add(k, v);
+  }
+  return out;
+}
 
 export interface LoadoutDraft {
   catalogVersion: string;
@@ -171,6 +213,11 @@ export function LoadoutEditor(props: {
           Editando sobre la revisión <strong>{props.loadedRevision}</strong> (guardar crea una revisión nueva).
         </p>
       )}
+      <p className="warn" role="note" data-testid="effect-note">
+        Efecto real en batalla: hoy solo la <strong>familia del chasis</strong> cambia la batalla (decide el arquetipo
+        que se juega). Los módulos elegidos cuentan para el presupuesto, la masa y la energía, pero en la ejecución real
+        se usan los módulos fijos del arquetipo. Cada ranura indica su efecto.
+      </p>
       <label>
         Chasis{" "}
         <select
@@ -188,8 +235,8 @@ export function LoadoutEditor(props: {
             </option>
           ))}
         </select>
-      </label>
-
+      </label>{" "}
+      <EffectBadge status={CHASSIS_CHOICE_EFFECT.status} title={CHASSIS_CHOICE_EFFECT.note} testId="effect-chassis" />
       <table>
         <tbody>
           {(chassisDef.slots ?? []).map((slot) => {
@@ -209,7 +256,11 @@ export function LoadoutEditor(props: {
                   {slot.id}{" "}
                   <small>
                     ({slot.accepts.join("/")}, ≤{slot.maxSize})
-                  </small>
+                  </small>{" "}
+                  <EffectBadge
+                    status={selectedDef ? categoryEffect(selectedDef.category) : categoryEffect(slot.accepts[0])}
+                    testId={`effect-slot-${slot.id}`}
+                  />
                 </td>
                 <td>
                   <select
@@ -250,6 +301,19 @@ export function LoadoutEditor(props: {
                       </label>
                     </>
                   )}
+                  {selectedDef && (
+                    <details data-testid={`effect-detail-${slot.id}`}>
+                      <summary>Efecto real de cada propiedad</summary>
+                      <ul>
+                        {moduleEffects(selectedDef).map((e) => (
+                          <li key={e.prop}>
+                            <code>{e.prop}</code>={e.value} <EffectBadge status={e.status} title={e.note} />{" "}
+                            <small>{e.note}</small>
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
                   {selectedDef?.category === "weapon" && selectedDef.acceptsAmmo?.length && ammoOptions.length === 0 ? (
                     <span className="error" role="alert">
                       {" "}
@@ -262,7 +326,6 @@ export function LoadoutEditor(props: {
           })}
         </tbody>
       </table>
-
       <p>
         <span className={live.costCredits > props.budgetCredits ? "error" : "ok"} data-testid="live-cost">
           Coste: {live.costCredits}/{props.budgetCredits} cr
@@ -273,7 +336,6 @@ export function LoadoutEditor(props: {
           {live.energyBalanceEUs} EU/s
         </span>
       </p>
-
       {diff.length > 0 && (
         <div data-testid="draft-diff">
           <h3>Cambios respecto a la revisión {props.loadedRevision ?? "cargada"}</h3>
@@ -297,7 +359,6 @@ export function LoadoutEditor(props: {
           </button>
         </div>
       )}
-
       {live.violations.length > 0 && (
         <ul data-testid="violations" role="alert">
           {live.violations.map((v, i) => (
@@ -321,7 +382,6 @@ export function LoadoutEditor(props: {
           Revisión de loadout guardada.
         </p>
       )}
-
       <button
         disabled={blocked}
         data-testid="save-loadout"

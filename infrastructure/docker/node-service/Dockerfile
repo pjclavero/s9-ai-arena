@@ -22,6 +22,10 @@ RUN npm ci --ignore-scripts
 
 COPY apps ./apps
 COPY maps ./maps
+# REVIEW (cierre funcional) · TD-001/TD-002: digests de las imágenes de RUNTIME de
+# bots (loadRuntimeImages, apps/bot-manager/src/bot-launch.ts). Sin él, el sandbox
+# del build y el lanzamiento en batalla fallan cerrado.
+COPY runtimes/DIGESTS.lock ./runtimes/DIGESTS.lock
 # Bots de ejemplo: son el código fuente que `cli.ts demo-teams` carga para crear
 # plantillas jugables en una instancia real. Sin ellos el comando falla con ENOENT.
 COPY example-bots ./example-bots

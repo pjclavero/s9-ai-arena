@@ -1,8 +1,6 @@
 /**
- * R6.2/R9-B · DoD del endpoint gateado POST /battles/:battleId/run.
- * Usa un `BattleRunLauncher` FAKE inyectado — NUNCA Docker real. Cubre: apagado→503,
- * no encontrada→404, estado inválido→409, bot no listo/sin firma→409, mapa no publicado→409,
- * runner ausente→503, y ejecución OK→200 con el fake.
+ * DEV-B (TD-002) · POST /battles/:battleId/run ya no ejecuta: delega en la cola del
+ * tournament-worker (autoridad única). Se mantiene la capability de /system/status.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -20,11 +18,7 @@ let rulesetId: string;
 const REAL_HASH = "sha256:" + "ab".repeat(32);
 const fakeRunner: BattleRunLauncher = {
   async launch(input) {
-    return {
-      status: "completed",
-      runner: "proxy-container",
-      replay: { ingested: true, battleId: input.battleId, verify_matches: true },
-    };
+    return { status: "completed", runner: "proxy-container", replay: { ingested: true, battleId: input.battleId } };
   },
 };
 
@@ -91,18 +85,16 @@ beforeEach(async () => {
   await h.db("battles").del();
 });
 
-describe("R6.2/R9-B · POST /battles/:battleId/run", () => {
-  it("apagado por defecto → 503 (aunque la batalla no exista)", async () => {
-    const app = createApp({ db: h.db, realBattleRuns: { enabled: false } });
-    const r = await request(app)
-      .post("/battles/whatever/run")
-      .set("Authorization", `Bearer ${await token(app)}`);
-    expect(r.status).toBe(503);
-    expect(r.body.error).toBe("real_battle_runs_disabled");
-  });
+describe("DEV-B (TD-002) · POST /battles/:battleId/run DELEGA en la cola (ya no ejecuta)", () => {
+  // Un launcher que EXPLOTA si alguien lo llama: /run no debe ejecutar nada.
+  const tripwire: BattleRunLauncher = {
+    async launch() {
+      throw new Error("/run NO debe llamar al launcher: la autoridad de ejecución es el worker");
+    },
+  };
 
-  it("habilitado + batalla inexistente → 404", async () => {
-    const app = createApp({ db: h.db, realBattleRuns: { enabled: true, runner: fakeRunner } });
+  it("batalla inexistente → 404", async () => {
+    const app = createApp({ db: h.db, realBattleRuns: { enabled: true, runner: tripwire } });
     const r = await request(app)
       .post("/battles/no_existe/run")
       .set("Authorization", `Bearer ${await token(app)}`);
@@ -112,7 +104,7 @@ describe("R6.2/R9-B · POST /battles/:battleId/run", () => {
   it("estado inválido (finished) → 409", async () => {
     const r1 = await seedBot("bot_r", { signed: true });
     const id = await seedBattle("finished", [{ botId: r1.botId, version: 1, team: "red" }]);
-    const app = createApp({ db: h.db, realBattleRuns: { enabled: true, runner: fakeRunner } });
+    const app = createApp({ db: h.db, realBattleRuns: { enabled: true, runner: tripwire } });
     const r = await request(app)
       .post(`/battles/${id}/run`)
       .set("Authorization", `Bearer ${await token(app)}`);
@@ -120,46 +112,37 @@ describe("R6.2/R9-B · POST /battles/:battleId/run", () => {
     expect(r.body.error).toBe("invalid_state");
   });
 
-  it("bot sin digest firmado → 409 bot_not_signed", async () => {
-    const u = await seedBot("bot_unsigned", { signed: false });
-    const id = await seedBattle("scheduled", [{ botId: u.botId, version: 1, team: "red" }]);
-    const app = createApp({ db: h.db, realBattleRuns: { enabled: true, runner: fakeRunner } });
-    const r = await request(app)
-      .post(`/battles/${id}/run`)
-      .set("Authorization", `Bearer ${await token(app)}`);
-    expect(r.status).toBe(409);
-    expect(r.body.error).toBe("bot_not_signed");
-  });
-
-  it("habilitado + válido pero SIN runner cableado → 503 runner_unavailable", async () => {
+  it("scheduled → 202, la batalla SIGUE scheduled, el launcher no se toca y doble /run = UN trabajo", async () => {
     const a = await seedBot("bot_a", { signed: true });
     const b = await seedBot("bot_b", { signed: true });
     const id = await seedBattle("scheduled", [
       { botId: a.botId, version: 1, team: "red" },
       { botId: b.botId, version: 1, team: "blue" },
     ]);
-    const app = createApp({ db: h.db, realBattleRuns: { enabled: true } }); // sin runner
-    const r = await request(app)
-      .post(`/battles/${id}/run`)
-      .set("Authorization", `Bearer ${await token(app)}`);
-    expect(r.status).toBe(503);
-    expect(r.body.error).toBe("runner_unavailable");
+    const app = createApp({ db: h.db, realBattleRuns: { enabled: true, runner: tripwire } });
+    const auth = `Bearer ${await token(app)}`;
+    const [r1, r2] = await Promise.all([
+      request(app).post(`/battles/${id}/run`).set("Authorization", auth),
+      request(app).post(`/battles/${id}/run`).set("Authorization", auth),
+    ]);
+    expect(r1.status).toBe(202);
+    expect(r2.status).toBe(202);
+    expect(r1.body.delegatedTo).toBe("tournament-worker");
+    const battle = await h.db("battles").where({ id }).first();
+    expect(battle.status).toBe("scheduled");
+    const jobs = await h.db("jobs").where({ kind: "run_battle" }).whereRaw("payload->>'battleId' = ?", [id]);
+    expect(jobs.length).toBe(1);
+    expect(jobs[0].dedupe_key).toBe(`run_battle:${id}`);
   });
 
-  it("habilitado + válido + runner fake → 200 con resultado y replay", async () => {
-    const a = await seedBot("bot_a", { signed: true });
-    const b = await seedBot("bot_b", { signed: true });
-    const id = await seedBattle("scheduled", [
-      { botId: a.botId, version: 1, team: "red" },
-      { botId: b.botId, version: 1, team: "blue" },
-    ]);
-    const app = createApp({ db: h.db, realBattleRuns: { enabled: true, runner: fakeRunner } });
+  it("con la flag apagada también delega (ya no hay camino de ejecución que apagar en la API)", async () => {
+    const a = await seedBot("bot_c", { signed: true });
+    const id = await seedBattle("scheduled", [{ botId: a.botId, version: 1, team: "red" }]);
+    const app = createApp({ db: h.db, realBattleRuns: { enabled: false } });
     const r = await request(app)
       .post(`/battles/${id}/run`)
       .set("Authorization", `Bearer ${await token(app)}`);
-    expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ battleId: id, status: "completed", runner: "proxy-container" });
-    expect(r.body.replay.ingested).toBe(true);
+    expect(r.status).toBe(202);
   });
 
   it("capability en /system/status: disabled por defecto, available solo con runner", async () => {

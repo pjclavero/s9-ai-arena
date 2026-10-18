@@ -424,7 +424,7 @@ export function createDockerProxyServer(opts: ProxyServerOptions): http.Server {
 // ── runner del bot-manager a través del proxy ────────────────────────────────
 
 import type { ContainerHandle, ContainerRunner, MeasuredContainerHandle, SandboxSpec } from "./container-runner.js";
-import { DockerContainerRunner, cpuMsFromDockerStats } from "./container-runner.js";
+import { DockerContainerRunner, cpuMsFromDockerStats, runStateFromInspect } from "./container-runner.js";
 
 /**
  * Runner de producción del bot-manager tras R1.7: SIN docker.sock. Habla con
@@ -456,8 +456,11 @@ export class ProxyContainerRunner implements ContainerRunner {
         Memory: l.memoryBytes,
         MemorySwap: l.memoryBytes, // sin swap extra
         PidsLimit: l.pids,
+        ...(spec.autoRemove ? { AutoRemove: true } : {}),
       },
       NetworkingConfig: { EndpointsConfig: { [spec.network]: {} } },
+      // DEV-A · TD-001: bootstrap del código de usuario (argumentos del ENTRYPOINT).
+      ...(spec.cmd ? { Cmd: spec.cmd } : {}),
     };
   }
 
@@ -498,7 +501,8 @@ export class ProxyContainerRunner implements ContainerRunner {
       id,
       async stop() {
         const stopped = await call("POST", `/containers/${id}/stop?t=5`);
-        if (stopped.status !== 204 && stopped.status !== 304) {
+        // 404 = ya no existe (AutoRemove tras salir): parado, que es lo pedido.
+        if (stopped.status !== 204 && stopped.status !== 304 && stopped.status !== 404) {
           throw new Error(`el proxy rechazó el stop (${stopped.status}): ${stopped.json?.message ?? "sin detalle"}`);
         }
       },
@@ -524,6 +528,15 @@ export class ProxyContainerRunner implements ContainerRunner {
           const stats = await call("GET", `/containers/${id}/stats?stream=false`);
           if (stats.status !== 200) return null;
           return cpuMsFromDockerStats(stats.json);
+        } catch {
+          return null;
+        }
+      },
+      /** DEV-A · ¿sigue vivo?, código de salida y OOM (inspect, ya en la allowlist). */
+      async state() {
+        try {
+          const inspected = await call("GET", `/containers/${id}/json`);
+          return runStateFromInspect(inspected.status, inspected.json);
         } catch {
           return null;
         }
