@@ -29,7 +29,7 @@ y en [docs/technical/services.md](../technical/services.md).
 ┌───────────────────────────────── gateway (nginx) ─────────────────────────────────┐
 │  /            → web:3000          /api/v1/* → api:8080 (sin prefijo)                │
 │  /ws/*        → tournament-worker:8081 (WebSocket espectador)                       │
-│  /replays/*   → replay-service:8083      /grafana/* → grafana:3000 (si existe)       │
+│  /replays/*   → 404 (TD-004: replays por /api/v1)  /grafana/* → grafana:3000        │
 └───────┬───────────────┬──────────────────────┬───────────────────────┬────────────┘
         │               │                      │                       │
       web            api ──────HTTP /run────► arena-engine ──HTTP──► s9-docker-proxy (HOST)

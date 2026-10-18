@@ -68,7 +68,7 @@ Cambios del cierre funcional 2026-10 (carril D): arranque de Phaser corregido ([
 - **Arranque y F5**: `bootstrapSession()` hace `POST /auth/refresh` y después `GET /users/me`. Devuelve `null` sólo si **no hay sesión** (400/401/403); si la API falla (red, plazo, 5xx) **lanza**, y el App muestra el error de arranque.
 - **Interceptor único de 401** (salvo `/auth/*`): refresh compartido y reintento; si falla, `expireSession(...)`.
 - **Respuestas**: no-ok ⇒ `ApiRequestError(status, body)`; si el cuerpo no es JSON (502 HTML del gateway) el mensaje nombra el estado. Un 200 con HTML donde se esperaba JSON también es error.
-- **`fetchJson(url)`**: el mismo plazo y la misma clasificación para rutas fuera de `/api/v1` (replay-service): lo usan `ReplaysPage` (`/replays/`) y `ReplayPage` (índice y segmentos).
+- **`fetchJson(url)`**: el mismo plazo y la misma clasificación para rutas fuera de `/api/v1`. Desde TD-004 `ReplaysPage` y `ReplayPage` ya no lo usan: piden los replays con `api()` (Bearer y refresh) a `/api/v1/replays`.
 
 ## Estados comunes y errores
 
@@ -121,8 +121,8 @@ const scene = await waitForViewerScene(game); // READY del juego + CREATE de la 
 | Cuadro | `#/tournaments/<id>/bracket` | `GET /tournaments/{id}/matches` |
 | Batallas | `#/battles[?bot=]` | `GET /battles[?status=]`; filtro por bot en el cliente |
 | Nueva batalla | `#/battles/new` | `GET /rulesets`, `GET /maps`, `GET /bots`, `POST /battles` (C/B) |
-| Replays | `#/replays` | `GET /replays/` (replay-service, con barra final) |
-| Reproductor | `#/replay/<id>?t=` | `GET /replays/{id}/index`, `GET /replays/{id}/segment` |
+| Replays | `#/replays` | `GET /replays` (API, con sesión; sólo los visibles, TD-004) |
+| Reproductor | `#/replay/<id>?t=` | `GET /replays/{id}/index`, `GET /replays/{id}/segment` (API; espera a recuperar la sesión) |
 | Visor | `#/viewer/<id>` | `POST /battles/{id}/spectate-ticket`, WebSocket `/ws/spectate/<id>` |
 | En directo | `#/live` | `GET /public/battles/live` |
 | Ranking | `#/ranking` | `GET /standings?mode=` (la API resuelve la temporada activa, TD-029) |
@@ -130,7 +130,7 @@ const scene = await waitForViewerScene(game); // READY del juego + CREATE de la 
 | Administración, Sistema, Auditoría, Roles | `#/admin`, `#/system`, `#/audit`, `#/roles` | `GET /admin/*`, `GET /system/status`, `GET /system/rbac`, `PUT /users/{id}/roles` |
 | 404 | cualquier otro hash | — |
 
-En desarrollo, `vite.config.ts` reenvía `/api/v1`, `/replays` (sin rewrite) y `/ws` (WebSocket, sin el prefijo), igual que el gateway.
+En desarrollo, `vite.config.ts` reenvía `/api/v1` y `/ws` (WebSocket, sin el prefijo), igual que el gateway.
 
 ## Tests
 
