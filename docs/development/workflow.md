@@ -114,9 +114,9 @@ verde:
 - `functional-e2e` (golden path real: navegador + build en sandbox + batalla + replay, y E2E Docker)
   es obligatorio en todo PR: si sale rojo, el PR rompe el núcleo funcional y no se mergea. Su
   evidencia está en el artifact `functional-e2e-golden-<n>` ([ci.md](ci.md#gate-funcional-functional-e2e));
-- hasta que el operador active la protección de rama de `main` con `semaforo` como check obligatorio
-  ([ci.md](ci.md#protección-de-rama-pendiente-del-operador)), **nada lo impide técnicamente**: la regla
-  la aplica quien mergea.
+- la protección de rama de `main` lo impone: `semaforo` y los dos jobs de `functional-e2e` son
+  checks obligatorios, la rama debe estar al día y la regla incluye a los administradores
+  ([ci.md](ci.md#protección-de-rama)). Si un check obligatorio falla, GitHub no deja mergear.
 
 ## 8. Review
 

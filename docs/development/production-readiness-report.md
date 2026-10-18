@@ -6,16 +6,18 @@ Revisión, integración y prueba de los tres carriles de la fase *Production Rea
 S9 AI Arena sobre la base `20d827d` (HEAD verificado del cierre funcional, PR #152): DEV-SANDBOX
 ([TD-034](../roadmap/technical-debt.md#td-034)), DEV-SEC ([TD-004](../roadmap/technical-debt.md#td-004))
 y DEV-CI ([TD-045](../roadmap/technical-debt.md#td-045)). Rama `integration/production-readiness`
-(PR #158, borrador, **sin fusionar**).
+(PR #158), **fusionada en `main` el 2026-10-19** (`59322e2`).
 
-Resultado: TD-004 y TD-034 quedan **CERRADAS en la integración**, con evidencia local y en CI real.
-TD-045 queda **ABIERTA con el gate activo y calibrado**: `functional-e2e` es obligatorio en el
-semáforo, pasa en CI real y se pone rojo con las regresiones, pero `main` no tiene protección de
-rama, así que un rojo todavía no impide el merge. **Nada se ha desplegado** ni se ha tocado
-producción.
+Resultado de la revisión (2026-10-18): TD-004 y TD-034 **CERRADAS**, con evidencia local y en CI
+real; TD-045 con el gate activo y calibrado, pero **sin bloqueo efectivo**, porque `main` no tenía
+protección de rama. Veredicto de entonces: BLOCKED.
 
-Veredicto: **BLOCKED**. Lo único que falta es una acción del operador: activar la protección de
-`main` con el check obligatorio `semaforo`.
+[Cierre de gobernanza](#cierre-de-gobernanza-2026-10-19) (2026-10-19): fusión de #152 y #158,
+protección de `main` con `functional-e2e` obligatorio (administradores incluidos) y control negativo
+del bloqueo en GitHub real. TD-045 queda **CERRADA**.
+
+Veredicto: **PRODUCTION_READY** (código y gobernanza). **Nada se ha desplegado** ni se ha tocado
+producción; el despliegue es la fase siguiente y necesita autorización del operador.
 
 ## Índice
 
@@ -24,6 +26,7 @@ Veredicto: **BLOCKED**. Lo único que falta es una acción del operador: activar
 - [TD-004](#td-004)
 - [TD-034](#td-034)
 - [TD-045](#td-045)
+- [Cierre de gobernanza (2026-10-19)](#cierre-de-gobernanza-2026-10-19)
 - [SECURITY](#security)
 - [SANDBOX](#sandbox)
 - [CI](#ci)
@@ -107,17 +110,31 @@ que coincidan con compose y código.
 
 ## TD-045
 
-**ABIERTA — gate activo y calibrado; bloqueo de merge pendiente de protección de rama.**
+**CERRADA (2026-10-19).** En la revisión del 2026-10-18 quedó abierta sólo por la falta de
+protección de rama; el [cierre de gobernanza](#cierre-de-gobernanza-2026-10-19) la resolvió.
 
 - `functional-e2e` (jobs `golden` y `docker-e2e`) es `obligatorio` en el semáforo: skipped,
   cancelled o ausente ⇒ ROJO.
-- PASS en CI real sobre la integración (run 39141675080).
-- ROJO en las calibraciones sobre la integración (#159 y #160) y en el primer run de #158, por una
-  regresión real.
-- `main`: `GET /branches/main/protection` ⇒ 404 «Branch not protected», `rulesets: []`.
+- PASS en CI real sobre la integración (run 39141675080) y sobre `main` tras el merge (run
+  39173546382).
+- ROJO en las calibraciones sobre la integración (#159 y #160), en el primer run de #158 por una
+  regresión real, y en #161 contra `main` protegida.
+- `main` protegida con los tres checks obligatorios ([ci.md](ci.md#protección-de-rama)); un rojo
+  impide el merge, también con `--admin`.
 
-Falta, y sólo puede hacerlo el operador: activar «Require status checks to pass» en `main` con el
-check `semaforo` ([ci.md](ci.md#protección-de-rama-pendiente-del-operador)).
+## Cierre de gobernanza (2026-10-19)
+
+| Paso | Resultado | Evidencia |
+|---|---|---|
+| Verificar PR #152 | HEAD `20d827d` (el verificado), `MERGEABLE CLEAN`, CI 26 success / 2 skipped | `gh pr view 152`, `gh pr checks 152` |
+| Merge de #152 | `main` = `debdf8a` (merge atado a `20d827d`; la rama no se borró, para no cerrar #158) | `gh pr merge --match-head-commit` |
+| CI de `main` tras #152 | ci 23 success; E6 4 success + «Semáforo CI» neutral (amarillo conocido: staging omitido); 0 fallos | runs 39172291370 y 39172291290 |
+| #158 contra `main` | base cambiada a `main` y rama actualizada sin force push: `c7f69b5`, mismo árbol que `367ca36` (revisado); diff = 74 ficheros, todos de los tres carriles o de la integración de REVIEW | `gh pr edit --base`, `gh pr update-branch`, `git rev-parse <commit>^{tree}` |
+| Protección de `main` | checks obligatorios `semaforo` + los dos `functional-e2e` (GitHub Actions, `app_id` 15368), `strict`, PR obligatorio (0 aprobaciones), administradores incluidos, sin force push ni borrado | `gh api …/branches/main/protection` |
+| Control negativo del bloqueo | PR #161 desechable (reproductor sin READY): golden y `semaforo` ROJO, `unit` verde; merge rechazado sin privilegios y con `--admin`; `main` sin cambios; PR cerrado y rama borrada | PR #161, run 39173036990 |
+| CI de #158 actualizado | 28 success / 2 skipped (staging); los tres checks obligatorios en verde; golden con `agents=container`, Artillero 11 disparos / Pacifista 0, replay por `/api/v1/replays` | run 39172930109 |
+| Merge de #158 | por la vía normal, sin `--admin`: `main` = `59322e2`, árbol = el revisado | `gh pr merge --match-head-commit` |
+| CI de `main` tras #158 | ci 25 success, incluidos `functional-e2e / golden`, `functional-e2e / docker-e2e` y `semaforo`; E6 4 success + «Semáforo CI» neutral (staging); 0 fallos | runs 39173546382 y 39173546351 |
 
 ## SECURITY
 
@@ -207,7 +224,7 @@ desplegar.
 
 ## REMAINING P1
 
-- [TD-045](../roadmap/technical-debt.md#td-045): falta la protección de rama de `main` (operador).
+- Ninguno del alcance: [TD-045](../roadmap/technical-debt.md#td-045) quedó CERRADA en el cierre de gobernanza.
 - Fuera del alcance de esta fase: [TD-047](../roadmap/technical-debt.md#td-047),
   [TD-033](../roadmap/technical-debt.md#td-033) y [TD-043](../roadmap/technical-debt.md#td-043).
 
@@ -222,10 +239,16 @@ desplegar.
 
 ## VERDICT
 
-**BLOCKED** — TD-004 y TD-034 CLOSED; TD-045 con gate activo y calibrado en CI real, pero sin
-bloqueo de merge efectivo porque `main` no tiene protección. Acción única pendiente (operador):
-proteger `main` con el check obligatorio `semaforo`. Después, re-evaluar TD-045 como CLOSED y el
-veredicto como PRODUCTION_READY.
+**PRODUCTION_READY** (2026-10-19) — TD-004, TD-034 y TD-045 CLOSED; #152 y #158 en `main`
+(`59322e2`) con la CI en verde; `functional-e2e` obligatorio y verificado como bloqueante en GitHub
+real; sin fugas de secretos ni de topología; producción intacta.
+
+La revisión del 2026-10-18 dio BLOCKED, sólo por la falta de protección de rama; el
+[cierre de gobernanza](#cierre-de-gobernanza-2026-10-19) lo resolvió.
+
+PRODUCTION_READY **no** significa desplegado. La fase siguiente (Release Candidate y despliegue
+controlado: migraciones `012`/`013`, `artifact_verify_key`, `s9-docker-proxy`, backup/readiness,
+gate A-G, golden path tras desplegar) necesita autorización explícita del operador.
 
 ## Documentación relacionada
 
@@ -241,5 +264,7 @@ veredicto como PRODUCTION_READY.
 | Golden completo ×2 en Chromium real | RUNTIME_VERIFIED (aislado) | `npm run test:browser` rc=0 ×2 + veredicto rc=0 |
 | functional-e2e verde en CI real | RUNTIME_VERIFIED (GitHub Actions) | run 39141675080 (PR #158) |
 | Calibraciones en rojo | RUNTIME_VERIFIED (GitHub Actions) | runs 39141682346 (#159), 39141685353 (#160), 39140871812 |
-| `main` sin protección | CODE_VERIFIED | API de GitHub, 2026-10-18 |
+| `main` sin protección (estado de la revisión) | CODE_VERIFIED | API de GitHub, 2026-10-18 |
+| `main` protegida con `functional-e2e` obligatorio; el bloqueo funciona también con `--admin` | RUNTIME_VERIFIED (GitHub real) | `gh api …/branches/main/protection`; PR #161 rechazado (2026-10-19) |
+| #152 y #158 en `main`; CI de `main` en verde con `functional-e2e` | RUNTIME_VERIFIED (GitHub Actions) | `main` = `59322e2`; run 39173546382 (2026-10-19) |
 | Producción sin cambios | DESIGN_ONLY | ningún comando contra producción |
