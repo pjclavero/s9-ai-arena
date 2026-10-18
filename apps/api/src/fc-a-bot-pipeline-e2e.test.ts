@@ -4,7 +4,7 @@
  * sandbox en contenedor → artefacto firmado → validated → publish → published.
  *
  * Sin UPDATE manual, sin mock del worker ni del sandbox. Docker: el de esta
- * máquina (rootless de ia02) tras el s9-docker-proxy REAL. Opt-in:
+ * máquina (rootless de la máquina de pruebas) tras el s9-docker-proxy REAL. Opt-in:
  * S9_RUN_DOCKER_SANDBOX_E2E=1 (sin ella el fichero queda SKIPPED, no verde).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
