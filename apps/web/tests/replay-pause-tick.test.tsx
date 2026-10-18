@@ -110,7 +110,15 @@ afterAll(() => {
 describe("ReplayPage · pausa", () => {
   it("al pausar, data-tick es el tick real del reproductor (no el último publicado a 4 Hz)", async () => {
     vi.useFakeTimers({
-      toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "performance", "requestAnimationFrame", "cancelAnimationFrame"],
+      toFake: [
+        "setTimeout",
+        "clearTimeout",
+        "setInterval",
+        "clearInterval",
+        "performance",
+        "requestAnimationFrame",
+        "cancelAnimationFrame",
+      ],
     });
     const { ReplayPage } = await import("../src/pages/ReplayPage.js");
     render(<ReplayPage battleId={BATTLE} />);
