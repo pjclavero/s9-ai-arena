@@ -47,6 +47,7 @@ import { api, type Me } from "../api.js";
 import { LoadoutEditor, type LoadoutDraft } from "./LoadoutEditor.js";
 import { BotDetailPage } from "./BotDetailPage.js";
 import { useResource, ResourceView, type Resource } from "../resource.js";
+import { FormError } from "../ui/primitives.js";
 import type { ModuleDefinition } from "../../../../packages/module-catalog/types.js";
 import type { Violation } from "../../../../packages/module-catalog/validator/index.js";
 
@@ -170,6 +171,9 @@ function BotsListPage(props: {
   const [pasted, setPasted] = useState("");
   const [runtime, setRuntime] = useState("python");
   const [error, setError] = useState("");
+  // REVIEW (R4.8) · el error de «Crear bot» se pinta JUNTO al formulario (antes
+  // sólo se veía con un bot abierto) con el componente común de D.
+  const [createErr, setCreateErr] = useState<unknown>(null);
   /**
    * issue #95 (defecto 1 del re-supervisor) · POR QUÉ se dejó de sondear, no solo
    * "se dejó". Eran dos causas distintas metidas en un booleano, y el mensaje solo
@@ -386,13 +390,13 @@ function BotsListPage(props: {
   // --------------------------------------------------------------- acciones
   async function onCreateBot(e: FormEvent) {
     e.preventDefault(); // Enter crea el bot (a11y R3.7)
-    setError("");
+    setCreateErr(null);
     try {
       await api("POST", "/bots", { name: newName });
       setNewName("");
       reloadBots();
     } catch (err) {
-      setError((err as Error).message);
+      setCreateErr(err ?? new Error("error desconocido"));
     }
   }
 
@@ -508,6 +512,7 @@ function BotsListPage(props: {
           </label>{" "}
           <button type="submit">Crear bot</button>
         </form>
+        <FormError error={createErr} data-testid="create-bot-error" />
       </div>
 
       {selected && (

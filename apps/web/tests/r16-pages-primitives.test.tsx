@@ -211,9 +211,10 @@ describe("R16 TeamsPage — primitivas", () => {
     // Escribir nombre y crear equipo que falla
     fireEvent.change(screen.getByLabelText("nuevo-equipo"), { target: { value: "Dup" } });
     fireEvent.click(screen.getByRole("button", { name: "Crear equipo" }));
-    const errP = await screen.findByText("nombre ya en uso");
-    expect(errP.tagName).toBe("P");
-    expect(errP.className).toBe("error");
+    // REVIEW (R4.8) · TeamsPage usa el FormError común de D (data-testid fijo).
+    const errBox = await screen.findByTestId("teams-error");
+    expect(errBox.textContent ?? "").toContain("nombre ya en uso");
+    expect(errBox.getAttribute("role")).toBe("alert");
   });
 });
 

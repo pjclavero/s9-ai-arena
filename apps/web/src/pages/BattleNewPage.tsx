@@ -2,10 +2,10 @@
  * R9 · Crear una batalla de práctica desde la UI (modo prepared/seguro).
  *
  * Usa el endpoint EXISTENTE y seguro `POST /battles` (createPracticeBattle, RBAC
- * x-min-role: user), que ENCOLA una batalla no oficial. NO habla con Docker, NO salta
- * bot-manager/firma/digest ni el s9-docker-proxy, NO usa mocks. La ejecución con runner
- * containerizado (código no confiable aislado) es un flujo operativo opt-in (arnés
- * `e2e-real-battle-smoke`) y NO se dispara desde aquí.
+ * x-min-role: user), que ENCOLA una batalla no oficial. La ejecuta el
+ * tournament-worker (autoridad única, DEV-B): el código de cada bot en su
+ * contenedor del sandbox. REVIEW (R4.6): ya no hay botón «Ejecutar batalla real»
+ * (`POST /battles/{id}/run` sólo delega en la cola): crear = ejecutar.
  *
  * Solo permite mapas PUBLICADOS y bots con versión PUBLICADA (ready/signed).
  *
@@ -15,6 +15,7 @@
  */
 import { useEffect, useState } from "react";
 import { api, type Me } from "../api.js";
+import { ErrorState, FormError } from "../ui/primitives.js";
 
 export interface RulesetOption {
   id: string;
@@ -45,7 +46,8 @@ interface BotSummary {
 export function BattleNewPage(_props: { me: Me }) {
   const [maps, setMaps] = useState<MapVersion[]>([]);
   const [bots, setBots] = useState<BotSummary[]>([]);
-  const [loadErr, setLoadErr] = useState("");
+  const [loadErr, setLoadErr] = useState<unknown>(null);
+  const [loadEpoch, setLoadEpoch] = useState(0);
   const [modes, setModes] = useState<string[]>([]);
   const [rulesets, setRulesets] = useState<RulesetOption[]>([]);
   const [teams, setTeams] = useState<TeamOption[]>([]);
@@ -58,16 +60,12 @@ export function BattleNewPage(_props: { me: Me }) {
   const [redBot, setRedBot] = useState("");
   const [blueBot, setBlueBot] = useState("");
   const [error, setError] = useState("");
+  const [submitErr, setSubmitErr] = useState<unknown>(null);
   const [submitting, setSubmitting] = useState(false);
   const [created, setCreated] = useState<string | null>(null);
-  // R6.2/R9-B · capability de ejecución real (la decide el backend; nunca secretos).
-  const [runCap, setRunCap] = useState<{ enabled: boolean; available: boolean }>({ enabled: false, available: false });
-  const [running, setRunning] = useState(false);
-  const [runResult, setRunResult] = useState<{ status: string; replay?: { ingested?: boolean } | null } | null>(null);
-  const [runErr, setRunErr] = useState("");
-
   useEffect(() => {
     void (async () => {
+      setLoadErr(null);
       try {
         const [m, b, r, t] = await Promise.all([
           api<{ items: MapVersion[] }>("GET", "/maps?limit=100"),
@@ -82,32 +80,10 @@ export function BattleNewPage(_props: { me: Me }) {
         setTeams((t.items ?? []).filter((x) => x.isMember));
         if (r.modes?.length) setMode(r.modes[0]);
       } catch (e) {
-        setLoadErr((e as Error).message);
-      }
-      try {
-        const st = await api<{ realBattleRuns?: { enabled: boolean; available: boolean } }>("GET", "/system/status");
-        if (st.realBattleRuns) setRunCap(st.realBattleRuns);
-      } catch {
-        /* si /system/status no responde, Run queda deshabilitado (fail-closed). */
+        setLoadErr(e ?? new Error("error desconocido"));
       }
     })();
-  }, []);
-
-  async function runReal(battleId: string) {
-    setRunErr("");
-    setRunning(true);
-    try {
-      const res = await api<{ status: string; replay?: { ingested?: boolean } | null }>(
-        "POST",
-        `/battles/${encodeURIComponent(battleId)}/run`,
-      );
-      setRunResult(res);
-    } catch (e) {
-      setRunErr((e as Error).message);
-    } finally {
-      setRunning(false);
-    }
-  }
+  }, [loadEpoch]);
 
   function botVersion(id: string): number | undefined {
     const v = bots.find((x) => x.id === id)?.latestPublishedVersion;
@@ -131,6 +107,7 @@ export function BattleNewPage(_props: { me: Me }) {
 
   async function submit() {
     setError("");
+    setSubmitErr(null);
     if (!effectiveRuleset) return setError("No hay ningún ruleset para este modo.");
     if (!selectedMap) return setError("Elige un mapa publicado que soporte el modo.");
     if (!redBot || !blueBot) return setError("Elige dos bots con versión publicada.");
@@ -153,7 +130,7 @@ export function BattleNewPage(_props: { me: Me }) {
       });
       setCreated(battle.id);
     } catch (e) {
-      setError((e as Error).message);
+      setSubmitErr(e ?? new Error("error desconocido"));
     } finally {
       setSubmitting(false);
     }
@@ -163,39 +140,14 @@ export function BattleNewPage(_props: { me: Me }) {
     return (
       <section>
         <h2>Batalla encolada</h2>
-        <p className="ok">
+        <p className="ok" data-testid="battle-created">
           Batalla <code>{created}</code> creada y encolada.
         </p>
 
-        <h3>Ejecución real (containerizada)</h3>
-        {runResult ? (
-          <p className="ok" role="status">
-            Ejecución: <strong>{runResult.status}</strong>
-            {runResult.replay?.ingested ? (
-              <>
-                {" · replay ingerido · "}
-                <a href={`#/replay/${encodeURIComponent(created)}`}>ver replay</a>
-              </>
-            ) : null}
-          </p>
-        ) : (
-          <>
-            <button data-testid="run-real" disabled={!runCap.available || running} onClick={() => runReal(created)}>
-              {running ? "Ejecutando…" : "Ejecutar batalla real"}
-            </button>
-            {!runCap.available && (
-              <p className="warn" role="note">
-                Ejecución real no disponible en este entorno
-                {runCap.enabled ? " (runner no configurado)." : " (deshabilitada)."}
-              </p>
-            )}
-            {runErr && (
-              <p className="error" role="alert">
-                {runErr}
-              </p>
-            )}
-          </>
-        )}
+        <p role="status">
+          La ejecuta el worker de la plataforma con el código publicado de cada bot. Sigue su estado y su resultado en{" "}
+          <a href={`#/battles`}>Batallas</a>; el replay aparece al terminar.
+        </p>
 
         <p>
           <a href="#/battles">Ver batallas</a> · <a href="#/replays">Ver replays</a>
@@ -208,20 +160,18 @@ export function BattleNewPage(_props: { me: Me }) {
     <section>
       <h2>Nueva batalla de práctica</h2>
       <p className="warn" role="note">
-        La batalla se <strong>encola</strong> y la ejecuta el worker de la plataforma; el límite de ticks lo fija el
-        ruleset. La ejecución con <strong>runner containerizado</strong> (código no confiable aislado) NO está
-        disponible desde la UI: es un flujo operativo opt-in (arnés <code>e2e-real-battle-smoke</code>).
+        La batalla se <strong>encola</strong> y la ejecuta el worker de la plataforma: cada bot corre su versión
+        publicada en su contenedor aislado. El límite de ticks lo fija el ruleset.
       </p>
-      {loadErr && (
-        <p role="alert" className="error">
-          No se pudieron cargar mapas/bots: {loadErr}
-        </p>
+      {loadErr !== null && (
+        <ErrorState label="mapas, bots y rulesets" error={loadErr} onRetry={() => setLoadEpoch((n) => n + 1)} />
       )}
       {error && (
         <p role="alert" className="error">
           {error}
         </p>
       )}
+      <FormError error={submitErr} />
 
       <label>
         Modo{" "}

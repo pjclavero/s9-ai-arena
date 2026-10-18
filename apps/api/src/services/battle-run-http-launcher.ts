@@ -1,4 +1,13 @@
 /**
+ * REVIEW (cierre funcional 2026-10, R4.1) · CAMINO LEGADO, NO CABLEADO.
+ * server.ts ya no construye este launcher (lo prueba server-wiring.test.ts) y
+ * `POST /battles/{id}/run` sólo delega en la cola del tournament-worker. Además
+ * `imageDigest` = `artifact_hash` (más abajo) NO es un digest de imagen: el hash
+ * es el del paquete `arena-artifact/v1`; por este camino el código del bot no
+ * arrancaría. El lanzamiento real es createBattleLaunchHost (bot-manager). Se
+ * conserva sólo por sus tests de traducción; retirada registrada como deuda.
+ */
+/**
  * B2 · Launcher REAL de `BattleRunLauncher` (apps/api/src/battle-run.ts): habla
  * por HTTP con el servicio arena-engine (`POST /run`, apps/arena-engine/src/service.ts),
  * NUNCA con Docker directamente. Cadena completa:

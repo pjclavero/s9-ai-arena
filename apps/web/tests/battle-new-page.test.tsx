@@ -3,7 +3,9 @@
  * R9 · DoD de la página de creación de batalla (#/battles/new).
  * Mockea `api`; NO toca Docker ni el runner. Verifica: crear prepared con mapa publicado
  * + 2 bots ready → POST /battles; rechazo sin mapa; botón deshabilitado con <2 bots
- * publicados; y el aviso de que el runner containerizado no se dispara desde la UI.
+ * publicados. REVIEW (R4.6): crear = ejecutar (lo hace el tournament-worker); no hay
+ * botón «Ejecutar batalla real» ni llamada a /run ni a /system/status; los errores de
+ * carga y de envío usan los componentes comunes de D (ErrorState / FormError).
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
@@ -122,11 +124,11 @@ describe("R9 · #/battles/new", () => {
     expect(screen.getByText(/al menos 2 bots/i)).toBeTruthy();
   });
 
-  it("avisa de que el runner containerizado NO se dispara desde la UI", async () => {
+  it("avisa de que la batalla la ejecuta el worker con la versión publicada de cada bot", async () => {
     mockLists(MAPS, BOTS);
     render(<BattleNewPage me={ME} />);
     const note = await screen.findByRole("note");
-    expect(note.textContent ?? "").toMatch(/runner containerizado/i);
+    expect(note.textContent ?? "").toMatch(/la ejecuta el worker/i);
   });
 
   async function createBattle() {
@@ -139,23 +141,50 @@ describe("R9 · #/battles/new", () => {
     await screen.findByText(/creada y encolada/i);
   }
 
-  it("R6.2/R9-B · botón Run DESHABILITADO si el backend no lo permite", async () => {
-    mockLists(MAPS, BOTS, { enabled: false, available: false });
-    await createBattle();
-    const run = screen.getByTestId("run-real") as HTMLButtonElement;
-    expect(run.disabled).toBe(true);
-    expect(screen.getByText(/Ejecución real no disponible/i)).toBeTruthy();
-  });
-
-  it("R6.2/R9-B · botón Run HABILITADO y ejecuta cuando el backend dice available", async () => {
+  it("REVIEW R4.6 · tras crear NO hay botón de ejecución real ni se llama a /run o /system/status", async () => {
     mockLists(MAPS, BOTS, { enabled: true, available: true });
     await createBattle();
-    const run = screen.getByTestId("run-real") as HTMLButtonElement;
-    expect(run.disabled).toBe(false);
-    await userEvent.click(run);
-    await screen.findByText(/completed/i);
-    const post = apiMock.mock.calls.find((c) => c[0] === "POST" && c[1] === "/battles/btl_1/run");
-    expect(post).toBeTruthy();
-    expect((screen.getByText("ver replay") as HTMLAnchorElement).getAttribute("href")).toBe("#/replay/btl_1");
+    expect(screen.queryByTestId("run-real")).toBeNull();
+    expect(screen.queryByText(/Ejecutar batalla real/i)).toBeNull();
+    const paths = apiMock.mock.calls.map((c) => `${c[0]} ${c[1]}`);
+    expect(paths.some((p) => p.endsWith("/run"))).toBe(false);
+    expect(paths).not.toContain("GET /system/status");
+    expect((screen.getByRole("link", { name: "Batallas" }) as HTMLAnchorElement).getAttribute("href")).toBe(
+      "#/battles",
+    );
+  });
+
+  it("REVIEW R4.8 · un 409 del servidor al crear se muestra con FormError (no se traga)", async () => {
+    apiMock.mockImplementation((method: string, path: string) => {
+      if (method === "POST" && path === "/battles") {
+        return Promise.reject(
+          Object.assign(new Error("El mapa map_a v2 no soporta el modo deathmatch"), {
+            status: 409,
+            kind: "http",
+            body: { error: "map_mode_unsupported", message: "El mapa map_a v2 no soporta el modo deathmatch" },
+          }),
+        );
+      }
+      if (method === "GET" && path === "/maps?limit=100") return Promise.resolve({ items: MAPS });
+      if (method === "GET" && path === "/bots?limit=100") return Promise.resolve({ items: BOTS });
+      if (method === "GET" && path === "/rulesets") return Promise.resolve(RULESETS);
+      if (method === "GET" && path === "/teams?limit=100") return Promise.resolve({ items: [] });
+      return Promise.reject(new Error(`unexpected ${method} ${path}`));
+    });
+    render(<BattleNewPage me={ME} />);
+    await screen.findByLabelText("mapa");
+    await userEvent.selectOptions(screen.getByLabelText("mapa"), "map_a@2");
+    await userEvent.selectOptions(screen.getByLabelText("bot rojo"), "bot_r");
+    await userEvent.selectOptions(screen.getByLabelText("bot azul"), "bot_b");
+    await userEvent.click(screen.getByText("Crear batalla"));
+    const fe = await screen.findByTestId("form-error");
+    expect(fe.textContent ?? "").toMatch(/no soporta el modo deathmatch/);
+  });
+
+  it("REVIEW R4.8 · si falla la carga se pinta ErrorState con Reintentar, no una lista vacía", async () => {
+    apiMock.mockImplementation(() => Promise.reject(Object.assign(new Error("boom"), { status: 503, kind: "http" })));
+    render(<BattleNewPage me={ME} />);
+    const err = await screen.findByTestId("resource-error-mapas,-bots-y-rulesets");
+    expect(err.textContent ?? "").toMatch(/No se pudo cargar/);
   });
 });

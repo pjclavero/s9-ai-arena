@@ -9,7 +9,7 @@
  */
 import { useEffect, useState } from "react";
 import { api, type Me } from "../api.js";
-import { Panel, Button } from "../ui/primitives.js";
+import { Panel, Button, ErrorState, FormError } from "../ui/primitives.js";
 
 interface TeamMember {
   userId: string;
@@ -37,23 +37,21 @@ interface MyBot {
   teamId?: string | null;
 }
 
-function errText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
-
 export function TeamsPage(props: { me: Me }) {
   const [teams, setTeams] = useState<Team[] | null>(null);
   const [myBots, setMyBots] = useState<MyBot[]>([]);
-  const [loadError, setLoadError] = useState("");
+  // REVIEW (R4.8) · se guarda el FALLO ORIGINAL (no su texto) para que los
+  // componentes comunes de D distingan 403/404/5xx/timeout/red.
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [name, setName] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState("");
   const [invite, setInvite] = useState<Record<string, string>>({});
   const [rename, setRename] = useState<Record<string, string>>({});
   const [botPick, setBotPick] = useState<Record<string, string>>({});
 
   async function refresh() {
-    setLoadError("");
+    setLoadError(null);
     try {
       const [page, bots] = await Promise.all([
         api<{ items: Team[] }>("GET", "/teams?limit=100"),
@@ -63,7 +61,7 @@ export function TeamsPage(props: { me: Me }) {
       setMyBots(bots.items ?? []);
     } catch (e) {
       setTeams(null);
-      setLoadError(errText(e));
+      setLoadError(e ?? new Error("error desconocido"));
     }
   }
   useEffect(() => {
@@ -72,14 +70,14 @@ export function TeamsPage(props: { me: Me }) {
   }, []);
 
   async function act(label: string, fn: () => Promise<unknown>) {
-    setError("");
+    setError(null);
     setNotice("");
     try {
       await fn();
       setNotice(label);
       await refresh();
     } catch (e) {
-      setError(errText(e));
+      setError(e ?? new Error("error desconocido"));
     }
   }
 
@@ -105,23 +103,18 @@ export function TeamsPage(props: { me: Me }) {
       >
         Crear equipo
       </Button>
-      {error && (
-        <p className="error" role="alert" data-testid="teams-error">
-          {error}
-        </p>
-      )}
+      <FormError error={error} data-testid="teams-error" />
       {notice && (
         <p className="ok" role="status" data-testid="teams-notice">
           {notice}
         </p>
       )}
-      {loadError && (
-        <div role="alert" data-testid="teams-load-error">
-          <p className="error">No se pudieron cargar los equipos: {loadError}</p>
-          <Button onClick={() => void refresh()}>Reintentar</Button>
+      {loadError !== null && (
+        <div data-testid="teams-load-error">
+          <ErrorState label="los equipos" error={loadError} onRetry={() => void refresh()} />
         </div>
       )}
-      {teams === null && !loadError && <p>Cargando equipos…</p>}
+      {teams === null && loadError === null && <p>Cargando equipos…</p>}
       {mine.map((t) => (
         <section key={t.id} className="card" data-testid={`team-${t.name}`} aria-label={`equipo ${t.name}`}>
           <h3>
