@@ -235,6 +235,11 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
             if (!player) return;
             if (player.playing) {
               player.pause();
+              // El tick se publica a ~4 Hz (R3.3): sin esto, «en pausa» mostraría
+              // hasta 250 ms de tick viejo y luego saltaría al real. `advance()` sólo
+              // mueve el playhead si está reproduciendo, así que éste es el definitivo.
+              tickRef.current = player.currentTick;
+              setTick(player.currentTick);
               setPlaying(false);
               setState("paused");
             } else {

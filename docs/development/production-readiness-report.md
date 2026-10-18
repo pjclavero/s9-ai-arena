@@ -135,6 +135,8 @@ protección de rama; el [cierre de gobernanza](#cierre-de-gobernanza-2026-10-19)
 | CI de #158 actualizado | 28 success / 2 skipped (staging); los tres checks obligatorios en verde; golden con `agents=container`, Artillero 11 disparos / Pacifista 0, replay por `/api/v1/replays` | run 39172930109 |
 | Merge de #158 | por la vía normal, sin `--admin`: `main` = `59322e2`, árbol = el revisado | `gh pr merge --match-head-commit` |
 | CI de `main` tras #158 | ci 25 success, incluidos `functional-e2e / golden`, `functional-e2e / docker-e2e` y `semaforo`; E6 4 success + «Semáforo CI» neutral (staging); 0 fallos | runs 39173546382 y 39173546351 |
+| CI de `main` tras #162 (sólo docs) | **ROJA**: `functional-e2e / golden` falló en `replay.spec` «pausa» (`data-tick` 108 → 110 con el reproductor ya en pausa). Causa: el tick se publica a ~4 Hz (R3.3) y la pausa no publicaba el tick real; intermitente (había pasado en todos los runs anteriores). Defecto real del producto, no del entorno | run 39175128559 |
+| Corrección | la pausa publica el tick real en el mismo render que `state=paused`; test determinista nuevo `apps/web/tests/replay-pause-tick.test.tsx` (replay real, reloj falso), rojo sin el arreglo (31 ≠ 33) y verde con él | PR `fix/replay-pause-tick` |
 
 ## SECURITY
 
