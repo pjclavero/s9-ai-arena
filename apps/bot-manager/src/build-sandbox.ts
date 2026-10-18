@@ -276,7 +276,9 @@ export class ContainerBuildSandbox implements BuildSandbox {
         container = await launchWithinStartup(this.o.runner, spec, timeouts, timeline.launchRequestedAt);
       } catch (e) {
         const reason = e instanceof SandboxLaunchError ? e.reason : "sandbox_start_failed";
-        throw new SandboxInfrastructureError(`[${reason}] el sandbox no pudo lanzar el contenedor: ${(e as Error).message}`);
+        throw new SandboxInfrastructureError(
+          `[${reason}] el sandbox no pudo lanzar el contenedor: ${(e as Error).message}`,
+        );
       }
       timeline.launchedAt = performance.now();
       const launchMs = timeline.launchedAt - timeline.launchRequestedAt;

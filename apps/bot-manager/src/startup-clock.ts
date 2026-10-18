@@ -75,7 +75,13 @@ export function startupTimeoutsFromEnv(env: NodeJS.ProcessEnv = process.env): St
 }
 
 /** Informes del bootstrap que son de la PLATAFORMA (ver sandbox-bootstrap/). */
-export const PLATFORM_REPORT_KINDS: ReadonlySet<string> = new Set(["config", "fetch", "integrity", "materialize", "sdk"]);
+export const PLATFORM_REPORT_KINDS: ReadonlySet<string> = new Set([
+  "config",
+  "fetch",
+  "integrity",
+  "materialize",
+  "sdk",
+]);
 /** Informes del bootstrap que son del BOT (su paquete o su código). */
 export const BOT_REPORT_KINDS: ReadonlySet<string> = new Set(["manifest", "entry", "import", "runtime"]);
 

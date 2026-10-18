@@ -279,9 +279,7 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
           }
         } else {
           try {
-            await server.whenAllConnected(
-              opts.connectTimeoutMs ?? timeouts.sandboxStartupMs + timeouts.botExecutionMs,
-            );
+            await server.whenAllConnected(opts.connectTimeoutMs ?? timeouts.sandboxStartupMs + timeouts.botExecutionMs);
           } catch (err) {
             const connected = new Set(server.connectedVehicleIds());
             if (connected.size === 0) {
