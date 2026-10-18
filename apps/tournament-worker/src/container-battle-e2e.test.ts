@@ -101,13 +101,22 @@ class Pacifista(ArenaBot):
         return {"move": {"throttle": 0.0, "steer": 0.0}}
 `;
 
-/** Loadout con RADAR (el de ejemplo lleva lidar, que no ve vehículos). */
+/**
+ * Loadout con RADAR (el de ejemplo lleva lidar, que no ve vehículos), VALIDADO por
+ * la API. REVIEW: el E2E de B insertaba por SQL tracks+radar+cannon con batería
+ * (8.5 EU/s de consumo pasivo con 8 EU/s de generación), que la API rechaza con
+ * 422 energy_deficit; aquí se usan ruedas (1.5 EU/s) para que el loadout sea legal.
+ */
 function radarLoadout() {
   const base = JSON.parse(
     readFileSync(join(REPO, "packages", "module-catalog", "examples", "loadout-medium-gunner.json"), "utf8"),
   );
   base.modules = base.modules.map((m: { slot: string; moduleId: string }) =>
-    m.slot === "sensor_a" ? { ...m, moduleId: "sensor.radar@1" } : m,
+    m.slot === "sensor_a"
+      ? { ...m, moduleId: "sensor.radar@1" }
+      : m.slot === "drive"
+        ? { ...m, moduleId: "movement.wheels@1" }
+        : m,
   );
   return base;
 }
