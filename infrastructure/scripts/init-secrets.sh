@@ -60,6 +60,21 @@ if [ ! -s "$DIR/artifact_signing_key.pem" ]; then
 fi
 [ -f "$DIR/artifact_signing_key.pem" ] && harden artifact_signing_key.pem
 
+# REVIEW (cierre funcional) · clave PÚBLICA de verificación (PEM SPKI) para el
+# tournament-worker (ARTIFACT_VERIFY_KEY_FILE): se DERIVA siempre de la privada,
+# así que no puede divergir; se regenera si falta o si no casa con la privada.
+if [ -s "$DIR/artifact_signing_key.pem" ] && command -v openssl >/dev/null; then
+  umask 077
+  openssl pkey -in "$DIR/artifact_signing_key.pem" -pubout -out "$DIR/artifact_verify_key.pem.tmp" 2>/dev/null &&
+    if ! cmp -s "$DIR/artifact_verify_key.pem.tmp" "$DIR/artifact_verify_key.pem" 2>/dev/null; then
+      mv "$DIR/artifact_verify_key.pem.tmp" "$DIR/artifact_verify_key.pem"
+      echo "generado:  artifact_verify_key.pem (pública de artifact_signing_key.pem)"
+    else
+      rm -f "$DIR/artifact_verify_key.pem.tmp"
+    fi
+fi
+[ -f "$DIR/artifact_verify_key.pem" ] && harden artifact_verify_key.pem
+
 # stream_key es del proveedor (YouTube): placeholder vacío que el operador rellena.
 if [ ! -f "$DIR/stream_key.txt" ]; then
   umask 077; : > "$DIR/stream_key.txt"

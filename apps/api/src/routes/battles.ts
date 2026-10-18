@@ -34,12 +34,30 @@ const SPECTATE_TICKET_TTL_S = 60;
  * por ese canal); si falta o va en claro, se falla CERRADO con 500 de
  * configuración en vez de emitir tickets que viajarían sin cifrar.
  */
+/**
+ * Base del WebSocket de espectador que se devuelve al navegador.
+ *
+ * REVIEW (cierre funcional, TD-030/D2) · además de `wss://…` se admite una ruta
+ * RELATIVA al origen (`/ws/spectate`, la que enruta el gateway): el cliente la ancla
+ * a `location` (wss bajo https, apps/web/src/viewer/spectator-client.ts
+ * resolveWsUrl), así que nunca viaja en claro detrás de TLS y no depende del nombre
+ * público. En producción sigue fallando CERRADO: sin valor, `ws://` en claro o
+ * una ruta protocol-relative (`//host`) ⇒ 500. El compose pasa `/ws/spectate`.
+ */
 export function spectateWsBase(): string {
   const wsBase = process.env.SPECTATE_WS_URL ?? "ws://localhost:8081/spectate";
-  if (process.env.NODE_ENV === "production" && !wsBase.startsWith("wss://")) {
-    throw new ApiError(500, "spectate_ws_misconfigured", "SPECTATE_WS_URL debe ser wss:// en producción");
+  const sameOriginPath = /^\/(?!\/)/.test(wsBase);
+  if (process.env.NODE_ENV === "production" && !(wsBase.startsWith("wss://") || sameOriginPath)) {
+    throw new ApiError(
+      500,
+      "spectate_ws_misconfigured",
+      "SPECTATE_WS_URL debe ser wss:// o una ruta del mismo origen (/ws/spectate) en producción",
+    );
   }
-  return wsBase;
+  if (process.env.NODE_ENV === "production" && process.env.SPECTATE_WS_URL === undefined) {
+    throw new ApiError(500, "spectate_ws_misconfigured", "SPECTATE_WS_URL no configurada");
+  }
+  return wsBase.replace(/\/+$/, "");
 }
 
 // DEV-B (TD-002) · La reserva atómica de una batalla (`scheduled → running`) ya

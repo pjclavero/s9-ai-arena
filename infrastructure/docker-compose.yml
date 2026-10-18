@@ -189,6 +189,11 @@ services:
       # En el stack SIEMPRE hay al menos el gateway (1). Detrás del Nginx de
       # VM104 (GATEWAY_CONF=nginx-behind-proxy.conf) son 2. Nunca "true".
       TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
+      # REVIEW (cierre funcional) · TD-030: base del WebSocket de espectador que la
+      # API devuelve al NAVEGADOR. Ruta del MISMO ORIGEN: el gateway enruta /ws/ al
+      # tournament-worker y el cliente la ancla a wss:// bajo https. Antes no se
+      # pasaba y el navegador recibía el defecto de desarrollo ws://localhost:8081.
+      SPECTATE_WS_URL: ${SPECTATE_WS_URL:-/ws/spectate}
       # B2 · launcher REAL de POST /battles/:id/run (API → arena-engine por HTTP,
       # red platform, NUNCA Docker). Solo se cablea si arena-engine responde con
       # AMBAS piezas presentes: URL (default seguro, solo un hostname interno,
@@ -317,10 +322,24 @@ services:
         APP_PATH: apps/tournament-worker
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/tournament-worker:${TOURNAMENT_WORKER_TAG:-${TAG:-latest}}
     profiles: [nucleo, development, production, external-db]
-    networks: [platform, data]
+    # REVIEW (cierre funcional) · `arena`: los contenedores de los bots se conectan
+    # al ProtocolServer y descargan su artefacto del host de la batalla, que viven
+    # en ESTE proceso. Deuda aceptada y registrada (TD-032, ex TD-A1): el proceso
+    # que expone puertos a la red de los bots también tiene credenciales de BD.
+    networks: [platform, data, arena]
     environment:
       <<: *node-db-env
       SERVICE_ENTRY: ${WORKER_ENTRY:-apps/tournament-worker/src/main.ts}
+      # REVIEW (cierre funcional) · autoridad única de ejecución (DEV-B) con el
+      # artefacto firmado de cada versión (DEV-A). SIN valor por defecto a propósito:
+      # sin DOCKER_PROXY_URL el worker NO reclama run_battle y lo anuncia al
+      # arrancar (las batallas quedan `scheduled`, nunca con un stub).
+      DOCKER_PROXY_URL: ${DOCKER_PROXY_URL:-}
+      ARENA_NETWORK: arena
+      # Nombre con el que los contenedores de bots alcanzan este proceso en `arena`.
+      ARENA_ENGINE_HOST: tournament-worker
+      # Sólo VERIFICA artefactos: recibe la clave PÚBLICA, no la de firma.
+      ARTIFACT_VERIFY_KEY_FILE: /run/secrets/artifact_verify_key
       SPECTATE_PORT: "8081"
       REPLAYS_DIR: /data/replays
       # B7 · directorios de datos cuya propiedad ajusta el entrypoint de la
@@ -336,7 +355,9 @@ services:
       # coherencia emisor/verificador la exige
       # apps/api/src/spectate/ticket-secret-compose.test.ts.
       JWT_SECRET_FILE: /run/secrets/jwt_secret
-    secrets: [postgres_password, jwt_secret]
+    secrets: [postgres_password, jwt_secret, artifact_verify_key]
+    extra_hosts:
+      - "docker-proxy.internal:host-gateway"
     volumes:
       # B7 · ESCRITURA, y justificado por el código: finishBattle
       # (apps/tournament-worker/src/battle-runner.ts) llama a
@@ -455,13 +476,23 @@ services:
     # y lo dice; no es una excepción silenciosa.
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/bot-manager:${BOT_MANAGER_TAG:-${TAG:-latest}}
     profiles: [development, production, external-db]
-    networks: [platform, build, data]
+    # REVIEW (cierre funcional) · `arena`: el sandbox del build (DEV-A, TD-001) lanza
+    # el bot en un contenedor que se conecta a ESTE proceso (ProtocolServer +
+    # descarga del artefacto). Misma deuda aceptada que el tournament-worker (TD-032).
+    networks: [platform, build, data, arena]
     environment:
       <<: *node-db-env
       SERVICE_ENTRY: ${BOT_BUILD_WORKER_ENTRY:-apps/bot-manager/src/build-worker-main.ts}
       # Fallar cerrado en el arranque: sin clave de firma no hay pipeline que firmar.
       ARTIFACT_SIGNING_KEY_FILE: /run/secrets/artifact_signing_key
+      # Sandbox del build: sin proxy ni host anunciado, todo build se rechaza como
+      # «sandbox no verificado» (fallo cerrado, build-worker-wiring.ts).
+      DOCKER_PROXY_URL: ${DOCKER_PROXY_URL:-http://docker-proxy.internal:2375}
+      BUILD_SANDBOX_HOST: bot-build-worker
+      ARENA_NETWORK: arena
     secrets: [postgres_password, artifact_signing_key]
+    extra_hosts:
+      - "docker-proxy.internal:host-gateway"
     volumes:
       - arena_bot_sources:/data/bot-sources
       - arena_build_cache:/data/build-cache
@@ -495,6 +526,11 @@ services:
         SERVICE_NAME: map-service
         APP_PATH: apps/map-service
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/map-service:${MAP_SERVICE_TAG:-${TAG:-latest}}
+    # REVIEW (cierre funcional) · TD-017 SIGUE PARCIAL: la API persiste y valida
+    # los mapas importando apps/map-service/src como LIBRERÍA y el servicio HTTP no
+    # lo consume nadie del stack, pero sacarlo de `production` cambia el conjunto
+    # desplegado que fija deploy-contract.json (12 servicios medidos). Se decide en
+    # el próximo despliegue (ADR), no en el cierre funcional.
     profiles: [development, production, external-db]
     networks: [platform, data]
     environment:
@@ -1129,6 +1165,10 @@ secrets:
   # worker no arranca (fallo cerrado).
   artifact_signing_key:
     file: ./secrets/artifact_signing_key.pem
+  # REVIEW (cierre funcional) · clave PÚBLICA (PEM SPKI) derivada de la anterior por
+  # init-secrets.sh: el tournament-worker sólo verifica artefactos, no firma.
+  artifact_verify_key:
+    file: ./secrets/artifact_verify_key.pem
   stream_key:
     file: ./secrets/stream_key.txt
   grafana_admin_password:

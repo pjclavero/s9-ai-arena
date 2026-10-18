@@ -172,6 +172,16 @@ describe("T7.5 espectador anónimo (DoD: batalla en directo y replay sin cuenta)
       const enClaro = await request(app).post(`/battles/${liveBattleId}/spectate-ticket`);
       expect(enClaro.status).toBe(500);
 
+      process.env.SPECTATE_WS_URL = "//otro.example/spectate"; // protocol-relative ⇒ también 500
+      const relProto = await request(app).post(`/battles/${liveBattleId}/spectate-ticket`);
+      expect(relProto.status).toBe(500);
+
+      // REVIEW (TD-030) · ruta del MISMO ORIGEN: el navegador la ancla a wss bajo https.
+      process.env.SPECTATE_WS_URL = "/ws/spectate";
+      const rel = await request(app).post(`/battles/${liveBattleId}/spectate-ticket`);
+      expect(rel.status).toBe(201);
+      expect(rel.body.wsUrl).toBe(`/ws/spectate/${liveBattleId}`);
+
       process.env.SPECTATE_WS_URL = "wss://arena.example/spectate";
       const seguro = await request(app).post(`/battles/${liveBattleId}/spectate-ticket`);
       expect(seguro.status).toBe(201);

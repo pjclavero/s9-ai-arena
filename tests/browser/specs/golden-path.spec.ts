@@ -185,6 +185,10 @@ test.describe("@golden Golden path", () => {
       timeout: 30_000,
     });
     const viewerState = await page.getByTestId("viewer-status").getAttribute("data-state");
+    // No basta con «en directo»: el visor tiene que RECIBIR la partida. Se espera a
+    // que el marcador del HUD (alimentado por snapshots/eventos del WebSocket) vea
+    // la baja que decide la batalla.
+    await expect(page.getByTestId("score")).toContainText("red: 1", { timeout: 180_000 });
     await shot(page, info, "golden-visor-en-directo");
 
     // --- finished + ganador en la lista de batallas -----------------------
