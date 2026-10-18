@@ -159,7 +159,8 @@ describe("TD-034 · SAN-4 · el worker de PRODUCCIÓN aplica los plazos configur
     const { readFileSync } = await import("node:fs");
     const src = readFileSync(new URL("./main.ts", import.meta.url), "utf8");
     const call = src.slice(src.indexOf("containerAgents({"), src.indexOf("})", src.indexOf("containerAgents({")));
-    expect(call).toMatch(/timeouts:\s*startupTimeoutsFromEnv\(process\.env\)/);
+    // Sin comentarios: una línea comentada no cuenta como cableada.
+    expect(call.replace(/\/\/.*$/gm, "")).toMatch(/timeouts:\s*startupTimeoutsFromEnv\(process\.env\)/);
   });
 
   it("el plazo configurado es el que se aplica en el lanzamiento de batalla", async () => {
