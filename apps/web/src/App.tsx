@@ -188,8 +188,9 @@ export function App() {
   const broadcast = matchBroadcastRoute(window.location.pathname, window.location.search, route);
   if (broadcast) return <BroadcastPage config={broadcast} />;
 
-  // E8: el visor y los replays son PÚBLICOS (DoD T7.5: un visitante anónimo ve la
-  // batalla en directo y el replay sin cuenta). No pasan por el login del panel.
+  // E8: el visor y el reproductor son rutas PÚBLICAS (no pasan por el login del
+  // panel). PRC (TD-004): el replay en sí sólo se sirve si la API lo autoriza
+  // (participante/equipo/staff, o público por S9_PUBLIC_REPLAYS_ENABLED).
   const publicView = matchPublicRoute(route);
   if (publicView) {
     return (
@@ -202,8 +203,14 @@ export function App() {
             <LivePage />
           ) : publicView.kind === "ranking" ? (
             <RankingPage />
+          ) : booting ? (
+            // PRC (TD-004): el replay se pide CON la sesión (si la hay). Se espera al
+            // refresh desde la cookie para no pedirlo anónimo y recibir un 404.
+            <p role="status" aria-live="polite" data-testid="replay-status" data-state="loading">
+              Recuperando sesión…
+            </p>
           ) : (
-            <ReplayPage battleId={publicView.battleId} initialTick={publicView.t} />
+            <ReplayPage key={me?.id ?? "anon"} battleId={publicView.battleId} initialTick={publicView.t} />
           )}
         </ErrorBoundary>
       </main>

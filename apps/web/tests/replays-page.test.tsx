@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 /**
- * R7-A · DoD del listado de replays (#/replays). Mockea `fetch` a `GET /replays`.
+ * R7-A · DoD del listado de replays (#/replays). Mockea `fetch` a `GET /api/v1/replays`
+ * (PRC TD-004: la API, con la sesión; ya no el replay-service por el gateway).
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
@@ -39,7 +40,12 @@ describe("R7-A · #/replays", () => {
     const urls: string[] = [];
     mockFetch((u) => {
       urls.push(u);
-      return Promise.resolve(new Response(JSON.stringify({ items: ITEMS }), { status: 200 }));
+      return Promise.resolve(
+        new Response(JSON.stringify({ items: ITEMS }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
     });
     render(<ReplaysPage />);
     const rows = await screen.findAllByTestId("replay-row");
@@ -50,8 +56,8 @@ describe("R7-A · #/replays", () => {
     expect(within(rows[1]).getByText("gana red")).toBeTruthy();
     expect(within(rows[0]).getByText("empate")).toBeTruthy(); // winner "draw"
     expect(within(rows[0]).getByText(/0:10/)).toBeTruthy(); // 300 ticks a 30/s
-    // FC-D (D6, TD-014): CON barra final; sin ella nginx redirigía 301 a http://.
-    expect(urls).toEqual(["/replays/"]);
+    // PRC (TD-004): la lista sale de la API autorizada, nunca de /replays/ del gateway.
+    expect(urls).toEqual(["/api/v1/replays"]);
   });
 
   it("un 502 del gateway es un error visible con reintento, nunca lista vacía (FC-D D2)", async () => {
@@ -68,7 +74,11 @@ describe("R7-A · #/replays", () => {
   });
 
   it("estado vacío", async () => {
-    mockFetch(() => Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 })));
+    mockFetch(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "content-type": "application/json" } }),
+      ),
+    );
     render(<ReplaysPage />);
     expect(await screen.findByText(/No hay replays todavía/i)).toBeTruthy();
   });
