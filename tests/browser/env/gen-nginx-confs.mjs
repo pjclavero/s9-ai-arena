@@ -5,7 +5,7 @@
  *  - gateway: infrastructure/gateway/nginx-behind-proxy.conf (modo real del
  *    homelab: TLS fuera, gateway en http). Sólo se sustituyen los nombres de
  *    servicio Docker por 127.0.0.1:<puerto> y el `listen`; TODAS las `location`
- *    (incluidas /replays, /replays/, /ws/, /api/v1/) son las del repo.
+ *    (incluidas /replays, /replays/ —404 desde TD-004—, /ws/, /api/v1/) son las del repo.
  *  - web: infrastructure/docker/web/nginx.conf (estáticos + fallback de SPA).
  *  - tls: proxy TLS delante del gateway, en el papel del proxy inverso externo
  *    (termina TLS y reenvía en http con X-Forwarded-Proto https).
@@ -35,7 +35,11 @@ g = must(g, "listen 80;", `listen 127.0.0.1:${gw};`, "listen del gateway");
 g = must(g, "resolver 127.0.0.11 valid=10s ipv6=off;", "# resolver: no hace falta con upstreams IP", "resolver Docker");
 g = must(g, "http://api:8080", `http://127.0.0.1:${api}`, "upstream api");
 g = must(g, "http://tournament-worker:8081", `http://127.0.0.1:${ws}`, "upstream ws");
-g = must(g, "http://replay-service:8083", `http://127.0.0.1:${replay}`, "upstream replays");
+// PRC (TD-004) · la conf buena YA NO enruta al replay-service (/replays* ⇒ 404 en
+// el gateway; los replays van por /api/v1). La sustitución es OPCIONAL a
+// propósito: si alguien re-expone el proxy_pass, el entorno lo conecta al
+// replay-service real y replay.spec.ts lo detecta (anónimo ⇒ 200 ⇒ ROJO).
+g = g.split("http://replay-service:8083").join(`http://127.0.0.1:${replay}`);
 g = must(g, "http://web:3000", `http://127.0.0.1:${web}`, "upstream web");
 g = must(g, "http://grafana:3000", "http://127.0.0.1:9", "upstream grafana (sin uso)");
 g = g.replace("events {", "pid /tmp/s9-e2e-gw.pid;\nevents {");
