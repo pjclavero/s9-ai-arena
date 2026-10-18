@@ -145,10 +145,17 @@ export interface AwaitAgentReadyInput {
   now?: () => number;
 }
 
+/**
+ * ¿De quién es un informe del bootstrap? Tras `ready` ya corre código del
+ * usuario, que ve ARTIFACT_URL/ARTIFACT_TOKEN en su entorno y podría FALSEAR un
+ * informe de plataforma (p. ej. `fetch`) para convertir su fallo en
+ * «infraestructura» (reintentos, batalla que nunca se juega). Por eso, tras
+ * `ready`, todo informe es del bot; antes, manda el `kind`.
+ */
 export function classifyReport(kind: string, afterReady: boolean): StartupFault {
-  if (PLATFORM_REPORT_KINDS.has(kind)) return "infrastructure";
+  if (afterReady) return "bot";
   if (BOT_REPORT_KINDS.has(kind)) return "bot";
-  return afterReady ? "bot" : "infrastructure";
+  return "infrastructure";
 }
 
 /**

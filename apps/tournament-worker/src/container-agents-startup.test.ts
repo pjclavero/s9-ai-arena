@@ -143,6 +143,14 @@ describe("TD-034 · batalla: dos relojes por bot", () => {
     expect(err.botId).toBe(BOTS[0].botId);
   }, 20_000);
 
+  it("un bot que FALSEA un informe de plataforma tras `ready` pierde él (bot_crash), no se reintenta la batalla", async () => {
+    const { agents } = driver((i) => (i === 1 ? { crashAfterReady: true, crashAfterReadyKind: "fetch" } : {}), T);
+    const err = await agents.run(await input()).catch((e) => e);
+    expect(err).toBeInstanceOf(SportingFailure);
+    expect(err.code).toBe("bot_crash");
+    expect(err.botId).toBe(BOTS[1].botId);
+  }, 20_000);
+
   it("la plataforma manda: un fallo de plataforma de un bot no castiga al otro aunque éste falle", async () => {
     const { agents } = driver(
       (i) => (i === 0 ? { crashAfterReady: true } : { failBeforeReady: { kind: "fetch", detail: "HTTP 503" } }),

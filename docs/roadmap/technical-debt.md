@@ -814,7 +814,7 @@ Estados posibles:
   - `apps/bot-manager/src/startup-clock.ts`: dos relojes separados por una señal real del bootstrap (`POST /s9/artifact/<id>/ready`, con token, justo antes de ejecutar código del usuario).
     - `SANDBOX_STARTUP_TIMEOUT_MS` (def. 30000): lanzamiento → `ready`. Agotarlo es infraestructura.
     - `BOT_EXECUTION_TIMEOUT_MS` (def. 5000): `ready` → HELLO aceptado (`ProtocolServer.helloAt`). Agotarlo es culpa del bot.
-  - Clasificación: antes de `ready` (Docker lento o que falla, runtime ausente, contenedor muerto, informes `config`/`fetch`/`integrity`/`materialize`/`sdk`) ⇒ infraestructura; después (`import`/`runtime`, salida del proceso, cuelgue) o paquete sin entrada (`manifest`/`entry`) ⇒ bot.
+  - Clasificación: antes de `ready` (Docker lento o que falla, runtime ausente, contenedor muerto, informes `config`/`fetch`/`integrity`/`materialize`/`sdk`) ⇒ infraestructura; después (cualquier informe, salida del proceso o cuelgue; un `kind` de plataforma enviado tras `ready` lo pudo falsear el código del usuario) o paquete sin entrada (`manifest`/`entry`) ⇒ bot.
   - Build (`build-sandbox.ts`) y batalla (`container-agents.ts`) usan el mismo módulo. Métricas por etapa: `launchMs`, `artifactFetchMs`, `startupMs`, `botReadyToHelloMs`, `executionMs`, `startedAtToHelloMs` y los plazos efectivos; el motivo lleva `timeout_reason=`.
   - Configuración: parser único (inválido ⇒ el servicio no arranca), compose y `.env.example` (commit aparte, OWNER REVIEW), cubierta por `service-env-contract.test.ts`.
 - **Verificación (Docker rootless local):**
@@ -822,7 +822,7 @@ Estados posibles:
   - Bot de 4 s tras `ready` con `BOT_EXECUTION_TIMEOUT_MS=1500` ⇒ `rejected` (`bot_execution_timeout`); bot infinito ⇒ `rejected`.
   - Plataforma que no llega a `ready` en 3000 ms y runtime ausente ⇒ `SandboxInfrastructureError`, nunca `rejected`.
   - Saturación acotada: 20 builds (6 y 8 en paralelo, Python y Node, con 3 y 8 procesos ocupando CPU del host): 20/20 `validated`; `launchMs` hasta 7,6 s, `startupMs` hasta 8,3 s, `botReadyToHelloMs` máx. 619 ms.
-  - Mutaciones: reloj del bot desde el lanzamiento, sin timeout del bot, «nunca ready» como culpa del bot, informes de plataforma como culpa del bot, entorno ignorado, cableado sin plazos y bootstrap sin `ready` ⇒ rojo.
+  - Mutaciones: reloj del bot desde el lanzamiento, sin timeout del bot, «nunca ready» como culpa del bot, informes de plataforma como culpa del bot, informe falseado tras `ready` como plataforma, entorno ignorado, cableado sin plazos y bootstrap sin `ready` ⇒ rojo.
 - **Límite que queda:** el reloj del bot sigue siendo de pared (no CPU): un import muy pesado con 0,5 CPU y el host saturado puede acercarse a 5 s. Bajo la saturación probada, el máximo fue 619 ms.
 - **Condición de cierre:** Ningún rechazo de un bot válido por carga en N ejecuciones bajo estrés controlado. Cumplida (N = 20 bajo estrés + plataforma lenta real), y slow-start/slow-execution distinguen los dos límites.
 

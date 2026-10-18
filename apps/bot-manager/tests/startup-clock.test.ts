@@ -181,7 +181,9 @@ describe("TD-034 · SAN-9 · clasificación: plataforma ⇒ infraestructura, có
     const t0 = performance.now();
     const err = await verify(sandbox).catch((e) => e);
     expect(err).toBeInstanceOf(SandboxInfrastructureError);
-    expect(String(err.message)).toMatch(/el sandbox no pudo lanzar el contenedor: Docker no creó\/arrancó.*\[sandbox_start_timeout\]/);
+    expect(String(err.message)).toMatch(
+      /el sandbox no pudo lanzar el contenedor: Docker no creó\/arrancó.*\[sandbox_start_timeout\]/,
+    );
     expect(performance.now() - t0).toBeLessThan(2400);
     expect(runner.launches).toHaveLength(1);
   }, 20_000);
@@ -190,7 +192,9 @@ describe("TD-034 · SAN-9 · clasificación: plataforma ⇒ infraestructura, có
     const { sandbox } = sandboxWith({ launchError: "No such image" }, T);
     const err = await verify(sandbox).catch((e) => e);
     expect(err).toBeInstanceOf(SandboxInfrastructureError);
-    expect(String(err.message)).toMatch(/el sandbox no pudo lanzar el contenedor: No such image \[sandbox_start_failed\]/);
+    expect(String(err.message)).toMatch(
+      /el sandbox no pudo lanzar el contenedor: No such image \[sandbox_start_failed\]/,
+    );
   });
 
   it("el contenedor muere antes de `ready` sin informe → infraestructura", async () => {
@@ -223,6 +227,13 @@ describe("TD-034 · SAN-9 · clasificación: plataforma ⇒ infraestructura, có
     expect(v.protocol.outcome).toBe("failed");
     expect(v.protocol.message).toMatch(/timeout_reason=bot_crash/);
     expect(v.protocol.message).toMatch(/fallo al importar el bot/);
+  }, 20_000);
+
+  it("tras `ready`, un informe de «plataforma» (fetch) lo envía el código del usuario: es del bot, no infraestructura", async () => {
+    const { sandbox } = sandboxWith({ crashAfterReady: true, crashAfterReadyKind: "fetch" }, T);
+    const v = await verify(sandbox);
+    expect(v.protocol.outcome).toBe("failed");
+    expect(v.protocol.message).toMatch(/timeout_reason=bot_crash/);
   }, 20_000);
 
   it("señal `ready` perdida pero HELLO a tiempo → el bot pasa (el HELLO prueba la readiness)", async () => {

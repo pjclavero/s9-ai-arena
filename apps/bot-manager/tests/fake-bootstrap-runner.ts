@@ -42,6 +42,8 @@ export interface FakeBootstrapBehaviour {
   hangAfterReady?: boolean;
   /** El código del usuario revienta tras `ready` (informe kind import y salida). */
   crashAfterReady?: boolean;
+  /** `kind` del informe al reventar tras `ready` (def. import); p. ej. un `fetch` FALSEADO por el código del usuario. */
+  crashAfterReadyKind?: string;
   /** Retardo de cada decisión (COMMAND) tras recibir la OBSERVATION. */
   decisionMs?: number;
 }
@@ -109,7 +111,10 @@ export class FakeBootstrapRunner implements ContainerRunner {
         record.marks.ready = performance.now();
       }
       if (b.crashAfterReady) {
-        await report("import", "Traceback (most recent call last):\nRuntimeError: fallo al importar el bot");
+        await report(
+          b.crashAfterReadyKind ?? "import",
+          "Traceback (most recent call last):\nRuntimeError: fallo al importar el bot",
+        );
         return exit(7);
       }
       if (b.hangAfterReady) return; // proceso vivo, sin conectar nunca

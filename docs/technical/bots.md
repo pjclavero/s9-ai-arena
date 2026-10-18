@@ -148,7 +148,7 @@ Una sola sesión por build (`ContainerBuildSandbox.verify`):
    - instancia la subclase de `ArenaBot` (en Python, `Bot` o la única definida; en Node, `export default`, `Bot` o la única exportada);
    - llama a `run(WS_URL, BATTLE_TOKEN)`.
 
-   Si algo falla, informa a `ARTIFACT_URL/report` (`kind` + traza) y sale con un código distinto de 0. Los `kind` de plataforma (`config`, `fetch`, `integrity`, `materialize`, `sdk`) son infraestructura; los del bot (`manifest`, `entry`, `import`, `runtime`) llegan al motivo de rechazo.
+   Si algo falla, informa a `ARTIFACT_URL/report` (`kind` + traza) y sale con un código distinto de 0. Antes de `ready`, los `kind` de plataforma (`config`, `fetch`, `integrity`, `materialize`, `sdk`) son infraestructura y los del paquete (`manifest`, `entry`) son del bot. Después de `ready`, **cualquier** informe es del bot: su código ve `ARTIFACT_URL`/`ARTIFACT_TOKEN` y podría falsear un `kind` de plataforma. Los del bot llegan al motivo de rechazo.
 4. **Postura.** Se inspecciona la postura real del contenedor con `complianceViolations`. Si no es conforme, es un fallo de plataforma.
 5. **Readiness.** `awaitAgentReady` (`startup-clock.ts`) espera la señal `ready` y el HELLO aceptado por el ProtocolServer con los dos relojes de abajo; despierta con cada señal y sondea el estado real del contenedor (salida temprana). Nunca duerme a ciegas.
 6. **Partida de humo.** El candidato hace el handshake y juega en el motor real (`dm_practice@1`, `emptyArena`, `smokeBattleTicks` ticks) contra el bot de referencia `HunterBot` (E5).
@@ -186,7 +186,7 @@ Antes, `resource_limits` exigía ≤ 5000 ms desde `State.StartedAt` hasta el HE
 Clasificación de fallos de arranque:
 
 - **Infraestructura** (`[sandbox_start_failed]`): la Engine no crea o arranca el contenedor (p. ej. imagen de runtime ausente), el contenedor muere antes de `ready` sin informe, o el bootstrap informa `config`/`fetch`/`integrity`/`materialize`/`sdk`.
-- **Bot** (`timeout_reason=bot_crash`): informe `manifest`/`entry`/`import`/`runtime`, o el proceso sale después de `ready`.
+- **Bot** (`timeout_reason=bot_crash`): informe `manifest`/`entry` antes de `ready`, o cualquier informe o salida del proceso después de `ready` (incluido un `fetch` falseado por el código del usuario).
 - Si la señal `ready` se pierde pero el HELLO llega a tiempo, el bot pasa (el HELLO prueba la readiness); el tramo del bot no se mide aparte y lo dice el log.
 
 Los plazos se parsean una vez (`startupTimeoutsFromEnv`); un valor que no sea un entero de 1 a 600000 ms hace fallar el arranque del servicio. El `handshakeTimeoutMs` del ProtocolServer (conexión → HELLO) usa `BOT_EXECUTION_TIMEOUT_MS`. `maxStartupMs` de `PipelineConfig` sólo se usa en la medición en proceso (sin sandbox).
