@@ -1,10 +1,12 @@
 /**
- * T8.3 · Página del reproductor de replays. Pública (sin cuenta). Mismos modos de
+ * T8.3 · Página del reproductor de replays. Ruta pública, pero el replay sólo se
+ * carga si la API lo autoriza (PRC TD-004: participante, equipo, staff o replay
+ * público por S9_PUBLIC_REPLAYS_ENABLED). Mismos modos de
  * cámara y overlay que el directo: reutiliza ViewerScene; solo cambia la FUENTE
  * (ReplayPlayer contra el replay-service en vez de SpectatorClient contra el gateway).
  */
 import { useEffect, useRef, useState } from "react";
-import { fetchJson } from "../api.js";
+import { api } from "../api.js";
 import { describeApiError } from "../errors.js";
 import { ReplayPlayer, buildShareLink, httpReplaySource } from "../viewer/replay-player.js";
 import { ReplayFeed } from "../viewer/replay-feed.js";
@@ -17,33 +19,18 @@ import type { CameraMode } from "../viewer/camera.js";
 const PREFETCH_INTERVAL_MS = 500;
 
 /**
- * B6 (hallazgo del supervisor, demostrado en vivo — DOS rondas) · Base que se
- * antepone a las rutas que ya construye `httpReplaySource()`
- * (`apps/web/src/viewer/replay-player.ts`): esa función YA incluye el prefijo
- * `/replays/` en cada ruta que pide (`${baseUrl}/replays/${battleId}/index`,
- * `.../segment`) — el mismo patrón que usa `replay-player.test.ts` contra el
- * Express real del replay-service con `httpReplaySource("", battleId, ...)`.
+ * PRC (TD-004) · Base que se antepone a las rutas de `httpReplaySource()`
+ * (`/replays/<id>/index`, `/replays/<id>/segment`). Queda VACÍA porque el fetch
+ * es `api()` (apps/web/src/api.ts), que ya antepone `/api/v1`: el navegador pide
+ * `/api/v1/replays/<id>/index`, el gateway quita `/api/v1` y la API resuelve
+ * `getReplayIndex`/`getReplaySegment` aplicando la política de acceso.
  *
- * Ronda 1 del supervisor: esta página usaba `baseUrl = "/replay-service"`
- * (prefijo que NUNCA existió en el gateway) → `/replay-service/replays/...`
- * caía en el `location /` genérico y volvía el SPA.
- *
- * Ronda 2 del supervisor (ejecutando el Express real de replay-service, no
- * solo leyendo): el "arreglo" de la ronda 1 puso `baseUrl = "/replays"`, que
- * con el prefijo YA incluido en `httpReplaySource()` componía
- * `/replays/replays/${battleId}/index` — un prefijo DUPLICADO, 404 igual,
- * solo que por un motivo distinto. Además, el propio gateway tenía un
- * `rewrite` en `location /replays/` que quitaba el prefijo antes de reenviar
- * a replay-service (que SÍ registra sus rutas con `/replays`, ver
- * `apps/replay-service/src/server.ts`) — roto en las DOS direcciones a la vez.
- * Ambos arreglados: el `rewrite` se quitó de `nginx.conf`/
- * `nginx-behind-proxy.conf` (el gateway reenvía la URI íntegra), y aquí la
- * base queda VACÍA — el origen actual, sin prefijo — porque `/replays/` ya lo
- * pone `httpReplaySource()`. Cubierto por un test que aplica la MISMA
- * composición de rutas contra el Express real de replay-service (supertest),
- * no una comparación de cadenas: `apps/web/tests/replay-page-gateway-path.test.ts`.
+ * Antes (B6) la base apuntaba al replay-service a través de `location /replays/`
+ * del gateway, SIN autenticación: cualquiera bajaba replays privados. Ese
+ * `location` ahora responde 404. La cadena cliente → gateway → contrato de la API
+ * la ejecuta `apps/web/tests/replay-page-gateway-path.test.ts`.
  */
-export const REPLAY_SERVICE_GATEWAY_BASE = "";
+export const REPLAY_API_BASE = "";
 
 const SPEEDS = [0.5, 1, 2, 4, 8];
 
@@ -54,9 +41,14 @@ const SPEEDS = [0.5, 1, 2, 4, 8];
  */
 export type ReplayState = "loading" | "init" | "playing" | "paused" | "finished" | "error";
 
-/** Fetch del replay-service con el MISMO plazo y clasificación que la API (api.ts). */
-const replayFetch = async (url: string) => {
-  const data = await fetchJson<unknown>(url);
+/**
+ * PRC (TD-004) · Fetch AUTENTICADO del replay: `api()` adjunta el Bearer de la
+ * sesión (y refresca si caducó), con el MISMO plazo y clasificación de errores
+ * que el resto del panel. Sin sesión, la API sólo sirve replays públicos; el
+ * resto responde 404, igual que un replay inexistente.
+ */
+export const replayApiFetch = async (url: string) => {
+  const data = await api<unknown>("GET", url);
   return { ok: true, status: 200, json: async () => data };
 };
 
@@ -102,9 +94,8 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
       .then(async ({ createViewerGame, waitForViewerScene }) => {
         if (!alive || !hostRef.current) return;
         // Primero el índice: si el replay no existe no se arranca el motor de render.
-        // El gateway (E10) enruta /replays/* al replay-service (ver la nota de
-        // REPLAY_SERVICE_GATEWAY_BASE más arriba).
-        const player = new ReplayPlayer(httpReplaySource(REPLAY_SERVICE_GATEWAY_BASE, battleId, replayFetch));
+        // PRC (TD-004): por la API autorizada (ver REPLAY_API_BASE más arriba).
+        const player = new ReplayPlayer(httpReplaySource(REPLAY_API_BASE, battleId, replayApiFetch));
         playerRef.current = player;
         try {
           await player.init(initialTick);

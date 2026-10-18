@@ -355,14 +355,19 @@ describe("T12.1 · el MVP funciona (26.1), en 6 pasos con evidencia", () => {
     expect(direct.matches).toBe(true);
     expect(direct.divergedAtTick).toBeNull();
 
-    // Y por la API pública, como visitante anónimo (operación verifyReplay de E8).
-    const viaApi = await request(app).post(`/replays/${state.battleDbId}/verify`);
+    // PRC (TD-004) · el replay de una batalla con bots privados NO es anónimo:
+    // anónimo ⇒ 404 (igual que inexistente); su participante sí lo verifica.
+    expect((await request(app).post(`/replays/${state.battleDbId}/verify`)).status).toBe(404);
+    expect((await request(app).get(`/replays/${state.battleDbId}`)).status).toBe(404);
+    const owner = { Authorization: `Bearer ${state.accessToken}` };
+    // Por la API (operación verifyReplay de E8), como dueño de un bot participante.
+    const viaApi = await request(app).post(`/replays/${state.battleDbId}/verify`).set(owner);
     expect(viaApi.status).toBe(200);
     expect(viaApi.body.matches).toBe(true);
     expect(viaApi.body.recomputedHash).toBe(state.result.finalStateHash);
 
-    // El replay también se DESCARGA sin cuenta (23.1).
-    const download = await request(app).get(`/replays/${state.battleDbId}`);
+    // El replay también se DESCARGA (23.1), con la misma autorización.
+    const download = await request(app).get(`/replays/${state.battleDbId}`).set(owner);
     expect(download.status).toBe(200);
     expect(download.body.length).toBeGreaterThan(0);
 

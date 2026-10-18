@@ -11,7 +11,8 @@ import { join } from "node:path";
 import request from "supertest";
 import type { Express } from "express";
 import { startTestDb, type TestDbHandle } from "./testing/test-db.js";
-import { seedDev, DEFAULT_RULESET_ID } from "./db/seeds/dev.js";
+import { seedDev, DEFAULT_RULESET_ID, DEV_USERS } from "./db/seeds/dev.js";
+import { tokenFor } from "./testing/helpers.js";
 import { createApp } from "./app.js";
 import { FakeBotManager } from "./services/bot-manager.js";
 import { loadRuleset } from "../../../packages/game-rules/index.js";
@@ -28,6 +29,8 @@ let replay: Replay;
 let stored: StoredReplay;
 let battleId: string;
 let dir: string;
+/** PRC (TD-004) · verifyReplay sigue la política de acceso: aquí, staff (admin). */
+let staff: string;
 
 async function insertBattle(db: TestDbHandle["db"], replayRef: string | null, extra: Record<string, unknown> = {}) {
   const [row] = await db("battles")
@@ -51,6 +54,7 @@ beforeAll(async () => {
   h = await startTestDb();
   await seedDev(h.db);
   app = createApp({ db: h.db, botManager: new FakeBotManager(h.db), anonQuota: { max: 1000, windowMs: 3600_000 } });
+  staff = await tokenFor(h.db, DEV_USERS.admin);
 
   // Batalla REAL de E2, almacenada por el replay-service (política 23.1: archivo + ref).
   replay = await record(
@@ -88,8 +92,14 @@ describe("verifyReplay (operación 53/53 del contrato de E1)", () => {
     expect(implementedOperations.some((o) => o.operationId === "verifyReplay")).toBe(true);
   });
 
-  it("un visitante anónimo verifica un replay oficial: matches=true con hashes", async () => {
+  it("PRC (TD-004): un anónimo NO verifica un replay no público (404, como inexistente)", async () => {
     const r = await request(app).post(`/replays/${battleId}/verify`);
+    expect(r.status).toBe(404);
+    expect(r.body.error).toBe("not_found");
+  });
+
+  it("un usuario autorizado verifica un replay oficial: matches=true con hashes", async () => {
+    const r = await request(app).post(`/replays/${battleId}/verify`).set("Authorization", `Bearer ${staff}`);
     expect(r.status).toBe(200);
     expect(r.body.matches).toBe(true);
     expect(r.body.valid).toBe(true);
@@ -104,7 +114,7 @@ describe("verifyReplay (operación 53/53 del contrato de E1)", () => {
     writeFileSync(tPath, tampered);
     const id = await insertBattle(h.db, tPath, { replay_hash: stored.index.sha256 });
 
-    const r = await request(app).post(`/replays/${id}/verify`);
+    const r = await request(app).post(`/replays/${id}/verify`).set("Authorization", `Bearer ${staff}`);
     expect(r.status).toBe(200);
     expect(r.body.matches).toBe(false);
     expect(r.body.valid).toBe(false);
@@ -116,7 +126,7 @@ describe("verifyReplay (operación 53/53 del contrato de E1)", () => {
       replay_hash: stored.index.sha256,
       final_state_hash: "f".repeat(64), // resultado oficial distinto del archivo
     });
-    const r = await request(app).post(`/replays/${id}/verify`);
+    const r = await request(app).post(`/replays/${id}/verify`).set("Authorization", `Bearer ${staff}`);
     expect(r.status).toBe(200);
     expect(r.body.matches).toBe(false);
     expect(r.body.reason).toBe("final_state_hash_mismatch_with_db");
@@ -124,7 +134,10 @@ describe("verifyReplay (operación 53/53 del contrato de E1)", () => {
 
   it("batalla sin replay ⇒ 404; batalla inexistente ⇒ 404", async () => {
     const sinReplay = await insertBattle(h.db, null);
-    expect((await request(app).post(`/replays/${sinReplay}/verify`)).status).toBe(404);
-    expect((await request(app).post(`/replays/00000000-0000-4000-8000-000000000000/verify`)).status).toBe(404);
+    const auth = { Authorization: `Bearer ${staff}` };
+    expect((await request(app).post(`/replays/${sinReplay}/verify`).set(auth)).status).toBe(404);
+    expect((await request(app).post(`/replays/00000000-0000-4000-8000-000000000000/verify`).set(auth)).status).toBe(
+      404,
+    );
   });
 });

@@ -125,7 +125,7 @@ afterAll(async () => {
 });
 
 describe("T7.5 espectador anónimo (DoD: batalla en directo y replay sin cuenta)", () => {
-  it("un visitante lista batallas en directo, saca ticket de espectador y baja un replay", async () => {
+  it("un visitante lista batallas en directo y saca ticket; el replay privado sólo lo baja su participante (TD-004)", async () => {
     const live = await request(app).get("/battles?status=running");
     expect(live.status).toBe(200);
     expect(live.body.items.some((b: { id: string }) => b.id === liveBattleId)).toBe(true);
@@ -136,8 +136,16 @@ describe("T7.5 espectador anónimo (DoD: batalla en directo y replay sin cuenta)
     expect(ticket.body.wsUrl).toContain(liveBattleId);
     expect(new Date(ticket.body.expiresAt).getTime()).toBeGreaterThan(Date.now());
 
+    // PRC (TD-004) · el replay de una batalla con un bot PRIVADO ya no se sirve
+    // a anónimos (antes: 200 con los bytes). Mismo 404 que un id inexistente.
+    const anon = await request(app).get(`/replays/${finishedBattleId}`);
+    expect(anon.status).toBe(404);
+    expect(anon.body.error).toBe("not_found");
+
+    // Su dueño (participante) sí lo baja, y nunca con caché compartida.
     const replay = await request(app)
       .get(`/replays/${finishedBattleId}`)
+      .set("Authorization", `Bearer ${dev}`)
       .buffer(true)
       .parse((res, cb) => {
         const chunks: Buffer[] = [];
@@ -146,7 +154,7 @@ describe("T7.5 espectador anónimo (DoD: batalla en directo y replay sin cuenta)
       });
     expect(replay.status).toBe(200);
     expect(Buffer.compare(replay.body as Buffer, replayBytes)).toBe(0);
-    expect(replay.headers["cache-control"]).toContain("max-age=3600");
+    expect(replay.headers["cache-control"]).toBe("private, no-store");
 
     const audit = await request(app).get(`/battles/${finishedBattleId}/audit`);
     expect(audit.status).toBe(200);

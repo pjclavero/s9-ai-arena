@@ -49,7 +49,7 @@ Estas variables se repiten en varios servicios y se agrupan como «BD común»:
 | Responsabilidad | SPA del panel: bots, loadouts, equipos, mapas y editor, batallas, torneos y bracket, replays, visor, ranking, admin |
 | Entrypoint | nginx sirviendo el build de Vite (`infrastructure/docker/web/Dockerfile`) |
 | Entrada | HTTP :3000 (desde el gateway) |
-| Salida | el navegador llama a `/api/v1`, `/replays/` y `/ws/` a través del gateway |
+| Salida | el navegador llama a `/api/v1` y `/ws/` a través del gateway (`/replays*` responde 404 desde TD-004) |
 | Persistencia | — |
 | Configuración | `LOG_FORMAT` |
 | Healthcheck | `wget http://127.0.0.1:3000/healthz` |
@@ -171,7 +171,7 @@ Estas variables se repiten en varios servicios y se agrupan como «BD común»:
 | Tests | 7 ficheros (`ingest-auth`, `list-replays`, `retention-sweep-regression`, `stats`) |
 | Detalle | [replays.md](replays.md) |
 
-Rutas del replay-service:
+Rutas del replay-service (internas: el gateway ya no las enruta desde TD-004; el navegador lee por la API):
 
 | Ruta | Autenticación |
 |---|---|

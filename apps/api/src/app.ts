@@ -19,6 +19,7 @@ import { botRoutes, buildRoutes } from "./routes/bots.js";
 import { catalogRoutes } from "./routes/catalog.js";
 import { adminRoutes } from "./routes/admin.js";
 import { battleRoutes } from "./routes/battles.js";
+import { replayRoutes } from "./routes/replays.js";
 import { battleRunConfigFromEnv, realBattleRunsCapability, type BattleRunConfig } from "./battle-run.js";
 import { publicSpectateEnabledFromEnv } from "./public-spectate.js";
 import { publicReplaysEnabledFromEnv } from "./public-replays.js";
@@ -167,6 +168,8 @@ export function createApp(cfg: AppConfig): express.Express {
       publicReplaysEnabled,
     ),
   );
+  // PRC (TD-004) · replays para el navegador, con la política única de acceso.
+  app.use(replayRoutes(cfg.db, cfg.anonQuota ?? DEFAULT_ANON_QUOTA, publicReplaysEnabled));
   app.use(standingsRoutes(cfg.db));
   app.use(tournamentRoutes(cfg.db));
   app.use(mapRoutes(cfg.db));

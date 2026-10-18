@@ -35,7 +35,7 @@ Estados posibles:
 | [TD-001](#td-001) | Build de bots sin sandbox real | P0 | Bots / build | PARCIAL |
 | [TD-002](#td-002) | Stub HunterBot y doble camino de ejecución | P0 | Batallas | CERRADA |
 | [TD-003](#td-003) | Costura `rulesetId` web ↔ BD | P0 | Batallas | CERRADA |
-| [TD-004](#td-004) | Replays a anónimos por el gateway | P0 | Seguridad | ABIERTA |
+| [TD-004](#td-004) | Replays a anónimos por el gateway | P0 | Seguridad | CERRADA en `prc/dev-sec`; sin desplegar |
 | [TD-005](#td-005) | Autorización de participantes | P0 | Seguridad | CERRADA |
 | [TD-006](#td-006) | Runtime mezclado sin identidad de build | P0 | Runtime | ABIERTA |
 | [TD-007](#td-007) | Backup sin alertas, sin snapshots de VM, apagado no limpio | P0 | Operación | MEJORADA |
@@ -173,7 +173,7 @@ Estados posibles:
 <a id="td-004"></a>
 ## TD-004 — Replays servidos a anónimos por el gateway
 
-- **Estado:** ABIERTA
+- **Estado:** CERRADA en la rama `prc/dev-sec` (Production Readiness, DEV-SEC); sin desplegar
 - **Prioridad:** P0 (auditoría P0-4)
 - **Área:** Seguridad (`gateway`, `replay-service`)
 - **Detectado:** 2026-10-15
@@ -190,6 +190,12 @@ Estados posibles:
   - El acceso autenticado sigue la política.
   - Hay un test sobre la config real que se pone rojo con la mutación M1a.
 - **Verificación (REVIEW, 2026-10-18):** sigue ABIERTA. En el E2E de la integración, `GET /replays` anónimo a través de TLS y del gateway real responde 200 con el inventario (`replay.spec.ts`).
+- **Cierre (DEV-SEC, 2026-10, rama `prc/dev-sec`):**
+  - **Una autoridad**: la API (`apps/api/src/replay-access.ts`) autoriza ANTES de leer el fichero. Staff (rol ≥ `organizer`), dueño o equipo (bot no `private`) de un bot participante; público sólo con `S9_PUBLIC_REPLAYS_ENABLED` y todos los bots `public`. Resto: 404 idéntico a inexistente.
+  - **Borde**: `location = /replays` y `/replays/` responden 404 en `nginx.conf` y `nginx-behind-proxy.conf`; el navegador lee por `/api/v1/replays/{id}`, `/index`, `/segment` y `GET /api/v1/replays` (contrato 0.9.0). Ingesta del worker sin cambios.
+  - **Tests**: `apps/api/src/td004-replay-access.test.ts` (87/87); `infrastructure/gateway/tests/replay-gateway.test.ts` con nginx real (11/11, opt-in `S9_RUN_GATEWAY_SECURITY_E2E=1`); E2E de navegador (`tests/browser/specs/replay.spec.ts`).
+  - **Mutación** (la inversa de M1a): re-exponer el `proxy_pass` de `/replays/` ⇒ 5 tests rojos (rc=1) sobre la conf real.
+  - **Pendiente**: desplegar; las lecturas del replay-service no llevan credencial dentro de la red `platform` (riesgo residual).
 
 <a id="td-005"></a>
 ## TD-005 — Autorización de participantes y datos de bots ajenos

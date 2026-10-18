@@ -29,9 +29,11 @@ describe("T7.5 conformidad con el contrato de E1", () => {
   // + 5 de versionado de bots (DEV-A: getBotVersion, getBotVersionFiles,
   // getBotVersionArtifact, diffBotVersions, cloneBotVersion)
   // + 7 de contenido (DEV-C: listRulesets, getMapVersionContent, getTeam,
-  // updateTeam, deleteTeam, addTeamBot, removeTeamBot).
-  it("el contrato tiene 77 operaciones (65 de R11 + 5 de versionado A9 + 7 de contenido FC-C)", () => {
-    expect(loadContract().operations.length).toBe(77);
+  // updateTeam, deleteTeam, addTeamBot, removeTeamBot)
+  // + 3 de autorización de replays (PRC TD-004, contrato 0.9.0: listReplays,
+  // getReplayIndex, getReplaySegment).
+  it("el contrato tiene 80 operaciones (65 de R11 + 5 de versionado A9 + 7 de contenido FC-C + 3 de replays TD-004)", () => {
+    expect(loadContract().operations.length).toBe(80);
   });
 
   it("toda operación del contrato está implementada o declarada pendiente con motivo", () => {

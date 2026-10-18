@@ -64,30 +64,34 @@ que no quede en los logs de acceso. Ver [websocket.md](websocket.md).
 
 ## El caso /replays
 
-`/replays/` expone a través del gateway **todas** las rutas del replay-service, incluidas las de
-lectura sin autenticación (inventario, contenido, índice, segmentos) y la re-verificación, que tiene
-coste de CPU. Las escrituras sí exigen el secreto de ingesta.
-- La capability `S9_PUBLIC_REPLAYS_ENABLED` de la API **no** gobierna esta ruta: sólo afecta a la ruta pública de la propia API.
-- No hay ningún test que cubra la política de esta `location`. Una mutación que la cierra deja la suite en verde ([TD-018](../roadmap/technical-debt.md#td-018)).
+Hasta [TD-004](../roadmap/technical-debt.md#td-004), `/replays/` exponía a través del gateway
+**todas** las rutas del replay-service, incluidas las de lectura sin autenticación.
 
-Estado: **ABIERTO**, en [TD-004](../roadmap/technical-debt.md#td-004). Este documento no da más detalle a propósito.
+Desde la rama `prc/dev-sec` (**sin desplegar**), `location = /replays` y `location /replays/`
+responden **404** JSON, sin `Location` y para cualquier método. El navegador lee los replays por
+`/api/v1/replays/...`: la API es la única autoridad y aplica la política de acceso antes de
+entregar bytes ([replays.md](replays.md#autorización-de-acceso-td-004)). El replay-service sólo es
+alcanzable por la red interna.
+
+Lo cubre `infrastructure/gateway/tests/replay-gateway.test.ts`, con nginx real y las dos confs del
+repo. Re-exponer el `proxy_pass` lo pone en rojo.
 
 ## El 301 de /replays
 
-La SPA pide `fetch("/replays")`, sin barra final (`apps/web/src/pages/ReplaysPage.tsx:28`). nginx
+> Histórico (corregido en FC-D y, desde TD-004, `/replays` ya no se enruta). En la base, la SPA
+> pedía `fetch("/replays")`, sin barra final. nginx
 sólo tiene `location /replays/`, así que responde **301** hacia `/replays/`. Esa redirección es
 absoluta y se construye con el esquema con el que el gateway recibió la petición, que es `http`,
 porque el TLS lo termina el proxy externo. El navegador está en una página `https`, bloquea la
 redirección por **contenido mixto** y la página `#/replays` muestra «Servicio de replays no
 disponible». En HTTP plano, sin TLS, sí funciona.
 
-Hay dos correcciones posibles: usar `/replays/` en el cliente, o desactivar la redirección
-absoluta o añadir `location = /replays` en el gateway. Ver [TD-014](../roadmap/technical-debt.md#td-014).
+Se corrigió con `absolute_redirect off` y `location = /replays`; ver [TD-014](../roadmap/technical-debt.md#td-014).
 
 ## Lo que no hay
 
 - **`/api/healthz` no existe:** cae en `location /` y devuelve la SPA con 200. Una sonda contra esa ruta siempre «pasa». Para sondear la API hay que usar `/api/v1/...` o el healthcheck interno del contenedor ([TD-020](../roadmap/technical-debt.md#td-020)).
-- **`/replays/healthz` no existe** en el replay-service a través del gateway.
+- **`/replays/*` no llega al replay-service** (TD-004): 404 del propio gateway.
 - **No hay limitación de tasa** en nginx (`limit_req`): los límites están en la API.
 - **No hay página 404:** cualquier ruta desconocida la sirve la SPA.
 
@@ -119,7 +123,7 @@ standalone. La configuración de red del despliegue está en
 | :80 → 301 https en standalone | CODE_VERIFIED | `infrastructure/gateway/nginx.conf:67` |
 | Cabeceras | CODE_VERIFIED | `nginx-behind-proxy.conf`, bloque `http` (`proxy_set_header`, `add_header`) |
 | Sin `limit_req` | CODE_VERIFIED | `grep limit_req infrastructure/gateway/*.conf` (vacío) |
-| `fetch("/replays")` | CODE_VERIFIED | `apps/web/src/pages/ReplaysPage.tsx:28` |
+| `/replays*` ⇒ 404 en el gateway (TD-004) | CODE_VERIFIED / RUNTIME_VERIFIED (entorno aislado) | `infrastructure/gateway/nginx.conf:124-132`; `nginx-behind-proxy.conf:103-111`; `infrastructure/gateway/tests/replay-gateway.test.ts` |
 | 301 a http bloqueado en producción | BROWSER (auditoría, interna) | auditoría del 2026-10-15, pasada 2 ([resumen](../audits/2026-10-15/README.md)) |
 | `/api/healthz` devuelve la SPA | RUNTIME_VERIFIED (en la auditoría) | GET al gateway |
 | Escrituras de replay con secreto | CODE_VERIFIED | `apps/replay-service/src/server.ts:111,252` (`requireWriteAuth`) |
