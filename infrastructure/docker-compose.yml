@@ -194,6 +194,15 @@ services:
       # tournament-worker y el cliente la ancla a wss:// bajo https. Antes no se
       # pasaba y el navegador recibía el defecto de desarrollo ws://localhost:8081.
       SPECTATE_WS_URL: ${SPECTATE_WS_URL:-/ws/spectate}
+      # REVIEW (cierre funcional) · TD-030: variables que la API LEE y el compose no
+      # entregaba (un valor en infrastructure/.env no tenía efecto). Defaults
+      # IDÉNTICOS a los del código: declararlas no cambia el comportamiento.
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
+      S9_PUBLIC_SPECTATE_ENABLED: ${S9_PUBLIC_SPECTATE_ENABLED:-}
+      S9_PUBLIC_REPLAYS_ENABLED: ${S9_PUBLIC_REPLAYS_ENABLED:-}
+      S9_METRICS_ENABLED: ${S9_METRICS_ENABLED:-}
+      # GET /keys/artifact-signing publica la clave PÚBLICA de verificación.
+      ARTIFACT_VERIFY_KEY_FILE: /run/secrets/artifact_verify_key
       # B2 · launcher REAL de POST /battles/:id/run (API → arena-engine por HTTP,
       # red platform, NUNCA Docker). Solo se cablea si arena-engine responde con
       # AMBAS piezas presentes: URL (default seguro, solo un hostname interno,
@@ -225,7 +234,7 @@ services:
       # igual que arena_engine_internal_secret. Sin él, la ingesta responde 401
       # y se reporta `replay.ingested: false` (fail-closed, nunca se finge).
       REPLAY_INGEST_SECRET_FILE: /run/secrets/replay_ingest_secret
-    secrets: [postgres_password, jwt_secret, arena_engine_internal_secret, replay_ingest_secret]
+    secrets: [postgres_password, jwt_secret, arena_engine_internal_secret, replay_ingest_secret, artifact_verify_key]
     volumes:
       # B7 · SOLO LECTURA, y justificado por el código: getReplay y
       # verifyReplay (apps/api/src/routes/battles.ts) hacen
@@ -340,6 +349,9 @@ services:
       ARENA_ENGINE_HOST: tournament-worker
       # Sólo VERIFICA artefactos: recibe la clave PÚBLICA, no la de firma.
       ARTIFACT_VERIFY_KEY_FILE: /run/secrets/artifact_verify_key
+      # El gateway de espectador (en este proceso) aplica la MISMA capability
+      # pública que la API al emitir el ticket anónimo (TD-030).
+      S9_PUBLIC_SPECTATE_ENABLED: ${S9_PUBLIC_SPECTATE_ENABLED:-}
       SPECTATE_PORT: "8081"
       REPLAYS_DIR: /data/replays
       # B7 · directorios de datos cuya propiedad ajusta el entrypoint de la

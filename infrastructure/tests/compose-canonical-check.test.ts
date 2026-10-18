@@ -473,13 +473,28 @@ describe("HECHOS REALES de VM108 · el incidente que motiva el carril", () => {
     expect(res.reetiquetar).toEqual(["arena-engine", "bot-manager", "gateway", "map-service", "replay-service", "web"]);
   });
 
-  it("api sólo diverge en la variable de concurrencia y en SPECTATE_WS_URL (REVIEW, TD-030)", () => {
+  it("api sólo diverge en lo declarado por el cierre funcional (TD-030) y la concurrencia", () => {
     const res = r();
     const api = res.hallazgos.filter((x: any) => x.service === "api" && x.code !== CODIGOS.CONFIG_FILES_DIVERGENTE);
-    expect(codigos(api)).toEqual([CODIGOS.ENV_FALTA, CODIGOS.ENV_FALTA]);
-    const details = api.map((x: any) => String(x.detail)).join(" | ");
-    expect(details).toContain("S9_MAX_CONCURRENT_REAL_BATTLE_RUNS");
-    expect(details).toContain("SPECTATE_WS_URL");
+    // REVIEW (cierre funcional): la API recibe ahora las variables que LEÍA y el
+    // compose no entregaba (TD-030) y la clave PÚBLICA de verificación de artefactos.
+    // Desplegarlo exige recrear la API (ya estaba en `recrear`).
+    const envFalta = api.filter((x: any) => x.code === CODIGOS.ENV_FALTA).map((x: any) => String(x.detail));
+    const esperadas = [
+      "S9_MAX_CONCURRENT_REAL_BATTLE_RUNS",
+      "SPECTATE_WS_URL",
+      "CORS_ORIGIN",
+      "S9_PUBLIC_SPECTATE_ENABLED",
+      "S9_PUBLIC_REPLAYS_ENABLED",
+      "S9_METRICS_ENABLED",
+      "ARTIFACT_VERIFY_KEY_FILE",
+    ];
+    const todo = envFalta.join(" | ");
+    for (const v of esperadas) expect(todo, v).toContain(v);
+    expect(envFalta.length).toBe(esperadas.length);
+    const otros = api.filter((x: any) => x.code !== CODIGOS.ENV_FALTA);
+    expect(codigos(otros)).toEqual([CODIGOS.SECRETO_FALTA]);
+    expect(String(otros[0].detail)).toContain("artifact_verify_key");
   });
 
   it("backup diverge en imagen, hostname de restic y healthcheck", () => {

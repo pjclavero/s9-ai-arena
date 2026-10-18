@@ -4,7 +4,8 @@
  * Extensión documentada fuera del contrato de E1 (como recoverAccount/resetPassword):
  * cualquier verificador (motor, worker de batallas, terceros) obtiene aquí la clave
  * con la que comprobar las firmas ed25519 de los artefactos. Solo se expone la
- * PÚBLICA, derivada de la privada del almacén de secretos.
+ * PÚBLICA. REVIEW (cierre funcional): la API ya no necesita la PRIVADA; lee la
+ * pública (ARTIFACT_VERIFY_KEY_FILE) y sólo si falta la deriva de la de firma.
  *
  * Fallar cerrado: si la clave de firma no está configurada (y no es el modo dev
  * explícito), el endpoint responde 503 — nunca inventa una clave.
@@ -12,7 +13,8 @@
 import { Router } from "express";
 import { defineExtension } from "../registry.js";
 import { ApiError } from "../errors.js";
-import { loadServiceKeypair, publicKeyPem } from "../../../bot-manager/src/signing.js";
+import { publicKeyPem } from "../../../bot-manager/src/signing.js";
+import { loadArtifactVerifyKey } from "../../../bot-manager/src/bot-launch.js";
 
 export function keyRoutes(): Router {
   const router = Router();
@@ -22,7 +24,7 @@ export function keyRoutes(): Router {
     async (_req, res) => {
       let pem: string;
       try {
-        pem = publicKeyPem(loadServiceKeypair().publicKey);
+        pem = publicKeyPem(loadArtifactVerifyKey());
       } catch (e) {
         throw new ApiError(
           503,
