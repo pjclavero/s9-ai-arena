@@ -121,6 +121,18 @@ con el prefijo del run (`s9ci-<run>-<intento>-*`), los de bot residuales, sus vo
 el estado temporal; los services los retira el runner. Pensado para el runner efímero: en una
 máquina compartida no lo uses (borra todos los `bot-*`).
 
+### Calibración en CI real (2026-10-18)
+
+| PR | Mutación | `golden` | `docker-e2e` | `semaforo` | Otros jobs rojos |
+|---|---|---|---|---|---|
+| #153 | ninguna (control positivo) | PASS | PASS | PASS | — |
+| #154 | `build-worker-wiring.ts`: el pipeline pierde el sandbox | FAIL | FAIL | FAIL | ninguno (`unit` verde) |
+| #155 | `engine-executor.ts`: el executor de batalla lanza siempre | FAIL | FAIL | FAIL | `unit` |
+| #156 | `ReplayPage.tsx`: `getScene` sin esperar a READY (TD-009) | FAIL | PASS | FAIL | ninguno (`unit` verde) |
+| #157 | `functional-e2e` con `if: false` | skipped | skipped | FAIL (fila «obligatorio sin ejecutar») | `unit` (G1 lo detecta) |
+
+Los PR de calibración se cerraron y sus ramas se borraron.
+
 ### Gate manual de release
 
 Antes de etiquetar o desplegar un commit: *Actions → functional-e2e → Run workflow* sobre ese

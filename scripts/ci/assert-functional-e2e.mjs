@@ -68,7 +68,8 @@ export function evaluarE2E(outDir) {
     const skipped = Number(s.skipped ?? 0);
     const ok = expected >= 1 && unexpected === 0 && flaky === 0 && skipped === 0;
     let motivo = `expected=${expected} unexpected=${unexpected} flaky=${flaky} skipped=${skipped}`;
-    if (expected < 1) motivo += " · no se ejecutó ningún test: no cuenta como verde";
+    if (unexpected > 0) motivo += " · tests en ROJO";
+    else if (expected < 1) motivo += " · no pasó ningún test: no cuenta como verde";
     if (skipped > 0) motivo += " · skipped NO es verde";
     add(`fase ${fase}`, ok, motivo);
   }
