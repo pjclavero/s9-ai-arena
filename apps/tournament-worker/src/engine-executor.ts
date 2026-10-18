@@ -138,6 +138,7 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
   return async (ctx: BattleContext): Promise<BattleExecution> => {
     const db = opts.db;
     const { battle, participants } = ctx;
+    throw new InfrastructureFailure("engine_start_failure", "CALIBRACIÓN: executor de batalla roto");
 
     // --- mapa (E4 real): contenido versionado en BD → ArenaMap del motor ----
     const mapRow = await db("map_versions").where({ map_id: battle.map_id, version: battle.map_version }).first();
