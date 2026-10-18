@@ -68,7 +68,9 @@ export function standingsRoutes(db: Db): Router {
       if (Number.isNaN(at.getTime())) throw badRequest("at debe ser una fecha ISO 8601 válida");
       body.ratingAt = await ratingAt(db, botId, seasonId, mode, at);
     }
-    res.setHeader("Cache-Control", "public, max-age=60");
+    // REVIEW (cierre funcional, R8) · el historial de un bot NO público ya pasó el
+    // control de acceso: una caché compartida no debe servírselo a terceros.
+    res.setHeader("Cache-Control", bot.visibility === "public" ? "public, max-age=60" : "private, no-store");
     res.setHeader("X-S9-Season", seasonId);
     res.json(body);
   });

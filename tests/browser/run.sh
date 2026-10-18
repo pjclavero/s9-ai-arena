@@ -12,7 +12,7 @@
 #   gateway nginx con la conf REAL infrastructure/gateway/nginx-behind-proxy.conf
 #   proxy TLS delante (papel del proxy inverso externo: https → gateway http)
 # y ejecuta Playwright con el Chromium de la imagen oficial, fijada por digest,
-# en el Docker local (rootless en ia02). Todo escucha en 127.0.0.1.
+# en el Docker local (rootless de la máquina de pruebas). Todo escucha en 127.0.0.1.
 #
 # Fases (cada una con su rc):
 #   G · @golden golden path (REVIEW, R6): registro → bots → build real → equipo → mapa

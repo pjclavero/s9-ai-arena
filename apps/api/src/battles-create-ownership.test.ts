@@ -124,7 +124,10 @@ describe("TD-005 · propiedad/visibilidad de los participantes", () => {
       .get(`/bots/${foreignPrivate.botId}/rating-history`)
       .set("Authorization", `Bearer ${devTok}`);
     expect(own.status).toBe(200);
+    // REVIEW (R8): respuesta autorizada de un bot privado ⇒ nunca cacheable por terceros.
+    expect(own.headers["cache-control"]).toBe("private, no-store");
     const pub = await request(app).get(`/bots/${foreignPublic.botId}/rating-history`);
     expect(pub.status).toBe(200);
+    expect(pub.headers["cache-control"]).toBe("public, max-age=60");
   });
 });

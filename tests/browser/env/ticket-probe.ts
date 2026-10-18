@@ -1,6 +1,6 @@
 /**
  * FC-D · TD-028 — Sonda de RUNTIME del contrato del ticket de espectador a
- * través de la cadena real: TLS (proxy tipo VM104) → gateway nginx (`/ws/`) →
+ * través de la cadena real: TLS (proxy inverso externo) → gateway nginx (`/ws/`) →
  * tournament-worker (SpectateGateway) — tres procesos distintos.
  *
  * Firma un ticket con `signSpectateTicket` usando el JWT_SECRET_FILE que se le

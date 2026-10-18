@@ -3,7 +3,7 @@
  *
  * Reproduce en local la topología de producción sin tocarla:
  *   - el s9-docker-proxy REAL (createDockerProxyServer) en 127.0.0.1:<libre>,
- *     reenviando al socket de Docker de ESTA máquina (rootless de ia02);
+ *     reenviando al socket de Docker de ESTA máquina (rootless de la máquina de pruebas);
  *   - la red `arena` (nombre exigido por compliance) en ese Docker;
  *   - el anfitrión del sandbox anunciado en una IP de esta máquina alcanzable
  *     desde los contenedores.
