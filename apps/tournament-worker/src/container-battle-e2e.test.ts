@@ -269,7 +269,11 @@ describe.skipIf(!ENABLED)("B8+A · batalla REAL con el ARTEFACTO FIRMADO de dos 
     expect(pP.outcome).not.toBe("win");
     expect(["win", "draw"]).toContain(pA.outcome);
 
-    const verify = await request(app).post(`/replays/${battleId}/verify`);
+    // PRC REVIEW (TD-004): verificar un replay revela su resultado ⇒ misma política
+    // que la lectura. El anónimo recibe el 404 uniforme; el dueño de los bots, 200.
+    const anonVerify = await request(app).post(`/replays/${battleId}/verify`);
+    expect(anonVerify.status).toBe(404);
+    const verify = await request(app).post(`/replays/${battleId}/verify`).set(hdr());
     expect(verify.status).toBe(200);
     expect(verify.body.matches).toBe(true);
 
