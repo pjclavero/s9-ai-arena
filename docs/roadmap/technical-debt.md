@@ -65,7 +65,7 @@ Estados posibles:
 | [TD-031](#td-031) | Imágenes de servicio vulnerables y sin escaneo | P1 | Seguridad / imágenes | ABIERTA |
 | [TD-032](#td-032) | Compatibilidad modo ↔ ruleset ↔ mapa sin validar en `POST /battles` | P1 | API / batallas | CERRADA |
 | [TD-033](#td-033) | Anfitrión de bots con credenciales de BD en la red `arena` | P1 | Seguridad / arquitectura | ABIERTA |
-| [TD-034](#td-034) | Límite de arranque del bot medido en tiempo de pared | P1 | Bots / build | ABIERTA |
+| [TD-034](#td-034) | Límite de arranque del bot medido en tiempo de pared | P1 | Bots / build | CERRADA (rama `prc/dev-sandbox`) |
 | [TD-035](#td-035) | Volúmenes `arena_bot_sources` y `arena_build_cache` sin uso | P4 | Infraestructura | ABIERTA |
 | [TD-036](#td-036) | Procedencia del código no expuesta en la API de batallas | P3 | API / bots | ABIERTA |
 | [TD-037](#td-037) | Un bot no puede enfrentarse a otra versión de sí mismo | P3 | Batallas / BD | ABIERTA |
@@ -803,14 +803,28 @@ Estados posibles:
 <a id="td-034"></a>
 ## TD-034 — Límite de arranque del bot medido en tiempo de pared
 
-- **Estado:** ABIERTA
+- **Estado:** CERRADA en la rama `prc/dev-sandbox` (Production Readiness Closure, pendiente de REVIEW); sin desplegar
 - **Prioridad:** P1
 - **Área:** Bots / build
 - **Detectado:** 2026-10-18, cierre funcional (REVIEW)
 - **Evidencia:** TD-A2 (DEV-A). En la integración, 1 de 2 ejecuciones del E2E A+B rechazó un bot válido: «arranque 6580 ms > 5000 ms» (lanzamiento del contenedor 4250 ms) con la máquina cargada.
 - **Problema:** Un bot correcto puede quedar `rejected` según la carga del host: falso negativo no determinista.
-- **Solución prevista:** Medir el arranque desde `State.StartedAt` hasta el HELLO descontando la descarga, o margen configurable por runtime, con test de carga.
-- **Condición de cierre:** Ningún rechazo de un bot válido por carga en N ejecuciones bajo estrés controlado.
+- **Causa medida (SAN-1):** el único reloj era `State.StartedAt` → HELLO ≤ `maxStartupMs` (5000 ms), con un margen de plataforma de +20 s sólo para *esperar* el handshake. Ese tramo incluye init del intérprete, descarga y sha256 del artefacto, materialización y carga del SDK, que son de la plataforma. En el lanzamiento de batalla, `whenAllConnected(20 s)` corría tras lanzar todos los contenedores y un bot lento con otro ya conectado perdía con `bot_crash`.
+- **Solución aplicada:**
+  - `apps/bot-manager/src/startup-clock.ts`: dos relojes separados por una señal real del bootstrap (`POST /s9/artifact/<id>/ready`, con token, justo antes de ejecutar código del usuario).
+    - `SANDBOX_STARTUP_TIMEOUT_MS` (def. 30000): lanzamiento → `ready`. Agotarlo es infraestructura.
+    - `BOT_EXECUTION_TIMEOUT_MS` (def. 5000): `ready` → HELLO aceptado (`ProtocolServer.helloAt`). Agotarlo es culpa del bot.
+  - Clasificación: antes de `ready` (Docker lento o que falla, runtime ausente, contenedor muerto, informes `config`/`fetch`/`integrity`/`materialize`/`sdk`) ⇒ infraestructura; después (`import`/`runtime`, salida del proceso, cuelgue) o paquete sin entrada (`manifest`/`entry`) ⇒ bot.
+  - Build (`build-sandbox.ts`) y batalla (`container-agents.ts`) usan el mismo módulo. Métricas por etapa: `launchMs`, `artifactFetchMs`, `startupMs`, `botReadyToHelloMs`, `executionMs`, `startedAtToHelloMs` y los plazos efectivos; el motivo lleva `timeout_reason=`.
+  - Configuración: parser único (inválido ⇒ el servicio no arranca), compose y `.env.example` (commit aparte, OWNER REVIEW), cubierta por `service-env-contract.test.ts`.
+- **Verificación (Docker rootless local):**
+  - Plataforma lenta real (7 s antes de `ready`) + bot de ~500 ms ⇒ `validated`; `startedAtToHelloMs` = 9062 ms (la regla anterior lo habría rechazado).
+  - Bot de 4 s tras `ready` con `BOT_EXECUTION_TIMEOUT_MS=1500` ⇒ `rejected` (`bot_execution_timeout`); bot infinito ⇒ `rejected`.
+  - Plataforma que no llega a `ready` en 3000 ms y runtime ausente ⇒ `SandboxInfrastructureError`, nunca `rejected`.
+  - Saturación acotada: 20 builds (6 y 8 en paralelo, Python y Node, con 3 y 8 procesos ocupando CPU del host): 20/20 `validated`; `launchMs` hasta 7,6 s, `startupMs` hasta 8,3 s, `botReadyToHelloMs` máx. 619 ms.
+  - Mutaciones: reloj del bot desde el lanzamiento, sin timeout del bot, «nunca ready» como culpa del bot, informes de plataforma como culpa del bot, entorno ignorado, cableado sin plazos y bootstrap sin `ready` ⇒ rojo.
+- **Límite que queda:** el reloj del bot sigue siendo de pared (no CPU): un import muy pesado con 0,5 CPU y el host saturado puede acercarse a 5 s. Bajo la saturación probada, el máximo fue 619 ms.
+- **Condición de cierre:** Ningún rechazo de un bot válido por carga en N ejecuciones bajo estrés controlado. Cumplida (N = 20 bajo estrés + plataforma lenta real), y slow-start/slow-execution distinguen los dos límites.
 
 <a id="td-035"></a>
 ## TD-035 — Volúmenes `arena_bot_sources` y `arena_build_cache` sin uso
