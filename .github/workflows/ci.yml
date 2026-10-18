@@ -914,6 +914,17 @@ jobs:
           path: tests/e2e/evidence/
           if-no-files-found: warn
 
+  # ── Etapa 6b: golden path FUNCIONAL real (TD-045, PRC DEV-CI) ──────────────
+  # E2E de navegador real + build de bots en sandbox Docker real + batalla real
+  # + replay (npm run test:browser), y los E2E Docker de vitest con el opt-in
+  # ACTIVADO. Definición en functional-e2e.yml (también workflow_dispatch: gate
+  # manual de release). Corre en TODO pull_request y en push a main, en
+  # paralelo con el resto. SIN `if:` y SIN continue-on-error a propósito: el
+  # semáforo lo trata como obligatorio y un skipped/cancelled es ROJO
+  # (infrastructure/tests/functional-e2e-gate.test.ts lo vigila).
+  functional-e2e:
+    uses: ./.github/workflows/functional-e2e.yml
+
   # ── Etapa 7: despliegue a staging (solo main) ──────────────────────────────
   deploy-staging:
     if: github.ref == 'refs/heads/main'
@@ -998,6 +1009,7 @@ jobs:
         image-provenance,
         scan,
         e2e-mvp,
+        functional-e2e,
         deploy-staging,
         smoke-and-promote,
       ]

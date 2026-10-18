@@ -110,7 +110,13 @@ verde:
 - se cuentan **todas** las conclusiones de **todos** los checks (`gh pr checks <n>`), no el final
   de un `gh run watch`;
 - `skipped`, `neutral` o en curso **no** son éxito; un recuento vacío no es verde;
-- el job `semaforo` resume: 🔴 bloquea, 🟡 hubo trabajo omitido (p. ej. staging), 🟢 todo ejecutado.
+- el job `semaforo` resume: 🔴 bloquea, 🟡 hubo trabajo omitido (p. ej. staging), 🟢 todo ejecutado;
+- `functional-e2e` (golden path real: navegador + build en sandbox + batalla + replay, y E2E Docker)
+  es obligatorio en todo PR: si sale rojo, el PR rompe el núcleo funcional y no se mergea. Su
+  evidencia está en el artifact `functional-e2e-golden-<n>` ([ci.md](ci.md#gate-funcional-functional-e2e));
+- hasta que el operador active la protección de rama de `main` con `semaforo` como check obligatorio
+  ([ci.md](ci.md#protección-de-rama-pendiente-del-operador)), **nada lo impide técnicamente**: la regla
+  la aplica quien mergea.
 
 ## 8. Review
 
@@ -120,7 +126,8 @@ y que la documentación canónica dice la verdad.
 
 ## 9. Merge
 
-Merge a `main` con CI verde (recuento completo) y review aprobada. No reescribas `main`. Si el PR
+Merge a `main` con CI verde (recuento completo, `semaforo` y `functional-e2e` incluidos) y review
+aprobada. Antes de un release, gate manual `functional-e2e` (`workflow_dispatch`) sobre el commit. No reescribas `main`. Si el PR
 forma parte de una pila, reapunta los PR dependientes antes de borrar la rama.
 
 ## 10. Construcción y despliegue
