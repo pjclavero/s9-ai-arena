@@ -59,7 +59,7 @@ Ningún valor secreto aparece aquí.
 | `SPECTATE_WS_URL` | `api` | `/ws/spectate` | no | base del WebSocket de espectador para el NAVEGADOR: ruta del mismo origen (el cliente la ancla a `wss://` bajo https) o `wss://…`; `ws://` en claro se rechaza con `NODE_ENV=production` |
 | `CORS_ORIGIN` | `api` | `http://localhost:5173` | no | mismo defecto que el código; la web es same-origin por el gateway |
 | `S9_PUBLIC_SPECTATE_ENABLED` | `api`, `tournament-worker` | vacío (apagado) | no | espectador público; el gateway del worker aplica la MISMA capability |
-| `S9_PUBLIC_REPLAYS_ENABLED` | `api` | vacío (apagado) | no | replays públicos de la API ([TD-004](../roadmap/technical-debt.md#td-004) sigue abierta en el gateway) |
+| `S9_PUBLIC_REPLAYS_ENABLED` | `api` | vacío (apagado) | no | replays públicos (anónimos) sólo de batallas `finished` cuyos bots son todos `public`; el gateway ya no sirve `/replays/*` ([TD-004](../roadmap/technical-debt.md#td-004)) |
 | `S9_METRICS_ENABLED` | `api` | vacío (apagado) | no | `/metrics` |
 | `API_ENTRY`, `ENGINE_ENTRY`, `WORKER_ENTRY`, `BOT_MANAGER_ENTRY`, `BOT_BUILD_WORKER_ENTRY`, `MAP_SERVICE_ENTRY`, `REPLAY_SERVICE_ENTRY` | servicios Node (`SERVICE_ENTRY`) | el `main`/`server` de cada app | no | no tocar salvo depuración |
 | `RESTIC_REPOSITORY` | `backup` | vacío | **sí** para tener copias | `sftp:usuario@host:/ruta` (ruta dentro del chroot) o ruta montada |

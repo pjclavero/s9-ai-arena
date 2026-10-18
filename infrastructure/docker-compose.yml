@@ -219,8 +219,8 @@ services:
       # se interpreta como "sin límite".
       S9_MAX_CONCURRENT_REAL_BATTLE_RUNS: ${S9_MAX_CONCURRENT_REAL_BATTLE_RUNS:-}
       # B6 · ingesta del replay REAL de una batalla containerizada en el
-      # replay-service, para que quede visible en el visor web (que habla con
-      # el replay-service vía el gateway, no con esta API). api y replay-service
+      # replay-service. El visor web lee los replays por esta API (TD-004:
+      # /api/v1/replays, autorizado); el gateway ya no enruta /replays. api y replay-service
       # ya comparten la red `platform` (ver el bloque replay-service más abajo);
       # no hace falta volumen ni red nuevos, solo esta URL interna. Opt-in: sin
       # ella, el comportamiento es igual que antes de B6 (replay.ingested: false
@@ -599,9 +599,9 @@ services:
       # repita el EACCES silencioso de VM108 cuando el volumen se recree.
       ARENA_DATA_DIRS: /data/replays
       # B8 · secreto que autentica la ESCRITURA (POST /replays/:battleId y
-      # POST /retention/sweep). Las rutas de LECTURA que consume el visor por el
-      # gateway siguen abiertas a propósito. Sin este fichero, el servicio
-      # arranca y sirve lecturas, pero rechaza toda escritura con 401.
+      # POST /retention/sweep). Sus rutas de LECTURA ya no son públicas: el
+      # gateway responde 404 en /replays* (TD-004) y sólo las alcanza la red
+      # platform. Sin este fichero, el servicio rechaza toda escritura con 401.
       REPLAY_INGEST_SECRET_FILE: /run/secrets/replay_ingest_secret
     secrets: [postgres_password, replay_ingest_secret]
     volumes:
