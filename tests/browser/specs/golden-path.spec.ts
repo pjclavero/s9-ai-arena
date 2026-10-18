@@ -226,6 +226,15 @@ test.describe("@golden Golden path", () => {
     expect(sB.perModule.turret_main.uses + sB.perModule.turret_main.rejections).toBe(0);
 
     // --- replay y reproducción en la web ---------------------------------
+    // PRC REVIEW (TD-004) · el reproductor lee por la API AUTORIZADA
+    // (/api/v1/replays/<id>/index y /segment) y NUNCA por /replays* del gateway
+    // (cerrado: 404). Se registra cada respuesta para el veredicto independiente.
+    const replayHits: { path: string; status: number }[] = [];
+    page.on("response", (r) => {
+      const path = new URL(r.url()).pathname;
+      if (/^\/replays(\/|$)/.test(path) || path.startsWith("/api/v1/replays"))
+        replayHits.push({ path, status: r.status() });
+    });
     await go(page, "#/replays");
     const rrow = page.locator(`[data-testid="replay-row"][data-battle-id="${battleId}"]`);
     await expect(rrow).toBeVisible({ timeout: 30_000 });
@@ -239,6 +248,15 @@ test.describe("@golden Golden path", () => {
     await page.getByRole("button", { name: "8×" }).click();
     await expect(status).toHaveAttribute("data-state", "finished", { timeout: 60_000 });
     await shot(page, info, "golden-replay-fin");
+    const replayPath = {
+      apiIndex200: replayHits.filter((h) => h.path === `/api/v1/replays/${battleId}/index` && h.status === 200).length,
+      apiSegment200: replayHits.filter((h) => h.path === `/api/v1/replays/${battleId}/segment` && h.status === 200)
+        .length,
+      gatewayReplays: replayHits.filter((h) => /^\/replays(\/|$)/.test(h.path)).length,
+    };
+    expect(replayPath.apiIndex200, JSON.stringify(replayHits)).toBeGreaterThan(0);
+    expect(replayPath.apiSegment200, JSON.stringify(replayHits)).toBeGreaterThan(0);
+    expect(replayPath.gatewayReplays, JSON.stringify(replayHits)).toBe(0);
 
     writeFileSync(
       `${OUT}/golden/evidence.json`,
@@ -248,6 +266,7 @@ test.describe("@golden Golden path", () => {
         result: battle.result,
         participants: battle.participants,
         stats: { red: sA.shotsFired, blue: sB.shotsFired },
+        replayPath,
       }),
     );
     expect(problems.filter((p) => !p.startsWith("console.error"))).toEqual([]);

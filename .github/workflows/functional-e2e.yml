@@ -130,6 +130,12 @@ jobs:
     env:
       S9_RUN_DOCKER_SANDBOX_E2E: "1"
       S9_RUN_REAL_DOCKER_E2E: "1"
+      # PRC REVIEW (TD-004): bypass /replays* sobre las confs REALES del gateway
+      # (nginx de verdad + API y replay-service reales). Saltado ⇒ el veredicto FALLA.
+      S9_RUN_GATEWAY_SECURITY_E2E: "1"
+      # Misma imagen fijada por digest que S9_E2E_NGINX_IMAGE (el contexto `env` no
+      # existe en jobs.<id>.env; functional-e2e-gate.test.ts exige que coincidan).
+      S9_GATEWAY_TEST_NGINX_IMAGE: nginxinc/nginx-unprivileged:1.27-alpine@sha256:65e3e85dbaed8ba248841d9d58a899b6197106c23cb0ff1a132b7bfe0547e4c0
       DOCKER_SOCKET: /var/run/docker.sock
     steps:
       - uses: actions/checkout@v4
@@ -145,26 +151,34 @@ jobs:
         run: |
           docker info --format 'Docker {{.ServerVersion}} · {{.OperatingSystem}}'
           test -S "$DOCKER_SOCKET"
-      - name: Runtimes de bots fijados por digest (fase propia, fuera del reloj de arranque)
+      - name: Imágenes fijadas por digest (runtimes de bots y nginx; fase propia, fuera del reloj de arranque)
         timeout-minutes: 10
-        run: grep -v '^#' runtimes/DIGESTS.lock | awk 'NF==3 {print $3}' | while read -r img; do docker pull -q "$img"; done
+        run: |
+          grep -v '^#' runtimes/DIGESTS.lock | awk 'NF==3 {print $3}' | while read -r img; do docker pull -q "$img"; done
+          docker pull -q "$S9_GATEWAY_TEST_NGINX_IMAGE"
       - name: E2E Docker de vitest (opt-in ACTIVADO)
-        timeout-minutes: 25
+        # --maxWorkers=1: un fichero cada vez; las comprobaciones «no quedan
+        # contenedores ^bot-» de un fichero no ven los de otro (runner efímero).
+        timeout-minutes: 30
         run: >-
           npx vitest run
           apps/bot-manager/tests/build-sandbox-docker.test.ts
+          apps/bot-manager/tests/build-sandbox-timing-docker.test.ts
           apps/api/src/fc-a-bot-pipeline-e2e.test.ts
           apps/tournament-worker/src/container-battle-e2e.test.ts
+          infrastructure/gateway/tests/replay-gateway.test.ts
           --maxWorkers=1 --reporter=default --reporter=json
           --outputFile.json="${{ runner.temp }}/docker-e2e/vitest.json"
-      - name: Veredicto independiente (los 3 ficheros ejecutados, 0 skipped)
+      - name: Veredicto independiente (los 5 ficheros ejecutados, 0 skipped)
         if: always()
         timeout-minutes: 2
         run: >-
           node scripts/ci/assert-functional-e2e.mjs vitest "${{ runner.temp }}/docker-e2e/vitest.json"
           apps/bot-manager/tests/build-sandbox-docker.test.ts
+          apps/bot-manager/tests/build-sandbox-timing-docker.test.ts
           apps/api/src/fc-a-bot-pipeline-e2e.test.ts
           apps/tournament-worker/src/container-battle-e2e.test.ts
+          infrastructure/gateway/tests/replay-gateway.test.ts
       - name: Evidencia (informe de vitest y contenedores)
         if: always()
         timeout-minutes: 2

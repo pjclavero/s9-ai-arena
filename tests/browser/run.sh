@@ -169,12 +169,17 @@ DATABASE_URL="$(cat "$STATE/db.url")"
 export DATABASE_URL
 WORKER_REDIS=()
 [ -n "${S9_E2E_REDIS_URL:-}" ] && WORKER_REDIS=(REDIS_URL="$S9_E2E_REDIS_URL")
-PIDS+=("$(start worker env "${WORKER_REDIS[@]}" JWT_SECRET_FILE="$STATE/secrets/jwt_secret" REPLAYS_DIR="$STATE/replays" \
+# PRC REVIEW (TD-034) · relojes del arranque del bot: los MISMOS que producción
+# (defectos de infrastructure/docker-compose.yml y de startup-clock.ts), fijados
+# EXPLÍCITAMENTE para que un valor heredado del shell no relaje ni endurezca el
+# gate. functional-e2e-gate.test.ts (G6) exige que coincidan los tres.
+SANDBOX_CLOCKS=(SANDBOX_STARTUP_TIMEOUT_MS=30000 BOT_EXECUTION_TIMEOUT_MS=5000)
+PIDS+=("$(start worker env "${WORKER_REDIS[@]}" "${SANDBOX_CLOCKS[@]}" JWT_SECRET_FILE="$STATE/secrets/jwt_secret" REPLAYS_DIR="$STATE/replays" \
   SPECTATE_PORT=$P_WS VERSION_PATH="$STATE/worker-version.json" HEARTBEAT_PATH="$STATE/worker-heartbeat" \
   DOCKER_PROXY_URL="http://127.0.0.1:$P_PROXY" ARENA_ENGINE_HOST="$ADVERTISE" ARENA_NETWORK=arena \
   ARTIFACT_VERIFY_KEY_FILE="$STATE/secrets/artifact_verify_key.pem" \
   "$TSX" apps/tournament-worker/src/main.ts)")
-PIDS+=("$(start build-worker env DOCKER_PROXY_URL="http://127.0.0.1:$P_PROXY" BUILD_SANDBOX_HOST="$ADVERTISE" \
+PIDS+=("$(start build-worker env "${SANDBOX_CLOCKS[@]}" DOCKER_PROXY_URL="http://127.0.0.1:$P_PROXY" BUILD_SANDBOX_HOST="$ADVERTISE" \
   ARENA_NETWORK=arena ARTIFACT_SIGNING_KEY_FILE="$STATE/secrets/artifact_signing_key.pem" \
   HEARTBEAT_PATH="$STATE/build-heartbeat" "$TSX" apps/bot-manager/src/build-worker-main.ts)")
 unset DATABASE_URL

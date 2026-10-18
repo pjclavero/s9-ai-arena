@@ -11,6 +11,9 @@
 //      skipped, 0 tests, batalla sin contenedores ni bots que no corrieron su código.
 //   G5 la evidencia no sube secretos: secrets/ y certs/ fuera, y una fuga del
 //      contenido de un secreto a un log ⇒ rc 1 y fichero retirado.
+//   G6 (PRC REVIEW, TD-034) el gate corre con los MISMOS relojes de arranque que
+//      producción: run.sh los fija explícitamente con los defectos del compose y
+//      del código, y el workflow no los sobrescribe.
 import { describe, expect, it } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
@@ -20,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 // @ts-expect-error módulo .mjs sin tipos
 import { evaluarSemaforo, JOBS_CI } from "../scripts/ci-gate.mjs";
+import { DEFAULT_STARTUP_TIMEOUTS } from "../../apps/bot-manager/src/startup-clock.js";
 // @ts-expect-error módulo .mjs sin tipos
 import { evaluarE2E, evaluarVitest, FASES } from "../../scripts/ci/assert-functional-e2e.mjs";
 
@@ -142,13 +146,23 @@ describe("G3 · functional-e2e.yml ejecuta el E2E completo y activa el opt-in", 
     expect(d.find((s) => s.run?.includes("assert-functional-e2e.mjs vitest"))!.if).toBe("always()");
   });
 
-  it("docker-e2e activa S9_RUN_DOCKER_SANDBOX_E2E y S9_RUN_REAL_DOCKER_E2E y exige sus 3 ficheros", () => {
-    expect(FE.jobs["docker-e2e"].env.S9_RUN_DOCKER_SANDBOX_E2E).toBe("1");
-    expect(FE.jobs["docker-e2e"].env.S9_RUN_REAL_DOCKER_E2E).toBe("1");
+  it("docker-e2e activa los opt-in (sandbox, Docker real y gateway TD-004) y exige sus 5 ficheros", () => {
+    const env = FE.jobs["docker-e2e"].env;
+    expect(env.S9_RUN_DOCKER_SANDBOX_E2E).toBe("1");
+    expect(env.S9_RUN_REAL_DOCKER_E2E).toBe("1");
+    // PRC REVIEW · el test del bypass /replays* sobre el nginx REAL (TD-004) es
+    // opt-in: sin esta variable el fichero se salta y el veredicto lo rechaza.
+    expect(env.S9_RUN_GATEWAY_SECURITY_E2E).toBe("1");
+    // La imagen nginx del test del gateway es la MISMA fijada por digest que la del golden.
+    expect(env.S9_GATEWAY_TEST_NGINX_IMAGE).toBe(FE.env.S9_E2E_NGINX_IMAGE);
     const files = [
       "apps/bot-manager/tests/build-sandbox-docker.test.ts",
+      // PRC REVIEW · TD-034: dos relojes con contenedores reales (SAN-5/6/7/9/10).
+      "apps/bot-manager/tests/build-sandbox-timing-docker.test.ts",
       "apps/api/src/fc-a-bot-pipeline-e2e.test.ts",
       "apps/tournament-worker/src/container-battle-e2e.test.ts",
+      // PRC REVIEW · TD-004: bypass del gateway sobre las confs reales.
+      "infrastructure/gateway/tests/replay-gateway.test.ts",
     ];
     const run = steps("docker-e2e").find((s) => s.run?.includes("npx vitest run"))!.run!;
     const check = steps("docker-e2e").find((s) => s.run?.includes("assert-functional-e2e.mjs vitest"))!.run!;
@@ -177,6 +191,7 @@ function fixtureOut(mut: (dir: string) => void = () => {}): string {
       battleId: "b-1",
       result: { schema: "battle-result/v1", agents: "container", winner: "red" },
       stats: { red: 11, blue: 0 },
+      replayPath: { apiIndex200: 1, apiSegment200: 3, gatewayReplays: 0 },
     }),
   );
   writeFileSync(
@@ -225,6 +240,16 @@ describe("G4 · assert-functional-e2e (browser): skipped no es verde", () => {
     ["el Pacifista disparó (no corrió SU código)", (d) => ev(d, { stats: { red: 3, blue: 2 } })],
     ["el Artillero no disparó", (d) => ev(d, { stats: { red: 0, blue: 0 } })],
     ["sin evidence.json del golden", (d) => writeFileSync(join(d, "golden", "evidence.json"), "")],
+    // PRC REVIEW (TD-004): el reproductor debe leer por la API autorizada.
+    ["golden sin evidencia de la ruta del replay", (d) => ev(d, { replayPath: undefined })],
+    [
+      "replay leído por /replays* del gateway (bypass reabierto)",
+      (d) => ev(d, { replayPath: { apiIndex200: 1, apiSegment200: 3, gatewayReplays: 2 } }),
+    ],
+    [
+      "replay sin índice 200 por /api/v1/replays",
+      (d) => ev(d, { replayPath: { apiIndex200: 0, apiSegment200: 3, gatewayReplays: 0 } }),
+    ],
     [
       "sonda TD-028 aceptando un secreto ajeno",
       (d) =>
@@ -357,5 +382,41 @@ describe("G5 · collect-functional-evidence.sh no sube secretos", () => {
     const r = run(join(tmpdir(), "fe2e-no-existe"), dest);
     expect(r.status).toBe(0);
     expect(execFileSync("ls", [dest], { encoding: "utf8" })).toContain("NO-STATE.txt");
+  });
+});
+
+// ── G6 · relojes de producción en el gate (PRC REVIEW, TD-034) ──────────────
+describe("G6 · el gate usa los relojes de arranque de producción", () => {
+  const RUN_SH = readFileSync(join(REPO, "tests/browser/run.sh"), "utf8");
+  const COMPOSE = readFileSync(join(REPO, "infrastructure/docker-compose.yml"), "utf8");
+  const want = {
+    SANDBOX_STARTUP_TIMEOUT_MS: DEFAULT_STARTUP_TIMEOUTS.sandboxStartupMs,
+    BOT_EXECUTION_TIMEOUT_MS: DEFAULT_STARTUP_TIMEOUTS.botExecutionMs,
+  };
+
+  it("run.sh fija SANDBOX_STARTUP_TIMEOUT_MS y BOT_EXECUTION_TIMEOUT_MS con los defectos del código", () => {
+    const line = RUN_SH.split("\n").find((l) => l.startsWith("SANDBOX_CLOCKS=("));
+    expect(line, "falta SANDBOX_CLOCKS en run.sh").toBeDefined();
+    for (const [k, v] of Object.entries(want)) expect(line).toContain(`${k}=${v}`);
+  });
+
+  it("el tournament-worker y el bot-build-worker de run.sh reciben esos relojes", () => {
+    for (const svc of ["worker", "build-worker"]) {
+      const start = RUN_SH.split("\n").find((l) => l.includes(`start ${svc} env`));
+      expect(start, `no se arranca ${svc}`).toBeDefined();
+      expect(start).toContain('"${SANDBOX_CLOCKS[@]}"');
+    }
+  });
+
+  it("el compose de producción usa los mismos defectos (tournament-worker y bot-build-worker)", () => {
+    for (const [k, v] of Object.entries(want)) {
+      const n = COMPOSE.split(`${k}: \${${k}:-${v}}`).length - 1;
+      expect(n, `${k} con defecto ${v} en el compose`).toBe(2);
+    }
+  });
+
+  it("functional-e2e.yml no sobrescribe los relojes", () => {
+    const raw = readFileSync(join(REPO, ".github/workflows/functional-e2e.yml"), "utf8");
+    for (const k of Object.keys(want)) expect(raw).not.toContain(k);
   });
 });

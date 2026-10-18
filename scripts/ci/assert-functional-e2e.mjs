@@ -15,6 +15,8 @@
  *   3. Golden: evidence.json con resultado `battle-result/v1`, `agents=container`
  *      (ejecución real con contenedores), ganador `red`, el Artillero disparó (>0)
  *      y el Pacifista no (0) — prueba de que corrió el CÓDIGO del usuario.
+ *      Y (PRC REVIEW, TD-004) el replay se leyó por /api/v1/replays/<id>/index y
+ *      /segment con 200 y NINGUNA petición fue a /replays* del gateway.
  *   4. Sonda TD-028: 4404 con el secreto compartido y 4401 con uno ajeno.
  *
  * Modo `vitest` (job docker-e2e): el informe JSON de vitest debe contener CADA
@@ -87,6 +89,14 @@ export function evaluarE2E(outDir) {
       ["ganador red", res.winner === "red", String(res.winner)],
       ["Artillero disparó", Number(e.stats?.red) > 0, String(e.stats?.red)],
       ["Pacifista 0 disparos", e.stats?.blue === 0, String(e.stats?.blue)],
+      // PRC REVIEW (TD-004): el replay se reprodujo por la API autorizada, nunca por /replays*.
+      [
+        "replay por /api/v1/replays (autorizado), 0 por /replays*",
+        Number(e.replayPath?.apiIndex200) > 0 &&
+          Number(e.replayPath?.apiSegment200) > 0 &&
+          e.replayPath?.gatewayReplays === 0,
+        JSON.stringify(e.replayPath ?? null),
+      ],
     ];
     for (const [n, ok, v] of checks) add(`golden · ${n}`, ok, v);
   }
