@@ -112,7 +112,9 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
         // a esa señal (y al create de la escena), nunca a un sleep.
         let scene: ViewerScene;
         try {
-          scene = await waitForViewerScene(game as any);
+          // MUTACIÓN DE CALIBRACIÓN (gobernanza TD-045): getScene sin esperar al READY. NO MERGEAR.
+          void waitForViewerScene;
+          scene = (game as any).scene.getScene("viewer") as ViewerScene;
         } catch (e) {
           fail("el visor no pudo arrancar", e);
           return;
