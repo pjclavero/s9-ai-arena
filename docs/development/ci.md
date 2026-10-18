@@ -13,7 +13,7 @@ real (`functional-e2e`) es un job obligatorio del semáforo.
 - [`ci.yml`](#ciyml)
 - [El semáforo](#el-semáforo)
 - [Gate funcional: `functional-e2e`](#gate-funcional-functional-e2e)
-- [Protección de rama (pendiente del operador)](#protección-de-rama-pendiente-del-operador)
+- [Protección de rama](#protección-de-rama)
 - [`deploy-staging` y `smoke-and-promote`](#deploy-staging-y-smoke-and-promote)
 - [`nightly.yml`](#nightlyyml)
 - [`e6-security.yml`](#e6-securityyml)
@@ -169,19 +169,31 @@ S9_RUN_DOCKER_SANDBOX_E2E=1 S9_RUN_REAL_DOCKER_E2E=1 npx vitest run \
 Sobre la rama de integración basta con que los cambios de SEC/SANDBOX estén mergeados: el job no
 necesita variables nuevas salvo que alguna rama las introduzca (se anotan en COORD).
 
-## Protección de rama (pendiente del operador)
+## Protección de rama
 
-Hoy `main` **no tiene protección de rama ni rulesets** (`gh api repos/pjclavero/s9-ai-arena/branches/main/protection`
-→ 404): ningún check bloquea un merge. El gate está **listo**; el bloqueo efectivo lo activa el
-operador (no la CI):
+Desde el 2026-10-19 `main` está **protegida** (protección de rama clásica; se consulta con
+`gh api repos/pjclavero/s9-ai-arena/branches/main/protection`). Ningún PR se fusiona si el gate
+funcional falla:
 
-- Rama: `main`. *Settings → Branches → Add rule* (o un ruleset) con «Require status checks to pass
-  before merging» y «Require branches to be up to date».
-- Check obligatorio: **`semaforo`** (job de `ci.yml`; agrega todo, incluido `functional-e2e`, y
-  falla con un `skipped`). Opcionalmente, también `functional-e2e / golden (navegador real + build y
-  batalla reales)` y `functional-e2e / docker-e2e (sandbox real + build → published + batalla A+B)`.
-- No usar como obligatorio el check-run «Semáforo CI»: se crea por API y en PRs de fork puede no
-  existir.
+| Regla | Valor |
+|---|---|
+| Checks obligatorios | `semaforo` · `functional-e2e / golden (navegador real + build y batalla reales)` · `functional-e2e / docker-e2e (sandbox real + build → published + batalla A+B)` |
+| Origen de los checks | GitHub Actions (`app_id` 15368): otro integrador con el mismo nombre no los satisface |
+| Rama al día con `main` | obligatoria (`strict`) |
+| Pull request | obligatorio; 0 aprobaciones (un solo desarrollador: GitHub no deja aprobar el PR propio) |
+| Administradores | **incluidos** (`enforce_admins`): `gh pr merge --admin` también queda bloqueado |
+| Force push y borrado de `main` | bloqueados |
+
+- `semaforo` agrega todo, incluido `functional-e2e`, y falla con un `skipped`. Los dos jobs de
+  `functional-e2e` se exigen además por su nombre, para que un cambio en el semáforo no pueda
+  dejarlos fuera en silencio.
+- No es obligatorio el check-run «Semáforo CI»: se crea por API y en PRs de fork puede no existir.
+- Ningún workflow empuja a `main`, así que exigir PR no rompe ninguna automatización.
+
+Comprobación funcional (2026-10-19, PR #161 desechable con la reproducción de replay rota):
+`functional-e2e / golden` y `semaforo` en rojo, `unit` en verde; el merge se rechazó sin privilegios
+(«the base branch policy prohibits the merge») y con `--admin` («2 of 3 required status checks are
+failing»). Cambiar o quitar estas reglas es una decisión del operador y debe documentarse aquí.
 
 ## `deploy-staging` y `smoke-and-promote`
 
@@ -245,7 +257,8 @@ vacío no es verde (ADR-017 §10). No uses el final de `gh run watch` como vered
 |---|---|---|
 | Disparadores y jobs de los 6 workflows | CODE_VERIFIED | `.github/workflows/*.yml` parseados (`on:`, `jobs:`, `needs:`, `if:`) |
 | `functional-e2e` obligatorio y exigido por el semáforo; skipped ⇒ ROJO | CODE_VERIFIED + RUNTIME_VERIFIED | `infrastructure/tests/functional-e2e-gate.test.ts` (G1-G5); PR #153 (PASS) y calibraciones #154-#157 (ROJO) |
-| `main` sin protección de rama | RUNTIME_VERIFIED (2026-10-18) | `gh api …/branches/main/protection` → 404 |
+| `main` protegida: 3 checks obligatorios, `strict`, PR obligatorio, administradores incluidos, sin force push ni borrado | RUNTIME_VERIFIED (2026-10-19) | `gh api …/branches/main/protection` |
+| Un rojo de `functional-e2e` bloquea el merge (también con `--admin`) | RUNTIME_VERIFIED (2026-10-19) | PR #161: golden y `semaforo` en rojo; `gh pr merge` y `gh pr merge --admin` rechazados; `main` sin cambios |
 | `unit` habilita userns y excluye los E2E SFTP | CODE_VERIFIED | `ci.yml:72-105` |
 | Matriz de 11 imágenes; push sólo en `main`; etiquetas | CODE_VERIFIED | `ci.yml:290-377` |
 | `deploy-staging` con `ssh` comentado y `resultado=desplegado` | CODE_VERIFIED | `ci.yml:930-947` |

@@ -6,18 +6,16 @@ Esta es la **fuente única del estado del proyecto**. Sustituye a los antiguos `
 y `docs/ESTADO_ACTUAL.md`, que quedan archivados en `docs/history/status/` y ya no son vigentes.
 
 Hay dos planos y no se mezclan:
-- **Código (integración del cierre funcional):** rama `integration/functional-closure`, que une los cuatro carriles DEV-A…D sobre `0b8c12b` y se verificó en un entorno aislado (PostgreSQL embebido, Docker rootless local, navegador real). **No está en `main` hasta que se fusione.**
-- **Código (Production Readiness Closure):** rama `integration/production-readiness`, que une sobre `20d827d` (HEAD de la anterior) los carriles DEV-SANDBOX (TD-034), DEV-SEC (TD-004) y DEV-CI (TD-045). Verificada en aislado y en CI real (PR #158, borrador, sin fusionar). Informe: [production-readiness-report.md](../development/production-readiness-report.md).
-- **Producción:** no ha cambiado. El cierre funcional no despliega nada.
+- **Código (`main`):** contiene el cierre funcional (PR #152) y el *Production Readiness Closure* (PR #158). `main` está protegida: no se fusiona nada si falla el golden path real de `functional-e2e`. Informes: [functional-closure-report.md](../development/functional-closure-report.md) y [production-readiness-report.md](../development/production-readiness-report.md).
+- **Producción:** no ha cambiado. Nada de lo fusionado se ha desplegado todavía.
 
 ```
-BASE COMMIT:    0b8c12b (origin/main; tras #151 y #150)
-INTEGRACIÓN:    integration/functional-closure (PR #152) → integration/production-readiness (PR #158)
-LAST VERIFIED:  2026-10-18 (suites, navegador en aislado y functional-e2e en CI real)
+MAIN:           59322e2 (tras #152 → debdf8a y #158 → 59322e2)
+LAST VERIFIED:  2026-10-19 (CI de main en verde, functional-e2e incluido; protección de rama verificada)
 RUNTIME:        sin cambios desde la auditoría: perfil `production`, 12 servicios, imágenes de 3 commits
-VEREDICTO CÓDIGO:     el recorrido de usuario completo funciona en aislado (golden path en navegador real)
-VEREDICTO PRODUCCIÓN: NO funcional como producto hasta desplegar la integración
-READINESS:      BLOCKED sólo por la protección de rama de main (check obligatorio `semaforo`, TD-045)
+VEREDICTO CÓDIGO:     el recorrido de usuario completo funciona y lo exige la CI (golden path en navegador real)
+VEREDICTO PRODUCCIÓN: NO funcional como producto hasta desplegar main (fase Release Candidate)
+READINESS:      PRODUCTION_READY (código y gobernanza); despliegue pendiente de autorización del operador
 ```
 
 Informe del cierre: [functional-closure-report.md](../development/functional-closure-report.md).
@@ -63,9 +61,9 @@ Informe del cierre: [functional-closure-report.md](../development/functional-clo
 
 ## Blocked
 
-**PENDIENTE / BLOQUEADO en producción.** Los tres bloqueos de la auditoría (publicar un bot, crear una batalla, ejecutar código de usuario) están resueltos **en el código integrado**, no en producción. Para verlos en producción hace falta, con una ventana autorizada por el operador:
+**PENDIENTE / BLOQUEADO en producción.** Los tres bloqueos de la auditoría (publicar un bot, crear una batalla, ejecutar código de usuario) están resueltos **en `main`**, no en producción. Para verlos en producción hace falta, con una ventana autorizada por el operador (fase Release Candidate):
 
-1. Fusionar la integración en `main` y construir las imágenes.
+1. Construir las imágenes de `main` con su identidad de build.
 2. Generar `artifact_verify_key.pem` (`init-secrets.sh` lo deriva de la clave de firma) y operar el `s9-docker-proxy` en el host.
 3. Recrear `api`, `tournament-worker` y `bot-build-worker` (más `backup`/`postgres`/`queue` según el contrato de despliegue) y aplicar las migraciones `012_bot_versioning` y `013_battle_claim`.
 
@@ -84,14 +82,14 @@ PostgreSQL 16.14 y Redis 7.4.9 están fijados por digest. Ver [TD-006](technical
 - **Perfil:** `production`, con 12 servicios ([docker.md](../operations/docker.md)). `map-service` sigue en él ([TD-017](technical-debt.md#td-017)).
 - **Despliegue de la integración:** exige recrear `api`, `bot-build-worker` y `tournament-worker` (lo mide `infrastructure/tests/compose-canonical-check.test.ts`) y un secreto nuevo, `artifact_verify_key` ([configuration.md](../operations/configuration.md#secretos)).
 - **Backup:** opera; sin alertas, sin snapshot de la VM y sin apagado limpio garantizado ([TD-007](technical-debt.md#td-007)).
-- **CI:** `nightly.yml` en rojo crónico ([TD-019](technical-debt.md#td-019)). En la integración PRC, `functional-e2e` (golden en navegador real + E2E Docker, gateway de TD-004 incluido) es obligatorio en el semáforo y está calibrado en CI real; el bloqueo del merge depende de activar la protección de `main` con el check `semaforo` ([TD-045](technical-debt.md#td-045), acción del operador).
+- **CI:** `nightly.yml` en rojo crónico ([TD-019](technical-debt.md#td-019)). `functional-e2e` (golden en navegador real + E2E Docker, gateway de TD-004 incluido) corre en todo PR y en `main`, está calibrado en CI real y es **check obligatorio** de la protección de rama de `main`, que incluye a los administradores ([TD-045](technical-debt.md#td-045) CERRADA, [ci.md](../development/ci.md#protección-de-rama)).
 
 ## Security
 
 | Problema | Estado | Deuda |
 |---|---|---|
-| Replays legibles por anónimos a través del gateway | **CERRADO en la integración PRC** (gateway 404 en `/replays*`, API única autoridad); abierto en producción hasta desplegar | [TD-004](technical-debt.md#td-004) |
-| Batallas con bots privados ajenos; `rating-history` ajeno | **CERRADO en la integración** | [TD-005](technical-debt.md#td-005) |
+| Replays legibles por anónimos a través del gateway | **CERRADO en `main`** (gateway 404 en `/replays*`, API única autoridad); abierto en producción hasta desplegar | [TD-004](technical-debt.md#td-004) |
+| Batallas con bots privados ajenos; `rating-history` ajeno | **CERRADO en `main`** | [TD-005](technical-debt.md#td-005) |
 | Batallas y stats exponen participantes de bots privados | ABIERTO | [TD-047](technical-debt.md#td-047) |
 | Anfitrión de bots con credenciales de BD en la red `arena` | ABIERTO (aceptado) | [TD-033](technical-debt.md#td-033) |
 | Worker con el secreto de sesión raíz | ABIERTO | [TD-043](technical-debt.md#td-043) |
@@ -108,8 +106,8 @@ Síntomas vigentes en [known-issues.md](known-issues.md).
 
 ## Next priorities
 
-1. Operador: activar la protección de `main` con el check obligatorio `semaforo` ([TD-045](technical-debt.md#td-045), [ci.md](../development/ci.md#protección-de-rama-pendiente-del-operador)).
-2. Revisar y fusionar `integration/functional-closure` y `integration/production-readiness`; desplegar con su gate ([Blocked](#blocked)).
+1. Fase Release Candidate, con autorización del operador: imágenes de `main`, migraciones `012`/`013`, `artifact_verify_key`, `s9-docker-proxy`, backup/readiness, gate A-G, despliegue controlado y golden path tras desplegar ([Blocked](#blocked)).
+2. Mantener la protección de `main` tal como está documentada ([ci.md](../development/ci.md#protección-de-rama)); cualquier cambio de reglas es decisión del operador.
 3. [TD-047](technical-debt.md#td-047), [TD-041](technical-debt.md#td-041), [TD-012](technical-debt.md#td-012): antes de abrir a terceros.
 4. [TD-033](technical-debt.md#td-033) y [TD-043](technical-debt.md#td-043): reducir el privilegio de los procesos que hablan con bots.
 5. [TD-006](technical-debt.md#td-006) y [TD-007](technical-debt.md#td-007): runtime y backup (ventana del operador).
@@ -134,4 +132,5 @@ Funciones pendientes de diseño: [pending-features.md](pending-features.md).
 | Perfil `production` = 12 servicios | CODE_VERIFIED | `infrastructure/tests/compose.test.ts`, `deploy-contract-gate.test.ts` |
 | Runtime de producción sin cambios | DESIGN_ONLY | el cierre funcional no despliega (sin SSH ni compose contra producción) |
 | TD-004 / TD-034 cerradas en la integración PRC; `functional-e2e` verde y calibrado en CI real | RUNTIME_VERIFIED (aislado y GitHub Actions) | [production-readiness-report.md](../development/production-readiness-report.md); runs 39141675080 (verde), 39141682346 y 39141685353 (calibraciones en rojo) |
-| `main` sin protección de rama | CODE_VERIFIED | `gh api repos/…/branches/main/protection` ⇒ 404 «Branch not protected» (2026-10-18) |
+| #152 y #158 fusionados; `main` = `59322e2` con CI en verde (`functional-e2e` y `semaforo` incluidos) | RUNTIME_VERIFIED (GitHub Actions) | `git rev-parse origin/main`; run 39173546382 (25 jobs en verde) (2026-10-19) |
+| `main` protegida y el bloqueo funciona | RUNTIME_VERIFIED | `gh api repos/…/branches/main/protection`; PR #161: merge rechazado con `functional-e2e` en rojo, también con `--admin` (2026-10-19) |

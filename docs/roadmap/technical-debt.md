@@ -40,7 +40,7 @@ Estados posibles:
 | [TD-006](#td-006) | Runtime mezclado sin identidad de build | P0 | Runtime | ABIERTA |
 | [TD-007](#td-007) | Backup sin alertas, sin snapshots de VM, apagado no limpio | P0 | Operación | MEJORADA |
 | [TD-008](#td-008) | Topología en el repo público | P0 | Seguridad | ABIERTA |
-| [TD-009](#td-009) | Reproductor y visor rotos (Phaser) | P1 | Web | PARCIAL |
+| [TD-009](#td-009) | Reproductor y visor rotos (Phaser) | P1 | Web | CERRADA en `main` (producción pendiente de despliegue) |
 | [TD-010](#td-010) | Editor de mapas sólo cliente | P1 | Mapas | CERRADA |
 | [TD-011](#td-011) | Equipos incompletos, listado anónimo | P1 | Equipos | CERRADA |
 | [TD-012](#td-012) | Autenticación incompleta | P1 | Seguridad | ABIERTA |
@@ -76,7 +76,7 @@ Estados posibles:
 | [TD-042](#td-042) | Sin borrado de mapas ni versiones, ni cesión de capitanía | P3 | Mapas / equipos | ABIERTA |
 | [TD-043](#td-043) | El worker recibe el secreto de sesión raíz para verificar tickets | P2 | Seguridad / espectador | ABIERTA |
 | [TD-044](#td-044) | `SPECTATE_WS_URL` inservible para el navegador | P1 | Configuración / espectador | CERRADA |
-| [TD-045](#td-045) | E2E de navegador y E2E con Docker fuera de CI | P1 | CI | ABIERTA: gate activo y calibrado; bloqueo de merge pendiente de protección de rama |
+| [TD-045](#td-045) | E2E de navegador y E2E con Docker fuera de CI | P1 | CI | CERRADA (2026-10-19): `functional-e2e` obligatorio por protección de rama en `main` |
 | [TD-046](#td-046) | `absolute_redirect off` falta en la conf del contenedor web | P3 | Gateway / web | ABIERTA |
 | [TD-047](#td-047) | Batallas y estadísticas exponen participantes de bots privados | P1 | Seguridad / batallas | ABIERTA |
 | [TD-048](#td-048) | `NODE_ENV` no se fija en las imágenes | P2 | Configuración | ABIERTA |
@@ -297,7 +297,7 @@ Estados posibles:
 <a id="td-009"></a>
 ## TD-009 — Reproductor y visor rotos en navegador por arranque de Phaser
 
-- **Estado:** PARCIAL — E2E de Chromium real en verde en la integración (también con una batalla REAL); falta que corra en CI ([TD-045](#td-045))
+- **Estado:** CERRADA en `main` (2026-10-19; producción pendiente de despliegue) — el golden obligatorio de CI ([TD-045](#td-045)) reproduce un replay real en Chromium, y la mutación que rompe la espera del READY de Phaser lo pone en rojo en CI real (PR #156 y #161)
 - **Prioridad:** P1 (auditoría P1-1)
 - **Área:** Web (`apps/web`)
 - **Detectado:** 2026-10-15
@@ -530,7 +530,7 @@ Estados posibles:
   - test sobre la configuración real de nginx;
   - test de autorización con expectativas independientes del contrato.
 - **Condición de cierre:** las mutaciones M1a y M3 ponen al menos un test en rojo, y existe un E2E de navegador en CI.
-- **Mejora (REVIEW):** golden path de navegador sin mocks, matriz de seguridad transversal (`apps/api/src/fc-review-security.test.ts`), contrato de entorno por servicio y orden de migraciones; cada uno con su mutación roja. Sigue sin CI para lo que necesita Docker ([TD-045](#td-045)).
+- **Mejora (REVIEW):** golden path de navegador sin mocks, matriz de seguridad transversal (`apps/api/src/fc-review-security.test.ts`), contrato de entorno por servicio y orden de migraciones; cada uno con su mutación roja. Lo que necesita Docker y navegador corre desde 2026-10-19 en el job obligatorio `functional-e2e` ([TD-045](#td-045)); la mutación M3 no se ha vuelto a medir, por eso esta entrada sigue abierta.
 
 <a id="td-019"></a>
 ## TD-019 — CI: nightly en rojo crónico y deploy-staging con verde falso latente
@@ -961,7 +961,7 @@ Estados posibles:
 <a id="td-045"></a>
 ## TD-045 — E2E de navegador y E2E con Docker fuera de CI
 
-- **Estado:** ABIERTA — gate activo y calibrado en la integración; bloqueo de merge pendiente de protección de rama (acción del operador)
+- **Estado:** CERRADA (2026-10-19) — `functional-e2e` corre en todo PR y en `main`, está calibrado en CI real y la protección de rama de `main` impide mergear si falla (ver «Cierre de gobernanza»)
 - **Prioridad:** P1
 - **Área:** CI
 - **Detectado:** 2026-10-18, cierre funcional (REVIEW)
@@ -974,7 +974,12 @@ Estados posibles:
   - Veredicto independiente `scripts/ci/assert-functional-e2e.mjs`: `skipped`, 0 tests, batalla sin contenedores o bots que no corrieron su código ⇒ rojo. El semáforo lo exige como `obligatorio` (skipped/cancelled/ausente ⇒ ROJO). Tests: `infrastructure/tests/functional-e2e-gate.test.ts`.
   - RUNTIME_VERIFIED en GitHub Actions: PASS en el PR #153; ROJO en las cuatro calibraciones (PR #154 sandbox fuera del pipeline, #155 executor de batalla roto, #156 reproducción de replay sin esperar a READY, #157 `functional-e2e` skipped). En #154 y #156 **sólo** `functional-e2e` detectó la regresión (`unit` en verde).
 - **Verificación REVIEW (2026-10-18, integración):** PASS en CI real sobre `6a4c177` (PR #158, run 39141675080: `golden`, `docker-e2e` con 5 ficheros/35 tests y `semaforo` en verde). ROJO en dos calibraciones nuevas sobre la integración: #159 (bypass de `/replays*`) y #160 (el reproductor lee `/replays` del gateway; sólo `functional-e2e` lo detecta, `unit` verde). El primer run de #158 (`84cfb3a`) ya salió rojo por una costura real (`container-battle-e2e.test.ts`). `main` sigue sin protección ni rulesets (API: 404 «Branch not protected», `rulesets: []`).
-- **Falta para CERRAR:** que una regresión del golden **bloquee** el merge: el operador debe activar la protección de `main` con el check obligatorio `semaforo` ([ci.md](../development/ci.md#protección-de-rama-pendiente-del-operador)). Hasta entonces el gate informa pero no impide.
+- **Cierre de gobernanza (2026-10-19):**
+  - PR #152 fusionado (`main` = `debdf8a`; CI de `main` sin fallos). PR #158 re-apuntado a `main` y actualizado sin force push (`c7f69b5`, mismo árbol que el revisado `367ca36`).
+  - Protección de rama de `main` activa (API `GET /branches/main/protection`): checks obligatorios `semaforo`, `functional-e2e / golden (navegador real + build y batalla reales)` y `functional-e2e / docker-e2e (sandbox real + build → published + batalla A+B)`, los tres de GitHub Actions (`app_id` 15368) y con la rama al día; PR obligatorio (0 aprobaciones: un solo desarrollador); **incluye a los administradores**; force push y borrado bloqueados. Detalle en [ci.md](../development/ci.md#protección-de-rama).
+  - Control negativo en GitHub real: PR #161 (desechable, `ReplayPage` sin esperar al READY de Phaser) ⇒ `functional-e2e / golden` y `semaforo` en ROJO con `unit` en verde; el merge se **rechazó** sin privilegios («the base branch policy prohibits the merge») y con `--admin` («2 of 3 required status checks are failing»); `main` no se movió. PR cerrado y rama borrada.
+  - PR #158 fusionado por la vía normal (sin `--admin`) con los tres checks obligatorios en verde (run 39172930109): `main` = `59322e2`.
+  - CI post-merge de `main` (`59322e2`, run 39173546382): 25 jobs en verde, incluidos los dos `functional-e2e` y `semaforo`; el golden ejecutó batalla real (`agents=container`) y replay por `/api/v1/replays`.
 
 <a id="td-046"></a>
 ## TD-046 — `absolute_redirect off` falta en la conf del contenedor web
