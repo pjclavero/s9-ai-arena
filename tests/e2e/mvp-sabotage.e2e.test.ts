@@ -195,13 +195,15 @@ describe("T12.1 · 6 sabotajes deliberados, uno por paso del criterio 26.1", () 
   });
 
   it("sabotaje 5 (replay): un replay manipulado byte a byte o un resultado oficial falso NO verifican", async () => {
+    // PRC (TD-004) · verifyReplay exige poder leer el replay: aquí, staff (admin).
+    const staff = { Authorization: `Bearer ${await tokenFor(h.db, DEV_USERS.admin)}` };
     // 5a · bytes alterados en disco: checksum_mismatch, sin re-simular.
     const tampered = Buffer.from(readFileSync(stored.path));
     tampered[Math.floor(tampered.length / 2)] ^= 0xff;
     const tPath = join(dir, "tampered.replay");
     writeFileSync(tPath, tampered);
     const tamperedId = await insertFinishedBattle({ replay_ref: tPath, replay_hash: stored.index.sha256 });
-    const r1 = await request(app).post(`/replays/${tamperedId}/verify`);
+    const r1 = await request(app).post(`/replays/${tamperedId}/verify`).set(staff);
     expect(r1.status).toBe(200);
     expect(r1.body.matches).toBe(false);
     expect(r1.body.reason).toBe("checksum_mismatch");
@@ -212,7 +214,7 @@ describe("T12.1 · 6 sabotajes deliberados, uno por paso del criterio 26.1", () 
       replay_hash: stored.index.sha256,
       final_state_hash: "f".repeat(64),
     });
-    const r2 = await request(app).post(`/replays/${fakedId}/verify`);
+    const r2 = await request(app).post(`/replays/${fakedId}/verify`).set(staff);
     expect(r2.body.matches).toBe(false);
     expect(r2.body.reason).toBe("final_state_hash_mismatch_with_db");
   }, 120_000);

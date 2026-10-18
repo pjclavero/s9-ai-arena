@@ -8,9 +8,6 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { fromJsonl, type Replay } from "../../../arena-engine/src/replay.js";
-import { decompress, sha256 } from "../../../replay-service/src/format.js";
-import { verifyLoaded } from "../../../replay-service/src/store.js";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
 import { audit } from "../audit.js";
@@ -25,6 +22,7 @@ import type { BattleRunConfig } from "../battle-run.js";
 import { publicSpectateEnabledFromEnv } from "../public-spectate.js";
 import { publicReplaysEnabledFromEnv } from "../public-replays.js";
 import { checkBattleContent } from "./catalog.js";
+import { wherePublicReplay } from "../replay-access.js";
 
 const SPECTATE_TICKET_TTL_S = 60;
 
@@ -157,9 +155,9 @@ function parsePublicReplayLimit(raw: unknown): number {
 }
 
 async function getFinishedBattleWithReplayOr404(db: Db, id: string) {
-  const battle = await db("battles")
-    .join("maps", "maps.id", "battles.map_id")
-    .where({ "battles.id": id, "battles.status": "finished" })
+  // PRC (TD-004) · mismo predicado público que el listado y que el visor.
+  const battle = await wherePublicReplay(db, db("battles").join("maps", "maps.id", "battles.map_id"))
+    .where({ "battles.id": id })
     .whereNotNull("battles.replay_ref")
     .select(
       "battles.id as id",
@@ -289,9 +287,9 @@ export function battleRoutes(
       }
       const limit = parsePublicReplayLimit(req.query.limit);
       const cursor = decodeCursor(req.query.cursor as string | undefined);
-      let q = db("battles")
-        .join("maps", "maps.id", "battles.map_id")
-        .where({ "battles.status": "finished" })
+      // PRC (TD-004) · «público» = finished + ningún bot participante no-público
+      // (replay-access.ts). Activar la capability NO publica todos los ficheros.
+      let q = wherePublicReplay(db, db("battles").join("maps", "maps.id", "battles.map_id"))
         .whereNotNull("battles.replay_ref")
         .select(
           "battles.id as id",
@@ -564,74 +562,9 @@ export function battleRoutes(
     res.json({ battleId: battle.id, perBot: stats });
   });
 
-  // ------------------------------------------------------------- replays
-  defineOperation(
-    router,
-    "getReplay",
-    async (req, res) => {
-      const battle = await getBattleOr404(db, pathParam(req, "battleId"));
-      if (!battle.replay_ref) throw notFound("La batalla no tiene replay publicado");
-      // Política 23.1: el replay vive en un archivo; la BD solo guarda la referencia.
-      let bytes: Buffer;
-      try {
-        bytes = await readFile(battle.replay_ref);
-      } catch {
-        throw notFound("Replay no disponible");
-      }
-      res
-        .status(200)
-        .setHeader("Content-Type", "application/octet-stream")
-        .setHeader("Cache-Control", "public, max-age=3600, immutable")
-        .send(bytes);
-    },
-    (req, res, next) => anonQuota(db, "replays", quota)(req, res, next),
-  );
-
-  /**
-   * E8/T8.1 · verifyReplay: re-simula el replay con el motor de E2 (versión registrada
-   * en la cabecera) y compara resultado y hashes con el oficial. Era la operación
-   * pendiente declarada por E7 en conformance.test.ts — la implementa E8 sobre el
-   * replay-service real, no en paralelo. Es cara (re-simulación completa): cuota
-   * anónima propia, más estricta que la de descarga.
-   */
-  defineOperation(
-    router,
-    "verifyReplay",
-    async (req, res) => {
-      const battle = await getBattleOr404(db, pathParam(req, "battleId"));
-      if (!battle.replay_ref) throw notFound("La batalla no tiene replay publicado");
-      let bytes: Buffer;
-      try {
-        bytes = await readFile(battle.replay_ref);
-      } catch {
-        throw notFound("Replay no disponible");
-      }
-      // Manipulación byte a byte: el hash registrado en la BD manda (DoD T8.1).
-      if (battle.replay_hash && sha256(bytes) !== battle.replay_hash) {
-        res.json({ matches: false, valid: false, reason: "checksum_mismatch" });
-        return;
-      }
-      let replay: Replay;
-      try {
-        replay = fromJsonl(decompress(bytes).toString("utf8"));
-      } catch (e) {
-        res.json({ matches: false, valid: false, reason: `corrupt_file: ${(e as Error).message}` });
-        return;
-      }
-      const r = await verifyLoaded(battle.id, replay);
-      // Cinturón extra: el resultado oficial del ARCHIVO debe ser el que registró la BD.
-      const dbHashOk = !battle.final_state_hash || battle.final_state_hash === replay.result?.finalStateHash;
-      res.json({
-        matches: (r.verification?.matches ?? false) && dbHashOk,
-        officialHash: r.verification?.officialHash,
-        recomputedHash: r.verification?.recomputedHash,
-        valid: r.valid && dbHashOk,
-        reason: !dbHashOk ? "final_state_hash_mismatch_with_db" : r.reason,
-        divergedAtTick: r.verification?.divergedAtTick ?? undefined,
-      });
-    },
-    (req, res, next) => anonQuota(db, "replay-verify", quota)(req, res, next),
-  );
+  // PRC (TD-004) · getReplay, getReplayIndex, getReplaySegment, verifyReplay y
+  // listReplays viven en routes/replays.ts, detrás de la política única de
+  // replay-access.ts.
 
   // DEV-B (TD-002) · `POST /battles/{id}/run` YA NO EJECUTA NADA. Antes lanzaba la
   // batalla por un segundo camino (API → arena-engine → contenedores) que competía
