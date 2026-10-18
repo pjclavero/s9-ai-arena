@@ -50,6 +50,8 @@ export interface BotLaunchPlan {
   env?: Record<string, string>;
   /** Cmd del contenedor (bootstrap del runtime), si el runner lo soporta. */
   cmd?: string[];
+  /** Borrar el contenedor al pararse (HostConfig.AutoRemove): el proxy no tiene DELETE. */
+  autoRemove?: boolean;
 }
 
 /** Lo que el host de una batalla sabe hacer (contrato B↔A, ver COORD.md). */
@@ -157,7 +159,7 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
               `bot ${v.botId} v${v.version}: no se pudo resolver qué lanzar: ${err instanceof Error ? err.message : String(err)}`,
             );
           }
-          const spec: SandboxSpec & { cmd?: string[] } = {
+          const spec: SandboxSpec = {
             imageDigest: plan.imageDigest,
             botId: v.botId,
             version: v.version,
@@ -168,6 +170,7 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
             limits: opts.limits ?? DEFAULT_LIMITS,
             seccompProfilePath: opts.seccompProfilePath ?? DEFAULT_SECCOMP_PROFILE,
             ...(plan.cmd ? { cmd: plan.cmd } : {}),
+            ...(plan.autoRemove ? { autoRemove: true } : {}),
           };
           try {
             handles[i] = await opts.runner.launch(spec);

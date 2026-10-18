@@ -367,7 +367,7 @@ describe("T7.5 torneos (cap. 17.2) y batallas de práctica", () => {
       .send({
         mode: "deathmatch",
         rulesetId: DEFAULT_RULESET_ID,
-        mapId: "mvp-arena-01",
+        mapId: "mvp-arena-02",
         participants: [{ botId, version: 1, team: "A" }],
       });
     expect(r.status).toBe(202);

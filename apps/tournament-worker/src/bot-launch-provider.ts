@@ -1,37 +1,53 @@
 /**
  * DEV-B · Proveedor de lanzamiento de PRODUCCIÓN: adaptador al contrato de DEV-A.
  *
- * DEV-A (bots/sandbox) publica en apps/bot-manager/src/bot-launch.ts la forma de
- * arrancar el código de una versión publicada: `resolveBotLaunch` (verifica estado,
- * firma ed25519 y sha256 del artefacto, falla cerrado) + `SandboxHost` (sirve el
- * artefacto al bootstrap del runtime fijado). Ver COORD.md.
+ * REVIEW (cierre funcional, R4.1): integrado con `createBattleLaunchHost` de
+ * apps/bot-manager/src/bot-launch.ts. Cada participante arranca el ARTEFACTO
+ * FIRMADO de su versión exacta (bot_id, version): `resolveBotLaunch` verifica
+ * estado published|frozen, artefacto de su build, sha256 y firma ed25519 (falla
+ * cerrado) y el bootstrap del runtime fijado por digest lo descarga del host de
+ * la batalla y vuelve a comprobar el sha256 antes de ejecutarlo.
  *
- * Contrato que este worker consume (B ↔ A):
+ * La importación es ESTÁTICA (antes era dinámica porque el módulo vivía en la
+ * rama de DEV-A): un contrato roto es ahora un error de compilación, no un
+ * worker que arranca sin ejecutar batallas.
  *
- *   export function createBattleLaunchHost(
- *     db: Knex, opts: { engineHost: string; battleId: string },
- *   ): Promise<BattleLaunchHost>      // interfaz de container-agents.ts
- *
- * Mientras ese módulo no esté integrado en la rama, la importación falla y el
- * worker NO ejecuta batallas (no reclama `run_battle`): nunca cae a un stub.
- * La importación es dinámica a propósito: el fichero vive en la rama de DEV-A.
+ * La clave de verificación y los digests de runtime se cargan AL CREAR el
+ * proveedor (arranque del worker): si faltan, `buildExecutor` de main.ts lo
+ * anuncia y el worker no reclama `run_battle`; nunca cae a un stub.
  */
 import type { Knex } from "knex";
-import type { BattleLaunchHost, BotLaunchProvider } from "./container-agents.js";
+import type { KeyObject } from "node:crypto";
+import {
+  createBattleLaunchHost,
+  loadArtifactVerifyKey,
+  loadRuntimeImages,
+  type RuntimeImages,
+} from "../../bot-manager/src/bot-launch.js";
+import type { BotLaunchProvider } from "./container-agents.js";
 
-const BOT_LAUNCH_MODULE = "../../bot-manager/src/bot-launch.js";
+export interface ArtifactLaunchProviderOptions {
+  publicKey?: KeyObject;
+  runtimeImages?: RuntimeImages;
+  env?: NodeJS.ProcessEnv;
+  bindHost?: string;
+}
 
-export async function loadArtifactLaunchProvider(
+export function artifactLaunchProvider(
   db: Knex,
   engineHost: string,
-  modulePath: string = BOT_LAUNCH_MODULE,
-): Promise<BotLaunchProvider> {
-  const mod = (await import(new URL(modulePath, import.meta.url).href)) as {
-    createBattleLaunchHost?: (db: Knex, o: { engineHost: string; battleId: string }) => Promise<BattleLaunchHost>;
+  opts: ArtifactLaunchProviderOptions = {},
+): BotLaunchProvider {
+  const env = opts.env ?? process.env;
+  const publicKey = opts.publicKey ?? loadArtifactVerifyKey(env);
+  const runtimeImages = opts.runtimeImages ?? loadRuntimeImages(env);
+  return {
+    openBattle: (battleId) =>
+      createBattleLaunchHost(db, { engineHost, battleId, publicKey, runtimeImages, env, bindHost: opts.bindHost }),
   };
-  if (typeof mod.createBattleLaunchHost !== "function") {
-    throw new Error(`${modulePath} no exporta createBattleLaunchHost (contrato B↔A, COORD.md)`);
-  }
-  const create = mod.createBattleLaunchHost;
-  return { openBattle: (battleId) => create(db, { engineHost, battleId }) };
+}
+
+/** Compatibilidad con el nombre que usaba main.ts (antes asíncrono por la importación dinámica). */
+export async function loadArtifactLaunchProvider(db: Knex, engineHost: string): Promise<BotLaunchProvider> {
+  return artifactLaunchProvider(db, engineHost);
 }

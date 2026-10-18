@@ -48,7 +48,7 @@ function body(a: TestBot, b: TestBot, teams = ["red", "blue"]) {
   return {
     mode: "deathmatch",
     rulesetId: DEFAULT_RULESET_ID,
-    mapId: "mvp-arena-01",
+    mapId: "mvp-arena-02",
     participants: [
       { botId: a.botId, version: 1, team: teams[0] },
       { botId: b.botId, version: 1, team: teams[1] },

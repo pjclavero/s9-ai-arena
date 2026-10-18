@@ -24,6 +24,7 @@ import { anonQuota, type AnonQuotaConfig } from "../middleware/anon-quota.js";
 import type { BattleRunConfig } from "../battle-run.js";
 import { publicSpectateEnabledFromEnv } from "../public-spectate.js";
 import { publicReplaysEnabledFromEnv } from "../public-replays.js";
+import { checkBattleContent } from "./catalog.js";
 
 const SPECTATE_TICKET_TTL_S = 60;
 
@@ -387,16 +388,13 @@ export function battleRoutes(
     if (!Array.isArray(participants) || participants.length < 1 || participants.length > 8) {
       throw badRequest("participants: entre 1 y 8");
     }
-    const ruleset = await db("rulesets").where({ id: rulesetId }).first();
-    if (!ruleset) throw badRequest("rulesetId desconocido");
-    const map = await db("map_versions")
-      .where({ map_id: mapId, state: "published" })
-      .modify((q) => {
-        if (mapVersion) q.where({ version: mapVersion });
-      })
-      .orderBy("version", "desc")
-      .first();
-    if (!map) throw badRequest("Mapa inexistente o no publicado");
+    // REVIEW (R4.5, TD-NEW-C1) · compatibilidad modo ↔ ruleset ↔ mapa con la
+    // MISMA regla que usa la web (checkBattleContent de catalog.ts, DEV-C). Antes
+    // POST /battles aceptaba un ruleset de otro modo o un mapa que no soporta el
+    // modo, y el fallo aparecía tarde, en el worker.
+    const content = await checkBattleContent(db, { mode, rulesetId, mapId, mapVersion });
+    if (!content.ok) throw new ApiError(content.status, content.code, content.message);
+    const map = { map_id: content.map.mapId, version: content.map.version };
 
     // DEV-B · forma de cada participante y composición mínima. PK de participants
     // = (battle_id, bot_id): un mismo bot NO puede ir en dos bandos (ni dos veces
