@@ -11,7 +11,8 @@
 #   WS_URL, BATTLE_TOKEN, BOT_ID   conexión al ProtocolServer (arena/1)
 #
 # Pasos: descarga -> verifica sha256 -> materializa en /tmp/bot (tmpfs) -> carga el
-# fichero de entrada -> instancia la subclase de ArenaBot -> run(WS_URL, BATTLE_TOKEN).
+# SDK -> señal `ready` (TD-034) -> carga el fichero de entrada -> instancia la
+# subclase de ArenaBot -> run(WS_URL, BATTLE_TOKEN).
 # Cualquier fallo se notifica a ARTIFACT_URL + "/report" (texto <= 4 KB) y sale != 0.
 import hashlib
 import importlib.util
@@ -36,6 +37,19 @@ def report(kind, detail):
                 "x-s9-artifact-token": os.environ.get("ARTIFACT_TOKEN", ""),
                 "content-type": "application/json",
             },
+        )
+        urllib.request.urlopen(req, timeout=5).read()
+    except Exception:
+        pass
+
+
+def signal_ready():
+    try:
+        req = urllib.request.Request(
+            os.environ["ARTIFACT_URL"] + "/ready",
+            data=b"",
+            method="POST",
+            headers={"x-s9-artifact-token": os.environ.get("ARTIFACT_TOKEN", "")},
         )
         urllib.request.urlopen(req, timeout=5).read()
     except Exception:
@@ -122,7 +136,20 @@ def main():
     os.chdir(ROOT)
     try:
         from arena_sdk import ArenaBot
+    except SystemExit:
+        raise
+    except BaseException:
+        # El SDK es de la imagen de runtime: si no carga, es la plataforma (TD-034).
+        fail("sdk", traceback.format_exc(), 10)
 
+    # TD-034 · señal `ready`: runtime, artefacto verificado y SDK cargados. Se espera
+    # la respuesta ANTES de ejecutar el código del usuario: lo anterior cuenta en el
+    # reloj de la plataforma (SANDBOX_STARTUP_TIMEOUT_MS), lo posterior en el del bot
+    # (BOT_EXECUTION_TIMEOUT_MS). Sin canal se sigue: el anfitrión lo tratará como
+    # plataforma, nunca como culpa del bot.
+    signal_ready()
+
+    try:
         spec = importlib.util.spec_from_file_location("s9_user_bot", entry_path)
         module = importlib.util.module_from_spec(spec)
         sys.modules["s9_user_bot"] = module

@@ -25,6 +25,7 @@ import { findVersionArtifact } from "./launch-verify.js";
 import { SandboxHost, type ArtifactOffer } from "./sandbox-host.js";
 import type { WebSocketServer } from "ws";
 import type { Runtime } from "./types.js";
+import type { BootstrapSignals } from "./startup-clock.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
@@ -204,6 +205,8 @@ export interface BattleBotLaunchPlan {
   /** Procedencia: qué se va a ejecutar exactamente. */
   artifactHash: string;
   buildId: string;
+  /** TD-034 · señales del bootstrap de esta sesión (descarga, `ready`, fallos). */
+  startup: BootstrapSignals;
 }
 
 /** Host de UNA batalla (forma estructural de BattleLaunchHost del tournament-worker). */
@@ -278,6 +281,7 @@ export async function createBattleLaunchHost(db: Knex, opts: BattleLaunchHostOpt
         autoRemove: spec.autoRemove ?? true,
         artifactHash: r.artifactHash,
         buildId: r.buildId,
+        startup: offer.signals,
       };
     },
     offers: () => offers,

@@ -347,6 +347,10 @@ services:
       ARENA_NETWORK: arena
       # Nombre con el que los contenedores de bots alcanzan este proceso en `arena`.
       ARENA_ENGINE_HOST: tournament-worker
+      # TD-034 · relojes del arranque del bot: plataforma hasta `ready` y bot
+      # desde `ready` hasta su HELLO (docs/operations/configuration.md).
+      SANDBOX_STARTUP_TIMEOUT_MS: ${SANDBOX_STARTUP_TIMEOUT_MS:-30000}
+      BOT_EXECUTION_TIMEOUT_MS: ${BOT_EXECUTION_TIMEOUT_MS:-5000}
       # Sólo VERIFICA artefactos: recibe la clave PÚBLICA, no la de firma.
       ARTIFACT_VERIFY_KEY_FILE: /run/secrets/artifact_verify_key
       # El gateway de espectador (en este proceso) aplica la MISMA capability
@@ -502,6 +506,9 @@ services:
       DOCKER_PROXY_URL: ${DOCKER_PROXY_URL:-http://docker-proxy.internal:2375}
       BUILD_SANDBOX_HOST: bot-build-worker
       ARENA_NETWORK: arena
+      # TD-034 · mismos relojes que el tournament-worker (protocol_test del build).
+      SANDBOX_STARTUP_TIMEOUT_MS: ${SANDBOX_STARTUP_TIMEOUT_MS:-30000}
+      BOT_EXECUTION_TIMEOUT_MS: ${BOT_EXECUTION_TIMEOUT_MS:-5000}
     secrets: [postgres_password, artifact_signing_key]
     extra_hosts:
       - "docker-proxy.internal:host-gateway"

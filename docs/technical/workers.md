@@ -45,6 +45,21 @@ Detalle paso a paso en [battles.md](battles.md#flujo-de-datos-paso-a-paso). Resu
 
 Una batalla `failed` sigue impidiendo que el match o el torneo se cierren ([TD-015](../roadmap/technical-debt.md#td-015)).
 
+### Arranque de los bots: dos relojes (TD-034)
+
+`containerAgents` aplica a **cada bot**, en paralelo, los dos relojes de `apps/bot-manager/src/startup-clock.ts` (los mismos que el build, ver [bots.md](bots.md#arranque-dos-relojes-td-034)):
+
+| Reloj | Variable (def.) | Desde → hasta | Si se agota o falla |
+|---|---|---|---|
+| Plataforma | `SANDBOX_STARTUP_TIMEOUT_MS` (30000) | petición de lanzamiento de SU contenedor → señal `ready` de su bootstrap | `InfrastructureFailure(container_unavailable)` con `[sandbox_start_timeout]` o `[sandbox_start_failed]`: la batalla se reintenta, nadie pierde |
+| Bot | `BOT_EXECUTION_TIMEOUT_MS` (5000) | `ready` → HELLO aceptado (`ProtocolServer.helloAt`) | `SportingFailure(bot_timeout)` de ese bot; si su código revienta o el proceso sale tras `ready`, `SportingFailure(bot_crash)` |
+
+- Un fallo de plataforma de cualquier bot manda sobre los fallos de bot de los demás: se reintenta la batalla entera.
+- Docker lento ya no se convierte en derrota: antes, si un bot conectaba y otro tardaba más de 20 s en total, el lento perdía con `bot_crash`.
+- Las señales las da `createBattleLaunchHost` (`plan().startup`). Un proveedor sin señales (sólo tests) usa un plazo único `connectTimeoutMs` (def. la suma de los dos) y la clasificación anterior.
+- `main.ts` parsea las variables con `startupTimeoutsFromEnv`; un valor inválido deja el worker sin ejecutar batallas y lo anuncia.
+- Tras el HELLO, la batalla sigue con su guard global (`ticks × tickIntervalMs + 15 s`) y el deadline de decisión del protocolo, sin cambios.
+
 ### Sin stub en producción
 
 `HunterBot` sólo existe ya en `testing/stub-agents.ts`, se pide explícitamente y **lanza con `NODE_ENV=production`**. `main.ts` construye `containerAgents` si hay `DOCKER_PROXY_URL` + `ARENA_ENGINE_HOST` y cargan la clave PÚBLICA de verificación (`ARTIFACT_VERIFY_KEY_FILE`) y los digests de runtime (`createBattleLaunchHost` de DEV-A, importación estática); cablea además `DbArtifactLaunchGuard` (firma por participante antes de lanzar); si falta algo, registra «EJECUCIÓN DE BATALLAS DESACTIVADA» y **no registra el handler** `run_battle` (las batallas quedan `scheduled`, visibles como pendientes). Un test comprueba que `main.ts` no importa stubs.
@@ -71,7 +86,7 @@ envía una versión a validación (`QueueBotManager`).
 
 1. Reclama el trabajo con `FOR UPDATE SKIP LOCKED`. Los trabajos `running` cuyo bloqueo tiene más de 10 min se consideran huérfanos y se vuelven a reclamar.
 2. Ejecuta `E6PipelineBotManager.enqueueBuild`, que recorre estas etapas: `structure`, `static_analysis` (AST: `acorn` para Node y `python3` para Python), `dependencies`, `build`, **`protocol_test`, `smoke_battle`, `resource_limits`**, `secret_scan`, `sign` y `publish`.
-3. Las tres etapas en negrita **necesitan ejecutar el bot**, y para eso hace falta un `agentResolver` (sandbox en contenedor). `build-worker-main.ts` no lo pasa, así que esas etapas son «no ejecutables». El build queda `failed` y la versión `rejected` con este motivo: *«sandbox no verificado: etapa(s) de ejecución no ejecutable(s) [...]»*.
+3. Las tres etapas en negrita ejecutan el bot en el sandbox de contenedor (`build-worker-wiring.ts`), con los dos relojes de arranque de TD-034 (`SANDBOX_STARTUP_TIMEOUT_MS`, `BOT_EXECUTION_TIMEOUT_MS`; ver [bots.md](bots.md#arranque-dos-relojes-td-034)). Un valor inválido de esas variables impide arrancar el proceso. Texto anterior, aplicable sin sandbox configurado: las tres etapas **necesitan ejecutar el bot**, y para eso hace falta un `agentResolver` (sandbox en contenedor). `build-worker-main.ts` no lo pasa, así que esas etapas son «no ejecutables». El build queda `failed` y la versión `rejected` con este motivo: *«sandbox no verificado: etapa(s) de ejecución no ejecutable(s) [...]»*.
 4. Si el ejecutor lanza una excepción y se agotan los reintentos, el resultado es el mismo: `failed`/`rejected` «no verificable». **Nunca** queda `validated` sin el pipeline completo.
 
 ### Fail-closed
@@ -108,6 +123,7 @@ vivo, **no** que avance. Para ver el avance hay que consultar `jobs` (ver [docs/
 - tournament-worker: `tournament-e2e.test.ts` (BD real, torneo completo con stub), `queue.test.ts`, `worker-degradation.test.ts`, `ratings.test.ts`, `battle-stats-canonical.test.ts`, `spectate-live.test.ts`, `redis-signal-semantics.test.ts` (requiere `REDIS_TEST_URL`; sin ella se omite).
 - bot-build-worker: `apps/bot-manager/tests/pipeline.test.ts`, `static-analysis.test.ts`, `ast-analysis.test.ts`; `apps/api/src/r25-cola-builds.test.ts`.
 - `battle-lifecycle.test.ts` (reserva, lease, cierre único, sin driver por defecto, DQ del motor).
+- `container-agents-startup.test.ts`: TD-034 sin Docker (SandboxHost y ProtocolServer reales, contenedor simulado con el contrato del bootstrap): plataforma lenta ⇒ la batalla se juega; plataforma que no llega ⇒ infraestructura; bot lento o que revienta ⇒ `bot_timeout`/`bot_crash` de ese bot; plazos del entorno = plazos aplicados.
 - `container-battle-e2e.test.ts`: batalla REAL con el código de dos bots en contenedores (opt-in `S9_RUN_REAL_DOCKER_E2E=1`, necesita Docker; no corre en el CI normal).
 
 ## Documentación relacionada
@@ -130,3 +146,4 @@ vivo, **no** que avance. Para ver el avance hay que consultar `jobs` (ver [docs/
 | Rechazo sin `agentResolver` | CODE_VERIFIED | `pipeline.ts:172,467-473`; `build-worker-main.ts:31` |
 | Bloqueo huérfano de 10 min | CODE_VERIFIED | `apps/bot-manager/src/build-worker.ts:52` |
 | Producción: 22 builds `failed` | RUNTIME_VERIFIED (en la auditoría) | consulta de sólo lectura a la BD |
+| TD-034 · dos relojes por bot en `containerAgents`; plataforma ⇒ infraestructura, bot ⇒ `bot_timeout`/`bot_crash` | CODE_VERIFIED + test (`prc/dev-sandbox`) | `container-agents.ts`; `container-agents-startup.test.ts` (8/8); mutaciones de reloj y clasificación → rojo |
