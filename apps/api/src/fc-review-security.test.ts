@@ -23,6 +23,7 @@ let owner: string;
 let alien: string;
 let ownerId: string;
 let privBot: TestBot;
+let pubBot: TestBot;
 let alienBot: TestBot;
 let teamId: string;
 const MAP_ID = "fcrev-sec-draft";
@@ -54,6 +55,15 @@ beforeAll(async () => {
       });
     });
   alienBot = await createPublishedBot(h.db, "fcrev-sec-alien", { ownerId: alienId });
+  // Bot PÚBLICO con código PRIVADO (code_public=false): aquí la única barrera es
+  // canReadSource — la visibilidad del bot deja pasar al ajeno.
+  pubBot = await createPublishedBot(h.db, "fcrev-sec-pub", { ownerId });
+  await h.db.transaction(async (trx) => {
+    await trx.raw("SET LOCAL session_replication_role = replica");
+    await trx("bot_versions")
+      .where({ bot_id: pubBot.botId, version: 1 })
+      .update({ source: Buffer.from("CODIGO_PRIVADO_DE_BOT_PUBLICO = 1\n"), code_public: false });
+  });
 
   const map = JSON.parse((await request(app).get("/maps/mvp-arena-01/versions/1/content")).text) as Record<
     string,
@@ -109,6 +119,27 @@ describe("R8 · código y artefactos de un bot PRIVADO ajeno (A)", () => {
       const r = await as(alien)(request(app).post(p)).send(body);
       expect([403, 404], `POST ${p} → ${r.status}`).toContain(r.status);
     }
+  });
+});
+
+describe("R8 · bot PÚBLICO con código PRIVADO (canReadSource, A)", () => {
+  it("el AJENO ve el bot pero NO su código (source, files, diff)", async () => {
+    expect((await as(alien)(request(app).get(`/bots/${pubBot.botId}`))).status).toBe(200);
+    for (const p of [
+      `/bots/${pubBot.botId}/versions/1/source`,
+      `/bots/${pubBot.botId}/versions/1/files`,
+      `/bots/${pubBot.botId}/versions/1/diff?against=1`,
+    ]) {
+      const r = await as(alien)(request(app).get(p));
+      expect([403, 404], `GET ${p} → ${r.status}`).toContain(r.status);
+      expect(r.text).not.toContain("CODIGO_PRIVADO_DE_BOT_PUBLICO");
+    }
+  });
+
+  it("control positivo: el dueño sí lo lee", async () => {
+    const r = await as(owner)(request(app).get(`/bots/${pubBot.botId}/versions/1/files`));
+    expect(r.status).toBe(200);
+    expect(JSON.stringify(r.body)).toContain("CODIGO_PRIVADO_DE_BOT_PUBLICO");
   });
 });
 
