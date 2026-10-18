@@ -333,7 +333,7 @@ services:
     profiles: [nucleo, development, production, external-db]
     # REVIEW (cierre funcional) · `arena`: los contenedores de los bots se conectan
     # al ProtocolServer y descargan su artefacto del host de la batalla, que viven
-    # en ESTE proceso. Deuda aceptada y registrada (TD-032, ex TD-A1): el proceso
+    # en ESTE proceso. Deuda aceptada y registrada (TD-033, ex TD-A1): el proceso
     # que expone puertos a la red de los bots también tiene credenciales de BD.
     networks: [platform, data, arena]
     environment:
@@ -490,7 +490,7 @@ services:
     profiles: [development, production, external-db]
     # REVIEW (cierre funcional) · `arena`: el sandbox del build (DEV-A, TD-001) lanza
     # el bot en un contenedor que se conecta a ESTE proceso (ProtocolServer +
-    # descarga del artefacto). Misma deuda aceptada que el tournament-worker (TD-032).
+    # descarga del artefacto). Misma deuda aceptada que el tournament-worker (TD-033).
     networks: [platform, build, data, arena]
     environment:
       <<: *node-db-env

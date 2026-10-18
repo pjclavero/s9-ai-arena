@@ -77,7 +77,7 @@ Estados de una batalla:
 
 ## Ejecutar batalla real
 
-Ya no hace falta: **toda** batalla se ejecuta con el código real al crearla. Si ves el botón «Ejecutar batalla real», sólo vuelve a pedir que la batalla se ponga en cola (no la juega dos veces).
+Ya no hace falta y el botón «Ejecutar batalla real» ya no existe: **toda** batalla se ejecuta con el código publicado de sus bots al crearla. Tras «Crear batalla», sigue su estado en **Batallas** y abre el replay cuando termine.
 
 ## Errores / limitaciones
 

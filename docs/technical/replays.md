@@ -53,7 +53,7 @@ El volumen entra en la copia de seguridad que documenta C ([backup.md](../operat
 
 ## Escritura (ingesta)
 
-1. **Camino activo**: `finishBattle` del worker llama a `ingestReplay(replaysDir, replay, {official})`, que valida, comprime y escribe los dos ficheros. Después `battles.replay_ref` y `replay_hash` quedan en la misma transacción que el resultado ([battles.md](battles.md#7-resultado)).
+1. **Camino activo**: `finishBattle` del worker llama a `ingestReplay(replaysDir, replay, {official})`, que valida, comprime y escribe los dos ficheros. Después `battles.replay_ref` y `replay_hash` quedan en la misma transacción que el resultado ([battles.md](battles.md#battle_result-forma-de-battlesresult)).
 2. **Por HTTP**: `POST /replays/{battleId}` en el replay-service, con cuerpo JSONL. Exige la cabecera `x-replay-ingest-auth` con el secreto interno (`REPLAY_INGEST_SECRET[_FILE]`). Sin secreto configurado, **toda escritura responde 401**. Lo usa el launcher del camino real (apagado).
 
 El servicio arranca sólo si el directorio es escribible (`requireWritableDataDir`).

@@ -6,7 +6,7 @@ Hay dos procesos sin HTTP de negocio que reclaman trabajos de la tabla `jobs` (v
 
 | Worker | Qué hace | Estado |
 |---|---|---|
-| **tournament-worker** | **autoridad única de ejecución**: reserva cada batalla, lanza un contenedor por bot con su código, aloja motor + `ProtocolServer` + espectador, cierra la batalla una vez; procesa resultados, calendarios y clasificaciones | **PARCIAL** (verificado en aislado; en producción no reclama `run_battle` hasta tener sandbox y proveedor de DEV-A) |
+| **tournament-worker** | **autoridad única de ejecución**: reserva cada batalla, lanza un contenedor por bot con su código, aloja motor + `ProtocolServer` + espectador, cierra la batalla una vez; procesa resultados, calendarios y clasificaciones | **PARCIAL** (verificado en aislado e integrado con el proveedor de DEV-A; en producción no reclama `run_battle` hasta desplegar el compose con `DOCKER_PROXY_URL` y la clave pública) |
 | **bot-build-worker** | ejecuta el pipeline de validación de versiones de bot | **falla cerrado siempre**: no hay sandbox |
 
 El tournament-worker ejecuta el código de usuario en contenedores cuando tiene configurado el sandbox; sin él **no ejecuta batallas** (ya no cae al stub). Ver [TD-001](../roadmap/technical-debt.md#td-001) y [TD-002](../roadmap/technical-debt.md#td-002).
@@ -38,7 +38,7 @@ Detalle paso a paso en [battles.md](battles.md#flujo-de-datos-paso-a-paso). Resu
 
 1. **Reserva atómica** `claimBattle`: `UPDATE battles … WHERE status='scheduled'` (o `running` con lease caducado) `RETURNING *`, con `claimed_by` y `lease_expires_at`. Si no la gana: `finished` → sólo stats que falten; `failed` → nada; `running` con lease vivo → `battle_busy` (duplicado).
 2. **Lease** renovado cada `lease/3` (def. 45 s) junto con `jobs.locked_at`; si no se puede renovar, la ejecución se aborta y no se escribe nada.
-3. **Descalificaciones administrativas**: versión fuera de `published|frozen`, `suspensions`, `artifactGuard` (estos dos, si se inyectan).
+3. **Descalificaciones administrativas**: versión fuera de `published|frozen`, `suspensions` (si se inyecta; `main.ts` no la cablea) y `artifactGuard` (cableado en `main.ts` desde la integración).
 4. **Motor + agentes** (`engine-executor.ts`): mapa, ruleset (`resolveBattleRuleset`), catálogo y loadout reales; el `AgentDriver` es obligatorio. En producción `containerAgents` (`container-agents.ts`): contenedores por `ProxyContainerRunner`, postura comprobada, handshake de todos, ritmo real, CPU muestreada.
 5. **Cierre** `finishBattle` en una transacción condicionada al titular: resultado (`battle-result/v1`), replay, `participants.outcome`/`cpu_ms`, `process_result`. Después `runStatsJob`.
 6. **Fallos**: `SportingFailure` → derrota del culpable, sin reintento. `InfrastructureFailure` → la batalla vuelve a `scheduled` (si sigue siendo nuestra) y la cola reintenta; agotado, `failed (infrastructure)`. Error no clasificado tras reservar → se libera la reserva y el trabajo va a `needs_review`.
@@ -47,7 +47,7 @@ Una batalla `failed` sigue impidiendo que el match o el torneo se cierren ([TD-0
 
 ### Sin stub en producción
 
-`HunterBot` sólo existe ya en `testing/stub-agents.ts`, se pide explícitamente y **lanza con `NODE_ENV=production`**. `main.ts` construye `containerAgents` si hay `DOCKER_PROXY_URL` + `ARENA_ENGINE_HOST` y el proveedor de DEV-A carga; si falta algo, registra «EJECUCIÓN DE BATALLAS DESACTIVADA» y **no registra el handler** `run_battle` (las batallas quedan `scheduled`, visibles como pendientes). Un test comprueba que `main.ts` no importa stubs.
+`HunterBot` sólo existe ya en `testing/stub-agents.ts`, se pide explícitamente y **lanza con `NODE_ENV=production`**. `main.ts` construye `containerAgents` si hay `DOCKER_PROXY_URL` + `ARENA_ENGINE_HOST` y cargan la clave PÚBLICA de verificación (`ARTIFACT_VERIFY_KEY_FILE`) y los digests de runtime (`createBattleLaunchHost` de DEV-A, importación estática); cablea además `DbArtifactLaunchGuard` (firma por participante antes de lanzar); si falta algo, registra «EJECUCIÓN DE BATALLAS DESACTIVADA» y **no registra el handler** `run_battle` (las batallas quedan `scheduled`, visibles como pendientes). Un test comprueba que `main.ts` no importa stubs.
 
 ### Concurrencia
 

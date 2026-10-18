@@ -132,7 +132,7 @@ describe("6.4 · las cinco redes y sus reglas", () => {
     // Sólo los ANFITRIONES de bots comparten la red arena con ellos: el motor
     // legado, el tournament-worker (aloja el ProtocolServer de las batallas, DEV-B)
     // y el bot-build-worker (sandbox del build, DEV-A). REVIEW (cierre funcional):
-    // los dos workers también están en `data` — deuda aceptada TD-032 (proceso con
+    // los dos workers también están en `data` — deuda aceptada TD-033 (proceso con
     // credenciales de BD que expone puertos a la red de los bots). La red sigue
     // sin dar RUTA a postgres/redis/api: ninguno de ellos está en arena.
     const ARENA_HOSTS = ["arena-engine", "bot-runtime-template", "tournament-worker", "bot-build-worker"];

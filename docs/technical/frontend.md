@@ -143,26 +143,27 @@ Directorio canónico `tests/browser/`, comando **`npm run test:browser`** (= `ba
 
 | Pieza | Qué es |
 |---|---|
-| `run.sh` | Orquesta el entorno aislado, la sonda TD-028 y tres fases de Playwright; rc 0 sólo si todo pasa; resumen en `$S9_E2E_STATE/out/summary.txt` |
+| `run.sh` | Orquesta el entorno aislado (también el `bot-build-worker`, el s9-docker-proxy LOCAL del repo y el `tournament-worker` con ejecución en contenedores), la fase **golden**, la sonda TD-028 y tres fases de Playwright; rc 0 sólo si todo pasa; resumen en `$S9_E2E_STATE/out/summary.txt` |
 | `env/api-env.ts` | API real (`createApp`) sobre PostgreSQL embebido con `seedDev`+`seedContent` |
 | `env/gen-nginx-confs.mjs` | Genera las confs del gateway (`infrastructure/gateway/nginx-behind-proxy.conf`) y del web (`infrastructure/docker/web/nginx.conf`) **reales**, sustituyendo sólo nombres de servicio y `listen`; añade un proxy TLS delante. Falla si la conf real deja de casar |
-| `env/seed-replay.ts` | Atajo **declarado**: graba una batalla con el motor real (bots stub) e `ingestReplay` en el directorio del replay-service. No toca la BD. Lo sustituye el golden path de REVIEW |
 | `env/ticket-probe.ts` | Sonda TD-028: ticket firmado → TLS → gateway → worker |
-| `playwright.config.ts`, `specs/*.spec.ts` | Specs `@fase1` (todo vivo), `@fase2` (replay-service parado), `@fase3` (API parada) |
+| `specs/golden-path.spec.ts` | `@golden`: registro → 2 bots con build REAL → equipo → mapa → batalla REAL (contenedores) → visor en directo → stats → replay. Su batalla es la que usan la fase 1 (replay) y la sonda: ya no hay atajo `seed-replay` |
+| `playwright.config.ts`, `specs/*.spec.ts` | Specs `@golden`, `@fase1` (todo vivo), `@fase2` (replay-service parado), `@fase3` (API parada) |
 
-Navegador: `mcr.microsoft.com/playwright:v1.48.2-jammy@sha256:96dc479b…` (Chromium 130), `@playwright/test` 1.48.2 instalado en el contenedor desde `tests/browser/package-lock.json`. Todo escucha en `127.0.0.1`; los secretos son ficheros 0600 efímeros. Variables: `S9_E2E_STATE`, `S9_E2E_PORT_BASE` (38080), `S9_E2E_GREP`, `S9_E2E_KEEP=1`. Para el golden path: añadir specs en `tests/browser/specs/` con la etiqueta de fase.
+Navegador: `mcr.microsoft.com/playwright:v1.48.2-jammy@sha256:96dc479b…` (Chromium 130), `@playwright/test` 1.48.2 instalado en el contenedor desde `tests/browser/package-lock.json`. Todo escucha en `127.0.0.1`; los secretos son ficheros 0600 efímeros. Variables: `S9_E2E_STATE`, `S9_E2E_PORT_BASE` (38080), `S9_E2E_GREP`, `S9_E2E_KEEP=1`, `S9_E2E_SKIP_GOLDEN=1` (sin Docker para bots: la fase 1 de replay falla, no hay atajo), `S9_SANDBOX_ADVERTISE_HOST` (IP del host alcanzable desde los contenedores). La red Docker `arena` es compartida: se crea si falta y nunca se borra.
 
 ## Errores / limitaciones
 
 - No hay subida de archivo de código (sólo pegar texto) ni pantallas de estadísticas, historial de rating, gestión de cuenta, 2FA, sesiones o borradores de mapa.
 - Los identificadores se ven como UUID truncados.
 - En móvil (375 px) no se ha vuelto a medir el desbordamiento del editor de mapas y del reproductor.
-- El directo con una batalla viva no tiene E2E de navegador en este carril (falta una batalla ejecutándose: carriles A/B).
+- El directo con una batalla viva se prueba en la fase golden (el marcador del visor recibe la baja decisiva); la emisión (`#/broadcast`) con batalla viva no tiene E2E.
 
 ## Estado actual
 
 - **FUNCIONA ACTUALMENTE**: sesión persistente; arranque con API caída explicado; 404; estados comunes; lista de replays tras TLS; reproductor (lista → abrir → canvas → ticks → pausa → fin); visor hasta el ticket y rechazos explicados; resultados de batalla en `#/battles`.
-- **PARCIAL**: visor/emisión con batalla viva (depende de A/B); páginas de A y C pendientes de adoptar los componentes comunes.
+- **FUNCIONA ACTUALMENTE** (integración REVIEW): visor con batalla VIVA (ticket real de la API → TLS → gateway → worker); TeamsPage, BattleNewPage y «Crear bot» usan `ErrorState`/`FormError`.
+- **PARCIAL**: emisión (`#/broadcast`) con batalla viva sin E2E.
 - **PENDIENTE**: lo enumerado en la sección anterior.
 
 ## Documentación relacionada

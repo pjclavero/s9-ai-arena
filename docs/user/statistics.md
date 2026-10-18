@@ -57,4 +57,4 @@ Las estadísticas reflejan **lo que hizo tu código**: si tu bot nunca dispara, 
 ## Documentación relacionada
 
 - Usuario: [Clasificaciones](rankings.md), [Batallas](battles.md), [Replays](replays.md)
-- Técnica: [battles.md — estadísticas](../technical/battles.md#8-estadísticas), [replays.md](../technical/replays.md)
+- Técnica: [battles.md — estadísticas](../technical/battles.md#8-cierre-exactamente-una-vez-finishbattle), [replays.md](../technical/replays.md)

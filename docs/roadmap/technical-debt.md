@@ -144,7 +144,7 @@ Estados posibles:
 - **Evidencia de cierre (FC-C, rama `fc/dev-c-maps-teams`):**
   - El contenido base (`seedContent` = `cli.ts bootstrap`, idempotente, sin usuarios) siembra un ruleset de BD por modo: `deathmatch-mvp`, `team-deathmatch-mvp`, `capture-the-flag-mvp` y `zone-control-mvp`, con `config.mode` y `config.engineRulesetId`.
   - `GET /rulesets` los sirve, y `BattleNewPage` ya no tiene ids de ruleset.
-  - Un E2E de Chromium contra API, PostgreSQL y SPA reales (`tests/fc-c-browser/c8-flow.spec.ts`) crea la batalla desde la UI y recibe **202**: rc=0.
+  - Un E2E de Chromium contra API, PostgreSQL y SPA reales (`tests/browser/specs/golden-path.spec.ts`, unificado por REVIEW) crea la batalla desde la UI, recibe **202** y la batalla termina con el código real de los bots: rc=0.
   - Mutación «volver al id hardcodeado»: E2E rc=1 (`400` en vez de `202`) y `apps/web/tests/battle-new-page.test.tsx` rc=1.
   - Residual, área de B: `POST /battles` aún no rechaza un ruleset de otro modo. `checkBattleContent` está lista para que la llame.
 

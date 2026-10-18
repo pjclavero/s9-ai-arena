@@ -55,13 +55,12 @@ En orden:
 
 1. `mode` ∈ `deathmatch`, `team_deathmatch`, `capture_the_flag`, `zone_control` → si no, `400 mode inválido`.
 2. Entre 1 y 8 `participants` → si no, `400`.
-3. `rulesetId` existe en `rulesets` → si no, `400 rulesetId desconocido`.
-4. Hay `map_versions` publicada → si no, `400 Mapa inexistente o no publicado`.
-5. **Forma de cada participante**: `botId` cadena, `version` entero ≥ 1, `team` `[A-Za-z0-9_-]{1,32}`, y **cada bot una sola vez** → si no, `400` (antes un bot repetido daba `500` por la PK).
-6. **Propiedad / visibilidad** ([TD-005](../roadmap/technical-debt.md#td-005)): el bot debe ser propio, `public`, o `team` de un equipo del que el solicitante es miembro (un `admin`, cualquiera). Si no → **`404 bot_not_found`, idéntico al de un bot inexistente** (no se revela que existe).
-7. Cada `(botId, version)` en `published`/`frozen` → si no, `409 bot_not_published`.
+3. **Contenido** (integración REVIEW): `checkBattleContent` de DEV-C (`routes/catalog.ts`), la MISMA regla que usa la web → `400 ruleset_unknown`, `409 ruleset_mode_mismatch` (ruleset de otro modo), `400 map_not_published`, `409 map_mode_unsupported` (el mapa no declara el modo). Antes estos fallos aparecían tarde, en el worker.
+4. **Forma de cada participante**: `botId` cadena, `version` entero ≥ 1, `team` `[A-Za-z0-9_-]{1,32}`, y **cada bot una sola vez** → si no, `400` (antes un bot repetido daba `500` por la PK).
+5. **Propiedad / visibilidad** ([TD-005](../roadmap/technical-debt.md#td-005)): el bot debe ser propio, `public`, o `team` de un equipo del que el solicitante es miembro (un `admin`, cualquiera). Si no → **`404 bot_not_found`, idéntico al de un bot inexistente** (no se revela que existe).
+6. Cada `(botId, version)` en `published`/`frozen` → si no, `409 bot_not_published`.
 
-**No valida todavía** que el mapa declare el modo ni la composición por modo (ver [Errores](#errores--limitaciones)).
+**No valida todavía** la composición por modo (equipos compartidos en deathmatch, zonas/banderas que exija el modo; ver [Errores](#errores--limitaciones)).
 
 ### 3. Persistencia (una transacción)
 
@@ -99,8 +98,8 @@ RETURNING *
 - **Reglas**: `resolveBattleRuleset` (el mismo resolutor que usaba el launcher: `rulesets.config.engineRulesetId` o el defecto del modo, exigiendo que el modo coincida) + `budget_credits` del torneo/ruleset. Antes el worker ignoraba `config.engineRulesetId`.
 - **Catálogo** congelado del torneo o el último importado; **vehículos** del loadout congelado (`entries.loadout_revision` o `bot_versions.loadout_revision`).
 - **Agentes**: el `AgentDriver` es **obligatorio**; sin él `makeEngineExecutor` lanza. En producción, `containerAgents()` (`container-agents.ts`):
-  1. abre el host de la batalla del proveedor (contrato B↔A `createBattleLaunchHost`, ver `bot-launch-provider.ts`);
-  2. crea el `ProtocolServer` (con el `wss` del host si lo da) y, por vehículo, pide al proveedor el plan `{imageDigest, env, cmd}` y lanza el contenedor por `ProxyContainerRunner` con `WS_URL`, `BATTLE_TOKEN`, `BOT_ID` (asa del cable, no el uuid), límites `DEFAULT_LIMITS` y seccomp restrictivo;
+  1. abre el host de la batalla con `createBattleLaunchHost` (DEV-A, `apps/bot-manager/src/bot-launch.ts`, integrado por REVIEW): un `SandboxHost` (HTTP del artefacto + WebSocket del protocolo en un puerto);
+  2. crea el `ProtocolServer` con ese `wss` y, por vehículo, pide el plan: `resolveBotLaunch` verifica que `(botId, version)` está `published|frozen`, que el artefacto es el DE SU build, su sha256 y la firma ed25519 con la clave PÚBLICA (`ARTIFACT_VERIFY_KEY_FILE`), y devuelve la imagen de RUNTIME fijada en `runtimes/DIGESTS.lock` + el bootstrap (`Cmd`) + `ARTIFACT_URL/TOKEN/SHA256`. El contenedor descarga el artefacto, vuelve a comprobar el sha256 y ejecuta el código del usuario. Se lanza por `ProxyContainerRunner` con `WS_URL`, `BATTLE_TOKEN`, `BOT_ID` (asa del cable, no el uuid), `AutoRemove`, límites `DEFAULT_LIMITS` y seccomp restrictivo. Antes, además, `DbArtifactLaunchGuard` comprueba la firma por participante: un artefacto manipulado DESCALIFICA a ese bot (walkover del íntegro) en vez de tumbar la batalla;
   3. **inspecciona la postura** de cada contenedor y aborta si `complianceViolations` no está vacío;
   4. espera el handshake de TODOS (tick 0 con todos enganchados) y arranca el bucle a ritmo real (34 ms/tick por defecto);
   5. muestrea la **CPU del cgroup** de cada contenedor durante la batalla (Docker la devuelve a 0 en cuanto el bot sale tras `SHUTDOWN`);
@@ -202,10 +201,12 @@ curl https://arena.example.internal/api/v1/battles/<id>/stats  # battle_stats po
 | Bot privado ajeno o inexistente | API | `404 bot_not_found` |
 | Bot repetido / `team` inválido | API | `400` |
 | Versión no publicada | API | `409 bot_not_published` |
-| Sandbox no configurado en el worker (`DOCKER_PROXY_URL`, `ARENA_ENGINE_HOST` o proveedor de DEV-A ausentes) | worker | Log «EJECUCIÓN DE BATALLAS DESACTIVADA»; las batallas quedan `scheduled` |
+| Sandbox no configurado en el worker (`DOCKER_PROXY_URL`, `ARENA_ENGINE_HOST`, clave de verificación o `DIGESTS.lock` ausentes) | worker | Log «EJECUCIÓN DE BATALLAS DESACTIVADA»; las batallas quedan `scheduled` |
 | No se puede lanzar un contenedor, ningún bot conecta, postura no conforme | worker | Infraestructura: reintento ×3 y `failed (infrastructure)` |
 | Un bot conecta y otro no | worker | Derrota deportiva del ausente (`bot_crash`, `endReason: sporting_failure`) |
 | Bot que deja de responder | motor | Descalificado por timeouts → `participants.outcome = disqualified` |
+| Ruleset de otro modo / mapa que no declara el modo | API | `409 ruleset_mode_mismatch` / `409 map_mode_unsupported` |
+| Artefacto manipulado o firma ajena | worker | el guard lo descalifica antes de lanzar; si llegara al proveedor, `InfrastructureFailure artifact_unavailable` (fallo cerrado, ningún contenedor) |
 | Deathmatch con equipos compartidos, ZC sin zonas, CTF sin banderas | motor | `failed (infrastructure)` tras 3 reintentos (error de configuración del usuario clasificado como infraestructura; pendiente validarlo en la API) |
 | Trabajo duplicado de una batalla en curso | worker | `needs_review` con `[battle_busy]`; la batalla no se toca |
 
@@ -213,14 +214,15 @@ Limitaciones:
 
 - **CPU**: es la última muestra (cada 500 ms) del contador del cgroup antes de que el bot salga: cota inferior de lo consumido, incluye arranque del intérprete y SDK.
 - La batalla corre a **ritmo real** (≈5 min para 9 000 ticks); el `tickIntervalMs` sólo se acelera en tests.
-- Los contenedores parados no se borran (el proxy no expone `DELETE`): limpieza operativa pendiente (ver deuda propuesta en el informe de DEV-B).
-- La API no valida modo↔mapa ni composición por modo.
+- Los contenedores de bots se lanzan con `AutoRemove` (el proxy no expone `DELETE`): la Engine los borra al salir.
+- La API no valida la composición por modo.
+- Arranque del contenedor medido en pared: bajo carga un bot Python puede pasar de 5 s en el build (TD-034).
 
 ## Estado actual
 
-- **FUNCIONA (entorno aislado, RUNTIME_VERIFIED)**: API → cola → worker → contenedores con el código real de dos bots → motor → resultado, outcome, replay verificable, stats y CPU reales.
-- **PARCIAL (producción)**: el código está, pero no se activa hasta integrar el proveedor de artefactos de DEV-A y aplicar los cambios de compose (worker en la red `arena`, `DOCKER_PROXY_URL`, `ARENA_ENGINE_HOST`).
-- **PENDIENTE**: validación modo↔mapa y composición en la API; borrado de contenedores parados.
+- **FUNCIONA (entorno aislado, RUNTIME_VERIFIED)**: web → API → cola → worker → contenedores con el ARTEFACTO FIRMADO de la versión exacta de cada bot (buildeado en el sandbox real) → motor → resultado, outcome, replay verificable, stats y CPU reales; también desde el navegador (golden path).
+- **PARCIAL (producción)**: código integrado y compose preparado (worker en `arena`, `DOCKER_PROXY_URL`, `ARENA_ENGINE_HOST`, clave pública), sin desplegar: exige recrear `tournament-worker`, `bot-build-worker` y `api`, generar `artifact_verify_key.pem` y el proxy del host.
+- **PENDIENTE**: composición por modo en la API; separar el anfitrión de bots del proceso con credenciales de BD (TD-033).
 
 ## Documentación relacionada
 
@@ -230,7 +232,7 @@ Limitaciones:
 
 ## Verificación
 
-Verificado sobre la rama `fc/dev-b-battles` (base `0b8c12b`).
+Verificado sobre la rama `fc/dev-b-battles` (base `0b8c12b`) y, tras la integración, sobre `integration/functional-closure` (filas marcadas REVIEW).
 
 | Afirmación | Estado | Evidencia |
 |---|---|---|
@@ -246,4 +248,8 @@ Verificado sobre la rama `fc/dev-b-battles` (base `0b8c12b`).
 | Postura de contenedor verificada; no-show = deportivo | CODE_VERIFIED | `container-agents.ts:190`, `:210` |
 | Producción: worker con `containerAgents`, sin stub, no reclama `run_battle` sin sandbox | CODE_VERIFIED | `apps/tournament-worker/src/main.ts:72`, `:115` |
 | E2E real: código de dos bots en contenedores, ganador y stats lo prueban | RUNTIME_VERIFIED (aislado, Docker rootless) | `apps/tournament-worker/src/container-battle-e2e.test.ts` con `S9_RUN_REAL_DOCKER_E2E=1`: Artillero `win` (1 kill, 13 disparos aceptados, 122 intentos, 461,7 de daño), Pacifista `loss` (0 intentos), `agents:"container"`, CPU 570/537 ms, `verify.matches=true` |
-| Producción sin activar | DESIGN_ONLY | depende de DEV-A (`bot-launch.ts`) y de compose (REVIEW) |
+| REVIEW · el worker lanza el artefacto firmado de la versión exacta (no imagen por versión) | RUNTIME_VERIFIED (aislado) | `apps/tournament-worker/src/container-battle-e2e.test.ts` (`S9_RUN_REAL_DOCKER_E2E=1`, rc=0, 3/3): bots buildeados por la API en el sandbox real; Artillero `win` (11 disparos, 101 intentos), Pacifista `loss` (0 intentos); procedencia = artefacto y build de cada versión; artefacto manipulado ⇒ no se lanza |
+| REVIEW · `createBattleLaunchHost` falla cerrado (no publicada, manipulado, firma ajena) | CODE_VERIFIED + test | `apps/bot-manager/src/bot-launch.ts`; `apps/bot-manager/tests/battle-launch-host.test.ts` |
+| REVIEW · `checkBattleContent` en POST /battles | CODE_VERIFIED + test | `routes/battles.ts` (`createPracticeBattle`); `apps/api/src/battles-create-content.test.ts` (mutación «saltar la comprobación» ⇒ 4 rojos) |
+| REVIEW · golden path en navegador | RUNTIME_VERIFIED (aislado) | `tests/browser/specs/golden-path.spec.ts` (`npm run test:browser`, fase golden rc=0) |
+| Producción sin activar | DESIGN_ONLY | compose preparado (`infrastructure/docker-compose.yml`, bloque `tournament-worker`); despliegue fuera del cierre funcional |

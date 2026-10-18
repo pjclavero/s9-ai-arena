@@ -293,4 +293,4 @@ Verificado contra `27f70bb`. Las filas FC-C, en la rama `fc/dev-c-maps-teams` (b
 | `HunterBot` sólo usa radar, lidar y `turret_main` | CODE_VERIFIED | `apps/arena-engine/src/stubs.ts:50-100` |
 | Camino real: del loadout sólo viaja la familia del chasis (arquetipo) | CODE_VERIFIED | `apps/api/src/services/battle-run-http-launcher.ts:141-146,617-622,638,712-719`; `apps/arena-engine/src/service.ts:124-125`; `apps/bot-manager/src/container-battle.ts:134-141` |
 | Toda propiedad del catálogo clasificada ACTIVE/PARTIAL/FUTURE | CODE_VERIFIED / RUNTIME_VERIFIED | `packages/module-catalog/effect-status.ts`; `packages/module-catalog/effect-status.test.ts` (rc=0) |
-| La UI muestra el efecto real (chasis ACTIVE, arma PARTIAL, `rangeM` FUTURE) | RUNTIME_VERIFIED | `apps/web/src/pages/LoadoutEditor.tsx` (`EffectBadge`); `tests/fc-c-browser/c8-flow.spec.ts` (Chromium) |
+| La UI muestra el efecto real (chasis ACTIVE, arma PARTIAL, `rangeM` FUTURE) | RUNTIME_VERIFIED | `apps/web/src/pages/LoadoutEditor.tsx` (`EffectBadge`); `tests/browser/specs/golden-path.spec.ts` (Chromium 1.48.2, fase golden de `npm run test:browser`, rc=0) |

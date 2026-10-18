@@ -203,6 +203,6 @@ Verificado en la rama `fc/dev-c-maps-teams`, base `0b8c12b`.
 | `GET …/content` | CODE_VERIFIED | `routes/maps.ts:277-282` |
 | Import sin 500 (autoría antigua y documento sin capas: 400) | CODE_VERIFIED / RUNTIME_VERIFIED | `routes/maps.ts:82-88,311`; `fc-c-content.test.ts:159,166` |
 | Publicar: dueño u organizer+ | CODE_VERIFIED / RUNTIME_VERIFIED | `routes/maps.ts:364-374`; `fc-c-content.test.ts:214` |
-| Editor guarda, reabre tras F5, publica y se usa en batalla (navegador real) | RUNTIME_VERIFIED | `tests/fc-c-browser/c8-flow.spec.ts` (Chromium 1.48.2, rc=0) |
+| Editor guarda, reabre tras F5, publica y se usa en batalla (navegador real) | RUNTIME_VERIFIED | `tests/browser/specs/golden-path.spec.ts` (Chromium 1.48.2, fase golden de `npm run test:browser`, rc=0) |
 | Modos del mapa de serie (v1 corregida; mvp-arena-02 con deathmatch) | CODE_VERIFIED / RUNTIME_VERIFIED | `apps/api/src/db/seeds/dev.ts` (`seedContent`, `mvpArena02`); `fc-c-content.test.ts:276` |
 | El servicio map-service no tiene consumidores | CODE_VERIFIED | `apps/map-service/src/main.ts:22-41`; ningún `MAP_SERVICE_URL` en `apps/` |

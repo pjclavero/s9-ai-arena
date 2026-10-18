@@ -233,7 +233,7 @@ Verificado contra `27f70bb`. Las filas FC-C, en la rama `fc/dev-c-maps-teams` (b
 | Deathmatch rechaza equipos compartidos | CODE_VERIFIED | `modes.ts:126-147` |
 | API práctica: 4 modos | CODE_VERIFIED | `apps/api/src/routes/battles.ts:394` |
 | Torneos: 4 modos en API y CHECK de BD | CODE_VERIFIED | `apps/api/src/routes/tournaments.ts:19`; `apps/api/src/db/migrations.ts:280` |
-| Web de nueva batalla: modos y rulesets desde `GET /rulesets`, sin ids hardcodeados | CODE_VERIFIED / RUNTIME_VERIFIED | `apps/web/src/pages/BattleNewPage.tsx` (`/rulesets`, `effectiveRuleset`); `tests/fc-c-browser/c8-flow.spec.ts` (202) |
+| Web de nueva batalla: modos y rulesets desde `GET /rulesets`, sin ids hardcodeados | CODE_VERIFIED / RUNTIME_VERIFIED | `apps/web/src/pages/BattleNewPage.tsx` (`/rulesets`, `effectiveRuleset`); `tests/browser/specs/golden-path.spec.ts` (Chromium 1.48.2, fase golden de `npm run test:browser`, rc=0) |
 | `GET /rulesets` y los 4 rulesets sembrados, resolubles por `resolveBattleRuleset` | CODE_VERIFIED / RUNTIME_VERIFIED | `apps/api/src/routes/catalog.ts:133-140`; `apps/api/src/db/seeds/dev.ts:48`; `apps/api/src/routes/fc-c-content.test.ts:233` |
 | `checkBattleContent` rechaza ruleset y mapa incompatibles | CODE_VERIFIED / RUNTIME_VERIFIED | `catalog.ts:71-130`; `fc-c-content.test.ts:253` |
 | Web de torneo: campo de ruleset de texto libre | CODE_VERIFIED | `TournamentsPage.tsx:20` (área de B/D) |
