@@ -30,6 +30,7 @@ son Vitest salvo el SDK Python (pytest) y la aceptación visual/perf (Playwright
 | `npm run format:check` | Prettier |
 | `npm run test:visual` | aceptación visual Playwright (requiere instalar Playwright y navegador; no está en `package.json`) |
 | `cd sdks/python && python -m pytest tests/ -q` | SDK Python |
+| `npm run test:browser` | E2E de navegador real (`tests/browser/run.sh`): entorno aislado, fase **golden** (recorrido completo con build y batalla reales en Docker) y fases 1-3; Node ≥ 22.15 y Docker local ([frontend.md](../technical/frontend.md#e2e-de-navegador)) |
 
 Timeout por test: 180 s; hooks: 60 s.
 
@@ -66,7 +67,9 @@ libre (ADR-E7-002). Con `DATABASE_URL` definida se usa ese servidor con bases ef
 | `PYTHON_BIN` | intérprete con `arena-sdk` para el CTF 2v2 (por defecto `sdks/python/.venv`) |
 | `DETERMINISM_RUNS` | repeticiones del test de determinismo (la nightly usa 1000) |
 | `REDIS_TEST_URL` | activa el contrato contra un **Redis real** en `redis-signal-semantics.test.ts`; sin ella se usa un doble |
-| `S9_RUN_REAL_DOCKER_E2E` | habilita el smoke de batalla real con contenedores (`tests/e2e/e2e-real-battle-smoke.test.ts`) |
+| `S9_RUN_REAL_DOCKER_E2E` | habilita los E2E de batalla real con contenedores: `tests/e2e/e2e-real-battle-smoke.test.ts` y `apps/tournament-worker/src/container-battle-e2e.test.ts` (build real + artefacto firmado + batalla, cierre funcional) |
+| `S9_RUN_DOCKER_SANDBOX_E2E` | habilita los E2E del sandbox de build (`apps/bot-manager/tests/build-sandbox-docker.test.ts`, `apps/api/src/fc-a-bot-pipeline-e2e.test.ts`) |
+| `S9_SANDBOX_ADVERTISE_HOST` | IP de este host alcanzable desde los contenedores de bots (por defecto, la primera IPv4 no interna) |
 | `DATABASE_URL` | PostgreSQL externo en lugar del embebido |
 | `ARENA_DEV_INSECURE_SECRETS=1` | secretos efímeros (lo fija el arnés de BD) |
 

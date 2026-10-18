@@ -10,7 +10,7 @@ El directo de una batalla se sirve por WebSocket desde el **gateway de espectado
 
 Estado actual:
 
-- el visor web arranca Phaser correctamente y pide el ticket ([TD-009](../roadmap/technical-debt.md#td-009), corregido en `fc/dev-d-frontend`);
+- el visor web arranca Phaser correctamente y pide el ticket ([TD-009](../roadmap/technical-debt.md#td-009), corregido en la integración del cierre funcional);
 - el worker recibe el MISMO secreto que la API (`jwt_secret` por fichero) y verifica los tickets; un test de compose exige esa coherencia ([TD-028](../roadmap/technical-debt.md#td-028), corregido en la rama, pendiente de despliegue);
 - las batallas duran segundos, así que casi nunca hay nada «en directo».
 
@@ -129,7 +129,7 @@ Detalle transversal en [security.md](security.md) (A).
 ## Estado actual
 
 - **FUNCIONA ACTUALMENTE**: emisión de tickets con sesión, protocolo del gateway y reconexión (cubiertos por tests: `spectator.e2e`, `gateway-hardening`, `j-fail-closed`).
-- **FUNCIONA ACTUALMENTE (rama `fc/dev-d-frontend`, entorno aislado)**: ticket firmado por la API verificado por el worker a través de TLS → gateway real → worker (sonda: `4404 battle_not_live` con el secreto compartido, `4401` con uno ajeno); el visor pide un ticket y explica el rechazo sin bucle.
+- **FUNCIONA ACTUALMENTE (integración `integration/functional-closure`, entorno aislado)**: ticket firmado por la API verificado por el worker a través de TLS → gateway real → worker (sonda: `4404 battle_not_live` con el secreto compartido, `4401` con uno ajeno); el visor pide un ticket y explica el rechazo sin bucle.
 - **PARCIAL**: directo con una batalla viva en navegador (falta una batalla ejecutándose: carriles A/B); el despliegue en producción no se ha tocado.
 - **PENDIENTE**: ritmo de tiempo real (o retardo) para que el directo tenga sentido.
 
@@ -142,7 +142,7 @@ Detalle transversal en [security.md](security.md) (A).
 
 ## Verificación
 
-Verificado contra `27f70bb`; filas FC-D contra `fc/dev-d-frontend` (base `0b8c12b`).
+Verificado contra `27f70bb`; filas FC-D contra los carriles del cierre funcional, integrados en `integration/functional-closure` (base `0b8c12b`).
 
 | Afirmación | Estado | Evidencia |
 |---|---|---|

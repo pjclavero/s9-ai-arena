@@ -232,7 +232,7 @@ Limitaciones:
 
 ## Verificación
 
-Verificado sobre la rama `fc/dev-b-battles` (base `0b8c12b`) y, tras la integración, sobre `integration/functional-closure` (filas marcadas REVIEW).
+Verificado sobre la integración del cierre funcional (`integration/functional-closure`) (base `0b8c12b`) y, tras la integración, sobre `integration/functional-closure` (filas marcadas REVIEW).
 
 | Afirmación | Estado | Evidencia |
 |---|---|---|

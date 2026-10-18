@@ -190,7 +190,7 @@ POST /api/v1/bots/<id>/versions/1/actions/clone   {}
 
 ## Verificación
 
-Verificado sobre la rama `fc/dev-a-bots` (base `0b8c12b`).
+Verificado sobre la integración del cierre funcional (`integration/functional-closure`) (base `0b8c12b`).
 
 | Afirmación | Estado | Evidencia |
 |---|---|---|

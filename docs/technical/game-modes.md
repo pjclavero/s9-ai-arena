@@ -223,7 +223,7 @@ En el visor, el HUD reconoce objetivos de bandera, zona y juggernaut (`apps/web/
 
 ## Verificación
 
-Verificado contra `27f70bb`. Las filas FC-C, en la rama `fc/dev-c-maps-teams` (base `0b8c12b`).
+Verificado contra `27f70bb`. Las filas FC-C, la integración del cierre funcional (`integration/functional-closure`) (base `0b8c12b`).
 
 | Afirmación | Estado | Evidencia |
 |---|---|---|

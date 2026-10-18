@@ -36,6 +36,7 @@ Verificada contra `27f70bb`.
 | [contributing.md](contributing.md) | cómo proponer cambios (PR, review, CODEOWNERS) |
 | [conventions.md](conventions.md) | idioma, commits, estilo de código y de documentación |
 | [contract-compatibility.md](contract-compatibility.md) | versionado y cambio de contratos (`protocol`, catálogo, mapas, OpenAPI) |
+| [functional-closure-report.md](functional-closure-report.md) | informe del cierre funcional 2026-10 (integración de los carriles A–D, golden path, deuda) |
 
 ## Reglas que no se negocian
 

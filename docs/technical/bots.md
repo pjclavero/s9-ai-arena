@@ -13,7 +13,7 @@ Para jugar, una versión tiene que pasar por tres pasos:
 2. la **publicación**, que el dueño hace a mano y la deja `published`;
 3. la ejecución en una batalla.
 
-**Estado actual (rama `fc/dev-a-bots`):**
+**Estado actual (integración `integration/functional-closure`):**
 
 - **Pipeline.** El código del usuario se ejecuta de verdad en un **contenedor** durante el build. Tres etapas lo hacen: `protocol_test`, `smoke_battle` y `resource_limits` (`ContainerBuildSandbox`).
   - Un bot válido llega a `validated` y, publicado por su dueño, a `published`.
@@ -212,7 +212,7 @@ Tablas `bots`, `bot_loadouts`, `loadout_modules`, `bot_versions`, `builds`, `art
 
 - **FUNCIONA ACTUALMENTE**: crear bot, guardar y recuperar loadouts (validación 422 con violaciones legibles), subir versiones, encolar y ejecutar el pipeline, y rechazos con motivo visible.
 - **PARCIAL**: visibilidad y edición sólo por API; código fuente sólo por API.
-- **FUNCIONA ACTUALMENTE (rama `fc/dev-a-bots`, verificado con Docker rootless local)**:
+- **FUNCIONA ACTUALMENTE (integración `integration/functional-closure`, verificado con Docker rootless local)**:
   - sandbox real en el build;
   - E2E crear → código → build → artefacto → `validated` → `published`;
   - controles negativos: source inválido, timeout de arranque, protocolo, crash, artefacto alterado, proxy caído y sin sandbox.
@@ -229,7 +229,7 @@ Tablas `bots`, `bot_loadouts`, `loadout_modules`, `bot_versions`, `builds`, `art
 
 ## Verificación
 
-Verificado contra `27f70bb`; filas del sandbox y del versionado, contra la rama `fc/dev-a-bots` (base `0b8c12b`).
+Verificado contra `27f70bb`; filas del sandbox y del versionado, contra la integración del cierre funcional (`integration/functional-closure`) (base `0b8c12b`).
 
 | Afirmación | Estado | Evidencia |
 |---|---|---|

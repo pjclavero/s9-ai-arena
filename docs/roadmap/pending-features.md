@@ -40,7 +40,7 @@ Lo que está roto **no** es una función pendiente: es deuda y está en [technic
 | Mejora | Qué existe hoy | Qué falta | Deuda / gate |
 |---|---|---|---|
 | Guardado del editor de mapas | API `saveMapDraft` (`x-min-role: user`) | que la web lo use, reabrir y duplicar | [TD-010](technical-debt.md#td-010) |
-| Ejecución real de batallas en contenedores | launcher HTTP API → arena-engine → proxy Docker cableado; flag `S9_ENABLE_REAL_BATTLE_RUNS` | activarla con el gate del Carril I tras resolver TD-002 | [TD-002](technical-debt.md#td-002) · [docs/operations/readiness.md](../operations/readiness.md) |
+| Ejecución real de batallas en producción | implementada e integrada: el `tournament-worker` ejecuta el artefacto firmado de cada bot (cierre funcional) | desplegar el compose de la integración con su gate (proxy del host, clave pública) | [TD-002](technical-debt.md#td-002) · [current-status.md](current-status.md#blocked) |
 | Espectador público | capability `S9_PUBLIC_SPECTATE_ENABLED` (apagada), `#/live`, `GET /public/battles/live` | gate del Carril J; TD-009 y TD-028 | [TD-028](technical-debt.md#td-028) |
 | Replays públicos | capability `S9_PUBLIC_REPLAYS_ENABLED` (apagada) | coherencia con el borde (TD-004) | [TD-004](technical-debt.md#td-004) |
 | Auto-run real de torneos y batallas desde la UI | ninguna pieza activa | bloqueado: requiere autorización del operador y validación en el host | — |

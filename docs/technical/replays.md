@@ -9,7 +9,7 @@ Lo escribe el `tournament-worker` usando la librería del replay-service. Lo sir
 - el **replay-service** por el gateway (`/replays/*`, **anónimo**);
 - la **API** (`/api/v1/replays/{id}`, `/verify`, y `/api/v1/public/replays*` detrás de una bandera apagada).
 
-**Gobernanza actual**: la API anuncia los replays públicos como apagados (`enabled:false`), pero el gateway sirve inventario y ficheros completos a cualquiera ([TD-004](../roadmap/technical-debt.md#td-004)). En la rama `fc/dev-d-frontend` la lista web ya no sufre la redirección 301 a `http://` ([TD-014](../roadmap/technical-debt.md#td-014)) y el reproductor web arranca y reproduce en navegador real ([TD-009](../roadmap/technical-debt.md#td-009)).
+**Gobernanza actual**: la API anuncia los replays públicos como apagados (`enabled:false`), pero el gateway sirve inventario y ficheros completos a cualquiera ([TD-004](../roadmap/technical-debt.md#td-004)). En la integración del cierre funcional (`integration/functional-closure`) la lista web ya no sufre la redirección 301 a `http://` ([TD-014](../roadmap/technical-debt.md#td-014)) y el reproductor web arranca y reproduce en navegador real ([TD-009](../roadmap/technical-debt.md#td-009)).
 
 ## Índice
 
@@ -115,7 +115,7 @@ Estado actual, no deseado:
 ## Estado actual
 
 - **FUNCIONA ACTUALMENTE**: generación e ingesta, índice, segmentos, descarga con `Range` y verificación por re-simulación (`matches:true` en la auditoría).
-- **FUNCIONA ACTUALMENTE (rama `fc/dev-d-frontend`, entorno aislado tras TLS)**: listar → abrir → cargar → canvas → ticks → pausa → fin en Chromium real; 502 del replay-service visible con «Reintentar».
+- **FUNCIONA ACTUALMENTE (integración `integration/functional-closure`, entorno aislado tras TLS)**: listar → abrir → cargar → canvas → ticks → pausa → fin en Chromium real; 502 del replay-service visible con «Reintentar».
 - **PENDIENTE**: gobernanza de acceso coherente con la bandera pública, retención programada y apertura de `debugOpen` por el dueño (no hay pantalla).
 
 ## Documentación relacionada
@@ -128,7 +128,7 @@ Estado actual, no deseado:
 
 ## Verificación
 
-Verificado contra `27f70bb`; filas FC-D contra `fc/dev-d-frontend` (base `0b8c12b`).
+Verificado contra `27f70bb`; filas FC-D contra los carriles del cierre funcional, integrados en `integration/functional-closure` (base `0b8c12b`).
 
 | Afirmación | Estado | Evidencia |
 |---|---|---|

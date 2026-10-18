@@ -173,7 +173,7 @@ POST /api/v1/maps/drafts (mapId de otro, como organizer) → 403 forbidden
 
 ## Errores / limitaciones
 
-- `POST /battles` no valida modo ↔ mapa hasta que B integre `checkBattleContent`. La web ya filtra.
+- `POST /battles` valida modo ↔ ruleset ↔ mapa con `checkBattleContent` (integración REVIEW, [TD-032](../roadmap/technical-debt.md#td-032)); la web además filtra.
 - No hay borrado de mapas ni de versiones.
 - `generateMap` sigue exigiendo `organizer`.
 - El editor no edita polígonos, materiales, la capa de navegación ni `maxChassisSize`, aunque los conserva si vienen en el documento. Los objetos se mueven con campos numéricos, no arrastrando.
@@ -192,7 +192,7 @@ POST /api/v1/maps/drafts (mapId de otro, como organizer) → 403 forbidden
 
 ## Verificación
 
-Verificado en la rama `fc/dev-c-maps-teams`, base `0b8c12b`.
+Verificado la integración del cierre funcional (`integration/functional-closure`), base `0b8c12b`.
 
 | Afirmación | Estado | Evidencia |
 |---|---|---|

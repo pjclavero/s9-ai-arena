@@ -5,10 +5,12 @@ equipa con módulos (chasis, armas, sensores, radio…) y lo enfrenta a otros en
 simulación 2D determinista. Las batallas se ven en directo o se repiten después como replay, y los
 torneos generan clasificaciones Elo.
 
-> **Estado actual (verificado el 2026-10-15 sobre `27f70bb`): NO es funcional de extremo a
-> extremo.** El motor, los torneos, el catálogo de equipamiento y gran parte de la plataforma
-> existen y están probados. Pero hoy ningún bot de usuario puede llegar a `published`, y las
-> batallas las juega un bot de relleno en lugar del código del usuario.
+> **Estado actual (2026-10-18).** En **producción** (sin cambios desde la auditoría sobre
+> `27f70bb`) **no es funcional de extremo a extremo**: ningún bot de usuario llega a `published` y
+> las batallas las juega un bot de relleno. El **cierre funcional** (rama
+> `integration/functional-closure`, aún sin fusionar ni desplegar) resuelve ese recorrido y lo
+> demuestra en un entorno aislado con navegador real: bot propio → build en sandbox → batalla con
+> su código → resultado, estadísticas y replay.
 > Detalle: [docs/roadmap/current-status.md](docs/roadmap/current-status.md).
 
 ## Qué es

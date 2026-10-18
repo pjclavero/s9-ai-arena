@@ -134,7 +134,7 @@ En desarrollo, `vite.config.ts` reenvía `/api/v1`, `/replays` (sin rewrite) y `
 
 ## Tests
 
-- **Unitarios** (vitest + jsdom, `apps/web/tests/`): 32 ficheros, 365 tests (rc=0 en `fc/dev-d-frontend`). `fc-d-ux-states.test.tsx` cubre plazo, clasificación, `ErrorState`/`FormError`, arranque con la API caída, 404, espera de escena con un juego falso que reproduce el orden de eventos de Phaser 4.2.1, rechazos terminales del espectador, `resolveWsUrl` y `summarizeBattle`.
+- **Unitarios** (vitest + jsdom, `apps/web/tests/`): 32 ficheros, 365 tests (rc=0 en el carril DEV-D). `fc-d-ux-states.test.tsx` cubre plazo, clasificación, `ErrorState`/`FormError`, arranque con la API caída, 404, espera de escena con un juego falso que reproduce el orden de eventos de Phaser 4.2.1, rechazos terminales del espectador, `resolveWsUrl` y `summarizeBattle`.
 - **E2E de navegador real**: ver la sección siguiente. Es la evidencia de Phaser real (los unitarios no la sustituyen).
 
 ## E2E de navegador
@@ -174,7 +174,7 @@ Navegador: `mcr.microsoft.com/playwright:v1.48.2-jammy@sha256:96dc479b…` (Chro
 
 ## Verificación
 
-Verificado contra la rama `fc/dev-d-frontend` (base `0b8c12b`).
+Verificado contra la integración del cierre funcional (`integration/functional-closure`) (base `0b8c12b`).
 
 | Afirmación | Estado | Evidencia |
 |---|---|---|
