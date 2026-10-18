@@ -73,13 +73,9 @@ export async function startDockerSandboxEnv(): Promise<DockerSandboxEnv> {
     decisions,
     async stop() {
       await new Promise<void>((r) => server.close(() => r()));
-      if (createdNetwork) {
-        try {
-          execFileSync("docker", ["network", "rm", "arena"], { stdio: "ignore" });
-        } catch {
-          /* algún contenedor colgado la retiene: no es fatal para el test */
-        }
-      }
+      // REVIEW · la red `arena` es COMPARTIDA con otros arneses de la máquina
+      // (COORD [B]): nunca se borra, aunque la haya creado este proceso.
+      void createdNetwork;
     },
   };
 }

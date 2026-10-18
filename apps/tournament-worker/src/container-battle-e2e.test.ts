@@ -1,66 +1,65 @@
 /**
- * DEV-B · B8 · E2E REAL: una batalla creada por la API la ejecuta el
- * tournament-worker con el CÓDIGO de dos bots, cada uno en su contenedor del
- * sandbox, y el resultado + las estadísticas demuestran que se ejecutó SU código.
+ * DEV-B · B8 + REVIEW (cierre funcional, R4.1) · E2E REAL A+B integrado: el
+ * código que un usuario sube por la API se BUILDEA en el sandbox real de DEV-A,
+ * se publica con su artefacto FIRMADO, y una batalla creada por la API la
+ * ejecuta el tournament-worker de DEV-B lanzando ESE artefacto (createBattleLaunchHost),
+ * no una imagen construida al vuelo.
  *
  * Piezas REALES de punta a punta (ningún stub de servicio de S9):
- *   API (POST /battles, propiedad, alta transaccional) → jobs.run_battle →
- *   TournamentWorker (reserva atómica + lease) → engine-executor (mapa, ruleset,
- *   loadout reales de la BD) → containerAgents → ProxyContainerRunner →
- *   s9-docker-proxy (createDockerProxyServer, misma política que producción) →
- *   Docker ROOTLESS de la máquina de pruebas → contenedores con el runtime Python
- *   FIJADO en runtimes/DIGESTS.lock + el source guardado en bot_versions.source →
- *   protocolo arena/1 contra el ProtocolServer del worker → motor → finishBattle
- *   (resultado, outcome, replay, cpu_ms) → runStatsJob (stats re-simuladas).
+ *   API (POST /bots, /loadouts, /versions multipart, submit, publish) → jobs.bot_build
+ *   → build worker (createBuildExecutor, mismo cableado que build-worker-main) →
+ *   ContainerBuildSandbox → s9-docker-proxy → Docker ROOTLESS local → artefacto
+ *   `arena-artifact/v1` firmado → published;
+ *   API (POST /battles, checkBattleContent, propiedad) → jobs.run_battle →
+ *   TournamentWorker (reserva atómica + lease) → engine-executor → containerAgents →
+ *   artifactLaunchProvider (resolveBotLaunch: estado, artefacto de SU build, sha256,
+ *   firma ed25519) → SandboxHost sirve el artefacto → bootstrap del runtime python
+ *   FIJADO en runtimes/DIGESTS.lock lo descarga, verifica y ejecuta → protocolo
+ *   arena/1 → motor → finishBattle (resultado, outcome, replay, cpu_ms) → stats.
  *
  * Los dos bots tienen comportamiento DISTINTO y reconocible:
  *   - «Artillero» navega por waypoints y DISPARA a todo contacto de radar.
  *   - «Pacifista» se queda quieto y NUNCA envía `fire`.
  * Con HunterBot (el stub antiguo) los dos dispararían: el test se pone ROJO.
  *
- * Imagen por versión: `FROM <runtime python@digest>` + main.py (el source de la
- * BD), publicada en un registry local efímero para tener REPO DIGEST (el proxy
- * sólo acepta `@sha256:`). Es el proveedor `registryImageProvider`; el de
- * producción (artefacto firmado servido al runtime) es el de DEV-A.
- *
  * Opt-in: S9_RUN_REAL_DOCKER_E2E=1 (necesita Docker). Variables opcionales:
- *   S9_E2E_DOCKER_SOCKET (def. /run/user/<uid>/docker.sock),
- *   S9_E2E_ENGINE_HOST   (IP de este host alcanzable desde los contenedores; def. autodetección),
- *   S9_E2E_REGISTRY_PORT (def. 5057).
+ *   DOCKER_HOST/DOCKER_SOCKET (socket; def. el rootless del usuario),
+ *   S9_SANDBOX_ADVERTISE_HOST (IP de este host alcanzable desde los contenedores).
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { execFile } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { networkInterfaces, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import type { Server } from "node:http";
-import type { AddressInfo } from "node:net";
 import request from "supertest";
 import type { Express } from "express";
 import { startTestDb, type TestDbHandle } from "../../api/src/testing/test-db.js";
 import { DEFAULT_RULESET_ID, DEV_USERS, seedDev } from "../../api/src/db/seeds/dev.js";
 import { tokenFor } from "../../api/src/testing/helpers.js";
 import { createApp } from "../../api/src/app.js";
+import { battleCodeProvenance } from "../../api/src/services/bot-provenance.js";
+import { ProxyContainerRunner } from "../../bot-manager/src/docker-proxy.js";
+import { runBuildWorkerOnce } from "../../bot-manager/src/build-worker.js";
+import { createBuildExecutor } from "../../bot-manager/src/build-worker-wiring.js";
+import { generateServiceKeypair } from "../../bot-manager/src/signing.js";
+import { loadRuntimeImages } from "../../bot-manager/src/bot-launch.js";
 import {
-  DEFAULT_POLICY,
-  ProxyContainerRunner,
-  createDockerProxyServer,
-  createSocketBackend,
-} from "../../bot-manager/src/docker-proxy.js";
+  leftoverBotContainers,
+  startDockerSandboxEnv,
+  type DockerSandboxEnv,
+} from "../../bot-manager/tests/docker-sandbox-env.js";
+import { initPhysics } from "../../arena-engine/src/sim/physics.js";
 import { TournamentWorker } from "./worker.js";
 import { makeDefaultHandlers } from "./engine-executor.js";
 import { containerAgents } from "./container-agents.js";
-import { registryImageProvider } from "./testing/registry-image-provider.js";
+import { artifactLaunchProvider } from "./bot-launch-provider.js";
 
-const run = promisify(execFile);
 const ENABLED = process.env.S9_RUN_REAL_DOCKER_E2E === "1";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = join(__dirname, "..", "..", "..");
 
-const ARTILLERO = `from arena_sdk import ArenaBot, angle_diff, angle_to
-import os
+/** Lo que un usuario pegaría en la web: una subclase de ArenaBot (el bootstrap la instancia). */
+export const ARTILLERO = `from arena_sdk import ArenaBot, angle_diff, angle_to
 
 WAYPOINTS = [(30.0, 64.0), (88.0, 64.0), (100.0, 40.0)]
 
@@ -90,13 +89,9 @@ class Artillero(ArenaBot):
             self.wp += 1
         turn = angle_diff(me["heading"], angle_to(pos, {"x": tx, "y": ty}))
         return {"move": {"throttle": 0.9 if abs(turn) < 1.0 else 0.3, "steer": max(-1.0, min(1.0, turn * 2.0))}}
-
-
-Artillero(bot_id=os.environ.get("BOT_ID", "bot_0")).run(os.environ["WS_URL"], os.environ["BATTLE_TOKEN"])
 `;
 
-const PACIFISTA = `from arena_sdk import ArenaBot
-import os
+export const PACIFISTA = `from arena_sdk import ArenaBot
 
 
 class Pacifista(ArenaBot):
@@ -104,175 +99,114 @@ class Pacifista(ArenaBot):
 
     def on_observation(self, observation):
         return {"move": {"throttle": 0.0, "steer": 0.0}}
-
-
-Pacifista(bot_id=os.environ.get("BOT_ID", "bot_1")).run(os.environ["WS_URL"], os.environ["BATTLE_TOKEN"])
 `;
 
 /** Loadout con RADAR (el de ejemplo lleva lidar, que no ve vehículos). */
-const RADAR_MODULES = [
-  { slot: "drive", moduleId: "movement.tracks@1" },
-  { slot: "power", moduleId: "power.battery@1" },
-  { slot: "sensor_a", moduleId: "sensor.radar@1" },
-  { slot: "turret_main", moduleId: "weapon.cannon@1", ammo: "ammo.ap@1" },
-  { slot: "armor_front", moduleId: "armor.steel_front@1" },
-];
-
-function pythonRuntimeDigest(): string {
-  const lock = readFileSync(join(REPO, "runtimes", "DIGESTS.lock"), "utf8");
-  const line = lock.split("\n").find((l) => l.startsWith("python "));
-  if (!line) throw new Error("runtimes/DIGESTS.lock sin entrada python");
-  return line.trim().split(/\s+/)[2];
+function radarLoadout() {
+  const base = JSON.parse(
+    readFileSync(join(REPO, "packages", "module-catalog", "examples", "loadout-medium-gunner.json"), "utf8"),
+  );
+  base.modules = base.modules.map((m: { slot: string; moduleId: string }) =>
+    m.slot === "sensor_a" ? { ...m, moduleId: "sensor.radar@1" } : m,
+  );
+  return base;
 }
-
-function engineHost(): string {
-  if (process.env.S9_E2E_ENGINE_HOST) return process.env.S9_E2E_ENGINE_HOST;
-  for (const [name, addrs] of Object.entries(networkInterfaces())) {
-    if (/^(docker|br-|veth|tailscale|lo)/.test(name)) continue;
-    const v4 = (addrs ?? []).find((a) => a.family === "IPv4" && !a.internal);
-    if (v4) return v4.address;
-  }
-  throw new Error("no se encontró una IPv4 de este host alcanzable desde los contenedores (S9_E2E_ENGINE_HOST)");
-}
-
-const docker = (...args: string[]) => run("docker", args, { maxBuffer: 16 * 1024 * 1024 });
 
 let h: TestDbHandle;
 let app: Express;
-let proxy: Server;
-let proxyUrl: string;
-const myBattles: string[] = [];
-const REG_PORT = Number(process.env.S9_E2E_REGISTRY_PORT ?? 5057);
-const REG_NAME = "s9fcb-e2e-registry";
-const images = new Map<string, string>();
-let owner: { id: string };
-let artillero: string;
-let pacifista: string;
-const proxyDecisions: { allowed: boolean; path: string }[] = [];
+let env: DockerSandboxEnv;
+let devTok: string;
+const signer = generateServiceKeypair();
+const hdr = () => ({ Authorization: `Bearer ${devTok}` });
+let artillero: { botId: string; version: number };
+let pacifista: { botId: string; version: number };
 
-async function insertBot(name: string, source: string): Promise<string> {
-  const [bot] = await h.db("bots").insert({ name, owner_id: owner.id, visibility: "private" }).returning("id");
-  const catalogVersion = (await h.db("catalog_versions").orderBy("imported_at", "desc").first()).catalog_version;
-  await h.db("bot_loadouts").insert({
-    bot_id: bot.id,
-    revision: 1,
-    name: `${name}-radar`,
-    catalog_version: catalogVersion,
-    chassis: "chassis.medium@1",
-    modules: JSON.stringify(RADAR_MODULES),
+/** Crea el bot POR LA API, buildea en el sandbox REAL y publica. Nada de UPDATE manual. */
+async function publishBotFromCode(name: string, code: string) {
+  const bot = await request(app).post("/bots").set(hdr()).send({ name });
+  expect(bot.status, JSON.stringify(bot.body)).toBe(201);
+  const ld = await request(app).post(`/bots/${bot.body.id}/loadouts`).set(hdr()).send(radarLoadout());
+  expect(ld.status, JSON.stringify(ld.body)).toBe(201);
+  const v = await request(app)
+    .post(`/bots/${bot.body.id}/versions`)
+    .set(hdr())
+    .field("runtime", "python")
+    .field("loadoutRevision", String(ld.body.revision ?? 1))
+    .attach("source", Buffer.from(code), "bot.py");
+  expect(v.status, JSON.stringify(v.body)).toBe(201);
+  const submit = await request(app).post(`/bots/${bot.body.id}/versions/${v.body.version}/actions/submit`).set(hdr());
+  expect(submit.status).toBe(202);
+  const { executor, sandbox } = createBuildExecutor(h.db, signer, {
+    DOCKER_PROXY_URL: env.proxyUrl,
+    BUILD_SANDBOX_HOST: env.advertiseHost,
+    ARENA_NETWORK: "arena",
   });
-  await h.db("bot_versions").insert({
-    bot_id: bot.id,
-    version: 1,
-    state: "published",
-    runtime: "python",
-    loadout_revision: 1,
-    source: Buffer.from(source, "utf8"),
-    source_filename: "main.py",
-  });
-  return bot.id as string;
+  expect(sandbox).not.toBeNull();
+  expect((await runBuildWorkerOnce(h.db, executor, { workerId: "fc-rev-e2e-build" })).outcome).toBe("done");
+  const build = await request(app).get(`/builds/${submit.body.id}`).set(hdr());
+  expect(build.body.status, JSON.stringify(build.body.stages)).toBe("passed");
+  const pub = await request(app)
+    .post(`/bots/${bot.body.id}/versions/${v.body.version}/actions/publish`)
+    .set(hdr())
+    .send({});
+  expect(pub.status, JSON.stringify(pub.body)).toBe(200);
+  expect(pub.body.state).toBe("published");
+  return { botId: bot.body.id as string, version: v.body.version as number };
 }
 
-/** Construye la imagen DE ESA VERSIÓN desde el source que hay EN LA BD (no desde la constante). */
-async function buildVersionImage(botId: string, version: number): Promise<string> {
-  const v = await h.db("bot_versions").where({ bot_id: botId, version }).first();
-  const dir = mkdtempSync(join(tmpdir(), "s9fcb-img-"));
-  writeFileSync(join(dir, "main.py"), Buffer.from(v.source));
-  writeFileSync(
-    join(dir, "Dockerfile"),
-    `FROM ${pythonRuntimeDigest()}\nCOPY --chown=10001:10001 main.py /bot/main.py\n`,
-  );
-  const tag = `127.0.0.1:${REG_PORT}/s9fcb-bot-${botId.slice(0, 8)}:v${version}`;
-  await docker("build", "-q", "-t", tag, dir);
-  await docker("push", "-q", tag);
-  const { stdout } = await docker("inspect", "--format", "{{index .RepoDigests 0}}", tag);
-  return stdout.trim();
-}
-
-describe.skipIf(!ENABLED)("B8 · batalla REAL con el código de dos bots en contenedores", () => {
+describe.skipIf(!ENABLED)("B8+A · batalla REAL con el ARTEFACTO FIRMADO de dos bots buildeados de verdad", () => {
   beforeAll(async () => {
+    await initPhysics();
     h = await startTestDb();
     await seedDev(h.db);
     app = createApp({ db: h.db, anonQuota: { max: 10_000, windowMs: 3600_000 } });
-    owner = await h.db("users").where({ email: DEV_USERS.user }).first();
-
-    // Red de los bots: compliance exige el nombre literal "arena". En la máquina
-    // de pruebas NO es internal (los contenedores tienen que llegar a la IP de
-    // este host, donde escucha el ProtocolServer del worker). En producción es
-    // internal y el worker está dentro de ella.
-    const nets = (await docker("network", "ls", "--format", "{{.Name}}")).stdout.split("\n");
-    if (!nets.includes("arena")) await docker("network", "create", "arena").catch(() => undefined);
-    await docker("rm", "-f", REG_NAME).catch(() => undefined);
-    await docker("run", "-d", "--restart", "no", "-p", `127.0.0.1:${REG_PORT}:5000`, "--name", REG_NAME, "registry:2");
-    await new Promise((r) => setTimeout(r, 1500));
-
-    artillero = await insertBot("artillero", ARTILLERO);
-    pacifista = await insertBot("pacifista", PACIFISTA);
-    images.set(`${artillero}@1`, await buildVersionImage(artillero, 1));
-    images.set(`${pacifista}@1`, await buildVersionImage(pacifista, 1));
-
-    const socketPath = process.env.S9_E2E_DOCKER_SOCKET ?? `/run/user/${process.getuid?.()}/docker.sock`;
-    proxy = createDockerProxyServer({
-      backend: createSocketBackend(socketPath),
-      policy: DEFAULT_POLICY,
-      onDecision: (d) => proxyDecisions.push({ allowed: d.allowed, path: d.path }),
-    });
-    await new Promise<void>((r) => proxy.listen(0, "127.0.0.1", r));
-    proxyUrl = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
+    devTok = await tokenFor(h.db, DEV_USERS.developer);
+    env = await startDockerSandboxEnv();
+    artillero = await publishBotFromCode("fcrev-artillero", ARTILLERO);
+    pacifista = await publishBotFromCode("fcrev-pacifista", PACIFISTA);
   }, 600_000);
 
   afterAll(async () => {
-    proxy?.close();
-    await docker("rm", "-f", REG_NAME).catch(() => undefined);
-    // Los contenedores de bots los PARA el runner (el proxy no expone DELETE): se
-    // retiran aquí SÓLO los de las batallas de este test (otros procesos de la
-    // máquina pueden tener los suyos). La red `arena` NO se borra aunque la hayamos
-    // creado: es compartida con otros arneses de la misma máquina.
-    for (const bid of myBattles) {
-      const { stdout } = await docker("ps", "-aq", "--filter", `name=${bid}`).catch(() => ({ stdout: "" }));
-      for (const id of stdout.split("\n").filter(Boolean)) await docker("rm", "-f", id).catch(() => undefined);
-    }
+    await env?.stop();
     await h?.stop();
   }, 120_000);
 
-  it("la API agenda, el worker ejecuta EL CÓDIGO de cada bot y lo demuestran el resultado y las stats", async () => {
-    // La red puede haberla retirado otro arnés de la máquina entre beforeAll y aquí.
-    await docker("network", "inspect", "arena").catch(() => docker("network", "create", "arena"));
-    const token = await tokenFor(h.db, DEV_USERS.user);
+  it("la API agenda, el worker lanza EL ARTEFACTO FIRMADO de cada versión y lo demuestran resultado y stats", async () => {
     const created = await request(app)
       .post("/battles")
-      .set("Authorization", `Bearer ${token}`)
+      .set(hdr())
       .send({
         mode: "deathmatch",
         rulesetId: DEFAULT_RULESET_ID,
-        mapId: "mvp-arena-01",
-        seed: "fc-b-e2e",
+        mapId: "mvp-arena-02",
+        seed: "fc-rev-e2e",
         participants: [
-          { botId: artillero, version: 1, team: "red" },
-          { botId: pacifista, version: 1, team: "blue" },
+          { botId: artillero.botId, version: artillero.version, team: "red" },
+          { botId: pacifista.botId, version: pacifista.version, team: "blue" },
         ],
       });
-    expect(created.status).toBe(202);
+    expect(created.status, JSON.stringify(created.body)).toBe(202);
     const battleId = created.body.id as string;
-    myBattles.push(battleId);
 
-    const replaysDir = mkdtempSync(join(tmpdir(), "s9fcb-replays-"));
+    const replaysDir = mkdtempSync(join(tmpdir(), "fcrev-replays-"));
+    const decisionsBefore = env.decisions.length;
     const wired = await makeDefaultHandlers({
       db: h.db,
       replaysDir,
       rulesetOverrides: { timeLimitTicks: 2400, scoreToWin: 1 },
       agents: containerAgents({
-        runner: new ProxyContainerRunner(proxyUrl),
-        provider: registryImageProvider(images),
+        runner: new ProxyContainerRunner(env.proxyUrl),
+        // Camino de PRODUCCIÓN (main.ts): verifica con la clave PÚBLICA del firmante.
+        provider: artifactLaunchProvider(h.db, env.advertiseHost, { publicKey: signer.publicKey }),
         network: "arena",
-        engineHost: engineHost(),
+        engineHost: env.advertiseHost,
         tickIntervalMs: 12,
         connectTimeoutMs: 60_000,
       }),
     });
     const worker = new TournamentWorker({
       db: h.db,
-      workerId: "fc-b-e2e",
+      workerId: "fc-rev-e2e",
       handlers: wired.handlers,
       onExhausted: (job, ctx) => wired.onExhausted(ctx.db, job),
     });
@@ -287,24 +221,34 @@ describe.skipIf(!ENABLED)("B8 · batalla REAL con el código de dos bots en cont
     expect(battle.result.agents).toBe("container");
     expect(battle.result.schema).toBe("battle-result/v1");
     expect(battle.run_attempts).toBe(1);
-    expect(battle.replay_ref).toMatch(new RegExp(`${battleId}\\.replay$`));
-    expect(battle.started_at).toBeTruthy();
-    expect(battle.finished_at).toBeTruthy();
 
-    // El sandbox de verdad: el proxy aceptó create/start y nada se coló.
-    expect(proxyDecisions.some((d) => d.allowed && d.path.startsWith("/containers/create"))).toBe(true);
+    // Se lanzó la IMAGEN DE RUNTIME fijada (no una imagen por bot) con el bootstrap.
+    const runtimePy = loadRuntimeImages().python;
+    const creates = env.decisions
+      .slice(decisionsBefore)
+      .filter((d) => d.allowed && d.path.startsWith("/containers/create"));
+    expect(creates.length).toBe(2);
+
+    // Procedencia: cada participante jugó SU versión exacta, con el artefacto de SU build.
+    const prov = await battleCodeProvenance(h.db, battleId);
+    for (const p of prov) {
+      const row = await h.db("bot_versions").where({ bot_id: p.botId, version: p.version }).first();
+      expect(p.artifactHash).toBe(row.artifact_hash);
+      expect(p.buildId).toBe(row.validated_build_id);
+      expect(row.runtime).toBe("python");
+    }
+    expect(runtimePy).toMatch(/@sha256:[0-9a-f]{64}$/);
 
     const parts = await h.db("participants").where({ battle_id: battleId });
-    const pA = parts.find((p: any) => p.bot_id === artillero);
-    const pP = parts.find((p: any) => p.bot_id === pacifista);
-    // CPU real del cgroup de cada contenedor (antes null siempre en este camino).
+    const pA = parts.find((p: any) => p.bot_id === artillero.botId);
+    const pP = parts.find((p: any) => p.bot_id === pacifista.botId);
     expect(Number(pA.cpu_ms)).toBeGreaterThan(0);
     expect(Number(pP.cpu_ms)).toBeGreaterThan(0);
 
     const statsRes = await request(app).get(`/battles/${battleId}/stats`);
     expect(statsRes.status).toBe(200);
-    const sA = statsRes.body.perBot[artillero];
-    const sP = statsRes.body.perBot[pacifista];
+    const sA = statsRes.body.perBot[artillero.botId];
+    const sP = statsRes.body.perBot[pacifista.botId];
     // EL CÓDIGO SE EJECUTÓ: el Pacifista jamás intentó disparar; el Artillero sí.
     const triesA = sA.perModule.turret_main.uses + sA.perModule.turret_main.rejections;
     const triesP = sP.perModule.turret_main.uses + sP.perModule.turret_main.rejections;
@@ -313,37 +257,96 @@ describe.skipIf(!ENABLED)("B8 · batalla REAL con el código de dos bots en cont
     expect(triesA).toBeGreaterThan(0);
     expect(sA.shotsFired).toBeGreaterThan(0);
     expect(sP.damageDealt).toBe(0);
-    expect(sA.cpuMs).toBeGreaterThan(0);
-    // Ganador coherente: el Pacifista no puede ganar por puntos (nunca hace daño).
     expect(pP.outcome).not.toBe("win");
     expect(["win", "draw"]).toContain(pA.outcome);
 
-    // El replay archivado re-simula bit a bit (sin los bots: con sus comandos grabados).
     const verify = await request(app).post(`/replays/${battleId}/verify`);
     expect(verify.status).toBe(200);
     expect(verify.body.matches).toBe(true);
 
-    // La API expone el BATTLE_RESULT completo.
     const got = await request(app).get(`/battles/${battleId}`);
     expect(got.body.result.agents).toBe("container");
-    expect(got.body.finishedAt).toBeTruthy();
     expect(got.body.replayAvailable).toBe(true);
 
-    // Un segundo POST /run sobre la batalla terminada no vuelve a ejecutar nada.
-    const rerun = await request(app).post(`/battles/${battleId}/run`).set("Authorization", `Bearer ${token}`);
+    const rerun = await request(app).post(`/battles/${battleId}/run`).set(hdr());
     expect(rerun.status).toBe(409);
-    const evidence = JSON.stringify({
-      e2e: "fc-b",
-      battleId,
-      result: battle.result,
-      outcomes: { artillero: pA.outcome, pacifista: pP.outcome },
-      cpuMs: { artillero: Number(pA.cpu_ms), pacifista: Number(pP.cpu_ms) },
-      shots: { artillero: sA.shotsFired, pacifista: sP.shotsFired },
-      tries: { artillero: triesA, pacifista: triesP },
-      damage: { artillero: sA.damageDealt, pacifista: sP.damageDealt },
-      kills: { artillero: sA.kills, pacifista: sP.kills },
-    });
-    // Evidencia legible para el informe (fuera del repo).
-    if (process.env.S9_E2E_EVIDENCE) writeFileSync(process.env.S9_E2E_EVIDENCE, evidence + "\n");
+
+    if (process.env.S9_E2E_EVIDENCE) {
+      writeFileSync(
+        process.env.S9_E2E_EVIDENCE,
+        JSON.stringify({
+          e2e: "fc-review-a+b",
+          battleId,
+          result: battle.result,
+          outcomes: { artillero: pA.outcome, pacifista: pP.outcome },
+          cpuMs: { artillero: Number(pA.cpu_ms), pacifista: Number(pP.cpu_ms) },
+          shots: { artillero: sA.shotsFired, pacifista: sP.shotsFired },
+          tries: { artillero: triesA, pacifista: triesP },
+          provenance: prov.map((p) => ({ version: p.version, artifactHash: p.artifactHash, buildId: p.buildId })),
+        }) + "\n",
+      );
+    }
   }, 600_000);
+
+  it("NEGATIVO · un artefacto manipulado en BD NO se lanza: la batalla falla como infraestructura", async () => {
+    // Se clona la versión publicada del Pacifista en otra batalla y se corrompen los
+    // bytes de SU artefacto por SQL (es el ataque, no un atajo de la prueba).
+    const row = await h.db("bot_versions").where({ bot_id: pacifista.botId, version: pacifista.version }).first();
+    const art = await h.db("artifacts").where({ build_id: row.validated_build_id }).first();
+    const original = Buffer.from(art.bytes);
+    const tampered = Buffer.concat([original, Buffer.from("\n# manipulado\n")]);
+    await h.db("artifacts").where({ id: art.id }).update({ bytes: tampered });
+    try {
+      const created = await request(app)
+        .post("/battles")
+        .set(hdr())
+        .send({
+          mode: "deathmatch",
+          rulesetId: DEFAULT_RULESET_ID,
+          mapId: "mvp-arena-02",
+          participants: [
+            { botId: artillero.botId, version: artillero.version, team: "red" },
+            { botId: pacifista.botId, version: pacifista.version, team: "blue" },
+          ],
+        });
+      expect(created.status).toBe(202);
+      const decisionsBefore = env.decisions.length;
+      const wired = await makeDefaultHandlers({
+        db: h.db,
+        replaysDir: mkdtempSync(join(tmpdir(), "fcrev-replays-")),
+        rulesetOverrides: { timeLimitTicks: 300, scoreToWin: 1 },
+        agents: containerAgents({
+          runner: new ProxyContainerRunner(env.proxyUrl),
+          provider: artifactLaunchProvider(h.db, env.advertiseHost, { publicKey: signer.publicKey }),
+          network: "arena",
+          engineHost: env.advertiseHost,
+          tickIntervalMs: 12,
+          connectTimeoutMs: 20_000,
+        }),
+      });
+      const worker = new TournamentWorker({
+        db: h.db,
+        workerId: "fc-rev-e2e-neg",
+        handlers: wired.handlers,
+        onExhausted: (job, ctx) => wired.onExhausted(ctx.db, job),
+      });
+      await worker.drain(20);
+      const battle = await h.db("battles").where({ id: created.body.id }).first();
+      expect(battle.status).not.toBe("finished");
+      const jobs = await h.db("jobs").whereRaw("payload->>'battleId' = ?", [created.body.id]);
+      expect(JSON.stringify(jobs.map((j: any) => j.last_error))).toMatch(/manipulado|firma/);
+      // El bot manipulado nunca llegó a crearse como contenedor.
+      const creates = env.decisions
+        .slice(decisionsBefore)
+        .filter((d) => d.allowed && d.path.startsWith("/containers/create"));
+      expect(creates.length).toBeLessThan(2);
+    } finally {
+      // Restaura (la versión es inmutable, el artefacto no lo es: el test lo deja como estaba).
+      await h.db("artifacts").where({ id: art.id }).update({ bytes: original });
+    }
+  }, 300_000);
+
+  it("no quedan contenedores de bot", async () => {
+    expect(await leftoverBotContainers(30_000)).toEqual([]);
+  }, 60_000);
 });

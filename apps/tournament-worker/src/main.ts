@@ -16,7 +16,9 @@ import { SpectateGateway } from "../../api/src/spectate/gateway.js";
 import { makeRunBattleHandler, markBattleForReview } from "./battle-runner.js";
 import { makeEngineExecutor } from "./engine-executor.js";
 import { containerAgents } from "./container-agents.js";
-import { loadArtifactLaunchProvider } from "./bot-launch-provider.js";
+import { artifactLaunchProvider } from "./bot-launch-provider.js";
+import { loadArtifactVerifyKey } from "../../bot-manager/src/bot-launch.js";
+import { DbArtifactLaunchGuard } from "../../bot-manager/src/launch-verify.js";
 import { ProxyContainerRunner } from "../../bot-manager/src/docker-proxy.js";
 import { RedisSignal } from "./redis-signal.js";
 import { handleGenerateSchedule, handleTournamentDryRun } from "./scheduler.js";
@@ -69,6 +71,7 @@ const spectate = new SpectateGateway({ port: spectatePort });
 // configuración del sandbox, este worker NO reclama `run_battle` (las batallas
 // se quedan `scheduled`, visibles como pendientes) en vez de jugarlas con
 // HunterBot. Lo dice al arrancar.
+let artifactGuard: DbArtifactLaunchGuard | undefined;
 async function buildExecutor() {
   const proxyUrl = process.env.DOCKER_PROXY_URL;
   const engineHost = process.env.ARENA_ENGINE_HOST;
@@ -76,7 +79,14 @@ async function buildExecutor() {
     return { executor: undefined, reason: "faltan DOCKER_PROXY_URL y/o ARENA_ENGINE_HOST" };
   }
   try {
-    const provider = await loadArtifactLaunchProvider(db, engineHost);
+    // REVIEW (R4.1) · clave PÚBLICA (ARTIFACT_VERIFY_KEY_FILE) y digests de runtime
+    // se cargan aquí: si faltan, el worker lo anuncia y no reclama run_battle.
+    const publicKey = loadArtifactVerifyKey();
+    const provider = artifactLaunchProvider(db, engineHost, { publicKey });
+    // R2.5 · verificación previa por participante: un artefacto manipulado
+    // DESCALIFICA a ese bot (walkover del íntegro) en vez de tumbar la batalla
+    // como fallo de infraestructura; el proveedor vuelve a verificar al lanzar.
+    artifactGuard = new DbArtifactLaunchGuard(db, publicKey);
     const executor = makeEngineExecutor({
       db,
       spectate,
@@ -112,7 +122,7 @@ if (process.env.REDIS_URL) {
 const worker = new TournamentWorker({
   db,
   handlers: {
-    ...(executor ? { run_battle: makeRunBattleHandler({ executor, replaysDir }) } : {}),
+    ...(executor ? { run_battle: makeRunBattleHandler({ executor, replaysDir, artifactGuard }) } : {}),
     generate_schedule: handleGenerateSchedule,
     process_result: handleProcessResult,
     update_standings: handleUpdateStandings,

@@ -245,10 +245,7 @@ export interface BattleLaunchHostOptions {
  * runtime fijada por digest + bootstrap que descarga y verifica el sha256). Nada
  * de imágenes construidas al vuelo ni de `artifact_hash` como imagen.
  */
-export async function createBattleLaunchHost(
-  db: Knex,
-  opts: BattleLaunchHostOptions,
-): Promise<BotBattleLaunchHost> {
+export async function createBattleLaunchHost(db: Knex, opts: BattleLaunchHostOptions): Promise<BotBattleLaunchHost> {
   const env = opts.env ?? process.env;
   const publicKey = opts.publicKey ?? loadArtifactVerifyKey(env);
   const runtimeImages = opts.runtimeImages ?? loadRuntimeImages(env);
