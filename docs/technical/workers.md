@@ -146,4 +146,4 @@ vivo, **no** que avance. Para ver el avance hay que consultar `jobs` (ver [docs/
 | Rechazo sin `agentResolver` | CODE_VERIFIED | `pipeline.ts:172,467-473`; `build-worker-main.ts:31` |
 | Bloqueo huérfano de 10 min | CODE_VERIFIED | `apps/bot-manager/src/build-worker.ts:52` |
 | Producción: 22 builds `failed` | RUNTIME_VERIFIED (en la auditoría) | consulta de sólo lectura a la BD |
-| TD-034 · dos relojes por bot en `containerAgents`; plataforma ⇒ infraestructura, bot ⇒ `bot_timeout`/`bot_crash` | CODE_VERIFIED + test (`prc/dev-sandbox`) | `container-agents.ts`; `container-agents-startup.test.ts` (8/8); mutaciones de reloj y clasificación → rojo |
+| TD-034 · dos relojes por bot en `containerAgents`; plataforma ⇒ infraestructura, bot ⇒ `bot_timeout`/`bot_crash` | CODE_VERIFIED + test (`integration/production-readiness`) | `container-agents.ts`; `container-agents-startup.test.ts` (8/8); mutaciones de reloj y clasificación → rojo |

@@ -4,7 +4,7 @@
 
 Cada batalla terminada deja un **replay**: el JSONL del motor, comprimido, más un índice. Se guarda **en disco** (volumen de replays). No hay tabla de replays: la BD sólo guarda la referencia en `battles.replay_ref` y `battles.replay_hash`.
 
-Lo escribe el `tournament-worker` usando la librería del replay-service. Desde la fase *Production Readiness* (2026-10, rama `prc/dev-sec`, **sin desplegar**) lo sirve **un solo camino** hacia el navegador:
+Lo escribe el `tournament-worker` usando la librería del replay-service. Desde la fase *Production Readiness* (2026-10, integración `integration/production-readiness`, **sin desplegar**) lo sirve **un solo camino** hacia el navegador:
 
 - la **API** (`/api/v1/replays`, `/api/v1/replays/{id}`, `/index`, `/segment`, `/verify` y `/api/v1/public/replays*`), que aplica la [política de acceso](#autorización-de-acceso-td-004) **antes** de abrir ningún fichero;
 - el **replay-service** queda **interno**: el gateway responde 404 en `/replays*` y sólo lo alcanza la red `platform` (ingesta del worker con su secreto, diagnóstico de operador).
@@ -126,7 +126,7 @@ Responde `{matches, valid, officialHash, recomputedHash, reason, divergedAtTick}
 
 ## Gobernanza actual
 
-- **Acceso** (rama `prc/dev-sec`, sin desplegar): una autoridad (la API) y el gateway cerrado en `/replays*`; ver [Autorización de acceso](#autorización-de-acceso-td-004). En producción sigue la apertura anónima hasta el despliegue ([TD-004](../roadmap/technical-debt.md#td-004)).
+- **Acceso** (integración `integration/production-readiness`, sin desplegar): una autoridad (la API) y el gateway cerrado en `/replays*`; ver [Autorización de acceso](#autorización-de-acceso-td-004). En producción sigue la apertura anónima hasta el despliegue ([TD-004](../roadmap/technical-debt.md#td-004)).
 - **Esquema**: ninguna respuesta de replay redirige; `absolute_redirect off` en cada `server` y `/replays` responde 404 sin `Location` ([TD-014](../roadmap/technical-debt.md#td-014)).
 - **Escritura**: la ingesta y el barrido están autenticados. El cuerpo se lee entero (hasta 64 MB) antes del 401.
 
@@ -141,7 +141,7 @@ Responde `{matches, valid, officialHash, recomputedHash, reason, divergedAtTick}
 
 - **FUNCIONA ACTUALMENTE**: generación e ingesta, índice, segmentos, descarga con `Range` y verificación por re-simulación (`matches:true` en la auditoría).
 - **FUNCIONA ACTUALMENTE (integración `integration/functional-closure`, entorno aislado tras TLS)**: listar → abrir → cargar → canvas → ticks → pausa → fin en Chromium real.
-- **IMPLEMENTADO, sin desplegar (rama `prc/dev-sec`)**: autorización de replays (TD-004) probada a través del gateway real y en navegador real; con el replay-service parado los replays siguen leyéndose (la API lee el volumen).
+- **IMPLEMENTADO, sin desplegar (integración `integration/production-readiness`)**: autorización de replays (TD-004) probada a través del gateway real y en navegador real; con el replay-service parado los replays siguen leyéndose (la API lee el volumen).
 - **PENDIENTE**: retención programada y apertura de `debugOpen` por el dueño (no hay pantalla).
 
 ## Documentación relacionada

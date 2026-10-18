@@ -67,7 +67,7 @@ que no quede en los logs de acceso. Ver [websocket.md](websocket.md).
 Hasta [TD-004](../roadmap/technical-debt.md#td-004), `/replays/` exponía a través del gateway
 **todas** las rutas del replay-service, incluidas las de lectura sin autenticación.
 
-Desde la rama `prc/dev-sec` (**sin desplegar**), `location = /replays` y `location /replays/`
+Desde la integración `integration/production-readiness` (**sin desplegar**), `location = /replays` y `location /replays/`
 responden **404** JSON, sin `Location` y para cualquier método. El navegador lee los replays por
 `/api/v1/replays/...`: la API es la única autoridad y aplica la política de acceso antes de
 entregar bytes ([replays.md](replays.md#autorización-de-acceso-td-004)). El replay-service sólo es

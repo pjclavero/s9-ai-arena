@@ -81,8 +81,8 @@ rootful del runner). Corre en paralelo con el resto de `ci.yml`.
 
 | Job | Qué ejecuta | Veredicto |
 |---|---|---|
-| `golden` | `npm run test:browser` completo (`tests/browser/run.sh`): fase golden (registro → bot A con build REAL en el sandbox → `published` → bot B → `published` → equipo → mapa → batalla → ejecución con los artefactos firmados en contenedores → visor en directo → `finished` → ganador → stats → replay reproducido), fases 1-3 y sonda TD-028 | rc de `run.sh` **y** `scripts/ci/assert-functional-e2e.mjs browser`: cada fase con ≥1 test y 0 `skipped`/`flaky`/fallidos; `agents=container`, gana `red`, el Artillero dispara y el Pacifista no; sonda 4404/4401 |
-| `docker-e2e` | `vitest run` de `build-sandbox-docker.test.ts`, `fc-a-bot-pipeline-e2e.test.ts` y `container-battle-e2e.test.ts` con `S9_RUN_DOCKER_SANDBOX_E2E=1` y `S9_RUN_REAL_DOCKER_E2E=1` | `assert-functional-e2e.mjs vitest`: los 3 ficheros presentes, `passed`, todos sus tests `passed` (un `describe.skipIf` sin opt-in ⇒ FALLA) |
+| `golden` | `npm run test:browser` completo (`tests/browser/run.sh`): fase golden (registro → bot A con build REAL en el sandbox → `published` → bot B → `published` → equipo → mapa → batalla → ejecución con los artefactos firmados en contenedores → visor en directo → `finished` → ganador → stats → replay reproducido por la API autorizada), fases 1-3 y sonda TD-028 | rc de `run.sh` **y** `scripts/ci/assert-functional-e2e.mjs browser`: cada fase con ≥1 test y 0 `skipped`/`flaky`/fallidos; `agents=container`, gana `red`, el Artillero dispara y el Pacifista no; el replay se leyó por `/api/v1/replays/<id>/index` y `/segment` (200) y **ninguna** petición fue a `/replays*` del gateway (TD-004); sonda 4404/4401 |
+| `docker-e2e` | `vitest run --maxWorkers=1` de `build-sandbox-docker.test.ts`, `build-sandbox-timing-docker.test.ts` (TD-034), `fc-a-bot-pipeline-e2e.test.ts`, `container-battle-e2e.test.ts` e `infrastructure/gateway/tests/replay-gateway.test.ts` (TD-004, nginx real fijado por digest) con `S9_RUN_DOCKER_SANDBOX_E2E=1`, `S9_RUN_REAL_DOCKER_E2E=1` y `S9_RUN_GATEWAY_SECURITY_E2E=1` | `assert-functional-e2e.mjs vitest`: los 5 ficheros presentes, `passed`, todos sus tests `passed` (un `describe.skipIf` sin opt-in ⇒ FALLA) |
 
 Entorno del job `golden` (todo en el runner, `127.0.0.1`, `$RUNNER_TEMP`):
 
@@ -105,7 +105,10 @@ Relojes (CI-7): cada paso tiene su `timeout-minutes` (deps 10, imágenes 15, E2E
 evidencia 3, limpieza 3; job 60) y Playwright conserva los suyos por fase (build 240 s por bot,
 golden 900 s). Las imágenes de runtime se descargan en un paso propio **antes** del E2E: el límite de
 arranque del bot (TD-034, código de DEV-SANDBOX) nunca mide un `docker pull`. No se ha subido ningún
-límite del código.
+límite del código: `run.sh` fija `SANDBOX_STARTUP_TIMEOUT_MS=30000` y `BOT_EXECUTION_TIMEOUT_MS=5000`
+para el tournament-worker y el bot-build-worker, los mismos defectos que el compose de producción y
+`startup-clock.ts`; `functional-e2e-gate.test.ts` (G6) exige que los tres coincidan y que el workflow
+no los sobrescriba.
 
 Evidencia (CI-8), artifact `functional-e2e-golden-<intento>` (también en verde, 14 días):
 `logs/` de cada servicio, `logs/containers/` (`docker ps -a` y `docker logs` de los contenedores
@@ -130,6 +133,18 @@ máquina compartida no lo uses (borra todos los `bot-*`).
 | #155 | `engine-executor.ts`: el executor de batalla lanza siempre | FAIL | FAIL | FAIL | `unit` |
 | #156 | `ReplayPage.tsx`: `getScene` sin esperar a READY (TD-009) | FAIL | PASS | FAIL | ninguno (`unit` verde) |
 | #157 | `functional-e2e` con `if: false` | skipped | skipped | FAIL (fila «obligatorio sin ejecutar») | `unit` (G1 lo detecta) |
+
+Calibración sobre la integración (REVIEW de Production Readiness, `integration/production-readiness`):
+
+| PR | Mutación | `golden` | `docker-e2e` | `semaforo` | Otros jobs rojos |
+|---|---|---|---|---|---|
+| #158 | ninguna (control positivo, HEAD `6a4c177`) | PASS | PASS (5 ficheros, 35 tests) | PASS | — |
+| #159 | gateway: `/replays*` vuelve a hacer `proxy_pass` al replay-service (bypass de TD-004) | FAIL (fase1, `replay.spec`) | FAIL (`replay-gateway.test.ts`, 3 rojos) | FAIL | `unit` (`replay-page-gateway-path.test.ts`) |
+| #160 | `ReplayPage.tsx`: el reproductor vuelve a leer `/replays/<id>/index` del gateway | FAIL (golden y fases 1-3) | PASS (no toca la web) | FAIL | ninguno (`unit` verde) |
+
+Además, el primer run de #158 (HEAD `84cfb3a`) salió ROJO en `docker-e2e`: `container-battle-e2e.test.ts`
+(opt-in, nunca ejecutado por DEV-SEC) verificaba el replay sin sesión y TD-004 lo deniega; corregido en
+`6a4c177`. Es la clase de regresión que este gate existe para ver.
 
 Los PR de calibración se cerraron y sus ramas se borraron.
 
