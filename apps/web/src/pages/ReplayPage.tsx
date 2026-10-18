@@ -95,7 +95,7 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
         if (!alive || !hostRef.current) return;
         // Primero el índice: si el replay no existe no se arranca el motor de render.
         // PRC (TD-004): por la API autorizada (ver REPLAY_API_BASE más arriba).
-        const player = new ReplayPlayer(httpReplaySource(REPLAY_API_BASE, battleId, replayApiFetch));
+        const player = new ReplayPlayer(httpReplaySource("", battleId));
         playerRef.current = player;
         try {
           await player.init(initialTick);
