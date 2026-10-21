@@ -244,10 +244,13 @@ probe_phase() {
   log "sondas fase $phase: $(jq -r 'map("\(.target)=\(.tcp // "?")/\(.http.status // "-")") | join(" ")' "$OUT/probes-$phase.json")"
 }
 
+# s9-firewall.sh de DEV-SECOPS (S9FW_*; sus defectos son las constantes del contrato). Se
+# fijan igualmente aquí para que el job pruebe EXACTAMENTE el contrato, y S9FW_CONF apunta
+# a un fichero inexistente: ninguna configuración del runner puede cambiar las reglas.
 firewall() { # firewall <apply|check|remove>
-  [ -x "$FIREWALL" ] || [ -f "$FIREWALL" ] || { echo "no existe $FIREWALL"; return 127; }
-  sudo -n env S9_FW_BRIDGE="$BRIDGE" S9_FW_SUBNET="$SUBNET" S9_FW_PROXY_IP="$GW_IP" S9_FW_PROXY_PORT="$PROXY_PORT" \
-    bash "$FIREWALL" "$1"
+  [ -f "$FIREWALL" ] || { echo "no existe $FIREWALL"; return 127; }
+  sudo -n env S9FW_CONF=/nonexistent S9FW_BRIDGE="$BRIDGE" S9FW_SUBNET="$SUBNET" S9FW_PROXY_IP="$GW_IP" \
+    S9FW_PROXY_PORT="$PROXY_PORT" bash "$FIREWALL" "$1"
 }
 
 pg_state() {
@@ -264,7 +267,7 @@ do_probes() {
   fa=$?
   firewall check >"$LOGS/firewall-check.log" 2>&1
   fc=$?
-  sudo -n iptables -S INPUT >"$LOGS/iptables-input.txt" 2>&1
+  { sudo -n iptables -S INPUT; sudo -n iptables -S S9-HOST-GUARD; } >"$LOGS/iptables-input.txt" 2>&1
   jq -n --argjson a $fa --argjson c $fc --arg s "$FIREWALL" '{script:$s, applyRc:$a, checkRc:$c}' >"$OUT/firewall.json"
   log "firewall: apply rc=$fa check rc=$fc"
   probe_phase B

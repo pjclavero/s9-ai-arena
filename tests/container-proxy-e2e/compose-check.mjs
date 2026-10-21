@@ -27,11 +27,13 @@ export const SUBNET = "10.89.250.0/24";
 export const GATEWAY = "10.89.250.1";
 export const PROXY_URL = "http://docker-proxy.internal:2375";
 /**
- * Consumidores del s9-docker-proxy: quien instancia ProxyContainerRunner / habla con
- * DOCKER_PROXY_URL (verificado en código por DEV-NET, N1). Lista EXPLÍCITA a propósito:
- * un servicio nuevo en `bot-control` tiene que pasar por aquí o el gate se pone ROJO.
+ * Consumidores del s9-docker-proxy: quien instancia ProxyContainerRunner (verificado en
+ * código por DEV-NET, N1, docs/operations/networking.md). `bot-manager` NO lo es: sólo exige
+ * la URL no vacía y la publica en /healthz; queda FUERA de bot-control (su URL es
+ * inalcanzable a propósito). Lista EXPLÍCITA: un servicio nuevo en `bot-control` tiene que
+ * pasar por aquí o el gate se pone ROJO.
  */
-export const CONSUMERS = ["arena-engine", "bot-build-worker", "bot-manager", "tournament-worker"];
+export const CONSUMERS = ["arena-engine", "bot-build-worker", "tournament-worker"];
 /** Los que ejecutan contenedores en los flujos reales del E2E (C3/C4). */
 export const EXECUTORS = ["bot-build-worker", "tournament-worker"];
 

@@ -451,7 +451,10 @@ function composeOk() {
       api: svc(["platform", "data"]),
       postgres: svc(["data"], { image: "postgres@sha256:" + "1".padEnd(64, "2") }),
       "arena-engine": consumer({ DOCKER_PROXY_URL: "" }),
-      "bot-manager": consumer(url),
+      "bot-manager": svc(["platform", "build"], {
+        extra_hosts: ["docker-proxy.internal=10.89.250.1"],
+        environment: url,
+      }),
       "bot-build-worker": consumer(url),
       "tournament-worker": consumer(url),
       backup: svc(["data", "public"]),
@@ -484,6 +487,10 @@ describe("C3 · compose-check.mjs juzga el compose resuelto", () => {
   });
   const casos: [string, (c: any, d: any) => void][] = [
     ["gateway en bot-control", (c) => (c.services.gateway.networks["bot-control"] = null)],
+    [
+      "bot-manager en bot-control (no consume el proxy)",
+      (c) => (c.services["bot-manager"].networks["bot-control"] = null),
+    ],
     ["bot-build-worker fuera de bot-control", (c) => delete c.services["bot-build-worker"].networks["bot-control"]],
     ["bot-control no interna", (c) => (c.networks["bot-control"].internal = false)],
     ["subred distinta", (c) => (c.networks["bot-control"].ipam.config[0].subnet = "172.30.0.0/16")],
