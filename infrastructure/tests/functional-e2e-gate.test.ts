@@ -146,7 +146,7 @@ describe("G3 · functional-e2e.yml ejecuta el E2E completo y activa el opt-in", 
     expect(d.find((s) => s.run?.includes("assert-functional-e2e.mjs vitest"))!.if).toBe("always()");
   });
 
-  it("docker-e2e activa los opt-in (sandbox, Docker real y gateway TD-004) y exige sus 5 ficheros", () => {
+  it("docker-e2e activa los opt-in (sandbox, Docker real y gateway TD-004) y exige sus 6 ficheros", () => {
     const env = FE.jobs["docker-e2e"].env;
     expect(env.S9_RUN_DOCKER_SANDBOX_E2E).toBe("1");
     expect(env.S9_RUN_REAL_DOCKER_E2E).toBe("1");
@@ -159,6 +159,8 @@ describe("G3 · functional-e2e.yml ejecuta el E2E completo y activa el opt-in", 
       "apps/bot-manager/tests/build-sandbox-docker.test.ts",
       // PRC REVIEW · TD-034: dos relojes con contenedores reales (SAN-5/6/7/9/10).
       "apps/bot-manager/tests/build-sandbox-timing-docker.test.ts",
+      // RC2 DEV-PROXY · proxy endurecido contra Docker real (allowlist, propiedad, cliente).
+      "apps/bot-manager/tests/docker-proxy-docker.test.ts",
       "apps/api/src/fc-a-bot-pipeline-e2e.test.ts",
       "apps/tournament-worker/src/container-battle-e2e.test.ts",
       // PRC REVIEW · TD-004: bypass del gateway sobre las confs reales.
