@@ -14,9 +14,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
-import { createRequire } from "node:module";
-// typescript es CJS: con require se obtiene el objeto completo (ScriptTarget, isX…).
-const ts = createRequire(import.meta.url)("typescript") as typeof import("typescript");
+import { stripTypeScriptTypes } from "node:module";
+import * as acorn from "acorn";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(here, "..", "..");
@@ -370,21 +369,30 @@ const PROXY_CONFIG = join(ROOT, "apps", "bot-manager", "src", "docker-proxy-conf
 const UNIT_ONLY = new Set(["DOCKER_PROXY_BRIDGE", "DOCKER_PROXY_BRIDGE_WAIT"]);
 const TEST_ONLY = new Set(["DOCKER_PROXY_INSECURE_BIND_FOR_TESTS"]);
 
+// Mismo método que service-env-contract.test.ts: tipos fuera (node:module) + AST de acorn.
+type AnyNode = { type: string; [k: string]: unknown };
 function envVarsReadBy(file: string): Set<string> {
-  const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+  const js = stripTypeScriptTypes(readFileSync(file, "utf8"));
+  const ast = acorn.parse(js, { ecmaVersion: "latest", sourceType: "module" }) as unknown as AnyNode;
+  const isEnvObject = (o: AnyNode) =>
+    (o.type === "Identifier" && o.name === "env") ||
+    (o.type === "MemberExpression" &&
+      (o.object as AnyNode).type === "Identifier" &&
+      (o.object as AnyNode).name === "process" &&
+      (o.property as AnyNode).name === "env");
   const out = new Set<string>();
-  const visit = (n: ts.Node) => {
-    // env.X / process.env.X / env["X"]
-    if (ts.isPropertyAccessExpression(n)) {
-      const obj = n.expression.getText(sf);
-      if (obj === "env" || obj === "process.env") out.add(n.name.text);
-    } else if (ts.isElementAccessExpression(n) && ts.isStringLiteral(n.argumentExpression)) {
-      const obj = n.expression.getText(sf);
-      if (obj === "env" || obj === "process.env") out.add(n.argumentExpression.text);
+  const visit = (n: unknown) => {
+    if (!n || typeof n !== "object") return;
+    if (Array.isArray(n)) return n.forEach(visit);
+    const node = n as AnyNode;
+    if (node.type === "MemberExpression" && isEnvObject(node.object as AnyNode)) {
+      const prop = node.property as AnyNode;
+      if (!node.computed && prop.type === "Identifier") out.add(prop.name as string);
+      else if (node.computed && prop.type === "Literal" && typeof prop.value === "string") out.add(prop.value);
     }
-    ts.forEachChild(n, visit);
+    for (const v of Object.values(node)) if (v && typeof v === "object") visit(v);
   };
-  visit(sf);
+  visit(ast);
   return out;
 }
 
