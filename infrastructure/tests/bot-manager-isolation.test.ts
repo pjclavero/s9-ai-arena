@@ -45,6 +45,13 @@ describe("R1.7 · aislamiento del bot-manager en el Compose", () => {
     expect(bm.networks).not.toContain("public");
   });
 
+  it("no está en bot-control (RC2): no es consumidor del s9-docker-proxy", () => {
+    // main.ts sólo exige DOCKER_PROXY_URL no vacía; no instancia
+    // ProxyContainerRunner (lo prueba por AST bot-control-network.test.ts).
+    // Sin la red, aunque se comprometa, no tiene ruta al proxy (ENETUNREACH).
+    expect(bm.networks).not.toContain("bot-control");
+  });
+
   it("no comparte ninguna red con postgres ni con backup", () => {
     // Nota: postgres-exporter (solo métricas) sí convive en platform; la BD y
     // el backup — los que custodian datos y credenciales restic — no.
@@ -87,6 +94,7 @@ describe("R1.7 · aislamiento del bot-manager en el Compose", () => {
     const cVols = (cbm.volumes ?? []).map((v: any) => (typeof v === "string" ? v : String(v.source)));
     expect(cVols.join("\n")).not.toMatch(/docker\.sock/);
     expect(Object.keys(cbm.networks ?? {})).not.toContain("data");
+    expect(Object.keys(cbm.networks ?? {})).not.toContain("bot-control");
     expect(cbm.secrets).toBeUndefined();
   });
 });

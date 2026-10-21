@@ -63,10 +63,10 @@ El compose define 22 servicios en total.
 | `gateway` | `${IMAGE_PREFIX}/gateway:${GATEWAY_TAG:-${TAG}}` (nginx 1.27) | 80, 443 (**publicados** como `HTTP_PORT`/`HTTPS_PORT`) | public, platform | `./gateway/${GATEWAY_CONF}` → `/etc/nginx/nginx.conf`, `./secrets/tls` | web, api |
 | `web` | `…/web` | 3000 | platform | — | — |
 | `api` | `…/api` | 8080 | platform, data | `arena_replays:/data/replays:ro` | queue, postgres |
-| `arena-engine` | `…/arena-engine` | 8081 | platform, arena | — | queue |
-| `tournament-worker` | `…/tournament-worker` | 8081 (espectador WS) | platform, data | `arena_replays:/data/replays` | queue, postgres |
+| `arena-engine` | `…/arena-engine` | 8081 | platform, arena, bot-control | — | queue |
+| `tournament-worker` | `…/tournament-worker` | 8081 (espectador WS) | platform, data, arena, bot-control | `arena_replays:/data/replays` | queue, postgres |
 | `bot-manager` | `…/bot-manager` | 8084 | platform, build | `arena_bot_sources`, `arena_build_cache` | queue |
-| `bot-build-worker` | `…/bot-manager` (misma imagen, otro entrypoint) | — | platform, build, data | `arena_bot_sources`, `arena_build_cache` | queue, postgres |
+| `bot-build-worker` | `…/bot-manager` (misma imagen, otro entrypoint) | — | platform, build, data, arena, bot-control | `arena_bot_sources`, `arena_build_cache` | queue, postgres |
 | `map-service` | `…/map-service` | 8082 | platform, data | `arena_maps`, `arena_assets:ro` | postgres |
 | `replay-service` | `…/replay-service` | 8083 | platform, data | `arena_replays` | postgres |
 | `queue` | `redis:7.4.9-alpine@sha256:6ab0…` | 6379 | platform | `queue_data:/data` | — |
@@ -86,6 +86,9 @@ por defecto antes de matar el proceso, lo que no basta a PostgreSQL ni a Redis e
 - `docker-proxy` **no** está en Compose: corre en el host como unidad systemd
   ([docker-proxy.md](docker-proxy.md)), porque es el único proceso con acceso al socket de Docker.
 - Los contenedores de bots se lanzan, a través de ese proxy, en la red `arena`.
+- Los servicios que lo consumen lo alcanzan por la red `bot-control` (`s9-bot-control`), en
+  `docker-proxy.internal` → `10.89.250.1` (`extra_hosts` con IP fija, nunca `host-gateway`):
+  [networking.md](networking.md#red-de-control-del-docker-proxy-bot-control).
 
 ## Volúmenes
 
@@ -113,7 +116,8 @@ por defecto antes de matar el proceso, lo que no basta a PostgreSQL ni a Redis e
 | `infrastructure_platform` | sí | casi todos | HTTP interno entre servicios |
 | `infrastructure_data` | sí | postgres y sus clientes | acceso a la base de datos |
 | `infrastructure_build` | sí | bot-manager, bot-build-worker | pipeline de build |
-| `arena` (nombre **explícito**, sin prefijo) | sí | arena-engine y contenedores de bots | partidas; sin salida a Internet |
+| `arena` (nombre **explícito**, sin prefijo) | sí | arena-engine, tournament-worker, bot-build-worker y contenedores de bots | partidas y sandbox del build; sin salida a Internet |
+| `s9-bot-control` (nombre **explícito**; bridge `s9-botctl0`; `10.89.250.0/24`, gateway `10.89.250.1`) | sí | arena-engine, tournament-worker, bot-build-worker | **sólo** control del s9-docker-proxy del host ([networking.md](networking.md#red-de-control-del-docker-proxy-bot-control)) |
 
 Puede existir además una red `infrastructure_arena` huérfana de una versión anterior; ningún
 servicio la usa.
@@ -188,6 +192,7 @@ $DC restart web
 | Servicios por perfil (production 12, nucleo 7, total 22) | RUNTIME_VERIFIED | `docker compose -f infrastructure/docker-compose.yml --profile <p> config --services` |
 | `external-db` sin postgres; `development` sin backup | CODE_VERIFIED | `profiles:` de cada servicio en el compose |
 | Nombres reales `infrastructure_*` y red `arena` | RUNTIME_VERIFIED | `docker compose … config` (bloques `name:`) |
+| Red `s9-bot-control` (internal, bridge, subred y gateway fijos) y sus tres miembros | CODE_VERIFIED | `docker compose … config --format json`, comprobado en `infrastructure/tests/bot-control-network.test.ts` |
 | Imágenes de postgres y queue por digest | CODE_VERIFIED | `infrastructure/docker-compose.yml` servicios `postgres`, `queue` |
 | Ningún servicio define `stop_grace_period` | CODE_VERIFIED | compose parseado: 0 servicios con la clave |
 | Healthchecks de la tabla | CODE_VERIFIED | `healthcheck:` de cada servicio |
