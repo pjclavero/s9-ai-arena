@@ -107,11 +107,13 @@ describe("6.1 · perfiles", () => {
   });
 });
 
-describe("6.4 · las cinco redes y sus reglas", () => {
-  it("existen public, platform, arena, build y data; solo public tiene salida", () => {
-    expect(Object.keys(doc.networks).sort()).toEqual(["arena", "build", "data", "platform", "public"]);
+describe("6.4 · las redes y sus reglas (cinco del dosier + bot-control de la RC2)", () => {
+  it("existen public, platform, arena, build, data y bot-control; solo public tiene salida", () => {
+    // bot-control (RC2): red de control del s9-docker-proxy. Su contrato completo
+    // (subred, bridge, miembros por código) vive en bot-control-network.test.ts.
+    expect(Object.keys(doc.networks).sort()).toEqual(["arena", "bot-control", "build", "data", "platform", "public"]);
     expect(doc.networks.public.internal).toBeUndefined();
-    for (const n of ["platform", "arena", "build", "data"]) {
+    for (const n of ["platform", "arena", "build", "data", "bot-control"]) {
       expect(doc.networks[n].internal, `${n} debe ser internal`).toBe(true);
     }
   });

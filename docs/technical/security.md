@@ -109,7 +109,9 @@ Todas las claves usan `req.ip`. Con un salto de proxy sin contar, colapsan en un
 | Firma | artefactos firmados con `artifact_signing_key`; sin clave, el worker no arranca | FUNCIONA (sin artefactos todavía) |
 | Verificación antes de lanzar | `artifactGuard` en el worker | **no cableado** ([TD-015](../roadmap/technical-debt.md#td-015)) |
 | Contenedores de bot | sólo la red `arena` (sin ruta a BD, Redis ni API), `read_only`, `cap_drop: ALL`, `no-new-privileges`, límites de CPU, memoria y `pids`; imágenes de runtime fijadas por digest | definido; no se ejecuta hoy |
-| Acceso a Docker | ningún contenedor monta `docker.sock`. El proxy del host (`s9-docker-proxy`, en loopback por defecto) sólo permite crear, arrancar, parar, inspeccionar y ver estadísticas, y rechaza `privileged`, bind-mounts, red del host y cambio de usuario | definido; sin uso activo |
+| Acceso a Docker | ningún contenedor monta `docker.sock`. El proxy del host (`s9-docker-proxy`) sólo permite crear, arrancar, parar, inspeccionar y ver estadísticas, y rechaza `privileged`, bind-mounts, red del host y cambio de usuario. RC2 añade: bind obligatorio (nunca comodín, `docker0` ni `host-gateway`), **control del cliente por IP de origen** (`DOCKER_PROXY_ALLOWED_CLIENTS`, sólo la subred de `bot-control`), **allowlist de imágenes** (3.ª columna de `runtimes/DIGESTS.lock`), **propiedad por labels impuestas** (`s9.managed`, `s9.proxy.instance`; un contenedor ajeno como `postgres` → 403) y límites obligatorios. Ver [docker-proxy.md](../operations/docker-proxy.md#política-rc2) | código y tests (en proceso y Docker real); despliegue pendiente |
+| Alcance del proxy (RC2, tres capas independientes) | (a) red `bot-control` (`internal`, sólo los tres consumidores; [networking.md](../operations/networking.md#red-de-control-del-docker-proxy-bot-control)); (b) firewall de host `S9-HOST-GUARD`: 2375 sólo desde `s9-botctl0` + `10.89.250.0/24`, y DROP de sshd desde los bridges de Docker ([firewall.md](../operations/firewall.md)); (c) control de cliente en el proxy, que además excluye la IP de bind y las direcciones locales del host | integrado; medido en el stack Compose real por `container-proxy-e2e` (gateway/backup ⇒ 403 sin firewall, TIMEOUT con él); sin aplicar en producción ([TD-053](../roadmap/technical-debt.md#td-053)) |
+| Seccomp de los bots | `apps/bot-manager/security/seccomp-bot.json`, `defaultAction` ERRNO; desde RC2 incluye `sendmmsg` (sin él glibc no resuelve nombres y el bot no descarga su artefacto, [TD-061](../roadmap/technical-debt.md#td-061)) | integrado; test estático + Docker real por nombre |
 | Verificación de no-privilegios | `infrastructure/scripts/scan-compose.mjs` en CI; `sandbox-escape-suite.test.ts`; job `sandbox-escape` en `e6-security.yml` | FUNCIONA en CI |
 
 **Señal `ready` del sandbox ([TD-034](../roadmap/technical-debt.md#td-034)).** `SandboxHost` expone, además de
@@ -198,7 +200,7 @@ Las vulnerabilidades se reportan al responsable del repositorio, no en issues p�
 | Bypass del gateway con nginx real (conf del repo, API y replay-service reales) | `infrastructure/gateway/tests/replay-gateway.test.ts` (opt-in `S9_RUN_GATEWAY_SECURITY_E2E=1`, Docker; obligatorio en el job `functional-e2e / docker-e2e` de CI) |
 | Sandbox | `apps/bot-manager/tests/sandbox-escape-suite.test.ts` y `tests/sandbox-escape/` |
 | Análisis estático y secretos | `static-analysis`, `secret-scan` |
-| Proxy de Docker y lanzamiento | `docker-proxy`, `launch-guard`, `digest-guard` |
+| Proxy de Docker y lanzamiento | `docker-proxy`, `cpu-ms`, `launch-guard`, `digest-guard`; contra Docker real `docker-proxy-docker.test.ts` (opt-in `S9_RUN_DOCKER_SANDBOX_E2E=1`) |
 | Aislamiento de bot-manager | `infrastructure/tests/bot-manager-isolation.test.ts` |
 | Escaneo del compose | `scan-compose.test.ts` |
 
@@ -230,7 +232,7 @@ Mutaciones medidas en la auditoría:
 | Límites y bloqueo | CODE_VERIFIED | `apps/api/src/app.ts:126-151`; `middleware/shared-rate-limit.ts:118-121` |
 | Cabeceras de la API | CODE_VERIFIED | `apps/api/src/middleware/context.ts:28-31` |
 | Contenedor de bot restringido | CODE_VERIFIED | `infrastructure/docker-compose.yml`, servicio `bot-runtime-template` |
-| Proxy de Docker en loopback por defecto | CODE_VERIFIED | `apps/bot-manager/src/docker-proxy-main.ts:19-25` |
+| Proxy de Docker: bind obligatorio que falla cerrado, control de cliente, allowlist de imágenes y propiedad por labels | CODE_VERIFIED + TEST (mutación: cada control retirado ⇒ rojo) | `apps/bot-manager/src/docker-proxy.ts`, `docker-proxy-config.ts`; `apps/bot-manager/tests/docker-proxy.test.ts`, `docker-proxy-docker.test.ts` |
 | Secretos y consumidores | CODE_VERIFIED | `infrastructure/docker-compose.yml` (`secrets:` de cada servicio y bloque `secrets:`) |
 | Clave HKDF de tickets | CODE_VERIFIED | `apps/api/src/auth/tokens.ts:92-97` |
 | `/run` 503 con la flag apagada | CODE_VERIFIED | `apps/api/src/routes/battles.ts:595-600` |

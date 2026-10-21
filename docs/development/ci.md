@@ -13,6 +13,7 @@ real (`functional-e2e`) es un job obligatorio del semáforo.
 - [`ci.yml`](#ciyml)
 - [El semáforo](#el-semáforo)
 - [Gate funcional: `functional-e2e`](#gate-funcional-functional-e2e)
+  - [Job `container-proxy-e2e` (RC2)](#job-container-proxy-e2e-rc2)
 - [Protección de rama](#protección-de-rama)
 - [`deploy-staging` y `smoke-and-promote`](#deploy-staging-y-smoke-and-promote)
 - [`nightly.yml`](#nightlyyml)
@@ -51,7 +52,7 @@ Node `22.15` en todos los jobs (`NODE_VERSION`).
 | `image-provenance` | — | ADR-016: control positivo y negativo de procedencia de imagen, deriva de image ID, compose canónico, contrato de despliegue, backup-stack, override de versión, release-gate (con sus mutantes) |
 | `scan` | build-images | `npm audit`, escaneo del compose y Trivy, clasificados por `scan-gate.mjs` (ADR-018) |
 | `e2e-mvp` | — | `vitest run tests/e2e` |
-| `functional-e2e` | — | reusable `functional-e2e.yml`: jobs `golden` y `docker-e2e` ([abajo](#gate-funcional-functional-e2e)); sin `if:` ni `continue-on-error` |
+| `functional-e2e` | — | reusable `functional-e2e.yml`: jobs `golden`, `docker-e2e` y `container-proxy-e2e` ([abajo](#gate-funcional-functional-e2e)); sin `if:` ni `continue-on-error` |
 | `deploy-staging` | scan, e2e-mvp | sólo en `main`; ver abajo |
 | `smoke-and-promote` | deploy-staging | sólo en `main`; environment `production` con aprobación manual |
 | `semaforo` | todos | `if: always()`; veredicto del run |
@@ -82,7 +83,7 @@ rootful del runner). Corre en paralelo con el resto de `ci.yml`.
 | Job | Qué ejecuta | Veredicto |
 |---|---|---|
 | `golden` | `npm run test:browser` completo (`tests/browser/run.sh`): fase golden (registro → bot A con build REAL en el sandbox → `published` → bot B → `published` → equipo → mapa → batalla → ejecución con los artefactos firmados en contenedores → visor en directo → `finished` → ganador → stats → replay reproducido por la API autorizada), fases 1-3 y sonda TD-028 | rc de `run.sh` **y** `scripts/ci/assert-functional-e2e.mjs browser`: cada fase con ≥1 test y 0 `skipped`/`flaky`/fallidos; `agents=container`, gana `red`, el Artillero dispara y el Pacifista no; el replay se leyó por `/api/v1/replays/<id>/index` y `/segment` (200) y **ninguna** petición fue a `/replays*` del gateway (TD-004); sonda 4404/4401 |
-| `docker-e2e` | `vitest run --maxWorkers=1` de `build-sandbox-docker.test.ts`, `build-sandbox-timing-docker.test.ts` (TD-034), `fc-a-bot-pipeline-e2e.test.ts`, `container-battle-e2e.test.ts` e `infrastructure/gateway/tests/replay-gateway.test.ts` (TD-004, nginx real fijado por digest) con `S9_RUN_DOCKER_SANDBOX_E2E=1`, `S9_RUN_REAL_DOCKER_E2E=1` y `S9_RUN_GATEWAY_SECURITY_E2E=1` | `assert-functional-e2e.mjs vitest`: los 5 ficheros presentes, `passed`, todos sus tests `passed` (un `describe.skipIf` sin opt-in ⇒ FALLA) |
+| `docker-e2e` | `vitest run --maxWorkers=1` de `build-sandbox-docker.test.ts`, `build-sandbox-timing-docker.test.ts` (TD-034), `docker-proxy-docker.test.ts` (RC2, proxy endurecido contra Docker real), `seccomp-bot-dns.test.ts` (RC2, el bot resuelve por nombre con su seccomp), `fc-a-bot-pipeline-e2e.test.ts`, `container-battle-e2e.test.ts` e `infrastructure/gateway/tests/replay-gateway.test.ts` (TD-004, nginx real fijado por digest) con `S9_RUN_DOCKER_SANDBOX_E2E=1`, `S9_RUN_REAL_DOCKER_E2E=1` y `S9_RUN_GATEWAY_SECURITY_E2E=1` | `assert-functional-e2e.mjs vitest`: los 7 ficheros presentes, `passed`, todos sus tests `passed` (un `describe.skipIf` sin opt-in ⇒ FALLA) |
 
 Entorno del job `golden` (todo en el runner, `127.0.0.1`, `$RUNNER_TEMP`):
 
@@ -123,6 +124,58 @@ Limpieza (CI-9): `scripts/ci/cleanup-functional-e2e.sh` con `if: always()` borra
 con el prefijo del run (`s9ci-<run>-<intento>-*`), los de bot residuales, sus volúmenes anónimos y
 el estado temporal; los services los retira el runner. Pensado para el runner efímero: en una
 máquina compartida no lo uses (borra todos los `bot-*`).
+
+### Job `container-proxy-e2e` (RC2)
+
+Por qué (RC1 `DEPLOYMENT_BLOCKED`, REVIEW P0-3, TD-052): `golden` y `docker-e2e` corren los
+servicios como procesos del runner y hablan con el proxy por `127.0.0.1`; nunca ejercitaron
+**contenedor en red interna → proxy del host**, que en producción daba `ENETUNREACH` mientras el
+gateway público sí lo alcanzaba. Este job lo prueba con el stack real, en `ubuntu-24.04` (Docker
+rootful, `sudo`):
+
+| Fase (`tests/container-proxy-e2e/run.sh <fase>`) | Qué hace |
+|---|---|
+| `prepare` | secretos efímeros con `init-secrets.sh`; `docker compose config --format json` del perfil `production` con el entorno del job y **sin** `DOCKER_PROXY_URL` (defectos); `compose-check.mjs` juzga el render; cuerpos de create con `ProxyContainerRunner.buildCreateBody` (`make-bodies.ts`) |
+| `build` | imágenes de gateway, web, api, arena-engine, tournament-worker, bot-manager (también bot-build-worker), map-service y replay-service **desde el commit** (`BUILD_COMMIT=github.sha`, `s9cpx-local/*:ci-<sha>`; nunca se descargan de GHCR) |
+| `up` | `up --no-start` (crea `s9-bot-control` y su bridge con `10.89.250.1`) → `s9-docker-proxy` como **proceso del host** con `DOCKER_PROXY_BIND=10.89.250.1`, `DOCKER_PROXY_ALLOWED_CLIENTS=10.89.250.0/24` y la allowlist `runtimes/DIGESTS.lock` → postgres/queue → `cli.ts bootstrap` (nunca `seed`) → aplicación con `--wait`; exige `battleExecution=container` y `sandbox=container` |
+| `probes` | sonda (`probe.mjs`, en `--network container:<objetivo>`) desde **cada** contenedor del stack y dos equivalentes declarados (backup en sus mismas redes; un «bot» sólo en `arena`): fase A **sin** firewall y fase B **con** el firewall de DEV-SECOPS; escucha del proxy |
+| `flow` | `flow.mjs` por la API pública del gateway: registro → 2 bots con código → builds → `published` → mapa propio → batalla → `finished` → stats → replay |
+| `policy` | política desde `bot-build-worker` (consumidor legítimo). Va **después** del flujo: con un proxy sin control de propiedad estas peticiones paran de verdad postgres y el gateway (visto en la calibración) |
+| `evidence`, `cleanup` | `if: always()`; logs, eventos y redes saneadas; luego proxy parado, firewall retirado, `down -v` |
+
+Veredicto (`scripts/ci/assert-container-proxy-e2e.mjs <out> <commit>`, `if: always()`): una fase
+que no corrió deja su fichero ausente y **falla**.
+
+| Regla | Exige |
+|---|---|
+| R1 | compose resuelto según el contrato RC2: red `bot-control` (`s9-bot-control`, interna, `s9-botctl0`, `10.89.250.0/24`), miembros = consumidores, alias a `10.89.250.1`, sin 2375/docker.sock/privileged, `tournament-worker` apagado por defecto |
+| R2-R3 | imágenes con `revision` = commit; consumidores en `s9-bot-control` con IP de la subred; ejecutores reales |
+| R4-R5 | proxy escuchando **sólo** en `10.89.250.1:2375`; firewall `apply` y `check` con rc 0 |
+| R6 | consumidor ⇒ `ACCESS` (create válido 201); no consumidor sólo en redes internas ⇒ sin ruta; gateway y backup (red no interna) ⇒ fase A **el proxy deniega** (403/cierre, capa c), fase B **no conectan** (capa b) |
+| R7 | desde un consumidor legítimo: imagen ajena, base de `DIGESTS.lock`, digest fuera del lock y labels `s9.*` forjadas ⇒ 403; stop/start/inspect/stats de postgres (por id y nombre) y stop del gateway ⇒ 403; postgres sigue con el mismo arranque; lo creado por el proxy lleva sus labels y se puede inspeccionar |
+| R8 | 2 builds `passed` → `published`; batalla `finished`, `agents=container`, gana red, blue 0 intentos; replay por `/api/v1/replays` 200 y `/replays*` del gateway 404 |
+| R9 | eventos de Docker: ≥2 contenedores de runtime vía proxy en los builds y ≥2 en la batalla; todo create es del Compose, del arnés o del proxy (un create sin labels = bypass) |
+
+Evidencia: artifact `functional-e2e-container-proxy-<intento>` (compose config, `compose-check`,
+`services.json`, sondas, política, `flow.json`, eventos, redes, logs del proxy y de cada contenedor;
+`collect-functional-evidence.sh` retira cualquier fichero con material secreto). Hacerlo check
+obligatorio de `main` lo decide REVIEW.
+
+Calibración en CI real (2026-10-21, `workflow_dispatch` sobre la integración de los carriles RC2,
+mutación en ramas `rc2/calib-*` ya borradas):
+
+| Run | Sujeto | `container-proxy-e2e` | Filas en ROJO (motivo) |
+|---|---|---|---|
+| 39612406545 | integración `5ca7f5c` (control positivo) | PASS (108/108) | — |
+| 39612416596 | M1: `bot-build-worker` sin `bot-control` | FAIL (32) | R1 miembros; R2; R6 `bot-build-worker` sin ruta; R10; R7 sin acceso; R8 build `failed` |
+| 39612425927 | M2: `gateway` en `bot-control` | FAIL (5) | R1 miembros (`extra: gateway`); R6 gateway `ACCESS` en A y B (atraviesa red, firewall y cliente); R10 |
+| 39612436211 | M3: allowlist de imágenes desactivada | FAIL (4) | R7 imagen de postgres 201, base/digest ajeno 404 (reenviados a Docker); R9 el proxy creó una imagen fuera del lock |
+| 39612444865 | M4: propiedad desactivada | FAIL (6) | R7 stop/start de postgres 204, inspect/stats 200, stop del gateway 204; postgres con otro arranque |
+
+Control natural: antes del arreglo de DEV-PROXY (`483b05d`, `sendmmsg` en `seccomp-bot.json`)
+el job estaba ROJO en R8 por un defecto REAL que ninguna otra prueba veía: con el perfil seccomp del
+bot, glibc no resolvía `bot-build-worker`/`tournament-worker` (`EAI_AGAIN`, el bootstrap salía con
+código 3 sin descargar el artefacto). El golden y los E2E de vitest anuncian una IP, no un nombre.
 
 ### Calibración en CI real (2026-10-18)
 
@@ -177,14 +230,14 @@ funcional falla:
 
 | Regla | Valor |
 |---|---|
-| Checks obligatorios | `semaforo` · `functional-e2e / golden (navegador real + build y batalla reales)` · `functional-e2e / docker-e2e (sandbox real + build → published + batalla A+B)` |
+| Checks obligatorios | `semaforo` · `functional-e2e / golden (navegador real + build y batalla reales)` · `functional-e2e / docker-e2e (sandbox real + build → published + batalla A+B)` · `functional-e2e / container-proxy-e2e (stack Compose real → bot-control → s9-docker-proxy → batalla)` (desde RC2, 2026-10-21) |
 | Origen de los checks | GitHub Actions (`app_id` 15368): otro integrador con el mismo nombre no los satisface |
 | Rama al día con `main` | obligatoria (`strict`) |
 | Pull request | obligatorio; 0 aprobaciones (un solo desarrollador: GitHub no deja aprobar el PR propio) |
 | Administradores | **incluidos** (`enforce_admins`): `gh pr merge --admin` también queda bloqueado |
 | Force push y borrado de `main` | bloqueados |
 
-- `semaforo` agrega todo, incluido `functional-e2e`, y falla con un `skipped`. Los dos jobs de
+- `semaforo` agrega todo, incluido `functional-e2e`, y falla con un `skipped`. Los tres jobs de
   `functional-e2e` se exigen además por su nombre, para que un cambio en el semáforo no pueda
   dejarlos fuera en silencio.
 - No es obligatorio el check-run «Semáforo CI»: se crea por API y en PRs de fork puede no existir.
@@ -194,6 +247,18 @@ Comprobación funcional (2026-10-19, PR #161 desechable con la reproducción de 
 `functional-e2e / golden` y `semaforo` en rojo, `unit` en verde; el merge se rechazó sin privilegios
 («the base branch policy prohibits the merge») y con `--admin` («2 of 3 required status checks are
 failing»). Cambiar o quitar estas reglas es una decisión del operador y debe documentarse aquí.
+
+Ampliación RC2 (2026-10-21, REVIEW): se añadió `functional-e2e / container-proxy-e2e (…)` como
+cuarto check obligatorio (`app_id` 15368), conservando los tres anteriores, `strict` y
+`enforce_admins` (verificado por API tras el cambio). Calibración:
+- PR #165 desechable (`bot-build-worker` sin `bot-control`, sobre la cabeza de integración de RC2):
+  `container-proxy-e2e`, `unit` (el test estático de red también lo ve) y `semaforo` en ROJO,
+  `golden` y `docker-e2e` en verde; el merge normal se **rechazó** («the base branch policy
+  prohibits the merge»). El intento con `--admin` no se ejecutó (lo denegó la política de permisos
+  del agente); el bloqueo de administradores lo garantiza `enforce_admins=true`, ya calibrado con
+  `--admin` en el PR #161. PR cerrado y rama borrada.
+- `workflow_dispatch` 39656275416 (`gateway` en `bot-control`): `container-proxy-e2e` ROJO con
+  `golden` y `docker-e2e` en verde: sólo el job nuevo ve esa regresión.
 
 ## `deploy-staging` y `smoke-and-promote`
 

@@ -6,12 +6,12 @@ Esta es la **fuente única del estado del proyecto**. Sustituye a los antiguos `
 y `docs/ESTADO_ACTUAL.md`, que quedan archivados en `docs/history/status/` y ya no son vigentes.
 
 Hay dos planos y no se mezclan:
-- **Código (`main`):** contiene el cierre funcional (PR #152) y el *Production Readiness Closure* (PR #158). `main` está protegida: no se fusiona nada si falla el golden path real de `functional-e2e`. Informes: [functional-closure-report.md](../development/functional-closure-report.md) y [production-readiness-report.md](../development/production-readiness-report.md).
+- **Código (`main`):** contiene el cierre funcional (PR #152), el *Production Readiness Closure* (PR #158) y **RC2** (cierre del bloqueo del Docker proxy de RC1: red dedicada `bot-control`, firewall de host como código, proxy con control de cliente, allowlist de imágenes y propiedad, y el E2E contenedor → proxy obligatorio). `main` está protegida: no se fusiona nada si falla el golden path real de `functional-e2e`. Informes: [functional-closure-report.md](../development/functional-closure-report.md) y [production-readiness-report.md](../development/production-readiness-report.md).
 - **Producción:** no ha cambiado. Nada de lo fusionado se ha desplegado todavía.
 
 ```
-MAIN:           59322e2 (tras #152 → debdf8a y #158 → 59322e2)
-LAST VERIFIED:  2026-10-19 (CI de main en verde, functional-e2e incluido; protección de rama verificada)
+MAIN:           RC2 (rama integration/rc2-docker-proxy) sobre 7cf88dd
+LAST VERIFIED:  2026-10-21 (RC2: CI del PR en verde con container-proxy-e2e; protección de rama con 4 checks obligatorios)
 RUNTIME:        sin cambios desde la auditoría: perfil `production`, 12 servicios, imágenes de 3 commits
 VEREDICTO CÓDIGO:     el recorrido de usuario completo funciona y lo exige la CI (golden path en navegador real)
 VEREDICTO PRODUCCIÓN: NO funcional como producto hasta desplegar main (fase Release Candidate)
@@ -50,7 +50,7 @@ Informe del cierre: [functional-closure-report.md](../development/functional-clo
 
 | Área | Qué funciona | Qué no | Deuda |
 |---|---|---|---|
-| Build de bots | sandbox real en aislado, en navegador y en CI; dos relojes de arranque (plataforma / bot) en la integración PRC | proxy del host sin operar | [TD-001](technical-debt.md#td-001), [TD-034](technical-debt.md#td-034) (cerrada en la integración) |
+| Build de bots | sandbox real en aislado, en navegador y en CI; dos relojes de arranque (plataforma / bot); desde RC2, build y batalla desde contenedores por el proxy en el stack Compose real (CI) | proxy del host sin operar en producción (pasos de RC2 en [upgrades.md](../operations/upgrades.md#rc2-proxy-de-docker-red-dedicada-y-firewall)) | [TD-001](technical-debt.md#td-001), [TD-034](technical-debt.md#td-034) (cerrada en la integración) |
 | Equipamiento | catálogo, validación, persistencia; la UI dice qué campos tienen efecto | efecto parcial en batalla | [TD-016](technical-debt.md#td-016) |
 | Torneos | `round_robin` con el código real de los bots (worker integrado) | `mapPool`; `failed` bloquea el cierre | [TD-015](technical-debt.md#td-015) |
 | Visor / emisión | visor en directo con batalla viva (aislado) | emisión (`#/broadcast`) sin E2E | [TD-009](technical-debt.md#td-009) |
@@ -64,7 +64,7 @@ Informe del cierre: [functional-closure-report.md](../development/functional-clo
 **PENDIENTE / BLOQUEADO en producción.** Los tres bloqueos de la auditoría (publicar un bot, crear una batalla, ejecutar código de usuario) están resueltos **en `main`**, no en producción. Para verlos en producción hace falta, con una ventana autorizada por el operador (fase Release Candidate):
 
 1. Construir las imágenes de `main` con su identidad de build.
-2. Generar `artifact_verify_key.pem` (`init-secrets.sh` lo deriva de la clave de firma) y operar el `s9-docker-proxy` en el host.
+2. Generar `artifact_verify_key.pem` (`init-secrets.sh` lo deriva de la clave de firma) y operar el `s9-docker-proxy` en el host con la configuración de RC2: runtimes por digest, firewall, unidad nueva con bind en `10.89.250.1` ([upgrades.md](../operations/upgrades.md#rc2-proxy-de-docker-red-dedicada-y-firewall)).
 3. Recrear `api`, `tournament-worker` y `bot-build-worker` (más `backup`/`postgres`/`queue` según el contrato de despliegue) y aplicar las migraciones `012_bot_versioning` y `013_battle_claim`.
 
 ## Operations
@@ -82,7 +82,7 @@ PostgreSQL 16.14 y Redis 7.4.9 están fijados por digest. Ver [TD-006](technical
 - **Perfil:** `production`, con 12 servicios ([docker.md](../operations/docker.md)). `map-service` sigue en él ([TD-017](technical-debt.md#td-017)).
 - **Despliegue de la integración:** exige recrear `api`, `bot-build-worker` y `tournament-worker` (lo mide `infrastructure/tests/compose-canonical-check.test.ts`) y un secreto nuevo, `artifact_verify_key` ([configuration.md](../operations/configuration.md#secretos)).
 - **Backup:** opera; sin alertas, sin snapshot de la VM y sin apagado limpio garantizado ([TD-007](technical-debt.md#td-007)).
-- **CI:** `nightly.yml` en rojo crónico ([TD-019](technical-debt.md#td-019)). `functional-e2e` (golden en navegador real + E2E Docker, gateway de TD-004 incluido) corre en todo PR y en `main`, está calibrado en CI real y es **check obligatorio** de la protección de rama de `main`, que incluye a los administradores ([TD-045](technical-debt.md#td-045) CERRADA, [ci.md](../development/ci.md#protección-de-rama)).
+- **CI:** `nightly.yml` en rojo crónico ([TD-019](technical-debt.md#td-019)). `functional-e2e` (golden en navegador real + E2E Docker, gateway de TD-004 incluido) corre en todo PR y en `main`, está calibrado en CI real y es **check obligatorio** de la protección de rama de `main`, que incluye a los administradores ([TD-045](technical-debt.md#td-045) CERRADA, [ci.md](../development/ci.md#protección-de-rama)). Desde RC2 también lo es `functional-e2e / container-proxy-e2e` (stack Compose real → `bot-control` → proxy → batalla; [TD-052](technical-debt.md#td-052) CERRADA).
 
 ## Security
 
@@ -98,6 +98,9 @@ PostgreSQL 16.14 y Redis 7.4.9 están fijados por digest. Ver [TD-006](technical
 | Registro abierto; clave de límites colapsada a la IP del proxy | ABIERTO | [TD-012](technical-debt.md#td-012) |
 | Imágenes de servicio con vulnerabilidades HIGH/CRITICAL | ABIERTO | [TD-031](technical-debt.md#td-031) |
 | Topología de infraestructura en el repositorio público | ABIERTO | [TD-008](technical-debt.md#td-008) |
+| Proxy de Docker sin ámbito (imagen, contenedor, cliente) y alcanzable desde `gateway`/`backup` | **CERRADO en `main` (RC2)**; abierto en producción hasta desplegar | [TD-051](technical-debt.md#td-051), [TD-053](technical-debt.md#td-053) |
+| El proxy ejecuta código de un árbol no sólo de root | ABIERTO | [TD-062](technical-debt.md#td-062) |
+| `.env` 0644 y `secrets/` 0755 en el host | ABIERTO | [TD-060](technical-debt.md#td-060) |
 | Ejecución real y espectador público | en producción, **apagados** hasta desplegar con su gate | [docs/technical/security.md](../technical/security.md) |
 
 ## Known issues
@@ -106,7 +109,7 @@ Síntomas vigentes en [known-issues.md](known-issues.md).
 
 ## Next priorities
 
-1. Fase Release Candidate, con autorización del operador: imágenes de `main`, migraciones `012`/`013`, `artifact_verify_key`, `s9-docker-proxy`, backup/readiness, gate A-G, despliegue controlado y golden path tras desplegar ([Blocked](#blocked)).
+1. Fase Release Candidate, con autorización del operador: imágenes de `main`, migraciones `012`/`013`, `artifact_verify_key`, `s9-docker-proxy` con los pasos de host de RC2, backup/readiness, gate A-G, despliegue controlado y golden path tras desplegar ([Blocked](#blocked)).
 2. Mantener la protección de `main` tal como está documentada ([ci.md](../development/ci.md#protección-de-rama)); cualquier cambio de reglas es decisión del operador.
 3. [TD-047](technical-debt.md#td-047), [TD-041](technical-debt.md#td-041), [TD-012](technical-debt.md#td-012): antes de abrir a terceros.
 4. [TD-033](technical-debt.md#td-033) y [TD-043](technical-debt.md#td-043): reducir el privilegio de los procesos que hablan con bots.

@@ -32,6 +32,8 @@ son Vitest salvo el SDK Python (pytest) y la aceptación visual/perf (Playwright
 | `cd sdks/python && python -m pytest tests/ -q` | SDK Python |
 | `npm run test:browser` | E2E de navegador real (`tests/browser/run.sh`): entorno aislado, fase **golden** (recorrido completo con build y batalla reales en Docker) y fases 1-3; Node ≥ 22.15 y Docker local ([frontend.md](../technical/frontend.md#e2e-de-navegador)). En CI: job obligatorio `functional-e2e` ([ci.md](ci.md#gate-funcional-functional-e2e)) |
 
+| `bash tests/container-proxy-e2e/run.sh <fase>` | E2E **contenedor → bot-control → s9-docker-proxy** (RC2): stack Compose real, proxy como proceso del host en `10.89.250.1`, firewall aplicado. **Sólo en un runner de GitHub Actions** (`GITHUB_ACTIONS=true` y `RUNNER_ENVIRONMENT=github-hosted`; en otra máquina sale con rc 3): aplica iptables con sudo y borra el stack. Job `functional-e2e / container-proxy-e2e` ([ci.md](ci.md#job-container-proxy-e2e-rc2)) |
+
 Timeout por test: 180 s; hooks: 60 s.
 
 ## Suites
@@ -90,6 +92,11 @@ Los gates de infraestructura tienen `--self-test` (controles positivo y negativo
   y en el job `unit`; **sólo** cuentan porque el job `functional-e2e` los activa y exige 0 `skipped`
   ([ci.md](ci.md#gate-funcional-functional-e2e), TD-045). `tests/e2e/e2e-real-battle-smoke.test.ts`
   (smoke contra el despliegue real, paso de operación) sigue fuera de CI a propósito.
+- **El golden path no prueba la red del proxy**: `tests/browser/run.sh` corre los servicios como
+  procesos del host y habla con el proxy por `127.0.0.1`. El camino contenedor → red interna →
+  proxy del host (el que falló en RC1, TD-052) sólo lo cubre `tests/container-proxy-e2e/` en el job
+  `container-proxy-e2e`; sus piezas en proceso (veredicto, `compose-check.mjs`, sonda, guarda de
+  `run.sh`) se prueban en `infrastructure/tests/container-proxy-e2e-gate.test.ts`.
 - **E2E del MVP en proceso**: usa los bots stub del motor; la ejecución de código de usuario en
   contenedores queda `skipped` y así se declara ([TD-002](../roadmap/technical-debt.md#td-002)).
 - La matriz RBAC tiene tests tautológicos (comparan la matriz consigo misma)

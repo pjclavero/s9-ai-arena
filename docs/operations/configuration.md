@@ -14,6 +14,7 @@ Ningún valor secreto aparece aquí.
 - [Variables fijadas por el compose dentro de los contenedores](#variables-fijadas-por-el-compose-dentro-de-los-contenedores)
 - [Variables que el código lee pero el compose NO pasa](#variables-que-el-código-lee-pero-el-compose-no-pasa)
 - [Secretos](#secretos)
+- [Configuración del host (fuera del compose)](#configuración-del-host-fuera-del-compose)
 - [Variables sólo de desarrollo y tests](#variables-sólo-de-desarrollo-y-tests)
 - [Errores / limitaciones](#errores--limitaciones)
 - [Documentación relacionada](#documentación-relacionada)
@@ -51,7 +52,7 @@ Ningún valor secreto aparece aquí.
 | `DOCKER_PROXY_URL` | `tournament-worker` | vacío (sin defecto a propósito) | **sí** para ejecutar batallas | vacío = el worker NO reclama `run_battle` y lo anuncia al arrancar (`battleExecution: disabled`); con valor, ejecuta cada batalla con el artefacto firmado de cada bot |
 | `DOCKER_PROXY_URL` | `bot-build-worker` | `http://docker-proxy.internal:2375` | **sí** para validar bots | sin proxy, todo build se rechaza «sandbox no verificado» |
 | `DOCKER_PROXY_URL` | `arena-engine` | vacío | no | camino legado; vacío = el motor no lanza contenedores |
-| `DOCKER_PROXY_URL` | `bot-manager` | `http://docker-proxy.internal:2375` | no | el proxy vive en el host ([docker-proxy.md](docker-proxy.md)) |
+| `DOCKER_PROXY_URL` | `bot-manager` | `http://docker-proxy.internal:2375` | no | sólo se exige no vacía y se publica en `/healthz`; `bot-manager` no consume el proxy y no está en `bot-control` (desde él es ENETUNREACH). El proxy vive en el host ([docker-proxy.md](docker-proxy.md)) |
 | `SANDBOX_STARTUP_TIMEOUT_MS` | `tournament-worker`, `bot-build-worker` | `30000` | no | reloj de **plataforma** del arranque de cada bot ([TD-034](../roadmap/technical-debt.md#td-034)): petición de lanzamiento del contenedor → señal `ready` del bootstrap (create/start de la Engine, runtime, descarga y sha256 del artefacto, SDK). Agotarlo es infraestructura (build: reintento → «no verificable»; batalla: `container_unavailable`, se reintenta), nunca rechazo del bot. Entero `1..600000`; inválido → el sandbox no arranca (build-worker no arranca; tournament-worker no ejecuta batallas y lo anuncia). Subirlo sólo si la Engine es lenta de forma sostenida: no afecta al límite del bot |
 | `BOT_EXECUTION_TIMEOUT_MS` | `tournament-worker`, `bot-build-worker` | `5000` | no | reloj del **bot** ([TD-034](../roadmap/technical-debt.md#td-034)): empieza en la señal `ready` (nunca antes) y cubre import del código del usuario, constructor, conexión y HELLO. Agotarlo es culpa del bot (`protocol_test` rechazado / `bot_timeout`). Es también el `handshakeTimeoutMs` del ProtocolServer. Las decisiones tienen su propio límite (`maxDecisionMs`, deadline del protocolo). Entero `1..600000`; inválido → como arriba |
 | `ARENA_NETWORK` | `arena-engine` | `arena` | no | red de los contenedores de bots (nombre fijo) |
@@ -129,6 +130,20 @@ un snapshot aparte (`s9-arena-secrets`).
 
 Sin secreto, los servicios **fallan cerrados** (no arrancan): la API exige `JWT_SECRET_FILE` o
 `JWT_SECRET` salvo `ARENA_DEV_INSECURE_SECRETS=1`, que es sólo de desarrollo.
+
+## Configuración del host (fuera del compose)
+
+Dos piezas viven en el host, no en Compose, y tienen su propio fichero de entorno:
+
+| Fichero | Plantilla | Lo lee | Documentación |
+|---|---|---|---|
+| `/etc/s9-ai-arena/docker-proxy.env` | `infrastructure/systemd/docker-proxy.env.example` | `s9-docker-proxy.service` (`DOCKER_PROXY_BIND`, `DOCKER_PROXY_PORT`, `DOCKER_PROXY_ALLOWED_CLIENTS`, `DOCKER_PROXY_DENIED_CLIENTS`, `DOCKER_PROXY_IMAGE_ALLOWLIST`, `DOCKER_PROXY_INSTANCE`, `DOCKER_PROXY_BRIDGE`, `DOCKER_PROXY_BRIDGE_WAIT`) | [docker-proxy.md](docker-proxy.md#configuración) |
+| `/etc/s9-ai-arena/firewall.env` | `infrastructure/firewall/firewall.env.example` | `s9-firewall.sh` (`S9FW_*`) | [firewall.md](firewall.md#configuración) |
+
+Los valores de producción son las constantes de la red `bot-control` (`10.89.250.1`,
+`10.89.250.0/24`, bridge `s9-botctl0`; [networking.md](networking.md#red-de-control-del-docker-proxy-bot-control)).
+`install-docker-proxy.sh check-env` rechaza un bind comodín, loopback o de `docker0` antes de tocar
+la unidad.
 
 ## Variables sólo de desarrollo y tests
 

@@ -134,11 +134,18 @@ Una sola sesión por build (`ContainerBuildSandbox.verify`):
 2. **Contenedor.** Se lanza con `ProxyContainerRunner` a través de `s9-docker-proxy`, con esta configuración:
    - imagen de runtime `python|node` fijada por digest en `runtimes/DIGESTS.lock`;
    - usuario 10001, `cap-drop ALL` y `no-new-privileges`;
-   - seccomp `security/seccomp-bot.json`;
+   - seccomp `security/seccomp-bot.json` (permite `sendmmsg`, que glibc usa al resolver el nombre anunciado del worker; [TD-061](../roadmap/technical-debt.md#td-061));
    - rootfs de solo lectura y `/tmp` tmpfs de 32 MiB (`noexec`);
    - red `arena` sin DNS;
    - 0,5 CPU, 256 MiB sin swap y 64 PIDs;
    - `AutoRemove`.
+
+   El proxy (RC2) lo hace cumplir, no sólo lo admite: la imagen debe ser **exactamente** una de la 3.ª
+   columna de `DIGESTS.lock` (otra imagen, la base o un tag → 403), los límites son obligatorios y con
+   techo, y el contenedor sale con las labels `s9.managed=true` y `s9.proxy.instance`, que el proxy
+   exige después para `start`/`stop`/`json`/`stats` (por Id completo). Un bot o un servicio no puede
+   operar contenedores que no haya creado el proxy. Detalle en
+   [docker-proxy.md](../operations/docker-proxy.md#política-rc2).
 3. **Bootstrap.** Corre como `Cmd` tras el `ENTRYPOINT` del runtime:
    - descarga el artefacto con el token y verifica el sha256;
    - lo materializa en `/tmp/bot`;

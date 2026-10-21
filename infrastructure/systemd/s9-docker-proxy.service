@@ -1,19 +1,27 @@
-# R-DEPLOY · R2 — proxy de la API de Docker de S9 AI Arena (HOST VM108).
+# R-DEPLOY · R2 / RC2 — proxy de la API de Docker de S9 AI Arena (HOST).
 #
 # ÚNICO proceso autorizado a tocar /var/run/docker.sock. Ningún contenedor del
-# stack monta el socket (R1.7 · ERR-SEC-02): el bot-manager lanza contenedores
-# de bots exclusivamente a través de ESTE proxy, con allowlist estricta
-# (crear/arrancar/parar/inspeccionar; rechaza privileged, bind-mounts, red del
-# host y cambios de usuario). Ver docs/ops/docker-proxy.md.
+# stack monta el socket (R1.7 · ERR-SEC-02): los consumidores (tournament-worker,
+# bot-build-worker y arena-engine, los miembros de la red `bot-control`) lanzan
+# contenedores de bots exclusivamente a través de ESTE proxy, con allowlist estricta.
+# Ver docs/operations/docker-proxy.md.
+#
+# RC2: el proxy escucha SÓLO en el gateway de la red Docker dedicada `bot-control`
+# (bridge `s9-botctl0`, 10.89.250.1). Nunca 0.0.0.0, nunca docker0, nunca host-gateway.
+# Tres capas independientes: red dedicada interna, firewall de host
+# (s9-firewall.service, docs/operations/firewall.md) y control de cliente en el proxy.
 #
 # Instalación/validación/rollback: infrastructure/scripts/install-docker-proxy.sh
 
 [Unit]
-Description=S9 AI Arena · proxy de la API de Docker (allowlist, host-only)
-Documentation=file:///opt/s9-ai-arena/docs/ops/docker-proxy.md
-After=docker.service network-online.target
+Description=S9 AI Arena · proxy de la API de Docker (allowlist, sólo red bot-control)
+Documentation=file:///opt/s9-ai-arena/docs/operations/docker-proxy.md
+After=docker.service network-online.target s9-firewall.service
 Requires=docker.service
-Wants=network-online.target
+Wants=network-online.target s9-firewall.service
+# Reintento acotado si el bridge tarda (ver ExecStartPre): como mucho 10 arranques en 10 min.
+StartLimitIntervalSec=600
+StartLimitBurst=10
 
 [Service]
 Type=simple
@@ -22,15 +30,36 @@ Type=simple
 User=s9proxy
 Group=docker
 WorkingDirectory=/opt/s9-ai-arena
-# Config del operador (bind, puerto, red arena, usuario del sandbox). El bind por
-# defecto NO es 127.0.0.1: un proceso en loopback del host NO es alcanzable desde
-# los contenedores vía host-gateway. Se usa la IP de la interfaz interna
-# controlada del bridge de Docker (docker0), acotada por firewall a esa red.
-# Ver docs/ops/docker-proxy.md § "Alcance de red".
+# Config del operador: bind, puerto, bridge, clientes, allowlist de imágenes, red arena,
+# usuario del sandbox. Ver infrastructure/systemd/docker-proxy.env.example.
 EnvironmentFile=/etc/s9-ai-arena/docker-proxy.env
+# Fail-closed antes de escuchar:
+#   1. DOCKER_PROXY_BIND ni vacío, ni comodín, ni loopback; el bridge no es docker0.
+#   2. Espera acotada (DOCKER_PROXY_BRIDGE_WAIT × 2 s; defecto 60, tope 80 para no
+#      superar TimeoutStartSec) a que el bridge dedicado exista y tenga la IP del bind:
+#      lo crea Docker al restaurar la red `s9-bot-control`, poco después de arrancar.
+#      Sin esto el bind fallaría con EADDRNOTAVAIL en el arranque de la máquina.
+#   3. La IP del bind no puede estar en docker0.
+# Mismo convenio que el proceso: configuración inválida ⇒ exit 78; bridge no listo ⇒ exit 1.
+# (`$$` = `$` literal para el shell: systemd no expande esas variables.)
+ExecStartPre=/bin/sh -ec '\
+  b="$${DOCKER_PROXY_BIND:-}"; br="$${DOCKER_PROXY_BRIDGE:-s9-botctl0}"; n="$${DOCKER_PROXY_BRIDGE_WAIT:-60}"; \
+  case "$$b" in ""|0.0.0.0|::|"[::]"|127.*|localhost) echo "s9-docker-proxy: DOCKER_PROXY_BIND inválido: [$$b]" >&2; exit 78;; esac; \
+  case "$$br" in ""|docker0|lo) echo "s9-docker-proxy: DOCKER_PROXY_BRIDGE inválido: [$$br]" >&2; exit 78;; esac; \
+  case "$$n" in ""|*[!0-9]*) echo "s9-docker-proxy: DOCKER_PROXY_BRIDGE_WAIT inválido: [$$n]" >&2; exit 78;; esac; \
+  [ "$$n" -le 80 ] || n=80; \
+  i=0; until ip -4 -o addr show dev "$$br" 2>/dev/null | grep -qF " $$b/"; do \
+    i=$$((i+1)); [ "$$i" -le "$$n" ] || { echo "s9-docker-proxy: $$br no tiene $$b tras $$n intentos" >&2; exit 1; }; sleep 2; done; \
+  if ip -4 -o addr show dev docker0 2>/dev/null | grep -qF " $$b/"; then echo "s9-docker-proxy: $$b es de docker0" >&2; exit 78; fi'
 ExecStart=/usr/bin/npx tsx apps/bot-manager/src/docker-proxy-main.ts
 Restart=always
-RestartSec=2
+RestartSec=5
+# Códigos del proceso (docker-proxy-main.ts): 78 = configuración inválida (EX_CONFIG) ⇒
+# NO se reintenta (un bucle no lo arreglaría); 1 = bind fallido (p. ej. el bridge aún no
+# tiene la IP) ⇒ sí se reintenta, acotado por StartLimit*.
+RestartPreventExitStatus=78
+# Debe superar la espera máxima de ExecStartPre (80 × 2 s = 160 s).
+TimeoutStartSec=180
 # Logs claros por journald (el proxy ya emite JSON por stdout con cada decisión).
 StandardOutput=journal
 StandardError=journal
@@ -44,12 +73,15 @@ PrivateTmp=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# AF_NETLINK sólo para `ip addr show` de ExecStartPre (lectura; el usuario no tiene
+# CAP_NET_ADMIN y no puede cambiar nada).
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 RestrictNamespaces=true
 LockPersonality=true
 MemoryDenyWriteExecute=false
 # El socket de Docker vive fuera de WorkingDirectory: se permite explícitamente.
 ReadWritePaths=/var/run/docker.sock
+# El árbol (incluida la allowlist runtimes/DIGESTS.lock) es de sólo lectura para el proxy.
 ReadOnlyPaths=/opt/s9-ai-arena
 
 [Install]
