@@ -68,6 +68,7 @@ export const PRIVILEGE_NEGATIVES = [
   "append-unit",
   "create-dropin",
   "append-env",
+  "append-preflight",
 ];
 export const PRIVILEGE_MUTATIONS = [
   "bundle-group-writable",
@@ -356,6 +357,23 @@ export function evaluar(outDir, { commit } = {}) {
   else {
     const p = pv.value;
     const e = p.effective ?? {};
+    const tr = p.trust ?? {};
+    // B1 (REVIEW #167): la confianza no se ancla en el árbol.
+    add(
+      "R11 B1 el instalador del checkout (no de root) se NIEGA: preflight rc 2 e install rc 2",
+      tr.untrustedPreflightRc === 2 && tr.untrustedInstallRc === 2,
+      JSON.stringify({ preflight: tr.untrustedPreflightRc, install: tr.untrustedInstallRc }),
+    );
+    add(
+      "R11 B1 preflight instalado de root (/usr/local/sbin, 0:0 755)",
+      tr.installedPreflight === "0:0 755",
+      String(tr.installedPreflight),
+    );
+    add(
+      "R11 B1 el bundle construido por root en la copia de confianza = el del usuario (sha256)",
+      Boolean(p.bundle?.sha256) && tr.bundleRootSha256 === p.bundle.sha256,
+      JSON.stringify({ user: p.bundle?.sha256, root: tr.bundleRootSha256 }),
+    );
     add(
       "R11 preflight inicial VERDE (root real, systemd real, proceso en marcha)",
       p.preflightInitialRc === 0,

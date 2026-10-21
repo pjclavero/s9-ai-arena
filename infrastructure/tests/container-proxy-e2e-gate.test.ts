@@ -269,6 +269,12 @@ function fixture(mut: (d: string) => void = () => {}): string {
       revertedRc: 0,
     })),
     process: { mainPidBefore: "4242", mainPidAfter: "4242", active: "active" },
+    trust: {
+      untrustedPreflightRc: 2,
+      untrustedInstallRc: 2,
+      installedPreflight: "0:0 755",
+      bundleRootSha256: "a".repeat(64),
+    },
   });
   writeFileSync(
     join(d, "docker-events.jsonl"),
@@ -560,6 +566,24 @@ describe("C2 · assert-container-proxy-e2e: el veredicto no se deja engañar", (
       "el proxy se reinició durante las mutaciones",
       (d) => patch(d, "privilege.json", (v) => ({ ...v, process: { ...v.process, mainPidAfter: "999" } })),
     ],
+    // ── R11 · B1 (REVIEW #167): procedencia ──
+    [
+      "el preflight del checkout (no de root) da veredicto (rc 0)",
+      (d) => patch(d, "privilege.json", (v) => ({ ...v, trust: { ...v.trust, untrustedPreflightRc: 0 } })),
+    ],
+    [
+      "el install del checkout (no de root) no se niega",
+      (d) => patch(d, "privilege.json", (v) => ({ ...v, trust: { ...v.trust, untrustedInstallRc: 0 } })),
+    ],
+    [
+      "preflight instalado escribible por grupo",
+      (d) => patch(d, "privilege.json", (v) => ({ ...v, trust: { ...v.trust, installedPreflight: "0:0 775" } })),
+    ],
+    [
+      "bundle de root distinto del bundle del usuario",
+      (d) => patch(d, "privilege.json", (v) => ({ ...v, trust: { ...v.trust, bundleRootSha256: "b".repeat(64) } })),
+    ],
+    ["sin bloque trust", (d) => patch(d, "privilege.json", (v) => ({ ...v, trust: undefined }))],
   ];
   for (const [nombre, mut] of casos) {
     it(`${nombre} → FAIL (CLI rc 1)`, () => {
@@ -729,11 +753,17 @@ describe("TD-062 · run.sh arranca el proxy con el instalador real, no desde el 
     expect(lines.filter((l) => /docker-proxy-main\.ts/.test(l))).toEqual([]);
     expect(sh.split("\n").filter((l) => /docker-proxy-main\.ts/.test(l)).length).toBe(1); // sólo la mutación
   });
-  it("instala con install-docker-proxy.sh install, construye el bundle sin root y retira con rollback", () => {
-    expect(sh).toMatch(/INSTALLER="\$REPO\/infrastructure\/scripts\/install-docker-proxy\.sh"/);
-    expect(sh).toMatch(/"\$\{PX\[@\]\}" install/);
+  it("instala desde la COPIA DE ROOT (B1) con el sha256 esperado, construye el bundle dos veces y retira con rollback", () => {
+    expect(sh).toMatch(/TRUSTED="\/opt\/s9cpx-trusted"/);
+    expect(sh).toMatch(
+      /"S9PX_EXPECT_SHA256=\$s_user" bash "\$TRUSTED\/infrastructure\/scripts\/install-docker-proxy\.sh" install/,
+    );
     expect(sh).toMatch(/"\$\{PX\[@\]\}" rollback/);
     expect(sh).toMatch(/node "\$REPO\/infrastructure\/scripts\/build-docker-proxy-bundle\.mjs"/);
+    expect(sh).toMatch(/node "\$TRUSTED\/infrastructure\/scripts\/build-docker-proxy-bundle\.mjs"/);
+    // preflight sólo con la copia INSTALADA
+    expect(sh).toMatch(/PF=\(sudo -n env "S9PX_TREE=\$REPO" "\$PREFLIGHT_BIN"\)/);
+    expect(sh).not.toMatch(/"\$\{PX\[@\]\}" preflight/);
   });
 });
 

@@ -68,8 +68,14 @@ BUNDLE_DST="/usr/local/lib/s9-docker-proxy/docker-proxy.mjs"
 LOCK_DST="/etc/s9-docker-proxy/DIGESTS.lock"
 PROXY_ENV="/etc/s9-ai-arena/docker-proxy.env"
 EXPECTED_EXECSTART="/usr/bin/node --no-addons $BUNDLE_DST"
-# S9PX_TREE: el checkout es «el árbol» que el proceso del proxy no debe ver.
-PX=(sudo -n env "S9PX_TREE=$REPO" bash "$INSTALLER")
+# B1 (REVIEW #167): como en producción, el instalador NO se ejecuta desde el checkout (que
+# es del usuario del runner, el papel de s9arena): se ejecuta desde una COPIA DE ROOT del
+# commit, y validate/preflight desde la copia INSTALADA. S9PX_TREE: el checkout es «el árbol»
+# que el proceso del proxy no debe ver.
+TRUSTED="/opt/s9cpx-trusted"
+PREFLIGHT_BIN="/usr/local/sbin/s9-docker-proxy-preflight"
+PX=(sudo -n env "S9PX_TREE=$REPO" bash "$TRUSTED/infrastructure/scripts/install-docker-proxy.sh")
+PF=(sudo -n env "S9PX_TREE=$REPO" "$PREFLIGHT_BIN")
 
 BUILD_SERVICES=(gateway web api arena-engine tournament-worker bot-manager map-service replay-service)
 INFRA_SERVICES=(postgres queue)
@@ -148,8 +154,27 @@ install_proxy_as_production() {
     #    copia de root). Root 0640, como en producción.
     sudo -n install -d -o root -g root -m 0755 /etc/s9-ai-arena || return 1
     sudo -n install -o root -g root -m 0640 "$REPO/infrastructure/systemd/docker-proxy.env.example" "$PROXY_ENV" || return 1
-    # d) instalador REAL: copia bundle/allowlist/unidad, usuario s9proxy, systemd, preflight.
-    "${PX[@]}" install
+    # d) COPIA DE ROOT del commit (B1; el equivalente del clon de root de upgrades.md#td-062):
+    #    root clona el checkout en $TRUSTED y comprueba que su HEAD es el commit del job.
+    sudo -n rm -rf "$TRUSTED"
+    sudo -n git -c safe.directory='*' clone -q --no-hardlinks "$REPO" "$TRUSTED" || return 1
+    local th
+    th=$(sudo -n git -c safe.directory='*' -C "$TRUSTED" rev-parse HEAD)
+    [ "$th" = "$COMMIT" ] || { echo "la copia de root está en $th, no en $COMMIT"; return 1; }
+    sudo -n chmod -R go-w "$TRUSTED"
+    # e) bundle construido POR ROOT en esa copia (dependencias del lock, SIN scripts de
+    #    instalación) y comparado con el del paso a): dos medidas independientes del mismo
+    #    commit. Es lo que exige install (S9PX_EXPECT_SHA256) en producción.
+    (cd "$TRUSTED" && sudo -n env "PATH=$PATH" npm_config_cache=/root/.npm-s9cpx npm ci --ignore-scripts --no-audit --no-fund) >/dev/null || return 1
+    sudo -n env "PATH=$PATH" node "$TRUSTED/infrastructure/scripts/build-docker-proxy-bundle.mjs" --commit "$COMMIT" >"$OUT/proxy-bundle-root.json" || return 1
+    local s_user s_root
+    s_user=$(jq -r .sha256 "$OUT/proxy-bundle.json")
+    s_root=$(jq -r .sha256 "$OUT/proxy-bundle-root.json")
+    stat -c 'copia de confianza %U:%G %a %n' /opt "$TRUSTED" "$TRUSTED/infrastructure/scripts/install-docker-proxy.sh" "$TRUSTED/dist/s9-docker-proxy/docker-proxy.mjs"
+    echo "sha256 bundle: usuario=$s_user root=$s_root"
+    [ "$s_user" = "$s_root" ] || { echo "el bundle de root y el del usuario DIFIEREN: PARA"; return 1; }
+    # f) instalador REAL desde la copia de root, con el sha256 esperado (obligatorio).
+    sudo -n env "S9PX_TREE=$REPO" "S9PX_EXPECT_SHA256=$s_user" bash "$TRUSTED/infrastructure/scripts/install-docker-proxy.sh" install
   } >"$LOGS/proxy-install.log" 2>&1
 }
 
@@ -168,9 +193,18 @@ do_privilege() {
   : >"$STATE/privilege-neg.jsonl"
   : >"$STATE/privilege-mut.jsonl"
 
-  # P1
-  "${PX[@]}" preflight >"$LOGS/privilege-preflight-1.log" 2>&1
+  # P1 · el preflight INSTALADO (de root), el único que vale (B1)
+  "${PF[@]}" preflight >"$LOGS/privilege-preflight-1.log" 2>&1
   local pf1=$?
+  # P1b · procedencia (B1): el instalador del CHECKOUT (del usuario del runner, el papel del
+  #       árbol de s9arena) se NIEGA a dar veredicto o a instalar: rc 2.
+  sudo -n env "S9PX_TREE=$REPO" bash "$INSTALLER" preflight >"$LOGS/privilege-untrusted-preflight.log" 2>&1
+  local ut_pf=$?
+  sudo -n env "S9PX_TREE=$REPO" "S9PX_EXPECT_SHA256=$(jq -r .sha256 "$OUT/proxy-bundle.json")" bash "$INSTALLER" install \
+    >"$LOGS/privilege-untrusted-install.log" 2>&1
+  local ut_in=$?
+  local pf_owner
+  pf_owner=$(stat -c '%u:%g %a' "$PREFLIGHT_BIN")
 
   # P2
   local exe cmd user tree_visible
@@ -191,7 +225,8 @@ do_privilege() {
       "create-in-policydir|touch /etc/s9-docker-proxy/DIGESTS.lock.new" \
       "append-unit|printf x >>/etc/systemd/system/$PROXY_UNIT" \
       "create-dropin|mkdir /etc/systemd/system/$PROXY_UNIT.d" \
-      "append-env|printf x >>$PROXY_ENV"; do
+      "append-env|printf x >>$PROXY_ENV" \
+      "append-preflight|printf x >>$PREFLIGHT_BIN"; do
       a=${t#*|}
       err=$(sudo -n -u "$who" env LC_ALL=C sh -c "$a" 2>&1)
       rc=$?
@@ -208,11 +243,11 @@ do_privilege() {
   mutate() { # id motivo(regex) aplicar revertir
     local id=$1 reason=$2 apply=$3 revert=$4 red green found
     eval "$apply" >>"$LOGS/privilege-mutations.log" 2>&1
-    "${PX[@]}" preflight >"$LOGS/privilege-mut-$id.log" 2>&1
+    "${PF[@]}" preflight >"$LOGS/privilege-mut-$id.log" 2>&1
     red=$?
     if grep -E "ROJO:" "$LOGS/privilege-mut-$id.log" | grep -qE "$reason"; then found=true; else found=false; fi
     eval "$revert" >>"$LOGS/privilege-mutations.log" 2>&1
-    "${PX[@]}" preflight >"$LOGS/privilege-mut-$id-revert.log" 2>&1
+    "${PF[@]}" preflight >"$LOGS/privilege-mut-$id-revert.log" 2>&1
     green=$?
     jq -nc --arg id "$id" --arg reason "$reason" --argjson red $red --argjson found $found --argjson green $green \
       '{id:$id, reason:$reason, redRc:$red, reasonFound:$found, revertedRc:$green}' >>"$STATE/privilege-mut.jsonl"
@@ -234,7 +269,7 @@ do_privilege() {
   sudo -n rm -rf /run/s9cpx-bak
 
   # P5
-  "${PX[@]}" preflight >"$LOGS/privilege-preflight-2.log" 2>&1
+  "${PF[@]}" preflight >"$LOGS/privilege-preflight-2.log" 2>&1
   local pf2=$? pid1 active
   pid1=$(systemctl show -p MainPID --value "$PROXY_UNIT")
   active=$(systemctl is-active "$PROXY_UNIT")
@@ -243,8 +278,11 @@ do_privilege() {
     --argjson tv $tree_visible --arg pid0 "$pid0" --arg pid1 "$pid1" --arg active "$active" \
     --arg expected "$EXPECTED_EXECSTART" --arg nodeReal "$(readlink -f /usr/bin/node)" \
     --slurpfile neg "$STATE/privilege-neg.jsonl" --slurpfile mut "$STATE/privilege-mut.jsonl" \
-    --slurpfile bundle "$OUT/proxy-bundle.json" \
+    --slurpfile bundle "$OUT/proxy-bundle.json" --slurpfile bundleRoot "$OUT/proxy-bundle-root.json" \
+    --argjson utpf $ut_pf --argjson utin $ut_in --arg pfo "$pf_owner" \
     '{preflightInitialRc: $pf1, preflightFinalRc: $pf2,
+      trust: {untrustedPreflightRc: $utpf, untrustedInstallRc: $utin, installedPreflight: $pfo,
+              bundleRootSha256: ($bundleRoot[0].sha256 // null)},
       effective: {exe: $exe, nodeReal: $nodeReal, cmdline: $cmd, expectedCmdline: $expected, user: $user, treeVisible: $tv},
       bundle: ($bundle[0] // null),
       negatives: $neg, mutations: $mut,
