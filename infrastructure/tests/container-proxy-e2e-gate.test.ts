@@ -164,6 +164,8 @@ function fixture(mut: (d: string) => void = () => {}): string {
     ],
   });
   w("firewall.json", { script: "s9-firewall.sh", applyRc: 0, checkRc: 0 });
+  w("network-probe-A.json", { rc: 0, result: {} });
+  w("network-probe-B.json", { rc: 0, result: {} });
   for (const f of ["A", "B"] as const)
     w(
       `probes-${f}.json`,
@@ -309,6 +311,8 @@ describe("C2 · assert-container-proxy-e2e: el veredicto no se deja engañar", (
         })),
     ],
     ["firewall no aplicado", (d) => patch(d, "firewall.json", (v) => ({ ...v, applyRc: 127 }))],
+    ["sonda de DEV-NET no medida (rc 2)", (d) => patch(d, "network-probe-B.json", () => ({ rc: 2 }))],
+    ["sonda de DEV-NET ausente", (d) => patch(d, "network-probe-A.json", () => ({ rc: null, missing: true }))],
     ["sin sondas de la fase B", (d) => writeFileSync(join(d, "probes-B.json"), "[]")],
     [
       "gateway con ACCESS (gateway en bot-control)",

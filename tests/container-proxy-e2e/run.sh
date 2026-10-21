@@ -215,7 +215,8 @@ make_equivalents() {
     for n in "${nets[@]:1}"; do docker network connect "$n" "$PROJECT-backup-equivalent"; done
     docker start "$PROJECT-backup-equivalent" >/dev/null
   fi
-  docker run -d --name "$PROJECT-bot-equivalent" --network arena --entrypoint sleep --user 10001:10001 \
+  # --dns 0.0.0.0 como el create de ProxyContainerRunner (HostConfig.Dns): misma resolución.
+  docker run -d --name "$PROJECT-bot-equivalent" --network arena --dns 0.0.0.0 --entrypoint sleep --user 10001:10001 \
     --read-only --cap-drop ALL --security-opt no-new-privileges "$PROBE_IMG" 3600 >/dev/null
   jq -nc --argjson b "$(printf '%s\n' "${nets[@]}" | jq -R . | jq -sc .)" \
     '{"backup-equivalent": {declared: "contenedor en las MISMAS redes que el servicio backup del compose resuelto (backup no se arranca: necesita restic/SFTP reales)", networks: $b},
@@ -247,6 +248,23 @@ probe_phase() {
 # s9-firewall.sh de DEV-SECOPS (S9FW_*; sus defectos son las constantes del contrato). Se
 # fijan igualmente aquí para que el job pruebe EXACTAMENTE el contrato, y S9FW_CONF apunta
 # a un fichero inexistente: ninguna configuración del runner puede cambiar las reglas.
+# Segunda medida INDEPENDIENTE (coordinador): la sonda de DEV-NET (scripts/ops/network-probe.mjs)
+# sobre el mismo proyecto, con la pertenencia esperada. rc 0 PASS · 1 FAIL · 2 no medido (≠ PASS).
+netprobe() { # netprobe <fase> [flags…]
+  local phase=$1 rc
+  shift
+  if [ ! -f "$REPO/scripts/ops/network-probe.mjs" ]; then
+    jq -n '{rc: null, missing: true}' >"$OUT/network-probe-$phase.json"
+    return
+  fi
+  node "$REPO/scripts/ops/network-probe.mjs" --project "$PROJECT" \
+    --expect-members arena-engine,bot-build-worker,tournament-worker "$@" --json >"$STATE/netprobe-$phase.json" 2>"$LOGS/netprobe-$phase.err"
+  rc=$?
+  jq -n --argjson rc $rc --slurpfile r "$STATE/netprobe-$phase.json" '{rc: $rc, result: ($r[0] // null)}' \
+    >"$OUT/network-probe-$phase.json" 2>/dev/null || jq -n --argjson rc $rc '{rc: $rc, result: null}' >"$OUT/network-probe-$phase.json"
+  log "sonda DEV-NET fase $phase: rc=$rc"
+}
+
 firewall() { # firewall <apply|check|remove>
   [ -f "$FIREWALL" ] || { echo "no existe $FIREWALL"; return 127; }
   sudo -n env S9FW_CONF=/nonexistent S9FW_BRIDGE="$BRIDGE" S9FW_SUBNET="$SUBNET" S9FW_PROXY_IP="$GW_IP" \
@@ -259,8 +277,15 @@ pg_state() {
 
 do_probes() {
   make_equivalents
+  # Diagnóstico de C3/C4 desde la posición de un bot (evidencia, no veredicto).
+  docker run --rm --network "container:$PROJECT-bot-equivalent" -v "$HERE:/probe:ro" --entrypoint node \
+    --user 65534:65534 --read-only --cap-drop ALL "$PROBE_IMG" /probe/bot-view.mjs tournament-worker:8081 \
+    >"$OUT/bot-view.json" 2>"$LOGS/bot-view.err"
+  docker exec "$PROJECT-bot-equivalent" cat /etc/resolv.conf >"$LOGS/bot-view-resolv.txt" 2>&1
+  log "vista de un bot: $(cat "$OUT/bot-view.json" 2>/dev/null)"
   # Fase A: SIN firewall. Mide la capa (a) red y la capa (c) control de cliente del proxy.
   probe_phase A
+  netprobe A
   # Fase B: CON el firewall de DEV-SECOPS. Mide la capa (b).
   local fa fc
   firewall apply >"$LOGS/firewall-apply.log" 2>&1
@@ -271,6 +296,7 @@ do_probes() {
   jq -n --argjson a $fa --argjson c $fc --arg s "$FIREWALL" '{script:$s, applyRc:$a, checkRc:$c}' >"$OUT/firewall.json"
   log "firewall: apply rc=$fa check rc=$fc"
   probe_phase B
+  netprobe B --expect-default-route-blocked
 
   # Escucha del proxy en el host: SÓLO 10.89.250.1:2375. Y desde el propio host, por
   # loopback, docker0 y la IP principal del runner: nada escucha.
@@ -330,8 +356,20 @@ do_policy() {
 # ── flow ────────────────────────────────────────────────────────────────────
 do_flow() {
   date -u +%Y-%m-%dT%H:%M:%SZ >"$STATE/flow-start"
+  # C9 · los contenedores de bot llevan AutoRemove: sus logs se siguen EN VIVO desde que
+  # arrancan (después de salir ya no existen).
+  mkdir -p "$LOGS/containers/bots"
+  (
+    docker events --filter type=container --filter event=start --format '{{.Actor.ID}} {{.Actor.Attributes.name}}' |
+      while read -r id name; do
+        case "$name" in bot-*) docker logs -f "$id" >"$LOGS/containers/bots/$name.log" 2>&1 & ;; esac
+      done
+  ) &
+  local follower=$!
   node "$HERE/flow.mjs" "http://127.0.0.1:$HTTP_PORT" "$OUT/flow.json" >"$LOGS/flow.log" 2>&1
   local rc=$?
+  kill "$follower" 2>/dev/null
+  pkill -f "docker events --filter type=container --filter event=start" 2>/dev/null
   date -u +%Y-%m-%dT%H:%M:%SZ >"$STATE/flow-end"
   log "FLOW_RC=$rc ($(tail -1 "$LOGS/flow.log"))"
   return 0 # el veredicto lo da assert-container-proxy-e2e.mjs con flow.json
