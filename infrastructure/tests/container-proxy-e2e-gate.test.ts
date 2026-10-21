@@ -56,7 +56,7 @@ describe("C1 · functional-e2e.yml: job container-proxy-e2e obligatorio y comple
   });
 
   it("las fases corren en orden, cada una con su reloj y SIN if: (un paso no se puede saltar)", () => {
-    const fases = ["run.sh prepare", "run.sh build", "run.sh up", "run.sh probes", "run.sh flow"];
+    const fases = ["run.sh prepare", "run.sh build", "run.sh up", "run.sh probes", "run.sh flow", "run.sh policy"];
     const pos = fases.map(idx);
     for (const [i, p] of pos.entries()) {
       expect(p, fases[i]).toBeGreaterThanOrEqual(0);
@@ -67,7 +67,7 @@ describe("C1 · functional-e2e.yml: job container-proxy-e2e obligatorio y comple
   });
 
   it("evidencia, veredicto (con el commit), subida y limpieza corren SIEMPRE, después de las fases", () => {
-    const flow = idx("run.sh flow");
+    const flow = idx("run.sh policy");
     const ev = idx("run.sh evidence");
     const verdict = idx("assert-container-proxy-e2e.mjs");
     const collect = idx("collect-functional-evidence.sh");

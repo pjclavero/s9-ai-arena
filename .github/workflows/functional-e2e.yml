@@ -244,12 +244,15 @@ jobs:
       - name: Stack Compose + s9-docker-proxy en 10.89.250.1
         timeout-minutes: 10
         run: bash tests/container-proxy-e2e/run.sh up
-      - name: Sondas de alcance (sin y con firewall) y política del proxy
+      - name: Sondas de alcance desde cada contenedor (sin y con firewall)
         timeout-minutes: 8
         run: bash tests/container-proxy-e2e/run.sh probes
       - name: Build → published ×2 y batalla A+B por la API pública
         timeout-minutes: 20
         run: bash tests/container-proxy-e2e/run.sh flow
+      - name: Política del proxy (imagen ajena, propiedad; después del flujo)
+        timeout-minutes: 5
+        run: bash tests/container-proxy-e2e/run.sh policy
       - name: Evidencia (logs, compose config, redes, eventos)
         if: always()
         timeout-minutes: 3

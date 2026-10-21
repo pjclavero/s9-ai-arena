@@ -138,8 +138,9 @@ rootful, `sudo`):
 | `prepare` | secretos efímeros con `init-secrets.sh`; `docker compose config --format json` del perfil `production` con el entorno del job y **sin** `DOCKER_PROXY_URL` (defectos); `compose-check.mjs` juzga el render; cuerpos de create con `ProxyContainerRunner.buildCreateBody` (`make-bodies.ts`) |
 | `build` | imágenes de gateway, web, api, arena-engine, tournament-worker, bot-manager (también bot-build-worker), map-service y replay-service **desde el commit** (`BUILD_COMMIT=github.sha`, `s9cpx-local/*:ci-<sha>`; nunca se descargan de GHCR) |
 | `up` | `up --no-start` (crea `s9-bot-control` y su bridge con `10.89.250.1`) → `s9-docker-proxy` como **proceso del host** con `DOCKER_PROXY_BIND=10.89.250.1`, `DOCKER_PROXY_ALLOWED_CLIENTS=10.89.250.0/24` y la allowlist `runtimes/DIGESTS.lock` → postgres/queue → `cli.ts bootstrap` (nunca `seed`) → aplicación con `--wait`; exige `battleExecution=container` y `sandbox=container` |
-| `probes` | sonda (`probe.mjs`, en `--network container:<objetivo>`) desde **cada** contenedor del stack y dos equivalentes declarados (backup en sus mismas redes; un «bot» sólo en `arena`): fase A **sin** firewall y fase B **con** el firewall de DEV-SECOPS; escucha del proxy; política desde `bot-build-worker` |
+| `probes` | sonda (`probe.mjs`, en `--network container:<objetivo>`) desde **cada** contenedor del stack y dos equivalentes declarados (backup en sus mismas redes; un «bot» sólo en `arena`): fase A **sin** firewall y fase B **con** el firewall de DEV-SECOPS; escucha del proxy |
 | `flow` | `flow.mjs` por la API pública del gateway: registro → 2 bots con código → builds → `published` → mapa propio → batalla → `finished` → stats → replay |
+| `policy` | política desde `bot-build-worker` (consumidor legítimo). Va **después** del flujo: con un proxy sin control de propiedad estas peticiones paran de verdad postgres y el gateway (visto en la calibración) |
 | `evidence`, `cleanup` | `if: always()`; logs, eventos y redes saneadas; luego proxy parado, firewall retirado, `down -v` |
 
 Veredicto (`scripts/ci/assert-container-proxy-e2e.mjs <out> <commit>`, `if: always()`): una fase

@@ -16,9 +16,10 @@
 #   build     imágenes de la aplicación desde el commit (BUILD_COMMIT = commit del job)
 #   up        redes + contenedores sin arrancar → proxy en 10.89.250.1 → stack con --wait
 #   probes    C5: sondas desde CADA contenedor (y equivalentes declarados de backup y de un
-#             bot) sin firewall (capa proxy) y con firewall (capa host); escucha del proxy;
-#             C6: política de imagen y de propiedad desde un consumidor legítimo
+#             bot) sin firewall (capa proxy) y con firewall (capa host); escucha del proxy
 #   flow      C3/C4: build → published ×2 y batalla A+B por la API pública del gateway
+#   policy    C6: política de imagen y de propiedad desde un consumidor legítimo (DESPUÉS
+#             del flujo: con un proxy roto, estas peticiones paran postgres y el gateway)
 #   evidence  C9: logs, compose config, redes saneadas, eventos de Docker, sin secretos
 #   cleanup   para el proxy, retira el firewall y el stack (SÓLO en el runner efímero)
 #
@@ -29,7 +30,7 @@
 # máquina se niega (rc 3). NUNCA contra producción.
 set -uo pipefail
 
-CMD=${1:?uso: run.sh <prepare|build|up|probes|flow|evidence|cleanup>}
+CMD=${1:?uso: run.sh <prepare|build|up|probes|flow|policy|evidence|cleanup>}
 if [ "${GITHUB_ACTIONS:-}" != "true" ] || [ "${RUNNER_ENVIRONMENT:-}" != "github-hosted" ]; then
   echo "run.sh: sólo en un runner efímero de GitHub Actions (aplica firewall y borra el stack)" >&2
   exit 3
@@ -278,9 +279,13 @@ do_probes() {
     node "$HERE/probe.mjs" "$h" "$PROXY_PORT" GET /containers/json - 3000 | jq -c --arg h "$h" '. + {from:"host", to:$h}' >>"$STATE/host-probes.jsonl"
   done
   jq -s --slurpfile l "$STATE/listeners.json" '{listeners: $l[0].listeners, hostProbes: .}' "$STATE/host-probes.jsonl" >"$OUT/host-checks.json"
+}
 
-  # C6 · política desde un consumidor LEGÍTIMO (bot-build-worker): la capa de red y la de
-  # cliente dejan pasar; sólo pueden denegar la allowlist de imágenes y la propiedad.
+# C6 · política desde un consumidor LEGÍTIMO (bot-build-worker): la capa de red y la de
+# cliente dejan pasar; sólo pueden denegar la allowlist de imágenes y la propiedad.
+# Va DESPUÉS del flujo a propósito: con un proxy sin control de propiedad (calibración)
+# estas peticiones paran de verdad postgres y el gateway, y eso no debe enmascarar C3/C4.
+do_policy() {
   local bw pg gw
   bw=$(cid bot-build-worker)
   pg=$(docker inspect -f '{{.Id}}' "$(cid postgres)")
@@ -373,6 +378,7 @@ case "$CMD" in
   build) do_build ;;
   up) do_up ;;
   probes) do_probes ;;
+  policy) do_policy ;;
   flow) do_flow ;;
   evidence) do_evidence ;;
   cleanup) do_cleanup ;;
