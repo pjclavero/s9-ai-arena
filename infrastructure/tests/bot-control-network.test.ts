@@ -229,14 +229,16 @@ describe("RC2 · bot-control — contrato de la red (compose resuelto)", () => {
     expect(net.ipam?.config).toEqual([{ subnet: SUBNET, gateway: GATEWAY_IP }]);
   });
 
-  it("la subred no solapa con los pools por defecto de Docker ni con otra red declarada", () => {
+  it("la subred RENDERIZADA no solapa con los pools por defecto de Docker ni con otra red declarada", () => {
+    const rendered = net.ipam?.config?.[0]?.subnet;
+    expect(rendered, "bot-control sin subred fija").toBeTruthy();
     // Pools por defecto de dockerd (default-address-pools) + docker0.
     for (const pool of ["172.17.0.0/16", "172.16.0.0/12", "192.168.0.0/16"]) {
-      expect(overlap(SUBNET, pool), pool).toBe(false);
+      expect(overlap(rendered!, pool), pool).toBe(false);
     }
     for (const [k, n] of Object.entries(prod.networks)) {
       if (k === NET_KEY) continue;
-      for (const cfg of n.ipam?.config ?? []) if (cfg.subnet) expect(overlap(SUBNET, cfg.subnet), k).toBe(false);
+      for (const cfg of n.ipam?.config ?? []) if (cfg.subnet) expect(overlap(rendered!, cfg.subnet), k).toBe(false);
     }
   });
 
