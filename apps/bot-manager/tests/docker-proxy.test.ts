@@ -773,6 +773,84 @@ describe("RC2 · control del cliente por IP de origen", () => {
       createDockerProxyServer({ backend: fakeDockerBackend().backend, allowedClients: "0.0.0.0/0" }),
     ).toThrow(/demasiado amplio/);
   });
+
+  it("la exclusión PREVALECE: un origen dentro de la subred admitida pero excluido (la IP de bind) → 403", async () => {
+    // Análogo en loopback del caso real: proceso del host que conecta a 10.89.250.1
+    // sale con origen 10.89.250.1 ∈ 10.89.250.0/24.
+    const fake = fakeDockerBackend();
+    const decisions: ProxyDecisionLog[] = [];
+    const server = createDockerProxyServer({
+      backend: fake.backend,
+      allowedClients: ["127.0.0.0/8"],
+      deniedClients: ["127.0.0.1"],
+      onDecision: (d) => decisions.push(d),
+    });
+    const url = await listen(server);
+    try {
+      const res = await fetch(`${url}/containers/${ID_A}/json`);
+      expect(res.status).toBe(403);
+      expect((await res.json()).message).toMatch(/cliente no autorizado/);
+      expect(fake.requests).toEqual([]);
+      expect(decisions.some((d) => !d.allowed && d.client === "127.0.0.1")).toBe(true);
+    } finally {
+      await close(server);
+    }
+    // Sin exclusión, el mismo origen pasa el control (control positivo del test).
+    const open = createDockerProxyServer({ backend: fake.backend, allowedClients: ["127.0.0.0/8"] });
+    const openUrl = await listen(open);
+    try {
+      expect((await fetch(`${openUrl}/containers/${ID_A}/json`)).status).toBe(404);
+    } finally {
+      await close(open);
+    }
+  });
+});
+
+describe("RC2 · exclusión de la IP de bind y de las direcciones locales del host", () => {
+  const ifaces = {
+    lo: [{ address: "127.0.0.1" }, { address: "::1" }],
+    "s9-botctl0": [{ address: "10.89.250.1" }],
+    eth0: [{ address: "192.0.2.10" }, { address: "fe80::1%eth0" }],
+  };
+
+  it("bind 10.89.250.1: excluye la IP de bind y TODA dirección local, aunque esté en la subred admitida", () => {
+    const c = proxyConfigFromEnv(
+      { DOCKER_PROXY_BIND: "10.89.250.1", DOCKER_PROXY_ALLOWED_CLIENTS: "10.89.250.0/24" },
+      ifaces,
+    );
+    for (const a of ["10.89.250.1", "192.0.2.10", "127.0.0.1", "::1", "fe80::1"])
+      expect(c.deniedClients, a).toContain(a);
+    const { blockList } = parseAllowedClients(c.deniedClients);
+    expect(isClientAllowed("10.89.250.1", blockList)).toBe(true); // está en la exclusión
+    expect(isClientAllowed("10.89.250.2", blockList)).toBe(false); // un consumidor no
+  });
+
+  it("la IP de bind se excluye aunque no aparezca en las interfaces leídas al arrancar", () => {
+    const c = proxyConfigFromEnv({ DOCKER_PROXY_BIND: "10.89.250.1", DOCKER_PROXY_ALLOWED_CLIENTS: "10.89.250.0/24" });
+    expect(c.deniedClients).toEqual(["10.89.250.1"]);
+  });
+
+  it("bind loopback (golden): loopback NO se excluye; el resto de direcciones locales sí", () => {
+    const c = proxyConfigFromEnv({ DOCKER_PROXY_BIND: "127.0.0.1" }, ifaces);
+    expect(c.deniedClients).not.toContain("127.0.0.1");
+    expect(c.deniedClients).not.toContain("::1");
+    expect(c.deniedClients).toContain("10.89.250.1");
+  });
+
+  it("DOCKER_PROXY_DENIED_CLIENTS se suma; una entrada inválida o /0 impide arrancar", () => {
+    const c = proxyConfigFromEnv({
+      DOCKER_PROXY_BIND: "10.89.250.1",
+      DOCKER_PROXY_ALLOWED_CLIENTS: "10.89.250.0/24",
+      DOCKER_PROXY_DENIED_CLIENTS: "10.89.250.200/29",
+    });
+    expect(c.deniedClients).toEqual(["10.89.250.1", "10.89.250.200/29"]);
+    expect(() => proxyConfigFromEnv({ DOCKER_PROXY_BIND: "127.0.0.1", DOCKER_PROXY_DENIED_CLIENTS: "basura" })).toThrow(
+      /no válido/,
+    );
+    expect(() =>
+      proxyConfigFromEnv({ DOCKER_PROXY_BIND: "127.0.0.1", DOCKER_PROXY_DENIED_CLIENTS: "0.0.0.0/0" }),
+    ).toThrow(/demasiado amplio/);
+  });
 });
 
 // ── bind / configuración ─────────────────────────────────────────────────────
@@ -933,6 +1011,28 @@ describe("RC2 · el proceso docker-proxy-main.ts aplica la configuración (spawn
       expect(res.status).toBe(403);
       expect((await res.json()).message).toMatch(/cliente no autorizado/);
       expect(p.output()).toMatch(/"allowed":false.*cliente no autorizado: 127\.0\.0\.1/);
+    } finally {
+      p.child.kill("SIGTERM");
+      await p.exited;
+    }
+  }, 30_000);
+
+  it("DOCKER_PROXY_DENIED_CLIENTS llega al servidor: origen admitido por CIDR pero excluido → 403", async () => {
+    const port = await freePort();
+    const p = runMain(
+      {
+        DOCKER_PROXY_BIND: "127.0.0.1",
+        DOCKER_PROXY_PORT: String(port),
+        DOCKER_PROXY_ALLOWED_CLIENTS: "127.0.0.0/8",
+        DOCKER_PROXY_DENIED_CLIENTS: "127.0.0.1",
+      },
+      /proxy de Docker escuchando/,
+    );
+    try {
+      await p.ready;
+      const res = await fetch(`http://127.0.0.1:${port}/containers/${ID_A}/json`);
+      expect(res.status).toBe(403);
+      expect((await res.json()).message).toMatch(/cliente no autorizado/);
     } finally {
       p.child.kill("SIGTERM");
       await p.exited;

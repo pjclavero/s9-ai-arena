@@ -636,8 +636,22 @@ export interface ProxyServerOptions {
    * ⇒ LOOPBACK_CLIENTS. Cualquier otro origen: 403 y cierre, sin leer la petición.
    */
   allowedClients?: string | readonly string[];
+  /**
+   * RC2 · orígenes SIEMPRE rechazados, aunque caigan dentro de `allowedClients`
+   * (prevalecen). docker-proxy-config.ts pone aquí la IP de bind y las direcciones
+   * locales del host: un proceso del host que conecta a 10.89.250.1 sale CON ORIGEN
+   * 10.89.250.1, que está dentro de 10.89.250.0/24; sin esta exclusión sólo lo
+   * pararía el firewall, y la capa del proxy debe ser independiente de él.
+   */
+  deniedClients?: string | readonly string[];
   /** Auditoría: se llama con cada decisión (permitida o denegada). */
   onDecision?: (entry: ProxyDecisionLog) => void;
+}
+
+/** Lista de exclusión (IP o CIDR); vacía ⇒ ninguna. Mismas reglas de parseo que la admitida. */
+function parseDeniedClients(spec: string | readonly string[] | undefined): net.BlockList {
+  const items = spec === undefined ? [] : typeof spec === "string" ? spec.split(/[\s,]+/).filter(Boolean) : [...spec];
+  return items.length ? parseAllowedClients(items).blockList : new net.BlockList();
 }
 
 const CLIENT_DENIED_BODY = JSON.stringify({ message: "cliente no autorizado por el proxy de Docker" });
@@ -646,7 +660,12 @@ const CLIENT_DENIED_BODY = JSON.stringify({ message: "cliente no autorizado por 
 export function createDockerProxyServer(opts: ProxyServerOptions): http.Server {
   const policy = opts.policy ?? DEFAULT_POLICY;
   // Se parsea AL CREAR el servidor: una lista inválida no llega a escuchar.
-  const clients = parseAllowedClients(opts.allowedClients ?? LOOPBACK_CLIENTS);
+  const allowedList = parseAllowedClients(opts.allowedClients ?? LOOPBACK_CLIENTS).blockList;
+  const deniedList = parseDeniedClients(opts.deniedClients);
+  const clients = {
+    // Admitido = dentro de la lista admitida Y fuera de la de exclusión.
+    admits: (addr: string | undefined) => isClientAllowed(addr, allowedList) && !isClientAllowed(addr, deniedList),
+  };
   if (policy.instance !== undefined && !INSTANCE_RE.test(policy.instance))
     throw new Error(`instancia del proxy no válida: ${policy.instance}`);
 
@@ -659,7 +678,7 @@ export function createDockerProxyServer(opts: ProxyServerOptions): http.Server {
     };
     // Defensa en profundidad: el filtro de `connection` ya cerró a los no
     // admitidos; si alguno llegara aquí, no se lee ni un byte de su cuerpo.
-    if (!isClientAllowed(req.socket.remoteAddress, clients.blockList)) {
+    if (!clients.admits(req.socket.remoteAddress)) {
       log({
         method: req.method ?? "?",
         path: req.url ?? "?",
@@ -736,7 +755,7 @@ export function createDockerProxyServer(opts: ProxyServerOptions): http.Server {
   // RC2 · el control de cliente actúa en la CONEXIÓN: un origen no admitido
   // recibe un 403 crudo y se cierra sin que el parser HTTP llegue a leerle nada.
   server.on("connection", (socket: net.Socket) => {
-    if (isClientAllowed(socket.remoteAddress, clients.blockList)) return;
+    if (clients.admits(socket.remoteAddress)) return;
     const client = normalizeAddress(socket.remoteAddress ?? "");
     opts.onDecision?.({ method: "-", path: "-", allowed: false, reason: `cliente no autorizado: ${client}`, client });
     socket.end(

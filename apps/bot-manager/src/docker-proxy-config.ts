@@ -26,6 +26,8 @@ export interface ProxyRuntimeConfig {
   socketPath: string;
   policy: ProxyPolicy & { imageAllowlist: ReadonlySet<string>; instance: string };
   allowedClients: string[];
+  /** Orígenes siempre rechazados (bind, direcciones locales, DOCKER_PROXY_DENIED_CLIENTS). */
+  deniedClients: string[];
   imageAllowlistPath: string;
   warnings: string[];
 }
@@ -80,6 +82,26 @@ export function proxyConfigFromEnv(env: NodeJS.ProcessEnv, interfaces: Interface
     );
   const allowedClients = parseAllowedClients(clientsRaw || LOOPBACK_CLIENTS).list;
 
+  // Exclusión (prevalece sobre la admitida): la IP de bind, toda dirección local del
+  // host (un proceso del host que conecta a la IP del bridge sale con ESA IP de
+  // origen, dentro de la subred admitida) y DOCKER_PROXY_DENIED_CLIENTS. Con bind
+  // loopback, loopback NO se excluye: ahí los clientes legítimos son procesos locales.
+  const isLoopback = (a: string) => {
+    const f = net.isIP(a);
+    return f !== 0 && loopback.check(a, f === 4 ? "ipv4" : "ipv6");
+  };
+  const local = Object.values(interfaces)
+    .flatMap((addrs) => addrs ?? [])
+    .map((a) => normalizeAddress(a.address.split("%")[0]))
+    .filter((a) => net.isIP(a) !== 0);
+  const denied = new Set<string>();
+  for (const a of [...(isWildcard ? [] : [bind]), ...local]) {
+    if (bindIsLoopback && isLoopback(a)) continue;
+    denied.add(a);
+  }
+  const deniedRaw = (env.DOCKER_PROXY_DENIED_CLIENTS ?? "").trim();
+  const deniedClients = [...denied, ...(deniedRaw ? parseAllowedClients(deniedRaw).list : [])];
+
   const imageAllowlistPath = (env.DOCKER_PROXY_IMAGE_ALLOWLIST ?? "").trim() || DEFAULT_IMAGE_ALLOWLIST_PATH;
   const imageAllowlist = loadImageAllowlist(imageAllowlistPath);
 
@@ -98,6 +120,7 @@ export function proxyConfigFromEnv(env: NodeJS.ProcessEnv, interfaces: Interface
       instance,
     },
     allowedClients,
+    deniedClients,
     imageAllowlistPath,
     warnings,
   };
