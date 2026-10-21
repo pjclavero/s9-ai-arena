@@ -4,7 +4,7 @@
  * El bot-manager YA NO monta /var/run/docker.sock (RCE en el servicio que
  * procesa código de usuario = root en el host). En su lugar habla HTTP con
  * este proxy, que corre FUERA del Compose (en el host, ver docker-proxy-main.ts
- * y docs/despliegue.md) y es el único que toca el socket.
+ * y docs/operations/docker-proxy.md) y es el único que toca el socket.
  *
  * Superficie expuesta (todo lo demás → 403):
  *   POST /containers/create        crear (cuerpo validado campo a campo)
