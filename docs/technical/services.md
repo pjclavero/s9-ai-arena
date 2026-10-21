@@ -83,6 +83,7 @@ Estas variables se repiten en varios servicios y se agrupan como «BD común»:
 | Entrypoint | `apps/arena-engine/src/service.ts` |
 | Entrada | HTTP :8081: `GET /healthz`; `POST /run` con la cabecera `x-arena-engine-auth` (secreto interno) |
 | Salida | `DOCKER_PROXY_URL` (proxy del host) → contenedores de bots en la red `arena` |
+| Redes | `platform`, `arena`, `bot-control` (consumidor del proxy: instancia `ProxyContainerRunner` si hay URL; [networking.md](../operations/networking.md#red-de-control-del-docker-proxy-bot-control)) |
 | Persistencia | ninguna. Devuelve el replay en memoria a quien llama |
 | Configuración | `PORT`, `DOCKER_PROXY_URL` (**vacía por defecto** ⇒ sin runner ⇒ 503), `ARENA_NETWORK`, `ARENA_ENGINE_HOST`, `ARENA_ENGINE_INTERNAL_SECRET_FILE` |
 | Healthcheck | `wget http://127.0.0.1:8081/healthz` |
@@ -100,6 +101,8 @@ Estas variables se repiten en varios servicios y se agrupan como «BD común»:
 | Entrada | tabla `jobs`; Redis `BLPOP s9:wake:jobs` (opcional); WebSocket :8081 (`/spectate/<battleId>`) |
 | Salida | `battles`, `participants`, `battle_stats`, `matches`, `tournaments`, `ratings`, `rating_events`, `standings`; ficheros en `/data/replays`; fichero de identidad `/tmp/version.json` |
 | Depende de | postgres, queue |
+| Redes | `platform`, `data`, `arena` (aloja el ProtocolServer de los bots, [TD-033](../roadmap/technical-debt.md#td-033)), `bot-control` (única ruta al proxy) |
+| Proxy | `DOCKER_PROXY_URL` **vacía por defecto** ⇒ no reclama `run_battle` (interruptor del operador); con valor, `http://docker-proxy.internal:2375` → `10.89.250.1` |
 | Persistencia | PostgreSQL + volumen `arena_replays` (lectura y escritura) |
 | Configuración | BD común; `SPECTATE_PORT`, `REPLAYS_DIR`, `ARENA_DATA_DIRS`, `HEARTBEAT_PATH`, `VERSION_PATH` |
 | Secretos montados | sólo `postgres_password` (falta el secreto de tickets: [TD-028](../roadmap/technical-debt.md#td-028)) |
@@ -118,8 +121,8 @@ Estas variables se repiten en varios servicios y se agrupan como «BD común»:
 | Entrada | HTTP :8084 |
 | Salida | — (`DOCKER_PROXY_URL` es obligatoria para arrancar, pero no se usa para operar) |
 | Persistencia | volúmenes `arena_bot_sources` y `arena_build_cache` |
-| Configuración | `PORT`, `DOCKER_PROXY_URL` (por defecto apunta al host vía `host-gateway`) |
-| Secretos | ninguno. Redes `platform` + `build`, sin `data` |
+| Configuración | `PORT`, `DOCKER_PROXY_URL` (por defecto `http://docker-proxy.internal:2375`; el alias va a la IP fija `10.89.250.1`, nunca `host-gateway`) |
+| Secretos | ninguno. Redes `platform` + `build`, sin `data` y **sin `bot-control`**: no es consumidor del proxy (no instancia `ProxyContainerRunner`), así que no tiene ruta hacia él |
 | Healthcheck | `wget http://127.0.0.1:8084/healthz` |
 | Errores | sin `DOCKER_PROXY_URL` no arranca (exit 1) |
 | Tests | 20 ficheros en `apps/bot-manager` (pipeline, análisis, sandbox-escape, docker-proxy, launch-guard); `infrastructure/tests/bot-manager-isolation.test.ts` |
@@ -134,7 +137,8 @@ Estas variables se repiten en varios servicios y se agrupan como «BD común»:
 | Entrada | tabla `jobs` (`kind = bot_build`) |
 | Salida | `builds`, `bot_versions.state`, `artifacts`, `security_findings`, `audit_log` |
 | Persistencia | PostgreSQL + volúmenes de fuentes y caché |
-| Configuración | BD común; `ARTIFACT_SIGNING_KEY_FILE`, `HEARTBEAT_PATH` |
+| Redes | `platform`, `build`, `data`, `arena` (sandbox del build), `bot-control` (única ruta al proxy) |
+| Configuración | BD común; `ARTIFACT_SIGNING_KEY_FILE`, `HEARTBEAT_PATH`, `DOCKER_PROXY_URL` (por defecto `http://docker-proxy.internal:2375` → `10.89.250.1`), `BUILD_SANDBOX_HOST` |
 | Secretos montados | `postgres_password`, `artifact_signing_key` (sin clave de firma **no arranca**) |
 | Healthcheck | latido `/tmp/heartbeat` con menos de 120 s |
 | Errores | sin `agentResolver`, las etapas de ejecución son «no verificables» ⇒ versión `rejected`, build `failed` (**siempre**, [TD-001](../roadmap/technical-debt.md#td-001)) |
@@ -227,6 +231,7 @@ Rutas del replay-service (internas: el gateway ya no las enruta desde TD-004; el
 | Responsabilidad | Proxy de la API de Docker con allowlist (crear, arrancar, parar, inspeccionar, estadísticas). Rechaza `privileged`, bind-mounts, red del host y cambios de usuario |
 | Entrypoint | unidad systemd `infrastructure/systemd/s9-docker-proxy.service` → `apps/bot-manager/src/docker-proxy-main.ts` |
 | Configuración | `DOCKER_PROXY_BIND` (por defecto loopback), `DOCKER_PROXY_PORT` (2375), `DOCKER_SOCKET`, `ARENA_NETWORK`, `SANDBOX_USER` |
+| Red (RC2) | escucha en `10.89.250.1:2375`, el gateway de la red Compose `bot-control` (bridge `s9-botctl0`); sólo la comparten sus tres consumidores. La red **no basta**: gateway y backup (red `public`, con ruta por defecto) alcanzan esa IP; lo cierran el firewall del host y el control de cliente del proxy ([networking.md](../operations/networking.md#red-de-control-del-docker-proxy-bot-control)) |
 | Estado | instalado; ningún flujo activo lo usa hoy |
 | Detalle | [docs/operations/docker-proxy.md](../operations/docker-proxy.md) |
 
@@ -245,6 +250,7 @@ Rutas del replay-service (internas: el gateway ya no las enruta desde TD-004; el
 | Rutas del replay-service | CODE_VERIFIED | `apps/replay-service/src/server.ts:105-252` |
 | Rutas de map-service | CODE_VERIFIED | `apps/map-service/src/main.ts:26-42` |
 | bot-manager no arranca sin proxy | CODE_VERIFIED | `apps/bot-manager/src/main.ts:30-35,62-66` |
+| Consumidores del proxy = arena-engine, bot-build-worker, tournament-worker (y sólo ellos en `bot-control`) | CODE_VERIFIED | AST desde cada `SERVICE_ENTRY`: `infrastructure/tests/bot-control-network.test.ts` |
 | bot-build-worker sin clave no arranca | CODE_VERIFIED | `apps/bot-manager/src/build-worker-main.ts:29-30` |
 | `/run` con secreto interno | CODE_VERIFIED | `apps/arena-engine/src/service.ts:264-270` |
 | Secretos del worker | CODE_VERIFIED + RUNTIME_VERIFIED (sólo nombres) | compose; `docker inspect` de nombres de variables y montajes, 2026-10-15 |
