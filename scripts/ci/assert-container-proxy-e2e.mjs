@@ -32,6 +32,12 @@
  *      por /api/v1/replays (200) y /replays* del gateway cerrado (404).
  *   R10 la sonda de DEV-NET (scripts/ops/network-probe.mjs --expect-members …) da rc 0
  *      sin firewall y con --expect-default-route-blocked con firewall (2 = no medido ≠ PASS).
+ *   R11 (TD-062) frontera de privilegio, con el proxy INSTALADO como en producción
+ *      (privilege.json): preflight inicial y final rc 0; el proceso es /usr/bin/node + el
+ *      bundle de root, corre como s9proxy y NO ve el checkout; bundle del commit con sólo
+ *      importaciones node:*; un usuario no root (s9cpx-arena) y s9proxy reciben EACCES en
+ *      cada intento contra bundle/allowlist/unidad/entorno; cada mutación de root pone el
+ *      preflight ROJO por su motivo y VERDE al revertir; el proxy no se reinició.
  *   R9 eventos de Docker: ≥2 contenedores de runtime creados durante los builds y ≥2 durante
  *      la batalla, TODOS con las labels del proxy; ningún create ajeno (sólo contenedores
  *      del proyecto Compose, del arnés o del proxy): un create sin labels = bypass.
@@ -51,6 +57,27 @@ import {
 } from "../../tests/container-proxy-e2e/compose-check.mjs";
 
 export const PROXY_INSTANCE = "s9-docker-proxy";
+// TD-062 · contrato del artefacto instalado y de la fase `privilege` de run.sh.
+export const EXPECTED_PROXY_CMDLINE = "/usr/bin/node --no-addons /usr/local/lib/s9-docker-proxy/docker-proxy.mjs";
+export const PRIVILEGE_NEGATIVES = [
+  "append-bundle",
+  "create-in-libdir",
+  "rename-bundle",
+  "append-lock",
+  "create-in-policydir",
+  "append-unit",
+  "create-dropin",
+  "append-env",
+];
+export const PRIVILEGE_MUTATIONS = [
+  "bundle-group-writable",
+  "libdir-owned-by-nonroot",
+  "lockdir-owned-by-nonroot",
+  "env-allowlist-in-tree",
+  "unit-npx-tsx",
+  "unit-workdir-opt",
+  "unit-dropin",
+];
 export const APP_SERVICES = [
   "api",
   "web",
@@ -320,6 +347,57 @@ export function evaluar(outDir, { commit } = {}) {
       "R8 replay por /api/v1/replays (200) y /replays* del gateway cerrado (404)",
       bt.replayAvailable === true && bt.replayIndexStatus === 200 && bt.gatewayReplaysStatus === 404,
       `available=${bt.replayAvailable} api=${bt.replayIndexStatus} gateway=${bt.gatewayReplaysStatus}`,
+    );
+  }
+
+  // R11 · TD-062: frontera de privilegio del proxy (instalado como en producción)
+  const pv = leer(outDir, "privilege.json");
+  if (pv.error) add("R11 frontera de privilegio del proxy", false, pv.error);
+  else {
+    const p = pv.value;
+    const e = p.effective ?? {};
+    add("R11 preflight inicial VERDE (root real, systemd real, proceso en marcha)", p.preflightInitialRc === 0, String(p.preflightInitialRc));
+    add(
+      "R11 el proceso ejecuta /usr/bin/node + el bundle instalado (no tsx/npx del árbol)",
+      Boolean(e.exe) && e.exe === e.nodeReal && e.cmdline === EXPECTED_PROXY_CMDLINE && e.expectedCmdline === EXPECTED_PROXY_CMDLINE,
+      JSON.stringify({ exe: e.exe, cmdline: e.cmdline }),
+    );
+    add("R11 el proceso corre como s9proxy", e.user === "s9proxy", String(e.user));
+    add("R11 el proceso NO ve el checkout (árbol inaccesible)", e.treeVisible === false, String(e.treeVisible));
+    add(
+      "R11 bundle autocontenido del commit (sólo node:*)",
+      Boolean(p.bundle) &&
+        (!commit || p.bundle.commit === commit) &&
+        (p.bundle.runtimeImports ?? []).length > 0 &&
+        p.bundle.runtimeImports.every((i) => i.startsWith("node:")),
+      JSON.stringify({ commit: p.bundle?.commit, runtimeImports: p.bundle?.runtimeImports }),
+    );
+    const neg = p.negatives ?? [];
+    const negWho = new Set(neg.map((n) => n.who));
+    add(
+      "R11 negativos: s9cpx-arena y s9proxy reciben EACCES al tocar bundle/allowlist/unidad/entorno",
+      neg.length >= PRIVILEGE_NEGATIVES.length * 2 &&
+        ["s9cpx-arena", "s9proxy"].every((w) => negWho.has(w)) &&
+        PRIVILEGE_NEGATIVES.every((id) => ["s9cpx-arena", "s9proxy"].every((w) => neg.some((n) => n.who === w && n.id === id))) &&
+        neg.every((n) => n.rc !== 0 && n.eacces === true),
+      neg.filter((n) => !(n.rc !== 0 && n.eacces === true)).map((n) => `${n.who}/${n.id} rc=${n.rc}`).join(", ") ||
+        `${neg.length} intentos denegados`,
+    );
+    const mut = p.mutations ?? [];
+    for (const id of PRIVILEGE_MUTATIONS) {
+      const m = mut.find((x) => x.id === id);
+      add(
+        `R11 mutación ${id}: preflight ROJO por su motivo y VERDE al revertir`,
+        Boolean(m) && m.redRc === 1 && m.reasonFound === true && m.revertedRc === 0,
+        m ? JSON.stringify(m) : "no se ejecutó",
+      );
+    }
+    add("R11 preflight final VERDE", p.preflightFinalRc === 0, String(p.preflightFinalRc));
+    const pr = p.process ?? {};
+    add(
+      "R11 el proxy siguió activo con el mismo MainPID (las mutaciones no lo reiniciaron)",
+      pr.active === "active" && Boolean(pr.mainPidBefore) && pr.mainPidBefore !== "0" && pr.mainPidBefore === pr.mainPidAfter,
+      JSON.stringify(pr),
     );
   }
 

@@ -6,7 +6,7 @@
 #   tournament-worker real: EJECUTA las batallas (contenedores reales vía el
 #     s9-docker-proxy local del repo) y aloja el gateway WebSocket de espectador
 #   bot-build-worker real: builds en el sandbox (contenedor real) y firma
-#   s9-docker-proxy LOCAL (apps/bot-manager/src/docker-proxy-main.ts) → Docker rootless
+#   s9-docker-proxy LOCAL (bundle instalado de docker-proxy-main.ts, TD-062) → Docker rootless
 #   replay-service real
 #   SPA construida con `vite build` servida con la conf REAL del contenedor web
 #   gateway nginx con la conf REAL infrastructure/gateway/nginx-behind-proxy.conf
@@ -187,8 +187,14 @@ PIDS+=("$(start replay env REPLAYS_DIR="$STATE/replays" PORT=$P_REPLAY "$TSX" ap
 REPLAY_PID=${PIDS[3]}
 API_PID=${PIDS[0]}
 # s9-docker-proxy LOCAL (el del repo, no el del host de producción): único proceso que toca el socket.
+# TD-062: el MISMO artefacto que se instala en producción (bundle autocontenido, node con
+# --no-addons, allowlist explícita desde una copia fuera del árbol), no tsx sobre el código.
+node "$REPO/infrastructure/scripts/build-docker-proxy-bundle.mjs" --out "$STATE/proxy/docker-proxy.mjs" \
+  >"$STATE/logs/proxy-bundle.log" 2>&1 || { log "build del bundle del proxy falló (logs/proxy-bundle.log)"; exit 1; }
+cp "$REPO/runtimes/DIGESTS.lock" "$STATE/proxy/DIGESTS.lock"
 PIDS+=("$(start docker-proxy env DOCKER_PROXY_BIND=127.0.0.1 DOCKER_PROXY_PORT=$P_PROXY DOCKER_SOCKET="$DOCKER_SOCK" \
-  ARENA_NETWORK=arena "$TSX" apps/bot-manager/src/docker-proxy-main.ts)")
+  DOCKER_PROXY_IMAGE_ALLOWLIST="$STATE/proxy/DIGESTS.lock" ARENA_NETWORK=arena \
+  node --no-addons "$STATE/proxy/docker-proxy.mjs")")
 
 # ── nginx: web, gateway y TLS con las confs REALES transformadas ─────────────
 node tests/browser/env/gen-nginx-confs.mjs "$REPO" "$STATE/confs" $P_API $P_WS $P_REPLAY $P_WEB $P_GW $P_TLS >>"$STATE/logs/confs.log" 2>&1 || {

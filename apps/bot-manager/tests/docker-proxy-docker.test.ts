@@ -4,7 +4,7 @@
  * Reproduce los controles N20–N23 de OPS-C (RC1) con el mismo tipo de víctima —un
  * contenedor creado FUERA del proxy— y exige el resultado contrario: 403 y la víctima
  * intacta (mismo StartedAt, sigue running). Además, con el proxy como PROCESO REAL
- * (docker-proxy-main.ts) dentro de un contenedor que comparte red con los clientes,
+ * (el BUNDLE instalado de docker-proxy-main.ts, TD-062) dentro de un contenedor que comparte red con los clientes,
  * prueba el control de cliente por IP de origen con contenedores de verdad:
  *   - cliente en la red «de control» (subred admitida)          → pasa el control;
  *   - cliente en una red NO interna ajena (el caso gateway/backup) → 403.
@@ -28,6 +28,8 @@ import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import type http from "node:http";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_LIMITS, DockerContainerRunner, complianceViolations } from "../src/container-runner.js";
@@ -46,8 +48,12 @@ import { DOCKER_E2E, dockerSocketPath } from "./docker-sandbox-env.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO = join(here, "..", "..", "..");
 const SECCOMP_PATH = join(here, "..", "security", "seccomp-bot.json");
+const BUILD = join(REPO, "infrastructure", "scripts", "build-docker-proxy-bundle.mjs");
+// Prefijo de TODOS los recursos Docker del test (defecto rc2px; en local, el de cada carril:
+// p. ej. S9_PROXY_DOCKER_TEST_PREFIX=rc3priv). Limpieza sólo de lo propio.
+const PFX = process.env.S9_PROXY_DOCKER_TEST_PREFIX || "rc2px";
 const RUN = randomBytes(3).toString("hex");
-const INSTANCE = "rc2px-test";
+const INSTANCE = `${PFX}-test`;
 const RUNTIMES = [...loadImageAllowlist()];
 const RUNTIME_NODE = RUNTIMES.find((i) => i.includes("runtime-node")) ?? RUNTIMES[0];
 
@@ -72,7 +78,7 @@ function victim(name: string, labels: Record<string, string> = {}): string {
     "--network",
     "none",
     "--label",
-    `rc2px.run=${RUN}`,
+    `${PFX}.run=${RUN}`,
     ...labelArgs,
     "--entrypoint",
     "node",
@@ -85,7 +91,7 @@ function victim(name: string, labels: Record<string, string> = {}): string {
 function createBody(overrides: Record<string, unknown> = {}) {
   const body = ProxyContainerRunner.buildCreateBody({
     imageDigest: RUNTIME_NODE,
-    botId: "rc2px",
+    botId: PFX,
     version: 1,
     battleId: RUN,
     network: "arena",
@@ -100,7 +106,7 @@ function createBody(overrides: Record<string, unknown> = {}) {
 }
 
 function cleanup() {
-  for (const filter of [`label=rc2px.run=${RUN}`, `label=${LABEL_INSTANCE}=${INSTANCE}`, `name=rc2px-`]) {
+  for (const filter of [`label=${PFX}.run=${RUN}`, `label=${LABEL_INSTANCE}=${INSTANCE}`, `name=${PFX}-`]) {
     const ids = dockerOk("ps", "-aq", "--filter", filter).out.split("\n").filter(Boolean);
     if (ids.length) dockerOk("rm", "-f", ...ids);
   }
@@ -122,9 +128,9 @@ describe.skipIf(!DOCKER_E2E)("RC2 · P10 · proxy real contra Docker real (in-pr
     });
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
     url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    victims.plain = victim(`rc2px-victim-${RUN}`);
-    victims.mimic = victim(`rc2px-mimic-${RUN}`, { [LABEL_MANAGED]: "true", [LABEL_INSTANCE]: "otra-instancia" });
-    victims.managedOnly = victim(`rc2px-managed-${RUN}`, { [LABEL_MANAGED]: "true" });
+    victims.plain = victim(`${PFX}-victim-${RUN}`);
+    victims.mimic = victim(`${PFX}-mimic-${RUN}`, { [LABEL_MANAGED]: "true", [LABEL_INSTANCE]: "otra-instancia" });
+    victims.managedOnly = victim(`${PFX}-managed-${RUN}`, { [LABEL_MANAGED]: "true" });
   }, 120_000);
 
   afterAll(async () => {
@@ -143,7 +149,7 @@ describe.skipIf(!DOCKER_E2E)("RC2 · P10 · proxy real contra Docker real (in-pr
   };
 
   it("positivo: create 201 (labels impuestas DE VERDAD), start 204, json 200, stats 200, stop 204; AutoRemove → 404", async () => {
-    const name = `rc2px-ok-${RUN}`;
+    const name = `${PFX}-ok-${RUN}`;
     const c = await call("POST", `/containers/create?name=${name}`, createBody());
     expect(c.status, c.text).toBe(201);
     const id = JSON.parse(c.text).Id as string;
@@ -181,7 +187,7 @@ describe.skipIf(!DOCKER_E2E)("RC2 · P10 · proxy real contra Docker real (in-pr
     const runner = new ProxyContainerRunner(url);
     const handle = await runner.launch({
       imageDigest: RUNTIME_NODE,
-      botId: `rc2px-${RUN}`,
+      botId: `${PFX}-${RUN}`,
       version: 1,
       battleId: "runner",
       network: "arena",
@@ -220,7 +226,7 @@ describe.skipIf(!DOCKER_E2E)("RC2 · P10 · proxy real contra Docker real (in-pr
   ];
   for (const image of foreign) {
     it(`N20 · create con imagen ajena ${image.slice(0, 60)}… → 403 y NO se crea nada`, async () => {
-      const name = `rc2px-n20-${randomBytes(3).toString("hex")}`;
+      const name = `${PFX}-n20-${randomBytes(3).toString("hex")}`;
       const r = await call("POST", `/containers/create?name=${name}`, createBody({ Image: image }));
       expect(r.status, r.text).toBe(403);
       expect(dockerOk("inspect", name).ok).toBe(false);
@@ -253,7 +259,7 @@ describe.skipIf(!DOCKER_E2E)("RC2 · P10 · proxy real contra Docker real (in-pr
   }
 
   it("por NOMBRE o prefijo corto de la víctima → 403 (el proxy nunca resuelve por nombre)", async () => {
-    for (const ref of [`rc2px-victim-${RUN}`, victims.plain.slice(0, 12)]) {
+    for (const ref of [`${PFX}-victim-${RUN}`, victims.plain.slice(0, 12)]) {
       expect((await call("POST", `/containers/${ref}/stop`)).status).toBe(403);
     }
     expect(inspectState(victims.plain).Running).toBe(true);
@@ -292,7 +298,7 @@ describe.skipIf(!DOCKER_E2E)("RC2 · P10 · proxy real contra Docker real (in-pr
     ]);
     bodies.push(["red host", { ...base, HostConfig: { ...base.HostConfig, NetworkMode: "host" } }]);
     for (const [label, body] of bodies) {
-      const name = `rc2px-hostile-${randomBytes(3).toString("hex")}`;
+      const name = `${PFX}-hostile-${randomBytes(3).toString("hex")}`;
       const r = await call("POST", `/containers/create?name=${name}`, body);
       expect(r.status, `${label}: ${r.text}`).toBe(403);
       expect(dockerOk("inspect", name).ok, label).toBe(false);
@@ -326,29 +332,40 @@ const PUB_SUBNET = "10.89.245.0/24";
 describe.skipIf(!DOCKER_E2E)(
   "RC2 · P10 · control de cliente: proceso real del proxy, clientes en contenedores reales",
   () => {
-    const ctlNet = `rc2px-ctl-${RUN}`;
-    const pubNet = `rc2px-pub-${RUN}`;
-    const proxyName = `rc2px-proxy-${RUN}`;
+    const ctlNet = `${PFX}-ctl-${RUN}`;
+    const pubNet = `${PFX}-pub-${RUN}`;
+    const proxyName = `${PFX}-proxy-${RUN}`;
     let proxyCtlIp = "";
     let proxyPubIp = "";
+    let bundleDir = "";
 
     beforeAll(() => {
-      docker("network", "create", "--internal", "--subnet", CTL_SUBNET, "--label", `rc2px.run=${RUN}`, ctlNet);
-      docker("network", "create", "--subnet", PUB_SUBNET, "--label", `rc2px.run=${RUN}`, pubNet);
+      docker("network", "create", "--internal", "--subnet", CTL_SUBNET, "--label", `${PFX}.run=${RUN}`, ctlNet);
+      docker("network", "create", "--subnet", PUB_SUBNET, "--label", `${PFX}.run=${RUN}`, pubNet);
       const nodeHome = dirname(dirname(process.execPath));
+      // TD-062: el proxy corre DESDE EL BUNDLE (como la unidad de producción), sin montar
+      // el repo ni node_modules: si el bundle necesitara algo del árbol, no arrancaría.
+      // La allowlist es una copia montada en la ruta de producción.
+      bundleDir = mkdtempSync(join(tmpdir(), `${PFX}-bundle-`));
+      execFileSync(process.execPath, [BUILD, "--out", join(bundleDir, "lib", "docker-proxy.mjs")], { encoding: "utf8" });
+      mkdirSync(join(bundleDir, "policy"));
+      copyFileSync(join(REPO, "runtimes", "DIGESTS.lock"), join(bundleDir, "policy", "DIGESTS.lock"));
+      chmodSync(bundleDir, 0o755);
       docker(
         "run",
         "-d",
         "--name",
         proxyName,
         "--label",
-        `rc2px.run=${RUN}`,
+        `${PFX}.run=${RUN}`,
         "--user",
         "0:0",
         "--network",
         ctlNet,
         "-v",
-        `${REPO}:/repo:ro`,
+        `${join(bundleDir, "lib")}:/usr/local/lib/s9-docker-proxy:ro`,
+        "-v",
+        `${join(bundleDir, "policy")}:/etc/s9-docker-proxy:ro`,
         "-v",
         `${nodeHome}:/opt/node:ro`,
         "-v",
@@ -365,13 +382,15 @@ describe.skipIf(!DOCKER_E2E)(
         `DOCKER_PROXY_INSTANCE=${INSTANCE}`,
         "-e",
         "DOCKER_SOCKET=/var/run/docker.sock",
+        "-e",
+        "DOCKER_PROXY_IMAGE_ALLOWLIST=/etc/s9-docker-proxy/DIGESTS.lock",
         "-w",
-        "/repo",
+        "/",
         "--entrypoint",
         "/opt/node/bin/node",
         RUNTIME_NODE,
-        "/repo/node_modules/tsx/dist/cli.mjs",
-        "/repo/apps/bot-manager/src/docker-proxy-main.ts",
+        "--no-addons",
+        "/usr/local/lib/s9-docker-proxy/docker-proxy.mjs",
       );
       docker("network", "connect", pubNet, proxyName);
       const nets = JSON.parse(docker("inspect", "-f", "{{json .NetworkSettings.Networks}}", proxyName));
@@ -387,7 +406,21 @@ describe.skipIf(!DOCKER_E2E)(
     afterAll(() => {
       cleanup();
       dockerOk("network", "rm", ctlNet, pubNet);
+      if (bundleDir) rmSync(bundleDir, { recursive: true, force: true });
     }, 60_000);
+
+    it("TD-062: el proceso del proxy es el BUNDLE instalado (sin repo ni node_modules montados)", () => {
+      const line = dockerOk("logs", proxyName)
+        .out.split("\n")
+        .find((l) => l.includes("proxy de Docker escuchando"));
+      const j = JSON.parse(line!);
+      expect(j.artifact.kind).toBe("bundle");
+      expect(j.imageAllowlist.path).toBe("/etc/s9-docker-proxy/DIGESTS.lock");
+      const mounts = JSON.parse(docker("inspect", "-f", "{{json .Mounts}}", proxyName)) as { Destination: string }[];
+      expect(mounts.map((m) => m.Destination).sort()).toEqual(
+        ["/etc/s9-docker-proxy", "/opt/node", "/usr/local/lib/s9-docker-proxy", "/var/run/docker.sock"].sort(),
+      );
+    });
 
     /** Cliente HTTP en un contenedor de verdad, en la red dada. */
     function clientCall(network: string, target: string, path: string): { status: number; body: string } {
@@ -399,9 +432,9 @@ describe.skipIf(!DOCKER_E2E)(
         "run",
         "--rm",
         "--name",
-        `rc2px-client-${randomBytes(3).toString("hex")}`,
+        `${PFX}-client-${randomBytes(3).toString("hex")}`,
         "--label",
-        `rc2px.run=${RUN}`,
+        `${PFX}.run=${RUN}`,
         "--network",
         network,
         "--entrypoint",

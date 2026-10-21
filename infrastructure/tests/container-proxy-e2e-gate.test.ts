@@ -27,7 +27,15 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 // @ts-expect-error módulo .mjs sin tipos
-import { evaluar, PROBE_TARGETS, PROXY_INSTANCE, STACK } from "../../scripts/ci/assert-container-proxy-e2e.mjs";
+import {
+  evaluar,
+  EXPECTED_PROXY_CMDLINE,
+  PRIVILEGE_MUTATIONS,
+  PRIVILEGE_NEGATIVES,
+  PROBE_TARGETS,
+  PROXY_INSTANCE,
+  STACK,
+} from "../../scripts/ci/assert-container-proxy-e2e.mjs";
 // @ts-expect-error módulo .mjs sin tipos
 import { evaluateCompose, CONSUMERS, EXECUTORS } from "../../tests/container-proxy-e2e/compose-check.mjs";
 
@@ -56,7 +64,15 @@ describe("C1 · functional-e2e.yml: job container-proxy-e2e obligatorio y comple
   });
 
   it("las fases corren en orden, cada una con su reloj y SIN if: (un paso no se puede saltar)", () => {
-    const fases = ["run.sh prepare", "run.sh build", "run.sh up", "run.sh probes", "run.sh flow", "run.sh policy"];
+    const fases = [
+      "run.sh prepare",
+      "run.sh build",
+      "run.sh up",
+      "run.sh probes",
+      "run.sh flow",
+      "run.sh policy",
+      "run.sh privilege",
+    ];
     const pos = fases.map(idx);
     for (const [i, p] of pos.entries()) {
       expect(p, fases[i]).toBeGreaterThanOrEqual(0);
@@ -67,7 +83,7 @@ describe("C1 · functional-e2e.yml: job container-proxy-e2e obligatorio y comple
   });
 
   it("evidencia, veredicto (con el commit), subida y limpieza corren SIEMPRE, después de las fases", () => {
-    const flow = idx("run.sh policy");
+    const flow = idx("run.sh privilege");
     const ev = idx("run.sh evidence");
     const verdict = idx("assert-container-proxy-e2e.mjs");
     const collect = idx("collect-functional-evidence.sh");
@@ -230,6 +246,24 @@ function fixture(mut: (d: string) => void = () => {}): string {
     },
   });
   w("images.json", { runtimeImages: [RT] });
+  w("privilege.json", {
+    preflightInitialRc: 0,
+    preflightFinalRc: 0,
+    effective: {
+      exe: "/usr/bin/node",
+      nodeReal: "/usr/bin/node",
+      cmdline: EXPECTED_PROXY_CMDLINE,
+      expectedCmdline: EXPECTED_PROXY_CMDLINE,
+      user: "s9proxy",
+      treeVisible: false,
+    },
+    bundle: { commit: COMMIT, sha256: "a".repeat(64), runtimeImports: ["node:fs", "node:http", "node:net"] },
+    negatives: ["s9cpx-arena", "s9proxy"].flatMap((who) =>
+      PRIVILEGE_NEGATIVES.map((id: string) => ({ who, id, rc: 1, eacces: true, err: "Permission denied" })),
+    ),
+    mutations: PRIVILEGE_MUTATIONS.map((id: string) => ({ id, reason: "x", redRc: 1, reasonFound: true, revertedRc: 0 })),
+    process: { mainPidBefore: "4242", mainPidAfter: "4242", active: "active" },
+  });
   writeFileSync(
     join(d, "docker-events.jsonl"),
     [
@@ -418,6 +452,86 @@ describe("C2 · assert-container-proxy-e2e: el veredicto no se deja engañar", (
             .join("\n"),
         ),
     ],
+    // ── R11 · TD-062: frontera de privilegio ──
+    ["sin privilege.json (la fase no corrió)", (d) => writeFileSync(join(d, "privilege.json"), "")],
+    ["preflight inicial ROJO", (d) => patch(d, "privilege.json", (v) => ({ ...v, preflightInitialRc: 1 }))],
+    [
+      "el proxy corre con tsx desde el árbol",
+      (d) =>
+        patch(d, "privilege.json", (v) => ({
+          ...v,
+          effective: { ...v.effective, cmdline: "node /opt/s9-ai-arena/node_modules/.bin/tsx apps/bot-manager/src/docker-proxy-main.ts" },
+        })),
+    ],
+    [
+      "el ejecutable no es el node de root",
+      (d) => patch(d, "privilege.json", (v) => ({ ...v, effective: { ...v.effective, exe: "/opt/hostedtoolcache/node/bin/node" } })),
+    ],
+    ["el proceso ve el checkout", (d) => patch(d, "privilege.json", (v) => ({ ...v, effective: { ...v.effective, treeVisible: true } }))],
+    ["el proceso corre como root", (d) => patch(d, "privilege.json", (v) => ({ ...v, effective: { ...v.effective, user: "root" } }))],
+    [
+      "bundle con una importación de node_modules",
+      (d) => patch(d, "privilege.json", (v) => ({ ...v, bundle: { ...v.bundle, runtimeImports: ["node:fs", "yaml"] } })),
+    ],
+    [
+      "bundle de otro commit",
+      (d) => patch(d, "privilege.json", (v) => ({ ...v, bundle: { ...v.bundle, commit: "f".repeat(40) } })),
+    ],
+    [
+      "s9cpx-arena PUEDE escribir la allowlist",
+      (d) =>
+        patch(d, "privilege.json", (v) => ({
+          ...v,
+          negatives: v.negatives.map((n: any) =>
+            n.who === "s9cpx-arena" && n.id === "append-lock" ? { ...n, rc: 0, eacces: false } : n,
+          ),
+        })),
+    ],
+    [
+      "un negativo falla por otra causa (no EACCES)",
+      (d) =>
+        patch(d, "privilege.json", (v) => ({
+          ...v,
+          negatives: v.negatives.map((n: any) => (n.id === "append-unit" ? { ...n, eacces: false } : n)),
+        })),
+    ],
+    [
+      "falta un negativo (no se midió)",
+      (d) => patch(d, "privilege.json", (v) => ({ ...v, negatives: v.negatives.filter((n: any) => n.id !== "rename-bundle") })),
+    ],
+    [
+      "mutación que NO pone el preflight en rojo",
+      (d) =>
+        patch(d, "privilege.json", (v) => ({
+          ...v,
+          mutations: v.mutations.map((m: any) => (m.id === "env-allowlist-in-tree" ? { ...m, redRc: 0 } : m)),
+        })),
+    ],
+    [
+      "mutación en rojo por OTRO motivo",
+      (d) =>
+        patch(d, "privilege.json", (v) => ({
+          ...v,
+          mutations: v.mutations.map((m: any) => (m.id === "unit-npx-tsx" ? { ...m, reasonFound: false } : m)),
+        })),
+    ],
+    [
+      "mutación sin revertir a verde",
+      (d) =>
+        patch(d, "privilege.json", (v) => ({
+          ...v,
+          mutations: v.mutations.map((m: any) => (m.id === "unit-dropin" ? { ...m, revertedRc: 1 } : m)),
+        })),
+    ],
+    [
+      "falta una mutación",
+      (d) => patch(d, "privilege.json", (v) => ({ ...v, mutations: v.mutations.filter((m: any) => m.id !== "libdir-owned-by-nonroot") })),
+    ],
+    ["preflight final ROJO", (d) => patch(d, "privilege.json", (v) => ({ ...v, preflightFinalRc: 1 }))],
+    [
+      "el proxy se reinició durante las mutaciones",
+      (d) => patch(d, "privilege.json", (v) => ({ ...v, process: { ...v.process, mainPidAfter: "999" } })),
+    ],
   ];
   for (const [nombre, mut] of casos) {
     it(`${nombre} → FAIL (CLI rc 1)`, () => {
@@ -569,6 +683,29 @@ describe("C4 · probe.mjs", () => {
     expect(p.tcp).toBe("CONNECT");
     expect(p.http).toBeNull();
     expect(p.closed).toBe(true);
+  });
+});
+
+// ── TD-062 · el job ejecuta el proxy COMO PRODUCCIÓN ────────────────────────
+// Complementa R11 (que mide el proceso efectivo en el runner: /proc/<pid>/exe y cmdline):
+// aquí se exige que run.sh no tenga otro camino de arranque del proxy desde el checkout.
+describe("TD-062 · run.sh arranca el proxy con el instalador real, no desde el árbol", () => {
+  const sh = readFileSync(RUN, "utf8")
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("#"))
+    .join("\n");
+  it("ninguna línea ejecutable arranca docker-proxy-main.ts ni el proxy con tsx", () => {
+    // Excluidas (declarado): las `sed -i` de la fase privilege, que ESCRIBEN ese ExecStart
+    // en la unidad como mutación de calibración (el preflight debe ponerse rojo con ella).
+    const lines = sh.split("\n").filter((l) => !/sudo -n sed -i /.test(l));
+    expect(lines.filter((l) => /docker-proxy-main\.ts/.test(l))).toEqual([]);
+    expect(sh.split("\n").filter((l) => /docker-proxy-main\.ts/.test(l)).length).toBe(1); // sólo la mutación
+  });
+  it("instala con install-docker-proxy.sh install, construye el bundle sin root y retira con rollback", () => {
+    expect(sh).toMatch(/INSTALLER="\$REPO\/infrastructure\/scripts\/install-docker-proxy\.sh"/);
+    expect(sh).toMatch(/"\$\{PX\[@\]\}" install/);
+    expect(sh).toMatch(/"\$\{PX\[@\]\}" rollback/);
+    expect(sh).toMatch(/node "\$REPO\/infrastructure\/scripts\/build-docker-proxy-bundle\.mjs"/);
   });
 });
 
