@@ -114,8 +114,10 @@ RemoveIPC=true
 # - llamadas al sistema: las de un servicio normal, sólo la ABI nativa; una llamada
 #   filtrada devuelve EPERM (no mata el proceso: libuv tiene alternativas).
 SystemCallArchitectures=native
+#   NO se añade ~@privileged: `ip` (ExecStartPre) suelta capacidades con capset() y, con
+#   EPERM, sale con 1 y el bridge «nunca» aparece (medido en CI, run 39672952774, y
+#   reproducido con systemd-run; lo vigila docker-proxy-privilege.test.ts «U · sandbox real»).
 SystemCallFilter=@system-service
-SystemCallFilter=~@privileged
 SystemCallErrorNumber=EPERM
 # - V8 (JIT) necesita memoria W+X: MemoryDenyWriteExecute=true rompe node. Declarado.
 MemoryDenyWriteExecute=false

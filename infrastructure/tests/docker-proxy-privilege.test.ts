@@ -230,6 +230,96 @@ describe("U · s9-docker-proxy.service ejecuta el artefacto instalado", () => {
   });
 });
 
+// ── U · sandbox real de la unidad ───────────────────────────────────────────
+// Las opciones de proceso de la unidad (seccomp, familias, NoNewPrivileges, capacidades…)
+// se aplican de verdad con `systemd-run` a lo que la unidad ejecuta: `ip`/`grep`/`sleep` del
+// ExecStartPre y el bundle con node. Regresión real que motivó la prueba: con
+// `SystemCallFilter=~@privileged`, `ip` falla en capset() (EPERM), sale con 1 y el
+// ExecStartPre espera un bridge que «nunca» aparece (CI, run 39672952774).
+const SANDBOX_KEYS = [
+  "SystemCallFilter",
+  "SystemCallErrorNumber",
+  "SystemCallArchitectures",
+  "NoNewPrivileges",
+  "RestrictAddressFamilies",
+  "RestrictNamespaces",
+  "LockPersonality",
+  "MemoryDenyWriteExecute",
+  "RestrictRealtime",
+  "RestrictSUIDSGID",
+  "CapabilityBoundingSet",
+  "UMask",
+];
+/** systemd-run con gestor de usuario o, si no lo hay (runner de CI), el de sistema con sudo. */
+function systemdRunLauncher(): { cmd: string[]; user: boolean } {
+  const user = ["systemd-run", "--user", "--wait", "--pipe", "--quiet", "--collect"];
+  if (spawnSync(user[0], [...user.slice(1), "true"]).status === 0) return { cmd: user, user: true };
+  const uname = spawnSync("id", ["-un"], { encoding: "utf8" }).stdout.trim();
+  const sys = ["sudo", "-n", "systemd-run", "--wait", "--pipe", "--quiet", "--collect", "-p", `User=${uname}`];
+  if (spawnSync(sys[0], [...sys.slice(1), "true"]).status === 0) return { cmd: sys, user: false };
+  throw new Error("ni systemd-run --user ni sudo -n systemd-run: el sandbox real no se puede probar (NO se salta)");
+}
+
+describe("U · lo que ejecuta la unidad funciona DENTRO de su sandbox real (systemd-run)", () => {
+  const S = parseUnit(readFileSync(UNIT_PATH, "utf8")).Service;
+  let L: { cmd: string[]; user: boolean };
+  let props: string[] = [];
+  beforeAll(() => {
+    L = systemdRunLauncher();
+    // Con el gestor de USUARIO, CapabilityBoundingSet= no se puede aplicar (exige CAP_SETPCAP;
+    // sale con 218). Se omite SÓLO ahí (declarado): un proceso no root no tiene capacidades
+    // que acotar. Con el gestor de sistema (CI, sudo) se aplican TODAS.
+    const keys = L.user ? SANDBOX_KEYS.filter((k) => k !== "CapabilityBoundingSet") : SANDBOX_KEYS;
+    props = keys.flatMap((k) => (S[k] ?? []).flatMap((v) => ["-p", `${k}=${v}`]));
+  });
+  const run = (cmd: string[], extra: string[] = []) => {
+    const r = spawnSync(L.cmd[0], [...L.cmd.slice(1), ...props, ...extra, ...cmd], {
+      encoding: "utf8",
+      timeout: 60_000,
+    });
+    return { rc: r.status, out: (r.stdout ?? "") + (r.stderr ?? "") + `\n[systemd-run rc=${r.status}]` };
+  };
+
+  it("se aplican las opciones de la unidad (el filtro seccomp está entre ellas)", () => {
+    expect(props).toContain("SystemCallFilter=@system-service");
+    expect(props.filter((p) => p.startsWith("SystemCallFilter=")).length).toBeGreaterThan(0);
+  });
+
+  it("`ip -4 -o addr show`, `grep` y `sleep` (ExecStartPre) funcionan con el seccomp de la unidad", () => {
+    const ipBin = ["/usr/sbin/ip", "/sbin/ip", "/usr/bin/ip", "/bin/ip"].find((p) => spawnSync("test", ["-x", p]).status === 0);
+    expect(ipBin, "no hay `ip` en el host del test").toBeTruthy();
+    const r = run(["/bin/sh", "-ec", `${ipBin} -4 -o addr show dev lo | grep -qF " 127.0.0.1/"; sleep 0; echo PRE_OK`]);
+    expect(r.out, r.out).toContain("PRE_OK");
+    expect(r.rc, r.out).toBe(0);
+  });
+
+  it("el bundle arranca con node --no-addons con el seccomp de la unidad (escucha y declara artifact=bundle)", () => {
+    const dir = mkdtempSync(join(tmp, "sbx-"));
+    copyFileSync(bundle.out, join(dir, "docker-proxy.mjs"));
+    copyFileSync(LOCK, join(dir, "DIGESTS.lock"));
+    spawnSync("chmod", ["-R", "a+rX", tmp]);
+    const port = String(20000 + Math.floor(Math.random() * 20000));
+    const r = run(
+      [process.execPath, "--no-addons", join(dir, "docker-proxy.mjs")],
+      [
+        "-p",
+        "RuntimeMaxSec=6",
+        "-E",
+        "DOCKER_PROXY_BIND=127.0.0.1",
+        "-E",
+        `DOCKER_PROXY_PORT=${port}`,
+        "-E",
+        `DOCKER_PROXY_IMAGE_ALLOWLIST=${join(dir, "DIGESTS.lock")}`,
+        "-E",
+        `DOCKER_SOCKET=${join(dir, "no-socket")}`,
+      ],
+    );
+    expect(r.out, r.out).toMatch(/proxy de Docker escuchando/);
+    expect(r.out).toMatch(/"artifact":\{"kind":"bundle"/);
+    expect(r.out).not.toMatch(/Bad system call|SIGSYS|EPERM/);
+  }, 90_000);
+});
+
 // ── P/N · install + preflight con propietarios reales ──────────────────────
 /** Cómo obtener un «root» con chown real: uid 0, userns con subuids o sudo -n. Nunca se salta. */
 function privLauncher(): string[] {
