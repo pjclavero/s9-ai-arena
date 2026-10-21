@@ -511,7 +511,7 @@ services:
     # descarga del artefacto). Misma deuda aceptada que el tournament-worker (TD-033).
     # RC2 · `bot-control`: build-worker-wiring.ts instancia ProxyContainerRunner;
     # es su única ruta hacia el s9-docker-proxy (10.89.250.1).
-    networks: [platform, build, data, arena, bot-control]
+    networks: [platform, build, data, arena]
     environment:
       <<: *node-db-env
       SERVICE_ENTRY: ${BOT_BUILD_WORKER_ENTRY:-apps/bot-manager/src/build-worker-main.ts}
