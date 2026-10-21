@@ -1210,7 +1210,7 @@ Estados posibles:
     - si el entorno apunta la allowlist fuera de la copia de root.
   - **Firewall:** las unidades se comprueban con la misma regla (sólo `/usr/local/sbin/s9-firewall`).
 - **Pruebas:**
-  - `infrastructure/tests/docker-proxy-privilege.test.ts` (job `unit`): el bundle copiado fuera del repo arranca; install y preflight sobre un árbol de pruebas con propietarios reales (userns con subuids o `sudo -n`); 18 mutaciones en ROJO por su motivo; EACCES real para un usuario no root.
+  - `infrastructure/tests/docker-proxy-privilege.test.ts` (job `unit`): el bundle copiado fuera del repo arranca; install y preflight sobre un árbol de pruebas con propietarios reales (userns con subuids o `sudo -n`); 20 mutaciones en ROJO por su motivo; EACCES real para un usuario no root.
   - `container-proxy-e2e` (R11, check obligatorio): el proxy instalado con el instalador real como unidad systemd real; preflight, proceso efectivo, EACCES para `s9cpx-arena` y `s9proxy`, y 7 mutaciones de root ROJO → revertidas → VERDE.
   - `docker-e2e` y `golden` ejecutan el bundle.
 - **Condición de cierre (cumplida en código):** el instalador y el preflight rechazan un `WorkingDirectory`/`ExecStart` o una política escribible por un usuario no root (calibrado con mutaciones). **Queda:** migrar producción (operador, [upgrades.md](../operations/upgrades.md#td-062)) y que `preflight` dé VERDE allí.

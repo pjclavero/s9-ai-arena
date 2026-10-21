@@ -443,6 +443,20 @@ describe("P · install en un árbol de pruebas con propietarios reales", () => {
       /PATH del servicio.*usr\/local\/bin es escribible/,
     ],
     [
+      // REVIEW PR #167: un padre INTERMEDIO que es un enlace (aquí /usr/local/lib → un
+      // directorio de uid 1000) deja el bundle a merced de ese usuario (puede renombrar
+      // s9-docker-proxy/); el enlace es de root y la hoja también, así que sólo se ve
+      // siguiendo la ruta REAL completa, no sólo el enlace de la hoja.
+      "padre intermedio que es un enlace a un directorio de no root",
+      `mkdir -p "$F/home/evil"; mv "$F/usr/local/lib/s9-docker-proxy" "$F/home/evil/"; chown 1000:1000 "$F/home/evil"; rmdir "$F/usr/local/lib"; ln -s ../../home/evil "$F/usr/local/lib"`,
+      /home\/evil es propiedad de uid=1000/,
+    ],
+    [
+      "allowlist bajo un directorio que es un enlace a uno de no root",
+      `mkdir -p "$F/home/evil2"; mv "$F/etc/s9-docker-proxy" "$F/home/evil2/"; chown 1000:1000 "$F/home/evil2"; ln -s ../home/evil2/s9-docker-proxy "$F/etc/s9-docker-proxy"`,
+      /home\/evil2 es propiedad de uid=1000/,
+    ],
+    [
       "bundle sustituido por un enlace al árbol",
       `ln -sf "$F/opt/s9-ai-arena/runtimes/DIGESTS.lock" "$F${BUNDLE_DST}"`,
       /no es un fichero regular/,

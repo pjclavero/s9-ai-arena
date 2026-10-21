@@ -263,7 +263,7 @@ sudo rm -rf /etc/s9-ai-arena && sudo userdel s9proxy
 |---|---|---|
 | `install|preflight|validate|rollback`, `APP_DIR`, `/etc/s9-ai-arena`, usuario `s9proxy` | CODE_VERIFIED | `infrastructure/scripts/install-docker-proxy.sh` |
 | Bundle autocontenido (sólo `node:*`), determinista, arranca fuera del repo y exige la allowlist | TEST | `infrastructure/tests/docker-proxy-privilege.test.ts` (B); mutación «el proxy importa un paquete» ⇒ build ROJO |
-| `install` fija root:root 0755/0644/0640; `preflight` ROJO ante 18 mutaciones (modo, propietario de un padre, enlace, sha256, entorno, unidad, drop-in, firewall) | TEST (propietarios reales en userns/sudo) | `docker-proxy-privilege.test.ts` (P) |
+| `install` fija root:root 0755/0644/0640; `preflight` ROJO ante 20 mutaciones (modo, propietario de un padre, enlace en la hoja o en un padre intermedio, sha256, entorno, unidad, drop-in, firewall) | TEST (propietarios reales en userns/sudo) | `docker-proxy-privilege.test.ts` (P) |
 | Un usuario no root recibe EACCES sobre bundle, allowlist, unidad y entorno | TEST (núcleo real) | `docker-proxy-privilege.test.ts` (N); `container-proxy-e2e` R11 (`s9cpx-arena`, `s9proxy`) |
 | Proceso efectivo = `/usr/bin/node` + bundle, como `s9proxy`, sin ver el checkout | CI (unidad systemd real en el runner) | `container-proxy-e2e` R11 |
 | Unidad de producción instalada hoy = RC1 (`npx tsx`, `WorkingDirectory` en el árbol) | RUNTIME_VERIFIED (lectura, 2026-10-21) | `systemctl cat`/`show` y `/proc` en el host (no se versiona la topología) |

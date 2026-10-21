@@ -282,7 +282,10 @@ pf_node() {
 }
 
 # La ruta y TODOS sus padres hasta / (o hasta S9PX_ROOT en el árbol de pruebas): un padre
-# escribible permite renombrar/sustituir lo de dentro. Si es un enlace, también su destino.
+# escribible permite renombrar/sustituir lo de dentro. Si la ruta pasa por un enlace (la hoja
+# o CUALQUIER componente intermedio, p. ej. /usr/local/lib → otro sitio), también la cadena
+# de la ruta REAL: el enlace es de root, pero el directorio al que apunta puede no serlo
+# (REVIEW PR #167).
 pf_chain() {
   local path="$1" label="$2" p top="${R:-/}" real
   p="$path"
@@ -291,9 +294,9 @@ pf_chain() {
     [ "$p" = "$top" ] || [ "$p" = "/" ] && break
     p="$(dirname -- "$p")"
   done
-  if [ -L "$path" ]; then
-    real="$(readlink -f -- "$path" || true)"
-    [ -n "$real" ] && pf_chain "$real" "$label (destino de $path)"
+  real="$(readlink -f -- "$path" 2>/dev/null || true)"
+  if [ -n "$real" ] && [ "$real" != "$path" ]; then
+    pf_chain "$real" "$label (destino de $path)"
   fi
 }
 
