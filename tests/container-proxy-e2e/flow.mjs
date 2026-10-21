@@ -184,8 +184,8 @@ async function main() {
   const b = await publishedBot("blue", `rc2ci-pacifista-${stamp}`, PACIFISTA);
 
   out.phase = "map";
-  const base = await call("GET", "/maps/mvp-arena-01/versions/1/content");
-  const content = base?.content ?? base;
+  const mapBase = await call("GET", "/maps/mvp-arena-01/versions/1/content");
+  const content = mapBase?.content ?? mapBase;
   const { checksum: _c, ...doc } = content;
   const mapId = `rc2ci-${stamp}`;
   const modes = new Set([...(doc.meta?.supportedModes ?? []), "deathmatch"]);
