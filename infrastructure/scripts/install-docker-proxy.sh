@@ -119,7 +119,10 @@ check_env() {
         inside=1
       fi
     done
-    is_ipv4 "$bind" && [ "$inside" = 1 ] || err "DOCKER_PROXY_BIND ($bind) no pertenece a DOCKER_PROXY_ALLOWED_CLIENTS ($v): el bind debe ser el gateway de esa subred"
+    # (Un bind que no es IPv4 ya se ha rechazado arriba: no se cuenta dos veces.)
+    if is_ipv4 "$bind" && [ "$inside" != 1 ]; then
+      err "DOCKER_PROXY_BIND ($bind) no pertenece a DOCKER_PROXY_ALLOWED_CLIENTS ($v): el bind debe ser el gateway de esa subred"
+    fi
   fi
 
   # --- allowlist de imágenes ---

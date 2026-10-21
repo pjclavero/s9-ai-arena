@@ -132,33 +132,47 @@ describe("install-docker-proxy.sh check-env", () => {
     expect(r.rc).toBe(0);
   });
 
-  const bad: [string, (l: string[]) => string[]][] = [
-    ["bind 0.0.0.0", set("DOCKER_PROXY_BIND", "0.0.0.0")],
-    ["bind vacío", set("DOCKER_PROXY_BIND", "")],
-    ["bind ausente", set("DOCKER_PROXY_BIND", null)],
-    ["bind :: (IPv6 comodín)", set("DOCKER_PROXY_BIND", "::")],
-    ["bind loopback", set("DOCKER_PROXY_BIND", "127.0.0.1")],
-    ["bind docker0 / host-gateway (172.17.0.1, el valor de RC1)", set("DOCKER_PROXY_BIND", "172.17.0.1")],
-    ["bind host-gateway literal", set("DOCKER_PROXY_BIND", "host-gateway")],
-    ["bind fuera de los clientes admitidos", set("DOCKER_PROXY_BIND", "10.89.251.1")],
-    ["puerto no numérico", set("DOCKER_PROXY_PORT", "abc")],
-    ["bridge docker0", set("DOCKER_PROXY_BRIDGE", "docker0")],
-    ["espera del bridge > tope (80)", set("DOCKER_PROXY_BRIDGE_WAIT", "500")],
-    ["clientes ausentes", set("DOCKER_PROXY_ALLOWED_CLIENTS", null)],
-    ["clientes 0.0.0.0/0", set("DOCKER_PROXY_ALLOWED_CLIENTS", "0.0.0.0/0")],
-    ["clientes no CIDR", set("DOCKER_PROXY_ALLOWED_CLIENTS", "10.89.250.1")],
-    ["allowlist ausente", set("DOCKER_PROXY_IMAGE_ALLOWLIST", null)],
-    ["allowlist relativa", set("DOCKER_PROXY_IMAGE_ALLOWLIST", "runtimes/DIGESTS.lock")],
-    ["allowlist inexistente", set("DOCKER_PROXY_IMAGE_ALLOWLIST", "/nonexistent/DIGESTS.lock")],
-    ["ARENA_NETWORK prefijada", set("ARENA_NETWORK", "infrastructure_arena")],
-    ["sandbox como root", set("SANDBOX_USER", "0:0")],
-    ["sandbox sin gid", set("SANDBOX_USER", "10001")],
+  // Cada caso aísla UNA causa: los clientes se ajustan para contener el bind cuando hace
+  // falta, de modo que el rechazo no pueda venir de la regla «bind fuera de los clientes»
+  // (un rechazo sobredeterminado no prueba la regla que dice probar). Se exige un único
+  // error y su motivo.
+  const both =
+    (...edits: ((l: string[]) => string[])[]) =>
+    (l: string[]) =>
+      edits.reduce((acc, e) => e(acc), l);
+  const clients = (c: string) => set("DOCKER_PROXY_ALLOWED_CLIENTS", c);
+  const bad: [string, (l: string[]) => string[], string][] = [
+    ["bind 0.0.0.0", both(set("DOCKER_PROXY_BIND", "0.0.0.0"), clients("0.0.0.0/16")), "comodín o loopback"],
+    ["bind loopback", both(set("DOCKER_PROXY_BIND", "127.0.0.1"), clients("127.0.0.0/24")), "comodín o loopback"],
+    [
+      "bind docker0 / host-gateway (172.17.0.1, el valor de RC1)",
+      both(set("DOCKER_PROXY_BIND", "172.17.0.1"), clients("172.17.0.0/16")),
+      "pool de docker0/host-gateway",
+    ],
+    ["bind vacío", set("DOCKER_PROXY_BIND", ""), "DOCKER_PROXY_BIND vacío"],
+    ["bind ausente", set("DOCKER_PROXY_BIND", null), "DOCKER_PROXY_BIND vacío"],
+    ["bind :: (IPv6 comodín)", set("DOCKER_PROXY_BIND", "::"), "IPv4 concreta"],
+    ["bind host-gateway literal", set("DOCKER_PROXY_BIND", "host-gateway"), "IPv4 concreta"],
+    ["bind fuera de los clientes admitidos", set("DOCKER_PROXY_BIND", "10.89.251.1"), "no pertenece"],
+    ["puerto no numérico", set("DOCKER_PROXY_PORT", "abc"), "DOCKER_PROXY_PORT inválido"],
+    ["bridge docker0", set("DOCKER_PROXY_BRIDGE", "docker0"), "DOCKER_PROXY_BRIDGE=docker0 prohibido"],
+    ["espera del bridge > tope (80)", set("DOCKER_PROXY_BRIDGE_WAIT", "500"), "DOCKER_PROXY_BRIDGE_WAIT"],
+    ["clientes ausentes", set("DOCKER_PROXY_ALLOWED_CLIENTS", null), "ALLOWED_CLIENTS vacío"],
+    ["clientes 0.0.0.0/0", clients("0.0.0.0/0,10.89.250.0/24"), "demasiado ancho"],
+    ["clientes no CIDR", clients("10.89.250.1,10.89.250.0/24"), "CIDR inválido"],
+    ["allowlist ausente", set("DOCKER_PROXY_IMAGE_ALLOWLIST", null), "IMAGE_ALLOWLIST vacío"],
+    ["allowlist relativa", set("DOCKER_PROXY_IMAGE_ALLOWLIST", "runtimes/DIGESTS.lock"), "ruta absoluta"],
+    ["allowlist inexistente", set("DOCKER_PROXY_IMAGE_ALLOWLIST", "/nonexistent/DIGESTS.lock"), "no existe"],
+    ["ARENA_NETWORK prefijada", set("ARENA_NETWORK", "infrastructure_arena"), "ARENA_NETWORK"],
+    ["sandbox como root", set("SANDBOX_USER", "0:0"), "no puede ser root"],
+    ["sandbox sin gid", set("SANDBOX_USER", "10001"), "uid:gid"],
   ];
-  for (const [name, edit] of bad) {
-    it(`RECHAZA: ${name} ⇒ rc=1`, () => {
+  for (const [name, edit, reason] of bad) {
+    it(`RECHAZA: ${name} ⇒ rc=1 por «${reason}» (único error)`, () => {
       const r = checkEnv(envVariant(edit));
       expect(r.rc, r.out).toBe(1);
-      expect(r.out).toContain("NO conforme");
+      expect(r.out).toContain("NO conforme (1 error/es)");
+      expect(r.out).toContain(reason);
     });
   }
 
