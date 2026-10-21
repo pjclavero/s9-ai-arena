@@ -27,7 +27,7 @@ configuración del proceso en `apps/bot-manager/src/docker-proxy-config.ts`, ent
 
 | Control | Qué hace | Si falla |
 |---|---|---|
-| Cliente | Sólo atiende conexiones cuya **IP de origen del socket** está en `DOCKER_PROXY_ALLOWED_CLIENTS` (nunca una cabecera). | 403 crudo y cierre de la conexión sin leer la petición; queda registrado con la IP. |
+| Cliente | Sólo atiende conexiones cuya **IP de origen del socket** está en `DOCKER_PROXY_ALLOWED_CLIENTS` (nunca una cabecera) y **no** está excluida. La exclusión prevalece y contiene siempre la IP de bind y las direcciones locales del host (un proceso del host que conecta a `10.89.250.1` sale con ese origen, dentro de la subred admitida), más `DOCKER_PROXY_DENIED_CLIENTS`; con bind loopback, loopback no se excluye. | 403 crudo y cierre de la conexión sin leer la petición; queda registrado con la IP. |
 | Imagen | El create sólo admite una imagen **idéntica** a una de la 3.ª columna de `runtimes/DIGESTS.lock` (`repo@sha256:…`). La base (2.ª columna), un tag, otro registro o un digest ajeno no entran. | 403; no se llama a Docker. Lock ilegible o vacío: el proxy no arranca. |
 | Propiedad | El create **impone** `s9.managed=true` y `s9.proxy.instance=<DOCKER_PROXY_INSTANCE>`; el cliente no puede fijar ninguna label `s9.*`. `start`/`stop`/`json`/`stats` exigen el **Id completo** (64 hex, nunca nombre ni prefijo); el proxy inspecciona antes y sólo reenvía si el contenedor lleva esas labels. | Contenedor ajeno: 403, sin tocarlo. Inexistente: 404 (el runner lo trata como «ya parado»). |
 | Postura | Allowlist de campos del create y `complianceViolations` (tabla 18.2): usuario del sandbox, `cap-drop ALL`, rootfs de sólo lectura, `no-new-privileges`, seccomp, sin `privileged`, sin bind-mounts ni volúmenes, sin namespaces del host, sólo red `arena` con endpoint `{}`, DNS bloqueado y **límites obligatorios** (memoria ≤ 1 GiB, CPU ≤ 2, PIDs ≤ 256, sin swap extra). | 403 con el motivo. |
@@ -66,6 +66,7 @@ firewall del host (2375 sólo desde `s9-botctl0`) y el **control de cliente del 
 | `DOCKER_PROXY_BIND` | `10.89.250.1` | **Obligatoria**, IP literal. Prohibidos vacío, `0.0.0.0`, `::`, la IP de `docker0` y `host-gateway`/nombres. |
 | `DOCKER_PROXY_PORT` | `2375` | Entero 1–65535. |
 | `DOCKER_PROXY_ALLOWED_CLIENTS` | `10.89.250.0/24` | IP o CIDR separados por comas; prohibido `/0`. Obligatoria si el bind no es loopback; con bind loopback, por defecto sólo loopback. |
+| `DOCKER_PROXY_DENIED_CLIENTS` | (vacía) | IP o CIDR **siempre** rechazados, además de la IP de bind y las direcciones locales del host (leídas al arrancar). Prohibido `/0`. |
 | `DOCKER_PROXY_IMAGE_ALLOWLIST` | (vacía) | Ruta a un `DIGESTS.lock`; por defecto el del árbol (`<APP_DIR>/runtimes/DIGESTS.lock`). Se lee al arrancar: cambiar el lock exige reiniciar el proxy. |
 | `DOCKER_PROXY_INSTANCE` | `s9-docker-proxy` | Valor de `s9.proxy.instance`; `[A-Za-z0-9][A-Za-z0-9_.-]{0,62}`. |
 | `DOCKER_SOCKET`, `ARENA_NETWORK`, `SANDBOX_USER` | `/var/run/docker.sock`, `arena`, `10001:10001` | — |
