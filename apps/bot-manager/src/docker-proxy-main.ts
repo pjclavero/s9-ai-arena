@@ -5,7 +5,12 @@
  * lo alcanzan por la red dedicada `bot-control` en http://docker-proxy.internal:2375
  * (alias a la IP de gateway 10.89.250.1; ver docs/operations/docker-proxy.md).
  *
- * Uso: npx tsx apps/bot-manager/src/docker-proxy-main.ts
+ * Producción (TD-062): NO se ejecuta este fichero desde el árbol. Se instala un bundle
+ * autocontenido (infrastructure/scripts/build-docker-proxy-bundle.mjs) en
+ * /usr/local/lib/s9-docker-proxy/docker-proxy.mjs (root:root 0644) y la unidad lo arranca
+ * con `/usr/bin/node --no-addons <bundle>`. En el bundle la allowlist de imágenes es
+ * OBLIGATORIA y explícita (DOCKER_PROXY_IMAGE_ALLOWLIST=/etc/s9-docker-proxy/DIGESTS.lock).
+ * Desarrollo/tests: npx tsx apps/bot-manager/src/docker-proxy-main.ts
  *
  * Variables (todas validadas por proxyConfigFromEnv; cualquier error ⇒ no arranca,
  * exit 78 = EX_CONFIG):
@@ -15,7 +20,8 @@
  *   DOCKER_PROXY_ALLOWED_CLIENTS CIDR/IP de ORIGEN admitidos (coma). Obligatoria si el
  *                                bind no es loopback. Producción: 10.89.250.0/24.
  *   DOCKER_PROXY_DENIED_CLIENTS  CIDR/IP siempre rechazados (además de la IP de bind y las locales).
- *   DOCKER_PROXY_IMAGE_ALLOWLIST ruta a un DIGESTS.lock (3.ª columna). Defecto: el del árbol.
+ *   DOCKER_PROXY_IMAGE_ALLOWLIST ruta a un DIGESTS.lock (3.ª columna). Defecto (sólo fuera
+ *                                del bundle): el del árbol. En el bundle es obligatoria.
  *   DOCKER_PROXY_INSTANCE        label s9.proxy.instance (defecto s9-docker-proxy).
  *   DOCKER_SOCKET                /var/run/docker.sock.
  *   ARENA_NETWORK                arena.   SANDBOX_USER  10001:10001.
@@ -29,12 +35,18 @@ import type { AddressInfo } from "node:net";
 import { createDockerProxyServer, createSocketBackend } from "./docker-proxy.js";
 import { proxyConfigFromEnv } from "./docker-proxy-config.js";
 
+// Constantes que inyecta el bundle (define de esbuild); ausentes al correr con tsx.
+declare const __S9_DOCKER_PROXY_BUNDLE__: boolean | undefined;
+declare const __S9_DOCKER_PROXY_BUILD_COMMIT__: string | undefined;
+const bundled = typeof __S9_DOCKER_PROXY_BUNDLE__ !== "undefined" && __S9_DOCKER_PROXY_BUNDLE__ === true;
+const buildCommit = typeof __S9_DOCKER_PROXY_BUILD_COMMIT__ !== "undefined" ? __S9_DOCKER_PROXY_BUILD_COMMIT__ : null;
+
 const log = (fields: Record<string, unknown>) =>
   console.log(JSON.stringify({ ts: new Date().toISOString(), service: "docker-proxy", ...fields }));
 
 let cfg: ReturnType<typeof proxyConfigFromEnv>;
 try {
-  cfg = proxyConfigFromEnv(process.env, networkInterfaces());
+  cfg = proxyConfigFromEnv(process.env, networkInterfaces(), { requireExplicitAllowlist: bundled });
 } catch (e) {
   log({ level: "error", msg: `configuración rechazada, el proxy NO arranca: ${(e as Error).message}` });
   process.exit(78);
@@ -64,5 +76,6 @@ server.listen(cfg.port, cfg.bind, () => {
     deniedClients: cfg.deniedClients,
     imageAllowlist: { path: cfg.imageAllowlistPath, images: [...cfg.policy.imageAllowlist] },
     instance: cfg.policy.instance,
+    artifact: bundled ? { kind: "bundle", file: process.argv[1] ?? null, commit: buildCommit } : { kind: "source" },
   });
 });

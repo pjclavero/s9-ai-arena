@@ -8,7 +8,9 @@
 # Uso:
 #   bash      infrastructure/scripts/install-docker-proxy.sh check-env [fichero]  # sin root
 #   bash      infrastructure/scripts/install-docker-proxy.sh probe <bind> [puerto] # sin root
+#   npm run build:docker-proxy                                   # SIN root: genera el bundle
 #   sudo bash infrastructure/scripts/install-docker-proxy.sh install
+#   sudo bash infrastructure/scripts/install-docker-proxy.sh preflight [--static]
 #   sudo bash infrastructure/scripts/install-docker-proxy.sh validate
 #   sudo bash infrastructure/scripts/install-docker-proxy.sh rollback
 #
@@ -17,17 +19,49 @@
 # loopback, docker0 ni host-gateway), clientes admitidos, allowlist de imágenes, red
 # `arena` y usuario del sandbox. `install` lo ejecuta ANTES de tocar la unidad: con un
 # fichero inválido no se instala nada y el proxy en marcha sigue como estaba.
+#
+# TD-062 · frontera de privilegio. El proxy corre con el grupo `docker` (= root en el
+# host): «el llamador puede pedir una operación; no puede modificar la autoridad que la
+# aplica». Por eso el proxy NO se ejecuta desde el árbol de despliegue (/opt/s9-ai-arena,
+# escribible por el usuario de despliegue):
+#   - `install` copia un bundle autocontenido (sin node_modules) a ${LIB_DIR} y la
+#     allowlist a ${LOCK_DST}, root:root 0755/0644, y la unidad los usa con /usr/bin/node;
+#   - `preflight` FALLA si cualquier ruta que el proxy ejecuta o lee como política (o un
+#     directorio padre hasta /) no es de root o es escribible por grupo/otros, si la unidad
+#     invoca otra cosa (npx/tsx, WorkingDirectory u otra ruta en /opt) o si el entorno
+#     apunta la allowlist fuera de la copia de root. `validate` lo incluye.
+# Modo árbol de pruebas (SÓLO tests): S9PX_ROOT=<dir> antepone <dir> a todas las rutas del
+# host, la cadena de padres termina en <dir> y no se tocan usuarios ni systemd.
 set -euo pipefail
 export PATH="${PATH:-/usr/bin:/bin}:/usr/sbin:/sbin:/usr/bin:/bin"
 
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 APP_DIR="${APP_DIR:-/opt/s9-ai-arena}"
+R="${S9PX_ROOT:-}"
+R="${R%/}"
 ETC_DIR="/etc/s9-ai-arena"
 ENV_FILE="${ETC_DIR}/docker-proxy.env"
 UNIT="s9-docker-proxy.service"
-UNIT_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/systemd/${UNIT}"
-ENV_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/systemd/docker-proxy.env.example"
+UNIT_DST="/etc/systemd/system/${UNIT}"
+UNIT_SRC="${REPO_DIR}/infrastructure/systemd/${UNIT}"
+ENV_SRC="${REPO_DIR}/infrastructure/systemd/docker-proxy.env.example"
 PROXY_USER="s9proxy"
 FIREWALL_BIN="/usr/local/sbin/s9-firewall"
+# Artefacto instalado y política (TD-062): rutas de root, fuera del árbol.
+NODE_BIN="/usr/bin/node"
+LIB_DIR="/usr/local/lib/s9-docker-proxy"
+BUNDLE_DST="${LIB_DIR}/docker-proxy.mjs"
+BUNDLE_SUM="${LIB_DIR}/docker-proxy.mjs.sha256"
+POLICY_DIR="/etc/s9-docker-proxy"
+LOCK_DST="${POLICY_DIR}/DIGESTS.lock"
+EXPECTED_EXECSTART="${NODE_BIN} --no-addons ${BUNDLE_DST}"
+BUNDLE_SRC="${S9PX_BUNDLE_SRC:-${REPO_DIR}/dist/s9-docker-proxy/docker-proxy.mjs}"
+LOCK_SRC="${S9PX_LOCK_SRC:-${REPO_DIR}/runtimes/DIGESTS.lock}"
+# PATH por defecto de los servicios de systemd: el ExecStartPre resuelve ahí sh, ip, grep y
+# sleep, así que un directorio escribible de la lista permitiría plantar un binario.
+SERVICE_PATH_DIRS=(/usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin)
+# Árbol que el proceso del proxy NO debe ver (InaccessiblePaths); en CI, el checkout.
+TREE_DIR="${S9PX_TREE:-$APP_DIR}"
 
 need_root() { [ "$(id -u)" = "0" ] || { echo "Ejecuta con sudo/root."; exit 1; }; }
 
@@ -71,8 +105,20 @@ in_cidr() { # ip cidr
   [ $(($(ip2int "$1") & mask)) -eq $(($(ip2int "$net") & mask)) ]
 }
 
+# DIGESTS.lock válido para el proxy: toda línea útil con 3 columnas y la 3ª una imagen por
+# digest completo; al menos una. Misma regla que parseImageAllowlist (docker-proxy.ts).
+lock_check() {
+  awk '
+    { sub(/#.*/, ""); gsub(/^[ \t]+|[ \t]+$/, "") }
+    $0 == "" { next }
+    NF != 3 || $3 !~ /^[a-z0-9][a-z0-9._\/:-]*@sha256:[0-9a-f]{64}$/ { bad++; next }
+    { ok++ }
+    END { exit (bad == 0 && ok >= 1) ? 0 : 1 }
+  ' "$1"
+}
+
 check_env() {
-  local f="${1:-$ENV_FILE}" errs=0 v c
+  local f="${1:-${R}${ENV_FILE}}" errs=0 v c k
   CFG=()
   parse_env "$f" || return 1
   err() { echo "check-env: ERROR: $*" >&2; errs=$((errs + 1)); }
@@ -146,18 +192,27 @@ check_env() {
   fi
 
   # --- allowlist de imágenes ---
-  # Opcional: sin valor, el proxy usa runtimes/DIGESTS.lock del árbol desde el que corre
-  # (docker-proxy-config.ts); aquí se valida ese mismo fichero ($APP_DIR).
-  v="${CFG[DOCKER_PROXY_IMAGE_ALLOWLIST]:-${APP_DIR}/runtimes/DIGESTS.lock}"
-  if [[ "$v" != /* ]]; then
+  # TD-062: OBLIGATORIA y explícita. Nunca se deduce del árbol de despliegue (/opt), que no
+  # es autoridad del proxy. En producción es la copia de root ${LOCK_DST} (la exige
+  # `preflight`); aquí se validan su forma y su contenido. Se lee bajo S9PX_ROOT.
+  v="${CFG[DOCKER_PROXY_IMAGE_ALLOWLIST]:-}"
+  if [ -z "$v" ]; then
+    err "DOCKER_PROXY_IMAGE_ALLOWLIST vacía: es obligatoria (producción: ${LOCK_DST})"
+  elif [[ "$v" != /* ]]; then
     err "DOCKER_PROXY_IMAGE_ALLOWLIST debe ser una ruta absoluta: '$v'"
-  elif [ ! -r "$v" ]; then
-    err "DOCKER_PROXY_IMAGE_ALLOWLIST no existe o no se puede leer: $v"
-  else
-    local n
-    n="$(awk '!/^[[:space:]]*(#|$)/ && NF>=3 && $3 ~ /^[a-z0-9][a-z0-9._\/-]*@sha256:[0-9a-f]{64}$/ {c++} END {print c+0}' "$v")"
-    [ "$n" -ge 1 ] || err "DOCKER_PROXY_IMAGE_ALLOWLIST ($v) no contiene ninguna imagen de runtime por digest en la 3ª columna"
+  elif [ ! -r "${R}${v}" ]; then
+    err "DOCKER_PROXY_IMAGE_ALLOWLIST no existe o no se puede leer: ${R}${v}"
+  elif ! lock_check "${R}${v}"; then
+    err "DOCKER_PROXY_IMAGE_ALLOWLIST (${R}${v}) no contiene ninguna imagen de runtime por digest en la 3ª columna (o tiene líneas inválidas)"
   fi
+
+  # --- variables que inyectarían código en node o en el enlazador (TD-062) ---
+  for k in "${!CFG[@]}"; do
+    case "$k" in
+      NODE_* | LD_*) err "variable prohibida en el entorno del proxy: $k (inyección de código en node/ld.so)" ;;
+      DOCKER_PROXY_INSECURE_BIND_FOR_TESTS) err "DOCKER_PROXY_INSECURE_BIND_FOR_TESTS es SÓLO para tests: prohibida en el entorno instalado" ;;
+    esac
+  done
 
   # --- instancia (label s9.proxy.instance) ---
   v="${CFG[DOCKER_PROXY_INSTANCE]:-s9-docker-proxy}"
@@ -195,32 +250,321 @@ probe_ping() {
   esac
 }
 
+# ------------------------------------------------------------ preflight ----
+# TD-062 · S8. Comprueba la FRONTERA DE PRIVILEGIO del proxy. Cada fallo es una línea
+# «preflight: ROJO: …» y el rc final es 1 si hay alguno. Con --static no consulta systemd ni
+# el proceso en marcha (lo usa `install` antes de reiniciar).
+PF_ERRS=0
+pf_err() { echo "preflight: ROJO: $*" >&2; PF_ERRS=$((PF_ERRS + 1)); }
+pf_ok() { echo "preflight: ok: $*"; }
+
+# Un nodo del sistema de ficheros: de root (uid 0), sin escritura de grupo ni de otros
+# (los bits de un enlace simbólico no significan nada; su destino se comprueba aparte) y
+# sin ACL (un `+` en `ls -ld`: permisos que el modo no muestra).
+declare -A PF_SEEN=()
+pf_node() {
+  local p="$1" label="$2" uid gid mode typ perm lsf
+  # Cada nodo se juzga una vez (los padres comunes no repiten el mismo fallo).
+  [ -n "${PF_SEEN[$p]:-}" ] && return
+  PF_SEEN[$p]=1
+  if [ ! -e "$p" ] && [ ! -L "$p" ]; then
+    pf_err "$label: no existe: $p"
+    return
+  fi
+  read -r uid gid mode typ < <(stat -c '%u %g %a %F' -- "$p")
+  perm=$((8#$mode))
+  [ "$uid" = 0 ] || pf_err "$label: $p es propiedad de uid=$uid (debe ser root)"
+  if [ "$typ" != "symbolic link" ] && [ $((perm & 8#022)) -ne 0 ]; then
+    pf_err "$label: $p es escribible por grupo u otros (modo $mode, gid=$gid)"
+  fi
+  lsf="$(ls -ld -- "$p" | awk '{print $1}')"
+  [ "${lsf:10:1}" != "+" ] || pf_err "$label: $p tiene ACL (permisos fuera del modo)"
+}
+
+# La ruta y TODOS sus padres hasta / (o hasta S9PX_ROOT en el árbol de pruebas): un padre
+# escribible permite renombrar/sustituir lo de dentro. Si es un enlace, también su destino.
+pf_chain() {
+  local path="$1" label="$2" p top="${R:-/}" real
+  p="$path"
+  while :; do
+    pf_node "$p" "$label"
+    [ "$p" = "$top" ] || [ "$p" = "/" ] && break
+    p="$(dirname -- "$p")"
+  done
+  if [ -L "$path" ]; then
+    real="$(readlink -f -- "$path" || true)"
+    [ -n "$real" ] && pf_chain "$real" "$label (destino de $path)"
+  fi
+}
+
+# Valores de una clave de la sección [Service] de un fichero de unidad (continuaciones `\` unidas).
+unit_values() {
+  awk -v want="$2" '
+    /\\$/ { buf = buf substr($0, 1, length($0) - 1) " "; next }
+    {
+      line = buf $0; buf = ""
+      sub(/^[ \t]+/, "", line)
+      if (line == "" || line ~ /^[#;]/) next
+      if (line ~ /^\[.*\]$/) { sec = line; next }
+      if (sec != "[Service]") next
+      i = index(line, "="); if (i == 0) next
+      k = substr(line, 1, i - 1); v = substr(line, i + 1)
+      gsub(/[ \t]+$/, "", k); sub(/^[ \t]+/, "", v); gsub(/[ \t]+$/, "", v)
+      if (k == want) print v
+    }' "$1"
+}
+
+pf_unit_file() {
+  local u="$1" v n
+  echo "==> unidad ${u}"
+  v="$(unit_values "$u" ExecStart | tr -s ' ')"
+  n="$(unit_values "$u" ExecStart | grep -c . || true)"
+  if [ "$n" != 1 ] || [ "$v" != "$EXPECTED_EXECSTART" ]; then
+    pf_err "ExecStart debe ser exactamente «${EXPECTED_EXECSTART}» (hay ${n}: «${v}»)"
+  else
+    pf_ok "ExecStart = artefacto instalado"
+  fi
+  while IFS= read -r v; do
+    [ -z "$v" ] && continue
+    [[ "$v" == "/bin/sh -ec '"* ]] || pf_err "ExecStartPre no es el guardián /bin/sh -ec del repo: «${v:0:60}…»"
+  done < <(unit_values "$u" ExecStartPre)
+  v="$(unit_values "$u" WorkingDirectory | tail -1)"
+  case "$v" in "" | /) ;; *) pf_err "WorkingDirectory=${v}: el proxy no se ejecuta desde un árbol (sólo vacío o /)" ;; esac
+  v="$(unit_values "$u" EnvironmentFile)"
+  [ "$v" = "$ENV_FILE" ] || pf_err "EnvironmentFile debe ser exactamente ${ENV_FILE} (hay «${v}»)"
+  [ "$(unit_values "$u" User | tail -1)" = "$PROXY_USER" ] || pf_err "User debe ser ${PROXY_USER}"
+  [ "$(unit_values "$u" NoNewPrivileges | tail -1)" = true ] || pf_err "NoNewPrivileges=true ausente"
+  unit_values "$u" InaccessiblePaths | tr ' ' '\n' | grep -qxE -- "-?${APP_DIR}" ||
+    pf_err "InaccessiblePaths no incluye el árbol de despliegue ${APP_DIR}"
+  # Ninguna ejecución, directorio, entorno ni montaje puede apuntar al árbol, a npx o a tsx.
+  local key
+  for key in ExecStart ExecStartPre ExecStartPost ExecStop ExecStopPost ExecReload ExecCondition \
+    WorkingDirectory RootDirectory EnvironmentFile Environment BindPaths BindReadOnlyPaths ReadWritePaths; do
+    while IFS= read -r v; do
+      [ -z "$v" ] && continue
+      if [[ "$v" == *"${APP_DIR}"* || "$v" == *"/opt/"* ]]; then pf_err "${key} apunta al árbol de despliegue: «${v:0:80}»"; fi
+      if [[ " $v " =~ [[:space:]/](npx|tsx)[[:space:]] || "$v" == *node_modules* ]]; then
+        pf_err "${key} invoca npx/tsx/node_modules: «${v:0:80}»"
+      fi
+      if [ "$key" = Environment ] && [[ "$v" =~ (^|[[:space:]\"])(NODE_|LD_) ]]; then pf_err "Environment= fija NODE_*/LD_*: «${v:0:80}»"; fi
+    done < <(unit_values "$u" "$key")
+  done
+}
+
+# Unidades del firewall (también corren como root: misma regla). Sólo si están instaladas.
+pf_firewall() {
+  local f v found=0
+  for f in s9-firewall.service s9-firewall-reassert.service s9-firewall-reassert.timer; do
+    [ -e "${R}/etc/systemd/system/$f" ] || continue
+    found=1
+    pf_chain "${R}/etc/systemd/system/$f" "unidad $f"
+    while IFS= read -r v; do
+      [ -z "$v" ] && continue
+      [[ "$v" == "${FIREWALL_BIN} "* || "$v" == "$FIREWALL_BIN" ]] || pf_err "$f ejecuta algo que no es ${FIREWALL_BIN}: «${v:0:80}»"
+    done < <(unit_values "${R}/etc/systemd/system/$f" ExecStart; unit_values "${R}/etc/systemd/system/$f" ExecReload)
+  done
+  if [ "$found" = 1 ]; then
+    pf_chain "${R}${FIREWALL_BIN}" "firewall (ejecutado como root)"
+    [ -e "${R}${ETC_DIR}/firewall.env" ] && pf_chain "${R}${ETC_DIR}/firewall.env" "config del firewall"
+  else
+    echo "preflight: AVISO: unidades del firewall no instaladas (capa b ausente; docs/operations/firewall.md)"
+  fi
+}
+
+# Lo EFECTIVO (no el fichero): lo que systemd tiene cargado y el proceso en marcha.
+pf_effective() {
+  echo "==> efectivo (systemd y proceso)"
+  local show k v pid exe cmd
+  show="$(systemctl show "$UNIT" -p FragmentPath -p DropInPaths -p NeedDaemonReload -p User -p WorkingDirectory \
+    -p EnvironmentFiles -p ExecStart -p MainPID -p ActiveState --no-pager 2>&1)" || { pf_err "systemctl show falló: $show"; return; }
+  declare -A S=()
+  while IFS= read -r v; do k="${v%%=*}"; S[$k]="${v#*=}"; done <<<"$show"
+  [ "${S[FragmentPath]:-}" = "$UNIT_DST" ] || pf_err "unidad cargada desde «${S[FragmentPath]:-}» (debe ser ${UNIT_DST})"
+  [ -z "${S[DropInPaths]:-}" ] || pf_err "drop-ins cargados: ${S[DropInPaths]}"
+  [ "${S[NeedDaemonReload]:-}" = no ] || pf_err "NeedDaemonReload=${S[NeedDaemonReload]:-?}: lo cargado no es lo que hay en disco"
+  [ "${S[User]:-}" = "$PROXY_USER" ] || pf_err "User efectivo=${S[User]:-}"
+  case "${S[WorkingDirectory]:-}" in "" | /) ;; *) pf_err "WorkingDirectory efectivo=${S[WorkingDirectory]}" ;; esac
+  [[ "${S[EnvironmentFiles]:-}" == "${ENV_FILE} "* ]] || pf_err "EnvironmentFiles efectivo=«${S[EnvironmentFiles]:-}»"
+  v="$(sed -n 's/.*argv\[\]=\([^;]*\);.*/\1/p' <<<"${S[ExecStart]:-}" | tr -s ' ' | sed 's/ $//')"
+  [ "$v" = "$EXPECTED_EXECSTART" ] || pf_err "ExecStart efectivo=«${v}»"
+  pid="${S[MainPID]:-0}"
+  if [ "${S[ActiveState]:-}" != active ] || [ "$pid" = 0 ]; then
+    pf_err "el proxy no está activo (ActiveState=${S[ActiveState]:-?}, MainPID=${pid})"
+    return
+  fi
+  exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
+  [ "$exe" = "$(readlink -f "$NODE_BIN")" ] || pf_err "el proceso $pid ejecuta «${exe}» (debe ser $(readlink -f "$NODE_BIN"))"
+  cmd="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null | sed 's/ $//')"
+  [ "$cmd" = "$EXPECTED_EXECSTART" ] || pf_err "línea de órdenes del proceso $pid: «${cmd}»"
+  # El árbol de despliegue NO es visible para el proceso (InaccessiblePaths/ProtectHome).
+  if command -v nsenter >/dev/null; then
+    if nsenter -t "$pid" -m -- sh -c "[ -n \"\$(ls -A '$TREE_DIR' 2>/dev/null)\" ]" 2>/dev/null; then
+      pf_err "el proceso $pid VE el contenido de ${TREE_DIR} (debe ser inaccesible)"
+    else
+      pf_ok "el proceso no ve ${TREE_DIR}"
+    fi
+  fi
+  pf_ok "proceso ${pid}: ${cmd}"
+}
+
+preflight() {
+  local static=0
+  [ "${1:-}" = --static ] && static=1
+  PF_ERRS=0
+  PF_SEEN=()
+  [ -n "$R" ] && echo "preflight: ÁRBOL DE PRUEBAS ${R} (no es el host)"
+
+  echo "==> código y su intérprete (ejecutados con el grupo docker)"
+  pf_chain "${R}${NODE_BIN}" "node"
+  pf_chain "${R}${BUNDLE_DST}" "bundle"
+  if [ -L "${R}${BUNDLE_DST}" ] || [ ! -f "${R}${BUNDLE_DST}" ]; then pf_err "bundle: ${BUNDLE_DST} no es un fichero regular"; fi
+  pf_chain "${R}${BUNDLE_SUM}" "sha256 del bundle"
+  if [ -f "${R}${BUNDLE_DST}" ] && [ -f "${R}${BUNDLE_SUM}" ]; then
+    local want got
+    want="$(awk '{print $1; exit}' "${R}${BUNDLE_SUM}")"
+    got="$(sha256sum "${R}${BUNDLE_DST}" | awk '{print $1}')"
+    [ "$want" = "$got" ] && pf_ok "bundle sha256 ${got}" || pf_err "bundle: sha256 ${got} ≠ registrado en la instalación ${want}"
+  fi
+  pf_chain "${R}/bin/sh" "shell del ExecStartPre"
+  local d
+  for d in "${SERVICE_PATH_DIRS[@]}"; do
+    [ -e "${R}${d}" ] && pf_chain "${R}${d}" "PATH del servicio (ip/grep/sleep)"
+  done
+
+  echo "==> política (allowlist, entorno, unidad)"
+  pf_chain "${R}${LOCK_DST}" "allowlist"
+  [ -f "${R}${LOCK_DST}" ] && { lock_check "${R}${LOCK_DST}" && pf_ok "allowlist válida" || pf_err "allowlist: ${LOCK_DST} no es un DIGESTS.lock válido"; }
+  if [ -f "${R}${LOCK_DST}" ] && [ -f "${APP_DIR}/runtimes/DIGESTS.lock" ] && ! cmp -s "${R}${LOCK_DST}" "${APP_DIR}/runtimes/DIGESTS.lock"; then
+    echo "preflight: AVISO: ${LOCK_DST} difiere de ${APP_DIR}/runtimes/DIGESTS.lock (la autoridad es la copia de root; reinstala para actualizarla)"
+  fi
+  pf_chain "${R}${ENV_FILE}" "entorno"
+  if [ -r "${R}${ENV_FILE}" ]; then
+    check_env "${R}${ENV_FILE}" >/dev/null 2>&1 || pf_err "entorno: check-env NO conforme (sudo bash $0 check-env ${ENV_FILE})"
+    parse_env "${R}${ENV_FILE}"
+    [ "${CFG[DOCKER_PROXY_IMAGE_ALLOWLIST]:-}" = "$LOCK_DST" ] ||
+      pf_err "entorno: DOCKER_PROXY_IMAGE_ALLOWLIST=«${CFG[DOCKER_PROXY_IMAGE_ALLOWLIST]:-}» (debe ser la copia de root ${LOCK_DST})"
+  fi
+  pf_chain "${R}${UNIT_DST}" "unidad"
+  if [ -e "${R}${UNIT_DST}.d" ]; then
+    pf_chain "${R}${UNIT_DST}.d" "drop-ins"
+    [ -z "$(ls -A "${R}${UNIT_DST}.d" 2>/dev/null)" ] || pf_err "drop-ins presentes en ${UNIT_DST}.d (no auditados): $(ls -A "${R}${UNIT_DST}.d" | tr '\n' ' ')"
+  fi
+  [ -f "${R}${UNIT_DST}" ] && pf_unit_file "${R}${UNIT_DST}"
+  [ -e "${R}/etc/ld.so.preload" ] && pf_chain "${R}/etc/ld.so.preload" "ld.so.preload"
+
+  echo "==> firewall (también root)"
+  pf_firewall
+
+  if [ "$static" = 0 ] && [ -z "$R" ]; then
+    pf_effective
+  fi
+
+  if [ "$PF_ERRS" -gt 0 ]; then
+    echo "==> PREFLIGHT ROJO (${PF_ERRS} fallo/s): la frontera de privilegio del proxy NO se cumple (TD-062)" >&2
+    return 1
+  fi
+  echo "==> PREFLIGHT VERDE: lo que el proxy ejecuta y lee como política es de root y no lo escribe nadie más"
+}
+
+# --------------------------------------------------------------- install ----
+
+# Copia src → dst con root:root y modo, de forma ATÓMICA (fichero temporal en el mismo
+# directorio + rename) y devuelve el sha256 DE LA COPIA (no del origen, que el usuario de
+# despliegue podría cambiar entre la comprobación y la copia).
+install_file() {
+  local src="$1" dst="$2" mode="$3" tmp
+  tmp="$(dirname "$dst")/.$(basename "$dst").new.$$"
+  install -o root -g root -m 0600 -- "$src" "$tmp"
+  chmod "$mode" "$tmp"
+  mv -f -- "$tmp" "$dst"
+}
+
 install_proxy() {
   need_root
+  umask 022
+  [ -n "$R" ] && echo "==> MODO ÁRBOL DE PRUEBAS en ${R}: sin usuarios ni systemd"
+
+  echo "==> artefacto: ${BUNDLE_SRC}"
+  if [ ! -f "$BUNDLE_SRC" ] || [ -L "$BUNDLE_SRC" ]; then
+    echo "==> ABORTO: falta el bundle. Genéralo SIN root: npm run build:docker-proxy" >&2
+    exit 1
+  fi
+  lock_check "$LOCK_SRC" || { echo "==> ABORTO: ${LOCK_SRC} no es un DIGESTS.lock válido" >&2; exit 1; }
+
+  install -d -o root -g root -m 0755 "${R}${LIB_DIR}" "${R}${POLICY_DIR}" "${R}${ETC_DIR}" "${R}$(dirname "$UNIT_DST")"
+  # Copia a un temporal de root ANTES de verificar (sin carrera con el árbol).
+  local stage="${R}${LIB_DIR}/.stage.$$" sum want
+  install -o root -g root -m 0600 -- "$BUNDLE_SRC" "$stage"
+  sum="$(sha256sum "$stage" | awk '{print $1}')"
+  if [ -f "${BUNDLE_SRC}.sha256" ]; then
+    want="$(awk '{print $1; exit}' "${BUNDLE_SRC}.sha256")"
+    [ "$want" = "$sum" ] || { rm -f "$stage"; echo "==> ABORTO: sha256 del bundle ${sum} ≠ ${BUNDLE_SRC}.sha256 (${want})" >&2; exit 1; }
+  fi
+  if [ -n "${S9PX_EXPECT_SHA256:-}" ]; then
+    [ "$S9PX_EXPECT_SHA256" = "$sum" ] || { rm -f "$stage"; echo "==> ABORTO: sha256 del bundle ${sum} ≠ S9PX_EXPECT_SHA256" >&2; exit 1; }
+    echo "==> sha256 del bundle = el esperado (${sum})"
+  else
+    echo "==> AVISO: sin S9PX_EXPECT_SHA256: se instala el bundle que hay AHORA en el árbol (${sum}); compáralo con el de la CI"
+  fi
+  chmod 0644 "$stage"
+  mv -f -- "$stage" "${R}${BUNDLE_DST}"
+  printf '%s  %s\n' "$sum" "$(basename "$BUNDLE_DST")" >"${R}${LIB_DIR}/.sum.$$"
+  install_file "${R}${LIB_DIR}/.sum.$$" "${R}${BUNDLE_SUM}" 0644
+  rm -f "${R}${LIB_DIR}/.sum.$$"
+  echo "==> bundle instalado: ${BUNDLE_DST} (root:root 0644, sha256 ${sum})"
+
+  echo "==> allowlist: ${LOCK_SRC} → ${LOCK_DST}"
+  local lstage="${R}${POLICY_DIR}/.stage.$$"
+  install -o root -g root -m 0600 -- "$LOCK_SRC" "$lstage"
+  lock_check "$lstage" || { rm -f "$lstage"; echo "==> ABORTO: la copia de la allowlist no es válida" >&2; exit 1; }
+  chmod 0644 "$lstage"
+  mv -f -- "$lstage" "${R}${LOCK_DST}"
+  echo "==> allowlist instalada (root:root 0644, sha256 $(sha256sum "${R}${LOCK_DST}" | awk '{print $1}'))"
+
   echo "==> config en ${ENV_FILE} (no se sobrescribe si existe)"
-  mkdir -p "$ETC_DIR"
-  [ -f "$ENV_FILE" ] || install -o root -g root -m 0640 "$ENV_SRC" "$ENV_FILE"
+  [ -f "${R}${ENV_FILE}" ] || install -o root -g root -m 0640 "$ENV_SRC" "${R}${ENV_FILE}"
+  parse_env "${R}${ENV_FILE}"
+  if [ "${CFG[DOCKER_PROXY_IMAGE_ALLOWLIST]:-}" != "$LOCK_DST" ]; then
+    echo "==> ABORTO: ${ENV_FILE} tiene DOCKER_PROXY_IMAGE_ALLOWLIST=«${CFG[DOCKER_PROXY_IMAGE_ALLOWLIST]:-}»;" >&2
+    echo "    debe ser ${LOCK_DST} (TD-062: la copia de root). Edítalo y repite. No se ha cambiado la unidad." >&2
+    exit 1
+  fi
   echo "==> validación de la config ANTES de tocar la unidad"
-  if ! check_env "$ENV_FILE"; then
+  if ! check_env "${R}${ENV_FILE}"; then
     echo "==> ABORTO: corrige ${ENV_FILE} (referencia: ${ENV_SRC}). No se ha cambiado la unidad."
     exit 1
+  fi
+
+  echo "==> unidad systemd"
+  install_file "$UNIT_SRC" "${R}${UNIT_DST}" 0644
+
+  echo "==> preflight estático (antes de arrancar)"
+  if ! preflight --static; then
+    echo "==> ABORTO: preflight ROJO; NO se reinicia el proxy (corrige lo indicado y repite)." >&2
+    exit 1
+  fi
+  if [ -n "$R" ]; then
+    echo "==> hecho (árbol de pruebas)."
+    return 0
   fi
 
   echo "==> usuario de servicio '${PROXY_USER}' (sin login, en grupo docker)"
   id -u "$PROXY_USER" >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin "$PROXY_USER"
   usermod -aG docker "$PROXY_USER"
-
-  echo "==> unidad systemd"
-  install -m 0644 "$UNIT_SRC" "/etc/systemd/system/${UNIT}"
   systemctl daemon-reload
   systemctl enable "$UNIT"
   systemctl restart "$UNIT"
+  sleep "${S9PX_SETTLE:-2}"
+  echo "==> preflight completo (unidad cargada y proceso en marcha)"
+  preflight || { echo "==> el proxy arrancó pero el PREFLIGHT está ROJO" >&2; exit 1; }
   echo "==> hecho. Comprueba: sudo bash $0 validate"
 }
 
 validate_proxy() {
   need_root
   local rc=0
+  echo "==> frontera de privilegio (TD-062)"
+  preflight || rc=1
   echo "==> configuración"
   check_env "$ENV_FILE" || rc=1
   local bind="${CFG[DOCKER_PROXY_BIND]:-}" port="${CFG[DOCKER_PROXY_PORT]:-2375}" br="${CFG[DOCKER_PROXY_BRIDGE]:-s9-botctl0}"
@@ -269,15 +613,19 @@ rollback_proxy() {
   systemctl disable --now "$UNIT" 2>/dev/null || true
   rm -f "/etc/systemd/system/${UNIT}"
   systemctl daemon-reload
-  echo "==> unidad retirada. Config y usuario se conservan:"
-  echo "   rm -rf ${ETC_DIR} && userdel ${PROXY_USER}   # opcional, borrado total"
+  echo "==> unidad retirada. Config, artefacto, allowlist y usuario se conservan:"
+  echo "   rm -rf ${ETC_DIR} ${LIB_DIR} ${POLICY_DIR} && userdel ${PROXY_USER}   # opcional, borrado total"
 }
 
 case "${1:-}" in
-  check-env) check_env "${2:-$ENV_FILE}" ;;
+  check-env) check_env "${2:-${R}${ENV_FILE}}" ;;
   probe) probe_ping "${2:?bind}" "${3:-2375}" ;;
   install) install_proxy ;;
+  preflight)
+    need_root
+    preflight "${2:-}"
+    ;;
   validate) validate_proxy ;;
   rollback) rollback_proxy ;;
-  *) echo "Uso: $0 {check-env [fichero]|probe <bind> [puerto]|install|validate|rollback}"; exit 2 ;;
+  *) echo "Uso: $0 {check-env [fichero]|probe <bind> [puerto]|install|preflight [--static]|validate|rollback}"; exit 2 ;;
 esac
