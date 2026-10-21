@@ -8,11 +8,13 @@
 # Uso:
 #   bash      infrastructure/scripts/install-docker-proxy.sh check-env [fichero]  # sin root
 #   bash      infrastructure/scripts/install-docker-proxy.sh probe <bind> [puerto] # sin root
-#   npm run build:docker-proxy                                   # SIN root: genera el bundle
-#   sudo bash infrastructure/scripts/install-docker-proxy.sh install
-#   sudo bash infrastructure/scripts/install-docker-proxy.sh preflight [--static]
-#   sudo bash infrastructure/scripts/install-docker-proxy.sh validate
-#   sudo bash infrastructure/scripts/install-docker-proxy.sh rollback
+#   (root, desde un CLON DE ROOT fijado al SHA revisado — nunca desde /opt; upgrades.md#td-062)
+#   S9PX_EXPECT_SHA256=<sha CI> [S9PX_MIGRATE_ENV=1] bash $S/infrastructure/scripts/install-docker-proxy.sh install
+#   (después, SÓLO con la copia instalada)
+#   sudo /usr/local/sbin/s9-docker-proxy-preflight preflight [--static]
+#   sudo /usr/local/sbin/s9-docker-proxy-preflight validate
+#   sudo /usr/local/sbin/s9-docker-proxy-preflight restore <copia de seguridad de install>
+#   sudo /usr/local/sbin/s9-docker-proxy-preflight rollback
 #
 # `check-env` valida el fichero de configuración SIN ejecutarlo (se parsea como
 # CLAVE=VALOR, nunca se hace `source`): bind del contrato RC2 (nunca 0.0.0.0, ::,

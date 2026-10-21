@@ -20,7 +20,8 @@
 #   - config: /etc/s9-ai-arena/docker-proxy.env (root:root 0640); esta unidad (root 0644).
 # El árbol de despliegue (/opt/s9-ai-arena) NO es autoridad: ni WorkingDirectory ni ruta
 # ejecutada, y el proceso no lo ve (InaccessiblePaths). Lo comprueba
-# `install-docker-proxy.sh preflight` (falla si cualquier pieza o un padre no es de root).
+# /usr/local/sbin/s9-docker-proxy-preflight (copia de root que instala `install`; falla si
+# cualquier pieza o un padre no es de root).
 #
 # Instalación/validación/rollback: infrastructure/scripts/install-docker-proxy.sh
 

@@ -92,19 +92,38 @@ contiene.
 | `…/docker-proxy.mjs.sha256` | root:root 0644 | hash registrado en la instalación (lo comprueba `preflight`) | root (`install`) |
 | `/etc/s9-docker-proxy/DIGESTS.lock` | root:root 0644 | allowlist de imágenes (copia verificada de `runtimes/DIGESTS.lock`) | root (`install`) |
 | `/etc/s9-ai-arena/docker-proxy.env` | root:root 0640 | configuración | operador (root) |
-| `/etc/systemd/system/s9-docker-proxy.service` | root:root 0644 | unidad, sin drop-ins | root (`install`) |
+| `/etc/systemd/system/s9-docker-proxy.service` | root:root 0644 | unidad, sin drop-ins (ni propios en `/etc`, `/run`, `/usr/lib`, `/usr/local/lib`, ni globales `service.d` en `/etc` o `/run`) | root (`install`) |
+| `/usr/local/sbin/s9-docker-proxy-preflight` | root:root 0755 | **preflight instalado**: la única copia que vale para `preflight`/`validate`/`restore` y para TD-057 | root (`install`) |
+| `/var/lib/s9-docker-proxy/backup/` | root:root 0700 | copias de seguridad que hace `install` (unidad, drop-ins, `.env`) | root (`install`) |
 | `/bin/sh` y `/usr/local/sbin`, `/usr/local/bin`, `/usr/sbin`, `/usr/bin` | root, sin escritura de grupo ni de otros | `ExecStartPre` (`sh`, `ip`, `grep`, `sleep` por el `PATH` del servicio) | root |
 | `/var/run/docker.sock` | root:docker 0660 | lo **único** escribible por el proceso | — |
 | `/opt/s9-ai-arena` (árbol de despliegue) | usuario de despliegue | **no es autoridad del proxy**: el proceso no lo ve (`InaccessiblePaths`) | usuario de despliegue |
 
 Cómo se garantiza:
 
-- **El artefacto se construye sin root** (`npm run build:docker-proxy`). El build comprueba con el
-  metafile de esbuild que todas las entradas vienen de `apps/bot-manager/src/` y que no hay
-  importaciones fuera de `node:*`. Es determinista: el mismo commit da el mismo sha256.
-- **`install` (root) no ejecuta nada del árbol** (ni esbuild ni node): copia el bundle a un
-  temporal de root, verifica el sha256 **de la copia** (y `S9PX_EXPECT_SHA256` si se pasa) y lo
-  mueve a su sitio de forma atómica. La allowlist sigue el mismo camino.
+- **Ancla de confianza (REVIEW #167, B1):** nada de lo que corre como root sale del árbol de
+  despliegue.
+  - El instalador se ejecuta desde un **clon de root fijado al SHA revisado**.
+  - El bundle se construye **en ese clon**, con `npm ci --ignore-scripts` y `--commit <SHA>`.
+    Decisión: así no hace falta ni un token de GitHub en el host ni artefactos de la CI, y el
+    resultado es determinista. Tiene que coincidir con el sha256 que publica la CI de `main` para
+    ese SHA: son dos medidas independientes del mismo commit.
+  - `validate`, `preflight` y `restore` se ejecutan **sólo** con la copia instalada
+    `/usr/local/sbin/s9-docker-proxy-preflight`.
+  - `install`, `preflight` y `validate` comprueban su propia procedencia y la de lo que instalan.
+    Desde una copia que no es sólo de root (la de `/opt`), se niegan con rc 2.
+  - Esa comprobación protege del **error** del operador. Del atacante protege el procedimiento
+    ([upgrades.md](upgrades.md#td-062)).
+- **El build** comprueba con el metafile de esbuild que todas las entradas vienen de
+  `apps/bot-manager/src/` y que no hay importaciones fuera de `node:*`. Es determinista: el mismo
+  `--commit` da el mismo sha256 en cualquier máquina (comprobado en local y en la CI).
+- **`install`:**
+  - exige `S9PX_EXPECT_SHA256`;
+  - copia el bundle a un temporal de root y verifica el sha256 **de la copia** contra ese valor;
+  - lo mueve a su sitio de forma atómica, y la allowlist sigue el mismo camino;
+  - la comparación sólo vale porque la hace una copia de root. Desde una copia escribible por otro
+    usuario, ese mismo script podría saltársela: por eso el ancla es la procedencia de la copia, no
+    la variable.
 - **Unidad** (`ExecStart=/usr/bin/node --no-addons /usr/local/lib/s9-docker-proxy/docker-proxy.mjs`):
   - sin `npx`/`tsx` y sin `WorkingDirectory`;
   - `ProtectSystem=strict` + `ReadOnlyPaths` del artefacto y de la allowlist; sólo el socket es
@@ -127,31 +146,39 @@ Cómo se garantiza:
 
 Riesgo residual (declarado):
 
-- `install-docker-proxy.sh` y `s9-firewall.sh install` corren como root desde el árbol, así que
-  se confía en el árbol en el instante del despliegue. Verifica el commit y compara el sha256 del
-  bundle con el que imprime la CI.
+- Se confía en GitHub y en el SHA revisado: el clon de root se obtiene por HTTPS y se fija por
+  commit. Las dependencias del build salen del `package-lock.json` de ese SHA (integridad sha512
+  de npm), sin ejecutar sus scripts de instalación.
+- `s9-firewall.sh install` aplica la misma regla: hay que ejecutarlo desde el clon de root, no
+  desde `/opt` (lo indica [firewall.md](firewall.md)). Su script **no** tiene autocomprobación de
+  procedencia: lo vigila `preflight` una vez instalado.
 - `preflight` no audita las bibliotecas dinámicas de `node`.
 
 ## Instalación
 
+Procedimiento completo, con sus condiciones de parada: [upgrades.md](upgrades.md#td-062). En resumen,
+como root:
+
 ```bash
-# En el host, con el repo desplegado en /opt/s9-ai-arena (APP_DIR):
-cd /opt/s9-ai-arena
-npm run build:docker-proxy                        # SIN root: dist/s9-docker-proxy/docker-proxy.mjs (+ .sha256)
-sudo S9PX_EXPECT_SHA256=<sha256 del build> bash infrastructure/scripts/install-docker-proxy.sh install
+S=/root/s9-td062/$SHA        # clon de root fijado al SHA revisado (paso 1 de upgrades.md#td-062)
+cd "$S" && npm ci --ignore-scripts && node infrastructure/scripts/build-docker-proxy-bundle.mjs --commit "$SHA"
+S9PX_EXPECT_SHA256=<sha256 publicado por la CI de main para $SHA> bash "$S/infrastructure/scripts/install-docker-proxy.sh" install
 ```
 
 `install` hace, por este orden:
 
-1. Copia el bundle y la allowlist a sus rutas de root.
-2. Crea `/etc/s9-ai-arena/docker-proxy.env` desde la plantilla si no existe. Si existe y su allowlist
-   no es `/etc/s9-docker-proxy/DIGESTS.lock`, **aborta**: es el caso de la migración (ver
-   [upgrades.md](upgrades.md#td-062)).
-3. Pasa `check-env`.
-4. Instala la unidad.
-5. Pasa `preflight --static`. Si sale ROJO, aborta **sin reiniciar**.
-6. Crea `s9proxy` en el grupo `docker`, recarga systemd y reinicia la unidad.
-7. Pasa el `preflight` completo.
+1. Comprueba su procedencia y la de sus orígenes. Si no son sólo de root: rc 2.
+2. Exige que el sha256 del bundle sea el esperado. Si no: PARA.
+3. Hace la **copia de seguridad** de la unidad, los drop-ins y el `.env`.
+4. Instala el bundle, la allowlist y el preflight.
+5. Crea el `.env` desde la plantilla si no existe.
+   - Si existe y su allowlist no es la de `/etc`, aborta.
+   - Con `S9PX_MIGRATE_ENV=1` cambia **sólo** esa línea, y sólo cuando la copia de root ya existe.
+6. Pasa `check-env`.
+7. Escribe la unidad y pasa `preflight --static`. Si sale ROJO, **restaura** la unidad y el `.env`
+   y sale sin reiniciar.
+8. Crea `s9proxy` en el grupo `docker`, recarga systemd, reinicia la unidad y pasa el `preflight`
+   completo con la copia instalada.
 
 La unidad corre como `s9proxy` (sin login) con `Restart=always`. Las imágenes de runtime deben estar
 ya en el host (el proxy no permite `pull`).
@@ -159,12 +186,14 @@ ya en el host (el proxy no permite `pull`).
 ## Validación
 
 ```bash
-sudo bash infrastructure/scripts/install-docker-proxy.sh preflight   # frontera de privilegio (TD-062)
-sudo bash infrastructure/scripts/install-docker-proxy.sh validate    # preflight + config + escucha + firewall
+sudo /usr/local/sbin/s9-docker-proxy-preflight preflight   # frontera de privilegio (TD-062); SÓLO la copia instalada
+sudo /usr/local/sbin/s9-docker-proxy-preflight validate    # preflight + config + escucha + firewall
 sudo journalctl -u s9-docker-proxy -f   # cada decisión allow/deny, con "client" (IP de origen)
 ```
 
-`preflight` imprime una línea `preflight: ROJO: …` por fallo y sale con 1 si hay alguno. Falla si:
+`preflight` imprime una línea `preflight: ROJO: …` por fallo y sale con 1 si hay alguno; con rc 2 se
+**niega** a dar veredicto si la copia que se ejecuta no es sólo de root (por ejemplo, la del árbol).
+Falla si:
 
 - cualquier ruta de la tabla de arriba, o un padre suyo hasta `/`, no es de root, es escribible por
   grupo u otros o tiene ACL;
@@ -201,9 +230,22 @@ imágenes de la allowlist y la instancia. Comprobaciones de alcance, desde conte
 
 ## Rollback
 
+**Volver al estado anterior a un `install`** (lo normal):
+
 ```bash
-sudo bash infrastructure/scripts/install-docker-proxy.sh rollback
-# Para y retira la unidad; conserva config y usuario.
+sudo /usr/local/sbin/s9-docker-proxy-preflight restore /var/lib/s9-docker-proxy/backup/<fecha>-<pid>
+```
+
+Repone la unidad, los drop-ins y el `.env` de la copia que hizo `install` (la ruta la imprime
+`install`), recarga systemd y reinicia el proxy. Si lo repuesto es la unidad de RC1/RC2, TD-062
+vuelve a estar abierta y el comando lo avisa: es una medida de emergencia
+([upgrades.md](upgrades.md#td-062)).
+
+**Retirar el proxy** (parar y quitar la unidad; conserva config, artefacto, allowlist, preflight y
+usuario):
+
+```bash
+sudo /usr/local/sbin/s9-docker-proxy-preflight rollback
 ```
 
 Volver a la política de RC1 no es un rollback admisible: reabre N20–N23.
@@ -215,7 +257,7 @@ Volver a la política de RC1 no es un rollback admisible: reabre N20–N23.
 >
 > **EFFECT:** elimina `/etc/s9-ai-arena` (configuración del proxy) y el usuario de sistema `s9proxy`.
 >
-> **ROLLBACK:** reinstalar con `install-docker-proxy.sh install` y rehacer la configuración.
+> **ROLLBACK:** reinstalar con el procedimiento de [upgrades.md](upgrades.md#td-062) y rehacer la configuración.
 
 ```bash
 sudo rm -rf /etc/s9-ai-arena && sudo userdel s9proxy
@@ -261,9 +303,11 @@ sudo rm -rf /etc/s9-ai-arena && sudo userdel s9proxy
 
 | Afirmación | Estado | Evidencia |
 |---|---|---|
-| `install|preflight|validate|rollback`, `APP_DIR`, `/etc/s9-ai-arena`, usuario `s9proxy` | CODE_VERIFIED | `infrastructure/scripts/install-docker-proxy.sh` |
+| `install|preflight|validate|rollback|restore`, `APP_DIR`, `/etc/s9-ai-arena`, usuario `s9proxy` | CODE_VERIFIED | `infrastructure/scripts/install-docker-proxy.sh` |
+| B1: `install`/`preflight`/`validate` se niegan (rc 2) desde una copia que no es sólo de root; `S9PX_EXPECT_SHA256` obligatorio; preflight instalado de root | TEST (propietarios reales) + CI (R11: el instalador del checkout se niega) | `docker-proxy-privilege.test.ts` «B1 ·»; `container-proxy-e2e` R11 B1 |
+| B2: copia de seguridad, migración de una sola línea del `.env`, restauración si `--static` sale ROJO, `restore` | TEST | `docker-proxy-privilege.test.ts` «B2 ·» |
 | Bundle autocontenido (sólo `node:*`), determinista, arranca fuera del repo y exige la allowlist | TEST | `infrastructure/tests/docker-proxy-privilege.test.ts` (B); mutación «el proxy importa un paquete» ⇒ build ROJO |
-| `install` fija root:root 0755/0644/0640; `preflight` ROJO ante 20 mutaciones (modo, propietario de un padre, enlace en la hoja o en un padre intermedio, sha256, entorno, unidad, drop-in, firewall) | TEST (propietarios reales en userns/sudo) | `docker-proxy-privilege.test.ts` (P) |
+| `install` fija root:root 0755/0644/0640; `preflight` ROJO ante 26 mutaciones (modo, propietario de un padre, enlace en la hoja o en un padre intermedio, sha256, entorno, unidad, drop-in, firewall) | TEST (propietarios reales en userns/sudo) | `docker-proxy-privilege.test.ts` (P) |
 | Un usuario no root recibe EACCES sobre bundle, allowlist, unidad y entorno | TEST (núcleo real) | `docker-proxy-privilege.test.ts` (N); `container-proxy-e2e` R11 (`s9cpx-arena`, `s9proxy`) |
 | Proceso efectivo = `/usr/bin/node` + bundle, como `s9proxy`, sin ver el checkout | CI (unidad systemd real en el runner) | `container-proxy-e2e` R11 |
 | Unidad de producción instalada hoy = RC1 (`npx tsx`, `WorkingDirectory` en el árbol) | RUNTIME_VERIFIED (lectura, 2026-10-21) | `systemctl cat`/`show` y `/proc` en el host (no se versiona la topología) |

@@ -112,7 +112,7 @@ identidad ADR-016 ([TD-020](../roadmap/technical-debt.md#td-020)).
 Sólo lectura. Responde a «¿el proxy ejecuta el artefacto de root o algo del árbol?» (TD-062):
 
 ```bash
-sudo bash infrastructure/scripts/install-docker-proxy.sh preflight   # una línea «ROJO:» por problema
+sudo /usr/local/sbin/s9-docker-proxy-preflight preflight   # copia de root instalada; una línea «ROJO:» por problema
 systemctl show s9-docker-proxy -p ExecStart -p WorkingDirectory -p DropInPaths -p NeedDaemonReload
 pid=$(systemctl show -p MainPID --value s9-docker-proxy); sudo readlink -f /proc/$pid/exe; sudo tr '\0' ' ' </proc/$pid/cmdline
 sudo journalctl -u s9-docker-proxy -o cat | grep -m1 'escuchando'   # "artifact":{"kind":"bundle",…} y la ruta de la allowlist
@@ -124,6 +124,8 @@ Síntomas típicos:
   ([upgrades.md](upgrades.md#td-062)).
 - `DOCKER_PROXY_IMAGE_ALLOWLIST=… (debe ser la copia de root …)`: falta el paso 3 de la migración.
 - `exit 78` con «DOCKER_PROXY_IMAGE_ALLOWLIST es obligatoria»: el bundle arrancó sin la variable.
+- `rc 2` con «esta copia o lo que instala NO es sólo de root»: se está ejecutando el script del árbol
+  (`/opt/...`). Usa `/usr/local/sbin/s9-docker-proxy-preflight` o el clon de root.
 
 ## Deriva entre lo declarado y lo que corre
 

@@ -148,14 +148,22 @@ ninguna credencial en el host.
 
 ### Proxy de Docker del host (artefacto instalado, TD-062)
 
-El proxy **no** se ejecuta desde este árbol: el árbol lo puede escribir el usuario de despliegue, y
-el proxy tiene el grupo `docker`, que equivale a root. Se construye un bundle **sin root** y el
-instalador lo copia, junto con la allowlist, a rutas de root:
+El proxy **no** se ejecuta desde este árbol, y su instalador tampoco: el árbol lo puede escribir el
+usuario de despliegue, y el proxy tiene el grupo `docker`, que equivale a root.
+
+- Root clona el repo **aparte**, fijado al SHA revisado.
+- Construye allí el bundle y lo compara con el sha256 que publica la CI de `main`.
+- Instala desde ese clon.
+- Después valida **sólo** con la copia instalada del preflight.
+
+Desde una copia que no es de root, el instalador se niega (rc 2).
 
 ```bash
-npm run build:docker-proxy                                             # sin root; imprime el sha256
-sudo S9PX_EXPECT_SHA256=<sha256> bash infrastructure/scripts/install-docker-proxy.sh install
-sudo bash infrastructure/scripts/install-docker-proxy.sh preflight     # rc 0 = frontera de privilegio OK
+# como root, umask 022; pasos y condiciones de parada: upgrades.md#td-062
+S=/root/s9-td062/$SHA
+cd "$S" && npm ci --ignore-scripts && node infrastructure/scripts/build-docker-proxy-bundle.mjs --commit "$SHA"
+S9PX_EXPECT_SHA256=<sha256 de la CI de main> bash "$S/infrastructure/scripts/install-docker-proxy.sh" install
+/usr/local/sbin/s9-docker-proxy-preflight preflight     # rc 0 = frontera de privilegio OK
 ```
 
 Detalle, propietarios y verificación: [docker-proxy.md](docker-proxy.md#frontera-de-privilegio-td-062).
