@@ -134,7 +134,7 @@ Una sola sesión por build (`ContainerBuildSandbox.verify`):
 2. **Contenedor.** Se lanza con `ProxyContainerRunner` a través de `s9-docker-proxy`, con esta configuración:
    - imagen de runtime `python|node` fijada por digest en `runtimes/DIGESTS.lock`;
    - usuario 10001, `cap-drop ALL` y `no-new-privileges`;
-   - seccomp `security/seccomp-bot.json`;
+   - seccomp `security/seccomp-bot.json` (permite `sendmmsg`, que glibc usa al resolver el nombre anunciado del worker; [TD-061](../roadmap/technical-debt.md#td-061));
    - rootfs de solo lectura y `/tmp` tmpfs de 32 MiB (`noexec`);
    - red `arena` sin DNS;
    - 0,5 CPU, 256 MiB sin swap y 64 PIDs;

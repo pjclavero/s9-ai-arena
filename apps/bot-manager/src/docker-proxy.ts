@@ -154,7 +154,7 @@ export const DEFAULT_POLICY: ProxyPolicy = {
 
 // ── RC2 · allowlist de imágenes (runtimes/DIGESTS.lock, 3.ª columna) ─────────
 
-/** DIGESTS.lock del árbol desde el que corre el proxy (en VM108: /opt/s9-ai-arena). */
+/** DIGESTS.lock del árbol desde el que corre el proxy (en producción: /opt/s9-ai-arena). */
 export const DEFAULT_IMAGE_ALLOWLIST_PATH = join(
   dirname(fileURLToPath(import.meta.url)),
   "..",

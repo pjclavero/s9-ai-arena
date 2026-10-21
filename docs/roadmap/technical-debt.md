@@ -9,7 +9,7 @@ nunca se implementaron van en [pending-features.md](pending-features.md). Los s�
 usuario o el operador van en [known-issues.md](known-issues.md).
 
 - **BASE COMMIT:** `27f70bb` (origin/main, 2026-09-13). Desde la auditoría del 2026-10-15 hay 0 commits nuevos.
-- **LAST VERIFIED:** 2026-10-15; estados de TD-001…TD-031 revisados y TD-032…TD-049 añadidas en el cierre funcional (rama `integration/functional-closure`, base `0b8c12b`, 2026-10-18; ver [functional-closure-report.md](../development/functional-closure-report.md)).
+- **LAST VERIFIED:** 2026-10-21 (RC2: TD-051…TD-063 añadidas desde las propuestas de RC1 y los hallazgos de RC2; TD-050 fusionada en TD-019). Antes: 2026-10-15; estados de TD-001…TD-031 revisados y TD-032…TD-049 añadidas en el cierre funcional (rama `integration/functional-closure`, base `0b8c12b`, 2026-10-18; ver [functional-closure-report.md](../development/functional-closure-report.md)).
 - **Origen:** auditoría del 2026-10-15 ([resumen público](../audits/2026-10-15/README.md),
   [delta](../audits/2026-10-15/AUDIT-DELTA-2026-10.md)). Las excepciones son TD-026, TD-028,
   TD-029 y TD-030, que salieron de la verificación de esta consolidación, y TD-031, que salió del
@@ -81,6 +81,19 @@ Estados posibles:
 | [TD-047](#td-047) | Batallas y estadísticas exponen participantes de bots privados | P1 | Seguridad / batallas | ABIERTA |
 | [TD-048](#td-048) | `NODE_ENV` no se fija en las imágenes | P2 | Configuración | ABIERTA |
 | [TD-049](#td-049) | Fallbacks silenciosos menores | P3 | Web / API | ABIERTA |
+| [TD-051](#td-051) | Proxy de Docker sin límite de imagen, contenedor ni cliente | P0 | Seguridad / bots | CERRADA en la integración RC2 (REVIEW + CI real); sin desplegar |
+| [TD-052](#td-052) | Sin E2E contenedor → proxy | P0 | CI | CERRADA (RC2): `container-proxy-e2e` obligatorio en `main` |
+| [TD-053](#td-053) | Sin firewall de host en 2375; redes internas alcanzan sshd | P1 | Seguridad / operación | CERRADA en la integración RC2; sin aplicar en producción |
+| [TD-054](#td-054) | `backup.sh` sin modo sin retención | P2 | Operación / backup | ABIERTA |
+| [TD-055](#td-055) | `deploy-contract.json` desfasado | P2 | Operación / despliegue | ABIERTA |
+| [TD-056](#td-056) | `Documentation=` de la unidad del proxy roto | P3 | Operación | CERRADA en la integración RC2; sin desplegar |
+| [TD-057](#td-057) | Árbol de despliegue con ficheros de root | P2 | Operación | ABIERTA |
+| [TD-058](#td-058) | Restos de un smoke manual en producción | P3 | Operación | ABIERTA (operador) |
+| [TD-059](#td-059) | `/healthz` de la API ciego al nivel de migraciones | P2 | Operación / API | ABIERTA |
+| [TD-060](#td-060) | `.env` 0644 y `secrets/` 0755 en el host | P2 | Seguridad / operación | ABIERTA |
+| [TD-061](#td-061) | Seccomp de los bots sin `sendmmsg` (DNS roto) | P0 | Bots / sandbox | CERRADA en la integración RC2; sin desplegar |
+| [TD-062](#td-062) | El proxy ejecuta código de un árbol no sólo de root | P1 | Seguridad / operación | ABIERTA |
+| [TD-063](#td-063) | Otros servicios del host en todas las interfaces | P3 | Seguridad / red | ABIERTA (sin medir) |
 
 ---
 
@@ -548,6 +561,7 @@ Estados posibles:
 - **Impacto:** se pierde la señal de CI, y queda un verde falso latente.
 - **Solución prevista:** arreglar los dos fallos del nightly, y hacer que `deploy-staging` despliegue de verdad o falle cuando no despliega.
 - **Condición de cierre:** el nightly pasa a verde, y `deploy-staging` no puede dar verde sin desplegar (lo demuestra un test o una mutación).
+- **RC2 (2026-10-21):** la propuesta TD-050 de RC1 («nightly `slow-suites` en rojo crónico por el arnés») es esta misma deuda y no se abre aparte. Evidencia nueva: `nightly.yml` en `failure` las 10 noches del 12 al 21 de octubre, sobre 3 commits distintos (`gh run list --workflow nightly.yml`).
 
 <a id="td-020"></a>
 ## TD-020 — Endpoints de salud e identidad engañosos
@@ -1028,6 +1042,164 @@ Estados posibles:
 - **Problema:** Errores reales presentados como estados normales.
 - **Solución prevista:** Propagar el error con los componentes comunes y separar 404 de 5xx.
 - **Condición de cierre:** Tests con fallo inyectado por cada caso.
+
+<a id="td-051"></a>
+## TD-051 — El proxy de Docker no limitaba imagen, contenedor ni cliente
+
+- **Estado:** CERRADA en la integración `integration/rc2-docker-proxy` (RC2, REVIEW + CI real); sin desplegar
+- **Prioridad:** P0
+- **Área:** Seguridad / bots
+- **Detectado:** 2026-10-20, RC1 (OPS-C, controles N20–N23; REVIEW)
+- **Evidencia:** RC1: `create` con el digest de la imagen del gateway = 201; `start`/`stop`/`inspect` de un contenedor ajeno = 2xx (podía parar `postgres`); `gateway` y `backup` alcanzaban el proxy.
+- **Problema:** Quien alcanzaba el proxy podía lanzar cualquier imagen fijada por digest y operar cualquier contenedor del host.
+- **Solución prevista:** Control de cliente por IP de origen, allowlist de imágenes de `runtimes/DIGESTS.lock`, propiedad por labels impuestas y default deny.
+- **Condición de cierre:** N20–N23 dan 403 con la víctima intacta, con pruebas capaces de ponerse rojas.
+- **Cierre (RC2):**
+  - Código: `apps/bot-manager/src/docker-proxy.ts` (cliente en la conexión, imagen = 3.ª columna exacta del lock, labels `s9.managed`/`s9.proxy.instance` impuestas y exigidas tras inspect previo, Id de 64 hex, límites obligatorios) y `docker-proxy-config.ts` (bind obligatorio, nunca comodín/`docker0`/`host-gateway`; exclusión de la IP de bind y de las direcciones locales del host). Ver [docker-proxy.md](../operations/docker-proxy.md#política-rc2).
+  - Pruebas: en proceso (`docker-proxy.test.ts`, `cpu-ms.test.ts`) y contra Docker real (`docker-proxy-docker.test.ts`, en el job `docker-e2e` con 0 skipped).
+  - CI real: el job `container-proxy-e2e` (stack Compose real) da 403 a imagen ajena, base del lock, digest fuera del lock, labels `s9.*` forjadas, y a stop/start/inspect/stats de `postgres` y stop del `gateway`, con `postgres` intacto. Calibración: allowlist desactivada y propiedad desactivada ⇒ ROJO.
+
+<a id="td-052"></a>
+## TD-052 — No había E2E contenedor → proxy
+
+- **Estado:** CERRADA (RC2): `functional-e2e / container-proxy-e2e` es check obligatorio de `main`
+- **Prioridad:** P0
+- **Área:** CI
+- **Detectado:** 2026-10-20, RC1 (REVIEW, P0-3)
+- **Evidencia:** RC1: la CI ejecutaba los servicios como procesos del host (`tests/browser/run.sh` con el proxy en `127.0.0.1`); en el stack real los consumidores daban ENETUNREACH. Las piezas pasaban en verde por separado y fallaban juntas.
+- **Problema:** El camino que falló en producción no estaba cubierto por ningún gate.
+- **Solución prevista:** Job con el Compose real (perfil `production`, imágenes del propio commit), proxy como proceso del host en la IP de la red dedicada y firewall aplicado.
+- **Condición de cierre:** Job obligatorio en la protección de `main`, con veredicto independiente (skipped, 0 sondas o sin batalla `finished` ⇒ rojo).
+- **Cierre (RC2):** job `container-proxy-e2e` en `.github/workflows/functional-e2e.yml` (`tests/container-proxy-e2e/run.sh`, veredicto `scripts/ci/assert-container-proxy-e2e.mjs`). Calibrado con cuatro mutaciones (worker sin `bot-control`, gateway en `bot-control`, allowlist de imágenes desactivada, propiedad desactivada), todas ROJO. Añadido a los checks obligatorios de `main` y calibrado con un PR de control negativo (detalle en [ci.md](../development/ci.md#protección-de-rama)). En el camino destapó [TD-061](#td-061).
+
+<a id="td-053"></a>
+## TD-053 — Sin firewall de host en 2375, y redes internas alcanzan sshd del host
+
+- **Estado:** CERRADA en la integración (RC2: firewall como código, aplicado y medido en la CI); **sin aplicar en producción** (gate del operador)
+- **Prioridad:** P1
+- **Área:** Seguridad / operación
+- **Detectado:** 2026-10-20, RC1 (OPS-C, REVIEW P1-1)
+- **Evidencia:** RC1: `gateway` y `backup` (red `public`, con ruta por defecto al host) alcanzaban el puerto del proxy; contenedores de redes internas alcanzaban el sshd del host por la IP de su bridge.
+- **Problema:** Una IP propiedad del host es alcanzable desde cualquier contenedor con ruta por defecto, aunque no comparta red.
+- **Solución prevista:** Reglas idempotentes en caliente (sin recargar nftables ni tocar las cadenas de Docker): 2375 sólo desde `s9-botctl0` + `10.89.250.0/24` hacia `10.89.250.1`; DROP de 22 desde los bridges de Docker.
+- **Condición de cierre:** gateway → 2375 timeout; bridge → 22 timeout; servicios de Docker sanos tras aplicarlas.
+- **Cierre (RC2):** `infrastructure/firewall/s9-firewall.sh` (`apply|check|remove`), unidades `s9-firewall.service` y `s9-firewall-reassert.timer`, [firewall.md](../operations/firewall.md). Probado en netns aislado (`infrastructure/firewall/tests/netns-harness.sh`, con siete mutaciones ROJO) y aplicado con sudo en el runner del job `container-proxy-e2e`: con firewall, `gateway` y el equivalente de `backup` dan TIMEOUT y los consumidores siguen llegando (201). Aplicarlo en producción es un paso del gate de despliegue.
+
+<a id="td-054"></a>
+## TD-054 — `backup.sh` sin modo sin retención
+
+- **Estado:** ABIERTA
+- **Prioridad:** P2
+- **Área:** Operación / backup
+- **Detectado:** 2026-10-20, RC1 (REVIEW, P2-3)
+- **Evidencia:** `infrastructure/backup/backup.sh:771`: toda ejecución termina en `restic forget … --prune`; no hay `--no-retention` ni variable equivalente (RC2: verificado en el código).
+- **Problema:** Una copia pre-despliegue manual aplica la retención del nocturno y pisa sus métricas (`last_success`).
+- **Solución prevista:** Modo `--no-retention` / `S9_BACKUP_SKIP_RETENTION=1` con su propio `RESTIC_HOSTNAME`.
+- **Condición de cierre:** Test que demuestra que en ese modo no se invoca `forget` ni `prune` y que `last_success` del nocturno no cambia.
+
+<a id="td-055"></a>
+## TD-055 — `deploy-contract.json` desfasado
+
+- **Estado:** ABIERTA
+- **Prioridad:** P2
+- **Área:** Operación / despliegue
+- **Detectado:** 2026-10-20, RC1 (REVIEW, P2-1)
+- **Evidencia:** `infrastructure/deploy-contract.json:22-25`: `TAG=4d469dc`, `BACKUP_TAG=ad0a42b`, `TOURNAMENT_WORKER_TAG=82c74a8` (RC2: sin cambios).
+- **Problema:** El contrato de despliegue no describe el candidato que se quiere desplegar.
+- **Solución prevista:** Actualizarlo al commit del RC y al prefijo de imagen de GHCR, y retirar `TOURNAMENT_WORKER_TAG`.
+- **Condición de cierre:** `deploy-contract-gate` renderiza exactamente las imágenes del manifiesto del RC.
+
+<a id="td-056"></a>
+## TD-056 — `Documentation=` de la unidad del proxy roto
+
+- **Estado:** CERRADA en la integración (RC2); sin desplegar
+- **Prioridad:** P3
+- **Área:** Operación
+- **Detectado:** 2026-10-20, RC1 (REVIEW, P2-2)
+- **Evidencia:** La unidad instalada apunta a `docs/ops/docker-proxy.md`, que no existe en el árbol de `main` (el runbook está en `docs/operations/`).
+- **Cierre (RC2):** `infrastructure/systemd/s9-docker-proxy.service` apunta a `docs/operations/docker-proxy.md`; `infrastructure/tests/docker-proxy-env.test.ts` comprueba que la ruta existe en el árbol. Se corrige en el host al reinstalar la unidad (`install-docker-proxy.sh install`).
+
+<a id="td-057"></a>
+## TD-057 — Árbol de despliegue con `.git` y ficheros versionados propiedad de root
+
+- **Estado:** ABIERTA
+- **Prioridad:** P2
+- **Área:** Operación
+- **Detectado:** 2026-10-20, RC1 (REVIEW)
+- **Evidencia:** RC2 (lectura, 2026-10-21): en el árbol de despliegue del host `.git` es `root:root` y ~640 ficheros son de root, mientras que el procedimiento opera como el usuario de despliegue.
+- **Problema:** Un `git` hecho como root rompe el procedimiento normal (permisos), y obliga a usar root para actualizar.
+- **Solución prevista:** `chown` acotado y verificado al usuario de despliegue, **excepto** el código que ejecuta el proxy (ver [TD-062](#td-062)).
+- **Condición de cierre:** 0 ficheros de root fuera de la lista justificada y procedimiento de actualización sin root.
+
+<a id="td-058"></a>
+## TD-058 — Restos de un smoke manual en producción
+
+- **Estado:** ABIERTA (decisión del operador)
+- **Prioridad:** P3
+- **Área:** Operación
+- **Detectado:** 2026-10-20, RC1 (REVIEW)
+- **Evidencia:** RC2 (lectura, 2026-10-21): seis contenedores `bot-bot_smoke*` en `exited (0)` desde julio y un `s9-localreg` (`registry:2`) en `exited (255)`, creados por `scripts/e2e-real-battle-smoke.ts` y `bots/s9-smoke-bot/build.sh --local`; ninguno pertenece al Compose. No los cubre [TD-040](#td-040) (`AutoRemove` del lanzamiento normal).
+- **Problema:** Inventario sucio; tras RC2 el proxy ya no puede operarlos (no llevan las labels `s9.*`).
+- **Solución prevista:** Guardar sus logs como evidencia y borrarlos; decidir sobre el volumen anónimo del registro local.
+- **Condición de cierre:** El inventario del host no contiene contenedores fuera del Compose sin justificar.
+
+<a id="td-059"></a>
+## TD-059 — `/healthz` de la API no detecta un esquema por detrás del código
+
+- **Estado:** ABIERTA
+- **Prioridad:** P2
+- **Área:** Operación / API
+- **Detectado:** 2026-10-20, RC1 (REVIEW, B6)
+- **Evidencia:** `apps/api/src/server.ts:28`: `/healthz` responde `{status:"ok"}` sin consultar el nivel de migraciones. Distinto de [TD-020](#td-020) (healthcheck a través del gateway e identidad de build).
+- **Problema:** Una API nueva sobre una BD sin migrar se declara sana.
+- **Solución prevista:** Comprobación del nivel de migración en el arranque o en readiness.
+- **Condición de cierre:** Test con una BD un nivel por detrás ⇒ `/healthz` (o readiness) en rojo.
+
+<a id="td-060"></a>
+## TD-060 — `.env` legible por todos y `secrets/` en 0755 en el host
+
+- **Estado:** ABIERTA
+- **Prioridad:** P2
+- **Área:** Seguridad / operación
+- **Detectado:** 2026-10-20, RC1 (REVIEW)
+- **Evidencia:** RC2 (lectura, 2026-10-21): `infrastructure/.env` en 0644 y `infrastructure/secrets/` en 0755 en el host de producción.
+- **Problema:** Cualquier usuario local lee la configuración (con topología) y lista los secretos.
+- **Solución prevista:** `.env` 0600 y `secrets/` 0700 del usuario de despliegue, comprobados por readiness.
+- **Condición de cierre:** Readiness falla con permisos más laxos (mutación ROJO).
+
+<a id="td-061"></a>
+## TD-061 — El perfil seccomp de los bots rompía la resolución de nombres
+
+- **Estado:** CERRADA en la integración (RC2); sin desplegar
+- **Prioridad:** P0
+- **Área:** Bots / sandbox
+- **Detectado:** 2026-10-21, RC2 (DEV-CI, run de GitHub 39606703262)
+- **Evidencia:** `apps/bot-manager/security/seccomp-bot.json` no permitía `sendmmsg`; glibc lo usa en `getaddrinfo` (A y AAAA en paralelo) y fallaba con `EAI_AGAIN`. En el Compose real los workers se anuncian por nombre (`bot-build-worker`, `tournament-worker`), el bootstrap del bot salía con código 3 y no se publicaba ningún build ni corría ninguna batalla. Oculto en golden y vitest porque anuncian una IP.
+- **Cierre (RC2):** `sendmmsg` añadido al perfil (está en el perfil por defecto de Docker; `defaultAction` sigue en ERRNO). Test `apps/bot-manager/tests/seccomp-bot-dns.test.ts` (estático + Docker real python/node por nombre, en `docker-e2e` con 0 skipped); mutación sin `sendmmsg` ⇒ `EAI_AGAIN` ROJO.
+
+<a id="td-062"></a>
+## TD-062 — El proxy ejecuta código de un árbol que no es sólo de root
+
+- **Estado:** ABIERTA
+- **Prioridad:** P1
+- **Área:** Seguridad / operación
+- **Detectado:** 2026-10-21, RC2 (DEV-SECOPS; REVIEW)
+- **Evidencia:** `infrastructure/systemd/s9-docker-proxy.service`: el usuario del proxy está en el grupo `docker` (equivalente a root) y ejecuta `npx tsx apps/bot-manager/src/docker-proxy-main.ts` desde el árbol de despliegue. Si ese árbol pasa al usuario de despliegue ([TD-057](#td-057)), ese usuario podría modificar el código que corre con acceso al socket de Docker. `ReadOnlyPaths` sólo impide que escriba el propio proxy.
+- **Problema:** Escalada potencial del usuario de despliegue a root a través del proxy.
+- **Solución prevista:** Instalar el código del proxy (y su allowlist) en una ruta propiedad de root, como ya hace el firewall (`/usr/local/sbin`), o fijar su contenido por hash en el arranque.
+- **Condición de cierre:** Test de la unidad/instalador que rechaza un `WorkingDirectory`/`ExecStart` escribible por un usuario no root.
+
+<a id="td-063"></a>
+## TD-063 — Otros servicios del host escuchan en todas las interfaces
+
+- **Estado:** ABIERTA (sin medir)
+- **Prioridad:** P3
+- **Área:** Seguridad / red
+- **Detectado:** 2026-10-21, RC2 (DEV-SECOPS)
+- **Evidencia:** Lectura del host: hay escuchas en `0.0.0.0` además de sshd (proxy de usuario de Docker, LLMNR). El firewall de RC2 sólo cubre 2375 y 22; no se ha medido si esas escuchas son alcanzables desde los bridges.
+- **Problema:** Superficie del host alcanzable desde contenedores con ruta por defecto.
+- **Solución prevista:** Inventario de escuchas y, para cada una, bind acotado o regla en `S9-HOST-GUARD`.
+- **Condición de cierre:** Sonda desde un contenedor de cada red ⇒ sólo los puertos justificados responden.
 
 ## Documentación relacionada
 

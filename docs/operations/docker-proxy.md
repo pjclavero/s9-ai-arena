@@ -131,9 +131,22 @@ sudo rm -rf /etc/s9-ai-arena && sudo userdel s9proxy
 - **FUNCIONA (código y tests):** control de cliente, allowlist de imágenes, propiedad por labels,
   bind que falla cerrado y límites obligatorios. Probado en proceso
   (`apps/bot-manager/tests/docker-proxy.test.ts`, CI normal) y contra Docker real con el proceso real
-  del proxy (`apps/bot-manager/tests/docker-proxy-docker.test.ts`, opt-in `S9_RUN_DOCKER_SANDBOX_E2E=1`).
-- **PENDIENTE (otros carriles de RC2):** red `bot-control` en compose, firewall del host, unidad y
-  `docker-proxy.env.example` con las variables nuevas, y el E2E contenedor → proxy en CI.
+  del proxy (`apps/bot-manager/tests/docker-proxy-docker.test.ts`, opt-in `S9_RUN_DOCKER_SANDBOX_E2E=1`;
+  lo activa el job `functional-e2e / docker-e2e` con 0 skipped).
+- **INTEGRADO (RC2, `integration/rc2-docker-proxy`):** red `bot-control` en compose
+  ([networking.md](networking.md#red-de-control-del-docker-proxy-bot-control)), firewall del host
+  ([firewall.md](firewall.md)), unidad y `docker-proxy.env.example` con las variables nuevas, y el
+  E2E contenedor → proxy en CI (`functional-e2e / container-proxy-e2e`, check obligatorio de
+  `main`; [ci.md](../development/ci.md)). Cierra [TD-051](../roadmap/technical-debt.md#td-051),
+  [TD-052](../roadmap/technical-debt.md#td-052) y [TD-056](../roadmap/technical-debt.md#td-056).
+- **SIN DESPLEGAR:** el proxy de producción sigue con la configuración de RC1 hasta la ventana del
+  operador (unidad nueva, `docker-proxy.env` con `DOCKER_PROXY_BIND=10.89.250.1`, firewall, runtimes
+  descargados por digest; ver [upgrades.md](upgrades.md#rc2-proxy-de-docker-red-dedicada-y-firewall)).
+- **Límite declarado:** las direcciones locales del host que se excluyen del control de cliente se
+  leen al arrancar; un bridge creado después no entra en la exclusión hasta reiniciar el proxy (la IP
+  de bind sí entra siempre). Lo cubre además el firewall ([firewall.md](firewall.md)).
+- **Deuda relacionada:** el proxy corre con el grupo `docker` y ejecuta código del árbol de
+  despliegue ([TD-062](../roadmap/technical-debt.md#td-062)).
 - **Compatibilidad:** el arnés manual `scripts/e2e-real-battle-smoke.ts` usa una imagen
   `s9-smoke-bot` que no está en `DIGESTS.lock`; con RC2 hay que arrancar el proxy con un lock propio
   (`DOCKER_PROXY_IMAGE_ALLOWLIST`) que la incluya. Los contenedores creados antes de RC2 no llevan las

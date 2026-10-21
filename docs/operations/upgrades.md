@@ -15,6 +15,7 @@ productivo con identidad de build** (o usar las imágenes de la CI), **verificar
 - [Construir fuera del host productivo](#construir-fuera-del-host-productivo)
 - [Verificar el contenido de la imagen](#verificar-el-contenido-de-la-imagen)
 - [Desplegar](#desplegar)
+- [RC2: proxy de Docker, red dedicada y firewall](#rc2-proxy-de-docker-red-dedicada-y-firewall)
 - [Override de versión por servicio](#override-de-versión-por-servicio)
 - [Alinear todas las imágenes con un mismo `BUILD_COMMIT`](#alinear-todas-las-imágenes-con-un-mismo-build_commit)
 - [PostgreSQL y Redis](#postgresql-y-redis)
@@ -107,6 +108,29 @@ En el host productivo, como usuario de despliegue, desde el clon productivo:
 (`--no-build` presente, directorio de proyecto productivo) antes de ejecutarla, y
 `release-gate.mjs --evidencia despliegue.json` valida que el despliegue responde «qué código, qué
 imagen, qué spec, qué runtime».
+
+## RC2: proxy de Docker, red dedicada y firewall
+
+Desplegar una versión que incluya RC2 añade pasos en el **host**, además de recrear servicios. Van
+en este orden, con la ejecución real todavía apagada (`DOCKER_PROXY_URL` vacío en
+`tournament-worker` y `arena-engine`):
+
+1. **Runtimes de los bots por digest** (el proxy no permite `pull`):
+   `bash scripts/ops/pull-runtime-images.sh` y después `--check-only`, que debe dar
+   `RUNTIME_IMAGES_READY=YES` ([installation.md](installation.md#imágenes-de-runtime-de-los-bots)).
+2. **Red `bot-control`:** la crea Compose al recrear `bot-build-worker`, `tournament-worker` y
+   `arena-engine` (bridge `s9-botctl0`, `10.89.250.0/24`; [networking.md](networking.md#red-de-control-del-docker-proxy-bot-control)).
+3. **Firewall:** `sudo bash infrastructure/firewall/s9-firewall.sh install` y `check` (rc 0). Se
+   inserta en caliente; nunca recargar ni hacer flush de nftables ([firewall.md](firewall.md)).
+4. **Proxy:** `/etc/s9-ai-arena/docker-proxy.env` con `DOCKER_PROXY_BIND=10.89.250.1` y
+   `DOCKER_PROXY_ALLOWED_CLIENTS=10.89.250.0/24`; `install-docker-proxy.sh check-env`, `install` y
+   `validate` ([docker-proxy.md](docker-proxy.md#instalación)). Con el entorno de RC1 (bind en
+   `docker0`) `install` aborta sin cambiar nada.
+5. **Verificación:** `node scripts/ops/network-probe.mjs --project <proyecto> --expect-members
+   arena-engine,bot-build-worker,tournament-worker --expect-default-route-blocked` (rc 0).
+
+Encender la ejecución real (fijar `DOCKER_PROXY_URL` en `tournament-worker`) sigue siendo un gate
+aparte del operador.
 
 ## Override de versión por servicio
 
