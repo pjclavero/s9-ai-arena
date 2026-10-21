@@ -106,6 +106,7 @@
         "sendto",
         "recvfrom",
         "sendmsg",
+        "sendmmsg",
         "recvmsg",
         "shutdown",
         "setsockopt",

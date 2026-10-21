@@ -139,6 +139,13 @@ Una sola sesión por build (`ContainerBuildSandbox.verify`):
    - red `arena` sin DNS;
    - 0,5 CPU, 256 MiB sin swap y 64 PIDs;
    - `AutoRemove`.
+
+   El proxy (RC2) lo hace cumplir, no sólo lo admite: la imagen debe ser **exactamente** una de la 3.ª
+   columna de `DIGESTS.lock` (otra imagen, la base o un tag → 403), los límites son obligatorios y con
+   techo, y el contenedor sale con las labels `s9.managed=true` y `s9.proxy.instance`, que el proxy
+   exige después para `start`/`stop`/`json`/`stats` (por Id completo). Un bot o un servicio no puede
+   operar contenedores que no haya creado el proxy. Detalle en
+   [docker-proxy.md](../operations/docker-proxy.md#política-rc2).
 3. **Bootstrap.** Corre como `Cmd` tras el `ENTRYPOINT` del runtime:
    - descarga el artefacto con el token y verifica el sha256;
    - lo materializa en `/tmp/bot`;

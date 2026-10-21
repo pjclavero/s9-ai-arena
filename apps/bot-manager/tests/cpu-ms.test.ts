@@ -29,10 +29,15 @@ import {
   ProxyContainerRunner,
   createDockerProxyServer,
   evaluateProxyRequest,
+  loadImageAllowlist,
   type DockerBackend,
 } from "../src/docker-proxy.js";
 
-const REAL_DIGEST = "arena/bot-runtime-python@sha256:" + "8fb09919".padEnd(64, "a");
+// RC2 · el proxy sólo admite imágenes de runtimes/DIGESTS.lock (3.ª columna) y
+// opera sólo por Id COMPLETO (64 hex) sobre contenedores con sus labels.
+const REAL_DIGEST = [...loadImageAllowlist()][0];
+const cidOf = (n: number) => n.toString(16).padStart(64, "c");
+const CID1 = cidOf(1);
 const SECCOMP_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "security", "seccomp-bot.json");
 
 const spec = (botId: string): SandboxSpec => ({
@@ -113,12 +118,12 @@ describe("B10 · cpuMsFromDockerStats: qué es una medida y qué es un hueco", (
 
 describe("B10 · allowlist del proxy: `stats` entra acotado, el resto sigue fuera", () => {
   it("admite GET /containers/{id}/stats?stream=false y reconstruye la ruta reenviada", () => {
-    const d = evaluateProxyRequest("GET", "/v1.44/containers/cid1/stats?stream=false", undefined);
+    const d = evaluateProxyRequest("GET", `/v1.44/containers/${CID1}/stats?stream=false`, undefined);
     expect(d.ok).toBe(true);
     if (d.ok) {
-      expect(d.action).toEqual({ kind: "stats", id: "cid1" });
+      expect(d.action).toEqual({ kind: "stats", id: CID1 });
       // Al backend nunca se le pasa la query tal cual: se canoniza.
-      expect(d.forwardPath).toBe("/containers/cid1/stats?stream=false");
+      expect(d.forwardPath).toBe(`/containers/${CID1}/stats?stream=false`);
       expect(d.forwardBody).toBeUndefined();
     }
   });
@@ -127,12 +132,12 @@ describe("B10 · allowlist del proxy: `stats` entra acotado, el resto sigue fuer
     // stream=true dejaría la petición abierta indefinidamente: el proxy acumula
     // la respuesta del backend antes de contestar y se quedaría colgado.
     for (const path of [
-      "/containers/cid1/stats?stream=true",
-      "/containers/cid1/stats", // sin query = streaming por defecto en Docker
-      "/containers/cid1/stats?stream=false&extra=1",
-      "/containers/cid1/stats?stream=false&stream=true",
-      "/containers/cid1/stats?one-shot=true",
-      "/containers/cid1/stats?stream=0",
+      `/containers/${CID1}/stats?stream=true`,
+      `/containers/${CID1}/stats`, // sin query = streaming por defecto en Docker
+      `/containers/${CID1}/stats?stream=false&extra=1`,
+      `/containers/${CID1}/stats?stream=false&stream=true`,
+      `/containers/${CID1}/stats?one-shot=true`,
+      `/containers/${CID1}/stats?stream=0`,
     ]) {
       const d = evaluateProxyRequest("GET", path, undefined);
       expect(d.ok, path).toBe(false);
@@ -140,25 +145,25 @@ describe("B10 · allowlist del proxy: `stats` entra acotado, el resto sigue fuer
   });
 
   it("stats es SOLO lectura: otros métodos, cuerpos e ids raros se rechazan", () => {
-    expect(evaluateProxyRequest("POST", "/containers/cid1/stats?stream=false", undefined).ok).toBe(false);
-    expect(evaluateProxyRequest("DELETE", "/containers/cid1/stats?stream=false", undefined).ok).toBe(false);
-    expect(evaluateProxyRequest("GET", "/containers/cid1/stats?stream=false", '{"x":1}').ok).toBe(false);
+    expect(evaluateProxyRequest("POST", `/containers/${CID1}/stats?stream=false`, undefined).ok).toBe(false);
+    expect(evaluateProxyRequest("DELETE", `/containers/${CID1}/stats?stream=false`, undefined).ok).toBe(false);
+    expect(evaluateProxyRequest("GET", `/containers/${CID1}/stats?stream=false`, '{"x":1}').ok).toBe(false);
     expect(evaluateProxyRequest("GET", "/containers/%2e%2e/stats?stream=false", undefined).ok).toBe(false);
     expect(evaluateProxyRequest("GET", "/containers/../stats?stream=false", undefined).ok).toBe(false);
   });
 
   it("la ampliación NO abre nada más: exec, attach, logs, archive, images y /version siguen en 403", () => {
     const stillDenied: Array<[string, string]> = [
-      ["POST", "/containers/cid1/exec"],
-      ["POST", "/containers/cid1/attach"],
-      ["GET", "/containers/cid1/logs?stdout=1"],
-      ["GET", "/containers/cid1/top"],
-      ["PUT", "/containers/cid1/archive"],
+      ["POST", `/containers/${CID1}/exec`],
+      ["POST", `/containers/${CID1}/attach`],
+      ["GET", `/containers/${CID1}/logs?stdout=1`],
+      ["GET", `/containers/${CID1}/top`],
+      ["PUT", `/containers/${CID1}/archive`],
       ["GET", "/containers/json"], // listar TODOS los contenedores
       ["GET", "/version"],
       ["GET", "/info"],
       ["POST", "/images/create?fromImage=alpine"],
-      ["DELETE", "/containers/cid1"],
+      ["DELETE", `/containers/${CID1}`],
     ];
     for (const [method, path] of stillDenied) {
       expect(evaluateProxyRequest(method, path, undefined).ok, `${method} ${path}`).toBe(false);
@@ -173,6 +178,8 @@ interface FakeContainer {
   running: boolean;
   /** ns de CPU que "consumió" este contenedor mientras corría. */
   totalUsageNs: number;
+  /** Labels del create (RC2: el proxy impone las de propiedad y las comprueba). */
+  labels: Record<string, string>;
 }
 
 function fakeDockerBackend() {
@@ -180,11 +187,12 @@ function fakeDockerBackend() {
   const requests: Array<{ method: string; path: string }> = [];
   let nextUsageNs = 0;
   const backend: DockerBackend = {
-    async dispatch(method, path) {
+    async dispatch(method, path, body) {
       requests.push({ method, path });
       if (method === "POST" && path.startsWith("/containers/create")) {
-        const id = `cid${containers.size + 1}`;
-        containers.set(id, { id, running: false, totalUsageNs: nextUsageNs });
+        const id = cidOf(containers.size + 1);
+        const labels = (JSON.parse(body ?? "{}").Labels ?? {}) as Record<string, string>;
+        containers.set(id, { id, running: false, totalUsageNs: nextUsageNs, labels });
         return { status: 201, body: JSON.stringify({ Id: id, Warnings: [] }) };
       }
       const m = /^\/containers\/([^/]+)\/(start|stop|json|stats)/.exec(path);
@@ -205,7 +213,10 @@ function fakeDockerBackend() {
           body: JSON.stringify(c.running ? statsPayload(c.totalUsageNs) : STOPPED_CONTAINER_STATS),
         };
       }
-      return { status: 200, body: JSON.stringify([{ Id: c.id, State: { Running: c.running } }]) };
+      return {
+        status: 200,
+        body: JSON.stringify({ Id: c.id, State: { Running: c.running }, Config: { Labels: c.labels } }),
+      };
     },
   };
   return { backend, containers, requests, setNextUsageNs: (ns: number) => (nextUsageNs = ns) };
@@ -270,7 +281,7 @@ describe("B10 · ProxyContainerRunner mide CPU a través del proxy (sin Docker, 
 
   it("una petición hostil de streaming al proxy recibe 403 y NUNCA llega al backend", async () => {
     const before = fake.requests.length;
-    const res = await fetch(`${proxyUrl}/containers/cid1/stats?stream=true`);
+    const res = await fetch(`${proxyUrl}/containers/${CID1}/stats?stream=true`);
     expect(res.status).toBe(403);
     expect(fake.requests.length).toBe(before);
     expect(denials.some((d) => d.includes("stream=false"))).toBe(true);
