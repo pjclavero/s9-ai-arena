@@ -24,9 +24,12 @@ SCRIPT="$(cd "$(dirname "$SCRIPT")" && pwd)/$(basename "$SCRIPT")"
 
 if [ "${S9FW_HARNESS_INNER:-}" != 1 ]; then
   self="$HERE/$(basename "${BASH_SOURCE[0]}")"
+  # Se prueba la CAPACIDAD, no sólo crear el userns: en Ubuntu 24.04 (AppArmor
+  # restrict_unprivileged_userns) `unshare -rn true` funciona pero dentro no hay
+  # CAP_NET_ADMIN. Entonces se usa sudo -n (runners de GitHub).
   if [ "$(id -u)" = 0 ]; then
     exec unshare -n env S9FW_HARNESS_INNER=1 S9FW_SCRIPT="$SCRIPT" bash "$self"
-  elif unshare -rn true 2>/dev/null; then
+  elif unshare -rn sh -c 'PATH="$PATH:/usr/sbin:/sbin"; ip link set lo up && iptables -w 5 -S INPUT >/dev/null' 2>/dev/null; then
     exec unshare -rn env S9FW_HARNESS_INNER=1 S9FW_SCRIPT="$SCRIPT" bash "$self"
   elif sudo -n true 2>/dev/null; then
     exec sudo -n env "PATH=$PATH" S9FW_HARNESS_INNER=1 S9FW_SCRIPT="$SCRIPT" unshare -n bash "$self"

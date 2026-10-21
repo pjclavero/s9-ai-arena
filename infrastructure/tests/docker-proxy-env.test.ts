@@ -230,7 +230,11 @@ function execStartPreScript(): string {
 
 function netnsLauncher(): string[] {
   if (process.getuid?.() === 0) return ["unshare", "-n"];
-  if (spawnSync("unshare", ["-rn", "true"]).status === 0) return ["unshare", "-rn"];
+  // Se prueba la CAPACIDAD (crear un bridge), no sólo el userns: en Ubuntu 24.04 (AppArmor
+  // restrict_unprivileged_userns) `unshare -rn true` funciona pero dentro no hay
+  // CAP_NET_ADMIN; entonces se usa sudo -n (runners de GitHub).
+  const probe = 'PATH="$PATH:/usr/sbin:/sbin"; ip link add rc2so-p type bridge && ip link set lo up';
+  if (spawnSync("unshare", ["-rn", "sh", "-c", probe]).status === 0) return ["unshare", "-rn"];
   if (spawnSync("sudo", ["-n", "true"]).status === 0)
     return ["sudo", "-n", "env", `PATH=${process.env.PATH}`, "unshare", "-n"];
   throw new Error("no se puede crear un netns (ni userns sin privilegios ni sudo -n): el test NO se salta");
