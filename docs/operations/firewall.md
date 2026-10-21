@@ -125,7 +125,10 @@ Una configuración inválida termina con rc=2 **sin tocar** las reglas.
 
 - **Loopback también se descarta.** Un proceso del host que conecte a `10.89.250.1:2375` sale con
   origen `10.89.250.1`, que está dentro de la subred admitida por el proxy; por eso la capa (b) lo
-  corta. `install-docker-proxy.sh validate` comprueba la escucha con `ss`, no con `curl` desde el host.
+  corta (medido con el proxy real en un netns aislado: desde el host, `/_ping` da el 403 de la
+  allowlist de endpoints, es decir, el origen se admite; desde otro bridge, el 403 de «cliente no
+  autorizado»). `install-docker-proxy.sh validate` comprueba la escucha con `ss`, y su sonda `/_ping`
+  desde el host da «sin respuesta» cuando este firewall está aplicado, que es lo esperado.
 - **Sólo cubre 2375 y sshd.** Otros servicios del host que escuchen en `0.0.0.0` siguen siendo
   alcanzables por la IP de un bridge; inventariarlos con `ss -ltn` antes de dar la capa por cerrada.
 - La reinserción de `ts-input` por Tailscale sin reinicio del servicio queda cubierta como mucho a los
