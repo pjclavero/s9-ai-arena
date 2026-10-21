@@ -22,6 +22,7 @@ import {
   categorize,
   classifyOutcome,
   expectationText,
+  memberMismatch,
   probeImageFromLock,
   replicaCompose,
   verdict,
@@ -73,6 +74,18 @@ describe("categorize + verdict", () => {
     expect(verdict("DEFAULT_ROUTE", "REFUSED", strict)).toBe(true);
     expect(verdict("DEFAULT_ROUTE", "ERROR:EAI_AGAIN", strict)).toBe(false);
   });
+});
+
+describe("memberMismatch (--expect-members)", () => {
+  const exp = ["arena-engine", "bot-build-worker", "tournament-worker"];
+  it("coincide ⇒ null", () => expect(memberMismatch(exp, [...exp].reverse())).toBeNull());
+  it("gateway unido a la red de control ⇒ sobra", () =>
+    expect(memberMismatch(exp, [...exp, "gateway"])).toEqual({ missing: [], unexpected: ["gateway"] }));
+  it("worker sin la red de control ⇒ falta", () =>
+    expect(memberMismatch(exp, ["arena-engine", "tournament-worker"])).toEqual({
+      missing: ["bot-build-worker"],
+      unexpected: [],
+    }));
 });
 
 describe("imagen de sonda", () => {

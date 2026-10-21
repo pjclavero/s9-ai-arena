@@ -36,7 +36,12 @@
  *   node scripts/ops/network-probe.mjs --project <proyecto-compose> \
  *     [--target 10.89.250.1] [--port 2375] [--timeout-ms 3000] \
  *     [--control-network s9-bot-control] [--probe-image <ref@sha256:…>] \
- *     [--expect-default-route-blocked] [--json]
+ *     [--expect-default-route-blocked] [--expect-members svc1,svc2,…] [--json]
+ *
+ *   --expect-members fija ADEMÁS qué servicios deben ser miembros de la red de
+ *   control: si el conjunto medido difiere (p. ej. gateway unido a bot-control o
+ *   un worker sin ella), rc 1. Sin esta bandera la sonda sólo comprueba que la
+ *   conectividad es coherente con la topología, no que la topología sea la buena.
  *
  *   node scripts/ops/network-probe.mjs replica-compose --prefix <p> [--profile production …]
  *     Emite (stdout) un compose DERIVADO del render real de infrastructure/
@@ -95,6 +100,15 @@ export function verdict(category, result, { expectDefaultRouteBlocked = false } 
   if (category === "INTERNAL_ONLY") return result === "ENETUNREACH";
   if (expectDefaultRouteBlocked) return result !== "CONNECT" && !result.startsWith("ERROR:");
   return null;
+}
+
+/** Diferencia entre miembros esperados y medidos (null si coinciden). */
+export function memberMismatch(expected, measured) {
+  const e = new Set(expected);
+  const m = new Set(measured);
+  const missing = [...e].filter((x) => !m.has(x)).sort();
+  const unexpected = [...m].filter((x) => !e.has(x)).sort();
+  return missing.length || unexpected.length ? { missing, unexpected } : null;
 }
 
 export function expectationText(category, { expectDefaultRouteBlocked = false } = {}) {
@@ -238,6 +252,11 @@ function parseArgs(argv) {
     else if (k === "--probe-image") a.probeImage = v();
     else if (k === "--expect-default-route-blocked") a.expectDefaultRouteBlocked = true;
     else if (k === "--json") a.json = true;
+    else if (k === "--expect-members")
+      a.expectMembers = v()
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
     else if (k === "--prefix") a.prefix = v();
     else if (k === "--profile") a.profiles.push(v());
     else if (k === "--compose") a.compose = v();
@@ -323,6 +342,13 @@ function main(argv) {
     pass: rows.filter((r) => r.verdict === "PASS").length,
     fail: rows.filter((r) => r.verdict === "FAIL").length,
     report: rows.filter((r) => r.verdict === "REPORT").length,
+    members: [...new Set(rows.filter((r) => r.category === "MEMBER").map((r) => r.service))].sort(),
+    memberMismatch: a.expectMembers
+      ? memberMismatch(
+          a.expectMembers,
+          rows.filter((r) => r.category === "MEMBER").map((r) => r.service),
+        )
+      : null,
   };
   if (a.json) {
     process.stdout.write(JSON.stringify({ summary, rows }, null, 2) + "\n");
@@ -341,10 +367,16 @@ function main(argv) {
       );
       if (r.error) console.log(`       ${r.error}`);
     }
+    console.log(`miembros medidos: ${summary.members.join(",") || "(ninguno)"}`);
+    if (summary.memberMismatch) {
+      console.log(
+        `FAIL miembros: faltan=[${summary.memberMismatch.missing}] sobran=[${summary.memberMismatch.unexpected}]`,
+      );
+    }
     console.log(`PASS=${summary.pass} FAIL=${summary.fail} REPORT=${summary.report}`);
   }
   if (infraError) return 2;
-  return summary.fail > 0 ? 1 : 0;
+  return summary.fail > 0 || summary.memberMismatch ? 1 : 0;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
