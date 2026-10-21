@@ -4,7 +4,7 @@
  * El bot-manager YA NO monta /var/run/docker.sock (RCE en el servicio que
  * procesa código de usuario = root en el host). En su lugar habla HTTP con
  * este proxy, que corre FUERA del Compose (en el host, ver docker-proxy-main.ts
- * y docs/despliegue.md) y es el único que toca el socket.
+ * y docs/operations/docker-proxy.md) y es el único que toca el socket.
  *
  * Superficie expuesta (todo lo demás → 403):
  *   POST /containers/create        crear (cuerpo validado campo a campo)
@@ -43,16 +43,44 @@
  * particular: privileged, bind-mounts (Binds/Mounts no-tmpfs), red del host,
  * y cualquier usuario distinto del usuario del sandbox.
  *
- * HONESTIDAD DE ENTORNO: en esta máquina no hay Docker (ia02 sin grupo
- * docker). La lógica del proxy se verifica EN PROCESO con un backend simulado
- * (tests/docker-proxy.test.ts); la verificación viva contra el socket real
- * queda anotada como pendiente de R-DEPLOY.
+ * RC2 (DEV-PROXY) · ÁMBITO DEL PROXY. Hasta RC1 la allowlist era sólo de
+ * ENDPOINTS y de POSTURA: quien alcanzara el proxy podía crear un contenedor con
+ * CUALQUIER imagen fijada por digest y parar/arrancar/inspeccionar CUALQUIER
+ * contenedor del host (controles N20–N23 de OPS-C: create con la imagen del
+ * gateway = 201; stop de un contenedor ajeno = 204). Ahora hay cuatro controles
+ * más, independientes entre sí, y todos fallan cerrado:
+ *   1. CLIENTE: sólo se atiende a conexiones cuya IP de ORIGEN (la del socket,
+ *      nunca una cabecera) está en `allowedClients` (DOCKER_PROXY_ALLOWED_CLIENTS).
+ *      El resto recibe 403 y se cierra la conexión sin leer la petición.
+ *      Defecto: SÓLO loopback. Razón: una IP propiedad del host es alcanzable
+ *      desde cualquier contenedor con ruta por defecto (gateway, backup), así
+ *      que el bind por sí solo no limita quién llega.
+ *   2. IMAGEN: el create sólo admite una imagen que sea EXACTAMENTE una de la 3.ª
+ *      columna de runtimes/DIGESTS.lock (imagen de runtime `repo@sha256:…`). La
+ *      base (2.ª columna), un tag, un digest ajeno o cualquier otra imagen → 403.
+ *   3. PROPIEDAD: el proxy IMPONE en el create las labels `s9.managed=true` y
+ *      `s9.proxy.instance=<instancia>`; el cliente no puede fijar ninguna label
+ *      `s9.*`. start/stop/json/stats exigen un Id COMPLETO (64 hex, nunca un
+ *      nombre ni un prefijo), el proxy inspecciona ANTES el contenedor y sólo
+ *      reenvía si lleva esas labels. Un contenedor ajeno (postgres, gateway, uno
+ *      creado fuera del proxy) → 403 y no se le toca. Uno inexistente → 404 (el
+ *      cliente lo trata como «ya parado», ver ProxyContainerRunner.stop).
+ *   4. BIND (docker-proxy-main.ts / proxyConfigFromEnv): obligatorio, IP literal,
+ *      nunca 0.0.0.0/::, nunca la IP de docker0 ni `host-gateway`.
+ *
+ * HONESTIDAD DE ENTORNO: la lógica se prueba EN PROCESO con un backend simulado
+ * (tests/docker-proxy.test.ts, corre en la CI normal) y CONTRA DOCKER REAL con el
+ * proxy real (tests/docker-proxy-docker.test.ts, opt-in con
+ * S9_RUN_DOCKER_SANDBOX_E2E=1; ver su cabecera para lo que reproduce y lo que no).
  */
 
 import http from "node:http";
+import net from "node:net";
 import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { complianceViolations } from "./compliance.mjs";
-import { assertRealDigest } from "./digest-guard.js";
+import { assertRealDigest, isPlaceholderDigest } from "./digest-guard.js";
 import type { SecurityPosture } from "./container-runner.js";
 
 /**
@@ -86,13 +114,149 @@ export interface ProxyPolicy {
   allowedUser: string;
   /** Tamaño máximo del cuerpo aceptado (anti-abuso). */
   maxBodyBytes: number;
+  /**
+   * RC2 · imágenes admitidas en el create (coincidencia EXACTA). Sin definir ⇒ la
+   * 3.ª columna del DIGESTS.lock del repo (DEFAULT_IMAGE_ALLOWLIST_PATH), cargada
+   * en el primer uso; si no se puede cargar, TODO create se deniega (fail closed).
+   * Un conjunto vacío deniega todo create.
+   */
+  imageAllowlist?: ReadonlySet<string>;
+  /** RC2 · valor de la label `s9.proxy.instance` (defecto DEFAULT_PROXY_INSTANCE). */
+  instance?: string;
+  /** RC2 · techos de recursos (defecto DEFAULT_LIMIT_CEILINGS). Ausente/≤0 ⇒ rechazo. */
+  limitCeilings?: LimitCeilings;
 }
+
+export interface LimitCeilings {
+  maxMemoryBytes: number;
+  maxNanoCpus: number;
+  maxPids: number;
+}
+
+/**
+ * RC2 · P8/P9. Antes el proxy admitía un create SIN límites (Memory/NanoCpus/
+ * PidsLimit ausentes = ilimitado: agotamiento del host). Ahora son obligatorios,
+ * positivos y con techo; sin swap extra (MemorySwap = Memory). Los techos son 4×
+ * DEFAULT_LIMITS (0,5 CPU · 256 MiB · 64 PIDs), lo único que usan hoy los flujos
+ * reales (build-sandbox, bot-launch, container-agents).
+ */
+export const DEFAULT_LIMIT_CEILINGS: LimitCeilings = {
+  maxMemoryBytes: 1024 * 1024 * 1024,
+  maxNanoCpus: 2_000_000_000,
+  maxPids: 256,
+};
 
 export const DEFAULT_POLICY: ProxyPolicy = {
   allowedNetwork: "arena",
   allowedUser: "10001:10001",
   maxBodyBytes: 1024 * 1024,
 };
+
+// ── RC2 · allowlist de imágenes (runtimes/DIGESTS.lock, 3.ª columna) ─────────
+
+/** DIGESTS.lock del árbol desde el que corre el proxy (en VM108: /opt/s9-ai-arena). */
+export const DEFAULT_IMAGE_ALLOWLIST_PATH = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "..",
+  "runtimes",
+  "DIGESTS.lock",
+);
+
+/** Referencia de imagen completa por digest: `repo[/…]@sha256:<64 hex minúsculas>`. */
+const FULL_IMAGE_REF_RE = /^[a-z0-9][a-z0-9._\-/:]*@sha256:[0-9a-f]{64}$/;
+
+/**
+ * Parsea un DIGESTS.lock (`<runtime> <base@digest> <imagen-runtime@digest>`) y
+ * devuelve SÓLO la 3.ª columna. Falla CERRADO (lanza) si una línea útil no tiene
+ * 3 columnas, si la 3.ª no es una referencia completa por digest o es placeholder,
+ * o si no queda ninguna imagen. La 2.ª columna (imagen BASE) nunca entra: es la
+ * imagen de la que se construye el runtime, no una con la que se lance un bot.
+ */
+export function parseImageAllowlist(text: string, source = "DIGESTS.lock"): Set<string> {
+  const out = new Set<string>();
+  const lines = text.split(/\r?\n/);
+  lines.forEach((raw, i) => {
+    const line = raw.replace(/#.*$/, "").trim();
+    if (!line) return;
+    const cols = line.split(/\s+/);
+    if (cols.length !== 3) throw new Error(`${source}:${i + 1}: se esperaban 3 columnas, hay ${cols.length}`);
+    const image = cols[2];
+    if (!FULL_IMAGE_REF_RE.test(image))
+      throw new Error(`${source}:${i + 1}: la 3.ª columna no es una imagen fijada por digest completo (${image})`);
+    if (isPlaceholderDigest(image)) throw new Error(`${source}:${i + 1}: digest placeholder (${image})`);
+    out.add(image);
+  });
+  if (out.size === 0) throw new Error(`${source}: ninguna imagen de runtime; el proxy no admitiría ningún create`);
+  return out;
+}
+
+export function loadImageAllowlist(path: string = DEFAULT_IMAGE_ALLOWLIST_PATH): Set<string> {
+  if (!existsSync(path)) throw new Error(`allowlist de imágenes no encontrada: ${path}`);
+  return parseImageAllowlist(readFileSync(path, "utf8"), path);
+}
+
+let defaultAllowlistCache: { set?: ReadonlySet<string>; error?: string } | undefined;
+/** Allowlist por defecto, cargada una sola vez y SÓLO cuando se usa (los clientes
+ *  —tournament-worker, arena-engine— importan este módulo y no llevan el lock). */
+function resolveImageAllowlist(policy: ProxyPolicy): { set?: ReadonlySet<string>; error?: string } {
+  if (policy.imageAllowlist) return { set: policy.imageAllowlist };
+  if (!defaultAllowlistCache) {
+    try {
+      defaultAllowlistCache = { set: loadImageAllowlist() };
+    } catch (e) {
+      defaultAllowlistCache = { error: (e as Error).message };
+    }
+  }
+  return defaultAllowlistCache;
+}
+
+/** Motivo de rechazo de la imagen frente a la allowlist (null = admitida). */
+export function imageAllowlistViolation(image: unknown, policy: ProxyPolicy = DEFAULT_POLICY): string | null {
+  const { set, error } = resolveImageAllowlist(policy);
+  if (!set) return `allowlist de imágenes no disponible (${error}): create denegado`;
+  if (typeof image !== "string" || !set.has(image))
+    return `imagen fuera de la allowlist de runtimes (DIGESTS.lock, 3.ª columna): ${String(image) || "ausente"}`;
+  return null;
+}
+
+// ── RC2 · propiedad por labels impuestas ─────────────────────────────────────
+
+export const DEFAULT_PROXY_INSTANCE = "s9-docker-proxy";
+export const LABEL_MANAGED = "s9.managed";
+export const LABEL_INSTANCE = "s9.proxy.instance";
+export const INSTANCE_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/;
+/** Id de contenedor COMPLETO (lo que devuelve el create). Nunca nombre ni prefijo. */
+const FULL_CONTAINER_ID_RE = /^[0-9a-f]{64}$/;
+
+/** Labels que el proxy impone en todo create que reenvía. */
+export function ownerLabels(policy: ProxyPolicy = DEFAULT_POLICY): Record<string, string> {
+  return { [LABEL_MANAGED]: "true", [LABEL_INSTANCE]: policy.instance ?? DEFAULT_PROXY_INSTANCE };
+}
+
+/**
+ * Motivo por el que el contenedor inspeccionado NO es de este proxy (null = sí lo
+ * es). Se decide SÓLO por las labels de `Config.Labels` del inspect de la Engine
+ * y por la igualdad exacta del Id; nunca por el nombre.
+ */
+export function ownershipViolation(
+  inspectJson: unknown,
+  requestedId: string,
+  policy: ProxyPolicy = DEFAULT_POLICY,
+): string | null {
+  const c = (Array.isArray(inspectJson) ? inspectJson[0] : inspectJson) as Record<string, unknown> | null;
+  if (!isPlainObject(c)) return "inspect previo ilegible: no se puede comprobar la propiedad";
+  if (c.Id !== requestedId) return `el Id inspeccionado no coincide con el pedido (${String(c.Id)})`;
+  const cfg = isPlainObject(c.Config) ? c.Config : {};
+  const labels = isPlainObject(cfg.Labels) ? cfg.Labels : {};
+  const want = ownerLabels(policy);
+  for (const [k, v] of Object.entries(want)) {
+    if (labels[k] !== v)
+      return `contenedor no gestionado por este proxy (label ${k}=${labels[k] === undefined ? "ausente" : JSON.stringify(labels[k])}, se exige ${JSON.stringify(v)})`;
+  }
+  return null;
+}
 
 // ── decisión ─────────────────────────────────────────────────────────────────
 
@@ -227,12 +391,41 @@ export function createBodyViolations(body: unknown, policy: ProxyPolicy = DEFAUL
     }
   }
 
+  // RC2 · labels del cliente: objeto string→string y NINGUNA en el espacio `s9.*`
+  // (las de propiedad las impone el proxy; un cliente que pudiera fijarlas podría
+  // fabricar un contenedor «gestionado» o suplantar otra instancia).
+  if ("Labels" in body && body.Labels !== undefined && body.Labels !== null) {
+    if (!isPlainObject(body.Labels)) v.push("Labels debe ser un objeto");
+    else
+      for (const [k, val] of Object.entries(body.Labels)) {
+        if (/^s9\./i.test(k)) v.push(`label reservada al proxy: ${k} (el cliente no puede fijar labels s9.*)`);
+        if (typeof val !== "string") v.push(`label ${k} con valor no string`);
+      }
+  }
+
   // La red declarada en NetworkingConfig también debe ser la permitida.
   const netCfg = isPlainObject(body.NetworkingConfig) ? body.NetworkingConfig : {};
   const endpoints = Object.keys(isPlainObject(netCfg.EndpointsConfig) ? netCfg.EndpointsConfig : {});
   for (const n of endpoints) {
     if (n !== policy.allowedNetwork) v.push(`NetworkingConfig con red no permitida: ${n}`);
+    // RC2 · sin IPAM/alias/links: el endpoint del bot es siempre `{}`.
+    const ep = (netCfg.EndpointsConfig as Record<string, unknown>)[n];
+    if (!isPlainObject(ep) || Object.keys(ep).length > 0)
+      v.push(`NetworkingConfig.EndpointsConfig.${n} debe ser {} (sin IPAM, alias ni links)`);
   }
+
+  // RC2 · P8/P9 · límites obligatorios, positivos y con techo; sin swap extra.
+  const ceil = policy.limitCeilings ?? DEFAULT_LIMIT_CEILINGS;
+  const limit = (key: string, max: number) => {
+    const val = hc[key];
+    if (typeof val !== "number" || !Number.isInteger(val) || val <= 0)
+      v.push(`límite obligatorio ausente o no válido: HostConfig.${key}`);
+    else if (val > max) v.push(`HostConfig.${key}=${val} supera el techo del proxy (${max})`);
+  };
+  limit("Memory", ceil.maxMemoryBytes);
+  limit("NanoCpus", ceil.maxNanoCpus);
+  limit("PidsLimit", ceil.maxPids);
+  if (hc.MemorySwap !== hc.Memory) v.push("HostConfig.MemorySwap debe ser igual a Memory (sin swap extra)");
 
   // Única fuente de verdad: la postura resultante debe ser conforme (tabla 18.2).
   v.push(...complianceViolations(postureFromCreateBody(body)));
@@ -266,16 +459,25 @@ export function evaluateProxyRequest(
       return deny("cuerpo del create no es JSON válido", 400);
     }
     const violations = createBodyViolations(parsed, policy);
+    // RC2 · allowlist de imágenes: independiente de la postura (una imagen ajena
+    // con postura impecable sigue fuera).
+    if (isPlainObject(parsed)) {
+      const imageV = imageAllowlistViolation(parsed.Image, policy);
+      if (imageV) violations.push(imageV);
+    }
     if (violations.length) return deny(`create rechazado por el proxy: ${violations.join("; ")}`);
     const name = url.searchParams.get("name") ?? undefined;
     if (name !== undefined && !CONTAINER_ID_RE.test(name)) return deny(`nombre de contenedor no válido: ${name}`);
+    const validated = parsed as Record<string, unknown>;
+    const clientLabels = isPlainObject(validated.Labels) ? (validated.Labels as Record<string, string>) : {};
     return {
       ok: true,
       action: { kind: "create", name },
       // Se reconstruye la ruta y se re-serializa el cuerpo YA validado:
-      // al backend nunca llega nada que el proxy no haya entendido.
+      // al backend nunca llega nada que el proxy no haya entendido. Las labels
+      // de propiedad se IMPONEN aquí (van después: ganan siempre).
       forwardPath: `/containers/create${name ? `?name=${encodeURIComponent(name)}` : ""}`,
-      forwardBody: JSON.stringify(parsed),
+      forwardBody: JSON.stringify({ ...validated, Labels: { ...clientLabels, ...ownerLabels(policy) } }),
     };
   }
 
@@ -283,7 +485,10 @@ export function evaluateProxyRequest(
   const idMatch = /^\/containers\/([^/]+)\/(start|stop|json|stats)$/.exec(path);
   if (idMatch) {
     const [, id, op] = idMatch;
-    if (!CONTAINER_ID_RE.test(id)) return deny(`identificador de contenedor no válido: ${id}`);
+    // RC2 · sólo Id COMPLETO: un nombre o un prefijo los resuelve la Engine y
+    // podría designar otro contenedor que el inspeccionado (propiedad por nombre).
+    if (!FULL_CONTAINER_ID_RE.test(id))
+      return deny(`identificador de contenedor no válido (se exige el Id completo de 64 hex): ${id}`);
     if (body && body.trim() && body.trim() !== "{}") return deny(`la operación ${op} no admite cuerpo`);
     if (op === "stats") {
       // B10 · solo lectura puntual: GET y `stream=false` EXPLÍCITO, nada más
@@ -371,17 +576,102 @@ export function createSocketBackend(socketPath = "/var/run/docker.sock"): Docker
   };
 }
 
+// ── RC2 · control del cliente por IP de origen ───────────────────────────────
+
+/** Clientes por defecto si no se declara ninguno: SÓLO loopback. */
+export const LOOPBACK_CLIENTS: readonly string[] = ["127.0.0.0/8", "::1/128"];
+
+/** `::ffff:a.b.c.d` (socket dual-stack) → `a.b.c.d`. */
+export function normalizeAddress(addr: string): string {
+  const m = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(addr);
+  return m ? m[1] : addr;
+}
+
+/**
+ * Parsea una lista de clientes admitidos (CIDR o IP sueltas, separadas por comas
+ * o espacios). Lanza (fail closed) ante una entrada ilegible, ante `/0` (todo
+ * Internet) o si la lista queda vacía.
+ */
+export function parseAllowedClients(spec: string | readonly string[]): { list: string[]; blockList: net.BlockList } {
+  const items = (typeof spec === "string" ? spec.split(/[\s,]+/) : [...spec]).map((s) => s.trim()).filter(Boolean);
+  if (items.length === 0) throw new Error("lista de clientes admitidos vacía");
+  const blockList = new net.BlockList();
+  for (const item of items) {
+    const [addr, prefixRaw, extra] = item.split("/");
+    const family = net.isIP(addr);
+    if (!family || extra !== undefined) throw new Error(`cliente admitido no válido (se espera IP o CIDR): ${item}`);
+    const max = family === 4 ? 32 : 128;
+    if (prefixRaw !== undefined && !/^\d{1,3}$/.test(prefixRaw)) throw new Error(`prefijo CIDR no válido: ${item}`);
+    const prefix = prefixRaw === undefined ? max : Number(prefixRaw);
+    if (prefix > max) throw new Error(`prefijo CIDR no válido: ${item}`);
+    if (prefix === 0) throw new Error(`cliente admitido demasiado amplio (/0 = cualquier origen): ${item}`);
+    blockList.addSubnet(addr, prefix, family === 4 ? "ipv4" : "ipv6");
+  }
+  return { list: items, blockList };
+}
+
+/** ¿La IP de origen del socket está admitida? (undefined/ilegible ⇒ no). */
+export function isClientAllowed(remoteAddress: string | undefined, allowed: net.BlockList): boolean {
+  if (!remoteAddress) return false;
+  const addr = normalizeAddress(remoteAddress);
+  const family = net.isIP(addr);
+  if (!family) return false;
+  return allowed.check(addr, family === 4 ? "ipv4" : "ipv6");
+}
+
+export interface ProxyDecisionLog {
+  method: string;
+  path: string;
+  allowed: boolean;
+  reason?: string;
+  /** IP de origen del socket (RC2: auditoría del control de cliente). */
+  client?: string;
+}
+
 export interface ProxyServerOptions {
   backend: DockerBackend;
   policy?: ProxyPolicy;
+  /**
+   * RC2 · IPs/CIDR de origen admitidos (DOCKER_PROXY_ALLOWED_CLIENTS). Sin definir
+   * ⇒ LOOPBACK_CLIENTS. Cualquier otro origen: 403 y cierre, sin leer la petición.
+   */
+  allowedClients?: string | readonly string[];
   /** Auditoría: se llama con cada decisión (permitida o denegada). */
-  onDecision?: (entry: { method: string; path: string; allowed: boolean; reason?: string }) => void;
+  onDecision?: (entry: ProxyDecisionLog) => void;
 }
+
+const CLIENT_DENIED_BODY = JSON.stringify({ message: "cliente no autorizado por el proxy de Docker" });
 
 /** Servidor HTTP del proxy. Valida, y solo entonces reenvía al backend. */
 export function createDockerProxyServer(opts: ProxyServerOptions): http.Server {
   const policy = opts.policy ?? DEFAULT_POLICY;
-  return http.createServer((req, res) => {
+  // Se parsea AL CREAR el servidor: una lista inválida no llega a escuchar.
+  const clients = parseAllowedClients(opts.allowedClients ?? LOOPBACK_CLIENTS);
+  if (policy.instance !== undefined && !INSTANCE_RE.test(policy.instance))
+    throw new Error(`instancia del proxy no válida: ${policy.instance}`);
+
+  const server = http.createServer((req, res) => {
+    const client = normalizeAddress(req.socket.remoteAddress ?? "");
+    const log = (e: Omit<ProxyDecisionLog, "client">) => opts.onDecision?.({ ...e, client });
+    const respond = (status: number, payload: unknown) => {
+      res.writeHead(status, { "content-type": "application/json" });
+      res.end(typeof payload === "string" ? payload : JSON.stringify(payload));
+    };
+    // Defensa en profundidad: el filtro de `connection` ya cerró a los no
+    // admitidos; si alguno llegara aquí, no se lee ni un byte de su cuerpo.
+    if (!isClientAllowed(req.socket.remoteAddress, clients.blockList)) {
+      log({
+        method: req.method ?? "?",
+        path: req.url ?? "?",
+        allowed: false,
+        reason: `cliente no autorizado: ${client}`,
+      });
+      // Ya contestado y cerrado en `connection`: no se escribe nada más.
+      if (req.socket.writableEnded || req.socket.destroyed) return;
+      res.writeHead(403, { "content-type": "application/json", connection: "close" });
+      res.end(CLIENT_DENIED_BODY, () => req.socket.destroy());
+      return;
+    }
     const chunks: Buffer[] = [];
     let size = 0;
     let overflow = false;
@@ -391,27 +681,50 @@ export function createDockerProxyServer(opts: ProxyServerOptions): http.Server {
       else chunks.push(c);
     });
     req.on("end", async () => {
-      const respond = (status: number, payload: unknown) => {
-        res.writeHead(status, { "content-type": "application/json" });
-        res.end(typeof payload === "string" ? payload : JSON.stringify(payload));
-      };
+      const method = req.method ?? "?";
+      const path = req.url ?? "?";
       if (overflow) {
-        opts.onDecision?.({
-          method: req.method ?? "?",
-          path: req.url ?? "?",
-          allowed: false,
-          reason: "cuerpo demasiado grande",
-        });
+        log({ method, path, allowed: false, reason: "cuerpo demasiado grande" });
         return respond(413, { message: "cuerpo demasiado grande" });
       }
       const body = chunks.length ? Buffer.concat(chunks).toString("utf8") : undefined;
       const decision = evaluateProxyRequest(req.method ?? "GET", req.url ?? "/", body, policy);
       if (decision.ok === false) {
-        opts.onDecision?.({ method: req.method ?? "?", path: req.url ?? "?", allowed: false, reason: decision.reason });
+        log({ method, path, allowed: false, reason: decision.reason });
         return respond(decision.status, { message: decision.reason });
       }
-      opts.onDecision?.({ method: req.method ?? "?", path: req.url ?? "?", allowed: true });
       try {
+        const action = decision.action;
+        if (action.kind !== "create") {
+          // RC2 · PROPIEDAD: inspección previa en el proxy, SIEMPRE por Id completo.
+          const pre = await opts.backend.dispatch("GET", `/containers/${action.id}/json`);
+          if (pre.status === 404) {
+            // No existe (p. ej. AutoRemove tras salir): 404 tal cual; el runner lo
+            // trata como «ya parado» y state() como `gone`. No se toca nada.
+            log({ method, path, allowed: false, reason: "contenedor inexistente (404)" });
+            return respond(404, pre.body || { message: "no such container" });
+          }
+          if (pre.status !== 200) {
+            log({ method, path, allowed: false, reason: `inspect previo falló (${pre.status})` });
+            return respond(502, { message: `inspect previo del proxy falló (${pre.status}): no se reenvía` });
+          }
+          let inspected: unknown;
+          try {
+            inspected = JSON.parse(pre.body);
+          } catch {
+            inspected = null;
+          }
+          const notOwned = ownershipViolation(inspected, action.id, policy);
+          if (notOwned) {
+            log({ method, path, allowed: false, reason: notOwned });
+            return respond(403, { message: `operación ${action.kind} rechazada por el proxy: ${notOwned}` });
+          }
+          log({ method, path, allowed: true });
+          // El inspect ya está hecho: se devuelve tal cual (misma respuesta de la Engine).
+          if (action.kind === "inspect") return respond(pre.status, pre.body);
+        } else {
+          log({ method, path, allowed: true });
+        }
         const backendRes = await opts.backend.dispatch(req.method ?? "GET", decision.forwardPath, decision.forwardBody);
         respond(backendRes.status, backendRes.body);
       } catch (e) {
@@ -419,6 +732,20 @@ export function createDockerProxyServer(opts: ProxyServerOptions): http.Server {
       }
     });
   });
+
+  // RC2 · el control de cliente actúa en la CONEXIÓN: un origen no admitido
+  // recibe un 403 crudo y se cierra sin que el parser HTTP llegue a leerle nada.
+  server.on("connection", (socket: net.Socket) => {
+    if (isClientAllowed(socket.remoteAddress, clients.blockList)) return;
+    const client = normalizeAddress(socket.remoteAddress ?? "");
+    opts.onDecision?.({ method: "-", path: "-", allowed: false, reason: `cliente no autorizado: ${client}`, client });
+    socket.end(
+      "HTTP/1.1 403 Forbidden\r\ncontent-type: application/json\r\nconnection: close\r\n" +
+        `content-length: ${Buffer.byteLength(CLIENT_DENIED_BODY)}\r\n\r\n${CLIENT_DENIED_BODY}`,
+      () => socket.destroy(),
+    );
+  });
+  return server;
 }
 
 // ── runner del bot-manager a través del proxy ────────────────────────────────
