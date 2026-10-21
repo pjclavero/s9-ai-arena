@@ -96,8 +96,9 @@ describe("docker-proxy.env.example · contrato RC2", () => {
     expect(env.DOCKER_PROXY_ALLOWED_CLIENTS).toBe("10.89.250.0/24");
   });
 
-  it("allowlist de imágenes = runtimes/DIGESTS.lock del árbol desplegado; instancia por defecto", () => {
-    expect(env.DOCKER_PROXY_IMAGE_ALLOWLIST).toBe("/opt/s9-ai-arena/runtimes/DIGESTS.lock");
+  it("allowlist de imágenes = la COPIA DE ROOT /etc/s9-docker-proxy/DIGESTS.lock (TD-062), nunca el árbol; instancia por defecto", () => {
+    expect(env.DOCKER_PROXY_IMAGE_ALLOWLIST).toBe("/etc/s9-docker-proxy/DIGESTS.lock");
+    expect(env.DOCKER_PROXY_IMAGE_ALLOWLIST).not.toMatch(/^\/opt\//);
     expect(env.DOCKER_PROXY_INSTANCE).toBe("s9-docker-proxy");
   });
 });
@@ -168,8 +169,12 @@ describe("install-docker-proxy.sh check-env", () => {
     ["excluidos con /0", set("DOCKER_PROXY_DENIED_CLIENTS", "10.89.250.7,0.0.0.0/0"), "no admite /0"],
     ["excluidos ::/0", set("DOCKER_PROXY_DENIED_CLIENTS", "::/0"), "no admite /0"],
     ["excluidos basura", set("DOCKER_PROXY_DENIED_CLIENTS", "host-gateway"), "entrada inválida"],
-    // Ausente ⇒ se usa la del árbol ($APP_DIR/runtimes/DIGESTS.lock); aquí APP_DIR no existe.
-    ["allowlist ausente y sin árbol", set("DOCKER_PROXY_IMAGE_ALLOWLIST", null), "no existe"],
+    // TD-062: ausente ⇒ ERROR (antes se deducía del árbol $APP_DIR, que no es autoridad).
+    ["allowlist ausente", set("DOCKER_PROXY_IMAGE_ALLOWLIST", null), "es obligatoria"],
+    ["allowlist vacía", set("DOCKER_PROXY_IMAGE_ALLOWLIST", ""), "es obligatoria"],
+    ["NODE_OPTIONS en el entorno", set("NODE_OPTIONS", "--require /opt/s9-ai-arena/x.js"), "variable prohibida"],
+    ["LD_PRELOAD en el entorno", set("LD_PRELOAD", "/opt/s9-ai-arena/x.so"), "variable prohibida"],
+    ["opt-in inseguro de tests", set("DOCKER_PROXY_INSECURE_BIND_FOR_TESTS", "1"), "SÓLO para tests"],
     ["instancia inválida", set("DOCKER_PROXY_INSTANCE", "-mala/instancia"), "DOCKER_PROXY_INSTANCE inválido"],
     ["allowlist relativa", set("DOCKER_PROXY_IMAGE_ALLOWLIST", "runtimes/DIGESTS.lock"), "ruta absoluta"],
     ["allowlist inexistente", set("DOCKER_PROXY_IMAGE_ALLOWLIST", "/nonexistent/DIGESTS.lock"), "no existe"],
@@ -192,9 +197,16 @@ describe("install-docker-proxy.sh check-env", () => {
     expect(r.rc, r.out).toBe(0);
   });
 
-  it("allowlist ausente ⇒ usa runtimes/DIGESTS.lock del árbol (APP_DIR) y es conforme", () => {
+  it("allowlist ausente con un árbol válido en APP_DIR ⇒ SIGUE rechazada (TD-062: el árbol no es autoridad)", () => {
     const r = checkEnv(envVariant(set("DOCKER_PROXY_IMAGE_ALLOWLIST", null)), ROOT);
-    expect(r.rc, r.out).toBe(0);
+    expect(r.rc, r.out).toBe(1);
+    expect(r.out).toContain("es obligatoria");
+  });
+
+  it("RECHAZA una allowlist con una línea inválida aunque haya otras válidas (misma regla que el proxy)", () => {
+    const lock = join(tmp, "mixed.lock");
+    writeFileSync(lock, readFileSync(REAL_LOCK, "utf8") + "\nbasura sin tres columnas\n");
+    expect(checkEnv(envVariant(set("DOCKER_PROXY_IMAGE_ALLOWLIST", lock))).rc).toBe(1);
   });
 
   it("RECHAZA una allowlist cuya 3ª columna no está por digest (tag)", () => {
