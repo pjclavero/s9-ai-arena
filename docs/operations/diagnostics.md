@@ -13,6 +13,7 @@ falla. Para síntomas concretos y su remedio, ver [troubleshooting.md](troublesh
 - [Logs](#logs)
 - [Base de datos y cola](#base-de-datos-y-cola)
 - [Estado desde la web](#estado-desde-la-web)
+- [Proxy de Docker: qué se está ejecutando de verdad](#proxy-de-docker-qué-se-está-ejecutando-de-verdad)
 - [Deriva entre lo declarado y lo que corre](#deriva-entre-lo-declarado-y-lo-que-corre)
 - [Errores / limitaciones](#errores--limitaciones)
 - [Documentación relacionada](#documentación-relacionada)
@@ -105,6 +106,24 @@ La página **Sistema** del panel (rol admin) usa `GET /api/v1/system/status`: co
 builds y versiones, y el estado de las puertas (`realBattleRuns`, espectador y replays públicos).
 Su campo `commit` lee `GIT_COMMIT`/`COMMIT_SHA` (que el compose no define → `unknown`) y no la
 identidad ADR-016 ([TD-020](../roadmap/technical-debt.md#td-020)).
+
+## Proxy de Docker: qué se está ejecutando de verdad
+
+Sólo lectura. Responde a «¿el proxy ejecuta el artefacto de root o algo del árbol?» (TD-062):
+
+```bash
+sudo bash infrastructure/scripts/install-docker-proxy.sh preflight   # una línea «ROJO:» por problema
+systemctl show s9-docker-proxy -p ExecStart -p WorkingDirectory -p DropInPaths -p NeedDaemonReload
+pid=$(systemctl show -p MainPID --value s9-docker-proxy); sudo readlink -f /proc/$pid/exe; sudo tr '\0' ' ' </proc/$pid/cmdline
+sudo journalctl -u s9-docker-proxy -o cat | grep -m1 'escuchando'   # "artifact":{"kind":"bundle",…} y la ruta de la allowlist
+```
+
+Síntomas típicos:
+
+- `ExecStart … npx tsx`: la unidad es la de RC1. Hay que migrar
+  ([upgrades.md](upgrades.md#td-062)).
+- `DOCKER_PROXY_IMAGE_ALLOWLIST=… (debe ser la copia de root …)`: falta el paso 3 de la migración.
+- `exit 78` con «DOCKER_PROXY_IMAGE_ALLOWLIST es obligatoria»: el bundle arrancó sin la variable.
 
 ## Deriva entre lo declarado y lo que corre
 

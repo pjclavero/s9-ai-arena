@@ -137,11 +137,12 @@ rootful, `sudo`):
 |---|---|
 | `prepare` | secretos efímeros con `init-secrets.sh`; `docker compose config --format json` del perfil `production` con el entorno del job y **sin** `DOCKER_PROXY_URL` (defectos); `compose-check.mjs` juzga el render; cuerpos de create con `ProxyContainerRunner.buildCreateBody` (`make-bodies.ts`) |
 | `build` | imágenes de gateway, web, api, arena-engine, tournament-worker, bot-manager (también bot-build-worker), map-service y replay-service **desde el commit** (`BUILD_COMMIT=github.sha`, `s9cpx-local/*:ci-<sha>`; nunca se descargan de GHCR) |
-| `up` | `up --no-start` (crea `s9-bot-control` y su bridge con `10.89.250.1`) → `s9-docker-proxy` como **proceso del host** con `DOCKER_PROXY_BIND=10.89.250.1`, `DOCKER_PROXY_ALLOWED_CLIENTS=10.89.250.0/24` y la allowlist `runtimes/DIGESTS.lock` → postgres/queue → `cli.ts bootstrap` (nunca `seed`) → aplicación con `--wait`; exige `battleExecution=container` y `sandbox=container` |
+| `up` | `up --no-start` (crea `s9-bot-control` y su bridge con `10.89.250.1`) → `s9-docker-proxy` **instalado como en producción** (TD-062): bundle construido sin root, `/usr/bin/node` de root, `/etc/s9-ai-arena/docker-proxy.env` del ejemplo y `install-docker-proxy.sh install` con root real ⇒ unidad systemd real (`User=s9proxy`, `ProtectHome`: el checkout es invisible), bind `10.89.250.1`, clientes `10.89.250.0/24`, allowlist `/etc/s9-docker-proxy/DIGESTS.lock` → postgres/queue → `cli.ts bootstrap` (nunca `seed`) → aplicación con `--wait`; exige `battleExecution=container` y `sandbox=container` |
 | `probes` | sonda (`probe.mjs`, en `--network container:<objetivo>`) desde **cada** contenedor del stack y dos equivalentes declarados (backup en sus mismas redes; un «bot» sólo en `arena`): fase A **sin** firewall y fase B **con** el firewall de DEV-SECOPS; escucha del proxy |
 | `flow` | `flow.mjs` por la API pública del gateway: registro → 2 bots con código → builds → `published` → mapa propio → batalla → `finished` → stats → replay |
 | `policy` | política desde `bot-build-worker` (consumidor legítimo). Va **después** del flujo: con un proxy sin control de propiedad estas peticiones paran de verdad postgres y el gateway (visto en la calibración) |
-| `evidence`, `cleanup` | `if: always()`; logs, eventos y redes saneadas; luego proxy parado, firewall retirado, `down -v` |
+| `privilege` | TD-062: `preflight` completo con root real; proceso efectivo (`/proc/<MainPID>/exe` y `cmdline`, usuario, ¿ve el checkout?); negativos con usuarios reales (`s9cpx-arena`, el papel del usuario de despliegue, y `s9proxy`) contra bundle, allowlist, unidad y entorno ⇒ EACCES; 7 mutaciones de root (modo, propietario de un padre, entorno, `ExecStart` npx/tsx, `WorkingDirectory`, drop-in) ⇒ `preflight` ROJO por su motivo, revertidas ⇒ VERDE; el proxy no se reinicia |
+| `evidence`, `cleanup` | `if: always()`; logs (el del proxy, de journald), eventos y redes saneadas; luego `install-docker-proxy.sh rollback`, firewall retirado, `down -v` |
 
 Veredicto (`scripts/ci/assert-container-proxy-e2e.mjs <out> <commit>`, `if: always()`): una fase
 que no corrió deja su fichero ausente y **falla**.
@@ -155,6 +156,7 @@ que no corrió deja su fichero ausente y **falla**.
 | R7 | desde un consumidor legítimo: imagen ajena, base de `DIGESTS.lock`, digest fuera del lock y labels `s9.*` forjadas ⇒ 403; stop/start/inspect/stats de postgres (por id y nombre) y stop del gateway ⇒ 403; postgres sigue con el mismo arranque; lo creado por el proxy lleva sus labels y se puede inspeccionar |
 | R8 | 2 builds `passed` → `published`; batalla `finished`, `agents=container`, gana red, blue 0 intentos; replay por `/api/v1/replays` 200 y `/replays*` del gateway 404 |
 | R9 | eventos de Docker: ≥2 contenedores de runtime vía proxy en los builds y ≥2 en la batalla; todo create es del Compose, del arnés o del proxy (un create sin labels = bypass) |
+| R11 | (TD-062) `privilege.json`: preflight inicial y final rc 0; proceso = `/usr/bin/node --no-addons /usr/local/lib/s9-docker-proxy/docker-proxy.mjs` como `s9proxy` y sin ver el checkout; bundle del commit con sólo `node:*`; los 16 negativos con EACCES; cada mutación ROJO por su motivo y VERDE al revertir; mismo `MainPID` |
 
 Evidencia: artifact `functional-e2e-container-proxy-<intento>` (compose config, `compose-check`,
 `services.json`, sondas, política, `flow.json`, eventos, redes, logs del proxy y de cada contenedor;
@@ -259,6 +261,14 @@ cuarto check obligatorio (`app_id` 15368), conservando los tres anteriores, `str
   `--admin` en el PR #161. PR cerrado y rama borrada.
 - `workflow_dispatch` 39656275416 (`gateway` en `bot-control`): `container-proxy-e2e` ROJO con
   `golden` y `docker-e2e` en verde: sólo el job nuevo ve esa regresión.
+- Calibración con `--admin` del check obligatorio `functional-e2e / container-proxy-e2e`
+  (2026-10-21), con el PR de control #166, cerrado sin merge:
+  - mutación: `BUILD_SANDBOX_HOST` sin resolver;
+  - resultado: falló sólo `container-proxy-e2e`, y `semaforo` por arrastre;
+  - el merge normal **y** el merge con `--admin` se rechazaron: «2 of 4 required status checks are
+    failing».
+- El PR #164 (RC2) se fusionó en `main` (`6612868`) **antes** del PASS formal de REVIEW. El
+  operador lo aceptó después, y la CI de `main` sobre `6612868` está en verde.
 
 ## `deploy-staging` y `smoke-and-promote`
 

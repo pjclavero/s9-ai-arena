@@ -146,6 +146,21 @@ sea `repo@sha256:<64 hex>` y verifica con `docker image inspect` que el digest e
 todas están presentes. GHCR se descarga de forma anónima (el repositorio es público): no hace falta
 ninguna credencial en el host.
 
+### Proxy de Docker del host (artefacto instalado, TD-062)
+
+El proxy **no** se ejecuta desde este árbol: el árbol lo puede escribir el usuario de despliegue, y
+el proxy tiene el grupo `docker`, que equivale a root. Se construye un bundle **sin root** y el
+instalador lo copia, junto con la allowlist, a rutas de root:
+
+```bash
+npm run build:docker-proxy                                             # sin root; imprime el sha256
+sudo S9PX_EXPECT_SHA256=<sha256> bash infrastructure/scripts/install-docker-proxy.sh install
+sudo bash infrastructure/scripts/install-docker-proxy.sh preflight     # rc 0 = frontera de privilegio OK
+```
+
+Detalle, propietarios y verificación: [docker-proxy.md](docker-proxy.md#frontera-de-privilegio-td-062).
+
+
 ## 7. Arrancar
 
 ```bash

@@ -137,6 +137,13 @@ install_proxy_as_production() {
     #    rechazaría, y con razón.
     sudo -n install -o root -g root -m 0755 "$(command -v node)" /usr/bin/node || return 1
     /usr/bin/node --version
+    # b2) El runner de GitHub trae /usr/local/bin en 0777 (medido: el preflight lo dio ROJO en
+    #     el run 39672287949): en un host así cualquier usuario plantaría un `ip`/`grep` que el
+    #     ExecStartPre ejecutaría. Se corrige el host EFÍMERO como lo haría el operador, y queda
+    #     registrado el antes/después. Producción (lectura 2026-10-21): root 0755.
+    stat -c 'antes %U:%G %a %n' / /usr /usr/local /usr/local/bin /usr/local/sbin /usr/local/lib /usr/sbin /usr/bin /etc /etc/systemd/system
+    sudo -n chmod go-w /usr/local/bin /usr/local/sbin /usr/local/lib /usr/local 2>/dev/null
+    stat -c 'después %U:%G %a %n' /usr/local /usr/local/bin /usr/local/sbin /usr/local/lib
     # c) entorno del operador: el ejemplo del repo (constantes del contrato RC2; allowlist =
     #    copia de root). Root 0640, como en producción.
     sudo -n install -d -o root -g root -m 0755 /etc/s9-ai-arena || return 1

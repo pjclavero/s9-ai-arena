@@ -16,6 +16,7 @@ productivo con identidad de build** (o usar las imágenes de la CI), **verificar
 - [Verificar el contenido de la imagen](#verificar-el-contenido-de-la-imagen)
 - [Desplegar](#desplegar)
 - [RC2: proxy de Docker, red dedicada y firewall](#rc2-proxy-de-docker-red-dedicada-y-firewall)
+- [TD-062: migrar el proxy al artefacto instalado](#td-062)
 - [Override de versión por servicio](#override-de-versión-por-servicio)
 - [Alinear todas las imágenes con un mismo `BUILD_COMMIT`](#alinear-todas-las-imágenes-con-un-mismo-build_commit)
 - [PostgreSQL y Redis](#postgresql-y-redis)
@@ -131,6 +132,62 @@ en este orden, con la ejecución real todavía apagada (`DOCKER_PROXY_URL` vací
 
 Encender la ejecución real (fijar `DOCKER_PROXY_URL` en `tournament-worker`) sigue siendo un gate
 aparte del operador.
+
+<a id="td-062"></a>
+## TD-062: migrar el proxy al artefacto instalado
+
+**Por qué:** la unidad que hay hoy en el host (RC1/RC2) ejecuta `npx tsx` desde el árbol de
+despliegue, con `WorkingDirectory` en él, y lee la allowlist de `runtimes/DIGESTS.lock`. El usuario
+de despliegue puede escribir ese árbol, y el proxy tiene el grupo `docker`: el usuario de despliegue
+puede llegar a root ([TD-062](../roadmap/technical-debt.md#td-062)). Tras la migración, el proxy
+ejecuta un bundle de root fuera del árbol ([docker-proxy.md](docker-proxy.md#frontera-de-privilegio-td-062)).
+
+**Precondiciones:** commit con TD-062 desplegado en el árbol. La red `bot-control` existe (si no,
+el `ExecStartPre` espera y la unidad no arranca). Ventana del operador: el proxy se reinicia una
+vez, durante unos segundos.
+
+1. **Comprobar el estado de partida (sólo lectura).** `preflight` debe salir **ROJO** con la unidad
+   antigua. Es la prueba de que mide lo que dice:
+
+   ```bash
+   sudo bash infrastructure/scripts/install-docker-proxy.sh preflight; echo rc=$?   # esperado rc=1
+   ```
+
+2. **Construir el bundle sin root** y anotar su sha256. Compáralo con el que imprime la CI del
+   mismo commit (`proxy-bundle.json` en la evidencia de `container-proxy-e2e`):
+
+   ```bash
+   npm run build:docker-proxy      # como usuario de despliegue, en el árbol
+   ```
+
+3. **Ajustar el entorno.** Es el único cambio a mano: en `/etc/s9-ai-arena/docker-proxy.env`, poner
+   `DOCKER_PROXY_IMAGE_ALLOWLIST=/etc/s9-docker-proxy/DIGESTS.lock`. Con el valor antiguo, `install`
+   aborta sin tocar la unidad. Retirar también cualquier `NODE_*`/`LD_*`.
+4. **Instalar:**
+
+   ```bash
+   sudo S9PX_EXPECT_SHA256=<sha256 del paso 2> bash infrastructure/scripts/install-docker-proxy.sh install
+   ```
+
+   Copia el bundle y la allowlist con root:root, instala la unidad nueva y pasa `preflight --static`.
+   Si sale ROJO, **no reinicia**. Si sale bien, reinicia el proxy y pasa el `preflight` completo.
+5. **Verificar:**
+
+   ```bash
+   sudo bash infrastructure/scripts/install-docker-proxy.sh validate   # preflight VERDE + escucha + firewall
+   ```
+
+   Comprueba también que la línea de arranque del journal dice `"artifact":{"kind":"bundle",…}` y que
+   `imageAllowlist.path` es `/etc/s9-docker-proxy/DIGESTS.lock`.
+6. **Después, y sólo después,** se puede aplicar el chown del árbol de
+   [TD-057](../roadmap/technical-debt.md#td-057). Repite `preflight`: debe seguir VERDE.
+
+**Actualizar la allowlist o el código del proxy** en versiones posteriores: repite los pasos 2, 4 y 5.
+Un cambio en `runtimes/DIGESTS.lock` **no** llega al proxy hasta que se reinstala, y `preflight`
+avisa si la copia de root y la del árbol difieren.
+
+**Vuelta atrás:** reinstala la versión anterior del repo con su `install`. No hay vuelta a la unidad
+de RC1: reabre TD-062.
 
 ## Override de versión por servicio
 

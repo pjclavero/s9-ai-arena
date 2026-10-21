@@ -67,32 +67,122 @@ firewall del host (2375 sólo desde `s9-botctl0`) y el **control de cliente del 
 | `DOCKER_PROXY_PORT` | `2375` | Entero 1–65535. |
 | `DOCKER_PROXY_ALLOWED_CLIENTS` | `10.89.250.0/24` | IP o CIDR separados por comas; prohibido `/0`. Obligatoria si el bind no es loopback; con bind loopback, por defecto sólo loopback. |
 | `DOCKER_PROXY_DENIED_CLIENTS` | (vacía) | IP o CIDR **siempre** rechazados, además de la IP de bind y las direcciones locales del host (leídas al arrancar). Prohibido `/0`. |
-| `DOCKER_PROXY_IMAGE_ALLOWLIST` | (vacía) | Ruta a un `DIGESTS.lock`; por defecto el del árbol (`<APP_DIR>/runtimes/DIGESTS.lock`). Se lee al arrancar: cambiar el lock exige reiniciar el proxy. |
+| `DOCKER_PROXY_IMAGE_ALLOWLIST` | `/etc/s9-docker-proxy/DIGESTS.lock` | **Obligatoria** (TD-062): la copia de root que instala `install`. El bundle instalado no la deduce del árbol (sin ella, exit 78); `preflight` falla si apunta a otra ruta. Se lee al arrancar: cambiar el lock exige reinstalar y reiniciar. |
 | `DOCKER_PROXY_INSTANCE` | `s9-docker-proxy` | Valor de `s9.proxy.instance`; `[A-Za-z0-9][A-Za-z0-9_.-]{0,62}`. |
 | `DOCKER_SOCKET`, `ARENA_NETWORK`, `SANDBOX_USER` | `/var/run/docker.sock`, `arena`, `10001:10001` | — |
-| `DOCKER_PROXY_INSECURE_BIND_FOR_TESTS` | **nunca en producción** | `1` admite bind comodín o de `docker0` (sólo tests; avisa en el log y sigue exigiendo clientes). |
+| `DOCKER_PROXY_INSECURE_BIND_FOR_TESTS` | **nunca en producción** | `1` admite bind comodín o de `docker0` (sólo tests; avisa en el log y sigue exigiendo clientes). `check-env` la rechaza en el fichero instalado. |
+| `NODE_*`, `LD_*` | **prohibidas** | Inyectarían código en node o en el enlazador: `check-env` las rechaza y la unidad las retira (`UnsetEnvironment`). |
 
 Si el bind falla porque `s9-botctl0` aún no existe (`EADDRNOTAVAIL`), el proceso sale con 1 y la
 unidad reintenta; nunca cae a otra dirección.
+
+## Frontera de privilegio (TD-062)
+
+El proceso tiene el grupo `docker`, y eso equivale a root en el host. La regla es: **el llamador
+puede pedir una operación; no puede modificar la autoridad que la aplica.** Todo lo que el proxy
+ejecuta o lee como política es de root y nadie más lo puede escribir. Eso incluye **todos los
+directorios padre hasta `/`**, porque un padre escribible permite renombrar o sustituir lo que
+contiene.
+
+| Ruta | Propietario / modo | Qué es | Escritores permitidos |
+|---|---|---|---|
+| `/usr/bin/node` | root:root 0755 (paquete de la distribución) | intérprete | root (gestor de paquetes) |
+| `/usr/local/lib/s9-docker-proxy/` | root:root 0755 | directorio del artefacto | root (`install`) |
+| `…/docker-proxy.mjs` | root:root 0644 | bundle autocontenido: sólo importa `node:*` | root (`install`) |
+| `…/docker-proxy.mjs.sha256` | root:root 0644 | hash registrado en la instalación (lo comprueba `preflight`) | root (`install`) |
+| `/etc/s9-docker-proxy/DIGESTS.lock` | root:root 0644 | allowlist de imágenes (copia verificada de `runtimes/DIGESTS.lock`) | root (`install`) |
+| `/etc/s9-ai-arena/docker-proxy.env` | root:root 0640 | configuración | operador (root) |
+| `/etc/systemd/system/s9-docker-proxy.service` | root:root 0644 | unidad, sin drop-ins | root (`install`) |
+| `/bin/sh` y `/usr/local/sbin`, `/usr/local/bin`, `/usr/sbin`, `/usr/bin` | root, sin escritura de grupo ni de otros | `ExecStartPre` (`sh`, `ip`, `grep`, `sleep` por el `PATH` del servicio) | root |
+| `/var/run/docker.sock` | root:docker 0660 | lo **único** escribible por el proceso | — |
+| `/opt/s9-ai-arena` (árbol de despliegue) | usuario de despliegue | **no es autoridad del proxy**: el proceso no lo ve (`InaccessiblePaths`) | usuario de despliegue |
+
+Cómo se garantiza:
+
+- **El artefacto se construye sin root** (`npm run build:docker-proxy`). El build comprueba con el
+  metafile de esbuild que todas las entradas vienen de `apps/bot-manager/src/` y que no hay
+  importaciones fuera de `node:*`. Es determinista: el mismo commit da el mismo sha256.
+- **`install` (root) no ejecuta nada del árbol** (ni esbuild ni node): copia el bundle a un
+  temporal de root, verifica el sha256 **de la copia** (y `S9PX_EXPECT_SHA256` si se pasa) y lo
+  mueve a su sitio de forma atómica. La allowlist sigue el mismo camino.
+- **Unidad** (`ExecStart=/usr/bin/node --no-addons /usr/local/lib/s9-docker-proxy/docker-proxy.mjs`):
+  - sin `npx`/`tsx` y sin `WorkingDirectory`;
+  - `ProtectSystem=strict` + `ReadOnlyPaths` del artefacto y de la allowlist; sólo el socket es
+    escribible;
+  - `InaccessiblePaths=-/opt/s9-ai-arena` y `ProtectHome`;
+  - sin capacidades (`CapabilityBoundingSet=`), `PrivateDevices`, `ProtectClock`, `ProtectProc`,
+    `RestrictSUIDSGID`, `SystemCallArchitectures=native` y `SystemCallFilter=@system-service ~@privileged`
+    (errno EPERM), `UMask=0077`, y `UnsetEnvironment` de `NODE_*`/`LD_*`;
+  - `MemoryDenyWriteExecute=false` **declarado**: V8 necesita memoria W+X.
+  - Exposición de `systemd-analyze security --offline`: **1.4** (antes 6.5).
+  - No se usa `PrivateUsers`, porque haría perder el grupo `docker` del socket, ni
+    `PrivateNetwork`, porque el proxy escucha.
+- **`preflight`**: ver [Validación](#validación). El firewall (`s9-firewall`, root) sigue la misma
+  regla y `preflight` también revisa sus unidades.
+
+Riesgo residual (declarado):
+
+- `install-docker-proxy.sh` y `s9-firewall.sh install` corren como root desde el árbol, así que
+  se confía en el árbol en el instante del despliegue. Verifica el commit y compara el sha256 del
+  bundle con el que imprime la CI.
+- `preflight` no audita las bibliotecas dinámicas de `node`.
 
 ## Instalación
 
 ```bash
 # En el host, con el repo desplegado en /opt/s9-ai-arena (APP_DIR):
-sudo APP_DIR=/opt/s9-ai-arena bash infrastructure/scripts/install-docker-proxy.sh install
-sudo nano /etc/s9-ai-arena/docker-proxy.env     # DOCKER_PROXY_BIND, DOCKER_PROXY_ALLOWED_CLIENTS…
-sudo systemctl restart s9-docker-proxy
+cd /opt/s9-ai-arena
+npm run build:docker-proxy                        # SIN root: dist/s9-docker-proxy/docker-proxy.mjs (+ .sha256)
+sudo S9PX_EXPECT_SHA256=<sha256 del build> bash infrastructure/scripts/install-docker-proxy.sh install
 ```
 
-La unidad (`infrastructure/systemd/s9-docker-proxy.service`) corre como usuario dedicado `s9proxy`
-(sin login) del grupo `docker`, con `Restart=always` y endurecimiento systemd. Las imágenes de
-runtime deben estar ya en el host (el proxy no permite `pull`).
+`install` hace, por este orden:
+
+1. Copia el bundle y la allowlist a sus rutas de root.
+2. Crea `/etc/s9-ai-arena/docker-proxy.env` desde la plantilla si no existe. Si existe y su allowlist
+   no es `/etc/s9-docker-proxy/DIGESTS.lock`, **aborta**: es el caso de la migración (ver
+   [upgrades.md](upgrades.md#td-062)).
+3. Pasa `check-env`.
+4. Instala la unidad.
+5. Pasa `preflight --static`. Si sale ROJO, aborta **sin reiniciar**.
+6. Crea `s9proxy` en el grupo `docker`, recarga systemd y reinicia la unidad.
+7. Pasa el `preflight` completo.
+
+La unidad corre como `s9proxy` (sin login) con `Restart=always`. Las imágenes de runtime deben estar
+ya en el host (el proxy no permite `pull`).
 
 ## Validación
 
 ```bash
-sudo bash infrastructure/scripts/install-docker-proxy.sh validate
+sudo bash infrastructure/scripts/install-docker-proxy.sh preflight   # frontera de privilegio (TD-062)
+sudo bash infrastructure/scripts/install-docker-proxy.sh validate    # preflight + config + escucha + firewall
 sudo journalctl -u s9-docker-proxy -f   # cada decisión allow/deny, con "client" (IP de origen)
+```
+
+`preflight` imprime una línea `preflight: ROJO: …` por fallo y sale con 1 si hay alguno. Falla si:
+
+- cualquier ruta de la tabla de arriba, o un padre suyo hasta `/`, no es de root, es escribible por
+  grupo u otros o tiene ACL;
+- el bundle no es un fichero regular o su sha256 no es el registrado;
+- la allowlist no es válida, o el entorno la apunta a otra ruta;
+- el entorno no pasa `check-env`;
+- en la unidad, el fichero o lo que systemd tiene **cargado** (`systemctl show`) usa otro
+  `ExecStart`, un `WorkingDirectory`, un `EnvironmentFile` distinto, `npx`/`tsx`/`node_modules`,
+  rutas de `/opt` o drop-ins, o bien le falta `InaccessiblePaths` del árbol o hay que hacer
+  `daemon-reload`;
+- el **proceso en marcha** no es `/usr/bin/node` + el bundle (`/proc/<pid>/exe` y `cmdline`), o
+  **ve** el árbol (lo comprueba en su namespace de montaje);
+- una unidad del firewall ejecuta algo que no es `/usr/local/sbin/s9-firewall`.
+
+`--static` omite systemd y el proceso. `S9PX_TREE=<dir>` cambia el árbol que el proceso no debe ver;
+por defecto es `APP_DIR`.
+
+Comprobación manual equivalente (sólo lectura):
+
+```bash
+systemctl show s9-docker-proxy -p ExecStart -p WorkingDirectory -p DropInPaths -p NeedDaemonReload
+pid=$(systemctl show -p MainPID --value s9-docker-proxy); sudo readlink -f /proc/$pid/exe; sudo tr '\0' ' ' </proc/$pid/cmdline
+stat -c '%U:%G %a %n' / /usr /usr/local /usr/local/lib /usr/local/lib/s9-docker-proxy /usr/local/lib/s9-docker-proxy/* /etc/s9-docker-proxy /etc/s9-docker-proxy/DIGESTS.lock
 ```
 
 La línea de arranque (`proxy de Docker escuchando en …`) lista `allowedClients`, la ruta y las
@@ -145,8 +235,11 @@ sudo rm -rf /etc/s9-ai-arena && sudo userdel s9proxy
 - **Límite declarado:** las direcciones locales del host que se excluyen del control de cliente se
   leen al arrancar; un bridge creado después no entra en la exclusión hasta reiniciar el proxy (la IP
   de bind sí entra siempre). Lo cubre además el firewall ([firewall.md](firewall.md)).
-- **Deuda relacionada:** el proxy corre con el grupo `docker` y ejecuta código del árbol de
-  despliegue ([TD-062](../roadmap/technical-debt.md#td-062)).
+- **TD-062 (frontera de privilegio):** CERRADA en código (rama `fix/td-062-proxy-privilege-boundary`,
+  pendiente de REVIEW). La **unidad instalada en producción sigue siendo la de RC1** (`npx tsx`
+  desde el árbol), así que TD-062 está **abierta en producción** hasta la migración
+  ([upgrades.md](upgrades.md#td-062)). La CI la mide en `container-proxy-e2e` (regla R11) y en
+  `infrastructure/tests/docker-proxy-privilege.test.ts`.
 - **Compatibilidad:** el arnés manual `scripts/e2e-real-battle-smoke.ts` usa una imagen
   `s9-smoke-bot` que no está en `DIGESTS.lock`; con RC2 hay que arrancar el proxy con un lock propio
   (`DOCKER_PROXY_IMAGE_ALLOWLIST`) que la incluya. Los contenedores creados antes de RC2 no llevan las
@@ -163,7 +256,12 @@ sudo rm -rf /etc/s9-ai-arena && sudo userdel s9proxy
 
 | Afirmación | Estado | Evidencia |
 |---|---|---|
-| `install|validate|rollback`, `APP_DIR`, `/etc/s9-ai-arena`, usuario `s9proxy` | CODE_VERIFIED | `infrastructure/scripts/install-docker-proxy.sh` |
+| `install|preflight|validate|rollback`, `APP_DIR`, `/etc/s9-ai-arena`, usuario `s9proxy` | CODE_VERIFIED | `infrastructure/scripts/install-docker-proxy.sh` |
+| Bundle autocontenido (sólo `node:*`), determinista, arranca fuera del repo y exige la allowlist | TEST | `infrastructure/tests/docker-proxy-privilege.test.ts` (B); mutación «el proxy importa un paquete» ⇒ build ROJO |
+| `install` fija root:root 0755/0644/0640; `preflight` ROJO ante 18 mutaciones (modo, propietario de un padre, enlace, sha256, entorno, unidad, drop-in, firewall) | TEST (propietarios reales en userns/sudo) | `docker-proxy-privilege.test.ts` (P) |
+| Un usuario no root recibe EACCES sobre bundle, allowlist, unidad y entorno | TEST (núcleo real) | `docker-proxy-privilege.test.ts` (N); `container-proxy-e2e` R11 (`s9cpx-arena`, `s9proxy`) |
+| Proceso efectivo = `/usr/bin/node` + bundle, como `s9proxy`, sin ver el checkout | CI (unidad systemd real en el runner) | `container-proxy-e2e` R11 |
+| Unidad de producción instalada hoy = RC1 (`npx tsx`, `WorkingDirectory` en el árbol) | RUNTIME_VERIFIED (lectura, 2026-10-21) | `systemctl cat`/`show` y `/proc` en el host (no se versiona la topología) |
 | Bind obligatorio; vacío, comodín, `docker0` y nombres rechazados | CODE_VERIFIED + TEST | `docker-proxy-config.ts` (`proxyConfigFromEnv`); `docker-proxy.test.ts` «bind y configuración» y spawn del proceso real (exit 78) |
 | Control de cliente por IP de origen | CODE_VERIFIED + TEST (proceso, Docker real) | `docker-proxy.ts` (`createDockerProxyServer`); `docker-proxy-docker.test.ts`: cliente de red ajena no interna → 403 |
 | Allowlist de imágenes = 3.ª columna de `DIGESTS.lock` | CODE_VERIFIED + TEST (N20) | `parseImageAllowlist`, `imageAllowlistViolation` |

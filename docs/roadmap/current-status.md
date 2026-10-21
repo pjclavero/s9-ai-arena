@@ -10,7 +10,8 @@ Hay dos planos y no se mezclan:
 - **Producción:** no ha cambiado. Nada de lo fusionado se ha desplegado todavía.
 
 ```
-MAIN:           RC2 (rama integration/rc2-docker-proxy) sobre 7cf88dd
+MAIN:           6612868 (RC2, PR #164, rama integration/rc2-docker-proxy sobre 7cf88dd); CI de main en verde
+EN CURSO:       TD-062 (frontera de privilegio del proxy) en la rama fix/td-062-proxy-privilege-boundary, pendiente de REVIEW
 LAST VERIFIED:  2026-10-21 (RC2: CI del PR en verde con container-proxy-e2e; protección de rama con 4 checks obligatorios)
 RUNTIME:        sin cambios desde la auditoría: perfil `production`, 12 servicios, imágenes de 3 commits
 VEREDICTO CÓDIGO:     el recorrido de usuario completo funciona y lo exige la CI (golden path en navegador real)
@@ -64,7 +65,7 @@ Informe del cierre: [functional-closure-report.md](../development/functional-clo
 **PENDIENTE / BLOQUEADO en producción.** Los tres bloqueos de la auditoría (publicar un bot, crear una batalla, ejecutar código de usuario) están resueltos **en `main`**, no en producción. Para verlos en producción hace falta, con una ventana autorizada por el operador (fase Release Candidate):
 
 1. Construir las imágenes de `main` con su identidad de build.
-2. Generar `artifact_verify_key.pem` (`init-secrets.sh` lo deriva de la clave de firma) y operar el `s9-docker-proxy` en el host con la configuración de RC2: runtimes por digest, firewall, unidad nueva con bind en `10.89.250.1` ([upgrades.md](../operations/upgrades.md#rc2-proxy-de-docker-red-dedicada-y-firewall)).
+2. Generar `artifact_verify_key.pem` (`init-secrets.sh` lo deriva de la clave de firma) y operar el `s9-docker-proxy` en el host con la configuración de RC2: runtimes por digest, firewall, unidad nueva con bind en `10.89.250.1` ([upgrades.md](../operations/upgrades.md#rc2-proxy-de-docker-red-dedicada-y-firewall)) **instalada como artefacto de root** (TD-062: bundle + allowlist en `/etc`, `preflight` VERDE; [upgrades.md](../operations/upgrades.md#td-062)). El chown del árbol ([TD-057](technical-debt.md#td-057)) va **después**, nunca antes.
 3. Recrear `api`, `tournament-worker` y `bot-build-worker` (más `backup`/`postgres`/`queue` según el contrato de despliegue) y aplicar las migraciones `012_bot_versioning` y `013_battle_claim`.
 
 ## Operations
@@ -99,7 +100,7 @@ PostgreSQL 16.14 y Redis 7.4.9 están fijados por digest. Ver [TD-006](technical
 | Imágenes de servicio con vulnerabilidades HIGH/CRITICAL | ABIERTO | [TD-031](technical-debt.md#td-031) |
 | Topología de infraestructura en el repositorio público | ABIERTO | [TD-008](technical-debt.md#td-008) |
 | Proxy de Docker sin ámbito (imagen, contenedor, cliente) y alcanzable desde `gateway`/`backup` | **CERRADO en `main` (RC2)**; abierto en producción hasta desplegar | [TD-051](technical-debt.md#td-051), [TD-053](technical-debt.md#td-053) |
-| El proxy ejecuta código de un árbol no sólo de root | ABIERTO | [TD-062](technical-debt.md#td-062) |
+| El proxy ejecuta código de un árbol no sólo de root (el usuario de despliegue puede escribir lo que corre con el grupo `docker`) | **CERRADO en código** en `fix/td-062-proxy-privilege-boundary` (pendiente de REVIEW): bundle de root fuera del árbol, allowlist en `/etc`, unidad endurecida y `install-docker-proxy.sh preflight`; **ABIERTO en producción** (unidad de RC1 con `npx tsx` desde el árbol, leída el 2026-10-21) hasta la migración ([upgrades.md](../operations/upgrades.md#td-062)) | [TD-062](technical-debt.md#td-062), [TD-057](technical-debt.md#td-057) |
 | `.env` 0644 y `secrets/` 0755 en el host | ABIERTO | [TD-060](technical-debt.md#td-060) |
 | Ejecución real y espectador público | en producción, **apagados** hasta desplegar con su gate | [docs/technical/security.md](../technical/security.md) |
 
@@ -137,3 +138,6 @@ Funciones pendientes de diseño: [pending-features.md](pending-features.md).
 | TD-004 / TD-034 cerradas en la integración PRC; `functional-e2e` verde y calibrado en CI real | RUNTIME_VERIFIED (aislado y GitHub Actions) | [production-readiness-report.md](../development/production-readiness-report.md); runs 39141675080 (verde), 39141682346 y 39141685353 (calibraciones en rojo) |
 | #152 y #158 fusionados; `main` = `59322e2` con CI en verde (`functional-e2e` y `semaforo` incluidos) | RUNTIME_VERIFIED (GitHub Actions) | `git rev-parse origin/main`; run 39173546382 (25 jobs en verde) (2026-10-19) |
 | `main` protegida y el bloqueo funciona | RUNTIME_VERIFIED | `gh api repos/…/branches/main/protection`; PR #161: merge rechazado con `functional-e2e` en rojo, también con `--admin` (2026-10-19) |
+| El check obligatorio `functional-e2e / container-proxy-e2e` bloquea el merge, también con `--admin` | RUNTIME_VERIFIED (GitHub, 2026-10-21) | PR de control #166 (cerrado sin merge): mutación `BUILD_SANDBOX_HOST` sin resolver ⇒ falló sólo `container-proxy-e2e` (y `semaforo` por arrastre); merge normal y con `--admin` rechazados: «2 of 4 required status checks are failing» |
+| RC2 en `main` | RUNTIME_VERIFIED (GitHub) | PR #164 fusionado (`main` = `6612868`) **antes** del PASS formal de REVIEW; el operador lo aceptó después; CI de `main` sobre `6612868` en verde |
+| Unidad del proxy en producción = RC1 (`npx tsx` desde el árbol; allowlist y loader escribibles por el usuario de despliegue) | RUNTIME_VERIFIED (lectura, 2026-10-21) | `systemctl cat/show`, `/proc/<pid>/cmdline` y `stat` en el host; matriz en el informe de DEV-PRIV (sin topología en el repo) |
