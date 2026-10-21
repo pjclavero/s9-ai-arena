@@ -271,16 +271,20 @@ describe("s9-docker-proxy.service · ExecStartPre real en netns", () => {
     expect(r.out).toContain("docker0");
   });
 
-  for (const [name, env] of [
-    ["bind 0.0.0.0", { ...OK_ENV, DOCKER_PROXY_BIND: "0.0.0.0" }],
-    ["bind vacío", { ...OK_ENV, DOCKER_PROXY_BIND: "" }],
-    ["bind loopback", { ...OK_ENV, DOCKER_PROXY_BIND: "127.0.0.1" }],
-    ["bridge docker0", { ...OK_ENV, DOCKER_PROXY_BRIDGE: "docker0" }],
-    ["espera no numérica", { ...OK_ENV, DOCKER_PROXY_BRIDGE_WAIT: "x" }],
+  // La espera también fallaría con estos valores: se exige el MOTIVO, que sólo emite la
+  // comprobación explícita (corre antes de esperar). Sin él, el rechazo estaría
+  // sobredeterminado y no probaría la comprobación.
+  for (const [name, env, reason] of [
+    ["bind 0.0.0.0", { ...OK_ENV, DOCKER_PROXY_BIND: "0.0.0.0" }, "DOCKER_PROXY_BIND inválido"],
+    ["bind vacío", { ...OK_ENV, DOCKER_PROXY_BIND: "" }, "DOCKER_PROXY_BIND inválido"],
+    ["bind loopback", { ...OK_ENV, DOCKER_PROXY_BIND: "127.0.0.1" }, "DOCKER_PROXY_BIND inválido"],
+    ["bridge docker0", { ...OK_ENV, DOCKER_PROXY_BRIDGE: "docker0" }, "DOCKER_PROXY_BRIDGE inválido"],
+    ["espera no numérica", { ...OK_ENV, DOCKER_PROXY_BRIDGE_WAIT: "x" }, "DOCKER_PROXY_BRIDGE_WAIT inválido"],
   ] as const) {
-    it(`RECHAZA ${name} aunque el bridge exista ⇒ rc≠0`, () => {
+    it(`RECHAZA ${name} aunque el bridge exista ⇒ rc≠0 por «${reason}»`, () => {
       const r = runPre(BR("s9-botctl0", "10.89.250.1/24") + BR("docker0", "172.17.0.1/16"), env);
       expect(r.rc).not.toBe(0);
+      expect(r.out).toContain(reason);
     });
   }
 });
