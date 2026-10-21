@@ -149,9 +149,16 @@ async function publishedBot(key, name, code) {
   rec.stages = (build.stages ?? []).map((s) => ({ name: s.name, status: s.status }));
   const proto = (build.stages ?? []).find((s) => s.name === "protocol_test");
   rec.protocolTestPosture = /postura del contenedor conforme/.test((proto?.logs ?? []).join("\n"));
-  if (build.status !== "passed")
-    throw new Error(`build ${key} terminó en ${build.status}: ${JSON.stringify(rec.stages)}`);
   const detail = await call("GET", `/bots/${bot.id}/versions/${v.version}`);
+  if (build.status !== "passed") {
+    // C9 · diagnóstico SIN secretos: motivo de rechazo de la versión y logs de cada etapa
+    // (son los del sandbox: stderr del bot y del bootstrap del runtime).
+    rec.rejectionReason = detail.rejectionReason ?? detail.rejection_reason ?? null;
+    rec.versionState = detail.state;
+    rec.stageLogs = (build.stages ?? []).map((s) => ({ name: s.name, logs: (s.logs ?? []).slice(-20) }));
+    save();
+    throw new Error(`build ${key} terminó en ${build.status}: ${rec.rejectionReason ?? JSON.stringify(rec.stages)}`);
+  }
   rec.stateBeforePublish = detail.state;
   rec.artifactBuildId = detail.artifact?.buildId ?? null;
   const pub = await call("POST", `/bots/${bot.id}/versions/${v.version}/actions/publish`, {
