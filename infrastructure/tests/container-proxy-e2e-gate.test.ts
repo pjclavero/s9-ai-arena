@@ -261,7 +261,13 @@ function fixture(mut: (d: string) => void = () => {}): string {
     negatives: ["s9cpx-arena", "s9proxy"].flatMap((who) =>
       PRIVILEGE_NEGATIVES.map((id: string) => ({ who, id, rc: 1, eacces: true, err: "Permission denied" })),
     ),
-    mutations: PRIVILEGE_MUTATIONS.map((id: string) => ({ id, reason: "x", redRc: 1, reasonFound: true, revertedRc: 0 })),
+    mutations: PRIVILEGE_MUTATIONS.map((id: string) => ({
+      id,
+      reason: "x",
+      redRc: 1,
+      reasonFound: true,
+      revertedRc: 0,
+    })),
     process: { mainPidBefore: "4242", mainPidAfter: "4242", active: "active" },
   });
   writeFileSync(
@@ -460,18 +466,32 @@ describe("C2 · assert-container-proxy-e2e: el veredicto no se deja engañar", (
       (d) =>
         patch(d, "privilege.json", (v) => ({
           ...v,
-          effective: { ...v.effective, cmdline: "node /opt/s9-ai-arena/node_modules/.bin/tsx apps/bot-manager/src/docker-proxy-main.ts" },
+          effective: {
+            ...v.effective,
+            cmdline: "node /opt/s9-ai-arena/node_modules/.bin/tsx apps/bot-manager/src/docker-proxy-main.ts",
+          },
         })),
     ],
     [
       "el ejecutable no es el node de root",
-      (d) => patch(d, "privilege.json", (v) => ({ ...v, effective: { ...v.effective, exe: "/opt/hostedtoolcache/node/bin/node" } })),
+      (d) =>
+        patch(d, "privilege.json", (v) => ({
+          ...v,
+          effective: { ...v.effective, exe: "/opt/hostedtoolcache/node/bin/node" },
+        })),
     ],
-    ["el proceso ve el checkout", (d) => patch(d, "privilege.json", (v) => ({ ...v, effective: { ...v.effective, treeVisible: true } }))],
-    ["el proceso corre como root", (d) => patch(d, "privilege.json", (v) => ({ ...v, effective: { ...v.effective, user: "root" } }))],
+    [
+      "el proceso ve el checkout",
+      (d) => patch(d, "privilege.json", (v) => ({ ...v, effective: { ...v.effective, treeVisible: true } })),
+    ],
+    [
+      "el proceso corre como root",
+      (d) => patch(d, "privilege.json", (v) => ({ ...v, effective: { ...v.effective, user: "root" } })),
+    ],
     [
       "bundle con una importación de node_modules",
-      (d) => patch(d, "privilege.json", (v) => ({ ...v, bundle: { ...v.bundle, runtimeImports: ["node:fs", "yaml"] } })),
+      (d) =>
+        patch(d, "privilege.json", (v) => ({ ...v, bundle: { ...v.bundle, runtimeImports: ["node:fs", "yaml"] } })),
     ],
     [
       "bundle de otro commit",
@@ -497,7 +517,11 @@ describe("C2 · assert-container-proxy-e2e: el veredicto no se deja engañar", (
     ],
     [
       "falta un negativo (no se midió)",
-      (d) => patch(d, "privilege.json", (v) => ({ ...v, negatives: v.negatives.filter((n: any) => n.id !== "rename-bundle") })),
+      (d) =>
+        patch(d, "privilege.json", (v) => ({
+          ...v,
+          negatives: v.negatives.filter((n: any) => n.id !== "rename-bundle"),
+        })),
     ],
     [
       "mutación que NO pone el preflight en rojo",
@@ -525,7 +549,11 @@ describe("C2 · assert-container-proxy-e2e: el veredicto no se deja engañar", (
     ],
     [
       "falta una mutación",
-      (d) => patch(d, "privilege.json", (v) => ({ ...v, mutations: v.mutations.filter((m: any) => m.id !== "libdir-owned-by-nonroot") })),
+      (d) =>
+        patch(d, "privilege.json", (v) => ({
+          ...v,
+          mutations: v.mutations.filter((m: any) => m.id !== "libdir-owned-by-nonroot"),
+        })),
     ],
     ["preflight final ROJO", (d) => patch(d, "privilege.json", (v) => ({ ...v, preflightFinalRc: 1 }))],
     [

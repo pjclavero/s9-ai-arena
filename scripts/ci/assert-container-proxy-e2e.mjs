@@ -356,10 +356,17 @@ export function evaluar(outDir, { commit } = {}) {
   else {
     const p = pv.value;
     const e = p.effective ?? {};
-    add("R11 preflight inicial VERDE (root real, systemd real, proceso en marcha)", p.preflightInitialRc === 0, String(p.preflightInitialRc));
+    add(
+      "R11 preflight inicial VERDE (root real, systemd real, proceso en marcha)",
+      p.preflightInitialRc === 0,
+      String(p.preflightInitialRc),
+    );
     add(
       "R11 el proceso ejecuta /usr/bin/node + el bundle instalado (no tsx/npx del árbol)",
-      Boolean(e.exe) && e.exe === e.nodeReal && e.cmdline === EXPECTED_PROXY_CMDLINE && e.expectedCmdline === EXPECTED_PROXY_CMDLINE,
+      Boolean(e.exe) &&
+        e.exe === e.nodeReal &&
+        e.cmdline === EXPECTED_PROXY_CMDLINE &&
+        e.expectedCmdline === EXPECTED_PROXY_CMDLINE,
       JSON.stringify({ exe: e.exe, cmdline: e.cmdline }),
     );
     add("R11 el proceso corre como s9proxy", e.user === "s9proxy", String(e.user));
@@ -378,10 +385,14 @@ export function evaluar(outDir, { commit } = {}) {
       "R11 negativos: s9cpx-arena y s9proxy reciben EACCES al tocar bundle/allowlist/unidad/entorno",
       neg.length >= PRIVILEGE_NEGATIVES.length * 2 &&
         ["s9cpx-arena", "s9proxy"].every((w) => negWho.has(w)) &&
-        PRIVILEGE_NEGATIVES.every((id) => ["s9cpx-arena", "s9proxy"].every((w) => neg.some((n) => n.who === w && n.id === id))) &&
+        PRIVILEGE_NEGATIVES.every((id) =>
+          ["s9cpx-arena", "s9proxy"].every((w) => neg.some((n) => n.who === w && n.id === id)),
+        ) &&
         neg.every((n) => n.rc !== 0 && n.eacces === true),
-      neg.filter((n) => !(n.rc !== 0 && n.eacces === true)).map((n) => `${n.who}/${n.id} rc=${n.rc}`).join(", ") ||
-        `${neg.length} intentos denegados`,
+      neg
+        .filter((n) => !(n.rc !== 0 && n.eacces === true))
+        .map((n) => `${n.who}/${n.id} rc=${n.rc}`)
+        .join(", ") || `${neg.length} intentos denegados`,
     );
     const mut = p.mutations ?? [];
     for (const id of PRIVILEGE_MUTATIONS) {
@@ -396,7 +407,10 @@ export function evaluar(outDir, { commit } = {}) {
     const pr = p.process ?? {};
     add(
       "R11 el proxy siguió activo con el mismo MainPID (las mutaciones no lo reiniciaron)",
-      pr.active === "active" && Boolean(pr.mainPidBefore) && pr.mainPidBefore !== "0" && pr.mainPidBefore === pr.mainPidAfter,
+      pr.active === "active" &&
+        Boolean(pr.mainPidBefore) &&
+        pr.mainPidBefore !== "0" &&
+        pr.mainPidBefore === pr.mainPidAfter,
       JSON.stringify(pr),
     );
   }

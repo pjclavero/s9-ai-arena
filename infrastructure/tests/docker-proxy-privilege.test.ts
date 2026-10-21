@@ -123,7 +123,11 @@ describe("B · bundle autocontenido del proxy", () => {
 
   it("en el bundle una allowlist RELATIVA también ⇒ exit 78", async () => {
     const r = await runCopied(
-      { DOCKER_PROXY_BIND: "127.0.0.1", DOCKER_PROXY_PORT: "23751", DOCKER_PROXY_IMAGE_ALLOWLIST: "runtimes/DIGESTS.lock" },
+      {
+        DOCKER_PROXY_BIND: "127.0.0.1",
+        DOCKER_PROXY_PORT: "23751",
+        DOCKER_PROXY_IMAGE_ALLOWLIST: "runtimes/DIGESTS.lock",
+      },
       null,
     );
     expect(r.rc, r.out).toBe(78);
@@ -172,7 +176,9 @@ describe("U · s9-docker-proxy.service ejecuta el artefacto instalado", () => {
 
   it("el árbol de despliegue es inaccesible; código y allowlist de sólo lectura; sólo el socket escribible", () => {
     expect(words("InaccessiblePaths")).toContain("-/opt/s9-ai-arena");
-    expect(words("ReadOnlyPaths")).toEqual(expect.arrayContaining(["/usr/local/lib/s9-docker-proxy", "/etc/s9-docker-proxy"]));
+    expect(words("ReadOnlyPaths")).toEqual(
+      expect.arrayContaining(["/usr/local/lib/s9-docker-proxy", "/etc/s9-docker-proxy"]),
+    );
     expect(words("ReadWritePaths")).toEqual(["/var/run/docker.sock"]);
     expect(S.ProtectSystem).toEqual(["strict"]);
     expect(S.ProtectHome).toEqual(["true"]);
@@ -305,18 +311,38 @@ describe("P · install en un árbol de pruebas con propietarios reales", () => {
 
   // Cada mutación: un único motivo esperado (el resto del árbol sigue conforme).
   const mutations: [string, string, RegExp][] = [
-    ["bundle escribible por grupo", `chmod g+w "$F${BUNDLE_DST}"`, /bundle: .*docker-proxy\.mjs es escribible por grupo/],
-    ["allowlist escribible por otros", `chmod o+w "$F${LOCK_DST}"`, /allowlist: .*DIGESTS\.lock es escribible por grupo u otros/],
+    [
+      "bundle escribible por grupo",
+      `chmod g+w "$F${BUNDLE_DST}"`,
+      /bundle: .*docker-proxy\.mjs es escribible por grupo/,
+    ],
+    [
+      "allowlist escribible por otros",
+      `chmod o+w "$F${LOCK_DST}"`,
+      /allowlist: .*DIGESTS\.lock es escribible por grupo u otros/,
+    ],
     ["unidad escribible por grupo", `chmod g+w ${UNIT}`, /unidad: .*s9-docker-proxy\.service es escribible/],
     [
       "directorio del bundle propiedad de no root (rename/replace)",
       `chown 1000:1000 "$F/usr/local/lib/s9-docker-proxy"`,
       /s9-docker-proxy es propiedad de uid=1000/,
     ],
-    ["padre lejano (/usr/local) propiedad de no root", `chown 1000 "$F/usr/local"`, /\/usr\/local es propiedad de uid=1000/],
-    ["directorio de la allowlist propiedad de no root", `chown 1000 "$F/etc/s9-docker-proxy"`, /etc\/s9-docker-proxy es propiedad de uid=1000/],
+    [
+      "padre lejano (/usr/local) propiedad de no root",
+      `chown 1000 "$F/usr/local"`,
+      /\/usr\/local es propiedad de uid=1000/,
+    ],
+    [
+      "directorio de la allowlist propiedad de no root",
+      `chown 1000 "$F/etc/s9-docker-proxy"`,
+      /etc\/s9-docker-proxy es propiedad de uid=1000/,
+    ],
     ["node propiedad de no root", `chown 1000 "$F/usr/bin/node"`, /node: .*usr\/bin\/node es propiedad de uid=1000/],
-    ["/usr/local/bin del PATH del servicio escribible", `chmod o+w "$F/usr/local/bin"`, /PATH del servicio.*usr\/local\/bin es escribible/],
+    [
+      "/usr/local/bin del PATH del servicio escribible",
+      `chmod o+w "$F/usr/local/bin"`,
+      /PATH del servicio.*usr\/local\/bin es escribible/,
+    ],
     [
       "bundle sustituido por un enlace al árbol",
       `ln -sf "$F/opt/s9-ai-arena/runtimes/DIGESTS.lock" "$F${BUNDLE_DST}"`,
@@ -344,7 +370,11 @@ describe("P · install en un árbol de pruebas con propietarios reales", () => {
       `sed -i 's|^EnvironmentFile=.*|EnvironmentFile=/opt/s9-ai-arena/proxy.env|' ${UNIT}`,
       /EnvironmentFile debe ser exactamente/,
     ],
-    ["unidad: sin InaccessiblePaths del árbol", `sed -i '/^InaccessiblePaths=/d' ${UNIT}`, /InaccessiblePaths no incluye/],
+    [
+      "unidad: sin InaccessiblePaths del árbol",
+      `sed -i '/^InaccessiblePaths=/d' ${UNIT}`,
+      /InaccessiblePaths no incluye/,
+    ],
     [
       "drop-in no auditado",
       `mkdir -p "$F/etc/systemd/system/s9-docker-proxy.service.d"; echo '[Service]' >"$F/etc/systemd/system/s9-docker-proxy.service.d/x.conf"`,
@@ -360,7 +390,10 @@ describe("P · install en un árbol de pruebas con propietarios reales", () => {
     it(`MUTACIÓN «${name}» ⇒ preflight ROJO por su motivo`, () => {
       const r = preflightAfter(mutation);
       expect(r.rc, r.out).toBe(1);
-      expect(r.rojo.some((l) => reason.test(l)), `${reason} no está en:\n${r.rojo.join("\n")}`).toBe(true);
+      expect(
+        r.rojo.some((l) => reason.test(l)),
+        `${reason} no está en:\n${r.rojo.join("\n")}`,
+      ).toBe(true);
     });
   }
 

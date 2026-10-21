@@ -347,7 +347,9 @@ describe.skipIf(!DOCKER_E2E)(
       // el repo ni node_modules: si el bundle necesitara algo del árbol, no arrancaría.
       // La allowlist es una copia montada en la ruta de producción.
       bundleDir = mkdtempSync(join(tmpdir(), `${PFX}-bundle-`));
-      execFileSync(process.execPath, [BUILD, "--out", join(bundleDir, "lib", "docker-proxy.mjs")], { encoding: "utf8" });
+      execFileSync(process.execPath, [BUILD, "--out", join(bundleDir, "lib", "docker-proxy.mjs")], {
+        encoding: "utf8",
+      });
       mkdirSync(join(bundleDir, "policy"));
       copyFileSync(join(REPO, "runtimes", "DIGESTS.lock"), join(bundleDir, "policy", "DIGESTS.lock"));
       chmodSync(bundleDir, 0o755);
