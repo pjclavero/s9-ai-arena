@@ -520,7 +520,7 @@ services:
       # Sandbox del build: sin proxy ni host anunciado, todo build se rechaza como
       # «sandbox no verificado» (fallo cerrado, build-worker-wiring.ts).
       DOCKER_PROXY_URL: ${DOCKER_PROXY_URL:-http://docker-proxy.internal:2375}
-      BUILD_SANDBOX_HOST: bot-build-worker
+      BUILD_SANDBOX_HOST: calib-host-que-no-resuelve
       ARENA_NETWORK: arena
       # TD-034 · mismos relojes que el tournament-worker (protocol_test del build).
       SANDBOX_STARTUP_TIMEOUT_MS: ${SANDBOX_STARTUP_TIMEOUT_MS:-30000}
