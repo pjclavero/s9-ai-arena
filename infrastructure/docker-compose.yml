@@ -11,7 +11,9 @@
 #   observability  Prometheus+Grafana+Loki y exporters (cap. 24, opcional)
 #
 # Redes (6.4): public (solo gateway con acceso exterior), platform, arena,
-#   build y data son `internal: true` (sin salida a Internet).
+#   build, data y bot-control son `internal: true` (sin salida a Internet).
+#   bot-control (RC2) es la red de control del s9-docker-proxy: sólo sus
+#   consumidores, con subred, gateway y bridge fijos (ver su definición).
 #   Excepciones documentadas de acople a `public` SIN publicar puertos (solo
 #   salida a Internet, porque las redes internas no la tienen): streamer
 #   (RTMPS hacia YouTube) y alertmanager (webhook/email del operador).
@@ -274,7 +276,12 @@ services:
         SERVICE_NAME: arena-engine
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/arena-engine:${ARENA_ENGINE_TAG:-${TAG:-latest}}
     profiles: [development, production, external-db]
-    networks: [platform, arena]
+    # RC2 · `bot-control`: service.ts instancia ProxyContainerRunner si
+    # DOCKER_PROXY_URL está presente. La URL sigue VACÍA por defecto (ejecución
+    # real apagada); la red sólo hace posible encenderla sin tocar el compose.
+    networks: [platform, arena, bot-control]
+    extra_hosts:
+      - "docker-proxy.internal:10.89.250.1"
     environment:
       PORT: "8081"
       # B1: entrypoint de SERVICIO (sirve /healthz y expone POST /run sobre
@@ -335,7 +342,8 @@ services:
     # al ProtocolServer y descargan su artefacto del host de la batalla, que viven
     # en ESTE proceso. Deuda aceptada y registrada (TD-033, ex TD-A1): el proceso
     # que expone puertos a la red de los bots también tiene credenciales de BD.
-    networks: [platform, data, arena]
+    # RC2 · `bot-control`: única ruta hacia el s9-docker-proxy (10.89.250.1).
+    networks: [platform, data, arena, bot-control]
     environment:
       <<: *node-db-env
       SERVICE_ENTRY: ${WORKER_ENTRY:-apps/tournament-worker/src/main.ts}
@@ -372,8 +380,10 @@ services:
       # apps/api/src/spectate/ticket-secret-compose.test.ts.
       JWT_SECRET_FILE: /run/secrets/jwt_secret
     secrets: [postgres_password, jwt_secret, artifact_verify_key]
+    # RC2 · IP FIJA del gateway de `bot-control`, NUNCA host-gateway: desde una
+    # red interna host-gateway (docker0) es ENETUNREACH (bloqueo de la RC1).
     extra_hosts:
-      - "docker-proxy.internal:host-gateway"
+      - "docker-proxy.internal:10.89.250.1"
     volumes:
       # B7 · ESCRITURA, y justificado por el código: finishBattle
       # (apps/tournament-worker/src/battle-runner.ts) llama a
@@ -411,9 +421,13 @@ services:
   # usuario). Lanza contenedores a través del proxy de la API de Docker con
   # allowlist (crear/arrancar/parar/inspeccionar; rechaza privileged,
   # bind-mounts, red del host y cambios de usuario), que corre EN EL HOST:
-  # apps/bot-manager/src/docker-proxy-main.ts (ver docs/despliegue.md). El
-  # alias docker-proxy.internal apunta al host vía host-gateway; la
-  # verificación viva de esa ruta queda para R-DEPLOY.
+  # apps/bot-manager/src/docker-proxy-main.ts (ver docs/operations/docker-proxy.md).
+  # RC2 · NO está en `bot-control`, a propósito: este proceso (main.ts) sólo
+  # exige que DOCKER_PROXY_URL no esté vacía y la publica en /healthz; no
+  # instancia ProxyContainerRunner ni abre conexión alguna con el proxy (lo
+  # fija por AST infrastructure/tests/bot-control-network.test.ts). Si algún día
+  # lo hace, ese test se pone ROJO y la red se añade con su motivo. El alias va
+  # a la IP fija del proxy (nunca host-gateway); desde aquí es ENETUNREACH.
   # Aislamiento: redes platform+build (sin data → sin ruta a PostgreSQL ni al
   # backup), sin `secrets:` montados. Lo fija infrastructure/tests/
   # bot-manager-isolation.test.ts.
@@ -438,7 +452,7 @@ services:
       # R1.7: única vía hacia Docker; el socket ya no se monta.
       DOCKER_PROXY_URL: ${DOCKER_PROXY_URL:-http://docker-proxy.internal:2375}
     extra_hosts:
-      - "docker-proxy.internal:host-gateway"
+      - "docker-proxy.internal:10.89.250.1"
     volumes:
       - arena_bot_sources:/data/bot-sources
       - arena_build_cache:/data/build-cache
@@ -464,8 +478,8 @@ services:
   # real E6PipelineBotManager (apps/bot-manager/src/build-worker-main.ts). No
   # publica puertos ni monta docker.sock. FALLA CERRADO si falta la clave de
   # firma (ARTIFACT_SIGNING_KEY_FILE, ERR-SEC-15) o la config de BD. Vive en
-  # platform+build+data: necesita la cola/BD (jobs) y el volumen de fuentes; NO
-  # está en la red arena (no toca contenedores de bots: eso es del bot-manager).
+  # platform+build+data (cola/BD de jobs y volumen de fuentes), arena (sandbox
+  # del build, ver abajo) y bot-control (RC2, única ruta al s9-docker-proxy).
   # B3: imagen PROPIA con python3 — es AQUÍ donde corre static_analysis de
   # verdad (el AST de bots Python). Ver infrastructure/docker/bot-manager/Dockerfile.
   bot-build-worker:
@@ -495,7 +509,9 @@ services:
     # REVIEW (cierre funcional) · `arena`: el sandbox del build (DEV-A, TD-001) lanza
     # el bot en un contenedor que se conecta a ESTE proceso (ProtocolServer +
     # descarga del artefacto). Misma deuda aceptada que el tournament-worker (TD-033).
-    networks: [platform, build, data, arena]
+    # RC2 · `bot-control`: build-worker-wiring.ts instancia ProxyContainerRunner;
+    # es su única ruta hacia el s9-docker-proxy (10.89.250.1).
+    networks: [platform, build, data, arena, bot-control]
     environment:
       <<: *node-db-env
       SERVICE_ENTRY: ${BOT_BUILD_WORKER_ENTRY:-apps/bot-manager/src/build-worker-main.ts}
@@ -511,7 +527,7 @@ services:
       BOT_EXECUTION_TIMEOUT_MS: ${BOT_EXECUTION_TIMEOUT_MS:-5000}
     secrets: [postgres_password, artifact_signing_key]
     extra_hosts:
-      - "docker-proxy.internal:host-gateway"
+      - "docker-proxy.internal:10.89.250.1"
     volumes:
       - arena_bot_sources:/data/bot-sources
       - arena_build_cache:/data/build-cache
@@ -1125,6 +1141,31 @@ services:
     logging: *default-logging
 
 networks:
+  # RC2 · red de CONTROL del s9-docker-proxy (docs/operations/networking.md).
+  # Sólo la comparten los procesos que, por código, instancian
+  # ProxyContainerRunner (tournament-worker, bot-build-worker, arena-engine).
+  # Todo es fijo a propósito, porque lo consumen piezas FUERA de Compose:
+  #   - `name` fijo: el firewall del host y la CI la buscan por nombre.
+  #   - bridge `s9-botctl0`: la regla de firewall del host filtra por `-i`.
+  #   - subred/gateway fijos: el proxy del host bindea 10.89.250.1 y los
+  #     consumidores lo resuelven por `extra_hosts` a esa IP (nunca
+  #     host-gateway). 10.89.250.0/24 queda fuera de los pools por defecto de
+  #     Docker (172.17-31/16, 192.168/16): no colisiona con otra red del host.
+  #   - `internal: true`: sin ruta por defecto ni salida a Internet.
+  # Esta red NO basta por sí sola: un contenedor de una red NO interna (gateway,
+  # backup) tiene ruta por defecto al host y alcanza CUALQUIER IP del host,
+  # 10.89.250.1 incluida. Esa conectividad residual la cierran el firewall del
+  # host y el control de cliente del propio proxy.
+  bot-control:
+    name: s9-bot-control
+    driver: bridge
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.name: s9-botctl0
+    ipam:
+      config:
+        - subnet: 10.89.250.0/24
+          gateway: 10.89.250.1
   # Solo el gateway tiene acceso exterior (6.4).
   public:
     driver: bridge
