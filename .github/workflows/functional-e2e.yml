@@ -198,3 +198,79 @@ jobs:
         run: |
           docker ps -aq --filter 'name=^bot-' | xargs -r docker rm -f
           rm -rf "${{ runner.temp }}/docker-e2e"
+
+  # RC2 DEV-CI (REVIEW RC1 P0-3, TD-052) · el camino que falló en producción, de verdad:
+  # stack Compose REAL (perfil production, mismas redes) con las imágenes construidas en
+  # este job desde el commit; bot-build-worker y tournament-worker son CONTENEDORES que
+  # alcanzan al s9-docker-proxy (PROCESO DEL HOST, en 10.89.250.1 como la unidad systemd)
+  # por la red dedicada `bot-control`, con el firewall de host aplicado (sudo). Sondas desde
+  # cada contenedor (gateway y backup ⇒ sin acceso), política de imagen y propiedad (imagen
+  # ajena y stop de postgres ⇒ 403) y el recorrido build → published → batalla → replay.
+  # Detalle: tests/container-proxy-e2e/run.sh · veredicto: scripts/ci/assert-container-proxy-e2e.mjs.
+  container-proxy-e2e:
+    name: container-proxy-e2e (stack Compose real → bot-control → s9-docker-proxy → batalla)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      S9_CPX_PROJECT: s9cpx
+      S9_CPX_COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Estado temporal en $RUNNER_TEMP (nada fuera del runner)
+        run: echo "S9_CPX_STATE=$RUNNER_TEMP/s9-cpx" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Dependencias (npm ci)
+        timeout-minutes: 10
+        run: npm ci
+      - name: Docker rootful, compose, iptables y sudo del runner (sin ellos el gate FALLA)
+        timeout-minutes: 2
+        run: |
+          docker info --format 'Docker {{.ServerVersion}} · {{.OperatingSystem}} · cgroup {{.CgroupVersion}}'
+          docker compose version
+          sudo -n true
+          sudo -n iptables --version
+      - name: Imágenes de runtime fijadas por digest (fase propia, fuera del reloj de arranque)
+        timeout-minutes: 10
+        run: grep -v '^#' runtimes/DIGESTS.lock | awk 'NF==3 {print $3}' | while read -r img; do docker pull -q "$img"; done
+      - name: Preparar (secretos efímeros, compose resuelto, compose-check)
+        timeout-minutes: 3
+        run: bash tests/container-proxy-e2e/run.sh prepare
+      - name: Imágenes de la aplicación desde el commit
+        timeout-minutes: 30
+        run: bash tests/container-proxy-e2e/run.sh build
+      - name: Stack Compose + s9-docker-proxy en 10.89.250.1
+        timeout-minutes: 10
+        run: bash tests/container-proxy-e2e/run.sh up
+      - name: Sondas de alcance (sin y con firewall) y política del proxy
+        timeout-minutes: 8
+        run: bash tests/container-proxy-e2e/run.sh probes
+      - name: Build → published ×2 y batalla A+B por la API pública
+        timeout-minutes: 20
+        run: bash tests/container-proxy-e2e/run.sh flow
+      - name: Evidencia (logs, compose config, redes, eventos)
+        if: always()
+        timeout-minutes: 3
+        run: bash tests/container-proxy-e2e/run.sh evidence
+      - name: Veredicto independiente (skipped / sin sondas / sin batalla finished ⇒ FALLA)
+        if: always()
+        timeout-minutes: 2
+        run: node scripts/ci/assert-container-proxy-e2e.mjs "$S9_CPX_STATE/out" "$S9_CPX_COMMIT"
+      - name: Preparar evidencia SIN secretos
+        if: always()
+        timeout-minutes: 3
+        run: bash scripts/ci/collect-functional-evidence.sh "$S9_CPX_STATE" "${{ runner.temp }}/container-proxy-e2e-evidence"
+      - name: Subir evidencia
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: functional-e2e-container-proxy-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/container-proxy-e2e-evidence/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Limpieza (proxy, firewall, stack, secretos y estado)
+        if: always()
+        timeout-minutes: 5
+        run: bash tests/container-proxy-e2e/run.sh cleanup
