@@ -258,7 +258,7 @@ netprobe() { # netprobe <fase> [flags…]
     return
   fi
   node "$REPO/scripts/ops/network-probe.mjs" --project "$PROJECT" \
-    --expect-members arena-engine,bot-build-worker,tournament-worker "$@" --json >"$STATE/netprobe-$phase.json" 2>"$LOGS/netprobe-$phase.err"
+    --expect-members arena-engine,bot-build-worker,tournament-worker --probe-image "$PROBE_IMG" "$@" --json >"$STATE/netprobe-$phase.json" 2>"$LOGS/netprobe-$phase.err"
   rc=$?
   jq -n --argjson rc $rc --slurpfile r "$STATE/netprobe-$phase.json" '{rc: $rc, result: ($r[0] // null)}' \
     >"$OUT/network-probe-$phase.json" 2>/dev/null || jq -n --argjson rc $rc '{rc: $rc, result: null}' >"$OUT/network-probe-$phase.json"

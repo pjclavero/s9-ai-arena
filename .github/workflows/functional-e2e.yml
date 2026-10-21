@@ -165,12 +165,13 @@ jobs:
           apps/bot-manager/tests/build-sandbox-docker.test.ts
           apps/bot-manager/tests/build-sandbox-timing-docker.test.ts
           apps/bot-manager/tests/docker-proxy-docker.test.ts
+          apps/bot-manager/tests/seccomp-bot-dns.test.ts
           apps/api/src/fc-a-bot-pipeline-e2e.test.ts
           apps/tournament-worker/src/container-battle-e2e.test.ts
           infrastructure/gateway/tests/replay-gateway.test.ts
           --maxWorkers=1 --reporter=default --reporter=json
           --outputFile.json="${{ runner.temp }}/docker-e2e/vitest.json"
-      - name: Veredicto independiente (los 6 ficheros ejecutados, 0 skipped)
+      - name: Veredicto independiente (los 7 ficheros ejecutados, 0 skipped)
         if: always()
         timeout-minutes: 2
         run: >-
@@ -178,6 +179,7 @@ jobs:
           apps/bot-manager/tests/build-sandbox-docker.test.ts
           apps/bot-manager/tests/build-sandbox-timing-docker.test.ts
           apps/bot-manager/tests/docker-proxy-docker.test.ts
+          apps/bot-manager/tests/seccomp-bot-dns.test.ts
           apps/api/src/fc-a-bot-pipeline-e2e.test.ts
           apps/tournament-worker/src/container-battle-e2e.test.ts
           infrastructure/gateway/tests/replay-gateway.test.ts
