@@ -208,7 +208,14 @@ describe("U · s9-docker-proxy.service ejecuta el artefacto instalado", () => {
   it("systemd-analyze verify rc=0 y security --offline ≤ 2.0 (la unidad de RC2 daba 6.5)", () => {
     const d = mkdtempSync(join(tmp, "sa-"));
     copyFileSync(UNIT_PATH, join(d, "s9-docker-proxy.service"));
-    const v = spawnSync("systemd-analyze", ["verify", join(d, "s9-docker-proxy.service")], { encoding: "utf8" });
+    // verify exige que el binario de ExecStart exista: en la copia para verify (y SÓLO ahí)
+    // /usr/bin/node se sustituye por el node que corre el test (el runner puede no tenerlo).
+    const vdir = mkdtempSync(join(tmp, "sav-"));
+    writeFileSync(
+      join(vdir, "s9-docker-proxy.service"),
+      readFileSync(UNIT_PATH, "utf8").replace("ExecStart=/usr/bin/node ", `ExecStart=${process.execPath} `),
+    );
+    const v = spawnSync("systemd-analyze", ["verify", join(vdir, "s9-docker-proxy.service")], { encoding: "utf8" });
     expect(v.error, "systemd-analyze no disponible: el test NO se salta").toBeUndefined();
     // verify avisa (no falla) de lo que no existe en esta máquina (/usr/bin/node en CI): se
     // exige rc=0 y ningún error de sintaxis/directiva.
