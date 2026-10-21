@@ -126,6 +126,25 @@ check_env() {
     fi
   fi
 
+  # --- clientes excluidos (opcional; prevalecen sobre los admitidos) ---
+  v="${CFG[DOCKER_PROXY_DENIED_CLIENTS]:-}"
+  if [ -n "$v" ]; then
+    IFS=',' read -r -a _dl <<<"$v"
+    for c in "${_dl[@]}"; do
+      c="${c// /}"
+      if [[ "$c" == */* ]]; then
+        if ! { is_ipv4 "${c%/*}" && [[ "${c#*/}" =~ ^[0-9]{1,2}$ ]] && [ "${c#*/}" -le 32 ]; } &&
+          ! [[ "$c" =~ ^[0-9A-Fa-f:]+/[0-9]{1,3}$ ]]; then
+          err "CIDR inválido en DOCKER_PROXY_DENIED_CLIENTS: '$c'"
+        elif [ "${c#*/}" = 0 ]; then
+          err "DOCKER_PROXY_DENIED_CLIENTS no admite /0: '$c'"
+        fi
+      elif ! is_ipv4 "$c" && ! [[ "$c" =~ ^[0-9A-Fa-f:]*:[0-9A-Fa-f:]*$ ]]; then
+        err "entrada inválida en DOCKER_PROXY_DENIED_CLIENTS: '$c'"
+      fi
+    done
+  fi
+
   # --- allowlist de imágenes ---
   # Opcional: sin valor, el proxy usa runtimes/DIGESTS.lock del árbol desde el que corre
   # (docker-proxy-config.ts); aquí se valida ese mismo fichero ($APP_DIR).

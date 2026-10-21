@@ -165,6 +165,9 @@ describe("install-docker-proxy.sh check-env", () => {
     ["clientes ausentes", set("DOCKER_PROXY_ALLOWED_CLIENTS", null), "ALLOWED_CLIENTS vacío"],
     ["clientes 0.0.0.0/0", clients("0.0.0.0/0,10.89.250.0/24"), "demasiado ancho"],
     ["clientes no CIDR", clients("10.89.250.1,10.89.250.0/24"), "CIDR inválido"],
+    ["excluidos con /0", set("DOCKER_PROXY_DENIED_CLIENTS", "10.89.250.7,0.0.0.0/0"), "no admite /0"],
+    ["excluidos ::/0", set("DOCKER_PROXY_DENIED_CLIENTS", "::/0"), "no admite /0"],
+    ["excluidos basura", set("DOCKER_PROXY_DENIED_CLIENTS", "host-gateway"), "entrada inválida"],
     // Ausente ⇒ se usa la del árbol ($APP_DIR/runtimes/DIGESTS.lock); aquí APP_DIR no existe.
     ["allowlist ausente y sin árbol", set("DOCKER_PROXY_IMAGE_ALLOWLIST", null), "no existe"],
     ["instancia inválida", set("DOCKER_PROXY_INSTANCE", "-mala/instancia"), "DOCKER_PROXY_INSTANCE inválido"],
@@ -182,6 +185,12 @@ describe("install-docker-proxy.sh check-env", () => {
       expect(r.out).toContain(reason);
     });
   }
+
+  it("DOCKER_PROXY_DENIED_CLIENTS: vacía en el ejemplo; IP y CIDR válidos ⇒ conforme", () => {
+    expect(readEnv().DOCKER_PROXY_DENIED_CLIENTS).toBe("");
+    const r = checkEnv(envVariant(set("DOCKER_PROXY_DENIED_CLIENTS", "10.89.250.1, 10.89.250.128/25,fd00::1")));
+    expect(r.rc, r.out).toBe(0);
+  });
 
   it("allowlist ausente ⇒ usa runtimes/DIGESTS.lock del árbol (APP_DIR) y es conforme", () => {
     const r = checkEnv(envVariant(set("DOCKER_PROXY_IMAGE_ALLOWLIST", null)), ROOT);
