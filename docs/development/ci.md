@@ -161,6 +161,22 @@ Evidencia: artifact `functional-e2e-container-proxy-<intento>` (compose config, 
 `collect-functional-evidence.sh` retira cualquier fichero con material secreto). Hacerlo check
 obligatorio de `main` lo decide REVIEW.
 
+Calibración en CI real (2026-10-21, `workflow_dispatch` sobre la integración de los carriles RC2,
+mutación en ramas `rc2/calib-*` ya borradas):
+
+| Run | Sujeto | `container-proxy-e2e` | Filas en ROJO (motivo) |
+|---|---|---|---|
+| 39612406545 | integración `5ca7f5c` (control positivo) | PASS (108/108) | — |
+| 39612416596 | M1: `bot-build-worker` sin `bot-control` | FAIL (32) | R1 miembros; R2; R6 `bot-build-worker` sin ruta; R10; R7 sin acceso; R8 build `failed` |
+| 39612425927 | M2: `gateway` en `bot-control` | FAIL (5) | R1 miembros (`extra: gateway`); R6 gateway `ACCESS` en A y B (atraviesa red, firewall y cliente); R10 |
+| 39612436211 | M3: allowlist de imágenes desactivada | FAIL (4) | R7 imagen de postgres 201, base/digest ajeno 404 (reenviados a Docker); R9 el proxy creó una imagen fuera del lock |
+| 39612444865 | M4: propiedad desactivada | FAIL (6) | R7 stop/start de postgres 204, inspect/stats 200, stop del gateway 204; postgres con otro arranque |
+
+Control natural: antes del arreglo de DEV-PROXY (`483b05d`, `sendmmsg` en `seccomp-bot.json`)
+el job estaba ROJO en R8 por un defecto REAL que ninguna otra prueba veía: con el perfil seccomp del
+bot, glibc no resolvía `bot-build-worker`/`tournament-worker` (`EAI_AGAIN`, el bootstrap salía con
+código 3 sin descargar el artefacto). El golden y los E2E de vitest anuncian una IP, no un nombre.
+
 ### Calibración en CI real (2026-10-18)
 
 | PR | Mutación | `golden` | `docker-e2e` | `semaforo` | Otros jobs rojos |
