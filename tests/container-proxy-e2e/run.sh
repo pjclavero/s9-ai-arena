@@ -215,7 +215,8 @@ make_equivalents() {
     for n in "${nets[@]:1}"; do docker network connect "$n" "$PROJECT-backup-equivalent"; done
     docker start "$PROJECT-backup-equivalent" >/dev/null
   fi
-  docker run -d --name "$PROJECT-bot-equivalent" --network arena --entrypoint sleep --user 10001:10001 \
+  # --dns 0.0.0.0 como el create de ProxyContainerRunner (HostConfig.Dns): misma resolución.
+  docker run -d --name "$PROJECT-bot-equivalent" --network arena --dns 0.0.0.0 --entrypoint sleep --user 10001:10001 \
     --read-only --cap-drop ALL --security-opt no-new-privileges "$PROBE_IMG" 3600 >/dev/null
   jq -nc --argjson b "$(printf '%s\n' "${nets[@]}" | jq -R . | jq -sc .)" \
     '{"backup-equivalent": {declared: "contenedor en las MISMAS redes que el servicio backup del compose resuelto (backup no se arranca: necesita restic/SFTP reales)", networks: $b},
@@ -276,6 +277,12 @@ pg_state() {
 
 do_probes() {
   make_equivalents
+  # Diagnóstico de C3/C4 desde la posición de un bot (evidencia, no veredicto).
+  docker run --rm --network "container:$PROJECT-bot-equivalent" -v "$HERE:/probe:ro" --entrypoint node \
+    --user 65534:65534 --read-only --cap-drop ALL "$PROBE_IMG" /probe/bot-view.mjs tournament-worker:8081 \
+    >"$OUT/bot-view.json" 2>"$LOGS/bot-view.err"
+  docker exec "$PROJECT-bot-equivalent" cat /etc/resolv.conf >"$LOGS/bot-view-resolv.txt" 2>&1
+  log "vista de un bot: $(cat "$OUT/bot-view.json" 2>/dev/null)"
   # Fase A: SIN firewall. Mide la capa (a) red y la capa (c) control de cliente del proxy.
   probe_phase A
   netprobe A
@@ -349,8 +356,20 @@ do_policy() {
 # ── flow ────────────────────────────────────────────────────────────────────
 do_flow() {
   date -u +%Y-%m-%dT%H:%M:%SZ >"$STATE/flow-start"
+  # C9 · los contenedores de bot llevan AutoRemove: sus logs se siguen EN VIVO desde que
+  # arrancan (después de salir ya no existen).
+  mkdir -p "$LOGS/containers/bots"
+  (
+    docker events --filter type=container --filter event=start --format '{{.Actor.ID}} {{.Actor.Attributes.name}}' |
+      while read -r id name; do
+        case "$name" in bot-*) docker logs -f "$id" >"$LOGS/containers/bots/$name.log" 2>&1 & ;; esac
+      done
+  ) &
+  local follower=$!
   node "$HERE/flow.mjs" "http://127.0.0.1:$HTTP_PORT" "$OUT/flow.json" >"$LOGS/flow.log" 2>&1
   local rc=$?
+  kill "$follower" 2>/dev/null
+  pkill -f "docker events --filter type=container --filter event=start" 2>/dev/null
   date -u +%Y-%m-%dT%H:%M:%SZ >"$STATE/flow-end"
   log "FLOW_RC=$rc ($(tail -1 "$LOGS/flow.log"))"
   return 0 # el veredicto lo da assert-container-proxy-e2e.mjs con flow.json
