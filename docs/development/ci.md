@@ -230,14 +230,14 @@ funcional falla:
 
 | Regla | Valor |
 |---|---|
-| Checks obligatorios | `semaforo` · `functional-e2e / golden (navegador real + build y batalla reales)` · `functional-e2e / docker-e2e (sandbox real + build → published + batalla A+B)` |
+| Checks obligatorios | `semaforo` · `functional-e2e / golden (navegador real + build y batalla reales)` · `functional-e2e / docker-e2e (sandbox real + build → published + batalla A+B)` · `functional-e2e / container-proxy-e2e (stack Compose real → bot-control → s9-docker-proxy → batalla)` (desde RC2, 2026-10-21) |
 | Origen de los checks | GitHub Actions (`app_id` 15368): otro integrador con el mismo nombre no los satisface |
 | Rama al día con `main` | obligatoria (`strict`) |
 | Pull request | obligatorio; 0 aprobaciones (un solo desarrollador: GitHub no deja aprobar el PR propio) |
 | Administradores | **incluidos** (`enforce_admins`): `gh pr merge --admin` también queda bloqueado |
 | Force push y borrado de `main` | bloqueados |
 
-- `semaforo` agrega todo, incluido `functional-e2e`, y falla con un `skipped`. Los dos jobs de
+- `semaforo` agrega todo, incluido `functional-e2e`, y falla con un `skipped`. Los tres jobs de
   `functional-e2e` se exigen además por su nombre, para que un cambio en el semáforo no pueda
   dejarlos fuera en silencio.
 - No es obligatorio el check-run «Semáforo CI»: se crea por API y en PRs de fork puede no existir.
@@ -247,6 +247,18 @@ Comprobación funcional (2026-10-19, PR #161 desechable con la reproducción de 
 `functional-e2e / golden` y `semaforo` en rojo, `unit` en verde; el merge se rechazó sin privilegios
 («the base branch policy prohibits the merge») y con `--admin` («2 of 3 required status checks are
 failing»). Cambiar o quitar estas reglas es una decisión del operador y debe documentarse aquí.
+
+Ampliación RC2 (2026-10-21, REVIEW): se añadió `functional-e2e / container-proxy-e2e (…)` como
+cuarto check obligatorio (`app_id` 15368), conservando los tres anteriores, `strict` y
+`enforce_admins` (verificado por API tras el cambio). Calibración:
+- PR #165 desechable (`bot-build-worker` sin `bot-control`, sobre la cabeza de integración de RC2):
+  `container-proxy-e2e`, `unit` (el test estático de red también lo ve) y `semaforo` en ROJO,
+  `golden` y `docker-e2e` en verde; el merge normal se **rechazó** («the base branch policy
+  prohibits the merge»). El intento con `--admin` no se ejecutó (lo denegó la política de permisos
+  del agente); el bloqueo de administradores lo garantiza `enforce_admins=true`, ya calibrado con
+  `--admin` en el PR #161. PR cerrado y rama borrada.
+- `workflow_dispatch` 39656275416 (`gateway` en `bot-control`): `container-proxy-e2e` ROJO con
+  `golden` y `docker-e2e` en verde: sólo el job nuevo ve esa regresión.
 
 ## `deploy-staging` y `smoke-and-promote`
 
