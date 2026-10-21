@@ -257,6 +257,9 @@ jobs:
       - name: Política del proxy (imagen ajena, propiedad; después del flujo)
         timeout-minutes: 5
         run: bash tests/container-proxy-e2e/run.sh policy
+      - name: Frontera de privilegio del proxy (TD-062; preflight real, EACCES, mutaciones calibradas)
+        timeout-minutes: 5
+        run: bash tests/container-proxy-e2e/run.sh privilege
       - name: Evidencia (logs, compose config, redes, eventos)
         if: always()
         timeout-minutes: 3

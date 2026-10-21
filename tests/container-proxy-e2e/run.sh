@@ -7,9 +7,12 @@
 # interna → proxy del host: ENETUNREACH) ni el que sobraba (gateway/backup → proxy: 403).
 # Aquí el stack es el Compose REAL (perfil production, mismas redes), con imágenes
 # construidas en el propio job desde el commit, y el proxy es un PROCESO DEL HOST del runner
-# escuchando en 10.89.250.1 (como la unidad systemd de producción), con el firewall de
-# DEV-SECOPS aplicado de verdad (sudo). Nada de bypass: las sondas y los flujos salen desde
-# dentro de los contenedores del stack.
+# escuchando en 10.89.250.1, con el firewall de DEV-SECOPS aplicado de verdad (sudo). Nada de
+# bypass: las sondas y los flujos salen desde dentro de los contenedores del stack.
+# TD-062: el proxy NO se arranca con tsx desde el checkout: se instala con
+# infrastructure/scripts/install-docker-proxy.sh install (bundle de root en
+# /usr/local/lib/s9-docker-proxy, allowlist en /etc/s9-docker-proxy) y corre como la unidad
+# systemd REAL s9-docker-proxy.service (User=s9proxy, ProtectHome: el checkout es invisible).
 #
 # Subcomandos (cada uno es un paso del job con su propio reloj; el estado vive en $STATE):
 #   prepare   secretos efímeros, entorno, compose resuelto (+ defectos) y compose-check
@@ -20,6 +23,8 @@
 #   flow      C3/C4: build → published ×2 y batalla A+B por la API pública del gateway
 #   policy    C6: política de imagen y de propiedad desde un consumidor legítimo (DESPUÉS
 #             del flujo: con un proxy roto, estas peticiones paran postgres y el gateway)
+#   privilege TD-062: preflight real, proceso efectivo, negativos EACCES con usuarios reales
+#             y calibración del preflight con mutaciones de root (ROJO → revertida → VERDE)
 #   evidence  C9: logs, compose config, redes saneadas, eventos de Docker, sin secretos
 #   cleanup   para el proxy, retira el firewall y el stack (SÓLO en el runner efímero)
 #
@@ -30,7 +35,7 @@
 # máquina se niega (rc 3). NUNCA contra producción.
 set -uo pipefail
 
-CMD=${1:?uso: run.sh <prepare|build|up|probes|flow|policy|evidence|cleanup>}
+CMD=${1:?uso: run.sh <prepare|build|up|probes|flow|policy|privilege|evidence|cleanup>}
 if [ "${GITHUB_ACTIONS:-}" != "true" ] || [ "${RUNNER_ENVIRONMENT:-}" != "github-hosted" ]; then
   echo "run.sh: sólo en un runner efímero de GitHub Actions (aplica firewall y borra el stack)" >&2
   exit 3
@@ -56,6 +61,23 @@ PROXY_INSTANCE="s9-docker-proxy"
 HTTP_PORT=18080
 # Firewall de DEV-SECOPS (infrastructure/firewall/). Se invoca, no se reimplementa.
 FIREWALL="${S9_CPX_FIREWALL:-$REPO/infrastructure/firewall/s9-firewall.sh}"
+# TD-062: el proxy se instala con el instalador REAL y corre como la unidad systemd REAL.
+INSTALLER="$REPO/infrastructure/scripts/install-docker-proxy.sh"
+PROXY_UNIT="s9-docker-proxy.service"
+BUNDLE_DST="/usr/local/lib/s9-docker-proxy/docker-proxy.mjs"
+LOCK_DST="/etc/s9-docker-proxy/DIGESTS.lock"
+PROXY_ENV="/etc/s9-ai-arena/docker-proxy.env"
+EXPECTED_EXECSTART="/usr/bin/node --no-addons $BUNDLE_DST"
+# B1 (REVIEW #167): como en producción, el instalador NO se ejecuta desde el checkout (que
+# es del usuario del runner, el papel de s9arena): se ejecuta desde una COPIA DE ROOT del
+# commit, y validate/preflight desde la copia INSTALADA. S9PX_TREE: el checkout es «el árbol»
+# que el proceso del proxy no debe ver.
+# En /root (0700, de root): en el runner, /opt es 0777 (medido en el run 39689058590) y el
+# self_check lo rechazaría, con razón.
+TRUSTED="/root/s9cpx-trusted"
+PREFLIGHT_BIN="/usr/local/sbin/s9-docker-proxy-preflight"
+PX=(sudo -n env "S9PX_TREE=$REPO" bash "$TRUSTED/infrastructure/scripts/install-docker-proxy.sh")
+PF=(sudo -n env "S9PX_TREE=$REPO" "$PREFLIGHT_BIN")
 
 BUILD_SERVICES=(gateway web api arena-engine tournament-worker bot-manager map-service replay-service)
 INFRA_SERVICES=(postgres queue)
@@ -113,6 +135,167 @@ do_build() {
   return $rc
 }
 
+# ── instalación del proxy como en producción (TD-062) ───────────────────────
+install_proxy_as_production() {
+  {
+    # a) bundle SIN root (usuario del runner), con el commit del job.
+    node "$REPO/infrastructure/scripts/build-docker-proxy-bundle.mjs" --commit "$COMMIT" >"$OUT/proxy-bundle.json" || return 1
+    # b) /usr/bin/node de root (la unidad lo fija): el node del job, copiado con root:root 0755.
+    #    El de setup-node vive en el toolcache del usuario del runner: el preflight lo
+    #    rechazaría, y con razón.
+    sudo -n install -o root -g root -m 0755 "$(command -v node)" /usr/bin/node || return 1
+    /usr/bin/node --version
+    # b2) El runner de GitHub trae /usr/local/bin en 0777 (medido: el preflight lo dio ROJO en
+    #     el run 39672287949): en un host así cualquier usuario plantaría un `ip`/`grep` que el
+    #     ExecStartPre ejecutaría. Se corrige el host EFÍMERO como lo haría el operador, y queda
+    #     registrado el antes/después. Producción (lectura 2026-10-21): root 0755.
+    stat -c 'antes %U:%G %a %n' / /usr /usr/local /usr/local/bin /usr/local/sbin /usr/local/lib /usr/sbin /usr/bin /etc /etc/systemd/system
+    sudo -n chmod go-w /usr/local/bin /usr/local/sbin /usr/local/lib /usr/local 2>/dev/null
+    stat -c 'después %U:%G %a %n' /usr/local /usr/local/bin /usr/local/sbin /usr/local/lib
+    # c) entorno del operador: el ejemplo del repo (constantes del contrato RC2; allowlist =
+    #    copia de root). Root 0640, como en producción.
+    sudo -n install -d -o root -g root -m 0755 /etc/s9-ai-arena || return 1
+    sudo -n install -o root -g root -m 0640 "$REPO/infrastructure/systemd/docker-proxy.env.example" "$PROXY_ENV" || return 1
+    # d) COPIA DE ROOT del commit (B1; el equivalente del clon de root de upgrades.md#td-062):
+    #    root clona el checkout en $TRUSTED y comprueba que su HEAD es el commit del job.
+    #    `umask 022` explícito: con sudo, el runner crea ficheros 0666 (medido). Producción
+    #    hace lo mismo (upgrades.md#td-062).
+    rootsh() { sudo -n env "PATH=$PATH" bash -c 'umask 022; "$@"' _ "$@"; }
+    rootsh rm -rf "$TRUSTED"
+    rootsh git -c safe.directory='*' clone -q --no-hardlinks "$REPO" "$TRUSTED" || return 1
+    local th
+    th=$(rootsh git -c safe.directory='*' -C "$TRUSTED" rev-parse HEAD)
+    [ "$th" = "$COMMIT" ] || { echo "la copia de root está en $th, no en $COMMIT"; return 1; }
+    rootsh chmod -R go-w "$TRUSTED"
+    # e) bundle construido POR ROOT en esa copia (dependencias del lock, SIN scripts de
+    #    instalación) y comparado con el del paso a): dos medidas independientes del mismo
+    #    commit. Es lo que exige install (S9PX_EXPECT_SHA256) en producción. Se lanza desde
+    #    OTRO directorio de trabajo a propósito: el sha no puede depender del cwd.
+    rootsh env npm_config_cache=/root/.npm-s9cpx npm ci --prefix "$TRUSTED" --ignore-scripts --no-audit --no-fund >/dev/null || return 1
+    (cd / && rootsh node "$TRUSTED/infrastructure/scripts/build-docker-proxy-bundle.mjs" --commit "$COMMIT") >"$OUT/proxy-bundle-root.json" || return 1
+    local s_user s_root
+    s_user=$(jq -r .sha256 "$OUT/proxy-bundle.json")
+    s_root=$(jq -r .sha256 "$OUT/proxy-bundle-root.json")
+    stat -c 'copia de confianza %U:%G %a %n' /opt "$TRUSTED" "$TRUSTED/infrastructure/scripts/install-docker-proxy.sh" "$TRUSTED/dist/s9-docker-proxy/docker-proxy.mjs"
+    echo "sha256 bundle: usuario=$s_user root=$s_root"
+    [ "$s_user" = "$s_root" ] || { echo "el bundle de root y el del usuario DIFIEREN: PARA"; return 1; }
+    # f) instalador REAL desde la copia de root, con el sha256 esperado (obligatorio).
+    sudo -n env "S9PX_TREE=$REPO" "S9PX_EXPECT_SHA256=$s_user" bash "$TRUSTED/infrastructure/scripts/install-docker-proxy.sh" install
+  } >"$LOGS/proxy-install.log" 2>&1
+}
+
+# ── privilege (TD-062) ───────────────────────────────────────────────────────
+# La frontera de privilegio medida con root REAL, systemd REAL y usuarios REALES:
+#   P1 preflight completo (ficheros, unidad cargada, proceso en marcha) ⇒ rc 0
+#   P2 lo efectivo: /proc/<MainPID>/exe = /usr/bin/node, cmdline = ExecStart esperado,
+#      usuario s9proxy, y el proceso NO ve el checkout (namespace de montaje del servicio)
+#   P3 negativos: un usuario no root (s9cpx-arena, el papel de s9arena) y el propio s9proxy
+#      NO pueden escribir/crear/renombrar bundle, allowlist, unidad ni entorno ⇒ EACCES
+#   P4 calibración: cada mutación (root) pone el preflight ROJO por su motivo; revertida ⇒ VERDE
+#   P5 el proxy siguió vivo (mismo MainPID): ninguna mutación lo reinició
+do_privilege() {
+  local pid0 rc
+  pid0=$(systemctl show -p MainPID --value "$PROXY_UNIT")
+  : >"$STATE/privilege-neg.jsonl"
+  : >"$STATE/privilege-mut.jsonl"
+
+  # P1 · el preflight INSTALADO (de root), el único que vale (B1)
+  "${PF[@]}" preflight >"$LOGS/privilege-preflight-1.log" 2>&1
+  local pf1=$?
+  # P1b · procedencia (B1): el instalador del CHECKOUT (del usuario del runner, el papel del
+  #       árbol de s9arena) se NIEGA a dar veredicto o a instalar: rc 2.
+  sudo -n env "S9PX_TREE=$REPO" bash "$INSTALLER" preflight >"$LOGS/privilege-untrusted-preflight.log" 2>&1
+  local ut_pf=$?
+  sudo -n env "S9PX_TREE=$REPO" "S9PX_EXPECT_SHA256=$(jq -r .sha256 "$OUT/proxy-bundle.json")" bash "$INSTALLER" install \
+    >"$LOGS/privilege-untrusted-install.log" 2>&1
+  local ut_in=$?
+  local pf_owner
+  pf_owner=$(stat -c '%u:%g %a' "$PREFLIGHT_BIN")
+
+  # P2
+  local exe cmd user tree_visible
+  exe=$(sudo -n readlink -f "/proc/$pid0/exe")
+  cmd=$(sudo -n cat "/proc/$pid0/cmdline" | tr '\0' ' ' | sed 's/ $//')
+  user=$(ps -o user= -p "$pid0" | tr -d ' ')
+  if sudo -n nsenter -t "$pid0" -m -- test -e "$REPO/package.json"; then tree_visible=true; else tree_visible=false; fi
+
+  # P3 · negativos con usuarios reales
+  id -u s9cpx-arena >/dev/null 2>&1 || sudo -n useradd --system --no-create-home --shell /usr/sbin/nologin s9cpx-arena
+  local who t a err
+  for who in s9cpx-arena s9proxy; do
+    for t in \
+      "append-bundle|printf x >>$BUNDLE_DST" \
+      "create-in-libdir|touch /usr/local/lib/s9-docker-proxy/evil.mjs" \
+      "rename-bundle|mv $BUNDLE_DST $BUNDLE_DST.old" \
+      "append-lock|printf x >>$LOCK_DST" \
+      "create-in-policydir|touch /etc/s9-docker-proxy/DIGESTS.lock.new" \
+      "append-unit|printf x >>/etc/systemd/system/$PROXY_UNIT" \
+      "create-dropin|mkdir /etc/systemd/system/$PROXY_UNIT.d" \
+      "append-env|printf x >>$PROXY_ENV" \
+      "append-preflight|printf x >>$PREFLIGHT_BIN"; do
+      a=${t#*|}
+      err=$(sudo -n -u "$who" env LC_ALL=C sh -c "$a" 2>&1)
+      rc=$?
+      jq -nc --arg who "$who" --arg id "${t%%|*}" --argjson rc $rc --arg err "$err" \
+        '{who:$who, id:$id, rc:$rc, eacces: ($err | test("Permission denied")), err:$err}' >>"$STATE/privilege-neg.jsonl"
+    done
+  done
+
+  # P4 · mutaciones con root real (copia de seguridad antes; restauración con dueño/modo)
+  sudo -n install -d -m 0700 /run/s9cpx-bak
+  sudo -n cp -a /etc/systemd/system/$PROXY_UNIT "$PROXY_ENV" /run/s9cpx-bak/
+  restore_unit() { sudo -n cp -a "/run/s9cpx-bak/$PROXY_UNIT" "/etc/systemd/system/$PROXY_UNIT"; sudo -n rm -rf "/etc/systemd/system/$PROXY_UNIT.d"; sudo -n systemctl daemon-reload; }
+  restore_env() { sudo -n cp -a "/run/s9cpx-bak/$(basename "$PROXY_ENV")" "$PROXY_ENV"; }
+  mutate() { # id motivo(regex) aplicar revertir
+    local id=$1 reason=$2 apply=$3 revert=$4 red green found
+    eval "$apply" >>"$LOGS/privilege-mutations.log" 2>&1
+    "${PF[@]}" preflight >"$LOGS/privilege-mut-$id.log" 2>&1
+    red=$?
+    if grep -E "ROJO:" "$LOGS/privilege-mut-$id.log" | grep -qE "$reason"; then found=true; else found=false; fi
+    eval "$revert" >>"$LOGS/privilege-mutations.log" 2>&1
+    "${PF[@]}" preflight >"$LOGS/privilege-mut-$id-revert.log" 2>&1
+    green=$?
+    jq -nc --arg id "$id" --arg reason "$reason" --argjson red $red --argjson found $found --argjson green $green \
+      '{id:$id, reason:$reason, redRc:$red, reasonFound:$found, revertedRc:$green}' >>"$STATE/privilege-mut.jsonl"
+  }
+  mutate bundle-group-writable "docker-proxy\.mjs es escribible por grupo" \
+    "sudo -n chmod g+w $BUNDLE_DST" "sudo -n chmod g-w $BUNDLE_DST"
+  mutate libdir-owned-by-nonroot "s9-docker-proxy es propiedad de uid=" \
+    "sudo -n chown s9cpx-arena /usr/local/lib/s9-docker-proxy" "sudo -n chown root /usr/local/lib/s9-docker-proxy"
+  mutate lockdir-owned-by-nonroot "etc/s9-docker-proxy es propiedad de uid=" \
+    "sudo -n chown s9cpx-arena /etc/s9-docker-proxy" "sudo -n chown root /etc/s9-docker-proxy"
+  mutate env-allowlist-in-tree "debe ser la copia de root" \
+    "sudo -n sed -i 's|^DOCKER_PROXY_IMAGE_ALLOWLIST=.*|DOCKER_PROXY_IMAGE_ALLOWLIST=$REPO/runtimes/DIGESTS.lock|' $PROXY_ENV" "restore_env"
+  mutate unit-npx-tsx "ExecStart (debe ser exactamente|efectivo)" \
+    "sudo -n sed -i 's|^ExecStart=.*|ExecStart=/usr/bin/npx tsx apps/bot-manager/src/docker-proxy-main.ts|' /etc/systemd/system/$PROXY_UNIT; sudo -n systemctl daemon-reload" "restore_unit"
+  mutate unit-workdir-opt "WorkingDirectory" \
+    "sudo -n sed -i 's|^UMask=0077|UMask=0077\nWorkingDirectory=/opt/s9-ai-arena|' /etc/systemd/system/$PROXY_UNIT; sudo -n systemctl daemon-reload" "restore_unit"
+  mutate unit-dropin "drop-ins" \
+    "sudo -n mkdir -p /etc/systemd/system/$PROXY_UNIT.d; printf '[Service]\nEnvironment=X=1\n' | sudo -n tee /etc/systemd/system/$PROXY_UNIT.d/x.conf; sudo -n systemctl daemon-reload" "restore_unit"
+  sudo -n rm -rf /run/s9cpx-bak
+
+  # P5
+  "${PF[@]}" preflight >"$LOGS/privilege-preflight-2.log" 2>&1
+  local pf2=$? pid1 active
+  pid1=$(systemctl show -p MainPID --value "$PROXY_UNIT")
+  active=$(systemctl is-active "$PROXY_UNIT")
+
+  jq -n --argjson pf1 $pf1 --argjson pf2 $pf2 --arg exe "$exe" --arg cmd "$cmd" --arg user "$user" \
+    --argjson tv $tree_visible --arg pid0 "$pid0" --arg pid1 "$pid1" --arg active "$active" \
+    --arg expected "$EXPECTED_EXECSTART" --arg nodeReal "$(readlink -f /usr/bin/node)" \
+    --slurpfile neg "$STATE/privilege-neg.jsonl" --slurpfile mut "$STATE/privilege-mut.jsonl" \
+    --slurpfile bundle "$OUT/proxy-bundle.json" --slurpfile bundleRoot "$OUT/proxy-bundle-root.json" \
+    --argjson utpf $ut_pf --argjson utin $ut_in --arg pfo "$pf_owner" \
+    '{preflightInitialRc: $pf1, preflightFinalRc: $pf2,
+      trust: {untrustedPreflightRc: $utpf, untrustedInstallRc: $utin, installedPreflight: $pfo,
+              bundleRootSha256: ($bundleRoot[0].sha256 // null)},
+      effective: {exe: $exe, nodeReal: $nodeReal, cmdline: $cmd, expectedCmdline: $expected, user: $user, treeVisible: $tv},
+      bundle: ($bundle[0] // null),
+      negatives: $neg, mutations: $mut,
+      process: {mainPidBefore: $pid0, mainPidAfter: $pid1, active: $active}}' >"$OUT/privilege.json"
+  log "privilegio: preflight $pf1→$pf2, exe=$exe user=$user treeVisible=$tree_visible, negativos=$(jq -s 'map(select(.rc != 0 and .eacces)) | length' "$STATE/privilege-neg.jsonl")/$(wc -l <"$STATE/privilege-neg.jsonl"), mutaciones=$(jq -s 'map(select(.redRc == 1 and .reasonFound and .revertedRc == 0)) | length' "$STATE/privilege-mut.jsonl")/$(wc -l <"$STATE/privilege-mut.jsonl")"
+}
+
 # ── up ──────────────────────────────────────────────────────────────────────
 do_up() {
   "${DC[@]}" pull "${INFRA_SERVICES[@]}" >"$LOGS/pull.log" 2>&1 || { log "pull de postgres/queue falló"; return 1; }
@@ -120,22 +303,20 @@ do_up() {
   "${DC[@]}" up --no-start --no-build "${STACK[@]}" >"$LOGS/up-no-start.log" 2>&1 ||
     { log "up --no-start falló"; return 1; }
   ip -4 -o addr show "$BRIDGE" >"$OUT/bridge.txt" 2>&1 || log "aviso: no existe el bridge $BRIDGE"
-  # 2) El proxy, PROCESO DEL HOST, escuchando SÓLO en el gateway de bot-control.
-  (
-    cd "$REPO" || exit 1
-    exec setsid env DOCKER_PROXY_BIND="$GW_IP" DOCKER_PROXY_PORT="$PROXY_PORT" \
-      DOCKER_PROXY_ALLOWED_CLIENTS="$SUBNET" DOCKER_PROXY_IMAGE_ALLOWLIST="$REPO/runtimes/DIGESTS.lock" \
-      DOCKER_PROXY_INSTANCE="$PROXY_INSTANCE" DOCKER_SOCKET=/var/run/docker.sock ARENA_NETWORK=arena \
-      SANDBOX_USER=10001:10001 node_modules/.bin/tsx apps/bot-manager/src/docker-proxy-main.ts
-  ) >"$LOGS/docker-proxy.log" 2>&1 &
-  echo $! >"$STATE/proxy.pid"
+  # 2) El proxy, PROCESO DEL HOST, escuchando SÓLO en el gateway de bot-control, instalado
+  #    COMO EN PRODUCCIÓN (TD-062): bundle construido SIN root, `install-docker-proxy.sh
+  #    install` (root) lo copia a /usr/local/lib/s9-docker-proxy y la allowlist a
+  #    /etc/s9-docker-proxy, y la unidad systemd REAL (User=s9proxy, ProtectHome: el checkout
+  #    de /home/runner es invisible para el proceso) lo ejecuta con /usr/bin/node. Nada de tsx.
+  install_proxy_as_production || { log "instalación del proxy falló (logs/proxy-install.log)"; return 1; }
   local ok=0
   for _ in $(seq 1 60); do
     ss -Hltn "sport = :$PROXY_PORT" | grep -q . && { ok=1; break; }
-    kill -0 "$(cat "$STATE/proxy.pid")" 2>/dev/null || break
+    systemctl is-failed --quiet "$PROXY_UNIT" && break
     sleep 1
   done
-  [ $ok -eq 1 ] || { log "el s9-docker-proxy no escucha (ver logs/docker-proxy.log)"; return 1; }
+  systemctl show -p MainPID --value "$PROXY_UNIT" >"$STATE/proxy.pid"
+  [ $ok -eq 1 ] || { log "el s9-docker-proxy no escucha (journalctl -u $PROXY_UNIT)"; return 1; }
   # 3) Eventos de Docker desde ANTES del primer contenedor que pueda crear el proxy.
   docker events --filter type=container --format '{{json .}}' >"$LOGS/docker-events.jsonl" 2>&1 &
   echo $! >"$STATE/events.pid"
@@ -378,6 +559,8 @@ do_flow() {
 # ── evidence ────────────────────────────────────────────────────────────────
 do_evidence() {
   local s id f
+  # Decisiones del proxy (JSON por línea) desde journald: corre como unidad systemd (TD-062).
+  sudo -n journalctl -u "$PROXY_UNIT" --no-pager -o cat >"$LOGS/docker-proxy.log" 2>&1
   [ -f "$STATE/events.pid" ] && kill "$(cat "$STATE/events.pid")" 2>/dev/null
   [ -f "$LOGS/docker-events.jsonl" ] && cp "$LOGS/docker-events.jsonl" "$OUT/docker-events.jsonl"
   for f in flow-start flow-end; do [ -f "$STATE/$f" ] && cp "$STATE/$f" "$OUT/$f.txt"; done
@@ -401,7 +584,8 @@ do_evidence() {
 
 # ── cleanup ─────────────────────────────────────────────────────────────────
 do_cleanup() {
-  [ -f "$STATE/proxy.pid" ] && kill -TERM -- "-$(cat "$STATE/proxy.pid")" 2>/dev/null
+  # TD-062: el proxy es la unidad systemd instalada; se retira con el instalador.
+  "${PX[@]}" rollback >"$LOGS/proxy-rollback.log" 2>&1
   [ -f "$STATE/events.pid" ] && kill "$(cat "$STATE/events.pid")" 2>/dev/null
   firewall remove >"$LOGS/firewall-remove.log" 2>&1
   docker rm -f "$PROJECT-backup-equivalent" "$PROJECT-bot-equivalent" >/dev/null 2>&1
@@ -420,6 +604,7 @@ case "$CMD" in
   up) do_up ;;
   probes) do_probes ;;
   policy) do_policy ;;
+  privilege) do_privilege ;;
   flow) do_flow ;;
   evidence) do_evidence ;;
   cleanup) do_cleanup ;;

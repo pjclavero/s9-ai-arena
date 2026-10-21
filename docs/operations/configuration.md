@@ -138,12 +138,15 @@ Dos piezas viven en el host, no en Compose, y tienen su propio fichero de entorn
 | Fichero | Plantilla | Lo lee | Documentación |
 |---|---|---|---|
 | `/etc/s9-ai-arena/docker-proxy.env` | `infrastructure/systemd/docker-proxy.env.example` | `s9-docker-proxy.service` (`DOCKER_PROXY_BIND`, `DOCKER_PROXY_PORT`, `DOCKER_PROXY_ALLOWED_CLIENTS`, `DOCKER_PROXY_DENIED_CLIENTS`, `DOCKER_PROXY_IMAGE_ALLOWLIST`, `DOCKER_PROXY_INSTANCE`, `DOCKER_PROXY_BRIDGE`, `DOCKER_PROXY_BRIDGE_WAIT`) | [docker-proxy.md](docker-proxy.md#configuración) |
+| `/etc/s9-docker-proxy/DIGESTS.lock` | `runtimes/DIGESTS.lock` (copia verificada por `install-docker-proxy.sh install`, root:root 0644) | el proxy (`DOCKER_PROXY_IMAGE_ALLOWLIST`, **obligatoria** y exactamente esta ruta: TD-062) | [docker-proxy.md](docker-proxy.md#frontera-de-privilegio-td-062) |
 | `/etc/s9-ai-arena/firewall.env` | `infrastructure/firewall/firewall.env.example` | `s9-firewall.sh` (`S9FW_*`) | [firewall.md](firewall.md#configuración) |
 
 Los valores de producción son las constantes de la red `bot-control` (`10.89.250.1`,
 `10.89.250.0/24`, bridge `s9-botctl0`; [networking.md](networking.md#red-de-control-del-docker-proxy-bot-control)).
-`install-docker-proxy.sh check-env` rechaza un bind comodín, loopback o de `docker0` antes de tocar
-la unidad.
+`install-docker-proxy.sh check-env` rechaza un bind comodín, loopback o de `docker0`, una allowlist
+ausente y cualquier `NODE_*`/`LD_*` antes de tocar la unidad. `preflight` exige además que la allowlist
+sea la copia de root y que nada de lo que ejecuta o lee el proxy sea escribible por otro usuario
+(TD-062).
 
 ## Variables sólo de desarrollo y tests
 

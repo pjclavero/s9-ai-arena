@@ -87,12 +87,12 @@ Estados posibles:
 | [TD-054](#td-054) | `backup.sh` sin modo sin retención | P2 | Operación / backup | ABIERTA |
 | [TD-055](#td-055) | `deploy-contract.json` desfasado | P2 | Operación / despliegue | ABIERTA |
 | [TD-056](#td-056) | `Documentation=` de la unidad del proxy roto | P3 | Operación | CERRADA en la integración RC2; sin desplegar |
-| [TD-057](#td-057) | Árbol de despliegue con ficheros de root | P2 | Operación | ABIERTA |
+| [TD-057](#td-057) | Árbol de despliegue con ficheros de root | P2 | Operación | ABIERTA (desbloqueada por TD-062: chown sólo tras migrar el proxy y con preflight VERDE) |
 | [TD-058](#td-058) | Restos de un smoke manual en producción | P3 | Operación | ABIERTA (operador) |
 | [TD-059](#td-059) | `/healthz` de la API ciego al nivel de migraciones | P2 | Operación / API | ABIERTA |
 | [TD-060](#td-060) | `.env` 0644 y `secrets/` 0755 en el host | P2 | Seguridad / operación | ABIERTA |
 | [TD-061](#td-061) | Seccomp de los bots sin `sendmmsg` (DNS roto) | P0 | Bots / sandbox | CERRADA en la integración RC2; sin desplegar |
-| [TD-062](#td-062) | El proxy ejecuta código de un árbol no sólo de root | P1 | Seguridad / operación | ABIERTA |
+| [TD-062](#td-062) | El proxy ejecuta código de un árbol no sólo de root | P1 | Seguridad / operación | CERRADA en código (rama fix/td-062, pendiente REVIEW); ABIERTA en producción hasta migrar |
 | [TD-063](#td-063) | Otros servicios del host en todas las interfaces | P3 | Seguridad / red | ABIERTA (sin medir) |
 
 ---
@@ -1128,8 +1128,20 @@ Estados posibles:
 - **Detectado:** 2026-10-20, RC1 (REVIEW)
 - **Evidencia:** RC2 (lectura, 2026-10-21): en el árbol de despliegue del host `.git` es `root:root` y ~640 ficheros son de root, mientras que el procedimiento opera como el usuario de despliegue.
 - **Problema:** Un `git` hecho como root rompe el procedimiento normal (permisos), y obliga a usar root para actualizar.
-- **Solución prevista:** `chown` acotado y verificado al usuario de despliegue, **excepto** el código que ejecuta el proxy (ver [TD-062](#td-062)).
-- **Condición de cierre:** 0 ficheros de root fuera de la lista justificada y procedimiento de actualización sin root.
+- **Relación con [TD-062](#td-062) (reescrito 2026-10-21):**
+  - Antes, el chown del árbol reabría TD-062, porque el proxy ejecutaba código del árbol.
+  - Con el proxy instalado fuera del árbol, **el árbol de despliegue deja de ser autoridad del proxy**, y eso ya no ocurre. Queda una condición: que lo vigile el preflight **instalado** (`/usr/local/sbin/s9-docker-proxy-preflight`, de root), que falla si la unidad, el entorno o el proceso vuelven a apuntar a `/opt`.
+  - **Nunca** se usa para esto el `install-docker-proxy.sh` del árbol. Tras el chown sería del usuario de despliegue y podría imprimir VERDE a voluntad (REVIEW #167, B1). Además, ese script se niega a dar veredicto con rc 2 cuando no es sólo de root.
+  - El instalador sale de un clon de root fijado al SHA revisado ([upgrades.md](../operations/upgrades.md#td-062)), no del árbol.
+  - Ya no hay lista de excepciones: dentro del árbol no queda nada que deba seguir siendo de root por el proxy.
+  - La evidencia del cambio está en `infrastructure/tests/docker-proxy-privilege.test.ts` y en la regla R11 de `container-proxy-e2e`.
+  - Las mutaciones `env-allowlist-in-tree`, `unit-npx-tsx` y `unit-workdir-opt` ⇒ ROJO.
+- **Solución prevista:**
+  - **Orden:** primero migrar el proxy ([upgrades.md](../operations/upgrades.md#td-062)) y obtener VERDE con el preflight **instalado** (`/usr/local/sbin/s9-docker-proxy-preflight preflight`) en el host. **No antes.**
+  - Después, `chown -R` **del árbol de despliegue** (y sólo de él) al usuario de despliegue.
+  - Por último, `/usr/local/sbin/s9-docker-proxy-preflight preflight` otra vez: debe seguir VERDE, porque nada de lo que el proxy ejecuta o lee, ni el propio preflight, vive en el árbol.
+  - **No ejecutado** en este cambio.
+- **Condición de cierre:** 0 ficheros de root en el árbol, procedimiento de actualización sin root y el preflight **instalado** VERDE después del chown.
 
 <a id="td-058"></a>
 ## TD-058 — Restos de un smoke manual en producción
@@ -1180,14 +1192,57 @@ Estados posibles:
 <a id="td-062"></a>
 ## TD-062 — El proxy ejecuta código de un árbol que no es sólo de root
 
-- **Estado:** ABIERTA
+- **Estado:** CERRADA en el código (rama `fix/td-062-proxy-privilege-boundary`, pendiente de REVIEW). **ABIERTA en producción** hasta migrar la unidad instalada ([upgrades.md](../operations/upgrades.md#td-062)).
 - **Prioridad:** P1
 - **Área:** Seguridad / operación
 - **Detectado:** 2026-10-21, RC2 (DEV-SECOPS; REVIEW)
-- **Evidencia:** `infrastructure/systemd/s9-docker-proxy.service`: el usuario del proxy está en el grupo `docker` (equivalente a root) y ejecuta `npx tsx apps/bot-manager/src/docker-proxy-main.ts` desde el árbol de despliegue. Si ese árbol pasa al usuario de despliegue ([TD-057](#td-057)), ese usuario podría modificar el código que corre con acceso al socket de Docker. `ReadOnlyPaths` sólo impide que escriba el propio proxy.
-- **Problema:** Escalada potencial del usuario de despliegue a root a través del proxy.
-- **Solución prevista:** Instalar el código del proxy (y su allowlist) en una ruta propiedad de root, como ya hace el firewall (`/usr/local/sbin`), o fijar su contenido por hash en el arranque.
-- **Condición de cierre:** Test de la unidad/instalador que rechaza un `WorkingDirectory`/`ExecStart` escribible por un usuario no root.
+- **Evidencia:** la unidad instalada en producción (RC1/RC2, lectura del 2026-10-21) corre con `User=s9proxy` en el grupo `docker` (= root en el host), `WorkingDirectory=` en el árbol de despliegue y `ExecStart=/usr/bin/npx tsx apps/bot-manager/src/docker-proxy-main.ts`. El proceso real es `node --require <árbol>/node_modules/tsx/dist/preflight.cjs --import <árbol>/node_modules/tsx/dist/loader.mjs …`. En ese árbol, la raíz, `apps/bot-manager/src/`, `node_modules/` (tsx, esbuild), `node_modules/.bin/`, `package.json`, `tsconfig.json` y `runtimes/DIGESTS.lock` son del usuario de despliegue; `docker-proxy.ts` y `container-runner.ts` son de root, pero su directorio padre no. **TD-062 está abierta HOY, no sólo «tras el chown de TD-057»:** el usuario de despliegue puede reescribir la allowlist, sustituir el intérprete/loader o renombrar el código, y lo que ejecute el proxy corre con acceso al socket de Docker. `ReadOnlyPaths` sólo impide que escriba el propio proxy, no que otro cambie lo que ejecuta.
+- **Problema:** Escalada del usuario de despliegue a root a través del proxy.
+- **Regla:** «el llamador puede pedir una operación; no puede modificar la autoridad que la aplica». Todo lo que el proxy EJECUTA o LEE como política es de root y no lo escribe nadie más, con todos sus directorios padre hasta `/`.
+- **Cierre (código):**
+  - **Artefacto instalado:** `infrastructure/scripts/build-docker-proxy-bundle.mjs` genera un bundle ESM autocontenido. Comprueba con el metafile de esbuild que todas las entradas vienen de `apps/bot-manager/src/` y que sólo importa `node:*`. Es determinista: el mismo `--commit` da el mismo sha256 con cualquier cwd y en cualquier máquina (`absWorkingDir`; regresión real en la CI, corregida y probada).
+  - **Ancla de confianza (REVIEW #167, B1):**
+    - el instalador se ejecuta desde un **clon de root fijado al SHA revisado**, y el bundle se construye en ese clon (`npm ci --ignore-scripts`, `--commit <SHA>`);
+    - `install`, `preflight` y `validate` comprueban su propia procedencia y la de lo que instalan, y se niegan con rc 2 si no son sólo de root;
+    - `install` instala el preflight en `/usr/local/sbin/s9-docker-proxy-preflight` (root 0755), y `validate`, `preflight`, `restore` y TD-057 usan **sólo** esa copia.
+  - **Instalación:**
+    - copia el bundle a `/usr/local/lib/s9-docker-proxy/docker-proxy.mjs` (dir 0755, ficheros 0644, root:root): primero a un temporal de root, cuyo sha256 tiene que ser `S9PX_EXPECT_SHA256`, y registra ese sha256 junto al bundle;
+    - `S9PX_EXPECT_SHA256` es **obligatorio**: es el sha256 que publica la CI de `main` para el SHA, una medida independiente. Sólo tiene valor porque lo compara una copia de root: ejecutado desde una copia escribible por otro, el mismo script podría saltárselo (por eso el ancla es la procedencia, no la variable).
+  - **Migración transaccional (B2):**
+    - `install` hace copia de seguridad de la unidad, los drop-ins y el `.env` (root 0700);
+    - con `S9PX_MIGRATE_ENV=1` cambia **sólo** la línea de la allowlist, y sólo cuando la copia de root ya está instalada, así que no hay ventana;
+    - si `preflight --static` sale ROJO tras escribir la unidad, restaura todo;
+    - `restore <copia>` deshace un install.
+  - **Allowlist:** se copia a `/etc/s9-docker-proxy/DIGESTS.lock` (root:root 0644) tras validar su formato.
+  - **Unidad:** ejecuta `/usr/bin/node --no-addons <bundle>`, sin `npx`/`tsx` y sin `WorkingDirectory`; el árbol queda inaccesible (`InaccessiblePaths=-/opt/s9-ai-arena`) y el endurecimiento S6 baja la exposición de `systemd-analyze security` de 6.5 a 1.5.
+  - **Entorno:** `DOCKER_PROXY_IMAGE_ALLOWLIST` pasa a ser obligatoria y explícita. En el bundle no se deduce del árbol (exit 78), y `check-env` rechaza `NODE_*`/`LD_*` y el opt-in de tests.
+  - **`preflight [--static]`** (también dentro de `validate`) falla:
+    - si cualquier ruta ejecutada o leída como política, o un padre suyo hasta `/`, no es de root, es escribible por grupo u otros o tiene ACL;
+    - si la unidad (fichero y lo que systemd tiene cargado) invoca otra cosa, apunta al árbol, fija `DOCKER_PROXY_INSECURE_BIND_FOR_TESTS` o `S9PX_*`, o tiene drop-ins (también los globales `service.d` de `/etc` y `/run` y un fragmento en `/run`, visibles incluso con `--static`);
+    - si el proceso en marcha no es `node` + el bundle, o ve el árbol;
+    - si el entorno apunta la allowlist fuera de la copia de root.
+  - **Firewall:** las unidades se comprueban con la misma regla (sólo `/usr/local/sbin/s9-firewall`).
+- **Pruebas:**
+  - `infrastructure/tests/docker-proxy-privilege.test.ts` (job `unit`):
+    - el bundle copiado fuera del repo arranca, y el build es determinista con otro cwd;
+    - install y preflight sobre un árbol de pruebas con propietarios reales (userns con subuids o `sudo -n`), con el instalador ejecutado desde una copia de root;
+    - 26 mutaciones de fixture en ROJO por su motivo;
+    - B1: se niega desde una copia de no root, y `S9PX_EXPECT_SHA256` es obligatorio y se comprueba;
+    - B2: migración de una sola línea con copia de seguridad, restauración tras un `--static` en ROJO y `restore`;
+    - EACCES real para un usuario no root.
+  - `container-proxy-e2e` (R11, check obligatorio):
+    - copia de root del commit, bundle construido por root desde otro cwd e igual al del usuario;
+    - el instalador real como unidad systemd real, y el preflight **instalado**;
+    - el instalador del checkout se niega (rc 2);
+    - proceso efectivo, EACCES para `s9cpx-arena` y `s9proxy` (también sobre el preflight instalado);
+    - 7 mutaciones de root ROJO → revertidas → VERDE.
+  - `docker-e2e` y `golden` ejecutan el bundle.
+- **Condición de cierre (cumplida en código):** el instalador y el preflight rechazan un `WorkingDirectory`/`ExecStart` o una política escribible por un usuario no root (calibrado con mutaciones). **Queda:** migrar producción (operador, [upgrades.md](../operations/upgrades.md#td-062)) y que `preflight` dé VERDE allí.
+- **Riesgo residual (declarado):**
+  - se confía en GitHub y en el SHA revisado. El clon de root se obtiene por HTTPS y se fija por commit; las dependencias del build salen del lock de ese SHA (integridad sha512), sin ejecutar sus scripts;
+  - la autocomprobación de procedencia protege del error del operador, no de una copia ya reescrita: lo que protege de eso es el procedimiento (clon de root, preflight instalado);
+  - `s9-firewall.sh install` debe ejecutarse también desde el clon de root ([firewall.md](../operations/firewall.md)). No tiene autocomprobación propia; el preflight vigila lo que instala;
+  - el preflight no audita las bibliotecas dinámicas de `node` (`/usr/lib`, paquetes de la distribución).
 
 <a id="td-063"></a>
 ## TD-063 — Otros servicios del host escuchan en todas las interfaces

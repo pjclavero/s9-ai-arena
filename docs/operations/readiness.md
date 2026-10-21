@@ -83,6 +83,9 @@ Más la comprobación de la puerta de ejecución (`gateState`), también sin son
   podría dar verde en todo lo anterior y seguir sin ejecutar código de usuario
   ([TD-001](../roadmap/technical-debt.md#td-001), [TD-002](../roadmap/technical-debt.md#td-002)).
 - No mide producción por sí solo: hay que pasarle los contenedores.
+- No mide la frontera de privilegio del proxy de Docker del host (proceso fuera de Compose): eso lo
+  hace `sudo /usr/local/sbin/s9-docker-proxy-preflight preflight`, la copia de root instalada y nunca la del árbol (rc 0 obligatorio antes de
+  activar la ejecución real; [docker-proxy.md](docker-proxy.md#validación), [TD-062](../roadmap/technical-debt.md#td-062)).
 - Con 9 de 12 imágenes desplegadas sin identidad de build, `security.deployed_version` falla en la
   instalación de referencia ([TD-006](../roadmap/technical-debt.md#td-006)).
 

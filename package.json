@@ -18,6 +18,7 @@
     "test:visual": "playwright test -c acceptance/visual/playwright.config.ts",
     "test:browser": "bash tests/browser/run.sh",
     "typecheck": "tsc --noEmit && tsc --noEmit -p apps/web",
+    "build:docker-proxy": "node infrastructure/scripts/build-docker-proxy-bundle.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "changeset": "changeset",

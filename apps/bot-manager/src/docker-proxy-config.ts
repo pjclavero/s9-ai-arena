@@ -41,10 +41,24 @@ type Interfaces = Record<string, Array<{ address: string }> | undefined>;
  *     DOCKER_PROXY_INSECURE_BIND_FOR_TESTS=1, que sólo relaja comodín/docker0;
  *   - bind no loopback sin DOCKER_PROXY_ALLOWED_CLIENTS explícito;
  *   - lista de clientes o allowlist de imágenes ilegible/vacía;
- *   - puerto o instancia no válidos.
+ *   - puerto o instancia no válidos;
+ *   - (opts.requireExplicitAllowlist, el bundle instalado) allowlist sin ruta absoluta explícita.
  * `interfaces` = os.networkInterfaces() (inyectable en tests).
  */
-export function proxyConfigFromEnv(env: NodeJS.ProcessEnv, interfaces: Interfaces = {}): ProxyRuntimeConfig {
+export interface ProxyConfigOptions {
+  /**
+   * TD-062 · el ARTEFACTO INSTALADO (bundle) exige DOCKER_PROXY_IMAGE_ALLOWLIST explícita y
+   * absoluta: la ruta por defecto se deduce de la ubicación del módulo (el árbol del repo),
+   * que en el bundle no significa nada y nunca debe ser la autoridad de la allowlist.
+   */
+  requireExplicitAllowlist?: boolean;
+}
+
+export function proxyConfigFromEnv(
+  env: NodeJS.ProcessEnv,
+  interfaces: Interfaces = {},
+  opts: ProxyConfigOptions = {},
+): ProxyRuntimeConfig {
   const warnings: string[] = [];
   const insecureOptIn = env.DOCKER_PROXY_INSECURE_BIND_FOR_TESTS === "1";
   const bind = (env.DOCKER_PROXY_BIND ?? "").trim();
@@ -102,7 +116,13 @@ export function proxyConfigFromEnv(env: NodeJS.ProcessEnv, interfaces: Interface
   const deniedRaw = (env.DOCKER_PROXY_DENIED_CLIENTS ?? "").trim();
   const deniedClients = [...denied, ...(deniedRaw ? parseAllowedClients(deniedRaw).list : [])];
 
-  const imageAllowlistPath = (env.DOCKER_PROXY_IMAGE_ALLOWLIST ?? "").trim() || DEFAULT_IMAGE_ALLOWLIST_PATH;
+  const allowlistRaw = (env.DOCKER_PROXY_IMAGE_ALLOWLIST ?? "").trim();
+  if (opts.requireExplicitAllowlist && !allowlistRaw.startsWith("/"))
+    throw new Error(
+      "DOCKER_PROXY_IMAGE_ALLOWLIST es obligatoria y absoluta en el proxy instalado " +
+        `(recibido: ${allowlistRaw || "vacío"}; producción: /etc/s9-docker-proxy/DIGESTS.lock)`,
+    );
+  const imageAllowlistPath = allowlistRaw || DEFAULT_IMAGE_ALLOWLIST_PATH;
   const imageAllowlist = loadImageAllowlist(imageAllowlistPath);
 
   const instance = (env.DOCKER_PROXY_INSTANCE ?? "").trim() || DEFAULT_PROXY_INSTANCE;

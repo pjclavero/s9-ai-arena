@@ -96,7 +96,9 @@ Instalar y aplicar:
 > propias, por especificación).
 
 ```bash
-sudo bash infrastructure/firewall/s9-firewall.sh install
+# Desde el CLON DE ROOT fijado al SHA revisado ($S, upgrades.md#td-062), nunca desde /opt:
+# el script se ejecuta como root y el árbol de despliegue lo puede escribir otro usuario (TD-062).
+sudo bash "$S/infrastructure/firewall/s9-firewall.sh" install
 sudo /usr/local/sbin/s9-firewall check
 ```
 

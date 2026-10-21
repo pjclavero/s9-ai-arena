@@ -16,6 +16,7 @@ productivo con identidad de build** (o usar las imágenes de la CI), **verificar
 - [Verificar el contenido de la imagen](#verificar-el-contenido-de-la-imagen)
 - [Desplegar](#desplegar)
 - [RC2: proxy de Docker, red dedicada y firewall](#rc2-proxy-de-docker-red-dedicada-y-firewall)
+- [TD-062: migrar el proxy al artefacto instalado](#td-062)
 - [Override de versión por servicio](#override-de-versión-por-servicio)
 - [Alinear todas las imágenes con un mismo `BUILD_COMMIT`](#alinear-todas-las-imágenes-con-un-mismo-build_commit)
 - [PostgreSQL y Redis](#postgresql-y-redis)
@@ -131,6 +132,142 @@ en este orden, con la ejecución real todavía apagada (`DOCKER_PROXY_URL` vací
 
 Encender la ejecución real (fijar `DOCKER_PROXY_URL` en `tournament-worker`) sigue siendo un gate
 aparte del operador.
+
+<a id="td-062"></a>
+## TD-062: migrar el proxy al artefacto instalado
+
+**Por qué.** La unidad que hay hoy en el host (RC1/RC2) ejecuta `npx tsx` desde el árbol de
+despliegue, con `WorkingDirectory` dentro de él, y lee la allowlist de `runtimes/DIGESTS.lock`. Ese
+árbol lo puede escribir el usuario de despliegue, y el proxy tiene el grupo `docker`. Resultado: el
+usuario de despliegue puede llegar a root ([TD-062](../roadmap/technical-debt.md#td-062)). Tras la
+migración, el proxy ejecuta un bundle de root fuera del árbol
+([docker-proxy.md](docker-proxy.md#frontera-de-privilegio-td-062)).
+
+**Regla de confianza.** Nada de lo que se ejecuta como root en esta migración sale del árbol de
+despliegue (`/opt/s9-ai-arena`). Ese árbol es del usuario de despliegue, y su `install-docker-proxy.sh`
+podría estar reescrito. Todo sale de un **clon de root** fijado al SHA revisado, y después, de la
+**copia instalada** del preflight (`/usr/local/sbin/s9-docker-proxy-preflight`). El instalador
+comprueba su propia procedencia y la de lo que instala: ejecutado desde una copia que no es sólo de
+root, se niega con rc 2. Esa comprobación protege del error del operador, no de un atacante que ya
+reescribió la copia. Lo que protege del atacante es este procedimiento.
+
+**Precondiciones.**
+- `SHA` = el commit fusionado en `main` que contiene TD-062, con la CI de `main` en verde (el push,
+  no la de PR).
+- `EXPECTED` = el sha256 del bundle que publicó esa CI para ese SHA. Está en el run de `main` →
+  job `functional-e2e / container-proxy-e2e`, en el resumen del paso «Veredicto independiente»,
+  fila «R11 B1 el bundle construido por root… (sha256)». También está en el artefacto
+  `functional-e2e-container-proxy-<intento>`, en `out/proxy-bundle.json`.
+  - No sirve el de un run de PR: la CI de PR construye el *merge ref*, otro commit, y el sha no
+    coincidiría.
+  - El bundle lleva el commit en su cabecera, así que el sha depende de `--commit`.
+- La red `bot-control` existe. Si no, el `ExecStartPre` espera y la unidad no arranca.
+- Ventana del operador: el proxy se reinicia una vez, durante unos segundos. La ejecución real de
+  bots sigue apagada.
+
+Todos los comandos son de root, en una shell con `umask 022`: sin ella, root podría crear ficheros
+escribibles por otros, y el preflight los rechazaría con razón. `S=/root/s9-td062/$SHA` es el clon
+de confianza.
+
+1. **Clon de root fijado al SHA.** No usar `git` sobre `/opt/s9-ai-arena`: su `.git` es root:root y
+   el árbol es de otro usuario («dubious ownership»), y además no es de fiar.
+
+   ```bash
+   install -d -m 0700 /root/s9-td062
+   git clone -q https://github.com/pjclavero/s9-ai-arena "$S"
+   git -C "$S" checkout -q --detach "$SHA"
+   test "$(git -C "$S" rev-parse HEAD)" = "$SHA" && echo CLON_OK
+   ```
+
+   **PARA** si no imprime `CLON_OK`.
+
+2. **Construir el bundle en el clon y compararlo con la CI.** Se instalan las dependencias del lock
+   **sin scripts de instalación**, y se pasa `--commit`: no depende de `git` y da el mismo sha256 que
+   la CI.
+
+   ```bash
+   cd "$S" && npm ci --ignore-scripts --no-audit --no-fund
+   node infrastructure/scripts/build-docker-proxy-bundle.mjs --commit "$SHA"   # imprime "sha256"; no depende del cwd
+   test "$(cut -c1-64 dist/s9-docker-proxy/docker-proxy.mjs.sha256)" = "$EXPECTED" && echo SHA_OK
+   ```
+
+   **PARA** si no imprime `SHA_OK`. No instales: el bundle no es el que la CI probó.
+
+3. **Estado de partida (sólo lectura, con la copia de root del clon).**
+
+   ```bash
+   bash "$S/infrastructure/scripts/install-docker-proxy.sh" preflight; echo rc=$?
+   ```
+
+   - `rc=1` (ROJO) con «ExecStart debe ser exactamente…»: es lo esperado con la unidad de RC1/RC2.
+     Sigue.
+   - `rc=0` (VERDE): **PARA** y averigua por qué antes de tocar nada.
+     - Si `systemctl cat s9-docker-proxy` ya muestra `ExecStart=/usr/bin/node --no-addons /usr/local/lib/…`,
+       la migración ya está hecha: ve al paso 5.
+     - Si muestra `npx tsx` y aun así sale VERDE, el preflight no mide lo que dice: no sigas e
+       informa.
+   - `rc=2`: el clon no es sólo de root. Repite el paso 1.
+
+4. **Instalar (transaccional).**
+
+   ```bash
+   S9PX_EXPECT_SHA256="$EXPECTED" S9PX_MIGRATE_ENV=1 bash "$S/infrastructure/scripts/install-docker-proxy.sh" install
+   ```
+
+   Lo que hace, en este orden:
+   1. Comprueba su procedencia y la de lo que va a instalar.
+   2. Copia el bundle a un temporal de root y exige `sha256 == S9PX_EXPECT_SHA256`. Si no coincide,
+      **PARA** sin tocar nada.
+   3. **Hace una copia de seguridad** de la unidad, sus drop-ins y el `.env` en
+      `/var/lib/s9-docker-proxy/backup/<fecha>-<pid>/` (root 0700). Imprime la ruta: **anótala**.
+   4. Instala el bundle, la allowlist (`/etc/s9-docker-proxy/DIGESTS.lock`) y el preflight
+      (`/usr/local/sbin/s9-docker-proxy-preflight`).
+   5. Sólo entonces, con la copia de root de la allowlist ya en su sitio, cambia en el `.env` **una
+      línea**: `DOCKER_PROXY_IMAGE_ALLOWLIST=/etc/s9-docker-proxy/DIGESTS.lock`. Ésa es la razón de
+      `S9PX_MIGRATE_ENV=1`.
+      - **No hay ventana** en la que un reinicio del proxy viejo lea una allowlist inexistente.
+      - El proxy de RC1 ni siquiera lee esa variable.
+   6. Pasa `check-env`, escribe la unidad y pasa `preflight --static`. Si sale ROJO, **restaura la
+      unidad y el `.env` desde la copia** y sale con 1 sin reiniciar el proxy: no queda un estado a
+      medias. El bundle y la allowlist instalados no los usa nadie hasta que la unidad nueva arranca.
+   7. `daemon-reload`, reinicia la unidad y pasa el `preflight` completo con la **copia instalada**.
+
+   Sin `S9PX_MIGRATE_ENV=1` y con el `.env` de RC2, aborta antes de escribir la unidad.
+
+5. **Verificar con la copia instalada** (nunca con la del árbol):
+
+   ```bash
+   /usr/local/sbin/s9-docker-proxy-preflight validate   # preflight VERDE + escucha + firewall
+   journalctl -u s9-docker-proxy -o cat | grep -m1 escuchando   # "artifact":{"kind":"bundle","commit":"<SHA>"} y la allowlist de /etc
+   ```
+
+   **Si sale ROJO, vuelve atrás** (abajo) y abre una incidencia con la salida.
+
+6. **Después, y sólo después,** se puede aplicar el chown del árbol de
+   [TD-057](../roadmap/technical-debt.md#td-057). A continuación, `/usr/local/sbin/s9-docker-proxy-preflight preflight`
+   debe seguir VERDE. Nada de lo que ejecuta el proxy, ni el preflight, vive en el árbol.
+7. Borra el clon (`rm -rf /root/s9-td062`). La copia de seguridad se conserva.
+
+**Actualizar la allowlist o el código del proxy** en versiones posteriores: repite los pasos 1, 2,
+4 (sin `S9PX_MIGRATE_ENV`) y 5 con el SHA nuevo. Un cambio en `runtimes/DIGESTS.lock` **no** llega
+al proxy hasta que se reinstala, y `preflight` avisa si la copia de root y la del árbol difieren.
+
+**Vuelta atrás.**
+
+```bash
+/usr/local/sbin/s9-docker-proxy-preflight restore /var/lib/s9-docker-proxy/backup/<fecha>-<pid>
+```
+
+- Repone exactamente la unidad, los drop-ins y el `.env` anteriores, recarga systemd y reinicia el
+  proxy.
+- Antes de copiar nada comprueba que la copia de seguridad (el directorio, sus padres y todo su
+  contenido) es sólo de root y sin escritura de grupo u otros. Si no lo es, **no restaura nada** y
+  sale con error: lo restaurado lo ejecuta systemd como root.
+- Si lo restaurado es la unidad de RC1/RC2, **TD-062 vuelve a estar abierta**, y el comando lo avisa.
+  Es una medida de emergencia para recuperar el servicio, no un estado admitido: hay que volver a
+  migrar en cuanto se corrija la causa.
+- El bundle, la allowlist y el preflight instalados se quedan. No molestan a la unidad antigua, y
+  el preflight seguirá diciendo ROJO hasta que se migre.
 
 ## Override de versión por servicio
 
