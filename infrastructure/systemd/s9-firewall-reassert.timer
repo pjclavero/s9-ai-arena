@@ -1,0 +1,16 @@
+# RC2 · DEV-SECOPS — cada 5 minutos re-afirma el firewall de host (s9-firewall-reassert.service).
+# Complementa a s9-firewall.service, que se aplica al arrancar y cuando se reinicia Docker o
+# Tailscale. Ver docs/operations/firewall.md.
+
+[Unit]
+Description=S9 AI Arena · re-afirmar el firewall de host cada 5 minutos
+Documentation=file:///opt/s9-ai-arena/docs/operations/firewall.md
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=s9-firewall-reassert.service
+
+[Install]
+WantedBy=timers.target

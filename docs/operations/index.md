@@ -35,6 +35,8 @@ documenta [TD-023](../roadmap/technical-debt.md#td-023).
 | Saber qué variable hace qué | [configuration.md](configuration.md) | `infrastructure/.env` |
 | Entender servicios, perfiles, volúmenes y redes | [docker.md](docker.md) | host |
 | Operar el proxy de Docker del host (ejecución de bots) | [docker-proxy.md](docker-proxy.md) | host (systemd) |
+| Cerrar el puerto del proxy y el sshd del host a los contenedores (firewall como código) | [firewall.md](firewall.md) | host (systemd, root) |
+| Descargar las imágenes de runtime de los bots antes de activar la ejecución | [installation.md](installation.md#imágenes-de-runtime-de-los-bots) | host |
 | Publicar detrás de un proxy inverso / TLS | [networking.md](networking.md) | host + proxy |
 | Comprobar las copias | [backup.md](backup.md) | host |
 | Restaurar | [restore.md](restore.md) | host nuevo o aislado |

@@ -127,6 +127,25 @@ Alternativa: construir las imágenes en un host de build con identidad (ADR-016)
 después; ver [upgrades.md](upgrades.md#construir-fuera-del-host-productivo). No construyas en el
 host productivo con `--profile production build`.
 
+### Imágenes de runtime de los bots
+
+`$DC pull` **no** trae las imágenes de runtime de los bots (python y node): no son servicios del
+compose, las lanza el proxy de Docker ([docker-proxy.md](docker-proxy.md)), y el proxy **no permite
+`pull`**. Hay que descargarlas en el Docker del host antes de activar la ejecución real; es parte del
+Gate F (host / proxy / sandbox):
+
+```bash
+bash scripts/ops/pull-runtime-images.sh               # descarga por digest y verifica
+bash scripts/ops/pull-runtime-images.sh --check-only  # sólo comprueba (sólo lectura)
+```
+
+El script toma **sólo la 3ª columna** de `runtimes/DIGESTS.lock` (la misma imagen que admite la
+allowlist del proxy; la base de la 2ª columna nunca se descarga), rechaza cualquier referencia que no
+sea `repo@sha256:<64 hex>` y verifica con `docker image inspect` que el digest exacto está en
+`RepoDigests` (un `pull` con rc=0 no basta). Termina con `RUNTIME_IMAGES_READY=YES` y rc=0 sólo si
+todas están presentes. GHCR se descarga de forma anónima (el repositorio es público): no hace falta
+ninguna credencial en el host.
+
 ## 7. Arrancar
 
 ```bash
@@ -211,7 +230,7 @@ Más comprobaciones en [diagnostics.md](diagnostics.md) y [readiness.md](readine
 ## Documentación relacionada
 
 [first-run.md](first-run.md) · [configuration.md](configuration.md) · [docker.md](docker.md) ·
-[networking.md](networking.md) · [backup.md](backup.md) · [upgrades.md](upgrades.md) ·
+[networking.md](networking.md) · [firewall.md](firewall.md) · [backup.md](backup.md) · [upgrades.md](upgrades.md) ·
 [../technical/services.md](../technical/services.md) · [../technical/database.md](../technical/database.md) ·
 [../development/releases.md](../development/releases.md) · ADR: [ADR-016](../adr/ADR-016-identidad-de-build.md),
 [ADR-017](../adr/ADR-017-contrato-de-release.md).
@@ -229,3 +248,5 @@ Más comprobaciones en [diagnostics.md](diagnostics.md) y [readiness.md](readine
 | `/api/healthz` cae en la web; `/api/v1/healthz` es la API | CODE_VERIFIED + RUNTIME_VERIFIED | `infrastructure/gateway/nginx-behind-proxy.conf:72-107`; entorno aislado |
 | `smoke.sh` comprueba `/api/healthz` y `/replays/healthz` | CODE_VERIFIED | `infrastructure/scripts/smoke.sh:21-24` |
 | Contenedores Node bajan a uid 1000 | CODE_VERIFIED | `infrastructure/docker/node-service/Dockerfile:13-15,46`; `entrypoint.sh` |
+| `pull-runtime-images.sh` descarga sólo la 3ª columna del lock, por digest, y falla si `image inspect` no muestra el digest | CODE_VERIFIED + RUNTIME_VERIFIED | `infrastructure/tests/pull-runtime-images.test.ts`; Docker rootless aislado: rc=0 con el lock real, rc=1 con un digest inexistente |
+| En un host sin las imágenes de runtime, `--check-only` da `ABSENT` y rc=1 | RUNTIME_VERIFIED (2026-10-21, sólo lectura) | `--check-only` contra un host real sin las imágenes |

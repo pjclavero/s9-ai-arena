@@ -1,0 +1,25 @@
+# RC2 · DEV-SECOPS — re-afirma el firewall de host periódicamente (lo lanza
+# s9-firewall-reassert.timer). `apply` es idempotente: si no hay deriva, no cambia nada y
+# lo dice («sin cambios»); si la hay (p. ej. tailscaled volvió a poner ts-input en la regla
+# 1 de INPUT sin que se propagara un reinicio), la corrige sin ventana abierta y lo registra.
+# Ver docs/operations/firewall.md.
+
+[Unit]
+Description=S9 AI Arena · re-afirmar el firewall de host (corrige deriva)
+Documentation=file:///opt/s9-ai-arena/docs/operations/firewall.md
+After=s9-firewall.service docker.service tailscaled.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/s9-firewall apply
+
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+ReadWritePaths=-/run/xtables.lock
