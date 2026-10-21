@@ -1201,7 +1201,7 @@ Estados posibles:
   - **Artefacto instalado:** `infrastructure/scripts/build-docker-proxy-bundle.mjs` (`npm run build:docker-proxy`, SIN root) genera un bundle ESM autocontenido. Comprueba con el metafile de esbuild que todas las entradas vienen de `apps/bot-manager/src/` y que sólo importa `node:*`.
   - **Instalación:** `install-docker-proxy.sh install` (root) lo copia a `/usr/local/lib/s9-docker-proxy/docker-proxy.mjs` (dir 0755, ficheros 0644, root:root). Primero lo copia a un temporal de root y verifica el sha256 de la copia (`S9PX_EXPECT_SHA256` opcional), y registra ese sha256 junto al bundle.
   - **Allowlist:** se copia a `/etc/s9-docker-proxy/DIGESTS.lock` (root:root 0644) tras validar su formato.
-  - **Unidad:** ejecuta `/usr/bin/node --no-addons <bundle>`, sin `npx`/`tsx` y sin `WorkingDirectory`; el árbol queda inaccesible (`InaccessiblePaths=-/opt/s9-ai-arena`) y el endurecimiento S6 baja la exposición de `systemd-analyze security` de 6.5 a 1.4.
+  - **Unidad:** ejecuta `/usr/bin/node --no-addons <bundle>`, sin `npx`/`tsx` y sin `WorkingDirectory`; el árbol queda inaccesible (`InaccessiblePaths=-/opt/s9-ai-arena`) y el endurecimiento S6 baja la exposición de `systemd-analyze security` de 6.5 a 1.5.
   - **Entorno:** `DOCKER_PROXY_IMAGE_ALLOWLIST` pasa a ser obligatoria y explícita. En el bundle no se deduce del árbol (exit 78), y `check-env` rechaza `NODE_*`/`LD_*` y el opt-in de tests.
   - **`preflight [--static]`** (también dentro de `validate`) falla:
     - si cualquier ruta ejecutada o leída como política, o un padre suyo hasta `/`, no es de root, es escribible por grupo u otros o tiene ACL;

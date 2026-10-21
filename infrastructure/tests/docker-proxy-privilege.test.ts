@@ -286,7 +286,9 @@ describe("U · lo que ejecuta la unidad funciona DENTRO de su sandbox real (syst
   });
 
   it("`ip -4 -o addr show`, `grep` y `sleep` (ExecStartPre) funcionan con el seccomp de la unidad", () => {
-    const ipBin = ["/usr/sbin/ip", "/sbin/ip", "/usr/bin/ip", "/bin/ip"].find((p) => spawnSync("test", ["-x", p]).status === 0);
+    const ipBin = ["/usr/sbin/ip", "/sbin/ip", "/usr/bin/ip", "/bin/ip"].find(
+      (p) => spawnSync("test", ["-x", p]).status === 0,
+    );
     expect(ipBin, "no hay `ip` en el host del test").toBeTruthy();
     const r = run(["/bin/sh", "-ec", `${ipBin} -4 -o addr show dev lo | grep -qF " 127.0.0.1/"; sleep 0; echo PRE_OK`]);
     expect(r.out, r.out).toContain("PRE_OK");

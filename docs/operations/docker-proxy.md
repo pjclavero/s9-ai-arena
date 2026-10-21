@@ -111,12 +111,17 @@ Cómo se garantiza:
     escribible;
   - `InaccessiblePaths=-/opt/s9-ai-arena` y `ProtectHome`;
   - sin capacidades (`CapabilityBoundingSet=`), `PrivateDevices`, `ProtectClock`, `ProtectProc`,
-    `RestrictSUIDSGID`, `SystemCallArchitectures=native` y `SystemCallFilter=@system-service ~@privileged`
+    `RestrictSUIDSGID`, `SystemCallArchitectures=native` y `SystemCallFilter=@system-service`
     (errno EPERM), `UMask=0077`, y `UnsetEnvironment` de `NODE_*`/`LD_*`;
   - `MemoryDenyWriteExecute=false` **declarado**: V8 necesita memoria W+X.
-  - Exposición de `systemd-analyze security --offline`: **1.4** (antes 6.5).
+  - Exposición de `systemd-analyze security --offline`: **1.5** (antes 6.5).
   - No se usa `PrivateUsers`, porque haría perder el grupo `docker` del socket, ni
     `PrivateNetwork`, porque el proxy escucha.
+  - Tampoco se usa `~@privileged`: `ip`, en el `ExecStartPre`, suelta capacidades con `capset()`
+    y con EPERM sale con 1, así que el bridge «nunca» aparecería. Pasó en la CI y se reprodujo con
+    `systemd-run`.
+  - Lo que ejecuta la unidad se prueba **dentro de su sandbox real** (`docker-proxy-privilege.test.ts`,
+    con `systemd-run`); reintroducir `~@privileged` lo pone ROJO.
 - **`preflight`**: ver [Validación](#validación). El firewall (`s9-firewall`, root) sigue la misma
   regla y `preflight` también revisa sus unidades.
 
