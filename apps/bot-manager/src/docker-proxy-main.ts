@@ -14,6 +14,7 @@
  *   DOCKER_PROXY_PORT            2375.
  *   DOCKER_PROXY_ALLOWED_CLIENTS CIDR/IP de ORIGEN admitidos (coma). Obligatoria si el
  *                                bind no es loopback. Producción: 10.89.250.0/24.
+ *   DOCKER_PROXY_DENIED_CLIENTS  CIDR/IP siempre rechazados (además de la IP de bind y las locales).
  *   DOCKER_PROXY_IMAGE_ALLOWLIST ruta a un DIGESTS.lock (3.ª columna). Defecto: el del árbol.
  *   DOCKER_PROXY_INSTANCE        label s9.proxy.instance (defecto s9-docker-proxy).
  *   DOCKER_SOCKET                /var/run/docker.sock.
@@ -44,6 +45,7 @@ const server = createDockerProxyServer({
   backend: createSocketBackend(cfg.socketPath),
   policy: cfg.policy,
   allowedClients: cfg.allowedClients,
+  deniedClients: cfg.deniedClients,
   onDecision: (entry) => log({ ...entry }),
 });
 
@@ -59,6 +61,7 @@ server.listen(cfg.port, cfg.bind, () => {
       `proxy de Docker escuchando en ${a.address}:${a.port} → ${cfg.socketPath} ` +
       `(red=${cfg.policy.allowedNetwork}, user=${cfg.policy.allowedUser})`,
     allowedClients: cfg.allowedClients,
+    deniedClients: cfg.deniedClients,
     imageAllowlist: { path: cfg.imageAllowlistPath, images: [...cfg.policy.imageAllowlist] },
     instance: cfg.policy.instance,
   });

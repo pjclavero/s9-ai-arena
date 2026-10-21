@@ -426,6 +426,21 @@ describe.skipIf(!DOCKER_E2E)(
       expect(r.body).toMatch(/cliente no autorizado/);
     }, 60_000);
 
+    it("proceso local del «host» del proxy que conecta a la IP de la red de control (origen ∈ subred admitida) → 403", () => {
+      // Análogo del hallazgo de DEV-SECOPS: un proceso del host que conecta a 10.89.250.1
+      // sale con origen 10.89.250.1, dentro de 10.89.250.0/24. Aquí el «host» del proxy es
+      // su contenedor: un proceso en él conecta a su propia IP de la red de control.
+      const js =
+        `fetch(${JSON.stringify(`http://${proxyCtlIp}:2375${probePath}`)})` +
+        `.then(async r=>console.log(JSON.stringify({status:r.status,body:await r.text()})))` +
+        `.catch(e=>console.log(JSON.stringify({status:-1,body:String(e.cause?.code??e.message)})))`;
+      const out = docker("exec", proxyName, "/opt/node/bin/node", "-e", js);
+      const r = JSON.parse(out.split("\n").pop()!) as { status: number; body: string };
+      expect(proxyCtlIp.startsWith(CTL_SUBNET.split(".").slice(0, 3).join("."))).toBe(true);
+      expect(r.status, r.body).toBe(403);
+      expect(r.body).toMatch(/cliente no autorizado/);
+    }, 60_000);
+
     it("el proxy registró la denegación con la IP de origen de la red ajena", () => {
       const logs = dockerOk("logs", proxyName).out;
       const pubPrefix = PUB_SUBNET.split(".").slice(0, 3).join(".");
