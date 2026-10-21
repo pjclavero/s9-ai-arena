@@ -54,6 +54,10 @@ BUNDLE_DST="${LIB_DIR}/docker-proxy.mjs"
 BUNDLE_SUM="${LIB_DIR}/docker-proxy.mjs.sha256"
 POLICY_DIR="/etc/s9-docker-proxy"
 LOCK_DST="${POLICY_DIR}/DIGESTS.lock"
+# B1: copia de ROOT de este mismo script, instalada por `install`; validate/preflight y
+# TD-057 usan SÓLO esta (como /usr/local/sbin/s9-firewall).
+PREFLIGHT_DST="/usr/local/sbin/s9-docker-proxy-preflight"
+BACKUP_ROOT="/var/lib/s9-docker-proxy/backup"
 EXPECTED_EXECSTART="${NODE_BIN} --no-addons ${BUNDLE_DST}"
 BUNDLE_SRC="${S9PX_BUNDLE_SRC:-${REPO_DIR}/dist/s9-docker-proxy/docker-proxy.mjs}"
 LOCK_SRC="${S9PX_LOCK_SRC:-${REPO_DIR}/runtimes/DIGESTS.lock}"
@@ -350,6 +354,9 @@ pf_unit_file() {
         pf_err "${key} invoca npx/tsx/node_modules: «${v:0:80}»"
       fi
       if [ "$key" = Environment ] && [[ "$v" =~ (^|[[:space:]\"])(NODE_|LD_) ]]; then pf_err "Environment= fija NODE_*/LD_*: «${v:0:80}»"; fi
+      if [ "$key" = Environment ] && [[ "$v" =~ (^|[[:space:]\"])(DOCKER_PROXY_INSECURE_BIND_FOR_TESTS|S9PX_[A-Z_]*)= ]]; then
+        pf_err "Environment= fija una variable de tests (${BASH_REMATCH[2]}): prohibida en la unidad instalada"
+      fi
     done < <(unit_values "$u" "$key")
   done
 }
@@ -429,6 +436,8 @@ preflight() {
     [ "$want" = "$got" ] && pf_ok "bundle sha256 ${got}" || pf_err "bundle: sha256 ${got} ≠ registrado en la instalación ${want}"
   fi
   pf_chain "${R}/bin/sh" "shell del ExecStartPre"
+  # La copia de root de este preflight (la que usan validate y TD-057).
+  pf_chain "${R}${PREFLIGHT_DST}" "preflight instalado"
   local d
   for d in "${SERVICE_PATH_DIRS[@]}"; do
     [ -e "${R}${d}" ] && pf_chain "${R}${d}" "PATH del servicio (ip/grep/sleep)"
@@ -448,10 +457,18 @@ preflight() {
       pf_err "entorno: DOCKER_PROXY_IMAGE_ALLOWLIST=«${CFG[DOCKER_PROXY_IMAGE_ALLOWLIST]:-}» (debe ser la copia de root ${LOCK_DST})"
   fi
   pf_chain "${R}${UNIT_DST}" "unidad"
-  if [ -e "${R}${UNIT_DST}.d" ]; then
-    pf_chain "${R}${UNIT_DST}.d" "drop-ins"
-    [ -z "$(ls -A "${R}${UNIT_DST}.d" 2>/dev/null)" ] || pf_err "drop-ins presentes en ${UNIT_DST}.d (no auditados): $(ls -A "${R}${UNIT_DST}.d" | tr '\n' ' ')"
-  fi
+  # Drop-ins y fragmentos que systemd FUSIONA con la unidad, también sin systemctl (--static):
+  # los de la propia unidad (en /etc, /run, /usr/lib, /usr/local/lib) y los GLOBALES de
+  # servicio de /etc y /run (los de /usr/lib/systemd/system/service.d son del paquete de
+  # systemd; en modo completo, DropInPaths de systemctl show lista TODOS). REVIEW PR #167.
+  local dd
+  for dd in "${UNIT_DST}.d" "/run/systemd/system/${UNIT}.d" "/usr/lib/systemd/system/${UNIT}.d" \
+    "/usr/local/lib/systemd/system/${UNIT}.d" /etc/systemd/system/service.d /run/systemd/system/service.d; do
+    [ -e "${R}${dd}" ] || continue
+    pf_chain "${R}${dd}" "drop-ins"
+    [ -z "$(ls -A "${R}${dd}" 2>/dev/null)" ] || pf_err "drop-ins presentes en ${dd} (no auditados): $(ls -A "${R}${dd}" | tr '\n' ' ')"
+  done
+  [ -e "${R}/run/systemd/system/${UNIT}" ] && pf_err "fragmento en /run/systemd/system/${UNIT} (sustituye a la unidad instalada)"
   [ -f "${R}${UNIT_DST}" ] && pf_unit_file "${R}${UNIT_DST}"
   [ -e "${R}/etc/ld.so.preload" ] && pf_chain "${R}/etc/ld.so.preload" "ld.so.preload"
 
@@ -471,9 +488,8 @@ preflight() {
 
 # --------------------------------------------------------------- install ----
 
-# Copia src → dst con root:root y modo, de forma ATÓMICA (fichero temporal en el mismo
-# directorio + rename) y devuelve el sha256 DE LA COPIA (no del origen, que el usuario de
-# despliegue podría cambiar entre la comprobación y la copia).
+# Copia src → dst con root:root y modo, de forma ATÓMICA (temporal en el mismo directorio +
+# rename).
 install_file() {
   local src="$1" dst="$2" mode="$3" tmp
   tmp="$(dirname "$dst")/.$(basename "$dst").new.$$"
@@ -482,33 +498,102 @@ install_file() {
   mv -f -- "$tmp" "$dst"
 }
 
+# B1 (REVIEW PR #167) · ancla de confianza. Un script que corre como root y del que depende
+# la frontera NO puede venir de un sitio que escriba otro usuario: el árbol de despliegue
+# (/opt/s9-ai-arena) es del usuario de despliegue. Esta comprobación aplica la regla de
+# preflight (root, sin escritura de grupo/otros, padres hasta /) a la copia que se está
+# ejecutando y a lo que va a instalar. AVISO honesto: protege contra el ERROR del operador
+# (ejecutar desde /opt), no contra un atacante que ya reescribió esta copia; la confianza la
+# da el procedimiento (copia de root obtenida en el SHA revisado; upgrades.md#td-062).
+self_check() { # self_check <qué> [rutas a instalar…]
+  local what="$1" self
+  shift
+  self="$(readlink -f -- "${BASH_SOURCE[0]}")"
+  PF_ERRS=0
+  PF_SEEN=()
+  pf_chain "$self" "copia en ejecución"
+  local p
+  for p in "$@"; do [ -e "$p" ] && pf_chain "$p" "origen de ${what}"; done
+  if [ "$PF_ERRS" -gt 0 ]; then
+    echo "==> ABORTO (${what}): esta copia o lo que instala NO es sólo de root (${PF_ERRS} fallo/s)." >&2
+    echo "    Ejecuta la copia instalada (${PREFLIGHT_DST}) o una copia de root obtenida en el SHA revisado" >&2
+    echo "    (docs/operations/upgrades.md#td-062), nunca la del árbol de despliegue." >&2
+    exit 2
+  fi
+}
+
+# Copia de seguridad de lo que `install` va a cambiar (unidad, drop-ins, entorno), root 0700.
+backup_state() {
+  local dir="${R}${BACKUP_ROOT}/$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  install -d -o root -g root -m 0700 "${R}${BACKUP_ROOT}" "$dir"
+  [ -e "${R}${UNIT_DST}" ] && cp -a -- "${R}${UNIT_DST}" "$dir/unit"
+  [ -e "${R}${UNIT_DST}.d" ] && cp -a -- "${R}${UNIT_DST}.d" "$dir/unit.d"
+  [ -e "${R}${ENV_FILE}" ] && cp -a -- "${R}${ENV_FILE}" "$dir/env"
+  : >"$dir/.complete"
+  echo "$dir"
+}
+
+# Vuelve al estado de una copia de seguridad (lo que no estaba, se retira).
+restore_state() { # restore_state <dir>
+  local dir="$1"
+  [ -f "$dir/.complete" ] || { echo "==> ${dir} no es una copia de seguridad completa de install" >&2; return 1; }
+  if [ -e "$dir/unit" ]; then cp -a -- "$dir/unit" "${R}${UNIT_DST}"; else rm -f -- "${R}${UNIT_DST}"; fi
+  rm -rf -- "${R}${UNIT_DST}.d"
+  [ -e "$dir/unit.d" ] && cp -a -- "$dir/unit.d" "${R}${UNIT_DST}.d"
+  if [ -e "$dir/env" ]; then cp -a -- "$dir/env" "${R}${ENV_FILE}"; fi
+  echo "==> restaurado desde ${dir}"
+}
+
+# B2 · migración del entorno SIN ventana: sólo cambia DOCKER_PROXY_IMAGE_ALLOWLIST, y sólo
+# DESPUÉS de instalar la copia de root de la allowlist (que ya existe cuando el proxy la lea).
+migrate_env() {
+  local f="${R}${ENV_FILE}" tmp
+  tmp="$(dirname "$f")/.$(basename "$f").new.$$"
+  install -o root -g root -m 0640 /dev/null "$tmp"
+  awk -v v="$LOCK_DST" '
+    /^[[:space:]]*DOCKER_PROXY_IMAGE_ALLOWLIST[[:space:]]*=/ { if (!done) print "DOCKER_PROXY_IMAGE_ALLOWLIST=" v; done = 1; next }
+    { print }
+    END { if (!done) print "DOCKER_PROXY_IMAGE_ALLOWLIST=" v }' "$f" >"$tmp"
+  mv -f -- "$tmp" "$f"
+  echo "==> ${ENV_FILE}: DOCKER_PROXY_IMAGE_ALLOWLIST=${LOCK_DST} (migrado; copia de seguridad hecha)"
+}
+
 install_proxy() {
   need_root
   umask 022
   [ -n "$R" ] && echo "==> MODO ÁRBOL DE PRUEBAS en ${R}: sin usuarios ni systemd"
+  self_check install "$UNIT_SRC" "$ENV_SRC" "$LOCK_SRC" "$BUNDLE_SRC"
 
   echo "==> artefacto: ${BUNDLE_SRC}"
   if [ ! -f "$BUNDLE_SRC" ] || [ -L "$BUNDLE_SRC" ]; then
-    echo "==> ABORTO: falta el bundle. Genéralo SIN root: npm run build:docker-proxy" >&2
+    echo "==> ABORTO: falta el bundle (constrúyelo en esta copia: build-docker-proxy-bundle.mjs --commit <sha>)" >&2
+    exit 1
+  fi
+  # S9PX_EXPECT_SHA256 es OBLIGATORIO. Sólo tiene valor porque lo compara una copia de root
+  # (self_check): es el sha256 publicado por la CI de main para el SHA revisado, una medida
+  # INDEPENDIENTE de este build. Ejecutado desde una copia escribible por otro no valdría nada.
+  if ! [[ "${S9PX_EXPECT_SHA256:-}" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "==> ABORTO: falta S9PX_EXPECT_SHA256 (sha256 del bundle publicado por la CI para el SHA revisado)" >&2
     exit 1
   fi
   lock_check "$LOCK_SRC" || { echo "==> ABORTO: ${LOCK_SRC} no es un DIGESTS.lock válido" >&2; exit 1; }
 
-  install -d -o root -g root -m 0755 "${R}${LIB_DIR}" "${R}${POLICY_DIR}" "${R}${ETC_DIR}" "${R}$(dirname "$UNIT_DST")"
-  # Copia a un temporal de root ANTES de verificar (sin carrera con el árbol).
-  local stage="${R}${LIB_DIR}/.stage.$$" sum want
+  install -d -o root -g root -m 0755 "${R}${LIB_DIR}" "${R}${POLICY_DIR}" "${R}${ETC_DIR}" \
+    "${R}$(dirname "$UNIT_DST")" "${R}$(dirname "$PREFLIGHT_DST")"
+  local stage="${R}${LIB_DIR}/.stage.$$" sum
   install -o root -g root -m 0600 -- "$BUNDLE_SRC" "$stage"
   sum="$(sha256sum "$stage" | awk '{print $1}')"
-  if [ -f "${BUNDLE_SRC}.sha256" ]; then
-    want="$(awk '{print $1; exit}' "${BUNDLE_SRC}.sha256")"
-    [ "$want" = "$sum" ] || { rm -f "$stage"; echo "==> ABORTO: sha256 del bundle ${sum} ≠ ${BUNDLE_SRC}.sha256 (${want})" >&2; exit 1; }
+  if [ "$S9PX_EXPECT_SHA256" != "$sum" ]; then
+    rm -f "$stage"
+    echo "==> ABORTO: sha256 del bundle ${sum} ≠ S9PX_EXPECT_SHA256 (${S9PX_EXPECT_SHA256}). PARA: no instales." >&2
+    exit 1
   fi
-  if [ -n "${S9PX_EXPECT_SHA256:-}" ]; then
-    [ "$S9PX_EXPECT_SHA256" = "$sum" ] || { rm -f "$stage"; echo "==> ABORTO: sha256 del bundle ${sum} ≠ S9PX_EXPECT_SHA256" >&2; exit 1; }
-    echo "==> sha256 del bundle = el esperado (${sum})"
-  else
-    echo "==> AVISO: sin S9PX_EXPECT_SHA256: se instala el bundle que hay AHORA en el árbol (${sum}); compáralo con el de la CI"
-  fi
+  echo "==> sha256 del bundle = el esperado (${sum})"
+
+  local bak
+  bak="$(backup_state)"
+  echo "==> copia de seguridad de unidad y entorno: ${bak}"
+
   chmod 0644 "$stage"
   mv -f -- "$stage" "${R}${BUNDLE_DST}"
   printf '%s  %s\n' "$sum" "$(basename "$BUNDLE_DST")" >"${R}${LIB_DIR}/.sum.$$"
@@ -524,17 +609,26 @@ install_proxy() {
   mv -f -- "$lstage" "${R}${LOCK_DST}"
   echo "==> allowlist instalada (root:root 0644, sha256 $(sha256sum "${R}${LOCK_DST}" | awk '{print $1}'))"
 
+  # El preflight se instala como root: validate/preflight/TD-057 usan SÓLO esta copia.
+  install_file "${BASH_SOURCE[0]}" "${R}${PREFLIGHT_DST}" 0755
+  echo "==> preflight instalado: ${PREFLIGHT_DST} (root:root 0755)"
+
   echo "==> config en ${ENV_FILE} (no se sobrescribe si existe)"
   [ -f "${R}${ENV_FILE}" ] || install -o root -g root -m 0640 "$ENV_SRC" "${R}${ENV_FILE}"
   parse_env "${R}${ENV_FILE}"
   if [ "${CFG[DOCKER_PROXY_IMAGE_ALLOWLIST]:-}" != "$LOCK_DST" ]; then
-    echo "==> ABORTO: ${ENV_FILE} tiene DOCKER_PROXY_IMAGE_ALLOWLIST=«${CFG[DOCKER_PROXY_IMAGE_ALLOWLIST]:-}»;" >&2
-    echo "    debe ser ${LOCK_DST} (TD-062: la copia de root). Edítalo y repite. No se ha cambiado la unidad." >&2
-    exit 1
+    if [ "${S9PX_MIGRATE_ENV:-}" = 1 ]; then
+      migrate_env
+    else
+      echo "==> ABORTO: ${ENV_FILE} tiene DOCKER_PROXY_IMAGE_ALLOWLIST=«${CFG[DOCKER_PROXY_IMAGE_ALLOWLIST]:-}»;" >&2
+      echo "    debe ser ${LOCK_DST}. Repite con S9PX_MIGRATE_ENV=1 (sólo cambia esa línea). Unidad sin tocar." >&2
+      exit 1
+    fi
   fi
   echo "==> validación de la config ANTES de tocar la unidad"
   if ! check_env "${R}${ENV_FILE}"; then
-    echo "==> ABORTO: corrige ${ENV_FILE} (referencia: ${ENV_SRC}). No se ha cambiado la unidad."
+    restore_state "$bak" >&2
+    echo "==> ABORTO: corrige ${ENV_FILE} (referencia: ${ENV_SRC}). Entorno restaurado; unidad sin tocar." >&2
     exit 1
   fi
 
@@ -543,7 +637,8 @@ install_proxy() {
 
   echo "==> preflight estático (antes de arrancar)"
   if ! preflight --static; then
-    echo "==> ABORTO: preflight ROJO; NO se reinicia el proxy (corrige lo indicado y repite)." >&2
+    restore_state "$bak" >&2
+    echo "==> ABORTO: preflight ROJO. Unidad y entorno RESTAURADOS desde ${bak}; el proxy NO se ha reiniciado." >&2
     exit 1
   fi
   if [ -n "$R" ]; then
@@ -558,9 +653,9 @@ install_proxy() {
   systemctl enable "$UNIT"
   systemctl restart "$UNIT"
   sleep "${S9PX_SETTLE:-2}"
-  echo "==> preflight completo (unidad cargada y proceso en marcha)"
-  preflight || { echo "==> el proxy arrancó pero el PREFLIGHT está ROJO" >&2; exit 1; }
-  echo "==> hecho. Comprueba: sudo bash $0 validate"
+  echo "==> preflight completo con la copia INSTALADA (${PREFLIGHT_DST})"
+  "$PREFLIGHT_DST" preflight || { echo "==> el proxy arrancó pero el PREFLIGHT está ROJO (vuelta atrás: ${PREFLIGHT_DST} restore ${bak})" >&2; exit 1; }
+  echo "==> hecho. Copia de seguridad: ${bak}. Comprueba: sudo ${PREFLIGHT_DST} validate"
 }
 
 validate_proxy() {
@@ -616,8 +711,23 @@ rollback_proxy() {
   systemctl disable --now "$UNIT" 2>/dev/null || true
   rm -f "/etc/systemd/system/${UNIT}"
   systemctl daemon-reload
-  echo "==> unidad retirada. Config, artefacto, allowlist y usuario se conservan:"
-  echo "   rm -rf ${ETC_DIR} ${LIB_DIR} ${POLICY_DIR} && userdel ${PROXY_USER}   # opcional, borrado total"
+  echo "==> unidad retirada. Config, artefacto, allowlist, preflight y usuario se conservan:"
+  echo "   rm -rf ${ETC_DIR} ${LIB_DIR} ${POLICY_DIR} ${PREFLIGHT_DST} && userdel ${PROXY_USER}   # opcional, borrado total"
+}
+
+# Vuelta atrás de un `install`: unidad, drop-ins y entorno de la copia de seguridad; recarga
+# y reinicia. Si la copia es de la unidad de RC1/RC2 (npx tsx desde el árbol), TD-062 vuelve
+# a estar abierta: es una medida de EMERGENCIA, no un estado admitido.
+restore_proxy() {
+  need_root
+  local dir="${1:?uso: restore <directorio de copia de seguridad de install>}"
+  restore_state "$dir" || exit 1
+  [ -n "$R" ] && return 0
+  systemctl daemon-reload
+  systemctl restart "$UNIT" || true
+  if ! "$PREFLIGHT_DST" preflight >/dev/null 2>&1; then
+    echo "==> AVISO: tras restaurar, el preflight está ROJO: si es la unidad de RC1/RC2, TD-062 está ABIERTA otra vez" >&2
+  fi
 }
 
 case "${1:-}" in
@@ -626,9 +736,15 @@ case "${1:-}" in
   install) install_proxy ;;
   preflight)
     need_root
+    self_check preflight
     preflight "${2:-}"
     ;;
-  validate) validate_proxy ;;
+  validate)
+    need_root
+    self_check validate
+    validate_proxy
+    ;;
   rollback) rollback_proxy ;;
-  *) echo "Uso: $0 {check-env [fichero]|probe <bind> [puerto]|install|preflight [--static]|validate|rollback}"; exit 2 ;;
+  restore) restore_proxy "${2:-}" ;;
+  *) echo "Uso: $0 {check-env [fichero]|probe <bind> [puerto]|install|preflight [--static]|validate|rollback|restore <copia>}"; exit 2 ;;
 esac

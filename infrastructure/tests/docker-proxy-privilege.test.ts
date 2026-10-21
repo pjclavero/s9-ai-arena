@@ -338,24 +338,44 @@ beforeAll(() => {
   LAUNCH = privLauncher();
 });
 
-// Árbol del host mínimo (usr-merged como Debian) con root como dueño y modos de sistema.
-const FIXTURE = `
+// Árbol del host mínimo (usr-merged como Debian) con root como dueño y modos de sistema, y
+// la COPIA DE CONFIANZA del repo ($F/root/trusted: instalador, unidad, plantilla, lock y
+// bundle, todo de root) desde la que se ejecuta `install`, como exige producción (B1,
+// REVIEW PR #167). `pfi` es el preflight INSTALADO por `install` (/usr/local/sbin/…).
+const BASE = `
 umask 022
 F=$(mktemp -d /tmp/rc3priv-fx.XXXXXX); chmod 755 "$F"; export F
-trap 'rm -rf "$F"' EXIT
+trap 'rm -rf "$F" "$F".*' EXIT
 mkdir -p "$F/usr/bin" "$F/usr/sbin" "$F/usr/local/sbin" "$F/usr/local/bin" "$F/etc/systemd/system" "$F/opt/s9-ai-arena/runtimes"
 ln -s usr/bin "$F/bin"; ln -s usr/sbin "$F/sbin"
 printf '#!/bin/sh\\n' >"$F/usr/bin/node"; printf '#!/bin/sh\\n' >"$F/usr/bin/dash"; chmod 755 "$F/usr/bin/node" "$F/usr/bin/dash"
 ln -s dash "$F/usr/bin/sh"
 cp "$LOCK" "$F/opt/s9-ai-arena/runtimes/DIGESTS.lock"
-px() { S9PX_ROOT="$F" S9PX_BUNDLE_SRC="$BUNDLE" bash "$INSTALLER" "$@"; }
-px install >"$F.install.log" 2>&1 || { echo "INSTALL_RC=$?"; cat "$F.install.log"; rm -f "$F.install.log"; exit 90; }
-rm -f "$F.install.log"
+T="$F/root/trusted"; TI="$T/infrastructure/scripts/install-docker-proxy.sh"; export T TI
+mkdir -p "$T/infrastructure/scripts" "$T/infrastructure/systemd" "$T/runtimes" "$T/dist/s9-docker-proxy"
+cp "$INSTALLER" "$TI"
+cp "$SYSTEMD_DIR/s9-docker-proxy.service" "$SYSTEMD_DIR/docker-proxy.env.example" "$T/infrastructure/systemd/"
+cp "$LOCK" "$T/runtimes/DIGESTS.lock"
+cp "$BUNDLE" "$T/dist/s9-docker-proxy/docker-proxy.mjs"
+px() { S9PX_ROOT="$F" S9PX_EXPECT_SHA256="$BSHA" bash "$TI" "$@"; }
+pfi() { S9PX_ROOT="$F" "$F/usr/local/sbin/s9-docker-proxy-preflight" "$@"; }
+`;
+const FIXTURE = `${BASE}
+px install >"$F.install.log" 2>&1 || { echo "INSTALL_RC=$?"; cat "$F.install.log"; exit 90; }
 `;
 
 function priv(script: string, extraEnv: Record<string, string> = {}) {
   // LC_ALL=C: los mensajes del núcleo/coreutils se comparan en inglés («Permission denied»).
-  const env = { LC_ALL: "C", LANG: "C", LOCK, INSTALLER, BUNDLE: bundle.out, ...extraEnv };
+  const env = {
+    LC_ALL: "C",
+    LANG: "C",
+    LOCK,
+    INSTALLER,
+    SYSTEMD_DIR: dirname(UNIT_PATH),
+    BUNDLE: bundle.out,
+    BSHA: bundle.sha256,
+    ...extraEnv,
+  };
   const envArgs = Object.entries(env).map(([k, v]) => `${k}=${v}`);
   const [cmd, ...pre] = LAUNCH.length ? LAUNCH : ["env"];
   const args = LAUNCH.length ? [...pre, "env", ...envArgs, "bash", "-c", script] : [...envArgs, "bash", "-c", script];
@@ -365,7 +385,7 @@ function priv(script: string, extraEnv: Record<string, string> = {}) {
 
 /** Árbol instalado + mutación + preflight; imprime la línea final PF_RC=<rc>. */
 function preflightAfter(mutation: string) {
-  const r = priv(`${FIXTURE}\n${mutation}\npx preflight; echo "PF_RC=$?"`);
+  const r = priv(`${FIXTURE}\n${mutation}\npfi preflight; echo "PF_RC=$?"`);
   const m = /PF_RC=(\d+)/.exec(r.out);
   return { rc: m ? Number(m[1]) : null, out: r.out, rojo: r.out.split("\n").filter((l) => l.includes("ROJO:")) };
 }
@@ -376,7 +396,7 @@ const ENV = '"$F/etc/s9-ai-arena/docker-proxy.env"';
 describe("P · install en un árbol de pruebas con propietarios reales", () => {
   it("instala bundle, sha256, allowlist, unidad y entorno con root:root y modos 0755/0644/0640", () => {
     const r = priv(
-      `${FIXTURE}\nstat -c '%u:%g %a %n' "$F/usr/local/lib/s9-docker-proxy" "$F${BUNDLE_DST}" "$F${BUNDLE_DST}.sha256" "$F/etc/s9-docker-proxy" "$F${LOCK_DST}" ${UNIT} ${ENV}\ncmp "$F${LOCK_DST}" "$LOCK" && echo LOCK_IGUAL\ncmp "$F${BUNDLE_DST}" "$BUNDLE" && echo BUNDLE_IGUAL`,
+      `${FIXTURE}\nstat -c '%u:%g %a %n' "$F/usr/local/lib/s9-docker-proxy" "$F${BUNDLE_DST}" "$F${BUNDLE_DST}.sha256" "$F/etc/s9-docker-proxy" "$F${LOCK_DST}" ${UNIT} ${ENV} "$F/usr/local/sbin/s9-docker-proxy-preflight"\ncmp "$F${LOCK_DST}" "$LOCK" && echo LOCK_IGUAL\ncmp "$F${BUNDLE_DST}" "$BUNDLE" && echo BUNDLE_IGUAL`,
     );
     expect(r.rc, r.out).toBe(0);
     const modes = Object.fromEntries(
@@ -396,6 +416,7 @@ describe("P · install en un árbol de pruebas con propietarios reales", () => {
       [LOCK_DST]: "0:0 644",
       "/etc/systemd/system/s9-docker-proxy.service": "0:0 644",
       "/etc/s9-ai-arena/docker-proxy.env": "0:0 640",
+      "/usr/local/sbin/s9-docker-proxy-preflight": "0:0 755",
     });
     expect(r.out).toContain("LOCK_IGUAL");
     expect(r.out).toContain("BUNDLE_IGUAL");
@@ -494,6 +515,36 @@ describe("P · install en un árbol de pruebas con propietarios reales", () => {
       /drop-ins presentes/,
     ],
     [
+      "drop-in GLOBAL de servicios en /etc (service.d), invisible antes en --static",
+      `mkdir -p "$F/etc/systemd/system/service.d"; echo '[Service]' >"$F/etc/systemd/system/service.d/x.conf"`,
+      /drop-ins presentes en \/etc\/systemd\/system\/service\.d/,
+    ],
+    [
+      "drop-in de la unidad en /run",
+      `mkdir -p "$F/run/systemd/system/s9-docker-proxy.service.d"; echo '[Service]' >"$F/run/systemd/system/s9-docker-proxy.service.d/x.conf"`,
+      /drop-ins presentes en \/run\/systemd\/system\/s9-docker-proxy\.service\.d/,
+    ],
+    [
+      "fragmento de la unidad en /run (sustituye a la instalada)",
+      `mkdir -p "$F/run/systemd/system"; cp ${UNIT} "$F/run/systemd/system/s9-docker-proxy.service"`,
+      /fragmento en \/run\/systemd\/system/,
+    ],
+    [
+      "unidad con el opt-in inseguro de tests",
+      `sed -i 's|^UMask=0077|UMask=0077\\nEnvironment=DOCKER_PROXY_INSECURE_BIND_FOR_TESTS=1|' ${UNIT}`,
+      /variable de tests \(DOCKER_PROXY_INSECURE_BIND_FOR_TESTS\)/,
+    ],
+    [
+      "unidad con una variable S9PX_* (modo árbol de pruebas)",
+      `sed -i 's|^UMask=0077|UMask=0077\\nEnvironment=S9PX_ROOT=/tmp/x|' ${UNIT}`,
+      /variable de tests \(S9PX_ROOT\)/,
+    ],
+    [
+      "preflight instalado escribible por grupo (validate/TD-057 dependen de él)",
+      `chmod g+w "$F/usr/local/sbin/s9-docker-proxy-preflight"`,
+      /(preflight instalado|copia en ejecución): .*s9-docker-proxy-preflight es escribible/,
+    ],
+    [
       "unidad del firewall que ejecuta un script del árbol",
       `printf '[Service]\\nExecStart=/opt/s9-ai-arena/infrastructure/firewall/s9-firewall.sh apply\\n' >"$F/etc/systemd/system/s9-firewall.service"; printf '#!/bin/sh\\n' >"$F/usr/local/sbin/s9-firewall"; chmod 755 "$F/usr/local/sbin/s9-firewall"`,
       /s9-firewall\.service ejecuta algo que no es \/usr\/local\/sbin\/s9-firewall/,
@@ -502,7 +553,9 @@ describe("P · install en un árbol de pruebas con propietarios reales", () => {
   for (const [name, mutation, reason] of mutations) {
     it(`MUTACIÓN «${name}» ⇒ preflight ROJO por su motivo`, () => {
       const r = preflightAfter(mutation);
-      expect(r.rc, r.out).toBe(1);
+      // 1 = ROJO; 2 = el preflight INSTALADO está comprometido por la mutación (p. ej. su padre
+      // /usr/local) y se niega a dar veredicto. Las dos son negativas; nunca 0.
+      expect([1, 2], r.out).toContain(r.rc);
       expect(
         r.rojo.some((l) => reason.test(l)),
         `${reason} no está en:\n${r.rojo.join("\n")}`,
@@ -510,41 +563,125 @@ describe("P · install en un árbol de pruebas con propietarios reales", () => {
     });
   }
 
-  it("migración: entorno existente con la allowlist de /opt ⇒ install ABORTA sin escribir la unidad", () => {
-    const r = priv(`
-umask 022; F=$(mktemp -d /tmp/rc3priv-fx.XXXXXX); chmod 755 "$F"; trap 'rm -rf "$F"' EXIT
-mkdir -p "$F/etc/s9-ai-arena"
-sed 's|^DOCKER_PROXY_IMAGE_ALLOWLIST=.*|DOCKER_PROXY_IMAGE_ALLOWLIST=/opt/s9-ai-arena/runtimes/DIGESTS.lock|' \\
-  "$(dirname "$INSTALLER")/../systemd/docker-proxy.env.example" >"$F/etc/s9-ai-arena/docker-proxy.env"
-S9PX_ROOT="$F" S9PX_BUNDLE_SRC="$BUNDLE" bash "$INSTALLER" install; echo "IN_RC=$?"
+  // ── B1 (REVIEW PR #167): la confianza no se ancla en el árbol ──
+  it("B1 · install desde una copia que NO es sólo de root (el árbol de s9arena) ⇒ ABORTA rc=2 sin instalar nada", () => {
+    const r = priv(`${BASE}
+chown -R 1000:1000 "$T"
+px install; echo "IN_RC=$?"
+[ -e "$F${BUNDLE_DST}" ] && echo BUNDLE_INSTALADO || echo BUNDLE_NO_INSTALADO
 [ -e "$F/etc/systemd/system/s9-docker-proxy.service" ] && echo UNIDAD_ESCRITA || echo UNIDAD_NO_ESCRITA`);
-    expect(r.out).toContain("IN_RC=1");
-    expect(r.out).toContain("debe ser /etc/s9-docker-proxy/DIGESTS.lock");
+    expect(r.out).toContain("IN_RC=2");
+    expect(r.out).toMatch(/copia en ejecución: .*install-docker-proxy\.sh es propiedad de uid=1000/);
+    expect(r.out).toContain("BUNDLE_NO_INSTALADO");
     expect(r.out).toContain("UNIDAD_NO_ESCRITA");
   });
 
-  it("S9PX_EXPECT_SHA256 distinto del bundle ⇒ install ABORTA y no instala el bundle", () => {
-    const r = priv(
-      `umask 022; F=$(mktemp -d /tmp/rc3priv-fx.XXXXXX); chmod 755 "$F"; trap 'rm -rf "$F"' EXIT
-S9PX_ROOT="$F" S9PX_BUNDLE_SRC="$BUNDLE" S9PX_EXPECT_SHA256=${"f".repeat(64)} bash "$INSTALLER" install; echo "IN_RC=$?"
-[ -e "$F${BUNDLE_DST}" ] && echo BUNDLE_INSTALADO || echo BUNDLE_NO_INSTALADO`,
-    );
+  it("B1 · install con el script de root pero el BUNDLE de origen de no root ⇒ ABORTA rc=2", () => {
+    const r = priv(`${BASE}
+chown 1000 "$T/dist/s9-docker-proxy/docker-proxy.mjs"
+px install; echo "IN_RC=$?"`);
+    expect(r.out).toContain("IN_RC=2");
+    expect(r.out).toMatch(/origen de install: .*docker-proxy\.mjs es propiedad de uid=1000/);
+  });
+
+  it("B1 · preflight y validate ejecutados desde una copia de no root ⇒ rc=2 (su veredicto no vale)", () => {
+    const r = priv(`${FIXTURE}
+chown 1000 "$TI"
+px preflight >/dev/null 2>&1; echo "PF_RC=$?"
+px validate >/dev/null 2>&1; echo "VA_RC=$?"
+pfi preflight >/dev/null 2>&1; echo "PFI_RC=$?"`);
+    expect(r.out).toContain("PF_RC=2");
+    expect(r.out).toContain("VA_RC=2");
+    expect(r.out).toContain("PFI_RC=0"); // la copia instalada sigue siendo de root y válida
+  });
+
+  it("B1 · S9PX_EXPECT_SHA256 es OBLIGATORIO: sin él ⇒ ABORTA y no instala el bundle", () => {
+    const r = priv(`${BASE}
+S9PX_ROOT="$F" bash "$TI" install; echo "IN_RC=$?"
+[ -e "$F${BUNDLE_DST}" ] && echo BUNDLE_INSTALADO || echo BUNDLE_NO_INSTALADO`);
     expect(r.out).toContain("IN_RC=1");
+    expect(r.out).toContain("falta S9PX_EXPECT_SHA256");
     expect(r.out).toContain("BUNDLE_NO_INSTALADO");
   });
 
-  it("S9PX_EXPECT_SHA256 = el del build ⇒ install rc=0", () => {
-    const r = priv(
-      `umask 022; F=$(mktemp -d /tmp/rc3priv-fx.XXXXXX); chmod 755 "$F"; trap 'rm -rf "$F"' EXIT
-mkdir -p "$F/usr/bin" "$F/etc/systemd/system"; printf '#!/bin/sh\\n' >"$F/usr/bin/node"; chmod 755 "$F/usr/bin/node"
-ln -s /bin/sh "$F/usr/bin/sh"
-S9PX_ROOT="$F" S9PX_BUNDLE_SRC="$BUNDLE" S9PX_EXPECT_SHA256=${bundle.sha256} bash "$INSTALLER" install >/dev/null 2>&1; echo "IN_RC=$?"
-[ -e "$F${BUNDLE_DST}" ] && echo BUNDLE_INSTALADO`,
-    );
-    // El sh del fixture apunta FUERA del árbol de pruebas (a /bin/sh real, cuyo dueño no es
-    // el root del userns): el preflight estático lo detecta, y eso también es correcto. Aquí
-    // sólo se exige que el hash correcto pase la comprobación y el bundle se instale.
-    expect(r.out).toContain("BUNDLE_INSTALADO");
+  it("B1 · S9PX_EXPECT_SHA256 distinto del bundle ⇒ ABORTA (PARA) y no instala el bundle", () => {
+    const r = priv(`${BASE}
+S9PX_ROOT="$F" S9PX_EXPECT_SHA256=${"f".repeat(64)} bash "$TI" install; echo "IN_RC=$?"
+[ -e "$F${BUNDLE_DST}" ] && echo BUNDLE_INSTALADO || echo BUNDLE_NO_INSTALADO`);
+    expect(r.out).toContain("IN_RC=1");
+    expect(r.out).toContain("PARA: no instales");
+    expect(r.out).toContain("BUNDLE_NO_INSTALADO");
+  });
+
+  // ── B2 (REVIEW PR #167): migración transaccional ──
+  const OLD_UNIT = `printf '[Service]\\nExecStart=/usr/bin/npx tsx apps/bot-manager/src/docker-proxy-main.ts\\nWorkingDirectory=/opt/s9-ai-arena\\n' >"$F/etc/systemd/system/s9-docker-proxy.service"`;
+  const OLD_ENV = `mkdir -p "$F/etc/s9-ai-arena"; sed 's|^DOCKER_PROXY_IMAGE_ALLOWLIST=.*|DOCKER_PROXY_IMAGE_ALLOWLIST=/opt/s9-ai-arena/runtimes/DIGESTS.lock|' "$SYSTEMD_DIR/docker-proxy.env.example" >"$F/etc/s9-ai-arena/docker-proxy.env"; chmod 640 "$F/etc/s9-ai-arena/docker-proxy.env"`;
+
+  it("B2 · entorno de RC2 (allowlist de /opt) sin S9PX_MIGRATE_ENV ⇒ ABORTA con la unidad vieja intacta", () => {
+    const r = priv(`${BASE}
+${OLD_UNIT}; ${OLD_ENV}
+sha0=$(sha256sum "$F/etc/systemd/system/s9-docker-proxy.service" | cut -c1-64)
+px install; echo "IN_RC=$?"
+[ "$(sha256sum "$F/etc/systemd/system/s9-docker-proxy.service" | cut -c1-64)" = "$sha0" ] && echo UNIDAD_INTACTA`);
+    expect(r.out).toContain("IN_RC=1");
+    expect(r.out).toContain("S9PX_MIGRATE_ENV=1");
+    expect(r.out).toContain("UNIDAD_INTACTA");
+  });
+
+  it("B2 · S9PX_MIGRATE_ENV=1 cambia SÓLO la allowlist, DESPUÉS de instalar la copia de root, con copia de seguridad", () => {
+    const r = priv(`${BASE}
+${OLD_UNIT}; ${OLD_ENV}
+cp "$F/etc/s9-ai-arena/docker-proxy.env" "$F.env0"
+S9PX_MIGRATE_ENV=1 px install >"$F.log" 2>&1; echo "IN_RC=$?"
+bak=$(sed -n 's/^==> copia de seguridad de unidad y entorno: //p' "$F.log")
+cmp -s "$bak/env" "$F.env0" && echo BACKUP_ENV_OK
+grep -q 'npx tsx' "$bak/unit" && echo BACKUP_UNIT_OK
+stat -c '%u:%g %a' "$bak" "$F/etc/s9-ai-arena/docker-proxy.env"
+diff "$F.env0" "$F/etc/s9-ai-arena/docker-proxy.env" | grep '^[<>]'
+pfi preflight >/dev/null 2>&1; echo "PF_RC=$?"`);
+    expect(r.out, r.out).toContain("IN_RC=0");
+    expect(r.out).toContain("BACKUP_ENV_OK");
+    expect(r.out).toContain("BACKUP_UNIT_OK");
+    expect(r.out).toContain("0:0 700");
+    expect(r.out).toContain("0:0 640");
+    // diff: exactamente una línea fuera y una dentro, la de la allowlist.
+    const d = r.out.split("\n").filter((l) => /^[<>] /.test(l));
+    expect(d).toEqual([
+      "< DOCKER_PROXY_IMAGE_ALLOWLIST=/opt/s9-ai-arena/runtimes/DIGESTS.lock",
+      "> DOCKER_PROXY_IMAGE_ALLOWLIST=/etc/s9-docker-proxy/DIGESTS.lock",
+    ]);
+    expect(r.out).toContain("PF_RC=0");
+  });
+
+  it("B2 · preflight --static ROJO tras escribir la unidad ⇒ unidad y entorno RESTAURADOS (sin estado a medias)", () => {
+    const r = priv(`${BASE}
+${OLD_UNIT}; ${OLD_ENV}
+cp "$F/etc/systemd/system/s9-docker-proxy.service" "$F.unit0"; cp "$F/etc/s9-ai-arena/docker-proxy.env" "$F.env0"
+chown 1000 "$F/usr/bin/node"
+S9PX_MIGRATE_ENV=1 px install >"$F.log" 2>&1; echo "IN_RC=$?"
+grep -c 'restaurado desde' "$F.log"
+cmp -s "$F.unit0" "$F/etc/systemd/system/s9-docker-proxy.service" && echo UNIDAD_RESTAURADA
+cmp -s "$F.env0" "$F/etc/s9-ai-arena/docker-proxy.env" && echo ENV_RESTAURADO`);
+    expect(r.out).toContain("IN_RC=1");
+    expect(r.out).toContain("UNIDAD_RESTAURADA");
+    expect(r.out).toContain("ENV_RESTAURADO");
+  });
+
+  it("B2 · `restore <copia>` (vuelta atrás) devuelve exactamente la unidad y el entorno anteriores", () => {
+    const r = priv(`${BASE}
+${OLD_UNIT}; ${OLD_ENV}
+cp "$F/etc/systemd/system/s9-docker-proxy.service" "$F.unit0"; cp "$F/etc/s9-ai-arena/docker-proxy.env" "$F.env0"
+S9PX_MIGRATE_ENV=1 px install >"$F.log" 2>&1; echo "IN_RC=$?"
+bak=$(sed -n 's/^==> copia de seguridad de unidad y entorno: //p' "$F.log")
+pfi restore "$bak"; echo "RS_RC=$?"
+cmp -s "$F.unit0" "$F/etc/systemd/system/s9-docker-proxy.service" && echo UNIDAD_ANTERIOR
+cmp -s "$F.env0" "$F/etc/s9-ai-arena/docker-proxy.env" && echo ENV_ANTERIOR
+pfi restore "$F/no-existe"; echo "RS_MAL_RC=$?"`);
+    expect(r.out).toContain("IN_RC=0");
+    expect(r.out).toContain("RS_RC=0");
+    expect(r.out).toContain("UNIDAD_ANTERIOR");
+    expect(r.out).toContain("ENV_ANTERIOR");
+    expect(r.out).toContain("RS_MAL_RC=1");
   });
 });
 
