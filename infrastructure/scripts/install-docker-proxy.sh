@@ -539,6 +539,18 @@ backup_state() {
 restore_state() { # restore_state <dir>
   local dir="$1"
   [ -f "$dir/.complete" ] || { echo "==> ${dir} no es una copia de seguridad completa de install" >&2; return 1; }
+  # REVIEW PR #167 r2: `cp -a` conserva dueño y modo. Lo que se repone pasa a ser la unidad y
+  # el entorno que systemd ejecuta como root: la copia (directorio, padres y TODO su
+  # contenido) tiene que ser sólo de root, o no se toca nada.
+  PF_ERRS=0
+  PF_SEEN=()
+  local q
+  pf_chain "$dir" "copia de seguridad"
+  while IFS= read -r -d '' q; do pf_chain "$q" "copia de seguridad"; done < <(find "$dir" -mindepth 1 -print0)
+  if [ "$PF_ERRS" -gt 0 ]; then
+    echo "==> ABORTO: la copia de seguridad ${dir} no es sólo de root (${PF_ERRS} fallo/s); no se restaura nada" >&2
+    return 2
+  fi
   if [ -e "$dir/unit" ]; then cp -a -- "$dir/unit" "${R}${UNIT_DST}"; else rm -f -- "${R}${UNIT_DST}"; fi
   rm -rf -- "${R}${UNIT_DST}.d"
   [ -e "$dir/unit.d" ] && cp -a -- "$dir/unit.d" "${R}${UNIT_DST}.d"

@@ -260,6 +260,9 @@ al proxy hasta que se reinstala, y `preflight` avisa si la copia de root y la de
 
 - Repone exactamente la unidad, los drop-ins y el `.env` anteriores, recarga systemd y reinicia el
   proxy.
+- Antes de copiar nada comprueba que la copia de seguridad (el directorio, sus padres y todo su
+  contenido) es sólo de root y sin escritura de grupo u otros. Si no lo es, **no restaura nada** y
+  sale con error: lo restaurado lo ejecuta systemd como root.
 - Si lo restaurado es la unidad de RC1/RC2, **TD-062 vuelve a estar abierta**, y el comando lo avisa.
   Es una medida de emergencia para recuperar el servicio, no un estado admitido: hay que volver a
   migrar en cuanto se corrija la causa.

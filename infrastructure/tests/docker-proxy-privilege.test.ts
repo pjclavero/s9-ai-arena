@@ -547,6 +547,12 @@ describe("P · install en un árbol de pruebas con propietarios reales", () => {
       /(preflight instalado|copia en ejecución): .*s9-docker-proxy-preflight es escribible/,
     ],
     [
+      // REVIEW PR #167 r2: el preflight instalado sustituido por un enlace al script del árbol.
+      "preflight instalado sustituido por un enlace al instalador del árbol de despliegue",
+      `chown -R 1000:1000 "$F/opt/s9-ai-arena"; mkdir -p "$F/opt/s9-ai-arena/infrastructure/scripts"; cp "$TI" "$F/opt/s9-ai-arena/infrastructure/scripts/install-docker-proxy.sh"; chown -R 1000:1000 "$F/opt/s9-ai-arena/infrastructure"; ln -sf "$F/opt/s9-ai-arena/infrastructure/scripts/install-docker-proxy.sh" "$F/usr/local/sbin/s9-docker-proxy-preflight"`,
+      /(preflight instalado \(destino de .*\)|copia en ejecución): .*opt\/s9-ai-arena.* es propiedad de uid=1000/,
+    ],
+    [
       "unidad del firewall que ejecuta un script del árbol",
       `printf '[Service]\\nExecStart=/opt/s9-ai-arena/infrastructure/firewall/s9-firewall.sh apply\\n' >"$F/etc/systemd/system/s9-firewall.service"; printf '#!/bin/sh\\n' >"$F/usr/local/sbin/s9-firewall"; chmod 755 "$F/usr/local/sbin/s9-firewall"`,
       /s9-firewall\.service ejecuta algo que no es \/usr\/local\/sbin\/s9-firewall/,
@@ -685,6 +691,33 @@ pfi restore "$F/no-existe"; echo "RS_MAL_RC=$?"`);
     expect(r.out).toContain("ENV_ANTERIOR");
     expect(r.out).toContain("RS_MAL_RC=1");
   });
+
+  // REVIEW PR #167 r2: `restore` copia con `cp -a` (conserva dueño y modo). Una copia de
+  // seguridad manipulada por un no root (o un directorio suyo pasado por error) NO puede
+  // convertirse en la unidad o el entorno que systemd ejecuta como root.
+  for (const [name, tamper] of [
+    ["unidad de la copia propiedad de uid 1000", `chown 1000 "$bak/unit"`],
+    ["directorio de la copia escribible por otros", `chmod o+w "$bak"`],
+    ["entorno de la copia propiedad de uid 1000", `chown 1000 "$bak/env"`],
+  ] as const) {
+    it(`B2 · restore desde una copia manipulada (${name}) ⇒ se NIEGA y no toca unidad ni entorno`, () => {
+      const r = priv(`${BASE}
+${OLD_UNIT}; ${OLD_ENV}
+S9PX_MIGRATE_ENV=1 px install >"$F.log" 2>&1; echo "IN_RC=$?"
+bak=$(sed -n 's/^==> copia de seguridad de unidad y entorno: //p' "$F.log")
+cp "$F/etc/systemd/system/s9-docker-proxy.service" "$F.unit1"; cp "$F/etc/s9-ai-arena/docker-proxy.env" "$F.env1"
+${tamper}
+pfi restore "$bak"; echo "RS_RC=$?"
+cmp -s "$F.unit1" "$F/etc/systemd/system/s9-docker-proxy.service" && echo UNIDAD_INTACTA
+cmp -s "$F.env1" "$F/etc/s9-ai-arena/docker-proxy.env" && echo ENV_INTACTO
+stat -c 'OWN %u %n' "$F/etc/systemd/system/s9-docker-proxy.service" "$F/etc/s9-ai-arena/docker-proxy.env"`);
+      expect(r.out).toContain("IN_RC=0");
+      expect(r.out).not.toContain("RS_RC=0");
+      expect(r.out).toContain("UNIDAD_INTACTA");
+      expect(r.out).toContain("ENV_INTACTO");
+      expect(r.out).not.toMatch(/OWN 1000 /);
+    });
+  }
 });
 
 describe("N · un usuario NO root real no puede tocar la autoridad del proxy (EACCES del núcleo)", () => {
