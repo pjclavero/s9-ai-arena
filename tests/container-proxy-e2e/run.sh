@@ -247,6 +247,23 @@ probe_phase() {
 # s9-firewall.sh de DEV-SECOPS (S9FW_*; sus defectos son las constantes del contrato). Se
 # fijan igualmente aquí para que el job pruebe EXACTAMENTE el contrato, y S9FW_CONF apunta
 # a un fichero inexistente: ninguna configuración del runner puede cambiar las reglas.
+# Segunda medida INDEPENDIENTE (coordinador): la sonda de DEV-NET (scripts/ops/network-probe.mjs)
+# sobre el mismo proyecto, con la pertenencia esperada. rc 0 PASS · 1 FAIL · 2 no medido (≠ PASS).
+netprobe() { # netprobe <fase> [flags…]
+  local phase=$1 rc
+  shift
+  if [ ! -f "$REPO/scripts/ops/network-probe.mjs" ]; then
+    jq -n '{rc: null, missing: true}' >"$OUT/network-probe-$phase.json"
+    return
+  fi
+  node "$REPO/scripts/ops/network-probe.mjs" --project "$PROJECT" \
+    --expect-members arena-engine,bot-build-worker,tournament-worker "$@" --json >"$STATE/netprobe-$phase.json" 2>"$LOGS/netprobe-$phase.err"
+  rc=$?
+  jq -n --argjson rc $rc --slurpfile r "$STATE/netprobe-$phase.json" '{rc: $rc, result: ($r[0] // null)}' \
+    >"$OUT/network-probe-$phase.json" 2>/dev/null || jq -n --argjson rc $rc '{rc: $rc, result: null}' >"$OUT/network-probe-$phase.json"
+  log "sonda DEV-NET fase $phase: rc=$rc"
+}
+
 firewall() { # firewall <apply|check|remove>
   [ -f "$FIREWALL" ] || { echo "no existe $FIREWALL"; return 127; }
   sudo -n env S9FW_CONF=/nonexistent S9FW_BRIDGE="$BRIDGE" S9FW_SUBNET="$SUBNET" S9FW_PROXY_IP="$GW_IP" \
@@ -261,6 +278,7 @@ do_probes() {
   make_equivalents
   # Fase A: SIN firewall. Mide la capa (a) red y la capa (c) control de cliente del proxy.
   probe_phase A
+  netprobe A
   # Fase B: CON el firewall de DEV-SECOPS. Mide la capa (b).
   local fa fc
   firewall apply >"$LOGS/firewall-apply.log" 2>&1
@@ -271,6 +289,7 @@ do_probes() {
   jq -n --argjson a $fa --argjson c $fc --arg s "$FIREWALL" '{script:$s, applyRc:$a, checkRc:$c}' >"$OUT/firewall.json"
   log "firewall: apply rc=$fa check rc=$fc"
   probe_phase B
+  netprobe B --expect-default-route-blocked
 
   # Escucha del proxy en el host: SÓLO 10.89.250.1:2375. Y desde el propio host, por
   # loopback, docker0 y la IP principal del runner: nada escucha.

@@ -30,6 +30,8 @@
  *   R8 flujo (C3/C4): dos builds `passed` → published con artefacto de su build; batalla
  *      `finished`, agents=container, gana red, red dispara y blue tiene 0 intentos; replay
  *      por /api/v1/replays (200) y /replays* del gateway cerrado (404).
+ *   R10 la sonda de DEV-NET (scripts/ops/network-probe.mjs --expect-members …) da rc 0
+ *      sin firewall y con --expect-default-route-blocked con firewall (2 = no medido ≠ PASS).
  *   R9 eventos de Docker: ≥2 contenedores de runtime creados durante los builds y ≥2 durante
  *      la batalla, TODOS con las labels del proxy; ningún create ajeno (sólo contenedores
  *      del proyecto Compose, del arnés o del proxy): un create sin labels = bypass.
@@ -227,6 +229,16 @@ export function evaluar(outDir, { commit } = {}) {
           .join(",")}`,
       );
     }
+  }
+
+  // R10 · segunda medida independiente: la sonda de DEV-NET (rc 0 = PASS; 2 = no medido)
+  for (const fase of ["A", "B"]) {
+    const np = leer(outDir, `network-probe-${fase}.json`);
+    add(
+      `R10 sonda de DEV-NET (network-probe.mjs) fase ${fase}`,
+      !np.error && np.value.rc === 0,
+      np.error ?? (np.value.missing ? "scripts/ops/network-probe.mjs ausente" : `rc=${np.value.rc}`),
+    );
   }
 
   // R7
