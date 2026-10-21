@@ -7,6 +7,7 @@
 #
 # Uso:
 #   bash      infrastructure/scripts/install-docker-proxy.sh check-env [fichero]  # sin root
+#   bash      infrastructure/scripts/install-docker-proxy.sh probe <bind> [puerto] # sin root
 #   sudo bash infrastructure/scripts/install-docker-proxy.sh install
 #   sudo bash infrastructure/scripts/install-docker-proxy.sh validate
 #   sudo bash infrastructure/scripts/install-docker-proxy.sh rollback
@@ -126,10 +127,10 @@ check_env() {
   fi
 
   # --- allowlist de imágenes ---
-  v="${CFG[DOCKER_PROXY_IMAGE_ALLOWLIST]:-}"
-  if [ -z "$v" ]; then
-    err "DOCKER_PROXY_IMAGE_ALLOWLIST vacío (contrato: ruta a runtimes/DIGESTS.lock)"
-  elif [[ "$v" != /* ]]; then
+  # Opcional: sin valor, el proxy usa runtimes/DIGESTS.lock del árbol desde el que corre
+  # (docker-proxy-config.ts); aquí se valida ese mismo fichero ($APP_DIR).
+  v="${CFG[DOCKER_PROXY_IMAGE_ALLOWLIST]:-${APP_DIR}/runtimes/DIGESTS.lock}"
+  if [[ "$v" != /* ]]; then
     err "DOCKER_PROXY_IMAGE_ALLOWLIST debe ser una ruta absoluta: '$v'"
   elif [ ! -r "$v" ]; then
     err "DOCKER_PROXY_IMAGE_ALLOWLIST no existe o no se puede leer: $v"
@@ -138,6 +139,10 @@ check_env() {
     n="$(awk '!/^[[:space:]]*(#|$)/ && NF>=3 && $3 ~ /^[a-z0-9][a-z0-9._\/-]*@sha256:[0-9a-f]{64}$/ {c++} END {print c+0}' "$v")"
     [ "$n" -ge 1 ] || err "DOCKER_PROXY_IMAGE_ALLOWLIST ($v) no contiene ninguna imagen de runtime por digest en la 3ª columna"
   fi
+
+  # --- instancia (label s9.proxy.instance) ---
+  v="${CFG[DOCKER_PROXY_INSTANCE]:-s9-docker-proxy}"
+  [[ "$v" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$ ]] || err "DOCKER_PROXY_INSTANCE inválido: '$v'"
 
   # --- red y usuario del sandbox ---
   [ "${CFG[ARENA_NETWORK]:-}" = arena ] || err "ARENA_NETWORK debe ser exactamente 'arena' (compliance.mjs)"
@@ -156,6 +161,20 @@ check_env() {
 }
 
 # ------------------------------------------------------- install/validate ----
+
+# Sonda /_ping (sin root). rc=0 si la respuesta es una de las esperadas, rc=1 si no.
+probe_ping() {
+  local bind="$1" port="$2" body code
+  command -v curl >/dev/null || { echo "curl no disponible: se omite la sonda"; return 0; }
+  body="$(curl -sS --max-time "${PROBE_TIMEOUT:-3}" -o - -w '\n%{http_code}' "http://${bind}:${port}/_ping" 2>/dev/null || true)"
+  code="${body##*$'\n'}"
+  case "$code:$body" in
+    403:*"endpoint fuera de la allowlist"*) echo "PING=ENDPOINT_DENIED proxy vivo: 403 por allowlist de endpoints (origen admitido)" ;;
+    403:*"cliente no autorizado"*) echo "PING=CLIENT_DENIED proxy vivo: 403 del control de cliente (origen rechazado)" ;;
+    000:* | :*) echo "PING=NO_RESPONSE sin respuesta (esperado con el firewall de host aplicado: descarta loopback)" ;;
+    *) echo "PING=UNEXPECTED respuesta inesperada (http ${code})"; return 1 ;;
+  esac
+}
 
 install_proxy() {
   need_root
@@ -205,8 +224,12 @@ validate_proxy() {
   else
     echo "OK ${listen}"
   fi
-  # No se hace `curl` desde el host: el firewall (capa b) DESCARTA también loopback hacia
-  # 2375 por diseño. El alcance real se mide desde los contenedores (sonda de red).
+  echo "==> sonda /_ping desde el host (informativa; el alcance real se mide desde los contenedores)"
+  # Un proceso del host sale con origen = ${bind}, que está DENTRO de la subred admitida.
+  # Con el firewall instalado, loopback hacia 2375 se descarta por diseño ⇒ TIMEOUT.
+  # Sin firewall, `/_ping` da 403 por la allowlist de ENDPOINTS (proxy vivo); un 403 con
+  # «cliente no autorizado» indica que el control de cliente rechazó el origen.
+  probe_ping "$bind" "$port" || rc=1
 
   echo "==> firewall de host (capa b)"
   if [ -x "$FIREWALL_BIN" ]; then
@@ -233,8 +256,9 @@ rollback_proxy() {
 
 case "${1:-}" in
   check-env) check_env "${2:-$ENV_FILE}" ;;
+  probe) probe_ping "${2:?bind}" "${3:-2375}" ;;
   install) install_proxy ;;
   validate) validate_proxy ;;
   rollback) rollback_proxy ;;
-  *) echo "Uso: $0 {check-env [fichero]|install|validate|rollback}"; exit 2 ;;
+  *) echo "Uso: $0 {check-env [fichero]|probe <bind> [puerto]|install|validate|rollback}"; exit 2 ;;
 esac

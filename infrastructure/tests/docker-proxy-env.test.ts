@@ -8,12 +8,13 @@
 // check-env` rechaza configuraciones inseguras (cada mutación ⇒ rc≠0) sin ejecutar el
 // fichero, y el ExecStartPre REAL de la unidad se ejecuta en un netns aislado.
 import { afterAll, describe, expect, it } from "vitest";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
+import ts from "typescript";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(here, "..", "..");
@@ -120,8 +121,11 @@ const set = (k: string, v: string | null) => (lines: string[]) => {
   const rest = lines.filter((l) => !l.startsWith(`${k}=`));
   return v === null ? rest : [...rest, `${k}=${v}`];
 };
-function checkEnv(file: string) {
-  const r = spawnSync("bash", [INSTALLER, "check-env", file], { encoding: "utf8" });
+function checkEnv(file: string, appDir = "/nonexistent-app-dir") {
+  const r = spawnSync("bash", [INSTALLER, "check-env", file], {
+    encoding: "utf8",
+    env: { ...process.env, APP_DIR: appDir },
+  });
   return { rc: r.status, out: r.stdout + r.stderr };
 }
 
@@ -160,7 +164,9 @@ describe("install-docker-proxy.sh check-env", () => {
     ["clientes ausentes", set("DOCKER_PROXY_ALLOWED_CLIENTS", null), "ALLOWED_CLIENTS vacío"],
     ["clientes 0.0.0.0/0", clients("0.0.0.0/0,10.89.250.0/24"), "demasiado ancho"],
     ["clientes no CIDR", clients("10.89.250.1,10.89.250.0/24"), "CIDR inválido"],
-    ["allowlist ausente", set("DOCKER_PROXY_IMAGE_ALLOWLIST", null), "IMAGE_ALLOWLIST vacío"],
+    // Ausente ⇒ se usa la del árbol ($APP_DIR/runtimes/DIGESTS.lock); aquí APP_DIR no existe.
+    ["allowlist ausente y sin árbol", set("DOCKER_PROXY_IMAGE_ALLOWLIST", null), "no existe"],
+    ["instancia inválida", set("DOCKER_PROXY_INSTANCE", "-mala/instancia"), "DOCKER_PROXY_INSTANCE inválido"],
     ["allowlist relativa", set("DOCKER_PROXY_IMAGE_ALLOWLIST", "runtimes/DIGESTS.lock"), "ruta absoluta"],
     ["allowlist inexistente", set("DOCKER_PROXY_IMAGE_ALLOWLIST", "/nonexistent/DIGESTS.lock"), "no existe"],
     ["ARENA_NETWORK prefijada", set("ARENA_NETWORK", "infrastructure_arena"), "ARENA_NETWORK"],
@@ -175,6 +181,11 @@ describe("install-docker-proxy.sh check-env", () => {
       expect(r.out).toContain(reason);
     });
   }
+
+  it("allowlist ausente ⇒ usa runtimes/DIGESTS.lock del árbol (APP_DIR) y es conforme", () => {
+    const r = checkEnv(envVariant(set("DOCKER_PROXY_IMAGE_ALLOWLIST", null)), ROOT);
+    expect(r.rc, r.out).toBe(0);
+  });
 
   it("RECHAZA una allowlist cuya 3ª columna no está por digest (tag)", () => {
     const lock = join(tmp, "tag.lock");
@@ -215,6 +226,7 @@ describe("s9-docker-proxy.service · unidad", () => {
   it("EnvironmentFile del operador, usuario sin root y TimeoutStartSec > espera máxima (80×2 s)", () => {
     expect(u.Service.EnvironmentFile).toEqual(["/etc/s9-ai-arena/docker-proxy.env"]);
     expect(u.Service.User).toEqual(["s9proxy"]);
+    expect(u.Service.RestartPreventExitStatus).toEqual(["78"]);
     expect(Number(u.Service.TimeoutStartSec?.[0])).toBeGreaterThan(160);
     expect(u.Service.ExecStartPre?.length).toBe(1);
   });
@@ -260,7 +272,7 @@ describe("s9-docker-proxy.service · ExecStartPre real en netns", () => {
 
   it("bridge ausente ⇒ espera acotada y rc≠0 (no arranca)", () => {
     const r = runPre("", OK_ENV);
-    expect(r.rc).not.toBe(0);
+    expect(r.rc).toBe(1); // reintentable (no 78)
     expect(r.out).toContain("no tiene 10.89.250.1");
   });
 
@@ -271,7 +283,7 @@ describe("s9-docker-proxy.service · ExecStartPre real en netns", () => {
 
   it("la IP del bind también en docker0 ⇒ rc≠0", () => {
     const r = runPre(BR("s9-botctl0", "10.89.250.1/24") + BR("docker0", "10.89.250.1/24"), OK_ENV);
-    expect(r.rc).not.toBe(0);
+    expect(r.rc).toBe(78);
     expect(r.out).toContain("docker0");
   });
 
@@ -287,8 +299,103 @@ describe("s9-docker-proxy.service · ExecStartPre real en netns", () => {
   ] as const) {
     it(`RECHAZA ${name} aunque el bridge exista ⇒ rc≠0 por «${reason}»`, () => {
       const r = runPre(BR("s9-botctl0", "10.89.250.1/24") + BR("docker0", "172.17.0.1/16"), env);
-      expect(r.rc).not.toBe(0);
+      expect(r.rc).toBe(78); // EX_CONFIG: RestartPreventExitStatus=78, sin bucle
       expect(r.out).toContain(reason);
     });
   }
+});
+
+// ------------------------------------------------------- sonda /_ping (validate) ----
+// Servidor HTTP REAL en otro proceso (spawnSync bloquearía el bucle de eventos de éste).
+async function withServer(status: number, body: string, fn: (port: number) => void) {
+  const code =
+    `const s=require("http").createServer((q,r)=>{r.writeHead(${status},{"content-type":"application/json"});` +
+    `r.end(${JSON.stringify(body)})});s.listen(0,"127.0.0.1",()=>console.log(s.address().port));`;
+  const child = spawn(process.execPath, ["-e", code], { stdio: ["ignore", "pipe", "inherit"] });
+  try {
+    const port = await new Promise<number>((res, rej) => {
+      child.stdout.once("data", (d) => res(Number(String(d).trim())));
+      child.once("exit", () => rej(new Error("el servidor de prueba terminó")));
+    });
+    fn(port);
+  } finally {
+    child.kill();
+  }
+}
+const probe = (port: number) => {
+  const r = spawnSync("bash", [INSTALLER, "probe", "127.0.0.1", String(port)], {
+    encoding: "utf8",
+    env: { ...process.env, PROBE_TIMEOUT: "2" },
+  });
+  return { rc: r.status, out: r.stdout + r.stderr };
+};
+
+describe("install-docker-proxy.sh probe · distingue los dos 403 por el cuerpo", () => {
+  it("403 de la allowlist de endpoints ⇒ ENDPOINT_DENIED, rc=0", async () => {
+    await withServer(403, JSON.stringify({ message: "endpoint fuera de la allowlist del proxy: GET /_ping" }), (p) => {
+      const r = probe(p);
+      expect(r.out).toContain("PING=ENDPOINT_DENIED");
+      expect(r.rc).toBe(0);
+    });
+  });
+  it("403 del control de cliente ⇒ CLIENT_DENIED, rc=0", async () => {
+    await withServer(403, JSON.stringify({ message: "cliente no autorizado por el proxy de Docker" }), (p) => {
+      const r = probe(p);
+      expect(r.out).toContain("PING=CLIENT_DENIED");
+      expect(r.rc).toBe(0);
+    });
+  });
+  it("200 (un proxy que dejara pasar /_ping) ⇒ UNEXPECTED, rc=1", async () => {
+    await withServer(200, "OK", (p) => {
+      const r = probe(p);
+      expect(r.out).toContain("PING=UNEXPECTED");
+      expect(r.rc).toBe(1);
+    });
+  });
+  it("403 con otro cuerpo ⇒ UNEXPECTED, rc=1 (no se acepta cualquier 403)", async () => {
+    await withServer(403, JSON.stringify({ message: "otra cosa" }), (p) => {
+      expect(probe(p).rc).toBe(1);
+    });
+  });
+});
+
+// ------------------------------------- costura con el lector del proxy (DEV-PROXY) ----
+// Las variables que el PROCESO lee (por AST de docker-proxy-config.ts) y las del env de
+// ejemplo deben coincidir: una variable del ejemplo que nadie lee es configuración
+// muerta; una que el proceso lee y el ejemplo omite es un defecto que el operador no ve.
+// Las únicas variables sólo de la unidad son las del ExecStartPre.
+const PROXY_CONFIG = join(ROOT, "apps", "bot-manager", "src", "docker-proxy-config.ts");
+const UNIT_ONLY = new Set(["DOCKER_PROXY_BRIDGE", "DOCKER_PROXY_BRIDGE_WAIT"]);
+const TEST_ONLY = new Set(["DOCKER_PROXY_INSECURE_BIND_FOR_TESTS"]);
+
+function envVarsReadBy(file: string): Set<string> {
+  const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+  const out = new Set<string>();
+  const visit = (n: ts.Node) => {
+    // env.X / process.env.X / env["X"]
+    if (ts.isPropertyAccessExpression(n)) {
+      const obj = n.expression.getText(sf);
+      if (obj === "env" || obj === "process.env") out.add(n.name.text);
+    } else if (ts.isElementAccessExpression(n) && ts.isStringLiteral(n.argumentExpression)) {
+      const obj = n.expression.getText(sf);
+      if (obj === "env" || obj === "process.env") out.add(n.argumentExpression.text);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+describe("docker-proxy.env.example ↔ docker-proxy-config.ts (costura con DEV-PROXY)", () => {
+  it("existe el lector de configuración del proceso", () => {
+    expect(existsSync(PROXY_CONFIG), "falta apps/bot-manager/src/docker-proxy-config.ts (rama DEV-PROXY)").toBe(true);
+  });
+  it("mismo conjunto de variables (salvo las de la unidad y las de tests)", () => {
+    const read = [...envVarsReadBy(PROXY_CONFIG)].filter((v) => !TEST_ONLY.has(v)).sort();
+    const example = Object.keys(readEnv())
+      .filter((v) => !UNIT_ONLY.has(v))
+      .sort();
+    expect(read.length).toBeGreaterThanOrEqual(5); // el AST encontró lecturas de verdad
+    expect(example).toEqual(read);
+  });
 });

@@ -1,9 +1,10 @@
 # R-DEPLOY · R2 / RC2 — proxy de la API de Docker de S9 AI Arena (HOST).
 #
 # ÚNICO proceso autorizado a tocar /var/run/docker.sock. Ningún contenedor del
-# stack monta el socket (R1.7 · ERR-SEC-02): los consumidores (bot-manager,
-# bot-build-worker, tournament-worker) lanzan contenedores de bots exclusivamente
-# a través de ESTE proxy, con allowlist estricta. Ver docs/operations/docker-proxy.md.
+# stack monta el socket (R1.7 · ERR-SEC-02): los consumidores (tournament-worker,
+# bot-build-worker y arena-engine, los miembros de la red `bot-control`) lanzan
+# contenedores de bots exclusivamente a través de ESTE proxy, con allowlist estricta.
+# Ver docs/operations/docker-proxy.md.
 #
 # RC2: el proxy escucha SÓLO en el gateway de la red Docker dedicada `bot-control`
 # (bridge `s9-botctl0`, 10.89.250.1). Nunca 0.0.0.0, nunca docker0, nunca host-gateway.
@@ -39,19 +40,24 @@ EnvironmentFile=/etc/s9-ai-arena/docker-proxy.env
 #      lo crea Docker al restaurar la red `s9-bot-control`, poco después de arrancar.
 #      Sin esto el bind fallaría con EADDRNOTAVAIL en el arranque de la máquina.
 #   3. La IP del bind no puede estar en docker0.
+# Mismo convenio que el proceso: configuración inválida ⇒ exit 78; bridge no listo ⇒ exit 1.
 # (`$$` = `$` literal para el shell: systemd no expande esas variables.)
 ExecStartPre=/bin/sh -ec '\
   b="$${DOCKER_PROXY_BIND:-}"; br="$${DOCKER_PROXY_BRIDGE:-s9-botctl0}"; n="$${DOCKER_PROXY_BRIDGE_WAIT:-60}"; \
-  case "$$b" in ""|0.0.0.0|::|"[::]"|127.*|localhost) echo "s9-docker-proxy: DOCKER_PROXY_BIND inválido: [$$b]" >&2; exit 1;; esac; \
-  case "$$br" in ""|docker0|lo) echo "s9-docker-proxy: DOCKER_PROXY_BRIDGE inválido: [$$br]" >&2; exit 1;; esac; \
-  case "$$n" in ""|*[!0-9]*) echo "s9-docker-proxy: DOCKER_PROXY_BRIDGE_WAIT inválido: [$$n]" >&2; exit 1;; esac; \
+  case "$$b" in ""|0.0.0.0|::|"[::]"|127.*|localhost) echo "s9-docker-proxy: DOCKER_PROXY_BIND inválido: [$$b]" >&2; exit 78;; esac; \
+  case "$$br" in ""|docker0|lo) echo "s9-docker-proxy: DOCKER_PROXY_BRIDGE inválido: [$$br]" >&2; exit 78;; esac; \
+  case "$$n" in ""|*[!0-9]*) echo "s9-docker-proxy: DOCKER_PROXY_BRIDGE_WAIT inválido: [$$n]" >&2; exit 78;; esac; \
   [ "$$n" -le 80 ] || n=80; \
   i=0; until ip -4 -o addr show dev "$$br" 2>/dev/null | grep -qF " $$b/"; do \
     i=$$((i+1)); [ "$$i" -le "$$n" ] || { echo "s9-docker-proxy: $$br no tiene $$b tras $$n intentos" >&2; exit 1; }; sleep 2; done; \
-  if ip -4 -o addr show dev docker0 2>/dev/null | grep -qF " $$b/"; then echo "s9-docker-proxy: $$b es de docker0" >&2; exit 1; fi'
+  if ip -4 -o addr show dev docker0 2>/dev/null | grep -qF " $$b/"; then echo "s9-docker-proxy: $$b es de docker0" >&2; exit 78; fi'
 ExecStart=/usr/bin/npx tsx apps/bot-manager/src/docker-proxy-main.ts
 Restart=always
 RestartSec=5
+# Códigos del proceso (docker-proxy-main.ts): 78 = configuración inválida (EX_CONFIG) ⇒
+# NO se reintenta (un bucle no lo arreglaría); 1 = bind fallido (p. ej. el bridge aún no
+# tiene la IP) ⇒ sí se reintenta, acotado por StartLimit*.
+RestartPreventExitStatus=78
 # Debe superar la espera máxima de ExecStartPre (80 × 2 s = 160 s).
 TimeoutStartSec=180
 # Logs claros por journald (el proxy ya emite JSON por stdout con cada decisión).
