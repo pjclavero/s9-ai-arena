@@ -1,0 +1,44 @@
+# RC2 · DEV-SECOPS — persiste el firewall de host de S9 AI Arena (TD-053).
+#
+# Aplica infrastructure/firewall/s9-firewall.sh (instalado como /usr/local/sbin/s9-firewall,
+# propiedad de root: la unidad NO ejecuta un script del clon, escribible por el usuario de
+# despliegue). Reglas: 2375 sólo desde el bridge dedicado s9-botctl0 (10.89.250.0/24 →
+# 10.89.250.1); sshd del host cerrado a los bridges de Docker. Ver docs/operations/firewall.md.
+#
+# Instalación: sudo bash infrastructure/firewall/s9-firewall.sh install
+# NUNCA recarga ni vacía nftables, NUNCA toca las cadenas de Docker ni de Tailscale.
+
+[Unit]
+Description=S9 AI Arena · firewall de host (2375 sólo desde s9-botctl0; sshd cerrado a los bridges de Docker)
+Documentation=file:///opt/s9-ai-arena/docs/operations/firewall.md
+# Después de Docker y de Tailscale: tailscaled inserta su `ts-input` como regla 1 de INPUT
+# al arrancar, y el salto propio debe quedar por DELANTE.
+After=network-pre.target docker.service tailscaled.service
+# Antes del proxy: el puerto queda filtrado antes de que nadie escuche en él.
+Before=s9-docker-proxy.service
+# Si se reinicia Docker o Tailscale, se reinicia esta unidad (= se vuelve a aplicar).
+PartOf=docker.service tailscaled.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/s9-firewall apply
+ExecReload=/usr/local/sbin/s9-firewall apply
+# Parar la unidad NO retira las reglas (una parada o un reinicio no deben abrir el puerto).
+# Retirada explícita: s9-firewall remove | uninstall.
+
+# Endurecimiento: sólo necesita administrar netfilter.
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+# iptables-legacy usa este cerrojo; con iptables-nft no hace falta (el `-` lo hace opcional).
+ReadWritePaths=-/run/xtables.lock
+
+[Install]
+WantedBy=multi-user.target docker.service
