@@ -14,7 +14,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
-import ts from "typescript";
+import { createRequire } from "node:module";
+// typescript es CJS: con require se obtiene el objeto completo (ScriptTarget, isX…).
+const ts = createRequire(import.meta.url)("typescript") as typeof import("typescript");
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(here, "..", "..");
