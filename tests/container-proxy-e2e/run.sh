@@ -72,7 +72,9 @@ EXPECTED_EXECSTART="/usr/bin/node --no-addons $BUNDLE_DST"
 # es del usuario del runner, el papel de s9arena): se ejecuta desde una COPIA DE ROOT del
 # commit, y validate/preflight desde la copia INSTALADA. S9PX_TREE: el checkout es «el árbol»
 # que el proceso del proxy no debe ver.
-TRUSTED="/opt/s9cpx-trusted"
+# En /root (0700, de root): en el runner, /opt es 0777 (medido en el run 39689058590) y el
+# self_check lo rechazaría, con razón.
+TRUSTED="/root/s9cpx-trusted"
 PREFLIGHT_BIN="/usr/local/sbin/s9-docker-proxy-preflight"
 PX=(sudo -n env "S9PX_TREE=$REPO" bash "$TRUSTED/infrastructure/scripts/install-docker-proxy.sh")
 PF=(sudo -n env "S9PX_TREE=$REPO" "$PREFLIGHT_BIN")
@@ -156,17 +158,21 @@ install_proxy_as_production() {
     sudo -n install -o root -g root -m 0640 "$REPO/infrastructure/systemd/docker-proxy.env.example" "$PROXY_ENV" || return 1
     # d) COPIA DE ROOT del commit (B1; el equivalente del clon de root de upgrades.md#td-062):
     #    root clona el checkout en $TRUSTED y comprueba que su HEAD es el commit del job.
-    sudo -n rm -rf "$TRUSTED"
-    sudo -n git -c safe.directory='*' clone -q --no-hardlinks "$REPO" "$TRUSTED" || return 1
+    #    `umask 022` explícito: con sudo, el runner crea ficheros 0666 (medido). Producción
+    #    hace lo mismo (upgrades.md#td-062).
+    rootsh() { sudo -n env "PATH=$PATH" bash -c 'umask 022; "$@"' _ "$@"; }
+    rootsh rm -rf "$TRUSTED"
+    rootsh git -c safe.directory='*' clone -q --no-hardlinks "$REPO" "$TRUSTED" || return 1
     local th
-    th=$(sudo -n git -c safe.directory='*' -C "$TRUSTED" rev-parse HEAD)
+    th=$(rootsh git -c safe.directory='*' -C "$TRUSTED" rev-parse HEAD)
     [ "$th" = "$COMMIT" ] || { echo "la copia de root está en $th, no en $COMMIT"; return 1; }
-    sudo -n chmod -R go-w "$TRUSTED"
+    rootsh chmod -R go-w "$TRUSTED"
     # e) bundle construido POR ROOT en esa copia (dependencias del lock, SIN scripts de
     #    instalación) y comparado con el del paso a): dos medidas independientes del mismo
-    #    commit. Es lo que exige install (S9PX_EXPECT_SHA256) en producción.
-    (cd "$TRUSTED" && sudo -n env "PATH=$PATH" npm_config_cache=/root/.npm-s9cpx npm ci --ignore-scripts --no-audit --no-fund) >/dev/null || return 1
-    sudo -n env "PATH=$PATH" node "$TRUSTED/infrastructure/scripts/build-docker-proxy-bundle.mjs" --commit "$COMMIT" >"$OUT/proxy-bundle-root.json" || return 1
+    #    commit. Es lo que exige install (S9PX_EXPECT_SHA256) en producción. Se lanza desde
+    #    OTRO directorio de trabajo a propósito: el sha no puede depender del cwd.
+    rootsh env npm_config_cache=/root/.npm-s9cpx npm ci --prefix "$TRUSTED" --ignore-scripts --no-audit --no-fund >/dev/null || return 1
+    (cd / && rootsh node "$TRUSTED/infrastructure/scripts/build-docker-proxy-bundle.mjs" --commit "$COMMIT") >"$OUT/proxy-bundle-root.json" || return 1
     local s_user s_root
     s_user=$(jq -r .sha256 "$OUT/proxy-bundle.json")
     s_root=$(jq -r .sha256 "$OUT/proxy-bundle-root.json")

@@ -754,7 +754,7 @@ describe("TD-062 · run.sh arranca el proxy con el instalador real, no desde el 
     expect(sh.split("\n").filter((l) => /docker-proxy-main\.ts/.test(l)).length).toBe(1); // sólo la mutación
   });
   it("instala desde la COPIA DE ROOT (B1) con el sha256 esperado, construye el bundle dos veces y retira con rollback", () => {
-    expect(sh).toMatch(/TRUSTED="\/opt\/s9cpx-trusted"/);
+    expect(sh).toMatch(/TRUSTED="\/root\/s9cpx-trusted"/);
     expect(sh).toMatch(
       /"S9PX_EXPECT_SHA256=\$s_user" bash "\$TRUSTED\/infrastructure\/scripts\/install-docker-proxy\.sh" install/,
     );

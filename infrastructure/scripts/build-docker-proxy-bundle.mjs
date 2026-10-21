@@ -54,6 +54,10 @@ mkdirSync(dirname(out), { recursive: true });
 const result = await build({
   entryPoints: [ENTRY],
   outfile: out,
+  // esbuild escribe en el bundle comentarios con la ruta de cada módulo RELATIVA al
+  // directorio de trabajo: sin fijarlo, el mismo commit daba otro sha256 según el cwd
+  // (medido en CI, run 39689058590). Con el repo como base, el sha sólo depende del commit.
+  absWorkingDir: REPO,
   bundle: true,
   platform: "node",
   format: "esm",
@@ -79,7 +83,8 @@ const result = await build({
 
 // ── comprobaciones del metafile (fallan CERRADO) ────────────────────────────
 const problems = [];
-const inputs = Object.keys(result.metafile.inputs).map((p) => (isAbsolute(p) ? p : resolve(process.cwd(), p)));
+// Las rutas del metafile son relativas a absWorkingDir (el repo), no al cwd del proceso.
+const inputs = Object.keys(result.metafile.inputs).map((p) => (isAbsolute(p) ? p : resolve(REPO, p)));
 for (const p of inputs) {
   const rel = relative(SRC_DIR, p);
   if (rel.startsWith("..") || isAbsolute(rel) || p.includes(`${"/"}node_modules${"/"}`))

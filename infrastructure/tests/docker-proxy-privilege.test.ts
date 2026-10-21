@@ -41,8 +41,8 @@ const tmp = mkdtempSync(join(tmpdir(), "rc3priv-test-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
 type Built = { out: string; sha256: string; inputs: string[]; runtimeImports: string[]; commit: string };
-function build(out: string): Built {
-  const r = spawnSync(process.execPath, [BUILD, "--out", out, "--commit", "0".repeat(40)], { encoding: "utf8" });
+function build(out: string, cwd: string = ROOT): Built {
+  const r = spawnSync(process.execPath, [BUILD, "--out", out, "--commit", "0".repeat(40)], { encoding: "utf8", cwd });
   if (r.status !== 0) throw new Error(`build rc=${r.status}: ${r.stderr}`);
   return JSON.parse(r.stdout.trim().split("\n").pop()!);
 }
@@ -62,8 +62,10 @@ describe("B · bundle autocontenido del proxy", () => {
     for (const i of bundle.runtimeImports) expect(i.startsWith("node:"), i).toBe(true);
   });
 
-  it("determinista: dos builds del mismo commit ⇒ mismo sha256 (y el .sha256 lo registra)", () => {
-    const again = build(join(tmp, "dist2", "docker-proxy.mjs"));
+  it("determinista: el mismo commit ⇒ mismo sha256 AUNQUE cambie el directorio de trabajo (y el .sha256 lo registra)", () => {
+    // Regresión real (CI, run 39689058590): el build de root lanzado desde otro cwd daba otro
+    // sha256 porque esbuild escribe rutas relativas al cwd. Se construye desde `/`.
+    const again = build(join(tmp, "dist2", "docker-proxy.mjs"), "/");
     expect(again.sha256).toBe(bundle.sha256);
     expect(readFileSync(`${bundle.out}.sha256`, "utf8")).toBe(`${bundle.sha256}  docker-proxy.mjs\n`);
   });
