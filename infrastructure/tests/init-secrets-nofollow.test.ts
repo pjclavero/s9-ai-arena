@@ -15,8 +15,19 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { spawnSync } from "node:child_process";
 import {
-  mkdtempSync, mkdirSync, copyFileSync, writeFileSync, symlinkSync, linkSync, rmSync,
-  lstatSync, readFileSync, readlinkSync, chmodSync, existsSync, readdirSync,
+  mkdtempSync,
+  mkdirSync,
+  copyFileSync,
+  writeFileSync,
+  symlinkSync,
+  linkSync,
+  rmSync,
+  lstatSync,
+  readFileSync,
+  readlinkSync,
+  chmodSync,
+  existsSync,
+  readdirSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -29,9 +40,17 @@ const SUT = process.env.INIT_SECRETS_UNDER_TEST
 const ROOT_SCENARIOS = join(__dirname, "fixtures/init-secrets-root-scenarios.sh");
 
 const GENERATED = [
-  "postgres_password.txt", "jwt_secret.txt", "grafana_admin_password.txt", "restic_password.txt",
-  "arena_engine_internal_secret.txt", "replay_ingest_secret.txt", "artifact_signing_key.pem",
-  "artifact_verify_key.pem", "stream_key.txt", "restic_ssh_key", "restic_ssh_known_hosts",
+  "postgres_password.txt",
+  "jwt_secret.txt",
+  "grafana_admin_password.txt",
+  "restic_password.txt",
+  "arena_engine_internal_secret.txt",
+  "replay_ingest_secret.txt",
+  "artifact_signing_key.pem",
+  "artifact_verify_key.pem",
+  "stream_key.txt",
+  "restic_ssh_key",
+  "restic_ssh_known_hosts",
 ];
 
 let base: string;
@@ -42,19 +61,33 @@ const uid = process.getuid ? process.getuid() : 0;
 function run(env: Record<string, string> = {}) {
   return spawnSync("bash", [join(base, "infrastructure/scripts/init-secrets.sh")], {
     encoding: "utf8",
-    env: { PATH: process.env.PATH ?? "/usr/bin:/bin", RUNTIME_UID: String(uid), RUNTIME_GID: String(process.getgid?.() ?? 0), ...env },
+    env: {
+      PATH: process.env.PATH ?? "/usr/bin:/bin",
+      RUNTIME_UID: String(uid),
+      RUNTIME_GID: String(process.getgid?.() ?? 0),
+      ...env,
+    },
   });
 }
-function sha(p: string) { return createHash("sha256").update(readFileSync(p)).digest("hex"); }
-function victimState() { const s = lstatSync(victim); return { mode: (s.mode & 0o7777).toString(8), size: s.size, sha: sha(victim) }; }
+function sha(p: string) {
+  return createHash("sha256").update(readFileSync(p)).digest("hex");
+}
+function victimState() {
+  const s = lstatSync(victim);
+  return { mode: (s.mode & 0o7777).toString(8), size: s.size, sha: sha(victim) };
+}
 function tree() {
   const out: Record<string, string> = {};
   const walk = (d: string, rel: string) => {
     for (const n of readdirSync(d)) {
-      const p = join(d, n); const r = rel ? `${rel}/${n}` : n; const s = lstatSync(p);
+      const p = join(d, n);
+      const r = rel ? `${rel}/${n}` : n;
+      const s = lstatSync(p);
       if (s.isSymbolicLink()) out[r] = `l:${readlinkSync(p)}`;
-      else if (s.isDirectory()) { out[r] = "d"; walk(p, r); }
-      else out[r] = `f:${(s.mode & 0o7777).toString(8)}:${s.nlink}:${sha(p)}`;
+      else if (s.isDirectory()) {
+        out[r] = "d";
+        walk(p, r);
+      } else out[r] = `f:${(s.mode & 0o7777).toString(8)}:${s.nlink}:${sha(p)}`;
     }
   };
   walk(secrets, "");
@@ -88,7 +121,8 @@ describe("TD-064 · init-secrets.sh: funcionamiento normal", () => {
     }
     expect(lstatSync(join(secrets, "tls/fullchain.pem")).isFile()).toBe(true);
     const pub = createPublicKey(readFileSync(join(secrets, "artifact_signing_key.pem")))
-      .export({ type: "spki", format: "pem" }).toString();
+      .export({ type: "spki", format: "pem" })
+      .toString();
     expect(readFileSync(join(secrets, "artifact_verify_key.pem"), "utf8")).toBe(pub);
     expect(readdirSync(secrets).filter((n) => n.includes(".tmp") || n.startsWith(".init-secrets."))).toEqual([]);
   });
@@ -106,7 +140,12 @@ describe("TD-064 · init-secrets.sh: funcionamiento normal", () => {
     copyFileSync(SUT, copy);
     const r = spawnSync("bash", [copy], {
       encoding: "utf8",
-      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", RUNTIME_UID: String(uid), RUNTIME_GID: String(process.getgid?.() ?? 0), S9_SECRETS_DIR: secrets },
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        RUNTIME_UID: String(uid),
+        RUNTIME_GID: String(process.getgid?.() ?? 0),
+        S9_SECRETS_DIR: secrets,
+      },
     });
     expect(r.status, r.stderr).toBe(0);
     expect(lstatSync(join(secrets, "jwt_secret.txt")).isFile()).toBe(true);
@@ -114,7 +153,9 @@ describe("TD-064 · init-secrets.sh: funcionamiento normal", () => {
 
   it("por stdin sin S9_SECRETS_DIR se niega (antes derivaba DIR=/secrets)", () => {
     const r = spawnSync("bash", ["-s"], {
-      encoding: "utf8", input: readFileSync(SUT), cwd: join(base, "infrastructure/scripts"),
+      encoding: "utf8",
+      input: readFileSync(SUT),
+      cwd: join(base, "infrastructure/scripts"),
       env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
     });
     expect(r.status).not.toBe(0);
@@ -137,7 +178,10 @@ describe("TD-064 · init-secrets.sh: enlaces y hardlinks plantados no tocan nada
   const cases: Array<[string, () => void]> = [
     ["jwt_secret.txt -> víctima (gen/harden)", () => symlinkSync(victim, join(secrets, "jwt_secret.txt"))],
     ["jwt_secret.txt -> ../../victim (relativo)", () => symlinkSync("../../victim", join(secrets, "jwt_secret.txt"))],
-    ["artifact_verify_key.pem.tmp -> víctima (openssl -out)", () => symlinkSync(victim, join(secrets, "artifact_verify_key.pem.tmp"))],
+    [
+      "artifact_verify_key.pem.tmp -> víctima (openssl -out)",
+      () => symlinkSync(victim, join(secrets, "artifact_verify_key.pem.tmp")),
+    ],
     ["artifact_verify_key.pem -> víctima", () => symlinkSync(victim, join(secrets, "artifact_verify_key.pem"))],
     ["stream_key.txt -> víctima", () => symlinkSync(victim, join(secrets, "stream_key.txt"))],
     ["restic_ssh_known_hosts -> víctima", () => symlinkSync(victim, join(secrets, "restic_ssh_known_hosts"))],
@@ -199,10 +243,19 @@ const probe = spawnSync("unshare", ["--map-root-user", "--map-auto", "true"], { 
 const userns = probe.status === 0;
 describe.skipIf(!userns)("TD-064 · como root (user namespace con propietarios reales)", () => {
   it("se niega en un dir ajeno, se apropia con ADOPT, y lo plantado antes sigue bloqueando", () => {
-    const r = spawnSync("unshare", ["--map-root-user", "--map-auto", "bash", ROOT_SCENARIOS, SUT, base], { encoding: "utf8" });
+    const r = spawnSync("unshare", ["--map-root-user", "--map-auto", "bash", ROOT_SCENARIOS, SUT, base], {
+      encoding: "utf8",
+    });
     expect(r.status, r.stderr).toBe(0);
     const res = Object.fromEntries(
-      r.stdout.trim().split("\n").filter(Boolean).map((l) => { const j = JSON.parse(l); return [j.id, j]; }),
+      r.stdout
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => {
+          const j = JSON.parse(l);
+          return [j.id, j];
+        }),
     );
     expect(res["R1-refuse"].rc).not.toBe(0);
     expect(res["R1-refuse"].files).toBe(0);
