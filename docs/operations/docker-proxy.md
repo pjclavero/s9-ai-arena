@@ -287,10 +287,10 @@ sudo rm -rf /etc/s9-ai-arena && sudo userdel s9proxy
 - **TD-062 (frontera de privilegio):** CERRADA en código, en `main` desde `4cc7651` (PR #167, REVIEW
   ronda 2 PASS). La **unidad instalada en producción sigue siendo la de RC1** (`npx tsx` desde el
   árbol), así que TD-062 está **abierta en producción** hasta la migración
-  ([upgrades.md](upgrades.md#td-062)). Desde el 2026-10-22 esa unidad está **parada** por decisión del
-  operador (`systemctl stop`: `inactive`, `enabled`), sin degradación de los servicios. Sigue
-  `enabled`, así que arrancaría con un reinicio del host; por indicación del operador no se ha hecho
-  `disable` ni se ha borrado nada. La CI la mide en `container-proxy-e2e` (regla R11) y en
+  ([upgrades.md](upgrades.md#td-062)). Desde el 2026-10-22 esa unidad está **parada y deshabilitada** por
+  decisión del operador (`systemctl stop` y después `systemctl disable`: `inactive`, `disabled`, nadie
+  escucha en `:2375`), sin degradación de los servicios. El fichero de la unidad se conserva.
+  **Política del operador (RC3):** el proxy antiguo (unidad de RC1/RC2, `npx tsx` desde el árbol) queda siempre **parado y deshabilitado** (`stop` + `disable`), nunca `enabled`; el fichero de la unidad se conserva. Cualquier vuelta atrás o restauración que deje esa unidad instalada termina con `systemctl disable --now s9-docker-proxy` y la comprobación `systemctl is-enabled` = `disabled`, `is-active` = `inactive` y nadie escuchando en `:2375`. La CI la mide en `container-proxy-e2e` (regla R11) y en
   `infrastructure/tests/docker-proxy-privilege.test.ts`.
 - **El «interruptor» `DOCKER_PROXY_URL` sólo gobierna las batallas.** En `tournament-worker` y
   `arena-engine` va vacío por defecto, y eso apaga la ejecución real de **batallas**. `bot-build-worker`

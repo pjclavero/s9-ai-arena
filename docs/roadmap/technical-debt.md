@@ -93,9 +93,9 @@ Estados posibles:
 | [TD-059](#td-059) | `/healthz` de la API ciego al nivel de migraciones | P2 | Operación / API | ABIERTA |
 | [TD-060](#td-060) | `.env` 0644 y `secrets/` 0755 en el host | P2 | Seguridad / operación | ABIERTA |
 | [TD-061](#td-061) | Seccomp de los bots sin `sendmmsg` (DNS roto) | P0 | Bots / sandbox | CERRADA en la integración RC2; sin desplegar |
-| [TD-062](#td-062) | El proxy ejecuta código de un árbol no sólo de root | P1 | Seguridad / operación | CERRADA en código (`main` `4cc7651`, PR #167); ABIERTA en producción hasta migrar (unidad antigua parada, no migrada) |
+| [TD-062](#td-062) | El proxy ejecuta código de un árbol no sólo de root | P1 | Seguridad / operación | CERRADA en código (`main` `4cc7651`, PR #167); ABIERTA en producción hasta migrar (unidad antigua parada y deshabilitada, no migrada) |
 | [TD-063](#td-063) | Otros servicios del host en todas las interfaces | P3 | Seguridad / red | ABIERTA (sin medir) |
-| [TD-064](#td-064) | `init-secrets.sh` sigue enlaces simbólicos al endurecer los secretos | P1 | Seguridad / operación | ABIERTA (mitigación: inventario de enlaces antes de ejecutarlo) |
+| [TD-064](#td-064) | `init-secrets.sh` sigue enlaces simbólicos al endurecer los secretos | P1 | Seguridad / operación | ABIERTA (P1); mitigada para el despliegue: `TD064_PREFLIGHT = PASS` obligatorio antes de ejecutarlo |
 
 ---
 
@@ -1226,9 +1226,10 @@ Estados posibles:
 
 - **Estado:** CERRADA en el código: PR #167 (rama `fix/td-062-proxy-privilege-boundary`, REVIEW ronda 1 BLOCKED por B1/B2 y ronda 2 PASS), fusionado en `main` el 2026-10-21 (`4cc7651`). **ABIERTA en producción** hasta migrar la unidad instalada ([upgrades.md](../operations/upgrades.md#td-062)).
 - **Producción (RC3, 2026-10-22):**
-  - El operador autorizó parar la unidad antigua: `systemctl stop s9-docker-proxy`. Queda `inactive` y `enabled`; los 12 contenedores siguieron `healthy`, sin reinicios, y el gateway respondió 200.
-  - Mientras está parada, la vía de escalada no tiene proceso que la ejecute, pero **la deuda sigue abierta**: la unidad instalada sigue siendo la de RC1 y, como está `enabled`, volvería a arrancar con un reinicio del host. Sólo la cierra la migración con el preflight instalado en VERDE.
-  - No se ha hecho `disable`, ni se ha borrado nada, ni se ha hecho el chown de TD-057.
+  - El operador autorizó parar la unidad antigua (`systemctl stop s9-docker-proxy`, 12:46Z) y después deshabilitarla (`systemctl disable s9-docker-proxy`, 18:11Z). Queda `inactive` y `disabled`, nadie escucha en `:2375`; los 12 contenedores siguieron `healthy`, sin reinicios, y el gateway respondió 200.
+  - Mientras está parada y deshabilitada, la vía de escalada no tiene proceso que la ejecute ni arranca con un reinicio del host, pero **la deuda sigue abierta**: la unidad instalada sigue siendo la de RC1. Sólo la cierra la migración con el preflight instalado en VERDE.
+  - No se ha borrado nada (el fichero de la unidad se conserva) ni se ha hecho el chown de TD-057.
+  - **Política del operador (RC3):** el proxy antiguo (unidad de RC1/RC2, `npx tsx` desde el árbol) queda siempre **parado y deshabilitado** (`stop` + `disable`), nunca `enabled`; el fichero de la unidad se conserva. Cualquier vuelta atrás o restauración que deje esa unidad instalada termina con `systemctl disable --now s9-docker-proxy` y la comprobación `systemctl is-enabled` = `disabled`, `is-active` = `inactive` y nadie escuchando en `:2375`.
 - **Prioridad:** P1
 - **Área:** Seguridad / operación
 - **Detectado:** 2026-10-21, RC2 (DEV-SECOPS; REVIEW)
@@ -1295,24 +1296,38 @@ Estados posibles:
 <a id="td-064"></a>
 ## TD-064 — `init-secrets.sh` sigue enlaces simbólicos al endurecer los secretos
 
-- **Estado:** ABIERTA
+- **Estado:** ABIERTA (P1). **Mitigada para el despliegue de RC3** por `TD064_PREFLIGHT` (abajo); la mitigación no la cierra.
 - **Prioridad:** P1
 - **Área:** Seguridad / operación
-- **Detectado:** 2026-10-22, RC3 (OPS-C, GATE G)
+- **Detectado:** 2026-10-22, RC3 (OPS-C, GATE G; ampliada por REVIEW)
 - **Evidencia:**
   - `infrastructure/scripts/init-secrets.sh` en `4cc7651`: `harden()` (líneas 16-20) hace `chown` y `chmod` **sin `-h`**, así que actúan sobre el destino de un enlace simbólico.
   - `openssl … -out "$DIR/artifact_verify_key.pem.tmp"` (línea 68) también sigue un enlace plantado con ese nombre.
   - En producción, el directorio `secrets/` del árbol de despliegue es del usuario de despliegue, con modo 755. Ese usuario puede plantar un enlace (por ejemplo, `<secreto>.txt → <fichero del sistema>`).
   - Ejecutado como root, el script pasa el destino al UID/GID de runtime con modo 0400.
   - **Demostrado sin root** en RC3: una víctima fuera de `secrets/` pasó de 644 a 400; en el control negativo no cambió.
+  - Más vías del mismo defecto (lectura del código, REVIEW RC3):
+    - `gen()` comprueba `-s "$f"` y escribe con `> "$f"`: ambos siguen el enlace. Un enlace a un fichero vacío o inexistente hace que root **cree o sobrescriba** ese destino con un valor aleatorio;
+    - `: > stream_key.txt` y `: > restic_ssh_known_hosts` (si faltan) y el TLS autofirmado (`tls/privkey.pem`, `tls/fullchain.pem`) escriben igual a través de un enlace;
+    - `DIR` sale de la ubicación del script: si `secrets/` o `tls/` son un enlace, todo lo anterior opera en otro directorio;
+    - `infrastructure/`, `infrastructure/scripts/` y `secrets/` son del usuario de despliegue: puede sustituir el propio `init-secrets.sh` o plantar un enlace **entre** la comprobación y la ejecución (TOCTOU).
   - Comprobar el sha del script no lo cierra: el script es el correcto, y el problema es el contenido del directorio.
 - **Problema:** escalada del usuario de despliegue a «cambiar dueño y modo de cualquier fichero del host» en cuanto root ejecuta `init-secrets.sh`, que es un paso del despliegue (`artifact_verify_key.pem`).
-- **Mitigación mientras siga abierta:** antes de ejecutarlo como root, hacer un inventario de enlaces del directorio de secretos (`find <secrets> -type l -printf '%p -> %l\n'`). Sólo pueden aparecer los enlaces conocidos y justificados, con `readlink -f` dentro del propio directorio, y no debe existir ningún `*.tmp`. Después de ejecutarlo, el inventario tiene que salir igual. Cualquier diferencia ⇒ **PARA**. Es el paso P7 del plan de despliegue de RC3 (GATE G, privado).
+- **Mitigación mientras siga abierta (obligatoria): `TD064_PREFLIGHT = PASS` antes de ejecutar `init-secrets.sh` como root.** Es el paso P7 del plan de despliegue de RC3 (GATE G, privado). El preflight:
+  - usa `find`/`stat`/`readlink`/`realpath` **sin seguir enlaces** (`find -P`, `stat` sin `-L`);
+  - exige que `secrets/`, `secrets/tls/` y sus padres hasta el árbol no sean enlaces y tengan el dueño esperado;
+  - sólo admite los enlaces conocidos y justificados (hoy `restic_ssh_key` y `restic_ssh_known_hosts`, relativos y resueltos a ficheros regulares dentro de `secrets/`), ningún `*.tmp` y, para cada fichero, el dueño y el modo esperados;
+  - comprueba que el `init-secrets.sh` del árbol es byte a byte el del clon de root del SHA revisado;
+  - está calibrado con un control negativo: un enlace malicioso plantado ⇒ ROJO;
+  - se repite justo después de ejecutar el script, y el inventario tiene que salir igual.
+  
+  Con cualquier enlace, dueño o modo inesperado ⇒ **PARA**: no se ejecuta `init-secrets.sh` y no hay despliegue. Para acotar la ventana entre la comprobación y la ejecución, se ejecutan seguidos en la misma sesión de root, sin procesos ni sesiones del usuario de despliegue en el host.
+- **Riesgo residual de la mitigación (declarado):** mientras los directorios sean del usuario de despliegue, entre el preflight y la ejecución queda una ventana; el preflight la acota, no la elimina. Sólo el arreglo de código la cierra.
 - **Solución prevista:** no seguir enlaces:
   - `chown -h`/`chmod` sólo sobre ficheros regulares (comprobar `-L`/`-f`, o abrir con `O_NOFOLLOW`);
   - temporales creados con `mktemp` en el propio directorio;
   - rechazar con error un enlace no esperado.
-- **Condición de cierre:** el código ya no sigue enlaces, y un test con mutación lo demuestra: un enlace plantado hacia un fichero víctima ⇒ la víctima no cambia y el script falla; si se reintroduce el seguimiento ⇒ test ROJO.
+- **Condición de cierre:** el código ya no sigue enlaces en ninguna de las vías anteriores (endurecimiento, escritura de secretos, temporales, `tls/`, `secrets/` como enlace), y un test con mutación lo demuestra: un enlace plantado hacia un fichero víctima ⇒ la víctima no cambia y el script falla; si se reintroduce el seguimiento ⇒ test ROJO. Mientras no se cumpla, `TD064_PREFLIGHT` sigue siendo obligatorio en cada ejecución de `init-secrets.sh` como root.
 
 ## Documentación relacionada
 
@@ -1346,7 +1361,7 @@ Estados posibles:
 | PR #167 (TD-062) fusionado en `main` = `4cc7651` | RUNTIME_VERIFIED (GitHub, 2026-10-22) | `gh pr view 167` (MERGED 2026-10-21T23:24Z); `git rev-parse origin/main` |
 | `backup.sh:771`, `deploy-contract.json:22-25`, `server.ts:28` sin cambios en `4cc7651` (TD-054, TD-055, TD-059) | CODE_VERIFIED | `grep -n` sobre el árbol de `4cc7651` |
 | Migraciones 012 y 013 en el código; producción en 011 | CODE_VERIFIED + RUNTIME_VERIFIED (lectura, 2026-10-22) | `apps/api/src/db/migrations.ts:693,794`; lectura de producción del coordinador (sin topología en el repo) |
-| Proxy antiguo parado (`inactive`, `enabled`), 12 contenedores `healthy`; restos del smoke presentes (TD-058, TD-062) | RUNTIME_VERIFIED (lectura, 2026-10-22) | lectura de producción del coordinador antes y después del `stop` (sin topología en el repo) |
+| Proxy antiguo parado y deshabilitado (`inactive`, `disabled`, `:2375` cerrado), 12 contenedores `healthy`; restos del smoke presentes (TD-058, TD-062) | RUNTIME_VERIFIED (lectura, 2026-10-22) | lectura de producción del coordinador antes y después del `stop` y del `disable`, y lectura independiente de REVIEW (sin topología en el repo) |
 | Decisión del operador `BREAK_GLASS = DEFERRED` (TD-007) | DESIGN_ONLY (decisión, no medida) | decisión del operador del 2026-10-22 |
 | `init-secrets.sh` sigue enlaces (TD-064) | CODE_VERIFIED + RUNTIME_VERIFIED (sin root, con control negativo) | `infrastructure/scripts/init-secrets.sh:16-20,68` en `4cc7651`; demostración de OPS-C en RC3 (privada) |
 | Causa del nightly: falta `backup-image-tar` y el `sysctl` de `ci.yml:82` (TD-019) | CODE_VERIFIED | `grep -n 'backup-image-tar\|apparmor_restrict' .github/workflows/ci.yml .github/workflows/nightly.yml` (sólo aparece en `ci.yml`) |

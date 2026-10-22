@@ -14,7 +14,7 @@ MAIN:           4cc7651 (PR #167, TD-062, sobre RC2 6612868); CI de push a main 
 EN CURSO:       RC3 — release gates A–G sobre la base 4cc7651; main no se mueve durante la RC
 LAST VERIFIED:  2026-10-22 (RC3: origin/main = 4cc7651; lectura de producción)
 PRODUCCIÓN:     árbol de despliegue en 1b4d8eb, SIN desplegar 4cc7651; 12 servicios healthy; BD en la migración 011
-PROXY ANTIGUO:  parado por el operador (inactive, enabled); TD-062 sigue abierta en producción hasta migrar
+PROXY ANTIGUO:  parado y deshabilitado por el operador (inactive, disabled; :2375 cerrado); TD-062 sigue abierta en producción hasta migrar
 RUNTIME:        sin cambios desde la auditoría: perfil `production`, 12 servicios, imágenes de 3 commits
 BREAK-GLASS:    DEFERRED (decisión del operador, 2026-10-22): future hardening, NO bloquea RC3 ni la activación
 VEREDICTO CÓDIGO:     el recorrido de usuario completo funciona y lo exige la CI (golden path en navegador real)
@@ -56,7 +56,7 @@ Estado de producción al empezar la RC (lectura del 2026-10-22, sin topología):
 - árbol de despliegue en `1b4d8eb`, 12 contenedores `healthy` tras un reinicio no planificado del host el 2026-10-21;
 - PostgreSQL 16.14 con migraciones hasta `011`;
 - copia nocturna correcta (04:15 UTC);
-- proxy de Docker antiguo **parado** con `systemctl stop` por decisión del operador (`inactive`, `enabled`), sin degradación de los servicios. Es una mitigación de [TD-062](technical-debt.md#td-062), no su cierre: la unidad de RC1 sigue instalada y arrancaría con un reinicio del host.
+- proxy de Docker antiguo **parado** (`systemctl stop`, 12:46Z) y **deshabilitado** (`systemctl disable`, 18:11Z) por decisión del operador: `inactive`, `disabled`, nadie escucha en `:2375`, sin degradación de los servicios. El fichero de la unidad de RC1 se conserva. Es una mitigación de [TD-062](technical-debt.md#td-062), no su cierre: la unidad de RC1 sigue instalada, aunque ya no arranca con un reinicio del host.
 
 **Decisión del operador sobre el break-glass (2026-10-22):** `BREAK_GLASS = DEFERRED`. Es *future
 hardening* y **no bloquea** RC3, el despliegue, ni la activación de la ejecución real o del espectador
@@ -173,5 +173,5 @@ Funciones pendientes de diseño: [pending-features.md](pending-features.md).
 | RC2 en `main` | RUNTIME_VERIFIED (GitHub) | PR #164 fusionado (`main` = `6612868`) **antes** del PASS formal de REVIEW; el operador lo aceptó después; CI de `main` sobre `6612868` en verde |
 | Unidad del proxy en producción = RC1 (`npx tsx` desde el árbol; allowlist y loader escribibles por el usuario de despliegue) | RUNTIME_VERIFIED (lectura, 2026-10-21) | `systemctl cat/show`, `/proc/<pid>/cmdline` y `stat` en el host; matriz en el informe de DEV-PRIV (sin topología en el repo) |
 | `origin/main` = `4cc7651` (PR #167 fusionado); CI de push en verde | RUNTIME_VERIFIED (GitHub, 2026-10-22) | `git rev-parse origin/main`; runs `ci` 39693207313 y `E6 security` 39693207224 en `success` |
-| Producción: árbol `1b4d8eb`, 12 `healthy`, migraciones hasta `011`, copia nocturna correcta; proxy antiguo `inactive`/`enabled` sin degradación | RUNTIME_VERIFIED (lectura, 2026-10-22) | lectura del coordinador de la RC antes y después del `stop` (sin topología en el repo) |
+| Producción: árbol `1b4d8eb`, 12 `healthy`, migraciones hasta `011`, copia nocturna correcta; proxy antiguo `inactive`/`disabled` sin degradación | RUNTIME_VERIFIED (lectura, 2026-10-22) | lectura del coordinador de la RC antes y después del `stop` y del `disable`, y lectura independiente de REVIEW (sin topología en el repo) |
 | `BREAK_GLASS = DEFERRED`, no bloqueante | DESIGN_ONLY (decisión del operador) | decisión del 2026-10-22 |
