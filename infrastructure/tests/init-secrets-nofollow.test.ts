@@ -101,6 +101,26 @@ describe("TD-064 · init-secrets.sh: funcionamiento normal", () => {
     expect(tree()).toEqual(before);
   });
 
+  it("S9_SECRETS_DIR: una copia del script fuera del árbol escribe en el directorio indicado", () => {
+    const copy = join(base, "copia-de-confianza.sh");
+    copyFileSync(SUT, copy);
+    const r = spawnSync("bash", [copy], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", RUNTIME_UID: String(uid), RUNTIME_GID: String(process.getgid?.() ?? 0), S9_SECRETS_DIR: secrets },
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(lstatSync(join(secrets, "jwt_secret.txt")).isFile()).toBe(true);
+  });
+
+  it("por stdin sin S9_SECRETS_DIR se niega (antes derivaba DIR=/secrets)", () => {
+    const r = spawnSync("bash", ["-s"], {
+      encoding: "utf8", input: readFileSync(SUT), cwd: join(base, "infrastructure/scripts"),
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("S9_SECRETS_DIR");
+  });
+
   it("respeta el enlace admitido restic_ssh_key -> s9backup_ssh_key (destino literal sin '/')", () => {
     writeFileSync(join(secrets, "s9backup_ssh_key"), "clave-ficticia\n", { mode: 0o600 });
     symlinkSync("s9backup_ssh_key", join(secrets, "restic_ssh_key"));

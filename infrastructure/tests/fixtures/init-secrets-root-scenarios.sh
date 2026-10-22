@@ -49,3 +49,6 @@ mk; mkdir "$BASE/t/infrastructure/evil"; chown $APPUID:$APPUID "$BASE/t/infrastr
 rmdir "$(S)"; ln -s evil "$(S)"; chown -h $APPUID:$APPUID "$(S)"
 b=$(vstate); rc=$(run S9_SECRETS_ADOPT=1)
 printf '{"id":"R7-secrets-is-link","rc":%s,"evil_files":%s}\n' "$rc" "$(find -P "$BASE/t/infrastructure/evil" -mindepth 1 | wc -l)"
+
+# Limpieza DENTRO del namespace: fuera, los ficheros de subuids no se pueden borrar.
+rm -rf "$BASE/t" "$BASE/victim" "$BASE/out.log"

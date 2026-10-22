@@ -31,6 +31,8 @@ die() { echo "init-secrets: ERROR (TD-064): $*" >&2; exit 3; }
 if [ -n "${S9_SECRETS_DIR:-}" ]; then
   DIR=$S9_SECRETS_DIR
 else
+  # Por stdin (bash -s) BASH_SOURCE está vacío: antes eso daba DIR=/secrets.
+  [ -n "${BASH_SOURCE[0]:-}" ] || die "ejecutado sin ruta de script (¿por stdin?): define S9_SECRETS_DIR"
   DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/secrets"
 fi
 case "$DIR" in /*) ;; *) die "el directorio de secretos debe ser una ruta absoluta: $DIR" ;; esac
