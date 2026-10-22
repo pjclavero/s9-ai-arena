@@ -4,7 +4,9 @@
 > el host como unidad systemd y es el único proceso con `/var/run/docker.sock`. RC2 cambia su
 > alcance de red (red dedicada `bot-control`) y su política (control de cliente, allowlist de
 > imágenes y propiedad de contenedores). La **ejecución real de bots sigue apagada** por defecto:
-> `DOCKER_PROXY_URL` vacío en `tournament-worker`/`arena-engine` (puerta del operador). Índice de
+> `DOCKER_PROXY_URL` vacío en `tournament-worker`/`arena-engine` (puerta del operador). Ojo: eso
+> apaga las batallas, no los builds: `bot-build-worker` trae la URL por defecto y valida bots en el
+> sandbox en cuanto el proxy arranca ([Estado actual](#estado-actual)). Índice de
 > operación: [index.md](index.md) · Seguridad: [../technical/security.md](../technical/security.md).
 
 R-DEPLOY · R2 (R1.7 · ERR-SEC-02) · RC2. Este documento describe el **único proceso autorizado a
@@ -290,6 +292,12 @@ sudo rm -rf /etc/s9-ai-arena && sudo userdel s9proxy
   `enabled`, así que arrancaría con un reinicio del host; por indicación del operador no se ha hecho
   `disable` ni se ha borrado nada. La CI la mide en `container-proxy-e2e` (regla R11) y en
   `infrastructure/tests/docker-proxy-privilege.test.ts`.
+- **El «interruptor» `DOCKER_PROXY_URL` sólo gobierna las batallas.** En `tournament-worker` y
+  `arena-engine` va vacío por defecto, y eso apaga la ejecución real de **batallas**. `bot-build-worker`
+  trae la URL por defecto (`http://docker-proxy.internal:2375`, `infrastructure/docker-compose.yml`). En
+  cuanto el proxy está en marcha y los runtimes descargados, los **builds ya ejecutan código de usuario**
+  en el sandbox, aunque `DOCKER_PROXY_URL` no esté en `.env`. Arrancar el proxy es, por tanto, activar
+  los builds; el operador tiene que tratarlo así.
 - **Compatibilidad:** el arnés manual `scripts/e2e-real-battle-smoke.ts` usa una imagen
   `s9-smoke-bot` que no está en `DIGESTS.lock`; con RC2 hay que arrancar el proxy con un lock propio
   (`DOCKER_PROXY_IMAGE_ALLOWLIST`) que la incluya. Los contenedores creados antes de RC2 no llevan las

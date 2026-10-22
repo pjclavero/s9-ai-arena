@@ -172,6 +172,10 @@ las lee sólo `scripts/e2e-real-battle-smoke.ts`, no la API). Ver
 - **En producción (2026-10-22):** sin desplegar. La unidad del proxy instalada es la de RC1 y está
   parada ([TD-062](../roadmap/technical-debt.md#td-062)); el `.env` y `secrets/` siguen con permisos
   laxos ([TD-060](../roadmap/technical-debt.md#td-060)).
+- **`DOCKER_PROXY_URL` no es un interruptor global.** Vacío en `tournament-worker` apaga las batallas
+  reales. `bot-build-worker` usa la URL por defecto, así que, con el proxy y los runtimes presentes,
+  los builds ya ejecutan código de usuario en el sandbox aunque el `.env` no la defina
+  ([docker-proxy.md](docker-proxy.md#estado-actual)).
 - **Durante RC3:** la lista exacta de cambios del `.env` de producción (nombres y valores no
   secretos) y la cadena `.env` → compose → contenedor → proceso las verifica el gate de configuración
   y secretos de la RC. En la migración del proxy, `S9PX_MIGRATE_ENV=1` cambia sólo la línea de la

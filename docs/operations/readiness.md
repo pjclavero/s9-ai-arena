@@ -105,7 +105,11 @@ B backup y restauración aislada · C imágenes por contenido · D migraciones �
 (incluida la migración de TD-062) · F camino Docker de los bots · G plan de despliegue. Un gate sólo
 pasa con evidencia capaz de ponerse roja; `skipped` no es PASS.
 
-**Gate de activación** de `S9_ENABLE_REAL_BATTLE_RUNS` y `S9_PUBLIC_SPECTATE_ENABLED`, después de desplegar:
+**Gate de activación** de `S9_ENABLE_REAL_BATTLE_RUNS` y `S9_PUBLIC_SPECTATE_ENABLED`, después de desplegar.
+`DOCKER_PROXY_URL` en `tournament-worker` gobierna sólo las batallas: los builds dependen únicamente
+de que el proxy esté en marcha.
+
+
 
 | Condición | Bloquea la activación | Estado / dónde se mide |
 |---|---|---|
@@ -115,6 +119,7 @@ pasa con evidencia capaz de ponerse roja; `skipped` no es PASS.
 | Procedencia de las imágenes en ejecución (`BUILD_COMMIT`, `/version`) | sí | GATE C ([upgrades.md](upgrades.md#verificar-el-contenido-de-la-imagen)) |
 | Preflight instalado del proxy en VERDE (`/usr/local/sbin/s9-docker-proxy-preflight preflight`, rc 0) | sí | GATE E / plan G ([TD-062](../roadmap/technical-debt.md#td-062)) |
 | Readiness revalidado con las sondas que el CLI ejerce | sí | este documento |
+| Conciencia de que arrancar el proxy activa los **builds** (código de usuario en el sandbox) aunque `DOCKER_PROXY_URL` no esté en `.env` | sí (decisión explícita al arrancar el proxy) | `bot-build-worker` trae la URL por defecto ([docker-proxy.md](docker-proxy.md#estado-actual)) |
 | **Copia del paquete break-glass fuera del dominio de fallo** | **no: DEFERRED** | decisión del operador, 2026-10-22 ([TD-007](../roadmap/technical-debt.md#td-007)) |
 | **Doble custodia de la frase de paso** | **no: DEFERRED** | ídem |
 

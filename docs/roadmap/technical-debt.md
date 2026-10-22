@@ -9,7 +9,7 @@ nunca se implementaron van en [pending-features.md](pending-features.md). Los s�
 usuario o el operador van en [known-issues.md](known-issues.md).
 
 - **BASE COMMIT:** `27f70bb` (origin/main, 2026-09-13). Desde la auditoría del 2026-10-15 hay 0 commits nuevos.
-- **LAST VERIFIED:** 2026-10-22 (RC3, base `4cc7651`: estados de TD-007, TD-019, TD-050…TD-062 revisados contra el código de `4cc7651`, la CI de GitHub y la lectura de producción del 2026-10-22; decisión del operador sobre el break-glass en [TD-007](#td-007)). Antes: 2026-10-21 (RC2: TD-051…TD-063 añadidas desde las propuestas de RC1 y los hallazgos de RC2; TD-050 fusionada en TD-019). Antes: 2026-10-15; estados de TD-001…TD-031 revisados y TD-032…TD-049 añadidas en el cierre funcional (rama `integration/functional-closure`, base `0b8c12b`, 2026-10-18; ver [functional-closure-report.md](../development/functional-closure-report.md)).
+- **LAST VERIFIED:** 2026-10-22 (RC3, base `4cc7651`: estados de TD-007, TD-019, TD-050…TD-062 revisados contra el código de `4cc7651` y TD-064 añadida, la CI de GitHub y la lectura de producción del 2026-10-22; decisión del operador sobre el break-glass en [TD-007](#td-007)). Antes: 2026-10-21 (RC2: TD-051…TD-063 añadidas desde las propuestas de RC1 y los hallazgos de RC2; TD-050 fusionada en TD-019). Antes: 2026-10-15; estados de TD-001…TD-031 revisados y TD-032…TD-049 añadidas en el cierre funcional (rama `integration/functional-closure`, base `0b8c12b`, 2026-10-18; ver [functional-closure-report.md](../development/functional-closure-report.md)).
 - **Origen:** auditoría del 2026-10-15 ([resumen público](../audits/2026-10-15/README.md),
   [delta](../audits/2026-10-15/AUDIT-DELTA-2026-10.md)). Las excepciones son TD-026, TD-028,
   TD-029 y TD-030, que salieron de la verificación de esta consolidación, y TD-031, que salió del
@@ -95,6 +95,7 @@ Estados posibles:
 | [TD-061](#td-061) | Seccomp de los bots sin `sendmmsg` (DNS roto) | P0 | Bots / sandbox | CERRADA en la integración RC2; sin desplegar |
 | [TD-062](#td-062) | El proxy ejecuta código de un árbol no sólo de root | P1 | Seguridad / operación | CERRADA en código (`main` `4cc7651`, PR #167); ABIERTA en producción hasta migrar (unidad antigua parada, no migrada) |
 | [TD-063](#td-063) | Otros servicios del host en todas las interfaces | P3 | Seguridad / red | ABIERTA (sin medir) |
+| [TD-064](#td-064) | `init-secrets.sh` sigue enlaces simbólicos al endurecer los secretos | P1 | Seguridad / operación | ABIERTA (mitigación: inventario de enlaces antes de ejecutarlo) |
 
 ---
 
@@ -571,6 +572,11 @@ Estados posibles:
 - **Solución prevista:** arreglar los dos fallos del nightly, y hacer que `deploy-staging` despliegue de verdad o falle cuando no despliega.
 - **Condición de cierre:** el nightly pasa a verde, y `deploy-staging` no puede dar verde sin desplegar (lo demuestra un test o una mutación).
 - **RC2 (2026-10-21):** la propuesta TD-050 de RC1 («nightly `slow-suites` en rojo crónico por el arnés») es esta misma deuda y no se abre aparte. Evidencia nueva: `nightly.yml` en `failure` las 10 noches del 12 al 21 de octubre, sobre 3 commits distintos (`gh run list --workflow nightly.yml`).
+- **Causa exacta y arreglo (RC3, OPS-C):** 15 de 15 nightly en `failure` entre el 8 y el 22 de octubre, sobre 4 commits. Siempre fallan los mismos dos tests:
+  - `restore-sftp-bootstrap.test.ts`: «la imagen … backup:e2e-test no está cargada». `nightly.yml` no carga el artefacto `backup-image-tar`, y el mismo E2E pasa en el job `e2e-restore-sftp-bootstrap` de `ci.yml`.
+  - `b13-data-volumes.test.ts`: «unshare -rm no funciona en este runner». `ci.yml:82` hace `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` y `nightly.yml` no.
+  - **Arreglo (2 líneas en `nightly.yml`):** cargar la imagen `backup` como hace `ci.yml` con `backup-image-tar`, y añadir el mismo `sysctl`.
+  - **No se aplica en RC3:** sigue como KNOWN ISSUE no bloqueante. El rojo crónico enmascara regresiones, así que conviene arreglarlo justo después de la RC.
 - **RC3 (2026-10-22):** sigue igual. `nightly.yml` sale en `failure` las 12 noches del 11 al 22 de octubre, la última sobre `4cc7651` (run 39750535840). En los dos últimos runs (39750535840 y 39571809812) el único job en `failure` es `slow-suites`; `determinism-1000` sale en `success`.
   - Clasificación para RC3: **KNOWN ISSUE, no bloqueante**. El nightly no es check obligatorio de `main`, y el camino que cubre la RC lo ejercen los checks obligatorios (`functional-e2e`: golden, docker-e2e y container-proxy-e2e). El log de `slow-suites` del run 39750535840 da las dos causas ya conocidas, ambas del montaje del arnés y no del producto: `restore-sftp-bootstrap.test.ts` no encuentra la imagen `backup` («comprobar que está cargada», `pull access denied`) y `b13-data-volumes.test.ts` falla en el caso que necesita espacios de nombres en CI. Resultado: 2 ficheros en rojo, 218 en verde y 6 saltados; 1 test en rojo, 3261 en verde y 78 saltados.
 
@@ -1286,6 +1292,28 @@ Estados posibles:
 - **Solución prevista:** Inventario de escuchas y, para cada una, bind acotado o regla en `S9-HOST-GUARD`.
 - **Condición de cierre:** Sonda desde un contenedor de cada red ⇒ sólo los puertos justificados responden.
 
+<a id="td-064"></a>
+## TD-064 — `init-secrets.sh` sigue enlaces simbólicos al endurecer los secretos
+
+- **Estado:** ABIERTA
+- **Prioridad:** P1
+- **Área:** Seguridad / operación
+- **Detectado:** 2026-10-22, RC3 (OPS-C, GATE G)
+- **Evidencia:**
+  - `infrastructure/scripts/init-secrets.sh` en `4cc7651`: `harden()` (líneas 16-20) hace `chown` y `chmod` **sin `-h`**, así que actúan sobre el destino de un enlace simbólico.
+  - `openssl … -out "$DIR/artifact_verify_key.pem.tmp"` (línea 68) también sigue un enlace plantado con ese nombre.
+  - En producción, el directorio `secrets/` del árbol de despliegue es del usuario de despliegue, con modo 755. Ese usuario puede plantar un enlace (por ejemplo, `<secreto>.txt → <fichero del sistema>`).
+  - Ejecutado como root, el script pasa el destino al UID/GID de runtime con modo 0400.
+  - **Demostrado sin root** en RC3: una víctima fuera de `secrets/` pasó de 644 a 400; en el control negativo no cambió.
+  - Comprobar el sha del script no lo cierra: el script es el correcto, y el problema es el contenido del directorio.
+- **Problema:** escalada del usuario de despliegue a «cambiar dueño y modo de cualquier fichero del host» en cuanto root ejecuta `init-secrets.sh`, que es un paso del despliegue (`artifact_verify_key.pem`).
+- **Mitigación mientras siga abierta:** antes de ejecutarlo como root, hacer un inventario de enlaces del directorio de secretos (`find <secrets> -type l -printf '%p -> %l\n'`). Sólo pueden aparecer los enlaces conocidos y justificados, con `readlink -f` dentro del propio directorio, y no debe existir ningún `*.tmp`. Después de ejecutarlo, el inventario tiene que salir igual. Cualquier diferencia ⇒ **PARA**. Es el paso P7 del plan de despliegue de RC3 (GATE G, privado).
+- **Solución prevista:** no seguir enlaces:
+  - `chown -h`/`chmod` sólo sobre ficheros regulares (comprobar `-L`/`-f`, o abrir con `O_NOFOLLOW`);
+  - temporales creados con `mktemp` en el propio directorio;
+  - rechazar con error un enlace no esperado.
+- **Condición de cierre:** el código ya no sigue enlaces, y un test con mutación lo demuestra: un enlace plantado hacia un fichero víctima ⇒ la víctima no cambia y el script falla; si se reintroduce el seguimiento ⇒ test ROJO.
+
 ## Documentación relacionada
 
 - [current-status.md](current-status.md): estado actual.
@@ -1320,3 +1348,5 @@ Estados posibles:
 | Migraciones 012 y 013 en el código; producción en 011 | CODE_VERIFIED + RUNTIME_VERIFIED (lectura, 2026-10-22) | `apps/api/src/db/migrations.ts:693,794`; lectura de producción del coordinador (sin topología en el repo) |
 | Proxy antiguo parado (`inactive`, `enabled`), 12 contenedores `healthy`; restos del smoke presentes (TD-058, TD-062) | RUNTIME_VERIFIED (lectura, 2026-10-22) | lectura de producción del coordinador antes y después del `stop` (sin topología en el repo) |
 | Decisión del operador `BREAK_GLASS = DEFERRED` (TD-007) | DESIGN_ONLY (decisión, no medida) | decisión del operador del 2026-10-22 |
+| `init-secrets.sh` sigue enlaces (TD-064) | CODE_VERIFIED + RUNTIME_VERIFIED (sin root, con control negativo) | `infrastructure/scripts/init-secrets.sh:16-20,68` en `4cc7651`; demostración de OPS-C en RC3 (privada) |
+| Causa del nightly: falta `backup-image-tar` y el `sysctl` de `ci.yml:82` (TD-019) | CODE_VERIFIED | `grep -n 'backup-image-tar\|apparmor_restrict' .github/workflows/ci.yml .github/workflows/nightly.yml` (sólo aparece en `ci.yml`) |

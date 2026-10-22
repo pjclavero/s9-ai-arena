@@ -261,8 +261,9 @@ de confianza.
      `cmp -s "$B" "$E" && echo RESTAURADO`. Con eso el host queda igual que antes del paso, con el
      proxy antiguo parado.
    - En el paso 4, `install` vuelve a pasar `check-env` sobre el fichero real (ya con la allowlist de
-     root). Si sale ROJO, restaura su propia copia y no reinicia nada. La copia `$B` es la vuelta atrás
-     al formato RC1, también **después** de una instalación revertida con `restore`.
+     root). Si sale ROJO, restaura su propia copia y no reinicia nada.
+   - La copia `$B` es la vuelta atrás al formato RC1. Para volver después del paso 4 **no** sirve
+     `restore`: ver [Vuelta atrás desde un host que venía de RC1](#td-062-vuelta-atras-rc1).
 
 4. **Instalar (transaccional).**
 
@@ -325,29 +326,74 @@ al proxy hasta que se reinstala, y `preflight` avisa si la copia de root y la de
 - El bundle, la allowlist y el preflight instalados se quedan. No molestan a la unidad antigua, y
   el preflight seguirá diciendo ROJO hasta que se migre.
 
+<a id="td-062-vuelta-atras-rc1"></a>
+> **DANGER — `restore` en un host que venía de RC1**
+>
+> **PRECONDITION:** la copia que hizo `install` (`/var/lib/s9-docker-proxy/backup/<fecha>-<pid>/`)
+> contiene la **unidad de RC1** (`npx tsx` desde el árbol de despliegue).
+>
+> **EFFECT:** `restore` repone esa unidad y **reinicia** el proxy. Arrancaría el proxy viejo, que
+> ejecuta código del árbol con el grupo `docker`: **reabre TD-062** en ese momento. Si el entorno ya se
+> había pasado a RC2 (paso 3 bis), además lo arranca con una configuración que no es la suya.
+>
+> **ROLLBACK (el que hay que usar):** reponer a mano y dejar el proxy **parado**:
+>
+> ```bash
+> systemctl stop s9-docker-proxy
+> K=/var/lib/s9-docker-proxy/backup/<fecha>-<pid>        # la ruta que imprimió install
+> cp -a -- "$K/unit" /etc/systemd/system/s9-docker-proxy.service
+> rm -rf -- /etc/systemd/system/s9-docker-proxy.service.d
+> [ -e "$K/unit.d" ] && cp -a -- "$K/unit.d" /etc/systemd/system/s9-docker-proxy.service.d
+> cp -a -- "$B" /etc/s9-ai-arena/docker-proxy.env        # el .env de RC1 del paso 3 bis (o "$K/env" si no hubo 3 bis)
+> systemctl daemon-reload
+> systemctl is-active s9-docker-proxy                     # debe decir inactive
+> ```
+>
+> El host queda como antes de la migración: unidad de RC1 instalada y **parada**, y TD-062 abierta
+> pero sin proceso que la ejecute. La unidad sigue `enabled`, así que un reinicio del host la
+> arrancaría: decide aparte si hay que deshabilitarla hasta reintentar la migración.
+
 ## RC3: orden del despliegue de `4cc7651`
 
 Resumen del orden; el plan exacto (comando, resultado esperado, condición de aborto y vuelta atrás de
-cada paso) es el GATE G de la RC y vive en el informe privado del operador, porque depende del estado
-real del host. Nada de esto se ha ejecutado todavía.
+cada paso, P0–P21) es el GATE G de la RC y vive en el informe privado del operador, porque depende del
+estado real del host. Nada de esto se ha ejecutado todavía.
 
-Estado de partida (2026-10-22): árbol de despliegue en `1b4d8eb`, BD en `011`, proxy antiguo parado
-(`inactive`, `enabled`) por decisión del operador.
+Estado de partida (2026-10-22): árbol de despliegue en `1b4d8eb`, con `.git` de root; BD en `011`;
+proxy antiguo parado (`inactive`, `enabled`) por decisión del operador; `docker-proxy.env` en formato
+RC1.
 
-1. **Baseline** de solo lectura y **copia previa** sin retención ([backup.md](backup.md#copia-manual), [TD-054](../roadmap/technical-debt.md#td-054)).
-2. **Pre-pull por digest** de las imágenes del RC (`sha-<SHA completo>`) y de los runtimes de bots (`scripts/ops/pull-runtime-images.sh`, después `--check-only`).
-3. **Red y firewall:** los pasos de host de [RC2](#rc2-proxy-de-docker-red-dedicada-y-firewall). El bridge `s9-botctl0` tiene que existir **antes** de arrancar el proxy nuevo, y sólo lo crea Compose al recrear los servicios que se unen a `bot-control`. El GATE G decide en qué punto se recrean (con `DOCKER_PROXY_URL` vacío); lo que no se puede hacer es instalar el proxy sin el bridge.
-4. **Proxy:** migración de [TD-062](#td-062) desde un clon de root fijado a `4cc7651`, con el sha256 del bundle de la CI de push a `main`. El preflight instalado tiene que dar VERDE. Producción parte de un `docker-proxy.env` en formato RC1: antes del `install` va el [paso 3 bis](#td-062-env-rc1).
-5. **Migraciones** `012_bot_versioning` y `013_battle_claim` con el CLI de la imagen `api` del RC ([Migraciones](#migraciones)). `/healthz` no las detecta ([TD-059](../roadmap/technical-debt.md#td-059)).
-6. **Recrear sólo lo necesario** con `up -d --no-build --no-deps <servicios>` y servicios explícitos, según `config --hash`. `postgres` y `queue` **no**.
-7. **Verificar:** health, procedencia por contenido (`BUILD_COMMIT`, `/version`), conectividad permitida y denegada del proxy, smoke y golden path.
-8. **Copia posterior** al despliegue.
-9. Sólo después, y con el preflight instalado otra vez en VERDE: el chown de [TD-057](../roadmap/technical-debt.md#td-057).
+**El ciclo que fija el orden.** TD-057 (el chown del árbol) sólo puede ir después de TD-062. TD-062
+necesita el bridge `s9-botctl0`, y ese bridge sólo lo crea el compose de `4cc7651` al recrear los
+consumidores. Para tener ese compose hay que avanzar el árbol, cuyo `.git` es de root (un `git fetch`
+como usuario de despliegue falla con «dubious ownership»). Se rompe así: **fast-forward del árbol como
+root, sin chown previo**. `.git` es de root, así que el usuario de despliegue no controla ni sus hooks
+ni su configuración.
+
+1. **Baseline** de sólo lectura y **copia previa** verificada, sin retención ([backup.md](backup.md#copia-manual), [TD-054](../roadmap/technical-debt.md#td-054)).
+2. **Clon de root y bundle** ([TD-062](#td-062), pasos 1 y 2).
+3. **Pre-pull por digest** de las imágenes del RC (`sha-<SHA completo>`), identificadas por contenido, y de los runtimes de bots (`scripts/ops/pull-runtime-images.sh` del clon, después `--check-only`).
+4. **Firewall** del host desde el clon ([firewall.md](firewall.md)). Insertado en caliente; nunca recargar ni hacer flush de nftables.
+5. **Copias** del `.env` y del entorno del proxy.
+6. **Fast-forward del árbol como root**, con hooks y fsmonitor anulados y **sin chown**:
+   `git -c safe.directory=<árbol> -c core.hooksPath=/dev/null -c core.fsmonitor=false -C <árbol> merge --ff-only <SHA>`,
+   precedido de `fetch` y de la comprobación de que el SHA viejo es ancestro. Nunca `reset --hard`.
+7. **`artifact_verify_key.pem`** con `init-secrets.sh`, precedido y seguido del inventario de enlaces del directorio de secretos ([TD-064](../roadmap/technical-debt.md#td-064)).
+8. **`.env`** con la lista exacta de cambios (etiquetas, `IMAGE_PREFIX`, `BACKUP_TAG`), **sin** `DOCKER_PROXY_URL`.
+9. **Qué va a cambiar:** `config --hash`. `postgres` y `queue` tienen que salir iguales.
+10. **Migraciones** `012_bot_versioning` y `013_battle_claim` con el CLI de la imagen `api` del RC ([Migraciones](#migraciones)). `/healthz` no las detecta ([TD-059](../roadmap/technical-debt.md#td-059)).
+11. **Recrear**, un servicio cada vez, con `up -d --no-build --no-deps <servicio>`. Al recrear los consumidores de `bot-control` se crea `s9-botctl0`. `postgres` y `queue` **no** se recrean.
+12. **Entorno del proxy RC1 → RC2** ([paso 3 bis](#td-062-env-rc1)).
+13. **Instalar el proxy** ([TD-062](#td-062), paso 4). Si hay que volver atrás, **no** con `restore` ([vuelta atrás desde RC1](#td-062-vuelta-atras-rc1)).
+14. **Validar** con la copia instalada; conectividad permitida y denegada (`network-probe.mjs`), política y propiedad del proxy; procedencia, health, smoke y build real.
+15. **TD-057, sólo ahora:** el chown del árbol, con el preflight instalado en VERDE antes y después ([TD-057](../roadmap/technical-debt.md#td-057)).
+16. **Activación** de la ejecución real (`DOCKER_PROXY_URL`): gate aparte del operador ([readiness.md](readiness.md#gates-de-la-release-candidate-y-de-activación)).
+17. **Copia posterior** al despliegue y cierre.
 
 Particularidades conocidas:
-- `.git` del árbol de despliegue es de root: un `git fetch` como usuario de despliegue falla («dubious ownership») hasta TD-057. El clon de root de TD-062 no depende de ese árbol.
-- `deploy-contract.json` sigue describiendo `4d469dc` ([TD-055](../roadmap/technical-debt.md#td-055)): las etiquetas se fijan en `.env`, no se toman del contrato.
-- `IMAGE_PREFIX` pasa a GHCR, y `BACKUP_TAG` va aparte de `TAG`.
+- **Los builds se activan con el proxy, no con `DOCKER_PROXY_URL`.** `bot-build-worker` trae la URL por defecto. En cuanto el proxy nuevo arranca (paso 13) y están los runtimes (paso 3), los builds ya ejecutan código de usuario en el sandbox ([docker-proxy.md](docker-proxy.md#estado-actual)).
+- `deploy-contract.json` sigue describiendo `4d469dc` ([TD-055](../roadmap/technical-debt.md#td-055)): las etiquetas se fijan en `.env`, y no se usan `deploy-contract-gate` ni `tag-override-gate` para este despliegue.
+- `IMAGE_PREFIX` pasa a GHCR, y `BACKUP_TAG` va aparte de `TAG`: con el prefijo de GHCR, la etiqueta antigua de `backup` no existe allí.
 - El break-glass fuera del host **no** es condición de este despliegue (DEFERRED, [readiness.md](readiness.md#gates-de-la-release-candidate-y-de-activación)).
 
 ## Override de versión por servicio
@@ -468,3 +514,5 @@ Históricos: [../history/operaciones/OVERRIDE_VERSION_POR_SERVICIO.md](../histor
 | Con un `.env` de RC1, `install` aborta en `check-env` (rc 1) sin tocar la unidad; `S9PX_MIGRATE_ENV` sólo cambia la allowlist | CODE_VERIFIED | `infrastructure/scripts/install-docker-proxy.sh` (`check_env`, `migrate_env`, `install_proxy`) en `4cc7651` |
 | Producción tiene `docker-proxy.env` en formato RC1 | RUNTIME_VERIFIED (lectura, 2026-10-22) | lectura del carril OPS-B de RC3 (sin topología en el repo) |
 | Primer ROJO del preflight en un host de RC1: «bundle: no existe» | CODE_VERIFIED | orden de `pf_chain` en `preflight` (node → bundle → …) |
+| `restore` repone la unidad de la copia y reinicia el proxy | CODE_VERIFIED | `install-docker-proxy.sh` (`backup_state`, `restore_state`, `restore_proxy`: `daemon-reload` + `restart`) en `4cc7651` |
+| Orden fast-forward como root → TD-062 → TD-057 | DESIGN_ONLY | GATE G de RC3 (OPS-C, privado); no ejecutado |
