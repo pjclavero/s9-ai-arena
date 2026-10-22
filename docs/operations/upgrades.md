@@ -162,7 +162,13 @@ reescribió la copia. Lo que protege del atacante es este procedimiento.
   - No sirve el de un run de PR: la CI de PR construye el *merge ref*, otro commit, y el sha no
     coincidiría.
   - El bundle lleva el commit en su cabecera, así que el sha depende de `--commit`.
-- La red `bot-control` existe. Si no, el `ExecStartPre` espera y la unidad no arranca.
+- El bridge `s9-botctl0` (red `bot-control`) **existe antes de arrancar el proxy**. No lo crea ni el
+  instalador ni la unidad: lo crea Compose al recrear los servicios que se unen a `bot-control`
+  (`arena-engine`, `bot-build-worker` y `tournament-worker`; [RC2](#rc2-proxy-de-docker-red-dedicada-y-firewall),
+  paso 2). Si falta, el `ExecStartPre` espera `DOCKER_PROXY_BRIDGE_WAIT` segundos, la unidad no arranca
+  y el `install` termina con el preflight completo en ROJO. Compruébalo con `ip -br link show s9-botctl0`.
+- `/etc/s9-ai-arena/docker-proxy.env` está en formato RC2 (bind en `bot-control` y clientes
+  admitidos). Si viene de RC1, haz antes el [paso 3 bis](#td-062-env-rc1).
 - Ventana del operador: el proxy se reinicia una vez, durante unos segundos. La ejecución real de
   bots sigue apagada.
 
@@ -200,14 +206,63 @@ de confianza.
    bash "$S/infrastructure/scripts/install-docker-proxy.sh" preflight; echo rc=$?
    ```
 
-   - `rc=1` (ROJO) con «ExecStart debe ser exactamente…»: es lo esperado con la unidad de RC1/RC2.
-     Sigue.
+   - `rc=1` (ROJO): es lo esperado con la unidad de RC1/RC2. Sigue.
+     - En un host que viene de RC1 (nada instalado todavía en `/usr/local/lib/s9-docker-proxy`), el
+       **primer** ROJO que imprime es «preflight: ROJO: bundle: no existe: …», y después vienen otros, entre ellos
+       «ExecStart debe ser exactamente…». Es normal: el criterio sigue siendo `rc=1`.
    - `rc=0` (VERDE): **PARA** y averigua por qué antes de tocar nada.
      - Si `systemctl cat s9-docker-proxy` ya muestra `ExecStart=/usr/bin/node --no-addons /usr/local/lib/…`,
        la migración ya está hecha: ve al paso 5.
      - Si muestra `npx tsx` y aun así sale VERDE, el preflight no mide lo que dice: no sigas e
        informa.
    - `rc=2`: el clon no es sólo de root. Repite el paso 1.
+
+<a id="td-062-env-rc1"></a>
+3 bis. **Sólo si `docker-proxy.env` está en formato RC1.** Es el caso si `DOCKER_PROXY_BIND` es una IP
+   de `docker0` o del pool `172.17.0.0/16`, o si falta `DOCKER_PROXY_ALLOWED_CLIENTS`. Con ese fichero,
+   `install` **aborta sin tocar nada**: `check-env` sale con rc 1 y el instalador restaura el entorno.
+   `S9PX_MIGRATE_ENV=1` no lo arregla, porque sólo reescribe la línea de la allowlist.
+
+   El proxy antiguo tiene que seguir **parado** durante este paso. El `.env` editado ya no sirve a la
+   unidad de RC1: si arrancara, escucharía en un bridge que quizá aún no existe.
+
+   ```bash
+   E=/etc/s9-ai-arena/docker-proxy.env
+   systemctl is-active s9-docker-proxy                     # debe decir inactive; si no, PARA
+   B="$E.rc1.$(date -u +%Y%m%dT%H%M%SZ)"
+   cp -a -- "$E" "$B" && cmp -s "$E" "$B" && stat -c '%U:%G %a' "$B" && echo BAK_OK   # root:root, sin permisos para otros
+   ```
+
+   **PARA** si no imprime `BAK_OK`. Después, edita `$E` como root (con un editor, sin pegar secretos
+   en la línea de órdenes):
+   - `DOCKER_PROXY_BIND=10.89.250.1`
+   - `DOCKER_PROXY_ALLOWED_CLIENTS=10.89.250.0/24`
+   - Las claves de `$S/infrastructure/systemd/docker-proxy.env.example` que falten (por ejemplo,
+     `ARENA_NETWORK` o `SANDBOX_USER`), con los valores de la plantilla. No copies la plantilla
+     encima del fichero.
+   - No toques `DOCKER_PROXY_IMAGE_ALLOWLIST`: la cambia `install` en el paso 4, cuando la copia de root
+     ya está en su sitio.
+
+   Valida con la **copia de confianza** (la del clon, nunca la del árbol). La allowlist de
+   `/etc/s9-docker-proxy` todavía no existe, así que se valida una copia temporal del fichero que
+   apunta a la allowlist del clon:
+
+   ```bash
+   T=$(mktemp) && chmod 600 "$T"
+   sed '/^[[:space:]]*DOCKER_PROXY_IMAGE_ALLOWLIST[[:space:]]*=/d' "$E" > "$T"
+   echo "DOCKER_PROXY_IMAGE_ALLOWLIST=$S/runtimes/DIGESTS.lock" >> "$T"
+   bash "$S/infrastructure/scripts/install-docker-proxy.sh" check-env "$T"; echo rc=$?
+   rm -f -- "$T"
+   ```
+
+   - `rc=0` («conforme»): sigue al paso 4.
+   - `rc=1`: **PARA** sin instalar. Corrige lo que señala cada `check-env: ERROR` y vuelve a validar.
+     Si no se puede corregir en la ventana, **vuelve atrás**: `cp -a -- "$B" "$E"` y
+     `cmp -s "$B" "$E" && echo RESTAURADO`. Con eso el host queda igual que antes del paso, con el
+     proxy antiguo parado.
+   - En el paso 4, `install` vuelve a pasar `check-env` sobre el fichero real (ya con la allowlist de
+     root). Si sale ROJO, restaura su propia copia y no reinicia nada. La copia `$B` es la vuelta atrás
+     al formato RC1, también **después** de una instalación revertida con `restore`.
 
 4. **Instalar (transaccional).**
 
@@ -281,8 +336,8 @@ Estado de partida (2026-10-22): árbol de despliegue en `1b4d8eb`, BD en `011`, 
 
 1. **Baseline** de solo lectura y **copia previa** sin retención ([backup.md](backup.md#copia-manual), [TD-054](../roadmap/technical-debt.md#td-054)).
 2. **Pre-pull por digest** de las imágenes del RC (`sha-<SHA completo>`) y de los runtimes de bots (`scripts/ops/pull-runtime-images.sh`, después `--check-only`).
-3. **Proxy:** migración de [TD-062](#td-062) desde un clon de root fijado a `4cc7651`, con el sha256 del bundle de la CI de push a `main`. El preflight instalado tiene que dar VERDE **antes** de arrancar el proxy nuevo.
-4. **Red y firewall:** los pasos de host de [RC2](#rc2-proxy-de-docker-red-dedicada-y-firewall).
+3. **Red y firewall:** los pasos de host de [RC2](#rc2-proxy-de-docker-red-dedicada-y-firewall). El bridge `s9-botctl0` tiene que existir **antes** de arrancar el proxy nuevo, y sólo lo crea Compose al recrear los servicios que se unen a `bot-control`. El GATE G decide en qué punto se recrean (con `DOCKER_PROXY_URL` vacío); lo que no se puede hacer es instalar el proxy sin el bridge.
+4. **Proxy:** migración de [TD-062](#td-062) desde un clon de root fijado a `4cc7651`, con el sha256 del bundle de la CI de push a `main`. El preflight instalado tiene que dar VERDE. Producción parte de un `docker-proxy.env` en formato RC1: antes del `install` va el [paso 3 bis](#td-062-env-rc1).
 5. **Migraciones** `012_bot_versioning` y `013_battle_claim` con el CLI de la imagen `api` del RC ([Migraciones](#migraciones)). `/healthz` no las detecta ([TD-059](../roadmap/technical-debt.md#td-059)).
 6. **Recrear sólo lo necesario** con `up -d --no-build --no-deps <servicios>` y servicios explícitos, según `config --hash`. `postgres` y `queue` **no**.
 7. **Verificar:** health, procedencia por contenido (`BUILD_COMMIT`, `/version`), conectividad permitida y denegada del proxy, smoke y golden path.
@@ -410,3 +465,6 @@ Históricos: [../history/operaciones/OVERRIDE_VERSION_POR_SERVICIO.md](../histor
 | La CI publica `sha-<commit>` para los 11 repos de imagen | RUNTIME_VERIFIED | GHCR anónimo, `sha-27f70bb…` → 200 en todos |
 | Sin snapshots de VM (2026-10-15); snapshot previo a la RC creado el 2026-10-20 | RUNTIME_VERIFIED | verificación de la consolidación, 2026-10-15, y RC1, 2026-10-20 (listado de snapshots del hipervisor) |
 | Orden del despliegue de RC3 | DESIGN_ONLY | no ejecutado; plan exacto en el GATE G de la RC (privado) |
+| Con un `.env` de RC1, `install` aborta en `check-env` (rc 1) sin tocar la unidad; `S9PX_MIGRATE_ENV` sólo cambia la allowlist | CODE_VERIFIED | `infrastructure/scripts/install-docker-proxy.sh` (`check_env`, `migrate_env`, `install_proxy`) en `4cc7651` |
+| Producción tiene `docker-proxy.env` en formato RC1 | RUNTIME_VERIFIED (lectura, 2026-10-22) | lectura del carril OPS-B de RC3 (sin topología en el repo) |
+| Primer ROJO del preflight en un host de RC1: «bundle: no existe» | CODE_VERIFIED | orden de `pf_chain` en `preflight` (node → bundle → …) |
