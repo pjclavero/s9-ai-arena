@@ -95,7 +95,7 @@ Estados posibles:
 | [TD-061](#td-061) | Seccomp de los bots sin `sendmmsg` (DNS roto) | P0 | Bots / sandbox | CERRADA en la integración RC2; sin desplegar |
 | [TD-062](#td-062) | El proxy ejecuta código de un árbol no sólo de root | P1 | Seguridad / operación | CERRADA en código (`main` `4cc7651`, PR #167); ABIERTA en producción hasta migrar (unidad antigua parada y deshabilitada, no migrada) |
 | [TD-063](#td-063) | Otros servicios del host en todas las interfaces | P3 | Seguridad / red | ABIERTA (sin medir) |
-| [TD-064](#td-064) | `init-secrets.sh` sigue enlaces simbólicos al endurecer los secretos | P1 | Seguridad / operación | ABIERTA (P1); mitigada para el despliegue: `TD064_PREFLIGHT = PASS` obligatorio antes de ejecutarlo |
+| [TD-064](#td-064) | `init-secrets.sh` sigue enlaces simbólicos al endurecer los secretos | P1 | Seguridad / operación | ABIERTA (P1); mitigada para el despliegue: `TD064_PREFLIGHT = PASS` obligatorio antes de ejecutarlo; cierre previsto en el PR #169 (draft, fuera de RC3) |
 
 ---
 
@@ -1327,6 +1327,8 @@ Estados posibles:
   - `chown -h`/`chmod` sólo sobre ficheros regulares (comprobar `-L`/`-f`, o abrir con `O_NOFOLLOW`);
   - temporales creados con `mktemp` en el propio directorio;
   - rechazar con error un enlace no esperado.
+- **Ejecución en producción mientras siga abierta:** **Nunca por stdin** (`bash -s < init-secrets.sh` o `… | bash`): el script calcula su directorio a partir de su propia ruta; por stdin `BASH_SOURCE` queda vacío y `DIR` pasa a ser `/secrets` en la raíz del host, donde root generaría secretos nuevos (medido en RC3). Se ejecuta la copia del clon de confianza desde un *staging* de root ([upgrades.md](../operations/upgrades.md#rc3-orden-del-despliegue-de-4cc7651), pasos 8 y 9).
+- **Cierre definitivo previsto: PR #169** (draft, rama `fix/td-064-init-secrets-nofollow`; **no entra en RC3**). Directorio de secretos de root (rc 3 si no lo es; `S9_SECRETS_ADOPT=1` para apropiarlo), escritura por temporal nuevo + `rename`, `chown -h`, sólo los enlaces admitidos, `S9_SECRETS_DIR` para ejecutar la copia de confianza y negativa a ejecutarse por stdin sin él. Test `infrastructure/tests/init-secrets-nofollow.test.ts` (18/18 con el script nuevo; con el de `4cc7651`, 14 en ROJO). Al desplegarlo hará falta migrar el directorio de secretos de producción a root.
 - **Condición de cierre:** el código ya no sigue enlaces en ninguna de las vías anteriores (endurecimiento, escritura de secretos, temporales, `tls/`, `secrets/` como enlace), y un test con mutación lo demuestra: un enlace plantado hacia un fichero víctima ⇒ la víctima no cambia y el script falla; si se reintroduce el seguimiento ⇒ test ROJO. Mientras no se cumpla, `TD064_PREFLIGHT` sigue siendo obligatorio en cada ejecución de `init-secrets.sh` como root.
 
 ## Documentación relacionada
@@ -1363,5 +1365,7 @@ Estados posibles:
 | Migraciones 012 y 013 en el código; producción en 011 | CODE_VERIFIED + RUNTIME_VERIFIED (lectura, 2026-10-22) | `apps/api/src/db/migrations.ts:693,794`; lectura de producción del coordinador (sin topología en el repo) |
 | Proxy antiguo parado y deshabilitado (`inactive`, `disabled`, `:2375` cerrado), 12 contenedores `healthy`; restos del smoke presentes (TD-058, TD-062) | RUNTIME_VERIFIED (lectura, 2026-10-22) | lectura de producción del coordinador antes y después del `stop` y del `disable`, y lectura independiente de REVIEW (sin topología en el repo) |
 | Decisión del operador `BREAK_GLASS = DEFERRED` (TD-007) | DESIGN_ONLY (decisión, no medida) | decisión del operador del 2026-10-22 |
+| `TD064_PREFLIGHT` en ROJO ante enlaces, dueños, modos, restos y padres fuera del contrato; con él delante, `init-secrets.sh` no se ejecuta y la víctima no cambia | RUNTIME_VERIFIED (réplica con dueños reales en un espacio de nombres de usuario, 51 casos; repetido por REVIEW) | calibración de la RC3 (privada) |
+| `init-secrets.sh` por stdin escribe en `/secrets` | RUNTIME_VERIFIED (réplica) | `BASH_SOURCE` vacío ⇒ `DIR=/secrets`; calibración de la RC3 |
 | `init-secrets.sh` sigue enlaces (TD-064) | CODE_VERIFIED + RUNTIME_VERIFIED (sin root, con control negativo) | `infrastructure/scripts/init-secrets.sh:16-20,68` en `4cc7651`; demostración de OPS-C en RC3 (privada) |
 | Causa del nightly: falta `backup-image-tar` y el `sysctl` de `ci.yml:82` (TD-019) | CODE_VERIFIED | `grep -n 'backup-image-tar\|apparmor_restrict' .github/workflows/ci.yml .github/workflows/nightly.yml` (sólo aparece en `ci.yml`) |

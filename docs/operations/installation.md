@@ -63,6 +63,11 @@ rompe operaciones posteriores.
 bash infrastructure/scripts/init-secrets.sh
 ```
 
+> Ejecútalo siempre como fichero, **nunca por stdin**: el script calcula su directorio a partir de
+> su propia ruta y, por stdin, escribiría en `/secrets`. En un host ya instalado donde el directorio
+> de secretos no es de root, ejecutarlo como root exige antes `TD064_PREFLIGHT = PASS`
+> ([TD-064](../roadmap/technical-debt.md#td-064), [upgrades.md](upgrades.md#rc3-orden-del-despliegue-de-4cc7651)).
+
 Genera, sólo si no existen, en `infrastructure/secrets/` (permisos `0400`, dueño
 `RUNTIME_UID:RUNTIME_GID`, por defecto `1000:1000`): `postgres_password.txt`, `jwt_secret.txt`,
 `grafana_admin_password.txt`, `restic_password.txt`, `arena_engine_internal_secret.txt`,
