@@ -14,6 +14,7 @@ veredicto **nunca puede ser `READY`** porque varias comprobaciones obligatorias 
 - [Uso](#uso)
 - [Comprobaciones](#comprobaciones)
 - [Qué NO mide](#qué-no-mide)
+- [Gates de la Release Candidate y de activación](#gates-de-la-release-candidate-y-de-activación)
 - [Estado actual](#estado-actual)
 - [Documentación relacionada](#documentación-relacionada)
 - [Verificación](#verificación)
@@ -93,6 +94,37 @@ Las puertas de activación de ejecución real y de espectador público tienen su
 procedimiento: [../technical/battles.md](../technical/battles.md) y
 [../technical/replays.md](../technical/replays.md).
 
+## Gates de la Release Candidate y de activación
+
+El veredicto de este CLI es una entrada más; no sustituye a los gates de operación. Son decisiones del
+operador y se registran aquí para que todas las páginas digan lo mismo.
+
+**Release gates de RC3** (base `4cc7651`; estado en
+[../roadmap/current-status.md](../roadmap/current-status.md#rc3-en-curso)): A fuente/CI/gobernanza ·
+B backup y restauración aislada · C imágenes por contenido · D migraciones · E configuración y secretos
+(incluida la migración de TD-062) · F camino Docker de los bots · G plan de despliegue. Un gate sólo
+pasa con evidencia capaz de ponerse roja; `skipped` no es PASS.
+
+**Gate de activación** de `S9_ENABLE_REAL_BATTLE_RUNS` y `S9_PUBLIC_SPECTATE_ENABLED`, después de desplegar:
+
+| Condición | Bloquea la activación | Estado / dónde se mide |
+|---|---|---|
+| Restauración verificada en aislado | sí | GATE B de la RC ([restore.md](restore.md)) |
+| Runtime de `backup` alineado con el código desplegado | sí | GATE C ([upgrades.md](upgrades.md)) |
+| Copia reciente verificada, con checksum del `pg_dump` | sí | GATE B; copia posterior al despliegue ([backup.md](backup.md)) |
+| Procedencia de las imágenes en ejecución (`BUILD_COMMIT`, `/version`) | sí | GATE C ([upgrades.md](upgrades.md#verificar-el-contenido-de-la-imagen)) |
+| Preflight instalado del proxy en VERDE (`/usr/local/sbin/s9-docker-proxy-preflight preflight`, rc 0) | sí | GATE E / plan G ([TD-062](../roadmap/technical-debt.md#td-062)) |
+| Readiness revalidado con las sondas que el CLI ejerce | sí | este documento |
+| **Copia del paquete break-glass fuera del dominio de fallo** | **no: DEFERRED** | decisión del operador, 2026-10-22 ([TD-007](../roadmap/technical-debt.md#td-007)) |
+| **Doble custodia de la frase de paso** | **no: DEFERRED** | ídem |
+
+**Break-glass = DEFERRED, future hardening, NON-BLOCKING** para RC3, el despliegue, la ejecución
+real y el espectador en el entorno actual. Razonamiento del operador: entorno homelab/club, backups
+verificados, restauración verificada, infraestructura reproducible y snapshot de VM disponible. La
+recomendación se mantiene: una copia del paquete fuera del dominio de fallo del repositorio de copias
+y doble custodia de la frase de paso. Si cambia alguna de esas premisas (por ejemplo, datos de
+terceros o pérdida del snapshot), vuelve a ser condición.
+
 ## Estado actual
 
 - **FUNCIONA ACTUALMENTE:** motor, catálogo, CLI con sondas de solo lectura, autoprueba y mutantes.
@@ -117,3 +149,4 @@ procedimiento: [../technical/battles.md](../technical/battles.md) y
 | Sondas no ejercidas: pg_dump checksum, restore drill, secret mounted, db canary, bundle, gate | CODE_VERIFIED | `packages/readiness/probes-local.ts:62-113` |
 | Variables `S9_READINESS_*` activan las sondas de solo lectura | CODE_VERIFIED | `probes-local.ts:55-87`; `config.ts:270-281` |
 | Ninguna app ni servicio ejecuta readiness | CODE_VERIFIED | sin referencias desde `apps/` ni el compose |
+| Gates de RC3 y gate de activación; break-glass DEFERRED | DESIGN_ONLY (decisión del operador) | decisiones del operador (gate de activación de 2026-08 y break-glass del 2026-10-22) |

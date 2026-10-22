@@ -137,6 +137,20 @@ $DC exec backup /usr/local/bin/backup.sh
 snapshot y aplica la retención). Duración típica observada: decenas de segundos con el volumen de
 datos actual.
 
+**Copia previa a una Release Candidate.** `backup.sh` termina **siempre** en `restic forget … --prune`
+([TD-054](../roadmap/technical-debt.md#td-054), `backup.sh:771`), así que una copia manual aplica la
+retención del nocturno. Mientras no exista un modo sin retención, la copia previa a la RC (RC1, RC3)
+se hace con este rodeo:
+- un envoltorio de `restic` en el `PATH` que intercepta **sólo** `forget` y `prune`, devuelve 0 y pasa
+  todo lo demás al `restic` real;
+- un `RESTIC_HOSTNAME` propio de la RC, para que la copia quede en su grupo de retención y no desplace
+  a los nocturnos;
+- retirar el envoltorio al acabar;
+- comparar la lista de IDs de snapshots antes y después: no debe desaparecer ninguno.
+
+La copia sí actualiza las métricas del contenedor (`last_success` y compañía) como si fuera el
+nocturno. Hay que tenerlo en cuenta al leer el healthcheck hasta la siguiente copia programada.
+
 ## Errores / limitaciones
 
 | Síntoma | Causa | Remedio |
@@ -152,9 +166,14 @@ datos actual.
 
 - **FUNCIONA ACTUALMENTE:** copia diaria con `pg_dump`, volúmenes, secretos en snapshot aparte,
   manifest con checksum del dump, retención y `restic check`; última copia observada correcta el
-  2026-10-15 a las 04:15 UTC con `restic check` sin errores.
+  2026-10-22 a las 04:15 UTC (contenedor `healthy`).
 - **PARCIAL:** sin alertas; el destino de las copias y la máquina que las produce pueden compartir
-  dominio de fallo físico; sin snapshots de VM ([TD-007](../roadmap/technical-debt.md#td-007)).
+  dominio de fallo físico. Hay un snapshot de disco de la VM previo a la RC (2026-10-20,
+  *crash-consistent*), pero no un snapshot base mantenido ([TD-007](../roadmap/technical-debt.md#td-007)).
+- **DEFERRED (decisión del operador, 2026-10-22):** copia del paquete break-glass fuera del dominio de
+  fallo del repositorio y doble custodia de su frase de paso. Es *future hardening*: no bloquea RC3,
+  el despliegue ni la activación en el entorno actual. Se mantiene como recomendación
+  ([TD-007](../roadmap/technical-debt.md#td-007)).
 - **PENDIENTE:** ensayo de restauración reciente ([TD-025](../roadmap/technical-debt.md#td-025)).
 
 ## Documentación relacionada
@@ -177,3 +196,7 @@ Históricos: [../history/operaciones/BACKUP_RUNTIME_ALIGNMENT.md](../history/ope
 | `evidence.sh` sólo lectura (`--no-lock`) y sin preparación SSH propia | CODE_VERIFIED | `infrastructure/backup/evidence.sh:1-30,99`; `grep setup_ssh evidence.sh` → 0 |
 | Última copia 2026-10-15 04:15 UTC correcta, `restic check` sin errores | RUNTIME_VERIFIED (sólo lectura) | verificación de la consolidación, 2026-10-15 (logs y health del contenedor `backup`) |
 | Sin alertas desplegadas | RUNTIME_VERIFIED (auditoría) | perfil `observability` no en ejecución |
+| Copia nocturna del 2026-10-22 correcta, contenedor `healthy` | RUNTIME_VERIFIED (sólo lectura, 2026-10-22) | lectura de producción del coordinador de RC3 (sin topología en el repo) |
+| Toda ejecución de `backup.sh` aplica `forget --prune` | CODE_VERIFIED | `backup.sh:771` en `4cc7651` |
+| Rodeo de la copia previa a la RC (envoltorio de `restic`, `RESTIC_HOSTNAME` propio) | RUNTIME_VERIFIED (RC1, 2026-10-20) | informe privado de RC1; se repite en RC3 |
+| Snapshot de disco de la VM previo a la RC | RUNTIME_VERIFIED (RC1, 2026-10-20) | listado de snapshots del hipervisor en RC1 (sin topología en el repo) |

@@ -37,6 +37,7 @@ producción; el despliegue es la fase siguiente y necesita autorización del ope
 - [REMAINING P1](#remaining-p1)
 - [PRODUCTION CHANGES](#production-changes)
 - [VERDICT](#verdict)
+- [Addendum 2026-10-22: RC2, TD-062 y RC3](#addendum-2026-10-22-rc2-td-062-y-rc3)
 - [Documentación relacionada](#documentación-relacionada)
 - [Verificación](#verificación)
 
@@ -252,6 +253,31 @@ PRODUCTION_READY **no** significa desplegado. La fase siguiente (Release Candida
 controlado: migraciones `012`/`013`, `artifact_verify_key`, `s9-docker-proxy`, backup/readiness,
 gate A-G, golden path tras desplegar) necesita autorización explícita del operador.
 
+## Addendum 2026-10-22: RC2, TD-062 y RC3
+
+Este informe se cerró el 2026-10-19; lo posterior se resume aquí para que el veredicto no se lea fuera
+de contexto. El estado vigente está en [current-status.md](../roadmap/current-status.md).
+
+- **RC1 (2026-10-20):** DEPLOYMENT_BLOCKED por el camino Docker de los bots (proxy inalcanzable desde
+  los contenedores y sin ámbito). Origen de [TD-051](../roadmap/technical-debt.md#td-051)…[TD-060](../roadmap/technical-debt.md#td-060).
+- **RC2 (2026-10-21):** PR #164 en `main` (`6612868`): red `bot-control`, firewall del host, proxy con
+  control de cliente, allowlist y propiedad, y `functional-e2e / container-proxy-e2e` como cuarto check
+  obligatorio. El PR se fusionó antes del PASS formal de REVIEW; el operador lo aceptó después. La
+  calibración del bloqueo con `--admin` (PR de control #166) dio PASS.
+- **TD-062 (2026-10-21):** PR #167 en `main` (`4cc7651`) tras dos rondas de REVIEW (BLOCKED → PASS):
+  el proxy deja de ejecutar código del árbol de despliegue ([TD-062](../roadmap/technical-debt.md#td-062)).
+- **RC3 (en curso desde 2026-10-22):** release gates A–G sobre `4cc7651`; `main` no se mueve durante
+  la RC. Producción sigue sin desplegar (árbol `1b4d8eb`, BD en `011`) y con el proxy antiguo parado
+  por el operador.
+- **Break-glass:** `BREAK_GLASS = DEFERRED` (decisión del operador, 2026-10-22). Es future hardening y
+  no bloquea RC3, el despliegue, la ejecución real ni el espectador en el entorno actual
+  ([readiness.md](../operations/readiness.md#gates-de-la-release-candidate-y-de-activación)).
+- **Nightly:** sigue en rojo sólo en `slow-suites` por el arnés: KNOWN ISSUE, no bloqueante
+  ([TD-019](../roadmap/technical-debt.md#td-019)).
+
+El veredicto PRODUCTION_READY de 2026-10-19 sigue siendo de código y gobernanza. No equivale a
+desplegado.
+
 ## Documentación relacionada
 
 - [functional-closure-report.md](functional-closure-report.md) · [ci.md](ci.md) · [testing.md](testing.md)
@@ -270,3 +296,5 @@ gate A-G, golden path tras desplegar) necesita autorización explícita del oper
 | `main` protegida con `functional-e2e` obligatorio; el bloqueo funciona también con `--admin` | RUNTIME_VERIFIED (GitHub real) | `gh api …/branches/main/protection`; PR #161 rechazado (2026-10-19) |
 | #152 y #158 en `main`; CI de `main` en verde con `functional-e2e` | RUNTIME_VERIFIED (GitHub Actions) | `main` = `59322e2`; run 39173546382 (2026-10-19) |
 | Producción sin cambios | DESIGN_ONLY | ningún comando contra producción |
+| Addendum: PR #164 y #167 en `main`, `origin/main` = `4cc7651` | RUNTIME_VERIFIED (GitHub, 2026-10-22) | `gh pr view 167`; `git rev-parse origin/main` |
+| Addendum: estado de producción al empezar RC3 | RUNTIME_VERIFIED (lectura, 2026-10-22) | lectura del coordinador de RC3 (sin topología en el repo) |

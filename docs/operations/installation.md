@@ -249,6 +249,12 @@ Más comprobaciones en [diagnostics.md](diagnostics.md) y [readiness.md](readine
   [../roadmap/current-status.md](../roadmap/current-status.md).
 - **PENDIENTE:** primer administrador sin SQL; `.env.example` con un `TAG` válido; humo fiable
   ([TD-024](../roadmap/technical-debt.md#td-024), [TD-020](../roadmap/technical-debt.md#td-020)).
+- **Desde `4cc7651` (base de RC3):** el proxy de Docker del host se instala como artefacto de root
+  desde un clon fijado al SHA ([Proxy de Docker del host](#proxy-de-docker-del-host-artefacto-instalado-td-062)).
+  La custodia de `restic_password` y de las claves SSH fuera del servidor sigue siendo requisito (sin
+  ella no hay restauración). Sacar además el paquete break-glass fuera del dominio de fallo del
+  repositorio de copias es recomendación, no requisito: DEFERRED por decisión del operador
+  (2026-10-22, [TD-007](../roadmap/technical-debt.md#td-007)).
 
 ## Documentación relacionada
 

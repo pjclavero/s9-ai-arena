@@ -18,6 +18,7 @@ en [../technical/services.md](../technical/services.md).
 - [Healthchecks y readiness de contenedores](#healthchecks-y-readiness-de-contenedores)
 - [Comandos habituales](#comandos-habituales)
 - [Errores / limitaciones](#errores--limitaciones)
+- [Estado actual](#estado-actual)
 - [Documentación relacionada](#documentación-relacionada)
 - [Verificación](#verificación)
 
@@ -178,6 +179,17 @@ $DC restart web
 - 9 de las 12 imágenes desplegadas hoy no llevan identidad de build verificable
   ([TD-006](../roadmap/technical-debt.md#td-006)).
 - El gateway publica `/grafana/` aunque la observabilidad no esté desplegada (responde 502).
+
+## Estado actual
+
+- **Producción (lectura del 2026-10-22):** perfil `production` con los 12 servicios `healthy`, con
+  imágenes de tres commits ([TD-006](../roadmap/technical-debt.md#td-006)); `postgres` y `queue` fijados
+  por digest. Siguen los contenedores del smoke manual fuera del Compose
+  ([TD-058](../roadmap/technical-debt.md#td-058)).
+- **RC3 (base `4cc7651`):** el despliegue recrea sólo los servicios cuyo `config --hash` cambia, con
+  `--no-build --no-deps` y servicios explícitos; `postgres` y `queue` **no** se recrean
+  ([upgrades.md](upgrades.md#rc3-orden-del-despliegue-de-4cc7651)). Las imágenes son las de la CI de
+  `main` para el SHA completo, identificadas por contenido.
 
 ## Documentación relacionada
 

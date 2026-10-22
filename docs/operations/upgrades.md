@@ -17,6 +17,7 @@ productivo con identidad de build** (o usar las imágenes de la CI), **verificar
 - [Desplegar](#desplegar)
 - [RC2: proxy de Docker, red dedicada y firewall](#rc2-proxy-de-docker-red-dedicada-y-firewall)
 - [TD-062: migrar el proxy al artefacto instalado](#td-062)
+- [RC3: orden del despliegue de `4cc7651`](#rc3-orden-del-despliegue-de-4cc7651)
 - [Override de versión por servicio](#override-de-versión-por-servicio)
 - [Alinear todas las imágenes con un mismo `BUILD_COMMIT`](#alinear-todas-las-imágenes-con-un-mismo-build_commit)
 - [PostgreSQL y Redis](#postgresql-y-redis)
@@ -269,6 +270,31 @@ al proxy hasta que se reinstala, y `preflight` avisa si la copia de root y la de
 - El bundle, la allowlist y el preflight instalados se quedan. No molestan a la unidad antigua, y
   el preflight seguirá diciendo ROJO hasta que se migre.
 
+## RC3: orden del despliegue de `4cc7651`
+
+Resumen del orden; el plan exacto (comando, resultado esperado, condición de aborto y vuelta atrás de
+cada paso) es el GATE G de la RC y vive en el informe privado del operador, porque depende del estado
+real del host. Nada de esto se ha ejecutado todavía.
+
+Estado de partida (2026-10-22): árbol de despliegue en `1b4d8eb`, BD en `011`, proxy antiguo parado
+(`inactive`, `enabled`) por decisión del operador.
+
+1. **Baseline** de solo lectura y **copia previa** sin retención ([backup.md](backup.md#copia-manual), [TD-054](../roadmap/technical-debt.md#td-054)).
+2. **Pre-pull por digest** de las imágenes del RC (`sha-<SHA completo>`) y de los runtimes de bots (`scripts/ops/pull-runtime-images.sh`, después `--check-only`).
+3. **Proxy:** migración de [TD-062](#td-062) desde un clon de root fijado a `4cc7651`, con el sha256 del bundle de la CI de push a `main`. El preflight instalado tiene que dar VERDE **antes** de arrancar el proxy nuevo.
+4. **Red y firewall:** los pasos de host de [RC2](#rc2-proxy-de-docker-red-dedicada-y-firewall).
+5. **Migraciones** `012_bot_versioning` y `013_battle_claim` con el CLI de la imagen `api` del RC ([Migraciones](#migraciones)). `/healthz` no las detecta ([TD-059](../roadmap/technical-debt.md#td-059)).
+6. **Recrear sólo lo necesario** con `up -d --no-build --no-deps <servicios>` y servicios explícitos, según `config --hash`. `postgres` y `queue` **no**.
+7. **Verificar:** health, procedencia por contenido (`BUILD_COMMIT`, `/version`), conectividad permitida y denegada del proxy, smoke y golden path.
+8. **Copia posterior** al despliegue.
+9. Sólo después, y con el preflight instalado otra vez en VERDE: el chown de [TD-057](../roadmap/technical-debt.md#td-057).
+
+Particularidades conocidas:
+- `.git` del árbol de despliegue es de root: un `git fetch` como usuario de despliegue falla («dubious ownership») hasta TD-057. El clon de root de TD-062 no depende de ese árbol.
+- `deploy-contract.json` sigue describiendo `4d469dc` ([TD-055](../roadmap/technical-debt.md#td-055)): las etiquetas se fijan en `.env`, no se toman del contrato.
+- `IMAGE_PREFIX` pasa a GHCR, y `BACKUP_TAG` va aparte de `TAG`.
+- El break-glass fuera del host **no** es condición de este despliegue (DEFERRED, [readiness.md](readiness.md#gates-de-la-release-candidate-y-de-activación)).
+
 ## Override de versión por servicio
 
 `<SERVICIO>_TAG` en `infrastructure/.env` ancla un servicio a otra etiqueta sin mover los demás
@@ -345,9 +371,11 @@ esquema ([first-run.md](first-run.md#comandos-prohibidos-en-producción)).
 
 - **Servicio de aplicación:** volver a la etiqueta anterior en `.env` y repetir el despliegue de ese
   servicio. Por eso nunca se sobrescriben etiquetas en el host.
-- **Datos:** sólo restauración desde restic ([restore.md](restore.md)). **No hay snapshots de VM**
-  en la instalación de referencia: cualquier `qm rollback` de documentos anteriores apunta a
-  snapshots que ya no existen ([TD-007](../roadmap/technical-debt.md#td-007)).
+- **Datos:** restauración desde restic ([restore.md](restore.md)). En la instalación de referencia
+  hay un único snapshot de disco de la VM, previo a la RC (2026-10-20, *crash-consistent*): sirve de
+  último recurso para volver al estado de antes de la RC, no para recuperar datos posteriores. Los
+  `qm rollback` de documentos anteriores apuntan a snapshots que ya no existen
+  ([TD-007](../roadmap/technical-debt.md#td-007)).
 
 ## Errores / limitaciones
 
@@ -380,4 +408,5 @@ Históricos: [../history/operaciones/OVERRIDE_VERSION_POR_SERVICIO.md](../histor
 | postgres/queue por digest | CODE_VERIFIED | compose |
 | Estado mezclado 4d469dc / 0daa500 / ad0a42b y dos orígenes de config | RUNTIME_VERIFIED (auditoría 2026-10-15, sólo lectura) | `docker inspect`, `docker compose ls` |
 | La CI publica `sha-<commit>` para los 11 repos de imagen | RUNTIME_VERIFIED | GHCR anónimo, `sha-27f70bb…` → 200 en todos |
-| Sin snapshots de VM | RUNTIME_VERIFIED | verificación de la consolidación, 2026-10-15 (listado de snapshots del hipervisor) |
+| Sin snapshots de VM (2026-10-15); snapshot previo a la RC creado el 2026-10-20 | RUNTIME_VERIFIED | verificación de la consolidación, 2026-10-15, y RC1, 2026-10-20 (listado de snapshots del hipervisor) |
+| Orden del despliegue de RC3 | DESIGN_ONLY | no ejecutado; plan exacto en el GATE G de la RC (privado) |

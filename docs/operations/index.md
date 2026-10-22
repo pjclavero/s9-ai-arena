@@ -86,7 +86,7 @@ documenta [TD-023](../roadmap/technical-debt.md#td-023).
   versión y de deriva por línea de comandos.
 - **PARCIAL:** readiness (sólo por CLI y nunca puede dar `READY`, ver [readiness.md](readiness.md));
   identidad de versión en runtime ([TD-006](../roadmap/technical-debt.md#td-006)); copias sin
-  alertas ni snapshots de VM y apagado no limpio ([TD-007](../roadmap/technical-debt.md#td-007)).
+  alertas, sin snapshot base de VM (sólo el previo a la RC) y apagado no limpio ([TD-007](../roadmap/technical-debt.md#td-007)).
 - **PENDIENTE:** alta del primer administrador sin SQL ([TD-023](../roadmap/technical-debt.md#td-023)),
   instalación de un solo paso y readiness desplegado ([TD-024](../roadmap/technical-debt.md#td-024)),
   ensayo reciente de restauración ([TD-025](../roadmap/technical-debt.md#td-025)).

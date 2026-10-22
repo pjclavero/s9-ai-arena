@@ -19,6 +19,7 @@ una dirección de una instalación concreta).
 - [Exposición y superficie anónima](#exposición-y-superficie-anónima)
 - [Red de control del docker-proxy (`bot-control`)](#red-de-control-del-docker-proxy-bot-control)
 - [Errores / limitaciones](#errores--limitaciones)
+- [Estado actual](#estado-actual)
 - [Documentación relacionada](#documentación-relacionada)
 - [Verificación](#verificación)
 
@@ -207,6 +208,18 @@ topología sin levantar la aplicación.
 | Un consumidor da `REFUSED` a `10.89.250.1:2375` | la red existe pero el proxy no escucha en esa IP (arrancó antes que el bridge, o bind distinto) | [docker-proxy.md](docker-proxy.md) |
 | `Pool overlaps with other one on this address space` al crear la red | otra red del host ya usa `10.89.250.0/24` | liberar ese rango; la subred es parte del contrato del proxy y del firewall |
 | gateway o backup dan `CONNECT` al proxy | ruta por defecto al host (red `public`); la red sola no lo impide | firewall del host y control de cliente del proxy (ver arriba) |
+
+## Estado actual
+
+- **FUNCIONA ACTUALMENTE (código y CI):** red `bot-control`, alias fijo `docker-proxy.internal` y
+  firewall del host, en `main` desde RC2 y presentes en la base de RC3 (`4cc7651`). Los mide en cada PR
+  y en `main` el check obligatorio `functional-e2e / container-proxy-e2e`.
+- **SIN DESPLEGAR:** en producción (árbol `1b4d8eb`, lectura del 2026-10-22) no existe la red
+  `bot-control` y el firewall no está aplicado ([TD-053](../roadmap/technical-debt.md#td-053)). El proxy
+  antiguo, que escuchaba en `docker0`, está parado desde el 2026-10-22 por decisión del operador
+  ([TD-062](../roadmap/technical-debt.md#td-062)). Ninguno de esos cambios afecta a las rutas públicas del gateway.
+- **PENDIENTE:** inventario de las demás escuchas del host ([TD-063](../roadmap/technical-debt.md#td-063)).
+  El orden de aplicación en producción está en [upgrades.md](upgrades.md#rc3-orden-del-despliegue-de-4cc7651).
 
 ## Documentación relacionada
 

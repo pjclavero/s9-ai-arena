@@ -187,7 +187,7 @@ no hay uno posterior ([TD-025](../roadmap/technical-debt.md#td-025)).
 | Snapshot antiguo: «el dump de PostgreSQL NO tiene checksum» | snapshot anterior al manifest con dump | aceptable, pero la integridad del dump no queda probada |
 | Volumen vacío tras restaurar | nombre de volumen equivocado | usar los `infrastructure_*` y la comprobación de la fase 6 |
 | `role "postgres" does not exist` | comando antiguo con `-U postgres` | `-U arena` |
-| Rollback a nivel de VM | no existen snapshots de VM de la instalación de referencia | sólo restauración desde restic ([TD-007](../roadmap/technical-debt.md#td-007)) |
+| Rollback a nivel de VM | la instalación de referencia sólo tiene el snapshot de disco previo a la RC (2026-10-20, *crash-consistent*) | restauración desde restic; el snapshot es último recurso para volver a antes de la RC ([TD-007](../roadmap/technical-debt.md#td-007)) |
 
 ## Estado actual
 

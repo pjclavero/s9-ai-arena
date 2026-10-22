@@ -17,6 +17,7 @@ Ningún valor secreto aparece aquí.
 - [Configuración del host (fuera del compose)](#configuración-del-host-fuera-del-compose)
 - [Variables sólo de desarrollo y tests](#variables-sólo-de-desarrollo-y-tests)
 - [Errores / limitaciones](#errores--limitaciones)
+- [Estado actual](#estado-actual)
 - [Documentación relacionada](#documentación-relacionada)
 - [Verificación](#verificación)
 
@@ -162,6 +163,19 @@ las lee sólo `scripts/e2e-real-battle-smoke.ts`, no la API). Ver
 - `TRUST_PROXY_HOPS`: con un proxy delante y el valor por defecto `1`, la API ve la IP del proxy
   como IP del cliente; la cuota anónima y el bloqueo de login se comparten entre todos los
   clientes ([TD-012](../roadmap/technical-debt.md#td-012)).
+
+## Estado actual
+
+- **En `main` (`4cc7651`, base de RC3):** contrato de variables por servicio, secreto
+  `artifact_verify_key` y configuración del host de RC2 y TD-062 (bind del proxy en la red
+  `bot-control`, allowlist obligatoria en `/etc/s9-docker-proxy/DIGESTS.lock`).
+- **En producción (2026-10-22):** sin desplegar. La unidad del proxy instalada es la de RC1 y está
+  parada ([TD-062](../roadmap/technical-debt.md#td-062)); el `.env` y `secrets/` siguen con permisos
+  laxos ([TD-060](../roadmap/technical-debt.md#td-060)).
+- **Durante RC3:** la lista exacta de cambios del `.env` de producción (nombres y valores no
+  secretos) y la cadena `.env` → compose → contenedor → proceso las verifica el gate de configuración
+  y secretos de la RC. En la migración del proxy, `S9PX_MIGRATE_ENV=1` cambia sólo la línea de la
+  allowlist de `docker-proxy.env` ([upgrades.md](upgrades.md#td-062)).
 
 ## Documentación relacionada
 
