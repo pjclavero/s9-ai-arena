@@ -20,6 +20,7 @@ Corrige los errores de los runbooks anteriores: los volúmenes reales se llaman
 - [Fase 5 · Base de datos](#fase-5--base-de-datos)
 - [Fase 6 · Volúmenes](#fase-6--volúmenes)
 - [Fase 7 · Arranque y verificación](#fase-7--arranque-y-verificación)
+- [Restaurar el estado de RC1](#restaurar-el-estado-de-rc1)
 - [Ensayo](#ensayo)
 - [Errores / limitaciones](#errores--limitaciones)
 - [Estado actual](#estado-actual)
@@ -170,6 +171,31 @@ rm -rf /tmp/restore-data                                                       #
 criterio ([TD-020](../roadmap/technical-debt.md#td-020)). Lanza después una copia manual
 ([backup.md](backup.md#copia-manual)) para comprobar que el nuevo host también copia.
 
+## Restaurar el estado de RC1
+
+Aplica cuando se vuelve al estado anterior a la RC3 restaurando la VM entera (el snapshot de disco
+previo a la RC, del 2026-10-20) o reconstruyendo el host con la configuración de RC1. En ese estado la
+unidad instalada del proxy de Docker es la de RC1 (`npx tsx` desde el árbol de despliegue) y, en el
+snapshot, está **`enabled` y en marcha**: con ella vuelve TD-062
+([technical-debt.md](../roadmap/technical-debt.md#td-062)).
+
+**Política del operador:** el proxy antiguo queda **parado y deshabilitado**, nunca `enabled`. La
+restauración **no está completa** mientras el proxy antiguo pueda arrancar solo. Tras restaurar y
+**antes de exponer la VM** (antes de devolverle la red pública o el reenvío del gateway):
+
+```bash
+systemctl stop s9-docker-proxy
+systemctl disable s9-docker-proxy
+systemctl is-enabled s9-docker-proxy        # debe decir disabled
+systemctl is-active s9-docker-proxy         # debe decir inactive
+ss -ltnH 'sport = :2375' | wc -l            # debe ser 0
+```
+
+Si cualquiera de las tres comprobaciones falla, **no expongas la VM**. El fichero de la unidad se
+conserva; no lo borres ni hagas el chown de TD-057. Pararlo no degradó los servicios cuando se hizo en producción el
+2026-10-22 (12 `healthy`, gateway 200); los builds de bots se quedan sin sandbox y fallan cerrados. Después, la
+vuelta a la versión nueva sigue [upgrades.md](upgrades.md#rc3-orden-del-despliegue-de-4cc7651).
+
 ## Ensayo
 
 El ensayo se hace en un **host aislado**, nunca sobre la instalación productiva, y se registra con
@@ -187,7 +213,7 @@ no hay uno posterior ([TD-025](../roadmap/technical-debt.md#td-025)).
 | Snapshot antiguo: «el dump de PostgreSQL NO tiene checksum» | snapshot anterior al manifest con dump | aceptable, pero la integridad del dump no queda probada |
 | Volumen vacío tras restaurar | nombre de volumen equivocado | usar los `infrastructure_*` y la comprobación de la fase 6 |
 | `role "postgres" does not exist` | comando antiguo con `-U postgres` | `-U arena` |
-| Rollback a nivel de VM | no existen snapshots de VM de la instalación de referencia | sólo restauración desde restic ([TD-007](../roadmap/technical-debt.md#td-007)) |
+| Rollback a nivel de VM | la instalación de referencia sólo tiene el snapshot de disco previo a la RC (2026-10-20, *crash-consistent*) | restauración desde restic; el snapshot es último recurso para volver a antes de la RC ([TD-007](../roadmap/technical-debt.md#td-007)); tras restaurarlo, proxy antiguo parado y deshabilitado antes de exponer la VM ([Restaurar el estado de RC1](#restaurar-el-estado-de-rc1)) |
 
 ## Estado actual
 
@@ -218,6 +244,7 @@ Runbook anterior (histórico, con errores conocidos): [../recuperacion.md](../re
 | Bucle de la fase 6 (copia a volumen, `skip` de fuentes ausentes, detección de volumen inexistente) | RUNTIME_VERIFIED | entorno aislado con un staging sintético |
 | `restore.sh --dry-run` imprime el plan sin tocar nada | RUNTIME_VERIFIED | ejecutado en la máquina de desarrollo (rc=0) |
 | `pg_dump -Fc -U arena arena` funciona con el rol `arena` | RUNTIME_VERIFIED | entorno aislado |
+| El snapshot previo a la RC tiene el proxy antiguo `enabled` y en marcha; la política exige `stop` + `disable` antes de exponer | inferido: el proxy antiguo estaba `active`/`enabled` en todas las lecturas de producción anteriores al 2026-10-22 (RC1 y baseline de RC3) + DESIGN_ONLY (política del operador) | lecturas de la RC3 (sin topología en el repo) |
 
 Nota: el resumen de la auditoría 2026-10-15 indica «`restore.sh` solo `latest`»; el código de
 `27f70bb` (y el de la imagen desplegada) **sí** admite `--snapshot <id>`. Lo que es cierto es que,

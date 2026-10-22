@@ -6,23 +6,27 @@ Esta es la **fuente única del estado del proyecto**. Sustituye a los antiguos `
 y `docs/ESTADO_ACTUAL.md`, que quedan archivados en `docs/history/status/` y ya no son vigentes.
 
 Hay dos planos y no se mezclan:
-- **Código (`main`):** contiene el cierre funcional (PR #152), el *Production Readiness Closure* (PR #158) y **RC2** (cierre del bloqueo del Docker proxy de RC1: red dedicada `bot-control`, firewall de host como código, proxy con control de cliente, allowlist de imágenes y propiedad, y el E2E contenedor → proxy obligatorio). `main` está protegida: no se fusiona nada si falla el golden path real de `functional-e2e`. Informes: [functional-closure-report.md](../development/functional-closure-report.md) y [production-readiness-report.md](../development/production-readiness-report.md).
-- **Producción:** no ha cambiado. Nada de lo fusionado se ha desplegado todavía.
+- **Código (`main`):** contiene el cierre funcional (PR #152), el *Production Readiness Closure* (PR #158), **RC2** (cierre del bloqueo del Docker proxy de RC1: red dedicada `bot-control`, firewall de host como código, proxy con control de cliente, allowlist de imágenes y propiedad, y el E2E contenedor → proxy obligatorio; PR #164) y **TD-062** (frontera de privilegio del proxy: artefacto de root fuera del árbol y preflight instalado; PR #167). `main` está protegida: no se fusiona nada si falla el golden path real de `functional-e2e`. Informes: [functional-closure-report.md](../development/functional-closure-report.md) y [production-readiness-report.md](../development/production-readiness-report.md).
+- **Producción:** no se ha desplegado nada de lo fusionado. El cambio de estado relevante es que el proxy de Docker antiguo está **parado** (decisión del operador del 2026-10-22, ver [RC3 en curso](#rc3-en-curso)).
 
 ```
-MAIN:           6612868 (RC2, PR #164, rama integration/rc2-docker-proxy sobre 7cf88dd); CI de main en verde
-EN CURSO:       TD-062 (frontera de privilegio del proxy) en la rama fix/td-062-proxy-privilege-boundary, pendiente de REVIEW
-LAST VERIFIED:  2026-10-21 (RC2: CI del PR en verde con container-proxy-e2e; protección de rama con 4 checks obligatorios)
+MAIN:           4cc7651 (PR #167, TD-062, sobre RC2 6612868); CI de push a main en verde
+EN CURSO:       RC3 — release gates A–G sobre la base 4cc7651; main no se mueve durante la RC
+LAST VERIFIED:  2026-10-22 (RC3: origin/main = 4cc7651; lectura de producción)
+PRODUCCIÓN:     árbol de despliegue en 1b4d8eb, SIN desplegar 4cc7651; 12 servicios healthy; BD en la migración 011
+PROXY ANTIGUO:  parado y deshabilitado por el operador (inactive, disabled; :2375 cerrado); TD-062 sigue abierta en producción hasta migrar
 RUNTIME:        sin cambios desde la auditoría: perfil `production`, 12 servicios, imágenes de 3 commits
+BREAK-GLASS:    DEFERRED (decisión del operador, 2026-10-22): future hardening, NO bloquea RC3 ni la activación
 VEREDICTO CÓDIGO:     el recorrido de usuario completo funciona y lo exige la CI (golden path en navegador real)
 VEREDICTO PRODUCCIÓN: NO funcional como producto hasta desplegar main (fase Release Candidate)
-READINESS:      PRODUCTION_READY (código y gobernanza); despliegue pendiente de autorización del operador
+READINESS:      PRODUCTION_READY (código y gobernanza); despliegue pendiente de los gates de RC3 y de la autorización del operador
 ```
 
 Informe del cierre: [functional-closure-report.md](../development/functional-closure-report.md).
 
 ## Índice
 
+- [RC3 en curso](#rc3-en-curso)
 - [Functional](#functional)
 - [Partial](#partial)
 - [Blocked](#blocked)
@@ -32,6 +36,33 @@ Informe del cierre: [functional-closure-report.md](../development/functional-clo
 - [Next priorities](#next-priorities)
 - [Documentación relacionada](#documentación-relacionada)
 - [Verificación](#verificación)
+
+## RC3 en curso
+
+Release Candidate 3 sobre la base `4cc7651` (= `origin/main` el 2026-10-22). Durante la RC **no se
+fusiona nada en `main`**: la documentación de la RC va en un PR que se queda abierto.
+
+| Gate | Qué demuestra |
+|---|---|
+| A | fuente, CI y gobernanza: `main` = base, CI contada, protección con los 4 checks obligatorios |
+| B | backup previo a la RC y restauración aislada comparada con producción |
+| C | imágenes de la CI de `main` para la base, identificadas por contenido (`BUILD_COMMIT`, revisión OCI, `/version`) |
+| D | migraciones `012` y `013` sobre una copia restaurada, idempotencia y vuelta atrás real |
+| E | cadena de configuración y secretos hasta el proceso; migración de TD-062 verificada en un entorno equivalente |
+| F | camino Docker de los bots: consumidores y denegados del proxy, política, propiedad y batalla completa |
+| G | plan exacto de despliegue en producción, con condiciones de aborto y vuelta atrás |
+
+Estado de producción al empezar la RC (lectura del 2026-10-22, sin topología):
+- árbol de despliegue en `1b4d8eb`, 12 contenedores `healthy` tras un reinicio no planificado del host el 2026-10-21;
+- PostgreSQL 16.14 con migraciones hasta `011`;
+- copia nocturna correcta (04:15 UTC);
+- proxy de Docker antiguo **parado** (`systemctl stop`, 12:46Z) y **deshabilitado** (`systemctl disable`, 18:11Z) por decisión del operador: `inactive`, `disabled`, nadie escucha en `:2375`, sin degradación de los servicios. El fichero de la unidad de RC1 se conserva. Es una mitigación de [TD-062](technical-debt.md#td-062), no su cierre: la unidad de RC1 sigue instalada, aunque ya no arranca con un reinicio del host.
+
+**Decisión del operador sobre el break-glass (2026-10-22):** `BREAK_GLASS = DEFERRED`. Es *future
+hardening* y **no bloquea** RC3, el despliegue, ni la activación de la ejecución real o del espectador
+en el entorno actual (homelab/club, backups y restauración verificados, infraestructura reproducible,
+snapshot de VM disponible). Se mantiene la recomendación de sacar el paquete fuera del dominio de fallo
+del repositorio de copias ([TD-007](technical-debt.md#td-007)).
 
 ## Functional
 
@@ -82,8 +113,8 @@ PostgreSQL 16.14 y Redis 7.4.9 están fijados por digest. Ver [TD-006](technical
 
 - **Perfil:** `production`, con 12 servicios ([docker.md](../operations/docker.md)). `map-service` sigue en él ([TD-017](technical-debt.md#td-017)).
 - **Despliegue de la integración:** exige recrear `api`, `bot-build-worker` y `tournament-worker` (lo mide `infrastructure/tests/compose-canonical-check.test.ts`) y un secreto nuevo, `artifact_verify_key` ([configuration.md](../operations/configuration.md#secretos)).
-- **Backup:** opera; sin alertas, sin snapshot de la VM y sin apagado limpio garantizado ([TD-007](technical-debt.md#td-007)).
-- **CI:** `nightly.yml` en rojo crónico ([TD-019](technical-debt.md#td-019)). `functional-e2e` (golden en navegador real + E2E Docker, gateway de TD-004 incluido) corre en todo PR y en `main`, está calibrado en CI real y es **check obligatorio** de la protección de rama de `main`, que incluye a los administradores ([TD-045](technical-debt.md#td-045) CERRADA, [ci.md](../development/ci.md#protección-de-rama)). Desde RC2 también lo es `functional-e2e / container-proxy-e2e` (stack Compose real → `bot-control` → proxy → batalla; [TD-052](technical-debt.md#td-052) CERRADA).
+- **Backup:** opera (copia nocturna correcta el 2026-10-22); sin alertas y sin apagado limpio garantizado. Hay un snapshot de disco de la VM previo a la RC (2026-10-20), *crash-consistent* ([TD-007](technical-debt.md#td-007)).
+- **CI:** `nightly.yml` en rojo crónico, sólo en `slow-suites` y por el arnés: KNOWN ISSUE, no bloquea RC3 ([TD-019](technical-debt.md#td-019)). `functional-e2e` (golden en navegador real + E2E Docker, gateway de TD-004 incluido) corre en todo PR y en `main`, está calibrado en CI real y es **check obligatorio** de la protección de rama de `main`, que incluye a los administradores ([TD-045](technical-debt.md#td-045) CERRADA, [ci.md](../development/ci.md#protección-de-rama)). Desde RC2 también lo es `functional-e2e / container-proxy-e2e` (stack Compose real → `bot-control` → proxy → batalla; [TD-052](technical-debt.md#td-052) CERRADA).
 
 ## Security
 
@@ -100,9 +131,9 @@ PostgreSQL 16.14 y Redis 7.4.9 están fijados por digest. Ver [TD-006](technical
 | Imágenes de servicio con vulnerabilidades HIGH/CRITICAL | ABIERTO | [TD-031](technical-debt.md#td-031) |
 | Topología de infraestructura en el repositorio público | ABIERTO | [TD-008](technical-debt.md#td-008) |
 | Proxy de Docker sin ámbito (imagen, contenedor, cliente) y alcanzable desde `gateway`/`backup` | **CERRADO en `main` (RC2)**; abierto en producción hasta desplegar | [TD-051](technical-debt.md#td-051), [TD-053](technical-debt.md#td-053) |
-| El proxy ejecuta código de un árbol no sólo de root (el usuario de despliegue puede escribir lo que corre con el grupo `docker`) | **CERRADO en código** en `fix/td-062-proxy-privilege-boundary` (REVIEW #167 ronda 1 = BLOCKED por B1/B2, corregidos; pendiente de re-REVIEW): bundle de root fuera del árbol, allowlist en `/etc`, unidad endurecida, instalador ejecutado desde un clon de root fijado al SHA y preflight **instalado** (`/usr/local/sbin/s9-docker-proxy-preflight`); **ABIERTO en producción** (unidad de RC1 con `npx tsx` desde el árbol, leída el 2026-10-21) hasta la migración ([upgrades.md](../operations/upgrades.md#td-062)) | [TD-062](technical-debt.md#td-062), [TD-057](technical-debt.md#td-057) |
+| El proxy ejecuta código de un árbol no sólo de root (el usuario de despliegue puede escribir lo que corre con el grupo `docker`) | **CERRADO en `main`** (`4cc7651`, PR #167; REVIEW ronda 1 BLOCKED por B1/B2, ronda 2 PASS): bundle de root fuera del árbol, allowlist en `/etc`, unidad endurecida, instalador ejecutado desde un clon de root fijado al SHA y preflight **instalado** (`/usr/local/sbin/s9-docker-proxy-preflight`). **ABIERTO en producción** hasta la migración ([upgrades.md](../operations/upgrades.md#td-062)): la unidad de RC1 (`npx tsx` desde el árbol) sigue instalada; desde el 2026-10-22 está parada (`inactive`, `enabled`) | [TD-062](technical-debt.md#td-062), [TD-057](technical-debt.md#td-057) |
 | `.env` 0644 y `secrets/` 0755 en el host | ABIERTO | [TD-060](technical-debt.md#td-060) |
-| Ejecución real y espectador público | en producción, **apagados** hasta desplegar con su gate | [docs/technical/security.md](../technical/security.md) |
+| Ejecución real y espectador público | en producción, **apagados** hasta desplegar con su gate; el break-glass fuera del host **no** forma parte del gate (DEFERRED, 2026-10-22) | [docs/technical/security.md](../technical/security.md#funciones-gateadas), [TD-007](technical-debt.md#td-007) |
 
 ## Known issues
 
@@ -110,7 +141,7 @@ Síntomas vigentes en [known-issues.md](known-issues.md).
 
 ## Next priorities
 
-1. Fase Release Candidate, con autorización del operador: imágenes de `main`, migraciones `012`/`013`, `artifact_verify_key`, `s9-docker-proxy` con los pasos de host de RC2, backup/readiness, gate A-G, despliegue controlado y golden path tras desplegar ([Blocked](#blocked)).
+1. Cerrar los gates A–G de RC3 sobre `4cc7651` ([RC3 en curso](#rc3-en-curso)) y, con autorización del operador, el despliegue controlado: imágenes de `main`, migraciones `012`/`013`, `artifact_verify_key`, `s9-docker-proxy` migrado ([TD-062](technical-debt.md#td-062)) con los pasos de host de RC2, backup previo y posterior, y golden path tras desplegar ([Blocked](#blocked)).
 2. Mantener la protección de `main` tal como está documentada ([ci.md](../development/ci.md#protección-de-rama)); cualquier cambio de reglas es decisión del operador.
 3. [TD-047](technical-debt.md#td-047), [TD-041](technical-debt.md#td-041), [TD-012](technical-debt.md#td-012): antes de abrir a terceros.
 4. [TD-033](technical-debt.md#td-033) y [TD-043](technical-debt.md#td-043): reducir el privilegio de los procesos que hablan con bots.
@@ -141,3 +172,6 @@ Funciones pendientes de diseño: [pending-features.md](pending-features.md).
 | El check obligatorio `functional-e2e / container-proxy-e2e` bloquea el merge, también con `--admin` | RUNTIME_VERIFIED (GitHub, 2026-10-21) | PR de control #166 (cerrado sin merge): mutación `BUILD_SANDBOX_HOST` sin resolver ⇒ falló sólo `container-proxy-e2e` (y `semaforo` por arrastre); merge normal y con `--admin` rechazados: «2 of 4 required status checks are failing» |
 | RC2 en `main` | RUNTIME_VERIFIED (GitHub) | PR #164 fusionado (`main` = `6612868`) **antes** del PASS formal de REVIEW; el operador lo aceptó después; CI de `main` sobre `6612868` en verde |
 | Unidad del proxy en producción = RC1 (`npx tsx` desde el árbol; allowlist y loader escribibles por el usuario de despliegue) | RUNTIME_VERIFIED (lectura, 2026-10-21) | `systemctl cat/show`, `/proc/<pid>/cmdline` y `stat` en el host; matriz en el informe de DEV-PRIV (sin topología en el repo) |
+| `origin/main` = `4cc7651` (PR #167 fusionado); CI de push en verde | RUNTIME_VERIFIED (GitHub, 2026-10-22) | `git rev-parse origin/main`; runs `ci` 39693207313 y `E6 security` 39693207224 en `success` |
+| Producción: árbol `1b4d8eb`, 12 `healthy`, migraciones hasta `011`, copia nocturna correcta; proxy antiguo `inactive`/`disabled` sin degradación | RUNTIME_VERIFIED (lectura, 2026-10-22) | lectura del coordinador de la RC antes y después del `stop` y del `disable`, y lectura independiente de REVIEW (sin topología en el repo) |
+| `BREAK_GLASS = DEFERRED`, no bloqueante | DESIGN_ONLY (decisión del operador) | decisión del 2026-10-22 |

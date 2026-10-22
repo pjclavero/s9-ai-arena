@@ -9,7 +9,7 @@ nunca se implementaron van en [pending-features.md](pending-features.md). Los s�
 usuario o el operador van en [known-issues.md](known-issues.md).
 
 - **BASE COMMIT:** `27f70bb` (origin/main, 2026-09-13). Desde la auditoría del 2026-10-15 hay 0 commits nuevos.
-- **LAST VERIFIED:** 2026-10-21 (RC2: TD-051…TD-063 añadidas desde las propuestas de RC1 y los hallazgos de RC2; TD-050 fusionada en TD-019). Antes: 2026-10-15; estados de TD-001…TD-031 revisados y TD-032…TD-049 añadidas en el cierre funcional (rama `integration/functional-closure`, base `0b8c12b`, 2026-10-18; ver [functional-closure-report.md](../development/functional-closure-report.md)).
+- **LAST VERIFIED:** 2026-10-22 (RC3, base `4cc7651`: estados de TD-007, TD-019, TD-050…TD-062 revisados contra el código de `4cc7651` y TD-064 añadida, la CI de GitHub y la lectura de producción del 2026-10-22; decisión del operador sobre el break-glass en [TD-007](#td-007)). Antes: 2026-10-21 (RC2: TD-051…TD-063 añadidas desde las propuestas de RC1 y los hallazgos de RC2; TD-050 fusionada en TD-019). Antes: 2026-10-15; estados de TD-001…TD-031 revisados y TD-032…TD-049 añadidas en el cierre funcional (rama `integration/functional-closure`, base `0b8c12b`, 2026-10-18; ver [functional-closure-report.md](../development/functional-closure-report.md)).
 - **Origen:** auditoría del 2026-10-15 ([resumen público](../audits/2026-10-15/README.md),
   [delta](../audits/2026-10-15/AUDIT-DELTA-2026-10.md)). Las excepciones son TD-026, TD-028,
   TD-029 y TD-030, que salieron de la verificación de esta consolidación, y TD-031, que salió del
@@ -38,7 +38,7 @@ Estados posibles:
 | [TD-004](#td-004) | Replays a anónimos por el gateway | P0 | Seguridad | CERRADA en la integración `integration/production-readiness` (REVIEW + CI real); sin desplegar |
 | [TD-005](#td-005) | Autorización de participantes | P0 | Seguridad | CERRADA |
 | [TD-006](#td-006) | Runtime mezclado sin identidad de build | P0 | Runtime | ABIERTA |
-| [TD-007](#td-007) | Backup sin alertas, sin snapshots de VM, apagado no limpio | P0 | Operación | MEJORADA |
+| [TD-007](#td-007) | Backup sin alertas, sin snapshots de VM, apagado no limpio | P0 | Operación | MEJORADA (break-glass fuera del host: DEFERRED, no bloquea RC3) |
 | [TD-008](#td-008) | Topología en el repo público | P0 | Seguridad | ABIERTA |
 | [TD-009](#td-009) | Reproductor y visor rotos (Phaser) | P1 | Web | CERRADA en `main` (producción pendiente de despliegue) |
 | [TD-010](#td-010) | Editor de mapas sólo cliente | P1 | Mapas | CERRADA |
@@ -50,7 +50,7 @@ Estados posibles:
 | [TD-016](#td-016) | Loadout con efecto parcial | P1 | Motor / equipamiento | PARCIAL |
 | [TD-017](#td-017) | map-service sin uso | P2 | Arquitectura | PARCIAL |
 | [TD-018](#td-018) | Pruebas que no detectan regresiones | P3 | Pruebas | MEJORADA |
-| [TD-019](#td-019) | Nightly rojo, deploy-staging falso verde | P3 | CI | ABIERTA |
+| [TD-019](#td-019) | Nightly rojo, deploy-staging falso verde | P3 | CI | ABIERTA (KNOWN ISSUE, no bloquea RC3) |
 | [TD-020](#td-020) | Endpoints de salud/identidad engañosos | P2 | Operación | ABIERTA |
 | [TD-021](#td-021) | Código muerto | P4 | Motor / ratings | ABIERTA |
 | [TD-022](#td-022) | Errores y estados de la web | P2 | Web | PARCIAL |
@@ -81,6 +81,7 @@ Estados posibles:
 | [TD-047](#td-047) | Batallas y estadísticas exponen participantes de bots privados | P1 | Seguridad / batallas | ABIERTA |
 | [TD-048](#td-048) | `NODE_ENV` no se fija en las imágenes | P2 | Configuración | ABIERTA |
 | [TD-049](#td-049) | Fallbacks silenciosos menores | P3 | Web / API | ABIERTA |
+| [TD-050](#td-050) | Nightly `slow-suites` en rojo crónico | — | CI | FUSIONADA en TD-019 |
 | [TD-051](#td-051) | Proxy de Docker sin límite de imagen, contenedor ni cliente | P0 | Seguridad / bots | CERRADA en la integración RC2 (REVIEW + CI real); sin desplegar |
 | [TD-052](#td-052) | Sin E2E contenedor → proxy | P0 | CI | CERRADA (RC2): `container-proxy-e2e` obligatorio en `main` |
 | [TD-053](#td-053) | Sin firewall de host en 2375; redes internas alcanzan sshd | P1 | Seguridad / operación | CERRADA en la integración RC2; sin aplicar en producción |
@@ -92,8 +93,9 @@ Estados posibles:
 | [TD-059](#td-059) | `/healthz` de la API ciego al nivel de migraciones | P2 | Operación / API | ABIERTA |
 | [TD-060](#td-060) | `.env` 0644 y `secrets/` 0755 en el host | P2 | Seguridad / operación | ABIERTA |
 | [TD-061](#td-061) | Seccomp de los bots sin `sendmmsg` (DNS roto) | P0 | Bots / sandbox | CERRADA en la integración RC2; sin desplegar |
-| [TD-062](#td-062) | El proxy ejecuta código de un árbol no sólo de root | P1 | Seguridad / operación | CERRADA en código (rama fix/td-062, pendiente REVIEW); ABIERTA en producción hasta migrar |
+| [TD-062](#td-062) | El proxy ejecuta código de un árbol no sólo de root | P1 | Seguridad / operación | CERRADA en código (`main` `4cc7651`, PR #167); ABIERTA en producción hasta migrar (unidad antigua parada y deshabilitada, no migrada) |
 | [TD-063](#td-063) | Otros servicios del host en todas las interfaces | P3 | Seguridad / red | ABIERTA (sin medir) |
+| [TD-064](#td-064) | `init-secrets.sh` sigue enlaces simbólicos al endurecer los secretos | P1 | Seguridad / operación | ABIERTA (P1); mitigada para el despliegue: `TD064_PREFLIGHT = PASS` obligatorio antes de ejecutarlo; cierre previsto en el PR #169 (draft, fuera de RC3) |
 
 ---
 
@@ -288,6 +290,14 @@ Estados posibles:
   - alerta probada (que se dispara);
   - snapshot base existente;
   - apagado limpio probado.
+- **RC1/RC3 (2026-10-20 / 2026-10-22):**
+  - **Snapshot de disco de la VM:** existe uno previo a la RC, creado el 2026-10-20 en RC1 (sin estado de memoria y *crash-consistent*, porque el agente de invitado no corre). Es una vuelta atrás a nivel de VM, no el «snapshot base» de la condición de cierre.
+  - **Backup:** la copia nocturna del 2026-10-22 (04:15 UTC) terminó bien y el contenedor está `healthy` (lectura del 2026-10-22). En RC1 se verificaron backup (con checksum del `pg_dump`) y restauración aislada (55/55 comprobaciones idénticas frente a producción).
+  - Siguen sin resolver la alerta y el apagado limpio.
+- **Break-glass fuera del dominio de fallo (decisión del operador, 2026-10-22):**
+  - `BREAK_GLASS = DEFERRED`. Es *future hardening* y **no bloquea** ni RC3, ni el despliegue, ni la activación de la ejecución real o del espectador **en el entorno actual**.
+  - Razonamiento del operador: entorno homelab/club, backups verificados, restauración verificada, infraestructura reproducible y snapshot de VM disponible.
+  - **Recomendación que se mantiene:** guardar una copia del paquete break-glass fuera del dominio de fallo del repositorio de copias y custodiar la frase de paso por dos vías independientes ([../recuperacion.md](../recuperacion.md#custodia-del-paquete-break-glass-y-de-su-frase-de-paso), histórico). Hay que revisarla si el entorno deja de ser homelab/club, si entran datos de terceros o si desaparece alguna de las premisas anteriores.
 
 <a id="td-008"></a>
 ## TD-008 — Topología de infraestructura en el repositorio público
@@ -562,6 +572,13 @@ Estados posibles:
 - **Solución prevista:** arreglar los dos fallos del nightly, y hacer que `deploy-staging` despliegue de verdad o falle cuando no despliega.
 - **Condición de cierre:** el nightly pasa a verde, y `deploy-staging` no puede dar verde sin desplegar (lo demuestra un test o una mutación).
 - **RC2 (2026-10-21):** la propuesta TD-050 de RC1 («nightly `slow-suites` en rojo crónico por el arnés») es esta misma deuda y no se abre aparte. Evidencia nueva: `nightly.yml` en `failure` las 10 noches del 12 al 21 de octubre, sobre 3 commits distintos (`gh run list --workflow nightly.yml`).
+- **Causa exacta y arreglo (RC3, OPS-C):** 15 de 15 nightly en `failure` entre el 8 y el 22 de octubre, sobre 4 commits. Siempre fallan los mismos dos tests:
+  - `restore-sftp-bootstrap.test.ts`: «la imagen … backup:e2e-test no está cargada». `nightly.yml` no carga el artefacto `backup-image-tar`, y el mismo E2E pasa en el job `e2e-restore-sftp-bootstrap` de `ci.yml`.
+  - `b13-data-volumes.test.ts`: «unshare -rm no funciona en este runner». `ci.yml:82` hace `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` y `nightly.yml` no.
+  - **Arreglo (2 líneas en `nightly.yml`):** cargar la imagen `backup` como hace `ci.yml` con `backup-image-tar`, y añadir el mismo `sysctl`.
+  - **No se aplica en RC3:** sigue como KNOWN ISSUE no bloqueante. El rojo crónico enmascara regresiones, así que conviene arreglarlo justo después de la RC.
+- **RC3 (2026-10-22):** sigue igual. `nightly.yml` sale en `failure` las 12 noches del 11 al 22 de octubre, la última sobre `4cc7651` (run 39750535840). En los dos últimos runs (39750535840 y 39571809812) el único job en `failure` es `slow-suites`; `determinism-1000` sale en `success`.
+  - Clasificación para RC3: **KNOWN ISSUE, no bloqueante**. El nightly no es check obligatorio de `main`, y el camino que cubre la RC lo ejercen los checks obligatorios (`functional-e2e`: golden, docker-e2e y container-proxy-e2e). El log de `slow-suites` del run 39750535840 da las dos causas ya conocidas, ambas del montaje del arnés y no del producto: `restore-sftp-bootstrap.test.ts` no encuentra la imagen `backup` («comprobar que está cargada», `pull access denied`) y `b13-data-volumes.test.ts` falla en el caso que necesita espacios de nombres en CI. Resultado: 2 ficheros en rojo, 218 en verde y 6 saltados; 1 test en rojo, 3261 en verde y 78 saltados.
 
 <a id="td-020"></a>
 ## TD-020 — Endpoints de salud e identidad engañosos
@@ -1043,6 +1060,11 @@ Estados posibles:
 - **Solución prevista:** Propagar el error con los componentes comunes y separar 404 de 5xx.
 - **Condición de cierre:** Tests con fallo inyectado por cada caso.
 
+<a id="td-050"></a>
+## TD-050 — Nightly `slow-suites` en rojo crónico (fusionada)
+
+- **Estado:** FUSIONADA en [TD-019](#td-019) (RC2, 2026-10-21). Era la propuesta de RC1 para el rojo del nightly y describe la misma deuda; se sigue allí.
+
 <a id="td-051"></a>
 ## TD-051 — El proxy de Docker no limitaba imagen, contenedor ni cliente
 
@@ -1058,6 +1080,7 @@ Estados posibles:
   - Código: `apps/bot-manager/src/docker-proxy.ts` (cliente en la conexión, imagen = 3.ª columna exacta del lock, labels `s9.managed`/`s9.proxy.instance` impuestas y exigidas tras inspect previo, Id de 64 hex, límites obligatorios) y `docker-proxy-config.ts` (bind obligatorio, nunca comodín/`docker0`/`host-gateway`; exclusión de la IP de bind y de las direcciones locales del host). Ver [docker-proxy.md](../operations/docker-proxy.md#política-rc2).
   - Pruebas: en proceso (`docker-proxy.test.ts`, `cpu-ms.test.ts`) y contra Docker real (`docker-proxy-docker.test.ts`, en el job `docker-e2e` con 0 skipped).
   - CI real: el job `container-proxy-e2e` (stack Compose real) da 403 a imagen ajena, base del lock, digest fuera del lock, labels `s9.*` forjadas, y a stop/start/inspect/stats de `postgres` y stop del `gateway`, con `postgres` intacto. Calibración: allowlist desactivada y propiedad desactivada ⇒ ROJO.
+- **RC3 (2026-10-22):** en `main` desde `6612868` (PR #164) y presente en `4cc7651`. Sin desplegar: en producción sigue el proxy de RC1, ahora parado (ver [TD-062](#td-062)).
 
 <a id="td-052"></a>
 ## TD-052 — No había E2E contenedor → proxy
@@ -1084,6 +1107,7 @@ Estados posibles:
 - **Solución prevista:** Reglas idempotentes en caliente (sin recargar nftables ni tocar las cadenas de Docker): 2375 sólo desde `s9-botctl0` + `10.89.250.0/24` hacia `10.89.250.1`; DROP de 22 desde los bridges de Docker.
 - **Condición de cierre:** gateway → 2375 timeout; bridge → 22 timeout; servicios de Docker sanos tras aplicarlas.
 - **Cierre (RC2):** `infrastructure/firewall/s9-firewall.sh` (`apply|check|remove`), unidades `s9-firewall.service` y `s9-firewall-reassert.timer`, [firewall.md](../operations/firewall.md). Probado en netns aislado (`infrastructure/firewall/tests/netns-harness.sh`, con siete mutaciones ROJO) y aplicado con sudo en el runner del job `container-proxy-e2e`: con firewall, `gateway` y el equivalente de `backup` dan TIMEOUT y los consumidores siguen llegando (201). Aplicarlo en producción es un paso del gate de despliegue.
+- **RC3 (2026-10-22):** sin cambios; el firewall sigue sin aplicar en producción.
 
 <a id="td-054"></a>
 ## TD-054 — `backup.sh` sin modo sin retención
@@ -1096,6 +1120,7 @@ Estados posibles:
 - **Problema:** Una copia pre-despliegue manual aplica la retención del nocturno y pisa sus métricas (`last_success`).
 - **Solución prevista:** Modo `--no-retention` / `S9_BACKUP_SKIP_RETENTION=1` con su propio `RESTIC_HOSTNAME`.
 - **Condición de cierre:** Test que demuestra que en ese modo no se invoca `forget` ni `prune` y que `last_success` del nocturno no cambia.
+- **RC3 (2026-10-22):** sigue abierta en `4cc7651` (`infrastructure/backup/backup.sh:771`). La copia previa a la RC se hace con el mismo rodeo de RC1: un envoltorio de `restic` en el `PATH` que intercepta sólo `forget`/`prune`, y un `RESTIC_HOSTNAME` propio para que la copia quede en su propio grupo de retención. Ese rodeo mueve las métricas `last_success` del contenedor: lo documenta el informe del carril de backup.
 
 <a id="td-055"></a>
 ## TD-055 — `deploy-contract.json` desfasado
@@ -1108,6 +1133,7 @@ Estados posibles:
 - **Problema:** El contrato de despliegue no describe el candidato que se quiere desplegar.
 - **Solución prevista:** Actualizarlo al commit del RC y al prefijo de imagen de GHCR, y retirar `TOURNAMENT_WORKER_TAG`.
 - **Condición de cierre:** `deploy-contract-gate` renderiza exactamente las imágenes del manifiesto del RC.
+- **RC3 (2026-10-22):** sigue abierta en `4cc7651` (`infrastructure/deploy-contract.json:22-25`: `TAG=4d469dc`, `BACKUP_TAG=ad0a42b`, `TOURNAMENT_WORKER_TAG=82c74a8`). El plan de despliegue de la RC tiene que fijar las etiquetas en `.env` y no fiarse del contrato.
 
 <a id="td-056"></a>
 ## TD-056 — `Documentation=` de la unidad del proxy roto
@@ -1118,6 +1144,7 @@ Estados posibles:
 - **Detectado:** 2026-10-20, RC1 (REVIEW, P2-2)
 - **Evidencia:** La unidad instalada apunta a `docs/ops/docker-proxy.md`, que no existe en el árbol de `main` (el runbook está en `docs/operations/`).
 - **Cierre (RC2):** `infrastructure/systemd/s9-docker-proxy.service` apunta a `docs/operations/docker-proxy.md`; `infrastructure/tests/docker-proxy-env.test.ts` comprueba que la ruta existe en el árbol. Se corrige en el host al reinstalar la unidad (`install-docker-proxy.sh install`).
+- **RC3 (2026-10-22):** en `main` (`4cc7651`). Producción conserva la unidad de RC1 hasta la migración de [TD-062](#td-062).
 
 <a id="td-057"></a>
 ## TD-057 — Árbol de despliegue con `.git` y ficheros versionados propiedad de root
@@ -1142,6 +1169,7 @@ Estados posibles:
   - Por último, `/usr/local/sbin/s9-docker-proxy-preflight preflight` otra vez: debe seguir VERDE, porque nada de lo que el proxy ejecuta o lee, ni el propio preflight, vive en el árbol.
   - **No ejecutado** en este cambio.
 - **Condición de cierre:** 0 ficheros de root en el árbol, procedimiento de actualización sin root y el preflight **instalado** VERDE después del chown.
+- **RC3 (2026-10-22):** sigue ABIERTA y sin ejecutar. El árbol de despliegue de producción está en `1b4d8eb`, con `.git` de root (un `git` como usuario de despliegue da «dubious ownership»). El orden no cambia: migrar el proxy, preflight instalado en VERDE, chown y preflight otra vez.
 
 <a id="td-058"></a>
 ## TD-058 — Restos de un smoke manual en producción
@@ -1154,6 +1182,7 @@ Estados posibles:
 - **Problema:** Inventario sucio; tras RC2 el proxy ya no puede operarlos (no llevan las labels `s9.*`).
 - **Solución prevista:** Guardar sus logs como evidencia y borrarlos; decidir sobre el volumen anónimo del registro local.
 - **Condición de cierre:** El inventario del host no contiene contenedores fuera del Compose sin justificar.
+- **RC3 (2026-10-22, lectura):** siguen los seis `bot-bot_smoke*` en `exited` (desde el 2026-07-26) y `s9-localreg` en `exited`. El carril de backup de la RC clasifica el volumen del registro local (SAFE_TO_REMOVE / KEEP / UNKNOWN) sin borrar nada.
 
 <a id="td-059"></a>
 ## TD-059 — `/healthz` de la API no detecta un esquema por detrás del código
@@ -1166,6 +1195,7 @@ Estados posibles:
 - **Problema:** Una API nueva sobre una BD sin migrar se declara sana.
 - **Solución prevista:** Comprobación del nivel de migración en el arranque o en readiness.
 - **Condición de cierre:** Test con una BD un nivel por detrás ⇒ `/healthz` (o readiness) en rojo.
+- **RC3 (2026-10-22):** sigue abierta en `4cc7651` (`apps/api/src/server.ts:28`). Afecta a la RC: `4cc7651` necesita `012_bot_versioning` y `013_battle_claim` (`apps/api/src/db/migrations.ts:693,794`) sobre una producción en `011`, y un `/healthz` en verde no prueba que se hayan aplicado. Hay que comprobar las migraciones aparte.
 
 <a id="td-060"></a>
 ## TD-060 — `.env` legible por todos y `secrets/` en 0755 en el host
@@ -1178,6 +1208,7 @@ Estados posibles:
 - **Problema:** Cualquier usuario local lee la configuración (con topología) y lista los secretos.
 - **Solución prevista:** `.env` 0600 y `secrets/` 0700 del usuario de despliegue, comprobados por readiness.
 - **Condición de cierre:** Readiness falla con permisos más laxos (mutación ROJO).
+- **RC3 (2026-10-22):** sin cambios de código en `4cc7651`; la medida de permisos en el host la repite el carril de configuración y secretos de la RC.
 
 <a id="td-061"></a>
 ## TD-061 — El perfil seccomp de los bots rompía la resolución de nombres
@@ -1188,11 +1219,17 @@ Estados posibles:
 - **Detectado:** 2026-10-21, RC2 (DEV-CI, run de GitHub 39606703262)
 - **Evidencia:** `apps/bot-manager/security/seccomp-bot.json` no permitía `sendmmsg`; glibc lo usa en `getaddrinfo` (A y AAAA en paralelo) y fallaba con `EAI_AGAIN`. En el Compose real los workers se anuncian por nombre (`bot-build-worker`, `tournament-worker`), el bootstrap del bot salía con código 3 y no se publicaba ningún build ni corría ninguna batalla. Oculto en golden y vitest porque anuncian una IP.
 - **Cierre (RC2):** `sendmmsg` añadido al perfil (está en el perfil por defecto de Docker; `defaultAction` sigue en ERRNO). Test `apps/bot-manager/tests/seccomp-bot-dns.test.ts` (estático + Docker real python/node por nombre, en `docker-e2e` con 0 skipped); mutación sin `sendmmsg` ⇒ `EAI_AGAIN` ROJO.
+- **RC3 (2026-10-22):** en `main` desde `6612868` y presente en `4cc7651` (`apps/bot-manager/security/seccomp-bot.json`). Sin desplegar.
 
 <a id="td-062"></a>
 ## TD-062 — El proxy ejecuta código de un árbol que no es sólo de root
 
-- **Estado:** CERRADA en el código (rama `fix/td-062-proxy-privilege-boundary`, pendiente de REVIEW). **ABIERTA en producción** hasta migrar la unidad instalada ([upgrades.md](../operations/upgrades.md#td-062)).
+- **Estado:** CERRADA en el código: PR #167 (rama `fix/td-062-proxy-privilege-boundary`, REVIEW ronda 1 BLOCKED por B1/B2 y ronda 2 PASS), fusionado en `main` el 2026-10-21 (`4cc7651`). **ABIERTA en producción** hasta migrar la unidad instalada ([upgrades.md](../operations/upgrades.md#td-062)).
+- **Producción (RC3, 2026-10-22):**
+  - El operador autorizó parar la unidad antigua (`systemctl stop s9-docker-proxy`, 12:46Z) y después deshabilitarla (`systemctl disable s9-docker-proxy`, 18:11Z). Queda `inactive` y `disabled`, nadie escucha en `:2375`; los 12 contenedores siguieron `healthy`, sin reinicios, y el gateway respondió 200.
+  - Mientras está parada y deshabilitada, la vía de escalada no tiene proceso que la ejecute ni arranca con un reinicio del host, pero **la deuda sigue abierta**: la unidad instalada sigue siendo la de RC1. Sólo la cierra la migración con el preflight instalado en VERDE.
+  - No se ha borrado nada (el fichero de la unidad se conserva) ni se ha hecho el chown de TD-057.
+  - **Política del operador (RC3):** el proxy antiguo (unidad de RC1/RC2, `npx tsx` desde el árbol) queda siempre **parado y deshabilitado** (`stop` + `disable`), nunca `enabled`; el fichero de la unidad se conserva. Cualquier vuelta atrás o restauración que deje esa unidad instalada termina con `systemctl disable --now s9-docker-proxy` y la comprobación `systemctl is-enabled` = `disabled`, `is-active` = `inactive` y nadie escuchando en `:2375`.
 - **Prioridad:** P1
 - **Área:** Seguridad / operación
 - **Detectado:** 2026-10-21, RC2 (DEV-SECOPS; REVIEW)
@@ -1256,6 +1293,44 @@ Estados posibles:
 - **Solución prevista:** Inventario de escuchas y, para cada una, bind acotado o regla en `S9-HOST-GUARD`.
 - **Condición de cierre:** Sonda desde un contenedor de cada red ⇒ sólo los puertos justificados responden.
 
+<a id="td-064"></a>
+## TD-064 — `init-secrets.sh` sigue enlaces simbólicos al endurecer los secretos
+
+- **Estado:** ABIERTA (P1). **Mitigada para el despliegue de RC3** por `TD064_PREFLIGHT` (abajo); la mitigación no la cierra.
+- **Prioridad:** P1
+- **Área:** Seguridad / operación
+- **Detectado:** 2026-10-22, RC3 (OPS-C, GATE G; ampliada por REVIEW)
+- **Evidencia:**
+  - `infrastructure/scripts/init-secrets.sh` en `4cc7651`: `harden()` (líneas 16-20) hace `chown` y `chmod` **sin `-h`**, así que actúan sobre el destino de un enlace simbólico.
+  - `openssl … -out "$DIR/artifact_verify_key.pem.tmp"` (línea 68) también sigue un enlace plantado con ese nombre.
+  - En producción, el directorio `secrets/` del árbol de despliegue es del usuario de despliegue, con modo 755. Ese usuario puede plantar un enlace (por ejemplo, `<secreto>.txt → <fichero del sistema>`).
+  - Ejecutado como root, el script pasa el destino al UID/GID de runtime con modo 0400.
+  - **Demostrado sin root** en RC3: una víctima fuera de `secrets/` pasó de 644 a 400; en el control negativo no cambió.
+  - Más vías del mismo defecto (lectura del código, REVIEW RC3):
+    - `gen()` comprueba `-s "$f"` y escribe con `> "$f"`: ambos siguen el enlace. Un enlace a un fichero vacío o inexistente hace que root **cree o sobrescriba** ese destino con un valor aleatorio;
+    - `: > stream_key.txt` y `: > restic_ssh_known_hosts` (si faltan) y el TLS autofirmado (`tls/privkey.pem`, `tls/fullchain.pem`) escriben igual a través de un enlace;
+    - `DIR` sale de la ubicación del script: si `secrets/` o `tls/` son un enlace, todo lo anterior opera en otro directorio;
+    - `infrastructure/`, `infrastructure/scripts/` y `secrets/` son del usuario de despliegue: puede sustituir el propio `init-secrets.sh` o plantar un enlace **entre** la comprobación y la ejecución (TOCTOU).
+  - Comprobar el sha del script no lo cierra: el script es el correcto, y el problema es el contenido del directorio.
+- **Problema:** escalada del usuario de despliegue a «cambiar dueño y modo de cualquier fichero del host» en cuanto root ejecuta `init-secrets.sh`, que es un paso del despliegue (`artifact_verify_key.pem`).
+- **Mitigación mientras siga abierta (obligatoria): `TD064_PREFLIGHT = PASS` antes de ejecutar `init-secrets.sh` como root.** Es el paso P7 del plan de despliegue de RC3 (GATE G, privado). El preflight:
+  - usa `find`/`stat`/`readlink`/`realpath` **sin seguir enlaces** (`find -P`, `stat` sin `-L`);
+  - exige que `secrets/`, `secrets/tls/` y sus padres hasta el árbol no sean enlaces y tengan el dueño esperado;
+  - sólo admite los enlaces conocidos y justificados (hoy `restic_ssh_key` y `restic_ssh_known_hosts`, relativos y resueltos a ficheros regulares dentro de `secrets/`), ningún `*.tmp` y, para cada fichero, el dueño y el modo esperados;
+  - comprueba que el `init-secrets.sh` del árbol es byte a byte el del clon de root del SHA revisado;
+  - está calibrado con un control negativo: un enlace malicioso plantado ⇒ ROJO;
+  - se repite justo después de ejecutar el script, y el inventario tiene que salir igual.
+  
+  Con cualquier enlace, dueño o modo inesperado ⇒ **PARA**: no se ejecuta `init-secrets.sh` y no hay despliegue. Para acotar la ventana entre la comprobación y la ejecución, se ejecutan seguidos en la misma sesión de root, sin procesos ni sesiones del usuario de despliegue en el host.
+- **Riesgo residual de la mitigación (declarado):** mientras los directorios sean del usuario de despliegue, entre el preflight y la ejecución queda una ventana; el preflight la acota, no la elimina. Sólo el arreglo de código la cierra.
+- **Solución prevista:** no seguir enlaces:
+  - `chown -h`/`chmod` sólo sobre ficheros regulares (comprobar `-L`/`-f`, o abrir con `O_NOFOLLOW`);
+  - temporales creados con `mktemp` en el propio directorio;
+  - rechazar con error un enlace no esperado.
+- **Ejecución en producción mientras siga abierta:** **Nunca por stdin** (`bash -s < init-secrets.sh` o `… | bash`): el script calcula su directorio a partir de su propia ruta; por stdin `BASH_SOURCE` queda vacío y `DIR` pasa a ser `/secrets` en la raíz del host, donde root generaría secretos nuevos (medido en RC3). Se ejecuta la copia del clon de confianza desde un *staging* de root ([upgrades.md](../operations/upgrades.md#rc3-orden-del-despliegue-de-4cc7651), pasos 8 y 9).
+- **Cierre definitivo previsto: PR #169** (draft, rama `fix/td-064-init-secrets-nofollow`; **no entra en RC3**). Directorio de secretos de root (rc 3 si no lo es; `S9_SECRETS_ADOPT=1` para apropiarlo), escritura por temporal nuevo + `rename`, `chown -h`, sólo los enlaces admitidos, `S9_SECRETS_DIR` para ejecutar la copia de confianza y negativa a ejecutarse por stdin sin él. Test `infrastructure/tests/init-secrets-nofollow.test.ts` (18/18 con el script nuevo; con el de `4cc7651`, 14 en ROJO). Al desplegarlo hará falta migrar el directorio de secretos de producción a root.
+- **Condición de cierre:** el código ya no sigue enlaces en ninguna de las vías anteriores (endurecimiento, escritura de secretos, temporales, `tls/`, `secrets/` como enlace), y un test con mutación lo demuestra: un enlace plantado hacia un fichero víctima ⇒ la víctima no cambia y el script falla; si se reintroduce el seguimiento ⇒ test ROJO. Mientras no se cumpla, `TD064_PREFLIGHT` sigue siendo obligatorio en cada ejecución de `init-secrets.sh` como root.
+
 ## Documentación relacionada
 
 - [current-status.md](current-status.md): estado actual.
@@ -1284,3 +1359,13 @@ Estados posibles:
 | Backup healthy tras la copia de las 04:15 UTC | RUNTIME_VERIFIED | `docker inspect .State.Health` y logs del contenedor `backup`, 2026-10-15 21:01 UTC |
 | `deploy-staging` con `ssh` comentado | CODE_VERIFIED | `.github/workflows/ci.yml:945-947` |
 | Nightly 40/40 rojo | RUNTIME_VERIFIED (en la auditoría) | historial de GitHub Actions, sin cambios desde entonces |
+| Nightly rojo 12/12 (11-22 oct), sólo `slow-suites` y por el arnés (TD-019) | RUNTIME_VERIFIED (GitHub Actions, 2026-10-22) | `gh run list --workflow nightly.yml`; `gh run view 39750535840 --log-failed` |
+| PR #167 (TD-062) fusionado en `main` = `4cc7651` | RUNTIME_VERIFIED (GitHub, 2026-10-22) | `gh pr view 167` (MERGED 2026-10-21T23:24Z); `git rev-parse origin/main` |
+| `backup.sh:771`, `deploy-contract.json:22-25`, `server.ts:28` sin cambios en `4cc7651` (TD-054, TD-055, TD-059) | CODE_VERIFIED | `grep -n` sobre el árbol de `4cc7651` |
+| Migraciones 012 y 013 en el código; producción en 011 | CODE_VERIFIED + RUNTIME_VERIFIED (lectura, 2026-10-22) | `apps/api/src/db/migrations.ts:693,794`; lectura de producción del coordinador (sin topología en el repo) |
+| Proxy antiguo parado y deshabilitado (`inactive`, `disabled`, `:2375` cerrado), 12 contenedores `healthy`; restos del smoke presentes (TD-058, TD-062) | RUNTIME_VERIFIED (lectura, 2026-10-22) | lectura de producción del coordinador antes y después del `stop` y del `disable`, y lectura independiente de REVIEW (sin topología en el repo) |
+| Decisión del operador `BREAK_GLASS = DEFERRED` (TD-007) | DESIGN_ONLY (decisión, no medida) | decisión del operador del 2026-10-22 |
+| `TD064_PREFLIGHT` en ROJO ante enlaces, dueños, modos, restos y padres fuera del contrato; con él delante, `init-secrets.sh` no se ejecuta y la víctima no cambia | RUNTIME_VERIFIED (réplica con dueños reales en un espacio de nombres de usuario, 51 casos; repetido por REVIEW) | calibración de la RC3 (privada) |
+| `init-secrets.sh` por stdin escribe en `/secrets` | RUNTIME_VERIFIED (réplica) | `BASH_SOURCE` vacío ⇒ `DIR=/secrets`; calibración de la RC3 |
+| `init-secrets.sh` sigue enlaces (TD-064) | CODE_VERIFIED + RUNTIME_VERIFIED (sin root, con control negativo) | `infrastructure/scripts/init-secrets.sh:16-20,68` en `4cc7651`; demostración de OPS-C en RC3 (privada) |
+| Causa del nightly: falta `backup-image-tar` y el `sysctl` de `ci.yml:82` (TD-019) | CODE_VERIFIED | `grep -n 'backup-image-tar\|apparmor_restrict' .github/workflows/ci.yml .github/workflows/nightly.yml` (sólo aparece en `ci.yml`) |

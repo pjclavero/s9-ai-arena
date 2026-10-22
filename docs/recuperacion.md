@@ -281,6 +281,14 @@ rm -rf /tmp/restore-data   # limpiar restos en claro
 
 ## Custodia del paquete break-glass y de su frase de paso
 
+> **Decisión del operador (2026-10-22): `BREAK_GLASS = DEFERRED`.** La copia externa del paquete y la
+> doble custodia de la frase de paso que se describen aquí pasan a ser *future hardening*: **no
+> bloquean** RC3, el despliegue ni la activación de la ejecución real o del espectador en el entorno
+> actual (homelab/club, backups y restauración verificados, infraestructura reproducible, snapshot de
+> VM disponible). La recomendación se mantiene. Estado vigente:
+> [roadmap/technical-debt.md#td-007](roadmap/technical-debt.md#td-007) y
+> [operations/readiness.md](operations/readiness.md#gates-de-la-release-candidate-y-de-activación).
+
 El paquete *break-glass* es un único fichero cifrado
 (`s9-ai-arena-break-glass.tar.gz.gpg`, GPG simétrico AES256, 0600 root:root)
 que contiene todo lo que hace falta para arrancar la Fase 2 desde cero:

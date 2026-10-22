@@ -77,8 +77,9 @@ Advertencias:
 
 - Si la VM no tiene el agente de invitado activo, el apagado ordenado del hipervisor depende de
   ACPI y puede agotar su tiempo de espera; por eso el paso 2 se hace antes.
-- **No hay snapshots de VM** de la instalación de referencia: hacer uno antes de una intervención
-  arriesgada es responsabilidad del operador en el hipervisor ([TD-007](../roadmap/technical-debt.md#td-007)).
+- La instalación de referencia sólo tiene un snapshot de VM, el previo a la RC (2026-10-20,
+  *crash-consistent*): hacer uno antes de una intervención arriesgada es responsabilidad del operador
+  en el hipervisor ([TD-007](../roadmap/technical-debt.md#td-007)).
 
 ## 4. Encender
 

@@ -1,10 +1,12 @@
 # Proxy de la API de Docker (host)
 
-> **Estado:** vigente, revisado contra RC2 (`rc2/dev-proxy`, base `7cf88dd`). El proxy se instala en
+> **Estado:** vigente, revisado contra RC2 (`rc2/dev-proxy`, base `7cf88dd`) y TD-062 (`main` `4cc7651`, base de RC3). El proxy se instala en
 > el host como unidad systemd y es el único proceso con `/var/run/docker.sock`. RC2 cambia su
 > alcance de red (red dedicada `bot-control`) y su política (control de cliente, allowlist de
 > imágenes y propiedad de contenedores). La **ejecución real de bots sigue apagada** por defecto:
-> `DOCKER_PROXY_URL` vacío en `tournament-worker`/`arena-engine` (puerta del operador). Índice de
+> `DOCKER_PROXY_URL` vacío en `tournament-worker`/`arena-engine` (puerta del operador). Ojo: eso
+> apaga las batallas, no los builds: `bot-build-worker` trae la URL por defecto y valida bots en el
+> sandbox en cuanto el proxy arranca ([Estado actual](#estado-actual)). Índice de
 > operación: [index.md](index.md) · Seguridad: [../technical/security.md](../technical/security.md).
 
 R-DEPLOY · R2 (R1.7 · ERR-SEC-02) · RC2. Este documento describe el **único proceso autorizado a
@@ -282,11 +284,20 @@ sudo rm -rf /etc/s9-ai-arena && sudo userdel s9proxy
 - **Límite declarado:** las direcciones locales del host que se excluyen del control de cliente se
   leen al arrancar; un bridge creado después no entra en la exclusión hasta reiniciar el proxy (la IP
   de bind sí entra siempre). Lo cubre además el firewall ([firewall.md](firewall.md)).
-- **TD-062 (frontera de privilegio):** CERRADA en código (rama `fix/td-062-proxy-privilege-boundary`,
-  pendiente de REVIEW). La **unidad instalada en producción sigue siendo la de RC1** (`npx tsx`
-  desde el árbol), así que TD-062 está **abierta en producción** hasta la migración
-  ([upgrades.md](upgrades.md#td-062)). La CI la mide en `container-proxy-e2e` (regla R11) y en
+- **TD-062 (frontera de privilegio):** CERRADA en código, en `main` desde `4cc7651` (PR #167, REVIEW
+  ronda 2 PASS). La **unidad instalada en producción sigue siendo la de RC1** (`npx tsx` desde el
+  árbol), así que TD-062 está **abierta en producción** hasta la migración
+  ([upgrades.md](upgrades.md#td-062)). Desde el 2026-10-22 esa unidad está **parada y deshabilitada** por
+  decisión del operador (`systemctl stop` y después `systemctl disable`: `inactive`, `disabled`, nadie
+  escucha en `:2375`), sin degradación de los servicios. El fichero de la unidad se conserva.
+  **Política del operador (RC3):** el proxy antiguo (unidad de RC1/RC2, `npx tsx` desde el árbol) queda siempre **parado y deshabilitado** (`stop` + `disable`), nunca `enabled`; el fichero de la unidad se conserva. Cualquier vuelta atrás o restauración que deje esa unidad instalada termina con `systemctl disable --now s9-docker-proxy` y la comprobación `systemctl is-enabled` = `disabled`, `is-active` = `inactive` y nadie escuchando en `:2375`. La CI la mide en `container-proxy-e2e` (regla R11) y en
   `infrastructure/tests/docker-proxy-privilege.test.ts`.
+- **El «interruptor» `DOCKER_PROXY_URL` sólo gobierna las batallas.** En `tournament-worker` y
+  `arena-engine` va vacío por defecto, y eso apaga la ejecución real de **batallas**. `bot-build-worker`
+  trae la URL por defecto (`http://docker-proxy.internal:2375`, `infrastructure/docker-compose.yml`). En
+  cuanto el proxy está en marcha y los runtimes descargados, los **builds ya ejecutan código de usuario**
+  en el sandbox, aunque `DOCKER_PROXY_URL` no esté en `.env`. Arrancar el proxy es, por tanto, activar
+  los builds; el operador tiene que tratarlo así.
 - **Compatibilidad:** el arnés manual `scripts/e2e-real-battle-smoke.ts` usa una imagen
   `s9-smoke-bot` que no está en `DIGESTS.lock`; con RC2 hay que arrancar el proxy con un lock propio
   (`DOCKER_PROXY_IMAGE_ALLOWLIST`) que la incluya. Los contenedores creados antes de RC2 no llevan las
