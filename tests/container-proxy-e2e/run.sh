@@ -95,7 +95,10 @@ cid() { "${DC[@]}" ps -aq "$1" 2>/dev/null | head -1; }
 # ── prepare ─────────────────────────────────────────────────────────────────
 do_prepare() {
   # Secretos efímeros con el instalador del repo (propietario 1000 = usuario de las imágenes).
-  sudo -n env RUNTIME_UID=1000 RUNTIME_GID=1000 bash "$REPO/infrastructure/scripts/init-secrets.sh" >"$LOGS/init-secrets.log" 2>&1 ||
+  # TD-064: el checkout es del usuario del runner y root no escribe en un
+  # directorio ajeno; S9_SECRETS_ADOPT=1 hace que init-secrets se lo apropie
+  # (root:root 0755) antes de escribir.
+  sudo -n env RUNTIME_UID=1000 RUNTIME_GID=1000 S9_SECRETS_ADOPT=1 bash "$REPO/infrastructure/scripts/init-secrets.sh" >"$LOGS/init-secrets.log" 2>&1 ||
     { log "init-secrets.sh falló"; return 1; }
   # Copia legible SÓLO para buscar fugas en la evidencia (collect-functional-evidence.sh);
   # $STATE/secrets nunca se sube.
