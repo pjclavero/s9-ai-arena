@@ -35,7 +35,9 @@ Estados que muestra el visor:
 | «El servidor de directo rechazó el pase…» | Pase inválido o caducado (fallo de configuración del servidor) | Avisar al administrador |
 | «sin conexión con el servidor de directo tras varios intentos» | Se agotaron los reintentos | «Reintentar» |
 
-Un rechazo definitivo **no** se reintenta en bucle: el visor pide un solo pase y explica el motivo.
+Un rechazo definitivo **no** se reintenta en bucle: el visor pide un solo pase y explica el motivo. Mientras no hay batalla que ver (rechazo, error o sin conexión) el visor sólo muestra el aviso: ni marcador, ni controles de cámara, ni lienzo vacío.
+
+El título dice quién juega («Batalla: Alfa vs Beta») en cuanto llega la nómina de la batalla. El lienzo se ajusta al ancho de la ventana, también en móvil.
 
 ## Qué muestra
 

@@ -171,7 +171,7 @@ export function createApp(cfg: AppConfig): express.Express {
   // PRC (TD-004) · replays para el navegador, con la política única de acceso.
   app.use(replayRoutes(cfg.db, cfg.anonQuota ?? DEFAULT_ANON_QUOTA, publicReplaysEnabled));
   app.use(standingsRoutes(cfg.db));
-  app.use(tournamentRoutes(cfg.db));
+  app.use(tournamentRoutes(cfg.db, { publicReplays: publicReplaysEnabled, publicSpectate: publicSpectateEnabled }));
   app.use(mapRoutes(cfg.db));
   app.use(systemRoutes(cfg.db, realBattleRunsCapability(realBattleRuns), publicSpectateEnabled, publicReplaysEnabled));
 

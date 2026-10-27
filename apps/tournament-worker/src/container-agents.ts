@@ -57,6 +57,7 @@ import {
 } from "../../bot-manager/src/startup-clock.js";
 import type { AgentDriver, AgentDriverInput, AgentDriverOutput } from "./engine-executor.js";
 import { InfrastructureFailure, SportingFailure } from "./errors.js";
+import { containerDiagnostics, type BotContainerDiagnostics, type BotRunDiagnostics } from "./bot-diagnostics.js";
 
 /** Qué arrancar para UN bot (lo decide el proveedor; contrato con DEV-A). */
 export interface BotLaunchPlan {
@@ -275,6 +276,8 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
               vehicles[culprit].botId,
               `[${r.reason}] ${r.detail}`,
               "container",
+              // UX-F (DEF-R4) · el motivo `hook` no se pierde en un `bot_crash` genérico.
+              r.report?.kind === "hook" ? "hook_missing" : undefined,
             );
           }
         } else {
@@ -320,6 +323,23 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
         cpuSampler = setInterval(() => void sampleCpu(), opts.cpuSampleMs ?? 500);
         cpuSampler.unref?.();
 
+        // UX-06 · si un bot se desconecta con la batalla en curso, se mira en ese
+        // momento cómo está su contenedor (salida, OOM): al acabar ya no se sabría
+        // (AutoRemove) o todos habrían salido por el SHUTDOWN.
+        const containerAtDisconnect = new Map<number, Promise<BotContainerDiagnostics>>();
+        const offDisconnect = server.onDisconnect((vid) => {
+          const i = vehicles.findIndex((v) => v.vehicleId === vid);
+          const h = i >= 0 ? handles[i] : null;
+          if (!h?.state || containerAtDisconnect.has(i)) return;
+          containerAtDisconnect.set(
+            i,
+            h.state().then(
+              (st) => containerDiagnostics(st, true),
+              () => containerDiagnostics(null, true),
+            ),
+          );
+        });
+
         server.start();
         const overallMs =
           engine.config.ruleset.timeLimitTicks * tickIntervalMs + (opts.graceMs ?? CONTAINER_BATTLE_GRACE_MS);
@@ -334,6 +354,7 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
           }),
         ]);
         const replay = server.getReplay();
+        offDisconnect();
 
         // Última muestra (por si el contenedor aún vive) y se fija la medida.
         clearInterval(cpuSampler);
@@ -341,7 +362,26 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
         await sampleCpu();
         const cpuMsByBot = new Map<string, number | null>();
         for (let i = 0; i < handles.length; i++) cpuMsByBot.set(vehicles[i].botId, lastCpu[i]);
-        return { result, replay, cpuMsByBot: Object.fromEntries(cpuMsByBot) };
+
+        const proto = server.protocolDiagnostics();
+        const diagnosticsByBot = new Map<string, BotRunDiagnostics>();
+        for (let i = 0; i < vehicles.length; i++) {
+          const atDisconnect = containerAtDisconnect.get(i);
+          // UX-F (DEF-R4) · versión publicada sin hook: jugó (quieta), con aviso.
+          const hookMissing = (plans[i]?.startup?.warnings?.() ?? []).some((w) => w.kind === "hook_missing");
+          diagnosticsByBot.set(vehicles[i].botId, {
+            schema: "bot-diagnostics/v1",
+            startup: hookMissing ? { ok: true, warning: "hook_missing" } : { ok: true },
+            ...(proto[vehicles[i].vehicleId] ? { protocol: proto[vehicles[i].vehicleId] } : {}),
+            ...(atDisconnect ? { container: await atDisconnect } : {}),
+          });
+        }
+        return {
+          result,
+          replay,
+          cpuMsByBot: Object.fromEntries(cpuMsByBot),
+          diagnosticsByBot: Object.fromEntries(diagnosticsByBot),
+        };
       } finally {
         if (guard) clearTimeout(guard);
         if (cpuSampler) clearInterval(cpuSampler);

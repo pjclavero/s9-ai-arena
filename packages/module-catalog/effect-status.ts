@@ -1,20 +1,18 @@
 /**
- * FC-C (TD-016) · Efecto REAL de cada propiedad del catálogo en la simulación, medido
- * sobre el código en FUNCTIONAL_BASE_COMMIT 0b8c12b (auditoría DEV-C, ver
- * docs/technical/equipment.md).
+ * FC-C (TD-016) · Efecto REAL de cada propiedad del catálogo en la simulación.
  *
- * El hecho que lo condiciona todo: en el CAMINO REAL de batalla
- * (apps/api/src/services/battle-run-http-launcher.ts:141-146,638) del loadout del bot
- * SOLO viaja la familia del chasis, traducida a un arquetipo fijo (light→scout,
- * heavy→heavy, resto→gunner) que el motor simula con los módulos de
- * packages/module-catalog/resolve/archetypes.ts. Los módulos que elige el usuario
- * NO llegan a la simulación; solo cuentan en la VALIDACIÓN del loadout (coste,
- * masa, energía, ranuras).
+ * UX-01 (G-16) · RECALIBRADO. La versión anterior de esta tabla se midió sobre el
+ * camino API → arena-engine `/run` (battle-run-http-launcher.ts), que sólo enviaba
+ * la familia del chasis traducida a un arquetipo fijo. Ese camino YA NO EJECUTA
+ * batallas: `POST /battles/{id}/run` delega en el tournament-worker (DEV-B,
+ * TD-002), y su engine-executor resuelve el loadout PERSISTIDO de la versión
+ * (bot_loadouts de su loadout_revision) con resolveVehicle y lo simula tal cual.
+ * Demostrado de extremo a extremo (loadout persistido ↔ WELCOME del bot ↔
+ * vehículo simulado) en apps/tournament-worker/src/ux01-loadout-welcome.test.ts.
+ * La partida de humo del build juega también ese loadout (smoke-vehicle.ts).
  *
- *   ACTIVE  · lo que elige el usuario cambia la batalla en el camino real.
- *   PARTIAL · el motor sabe usarla, pero en el camino real el valor es el del
- *             arquetipo (no el del usuario), o solo cuenta en validación, o su
- *             efecto es incompleto.
+ *   ACTIVE  · lo que elige el usuario cambia la batalla.
+ *   PARTIAL · sólo cuenta para VALIDAR el loadout (coste, tamaño, límites).
  *   FUTURE  · ningún código de simulación la lee: no cambia la batalla.
  *
  * La UI (LoadoutEditor) y la documentación leen ESTA tabla: no se presenta como
@@ -31,87 +29,91 @@ export interface PropertyEffect {
   note: string;
 }
 
-const ARQ = "El motor la usa, pero en batalla real se juega el valor del módulo del arquetipo, no el elegido.";
+const USED = "El motor usa el valor del módulo que eliges.";
 const VAL_ONLY = "Solo cuenta para validar el loadout; no cambia la batalla.";
 const NONE = "Ningún código de simulación la lee: no cambia la batalla.";
 
 const p = (status: EffectStatus, validation: boolean, note: string): PropertyEffect => ({ status, validation, note });
 
-/** Elegir el CHASIS sí cambia la batalla: decide el arquetipo (light/heavy/otro). */
+/** Elegir el CHASIS cambia la batalla: casco, radio, ranuras disponibles. */
 export const CHASSIS_CHOICE_EFFECT: PropertyEffect = p(
   "ACTIVE",
   true,
-  "La familia del chasis decide el arquetipo jugado (light→scout, heavy→heavy, resto→gunner). La versión (@2) se descarta.",
+  "El chasis elegido (con su versión) es el que se simula: casco, tamaño y ranuras disponibles.",
 );
 
 /** Por categoría y propiedad. Las comunes (massKg, costCredits, hp, size) van en COMMON. */
 export const COMMON_EFFECTS: Record<string, PropertyEffect> = {
-  massKg: p("PARTIAL", true, "Masa del arquetipo en la física; la del usuario solo en validación."),
+  massKg: p("ACTIVE", true, "Masa total (chasis + módulos elegidos): la usa la física y la valida el loadout."),
   costCredits: p("PARTIAL", true, VAL_ONLY),
   size: p("PARTIAL", true, VAL_ONLY),
-  hp: p("PARTIAL", false, ARQ),
+  hp: p("ACTIVE", false, USED),
   maxPerVehicle: p("PARTIAL", true, VAL_ONLY),
-  "power.passiveEUs": p("PARTIAL", true, ARQ),
+  "power.passiveEUs": p("ACTIVE", true, USED),
 };
 
 export const PROPERTY_EFFECTS: Record<ModuleCategory, Record<string, PropertyEffect>> = {
   chassis: {
-    hullHp: p("PARTIAL", false, ARQ),
-    radiusM: p("PARTIAL", false, ARQ),
+    hullHp: p("ACTIVE", false, USED),
+    radiusM: p("ACTIVE", false, USED),
     maxLoadKg: p("PARTIAL", true, VAL_ONLY),
-    slots: p("PARTIAL", true, "Ranuras: validación del loadout; en simulación solo nombran la munición."),
+    slots: p(
+      "ACTIVE",
+      true,
+      "Deciden qué puedes montar y el nombre de ranura que usas en los comandos (fire, deployMine).",
+    ),
   },
   movement: {
-    maxSpeedMs: p("PARTIAL", false, ARQ),
-    accelerationMs2: p("PARTIAL", false, ARQ),
-    turnRateRads: p("PARTIAL", false, ARQ),
-    ratedLoadKg: p("PARTIAL", false, ARQ),
+    maxSpeedMs: p("ACTIVE", false, USED),
+    accelerationMs2: p("ACTIVE", false, USED),
+    turnRateRads: p("ACTIVE", false, USED),
+    ratedLoadKg: p("ACTIVE", false, USED),
     terrain: p("FUTURE", false, NONE),
   },
   power: {
-    capacityEU: p("PARTIAL", false, ARQ),
-    generationEUs: p("PARTIAL", true, ARQ),
+    capacityEU: p("ACTIVE", false, USED),
+    generationEUs: p("ACTIVE", true, USED),
   },
   sensor: {
-    sensorType: p("PARTIAL", false, "Lidar y radar (arquetipos); proximity y acoustic nunca llegan a batalla."),
-    rangeM: p("PARTIAL", false, ARQ),
-    fovRad: p("PARTIAL", false, ARQ),
-    rays: p("PARTIAL", false, ARQ),
-    errorM: p("PARTIAL", false, ARQ),
+    sensorType: p("ACTIVE", false, "El motor simula el tipo que montas: lidar, radar, proximidad o acústico."),
+    rangeM: p("ACTIVE", false, USED),
+    fovRad: p("ACTIVE", false, USED),
+    rays: p("ACTIVE", false, USED),
+    errorM: p("ACTIVE", false, USED),
   },
   weapon: {
-    damage: p("PARTIAL", false, ARQ),
-    cooldownTicks: p("PARTIAL", false, ARQ),
-    projectileSpeedMs: p("PARTIAL", false, ARQ),
-    spreadRad: p("PARTIAL", false, ARQ),
-    turretRateRads: p("PARTIAL", false, ARQ),
-    acceptsAmmo: p("PARTIAL", true, ARQ),
-    "power.perActionEU": p("PARTIAL", false, ARQ),
+    damage: p("ACTIVE", false, USED),
+    cooldownTicks: p("ACTIVE", false, USED),
+    projectileSpeedMs: p("ACTIVE", false, USED),
+    spreadRad: p("ACTIVE", false, USED),
+    turretRateRads: p("ACTIVE", false, USED),
+    acceptsAmmo: p("ACTIVE", true, USED),
+    "power.perActionEU": p("ACTIVE", false, USED),
     rangeM: p("FUTURE", false, "El alcance real lo fija un TTL de proyectil de 90 ticks (combat.ts:198), no rangeM."),
     turretArcRad: p("FUTURE", false, "Todos los módulos declaran 2π: la comprobación de arco nunca se activa."),
   },
   ammo: {
-    damageMultiplier: p("PARTIAL", false, ARQ),
-    rounds: p("PARTIAL", false, ARQ),
-    explosionRadiusM: p("PARTIAL", false, "Solo ammo.he tiene radio y no está en ningún arquetipo."),
+    damageMultiplier: p("ACTIVE", false, USED),
+    rounds: p("ACTIVE", false, USED),
+    explosionRadiusM: p("ACTIVE", false, "Radio de explosión del impacto (sólo ammo.he lo declara)."),
   },
   mine: {
-    armDelayTicks: p("PARTIAL", false, "El motor las sabe usar, pero ningún arquetipo alcanzable monta minas."),
-    charges: p("PARTIAL", false, "Ningún arquetipo alcanzable monta minas."),
-    cooldownTicks: p("PARTIAL", false, "Ningún arquetipo alcanzable monta minas."),
-    damage: p("PARTIAL", false, "Ningún arquetipo alcanzable monta minas."),
-    explosionRadiusM: p("PARTIAL", false, "Ningún arquetipo alcanzable monta minas."),
-    lifetimeTicks: p("PARTIAL", false, "Ningún arquetipo alcanzable monta minas."),
-    triggerRadiusM: p("PARTIAL", false, "Ningún arquetipo alcanzable monta minas."),
-    "power.perActionEU": p("PARTIAL", false, "Ningún arquetipo alcanzable monta minas."),
+    armDelayTicks: p("ACTIVE", false, "El motor la usa si montas una mina en la bahía (comando deployMine)."),
+    charges: p("ACTIVE", false, "El motor la usa si montas una mina en la bahía (comando deployMine)."),
+    cooldownTicks: p("ACTIVE", false, "El motor la usa si montas una mina en la bahía (comando deployMine)."),
+    damage: p("ACTIVE", false, "El motor la usa si montas una mina en la bahía (comando deployMine)."),
+    explosionRadiusM: p("ACTIVE", false, "El motor la usa si montas una mina en la bahía (comando deployMine)."),
+    lifetimeTicks: p("ACTIVE", false, "El motor la usa si montas una mina en la bahía (comando deployMine)."),
+    triggerRadiusM: p("ACTIVE", false, "El motor la usa si montas una mina en la bahía (comando deployMine)."),
+    "power.perActionEU": p("ACTIVE", false, "El motor la usa si montas una mina en la bahía (comando deployMine)."),
   },
   armor: {
-    reduction: p("PARTIAL", false, ARQ),
-    sector: p("PARTIAL", true, "Solo el frontal (arquetipos gunner/heavy); izquierda/derecha/trasera nunca llegan."),
+    reduction: p("ACTIVE", false, USED),
+    sector: p("ACTIVE", true, "El blindaje protege el sector que cubre (frontal, laterales o trasero)."),
   },
   radio: {
-    maxMessageBytes: p("PARTIAL", false, ARQ),
-    maxMessagesPerSecond: p("PARTIAL", false, ARQ),
+    maxMessageBytes: p("ACTIVE", false, USED),
+    maxMessagesPerSecond: p("ACTIVE", false, USED),
     rangeM: p(
       "FUTURE",
       false,

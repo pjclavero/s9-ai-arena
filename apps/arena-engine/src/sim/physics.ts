@@ -186,6 +186,32 @@ export class PhysicsWorld {
     h.rb.setAngvel(st * turn, true);
   }
 
+  /**
+   * Restricción DURA de caja para un vehículo (UX-07): si su centro ha quedado fuera de
+   * [minX,maxX]×[minY,maxY] lo devuelve al borde y anula la componente de velocidad que
+   * apunta hacia fuera. Devuelve `true` si tuvo que corregir.
+   *
+   * Por qué hace falta además del muro: el contacto de Rapier es "blando" (corrige la
+   * penetración a lo largo de varios ticks) y `driveVehicle` impone la velocidad cada
+   * tick; un vehículo empujado contra el perímetro por otro se hunde así hasta ~0,35 m
+   * en el muro. El perímetro es una regla del juego, no una sugerencia del solver.
+   */
+  clampInsideBox(id: string, minX: number, maxX: number, minY: number, maxY: number): boolean {
+    const h = this.bodies.get(id);
+    if (!h) return false;
+    const t = h.rb.translation();
+    const x = clamp(t.x, minX, maxX);
+    const y = clamp(t.y, minY, maxY);
+    if (x === t.x && y === t.y) return false;
+    const v = h.rb.linvel();
+    const vx = (x > t.x && v.x < 0) || (x < t.x && v.x > 0) ? 0 : v.x;
+    const vy = (y > t.y && v.y < 0) || (y < t.y && v.y > 0) ? 0 : v.y;
+    h.rb.setTranslation({ x, y }, true);
+    h.rb.setLinvel({ x: vx, y: vy }, true);
+    this.dirty = true;
+    return true;
+  }
+
   /** Empuja un cuerpo (retroceso, explosiones). */
   applyImpulse(id: string, impulse: Vec2): void {
     this.bodies.get(id)?.rb.applyImpulse(impulse, true);

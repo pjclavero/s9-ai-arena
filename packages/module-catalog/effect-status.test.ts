@@ -5,7 +5,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { loadCatalog } from "./loadCatalog.js";
-import { NON_GAMEPLAY_KEYS, categoryEffect, effectOf } from "./effect-status.js";
+import { NON_GAMEPLAY_KEYS, PROPERTY_EFFECTS, categoryEffect, effectOf } from "./effect-status.js";
 import type { ModuleCategory } from "./types.js";
 
 function gameplayKeys(def: Record<string, unknown>): string[] {
@@ -38,9 +38,21 @@ describe("effect-status: clasificación ACTIVE/PARTIAL/FUTURE del catálogo real
     expect(effectOf("weapon", "rangeM")!.status).toBe("FUTURE");
     expect(effectOf("radio", "rangeM")!.status).toBe("FUTURE");
     expect(categoryEffect("utility")).toBe("FUTURE");
-    // solo la elección de chasis tiene efecto ACTIVE en el camino real
     expect(categoryEffect("chassis")).toBe("ACTIVE");
-    expect(categoryEffect("weapon")).toBe("PARTIAL");
+  });
+
+  it("UX-01 · el camino real juega el loadout elegido: los módulos cambian la batalla", () => {
+    // El executor del worker resuelve el loadout PERSISTIDO (ux01-loadout-welcome.test.ts):
+    // ninguna propiedad que el motor lea puede presentarse como «del arquetipo».
+    expect(categoryEffect("weapon")).toBe("ACTIVE");
+    expect(categoryEffect("movement")).toBe("ACTIVE");
+    expect(categoryEffect("mine")).toBe("ACTIVE");
+    expect(effectOf("weapon", "damage")!.status).toBe("ACTIVE");
+    expect(effectOf("movement", "maxSpeedMs")!.status).toBe("ACTIVE");
+    // lo que sólo valida sigue siendo PARTIAL
+    expect(effectOf("weapon", "costCredits")!.status).toBe("PARTIAL");
+    for (const byCat of Object.values(PROPERTY_EFFECTS))
+      for (const e of Object.values(byCat)) expect(e.note).not.toMatch(/arquetipo/i);
   });
 
   it("no consulta la cadena de prototipos", () => {

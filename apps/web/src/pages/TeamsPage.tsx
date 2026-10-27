@@ -87,6 +87,14 @@ export function TeamsPage(props: { me: Me }) {
   return (
     <Panel>
       <h2>Equipos</h2>
+      {/* UX-C · C1: qué es un equipo y qué NO es (antes no se explicaba en ninguna parte). */}
+      <p data-testid="teams-concepts">
+        Un <strong>equipo</strong> agrupa personas y <strong>bots</strong>: un bot del equipo con visibilidad «equipo»
+        lo pueden usar en batallas todos sus miembros, aunque no sea suyo. Cada bot pertenece como mucho a un equipo.
+        Una batalla no enfrenta equipos: enfrenta <strong>versiones publicadas de bots</strong>, cada una en un{" "}
+        <strong>bando</strong> (rojo o azul) que es sólo el lado del campo. Dos bots del mismo equipo pueden enfrentarse
+        entre sí.
+      </p>
       <input
         aria-label="nuevo-equipo"
         placeholder="nombre del equipo"
@@ -115,6 +123,11 @@ export function TeamsPage(props: { me: Me }) {
         </div>
       )}
       {teams === null && loadError === null && <p>Cargando equipos…</p>}
+      {teams !== null && mine.length === 0 && (
+        <p data-testid="teams-empty">
+          Todavía no perteneces a ningún equipo. Crea uno con el campo de arriba: serás su capitán.
+        </p>
+      )}
       {mine.map((t) => (
         <section key={t.id} className="card" data-testid={`team-${t.name}`} aria-label={`equipo ${t.name}`}>
           <h3>

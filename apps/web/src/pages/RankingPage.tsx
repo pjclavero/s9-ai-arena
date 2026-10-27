@@ -14,10 +14,12 @@ import { useState } from "react";
 import { api } from "../api.js";
 import { useResource, ResourceView } from "../resource.js";
 import { EmptyState } from "../ui/primitives.js";
+import { MODE_NAME } from "../battle-result.js";
 
 export interface Standing {
   rank: number;
-  botId: string;
+  /** UX-F (DEF-R3) · null = bot privado que no puedes identificar (botName «Bot privado»). */
+  botId: string | null;
   botName: string;
   rating: number;
   wins: number;
@@ -25,12 +27,9 @@ export interface Standing {
   draws: number;
 }
 
-const MODES = [
-  { value: "deathmatch", label: "Deathmatch" },
-  { value: "team_deathmatch", label: "Deathmatch por equipos" },
-  { value: "capture_the_flag", label: "Captura la bandera" },
-  { value: "zone_control", label: "Control de zona" },
-] as const;
+// UX-R · las etiquetas viven en battle-result.ts (MODE_NAME) para que crear
+// batalla y torneos digan lo mismo que el ranking.
+const MODES = Object.entries(MODE_NAME).map(([value, label]) => ({ value, label }));
 
 export function RankingPage() {
   const [mode, setMode] = useState<string>("deathmatch");
@@ -70,7 +69,7 @@ export function RankingPage() {
               </thead>
               <tbody>
                 {standings.map((s) => (
-                  <tr key={s.botId} data-testid="ranking-row">
+                  <tr key={s.botId ?? `privado-${s.rank}`} data-testid="ranking-row">
                     <td>{s.rank}</td>
                     <td>{s.botName}</td>
                     <td>{s.rating}</td>

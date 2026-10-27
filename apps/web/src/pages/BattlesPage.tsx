@@ -5,19 +5,32 @@
  *
  * FC-D (D7, TD-022) · Cada batalla muestra RESULTADO (ganador/empate), marcador,
  * duración y fallo real; `failureKind = none` ya no se pinta como error.
+ *
+ * UX-D (D1) · Participantes con NOMBRE de bot y versión exacta (antes UUID
+ * recortado), mapa por nombre, modo en palabras y enlace al detalle
+ * (#/battles/<id>). La API sólo lista las batallas que puedes ver (G-08).
  */
 import { useState } from "react";
 import { api } from "../api.js";
 import { useResource, ResourceView } from "../resource.js";
 import { EmptyState } from "../ui/primitives.js";
-import { summarizeBattle, type BattleLike } from "../battle-result.js";
+import {
+  MODE_TEXT,
+  botVersionLabel,
+  summarizeBattle,
+  winnerText,
+  teamText,
+  type BattleLike,
+  type ParticipantLike,
+} from "../battle-result.js";
 import { BattleLink } from "./TournamentDetailPage.js";
 
 interface Battle extends BattleLike {
   tournamentId?: string;
   mode: string;
   mapId: string;
-  participants: { botId: string; version: number; team?: string; outcome?: string }[];
+  mapName?: string;
+  participants: ParticipantLike[];
 }
 
 const STATUSES = ["", "scheduled", "running", "finished", "failed"];
@@ -95,18 +108,20 @@ export function BattlesPage(props: { botFilter?: string }) {
                   return (
                     <tr key={b.id} data-testid="battle-row" data-battle-id={b.id} data-status={b.status}>
                       <td>
-                        {b.participants
-                          .map((p) => `${p.botId.slice(0, 8)} v${p.version}${p.team ? ` (${p.team})` : ""}`)
-                          .join(" vs ") || b.id.slice(0, 8)}
+                        <a href={`#/battles/${encodeURIComponent(b.id)}`} data-testid="battle-detail-link">
+                          {b.participants
+                            .map((p) => `${botVersionLabel(p)}${p.team ? ` (${teamText(p.team)})` : ""}`)
+                            .join(" vs ") || "batalla sin participantes"}
+                        </a>
                       </td>
-                      <td>{b.mode}</td>
-                      <td>{b.mapId}</td>
+                      <td>{MODE_TEXT[b.mode] ?? b.mode}</td>
+                      <td>{b.mapName ?? b.mapId}</td>
                       <td>
                         {STATUS_TEXT[b.status] ?? b.status}
                         {v.failure ? <span className="error"> ({v.failure})</span> : null}
                       </td>
                       <td data-testid="battle-outcome">
-                        {v.outcome ?? "—"}
+                        {winnerText(b) ?? "—"}
                         {v.score ? <small> · {v.score}</small> : null}
                         {v.endReason ? <small> · {v.endReason}</small> : null}
                         {v.agentsNote ? <small className="warn"> · {v.agentsNote}</small> : null}

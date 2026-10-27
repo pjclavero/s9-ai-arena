@@ -123,3 +123,43 @@ describe("R8.2 gestión de mapas", () => {
     expect(apiMock).not.toHaveBeenCalledWith("POST", "/maps/generate", expect.anything());
   });
 });
+
+describe("UX-C · C4 publicar y estados legibles", () => {
+  const USER = { id: "u2", displayName: "Bea", email: "b@b.es", roles: ["user"], twoFactorEnabled: false };
+  const LIST = [
+    {
+      mapId: "mio",
+      version: 1,
+      state: "validated",
+      mine: true,
+      widthM: 30,
+      heightM: 30,
+      supportedModes: ["deathmatch"],
+    },
+    {
+      mapId: "ajeno",
+      version: 1,
+      state: "validated",
+      mine: false,
+      widthM: 30,
+      heightM: 30,
+      supportedModes: ["deathmatch"],
+    },
+  ];
+
+  it("el DUEÑO (rol user) ve «Publicar» en su mapa; en uno ajeno se le dice quién puede", async () => {
+    apiMock.mockResolvedValue({ items: LIST });
+    render(<MapsPage me={USER} />);
+    await screen.findByLabelText("publicar-mio-v1");
+    expect(screen.queryByLabelText("publicar-ajeno-v1")).toBeNull();
+    expect(screen.getByTestId("no-publish-ajeno-v1").textContent).toMatch(/Sólo su dueño/);
+  });
+
+  it("los estados se muestran en español, no como identificadores (validated → validado, sin publicar)", async () => {
+    apiMock.mockResolvedValue({ items: LIST });
+    render(<MapsPage me={USER} />);
+    await screen.findByLabelText("publicar-mio-v1");
+    expect(screen.getAllByText("validado, sin publicar").length).toBe(2);
+    expect(screen.queryByText("validated")).toBeNull();
+  });
+});

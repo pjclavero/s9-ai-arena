@@ -3,7 +3,10 @@
  * REAL de E4/T4.2), generar procedural (E4/T4.4) y publicar (inmutable).
  *
  * La interfaz solo OCULTA/deshabilita; la autorización la hace la API (cap. 16):
- * importar exige rol `user`, generar y publicar exigen `organizer`. Un rechazo
+ * importar exige rol `user`, generar exige `organizer`; publicar lo puede el DUEÑO
+ * del mapa (FC-C) y cualquier organizer+. UX-C: el botón «Publicar» sólo se ofrece
+ * a quien puede usarlo; a los demás se les dice quién puede (antes salía a todos y
+ * acababa en un 403). Un rechazo
  * de la API se ANUNCIA con role="alert" (nunca se traga), igual que el resto del
  * panel (R3.7). La ejecución real de batallas (mapa publicado ⇒ jugable) vive en
  * el pipeline de VM108 y NO se dispara desde aquí.
@@ -45,15 +48,23 @@ function checksOf(e: unknown): ValidationCheck[] {
   return [];
 }
 
+/** Estado legible: el usuario no tiene por qué saber qué es `validated`. */
+export function mapStateLabel(state: MapVersion["state"]): string {
+  if (state === "published") return "publicado";
+  if (state === "validated") return "validado, sin publicar";
+  return "borrador";
+}
+
 function stateVariant(state: MapVersion["state"]): StatusVariant {
   if (state === "published") return "ok";
   if (state === "validated") return "warn";
   return "neutral";
 }
 
-export function MapsPage(_props: { me: Me }) {
+export function MapsPage(props: { me: Me }) {
+  const canCurate = (props.me.roles ?? []).some((r) => r === "organizer" || r === "admin");
   const [maps, setMaps] = useState<MapVersion[] | null>(null);
-  const [loadErrorMsg, setLoadErrorMsg] = useState("");
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [actionError, setActionError] = useState("");
   const [checks, setChecks] = useState<ValidationCheck[]>([]);
   const [notice, setNotice] = useState("");
@@ -63,13 +74,13 @@ export function MapsPage(_props: { me: Me }) {
   const [busy, setBusy] = useState(false);
 
   async function refresh() {
-    setLoadErrorMsg("");
+    setLoadError(null);
     try {
       const page = await api<{ items: MapVersion[] }>("GET", "/maps");
       setMaps(page.items);
     } catch (e) {
       setMaps(null);
-      setLoadErrorMsg((e as Error).message);
+      setLoadError(e);
     }
   }
   useEffect(() => {
@@ -149,8 +160,10 @@ export function MapsPage(_props: { me: Me }) {
         </p>
         <p>
           Importa un mapa (JSON interno o export de Tiled) o genera uno procedural. Ambos pasan por el validador real
-          antes de guardarse. Solo un mapa <strong>publicado</strong> puede usarse en una batalla; la ejecución real la
-          realiza el pipeline de la arena, no este panel.
+          antes de guardarse. Solo un mapa <strong>publicado</strong> puede usarse en una batalla, y sólo en los{" "}
+          <strong>modos</strong> que declara (columna «Modos»): al crear una batalla sólo aparecen los mapas que
+          soportan el modo elegido. Puede publicar un mapa su dueño. El borde del mapa es un muro: no hace falta dibujar
+          el perímetro.
         </p>
 
         <fieldset>
@@ -217,8 +230,8 @@ export function MapsPage(_props: { me: Me }) {
 
       <Panel>
         <h3>Mapas registrados</h3>
-        {loadErrorMsg ? (
-          <ErrorState label="los mapas" message={loadErrorMsg} onRetry={() => void refresh()} />
+        {loadError !== null ? (
+          <ErrorState label="los mapas" error={loadError} onRetry={() => void refresh()} />
         ) : maps === null ? (
           <LoadingState label="los mapas" />
         ) : maps.length === 0 ? (
@@ -246,7 +259,7 @@ export function MapsPage(_props: { me: Me }) {
                   </td>
                   <td>v{m.version}</td>
                   <td>
-                    <StatusBadge variant={stateVariant(m.state)}>{m.state}</StatusBadge>
+                    <StatusBadge variant={stateVariant(m.state)}>{mapStateLabel(m.state)}</StatusBadge>
                   </td>
                   <td>{m.widthM != null && m.heightM != null ? `${m.widthM}×${m.heightM} m` : "—"}</td>
                   <td>{m.supportedModes.length ? m.supportedModes.join(", ") : "—"}</td>
@@ -271,6 +284,8 @@ export function MapsPage(_props: { me: Me }) {
                     </a>{" "}
                     {m.state === "published" ? (
                       <StatusBadge variant="ok">Disponible para batallas</StatusBadge>
+                    ) : !m.mine && !canCurate ? (
+                      <small data-testid={`no-publish-${m.mapId}-v${m.version}`}>Sólo su dueño puede publicarlo</small>
                     ) : (
                       <button
                         type="button"

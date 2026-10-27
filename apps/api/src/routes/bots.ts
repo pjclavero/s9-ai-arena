@@ -226,8 +226,14 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
   });
 
   defineOperation(router, "createBot", async (req, res) => {
-    const { name, visibility, teamId } = req.body ?? {};
-    if (typeof name !== "string" || !name || name.length > 48) throw badRequest("name obligatorio (máx. 48)");
+    const { visibility, teamId } = req.body ?? {};
+    // UX-B · B1: el nombre se recorta (un nombre de sólo espacios no es un nombre) y
+    // el error dice qué falla en vez de un genérico.
+    const name = typeof req.body?.name === "string" ? req.body.name.trim() : req.body?.name;
+    if (typeof name !== "string" || !name) throw badRequest("El nombre del bot es obligatorio.");
+    if (name.length > 48) {
+      throw badRequest(`El nombre del bot admite como máximo 48 caracteres (tiene ${name.length}).`);
+    }
     if (visibility !== undefined && !["private", "team", "public"].includes(visibility)) {
       throw badRequest("visibility inválida");
     }
@@ -238,12 +244,20 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
         .catch(() => null);
       if (!member) throw forbidden("No perteneces a ese equipo");
     }
-    if (await db("bots").where({ owner_id: req.auth!.userId, name }).first()) {
-      throw conflict("bot_name_taken", "Ya tienes un bot con ese nombre");
-    }
-    const [bot] = await db("bots")
-      .insert({ name, owner_id: req.auth!.userId, team_id: teamId ?? null, visibility: visibility ?? "private" })
-      .returning("*");
+    // UX-B · B1: comprobar-e-insertar bajo un cerrojo transaccional por (dueño,
+    // nombre). Sin él, dos POST simultáneos (doble clic) pasaban los dos la
+    // comprobación de duplicado y el perdedor chocaba con la restricción única
+    // (bots_owner_id_name_key): 500 «error interno» en vez del 409 legible.
+    const bot = await db.transaction(async (trx) => {
+      await trx.raw("SELECT pg_advisory_xact_lock(hashtext(?))", [`bot-name:${req.auth!.userId}:${name}`]);
+      if (await trx("bots").where({ owner_id: req.auth!.userId, name }).first()) {
+        throw conflict("bot_name_taken", `Ya tienes un bot llamado «${name}»: elige otro nombre.`);
+      }
+      const [row] = await trx("bots")
+        .insert({ name, owner_id: req.auth!.userId, team_id: teamId ?? null, visibility: visibility ?? "private" })
+        .returning("*");
+      return row;
+    });
     res.status(201).json(botToJson(bot));
   });
 

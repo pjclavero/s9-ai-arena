@@ -6,9 +6,9 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
 import { describeApiError } from "../errors.js";
-import { SpectatorClient } from "../viewer/spectator-client.js";
+import { SpectatorClient, type SpectateTicket } from "../viewer/spectator-client.js";
 import { LiveFeed } from "../viewer/live-feed.js";
-import { rosterFromMeta } from "../viewer/art-direction.js";
+import { participantsTitle, rosterFromMeta } from "../viewer/art-direction.js";
 import { buildHudModel } from "../viewer/hud-model.js";
 import { HudOverlay } from "../viewer/HudOverlay.js";
 import type { ViewerScene } from "../viewer/PhaserViewer.js";
@@ -72,6 +72,8 @@ export function ViewerPage({ battleId }: { battleId: string }) {
   const [debugOn, setDebugOn] = useState(false);
   const [camera, setCamera] = useState<CameraMode>({ kind: "global" });
   const [overlayTick, setOverlayTick] = useState(0);
+  // UX-R · «Batalla Alfa vs Beta» en cuanto la cabecera trae la nómina.
+  const [title, setTitle] = useState<string | null>(null);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -84,6 +86,24 @@ export function ViewerPage({ battleId }: { battleId: string }) {
     setStatus("inicializando visor…");
     setRejectCode(undefined);
     setShowReplay(false);
+    setTitle(null);
+    // UX-F (DEF-R11) · el pase se pide YA, en paralelo con la carga de Phaser. Antes
+    // se pedía cuando Phaser había arrancado (~5 s en un navegador sin GPU), y una
+    // batalla que no existe tardaba eso en decirse. El primer connect() usa esta
+    // misma petición (no se pide dos veces); los reintentos piden uno nuevo.
+    const ticketPath = `/battles/${battleId}/spectate-ticket`;
+    let firstTicket: Promise<SpectateTicket> | null = api<SpectateTicket>("POST", ticketPath);
+    let rejectedEarly = false;
+    firstTicket.catch((e: unknown) => {
+      const st = (e as { status?: unknown } | null)?.status;
+      if (!alive || typeof st !== "number" || st < 400 || st >= 500 || st === 429) return;
+      rejectedEarly = true;
+      const d = describeSpectateRejection({ kind: "ticket", status: st, error: e });
+      setState("rejected");
+      setRejectCode(String(st));
+      setShowReplay(d.showReplay);
+      setStatus(d.text);
+    });
     const fail = (prefix: string, e: unknown) => {
       if (!alive) return;
       const d = describeApiError(e);
@@ -105,7 +125,7 @@ export function ViewerPage({ battleId }: { battleId: string }) {
           fail("el visor no pudo arrancar", e);
           return;
         }
-        if (!alive) return;
+        if (!alive || rejectedEarly) return; // ya se dijo por qué no hay directo
         sceneRef.current = scene;
         setState("connecting");
         setStatus("conectando…");
@@ -114,7 +134,11 @@ export function ViewerPage({ battleId }: { battleId: string }) {
         const feed = new LiveFeed(scene);
 
         client = new SpectatorClient({
-          getTicket: () => api("POST", `/battles/${battleId}/spectate-ticket`),
+          getTicket: () => {
+            const t = firstTicket ?? api<SpectateTicket>("POST", ticketPath);
+            firstTicket = null;
+            return t;
+          },
         });
         const c = client;
         client.on("init", (msg) => {
@@ -126,6 +150,7 @@ export function ViewerPage({ battleId }: { battleId: string }) {
           // R3.4: nómina pública (nombre + chasis + equipo por vehículo) desde la
           // cabecera init; el visor pinta sprite por chasis y NOMBRE, no el UUID.
           if (msg.meta?.roster) scene.setRoster(rosterFromMeta(msg.meta.roster));
+          setTitle(participantsTitle(msg.meta?.roster));
           // R3.6: si nos conectamos a una batalla YA terminada, arrastramos el
           // resultado para anunciar el fin sobre el canvas y en el HUD.
           if (msg.finished && msg.result) scene.applyResult(msg.result);
@@ -183,16 +208,21 @@ export function ViewerPage({ battleId }: { battleId: string }) {
     scene.showDebug = debugOn && debugAvailable;
   }, [camera, allowFog, fogOn, fogTeam, debugOn, debugAvailable, overlayTick]);
 
-  const overlay = sceneRef.current?.overlay;
+  // UX-R · Sin batalla que ver (rechazo, error, sin conexión) no se pinta el HUD
+  // ni los controles de cámara: un «0 — 0 · Preparados» contradice la alerta.
+  const failed = state === "rejected" || state === "error" || state === "offline";
+  const overlay = failed ? undefined : sceneRef.current?.overlay;
   return (
     <section>
-      <h2>Batalla {battleId}</h2>
+      <h2 data-testid="viewer-title" style={{ overflowWrap: "anywhere" }}>
+        {title ? `Batalla: ${title}` : `Batalla ${battleId}`}
+      </h2>
       <p
         data-testid="viewer-status"
         data-state={state}
         data-reject-code={rejectCode}
-        role={state === "rejected" || state === "error" || state === "offline" ? "alert" : "status"}
-        className={state === "rejected" || state === "error" || state === "offline" ? "error" : undefined}
+        role={failed ? "alert" : "status"}
+        className={failed ? "error" : undefined}
       >
         {status}
       </p>
@@ -208,7 +238,7 @@ export function ViewerPage({ battleId }: { battleId: string }) {
           Reintentar
         </button>
       )}
-      <div>
+      <div hidden={failed} data-testid="viewer-controls">
         <button onClick={() => setCamera({ kind: "global" })}>Vista global</button>
         <button onClick={() => setCamera({ kind: "team", team: "red" })}>Equipo rojo</button>
         <button onClick={() => setCamera({ kind: "team", team: "blue" })}>Equipo azul</button>
@@ -236,13 +266,19 @@ export function ViewerPage({ battleId }: { battleId: string }) {
           </label>
         )}
       </div>
-      <p style={{ opacity: 0.7, fontSize: 13 }}>
+      <p hidden={failed} style={{ opacity: 0.7, fontSize: 13 }}>
         Rueda: zoom · arrastre: mover cámara · 1–4: seguir bots · G: vista global
       </p>
       {/* R3.6 · El HUD (marcador, reloj/fase, objetivo, panel de equipos con vida y
           módulos, kill feed, banderas y zonas) se superpone al canvas. El minimapa
           y el rótulo de fin de partida los dibuja Phaser dentro del canvas. */}
-      <div style={{ position: "relative", width: "100%", height: 640 }}>
+      {/* UX-R · El contenedor no deja que el canvas desborde la página en móvil
+          (como el del replay): el canvas sigue su ancho por ResizeObserver. */}
+      <div
+        data-testid="viewer-canvas-host"
+        hidden={failed}
+        style={{ position: "relative", width: "100%", maxWidth: "100%", height: 640, overflow: "hidden" }}
+      >
         <div ref={hostRef} style={{ position: "absolute", inset: 0 }} />
         {overlay && <HudOverlay model={buildHudModel(overlay, { roster: sceneRef.current?.rosterView })} />}
       </div>

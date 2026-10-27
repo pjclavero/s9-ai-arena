@@ -111,6 +111,8 @@ describe("createBattleLaunchHost", () => {
       expect(plan.env.ARTIFACT_SHA256).toBe(v.hash);
       expect(plan.env.WS_URL).toBe("ws://engine.example.internal:1234");
       expect(plan.env.BOT_ID).toBe("bot_0");
+      // UX-F (DEF-R4) · en batalla, una versión publicada sin hook juega (con aviso).
+      expect(plan.env.S9_HOOK_POLICY).toBe("warn");
       const url = plan.env.ARTIFACT_URL;
       const ok = await fetch(url, { headers: { [ARTIFACT_TOKEN_HEADER]: plan.env.ARTIFACT_TOKEN } });
       expect(ok.status).toBe(200);

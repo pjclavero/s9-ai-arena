@@ -1076,7 +1076,13 @@ paths:
     get:
       tags: [battles]
       operationId: listBattles
-      summary: Batallas en directo, programadas y terminadas
+      summary: Batallas en directo, programadas y terminadas que el solicitante puede ver
+      description: |
+        UX-D (G-08 · TD-047) · Política de lectura de batallas (apps/api/src/battle-access.ts, que
+        reutiliza la de replays): staff (rol >= organizer) · dueño de un bot participante · miembro
+        del equipo de un bot participante no privado · cualquiera SÓLO si la batalla no tiene bots
+        no públicos y (S9_PUBLIC_REPLAYS_ENABLED y está finished) o (S9_PUBLIC_SPECTATE_ENABLED y
+        está running). Fuera de eso, 404 idéntico al de un id inexistente. Cache-Control: private, no-store.
       x-min-role: visitor
       security: []
       parameters:
@@ -1107,11 +1113,19 @@ paths:
     get:
       tags: [battles]
       operationId: getBattle
+      summary: Una batalla (misma política de lectura que listBattles)
+      description: |
+        UX-D (G-08 · TD-047) · Política de lectura de batallas (apps/api/src/battle-access.ts, que
+        reutiliza la de replays): staff (rol >= organizer) · dueño de un bot participante · miembro
+        del equipo de un bot participante no privado · cualquiera SÓLO si la batalla no tiene bots
+        no públicos y (S9_PUBLIC_REPLAYS_ENABLED y está finished) o (S9_PUBLIC_SPECTATE_ENABLED y
+        está running). Fuera de eso, 404 idéntico al de un id inexistente. Cache-Control: private, no-store.
       x-min-role: visitor
       security: []
       parameters: [{ $ref: '#/components/parameters/BattleId' }]
       responses:
         '200': { description: Batalla, content: { application/json: { schema: { $ref: '#/components/schemas/Battle' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /battles/{battleId}/run:
     post:
@@ -1137,7 +1151,8 @@ paths:
       summary: |
         Ticket de un solo uso para abrir el WebSocket de espectador en el gateway.
         El canal de espectador transporta ÚNICAMENTE snapshots públicos: nunca observaciones
-        privadas de bots (D8, criterio del cap. 28).
+        privadas de bots (D8, criterio del cap. 28). UX-D (G-08): sólo para quien puede leer la
+        batalla (misma política que getBattle); sin sesión, además, exige S9_PUBLIC_SPECTATE_ENABLED.
       x-min-role: visitor
       security: []
       parameters: [{ $ref: '#/components/parameters/BattleId' }]
@@ -1162,23 +1177,32 @@ paths:
       summary: |
         Todo lo necesario para re-simular y verificar la batalla (E9/T9.4): versiones de motor,
         física, reglas y catálogo; checksum del mapa; hashes y firmas de los artefactos de bots;
-        semilla y su prueba de commit-reveal. Público: la auditabilidad no exige revelar código.
+        semilla y su prueba de commit-reveal. La auditabilidad no exige revelar código. UX-D (G-08):
+        la ve quien puede leer la batalla (misma política que getBattle).
       x-min-role: visitor
       security: []
       parameters: [{ $ref: '#/components/parameters/BattleId' }]
       responses:
         '200': { description: Auditoría, content: { application/json: { schema: { $ref: '#/components/schemas/BattleAudit' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /battles/{battleId}/stats:
     get:
       tags: [battles]
       operationId: getBattleStats
-      summary: Estadísticas por bot, equipo, módulo y mapa (cap. 20.3)
+      summary: Estadísticas por bot, equipo, módulo y mapa (cap. 20.3) y diagnóstico de TUS bots
+      description: |
+        Misma política de lectura que getBattle. `perBot` (deportivo) lo ve quien ve la batalla;
+        `diagnostics` (UX-06) sólo trae los bots del solicitante (o todos para el staff): nunca los
+        de un rival. TD-065: `status` = ready | pending (aún no calculadas: batalla en curso o job de
+        stats sin terminar) | unavailable (sin replay: walkover, fallo deportivo, fallida). Nunca se
+        cachea (private, no-store).
       x-min-role: visitor
       security: []
       parameters: [{ $ref: '#/components/parameters/BattleId' }]
       responses:
-        '200': { description: Estadísticas, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '200': { description: Estadísticas, content: { application/json: { schema: { $ref: '#/components/schemas/BattleStats' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   # --------------------------------------------------------------- REPLAYS
   # PRC (TD-004) · Política de acceso (apps/api/src/replay-access.ts), común a
@@ -1282,6 +1306,10 @@ paths:
                   matches: { type: boolean }
                   officialHash: { type: string }
                   recomputedHash: { type: string }
+                  valid: { type: boolean }
+                  reason: { type: string, description: "checksum_mismatch, corrupt_file, engine_version_mismatch, final_state_hash_mismatch_with_db" }
+                  message: { type: string, description: "Explicación para personas (p. ej. replay grabado con otra versión del motor: no verificable, no manipulado)" }
+                  divergedAtTick: { type: integer }
         '404': { $ref: '#/components/responses/NotFound' }
 
   # ------------------------------------------------------------- STANDINGS
@@ -1828,16 +1856,21 @@ components:
         mode: { type: string }
         mapId: { type: string }
         mapVersion: { type: integer }
+        rulesetId: { type: string }
+        mapName: { type: string, description: 'UX-D · nombre del mapa para la UI.' }
+        createdAt: { type: string, format: date-time }
         participants:
           type: array
           items:
             type: object
             properties:
               botId: { type: string }
-              version: { type: integer }
+              botName: { type: string, description: 'UX-D · nombre del bot (la UI no muestra UUIDs).' }
+              version: { type: integer, description: 'Versión EXACTA que jugó.' }
               team: { type: string }
               outcome: { enum: [win, loss, draw, disqualified] }
-              cpuMs: { type: number, nullable: true, description: 'CPU real del contenedor del bot (ms, cgroup). null = no medida.' }
+              diagnosticsVisible: { type: boolean, description: 'UX-D · el solicitante (dueño o staff) puede ver el diagnóstico de este bot.' }
+              cpuMs: { type: number, nullable: true, description: 'CPU real del contenedor del bot (ms, cgroup). null = no medida O no eres su dueño (diagnóstico, TD-047).' }
         result:
           type: object
           description: 'BATTLE_RESULT v1 (docs/technical/battles.md). El ganador POR BOT es participants[].outcome.'
@@ -1856,6 +1889,95 @@ components:
         finishedAt: { type: string, format: date-time }
         replayAvailable: { type: boolean }
         replayHash: { type: string }
+    BattleStats:
+      type: object
+      description: 'UX-D · Respuesta de getBattleStats.'
+      properties:
+        battleId: { type: string }
+        status: { enum: [ready, pending, unavailable] }
+        perBot:
+          type: object
+          description: 'Por botId: stats deportivas (replay-service/src/stats.ts) + botName y version. Sin cpuMs, decisions ni rejectionsByReason (diagnóstico); decisionTimeouts y perModule.*.rejections sólo para el dueño y el staff (UX-F, DEF-R12).'
+          additionalProperties:
+            type: object
+            additionalProperties: true
+            properties:
+              shotsFired: { type: integer }
+              shotsHit: { type: integer }
+              accuracy: { type: number, nullable: true }
+              damageDealt: { type: number }
+              damageTaken: { type: number }
+              kills: { type: integer }
+              died: { type: boolean }
+              survivedTicks: { type: integer }
+              decisionTimeouts: { type: integer }
+              distanceM: { type: number, description: 'Recorrido en metros (entre snapshots públicos).' }
+              perModule:
+                type: object
+                additionalProperties:
+                  type: object
+                  properties:
+                    moduleId: { type: string, nullable: true }
+                    usesKind: { enum: [shots, mines, move_commands, radio_messages, passive], description: 'Qué cuenta uses; passive = el módulo actúa solo (uses 0 por definición).' }
+                    uses: { type: integer }
+                    rejections: { type: integer }
+                    damageDealt: { type: number }
+                    efficiency: { type: number, nullable: true }
+                    finalState: { type: string }
+        diagnostics:
+          type: object
+          description: 'UX-06 · Por botId, SÓLO los bots del solicitante (todos para staff). null en un campo = no medido.'
+          additionalProperties: { $ref: '#/components/schemas/BotDiagnostics' }
+    BotDiagnostics:
+      type: object
+      description: 'UX-06 · Diagnóstico de un bot en una batalla. Códigos y contadores; nunca detalles del sandbox.'
+      properties:
+        botId: { type: string }
+        botName: { type: string }
+        version: { type: integer }
+        measured: { type: boolean, description: 'El ejecutor registró arranque/protocolo (false en batallas anteriores).' }
+        startup:
+          type: object
+          nullable: true
+          properties:
+            ok: { type: boolean }
+            reason: { enum: [bot_execution_timeout, bot_crash] }
+        hello:
+          type: object
+          nullable: true
+          properties:
+            ok: { type: boolean }
+            tick: { type: integer, nullable: true }
+            reconnects: { type: integer, nullable: true }
+        decisions: { type: integer, nullable: true, description: 'COMMAND aplicados por el motor.' }
+        decisionTimeouts: { type: integer, nullable: true }
+        maxConsecutiveTimeouts: { type: integer, nullable: true, description: 'Límite de timeouts seguidos que descalifica.' }
+        disqualified: { type: boolean }
+        disqualifiedReason: { type: string, nullable: true, description: "consecutive_timeouts | bot_execution_timeout | bot_crash | startup_failed | administrative | unknown" }
+        commands:
+          type: object
+          nullable: true
+          properties:
+            received: { type: integer, nullable: true }
+            invalid: { type: integer, nullable: true, description: 'COMMAND que no validan contra el esquema (el bot recibe rejected_action invalid_command).' }
+            firstInvalidReason: { type: string, nullable: true, description: 'Ruta JSON y regla del primer COMMAND inválido.' }
+            invalidJson: { type: integer, nullable: true }
+            late: { type: integer, nullable: true }
+            wrongTick: { type: integer, nullable: true }
+            extra: { type: integer, nullable: true }
+        rejectionsByReason: { type: object, nullable: true, additionalProperties: { type: integer }, description: 'cooldown, no_ammo, no_energy, out_of_arc, module_destroyed…' }
+        disconnectedAtTick: { type: integer, nullable: true }
+        container:
+          type: object
+          nullable: true
+          properties:
+            exitCode: { type: integer, nullable: true }
+            oomKilled: { type: boolean }
+            exitedDuringBattle: { type: boolean }
+        cpuMs: { type: number, nullable: true }
+        shotsFired: { type: integer, nullable: true }
+        shotsHit: { type: integer, nullable: true }
+        damageDealt: { type: number, nullable: true }
     BattlePage:
       type: object
       properties:
@@ -1957,8 +2079,9 @@ components:
       type: object
       properties:
         rank: { type: integer }
-        botId: { type: string }
-        botName: { type: string }
+        botId: { type: string, nullable: true, description: 'UX-F (DEF-R3) · null si es un bot privado que el solicitante no puede identificar' }
+        botName: { type: string, description: '«Bot privado» si el solicitante no puede identificarlo' }
+        private: { type: boolean, description: 'true = bot no identificable para el solicitante' }
         rating: { type: number }
         wins: { type: integer }
         losses: { type: integer }
@@ -2016,7 +2139,8 @@ components:
         slot: { type: string, nullable: true, description: 'Identificador único del hueco en el cuadro (matches_tournament_slot_idx)' }
         pairing: { type: object, additionalProperties: true, description: 'Fuentes del emparejamiento (home/away/round/slot), estructura del bracket' }
         state: { enum: [scheduled, running, finished, failed] }
-        winnerBotId: { type: string, nullable: true }
+        winnerBotId: { type: string, nullable: true, description: 'UX-F (DEF-R3) · null también si el ganador es un bot privado ajeno (winnerPrivate)' }
+        winnerPrivate: { type: boolean, description: 'el ganador es un bot que el solicitante no puede identificar' }
         winnerTeamId: { type: string, nullable: true }
         final: { type: boolean, description: 'true si es la final del torneo (modo visible, cap. 19.1)' }
 

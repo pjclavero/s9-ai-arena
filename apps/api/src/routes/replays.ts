@@ -30,6 +30,82 @@ import { getReadableReplayBattleOr404, replayNotFound, whereReplayReadable } fro
 
 const NO_STORE = "private, no-store";
 
+/**
+ * UX-D (D4 · C-G9) · Lo que el visor necesita para pintar el replay como el
+ * directo: el MUNDO (tamaño, muros, destructibles, bases) y la NÓMINA (vehículo →
+ * nombre del bot, equipo, chasis). Antes el índice no traía ninguna de las dos:
+ * el replay se veía sin obstáculos y con `veh_1` en vez del nombre del bot. Sale
+ * de la CABECERA del propio replay (el mapa exacto con el que se jugó) y de la
+ * tabla `bots` para los nombres. Sólo geometría pública y nombres: ni semilla,
+ * ni loadouts, ni nada que el visor del directo no reciba ya.
+ */
+interface ReplayViewerMeta {
+  world: {
+    widthM: number;
+    heightM: number;
+    walls: { position: { x: number; y: number }; halfW: number; halfH: number }[];
+    destructibles: { position: { x: number; y: number }; halfW: number; halfH: number }[];
+    bases: { team: string; position: { x: number; y: number }; radiusM?: number }[];
+  };
+  roster: { id: string; botId: string; team: string; chassis?: string; name?: string }[];
+}
+
+const viewerMetaCache = new Map<string, ReplayViewerMeta>(); // `${battleId}:${sha}` → meta
+
+async function viewerMetaOf(db: Db, battle: Record<string, any>, sha: string): Promise<ReplayViewerMeta | null> {
+  const key = `${battle.id}:${sha}`;
+  const hit = viewerMetaCache.get(key);
+  if (hit) return hit;
+  let header: any;
+  try {
+    const text = decompress(await readFile(battle.replay_ref)).toString("utf8");
+    const first = text.slice(0, text.indexOf("\n") >= 0 ? text.indexOf("\n") : text.length);
+    header = JSON.parse(first);
+    if (header?.t !== "header") return null;
+  } catch {
+    return null; // el visor degrada (sin obstáculos ni nombres), nunca un 500
+  }
+  const box = (b: any) => ({
+    position: { x: Number(b?.position?.x) || 0, y: Number(b?.position?.y) || 0 },
+    halfW: Number(b?.halfW) || 0,
+    halfH: Number(b?.halfH) || 0,
+  });
+  const map = header.map ?? {};
+  const participants: any[] = Array.isArray(header.participants) ? header.participants : [];
+  const botIds = participants.map((pp) => String(pp.botId ?? "")).filter(Boolean);
+  const names = new Map<string, string>();
+  if (botIds.length > 0) {
+    const rows = await db("bots")
+      .whereIn("id", botIds)
+      .select("id", "name")
+      .catch(() => []);
+    for (const r of rows as { id: string; name: string }[]) names.set(String(r.id), r.name);
+  }
+  const meta: ReplayViewerMeta = {
+    world: {
+      widthM: Number(map.widthM) || 0,
+      heightM: Number(map.heightM) || 0,
+      walls: (Array.isArray(map.walls) ? map.walls : []).map(box),
+      destructibles: (Array.isArray(map.destructibles) ? map.destructibles : []).map(box),
+      bases: (Array.isArray(map.bases) ? map.bases : []).map((b: any) => ({
+        team: String(b.team),
+        position: { x: Number(b?.position?.x) || 0, y: Number(b?.position?.y) || 0 },
+        ...(typeof b.radiusM === "number" ? { radiusM: b.radiusM } : {}),
+      })),
+    },
+    roster: participants.map((pp) => ({
+      id: String(pp.id),
+      botId: String(pp.botId ?? ""),
+      team: String(pp.team ?? ""),
+      ...(typeof pp.spec?.chassisId === "string" ? { chassis: pp.spec.chassisId } : {}),
+      ...(names.has(String(pp.botId)) ? { name: names.get(String(pp.botId)) } : {}),
+    })),
+  };
+  viewerMetaCache.set(key, meta);
+  while (viewerMetaCache.size > 64) viewerMetaCache.delete(viewerMetaCache.keys().next().value as string);
+  return meta;
+}
+
 function noStore(res: Response): Response {
   return res.setHeader("Cache-Control", NO_STORE);
 }
@@ -122,7 +198,9 @@ export function replayRoutes(
     "getReplayIndex",
     async (req, res) => {
       const battle = await getReadableReplayBattleOr404(db, pathParam(req, "battleId"), req.auth, publicReplaysEnabled);
-      noStore(res).json(indexOf(battle));
+      const index = indexOf(battle);
+      const meta = await viewerMetaOf(db, battle, index.sha256);
+      noStore(res).json(meta ? { ...index, world: meta.world, roster: meta.roster } : index);
     },
     (req, res, next) => anonQuota(db, "replay-index", quota)(req, res, next),
   );
@@ -182,6 +260,8 @@ export function replayRoutes(
         recomputedHash: r.verification?.recomputedHash,
         valid: r.valid && dbHashOk,
         reason: !dbHashOk ? "final_state_hash_mismatch_with_db" : r.reason,
+        // UX-F (DEF-R1) · sólo para engine_version_mismatch: «otra versión», no «manipulado».
+        message: dbHashOk ? r.message : undefined,
         divergedAtTick: r.verification?.divergedAtTick ?? undefined,
       });
     },

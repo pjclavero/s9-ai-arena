@@ -8,6 +8,7 @@
  */
 import { api } from "../api.js";
 import { useResource, ResourceView } from "../resource.js";
+import { MATCH_STATE_NAME, botLabel, labelOf } from "../battle-result.js";
 
 export interface TournamentMatch {
   id: string;
@@ -16,6 +17,8 @@ export interface TournamentMatch {
   pairing: Record<string, unknown>;
   state: string;
   winnerBotId: string | null;
+  /** UX-F (DEF-R3) · el ganador es un bot privado que no puedes identificar. */
+  winnerPrivate?: boolean;
   winnerTeamId: string | null;
   final: boolean;
 }
@@ -59,16 +62,24 @@ function BracketRounds({ matches }: { matches: TournamentMatch[] }) {
           <ul>
             {matches
               .filter((m) => m.round === round)
-              .map((m) => (
-                <li key={m.id} data-testid="bracket-match" data-final={m.final ? "true" : "false"}>
-                  <strong>{m.slot ?? m.id.slice(0, 8)}</strong>
+              .map((m, i) => (
+                <li key={m.id} data-testid="bracket-match" data-final={m.final ? "true" : "false"} data-slot={m.slot}>
+                  {/* UX-R · «Partido N» de la ronda, no el slot interno ni el id del match. */}
+                  <strong>Partido {i + 1}</strong>
                   {m.final && <span data-testid="bracket-final-mark"> · FINAL</span>}
                   <br />
-                  <small>{m.state}</small>
-                  {(m.winnerBotId || m.winnerTeamId) && (
+                  <small data-state={m.state}>{labelOf(MATCH_STATE_NAME, m.state)}</small>
+                  {(m.winnerBotId || m.winnerPrivate || m.winnerTeamId) && (
                     <>
                       <br />
-                      <small data-testid="bracket-winner">Ganador: {m.winnerBotId ?? m.winnerTeamId}</small>
+                      <small data-testid="bracket-winner">
+                        Ganador:{" "}
+                        {m.winnerBotId
+                          ? botLabel({ botId: m.winnerBotId })
+                          : m.winnerPrivate
+                            ? "bot privado"
+                            : `equipo ${m.winnerTeamId!.slice(0, 8)}`}
+                      </small>
                     </>
                   )}
                 </li>

@@ -19,6 +19,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { api, ApiRequestError } from "../api.js";
+import { ErrorState, LoadingState } from "../ui/primitives.js";
 import { safeLookup } from "../../../../packages/game-rules/safe-lookup.js";
 
 export const PLATFORM_MODES = ["deathmatch", "team_deathmatch", "capture_the_flag", "zone_control"] as const;
@@ -243,6 +244,8 @@ export function MapEditorPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [mine, setMine] = useState<SavedVersion[] | null>(null);
+  // UX-R · si «mis mapas» falla se dice (con reintento), no «Cargando…» eterno.
+  const [mineError, setMineError] = useState<unknown>(null);
   const [importText, setImportText] = useState("");
   const [copyId, setCopyId] = useState("");
 
@@ -272,11 +275,12 @@ export function MapEditorPage() {
   }
 
   async function loadMine() {
+    setMineError(null);
     try {
       const page = await api<{ items: SavedVersion[] }>("GET", "/maps?mine=true&limit=100");
       setMine(page.items);
     } catch (e) {
-      setError(`No se pudo cargar «mis mapas»: ${(e as Error).message}`);
+      setMineError(e);
     }
   }
 
@@ -487,6 +491,10 @@ export function MapEditorPage() {
           ))}
         </div>
       </fieldset>
+      <p data-testid="editor-perimeter-note">
+        El borde del mapa es un muro: en batalla nadie sale del rectángulo de {map.widthM}×{map.heightM} m, así que no
+        hace falta dibujar el perímetro. Los spawns y muros deben quedar dentro.
+      </p>
       <div role="toolbar" aria-label="Herramientas">
         <button
           type="button"
@@ -591,6 +599,7 @@ export function MapEditorPage() {
               r={1.6}
               fill={safeLookup(TEAM_COLORS, s.team) ?? "#555"}
               onClick={() => setSelected({ kind: "spawn", index: i })}
+              role="img"
               aria-label={`spawn ${s.objectId} (${s.team})`}
             />
           ))}
@@ -725,8 +734,10 @@ export function MapEditorPage() {
         </div>
       </div>
       <h2>Mis mapas</h2>
-      {mine === null ? (
-        <p>Cargando…</p>
+      {mineError !== null ? (
+        <ErrorState label="tus mapas" error={mineError} onRetry={() => void loadMine()} />
+      ) : mine === null ? (
+        <LoadingState label="tus mapas" />
       ) : mine.length === 0 ? (
         <p>Aún no has guardado ningún mapa.</p>
       ) : (

@@ -4,6 +4,7 @@
   "description": "E2E de navegador real (Chromium de mcr.microsoft.com/playwright:v1.48.2-jammy). Se instala DENTRO del contenedor; no forma parte de los workspaces.",
   "type": "module",
   "devDependencies": {
-    "@playwright/test": "1.48.2"
+    "@playwright/test": "1.48.2",
+    "axe-core": "4.10.2"
   }
 }

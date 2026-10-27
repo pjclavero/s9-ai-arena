@@ -55,7 +55,10 @@ describe("R8.6 SystemPage", () => {
   it("muestra conteos e invariantes, y avisa si el runner real no está disponible", async () => {
     apiMock.mockResolvedValue(STATUS);
     render(<SystemPage me={ME} />);
-    expect(await screen.findByTestId("execution-unavailable")).toBeTruthy();
+    const warn = await screen.findByTestId("execution-unavailable");
+    // UX-R · en español, como el resto del panel (antes «Battle execution unavailable…»).
+    expect(warn.textContent).toMatch(/no se pueden ejecutar/);
+    expect(warn.textContent).not.toMatch(/Battle execution|unavailable|environment/);
     expect(screen.getByText("abc123")).toBeTruthy();
     expect(screen.getByText("scheduled: 2")).toBeTruthy();
     // readyBots

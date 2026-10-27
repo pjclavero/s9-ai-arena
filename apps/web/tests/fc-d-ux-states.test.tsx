@@ -11,7 +11,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, fireEvent } from "@testing-library/react";
-import { api, setToken, onSessionExpired, ApiRequestError } from "../src/api.js";
+import { api, setToken, onSessionExpired, ApiRequestError, SESSION_HINT_KEY } from "../src/api.js";
 import { describeApiError } from "../src/errors.js";
 import { App, matchStaticPanelRoute, matchPanelRoute } from "../src/App.js";
 import { ErrorState, FormError } from "../src/ui/primitives.js";
@@ -28,6 +28,10 @@ beforeEach(() => {
   setToken(null);
   onSessionExpired(null);
   window.location.hash = "";
+  // UX-E (C-G13) · estos casos simulan un navegador CON cookie de sesión: el
+  // arranque sólo pregunta a /auth/refresh si hay marca de sesión previa (el
+  // caso anónimo, sin marca, está en ux-e-transversal.test.tsx).
+  window.localStorage.setItem(SESSION_HINT_KEY, "1");
 });
 
 function jsonRes(status: number, body?: unknown) {
@@ -98,6 +102,14 @@ describe("FC-D · clasificación de errores", () => {
     expect(alert.getAttribute("data-error-kind")).toBe("forbidden");
     expect(alert.textContent).toContain("No tienes permiso");
     expect(alert.textContent).toContain("No se pudo cargar los equipos: m403");
+    // UX-F (DEF-R9) · reintentar no arregla un 403.
+    expect(screen.queryByRole("button", { name: "Reintentar" })).toBeNull();
+    expect(screen.getByTestId("error-forbidden-hint").textContent).toMatch(/rol necesario/);
+  });
+
+  it("UX-F (DEF-R9) · un fallo pasajero (500) sí ofrece Reintentar", () => {
+    render(<ErrorState label="los equipos" error={mk(500)} onRetry={() => {}} />);
+    expect(screen.getByRole("button", { name: "Reintentar" })).toBeTruthy();
   });
 
   it("FormError pinta título, mensaje y detalles de validación; null no pinta nada", () => {
@@ -145,8 +157,9 @@ describe("FC-D · arranque con la API caída (TD-022)", () => {
 
 describe("FC-D · navegación (D8)", () => {
   it("rutas conocidas resuelven; las desconocidas no (⇒ 404)", () => {
-    expect(matchStaticPanelRoute("")).toBe("bots");
-    expect(matchStaticPanelRoute("#/")).toBe("bots");
+    // UX-A · la raíz es «Inicio» (checklist de primeros pasos), no «Mis bots».
+    expect(matchStaticPanelRoute("")).toBe("home");
+    expect(matchStaticPanelRoute("#/")).toBe("home");
     expect(matchStaticPanelRoute("#/bots")).toBe("bots");
     expect(matchStaticPanelRoute("#/teams")).toBe("teams");
     expect(matchStaticPanelRoute("#/maps/editor")).toBe("mapEditor");
@@ -326,10 +339,11 @@ describe("FC-D · resumen de resultado (D7)", () => {
       failureKind: "none",
       result: { winner: "red", ticks: 900, score: { red: 2, blue: 1 }, disqualified: [] },
     });
+    // UX-F (DEF-R6) · el bando en palabras, como en el selector (antes «gana red»).
     expect(v).toMatchObject({
-      outcome: "gana red",
+      outcome: "gana rojo",
       duration: "0:30",
-      score: "red: 2 · blue: 1",
+      score: "rojo: 2 · azul: 1",
       failure: null,
       hasReplay: true,
     });
@@ -350,7 +364,7 @@ describe("FC-D · resumen de resultado (D7)", () => {
       },
     });
     expect(v).toMatchObject({
-      outcome: "gana blue",
+      outcome: "gana azul",
       endReason: "por incomparecencia",
       agentsNote: "bots simulados (stub)",
       hasReplay: false,

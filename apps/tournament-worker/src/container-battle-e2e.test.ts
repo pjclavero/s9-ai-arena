@@ -254,7 +254,10 @@ describe.skipIf(!ENABLED)("B8+A · batalla REAL con el ARTEFACTO FIRMADO de dos 
     expect(Number(pA.cpu_ms)).toBeGreaterThan(0);
     expect(Number(pP.cpu_ms)).toBeGreaterThan(0);
 
-    const statsRes = await request(app).get(`/battles/${battleId}/stats`);
+    // UX-D (G-08 · TD-047) · stats y detalle siguen la política de lectura de la
+    // batalla: bots privados ⇒ el anónimo recibe 404; su dueño, 200.
+    expect((await request(app).get(`/battles/${battleId}/stats`)).status).toBe(404);
+    const statsRes = await request(app).get(`/battles/${battleId}/stats`).set(hdr());
     expect(statsRes.status).toBe(200);
     const sA = statsRes.body.perBot[artillero.botId];
     const sP = statsRes.body.perBot[pacifista.botId];
@@ -277,7 +280,7 @@ describe.skipIf(!ENABLED)("B8+A · batalla REAL con el ARTEFACTO FIRMADO de dos 
     expect(verify.status).toBe(200);
     expect(verify.body.matches).toBe(true);
 
-    const got = await request(app).get(`/battles/${battleId}`);
+    const got = await request(app).get(`/battles/${battleId}`).set(hdr());
     expect(got.body.result.agents).toBe("container");
     expect(got.body.replayAvailable).toBe(true);
 

@@ -12,6 +12,9 @@ Estado actual, en una línea: **hay UN solo camino de ejecución y ejecuta el c�
 - [Arquitectura](#arquitectura)
 - [Flujo de datos paso a paso](#flujo-de-datos-paso-a-paso)
 - [Autoridad única de ejecución](#autoridad-única-de-ejecución)
+- [Visibilidad de las vistas de una batalla (TD-047)](#visibilidad-de-las-vistas-de-una-batalla-td-047)
+- [Diagnóstico por bot (`participants.diagnostics`)](#diagnóstico-por-bot-participantsdiagnostics)
+- [COMMAND inválidos: evento `invalid_command`](#command-inválidos-evento-invalid_command)
 - [Persistencia y estados](#persistencia-y-estados)
 - [BATTLE_RESULT: forma de `battles.result`](#battle_result-forma-de-battlesresult)
 - [Uso](#uso)
@@ -106,6 +109,8 @@ RETURNING *
   6. al terminar, replay del `ProtocolServer` y limpieza incondicional.
 - **Descalificaciones del motor**: el motor descalifica **vehículos** (`veh_N`); el ejecutor las traduce a **bots** (antes no: un bot descalificado por timeouts nunca quedaba `disqualified`).
 - **Espectador**: `attachBattle` al empezar, `detachBattle` 3 s después ([websocket.md](websocket.md)).
+- **Perímetro (UX-07)**: el motor cierra toda arena con cuatro muros fijos FUERA del rectángulo `[0,widthM]×[0,heightM]` (`addArenaBoundary`, ids con el prefijo reservado `__arena_boundary_`), lo declare el mapa o no, y tras cada paso de física devuelve al borde a un vehículo que se haya hundido en él. Los proyectiles impactan en el perímetro. `validateArenaMap` rechaza ids con ese prefijo y spawns fuera del mapa. Los muros no se añaden a `config.map`: el mapa de la batalla es exactamente el pedido.
+- **Diagnóstico por bot**: al cerrar, el ejecutor reúne por bot el arranque, el transporte (`protocolDiagnostics()` del `ProtocolServer`) y el estado del contenedor ([ver abajo](#diagnóstico-por-bot-participantsdiagnostics)).
 
 ### 8. Cierre exactamente una vez (`finishBattle`)
 
@@ -113,14 +118,48 @@ En **una transacción**:
 
 1. `UPDATE battles SET status='finished', finished_at, failure_kind, result, final_state_hash, engine_versions, lease_expires_at=NULL WHERE id AND status='running' AND claimed_by=:owner`. **Si no es exactamente 1 fila → rollback y no se escribe nada** (otro titular la cerró o recuperó).
 2. Ingesta del replay (`ingestReplay`) **dentro** de la transacción, con la fila bloqueada: un finalizador perdedor nunca pisa `<battleId>.replay`. `replay_ref`, `replay_hash`.
-3. `participants.outcome` (`win|loss|draw|disqualified`) y `participants.cpu_ms` (sólo si se midió; nunca una estimación).
+3. `participants.outcome` (`win|loss|draw|disqualified`), `participants.cpu_ms` (sólo si se midió; nunca una estimación) y `participants.diagnostics` (forma `bot-diagnostics/v1`, migración `014_battle_diagnostics`). `runStatsJob` no la borra al reprocesar.
 4. `jobs.process_result` con `dedupe_key=process_result:<id>`.
 
 Después, `runStatsJob` (re-simulación del replay) escribe `battle_stats` (forma canónica: daño, disparos, aciertos, precisión, kills, banderas, minas, timeouts, `perModule`, `cpuMs` desde `participants.cpu_ms`).
 
 ### 9. Replay y visor
 
-`GET /api/v1/battles/{id}` (con `result`, `startedAt`, `finishedAt`, `replayAvailable`, `replayHash`, `participants[].outcome/cpuMs`), `GET /battles/{id}/stats`, `GET /replays/{id}`, `POST /replays/{id}/verify`. Visor y reproductor: [frontend.md](frontend.md) (DEV-D).
+`GET /api/v1/battles/{id}` (con `result`, `startedAt`, `finishedAt`, `replayAvailable`, `replayHash`, `mapName`, `participants[].botName/outcome/cpuMs/diagnosticsVisible`), `GET /battles/{id}/stats`, `GET /replays/{id}`, `POST /replays/{id}/verify`. Visor y reproductor: [frontend.md](frontend.md) (DEV-D).
+
+La web muestra el detalle en `#/battles/<id>` (`apps/web/src/pages/BattleDetailPage.tsx`): ganador con nombres, marcador, duración, participantes con su versión exacta, mapa, modo, estadísticas por bot y el diagnóstico de los bots del solicitante. `/stats` responde `status: ready | pending | unavailable`; con `pending` (las estadísticas aún no se han escrito, TD-065) la página dice «calculando» y vuelve a preguntar. Una batalla en cola o en curso se refresca sola.
+
+## Visibilidad de las vistas de una batalla (TD-047)
+
+Una sola política (`apps/api/src/battle-access.ts`) para `GET /battles`, `GET /battles/{id}`, `/stats`, `/audit`, `POST /spectate-ticket` y `POST /run`. Reutiliza la de replays (`whereReplayReadable`, `replay-access.ts`): lo que puedes ver de una batalla es lo que podrías ver de su replay, más el directo público.
+
+Puede leer la batalla:
+
+1. el staff;
+2. el dueño de un bot participante;
+3. un miembro del equipo de un bot participante no privado;
+4. cualquiera, con `S9_PUBLIC_REPLAYS_ENABLED`, si la batalla está `finished` y todos sus bots son públicos;
+5. cualquiera, con `S9_PUBLIC_SPECTATE_ENABLED`, si está `running` y todos sus bots son públicos.
+
+Fuera de eso, `404 Batalla no encontrada`, idéntico al de un id inexistente. El listado filtra con la misma condición. Antes un anónimo listaba y leía batallas de bots privados (botId, versión, CPU, estadísticas y auditoría).
+
+El **diagnóstico y la CPU** son un nivel más estricto (`canSeeBotDiagnostics`): sólo el dueño de ESE bot y el staff. Un rival o un compañero de equipo ve la batalla, no las tripas del bot ajeno (`cpuMs: null`, `diagnosticsVisible: false`). `/stats` se sirve con `Cache-Control: private, no-store`.
+
+## Diagnóstico por bot (`participants.diagnostics`)
+
+Lo que el replay no cuenta y sólo sabe quien ejecutó la batalla (`apps/tournament-worker/src/bot-diagnostics.ts`):
+
+| Campo | Significado |
+|---|---|
+| `startup` | `{ok}`; `ok:false` con `reason` `bot_execution_timeout` (no llegó al HELLO a tiempo) o `bot_crash` |
+| `protocol` | Del `ProtocolServer`: HELLO, reconexiones, COMMAND recibidos, inválidos (y el primer motivo), tardíos, de otro ciclo, extra, JSON roto y tick de desconexión |
+| `container` | `exitCode`, `oomKilled`, `exitedDuringBattle` |
+
+No lleva detalles del sandbox (perfil seccomp, red, proxy, tokens, rutas ni mensajes internos): sólo códigos y contadores. `GET /battles/{id}/stats` lo combina con `battle_stats` (decisiones, timeouts, rechazos por motivo) en `diagnostics[botId]`, sólo para el dueño de ese bot y el staff. `NULL` = batalla anterior a la migración o sin medida (`measured: false`).
+
+## COMMAND inválidos: evento `invalid_command`
+
+Un `COMMAND` con forma inválida ya no se descarta en silencio (`apps/arena-engine/src/protocol-server.ts`): no se aplica, se cuenta en el diagnóstico y el bot recibe `EVENT rejected_action` con `reason: "invalid_command: <ruta> <regla>"` (p. ej. `invalid_command: /move/throttle maximum`), como mucho un aviso por ciclo y truncado a 64 caracteres. El dueño ve el recuento y el primer motivo en el diagnóstico del detalle de la batalla.
 
 ## Autoridad única de ejecución
 
@@ -143,7 +182,7 @@ Garantías (cada una con test que se pone rojo, ver Verificación): doble POST `
 | Tabla | Columnas relevantes | Estados (CHECK) |
 |---|---|---|
 | `battles` | `status`, `official`, `mode`, `ruleset_id`, `map_id`, `map_version`, `seed`, `result`, `failure_kind`, `replay_ref`, `replay_hash`, `final_state_hash`, `engine_versions`, `started_at`, `finished_at`, **`claimed_by`, `lease_expires_at`, `run_attempts`** (migración `013_battle_claim`) | `status ∈ scheduled, running, finished, failed`; `failure_kind ∈ none, bot_timeout, bot_crash, infrastructure` |
-| `participants` | `battle_id`, `bot_id`, `version`, `team`, `outcome`, `cpu_ms` | `outcome ∈ win, loss, draw, disqualified` |
+| `participants` | `battle_id`, `bot_id`, `version`, `team`, `outcome`, `cpu_ms`, `diagnostics` (jsonb, migración `014_battle_diagnostics`) | `outcome ∈ win, loss, draw, disqualified` |
 | `jobs` | `kind`, `payload`, `status`, `attempts`, `locked_by`, `locked_at`, `dedupe_key`, `last_error`, `error_class` | `queued, running, done, failed, needs_review` |
 | `battle_stats` | `battle_id`, `bot_id`, `stats` | — |
 
@@ -252,4 +291,8 @@ Verificado sobre la integración del cierre funcional (`integration/functional-c
 | REVIEW · `createBattleLaunchHost` falla cerrado (no publicada, manipulado, firma ajena) | CODE_VERIFIED + test | `apps/bot-manager/src/bot-launch.ts`; `apps/bot-manager/tests/battle-launch-host.test.ts` |
 | REVIEW · `checkBattleContent` en POST /battles | CODE_VERIFIED + test | `routes/battles.ts` (`createPracticeBattle`); `apps/api/src/battles-create-content.test.ts` (mutación «saltar la comprobación» ⇒ 4 rojos) |
 | REVIEW · golden path en navegador | RUNTIME_VERIFIED (aislado) | `tests/browser/specs/golden-path.spec.ts` (`npm run test:browser`, fase golden rc=0) |
+| UX-R · una política de lectura para todas las vistas; diagnóstico y CPU sólo del dueño y staff | CODE_VERIFIED + test | `apps/api/src/battle-access.ts`; `apps/api/src/uxd-battle-access.test.ts` (rc=0, ronda UX-R) |
+| UX-R · diagnóstico de extremo a extremo (containerAgents → `participants.diagnostics` → `/stats` del dueño) | CODE_VERIFIED + test | `apps/tournament-worker/src/battle-diagnostics.test.ts` (rc=0, ronda UX-R) |
+| UX-R · `invalid_command`: se cuenta, se avisa y no se aplica | CODE_VERIFIED + test | `apps/arena-engine/src/protocol-server-diagnostics.test.ts` (rc=0, ronda UX-R) |
+| UX-R · perímetro implícito de la arena | CODE_VERIFIED + test | `apps/arena-engine/tests/arena-perimeter.test.ts` (rc=0, ronda UX-R) |
 | Producción sin activar | DESIGN_ONLY | compose preparado (`infrastructure/docker-compose.yml`, bloque `tournament-worker`); despliegue fuera del cierre funcional |

@@ -267,8 +267,13 @@ describe("T12.1 · el MVP funciona (26.1), en 6 pasos con evidencia", () => {
       .db("participants")
       .insert(participants.map((p) => ({ battle_id: row.id, bot_id: p.botId, version: 1, team: p.team })));
 
-    // Espectador ANÓNIMO: ticket vía API pública (sin Authorization) + WS real de E8.
-    const ticketRes = await request(app).post(`/battles/${state.battleDbId}/spectate-ticket`);
+    // UX-D (G-08) · los bots son PRIVADOS: un anónimo ya no obtiene ticket (antes
+    // sí), aunque el directo público esté encendido. El dueño de un bot
+    // participante sí, por la API + WS real de E8.
+    expect((await request(app).post(`/battles/${state.battleDbId}/spectate-ticket`)).status).toBe(404);
+    const ticketRes = await request(app)
+      .post(`/battles/${state.battleDbId}/spectate-ticket`)
+      .set("Authorization", `Bearer ${state.accessToken}`);
     expect(ticketRes.status).toBe(201);
     gateway.attachBattle(state.battleDbId, battle, {
       pollIntervalMs: 1,
@@ -391,8 +396,12 @@ describe("T12.1 · el MVP funciona (26.1), en 6 pasos con evidencia", () => {
       expect(job.stats.perTeam[team].score).toBe(state.result.score[team] ?? 0);
     }
 
-    // Por BOT y por MÓDULO, expuestas por la API pública (getBattleStats).
-    const res = await request(app).get(`/battles/${state.battleDbId}/stats`);
+    // Por BOT y por MÓDULO, expuestas por la API (getBattleStats). UX-D (G-08):
+    // con bots privados las lee su participante, no un anónimo.
+    expect((await request(app).get(`/battles/${state.battleDbId}/stats`)).status).toBe(404);
+    const res = await request(app)
+      .get(`/battles/${state.battleDbId}/stats`)
+      .set("Authorization", `Bearer ${state.accessToken}`);
     expect(res.status).toBe(200);
     const perBot = res.body.perBot;
     expect(Object.keys(perBot).length).toBe(4);

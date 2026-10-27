@@ -1,6 +1,12 @@
 /**
  * T7.4 · App del panel: navegación por hash, sesión y ocultación por rol (la API autoriza).
  *
+ * UX-A (G-01, C-G10) · UNA sola carcasa (barra de navegación) para TODAS las
+ * pantallas, públicas incluidas (antes Ranking, En directo, Replay y el visor no
+ * tenían menú y no había forma de volver), con «Inicio» y «Ayuda». Sin sesión la
+ * barra ofrece lo público y el acceso; #/ es la portada (qué es S9 + acceso) o,
+ * con sesión, la home con la checklist de primeros pasos. #/help es pública.
+ *
  * R3.7 (ERR-VIS-02/03/04/10):
  *  - la sesión sobrevive a un F5: bootstrapSession() la recupera desde la
  *    cookie httpOnly (nada en localStorage) y el interceptor único de 401 de
@@ -10,9 +16,10 @@
  *  - error boundary global + por pantalla (un fallo de render no deja la app
  *    en blanco) y el catálogo es un recurso con carga/error/reintento.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api, bootstrapSession, logout, onSessionExpired, getToken, type Me } from "./api.js";
 import { describeApiError } from "./errors.js";
+import { setDraftOwner } from "./ui/draft.js";
 import type { ModuleDefinition } from "../../../packages/module-catalog/types.js";
 import { LoginPage } from "./pages/LoginPage.js";
 import { BotsPage } from "./pages/BotsPage.js";
@@ -28,6 +35,7 @@ import { BracketPage } from "./pages/BracketPage.js"; // R12 (slice 1, solo lect
 import { BattlesPage } from "./pages/BattlesPage.js";
 // R9 · crear batalla de práctica desde la UI (usa POST /battles seguro; ver BattleNewPage).
 import { BattleNewPage } from "./pages/BattleNewPage.js";
+import { BattleDetailPage } from "./pages/BattleDetailPage.js"; // UX-D · #/battles/<uuid>
 import { MapsPage } from "./pages/MapsPage.js";
 import { MapEditorPage } from "./pages/MapEditorPage.js";
 import { ReplaysPage } from "./pages/ReplaysPage.js"; // R7-A · listado global de replays
@@ -40,6 +48,9 @@ import { BroadcastPage } from "./pages/BroadcastPage.js";
 import { ErrorBoundary } from "./ErrorBoundary.js";
 import { useResource, ResourceView } from "./resource.js";
 import { NotFoundPage } from "./pages/NotFoundPage.js";
+// UX-A (G-01) · portada pública + home con primeros pasos y guía integrada.
+import { HomePage, LandingIntro } from "./pages/HomePage.js";
+import { HelpPage } from "./pages/HelpPage.js";
 
 const BUDGET_DEFAULT = 1000; // BUDGET_CREDITS_MVP; el ruleset de cada torneo puede cambiarlo (D7)
 
@@ -56,6 +67,7 @@ export function matchPublicRoute(route: string):
       | { kind: "replay"; battleId: string; t: number }
       | { kind: "live" }
       | { kind: "ranking" }
+      | { kind: "help" }
     )
   | null {
   const viewer = /^#\/viewer\/([^/?]+)/.exec(route);
@@ -66,6 +78,8 @@ export function matchPublicRoute(route: string):
   if (/^#\/live(?:[/?]|$)/.test(route)) return { kind: "live" };
   // N6 · #/ranking: clasificación pública (GET /standings, security: [], solo lectura).
   if (/^#\/ranking(?:[/?]|$)/.test(route)) return { kind: "ranking" };
+  // UX-A (G-01) · guía integrada; #/ayuda y #/docs (que daban 404) son alias.
+  if (/^#\/(?:help|ayuda|docs)(?:[/?].*)?$/.test(route)) return { kind: "help" };
   return null;
 }
 
@@ -77,6 +91,7 @@ export function matchPanelRoute(
   | { kind: "tournament"; id: string }
   | { kind: "battles"; botFilter?: string }
   | { kind: "battle-new" }
+  | { kind: "battle"; id: string }
   | null {
   // R12 (slice 1) · el cuadro va ANTES del detalle: si no, "/tournaments/<id>/bracket"
   // lo captura el patrón de detalle (que solo mira el primer segmento tras el id).
@@ -85,6 +100,9 @@ export function matchPanelRoute(
   const detail = /^#\/tournaments\/([^/?]+)/.exec(route);
   if (detail) return { kind: "tournament", id: decodeURIComponent(detail[1]) };
   if (/^#\/battles\/new/.test(route)) return { kind: "battle-new" }; // R9 (antes del match general de #/battles)
+  // UX-D · detalle de batalla: SÓLO un UUID (`#/battles/<basura>` sigue siendo 404).
+  const battle = /^#\/battles\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?]|$)/i.exec(route);
+  if (battle) return { kind: "battle", id: battle[1] };
   // FC-D (D8): anclado — `#/battles/<basura>` es 404, no la lista.
   const battles = /^#\/battles\/?(?:\?(.*))?$/.exec(route);
   if (battles) {
@@ -107,10 +125,12 @@ export function matchPanelRoute(
  * Las rutas con parámetros siguen en `matchPanelRoute` / `matchPublicRoute`.
  */
 export type StaticPanelRoute =
-  "bots" | "teams" | "tournaments" | "replays" | "mapEditor" | "maps" | "system" | "audit" | "roles" | "admin";
+  "home" | "bots" | "teams" | "tournaments" | "replays" | "mapEditor" | "maps" | "system" | "audit" | "roles" | "admin";
 
 export const STATIC_PANEL_ROUTES: ReadonlyArray<{ name: StaticPanelRoute; pattern: RegExp }> = [
-  { name: "bots", pattern: /^(?:#?\/?|#\/bots(?:[/?].*)?)$/ },
+  // UX-A · la raíz es «Inicio» (checklist de primeros pasos), ya no «Mis bots».
+  { name: "home", pattern: /^(?:#?\/?|#\/inicio\/?)$/ },
+  { name: "bots", pattern: /^#\/bots(?:[/?].*)?$/ },
   { name: "teams", pattern: /^#\/teams(?:[/?].*)?$/ },
   { name: "tournaments", pattern: /^#\/tournaments(?:\?.*)?$/ },
   { name: "replays", pattern: /^#\/replays\/?(?:\?.*)?$/ },
@@ -135,10 +155,10 @@ export function App() {
   /** FC-D (TD-022) · API caída al arrancar: NO es «sin sesión» (antes mandaba al login). */
   const [bootError, setBootError] = useState<unknown>(null);
   const [bootAttempt, setBootAttempt] = useState(0);
-  const [route, setRoute] = useState(window.location.hash || "#/bots");
+  const [route, setRoute] = useState(window.location.hash || "#/");
 
   useEffect(() => {
-    const onHash = () => setRoute(window.location.hash || "#/bots");
+    const onHash = () => setRoute(window.location.hash || "#/");
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -160,7 +180,10 @@ export function App() {
     setBootError(null);
     bootstrapSession()
       .then((who) => {
-        if (alive && who) setMe(who);
+        if (alive && who) {
+          setDraftOwner(who.id);
+          setMe(who);
+        }
       })
       .catch((e: unknown) => {
         if (alive) setBootError(e);
@@ -188,32 +211,47 @@ export function App() {
   const broadcast = matchBroadcastRoute(window.location.pathname, window.location.search, route);
   if (broadcast) return <BroadcastPage config={broadcast} />;
 
+  function doLogout() {
+    void logout().then(() => {
+      setNotice("Sesión cerrada.");
+      setMe(null);
+    });
+  }
+
+  /** UX-A (C-G10) · Toda pantalla va dentro de la MISMA carcasa: barra + <main>. */
+  const shell = (content: ReactNode, label = "esta pantalla") => (
+    <ErrorBoundary label="el panel">
+      <ShellNav me={me && getToken() ? me : null} route={route} booting={booting} onLogout={doLogout} />
+      <main>
+        <ErrorBoundary label={label}>{content}</ErrorBoundary>
+      </main>
+    </ErrorBoundary>
+  );
+
   // E8: el visor y el reproductor son rutas PÚBLICAS (no pasan por el login del
   // panel). PRC (TD-004): el replay en sí sólo se sirve si la API lo autoriza
   // (participante/equipo/staff, o público por S9_PUBLIC_REPLAYS_ENABLED).
   const publicView = matchPublicRoute(route);
   if (publicView) {
-    return (
-      <main>
-        <h1>S9 AI Arena</h1>
-        <ErrorBoundary label="el visor">
-          {publicView.kind === "viewer" ? (
-            <ViewerPage battleId={publicView.battleId} />
-          ) : publicView.kind === "live" ? (
-            <LivePage />
-          ) : publicView.kind === "ranking" ? (
-            <RankingPage />
-          ) : booting ? (
-            // PRC (TD-004): el replay se pide CON la sesión (si la hay). Se espera al
-            // refresh desde la cookie para no pedirlo anónimo y recibir un 404.
-            <p role="status" aria-live="polite" data-testid="replay-status" data-state="loading">
-              Recuperando sesión…
-            </p>
-          ) : (
-            <ReplayPage key={me?.id ?? "anon"} battleId={publicView.battleId} initialTick={publicView.t} />
-          )}
-        </ErrorBoundary>
-      </main>
+    return shell(
+      publicView.kind === "viewer" ? (
+        <ViewerPage battleId={publicView.battleId} />
+      ) : publicView.kind === "live" ? (
+        <LivePage />
+      ) : publicView.kind === "ranking" ? (
+        <RankingPage />
+      ) : publicView.kind === "help" ? (
+        <HelpPage loggedIn={!!me && !!getToken()} />
+      ) : booting ? (
+        // PRC (TD-004): el replay se pide CON la sesión (si la hay). Se espera al
+        // refresh desde la cookie para no pedirlo anónimo y recibir un 404.
+        <p role="status" aria-live="polite" data-testid="replay-status" data-state="loading">
+          Recuperando sesión…
+        </p>
+      ) : (
+        <ReplayPage key={me?.id ?? "anon"} battleId={publicView.battleId} initialTick={publicView.t} />
+      ),
+      "el visor",
     );
   }
 
@@ -250,27 +288,47 @@ export function App() {
     );
   }
 
+  const panelRoute = matchPanelRoute(route);
+  const staticRoute = matchStaticPanelRoute(route);
+
   if (!me || !getToken()) {
-    return (
-      <main>
+    // UX-A · Sin sesión, una dirección que no es de NINGUNA pantalla es un 404
+    // (con la barra para volver), no el formulario de acceso.
+    if (!panelRoute && !staticRoute) return shell(<NotFoundPage route={route} loggedIn={false} />);
+    return shell(
+      <>
         <h1>S9 AI Arena</h1>
-        <ErrorBoundary label="el acceso">
-          <LoginPage
-            notice={notice}
-            onLogin={(who) => {
-              setNotice("");
-              setMe(who);
-            }}
-          />
-        </ErrorBoundary>
-      </main>
+        {staticRoute !== "home" && !notice && (
+          <p className="warn" role="status" data-testid="login-required">
+            Esa pantalla es del panel: inicia sesión o crea una cuenta para verla.
+          </p>
+        )}
+        {/* G-01 · la portada explica qué es S9 y cómo empezar, junto al acceso. */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", alignItems: "flex-start" }}>
+          <div style={{ flex: "1 1 320px" }}>
+            <LoginPage
+              notice={notice}
+              onLogin={(who) => {
+                setNotice("");
+                // UX-F (DEF-R2) · borradores de OTRA cuenta: fuera, antes de pintar el panel.
+                setDraftOwner(who.id);
+                setMe(who);
+              }}
+            />
+          </div>
+          <div style={{ flex: "2 1 420px" }}>
+            <LandingIntro />
+          </div>
+        </div>
+      </>,
+      "el acceso",
     );
   }
 
-  const panelRoute = matchPanelRoute(route);
-
   function renderStaticPanel(name: StaticPanelRoute | null) {
     switch (name) {
+      case "home":
+        return <HomePage me={me!} />;
       case "tournaments":
         return <TournamentsPage me={me!} />;
       case "teams":
@@ -298,72 +356,93 @@ export function App() {
           </ResourceView>
         );
       default:
-        return <NotFoundPage route={route} />;
+        return <NotFoundPage route={route} loggedIn />;
     }
   }
 
+  return shell(
+    panelRoute?.kind === "tournamentBracket" ? (
+      <BracketPage id={panelRoute.id} />
+    ) : panelRoute?.kind === "tournament" ? (
+      <TournamentDetailPage id={panelRoute.id} me={me} />
+    ) : panelRoute?.kind === "battle-new" ? ( // R9
+      <BattleNewPage me={me} />
+    ) : panelRoute?.kind === "battle" ? (
+      <BattleDetailPage key={panelRoute.id} id={panelRoute.id} />
+    ) : panelRoute?.kind === "battles" ? (
+      <BattlesPage botFilter={panelRoute.botFilter} />
+    ) : (
+      renderStaticPanel(staticRoute)
+    ),
+  );
+}
+
+/** ¿El enlace `href` de la barra es la pantalla actual? (aria-current="page"). */
+export function isNavActive(href: string, route: string): boolean {
+  const r = route || "#/";
+  if (href === "#/") return matchStaticPanelRoute(r) === "home";
+  if (href === "#/help") return matchPublicRoute(r)?.kind === "help";
+  return r === href || r.startsWith(`${href}/`) || r.startsWith(`${href}?`);
+}
+
+/**
+ * UX-A (C-G10) · Barra de navegación ÚNICA. Con sesión: el panel completo y
+ * «Salir»; sin sesión: lo público (Inicio, En directo, Ranking, Ayuda) y el
+ * acceso. Los enlaces son <a> (navegan) y «Salir» es <button> (acción).
+ */
+function ShellNav(props: { me: Me | null; route: string; booting: boolean; onLogout: () => void }) {
+  const { me, route } = props;
+  const link = (href: string, label: string, testId?: string) => (
+    <a href={href} data-testid={testId} aria-current={isNavActive(href, route) ? "page" : undefined}>
+      {label}
+    </a>
+  );
   return (
-    <ErrorBoundary label="el panel">
-      <nav aria-label="principal">
-        <strong>S9 AI Arena</strong>
-        <a href="#/bots">Mis bots</a>
-        <a href="#/teams">Equipos</a>
-        <a href="#/tournaments">Torneos</a>
-        <a href="#/battles">Batallas</a>
-        <a href="#/replays">Replays</a>
-        <a href="#/maps">Mapas</a>
-        {/* R11 · #/live es pública (sin cuenta); el enlace aquí es solo un atajo del panel. */}
-        <a href="#/live">En directo</a>
-        {/* N6 · #/ranking es pública (sin cuenta); el enlace aquí es solo un atajo del panel. */}
-        <a href="#/ranking">Ranking</a>
-        {/* La interfaz solo OCULTA; la autorización la hace la API (cap. 16) */}
-        {isAdmin(me) && (
-          <>
-            <a href="#/admin" data-testid="admin-link">
-              Administración
+    <nav aria-label="principal" style={{ flexWrap: "wrap" }}>
+      {/* La marca no es un segundo enlace a #/: «Inicio» ya lo es (un solo destino, un solo nombre). */}
+      <strong>S9 AI Arena</strong>
+      {link("#/", "Inicio", "nav-home")}
+      {me && (
+        <>
+          {link("#/bots", "Mis bots")}
+          {link("#/teams", "Equipos")}
+          {link("#/tournaments", "Torneos")}
+          {link("#/battles", "Batallas")}
+          {link("#/replays", "Replays")}
+          {link("#/maps", "Mapas")}
+        </>
+      )}
+      {/* R11 · #/live y N6 · #/ranking son públicas (sin cuenta). */}
+      {link("#/live", "En directo")}
+      {link("#/ranking", "Ranking")}
+      {link("#/help", "Ayuda", "nav-help")}
+      {/* La interfaz solo OCULTA; la autorización la hace la API (cap. 16) */}
+      {me && isAdmin(me) && (
+        <>
+          {link("#/admin", "Administración", "admin-link")}
+          {link("#/system", "Sistema", "system-link")}
+          {link("#/audit", "Auditoría", "audit-link")}
+          {link("#/roles", "Roles", "roles-link")}
+        </>
+      )}
+      {me ? (
+        <>
+          <span style={{ marginLeft: "auto" }}>
+            {me.displayName} ({me.roles.join(", ")})
+          </span>
+          <button type="button" data-testid="logout" onClick={props.onLogout}>
+            Salir
+          </button>
+        </>
+      ) : (
+        !props.booting && (
+          <span style={{ marginLeft: "auto" }}>
+            <a href="#/" data-testid="nav-access">
+              Entrar o registrarse
             </a>
-            <a href="#/system" data-testid="system-link">
-              Sistema
-            </a>
-            <a href="#/audit" data-testid="audit-link">
-              Auditoría
-            </a>
-            <a href="#/roles" data-testid="roles-link">
-              Roles
-            </a>
-          </>
-        )}
-        <span style={{ marginLeft: "auto" }}>
-          {me.displayName} ({me.roles.join(", ")})
-        </span>
-        <button
-          type="button"
-          data-testid="logout"
-          onClick={() => {
-            void logout().then(() => {
-              setNotice("Sesión cerrada.");
-              setMe(null);
-            });
-          }}
-        >
-          Salir
-        </button>
-      </nav>
-      <main>
-        <ErrorBoundary label="esta pantalla">
-          {panelRoute?.kind === "tournamentBracket" ? (
-            <BracketPage id={panelRoute.id} />
-          ) : panelRoute?.kind === "tournament" ? (
-            <TournamentDetailPage id={panelRoute.id} me={me} />
-          ) : panelRoute?.kind === "battle-new" ? ( // R9
-            <BattleNewPage me={me} />
-          ) : panelRoute?.kind === "battles" ? (
-            <BattlesPage botFilter={panelRoute.botFilter} />
-          ) : (
-            renderStaticPanel(matchStaticPanelRoute(route))
-          )}
-        </ErrorBoundary>
-      </main>
-    </ErrorBoundary>
+          </span>
+        )
+      )}
+    </nav>
   );
 }

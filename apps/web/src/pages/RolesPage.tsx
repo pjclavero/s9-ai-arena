@@ -5,6 +5,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { api, type Me } from "../api.js";
+import { ErrorState } from "../ui/primitives.js";
 
 interface RbacRole {
   name: string;
@@ -23,16 +24,17 @@ interface RbacMatrix {
 
 export function RolesPage(_props: { me: Me }) {
   const [matrix, setMatrix] = useState<RbacMatrix | null>(null);
-  const [error, setError] = useState("");
+  // UX-E · el fallo ORIGINAL, para clasificarlo (403/5xx/plazo…) con ErrorState.
+  const [error, setError] = useState<unknown>(null);
   const [filter, setFilter] = useState("");
 
   async function refresh() {
-    setError("");
+    setError(null);
     try {
       setMatrix(await api<RbacMatrix>("GET", "/system/rbac"));
     } catch (e) {
       setMatrix(null);
-      setError(`No se pudo cargar la matriz de permisos: ${(e as Error).message}`);
+      setError(e ?? new Error("error desconocido"));
     }
   }
   useEffect(() => {
@@ -51,11 +53,9 @@ export function RolesPage(_props: { me: Me }) {
 
   if (error) {
     return (
-      <div className="card" role="alert">
-        <p className="error">{error}</p>
-        <button type="button" onClick={() => void refresh()}>
-          Reintentar
-        </button>
+      <div className="card">
+        <h2>Roles y permisos</h2>
+        <ErrorState label="la matriz de permisos" error={error} onRetry={() => void refresh()} />
       </div>
     );
   }

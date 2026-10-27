@@ -9,6 +9,7 @@
 #   ARTIFACT_TOKEN   token de esta sesión (cabecera x-s9-artifact-token)
 #   ARTIFACT_SHA256  sha256 esperado de los bytes canónicos (arena-artifact/v1)
 #   WS_URL, BATTLE_TOKEN, BOT_ID   conexión al ProtocolServer (arena/1)
+#   S9_HOOK_POLICY   `reject` (por defecto: build) o `warn` (batalla; ver check_hook)
 #
 # Pasos: descarga -> verifica sha256 -> materializa en /tmp/bot (tmpfs) -> carga el
 # SDK -> señal `ready` (TD-034) -> carga el fichero de entrada -> instancia la
@@ -92,6 +93,58 @@ def safe_path(rel):
         if seg in ("", ".", ".."):
             raise ValueError("ruta no permitida: %r" % rel)
     return os.path.join(ROOT, rel)
+
+
+# UX-04 (G-05) · hook efectivo. ArenaBot.on_observation devuelve {} («sin cambios»):
+# una subclase que NO lo sobrescribe —p. ej. porque el método se llama
+# `on_observaton`— arranca, hace HELLO y responde COMMAND válidos vacíos, y
+# antes pasaba las 10 etapas sin hacer nada. Se exige que la clase (o un
+# ancestro suyo distinto de ArenaBot) defina on_observation, o el despachador
+# _handle_observation. Un bot quieto que SÍ lo implementa y devuelve {} pasa.
+HOOK = "on_observation"
+DISPATCH = "_handle_observation"
+
+
+def _inherited(bot, base, name):
+    # Sobre la INSTANCIA: un atributo asignado en __init__ también cuenta.
+    bound = getattr(bot, name, None)
+    return getattr(bound, "__func__", None) is getattr(base, name)
+
+
+def check_hook(bot, base):
+    cls = type(bot)
+    if not (_inherited(bot, base, HOOK) and _inherited(bot, base, DISPATCH)):
+        return
+    import difflib
+
+    own = sorted(
+        {
+            name
+            for klass in cls.__mro__
+            if klass is not base and klass is not object
+            for name, value in vars(klass).items()
+            if callable(value) and not name.startswith("__")
+        }
+        | {name for name, value in vars(bot).items() if callable(value)}
+    )
+    close = difflib.get_close_matches(HOOK, own, n=1, cutoff=0.6)
+    hint = (" ¿Quisiste decir «%s»? Renómbralo a «%s»." % (close[0], HOOK)) if close else ""
+    # UX-F (DEF-R4) · en BATALLA (`warn`) una versión YA publicada sin el hook no se
+    # rompe: juega como antes (quieta, COMMAND vacíos) y el aviso llega al anfitrión
+    # para el diagnóstico de su dueño. El BUILD (`reject`, por defecto) la rechaza.
+    if os.environ.get("S9_HOOK_POLICY") == "warn":
+        report(
+            "hook_missing",
+            "tu clase %s no implementa %s(self, observation): tu código no decide nada.%s"
+            % (cls.__name__, HOOK, hint),
+        )
+        return
+    fail(
+        "hook",
+        "tu clase %s no implementa %s(self, observation): sin él el bot no hace nada en la batalla.%s"
+        % (cls.__name__, HOOK, hint),
+        11,
+    )
 
 
 def main():
@@ -179,6 +232,12 @@ def main():
         chosen = candidates[0]
     try:
         bot = chosen(os.environ.get("BOT_ID", "bot_sandbox"))
+    except SystemExit:
+        raise
+    except BaseException:
+        fail("runtime", traceback.format_exc(), 9)
+    check_hook(bot, ArenaBot)
+    try:
         bot.run(os.environ["WS_URL"], os.environ["BATTLE_TOKEN"])
     except SystemExit:
         raise

@@ -64,6 +64,11 @@ export class SportingFailure extends Error {
     message: string,
     /** Quién conducía los vehículos (queda en battles.result.agents). */
     readonly agents?: "container" | "in_process_stub" | "scripted",
+    /**
+     * UX-F (DEF-R4) · motivo de arranque para el diagnóstico del dueño cuando es más
+     * preciso que el código (p. ej. `hook_missing` en vez de `bot_crash`).
+     */
+    readonly startupReason?: "hook_missing",
   ) {
     super(`[${code}] bot ${botId}: ${message}`);
     this.name = "SportingFailure";

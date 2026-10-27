@@ -46,6 +46,7 @@ import type { ArtifactLaunchCheck } from "../../bot-manager/src/launch-verify.js
 import { InfrastructureFailure, SportingFailure } from "./errors.js";
 import { enqueueJob, type JobRow } from "./queue.js";
 import type { HandlerContext, JobHandler } from "./worker.js";
+import type { BotRunDiagnostics } from "./bot-diagnostics.js";
 
 export interface BattleRow {
   id: string;
@@ -97,6 +98,12 @@ export interface BattleExecution {
    * transacción que el resultado; de ahí la lee runStatsJob.
    */
   cpuMsByBot?: Record<string, number | null>;
+  /**
+   * UX-06 · diagnóstico por botId (arranque, transporte, contenedor). Se persiste
+   * en `participants.diagnostics` en la MISMA transacción que el resultado. Lo
+   * lee la API y lo entrega sólo al dueño del bot (TD-047).
+   */
+  diagnosticsByBot?: Record<string, BotRunDiagnostics>;
   /** Quién condujo los vehículos (ver AgentsKind). Ausente ⇒ `scripted`. */
   agents?: AgentsKind;
   // H3 (issue #7): aquí existió `statsPerBot`. Se ELIMINÓ: battle_stats tiene UNA
@@ -354,6 +361,16 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
               disqualified: [...adminDq, err.botId],
               versions: {},
               ...(err.agents ? { agents: err.agents } : {}),
+              // UX-06 · el culpable no arrancó: queda escrito por qué (código, sin detalle interno).
+              diagnosticsByBot: {
+                [err.botId]: {
+                  schema: "bot-diagnostics/v1",
+                  startup: {
+                    ok: false,
+                    reason: err.startupReason ?? (err.code === "bot_timeout" ? "bot_execution_timeout" : "bot_crash"),
+                  },
+                },
+              },
             },
             adminDq,
             err.code,
@@ -496,6 +513,11 @@ async function finishBattle(
 
     for (const p of participants) {
       const cpu = execution.cpuMsByBot ? execution.cpuMsByBot[p.bot_id] : undefined;
+      // `bot_id` es un dato de BD usado como clave: Object.hasOwn, no `in` ni `[]` a pelo.
+      const diag =
+        execution.diagnosticsByBot && Object.hasOwn(execution.diagnosticsByBot, p.bot_id)
+          ? execution.diagnosticsByBot[p.bot_id]
+          : undefined;
       await trx("participants")
         .where({ battle_id: battle.id, bot_id: p.bot_id })
         .update({
@@ -503,6 +525,7 @@ async function finishBattle(
           // CPU medida por el runner de contenedores; null/ausente no escribe nada
           // (la columna queda NULL = no medida, nunca una estimación).
           ...(typeof cpu === "number" && Number.isFinite(cpu) && cpu >= 0 ? { cpu_ms: cpu } : {}),
+          ...(diag ? { diagnostics: JSON.stringify(diag) } : {}),
         });
     }
     // H3 (issue #7): battle_stats NO se escribe aquí. La única forma canónica

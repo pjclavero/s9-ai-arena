@@ -71,6 +71,7 @@ export function SystemPage(_props: { me: Me }) {
     // FC-D · componente común: 403 «No tienes permiso», 5xx, timeout… con detalle real.
     return (
       <div className="card">
+        <h2>Estado del sistema</h2>
         <ErrorState label="el estado del sistema" error={error} onRetry={() => void refresh()} />
       </div>
     );
@@ -92,7 +93,7 @@ export function SystemPage(_props: { me: Me }) {
         <h2>Estado del sistema</h2>
         {!status.realRunnerEnabled && (
           <p className="warn" role="status" data-testid="execution-unavailable">
-            Battle execution unavailable in this environment (runner real no habilitado).
+            Las batallas no se pueden ejecutar en este entorno: el ejecutor real de batallas no está habilitado.
           </p>
         )}
         <table>

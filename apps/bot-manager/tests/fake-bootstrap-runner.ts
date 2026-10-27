@@ -46,6 +46,13 @@ export interface FakeBootstrapBehaviour {
   crashAfterReadyKind?: string;
   /** Retardo de cada decisión (COMMAND) tras recibir la OBSERVATION. */
   decisionMs?: number;
+  /**
+   * UX-F (DEF-R4) · tras `ready`, el bootstrap AVISA (informe que no es un fallo,
+   * p. ej. `hook_missing` con S9_HOOK_POLICY=warn) y sigue arrancando.
+   */
+  warnAfterReady?: { kind: string; detail: string };
+  /** El bot responde COMMAND vacíos (`{}`), como una clase sin hook. */
+  idle?: boolean;
 }
 
 export interface FakeLaunch {
@@ -117,6 +124,7 @@ export class FakeBootstrapRunner implements ContainerRunner {
         );
         return exit(7);
       }
+      if (b.warnAfterReady) await report(b.warnAfterReady.kind, b.warnAfterReady.detail);
       if (b.hangAfterReady) return; // proceso vivo, sin conectar nunca
       if (b.userInitMs) await sleep(b.userInitMs);
       if (stopped) return;
@@ -160,7 +168,7 @@ export class FakeBootstrapRunner implements ContainerRunner {
                 type: "COMMAND",
                 seq: seq++,
                 tick: forTick,
-                payload: { forTick, move: { throttle: 0.6, steer: 0.1 } },
+                payload: b.idle ? { forTick } : { forTick, move: { throttle: 0.6, steer: 0.1 } },
               }),
             );
           if (b.decisionMs) setTimeout(send, b.decisionMs);

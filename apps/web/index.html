@@ -13,7 +13,10 @@
       }
       nav {
         display: flex;
-        gap: 1rem;
+        /* UX-E · la barra completa (9 enlaces + usuario + Salir; 13 con admin) no
+           cabe en una línea a 768 px: desbordaba 45 px. Siempre puede partirse. */
+        flex-wrap: wrap;
+        gap: 0.5rem 1rem;
         padding: 0.8rem 1.2rem;
         background: #1a212b;
         align-items: center;
@@ -21,6 +24,39 @@
       nav a {
         color: #7fb4ff;
         text-decoration: none;
+      }
+      /* UX-E · los enlaces del contenido usaban el azul por defecto del navegador
+         (#0000ee) sobre fondo oscuro: contraste ~2:1 (axe color-contrast en 12 de
+         16 pantallas). Mismo azul que la barra; visitados igual de legibles. */
+      a,
+      a:visited {
+        color: #7fb4ff;
+      }
+      a:hover {
+        color: #a9cdff;
+      }
+      /* UX-E · «Saltar al contenido» (index.html): oculto hasta recibir foco. */
+      .skip-link {
+        position: absolute;
+        left: 0.5rem;
+        top: -3rem;
+        z-index: 1000;
+        background: #2f6fdb;
+        color: white;
+        padding: 0.4rem 0.8rem;
+        border-radius: 4px;
+      }
+      .skip-link:focus {
+        top: 0.5rem;
+      }
+      /* Texto sólo para lectores de pantalla. */
+      .visually-hidden {
+        position: absolute !important;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
       }
       main {
         max-width: 960px;
@@ -47,6 +83,18 @@
         border: 1px solid #333c4a;
         border-radius: 4px;
         padding: 0.4rem;
+        /* UX-E · un textarea con cols=60 desbordaba la pantalla a 390 px. */
+        max-width: 100%;
+        box-sizing: border-box;
+      }
+      pre {
+        max-width: 100%;
+        overflow-x: auto;
+      }
+      img,
+      video {
+        max-width: 100%;
+        height: auto;
       }
       table {
         border-collapse: collapse;
@@ -130,6 +178,7 @@
     </style>
   </head>
   <body>
+    <a class="skip-link" href="#/" data-skip-link>Saltar al contenido</a>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

@@ -1,10 +1,14 @@
-# Bots de ejemplo oficiales (JavaScript/TypeScript): Artillero y Minador
+# Bots de ejemplo oficiales (JavaScript): Artillero y Minador
+
+Son **JavaScript ESM** (lo que ejecuta el runtime de bots, Node 20): puedes pegar
+`gunner.js` o `miner.js` en la web, o subirlos, tal cual. Cada uno exporta su clase
+por defecto e implementa `onObservation`. TypeScript no se acepta en el build.
 
 Dos de los cuatro bots oficiales de S9 AI Arena (los otros dos, Explorador y
 Defensor, están en [`example-bots/python/`](../python/)). Ambos usan
 [`@arena/sdk`](../../sdks/javascript/) y el catálogo real de E3.
 
-## Artillero (`gunner.ts`)
+## Artillero (`gunner.js`)
 
 **Estrategia, en un párrafo.** Mantiene distancia media (35 m, dentro del
 alcance de 60 m del cañón): se acerca si el objetivo se aleja demasiado,
@@ -17,7 +21,7 @@ proyectil leída de `WELCOME.vehicle.modules`, nunca asumida) — ver
 
 Loadout de referencia: arquetipo `gunner` (`packages/module-catalog/resolve/archetypes.ts`).
 
-## Minador (`miner.ts`)
+## Minador (`miner.js`)
 
 **Estrategia, en un párrafo.** Avanza hacia la base rival sembrando minas cada
 `MINE_INTERVAL_TICKS` a su paso, y responde con su ametralladora en cuanto su
