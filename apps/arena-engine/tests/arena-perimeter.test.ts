@@ -29,8 +29,7 @@ import { validateArenaMap } from "../src/arena-map.js";
 import { toEngineMap } from "../../map-service/src/to-engine-map.js";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const realMap = (file: string): ArenaMap =>
-  toEngineMap(JSON.parse(readFileSync(join(REPO, "maps", file), "utf8")));
+const realMap = (file: string): ArenaMap => toEngineMap(JSON.parse(readFileSync(join(REPO, "maps", file), "utf8")));
 
 /** Mapa sin muros de ningún tipo: lo que guarda el editor si el usuario no dibuja nada. */
 function openMap(w: number, h: number): ArenaMap {

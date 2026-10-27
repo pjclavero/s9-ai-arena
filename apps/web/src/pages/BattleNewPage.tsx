@@ -136,7 +136,13 @@ export function botEligibility(bot: BotSummary, versions: BotVersionSummary[] | 
   const def = playable[0];
   const latestNote =
     latest && latest.version !== def ? ` · última versión: v${latest.version} ${versionStateLabel(latest.state)}` : "";
-  return { eligible: true, playable, defaultVersion: def, latest, summary: `juega la v${def} (publicada)${latestNote}` };
+  return {
+    eligible: true,
+    playable,
+    defaultVersion: def,
+    latest,
+    summary: `juega la v${def} (publicada)${latestNote}`,
+  };
 }
 
 export function BattleNewPage(props: { me: Me }) {
@@ -235,7 +241,10 @@ export function BattleNewPage(props: { me: Me }) {
 
   // Qué falta para poder crear la batalla: una fila ✓/✗ por requisito.
   const checks: { ok: boolean; label: string }[] = [
-    { ok: Boolean(effectiveRuleset), label: effectiveRuleset ? `Ruleset: ${effectiveRuleset}` : "Ruleset: no hay ninguno para este modo" },
+    {
+      ok: Boolean(effectiveRuleset),
+      label: effectiveRuleset ? `Ruleset: ${effectiveRuleset}` : "Ruleset: no hay ninguno para este modo",
+    },
     {
       ok: Boolean(selectedMap),
       label: selectedMap
@@ -488,9 +497,7 @@ export function BattleNewPage(props: { me: Me }) {
         Crear batalla
       </button>
       {notEnoughBots && (
-        <p className="warn">
-          Necesitas al menos 2 bots con una versión publicada (ahora hay {eligibleBots.length}).
-        </p>
+        <p className="warn">Necesitas al menos 2 bots con una versión publicada (ahora hay {eligibleBots.length}).</p>
       )}
       {ineligibleOwn.length > 0 && (
         <div data-testid="ineligible-bots">

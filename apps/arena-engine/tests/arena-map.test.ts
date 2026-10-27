@@ -64,10 +64,7 @@ describe("B9 · validateArenaMap rechaza lo que el motor no sabe jugar", () => {
     // UX-07: el perímetro implícito del motor usa ids reservados; un mapa que los
     // reutilizara pisaría ese cuerpo en el mundo físico.
     ["muro con id reservado del perímetro", () => ({ ...base(), walls: [{ ...wall(), id: "__arena_boundary_n" }] })],
-    [
-      "destructible con id reservado del perímetro",
-      () => withFirstDestructible(base(), { id: "__arena_boundary_e" }),
-    ],
+    ["destructible con id reservado del perímetro", () => withFirstDestructible(base(), { id: "__arena_boundary_e" })],
     // UX-07: un spawn fuera del rectángulo nacería emparedado en el perímetro.
     ["spawn fuera del mapa (x<0)", () => withFirstSpawn(base(), { position: { x: -26, y: 40 } })],
     ["spawn fuera del mapa (y>alto)", () => withFirstSpawn(base(), { position: { x: 60, y: 94 } })],

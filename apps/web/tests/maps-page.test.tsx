@@ -127,7 +127,15 @@ describe("R8.2 gestión de mapas", () => {
 describe("UX-C · C4 publicar y estados legibles", () => {
   const USER = { id: "u2", displayName: "Bea", email: "b@b.es", roles: ["user"], twoFactorEnabled: false };
   const LIST = [
-    { mapId: "mio", version: 1, state: "validated", mine: true, widthM: 30, heightM: 30, supportedModes: ["deathmatch"] },
+    {
+      mapId: "mio",
+      version: 1,
+      state: "validated",
+      mine: true,
+      widthM: 30,
+      heightM: 30,
+      supportedModes: ["deathmatch"],
+    },
     {
       mapId: "ajeno",
       version: 1,
