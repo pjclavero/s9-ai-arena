@@ -46,4 +46,22 @@ describe("UX-01 · aviso de efecto real del loadout", () => {
     expect(detail).not.toMatch(/arquetipo/);
     expect(detail).toMatch(/rangeM.*FUTURE/s); // lo que el motor ignora sigue diciéndolo
   });
+
+  it("B2 · enseña la carga de módulos frente a maxLoadKg del chasis (la cifra que valida mass_exceeded)", () => {
+    render(
+      <LoadoutEditor
+        catalog={catalog}
+        catalogVersion={CATALOG_VERSION}
+        budgetCredits={1000}
+        onSave={async () => null}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("chasis"), { target: { value: "chassis.medium@1" } });
+    fireEvent.change(screen.getByLabelText("slot-turret_main"), { target: { value: "weapon.cannon@1" } });
+    const chassis = catalog.find((m) => `${m.id}@${m.version}` === "chassis.medium@1")!;
+    const cannon = catalog.find((m) => `${m.id}@${m.version}` === "weapon.cannon@1")!;
+    expect(screen.getByTestId("live-load").textContent).toContain(
+      `carga de módulos ${cannon.massKg}/${chassis.maxLoadKg} kg`,
+    );
+  });
 });
