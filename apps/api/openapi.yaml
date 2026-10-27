@@ -1897,7 +1897,7 @@ components:
         status: { enum: [ready, pending, unavailable] }
         perBot:
           type: object
-          description: 'Por botId: stats deportivas (replay-service/src/stats.ts) + botName y version. Sin cpuMs, decisions ni rejectionsByReason (diagnóstico).'
+          description: 'Por botId: stats deportivas (replay-service/src/stats.ts) + botName y version. Sin cpuMs, decisions ni rejectionsByReason (diagnóstico); decisionTimeouts y perModule.*.rejections sólo para el dueño y el staff (UX-F, DEF-R12).'
           additionalProperties:
             type: object
             additionalProperties: true

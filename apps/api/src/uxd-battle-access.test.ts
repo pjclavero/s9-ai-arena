@@ -160,7 +160,9 @@ beforeAll(async () => {
         rejectionsByReason: { cooldown: 5, no_ammo: 1 },
         cpuMs: 1234.5,
         disqualified: false,
-        perModule: {},
+        perModule: {
+          turret_main: { moduleId: "weapon.cannon@1", usesKind: "shots", uses: 10, rejections: 5, damageDealt: 120 },
+        },
       }),
     });
   }
@@ -293,6 +295,14 @@ describe("UX-06 · diagnóstico por bot: sólo el dueño de ESE bot y el staff",
     expect(sporting.cpuMs).toBeUndefined();
     expect(sporting.rejectionsByReason).toBeUndefined();
     expect(sporting.decisions).toBeUndefined();
+    // UX-F (DEF-R12) · turnos sin responder y rechazos por módulo: diagnóstico,
+    // sólo para el dueño. El uso y el daño del módulo siguen siendo públicos.
+    expect(sporting.decisionTimeouts).toBeUndefined();
+    expect(sporting.perModule.turret_main).toMatchObject({ uses: 10, damageDealt: 120 });
+    expect(sporting.perModule.turret_main.rejections).toBeUndefined();
+    const ownSporting = r.body.perBot[BOT.privA];
+    expect(ownSporting.decisionTimeouts).toBe(2);
+    expect(ownSporting.perModule.turret_main.rejections).toBe(5);
   });
 
   it("staff ve todos los diagnósticos; un lector público no ve ninguno", async () => {

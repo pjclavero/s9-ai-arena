@@ -708,13 +708,28 @@ export function battleRoutes(
     for (const p of participants) {
       const botId = String(p.bot_id);
       const s = statsByBot.get(botId);
+      const owner = canSeeBotDiagnostics(req.auth, p.bot_owner_id as string | null);
       if (s) {
         // Lo deportivo lo ve quien ve la batalla; la CPU y el desglose de
         // decisiones y rechazos son diagnóstico (TD-047): sólo dueño y staff.
         const { cpuMs: _cpu, decisions: _dec, rejectionsByReason: _rej, ...sporting } = s;
+        // UX-F (DEF-R12) · los turnos sin responder y los rechazos por módulo
+        // también son diagnóstico (cuánto falla TU código), no deporte: un rival no
+        // los ve. Daño, disparos, aciertos y estado final de los módulos, sí.
+        if (!owner) {
+          delete sporting.decisionTimeouts;
+          if (sporting.perModule && typeof sporting.perModule === "object") {
+            sporting.perModule = Object.fromEntries(
+              Object.entries(sporting.perModule as Record<string, Record<string, unknown>>).map(([slot, m]) => {
+                const { rejections: _r, ...rest } = m ?? {};
+                return [slot, rest];
+              }),
+            );
+          }
+        }
         perBot[botId] = { ...sporting, botName: p.bot_name ?? undefined, version: p.version };
       }
-      if (canSeeBotDiagnostics(req.auth, p.bot_owner_id as string | null)) {
+      if (owner) {
         diagnostics[botId] = buildDiagnostics(p, s, result, maxTimeouts);
       }
     }

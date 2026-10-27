@@ -77,6 +77,7 @@ BANNED_ATTRS = {"import_module", "__import__", "eval", "exec", "__builtins__", "
 def analyze(src):
     tree = ast.parse(src)
     imports, dynamic = [], []
+    # UX-F (DEF-R12): "l\u00ednea" con tilde, sin salir de ASCII en este script.
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             imports.extend(a.name for a in node.names)
@@ -84,9 +85,9 @@ def analyze(src):
             if node.level == 0 and node.module:
                 imports.append(node.module)
         elif isinstance(node, ast.Name) and node.id in BANNED_NAMES:
-            dynamic.append(f"linea {node.lineno}: referencia a {node.id}")
+            dynamic.append(f"l\u00ednea {node.lineno}: referencia a {node.id}")
         elif isinstance(node, ast.Attribute) and node.attr in BANNED_ATTRS:
-            dynamic.append(f"linea {node.lineno}: acceso a atributo {node.attr}")
+            dynamic.append(f"l\u00ednea {node.lineno}: acceso a atributo {node.attr}")
     return imports, dynamic
 
 out = []
@@ -95,7 +96,7 @@ for f in json.load(sys.stdin):
         imports, dynamic = analyze(f["content"])
         out.append({"path": f["path"], "imports": imports, "dynamic": dynamic, "error": None})
     except SyntaxError as e:
-        out.append({"path": f["path"], "imports": [], "dynamic": [], "error": f"SyntaxError: {e.msg} (linea {e.lineno})"})
+        out.append({"path": f["path"], "imports": [], "dynamic": [], "error": f"SyntaxError: {e.msg} (l\u00ednea {e.lineno})"})
 json.dump(out, sys.stdout)
 `;
 

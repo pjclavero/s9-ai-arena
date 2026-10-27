@@ -57,7 +57,8 @@ interface ModuleStatsView {
   moduleId: string | null;
   usesKind?: string;
   uses: number;
-  rejections: number;
+  /** UX-F (DEF-R12) · sólo para el dueño y el staff (diagnóstico). */
+  rejections?: number;
   damageDealt: number;
   finalState: string;
 }
@@ -78,7 +79,8 @@ interface BotStatsView {
   flagsTaken: number;
   minesDeployed: number;
   minesTriggered: number;
-  decisionTimeouts: number;
+  /** UX-F (DEF-R12) · sólo para el dueño y el staff (diagnóstico). */
+  decisionTimeouts?: number;
   distanceM?: number;
   disqualified: boolean;
   perModule: Record<string, ModuleStatsView>;
@@ -351,7 +353,7 @@ function StatsSection({ b, s }: { b: BattleDetail; s: StatsResponse }) {
                 <td>{st.kills}</td>
                 <td>{st.died ? `destruido a los ${ticksToClock(st.survivedTicks)}` : "sobrevivió"}</td>
                 <td>{typeof st.distanceM === "number" ? `${Math.round(st.distanceM)} m` : "—"}</td>
-                <td>{st.decisionTimeouts}</td>
+                <td>{typeof st.decisionTimeouts === "number" ? st.decisionTimeouts : "—"}</td>
                 <td>{objectives.length > 0 ? objectives.join(" · ") : "—"}</td>
               </tr>
             );
@@ -384,7 +386,7 @@ function StatsSection({ b, s }: { b: BattleDetail; s: StatsResponse }) {
                         ? `${m.uses} ${USES_KIND_TEXT[m.usesKind] ?? ""}`
                         : String(m.uses)}
                   </td>
-                  <td>{m.rejections}</td>
+                  <td>{typeof m.rejections === "number" ? m.rejections : "—"}</td>
                   <td>{m.damageDealt > 0 ? Math.round(m.damageDealt) : "—"}</td>
                   <td>{m.finalState === "operational" ? "operativo" : m.finalState}</td>
                 </tr>
