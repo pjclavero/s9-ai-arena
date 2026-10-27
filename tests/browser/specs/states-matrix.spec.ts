@@ -47,10 +47,8 @@ const cells = {
  * no se exige (se quita de aquí cuando el carril dueño lo corrija). Clave
  * `<ruta>|<estado>`; `*` = cualquier estado simulado de fallo.
  */
-const KNOWN: Record<string, string> = {
-  "#/maps/editor|*": "UX-C: MapEditorPage se queda en «Cargando…» para siempre si falla la lista de mapas",
-  [`#/viewer/${ZERO}|404`]: "UX-D: ViewerPage dice «no existe» sin role=alert y sigue pintando el HUD vacío",
-};
+// Vacía: editor de mapas y visor 404 corregidos en UX-R (3a7d227, 7a33000).
+const KNOWN: Record<string, string> = {};
 function known(route: string, state: string): string | undefined {
   return KNOWN[`${route}|${state}`] ?? (state in SIMULATED ? KNOWN[`${route}|*`] : undefined);
 }

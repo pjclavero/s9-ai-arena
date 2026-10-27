@@ -17,12 +17,9 @@ const VIEWPORTS = [
 
 /**
  * Desbordamientos conocidos de PÁGINAS de otros carriles. Clave `<ruta>|<ancho>`.
- * El visor fija el canvas de Phaser a su tamaño de diseño (UX-D).
  */
-const KNOWN: Record<string, string> = {
-  "#/viewer/00000000-0000-0000-0000-000000000000|768": "UX-D: canvas del visor de ancho fijo",
-  "#/viewer/00000000-0000-0000-0000-000000000000|390": "UX-D: canvas del visor de ancho fijo",
-};
+// Vacía: el canvas del visor sigue al contenedor desde UX-R (b5b8e8a, 7a33000).
+const KNOWN: Record<string, string> = {};
 
 async function overflow(page: Page): Promise<{ px: number; culprits: string[] }> {
   return page.evaluate(() => {
