@@ -29,6 +29,7 @@ import {
   type Mine,
   type Projectile,
 } from "./combat.js";
+import { ARENA_BOUNDARY_ID_PREFIX } from "../arena-map.js";
 import { createMode, type ArenaMap, type GameMode } from "./modes.js";
 import { PhysicsWorld, clamp, finite, finiteClamped, initPhysics, type Vec2 } from "./physics.js";
 import { buildObservation, radioReaches, validateRadio, type RadioMessage } from "./sensors.js";
@@ -99,6 +100,36 @@ export interface BotAgent {
   onEvent?(event: any): void;
 }
 
+/**
+ * Grosor (m) de cada muro de perímetro. Sobra con mucho para que un vehículo a
+ * velocidad máxima (13 m/s → 0,43 m por tick) no lo atraviese ni sin CCD, y no
+ * cuesta nada: son 4 cuerpos fijos por batalla.
+ */
+export const ARENA_BOUNDARY_THICKNESS_M = 10;
+
+/**
+ * Cierra la arena con cuatro muros FUERA del rectángulo [0,widthM]×[0,heightM],
+ * con la cara interior exactamente sobre el borde. Los muros norte/sur se alargan
+ * el grosor por cada lado para tapar las esquinas.
+ *
+ * Son muros de verdad (kind "wall"): bloquean el movimiento, la visión y los
+ * proyectiles, y los sensores los ven igual que cualquier otro muro (los bots ya
+ * reciben solo el tipo de impacto, nunca su id). No se añaden a `config.map`: el
+ * mapa de la batalla sigue siendo exactamente el pedido (sameArenaMap).
+ */
+export function addArenaBoundary(physics: PhysicsWorld, widthM: number, heightM: number): void {
+  const t = ARENA_BOUNDARY_THICKNESS_M;
+  const half = t / 2;
+  physics.addWall(`${ARENA_BOUNDARY_ID_PREFIX}s`, { x: widthM / 2, y: -half }, widthM / 2 + t, half);
+  physics.addWall(`${ARENA_BOUNDARY_ID_PREFIX}n`, { x: widthM / 2, y: heightM + half }, widthM / 2 + t, half);
+  physics.addWall(`${ARENA_BOUNDARY_ID_PREFIX}w`, { x: -half, y: heightM / 2 }, half, heightM / 2);
+  physics.addWall(`${ARENA_BOUNDARY_ID_PREFIX}e`, { x: widthM + half, y: heightM / 2 }, half, heightM / 2);
+}
+
+function insideArena(p: Vec2, map: Pick<ArenaMap, "widthM" | "heightM">): boolean {
+  return p.x >= 0 && p.x <= map.widthM && p.y >= 0 && p.y <= map.heightM;
+}
+
 export class Battle {
   readonly config: BattleConfig;
   private rng: Rng;
@@ -151,6 +182,12 @@ export class Battle {
     this.mode = createMode(config.ruleset, teams, config.map, config.participants);
 
     // --- Mundo estático
+    // Perímetro IMPLÍCITO (UX-07): la arena se cierra aquí, para TODO mapa, lo declare
+    // el documento o no. Antes dependía de que cada mapa trajera sus cuatro muros de
+    // borde; el del catálogo no los traía y en producción hubo vehículos a 26-45 m
+    // fuera de un mapa de 120×80. Se da de alta ANTES que los muros del mapa: el orden
+    // de alta es el orden estable de recorrido del solver (solverFingerprint).
+    addArenaBoundary(this.physics, config.map.widthM, config.map.heightM);
     for (const w of config.map.walls) {
       this.physics.addWall(w.id, w.position, w.halfW, w.halfH, w.rotation ?? 0);
     }
@@ -434,6 +471,14 @@ export class Battle {
       }
     }
     this.physics.step();
+    // Perímetro DURO (UX-07): el muro implícito para el movimiento; esta corrección
+    // absorbe la penetración residual del contacto blando cuando un vehículo empuja a
+    // otro contra el borde. Orden estable: el de this.vehicles.
+    const { widthM, heightM } = this.config.map;
+    for (const v of this.vehicles) {
+      const r = v.spec.radiusM;
+      this.physics.clampInsideBox(v.id, r, widthM - r, r, heightM - r);
+    }
 
     const posesAfter = this.poses();
     for (const v of this.vehicles) {
@@ -601,6 +646,11 @@ export class Battle {
         this.sounds.push({ position: impact, kind: "explosion", intensity: 1 });
         continue; // el proyectil muere al impactar
       }
+
+      // Fuera del mapa no hay nada que alcanzar: el proyectil DESAPARECE. Con el
+      // perímetro implícito el raycast de arriba ya lo hace impactar en el borde; esto
+      // es la red por si una geometría degenerada lo dejara pasar.
+      if (!insideArena(to, this.config.map)) continue;
 
       const ttl = p.ttlTicks - 1;
       if (ttl > 0) survivors.push({ ...p, position: to, ttlTicks: ttl });
@@ -828,6 +878,13 @@ export class Battle {
 
   private finish(winner: string | "draw"): void {
     this.finished = true;
+    // Snapshot FINAL garantizado: si la batalla acaba en un tick que no toca snapshot
+    // (cadencia de 3), el último que veía un espectador o el reproductor era anterior
+    // al golpe decisivo y su marcador no coincidía con el resultado (destapado al
+    // cambiar las trayectorias con el perímetro de UX-07). Los snapshots no entran en
+    // el hash de estado: no altera el determinismo.
+    const last = this.snapshots[this.snapshots.length - 1];
+    if (!last || last.tick !== this.tick) this.snapshots.push(this.publicSnapshot(this.poses()));
     this.result = {
       battleId: this.config.battleId,
       winner,

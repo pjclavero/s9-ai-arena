@@ -134,18 +134,18 @@ describe("R16 MapsPage — primitivas", () => {
     render(<MapsPage me={ME} />);
     await screen.findByText("a01");
 
-    // published → span con clase ok y texto "published"
-    const publishedBadge = screen.getByText("published");
+    // published → span con clase ok y texto legible (UX-C: «publicado», no el id «published»)
+    const publishedBadge = screen.getByText("publicado", { selector: "span" });
     expect(publishedBadge.tagName).toBe("SPAN");
     expect(publishedBadge.className).toBe("ok");
 
     // validated → span con clase warn
-    const validatedBadge = screen.getByText("validated");
+    const validatedBadge = screen.getByText("validado, sin publicar");
     expect(validatedBadge.tagName).toBe("SPAN");
     expect(validatedBadge.className).toBe("warn");
 
     // draft → span sin clase extra (variant neutral)
-    const draftBadge = screen.getByText("draft");
+    const draftBadge = screen.getByText("borrador");
     expect(draftBadge.tagName).toBe("SPAN");
     expect(draftBadge.className).toBe("");
 
