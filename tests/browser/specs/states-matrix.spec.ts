@@ -57,12 +57,12 @@ async function record(page: Page, route: string, state: string, mustShowError: b
   await visit(page, route);
   const text = await mainText(page);
   const error = await showsError(page);
+  // Lectura instantánea (evaluate): `locator.getAttribute` ESPERA al elemento y
+  // colgaba la celda entera cuando la pantalla no tiene error.
   const kind =
-    (await page
-      .locator("main [data-error-kind]")
-      .first()
-      .getAttribute("data-error-kind")
-      .catch(() => null)) ?? undefined;
+    (await page.evaluate(
+      () => document.querySelector("main [data-error-kind]")?.getAttribute("data-error-kind") ?? null,
+    )) ?? undefined;
   const cell: Cell = { route, state, error, forbidden: forbiddenLines(text), excerpt: text.slice(0, 300), kind };
   cells.push(cell);
   expect.soft(cell.forbidden, `${route} [${state}]: texto prohibido`).toEqual([]);

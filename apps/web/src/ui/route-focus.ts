@@ -14,11 +14,19 @@
 /** Atributo que marca el elemento enfocado por la navegación (diagnóstico y tests). */
 export const ROUTE_FOCUS_ATTR = "data-route-focus";
 
-/** Elemento al que va el foco tras navegar: primer h1/h2 del `<main>` o el `<main>`. */
+/**
+ * Elemento al que va el foco tras navegar: el primer h2 del `<main>` (el título
+ * de la PANTALLA; en las rutas públicas el h1 es el nombre del sitio, igual en
+ * todas), si no el h1, y si no el propio `<main>`.
+ */
 export function routeFocusTarget(doc: Document): HTMLElement | null {
   const main = doc.querySelector("main");
   if (!main) return null;
-  return (main.querySelector("h1, h2") as HTMLElement | null) ?? (main as HTMLElement);
+  return (
+    (main.querySelector("h2") as HTMLElement | null) ??
+    (main.querySelector("h1") as HTMLElement | null) ??
+    (main as HTMLElement)
+  );
 }
 
 /** Enfoca el destino sin hacerlo tabulable (tabindex=-1) y lo marca. */

@@ -270,13 +270,15 @@ describe("UX-E · ErrorBoundary", () => {
 
 describe("UX-E · foco tras navegar y «Saltar al contenido»", () => {
   it("tras un hashchange el foco va al primer encabezado del <main>", () => {
-    document.body.innerHTML = `<nav><a id="l" href="#/teams">Equipos</a></nav><main><h2>Equipos</h2><p>x</p></main>`;
+    // En las rutas públicas el h1 es el nombre del sitio: el foco va al h2 de la pantalla.
+    document.body.innerHTML = `<nav><a id="l" href="#/teams">Equipos</a></nav><main><h1>S9 AI Arena</h1><h2>Equipos</h2><p>x</p></main>`;
     const queue: Array<() => void> = [];
     const off = installRouteFocus(window, (fn) => queue.push(fn));
     (document.getElementById("l") as HTMLElement).focus();
     window.dispatchEvent(new HashChangeEvent("hashchange"));
     queue.forEach((fn) => fn());
     expect(document.activeElement?.tagName).toBe("H2");
+    expect(document.activeElement?.textContent).toBe("Equipos");
     expect(document.activeElement?.hasAttribute(ROUTE_FOCUS_ATTR)).toBe(true);
     expect(document.activeElement?.getAttribute("tabindex")).toBe("-1");
     off();
