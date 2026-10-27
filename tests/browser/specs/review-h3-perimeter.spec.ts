@@ -92,7 +92,7 @@ test.describe("@golden [REVIEW] H3 versión antigua + perímetro + diagnóstico 
     page,
     browser,
   }, info) => {
-    test.setTimeout(1_200_000);
+    test.setTimeout(840_000);
     const base = info.project.use.baseURL;
 
     // --- cuenta A: bot JS fugitivo, publicado y público ---------------------------

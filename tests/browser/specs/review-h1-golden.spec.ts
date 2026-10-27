@@ -55,7 +55,7 @@ test.describe("@golden [REVIEW] H1 usuario nuevo de extremo a extremo", () => {
     page,
     browser,
   }, info) => {
-    test.setTimeout(1_200_000);
+    test.setTimeout(840_000);
     const problems = watchProblems(page);
     const owner = await registerNewUser(page);
     const api = new PublicApi(page.request, owner);
