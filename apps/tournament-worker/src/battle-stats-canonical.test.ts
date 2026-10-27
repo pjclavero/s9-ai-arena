@@ -115,6 +115,10 @@ describe("H3 · battle_stats: una única forma canónica (la del job de E8)", ()
       "minesDeployed",
       "minesTriggered",
       "decisionTimeouts",
+      // UX-D/UX-06 · aditivos: decisiones aplicadas, rechazos por motivo y distancia.
+      "decisions",
+      "rejectionsByReason",
+      "distanceM",
       "disqualified",
       "cpuMs",
       "perModule",

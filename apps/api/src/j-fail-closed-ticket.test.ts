@@ -47,6 +47,26 @@ beforeAll(async () => {
     })
     .returning("id");
   battleId = row.id as string;
+  // UX-D (G-08) · el ticket sigue la política de lectura de la batalla: la sesión
+  // autenticada de abajo es la DUEÑA de un bot participante. Es público: con la
+  // puerta encendida el directo de una batalla de sólo bots públicos es anónimo.
+  const owner = await h.db("users").where({ email: DEV_USERS.user }).first();
+  const catalogVersion = (await h.db("catalog_versions").first()).catalog_version;
+  const [bot] = await h
+    .db("bots")
+    .insert({ name: "j-bot-propio", owner_id: owner.id, visibility: "public" })
+    .returning("id");
+  await h.db("bot_loadouts").insert({
+    bot_id: bot.id,
+    revision: 1,
+    catalog_version: catalogVersion,
+    chassis: "chassis.scout@1",
+    modules: JSON.stringify([]),
+  });
+  await h
+    .db("bot_versions")
+    .insert({ bot_id: bot.id, version: 1, state: "published", runtime: "python", loadout_revision: 1 });
+  await h.db("participants").insert({ battle_id: battleId, bot_id: bot.id, version: 1, team: "red" });
 }, 120_000);
 
 afterAll(async () => {
@@ -76,7 +96,7 @@ describe("Carril J · con la capability APAGADA no se emite ticket de espectador
     expect(a.body.error).toBe(b.body.error);
   });
 
-  it("una sesión AUTENTICADA sí obtiene ticket con la puerta apagada, y NO va marcado anónimo", async () => {
+  it("una sesión AUTENTICADA que puede leer la batalla sí obtiene ticket con la puerta apagada, y NO va marcado anónimo", async () => {
     const token = await tokenFor(h.db, DEV_USERS.user);
     const r = await request(app(false))
       .post(`/battles/${battleId}/spectate-ticket`)
@@ -85,6 +105,14 @@ describe("Carril J · con la capability APAGADA no se emite ticket de espectador
     const claims = verifySpectateTicket(r.body.ticket);
     expect(claims).not.toBeNull();
     expect(claims!.anon).toBe(false);
+  });
+
+  it("UX-D (G-08) · una sesión AJENA a la batalla no obtiene ticket: el mismo 404", async () => {
+    const token = await tokenFor(h.db, DEV_USERS.developer);
+    const r = await request(app(false))
+      .post(`/battles/${battleId}/spectate-ticket`)
+      .set("Authorization", `Bearer ${token}`);
+    expect(r.status).toBe(404);
   });
 });
 
