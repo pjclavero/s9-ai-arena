@@ -94,6 +94,8 @@ export interface BotEligibility {
   latest?: BotVersionSummary;
   /** Una frase para el usuario: qué versión juega, o por qué no puede jugar y qué hacer. */
   summary: string;
+  /** Sufijo corto para la opción del desplegable: «(v1)», «(v1) · última versión: v2 rechazada». */
+  short?: string;
 }
 
 /**
@@ -107,7 +109,13 @@ export function botEligibility(bot: BotSummary, versions: BotVersionSummary[] | 
     if (v == null) {
       return { eligible: false, playable: [], summary: "no elegible: ninguna versión publicada" };
     }
-    return { eligible: true, playable: [v], defaultVersion: v, summary: `juega la v${v} (publicada)` };
+    return {
+      eligible: true,
+      playable: [v],
+      defaultVersion: v,
+      summary: `juega la v${v} (publicada)`,
+      short: `(v${v})`,
+    };
   }
   const sorted = [...versions].sort((a, b) => b.version - a.version);
   const latest = sorted[0];
@@ -142,6 +150,7 @@ export function botEligibility(bot: BotSummary, versions: BotVersionSummary[] | 
     defaultVersion: def,
     latest,
     summary: `juega la v${def} (publicada)${latestNote}`,
+    short: `(v${def})${latestNote}`,
   };
 }
 
@@ -372,7 +381,7 @@ export function BattleNewPage(props: { me: Me }) {
               const be = eligibility(b.id)!;
               return (
                 <option key={b.id} value={b.id} disabled={!be.eligible}>
-                  {b.name} — {be.summary}
+                  {be.eligible ? `${b.name} ${be.short}` : `${b.name} — ${be.summary}`}
                 </option>
               );
             })}
@@ -380,7 +389,7 @@ export function BattleNewPage(props: { me: Me }) {
         </label>
         {e?.eligible && (
           <label>
-            Versión del bot {side}{" "}
+            Versión publicada ({side}){" "}
             <select
               aria-label={`versión ${side}`}
               value={String(chosenVersion(botId, picked) ?? "")}

@@ -255,9 +255,13 @@ describe("UX-03 · selector de participantes", () => {
     await screen.findByTestId("ineligible-bots"); // versiones cargadas
     const opt = await optionFor("bot rojo", "bot_old");
     expect(opt.disabled).toBe(false);
-    expect(opt.textContent ?? "").toMatch(/juega la v1 \(publicada\) · última versión: v2 rechazada/);
+    // Etiqueta corta en el desplegable (la que usa golden-path) y frase completa debajo.
+    expect(opt.textContent).toBe("Veterano (v1) · última versión: v2 rechazada");
     await userEvent.selectOptions(screen.getByLabelText("mapa"), "map_a@2");
     await userEvent.selectOptions(screen.getByLabelText("bot rojo"), "bot_old");
+    expect(screen.getByTestId("bot-status-rojo").textContent).toMatch(
+      /juega la v1 \(publicada\) · última versión: v2 rechazada/,
+    );
     await userEvent.selectOptions(screen.getByLabelText("bot azul"), "bot_multi");
     await userEvent.click(screen.getByText("Crear batalla"));
     await screen.findByText(/creada y encolada/i);
