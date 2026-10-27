@@ -28,6 +28,7 @@ import { BracketPage } from "./pages/BracketPage.js"; // R12 (slice 1, solo lect
 import { BattlesPage } from "./pages/BattlesPage.js";
 // R9 · crear batalla de práctica desde la UI (usa POST /battles seguro; ver BattleNewPage).
 import { BattleNewPage } from "./pages/BattleNewPage.js";
+import { BattleDetailPage } from "./pages/BattleDetailPage.js"; // UX-D · #/battles/<uuid>
 import { MapsPage } from "./pages/MapsPage.js";
 import { MapEditorPage } from "./pages/MapEditorPage.js";
 import { ReplaysPage } from "./pages/ReplaysPage.js"; // R7-A · listado global de replays
@@ -77,6 +78,7 @@ export function matchPanelRoute(
   | { kind: "tournament"; id: string }
   | { kind: "battles"; botFilter?: string }
   | { kind: "battle-new" }
+  | { kind: "battle"; id: string }
   | null {
   // R12 (slice 1) · el cuadro va ANTES del detalle: si no, "/tournaments/<id>/bracket"
   // lo captura el patrón de detalle (que solo mira el primer segmento tras el id).
@@ -85,6 +87,9 @@ export function matchPanelRoute(
   const detail = /^#\/tournaments\/([^/?]+)/.exec(route);
   if (detail) return { kind: "tournament", id: decodeURIComponent(detail[1]) };
   if (/^#\/battles\/new/.test(route)) return { kind: "battle-new" }; // R9 (antes del match general de #/battles)
+  // UX-D · detalle de batalla: SÓLO un UUID (`#/battles/<basura>` sigue siendo 404).
+  const battle = /^#\/battles\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?]|$)/i.exec(route);
+  if (battle) return { kind: "battle", id: battle[1] };
   // FC-D (D8): anclado — `#/battles/<basura>` es 404, no la lista.
   const battles = /^#\/battles\/?(?:\?(.*))?$/.exec(route);
   if (battles) {
@@ -357,6 +362,8 @@ export function App() {
             <TournamentDetailPage id={panelRoute.id} me={me} />
           ) : panelRoute?.kind === "battle-new" ? ( // R9
             <BattleNewPage me={me} />
+          ) : panelRoute?.kind === "battle" ? (
+            <BattleDetailPage key={panelRoute.id} id={panelRoute.id} />
           ) : panelRoute?.kind === "battles" ? (
             <BattlesPage botFilter={panelRoute.botFilter} />
           ) : (
