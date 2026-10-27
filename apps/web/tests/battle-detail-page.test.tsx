@@ -312,6 +312,26 @@ describe("UX-D · permiso incorrecto", () => {
   });
 });
 
+describe("UX-D · las batallas de un torneo se nombran por bot, no por UUID", () => {
+  it("TournamentDetailPage usa botName y versión", async () => {
+    const { TournamentDetailPage } = await import("../src/pages/TournamentDetailPage.js");
+    mockApi({
+      "/tournaments/t1": () =>
+        json({ id: "t1", name: "Copa", format: "league", mode: "deathmatch", state: "running", entryCount: 2 }),
+      "/tournaments/t1/battles": () => json({ items: [{ ...BATTLE, round: 1 }] }),
+      "/bots?ownerId=u1": () => json({ items: [] }),
+    });
+    render(
+      <TournamentDetailPage
+        id="t1"
+        me={{ id: "u1", displayName: "u", email: "u@x.invalid", roles: ["user"], twoFactorEnabled: false }}
+      />,
+    );
+    expect((await screen.findAllByText(/Tanque Rojo v3 vs Muro Azul v1/)).length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toContain(MINE.slice(0, 8));
+  });
+});
+
 describe("UX-D · lista de batallas con nombres y enlace al detalle", () => {
   it("participantes por nombre y versión, mapa por nombre, modo en palabras", async () => {
     mockApi({ "/battles": () => json({ items: [BATTLE] }) });
