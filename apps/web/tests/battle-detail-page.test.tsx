@@ -361,4 +361,19 @@ describe("UX-R · batalla en curso anunciada con LiveStatus", () => {
     expect(note.getAttribute("aria-busy")).toBe("true");
     expect(note.textContent).toMatch(/En curso/);
   });
+
+  it("la columna del lado del campo se llama «Bando» (no es un equipo de «Equipos»)", async () => {
+    mockApi({
+      [`/battles/${ID}`]: () => json(BATTLE),
+      [`/battles/${ID}/stats`]: () => json({ battleId: ID, status: "pending", perBot: {}, diagnostics: {} }),
+      [`/battles/${ID}/audit`]: () => json({}),
+    });
+    render(<BattleDetailPage id={ID} />);
+    const table = await screen.findByTestId("battle-participants");
+    const headers = within(table)
+      .getAllByRole("columnheader")
+      .map((h) => h.textContent);
+    expect(headers).toContain("Bando");
+    expect(headers).not.toContain("Equipo");
+  });
 });

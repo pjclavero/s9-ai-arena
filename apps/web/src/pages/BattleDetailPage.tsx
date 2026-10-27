@@ -259,7 +259,8 @@ function BattleHeader({ b, audit }: { b: BattleDetail; audit: AuditView | null }
           <tr>
             <th>Bot</th>
             <th>Versión</th>
-            <th>Equipo</th>
+            {/* UX-R · el lado del campo es el BANDO (como en «Nueva batalla»), no un equipo de «Equipos». */}
+            <th>Bando</th>
             <th>Resultado</th>
           </tr>
         </thead>
