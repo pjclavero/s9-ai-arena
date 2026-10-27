@@ -47,7 +47,8 @@ import { api, type Me } from "../api.js";
 import { LoadoutEditor, type LoadoutDraft } from "./LoadoutEditor.js";
 import { BotDetailPage } from "./BotDetailPage.js";
 import { useResource, ResourceView, type Resource } from "../resource.js";
-import { FormError } from "../ui/primitives.js";
+import { FormError, LiveStatus } from "../ui/primitives.js";
+import { useSessionDraft } from "../ui/draft.js";
 import { BOT_TEMPLATES, HOOK_HELP, isUntouchedTemplate, type BotRuntime } from "../bot-templates.js";
 import { BuildDiagnosisView, diagnoseBuild } from "../build-diagnosis.js";
 import type { ModuleDefinition } from "../../../../packages/module-catalog/types.js";
@@ -190,8 +191,14 @@ function BotsListPage(props: {
   const [focusRequest, setFocusRequest] = useState<number | null>(null);
   const [newName, setNewName] = useState("");
   // UX-B · B3: el editor arranca con una plantilla VÁLIDA del runtime, nunca vacío.
-  const [runtime, setRuntime] = useState<BotRuntime>("python");
-  const [pasted, setPasted] = useState(BOT_TEMPLATES.python);
+  // UX-R · código y runtime en BORRADOR de sesión (useSessionDraft): si la sesión
+  // caduca de verdad y el panel se desmonta, lo escrito vuelve al iniciar sesión.
+  const runtimeDraft = useSessionDraft("bots:upload:runtime", "python");
+  const runtime: BotRuntime = runtimeDraft.value === "node" ? "node" : "python";
+  const setRuntime = (r: BotRuntime) => runtimeDraft.setValue(r);
+  const codeDraft = useSessionDraft("bots:upload:code", BOT_TEMPLATES.python);
+  const pasted = codeDraft.value;
+  const setPasted = codeDraft.setValue;
   // Versión de la que se cargó el código del editor (para decir qué se edita).
   const [editingFrom, setEditingFrom] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
@@ -499,6 +506,9 @@ function BotsListPage(props: {
       // aquí es su estado, no el de ninguna anterior.
       setFocusRequest(created?.version ?? null);
       setEditingFrom(null);
+      // Ya está en el servidor: el borrador local deja de hacer falta.
+      codeDraft.clear();
+      runtimeDraft.clear();
       pollsRef.current = 0;
       setPollExhausted(false);
       reloadVersions({ silent: true });
@@ -629,6 +639,7 @@ function BotsListPage(props: {
                       : undefined
                   }
                   loadedRevision={current?.revision}
+                  draftKey={`loadout:${selected.id}:r${current?.revision ?? 0}`}
                   onSave={saveLoadout}
                 />
 
@@ -638,11 +649,12 @@ function BotsListPage(props: {
                     <h2>
                       Última subida: v{focused.version} · {focused.state}
                     </h2>
-                    <p role="status" aria-live="polite">
+                    {/* UX-R · LiveStatus: se anuncia sin mover el foco y marca aria-busy mientras valida. */}
+                    <LiveStatus busy={focused.state === "validating"} data-testid="focused-status">
                       {focused.state === "validating"
                         ? "Validación en curso…"
                         : pendingActionFor(focused.state) || "sin acciones pendientes"}
-                    </p>
+                    </LiveStatus>
                     {focusedRejection && (
                       <p className="error" data-testid="focused-rejection">
                         Motivo del rechazo de v{focused.version}: {focusedRejection}
@@ -732,6 +744,11 @@ function BotsListPage(props: {
                   <p className="muted" data-testid="hook-help">
                     {HOOK_HELP[runtime]}
                   </p>
+                  {codeDraft.restored && !isUntouchedTemplate(pasted) && (
+                    <p className="warn" role="status" data-testid="code-draft-restored">
+                      Recuperado el código sin subir de esta sesión (aún no es ninguna versión).
+                    </p>
+                  )}
                   {editingFrom !== null && (
                     <p className="warn" data-testid="editing-from">
                       Editando el código de v{editingFrom}: al subirlo se crea la v{nextVersion}; v{editingFrom} no
@@ -758,6 +775,7 @@ function BotsListPage(props: {
                     onClick={() => {
                       setPasted(BOT_TEMPLATES[runtime]);
                       setEditingFrom(null);
+                      codeDraft.clear();
                     }}
                   >
                     Restaurar la plantilla de {runtime === "node" ? "JavaScript" : "Python"}
@@ -822,9 +840,9 @@ function BotsListPage(props: {
                     ) : (
                       <>
                         {!buildFinished && (
-                          <p role="status" aria-live="polite" data-testid="pipeline-running">
+                          <LiveStatus busy data-testid="pipeline-running">
                             En curso: comprobando cada {Math.round(pollIntervalMs / 1000) || 1} s…
-                          </p>
+                          </LiveStatus>
                         )}
                         <table>
                           <tbody>

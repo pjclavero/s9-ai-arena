@@ -33,7 +33,7 @@ import {
   type BattleLike,
   type ParticipantLike,
 } from "../battle-result.js";
-import { StatusBadge } from "../ui/primitives.js";
+import { LiveStatus, StatusBadge } from "../ui/primitives.js";
 
 interface DetailParticipant extends ParticipantLike {
   cpuMs?: number | null;
@@ -207,12 +207,14 @@ function BattleHeader({ b, audit }: { b: BattleDetail; audit: AuditView | null }
         </p>
       )}
       {(b.status === "scheduled" || b.status === "running") && (
-        <p role="status" data-testid="battle-live-note">
+        // UX-R · LiveStatus: el paso de «en cola» a «en curso» se anuncia (aria-live) y
+        // aria-busy dice que el resultado aún no está.
+        <LiveStatus busy data-testid="battle-live-note">
           {b.status === "scheduled"
             ? "En cola: la ejecutará el servicio de batallas en cuanto haya hueco. Esta página se actualiza sola."
             : "En curso. Esta página se actualiza sola; el resultado aparecerá al terminar."}{" "}
           {b.status === "running" && <a href={`#/viewer/${encodeURIComponent(b.id)}`}>Ver en directo</a>}
-        </p>
+        </LiveStatus>
       )}
       <dl data-testid="battle-facts">
         <dt>Modo</dt>

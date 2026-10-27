@@ -93,7 +93,7 @@ export function SystemPage(_props: { me: Me }) {
         <h2>Estado del sistema</h2>
         {!status.realRunnerEnabled && (
           <p className="warn" role="status" data-testid="execution-unavailable">
-            Battle execution unavailable in this environment (runner real no habilitado).
+            Las batallas no se pueden ejecutar en este entorno: el ejecutor real de batallas no está habilitado.
           </p>
         )}
         <table>
