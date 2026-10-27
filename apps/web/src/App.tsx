@@ -19,6 +19,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { api, bootstrapSession, logout, onSessionExpired, getToken, type Me } from "./api.js";
 import { describeApiError } from "./errors.js";
+import { setDraftOwner } from "./ui/draft.js";
 import type { ModuleDefinition } from "../../../packages/module-catalog/types.js";
 import { LoginPage } from "./pages/LoginPage.js";
 import { BotsPage } from "./pages/BotsPage.js";
@@ -179,7 +180,10 @@ export function App() {
     setBootError(null);
     bootstrapSession()
       .then((who) => {
-        if (alive && who) setMe(who);
+        if (alive && who) {
+          setDraftOwner(who.id);
+          setMe(who);
+        }
       })
       .catch((e: unknown) => {
         if (alive) setBootError(e);
@@ -306,6 +310,8 @@ export function App() {
               notice={notice}
               onLogin={(who) => {
                 setNotice("");
+                // UX-F (DEF-R2) · borradores de OTRA cuenta: fuera, antes de pintar el panel.
+                setDraftOwner(who.id);
                 setMe(who);
               }}
             />

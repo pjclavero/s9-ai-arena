@@ -18,6 +18,7 @@
  * convertir un fallo en «lista vacía».
  */
 import { ApiRequestError, describeApiError } from "./errors.js";
+import { clearAllDrafts } from "./ui/draft.js";
 export { ApiRequestError, describeApiError } from "./errors.js";
 export type { ApiErrorKind, ApiErrorClass, DescribedError } from "./errors.js";
 
@@ -308,4 +309,6 @@ export async function logout(): Promise<void> {
   }
   accessToken = null;
   writeSessionHint(false);
+  // UX-F (DEF-R2) · «Salir» es explícito: lo escrito no sobrevive al cambio de cuenta.
+  clearAllDrafts();
 }
