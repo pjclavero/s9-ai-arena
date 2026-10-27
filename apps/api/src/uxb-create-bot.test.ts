@@ -14,7 +14,7 @@ import { createApp } from "./app.js";
 let h: TestDbHandle;
 let app: Express;
 let token: string;
-const post = (body: unknown) =>
+const post = (body: object) =>
   request(app)
     .post("/bots")
     .set({ Authorization: `Bearer ${token}` })
