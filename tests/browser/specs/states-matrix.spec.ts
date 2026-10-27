@@ -49,9 +49,6 @@ const cells = {
  */
 const KNOWN: Record<string, string> = {
   "#/maps/editor|*": "UX-C: MapEditorPage se queda en «Cargando…» para siempre si falla la lista de mapas",
-  "#/bots|429": "UX-B: BotsPage no enseña el fallo de la lista de bots con 429/503/red",
-  "#/bots|503": "UX-B: BotsPage no enseña el fallo de la lista de bots con 429/503/red",
-  "#/bots|api-unavailable": "UX-B: BotsPage no enseña el fallo de la lista de bots con 429/503/red",
   [`#/viewer/${ZERO}|404`]: "UX-D: ViewerPage dice «no existe» sin role=alert y sigue pintando el HUD vacío",
 };
 function known(route: string, state: string): string | undefined {
@@ -154,10 +151,12 @@ test.describe("@fase1 UX-E matriz de estados", () => {
   for (const [state, respond] of Object.entries(SIMULATED)) {
     test(`API con ${state}: cada pantalla del panel dice que ha fallado`, async ({ page }) => {
       test.setTimeout(240_000);
-      await enter(page);
+      // El fallo se instala ANTES de entrar: tras el login el panel ya está en
+      // #/bots y volver a esa ruta no recarga la lista (se vería la del login).
       await page.route("**/api/v1/**", (route) =>
         isSessionOrCatalog(route.request().url()) ? route.continue() : respond(route),
       );
+      await enter(page);
       for (const r of PANEL_ROUTES) await record(page, r, state, !NO_API_FOR_USER.has(r));
     });
   }

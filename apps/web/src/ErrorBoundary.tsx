@@ -75,7 +75,7 @@ export class ErrorBoundary extends Component<Props, State> {
             <button type="button" onClick={() => this.setState({ error: null })}>
               Reintentar
             </button>{" "}
-            <a href="#/bots">Volver al inicio</a>
+            <a href="#/">Volver al inicio</a>
           </p>
         </div>
       );

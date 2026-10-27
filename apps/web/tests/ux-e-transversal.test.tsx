@@ -228,7 +228,7 @@ describe("UX-E · mensajes de error sin basura técnica", () => {
   it("ErrorState 403 ofrece volver al inicio (no deja al usuario sin salida)", () => {
     render(<ErrorState label="el sistema" error={new ApiRequestError(403, { message: "Requiere rol admin" })} />);
     expect(screen.getByText("No tienes permiso para esto")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Volver al inicio" }).getAttribute("href")).toBe("#/bots");
+    expect(screen.getByRole("link", { name: "Volver al inicio" }).getAttribute("href")).toBe("#/");
   });
 });
 

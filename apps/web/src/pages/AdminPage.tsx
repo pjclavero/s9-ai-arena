@@ -60,7 +60,7 @@ export function AdminPage(props: { me: Me }) {
         <p className="error">
           <strong>No tienes permiso para esto</strong>: esta zona es sólo para cuentas con rol de administrador.
         </p>
-        <a href="#/bots">Volver al inicio</a>
+        <a href="#/">Volver al inicio</a>
       </div>
     );
   }

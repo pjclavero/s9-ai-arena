@@ -74,8 +74,8 @@ export function ErrorState(props: { label: string; message?: string; error?: unk
       <p className="error">
         No se pudo cargar {props.label}: {detail}
       </p>
-      {d?.kind === "unauthorized" && <a href="#/bots">Inicia sesión de nuevo</a>}
-      {(d?.kind === "notFound" || d?.kind === "forbidden") && <a href="#/bots">Volver al inicio</a>}
+      {d?.kind === "unauthorized" && <a href="#/">Inicia sesión de nuevo</a>}
+      {(d?.kind === "notFound" || d?.kind === "forbidden") && <a href="#/">Volver al inicio</a>}
       {props.onRetry && (
         <button type="button" onClick={() => props.onRetry?.()}>
           Reintentar
