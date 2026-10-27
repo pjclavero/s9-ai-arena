@@ -2079,8 +2079,9 @@ components:
       type: object
       properties:
         rank: { type: integer }
-        botId: { type: string }
-        botName: { type: string }
+        botId: { type: string, nullable: true, description: 'UX-F (DEF-R3) · null si es un bot privado que el solicitante no puede identificar' }
+        botName: { type: string, description: '«Bot privado» si el solicitante no puede identificarlo' }
+        private: { type: boolean, description: 'true = bot no identificable para el solicitante' }
         rating: { type: number }
         wins: { type: integer }
         losses: { type: integer }
@@ -2138,7 +2139,8 @@ components:
         slot: { type: string, nullable: true, description: 'Identificador único del hueco en el cuadro (matches_tournament_slot_idx)' }
         pairing: { type: object, additionalProperties: true, description: 'Fuentes del emparejamiento (home/away/round/slot), estructura del bracket' }
         state: { enum: [scheduled, running, finished, failed] }
-        winnerBotId: { type: string, nullable: true }
+        winnerBotId: { type: string, nullable: true, description: 'UX-F (DEF-R3) · null también si el ganador es un bot privado ajeno (winnerPrivate)' }
+        winnerPrivate: { type: boolean, description: 'el ganador es un bot que el solicitante no puede identificar' }
         winnerTeamId: { type: string, nullable: true }
         final: { type: boolean, description: 'true si es la final del torneo (modo visible, cap. 19.1)' }
 

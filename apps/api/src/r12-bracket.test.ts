@@ -77,6 +77,9 @@ describe("R12 · GET /tournaments/{tournamentId}/matches (slice 1, solo lectura)
       },
     ]);
 
+    // UX-F (DEF-R3) · el ganador es un bot PÚBLICO: un anónimo sólo puede ver el id
+    // de un bot que puede identificar (el caso privado: uxf-tournament-access.test.ts).
+    await h.db("bots").where({ id: bots[0].botId }).update({ visibility: "public" });
     const res = await request(app).get(`/tournaments/${tournamentId}/matches`); // sin Authorization
     expect(res.status).toBe(200);
     expect(res.body.matches.length).toBe(3);

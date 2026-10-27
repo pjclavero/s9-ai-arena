@@ -17,6 +17,8 @@ export interface TournamentMatch {
   pairing: Record<string, unknown>;
   state: string;
   winnerBotId: string | null;
+  /** UX-F (DEF-R3) · el ganador es un bot privado que no puedes identificar. */
+  winnerPrivate?: boolean;
   winnerTeamId: string | null;
   final: boolean;
 }
@@ -67,12 +69,16 @@ function BracketRounds({ matches }: { matches: TournamentMatch[] }) {
                   {m.final && <span data-testid="bracket-final-mark"> · FINAL</span>}
                   <br />
                   <small data-state={m.state}>{labelOf(MATCH_STATE_NAME, m.state)}</small>
-                  {(m.winnerBotId || m.winnerTeamId) && (
+                  {(m.winnerBotId || m.winnerPrivate || m.winnerTeamId) && (
                     <>
                       <br />
                       <small data-testid="bracket-winner">
                         Ganador:{" "}
-                        {m.winnerBotId ? botLabel({ botId: m.winnerBotId }) : `equipo ${m.winnerTeamId!.slice(0, 8)}`}
+                        {m.winnerBotId
+                          ? botLabel({ botId: m.winnerBotId })
+                          : m.winnerPrivate
+                            ? "bot privado"
+                            : `equipo ${m.winnerTeamId!.slice(0, 8)}`}
                       </small>
                     </>
                   )}

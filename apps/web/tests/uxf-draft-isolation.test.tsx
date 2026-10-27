@@ -48,7 +48,10 @@ describe("DEF-R2 · borradores aislados por cuenta", () => {
   });
 
   it("«Salir» borra todas las claves s9_draft:*", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 204 })),
+    );
     setDraftOwner("user-a");
     const a = renderHook(() => useSessionDraft("bots:upload:code", "plantilla"));
     act(() => a.result.current.setValue("SECRETO-DE-A"));

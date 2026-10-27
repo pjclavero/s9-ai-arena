@@ -137,7 +137,15 @@ describe("verifyReplay (operación 53/53 del contrato de E1)", () => {
   }, 120000);
 
   it("UX-F (DEF-R1): replay real del motor 0.1.0 ⇒ «otra versión del motor», nunca «manipulado»", async () => {
-    const fixture = join(__dirname, "..", "..", "replay-service", "tests", "fixtures", "engine-0.1.0-sin-perimetro.replay.jsonl.gz");
+    const fixture = join(
+      __dirname,
+      "..",
+      "..",
+      "replay-service",
+      "tests",
+      "fixtures",
+      "engine-0.1.0-sin-perimetro.replay.jsonl.gz",
+    );
     const old = fromJsonl(gunzipSync(readFileSync(fixture)).toString("utf8"));
     const s = ingestReplay(dir, old, { official: true });
     const id = await insertBattle(h.db, s.path, {
