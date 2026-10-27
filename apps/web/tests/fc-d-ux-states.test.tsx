@@ -11,7 +11,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, fireEvent } from "@testing-library/react";
-import { api, setToken, onSessionExpired, ApiRequestError } from "../src/api.js";
+import { api, setToken, onSessionExpired, ApiRequestError, SESSION_HINT_KEY } from "../src/api.js";
 import { describeApiError } from "../src/errors.js";
 import { App, matchStaticPanelRoute, matchPanelRoute } from "../src/App.js";
 import { ErrorState, FormError } from "../src/ui/primitives.js";
@@ -28,6 +28,10 @@ beforeEach(() => {
   setToken(null);
   onSessionExpired(null);
   window.location.hash = "";
+  // UX-E (C-G13) · estos casos simulan un navegador CON cookie de sesión: el
+  // arranque sólo pregunta a /auth/refresh si hay marca de sesión previa (el
+  // caso anónimo, sin marca, está en ux-e-transversal.test.tsx).
+  window.localStorage.setItem(SESSION_HINT_KEY, "1");
 });
 
 function jsonRes(status: number, body?: unknown) {
