@@ -487,6 +487,10 @@ export function MapEditorPage() {
           ))}
         </div>
       </fieldset>
+      <p data-testid="editor-perimeter-note">
+        El borde del mapa es un muro: en batalla nadie sale del rectángulo de {map.widthM}×{map.heightM} m, así que no
+        hace falta dibujar el perímetro. Los spawns y muros deben quedar dentro.
+      </p>
       <div role="toolbar" aria-label="Herramientas">
         <button
           type="button"
