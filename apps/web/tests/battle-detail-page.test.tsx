@@ -190,8 +190,13 @@ describe("UX-D · D1 resultado claro", () => {
     });
     render(<BattleDetailPage id={ID} />);
     const winner = await screen.findByTestId("battle-winner");
-    expect(winner.textContent).toContain("gana red (Tanque Rojo v3)");
-    expect(winner.textContent).toContain("red: 1 · blue: 0");
+    // UX-F (DEF-R6) · rojo/azul como en el selector de «Nueva batalla», no el código del motor.
+    expect(winner.textContent).toContain("gana rojo (Tanque Rojo v3)");
+    expect(winner.textContent).toContain("rojo: 1 · azul: 0");
+    expect(winner.textContent).not.toMatch(/\b(red|blue)\b/);
+    const teamCells = screen.getAllByTestId("participant-row").map((r) => r.textContent ?? "");
+    expect(teamCells[0]).toContain("rojo");
+    expect(teamCells[1]).toContain("azul");
     expect(screen.getByTestId("battle-duration").textContent).toBe("5:00 de partida (9000 ticks a 30/s)");
     const facts = screen.getByTestId("battle-facts").textContent ?? "";
     expect(facts).toContain("todos contra todos");
@@ -384,11 +389,11 @@ describe("UX-D · lista de batallas con nombres y enlace al detalle", () => {
     render(<BattlesPage />);
     const link = (await screen.findByTestId("battle-detail-link")) as HTMLAnchorElement;
     expect(link.getAttribute("href")).toBe(`#/battles/${ID}`);
-    expect(link.textContent).toBe("Tanque Rojo v3 (red) vs Muro Azul v1 (blue)");
+    expect(link.textContent).toBe("Tanque Rojo v3 (rojo) vs Muro Azul v1 (azul)");
     const row = screen.getByTestId("battle-row");
     expect(row.textContent).toContain("Arena de pruebas 2");
     expect(row.textContent).toContain("todos contra todos");
-    expect(within(row).getByTestId("battle-outcome").textContent).toContain("gana red (Tanque Rojo v3)");
+    expect(within(row).getByTestId("battle-outcome").textContent).toContain("gana rojo (Tanque Rojo v3)");
     expect(row.textContent).not.toContain(MINE.slice(0, 8));
   });
 });

@@ -30,6 +30,7 @@ import {
   summarizeBattle,
   ticksToClock,
   winnerText,
+  teamText,
   type BattleLike,
   type ParticipantLike,
 } from "../battle-result.js";
@@ -276,7 +277,7 @@ function BattleHeader({ b, audit }: { b: BattleDetail; audit: AuditView | null }
                 )}
               </td>
               <td>v{p.version}</td>
-              <td>{p.team ?? "—"}</td>
+              <td>{teamText(p.team)}</td>
               <td>{p.outcome ? (OUTCOME_TEXT[p.outcome] ?? p.outcome) : "—"}</td>
             </tr>
           ))}

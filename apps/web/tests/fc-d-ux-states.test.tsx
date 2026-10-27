@@ -331,10 +331,11 @@ describe("FC-D · resumen de resultado (D7)", () => {
       failureKind: "none",
       result: { winner: "red", ticks: 900, score: { red: 2, blue: 1 }, disqualified: [] },
     });
+    // UX-F (DEF-R6) · el bando en palabras, como en el selector (antes «gana red»).
     expect(v).toMatchObject({
-      outcome: "gana red",
+      outcome: "gana rojo",
       duration: "0:30",
-      score: "red: 2 · blue: 1",
+      score: "rojo: 2 · azul: 1",
       failure: null,
       hasReplay: true,
     });
@@ -355,7 +356,7 @@ describe("FC-D · resumen de resultado (D7)", () => {
       },
     });
     expect(v).toMatchObject({
-      outcome: "gana blue",
+      outcome: "gana azul",
       endReason: "por incomparecencia",
       agentsNote: "bots simulados (stub)",
       hasReplay: false,

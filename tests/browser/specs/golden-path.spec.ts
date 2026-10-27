@@ -223,7 +223,8 @@ test.describe("@golden Golden path", () => {
     await go(page, "#/battles");
     const row = page.locator(`[data-testid="battle-row"][data-battle-id="${battleId}"]`);
     await expect(row).toHaveAttribute("data-status", "finished");
-    await expect(row.getByTestId("battle-outcome")).toContainText("gana red");
+    // UX-F (DEF-R6) · el bando en palabras (rojo/azul), como en el selector.
+    await expect(row.getByTestId("battle-outcome")).toContainText("gana rojo");
     await shot(page, info, "golden-batalla-terminada");
 
     const battle = await api<{
