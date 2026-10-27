@@ -8,7 +8,14 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, type Me } from "../api.js";
 import { useResource, ResourceView, type Resource } from "../resource.js";
 import type { Tournament } from "./TournamentsPage.js";
-import { botVersionLabel, type ParticipantLike } from "../battle-result.js";
+import {
+  TOURNAMENT_FORMAT_NAME,
+  TOURNAMENT_STATE_NAME,
+  botVersionLabel,
+  labelOf,
+  modeName,
+  type ParticipantLike,
+} from "../battle-result.js";
 
 export interface TournamentBattle {
   id: string;
@@ -131,8 +138,11 @@ export function TournamentDetailPage(props: { id: string; me: Me }) {
             <>
               <h2>{t.name}</h2>
               <p>
-                {t.format} · {t.mode} · estado <strong data-testid="tournament-state">{t.state}</strong> ·{" "}
-                {t.entryCount ?? 0} inscritos
+                {labelOf(TOURNAMENT_FORMAT_NAME, t.format)} · {modeName(t.mode)} · estado{" "}
+                <strong data-testid="tournament-state" data-state={t.state}>
+                  {labelOf(TOURNAMENT_STATE_NAME, t.state)}
+                </strong>{" "}
+                · {t.entryCount ?? 0} inscritos
               </p>
               {t.state === "open" && (
                 <form onSubmit={onEnter}>

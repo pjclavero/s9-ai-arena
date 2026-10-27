@@ -34,7 +34,7 @@ import { OverlayState } from "./overlay.js";
 import { computeCamera, SmoothCamera, type CameraConfig, type CameraMode } from "./camera.js";
 import { CameraInteraction } from "./camera-interaction.js";
 import { FogFader, type FogOptions } from "./fog.js";
-import { canvasSizeFor } from "./viewport.js";
+import { applyCanvasSize, canvasSizeFor } from "./viewport.js";
 import { waitForScene, type GameLike } from "./scene-ready.js";
 import { installAtlas, ATLAS_KEY, ATLAS_FONT_KEY, FRAME_SCALE } from "./atlas.js";
 import { attachRenderStats, type PerfHandle } from "./render-stats.js";
@@ -725,8 +725,7 @@ export function createViewerGame(parent: HTMLElement, opts: ViewerGameOptions = 
   if (typeof ResizeObserver !== "undefined") {
     const observer = new ResizeObserver(() => {
       const size = canvasSizeFor(parent.clientWidth || 960, parent.clientHeight || 640, window.devicePixelRatio || 1);
-      game.scale.setZoom(size.zoom);
-      game.scale.resize(size.width, size.height);
+      applyCanvasSize(game.scale, size);
     });
     observer.observe(parent);
     game.events.once(Phaser.Core.Events.DESTROY, () => observer.disconnect());

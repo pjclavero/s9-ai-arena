@@ -10,6 +10,8 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiRequestError } from "../api.js";
+import { ErrorState } from "../ui/primitives.js";
+import { useSessionDraft } from "../ui/draft.js";
 import { BuildDiagnosisView, diagnoseBuild } from "../build-diagnosis.js";
 
 export interface BotInfo {
@@ -88,6 +90,63 @@ export function isWebEditable(files: { packaged: boolean } | null): boolean {
   return !!files && !files.packaged;
 }
 
+const MAIN_ENTRY = /(^|\/)(bot|main)\.(py|js|mjs)$/;
+function mainEntry(f: FilesInfo): { path: string; content: string } | undefined {
+  return f.files.find((x) => MAIN_ENTRY.test(x.path)) ?? f.files[0];
+}
+
+/**
+ * UX-R · Editor del fichero principal con BORRADOR de sesión (useSessionDraft):
+ * si la sesión caduca de verdad y el panel se desmonta, lo escrito no se pierde;
+ * al volver se recupera y se dice. Guardar en el servidor borra el borrador.
+ */
+function CodeDraftEditor(props: {
+  draftKey: string;
+  initial: string;
+  version: number;
+  onSave: (src: string) => Promise<boolean>;
+}) {
+  const draft = useSessionDraft(props.draftKey, props.initial);
+  return (
+    <>
+      {draft.restored && (
+        <p className="warn" role="status" data-testid="code-draft-restored">
+          Recuperado el borrador sin guardar de esta sesión (no está en el servidor).{" "}
+          <button
+            type="button"
+            className="link"
+            onClick={() => {
+              draft.setValue(props.initial);
+              draft.clear();
+            }}
+          >
+            Descartar borrador
+          </button>
+        </p>
+      )}
+      <textarea
+        aria-label="codigo-editado"
+        rows={14}
+        cols={80}
+        value={draft.value}
+        onChange={(e) => draft.setValue(e.target.value)}
+      />
+      <br />
+      <button
+        type="button"
+        data-testid="save-as-new"
+        onClick={() =>
+          void props.onSave(draft.value).then((ok) => {
+            if (ok) draft.clear();
+          })
+        }
+      >
+        Guardar como versión nueva desde v{props.version}
+      </button>
+    </>
+  );
+}
+
 const short = (h?: string) => (h ? `${h.slice(0, 12)}…` : "—");
 const when = (iso?: string) => (iso ? new Date(iso).toLocaleString() : "—");
 const errText = (e: unknown) =>
@@ -106,12 +165,12 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
   const [versions, setVersions] = useState<VersionInfo[] | null>(null);
   const [details, setDetails] = useState<Record<number, VersionDetail>>({});
   const [loadouts, setLoadouts] = useState<LoadoutInfo[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  // UX-R · el fallo ORIGINAL, para que ErrorState lo clasifique (no un texto suelto).
+  const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [codeVersion, setCodeVersion] = useState<number | null>(null);
   const [files, setFiles] = useState<FilesInfo | null>(null);
   const [filesError, setFilesError] = useState<string | null>(null);
-  const [edited, setEdited] = useState<string>("");
   const [openBuild, setOpenBuild] = useState<number | null>(null);
   const [diffPair, setDiffPair] = useState<{ from: number; to: number } | null>(null);
   const [diff, setDiff] = useState<DiffInfo | null>(null);
@@ -133,7 +192,7 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
       setDetails(Object.fromEntries(ds.map((d) => [d.version, d])));
       setCodeVersion((cur) => cur ?? (vs.length ? vs[vs.length - 1].version : null));
     } catch (e) {
-      setError(errText(e));
+      setError(e ?? new Error("error desconocido"));
     }
   }, [botId]);
 
@@ -146,11 +205,7 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
     setFiles(null);
     setFilesError(null);
     api<FilesInfo>("GET", `/bots/${botId}/versions/${codeVersion}/files`)
-      .then((f) => {
-        setFiles(f);
-        const entry = f.files.find((x) => /(^|\/)(bot|main)\.(py|js|mjs)$/.test(x.path)) ?? f.files[0];
-        setEdited(entry?.content ?? "");
-      })
+      .then(setFiles)
       .catch((e) => setFilesError(errText(e)));
   }, [botId, codeVersion, tab]);
 
@@ -186,11 +241,12 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
     }
   }
 
-  async function saveEditedAsNew() {
-    if (codeVersion === null) return;
+  /** true = guardado en el servidor (el borrador local ya puede borrarse). */
+  async function saveEditedAsNew(edited: string): Promise<boolean> {
+    if (codeVersion === null) return false;
     const base = versions?.find((v) => v.version === codeVersion);
-    if (!base) return;
-    if (!isWebEditable(files)) return; // G-15: un paquete no se reescribe como un único fichero
+    if (!base) return false;
+    if (!isWebEditable(files)) return false; // G-15: un paquete no se reescribe como un único fichero
     const fd = new FormData();
     fd.append("runtime", base.runtime);
     fd.append("loadoutRevision", String(base.loadoutRevision));
@@ -201,18 +257,17 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
       setNotice(`Guardado como v${created.version} (borrador) desde v${base.version}. v${base.version} no cambia.`);
       setCreatedDraft(created.version);
       await reload();
+      return true;
     } catch (e) {
       setNotice(`No se pudo guardar: ${errText(e)}`);
+      return false;
     }
   }
 
-  if (error) {
+  if (error !== null) {
     return (
-      <div className="card" role="alert" data-testid="bot-detail-error">
-        <p>No se pudo cargar el bot: {error}</p>
-        <button type="button" onClick={() => void reload()}>
-          Reintentar
-        </button>
+      <div className="card" data-testid="bot-detail-error">
+        <ErrorState label="el bot" error={error} onRetry={() => void reload()} />
         <p>
           <a href="#/bots">← Mis bots</a>
         </p>
@@ -320,17 +375,13 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
           {files && isOwner && editable && (
             <div>
               <h3>Editar en una versión NUEVA (v{codeVersion} no se modifica)</h3>
-              <textarea
-                aria-label="codigo-editado"
-                rows={14}
-                cols={80}
-                value={edited}
-                onChange={(e) => setEdited(e.target.value)}
+              <CodeDraftEditor
+                key={`${botId}:${codeVersion}`}
+                draftKey={`bot:${botId}:v${codeVersion}:code`}
+                initial={mainEntry(files)?.content ?? ""}
+                version={codeVersion!}
+                onSave={saveEditedAsNew}
               />
-              <br />
-              <button type="button" data-testid="save-as-new" onClick={() => void saveEditedAsNew()}>
-                Guardar como versión nueva desde v{codeVersion}
-              </button>
             </div>
           )}
         </div>

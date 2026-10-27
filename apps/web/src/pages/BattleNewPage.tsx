@@ -29,6 +29,7 @@
 import { useEffect, useState } from "react";
 import { api, type Me } from "../api.js";
 import { ErrorState, FormError } from "../ui/primitives.js";
+import { modeName } from "../battle-result.js";
 
 export interface RulesetOption {
   id: string;
@@ -259,7 +260,7 @@ export function BattleNewPage(props: { me: Me }) {
       label: selectedMap
         ? `Mapa: ${selectedMap.name ?? selectedMap.mapId} v${selectedMap.version}`
         : notEnoughMaps
-          ? `Mapa: no hay mapas publicados que soporten ${mode}`
+          ? `Mapa: no hay mapas publicados que soporten ${modeName(mode)}`
           : "Mapa: elige un mapa publicado",
     },
     participantCheck("Bando rojo", redBot, rv),
@@ -455,7 +456,7 @@ export function BattleNewPage(props: { me: Me }) {
         >
           {modes.map((m) => (
             <option key={m} value={m}>
-              {m}
+              {modeName(m)}
             </option>
           ))}
         </select>
@@ -484,9 +485,12 @@ export function BattleNewPage(props: { me: Me }) {
       </label>
       {notEnoughMaps && mode && (
         <p className="warn" data-testid="maps-for-mode">
-          Sólo aparecen los mapas publicados que declaran soportar el modo {mode}; ahora no hay ninguno.
+          Sólo aparecen los mapas publicados que declaran soportar el modo {modeName(mode)}; ahora no hay ninguno.
           {modes.some((m) => m !== mode && mapsForMode(m) > 0) &&
-            ` Modos con mapas: ${modes.filter((m) => mapsForMode(m) > 0).join(", ")}.`}
+            ` Modos con mapas: ${modes
+              .filter((m) => mapsForMode(m) > 0)
+              .map(modeName)
+              .join(", ")}.`}
         </p>
       )}
       <label>
@@ -523,7 +527,7 @@ export function BattleNewPage(props: { me: Me }) {
           </ul>
         </div>
       )}
-      {notEnoughMaps && <p className="warn">No hay mapas publicados que soporten el modo {mode}.</p>}
+      {notEnoughMaps && <p className="warn">No hay mapas publicados que soporten el modo {modeName(mode)}.</p>}
     </section>
   );
 }

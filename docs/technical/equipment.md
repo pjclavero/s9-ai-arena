@@ -6,7 +6,7 @@ El equipamiento de un vehículo es su **loadout**: un chasis y un módulo por ra
 
 Este documento dice qué hace **de verdad** cada campo en el motor. Varios campos del catálogo **no tienen efecto** (alcance de armas y de radio, terreno, detectabilidad de minas…).
 
-**Lo decisivo, auditado en FC-C:** en el **camino real** de batalla (`battle-run-http-launcher.ts:141-146,638`), del loadout del usuario **sólo viaja la familia del chasis**, traducida a un arquetipo fijo. Los módulos elegidos **no llegan a la simulación**.
+**Lo decisivo (UX-01, recalibrado):** las batallas las ejecuta el tournament-worker, y su `engine-executor` resuelve el loadout **persistido** de la versión (`bot_loadouts` de su `loadout_revision`, o la congelada en la inscripción de torneo) con `resolveVehicle` y lo simula tal cual, conducido por el código del bot (`containerAgents()`). La partida de humo del build juega también ese loadout (`apps/bot-manager/src/smoke-vehicle.ts`); el arquetipo fijo del chasis queda sólo como **reserva** y se dice en el log de la etapa. El camino antiguo API → arena-engine `/run` (`battle-run-http-launcher.ts`), que sólo enviaba la familia del chasis, ya no ejecuta batallas.
 
 La clasificación ACTIVE / PARTIAL / FUTURE de cada propiedad vive en código (`packages/module-catalog/effect-status.ts`). La UI la muestra y la tabla de [efecto real](#efecto-real-en-batalla-active--partial--future) la resume ([TD-016](../roadmap/technical-debt.md#td-016), [TD-002](../roadmap/technical-debt.md#td-002)).
 
@@ -210,27 +210,21 @@ El presupuesto en servidor es el del ruleset `mvp-default` (1000), venga el load
 
 ## Efecto real en batalla (ACTIVE / PARTIAL / FUTURE)
 
-Auditoría FC-C sobre `0b8c12b`. Fuente única: `packages/module-catalog/effect-status.ts`, que leen el `LoadoutEditor` (insignias) y esta documentación. El test `effect-status.test.ts` exige que **toda** propiedad de juego del catálogo esté clasificada.
+Recalibrado en UX-01 (la auditoría FC-C sobre `0b8c12b` se midió en el camino `/run`, que ya no ejecuta batallas). Fuente única: `packages/module-catalog/effect-status.ts`, que leen el `LoadoutEditor` (insignias) y esta documentación. El test `effect-status.test.ts` exige que **toda** propiedad de juego del catálogo esté clasificada.
 
-**Qué llega del loadout al motor en el camino real:**
+**Qué llega del loadout al motor:**
 
-1. `resolveBot` (`battle-run-http-launcher.ts:627-641`) lee el loadout, pero sólo usa `loadout.chassis` → `archetypeForChassis` (`:141-146`):
-   - `chassis.light` → `scout`;
-   - `chassis.heavy` → `heavy`;
-   - cualquier otro → `gunner`.
-2. Se descarta la versión: `chassis.light@2` juega como `@1`. El arquetipo `miner` no se alcanza nunca.
-3. El cuerpo de `/run` lleva `{botId, version, archetype, imageDigest}` por bot (`:617-622,712-719`): ningún módulo.
-4. `container-battle.ts:134-141` simula el loadout **fijo** del arquetipo (`packages/module-catalog/resolve/archetypes.ts`).
-
-El tournament-worker (`engine-executor.ts:172`) sí transporta el loadout completo, pero conduce los vehículos con stubs `HunterBot`, no con el código del usuario.
+1. `engine-executor.ts:193-227` toma la `loadout_revision` de la inscripción del torneo (congelada) o, fuera de torneo, la de la versión; lee esa fila de `bot_loadouts` y la resuelve con `resolveVehicle(loadout, catalog)`. Si la revisión no existe, la batalla falla con ese motivo; no se inventa un vehículo.
+2. Chasis **con su versión** y todos los módulos elegidos llegan a la simulación. Demostrado de extremo a extremo (loadout persistido = WELCOME del bot = vehículo simulado) en `apps/tournament-worker/src/ux01-loadout-welcome.test.ts`.
+3. Partida de humo del build: `smokeVehicle()` (`apps/bot-manager/src/smoke-vehicle.ts`) juega el mismo loadout. Sólo si la versión no trae loadout o es de otra versión de catálogo, juega el arquetipo del chasis (`light→scout`, `heavy→heavy`, resto `gunner`) y lo dice en el log.
 
 | Estado | Significado | Propiedades |
 |---|---|---|
-| **ACTIVE** | Lo que elige el usuario cambia la batalla real | **Sólo la familia del chasis** (decide el arquetipo) |
-| **PARTIAL** | El motor la sabe usar, pero en batalla real cuenta el valor del arquetipo, sólo cuenta en validación o el efecto es incompleto | `chassis.hullHp/radiusM/maxLoadKg/slots`; `movement.maxSpeedMs/accelerationMs2/turnRateRads/ratedLoadKg`; `power.capacityEU/generationEUs`; `sensor.*` (proximity y acoustic nunca llegan); `weapon.damage/cooldownTicks/projectileSpeedMs/spreadRad/turretRateRads/acceptsAmmo/power.perActionEU`; `ammo.*` (`explosionRadiusM` sólo en `ammo.he`, que ningún arquetipo monta); `mine.*` (ningún arquetipo alcanzable monta minas); `armor.reduction/sector` (sólo el frontal); `radio.maxMessageBytes/maxMessagesPerSecond`; las comunes `massKg`, `hp`, `power.passiveEUs`, y `costCredits`/`size`/`maxPerVehicle` (sólo validación) |
+| **ACTIVE** | Lo que elige el usuario cambia la batalla | El chasis elegido (con versión); `chassis.hullHp/radiusM/slots`; `movement.maxSpeedMs/accelerationMs2/turnRateRads/ratedLoadKg`; `power.capacityEU/generationEUs`; `sensor.*` (lidar, radar, proximidad y acústico); `weapon.damage/cooldownTicks/projectileSpeedMs/spreadRad/turretRateRads/acceptsAmmo/power.perActionEU`; `ammo.*`; `mine.*` (si el bot despliega la mina con `deployMine`); `armor.reduction/sector`; `radio.maxMessageBytes/maxMessagesPerSecond`; las comunes `massKg`, `hp`, `power.passiveEUs` |
+| **PARTIAL** | Sólo cuenta para validar el loadout | `chassis.maxLoadKg`; las comunes `costCredits`, `size`, `maxPerVehicle` |
 | **FUTURE** | Ningún código de simulación la lee | `movement.terrain`; `weapon.rangeM` (el alcance lo da el TTL de 90 ticks, `combat.ts:198`); `weapon.turretArcRad` (todos los datos valen 2π: la comprobación nunca actúa); `radio.rangeM` (`radioReaches` sin llamadas, `sensors.ts:227`); `utility.effect/magnitude/durationTicks` |
 
-**Seguirían sin efecto aunque se transportara el loadout completo** (hace falta cambiar el motor): `weapon.rangeM`, `radio.rangeM` (y la radio sin filtro de equipo), `turretArcRad` con los datos actuales, `ammo.hp` como pérdida de capacidad, `movement.terrain`, `maxLoadKg`/`maxPerVehicle`/`size`/`costCredits` y `utility.*`.
+**Para que tengan efecto hace falta cambiar el motor:** `weapon.rangeM`, `radio.rangeM` (y la radio sin filtro de equipo), `turretArcRad` con los datos actuales, `ammo.hp` como pérdida de capacidad, `movement.terrain` y `utility.*`.
 
 ## Campos sin efecto en el motor
 
@@ -258,10 +252,9 @@ El tournament-worker (`engine-executor.ts:172`) sí transporta el loadout comple
 
 ## Estado actual
 
-- **FUNCIONA ACTUALMENTE**: catálogo, validación en cliente y servidor, revisiones, resolución a `VehicleSpec`. En el camino real de batalla, la elección de **familia de chasis**. La UI marca el efecto real de cada ranura y propiedad, sin presentar como funcional lo que el motor ignora.
-- **PARCIAL**: todo módulo elegido por el usuario. El motor sabe simularlo, pero el camino real juega el loadout fijo del arquetipo (tabla de [efecto real](#efecto-real-en-batalla-active--partial--future)).
-- **PARCIAL**: radio (sin alcance ni filtro de equipo) y minas, proximidad y acústica (simuladas, pero inútiles con `HunterBot`).
-- **PENDIENTE**: módulos `utility`, efecto de los campos de la tabla anterior y ejecución del código del bot para que el equipamiento de percepción y comunicación importe.
+- **FUNCIONA ACTUALMENTE**: catálogo, validación en cliente y servidor, revisiones, resolución a `VehicleSpec`. La batalla y la partida de humo del build juegan el **loadout real** de la versión. La UI marca el efecto real de cada ranura y propiedad, sin presentar como funcional lo que el motor ignora, y enseña la carga de módulos frente a `maxLoadKg`.
+- **PARCIAL**: radio (sin alcance ni filtro de equipo).
+- **PENDIENTE**: módulos `utility` y efecto de los campos FUTURE de la tabla anterior.
 
 ## Documentación relacionada
 
@@ -273,7 +266,7 @@ El tournament-worker (`engine-executor.ts:172`) sí transporta el loadout comple
 
 ## Verificación
 
-Verificado contra `27f70bb`. Las filas FC-C, la integración del cierre funcional (`integration/functional-closure`) (base `0b8c12b`).
+Verificado contra `27f70bb`; las filas del loadout real, contra `integration/ux-acceptance` (ronda UX-R). Las filas FC-C, la integración del cierre funcional (`integration/functional-closure`) (base `0b8c12b`).
 
 | Afirmación | Estado | Evidencia |
 |---|---|---|
@@ -291,6 +284,7 @@ Verificado contra `27f70bb`. Las filas FC-C, la integración del cierre funciona
 | Validación en servidor con `mvp-default` | CODE_VERIFIED | `apps/api/src/services/bots.ts:134-160` |
 | `mine_bay` en chasis ligero → 422 `unknown_slot` | RUNTIME_VERIFIED | Auditoría 2026-10-15, B pasada 1 §B4 |
 | `HunterBot` sólo usa radar, lidar y `turret_main` | CODE_VERIFIED | `apps/arena-engine/src/stubs.ts:50-100` |
-| Camino real: del loadout sólo viaja la familia del chasis (arquetipo) | CODE_VERIFIED | `apps/api/src/services/battle-run-http-launcher.ts:141-146,617-622,638,712-719`; `apps/arena-engine/src/service.ts:124-125`; `apps/bot-manager/src/container-battle.ts:134-141` |
+| La batalla juega el loadout persistido de la versión (no el arquetipo) | CODE_VERIFIED / RUNTIME_VERIFIED | `apps/tournament-worker/src/engine-executor.ts:193-227`; `apps/tournament-worker/src/ux01-loadout-welcome.test.ts` (rc=0, ronda UX-R) |
+| La partida de humo juega el mismo loadout; el arquetipo es reserva declarada en el log | CODE_VERIFIED / RUNTIME_VERIFIED | `apps/bot-manager/src/smoke-vehicle.ts`; `apps/bot-manager/tests/smoke-vehicle.test.ts` (rc=0, ronda UX-R) |
 | Toda propiedad del catálogo clasificada ACTIVE/PARTIAL/FUTURE | CODE_VERIFIED / RUNTIME_VERIFIED | `packages/module-catalog/effect-status.ts`; `packages/module-catalog/effect-status.test.ts` (rc=0) |
-| La UI muestra el efecto real (chasis ACTIVE, arma PARTIAL, `rangeM` FUTURE) | RUNTIME_VERIFIED | `apps/web/src/pages/LoadoutEditor.tsx` (`EffectBadge`); `tests/browser/specs/golden-path.spec.ts` (Chromium 1.48.2, fase golden de `npm run test:browser`, rc=0) |
+| La UI muestra el efecto real (chasis y arma ACTIVE, `rangeM` FUTURE) | RUNTIME_VERIFIED | `apps/web/src/pages/LoadoutEditor.tsx` (`EffectBadge`); `tests/browser/specs/golden-path.spec.ts` (Chromium 1.48.2, fase golden de `npm run test:browser`, rc=0) |

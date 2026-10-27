@@ -6,6 +6,7 @@
  */
 import { useEffect, useState } from "react";
 import { api, type Me } from "../api.js";
+import { FormError } from "../ui/primitives.js";
 
 export function isAdmin(me: Me | null): boolean {
   return !!me && me.roles.includes("admin");
@@ -36,19 +37,20 @@ export function AdminPage(props: { me: Me }) {
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
   const [catalogs, setCatalogs] = useState<CatalogVersion[]>([]);
   const [roleEdit, setRoleEdit] = useState({ userId: "", roles: "" });
-  const [error, setError] = useState("");
+  // UX-R · el fallo ORIGINAL: FormError lo clasifica (permiso, servidor, red…).
+  const [error, setError] = useState<unknown>(null);
 
   useEffect(() => {
     if (!isAdmin(props.me)) return;
     api<Finding[]>("GET", "/admin/security-findings")
       .then(setFindings)
-      .catch((e) => setError(e.message));
+      .catch((e) => setError(e));
     api<AuditEntry[]>("GET", "/admin/audit-log")
       .then(setAuditLog)
-      .catch((e) => setError(e.message));
+      .catch((e) => setError(e));
     api<CatalogVersion[]>("GET", "/catalog/versions")
       .then(setCatalogs)
-      .catch((e) => setError(e.message));
+      .catch((e) => setError(e));
   }, [props.me]);
 
   if (!isAdmin(props.me)) {
@@ -88,13 +90,13 @@ export function AdminPage(props: { me: Me }) {
                 roles: roleEdit.roles.split(",").map((r) => r.trim()),
               });
             } catch (e) {
-              setError((e as Error).message);
+              setError(e);
             }
           }}
         >
           Asignar roles
         </button>
-        {error && <p className="error">{error}</p>}
+        <FormError error={error} data-testid="admin-error" />
       </div>
 
       <div className="card">

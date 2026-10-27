@@ -2,101 +2,117 @@
 
 ## Resumen
 
-Una **batalla de práctica** enfrenta a dos bots publicados (rojo contra azul) en un mapa publicado. No cuenta para el ranking. Se crea en **«Batallas» → «+ Nueva batalla de práctica»**. Puedes usar **tus bots** (aunque sean privados), bots **públicos** de otros y bots de un **equipo** del que eres miembro; nunca los bots privados de otra persona.
+Una **batalla de práctica** enfrenta a dos bots (bando rojo contra bando azul) en un mapa publicado. No cuenta para el ranking. Se crea en **«Batallas» → «+ Nueva batalla de práctica»**. Puedes usar **tus bots** (aunque sean privados), bots **públicos** de otros y bots de un **equipo** del que eres miembro; nunca los bots privados de otra persona.
 
-**Cuando la plataforma la ejecuta, la juega el código de cada bot**, cada uno en su propio contenedor aislado: lo que hace tu bot en la batalla es lo que programaste (comprobado en un entorno de pruebas; en este servidor la ejecución aún no está activada, ver [Estado actual](#estado-actual)).
-
-**Hoy, crear una batalla desde la web falla siempre** con el mensaje rojo «rulesetId desconocido», en cualquier modo ([TD-003](../roadmap/technical-debt.md#td-003)). Además necesitas dos versiones publicadas, que hoy no se pueden obtener ([TD-001](../roadmap/technical-debt.md#td-001)). La única forma de que se jueguen batallas desde la web es un **torneo** ([Torneos](tournaments.md)).
+En una batalla juega una **versión publicada** concreta de cada bot, con el **loadout** con el que se subió esa versión ([Equipamiento](equipment.md)). La juega el código de cada bot, cada uno en su propio contenedor aislado: lo que hace tu bot en la batalla es lo que programaste. Si la ejecución está activada en el servidor que usas lo dice [current-status.md](../roadmap/current-status.md).
 
 ## Índice
 
+- [Conceptos: bot, versión y bando](#conceptos-bot-versión-y-bando)
 - [Crear una batalla de práctica](#crear-una-batalla-de-práctica)
 - [Qué pasa después](#qué-pasa-después)
 - [Lista de batallas](#lista-de-batallas)
-- [Resultado](#resultado)
-- [Ejecutar batalla real](#ejecutar-batalla-real)
+- [Detalle de una batalla](#detalle-de-una-batalla)
+- [Quién ve qué](#quién-ve-qué)
+- [La arena tiene perímetro](#la-arena-tiene-perímetro)
 - [Errores / limitaciones](#errores--limitaciones)
 - [Estado actual](#estado-actual)
 - [Documentación relacionada](#documentación-relacionada)
 
+## Conceptos: bot, versión y bando
+
+- Un **bot** es tu programa. Una **versión de bot** es una entrega concreta de su código (v1, v2…). En una batalla juegan **versiones publicadas**.
+- Una versión publicada antigua **sigue pudiendo jugar** aunque la última esté rechazada o en validación.
+- El **bando** (rojo o azul) es sólo el lado del campo. **No es un equipo** de la sección «Equipos»: aquí los equipos sólo sirven para filtrar la lista de bots. Dos bots del mismo equipo pueden enfrentarse.
+
 ## Crear una batalla de práctica
 
-**PENDIENTE (falla al crear).** Pantalla «Nueva batalla de práctica»:
+Pantalla «Nueva batalla de práctica»:
 
-| Campo | Opciones |
+| Campo | Qué eliges |
 |---|---|
-| **Modo** | `deathmatch`, `team_deathmatch`, `capture_the_flag`, `zone_control` ([Modos de juego](game-modes.md)) |
-| **Mapa publicado** | Mapas en estado `published` |
+| **Modo** | Deathmatch, Deathmatch por equipos, Captura la bandera o Control de zona ([Modos de juego](game-modes.md)). Son los mismos nombres que en el Ranking |
+| **Ruleset** | Las reglas de ese modo, con su presupuesto en créditos |
+| **Mapa publicado** | Sólo los mapas publicados que declaran soportar el modo elegido. Si no hay ninguno, la pantalla dice qué modos sí tienen mapas |
 | **Semilla (opcional)** | La misma semilla repite la misma batalla |
-| **Bot rojo** / **Bot azul** | Bots con versión publicada, `nombre (vN)` |
+| **Bando rojo / Bando azul** | En cada bando: un filtro opcional por equipo, el **bot** y la **versión publicada** que juega |
 
-Pulsa **«Crear batalla»**. Puedes ver:
+En el desplegable de bots:
 
-- «Elige un mapa publicado.», «Elige dos bots con versión publicada.» o «Elige dos bots distintos.»: falta algo en el formulario.
-- «Necesitas al menos 2 bots con versión publicada.» o «No hay mapas publicados disponibles.»: el botón está deshabilitado.
-- **«rulesetId desconocido»**: es lo que verás hoy siempre al crear. La web pide unas reglas con un nombre que la plataforma no tiene registrado.
+- cada bot elegible muestra la versión que juega por defecto, la publicada más reciente: «Tanque (v3)». Si su última versión no está publicada lo añade: «(v3) · última versión: v4 rechazada»;
+- los bots que no pueden jugar salen **desactivados** y con el motivo y qué hacer: «no elegible: ninguna versión publicada — tienes v2 rechazada: corrige el código y vuelve a enviarla».
 
-Mientras la página carga, los selectores salen vacíos unos instantes.
+Si el bot tiene varias versiones publicadas, el selector **«Versión publicada»** te deja elegir cualquiera; la marcada «(la más reciente publicada)» es la que se usa si no eliges otra.
+
+Debajo, **«Qué falta para crear la batalla»** lista cada requisito con ✓ o ✗: ruleset, mapa y la versión de cada bando. **«Tus bots que todavía no pueden jugar»** enlaza cada bot tuyo no elegible con su motivo.
+
+Pulsa **«Crear batalla»**. Si algo falla, el error aparece arriba con su tipo (datos no válidos, sin permiso, conflicto…) y el mensaje del servidor.
 
 ## Qué pasa después
 
-Si la batalla llegara a crearse:
+1. Ves «Batalla encolada» y el enlace **«Ver esta batalla»**, que abre su [detalle](#detalle-de-una-batalla).
+2. La plataforma la juega en cuanto hay hueco. La batalla se juega una sola vez, aunque pulses dos veces o la plataforma reintente.
+3. Dura lo que dicen las reglas (unos 5 minutos en tiempo real a lo sumo). Mientras está **en curso** puedes verla en directo ([Visor](viewer.md)).
 
-1. Verías «Batalla encolada» y el identificador de la batalla.
-2. La plataforma la juega sola en pocos segundos.
-3. Aparecería en «Batallas» como `finished`, con el enlace «Ver replay».
-
-**PARCIAL.** Los vehículos los conduce **el código de cada bot**, con su equipamiento. La batalla se juega una sola vez, aunque pulses dos veces o la plataforma reintente. Dura lo que dicen las reglas (unos 5 minutos en tiempo real a lo sumo), así que puede verse `running` en directo.
-
-Si en este servidor la ejecución no está activada, la batalla se queda en `scheduled` («en cola»): no se juega con ningún bot de prueba en su lugar.
+Si en ese servidor la ejecución no está activada, la batalla se queda **en cola**: no se juega con ningún bot de prueba en su lugar.
 
 ## Lista de batallas
 
-**FUNCIONA ACTUALMENTE.** «Batallas» muestra todas las batallas de la plataforma, no sólo las tuyas, con:
+«Batallas» muestra las batallas **que puedes ver** ([Quién ve qué](#quién-ve-qué)), con:
 
-- participantes (`4de60bd0 v1 vs …`, el identificador del bot abreviado);
-- modo y mapa;
-- estado;
-- torneo (enlace);
-- **Ver**: «Ver en directo» si está en curso, «Ver replay» si terminó o «en cola».
+- participantes por **nombre y versión**, con su bando: «Tanque Rojo v3 (red) vs Muro Azul v1 (blue)». El enlace abre el detalle;
+- modo en palabras y mapa por su nombre;
+- estado: en cola, en curso, terminada o fallida;
+- resultado: ganador con su nombre y versión, marcador y descalificados;
+- duración y torneo (enlace);
+- **Ver**: «Ver en directo» si está en curso, «Ver replay» si terminó.
 
-Puedes filtrar por **Estado** (todas, `scheduled`, `running`, `finished`, `failed`). Desde «Mis bots», el enlace «batallas» filtra por un bot (sólo sobre la primera página de resultados).
+Puedes filtrar por **Estado**. Desde «Mis bots», el enlace «batallas» filtra por un bot (sólo sobre la primera página de resultados).
 
-## Resultado
+## Detalle de una batalla
 
-**PARCIAL.** La lista no muestra ganador ni marcador. El estado `finished` aparece con un «(none)» en rojo que **no es un error**: significa «sin fallos» ([TD-022](../roadmap/technical-debt.md#td-022)). El ganador, el marcador y las estadísticas existen en la plataforma, pero no tienen pantalla ([Estadísticas](statistics.md)).
+Cada batalla tiene su página, `#/battles/<id>` (desde la lista, desde «Ver esta batalla» o desde un torneo):
 
-Estados de una batalla:
+- **resultado**: ganador con nombres, marcador, duración en ticks y en tiempo, modo, mapa y versiones del motor;
+- **participantes**: bot, versión exacta que jugó, bando y resultado;
+- **estadísticas por bot**: disparos, aciertos, precisión, daño hecho y recibido, bajas, supervivencia, recorrido, turnos sin responder, objetivos y uso de cada módulo, con lo que mide cada una ([Estadísticas](statistics.md)). Justo al terminar puede decir «Calculando estadísticas…»: la página vuelve a preguntar sola;
+- **diagnóstico de tus bots**: si arrancó, el saludo (HELLO), decisiones, turnos sin responder, descalificación y motivo, COMMAND inválidos con el primer motivo, acciones rechazadas por el motor y CPU ([Diagnóstico](statistics.md#diagnóstico-de-tus-bots));
+- enlace **«Ver replay»** cuando hay replay.
 
-| Estado | Significado |
-|---|---|
-| `scheduled` | Encolada |
-| `running` | En juego (dura segundos) |
-| `finished` | Terminada |
-| `failed (infrastructure)` | No pudo jugarse. También ocurre cuando la combinación de modo y mapa es imposible |
+Una batalla en cola o en curso se actualiza sola y lo anuncia a los lectores de pantalla. Una batalla ajena que no puedes ver, o un enlace equivocado, dice «No existe o no está disponible».
 
-## Ejecutar batalla real
+## Quién ve qué
 
-Ya no hace falta y el botón «Ejecutar batalla real» ya no existe: **toda** batalla se ejecuta con el código publicado de sus bots al crearla. Tras «Crear batalla», sigue su estado en **Batallas** y abre el replay cuando termine.
+- **La batalla** (lista, detalle, estadísticas, directo y replay) la ven:
+  - el dueño de cualquiera de sus bots;
+  - los miembros del equipo de un bot participante que no sea privado;
+  - el staff;
+  - cualquiera, sólo si **todos** sus bots son públicos y el servidor tiene activado el replay o el directo públicos.
+- **El diagnóstico y la CPU de un bot** sólo los ve **su dueño** (y el staff). Un rival o un compañero de equipo ve la batalla, pero no las tripas de un bot que no es suyo.
+- Para quien no puede verla, una batalla responde igual que una que no existe.
+
+## La arena tiene perímetro
+
+Todo mapa está cerrado por un **perímetro** en su borde, lo dibuje el mapa o no: los vehículos no pueden salir del mapa y los proyectiles chocan con el borde. Los sensores lo ven como un muro más. Un mapa no puede colocar spawns fuera de sus límites (se rechaza al publicarlo).
 
 ## Errores / limitaciones
 
-- No se pueden elegir más de 2 bots, equipos, ni un loadout distinto por batalla.
+- Sólo 2 bots por batalla; no se elige un loadout distinto por batalla (juega el de la versión).
 - El mismo bot no puede estar dos veces en una batalla (ni con dos versiones distintas).
 - Si eliges un bot privado de otra persona, la plataforma responde como si no existiera («no existe o no es accesible»).
-- Si tu bot no llega a conectarse a la batalla, pierde por descalificación; si deja de responder durante la batalla, queda `disqualified`.
-- La plataforma no comprueba que el mapa admita el modo.
-- La nota de la pantalla habla del «runner containerizado» y de un «arnés»: es información técnica que puedes ignorar.
+- Si tu bot no llega a conectarse a la batalla, pierde por descalificación; si deja de responder durante la batalla, queda descalificado.
+- Si tu bot manda un COMMAND con forma inválida, no se aplica: tu bot recibe el aviso `rejected_action` con `invalid_command: …` y lo verás contado en su diagnóstico.
+- En la lista y en el detalle, el bando sale como `red` / `blue`.
 
 Lista completa: [known-issues.md](../roadmap/known-issues.md).
 
 ## Estado actual
 
-- **PARCIAL**: la ejecución con el código real de los bots, la propiedad de los bots y el resultado (ganador por bot, marcador, estadísticas) funcionan y están comprobados en un entorno de pruebas aislado. En este servidor la ejecución **todavía no está activada** (falta completar el entorno de ejecución de bots, [TD-001](../roadmap/technical-debt.md#td-001)); las batallas quedan en cola.
-- **PENDIENTE desde la web**: crear la batalla depende de [TD-003](../roadmap/technical-debt.md#td-003). La lista funciona.
+- **FUNCIONA ACTUALMENTE** en el código: creación con selector de versión, ejecución con el código y el loadout de cada versión, lista y detalle con resultado, estadísticas y diagnóstico del dueño, política de lectura única y perímetro de la arena.
+- Si la ejecución está activada en un servidor concreto: [current-status.md](../roadmap/current-status.md).
 
 ## Documentación relacionada
 
-- Usuario: [Modos de juego](game-modes.md), [Bots](bots.md), [Replays](replays.md), [Visor](viewer.md), [Torneos](tournaments.md)
-- Técnica: [battles.md](../technical/battles.md) (ciclo completo paso a paso)
-- Deuda: [TD-001](../roadmap/technical-debt.md#td-001), [TD-002](../roadmap/technical-debt.md#td-002), [TD-003](../roadmap/technical-debt.md#td-003), [TD-005](../roadmap/technical-debt.md#td-005)
+- Usuario: [Modos de juego](game-modes.md), [Bots](bots.md), [Equipamiento](equipment.md), [Estadísticas](statistics.md), [Replays](replays.md), [Visor](viewer.md), [Torneos](tournaments.md)
+- Técnica: [battles.md](../technical/battles.md) (ciclo completo paso a paso, visibilidad y diagnóstico)
+- Deuda: [TD-001](../roadmap/technical-debt.md#td-001), [TD-002](../roadmap/technical-debt.md#td-002), [TD-005](../roadmap/technical-debt.md#td-005), [TD-047](../roadmap/technical-debt.md#td-047)

@@ -4,7 +4,7 @@
 
 El **loadout** es el vehículo de tu bot: un chasis y un módulo por ranura (movilidad, energía, sensores, arma con su munición, minas, radio y blindaje por lado). Lo configuras en el **«Editor de loadout»** de «Mis bots», que valida el coste y la energía en vivo. El servidor lo vuelve a validar al guardar. Cada guardado crea una revisión nueva.
 
-**FUNCIONA ACTUALMENTE** la configuración. **En batalla real, hoy sólo cambia el resultado la familia del chasis** (ligero, medio o pesado), que decide el arquetipo que se juega. Los módulos que eliges cuentan para el presupuesto, la masa y la energía, pero la ejecución usa los módulos fijos del arquetipo ([TD-016](../roadmap/technical-debt.md#td-016)).
+**FUNCIONA ACTUALMENTE.** **El loadout es el vehículo que juega**: el chasis y los módulos que eliges son los que se simulan en las batallas y en la partida de humo del build. Cada versión de código queda ligada a la revisión de loadout con la que la subiste; guardar una revisión nueva no cambia las versiones ya subidas.
 
 El editor lo indica en cada ranura ([Qué cambia de verdad](#qué-cambia-de-verdad-en-la-batalla)).
 
@@ -27,6 +27,11 @@ El editor lo indica en cada ranura ([Qué cambia de verdad](#qué-cambia-de-verd
 3. En cada ranura elige un módulo. Si eliges un arma, aparece el selector de **munición compatible**.
 4. Vigila **«Coste: X/1000 cr»** y **«Energía: ±N»**. Las violaciones aparecen debajo, con el motivo.
 5. Pulsa **«Guardar revisión»**. Verás «Revisión de loadout guardada.». Al volver a entrar, el editor carga la revisión vigente y muestra los «Cambios respecto a la revisión N».
+6. Para que una versión de código juegue con la revisión nueva, sube una versión nueva: la subida usa la revisión vigente («Subir como versión nueva»).
+
+Junto a la masa total, el editor muestra la **carga de módulos** frente al límite del chasis («carga de módulos X/Y kg»). Esa es la cifra que limita `mass_exceeded`.
+
+Si la sesión caduca mientras editas, al volver a entrar se recuperan los cambios sin guardar de esa pestaña, con el aviso «Recuperados los cambios sin guardar de esta sesión». Todavía no son una revisión: guárdalos o descártalos.
 
 ## Qué cambia de verdad en la batalla
 
@@ -34,8 +39,8 @@ El editor muestra, arriba, una nota sobre el efecto real. Junto al chasis y a ca
 
 | Insignia | Significa |
 |---|---|
-| **[ACTIVE · cambia la batalla]** | Tu elección cambia la batalla. Hoy, sólo la del chasis |
-| **[PARTIAL · efecto parcial]** | El motor sabe usarlo, pero en la batalla real se juega el valor del módulo de serie del arquetipo, o sólo cuenta para validar tu configuración |
+| **[ACTIVE · cambia la batalla]** | El motor usa el valor del módulo que eliges |
+| **[PARTIAL · efecto parcial]** | Sólo cuenta para validar el loadout: coste, tamaño, carga máxima, límites por vehículo |
 | **[FUTURE · sin efecto en batalla]** | Ningún código lo usa todavía: no cambia nada |
 
 Al elegir un módulo, «Efecto real de cada propiedad» lista sus datos con su insignia y el motivo. Ejemplos FUTURE: el alcance del arma (`rangeM`), el alcance de la radio, el terreno de la movilidad y los módulos de utilidad.
@@ -94,17 +99,19 @@ Resultado: coste 680/1000 y energía +21,5.
 ## Errores / limitaciones
 
 - La web no explica qué hace cada módulo ni qué significan créditos o EU.
-- **PARCIAL**: radio, minas, sensor acústico y de proximidad se simulan, pero hoy no tienen efecto en las batallas, porque el bot de prueba no los usa. Además, la radio no se limita a tu equipo ni a su alcance ([equipment.md](../technical/equipment.md#radio-radio_a)).
-- Algunos datos del catálogo no influyen en la simulación: el alcance del arma, el terreno de la movilidad o la detectabilidad de la mina.
+- Las minas sólo actúan si tu bot las despliega (comando `deployMine`) y el chasis tiene bahía de minas.
+- **PARCIAL**: la radio no se limita a tu equipo ni a su alcance ([equipment.md](../technical/equipment.md#radio-radio_a)).
+- Algunos datos del catálogo no influyen en la simulación: el alcance del arma, el alcance de la radio, el terreno de la movilidad o la detectabilidad de la mina.
+- Si el loadout de la versión no se puede resolver con el catálogo del build (otra versión de catálogo), la partida de humo juega el arquetipo del chasis como reserva y lo dice en el log de la etapa. La batalla juega siempre el loadout de la versión.
 - No hay módulos de utilidad (humo, reparación…): **PENDIENTE**.
 
 ## Estado actual
 
-**FUNCIONA ACTUALMENTE** (configuración, validación e indicación honesta del efecto) · **PARCIAL** (efecto en batalla: sólo la familia del chasis).
+**FUNCIONA ACTUALMENTE** (configuración, validación, indicación del efecto y loadout real en batalla y en la partida de humo) · **PARCIAL** (algunas propiedades sin efecto: [FUTURE](#qué-cambia-de-verdad-en-la-batalla)).
 
 ## Documentación relacionada
 
 - Usuario: [Bots](bots.md), [Modos de juego](game-modes.md)
 - Técnica: [equipment.md](../technical/equipment.md), [engine.md](../technical/engine.md)
 - Balance: [docs/balance/v1.md](../balance/v1.md)
-- Deuda: [TD-016](../roadmap/technical-debt.md#td-016)
+- Deuda: [TD-016](../roadmap/technical-debt.md#td-016) (histórico: el camino antiguo `/run` sólo enviaba el chasis)

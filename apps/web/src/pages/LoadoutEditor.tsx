@@ -14,7 +14,8 @@
  *  - comparar contra la revisión cargada y "guardar como nueva revisión"
  *    (duplicar) con el diff a la vista.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSessionDraft } from "../ui/draft.js";
 import { emptyDict } from "../../../../packages/game-rules/safe-lookup.js";
 import { validateLoadout, type Violation } from "../../../../packages/module-catalog/validator/index.js";
 import { findModule, type LoadoutInput, type ModuleDefinition } from "../../../../packages/module-catalog/types.js";
@@ -109,6 +110,27 @@ export function diffDrafts(base: LoadoutDraft, draft: LoadoutDraft): string[] {
   return changes;
 }
 
+/** UX-R · Lee el borrador guardado; si está corrupto se ignora (se parte de la revisión). */
+function parseStoredDraft(
+  raw: string,
+): { chassis: string; modules: Record<string, string>; ammo: Record<string, string> } | null {
+  try {
+    const d = JSON.parse(raw) as { chassis?: unknown; modules?: unknown; ammo?: unknown };
+    const dict = (x: unknown): Record<string, string> | null => {
+      if (!x || typeof x !== "object" || Array.isArray(x)) return null;
+      const out = emptyDict<string>();
+      for (const [k, v] of Object.entries(x as Record<string, unknown>)) if (typeof v === "string") out[k] = v;
+      return out;
+    };
+    const modules = dict(d.modules);
+    const ammo = dict(d.ammo);
+    if (typeof d.chassis !== "string" || !modules || !ammo) return null;
+    return { chassis: d.chassis, modules, ammo };
+  } catch {
+    return null;
+  }
+}
+
 function slotsFromDraft(d: LoadoutDraft | undefined): {
   modules: Record<string, string>;
   ammo: Record<string, string>;
@@ -132,14 +154,29 @@ export function LoadoutEditor(props: {
   /** Nº de la revisión cargada, solo informativo. */
   loadedRevision?: number;
   onSave: (draft: LoadoutDraft) => Promise<Violation[] | null>;
+  /**
+   * UX-R · Clave del BORRADOR de sesión (p. ej. `loadout:<botId>:r3`). Con ella,
+   * los cambios sin guardar sobreviven a que la sesión caduque y el panel se
+   * desmonte; sin ella el editor no guarda nada local.
+   */
+  draftKey?: string;
 }) {
   const chassisOptions = props.catalog.filter((m) => m.category === "chassis");
   const initialSlots = useMemo(() => slotsFromDraft(props.initial), [props.initial]);
-  const [chassis, setChassis] = useState<string>(
-    props.initial?.chassis ?? (chassisOptions[0] ? versioned(chassisOptions[0]) : ""),
+  const initialChassis = props.initial?.chassis ?? (chassisOptions[0] ? versioned(chassisOptions[0]) : "");
+  const stored = useSessionDraft(
+    props.draftKey ?? "loadout:sin-clave",
+    JSON.stringify({ chassis: initialChassis, modules: initialSlots.modules, ammo: initialSlots.ammo }),
   );
-  const [slots, setSlots] = useState<Record<string, string>>(initialSlots.modules);
-  const [ammoBySlot, setAmmoBySlot] = useState<Record<string, string>>(initialSlots.ammo);
+  // El borrador sólo cuenta si la pantalla pidió borrador y es legible.
+  const [recovered] = useState(() => (props.draftKey && stored.restored ? parseStoredDraft(stored.value) : null));
+  const [chassis, setChassis] = useState<string>(recovered?.chassis ?? initialChassis);
+  const [slots, setSlots] = useState<Record<string, string>>(recovered?.modules ?? initialSlots.modules);
+  const [ammoBySlot, setAmmoBySlot] = useState<Record<string, string>>(recovered?.ammo ?? initialSlots.ammo);
+  const storeDraft = stored.setValue;
+  useEffect(() => {
+    if (props.draftKey) storeDraft(JSON.stringify({ chassis, modules: slots, ammo: ammoBySlot }));
+  }, [props.draftKey, storeDraft, chassis, slots, ammoBySlot]);
   const [serverViolations, setServerViolations] = useState<Violation[]>([]);
   const [saved, setSaved] = useState(false);
 
@@ -208,6 +245,11 @@ export function LoadoutEditor(props: {
   return (
     <div className="card">
       <h2>Editor de loadout</h2>
+      {recovered && stored.restored && (
+        <p className="warn" role="status" data-testid="loadout-draft-restored">
+          Recuperados los cambios sin guardar de esta sesión: todavía no son una revisión.
+        </p>
+      )}
       {props.loadedRevision !== undefined && (
         <p data-testid="loaded-revision">
           Editando sobre la revisión <strong>{props.loadedRevision}</strong> (guardar crea una revisión nueva).
@@ -367,6 +409,7 @@ export function LoadoutEditor(props: {
               const s = slotsFromDraft(props.initial);
               setSlots(s.modules);
               setAmmoBySlot(s.ammo);
+              stored.clear();
             }}
           >
             Descartar cambios (volver a la revisión {props.loadedRevision ?? "cargada"})
@@ -407,6 +450,7 @@ export function LoadoutEditor(props: {
           else {
             setServerViolations([]);
             setSaved(true);
+            stored.clear();
           }
         }}
       >

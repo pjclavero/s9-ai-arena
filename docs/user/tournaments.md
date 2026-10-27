@@ -23,7 +23,7 @@ Hoy es la **única vía de la web que llega a jugar batallas**, pero:
 
 ## Ver torneos
 
-**FUNCIONA ACTUALMENTE.** «Torneos» lista todos los torneos con nombre, formato, modo y estado. Pulsa el nombre para abrir el detalle.
+**FUNCIONA ACTUALMENTE.** «Torneos» lista todos los torneos con nombre, formato, modo y estado, en palabras («Eliminación directa», «Deathmatch por equipos», «inscripciones abiertas»). Pulsa el nombre para abrir el detalle.
 
 ## Crear un torneo
 
@@ -32,7 +32,7 @@ Hoy es la **única vía de la web que llega a jugar batallas**, pero:
 | Campo | Opciones |
 |---|---|
 | **Nombre** | Hasta 64 caracteres |
-| **Formato** | `league`, `round_robin`, `single_elimination`, `double_elimination`, `swiss`, `teams` |
+| **Formato** | Liga, Todos contra todos (liguilla), Eliminación directa, Doble eliminación, Sistema suizo, Por equipos |
 | **Modo** | Los 4 modos ([Modos de juego](game-modes.md)) |
 | **Ruleset** | Texto libre; déjalo en `mvp-default` |
 
@@ -61,8 +61,8 @@ Sin el rol verás «Requiere rol organizer» después de pulsar crear. El torneo
 
 **PARCIAL.**
 
-- **Detalle**: la sección «Batallas» se refresca cada 5 s. Tiene **Cuadro** por rondas e **Historial**, con enlaces «Ver en directo» o «Ver replay». Los bots aparecen con su identificador abreviado.
-- **«Ver cuadro»** (`#/tournaments/<id>/bracket`): emparejamientos por ronda y ganador de cada enfrentamiento. Es de sólo lectura.
+- **Detalle**: la sección «Batallas» se refresca cada 5 s. Tiene **Cuadro** por rondas e **Historial**, con enlaces «Ver en directo» o «Ver replay». Los bots aparecen por su nombre y la versión que juega.
+- **«Ver cuadro»** (`#/tournaments/<id>/bracket`): por ronda, «Partido 1», «Partido 2»…, su estado (pendiente, en juego, terminado, falló) y el ganador de cada enfrentamiento. Es de sólo lectura. El ganador sale como «bot» y su identificador abreviado: el cuadro aún no trae los nombres.
 - **Clasificación del torneo**: no se muestra. El ranking general está en [Clasificaciones](rankings.md), que hoy sale vacío.
 - **Directo y replay**: los enlaces llevan al visor y al reproductor, que hoy no se dibujan ([TD-009](../roadmap/technical-debt.md#td-009)).
 

@@ -132,6 +132,23 @@ export function rosterFromMeta(raw: unknown): ViewerRoster {
   return out;
 }
 
+/**
+ * UX-R · Título legible de una batalla a partir de su nómina pública (cabecera
+ * `init.meta.roster` o índice del replay): «Alfa vs Beta». Sólo usa NOMBRES
+ * (sin nombre no hay título: nunca un UUID); varios vehículos del mismo bot
+ * cuentan una vez. Sin nómina útil devuelve null y la página cae al id.
+ */
+export function participantsTitle(raw: unknown): string | null {
+  const names: string[] = [];
+  for (const e of rosterFromMeta(raw).values()) {
+    const n = e.name?.trim();
+    if (n && !names.includes(n)) names.push(n);
+  }
+  if (names.length === 0) return null;
+  if (names.length <= 4) return names.join(" vs ");
+  return `${names.slice(0, 4).join(" vs ")} y ${names.length - 4} más`;
+}
+
 /** Forma abreviada de un id crudo (nunca el UUID entero) cuando no hay nombre. */
 export function shortId(id: string): string {
   return id.length > 10 ? id.slice(0, 8) : id;

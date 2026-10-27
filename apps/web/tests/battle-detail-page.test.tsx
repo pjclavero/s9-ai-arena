@@ -346,3 +346,34 @@ describe("UX-D · lista de batallas con nombres y enlace al detalle", () => {
     expect(row.textContent).not.toContain(MINE.slice(0, 8));
   });
 });
+
+describe("UX-R · batalla en curso anunciada con LiveStatus", () => {
+  it("en curso: región viva (role=status, aria-live=polite) con aria-busy mientras no hay resultado", async () => {
+    mockApi({
+      [`/battles/${ID}`]: () => json({ ...BATTLE, status: "running", result: undefined, finishedAt: undefined }),
+      [`/battles/${ID}/stats`]: () => json({ battleId: ID, status: "pending", perBot: {}, diagnostics: {} }),
+      [`/battles/${ID}/audit`]: () => json({}),
+    });
+    render(<BattleDetailPage id={ID} />);
+    const note = await screen.findByTestId("battle-live-note");
+    expect(note.getAttribute("role")).toBe("status");
+    expect(note.getAttribute("aria-live")).toBe("polite");
+    expect(note.getAttribute("aria-busy")).toBe("true");
+    expect(note.textContent).toMatch(/En curso/);
+  });
+
+  it("la columna del lado del campo se llama «Bando» (no es un equipo de «Equipos»)", async () => {
+    mockApi({
+      [`/battles/${ID}`]: () => json(BATTLE),
+      [`/battles/${ID}/stats`]: () => json({ battleId: ID, status: "pending", perBot: {}, diagnostics: {} }),
+      [`/battles/${ID}/audit`]: () => json({}),
+    });
+    render(<BattleDetailPage id={ID} />);
+    const table = await screen.findByTestId("battle-participants");
+    const headers = within(table)
+      .getAllByRole("columnheader")
+      .map((h) => h.textContent);
+    expect(headers).toContain("Bando");
+    expect(headers).not.toContain("Equipo");
+  });
+});

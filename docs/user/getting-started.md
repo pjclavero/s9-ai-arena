@@ -4,6 +4,8 @@
 
 Este es el recorrido que la plataforma prevé para un usuario nuevo. Al lado de cada paso indicamos hasta dónde llega hoy, para que no pierdas tiempo en pasos que todavía no pueden completarse.
 
+**La misma guía está dentro de la web**: **«Ayuda»** en la barra de navegación (dirección `#/help`, se puede abrir sin cuenta) explica el ciclo y los términos (bot, versión, estados, runtime, loadout, chasis, build, artefacto, modo). Con sesión iniciada, la portada (`#/`) muestra la lista **«Primeros pasos»** con lo que ya has hecho y el siguiente paso.
+
 ## Índice
 
 - [Qué es](#qué-es)
@@ -43,14 +45,14 @@ Tu bot es un programa en Python o JavaScript (Node). Diez veces por segundo reci
    - pulsa «Guardar revisión».
 
    Ver [Equipamiento](equipment.md).
-4. **En «Subir código (pegado)»** elige el runtime (`python` o `node`), pega tu código y pulsa «Subir como versión nueva». Hay ejemplos y SDK en `example-bots/` y `sdks/` del repositorio.
+4. **En «Subir código (pegado)»** elige el runtime (Python o JavaScript). El editor ya trae una **plantilla válida** de ese runtime: puedes subirla tal cual o cambiarla, y pulsar «Subir como versión nueva». Detalle en [Bots](bots.md#subir-código).
 5. **Pulsa «Enviar a validación v1»**. El panel dice «Validación en curso…» y, al terminar, la versión quedará `rejected` con un motivo que empieza por «sandbox no verificado». **No es un fallo de tu código**: la plataforma todavía no puede ejecutar bots en su entorno aislado.
 
 Hasta que se resuelva ese punto, no puedes avanzar más con tus propios bots. Puedes explorar «Mapas», el «Editor de mapas», «Torneos», «Equipos» y «Ranking».
 
 ## Errores / limitaciones
 
-- La web no explica el ciclo ni muestra ayuda dentro de las pantallas. Términos como `loadout`, `runtime` o los nombres de las etapas del pipeline aparecen tal cual.
+- La ayuda vive en «Ayuda» (`#/help`). Dentro de algunas pantallas, los nombres de las etapas del pipeline aparecen tal cual.
 - Algunos formularios se muestran a todos aunque exigen permisos de organizador (crear torneo, generar o publicar mapa). Fallan con «Requiere rol organizer».
 - Si escribes una dirección que no existe (por ejemplo, `#/loquesea`), verás «Página no encontrada» con «Volver» y enlaces a las pantallas principales.
 - Cuando algo falla, la pantalla lo dice (permiso, inexistente, servidor caído, sin respuesta) y ofrece «Reintentar»: ver [Si algo falla](index.md#si-algo-falla).
@@ -63,6 +65,7 @@ Lista completa: [known-issues.md](../roadmap/known-issues.md).
 
 ## Documentación relacionada
 
+- En la web: «Ayuda» (`#/help`)
 - Siguiente: [Cuentas](accounts.md) · [Bots](bots.md)
 - Técnica: [bots.md](../technical/bots.md), [battles.md](../technical/battles.md)
 - Desarrollo de bots (SDK): `sdks/python/README.md`, `sdks/javascript/README.md`, `packages/protocol/README.md`

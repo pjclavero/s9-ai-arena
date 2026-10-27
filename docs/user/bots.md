@@ -24,7 +24,7 @@ Importante: esto funciona en la rama del cierre funcional con Docker. En la inst
 
 **FUNCIONA ACTUALMENTE.**
 
-1. «Mis bots» → campo **«Nombre del bot»** (hasta 48 caracteres, único entre tus bots) → **«Crear bot»**.
+1. «Mis bots» → campo **«Nombre del bot»** (hasta 48 caracteres, único entre tus bots) → **«Crear bot»**. Un nombre vacío, demasiado largo o repetido se explica junto al formulario («Ya tienes un bot llamado «Tanque».»). Pulsar dos veces crea un solo bot.
 2. Aparece en la lista como `nombre (private)`. Junto a cada bot hay un enlace **«batallas»** que lleva a sus batallas.
 
 Si no tienes ninguno verás «Aún no tienes bots: crea el primero abajo.». Todos los bots nacen **privados**. Desde la web no puedes cambiar la visibilidad, renombrar ni borrar un bot (**PENDIENTE**).
@@ -38,9 +38,11 @@ Si no tienes ninguno verás «Aún no tienes bots: crea el primero abajo.». Tod
 **PARCIAL.**
 
 1. En la tarjeta «Versiones de *bot*» → **«Subir código (pegado)»**.
-2. Elige el **Runtime**: `python` o `node`.
-3. Pega el código en **«Código»**.
+2. Elige el **Runtime**: Python o JavaScript (Node). Debajo se resume qué debe contener el código.
+3. El área **«Código»** arranca con una **plantilla válida** del runtime: patrulla y, si el radar ve a alguien, apunta y dispara con las armas de tu loadout. Pasa el build tal cual. Si cambias de runtime sin haberla tocado, se cambia por la del otro; si ya escribiste algo, se respeta. «Restaurar la plantilla» vuelve a ella.
 4. Pulsa **«Subir como versión nueva»**. Se crea la versión siguiente (v1, v2…) en estado `draft`, ligada a tu revisión de loadout actual.
+
+Si la sesión caduca mientras escribes, al volver a entrar el código sin subir de esa pestaña se recupera, con el aviso «Recuperado el código sin subir de esta sesión». Lo mismo en el editor de la pestaña Code del detalle del bot.
 
 Límites y particularidades:
 
@@ -49,10 +51,11 @@ Límites y particularidades:
 - Tamaño máximo: 10 MB.
 - Ejemplos de bots: `example-bots/python/`, `example-bots/javascript/`. SDK: `sdks/python`, `sdks/javascript`.
 - **Qué debe contener tu código**:
-  - **Python**: una clase que herede de `arena_sdk.ArenaBot` (llámala `Bot` si defines varias) con `on_observation(self, observation)` devolviendo el comando.
-  - **Node**: un módulo ES que exporte (`export default` o `export class Bot`) una clase que extienda `ArenaBot` de `@arena/sdk`, con `onObservation(observation)`.
+  - **Python** (3.11): una clase que herede de `arena_sdk.ArenaBot` (llámala `Bot` si defines varias) con `on_observation(self, observation)` devolviendo el comando.
+  - **JavaScript** (Node 20): un **módulo ES** (`import` / `export`, no `require`) que exporte (`export default` o `export class Bot`) una clase que extienda `ArenaBot` de `@arena/sdk`, con `onObservation(observation)`. **TypeScript no se acepta**: el runtime no lo ejecuta y el build lo rechaza diciendo que es TypeScript. Los ejemplos JavaScript del repositorio (`example-bots/javascript/`) y el tutorial del SDK son JavaScript ESM que se pueden subir tal cual.
 
   No hace falta conectar nada: la plataforma instancia tu clase y la conecta a la batalla.
+- **El hook es obligatorio.** Si tu clase no implementa `on_observation` (Python) u `onObservation` (JavaScript), por ejemplo porque el nombre tiene una errata, el build lo **rechaza**: «tu clase Bot no implementa on_observation(self, observation): sin él el bot no hace nada en la batalla. ¿Quisiste decir «on_observaton»? Renómbralo a «on_observation».». Antes un bot así pasaba todas las etapas sin hacer nada. Un bot que sí lo implementa y devuelve `{}` («sin cambios») pasa.
 
 Ejemplo mínimo en Python:
 
@@ -95,11 +98,21 @@ Qué comprueban las etapas de ejecución:
 - `smoke_battle`: que juega una partida corta contra un bot de referencia sin ser descalificado.
 - `resource_limits`: que arranca en menos de 5 s y decide en menos de 100 ms.
 
+Si la versión no supera la validación, la tarjeta **«vN: Tu bot no ha superado la validación»** te dice:
+
+- el **origen**: tu código, o la plataforma («tu código no tiene la culpa»);
+- la **fase** en la que falló;
+- **dónde**: el **fichero y la línea** de tu código («`src/bot.py`, línea 7»), sin rutas internas de la plataforma;
+- el motivo, la última línea del error («NameError: name 'x' is not defined»);
+- que **vN NO está publicada** y no puede usarse en batallas, y qué versión publicada sigue en juego, si la hay;
+- qué hacer. Si el fallo es de tu código, el botón **«Corregir el código de vN»** lo carga en el editor y lo guardarás como versión nueva. Si es de la plataforma, **«Reenviar vN a validación sin cambios»**.
+
 Motivos típicos y qué hacer:
 
 | Motivo | Qué significa |
 |---|---|
-| «el bot no completó el handshake…» | tu código no llegó a conectarse: un bucle o una espera al importar, o un error. Si se ve, la traza del error va al final |
+| «tu clase … no implementa on_observation…» / «…onObservation…» | falta el hook o tiene una errata: renómbralo como sugiere el mensaje |
+| «el bot no completó el handshake…» | tu código no llegó a conectarse: un bucle o una espera al importar, o un error. Si se ve, el fichero y la línea del error van al final |
 | «ningún COMMAND válido… (runtime: … Traceback …)» | tu bot lanzó una excepción. La última línea de la traza aparece en el motivo |
 | «mensaje(s) fuera de protocolo…» | devuelves un comando con valores fuera de rango, por ejemplo `throttle` fuera de [-1, 1] |
 | «candidato descalificado en la partida de humo» | no respondió a tiempo demasiadas veces seguidas |
@@ -134,13 +147,12 @@ batalla anterior.
 
 ## Usar el bot
 
-- **En una batalla de práctica**: necesitas 2 bots con versión publicada. Ver [Batallas](battles.md). **PENDIENTE.**
+- **En una batalla de práctica**: necesitas 2 bots con versión publicada; eliges qué versión publicada juega cada uno. Ver [Batallas](battles.md).
 - **En un torneo**: inscribes la última versión publicada. Ver [Torneos](tournaments.md). **PARCIAL.**
-- **Importante**: aunque tu bot juegue, **el vehículo lo conduce hoy un bot de prueba de la plataforma**, no tu código. Tu equipamiento sí se aplica ([TD-002](../roadmap/technical-debt.md#td-002)).
+- En la batalla, el vehículo lo conduce **tu código** con el **loadout** de esa versión ([Equipamiento](equipment.md)).
 
 ## Errores / limitaciones
 
-- **Error al crear un bot**: si el nombre está vacío o repetido, el error no se ve si no tienes un bot abierto. Si pulsas dos veces «Crear bot» puede producirse un error interno ([TD-022](../roadmap/technical-debt.md#td-022), [TD-013](../roadmap/technical-debt.md#td-013)).
 - **Asignar el bot a un equipo**: **PENDIENTE** ([Equipos](teams.md)).
 - **Ver el código de una versión**: **FUNCIONA ACTUALMENTE** en la pestaña Code.
 - **Paquetes de varios ficheros**: la web edita el fichero de entrada. Un paquete completo (`{"files":[…]}`) se sube por API.
@@ -152,7 +164,7 @@ batalla anterior.
 
 - Crear, configurar, subir, validar en el sandbox, publicar y consultar o comparar versiones funcionan en la rama del cierre funcional.
 - En la instalación desplegada falta configurar el sandbox del worker de builds ([TD-001](../roadmap/technical-debt.md#td-001)).
-- Las batallas aún no ejecutan tu código ([TD-002](../roadmap/technical-debt.md#td-002)).
+- En el código integrado las batallas ejecutan tu código con tu loadout; si está activado en un servidor concreto lo dice [current-status.md](../roadmap/current-status.md).
 
 ## Documentación relacionada
 
