@@ -73,7 +73,11 @@ test.describe("@fase1 UX-E accesibilidad básica", () => {
     await expect(page).toHaveURL(/#\/bots|\/$/);
 
     // Navegar con la barra: el foco acaba en el encabezado de la pantalla nueva.
-    await page.getByRole("link", { name: "Equipos" }).focus();
+    // Acotado a la barra: la home (UX-A) tiene también «Ir a Equipos» en la checklist.
+    await page
+      .getByRole("navigation", { name: "principal" })
+      .getByRole("link", { name: "Equipos", exact: true })
+      .focus();
     await page.keyboard.press("Enter");
     await expect(page.getByRole("heading", { name: "Equipos", exact: true })).toBeFocused();
 
