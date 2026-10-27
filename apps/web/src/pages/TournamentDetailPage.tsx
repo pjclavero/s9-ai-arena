@@ -142,8 +142,7 @@ export function TournamentDetailPage(props: { id: string; me: Me }) {
                 <strong data-testid="tournament-state" data-state={t.state}>
                   {labelOf(TOURNAMENT_STATE_NAME, t.state)}
                 </strong>{" "}
-                ·{" "}
-                {t.entryCount ?? 0} inscritos
+                · {t.entryCount ?? 0} inscritos
               </p>
               {t.state === "open" && (
                 <form onSubmit={onEnter}>

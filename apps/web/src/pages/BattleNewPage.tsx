@@ -487,7 +487,10 @@ export function BattleNewPage(props: { me: Me }) {
         <p className="warn" data-testid="maps-for-mode">
           Sólo aparecen los mapas publicados que declaran soportar el modo {modeName(mode)}; ahora no hay ninguno.
           {modes.some((m) => m !== mode && mapsForMode(m) > 0) &&
-            ` Modos con mapas: ${modes.filter((m) => mapsForMode(m) > 0).map(modeName).join(", ")}.`}
+            ` Modos con mapas: ${modes
+              .filter((m) => mapsForMode(m) > 0)
+              .map(modeName)
+              .join(", ")}.`}
         </p>
       )}
       <label>
