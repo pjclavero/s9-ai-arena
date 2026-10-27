@@ -154,8 +154,59 @@ if (!chosen) {
   }
   chosen = candidates[0];
 }
+
+// UX-04 (G-05) · hook efectivo. ArenaBot.prototype.onObservation devuelve {}
+// («sin cambios»): una clase que NO lo sobrescribe —p. ej. `onObservaton`— hace
+// HELLO y responde COMMAND válidos vacíos, y antes pasaba las 10 etapas sin hacer
+// nada. Se exige que la clase (o un ancestro distinto de ArenaBot) lo defina.
+// Un bot quieto que SÍ lo implementa y devuelve {} pasa.
+const HOOK = "onObservation";
+async function checkHook(bot) {
+  // Sobre la INSTANCIA: un campo de clase (`onObservation = (o) => …`) también cuenta.
+  if (bot[HOOK] !== ArenaBot.prototype[HOOK]) return;
+  const own = new Set();
+  for (let p = chosen.prototype; p && p !== ArenaBot.prototype && p !== Object.prototype; p = Object.getPrototypeOf(p)) {
+    for (const name of Object.getOwnPropertyNames(p)) {
+      if (name !== "constructor" && typeof Object.getOwnPropertyDescriptor(p, name)?.value === "function") own.add(name);
+    }
+  }
+  for (const name of Object.keys(bot)) if (typeof bot[name] === "function") own.add(name);
+  const close = closestName(HOOK, [...own]);
+  const hint = close ? ` ¿Quisiste decir «${close}»? Renómbralo a «${HOOK}».` : "";
+  await fail(
+    "hook",
+    `tu clase ${chosen.name || "(anónima)"} no implementa ${HOOK}(observation): sin él el bot no hace nada en la batalla.${hint}`,
+    11,
+  );
+}
+
+/** Nombre más parecido (distancia de edición ≤ 3 y < la mitad del hook), o undefined. */
+function closestName(target, names) {
+  const dist = (a, b) => {
+    const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+    for (let j = 1; j <= b.length; j++) d[0][j] = j;
+    for (let i = 1; i <= a.length; i++)
+      for (let j = 1; j <= b.length; j++)
+        d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    return d[a.length][b.length];
+  };
+  let best;
+  let bestD = Infinity;
+  for (const n of names) {
+    const v = dist(target.toLowerCase(), n.toLowerCase());
+    if (v < bestD) [best, bestD] = [n, v];
+  }
+  return bestD <= Math.min(3, Math.floor(target.length / 2)) ? best : undefined;
+}
+
+let bot;
 try {
-  const bot = new chosen(env.BOT_ID ?? "bot_sandbox");
+  bot = new chosen(env.BOT_ID ?? "bot_sandbox");
+} catch (e) {
+  await fail("runtime", e?.stack ?? String(e), 9);
+}
+await checkHook(bot);
+try {
   await bot.run(env.WS_URL, env.BATTLE_TOKEN);
 } catch (e) {
   await fail("runtime", e?.stack ?? String(e), 9);

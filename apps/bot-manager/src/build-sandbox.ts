@@ -62,6 +62,7 @@ import {
   type StartupTimeouts,
 } from "./startup-clock.js";
 import type { Runtime } from "./types.js";
+import { describeUserError } from "./user-error.js";
 
 export class SandboxInfrastructureError extends Error {
   constructor(message: string) {
@@ -323,10 +324,19 @@ export class ContainerBuildSandbox implements BuildSandbox {
             `[${startup.reason}] ${startup.detail}${exit}; descargas del artefacto: ${offer.fetches} (${formatTimeline(timeline)})`,
           );
         }
+        // UX-02/UX-04 · el informe del bootstrap trae lo que el usuario necesita:
+        // el hook ausente tal cual, y en una excepción, fichero y línea de SU código.
+        const report = startup.report;
+        const userMessage =
+          report?.kind === "hook"
+            ? report.detail.trim()
+            : report && (report.kind === "import" || report.kind === "runtime")
+              ? `tu código falló al ${report.kind === "import" ? "cargarse" : "arrancar"}: ${describeUserError(report.detail)}`
+              : `el bot no completó el handshake (HELLO): ${startup.detail}${exit}`;
         return {
           protocol: {
             outcome: "failed",
-            message: `el bot no completó el handshake (HELLO): ${startup.detail}${exit} [timeout_reason=${startup.reason}]`,
+            message: `${userMessage} [timeout_reason=${startup.reason}]`,
             logs: [...logs, `descargas del artefacto: ${offer.fetches}`, formatTimeline(timeline)],
             metrics,
           },
@@ -455,8 +465,8 @@ export class ContainerBuildSandbox implements BuildSandbox {
     if (state?.oomKilled) parts.push("OOM");
     if (reports.length) {
       const r = reports[0];
-      const lastLine = r.detail.trim().split("\n").slice(-3).join(" | ");
-      parts.push(`${r.kind}: ${lastLine}`);
+      // UX-02 · fichero y línea del código del usuario, no la traza cruda del sandbox.
+      parts.push(`${r.kind}: ${r.kind === "hook" ? r.detail.trim() : describeUserError(r.detail)}`);
     }
     return parts.length ? ` (${parts.join("; ")})` : "";
   }

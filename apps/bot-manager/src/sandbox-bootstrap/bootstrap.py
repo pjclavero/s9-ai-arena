@@ -94,6 +94,48 @@ def safe_path(rel):
     return os.path.join(ROOT, rel)
 
 
+# UX-04 (G-05) · hook efectivo. ArenaBot.on_observation devuelve {} («sin cambios»):
+# una subclase que NO lo sobrescribe —p. ej. porque el método se llama
+# `on_observaton`— arranca, hace HELLO y responde COMMAND válidos vacíos, y
+# antes pasaba las 10 etapas sin hacer nada. Se exige que la clase (o un
+# ancestro suyo distinto de ArenaBot) defina on_observation, o el despachador
+# _handle_observation. Un bot quieto que SÍ lo implementa y devuelve {} pasa.
+HOOK = "on_observation"
+DISPATCH = "_handle_observation"
+
+
+def _inherited(bot, base, name):
+    # Sobre la INSTANCIA: un atributo asignado en __init__ también cuenta.
+    bound = getattr(bot, name, None)
+    return getattr(bound, "__func__", None) is getattr(base, name)
+
+
+def check_hook(bot, base):
+    cls = type(bot)
+    if not (_inherited(bot, base, HOOK) and _inherited(bot, base, DISPATCH)):
+        return
+    import difflib
+
+    own = sorted(
+        {
+            name
+            for klass in cls.__mro__
+            if klass is not base and klass is not object
+            for name, value in vars(klass).items()
+            if callable(value) and not name.startswith("__")
+        }
+        | {name for name, value in vars(bot).items() if callable(value)}
+    )
+    close = difflib.get_close_matches(HOOK, own, n=1, cutoff=0.6)
+    hint = (" ¿Quisiste decir «%s»? Renómbralo a «%s»." % (close[0], HOOK)) if close else ""
+    fail(
+        "hook",
+        "tu clase %s no implementa %s(self, observation): sin él el bot no hace nada en la batalla.%s"
+        % (cls.__name__, HOOK, hint),
+        11,
+    )
+
+
 def main():
     url = os.environ.get("ARTIFACT_URL")
     expected = os.environ.get("ARTIFACT_SHA256", "")
@@ -179,6 +221,12 @@ def main():
         chosen = candidates[0]
     try:
         bot = chosen(os.environ.get("BOT_ID", "bot_sandbox"))
+    except SystemExit:
+        raise
+    except BaseException:
+        fail("runtime", traceback.format_exc(), 9)
+    check_hook(bot, ArenaBot)
+    try:
         bot.run(os.environ["WS_URL"], os.environ["BATTLE_TOKEN"])
     except SystemExit:
         raise
