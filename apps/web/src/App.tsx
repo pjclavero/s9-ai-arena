@@ -386,9 +386,8 @@ function ShellNav(props: { me: Me | null; route: string; booting: boolean; onLog
   );
   return (
     <nav aria-label="principal" style={{ flexWrap: "wrap" }}>
-      <a href="#/" aria-label="S9 AI Arena: inicio" style={{ color: "inherit" }}>
-        <strong>S9 AI Arena</strong>
-      </a>
+      {/* La marca no es un segundo enlace a #/: «Inicio» ya lo es (un solo destino, un solo nombre). */}
+      <strong>S9 AI Arena</strong>
       {link("#/", "Inicio", "nav-home")}
       {me && (
         <>
