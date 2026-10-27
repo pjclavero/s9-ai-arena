@@ -6,8 +6,10 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { gunzipSync } from "node:zlib";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import request from "supertest";
 import type { Express } from "express";
 import { startTestDb, type TestDbHandle } from "./testing/test-db.js";
@@ -17,11 +19,13 @@ import { createApp } from "./app.js";
 import { FakeBotManager } from "./services/bot-manager.js";
 import { loadRuleset } from "../../../packages/game-rules/index.js";
 import { initPhysics } from "../../arena-engine/src/sim/physics.js";
-import { record, type Replay } from "../../arena-engine/src/replay.js";
+import { fromJsonl, record, type Replay } from "../../arena-engine/src/replay.js";
 import { emptyArena, gunnerLoadout, scoutLoadout } from "../../arena-engine/src/fixtures.js";
 import { HunterBot } from "../../arena-engine/src/stubs.js";
 import { ingestReplay, type StoredReplay } from "../../replay-service/src/store.js";
 import { implementedOperations } from "./registry.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 let h: TestDbHandle;
 let app: Express;
@@ -130,6 +134,25 @@ describe("verifyReplay (operación 53/53 del contrato de E1)", () => {
     expect(r.status).toBe(200);
     expect(r.body.matches).toBe(false);
     expect(r.body.reason).toBe("final_state_hash_mismatch_with_db");
+  }, 120000);
+
+  it("UX-F (DEF-R1): replay real del motor 0.1.0 ⇒ «otra versión del motor», nunca «manipulado»", async () => {
+    const fixture = join(__dirname, "..", "..", "replay-service", "tests", "fixtures", "engine-0.1.0-sin-perimetro.replay.jsonl.gz");
+    const old = fromJsonl(gunzipSync(readFileSync(fixture)).toString("utf8"));
+    const s = ingestReplay(dir, old, { official: true });
+    const id = await insertBattle(h.db, s.path, {
+      replay_hash: s.index.sha256,
+      final_state_hash: old.result.finalStateHash,
+      engine_versions: JSON.stringify(old.header.versions),
+    });
+    const r = await request(app).post(`/replays/${id}/verify`).set("Authorization", `Bearer ${staff}`);
+    expect(r.status).toBe(200);
+    expect(r.body.valid).toBe(false);
+    expect(r.body.matches).toBe(false);
+    expect(r.body.reason).toMatch(/^engine_version_mismatch/);
+    expect(r.body.message).toMatch(/se grabó con otra versión del motor \(0\.1\.0/);
+    expect(r.body.message).toMatch(/NO significa que esté manipulado/);
+    expect(r.body.divergedAtTick).toBeUndefined();
   }, 120000);
 
   it("batalla sin replay ⇒ 404; batalla inexistente ⇒ 404", async () => {

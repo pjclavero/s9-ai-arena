@@ -1,6 +1,6 @@
 /**
  * UX-F (DEF-R1) · Un replay grabado con el motor ANTERIOR (0.1.0, sin perímetro)
- * tiene que verificarse como «grabado con otra versión del motor», nunca como
+ * tiene que verificarse como «se grabó con otra versión del motor», nunca como
  * «manipulado».
  *
  * El fixture NO es sintético: se grabó con el motor de `origin/main` (35a4fb9,
@@ -44,6 +44,6 @@ describe("DEF-R1 · replays del motor anterior tras el perímetro", () => {
     expect(r.reason).toContain("replay=0.1.0");
     // Nunca se llega a re-simular: no hay veredicto de manipulación.
     expect(r.verification).toBeNull();
-    expect(r.message).toMatch(/grabado con otra versión del motor/);
+    expect(r.message).toMatch(/se grabó con otra versión del motor/);
   });
 });

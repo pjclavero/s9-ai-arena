@@ -1306,6 +1306,10 @@ paths:
                   matches: { type: boolean }
                   officialHash: { type: string }
                   recomputedHash: { type: string }
+                  valid: { type: boolean }
+                  reason: { type: string, description: "checksum_mismatch, corrupt_file, engine_version_mismatch, final_state_hash_mismatch_with_db" }
+                  message: { type: string, description: "Explicación para personas (p. ej. replay grabado con otra versión del motor: no verificable, no manipulado)" }
+                  divergedAtTick: { type: integer }
         '404': { $ref: '#/components/responses/NotFound' }
 
   # ------------------------------------------------------------- STANDINGS

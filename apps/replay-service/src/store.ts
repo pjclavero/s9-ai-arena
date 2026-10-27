@@ -206,6 +206,11 @@ export interface StoredVerifyResult {
   /** false si el archivo está manipulado/corrupto o el motor no puede re-simular. */
   valid: boolean;
   reason?: string;
+  /**
+   * UX-F (DEF-R1) · Explicación para personas. Un replay de otra versión del motor
+   * NO está manipulado: simplemente este despliegue no puede re-simularlo.
+   */
+  message?: string;
   /** Resultado de la re-simulación (solo si valid). */
   verification: VerifyResult | null;
 }
@@ -225,6 +230,14 @@ export async function verifyStored(dir: string, battleId: string): Promise<Store
   return verifyLoaded(battleId, loaded.replay);
 }
 
+/** Texto humano del `engine_version_mismatch` (lo reutiliza la API). */
+export function engineVersionMismatchMessage(recorded: string): string {
+  return (
+    `Este replay se grabó con otra versión del motor (${recorded}; la actual es ${engineDeps.engine.version}). ` +
+    "No se puede re-simular con este motor, así que no se verifica; eso NO significa que esté manipulado."
+  );
+}
+
 /** Verifica un Replay ya decodificado (lo usa también el endpoint verifyReplay de la API). */
 export async function verifyLoaded(battleId: string, replay: Replay): Promise<StoredVerifyResult> {
   const recorded = replay.header.versions.engine;
@@ -233,6 +246,7 @@ export async function verifyLoaded(battleId: string, replay: Replay): Promise<St
       battleId,
       valid: false,
       reason: `engine_version_mismatch: replay=${recorded}, disponible=${engineDeps.engine.version}`,
+      message: engineVersionMismatchMessage(recorded),
       verification: null,
     };
   }

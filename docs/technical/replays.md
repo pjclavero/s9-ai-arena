@@ -117,7 +117,7 @@ La API monta el volumen de replays en sólo lectura (`arena_replays:/data/replay
 3. Re-simula (`verifyLoaded`).
 4. Exige que `final_state_hash` de la BD coincida con el del fichero.
 
-Responde `{matches, valid, officialHash, recomputedHash, reason, divergedAtTick}`. Exige poder leer el replay (misma política). Re-simular es caro: la API lo limita con cuota anónima; la ruta del replay-service ya no es alcanzable desde fuera.
+Responde `{matches, valid, officialHash, recomputedHash, reason, message, divergedAtTick}`. Un replay grabado con otra versión del motor da `valid=false`, `reason=engine_version_mismatch` y un `message` que lo explica: no se puede re-simular, pero **no** está manipulado ([ADR-019](../adr/ADR-019-perimetro-y-version-del-motor.md)). Exige poder leer el replay (misma política). Re-simular es caro: la API lo limita con cuota anónima; la ruta del replay-service ya no es alcanzable desde fuera.
 
 ## Retención
 

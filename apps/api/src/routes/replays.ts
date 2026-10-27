@@ -260,6 +260,8 @@ export function replayRoutes(
         recomputedHash: r.verification?.recomputedHash,
         valid: r.valid && dbHashOk,
         reason: !dbHashOk ? "final_state_hash_mismatch_with_db" : r.reason,
+        // UX-F (DEF-R1) · sólo para engine_version_mismatch: «otra versión», no «manipulado».
+        message: dbHashOk ? r.message : undefined,
         divergedAtTick: r.verification?.divergedAtTick ?? undefined,
       });
     },

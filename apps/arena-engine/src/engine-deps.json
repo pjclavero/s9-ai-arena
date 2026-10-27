@@ -1,7 +1,7 @@
 {
   "$comment": "D4 del ADR-000. El motor verifica estos hashes al arrancar y se niega a ejecutar si no coinciden. Cambiar un valor aquí exige un ADR y regenerar las batallas golden: una build distinta de Rapier puede alterar resultados deterministas e invalidar replays oficiales.",
   "engine": {
-    "version": "0.1.0",
+    "version": "0.2.0",
     "runtime": "node22"
   },
   "physics": {
