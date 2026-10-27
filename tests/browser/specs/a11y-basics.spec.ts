@@ -75,7 +75,7 @@ test.describe("@fase1 UX-E accesibilidad básica", () => {
     // Navegar con la barra: el foco acaba en el encabezado de la pantalla nueva.
     await page.getByRole("link", { name: "Equipos" }).focus();
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("heading", { name: "Equipos" })).toBeFocused();
+    await expect(page.getByRole("heading", { name: "Equipos", exact: true })).toBeFocused();
 
     // Todas las paradas de tabulación de la barra y del contenido tienen foco visible.
     await page.locator("body").focus();
