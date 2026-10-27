@@ -7,7 +7,7 @@ Desde la web puedes elegir **4 modos**: combate libre (`deathmatch`), combate po
 Hoy:
 
 - en «Nueva batalla» eliges el **modo** y un **ruleset** (las reglas: límite de tiempo, puntos y presupuesto), que salen de la plataforma; el selector de mapas sólo muestra los que admiten ese modo, y la batalla se crea ([TD-003](../roadmap/technical-debt.md#td-003));
-- los vehículos los conduce un bot de prueba que no persigue banderas ni zonas ([TD-002](../roadmap/technical-debt.md#td-002)).
+- los vehículos los conduce el código de cada bot: si quieres puntuar en bandera o zonas, tu código tiene que perseguir esos objetivos ([TD-002](../roadmap/technical-debt.md#td-002), cerrada).
 
 ## Índice
 
@@ -95,13 +95,13 @@ Cada mapa **declara** sus modos, y el validador comprueba que tenga lo necesario
 
 ## Errores / limitaciones
 
-- **Por API**, `POST /battles` todavía acepta un modo que el mapa no admite; la web no lo permite. Esa batalla acaba fallando.
-- **Bandera y zonas**: con el bot de prueba de la plataforma, estas partidas suelen acabar en empate por tiempo, porque ese bot no persigue objetivos.
+- **Por API**, `POST /battles` rechaza con 409 un mapa que no admite el modo; la web tampoco lo permite.
+- **Bandera y zonas**: si ningún bot persigue los objetivos, estas partidas suelen acabar en empate por tiempo.
 - Ningún mapa de serie admite control de zonas.
 
 ## Estado actual
 
-**FUNCIONA ACTUALMENTE**: los 4 modos, con rulesets reales, se eligen al crear una batalla de práctica (202, comprobado en un navegador real). **PARCIAL**: el bot de prueba no persigue objetivos. **PENDIENTE**: 3 modos sólo existen en el motor.
+**FUNCIONA ACTUALMENTE**: los 4 modos, con rulesets reales, se eligen al crear una batalla de práctica (202, comprobado en un navegador real). **PENDIENTE**: 3 modos sólo existen en el motor.
 
 ## Documentación relacionada
 

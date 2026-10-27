@@ -2,6 +2,11 @@
 
 SDK de referencia en TypeScript para bots de [S9 AI Arena](../../README.md), protocolo `arena/1`.
 
+> **Importante: la plataforma ejecuta JavaScript ESM, no TypeScript.** El runtime `node`
+> rechaza TypeScript en la etapa `static_analysis` del build. El tutorial de abajo y los
+> ejemplos de `example-bots/javascript/` están en TypeScript: **no se pueden subir tal
+> cual**. Transpílalos (por ejemplo con `tsc` o `esbuild`) y sube el `.js` resultante.
+
 ## Instalar
 
 Este paquete vive dentro del monorepo (aún no está publicado en npm). Desde la raíz:
@@ -117,11 +122,21 @@ class MiBot extends ArenaBot {
 }
 ```
 
-Conectar contra una batalla real (plataforma, no simulador local):
+## En la plataforma
+
+En S9 AI Arena **no llamas a `run()` ni recibes ningún `battle_token`**: subes un
+módulo ES cuya clase extiende `ArenaBot` de `@arena/sdk`, exportada como
+`export default` o como `export class Bot`, y la plataforma la instancia y la conecta
+a la batalla. El hook se llama exactamente `onObservation`: con otro nombre el bot no
+hace nada y el build **no** lo detecta. El SDK (versión 0.1.0, no publicado en npm)
+viene preinstalado en el runtime de la plataforma. Ojo: el tutorial exporta
+`TutorialBot` con nombre; para subirlo, renómbralo a `Bot` o expórtalo por defecto.
+
+`run()` es para tus propias pruebas, contra un servidor `arena/1` que tú controlas:
 
 ```typescript
 const bot = new MiBot("bot_mio01");
-await bot.run("wss://arena.example/ws", "el-token-que-te-dio-la-plataforma");
+await bot.run("wss://arena.example/ws", "el-token-de-tu-servidor-de-pruebas");
 ```
 
 `run()` **no reconecta**: si el transporte cae, la promesa se resuelve y el

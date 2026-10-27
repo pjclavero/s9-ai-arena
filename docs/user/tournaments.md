@@ -4,11 +4,11 @@
 
 Un torneo enfrenta a los bots inscritos según un formato (liga, eliminatoria, suizo…). Sus batallas son **oficiales**: cuentan para el rating. Crear un torneo y cerrar sus inscripciones exige el rol **organizador**; cualquier usuario puede inscribir sus bots publicados.
 
-Hoy es la **única vía de la web que llega a jugar batallas**, pero:
+Hoy:
 
-- necesita bots publicados, que no se pueden obtener ([TD-001](../roadmap/technical-debt.md#td-001));
+- necesita bots publicados ([Bots](bots.md));
 - se juega siempre en el mapa `mvp-arena-01` ([TD-015](../roadmap/technical-debt.md#td-015));
-- los vehículos los conduce el código de cada bot inscrito, en su contenedor; en este servidor la ejecución aún no está activada y las batallas quedan en cola ([TD-002](../roadmap/technical-debt.md#td-002)).
+- los vehículos los conduce el código de cada bot inscrito, en su contenedor, con su loadout ([TD-002](../roadmap/technical-debt.md#td-002), cerrada).
 
 ## Índice
 
@@ -45,7 +45,7 @@ Sin el rol verás «Requiere rol organizer» después de pulsar crear. El torneo
 | Mensaje | Causa |
 |---|---|
 | «X inscrito (vN)» | Correcto |
-| «Ese bot no tiene ninguna versión publicada» | Hoy, siempre ([TD-001](../roadmap/technical-debt.md#td-001)) |
+| «Ese bot no tiene ninguna versión publicada» | Publica antes una versión ([Bots](bots.md#publicar)) |
 | «El bot ya está inscrito en este torneo» | Ya inscrito |
 | «Las inscripciones no están abiertas» | Torneo cerrado |
 
@@ -63,19 +63,19 @@ Sin el rol verás «Requiere rol organizer» después de pulsar crear. El torneo
 
 - **Detalle**: la sección «Batallas» se refresca cada 5 s. Tiene **Cuadro** por rondas e **Historial**, con enlaces «Ver en directo» o «Ver replay». Los bots aparecen con su identificador abreviado.
 - **«Ver cuadro»** (`#/tournaments/<id>/bracket`): emparejamientos por ronda y ganador de cada enfrentamiento. Es de sólo lectura.
-- **Clasificación del torneo**: no se muestra. El ranking general está en [Clasificaciones](rankings.md), que hoy sale vacío.
-- **Directo y replay**: los enlaces llevan al visor y al reproductor, que hoy no se dibujan ([TD-009](../roadmap/technical-debt.md#td-009)).
+- **Clasificación del torneo**: no se muestra. El ranking general está en [Clasificaciones](rankings.md).
+- **Directo y replay**: los enlaces llevan al visor y al reproductor ([Visor](viewer.md), [Replays](replays.md)).
 
 ## Errores / limitaciones
 
-- **Versiones congeladas**: después de un torneo, tu versión queda `frozen` y no puede inscribirse en otro. Una versión nueva tampoco se puede publicar hoy.
-- **Formato `teams`**: no se puede usar en la práctica, porque no hay forma de asignar bots a equipos ([TD-011](../roadmap/technical-debt.md#td-011)).
+- **Versiones congeladas**: después de un torneo, tu versión queda `frozen` y no puede inscribirse en otro: publica una versión nueva.
+- **Formato `teams`**: ya puedes asignar bots a equipos (desde «Equipos»), pero el formato de torneo por equipos todavía no se puede usar en la práctica: quedó fuera del cierre de [TD-011](../roadmap/technical-debt.md#td-011).
 - **Carreras**: cerrar inscripciones dos veces a la vez puede dar un error interno ([TD-013](../roadmap/technical-debt.md#td-013)).
 - **Batalla fallida**: si una batalla del torneo falla por un problema técnico, su enfrentamiento puede quedarse sin cerrar ([TD-015](../roadmap/technical-debt.md#td-015)).
 
 ## Estado actual
 
-**PARCIAL**: el circuito completo funciona para un organizador con bots publicados; hoy no hay bots publicados.
+**PARCIAL**: el circuito completo funciona para un organizador con bots publicados; faltan la elección de mapas y el cierre con batallas fallidas ([TD-015](../roadmap/technical-debt.md#td-015)).
 
 ## Documentación relacionada
 

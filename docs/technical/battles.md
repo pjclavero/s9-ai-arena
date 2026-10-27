@@ -221,7 +221,7 @@ Limitaciones:
 ## Estado actual
 
 - **FUNCIONA (entorno aislado, RUNTIME_VERIFIED)**: web → API → cola → worker → contenedores con el ARTEFACTO FIRMADO de la versión exacta de cada bot (buildeado en el sandbox real) → motor → resultado, outcome, replay verificable, stats y CPU reales; también desde el navegador (golden path).
-- **PARCIAL (producción)**: código integrado y compose preparado (worker en `arena`, `DOCKER_PROXY_URL`, `ARENA_ENGINE_HOST`, clave pública), sin desplegar: exige recrear `tournament-worker`, `bot-build-worker` y `api`, generar `artifact_verify_key.pem` y el proxy del host.
+- **FUNCIONA (producción)**: desplegado con RC4 (`f32ab2c`) y verificado el 2026-10-27 con una batalla real: el código del usuario juega en contenedores con el artefacto firmado de su versión.
 - **PENDIENTE**: composición por modo en la API; separar el anfitrión de bots del proceso con credenciales de BD (TD-033).
 
 ## Documentación relacionada

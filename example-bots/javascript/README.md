@@ -4,6 +4,12 @@ Dos de los cuatro bots oficiales de S9 AI Arena (los otros dos, Explorador y
 Defensor, están en [`example-bots/python/`](../python/)). Ambos usan
 [`@arena/sdk`](../../sdks/javascript/) y el catálogo real de E3.
 
+> **Importante: no se pueden subir tal cual a la plataforma.** Están escritos en
+> TypeScript (`.ts`) y el runtime `node` ejecuta JavaScript ESM plano: TypeScript se
+> rechaza en la etapa `static_analysis` del build. Transpílalos (por ejemplo con `tsc`
+> o `esbuild`) y sube el `.js`; la clase debe exportarse como `export default` o
+> `export class Bot`.
+
 ## Artillero (`gunner.ts`)
 
 **Estrategia, en un párrafo.** Mantiene distancia media (35 m, dentro del

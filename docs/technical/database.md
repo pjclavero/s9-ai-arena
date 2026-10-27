@@ -3,9 +3,9 @@
 ## Resumen
 
 PostgreSQL 16.14 es la base de datos de negocio **y** la cola de trabajos. El esquema se define en
-código, con 11 migraciones en `apps/api/src/db/migrations.ts` aplicadas mediante Knex, y tiene 35
+código, con 13 migraciones en `apps/api/src/db/migrations.ts` aplicadas mediante Knex, y tiene 35
 tablas (33 de negocio más las 2 de control de Knex). **No hay tabla de replays**: los replays viven
-en disco. Todo está verificado en `27f70bb`. Este documento no contiene secretos.
+en disco. Verificado en `27f70bb`; las migraciones 012 y 013, en `35a4fb9`. Este documento no contiene secretos.
 
 ## Índice
 
@@ -33,6 +33,8 @@ en disco. Todo está verificado en `27f70bb`. Este documento no contiene secreto
 | `009_r24_refresh_families` | `sessions.absolute_expires_at`; `session_refresh_tokens` (familias de refresh) |
 | `010_r25_shared_limits` | `api_usage.expires_at` y `blocked_until` (límites compartidos); `artifacts.bytes` |
 | `011_battle_cpu_ms` | `participants.cpu_ms`, con un CHECK que exige un valor finito |
+| `012_bot_versioning` | `bot_versions.source_sha256`, `parent_version` y `validated_build_id`; `artifacts` único por `build_id`; trigger `bot_versions_guard` (inmutabilidad de la versión) |
+| `013_battle_claim` | `battles.claimed_by`, `lease_expires_at` y `run_attempts` (reserva atómica con lease); índice `battles_running_lease_idx` |
 
 ## Cómo se aplican
 
@@ -123,7 +125,7 @@ rol `postgres`**, así que cualquier comando que use `-U postgres` falla. Las co
 ## Errores / limitaciones
 
 - No hay tabla de replays. Si se pierde el volumen `arena_replays`, quedan `replay_ref` que apuntan a ficheros inexistentes.
-- `rulesets` sólo contiene lo que siembre `bootstrap`. La web pide otros ids ([TD-003](../roadmap/technical-debt.md#td-003)).
+- `rulesets` sólo contiene lo que siembre `bootstrap`. La web los lee de `GET /rulesets` ([TD-003](../roadmap/technical-debt.md#td-003), cerrada).
 - `achievements` y `security_findings` no tienen escritor.
 - La API y el worker comparten el mismo rol de BD, sin separación de privilegios.
 
@@ -136,8 +138,8 @@ rol `postgres`**, así que cualquier comando que use `-U postgres` falla. Las co
 
 | Afirmación | Estado | Fuente |
 |---|---|---|
-| 11 migraciones y sus tablas | CODE_VERIFIED | `apps/api/src/db/migrations.ts` (`name: "0xx_…"`, `CREATE TABLE`) |
-| 11 migraciones aplicadas y 35 tablas en producción | RUNTIME_VERIFIED (en la auditoría) | `knex_migrations` y `\dt` (sólo lectura) |
+| 13 migraciones y sus tablas | CODE_VERIFIED | `apps/api/src/db/migrations.ts` (`name: "0xx_…"`, `CREATE TABLE`) |
+| 11 migraciones aplicadas y 35 tablas en producción (antes de RC4; 012 y 013 no crean tablas) | RUNTIME_VERIFIED (en la auditoría) | `knex_migrations` y `\dt` (sólo lectura) |
 | Comandos del CLI | CODE_VERIFIED | `apps/api/src/db/cli.ts:2-69` |
 | Contenido de `bootstrap` | CODE_VERIFIED | `apps/api/src/db/seeds/dev.ts:75-95` |
 | Escritores y lectores | CODE_VERIFIED | análisis de `db("<tabla>")…insert/update` y SQL crudo en `apps/*/src` (sin tests) |

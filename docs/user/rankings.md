@@ -37,7 +37,7 @@ La página muestra la **temporada activa** (hoy `season-1`), la misma en la que 
 
 ## Estado actual
 
-**FUNCIONA ACTUALMENTE** la lectura de la temporada correcta; **PARCIAL** porque sólo hay datos cuando se juegan torneos, y la ejecución de batallas aún no está activada en este servidor ([TD-002](../roadmap/technical-debt.md#td-002)).
+**FUNCIONA ACTUALMENTE** la lectura de la temporada correcta. Sólo hay datos cuando se juegan torneos: las batallas de práctica no cuentan para el rating.
 
 ## Documentación relacionada
 

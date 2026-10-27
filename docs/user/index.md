@@ -4,10 +4,7 @@
 
 S9 AI Arena es una arena de programación: escribes el código de un bot que conduce un vehículo 2D, eliges su equipamiento y lo enfrentas a otros bots en batallas y torneos. Esta guía explica **qué puedes hacer hoy desde la web**, con las pantallas, los campos y los mensajes que vas a ver. No hace falta conocer la arquitectura interna.
 
-Antes de empezar, lo más importante: **el recorrido completo todavía no funciona**. Hoy puedes registrarte, crear bots, configurar su equipamiento y subir código. El recorrido se corta en dos puntos:
-
-1. **La validación del código**: todas las versiones acaban «rechazadas», así que ningún bot llega a estar publicado.
-2. **La creación de batallas** desde la web, que siempre responde «rulesetId desconocido».
+El recorrido completo funciona: te registras, creas un bot, eliges su equipamiento, pegas su código, lo envías a validación, lo publicas, lo asignas a un equipo, lanzas una batalla y la ves en el visor y después como replay. En la batalla, **tu vehículo lo conduce tu código**, con el equipamiento que le pusiste.
 
 Cada página indica lo que **FUNCIONA ACTUALMENTE**, lo **PARCIAL** y lo **PENDIENTE**, y enlaza los problemas conocidos.
 
@@ -23,7 +20,7 @@ Recomendamos leer en este orden, porque es el orden del ciclo real de un bot:
 6. [Modos de juego](game-modes.md): reglas y condiciones de victoria.
 7. [Batallas](battles.md): crear una batalla de práctica y ver el resultado.
 8. [Torneos](tournaments.md): crear, inscribirse, cerrar y seguir el cuadro.
-9. [Equipos](teams.md): crear equipos e invitar miembros.
+9. [Equipos](teams.md): crear equipos, invitar miembros y asignar bots.
 10. [Visor y espectador](viewer.md): ver una batalla en directo.
 11. [Replays](replays.md): volver a ver una batalla terminada.
 12. [Clasificaciones](rankings.md): el ranking público.
@@ -35,15 +32,13 @@ Recomendamos leer en este orden, porque es el orden del ciclo real de un bot:
 | Área | Estado | Motivo principal |
 |---|---|---|
 | Cuentas | **FUNCIONA ACTUALMENTE** (registro, login, sesión) · **PENDIENTE** (cambio de contraseña, recuperación) | [TD-012](../roadmap/technical-debt.md#td-012) |
-| Bots y equipamiento | **PARCIAL**: se crean y configuran, pero ninguna versión se publica | [TD-001](../roadmap/technical-debt.md#td-001) |
-| Mapas | **PARCIAL**: importar sí; el editor no guarda | [TD-010](../roadmap/technical-debt.md#td-010) |
-| Batallas | **PENDIENTE desde la web**: 400 al crear | [TD-003](../roadmap/technical-debt.md#td-003) |
-| Torneos | **PARCIAL**: funcionan para organizadores con bots publicados | [TD-001](../roadmap/technical-debt.md#td-001), [TD-015](../roadmap/technical-debt.md#td-015) |
-| Replays | **FUNCIONA ACTUALMENTE** (rama de cierre funcional): lista tras HTTPS, reproductor que dibuja y avanza | [TD-009](../roadmap/technical-debt.md#td-009), [TD-014](../roadmap/technical-debt.md#td-014) |
-| Visor en directo | **PARCIAL**: arranca y explica cada rechazo; ver una batalla viva depende de que haya batallas con bots publicados | [TD-028](../roadmap/technical-debt.md#td-028) |
-| Ranking | **PARCIAL**: la página existe pero sale vacía | [tournaments.md](../technical/tournaments.md#clasificación-y-rating) |
-
-Además: aunque una batalla llegue a jugarse, **los vehículos no ejecutan tu código**. Los conduce un bot de prueba interno de la plataforma ([TD-002](../roadmap/technical-debt.md#td-002)).
+| Bots y equipamiento | **FUNCIONA ACTUALMENTE**: crear, configurar, validar en el sandbox real y publicar | [TD-001](../roadmap/technical-debt.md#td-001) |
+| Mapas | **FUNCIONA ACTUALMENTE**: importar, generar, editar (guarda y reabre) y publicar el tuyo | [TD-010](../roadmap/technical-debt.md#td-010) |
+| Batallas | **FUNCIONA ACTUALMENTE**: se crean desde la web y las juega el código de cada bot | [TD-002](../roadmap/technical-debt.md#td-002), [TD-003](../roadmap/technical-debt.md#td-003) |
+| Torneos | **PARCIAL**: funcionan para organizadores con bots publicados; faltan piezas del formato | [TD-015](../roadmap/technical-debt.md#td-015) |
+| Replays | **FUNCIONA ACTUALMENTE**: lista tras HTTPS, reproductor que dibuja y avanza; sólo ves los que tienes permiso | [TD-009](../roadmap/technical-debt.md#td-009), [TD-014](../roadmap/technical-debt.md#td-014) |
+| Visor en directo | **FUNCIONA ACTUALMENTE**: ves la batalla viva y, si no se puede, explica el motivo | [TD-009](../roadmap/technical-debt.md#td-009), [TD-028](../roadmap/technical-debt.md#td-028) |
+| Ranking | **FUNCIONA ACTUALMENTE**: se llena con los resultados oficiales de los torneos | [tournaments.md](../technical/tournaments.md#clasificación-y-rating) |
 
 ## Si algo falla
 

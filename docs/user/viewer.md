@@ -4,7 +4,7 @@
 
 El **visor** (`#/viewer/<batalla>`) muestra una batalla en directo: vehículos, disparos, marcador, reloj y equipos, con varias cámaras. **«En directo»** (`#/live`) lista las batallas en curso para cualquier visitante. Hay también una vista de emisión (`/broadcast?battle=…`) pensada para retransmitir.
 
-Desde el cierre funcional de 2026-10 el visor **arranca de verdad en el navegador** (espera a que el motor gráfico esté listo), **pide el pase de espectador** y, si la batalla no se puede ver, **lo dice y se detiene** en lugar de quedarse en «conectando…». Ver una batalla en curso de punta a punta todavía depende de que haya batallas ejecutándose con bots publicados (ver [Estado actual](#estado-actual)).
+Desde el cierre funcional de 2026-10 el visor **arranca de verdad en el navegador** (espera a que el motor gráfico esté listo), **pide el pase de espectador** y, si la batalla no se puede ver, **lo dice y se detiene** en lugar de quedarse en «conectando…». Con RC4 desplegada hay batallas reales con el código de los bots, y el visor las muestra en directo (ver [Estado actual](#estado-actual)).
 
 ## Índice
 
@@ -65,12 +65,12 @@ Un rechazo definitivo **no** se reintenta en bucle: el visor pide un solo pase y
 ## Errores / limitaciones
 
 - **Batallas demasiado rápidas**: la plataforma simula sin ritmo de tiempo real, así que es difícil llegar a verlas en curso.
-- **Directo con batalla viva no probado en navegador** dentro de este carril: necesita bots publicados y batallas ejecutándose (carriles de bots y batallas). El pase de espectador sí se ha probado en la cadena real (ver [websocket.md](../technical/websocket.md#verificación)).
+- **Emisión** (`/broadcast`): sin prueba de extremo a extremo ([TD-009](../roadmap/technical-debt.md#td-009)).
 - **Móvil**: el lienzo es de ancho fijo.
 
 ## Estado actual
 
-**PARCIAL**: el visor arranca, pide el pase y explica cada rechazo en navegador real; el directo con una batalla en curso queda pendiente de la integración de los carriles de bots y batallas.
+**FUNCIONA ACTUALMENTE**: el visor arranca, pide el pase, explica cada rechazo y muestra en directo una batalla en curso (golden path en navegador real; RC4 verificada en producción el 2026-10-27). **PARCIAL**: la vista de emisión.
 
 ## Documentación relacionada
 

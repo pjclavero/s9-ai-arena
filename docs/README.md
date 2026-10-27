@@ -14,7 +14,7 @@ mezclan:
 Si un documento de evidencia contradice a uno canónico, manda el canónico. Si un documento canónico
 contradice al código, el error está en el documento: [cómo corregirlo](development/workflow.md).
 
-Estado verificado: `27f70bb`, 2026-10-15.
+Estado del proyecto (fuente única): [roadmap/current-status.md](roadmap/current-status.md).
 
 ## Índice
 
@@ -71,7 +71,7 @@ recomendada antes de cualquier otra.
 Cómo usar la web paso a paso: crear la cuenta, escribir y versionar un bot, equiparlo, formar
 equipos, crear mapas, lanzar batallas, organizar torneos, ver el directo y los replays, y consultar
 clasificaciones y estadísticas. Cada capítulo distingue lo que **funciona actualmente**, lo
-**parcial** y lo **pendiente**, y no oculta que hoy el flujo se corta en la publicación del bot.
+**parcial** y lo **pendiente**.
 
 ### Técnica — [technical/](technical/index.md)
 
