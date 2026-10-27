@@ -4,7 +4,7 @@
 
 En **«Mis bots»** creas bots, configuras su equipamiento, subes versiones de código y las envías a validación. Cada envío pasa por un *pipeline* de comprobaciones que **ejecuta tu código en un contenedor aislado** y lo enfrenta a un bot de referencia. Si las supera, puedes **publicar** la versión, y sólo las versiones publicadas juegan. Cada versión conserva su propio código, build y artefacto, y no cambia nunca: para modificarla creas una versión nueva desde ella.
 
-Importante: esto funciona en la rama del cierre funcional con Docker. En la instalación desplegada falta configurar el sandbox del worker de builds ([TD-001](../roadmap/technical-debt.md#td-001)). Mientras no se configure, los envíos terminan «rejected» con «sandbox no verificado», y eso no es un fallo de tu código.
+Todo esto funciona en la instalación desplegada: el build ejecuta tu código en el sandbox real y, en batalla, **tu vehículo lo conduce tu código** con el artefacto firmado de la versión publicada ([TD-001](../roadmap/technical-debt.md#td-001), [TD-002](../roadmap/technical-debt.md#td-002)).
 
 ## Índice
 
@@ -52,7 +52,13 @@ Límites y particularidades:
   - **Python**: una clase que herede de `arena_sdk.ArenaBot` (llámala `Bot` si defines varias) con `on_observation(self, observation)` devolviendo el comando.
   - **Node**: un módulo ES que exporte (`export default` o `export class Bot`) una clase que extienda `ArenaBot` de `@arena/sdk`, con `onObservation(observation)`.
 
-  No hace falta conectar nada: la plataforma instancia tu clase y la conecta a la batalla.
+  No hace falta conectar nada: la plataforma instancia tu clase y la conecta a la batalla. No llamas a `run()` ni recibes ningún `battle_token`; `run()` es sólo para tus pruebas fuera de la plataforma.
+
+> **Avisos antes de subir código**
+>
+> - **Runtime `node` = JavaScript ESM plano.** TypeScript se rechaza en la etapa `static_analysis`. El tutorial de `sdks/javascript/README.md` y los ejemplos `example-bots/javascript/*.ts` están en TypeScript: transpílalos (por ejemplo con `tsc` o `esbuild`) y sube el `.js`.
+> - **El nombre del hook importa.** Tiene que llamarse exactamente `on_observation` (Python) u `onObservation` (Node). Si escribes otro nombre, el bot no hace nada y **el build no lo detecta**.
+> - **En batalla no hay logs de tu bot.** Los únicos logs que ves son los del build, en «Ver build» (o `GET /api/v1/builds/{id}`).
 
 Ejemplo mínimo en Python:
 
@@ -83,7 +89,7 @@ La tarjeta **«Última subida: vN · estado»** resume la versión que estás mi
 
 ## Enviar a validación (build)
 
-**FUNCIONA ACTUALMENTE** en la rama del cierre funcional, con el sandbox configurado. **PENDIENTE** de configurar en la instalación desplegada.
+**FUNCIONA ACTUALMENTE**: el build ejecuta tu código en el sandbox real.
 
 1. Pulsa **«Enviar a validación vN»**.
 2. La tarjeta **«Pipeline de build · vN · …»** muestra las etapas: `structure`, `static_analysis`, `dependencies`, `build`, `protocol_test`, `smoke_battle`, `resource_limits`, `secret_scan`, `sign` y `publish`. Mientras dura dice «En curso: comprobando cada 2 s…».
@@ -93,7 +99,7 @@ Qué comprueban las etapas de ejecución:
 
 - `protocol_test`: que tu bot arranca, se conecta y envía comandos válidos.
 - `smoke_battle`: que juega una partida corta contra un bot de referencia sin ser descalificado.
-- `resource_limits`: que arranca en menos de 5 s y decide en menos de 100 ms.
+- `resource_limits`: que arranca en menos de 5 s y que el p95 de su tiempo de decisión es ≤ 100 ms. No es una garantía para la batalla: allí, un comando que no llega antes del siguiente ciclo de decisión (~100 ms, a 10 decisiones por segundo) se pierde, y 20 pérdidas seguidas descalifican al bot.
 
 Motivos típicos y qué hacer:
 
@@ -113,7 +119,7 @@ Si el pipeline no responde, tras unas 30 comprobaciones verás «El pipeline sig
 
 ## Publicar
 
-**FUNCIONA ACTUALMENTE** (con el sandbox configurado). El botón **«Publicar vN»** sólo aparece en versiones `validated`. Al publicar, el código **no** se hace público: la web siempre publica con el código privado.
+**FUNCIONA ACTUALMENTE.** El botón **«Publicar vN»** sólo aparece en versiones `validated`. Al publicar, el código **no** se hace público: la web siempre publica con el código privado.
 
 ## Ver un bot y sus versiones
 
@@ -134,25 +140,25 @@ batalla anterior.
 
 ## Usar el bot
 
-- **En una batalla de práctica**: necesitas 2 bots con versión publicada. Ver [Batallas](battles.md). **PENDIENTE.**
+- **En una batalla de práctica**: necesitas 2 bots con versión publicada. Ver [Batallas](battles.md). **FUNCIONA ACTUALMENTE.**
 - **En un torneo**: inscribes la última versión publicada. Ver [Torneos](tournaments.md). **PARCIAL.**
-- **Importante**: aunque tu bot juegue, **el vehículo lo conduce hoy un bot de prueba de la plataforma**, no tu código. Tu equipamiento sí se aplica ([TD-002](../roadmap/technical-debt.md#td-002)).
+- **En la batalla** el vehículo lo conduce **tu código**, con el loadout de la versión ([TD-002](../roadmap/technical-debt.md#td-002), cerrada).
 
 ## Errores / limitaciones
 
 - **Error al crear un bot**: si el nombre está vacío o repetido, el error no se ve si no tienes un bot abierto. Si pulsas dos veces «Crear bot» puede producirse un error interno ([TD-022](../roadmap/technical-debt.md#td-022), [TD-013](../roadmap/technical-debt.md#td-013)).
-- **Asignar el bot a un equipo**: **PENDIENTE** ([Equipos](teams.md)).
+- **Asignar el bot a un equipo**: **FUNCIONA ACTUALMENTE** desde «Equipos» → «Añadir bot» ([Equipos](teams.md)).
 - **Ver el código de una versión**: **FUNCIONA ACTUALMENTE** en la pestaña Code.
 - **Paquetes de varios ficheros**: la web edita el fichero de entrada. Un paquete completo (`{"files":[…]}`) se sube por API.
 - **Versión `frozen` tras un torneo**: no puede inscribirse en otro torneo.
 
 ## Estado actual
 
-**PARCIAL**:
+**FUNCIONA ACTUALMENTE**:
 
-- Crear, configurar, subir, validar en el sandbox, publicar y consultar o comparar versiones funcionan en la rama del cierre funcional.
-- En la instalación desplegada falta configurar el sandbox del worker de builds ([TD-001](../roadmap/technical-debt.md#td-001)).
-- Las batallas aún no ejecutan tu código ([TD-002](../roadmap/technical-debt.md#td-002)).
+- Crear, configurar, subir, validar en el sandbox real, publicar y consultar o comparar versiones.
+- Las batallas ejecutan tu código ([TD-002](../roadmap/technical-debt.md#td-002)).
+- **PENDIENTE**: cambiar visibilidad, renombrar o borrar un bot desde la web; logs del bot en batalla.
 
 ## Documentación relacionada
 

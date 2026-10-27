@@ -7,9 +7,9 @@ S9 AI Arena es una **arena de combate 2D para bots de IA**. Los usuarios program
 batallas y torneos. Un motor determinista simula las batallas y produce replays verificables.
 Todo se gestiona desde una plataforma web.
 
-**Estado actual, en una línea:** el motor y la plataforma existen en código y tienen tests, pero
-**el producto no es funcional de extremo a extremo** en su despliegue: ningún bot puede publicarse
-y ninguna batalla ejecuta código de usuario. Ver [current-status.md](../roadmap/current-status.md).
+**Estado actual, en una línea:** la release RC4 (`f32ab2c`) está desplegada en producción y
+verificada el 2026-10-27: un bot de usuario se buildea en el sandbox real, se publica y juega
+batallas con su propio código. Ver [current-status.md](../roadmap/current-status.md).
 
 ## Índice
 
@@ -52,7 +52,7 @@ Los roles reales del código son, de menor a mayor:
 
 - **Visitante:** ve el ranking, los mapas publicados y (si se activa) las batallas públicas.
 - **Desarrollador de bots** (`user` + `developer`, lo que concede el registro): crea bots, sube su código, configura el loadout y forma equipos.
-- **Organizador:** importa, genera y publica mapas; crea y gestiona torneos.
+- **Organizador:** genera mapas y puede publicar cualquiera (cada usuario publica los suyos); crea y gestiona torneos.
 - **Moderador / admin:** gestiona roles, suspende bots y consulta la auditoría.
 - **Operador** (fuera de la web): instala, despliega, hace backup y restore, y activa las funciones gateadas. Ver [docs/operations/](../operations/index.md).
 
@@ -63,13 +63,13 @@ Detalle del modelo de permisos: [docs/technical/security.md](../technical/securi
 | Caso de uso | Estado |
 |---|---|
 | Registrarse, crear un bot, pegar su código y configurar su loadout | **FUNCIONA ACTUALMENTE** |
-| Enviar el bot a validación y publicarlo | **PENDIENTE**: bloqueado por [TD-001](../roadmap/technical-debt.md#td-001) |
-| Lanzar una batalla de práctica desde la web | **PENDIENTE**: bloqueado por [TD-003](../roadmap/technical-debt.md#td-003) |
-| Que la batalla ejecute el código del bot | **PENDIENTE**: [TD-002](../roadmap/technical-debt.md#td-002) |
-| Organizar un torneo `round_robin` y ver el bracket y el Elo | **PARCIAL**: funciona con el stub, sólo para el rol organizer |
-| Ver una batalla en directo o reproducir un replay | **PARCIAL**: roto en navegador ([TD-009](../roadmap/technical-debt.md#td-009)) |
-| Crear un mapa en el editor y usarlo | **PARCIAL**: el editor no guarda ([TD-010](../roadmap/technical-debt.md#td-010)) |
-| Consultar el ranking | **FUNCIONA ACTUALMENTE** (vacío en producción: no hay batallas) |
+| Enviar el bot a validación y publicarlo | **FUNCIONA ACTUALMENTE**: build en el sandbox real ([TD-001](../roadmap/technical-debt.md#td-001)) |
+| Lanzar una batalla de práctica desde la web | **FUNCIONA ACTUALMENTE** ([TD-003](../roadmap/technical-debt.md#td-003), cerrada) |
+| Que la batalla ejecute el código del bot | **FUNCIONA ACTUALMENTE**: artefacto firmado en contenedores ([TD-002](../roadmap/technical-debt.md#td-002), cerrada) |
+| Organizar un torneo `round_robin` y ver el bracket y el Elo | **PARCIAL**: con el código real de los bots, sólo para el rol organizer; faltan `mapPool` y el cierre con `failed` ([TD-015](../roadmap/technical-debt.md#td-015)) |
+| Ver una batalla en directo o reproducir un replay | **FUNCIONA ACTUALMENTE** en navegador ([TD-009](../roadmap/technical-debt.md#td-009), cerrada) |
+| Crear un mapa en el editor y usarlo | **FUNCIONA ACTUALMENTE**: el editor guarda y reabre ([TD-010](../roadmap/technical-debt.md#td-010), cerrada) |
+| Consultar el ranking | **FUNCIONA ACTUALMENTE** |
 
 Guía de uso: [docs/user/](../user/index.md).
 
@@ -95,9 +95,10 @@ En el código existe:
 
 ## Estado actual
 
-Ver [docs/roadmap/current-status.md](../roadmap/current-status.md) (fuente única) y la
-[auditoría 2026-10-15](../audits/2026-10-15/README.md). En una frase: el motor es sólido (82 %); la
-madurez por capacidades ronda el 47 %, y el recorrido de producto de extremo a extremo es del 0 %.
+Ver [docs/roadmap/current-status.md](../roadmap/current-status.md) (fuente única). En una frase:
+RC4 está desplegada y verificada (2026-10-27) y el recorrido de producto de extremo a extremo
+funciona en producción. La [auditoría 2026-10-15](../audits/2026-10-15/README.md) (0 % de extremo a
+extremo entonces) queda como evidencia histórica.
 
 ## Documentación relacionada
 
@@ -114,4 +115,4 @@ madurez por capacidades ronda el 47 %, y el recorrido de producto de extremo a e
 | Protocolo `arena/1` | CODE_VERIFIED | `packages/game-rules/constants.ts:34` |
 | La v1 sólo está en el compose de demo | CODE_VERIFIED | `docker-compose.demo.yml`; `apps/arena-server`, `apps/arena-viewer` |
 | SDK JS y Python reales; .NET y Java vacíos | CODE_VERIFIED | `sdks/javascript`, `sdks/python`; `sdks/dotnet/README.md` |
-| Estado del producto | RUNTIME_VERIFIED (en la auditoría) | [AUDIT-DELTA](../audits/2026-10-15/AUDIT-DELTA-2026-10.md) |
+| Estado del producto | RUNTIME_VERIFIED (RC4 `f32ab2c`, 2026-10-27) | [current-status.md](../roadmap/current-status.md); histórico: [AUDIT-DELTA](../audits/2026-10-15/AUDIT-DELTA-2026-10.md) |

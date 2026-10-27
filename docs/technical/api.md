@@ -33,7 +33,7 @@ Autenticación:
 | App | `src/app.ts`: JSON ≤ 1 MB, contexto de petición (correlación), cabeceras de seguridad y CORS, autenticación, routers, 404 genérico y manejador de errores |
 | Contrato | `openapi.yaml` + `src/openapi.ts` (carga y `ROLE_RANK`) |
 | Registro | `src/registry.ts` (`defineOperation`, `defineExtension`, `rbacGuard`) |
-| Routers | `src/routes/{auth,users,teams,bots,catalog,keys,admin,battles,standings,tournaments,maps,system}.ts` |
+| Routers | `src/routes/{auth,users,teams,bots,catalog,keys,admin,battles,replays,standings,tournaments,maps,system}.ts` |
 | Errores | `src/errors.ts` |
 
 `servers` del contrato: `https://arena.example/api/v1`, un ejemplo.
@@ -76,7 +76,7 @@ La autorización por recurso va dentro de cada ruta (dueño del bot, capitán de
 ## Convenciones
 
 - **Paginación**: `?limit` (por defecto 20, máximo 100) y `?cursor` opaco (`created_at`+`id`), con `nextCursor` en la respuesta. Afecta a bots, batallas, mapas, torneos y equipos.
-- **Transiciones** como acciones: `POST …/actions/{submit|publish|suspend|retire|close-entries|dry-run}`.
+- **Transiciones** como acciones: `POST …/actions/{clone|submit|publish|suspend|retire|close-entries|dry-run}`.
 - **Caché**: hay `Cache-Control` en las lecturas públicas (5–60 s; los replays, `immutable`).
 - **Correlación**: cada respuesta de error incluye `correlationId`.
 
@@ -116,17 +116,23 @@ Rol mínimo según `x-min-role`. «anón.» = `visitor` sin credencial.
 | Método y ruta | Rol |
 |---|---|
 | `GET /teams` | anón. (expone `captainId` y `memberIds`, [TD-011](../roadmap/technical-debt.md#td-011)) |
+| `GET /teams/{teamId}` | anón. (sin sesión o ajeno: sólo nombre y recuentos) |
 | `POST /teams` | user |
+| `PATCH /teams/{teamId}`, `DELETE /teams/{teamId}` | team_captain (y ser el capitán, o admin) |
+| `POST /teams/{teamId}/bots` | user (dueño del bot y miembro del equipo, o admin) |
+| `DELETE /teams/{teamId}/bots/{botId}` | user (dueño del bot, capitán o admin) |
 | `POST /teams/{teamId}/members`, `DELETE /teams/{teamId}/members/{userId}` | team_captain (y ser el capitán, o admin) |
 
 **Bots** ([bots.md](bots.md)):
 
 | Método y ruta | Rol |
 |---|---|
-| `GET /bots`, `GET /bots/{botId}`, `GET /bots/{botId}/versions` | anón. (filtrado por visibilidad) |
+| `GET /bots`, `GET /bots/{botId}`, `GET /bots/{botId}/versions`, `GET /bots/{botId}/versions/{version}` | anón. (filtrado por visibilidad) |
 | `POST /bots`, `PATCH /bots/{botId}`, `POST /bots/{botId}/loadouts` | user (dueño) |
 | `POST /bots/{botId}/versions` (multipart) | developer |
-| `GET /bots/{botId}/versions/{version}/source` | user (reglas de visibilidad del código) |
+| `GET /bots/{botId}/versions/{version}/source`, `…/files`, `…/diff` | user (reglas de visibilidad del código) |
+| `GET /bots/{botId}/versions/{version}/artifact` | anón. (metadatos del artefacto firmado; visibilidad de la versión) |
+| `POST …/versions/{version}/actions/clone` | developer |
 | `POST …/versions/{version}/actions/submit` y `…/publish` | developer |
 | `POST …/actions/retire` | developer |
 | `POST …/actions/suspend` | moderator |
@@ -136,16 +142,17 @@ Rol mínimo según `x-min-role`. «anón.» = `visitor` sin credencial.
 
 | Método y ruta | Rol |
 |---|---|
-| `GET /catalog/versions`, `GET /catalog/{catalogVersion}/modules` | anón. |
+| `GET /catalog/versions`, `GET /catalog/{catalogVersion}/modules`, `GET /rulesets` | anón. |
 | `POST /catalog/versions` | admin |
 
 **Mapas** ([maps.md](maps.md)):
 
 | Método y ruta | Rol |
 |---|---|
-| `GET /maps`, `GET /maps/{mapId}/versions/{version}` | anón. |
+| `GET /maps`, `GET /maps/{mapId}/versions/{version}`, `GET /maps/{mapId}/versions/{version}/content` | anón. (los borradores, sólo su dueño o admin) |
 | `POST /maps`, `POST /maps/drafts` | user |
-| `POST /maps/generate`, `POST …/actions/publish` | organizer |
+| `POST /maps/{mapId}/versions/{version}/actions/publish` | user (el dueño del mapa; organizer+ puede publicar cualquiera) |
+| `POST /maps/generate` | organizer |
 | `PUT /maps/{mapId}/versions/{version}` | admin (siempre 409) |
 
 **Torneos y clasificación** ([tournaments.md](tournaments.md)):
@@ -165,7 +172,8 @@ Rol mínimo según `x-min-role`. «anón.» = `visitor` sin credencial.
 | `POST /battles` | user |
 | `POST /battles/{battleId}/run` | user |
 | `POST /battles/{battleId}/spectate-ticket` | anón. (404 sin sesión con la bandera apagada) |
-| `GET /replays/{battleId}`, `POST /replays/{battleId}/verify` | anón. (cuota) |
+| `GET /replays` | user (replays que el solicitante puede ver) |
+| `GET /replays/{battleId}`, `GET /replays/{battleId}/index`, `GET /replays/{battleId}/segment`, `POST /replays/{battleId}/verify` | anón. (política de acceso a replays y cuota) |
 | `GET /public/battles/live`, `GET /public/battles/{battleId}` | anón. (bandera `S9_PUBLIC_SPECTATE_ENABLED`) |
 | `GET /public/replays`, `GET /public/replays/{battleId}`, `GET /public/replays/{battleId}/download` | anón. (bandera `S9_PUBLIC_REPLAYS_ENABLED`) |
 
@@ -214,7 +222,7 @@ Los contadores se guardan en la tabla `api_usage`, compartidos entre réplicas.
 
 - **FUNCIONA ACTUALMENTE**: contrato con RBAC, autenticación con rotación de refresh, paginación y validaciones.
 - **PARCIAL**: falta cambio de contraseña y transporte de correo. Hay carreras que devuelven 500 ([TD-013](../roadmap/technical-debt.md#td-013)). Hay huecos de autorización por recurso ([TD-005](../roadmap/technical-debt.md#td-005)) y listados anónimos con identificadores ([TD-011](../roadmap/technical-debt.md#td-011)).
-- **PENDIENTE**: incorporar las extensiones al contrato; cerrar la costura `rulesetId` ([TD-003](../roadmap/technical-debt.md#td-003)).
+- **PENDIENTE**: incorporar las extensiones al contrato. La costura `rulesetId` está cerrada: `GET /rulesets` sirve los rulesets reales ([TD-003](../roadmap/technical-debt.md#td-003)).
 
 ## Documentación relacionada
 
@@ -225,7 +233,7 @@ Los contadores se guardan en la tabla `api_usage`, compartidos entre réplicas.
 
 ## Verificación
 
-Verificado contra `27f70bb`.
+Verificado contra `35a4fb9`.
 
 | Afirmación | Estado | Evidencia |
 |---|---|---|

@@ -473,7 +473,7 @@ paths:
               type: object
               required: [source, runtime, loadoutRevision]
               properties:
-                source: { type: string, format: binary, description: 'Archivo comprimido del código. Límite 10 MB (E6.M).' }
+                source: { type: string, format: binary, description: 'Código del bot, NO un archivo comprimido (ZIP no se acepta): o un fichero de texto único (se envuelve en el paquete estándar del runtime), o un JSON {"files":[{"path","content"}]} con el manifiesto en la raíz (requirements.txt en python, package.json en node). Límite 10 MB (E6.M).' }
                 runtime: { $ref: '#/components/schemas/Runtime' }
                 loadoutRevision: { type: integer }
                 parentVersion: { type: integer, description: 'DEV-A · A9.13: versión de la que parte (nueva versión desde X); queda registrada' }

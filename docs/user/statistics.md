@@ -16,20 +16,20 @@ La plataforma calcula muchas estadísticas de cada batalla: daño, disparos, aci
 
 | Métrica | Se calcula | Visible en la web |
 |---|---|---|
-| Victorias, derrotas y empates por bot | Sí | Sí, en «Ranking» (hoy vacío) |
-| Rating Elo | Sí | Sí, en «Ranking» (hoy vacío) |
+| Victorias, derrotas y empates por bot | Sí | Sí, en «Ranking» |
+| Rating Elo | Sí | Sí, en «Ranking» |
 | Historial de rating | Sí | **No** |
 | Daño hecho y recibido, por bot, equipo y módulo | Sí | **No** |
 | Disparos, aciertos, precisión | Sí | **No** |
 | Derribos, supervivencia | Sí | **No** |
-| Banderas tomadas y capturadas | Sí | Sólo en el marcador del visor (que hoy no se dibuja) |
+| Banderas tomadas y capturadas | Sí | Sólo en el marcador del visor |
 | Minas puestas y activadas | Sí | **No** |
 | Turnos sin respuesta del bot | Sí | **No** |
 | Tiempo de CPU del bot | Sí: CPU real del contenedor de tu bot (aprox., cota inferior) | **No** |
 | Clasificación por equipos de un torneo | Sí (formato `teams`) | **No** |
 | Ganador de cada enfrentamiento de torneo | Sí | Sí, en el cuadro |
 
-Las estadísticas reflejan **lo que hizo tu código**: si tu bot nunca dispara, sus disparos salen a 0 (comprobado con dos bots de comportamiento distinto en un entorno de pruebas, [TD-002](../roadmap/technical-debt.md#td-002)). El historial de rating de un bot privado sólo lo ves tú (o tu equipo).
+Las estadísticas reflejan **lo que hizo tu código**: si tu bot nunca dispara, sus disparos salen a 0 (comprobado con dos bots de comportamiento distinto, [TD-002](../roadmap/technical-debt.md#td-002)). El historial de rating de un bot privado sólo lo ves tú (o tu equipo).
 
 ## Dónde verlo
 

@@ -79,11 +79,20 @@ class MiBot(ArenaBot):
         defecto) para persistir algo antes de que el proceso se corte."""
 ```
 
-Conectar contra una batalla real (fuera del simulador local, p. ej. la plataforma):
+## En la plataforma
+
+En S9 AI Arena **no llamas a `run()` ni recibes ningún `battle_token`**: subes el
+código con tu clase y la plataforma la instancia y la conecta a la batalla. La
+clase tiene que ser una subclase de `arena_sdk.ArenaBot` llamada `Bot` (o la única
+subclase del fichero) y el hook se llama exactamente `on_observation`: con otro
+nombre el bot no hace nada y el build **no** lo detecta. El SDK (versión 0.1.0, no
+publicado en PyPI) viene preinstalado en el runtime de la plataforma.
+
+`run()` es para tus propias pruebas, contra un servidor `arena/1` que tú controlas:
 
 ```python
 bot = MiBot("bot_mio01")
-bot.run("wss://arena.example/ws", battle_token="el-token-que-te-dio-la-plataforma")
+bot.run("wss://arena.example/ws", battle_token="el-token-de-tu-servidor-de-pruebas")
 ```
 
 `run()` **no reconecta**. Si el transporte cae, el bucle termina y el proceso sale;

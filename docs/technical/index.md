@@ -49,7 +49,7 @@ standalone o detrás de un proxy, y los casos conocidos de `/replays` y del endp
 
 Los dos procesos que reclaman trabajo de la cola. `tournament-worker` ejecuta batallas y torneos,
 calcula ratings y aloja el WebSocket de espectador. `bot-build-worker` valida versiones de bots.
-Incluye su ciclo de trabajo, los reintentos y por qué hoy juegan con un bot de relleno.
+Incluye su ciclo de trabajo, los reintentos y cómo lanzan el código de cada bot en contenedores.
 
 → [workers.md](workers.md)
 
@@ -57,7 +57,7 @@ Incluye su ciclo de trabajo, los reintentos y por qué hoy juegan con un bot de 
 
 ### Base de datos
 
-PostgreSQL como base de negocio y como cola. Cubre las 11 migraciones, las tablas por área, qué
+PostgreSQL como base de negocio y como cola. Cubre las 13 migraciones, las tablas por área, qué
 servicio escribe y lee cada una, y las restricciones relevantes. No hay tabla de replays.
 
 → [database.md](database.md)

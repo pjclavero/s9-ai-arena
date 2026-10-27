@@ -12,10 +12,22 @@ registran en un **delta** aparte.
 
 ## Índice
 
+- [Auditoría de desarrollador externo del 2026-10-27](#auditoría-de-desarrollador-externo-del-2026-10-27)
 - [Auditoría del 2026-10-15](#auditoría-del-2026-10-15)
 - [Consolidación documental de 2026-10](#consolidación-documental-de-2026-10)
 - [Auditorías anteriores](#auditorías-anteriores)
 - [Qué no está en el repositorio](#qué-no-está-en-el-repositorio)
+
+## Auditoría de desarrollador externo del 2026-10-27
+
+Auditoría sobre `35a4fb9`, con producción en RC4 (`f32ab2c`). Pregunta: ¿puede una persona externa,
+o una IA externa con credenciales normales, completar el ciclo de un bot sin ayuda interna?
+Trabajaron cinco auditores y un REVIEW que reprodujo los puntos clave. Veredicto: el producto
+funciona en producción (PRODUCTION_CORE = PASS), pero **EXTERNAL_USER_READY = NO** y
+**AI_AGENT_READY = NO**, por descubrimiento, documentación y señales de depuración. Incluye
+matriz de gaps, propuesta de manual de bots y perfil de RAM.
+
+- [2026-10-27/EXTERNAL-DEVELOPER-AUDIT.md](2026-10-27/EXTERNAL-DEVELOPER-AUDIT.md)
 
 ## Auditoría del 2026-10-15
 

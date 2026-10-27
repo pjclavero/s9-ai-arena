@@ -40,7 +40,6 @@ Lo que está roto **no** es una función pendiente: es deuda y está en [technic
 | Mejora | Qué existe hoy | Qué falta | Deuda / gate |
 |---|---|---|---|
 | Guardado del editor de mapas | API `saveMapDraft` (`x-min-role: user`) | que la web lo use, reabrir y duplicar | [TD-010](technical-debt.md#td-010) |
-| Ejecución real de batallas en producción | implementada e integrada: el `tournament-worker` ejecuta el artefacto firmado de cada bot (cierre funcional) | desplegar el compose de la integración con su gate (proxy del host, clave pública) | [TD-002](technical-debt.md#td-002) · [current-status.md](current-status.md#blocked) |
 | Espectador público | capability `S9_PUBLIC_SPECTATE_ENABLED` (apagada), `#/live`, `GET /public/battles/live` | gate del Carril J; TD-009 y TD-028 | [TD-028](technical-debt.md#td-028) |
 | Replays públicos | capability `S9_PUBLIC_REPLAYS_ENABLED` (apagada) | coherencia con el borde (TD-004) | [TD-004](technical-debt.md#td-004) |
 | Auto-run real de torneos y batallas desde la UI | ninguna pieza activa | bloqueado: requiere autorización del operador y validación en el host | — |
@@ -51,12 +50,16 @@ Lo que está roto **no** es una función pendiente: es deuda y está en [technic
 | Formatos de torneo `league`, eliminación simple/doble, `swiss`, `teams` | generadores en `apps/tournament-worker/src/formats.ts` | `teams` es inalcanzable (TD-011); en la web sólo está verificado `round_robin` | [TD-011](technical-debt.md#td-011) |
 | Administración web de operación (sólo lectura) | CLI de readiness y drift; scripts del host | vistas web | [TD-023](technical-debt.md#td-023) |
 | Fases visuales posteriores a R16.3 | atlas procedural actual | alcance por fijar | — |
+| Servir `openapi.yaml` en runtime | el contrato existe en el repo (`apps/api/openapi.yaml`) y la API lo carga al arrancar | publicarlo por HTTP (p. ej. bajo `/api/v1`) para que un cliente lo descubra sin el repo | — |
+| Logs y diagnóstico del bot en batalla | logs del build en «Ver build» / `GET /builds/{buildId}` | ver la salida del bot y el motivo de cada comando perdido durante una batalla | — |
 
 ## Ideas
 
 - **SDK .NET y SDK Java:** `sdks/dotnet` y `sdks/java` sólo contienen un README de plantilla ("post-MVP"). Los SDK reales son JavaScript y Python.
 - **Decidir el futuro de `map-service`:** retirarlo o hacerlo autoridad de mapas. Ver [TD-017](technical-debt.md#td-017).
 - **Guía de onboarding** en la web, con enlace al SDK. Ver [TD-022](technical-debt.md#td-022).
+- **`llms.txt` y `llms-full.txt`:** índice y versión completa de la documentación de bots y SDK para asistentes de IA. No existe ninguno en el repo ni lo sirve el gateway.
+- **Token de desarrollador (PAT):** credencial de larga duración, revocable y con alcance limitado, para usar la API desde scripts sin el login de la web. Hoy sólo existen el *access token* de 15 min y el *refresh token*.
 
 ## Descartadas por decisión
 
@@ -88,6 +91,7 @@ Estas reglas vienen del roadmap anterior y siguen aplicándose a toda función n
 |---|---|---|
 | prepare-battle no existe | CODE_VERIFIED | `grep -n prepare apps/api/openapi.yaml` (vacío) |
 | matchmaking no existe | CODE_VERIFIED | `grep -n matchmaking apps/api/openapi.yaml apps/api/src/db/migrations.ts` (vacío) |
+| `llms.txt`, `openapi.yaml` servido, logs del bot en batalla y PAT no existen | CODE_VERIFIED (`35a4fb9`) | ningún fichero `llms*` en el árbol; ninguna ruta sirve `openapi.yaml` en `apps/api/src` ni en `infrastructure/gateway/*.conf`; sin operación de tokens de API en el contrato |
 | `saveMapDraft` existe | CODE_VERIFIED | `apps/api/openapi.yaml:518-520` |
 | El editor no lo usa | CODE_VERIFIED | `apps/web/src/pages/MapEditorPage.tsx:14-16` |
 | Recuperación sin canal | CODE_VERIFIED | `apps/api/src/routes/auth.ts:384-410` (crea el token; no lo envía) |

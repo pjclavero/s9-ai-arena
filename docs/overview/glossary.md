@@ -13,10 +13,10 @@ reales. Cuando el uso habitual y el del código difieren, se indica.
 
 - **anon (ticket).** Marca `anon: true` de un ticket de espectador emitido a un visitante sin sesión. El gateway de espectador lo rechaza si `S9_PUBLIC_SPECTATE_ENABLED` está apagada. Es el Carril J. Ver [security.md](../technical/security.md).
 - **agentResolver.** Función que dice cómo se ejecuta el comportamiento de un bot.
-  - En el **build**, debe lanzar el bot en un sandbox. Hoy no se inyecta, y el build falla cerrado ([TD-001](../roadmap/technical-debt.md#td-001)).
-  - En el **worker**, el resolutor por defecto devuelve el stub `HunterBot`.
-- **arquetipo.** En el camino de ejecución real, el chasis del loadout se traduce a uno de 3 arquetipos (`scout`, `heavy`, `gunner`). Ver [TD-016](../roadmap/technical-debt.md#td-016).
-- **artifact (artefacto).** Resultado firmado de un build aprobado. Fila de la tabla `artifacts`: `hash`, `signature`, `storage_ref`, `bytes`. En producción hay 0.
+  - En el **build**, lanza el bot candidato en el sandbox real y lo enfrenta al bot de referencia en la partida de humo ([TD-001](../roadmap/technical-debt.md#td-001)).
+  - En el **worker**, el `AgentDriver` es obligatorio: lanza en contenedores el artefacto firmado de cada versión; no hay stub implícito.
+- **arquetipo.** Vehículo predefinido (`scout`, `heavy`, `gunner`). La partida de humo del build traduce el chasis del loadout a uno de estos 3 arquetipos; en batalla se usa el loadout real (`resolveVehicle`). Ver [TD-016](../roadmap/technical-debt.md#td-016).
+- **artifact (artefacto).** Resultado firmado de un build aprobado. Fila de la tabla `artifacts`: `hash`, `signature`, `storage_ref`, `bytes`. Es lo que se ejecuta en batalla.
 - **audit_log.** Tabla de eventos auditados (por ejemplo `bot.version.submit` o `bot.version.rejected`).
 
 ## B
@@ -95,7 +95,7 @@ reales. Cuando el uso habitual y el del código difieren, se indica.
 - **seed.** Ver *bootstrap*. Sólo para desarrollo.
 - **spectator (espectador).** Cliente que sigue una batalla **en directo** por WebSocket (`/ws/spectate/<battleId>`), con un ticket de un solo uso enviado como subprotocolo. El gateway de espectador vive en el tournament-worker. *Viewer* es la página web que lo muestra.
 - **standings.** Clasificación de un torneo (tabla `standings`).
-- **stub (HunterBot).** Bot determinista de relleno del motor. Hoy juega **todas** las batallas en lugar del código del usuario ([TD-002](../roadmap/technical-debt.md#td-002)).
+- **stub (HunterBot).** Bot determinista de referencia del motor (`apps/arena-engine/src/stubs.ts`). Sólo se usa en tests y como rival de la partida de humo del build; en producción no juega batallas: las juega el código del usuario ([TD-002](../roadmap/technical-debt.md#td-002), cerrada).
 
 ## T
 

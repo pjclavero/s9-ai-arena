@@ -34,7 +34,7 @@ Las rutas son idénticas en los dos ficheros; en `nginx.conf` están en el bloqu
 | `= /version` | `alias /etc/nginx/version.json` (identidad de build del gateway; sólo en el server :80) | — | no |
 | `/api/v1/` | `http://api:8080` | `^/api/v1/(.*)$ → /$1` | la hace la API (JWT + RBAC) |
 | `/ws/` | `http://tournament-worker:8081` | `^/ws/(.*)$ → /$1` (así, `/ws/spectate/<id>` llega como `/spectate/<id>`) | ticket verificado por el worker |
-| `/replays/` | `http://replay-service:8083` | **sin** reescritura: el servicio registra sus rutas con el prefijo `/replays` | **ninguna** ([TD-004](../roadmap/technical-debt.md#td-004)) |
+| `= /replays`, `/replays/` | **404** JSON del propio nginx (los replays se sirven por `/api/v1/replays/...`) | — | — ([TD-004](../roadmap/technical-debt.md#td-004)) |
 | `/grafana/` | `http://grafana:3000` | — | la de Grafana. Si el perfil `observability` no está activo, da 502 |
 | `/` | `http://web:3000` | — | no (SPA) |
 
@@ -67,7 +67,7 @@ que no quede en los logs de acceso. Ver [websocket.md](websocket.md).
 Hasta [TD-004](../roadmap/technical-debt.md#td-004), `/replays/` exponía a través del gateway
 **todas** las rutas del replay-service, incluidas las de lectura sin autenticación.
 
-Desde la integración `integration/production-readiness` (**sin desplegar**), `location = /replays` y `location /replays/`
+Desde la fase *Production Readiness* (desplegada en producción con RC4), `location = /replays` y `location /replays/`
 responden **404** JSON, sin `Location` y para cualquier método. El navegador lee los replays por
 `/api/v1/replays/...`: la API es la única autoridad y aplica la política de acceso antes de
 entregar bytes ([replays.md](replays.md#autorización-de-acceso-td-004)). El replay-service sólo es

@@ -4,9 +4,9 @@
 
 El **loadout** es el vehículo de tu bot: un chasis y un módulo por ranura (movilidad, energía, sensores, arma con su munición, minas, radio y blindaje por lado). Lo configuras en el **«Editor de loadout»** de «Mis bots», que valida el coste y la energía en vivo. El servidor lo vuelve a validar al guardar. Cada guardado crea una revisión nueva.
 
-**FUNCIONA ACTUALMENTE** la configuración. **En batalla real, hoy sólo cambia el resultado la familia del chasis** (ligero, medio o pesado), que decide el arquetipo que se juega. Los módulos que eliges cuentan para el presupuesto, la masa y la energía, pero la ejecución usa los módulos fijos del arquetipo ([TD-016](../roadmap/technical-debt.md#td-016)).
+**FUNCIONA ACTUALMENTE** la configuración. **En batalla se juega el loadout real de tu versión**: el vehículo se construye con el chasis y los módulos que elegiste. Sólo la partida de humo del build (al enviar a validación) usa un vehículo de arquetipo según la familia del chasis. Algunas propiedades de algunos módulos todavía no tienen efecto en la simulación ([TD-016](../roadmap/technical-debt.md#td-016)).
 
-El editor lo indica en cada ranura ([Qué cambia de verdad](#qué-cambia-de-verdad-en-la-batalla)).
+El editor lo indica en cada ranura ([Qué cambia de verdad](#qué-cambia-de-verdad-en-la-batalla)). Ojo: la nota de arriba del editor todavía dice que en la ejecución real se usan los módulos fijos del arquetipo; ese texto está desactualizado.
 
 ## Índice
 
@@ -34,8 +34,8 @@ El editor muestra, arriba, una nota sobre el efecto real. Junto al chasis y a ca
 
 | Insignia | Significa |
 |---|---|
-| **[ACTIVE · cambia la batalla]** | Tu elección cambia la batalla. Hoy, sólo la del chasis |
-| **[PARTIAL · efecto parcial]** | El motor sabe usarlo, pero en la batalla real se juega el valor del módulo de serie del arquetipo, o sólo cuenta para validar tu configuración |
+| **[ACTIVE · cambia la batalla]** | Tu elección cambia la batalla |
+| **[PARTIAL · efecto parcial]** | El motor usa sólo parte de sus datos, o sólo cuenta para validar tu configuración |
 | **[FUTURE · sin efecto en batalla]** | Ningún código lo usa todavía: no cambia nada |
 
 Al elegir un módulo, «Efecto real de cada propiedad» lista sus datos con su insignia y el motivo. Ejemplos FUTURE: el alcance del arma (`rangeM`), el alcance de la radio, el terreno de la movilidad y los módulos de utilidad.
@@ -94,7 +94,7 @@ Resultado: coste 680/1000 y energía +21,5.
 ## Errores / limitaciones
 
 - La web no explica qué hace cada módulo ni qué significan créditos o EU.
-- **PARCIAL**: radio, minas, sensor acústico y de proximidad se simulan, pero hoy no tienen efecto en las batallas, porque el bot de prueba no los usa. Además, la radio no se limita a tu equipo ni a su alcance ([equipment.md](../technical/equipment.md#radio-radio_a)).
+- **PARCIAL**: radio, minas, sensor acústico y de proximidad se simulan; tienen efecto si tu código los usa. La radio no se limita a tu equipo ni a su alcance ([equipment.md](../technical/equipment.md#radio-radio_a)).
 - Algunos datos del catálogo no influyen en la simulación: el alcance del arma, el terreno de la movilidad o la detectabilidad de la mina.
 - No hay módulos de utilidad (humo, reparación…): **PENDIENTE**.
 

@@ -8,7 +8,7 @@ Desde el cierre funcional de 2026-10:
 
 - la lista **funciona detrás de HTTPS** (ya no hay redirección a una dirección sin cifrar, [TD-014](../roadmap/technical-debt.md#td-014));
 - el reproductor **dibuja la batalla**, avanza y llega al final ([TD-009](../roadmap/technical-debt.md#td-009));
-- desde la fase *Production Readiness* (2026-10, integración `integration/production-readiness`, sin desplegar), **un replay sólo lo ve quien tiene permiso** ([TD-004](../roadmap/technical-debt.md#td-004)); ver [Quién puede ver un replay](#quién-puede-ver-un-replay).
+- desde la fase *Production Readiness* (2026-10, desplegada en producción), **un replay sólo lo ve quien tiene permiso** ([TD-004](../roadmap/technical-debt.md#td-004)); ver [Quién puede ver un replay](#quién-puede-ver-un-replay).
 
 ## Índice
 
@@ -70,7 +70,7 @@ El reproductor genera un enlace con el instante actual (`#/replay/<id>?t=<tick>`
 
 ## Estado actual
 
-**FUNCIONA ACTUALMENTE**: lista, apertura, carga, dibujo, avance, pausa, velocidad y fin, verificados en Chromium real detrás de TLS ([frontend.md — E2E](../technical/frontend.md#e2e-de-navegador)). Privacidad de replays ([TD-004](../roadmap/technical-debt.md#td-004)): implementada y probada en la integración `integration/production-readiness`, **sin desplegar**.
+**FUNCIONA ACTUALMENTE**: lista, apertura, carga, dibujo, avance, pausa, velocidad y fin, verificados en Chromium real detrás de TLS ([frontend.md — E2E](../technical/frontend.md#e2e-de-navegador)). Privacidad de replays ([TD-004](../roadmap/technical-debt.md#td-004)): implementada, probada y desplegada en producción.
 
 ## Documentación relacionada
 

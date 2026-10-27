@@ -13,14 +13,14 @@ Para jugar, una versión tiene que pasar por tres pasos:
 2. la **publicación**, que el dueño hace a mano y la deja `published`;
 3. la ejecución en una batalla.
 
-**Estado actual (integración `integration/functional-closure`):**
+**Estado actual (desplegado en producción con RC4, `f32ab2c`, verificado el 2026-10-27):**
 
 - **Pipeline.** El código del usuario se ejecuta de verdad en un **contenedor** durante el build. Tres etapas lo hacen: `protocol_test`, `smoke_battle` y `resource_limits` (`ContainerBuildSandbox`).
   - Un bot válido llega a `validated` y, publicado por su dueño, a `published`.
   - Lo demuestra un E2E con Docker, sin tocar la BD.
-  - El worker cablea el sandbox desde `DOCKER_PROXY_URL` y `BUILD_SANDBOX_HOST`. Sin ellos sigue fallando cerrado, como antes.
-  - En el despliegue hacen falta cambios de compose ([Errores / limitaciones](#errores--limitaciones)).
-- **Batallas.** Siguen sin ejecutar el código del usuario hasta que el carril de batallas consuma `resolveBotLaunch` ([TD-002](../roadmap/technical-debt.md#td-002)).
+  - El worker cablea el sandbox desde `DOCKER_PROXY_URL` y `BUILD_SANDBOX_HOST`. Sin ellos falla cerrado.
+- **Batallas.** El `tournament-worker` ejecuta el **artefacto firmado** de la versión exacta de cada bot en contenedores (`resolveBotLaunch`, [TD-002](../roadmap/technical-debt.md#td-002), cerrada).
+- **Equipos.** Un bot se asigna a un equipo con `POST /teams/{teamId}/bots` y se quita con `DELETE /teams/{teamId}/bots/{botId}`.
 - **Versionado.** Ver [bot-versioning.md](bot-versioning.md).
 
 ## Índice
@@ -63,7 +63,7 @@ El bot «habla» el protocolo `arena/1` a 10 Hz de decisión: recibe una observa
 | Anfitrión del sandbox | `apps/bot-manager/src/sandbox-host.ts` (`SandboxHost`) | HTTP y WebSocket en un mismo puerto: sirve el artefacto con token y aloja el ProtocolServer |
 | Arranque del código | `apps/bot-manager/src/bot-launch.ts`, `sandbox-bootstrap/bootstrap.{py,mjs}` | Imagen de runtime (DIGESTS.lock), bootstrap, `launchSpecForBot` y `resolveBotLaunch` (batallas) |
 | Runner y proxy | `apps/bot-manager/src/container-runner.ts`, `docker-proxy*.ts`, `container-battle.ts`, `runtimes/{python,node}/Dockerfile` | Ejecución aislada; única vía hacia Docker |
-| Ejecutor de plataforma | `apps/tournament-worker/src/engine-executor.ts` | Batallas con `HunterBot` ([battles.md](battles.md)) |
+| Ejecutor de plataforma | `apps/tournament-worker/src/engine-executor.ts`, `container-agents.ts` | Batallas con el artefacto firmado de cada versión en contenedores ([battles.md](battles.md)) |
 
 ## Estados de versión
 
@@ -217,9 +217,9 @@ Para las **batallas**, el contrato para arrancar una versión publicada es `reso
 - el bootstrap;
 - el artefacto firmado y verificado.
 
-El proceso que aloja el ProtocolServer ofrece el artefacto con `SandboxHost` y pasa su `wss` al ProtocolServer. Hasta que el carril de batallas lo consuma, el camino de batallas sigue como describe [battles.md](battles.md#autoridad-única-de-ejecución). Ojo: `battle-run-http-launcher.ts` usa `artifact_hash` como `imageDigest`, y eso no arranca nada.
+El proceso que aloja el ProtocolServer (el `tournament-worker`) ofrece el artefacto con `SandboxHost` y pasa su `wss` al ProtocolServer; ver [battles.md](battles.md#autoridad-única-de-ejecución). El camino legado `battle-run-http-launcher.ts` (que usaba `artifact_hash` como `imageDigest` y no arrancaba nada) ya no está cableado en la API.
 
-Antes de lanzar, el camino real comprueba que cada bot está `published|frozen` y tiene digest firmado (`409 bot_not_ready` / `bot_not_signed`). El worker de plataforma tiene una guarda de firma (`artifactGuard`) que **no está cableada** ([TD-015](../roadmap/technical-debt.md#td-015)).
+Antes de lanzar, el camino real comprueba que cada bot está `published|frozen` y tiene digest firmado (`409 bot_not_ready` / `bot_not_signed`). El worker de plataforma cablea además la guarda de firma por participante (`DbArtifactLaunchGuard`): un artefacto manipulado descalifica a ese bot.
 
 ## Persistencia
 
@@ -235,13 +235,13 @@ Tablas `bots`, `bot_loadouts`, `loadout_modules`, `bot_versions`, `builds`, `art
 
 ## Errores / limitaciones
 
-- **Despliegue pendiente** ([TD-001](../roadmap/technical-debt.md#td-001)). Integrado por REVIEW: el compose ya da al `bot-build-worker` la red `arena`, `DOCKER_PROXY_URL`, `extra_hosts` y `BUILD_SANDBOX_HOST`, y las imágenes copian `runtimes/DIGESTS.lock`. Falta desplegarlo (recrear el servicio) con el `s9-docker-proxy` corriendo en el host. Sin proxy, el worker arranca y lo anuncia («sin sandbox: todo build se rechazará»).
+- **Despliegue** ([TD-001](../roadmap/technical-debt.md#td-001)): desplegado con RC4. El compose da al `bot-build-worker` la red `arena`, `DOCKER_PROXY_URL`, `extra_hosts` y `BUILD_SANDBOX_HOST`, y las imágenes copian `runtimes/DIGESTS.lock`. Sin proxy, el worker arranca y lo anuncia («sin sandbox: todo build se rechazará»).
 - **Lanzamiento en batalla**: `createBattleLaunchHost` (`apps/bot-manager/src/bot-launch.ts`) es el contrato con el tournament-worker: verifica con la clave PÚBLICA (`ARTIFACT_VERIFY_KEY_FILE`) y sirve el artefacto firmado de la versión exacta. Ver [battles.md](battles.md#7-worker-motor-y-agentes).
 - **Superficie nueva** ([TD-033](../roadmap/technical-debt.md#td-033)): el worker de builds (y el de batallas) escucha, en la red `arena`, un puerto efímero con token mientras dura cada sesión, y ese mismo proceso tiene credenciales de BD (red `data`). Deuda aceptada.
-- **Arranque** ([TD-034](../roadmap/technical-debt.md#td-034), cerrado en la integración `integration/production-readiness`, verificado por REVIEW y en CI real; sin desplegar): dos relojes separados por la señal `ready` del bootstrap ([detalle](#arranque-dos-relojes-td-034)). Límite que queda: el reloj del bot sigue siendo de pared, así que un bot cuyo import consume mucha CPU puede acercarse a los 5 s con 0,5 CPU y el host saturado (en la prueba de saturación, `botReadyToHelloMs` máx. 619 ms).
+- **Arranque** ([TD-034](../roadmap/technical-debt.md#td-034), cerrado en la integración `integration/production-readiness`, verificado por REVIEW y en CI real; desplegado con RC4): dos relojes separados por la señal `ready` del bootstrap ([detalle](#arranque-dos-relojes-td-034)). Límite que queda: el reloj del bot sigue siendo de pared, así que un bot cuyo import consume mucha CPU puede acercarse a los 5 s con 0,5 CPU y el host saturado (en la prueba de saturación, `botReadyToHelloMs` máx. 619 ms).
 - **Red del E2E local**: la red `arena` del Docker rootless no es `internal`, porque el worker es el proceso de test en el host. En compose sí lo es.
-- El código subido se ejecuta en batallas de plataforma (integración REVIEW, [TD-002](../roadmap/technical-debt.md#td-002)) en entorno aislado; en producción, al desplegar.
-- Bot↔equipo: sólo se asigna con `teamId` al crear el bot por API. `PATCH /bots/{id}` sólo acepta `name` y `visibility` ([TD-011](../roadmap/technical-debt.md#td-011)).
+- El código subido se ejecuta en batallas de plataforma, también en producción ([TD-002](../roadmap/technical-debt.md#td-002), cerrada).
+- Bot↔equipo: se asigna con `POST /teams/{teamId}/bots` (su dueño, que debe ser miembro, o admin) y se quita con `DELETE /teams/{teamId}/bots/{botId}`; en la web, desde Equipos. `PATCH /bots/{id}` sólo acepta `name` y `visibility`.
 - No existe borrado de bots ni de versiones.
 - Doble clic en «Crear bot»: la carrera con `UNIQUE(owner_id,name)` puede dar `500` ([TD-013](../roadmap/technical-debt.md#td-013)).
 
@@ -254,8 +254,8 @@ Tablas `bots`, `bot_loadouts`, `loadout_modules`, `bot_versions`, `builds`, `art
   - E2E crear → código → build → artefacto → `validated` → `published`;
   - controles negativos: source inválido, timeout de arranque, protocolo, crash, artefacto alterado, proxy caído y sin sandbox;
   - TD-034: plataforma lenta (7 s reales antes de `ready`) → `validated`; bot lento o infinito tras `ready` → `rejected`; plataforma que no llega o runtime ausente → infraestructura; saturación acotada sin rechazos (`apps/bot-manager/tests/build-sandbox-timing-docker.test.ts`, opt-in).
-- **PARCIAL**: el despliegue necesita los cambios de compose e imagen citados.
-- **PENDIENTE**: ejecución del código del bot en batallas (carril de batallas con `resolveBotLaunch`), asignación de bot a equipo y borrado.
+- **FUNCIONA ACTUALMENTE (producción, RC4)**: build en el sandbox real, publicación, ejecución del código del bot en batallas con el artefacto firmado y asignación de bot a equipo.
+- **PENDIENTE**: borrado de bots y de versiones.
 
 ## Documentación relacionada
 

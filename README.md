@@ -5,12 +5,9 @@ equipa con módulos (chasis, armas, sensores, radio…) y lo enfrenta a otros en
 simulación 2D determinista. Las batallas se ven en directo o se repiten después como replay, y los
 torneos generan clasificaciones Elo.
 
-> **Estado actual (2026-10-18).** En **producción** (sin cambios desde la auditoría sobre
-> `27f70bb`) **no es funcional de extremo a extremo**: ningún bot de usuario llega a `published` y
-> las batallas las juega un bot de relleno. El **cierre funcional** (rama
-> `integration/functional-closure`, aún sin fusionar ni desplegar) resuelve ese recorrido y lo
-> demuestra en un entorno aislado con navegador real: bot propio → build en sandbox → batalla con
-> su código → resultado, estadísticas y replay.
+> **Estado actual (2026-10-27).** La release **RC4** (`f32ab2c`) está **desplegada en producción y
+> verificada** el 2026-10-27: bot propio → build en el sandbox real → publicación → batalla jugada
+> por su código en contenedores → resultado, estadísticas, visor y replay en la web.
 > Detalle: [docs/roadmap/current-status.md](docs/roadmap/current-status.md).
 
 ## Qué es
@@ -37,11 +34,11 @@ Más contexto: [docs/overview/project.md](docs/overview/project.md).
 | Motor de simulación (física, armas, sensores, modos, determinismo, replay) | **Funciona** |
 | Cuentas, login, roles | **Funciona**, con huecos (sin cambio de contraseña ni recuperación por correo) |
 | Bots: crear, versionar código, configurar loadout | **Funciona** |
-| Build y publicación de bots | **Bloqueado**: el sandbox de validación no está conectado ([TD-001](docs/roadmap/technical-debt.md#td-001)) |
-| Batallas | **Parcial**: la web falla al crearlas ([TD-003](docs/roadmap/technical-debt.md#td-003)) y se ejecutan con un bot de relleno ([TD-002](docs/roadmap/technical-debt.md#td-002)) |
-| Torneos y ranking Elo | **Parcial**: funcionan con el bot de relleno; la clasificación pública sale vacía ([TD-029](docs/roadmap/technical-debt.md#td-029)) |
-| Mapas | **Parcial**: importar, generar y publicar sí; el editor visual no guarda ([TD-010](docs/roadmap/technical-debt.md#td-010)) |
-| Visor en directo y reproductor de replays | **Roto en navegador** ([TD-009](docs/roadmap/technical-debt.md#td-009)) |
+| Build y publicación de bots | **Funciona**: pipeline de 10 etapas con sandbox real; firma del artefacto ([TD-001](docs/roadmap/technical-debt.md#td-001)) |
+| Batallas | **Funciona**: se crean desde la web y las juega el código de cada bot en contenedores ([TD-002](docs/roadmap/technical-debt.md#td-002), [TD-003](docs/roadmap/technical-debt.md#td-003), cerradas) |
+| Torneos y ranking Elo | **Funciona**, con huecos: ranking con temporada única ([TD-029](docs/roadmap/technical-debt.md#td-029), cerrada); en torneos faltan `mapPool` y el cierre con batallas `failed` ([TD-015](docs/roadmap/technical-debt.md#td-015)) |
+| Mapas | **Funciona**: importar, generar, editar (el editor guarda y reabre) y publicar el mapa propio ([TD-010](docs/roadmap/technical-debt.md#td-010), cerrada) |
+| Visor en directo y reproductor de replays | **Funciona** en navegador ([TD-009](docs/roadmap/technical-debt.md#td-009), cerrada) |
 | Operación (backup, restore, despliegue) | **Parcial**: el backup funciona; faltan alertas, snapshots y alineación de versiones ([TD-006](docs/roadmap/technical-debt.md#td-006), [TD-007](docs/roadmap/technical-debt.md#td-007)) |
 
 Fuente única del estado: [docs/roadmap/current-status.md](docs/roadmap/current-status.md).
@@ -72,7 +69,7 @@ gateway (nginx) ── único servicio con puertos publicados
    ├── /          → web (SPA React + Phaser)
    ├── /api/v1/   → api (Express) ──────────────┐
    ├── /ws/       → tournament-worker (WebSocket de espectador)
-   └── /replays/  → replay-service (ficheros en disco)
+   └── /replays/  → 404 (los replays se sirven por /api/v1/replays; replay-service es interno)
                                                  │
                          PostgreSQL ◄────────────┘  negocio + cola de trabajos (tabla jobs)
                              ▲
@@ -127,8 +124,7 @@ usuario crea la batalla en la web
   → visor en directo y reproductor en la web
 ```
 
-Hoy ese flujo se corta en varios puntos (build, ruleset, bot de relleno, visor). Paso a paso, con
-tablas, estados y errores: [docs/technical/battles.md](docs/technical/battles.md).
+Paso a paso, con tablas, estados y errores: [docs/technical/battles.md](docs/technical/battles.md).
 
 ## Inicio rápido
 
