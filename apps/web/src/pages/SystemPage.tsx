@@ -71,6 +71,7 @@ export function SystemPage(_props: { me: Me }) {
     // FC-D · componente común: 403 «No tienes permiso», 5xx, timeout… con detalle real.
     return (
       <div className="card">
+        <h2>Estado del sistema</h2>
         <ErrorState label="el estado del sistema" error={error} onRetry={() => void refresh()} />
       </div>
     );

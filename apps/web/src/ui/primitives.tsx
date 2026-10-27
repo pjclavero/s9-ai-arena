@@ -10,8 +10,8 @@
  * Regla de docs/R16_DESIGN_SYSTEM.md §1: el color nunca es el único canal de
  * estado. Por eso StatusBadge y EmptyState siempre exigen texto.
  */
-import type { ReactNode } from "react";
-import { describeApiError, type DescribedError } from "../errors.js";
+import { useId, type ReactNode } from "react";
+import { describeApiError, formatDetail, type DescribedError } from "../errors.js";
 
 /** Envuelve `.card` (index.html:70-76): el panel/tarjeta ya usado por ErrorBoundary. */
 export function Panel(props: { children: ReactNode; "data-testid"?: string }) {
@@ -74,8 +74,8 @@ export function ErrorState(props: { label: string; message?: string; error?: unk
       <p className="error">
         No se pudo cargar {props.label}: {detail}
       </p>
-      {d?.kind === "unauthorized" && <a href="#/bots">Inicia sesión de nuevo</a>}
-      {d?.kind === "notFound" && <a href="#/bots">Volver al inicio</a>}
+      {d?.kind === "unauthorized" && <a href="#/">Inicia sesión de nuevo</a>}
+      {(d?.kind === "notFound" || d?.kind === "forbidden") && <a href="#/">Volver al inicio</a>}
       {props.onRetry && (
         <button type="button" onClick={() => props.onRetry?.()}>
           Reintentar
@@ -97,11 +97,13 @@ export function FormError(props: { error: unknown; "data-testid"?: string }) {
   const body = (props.error as { body?: Record<string, unknown> })?.body ?? {};
   const extra: string[] = [];
   const details = body.details ?? body.fieldErrors ?? body.errors;
+  // UX-E · cada detalle se dice en frase (`campo: mensaje`), nunca como JSON
+  // crudo ni «[object Object]».
   if (Array.isArray(details)) {
-    for (const x of details.slice(0, 10)) extra.push(typeof x === "string" ? x : JSON.stringify(x));
+    for (const x of details.slice(0, 10)) extra.push(formatDetail(x));
   } else if (details && typeof details === "object") {
     for (const [k, v] of Object.entries(details as Record<string, unknown>).slice(0, 10))
-      extra.push(`${k}: ${String(v)}`);
+      extra.push(formatDetail(v, k));
   }
   return (
     <div role="alert" className="error" data-testid={props["data-testid"] ?? "form-error"} data-error-kind={d.kind}>
@@ -156,5 +158,59 @@ export function Button(props: {
     >
       {props.children}
     </button>
+  );
+}
+
+/**
+ * UX-E · Campo de formulario accesible: etiqueta visible asociada, ayuda y error
+ * ligados al control con `aria-describedby`, y `aria-invalid` cuando hay error.
+ * Así el lector de pantalla lee el error AL ENTRAR en el campo, no sólo en un
+ * aviso suelto al final del formulario. `children` recibe las props a poner en
+ * el control (`id`, `aria-describedby`, `aria-invalid`).
+ */
+export function Field(props: {
+  label: ReactNode;
+  hint?: ReactNode;
+  error?: string | null;
+  "data-testid"?: string;
+  children: (control: { id: string; "aria-describedby"?: string; "aria-invalid"?: true }) => ReactNode;
+}) {
+  const id = useId();
+  const hintId = props.hint ? `${id}-hint` : undefined;
+  const errorId = props.error ? `${id}-error` : undefined;
+  const describedBy = [hintId, errorId].filter(Boolean).join(" ") || undefined;
+  return (
+    <p data-testid={props["data-testid"]}>
+      <label htmlFor={id}>{props.label}</label>{" "}
+      {props.children({
+        id,
+        "aria-describedby": describedBy,
+        ...(props.error ? { "aria-invalid": true as const } : {}),
+      })}
+      {props.hint && (
+        <small id={hintId} style={{ display: "block" }}>
+          {props.hint}
+        </small>
+      )}
+      {props.error && (
+        <span id={errorId} className="error" role="alert" style={{ display: "block" }}>
+          {props.error}
+        </span>
+      )}
+    </p>
+  );
+}
+
+/**
+ * UX-E · Región viva para PROCESOS largos (build en curso, batalla en cola o en
+ * marcha): `role="status"` + `aria-live="polite"` para que el cambio de estado
+ * se anuncie sin mover el foco. El texto es la fuente de verdad (nunca sólo un
+ * color o un spinner). `busy` marca `aria-busy` mientras el proceso no termina.
+ */
+export function LiveStatus(props: { children: ReactNode; busy?: boolean; "data-testid"?: string }) {
+  return (
+    <p role="status" aria-live="polite" aria-busy={props.busy ? true : undefined} data-testid={props["data-testid"]}>
+      {props.children}
+    </p>
   );
 }
