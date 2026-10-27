@@ -46,6 +46,8 @@ export function forbiddenLines(text: string): string[] {
 /** Navega por hash y espera a que no quede ningún «Cargando…» en la pantalla. */
 export async function visit(page: Page, hash: string, timeout = 25_000): Promise<void> {
   await page.evaluate((h) => (window.location.hash = h), hash);
+  // Dos frames: React ya ha pintado la pantalla nueva (si no, se leería la anterior).
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   await expect
     .poll(
       async () =>
