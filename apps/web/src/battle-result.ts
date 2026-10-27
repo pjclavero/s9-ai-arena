@@ -105,3 +105,102 @@ export function summarizeBattle(b: BattleLike): BattleSummaryView {
   const agentsNote = ag && ag !== "container" ? (AGENTS_TEXT[ag] ?? ag) : null;
   return { outcome, score, duration, failure, disqualified, hasReplay, endReason, agentsNote };
 }
+
+// ---------------------------------------------------------------- UX-D · D1/D3
+// Textos para que el usuario no vea UUIDs, `veh_1` ni códigos del motor.
+
+/** Participante tal como lo devuelve la API (UX-D: con nombre de bot). */
+export interface ParticipantLike {
+  botId: string;
+  botName?: string;
+  version: number;
+  team?: string;
+  outcome?: string;
+}
+
+/** Nombre del bot; si la API no lo trae (batalla antigua), el prefijo del id. */
+export function botLabel(p: { botId: string; botName?: string }): string {
+  return p.botName && p.botName.trim() ? p.botName : `bot ${p.botId.slice(0, 8)}`;
+}
+
+/** «nombre v3»: la versión EXACTA que jugó, no la última del bot. */
+export function botVersionLabel(p: ParticipantLike): string {
+  return `${botLabel(p)} v${p.version}`;
+}
+
+export const MODE_TEXT: Record<string, string> = {
+  deathmatch: "todos contra todos",
+  team_deathmatch: "por equipos",
+  capture_the_flag: "captura la bandera",
+  zone_control: "control de zona",
+};
+
+export const OUTCOME_TEXT: Record<string, string> = {
+  win: "gana",
+  loss: "pierde",
+  draw: "empate",
+  disqualified: "descalificado",
+};
+
+/**
+ * Ganador con NOMBRES: «gana red (Tanque A v2)». Sin resultado, null. Con un solo
+ * bot por equipo, el nombre del bot es lo que el usuario reconoce, no el color.
+ */
+export function winnerText(b: BattleLike & { participants?: ParticipantLike[] }): string | null {
+  const v = summarizeBattle(b);
+  if (!v.outcome) return null;
+  const r = (b.result && typeof b.result === "object" ? b.result : {}) as Record<string, unknown>;
+  const winner = typeof r.winner === "string" ? r.winner : null;
+  if (!winner || winner === "draw") return v.outcome;
+  const bots = (b.participants ?? []).filter((p) => p.team === winner).map(botVersionLabel);
+  return bots.length > 0 ? `gana ${winner} (${bots.join(", ")})` : v.outcome;
+}
+
+/** Qué mide `perModule.uses` (contrato de replay-service/src/stats.ts, UX-D). */
+export const USES_KIND_TEXT: Record<string, string> = {
+  shots: "disparos",
+  mines: "minas desplegadas",
+  move_commands: "órdenes de movimiento",
+  radio_messages: "mensajes de radio",
+  passive: "pasivo (actúa solo)",
+};
+
+/** Motivos de rechazo del motor (event.schema.json · reason). */
+const REJECTION_TEXT: Record<string, string> = {
+  cooldown: "arma en enfriamiento (cadencia)",
+  no_ammo: "sin munición",
+  no_energy: "sin energía",
+  out_of_arc: "fuera del arco de la torreta",
+  module_destroyed: "módulo destruido",
+  invalid_position: "posición no válida",
+  rate_limited: "demasiados mensajes de radio",
+  too_large: "mensaje de radio demasiado grande",
+  no_radio: "sin módulo de radio",
+  out_of_range: "fuera de alcance",
+  extra_command_discarded: "más de un COMMAND en el mismo ciclo",
+  unknown: "motivo no informado",
+};
+
+export function rejectionText(reason: string): string {
+  return Object.hasOwn(REJECTION_TEXT, reason) ? REJECTION_TEXT[reason] : reason.replace(/_/g, " ");
+}
+
+/** Por qué se descalificó a un bot (API: diagnostics[].disqualifiedReason). */
+const DQ_REASON_TEXT: Record<string, string> = {
+  consecutive_timeouts: "demasiados turnos seguidos sin responder a tiempo",
+  bot_execution_timeout: "no llegó a conectarse (HELLO) dentro del plazo de arranque",
+  bot_crash: "el proceso del bot falló al arrancar",
+  startup_failed: "no arrancó",
+  administrative: "versión no jugable, suspendida o artefacto no verificado (antes de empezar)",
+  unknown: "motivo no registrado",
+};
+
+export function dqReasonText(reason: string | null | undefined): string {
+  if (!reason) return DQ_REASON_TEXT.unknown;
+  return Object.hasOwn(DQ_REASON_TEXT, reason) ? DQ_REASON_TEXT[reason] : reason.replace(/_/g, " ");
+}
+
+/** Ticks del motor (30/s) a «m:ss». */
+export function ticksToClock(ticks: number): string {
+  return fmtSeconds(ticks / TICK_HZ);
+}

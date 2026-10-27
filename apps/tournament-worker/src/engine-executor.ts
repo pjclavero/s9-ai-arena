@@ -35,6 +35,7 @@ import type { SpectateGateway } from "../../api/src/spectate/gateway.js";
 import { resolveBattleRuleset } from "../../api/src/services/battle-ruleset-resolver.js";
 import { InfrastructureFailure } from "./errors.js";
 import type { AgentsKind, BattleContext, BattleExecution, BattleExecutor } from "./battle-runner.js";
+import type { BotRunDiagnostics } from "./bot-diagnostics.js";
 
 export type AgentResolver = (botId: string, version: number, vehicleId: string) => BotAgent;
 
@@ -61,6 +62,8 @@ export interface AgentDriverOutput {
   replay: Replay;
   /** CPU real por botId (contenedores); ausente si el driver no mide. */
   cpuMsByBot?: Record<string, number | null>;
+  /** UX-06 · diagnóstico de arranque/transporte/contenedor por botId; ausente si el driver no lo sabe. */
+  diagnosticsByBot?: Record<string, BotRunDiagnostics>;
 }
 
 /** Engancha agentes a los vehículos y hace avanzar la batalla hasta su final. */
@@ -279,6 +282,20 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
             round,
             official: battle.official,
             roster,
+            // UX-D (D5 · C-G9) · geometría PÚBLICA del mapa para el visor (ViewerPage
+            // ya la lee de `init.meta.world`, pero nadie la mandaba: el directo se
+            // pintaba sin muros). Sólo lo que también ve cualquiera en el editor.
+            world: {
+              widthM: arenaMap.widthM,
+              heightM: arenaMap.heightM,
+              walls: arenaMap.walls.map((w) => ({ position: w.position, halfW: w.halfW, halfH: w.halfH })),
+              destructibles: arenaMap.destructibles.map((d) => ({
+                position: d.position,
+                halfW: d.halfW,
+                halfH: d.halfH,
+              })),
+              bases: arenaMap.bases.map((b) => ({ team: b.team, position: b.position, radiusM: b.radiusM })),
+            },
           },
         });
       }
@@ -324,6 +341,7 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
         },
         replayJsonl: toJsonl(replay),
         ...(out.cpuMsByBot ? { cpuMsByBot: out.cpuMsByBot } : {}),
+        ...(out.diagnosticsByBot ? { diagnosticsByBot: out.diagnosticsByBot } : {}),
         agents: driver.kind,
       };
     } catch (err) {

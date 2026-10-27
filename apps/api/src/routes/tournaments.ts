@@ -7,7 +7,7 @@ import { Router } from "express";
 import { createHash, randomBytes } from "node:crypto";
 import type { Db } from "../db/connection.js";
 import { defineOperation, defineExtension } from "../registry.js";
-import { battleToJson } from "./battles.js";
+import { battleToJson, loadParticipants } from "./battles.js";
 import { audit } from "../audit.js";
 import { badRequest, conflict, forbidden, notFound } from "../errors.js";
 import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
@@ -159,7 +159,9 @@ export function tournamentRoutes(db: Db): Router {
       const roundByMatch = new Map(matches.map((m: Record<string, unknown>) => [m.id as string, Number(m.round)]));
       const items = await Promise.all(
         battles.map(async (b: Record<string, unknown>) => ({
-          ...battleToJson(b, await db("participants").where({ battle_id: b.id })),
+          // UX-D · con nombre de bot (la UI no enseña UUIDs). Sin `viewer`: el
+          // listado del torneo es público y nunca lleva CPU ni diagnóstico.
+          ...battleToJson(b, await loadParticipants(db, b.id as string)),
           round: b.match_id ? (roundByMatch.get(b.match_id as string) ?? 1) : 1,
         })),
       );

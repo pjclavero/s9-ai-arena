@@ -154,7 +154,9 @@ describe("T9.4 · commit-reveal de semillas", () => {
   it("DoD · el endpoint de auditoría contiene artefactos y versiones, y verify reproduce la batalla", async () => {
     const battles = await h.db("battles").where({ tournament_id: tournamentId });
     for (const b of battles) {
-      const audit = await request(app).get(`/battles/${b.id}/audit`); // público, sin cuenta
+      // UX-D (G-08) · la auditoría sigue la política de lectura de la batalla (la
+      // de los replays): la ve su participante o el staff; aquí, el organizador.
+      const audit = await request(app).get(`/battles/${b.id}/audit`).set("Authorization", `Bearer ${organizer}`);
       expect(audit.status).toBe(200);
       const a = audit.body;
 

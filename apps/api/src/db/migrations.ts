@@ -810,6 +810,22 @@ const m013_battle_claim: Migration = {
   },
 };
 
+// UX-06 · Diagnóstico por bot de cada batalla (arranque, transporte, contenedor),
+// forma `bot-diagnostics/v1` (apps/tournament-worker/src/bot-diagnostics.ts). Va en
+// `participants`, como cpu_ms: la escribe quien ejecutó la batalla en la MISMA
+// transacción que el resultado, y runStatsJob (delete+insert de battle_stats) no
+// la puede borrar al reprocesar. NULL = batalla anterior o sin medida.
+const m014_battle_diagnostics: Migration = {
+  name: "014_battle_diagnostics",
+  async up(db) {
+    await db.raw(`ALTER TABLE participants ADD COLUMN diagnostics jsonb`);
+  },
+  // Destructivo para los diagnósticos (no para el resultado): DROP COLUMN.
+  async down(db) {
+    await db.raw(`ALTER TABLE participants DROP COLUMN diagnostics`);
+  },
+};
+
 export const MIGRATIONS: Migration[] = [
   m001_identity,
   m002_content,
@@ -824,6 +840,7 @@ export const MIGRATIONS: Migration[] = [
   m011_battle_cpu_ms,
   m012_bot_versioning,
   m013_battle_claim,
+  m014_battle_diagnostics,
 ];
 
 class ProgrammaticMigrationSource {

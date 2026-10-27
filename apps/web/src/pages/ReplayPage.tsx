@@ -122,6 +122,8 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
 
         // R3.4: si el índice del replay trae nómina, sprite por chasis y NOMBRE.
         if (player.index?.roster) scene.setRoster(rosterFromMeta(player.index.roster));
+        // UX-D (C-G9): muros, destructibles y bases del mapa con el que se jugó.
+        if (player.index?.world && player.index.world.widthM > 0) scene.setWorld(player.index.world);
         setStatus("listo");
         // R3.1 (ERR-VIS-01): la ReplayFeed fecha los snapshots en tiempo de PARTIDA
         // (derivado del playhead) y usa pushSnapshot por snapshot nuevo + resetTo

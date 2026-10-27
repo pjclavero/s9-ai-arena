@@ -156,12 +156,18 @@ describe("T7.5 espectador anónimo (DoD: batalla en directo y replay sin cuenta)
     expect(Buffer.compare(replay.body as Buffer, replayBytes)).toBe(0);
     expect(replay.headers["cache-control"]).toBe("private, no-store");
 
-    const audit = await request(app).get(`/battles/${finishedBattleId}/audit`);
+    // UX-D (G-08 · TD-047) · auditoría y stats siguen la MISMA política que el
+    // replay: sin S9_PUBLIC_REPLAYS_ENABLED, la batalla terminada no es pública
+    // (antes un anónimo leía ambas de cualquier batalla). Su participante, sí.
+    expect((await request(app).get(`/battles/${finishedBattleId}/audit`)).status).toBe(404);
+    expect((await request(app).get(`/battles/${finishedBattleId}/stats`)).status).toBe(404);
+
+    const audit = await request(app).get(`/battles/${finishedBattleId}/audit`).set("Authorization", `Bearer ${dev}`);
     expect(audit.status).toBe(200);
     expect(audit.body.finalStateHash).toBe("ab".repeat(32));
     expect(audit.body.artifacts[0].artifactHash).toBeTruthy();
 
-    const stats = await request(app).get(`/battles/${finishedBattleId}/stats`);
+    const stats = await request(app).get(`/battles/${finishedBattleId}/stats`).set("Authorization", `Bearer ${dev}`);
     expect(stats.status).toBe(200);
     expect(stats.body.perBot[botId].damageDealt).toBe(120);
   });
@@ -211,7 +217,9 @@ describe("T7.5 barrido de fugas por contrato (x-private)", () => {
     const params: Record<string, string> = {
       userId: (await h.db("users").where({ email: DEV_USERS.developer }).first()).id,
       botId,
-      battleId: finishedBattleId,
+      // UX-D (G-08) · la batalla EN DIRECTO de un bot público es la que un anónimo
+      // puede leer con el espectador público encendido (la terminada ya no).
+      battleId: liveBattleId,
       buildId: "",
       mapId: "mvp-arena-01",
       tournamentId: "",

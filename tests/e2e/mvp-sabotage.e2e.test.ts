@@ -177,7 +177,10 @@ describe("T12.1 · 6 sabotajes deliberados, uno por paso del criterio 26.1", () 
       expect(await closeCode(forged)).toBe(4401);
 
       // Ticket legítimo REUTILIZADO (robado del historial): la 2ª conexión no entra.
-      const ticketRes = await request(app).post(`/battles/${battleId}/spectate-ticket`);
+      // UX-D (G-08) · el ticket exige poder leer la batalla (bot privado): staff.
+      const ticketRes = await request(app)
+        .post(`/battles/${battleId}/spectate-ticket`)
+        .set("Authorization", `Bearer ${await tokenFor(h.db, DEV_USERS.admin)}`);
       expect(ticketRes.status).toBe(201);
       const first = new WebSocket(`ws://127.0.0.1:${gateway.port}/spectate/${battleId}`, [
         "spectate.v1",
@@ -228,9 +231,13 @@ describe("T12.1 · 6 sabotajes deliberados, uno por paso del criterio 26.1", () 
     await expect(runStatsJob(h.db, dir2, ghostId, "e12_sabotage_dm")).rejects.toThrow(
       /replay_not_found|No se puede procesar/,
     );
-    // Y la API sigue sin stats para esa batalla (no hay filas fantasma).
-    const res = await request(app).get(`/battles/${ghostId}/stats`);
+    // Y la API sigue sin stats para esa batalla (no hay filas fantasma). UX-D:
+    // la lee el staff (G-08) y dice «pendiente», no una tabla vacía (TD-065).
+    const res = await request(app)
+      .get(`/battles/${ghostId}/stats`)
+      .set("Authorization", `Bearer ${await tokenFor(h.db, DEV_USERS.admin)}`);
     expect(res.status).toBe(200);
     expect(Object.keys(res.body.perBot)).toEqual([]);
+    expect(res.body.status).not.toBe("ready");
   });
 });

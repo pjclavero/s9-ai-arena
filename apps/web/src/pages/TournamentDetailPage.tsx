@@ -8,13 +8,14 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, type Me } from "../api.js";
 import { useResource, ResourceView, type Resource } from "../resource.js";
 import type { Tournament } from "./TournamentsPage.js";
+import { botVersionLabel, type ParticipantLike } from "../battle-result.js";
 
 export interface TournamentBattle {
   id: string;
   status: string;
   round: number;
   mode: string;
-  participants: { botId: string; version: number; team?: string; outcome?: string }[];
+  participants: ParticipantLike[];
   result?: unknown;
 }
 
@@ -26,9 +27,10 @@ interface OwnBot {
 
 const POLL_MS = 5000;
 
+/** UX-D · por NOMBRE de bot y versión exacta (antes: UUID recortado). */
 function battleLabel(b: TournamentBattle): string {
-  const names = b.participants.map((p) => `${p.botId.slice(0, 8)} v${p.version}`);
-  return names.length > 0 ? names.join(" vs ") : b.id.slice(0, 8);
+  const names = b.participants.map(botVersionLabel);
+  return names.length > 0 ? names.join(" vs ") : "batalla sin participantes";
 }
 
 export function BattleLink({ battle }: { battle: TournamentBattle }) {

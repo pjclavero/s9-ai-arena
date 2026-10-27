@@ -30,9 +30,25 @@ import { resimulateWithEvents, type Replay } from "../../arena-engine/src/replay
 import { loadStored } from "./store.js";
 import { emptyDict } from "../../../packages/game-rules/safe-lookup.js";
 
+/**
+ * UX-D · QUÉ cuenta `uses` en cada módulo. Antes sólo se contaban armas y minas
+ * y el resto salía con `uses: 0` (p. ej. `drive.uses = 0` en un bot que se movió
+ * toda la batalla): ahora cada módulo dice qué mide, y los pasivos lo declaran.
+ *  - `shots`: disparos aceptados (armas).
+ *  - `mines`: minas desplegadas aceptadas.
+ *  - `move_commands`: decisiones con orden de movimiento distinta de parar
+ *    (movimiento). La distancia recorrida va en `BotBattleStats.distanceM`.
+ *  - `radio_messages`: decisiones con mensaje de radio.
+ *  - `passive`: el módulo actúa solo (blindaje, energía, sensores, munición):
+ *    `uses` es 0 por definición, no porque no se usara.
+ */
+export type ModuleUsesKind = "shots" | "mines" | "move_commands" | "radio_messages" | "passive";
+
 export interface ModuleStats {
   moduleId: string | null;
-  /** Acciones aceptadas por el motor (disparos, minas…). */
+  /** Qué cuenta `uses` (ver ModuleUsesKind). */
+  usesKind: ModuleUsesKind;
+  /** Acciones aceptadas del tipo `usesKind` (disparos, minas, órdenes de movimiento…). */
   uses: number;
   /** Daño atribuido (proporcional a los usos entre slots de arma). */
   damageDealt: number;
@@ -62,6 +78,16 @@ export interface BotBattleStats {
   minesTriggered: number;
   /** Turnos omitidos reportados por el motor (decision_timeout). */
   decisionTimeouts: number;
+  /** UX-06 · Decisiones con COMMAND aplicado por el motor (las grabadas en el replay). */
+  decisions: number;
+  /**
+   * UX-06 · Acciones rechazadas por el motor, por motivo (`cooldown`, `no_ammo`,
+   * `no_energy`, `out_of_arc`, `module_destroyed`…). No incluye la descalificación
+   * por timeouts (eso es `disqualified`).
+   */
+  rejectionsByReason: Record<string, number>;
+  /** UX-D · Distancia recorrida en metros (suma entre snapshots públicos). */
+  distanceM: number;
   disqualified: boolean;
   /**
    * B10 (issue #9) · CPU consumida por el CONTENEDOR del bot durante la batalla,
@@ -112,6 +138,14 @@ export interface BattleStatsInputs {
   cpuMsByBot?: Record<string, unknown>;
 }
 
+function usesKindOf(category: string | undefined): ModuleUsesKind {
+  if (category === "weapon") return "shots";
+  if (category === "mine") return "mines";
+  if (category === "movement") return "move_commands";
+  if (category === "radio") return "radio_messages";
+  return "passive";
+}
+
 /** Normaliza una medida de CPU externa: número finito ≥ 0, o `null`. */
 function sanitizeCpuMs(raw: unknown): number | null {
   return typeof raw === "number" && Number.isFinite(raw) && raw >= 0 ? raw : null;
@@ -135,6 +169,7 @@ export async function computeBattleStats(replay: Replay, inputs: BattleStatsInpu
       if (m.category === "weapon" || m.category === "mine") weapons.add(m.slot);
       perModule[m.slot] = {
         moduleId: m.moduleId,
+        usesKind: usesKindOf(m.category),
         uses: 0,
         damageDealt: 0,
         rejections: 0,
@@ -160,6 +195,9 @@ export async function computeBattleStats(replay: Replay, inputs: BattleStatsInpu
       minesDeployed: 0,
       minesTriggered: 0,
       decisionTimeouts: 0,
+      decisions: 0,
+      rejectionsByReason: emptyDict<number>(),
+      distanceM: 0,
       disqualified: false,
       // B10 · botId viene del replay (dato externo): safeLookup, no p.botId
       // indexado a pelo — con botId "__proto__" un `dict[key]` devolvería algo
@@ -171,7 +209,16 @@ export async function computeBattleStats(replay: Replay, inputs: BattleStatsInpu
 
   // ---- 1 · Comandos grabados: intentos de acción por slot.
   const fireAttempts = new Map<string, Map<string, number>>(); // vehicleId → slot → intentos
+  const moveCommands = new Map<string, number>(); // vehicleId → decisiones con movimiento
+  const radioCommands = new Map<string, number>(); // vehicleId → decisiones con radio
   for (const c of replay.commands) {
+    const bs = byVehicle.get(c.vehicleId);
+    if (bs) bs.decisions += 1;
+    const mv = c.command?.move;
+    if (mv && ((Number(mv.throttle) || 0) !== 0 || (Number(mv.steer) || 0) !== 0)) {
+      moveCommands.set(c.vehicleId, (moveCommands.get(c.vehicleId) ?? 0) + 1);
+    }
+    if (c.command?.radio) radioCommands.set(c.vehicleId, (radioCommands.get(c.vehicleId) ?? 0) + 1);
     const v = fireAttempts.get(c.vehicleId) ?? new Map<string, number>();
     for (const slot of c.command?.fire ?? []) v.set(slot, (v.get(slot) ?? 0) + 1);
     if (c.command?.deployMine?.slot) v.set(c.command.deployMine.slot, (v.get(c.command.deployMine.slot) ?? 0) + 1);
@@ -199,7 +246,12 @@ export async function computeBattleStats(replay: Replay, inputs: BattleStatsInpu
         break;
       case "rejected_action":
         if (e.reason === "timeout_disqualified") s.disqualified = true;
-        else if (e.slot && s.perModule[e.slot]) s.perModule[e.slot].rejections += 1;
+        else {
+          if (e.slot && s.perModule[e.slot]) s.perModule[e.slot].rejections += 1;
+          // `reason` viene del motor re-simulado; emptyDict: clave de dato externo.
+          const reason = typeof e.reason === "string" && e.reason ? e.reason : "unknown";
+          s.rejectionsByReason[reason] = (s.rejectionsByReason[reason] ?? 0) + 1;
+        }
         break;
       case "mine_deployed":
         s.minesDeployed += 1;
@@ -281,12 +333,37 @@ export async function computeBattleStats(replay: Replay, inputs: BattleStatsInpu
       pm.damageDealt = (s.damageDealt * pm.uses) / totalUses;
       pm.efficiency = pm.uses > 0 ? pm.damageDealt / pm.uses : null;
     }
+    // Módulos que no disparan: qué hicieron (antes `uses: 0` siempre, engañoso).
+    for (const pm of Object.values(s.perModule)) {
+      if (pm.usesKind === "move_commands") pm.uses = moveCommands.get(vehicleId) ?? 0;
+      else if (pm.usesKind === "radio_messages") pm.uses = radioCommands.get(vehicleId) ?? 0;
+    }
     // Estado final de cada módulo: del último snapshot público.
     const snapVehicle = lastSnapshot?.vehicles?.find((v: any) => v.id === vehicleId);
     for (const m of snapVehicle?.modules ?? []) {
       if (s.perModule[m.slot]) s.perModule[m.slot].finalState = m.state;
     }
   }
+
+  // ---- 4b · Distancia recorrida: suma de tramos entre snapshots públicos
+  // consecutivos (cota inferior de la trayectoria real; un respawn no cuenta).
+  const lastPos = new Map<string, { x: number; y: number }>();
+  for (const snap of replay.snapshots) {
+    for (const v of snap?.vehicles ?? []) {
+      const s = byVehicle.get(v.id);
+      if (!s) continue;
+      const pos = v.alive && v.position ? v.position : null;
+      const prev = lastPos.get(v.id);
+      if (pos && prev) {
+        const d = Math.hypot(pos.x - prev.x, pos.y - prev.y);
+        // Un salto mayor de 20 m entre snapshots es un respawn, no un recorrido.
+        if (Number.isFinite(d) && d < 20) s.distanceM += d;
+      }
+      if (pos) lastPos.set(v.id, pos);
+      else lastPos.delete(v.id);
+    }
+  }
+  for (const s of byVehicle.values()) s.distanceM = Math.round(s.distanceM * 100) / 100;
 
   // ---- 5 · Por equipo y por mapa.
   // B8 · `emptyDict()`, NO `{}`: `s.team` viene del CONTENIDO DEL REPLAY.
