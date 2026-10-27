@@ -29,7 +29,16 @@ export interface BotRunDiagnostics {
    * Arranque del bot. `ok: false` sólo cuando la culpa es del bot (19.2):
    * `bot_execution_timeout` (no llegó al HELLO a tiempo) o `bot_crash`.
    */
-  startup: { ok: boolean; reason?: "bot_execution_timeout" | "bot_crash" };
+  startup: {
+    ok: boolean;
+    /** UX-F (DEF-R4) · `hook_missing`: el bootstrap rechazó la clase por no implementar el hook. */
+    reason?: "bot_execution_timeout" | "bot_crash" | "hook_missing";
+    /**
+     * UX-F (DEF-R4) · arrancó y jugó, PERO la versión no implementa el hook: su
+     * código no decide nada (versiones publicadas antes de exigirlo).
+     */
+    warning?: "hook_missing";
+  };
   /** Transporte (ProtocolServer). Ausente si la batalla no llegó a correr. */
   protocol?: BotProtocolDiagnostics;
   /** Contenedor del bot. Ausente si el runner no sabe medirlo. */

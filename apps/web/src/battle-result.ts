@@ -235,6 +235,9 @@ const DQ_REASON_TEXT: Record<string, string> = {
   consecutive_timeouts: "demasiados turnos seguidos sin responder a tiempo",
   bot_execution_timeout: "no llegó a conectarse (HELLO) dentro del plazo de arranque",
   bot_crash: "el proceso del bot falló al arrancar",
+  // UX-F (DEF-R4) · antes esto llegaba como bot_crash («el proceso falló»).
+  hook_missing:
+    "tu clase no implementa on_observation (Python) / onObservation (JavaScript): sin él el bot no decide nada",
   startup_failed: "no arrancó",
   administrative: "versión no jugable, suspendida o artefacto no verificado (antes de empezar)",
   unknown: "motivo no registrado",

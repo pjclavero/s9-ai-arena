@@ -24,7 +24,7 @@
 import http from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { WebSocketServer } from "ws";
-import type { BootstrapSignals } from "./startup-clock.js";
+import { WARNING_REPORT_KINDS, type BootstrapSignals } from "./startup-clock.js";
 
 export const ARTIFACT_TOKEN_HEADER = "x-s9-artifact-token";
 const MAX_REPORT_BYTES = 8 * 1024;
@@ -111,7 +111,9 @@ export class SandboxHost {
       signals: {
         fetchedAt: () => offer.fetchedAt,
         readyAt: () => offer.readyAt,
-        failure: () => offer.reports[0] ?? null,
+        // UX-F (DEF-R4) · un AVISO (hook_missing) no es un fallo de arranque.
+        failure: () => offer.reports.find((r) => !WARNING_REPORT_KINDS.has(r.kind)) ?? null,
+        warnings: () => offer.reports.filter((r) => WARNING_REPORT_KINDS.has(r.kind)),
         onChange(cb) {
           listeners.add(cb);
           return () => listeners.delete(cb);

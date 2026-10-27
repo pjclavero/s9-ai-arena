@@ -219,3 +219,123 @@ describe("UX-06 · el runner persiste el diagnóstico y la API se lo da sólo al
     expect(JSON.stringify(r.body)).not.toContain("detalle interno");
   });
 });
+
+/**
+ * UX-F (DEF-R4) · versiones YA publicadas que no implementan el hook. El build
+ * las rechaza desde UX-04, pero las publicadas antes siguen inscritas en
+ * batallas y torneos: con S9_HOOK_POLICY=warn el bootstrap avisa y el bot juega
+ * quieto como hasta ahora; el aviso llega al diagnóstico de su dueño. Si un
+ * bootstrap sí rechaza por el hook, el motivo es `hook_missing`, no `bot_crash`.
+ */
+describe("UX-F (DEF-R4) · versión publicada sin hook en batalla", () => {
+  async function runWith(behaviour: (i: number) => Record<string, unknown>) {
+    const catalog = loadCatalog();
+    const ruleset = loadRuleset("dm_practice@1", { timeLimitTicks: 90 });
+    const participants: Participant[] = VEHICLES.map((b, i) => ({
+      id: b.vehicleId,
+      botId: `bot_p${i}`,
+      team: b.team,
+      spec: resolveVehicle(ARCHETYPES.gunner, catalog),
+    }));
+    const engine = await Battle.create({
+      battleId: `uxf-hook-${Math.random().toString(16).slice(2, 10)}`,
+      seed: "uxf-hook",
+      ruleset,
+      map: emptyArena(),
+      participants,
+      recordReplay: true,
+    });
+    const runner = new FakeBootstrapRunner((_spec, i) => behaviour(i));
+    runners.push(runner);
+    const agents = containerAgents({
+      runner,
+      provider: provider(),
+      network: "arena",
+      engineHost: "127.0.0.1",
+      tickIntervalMs: 5,
+      timeouts: { sandboxStartupMs: 5_000, botExecutionMs: 2_000 },
+    });
+    return agents.run({
+      battleId: engine.config.battleId,
+      engine,
+      vehicles: VEHICLES,
+      ruleset,
+      catalogVersion: CATALOG_VERSION,
+    });
+  }
+
+  it("arranca y JUEGA (quieto) hasta el final; el diagnóstico lleva el aviso hook_missing", async () => {
+    const out = await runWith((i) =>
+      i === 0
+        ? {
+            warnAfterReady: { kind: "hook_missing", detail: "tu clase Torpe no implementa on_observation" },
+            idle: true,
+          }
+        : {},
+    );
+    expect(out.result.ticks).toBeGreaterThanOrEqual(90); // la batalla se jugó entera
+    const sinHook = out.diagnosticsByBot![VEHICLES[0].botId];
+    expect(sinHook.startup).toEqual({ ok: true, warning: "hook_missing" });
+    expect(sinHook.protocol).toMatchObject({ helloOk: true, invalidCommands: 0 });
+    expect(out.diagnosticsByBot![VEHICLES[1].botId].startup).toEqual({ ok: true });
+    // El texto del bootstrap no viaja al diagnóstico: sólo el código.
+    expect(JSON.stringify(out.diagnosticsByBot)).not.toContain("Torpe");
+  }, 30_000);
+
+  it("si el bootstrap RECHAZA por el hook, el motivo es hook_missing (nunca bot_crash a secas)", async () => {
+    const err = await runWith((i) => (i === 0 ? { crashAfterReady: true, crashAfterReadyKind: "hook" } : {})).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(SportingFailure);
+    expect((err as SportingFailure).botId).toBe(VEHICLES[0].botId);
+    expect((err as SportingFailure).startupReason).toBe("hook_missing");
+  }, 30_000);
+
+  it("el runner persiste reason=hook_missing y la API se lo da al dueño", async () => {
+    const id = await insertScheduledBattle(h.db, bots[0], bots[1]);
+    const executor = async (): Promise<BattleExecution> => {
+      throw new SportingFailure("bot_crash", bots[1].botId, "[bot_crash] hook", "container", "hook_missing");
+    };
+    await expect(
+      makeRunBattleHandler({ executor })(fakeJob(id, "00000000-0000-0000-0000-00000000d1a2"), {
+        db: h.db,
+        workerId: "D",
+      }),
+    ).rejects.toBeInstanceOf(SportingFailure);
+    const r = await request(createApp({ db: h.db, anonQuota: { max: 10_000, windowMs: 3600_000 } }))
+      .get(`/battles/${id}/stats`)
+      .set("Authorization", `Bearer ${await ownerToken(bots[1])}`);
+    expect(r.body.diagnostics[bots[1].botId]).toMatchObject({
+      startup: { ok: false, reason: "hook_missing" },
+      disqualifiedReason: "hook_missing",
+    });
+  });
+
+  it("el aviso se persiste y la API lo entrega SÓLO al dueño", async () => {
+    const id = await insertScheduledBattle(h.db, bots[0], bots[1]);
+    const executor = async (): Promise<BattleExecution> => ({
+      winner: "B",
+      ticks: 300,
+      score: { A: 0, B: 1 },
+      finalStateHash: "h-hook",
+      disqualified: [],
+      versions: { engine: "test" },
+      diagnosticsByBot: {
+        [bots[0].botId]: { schema: "bot-diagnostics/v1", startup: { ok: true, warning: "hook_missing" } },
+      },
+    });
+    await makeRunBattleHandler({ executor })(fakeJob(id, "00000000-0000-0000-0000-00000000d1a3"), {
+      db: h.db,
+      workerId: "D",
+    });
+    const app = createApp({ db: h.db, anonQuota: { max: 10_000, windowMs: 3600_000 } });
+    const own = await request(app)
+      .get(`/battles/${id}/stats`)
+      .set("Authorization", `Bearer ${await ownerToken(bots[0])}`);
+    expect(own.body.diagnostics[bots[0].botId].startup).toEqual({ ok: true, warning: "hook_missing" });
+    const rival = await request(app)
+      .get(`/battles/${id}/stats`)
+      .set("Authorization", `Bearer ${await ownerToken(bots[1])}`);
+    expect(rival.body.diagnostics[bots[0].botId]).toBeUndefined();
+  });
+});

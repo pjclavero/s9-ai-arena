@@ -298,6 +298,52 @@ describe("UX-06 · diagnóstico de TUS bots", () => {
   });
 });
 
+describe("UX-F (DEF-R4) · versión publicada sin hook", () => {
+  it("jugó con aviso: el dueño lee que su vN no implementa on_observation", async () => {
+    mockApi({
+      [`/battles/${ID}`]: () => json(BATTLE),
+      [`/battles/${ID}/stats`]: () =>
+        json({
+          ...STATS_READY,
+          diagnostics: {
+            [MINE]: { ...STATS_READY.diagnostics[MINE], startup: { ok: true, warning: "hook_missing" } },
+          },
+        }),
+      [`/battles/${ID}/audit`]: () => json({}),
+    });
+    render(<BattleDetailPage id={ID} />);
+    const problems = (await screen.findByTestId("diagnostics-problems")).textContent ?? "";
+    expect(problems).toContain("Tu versión publicada v3 no implementa on_observation");
+    expect(problems).toContain("tu código no decide nada");
+    expect(screen.getByTestId("bot-diagnostics").textContent).toContain("arrancó, pero sin hook");
+  });
+
+  it("rechazada por el hook: el motivo es el hook, no «el proceso falló al arrancar»", async () => {
+    mockApi({
+      [`/battles/${ID}`]: () => json(BATTLE),
+      [`/battles/${ID}/stats`]: () =>
+        json({
+          battleId: ID,
+          status: "unavailable",
+          perBot: {},
+          diagnostics: {
+            [MINE]: {
+              ...STATS_READY.diagnostics[MINE],
+              startup: { ok: false, reason: "hook_missing" },
+              disqualified: true,
+              disqualifiedReason: "hook_missing",
+            },
+          },
+        }),
+      [`/battles/${ID}/audit`]: () => json({}),
+    });
+    render(<BattleDetailPage id={ID} />);
+    const problems = (await screen.findByTestId("diagnostics-problems")).textContent ?? "";
+    expect(problems).toContain("No arrancó: tu clase no implementa on_observation");
+    expect(problems).not.toContain("el proceso del bot falló al arrancar");
+  });
+});
+
 describe("UX-D · permiso incorrecto", () => {
   it("una batalla ajena o inexistente: error visible de «no encontrado», sin datos", async () => {
     mockApi({

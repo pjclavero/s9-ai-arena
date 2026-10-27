@@ -153,7 +153,7 @@ Una sola sesión por build (`ContainerBuildSandbox.verify`):
    - envía la señal **`ready`** (`POST ARTIFACT_URL/ready`, con el token) y espera la respuesta: a partir de aquí todo lo que se ejecuta es código del usuario ([TD-034](#arranque-dos-relojes-td-034));
    - carga el fichero de entrada: `manifest.entry` o `src/bot.py` en Python; `package.json main` o `src/bot.js` en Node;
    - instancia la subclase de `ArenaBot` (en Python, `Bot` o la única definida; en Node, `export default`, `Bot` o la única exportada);
-   - **comprueba el hook (UX-04)**: la clase (o un ancestro distinto de `ArenaBot`) debe sobrescribir `on_observation` / `onObservation` o el despachador interno; si no, falla con `kind: "hook"` y sugiere el nombre propio más parecido («¿Quisiste decir «on_observaton»?»). Antes una clase con el hook mal escrito heredaba el `{}` de `ArenaBot` y pasaba las 10 etapas sin hacer nada;
+   - **comprueba el hook (UX-04)**: la clase (o un ancestro distinto de `ArenaBot`) debe sobrescribir `on_observation` / `onObservation` o el despachador interno (`_handle_observation` / `handleObservation`: desde UX-F cuenta en los dos runtimes); si no, falla con `kind: "hook"` y sugiere el nombre propio más parecido («¿Quisiste decir «on_observaton»?»). Antes una clase con el hook mal escrito heredaba el `{}` de `ArenaBot` y pasaba las 10 etapas sin hacer nada. En **batalla** la comprobación no rechaza: ver [Política del hook para versiones ya publicadas](#política-del-hook-para-versiones-ya-publicadas-def-r4);
    - llama a `run(WS_URL, BATTLE_TOKEN)`.
 
    Si algo falla, informa a `ARTIFACT_URL/report` (`kind` + traza) y sale con un código distinto de 0. `apps/bot-manager/src/user-error.ts` resume la traza como «fichero, línea: error» con la ruta DENTRO del paquete (`src/bot.py, línea 7: NameError…`), sin las rutas del sandbox; la web la muestra en el diagnóstico del build (fase, fichero y línea, que la versión no está publicada y qué hacer). Antes de `ready`, los `kind` de plataforma (`config`, `fetch`, `integrity`, `materialize`, `sdk`) son infraestructura y los del paquete (`manifest`, `entry`) son del bot. Después de `ready`, **cualquier** informe es del bot: su código ve `ARTIFACT_URL`/`ARTIFACT_TOKEN` y podría falsear un `kind` de plataforma. Los del bot llegan al motivo de rechazo.
@@ -199,6 +199,22 @@ Clasificación de fallos de arranque:
 - Si la señal `ready` se pierde pero el HELLO llega a tiempo, el bot pasa (el HELLO prueba la readiness); el tramo del bot no se mide aparte y lo dice el log.
 
 Los plazos se parsean una vez (`startupTimeoutsFromEnv`); un valor que no sea un entero de 1 a 600000 ms hace fallar el arranque del servicio. El `handshakeTimeoutMs` del ProtocolServer (conexión → HELLO) usa `BOT_EXECUTION_TIMEOUT_MS`. `maxStartupMs` de `PipelineConfig` sólo se usa en la medición en proceso (sin sandbox).
+
+### Política del hook para versiones ya publicadas (DEF-R4)
+
+El bootstrap es el mismo en el build y en la batalla, así que la comprobación del hook de UX-04 se aplicaba también al **lanzar en batalla** versiones publicadas antes de que existiera. Una de esas versiones (p. ej. con `on_observaton`) jugaba hasta entonces quieta, devolviendo `{}`; con la comprobación pasaba a perder por «No arrancó: el proceso del bot falló al arrancar», porque el worker reducía el informe `hook` a `bot_crash`.
+
+Decisión (criterio conservador: no romper bots que hoy juegan; no hubo recuento de producción disponible):
+
+| Dónde | `S9_HOOK_POLICY` | Clase sin hook |
+|---|---|---|
+| Build (`build-sandbox.ts`, por defecto en `launchSpecForBot`) | `reject` | **se rechaza** con `kind: "hook"`: ninguna versión NUEVA se publica sin hook |
+| Batalla (`createBattleLaunchHost`) | `warn` | **juega** como antes (quieta, COMMAND vacíos); el bootstrap envía el aviso `hook_missing` |
+
+- El aviso no es un fallo de arranque (`WARNING_REPORT_KINDS` en `startup-clock.ts`; `SandboxHost` lo expone en `signals.warnings()`, no en `failure()`).
+- El diagnóstico del dueño (`participants.diagnostics`) lleva `startup: { ok: true, warning: "hook_missing" }` y la web dice: «Tu versión publicada vN no implementa on_observation (Python) / onObservation (JavaScript): tu código no decide nada y el bot jugó quieto. Implementa el hook y publica una versión nueva.» Sólo lo ven el dueño y el staff (TD-047).
+- Si un bootstrap sí rechaza por el hook (`kind: "hook"`), el motivo propagado es `hook_missing` (`SportingFailure.startupReason`), nunca `bot_crash` a secas.
+- Por qué no rechazar en batalla: una derrota por «no arrancó» de una versión que ayer jugaba cambia resultados y ranking de bots ya inscritos (torneos congelados) sin que su dueño pueda hacer nada dentro de la competición. Por qué no tolerar en el build: el falso verde de UX-04.
 
 ## Artefacto y firma
 
@@ -285,6 +301,7 @@ Verificado contra `27f70bb`; filas del sandbox y del versionado, contra la integ
 | Rechazo determinista en navegador real (main y runtime de producción) | RUNTIME_VERIFIED | Auditoría 2026-10-15, B pasada 2 §1c |
 | En producción, las 12 versiones `rejected` y los 22 builds `failed` | RUNTIME_VERIFIED | Auditoría 2026-10-15, A pasada 1 (lectura de BD) |
 | UX-R · hook obligatorio (Python y Node), con sugerencia | CODE_VERIFIED + test | `apps/bot-manager/src/sandbox-bootstrap/bootstrap.{py,mjs}`; `apps/bot-manager/tests/bootstrap-hook.test.ts` (rc=0, ronda UX-R) |
+| UX-F (DEF-R4) · batalla con versión publicada sin hook: juega con aviso; build: rechazo | CODE_VERIFIED + test | `bootstrap.{py,mjs}` (`S9_HOOK_POLICY`); `apps/bot-manager/tests/uxf-hook-policy.test.ts`; `apps/tournament-worker/src/battle-diagnostics.test.ts` (rojo sin el fix) |
 | UX-R · humo con el loadout de la versión | CODE_VERIFIED + test | `apps/bot-manager/src/smoke-vehicle.ts`; `apps/bot-manager/tests/smoke-vehicle.test.ts` (rc=0, ronda UX-R) |
 | Orden de las 10 etapas | CODE_VERIFIED | `apps/bot-manager/src/types.ts:19-30`; `apps/api/src/services/bot-manager.ts:13-24` |
 | Límites: 10 MB, 500 ficheros, 200 MB, 100 ms, 5000 ms, 600 ticks | CODE_VERIFIED | `apps/bot-manager/src/config.ts:138-162` |

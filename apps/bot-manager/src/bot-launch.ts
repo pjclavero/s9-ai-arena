@@ -81,6 +81,12 @@ export interface LaunchSpecInput {
   limits?: ContainerLimits;
   seccompProfilePath?: string;
   autoRemove?: boolean;
+  /**
+   * UX-F (DEF-R4) · qué hace el bootstrap si la clase no implementa el hook:
+   * `reject` (build, por defecto) la rechaza; `warn` (batalla) la deja jugar
+   * quieta y avisa. Ver docs/technical/bots.md.
+   */
+  hookPolicy?: "reject" | "warn";
 }
 
 /** SandboxSpec completo (imagen de runtime + bootstrap + entorno) para una sesión. */
@@ -99,6 +105,7 @@ export function launchSpecForBot(i: LaunchSpecInput): SandboxSpec {
       ARTIFACT_URL: i.offer.url,
       ARTIFACT_TOKEN: i.offer.token,
       ARTIFACT_SHA256: i.offer.sha256,
+      S9_HOOK_POLICY: i.hookPolicy ?? "reject",
     },
     limits: i.limits ?? DEFAULT_LIMITS,
     seccompProfilePath: i.seccompProfilePath ?? DEFAULT_SECCOMP_PROFILE,
@@ -273,6 +280,9 @@ export async function createBattleLaunchHost(db: Knex, opts: BattleLaunchHostOpt
         battleToken: bot.battleToken,
         botHandle: bot.wireBotId,
         offer,
+        // UX-F (DEF-R4) · la versión ya pasó su build: si no implementa el hook,
+        // juega como hasta ahora (quieta) y su dueño lo ve en el diagnóstico.
+        hookPolicy: "warn",
       });
       return {
         imageDigest: spec.imageDigest,

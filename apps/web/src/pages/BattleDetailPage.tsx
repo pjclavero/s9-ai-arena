@@ -88,7 +88,7 @@ interface DiagnosticsView {
   botName?: string;
   version: number;
   measured: boolean;
-  startup: { ok: boolean; reason?: string } | null;
+  startup: { ok: boolean; reason?: string; warning?: string } | null;
   hello: { ok: boolean; tick: number | null; reconnects: number | null } | null;
   decisions: number | null;
   decisionTimeouts: number | null;
@@ -414,6 +414,12 @@ function DiagnosticsSection({ b, diagnostics }: { b: BattleDetail; diagnostics: 
 function BotDiagnostics({ d, label }: { d: DiagnosticsView; label: string }) {
   const problems: string[] = [];
   if (d.startup && !d.startup.ok) problems.push(`No arrancó: ${dqReasonText(d.startup.reason)}.`);
+  // UX-F (DEF-R4) · versión publicada antes de exigir el hook: jugó, pero quieta.
+  if (d.startup?.warning === "hook_missing")
+    problems.push(
+      `Tu versión publicada v${d.version} no implementa on_observation (Python) / onObservation (JavaScript): ` +
+        "tu código no decide nada y el bot jugó quieto. Implementa el hook y publica una versión nueva.",
+    );
   if (d.hello && !d.hello.ok) problems.push("Nunca completó el HELLO del protocolo.");
   if (d.disqualified) problems.push(`Descalificado: ${dqReasonText(d.disqualifiedReason)}.`);
   if (d.commands?.invalid)
@@ -452,7 +458,15 @@ function BotDiagnostics({ d, label }: { d: DiagnosticsView; label: string }) {
       )}
       <dl>
         <dt>Arranque</dt>
-        <dd>{d.startup ? (d.startup.ok ? "correcto" : dqReasonText(d.startup.reason)) : "no medido"}</dd>
+        <dd>
+          {d.startup
+            ? d.startup.ok
+              ? d.startup.warning === "hook_missing"
+                ? "arrancó, pero sin hook: no decide nada"
+                : "correcto"
+              : dqReasonText(d.startup.reason)
+            : "no medido"}
+        </dd>
         <dt>HELLO</dt>
         <dd>
           {d.hello
