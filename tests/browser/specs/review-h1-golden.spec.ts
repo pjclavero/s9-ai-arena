@@ -249,6 +249,7 @@ test.describe("@golden [REVIEW] H1 usuario nuevo de extremo a extremo", () => {
       "#/account",
     ])
       await visit(page, "usuario", h);
+    await anonPage.goto("/"); // la página anónima arranca en about:blank: primero se abre la SPA
     for (const h of ["#/", "#/live", "#/ranking", "#/help", "#/bots", "#/battles", "#/maps"])
       await visit(anonPage, "anonimo", h);
 
