@@ -100,8 +100,30 @@ async function publishedBot(page: Page, name: string, code: string) {
   await expect(page.getByTestId("version-row-1")).toContainText("published");
 }
 
+/**
+ * UX-D (G-08 · TD-047) · Las vistas de una batalla (detalle, stats, auditoría) ya
+ * no son anónimas: sólo las lee quien puede leer su replay. Antes estas lecturas
+ * iban SIN sesión y funcionaban por la fuga. Ahora llevan el Bearer del usuario
+ * del golden (login por la API pública con sus credenciales).
+ */
+let bearer = "";
+let creds: { email: string; password: string } | null = null;
+async function apiLogin(page: Page, email: string, password: string): Promise<void> {
+  creds = { email, password };
+  const r = await page.request.post("/api/v1/auth/login", { data: { email, password } });
+  expect(r.status(), `login API: ${await r.text()}`).toBe(200);
+  bearer = ((await r.json()) as { accessToken: string }).accessToken;
+}
+
 async function api<T>(page: Page, path: string): Promise<T> {
-  const r = await page.request.get(`/api/v1${path}`);
+  const get = () =>
+    page.request.get(`/api/v1${path}`, bearer ? { headers: { Authorization: `Bearer ${bearer}` } } : {});
+  let r = await get();
+  // El access token dura 15 min y el golden puede acercarse: se renueva una vez.
+  if (r.status() === 401 && creds) {
+    await apiLogin(page, creds.email, creds.password);
+    r = await get();
+  }
   expect(r.status(), `${path}: ${await r.text()}`).toBe(200);
   return (await r.json()) as T;
 }
@@ -113,6 +135,7 @@ test.describe("@golden Golden path", () => {
     test.setTimeout(900_000);
     const problems = watchProblems(page);
     const { email, password } = await registerNewUser(page);
+    await apiLogin(page, email, password);
 
     // --- bots A y B: código del usuario, build real, publicados ----------
     await publishedBot(page, BOT_A, ARTILLERO);
