@@ -119,17 +119,7 @@ export function matchPanelRoute(
  * Las rutas con parámetros siguen en `matchPanelRoute` / `matchPublicRoute`.
  */
 export type StaticPanelRoute =
-  | "home"
-  | "bots"
-  | "teams"
-  | "tournaments"
-  | "replays"
-  | "mapEditor"
-  | "maps"
-  | "system"
-  | "audit"
-  | "roles"
-  | "admin";
+  "home" | "bots" | "teams" | "tournaments" | "replays" | "mapEditor" | "maps" | "system" | "audit" | "roles" | "admin";
 
 export const STATIC_PANEL_ROUTES: ReadonlyArray<{ name: StaticPanelRoute; pattern: RegExp }> = [
   // UX-A · la raíz es «Inicio» (checklist de primeros pasos), ya no «Mis bots».

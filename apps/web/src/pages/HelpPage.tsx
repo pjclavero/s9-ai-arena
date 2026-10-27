@@ -40,8 +40,8 @@ export function HelpPage(props: { loggedIn: boolean }) {
           ))}
         </ol>
         <p>
-          ¿Algo falla? Cada pantalla dice qué ha pasado (permiso, inexistente, servidor no disponible, sin respuesta)
-          y ofrece «Reintentar». Si una versión queda <code>rejected</code>, el motivo aparece junto a la versión.
+          ¿Algo falla? Cada pantalla dice qué ha pasado (permiso, inexistente, servidor no disponible, sin respuesta) y
+          ofrece «Reintentar». Si una versión queda <code>rejected</code>, el motivo aparece junto a la versión.
         </p>
       </section>
 
@@ -61,7 +61,9 @@ export function HelpPage(props: { loggedIn: boolean }) {
 
       <section className="card" aria-labelledby="help-docs-title">
         <h3 id="help-docs-title">Documentación</h3>
-        <p>La documentación completa y los SDK están en el repositorio público del proyecto (se abre en otra pestaña):</p>
+        <p>
+          La documentación completa y los SDK están en el repositorio público del proyecto (se abre en otra pestaña):
+        </p>
         <ul data-testid="help-docs">
           {DOC_LINKS.map((d) => (
             <li key={d.href}>
