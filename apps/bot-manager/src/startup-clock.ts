@@ -84,12 +84,6 @@ export const PLATFORM_REPORT_KINDS: ReadonlySet<string> = new Set([
 ]);
 /** Informes del bootstrap que son del BOT (su paquete o su código). */
 export const BOT_REPORT_KINDS: ReadonlySet<string> = new Set(["manifest", "entry", "import", "runtime", "hook"]);
-/**
- * UX-F (DEF-R4) · AVISOS del bootstrap: el bot sigue arrancando. `hook_missing` =
- * versión ya publicada que no implementa el hook, lanzada en batalla con
- * `S9_HOOK_POLICY=warn`. Nunca son un fallo de arranque.
- */
-export const WARNING_REPORT_KINDS: ReadonlySet<string> = new Set(["hook_missing"]);
 
 export type StartupFault = "infrastructure" | "bot";
 export type StartupFailureReason =
@@ -128,7 +122,7 @@ export interface BootstrapSignals {
   fetchedAt(): number | null;
   readyAt(): number | null;
   failure(): { kind: string; detail: string } | null;
-  /** UX-F (DEF-R4) · avisos (WARNING_REPORT_KINDS) que no paran el arranque. */
+  /** UX-F (DEF-R4) · avisos (WARNING_REPORT_KINDS, sandbox-host.ts) que no paran el arranque. */
   warnings?(): readonly { kind: string; detail: string }[];
   /** Avisa ante cualquier señal nueva; devuelve la función para desuscribirse. */
   onChange(cb: () => void): () => void;

@@ -211,7 +211,7 @@ Decisión (criterio conservador: no romper bots que hoy juegan; no hubo recuento
 | Build (`build-sandbox.ts`, por defecto en `launchSpecForBot`) | `reject` | **se rechaza** con `kind: "hook"`: ninguna versión NUEVA se publica sin hook |
 | Batalla (`createBattleLaunchHost`) | `warn` | **juega** como antes (quieta, COMMAND vacíos); el bootstrap envía el aviso `hook_missing` |
 
-- El aviso no es un fallo de arranque (`WARNING_REPORT_KINDS` en `startup-clock.ts`; `SandboxHost` lo expone en `signals.warnings()`, no en `failure()`).
+- El aviso no es un fallo de arranque (`WARNING_REPORT_KINDS` en `sandbox-host.ts`; `SandboxHost` lo expone en `signals.warnings()`, no en `failure()`).
 - El diagnóstico del dueño (`participants.diagnostics`) lleva `startup: { ok: true, warning: "hook_missing" }` y la web dice: «Tu versión publicada vN no implementa on_observation (Python) / onObservation (JavaScript): tu código no decide nada y el bot jugó quieto. Implementa el hook y publica una versión nueva.» Sólo lo ven el dueño y el staff (TD-047).
 - Si un bootstrap sí rechaza por el hook (`kind: "hook"`), el motivo propagado es `hook_missing` (`SportingFailure.startupReason`), nunca `bot_crash` a secas.
 - Por qué no rechazar en batalla: una derrota por «no arrancó» de una versión que ayer jugaba cambia resultados y ranking de bots ya inscritos (torneos congelados) sin que su dueño pueda hacer nada dentro de la competición. Por qué no tolerar en el build: el falso verde de UX-04.

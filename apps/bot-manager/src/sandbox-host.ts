@@ -24,7 +24,16 @@
 import http from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { WebSocketServer } from "ws";
-import { WARNING_REPORT_KINDS, type BootstrapSignals } from "./startup-clock.js";
+import type { BootstrapSignals } from "./startup-clock.js";
+
+/**
+ * UX-F (DEF-R4) · AVISOS del bootstrap: el bot sigue arrancando. `hook_missing` =
+ * versión ya publicada que no implementa el hook, lanzada en batalla con
+ * `S9_HOOK_POLICY=warn`. Nunca son un fallo de arranque.
+ */
+export const WARNING_REPORT_KINDS: ReadonlySet<string> = new Set(["hook_missing"]);
+// (Vive aquí y no en startup-clock.ts: este módulo lo importa la API, y
+// startup-clock lee variables de entorno del bot-manager; ver TD-030.)
 
 export const ARTIFACT_TOKEN_HEADER = "x-s9-artifact-token";
 const MAX_REPORT_BYTES = 8 * 1024;
