@@ -10,7 +10,7 @@ import { api } from "../api.js";
 import { describeApiError } from "../errors.js";
 import { ReplayPlayer, buildShareLink, httpReplaySource } from "../viewer/replay-player.js";
 import { ReplayFeed } from "../viewer/replay-feed.js";
-import { rosterFromMeta } from "../viewer/art-direction.js";
+import { participantsTitle, rosterFromMeta } from "../viewer/art-direction.js";
 import { ReplayTickPublisher } from "../viewer/ui-throttle.js";
 import type { ViewerScene } from "../viewer/PhaserViewer.js";
 import type { CameraMode } from "../viewer/camera.js";
@@ -71,6 +71,8 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
   const [playing, setPlaying] = useState(false);
   const [camera, setCamera] = useState<CameraMode>({ kind: "global" });
   const [shareCopied, setShareCopied] = useState(false);
+  // UX-R · «Replay Alfa vs Beta» con la nómina del índice, si la trae.
+  const [title, setTitle] = useState<string | null>(null);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -89,6 +91,7 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
 
     setState("loading");
     setErrorKind(undefined);
+    setTitle(null);
     setStatus("cargando…");
     void import("../viewer/PhaserViewer.js")
       .then(async ({ createViewerGame, waitForViewerScene }) => {
@@ -105,6 +108,7 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
         }
         if (!alive || !hostRef.current) return;
         setTotalTicks(player.index!.ticks);
+        setTitle(participantsTitle(player.index?.roster));
         setState("init");
         setStatus("inicializando visor…");
         game = createViewerGame(hostRef.current, { targetFps: 60 });
@@ -212,7 +216,9 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
 
   return (
     <section>
-      <h2>Replay {battleId}</h2>
+      <h2 data-testid="replay-title" style={{ overflowWrap: "anywhere" }}>
+        {title ? `Replay: ${title}` : `Replay ${battleId}`}
+      </h2>
       <p>
         <a href="#/replays">← Todos los replays</a>
       </p>
@@ -289,6 +295,8 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
         max={totalTicks}
         value={tick}
         data-testid="timeline"
+        aria-label="Línea de tiempo del replay"
+        aria-valuetext={`tick ${tick} de ${totalTicks}`}
         // Arrastrar sólo mueve el pulgar (barato): el tick pintado sigue al slider
         // sin pedir datos. El SEEK real se hace al SOLTAR (R3.3), no en cada píxel.
         onChange={(e) => setTick(Number(e.target.value))}
