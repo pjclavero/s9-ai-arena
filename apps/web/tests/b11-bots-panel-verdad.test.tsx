@@ -625,6 +625,7 @@ describe("B11-fix · el sondeo no desmonta el panel ni tira trabajo del usuario"
     const chasis = screen.getByLabelText("chasis") as HTMLSelectElement;
     await userEvent.selectOptions(chasis, "chassis.heavy@1");
     const area = screen.getByLabelText("codigo") as HTMLTextAreaElement;
+    await userEvent.clear(area); // UX-B · B3: el área arranca con la plantilla del runtime
     await userEvent.type(area, "print('hola')");
     area.focus();
     expect(document.activeElement).toBe(area);
@@ -678,6 +679,7 @@ describe("B11-fix · el sondeo no desmonta el panel ni tira trabajo del usuario"
     const chasis = screen.getByLabelText("chasis") as HTMLSelectElement;
     await userEvent.selectOptions(chasis, "chassis.heavy@1");
     const area = screen.getByLabelText("codigo") as HTMLTextAreaElement;
+    await userEvent.clear(area); // UX-B · B3: el área arranca con la plantilla del runtime
     await userEvent.type(area, "sin guardar");
     area.focus();
 

@@ -40,6 +40,7 @@ import {
   jsFiles,
 } from "./sandbox-bots.js";
 import type { SourceFile } from "../src/types.js";
+import { JAVASCRIPT_TEMPLATE, PYTHON_TEMPLATE } from "../../web/src/bot-templates.js";
 import { initPhysics } from "../../arena-engine/src/sim/physics.js";
 
 let env: DockerSandboxEnv;
@@ -157,6 +158,15 @@ describe.skipIf(!DOCKER_E2E)("TD-001 · sandbox REAL en el pipeline (Docker)", (
     expect(b.botVersionState).toBe("rejected");
     expect(b.rejectionReason).toMatch(/src\/bot\.py, línea 6: NameError: name 'velocidad' is not defined/);
     expect(b.rejectionReason).not.toMatch(/\/tmp\/bot/);
+  });
+
+  it("B3 · las plantillas del editor web (Python y JavaScript), tal cual: validated", async () => {
+    const py = await pipeline().run(submission(pyFiles(PYTHON_TEMPLATE)));
+    expect(py.rejectionReason).toBeUndefined();
+    expect(py.botVersionState).toBe("validated");
+    const js = await pipeline().run(submission(jsFiles(JAVASCRIPT_TEMPLATE), { runtime: "node", archetype: "scout" }));
+    expect(js.rejectionReason).toBeUndefined();
+    expect(js.botVersionState).toBe("validated");
   });
 
   it("UX-05 · el tutorial JS del README y los ejemplos oficiales .js, pegados tal cual: validated", async () => {

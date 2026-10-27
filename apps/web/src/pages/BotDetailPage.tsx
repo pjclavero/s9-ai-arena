@@ -10,6 +10,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiRequestError } from "../api.js";
+import { BuildDiagnosisView, diagnoseBuild } from "../build-diagnosis.js";
 
 export interface BotInfo {
   id: string;
@@ -76,6 +77,17 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "versions", label: "Versions" },
 ];
 
+/**
+ * UX-B · G-15 · ¿se puede editar esta versión en la web sin perder nada? Sólo si se
+ * subió como UN fichero pegado (`packaged: false`: la plataforma le pone el
+ * esqueleto estándar). Un paquete `{"files": [...]}` puede traer varios ficheros o
+ * manifiestos propios, y el editor web sólo reenvía uno: guardar «como versión
+ * nueva» los perdería en silencio. Eso se bloquea y se explica.
+ */
+export function isWebEditable(files: { packaged: boolean } | null): boolean {
+  return !!files && !files.packaged;
+}
+
 const short = (h?: string) => (h ? `${h.slice(0, 12)}…` : "—");
 const when = (iso?: string) => (iso ? new Date(iso).toLocaleString() : "—");
 const errText = (e: unknown) =>
@@ -104,6 +116,7 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
   const [diffPair, setDiffPair] = useState<{ from: number; to: number } | null>(null);
   const [diff, setDiff] = useState<DiffInfo | null>(null);
   const [diffError, setDiffError] = useState<string | null>(null);
+  const [createdDraft, setCreatedDraft] = useState<number | null>(null);
 
   const reload = useCallback(async () => {
     setError(null);
@@ -161,10 +174,23 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
     }
   }
 
+  async function submitVersion(v: number) {
+    setNotice(null);
+    try {
+      await api("POST", `/bots/${botId}/versions/${v}/actions/submit`);
+      setNotice(`v${v} enviada a validación. Sigue su resultado en la pestaña Versions («Ver build»).`);
+      setCreatedDraft(null);
+      await reload();
+    } catch (e) {
+      setNotice(`No se pudo enviar v${v} a validación: ${errText(e)}`);
+    }
+  }
+
   async function saveEditedAsNew() {
     if (codeVersion === null) return;
     const base = versions?.find((v) => v.version === codeVersion);
     if (!base) return;
+    if (!isWebEditable(files)) return; // G-15: un paquete no se reescribe como un único fichero
     const fd = new FormData();
     fd.append("runtime", base.runtime);
     fd.append("loadoutRevision", String(base.loadoutRevision));
@@ -172,9 +198,8 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
     fd.append("source", new Blob([edited], { type: "text/plain" }), base.runtime === "python" ? "bot.py" : "bot.js");
     try {
       const created = await api<VersionInfo>("POST", `/bots/${botId}/versions`, undefined, { formData: fd });
-      setNotice(
-        `Guardado como v${created.version} (draft) desde v${base.version}. Envíala a validación desde «Mis bots».`,
-      );
+      setNotice(`Guardado como v${created.version} (borrador) desde v${base.version}. v${base.version} no cambia.`);
+      setCreatedDraft(created.version);
       await reload();
     } catch (e) {
       setNotice(`No se pudo guardar: ${errText(e)}`);
@@ -197,6 +222,10 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
   if (!bot || !versions) return <p role="status">Cargando el bot…</p>;
 
   const isOwner = props.meId === undefined || props.meId === bot.ownerId;
+  // UX-B · B6 · la versión que usan las batallas nuevas es la publicada más alta.
+  const publishedVersions = versions.filter((v) => v.state === "published").map((v) => v.version);
+  const inBattles = publishedVersions.length ? Math.max(...publishedVersions) : undefined;
+  const editable = isWebEditable(files);
 
   return (
     <div data-testid="bot-detail">
@@ -221,6 +250,18 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
       {notice && (
         <p role="status" data-testid="bot-detail-notice">
           {notice}
+          {createdDraft !== null && isOwner && (
+            <>
+              {" "}
+              <button
+                type="button"
+                data-testid={`submit-${createdDraft}`}
+                onClick={() => void submitVersion(createdDraft)}
+              >
+                Enviar v{createdDraft} a validación
+              </button>
+            </>
+          )}
         </p>
       )}
 
@@ -229,6 +270,11 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
           <p>Visibilidad: {bot.visibility}</p>
           <p>
             Versión publicada más reciente: {bot.latestPublishedVersion ? `v${bot.latestPublishedVersion}` : "ninguna"}
+          </p>
+          <p data-testid="overview-in-battles">
+            {inBattles
+              ? `Las batallas nuevas usan la v${inBattles}. Una versión rechazada o en borrador nunca entra en batalla.`
+              : "Sin versión publicada: el bot todavía no puede entrar en batallas."}
           </p>
           <p>Versiones: {versions.length}</p>
           <p>Creado: {when(bot.createdAt)}</p>
@@ -263,7 +309,15 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
                 <pre data-testid={`file-${f.path}`}>{f.content}</pre>
               </details>
             ))}
-          {files && isOwner && (
+          {files && isOwner && !editable && (
+            <p className="warn" role="note" data-testid="multi-file-locked">
+              v{codeVersion} se subió como paquete ({files.files.length} ficheros). El editor web sólo guarda un fichero
+              y perdería el resto, así que aquí no se puede editar: crea la versión nueva subiendo el paquete completo (
+              {"{"}"files": [...]{"}"}) por la API (POST /bots/{"{"}id{"}"}/versions), o usa «Nueva versión desde ésta»
+              en Versions para clonarla tal cual.
+            </p>
+          )}
+          {files && isOwner && editable && (
             <div>
               <h3>Editar en una versión NUEVA (v{codeVersion} no se modifica)</h3>
               <textarea
@@ -338,7 +392,13 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
                     <td>{when(v.createdAt)}</td>
                     <td>
                       {v.state}
-                      {v.rejectionReason ? ` — ${v.rejectionReason}` : ""}
+                      {v.state === "rejected" && v.rejectionReason ? ` — ${v.rejectionReason}` : ""}
+                      {v.version === inBattles && (
+                        <strong className="ok" data-testid={`detail-in-battles-${v.version}`}>
+                          {" "}
+                          · en batallas
+                        </strong>
+                      )}
                     </td>
                     <td>{d?.latestBuild ? d.latestBuild.status : "sin build"}</td>
                     <td title={d?.artifact?.hash}>{short(d?.artifact?.hash ?? v.artifactHash)}</td>
@@ -388,6 +448,32 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
           {openBuild !== null && (
             <div data-testid="build-detail">
               <h3>Build de v{openBuild}</h3>
+              {(() => {
+                const v = versions.find((x) => x.version === openBuild);
+                const diag = v
+                  ? diagnoseBuild({
+                      state: v.state,
+                      rejectionReason: v.rejectionReason,
+                      stages: details[openBuild]?.latestBuild?.stages,
+                    })
+                  : null;
+                return diag ? (
+                  <BuildDiagnosisView
+                    diagnosis={diag}
+                    version={openBuild}
+                    publishedVersion={inBattles}
+                    {...(isOwner
+                      ? {
+                          onFix: () => {
+                            setCodeVersion(openBuild);
+                            setTab("code");
+                          },
+                          onRetry: () => void submitVersion(openBuild),
+                        }
+                      : {})}
+                  />
+                ) : null;
+              })()}
               {!details[openBuild]?.latestBuild ? (
                 <p>Esta versión aún no se ha enviado a validación.</p>
               ) : (
