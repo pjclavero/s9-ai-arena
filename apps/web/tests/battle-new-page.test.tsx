@@ -66,6 +66,8 @@ describe("R9 · #/battles/new", () => {
     await userEvent.selectOptions(screen.getByLabelText("bot azul"), "bot_b");
     await userEvent.click(screen.getByText("Crear batalla"));
     await screen.findByText(/creada y encolada/i);
+    // Integración UX-C/UX-D: tras crear se enlaza al detalle de ESA batalla.
+    expect(screen.getByTestId("battle-detail-link").getAttribute("href")).toBe("#/battles/btl_1");
 
     const post = apiMock.mock.calls.find((c) => c[0] === "POST" && c[1] === "/battles");
     expect(post).toBeTruthy();

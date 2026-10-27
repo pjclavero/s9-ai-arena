@@ -324,7 +324,10 @@ export function BattleNewPage(props: { me: Me }) {
         </p>
 
         <p>
-          <a href="#/battles">Ver batallas</a> · <a href="#/replays">Ver replays</a>
+          <a href={`#/battles/${encodeURIComponent(created)}`} data-testid="battle-detail-link">
+            Ver esta batalla
+          </a>{" "}
+          · <a href="#/battles">Ver batallas</a> · <a href="#/replays">Ver replays</a>
         </p>
       </section>
     );
