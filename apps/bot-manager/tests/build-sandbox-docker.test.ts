@@ -9,6 +9,7 @@
  * SKIPPED (no es un verde: lo dice el runner).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { readFileSync } from "node:fs";
 import { BuildPipeline } from "../src/pipeline.js";
 import { InMemoryBuildStore } from "../src/store.js";
 import { withConfig } from "../src/config.js";
@@ -156,6 +157,20 @@ describe.skipIf(!DOCKER_E2E)("TD-001 · sandbox REAL en el pipeline (Docker)", (
     expect(b.botVersionState).toBe("rejected");
     expect(b.rejectionReason).toMatch(/src\/bot\.py, línea 6: NameError: name 'velocidad' is not defined/);
     expect(b.rejectionReason).not.toMatch(/\/tmp\/bot/);
+  });
+
+  it("UX-05 · el tutorial JS del README y los ejemplos oficiales .js, pegados tal cual: validated", async () => {
+    for (const path of [
+      "sdks/javascript/tests/tutorial-bot.js",
+      "example-bots/javascript/gunner.js",
+      "example-bots/javascript/miner.js",
+    ]) {
+      const b = await pipeline().run(
+        submission(jsFiles(readFileSync(path, "utf8")), { runtime: "node", archetype: "gunner" }),
+      );
+      expect(b.rejectionReason, path).toBeUndefined();
+      expect(b.botVersionState, path).toBe("validated");
+    }
   });
 
   it("NEGATIVO · artefacto inválido (bytes que no son los firmados): el bootstrap se niega a ejecutarlo", async () => {

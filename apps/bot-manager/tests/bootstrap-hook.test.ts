@@ -41,7 +41,10 @@ _cls = [v for v in _ns.values() if isinstance(v, type) and issubclass(v, ArenaBo
 check_hook(_cls("bot_test"), ArenaBot)
 print(_json.dumps({"ok": True}))
 `;
-  const r = spawnSync("python3", ["-c", harness], { env: { PYTHONPATH: SDK, PATH: process.env.PATH ?? "" }, encoding: "utf8" });
+  const r = spawnSync("python3", ["-c", harness], {
+    env: { PYTHONPATH: SDK, PATH: process.env.PATH ?? "" },
+    encoding: "utf8",
+  });
   expect(r.status, r.stderr).toBe(0);
   return JSON.parse(r.stdout.trim().split("\n").pop()!);
 }

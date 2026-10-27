@@ -165,9 +165,14 @@ async function checkHook(bot) {
   // Sobre la INSTANCIA: un campo de clase (`onObservation = (o) => …`) también cuenta.
   if (bot[HOOK] !== ArenaBot.prototype[HOOK]) return;
   const own = new Set();
-  for (let p = chosen.prototype; p && p !== ArenaBot.prototype && p !== Object.prototype; p = Object.getPrototypeOf(p)) {
+  for (
+    let p = chosen.prototype;
+    p && p !== ArenaBot.prototype && p !== Object.prototype;
+    p = Object.getPrototypeOf(p)
+  ) {
     for (const name of Object.getOwnPropertyNames(p)) {
-      if (name !== "constructor" && typeof Object.getOwnPropertyDescriptor(p, name)?.value === "function") own.add(name);
+      if (name !== "constructor" && typeof Object.getOwnPropertyDescriptor(p, name)?.value === "function")
+        own.add(name);
     }
   }
   for (const name of Object.keys(bot)) if (typeof bot[name] === "function") own.add(name);

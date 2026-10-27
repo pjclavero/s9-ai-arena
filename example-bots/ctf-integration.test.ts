@@ -2,7 +2,7 @@
  * T5.4 · DoD: "los cuatro bots completan una batalla CTF 2v2 real (servidor de
  * T5.1 + SDK, SIN stubs internos) sin timeouts ni descalificaciones — usa
  * ctfArena()". Cross-lenguaje de verdad: explorer.py y defender.py corren como
- * subprocesos Python reales (arena-sdk); gunner.ts y miner.ts corren en el mismo
+ * subprocesos Python reales (arena-sdk); gunner.js y miner.js corren en el mismo
  * proceso Node del test, ambos conectados por WebSocket real al mismo servidor de
  * protocolo — exactamente como en producción, salvo que los cuatro viven en la
  * misma máquina.
@@ -47,7 +47,7 @@ function spawnPythonBot(file: string, className: string, botId: string, url: str
 const slow = process.env.RUN_SLOW === "1" ? describe : describe.skip;
 
 slow("T5.4 · CTF 2v2 con los 4 bots oficiales, sin stubs internos", () => {
-  it("explorer.py + gunner.ts (red) vs defender.py + miner.ts (blue) terminan sin timeouts ni descalificaciones", async () => {
+  it("explorer.py + gunner.js (red) vs defender.py + miner.js (blue) terminan sin timeouts ni descalificaciones", async () => {
     // Fail-closed con mensaje claro si el venv de Python no está provisionado (evita un
     // spawn ENOENT críptico): la nightly debe crear sdks/python/.venv antes de RUN_SLOW.
     if (!process.env.PYTHON_BIN) {

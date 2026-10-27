@@ -16,7 +16,14 @@ const catalog = loadCatalog();
 
 describe("UX-01 · aviso de efecto real del loadout", () => {
   it("dice que el loadout elegido es el vehículo de la batalla y no menciona el arquetipo", () => {
-    render(<LoadoutEditor catalog={catalog} catalogVersion={CATALOG_VERSION} budgetCredits={1000} onSave={async () => null} />);
+    render(
+      <LoadoutEditor
+        catalog={catalog}
+        catalogVersion={CATALOG_VERSION}
+        budgetCredits={1000}
+        onSave={async () => null}
+      />,
+    );
     const note = screen.getByTestId("effect-note").textContent ?? "";
     expect(note).toMatch(/es el vehículo que juega/);
     expect(note).toMatch(/partida de humo del build/);
@@ -24,7 +31,14 @@ describe("UX-01 · aviso de efecto real del loadout", () => {
   });
 
   it("un arma elegida aparece como «cambia la batalla», no como efecto parcial del arquetipo", () => {
-    render(<LoadoutEditor catalog={catalog} catalogVersion={CATALOG_VERSION} budgetCredits={1000} onSave={async () => null} />);
+    render(
+      <LoadoutEditor
+        catalog={catalog}
+        catalogVersion={CATALOG_VERSION}
+        budgetCredits={1000}
+        onSave={async () => null}
+      />,
+    );
     fireEvent.change(screen.getByLabelText("chasis"), { target: { value: "chassis.medium@1" } });
     fireEvent.change(screen.getByLabelText("slot-turret_main"), { target: { value: "weapon.cannon@1" } });
     expect(screen.getByTestId("effect-slot-turret_main").getAttribute("data-effect")).toBe("ACTIVE");

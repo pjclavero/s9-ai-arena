@@ -57,7 +57,11 @@ export const PROPERTY_EFFECTS: Record<ModuleCategory, Record<string, PropertyEff
     hullHp: p("ACTIVE", false, USED),
     radiusM: p("ACTIVE", false, USED),
     maxLoadKg: p("PARTIAL", true, VAL_ONLY),
-    slots: p("ACTIVE", true, "Deciden qué puedes montar y el nombre de ranura que usas en los comandos (fire, deployMine)."),
+    slots: p(
+      "ACTIVE",
+      true,
+      "Deciden qué puedes montar y el nombre de ranura que usas en los comandos (fire, deployMine).",
+    ),
   },
   movement: {
     maxSpeedMs: p("ACTIVE", false, USED),
