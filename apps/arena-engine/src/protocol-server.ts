@@ -123,6 +123,70 @@ export interface ProtocolServerOptions {
   handshakeTimeoutMs?: number;
 }
 
+/**
+ * UX-06 · Diagnóstico de TRANSPORTE de un bot durante la batalla (lo que el motor
+ * no ve: lo que se descartó ANTES de llegar a `Battle`). Las decisiones,
+ * timeouts y rechazos por motivo salen del replay (stats.ts); esto completa el
+ * cuadro con lo que sólo sabe este servidor. Contadores puros: ni contenido de
+ * los mensajes ni nada del sandbox.
+ */
+export interface BotProtocolDiagnostics {
+  /** HELLO aceptado (WELCOME enviado) al menos una vez. */
+  helloOk: boolean;
+  /** Tick del motor en el primer HELLO aceptado (null si nunca conectó). */
+  helloTick: number | null;
+  /** HELLO aceptados después del primero (reconexiones dentro de la batalla). */
+  reconnects: number;
+  /** COMMAND con forma válida recibidos (aplicados o no). */
+  commandsReceived: number;
+  /** COMMAND que no validan contra el esquema (regla 4: se descartan). */
+  invalidCommands: number;
+  /** Primer motivo de esquema de un COMMAND inválido (ruta JSON + regla), o null. */
+  firstInvalidReason: string | null;
+  /** Mensajes que no son JSON (se descartan como si no hubieran llegado). */
+  invalidJson: number;
+  /** COMMAND llegados después del plazo de decisión (D2: se descartan). */
+  lateCommands: number;
+  /** COMMAND con un `forTick` que no es el del ciclo abierto. */
+  wrongTickCommands: number;
+  /** Segundo y siguientes COMMAND del mismo ciclo (extra_command_discarded). */
+  extraCommands: number;
+  /** Tick del motor en la última desconexión con la batalla en curso, o null. */
+  disconnectedAtTick: number | null;
+}
+
+function emptyProtocolDiagnostics(): BotProtocolDiagnostics {
+  return {
+    helloOk: false,
+    helloTick: null,
+    reconnects: 0,
+    commandsReceived: 0,
+    invalidCommands: 0,
+    firstInvalidReason: null,
+    invalidJson: 0,
+    lateCommands: 0,
+    wrongTickCommands: 0,
+    extraCommands: 0,
+    disconnectedAtTick: null,
+  };
+}
+
+/**
+ * Motivo legible (≤ 64, el máximo de `event.reason`) de un COMMAND inválido: el
+ * error de esquema MÁS concreto (ruta más profunda; los `if` de los allOf del
+ * envelope no dicen nada útil), sin el prefijo `/payload`.
+ */
+function schemaReason(
+  errors: { instancePath?: string; keyword?: string; params?: Record<string, unknown> }[] | null | undefined,
+): string {
+  const useful = (errors ?? []).filter((e) => e.keyword !== "if");
+  if (useful.length === 0) return "invalid_command";
+  const e = useful.reduce((a, b) => ((b.instancePath ?? "").length > (a.instancePath ?? "").length ? b : a));
+  const path = (e.instancePath ?? "").replace(/^\/payload/, "") || "/";
+  const missing = e.keyword === "required" && e.params?.missingProperty ? ` ${String(e.params.missingProperty)}` : "";
+  return `${path} ${e.keyword ?? "invalid"}${missing}`.slice(0, 64);
+}
+
 type ConnectionState = "awaiting_hello" | "connected" | "closed";
 
 // ------------------------------------------------------------------- BotAgent
@@ -139,11 +203,16 @@ class WebSocketBotAgent implements BotAgent {
   private expectedForTick: number | null = null;
   private deadlineTimer: ReturnType<typeof setTimeout> | null = null;
   private onSend: (msg: unknown) => void;
+  /** UX-06 · contadores de transporte de ESTE bot (los comparte el servidor). */
+  readonly diag: BotProtocolDiagnostics;
+  /** Ya se avisó al bot de un COMMAND inválido en el ciclo abierto (un aviso por ciclo). */
+  private invalidNotifiedThisCycle = false;
 
-  constructor(botId: string, ws: WebSocket, decisionDeadlineMs: number) {
+  constructor(botId: string, ws: WebSocket, decisionDeadlineMs: number, diag: BotProtocolDiagnostics) {
     this.botId = botId;
     this.ws = ws;
     this.decisionDeadlineMs = decisionDeadlineMs;
+    this.diag = diag;
     this.onSend = (msg) => safeSend(this.ws, msg);
   }
 
@@ -167,6 +236,7 @@ class WebSocketBotAgent implements BotAgent {
     const forTick = observation.tick + DECISION_EVERY_N_TICKS;
     this.expectedForTick = forTick;
     this.windowOpen = true;
+    this.invalidNotifiedThisCycle = false;
     this.onSend(envelope("OBSERVATION", observation, observation.tick));
 
     this.deadlineTimer = setTimeout(() => {
@@ -180,14 +250,39 @@ class WebSocketBotAgent implements BotAgent {
     this.onSend(envelope("EVENT", event, event.tick));
   }
 
+  /**
+   * UX-06 / G-13 · Un COMMAND que no valida contra el esquema ya no se descarta en
+   * SILENCIO: se cuenta y se avisa al bot con `rejected_action` +
+   * `reason: "invalid_command: <ruta> <regla>"` (como mucho un aviso por ciclo,
+   * para que un bot que inunda no convierta el aviso en otra inundación). El
+   * comando sigue sin aplicarse (regla 4): sólo cambia que ahora se sabe por qué.
+   */
+  rejectInvalidCommand(reason: string, tick: number): void {
+    this.diag.invalidCommands++;
+    if (this.diag.firstInvalidReason === null) this.diag.firstInvalidReason = reason;
+    if (this.invalidNotifiedThisCycle) return;
+    this.invalidNotifiedThisCycle = true;
+    this.onSend(
+      envelope("EVENT", { tick, kind: "rejected_action", reason: `invalid_command: ${reason}`.slice(0, 64) }, tick),
+    );
+  }
+
   /** Llamado por el servidor cuando llega un COMMAND ya validado contra el esquema. */
   receiveCommand(payload: any): void {
+    this.diag.commandsReceived++;
     // expectedForTick nunca es null con la ventana abierta (se asigna justo antes de
     // abrirla); el guard existe para que el narrowing de TS estricto lo sepa también.
-    if (!this.windowOpen || this.expectedForTick === null) return; // llegó tarde (D2): se descarta, sin evento.
+    if (!this.windowOpen || this.expectedForTick === null) {
+      this.diag.lateCommands++;
+      return; // llegó tarde (D2): se descarta, sin evento.
+    }
     const expectedForTick = this.expectedForTick;
-    if (payload.forTick !== expectedForTick) return; // no es para el ciclo que espera.
+    if (payload.forTick !== expectedForTick) {
+      this.diag.wrongTickCommands++;
+      return; // no es para el ciclo que espera.
+    }
     if (this.pendingCommand !== null) {
+      this.diag.extraCommands++;
       // Ya había un COMMAND válido para este ciclo: el segundo se descarta con evento.
       this.onSend(
         envelope(
@@ -236,6 +331,9 @@ export class ProtocolServer {
   /** TD-034 · instante (performance.now()) del PRIMER HELLO aceptado de cada vehículo. */
   private readonly helloAtByVehicle = new Map<string, number>();
   private readonly helloListeners = new Set<(vehicleId: string) => void>();
+  private readonly disconnectListeners = new Set<(vehicleId: string) => void>();
+  /** UX-06 · diagnóstico de transporte por vehículo esperado. */
+  private readonly diagByVehicle = new Map<string, BotProtocolDiagnostics>();
 
   constructor(opts: ProtocolServerOptions) {
     this.battle = opts.battle;
@@ -252,6 +350,7 @@ export class ProtocolServer {
       assertBotIdDelCable(e.botId, "ProtocolServer.expected");
       this.expectedByKey.set(`${e.botId}:${e.battleToken}`, e);
       this.expectedByBotId.set(e.botId, e);
+      this.diagByVehicle.set(e.vehicleId, emptyProtocolDiagnostics());
     }
 
     if (opts.wss) {
@@ -296,8 +395,13 @@ export class ProtocolServer {
       clearTimeout(timer);
       this.handshakeTimers.delete(ws);
     }
-    for (const agent of this.agents.values()) {
-      if (agent.ws === ws) agent.disconnect();
+    for (const [vehicleId, agent] of this.agents) {
+      if (agent.ws !== ws) continue;
+      agent.disconnect();
+      if (!this.battle.isFinished()) {
+        agent.diag.disconnectedAtTick = this.battle.tick;
+        for (const l of [...this.disconnectListeners]) l(vehicleId);
+      }
     }
   }
 
@@ -306,6 +410,8 @@ export class ProtocolServer {
     try {
       msg = JSON.parse(String(raw));
     } catch {
+      const agent = this.agentOf(ws);
+      if (agent) agent.diag.invalidJson++;
       return; // JSON inválido: se descarta, se trata como si no hubiera llegado (regla 4).
     }
     if (typeof msg !== "object" || msg === null) return;
@@ -317,9 +423,16 @@ export class ProtocolServer {
       return;
     }
 
-    if (!envelopeValidator()(msg)) return; // forma inválida: se descarta (regla 4).
-
+    const validate = envelopeValidator();
     const state = this.states.get(ws);
+    if (!validate(msg)) {
+      // Forma inválida: se descarta (regla 4). Si es el COMMAND de un bot ya
+      // conectado, además se cuenta y se le dice por qué (UX-06 / G-13).
+      const agent = state === "connected" && msg.type === "COMMAND" ? this.agentOf(ws) : undefined;
+      agent?.rejectInvalidCommand(schemaReason(validate.errors), this.battle.tick);
+      return;
+    }
+
     if (state === "awaiting_hello") {
       if (msg.type === "HELLO") this.handleHello(ws, msg.payload);
       return; // cualquier otro type mientras se espera HELLO: se ignora.
@@ -355,13 +468,17 @@ export class ProtocolServer {
       return;
     }
 
+    const diag = this.diagByVehicle.get(expected.vehicleId)!;
     let agent = this.agents.get(expected.vehicleId);
     if (agent) {
       // Reconexión: mismo bot, socket nuevo. El motor no ha descalificado (si lo
       // hubiera hecho, no reconectamos: se deja actuar al mecanismo existente).
       agent.rebind(ws);
+      diag.reconnects++;
     } else {
-      agent = new WebSocketBotAgent(expected.botId, ws, this.decisionDeadlineMs);
+      diag.helloOk = true;
+      diag.helloTick = this.battle.tick;
+      agent = new WebSocketBotAgent(expected.botId, ws, this.decisionDeadlineMs, diag);
       this.agents.set(expected.vehicleId, agent);
       this.battle.attachBot(expected.vehicleId, agent);
     }
@@ -409,6 +526,25 @@ export class ProtocolServer {
   onHello(cb: (vehicleId: string) => void): () => void {
     this.helloListeners.add(cb);
     return () => this.helloListeners.delete(cb);
+  }
+
+  /** UX-06 · aviso cuando un bot conectado se desconecta con la batalla en curso. */
+  onDisconnect(cb: (vehicleId: string) => void): () => void {
+    this.disconnectListeners.add(cb);
+    return () => this.disconnectListeners.delete(cb);
+  }
+
+  /**
+   * UX-06 · diagnóstico de transporte por vehículo (copia). Incluye a los bots
+   * esperados que nunca completaron el HELLO (`helloOk: false`).
+   */
+  protocolDiagnostics(): Record<string, BotProtocolDiagnostics> {
+    return Object.fromEntries([...this.diagByVehicle].map(([vid, d]) => [vid, { ...d }]));
+  }
+
+  private agentOf(ws: WebSocket): WebSocketBotAgent | undefined {
+    for (const agent of this.agents.values()) if (agent.ws === ws) return agent;
+    return undefined;
   }
 
   whenAllConnected(timeoutMs = 15000): Promise<void> {
