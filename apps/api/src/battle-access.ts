@@ -39,7 +39,7 @@ export const BATTLE_NOT_FOUND_MESSAGE = "Batalla no encontrada";
 export const battleNotFound = () => notFound(BATTLE_NOT_FOUND_MESSAGE);
 
 /** Ningún bot participante de la batalla es no-público. */
-function whereOnlyPublicBots(db: Db, q: any): any {
+export function whereOnlyPublicBots(db: Db, q: any): any {
   return q.whereNotExists(
     db("participants")
       .join("bots", "bots.id", "participants.bot_id")

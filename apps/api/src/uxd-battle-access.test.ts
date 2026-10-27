@@ -325,3 +325,14 @@ describe("TD-065 · stats justo tras finished: «pendiente», nunca vacías y ca
     expect((await call(open, "anon", "get", `/battles/${noReplay}/stats`)).body.status).toBe("unavailable");
   });
 });
+
+describe("G-08 · el directo público sólo anuncia lo que un anónimo puede ver", () => {
+  it("/public/battles/live lista la batalla de bots públicos, no la que tiene un bot privado", async () => {
+    const r = await call(open, "anon", "get", "/public/battles/live");
+    const ids = (r.body.battles as { id: string }[]).map((b) => b.id);
+    expect(ids).toContain(B.live);
+    expect(ids).not.toContain(B.liveMixed);
+    expect((await call(open, "anon", "get", `/public/battles/${B.live}`)).status).toBe(200);
+    expect((await call(open, "anon", "get", `/public/battles/${B.liveMixed}`)).status).toBe(404);
+  });
+});

@@ -27,6 +27,7 @@ import {
   canSeeBotDiagnostics,
   getReadableBattleOr404,
   whereBattleReadable,
+  whereOnlyPublicBots,
   type BattleVisibility,
 } from "../battle-access.js";
 import { loadRuleset } from "../../../../packages/game-rules/index.js";
@@ -331,9 +332,12 @@ export function battleRoutes(
         res.json({ enabled: false, battles: [] });
         return;
       }
-      const rows = await db("battles")
-        .join("maps", "maps.id", "battles.map_id")
-        .where({ "battles.status": "running" })
+      // UX-D (G-08) · sólo las que un anónimo puede VER de verdad: sin bots no
+      // públicos (las demás darían 404 al pedir el ticket).
+      const rows = await whereOnlyPublicBots(
+        db,
+        db("battles").join("maps", "maps.id", "battles.map_id").where({ "battles.status": "running" }),
+      )
         .select(
           "battles.id as id",
           "battles.status as status",
@@ -371,9 +375,12 @@ export function battleRoutes(
     async (req, res) => {
       if (!publicSpectateEnabled) throw notFound();
       const battleId = pathParam(req, "battleId");
-      const battle = await db("battles")
-        .join("maps", "maps.id", "battles.map_id")
-        .where({ "battles.id": battleId, "battles.status": "running" })
+      const battle = await whereOnlyPublicBots(
+        db,
+        db("battles")
+          .join("maps", "maps.id", "battles.map_id")
+          .where({ "battles.id": battleId, "battles.status": "running" }),
+      )
         .select(
           "battles.id as id",
           "battles.status as status",
