@@ -145,8 +145,9 @@ describe("FC-D · arranque con la API caída (TD-022)", () => {
 
 describe("FC-D · navegación (D8)", () => {
   it("rutas conocidas resuelven; las desconocidas no (⇒ 404)", () => {
-    expect(matchStaticPanelRoute("")).toBe("bots");
-    expect(matchStaticPanelRoute("#/")).toBe("bots");
+    // UX-A · la raíz es «Inicio» (checklist de primeros pasos), no «Mis bots».
+    expect(matchStaticPanelRoute("")).toBe("home");
+    expect(matchStaticPanelRoute("#/")).toBe("home");
     expect(matchStaticPanelRoute("#/bots")).toBe("bots");
     expect(matchStaticPanelRoute("#/teams")).toBe("teams");
     expect(matchStaticPanelRoute("#/maps/editor")).toBe("mapEditor");
