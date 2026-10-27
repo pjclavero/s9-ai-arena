@@ -122,6 +122,8 @@ export interface BootstrapSignals {
   fetchedAt(): number | null;
   readyAt(): number | null;
   failure(): { kind: string; detail: string } | null;
+  /** UX-F (DEF-R4) · avisos (WARNING_REPORT_KINDS, sandbox-host.ts) que no paran el arranque. */
+  warnings?(): readonly { kind: string; detail: string }[];
   /** Avisa ante cualquier señal nueva; devuelve la función para desuscribirse. */
   onChange(cb: () => void): () => void;
 }

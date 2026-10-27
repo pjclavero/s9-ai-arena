@@ -190,8 +190,13 @@ describe("UX-D · D1 resultado claro", () => {
     });
     render(<BattleDetailPage id={ID} />);
     const winner = await screen.findByTestId("battle-winner");
-    expect(winner.textContent).toContain("gana red (Tanque Rojo v3)");
-    expect(winner.textContent).toContain("red: 1 · blue: 0");
+    // UX-F (DEF-R6) · rojo/azul como en el selector de «Nueva batalla», no el código del motor.
+    expect(winner.textContent).toContain("gana rojo (Tanque Rojo v3)");
+    expect(winner.textContent).toContain("rojo: 1 · azul: 0");
+    expect(winner.textContent).not.toMatch(/\b(red|blue)\b/);
+    const teamCells = screen.getAllByTestId("participant-row").map((r) => r.textContent ?? "");
+    expect(teamCells[0]).toContain("rojo");
+    expect(teamCells[1]).toContain("azul");
     expect(screen.getByTestId("battle-duration").textContent).toBe("5:00 de partida (9000 ticks a 30/s)");
     const facts = screen.getByTestId("battle-facts").textContent ?? "";
     expect(facts).toContain("todos contra todos");
@@ -298,6 +303,52 @@ describe("UX-06 · diagnóstico de TUS bots", () => {
   });
 });
 
+describe("UX-F (DEF-R4) · versión publicada sin hook", () => {
+  it("jugó con aviso: el dueño lee que su vN no implementa on_observation", async () => {
+    mockApi({
+      [`/battles/${ID}`]: () => json(BATTLE),
+      [`/battles/${ID}/stats`]: () =>
+        json({
+          ...STATS_READY,
+          diagnostics: {
+            [MINE]: { ...STATS_READY.diagnostics[MINE], startup: { ok: true, warning: "hook_missing" } },
+          },
+        }),
+      [`/battles/${ID}/audit`]: () => json({}),
+    });
+    render(<BattleDetailPage id={ID} />);
+    const problems = (await screen.findByTestId("diagnostics-problems")).textContent ?? "";
+    expect(problems).toContain("Tu versión publicada v3 no implementa on_observation");
+    expect(problems).toContain("tu código no decide nada");
+    expect(screen.getByTestId("bot-diagnostics").textContent).toContain("arrancó, pero sin hook");
+  });
+
+  it("rechazada por el hook: el motivo es el hook, no «el proceso falló al arrancar»", async () => {
+    mockApi({
+      [`/battles/${ID}`]: () => json(BATTLE),
+      [`/battles/${ID}/stats`]: () =>
+        json({
+          battleId: ID,
+          status: "unavailable",
+          perBot: {},
+          diagnostics: {
+            [MINE]: {
+              ...STATS_READY.diagnostics[MINE],
+              startup: { ok: false, reason: "hook_missing" },
+              disqualified: true,
+              disqualifiedReason: "hook_missing",
+            },
+          },
+        }),
+      [`/battles/${ID}/audit`]: () => json({}),
+    });
+    render(<BattleDetailPage id={ID} />);
+    const problems = (await screen.findByTestId("diagnostics-problems")).textContent ?? "";
+    expect(problems).toContain("No arrancó: tu clase no implementa on_observation");
+    expect(problems).not.toContain("el proceso del bot falló al arrancar");
+  });
+});
+
 describe("UX-D · permiso incorrecto", () => {
   it("una batalla ajena o inexistente: error visible de «no encontrado», sin datos", async () => {
     mockApi({
@@ -338,11 +389,11 @@ describe("UX-D · lista de batallas con nombres y enlace al detalle", () => {
     render(<BattlesPage />);
     const link = (await screen.findByTestId("battle-detail-link")) as HTMLAnchorElement;
     expect(link.getAttribute("href")).toBe(`#/battles/${ID}`);
-    expect(link.textContent).toBe("Tanque Rojo v3 (red) vs Muro Azul v1 (blue)");
+    expect(link.textContent).toBe("Tanque Rojo v3 (rojo) vs Muro Azul v1 (azul)");
     const row = screen.getByTestId("battle-row");
     expect(row.textContent).toContain("Arena de pruebas 2");
     expect(row.textContent).toContain("todos contra todos");
-    expect(within(row).getByTestId("battle-outcome").textContent).toContain("gana red (Tanque Rojo v3)");
+    expect(within(row).getByTestId("battle-outcome").textContent).toContain("gana rojo (Tanque Rojo v3)");
     expect(row.textContent).not.toContain(MINE.slice(0, 8));
   });
 });

@@ -27,7 +27,7 @@ export interface BattleLike {
 }
 
 export interface BattleSummaryView {
-  /** Texto del resultado: «gana red», «empate», o null si aún no hay resultado. */
+  /** Texto del resultado: «gana rojo», «empate», o null si aún no hay resultado. */
   outcome: string | null;
   /** Marcador `equipo: puntos` si viene. */
   score: string | null;
@@ -68,22 +68,35 @@ function fmtSeconds(totalS: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+/**
+ * UX-F (DEF-R6) · el bando en palabras, como en el selector de «Nueva batalla»
+ * (rojo/azul). Los equipos de torneo (A, B…) se dejan tal cual.
+ */
+const TEAM_TEXT: Record<string, string> = { red: "rojo", blue: "azul" };
+export function teamText(team: string | null | undefined): string {
+  if (!team) return "—";
+  return Object.hasOwn(TEAM_TEXT, team) ? TEAM_TEXT[team] : team;
+}
+
 export function summarizeBattle(b: BattleLike): BattleSummaryView {
   const r = (b.result && typeof b.result === "object" ? b.result : {}) as Record<string, unknown>;
   const winner = (r.winner ?? null) as string | null;
   let outcome: string | null = null;
   if (b.status === "finished") {
-    if (winner && winner !== "draw") outcome = `gana ${winner}`;
+    if (winner && winner !== "draw") outcome = `gana ${teamText(winner)}`;
     else if (winner === "draw" || (b.participants ?? []).some((p) => p.outcome === "draw")) outcome = "empate";
     else {
       const wins = (b.participants ?? []).filter((p) => p.outcome === "win");
-      outcome = wins.length > 0 ? `gana ${wins.map((p) => p.team ?? p.botId.slice(0, 8)).join(", ")}` : "sin ganador";
+      outcome =
+        wins.length > 0
+          ? `gana ${wins.map((p) => (p.team ? teamText(p.team) : p.botId.slice(0, 8))).join(", ")}`
+          : "sin ganador";
     }
   }
   let score: string | null = null;
   if (r.score && typeof r.score === "object") {
     const entries = Object.entries(r.score as Record<string, unknown>);
-    if (entries.length > 0) score = entries.map(([t, n]) => `${t}: ${String(n)}`).join(" · ");
+    if (entries.length > 0) score = entries.map(([t, n]) => `${teamText(t)}: ${String(n)}`).join(" · ");
   }
   let duration: string | null = null;
   const ticks = Number(r.ticks);
@@ -188,7 +201,7 @@ export const OUTCOME_TEXT: Record<string, string> = {
 };
 
 /**
- * Ganador con NOMBRES: «gana red (Tanque A v2)». Sin resultado, null. Con un solo
+ * Ganador con NOMBRES: «gana rojo (Tanque A v2)». Sin resultado, null. Con un solo
  * bot por equipo, el nombre del bot es lo que el usuario reconoce, no el color.
  */
 export function winnerText(b: BattleLike & { participants?: ParticipantLike[] }): string | null {
@@ -198,7 +211,7 @@ export function winnerText(b: BattleLike & { participants?: ParticipantLike[] })
   const winner = typeof r.winner === "string" ? r.winner : null;
   if (!winner || winner === "draw") return v.outcome;
   const bots = (b.participants ?? []).filter((p) => p.team === winner).map(botVersionLabel);
-  return bots.length > 0 ? `gana ${winner} (${bots.join(", ")})` : v.outcome;
+  return bots.length > 0 ? `gana ${teamText(winner)} (${bots.join(", ")})` : v.outcome;
 }
 
 /** Qué mide `perModule.uses` (contrato de replay-service/src/stats.ts, UX-D). */
@@ -235,6 +248,9 @@ const DQ_REASON_TEXT: Record<string, string> = {
   consecutive_timeouts: "demasiados turnos seguidos sin responder a tiempo",
   bot_execution_timeout: "no llegó a conectarse (HELLO) dentro del plazo de arranque",
   bot_crash: "el proceso del bot falló al arrancar",
+  // UX-F (DEF-R4) · antes esto llegaba como bot_crash («el proceso falló»).
+  hook_missing:
+    "tu clase no implementa on_observation (Python) / onObservation (JavaScript): sin él el bot no decide nada",
   startup_failed: "no arrancó",
   administrative: "versión no jugable, suspendida o artefacto no verificado (antes de empezar)",
   unknown: "motivo no registrado",

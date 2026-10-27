@@ -276,6 +276,8 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
               vehicles[culprit].botId,
               `[${r.reason}] ${r.detail}`,
               "container",
+              // UX-F (DEF-R4) · el motivo `hook` no se pierde en un `bot_crash` genérico.
+              r.report?.kind === "hook" ? "hook_missing" : undefined,
             );
           }
         } else {
@@ -365,9 +367,11 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
         const diagnosticsByBot = new Map<string, BotRunDiagnostics>();
         for (let i = 0; i < vehicles.length; i++) {
           const atDisconnect = containerAtDisconnect.get(i);
+          // UX-F (DEF-R4) · versión publicada sin hook: jugó (quieta), con aviso.
+          const hookMissing = (plans[i]?.startup?.warnings?.() ?? []).some((w) => w.kind === "hook_missing");
           diagnosticsByBot.set(vehicles[i].botId, {
             schema: "bot-diagnostics/v1",
-            startup: { ok: true },
+            startup: hookMissing ? { ok: true, warning: "hook_missing" } : { ok: true },
             ...(proto[vehicles[i].vehicleId] ? { protocol: proto[vehicles[i].vehicleId] } : {}),
             ...(atDisconnect ? { container: await atDisconnect } : {}),
           });

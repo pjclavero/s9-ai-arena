@@ -9,6 +9,7 @@
 #   ARTIFACT_TOKEN   token de esta sesión (cabecera x-s9-artifact-token)
 #   ARTIFACT_SHA256  sha256 esperado de los bytes canónicos (arena-artifact/v1)
 #   WS_URL, BATTLE_TOKEN, BOT_ID   conexión al ProtocolServer (arena/1)
+#   S9_HOOK_POLICY   `reject` (por defecto: build) o `warn` (batalla; ver check_hook)
 #
 # Pasos: descarga -> verifica sha256 -> materializa en /tmp/bot (tmpfs) -> carga el
 # SDK -> señal `ready` (TD-034) -> carga el fichero de entrada -> instancia la
@@ -128,6 +129,16 @@ def check_hook(bot, base):
     )
     close = difflib.get_close_matches(HOOK, own, n=1, cutoff=0.6)
     hint = (" ¿Quisiste decir «%s»? Renómbralo a «%s»." % (close[0], HOOK)) if close else ""
+    # UX-F (DEF-R4) · en BATALLA (`warn`) una versión YA publicada sin el hook no se
+    # rompe: juega como antes (quieta, COMMAND vacíos) y el aviso llega al anfitrión
+    # para el diagnóstico de su dueño. El BUILD (`reject`, por defecto) la rechaza.
+    if os.environ.get("S9_HOOK_POLICY") == "warn":
+        report(
+            "hook_missing",
+            "tu clase %s no implementa %s(self, observation): tu código no decide nada.%s"
+            % (cls.__name__, HOOK, hint),
+        )
+        return
     fail(
         "hook",
         "tu clase %s no implementa %s(self, observation): sin él el bot no hace nada en la batalla.%s"

@@ -275,6 +275,8 @@ export class ContainerBuildSandbox implements BuildSandbox {
         offer,
         limits,
         seccompProfilePath: this.o.seccompProfilePath,
+        // UX-F (DEF-R4) · una versión NUEVA sin hook se rechaza aquí, en el build.
+        hookPolicy: "reject",
       });
       if (this.o.bootstrapCmd) spec.cmd = this.o.bootstrapCmd(sub.runtime);
       // Reloj de PLATAFORMA: arranca al PEDIR el contenedor.

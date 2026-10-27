@@ -100,6 +100,16 @@ async function record(page: Page, route: string, state: string, mustShowError: b
     if (!knownDefect) throw e;
     stuckLoading = true;
   }
+  // UX-F (DEF-R11) · el fallo se ESPERA (sin sleep) antes de leer la pantalla: leerlo
+  // de golpe tras visit() daba rojos intermitentes cuando la pantalla tarda en
+  // decirlo (p. ej. el visor de una batalla inexistente para un anónimo). Si no
+  // llega en el plazo, la celda queda sin error y el expect.soft de abajo lo dice.
+  if (mustShowError && !knownDefect) {
+    await expect
+      .poll(() => showsError(page), { timeout: 15_000, intervals: [100, 250, 500] })
+      .toBe(true)
+      .catch(() => undefined);
+  }
   const text = await mainText(page);
   const error = await showsError(page);
   // Lectura instantánea (evaluate): `locator.getAttribute` ESPERA al elemento y

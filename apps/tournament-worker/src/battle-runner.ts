@@ -365,7 +365,10 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
               diagnosticsByBot: {
                 [err.botId]: {
                   schema: "bot-diagnostics/v1",
-                  startup: { ok: false, reason: err.code === "bot_timeout" ? "bot_execution_timeout" : "bot_crash" },
+                  startup: {
+                    ok: false,
+                    reason: err.startupReason ?? (err.code === "bot_timeout" ? "bot_execution_timeout" : "bot_crash"),
+                  },
                 },
               },
             },

@@ -226,7 +226,13 @@ export function BattleNewPage(props: { me: Me }) {
   const modeRulesets = rulesets.filter((r) => r.mode === mode || r.mode === null);
   const modeMaps = maps.filter((m) => (m.supportedModes ?? []).includes(mode));
   const mapsForMode = (md: string) => maps.filter((m) => (m.supportedModes ?? []).includes(md)).length;
-  const selectedMap = modeMaps.find((m) => `${m.mapId}@${m.version}` === mapKey);
+  // UX-F (DEF-R8) · el primer mapa publicado compatible con el modo viene
+  // preseleccionado (como el ruleset): antes había que adivinar que faltaba elegirlo.
+  const keyOf = (m: MapVersion) => `${m.mapId}@${m.version}`;
+  const effectiveMapKey = modeMaps.some((m) => keyOf(m) === mapKey) ? mapKey : modeMaps[0] ? keyOf(modeMaps[0]) : "";
+  const selectedMap = modeMaps.find((m) => keyOf(m) === effectiveMapKey);
+  // …y se dice qué mapas publicados NO salen y por qué (p. ej. mvp-arena-01 no admite deathmatch).
+  const hiddenMaps = maps.filter((m) => !(m.supportedModes ?? []).includes(mode));
   const effectiveRuleset = modeRulesets.some((r) => r.id === rulesetId)
     ? rulesetId
     : ((modeRulesets.find((r) => r.mode === mode) ?? modeRulesets[0])?.id ?? "");
@@ -473,8 +479,8 @@ export function BattleNewPage(props: { me: Me }) {
       </label>
       <label>
         Mapa publicado{" "}
-        <select aria-label="mapa" value={mapKey} onChange={(e) => setMapKey(e.target.value)}>
-          <option value="">— elige —</option>
+        <select aria-label="mapa" value={effectiveMapKey} onChange={(e) => setMapKey(e.target.value)}>
+          {modeMaps.length === 0 && <option value="">— no hay mapas para este modo —</option>}
           {modeMaps.map((m) => (
             <option key={`${m.mapId}@${m.version}`} value={`${m.mapId}@${m.version}`}>
               {m.name ? `${m.name} · ` : ""}
@@ -483,6 +489,24 @@ export function BattleNewPage(props: { me: Me }) {
           ))}
         </select>
       </label>
+      {mode && hiddenMaps.length > 0 && (
+        <p data-testid="maps-hidden">
+          <small>
+            No aparecen porque no admiten {modeName(mode)}:{" "}
+            {hiddenMaps
+              .map(
+                (m) =>
+                  `${m.name ?? m.mapId} v${m.version} (${
+                    (m.supportedModes ?? []).length > 0
+                      ? (m.supportedModes ?? []).map(modeName).join(", ")
+                      : "sin modos declarados"
+                  })`,
+              )
+              .join(" · ")}
+            .
+          </small>
+        </p>
+      )}
       {notEnoughMaps && mode && (
         <p className="warn" data-testid="maps-for-mode">
           Sólo aparecen los mapas publicados que declaran soportar el modo {modeName(mode)}; ahora no hay ninguno.

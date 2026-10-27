@@ -10,22 +10,73 @@
  *
  * No guarda secretos: es para texto que el usuario escribe en el panel. Si el
  * almacenamiento no está disponible se comporta como un `useState` normal.
+ *
+ * UX-F (DEF-R2) · el borrador es de UNA cuenta. Antes la clave era global
+ * (`s9_draft:bots:upload:code`) y «Salir» no borraba nada: en un ordenador
+ * compartido la cuenta B veía en el editor lo que A dejó escrito. Ahora:
+ *  - la clave lleva el id del usuario (`s9_draft:<userId>:<clave>`, ver
+ *    `setDraftOwner`), así que B nunca lee lo de A;
+ *  - `clearAllDrafts()` borra todas las `s9_draft:*` al cerrar sesión (api.ts
+ *    `logout`) y cuando entra un usuario distinto del dueño de los borradores;
+ *  - si la sesión CADUCA y vuelve a entrar el MISMO usuario, el borrador se
+ *    recupera (es para lo que existe, UX-E); si entra otro, se borra antes.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export const DRAFT_PREFIX = "s9_draft:";
+/** Quién es el dueño de los borradores guardados en esta pestaña. */
+const OWNER_KEY = "s9_draft_owner";
+
+let owner: string | null = null;
+
+/** Prefijo efectivo: incluye al usuario (sin sesión, `anon`). */
+function scoped(key: string): string {
+  return `${DRAFT_PREFIX}${owner ?? "anon"}:${key}`;
+}
+
+/** Borra TODOS los borradores de la pestaña (todas las cuentas). */
+export function clearAllDrafts(): void {
+  owner = null;
+  try {
+    const store = window.sessionStorage;
+    const doomed: string[] = [];
+    for (let i = 0; i < store.length; i++) {
+      const k = store.key(i);
+      if (k && k.startsWith(DRAFT_PREFIX)) doomed.push(k);
+    }
+    for (const k of doomed) store.removeItem(k);
+    store.removeItem(OWNER_KEY);
+  } catch {
+    // sin almacenamiento no hay nada que borrar
+  }
+}
+
+/**
+ * Fija la cuenta dueña de los borradores ANTES de pintar el panel con ella. Si
+ * los borradores guardados son de otra cuenta, se borran todos.
+ */
+export function setDraftOwner(userId: string): void {
+  try {
+    const prev = window.sessionStorage.getItem(OWNER_KEY);
+    if (prev !== null && prev !== userId) clearAllDrafts();
+    window.sessionStorage.setItem(OWNER_KEY, userId);
+  } catch {
+    // sin almacenamiento: los borradores viven sólo en memoria
+  }
+  owner = userId;
+}
 
 function read(key: string): string | null {
   try {
-    return window.sessionStorage.getItem(DRAFT_PREFIX + key);
+    return window.sessionStorage.getItem(scoped(key));
   } catch {
     return null;
   }
 }
 function write(key: string, value: string | null): void {
   try {
-    if (value === null) window.sessionStorage.removeItem(DRAFT_PREFIX + key);
-    else window.sessionStorage.setItem(DRAFT_PREFIX + key, value);
+    if (value === null) window.sessionStorage.removeItem(scoped(key));
+    else window.sessionStorage.setItem(scoped(key), value);
   } catch {
     // sin almacenamiento: el borrador vive sólo en memoria
   }

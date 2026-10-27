@@ -1306,6 +1306,10 @@ paths:
                   matches: { type: boolean }
                   officialHash: { type: string }
                   recomputedHash: { type: string }
+                  valid: { type: boolean }
+                  reason: { type: string, description: "checksum_mismatch, corrupt_file, engine_version_mismatch, final_state_hash_mismatch_with_db" }
+                  message: { type: string, description: "Explicación para personas (p. ej. replay grabado con otra versión del motor: no verificable, no manipulado)" }
+                  divergedAtTick: { type: integer }
         '404': { $ref: '#/components/responses/NotFound' }
 
   # ------------------------------------------------------------- STANDINGS
@@ -1893,7 +1897,7 @@ components:
         status: { enum: [ready, pending, unavailable] }
         perBot:
           type: object
-          description: 'Por botId: stats deportivas (replay-service/src/stats.ts) + botName y version. Sin cpuMs, decisions ni rejectionsByReason (diagnóstico).'
+          description: 'Por botId: stats deportivas (replay-service/src/stats.ts) + botName y version. Sin cpuMs, decisions ni rejectionsByReason (diagnóstico); decisionTimeouts y perModule.*.rejections sólo para el dueño y el staff (UX-F, DEF-R12).'
           additionalProperties:
             type: object
             additionalProperties: true
@@ -2075,8 +2079,9 @@ components:
       type: object
       properties:
         rank: { type: integer }
-        botId: { type: string }
-        botName: { type: string }
+        botId: { type: string, nullable: true, description: 'UX-F (DEF-R3) · null si es un bot privado que el solicitante no puede identificar' }
+        botName: { type: string, description: '«Bot privado» si el solicitante no puede identificarlo' }
+        private: { type: boolean, description: 'true = bot no identificable para el solicitante' }
         rating: { type: number }
         wins: { type: integer }
         losses: { type: integer }
@@ -2134,7 +2139,8 @@ components:
         slot: { type: string, nullable: true, description: 'Identificador único del hueco en el cuadro (matches_tournament_slot_idx)' }
         pairing: { type: object, additionalProperties: true, description: 'Fuentes del emparejamiento (home/away/round/slot), estructura del bracket' }
         state: { enum: [scheduled, running, finished, failed] }
-        winnerBotId: { type: string, nullable: true }
+        winnerBotId: { type: string, nullable: true, description: 'UX-F (DEF-R3) · null también si el ganador es un bot privado ajeno (winnerPrivate)' }
+        winnerPrivate: { type: boolean, description: 'el ganador es un bot que el solicitante no puede identificar' }
         winnerTeamId: { type: string, nullable: true }
         final: { type: boolean, description: 'true si es la final del torneo (modo visible, cap. 19.1)' }
 

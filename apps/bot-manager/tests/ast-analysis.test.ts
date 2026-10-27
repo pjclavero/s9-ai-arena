@@ -60,6 +60,19 @@ describe("B3 · python3 disponible + AST real de Python", () => {
   });
 });
 
+describe("UX-F (DEF-R12) · el mensaje del análisis dice «línea», con tilde", () => {
+  it("error de sintaxis y hallazgo dinámico de Python", () => {
+    const res = extractAst("python", [
+      { path: "src/bot.py", content: "def f(:\n  pass\n" },
+      { path: "src/otro.py", content: "x = 1\ng = eval\n" },
+    ]);
+    const all = JSON.stringify(res);
+    expect(all).toMatch(/\(línea 1\)/);
+    expect(all).toMatch(/línea 2: referencia a eval/);
+    expect(all).not.toMatch(/\blinea\b/);
+  });
+});
+
 describe("B3 · Dockerfile de bot-manager instala python3 (comprobación INDIRECTA, no construida)", () => {
   it("infrastructure/docker/bot-manager/Dockerfile instala python3 vía apk", () => {
     // Comprobación indirecta: se parsea el texto del Dockerfile, NO se

@@ -369,8 +369,10 @@ describe("UX-E · borrador local del texto en edición", () => {
     act(() => fireEvent.click(screen.getByText("alternar")));
     expect((screen.getByLabelText("código") as HTMLTextAreaElement).value).toBe("mi trabajo");
     expect(screen.getByTestId("restored")).toBeTruthy();
+    // UX-F (DEF-R2) · la clave lleva la cuenta (`anon` sin sesión fijada en el test).
+    expect(window.sessionStorage.getItem(`${DRAFT_PREFIX}anon:bot:b1:code`)).toBe("mi trabajo");
     fireEvent.click(screen.getByText("guardado"));
-    expect(window.sessionStorage.getItem(`${DRAFT_PREFIX}bot:b1:code`)).toBeNull();
+    expect(window.sessionStorage.getItem(`${DRAFT_PREFIX}anon:bot:b1:code`)).toBeNull();
   });
 });
 
@@ -398,5 +400,7 @@ describe("UX-E · estados de error de las pantallas de administración", () => {
     expect(alert.getAttribute("data-error-kind")).toBe("forbidden");
     expect(alert.textContent).toContain("No tienes permiso para esto");
     expect(screen.getByRole("heading", { name: heading })).toBeTruthy();
+    // UX-F (DEF-R9) · ni Sistema, ni Auditoría, ni Roles ofrecen reintentar un 403.
+    expect(screen.queryByRole("button", { name: "Reintentar" })).toBeNull();
   });
 });

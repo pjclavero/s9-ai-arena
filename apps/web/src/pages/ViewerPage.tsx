@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
 import { describeApiError } from "../errors.js";
-import { SpectatorClient } from "../viewer/spectator-client.js";
+import { SpectatorClient, type SpectateTicket } from "../viewer/spectator-client.js";
 import { LiveFeed } from "../viewer/live-feed.js";
 import { participantsTitle, rosterFromMeta } from "../viewer/art-direction.js";
 import { buildHudModel } from "../viewer/hud-model.js";
@@ -87,6 +87,23 @@ export function ViewerPage({ battleId }: { battleId: string }) {
     setRejectCode(undefined);
     setShowReplay(false);
     setTitle(null);
+    // UX-F (DEF-R11) · el pase se pide YA, en paralelo con la carga de Phaser. Antes
+    // se pedía cuando Phaser había arrancado (~5 s en un navegador sin GPU), y una
+    // batalla que no existe tardaba eso en decirse. El primer connect() usa esta
+    // misma petición (no se pide dos veces); los reintentos piden uno nuevo.
+    const ticketPath = `/battles/${battleId}/spectate-ticket`;
+    let firstTicket: Promise<SpectateTicket> | null = api<SpectateTicket>("POST", ticketPath);
+    let rejectedEarly = false;
+    firstTicket.catch((e: unknown) => {
+      const st = (e as { status?: unknown } | null)?.status;
+      if (!alive || typeof st !== "number" || st < 400 || st >= 500 || st === 429) return;
+      rejectedEarly = true;
+      const d = describeSpectateRejection({ kind: "ticket", status: st, error: e });
+      setState("rejected");
+      setRejectCode(String(st));
+      setShowReplay(d.showReplay);
+      setStatus(d.text);
+    });
     const fail = (prefix: string, e: unknown) => {
       if (!alive) return;
       const d = describeApiError(e);
@@ -108,7 +125,7 @@ export function ViewerPage({ battleId }: { battleId: string }) {
           fail("el visor no pudo arrancar", e);
           return;
         }
-        if (!alive) return;
+        if (!alive || rejectedEarly) return; // ya se dijo por qué no hay directo
         sceneRef.current = scene;
         setState("connecting");
         setStatus("conectando…");
@@ -117,7 +134,11 @@ export function ViewerPage({ battleId }: { battleId: string }) {
         const feed = new LiveFeed(scene);
 
         client = new SpectatorClient({
-          getTicket: () => api("POST", `/battles/${battleId}/spectate-ticket`),
+          getTicket: () => {
+            const t = firstTicket ?? api<SpectateTicket>("POST", ticketPath);
+            firstTicket = null;
+            return t;
+          },
         });
         const c = client;
         client.on("init", (msg) => {

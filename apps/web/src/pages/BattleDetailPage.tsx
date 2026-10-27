@@ -30,6 +30,7 @@ import {
   summarizeBattle,
   ticksToClock,
   winnerText,
+  teamText,
   type BattleLike,
   type ParticipantLike,
 } from "../battle-result.js";
@@ -56,7 +57,8 @@ interface ModuleStatsView {
   moduleId: string | null;
   usesKind?: string;
   uses: number;
-  rejections: number;
+  /** UX-F (DEF-R12) · sólo para el dueño y el staff (diagnóstico). */
+  rejections?: number;
   damageDealt: number;
   finalState: string;
 }
@@ -77,7 +79,8 @@ interface BotStatsView {
   flagsTaken: number;
   minesDeployed: number;
   minesTriggered: number;
-  decisionTimeouts: number;
+  /** UX-F (DEF-R12) · sólo para el dueño y el staff (diagnóstico). */
+  decisionTimeouts?: number;
   distanceM?: number;
   disqualified: boolean;
   perModule: Record<string, ModuleStatsView>;
@@ -88,7 +91,7 @@ interface DiagnosticsView {
   botName?: string;
   version: number;
   measured: boolean;
-  startup: { ok: boolean; reason?: string } | null;
+  startup: { ok: boolean; reason?: string; warning?: string } | null;
   hello: { ok: boolean; tick: number | null; reconnects: number | null } | null;
   decisions: number | null;
   decisionTimeouts: number | null;
@@ -276,7 +279,7 @@ function BattleHeader({ b, audit }: { b: BattleDetail; audit: AuditView | null }
                 )}
               </td>
               <td>v{p.version}</td>
-              <td>{p.team ?? "—"}</td>
+              <td>{teamText(p.team)}</td>
               <td>{p.outcome ? (OUTCOME_TEXT[p.outcome] ?? p.outcome) : "—"}</td>
             </tr>
           ))}
@@ -350,7 +353,7 @@ function StatsSection({ b, s }: { b: BattleDetail; s: StatsResponse }) {
                 <td>{st.kills}</td>
                 <td>{st.died ? `destruido a los ${ticksToClock(st.survivedTicks)}` : "sobrevivió"}</td>
                 <td>{typeof st.distanceM === "number" ? `${Math.round(st.distanceM)} m` : "—"}</td>
-                <td>{st.decisionTimeouts}</td>
+                <td>{typeof st.decisionTimeouts === "number" ? st.decisionTimeouts : "—"}</td>
                 <td>{objectives.length > 0 ? objectives.join(" · ") : "—"}</td>
               </tr>
             );
@@ -383,7 +386,7 @@ function StatsSection({ b, s }: { b: BattleDetail; s: StatsResponse }) {
                         ? `${m.uses} ${USES_KIND_TEXT[m.usesKind] ?? ""}`
                         : String(m.uses)}
                   </td>
-                  <td>{m.rejections}</td>
+                  <td>{typeof m.rejections === "number" ? m.rejections : "—"}</td>
                   <td>{m.damageDealt > 0 ? Math.round(m.damageDealt) : "—"}</td>
                   <td>{m.finalState === "operational" ? "operativo" : m.finalState}</td>
                 </tr>
@@ -414,6 +417,12 @@ function DiagnosticsSection({ b, diagnostics }: { b: BattleDetail; diagnostics: 
 function BotDiagnostics({ d, label }: { d: DiagnosticsView; label: string }) {
   const problems: string[] = [];
   if (d.startup && !d.startup.ok) problems.push(`No arrancó: ${dqReasonText(d.startup.reason)}.`);
+  // UX-F (DEF-R4) · versión publicada antes de exigir el hook: jugó, pero quieta.
+  if (d.startup?.warning === "hook_missing")
+    problems.push(
+      `Tu versión publicada v${d.version} no implementa on_observation (Python) / onObservation (JavaScript): ` +
+        "tu código no decide nada y el bot jugó quieto. Implementa el hook y publica una versión nueva.",
+    );
   if (d.hello && !d.hello.ok) problems.push("Nunca completó el HELLO del protocolo.");
   if (d.disqualified) problems.push(`Descalificado: ${dqReasonText(d.disqualifiedReason)}.`);
   if (d.commands?.invalid)
@@ -452,7 +461,15 @@ function BotDiagnostics({ d, label }: { d: DiagnosticsView; label: string }) {
       )}
       <dl>
         <dt>Arranque</dt>
-        <dd>{d.startup ? (d.startup.ok ? "correcto" : dqReasonText(d.startup.reason)) : "no medido"}</dd>
+        <dd>
+          {d.startup
+            ? d.startup.ok
+              ? d.startup.warning === "hook_missing"
+                ? "arrancó, pero sin hook: no decide nada"
+                : "correcto"
+              : dqReasonText(d.startup.reason)
+            : "no medido"}
+        </dd>
         <dt>HELLO</dt>
         <dd>
           {d.hello

@@ -102,6 +102,14 @@ describe("FC-D · clasificación de errores", () => {
     expect(alert.getAttribute("data-error-kind")).toBe("forbidden");
     expect(alert.textContent).toContain("No tienes permiso");
     expect(alert.textContent).toContain("No se pudo cargar los equipos: m403");
+    // UX-F (DEF-R9) · reintentar no arregla un 403.
+    expect(screen.queryByRole("button", { name: "Reintentar" })).toBeNull();
+    expect(screen.getByTestId("error-forbidden-hint").textContent).toMatch(/rol necesario/);
+  });
+
+  it("UX-F (DEF-R9) · un fallo pasajero (500) sí ofrece Reintentar", () => {
+    render(<ErrorState label="los equipos" error={mk(500)} onRetry={() => {}} />);
+    expect(screen.getByRole("button", { name: "Reintentar" })).toBeTruthy();
   });
 
   it("FormError pinta título, mensaje y detalles de validación; null no pinta nada", () => {
@@ -331,10 +339,11 @@ describe("FC-D · resumen de resultado (D7)", () => {
       failureKind: "none",
       result: { winner: "red", ticks: 900, score: { red: 2, blue: 1 }, disqualified: [] },
     });
+    // UX-F (DEF-R6) · el bando en palabras, como en el selector (antes «gana red»).
     expect(v).toMatchObject({
-      outcome: "gana red",
+      outcome: "gana rojo",
       duration: "0:30",
-      score: "red: 2 · blue: 1",
+      score: "rojo: 2 · azul: 1",
       failure: null,
       hasReplay: true,
     });
@@ -355,7 +364,7 @@ describe("FC-D · resumen de resultado (D7)", () => {
       },
     });
     expect(v).toMatchObject({
-      outcome: "gana blue",
+      outcome: "gana azul",
       endReason: "por incomparecencia",
       agentsNote: "bots simulados (stub)",
       hasReplay: false,

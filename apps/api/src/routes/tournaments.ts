@@ -14,6 +14,7 @@ import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
 import { applyTransition } from "../services/bots.js";
 // H6 (issue #10) · La tabla por equipos es la de E9; se importa, no se duplica.
 import { leagueTable } from "../../../tournament-worker/src/results.js";
+import { hiddenBotIds, whereBattleReadable, type BattleVisibility } from "../battle-access.js";
 
 const FORMATS = ["league", "round_robin", "single_elimination", "double_elimination", "swiss", "teams"];
 const MODES = ["deathmatch", "team_deathmatch", "capture_the_flag", "zone_control"];
@@ -36,21 +37,53 @@ export function tournamentToJson(t: Record<string, unknown>) {
   };
 }
 
-/** R12 (slice 1) · Mapper explícito de una fila de `matches` (proyección pública del cuadro). */
-export function tournamentMatchToJson(m: Record<string, unknown>) {
+/**
+ * R12 (slice 1) · Mapper explícito de una fila de `matches` (proyección pública del cuadro).
+ *
+ * UX-F (DEF-R3) · `hidden` = bots que el solicitante NO puede identificar
+ * (battle-access.ts). Un bot privado ajeno sale como `null` en el emparejamiento
+ * y en el ganador, con `winnerPrivate: true` para que el cuadro diga «bot
+ * privado» sin revelar quién es. Sin `hidden` (llamadas internas), todo tal cual.
+ * En torneos de equipos `home`/`away` son equipos, no bots: no se tocan.
+ */
+export function tournamentMatchToJson(m: Record<string, unknown>, hidden?: Set<string>, isTeams = false) {
+  const hide = (id: unknown) => hidden !== undefined && typeof id === "string" && hidden.has(id);
+  let pairing = (m.pairing ?? {}) as Record<string, unknown>;
+  if (typeof pairing === "string") pairing = JSON.parse(pairing);
+  if (!isTeams && (hide(pairing.home) || hide(pairing.away))) {
+    pairing = {
+      ...pairing,
+      ...(hide(pairing.home) ? { home: null, homePrivate: true } : {}),
+      ...(hide(pairing.away) ? { away: null, awayPrivate: true } : {}),
+    };
+  }
+  const winnerHidden = hide(m.winner_bot_id);
   return {
     id: m.id,
     round: m.round,
     slot: m.slot ?? null,
-    pairing: m.pairing ?? {},
+    pairing,
     state: m.state,
-    winnerBotId: m.winner_bot_id ?? null,
+    winnerBotId: winnerHidden ? null : (m.winner_bot_id ?? null),
+    ...(winnerHidden ? { winnerPrivate: true } : {}),
     winnerTeamId: m.winner_team_id ?? null,
     final: m.final,
   };
 }
 
-export function tournamentRoutes(db: Db): Router {
+/** Ids de bot que nombra una fila de `matches` (emparejamiento y ganador). */
+function botIdsOfMatch(m: Record<string, unknown>): unknown[] {
+  let pairing = (m.pairing ?? {}) as Record<string, unknown>;
+  if (typeof pairing === "string") pairing = JSON.parse(pairing);
+  return [pairing.home, pairing.away, m.winner_bot_id];
+}
+
+const NO_STORE = "private, no-store";
+
+export function tournamentRoutes(
+  db: Db,
+  vis: BattleVisibility = { publicReplays: false, publicSpectate: false },
+): Router {
   const router = Router();
 
   defineOperation(router, "listTournaments", async (req, res) => {
@@ -154,18 +187,26 @@ export function tournamentRoutes(db: Db): Router {
         .first()
         .catch(() => null);
       if (!t) throw notFound();
-      const battles = await db("battles").where({ tournament_id: t.id }).orderBy("created_at", "asc");
+      // UX-F (DEF-R3) · la MISMA política que GET /battles (battle-access.ts): antes
+      // un anónimo veía aquí botId, versión, resultado y nombre de bots privados.
+      const battles = await whereBattleReadable(
+        db,
+        db("battles").where("battles.tournament_id", t.id).select("battles.*"),
+        req.auth,
+        vis,
+      ).orderBy("battles.created_at", "asc");
       const matches = await db("matches").where({ tournament_id: t.id });
       const roundByMatch = new Map(matches.map((m: Record<string, unknown>) => [m.id as string, Number(m.round)]));
       const items = await Promise.all(
         battles.map(async (b: Record<string, unknown>) => ({
           // UX-D · con nombre de bot (la UI no enseña UUIDs). Sin `viewer`: el
-          // listado del torneo es público y nunca lleva CPU ni diagnóstico.
+          // listado del torneo nunca lleva CPU ni diagnóstico.
           ...battleToJson(b, await loadParticipants(db, b.id as string)),
           round: b.match_id ? (roundByMatch.get(b.match_id as string) ?? 1) : 1,
         })),
       );
-      res.setHeader("Cache-Control", "public, max-age=5");
+      // Depende de quién pregunta: nunca en una caché compartida.
+      res.setHeader("Cache-Control", NO_STORE);
       res.json({ items });
     },
   );
@@ -304,7 +345,14 @@ export function tournamentRoutes(db: Db): Router {
         { column: "slot", order: "asc" },
       ])
       .select("id", "round", "slot", "pairing", "state", "winner_bot_id", "winner_team_id", "final");
-    res.json({ matches: rows.map(tournamentMatchToJson) });
+    const isTeams = t.format === "teams";
+    const hidden = await hiddenBotIds(
+      db,
+      req.auth,
+      isTeams ? rows.map((m: Record<string, unknown>) => m.winner_bot_id) : rows.flatMap(botIdsOfMatch),
+    );
+    res.setHeader("Cache-Control", NO_STORE);
+    res.json({ matches: rows.map((m: Record<string, unknown>) => tournamentMatchToJson(m, hidden, isTeams)) });
   });
 
   /**

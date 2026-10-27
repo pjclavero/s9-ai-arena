@@ -161,9 +161,12 @@ if (!chosen) {
 // nada. Se exige que la clase (o un ancestro distinto de ArenaBot) lo defina.
 // Un bot quieto que SÍ lo implementa y devuelve {} pasa.
 const HOOK = "onObservation";
+// UX-F (DEF-R4) · como en Python (`_handle_observation`), sobrescribir el
+// despachador `handleObservation` también cuenta: ese código sí decide.
+const DISPATCH = "handleObservation";
 async function checkHook(bot) {
   // Sobre la INSTANCIA: un campo de clase (`onObservation = (o) => …`) también cuenta.
-  if (bot[HOOK] !== ArenaBot.prototype[HOOK]) return;
+  if (bot[HOOK] !== ArenaBot.prototype[HOOK] || bot[DISPATCH] !== ArenaBot.prototype[DISPATCH]) return;
   const own = new Set();
   for (
     let p = chosen.prototype;
@@ -178,6 +181,15 @@ async function checkHook(bot) {
   for (const name of Object.keys(bot)) if (typeof bot[name] === "function") own.add(name);
   const close = closestName(HOOK, [...own]);
   const hint = close ? ` ¿Quisiste decir «${close}»? Renómbralo a «${HOOK}».` : "";
+  // UX-F (DEF-R4) · en BATALLA (`warn`) una versión YA publicada sin el hook juega
+  // como antes (quieta) y el aviso va al diagnóstico de su dueño; el BUILD la rechaza.
+  if (env.S9_HOOK_POLICY === "warn") {
+    await report(
+      "hook_missing",
+      `tu clase ${chosen.name || "(anónima)"} no implementa ${HOOK}(observation): tu código no decide nada.${hint}`,
+    );
+    return;
+  }
   await fail(
     "hook",
     `tu clase ${chosen.name || "(anónima)"} no implementa ${HOOK}(observation): sin él el bot no hace nada en la batalla.${hint}`,
