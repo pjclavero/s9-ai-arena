@@ -44,7 +44,11 @@ test.describe("@fase1 UX-C selector de batalla", () => {
     await expect(why).toContainText("tienes v1");
     await expect(why.getByRole("link", { name })).toHaveAttribute("href", /#\/bots\//);
     const opt = page.getByLabel("bot rojo").locator("option", { hasText: name });
-    await expect(opt).toBeDisabled();
+    // `toBeDisabled()` no evalúa el `disabled` nativo de <option> en Chromium 130 /
+    // Playwright 1.48 (visto en CI: el atributo estaba y el expect decía «enabled»):
+    // se comprueba el atributo y el motivo.
+    await expect(opt).toHaveAttribute("disabled", "");
+    await expect(opt).toContainText("no elegible: ninguna versión publicada");
     await expect(page.getByTestId("battle-checklist")).toContainText("✗ Bando rojo: elige un bot");
     await expect(page.getByTestId("battle-concepts")).toContainText("versión de bot");
     await expect(page.getByTestId("battle-concepts")).toContainText("no es un equipo de la sección Equipos");
