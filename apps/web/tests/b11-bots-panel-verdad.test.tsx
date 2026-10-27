@@ -1056,9 +1056,10 @@ describe("UX-R · borradores de sesión y estado vivo en «Mis bots»", () => {
     const area = (await screen.findByLabelText("codigo")) as HTMLTextAreaElement;
     await userEvent.clear(area);
     await userEvent.type(area, "v2 lista");
-    expect(window.sessionStorage.getItem("s9_draft:bots:upload:code")).toBe("v2 lista");
+    // UX-F (DEF-R2) · la clave lleva la cuenta (`anon`: el App no fija dueño en este test).
+    expect(window.sessionStorage.getItem("s9_draft:anon:bots:upload:code")).toBe("v2 lista");
     await userEvent.click(screen.getByRole("button", { name: "Subir como versión nueva" }));
-    await waitFor(() => expect(window.sessionStorage.getItem("s9_draft:bots:upload:code")).toBeNull());
+    await waitFor(() => expect(window.sessionStorage.getItem("s9_draft:anon:bots:upload:code")).toBeNull());
   });
 
   it("build en curso: LiveStatus (aria-live) con aria-busy", async () => {

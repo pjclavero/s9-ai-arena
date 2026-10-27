@@ -102,6 +102,14 @@ describe("FC-D · clasificación de errores", () => {
     expect(alert.getAttribute("data-error-kind")).toBe("forbidden");
     expect(alert.textContent).toContain("No tienes permiso");
     expect(alert.textContent).toContain("No se pudo cargar los equipos: m403");
+    // UX-F (DEF-R9) · reintentar no arregla un 403.
+    expect(screen.queryByRole("button", { name: "Reintentar" })).toBeNull();
+    expect(screen.getByTestId("error-forbidden-hint").textContent).toMatch(/rol necesario/);
+  });
+
+  it("UX-F (DEF-R9) · un fallo pasajero (500) sí ofrece Reintentar", () => {
+    render(<ErrorState label="los equipos" error={mk(500)} onRetry={() => {}} />);
+    expect(screen.getByRole("button", { name: "Reintentar" })).toBeTruthy();
   });
 
   it("FormError pinta título, mensaje y detalles de validación; null no pinta nada", () => {

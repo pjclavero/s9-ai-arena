@@ -76,7 +76,12 @@ export function ErrorState(props: { label: string; message?: string; error?: unk
       </p>
       {d?.kind === "unauthorized" && <a href="#/">Inicia sesión de nuevo</a>}
       {(d?.kind === "notFound" || d?.kind === "forbidden") && <a href="#/">Volver al inicio</a>}
-      {props.onRetry && (
+      {/* UX-F (DEF-R9) · un 403 no se arregla reintentando: falta un permiso, no hay
+          un fallo pasajero. Se dice qué hacer en vez de ofrecer el botón. */}
+      {d?.kind === "forbidden" && (
+        <p data-testid="error-forbidden-hint">Tu cuenta no tiene el rol necesario; pídeselo a un administrador.</p>
+      )}
+      {props.onRetry && d?.kind !== "forbidden" && (
         <button type="button" onClick={() => props.onRetry?.()}>
           Reintentar
         </button>
