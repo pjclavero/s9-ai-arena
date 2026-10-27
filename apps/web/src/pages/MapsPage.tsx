@@ -64,7 +64,7 @@ function stateVariant(state: MapVersion["state"]): StatusVariant {
 export function MapsPage(props: { me: Me }) {
   const canCurate = (props.me.roles ?? []).some((r) => r === "organizer" || r === "admin");
   const [maps, setMaps] = useState<MapVersion[] | null>(null);
-  const [loadErrorMsg, setLoadErrorMsg] = useState("");
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [actionError, setActionError] = useState("");
   const [checks, setChecks] = useState<ValidationCheck[]>([]);
   const [notice, setNotice] = useState("");
@@ -74,13 +74,13 @@ export function MapsPage(props: { me: Me }) {
   const [busy, setBusy] = useState(false);
 
   async function refresh() {
-    setLoadErrorMsg("");
+    setLoadError(null);
     try {
       const page = await api<{ items: MapVersion[] }>("GET", "/maps");
       setMaps(page.items);
     } catch (e) {
       setMaps(null);
-      setLoadErrorMsg((e as Error).message);
+      setLoadError(e);
     }
   }
   useEffect(() => {
@@ -230,8 +230,8 @@ export function MapsPage(props: { me: Me }) {
 
       <Panel>
         <h3>Mapas registrados</h3>
-        {loadErrorMsg ? (
-          <ErrorState label="los mapas" message={loadErrorMsg} onRetry={() => void refresh()} />
+        {loadError !== null ? (
+          <ErrorState label="los mapas" error={loadError} onRetry={() => void refresh()} />
         ) : maps === null ? (
           <LoadingState label="los mapas" />
         ) : maps.length === 0 ? (
