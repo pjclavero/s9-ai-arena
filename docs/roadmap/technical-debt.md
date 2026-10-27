@@ -1268,10 +1268,11 @@ Estados posibles:
   - `battle-runner.ts` cierra la batalla (`status='finished'`) en una transacción. `battle_stats` la escribe después el trabajo de stats (H3, issue #7).
   - En producción, `GET /battles/:id/stats` devolvió `perBot` vacío justo tras `finished`; las filas aparecieron unos 1,4 s después, con los valores correctos.
   - En CI no se manifiesta porque la escritura llega antes.
+  - La respuesta lleva `Cache-Control: public, max-age=60` también cuando `perBot` está vacío, así que un navegador o un proxy intermedio pueden servir el `{}` hasta 60 s.
 - **Problema:** Un cliente que lea los stats en cuanto ve `finished` puede recibir `perBot: {}` sin ninguna señal de «aún no disponibles».
 - **Mitigación:** `tests/browser/specs/golden-path.spec.ts` espera con `expect.poll` acotado hasta que existan las entradas de los dos participantes; si no aparecen en el plazo, falla.
-- **Solución prevista:** Que la API indique si los stats están pendientes (por ejemplo, un campo de estado o 202 mientras no existan), o materializarlos en la misma transacción de cierre.
-- **Condición de cierre:** Tras `finished`, la API nunca devuelve stats vacíos sin indicar que están pendientes; con un test que se ponga ROJO si vuelve a ocurrir.
+- **Solución prevista:** Que la API indique si los stats están pendientes (por ejemplo, un campo de estado o 202 mientras no existan), o materializarlos en la misma transacción de cierre. Mientras estén vacíos, `Cache-Control: no-store`.
+- **Condición de cierre:** Tras `finished`, la API nunca devuelve stats vacíos sin indicar que están pendientes, ni los deja en caché; con un test que se ponga ROJO si vuelve a ocurrir.
 
 ## Documentación relacionada
 

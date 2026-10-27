@@ -7,16 +7,17 @@ y `docs/ESTADO_ACTUAL.md`, que quedan archivados en `docs/history/status/` y ya 
 
 Hay dos planos y no se mezclan:
 - **Código (`main`):** contiene el cierre funcional (PR #152), el *Production Readiness Closure* (PR #158) y **RC2** (cierre del bloqueo del Docker proxy de RC1: red dedicada `bot-control`, firewall de host como código, proxy con control de cliente, allowlist de imágenes y propiedad, y el E2E contenedor → proxy obligatorio). `main` está protegida: no se fusiona nada si falla el golden path real de `functional-e2e`. Informes: [functional-closure-report.md](../development/functional-closure-report.md) y [production-readiness-report.md](../development/production-readiness-report.md).
-- **Producción:** no ha cambiado. Nada de lo fusionado se ha desplegado todavía.
+- **Producción:** **RC4 (`f32ab2c`) desplegada y verificada** el 2026-10-27, con golden path en navegador real contra producción y backup posterior verificado. Informe: [rc4-deployment-report.md](../development/rc4-deployment-report.md).
 
 ```
-MAIN:           6612868 (RC2, PR #164, rama integration/rc2-docker-proxy sobre 7cf88dd); CI de main en verde
-EN CURSO:       TD-062 (frontera de privilegio del proxy) en la rama fix/td-062-proxy-privilege-boundary, pendiente de REVIEW
-LAST VERIFIED:  2026-10-21 (RC2: CI del PR en verde con container-proxy-e2e; protección de rama con 4 checks obligatorios)
-RUNTIME:        sin cambios desde la auditoría: perfil `production`, 12 servicios, imágenes de 3 commits
+MAIN:           35a4fb9 (= f32ab2c + PR #172, sólo test golden y TD-065); CI de main contada
+PRODUCCIÓN:     f32ab2c (RC4 = PR #170 sobre 80baf4f = PR #171 sobre 4cc7651); 35a4fb9 NO se despliega
+EN CURSO:       TD-064 (PR #169, draft); documentación de RC3 (PR #168)
+LAST VERIFIED:  2026-10-27 (golden final PASS en producción; P20 backup PASS)
+RUNTIME:        perfil `production`, 12 servicios; 10 con imágenes sha-f32ab2c con identidad; postgres y queue por digest
 VEREDICTO CÓDIGO:     el recorrido de usuario completo funciona y lo exige la CI (golden path en navegador real)
-VEREDICTO PRODUCCIÓN: NO funcional como producto hasta desplegar main (fase Release Candidate)
-READINESS:      PRODUCTION_READY (código y gobernanza); despliegue pendiente de autorización del operador
+VEREDICTO PRODUCCIÓN: DEPLOYMENT_VERIFIED (RC4)
+READINESS:      PRODUCTION_READY (código y gobernanza)
 ```
 
 Informe del cierre: [functional-closure-report.md](../development/functional-closure-report.md).
@@ -62,23 +63,23 @@ Informe del cierre: [functional-closure-report.md](../development/functional-clo
 
 ## Blocked
 
-**PENDIENTE / BLOQUEADO en producción.** Los tres bloqueos de la auditoría (publicar un bot, crear una batalla, ejecutar código de usuario) están resueltos **en `main`**, no en producción. Para verlos en producción hace falta, con una ventana autorizada por el operador (fase Release Candidate):
+**RESUELTO EN PRODUCCIÓN (RC4, 2026-10-27).** Los tres bloqueos de la auditoría (publicar un bot, crear una batalla, ejecutar código de usuario) están resueltos en producción. Lo demuestra el golden path tras desplegar ([rc4-deployment-report.md](../development/rc4-deployment-report.md)):
 
-1. Construir las imágenes de `main` con su identidad de build.
-2. Generar `artifact_verify_key.pem` (`init-secrets.sh` lo deriva de la clave de firma) y operar el `s9-docker-proxy` en el host con la configuración de RC2: runtimes por digest, firewall, unidad nueva con bind en `10.89.250.1` ([upgrades.md](../operations/upgrades.md#rc2-proxy-de-docker-red-dedicada-y-firewall)) **instalada como artefacto de root** (TD-062: instalador desde un clon de root fijado al SHA, bundle + allowlist en `/etc`, VERDE con el preflight instalado; [upgrades.md](../operations/upgrades.md#td-062)). El chown del árbol ([TD-057](technical-debt.md#td-057)) va **después**, nunca antes.
-3. Recrear `api`, `tournament-worker` y `bot-build-worker` (más `backup`/`postgres`/`queue` según el contrato de despliegue) y aplicar las migraciones `012_bot_versioning` y `013_battle_claim`.
+1. Imágenes de `main` (`sha-f32ab2c…`) con su identidad de build, verificadas por Id.
+2. `artifact_verify_key.pem` generado y `s9-docker-proxy` instalado como artefacto de root (TD-062) con el preflight instalado en VERDE; el chown del árbol ([TD-057](technical-debt.md#td-057)) se hizo después.
+3. Migraciones `012_bot_versioning` y `013_battle_claim` aplicadas; ejecución de batallas en contenedores activa.
+
+El golden path tras desplegar falló dos veces antes de pasar. La primera fue por presión de memoria del hipervisor. La segunda, por una carrera del propio test con `battle_stats` ([TD-065](technical-debt.md#td-065), corregida en el test con el PR #172).
 
 ## Operations
 
-**Runtime** (medido en la auditoría; sin cambios):
+**Runtime** (RC4, verificado el 2026-10-27):
 
 | Commit | Servicios | Identidad de build |
 |---|---|---|
-| `4d469dc` | 9 servicios de aplicación | sin `BUILD_COMMIT` ni `/version` |
-| `0daa500` | `tournament-worker` | con `BUILD_COMMIT` |
-| `ad0a42b` | `backup` | con `BUILD_COMMIT`; bloque versionado aparte a propósito |
+| `f32ab2c` | los 10 servicios propios del perfil, `backup` incluido | `BUILD_COMMIT`, revisión OCI y `/version` = `f32ab2c`; verificados por Id |
 
-PostgreSQL 16.14 y Redis 7.4.9 están fijados por digest. Ver [TD-006](technical-debt.md#td-006).
+PostgreSQL 16.14 y Redis 7.4.9 siguen fijados por digest, sin recrear en RC4. La mezcla de imágenes de la auditoría ([TD-006](technical-debt.md#td-006)) ya no existe en producción; el cierre formal de la TD está pendiente.
 
 - **Perfil:** `production`, con 12 servicios ([docker.md](../operations/docker.md)). `map-service` sigue en él ([TD-017](technical-debt.md#td-017)).
 - **Despliegue de la integración:** exige recrear `api`, `bot-build-worker` y `tournament-worker` (lo mide `infrastructure/tests/compose-canonical-check.test.ts`) y un secreto nuevo, `artifact_verify_key` ([configuration.md](../operations/configuration.md#secretos)).
@@ -89,7 +90,7 @@ PostgreSQL 16.14 y Redis 7.4.9 están fijados por digest. Ver [TD-006](technical
 
 | Problema | Estado | Deuda |
 |---|---|---|
-| Replays legibles por anónimos a través del gateway | **CERRADO en `main`** (gateway 404 en `/replays*`, API única autoridad); abierto en producción hasta desplegar | [TD-004](technical-debt.md#td-004) |
+| Replays legibles por anónimos a través del gateway | **CERRADO en `main` y en producción (RC4)**: gateway 404 en `/replays*`, API única autoridad; anónimo y ajeno reciben el mismo 404 | [TD-004](technical-debt.md#td-004) |
 | Batallas con bots privados ajenos; `rating-history` ajeno | **CERRADO en `main`** | [TD-005](technical-debt.md#td-005) |
 | Batallas y stats exponen participantes de bots privados | ABIERTO | [TD-047](technical-debt.md#td-047) |
 | Anfitrión de bots con credenciales de BD en la red `arena` | ABIERTO (aceptado) | [TD-033](technical-debt.md#td-033) |
@@ -99,10 +100,10 @@ PostgreSQL 16.14 y Redis 7.4.9 están fijados por digest. Ver [TD-006](technical
 | Registro abierto; clave de límites colapsada a la IP del proxy | ABIERTO | [TD-012](technical-debt.md#td-012) |
 | Imágenes de servicio con vulnerabilidades HIGH/CRITICAL | ABIERTO | [TD-031](technical-debt.md#td-031) |
 | Topología de infraestructura en el repositorio público | ABIERTO | [TD-008](technical-debt.md#td-008) |
-| Proxy de Docker sin ámbito (imagen, contenedor, cliente) y alcanzable desde `gateway`/`backup` | **CERRADO en `main` (RC2)**; abierto en producción hasta desplegar | [TD-051](technical-debt.md#td-051), [TD-053](technical-debt.md#td-053) |
-| El proxy ejecuta código de un árbol no sólo de root (el usuario de despliegue puede escribir lo que corre con el grupo `docker`) | **CERRADO en código** en `fix/td-062-proxy-privilege-boundary` (REVIEW #167 ronda 1 = BLOCKED por B1/B2, corregidos; pendiente de re-REVIEW): bundle de root fuera del árbol, allowlist en `/etc`, unidad endurecida, instalador ejecutado desde un clon de root fijado al SHA y preflight **instalado** (`/usr/local/sbin/s9-docker-proxy-preflight`); **ABIERTO en producción** (unidad de RC1 con `npx tsx` desde el árbol, leída el 2026-10-21) hasta la migración ([upgrades.md](../operations/upgrades.md#td-062)) | [TD-062](technical-debt.md#td-062), [TD-057](technical-debt.md#td-057) |
+| Proxy de Docker sin ámbito (imagen, contenedor, cliente) y alcanzable desde `gateway`/`backup` | **CERRADO en `main` (RC2) y en producción (RC4)**: matriz de red 12/12; imagen fuera de la allowlist y control de contenedores ajenos → 403 | [TD-051](technical-debt.md#td-051), [TD-053](technical-debt.md#td-053) |
+| El proxy ejecuta código de un árbol no sólo de root (el usuario de despliegue puede escribir lo que corre con el grupo `docker`) | **CERRADO en `main` (PR #167) y en producción (RC4)**: bundle de root fuera del árbol, allowlist en `/etc`, unidad endurecida y preflight **instalado** en VERDE; el usuario de despliegue no puede escribir los artefactos del proxy; la unidad de RC1 queda *disabled* ([upgrades.md](../operations/upgrades.md#td-062)) | [TD-062](technical-debt.md#td-062), [TD-057](technical-debt.md#td-057) |
 | `.env` 0644 y `secrets/` 0755 en el host | ABIERTO | [TD-060](technical-debt.md#td-060) |
-| Ejecución real y espectador público | en producción, **apagados** hasta desplegar con su gate | [docs/technical/security.md](../technical/security.md) |
+| Ejecución real y espectador público | ejecución de batallas en contenedores **activa** en producción desde RC4 (P19, por el proxy con ámbito); el espectador público no cambia en RC4 | [docs/technical/security.md](../technical/security.md) |
 
 ## Known issues
 
@@ -110,7 +111,7 @@ Síntomas vigentes en [known-issues.md](known-issues.md).
 
 ## Next priorities
 
-1. Fase Release Candidate, con autorización del operador: imágenes de `main`, migraciones `012`/`013`, `artifact_verify_key`, `s9-docker-proxy` con los pasos de host de RC2, backup/readiness, gate A-G, despliegue controlado y golden path tras desplegar ([Blocked](#blocked)).
+1. Tras RC4: decisiones del operador sobre los residuos de RC3 y las rutas de root heredadas; TD-064 (PR #169); [TD-065](technical-debt.md#td-065) en la API (stats con la batalla terminada o `no-store` mientras estén vacíos); capacidad del hipervisor (el primer golden cayó por presión de memoria).
 2. Mantener la protección de `main` tal como está documentada ([ci.md](../development/ci.md#protección-de-rama)); cualquier cambio de reglas es decisión del operador.
 3. [TD-047](technical-debt.md#td-047), [TD-041](technical-debt.md#td-041), [TD-012](technical-debt.md#td-012): antes de abrir a terceros.
 4. [TD-033](technical-debt.md#td-033) y [TD-043](technical-debt.md#td-043): reducir el privilegio de los procesos que hablan con bots.
@@ -122,6 +123,7 @@ Funciones pendientes de diseño: [pending-features.md](pending-features.md).
 
 - [technical-debt.md](technical-debt.md) · [known-issues.md](known-issues.md) · [pending-features.md](pending-features.md)
 - [Informe del cierre funcional](../development/functional-closure-report.md)
+- [Informe de despliegue RC4](../development/rc4-deployment-report.md)
 - [Auditoría 2026-10-15](../audits/2026-10-15/README.md) · [AUDIT-DELTA](../audits/2026-10-15/AUDIT-DELTA-2026-10.md)
 - [Visión general](../overview/project.md) · [Arquitectura](../overview/architecture.md) · [Operación](../operations/index.md)
 
@@ -134,7 +136,8 @@ Funciones pendientes de diseño: [pending-features.md](pending-features.md).
 | El worker ejecuta el artefacto firmado de la versión exacta | RUNTIME_VERIFIED (aislado) | `apps/tournament-worker/src/container-battle-e2e.test.ts` (`S9_RUN_REAL_DOCKER_E2E=1`, 3/3) |
 | Mutaciones del cierre en rojo | CODE_VERIFIED | HunterBot disfrazado (golden rc=1), READY de Phaser (golden y replay rc=1), sandbox fuera (rc=1), cierre doble (rc=1), bot privado ajeno (rc=1), persistencia del mapa (rc=1); ver el informe |
 | Perfil `production` = 12 servicios | CODE_VERIFIED | `infrastructure/tests/compose.test.ts`, `deploy-contract-gate.test.ts` |
-| Runtime de producción sin cambios | DESIGN_ONLY | el cierre funcional no despliega (sin SSH ni compose contra producción) |
+| Runtime de producción sin cambios (en el cierre funcional) | DESIGN_ONLY | el cierre funcional no desplegaba; superado por RC4 |
+| Producción = RC4 `f32ab2c`, golden final PASS y P20 PASS | RUNTIME_VERIFIED (producción, 2026-10-27) | [rc4-deployment-report.md](../development/rc4-deployment-report.md) |
 | TD-004 / TD-034 cerradas en la integración PRC; `functional-e2e` verde y calibrado en CI real | RUNTIME_VERIFIED (aislado y GitHub Actions) | [production-readiness-report.md](../development/production-readiness-report.md); runs 39141675080 (verde), 39141682346 y 39141685353 (calibraciones en rojo) |
 | #152 y #158 fusionados; `main` = `59322e2` con CI en verde (`functional-e2e` y `semaforo` incluidos) | RUNTIME_VERIFIED (GitHub Actions) | `git rev-parse origin/main`; run 39173546382 (25 jobs en verde) (2026-10-19) |
 | `main` protegida y el bloqueo funciona | RUNTIME_VERIFIED | `gh api repos/…/branches/main/protection`; PR #161: merge rechazado con `functional-e2e` en rojo, también con `--admin` (2026-10-19) |
