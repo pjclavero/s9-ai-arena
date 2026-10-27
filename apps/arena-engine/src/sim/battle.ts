@@ -878,6 +878,13 @@ export class Battle {
 
   private finish(winner: string | "draw"): void {
     this.finished = true;
+    // Snapshot FINAL garantizado: si la batalla acaba en un tick que no toca snapshot
+    // (cadencia de 3), el último que veía un espectador o el reproductor era anterior
+    // al golpe decisivo y su marcador no coincidía con el resultado (destapado al
+    // cambiar las trayectorias con el perímetro de UX-07). Los snapshots no entran en
+    // el hash de estado: no altera el determinismo.
+    const last = this.snapshots[this.snapshots.length - 1];
+    if (!last || last.tick !== this.tick) this.snapshots.push(this.publicSnapshot(this.poses()));
     this.result = {
       battleId: this.config.battleId,
       winner,
