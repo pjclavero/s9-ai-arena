@@ -8,7 +8,7 @@
  * carga y de envío usan los componentes comunes de D (ErrorState / FormError).
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("../src/api.js", () => ({ api: vi.fn() }));
@@ -103,19 +103,41 @@ describe("R9 · #/battles/new", () => {
     expect(Array.from(modeSel.options).map((o) => o.value)).toEqual(RULESETS.modes);
     await userEvent.selectOptions(modeSel, "capture_the_flag");
     expect((screen.getByLabelText("ruleset") as HTMLSelectElement).value).toBe("capture-the-flag-mvp");
-    const maps = Array.from((screen.getByLabelText("mapa") as HTMLSelectElement).options).map((o) => o.value);
-    expect(maps).toEqual(["", "map_ctf@1"]);
+    const mapSel = screen.getByLabelText("mapa") as HTMLSelectElement;
+    // UX-F (DEF-R8) · el mapa compatible viene preseleccionado (antes había un «— elige —»).
+    expect(Array.from(mapSel.options).map((o) => o.value)).toEqual(["map_ctf@1"]);
+    expect(mapSel.value).toBe("map_ctf@1");
   });
 
-  it("rechaza crear sin mapa", async () => {
+  it("UX-F (DEF-R8) · preselecciona el primer mapa compatible y dice qué mapas no salen y por qué", async () => {
     mockLists(MAPS, BOTS);
+    render(<BattleNewPage me={ME} />);
+    const mapSel = (await screen.findByLabelText("mapa")) as HTMLSelectElement;
+    await waitFor(() => expect(mapSel.value).toBe("map_a@2"));
+    expect(screen.getByTestId("battle-checklist").textContent).toMatch(/✓ Mapa: map_a v2/);
+    expect(screen.getByTestId("maps-hidden").textContent).toMatch(
+      /No aparecen porque no admiten Deathmatch: map_ctf v1 \(Captura la bandera\)/,
+    );
+    // Sin elegir el mapa a mano, la batalla se crea con el preseleccionado.
+    await userEvent.selectOptions(screen.getByLabelText("bot rojo"), "bot_r");
+    await userEvent.selectOptions(screen.getByLabelText("bot azul"), "bot_b");
+    await userEvent.click(screen.getByText("Crear batalla"));
+    await screen.findByText(/creada y encolada/i);
+    const post = apiMock.mock.calls.find((c) => c[0] === "POST" && c[1] === "/battles");
+    expect(post![2]).toMatchObject({ mapId: "map_a", mapVersion: 2 });
+  });
+
+  it("rechaza crear sin mapa (ningún mapa publicado admite el modo)", async () => {
+    mockLists(
+      MAPS.filter((m) => m.mapId !== "map_a"),
+      BOTS,
+    );
     render(<BattleNewPage me={ME} />);
     await screen.findByLabelText("bot rojo");
     await userEvent.selectOptions(screen.getByLabelText("bot rojo"), "bot_r");
     await userEvent.selectOptions(screen.getByLabelText("bot azul"), "bot_b");
-    await userEvent.click(screen.getByText("Crear batalla"));
-    const alert = await screen.findByRole("alert");
-    expect(alert.textContent ?? "").toMatch(/mapa/i);
+    expect((screen.getByText("Crear batalla") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId("battle-checklist").textContent).toMatch(/✗ Mapa: no hay mapas publicados/);
     expect(apiMock.mock.calls.some((c) => c[0] === "POST")).toBe(false);
   });
 
@@ -298,7 +320,8 @@ describe("UX-03 · selector de participantes", () => {
     render(<BattleNewPage me={ME} />);
     await screen.findByTestId("ineligible-bots");
     const list = () => screen.getByTestId("battle-checklist").textContent ?? "";
-    expect(list()).toMatch(/✗ Mapa: elige un mapa publicado/);
+    // UX-F (DEF-R8) · el mapa viene preseleccionado: ya no falta elegirlo.
+    expect(list()).toMatch(/✓ Mapa: map_a v2/);
     expect(list()).toMatch(/✗ Bando rojo: elige un bot/);
     await userEvent.selectOptions(screen.getByLabelText("mapa"), "map_a@2");
     await userEvent.selectOptions(screen.getByLabelText("bot rojo"), "bot_old");

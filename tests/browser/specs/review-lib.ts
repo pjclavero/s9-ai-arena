@@ -115,13 +115,14 @@ export async function pickBot(page: Page, side: "rojo" | "azul", name: string): 
 
 /** Crea la batalla desde el formulario y devuelve su id (respuesta 202 real). */
 export async function createBattle(page: Page): Promise<string> {
-  // El mapa NO viene preseleccionado: se elige el del catálogo (mvp-arena-01) o, si no
-  // está, el primero publicado. Se registra cuál.
+  // UX-F (DEF-R8) · el primer mapa compatible viene preseleccionado (antes había un
+  // «— elige —» y hacían falta ≥2 opciones); se elige igualmente el del catálogo
+  // (mvp-arena-01) si admite el modo o, si no, el primero publicado.
   const mapSel = page.getByLabel("mapa");
-  await expect.poll(async () => (await mapSel.locator("option").count()) > 1, { timeout: 20_000 }).toBe(true);
-  const values = await mapSel
-    .locator("option")
-    .evaluateAll((os) => os.map((o) => (o as HTMLOptionElement).value).filter(Boolean));
+  const mapValues = () =>
+    mapSel.locator("option").evaluateAll((os) => os.map((o) => (o as HTMLOptionElement).value).filter(Boolean));
+  await expect.poll(async () => (await mapValues()).length > 0, { timeout: 20_000 }).toBe(true);
+  const values = await mapValues();
   const chosen = values.find((v) => v.startsWith("mvp-arena-01@")) ?? values[0];
   await mapSel.selectOption(chosen);
   await expect(page.getByTestId("battle-checklist")).not.toContainText("✗");
