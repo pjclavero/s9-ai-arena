@@ -282,6 +282,20 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
             round,
             official: battle.official,
             roster,
+            // UX-D (D5 · C-G9) · geometría PÚBLICA del mapa para el visor (ViewerPage
+            // ya la lee de `init.meta.world`, pero nadie la mandaba: el directo se
+            // pintaba sin muros). Sólo lo que también ve cualquiera en el editor.
+            world: {
+              widthM: arenaMap.widthM,
+              heightM: arenaMap.heightM,
+              walls: arenaMap.walls.map((w) => ({ position: w.position, halfW: w.halfW, halfH: w.halfH })),
+              destructibles: arenaMap.destructibles.map((d) => ({
+                position: d.position,
+                halfW: d.halfW,
+                halfH: d.halfH,
+              })),
+              bases: arenaMap.bases.map((b) => ({ team: b.team, position: b.position, radiusM: b.radiusM })),
+            },
           },
         });
       }
