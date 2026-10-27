@@ -425,6 +425,7 @@ export class BuildPipeline {
           candidate: factory,
           candidateBotId: sub.botId,
           candidateArchetype: sub.archetype,
+          candidateLoadout: sub.loadout,
           referenceAgent: this.deps.referenceAgent,
           ticks: cfg.smokeBattleTicks,
         });

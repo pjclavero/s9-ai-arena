@@ -15,8 +15,8 @@ const catalog = loadCatalog();
 const BOT_ARCHETYPES = {
   "explorer.py": "scout",
   "defender.py": "heavy",
-  "gunner.ts": "gunner",
-  "miner.ts": "miner",
+  "gunner.js": "gunner",
+  "miner.js": "miner",
 } as const;
 
 describe("T5.4 · los loadouts de los 4 bots oficiales validan contra el catálogo vigente", () => {

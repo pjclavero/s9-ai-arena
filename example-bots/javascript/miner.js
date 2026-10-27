@@ -2,6 +2,10 @@
  * Minador — siembra minas en su avance hacia territorio rival, combate cuerpo a
  * cuerpo con su ametralladora cuando detecta a alguien con el lidar.
  *
+ * JavaScript ESM tal cual lo ejecuta el runtime de bots (Node 20): este fichero se
+ * puede pegar en la web o subir sin cambios (UX-05). Exporta la clase por defecto,
+ * que es lo que busca el arranque del sandbox.
+ *
  * Loadout de referencia: arquetipo "miner" del catálogo real de E3
  * (packages/module-catalog/resolve/archetypes.ts): chasis medio, orugas, mina
  * explosiva, ametralladora, blindaje trasero.
@@ -14,29 +18,23 @@
  * deja explícita: sembrar en puntos conocidos de su ruta de avance, cada
  * MINE_INTERVAL_TICKS mientras dure el cooldown del módulo.
  */
-import {
-  ArenaBot,
-  angleDiff,
-  angleTo,
-  distance,
-  type CommandIntent,
-  type ObservationPayload,
-  type WelcomePayload,
-} from "@arena/sdk";
+import { ArenaBot, angleDiff, angleTo, distance } from "@arena/sdk";
 
 const MINE_INTERVAL_TICKS = 100; // algo más que el cooldown real (90 ticks) del módulo
 
 export class MinerBot extends ArenaBot {
-  static readonly ARCHETYPE = "miner";
+  static ARCHETYPE = "miner";
 
-  private mineSlot: string | null = null;
-  private enemyBase: { x: number; y: number } | null = null;
-  private mapCenter = { x: 60, y: 40 };
-  private lastMineTick = -MINE_INTERVAL_TICKS;
+  mineSlot = null;
+  weaponSlot = "turret_main";
+  enemyBase = null;
+  mapCenter = { x: 60, y: 40 };
+  lastMineTick = -MINE_INTERVAL_TICKS;
 
-  override onWelcome(welcome: WelcomePayload): void {
+  onWelcome(welcome) {
     for (const m of welcome.vehicle.modules) {
       if (m.category === "mine") this.mineSlot = m.slot;
+      if (m.category === "weapon") this.weaponSlot = m.slot;
     }
     this.mapCenter = { x: welcome.map.widthM / 2, y: welcome.map.heightM / 2 };
     const enemy = welcome.map.bases?.find((b) => b.team !== welcome.team);
@@ -46,14 +44,14 @@ export class MinerBot extends ArenaBot {
     this.enemyBase = enemy?.position ?? this.mapCenter;
   }
 
-  override onObservation(observation: ObservationPayload): CommandIntent {
+  onObservation(observation) {
     const me = observation.self;
     const lidarRays = observation.sensors?.lidar?.[0]?.rays ?? [];
     // Detecta hasta el alcance real del lidar frontal (~45 m), no un umbral corto:
     // con 30 m el minador se quedaba merodeando sin "ver" a un enemigo a 40 m.
     const intruders = lidarRays.filter((r) => r.hit === "vehicle" && r.distanceM <= 44);
 
-    const command: CommandIntent = {};
+    const command = {};
 
     if (intruders.length > 0) {
       const nearest = intruders.reduce((a, b) => (a.distanceM < b.distanceM ? a : b));
@@ -65,7 +63,7 @@ export class MinerBot extends ArenaBot {
       // Cierra distancia hasta ponerse a tiro de la ametralladora y dispara.
       command.move = { throttle: 0.6, steer: Math.max(-1, Math.min(1, nearest.angle * 2)) };
       command.turret = { targetHeading: bearing };
-      command.fire = ["turret_main"];
+      command.fire = [this.weaponSlot];
     } else {
       // Sin enemigos: avanza hacia territorio enemigo (la mitad OPUESTA a la suya) a
       // buscar, barriendo con el lidar frontal por el camino. Cuando llega, sigue
@@ -88,9 +86,11 @@ export class MinerBot extends ArenaBot {
 
   /** Punto de patrulla: la base enemiga si el mapa la declara; si no, un punto en la
    * mitad OPUESTA del mapa a la que ocupa el minador (así avanza hacia el enemigo). */
-  private patrolTarget(myPos: { x: number; y: number }): { x: number; y: number } {
+  patrolTarget(myPos) {
     if (this.enemyBase && this.enemyBase !== this.mapCenter) return this.enemyBase;
     const farX = myPos.x < this.mapCenter.x ? this.mapCenter.x * 1.7 : this.mapCenter.x * 0.3;
     return { x: farX, y: this.mapCenter.y };
   }
 }
+
+export default MinerBot;

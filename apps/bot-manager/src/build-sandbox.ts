@@ -62,6 +62,8 @@ import {
   type StartupTimeouts,
 } from "./startup-clock.js";
 import type { Runtime } from "./types.js";
+import { describeUserError } from "./user-error.js";
+import { smokeVehicle, type SmokeVehicle } from "./smoke-vehicle.js";
 
 export class SandboxInfrastructureError extends Error {
   constructor(message: string) {
@@ -220,12 +222,17 @@ export class ContainerBuildSandbox implements BuildSandbox {
     }
 
     const catalog = loadCatalog();
-    const candLoadout = safeLookup(ARCHETYPES, sub.archetype);
     const refLoadout = safeLookup(ARCHETYPES, "gunner");
-    if (!candLoadout || !refLoadout) throw new SandboxInfrastructureError(`arquetipo desconocido: ${sub.archetype}`);
+    let cand: SmokeVehicle;
+    try {
+      cand = smokeVehicle(sub, catalog);
+    } catch (e) {
+      throw new SandboxInfrastructureError((e as Error).message);
+    }
+    if (!refLoadout) throw new SandboxInfrastructureError("arquetipo de referencia desconocido: gunner");
     const handle0 = protocolBotHandle(0);
     const participants: Participant[] = [
-      { id: "veh_1", botId: handle0, team: "red", spec: resolveVehicle(candLoadout, catalog) },
+      { id: "veh_1", botId: handle0, team: "red", spec: cand.spec },
       { id: "veh_2", botId: "ref_bot", team: "blue", spec: resolveVehicle(refLoadout, catalog) },
     ];
     const sessionId = `build-${randomUUID().slice(0, 8)}`;
@@ -323,10 +330,19 @@ export class ContainerBuildSandbox implements BuildSandbox {
             `[${startup.reason}] ${startup.detail}${exit}; descargas del artefacto: ${offer.fetches} (${formatTimeline(timeline)})`,
           );
         }
+        // UX-02/UX-04 · el informe del bootstrap trae lo que el usuario necesita:
+        // el hook ausente tal cual, y en una excepción, fichero y línea de SU código.
+        const report = startup.report;
+        const userMessage =
+          report?.kind === "hook"
+            ? report.detail.trim()
+            : report && (report.kind === "import" || report.kind === "runtime")
+              ? `tu código falló al ${report.kind === "import" ? "cargarse" : "arrancar"}: ${describeUserError(report.detail)}`
+              : `el bot no completó el handshake (HELLO): ${startup.detail}${exit}`;
         return {
           protocol: {
             outcome: "failed",
-            message: `el bot no completó el handshake (HELLO): ${startup.detail}${exit} [timeout_reason=${startup.reason}]`,
+            message: `${userMessage} [timeout_reason=${startup.reason}]`,
             logs: [...logs, `descargas del artefacto: ${offer.fetches}`, formatTimeline(timeline)],
             metrics,
           },
@@ -408,7 +424,7 @@ export class ContainerBuildSandbox implements BuildSandbox {
       }
 
       const dq = result.disqualified ?? [];
-      const smokeLogs = [`batalla terminada en ${result.ticks} ticks; ganador ${result.winner}`];
+      const smokeLogs = [cand.note, `batalla terminada en ${result.ticks} ticks; ganador ${result.winner}`];
       const smoke: StageVerdict =
         dq.includes("veh_1") || dq.includes(handle0)
           ? {
@@ -455,8 +471,8 @@ export class ContainerBuildSandbox implements BuildSandbox {
     if (state?.oomKilled) parts.push("OOM");
     if (reports.length) {
       const r = reports[0];
-      const lastLine = r.detail.trim().split("\n").slice(-3).join(" | ");
-      parts.push(`${r.kind}: ${lastLine}`);
+      // UX-02 · fichero y línea del código del usuario, no la traza cruda del sandbox.
+      parts.push(`${r.kind}: ${r.kind === "hook" ? r.detail.trim() : describeUserError(r.detail)}`);
     }
     return parts.length ? ` (${parts.join("; ")})` : "";
   }

@@ -48,6 +48,8 @@ import { LoadoutEditor, type LoadoutDraft } from "./LoadoutEditor.js";
 import { BotDetailPage } from "./BotDetailPage.js";
 import { useResource, ResourceView, type Resource } from "../resource.js";
 import { FormError } from "../ui/primitives.js";
+import { BOT_TEMPLATES, HOOK_HELP, isUntouchedTemplate, type BotRuntime } from "../bot-templates.js";
+import { BuildDiagnosisView, diagnoseBuild } from "../build-diagnosis.js";
 import type { ModuleDefinition } from "../../../../packages/module-catalog/types.js";
 import type { Violation } from "../../../../packages/module-catalog/validator/index.js";
 
@@ -125,6 +127,25 @@ function combine<A, B>(a: Resource<A>, b: Resource<B>): Resource<{ a: A; b: B }>
   return { status: "ready", data: { a: a.data, b: b.data } };
 }
 
+/** UX-B · B1 · límite del nombre (el mismo que valida la API, routes/bots.ts). */
+export const BOT_NAME_MAX = 48;
+
+/** Validación en cliente del nombre del bot: mensaje legible o null si vale. */
+export function botNameProblem(raw: string, existing: string[] = []): string | null {
+  const name = raw.trim();
+  if (!name) return "Escribe un nombre para el bot.";
+  if (name.length > BOT_NAME_MAX)
+    return `El nombre admite como máximo ${BOT_NAME_MAX} caracteres (tiene ${name.length}).`;
+  if (existing.includes(name)) return `Ya tienes un bot llamado «${name}».`;
+  return null;
+}
+
+/** UX-B · B6 · versión que usan las batallas NUEVAS: la publicada más alta (G-18). */
+export function versionInBattles(versions: { version: number; state: string }[]): number | undefined {
+  const published = versions.filter((v) => v.state === "published").map((v) => v.version);
+  return published.length ? Math.max(...published) : undefined;
+}
+
 /** DEV-A · A9.19 · `#/bots/<botId>` → vista de detalle del bot (Overview/Code/Equipment/Versions). */
 export function matchBotDetailRoute(hash: string): string | null {
   const m = /^#\/bots\/([^/?#]+)/.exec(hash);
@@ -168,8 +189,13 @@ function BotsListPage(props: {
   // Versión que el usuario está mirando. null = "la última" (se resuelve al cargar).
   const [focusRequest, setFocusRequest] = useState<number | null>(null);
   const [newName, setNewName] = useState("");
-  const [pasted, setPasted] = useState("");
-  const [runtime, setRuntime] = useState("python");
+  // UX-B · B3: el editor arranca con una plantilla VÁLIDA del runtime, nunca vacío.
+  const [runtime, setRuntime] = useState<BotRuntime>("python");
+  const [pasted, setPasted] = useState(BOT_TEMPLATES.python);
+  // Versión de la que se cargó el código del editor (para decir qué se edita).
+  const [editingFrom, setEditingFrom] = useState<number | null>(null);
+  const [creating, setCreating] = useState(false);
+  const codeRef = useRef<HTMLTextAreaElement | null>(null);
   const [error, setError] = useState("");
   // REVIEW (R4.8) · el error de «Crear bot» se pinta JUNTO al formulario (antes
   // sólo se veía con un bot abierto) con el componente común de D.
@@ -390,13 +416,57 @@ function BotsListPage(props: {
   // --------------------------------------------------------------- acciones
   async function onCreateBot(e: FormEvent) {
     e.preventDefault(); // Enter crea el bot (a11y R3.7)
+    // UX-B · B1: un doble clic (o Enter + clic) no crea dos bots: mientras hay una
+    // creación en vuelo, el formulario no envía otra.
+    if (creating) return;
     setCreateErr(null);
+    const existing = botsRes.status === "ready" ? botsRes.data.items.map((b) => b.name) : [];
+    const problem = botNameProblem(newName, existing);
+    if (problem) {
+      setCreateErr(Object.assign(new Error(problem), { status: 400 }));
+      return;
+    }
+    setCreating(true);
     try {
-      await api("POST", "/bots", { name: newName });
+      const created = await api<Bot>("POST", "/bots", { name: newName.trim() });
       setNewName("");
       reloadBots();
+      // El paso siguiente es su loadout: se abre el bot recién creado.
+      if (created?.id) {
+        setSelected(created);
+        setFocusRequest(null);
+      }
     } catch (err) {
       setCreateErr(err ?? new Error("error desconocido"));
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  function changeRuntime(next: BotRuntime) {
+    // La plantilla sólo se sustituye si el usuario no ha escrito nada propio.
+    if (isUntouchedTemplate(pasted)) setPasted(BOT_TEMPLATES[next]);
+    setRuntime(next);
+  }
+
+  /** UX-02 · «Corregir»: carga el código de la versión rechazada en el editor. */
+  async function loadCodeForFix(v: BotVersion) {
+    if (!selected) return;
+    setError("");
+    try {
+      const f = await api<{ files: { path: string; content: string }[] }>(
+        "GET",
+        `/bots/${selected.id}/versions/${v.version}/files`,
+      );
+      const entry = f.files.find((x) => /(^|\/)(bot|main)\.(py|js|mjs)$/.test(x.path)) ?? f.files[0];
+      if (!entry) throw new Error("la versión no tiene ficheros de código");
+      setRuntime(v.runtime === "node" ? "node" : "python");
+      setPasted(entry.content);
+      setEditingFrom(v.version);
+      codeRef.current?.focus();
+      codeRef.current?.scrollIntoView?.({ block: "center" });
+    } catch (e) {
+      setError(`No se pudo cargar el código de v${v.version}: ${(e as Error).message}`);
     }
   }
 
@@ -423,10 +493,12 @@ function BotsListPage(props: {
       // B11: antes iba fijo a "1" — si la revisión 1 ya no existía, la subida
       // fallaba con un 400 que el usuario leía como "no se ha subido nada".
       fd.append("loadoutRevision", String(loadoutRevision));
+      if (editingFrom !== null) fd.append("parentVersion", String(editingFrom));
       const created = await api<BotVersion>("POST", `/bots/${selected.id}/versions`, undefined, { formData: fd });
       // El foco pasa a la versión RECIÉN creada: lo que se enseña a partir de
       // aquí es su estado, no el de ninguna anterior.
       setFocusRequest(created?.version ?? null);
+      setEditingFrom(null);
       pollsRef.current = 0;
       setPollExhausted(false);
       reloadVersions({ silent: true });
@@ -510,7 +582,10 @@ function BotsListPage(props: {
           <label>
             Nombre del bot <input aria-label="nuevo-bot" value={newName} onChange={(e) => setNewName(e.target.value)} />
           </label>{" "}
-          <button type="submit">Crear bot</button>
+          <button type="submit" disabled={creating} aria-busy={creating}>
+            {creating ? "Creando…" : "Crear bot"}
+          </button>{" "}
+          <small>Máximo {BOT_NAME_MAX} caracteres; no puedes repetir el nombre de otro de tus bots.</small>
         </form>
         <FormError error={createErr} data-testid="create-bot-error" />
       </div>
@@ -531,6 +606,15 @@ function BotsListPage(props: {
               (!!builds && (!builds.known || (pollExhausted && !!build && !buildFinished))) ||
               (!builds && pollExhausted);
             const focusedRejection = rejectionToShow(focused);
+            const inBattles = versionInBattles(d.a);
+            const nextVersion = d.a.length ? Math.max(...d.a.map((v) => v.version)) + 1 : 1;
+            const diagnosis = focused
+              ? diagnoseBuild({
+                  state: focused.state,
+                  rejectionReason: focused.rejectionReason,
+                  stages: build?.stages,
+                })
+              : null;
             return (
               <>
                 {/* key={bot.id}: al cambiar de bot el editor SE REMONTA con su revisión vigente. */}
@@ -564,6 +648,11 @@ function BotsListPage(props: {
                         Motivo del rechazo de v{focused.version}: {focusedRejection}
                       </p>
                     )}
+                    <p data-testid="in-battles">
+                      {inBattles
+                        ? `Las batallas nuevas usan la v${inBattles} (la publicada más reciente).`
+                        : "Ninguna versión publicada: este bot todavía no puede entrar en batallas."}
+                    </p>
                     {versionsStale && (
                       <p className="warn" data-testid="versions-stale">
                         No se ha podido actualizar el estado: lo que ves puede estar desfasado.
@@ -573,6 +662,15 @@ function BotsListPage(props: {
                       Actualizar estado
                     </button>
                   </div>
+                )}
+                {focused && diagnosis && (
+                  <BuildDiagnosisView
+                    diagnosis={diagnosis}
+                    version={focused.version}
+                    publishedVersion={inBattles}
+                    onFix={() => void loadCodeForFix(focused)}
+                    onRetry={() => void submitVersion(focused.version)}
+                  />
                 )}
 
                 <div className="card">
@@ -584,6 +682,12 @@ function BotsListPage(props: {
                           <td>
                             v{v.version}
                             {v.version === focusedVersion ? " ◀ mirando" : ""}
+                            {v.version === inBattles && (
+                              <strong className="ok" data-testid={`in-battles-${v.version}`}>
+                                {" "}
+                                · en batallas
+                              </strong>
+                            )}
                           </td>
                           <td>
                             {v.state}
@@ -613,30 +717,61 @@ function BotsListPage(props: {
                       ))}
                     </tbody>
                   </table>
-
                   <h3>Subir código (pegado)</h3>
                   <label>
                     Runtime{" "}
-                    <select aria-label="runtime" value={runtime} onChange={(e) => setRuntime(e.target.value)}>
-                      <option value="python">python</option>
-                      <option value="node">node</option>
+                    <select
+                      aria-label="runtime"
+                      value={runtime}
+                      onChange={(e) => changeRuntime(e.target.value === "node" ? "node" : "python")}
+                    >
+                      <option value="python">Python</option>
+                      <option value="node">JavaScript (Node)</option>
                     </select>
                   </label>
+                  <p className="muted" data-testid="hook-help">
+                    {HOOK_HELP[runtime]}
+                  </p>
+                  {editingFrom !== null && (
+                    <p className="warn" data-testid="editing-from">
+                      Editando el código de v{editingFrom}: al subirlo se crea la v{nextVersion}; v{editingFrom} no
+                      cambia.
+                    </p>
+                  )}
                   <p>
                     <label>
                       Código{" "}
                       <textarea
+                        ref={codeRef}
                         aria-label="codigo"
-                        rows={8}
-                        cols={70}
+                        rows={16}
+                        cols={80}
+                        spellCheck={false}
                         value={pasted}
                         onChange={(e) => setPasted(e.target.value)}
                       />
                     </label>
                   </p>
+                  <button
+                    type="button"
+                    data-testid="reset-template"
+                    onClick={() => {
+                      setPasted(BOT_TEMPLATES[runtime]);
+                      setEditingFrom(null);
+                    }}
+                  >
+                    Restaurar la plantilla de {runtime === "node" ? "JavaScript" : "Python"}
+                  </button>{" "}
                   <button type="button" disabled={!current} onClick={() => current && uploadPasted(current.revision)}>
                     Subir como versión nueva
                   </button>
+                  {current && (
+                    <small data-testid="upload-target">
+                      {" "}
+                      Se creará la v{nextVersion} con la revisión {current.revision} del loadout (borrador: después
+                      pulsa «Enviar a validación»).
+                    </small>
+                  )}
                   {!current && (
                     <p className="warn">Guarda antes una configuración (loadout) para poder subir código.</p>
                   )}

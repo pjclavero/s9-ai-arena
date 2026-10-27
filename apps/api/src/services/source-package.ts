@@ -90,20 +90,39 @@ export function rootManifestFor(runtime: Runtime): string {
   return runtime === "python" ? "requirements.txt" : "package.json";
 }
 
+/**
+ * Versión REAL del SDK que trae la imagen de runtime (sdks/python/pyproject.toml y
+ * sdks/javascript/package.json). UX-05: el esqueleto declaraba 1.0.0, que no existe.
+ */
+export const SDK_VERSION = "0.1.0";
+
 /** Paquete estándar mínimo alrededor de código "pegado" (T7.4: archivo o pegado). */
 export function wrapSingleFile(runtime: Runtime, content: string): SourceFile[] {
   if (runtime === "python") {
     return [
       { path: "manifest.json", content: JSON.stringify({ runtime: "python", entry: "src/bot.py" }, null, 2) },
-      { path: "requirements.txt", content: "arena-sdk==1.0.0\n" },
-      { path: "requirements.lock", content: "arena-sdk==1.0.0\n" },
+      { path: "requirements.txt", content: `arena-sdk==${SDK_VERSION}\n` },
+      { path: "requirements.lock", content: `arena-sdk==${SDK_VERSION}\n` },
       { path: "src/bot.py", content },
     ];
   }
   return [
     {
       path: "package.json",
-      content: JSON.stringify({ name: "bot", version: "1.0.0", dependencies: { "@arena/sdk": "1.0.0" } }, null, 2),
+      // UX-05: `"type": "module"` porque el bot es ESM (import/export). Sin él Node
+      // avisa MODULE_TYPELESS_PACKAGE_JSON al cargarlo y lo reinterpreta; `main`
+      // dice al arranque cuál es la entrada sin adivinar.
+      content: JSON.stringify(
+        {
+          name: "bot",
+          version: "1.0.0",
+          type: "module",
+          main: "src/bot.js",
+          dependencies: { "@arena/sdk": SDK_VERSION },
+        },
+        null,
+        2,
+      ),
     },
     { path: "package-lock.json", content: JSON.stringify({ lockfileVersion: 3, packages: {} }, null, 2) },
     { path: "src/bot.js", content },

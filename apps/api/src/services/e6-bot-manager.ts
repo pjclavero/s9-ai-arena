@@ -40,7 +40,7 @@ import { decodePackage, wrapSingleFile, PackageValidationError } from "./source-
 
 export { decodePackage, wrapSingleFile };
 
-/** Arquetipo de la partida de humo según el chasis del loadout (ARCHETYPES de E3). */
+/** Arquetipo de RESERVA de la partida de humo según el chasis (ARCHETYPES de E3); ver smoke-vehicle.ts. */
 export function archetypeForChassis(chassis: string): BotSubmission["archetype"] {
   const base = splitVersioned(chassis).base;
   if (base === "chassis.light") return "scout";
@@ -128,6 +128,15 @@ export class E6PipelineBotManager implements BotManagerClient {
       ownerUserId: (await this.db("bots").where({ id: req.botId }).first()).owner_id,
       runtime: req.runtime,
       archetype: archetypeForChassis(loadout.chassis),
+      // UX-01 · G-A05: la partida de humo juega el loadout REAL de la versión,
+      // el mismo que jugará en batalla (engine-executor); el arquetipo queda de reserva.
+      loadout: {
+        loadoutId: loadout.id,
+        revision: loadout.revision,
+        catalogVersion: loadout.catalog_version,
+        chassis: loadout.chassis,
+        modules: typeof loadout.modules === "string" ? JSON.parse(loadout.modules) : loadout.modules,
+      },
       files,
     };
 

@@ -166,8 +166,16 @@ function walk(node: unknown, visit: (n: Node) => void): void {
  * interprete un error de acorn sobre `sourceType`.
  */
 function looksLikeTypeScript(content: string): boolean {
-  return /:\s*(string|number|boolean|void|any|unknown|never)\b|<[A-Za-z_][\w.]*>\s*\(|\binterface\s+\w|\bimplements\s+\w|\bas\s+const\b|\benum\s+\w|:\s*\w+\[\]|\?\s*:\s*\w/.test(
-    content,
+  return (
+    /:\s*(string|number|boolean|void|any|unknown|never)\b|<[A-Za-z_][\w.]*>\s*\(|\binterface\s+\w|\bimplements\s+\w|\bas\s+const\b|\benum\s+\w|:\s*\w+\[\]|\?\s*:\s*\w/.test(
+      content,
+    ) ||
+    // UX-05 · lo que trae un bot copiado del SDK en TypeScript: `import type` /
+    // `{ type X }`, modificadores de miembro, `override` y anotaciones con tipos
+    // propios (`(obs: ObservationPayload): CommandIntent`).
+    /\bimport\s+type\s|[{,]\s*type\s+[A-Z]\w*|^\s*(private|protected|public|readonly)\s+\w+\s*[=:;(?]|^\s*override\s+\w+\s*\(|\(\s*\w+\s*:\s*[A-Z]\w*|\)\s*:\s*[A-Z]\w*\s*\{/m.test(
+      content,
+    )
   );
 }
 

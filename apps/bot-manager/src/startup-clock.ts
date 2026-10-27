@@ -83,7 +83,7 @@ export const PLATFORM_REPORT_KINDS: ReadonlySet<string> = new Set([
   "sdk",
 ]);
 /** Informes del bootstrap que son del BOT (su paquete o su código). */
-export const BOT_REPORT_KINDS: ReadonlySet<string> = new Set(["manifest", "entry", "import", "runtime"]);
+export const BOT_REPORT_KINDS: ReadonlySet<string> = new Set(["manifest", "entry", "import", "runtime", "hook"]);
 
 export type StartupFault = "infrastructure" | "bot";
 export type StartupFailureReason =

@@ -3,42 +3,39 @@
  * velocity del contacto de radar para anticipar dónde estará el objetivo, no solo
  * su posición actual.
  *
+ * JavaScript ESM tal cual lo ejecuta el runtime de bots (Node 20): este fichero se
+ * puede pegar en la web o subir sin cambios (UX-05). Exporta la clase por defecto,
+ * que es lo que busca el arranque del sandbox.
+ *
  * Loadout de referencia: arquetipo "gunner" del catálogo real de E3
  * (packages/module-catalog/resolve/archetypes.ts): chasis medio, cañón, radar,
- * blindaje frontal.
+ * blindaje frontal. Lee del WELCOME la ranura y la velocidad de proyectil REALES
+ * del arma que montes: no asume el loadout.
  */
-import {
-  ArenaBot,
-  angleDiff,
-  angleTo,
-  distance,
-  type CommandIntent,
-  type ObservationPayload,
-  type WelcomePayload,
-} from "@arena/sdk";
+import { ArenaBot, angleDiff, angleTo, distance } from "@arena/sdk";
 
 const IDEAL_RANGE_M = 35;
 const DEFAULT_PROJECTILE_SPEED_MS = 120;
 
 export class GunnerBot extends ArenaBot {
-  static readonly ARCHETYPE = "gunner";
+  static ARCHETYPE = "gunner";
 
-  private projectileSpeedMs = DEFAULT_PROJECTILE_SPEED_MS;
-  private weaponSlot = "turret_main";
-  private mapCenter = { x: 60, y: 40 };
+  projectileSpeedMs = DEFAULT_PROJECTILE_SPEED_MS;
+  weaponSlot = "turret_main";
+  mapCenter = { x: 60, y: 40 };
 
-  override onWelcome(welcome: WelcomePayload): void {
+  onWelcome(welcome) {
     this.mapCenter = { x: welcome.map.widthM / 2, y: welcome.map.heightM / 2 };
     for (const m of welcome.vehicle.modules) {
       if (m.category === "weapon") {
         this.weaponSlot = m.slot;
-        const speed = (m.specs as any)?.projectileSpeedMs;
+        const speed = m.specs?.projectileSpeedMs;
         if (typeof speed === "number") this.projectileSpeedMs = speed;
       }
     }
   }
 
-  override onObservation(observation: ObservationPayload): CommandIntent {
+  onObservation(observation) {
     const me = observation.self;
     const contacts = (observation.sensors?.radar ?? []).flatMap((r) => r.contacts);
 
@@ -57,8 +54,7 @@ export class GunnerBot extends ArenaBot {
     const aimPoint = this.predictedAimPoint(me.position, target);
 
     const d = distance(me.position, target.position);
-    const bearingToTarget = angleTo(me.position, target.position);
-    const turn = angleDiff(me.heading, bearingToTarget);
+    const turn = angleDiff(me.heading, angleTo(me.position, target.position));
 
     // Mantiene distancia: se acerca si está lejos, retrocede si está demasiado cerca.
     const throttle = d > IDEAL_RANGE_M + 10 ? 0.6 : d < IDEAL_RANGE_M - 10 ? -0.3 : 0;
@@ -78,10 +74,7 @@ export class GunnerBot extends ArenaBot {
    * iteraciones convergen de sobra para un blanco a velocidad constante y mejoran
    * claramente el acierto contra objetivos que cruzan la línea de tiro.
    */
-  private predictedAimPoint(
-    from: { x: number; y: number },
-    target: { position: { x: number; y: number }; velocity?: { x: number; y: number } },
-  ) {
+  predictedAimPoint(from, target) {
     if (!target.velocity) return target.position;
     let timeToImpact = distance(from, target.position) / this.projectileSpeedMs;
     for (let i = 0; i < 2; i++) {
@@ -95,3 +88,5 @@ export class GunnerBot extends ArenaBot {
     };
   }
 }
+
+export default GunnerBot;

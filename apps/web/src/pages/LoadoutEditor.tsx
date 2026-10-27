@@ -213,10 +213,11 @@ export function LoadoutEditor(props: {
           Editando sobre la revisión <strong>{props.loadedRevision}</strong> (guardar crea una revisión nueva).
         </p>
       )}
-      <p className="warn" role="note" data-testid="effect-note">
-        Efecto real en batalla: hoy solo la <strong>familia del chasis</strong> cambia la batalla (decide el arquetipo
-        que se juega). Los módulos elegidos cuentan para el presupuesto, la masa y la energía, pero en la ejecución real
-        se usan los módulos fijos del arquetipo. Cada ranura indica su efecto.
+      <p role="note" data-testid="effect-note">
+        Este loadout <strong>es el vehículo que juega</strong>: el chasis y los módulos que elijas son los que se
+        simulan en las batallas y en la partida de humo del build. Cada versión de código queda ligada a la revisión de
+        loadout con la que la subiste: guardar una revisión nueva no cambia las versiones ya subidas. Cada ranura indica
+        qué propiedades usa el motor.
       </p>
       <label>
         Chasis{" "}
@@ -330,7 +331,20 @@ export function LoadoutEditor(props: {
         <span className={live.costCredits > props.budgetCredits ? "error" : "ok"} data-testid="live-cost">
           Coste: {live.costCredits}/{props.budgetCredits} cr
         </span>{" "}
-        · <span data-testid="live-mass">Masa: {live.massKg} kg</span> ·{" "}
+        · <span data-testid="live-mass">Masa: {live.massKg} kg</span>
+        {chassisDef.maxLoadKg != null && (
+          // UX-B · B2: el límite de masa que aplica el validador (mass_exceeded) es la
+          // CARGA de módulos frente a maxLoadKg del chasis, no la masa total: se
+          // enseña esa cifra junto a su límite para que la violación se entienda.
+          <span
+            className={live.massKg - chassisDef.massKg > chassisDef.maxLoadKg ? "error" : "ok"}
+            data-testid="live-load"
+          >
+            {" "}
+            (carga de módulos {live.massKg - chassisDef.massKg}/{chassisDef.maxLoadKg} kg)
+          </span>
+        )}{" "}
+        ·{" "}
         <span className={live.energyBalanceEUs < 0 ? "error" : "ok"} data-testid="live-energy">
           Energía: {live.energyBalanceEUs >= 0 ? "+" : ""}
           {live.energyBalanceEUs} EU/s
