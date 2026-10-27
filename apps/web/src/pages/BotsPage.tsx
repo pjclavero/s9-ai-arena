@@ -171,7 +171,10 @@ function BotsListPage(props: {
   maxPollWaitMs?: number;
 }) {
   const pollIntervalMs = props.pollIntervalMs ?? 2000;
-  const maxPolls = props.maxPolls ?? 30; // ~60 s: presupuesto FINITO por diseño
+  // ~5 min: presupuesto FINITO por diseño. Era 30 (~60 s) y en producción (RC5)
+  // un build de 68 s, el primero tras recrear los servicios con el hipervisor
+  // cargado, dejó el panel en «Validación en curso…» sin enterarse del final.
+  const maxPolls = props.maxPolls ?? 150;
   /**
    * issue #95 · Tope de ESPERA por una lectura que no vuelve. `api.ts` hace
    * `fetch` sin plazo ni `AbortController`, así que una lectura puede quedarse
