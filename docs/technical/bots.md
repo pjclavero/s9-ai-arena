@@ -63,7 +63,7 @@ El bot «habla» el protocolo `arena/1` a 10 Hz de decisión: recibe una observa
 | Anfitrión del sandbox | `apps/bot-manager/src/sandbox-host.ts` (`SandboxHost`) | HTTP y WebSocket en un mismo puerto: sirve el artefacto con token y aloja el ProtocolServer |
 | Arranque del código | `apps/bot-manager/src/bot-launch.ts`, `sandbox-bootstrap/bootstrap.{py,mjs}` | Imagen de runtime (DIGESTS.lock), bootstrap, `launchSpecForBot` y `resolveBotLaunch` (batallas) |
 | Runner y proxy | `apps/bot-manager/src/container-runner.ts`, `docker-proxy*.ts`, `container-battle.ts`, `runtimes/{python,node}/Dockerfile` | Ejecución aislada; única vía hacia Docker |
-| Ejecutor de plataforma | `apps/tournament-worker/src/engine-executor.ts` | Batallas con `HunterBot` ([battles.md](battles.md)) |
+| Ejecutor de plataforma | `apps/tournament-worker/src/engine-executor.ts` | Batallas con el código de cada bot (`containerAgents`) y su loadout ([battles.md](battles.md)) |
 
 ## Estados de versión
 
@@ -153,17 +153,19 @@ Una sola sesión por build (`ContainerBuildSandbox.verify`):
    - envía la señal **`ready`** (`POST ARTIFACT_URL/ready`, con el token) y espera la respuesta: a partir de aquí todo lo que se ejecuta es código del usuario ([TD-034](#arranque-dos-relojes-td-034));
    - carga el fichero de entrada: `manifest.entry` o `src/bot.py` en Python; `package.json main` o `src/bot.js` en Node;
    - instancia la subclase de `ArenaBot` (en Python, `Bot` o la única definida; en Node, `export default`, `Bot` o la única exportada);
+   - **comprueba el hook (UX-04)**: la clase (o un ancestro distinto de `ArenaBot`) debe sobrescribir `on_observation` / `onObservation` o el despachador interno; si no, falla con `kind: "hook"` y sugiere el nombre propio más parecido («¿Quisiste decir «on_observaton»?»). Antes una clase con el hook mal escrito heredaba el `{}` de `ArenaBot` y pasaba las 10 etapas sin hacer nada;
    - llama a `run(WS_URL, BATTLE_TOKEN)`.
 
-   Si algo falla, informa a `ARTIFACT_URL/report` (`kind` + traza) y sale con un código distinto de 0. Antes de `ready`, los `kind` de plataforma (`config`, `fetch`, `integrity`, `materialize`, `sdk`) son infraestructura y los del paquete (`manifest`, `entry`) son del bot. Después de `ready`, **cualquier** informe es del bot: su código ve `ARTIFACT_URL`/`ARTIFACT_TOKEN` y podría falsear un `kind` de plataforma. Los del bot llegan al motivo de rechazo.
+   Si algo falla, informa a `ARTIFACT_URL/report` (`kind` + traza) y sale con un código distinto de 0. `apps/bot-manager/src/user-error.ts` resume la traza como «fichero, línea: error» con la ruta DENTRO del paquete (`src/bot.py, línea 7: NameError…`), sin las rutas del sandbox; la web la muestra en el diagnóstico del build (fase, fichero y línea, que la versión no está publicada y qué hacer). Antes de `ready`, los `kind` de plataforma (`config`, `fetch`, `integrity`, `materialize`, `sdk`) son infraestructura y los del paquete (`manifest`, `entry`) son del bot. Después de `ready`, **cualquier** informe es del bot: su código ve `ARTIFACT_URL`/`ARTIFACT_TOKEN` y podría falsear un `kind` de plataforma. Los del bot llegan al motivo de rechazo.
 4. **Postura.** Se inspecciona la postura real del contenedor con `complianceViolations`. Si no es conforme, es un fallo de plataforma.
 5. **Readiness.** `awaitAgentReady` (`startup-clock.ts`) espera la señal `ready` y el HELLO aceptado por el ProtocolServer con los dos relojes de abajo; despierta con cada señal y sondea el estado real del contenedor (salida temprana). Nunca duerme a ciegas.
-6. **Partida de humo.** El candidato hace el handshake y juega en el motor real (`dm_practice@1`, `emptyArena`, `smokeBattleTicks` ticks) contra el bot de referencia `HunterBot` (E5).
+6. **Partida de humo.** El candidato hace el handshake y juega en el motor real (`dm_practice@1`, `emptyArena`, `smokeBattleTicks` ticks) contra el bot de referencia `HunterBot` (E5). El vehículo del candidato es el **loadout de la versión** (`smoke-vehicle.ts`, UX-01), el mismo que juega en batalla; el arquetipo del chasis sólo es reserva si el loadout falta o es de otra versión de catálogo, y se dice en el log de la etapa.
 
 Veredictos:
 
 | Etapa | Pasa si | Falla con |
 |---|---|---|
+| `protocol_test` (hook) | la clase implementa el hook | «tu clase Bot no implementa on_observation(self, observation): sin él el bot no hace nada en la batalla.» + sugerencia |
 | `protocol_test` | la plataforma deja el agente `ready` en `SANDBOX_STARTUP_TIMEOUT_MS` (si no, infraestructura), el código del bot hace HELLO en `BOT_EXECUTION_TIMEOUT_MS` desde `ready`, todo mensaje valida contra `envelope.schema.json` y hay ≥1 `COMMAND` válido | «el bot no completó el handshake (HELLO): … [timeout_reason=bot_execution_timeout\|bot_crash]», «mensaje(s) fuera de protocolo…», «ningún COMMAND válido…» más la traza del bootstrap |
 | `smoke_battle` | la batalla termina y el candidato no está descalificado | «candidato descalificado en la partida de humo…» |
 | `resource_limits` | p95 de decisión ≤ `maxDecisionMs` (100 ms) y sin OOM | «decisión p95 …», «OOM» |
@@ -282,6 +284,8 @@ Verificado contra `27f70bb`; filas del sandbox y del versionado, contra la integ
 | Rechazo determinista antes del cambio (main y producción) | RUNTIME_VERIFIED (histórico) | Auditoría 2026-10-15, B pasada 2 §1c |
 | Rechazo determinista en navegador real (main y runtime de producción) | RUNTIME_VERIFIED | Auditoría 2026-10-15, B pasada 2 §1c |
 | En producción, las 12 versiones `rejected` y los 22 builds `failed` | RUNTIME_VERIFIED | Auditoría 2026-10-15, A pasada 1 (lectura de BD) |
+| UX-R · hook obligatorio (Python y Node), con sugerencia | CODE_VERIFIED + test | `apps/bot-manager/src/sandbox-bootstrap/bootstrap.{py,mjs}`; `apps/bot-manager/tests/bootstrap-hook.test.ts` (rc=0, ronda UX-R) |
+| UX-R · humo con el loadout de la versión | CODE_VERIFIED + test | `apps/bot-manager/src/smoke-vehicle.ts`; `apps/bot-manager/tests/smoke-vehicle.test.ts` (rc=0, ronda UX-R) |
 | Orden de las 10 etapas | CODE_VERIFIED | `apps/bot-manager/src/types.ts:19-30`; `apps/api/src/services/bot-manager.ts:13-24` |
 | Límites: 10 MB, 500 ficheros, 200 MB, 100 ms, 5000 ms, 600 ticks | CODE_VERIFIED | `apps/bot-manager/src/config.ts:138-162` |
 | TD-034 · dos relojes: plataforma (`SANDBOX_STARTUP_TIMEOUT_MS`) hasta `ready`, bot (`BOT_EXECUTION_TIMEOUT_MS`) desde `ready` | RUNTIME_VERIFIED (Docker rootless local y GitHub Actions, `integration/production-readiness`) | `apps/bot-manager/src/startup-clock.ts`; `apps/bot-manager/tests/build-sandbox-timing-docker.test.ts` (7/7); `startup-clock.test.ts` (20/20). Mutación «reloj del bot desde el lanzamiento» → rojo (también con Docker) |

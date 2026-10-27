@@ -66,7 +66,7 @@ El reproductor genera un enlace con el instante actual (`#/replay/<id>?t=<tick>`
 
 - La lista muestra identificadores y no los nombres de los bots.
 - Ya no lista ficheros de replay sin batalla en la plataforma: la lista sale de las batallas, no del almacén de ficheros.
-- En móvil (375 px) no se ha vuelto a medir el reproductor (la auditoría vio desbordamiento).
+- En móvil (375 px) no se ha vuelto a medir el reproductor (la auditoría vio desbordamiento). El título dice quién juega («Replay: Alfa vs Beta») si el replay trae la nómina, y la línea de tiempo tiene nombre para lectores de pantalla («Línea de tiempo del replay»).
 
 ## Estado actual
 
