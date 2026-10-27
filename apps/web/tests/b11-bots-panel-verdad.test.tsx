@@ -299,6 +299,33 @@ describe("B11 · el pipeline refleja el resultado final", () => {
     expect(screen.queryByTestId("pipeline-running")).toBeNull();
   });
 
+  it("RC5 · con el presupuesto POR DEFECTO, un build que tarda más de 60 s se ve terminar solo", async () => {
+    // Producción (RC5, 2026-10-27): un build de 68 s quedó «Validación en curso…»
+    // porque el presupuesto por defecto (30 lecturas ≈ 60 s) se agotó antes de
+    // que el worker terminara. Aquí: sin `maxPolls`, el build termina después de
+    // 35 lecturas y el panel debe enterarse sin pulsar «Actualizar estado».
+    const st = fakeBackend({ versions: [{ version: 1, state: "draft", runtime: "python", loadoutRevision: 7 }] });
+    render(
+      <BotsPage me={ME} catalog={catalog} catalogVersion={CATALOG_VERSION} budgetCredits={1000} pollIntervalMs={5} />,
+    );
+    await selectBot();
+    await screen.findByTestId("focused-version");
+    await userEvent.click(screen.getByRole("button", { name: "Enviar a validación v1" }));
+    await screen.findByTestId("pipeline-running", {}, { timeout: 15_000 });
+
+    await waitFor(() => expect(st.calls.filter((c) => c.includes("/builds")).length).toBeGreaterThan(35), {
+      timeout: 10_000,
+    });
+    st.versions = [{ version: 1, state: "validated", runtime: "python", loadoutRevision: 7 }];
+    st.builds = [{ id: "build-1", version: 1, status: "passed", stages: [{ name: "publish", status: "passed" }] }];
+
+    await waitFor(() => expect(screen.getByTestId("focused-version").textContent).toContain("validated"), {
+      timeout: 5000,
+    });
+    expect(screen.queryByTestId("pipeline-running")).toBeNull();
+    expect(document.body.textContent).not.toContain("estado desconocido");
+  });
+
   it("el sondeo TIENE FIN: agotado el presupuesto dice «estado desconocido», no miente", async () => {
     fakeBackend({
       versions: [{ version: 1, state: "validating", runtime: "python", loadoutRevision: 7 }],
