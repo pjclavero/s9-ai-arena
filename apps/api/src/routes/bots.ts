@@ -246,7 +246,8 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     }
     // UX-B · B1: comprobar-e-insertar bajo un cerrojo transaccional por (dueño,
     // nombre). Sin él, dos POST simultáneos (doble clic) pasaban los dos la
-    // comprobación de duplicado y creaban dos bots con el mismo nombre.
+    // comprobación de duplicado y el perdedor chocaba con la restricción única
+    // (bots_owner_id_name_key): 500 «error interno» en vez del 409 legible.
     const bot = await db.transaction(async (trx) => {
       await trx.raw("SELECT pg_advisory_xact_lock(hashtext(?))", [`bot-name:${req.auth!.userId}:${name}`]);
       if (await trx("bots").where({ owner_id: req.auth!.userId, name }).first()) {

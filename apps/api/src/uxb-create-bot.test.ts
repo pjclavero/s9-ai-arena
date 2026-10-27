@@ -58,7 +58,10 @@ describe("UX-B · B1 · alta de bot", () => {
     expect(r.body.message).toMatch(/Ya tienes un bot llamado «Gemelo»/);
   });
 
-  it("doble clic: dos POST simultáneos con el mismo nombre crean UN solo bot", async () => {
+  // Medido sin el cerrojo: la restricción única bots_owner_id_name_key impedía el
+  // segundo bot, pero la petición perdedora respondía 500 (error interno) en vez
+  // del 409 legible.
+  it("doble clic: dos POST simultáneos con el mismo nombre → UN bot, y el segundo recibe 409 (no 500)", async () => {
     const [a, b] = await Promise.all([post({ name: "Doble" }), post({ name: "Doble" })]);
     expect([a.status, b.status].sort()).toEqual([201, 409]);
     const owner = (await h.db("users").where({ email: DEV_USERS.developer }).first()).id;
