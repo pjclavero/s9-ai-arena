@@ -28,6 +28,10 @@ import { ErrorBoundary, userFacingMessage } from "../src/ErrorBoundary.js";
 import { ErrorState, FormError, Field, LiveStatus } from "../src/ui/primitives.js";
 import { installRouteFocus, ROUTE_FOCUS_ATTR } from "../src/ui/route-focus.js";
 import { useSessionDraft, DRAFT_PREFIX } from "../src/ui/draft.js";
+import { AdminPage } from "../src/pages/AdminPage.js";
+import { RolesPage } from "../src/pages/RolesPage.js";
+import { SystemPage } from "../src/pages/SystemPage.js";
+import { AuditPage } from "../src/pages/AuditPage.js";
 
 function jsonRes(status: number, body?: unknown, headers: Record<string, string> = {}) {
   return {
@@ -365,5 +369,32 @@ describe("UX-E · borrador local del texto en edición", () => {
     expect(screen.getByTestId("restored")).toBeTruthy();
     fireEvent.click(screen.getByText("guardado"));
     expect(window.sessionStorage.getItem(`${DRAFT_PREFIX}bot:b1:code`)).toBeNull();
+  });
+});
+
+describe("UX-E · estados de error de las pantallas de administración", () => {
+  const USER = { id: "u1", displayName: "Ana", email: "a@a.es", roles: ["user"], twoFactorEnabled: false };
+  const forbidden = () => vi.fn(async () => jsonRes(403, { code: "forbidden", message: "Requiere rol admin" }));
+
+  it("Administración para un usuario normal: título, motivo y salida (no un «Acceso denegado.» suelto)", () => {
+    render(<AdminPage me={USER} />);
+    const box = screen.getByTestId("admin-denied");
+    expect(box.getAttribute("role")).toBe("alert");
+    expect(screen.getByRole("heading", { name: "Administración" })).toBeTruthy();
+    expect(box.textContent).toContain("No tienes permiso para esto");
+    expect(screen.getByRole("link", { name: "Volver al inicio" })).toBeTruthy();
+  });
+
+  it.each([
+    ["Roles", () => <RolesPage me={USER} />, "Roles y permisos"],
+    ["Sistema", () => <SystemPage me={USER} />, "Estado del sistema"],
+    ["Auditoría", () => <AuditPage me={USER} />, "Auditoría"],
+  ] as const)("%s con 403: encabezado y error CLASIFICADO («No tienes permiso»)", async (_n, el, heading) => {
+    vi.stubGlobal("fetch", forbidden());
+    render(el());
+    const alert = await screen.findByRole("alert");
+    expect(alert.getAttribute("data-error-kind")).toBe("forbidden");
+    expect(alert.textContent).toContain("No tienes permiso para esto");
+    expect(screen.getByRole("heading", { name: heading })).toBeTruthy();
   });
 });

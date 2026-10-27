@@ -52,10 +52,16 @@ export function AdminPage(props: { me: Me }) {
   }, [props.me]);
 
   if (!isAdmin(props.me)) {
+    // UX-E · antes sólo «Acceso denegado.» sin título ni salida. La autorización
+    // real la hace la API; aquí se explica qué falta y adónde ir.
     return (
-      <p className="error" data-testid="admin-denied">
-        Acceso denegado.
-      </p>
+      <div className="card" role="alert" data-testid="admin-denied" data-error-kind="forbidden">
+        <h2>Administración</h2>
+        <p className="error">
+          <strong>No tienes permiso para esto</strong>: esta zona es sólo para cuentas con rol de administrador.
+        </p>
+        <a href="#/bots">Volver al inicio</a>
+      </div>
     );
   }
 
