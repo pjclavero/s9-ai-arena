@@ -61,6 +61,16 @@ describe("B9 · validateArenaMap rechaza lo que el motor no sabe jugar", () => {
     ["destructible con hp 0", () => withFirstDestructible(base(), { hp: 0 })],
     ["base con radio negativo", () => withFirstBase(base(), { radiusM: -1 })],
     ["demasiadas entidades", () => ({ ...base(), walls: new Array(MAX_ARENA_MAP_ENTITIES + 1).fill(wall()) })],
+    // UX-07: el perímetro implícito del motor usa ids reservados; un mapa que los
+    // reutilizara pisaría ese cuerpo en el mundo físico.
+    ["muro con id reservado del perímetro", () => ({ ...base(), walls: [{ ...wall(), id: "__arena_boundary_n" }] })],
+    [
+      "destructible con id reservado del perímetro",
+      () => withFirstDestructible(base(), { id: "__arena_boundary_e" }),
+    ],
+    // UX-07: un spawn fuera del rectángulo nacería emparedado en el perímetro.
+    ["spawn fuera del mapa (x<0)", () => withFirstSpawn(base(), { position: { x: -26, y: 40 } })],
+    ["spawn fuera del mapa (y>alto)", () => withFirstSpawn(base(), { position: { x: 60, y: 94 } })],
   ])("%s → rechazado con motivo", (_label, make) => {
     const res = validateArenaMap(make());
     expect(res.ok).toBe(false);
@@ -165,6 +175,9 @@ function withFirstDestructible(m: Record<string, unknown>, patch: Record<string,
     ...m,
     destructibles: (m.destructibles as Record<string, unknown>[]).map((d, i) => (i === 0 ? { ...d, ...patch } : d)),
   };
+}
+function withFirstSpawn(m: Record<string, unknown>, patch: Record<string, unknown>) {
+  return { ...m, spawns: (m.spawns as Record<string, unknown>[]).map((s, i) => (i === 0 ? { ...s, ...patch } : s)) };
 }
 function withFirstBase(m: Record<string, unknown>, patch: Record<string, unknown>) {
   return { ...m, bases: (m.bases as Record<string, unknown>[]).map((b, i) => (i === 0 ? { ...b, ...patch } : b)) };
