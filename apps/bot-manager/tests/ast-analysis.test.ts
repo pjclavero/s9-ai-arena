@@ -93,7 +93,18 @@ describe("B3 · Dockerfile de bot-manager instala python3 (comprobación INDIREC
 
 describe("B3 · mensaje de error real (causa 3: el fallback mentía)", () => {
   it("un fichero TypeScript produce un mensaje que menciona la causa REAL, no la del reintento CJS", () => {
-    const gunnerTs = readFileSync("example-bots/javascript/gunner.ts", "utf8");
+    // El antiguo example-bots/javascript/gunner.ts (UX-05 lo sustituyó por gunner.js):
+    // TypeScript real tal cual lo pegaba un usuario.
+    const gunnerTs = `import { ArenaBot, type CommandIntent, type ObservationPayload } from "@arena/sdk";
+
+export class GunnerBot extends ArenaBot {
+  private weaponSlot = "turret_main";
+
+  override onObservation(observation: ObservationPayload): CommandIntent {
+    return { fire: [this.weaponSlot] };
+  }
+}
+`;
     const res = extractAst("node", [{ path: "src/bot.js", content: gunnerTs }]);
     expect(res.parseErrors).toHaveLength(1);
     const detail = res.parseErrors[0].detail;
