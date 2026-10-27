@@ -161,8 +161,8 @@ test.describe("@golden [REVIEW] H1 usuario nuevo de extremo a extremo", () => {
     const vehicleState = (vid: string) => last.vehicles.find((v: any) => v.id === vid);
     const pyVeh = vehicleState(vehOf(pyId));
     const jsVeh = vehicleState(vehOf(jsId));
-    expect(roster.find((r) => r.botId === pyId)!.chassis).toBe("chassis.medium");
-    expect(roster.find((r) => r.botId === jsId)!.chassis).toBe("chassis.light");
+    expect(roster.find((r) => r.botId === pyId)!.chassis).toBe("chassis.medium@1");
+    expect(roster.find((r) => r.botId === jsId)!.chassis).toBe("chassis.light@1");
     expect(pyVeh.hullHpMax).toBe(300);
     expect(jsVeh.hullHpMax).toBe(180);
     expect(pyVeh.modules.map((m: any) => m.slot).sort()).toEqual(Object.keys(PY_LOADOUT.slots).sort());
