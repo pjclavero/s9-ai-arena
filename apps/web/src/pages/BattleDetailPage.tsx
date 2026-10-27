@@ -190,8 +190,7 @@ function BattleHeader({ b, audit }: { b: BattleDetail; audit: AuditView | null }
   return (
     <>
       <h2 data-testid="battle-title">
-        {b.participants.map(botLabel).join(" vs ") || "Batalla"}{" "}
-        <small>· {STATUS_TEXT[b.status] ?? b.status}</small>
+        {b.participants.map(botLabel).join(" vs ") || "Batalla"} <small>· {STATUS_TEXT[b.status] ?? b.status}</small>
       </h2>
       {b.status === "finished" && (
         <p data-testid="battle-winner">

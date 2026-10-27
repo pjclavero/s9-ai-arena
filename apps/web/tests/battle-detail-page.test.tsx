@@ -25,8 +25,24 @@ const BATTLE = {
   mapName: "Arena de pruebas 2",
   mapVersion: 1,
   participants: [
-    { botId: MINE, botName: "Tanque Rojo", version: 3, team: "red", outcome: "win", diagnosticsVisible: true, cpuMs: 2148 },
-    { botId: RIVAL, botName: "Muro Azul", version: 1, team: "blue", outcome: "disqualified", diagnosticsVisible: false, cpuMs: null },
+    {
+      botId: MINE,
+      botName: "Tanque Rojo",
+      version: 3,
+      team: "red",
+      outcome: "win",
+      diagnosticsVisible: true,
+      cpuMs: 2148,
+    },
+    {
+      botId: RIVAL,
+      botName: "Muro Azul",
+      version: 1,
+      team: "blue",
+      outcome: "disqualified",
+      diagnosticsVisible: false,
+      cpuMs: null,
+    },
   ],
   result: {
     schema: "battle-result/v1",
@@ -59,9 +75,30 @@ const STAT = (team: string, extra: Record<string, unknown> = {}) => ({
   distanceM: 412.7,
   disqualified: false,
   perModule: {
-    drive: { moduleId: "movement.tracks@1", usesKind: "move_commands", uses: 120, rejections: 0, damageDealt: 0, finalState: "operational" },
-    power: { moduleId: "power.generator@1", usesKind: "passive", uses: 0, rejections: 0, damageDealt: 0, finalState: "operational" },
-    turret_main: { moduleId: "weapon.cannon@1", usesKind: "shots", uses: 10, rejections: 5, damageDealt: 120, finalState: "operational" },
+    drive: {
+      moduleId: "movement.tracks@1",
+      usesKind: "move_commands",
+      uses: 120,
+      rejections: 0,
+      damageDealt: 0,
+      finalState: "operational",
+    },
+    power: {
+      moduleId: "power.generator@1",
+      usesKind: "passive",
+      uses: 0,
+      rejections: 0,
+      damageDealt: 0,
+      finalState: "operational",
+    },
+    turret_main: {
+      moduleId: "weapon.cannon@1",
+      usesKind: "shots",
+      uses: 10,
+      rejections: 5,
+      damageDealt: 120,
+      finalState: "operational",
+    },
   },
   ...extra,
 });
@@ -83,7 +120,15 @@ const STATS_READY = {
       maxConsecutiveTimeouts: 20,
       disqualified: false,
       disqualifiedReason: null,
-      commands: { received: 290, invalid: 7, firstInvalidReason: "/move/throttle maximum", invalidJson: 0, late: 3, wrongTick: 0, extra: 0 },
+      commands: {
+        received: 290,
+        invalid: 7,
+        firstInvalidReason: "/move/throttle maximum",
+        invalidJson: 0,
+        late: 3,
+        wrongTick: 0,
+        extra: 0,
+      },
       rejectionsByReason: { cooldown: 5, no_ammo: 1 },
       disconnectedAtTick: null,
       container: null,
@@ -93,7 +138,9 @@ const STATS_READY = {
 };
 
 function json(body: unknown, status = 200) {
-  return Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
+  return Promise.resolve(
+    new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }),
+  );
 }
 
 function mockApi(routes: Record<string, () => Promise<Response>>) {
@@ -131,7 +178,15 @@ describe("UX-D · D1 resultado claro", () => {
       [`/battles/${ID}`]: () => json(BATTLE),
       [`/battles/${ID}/stats`]: () => json(STATS_READY),
       [`/battles/${ID}/audit`]: () =>
-        json({ versions: { engine: "e2@1.4.0", physics: "rapier2d-compat@0.19.3", rules: "dm_mvp@1", catalog: "mvp@1", protocol: "arena/1" } }),
+        json({
+          versions: {
+            engine: "e2@1.4.0",
+            physics: "rapier2d-compat@0.19.3",
+            rules: "dm_mvp@1",
+            catalog: "mvp@1",
+            protocol: "arena/1",
+          },
+        }),
     });
     render(<BattleDetailPage id={ID} />);
     const winner = await screen.findByTestId("battle-winner");
@@ -147,7 +202,9 @@ describe("UX-D · D1 resultado claro", () => {
     expect(rows[0]).toContain("v3");
     expect(rows[1]).toContain("Muro Azul");
     expect(rows[1]).toContain("descalificado");
-    expect((screen.getByTestId("battle-replay-link") as HTMLAnchorElement).getAttribute("href")).toBe(`#/replay/${ID}?t=0`);
+    expect((screen.getByTestId("battle-replay-link") as HTMLAnchorElement).getAttribute("href")).toBe(
+      `#/replay/${ID}?t=0`,
+    );
 
     const text = screen.getByTestId("battle-detail").textContent ?? "";
     expect(text).not.toContain(MINE.slice(0, 8));

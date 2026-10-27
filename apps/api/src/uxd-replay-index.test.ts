@@ -61,7 +61,9 @@ beforeAll(async () => {
       chassis: "chassis.scout@1",
       modules: JSON.stringify([]),
     });
-    await h.db("bot_versions").insert({ bot_id: id, version: 1, state: "published", runtime: "python", loadout_revision: 1 });
+    await h
+      .db("bot_versions")
+      .insert({ bot_id: id, version: 1, state: "published", runtime: "python", loadout_revision: 1 });
     bots.push(id);
   }
 
@@ -127,7 +129,7 @@ describe("UX-D · GET /replays/{id}/index con mundo y nómina", () => {
       { id: "veh_2", botId: bots[1], team: "blue", chassis: scoutLoadout().chassisId, name: "Muro Azul" },
     ]);
     // Nada que el directo no mande ya: ni semilla ni loadouts.
-    expect(JSON.stringify(r.body)).not.toContain("uxd-ri\"");
+    expect(JSON.stringify(r.body)).not.toContain('uxd-ri"');
     expect(JSON.stringify(r.body.roster)).not.toContain("modules");
   });
 

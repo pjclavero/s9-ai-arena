@@ -75,7 +75,10 @@ async function viewerMetaOf(db: Db, battle: Record<string, any>, sha: string): P
   const botIds = participants.map((pp) => String(pp.botId ?? "")).filter(Boolean);
   const names = new Map<string, string>();
   if (botIds.length > 0) {
-    const rows = await db("bots").whereIn("id", botIds).select("id", "name").catch(() => []);
+    const rows = await db("bots")
+      .whereIn("id", botIds)
+      .select("id", "name")
+      .catch(() => []);
     for (const r of rows as { id: string; name: string }[]) names.set(String(r.id), r.name);
   }
   const meta: ReplayViewerMeta = {
