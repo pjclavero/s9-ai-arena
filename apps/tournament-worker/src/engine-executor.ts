@@ -35,6 +35,7 @@ import type { SpectateGateway } from "../../api/src/spectate/gateway.js";
 import { resolveBattleRuleset } from "../../api/src/services/battle-ruleset-resolver.js";
 import { InfrastructureFailure } from "./errors.js";
 import type { AgentsKind, BattleContext, BattleExecution, BattleExecutor } from "./battle-runner.js";
+import type { BotRunDiagnostics } from "./bot-diagnostics.js";
 
 export type AgentResolver = (botId: string, version: number, vehicleId: string) => BotAgent;
 
@@ -61,6 +62,8 @@ export interface AgentDriverOutput {
   replay: Replay;
   /** CPU real por botId (contenedores); ausente si el driver no mide. */
   cpuMsByBot?: Record<string, number | null>;
+  /** UX-06 · diagnóstico de arranque/transporte/contenedor por botId; ausente si el driver no lo sabe. */
+  diagnosticsByBot?: Record<string, BotRunDiagnostics>;
 }
 
 /** Engancha agentes a los vehículos y hace avanzar la batalla hasta su final. */
@@ -324,6 +327,7 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
         },
         replayJsonl: toJsonl(replay),
         ...(out.cpuMsByBot ? { cpuMsByBot: out.cpuMsByBot } : {}),
+        ...(out.diagnosticsByBot ? { diagnosticsByBot: out.diagnosticsByBot } : {}),
         agents: driver.kind,
       };
     } catch (err) {

@@ -23,6 +23,15 @@ import { publicSpectateEnabledFromEnv } from "../public-spectate.js";
 import { publicReplaysEnabledFromEnv } from "../public-replays.js";
 import { checkBattleContent } from "./catalog.js";
 import { wherePublicReplay } from "../replay-access.js";
+import {
+  canSeeBotDiagnostics,
+  getReadableBattleOr404,
+  whereBattleReadable,
+  type BattleVisibility,
+} from "../battle-access.js";
+import { loadRuleset } from "../../../../packages/game-rules/index.js";
+import { resolveBattleRuleset } from "../services/battle-ruleset-resolver.js";
+import type { Request } from "express";
 
 const SPECTATE_TICKET_TTL_S = 60;
 
@@ -75,24 +84,53 @@ export async function enqueueRunBattle(db: Db, battleId: string): Promise<boolea
   return rows.length > 0;
 }
 
-export function battleToJson(b: Record<string, unknown>, participants: Record<string, unknown>[]) {
+/**
+ * Participantes de una batalla con el NOMBRE del bot (UX-D · D1: la web mostraba
+ * UUIDs) y su dueño (sólo para decidir quién ve diagnósticos; nunca se serializa).
+ */
+export async function loadParticipants(db: Db, battleId: string): Promise<Record<string, unknown>[]> {
+  return db("participants")
+    .leftJoin("bots", "bots.id", "participants.bot_id")
+    .where("participants.battle_id", battleId)
+    .select("participants.*", "bots.name as bot_name", "bots.owner_id as bot_owner_id")
+    .orderBy("participants.team", "asc");
+}
+
+/**
+ * Proyección de una batalla. `viewer` decide qué participantes llevan su CPU
+ * (diagnóstico: sólo el dueño del bot y el staff, TD-047); sin `viewer`, ninguno.
+ */
+export function battleToJson(
+  b: Record<string, unknown>,
+  participants: Record<string, unknown>[],
+  viewer?: Request["auth"] | null,
+) {
   return {
     id: b.id,
     tournamentId: b.tournament_id ?? undefined,
     status: b.status,
     official: b.official,
     mode: b.mode,
+    rulesetId: b.ruleset_id ?? undefined,
     mapId: b.map_id,
+    mapName: b.map_name ?? undefined,
     mapVersion: b.map_version,
-    participants: participants.map((p) => ({
-      botId: p.bot_id,
-      version: p.version,
-      team: p.team,
-      outcome: p.outcome ?? undefined,
-      cpuMs: p.cpu_ms === null || p.cpu_ms === undefined ? null : Number(p.cpu_ms),
-    })),
+    participants: participants.map((p) => {
+      const mine = viewer !== undefined && canSeeBotDiagnostics(viewer ?? undefined, p.bot_owner_id as string | null);
+      return {
+        botId: p.bot_id,
+        botName: p.bot_name ?? undefined,
+        version: p.version,
+        team: p.team,
+        outcome: p.outcome ?? undefined,
+        // Sólo dice si EL SOLICITANTE puede ver el diagnóstico de este bot.
+        ...(viewer !== undefined ? { diagnosticsVisible: mine } : {}),
+        cpuMs: !mine || p.cpu_ms === null || p.cpu_ms === undefined ? null : Number(p.cpu_ms),
+      };
+    }),
     result: b.result ?? undefined,
     failureKind: b.failure_kind,
+    createdAt: b.created_at ? new Date(b.created_at as string).toISOString() : undefined,
     startedAt: b.started_at ? new Date(b.started_at as string).toISOString() : undefined,
     finishedAt: b.finished_at ? new Date(b.finished_at as string).toISOString() : undefined,
     replayAvailable: Boolean(b.replay_ref),
@@ -177,13 +215,96 @@ async function getFinishedBattleWithReplayOr404(db: Db, id: string) {
   return battle;
 }
 
-async function getBattleOr404(db: Db, id: string) {
-  const battle = await db("battles")
-    .where({ id })
-    .first()
+/** Nombre del mapa de una batalla (la web lo muestra en vez del id). */
+async function withMapName(db: Db, battle: Record<string, any>): Promise<Record<string, any>> {
+  const map = await db("maps")
+    .where({ id: battle.map_id })
+    .first("name")
     .catch(() => null);
-  if (!battle) throw notFound();
-  return battle;
+  return { ...battle, map_name: map?.name ?? undefined };
+}
+
+const NO_STORE = "private, no-store";
+
+/** `maxConsecutiveTimeouts` del ruleset con el que corrió la batalla, o null si no se sabe. */
+async function maxConsecutiveTimeoutsOf(db: Db, battle: Record<string, any>): Promise<number | null> {
+  const versions = (battle.engine_versions ?? {}) as Record<string, unknown>;
+  try {
+    // El ruleset del MOTOR que se usó (engine-executor lo deja en engine_versions);
+    // si no está (batalla sin ejecutar), la misma resolución que usa el worker.
+    if (typeof versions.rulesetEngine === "string" && versions.rulesetEngine) {
+      return Number(loadRuleset(versions.rulesetEngine).maxConsecutiveTimeouts);
+    }
+    const r = await resolveBattleRuleset(db, battle.mode, battle.ruleset_id);
+    return r.ok ? Number(r.ruleset.maxConsecutiveTimeouts) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * UX-06 · Diagnóstico de UN bot para su dueño: combina lo que midió quien ejecutó
+ * la batalla (`participants.diagnostics`: arranque, transporte, contenedor) con lo
+ * que sale del replay (`battle_stats`: decisiones, timeouts, rechazos). Lo que no
+ * se midió va a `null` (la web dice «no medido»), nunca a un cero inventado.
+ * Sólo códigos y contadores: nada del sandbox.
+ */
+function buildDiagnostics(
+  p: Record<string, unknown>,
+  s: Record<string, any> | undefined,
+  result: { disqualified?: string[]; endReason?: string },
+  maxConsecutiveTimeouts: number | null,
+) {
+  const raw = p.diagnostics;
+  const d = (typeof raw === "string" ? JSON.parse(raw) : (raw ?? null)) as Record<string, any> | null;
+  const proto = d?.protocol ?? null;
+  const disqualified = p.outcome === "disqualified" || (result.disqualified ?? []).includes(String(p.bot_id));
+  let disqualifiedReason: string | null = null;
+  if (disqualified) {
+    if (d?.startup?.ok === false) disqualifiedReason = d.startup.reason ?? "startup_failed";
+    else if (s?.disqualified) disqualifiedReason = "consecutive_timeouts";
+    else if (result.endReason === "walkover" || !s) disqualifiedReason = "administrative";
+    else disqualifiedReason = "unknown";
+  }
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  return {
+    botId: p.bot_id,
+    botName: p.bot_name ?? undefined,
+    version: p.version,
+    /** Hay medida del ejecutor (arranque/transporte); false en batallas antiguas. */
+    measured: d !== null,
+    startup: d?.startup ?? null,
+    hello: proto ? { ok: Boolean(proto.helloOk), tick: num(proto.helloTick), reconnects: num(proto.reconnects) } : null,
+    decisions: num(s?.decisions),
+    decisionTimeouts: num(s?.decisionTimeouts),
+    maxConsecutiveTimeouts,
+    disqualified,
+    disqualifiedReason,
+    commands: proto
+      ? {
+          received: num(proto.commandsReceived),
+          invalid: num(proto.invalidCommands),
+          firstInvalidReason: typeof proto.firstInvalidReason === "string" ? proto.firstInvalidReason : null,
+          invalidJson: num(proto.invalidJson),
+          late: num(proto.lateCommands),
+          wrongTick: num(proto.wrongTickCommands),
+          extra: num(proto.extraCommands),
+        }
+      : null,
+    rejectionsByReason: s?.rejectionsByReason ?? null,
+    disconnectedAtTick: proto ? num(proto.disconnectedAtTick) : null,
+    container: d?.container
+      ? {
+          exitCode: num(d.container.exitCode),
+          oomKilled: Boolean(d.container.oomKilled),
+          exitedDuringBattle: Boolean(d.container.exitedDuringBattle),
+        }
+      : null,
+    cpuMs: p.cpu_ms === null || p.cpu_ms === undefined ? null : Number(p.cpu_ms),
+    shotsFired: num(s?.shotsFired),
+    shotsHit: num(s?.shotsHit),
+    damageDealt: num(s?.damageDealt),
+  };
 }
 
 export function battleRoutes(
@@ -195,6 +316,9 @@ export function battleRoutes(
   publicReplaysEnabled: boolean = publicReplaysEnabledFromEnv(),
 ): Router {
   const router = Router();
+  // UX-D (G-08) · una sola política de lectura para listado, detalle, stats,
+  // auditoría, ticket de espectador y /run (battle-access.ts).
+  const vis: BattleVisibility = { publicReplays: publicReplaysEnabled, publicSpectate: publicSpectateEnabled };
 
   // R11 · Slice mínimo de espectador público: gateado por S9_PUBLIC_SPECTATE_ENABLED
   // (apagado por defecto). Responde 200 SIEMPRE, sin cuenta; si está apagado,
@@ -368,22 +492,27 @@ export function battleRoutes(
   defineOperation(router, "listBattles", async (req, res) => {
     const limit = parseLimit(req.query.limit);
     const cursor = decodeCursor(req.query.cursor as string | undefined);
+    // UX-D (G-08 · TD-047) · sólo las batallas que el solicitante puede leer.
     let q = db("battles")
+      .leftJoin("maps", "maps.id", "battles.map_id")
+      .select("battles.*", "maps.name as map_name")
       .orderBy([
-        { column: "created_at", order: "desc" },
-        { column: "id", order: "desc" },
+        { column: "battles.created_at", order: "desc" },
+        { column: "battles.id", order: "desc" },
       ])
       .limit(limit + 1);
-    if (typeof req.query.status === "string") q = q.where({ status: req.query.status });
-    if (cursor) q = q.whereRaw("(created_at, id) < (?, ?)", [cursor.createdAt, cursor.id]);
+    q = whereBattleReadable(db, q, req.auth, vis);
+    if (typeof req.query.status === "string") q = q.where("battles.status", req.query.status);
+    if (cursor) q = q.whereRaw("(battles.created_at, battles.id) < (?, ?)", [cursor.createdAt, cursor.id]);
     const rows = await q;
     const page = rows.slice(0, limit);
     const items = await Promise.all(
       page.map(async (b: Record<string, unknown>) =>
-        battleToJson(b, await db("participants").where({ battle_id: b.id })),
+        battleToJson(b, await loadParticipants(db, b.id as string), req.auth ?? null),
       ),
     );
-    res.setHeader("Cache-Control", "public, max-age=5");
+    // Depende de quién pregunta: nunca en una caché compartida.
+    res.setHeader("Cache-Control", NO_STORE);
     res.json({
       items,
       nextCursor:
@@ -392,8 +521,9 @@ export function battleRoutes(
   });
 
   defineOperation(router, "getBattle", async (req, res) => {
-    const battle = await getBattleOr404(db, pathParam(req, "battleId"));
-    res.json(battleToJson(battle, await db("participants").where({ battle_id: battle.id })));
+    const battle = await withMapName(db, await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis));
+    res.setHeader("Cache-Control", NO_STORE);
+    res.json(battleToJson(battle, await loadParticipants(db, battle.id), req.auth ?? null));
   });
 
   defineOperation(router, "createPracticeBattle", async (req, res) => {
@@ -498,7 +628,10 @@ export function battleRoutes(
       // si el id existe). Una sesión autenticada sigue pudiendo espectar: el
       // espectador interno del producto no es "espectador público".
       if (!publicSpectateEnabled && !req.auth) throw notFound();
-      const battle = await getBattleOr404(db, pathParam(req, "battleId"));
+      // UX-D (G-08) · el ticket sigue la MISMA política que el resto de vistas de
+      // la batalla: antes cualquier sesión (y, con el directo público, cualquier
+      // anónimo) obtenía ticket para la batalla de un bot privado ajeno.
+      const battle = await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis);
       // E8/T8.2: jti ⇒ el gateway hace el ticket de UN SOLO USO; debug ⇒ capas de
       // depuración (sensores, rutas, colisiones) solo para roles autorizados: el flag
       // viaja FIRMADO por la API, el visor no puede autoconcedérselo.
@@ -525,7 +658,7 @@ export function battleRoutes(
   );
 
   defineOperation(router, "getBattleAudit", async (req, res) => {
-    const battle = await getBattleOr404(db, pathParam(req, "battleId"));
+    const battle = await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis);
     const map = await db("map_versions").where({ map_id: battle.map_id, version: battle.map_version }).first();
     const participants = await db("participants").where({ battle_id: battle.id });
     const artifacts = [];
@@ -539,7 +672,8 @@ export function battleRoutes(
         signature: art?.signature ?? undefined,
       });
     }
-    // Público: la auditabilidad no exige revelar código (contrato E1).
+    // La auditabilidad no exige revelar código (contrato E1); la ve quien ve la batalla.
+    res.setHeader("Cache-Control", NO_STORE);
     res.json({
       battleId: battle.id,
       seed: battle.seed ?? undefined,
@@ -553,13 +687,40 @@ export function battleRoutes(
   });
 
   defineOperation(router, "getBattleStats", async (req, res) => {
-    const battle = await getBattleOr404(db, pathParam(req, "battleId"));
+    const battle = await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis);
     const rows = await db("battle_stats").where({ battle_id: battle.id });
-    // B8 · `emptyDict()`, NO `{}`: `r.bot_id` es un valor de BD usado como clave.
-    const stats: Record<string, unknown> = emptyDict<unknown>();
-    for (const r of rows) stats[r.bot_id] = r.stats;
-    res.setHeader("Cache-Control", "public, max-age=60");
-    res.json({ battleId: battle.id, perBot: stats });
+    const participants = await loadParticipants(db, battle.id);
+    const statsByBot = new Map<string, Record<string, any>>();
+    for (const r of rows) statsByBot.set(String(r.bot_id), typeof r.stats === "string" ? JSON.parse(r.stats) : r.stats);
+
+    // B8 · `emptyDict()`, NO `{}`: `bot_id` es un valor de BD usado como clave.
+    const perBot: Record<string, unknown> = emptyDict<unknown>();
+    const diagnostics: Record<string, unknown> = emptyDict<unknown>();
+    const result = (battle.result ?? {}) as { disqualified?: string[]; endReason?: string };
+    const maxTimeouts = await maxConsecutiveTimeoutsOf(db, battle);
+    for (const p of participants) {
+      const botId = String(p.bot_id);
+      const s = statsByBot.get(botId);
+      if (s) {
+        // Lo deportivo lo ve quien ve la batalla; la CPU y el desglose de
+        // decisiones y rechazos son diagnóstico (TD-047): sólo dueño y staff.
+        const { cpuMs: _cpu, decisions: _dec, rejectionsByReason: _rej, ...sporting } = s;
+        perBot[botId] = { ...sporting, botName: p.bot_name ?? undefined, version: p.version };
+      }
+      if (canSeeBotDiagnostics(req.auth, p.bot_owner_id as string | null)) {
+        diagnostics[botId] = buildDiagnostics(p, s, result, maxTimeouts);
+      }
+    }
+
+    // TD-065 · justo tras `finished` el job de stats aún no ha escrito: eso es
+    // «pendiente», no «sin estadísticas». Sin replay (walkover, fallo deportivo,
+    // fallida) no habrá estadísticas nunca: «unavailable». Nada se cachea.
+    let status: "ready" | "pending" | "unavailable" = "unavailable";
+    if (rows.length > 0) status = "ready";
+    else if (battle.status === "scheduled" || battle.status === "running") status = "pending";
+    else if (battle.status === "finished" && battle.replay_ref) status = "pending";
+    res.setHeader("Cache-Control", NO_STORE);
+    res.json({ battleId: battle.id, status, perBot, diagnostics });
   });
 
   // PRC (TD-004) · getReplay, getReplayIndex, getReplaySegment, verifyReplay y
@@ -574,7 +735,9 @@ export function battleRoutes(
   // `dedupe_key`) y responde 202. Llamarlo dos veces no ejecuta dos veces nada.
   defineOperation(router, "runBattle", async (req, res) => {
     const battleId = pathParam(req, "battleId");
-    const battle = await getBattleOr404(db, battleId);
+    // UX-D (G-08) · misma política de lectura: antes cualquier usuario «tocaba» por
+    // id la batalla de otro.
+    const battle = await getReadableBattleOr404(db, battleId, req.auth, vis);
     if (battle.status !== "scheduled") {
       res.status(409).json({ error: "invalid_state", message: `La batalla está en estado ${battle.status}` });
       return;
