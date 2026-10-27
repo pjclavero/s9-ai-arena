@@ -216,9 +216,27 @@ test.describe("@golden Golden path", () => {
     expect(blue.outcome).toBe("loss");
 
     // --- stats: SU código corrió (Pacifista 0 intentos; Artillero dispara) --
-    const stats = await api<{
+    // `status=finished` NO garantiza que `battle_stats` exista ya (TD-065): el
+    // worker la escribe tras la transacción de cierre (H3, issue #7). Medido en
+    // producción: ~1,4 s después de `finished_at`. Se espera a que estén las DOS
+    // entradas; si no aparecen en el plazo, el test FALLA (nunca pasa sin datos).
+    type Stats = {
       perBot: Record<string, { shotsFired: number; perModule: Record<string, { uses: number; rejections: number }> }>;
-    }>(page, `/battles/${battleId}/stats`);
+    };
+    let stats: Stats = { perBot: {} };
+    await expect
+      .poll(
+        async () => {
+          stats = await api<Stats>(page, `/battles/${battleId}/stats`);
+          return [red.botId, blue.botId].filter((id) => !stats.perBot?.[id]);
+        },
+        {
+          message: `battle_stats de ${battleId} sin materializar para algún participante (bots sin entrada en perBot)`,
+          timeout: 12_000,
+          intervals: [250, 500],
+        },
+      )
+      .toEqual([]);
     const sA = stats.perBot[red.botId];
     const sB = stats.perBot[blue.botId];
     expect(sA.shotsFired).toBeGreaterThan(0);

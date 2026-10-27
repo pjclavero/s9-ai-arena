@@ -94,6 +94,7 @@ Estados posibles:
 | [TD-061](#td-061) | Seccomp de los bots sin `sendmmsg` (DNS roto) | P0 | Bots / sandbox | CERRADA en la integración RC2; sin desplegar |
 | [TD-062](#td-062) | El proxy ejecuta código de un árbol no sólo de root | P1 | Seguridad / operación | CERRADA en código (rama fix/td-062, pendiente REVIEW); ABIERTA en producción hasta migrar |
 | [TD-063](#td-063) | Otros servicios del host en todas las interfaces | P3 | Seguridad / red | ABIERTA (sin medir) |
+| [TD-065](#td-065) | `status=finished` no garantiza stats materializados | P3 | API / contrato de batallas | ABIERTA (mitigada en el test) |
 
 ---
 
@@ -1255,6 +1256,22 @@ Estados posibles:
 - **Problema:** Superficie del host alcanzable desde contenedores con ruta por defecto.
 - **Solución prevista:** Inventario de escuchas y, para cada una, bind acotado o regla en `S9-HOST-GUARD`.
 - **Condición de cierre:** Sonda desde un contenedor de cada red ⇒ sólo los puertos justificados responden.
+
+<a id="td-065"></a>
+## TD-065 — `status=finished` no garantiza que existan los stats de la batalla
+
+- **Estado:** ABIERTA (mitigada en el test)
+- **Prioridad:** P3
+- **Área:** API / contrato de batallas
+- **Detectado:** 2026-10-26, golden de la ventana RC4 en producción
+- **Evidencia:**
+  - `battle-runner.ts` cierra la batalla (`status='finished'`) en una transacción. `battle_stats` la escribe después el trabajo de stats (H3, issue #7).
+  - En producción, `GET /battles/:id/stats` devolvió `perBot` vacío justo tras `finished`; las filas aparecieron unos 1,4 s después, con los valores correctos.
+  - En CI no se manifiesta porque la escritura llega antes.
+- **Problema:** Un cliente que lea los stats en cuanto ve `finished` puede recibir `perBot: {}` sin ninguna señal de «aún no disponibles».
+- **Mitigación:** `tests/browser/specs/golden-path.spec.ts` espera con `expect.poll` acotado hasta que existan las entradas de los dos participantes; si no aparecen en el plazo, falla.
+- **Solución prevista:** Que la API indique si los stats están pendientes (por ejemplo, un campo de estado o 202 mientras no existan), o materializarlos en la misma transacción de cierre.
+- **Condición de cierre:** Tras `finished`, la API nunca devuelve stats vacíos sin indicar que están pendientes; con un test que se ponga ROJO si vuelve a ocurrir.
 
 ## Documentación relacionada
 
