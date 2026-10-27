@@ -10,7 +10,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { setToken, onSessionExpired } from "../src/api.js";
+import { setToken, onSessionExpired, SESSION_HINT_KEY } from "../src/api.js";
 import { App, isNavActive, matchPublicRoute, matchStaticPanelRoute } from "../src/App.js";
 import { computeFirstSteps, type FirstStepsFacts } from "../src/pages/HomePage.js";
 import { humanizeAuthError, validateAuthForm } from "../src/pages/LoginPage.js";
@@ -62,6 +62,7 @@ beforeEach(() => {
   setToken(null);
   onSessionExpired(null);
   window.location.hash = "";
+  window.localStorage.removeItem(SESSION_HINT_KEY);
 });
 
 describe("UX-A · rutas de ayuda y portada", () => {
@@ -163,6 +164,12 @@ describe("UX-A · rutas de ayuda y portada", () => {
 });
 
 describe("UX-A · checklist de primeros pasos (estado real)", () => {
+  // Integración con UX-E (C-G13): el arranque sólo pregunta a /auth/refresh si
+  // hay marca de sesión previa; estos casos simulan un navegador CON sesión.
+  beforeEach(() => {
+    window.localStorage.setItem(SESSION_HINT_KEY, "1");
+  });
+
   const none: FirstStepsFacts = {
     bots: 0,
     botsWithLoadout: 0,
