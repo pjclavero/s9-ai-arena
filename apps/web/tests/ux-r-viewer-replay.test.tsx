@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import type { ReplayIndexData, ReplaySource } from "../src/viewer/replay-player.js";
 import { participantsTitle } from "../src/viewer/art-direction.js";
+import { applyCanvasSize, canvasSizeFor } from "../src/viewer/viewport.js";
 
 const INDEX: ReplayIndexData = {
   battleId: "btl_r",
@@ -75,6 +76,41 @@ vi.mock("../src/viewer/live-feed.js", () => ({
 afterEach(() => {
   cleanup();
   scenario = () => undefined;
+});
+
+/**
+ * Modelo del ScaleManager de Phaser 4 en modo NONE (node_modules/phaser/src/scale/
+ * ScaleManager.js): `resize` sólo toca el estilo si zoom ≠ 1; `setZoom` lo
+ * recalcula con el tamaño de juego que haya en ese momento.
+ */
+class PhaserNoneScale {
+  zoom = 1;
+  gameW = 960;
+  styleW = 960;
+  resize(w: number) {
+    this.gameW = w;
+    if (w * this.zoom !== w) this.styleW = w * this.zoom;
+  }
+  setZoom(z: number) {
+    this.zoom = z;
+    this.styleW = this.gameW * z;
+  }
+}
+
+describe("UX-R · el canvas del visor sigue al contenedor al estrecharse", () => {
+  it("dpr 1: tras cada redimensionado el ancho CSS es el del contenedor, no el anterior", () => {
+    const scale = new PhaserNoneScale();
+    for (const cssW of [1888, 736, 358]) {
+      applyCanvasSize(scale, canvasSizeFor(cssW, 640, 1));
+      expect(scale.styleW).toBe(cssW);
+    }
+  });
+  it("dpr 2: buffer al doble y CSS al tamaño del contenedor", () => {
+    const scale = new PhaserNoneScale();
+    applyCanvasSize(scale, canvasSizeFor(736, 640, 2));
+    expect(scale.gameW).toBe(1472);
+    expect(scale.styleW).toBe(736);
+  });
 });
 
 describe("UX-R · participantsTitle", () => {
