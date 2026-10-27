@@ -1026,3 +1026,54 @@ describe("issue #102 · el presupuesto de sondeos es POR BOT", () => {
     expect(lecturasV1, `lecturas de v1 = ${lecturasV1}`).toBeLessThanOrEqual(MAX + 2);
   });
 });
+
+describe("UX-R · borradores de sesión y estado vivo en «Mis bots»", () => {
+  beforeEach(() => window.sessionStorage.clear());
+  afterEach(() => window.sessionStorage.clear());
+
+  it("si el panel se DESMONTA (sesión caducada) el código y el loadout sin guardar vuelven al montar", async () => {
+    fakeBackend({ versions: [{ version: 1, state: "published", runtime: "python", loadoutRevision: 7 }] });
+    const first = renderPage();
+    await selectBot();
+    const area = (await screen.findByLabelText("codigo")) as HTMLTextAreaElement;
+    await userEvent.clear(area);
+    await userEvent.type(area, "trabajo sin subir");
+    await userEvent.selectOptions(screen.getByLabelText("chasis"), "chassis.heavy@1");
+    first.unmount(); // lo que hace el App al volver al login
+
+    renderPage();
+    await selectBot();
+    expect(((await screen.findByLabelText("codigo")) as HTMLTextAreaElement).value).toBe("trabajo sin subir");
+    expect(screen.getByTestId("code-draft-restored").textContent).toMatch(/Recuperado/);
+    expect((screen.getByLabelText("chasis") as HTMLSelectElement).value).toBe("chassis.heavy@1");
+    expect(screen.getByTestId("loadout-draft-restored")).toBeTruthy();
+  });
+
+  it("subido el código, el borrador se borra (no se «recupera» lo que ya es una versión)", async () => {
+    fakeBackend({ versions: [{ version: 1, state: "published", runtime: "python", loadoutRevision: 7 }] });
+    renderPage();
+    await selectBot();
+    const area = (await screen.findByLabelText("codigo")) as HTMLTextAreaElement;
+    await userEvent.clear(area);
+    await userEvent.type(area, "v2 lista");
+    expect(window.sessionStorage.getItem("s9_draft:bots:upload:code")).toBe("v2 lista");
+    await userEvent.click(screen.getByRole("button", { name: "Subir como versión nueva" }));
+    await waitFor(() => expect(window.sessionStorage.getItem("s9_draft:bots:upload:code")).toBeNull());
+  });
+
+  it("build en curso: LiveStatus (aria-live) con aria-busy", async () => {
+    fakeBackend({
+      versions: [{ version: 1, state: "validating", runtime: "python", loadoutRevision: 7 }],
+      builds: [{ id: "b-1", version: 1, status: "running", stages: [{ name: "structure", status: "running" }] }],
+    });
+    renderPage({ pollIntervalMs: 10, maxPolls: 5_000 });
+    await selectBot();
+    const running = await screen.findByTestId("pipeline-running", {}, { timeout: 15_000 });
+    expect(running.getAttribute("role")).toBe("status");
+    expect(running.getAttribute("aria-live")).toBe("polite");
+    expect(running.getAttribute("aria-busy")).toBe("true");
+    const focused = screen.getByTestId("focused-status");
+    expect(focused.textContent).toBe("Validación en curso…");
+    expect(focused.getAttribute("aria-busy")).toBe("true");
+  });
+});
