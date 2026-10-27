@@ -135,6 +135,51 @@ export const MODE_TEXT: Record<string, string> = {
   zone_control: "control de zona",
 };
 
+/**
+ * UX-R · Nombre del modo en los SELECTORES (crear batalla, torneos, ranking):
+ * el mismo en todas las pantallas, nunca el identificador crudo
+ * (`team_deathmatch`). Un modo desconocido se muestra tal cual.
+ */
+export const MODE_NAME: Record<string, string> = {
+  deathmatch: "Deathmatch",
+  team_deathmatch: "Deathmatch por equipos",
+  capture_the_flag: "Captura la bandera",
+  zone_control: "Control de zona",
+};
+
+export function modeName(mode: string): string {
+  return labelOf(MODE_NAME, mode);
+}
+
+/** UX-R · Formato, estado de torneo y estado de partido del cuadro, en palabras. */
+export const TOURNAMENT_FORMAT_NAME: Record<string, string> = {
+  league: "Liga",
+  round_robin: "Todos contra todos (liguilla)",
+  single_elimination: "Eliminación directa",
+  double_elimination: "Doble eliminación",
+  swiss: "Sistema suizo",
+  teams: "Por equipos",
+};
+export const TOURNAMENT_STATE_NAME: Record<string, string> = {
+  draft: "borrador",
+  open: "inscripciones abiertas",
+  closed: "inscripciones cerradas",
+  running: "en juego",
+  finished: "terminado",
+  cancelled: "cancelado",
+};
+export const MATCH_STATE_NAME: Record<string, string> = {
+  scheduled: "pendiente",
+  running: "en juego",
+  finished: "terminado",
+  failed: "falló",
+};
+
+/** Busca `key` en una tabla de etiquetas; si no está, devuelve el valor tal cual. */
+export function labelOf(table: Record<string, string>, key: string): string {
+  return Object.prototype.hasOwnProperty.call(table, key) ? table[key] : key;
+}
+
 export const OUTCOME_TEXT: Record<string, string> = {
   win: "gana",
   loss: "pierde",

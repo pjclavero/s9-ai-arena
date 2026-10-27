@@ -98,7 +98,8 @@ describe("R9 · #/battles/new", () => {
     mockLists(MAPS, BOTS);
     render(<BattleNewPage me={ME} />);
     const modeSel = (await screen.findByLabelText("modo")) as HTMLSelectElement;
-    await screen.findByRole("option", { name: "zone_control" });
+    // UX-R · la opción se ENSEÑA por su nombre (el valor sigue siendo el de la API).
+    await screen.findByRole("option", { name: "Control de zona" });
     expect(Array.from(modeSel.options).map((o) => o.value)).toEqual(RULESETS.modes);
     await userEvent.selectOptions(modeSel, "capture_the_flag");
     expect((screen.getByLabelText("ruleset") as HTMLSelectElement).value).toBe("capture-the-flag-mvp");

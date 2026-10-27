@@ -14,6 +14,7 @@ import { useState } from "react";
 import { api } from "../api.js";
 import { useResource, ResourceView } from "../resource.js";
 import { EmptyState } from "../ui/primitives.js";
+import { MODE_NAME } from "../battle-result.js";
 
 export interface Standing {
   rank: number;
@@ -25,12 +26,9 @@ export interface Standing {
   draws: number;
 }
 
-const MODES = [
-  { value: "deathmatch", label: "Deathmatch" },
-  { value: "team_deathmatch", label: "Deathmatch por equipos" },
-  { value: "capture_the_flag", label: "Captura la bandera" },
-  { value: "zone_control", label: "Control de zona" },
-] as const;
+// UX-R · las etiquetas viven en battle-result.ts (MODE_NAME) para que crear
+// batalla y torneos digan lo mismo que el ranking.
+const MODES = Object.entries(MODE_NAME).map(([value, label]) => ({ value, label }));
 
 export function RankingPage() {
   const [mode, setMode] = useState<string>("deathmatch");

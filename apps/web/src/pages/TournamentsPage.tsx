@@ -6,6 +6,7 @@
 import { useState, type FormEvent } from "react";
 import { api, type Me } from "../api.js";
 import { useResource, ResourceView } from "../resource.js";
+import { MODE_NAME, TOURNAMENT_FORMAT_NAME, TOURNAMENT_STATE_NAME, labelOf, modeName } from "../battle-result.js";
 
 export interface Tournament {
   id: string;
@@ -16,8 +17,9 @@ export interface Tournament {
   entryCount?: number;
 }
 
-const FORMATS = ["league", "round_robin", "single_elimination", "double_elimination", "swiss", "teams"];
-const MODES = ["deathmatch", "team_deathmatch", "capture_the_flag", "zone_control"];
+// UX-R · los valores son los de la API; lo que se ENSEÑA son sus nombres.
+const FORMATS = Object.keys(TOURNAMENT_FORMAT_NAME);
+const MODES = Object.keys(MODE_NAME);
 
 export function TournamentsPage(_props: { me: Me }) {
   const [list, reload] = useResource(() => api<{ items: Tournament[] }>("GET", "/tournaments"), []);
@@ -68,9 +70,9 @@ export function TournamentsPage(_props: { me: Me }) {
                       <td>
                         <a href={`#/tournaments/${t.id}`}>{t.name}</a>
                       </td>
-                      <td>{t.format}</td>
-                      <td>{t.mode}</td>
-                      <td>{t.state}</td>
+                      <td>{labelOf(TOURNAMENT_FORMAT_NAME, t.format)}</td>
+                      <td>{modeName(t.mode)}</td>
+                      <td>{labelOf(TOURNAMENT_STATE_NAME, t.state)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -96,7 +98,7 @@ export function TournamentsPage(_props: { me: Me }) {
               <select aria-label="formato" value={format} onChange={(e) => setFormat(e.target.value)}>
                 {FORMATS.map((f) => (
                   <option key={f} value={f}>
-                    {f}
+                    {labelOf(TOURNAMENT_FORMAT_NAME, f)}
                   </option>
                 ))}
               </select>
@@ -106,7 +108,7 @@ export function TournamentsPage(_props: { me: Me }) {
               <select aria-label="modo" value={mode} onChange={(e) => setMode(e.target.value)}>
                 {MODES.map((m) => (
                   <option key={m} value={m}>
-                    {m}
+                    {modeName(m)}
                   </option>
                 ))}
               </select>
