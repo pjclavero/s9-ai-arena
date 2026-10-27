@@ -83,9 +83,11 @@ async function publishedBot(page: Page, name: string, code: string) {
   await page.getByLabel("slot-turret_main").selectOption("weapon.cannon@1");
   await page.getByLabel("slot-armor_front").selectOption("armor.steel_front@1");
   // C4 · la UI dice la verdad sobre el efecto real del equipamiento.
-  await expect(page.getByTestId("effect-note")).toContainText("familia del chasis");
+  // UX-01 · el loadout elegido ES el vehículo de la batalla (no el arquetipo del chasis).
+  await expect(page.getByTestId("effect-note")).toContainText("es el vehículo que juega");
+  await expect(page.getByTestId("effect-note")).not.toContainText("arquetipo");
   await expect(page.getByTestId("effect-chassis")).toHaveAttribute("data-effect", "ACTIVE");
-  await expect(page.getByTestId("effect-slot-turret_main")).toHaveAttribute("data-effect", "PARTIAL");
+  await expect(page.getByTestId("effect-slot-turret_main")).toHaveAttribute("data-effect", "ACTIVE");
   await page.getByTestId("effect-detail-turret_main").locator("summary").click();
   await expect(page.getByTestId("effect-detail-turret_main")).toContainText("rangeM");
   await expect(page.getByTestId("effect-detail-turret_main")).toContainText("FUTURE");

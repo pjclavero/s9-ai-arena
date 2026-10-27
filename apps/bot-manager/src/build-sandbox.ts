@@ -63,6 +63,7 @@ import {
 } from "./startup-clock.js";
 import type { Runtime } from "./types.js";
 import { describeUserError } from "./user-error.js";
+import { smokeVehicle, type SmokeVehicle } from "./smoke-vehicle.js";
 
 export class SandboxInfrastructureError extends Error {
   constructor(message: string) {
@@ -221,12 +222,17 @@ export class ContainerBuildSandbox implements BuildSandbox {
     }
 
     const catalog = loadCatalog();
-    const candLoadout = safeLookup(ARCHETYPES, sub.archetype);
     const refLoadout = safeLookup(ARCHETYPES, "gunner");
-    if (!candLoadout || !refLoadout) throw new SandboxInfrastructureError(`arquetipo desconocido: ${sub.archetype}`);
+    let cand: SmokeVehicle;
+    try {
+      cand = smokeVehicle(sub, catalog);
+    } catch (e) {
+      throw new SandboxInfrastructureError((e as Error).message);
+    }
+    if (!refLoadout) throw new SandboxInfrastructureError("arquetipo de referencia desconocido: gunner");
     const handle0 = protocolBotHandle(0);
     const participants: Participant[] = [
-      { id: "veh_1", botId: handle0, team: "red", spec: resolveVehicle(candLoadout, catalog) },
+      { id: "veh_1", botId: handle0, team: "red", spec: cand.spec },
       { id: "veh_2", botId: "ref_bot", team: "blue", spec: resolveVehicle(refLoadout, catalog) },
     ];
     const sessionId = `build-${randomUUID().slice(0, 8)}`;
@@ -418,7 +424,7 @@ export class ContainerBuildSandbox implements BuildSandbox {
       }
 
       const dq = result.disqualified ?? [];
-      const smokeLogs = [`batalla terminada en ${result.ticks} ticks; ganador ${result.winner}`];
+      const smokeLogs = [cand.note, `batalla terminada en ${result.ticks} ticks; ganador ${result.winner}`];
       const smoke: StageVerdict =
         dq.includes("veh_1") || dq.includes(handle0)
           ? {
