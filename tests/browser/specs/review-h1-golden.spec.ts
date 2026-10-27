@@ -165,7 +165,9 @@ test.describe("@golden [REVIEW] H1 usuario nuevo de extremo a extremo", () => {
     expect(roster.find((r) => r.botId === jsId)!.chassis).toBe("chassis.light@1");
     expect(pyVeh.hullHpMax).toBe(300);
     expect(jsVeh.hullHpMax).toBe(180);
-    expect(pyVeh.modules.map((m: any) => m.slot).sort()).toEqual(Object.keys(PY_LOADOUT.slots).sort());
+    expect(pyVeh.modules.map((m: any) => m.slot).sort()).toEqual(
+      [...Object.keys(PY_LOADOUT.slots), "ammo_main"].sort(),
+    ); // el resolvedor materializa la munición del arma (resolve/index.ts:91)
     expect(jsVeh.modules.map((m: any) => m.slot).sort()).toEqual(Object.keys(JS_LOADOUT.slots).sort());
 
     let outside = 0;
