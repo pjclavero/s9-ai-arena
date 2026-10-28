@@ -77,11 +77,11 @@ async function counts() {
   return { battles: Number(bt.n), jobs: Number(jb.n) };
 }
 
-async function post(body: unknown) {
+async function post(body: object) {
   return request(app).post("/battles").set("Authorization", `Bearer ${tok}`).send(body);
 }
 
-async function expectRejected(body: unknown, status: number, code?: string) {
+async function expectRejected(body: object, status: number, code?: string) {
   const before = await counts();
   const r = await post(body);
   expect(r.status, JSON.stringify(r.body)).toBe(status);
@@ -90,7 +90,7 @@ async function expectRejected(body: unknown, status: number, code?: string) {
   return r;
 }
 
-async function expectAccepted(body: unknown) {
+async function expectAccepted(body: object) {
   const before = await counts();
   const r = await post(body);
   expect(r.status, JSON.stringify(r.body)).toBe(202);
