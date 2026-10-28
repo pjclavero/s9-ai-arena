@@ -30,7 +30,7 @@ import {
   type Projectile,
 } from "./combat.js";
 import { ARENA_BOUNDARY_ID_PREFIX } from "../arena-map.js";
-import { createMode, type ArenaMap, type GameMode } from "./modes.js";
+import { chooseSpawn, createMode, spawnPoolFor, type ArenaMap, type GameMode, type SpawnDisk } from "./modes.js";
 import { PhysicsWorld, clamp, finite, finiteClamped, initPhysics, type Vec2 } from "./physics.js";
 import { buildObservation, radioReaches, validateRadio, type RadioMessage } from "./sensors.js";
 import { Vehicle, type VehicleSpec } from "./vehicle.js";
@@ -218,9 +218,31 @@ export class Battle {
     this.agents.set(vehicleId, agent);
   }
 
+  /**
+   * Colocación inicial (motor 0.3.0, batallas 4v4). Se llama en orden de id con `v`
+   * ya en `this.vehicles` y los anteriores ya en la física. Ver «colocación de
+   * spawns» en modes.ts: spawns del mapa primero (1v1 y 2v2 red/blue idénticos a
+   * 0.2.0) y, agotados, posiciones auxiliares seguras alrededor del spawn base.
+   */
   private spawnFor(v: Vehicle): { position: Vec2; heading: number } {
-    const own = this.config.map.spawns.filter((s) => s.team === v.team);
-    const pool = own.length > 0 ? own : this.config.map.spawns;
+    const map = this.config.map;
+    const teams = [...new Set(this.config.participants.map((p) => p.team))].sort();
+    const pool = spawnPoolFor(v.team, teams, map);
+    const occupied: SpawnDisk[] = [];
+    for (const o of this.vehicles) {
+      if (o.id === v.id) continue;
+      const p = this.physics.pose(o.id);
+      if (p) occupied.push({ position: p.position, radiusM: o.spec.radiusM });
+    }
+    const radiusMaxM = Math.max(...this.config.participants.map((p) => p.spec.radiusM));
+    // Los spawns del mapa aún libres quedan reservados: un auxiliar de un bando no
+    // le quita el punto base a quien le toca después.
+    const reserved: SpawnDisk[] = map.spawns
+      .filter((s) => !occupied.some((d) => Math.hypot(d.position.x - s.position.x, d.position.y - s.position.y) < 1e-3))
+      .map((s) => ({ position: s.position, radiusM: radiusMaxM }));
+    const chosen = chooseSpawn({ pool, startIndex: 0, radiusM: v.spec.radiusM, radiusMaxM, occupied, reserved, map });
+    if (chosen) return chosen;
+    // Sin hueco seguro (mapa diminuto o saturado): el reparto cíclico de 0.2.0.
     const idx = this.vehicles.filter((o) => o.team === v.team).indexOf(v);
     const s = pool[Math.max(0, idx) % pool.length];
     return { position: { ...s.position }, heading: s.heading };
@@ -505,12 +527,22 @@ export class Battle {
 
     // --- PASO 7 · Respawn
     if (this.config.ruleset.respawn.enabled) {
+      // Poses vistas por spawnFor: las de este tick, corregidas con quien ya ha
+      // reaparecido en este mismo bucle (dos reapariciones simultáneas no pueden
+      // elegir el mismo punto). Copia perezosa: sin reapariciones, coste cero.
+      let respawnPoses: Map<string, any> | null = null;
       for (const v of this.vehicles) {
         if (v.alive || v.disqualified) continue;
         if (v.respawnAtTick === 0) {
           v.respawnAtTick = this.tick + this.config.ruleset.respawn.delayTicks;
         } else if (this.tick >= v.respawnAtTick) {
-          const sp = this.mode.spawnFor(v, ctx);
+          respawnPoses ??= new Map(posesAfter);
+          const sp = this.mode.spawnFor(v, { ...ctx, poses: respawnPoses });
+          const prev = respawnPoses.get(v.id);
+          respawnPoses.set(v.id, {
+            ...(prev ?? { heading: 0, velocity: { x: 0, y: 0 }, angularVelocity: 0 }),
+            position: { ...sp },
+          });
           v.respawn(sp);
           v.respawnAtTick = 0;
           const body = this.physics.get(v.id);
