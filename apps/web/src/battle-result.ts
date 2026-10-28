@@ -265,3 +265,87 @@ export function dqReasonText(reason: string | null | undefined): string {
 export function ticksToClock(ticks: number): string {
   return fmtSeconds(ticks / TICK_HZ);
 }
+
+// ---------------------------------------------------------------- 4v4 · por bando
+
+/** Orden estable de bandos: rojo, azul y el resto por nombre (mismo criterio que el visor). */
+function sideRank(t: string): number {
+  return t === "red" ? 0 : t === "blue" ? 1 : 2;
+}
+
+/** Participantes agrupados por BANDO (`team`), en orden estable; sin bando, al final. */
+export function groupBySide<T extends { team?: string }>(ps: T[]): { team: string | null; items: T[] }[] {
+  const map = new Map<string, T[]>();
+  for (const p of ps) {
+    const k = p.team ?? "";
+    const list = map.get(k) ?? [];
+    list.push(p);
+    map.set(k, list);
+  }
+  const keys = [...map.keys()].filter((k) => k !== "");
+  keys.sort((a, b) => sideRank(a) - sideRank(b) || a.localeCompare(b));
+  const out: { team: string | null; items: T[] }[] = keys.map((k) => ({ team: k, items: map.get(k)! }));
+  if (map.has("")) out.push({ team: null, items: map.get("")! });
+  return out;
+}
+
+/**
+ * 4v4 · Título de una batalla. Con un bot por bando se mantiene «Alfa vs Beta»
+ * (`withSide` añade « (rojo)»). Si algún bando lleva varios bots se agrupa por
+ * bando: «A-ATK-1, A-ATK-2, A-ATK-3, A-ATK-4 (rojo) vs B-DEF-1, … (azul)».
+ */
+export function sidesTitle<T extends { team?: string }>(
+  ps: T[],
+  label: (p: T) => string,
+  opts: { withSide?: boolean } = {},
+): string {
+  const groups = groupBySide(ps);
+  if (groups.every((g) => g.items.length <= 1)) {
+    return ps.map((p) => `${label(p)}${opts.withSide && p.team ? ` (${teamText(p.team)})` : ""}`).join(" vs ");
+  }
+  return groups.map((g) => `${g.items.map(label).join(", ")}${g.team ? ` (${teamText(g.team)})` : ""}`).join(" vs ");
+}
+
+export interface SideResult {
+  team: string;
+  /** «rojo», «azul»… */
+  label: string;
+  bots: string[];
+  /** Puntos del marcador del bando, si el resultado los trae. */
+  score: number | null;
+  /** gana / pierde / empate; null si la batalla aún no tiene resultado. */
+  outcome: "gana" | "pierde" | "empate" | null;
+}
+
+/**
+ * 4v4 · Resultado POR BANDO a partir de lo que ya da GET /battles/{id} (participantes
+ * y `result`): no pide ni expone nada nuevo. Ganador por `result.winner`; si no lo
+ * hay, por el `outcome` de los participantes del bando.
+ */
+export function sideResults(b: BattleLike & { participants?: ParticipantLike[] }): SideResult[] {
+  const r = (b.result && typeof b.result === "object" ? b.result : {}) as Record<string, unknown>;
+  const winner = typeof r.winner === "string" ? r.winner : null;
+  const score = r.score && typeof r.score === "object" ? (r.score as Record<string, unknown>) : {};
+  const out: SideResult[] = [];
+  for (const g of groupBySide(b.participants ?? [])) {
+    if (g.team === null) continue;
+    const team = g.team;
+    let outcome: SideResult["outcome"] = null;
+    if (b.status === "finished") {
+      if (winner === "draw") outcome = "empate";
+      else if (winner) outcome = winner === team ? "gana" : "pierde";
+      else if (g.items.some((p) => p.outcome === "win")) outcome = "gana";
+      else if (g.items.some((p) => p.outcome === "draw")) outcome = "empate";
+      else if (g.items.some((p) => p.outcome === "loss" || p.outcome === "disqualified")) outcome = "pierde";
+    }
+    const pts = Number(score[team]);
+    out.push({
+      team,
+      label: teamText(team),
+      bots: g.items.map(botVersionLabel),
+      score: Object.hasOwn(score, team) && Number.isFinite(pts) ? pts : null,
+      outcome,
+    });
+  }
+  return out;
+}

@@ -31,6 +31,9 @@ import {
   ticksToClock,
   winnerText,
   teamText,
+  sideResults,
+  sidesTitle,
+  groupBySide,
   type BattleLike,
   type ParticipantLike,
 } from "../battle-result.js";
@@ -193,7 +196,7 @@ function BattleHeader({ b, audit }: { b: BattleDetail; audit: AuditView | null }
   return (
     <>
       <h2 data-testid="battle-title">
-        {b.participants.map(botLabel).join(" vs ") || "Batalla"} <small>· {STATUS_TEXT[b.status] ?? b.status}</small>
+        {sidesTitle<DetailParticipant>(b.participants, botLabel) || "Batalla"} <small>· {STATUS_TEXT[b.status] ?? b.status}</small>
       </h2>
       {b.status === "finished" && (
         <p data-testid="battle-winner">
@@ -257,6 +260,7 @@ function BattleHeader({ b, audit }: { b: BattleDetail; audit: AuditView | null }
           </>
         )}
       </dl>
+      <SidesTable b={b} />
       <table data-testid="battle-participants">
         <thead>
           <tr>
@@ -295,6 +299,42 @@ function BattleHeader({ b, audit }: { b: BattleDetail; audit: AuditView | null }
         ) : null}
       </p>
     </>
+  );
+}
+
+const SIDE_OUTCOME_CLASS: Record<string, string> = { gana: "ok", pierde: "warn", empate: "" };
+
+/**
+ * 4v4 · Resultado POR BANDO (lo que ya trae la batalla: participantes y `result`).
+ * Recuerda que el bando es el lado del campo, no el equipo de la sección Equipos.
+ */
+function SidesTable({ b }: { b: BattleDetail }) {
+  const sides = sideResults(b);
+  if (sides.length < 2) return null;
+  return (
+    <table data-testid="battle-sides">
+      <caption>Resultado por bando (el bando es el lado del campo, no el equipo de la sección Equipos)</caption>
+      <thead>
+        <tr>
+          <th>Bando</th>
+          <th>Bots</th>
+          <th>Puntos</th>
+          <th>Resultado</th>
+        </tr>
+      </thead>
+      <tbody>
+        {sides.map((sd) => (
+          <tr key={sd.team} data-testid="side-row" data-team={sd.team}>
+            <td>{sd.label}</td>
+            <td>
+              {sd.bots.length} · {sd.bots.join(", ")}
+            </td>
+            <td>{sd.score ?? "—"}</td>
+            <td className={sd.outcome ? SIDE_OUTCOME_CLASS[sd.outcome] : undefined}>{sd.outcome ?? "—"}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -360,6 +400,37 @@ function StatsSection({ b, s }: { b: BattleDetail; s: StatsResponse }) {
           })}
         </tbody>
       </table>
+      {groupBySide(rows).some((g) => g.items.length > 1) && (
+        // 4v4 · totales por bando, sumados de las filas por bot de arriba (mismo dato).
+        <table data-testid="battle-stats-sides">
+          <thead>
+            <tr>
+              <th>Bando</th>
+              <th>Bajas</th>
+              <th>Daño hecho</th>
+              <th>Daño recibido</th>
+              <th>Supervivientes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {groupBySide(rows).map((g) => {
+              const st = g.items.map((p) => s.perBot[p.botId]);
+              const sum = (f: (x: BotStatsView) => number) => st.reduce((acc, x) => acc + (f(x) || 0), 0);
+              return (
+                <tr key={g.team ?? "_"} data-testid="stats-side-row" data-team={g.team ?? ""}>
+                  <td>{teamText(g.team)}</td>
+                  <td>{sum((x) => x.kills)}</td>
+                  <td>{Math.round(sum((x) => x.damageDealt))}</td>
+                  <td>{Math.round(sum((x) => x.damageTaken))}</td>
+                  <td>
+                    {st.filter((x) => !x.died).length} / {st.length}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
       {rows.map((p) => (
         <details key={p.botId} data-testid="module-usage">
           <summary>Uso de módulos de {botVersionLabel(p)}</summary>
