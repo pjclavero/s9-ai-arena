@@ -97,8 +97,14 @@ describe("4v4-STATS · TDM 4v4 real con respawn", () => {
       const bots = Object.values(s.perBot).filter((b) => b.team === team);
       const sum = (f: (b: (typeof bots)[number]) => number) => bots.reduce((a, b) => a + f(b), 0);
       const t = s.perTeam[team];
-      expect(t.damageDealt).toBeCloseTo(sum((b) => b.damageDealt), 9);
-      expect(t.damageTaken).toBeCloseTo(sum((b) => b.damageTaken), 9);
+      expect(t.damageDealt).toBeCloseTo(
+        sum((b) => b.damageDealt),
+        9,
+      );
+      expect(t.damageTaken).toBeCloseTo(
+        sum((b) => b.damageTaken),
+        9,
+      );
       expect(t.shotsFired).toBe(sum((b) => b.shotsFired));
       expect(t.shotsHit).toBe(sum((b) => b.shotsHit));
       expect(t.kills).toBe(sum((b) => b.kills));

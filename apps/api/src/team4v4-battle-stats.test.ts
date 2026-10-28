@@ -157,7 +157,8 @@ describe("4v4-STATS · /battles/{id}/stats con perTeam (TDM 4v4 real)", () => {
         const bots = Object.values(r.body.perBot as Record<string, any>).filter((b) => b.team === team);
         const sum = (k: string) => bots.reduce((a, b) => a + b[k], 0);
         const t = r.body.perTeam[team];
-        for (const k of ["kills", "deaths", "shotsFired", "shotsHit"]) expect(t[k], `${actor} ${team} ${k}`).toBe(sum(k));
+        for (const k of ["kills", "deaths", "shotsFired", "shotsHit"])
+          expect(t[k], `${actor} ${team} ${k}`).toBe(sum(k));
         for (const k of ["damageDealt", "damageTaken"]) expect(t[k]).toBeCloseTo(sum(k), 6);
         expect(t.survivors).toBe(bots.filter((b) => b.aliveAtEnd).length);
       }

@@ -726,13 +726,7 @@ export function battleRoutes(
         // 4v4-STATS · los descartes de radio miden el fallo del código del bot
         // (rate-limit, tamaño): diagnóstico, igual que rejectionsByReason. La
         // actividad de radio (`radio`: enviados/oídos) es juego: se queda.
-        const {
-          cpuMs: _cpu,
-          decisions: _dec,
-          rejectionsByReason: _rej,
-          radioDroppedByReason: _drop,
-          ...sporting
-        } = s;
+        const { cpuMs: _cpu, decisions: _dec, rejectionsByReason: _rej, radioDroppedByReason: _drop, ...sporting } = s;
         // UX-F (DEF-R12) · los turnos sin responder y los rechazos por módulo
         // también son diagnóstico (cuánto falla TU código), no deporte: un rival no
         // los ve. Daño, disparos, aciertos y estado final de los módulos, sí.
