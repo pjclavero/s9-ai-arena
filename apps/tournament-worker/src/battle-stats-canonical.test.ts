@@ -121,6 +121,13 @@ describe("H3 · battle_stats: una única forma canónica (la del job de E8)", ()
       "distanceM",
       "disqualified",
       "cpuMs",
+      // 4v4-STATS · aditivos: muertes con respawn y radio observada.
+      "teamKills",
+      "deaths",
+      "respawns",
+      "aliveAtEnd",
+      "radio",
+      "radioDroppedByReason",
       "perModule",
       "vehicleId",
       "battle",

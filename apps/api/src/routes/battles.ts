@@ -15,7 +15,8 @@ import { pathParam } from "../params.js";
 import { ROLE_RANK } from "../openapi.js";
 import { ApiError, badRequest, conflict, notFound } from "../errors.js";
 import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
-import { emptyDict } from "../../../../packages/game-rules/safe-lookup.js";
+import { emptyDict, safeLookup } from "../../../../packages/game-rules/safe-lookup.js";
+import { addBotToTeam, emptyTeamStats, type TeamBattleStats } from "../../../replay-service/src/team-stats.js";
 import { signSpectateTicket } from "../auth/tokens.js";
 import { anonQuota, type AnonQuotaConfig } from "../middleware/anon-quota.js";
 import type { BattleRunConfig } from "../battle-run.js";
@@ -293,6 +294,10 @@ function buildDiagnostics(
         }
       : null,
     rejectionsByReason: s?.rejectionsByReason ?? null,
+    // 4v4-STATS · mensajes de radio descartados por el motor, por motivo
+    // (rate_limited, too_large, no_radio, queue_full). null = stats sin medir
+    // (batalla anterior a 4v4-STATS o sin stats).
+    radioDroppedByReason: s?.radioDroppedByReason ?? null,
     disconnectedAtTick: proto ? num(proto.disconnectedAtTick) : null,
     container: d?.container
       ? {
@@ -703,8 +708,14 @@ export function battleRoutes(
     // B8 · `emptyDict()`, NO `{}`: `bot_id` es un valor de BD usado como clave.
     const perBot: Record<string, unknown> = emptyDict<unknown>();
     const diagnostics: Record<string, unknown> = emptyDict<unknown>();
-    const result = (battle.result ?? {}) as { disqualified?: string[]; endReason?: string };
+    const result = (battle.result ?? {}) as {
+      disqualified?: string[];
+      endReason?: string;
+      score?: Record<string, unknown>;
+    };
     const maxTimeouts = await maxConsecutiveTimeoutsOf(db, battle);
+    // `team` es dato de BD/replay usado como clave: Map, y emptyDict al serializar.
+    const teams = new Map<string, TeamBattleStats>();
     for (const p of participants) {
       const botId = String(p.bot_id);
       const s = statsByBot.get(botId);
@@ -712,7 +723,16 @@ export function battleRoutes(
       if (s) {
         // Lo deportivo lo ve quien ve la batalla; la CPU y el desglose de
         // decisiones y rechazos son diagnóstico (TD-047): sólo dueño y staff.
-        const { cpuMs: _cpu, decisions: _dec, rejectionsByReason: _rej, ...sporting } = s;
+        // 4v4-STATS · los descartes de radio miden el fallo del código del bot
+        // (rate-limit, tamaño): diagnóstico, igual que rejectionsByReason. La
+        // actividad de radio (`radio`: enviados/oídos) es juego: se queda.
+        const {
+          cpuMs: _cpu,
+          decisions: _dec,
+          rejectionsByReason: _rej,
+          radioDroppedByReason: _drop,
+          ...sporting
+        } = s;
         // UX-F (DEF-R12) · los turnos sin responder y los rechazos por módulo
         // también son diagnóstico (cuánto falla TU código), no deporte: un rival no
         // los ve. Daño, disparos, aciertos y estado final de los módulos, sí.
@@ -728,6 +748,17 @@ export function battleRoutes(
           }
         }
         perBot[botId] = { ...sporting, botName: p.bot_name ?? undefined, version: p.version };
+        // 4v4-STATS · `perTeam` se agrega SÓLO de lo que acaba de entrar en
+        // `perBot` (lo deportivo, igual para cualquier lector): por construcción
+        // no puede revelar más que `perBot` (TD-047).
+        const team = typeof sporting.team === "string" ? sporting.team : String(p.team ?? "");
+        let t = teams.get(team);
+        if (!t) {
+          const score = Number(safeLookup(result.score ?? {}, team) ?? sporting.battle?.team?.score ?? 0);
+          t = emptyTeamStats(team, Number.isFinite(score) ? score : 0);
+          teams.set(team, t);
+        }
+        addBotToTeam(t, sporting);
       }
       if (owner) {
         diagnostics[botId] = buildDiagnostics(p, s, result, maxTimeouts);
@@ -742,7 +773,9 @@ export function battleRoutes(
     else if (battle.status === "scheduled" || battle.status === "running") status = "pending";
     else if (battle.status === "finished" && battle.replay_ref) status = "pending";
     res.setHeader("Cache-Control", NO_STORE);
-    res.json({ battleId: battle.id, status, perBot, diagnostics });
+    const perTeam: Record<string, TeamBattleStats> = emptyDict<TeamBattleStats>();
+    for (const [team, t] of teams) perTeam[team] = t;
+    res.json({ battleId: battle.id, status, perBot, perTeam, diagnostics });
   });
 
   // PRC (TD-004) · getReplay, getReplayIndex, getReplaySegment, verifyReplay y
