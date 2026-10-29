@@ -15,6 +15,7 @@ import { go, login, registerNewUser, shot, watchProblems } from "./helpers.js";
 /** Punto del mundo (m) → coordenadas de página, leyendo la vista que publica el lienzo. */
 async function toPage(page: Page, x: number, y: number) {
   const stage = page.getByTestId("editor-stage");
+  await stage.scrollIntoViewIfNeeded(); // un punto fuera del viewport no recibe el clic
   const box = (await page.getByTestId("editor-canvas").boundingBox())!;
   const z = Number(await stage.getAttribute("data-zoom"));
   const [cx, cy] = (await stage.getAttribute("data-center"))!.split(",").map(Number);
@@ -121,7 +122,7 @@ test.describe("@fase1 UX-EDITOR editor visual", () => {
 
     // PAN: arrastrar en un hueco desplaza la vista.
     const center0 = await stage.getAttribute("data-center");
-    const empty = await toPage(page, 40, 70);
+    const empty = await toPage(page, 50, 50);
     await mouseDrag(page, empty, { x: empty.x - 120, y: empty.y - 40 });
     await expect(stage).not.toHaveAttribute("data-center", center0!);
     await page.getByRole("button", { name: "Encajar mapa" }).click();
@@ -179,7 +180,11 @@ test.describe("@fase1 UX-EDITOR editor visual", () => {
   }) => {
     test.setTimeout(120_000);
     const problems = watchProblems(page);
-    const { email, password } = await registerNewUser(page);
+    // Generar un procedural exige rol organizer: se usa el organizador de la semilla de
+    // desarrollo de la BD efímera (credenciales por entorno, no en el repo).
+    const email = process.env.S9_E2E_DEV_EMAIL!;
+    const password = process.env.S9_E2E_DEV_PASSWORD!;
+    await login(page, email, password);
     // El panel guarda el token en memoria (no en cookie): las lecturas directas de la
     // API van con su propio Bearer para ver los borradores del usuario.
     const lr = await page.request.post("/api/v1/auth/login", { data: { email, password } });
