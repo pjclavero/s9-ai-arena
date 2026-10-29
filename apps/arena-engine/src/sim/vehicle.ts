@@ -110,6 +110,8 @@ export class Vehicle {
   energyEU: number;
   alive = true;
   respawnAtTick = 0;
+  /** R-RULES (ADR-021) · reapariciones ya usadas (sólo limita con `respawn.maxRespawns`). */
+  respawnsUsed = 0;
   carryingFlag: string | null = null;
   /**
    * R3.8 · Marca de Juggernaut/VIP, al estilo carryingFlag: estado por vehículo que
@@ -320,6 +322,7 @@ export class Vehicle {
 
   // --------------------------------------------------------------- respawn
   respawn(position: { x: number; y: number }): void {
+    this.respawnsUsed += 1;
     this.hullHp = this.spec.hullHp;
     this.alive = true;
     this.carryingFlag = null;
