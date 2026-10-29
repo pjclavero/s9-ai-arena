@@ -152,8 +152,24 @@ const C: ModuleDefinition[] = [
       { id: "bay", accepts: ["mine"], maxSize: "M" },
     ],
   } as ModuleDefinition,
-  { id: "weapon.gun", version: 1, category: "weapon", size: "S", massKg: 1, costCredits: 1, acceptsAmmo: ["ammo.x", "ammo.y"] } as ModuleDefinition,
-  { id: "weapon.mg", version: 1, category: "weapon", size: "S", massKg: 1, costCredits: 1, acceptsAmmo: ["ammo.z"] } as ModuleDefinition,
+  {
+    id: "weapon.gun",
+    version: 1,
+    category: "weapon",
+    size: "S",
+    massKg: 1,
+    costCredits: 1,
+    acceptsAmmo: ["ammo.x", "ammo.y"],
+  } as ModuleDefinition,
+  {
+    id: "weapon.mg",
+    version: 1,
+    category: "weapon",
+    size: "S",
+    massKg: 1,
+    costCredits: 1,
+    acceptsAmmo: ["ammo.z"],
+  } as ModuleDefinition,
   { id: "weapon.laser", version: 1, category: "weapon", size: "S", massKg: 1, costCredits: 1 } as ModuleDefinition,
   { id: "ammo.x", version: 1, category: "ammo", size: "S", massKg: 1, costCredits: 1 } as ModuleDefinition,
   { id: "ammo.y", version: 2, category: "ammo", size: "S", massKg: 1, costCredits: 1 } as ModuleDefinition,
@@ -173,7 +189,9 @@ describe("casos límite de la regla de munición", () => {
   it("arma que consume munición SIN ninguna munición → incompatible_ammo con las compatibles", () => {
     const v = amm([{ slot: "t1", moduleId: "weapon.gun@1" }]);
     expect(v).toHaveLength(1);
-    expect(v[0]!.message).toBe("El módulo weapon.gun@1 necesita munición y no lleva ninguna. Municiones compatibles: ammo.x, ammo.y.");
+    expect(v[0]!.message).toBe(
+      "El módulo weapon.gun@1 necesita munición y no lleva ninguna. Municiones compatibles: ammo.x, ammo.y.",
+    );
     expect(v[0]!.ammoId).toBeUndefined();
   });
 
@@ -258,7 +276,11 @@ describe("casos límite de la regla de munición", () => {
       { slot: "t1", moduleId: "weapon.gun@1", ammo: "ammo.z@1" },
       { slot: "t2", moduleId: "weapon.mg@1" },
     ]);
-    expect(v.map((x) => x.slot)).toEqual(["t1"]);
+    // La munición rechazada no cuenta para nadie: la ametralladora se queda sin munición.
+    expect(v.map((x) => x.slot)).toEqual(["t1", "t2"]);
+    expect(v[1]!.message).toBe(
+      "El módulo weapon.mg@1 necesita munición y no lleva ninguna. Municiones compatibles: ammo.z.",
+    );
   });
 
   it("módulo inexistente en el catálogo: lo informa unknown_slot y la regla de munición no inventa nada", () => {
@@ -289,7 +311,10 @@ describe("la regla no rompe otras validaciones", () => {
 
   it("ranura inválida y energía insuficiente siguen informándose junto al error de munición", () => {
     const bad = defender("ammo.standard@1");
-    bad.modules = [...bad.modules.filter((m) => m.slot !== "power"), { slot: "no_such_slot", moduleId: "radio.short@1" }];
+    bad.modules = [
+      ...bad.modules.filter((m) => m.slot !== "power"),
+      { slot: "no_such_slot", moduleId: "radio.short@1" },
+    ];
     const codes = validateLoadout(bad, CATALOG, 1200).map((x) => x.code);
     expect(codes).toContain("unknown_slot");
     expect(codes).toContain("energy_deficit");

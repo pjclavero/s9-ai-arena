@@ -80,7 +80,7 @@ Valores exactos y su efecto en la simulación: [equipment.md técnico](../techni
 | `energy_deficit` | El consumo supera a la generación |
 | `unknown_slot` | La ranura no existe en ese chasis (p. ej. minas en un chasis ligero) |
 | `slot_type_mismatch` / `slot_size_exceeded` | Módulo de otro tipo o demasiado grande para la ranura |
-| `incompatible_ammo` | La munición no es compatible con el arma |
+| `incompatible_ammo` | Un arma no tiene munición que pueda disparar (ninguna o de otro tipo), o hay munición que ningún arma usa. Vale igual si la munición va con el arma o en su propia ranura (`ammo_main`). El mensaje dice qué municiones admite el arma (p. ej. el cañón: `ammo.ap`, `ammo.he`) |
 | `duplicate_limit_exceeded` | Más unidades de las permitidas de un módulo (p. ej. un lidar 360° por vehículo) |
 
 ## Ejemplo

@@ -30,6 +30,8 @@ import { signArtifact, type ServiceKeypair } from "./signing.js";
 import { runProtocolTest, runSmokeBattle } from "./smoke-battle.js";
 import type { BuildStore } from "./store.js";
 import { NullAuditSink, type AuditSink } from "./audit-sink.js";
+import { CATALOG_VERSION, loadCatalog } from "../../../packages/module-catalog/loadCatalog.js";
+import { validateAmmo } from "../../../packages/module-catalog/validator/index.js";
 import {
   STAGE_ORDER,
   type Build,
@@ -302,6 +304,15 @@ export class BuildPipeline {
         if (!sub.files.some((f) => f.path === manifest || f.path.endsWith("/" + manifest))) {
           stage.message = `falta manifiesto ${manifest}`;
           return "failed";
+        }
+        // Defensa en profundidad: la API ya rechaza en submit un loadout con munición
+        // incompatible, pero si llegase uno, se para aquí y no en la batalla de humo.
+        if (sub.loadout && sub.loadout.catalogVersion === CATALOG_VERSION) {
+          const bad = validateAmmo(sub.loadout, loadCatalog());
+          if (bad.length > 0) {
+            stage.message = `loadout inválido: ${bad.map((v) => v.message).join(" ")}`;
+            return "failed";
+          }
         }
         stage.logs.push(`estructura ok: ${sub.files.length} ficheros, ${size} B`);
         return "passed";

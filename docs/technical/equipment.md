@@ -34,7 +34,7 @@ La clasificación ACTIVE / PARTIAL / FUTURE de cada propiedad vive en código (`
 ## Cómo funciona
 
 1. La web (`LoadoutEditor`) usa el validador compilado al navegador para mostrar coste, energía y violaciones en vivo.
-2. `POST /bots/{id}/loadouts` vuelve a validar en servidor contra el ruleset `mvp-default` (presupuesto 1000). Responde `422 loadout_invalid` con `violations` o `201` con una nueva revisión.
+2. `POST /bots/{id}/loadouts` vuelve a validar en servidor contra el ruleset `mvp-default` (presupuesto 1000). Responde `422 loadout_invalid` con `violations` o `201` con una nueva revisión. Las revisiones guardadas son inmutables: si una antigua ya no valida (p. ej. cañón con munición estándar), se conserva, pero crear, clonar, enviar a build o publicar una versión con ella responde `422 loadout_invalid`; el pipeline también la para en `structure`.
 3. Cada versión de código fija una `loadout_revision`. En torneo, la inscripción congela la pareja código+loadout.
 4. Al empezar la batalla, el worker lee el loadout y llama a `resolveVehicle(loadout, catalog)`, que produce el `VehicleSpec`. La masa total es la del chasis más la de los módulos.
 
@@ -204,7 +204,7 @@ Hallazgo nuevo de esta consolidación, comunicado a A como parte de [TD-016](../
 
 Códigos de violación del validador (`packages/module-catalog/validator/index.ts`):
 
-`incompatible_chassis`, `duplicate_slot`, `unknown_slot` (p. ej. `mine_bay` en un chasis ligero), `slot_type_mismatch`, `slot_size_exceeded`, `category_forbidden_by_ruleset`, `incompatible_ammo`, `duplicate_limit_exceeded` (`maxPerVehicle`), `mass_exceeded` (`maxLoadKg`), `energy_deficit`, `budget_exceeded` y `module_cost_cap_exceeded` (ningún módulo puede costar más del 35 % del presupuesto).
+`incompatible_chassis`, `duplicate_slot`, `unknown_slot` (p. ej. `mine_bay` en un chasis ligero), `slot_type_mismatch`, `slot_size_exceeded`, `category_forbidden_by_ruleset`, `incompatible_ammo` (regla arma ↔ munición igual que `combat.ammoFor`: todo arma con `acceptsAmmo` necesita al menos una munición montada de un tipo base que acepte, tanto embebida en el arma (`ammo:`) como montada como módulo aparte; la munición embebida la tiene que admitir su arma; un módulo de munición que ningún arma usa también se rechaza; la violación trae `ammoId` y `acceptedAmmo`), `duplicate_limit_exceeded` (`maxPerVehicle`), `mass_exceeded` (`maxLoadKg`), `energy_deficit`, `budget_exceeded` y `module_cost_cap_exceeded` (ningún módulo puede costar más del 35 % del presupuesto).
 
 El presupuesto en servidor es el del ruleset `mvp-default` (1000), venga el loadout de donde venga (`services/bots.ts:134-160`).
 
