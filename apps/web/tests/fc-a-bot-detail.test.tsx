@@ -148,6 +148,23 @@ describe("A9.19 · BotDetailPage", () => {
     expect(calls.some((c) => c.method === "POST" && c.path === "/bots/b1/versions/1/actions/clone")).toBe(true);
   });
 
+  it("si el servidor rechaza la versión por el loadout (422), el aviso dice el motivo y qué munición usar", async () => {
+    const base = apiMock.getMockImplementation()!;
+    const message =
+      "La revisión 1 del loadout ya no es válida: El módulo weapon.cannon@1 no admite ammo.standard@1. Municiones compatibles: ammo.ap, ammo.he. Guarda una revisión corregida y úsala.";
+    apiMock.mockImplementation(async (method: string, path: string, body?: unknown) => {
+      if (method === "POST" && /actions\/clone$/.test(path)) {
+        throw new ApiRequestError(422, { error: "loadout_invalid", message, violations: [] });
+      }
+      return base(method, path, body);
+    });
+    render(<BotDetailPage botId="b1" meId="u1" initialTab="versions" />);
+    await userEvent.click(await screen.findByTestId("clone-1"));
+    expect((await screen.findByTestId("bot-detail-notice")).textContent).toBe(
+      `No se pudo crear la versión: ${message}`,
+    );
+  });
+
   it("Comparar pide el diff al backend y lo pinta (sólo ficheros cambiados)", async () => {
     render(<BotDetailPage botId="b1" meId="u1" initialTab="versions" />);
     await userEvent.click(await screen.findByTestId("compare-3"));
