@@ -10,7 +10,7 @@
  * Capturas en 5 viewports (1920, 1366, 1024, 430, 360) sin desbordamiento horizontal.
  */
 import { test, expect, type Page } from "@playwright/test";
-import { go, registerNewUser, shot, watchProblems } from "./helpers.js";
+import { go, login, registerNewUser, shot, watchProblems } from "./helpers.js";
 
 /** Punto del mundo (m) → coordenadas de página, leyendo la vista que publica el lienzo. */
 async function toPage(page: Page, x: number, y: number) {
@@ -96,6 +96,10 @@ test.describe("@fase1 UX-EDITOR editor visual", () => {
     await expect(objects(page, "wall")).toHaveCount(1);
     await page.keyboard.press("Control+z");
     await expect(objects(page, "wall")).toHaveCount(2);
+    await page
+      .getByTestId("editor-objects")
+      .getByRole("button", { name: /^Muro 2/ })
+      .click();
     await page.getByRole("button", { name: "Eliminar objeto", exact: true }).click();
     await expect(objects(page, "wall")).toHaveCount(1);
 
@@ -175,7 +179,17 @@ test.describe("@fase1 UX-EDITOR editor visual", () => {
   }) => {
     test.setTimeout(120_000);
     const problems = watchProblems(page);
-    await registerNewUser(page);
+    const { email, password } = await registerNewUser(page);
+    // El panel guarda el token en memoria (no en cookie): las lecturas directas de la
+    // API van con su propio Bearer para ver los borradores del usuario.
+    const lr = await page.request.post("/api/v1/auth/login", { data: { email, password } });
+    expect(lr.status()).toBe(200);
+    const auth = { Authorization: `Bearer ${((await lr.json()) as { accessToken: string }).accessToken}` };
+    const getJson = async (path: string) => {
+      const res = await page.request.get(`/api/v1${path}`, { headers: auth });
+      expect(res.status(), `${path}: ${await res.text()}`).toBe(200);
+      return (await res.json()) as Record<string, unknown>;
+    };
     const stamp = Date.now().toString(36);
     const strip = (m: Record<string, unknown>) => {
       const { checksum: _c, version: _v, ...rest } = m;
@@ -196,16 +210,17 @@ test.describe("@fase1 UX-EDITOR editor visual", () => {
     await page.getByLabel("id del mapa").fill(id1);
     await page.getByTestId("editor-save").click();
     await expect(page.getByTestId("editor-notice")).toContainText(`${id1} v1`);
-    const back = await (await page.request.get(`/api/v1/maps/${id1}/versions/1/content`)).json();
+    const back = await getJson(`/maps/${id1}/versions/1/content`);
     expect(strip(back)).toEqual(strip({ ...mvp, mapId: id1 }));
 
     // 2) Procedural generado por la API: abrir en el editor y guardar SIN tocar.
     const gen = await page.request.post("/api/v1/maps/generate", {
-      data: { seed: `uxed-${stamp}`, params: { widthM: 60, heightM: 40, modes: ["deathmatch"] } },
+      headers: auth,
+      data: { seed: `uxed-${stamp}`, params: { widthM: 40, heightM: 40, modes: ["deathmatch"] } },
     });
     expect(gen.status(), await gen.text()).toBe(201);
     const g = (await gen.json()) as { mapId: string; version: number };
-    const before = await (await page.request.get(`/api/v1/maps/${g.mapId}/versions/${g.version}/content`)).json();
+    const before = await getJson(`/maps/${g.mapId}/versions/${g.version}/content`);
     await go(page, `#/maps/editor?map=${g.mapId}&v=${g.version}`);
     await page.reload();
     await expect(page.getByTestId("editor-current")).toHaveText(`${g.mapId} v${g.version}`);
@@ -213,7 +228,7 @@ test.describe("@fase1 UX-EDITOR editor visual", () => {
     await expect(page.getByTestId("editor-notice")).toContainText("Guardado en el servidor");
     const notice = (await page.getByTestId("editor-notice").textContent()) ?? "";
     const v2 = Number(/ v(\d+)/.exec(notice)![1]);
-    const after = await (await page.request.get(`/api/v1/maps/${g.mapId}/versions/${v2}/content`)).json();
+    const after = await getJson(`/maps/${g.mapId}/versions/${v2}/content`);
     expect(strip(after)).toEqual(strip(before));
 
     // 3) Formato de autoría antiguo (px, 10 px = 1 m).
@@ -252,8 +267,7 @@ test.describe("@fase1 UX-EDITOR editor visual", () => {
     test.setTimeout(180_000);
     const ctx0 = await browser.newContext({ ignoreHTTPSErrors: true });
     const page0 = await ctx0.newPage();
-    await registerNewUser(page0);
-    const state = await ctx0.storageState();
+    const { email, password } = await registerNewUser(page0);
     const r = await page0.request.get("/api/v1/maps/mvp-arena-01/versions/1/content");
     const raw = (await r.json()) as Record<string, unknown>;
     const mvp = JSON.stringify((raw as { content?: unknown }).content ?? raw);
@@ -268,15 +282,13 @@ test.describe("@fase1 UX-EDITOR editor visual", () => {
     for (const vp of vps) {
       const ctx = await browser.newContext({
         ignoreHTTPSErrors: true,
-        storageState: state,
         viewport: { width: vp.width, height: vp.height },
         hasTouch: vp.touch,
         isMobile: vp.touch && vp.width < 500,
       });
       const page = await ctx.newPage();
       const problems = watchProblems(page);
-      await page.goto("/");
-      await expect(page.getByTestId("logout")).toBeVisible();
+      await login(page, email, password);
       await go(page, "#/maps/editor");
       await expect(page.getByTestId("editor-canvas")).toBeVisible();
       await openAdvancedAndImport(page, mvp);
