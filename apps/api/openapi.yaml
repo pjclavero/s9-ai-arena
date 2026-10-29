@@ -32,8 +32,12 @@ info:
   # y las nuevas aplican la política de acceso (staff, dueño o equipo de un bot
   # participante, o replay público por S9_PUBLIC_REPLAYS_ENABLED); el resto
   # recibe 404, igual que un id inexistente.
+  # 0.10.0 · R-RULES (ADR-021) reglas de batalla: añade checkBattleRules
+  # (POST /battles/rules-check) y, de forma ADITIVA, `rules` opcional en
+  # PracticeBattleInput, `rules` en Battle, `presets`/`custom` en listRulesets y
+  # `profile`/`rules` en BattleStats. Nada se quita ni cambia de significado.
   # Añadir un endpoint = MINOR (docs/compatibilidad.md, §2 Semver por paquete).
-  version: 0.9.0
+  version: 0.10.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
