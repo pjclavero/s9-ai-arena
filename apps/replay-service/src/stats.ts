@@ -130,6 +130,15 @@ export interface BotBattleStats {
    */
   radioDroppedByReason: Record<string, number>;
   perModule: Record<string, ModuleStats>;
+  /**
+   * R-RULES (ADR-021) · Sólo con respawn LIMITADO (`ruleset.respawn.maxRespawns`):
+   * vidas totales (1 + reapariciones permitidas), reapariciones que le quedaban al
+   * acabar y si quedó ELIMINADO (sin vidas). Ausentes en el resto de batallas: no se
+   * inventan métricas que no tienen sentido para el modo (FASE 13).
+   */
+  lives?: number;
+  respawnsRemaining?: number;
+  eliminated?: boolean;
 }
 
 /**
@@ -445,8 +454,18 @@ export async function computeBattleStats(replay: Replay, inputs: BattleStatsInpu
   // ---- 4 · Cierre por bot: vida, precisión, uso de módulos.
   const duration = replay.result.ticks;
   const lastSnapshot = replay.snapshots.at(-1);
+  // R-RULES · el límite sale de la cabecera (la COPIA con que se jugó), nunca de reglas actuales.
+  const respawnRule = header.ruleset?.respawn ?? {};
+  const maxRespawns =
+    respawnRule.enabled === true && Number.isInteger(respawnRule.maxRespawns) && respawnRule.maxRespawns >= 0
+      ? (respawnRule.maxRespawns as number)
+      : null;
   for (const [vehicleId, s] of byVehicle) {
     s.died = s.deaths > 0;
+    if (maxRespawns !== null) {
+      s.lives = 1 + maxRespawns;
+      s.respawnsRemaining = Math.max(0, maxRespawns - s.respawns);
+    }
     // Ticks vivo: suma de tramos [aparición, muerte) hasta el final.
     let alive = true;
     let since = 0;
@@ -459,6 +478,7 @@ export async function computeBattleStats(replay: Replay, inputs: BattleStatsInpu
     if (alive) lived += duration - since;
     s.survivedTicks = lived;
     s.aliveAtEnd = alive && !s.disqualified;
+    if (maxRespawns !== null) s.eliminated = !s.aliveAtEnd && s.respawnsRemaining === 0;
     const attempts = fireAttempts.get(vehicleId) ?? new Map();
     const weapons = weaponSlots.get(vehicleId) ?? new Set();
     let totalAcceptedShots = 0;

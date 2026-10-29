@@ -33,6 +33,7 @@ import {
 } from "../battle-access.js";
 import { loadRuleset } from "../../../../packages/game-rules/index.js";
 import { resolveBattleRuleset } from "../services/battle-ruleset-resolver.js";
+import { buildBattleRules, rulesOf, rulesToJson } from "../services/battle-rules.js";
 import type { Request } from "express";
 
 const SPECTATE_TICKET_TTL_S = 60;
@@ -185,6 +186,8 @@ export function battleToJson(
     finishedAt: b.finished_at ? new Date(b.finished_at as string).toISOString() : undefined,
     replayAvailable: Boolean(b.replay_ref),
     replayHash: b.replay_hash ?? undefined,
+    // R-RULES · copia inmutable de las reglas (ausente en batallas anteriores).
+    rules: rulesToJson(rulesOf(b)),
   };
 }
 
@@ -279,6 +282,9 @@ const NO_STORE = "private, no-store";
 /** `maxConsecutiveTimeouts` del ruleset con el que corrió la batalla, o null si no se sabe. */
 async function maxConsecutiveTimeoutsOf(db: Db, battle: Record<string, any>): Promise<number | null> {
   const versions = (battle.engine_versions ?? {}) as Record<string, unknown>;
+  // R-RULES · con copia de reglas, la copia manda (nunca el catálogo actual).
+  const snapshot = rulesOf(battle);
+  if (snapshot) return Number(snapshot.engineRuleset.maxConsecutiveTimeouts);
   try {
     // El ruleset del MOTOR que se usó (engine-executor lo deja en engine_versions);
     // si no está (batalla sin ejecutar), la misma resolución que usa el worker.
@@ -652,6 +658,10 @@ export function battleRoutes(
       }
     }
 
+    // R-RULES (ADR-021) · reglas: preset/personalizado/clásico, topes de créditos y
+    // masa con los loadouts REALES, y la COPIA INMUTABLE que jugará el worker.
+    const rulesBuild = await buildBattleRules(db, { mode, rulesetId, rules: req.body?.rules, participants });
+
     // Una sola transacción: batalla + participantes + trabajo. Antes eran tres
     // escrituras sueltas (una batalla podía quedar sin trabajo, o sin participantes).
     const battle = await db.transaction(async (trx) => {
@@ -664,6 +674,7 @@ export function battleRoutes(
           map_id: map.map_id,
           map_version: map.version,
           seed: seed ?? null,
+          rules: rulesBuild.snapshot ? JSON.stringify(rulesBuild.snapshot) : null,
         })
         .returning("*");
       await trx("participants").insert(
@@ -824,7 +835,17 @@ export function battleRoutes(
     res.setHeader("Cache-Control", NO_STORE);
     const perTeam: Record<string, TeamBattleStats> = emptyDict<TeamBattleStats>();
     for (const [team, t] of teams) perTeam[team] = t;
-    res.json({ battleId: battle.id, status, perBot, perTeam, diagnostics });
+    // R-RULES · perfil de métricas por modo (FASE 13), derivado de la copia de reglas.
+    const rules = rulesToJson(rulesOf(battle));
+    res.json({
+      battleId: battle.id,
+      status,
+      perBot,
+      perTeam,
+      diagnostics,
+      profile: rules?.profile ?? "classic",
+      rules,
+    });
   });
 
   // PRC (TD-004) · getReplay, getReplayIndex, getReplaySegment, verifyReplay y

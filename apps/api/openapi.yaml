@@ -32,8 +32,12 @@ info:
   # y las nuevas aplican la política de acceso (staff, dueño o equipo de un bot
   # participante, o replay público por S9_PUBLIC_REPLAYS_ENABLED); el resto
   # recibe 404, igual que un id inexistente.
+  # 0.10.0 · R-RULES (ADR-021) reglas de batalla: añade checkBattleRules
+  # (POST /battles/rules-check) y, de forma ADITIVA, `rules` opcional en
+  # PracticeBattleInput, `rules` en Battle, `presets`/`custom` en listRulesets y
+  # `profile`/`rules` en BattleStats. Nada se quita ni cambia de significado.
   # Añadir un endpoint = MINOR (docs/compatibilidad.md, §2 Semver por paquete).
-  version: 0.9.0
+  version: 0.10.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -872,6 +876,17 @@ paths:
                         engineRulesetId: { type: string, nullable: true }
                         budgetCredits: { type: integer }
                         forbiddenCategories: { type: array, items: { type: string } }
+                  presets:
+                    type: array
+                    description: 'R-RULES (ADR-021) · Presets OFICIALES versionados (packages/game-rules/battle-rules.ts). Inmutables: un cambio sube version.'
+                    items: { $ref: '#/components/schemas/RulesPreset' }
+                  custom:
+                    type: object
+                    description: 'R-RULES · Defectos y LÍMITES del modo personalizado: los mismos que aplica el servidor (la web sólo ayuda).'
+                    properties:
+                      defaults: { type: object, additionalProperties: true }
+                      limits: { type: object, additionalProperties: { type: object, properties: { min: { type: integer }, max: { type: integer } } } }
+                      maxParticipants: { type: integer }
         '400': { description: mode inválido, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /catalog/{catalogVersion}/modules:
@@ -1109,9 +1124,42 @@ paths:
             schema: { $ref: '#/components/schemas/PracticeBattleInput' }
       responses:
         '202': { description: Encolada (la ejecuta el tournament-worker con el código real de cada bot), content: { application/json: { schema: { $ref: '#/components/schemas/Battle' } } } }
-        '400': { description: 'Modo/participantes/team/ruleset/mapa inválidos o bot repetido. 4v4 · team_composition_invalid (un modo de equipo sin exactamente 2 bandos) · team_too_large (más de 4 bots por bando).', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '400': { description: 'Modo/participantes/team/ruleset/mapa inválidos o bot repetido. 4v4 · team_composition_invalid (un modo de equipo sin exactamente 2 bandos) · team_too_large (más de 4 bots por bando). R-RULES · rules_invalid (detalle errors[] por campo: tipo, rango, campo desconocido o combinación incompatible) · rules_team_size (el preset/personalizado NvN exige 2 bandos de exactamente N).', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { description: 'R-RULES · composition_invalid · algún bot o bando supera los topes de créditos o masa de las reglas (detalle composition, informe por bando y bot calculado con los loadouts REALES).', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '404': { description: 'bot_not_found · un bot inexistente o privado ajeno (TD-005); indistinguibles a propósito', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
-        '409': { description: 'bot_not_published · ruleset_mode_mismatch · map_mode_unsupported (checkBattleContent, misma regla que la web) · 4v4 · deathmatch_shared_team (deathmatch con bandos compartidos: usa team_deathmatch)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: 'bot_not_published · ruleset_mode_mismatch · map_mode_unsupported (checkBattleContent, misma regla que la web) · 4v4 · deathmatch_shared_team (deathmatch con bandos compartidos: usa team_deathmatch) · R-RULES · rules_mode_mismatch (el preset juega otro modo) · loadout_unavailable / catalog_unavailable (con topes de composición no se puede calcular coste o masa)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /battles/rules-check:
+    post:
+      tags: [battles]
+      operationId: checkBattleRules
+      summary: |
+        R-RULES (FASE 11) · Comprueba reglas y composición SIN crear la batalla: mismas validaciones que
+        POST /battles (contenido, participantes, visibilidad TD-005, versión publicada, reglas y topes de
+        créditos/masa con los loadouts REALES). Ayuda para la UI; la autoridad sigue siendo POST /battles.
+        Un bot no visible da 404 como en la creación. Cache-Control: private, no-store.
+      x-min-role: user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PracticeBattleInput' }
+      responses:
+        '200':
+          description: 'ok=false con errors[] (reglas) o con composition.violations (topes)'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+                  rules: { $ref: '#/components/schemas/BattleRules' }
+                  composition: { type: object, nullable: true, additionalProperties: true }
+                  errors: { type: array, items: { type: object, additionalProperties: true } }
+        '400': { description: Contenido o participantes inválidos, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: bot_not_found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: bot_not_published · ruleset_mode_mismatch · map_mode_unsupported · loadout_unavailable, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /battles/{battleId}:
     get:
@@ -1841,6 +1889,16 @@ components:
         mapId: { type: string }
         mapVersion: { type: integer }
         seed: { type: string }
+        rules:
+          type: object
+          description: |
+            R-RULES (ADR-021) · OPCIONAL. Sin él, las reglas clásicas del ruleset de plataforma (como antes).
+            { preset: <id de GET /rulesets presets> | "custom", teamSize: 1..4, params?: RulesParams (sólo custom) }.
+            Validación estricta en servidor: claves desconocidas, tipos, rangos y combinaciones incompatibles ⇒ 400 rules_invalid.
+          properties:
+            preset: { type: string }
+            teamSize: { type: integer, minimum: 1, maximum: 4 }
+            params: { $ref: '#/components/schemas/RulesParams' }
         participants:
           type: array
           minItems: 1
@@ -1896,6 +1954,55 @@ components:
         finishedAt: { type: string, format: date-time }
         replayAvailable: { type: boolean }
         replayHash: { type: string }
+        rules: { $ref: '#/components/schemas/BattleRules' }
+    BattleRules:
+      type: object
+      description: 'R-RULES (ADR-021) · COPIA INMUTABLE de las reglas con que se creó (y se juega) la batalla. Ausente en batallas anteriores a R-RULES y en las de torneo.'
+      properties:
+        schema: { type: integer, enum: [1] }
+        source: { enum: [preset, custom, classic] }
+        presetId: { type: string, nullable: true }
+        presetVersion: { type: integer, nullable: true }
+        name: { type: string }
+        mode: { type: string }
+        platformRulesetId: { type: string }
+        params: { allOf: [{ $ref: '#/components/schemas/RulesParams' }], nullable: true }
+        composition: { type: object, additionalProperties: { type: integer, nullable: true } }
+        catalogVersion: { type: string, nullable: true }
+        engineVersion: { type: string }
+        profile: { enum: [elimination, limited_respawn, deathmatch, time, classic], description: 'Métricas que tienen sentido (FASE 13).' }
+        summary: { type: array, items: { type: string } }
+        engine: { type: object, additionalProperties: true, description: 'Lo esencial del ruleset del motor copiado (tiempo, puntuación, respawn con maxRespawns, desempate).' }
+    RulesParams:
+      type: object
+      description: 'R-RULES · Parámetros de reglas. respawnsPerBot = REAPARICIONES (vidas = 1 + respawnsPerBot). Límites en GET /rulesets custom.limits.'
+      properties:
+        respawn:
+          type: object
+          properties:
+            mode: { enum: [none, limited, unlimited] }
+            respawnsPerBot: { type: integer, nullable: true }
+            delaySeconds: { type: integer, nullable: true }
+        victory: { enum: [elimination, score_limit, time_score] }
+        scoreLimit: { type: integer, nullable: true }
+        timeLimitMinutes: { type: integer }
+        botCredits: { type: integer, nullable: true }
+        teamCredits: { type: integer, nullable: true }
+        botMassKg: { type: integer, nullable: true }
+        teamMassKg: { type: integer, nullable: true }
+        friendlyFire: { type: boolean }
+        teamSize: { type: integer }
+    RulesPreset:
+      type: object
+      properties:
+        id: { type: string }
+        version: { type: integer }
+        format: { enum: ['1v1', team] }
+        name: { type: string }
+        tagline: { type: string }
+        description: { type: string }
+        teamSizes: { type: array, items: { type: integer } }
+        params: { $ref: '#/components/schemas/RulesParams' }
     BattleStats:
       type: object
       description: 'UX-D · Respuesta de getBattleStats.'
@@ -1952,6 +2059,8 @@ components:
           type: object
           description: 'UX-06 · Por botId, SÓLO los bots del solicitante (todos para staff). null en un campo = no medido.'
           additionalProperties: { $ref: '#/components/schemas/BotDiagnostics' }
+        profile: { enum: [elimination, limited_respawn, deathmatch, time, classic], description: 'R-RULES (FASE 13) · métricas con sentido para las reglas de la batalla.' }
+        rules: { $ref: '#/components/schemas/BattleRules' }
     BotDiagnostics:
       type: object
       description: 'UX-06 · Diagnóstico de un bot en una batalla. Códigos y contadores; nunca detalles del sandbox.'

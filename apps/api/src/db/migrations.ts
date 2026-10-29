@@ -826,6 +826,23 @@ const m014_battle_diagnostics: Migration = {
   },
 };
 
+// R-RULES (ADR-021) · COPIA INMUTABLE de las reglas con que se juega la batalla
+// (`BattleRules` de packages/game-rules/battle-rules.ts): preset/personalizado,
+// parámetros, topes de composición, catálogo y ruleset COMPLETO del motor. La escribe
+// POST /battles al crear; el worker juega esa copia. NULL = batalla anterior (o de
+// torneo): sigue el camino de 0.3.0 (resolución en ejecución). Aditiva: nada la lee
+// si es NULL, así que la RC5.3 funciona igual sobre el esquema nuevo.
+const m015_battle_rules: Migration = {
+  name: "015_battle_rules",
+  async up(db) {
+    await db.raw(`ALTER TABLE battles ADD COLUMN rules jsonb`);
+  },
+  // Destructivo para las copias de reglas (no para resultados ni replays).
+  async down(db) {
+    await db.raw(`ALTER TABLE battles DROP COLUMN rules`);
+  },
+};
+
 export const MIGRATIONS: Migration[] = [
   m001_identity,
   m002_content,
@@ -841,6 +858,7 @@ export const MIGRATIONS: Migration[] = [
   m012_bot_versioning,
   m013_battle_claim,
   m014_battle_diagnostics,
+  m015_battle_rules,
 ];
 
 class ProgrammaticMigrationSource {

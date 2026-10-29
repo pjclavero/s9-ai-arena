@@ -19,6 +19,7 @@ import { botRoutes, buildRoutes } from "./routes/bots.js";
 import { catalogRoutes } from "./routes/catalog.js";
 import { adminRoutes } from "./routes/admin.js";
 import { battleRoutes } from "./routes/battles.js";
+import { battleRulesRoutes } from "./routes/battle-rules.js";
 import { replayRoutes } from "./routes/replays.js";
 import { battleRunConfigFromEnv, realBattleRunsCapability, type BattleRunConfig } from "./battle-run.js";
 import { publicSpectateEnabledFromEnv } from "./public-spectate.js";
@@ -159,6 +160,8 @@ export function createApp(cfg: AppConfig): express.Express {
   const realBattleRuns = cfg.realBattleRuns ?? battleRunConfigFromEnv();
   const publicSpectateEnabled = cfg.publicSpectateEnabled ?? publicSpectateEnabledFromEnv();
   const publicReplaysEnabled = cfg.publicReplaysEnabled ?? publicReplaysEnabledFromEnv();
+  // R-RULES · antes que battleRoutes: POST /battles/rules-check es una ruta fija.
+  app.use(battleRulesRoutes(cfg.db));
   app.use(
     battleRoutes(
       cfg.db,

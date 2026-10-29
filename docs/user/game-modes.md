@@ -81,6 +81,24 @@ Reglas comunes:
 
 También trae «Ruleset MVP por defecto», válido para cualquier modo. Al cambiar de modo, el formulario elige el ruleset de ese modo.
 
+## Conjuntos de reglas (presets y personalizado)
+
+**IMPLEMENTADO EN LA RAMA `rules/rulesets` (ADR-021), pendiente de revisión y despliegue.** En «Nueva batalla», tras elegir el tipo (1 contra 1 o por equipos), eliges el **conjunto de reglas**:
+
+| Tipo | Reglas | Qué pasa |
+|---|---|---|
+| 1 contra 1 | **Duelo** | Una vida, sin reaparición. 5 min; al acabar el tiempo gana quien conserve más casco. |
+| 1 contra 1 | **Combate** | Reaparición ilimitada a los 5 s; gana el primero en 5 bajas (10 min de seguridad). |
+| 1 contra 1 | **Resistencia** | 5 min fijos con reaparición; gana quien tenga más bajas. |
+| Equipos (2v2–4v4) | **Eliminación** | Sin reaparición; pierde el equipo que se queda sin vehículos (8 min). |
+| Equipos | **Respawn limitado** | **2 reapariciones por bot (3 vidas)** a los 5 s; gana el último equipo con vidas (10 min). |
+| Equipos | **Team Deathmatch** | Reaparición ilimitada; gana el primero en 10 bajas (8 min de seguridad). |
+| Equipos | **Resistencia por equipos** | 5 min fijos; gana el equipo con más bajas. |
+| Ambos | **Personalizado** | Eliges respawn (ninguno / limitado con N reapariciones / ilimitado), su retardo, la victoria (eliminación, límite de bajas o puntos al acabar el tiempo), la duración (1–30 min), topes de **créditos** y de **masa** por bot y por equipo y, por equipos, el fuego amigo. |
+| Ambos | **Clásico** | El ruleset de la plataforma de cada modo (incluye bandera y zonas). |
+
+Antes de crear se muestra un **resumen** y se comprueba cada bot en el servidor («✓ A-ATK-1 — 890/900 cr»). Si un bot o un equipo supera un tope, no se puede crear la batalla. La batalla guarda una **copia de sus reglas**: si un preset cambia más adelante, tus batallas y replays conservan las suyas.
+
 ## Mapas compatibles
 
 Cada mapa **declara** sus modos, y el validador comprueba que tenga lo necesario: spawns, banderas y bases, o zonas de captura.

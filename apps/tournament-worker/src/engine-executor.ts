@@ -33,6 +33,7 @@ import { replayFromBattle, toJsonl, type Replay } from "../../arena-engine/src/r
 import { Battle, type BattleResult, type BotAgent, type Participant } from "../../arena-engine/src/sim/battle.js";
 import type { SpectateGateway } from "../../api/src/spectate/gateway.js";
 import { resolveBattleRuleset } from "../../api/src/services/battle-ruleset-resolver.js";
+import { rulesOf } from "../../api/src/services/battle-rules.js";
 import { InfrastructureFailure } from "./errors.js";
 import type { AgentsKind, BattleContext, BattleExecution, BattleExecutor } from "./battle-runner.js";
 import type { BotRunDiagnostics } from "./bot-diagnostics.js";
@@ -154,23 +155,33 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
       throw new InfrastructureFailure("map_unavailable", `mapa ${battle.map_id} no convertible: ${String(err)}`);
     }
 
-    // --- ruleset del motor (resolución única, B9) + presupuesto de BD --------
-    const resolved = await resolveBattleRuleset(db, battle.mode, battle.ruleset_id);
-    if (!resolved.ok) {
-      throw new InfrastructureFailure("engine_start_failure", `${resolved.code}: ${resolved.message}`);
-    }
-    const dbRuleset = battle.ruleset_id ? await db("rulesets").where({ id: battle.ruleset_id }).first() : null;
+    // --- R-RULES (ADR-021) · COPIA INMUTABLE de reglas: si la batalla la tiene, se
+    //     juega ESA copia (ruleset completo del motor y catálogo fijados al crearla) y
+    //     no se resuelve nada del catálogo actual. Sin copia (batallas anteriores y de
+    //     torneo): el camino de 0.3.0, sin cambios.
+    const snapshot = rulesOf(battle as unknown as Record<string, unknown>);
     const tournament = battle.tournament_id
       ? await db("tournaments").where({ id: battle.tournament_id }).first()
       : null;
-    const budgetCredits = (tournament?.budget_credits ?? dbRuleset?.budget_credits) as number | undefined;
-    const ruleset = loadRuleset(resolved.ruleset.rulesetId, {
-      ...(budgetCredits ? { budgetCredits } : {}),
-      ...(opts.rulesetOverrides ?? {}),
-    });
+    let ruleset: Ruleset;
+    if (snapshot) {
+      ruleset = { ...snapshot.engineRuleset, ...(opts.rulesetOverrides ?? {}) };
+    } else {
+      // --- ruleset del motor (resolución única, B9) + presupuesto de BD --------
+      const resolved = await resolveBattleRuleset(db, battle.mode, battle.ruleset_id);
+      if (!resolved.ok) {
+        throw new InfrastructureFailure("engine_start_failure", `${resolved.code}: ${resolved.message}`);
+      }
+      const dbRuleset = battle.ruleset_id ? await db("rulesets").where({ id: battle.ruleset_id }).first() : null;
+      const budgetCredits = (tournament?.budget_credits ?? dbRuleset?.budget_credits) as number | undefined;
+      ruleset = loadRuleset(resolved.ruleset.rulesetId, {
+        ...(budgetCredits ? { budgetCredits } : {}),
+        ...(opts.rulesetOverrides ?? {}),
+      });
+    }
 
-    // --- catálogo CONGELADO del torneo (T9.4) --------------------------------
-    const catalogVersion = (tournament?.catalog_version ?? null) as string | null;
+    // --- catálogo CONGELADO del torneo (T9.4) o de la copia de reglas ----------
+    const catalogVersion = (tournament?.catalog_version ?? snapshot?.catalogVersion ?? null) as string | null;
     let catalog: ModuleDefinition[];
     let effectiveCatalogVersion: string;
     if (catalogVersion) {

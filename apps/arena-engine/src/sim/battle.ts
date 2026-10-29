@@ -30,7 +30,17 @@ import {
   type Projectile,
 } from "./combat.js";
 import { ARENA_BOUNDARY_ID_PREFIX } from "../arena-map.js";
-import { chooseSpawn, createMode, spawnPoolFor, type ArenaMap, type GameMode, type SpawnDisk } from "./modes.js";
+import {
+  chooseSpawn,
+  createMode,
+  eliminatedByDeath,
+  respawnLimited,
+  respawnsLeft,
+  spawnPoolFor,
+  type ArenaMap,
+  type GameMode,
+  type SpawnDisk,
+} from "./modes.js";
 import { PhysicsWorld, clamp, finite, finiteClamped, initPhysics, type Vec2 } from "./physics.js";
 import { buildObservation, radioReaches, validateRadio, type RadioMessage } from "./sensors.js";
 import { Vehicle, type VehicleSpec } from "./vehicle.js";
@@ -533,6 +543,9 @@ export class Battle {
       let respawnPoses: Map<string, any> | null = null;
       for (const v of this.vehicles) {
         if (v.alive || v.disqualified) continue;
+        // R-RULES (ADR-021) · sin reapariciones restantes, se queda fuera. Con respawn
+        // ilimitado (0.3.0) `respawnsLeft` es Infinity y esta guarda no actúa.
+        if (respawnsLeft(v, this.config.ruleset) === 0) continue;
         if (v.respawnAtTick === 0) {
           v.respawnAtTick = this.tick + this.config.ruleset.respawn.delayTicks;
         } else if (this.tick >= v.respawnAtTick) {
@@ -767,6 +780,7 @@ export class Battle {
             map: this.config.map,
             emit: (e: any) => this.emit(e),
           });
+          this.noteElimination(v);
         }
       }
     }
@@ -820,7 +834,20 @@ export class Battle {
         map: this.config.map,
         emit: (e: any) => this.emit(e),
       });
+      this.noteElimination(target);
     }
+  }
+
+  /**
+   * R-RULES (ADR-021) · Con respawn LIMITADO, la muerte que agota las reapariciones se
+   * marca con un evento PÚBLICO `vehicle_eliminated` (va al replay y al espectador).
+   * NO se reparte a los bots: el esquema EVENT del protocolo arena/1 no lo declara. Sin
+   * `maxRespawns` (todos los rulesets de 0.3.0) no se emite nada: replays idénticos.
+   */
+  private noteElimination(v: Vehicle): void {
+    if (!respawnLimited(this.config.ruleset)) return;
+    if (!eliminatedByDeath(v, this.config.ruleset)) return;
+    this.publicEvents.push({ tick: this.tick, kind: "vehicle_eliminated", targetId: v.id, team: v.team });
   }
 
   // ------------------------------------------------------ snapshot y hash
@@ -829,6 +856,7 @@ export class Battle {
    * ni el estado interno de los sensores de un bot (test de fuga en E8).
    */
   private publicSnapshot(poses: Map<string, any>): any {
+    const limited = respawnLimited(this.config.ruleset);
     return {
       tick: this.tick,
       vehicles: this.vehicles.map((v) => {
@@ -844,6 +872,8 @@ export class Battle {
           hullHpMax: v.spec.hullHp,
           carryingFlag: v.carryingFlag,
           juggernaut: v.juggernaut,
+          // R-RULES · sólo con respawn limitado (snapshots de 0.3.0 idénticos).
+          ...(limited ? { respawnsLeft: respawnsLeft(v, this.config.ruleset) } : {}),
           modules: [...v.modules.values()].map((m) => ({
             slot: m.spec.slot,
             state: v.stateOf(m.spec.slot),
@@ -871,6 +901,7 @@ export class Battle {
     // divergencia interna de Rapier (islas de sueño, contactos) puede ser invisible
     // en las poses cuantizadas y aun así seguir viva; esto la saca a la luz.
     const solver = this.physics.solverFingerprint();
+    const limited = respawnLimited(this.config.ruleset);
     const canonical = {
       tick: this.tick,
       rng: this.rng.getState(),
@@ -897,6 +928,9 @@ export class Battle {
           armor: Object.entries(v.armor)
             .sort()
             .map(([s, a]) => [s, q(a!.hp)]),
+          // R-RULES (ADR-021) · las reapariciones usadas son estado de simulación SÓLO
+          // cuando limitan; sin `maxRespawns` no entran y el hash de 0.3.0 no cambia.
+          ...(limited ? { rsp: v.respawnsUsed } : {}),
         };
       }),
       projectiles: this.projectiles.map((p) => [p.id, q(p.position.x), q(p.position.y), q(p.damage)]),

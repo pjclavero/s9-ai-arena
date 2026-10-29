@@ -55,7 +55,12 @@ interface BattleDetail extends BattleLike {
   official?: boolean;
   createdAt?: string;
   participants: DetailParticipant[];
+  /** R-RULES · copia de las reglas con que se jugó (ausente en batallas anteriores). */
+  rules?: { name: string; source: string; summary: string[]; profile: StatsProfile };
 }
+
+/** R-RULES (FASE 13) · métricas con sentido para las reglas de la batalla. */
+type StatsProfile = "elimination" | "limited_respawn" | "deathmatch" | "time" | "classic";
 
 interface ModuleStatsView {
   moduleId: string | null;
@@ -84,6 +89,10 @@ interface BotStatsView {
   respawns?: number;
   /** 4v4-STATS · vivo y no descalificado al terminar. */
   aliveAtEnd?: boolean;
+  /** R-RULES · sólo con respawn limitado: vidas, reapariciones que le quedaban y si quedó eliminado. */
+  lives?: number;
+  respawnsRemaining?: number;
+  eliminated?: boolean;
   /** 4v4-STATS · bajas de compañeros o propias (sólo con fuego amigo). */
   teamKills?: number;
   /** 4v4-STATS · radio (pública): enviados aceptados y recibidos, por origen. */
@@ -142,6 +151,9 @@ interface TeamStatsView {
   shotsHit: number;
   flagCaptures?: number;
   survivors: number;
+  /** R-RULES · reapariciones del bando y, con respawn limitado, las que le quedaban. */
+  respawns?: number;
+  respawnsRemaining?: number;
 }
 
 /**
@@ -177,6 +189,8 @@ interface StatsResponse {
   /** 4v4-STATS · por bando (suma de perBot). Ausente en APIs anteriores. */
   perTeam?: Record<string, TeamStatsView>;
   diagnostics: Record<string, DiagnosticsView>;
+  /** R-RULES · perfil de métricas (ausente en APIs anteriores = classic). */
+  profile?: StatsProfile;
 }
 
 interface AuditView {
@@ -283,6 +297,15 @@ function BattleHeader({ b, audit }: { b: BattleDetail; audit: AuditView | null }
       <dl data-testid="battle-facts">
         <dt>Modo</dt>
         <dd>{MODE_TEXT[b.mode] ?? b.mode}</dd>
+        {b.rules && b.rules.source !== "classic" && (
+          <>
+            <dt>Reglas</dt>
+            <dd data-testid="battle-rules">
+              {b.rules.name}
+              {b.rules.summary.length > 0 && <> · {b.rules.summary.join(" · ")}</>}
+            </dd>
+          </>
+        )}
         <dt>Mapa</dt>
         <dd>
           {b.mapName ?? b.mapId} (versión {b.mapVersion})
@@ -453,7 +476,16 @@ function StatsSection({ b, s }: { b: BattleDetail; s: StatsResponse }) {
                   {st.kills}
                   {st.teamKills ? ` (+${st.teamKills} de fuego amigo)` : ""}
                 </td>
-                <td>{survivalText(st)}</td>
+                <td>
+                  {survivalText(st)}
+                  {typeof st.respawnsRemaining === "number" && (
+                    <span data-testid="stats-lives">
+                      {" "}
+                      · {st.respawnsRemaining} de {(st.lives ?? 1) - 1} reapariciones restantes
+                      {st.eliminated ? " · eliminado" : ""}
+                    </span>
+                  )}
+                </td>
                 <td>{typeof st.distanceM === "number" ? `${Math.round(st.distanceM)} m` : "—"}</td>
                 <td>{typeof st.decisionTimeouts === "number" ? st.decisionTimeouts : "—"}</td>
                 <td>{objectives.length > 0 ? objectives.join(" · ") : "—"}</td>
@@ -462,7 +494,7 @@ function StatsSection({ b, s }: { b: BattleDetail; s: StatsResponse }) {
           })}
         </tbody>
       </table>
-      <SidesStats b={b} s={s} rows={rows} />
+      <SidesStats b={b} s={s} rows={rows} profile={s.profile ?? b.rules?.profile ?? "classic"} />
       <RadioStats s={s} rows={rows} />
       {rows.map((p) => (
         <details key={p.botId} data-testid="module-usage">
@@ -508,7 +540,22 @@ function StatsSection({ b, s }: { b: BattleDetail; s: StatsResponse }) {
  * cualquier lector); con una API anterior se suma aquí a partir de las filas por bot.
  * Se enseña cuando algún bando tiene más de un bot o la API trae perTeam.
  */
-function SidesStats({ b, s, rows }: { b: BattleDetail; s: StatsResponse; rows: DetailParticipant[] }) {
+function SidesStats({
+  b,
+  s,
+  rows,
+  profile,
+}: {
+  b: BattleDetail;
+  s: StatsResponse;
+  rows: DetailParticipant[];
+  profile: StatsProfile;
+}) {
+  // R-RULES (FASE 13) · sin métricas engañosas: con respawn ilimitado casi todos
+  // «sobreviven»; las reapariciones sólo cuentan donde hay respawn.
+  const showSurvivors = profile !== "deathmatch" && profile !== "time";
+  const showRespawns = profile === "limited_respawn" || profile === "deathmatch" || profile === "time";
+  const showRemaining = profile === "limited_respawn";
   const groups = groupBySide(rows);
   const fromApi = Object.values(s.perTeam ?? {});
   if (fromApi.length === 0 && !groups.some((g) => g.items.length > 1)) return null;
@@ -550,7 +597,9 @@ function SidesStats({ b, s, rows }: { b: BattleDetail; s: StatsResponse; rows: D
           <th>Daño recibido</th>
           <th>Disparos</th>
           <th>Aciertos</th>
-          <th>Supervivientes</th>
+          {showRespawns && <th>Respawns</th>}
+          {showRemaining && <th>Respawns restantes</th>}
+          {showSurvivors && <th>Supervivientes</th>}
         </tr>
       </thead>
       <tbody>
@@ -568,9 +617,13 @@ function SidesStats({ b, s, rows }: { b: BattleDetail; s: StatsResponse; rows: D
             <td>{Math.round(t.damageTaken)}</td>
             <td>{t.shotsFired}</td>
             <td>{t.shotsHit}</td>
-            <td>
-              {t.survivors} / {t.bots}
-            </td>
+            {showRespawns && <td>{typeof t.respawns === "number" ? t.respawns : "—"}</td>}
+            {showRemaining && <td>{typeof t.respawnsRemaining === "number" ? t.respawnsRemaining : "—"}</td>}
+            {showSurvivors && (
+              <td>
+                {t.survivors} / {t.bots}
+              </td>
+            )}
           </tr>
         ))}
       </tbody>
