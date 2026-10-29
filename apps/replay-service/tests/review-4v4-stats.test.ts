@@ -49,9 +49,9 @@ async function acidBattle(seed: string): Promise<Replay> {
 }
 
 describe("[REVIEW-4v4] stats TDM 4v4 con ácido", () => {
-  // DEFECTO: se pondrá ROJO (y hay que quitar `.fails`) cuando stats.ts deje de
-  // atribuir al golpe anterior una muerte que causó la zona.
-  it.fails(
+  // REGRESIÓN (4v4-FIX): antes `it.fails`. stats.ts atribuía al golpe anterior una
+  // muerte que causó la zona; ahora la autoría sale de `mode.onKill` vía el gancho.
+  it(
     "perTeam.kills === marcador del motor con zona de daño (zk0)",
     async () => {
       const replay = await acidBattle("zk0");
@@ -61,7 +61,7 @@ describe("[REVIEW-4v4] stats TDM 4v4 con ácido", () => {
     120_000,
   );
 
-  it("la causa: muertes por ácido precedidas por un hit_dealt al mismo objetivo existen (zk0)", async () => {
+  it("la trampa: muertes por ácido precedidas por un hit_dealt al mismo objetivo existen y no cuentan como baja (zk0)", async () => {
     const replay = await acidBattle("zk0");
     let prev: { e: any; to: string | null } | null = null;
     let zoneAfterHit = 0;
@@ -79,8 +79,9 @@ describe("[REVIEW-4v4] stats TDM 4v4 con ácido", () => {
     const s = await computeBattleStats(replay);
     const statsKills = s.perTeam.red.kills + s.perTeam.blue.kills;
     const engine = (replay.result.score.red ?? 0) + (replay.result.score.blue ?? 0);
-    // stats cuenta TODAS las muertes precedidas por hit_dealt; el motor sólo las letales.
-    expect(statsKills).toBeGreaterThan(engine);
+    // La trampa existe (zoneAfterHit > 0) y aun así stats cuenta sólo las letales,
+    // como el motor (4v4-FIX; antes se fijaba statsKills > engine).
+    expect(statsKills).toBe(engine);
     expect(weaponKills).toBe(engine);
     expect(zoneAfterHit).toBeGreaterThan(0);
   }, 120_000);

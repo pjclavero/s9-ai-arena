@@ -177,10 +177,27 @@ export async function record(config: BattleConfig, attach: (b: Battle) => void):
  *    ENTRE vehículos; las estadísticas lo necesitan para atribuir una baja al
  *    autor del golpe que la causó cuando dos atacantes aciertan en el mismo tick.
  *    También se entrega una copia.
+ *  - `onKill(kill)` (4v4-FIX): cada baja de un vehículo EXACTAMENTE como la ve el
+ *    marcador: se avisa desde la llamada del motor a `mode.onKill(victim,
+ *    killerTeam)`, con `killerId` = autor del daño letal (el `ownerId` de
+ *    `damageVehicle`: proyectil, explosión o mina) o `null` si la muerte la
+ *    causó el entorno (zona de daño). Así las estadísticas no reconstruyen la
+ *    causa por el orden de emisión, que confunde un golpe NO letal seguido de la
+ *    muerte por ácido en el mismo tick con una baja del autor del golpe.
  */
+export interface KillNotice {
+  tick: number;
+  victimId: string;
+  /** Vehículo autor del daño letal; `null` si no hubo autor (zona de daño). */
+  killerId: string | null;
+  /** Equipo que el motor pasa a `mode.onKill` (el que puntúa); `null` sin autor. */
+  killerTeam: string | null;
+}
+
 export interface ResimulationHooks {
   onObservation?: (vehicleId: string, observation: any) => void;
   onEmission?: (event: any, toVehicle: string | null) => void;
+  onKill?: (kill: KillNotice) => void;
 }
 
 /**
@@ -217,7 +234,44 @@ export async function resimulateWithEvents(
     if (!byVehicle.has(c.vehicleId)) byVehicle.set(c.vehicleId, []);
     byVehicle.get(c.vehicleId)!.push({ tick: c.tick, command: c.command });
   }
-  const { onObservation, onEmission } = hooks;
+  const { onObservation, onEmission, onKill } = hooks;
+  if (onKill) {
+    // Envolturas TRANSPARENTES (sólo miran): `damageVehicle` fija quién es el autor
+    // del daño en curso y `mode.onKill` avisa con él. Fuera de `damageVehicle`
+    // (zona de daño) no hay autor. Si el motor renombra algo, falla en voz alta.
+    const target = b as unknown as {
+      damageVehicle: (...args: any[]) => void;
+      mode: { onKill?: (victim: any, killerTeam: string | null, ctx: any) => void };
+      tick: number;
+    };
+    if (typeof target.damageVehicle !== "function" || !target.mode) {
+      throw new Error("resimulateWithEvents: el motor ya no expone damageVehicle()/mode; onKill no es fiable");
+    }
+    const mode = target.mode;
+    let currentOwner: string | null = null;
+    const damage = target.damageVehicle.bind(b);
+    target.damageVehicle = (...args: any[]) => {
+      const outer = currentOwner;
+      currentOwner = String(args[4]); // ownerId
+      try {
+        damage(...args);
+      } finally {
+        currentOwner = outer;
+      }
+    };
+    // Un modo sin onKill (no puntúa bajas) recibe uno que sólo avisa: el motor lo
+    // llama con `?.` y no cambia nada de la simulación.
+    const original = typeof mode.onKill === "function" ? mode.onKill.bind(mode) : () => {};
+    mode.onKill = (victim: any, killerTeam: string | null, ctx: any) => {
+      original(victim, killerTeam, ctx);
+      onKill({
+        tick: target.tick,
+        victimId: String(victim.id),
+        killerId: killerTeam === null ? null : currentOwner,
+        killerTeam,
+      });
+    };
+  }
   if (onEmission) {
     // Envoltura TRANSPARENTE del emisor del motor: llama al original con los
     // mismos argumentos y después avisa. `emit` es privado de Battle (T-ENGINE):

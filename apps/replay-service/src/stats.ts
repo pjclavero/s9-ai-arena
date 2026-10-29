@@ -269,7 +269,6 @@ export async function computeBattleStats(replay: Replay, inputs: BattleStatsInpu
     l.push({ tick, alive });
     lifeline.set(id, l);
   };
-  let previousEmission: { event: any; to: string | null } | null = null;
   const radioDroppedBySlot = new Map<string, Map<string, number>>(); // vehicleId → slot → descartes
 
   const onEvent = (vehicleId: string, e: any) => {
@@ -333,26 +332,17 @@ export async function computeBattleStats(replay: Replay, inputs: BattleStatsInpu
   };
 
   /**
-   * Orden EXACTO de emisión del motor. El motor emite `hit_dealt` (al atacante)
-   * JUSTO antes de la muerte que causa ese golpe (sim/battle.ts, damageVehicle):
-   * así se atribuye cada baja a su autor aunque dos bots acierten en el mismo
-   * tick. Si lo anterior no es ese golpe (zona de daño…), no hay autor, y el
-   * motor tampoco puntúa. Con respawn se cuentan TODAS las muertes.
+   * Orden EXACTO de emisión del motor: muertes, reapariciones y descalificaciones
+   * por vehículo. Con respawn se cuentan TODAS las muertes. La AUTORÍA de cada
+   * baja no se deduce de aquí (4v4-FIX): un golpe NO letal seguido en el mismo
+   * tick de la muerte por ácido deja un `hit_dealt` justo antes del
+   * `vehicle_destroyed` sin que el motor puntúe nada. La da `onKill`.
    */
   const onEmission = (e: any, to: string | null) => {
-    const prev = previousEmission;
-    previousEmission = { event: e, to };
     if (to === null && e.kind === "vehicle_destroyed" && byVehicle.has(e.targetId)) {
       const victim = byVehicle.get(e.targetId)!;
       victim.deaths += 1;
       pushLife(e.targetId, e.tick, false);
-      if (prev && prev.to && prev.event.kind === "hit_dealt" && prev.event.targetId === e.targetId) {
-        const killer = byVehicle.get(prev.to);
-        if (killer) {
-          if (killer.team === victim.team) killer.teamKills += 1;
-          else killer.kills += 1;
-        }
-      }
     } else if (to !== null && e.kind === "respawned" && byVehicle.has(to)) {
       byVehicle.get(to)!.respawns += 1;
       pushLife(to, e.tick, true);
@@ -374,7 +364,23 @@ export async function computeBattleStats(replay: Replay, inputs: BattleStatsInpu
     }
   };
 
-  await resimulateWithEvents(replay, onEvent, { onEmission, onObservation });
+  /**
+   * 4v4-FIX · Autoría de las bajas EXACTAMENTE como la ve el marcador: el motor
+   * llama a `mode.onKill(victim, killerTeam)` y la re-simulación nos dice quién
+   * hizo el daño letal (`null` = zona de daño: nadie puntúa, nadie suma baja).
+   * Fuego amigo y suicidio (killer del mismo equipo que la víctima) son
+   * `teamKills`, nunca `kills`.
+   */
+  const onKill = (k: { victimId: string; killerId: string | null }) => {
+    const victim = byVehicle.get(k.victimId);
+    if (!victim || k.killerId === null) return;
+    const killer = byVehicle.get(k.killerId);
+    if (!killer) return;
+    if (killer.team === victim.team) killer.teamKills += 1;
+    else killer.kills += 1;
+  };
+
+  await resimulateWithEvents(replay, onEvent, { onEmission, onObservation, onKill });
 
   // La descalificación oficial la dice el RESULTADO (fuente de verdad), no un evento.
   for (const vehicleId of replay.result.disqualified ?? []) {
