@@ -151,4 +151,17 @@ describe("escena: los botones de zoom parten del encuadre OBJETIVO, no del frame
     expect(m.kind).toBe("manual");
     expect(m.zoom).toBeCloseTo(20, 9);
   });
+
+  it("«Seguir …» y «+» sin un frame entre medias: acerca desde el zoom de seguimiento, no desde el global", () => {
+    const { scene } = sceneWith(1);
+    scene.world = { widthM: 120, heightM: 80 };
+    scene.lastFrame = new Map([["v1", { x: 60, y: 40, alive: true }]]);
+    scene.lastCamera = { centerX: 60, centerY: 40, zoom: 5 };
+    scene.lastGoal = { centerX: 60, centerY: 40, zoom: 5 }; // objetivo del modo ANTERIOR (global)
+    scene.cameraMode = { kind: "follow", vehicleId: "v1" };
+    scene.zoomIn();
+    const m = scene.interaction.current;
+    expect(m.kind).toBe("manual");
+    expect(m.zoom).toBeCloseTo(12 * 1.25, 6); // seguimiento = 150 % (12 px/m) × 1.25
+  });
 });

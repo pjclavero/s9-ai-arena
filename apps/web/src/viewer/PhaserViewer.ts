@@ -400,6 +400,12 @@ export class ViewerScene extends Phaser.Scene {
   /** Vista desde el OBJETIVO (botones): lo que se va a ver, no el frame de tránsito. */
   private goalView() {
     const v = this.view();
+    // Se recalcula con el modo VIGENTE: si el usuario acaba de pulsar «Seguir …» y
+    // aún no ha corrido un frame, lastGoal sería todavía el del modo anterior.
+    if (this.lastFrame) {
+      const snap = this.cameraScratch.fill(this.lastFrame, (id) => this.overlay.vehicles.get(id)?.team);
+      return { current: clampToMap(computeCamera(this.interaction.current, snap, v.cfg), v.cfg), cfg: v.cfg };
+    }
     return this.lastGoal ? { current: this.lastGoal, cfg: v.cfg } : v;
   }
 
