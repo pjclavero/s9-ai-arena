@@ -285,6 +285,9 @@ async function touchChecks(browser: Browser, id: string, tag: string, expectedBo
 
     // Fuera del escenario el scroll vertical sigue siendo el del navegador (gesto
     // táctil real sobre la cabecera de la página).
+    // (El escenario se desplazó a la vista para el pinch: se vuelve arriba primero.)
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
     const head = await box(page.getByTestId("replay-title"));
     await cdp.send("Input.synthesizeScrollGesture", {
       x: Math.round(head.x + 10),
@@ -292,7 +295,7 @@ async function touchChecks(browser: Browser, id: string, tag: string, expectedBo
       yDistance: -300,
       gestureSourceType: "touch",
     });
-    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(scroll0);
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
 
     // Botones táctiles de tamaño suficiente (≥ 40 px).
     for (const name of ["Acercar", "Alejar", "Encajar mapa", "Pausa", "Reproducir"]) {

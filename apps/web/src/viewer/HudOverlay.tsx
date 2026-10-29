@@ -37,7 +37,16 @@ export interface HudOverlayProps {
 
 export function HudOverlay({ model, accent = "#ffe066", fontScale = 14, compact = false }: HudOverlayProps) {
   return (
-    <div data-testid="hud" style={{ position: "absolute", inset: 0, pointerEvents: "none", fontSize: fontScale }}>
+    <div
+      data-testid="hud"
+      style={{
+        position: "absolute",
+        inset: 0,
+        pointerEvents: "none",
+        // UX-VIEW · compacto: en un móvil estrecho el marcador no se come el mapa.
+        fontSize: compact ? `min(${fontScale}px, 3.3vw)` : fontScale,
+      }}
+    >
       <TopBar model={model} accent={accent} />
       {!compact && <TeamPanels model={model} accent={accent} />}
       <KillFeed model={model} accent={accent} compact={compact} />

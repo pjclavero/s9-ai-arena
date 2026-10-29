@@ -52,7 +52,7 @@ main.page-wide{max-width:none}
 .s9v-help{opacity:.75;font-size:.8rem;margin:0}
 .s9v-transport input[type=range]{flex:1 1 220px;min-width:0}
 @media (max-width:1100px){.s9v-grid{grid-template-columns:minmax(0,1fr)}.s9v-side{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));align-items:start}}
-@media (max-width:720px){.s9v-stage{height:clamp(240px,62vh,720px);height:clamp(240px,62dvh,720px)}.s9v-side{grid-template-columns:minmax(0,1fr)}.s9v-group+.s9v-group{border-left:0;padding-left:0}.s9v-head h2{font-size:1.05rem}}
+@media (max-width:720px){.s9v-stage{height:clamp(240px,min(62vh,110vw),720px);height:clamp(240px,min(62dvh,110vw),720px)}.s9v-side{grid-template-columns:minmax(0,1fr)}.s9v-group+.s9v-group{border-left:0;padding-left:0}.s9v-head h2{font-size:1.05rem}}
 @media (min-width:721px){.s9v-stage[data-fit-h]{height:var(--s9v-fit-h)}}
 @media (pointer:coarse){.s9v-bar button,.s9v-side button{min-height:44px;min-width:44px}}
 `;

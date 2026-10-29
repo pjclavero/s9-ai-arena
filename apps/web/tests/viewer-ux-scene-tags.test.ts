@@ -139,3 +139,16 @@ describe("escena: nombre y vida en tamaño de pantalla, sin rotar", () => {
     expect(labels[0].text).toBe("A-ATK-1 25%");
   });
 });
+
+describe("escena: los botones de zoom parten del encuadre OBJETIVO, no del frame de tránsito", () => {
+  it("pulsar «+» a mitad de una transición acerca desde el objetivo (×1.25)", () => {
+    const { scene } = sceneWith(1);
+    scene.world = { widthM: 120, heightM: 80 };
+    scene.lastCamera = { centerX: 60, centerY: 40, zoom: 8 }; // aún en tránsito
+    scene.lastGoal = { centerX: 30, centerY: 20, zoom: 16 }; // a donde va «Seguir …»
+    scene.zoomIn();
+    const m = scene.interaction.current;
+    expect(m.kind).toBe("manual");
+    expect(m.zoom).toBeCloseTo(20, 9);
+  });
+});

@@ -31,7 +31,14 @@ import Phaser from "phaser";
 import { InterpolationBuffer } from "./interpolation.js";
 import { BallisticsTracker } from "./ballistics.js";
 import { OverlayState } from "./overlay.js";
-import { computeCamera, SmoothCamera, type CameraConfig, type CameraMode, type CameraTarget } from "./camera.js";
+import {
+  clampToMap,
+  computeCamera,
+  SmoothCamera,
+  type CameraConfig,
+  type CameraMode,
+  type CameraTarget,
+} from "./camera.js";
 import { CameraInteraction } from "./camera-interaction.js";
 import { FogFader, type FogOptions } from "./fog.js";
 import { applyCanvasSize, canvasSizeFor } from "./viewport.js";
@@ -183,6 +190,12 @@ export class ViewerScene extends Phaser.Scene {
   private readonly pxPerM = 8;
   /** Último encuadre aplicado (para que la interacción parta de lo que se ve). */
   private lastCamera: { centerX: number; centerY: number; zoom: number } | null = null;
+  /**
+   * UX-VIEW · Encuadre OBJETIVO del último frame (al que va la transición suave).
+   * Los botones +/−/100 %/centrar parten de él: pulsar «+» a mitad de la
+   * transición de «Seguir …» acercaba desde el zoom de tránsito y se quedaba lejos.
+   */
+  private lastGoal: CameraTarget | null = null;
 
   constructor() {
     super("viewer");
@@ -384,6 +397,12 @@ export class ViewerScene extends Phaser.Scene {
     };
   }
 
+  /** Vista desde el OBJETIVO (botones): lo que se va a ver, no el frame de tránsito. */
+  private goalView() {
+    const v = this.view();
+    return this.lastGoal ? { current: this.lastGoal, cfg: v.cfg } : v;
+  }
+
   /** Escena lista para recibir entrada (create() ya corrió). */
   private ready(): boolean {
     return !!this.cameras?.main;
@@ -393,6 +412,7 @@ export class ViewerScene extends Phaser.Scene {
   private jump(mode: CameraMode): void {
     if (mode.kind !== "manual") return;
     this.lastCamera = this.smoothCamera.jumpTo(mode, this.cameraConfig());
+    this.lastGoal = this.lastCamera;
     this.emitStatus();
   }
 
@@ -411,13 +431,13 @@ export class ViewerScene extends Phaser.Scene {
   /** Botones/teclas +/−: zoom suave alrededor del centro. */
   zoomIn(): void {
     if (!this.ready()) return;
-    this.interaction.zoomBy(ZOOM_BUTTON_FACTOR, this.view());
+    this.interaction.zoomBy(ZOOM_BUTTON_FACTOR, this.goalView());
     this.emitStatus();
   }
 
   zoomOut(): void {
     if (!this.ready()) return;
-    this.interaction.zoomBy(1 / ZOOM_BUTTON_FACTOR, this.view());
+    this.interaction.zoomBy(1 / ZOOM_BUTTON_FACTOR, this.goalView());
     this.emitStatus();
   }
 
@@ -429,7 +449,7 @@ export class ViewerScene extends Phaser.Scene {
   /** «100 %»: escala nativa de la escena (1 px de escena = 1 px CSS), sin mover el centro. */
   zoomNative(): void {
     if (!this.ready()) return;
-    this.interaction.zoomTo(this.viewScale().native, this.view());
+    this.interaction.zoomTo(this.viewScale().native, this.goalView());
     this.emitStatus();
   }
 
@@ -438,7 +458,7 @@ export class ViewerScene extends Phaser.Scene {
     if (!this.ready() || !this.selectedId) return;
     const p = this.lastFrame?.get(this.selectedId) ?? this.lastVehiclePos.get(this.selectedId);
     if (!p) return;
-    this.interaction.centerOn(p.x, p.y, this.view());
+    this.interaction.centerOn(p.x, p.y, this.goalView());
     this.emitStatus();
   }
 
@@ -915,6 +935,8 @@ export class ViewerScene extends Phaser.Scene {
         .bitmapText(0, 0, ATLAS_FONT_KEY, vehicleLabel(this.roster, id), 14)
         .setOrigin(0.5, 1)
         .setTint(S9_ENV.label)
+        // La RetroFont es monoespaciada con celdas anchas: sin esto «A - T K - 1».
+        .setLetterSpacing(-3)
         .setDepth(8);
       this.labels.set(id, l);
     }
@@ -1054,7 +1076,7 @@ export class ViewerScene extends Phaser.Scene {
         id,
         x: (x - wv.x) * (camZoom / dpr),
         y: (ly - wv.y) * (camZoom / dpr) - 6,
-        w: label.text.length * 8.6 + 4,
+        w: label.text.length * 6.1 + 4,
         h: 13,
         priority: id === this.selectedId ? 2 : pose.alive ? 1 : 0,
       });
@@ -1079,6 +1101,7 @@ export class ViewerScene extends Phaser.Scene {
     // Amortiguación crítica + deadzone (follow) + clamp al mapa (R3.2 · ERR-VIS-07).
     const smoothed: CameraTarget = this.smoothCamera.update(mode, target, cfg, deltaMs);
     this.lastCamera = smoothed;
+    this.lastGoal = clampToMap(target, cfg);
     const cam = this.cameras.main;
     cam.centerOn(smoothed.centerX * this.pxPerM, smoothed.centerY * this.pxPerM);
     // computeCamera devuelve px/m deseados; la escena ya dibuja a pxPerM px/m.
