@@ -39,11 +39,20 @@ export class CameraInteraction {
    * bajo el ratón se queda quieto en pantalla). Pasa a modo manual.
    */
   onWheel(deltaY: number, pointerPx: { x: number; y: number }, view: InteractionView): CameraMode {
+    return this.zoomAt(Math.pow(ZOOM_STEP, -deltaY / 100), pointerPx, view);
+  }
+
+  /**
+   * UX-VIEW · Zoom por un FACTOR manteniendo fijo el punto del mundo que está
+   * bajo `pointerPx` (rueda, pinch, doble toque). Acotado a [minZoom, maxZoom] y
+   * recortado al mapa: nunca se pierde el mapa ni se deforma (zoom uniforme).
+   */
+  zoomAt(factor: number, pointerPx: { x: number; y: number }, view: InteractionView): CameraMode {
     const { current, cfg } = view;
     const minZoom = cfg.minZoom ?? 0.5;
     const maxZoom = cfg.maxZoom ?? 40;
-    const factor = Math.pow(ZOOM_STEP, -deltaY / 100);
-    const zoom = Math.min(maxZoom, Math.max(minZoom, current.zoom * factor));
+    const safe = Number.isFinite(factor) && factor > 0 ? factor : 1;
+    const zoom = Math.min(maxZoom, Math.max(minZoom, current.zoom * safe));
 
     // Punto del mundo bajo el cursor antes del zoom…
     const worldX = current.centerX + (pointerPx.x - cfg.viewportW / 2) / current.zoom;
@@ -53,6 +62,23 @@ export class CameraInteraction {
     const centerY = worldY - (pointerPx.y - cfg.viewportH / 2) / zoom;
 
     const clamped = clampToMap({ centerX, centerY, zoom }, cfg);
+    this.mode = { kind: "manual", centerX: clamped.centerX, centerY: clamped.centerY, zoom: clamped.zoom };
+    return this.mode;
+  }
+
+  /** UX-VIEW · Botones +/− y teclas: zoom por un factor alrededor del CENTRO de la vista. */
+  zoomBy(factor: number, view: InteractionView): CameraMode {
+    return this.zoomAt(factor, { x: view.cfg.viewportW / 2, y: view.cfg.viewportH / 2 }, view);
+  }
+
+  /** UX-VIEW · Zoom absoluto (p. ej. «100 %») manteniendo el centro actual. */
+  zoomTo(zoom: number, view: InteractionView): CameraMode {
+    return this.zoomBy(zoom / view.current.zoom, view);
+  }
+
+  /** UX-VIEW · Centra la vista en un punto del mundo (metros) sin cambiar el zoom. Modo manual. */
+  centerOn(x: number, y: number, view: InteractionView): CameraMode {
+    const clamped = clampToMap({ centerX: x, centerY: y, zoom: view.current.zoom }, view.cfg);
     this.mode = { kind: "manual", centerX: clamped.centerX, centerY: clamped.centerY, zoom: clamped.zoom };
     return this.mode;
   }
