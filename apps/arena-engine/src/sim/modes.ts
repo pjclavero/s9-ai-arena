@@ -3,7 +3,12 @@
  * 5–6 del bucle. Las condiciones de victoria, límites y respawn se leen del RULESET,
  * nunca están cableadas aquí.
  */
-import { safeLookup, emptyDict, type Ruleset } from "../../../../packages/game-rules/index.js";
+import {
+  safeLookup,
+  emptyDict,
+  type Ruleset,
+  type TimeoutTiebreakCriterion,
+} from "../../../../packages/game-rules/index.js";
 import type { Vec2 } from "./physics.js";
 import type { Vehicle } from "./vehicle.js";
 
@@ -97,13 +102,18 @@ abstract class BaseMode implements GameMode {
       if (pts >= ctx.ruleset.scoreToWin) return team;
     }
     if (ctx.tick >= ctx.ruleset.timeLimitTicks) {
+      // R-RULES (ADR-021) · desempate DECLARADO por el ruleset. Sin el campo, el
+      // código de 0.3.0 tal cual (los rulesets del catálogo no lo declaran).
+      const tiebreak = ctx.ruleset.timeoutTiebreak;
+      if (tiebreak) return resolveTimeoutTiebreak(tiebreak, Object.keys(this.score), this.score, ctx);
       const sorted = Object.entries(this.score).sort((a, b) => b[1] - a[1]);
       if (sorted.length > 1 && sorted[0][1] === sorted[1][1]) return "draw";
       return sorted[0]?.[0] ?? "draw";
     }
-    // Si el respawn está desactivado y solo queda un equipo con vivos, ese gana.
-    if (!ctx.ruleset.respawn.enabled) {
-      const alive = new Set(ctx.vehicles.filter((v) => v.alive && !v.disqualified).map((v) => v.team));
+    // Eliminación: sin respawn (0.3.0) o con respawn LIMITADO (R-RULES). Gana el único
+    // equipo con algún vehículo aún en juego; ninguno ⇒ empate.
+    if (eliminationActive(ctx.ruleset)) {
+      const alive = new Set(ctx.vehicles.filter((v) => inGame(v, ctx.ruleset)).map((v) => v.team));
       if (alive.size === 1) return [...alive][0];
       if (alive.size === 0) return "draw";
     }
@@ -964,6 +974,90 @@ export function createMode(
     default:
       throw new Error(`Modo desconocido: ${(ruleset as any).mode}`);
   }
+}
+
+// ------------------------------------------------ vidas y desempate (ADR-021)
+
+/** ¿El ruleset limita las reapariciones? (campo opcional; ausente = 0.3.0). */
+export function respawnLimited(ruleset: Ruleset): boolean {
+  return ruleset.respawn.enabled && typeof ruleset.respawn.maxRespawns === "number";
+}
+
+/** ¿Se puede ganar por eliminación? Sin respawn (0.3.0) o con respawn limitado. */
+export function eliminationActive(ruleset: Ruleset): boolean {
+  return !ruleset.respawn.enabled || respawnLimited(ruleset);
+}
+
+/** Reapariciones que le quedan a un vehículo (0 sin respawn; Infinity si es ilimitado). */
+export function respawnsLeft(v: Vehicle, ruleset: Ruleset): number {
+  if (!ruleset.respawn.enabled) return 0;
+  if (!respawnLimited(ruleset)) return Number.POSITIVE_INFINITY;
+  return Math.max(0, (ruleset.respawn.maxRespawns as number) - v.respawnsUsed);
+}
+
+/**
+ * ¿Sigue en juego? No descalificado y vivo, o muerto con reapariciones pendientes.
+ * Sin respawn se reduce EXACTAMENTE a `alive && !disqualified` (la regla de 0.3.0).
+ */
+export function inGame(v: Vehicle, ruleset: Ruleset): boolean {
+  if (v.disqualified) return false;
+  return v.alive || respawnsLeft(v, ruleset) > 0;
+}
+
+/** ¿Esta muerte lo elimina definitivamente? (sólo tiene sentido tras morir). */
+export function eliminatedByDeath(v: Vehicle, ruleset: Ruleset): boolean {
+  return respawnsLeft(v, ruleset) === 0;
+}
+
+/** Valor de un criterio de desempate para un equipo. Tabla: añadir uno = una entrada. */
+const TIEBREAK_VALUE: Record<
+  TimeoutTiebreakCriterion,
+  (team: string, score: Record<string, number>, ctx: ModeContext) => number
+> = {
+  score: (team, score) => score[team] ?? 0,
+  lives: (team, _s, ctx) => {
+    let lives = 0;
+    for (const v of ctx.vehicles) {
+      if (v.team !== team || v.disqualified) continue;
+      const left = respawnsLeft(v, ctx.ruleset);
+      // Ilimitado: cada vehículo no descalificado cuenta 1 (todos igual de «en juego»).
+      lives += Number.isFinite(left) ? (v.alive ? 1 : 0) + left : 1;
+    }
+    return lives;
+  },
+  hull: (team, _s, ctx) => {
+    let hull = 0;
+    for (const v of ctx.vehicles) {
+      if (v.team !== team || v.disqualified || !v.alive) continue;
+      hull += v.hullHp / (v.spec.hullHp || 1);
+    }
+    return Math.round(hull * 1e4) / 1e4;
+  },
+};
+
+/**
+ * Desempate al acabar el tiempo: vector de criterios por equipo, orden lexicográfico
+ * descendente. Si los dos primeros empatan en TODO ⇒ `draw`. Determinista: sólo
+ * aritmética sobre el estado y equipos en orden estable.
+ */
+export function resolveTimeoutTiebreak(
+  criteria: readonly TimeoutTiebreakCriterion[],
+  teams: readonly string[],
+  score: Record<string, number>,
+  ctx: ModeContext,
+): string | "draw" {
+  const known = criteria.filter((c) => Object.prototype.hasOwnProperty.call(TIEBREAK_VALUE, c));
+  const rows = [...teams]
+    .sort()
+    .map((team) => ({ team, key: known.map((c) => TIEBREAK_VALUE[c](team, score, ctx)) }));
+  const cmp = (a: number[], b: number[]) => {
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return b[i] - a[i];
+    return 0;
+  };
+  rows.sort((a, b) => cmp(a.key, b.key));
+  if (rows.length === 0) return "draw";
+  if (rows.length > 1 && cmp(rows[0].key, rows[1].key) === 0) return "draw";
+  return rows[0].team;
 }
 
 function distance(a: Vec2, b: Vec2): number {
