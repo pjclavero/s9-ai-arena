@@ -270,9 +270,12 @@
         .card {
           padding: 0.75rem;
         }
-        /* UX-MOBILE · tablas apilables (className="stack-table"): cada fila es una
-           tarjeta y cada celda una línea «Etiqueta: valor» (data-label, ver
-           src/ui/stack-table.ts). Los data-testid de fila siguen en su <tr>. */
+      }
+      /* UX-MOBILE · tablas apilables (className="stack-table"): en ≤720 px cada
+         fila es una tarjeta y cada celda una línea «Etiqueta: valor» (data-label,
+         ver src/ui/stack-table.ts). Los data-testid de fila siguen en su <tr>.
+         Las muy anchas (stack-table--wide, 10-11 columnas) se apilan ya en ≤960 px. */
+      @media (max-width: 720px) {
         table.stack-table,
         table.stack-table tbody,
         table.stack-table tr,
@@ -284,13 +287,10 @@
         table.stack-table {
           overflow: visible;
         }
+        /* Sin caja: las etiquetas de columna van en cada celda (::before, que sí
+           leen los lectores de pantalla). Recortado seguía ocupando ancho. */
         table.stack-table thead {
-          position: absolute;
-          width: 1px;
-          height: 1px;
-          overflow: hidden;
-          clip: rect(0 0 0 0);
-          white-space: nowrap;
+          display: none;
         }
         table.stack-table caption {
           display: block;
@@ -323,6 +323,59 @@
         }
         table.stack-table td a,
         table.stack-table td button {
+          display: inline-flex;
+          align-items: center;
+          min-height: 44px;
+        }
+      }
+      @media (max-width: 960px) {
+        table.stack-table--wide,
+        table.stack-table--wide tbody,
+        table.stack-table--wide tr,
+        table.stack-table--wide td,
+        table.stack-table--wide tbody th {
+          display: block;
+          width: auto;
+        }
+        table.stack-table--wide {
+          overflow: visible;
+        }
+        /* Sin caja: las etiquetas de columna van en cada celda (::before, que sí
+           leen los lectores de pantalla). Recortado seguía ocupando ancho. */
+        table.stack-table--wide thead {
+          display: none;
+        }
+        table.stack-table--wide caption {
+          display: block;
+          text-align: left;
+          margin-bottom: 0.5rem;
+        }
+        table.stack-table--wide tr {
+          background: #10141a;
+          border: 1px solid #2a3340;
+          border-radius: 6px;
+          padding: 0.35rem 0.75rem;
+          margin-bottom: 0.6rem;
+        }
+        table.stack-table--wide td,
+        table.stack-table--wide tbody th {
+          border: 0;
+          padding: 0.3rem 0;
+          overflow-wrap: anywhere;
+        }
+        table.stack-table--wide td:first-child {
+          font-weight: 600;
+        }
+        table.stack-table--wide td:empty {
+          display: none;
+        }
+        table.stack-table--wide td[data-label]::before {
+          content: attr(data-label) ": ";
+          font-weight: 600;
+          color: #9aa4b2;
+        }
+        table.stack-table--wide td a,
+        table.stack-table--wide td button {
           display: inline-flex;
           align-items: center;
           min-height: 44px;

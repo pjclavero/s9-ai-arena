@@ -75,7 +75,12 @@ describe("UX-MOBILE · CSS global (index.html)", () => {
   it("≤720 px: stack-table apila filas como tarjetas con la etiqueta de columna", () => {
     const m = "(max-width: 720px)";
     expect(find("table.stack-table tr", m)[0].rule.style.display).toBe("block");
-    expect(find("table.stack-table thead", m)[0].rule.style.position).toBe("absolute");
+    // sin caja: recortado seguía ocupando ancho y desbordaba (CI de e36d45f)
+    expect(find("table.stack-table thead", m)[0].rule.style.display).toBe("none");
+    // las de 10-11 columnas se apilan antes (a 768 px desbordaban 164 px)
+    const w = "(max-width: 960px)";
+    expect(find("table.stack-table--wide tr", w)[0].rule.style.display).toBe("block");
+    expect(find("table.stack-table--wide thead", w)[0].rule.style.display).toBe("none");
     const before = find("table.stack-table td[data-label]::before", m);
     expect(before.length).toBe(1);
     expect(before[0].rule.style.getPropertyValue("content")).toMatch(/attr\(data-label\)/);
@@ -172,7 +177,7 @@ describe("UX-MOBILE · páginas de tablas", () => {
       const src = readFileSync(join(WEB, "src", "pages", `${p}Page.tsx`), "utf8");
       const tables = src.match(/<table\b[^>]*>/g) ?? [];
       expect(tables.length, p).toBeGreaterThan(0);
-      for (const t of tables) expect(t, `${p}: ${t}`).toMatch(/className="stack-table"/);
+      for (const t of tables) expect(t, `${p}: ${t}`).toMatch(/className="stack-table( stack-table--wide)?"/);
     }
   });
 });

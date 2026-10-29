@@ -417,7 +417,7 @@ function StatsSection({ b, s }: { b: BattleDetail; s: StatsResponse }) {
   const rows = participantsBySide(b.participants).filter((p) => s.perBot[p.botId]);
   return (
     <>
-      <table className="stack-table" data-testid="battle-stats">
+      <table className="stack-table stack-table--wide" data-testid="battle-stats">
         <thead>
           <tr>
             <th>Bot</th>
@@ -537,7 +537,7 @@ function SidesStats({ b, s, rows }: { b: BattleDetail; s: StatsResponse; rows: D
             };
           });
   return (
-    <table className="stack-table" data-testid="battle-stats-sides">
+    <table className="stack-table stack-table--wide" data-testid="battle-stats-sides">
       <caption>Resumen por bando</caption>
       <thead>
         <tr>
