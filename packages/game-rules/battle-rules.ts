@@ -678,7 +678,8 @@ export interface BattleRulesSnapshot {
   platformRulesetId: string;
   params: RulesParams | null;
   composition: CompositionLimits;
-  catalogVersion: string;
+  /** Catálogo de la batalla; null sólo si no había ninguno importado (el worker usa entonces el último, como 0.3.0). */
+  catalogVersion: string | null;
   engineRuleset: Ruleset;
   engineVersion: string;
 }
