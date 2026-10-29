@@ -88,7 +88,7 @@ describe("R-UI · conjunto de reglas en Nueva batalla", () => {
     const summary = screen.getByTestId("rules-summary");
     expect(summary.textContent).toContain("1 contra 1");
     expect(summary.textContent).toContain("Respawns: ninguno (1 vida)");
-    expect(summary.textContent).toContain("Tiempo máximo: 3 min");
+    expect(summary.textContent).toContain("Tiempo máximo: 5 min");
     expect((screen.getByLabelText("modo") as HTMLSelectElement).value).toBe("deathmatch");
   });
 
