@@ -170,6 +170,15 @@ export function validateLoadout(
       continue;
     }
 
+    if (entry.ammo !== undefined && typeof entry.ammo !== "string") {
+      violations.push({
+        code: "incompatible_ammo",
+        slot: entry.slot,
+        moduleId: entry.moduleId,
+        message: `Munición inválida asignada a ${entry.slot}`,
+      });
+      continue;
+    }
     accepted.push({ slot: entry.slot, moduleDef, ammo: entry.ammo });
   }
 
@@ -260,8 +269,10 @@ const versioned = (m: ModuleDefinition) => `${m.id}@${m.version}`;
  *
  * 1. La munición embebida tiene que existir, ser munición y admitirla SU arma.
  * 2. Toda arma que consuma munición necesita al menos una compatible entre las montadas.
- * 3. Todo módulo de munición tiene que servir a algún arma del vehículo.
- * Un arma sin `acceptsAmmo` no consume munición y queda fuera.
+ * 3. Todo módulo de munición tiene que servir a algún arma del vehículo (más estricto que
+ *    el motor, que la ignoraría: munición que nadie usa es casi siempre un error de montaje).
+ * Un arma sin `acceptsAmmo` queda fuera de las reglas 2 y 3 (module.schema.json exige
+ * `acceptsAmmo` con al menos un tipo en toda arma, así que hoy no existe ninguna).
  */
 function ammoRule(items: Accepted[], catalog: ModuleDefinition[]): Violation[] {
   const out: Violation[] = [];
@@ -356,13 +367,24 @@ function ammoMismatch(w: Accepted, ammo: string): Violation {
  * aquí porque los informa el validador completo. Nunca lanza.
  */
 export function validateAmmo(loadout: LoadoutInput, catalog: ModuleDefinition[]): Violation[] {
+  const out: Violation[] = [];
   const items: Accepted[] = [];
   for (const entry of Array.isArray(loadout?.modules) ? loadout.modules : []) {
     if (!entry || typeof entry.moduleId !== "string") continue;
     const moduleDef = findModule(catalog, entry.moduleId);
-    if (moduleDef) items.push({ slot: String(entry.slot), moduleDef, ammo: entry.ammo });
+    if (!moduleDef) continue;
+    if (entry.ammo !== undefined && typeof entry.ammo !== "string") {
+      out.push({
+        code: "incompatible_ammo",
+        slot: String(entry.slot),
+        moduleId: moduleDef.id,
+        message: `Munición inválida asignada a ${String(entry.slot)}`,
+      });
+      continue;
+    }
+    items.push({ slot: String(entry.slot), moduleDef, ammo: entry.ammo });
   }
-  return ammoRule(items, catalog);
+  return [...out, ...ammoRule(items, catalog)];
 }
 
 export type { LoadoutInput, ModuleDefinition, ModuleCategory } from "../types.js";

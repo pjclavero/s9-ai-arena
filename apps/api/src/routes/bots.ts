@@ -297,7 +297,11 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     // El validador de E3 corre SIEMPRE en servidor (DoD T7.3/T7.4).
     const result = await validateLoadoutServerSide(db, req.body);
     if (result.violations.length > 0) {
-      res.status(422).json({ error: "loadout_invalid", violations: result.violations });
+      res.status(422).json({
+        error: "loadout_invalid",
+        message: result.violations.map((v) => v.message).join(" "),
+        violations: result.violations,
+      });
       return;
     }
     const loadout = await createLoadoutRevision(db, bot.id as string, req.body, result.summary!);

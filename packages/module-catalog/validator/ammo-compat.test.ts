@@ -321,3 +321,13 @@ describe("la regla no rompe otras validaciones", () => {
     expect(codes).toContain("incompatible_ammo");
   });
 });
+
+describe("entradas malformadas (las filtra el esquema de la API, pero la regla no debe lanzar)", () => {
+  it("ammo que no es texto → incompatible_ammo, sin excepción, por las dos entradas", () => {
+    const bad = L([{ slot: "t1", moduleId: "weapon.gun@1", ammo: {} as unknown as string }]);
+    expect(() => validateAmmo(bad, C)).not.toThrow();
+    expect(validateAmmo(bad, C).map((v) => v.code)).toContain("incompatible_ammo");
+    expect(() => validateLoadout(bad, C, 1_000_000)).not.toThrow();
+    expect(ammoCodes(validateLoadout(bad, C, 1_000_000))[0]).toMatchObject({ slot: "t1" });
+  });
+});

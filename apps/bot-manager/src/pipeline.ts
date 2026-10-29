@@ -313,6 +313,11 @@ export class BuildPipeline {
             stage.message = `loadout inválido: ${bad.map((v) => v.message).join(" ")}`;
             return "failed";
           }
+        } else if (sub.loadout) {
+          // Sin el catálogo de ese loadout no hay con qué comprobar la munición: queda dicho.
+          stage.logs.push(
+            `munición sin comprobar: el loadout es del catálogo ${sub.loadout.catalogVersion} y el build usa ${CATALOG_VERSION}`,
+          );
         }
         stage.logs.push(`estructura ok: ${sub.files.length} ficheros, ${size} B`);
         return "passed";
