@@ -84,6 +84,10 @@ export interface WELCOMEMotorBot {
     respawn?: {
       enabled?: boolean;
       delayTicks?: number;
+      /**
+       * R-RULES (ADR-021) · Reapariciones permitidas por vehículo (vidas = 1 + maxRespawns). Ausente = ilimitadas (si enabled). Agotadas, el vehículo queda eliminado.
+       */
+      maxRespawns?: number;
     };
     sharedTeamVision?: boolean;
     radio?: {

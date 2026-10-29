@@ -47,7 +47,12 @@
           "additionalProperties": false,
           "properties": {
             "enabled": { "type": "boolean" },
-            "delayTicks": { "type": "integer", "minimum": 0 }
+            "delayTicks": { "type": "integer", "minimum": 0 },
+            "maxRespawns": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "R-RULES (ADR-021) · Reapariciones permitidas por vehículo (vidas = 1 + maxRespawns). Ausente = ilimitadas (si enabled). Agotadas, el vehículo queda eliminado."
+            }
           }
         },
         "sharedTeamVision": { "type": "boolean", "default": false },
