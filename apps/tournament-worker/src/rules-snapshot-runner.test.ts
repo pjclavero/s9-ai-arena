@@ -81,7 +81,10 @@ describe("worker · copia de reglas", () => {
     await h
       .db("rulesets")
       .where({ id: "team-deathmatch-mvp" })
-      .update({ config: JSON.stringify({ mode: "team_deathmatch", engineRulesetId: "skirmish_low@1" }), budget_credits: 600 });
+      .update({
+        config: JSON.stringify({ mode: "team_deathmatch", engineRulesetId: "skirmish_low@1" }),
+        budget_credits: 600,
+      });
     try {
       const out = await exec()(ctx(battle, rows));
       const replay = fromJsonl(out.replayJsonl);
@@ -94,7 +97,10 @@ describe("worker · copia de reglas", () => {
       await h
         .db("rulesets")
         .where({ id: "team-deathmatch-mvp" })
-        .update({ config: JSON.stringify({ mode: "team_deathmatch", engineRulesetId: "tdm_mvp@1" }), budget_credits: 1000 });
+        .update({
+          config: JSON.stringify({ mode: "team_deathmatch", engineRulesetId: "tdm_mvp@1" }),
+          budget_credits: 1000,
+        });
     }
   }, 120_000);
 

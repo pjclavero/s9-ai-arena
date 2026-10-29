@@ -1047,9 +1047,7 @@ export function resolveTimeoutTiebreak(
   ctx: ModeContext,
 ): string | "draw" {
   const known = criteria.filter((c) => Object.prototype.hasOwnProperty.call(TIEBREAK_VALUE, c));
-  const rows = [...teams]
-    .sort()
-    .map((team) => ({ team, key: known.map((c) => TIEBREAK_VALUE[c](team, score, ctx)) }));
+  const rows = [...teams].sort().map((team) => ({ team, key: known.map((c) => TIEBREAK_VALUE[c](team, score, ctx)) }));
   const cmp = (a: number[], b: number[]) => {
     for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return b[i] - a[i];
     return 0;
