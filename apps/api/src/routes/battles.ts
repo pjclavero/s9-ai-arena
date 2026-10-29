@@ -15,7 +15,8 @@ import { pathParam } from "../params.js";
 import { ROLE_RANK } from "../openapi.js";
 import { ApiError, badRequest, conflict, notFound } from "../errors.js";
 import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
-import { emptyDict } from "../../../../packages/game-rules/safe-lookup.js";
+import { emptyDict, safeLookup } from "../../../../packages/game-rules/safe-lookup.js";
+import { addBotToTeam, emptyTeamStats, type TeamBattleStats } from "../../../replay-service/src/team-stats.js";
 import { signSpectateTicket } from "../auth/tokens.js";
 import { anonQuota, type AnonQuotaConfig } from "../middleware/anon-quota.js";
 import type { BattleRunConfig } from "../battle-run.js";
@@ -35,6 +36,54 @@ import { resolveBattleRuleset } from "../services/battle-ruleset-resolver.js";
 import type { Request } from "express";
 
 const SPECTATE_TICKET_TTL_S = 60;
+
+/** Modos que se juegan por equipos: exactamente 2 bandos (4v4 como máximo). */
+export const TEAM_BATTLE_MODES: readonly string[] = ["team_deathmatch", "capture_the_flag", "zone_control"];
+/** Tamaño máximo de un bando en un modo de equipos (8 participantes = 4v4). */
+export const MAX_PARTICIPANTS_PER_TEAM = 4;
+
+/**
+ * 4v4 · Reglas de composición de POST /battles (fases 2 y 8). Se llama con la forma
+ * de cada participante ya validada (team es una cadena válida).
+ *  - modos de equipo: exactamente 2 bandos, cada uno con 1..4 vehículos ⇒ 400;
+ *  - deathmatch: cada vehículo su propio bando; compartir etiqueta ⇒ 409 con la
+ *    salida explícita («usa team_deathmatch»), la misma regla que aplica el motor
+ *    (DeathmatchMode, ERR-ENG-07) pero ANTES de encolar.
+ */
+export function assertTeamComposition(mode: string, participants: { team: string }[]): void {
+  const byTeam = new Map<string, number>();
+  for (const p of participants) byTeam.set(p.team, (byTeam.get(p.team) ?? 0) + 1);
+  if (TEAM_BATTLE_MODES.includes(mode)) {
+    if (byTeam.size !== 2) {
+      throw new ApiError(
+        400,
+        "team_composition_invalid",
+        `${mode} exige exactamente 2 bandos con al menos 1 participante cada uno; recibidos ${byTeam.size}`,
+      );
+    }
+    for (const [team, n] of byTeam) {
+      if (n > MAX_PARTICIPANTS_PER_TEAM) {
+        throw new ApiError(
+          400,
+          "team_too_large",
+          `el bando ${team} tiene ${n} participantes; máximo ${MAX_PARTICIPANTS_PER_TEAM} por bando`,
+        );
+      }
+    }
+    return;
+  }
+  if (mode === "deathmatch") {
+    const shared = [...byTeam].filter(([, n]) => n > 1).map(([t]) => t);
+    if (shared.length > 0) {
+      throw conflict(
+        "deathmatch_shared_team",
+        `deathmatch exige que cada participante tenga su propio bando; compartidos: ${shared.join(", ")}. ` +
+          `Para jugar por equipos usa team_deathmatch`,
+        { teams: shared },
+      );
+    }
+  }
+}
 
 /**
  * R2.6 (ERR-SEC-16): base del WebSocket de espectador. En producción es
@@ -293,6 +342,10 @@ function buildDiagnostics(
         }
       : null,
     rejectionsByReason: s?.rejectionsByReason ?? null,
+    // 4v4-STATS · mensajes de radio descartados por el motor, por motivo
+    // (rate_limited, too_large, no_radio, queue_full). null = stats sin medir
+    // (batalla anterior a 4v4-STATS o sin stats).
+    radioDroppedByReason: s?.radioDroppedByReason ?? null,
     disconnectedAtTick: proto ? num(proto.disconnectedAtTick) : null,
     container: d?.container
       ? {
@@ -564,6 +617,13 @@ export function battleRoutes(
       seen.add(p.botId);
     }
 
+    // 4v4 · COMPOSICIÓN por bando, antes de tocar bots o cola. Sin esto, una
+    // combinación que el motor rechaza (DM con bandos compartidos) se encolaba y
+    // acababa en `engine_start_failure`, que el worker reintenta como si fuera un
+    // fallo de infraestructura. No depende de ningún dato privado: se puede
+    // responder antes de la comprobación de visibilidad sin filtrar nada.
+    assertTeamComposition(mode, participants);
+
     // TD-005 · PROPIEDAD/VISIBILIDAD: sólo se puede meter en una batalla un bot
     // propio, público o de un equipo del que el solicitante es miembro (los
     // admin, cualquiera). Un bot privado ajeno responde EXACTAMENTE igual que uno
@@ -703,8 +763,14 @@ export function battleRoutes(
     // B8 · `emptyDict()`, NO `{}`: `bot_id` es un valor de BD usado como clave.
     const perBot: Record<string, unknown> = emptyDict<unknown>();
     const diagnostics: Record<string, unknown> = emptyDict<unknown>();
-    const result = (battle.result ?? {}) as { disqualified?: string[]; endReason?: string };
+    const result = (battle.result ?? {}) as {
+      disqualified?: string[];
+      endReason?: string;
+      score?: Record<string, unknown>;
+    };
     const maxTimeouts = await maxConsecutiveTimeoutsOf(db, battle);
+    // `team` es dato de BD/replay usado como clave: Map, y emptyDict al serializar.
+    const teams = new Map<string, TeamBattleStats>();
     for (const p of participants) {
       const botId = String(p.bot_id);
       const s = statsByBot.get(botId);
@@ -712,7 +778,10 @@ export function battleRoutes(
       if (s) {
         // Lo deportivo lo ve quien ve la batalla; la CPU y el desglose de
         // decisiones y rechazos son diagnóstico (TD-047): sólo dueño y staff.
-        const { cpuMs: _cpu, decisions: _dec, rejectionsByReason: _rej, ...sporting } = s;
+        // 4v4-STATS · los descartes de radio miden el fallo del código del bot
+        // (rate-limit, tamaño): diagnóstico, igual que rejectionsByReason. La
+        // actividad de radio (`radio`: enviados/oídos) es juego: se queda.
+        const { cpuMs: _cpu, decisions: _dec, rejectionsByReason: _rej, radioDroppedByReason: _drop, ...sporting } = s;
         // UX-F (DEF-R12) · los turnos sin responder y los rechazos por módulo
         // también son diagnóstico (cuánto falla TU código), no deporte: un rival no
         // los ve. Daño, disparos, aciertos y estado final de los módulos, sí.
@@ -728,6 +797,17 @@ export function battleRoutes(
           }
         }
         perBot[botId] = { ...sporting, botName: p.bot_name ?? undefined, version: p.version };
+        // 4v4-STATS · `perTeam` se agrega SÓLO de lo que acaba de entrar en
+        // `perBot` (lo deportivo, igual para cualquier lector): por construcción
+        // no puede revelar más que `perBot` (TD-047).
+        const team = typeof sporting.team === "string" ? sporting.team : String(p.team ?? "");
+        let t = teams.get(team);
+        if (!t) {
+          const score = Number(safeLookup(result.score ?? {}, team) ?? sporting.battle?.team?.score ?? 0);
+          t = emptyTeamStats(team, Number.isFinite(score) ? score : 0);
+          teams.set(team, t);
+        }
+        addBotToTeam(t, sporting);
       }
       if (owner) {
         diagnostics[botId] = buildDiagnostics(p, s, result, maxTimeouts);
@@ -742,7 +822,9 @@ export function battleRoutes(
     else if (battle.status === "scheduled" || battle.status === "running") status = "pending";
     else if (battle.status === "finished" && battle.replay_ref) status = "pending";
     res.setHeader("Cache-Control", NO_STORE);
-    res.json({ battleId: battle.id, status, perBot, diagnostics });
+    const perTeam: Record<string, TeamBattleStats> = emptyDict<TeamBattleStats>();
+    for (const [team, t] of teams) perTeam[team] = t;
+    res.json({ battleId: battle.id, status, perBot, perTeam, diagnostics });
   });
 
   // PRC (TD-004) · getReplay, getReplayIndex, getReplaySegment, verifyReplay y

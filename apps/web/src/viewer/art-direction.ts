@@ -132,19 +132,75 @@ export function rosterFromMeta(raw: unknown): ViewerRoster {
   return out;
 }
 
+/** Nombre del bando en palabras para el visor (mismo criterio que battle-result.teamText). */
+const SIDE_TEXT: Record<string, string> = { red: "rojo", blue: "azul" };
+export function sideText(team: string): string {
+  return Object.hasOwn(SIDE_TEXT, team) ? SIDE_TEXT[team] : team;
+}
+
+/**
+ * 4v4 · Orden estable de los bandos: rojo, azul y el resto por nombre. Lo usan los
+ * botones de cámara, la niebla y la nómina: salen de la NÓMINA, no de red/blue fijos.
+ */
+export function sortTeams(teams: Iterable<string>): string[] {
+  const rank = (t: string) => (t === "red" ? 0 : t === "blue" ? 1 : 2);
+  return [...new Set(teams)].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+}
+
+/** Bandos presentes en la nómina (sin inventar ninguno si la nómina no los trae). */
+export function rosterTeams(roster: ViewerRoster): string[] {
+  const out: string[] = [];
+  for (const e of roster.values()) if (e.team) out.push(e.team);
+  return sortTeams(out);
+}
+
+/**
+ * 4v4 · Bando de un vehículo: el de la nómina y, si no, el del snapshot. Sin ninguno
+ * de los dos devuelve undefined (color neutro): NUNCA un "red" por defecto, que
+ * pintaba de rojo a un vehículo azul mientras llegaba la nómina.
+ */
+export function vehicleTeam(
+  roster: ViewerRoster | null | undefined,
+  id: string,
+  snapshotTeam?: string | null,
+): string | undefined {
+  return roster?.get(id)?.team || snapshotTeam || undefined;
+}
+
 /**
  * UX-R · Título legible de una batalla a partir de su nómina pública (cabecera
  * `init.meta.roster` o índice del replay): «Alfa vs Beta». Sólo usa NOMBRES
  * (sin nombre no hay título: nunca un UUID); varios vehículos del mismo bot
  * cuentan una vez. Sin nómina útil devuelve null y la página cae al id.
+ *
+ * 4v4 · Si algún bando lleva más de un bot, se agrupa POR BANDO:
+ * «A-ATK-1, A-ATK-2, A-ATK-3, A-ATK-4 (rojo) vs B-DEF-1, … (azul)». Con un bot por
+ * bando (o sin bandos en la nómina) se mantiene «Alfa vs Beta».
  */
 export function participantsTitle(raw: unknown): string | null {
   const names: string[] = [];
+  const bySide = new Map<string, string[]>();
   for (const e of rosterFromMeta(raw).values()) {
     const n = e.name?.trim();
-    if (n && !names.includes(n)) names.push(n);
+    if (!n) continue;
+    if (!names.includes(n)) names.push(n);
+    const side = e.team ?? "";
+    const list = bySide.get(side) ?? [];
+    if (!list.includes(n)) list.push(n);
+    bySide.set(side, list);
   }
   if (names.length === 0) return null;
+  const sided = [...bySide.keys()].filter((t) => t !== "");
+  if (sided.length >= 2 && [...bySide.values()].some((l) => l.length > 1)) {
+    // Orden estable dentro del bando (la nómina puede llegar en cualquier orden).
+    const part = (raw: string[]) => {
+      const list = [...raw].sort((x, y) => x.localeCompare(y, "es", { numeric: true }));
+      return list.length <= 4 ? list.join(", ") : `${list.slice(0, 4).join(", ")} y ${list.length - 4} más`;
+    };
+    const groups = sortTeams(sided).map((t) => `${part(bySide.get(t)!)} (${sideText(t)})`);
+    if (bySide.has("")) groups.push(part(bySide.get("")!));
+    return groups.join(" vs ");
+  }
   if (names.length <= 4) return names.join(" vs ");
   return `${names.slice(0, 4).join(" vs ")} y ${names.length - 4} más`;
 }

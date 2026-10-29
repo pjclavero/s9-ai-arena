@@ -149,10 +149,32 @@ export const DEFAULT_LEASE_MS = 45_000;
 /** Estados de bot_versions con los que una versión puede jugar (BOT_PUBLISHED). */
 const PLAYABLE_STATES = new Set(["published", "frozen"]);
 
+/**
+ * 4v4 (fase 5) · Participaciones de una batalla en ORDEN ESTABLE: (team, bot_id).
+ *
+ * El orden importa: engine-executor numera los vehículos `veh_<i+1>` en este orden,
+ * y el motor coloca cada vehículo según su id (spawn base, luego auxiliares). Sin
+ * ORDER BY, PostgreSQL devuelve las filas en el orden físico del heap, que suele
+ * ser el de inserción pero NO está garantizado (un UPDATE de `outcome`/diagnostics
+ * o un VACUUM lo cambian): un reintento de la misma batalla podía numerar distinto
+ * y, por tanto, colocar y simular distinto. `participants` no tiene columna de
+ * ordinal (PK = battle_id, bot_id), así que la clave estable es (team, bot_id).
+ * Consecuencia: los ids se agrupan por bando (con red/blue: blue = veh_1..4).
+ */
+export async function loadBattleParticipants(db: Knex, battleId: string): Promise<ParticipantRow[]> {
+  return (
+    (await db("participants")
+      .where({ battle_id: battleId })
+      // COLLATE "C": orden por bytes, idéntico en cualquier instancia de PostgreSQL
+      // (la intercalación por defecto depende del locale del servidor).
+      .orderByRaw('team COLLATE "C" ASC, bot_id ASC')) as ParticipantRow[]
+  );
+}
+
 async function loadBattle(db: Knex, battleId: string): Promise<{ battle: BattleRow; participants: ParticipantRow[] }> {
   const battle = (await db("battles").where({ id: battleId }).first()) as BattleRow | undefined;
   if (!battle) throw new Error(`run_battle: batalla ${battleId} inexistente`);
-  const participants = (await db("participants").where({ battle_id: battleId })) as ParticipantRow[];
+  const participants = await loadBattleParticipants(db, battleId);
   return { battle, participants };
 }
 
@@ -290,7 +312,7 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
       );
     }
     const battle = claimed;
-    const participants = (await db("participants").where({ battle_id: battleId })) as ParticipantRow[];
+    const participants = await loadBattleParticipants(db, battleId);
 
     // Lease vivo mientras dura la batalla; si se pierde, se aborta la ejecución.
     const aborter = new AbortController();

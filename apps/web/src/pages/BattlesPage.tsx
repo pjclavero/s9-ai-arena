@@ -19,7 +19,7 @@ import {
   botVersionLabel,
   summarizeBattle,
   winnerText,
-  teamText,
+  sidesTitle,
   type BattleLike,
   type ParticipantLike,
 } from "../battle-result.js";
@@ -109,9 +109,8 @@ export function BattlesPage(props: { botFilter?: string }) {
                     <tr key={b.id} data-testid="battle-row" data-battle-id={b.id} data-status={b.status}>
                       <td>
                         <a href={`#/battles/${encodeURIComponent(b.id)}`} data-testid="battle-detail-link">
-                          {b.participants
-                            .map((p) => `${botVersionLabel(p)}${p.team ? ` (${teamText(p.team)})` : ""}`)
-                            .join(" vs ") || "batalla sin participantes"}
+                          {sidesTitle(b.participants, botVersionLabel, { withSide: true }) ||
+                            "batalla sin participantes"}
                         </a>
                       </td>
                       <td>{MODE_TEXT[b.mode] ?? b.mode}</td>

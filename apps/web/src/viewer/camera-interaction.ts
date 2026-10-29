@@ -1,6 +1,6 @@
 /**
  * R3.2 · ERR-VIS-07 — Interacción de cámara del visor: rueda para zoom (hacia el
- * cursor), arrastre para pan y teclas 1–4 para seguir bots.
+ * cursor), arrastre para pan y teclas 1–8 para seguir bots (4v4: hasta 8 vehículos).
  *
  * Máquina de estados PURA: recibe entradas ya normalizadas (deltas de rueda,
  * desplazamientos de arrastre en píxeles, teclas) y produce el CameraMode que la
@@ -73,7 +73,7 @@ export class CameraInteraction {
   }
 
   /**
-   * Teclado: "1"–"4" siguen al bot n-ésimo (orden estable de aparición), "g"
+   * Teclado: "1"–"8" siguen al bot n-ésimo (orden estable de aparición), "g"
    * vuelve a la vista global. Devuelve el modo nuevo o null si la tecla no es nuestra.
    */
   onKey(key: string, vehicleIds: string[]): CameraMode | null {
@@ -82,7 +82,7 @@ export class CameraInteraction {
       return this.mode;
     }
     const n = Number(key);
-    if (Number.isInteger(n) && n >= 1 && n <= 4) {
+    if (Number.isInteger(n) && n >= 1 && n <= 8) {
       const id = vehicleIds[n - 1];
       if (!id) return null; // no hay tantos bots: la tecla no hace nada
       this.mode = { kind: "follow", vehicleId: id };

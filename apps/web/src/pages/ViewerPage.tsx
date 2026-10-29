@@ -8,7 +8,16 @@ import { api } from "../api.js";
 import { describeApiError } from "../errors.js";
 import { SpectatorClient, type SpectateTicket } from "../viewer/spectator-client.js";
 import { LiveFeed } from "../viewer/live-feed.js";
-import { participantsTitle, rosterFromMeta } from "../viewer/art-direction.js";
+import {
+  participantsTitle,
+  rosterFromMeta,
+  rosterTeams,
+  sideText,
+  sortTeams,
+  vehicleLabel,
+  type ViewerRoster,
+} from "../viewer/art-direction.js";
+import { RosterList } from "../viewer/RosterList.js";
 import { buildHudModel } from "../viewer/hud-model.js";
 import { HudOverlay } from "../viewer/HudOverlay.js";
 import type { ViewerScene } from "../viewer/PhaserViewer.js";
@@ -67,7 +76,10 @@ export function ViewerPage({ battleId }: { battleId: string }) {
   const [attempt, setAttempt] = useState(0);
   const [allowFog, setAllowFog] = useState(false);
   const [fogOn, setFogOn] = useState(false);
-  const [fogTeam, setFogTeam] = useState("red");
+  // 4v4 · sin bando por defecto: se toma de la nómina en cuanto llega (antes "red" fijo).
+  const [fogTeam, setFogTeam] = useState("");
+  /** Nómina pública (vehículo → bot): de ella salen bandos, cámaras y nombres. */
+  const [roster, setRoster] = useState<ViewerRoster>(() => new Map());
   const [debugAvailable, setDebugAvailable] = useState(false);
   const [debugOn, setDebugOn] = useState(false);
   const [camera, setCamera] = useState<CameraMode>({ kind: "global" });
@@ -87,6 +99,7 @@ export function ViewerPage({ battleId }: { battleId: string }) {
     setRejectCode(undefined);
     setShowReplay(false);
     setTitle(null);
+    setRoster(new Map());
     // UX-F (DEF-R11) · el pase se pide YA, en paralelo con la carga de Phaser. Antes
     // se pedía cuando Phaser había arrancado (~5 s en un navegador sin GPU), y una
     // batalla que no existe tardaba eso en decirse. El primer connect() usa esta
@@ -149,7 +162,13 @@ export function ViewerPage({ battleId }: { battleId: string }) {
           if (msg.meta?.world) scene.setWorld(msg.meta.world);
           // R3.4: nómina pública (nombre + chasis + equipo por vehículo) desde la
           // cabecera init; el visor pinta sprite por chasis y NOMBRE, no el UUID.
-          if (msg.meta?.roster) scene.setRoster(rosterFromMeta(msg.meta.roster));
+          if (msg.meta?.roster) {
+            const r = rosterFromMeta(msg.meta.roster);
+            scene.setRoster(r);
+            setRoster(r);
+            const teams = rosterTeams(r);
+            setFogTeam((prev) => (prev && teams.includes(prev) ? prev : (teams[0] ?? "")));
+          }
           setTitle(participantsTitle(msg.meta?.roster));
           // R3.6: si nos conectamos a una batalla YA terminada, arrastramos el
           // resultado para anunciar el fin sobre el canvas y en el HUD.
@@ -200,18 +219,31 @@ export function ViewerPage({ battleId }: { battleId: string }) {
     };
   }, [battleId, attempt]);
 
-  useEffect(() => {
-    const scene = sceneRef.current;
-    if (!scene) return;
-    scene.cameraMode = camera;
-    scene.fog = { allowFogView: allowFog, enabled: fogOn, team: fogTeam };
-    scene.showDebug = debugOn && debugAvailable;
-  }, [camera, allowFog, fogOn, fogTeam, debugOn, debugAvailable, overlayTick]);
-
   // UX-R · Sin batalla que ver (rechazo, error, sin conexión) no se pinta el HUD
   // ni los controles de cámara: un «0 — 0 · Preparados» contradice la alerta.
   const failed = state === "rejected" || state === "error" || state === "offline";
   const overlay = failed ? undefined : sceneRef.current?.overlay;
+  // 4v4 · bandos de la NÓMINA (y, si aún no la hay, de los vehículos del snapshot):
+  // nunca red/blue fijos. Con 8 vehículos, 2 bandos de 4.
+  const fromRoster = rosterTeams(roster);
+  const sides =
+    fromRoster.length > 0
+      ? fromRoster
+      : sortTeams([...(overlay?.vehicles.values() ?? [])].map((v) => v.team).filter(Boolean));
+  // 4v4-FIX · bando EFECTIVO de la niebla: el elegido si sigue existiendo y, si no
+  // (p. ej. sin nómina, con los bandos sacados del snapshot), el primero que enseña
+  // el desplegable. Antes el desplegable mostraba `sides[0]` y la niebla iba con "".
+  const effectiveFogTeam = fogTeam && sides.includes(fogTeam) ? fogTeam : (sides[0] ?? "");
+  const sidesKey = sides.join("|");
+
+  useEffect(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    scene.cameraMode = camera;
+    scene.fog = { allowFogView: allowFog, enabled: fogOn && effectiveFogTeam !== "", team: effectiveFogTeam };
+    scene.showDebug = debugOn && debugAvailable;
+  }, [camera, allowFog, fogOn, effectiveFogTeam, sidesKey, debugOn, debugAvailable, overlayTick]);
+
   return (
     <section>
       <h2 data-testid="viewer-title" style={{ overflowWrap: "anywhere" }}>
@@ -240,21 +272,31 @@ export function ViewerPage({ battleId }: { battleId: string }) {
       )}
       <div hidden={failed} data-testid="viewer-controls">
         <button onClick={() => setCamera({ kind: "global" })}>Vista global</button>
-        <button onClick={() => setCamera({ kind: "team", team: "red" })}>Equipo rojo</button>
-        <button onClick={() => setCamera({ kind: "team", team: "blue" })}>Equipo azul</button>
+        {sides.map((t) => (
+          <button key={t} data-testid="camera-side" onClick={() => setCamera({ kind: "team", team: t })}>
+            Bando {sideText(t)}
+          </button>
+        ))}
         {overlay &&
           [...overlay.vehicles.keys()].map((id) => (
             <button key={id} onClick={() => setCamera({ kind: "follow", vehicleId: id })}>
-              Seguir {id}
+              Seguir {vehicleLabel(roster, id)}
             </button>
           ))}
-        {allowFog && (
+        {allowFog && sides.length > 0 && (
           <label>
             <input type="checkbox" checked={fogOn} onChange={(e) => setFogOn(e.target.checked)} />
             Niebla de guerra (
-            <select value={fogTeam} onChange={(e) => setFogTeam(e.target.value)}>
-              <option value="red">rojo</option>
-              <option value="blue">azul</option>
+            <select
+              aria-label="bando de la niebla"
+              value={effectiveFogTeam}
+              onChange={(e) => setFogTeam(e.target.value)}
+            >
+              {sides.map((t) => (
+                <option key={t} value={t}>
+                  {sideText(t)}
+                </option>
+              ))}
             </select>
             )
           </label>
@@ -267,8 +309,9 @@ export function ViewerPage({ battleId }: { battleId: string }) {
         )}
       </div>
       <p hidden={failed} style={{ opacity: 0.7, fontSize: 13 }}>
-        Rueda: zoom · arrastre: mover cámara · 1–4: seguir bots · G: vista global
+        Rueda: zoom · arrastre: mover cámara · 1–8: seguir bots · G: vista global
       </p>
+      {!failed && <RosterList roster={roster} testId="viewer-roster" />}
       {/* R3.6 · El HUD (marcador, reloj/fase, objetivo, panel de equipos con vida y
           módulos, kill feed, banderas y zonas) se superpone al canvas. El minimapa
           y el rótulo de fin de partida los dibuja Phaser dentro del canvas. */}

@@ -53,6 +53,7 @@ import {
   turretFrameForChassis,
   explosionFrameForAge,
   vehicleLabel,
+  vehicleTeam,
   type ViewerRoster,
 } from "./art-direction.js";
 
@@ -77,7 +78,11 @@ export class ViewerScene extends Phaser.Scene {
   readonly fogFader = new FogFader();
   readonly smoothCamera = new SmoothCamera();
   readonly interaction = new CameraInteraction({ kind: "global" });
-  fog: FogOptions = { allowFogView: false, enabled: false, team: "red" };
+  /**
+   * 4v4 · Sin bando por defecto: la página elige uno de la NÓMINA. Con `team` vacío
+   * la niebla no filtra a nadie como «propio» (antes era "red" fijo).
+   */
+  fog: FogOptions = { allowFogView: false, enabled: false, team: "" };
   /** Capas de depuración: solo llegan si el ticket firmado lo autoriza (T8.2). */
   debugLayers: Record<string, unknown> | null = null;
   showDebug = false;
@@ -306,7 +311,7 @@ export class ViewerScene extends Phaser.Scene {
     this.minimap?.camera.ignore(obj);
   }
 
-  /** Rueda = zoom al cursor; arrastre = pan; teclas 1–4 = seguir bots; G = global. */
+  /** Rueda = zoom al cursor; arrastre = pan; teclas 1–8 = seguir bots; G = global. */
   private wireInput(): void {
     const view = () => ({
       current: this.lastCamera ?? {
@@ -384,11 +389,17 @@ export class ViewerScene extends Phaser.Scene {
       );
     }
     rt.draw(g);
+    // P1 · En Phaser 4 clear/fill/draw sólo se ENCOLAN en el commandBuffer de la
+    // DynamicTexture y se ejecutan con render(). Sin esta llamada la textura quedaba
+    // vacía (escenario negro, sin suelo ni muros). Y el Graphics temporal sólo se
+    // destruye DESPUÉS de ejecutar el búfer, que lo referencia.
+    rt.render();
     g.destroy();
     // El lienzo de decals sigue el tamaño del mundo y se limpia al re-hornear el mapa.
     if (this.decalLayer) {
       this.decalLayer.setSize(w, h);
       this.decalLayer.clear();
+      this.decalLayer.render();
     }
   }
 
@@ -472,6 +483,7 @@ export class ViewerScene extends Phaser.Scene {
       g.fillCircle(d.x * this.pxPerM, d.y * this.pxPerM, d.radiusM * this.pxPerM);
     }
     this.decalLayer.draw(g);
+    this.decalLayer.render(); // P1 · ejecutar el búfer antes de destruir el Graphics
     g.destroy();
   }
 
@@ -640,8 +652,9 @@ export class ViewerScene extends Phaser.Scene {
     // (cambiar de textura sí); los frames se hornean a FRAME_SCALE× px, de ahí el
     // reescalado 1/FRAME_SCALE.
     const entry = this.roster.get(id);
-    const team = entry?.team ?? this.overlay.vehicles.get(id)?.team ?? "red";
-    const color = this.tintForTeam(team);
+    // 4v4 · bando de la nómina o del snapshot; sin ninguno, color NEUTRO (antes "red").
+    const team = vehicleTeam(this.roster, id, this.overlay.vehicles.get(id)?.team);
+    const color = team ? this.tintForTeam(team) : NEUTRAL_TEAM_COLOR;
     // Casco según el arquetipo del chasis: explorador/artillero/pesado a un vistazo.
     const body = this.add
       .sprite(0, 0, ATLAS_KEY, bodyFrameForChassis(entry?.chassis))

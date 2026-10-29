@@ -25,8 +25,21 @@
  * Bando ≠ equipo: el «rojo/azul» de una batalla es sólo el lado del campo (la
  * etiqueta `team` del participante); los equipos de la sección Equipos sólo sirven
  * aquí para FILTRAR la lista de bots. Dos bots del mismo equipo pueden enfrentarse.
+ *
+ * 4v4 · Dos tipos de batalla:
+ *  - BATALLA INDIVIDUAL: el 1v1 de siempre (un bot por bando), sin cambios.
+ *  - BATALLA POR EQUIPOS: se eligen Equipo A y Equipo B (de los que el usuario es
+ *    miembro); sus bots elegibles se cargan solos con su versión publicada EXACTA
+ *    (se puede elegir otra publicada), se pueden excluir o sustituir, hasta 4 por
+ *    bando y 8 en total, sin duplicados. Sólo se ofrecen modos de equipo (por defecto
+ *    Deathmatch por equipos) y sus mapas. Se envía un participante por bot con
+ *    `team` = bando (A → red, B → blue): la batalla sigue sin guardar el equipo.
+ *
+ * P3 · «cargando» ≠ «falló»: la clave ausente en `versionsByBot` es «todavía
+ * cargando»; `null` es que la petición falló de verdad. Antes `?? null` las mezclaba
+ * y se decía «no se pudieron cargar sus otras versiones» mientras cargaban.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api, type Me } from "../api.js";
 import { ErrorState, FormError } from "../ui/primitives.js";
 import { modeName } from "../battle-result.js";
@@ -37,7 +50,7 @@ export interface RulesetOption {
   mode: string | null;
   budgetCredits: number;
 }
-interface TeamOption {
+export interface TeamOption {
   id: string;
   name: string;
   isMember?: boolean;
@@ -155,17 +168,43 @@ export function botEligibility(bot: BotSummary, versions: BotVersionSummary[] | 
   };
 }
 
+/** Modos que juegan bandos con varios bots (el motor rechaza equipos compartidos en deathmatch). */
+export const TEAM_MODES = ["team_deathmatch", "capture_the_flag", "zone_control"];
+/** Límites de la batalla por equipos: los mismos que valida la API (máx. 8 participantes). */
+export const MAX_PER_SIDE = 4;
+export const MAX_PARTICIPANTS = 8;
+
+/** Un bot que juega en un bando de la batalla por equipos (`picked` = versión elegida a mano). */
+export interface TeamSlot {
+  botId: string;
+  picked: number | null;
+}
+
+/** Equipo A juega en el bando rojo; Equipo B, en el azul. */
+const SIDES = {
+  A: { team: "red", color: "rojo", other: "B" },
+  B: { team: "blue", color: "azul", other: "A" },
+} as const;
+type SideKey = keyof typeof SIDES;
+
+/** Estado de carga de las versiones de un bot: lista, `null` (falló) o `undefined` (cargando). */
+type VersionsLoad = BotVersionSummary[] | null | undefined;
+
 export function BattleNewPage(props: { me: Me }) {
   const [maps, setMaps] = useState<MapVersion[]>([]);
   const [bots, setBots] = useState<BotSummary[]>([]);
-  /** Versiones por bot; `null` = no se pudieron cargar (se usa latestPublishedVersion). */
+  /**
+   * Versiones por bot. P3: clave AUSENTE = todavía cargando; `null` = la petición
+   * falló de verdad (se usa latestPublishedVersion y se dice); lista = cargadas.
+   */
   const [versionsByBot, setVersionsByBot] = useState<Record<string, BotVersionSummary[] | null>>({});
   const [loadErr, setLoadErr] = useState<unknown>(null);
   const [loadEpoch, setLoadEpoch] = useState(0);
   const [modes, setModes] = useState<string[]>([]);
   const [rulesets, setRulesets] = useState<RulesetOption[]>([]);
   const [teams, setTeams] = useState<TeamOption[]>([]);
-  const [mode, setMode] = useState("");
+  const [kind, setKind] = useState<"individual" | "team">("individual");
+  const [modeChoice, setMode] = useState("");
   const [rulesetId, setRulesetId] = useState("");
   const [redTeam, setRedTeam] = useState("");
   const [blueTeam, setBlueTeam] = useState("");
@@ -175,13 +214,18 @@ export function BattleNewPage(props: { me: Me }) {
   const [blueBot, setBlueBot] = useState("");
   const [redVersion, setRedVersion] = useState<number | null>(null);
   const [blueVersion, setBlueVersion] = useState<number | null>(null);
+  // Batalla por equipos: el equipo de cada bando y los bots que juegan en él.
+  const [teamIds, setTeamIds] = useState<Record<SideKey, string>>({ A: "", B: "" });
+  const [slots, setSlots] = useState<Record<SideKey, TeamSlot[]>>({ A: [], B: [] });
   const [error, setError] = useState("");
   const [submitErr, setSubmitErr] = useState<unknown>(null);
   const [submitting, setSubmitting] = useState(false);
   const [created, setCreated] = useState<string | null>(null);
   useEffect(() => {
+    let alive = true;
     void (async () => {
       setLoadErr(null);
+      setVersionsByBot({});
       try {
         const [m, b, r, t] = await Promise.all([
           api<{ items: MapVersion[] }>("GET", "/maps?limit=100"),
@@ -189,6 +233,7 @@ export function BattleNewPage(props: { me: Me }) {
           api<{ modes: string[]; items: RulesetOption[] }>("GET", "/rulesets"),
           api<{ items: TeamOption[] }>("GET", "/teams?limit=100"),
         ]);
+        if (!alive) return;
         const allBots = b.items ?? [];
         // Sólo interesan los bots que pueden jugar (para elegir versión) y los PROPIOS
         // (para explicar por qué no pueden). Un bot ajeno sin publicar no se lista.
@@ -201,28 +246,54 @@ export function BattleNewPage(props: { me: Me }) {
         if (r.modes?.length) setMode(r.modes[0]);
         // Las versiones de cada bot: un fallo aquí no tumba la página (se cae al
         // `latestPublishedVersion` del listado y se dice que no se conocen las demás).
-        const entries = await Promise.all(
+        // Cada bot se apunta al llegar su respuesta: hasta entonces está «cargando».
+        await Promise.all(
           relevant.map(async (x) => {
+            let vs: BotVersionSummary[] | null;
             try {
-              const vs = await api<BotVersionSummary[]>("GET", `/bots/${encodeURIComponent(x.id)}/versions`);
-              return [x.id, Array.isArray(vs) ? vs : null] as const;
+              const got = await api<BotVersionSummary[]>("GET", `/bots/${encodeURIComponent(x.id)}/versions`);
+              vs = Array.isArray(got) ? got : null;
             } catch {
-              return [x.id, null] as const;
+              vs = null;
             }
+            if (alive) setVersionsByBot((prev) => ({ ...prev, [x.id]: vs }));
           }),
         );
-        setVersionsByBot(Object.fromEntries(entries));
       } catch (e) {
-        setLoadErr(e ?? new Error("error desconocido"));
+        if (alive) setLoadErr(e ?? new Error("error desconocido"));
       }
     })();
+    return () => {
+      alive = false;
+    };
   }, [loadEpoch, props.me.id]);
 
+  /** P3 · `undefined` = cargando, `null` = falló, lista = cargadas. */
+  const versionsLoad = (id: string): VersionsLoad =>
+    Object.prototype.hasOwnProperty.call(versionsByBot, id) ? versionsByBot[id] : undefined;
   const eligibility = (id: string): BotEligibility | undefined => {
     const b = bots.find((x) => x.id === id);
-    return b ? botEligibility(b, versionsByBot[id] ?? null) : undefined;
+    return b ? botEligibility(b, versionsLoad(id) ?? null) : undefined;
+  };
+  /** Aviso de carga de versiones para un bot elegible: nada si ya están. */
+  const versionsNote = (id: string): string => {
+    const v = versionsLoad(id);
+    if (v === undefined) return " · cargando sus versiones…";
+    if (v === null) return " · no se pudieron cargar sus otras versiones";
+    return "";
   };
   // Opciones REALES derivadas del modo elegido.
+  const shownModes = kind === "team" ? modes.filter((m) => TEAM_MODES.includes(m)) : modes;
+  // 4v4-FIX · modo EFECTIVO, siempre uno de los que enseña el desplegable. Si se marca
+  // «BATALLA POR EQUIPOS» antes de que lleguen los rulesets, la carga hacía
+  // `setMode(modes[0])` (= deathmatch): el select de equipos lo pintaba como su
+  // primera opción, pero se enviaba el ruleset de DM y la API respondía 409
+  // `deathmatch_shared_team` (functional-e2e golden del PR #191).
+  const mode = shownModes.includes(modeChoice)
+    ? modeChoice
+    : kind === "team" && shownModes.includes("team_deathmatch")
+      ? "team_deathmatch"
+      : (shownModes[0] ?? "");
   const modeRulesets = rulesets.filter((r) => r.mode === mode || r.mode === null);
   const modeMaps = maps.filter((m) => (m.supportedModes ?? []).includes(mode));
   const mapsForMode = (md: string) => maps.filter((m) => (m.supportedModes ?? []).includes(md)).length;
@@ -255,8 +326,7 @@ export function BattleNewPage(props: { me: Me }) {
   const rv = redBot ? chosenVersion(redBot, redVersion) : undefined;
   const bv = blueBot ? chosenVersion(blueBot, blueVersion) : undefined;
 
-  // Qué falta para poder crear la batalla: una fila ✓/✗ por requisito.
-  const checks: { ok: boolean; label: string }[] = [
+  const contentChecks: { ok: boolean; label: string }[] = [
     {
       ok: Boolean(effectiveRuleset),
       label: effectiveRuleset ? `Ruleset: ${effectiveRuleset}` : "Ruleset: no hay ninguno para este modo",
@@ -269,6 +339,11 @@ export function BattleNewPage(props: { me: Me }) {
           ? `Mapa: no hay mapas publicados que soporten ${modeName(mode)}`
           : "Mapa: elige un mapa publicado",
     },
+  ];
+
+  // Qué falta para poder crear la batalla individual: una fila ✓/✗ por requisito.
+  const checks: { ok: boolean; label: string }[] = [
+    ...contentChecks,
     participantCheck("Bando rojo", redBot, rv),
     participantCheck("Bando azul", blueBot, bv),
   ];
@@ -285,6 +360,121 @@ export function BattleNewPage(props: { me: Me }) {
     return { ok: true, label: `${side}: ${b.name} v${version}` };
   }
 
+  // ------------------------------------------------ batalla por equipos (4v4)
+  const teamById = (id: string) => teams.find((t) => t.id === id);
+  const botName = (id: string): string =>
+    bots.find((b) => b.id === id)?.name ??
+    teams.flatMap((t) => t.bots ?? []).find((b) => b.id === id)?.name ??
+    `bot ${id.slice(0, 8)}`;
+  const inSlots = (side: SideKey) => new Set(slots[side].map((s) => s.botId));
+  const allSlotIds = new Set([...slots.A, ...slots.B].map((s) => s.botId));
+  const slotVersion = (s: TeamSlot) => chosenVersion(s.botId, s.picked);
+
+  /** Bots elegibles del equipo que entran solos: hasta 4 y sin los que ya juegan en el otro bando. */
+  function autoSlots(teamId: string, taken: Set<string>): TeamSlot[] {
+    const out: TeamSlot[] = [];
+    for (const tb of teamById(teamId)?.bots ?? []) {
+      if (out.length >= MAX_PER_SIDE) break;
+      if (taken.has(tb.id) || !eligibility(tb.id)?.eligible) continue;
+      out.push({ botId: tb.id, picked: null });
+    }
+    return out;
+  }
+  function chooseTeam(side: SideKey, teamId: string) {
+    setTeamIds((prev) => ({ ...prev, [side]: teamId }));
+    setSlots((prev) => ({
+      ...prev,
+      [side]: teamId ? autoSlots(teamId, new Set(prev[SIDES[side].other].map((s) => s.botId))) : [],
+    }));
+  }
+  const updateSlots = (side: SideKey, f: (list: TeamSlot[]) => TeamSlot[]) =>
+    setSlots((prev) => ({ ...prev, [side]: f(prev[side]) }));
+
+  /** Bots que pueden ENTRAR en un bando (añadir o sustituir): elegibles y que no juegan ya. */
+  function candidates(side: SideKey): { fromTeam: BotSummary[]; others: BotSummary[] } {
+    const teamBotIds = new Set((teamById(teamIds[side])?.bots ?? []).map((b) => b.id));
+    const free = bots.filter((b) => !allSlotIds.has(b.id) && eligibility(b.id)?.eligible);
+    return { fromTeam: free.filter((b) => teamBotIds.has(b.id)), others: free.filter((b) => !teamBotIds.has(b.id)) };
+  }
+
+  /** Por qué un bot del equipo NO está jugando en su bando. */
+  function notPlayingReason(side: SideKey, botId: string): string {
+    const other = SIDES[side].other;
+    if (inSlots(other).has(botId)) return `ya juega en el Equipo ${other}: un bot sólo puede jugar una vez por batalla`;
+    const e = eligibility(botId);
+    if (!e) return "no elegible: no tiene ninguna versión publicada";
+    if (!e.eligible) return e.summary;
+    if (slots[side].length >= MAX_PER_SIDE)
+      return `no cabe: máximo ${MAX_PER_SIDE} por bando (excluye otro para meterlo)`;
+    return "excluido de esta batalla (puedes volver a añadirlo)";
+  }
+
+  function sideCheck(side: SideKey): { ok: boolean; label: string } {
+    const head = `Equipo ${side} (bando ${SIDES[side].color})`;
+    const team = teamById(teamIds[side]);
+    if (!team) return { ok: false, label: `${head}: elige un equipo` };
+    const list = slots[side];
+    if (list.length === 0)
+      return { ok: false, label: `${head}: ${team.name} no tiene ningún bot elegible (con versión publicada)` };
+    if (list.length > MAX_PER_SIDE) return { ok: false, label: `${head}: máximo ${MAX_PER_SIDE} bots por bando` };
+    const bad = list.filter((s) => slotVersion(s) == null);
+    if (bad.length > 0)
+      return {
+        ok: false,
+        label: `${head}: ${bad.map((s) => `${botName(s.botId)} — ${eligibility(s.botId)?.summary ?? "no elegible"}`).join("; ")}`,
+      };
+    return { ok: true, label: `${head}: ${team.name} · ${list.length} bot${list.length === 1 ? "" : "s"}` };
+  }
+  const nA = slots.A.length;
+  const nB = slots.B.length;
+  const teamChecks: { ok: boolean; label: string }[] = [...contentChecks, sideCheck("A"), sideCheck("B")];
+  {
+    const seen = new Set<string>();
+    const dup = new Set<string>();
+    for (const s of [...slots.A, ...slots.B]) (seen.has(s.botId) ? dup : seen).add(s.botId);
+    for (const id of dup)
+      teamChecks.push({
+        ok: false,
+        label: `${botName(id)} está dos veces: un bot sólo puede jugar una vez por batalla`,
+      });
+    if (nA + nB > MAX_PARTICIPANTS)
+      teamChecks.push({ ok: false, label: `Demasiados participantes: ${nA + nB} (máximo ${MAX_PARTICIPANTS})` });
+  }
+  const teamValid = teamChecks.every((c) => c.ok);
+
+  function chooseKind(k: "individual" | "team") {
+    setKind(k);
+    setError("");
+    setSubmitErr(null);
+    setMapKey("");
+    setRulesetId("");
+    if (k === "team") {
+      const tm = modes.filter((m) => TEAM_MODES.includes(m));
+      setMode(tm.includes("team_deathmatch") ? "team_deathmatch" : (tm[0] ?? ""));
+    } else {
+      setMode(modes[0] ?? "");
+    }
+  }
+
+  async function post(participants: { botId: string; version: number; team: string }[]) {
+    setSubmitting(true);
+    try {
+      const battle = await api<{ id: string }>("POST", "/battles", {
+        mode,
+        rulesetId: effectiveRuleset, // id de la tabla `rulesets`, servido por GET /rulesets
+        mapId: selectedMap!.mapId,
+        mapVersion: selectedMap!.version,
+        ...(seed ? { seed } : {}),
+        participants,
+      });
+      setCreated(battle.id);
+    } catch (e) {
+      setSubmitErr(e ?? new Error("error desconocido"));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   async function submit() {
     setError("");
     setSubmitErr(null);
@@ -296,25 +486,25 @@ export function BattleNewPage(props: { me: Me }) {
       const bad = checks.filter((c) => !c.ok).map((c) => c.label);
       return setError(`No se puede crear la batalla: ${bad.join("; ")}.`);
     }
-    setSubmitting(true);
-    try {
-      const battle = await api<{ id: string }>("POST", "/battles", {
-        mode,
-        rulesetId: effectiveRuleset, // id de la tabla `rulesets`, servido por GET /rulesets
-        mapId: selectedMap.mapId,
-        mapVersion: selectedMap.version,
-        ...(seed ? { seed } : {}),
-        participants: [
-          { botId: redBot, version: rv, team: "red" },
-          { botId: blueBot, version: bv, team: "blue" },
-        ],
-      });
-      setCreated(battle.id);
-    } catch (e) {
-      setSubmitErr(e ?? new Error("error desconocido"));
-    } finally {
-      setSubmitting(false);
+    await post([
+      { botId: redBot, version: rv, team: "red" },
+      { botId: blueBot, version: bv, team: "blue" },
+    ]);
+  }
+
+  async function submitTeam() {
+    setError("");
+    setSubmitErr(null);
+    if (!teamValid || !selectedMap) {
+      const bad = teamChecks.filter((c) => !c.ok).map((c) => c.label);
+      return setError(`No se puede crear la batalla: ${bad.join("; ")}.`);
     }
+    // Uno por bot, con la versión elegida; `team` es el BANDO (A → rojo, B → azul).
+    await post(
+      (["A", "B"] as const).flatMap((side) =>
+        slots[side].map((s) => ({ botId: s.botId, version: slotVersion(s)!, team: SIDES[side].team })),
+      ),
+    );
   }
 
   if (created) {
@@ -350,7 +540,7 @@ export function BattleNewPage(props: { me: Me }) {
     setPicked: (v: number | null) => void,
   ) {
     const e = botId ? eligibility(botId) : undefined;
-    const versions = botId ? (versionsByBot[botId] ?? null) : null;
+    const versions = botId ? versionsLoad(botId) : undefined;
     const stateOf = (v: number) => versions?.find((x) => x.version === v)?.state ?? "published";
     return (
       <fieldset data-testid={`side-${side}`}>
@@ -417,14 +607,167 @@ export function BattleNewPage(props: { me: Me }) {
         {e && (
           <p className={e.eligible ? "" : "warn"} data-testid={`bot-status-${side}`}>
             {e.summary}
-            {versions === null && e.eligible ? " · no se pudieron cargar sus otras versiones" : ""}
+            {e.eligible ? versionsNote(botId) : ""}
           </p>
         )}
       </fieldset>
     );
   }
 
+  /** Opciones de bots que pueden entrar en un bando: primero los del equipo, luego el resto. */
+  function candidateOptions(side: SideKey): ReactNode {
+    const c = candidates(side);
+    return (
+      <>
+        {c.fromTeam.length > 0 && (
+          <optgroup label="Del equipo">
+            {c.fromTeam.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name} {eligibility(b.id)!.short}
+              </option>
+            ))}
+          </optgroup>
+        )}
+        {c.others.length > 0 && (
+          <optgroup label="Otros bots que puedes usar">
+            {c.others.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name} {eligibility(b.id)!.short}
+              </option>
+            ))}
+          </optgroup>
+        )}
+      </>
+    );
+  }
+
+  function teamSide(side: SideKey) {
+    const { color } = SIDES[side];
+    const team = teamById(teamIds[side]);
+    const list = slots[side];
+    const mine = inSlots(side);
+    const notPlaying = (team?.bots ?? []).filter((b) => !mine.has(b.id));
+    const c = candidates(side);
+    const anyCandidate = c.fromTeam.length + c.others.length > 0;
+    return (
+      <fieldset data-testid={`team-side-${side}`}>
+        <legend>
+          Equipo {side} · juega en el bando {color}
+        </legend>
+        <label>
+          Equipo {side}{" "}
+          <select
+            aria-label={`equipo ${side}`}
+            value={teamIds[side]}
+            onChange={(ev) => chooseTeam(side, ev.target.value)}
+          >
+            <option value="">— elige un equipo —</option>
+            {teams.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        {team && (
+          <>
+            <ul data-testid={`team-slots-${side}`}>
+              {list.map((s, i) => {
+                const name = botName(s.botId);
+                const e = eligibility(s.botId);
+                const v = slotVersion(s);
+                const versions = versionsLoad(s.botId);
+                const stateOf = (n: number) => versions?.find((x) => x.version === n)?.state ?? "published";
+                return (
+                  <li key={s.botId} data-testid="team-slot" data-bot-id={s.botId} className={v != null ? "ok" : "warn"}>
+                    {v != null ? "✓" : "✗"} {name}
+                    {v != null ? ` · v${v}` : ` — ${e?.summary ?? "no elegible"}`}{" "}
+                    {e?.eligible && (
+                      <select
+                        aria-label={`versión ${name}`}
+                        value={String(v ?? "")}
+                        onChange={(ev) =>
+                          updateSlots(side, (l) =>
+                            l.map((x, j) => (j === i ? { ...x, picked: Number(ev.target.value) } : x)),
+                          )
+                        }
+                      >
+                        {e.playable.map((n) => (
+                          <option key={n} value={String(n)}>
+                            v{n} · {versionStateLabel(stateOf(n))}
+                            {n === e.defaultVersion ? " (la más reciente publicada)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    )}{" "}
+                    <button
+                      type="button"
+                      aria-label={`excluir ${name}`}
+                      onClick={() => updateSlots(side, (l) => l.filter((_, j) => j !== i))}
+                    >
+                      Excluir
+                    </button>{" "}
+                    {anyCandidate && (
+                      <select
+                        aria-label={`sustituir ${name}`}
+                        value=""
+                        onChange={(ev) => {
+                          const id = ev.target.value;
+                          if (id)
+                            updateSlots(side, (l) => l.map((x, j) => (j === i ? { botId: id, picked: null } : x)));
+                        }}
+                      >
+                        <option value="">sustituir por…</option>
+                        {candidateOptions(side)}
+                      </select>
+                    )}
+                    {e?.eligible && versionsNote(s.botId) && <small>{versionsNote(s.botId)}</small>}
+                  </li>
+                );
+              })}
+            </ul>
+            {list.length < MAX_PER_SIDE && anyCandidate && (
+              <label>
+                Añadir bot{" "}
+                <select
+                  aria-label={`añadir bot al equipo ${side}`}
+                  value=""
+                  onChange={(ev) => {
+                    const id = ev.target.value;
+                    if (id) updateSlots(side, (l) => [...l, { botId: id, picked: null }]);
+                  }}
+                >
+                  <option value="">— elige —</option>
+                  {candidateOptions(side)}
+                </select>
+              </label>
+            )}
+            {notPlaying.length > 0 && (
+              <div data-testid={`team-not-playing-${side}`}>
+                <p>
+                  <small>Bots de {team.name} que no juegan:</small>
+                </p>
+                <ul>
+                  {notPlaying.map((b) => (
+                    <li key={b.id} className="warn">
+                      {b.name} — {notPlayingReason(side, b.id)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
+        )}
+      </fieldset>
+    );
+  }
+
   const ineligibleOwn = bots.filter((b) => b.ownerId === props.me.id && !eligibility(b.id)?.eligible);
+  const summaryLine = (side: SideKey) => {
+    const ok = sideCheck(side).ok;
+    const names = slots[side].map((s) => `${botName(s.botId)}${slotVersion(s) != null ? ` · v${slotVersion(s)}` : ""}`);
+    return `Equipo ${side} ${ok ? "✓" : "✗"} ${names.length > 0 ? names.join(", ") : "sin bots"}`;
+  };
 
   return (
     <section>
@@ -433,12 +776,38 @@ export function BattleNewPage(props: { me: Me }) {
         La batalla se <strong>encola</strong> y la ejecuta el worker de la plataforma: cada bot corre su versión
         publicada en su contenedor aislado. El límite de ticks lo fija el ruleset.
       </p>
-      <p data-testid="battle-concepts">
-        Un <strong>bot</strong> es tu programa; una <strong>versión de bot</strong> es una entrega concreta de su
-        código. En una batalla juegan <strong>versiones publicadas</strong>. El <strong>bando</strong> (rojo o azul) es
-        sólo el lado del campo: no es un equipo de la sección Equipos, que aquí sólo sirve para filtrar la lista. Dos
-        bots del mismo equipo pueden enfrentarse.
-      </p>
+      <fieldset data-testid="battle-kind">
+        <legend>Tipo de batalla</legend>
+        <label>
+          <input
+            type="radio"
+            name="battle-kind"
+            checked={kind === "individual"}
+            onChange={() => chooseKind("individual")}
+          />{" "}
+          <strong>BATALLA INDIVIDUAL</strong> · un bot contra otro (1 vs 1)
+        </label>{" "}
+        <label>
+          <input type="radio" name="battle-kind" checked={kind === "team"} onChange={() => chooseKind("team")} />{" "}
+          <strong>BATALLA POR EQUIPOS</strong> · hasta {MAX_PER_SIDE} bots por bando ({MAX_PER_SIDE} vs {MAX_PER_SIDE})
+        </label>
+      </fieldset>
+      {kind === "individual" ? (
+        <p data-testid="battle-concepts">
+          Un <strong>bot</strong> es tu programa; una <strong>versión de bot</strong> es una entrega concreta de su
+          código. En una batalla juegan <strong>versiones publicadas</strong>. El <strong>bando</strong> (rojo o azul)
+          es sólo el lado del campo: no es un equipo de la sección Equipos, que aquí sólo sirve para filtrar la lista.
+          Dos bots del mismo equipo pueden enfrentarse.
+        </p>
+      ) : (
+        <p data-testid="team-concepts">
+          Elige dos equipos de la sección Equipos: el <strong>Equipo A</strong> juega en el <strong>bando rojo</strong>{" "}
+          y el <strong>Equipo B</strong> en el <strong>bando azul</strong>. El bando sigue siendo sólo el lado del
+          campo: la batalla guarda el bando de cada bot, <strong>no</strong> qué equipo de la sección Equipos jugó, y el
+          resultado se da por bando. Cada bot juega su versión publicada (puedes elegir otra), como mucho {MAX_PER_SIDE}{" "}
+          por bando y {MAX_PARTICIPANTS} en total, y un bot sólo puede jugar una vez.
+        </p>
+      )}
       {loadErr !== null && (
         <ErrorState label="mapas, bots y rulesets" error={loadErr} onRetry={() => setLoadEpoch((n) => n + 1)} />
       )}
@@ -460,7 +829,7 @@ export function BattleNewPage(props: { me: Me }) {
             setRulesetId("");
           }}
         >
-          {modes.map((m) => (
+          {shownModes.map((m) => (
             <option key={m} value={m}>
               {modeName(m)}
             </option>
@@ -510,34 +879,81 @@ export function BattleNewPage(props: { me: Me }) {
       {notEnoughMaps && mode && (
         <p className="warn" data-testid="maps-for-mode">
           Sólo aparecen los mapas publicados que declaran soportar el modo {modeName(mode)}; ahora no hay ninguno.
-          {modes.some((m) => m !== mode && mapsForMode(m) > 0) &&
-            ` Modos con mapas: ${modes
+          {shownModes.some((m) => m !== mode && mapsForMode(m) > 0) &&
+            ` Modos con mapas: ${shownModes
               .filter((m) => mapsForMode(m) > 0)
               .map(modeName)
               .join(", ")}.`}
+        </p>
+      )}
+      {kind === "team" && shownModes.length === 0 && (
+        <p className="warn" data-testid="no-team-modes">
+          La plataforma no ofrece ningún modo por equipos ahora mismo.
         </p>
       )}
       <label>
         Semilla (opcional) <input aria-label="semilla" value={seed} onChange={(e) => setSeed(e.target.value)} />
       </label>
 
-      {sideControls("rojo", redTeam, setRedTeam, redBot, setRedBot, redVersion, setRedVersion)}
-      {sideControls("azul", blueTeam, setBlueTeam, blueBot, setBlueBot, blueVersion, setBlueVersion)}
+      {kind === "individual" ? (
+        <>
+          {sideControls("rojo", redTeam, setRedTeam, redBot, setRedBot, redVersion, setRedVersion)}
+          {sideControls("azul", blueTeam, setBlueTeam, blueBot, setBlueBot, blueVersion, setBlueVersion)}
 
-      <h3>Qué falta para crear la batalla</h3>
-      <ul data-testid="battle-checklist">
-        {checks.map((c) => (
-          <li key={c.label} className={c.ok ? "ok" : "warn"}>
-            {c.ok ? "✓" : "✗"} {c.label}
-          </li>
-        ))}
-      </ul>
+          <h3>Qué falta para crear la batalla</h3>
+          <ul data-testid="battle-checklist">
+            {checks.map((c) => (
+              <li key={c.label} className={c.ok ? "ok" : "warn"}>
+                {c.ok ? "✓" : "✗"} {c.label}
+              </li>
+            ))}
+          </ul>
 
-      <button disabled={submitting || notEnoughBots || notEnoughMaps} onClick={submit}>
-        Crear batalla
-      </button>
-      {notEnoughBots && (
-        <p className="warn">Necesitas al menos 2 bots con una versión publicada (ahora hay {eligibleBots.length}).</p>
+          <button disabled={submitting || notEnoughBots || notEnoughMaps} onClick={submit}>
+            Crear batalla
+          </button>
+          {notEnoughBots && (
+            <p className="warn">
+              Necesitas al menos 2 bots con una versión publicada (ahora hay {eligibleBots.length}).
+            </p>
+          )}
+        </>
+      ) : (
+        <>
+          {teams.length === 0 && (
+            <p className="warn" data-testid="no-teams">
+              No eres miembro de ningún equipo. Crea uno en <a href="#/teams">Equipos</a> y asígnale bots con versión
+              publicada.
+            </p>
+          )}
+          {teamSide("A")}
+          {teamSide("B")}
+
+          <div data-testid="team-composition">
+            <p data-testid="team-summary-A">
+              {summaryLine("A")} <small>(bando rojo)</small>
+            </p>
+            <p data-testid="team-summary-B">
+              {summaryLine("B")} <small>(bando azul)</small>
+            </p>
+            <p data-testid="participants-count">
+              Participantes: {nA} vs {nB} · {nA + nB} / {MAX_PARTICIPANTS}
+            </p>
+          </div>
+
+          <h3>Qué falta para crear la batalla</h3>
+          <ul data-testid="battle-checklist">
+            {teamChecks.map((c) => (
+              <li key={c.label} className={c.ok ? "ok" : "warn"}>
+                {c.ok ? "✓" : "✗"} {c.label}
+              </li>
+            ))}
+          </ul>
+
+          <button disabled={submitting || !teamValid} onClick={submitTeam}>
+            Crear batalla
+          </button>
+        </>
       )}
       {ineligibleOwn.length > 0 && (
         <div data-testid="ineligible-bots">

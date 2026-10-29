@@ -1105,9 +1105,9 @@ paths:
             schema: { $ref: '#/components/schemas/PracticeBattleInput' }
       responses:
         '202': { description: Encolada (la ejecuta el tournament-worker con el código real de cada bot), content: { application/json: { schema: { $ref: '#/components/schemas/Battle' } } } }
-        '400': { description: Modo/participantes/team/ruleset/mapa inválidos o bot repetido, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '400': { description: 'Modo/participantes/team/ruleset/mapa inválidos o bot repetido. 4v4 · team_composition_invalid (un modo de equipo sin exactamente 2 bandos) · team_too_large (más de 4 bots por bando).', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '404': { description: 'bot_not_found · un bot inexistente o privado ajeno (TD-005); indistinguibles a propósito', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
-        '409': { description: 'bot_not_published · ruleset_mode_mismatch · map_mode_unsupported (checkBattleContent, misma regla que la web)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: 'bot_not_published · ruleset_mode_mismatch · map_mode_unsupported (checkBattleContent, misma regla que la web) · 4v4 · deathmatch_shared_team (deathmatch con bandos compartidos: usa team_deathmatch)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /battles/{battleId}:
     get:
@@ -1897,33 +1897,50 @@ components:
         status: { enum: [ready, pending, unavailable] }
         perBot:
           type: object
-          description: 'Por botId: stats deportivas (replay-service/src/stats.ts) + botName y version. Sin cpuMs, decisions ni rejectionsByReason (diagnóstico); decisionTimeouts y perModule.*.rejections sólo para el dueño y el staff (UX-F, DEF-R12).'
+          description: 'Por botId: stats deportivas (replay-service/src/stats.ts) + botName y version. Sin cpuMs, decisions, rejectionsByReason ni radioDroppedByReason (diagnóstico); decisionTimeouts y perModule.*.rejections sólo para el dueño y el staff (UX-F, DEF-R12).'
           additionalProperties:
             type: object
             additionalProperties: true
             properties:
+              team: { type: string }
               shotsFired: { type: integer }
               shotsHit: { type: integer }
               accuracy: { type: number, nullable: true }
               damageDealt: { type: number }
               damageTaken: { type: number }
-              kills: { type: integer }
-              died: { type: boolean }
-              survivedTicks: { type: integer }
+              kills: { type: integer, description: 'Bajas de ENEMIGOS causadas por este bot (todas, también con respawn).' }
+              teamKills: { type: integer, description: '4v4-STATS · Bajas de compañeros o propias (sólo con fuego amigo).' }
+              deaths: { type: integer, description: '4v4-STATS · Veces que fue destruido (con respawn puede ser > 1). Ausente en stats anteriores a 4v4-STATS.' }
+              respawns: { type: integer, description: '4v4-STATS · Veces que reapareció.' }
+              died: { type: boolean, description: 'deaths > 0: destruido al menos una vez (con respawn puede acabar vivo, ver aliveAtEnd).' }
+              aliveAtEnd: { type: boolean, description: '4v4-STATS · Vivo y no descalificado al terminar.' }
+              survivedTicks: { type: integer, description: 'Ticks vivo en total (suma de tramos entre aparición y muerte).' }
               decisionTimeouts: { type: integer }
               distanceM: { type: number, description: 'Recorrido en metros (entre snapshots públicos).' }
+              radio:
+                type: object
+                description: '4v4-STATS · Actividad de radio (juego, pública). La radio también llega al rival (contrato actual del motor); esto sólo lo mide.'
+                properties:
+                  sent: { type: integer, description: 'Mensajes ACEPTADOS por el motor (aplicados estando vivo, menos los descartados).' }
+                  received: { type: integer, description: 'Mensajes recibidos en sus observaciones (suma de obs.radio.length).' }
+                  receivedFromTeammates: { type: integer }
+                  receivedFromEnemies: { type: integer }
               perModule:
                 type: object
                 additionalProperties:
                   type: object
                   properties:
                     moduleId: { type: string, nullable: true }
-                    usesKind: { enum: [shots, mines, move_commands, radio_messages, passive], description: 'Qué cuenta uses; passive = el módulo actúa solo (uses 0 por definición).' }
+                    usesKind: { enum: [shots, mines, move_commands, radio_messages, passive], description: 'Qué cuenta uses: shots = disparos aceptados; mines = minas desplegadas; move_commands = órdenes de movimiento aplicadas; radio_messages = MENSAJES de radio aceptados por ese slot (no decisiones con radio); passive = el módulo actúa solo (uses 0 por definición).' }
                     uses: { type: integer }
-                    rejections: { type: integer }
+                    rejections: { type: integer, description: 'Acciones rechazadas por el motor (en radio, mensajes descartados). Sólo dueño y staff.' }
                     damageDealt: { type: number }
                     efficiency: { type: number, nullable: true }
                     finalState: { type: string }
+        perTeam:
+          type: object
+          description: '4v4-STATS · Por bando: SUMA de los campos deportivos de perBot (por construcción no revela nada que perBot no enseñe; idéntico para cualquier lector, TD-047). En team_deathmatch sin fuego amigo kills = score. Vacío si status != ready.'
+          additionalProperties: { $ref: '#/components/schemas/TeamBattleStats' }
         diagnostics:
           type: object
           description: 'UX-06 · Por botId, SÓLO los bots del solicitante (todos para staff). null en un campo = no medido.'
@@ -1966,6 +1983,7 @@ components:
             wrongTick: { type: integer, nullable: true }
             extra: { type: integer, nullable: true }
         rejectionsByReason: { type: object, nullable: true, additionalProperties: { type: integer }, description: 'cooldown, no_ammo, no_energy, out_of_arc, module_destroyed…' }
+        radioDroppedByReason: { type: object, nullable: true, additionalProperties: { type: integer }, description: '4v4-STATS · Mensajes de radio descartados por el motor: rate_limited, too_large, no_radio, queue_full. null = stats sin esta medida.' }
         disconnectedAtTick: { type: integer, nullable: true }
         container:
           type: object
@@ -1978,6 +1996,22 @@ components:
         shotsFired: { type: integer, nullable: true }
         shotsHit: { type: integer, nullable: true }
         damageDealt: { type: number, nullable: true }
+    TeamBattleStats:
+      type: object
+      description: '4v4-STATS · Estadísticas de un bando (replay-service/src/team-stats.ts).'
+      properties:
+        team: { type: string }
+        score: { type: number, description: 'Marcador del motor (result.score).' }
+        bots: { type: integer }
+        kills: { type: integer }
+        teamKills: { type: integer }
+        deaths: { type: integer }
+        damageDealt: { type: number }
+        damageTaken: { type: number }
+        shotsFired: { type: integer }
+        shotsHit: { type: integer }
+        flagCaptures: { type: integer }
+        survivors: { type: integer, description: 'Bots vivos y no descalificados al terminar.' }
     BattlePage:
       type: object
       properties:

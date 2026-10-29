@@ -29,6 +29,9 @@ import type { Db } from "../../api/src/db/connection.js";
 import { resimulateWithEvents, type Replay } from "../../arena-engine/src/replay.js";
 import { loadStored } from "./store.js";
 import { emptyDict } from "../../../packages/game-rules/safe-lookup.js";
+import { addBotToTeam, emptyTeamStats, type TeamBattleStats } from "./team-stats.js";
+
+export { addBotToTeam, emptyTeamStats, type TeamBattleStats } from "./team-stats.js";
 
 /**
  * UX-D · QUÉ cuenta `uses` en cada módulo. Antes sólo se contaban armas y minas
@@ -38,7 +41,10 @@ import { emptyDict } from "../../../packages/game-rules/safe-lookup.js";
  *  - `mines`: minas desplegadas aceptadas.
  *  - `move_commands`: decisiones con orden de movimiento distinta de parar
  *    (movimiento). La distancia recorrida va en `BotBattleStats.distanceM`.
- *  - `radio_messages`: decisiones con mensaje de radio.
+ *  - `radio_messages`: MENSAJES de radio aceptados por el motor y emitidos por
+ *    ese slot (4v4-STATS: antes contaba DECISIONES con radio, no mensajes, y
+ *    contaba también los descartados y los enviados estando muerto). Es lo mismo
+ *    que `BotBattleStats.radio.sent`, desglosado por slot.
  *  - `passive`: el módulo actúa solo (blindaje, energía, sensores, munición):
  *    `uses` es 0 por definición, no porque no se usara.
  */
@@ -69,8 +75,27 @@ export interface BotBattleStats {
   shotsHit: number;
   /** shotsHit / shotsFired, null si no disparó. */
   accuracy: number | null;
+  /**
+   * Bajas de ENEMIGOS causadas por este bot: el golpe que destruye al rival es
+   * suyo (atribución exacta por orden de emisión del motor, no «último que le
+   * dio» en toda la batalla). Con respawn (TDM) cuenta TODAS, no sólo la primera.
+   */
   kills: number;
+  /** 4v4-STATS · Bajas de compañeros (o propias) con fuego amigo activo. */
+  teamKills: number;
+  /** 4v4-STATS · Veces que este bot fue destruido (con respawn puede ser > 1). */
+  deaths: number;
+  /** 4v4-STATS · Veces que reapareció. */
+  respawns: number;
+  /** `deaths > 0`: fue destruido AL MENOS una vez (con respawn puede acabar vivo). */
   died: boolean;
+  /** 4v4-STATS · Vivo y no descalificado al terminar la batalla. */
+  aliveAtEnd: boolean;
+  /**
+   * Ticks que estuvo VIVO en total (suma de tramos entre (re)aparición y muerte).
+   * Sin respawn coincide con el tick de su muerte, como antes. Un descalificado
+   * deja de sumar al descalificarse.
+   */
   survivedTicks: number;
   flagCaptures: number;
   flagsTaken: number;
@@ -96,16 +121,35 @@ export interface BotBattleStats {
    * contenedores (stubs en proceso) o medición no disponible. NUNCA estimada.
    */
   cpuMs: number | null;
+  /** 4v4-STATS · Actividad de radio (juego, pública: ver `RadioActivity`). */
+  radio: RadioActivity;
+  /**
+   * 4v4-STATS · Mensajes de radio que el motor DESCARTÓ, por motivo
+   * (`rate_limited`, `too_large`, `no_radio`, `queue_full`). Mide cuánto falla el
+   * código del bot: es DIAGNÓSTICO del dueño (TD-047/R12); la API no lo da a rivales.
+   */
+  radioDroppedByReason: Record<string, number>;
   perModule: Record<string, ModuleStats>;
 }
 
-export interface TeamBattleStats {
-  team: string;
-  score: number;
-  damageDealt: number;
-  kills: number;
-  flagCaptures: number;
-  survivors: number;
+/**
+ * 4v4-STATS (Fase 6) · Radio observada SIN cambiar el contrato: la radio se
+ * sigue entregando también al rival (`sensors.ts`, fijado por
+ * `radio-regression.test.ts`); esto sólo lo MIDE.
+ *  - `sent`: mensajes aceptados por el motor (los de `command.radio` aplicados
+ *    estando vivo, menos los `radio_dropped` del emisor). Bajo latencia simulada
+ *    el tick de aplicación no está en el replay y se usa el de decisión.
+ *  - `received`: suma de `obs.radio.length` de todas sus observaciones.
+ *  - `receivedFromTeammates` / `receivedFromEnemies`: el mismo total partido por
+ *    el bando del emisor. `receivedFromEnemies > 0` es la prueba de que el rival
+ *    oye la radio ajena según el contrato actual.
+ * Son contadores de actividad de juego, no de fallo del código: públicos en `perBot`.
+ */
+export interface RadioActivity {
+  sent: number;
+  received: number;
+  receivedFromTeammates: number;
+  receivedFromEnemies: number;
 }
 
 export interface BattleStatsResult {
@@ -188,7 +232,11 @@ export async function computeBattleStats(replay: Replay, inputs: BattleStatsInpu
       shotsHit: 0,
       accuracy: null,
       kills: 0,
+      teamKills: 0,
+      deaths: 0,
+      respawns: 0,
       died: false,
+      aliveAtEnd: true,
       survivedTicks: 0,
       flagCaptures: 0,
       flagsTaken: 0,
@@ -203,41 +251,44 @@ export async function computeBattleStats(replay: Replay, inputs: BattleStatsInpu
       // indexado a pelo — con botId "__proto__" un `dict[key]` devolvería algo
       // truthy que no es una medida.
       cpuMs: inputs.cpuMsByBot ? sanitizeCpuMs(safeLookup(inputs.cpuMsByBot, p.botId)) : null,
+      radio: { sent: 0, received: 0, receivedFromTeammates: 0, receivedFromEnemies: 0 },
+      radioDroppedByReason: emptyDict<number>(),
       perModule,
     });
   }
 
-  // ---- 1 · Comandos grabados: intentos de acción por slot.
-  const fireAttempts = new Map<string, Map<string, number>>(); // vehicleId → slot → intentos
-  const moveCommands = new Map<string, number>(); // vehicleId → decisiones con movimiento
-  const radioCommands = new Map<string, number>(); // vehicleId → decisiones con radio
-  for (const c of replay.commands) {
-    const bs = byVehicle.get(c.vehicleId);
-    if (bs) bs.decisions += 1;
-    const mv = c.command?.move;
-    if (mv && ((Number(mv.throttle) || 0) !== 0 || (Number(mv.steer) || 0) !== 0)) {
-      moveCommands.set(c.vehicleId, (moveCommands.get(c.vehicleId) ?? 0) + 1);
-    }
-    if (c.command?.radio) radioCommands.set(c.vehicleId, (radioCommands.get(c.vehicleId) ?? 0) + 1);
-    const v = fireAttempts.get(c.vehicleId) ?? new Map<string, number>();
-    for (const slot of c.command?.fire ?? []) v.set(slot, (v.get(slot) ?? 0) + 1);
-    if (c.command?.deployMine?.slot) v.set(c.command.deployMine.slot, (v.get(c.command.deployMine.slot) ?? 0) + 1);
-    fireAttempts.set(c.vehicleId, v);
-  }
-
-  // ---- 2 · Re-simulación: eventos privados por vehículo (daño, fallos, timeouts).
-  const lastDamager = new Map<string, string>(); // targetId → attackerId
+  // ---- 1 · Re-simulación: eventos privados por vehículo (daño, fallos,
+  // timeouts) + orden global de emisión (bajas, muertes, respawns) + lo que cada
+  // bot OYÓ por radio (sus observaciones).
   const carrierOfFlag = new Map<string, string>(); // flagTeam → vehicleId
   const mineOwnerByPos = new Map<string, string>(); // "x,y" → vehicleId (las minas no se mueven)
-  await resimulateWithEvents(replay, (vehicleId, e) => {
+  // Transiciones de vida por vehículo, en orden de tick: muerte, respawn, DQ.
+  const lifeline = new Map<string, { tick: number; alive: boolean }[]>();
+  const pushLife = (id: string, tick: number, alive: boolean) => {
+    const l = lifeline.get(id) ?? [];
+    l.push({ tick, alive });
+    lifeline.set(id, l);
+  };
+  const radioDroppedBySlot = new Map<string, Map<string, number>>(); // vehicleId → slot → descartes
+
+  const onEvent = (vehicleId: string, e: any) => {
     const s = byVehicle.get(vehicleId);
     if (!s) return;
     switch (e.kind) {
       case "hit_dealt":
         s.damageDealt += e.damage;
         s.shotsHit += 1;
-        lastDamager.set(e.targetId, vehicleId);
         break;
+      case "radio_dropped": {
+        const reason = typeof e.reason === "string" && e.reason ? e.reason : "unknown";
+        s.radioDroppedByReason[reason] = (s.radioDroppedByReason[reason] ?? 0) + 1;
+        // Un descarte es un rechazo del módulo (diagnóstico: la API lo oculta a rivales).
+        if (typeof e.slot === "string" && s.perModule[e.slot]) s.perModule[e.slot].rejections += 1;
+        const bySlot = radioDroppedBySlot.get(vehicleId) ?? new Map<string, number>();
+        bySlot.set(String(e.slot), (bySlot.get(String(e.slot)) ?? 0) + 1);
+        radioDroppedBySlot.set(vehicleId, bySlot);
+        break;
+      }
       case "hit_taken":
         s.damageTaken += e.damage;
         break;
@@ -278,7 +329,58 @@ export async function computeBattleStats(replay: Replay, inputs: BattleStatsInpu
       default:
         break;
     }
-  });
+  };
+
+  /**
+   * Orden EXACTO de emisión del motor: muertes, reapariciones y descalificaciones
+   * por vehículo. Con respawn se cuentan TODAS las muertes. La AUTORÍA de cada
+   * baja no se deduce de aquí (4v4-FIX): un golpe NO letal seguido en el mismo
+   * tick de la muerte por ácido deja un `hit_dealt` justo antes del
+   * `vehicle_destroyed` sin que el motor puntúe nada. La da `onKill`.
+   */
+  const onEmission = (e: any, to: string | null) => {
+    if (to === null && e.kind === "vehicle_destroyed" && byVehicle.has(e.targetId)) {
+      const victim = byVehicle.get(e.targetId)!;
+      victim.deaths += 1;
+      pushLife(e.targetId, e.tick, false);
+    } else if (to !== null && e.kind === "respawned" && byVehicle.has(to)) {
+      byVehicle.get(to)!.respawns += 1;
+      pushLife(to, e.tick, true);
+    } else if (to !== null && e.kind === "rejected_action" && e.reason === "timeout_disqualified") {
+      pushLife(to, e.tick, false);
+    }
+  };
+
+  /** Radio OÍDA: lo que el motor entregó en `obs.radio`, partido por bando del emisor. */
+  const onObservation = (vehicleId: string, obs: any) => {
+    const s = byVehicle.get(vehicleId);
+    if (!s || !Array.isArray(obs?.radio)) return;
+    for (const m of obs.radio) {
+      s.radio.received += 1;
+      const fromTeam = byVehicle.get(String(m?.from))?.team;
+      if (fromTeam === undefined) continue;
+      if (fromTeam === s.team) s.radio.receivedFromTeammates += 1;
+      else s.radio.receivedFromEnemies += 1;
+    }
+  };
+
+  /**
+   * 4v4-FIX · Autoría de las bajas EXACTAMENTE como la ve el marcador: el motor
+   * llama a `mode.onKill(victim, killerTeam)` y la re-simulación nos dice quién
+   * hizo el daño letal (`null` = zona de daño: nadie puntúa, nadie suma baja).
+   * Fuego amigo y suicidio (killer del mismo equipo que la víctima) son
+   * `teamKills`, nunca `kills`.
+   */
+  const onKill = (k: { victimId: string; killerId: string | null }) => {
+    const victim = byVehicle.get(k.victimId);
+    if (!victim || k.killerId === null) return;
+    const killer = byVehicle.get(k.killerId);
+    if (!killer) return;
+    if (killer.team === victim.team) killer.teamKills += 1;
+    else killer.kills += 1;
+  };
+
+  await resimulateWithEvents(replay, onEvent, { onEmission, onObservation, onKill });
 
   // La descalificación oficial la dice el RESULTADO (fuente de verdad), no un evento.
   for (const vehicleId of replay.result.disqualified ?? []) {
@@ -286,17 +388,51 @@ export async function computeBattleStats(replay: Replay, inputs: BattleStatsInpu
     if (s) s.disqualified = true;
   }
 
-  // ---- 3 · Eventos públicos del replay: muertes y minas detonadas (con atribución).
-  const deathTick = new Map<string, number>();
-  for (const e of replay.events) {
-    if (e.kind === "vehicle_destroyed" && byVehicle.has(e.targetId) && !deathTick.has(e.targetId)) {
-      deathTick.set(e.targetId, e.tick);
-      const killer = lastDamager.get(e.targetId);
-      if (killer && killer !== e.targetId) {
-        const ks = byVehicle.get(killer);
-        if (ks) ks.kills += 1;
-      }
+  /**
+   * ¿Estaba vivo `vehicleId` cuando el motor aplicó (PASO 3) una orden del tick
+   * `tick`? Muerte y respawn ocurren DESPUÉS del PASO 3 de su tick, así que sólo
+   * cuentan las transiciones de ticks anteriores. Un muerto decide (recibe
+   * observaciones), pero el motor ignora su orden: ni dispara ni emite.
+   */
+  const aliveAt = (vehicleId: string, tick: number): boolean => {
+    let alive = true;
+    for (const t of lifeline.get(vehicleId) ?? []) {
+      if (t.tick >= tick) break;
+      alive = t.alive;
     }
+    return alive;
+  };
+
+  // ---- 2 · Comandos grabados: acciones que el motor llegó a aplicar.
+  const fireAttempts = new Map<string, Map<string, number>>(); // vehicleId → slot → intentos
+  const moveCommands = new Map<string, number>(); // vehicleId → decisiones con movimiento
+  const radioAttempts = new Map<string, Map<string, number>>(); // vehicleId → slot → mensajes
+  for (const c of replay.commands) {
+    const bs = byVehicle.get(c.vehicleId);
+    if (bs) bs.decisions += 1;
+    // 4v4-STATS · con respawn un bot muerto sigue decidiendo: lo que ordena
+    // estando muerto no es un disparo ni un mensaje (antes inflaba `shotsFired`).
+    if (!aliveAt(c.vehicleId, c.tick)) continue;
+    const mv = c.command?.move;
+    if (mv && ((Number(mv.throttle) || 0) !== 0 || (Number(mv.steer) || 0) !== 0)) {
+      moveCommands.set(c.vehicleId, (moveCommands.get(c.vehicleId) ?? 0) + 1);
+    }
+    if (Array.isArray(c.command?.radio)) {
+      const r = radioAttempts.get(c.vehicleId) ?? new Map<string, number>();
+      for (const msg of c.command.radio) {
+        const slot = String(msg?.slot);
+        r.set(slot, (r.get(slot) ?? 0) + 1);
+      }
+      radioAttempts.set(c.vehicleId, r);
+    }
+    const v = fireAttempts.get(c.vehicleId) ?? new Map<string, number>();
+    for (const slot of c.command?.fire ?? []) v.set(slot, (v.get(slot) ?? 0) + 1);
+    if (c.command?.deployMine?.slot) v.set(c.command.deployMine.slot, (v.get(c.command.deployMine.slot) ?? 0) + 1);
+    fireAttempts.set(c.vehicleId, v);
+  }
+
+  // ---- 3 · Minas detonadas (evento público, con atribución por posición).
+  for (const e of replay.events) {
     if (e.kind === "mine_triggered" && e.position) {
       // El dueño no viaja en el evento público; se resuelve por la posición de
       // despliegue (las minas no se mueven).
@@ -306,12 +442,23 @@ export async function computeBattleStats(replay: Replay, inputs: BattleStatsInpu
     }
   }
 
-  // ---- 4 · Cierre por bot: supervivencia, precisión, uso de módulos.
+  // ---- 4 · Cierre por bot: vida, precisión, uso de módulos.
   const duration = replay.result.ticks;
   const lastSnapshot = replay.snapshots.at(-1);
   for (const [vehicleId, s] of byVehicle) {
-    s.died = deathTick.has(vehicleId);
-    s.survivedTicks = s.died ? deathTick.get(vehicleId)! : duration;
+    s.died = s.deaths > 0;
+    // Ticks vivo: suma de tramos [aparición, muerte) hasta el final.
+    let alive = true;
+    let since = 0;
+    let lived = 0;
+    for (const t of lifeline.get(vehicleId) ?? []) {
+      if (alive && !t.alive) lived += t.tick - since;
+      if (!alive && t.alive) since = t.tick;
+      alive = t.alive;
+    }
+    if (alive) lived += duration - since;
+    s.survivedTicks = lived;
+    s.aliveAtEnd = alive && !s.disqualified;
     const attempts = fireAttempts.get(vehicleId) ?? new Map();
     const weapons = weaponSlots.get(vehicleId) ?? new Set();
     let totalAcceptedShots = 0;
@@ -333,10 +480,20 @@ export async function computeBattleStats(replay: Replay, inputs: BattleStatsInpu
       pm.damageDealt = (s.damageDealt * pm.uses) / totalUses;
       pm.efficiency = pm.uses > 0 ? pm.damageDealt / pm.uses : null;
     }
+    // Radio: aceptados = mensajes aplicados estando vivo − descartados por el motor.
+    // En total (radio.sent) y por slot (perModule). Un mensaje a un slot que no es
+    // radio lo descarta el motor (`no_radio`): cuenta en el intento y en el descarte.
+    const radioBySlot = radioAttempts.get(vehicleId) ?? new Map<string, number>();
+    const droppedBySlot = radioDroppedBySlot.get(vehicleId) ?? new Map<string, number>();
+    const droppedTotal = [...droppedBySlot.values()].reduce((a, n) => a + n, 0);
+    const attemptedTotal = [...radioBySlot.values()].reduce((a, n) => a + n, 0);
+    s.radio.sent = Math.max(0, attemptedTotal - droppedTotal);
     // Módulos que no disparan: qué hicieron (antes `uses: 0` siempre, engañoso).
-    for (const pm of Object.values(s.perModule)) {
+    for (const [slot, pm] of Object.entries(s.perModule)) {
       if (pm.usesKind === "move_commands") pm.uses = moveCommands.get(vehicleId) ?? 0;
-      else if (pm.usesKind === "radio_messages") pm.uses = radioCommands.get(vehicleId) ?? 0;
+      else if (pm.usesKind === "radio_messages") {
+        pm.uses = Math.max(0, (radioBySlot.get(slot) ?? 0) - (droppedBySlot.get(slot) ?? 0));
+      }
     }
     // Estado final de cada módulo: del último snapshot público.
     const snapVehicle = lastSnapshot?.vehicles?.find((v: any) => v.id === vehicleId);
@@ -369,18 +526,8 @@ export async function computeBattleStats(replay: Replay, inputs: BattleStatsInpu
   // B8 · `emptyDict()`, NO `{}`: `s.team` viene del CONTENIDO DEL REPLAY.
   const perTeam: Record<string, TeamBattleStats> = emptyDict<TeamBattleStats>();
   for (const s of byVehicle.values()) {
-    const t = (perTeam[s.team] ??= {
-      team: s.team,
-      score: replay.result.score[s.team] ?? 0,
-      damageDealt: 0,
-      kills: 0,
-      flagCaptures: 0,
-      survivors: 0,
-    });
-    t.damageDealt += s.damageDealt;
-    t.kills += s.kills;
-    t.flagCaptures += s.flagCaptures;
-    if (!s.died) t.survivors += 1;
+    const t = (perTeam[s.team] ??= emptyTeamStats(s.team, Number(safeLookup(replay.result.score ?? {}, s.team) ?? 0)));
+    addBotToTeam(t, s);
   }
 
   const winner = replay.result.winner;
