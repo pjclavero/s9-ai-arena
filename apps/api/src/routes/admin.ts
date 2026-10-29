@@ -3,6 +3,7 @@ import { Router } from "express";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
 import { parseLimit } from "../serialize.js";
+import { buildEligibilityInventory } from "../services/version-eligibility.js";
 
 export function adminRoutes(db: Db): Router {
   const router = Router();
@@ -36,6 +37,26 @@ export function adminRoutes(db: Db): Router {
         at: (r.at as Date).toISOString(),
       })),
     );
+  });
+
+  // ELIG · H5/H15: inventario de elegibilidad, SOLO LECTURA (transacción READ ONLY).
+  // Sin escritura ni en audit_log: el acceso queda en el log estructurado (quién, cuándo).
+  defineOperation(router, "getBotVersionEligibilityInventory", async (req, res) => {
+    const summaryOnly = req.query.summaryOnly === "true" || req.query.summaryOnly === "1";
+    const inv = await buildEligibilityInventory(db, { summaryOnly });
+    console.info(
+      JSON.stringify({
+        audit: "admin.eligibility_inventory.read",
+        actorId: req.auth?.userId ?? null,
+        correlationId: req.correlationId,
+        at: inv.generatedAt,
+        summaryOnly,
+        total: inv.summary.totalPublishedVersions,
+        invalid: inv.summary.currentlyInvalid,
+      }),
+    );
+    res.setHeader("Cache-Control", "no-store");
+    res.json(inv);
   });
 
   return router;

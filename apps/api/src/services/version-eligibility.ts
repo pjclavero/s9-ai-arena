@@ -295,6 +295,32 @@ export function eligibilityToJson(e: VersionEligibility) {
   };
 }
 
+/** Estados en los que una versión es seleccionable para competición (además de elegible). */
+const COMPETITION_STATES = new Set(["published", "frozen"]);
+
+/**
+ * H9 · Campo aditivo `battleEligibility` para las filas de versión que devuelve la API.
+ * Sólo para versiones publicadas/congeladas (las demás ya no son seleccionables por
+ * estado). El llamador ya comprobó que quien pregunta puede ver el bot — y por tanto su
+ * loadout (listBotLoadouts) —, así que el motivo no añade información privada.
+ */
+export async function battleEligibilityOf(
+  db: Knex,
+  versions: Record<string, unknown>[],
+): Promise<(v: Record<string, unknown>) => { battleEligibility?: ReturnType<typeof eligibilityToJson> }> {
+  const res = await evaluateVersionsEligibility(
+    db,
+    versions
+      .filter((v) => COMPETITION_STATES.has(String(v.state)))
+      .map((v) => ({ botId: String(v.bot_id), version: Number(v.version) })),
+  );
+  return (v) => {
+    if (!COMPETITION_STATES.has(String(v.state))) return {};
+    const e = res.get(eligibilityKey(String(v.bot_id), Number(v.version)));
+    return e ? { battleEligibility: eligibilityToJson(e) } : {};
+  };
+}
+
 /**
  * Autoridad en servidor para competición NUEVA (H7/H8). Llamar DESPUÉS de las
  * comprobaciones de visibilidad y de estado publicado: quien llega aquí ya puede ver
@@ -315,5 +341,171 @@ export async function assertVersionsEligible(db: Knex, refs: VersionRef[]): Prom
     {
       notEligible: bad.map((b) => ({ botId: b.botId, version: b.version, ...eligibilityToJson(b.e!) })),
     },
+  );
+}
+
+// ---------------------------------------------------------------- inventario
+
+/**
+ * H5/H15 · Inventario de TODAS las versiones published/frozen. Corre en una
+ * transacción `READ ONLY` de PostgreSQL: cualquier escritura dentro fallaría, así que
+ * la garantía «no escribe» la da la base de datos, no la disciplina del código.
+ */
+export async function buildEligibilityInventory(db: Knex, opts: { summaryOnly?: boolean } = {}) {
+  const rows = (await db.transaction(async (trx) => {
+    await trx.raw("SET TRANSACTION READ ONLY");
+    const vs = (await trx("bot_versions as v")
+      .join("bots as b", "b.id", "v.bot_id")
+      .leftJoin("bot_loadouts as l", function () {
+        this.on("l.bot_id", "=", "v.bot_id").andOn("l.revision", "=", "v.loadout_revision");
+      })
+      .whereIn("v.state", [...COMPETITION_STATES])
+      .orderBy([
+        { column: "b.name", order: "asc" },
+        { column: "v.version", order: "asc" },
+      ])
+      .select(
+        "v.bot_id",
+        "v.version",
+        "v.state",
+        "v.loadout_revision",
+        "b.name as bot_name",
+        "b.owner_id",
+        "l.id as loadout_id",
+        "l.catalog_version",
+        "l.chassis",
+        "l.modules",
+      )) as Record<string, unknown>[];
+    const catalogs = new Map<string, ModuleDefinition[]>();
+    for (const r of vs) {
+      const cv = r.catalog_version == null ? null : String(r.catalog_version);
+      if (cv && !catalogs.has(cv)) catalogs.set(cv, await getCatalog(trx, cv));
+    }
+    return vs.map((r) => ({
+      r,
+      e: !r.loadout_id
+        ? unverifiable("su revisión de loadout no existe.")
+        : evaluateLoadout(
+            { catalog_version: String(r.catalog_version), chassis: String(r.chassis), modules: r.modules },
+            catalogs.get(String(r.catalog_version))!,
+          ),
+    }));
+  })) as { r: Record<string, unknown>; e: VersionEligibility }[];
+
+  const invalid = rows.filter((x) => !x.e.eligible);
+  const invalidByReason: Record<string, number> = {};
+  for (const x of invalid) invalidByReason[x.e.category] = (invalidByReason[x.e.category] ?? 0) + 1;
+  const warningsByCode: Record<string, number> = {};
+  for (const x of rows) for (const w of x.e.warnings) warningsByCode[w.code] = (warningsByCode[w.code] ?? 0) + 1;
+  return {
+    generatedAt: new Date().toISOString(),
+    rulesVersion: ELIGIBILITY_RULES_VERSION,
+    readOnly: true as const,
+    scope: "bot_versions.state IN (published, frozen)",
+    summary: {
+      totalPublishedVersions: rows.length,
+      currentlyValid: rows.length - invalid.length,
+      currentlyInvalid: invalid.length,
+      invalidByReason,
+      usersAffected: new Set(invalid.map((x) => String(x.r.owner_id))).size,
+      botsAffected: new Set(invalid.map((x) => String(x.r.bot_id))).size,
+      warningsByCode,
+    },
+    ...(opts.summaryOnly
+      ? {}
+      : {
+          items: rows.map(({ r, e }) => ({
+            botId: r.bot_id,
+            botName: r.bot_name,
+            version: Number(r.version),
+            state: r.state,
+            ownerId: r.owner_id,
+            loadoutRevision: Number(r.loadout_revision),
+            currentValidation: e.category,
+            eligible: e.eligible,
+            ...(e.reason ? { reason: e.reason } : {}),
+            violations: e.blocking.map((b) => ({ code: b.code, category: b.category, message: b.message })),
+          })),
+        }),
+  };
+}
+
+// ------------------------------------------------------------------- torneos
+
+/**
+ * Inscripción (H8). Primero exige que la versión pedida sea elegible (409
+ * `bot_version_not_eligible`). Después, si el bot YA tenía una inscripción PENDIENTE
+ * (sin congelar) con una versión que hoy no es elegible, la cambia por la pedida y lo
+ * audita: es el dueño quien elige la versión válida, nunca se sustituye sola. Devuelve
+ * la inscripción actualizada, o `null` si no había nada que sustituir (el llamador
+ * sigue con su flujo normal: alta nueva o `already_entered`).
+ */
+export async function replaceIneligibleEntry(
+  db: Knex,
+  actorId: string,
+  tournament: Record<string, unknown>,
+  version: Record<string, unknown>,
+  correlationId?: string,
+): Promise<Record<string, unknown> | null> {
+  const botId = String(version.bot_id);
+  const n = Number(version.version);
+  await assertVersionsEligible(db, [{ botId, version: n }]);
+  const entry = await db("entries").where({ tournament_id: tournament.id, bot_id: botId }).first();
+  if (!entry || entry.frozen || Number(entry.version) === n) return null;
+  const prev = (await evaluateVersionsEligibility(db, [{ botId, version: Number(entry.version) }])).get(
+    eligibilityKey(botId, Number(entry.version)),
+  );
+  if (!prev || prev.eligible) return null;
+  const [updated] = await db("entries")
+    .where({ id: entry.id, frozen: false })
+    .update({ version: n, loadout_revision: version.loadout_revision })
+    .returning("*");
+  if (!updated) return null;
+  await db("audit_log").insert({
+    actor_id: actorId,
+    action: "tournament.entry.version_replaced",
+    target: `tournament:${tournament.id}`,
+    detail: JSON.stringify({
+      entryId: entry.id,
+      botId,
+      fromVersion: Number(entry.version),
+      toVersion: n,
+      reason: prev.reason,
+      category: prev.category,
+    }),
+    correlation_id: correlationId ?? null,
+  });
+  return {
+    id: updated.id,
+    tournamentId: tournament.id,
+    botId,
+    version: n,
+    loadoutRevision: updated.loadout_revision,
+    frozen: updated.frozen,
+    replacedVersion: Number(entry.version),
+  };
+}
+
+/**
+ * Cierre de inscripciones (H8): si alguna inscripción pendiente usa una versión que ya
+ * no es elegible, NO se cierra (ni se congela nada, ni se genera calendario): 409
+ * `entries_not_eligible`. Sólo se devuelven los ids de inscripción, no el motivo: el
+ * organizador no tiene por qué ver el loadout de bots privados ajenos; cada dueño ve
+ * el motivo en su bot y reinscribe otra versión válida.
+ */
+export async function entryEligibilityGate(db: Knex, entries: Record<string, unknown>[]): Promise<void> {
+  const res = await evaluateVersionsEligibility(
+    db,
+    entries.map((e) => ({ botId: String(e.bot_id), version: Number(e.version) })),
+  );
+  const blocked = entries.filter(
+    (e) => res.get(eligibilityKey(String(e.bot_id), Number(e.version)))?.eligible === false,
+  );
+  if (blocked.length === 0) return;
+  throw new ApiError(
+    409,
+    "entries_not_eligible",
+    `${blocked.length} inscripción(es) usan una versión que se conserva para el histórico pero ya no es elegible para competición nueva. Sus dueños deben inscribir otra versión válida (la misma inscripción admite la nueva versión) antes de cerrar.`,
+    { notEligibleEntries: blocked.map((e) => ({ entryId: e.id })) },
   );
 }
