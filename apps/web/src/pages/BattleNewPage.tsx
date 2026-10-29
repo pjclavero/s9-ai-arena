@@ -204,7 +204,7 @@ export function BattleNewPage(props: { me: Me }) {
   const [rulesets, setRulesets] = useState<RulesetOption[]>([]);
   const [teams, setTeams] = useState<TeamOption[]>([]);
   const [kind, setKind] = useState<"individual" | "team">("individual");
-  const [mode, setMode] = useState("");
+  const [modeChoice, setMode] = useState("");
   const [rulesetId, setRulesetId] = useState("");
   const [redTeam, setRedTeam] = useState("");
   const [blueTeam, setBlueTeam] = useState("");
@@ -284,6 +284,16 @@ export function BattleNewPage(props: { me: Me }) {
   };
   // Opciones REALES derivadas del modo elegido.
   const shownModes = kind === "team" ? modes.filter((m) => TEAM_MODES.includes(m)) : modes;
+  // 4v4-FIX · modo EFECTIVO, siempre uno de los que enseña el desplegable. Si se marca
+  // «BATALLA POR EQUIPOS» antes de que lleguen los rulesets, la carga hacía
+  // `setMode(modes[0])` (= deathmatch): el select de equipos lo pintaba como su
+  // primera opción, pero se enviaba el ruleset de DM y la API respondía 409
+  // `deathmatch_shared_team` (functional-e2e golden del PR #191).
+  const mode = shownModes.includes(modeChoice)
+    ? modeChoice
+    : kind === "team" && shownModes.includes("team_deathmatch")
+      ? "team_deathmatch"
+      : (shownModes[0] ?? "");
   const modeRulesets = rulesets.filter((r) => r.mode === mode || r.mode === null);
   const modeMaps = maps.filter((m) => (m.supportedModes ?? []).includes(mode));
   const mapsForMode = (md: string) => maps.filter((m) => (m.supportedModes ?? []).includes(md)).length;
