@@ -10,7 +10,14 @@ import { api } from "../api.js";
 import { describeApiError } from "../errors.js";
 import { ReplayPlayer, buildShareLink, httpReplaySource } from "../viewer/replay-player.js";
 import { ReplayFeed } from "../viewer/replay-feed.js";
-import { participantsTitle, rosterFromMeta } from "../viewer/art-direction.js";
+import {
+  participantsTitle,
+  rosterFromMeta,
+  rosterTeams,
+  sideText,
+  type ViewerRoster,
+} from "../viewer/art-direction.js";
+import { RosterList } from "../viewer/RosterList.js";
 import { ReplayTickPublisher } from "../viewer/ui-throttle.js";
 import type { ViewerScene } from "../viewer/PhaserViewer.js";
 import type { CameraMode } from "../viewer/camera.js";
@@ -73,6 +80,8 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
   const [shareCopied, setShareCopied] = useState(false);
   // UX-R · «Replay Alfa vs Beta» con la nómina del índice, si la trae.
   const [title, setTitle] = useState<string | null>(null);
+  /** 4v4 · nómina del índice: de ella salen los botones de cámara por bando. */
+  const [roster, setRoster] = useState<ViewerRoster>(() => new Map());
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -92,6 +101,7 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
     setState("loading");
     setErrorKind(undefined);
     setTitle(null);
+    setRoster(new Map());
     setStatus("cargando…");
     void import("../viewer/PhaserViewer.js")
       .then(async ({ createViewerGame, waitForViewerScene }) => {
@@ -109,6 +119,7 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
         if (!alive || !hostRef.current) return;
         setTotalTicks(player.index!.ticks);
         setTitle(participantsTitle(player.index?.roster));
+        setRoster(rosterFromMeta(player.index?.roster));
         setState("init");
         setStatus("inicializando visor…");
         game = createViewerGame(hostRef.current, { targetFps: 60 });
@@ -286,8 +297,11 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
           {shareCopied ? "¡Copiado!" : "Compartir este instante"}
         </button>
         <button onClick={() => setCamera({ kind: "global" })}>Vista global</button>
-        <button onClick={() => setCamera({ kind: "team", team: "red" })}>Equipo rojo</button>
-        <button onClick={() => setCamera({ kind: "team", team: "blue" })}>Equipo azul</button>
+        {rosterTeams(roster).map((t) => (
+          <button key={t} data-testid="camera-side" onClick={() => setCamera({ kind: "team", team: t })}>
+            Bando {sideText(t)}
+          </button>
+        ))}
       </div>
       <input
         type="range"
@@ -307,6 +321,7 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
       <p data-testid="replay-tick" data-tick={tick} data-total={totalTicks}>
         tick {tick} / {totalTicks} · {speed}×
       </p>
+      <RosterList roster={roster} testId="replay-roster" />
       <div
         ref={hostRef}
         data-testid="replay-canvas-host"

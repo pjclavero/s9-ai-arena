@@ -31,6 +31,9 @@ import {
   ticksToClock,
   winnerText,
   teamText,
+  sideResults,
+  sidesTitle,
+  groupBySide,
   type BattleLike,
   type ParticipantLike,
 } from "../battle-result.js";
@@ -74,6 +77,16 @@ interface BotStatsView {
   accuracy: number | null;
   kills: number;
   died: boolean;
+  /** 4v4-STATS · veces destruido (con respawn puede ser > 1). Ausente en stats antiguas. */
+  deaths?: number;
+  /** 4v4-STATS · veces que reapareció. */
+  respawns?: number;
+  /** 4v4-STATS · vivo y no descalificado al terminar. */
+  aliveAtEnd?: boolean;
+  /** 4v4-STATS · bajas de compañeros o propias (sólo con fuego amigo). */
+  teamKills?: number;
+  /** 4v4-STATS · radio (pública): enviados aceptados y recibidos, por origen. */
+  radio?: { sent: number; received: number; receivedFromTeammates: number; receivedFromEnemies: number };
   survivedTicks: number;
   flagCaptures: number;
   flagsTaken: number;
@@ -111,11 +124,57 @@ interface DiagnosticsView {
   disconnectedAtTick: number | null;
   container: { exitCode: number | null; oomKilled: boolean; exitedDuringBattle: boolean } | null;
   cpuMs: number | null;
+  /** 4v4-STATS · mensajes de radio descartados por motivo (sólo dueño/staff); null = no medido. */
+  radioDroppedByReason?: Record<string, number> | null;
+}
+
+interface TeamStatsView {
+  team: string;
+  score?: number;
+  bots: number;
+  kills: number;
+  teamKills?: number;
+  deaths?: number;
+  damageDealt: number;
+  damageTaken: number;
+  shotsFired: number;
+  shotsHit: number;
+  flagCaptures?: number;
+  survivors: number;
+}
+
+/**
+ * 4v4-STATS · Supervivencia de un bot. Con respawn `died` sólo dice «murió al menos
+ * una vez» y `survivedTicks` es el tiempo vivo TOTAL: ya no vale «destruido a los X».
+ * Con los campos nuevos se dice cuántas veces murió y si acabó vivo; con stats
+ * antiguas (sin `deaths`) se mantiene el texto de antes.
+ */
+export function survivalText(st: {
+  died: boolean;
+  survivedTicks: number;
+  deaths?: number;
+  respawns?: number;
+  aliveAtEnd?: boolean;
+}): string {
+  if (typeof st.deaths !== "number")
+    return st.died ? `destruido a los ${ticksToClock(st.survivedTicks)}` : "sobrevivió";
+  if (st.deaths === 0) return st.aliveAtEnd === false ? "no acabó vivo (descalificado)" : "sobrevivió sin morir";
+  const parts = [
+    `${st.deaths} ${st.deaths === 1 ? "muerte" : "muertes"}`,
+    ...(typeof st.respawns === "number"
+      ? [`${st.respawns} ${st.respawns === 1 ? "reaparición" : "reapariciones"}`]
+      : []),
+    ...(typeof st.aliveAtEnd === "boolean" ? [st.aliveAtEnd ? "vivo al final" : "destruido al final"] : []),
+    `${ticksToClock(st.survivedTicks)} vivo en total`,
+  ];
+  return parts.join(" · ");
 }
 
 interface StatsResponse {
   status: "ready" | "pending" | "unavailable";
   perBot: Record<string, BotStatsView>;
+  /** 4v4-STATS · por bando (suma de perBot). Ausente en APIs anteriores. */
+  perTeam?: Record<string, TeamStatsView>;
   diagnostics: Record<string, DiagnosticsView>;
 }
 
@@ -193,7 +252,8 @@ function BattleHeader({ b, audit }: { b: BattleDetail; audit: AuditView | null }
   return (
     <>
       <h2 data-testid="battle-title">
-        {b.participants.map(botLabel).join(" vs ") || "Batalla"} <small>· {STATUS_TEXT[b.status] ?? b.status}</small>
+        {sidesTitle<DetailParticipant>(b.participants, botLabel) || "Batalla"}{" "}
+        <small>· {STATUS_TEXT[b.status] ?? b.status}</small>
       </h2>
       {b.status === "finished" && (
         <p data-testid="battle-winner">
@@ -257,6 +317,7 @@ function BattleHeader({ b, audit }: { b: BattleDetail; audit: AuditView | null }
           </>
         )}
       </dl>
+      <SidesTable b={b} />
       <table data-testid="battle-participants">
         <thead>
           <tr>
@@ -295,6 +356,42 @@ function BattleHeader({ b, audit }: { b: BattleDetail; audit: AuditView | null }
         ) : null}
       </p>
     </>
+  );
+}
+
+const SIDE_OUTCOME_CLASS: Record<string, string> = { gana: "ok", pierde: "warn", empate: "" };
+
+/**
+ * 4v4 · Resultado POR BANDO (lo que ya trae la batalla: participantes y `result`).
+ * Recuerda que el bando es el lado del campo, no el equipo de la sección Equipos.
+ */
+function SidesTable({ b }: { b: BattleDetail }) {
+  const sides = sideResults(b);
+  if (sides.length < 2) return null;
+  return (
+    <table data-testid="battle-sides">
+      <caption>Resultado por bando (el bando es el lado del campo, no el equipo de la sección Equipos)</caption>
+      <thead>
+        <tr>
+          <th>Bando</th>
+          <th>Bots</th>
+          <th>Puntos</th>
+          <th>Resultado</th>
+        </tr>
+      </thead>
+      <tbody>
+        {sides.map((sd) => (
+          <tr key={sd.team} data-testid="side-row" data-team={sd.team}>
+            <td>{sd.label}</td>
+            <td>
+              {sd.bots.length} · {sd.bots.join(", ")}
+            </td>
+            <td>{sd.score ?? "—"}</td>
+            <td className={sd.outcome ? SIDE_OUTCOME_CLASS[sd.outcome] : undefined}>{sd.outcome ?? "—"}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -350,8 +447,11 @@ function StatsSection({ b, s }: { b: BattleDetail; s: StatsResponse }) {
                 <td>{pct(st.accuracy)}</td>
                 <td>{Math.round(st.damageDealt)}</td>
                 <td>{Math.round(st.damageTaken)}</td>
-                <td>{st.kills}</td>
-                <td>{st.died ? `destruido a los ${ticksToClock(st.survivedTicks)}` : "sobrevivió"}</td>
+                <td>
+                  {st.kills}
+                  {st.teamKills ? ` (+${st.teamKills} de fuego amigo)` : ""}
+                </td>
+                <td>{survivalText(st)}</td>
                 <td>{typeof st.distanceM === "number" ? `${Math.round(st.distanceM)} m` : "—"}</td>
                 <td>{typeof st.decisionTimeouts === "number" ? st.decisionTimeouts : "—"}</td>
                 <td>{objectives.length > 0 ? objectives.join(" · ") : "—"}</td>
@@ -360,6 +460,8 @@ function StatsSection({ b, s }: { b: BattleDetail; s: StatsResponse }) {
           })}
         </tbody>
       </table>
+      <SidesStats b={b} s={s} rows={rows} />
+      <RadioStats s={s} rows={rows} />
       {rows.map((p) => (
         <details key={p.botId} data-testid="module-usage">
           <summary>Uso de módulos de {botVersionLabel(p)}</summary>
@@ -396,6 +498,115 @@ function StatsSection({ b, s }: { b: BattleDetail; s: StatsResponse }) {
         </details>
       ))}
     </>
+  );
+}
+
+/**
+ * 4v4-STATS · Resumen POR BANDO. Usa `perTeam` de la API (suma de perBot, igual para
+ * cualquier lector); con una API anterior se suma aquí a partir de las filas por bot.
+ * Se enseña cuando algún bando tiene más de un bot o la API trae perTeam.
+ */
+function SidesStats({ b, s, rows }: { b: BattleDetail; s: StatsResponse; rows: DetailParticipant[] }) {
+  const groups = groupBySide(rows);
+  const fromApi = Object.values(s.perTeam ?? {});
+  if (fromApi.length === 0 && !groups.some((g) => g.items.length > 1)) return null;
+  const score = ((b.result && typeof b.result === "object" ? b.result : {}) as { score?: Record<string, number> })
+    .score;
+  const teams: TeamStatsView[] =
+    fromApi.length > 0
+      ? groupBySide(fromApi).flatMap((g) => g.items)
+      : groups
+          .filter((g) => g.team !== null)
+          .map((g) => {
+            const st = g.items.map((p) => s.perBot[p.botId]);
+            const sum = (f: (x: BotStatsView) => number | undefined) => st.reduce((acc, x) => acc + (f(x) || 0), 0);
+            return {
+              team: g.team!,
+              score: score?.[g.team!],
+              bots: st.length,
+              kills: sum((x) => x.kills),
+              teamKills: sum((x) => x.teamKills),
+              deaths: st.every((x) => typeof x.deaths === "number") ? sum((x) => x.deaths) : undefined,
+              damageDealt: sum((x) => x.damageDealt),
+              damageTaken: sum((x) => x.damageTaken),
+              shotsFired: sum((x) => x.shotsFired),
+              shotsHit: sum((x) => x.shotsHit),
+              survivors: st.filter((x) => (typeof x.aliveAtEnd === "boolean" ? x.aliveAtEnd : !x.died)).length,
+            };
+          });
+  return (
+    <table data-testid="battle-stats-sides">
+      <caption>Resumen por bando</caption>
+      <thead>
+        <tr>
+          <th>Bando</th>
+          <th>Bots</th>
+          <th>Puntos</th>
+          <th>Bajas</th>
+          <th>Muertes</th>
+          <th>Daño hecho</th>
+          <th>Daño recibido</th>
+          <th>Disparos</th>
+          <th>Aciertos</th>
+          <th>Supervivientes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {teams.map((t) => (
+          <tr key={t.team} data-testid="stats-side-row" data-team={t.team}>
+            <td>{teamText(t.team)}</td>
+            <td>{t.bots}</td>
+            <td>{typeof t.score === "number" ? t.score : "—"}</td>
+            <td>
+              {t.kills}
+              {t.teamKills ? ` (+${t.teamKills} de fuego amigo)` : ""}
+            </td>
+            <td>{typeof t.deaths === "number" ? t.deaths : "—"}</td>
+            <td>{Math.round(t.damageDealt)}</td>
+            <td>{Math.round(t.damageTaken)}</td>
+            <td>{t.shotsFired}</td>
+            <td>{t.shotsHit}</td>
+            <td>
+              {t.survivors} / {t.bots}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+/** 4v4-STATS · Radio por bot (dato de juego, público). Sólo si las stats lo traen. */
+function RadioStats({ s, rows }: { s: StatsResponse; rows: DetailParticipant[] }) {
+  const withRadio = rows.filter((p) => s.perBot[p.botId]?.radio);
+  if (withRadio.length === 0) return null;
+  return (
+    <table data-testid="battle-stats-radio">
+      <caption>Radio (la radio también llega al bando rival)</caption>
+      <thead>
+        <tr>
+          <th>Bot</th>
+          <th>Enviados</th>
+          <th>Recibidos</th>
+          <th>De compañeros</th>
+          <th>Del rival</th>
+        </tr>
+      </thead>
+      <tbody>
+        {withRadio.map((p) => {
+          const r = s.perBot[p.botId].radio!;
+          return (
+            <tr key={p.botId} data-testid="radio-row">
+              <td>{botVersionLabel(p)}</td>
+              <td>{r.sent}</td>
+              <td>{r.received}</td>
+              <td>{r.receivedFromTeammates}</td>
+              <td>{r.receivedFromEnemies}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
 
@@ -502,6 +713,19 @@ function BotDiagnostics({ d, label }: { d: DiagnosticsView; label: string }) {
               : "no medido"
             : rejections.map(([reason, n]) => `${rejectionText(reason)}: ${n}`).join(" · ")}
         </dd>
+        {d.radioDroppedByReason && (
+          <>
+            <dt>Mensajes de radio descartados</dt>
+            <dd data-testid="diagnostics-radio-dropped">
+              {Object.entries(d.radioDroppedByReason).filter(([, n]) => n > 0).length === 0
+                ? "ninguno"
+                : Object.entries(d.radioDroppedByReason)
+                    .filter(([, n]) => n > 0)
+                    .map(([reason, n]) => `${rejectionText(reason)}: ${n}`)
+                    .join(" · ")}
+            </dd>
+          </>
+        )}
         <dt>CPU</dt>
         <dd>{typeof d.cpuMs === "number" ? `${Math.round(d.cpuMs)} ms` : "no medida"}</dd>
       </dl>
