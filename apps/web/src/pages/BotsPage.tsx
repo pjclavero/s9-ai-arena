@@ -690,7 +690,7 @@ function BotsListPage(props: {
 
                 <div className="card">
                   <h2>Versiones de {selected.name}</h2>
-                  <table>
+                  <table className="stack-table">
                     <tbody>
                       {d.a.map((v) => (
                         <tr key={v.version} data-testid={`version-row-${v.version}`}>
@@ -847,7 +847,7 @@ function BotsListPage(props: {
                             En curso: comprobando cada {Math.round(pollIntervalMs / 1000) || 1} s…
                           </LiveStatus>
                         )}
-                        <table>
+                        <table className="stack-table">
                           <tbody>
                             {build.stages.map((s) => (
                               <tr key={s.name}>

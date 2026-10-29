@@ -58,7 +58,7 @@ export function RankingPage() {
           standings.length === 0 ? (
             <EmptyState message="Todavía no hay clasificación para este modo." data-testid="ranking-empty" />
           ) : (
-            <table data-testid="ranking-table">
+            <table className="stack-table" data-testid="ranking-table">
               <thead>
                 <tr>
                   <th scope="col">#</th>

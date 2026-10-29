@@ -254,7 +254,7 @@ export function TeamsPage(props: { me: Me }) {
       {others.length > 0 && (
         <>
           <h3>Otros equipos</h3>
-          <table>
+          <table className="stack-table">
             <tbody>
               {others.map((t) => (
                 <tr key={t.id}>
