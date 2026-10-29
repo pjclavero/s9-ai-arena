@@ -128,6 +128,10 @@ test.describe("@fase1 UX-EDITOR editor visual", () => {
     await page.getByRole("button", { name: "Encajar mapa" }).click();
 
     // VALIDATION en vivo: un punto de aparición azul DENTRO del muro.
+    await page
+      .getByTestId("editor-objects")
+      .getByRole("button", { name: /^Muro 1/ })
+      .click(); // el pan en vacío deselecciona
     const wallPos = await toPage(page, await value(page, "Posición X"), await value(page, "Posición Y"));
     await palette(page, "Punto de aparición azul").click();
     await page.mouse.click(wallPos.x, wallPos.y);
@@ -145,6 +149,10 @@ test.describe("@fase1 UX-EDITOR editor visual", () => {
     await expect(page.getByTestId("editor-current")).toHaveText(`${mapId} v1`);
 
     // Cambio SIN guardar → recargar → sigue ahí (borrador local) sobre el mapa del servidor.
+    await page
+      .getByTestId("editor-objects")
+      .getByRole("button", { name: /^Muro 1/ })
+      .click(); // borrar el spawn deja sin selección
     const wp = await toPage(page, await value(page, "Posición X"), await value(page, "Posición Y"));
     await page.mouse.click(wp.x, wp.y);
     await mouseDrag(page, wp, await toPage(page, 30, 20));
