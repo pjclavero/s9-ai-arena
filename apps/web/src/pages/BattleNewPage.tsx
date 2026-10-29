@@ -43,6 +43,13 @@ import { useEffect, useState, type ReactNode } from "react";
 import { api, type Me } from "../api.js";
 import { ErrorState, FormError } from "../ui/primitives.js";
 import { modeName } from "../battle-result.js";
+import {
+  blockedVersionOptions,
+  eligibilityReason,
+  isBattleEligible,
+  NOT_ELIGIBLE_LABEL,
+  type BattleEligibilityInfo,
+} from "../version-eligibility.js";
 
 export interface RulesetOption {
   id: string;
@@ -73,6 +80,8 @@ export interface BotSummary {
 export interface BotVersionSummary {
   version: number;
   state: string;
+  /** ELIG · elegibilidad para batallas nuevas (la calcula y la impone la API). */
+  battleEligibility?: BattleEligibilityInfo;
 }
 
 /** Estados en los que una versión puede jugar (misma regla que createPracticeBattle). */
@@ -110,6 +119,8 @@ export interface BotEligibility {
   summary: string;
   /** Sufijo corto para la opción del desplegable: «(v1)», «(v1) · última versión: v2 rechazada». */
   short?: string;
+  /** ELIG · publicadas pero NO elegibles: se muestran deshabilitadas con su motivo. */
+  blocked: { version: number; reason: string }[];
 }
 
 /**
@@ -121,11 +132,12 @@ export function botEligibility(bot: BotSummary, versions: BotVersionSummary[] | 
   if (versions === null) {
     const v = bot.latestPublishedVersion;
     if (v == null) {
-      return { eligible: false, playable: [], summary: "no elegible: ninguna versión publicada" };
+      return { eligible: false, playable: [], blocked: [], summary: "no elegible: ninguna versión publicada" };
     }
     return {
       eligible: true,
       playable: [v],
+      blocked: [],
       defaultVersion: v,
       summary: `juega la v${v} (publicada)`,
       short: `(v${v})`,
@@ -133,10 +145,23 @@ export function botEligibility(bot: BotSummary, versions: BotVersionSummary[] | 
   }
   const sorted = [...versions].sort((a, b) => b.version - a.version);
   const latest = sorted[0];
-  const playable = sorted.filter((v) => PLAYABLE_STATES.includes(v.state)).map((v) => v.version);
+  const published = sorted.filter((v) => PLAYABLE_STATES.includes(v.state));
+  const playable = published.filter(isBattleEligible).map((v) => v.version);
+  const blocked = published
+    .filter((v) => !isBattleEligible(v))
+    .map((v) => ({ version: v.version, reason: eligibilityReason(v.battleEligibility) }));
   if (playable.length === 0) {
     if (!latest) {
-      return { eligible: false, playable, summary: "no elegible: el bot no tiene ninguna versión — crea una" };
+      return { eligible: false, playable, blocked, summary: "no elegible: el bot no tiene ninguna versión — crea una" };
+    }
+    if (blocked.length > 0) {
+      return {
+        eligible: false,
+        playable,
+        blocked,
+        latest,
+        summary: `no elegible: ${blocked.map((b) => `v${b.version}`).join(", ")} ${NOT_ELIGIBLE_LABEL.toLowerCase()} (${blocked[0].reason}) — crea una nueva versión con un loadout corregido`,
+      };
     }
     const fix =
       latest.state === "validated"
@@ -149,6 +174,7 @@ export function botEligibility(bot: BotSummary, versions: BotVersionSummary[] | 
     return {
       eligible: false,
       playable,
+      blocked,
       latest,
       summary: `no elegible: ninguna versión publicada — tienes v${latest.version} ${versionStateLabel(
         latest.state,
@@ -161,6 +187,7 @@ export function botEligibility(bot: BotSummary, versions: BotVersionSummary[] | 
   return {
     eligible: true,
     playable,
+    blocked,
     defaultVersion: def,
     latest,
     summary: `juega la v${def} (publicada)${latestNote}`,
@@ -601,6 +628,7 @@ export function BattleNewPage(props: { me: Me }) {
                   {v === e.defaultVersion ? " (la más reciente publicada)" : ""}
                 </option>
               ))}
+              {blockedVersionOptions(e.blocked)}
             </select>
           </label>
         )}
@@ -698,6 +726,7 @@ export function BattleNewPage(props: { me: Me }) {
                             {n === e.defaultVersion ? " (la más reciente publicada)" : ""}
                           </option>
                         ))}
+                        {blockedVersionOptions(e.blocked)}
                       </select>
                     )}{" "}
                     <button

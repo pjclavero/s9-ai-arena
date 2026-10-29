@@ -41,6 +41,7 @@ import { fromJsonl } from "../../arena-engine/src/replay.js";
 import { ingestReplay } from "../../replay-service/src/store.js";
 import { runStatsJob } from "../../replay-service/src/stats.js";
 import { administrativeDisqualifications } from "../../bot-manager/src/suspension.js";
+import { eligibilityKey, evaluateVersionsEligibility } from "../../api/src/services/version-eligibility.js";
 import type { SuspensionCheck } from "../../bot-manager/src/launch-guard.js";
 import type { ArtifactLaunchCheck } from "../../bot-manager/src/launch-verify.js";
 import { InfrastructureFailure, SportingFailure } from "./errors.js";
@@ -255,7 +256,8 @@ export class LostBattleClaim extends Error {
 
 /**
  * Descalificaciones administrativas ANTES de lanzar: versión no jugable (estado
- * fuera de published|frozen, p. ej. `suspended` o `retired` tras agendar),
+ * fuera de published|frozen, p. ej. `suspended` o `retired` tras agendar, o
+ * publicada pero no elegible con el validador actual: ELIG),
  * suspensiones del registro de E6 y firma del artefacto.
  */
 async function adminDisqualifications(
@@ -268,6 +270,17 @@ async function adminDisqualifications(
   for (const p of participants) {
     const v = await db("bot_versions").where({ bot_id: p.bot_id, version: p.version }).first();
     if (!v || !PLAYABLE_STATES.has(String(v.state))) adminDq.push(p.bot_id);
+  }
+  // ELIG · H7/H8 (ejecución): una versión publicada cuyo loadout histórico ya no cumple
+  // la validación actual no juega batallas nuevas, aunque se agendaran antes del fix.
+  const elig = await evaluateVersionsEligibility(
+    db,
+    participants.filter((p) => !adminDq.includes(p.bot_id)).map((p) => ({ botId: p.bot_id, version: p.version })),
+  );
+  for (const p of participants) {
+    if (elig.get(eligibilityKey(p.bot_id, p.version))?.eligible === false && !adminDq.includes(p.bot_id)) {
+      adminDq.push(p.bot_id);
+    }
   }
   if (deps.suspensions) {
     for (const d of administrativeDisqualifications(
