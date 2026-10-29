@@ -11,7 +11,7 @@ main.page-wide { max-width: min(1600px, 100%); }
 .s9-me h1 { margin: 0.2rem 0 0.4rem; }
 .s9-me h2 { font-size: 1.05rem; margin: 0.6rem 0 0.4rem; }
 .s9-me button { min-height: 34px; }
-@media (pointer: coarse) { .s9-me button, .s9-me select, .s9-me input { min-height: 44px; } }
+@media (pointer: coarse) { .s9-me button, .s9-me select, .s9-me input:not([type="checkbox"]) { min-height: 44px; } .s9-me input[type="checkbox"] { width: 22px; height: 22px; vertical-align: middle; } }
 .s9-me .s9-me-muted { color: var(--me-muted); font-size: 0.9rem; margin: 0.2rem 0; }
 .s9-me .s9-me-note { font-size: 0.85rem; background: #1d2633; border-left: 3px solid #7fb4ff; padding: 0.3rem 0.5rem; margin: 0.4rem 0; }
 .s9-me .s9-me-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; }
@@ -45,7 +45,7 @@ main.page-wide { max-width: min(1600px, 100%); }
   .s9-me .s9-me-layout { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 600px) {
-  .s9-me .s9-me-stage { height: 58vh; min-height: 280px; }
+  .s9-me .s9-me-stage { height: clamp(260px, 80vw, 58vh); }
   .s9-me .s9-me-bar { gap: 4px; }
   .s9-me .s9-me-bar .s9-me-sep { display: none; }
 }
