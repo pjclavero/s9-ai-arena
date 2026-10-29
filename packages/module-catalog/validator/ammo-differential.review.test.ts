@@ -135,15 +135,30 @@ describe("diferencial validador ↔ motor · catálogo real", () => {
     );
   });
 
-  // P3: promete «Nunca lanza» y lanza TypeError con `ammo` no-string.
-  it.fails("validateAmmo (pipeline) nunca lanza con entradas raras", () => {
-    const weird = [{ slot: "turret_main", moduleId: "weapon.cannon@1", ammo: {} as unknown as string }];
-    expect(() =>
-      validateAmmo(
-        { loadoutId: "x", revision: 1, catalogVersion: "mvp@1", chassis: "chassis.heavy@1", modules: weird },
-        CATALOG,
-      ),
-    ).not.toThrow();
+  // P3 corregido en 09e2936: `ammo` no-texto da incompatible_ammo y no lanza (validateAmmo y validateLoadout).
+  it("validateAmmo y validateLoadout nunca lanzan con `ammo` no-texto y lo rechazan", () => {
+    for (const bad of [{}, 7, ["ammo.ap@1"], null, true]) {
+      const l: LoadoutInput = {
+        loadoutId: "x",
+        revision: 1,
+        catalogVersion: "mvp@1",
+        chassis: "chassis.heavy@1",
+        modules: [
+          { slot: "turret_main", moduleId: "weapon.cannon@1", ammo: bad as unknown as string },
+          { slot: "ammo_main", moduleId: "ammo.ap@1" },
+        ],
+      };
+      const a = validateAmmo(l, CATALOG);
+      const f = validateLoadout(l, CATALOG, BUDGET);
+      expect(
+        a.some((v) => v.code === "incompatible_ammo"),
+        JSON.stringify(bad),
+      ).toBe(true);
+      expect(
+        f.some((v) => v.code === "incompatible_ammo"),
+        JSON.stringify(bad),
+      ).toBe(true);
+    }
   });
 
   it("todos los arquetipos validan y disparan", () => {

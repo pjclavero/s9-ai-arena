@@ -4,8 +4,8 @@
  * 1. El 422 de las cuatro rutas guardadas y el de POST /loadouts cumplen el esquema
  *    `components.responses.LoadoutInvalid` del contrato y no sacan campos internos.
  * 2. Orden directo por API (sin UI): versión válida → submit → publish sigue funcionando.
- * 3. El seed de equipos demo (camino fuera de las 4 rutas) crea una versión NUEVA que
- *    reutiliza la última revisión del bot sin revalidarla.
+ * 3. El seed de equipos demo (camino fuera de las 4 rutas) ya no reutiliza una revisión
+ *    histórica inválida (corregido en 09e2936).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
@@ -94,8 +94,8 @@ describe("422 conforme al contrato en las 5 rutas", () => {
     await h.db("bot_versions").where({ bot_id: bot.id, version: v1 }).update({ state: "validated" });
     bodies.push(await request(app).post(`/bots/${bot.id}/versions/${v1}/actions/publish`).set(auth()).send({}));
     for (const r of bodies) expectContract422(r);
-    // POST /loadouts no trae `message` (las otras 4 sí): anotado, no es violación de contrato
-    expect(bodies[0]!.body.message).toBeUndefined();
+    // P3 corregido en 09e2936: POST /loadouts también trae `message`
+    expect(bodies[0]!.body.message).toContain("ammo.standard@1");
     expect(bodies[1]!.body.message).toContain("no admite ammo.standard@1");
   });
 });
@@ -119,24 +119,32 @@ describe("orden directo por API, sin UI", () => {
 });
 
 describe("seed de equipos demo: camino fuera de las 4 rutas", () => {
-  it("reutiliza la última revisión del bot sin revalidarla al crear la siguiente versión", async () => {
+  it("no reutiliza una revisión histórica inválida: crea una revisión nueva del arquetipo y conserva la mala", async () => {
     await seedDemoTeams(h.db, DEV_USERS.developer, ["Rv Rojo"]);
     const owner = await h.db("users").where({ email: DEV_USERS.developer }).first();
     const bot = await h.db("bots").where({ owner_id: owner.id, name: "Rv Rojo · Defensor" }).first();
     expect(bot).toBeTruthy();
     // Historia: la última revisión es la mala (de antes del fix) y la última versión quedó rechazada.
     const bad = await createLoadoutRevision(h.db, bot.id, defender("ammo.standard@1", "power.generator@2"), SUMMARY);
+    const badRow = await h.db("bot_loadouts").where({ bot_id: bot.id, revision: bad.revision }).first();
     await h.db("bot_versions").where({ bot_id: bot.id }).update({ state: "rejected" });
     await seedDemoTeams(h.db, DEV_USERS.developer, ["Rv Rojo"]);
     const latest = await h.db("bot_versions").where({ bot_id: bot.id }).orderBy("version", "desc").first();
-    // Hallazgo: versión NUEVA en draft con la revisión inválida.
     expect(latest.version).toBe(2);
-    expect(latest.loadout_revision).toBe(bad.revision);
-    // ...pero la puerta de submit la para antes del pipeline.
+    expect(latest.loadout_revision).not.toBe(bad.revision);
+    expect(latest.loadout_revision).toBeGreaterThan(bad.revision);
+    // la histórica sigue intacta
+    expect(await h.db("bot_loadouts").where({ bot_id: bot.id, revision: bad.revision }).first()).toEqual(badRow);
+    // y la versión nueva sí pasa la puerta de submit
     const tok = await tokenFor(h.db, DEV_USERS.developer);
     const r = await request(app)
       .post(`/bots/${bot.id}/versions/2/actions/submit`)
       .set({ Authorization: `Bearer ${tok}` });
-    expect(r.status).toBe(422);
+    expect(r.status, JSON.stringify(r.body)).toBe(202);
+    // re-ejecutar el seed reutiliza ya la revisión buena (no crea revisiones en bucle)
+    const nRev = (await h.db("bot_loadouts").where({ bot_id: bot.id })).length;
+    await h.db("bot_versions").where({ bot_id: bot.id }).update({ state: "rejected" });
+    await seedDemoTeams(h.db, DEV_USERS.developer, ["Rv Rojo"]);
+    expect((await h.db("bot_loadouts").where({ bot_id: bot.id })).length).toBe(nRev);
   });
 });
