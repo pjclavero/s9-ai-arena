@@ -23,6 +23,7 @@ En una batalla juega una **versión publicada** concreta de cada bot, con el **l
 
 - Un **bot** es tu programa. Una **versión de bot** es una entrega concreta de su código (v1, v2…). En una batalla juegan **versiones publicadas**.
 - Una versión publicada antigua **sigue pudiendo jugar** aunque la última esté rechazada o en validación.
+- Excepción: si el loadout de una versión publicada ya no cumple la validación actual (p. ej. un cañón con munición estándar, de antes de la corrección de munición), aparece como **«Publicada · No elegible»**, deshabilitada y con el motivo. Se conserva en el histórico y sus replays se siguen viendo; sólo no puede entrar en batallas ni torneos nuevos. Usa otra versión elegible o crea una versión nueva con el loadout corregido.
 - El **bando** (rojo o azul) es sólo el lado del campo. **No es un equipo** de la sección «Equipos»: aquí los equipos sólo sirven para filtrar la lista de bots. Dos bots del mismo equipo pueden enfrentarse.
 
 ## Crear una batalla de práctica
