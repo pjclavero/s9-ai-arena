@@ -14,6 +14,12 @@ import { audit } from "../audit.js";
 import { badRequest, conflict, notFound } from "../errors.js";
 import { CatalogImmutableError, getCatalog, importCatalogVersion, listCatalogVersions } from "../services/catalog.js";
 import { safeLookup } from "../../../../packages/game-rules/safe-lookup.js";
+import {
+  CUSTOM_DEFAULTS,
+  MAX_BATTLE_PARTICIPANTS,
+  RULES_LIMITS,
+  RULES_PRESETS,
+} from "../../../../packages/game-rules/battle-rules.js";
 
 /** Modos de plataforma (contrato compartido RULESET). Orden estable para la UI. */
 export const PLATFORM_MODES = ["deathmatch", "team_deathmatch", "capture_the_flag", "zone_control"] as const;
@@ -136,7 +142,14 @@ export function catalogRoutes(db: Db): Router {
     const rows = await db("rulesets").orderBy("id", "asc");
     const items = rows.map(rulesetToJson).filter((r) => mode === undefined || r.mode === null || r.mode === mode);
     res.setHeader("Cache-Control", "public, max-age=30");
-    res.json({ modes: [...PLATFORM_MODES], items });
+    // R-RULES · presets oficiales, límites del personalizado (los mismos que aplica el
+    // servidor) y defectos. Aditivo: los clientes anteriores sólo leen modes/items.
+    res.json({
+      modes: [...PLATFORM_MODES],
+      items,
+      presets: RULES_PRESETS,
+      custom: { defaults: CUSTOM_DEFAULTS, limits: RULES_LIMITS, maxParticipants: MAX_BATTLE_PARTICIPANTS },
+    });
   });
 
   defineOperation(router, "importCatalogVersion", async (req, res) => {
