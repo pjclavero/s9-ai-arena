@@ -170,6 +170,7 @@ export class ViewerScene extends Phaser.Scene {
   tagPrefs: TagPrefs = DEFAULT_TAG_PREFS;
   private readonly viewListeners = new Set<(s: ViewStatus) => void>();
   private lastStatus: ViewStatus | null = null;
+  private lastStatusAt = 0;
   /** Último frame dibujado (posiciones para el minimapa y la selección por toque). */
   private lastFrame: Map<string, { x: number; y: number; alive: boolean; team?: string }> | null = null;
   /** R3.6 · Anuncio de FIN DE PARTIDA sobre el canvas (no sólo en el feed HTML). */
@@ -535,14 +536,13 @@ export class ViewerScene extends Phaser.Scene {
     if (this.viewListeners.size === 0) return;
     const next = this.currentStatus();
     const prev = this.lastStatus;
-    if (
-      prev &&
-      prev.mode === next.mode &&
-      prev.zoomPercent === next.zoomPercent &&
-      prev.selectedId === next.selectedId
-    ) {
-      return;
-    }
+    const sameModeAndSelection = !!prev && prev.mode === next.mode && prev.selectedId === next.selectedId;
+    if (sameModeAndSelection && prev.zoomPercent === next.zoomPercent) return;
+    // Durante una transición suave sólo cambia el %: a ≤ 10 Hz (React no re-renderiza
+    // la página a 60 fps por un número); el valor final llega en ≤ 100 ms.
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+    if (sameModeAndSelection && now - this.lastStatusAt < 100) return;
+    this.lastStatusAt = now;
     this.lastStatus = next;
     for (const cb of this.viewListeners) cb(next);
   }
