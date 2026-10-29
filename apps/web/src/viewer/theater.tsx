@@ -153,7 +153,7 @@ export function CameraBar(p: CameraBarProps) {
         <button type="button" aria-label="Alejar" title="Alejar (−)" disabled={p.disabled} onClick={p.onZoomOut}>
           −
         </button>
-        <span className="s9v-zoom" data-testid="zoom-level" data-percent={pct} aria-label={`Zoom ${pct} %`}>
+        <span className="s9v-zoom" data-testid="zoom-level" data-percent={pct} title="Zoom (100 % = escala nativa)">
           {pct > 0 ? `${pct} %` : "—"}
         </span>
         <button type="button" aria-label="Acercar" title="Acercar (+)" disabled={p.disabled} onClick={p.onZoomIn}>

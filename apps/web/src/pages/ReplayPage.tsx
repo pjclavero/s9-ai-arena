@@ -391,77 +391,80 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
           onCenterSelected={call((s) => s.centerSelected())}
         />
       </div>
-      <TheaterGrid
-        stage={
-          <>
-            <div style={{ position: "relative", width: "100%", maxWidth: "100%", overflow: "hidden" }}>
-              <div
-                ref={hostRef}
-                data-testid="replay-canvas-host"
-                className="s9v-stage"
-                tabIndex={0}
-                role="application"
-                aria-roledescription="escenario del replay"
-                aria-label="Escenario del replay"
-                aria-describedby="replay-help"
-                data-camera-mode={mode?.kind ?? "global"}
-                data-zoom-percent={viewStatus?.zoomPercent ?? 0}
-                style={{ width: "100%", maxWidth: "100%", overflow: "hidden" }}
-              />
-              {/* UX-VIEW · el replay también lleva el HUD compacto (marcador, reloj y kill feed). */}
-              {overlay && vehicles && (
-                <HudOverlay compact model={buildHudModel(overlay, { roster: sceneRef.current?.rosterView })} />
-              )}
-            </div>
-            <p id="replay-help" className="s9v-help">
-              Rueda o pellizco: zoom · arrastrar: mover cámara · toque: seleccionar · 1–8: seguir bots · G: vista global
-              · +/−: zoom · F: encajar · C: centrar seleccionado (con el foco en el escenario)
-            </p>
-          </>
-        }
-        side={
-          <>
-            <MinimapPanel
-              getState={() => sceneRef.current?.minimapState?.() ?? null}
-              onCenter={(x, y) => sceneRef.current?.centerOnWorld?.(x, y)}
-              defaultOpen={typeof window === "undefined" || window.innerWidth > 720}
-            />
-            {vehicles && vehicles.size > 0 && (
-              <section className="s9v-card" aria-label="Bots">
-                <BotSelector
-                  roster={roster}
-                  vehicleIds={[...vehicles.keys()]}
-                  vehicles={vehicles}
-                  status={viewStatus}
-                  onFollow={(id) => setCamera({ kind: "follow", vehicleId: id })}
+      {/* Sin replay (error) no se enseñan minimapa ni controles de bots; el host sigue en el DOM. */}
+      <div hidden={failed}>
+        <TheaterGrid
+          stage={
+            <>
+              <div style={{ position: "relative", width: "100%", maxWidth: "100%", overflow: "hidden" }}>
+                <div
+                  ref={hostRef}
+                  data-testid="replay-canvas-host"
+                  className="s9v-stage"
+                  tabIndex={0}
+                  role="application"
+                  aria-roledescription="escenario del replay"
+                  aria-label="Escenario del replay"
+                  aria-describedby="replay-help"
+                  data-camera-mode={mode?.kind ?? "global"}
+                  data-zoom-percent={viewStatus?.zoomPercent ?? 0}
+                  style={{ width: "100%", maxWidth: "100%", overflow: "hidden" }}
                 />
-              </section>
-            )}
-            <section className="s9v-card" aria-label="Participantes">
-              <RosterList roster={roster} testId="replay-roster" />
-              <TagPrefsControl prefs={tagPrefs} onChange={setTagPrefs} />
-            </section>
-            {sceneRef.current && (
-              <section className="s9v-card" aria-label="Marcador y eventos">
-                <p data-testid="score">
-                  {Object.entries(sceneRef.current.overlay?.score ?? {})
-                    .map(([t, n]) => `${t}: ${n}`)
-                    .join(" · ")}
-                </p>
-                {Array.isArray(overlay?.feed) && overlay.feed.length > 0 && (
-                  <ul data-testid="feed">
-                    {overlay.feed.slice(-8).map((f, i) => (
-                      <li key={i}>
-                        [{f.tick}] {f.text}
-                      </li>
-                    ))}
-                  </ul>
+                {/* UX-VIEW · el replay también lleva el HUD compacto (marcador, reloj y kill feed). */}
+                {overlay && vehicles && (
+                  <HudOverlay compact model={buildHudModel(overlay, { roster: sceneRef.current?.rosterView })} />
                 )}
+              </div>
+              <p id="replay-help" className="s9v-help">
+                Rueda o pellizco: zoom · arrastrar: mover cámara · toque: seleccionar · 1–8: seguir bots · G: vista
+                global · +/−: zoom · F: encajar · C: centrar seleccionado (con el foco en el escenario)
+              </p>
+            </>
+          }
+          side={
+            <>
+              <MinimapPanel
+                getState={() => sceneRef.current?.minimapState?.() ?? null}
+                onCenter={(x, y) => sceneRef.current?.centerOnWorld?.(x, y)}
+                defaultOpen={typeof window === "undefined" || window.innerWidth > 720}
+              />
+              {vehicles && vehicles.size > 0 && (
+                <section className="s9v-card" aria-label="Bots">
+                  <BotSelector
+                    roster={roster}
+                    vehicleIds={[...vehicles.keys()]}
+                    vehicles={vehicles}
+                    status={viewStatus}
+                    onFollow={(id) => setCamera({ kind: "follow", vehicleId: id })}
+                  />
+                </section>
+              )}
+              <section className="s9v-card" aria-label="Participantes">
+                <RosterList roster={roster} testId="replay-roster" />
+                <TagPrefsControl prefs={tagPrefs} onChange={setTagPrefs} />
               </section>
-            )}
-          </>
-        }
-      />
+              {sceneRef.current && (
+                <section className="s9v-card" aria-label="Marcador y eventos">
+                  <p data-testid="score">
+                    {Object.entries(sceneRef.current.overlay?.score ?? {})
+                      .map(([t, n]) => `${t}: ${n}`)
+                      .join(" · ")}
+                  </p>
+                  {Array.isArray(overlay?.feed) && overlay.feed.length > 0 && (
+                    <ul data-testid="feed">
+                      {overlay.feed.slice(-8).map((f, i) => (
+                        <li key={i}>
+                          [{f.tick}] {f.text}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              )}
+            </>
+          }
+        />
+      </div>
     </section>
   );
 }
