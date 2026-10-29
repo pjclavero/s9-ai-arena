@@ -39,8 +39,12 @@ info:
   # versión, y getBotVersionEligibilityInventory (admin, solo lectura).
   # 0.11.0 · ELIG (review): excludeTournamentEntry (excluir una inscripción pendiente,
   # auditado) y esquemas declarados de notEligible / notEligibleEntries / replacedVersion.
+  # 0.12.0 · R-RULES (ADR-021) reglas de batalla: añade checkBattleRules
+  # (POST /battles/rules-check) y, de forma ADITIVA, `rules` opcional en
+  # PracticeBattleInput, `rules` en Battle, `presets`/`custom` en listRulesets y
+  # `profile`/`rules` en BattleStats. Nada se quita ni cambia de significado.
   # Añadir un endpoint = MINOR (docs/compatibilidad.md, §2 Semver por paquete).
-  version: 0.11.0
+  version: 0.12.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
