@@ -40,6 +40,22 @@ const mode = async (page: Page) => (await page.getByTestId("camera-mode").getAtt
 const mini = (page: Page) => page.getByTestId("minimap-canvas");
 const miniAttr = async (page: Page, k: string) => (await mini(page).getAttribute(`data-${k}`)) ?? "";
 
+/** Espera a que la transición suave de la cámara termine (el % deja de cambiar). */
+async function settled(page: Page) {
+  let prev = -1;
+  await expect
+    .poll(
+      async () => {
+        const p = await pct(page);
+        const same = p === prev;
+        prev = p;
+        return same;
+      },
+      { intervals: [300], timeout: 10_000, message: "la cámara no se asienta" },
+    )
+    .toBe(true);
+}
+
 async function shotTo(page: Page, name: string) {
   await page.screenshot({ path: `${OUT}/shots/${name}.png`, fullPage: true });
 }
@@ -207,13 +223,15 @@ async function viewportPass(page: Page, id: string, tag: string, expectedBots: n
     }
     await page.getByRole("button", { name: "Encajar mapa" }).click();
     await expect.poll(() => miniAttr(page, "in-view")).toBe(String(expectedBots));
+    await settled(page);
     await shotTo(page, `view-${tag}-${vp.name}-replay`);
     // Con zoom: barras de vida y nombres sobre los bots (no tapan el escenario).
     await page.getByRole("button", { name: "Seguir", exact: false }).first().click();
     await expect.poll(() => mode(page)).toBe("follow");
-    const followPct = await pct(page);
     await page.getByRole("button", { name: "Acercar" }).click();
-    await expect.poll(() => pct(page)).toBeGreaterThan(followPct);
+    // «+» parte del zoom de SEGUIMIENTO (150 %), no del de tránsito: ×1.25 ≈ 188 %.
+    await settled(page);
+    expect(await pct(page), `${vp.name}: «+» tras «Seguir» acerca desde el seguimiento`).toBeGreaterThanOrEqual(150);
     await shotTo(page, `view-${tag}-${vp.name}-zoom`);
   }
 }
