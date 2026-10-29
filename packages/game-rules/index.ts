@@ -61,6 +61,15 @@ export type GameModeId =
   | "domination"
   | "juggernaut";
 
+/**
+ * R-RULES · Criterios de desempate al acabar el tiempo (datos, no `if` por modo):
+ *  - `score`: más puntos del modo;
+ *  - `lives`: más vidas en juego (vivos + reapariciones restantes; sin respawn = vivos);
+ *  - `hull`: más integridad (suma de casco/casco máximo de los vivos, redondeo 1e-4).
+ */
+export type TimeoutTiebreakCriterion = "score" | "lives" | "hull";
+export const TIMEOUT_TIEBREAK_CRITERIA: readonly TimeoutTiebreakCriterion[] = ["score", "lives", "hull"];
+
 export interface Ruleset {
   rulesetId: string;
   mode: GameModeId;
@@ -69,7 +78,18 @@ export interface Ruleset {
   timeLimitTicks: number;
   scoreToWin: number;
   friendlyFire: boolean;
-  respawn: { enabled: boolean; delayTicks: number };
+  /**
+   * `maxRespawns` (R-RULES, ADR-021) · REAPARICIONES por vehículo (no vidas: vidas =
+   * 1 + maxRespawns). Agotadas, el vehículo queda ELIMINADO y la batalla puede
+   * terminar por eliminación aunque haya respawn. Ausente = respawn ilimitado,
+   * exactamente el comportamiento de 0.3.0 (ningún ruleset del catálogo lo declara).
+   */
+  respawn: { enabled: boolean; delayTicks: number; maxRespawns?: number };
+  /**
+   * R-RULES (ADR-021) · Desempate al agotarse el tiempo: criterios en orden; si todos
+   * empatan, `draw`. Ausente = el desempate de 0.3.0 (más puntos; si no, empate).
+   */
+  timeoutTiebreak?: TimeoutTiebreakCriterion[];
   sharedTeamVision: boolean;
   /** Ticks de gracia tras desconexión antes de descalificar (D2). */
   disconnectGraceTicks: number;
