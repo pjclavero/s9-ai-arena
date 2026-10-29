@@ -12,7 +12,13 @@ import { audit } from "../audit.js";
 import { badRequest, conflict, forbidden, notFound } from "../errors.js";
 import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
 import { applyTransition } from "../services/bots.js";
-import { entryEligibilityGate, replaceIneligibleEntry } from "../services/version-eligibility.js";
+import {
+  entryEligibilityGate,
+  excludeTournamentEntry,
+  replaceIneligibleEntry,
+} from "../services/version-eligibility.js";
+import { ROLE_RANK } from "../openapi.js";
+import { pathParam } from "../params.js";
 // H6 (issue #10) · La tabla por equipos es la de E9; se importa, no se duplica.
 import { leagueTable } from "../../../tournament-worker/src/results.js";
 import { hiddenBotIds, whereBattleReadable, type BattleVisibility } from "../battle-access.js";
@@ -258,6 +264,20 @@ export function tournamentRoutes(
       loadoutRevision: entry.loadout_revision,
       frozen: entry.frozen,
     });
+  });
+
+  // ELIG · H8: excluir una inscripción pendiente (organizador: sólo no elegibles; dueño: la suya). Auditado.
+  defineOperation(router, "excludeTournamentEntry", async (req, res) => {
+    res.json(
+      await excludeTournamentEntry(
+        db,
+        { userId: req.auth!.userId, isOrganizer: req.auth!.rank >= ROLE_RANK.organizer },
+        pathParam(req, "tournamentId"),
+        pathParam(req, "entryId"),
+        req.body?.reason,
+        req.correlationId,
+      ),
+    );
   });
 
   defineOperation(router, "closeEntries", async (req, res) => {

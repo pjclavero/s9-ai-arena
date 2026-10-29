@@ -52,6 +52,15 @@ describe("botEligibility", () => {
     expect(e.summary).toMatch(/nueva versión/);
   });
 
+  it("ELIG-REVIEW P3 · si la carga de versiones FALLÓ: «no verificable», no se da por elegible", () => {
+    const e = botEligibility({ id: "a", name: "A-DEF", latestPublishedVersion: 2 }, null);
+    expect(e.eligible).toBe(false);
+    expect(e.playable).toEqual([]);
+    expect(e.summary).toMatch(/no verificable/);
+    // mientras CARGA (undefined) se mantiene el comportamiento anterior
+    expect(botEligibility({ id: "a", name: "A-DEF", latestPublishedVersion: 2 }, undefined).eligible).toBe(true);
+  });
+
   it("sin campo battleEligibility (API antigua) nada cambia: publicada = seleccionable", () => {
     const e = botEligibility({ id: "a", name: "x" }, [{ version: 1, state: "published" }]);
     expect(e).toMatchObject({ eligible: true, playable: [1], blocked: [] });

@@ -128,11 +128,21 @@ export interface BotEligibility {
  * GET /bots/{id}/versions; si no se pudo cargar (`null`) se usa lo que da el listado
  * (`latestPublishedVersion`) y se dice que no se conocen las demás.
  */
-export function botEligibility(bot: BotSummary, versions: BotVersionSummary[] | null): BotEligibility {
-  if (versions === null) {
+export function botEligibility(bot: BotSummary, versions: BotVersionSummary[] | null | undefined): BotEligibility {
+  if (versions == null) {
     const v = bot.latestPublishedVersion;
     if (v == null) {
       return { eligible: false, playable: [], blocked: [], summary: "no elegible: ninguna versión publicada" };
+    }
+    // ELIG · si la carga FALLÓ (`null`) no se sabe si esa versión sigue siendo elegible:
+    // no se ofrece como si lo fuera (la API decidiría, pero la UI no debe prometerlo).
+    if (versions === null) {
+      return {
+        eligible: false,
+        playable: [],
+        blocked: [],
+        summary: `no verificable: no se pudieron cargar sus versiones (la última publicada es v${v}) — recarga para comprobar si es elegible`,
+      };
     }
     return {
       eligible: true,
@@ -300,7 +310,7 @@ export function BattleNewPage(props: { me: Me }) {
     Object.prototype.hasOwnProperty.call(versionsByBot, id) ? versionsByBot[id] : undefined;
   const eligibility = (id: string): BotEligibility | undefined => {
     const b = bots.find((x) => x.id === id);
-    return b ? botEligibility(b, versionsLoad(id) ?? null) : undefined;
+    return b ? botEligibility(b, versionsLoad(id)) : undefined;
   };
   /** Aviso de carga de versiones para un bot elegible: nada si ya están. */
   const versionsNote = (id: string): string => {

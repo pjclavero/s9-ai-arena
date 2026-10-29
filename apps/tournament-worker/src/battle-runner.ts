@@ -41,7 +41,7 @@ import { fromJsonl } from "../../arena-engine/src/replay.js";
 import { ingestReplay } from "../../replay-service/src/store.js";
 import { runStatsJob } from "../../replay-service/src/stats.js";
 import { administrativeDisqualifications } from "../../bot-manager/src/suspension.js";
-import { eligibilityKey, evaluateVersionsEligibility } from "../../api/src/services/version-eligibility.js";
+import { eligibilityOf, evaluateVersionsEligibility } from "../../api/src/services/version-eligibility.js";
 import type { SuspensionCheck } from "../../bot-manager/src/launch-guard.js";
 import type { ArtifactLaunchCheck } from "../../bot-manager/src/launch-verify.js";
 import { InfrastructureFailure, SportingFailure } from "./errors.js";
@@ -278,7 +278,7 @@ async function adminDisqualifications(
     participants.filter((p) => !adminDq.includes(p.bot_id)).map((p) => ({ botId: p.bot_id, version: p.version })),
   );
   for (const p of participants) {
-    if (elig.get(eligibilityKey(p.bot_id, p.version))?.eligible === false && !adminDq.includes(p.bot_id)) {
+    if (!adminDq.includes(p.bot_id) && !eligibilityOf(elig, { botId: p.bot_id, version: p.version }).eligible) {
       adminDq.push(p.bot_id);
     }
   }

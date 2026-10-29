@@ -235,7 +235,31 @@ export interface VersionRef {
   version: number;
 }
 
-export const eligibilityKey = (botId: string, version: number) => `${botId}@${version}`;
+/**
+ * Forma canónica de un uuid (minúsculas, con guiones). PostgreSQL acepta como uuid
+ * MAYÚSCULAS, `{llaves}` y sin guiones: si la clave del mapa de resultados usara la
+ * forma cruda del cliente, una ref no casaría con su fila. Lo que no parece un uuid se
+ * devuelve tal cual (la BD lo rechazará o no lo encontrará).
+ */
+export function canonicalUuid(id: string): string {
+  const hex = id
+    .trim()
+    .replace(/^\{(.*)\}$/, "$1")
+    .replace(/-/g, "");
+  if (!/^[0-9a-fA-F]{32}$/.test(hex)) return id;
+  const h = hex.toLowerCase();
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+export const eligibilityKey = (botId: string, version: number) => `${canonicalUuid(String(botId))}@${version}`;
+
+/**
+ * Resultado de una ref, FALLANDO CERRADO: si no hay resultado (la ref no casa con
+ * ninguna fila, sea cual sea el motivo), la versión es UNKNOWN y no elegible.
+ */
+export function eligibilityOf(res: Map<string, VersionEligibility>, ref: VersionRef): VersionEligibility {
+  return res.get(eligibilityKey(ref.botId, ref.version)) ?? unverifiable("no se encontró la versión ni su loadout.");
+}
 
 /**
  * Elegibilidad de varias versiones en una pasada (una consulta por tabla y un
@@ -253,7 +277,7 @@ export async function evaluateVersionsEligibility(
       this.on("l.bot_id", "=", "v.bot_id").andOn("l.revision", "=", "v.loadout_revision");
     })
     .where((q) => {
-      for (const r of refs) q.orWhere({ "v.bot_id": r.botId, "v.version": r.version });
+      for (const r of refs) q.orWhere({ "v.bot_id": canonicalUuid(r.botId), "v.version": r.version });
     })
     .select("v.bot_id", "v.version", "l.id as loadout_id", "l.catalog_version", "l.chassis", "l.modules")) as Record<
     string,
@@ -307,7 +331,8 @@ const COMPETITION_STATES = new Set(["published", "frozen"]);
 export async function battleEligibilityOf(
   db: Knex,
   versions: Record<string, unknown>[],
-): Promise<(v: Record<string, unknown>) => { battleEligibility?: ReturnType<typeof eligibilityToJson> }> {
+  opts: { detailed: boolean },
+): Promise<(v: Record<string, unknown>) => { battleEligibility?: Record<string, unknown> }> {
   const res = await evaluateVersionsEligibility(
     db,
     versions
@@ -316,8 +341,18 @@ export async function battleEligibilityOf(
   );
   return (v) => {
     if (!COMPETITION_STATES.has(String(v.state))) return {};
-    const e = res.get(eligibilityKey(String(v.bot_id), Number(v.version)));
-    return e ? { battleEligibility: eligibilityToJson(e) } : {};
+    const e = eligibilityOf(res, { botId: String(v.bot_id), version: Number(v.version) });
+    if (opts.detailed) return { battleEligibility: eligibilityToJson(e) };
+    // Quien no puede leer el loadout (p. ej. anónimo: /loadouts exige rol user) sólo ve
+    // el veredicto, nunca los módulos implicados.
+    return {
+      battleEligibility: {
+        eligible: e.eligible,
+        ...(e.reason ? { reason: e.reason } : {}),
+        category: e.category,
+        violations: [],
+      },
+    };
   };
 }
 
@@ -329,9 +364,7 @@ export async function battleEligibilityOf(
  */
 export async function assertVersionsEligible(db: Knex, refs: VersionRef[]): Promise<void> {
   const res = await evaluateVersionsEligibility(db, refs);
-  const bad = refs
-    .map((r) => ({ ...r, e: res.get(eligibilityKey(r.botId, r.version)) }))
-    .filter((x) => x.e && !x.e.eligible);
+  const bad = refs.map((r) => ({ ...r, e: eligibilityOf(res, r) })).filter((x) => !x.e.eligible);
   if (bad.length === 0) return;
   const first = bad[0];
   throw new ApiError(
@@ -452,29 +485,35 @@ export async function replaceIneligibleEntry(
   await assertVersionsEligible(db, [{ botId, version: n }]);
   const entry = await db("entries").where({ tournament_id: tournament.id, bot_id: botId }).first();
   if (!entry || entry.frozen || Number(entry.version) === n) return null;
-  const prev = (await evaluateVersionsEligibility(db, [{ botId, version: Number(entry.version) }])).get(
-    eligibilityKey(botId, Number(entry.version)),
-  );
-  if (!prev || prev.eligible) return null;
-  const [updated] = await db("entries")
-    .where({ id: entry.id, frozen: false })
-    .update({ version: n, loadout_revision: version.loadout_revision })
-    .returning("*");
-  if (!updated) return null;
-  await db("audit_log").insert({
-    actor_id: actorId,
-    action: "tournament.entry.version_replaced",
-    target: `tournament:${tournament.id}`,
-    detail: JSON.stringify({
-      entryId: entry.id,
-      botId,
-      fromVersion: Number(entry.version),
-      toVersion: n,
-      reason: prev.reason,
-      category: prev.category,
-    }),
-    correlation_id: correlationId ?? null,
+  const prev = eligibilityOf(await evaluateVersionsEligibility(db, [{ botId, version: Number(entry.version) }]), {
+    botId,
+    version: Number(entry.version),
   });
+  if (prev.eligible) return null;
+  // Cambio y rastro de auditoría juntos: o las dos cosas o ninguna.
+  const updated = await db.transaction(async (trx) => {
+    const [row] = await trx("entries")
+      .where({ id: entry.id, frozen: false })
+      .update({ version: n, loadout_revision: version.loadout_revision })
+      .returning("*");
+    if (!row) return null;
+    await trx("audit_log").insert({
+      actor_id: actorId,
+      action: "tournament.entry.version_replaced",
+      target: `tournament:${tournament.id}`,
+      detail: JSON.stringify({
+        entryId: entry.id,
+        botId,
+        fromVersion: Number(entry.version),
+        toVersion: n,
+        reason: prev.reason,
+        category: prev.category,
+      }),
+      correlation_id: correlationId ?? null,
+    });
+    return row;
+  });
+  if (!updated) return null;
   return {
     id: updated.id,
     tournamentId: tournament.id,
@@ -499,13 +538,81 @@ export async function entryEligibilityGate(db: Knex, entries: Record<string, unk
     entries.map((e) => ({ botId: String(e.bot_id), version: Number(e.version) })),
   );
   const blocked = entries.filter(
-    (e) => res.get(eligibilityKey(String(e.bot_id), Number(e.version)))?.eligible === false,
+    (e) => !eligibilityOf(res, { botId: String(e.bot_id), version: Number(e.version) }).eligible,
   );
   if (blocked.length === 0) return;
   throw new ApiError(
     409,
     "entries_not_eligible",
-    `${blocked.length} inscripción(es) usan una versión que se conserva para el histórico pero ya no es elegible para competición nueva. Sus dueños deben inscribir otra versión válida (la misma inscripción admite la nueva versión) antes de cerrar.`,
+    `${blocked.length} inscripción(es) usan una versión que se conserva para el histórico pero ya no es elegible para competición nueva. Sus dueños deben inscribir otra versión válida (la misma inscripción admite la nueva versión), o el organizador puede excluirlas (POST …/entries/{entryId}/actions/exclude), antes de cerrar.`,
     { notEligibleEntries: blocked.map((e) => ({ entryId: e.id })) },
   );
+}
+
+/**
+ * H8 · Excluir una inscripción PENDIENTE (torneo abierto, sin congelar). Sin esto, un
+ * dueño ausente dejaba `closeEntries` en 409 `entries_not_eligible` para siempre.
+ *  - El ORGANIZADOR sólo puede excluir inscripciones NO elegibles.
+ *  - El DUEÑO del bot puede retirar la suya.
+ * Una inscripción pendiente nunca ha jugado (sin batallas, sin calendario, versión sin
+ * congelar): se quita de `entries` y su contenido completo queda en audit_log (quién,
+ * cuándo, motivo, versión) en la MISMA transacción. Ningún dato histórico se toca.
+ */
+export async function excludeTournamentEntry(
+  db: Knex,
+  actor: { userId: string; isOrganizer: boolean },
+  tournamentId: string,
+  entryId: string,
+  reason: unknown,
+  correlationId?: string,
+): Promise<Record<string, unknown>> {
+  if (typeof reason !== "string" || reason.trim().length === 0 || reason.length > 256) {
+    throw new ApiError(400, "bad_request", "reason obligatorio (máx. 256)");
+  }
+  const t = await db("tournaments")
+    .where({ id: tournamentId })
+    .first()
+    .catch(() => null);
+  const entry = t
+    ? await db("entries")
+        .where({ id: entryId, tournament_id: t.id })
+        .first()
+        .catch(() => null)
+    : null;
+  if (!t || !entry) throw new ApiError(404, "not_found", "No existe o no es visible para el solicitante");
+  const bot = await db("bots").where({ id: entry.bot_id }).first();
+  const byOwner = bot?.owner_id === actor.userId;
+  if (!byOwner && !actor.isOrganizer) {
+    throw new ApiError(403, "forbidden", "Sólo el dueño del bot o un organizador pueden excluir la inscripción");
+  }
+  if (t.state !== "open" || entry.frozen) {
+    throw new ApiError(409, "entries_closed", "Sólo se excluyen inscripciones pendientes de un torneo abierto");
+  }
+  const ref = { botId: String(entry.bot_id), version: Number(entry.version) };
+  const e = eligibilityOf(await evaluateVersionsEligibility(db, [ref]), ref);
+  if (!byOwner && e.eligible) {
+    throw new ApiError(409, "entry_eligible", "La inscripción es elegible: sólo su dueño puede retirarla");
+  }
+  await db.transaction(async (trx) => {
+    const n = await trx("entries").where({ id: entry.id, frozen: false }).del();
+    if (n !== 1) throw new ApiError(409, "entries_closed", "La inscripción ya no está pendiente");
+    await trx("audit_log").insert({
+      actor_id: actor.userId,
+      action: "tournament.entry.excluded",
+      target: `tournament:${t.id}`,
+      detail: JSON.stringify({
+        entryId: entry.id,
+        botId: entry.bot_id,
+        version: Number(entry.version),
+        loadoutRevision: Number(entry.loadout_revision),
+        enteredAt: entry.created_at,
+        by: byOwner ? "owner" : "organizer",
+        reason: reason.trim(),
+        eligible: e.eligible,
+        category: e.category,
+      }),
+      correlation_id: correlationId ?? null,
+    });
+  });
+  return { entryId: entry.id, tournamentId: t.id, excluded: true, by: byOwner ? "owner" : "organizer" };
 }
