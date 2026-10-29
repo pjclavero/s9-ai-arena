@@ -1,8 +1,8 @@
 /**
  * UX-VIEW · Bloque A — zoom, pan y cámara del visor (lógica pura).
  *
- *  - «Encajar mapa» = el zoom mínimo: alejarse más sólo enseñaría vacío y nunca
- *    se pierden los vehículos (todos están dentro del mapa);
+ *  - «Encajar mapa» = vista completa; el mínimo es el menor entre encajar y
+ *    100 %: alejado al máximo el mapa se ve entero y nunca se pierden vehículos;
  *  - «100 %» = escala nativa de la escena en px CSS, igual en HiDPI;
  *  - el zoom (rueda, pinch, botones) mantiene el punto bajo el cursor, está
  *    acotado y es uniforme (no deforma);
@@ -18,6 +18,15 @@ import {
   zoomPercent,
   MAX_PERCENT,
 } from "../src/viewer/view-scale.js";
+import { stageHeightFor } from "../src/viewer/theater.js";
+
+describe("layout teatro: alto del escenario ligado al viewport", () => {
+  it("ocupa lo que queda de pantalla desde su borde superior, acotado", () => {
+    expect(stageHeightFor(1080, 230)).toBe(1080 - 230 - 12);
+    expect(stageHeightFor(768, 600)).toBe(360); // nunca diminuto
+    expect(stageHeightFor(4000, 100)).toBe(1600); // ni gigantesco
+  });
+});
 
 const BASE = { viewportW: 1500, viewportH: 860, mapW: 120, mapH: 80, dpr: 1, pxPerM: 8 };
 

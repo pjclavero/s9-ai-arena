@@ -30,6 +30,7 @@ import {
   TagPrefsControl,
   TheaterGrid,
   TheaterStyles,
+  useFitStageHeight,
   useViewStatus,
   useWideMain,
 } from "../viewer/theater.js";
@@ -101,6 +102,7 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
   /** 4v4 · nómina del índice: de ella salen los botones de cámara por bando. */
   const [roster, setRoster] = useState<ViewerRoster>(() => new Map());
   const viewStatus = useViewStatus(scene);
+  useFitStageHeight(hostRef);
 
   useEffect(() => {
     if (!hostRef.current) return;

@@ -28,6 +28,7 @@ import {
   TagPrefsControl,
   TheaterGrid,
   TheaterStyles,
+  useFitStageHeight,
   useViewStatus,
   useWideMain,
 } from "../viewer/theater.js";
@@ -100,6 +101,7 @@ export function ViewerPage({ battleId }: { battleId: string }) {
   // UX-R · «Batalla Alfa vs Beta» en cuanto la cabecera trae la nómina.
   const [title, setTitle] = useState<string | null>(null);
   const viewStatus = useViewStatus(scene);
+  useFitStageHeight(hostRef);
 
   useEffect(() => {
     if (!hostRef.current) return;

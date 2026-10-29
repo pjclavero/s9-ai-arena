@@ -53,6 +53,7 @@ main.page-wide{max-width:none}
 .s9v-transport input[type=range]{flex:1 1 220px;min-width:0}
 @media (max-width:1100px){.s9v-grid{grid-template-columns:minmax(0,1fr)}.s9v-side{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));align-items:start}}
 @media (max-width:720px){.s9v-stage{height:clamp(240px,62vh,720px);height:clamp(240px,62dvh,720px)}.s9v-side{grid-template-columns:minmax(0,1fr)}.s9v-group+.s9v-group{border-left:0;padding-left:0}.s9v-head h2{font-size:1.05rem}}
+@media (min-width:721px){.s9v-stage[data-fit-h]{height:var(--s9v-fit-h)}}
 @media (pointer:coarse){.s9v-bar button,.s9v-side button{min-height:44px;min-width:44px}}
 `;
 
@@ -74,6 +75,41 @@ export function useWideMain(): void {
       if (!had) main.classList.remove("page-wide");
     };
   }, []);
+}
+
+/**
+ * Alto del escenario en escritorio/tablet: lo que queda de viewport desde donde
+ * EMPIEZA el escenario (la cabecera y las barras pueden partirse en varias
+ * líneas), acotado. Así el escenario se ve entero sin hacer scroll.
+ */
+export function stageHeightFor(viewportH: number, stageTopDoc: number, min = 360, max = 1600, gap = 12): number {
+  return Math.round(Math.max(min, Math.min(max, viewportH - stageTopDoc - gap)));
+}
+
+/** Aplica stageHeightFor al escenario y lo recalcula al redimensionar (y si la cabecera cambia de alto). */
+export function useFitStageHeight(ref: { current: HTMLElement | null }): void {
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof window === "undefined") return;
+    let last = -1;
+    const fit = () => {
+      const top = el.getBoundingClientRect().top + window.scrollY;
+      const h = stageHeightFor(window.innerHeight, top);
+      if (Math.abs(h - last) < 2) return;
+      last = h;
+      el.style.setProperty("--s9v-fit-h", `${h}px`);
+      el.setAttribute("data-fit-h", String(h));
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    const section = el.closest(".s9v");
+    const ro = typeof ResizeObserver !== "undefined" && section ? new ResizeObserver(fit) : null;
+    if (ro && section) ro.observe(section);
+    return () => {
+      window.removeEventListener("resize", fit);
+      ro?.disconnect();
+    };
+  }, [ref]);
 }
 
 /** Texto del modo de cámara visible para el usuario. */

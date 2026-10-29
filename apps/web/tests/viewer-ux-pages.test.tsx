@@ -142,7 +142,8 @@ describe("ViewerPage · la cámara manual no se pisa", () => {
     render(<ViewerPage battleId="btl_ux" />, { container: withMain() });
     await screen.findByText("en directo");
     expect(screen.getByTestId("camera-mode").textContent).toBe("Cámara: vista completa");
-    expect(screen.getByTestId("zoom-level").textContent).toBe("122 %");
+    // La suscripción a la escena se monta tras el primer render: se espera, no se supone.
+    await vi.waitFor(() => expect(screen.getByTestId("zoom-level").textContent).toBe("122 %"));
     await act(async () =>
       viewCb?.({ mode: { kind: "manual", centerX: 1, centerY: 1, zoom: 20 }, zoomPercent: 250, selectedId: null }),
     );
