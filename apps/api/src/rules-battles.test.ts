@@ -131,7 +131,7 @@ describe("GET /rulesets · presets y límites", () => {
 });
 
 describe("presets 1v1", () => {
-  it("Duelo ⇒ 202 y copia inmutable: sin respawn, 3 min, desempate vidas→bajas→casco", async () => {
+  it("Duelo ⇒ 202 y copia inmutable: sin respawn, 5 min, desempate vidas→bajas→casco", async () => {
     const { r, rules } = await accepted(duel({ preset: "duel", teamSize: 1 }));
     expect(rules.source).toBe("preset");
     expect(rules.presetId).toBe("duel");
@@ -139,7 +139,7 @@ describe("presets 1v1", () => {
     expect(rules.engineRuleset).toMatchObject({
       rulesetId: "duel@1",
       mode: "deathmatch",
-      timeLimitTicks: 3 * 60 * 30,
+      timeLimitTicks: 5 * 60 * 30,
       scoreToWin: Number.MAX_SAFE_INTEGER,
       respawn: { enabled: false, delayTicks: 0 },
       timeoutTiebreak: ["lives", "score", "hull"],

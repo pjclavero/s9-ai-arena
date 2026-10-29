@@ -87,7 +87,7 @@ También trae «Ruleset MVP por defecto», válido para cualquier modo. Al cambi
 
 | Tipo | Reglas | Qué pasa |
 |---|---|---|
-| 1 contra 1 | **Duelo** | Una vida, sin reaparición. 3 min; al acabar el tiempo gana quien conserve más casco. |
+| 1 contra 1 | **Duelo** | Una vida, sin reaparición. 5 min; al acabar el tiempo gana quien conserve más casco. |
 | 1 contra 1 | **Combate** | Reaparición ilimitada a los 5 s; gana el primero en 5 bajas (10 min de seguridad). |
 | 1 contra 1 | **Resistencia** | 5 min fijos con reaparición; gana quien tenga más bajas. |
 | Equipos (2v2–4v4) | **Eliminación** | Sin reaparición; pierde el equipo que se queda sin vehículos (8 min). |
