@@ -233,6 +233,7 @@ const REJECTION_TEXT: Record<string, string> = {
   invalid_position: "posición no válida",
   rate_limited: "demasiados mensajes de radio",
   too_large: "mensaje de radio demasiado grande",
+  queue_full: "cola de radio llena",
   no_radio: "sin módulo de radio",
   out_of_range: "fuera de alcance",
   extra_command_discarded: "más de un COMMAND en el mismo ciclo",
@@ -296,7 +297,7 @@ export function groupBySide<T extends { team?: string }>(ps: T[]): { team: strin
  */
 export function sidesTitle<T extends { team?: string }>(
   ps: T[],
-  label: (p: T) => string,
+  label: (p: NoInfer<T>) => string,
   opts: { withSide?: boolean } = {},
 ): string {
   const groups = groupBySide(ps);
