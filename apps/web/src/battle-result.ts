@@ -300,6 +300,16 @@ export function groupBySide<T extends { team?: string }>(ps: T[]): { team: strin
 }
 
 /**
+ * 4v4-FIX · Participantes en el MISMO orden que «Resultado por bando»: bandos en
+ * orden estable (rojo, azul, resto) y, dentro, por nombre y versión. Lo usan las
+ * tablas del detalle (participantes, estadísticas, radio) para no listar los bots
+ * en el orden arbitrario de la API mientras el resumen va por bandos.
+ */
+export function participantsBySide<T extends ParticipantLike>(ps: T[]): T[] {
+  return groupBySide(ps).flatMap((g) => [...g.items].sort((a, b) => byName(botVersionLabel(a), botVersionLabel(b))));
+}
+
+/**
  * 4v4 · Título de una batalla. Con un bot por bando se mantiene «Alfa vs Beta»
  * (`withSide` añade « (rojo)»). Si algún bando lleva varios bots se agrupa por
  * bando: «A-ATK-1, A-ATK-2, A-ATK-3, A-ATK-4 (rojo) vs B-DEF-1, … (azul)».

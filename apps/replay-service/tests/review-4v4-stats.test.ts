@@ -51,15 +51,11 @@ async function acidBattle(seed: string): Promise<Replay> {
 describe("[REVIEW-4v4] stats TDM 4v4 con ácido", () => {
   // REGRESIÓN (4v4-FIX): antes `it.fails`. stats.ts atribuía al golpe anterior una
   // muerte que causó la zona; ahora la autoría sale de `mode.onKill` vía el gancho.
-  it(
-    "perTeam.kills === marcador del motor con zona de daño (zk0)",
-    async () => {
-      const replay = await acidBattle("zk0");
-      const s = await computeBattleStats(replay);
-      for (const t of ["red", "blue"]) expect(s.perTeam[t].kills, t).toBe(replay.result.score[t] ?? 0);
-    },
-    120_000,
-  );
+  it("perTeam.kills === marcador del motor con zona de daño (zk0)", async () => {
+    const replay = await acidBattle("zk0");
+    const s = await computeBattleStats(replay);
+    for (const t of ["red", "blue"]) expect(s.perTeam[t].kills, t).toBe(replay.result.score[t] ?? 0);
+  }, 120_000);
 
   it("la trampa: muertes por ácido precedidas por un hit_dealt al mismo objetivo existen y no cuentan como baja (zk0)", async () => {
     const replay = await acidBattle("zk0");

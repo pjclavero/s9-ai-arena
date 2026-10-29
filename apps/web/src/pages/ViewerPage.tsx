@@ -219,14 +219,6 @@ export function ViewerPage({ battleId }: { battleId: string }) {
     };
   }, [battleId, attempt]);
 
-  useEffect(() => {
-    const scene = sceneRef.current;
-    if (!scene) return;
-    scene.cameraMode = camera;
-    scene.fog = { allowFogView: allowFog, enabled: fogOn && fogTeam !== "", team: fogTeam };
-    scene.showDebug = debugOn && debugAvailable;
-  }, [camera, allowFog, fogOn, fogTeam, debugOn, debugAvailable, overlayTick]);
-
   // UX-R · Sin batalla que ver (rechazo, error, sin conexión) no se pinta el HUD
   // ni los controles de cámara: un «0 — 0 · Preparados» contradice la alerta.
   const failed = state === "rejected" || state === "error" || state === "offline";
@@ -238,6 +230,20 @@ export function ViewerPage({ battleId }: { battleId: string }) {
     fromRoster.length > 0
       ? fromRoster
       : sortTeams([...(overlay?.vehicles.values() ?? [])].map((v) => v.team).filter(Boolean));
+  // 4v4-FIX · bando EFECTIVO de la niebla: el elegido si sigue existiendo y, si no
+  // (p. ej. sin nómina, con los bandos sacados del snapshot), el primero que enseña
+  // el desplegable. Antes el desplegable mostraba `sides[0]` y la niebla iba con "".
+  const effectiveFogTeam = fogTeam && sides.includes(fogTeam) ? fogTeam : (sides[0] ?? "");
+  const sidesKey = sides.join("|");
+
+  useEffect(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    scene.cameraMode = camera;
+    scene.fog = { allowFogView: allowFog, enabled: fogOn && effectiveFogTeam !== "", team: effectiveFogTeam };
+    scene.showDebug = debugOn && debugAvailable;
+  }, [camera, allowFog, fogOn, effectiveFogTeam, sidesKey, debugOn, debugAvailable, overlayTick]);
+
   return (
     <section>
       <h2 data-testid="viewer-title" style={{ overflowWrap: "anywhere" }}>
@@ -283,7 +289,7 @@ export function ViewerPage({ battleId }: { battleId: string }) {
             Niebla de guerra (
             <select
               aria-label="bando de la niebla"
-              value={fogTeam || sides[0]}
+              value={effectiveFogTeam}
               onChange={(e) => setFogTeam(e.target.value)}
             >
               {sides.map((t) => (

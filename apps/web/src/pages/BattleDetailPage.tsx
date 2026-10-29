@@ -34,6 +34,7 @@ import {
   sideResults,
   sidesTitle,
   groupBySide,
+  participantsBySide,
   type BattleLike,
   type ParticipantLike,
 } from "../battle-result.js";
@@ -329,7 +330,7 @@ function BattleHeader({ b, audit }: { b: BattleDetail; audit: AuditView | null }
           </tr>
         </thead>
         <tbody>
-          {b.participants.map((p) => (
+          {participantsBySide(b.participants).map((p) => (
             <tr key={p.botId} data-testid="participant-row">
               <td>
                 {/* Sólo tus bots tienen página de detalle para ti. */}
@@ -412,7 +413,8 @@ function StatsSection({ b, s }: { b: BattleDetail; s: StatsResponse }) {
       </p>
     );
   }
-  const rows = b.participants.filter((p) => s.perBot[p.botId]);
+  // 4v4-FIX · mismo orden de bandos (y de bots) que «Resultado por bando».
+  const rows = participantsBySide(b.participants).filter((p) => s.perBot[p.botId]);
   return (
     <>
       <table data-testid="battle-stats">

@@ -32,7 +32,9 @@ function place(map: ArenaMap) {
   const b = new Battle({ battleId: "corner", seed: "c", ruleset: loadRuleset("tdm_mvp@1"), map, participants: ps });
   for (const p of ps) b.attachBot(p.id, new IdleBot(p.botId));
   const phys = b.getPhysics();
-  const out = b.getVehicles().map((v) => ({ id: v.id, team: v.team, r: v.spec.radiusM, p: { ...phys.pose(v.id)!.position } }));
+  const out = b
+    .getVehicles()
+    .map((v) => ({ id: v.id, team: v.team, r: v.spec.radiusM, p: { ...phys.pose(v.id)!.position } }));
   const hash = b.stateHash();
   b.free();
   return { out, hash };
