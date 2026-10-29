@@ -158,8 +158,10 @@ test.describe("@golden Golden path", () => {
     const base = await api<Record<string, unknown>>(page, "/maps/mvp-arena-01/versions/1/content");
     const content = (base as { content?: unknown }).content ?? base;
     await go(page, "#/maps/editor");
+    // UX-EDITOR: el JSON vive plegado en «Opciones avanzadas» del editor visual.
+    await page.getByText("Opciones avanzadas: archivo JSON del mapa").click();
     await page.getByLabel("JSON a importar").fill(JSON.stringify(content));
-    await page.getByRole("button", { name: "Importar" }).click();
+    await page.getByRole("button", { name: "Importar", exact: true }).click();
     await page.getByLabel("id del mapa").fill(MAP_ID);
     await page.getByLabel("nombre del mapa").fill("Golden uno");
     const dm = page.getByLabel("modo deathmatch");
