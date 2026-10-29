@@ -164,6 +164,26 @@ export async function record(config: BattleConfig, attach: (b: Battle) => void):
 }
 
 /**
+ * 4v4-STATS · Ganchos OPCIONALES de observación de una re-simulación. Ninguno
+ * altera la simulación, el hash ni el protocolo: sólo MIRAN.
+ *  - `onObservation(vehicleId, obs)`: la observación que el motor entrega al
+ *    `ReplayAgent.decide(obs)` de ese vehículo en cada ciclo de decisión (la
+ *    misma que recibió el bot original). Se entrega una COPIA profunda: la
+ *    observación real comparte referencias con el estado del motor (p. ej. el
+ *    marcador), y un callback que la mutara cambiaría la batalla.
+ *  - `onEmission(event, toVehicle)`: cada evento EN EL ORDEN EXACTO en que el
+ *    motor lo emite (`toVehicle = null` si es público). `onEvent` entrega los
+ *    eventos por vehículo al principio de su siguiente ciclo y pierde el orden
+ *    ENTRE vehículos; las estadísticas lo necesitan para atribuir una baja al
+ *    autor del golpe que la causó cuando dos atacantes aciertan en el mismo tick.
+ *    También se entrega una copia.
+ */
+export interface ResimulationHooks {
+  onObservation?: (vehicleId: string, observation: any) => void;
+  onEmission?: (event: any, toVehicle: string | null) => void;
+}
+
+/**
  * E8/T8.4 · Re-simula el replay entregando a `onEvent` TODOS los eventos por
  * vehículo (privados incluidos: hit_dealt, rejected_action, decision_timeout…).
  *
@@ -172,10 +192,14 @@ export async function record(config: BattleConfig, attach: (b: Battle) => void):
  * política 23.1 manda calcularlas DESDE EL ARCHIVO, no desde una BD de eventos.
  * Re-simular con los comandos grabados los regenera exactamente (determinismo).
  * Misma mecánica que verify(); vive aquí para no duplicar ReplayAgent fuera.
+ *
+ * `hooks` (opcional, 4v4-STATS): ver `ResimulationHooks`. Sin ganchos el
+ * comportamiento es idéntico al de antes.
  */
 export async function resimulateWithEvents(
   replay: Replay,
   onEvent: (vehicleId: string, event: any) => void,
+  hooks: ResimulationHooks = {},
 ): Promise<BattleResult> {
   const b = await Battle.create({
     battleId: replay.header.battleId,
@@ -193,11 +217,36 @@ export async function resimulateWithEvents(
     if (!byVehicle.has(c.vehicleId)) byVehicle.set(c.vehicleId, []);
     byVehicle.get(c.vehicleId)!.push({ tick: c.tick, command: c.command });
   }
+  const { onObservation, onEmission } = hooks;
+  if (onEmission) {
+    // Envoltura TRANSPARENTE del emisor del motor: llama al original con los
+    // mismos argumentos y después avisa. `emit` es privado de Battle (T-ENGINE):
+    // si cambia de nombre, esto falla en voz alta en vez de contar a medias.
+    const target = b as unknown as { emit: (ev: any, toVehicle?: string) => void; tick: number };
+    if (typeof target.emit !== "function") {
+      throw new Error("resimulateWithEvents: el motor ya no expone emit(); onEmission no es fiable");
+    }
+    const original = target.emit.bind(b);
+    target.emit = (ev: any, toVehicle?: string) => {
+      original(ev, toVehicle);
+      onEmission(structuredClone({ tick: target.tick, ...ev }), toVehicle ?? null);
+    };
+  }
   for (const p of replay.header.participants) {
     const agent = new ReplayAgent(p.botId, byVehicle.get(p.id) ?? []) as ReplayAgent & {
       onEvent?: (e: any) => void;
     };
     agent.onEvent = (e: any) => onEvent(p.id, e);
+    if (onObservation) {
+      const decide = agent.decide.bind(agent);
+      // La orden se resuelve ANTES de avisar y sobre la observación original:
+      // el callback recibe una copia y no puede influir en lo que se reproduce.
+      agent.decide = (obs: any) => {
+        const cmd = decide(obs);
+        onObservation(p.id, structuredClone(obs));
+        return cmd;
+      };
+    }
     b.attachBot(p.id, agent);
   }
   const result = b.run();
