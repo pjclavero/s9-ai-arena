@@ -63,6 +63,13 @@
         margin: 1.5rem auto;
         padding: 0 1rem;
       }
+      /* UX-MOBILE · páginas anchas (visor/replay): anulan el máximo de 960 px
+         cuando <main> lleva la clase .page-wide o contiene un elemento con ella.
+         Acordado con UX-VIEW (SPEC 2026-10-29). */
+      main.page-wide,
+      main:has(.page-wide) {
+        max-width: none;
+      }
       button {
         background: #2f6fdb;
         color: white;
