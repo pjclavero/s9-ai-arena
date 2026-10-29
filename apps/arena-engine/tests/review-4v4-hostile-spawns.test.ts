@@ -96,13 +96,11 @@ const HOSTILE: Record<string, () => ArenaMap> = {
 
 describe("[REVIEW-4v4] spawns en mapas hostiles", () => {
   for (const [name, mk] of Object.entries(HOSTILE)) {
-    // DEFECTO (REVIEW-4v4): spawn en esquina con heading diagonal hacia dentro. La
-    // rejilla auxiliar sólo mira atrás y a los lados, que en una esquina caen TODOS
-    // fuera del mapa: chooseSpawn devuelve null y battle.ts vuelve al reparto
-    // cíclico de 0.2.0 ⇒ pares con los centros coincidentes (hueco -3,2 m). `fails`
-    // se pondrá ROJO cuando se arregle: entonces se quita.
-    const run = name === "corner" ? it.fails : it;
-    run(`${name}: 4v4 sin solapes, dentro del mapa, fuera de muros y ácido; determinista`, () => {
+    // REGRESIÓN (4v4-FIX, antes `it.fails` en "corner"): spawn en esquina con heading
+    // diagonal hacia dentro. La rejilla atrás/lados cae TODA fuera del mapa; ahora
+    // chooseSpawn sigue con anillos completos (y, en último recurso, por delante)
+    // antes de volver al reparto cíclico de 0.2.0.
+    it(`${name}: 4v4 sin solapes, dentro del mapa, fuera de muros y ácido; determinista`, () => {
       const map = mk();
       const a = build(map);
       const b = build(mk());

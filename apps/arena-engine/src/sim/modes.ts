@@ -290,10 +290,62 @@ function overlapsAny(p: Vec2, radiusM: number, disks: readonly SpawnDisk[], marg
   return false;
 }
 
+/** Anillos de la búsqueda AMPLIA (4v4-FIX), cuando la rejilla atrás/lados no basta. */
+export const SPAWN_AUX_WIDE_MAX_RING = 8;
+
+/**
+ * 4v4-FIX · Anillos COMPLETOS (Chebyshev) en el marco del spawn, también por
+ * delante: `b > 0` atrás, `b < 0` delante. Orden: anillo creciente; dentro, de más
+ * atrás a más adelante; luego |columna| e izquierda antes que derecha; y dentro de
+ * cada posición, los spawns base en su orden. Cada candidato lleva su base.
+ */
+export function wideSpawnCandidates(
+  pool: readonly SpawnPoint[],
+  stepM: number,
+  maxRing = SPAWN_AUX_WIDE_MAX_RING,
+): (SpawnPoint & { base: SpawnPoint })[] {
+  const out: (SpawnPoint & { base: SpawnPoint })[] = [];
+  for (let k = 1; k <= maxRing; k++) {
+    const offsets: [number, number][] = [];
+    for (let b = k; b >= -k; b--) {
+      const cols = Math.abs(b) === k ? range(-k, k) : [-k, k];
+      cols.sort((x, y) => Math.abs(x) - Math.abs(y) || x - y);
+      for (const j of cols) offsets.push([b, j]);
+    }
+    for (const [b, j] of offsets) {
+      for (const s of pool) {
+        const fx = Math.cos(s.heading);
+        const fy = Math.sin(s.heading);
+        out.push({
+          position: {
+            x: s.position.x - b * stepM * fx + j * stepM * -fy,
+            y: s.position.y - b * stepM * fy + j * stepM * fx,
+          },
+          heading: s.heading,
+          base: s,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/** Distancia mínima de p a los spawns RIVALES (Infinity si el mapa no tiene). */
+function nearestRivalM(p: Vec2, rivals: readonly Vec2[]): number {
+  let d = Infinity;
+  for (const r of rivals) d = Math.min(d, distance(p, r));
+  return d;
+}
+
 /**
  * Elige el punto de aparición: primero los spawns del mapa (desde `startIndex`,
- * cíclico) que no solapen a nadie; luego los auxiliares válidos. null si no hay
- * ninguno (el llamante conserva entonces el comportamiento anterior).
+ * cíclico) que no solapen a nadie; luego los auxiliares válidos atrás/lados (0.3.0
+ * original: si encuentra hueco aquí, el resultado es idéntico al de antes). Si no
+ * hay (spawn en esquina con heading diagonal, junto a un borde…), 4v4-FIX:
+ *   a) anillos completos, aceptando sólo puntos NO más cercanos a un spawn rival
+ *      que su spawn base;
+ *   b) como último recurso, anillos completos también hacia delante.
+ * null sólo si nada cabe (el llamante conserva entonces el reparto cíclico).
  */
 export function chooseSpawn(opts: {
   pool: readonly SpawnPoint[];
@@ -317,6 +369,20 @@ export function chooseSpawn(opts: {
     if (overlapsAny(c.position, radiusM, reserved)) continue;
     return c;
   }
+  // Spawns rivales: los del mapa que no son de este pool.
+  const rivals = map.spawns
+    .filter((m) => !pool.some((p) => distance(p.position, m.position) < 1e-6))
+    .map((m) => m.position);
+  const wide = wideSpawnCandidates(pool, step);
+  const free = (c: SpawnPoint) =>
+    isClearOfMap(c.position, radiusM, map) &&
+    !overlapsAny(c.position, radiusM, occupied) &&
+    !overlapsAny(c.position, radiusM, reserved);
+  for (const c of wide) {
+    if (nearestRivalM(c.position, rivals) < nearestRivalM(c.base.position, rivals) - SPAWN_EPS_M) continue;
+    if (free(c)) return { position: c.position, heading: c.heading };
+  }
+  for (const c of wide) if (free(c)) return { position: c.position, heading: c.heading };
   return null;
 }
 

@@ -26,7 +26,14 @@ El mapa trae **2 spawns por bando**. Con el motor 0.2.0:
    cerca del rival que su spawn base—, paso `2·radioMáx + 1 m`, hasta 4 anillos. Un auxiliar se
    acepta sólo si está dentro del mapa con margen, a ≥ radio + 1 m de muros (rectángulo orientado),
    destructibles y zonas de daño, y no solapa a ningún vehículo colocado ni a un spawn del mapa aún
-   libre. Sin hueco: el reparto cíclico de 0.2.0 (mapa saturado; no ocurre en los publicados).
+   libre. **Búsqueda amplia (4v4-FIX):** si atrás/lados no tiene hueco (spawn en esquina con
+   heading diagonal, donde toda esa rejilla cae fuera del mapa), se prueban anillos COMPLETOS
+   hasta 8: primero sólo puntos no más cercanos a un spawn rival que su base y, como último
+   recurso, también por delante. Sin hueco tras eso: el reparto cíclico de 0.2.0 (mapa saturado
+   o diminuto; no ocurre en los publicados). Es un cambio DENTRO de 0.3.0, que aún no está en
+   producción (`main` sigue en 0.2.0): no hay replays 0.3.0 grabados que proteger y no se sube
+   la versión. 1v1/2v2 red/blue y el 4v4 sobre `mvp-arena-01` dan el mismo hash que antes del
+   cambio (`fix-4v4-spawn-hash-identity.test.ts`).
 2. **Grupos de spawns** (`resolveSpawnGroups`): un bando con etiqueta del mapa usa la suya; los
    desconocidos, en orden alfabético, se reparten cíclicamente entre los grupos que nadie reclama
    (en orden de aparición en el mapa). A/B sobre red/blue ⇒ A→red, B→blue.
