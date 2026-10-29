@@ -88,13 +88,13 @@ export const RULES_PRESETS: readonly RulesPreset[] = [
     name: "Duelo",
     tagline: "Una vida. Sin reaparición.",
     description:
-      "Gana el último bot operativo. Límite de 3 minutos; si se agota, gana quien conserve más casco (si empatan, tablas).",
+      "Gana el último bot operativo. Límite de 5 minutos; si se agota, gana quien conserve más casco (si empatan, tablas).",
     teamSizes: [1],
     params: {
       respawn: { mode: "none", respawnsPerBot: null, delaySeconds: null },
       victory: "elimination",
       scoreLimit: null,
-      timeLimitMinutes: 3,
+      timeLimitMinutes: 5,
       ...NO_LIMITS,
       friendlyFire: false,
     },
