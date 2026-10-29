@@ -104,9 +104,14 @@ test.describe("@fase1 UX-E responsive", () => {
 test.describe("@fase1 UX-MOBILE", () => {
   test("tablas con datos reales: tarjetas en móvil, nada fuera de pantalla en 7 anchos", async ({ page }, info) => {
     test.setTimeout(420_000);
-    expect(REPLAY_ID, "run.sh debe dar la batalla del golden (S9_E2E_REPLAY_ID)").not.toBe("");
     await login(page, process.env.S9_E2E_DEV_EMAIL ?? "", process.env.S9_E2E_DEV_PASSWORD ?? "");
-    const detail = `#/battles/${encodeURIComponent(REPLAY_ID)}`;
+    // La batalla del golden si la hay; si no, la última terminada que ve el staff
+    // (la fase golden siempre deja alguna: 4v4, H1…). Sin ninguna, la prueba falla.
+    await visit(page, "#/battles");
+    const finished = page.locator('[data-testid="battle-row"][data-status="finished"]').first();
+    await expect(finished, "hace falta al menos una batalla terminada (fase golden)").toBeVisible();
+    const battleId = REPLAY_ID || ((await finished.getAttribute("data-battle-id")) ?? "");
+    const detail = `#/battles/${encodeURIComponent(battleId)}`;
     /** ruta → testid de fila que la tabla DEBE enseñar con estos datos. */
     const tables: [string, string, string][] = [
       ["#/battles", "battle-row", "batallas"],
