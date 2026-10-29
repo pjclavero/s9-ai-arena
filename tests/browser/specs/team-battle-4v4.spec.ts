@@ -8,6 +8,9 @@
  *   tournament-worker con contenedores reales → detalle con el resultado POR BANDO →
  *   replay con los 8 por nombre y cámaras por bando de la nómina.
  *
+ * 4v4-FIX: los bots combaten (disparos en los dos bandos, bajas y reapariciones) y
+ * el marcador del resultado debe coincidir con `perTeam.kills` de `/stats`.
+ *
  * Coste de CI: 8 builds. Por eso los bots y los equipos se crean por la API (lo
  * que ya cubren golden-path/teams.spec por la UI) y la UI se reserva para lo nuevo:
  * la creación de la batalla por equipos, el detalle y el replay.
@@ -18,7 +21,7 @@
  */
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { go, registerNewUser, shot, watchProblems } from "./helpers.js";
-import { BUILD_MS, PublicApi, evidence, waitFinished } from "./review-lib.js";
+import { BUILD_MS, PublicApi, evidence, waitFinished, waitStatsReady } from "./review-lib.js";
 
 const STAMP = Date.now().toString(36);
 const RED = ["A-ATK-1", "A-ATK-2", "A-ATK-3", "A-ATK-4"].map((n) => `${n}-${STAMP}`);
@@ -26,28 +29,146 @@ const BLUE = ["B-DEF-1", "B-DEF-2", "B-DEF-3", "B-DEF-4"].map((n) => `${n}-${STA
 const TEAM_A = `Alfa 4v4 ${STAMP}`;
 const TEAM_B = `Beta 4v4 ${STAMP}`;
 
-/** Avanza al centro y dispara al rival más cercano que ve el radar: la partida se decide pronto. */
-const SHOOTER = `from arena_sdk import ArenaBot, angle_diff, angle_to
+/**
+ * 4v4-FIX · Bot que COMBATE de verdad sobre mvp-arena-01 (el anterior iba al centro,
+ * se clavaba en el muro central y la batalla de CI acabó 0-0 con 0 disparos tras
+ * 9000 ticks). Navegación de `team_bot.py` (ATK, ya probado en producción): avanza
+ * por un carril norte/sur hacia la base rival rodeando muros (marcha atrás + desvío
+ * de ±90° al atascarse), persigue el contacto de radar más cercano y dispara con
+ * la torreta alineada. Medido con el motor local sobre el mapa real: 8-6, 8-6, 8-2
+ * (el anterior, 0-0 y 0 disparos). La batalla termina al llegar a 8, no a 9000 ticks.
+ */
+const SHOOTER = `import math
+
+from arena_sdk import ArenaBot
 
 
-class Tirador(ArenaBot):
+def angle_to(a, b):
+    return math.atan2(b["y"] - a["y"], b["x"] - a["x"])
+
+
+def angle_diff(a, b):
+    d = b - a
+    while d > math.pi:
+        d -= 2 * math.pi
+    while d < -math.pi:
+        d += 2 * math.pi
+    return d
+
+
+def dist(a, b):
+    return math.hypot(b["x"] - a["x"], b["y"] - a["y"])
+
+
+def num(entity_id):
+    digits = "".join(ch for ch in str(entity_id or "") if ch.isdigit())
+    return int(digits) if digits else 0
+
+
+class Atacante(ArenaBot):
+    """Avanza por un carril hacia la base rival (rodeando muros), persigue al
+    contacto de radar más cercano y dispara con la torreta alineada."""
+
+    ready = False
+
+    def on_welcome(self, welcome):
+        self.me = welcome.get("selfId")
+        self.team = welcome.get("team")
+        m = welcome.get("map") or {}
+        self.w = float(m.get("widthM") or 120)
+        self.h = float(m.get("heightM") or 80)
+        spawns = m.get("spawns") or []
+        own = [s["position"] for s in spawns if s.get("team") == self.team]
+        foe = [s["position"] for s in spawns if s.get("team") != self.team]
+        center = {"x": self.w / 2, "y": self.h / 2}
+        home = own[0] if own else center
+        enemy = foe[0] if foe else center
+        self.weapon = None
+        for mod in (welcome.get("vehicle") or {}).get("modules") or []:
+            if mod.get("category") == "weapon" and self.weapon is None:
+                self.weapon = mod.get("slot")
+        lane_y = self.h * (0.3 if num(self.me) % 2 else 0.7)
+        fwd = 1 if enemy["x"] >= home["x"] else -1
+        self.lane = [{"x": self.w / 2, "y": lane_y}, {"x": enemy["x"] - fwd * 15, "y": lane_y}, dict(enemy)]
+        self.wp = 0
+        self.seen = None
+        self.last_pos = None
+        self.last_tick = 0
+        self.detour_until = 0
+        self.reverse_until = 0
+        self.detour_heading = 0.0
+        self.side = 1 if num(self.me) % 2 else -1
+        self.stuck = 0
+        self.ready = True
+
+    def drive(self, obs, goal, speed=1.0, keep_away=None):
+        s = obs["self"]
+        me = s["position"]
+        tick = obs.get("tick", 0)
+        if tick < self.detour_until:
+            if tick < self.reverse_until:
+                return {"throttle": -1.0, "steer": 0.0}
+            turn = angle_diff(s["heading"], self.detour_heading)
+            return {"throttle": 1.0 if abs(turn) < 0.9 else 0.4, "steer": max(-1.0, min(1.0, turn * 2.0))}
+        want = angle_to(me, goal)
+        far = dist(me, goal)
+        if keep_away is not None and far < keep_away:
+            want = angle_to(goal, me)
+        turn = angle_diff(s["heading"], want)
+        throttle = speed * (0.6 if abs(turn) > 1.4 else 1.0)
+        if throttle > 0.3:
+            if self.last_pos is None:
+                self.last_pos, self.last_tick = dict(me), tick
+            elif tick - self.last_tick >= 30:
+                if dist(self.last_pos, me) < 1.5:
+                    self.stuck += 1
+                    if self.stuck >= 3:
+                        self.side, self.stuck = -self.side, 0
+                    self.detour_heading = want + self.side * (math.pi / 2)
+                    self.reverse_until = tick + 9
+                    self.detour_until = tick + 9 + 30 + 25 * min(self.stuck + 1, 4)
+                else:
+                    self.stuck = 0
+                self.last_pos, self.last_tick = dict(me), tick
+        else:
+            self.last_pos = None
+        return {"throttle": throttle, "steer": max(-1.0, min(1.0, turn * 2.0))}
+
     def on_observation(self, observation):
-        me = observation["self"]
-        pos = me["position"]
-        contacts = [c for r in observation.get("sensors", {}).get("radar", []) for c in r.get("contacts", [])]
-        enemies = [c for c in contacts if not c.get("team")]
-        if enemies:
-            t = min(enemies, key=lambda c: (c["position"]["x"] - pos["x"]) ** 2 + (c["position"]["y"] - pos["y"]) ** 2)
-            turn = angle_diff(me["heading"], angle_to(pos, t["position"]))
-            return {
-                "move": {"throttle": 0.3, "steer": max(-1.0, min(1.0, turn * 1.5))},
-                "turret": {"targetPoint": t["position"]},
-                "fire": ["turret_main"],
-            }
-        turn = angle_diff(me["heading"], angle_to(pos, {"x": 60.0, "y": 40.0}))
-        return {"move": {"throttle": 0.8, "steer": max(-1.0, min(1.0, turn * 2.0))}}
-`;
+        try:
+            return self.decide(observation)
+        except Exception:
+            return {}
 
+    def decide(self, obs):
+        if not self.ready or not obs.get("self") or obs["self"].get("respawningInTicks"):
+            return {}
+        s = obs["self"]
+        me = s["position"]
+        tick = obs.get("tick", 0)
+        enemies = []
+        for radar in (obs.get("sensors") or {}).get("radar") or []:
+            for c in radar.get("contacts") or []:
+                p = c.get("position") or {}
+                if not c.get("team") and "x" in p:
+                    enemies.append(p)
+        if enemies:
+            self.seen = (min(enemies, key=lambda p: dist(me, p)), tick)
+        target = self.seen[0] if self.seen and tick - self.seen[1] < 90 else None
+        cmd = {}
+        if target is not None:
+            cmd["move"] = self.drive(obs, target, 0.8, keep_away=12)
+            cmd["turret"] = {"targetPoint": {"x": target["x"], "y": target["y"]}}
+            aligned = abs(angle_diff(s.get("turretHeading", s["heading"]), angle_to(me, target))) < 0.15
+            if aligned and enemies and self.weapon and dist(me, target) <= 45:
+                cmd["fire"] = [self.weapon]
+        else:
+            goal = self.lane[self.wp % len(self.lane)]
+            if dist(me, goal) < 6:
+                self.wp = self.wp + 1 if self.wp + 1 < len(self.lane) else 1
+            cmd["move"] = self.drive(obs, goal, 1.0)
+        return cmd
+`;
 const LOADOUT = {
   catalogVersion: "mvp@1",
   chassis: "chassis.medium@1",
@@ -216,6 +337,22 @@ test.describe("@golden 4v4 · batalla por equipos", () => {
     expect(battle.participants).toHaveLength(8);
     const winner = battle.result?.winner as string;
     expect(["red", "blue", "draw"]).toContain(winner);
+
+    // 4v4-FIX · hubo COMBATE de verdad y el marcador cuadra con las estadísticas.
+    const stats = await waitStatsReady(api, battleId);
+    const perTeam = stats.perTeam as Record<string, { kills: number; teamKills: number; shotsFired: number }>;
+    const perBot = Object.values(stats.perBot as Record<string, { respawns?: number; kills?: number }>);
+    const score = (battle.result?.score ?? {}) as Record<string, number>;
+    expect(Object.keys(perTeam).sort(), JSON.stringify(stats.perTeam)).toEqual(["blue", "red"]);
+    for (const t of ["red", "blue"]) expect(perTeam[t].shotsFired, `disparos de ${t}`).toBeGreaterThan(0);
+    expect(perTeam.red.kills + perTeam.blue.kills, "al menos una baja").toBeGreaterThan(0);
+    expect(
+      perBot.reduce((a, b) => a + (b.respawns ?? 0), 0),
+      "al menos una reaparición",
+    ).toBeGreaterThan(0);
+    // TDM: cada baja enemiga es un punto; con fuego amigo el rival suma además los teamKills.
+    expect(perTeam.red.kills + perTeam.blue.teamKills, "marcador rojo").toBe(score.red ?? 0);
+    expect(perTeam.blue.kills + perTeam.red.teamKills, "marcador azul").toBe(score.blue ?? 0);
     await page.reload();
     await expect(page.getByTestId("battle-title")).toContainText(
       `${RED.join(", ")} (rojo) vs ${BLUE.join(", ")} (azul)`,
@@ -263,7 +400,7 @@ test.describe("@golden 4v4 · batalla por equipos", () => {
       )
       .toBe(true);
     await shot(page, info, "4v4-replay");
-    evidence("team-4v4", { battleId, winner, sent: sent.participants, pixels });
+    evidence("team-4v4", { battleId, winner, score, perTeam, sent: sent.participants, pixels });
     expect(problems.filter((p) => !p.startsWith("console.error"))).toEqual([]);
   });
 });
