@@ -27,12 +27,9 @@ async function play(ruleset: any, perSide: number): Promise<Replay> {
       spec: gunnerLoadout(),
     });
   }
-  return record(
-    { battleId: "stats-rules", seed: "stats-rules", ruleset, map: emptyArena(), participants },
-    (b) => {
-      for (const p of participants) b.attachBot(p.id, new HunterBot(p.botId));
-    },
-  );
+  return record({ battleId: "stats-rules", seed: "stats-rules", ruleset, map: emptyArena(), participants }, (b) => {
+    for (const p of participants) b.attachBot(p.id, new HunterBot(p.botId));
+  });
 }
 
 function limitedRuleset() {

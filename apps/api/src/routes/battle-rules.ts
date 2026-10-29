@@ -71,7 +71,11 @@ export function battleRulesRoutes(db: Db): Router {
     // Reglas inválidas: 200 con ok:false y los errores por campo (la UI los pinta);
     // composición fuera de los topes: 200 con ok:false y el informe por bando/bot.
     try {
-      const built = await buildBattleRules(db, { mode, rulesetId, rules, participants }, { allowCompositionFailure: true });
+      const built = await buildBattleRules(
+        db,
+        { mode, rulesetId, rules, participants },
+        { allowCompositionFailure: true },
+      );
       res.setHeader("Cache-Control", "private, no-store");
       res.json({
         ok: built.composition.ok,
@@ -80,7 +84,10 @@ export function battleRulesRoutes(db: Db): Router {
         errors: [],
       });
     } catch (err) {
-      if (err instanceof ApiError && (err.code === "rules_invalid" || err.code === "rules_team_size" || err.code === "rules_mode_mismatch")) {
+      if (
+        err instanceof ApiError &&
+        (err.code === "rules_invalid" || err.code === "rules_team_size" || err.code === "rules_mode_mismatch")
+      ) {
         res.setHeader("Cache-Control", "private, no-store");
         res.json({
           ok: false,
