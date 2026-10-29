@@ -36,6 +36,54 @@ import type { Request } from "express";
 
 const SPECTATE_TICKET_TTL_S = 60;
 
+/** Modos que se juegan por equipos: exactamente 2 bandos (4v4 como máximo). */
+export const TEAM_BATTLE_MODES: readonly string[] = ["team_deathmatch", "capture_the_flag", "zone_control"];
+/** Tamaño máximo de un bando en un modo de equipos (8 participantes = 4v4). */
+export const MAX_PARTICIPANTS_PER_TEAM = 4;
+
+/**
+ * 4v4 · Reglas de composición de POST /battles (fases 2 y 8). Se llama con la forma
+ * de cada participante ya validada (team es una cadena válida).
+ *  - modos de equipo: exactamente 2 bandos, cada uno con 1..4 vehículos ⇒ 400;
+ *  - deathmatch: cada vehículo su propio bando; compartir etiqueta ⇒ 409 con la
+ *    salida explícita («usa team_deathmatch»), la misma regla que aplica el motor
+ *    (DeathmatchMode, ERR-ENG-07) pero ANTES de encolar.
+ */
+export function assertTeamComposition(mode: string, participants: { team: string }[]): void {
+  const byTeam = new Map<string, number>();
+  for (const p of participants) byTeam.set(p.team, (byTeam.get(p.team) ?? 0) + 1);
+  if (TEAM_BATTLE_MODES.includes(mode)) {
+    if (byTeam.size !== 2) {
+      throw new ApiError(
+        400,
+        "team_composition_invalid",
+        `${mode} exige exactamente 2 bandos con al menos 1 participante cada uno; recibidos ${byTeam.size}`,
+      );
+    }
+    for (const [team, n] of byTeam) {
+      if (n > MAX_PARTICIPANTS_PER_TEAM) {
+        throw new ApiError(
+          400,
+          "team_too_large",
+          `el bando ${team} tiene ${n} participantes; máximo ${MAX_PARTICIPANTS_PER_TEAM} por bando`,
+        );
+      }
+    }
+    return;
+  }
+  if (mode === "deathmatch") {
+    const shared = [...byTeam].filter(([, n]) => n > 1).map(([t]) => t);
+    if (shared.length > 0) {
+      throw conflict(
+        "deathmatch_shared_team",
+        `deathmatch exige que cada participante tenga su propio bando; compartidos: ${shared.join(", ")}. ` +
+          `Para jugar por equipos usa team_deathmatch`,
+        { teams: shared },
+      );
+    }
+  }
+}
+
 /**
  * R2.6 (ERR-SEC-16): base del WebSocket de espectador. En producción es
  * OBLIGATORIO configurar SPECTATE_WS_URL con esquema wss:// (el ticket viaja
@@ -563,6 +611,13 @@ export function battleRoutes(
       if (seen.has(p.botId)) throw badRequest("participants: un bot solo puede aparecer una vez por batalla");
       seen.add(p.botId);
     }
+
+    // 4v4 · COMPOSICIÓN por bando, antes de tocar bots o cola. Sin esto, una
+    // combinación que el motor rechaza (DM con bandos compartidos) se encolaba y
+    // acababa en `engine_start_failure`, que el worker reintenta como si fuera un
+    // fallo de infraestructura. No depende de ningún dato privado: se puede
+    // responder antes de la comprobación de visibilidad sin filtrar nada.
+    assertTeamComposition(mode, participants);
 
     // TD-005 · PROPIEDAD/VISIBILIDAD: sólo se puede meter en una batalla un bot
     // propio, público o de un equipo del que el solicitante es miembro (los

@@ -17,7 +17,8 @@ sistema, ver [../technical/index.md](../technical/index.md) y
 | [ADR-016](ADR-016-identidad-de-build.md) | Identidad de build: procedencia de imagen observable | aceptado | 9 de 12 imágenes de la instalación de referencia no la cumplen ([TD-006](../roadmap/technical-debt.md#td-006)) |
 | [ADR-017](ADR-017-contrato-de-release.md) | Contrato de release: BUILD y DEPLOY son fases distintas | aceptado | procedimiento en [../operations/upgrades.md](../operations/upgrades.md) |
 | [ADR-018](ADR-018-semantica-del-scan.md) | Semántica del scan: cinco estados | aceptado | aplicado por `infrastructure/scripts/scan-gate.mjs` |
-| [ADR-019](ADR-019-perimetro-y-version-del-motor.md) | Perímetro de la arena: el motor pasa a 0.2.0 | aceptado | vigente: `apps/arena-engine/src/engine-deps.json` |
+| [ADR-019](ADR-019-perimetro-y-version-del-motor.md) | Perímetro de la arena: el motor pasa a 0.2.0 | aceptado | sustituido en la versión por ADR-020; la regla de versión sigue vigente |
+| [ADR-020](ADR-020-spawns-4v4-y-version-del-motor.md) | Spawns seguros para 4v4: el motor pasa a 0.3.0 | aceptado | vigente: `apps/arena-engine/src/engine-deps.json` |
 | [ADR-E7-001](ADR-E7-001-migraciones-knex.md) | Migraciones con Knex (programático) | aceptado | vigente: `apps/api/src/db/migrations.ts` |
 | [ADR-E7-002](ADR-E7-002-postgres-embebido-en-tests.md) | PostgreSQL embebido en tests | aceptado | vigente ([../development/testing.md](../development/testing.md)) |
 | [ADR-E7-003](ADR-E7-003-panel-react-vite.md) | Panel web: React + Vite | aceptado | vigente |

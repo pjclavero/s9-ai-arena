@@ -111,12 +111,213 @@ abstract class BaseMode implements GameMode {
   }
 
   spawnFor(v: Vehicle, ctx: ModeContext): Vec2 {
-    const own = ctx.map.spawns.filter((s) => s.team === v.team);
-    const pool = own.length > 0 ? own : ctx.map.spawns;
-    // Determinista: el índice depende del id del vehículo, no de aleatoriedad.
-    const idx = hashId(v.id) % pool.length;
-    return { ...pool[idx].position };
+    // 4v4 (motor 0.3.0) · El grupo de spawns sale de resolveSpawnGroups: un bando cuya
+    // etiqueta no está en el mapa (torneos A/B) recibe un grupo propio y estable, en
+    // vez de compartir TODO el pool con el rival.
+    const teams = [...new Set(ctx.vehicles.map((o) => o.team))].sort();
+    const pool = spawnPoolFor(v.team, teams, ctx.map);
+    // Determinista: el índice de partida depende del id del vehículo, no de
+    // aleatoriedad. Es el mismo punto que antes del 0.3.0 cuando está libre.
+    const start = hashId(v.id) % pool.length;
+    // Ocupación: todo vehículo con cuerpo en la física salvo él mismo. Los restos de
+    // un vehículo destruido SIGUEN siendo un collider hasta que reaparece, así que se
+    // evitan igual que un vehículo vivo (reaparecer encima es el mismo solape).
+    const occupied: SpawnDisk[] = [];
+    for (const o of ctx.vehicles) {
+      if (o.id === v.id) continue;
+      const p = ctx.poses.get(o.id);
+      if (p) occupied.push({ position: p.position, radiusM: o.spec.radiusM });
+    }
+    const radiusMaxM = Math.max(v.spec.radiusM, ...ctx.vehicles.map((o) => o.spec.radiusM));
+    const chosen = chooseSpawn({
+      pool,
+      startIndex: start,
+      radiusM: v.spec.radiusM,
+      radiusMaxM,
+      occupied,
+      reserved: [],
+      map: ctx.map,
+    });
+    return { ...(chosen ?? pool[start]).position };
   }
+}
+
+// ------------------------------------------------- colocación de spawns (4v4)
+//
+// Los mapas publicados traen POCOS spawns por bando (mvp-arena-01: 2). Antes del
+// motor 0.3.0 el reparto era cíclico (`pool[idx % pool.length]`), así que con 4 por
+// lado nacían pares EXACTAMENTE superpuestos y Rapier tardaba ~30 ticks en separarlos
+// a empujones; y un bando cuya etiqueta no estaba en el mapa (A/B) usaba el pool
+// completo, con lo que A y B nacían uno encima del otro en spawns[0].
+//
+// Regla nueva, sin tocar los mapas:
+//   1. Los spawns del mapa se usan primero y en su orden: 1v1 y 2v2 red/blue nacen
+//      exactamente donde nacían.
+//   2. Si están todos ocupados, se generan POSICIONES AUXILIARES alrededor de cada
+//      spawn base: una rejilla orientada con el heading del spawn, sólo hacia los
+//      lados y hacia atrás (nunca hacia delante: un auxiliar no nace más cerca del
+//      rival que el spawn base), con paso 2·radioMáx + margen.
+//   3. Un auxiliar se acepta sólo si cae dentro del mapa, lejos de muros,
+//      destructibles y zonas de daño, y no solapa a ningún vehículo ya colocado ni a
+//      un spawn del mapa aún libre (que queda reservado para quien le toque).
+// Todo es aritmética sobre datos ordenados: determinista, sin RNG.
+
+/** Holgura (m) entre dos vehículos, o entre un vehículo y un obstáculo, al nacer. */
+export const SPAWN_MARGIN_M = 1;
+/** Anillos de la rejilla auxiliar alrededor de cada spawn base. */
+export const SPAWN_AUX_MAX_RING = 4;
+/** Tolerancia de coma flotante: un hueco de exactamente `margen` cuenta como libre. */
+const SPAWN_EPS_M = 1e-6;
+
+export interface SpawnPoint {
+  position: Vec2;
+  heading: number;
+}
+export interface SpawnDisk {
+  position: Vec2;
+  radiusM: number;
+}
+
+/** Etiquetas de grupo de spawns del mapa, en orden de primera aparición. */
+export function spawnGroupsOf(map: Pick<ArenaMap, "spawns">): string[] {
+  const out: string[] = [];
+  for (const s of map.spawns) if (!out.includes(s.team)) out.push(s.team);
+  return out;
+}
+
+/**
+ * Bando → grupo de spawns del mapa. Un bando con etiqueta del mapa usa la suya. Los
+ * bandos desconocidos (en el orden dado, que el motor pasa ORDENADO) se reparten
+ * cíclicamente entre los grupos que ningún bando conocido reclama; si todos están
+ * reclamados, entre todos. Así A/B sobre un mapa red/blue da A→red, B→blue.
+ */
+export function resolveSpawnGroups(teams: readonly string[], map: Pick<ArenaMap, "spawns">): Map<string, string> {
+  const groups = spawnGroupsOf(map);
+  const out = new Map<string, string>();
+  const unknown: string[] = [];
+  for (const t of teams) {
+    if (groups.includes(t)) out.set(t, t);
+    else unknown.push(t);
+  }
+  const claimed = new Set(out.values());
+  let free = groups.filter((g) => !claimed.has(g));
+  if (free.length === 0) free = groups;
+  unknown.forEach((t, i) => {
+    if (free.length > 0) out.set(t, free[i % free.length]);
+  });
+  return out;
+}
+
+/** Spawns del mapa que le tocan a un bando (su grupo, en orden de mapa). */
+export function spawnPoolFor(team: string, teams: readonly string[], map: Pick<ArenaMap, "spawns">): SpawnPoint[] {
+  if (map.spawns.length === 0) throw new Error("el mapa no declara spawns");
+  const group = resolveSpawnGroups(teams.includes(team) ? teams : [...teams, team].sort(), map).get(team);
+  const pool = map.spawns.filter((s) => s.team === group);
+  return (pool.length > 0 ? pool : map.spawns).map((s) => ({ position: s.position, heading: s.heading }));
+}
+
+/**
+ * Rejilla auxiliar en el marco del spawn: `b` filas hacia atrás, `j` columnas a los
+ * lados. Orden: anillo (Chebyshev) creciente, luego fila, luego |columna|, izquierda
+ * antes que derecha; y dentro de cada posición de la rejilla, los spawns base en su
+ * orden. Nunca hay filas hacia delante.
+ */
+export function auxSpawnCandidates(
+  pool: readonly SpawnPoint[],
+  stepM: number,
+  maxRing = SPAWN_AUX_MAX_RING,
+): SpawnPoint[] {
+  const out: SpawnPoint[] = [];
+  for (let k = 1; k <= maxRing; k++) {
+    const offsets: [number, number][] = [];
+    for (let b = 0; b <= k; b++) {
+      const cols = b === k ? range(-k, k) : [-k, k];
+      cols.sort((x, y) => Math.abs(x) - Math.abs(y) || x - y);
+      for (const j of cols) offsets.push([b, j]);
+    }
+    for (const [b, j] of offsets) {
+      for (const s of pool) {
+        const fx = Math.cos(s.heading);
+        const fy = Math.sin(s.heading);
+        // lateral = forward girado +90°
+        const lx = -fy;
+        const ly = fx;
+        out.push({
+          position: {
+            x: s.position.x - b * stepM * fx + j * stepM * lx,
+            y: s.position.y - b * stepM * fy + j * stepM * ly,
+          },
+          heading: s.heading,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+function range(a: number, b: number): number[] {
+  const r: number[] = [];
+  for (let i = a; i <= b; i++) r.push(i);
+  return r;
+}
+
+/** Distancia de un punto a un rectángulo orientado (0 si está dentro). */
+function distToBox(p: Vec2, c: Vec2, halfW: number, halfH: number, rotation: number): number {
+  const dx = p.x - c.x;
+  const dy = p.y - c.y;
+  const cr = Math.cos(-rotation);
+  const sr = Math.sin(-rotation);
+  const lx = dx * cr - dy * sr;
+  const ly = dx * sr + dy * cr;
+  return Math.hypot(Math.max(Math.abs(lx) - halfW, 0), Math.max(Math.abs(ly) - halfH, 0));
+}
+
+/** ¿Un disco de radio r en p cabe en el mapa sin tocar muros, cajas ni zonas de daño? */
+export function isClearOfMap(p: Vec2, radiusM: number, map: ArenaMap, marginM = SPAWN_MARGIN_M): boolean {
+  const need = radiusM + marginM - SPAWN_EPS_M;
+  if (p.x < need || p.y < need || p.x > map.widthM - need || p.y > map.heightM - need) return false;
+  for (const w of map.walls) if (distToBox(p, w.position, w.halfW, w.halfH, w.rotation ?? 0) < need) return false;
+  for (const d of map.destructibles) if (distToBox(p, d.position, d.halfW, d.halfH, 0) < need) return false;
+  for (const z of map.zones) {
+    if (z.kind !== "damage") continue;
+    if (distance(p, z.position) < z.radiusM + need) return false;
+  }
+  return true;
+}
+
+function overlapsAny(p: Vec2, radiusM: number, disks: readonly SpawnDisk[], marginM = SPAWN_MARGIN_M): boolean {
+  for (const d of disks) if (distance(p, d.position) < radiusM + d.radiusM + marginM - SPAWN_EPS_M) return true;
+  return false;
+}
+
+/**
+ * Elige el punto de aparición: primero los spawns del mapa (desde `startIndex`,
+ * cíclico) que no solapen a nadie; luego los auxiliares válidos. null si no hay
+ * ninguno (el llamante conserva entonces el comportamiento anterior).
+ */
+export function chooseSpawn(opts: {
+  pool: readonly SpawnPoint[];
+  startIndex: number;
+  radiusM: number;
+  radiusMaxM: number;
+  occupied: readonly SpawnDisk[];
+  /** Spawns del mapa aún libres: los auxiliares no los pisan. */
+  reserved: readonly SpawnDisk[];
+  map: ArenaMap;
+}): SpawnPoint | null {
+  const { pool, startIndex, radiusM, radiusMaxM, occupied, reserved, map } = opts;
+  for (let i = 0; i < pool.length; i++) {
+    const s = pool[(startIndex + i) % pool.length];
+    if (!overlapsAny(s.position, radiusM, occupied)) return { position: { ...s.position }, heading: s.heading };
+  }
+  const step = 2 * radiusMaxM + SPAWN_MARGIN_M;
+  for (const c of auxSpawnCandidates(pool, step)) {
+    if (!isClearOfMap(c.position, radiusM, map)) continue;
+    if (overlapsAny(c.position, radiusM, occupied)) continue;
+    if (overlapsAny(c.position, radiusM, reserved)) continue;
+    return c;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------- deathmatch
