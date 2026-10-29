@@ -164,6 +164,16 @@ describe("presets 1v1", () => {
     );
   });
 
+  it("clásico con presupuesto de BD distinto del defecto: la copia lleva el de la BD (como el worker)", async () => {
+    await h.db("rulesets").where({ id: "deathmatch-mvp" }).update({ budget_credits: 800 });
+    try {
+      const { rules } = await accepted(duel(undefined));
+      expect(rules.engineRuleset.budgetCredits).toBe(800);
+    } finally {
+      await h.db("rulesets").where({ id: "deathmatch-mvp" }).update({ budget_credits: 1000 });
+    }
+  });
+
   it("un preset de equipos en 1v1 ⇒ 400 rules_invalid", async () => {
     await rejected(duel({ preset: "team_deathmatch", teamSize: 1 }), 400, "rules_invalid");
   });
