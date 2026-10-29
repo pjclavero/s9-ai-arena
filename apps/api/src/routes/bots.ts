@@ -12,6 +12,7 @@ import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
 import { ROLE_RANK } from "../openapi.js";
 import {
   applyTransition,
+  assertLoadoutRevisionUsable,
   assertOwner,
   canSeeBot,
   createLoadoutRevision,
@@ -296,7 +297,11 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     // El validador de E3 corre SIEMPRE en servidor (DoD T7.3/T7.4).
     const result = await validateLoadoutServerSide(db, req.body);
     if (result.violations.length > 0) {
-      res.status(422).json({ error: "loadout_invalid", violations: result.violations });
+      res.status(422).json({
+        error: "loadout_invalid",
+        message: result.violations.map((v) => v.message).join(" "),
+        violations: result.violations,
+      });
       return;
     }
     const loadout = await createLoadoutRevision(db, bot.id as string, req.body, result.summary!);
@@ -369,6 +374,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
       const rev = Number(loadoutRevision);
       const loadout = await db("bot_loadouts").where({ bot_id: bot.id, revision: rev }).first();
       if (!loadout) throw badRequest(`loadoutRevision ${loadoutRevision} no existe para este bot`);
+      await assertLoadoutRevisionUsable(db, bot.id as string, rev);
 
       // A9.13 · «nueva versión desde X»: la versión de partida queda registrada.
       let parentVersion: number | null = null;
@@ -502,6 +508,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
         const loadout = await db("bot_loadouts").where({ bot_id: bot.id, revision: rev }).first();
         if (!loadout) throw badRequest(`loadoutRevision ${req.body.loadoutRevision} no existe para este bot`);
       }
+      await assertLoadoutRevisionUsable(db, bot.id as string, rev);
       const version = await insertNextVersion(db, bot.id as string, {
         runtime: src.runtime,
         loadout_revision: rev,
@@ -522,6 +529,8 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
       const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
       assertOwner(req.auth, bot);
       const v = await getVersionOr404(db, bot.id as string, pathParam(req, "version"));
+      // Un loadout que hoy no valida no llega al pipeline (build, protocol_test, smoke…).
+      await assertLoadoutRevisionUsable(db, bot.id as string, v.loadout_revision as number);
       // B11 · `submit` viene de draft O de rejected (cap. 17.1). Al reenviar una
       // versión rechazada el motivo del rechazo ANTERIOR se quedaba en la fila
       // (solo se limpiaba al pasar a `validated`): quedaba una versión
@@ -556,6 +565,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
     assertOwner(req.auth, bot);
     const v = await getVersionOr404(db, bot.id as string, pathParam(req, "version"));
+    await assertLoadoutRevisionUsable(db, bot.id as string, v.loadout_revision as number);
     const codePublic = req.body?.codePublic === true;
     const updated = await applyTransition(
       db,

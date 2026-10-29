@@ -3,7 +3,7 @@
  * revisiones de loadout validadas SIEMPRE en servidor con el validador de E3.
  */
 import type { Db } from "../db/connection.js";
-import { conflict, forbidden, notFound } from "../errors.js";
+import { ApiError, conflict, forbidden, notFound } from "../errors.js";
 import { ROLE_RANK } from "../openapi.js";
 import { audit } from "../audit.js";
 // Validador y resolutor REALES de E3 (T3.2/T3.3): importados, no reescritos.
@@ -174,6 +174,31 @@ export async function validateLoadoutServerSide(
     summary: { massKg: spec.massKg, costCredits, energyBalanceEUs: generation - passive },
     catalog,
   };
+}
+
+/**
+ * Una revisión de loadout guardada es INMUTABLE y se conserva tal cual, aunque hoy el
+ * validador la rechazase (p. ej. un cañón con munición estándar de antes del fix de
+ * munición). Lo que no se permite es construir con ella una versión NUEVA, ni enviarla a
+ * build ni publicarla: se revalida con el mismo validador del servidor y, si ya no pasa,
+ * 422 con las violaciones. Las versiones ya publicadas no se tocan.
+ */
+export async function assertLoadoutRevisionUsable(db: Db, botId: string, revision: number): Promise<void> {
+  const row = await db("bot_loadouts").where({ bot_id: botId, revision }).first();
+  if (!row) return; // el llamador ya responde 400 por revisión inexistente
+  const modules = typeof row.modules === "string" ? JSON.parse(row.modules) : row.modules;
+  const { violations } = await validateLoadoutServerSide(db, {
+    catalogVersion: row.catalog_version,
+    chassis: row.chassis,
+    modules,
+  });
+  if (violations.length === 0) return;
+  throw new ApiError(
+    422,
+    "loadout_invalid",
+    `La revisión ${revision} del loadout ya no es válida: ${violations.map((v) => v.message).join(" ")} Guarda una revisión corregida y úsala.`,
+    { violations },
+  );
 }
 
 /** Crea una revisión nueva (nunca modifica las anteriores, cap. 17.2). */

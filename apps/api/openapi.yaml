@@ -480,6 +480,7 @@ paths:
       responses:
         '201': { description: Versión creada, content: { application/json: { schema: { $ref: '#/components/schemas/BotVersion' } } } }
         '413': { description: Código demasiado grande, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { $ref: '#/components/responses/LoadoutInvalid' }
 
   /bots/{botId}/versions/{version}/source:
     get:
@@ -596,6 +597,7 @@ paths:
         '201': { description: Versión creada, content: { application/json: { schema: { $ref: '#/components/schemas/BotVersion' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/LoadoutInvalid' }
 
   # -------- Transiciones de estado del capítulo 17.1 (acciones explícitas)
   /bots/{botId}/versions/{version}/actions/submit:
@@ -608,6 +610,7 @@ paths:
       responses:
         '202': { description: Pipeline encolado, content: { application/json: { schema: { $ref: '#/components/schemas/Build' } } } }
         '409': { $ref: '#/components/responses/IllegalTransition' }
+        '422': { $ref: '#/components/responses/LoadoutInvalid' }
 
   /bots/{botId}/versions/{version}/actions/publish:
     post:
@@ -626,6 +629,7 @@ paths:
       responses:
         '200': { description: Publicada, content: { application/json: { schema: { $ref: '#/components/schemas/BotVersion' } } } }
         '409': { $ref: '#/components/responses/IllegalTransition' }
+        '422': { $ref: '#/components/responses/LoadoutInvalid' }
 
   /bots/{botId}/versions/{version}/actions/suspend:
     post:
@@ -1500,6 +1504,7 @@ components:
             type: object
             properties:
               error: { type: string, const: loadout_invalid }
+              message: { type: string, description: 'Resumen legible de las violaciones (para pintarlo tal cual en la UI)' }
               violations:
                 type: array
                 items:
@@ -1511,6 +1516,8 @@ components:
                     moduleId: { type: string }
                     slot: { type: string }
                     message: { type: string }
+                    ammoId: { type: string, description: 'incompatible_ammo · munición (versionada) que no encaja, si la hay' }
+                    acceptedAmmo: { type: array, items: { type: string }, description: 'incompatible_ammo · tipos base de munición que admite el arma' }
     MapInvalid:
       description: 'El mapa no supera el validador (cap. 14.3). Nunca llega a publicarse.'
       content:
