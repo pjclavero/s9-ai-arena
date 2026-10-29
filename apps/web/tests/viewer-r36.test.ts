@@ -7,8 +7,9 @@
  *  - el VIEWMODEL del HUD derivado del snapshot conocido (marcador, vida,
  *    objetivos, kill feed, fin de partida) — funciones puras contra un snapshot
  *    real guionizado;
- *  - la construcción del MINIMAPA: UNA sola cámara adicional (setViewport +
- *    ignore()) SIN duplicar entidades, verificable por su configuración;
+ *  - el MINIMAPA (UX-VIEW: ya no es una segunda cámara dentro del canvas sino
+ *    un panel FUERA del escenario): su geometría pura y que ningún bot quede
+ *    invisible;
  *  - el registro del FIN DE PARTIDA en el overlay, que alimenta tanto el HUD como
  *    el rótulo que PhaserViewer dibuja sobre el canvas.
  *
@@ -19,14 +20,18 @@ import { describe, expect, it } from "vitest";
 import { OverlayState } from "../src/viewer/overlay.js";
 import { buildHudModel } from "../src/viewer/hud-model.js";
 import {
-  computeMinimapViewport,
-  computeMinimapZoom,
-  worldCenterPx,
-  MinimapController,
-  MINIMAP_CAMERA_NAME,
-  type MinimapSceneLike,
-  type MinimapCameraLike,
+  computeMinimapLayout,
+  minimapBoxHeight,
+  minimapDots,
+  minimapToWorld,
+  minimapViewRect,
+  minimapWidthFor,
+  rectsOverlap,
+  worldToMinimap,
+  MIN_DOT_RADIUS_PX,
 } from "../src/viewer/minimap.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 // Snapshot CTF conocido: 2 equipos, casco/módulos variados, banderas y una zona.
 function ctfOverlay(): OverlayState {
@@ -184,141 +189,121 @@ describe("fin de partida: el overlay lo registra y el HUD lo anuncia", () => {
   });
 });
 
-// ───────────────────────────── minimapa (una sola cámara) ─────────────────────
+// ─────────────────── minimapa FUERA del escenario (UX-VIEW sustituye a R3.6) ───────────
+//
+// R3.6 fijaba aquí un minimapa como SEGUNDA cámara de Phaser dentro del canvas
+// (160 px, x=12, y=640−160−12, «exactamente una cámara»). UX-VIEW lo saca del área
+// del mapa a un panel propio (MinimapPanel): tapaba el mapa y un bot podía quedar
+// invisible debajo. Estos casos son su EQUIVALENTE: la geometría pura que dibuja
+// el panel (encaje del mapa, puntos, rectángulo de vista, pulsar para centrar) y la
+// garantía de que el escenario ya no lleva ninguna cámara de minimapa.
 
-/** Cámara de mentira que registra su configuración para poder auditarla. */
-class FakeCamera implements MinimapCameraLike {
-  name = "";
-  viewport: [number, number, number, number] | null = null;
-  zoom = 1;
-  center: [number, number] | null = null;
-  background: number | string | null = null;
-  round = false;
-  ignored: unknown[] = [];
-  setName(n: string) {
-    this.name = n;
-    return this;
-  }
-  setViewport(x: number, y: number, w: number, h: number) {
-    this.viewport = [x, y, w, h];
-    return this;
-  }
-  setZoom(z: number) {
-    this.zoom = z;
-    return this;
-  }
-  centerOn(x: number, y: number) {
-    this.center = [x, y];
-    return this;
-  }
-  setBackgroundColor(c: number | string) {
-    this.background = c;
-    return this;
-  }
-  setRoundPixels(r: boolean) {
-    this.round = r;
-    return this;
-  }
-  ignore(obj: unknown) {
-    this.ignored.push(obj);
-    return this;
-  }
-}
-
-/** Escena de mentira que cuenta cuántas cámaras se AÑADEN. */
-class FakeScene implements MinimapSceneLike {
-  added: FakeCamera[] = [];
-  cameras = {
-    add: (_x: number, _y: number, _w: number, _h: number, makeMain?: boolean, name?: string): MinimapCameraLike => {
-      const cam = new FakeCamera();
-      cam.name = name ?? "";
-      // El minimapa jamás debe pedir ser la cámara principal.
-      expect(makeMain).toBe(false);
-      this.added.push(cam);
-      return cam;
-    },
-  };
-}
-
-describe("minimapa: geometría pura (viewport + zoom que encuadra el mapa)", () => {
-  it("viewport cuadrado anclado a la esquina con margen y acotado", () => {
-    const p = computeMinimapViewport(960, 640, { pxPerM: 8, corner: "bottom-left", marginPx: 12, sizeFraction: 0.25 });
-    expect(p.width).toBe(p.height); // cuadrado
-    expect(p.width).toBe(160); // 640*0.25
-    expect(p.x).toBe(12); // pegado a la izquierda
-    expect(p.y).toBe(640 - 160 - 12); // pegado abajo
+describe("minimapa: encaje del mapa entero en su caja (sin deformar)", () => {
+  it("el mapa 120×80 cabe con margen, centrado y con la MISMA escala en los dos ejes", () => {
+    const l = computeMinimapLayout({ widthM: 120, heightM: 80 }, 240, 168, 6);
+    expect(l.mapW / 120).toBeCloseTo(l.mapH / 80, 9); // uniforme: no deforma
+    expect(l.mapW).toBeLessThanOrEqual(240 - 12 + 1e-9);
+    expect(l.mapH).toBeLessThanOrEqual(168 - 12 + 1e-9);
+    expect(l.offsetX).toBeCloseTo((240 - l.mapW) / 2, 9);
+    expect(l.offsetY).toBeCloseTo((168 - l.mapH) / 2, 9);
   });
 
-  it("ancla a top-right cuando se pide", () => {
-    const p = computeMinimapViewport(1000, 800, { pxPerM: 8, corner: "top-right", marginPx: 10, sizeFraction: 0.2 });
-    expect(p.x).toBe(1000 - p.width - 10);
-    expect(p.y).toBe(10);
+  it("el alto de la caja sigue la proporción del mapa (acotado)", () => {
+    expect(minimapBoxHeight({ widthM: 120, heightM: 80 }, 240)).toBe(Math.round((240 - 12) * (80 / 120) + 12));
+    expect(minimapBoxHeight({ widthM: 10, heightM: 1000 }, 200)).toBe(300); // tope 1.5× el ancho
   });
 
-  it("el zoom hace CABER el mapa entero en el viewport", () => {
-    const placement = { x: 0, y: 0, width: 160, height: 160 };
-    // Mundo 120×80 m a 8 px/m = 960×640 px de escena.
-    const zoom = computeMinimapZoom(placement, { widthM: 120, heightM: 80 }, 8, 0);
-    // El lado limitante es el ancho (960 px): 160/960.
-    expect(zoom).toBeCloseTo(160 / 960, 6);
-    // A ese zoom el mapa cabe: 960*zoom ≤ 160 y 640*zoom ≤ 160.
-    expect(960 * zoom).toBeLessThanOrEqual(160 + 1e-9);
-    expect(640 * zoom).toBeLessThanOrEqual(160 + 1e-9);
-  });
-
-  it("centra en el centro del mundo en píxeles de escena", () => {
-    expect(worldCenterPx({ widthM: 120, heightM: 80 }, 8)).toEqual({ x: 480, y: 320 });
+  it("pulsar el minimapa da el punto del mundo, recortado a los límites", () => {
+    const world = { widthM: 120, heightM: 80 };
+    const l = computeMinimapLayout(world, 240, 168, 6);
+    const p = worldToMinimap(l, 30, 20);
+    const back = minimapToWorld(l, world, p.x, p.y);
+    expect(back.x).toBeCloseTo(30, 6);
+    expect(back.y).toBeCloseTo(20, 6);
+    expect(minimapToWorld(l, world, -50, 9999)).toEqual({ x: 0, y: 80 });
   });
 });
 
-describe("MinimapController: UNA sola cámara adicional, sin duplicar entidades", () => {
-  it("añade EXACTAMENTE una cámara, nombrada, y NO como principal", () => {
-    const scene = new FakeScene();
-    new MinimapController(scene, { world: { widthM: 120, heightM: 80 }, pxPerM: 8 });
-    expect(scene.added.length).toBe(1);
-    expect(scene.added[0].name).toBe(MINIMAP_CAMERA_NAME);
+describe("minimapa: ningún bot invisible", () => {
+  const world = { widthM: 120, heightM: 80 };
+  const l = computeMinimapLayout(world, 160, 112, 6);
+
+  it("8 vehículos ⇒ 8 puntos con radio mínimo, todos DENTRO del mapa dibujado", () => {
+    const vs = Array.from({ length: 8 }, (_, i) => ({
+      id: `v${i}`,
+      x: i === 0 ? 0 : i === 1 ? 120 : 15 * i,
+      y: i === 0 ? 0 : i === 1 ? 80 : 10 * i,
+      alive: i !== 3,
+      team: i < 4 ? "red" : "blue",
+    }));
+    const dots = minimapDots(vs, l, null);
+    expect(dots).toHaveLength(8);
+    for (const d of dots) {
+      expect(d.r).toBeGreaterThanOrEqual(MIN_DOT_RADIUS_PX);
+      expect(d.x - d.r).toBeGreaterThanOrEqual(l.offsetX - 1e-9);
+      expect(d.x + d.r).toBeLessThanOrEqual(l.offsetX + l.mapW + 1e-9);
+      expect(d.y - d.r).toBeGreaterThanOrEqual(l.offsetY - 1e-9);
+      expect(d.y + d.r).toBeLessThanOrEqual(l.offsetY + l.mapH + 1e-9);
+    }
+    // El destruido sigue dibujado (hueco con aspa), no desaparece.
+    expect(dots.find((d) => d.id === "v3")!.alive).toBe(false);
   });
 
-  it("ignora SOLO las capas de detalle; las entidades del mundo NO se ignoran", () => {
-    const scene = new FakeScene();
-    const decals = { kind: "decals" };
-    const debug = { kind: "debug" };
-    // Entidades del mundo que DEBEN verse en el minimapa (compartidas, no duplicadas):
-    const vehicle = { kind: "vehicle" };
-    const objective = { kind: "objective" };
-    const ctrl = new MinimapController(scene, {
-      world: { widthM: 120, heightM: 80 },
-      pxPerM: 8,
-      ignore: [decals, debug],
-    });
-    expect(ctrl.camera).toBe(scene.added[0]);
-    expect(scene.added[0].ignored).toContain(decals);
-    expect(scene.added[0].ignored).toContain(debug);
-    // La clave del DoD: las entidades del mundo NO se ignoran ⇒ se ven en ambas
-    // cámaras SIN crear una segunda copia.
-    expect(scene.added[0].ignored).not.toContain(vehicle);
-    expect(scene.added[0].ignored).not.toContain(objective);
+  it("el seleccionado es más grande y se pinta el ÚLTIMO (encima de los demás)", () => {
+    const dots = minimapDots(
+      [
+        { id: "a", x: 10, y: 10, alive: true },
+        { id: "b", x: 10, y: 10, alive: true },
+      ],
+      l,
+      "a",
+    );
+    expect(dots.at(-1)!.id).toBe("a");
+    expect(dots.at(-1)!.r).toBeGreaterThan(dots[0].r);
   });
 
-  it("layout() coloca el viewport, ajusta el zoom y centra en el mapa", () => {
-    const scene = new FakeScene();
-    const ctrl = new MinimapController(scene, {
-      world: { widthM: 120, heightM: 80 },
-      pxPerM: 8,
-      layout: { corner: "bottom-left" },
-    });
-    const placement = ctrl.layout(960, 640);
-    const cam = scene.added[0];
-    expect(cam.viewport).toEqual([placement.x, placement.y, placement.width, placement.height]);
-    expect(cam.zoom).toBeGreaterThan(0);
-    expect(cam.center).toEqual([480, 320]); // centro del mundo en px
+  it("el minimapa del panel y el escenario no se solapan (rectsOverlap)", () => {
+    const stage = { x: 0, y: 100, width: 1500, height: 800 };
+    expect(rectsOverlap(stage, { x: 1512, y: 100, width: 300, height: 210 })).toBe(false);
+    expect(rectsOverlap(stage, { x: 12, y: 628, width: 160, height: 160 })).toBe(true); // el de R3.6
+  });
+});
+
+describe("minimapa: rectángulo de la cámara principal", () => {
+  const world = { widthM: 120, heightM: 80 };
+  const l = computeMinimapLayout(world, 240, 168, 6);
+
+  it("vista completa ⇒ el rectángulo cubre el mapa dibujado entero", () => {
+    const r = minimapViewRect(l, { centerX: 60, centerY: 40, zoom: 4, viewportW: 960, viewportH: 640 })!;
+    expect(r.x).toBeCloseTo(l.offsetX, 6);
+    expect(r.y).toBeCloseTo(l.offsetY, 6);
+    expect(r.w).toBeCloseTo(l.mapW, 6);
+    expect(r.h).toBeCloseTo(l.mapH, 6);
   });
 
-  it("setWorld reencuadra al nuevo mapa sin añadir más cámaras", () => {
-    const scene = new FakeScene();
-    const ctrl = new MinimapController(scene, { world: { widthM: 120, heightM: 80 }, pxPerM: 8 });
-    ctrl.setWorld({ widthM: 200, heightM: 200 }, 960, 640);
-    expect(scene.added.length).toBe(1); // sigue habiendo una sola cámara
-    expect(scene.added[0].center).toEqual([800, 800]); // nuevo centro (200/2*8)
+  it("con zoom el rectángulo encoge en proporción y se centra en la cámara", () => {
+    // zoom 16 px/m en 960×640 ⇒ 60×40 m visibles alrededor de (30, 20).
+    const r = minimapViewRect(l, { centerX: 30, centerY: 20, zoom: 16, viewportW: 960, viewportH: 640 })!;
+    expect(r.w).toBeCloseTo(60 * l.scale, 6);
+    expect(r.h).toBeCloseTo(40 * l.scale, 6);
+    expect(r.x).toBeCloseTo(l.offsetX, 6);
+    expect(r.y).toBeCloseTo(l.offsetY, 6);
+  });
+
+  it("tamaños S/M/L acotados al hueco disponible", () => {
+    expect(minimapWidthFor("s", 999)).toBe(160);
+    expect(minimapWidthFor("m", 999)).toBe(240);
+    expect(minimapWidthFor("l", 999)).toBe(320);
+    expect(minimapWidthFor("l", 200)).toBe(200);
+  });
+});
+
+describe("el escenario ya NO lleva una cámara de minimapa dentro del canvas", () => {
+  const src = readFileSync(fileURLToPath(new URL("../src/viewer/PhaserViewer.ts", import.meta.url)), "utf8");
+  it("PhaserViewer no añade cámaras (cameras.add) ni importa el controlador antiguo", () => {
+    expect(src).not.toMatch(/cameras\.add\(/);
+    expect(src).not.toMatch(/MinimapController/);
+    // Y expone el estado que dibuja el panel externo.
+    expect(src).toMatch(/minimapState\(\): MinimapState/);
   });
 });

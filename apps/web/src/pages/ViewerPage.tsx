@@ -14,7 +14,6 @@ import {
   rosterTeams,
   sideText,
   sortTeams,
-  vehicleLabel,
   type ViewerRoster,
 } from "../viewer/art-direction.js";
 import { RosterList } from "../viewer/RosterList.js";
@@ -22,6 +21,18 @@ import { buildHudModel } from "../viewer/hud-model.js";
 import { HudOverlay } from "../viewer/HudOverlay.js";
 import type { ViewerScene } from "../viewer/PhaserViewer.js";
 import type { CameraMode } from "../viewer/camera.js";
+import { MinimapPanel } from "../viewer/MinimapPanel.js";
+import {
+  BotSelector,
+  CameraBar,
+  TagPrefsControl,
+  TheaterGrid,
+  TheaterStyles,
+  useFitStageHeight,
+  useViewStatus,
+  useWideMain,
+} from "../viewer/theater.js";
+import { DEFAULT_TAG_PREFS, type TagPrefs } from "../viewer/vehicle-tags.js";
 
 /**
  * FC-D (D4) · Estado del visor, en `data-state` para la UI y el E2E:
@@ -67,8 +78,11 @@ export function describeSpectateRejection(r: {
 }
 
 export function ViewerPage({ battleId }: { battleId: string }) {
+  useWideMain();
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<ViewerScene | null>(null);
+  /** UX-VIEW · la escena en estado de React (para suscribirse a su cámara). */
+  const [scene, setScene] = useState<ViewerScene | null>(null);
   const [status, setStatus] = useState("inicializando visor…");
   const [state, setState] = useState<ViewerState>("init");
   const [rejectCode, setRejectCode] = useState<string | undefined>(undefined);
@@ -82,10 +96,12 @@ export function ViewerPage({ battleId }: { battleId: string }) {
   const [roster, setRoster] = useState<ViewerRoster>(() => new Map());
   const [debugAvailable, setDebugAvailable] = useState(false);
   const [debugOn, setDebugOn] = useState(false);
-  const [camera, setCamera] = useState<CameraMode>({ kind: "global" });
+  const [tagPrefs, setTagPrefs] = useState<TagPrefs>(DEFAULT_TAG_PREFS);
   const [overlayTick, setOverlayTick] = useState(0);
   // UX-R · «Batalla Alfa vs Beta» en cuanto la cabecera trae la nómina.
   const [title, setTitle] = useState<string | null>(null);
+  const viewStatus = useViewStatus(scene);
+  useFitStageHeight(hostRef);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -127,7 +143,7 @@ export function ViewerPage({ battleId }: { battleId: string }) {
     void import("../viewer/PhaserViewer.js")
       .then(async ({ createViewerGame, waitForViewerScene }) => {
         if (!alive || !hostRef.current) return;
-        game = createViewerGame(hostRef.current, { targetFps: 60 });
+        game = createViewerGame(hostRef.current, { targetFps: 60, interactive: true });
         // FC-D (D3, TD-009): la escena no existe hasta el READY de Phaser. Antes se
         // pedía aquí con getScene → null → TypeError y el visor se quedaba en
         // «conectando…» sin pedir siquiera el ticket.
@@ -140,6 +156,7 @@ export function ViewerPage({ battleId }: { battleId: string }) {
         }
         if (!alive || rejectedEarly) return; // ya se dijo por qué no hay directo
         sceneRef.current = scene;
+        setScene(scene);
         setState("connecting");
         setStatus("conectando…");
         // R3.2: LiveFeed fecha los snapshots por su tick (eje de partida) y fija el
@@ -216,6 +233,8 @@ export function ViewerPage({ battleId }: { battleId: string }) {
       alive = false;
       client?.stop();
       game?.destroy(true);
+      sceneRef.current = null;
+      setScene(null);
     };
   }, [battleId, attempt]);
 
@@ -223,124 +242,205 @@ export function ViewerPage({ battleId }: { battleId: string }) {
   // ni los controles de cámara: un «0 — 0 · Preparados» contradice la alerta.
   const failed = state === "rejected" || state === "error" || state === "offline";
   const overlay = failed ? undefined : sceneRef.current?.overlay;
+  const vehicles = overlay?.vehicles instanceof Map ? overlay.vehicles : undefined;
   // 4v4 · bandos de la NÓMINA (y, si aún no la hay, de los vehículos del snapshot):
   // nunca red/blue fijos. Con 8 vehículos, 2 bandos de 4.
   const fromRoster = rosterTeams(roster);
   const sides =
-    fromRoster.length > 0
-      ? fromRoster
-      : sortTeams([...(overlay?.vehicles.values() ?? [])].map((v) => v.team).filter(Boolean));
+    fromRoster.length > 0 ? fromRoster : sortTeams([...(vehicles?.values() ?? [])].map((v) => v.team).filter(Boolean));
   // 4v4-FIX · bando EFECTIVO de la niebla: el elegido si sigue existiendo y, si no
   // (p. ej. sin nómina, con los bandos sacados del snapshot), el primero que enseña
   // el desplegable. Antes el desplegable mostraba `sides[0]` y la niebla iba con "".
   const effectiveFogTeam = fogTeam && sides.includes(fogTeam) ? fogTeam : (sides[0] ?? "");
   const sidesKey = sides.join("|");
 
+  // UX-VIEW · Niebla, depuración y etiquetas sí se reaplican (no los toca la entrada
+  // del escenario). El MODO DE CÁMARA ya no: antes este efecto hacía
+  // `scene.cameraMode = camera` en cada tick y pisaba el zoom/pan manual del usuario.
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene) return;
-    scene.cameraMode = camera;
     scene.fog = { allowFogView: allowFog, enabled: fogOn && effectiveFogTeam !== "", team: effectiveFogTeam };
     scene.showDebug = debugOn && debugAvailable;
-  }, [camera, allowFog, fogOn, effectiveFogTeam, sidesKey, debugOn, debugAvailable, overlayTick]);
+    scene.tagPrefs = tagPrefs;
+  }, [allowFog, fogOn, effectiveFogTeam, sidesKey, debugOn, debugAvailable, tagPrefs, overlayTick]);
+
+  /** Cambio de cámara por una acción del usuario: va directo a la escena (fuente de verdad). */
+  const setCamera = (mode: CameraMode) => {
+    const s = sceneRef.current;
+    if (s) s.cameraMode = mode;
+  };
+  const call = (fn: (s: ViewerScene) => void) => () => {
+    const s = sceneRef.current;
+    if (s) fn(s);
+  };
+  const mode = viewStatus?.mode;
 
   return (
-    <section>
-      <h2 data-testid="viewer-title" style={{ overflowWrap: "anywhere" }}>
-        {title ? `Batalla: ${title}` : `Batalla ${battleId}`}
-      </h2>
-      <p
-        data-testid="viewer-status"
-        data-state={state}
-        data-reject-code={rejectCode}
-        role={failed ? "alert" : "status"}
-        className={failed ? "error" : undefined}
-      >
-        {status}
-      </p>
-      {(showReplay || state === "finished") && (
-        <p>
-          <a href={`#/replay/${encodeURIComponent(battleId)}?t=0`} data-testid="viewer-replay-link">
-            Ver el replay de esta batalla
-          </a>
+    <section className="s9v" style={{ ["--s9v-reserve" as string]: "200px" }}>
+      <TheaterStyles />
+      <div className="s9v-head">
+        <h2 data-testid="viewer-title" style={{ overflowWrap: "anywhere" }}>
+          {title ? `Batalla: ${title}` : `Batalla ${battleId}`}
+        </h2>
+        <p
+          data-testid="viewer-status"
+          data-state={state}
+          data-reject-code={rejectCode}
+          role={failed ? "alert" : "status"}
+          className={failed ? "error" : undefined}
+        >
+          {status}
         </p>
-      )}
-      {(state === "offline" || state === "error") && (
-        <button type="button" onClick={() => setAttempt((n) => n + 1)}>
-          Reintentar
-        </button>
-      )}
-      <div hidden={failed} data-testid="viewer-controls">
-        <button onClick={() => setCamera({ kind: "global" })}>Vista global</button>
-        {sides.map((t) => (
-          <button key={t} data-testid="camera-side" onClick={() => setCamera({ kind: "team", team: t })}>
-            Bando {sideText(t)}
+        {(showReplay || state === "finished") && (
+          <p>
+            <a href={`#/replay/${encodeURIComponent(battleId)}?t=0`} data-testid="viewer-replay-link">
+              Ver el replay de esta batalla
+            </a>
+          </p>
+        )}
+        {(state === "offline" || state === "error") && (
+          <button type="button" onClick={() => setAttempt((n) => n + 1)}>
+            Reintentar
           </button>
-        ))}
-        {overlay &&
-          [...overlay.vehicles.keys()].map((id) => (
-            <button key={id} onClick={() => setCamera({ kind: "follow", vehicleId: id })}>
-              Seguir {vehicleLabel(roster, id)}
+        )}
+      </div>
+      <div hidden={failed} data-testid="viewer-controls" className="s9v-bar">
+        <span className="s9v-group" role="group" aria-label="Encuadre">
+          <button aria-pressed={mode?.kind === "global"} onClick={() => setCamera({ kind: "global" })}>
+            Vista global
+          </button>
+          {sides.map((t) => (
+            <button
+              key={t}
+              data-testid="camera-side"
+              aria-pressed={mode?.kind === "team" && mode.team === t}
+              onClick={() => setCamera({ kind: "team", team: t })}
+            >
+              Bando {sideText(t)}
             </button>
           ))}
+        </span>
+        <CameraBar
+          status={viewStatus}
+          roster={roster}
+          disabled={!scene}
+          onZoomIn={call((s) => s.zoomIn())}
+          onZoomOut={call((s) => s.zoomOut())}
+          onFit={call((s) => s.fitMap())}
+          onNative={call((s) => s.zoomNative())}
+          onCenterSelected={call((s) => s.centerSelected())}
+        />
         {allowFog && sides.length > 0 && (
-          <label>
-            <input type="checkbox" checked={fogOn} onChange={(e) => setFogOn(e.target.checked)} />
-            Niebla de guerra (
-            <select
-              aria-label="bando de la niebla"
-              value={effectiveFogTeam}
-              onChange={(e) => setFogTeam(e.target.value)}
-            >
-              {sides.map((t) => (
-                <option key={t} value={t}>
-                  {sideText(t)}
-                </option>
-              ))}
-            </select>
-            )
-          </label>
+          <span className="s9v-group">
+            <label>
+              <input type="checkbox" checked={fogOn} onChange={(e) => setFogOn(e.target.checked)} />
+              Niebla de guerra (
+              <select
+                aria-label="bando de la niebla"
+                value={effectiveFogTeam}
+                onChange={(e) => setFogTeam(e.target.value)}
+              >
+                {sides.map((t) => (
+                  <option key={t} value={t}>
+                    {sideText(t)}
+                  </option>
+                ))}
+              </select>
+              )
+            </label>
+          </span>
         )}
         {debugAvailable && (
-          <label>
-            <input type="checkbox" checked={debugOn} onChange={(e) => setDebugOn(e.target.checked)} />
-            Capas de depuración
-          </label>
+          <span className="s9v-group">
+            <label>
+              <input type="checkbox" checked={debugOn} onChange={(e) => setDebugOn(e.target.checked)} />
+              Capas de depuración
+            </label>
+          </span>
         )}
       </div>
-      <p hidden={failed} style={{ opacity: 0.7, fontSize: 13 }}>
-        Rueda: zoom · arrastre: mover cámara · 1–8: seguir bots · G: vista global
-      </p>
-      {!failed && <RosterList roster={roster} testId="viewer-roster" />}
-      {/* R3.6 · El HUD (marcador, reloj/fase, objetivo, panel de equipos con vida y
-          módulos, kill feed, banderas y zonas) se superpone al canvas. El minimapa
-          y el rótulo de fin de partida los dibuja Phaser dentro del canvas. */}
-      {/* UX-R · El contenedor no deja que el canvas desborde la página en móvil
-          (como el del replay): el canvas sigue su ancho por ResizeObserver. */}
-      <div
-        data-testid="viewer-canvas-host"
-        hidden={failed}
-        style={{ position: "relative", width: "100%", maxWidth: "100%", height: 640, overflow: "hidden" }}
-      >
-        <div ref={hostRef} style={{ position: "absolute", inset: 0 }} />
-        {overlay && <HudOverlay model={buildHudModel(overlay, { roster: sceneRef.current?.rosterView })} />}
+      <div hidden={failed}>
+        <TheaterGrid
+          stage={
+            <>
+              {/* R3.6 · El HUD (marcador, reloj/fase, objetivo y kill feed) se superpone
+                  al canvas, en versión compacta: la vida por bot va en el selector y el
+                  minimapa en el panel lateral, FUERA del escenario (UX-VIEW). */}
+              {/* UX-R · El contenedor no deja que el canvas desborde la página en móvil
+                  (como el del replay): el canvas sigue su ancho por ResizeObserver. */}
+              <div
+                data-testid="viewer-canvas-host"
+                hidden={failed}
+                style={{ position: "relative", width: "100%", maxWidth: "100%", overflow: "hidden" }}
+                className="s9v-stage-wrap"
+              >
+                <div
+                  ref={hostRef}
+                  className="s9v-stage"
+                  data-testid="viewer-stage"
+                  tabIndex={0}
+                  role="application"
+                  aria-roledescription="escenario de la batalla"
+                  aria-label="Escenario de la batalla"
+                  aria-describedby="viewer-help"
+                  data-camera-mode={mode?.kind ?? "global"}
+                  data-zoom-percent={viewStatus?.zoomPercent ?? 0}
+                />
+                {overlay && vehicles && (
+                  <HudOverlay compact model={buildHudModel(overlay, { roster: sceneRef.current?.rosterView })} />
+                )}
+              </div>
+              <p id="viewer-help" className="s9v-help" hidden={failed}>
+                Rueda o pellizco: zoom · arrastrar: mover cámara · toque: seleccionar · 1–8: seguir bots · G: vista
+                global · +/−: zoom · F: encajar · C: centrar seleccionado (con el foco en el escenario)
+              </p>
+            </>
+          }
+          side={
+            <>
+              <MinimapPanel
+                getState={() => sceneRef.current?.minimapState?.() ?? null}
+                onCenter={(x, y) => sceneRef.current?.centerOnWorld?.(x, y)}
+                defaultOpen={typeof window === "undefined" || window.innerWidth > 720}
+              />
+              {vehicles && vehicles.size > 0 && (
+                <section className="s9v-card" aria-label="Bots">
+                  <BotSelector
+                    roster={roster}
+                    vehicleIds={[...vehicles.keys()]}
+                    vehicles={vehicles}
+                    status={viewStatus}
+                    onFollow={(id) => setCamera({ kind: "follow", vehicleId: id })}
+                  />
+                </section>
+              )}
+              {!failed && (
+                <section className="s9v-card" aria-label="Participantes">
+                  <RosterList roster={roster} testId="viewer-roster" />
+                  <TagPrefsControl prefs={tagPrefs} onChange={setTagPrefs} />
+                </section>
+              )}
+              {overlay && (
+                <section className="s9v-card" aria-label="Marcador y eventos">
+                  <p data-testid="score">
+                    {Object.entries(overlay.score)
+                      .map(([t, n]) => `${t}: ${n}`)
+                      .join(" · ")}
+                  </p>
+                  <ul data-testid="feed">
+                    {(overlay.feed ?? []).slice(-8).map((f, i) => (
+                      <li key={i}>
+                        [{f.tick}] {f.text}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+            </>
+          }
+        />
       </div>
-      {overlay && (
-        <aside>
-          <p data-testid="score">
-            {Object.entries(overlay.score)
-              .map(([t, n]) => `${t}: ${n}`)
-              .join(" · ")}
-          </p>
-          <ul data-testid="feed">
-            {overlay.feed.slice(-8).map((f, i) => (
-              <li key={i}>
-                [{f.tick}] {f.text}
-              </li>
-            ))}
-          </ul>
-        </aside>
-      )}
     </section>
   );
 }
