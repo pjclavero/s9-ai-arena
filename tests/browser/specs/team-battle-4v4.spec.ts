@@ -177,11 +177,11 @@ test.describe("@golden 4v4 · batalla por equipos", () => {
     await page.getByRole("radio", { name: /BATALLA POR EQUIPOS/ }).check();
     await expect(page.getByLabel("modo")).toHaveValue("team_deathmatch");
     await expect(page.getByTestId("team-concepts")).toContainText("Equipo A juega en el bando rojo");
-    await expect(page.getByLabel("equipo A").locator("option", { hasText: TEAM_A })).toHaveCount(1, {
+    await expect(page.getByLabel("equipo A", { exact: true }).locator("option", { hasText: TEAM_A })).toHaveCount(1, {
       timeout: 20_000,
     });
-    await page.getByLabel("equipo A").selectOption({ label: TEAM_A });
-    await page.getByLabel("equipo B").selectOption({ label: TEAM_B });
+    await page.getByLabel("equipo A", { exact: true }).selectOption({ label: TEAM_A });
+    await page.getByLabel("equipo B", { exact: true }).selectOption({ label: TEAM_B });
     await expect(page.getByTestId("participants-count")).toHaveText("Participantes: 4 vs 4 · 8 / 8");
     for (const n of RED) await expect(page.getByTestId("team-summary-A")).toContainText(`${n} · v1`);
     for (const n of BLUE) await expect(page.getByTestId("team-summary-B")).toContainText(`${n} · v1`);
