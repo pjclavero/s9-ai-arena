@@ -189,19 +189,23 @@ describe("respawn limitado", () => {
   });
 
   it("los bots NO reciben vehicle_eliminated (no está en el esquema EVENT de arena/1)", () => {
-    const b = battle(limited(0), roster(1));
+    // 2v2 con una sola vida: tras la PRIMERA eliminación la batalla sigue y todos los
+    // bots vuelven a decidir, así que un evento repartido les llegaría por onEvent.
+    const b = battle(limited(0), roster(2));
     const seen: string[] = [];
     for (const v of b.getVehicles()) {
+      const inner = new HunterBot(v.botId);
       b.attachBot(v.id, {
         botId: v.botId,
-        decide: (obs: any) => {
-          for (const e of obs.events ?? []) seen.push(e.kind);
-          return new HunterBot(v.botId).decide(obs);
-        },
+        decide: (obs: any) => inner.decide(obs),
+        onEvent: (e: any) => seen.push(e.kind),
       });
     }
     runFor(b, 40_000);
-    expect(eliminations(b)).toHaveLength(1);
+    const elim = eliminations(b);
+    expect(elim.length).toBeGreaterThanOrEqual(2);
+    expect(elim[0].tick).toBeLessThan(b.getResult()!.ticks); // hubo decisiones después
+    expect(seen).toContain("vehicle_destroyed"); // el canal funciona
     expect(seen).not.toContain("vehicle_eliminated");
     b.free();
   });
