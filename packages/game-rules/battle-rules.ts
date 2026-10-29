@@ -271,7 +271,11 @@ function intField(
     return null;
   }
   if (v < range.min || v > range.max) {
-    errs.push({ field, code: "range", message: `${field} debe estar entre ${range.min} y ${range.max} (recibido ${v})` });
+    errs.push({
+      field,
+      code: "range",
+      message: `${field} debe estar entre ${range.min} y ${range.max} (recibido ${v})`,
+    });
     return null;
   }
   return v;
@@ -283,7 +287,11 @@ const VICTORIES: readonly VictoryCondition[] = ["elimination", "score_limit", "t
 /** Parsea y valida los parámetros de un personalizado. Estricto: claves desconocidas = error. */
 export function parseCustomParams(raw: unknown, teamSize: number, errs: RulesError[]): RulesParams | null {
   if (!isObj(raw)) {
-    errs.push({ field: "rules.params", code: "required", message: "rules.params es obligatorio en una batalla personalizada" });
+    errs.push({
+      field: "rules.params",
+      code: "required",
+      message: "rules.params es obligatorio en una batalla personalizada",
+    });
     return null;
   }
   const P = "rules.params.";
@@ -314,7 +322,11 @@ export function parseCustomParams(raw: unknown, teamSize: number, errs: RulesErr
     checkKeys(respawnRaw, ["mode", "respawnsPerBot", "delaySeconds"], `${P}respawn.`, errs);
     const m = own(respawnRaw, "mode") ? respawnRaw.mode : undefined;
     if (typeof m !== "string" || !(RESPAWN_MODES as readonly string[]).includes(m)) {
-      errs.push({ field: `${P}respawn.mode`, code: "type", message: `${P}respawn.mode debe ser none, limited o unlimited` });
+      errs.push({
+        field: `${P}respawn.mode`,
+        code: "type",
+        message: `${P}respawn.mode debe ser none, limited o unlimited`,
+      });
     } else mode = m as RespawnMode;
     respawnsPerBot = intField(respawnRaw, "respawnsPerBot", `${P}respawn.respawnsPerBot`, L.respawnsPerBot, errs, {
       nullable: mode !== "limited",
@@ -340,13 +352,21 @@ export function parseCustomParams(raw: unknown, teamSize: number, errs: RulesErr
   const vRaw = own(raw, "victory") ? raw.victory : undefined;
   let victory: VictoryCondition = "score_limit";
   if (typeof vRaw !== "string" || !(VICTORIES as readonly string[]).includes(vRaw)) {
-    errs.push({ field: `${P}victory`, code: "type", message: `${P}victory debe ser elimination, score_limit o time_score` });
+    errs.push({
+      field: `${P}victory`,
+      code: "type",
+      message: `${P}victory debe ser elimination, score_limit o time_score`,
+    });
   } else victory = vRaw as VictoryCondition;
   const scoreLimit = intField(raw, "scoreLimit", `${P}scoreLimit`, L.scoreLimit, errs, {
     nullable: victory !== "score_limit",
   });
   if (victory !== "score_limit" && scoreLimit !== null) {
-    errs.push({ field: `${P}scoreLimit`, code: "incompatible", message: "scoreLimit sólo se admite con victoria por límite de bajas" });
+    errs.push({
+      field: `${P}scoreLimit`,
+      code: "incompatible",
+      message: "scoreLimit sólo se admite con victoria por límite de bajas",
+    });
   }
   const timeLimitMinutes = intField(raw, "timeLimitMinutes", `${P}timeLimitMinutes`, L.timeLimitMinutes, errs, {
     nullable: false,
@@ -395,7 +415,8 @@ export function incompatibilities(p: RulesParams): RulesError[] {
     });
   }
   if (p.victory === "score_limit" && p.scoreLimit !== null) {
-    const lives = p.respawn.mode === "none" ? 1 : p.respawn.mode === "limited" ? 1 + (p.respawn.respawnsPerBot ?? 0) : Infinity;
+    const lives =
+      p.respawn.mode === "none" ? 1 : p.respawn.mode === "limited" ? 1 + (p.respawn.respawnsPerBot ?? 0) : Infinity;
     const reachable = p.teamSize * lives;
     if (p.scoreLimit > reachable) {
       errs.push({
@@ -407,13 +428,25 @@ export function incompatibilities(p: RulesParams): RulesError[] {
   }
   if (p.teamSize === 1) {
     if (p.friendlyFire) {
-      errs.push({ field: `${P}friendlyFire`, code: "incompatible", message: "el fuego amigo sólo tiene sentido por equipos" });
+      errs.push({
+        field: `${P}friendlyFire`,
+        code: "incompatible",
+        message: "el fuego amigo sólo tiene sentido por equipos",
+      });
     }
     if (p.teamCredits !== null) {
-      errs.push({ field: `${P}teamCredits`, code: "incompatible", message: "en 1 contra 1 usa el límite por bot (botCredits)" });
+      errs.push({
+        field: `${P}teamCredits`,
+        code: "incompatible",
+        message: "en 1 contra 1 usa el límite por bot (botCredits)",
+      });
     }
     if (p.teamMassKg !== null) {
-      errs.push({ field: `${P}teamMassKg`, code: "incompatible", message: "en 1 contra 1 usa el límite por bot (botMassKg)" });
+      errs.push({
+        field: `${P}teamMassKg`,
+        code: "incompatible",
+        message: "en 1 contra 1 usa el límite por bot (botMassKg)",
+      });
     }
   }
   return errs;
@@ -480,7 +513,8 @@ export type ResolvedRules =
 /** `rules` de la petición → parámetros normalizados + ruleset del motor, o errores. */
 export function resolveRulesRequest(raw: unknown): ResolvedRules {
   const errs: RulesError[] = [];
-  if (!isObj(raw)) return { ok: false, errors: [{ field: "rules", code: "type", message: "rules debe ser un objeto" }] };
+  if (!isObj(raw))
+    return { ok: false, errors: [{ field: "rules", code: "type", message: "rules debe ser un objeto" }] };
   checkKeys(raw, ["preset", "teamSize", "params"], "rules.", errs);
   const teamSize = intField(raw, "teamSize", "rules.teamSize", RULES_LIMITS.teamSize, errs, { nullable: false });
   const presetId = own(raw, "preset") ? raw.preset : undefined;
@@ -550,10 +584,7 @@ export interface CompositionEntry {
 }
 
 export type CompositionViolationCode =
-  | "bot_credits_exceeded"
-  | "team_credits_exceeded"
-  | "bot_mass_exceeded"
-  | "team_mass_exceeded";
+  "bot_credits_exceeded" | "team_credits_exceeded" | "bot_mass_exceeded" | "team_mass_exceeded";
 
 export interface CompositionViolation {
   code: CompositionViolationCode;

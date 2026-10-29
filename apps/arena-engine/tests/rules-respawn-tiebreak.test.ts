@@ -59,7 +59,14 @@ describe("regresión · configuraciones existentes = hash de 9aaad79", () => {
     ["tdm_1v1", "tdm_mvp@1", 1, emptyArena(), 3000, {}],
     ["tdm_2v2", "tdm_mvp@1", 2, emptyArena(), 3000, {}],
     ["tdm_4v4", "tdm_mvp@1", 4, emptyArena(), 3000, {}],
-    ["tdm_4v4_norespawn", "tdm_mvp@1", 4, emptyArena(), 6000, { respawn: { enabled: false, delayTicks: 0 }, scoreToWin: 99 }],
+    [
+      "tdm_4v4_norespawn",
+      "tdm_mvp@1",
+      4,
+      emptyArena(),
+      6000,
+      { respawn: { enabled: false, delayTicks: 0 }, scoreToWin: 99 },
+    ],
     ["ctf_1v1", "ctf_mvp@1", 1, ctfArena(), 2000, {}],
   ];
   for (const [key, rs, n, map, ticks, over] of cases) {
@@ -112,7 +119,9 @@ describe("respawn limitado", () => {
     for (const v of b.getVehicles()) expect(v.respawnsUsed).toBeLessThanOrEqual(3);
     const loser = b.getVehicles().find((v) => v.team !== r.winner)!;
     expect(loser.respawnsUsed).toBe(3);
-    expect(b.publicEvents.filter((e: any) => e.kind === "vehicle_destroyed" && e.targetId === loser.id)).toHaveLength(4);
+    expect(b.publicEvents.filter((e: any) => e.kind === "vehicle_destroyed" && e.targetId === loser.id)).toHaveLength(
+      4,
+    );
     b.free();
   });
 
@@ -136,9 +145,11 @@ describe("respawn limitado", () => {
       expect(v.alive).toBe(false);
       expect(v.respawnsUsed).toBe(1);
     }
-    expect(eliminations(b).map((e: any) => e.targetId).sort()).toEqual(
-      expect.arrayContaining(losers.map((v) => v.id).sort()),
-    );
+    expect(
+      eliminations(b)
+        .map((e: any) => e.targetId)
+        .sort(),
+    ).toEqual(expect.arrayContaining(losers.map((v) => v.id).sort()));
     b.free();
   });
 
@@ -298,9 +309,9 @@ describe("resolveTimeoutTiebreak (pura)", () => {
 
   it("empate en todos los criterios ⇒ draw; criterio desconocido se ignora", () => {
     const c = ctx(rs, [veh("a", "red"), veh("b", "blue")]);
-    expect(resolveTimeoutTiebreak(["score", "lives", "hull", "bogus" as any], ["red", "blue"], { red: 1, blue: 1 }, c)).toBe(
-      "draw",
-    );
+    expect(
+      resolveTimeoutTiebreak(["score", "lives", "hull", "bogus" as any], ["red", "blue"], { red: 1, blue: 1 }, c),
+    ).toBe("draw");
   });
 
   it("hull: redondeo a 1e-4 (diferencias por debajo son empate)", () => {
@@ -331,19 +342,26 @@ describe("engineRulesetFor", () => {
       teamMassKg: null,
       friendlyFire: false,
     };
-    expect(engineRulesetFor({ ...base, respawn: { mode: "limited", respawnsPerBot: 2, delaySeconds: 5 } }, "x").respawn).toEqual({
+    expect(
+      engineRulesetFor({ ...base, respawn: { mode: "limited", respawnsPerBot: 2, delaySeconds: 5 } }, "x").respawn,
+    ).toEqual({
       enabled: true,
       delayTicks: 150,
       maxRespawns: 2,
     });
     expect(
       engineRulesetFor(
-        { ...base, victory: "score_limit", scoreLimit: 3, respawn: { mode: "unlimited", respawnsPerBot: null, delaySeconds: 7 } },
+        {
+          ...base,
+          victory: "score_limit",
+          scoreLimit: 3,
+          respawn: { mode: "unlimited", respawnsPerBot: null, delaySeconds: 7 },
+        },
         "x",
       ).respawn,
     ).toEqual({ enabled: true, delayTicks: 210 });
-    expect(engineRulesetFor({ ...base, respawn: { mode: "none", respawnsPerBot: null, delaySeconds: null } }, "x").respawn).toEqual(
-      { enabled: false, delayTicks: 0 },
-    );
+    expect(
+      engineRulesetFor({ ...base, respawn: { mode: "none", respawnsPerBot: null, delaySeconds: null } }, "x").respawn,
+    ).toEqual({ enabled: false, delayTicks: 0 });
   });
 });

@@ -90,7 +90,8 @@ export function addBotToTeam(t: TeamBattleStats, s: TeamSummable): void {
   t.shotsHit += n(s.shotsHit);
   t.flagCaptures += n(s.flagCaptures);
   t.respawns += n(s.respawns);
-  if (typeof s.respawnsRemaining === "number") t.respawnsRemaining = (t.respawnsRemaining ?? 0) + n(s.respawnsRemaining);
+  if (typeof s.respawnsRemaining === "number")
+    t.respawnsRemaining = (t.respawnsRemaining ?? 0) + n(s.respawnsRemaining);
   const alive = typeof s.aliveAtEnd === "boolean" ? s.aliveAtEnd : s.died !== true && s.disqualified !== true;
   if (alive) t.survivors += 1;
 }

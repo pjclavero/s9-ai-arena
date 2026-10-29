@@ -171,12 +171,9 @@ export async function buildBattleRules(
     const r = resolveRulesRequest(input.rules);
     if (!r.ok) throw rulesInvalid(r.errors);
     if (r.mode !== input.mode) {
-      throw new RulesRejected(
-        409,
-        "rules_mode_mismatch",
-        `${r.name} se juega en modo ${r.mode}, no ${input.mode}`,
-        { expectedMode: r.mode },
-      );
+      throw new RulesRejected(409, "rules_mode_mismatch", `${r.name} se juega en modo ${r.mode}, no ${input.mode}`, {
+        expectedMode: r.mode,
+      });
     }
     const sizes = sideSizes(input.participants);
     const bad = sizes.size !== 2 || [...sizes.values()].some((n) => n !== r.params.teamSize);

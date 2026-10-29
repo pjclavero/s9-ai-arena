@@ -837,7 +837,15 @@ export function battleRoutes(
     for (const [team, t] of teams) perTeam[team] = t;
     // R-RULES · perfil de métricas por modo (FASE 13), derivado de la copia de reglas.
     const rules = rulesToJson(rulesOf(battle));
-    res.json({ battleId: battle.id, status, perBot, perTeam, diagnostics, profile: rules?.profile ?? "classic", rules });
+    res.json({
+      battleId: battle.id,
+      status,
+      perBot,
+      perTeam,
+      diagnostics,
+      profile: rules?.profile ?? "classic",
+      rules,
+    });
   });
 
   // PRC (TD-004) · getReplay, getReplayIndex, getReplaySegment, verifyReplay y

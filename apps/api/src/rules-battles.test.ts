@@ -86,7 +86,11 @@ function team(n: number, rules: unknown, a = bots.slice(0, n), b = bots.slice(4,
   };
 }
 const custom = (teamSize: number, params: Record<string, unknown>) => ({ preset: "custom", teamSize, params });
-const P_OK = { respawn: { mode: "limited", respawnsPerBot: 2, delaySeconds: 5 }, victory: "elimination", timeLimitMinutes: 10 };
+const P_OK = {
+  respawn: { mode: "limited", respawnsPerBot: 2, delaySeconds: 5 },
+  victory: "elimination",
+  timeLimitMinutes: 10,
+};
 
 async function counts() {
   const [bt] = await h.db("battles").count({ n: "*" });
@@ -115,7 +119,9 @@ describe("GET /rulesets · presets y límites", () => {
   it("expone los 7 presets oficiales versionados y los límites del servidor", async () => {
     const r = await request(app).get("/rulesets");
     expect(r.status).toBe(200);
-    expect(r.body.presets.map((p: any) => `${p.id}@${p.version}`)).toEqual(RULES_PRESETS.map((p) => `${p.id}@${p.version}`));
+    expect(r.body.presets.map((p: any) => `${p.id}@${p.version}`)).toEqual(
+      RULES_PRESETS.map((p) => `${p.id}@${p.version}`),
+    );
     expect(r.body.custom.limits).toEqual(JSON.parse(JSON.stringify(RULES_LIMITS)));
     expect(r.body.custom.maxParticipants).toBe(8);
     // Contrato anterior intacto.
@@ -153,7 +159,9 @@ describe("presets 1v1", () => {
   it("sin `rules` ⇒ clásico: copia EXACTA de lo que resolvía el worker (dm_practice@1 + presupuesto de BD)", async () => {
     const { rules } = await accepted(duel(undefined));
     expect(rules.source).toBe("classic");
-    expect(rules.engineRuleset).toEqual(JSON.parse(JSON.stringify(loadRuleset("dm_practice@1", { budgetCredits: 1000 }))));
+    expect(rules.engineRuleset).toEqual(
+      JSON.parse(JSON.stringify(loadRuleset("dm_practice@1", { budgetCredits: 1000 }))),
+    );
   });
 
   it("un preset de equipos en 1v1 ⇒ 400 rules_invalid", async () => {
@@ -187,11 +195,24 @@ describe("presets por equipos (2v2, 3v3, 4v4)", () => {
   });
 
   it("4v4 declarado con 3v4 ⇒ 400 rules_team_size", async () => {
-    await rejected(team(4, { preset: "team_deathmatch", teamSize: 4 }, bots.slice(0, 3), bots.slice(4, 8)), 400, "rules_team_size");
+    await rejected(
+      team(4, { preset: "team_deathmatch", teamSize: 4 }, bots.slice(0, 3), bots.slice(4, 8)),
+      400,
+      "rules_team_size",
+    );
   });
 
   it("preset de equipos con modo deathmatch ⇒ 409 rules_mode_mismatch", async () => {
-    await rejected({ ...team(2, { preset: "team_deathmatch", teamSize: 2 }), mode: "deathmatch", rulesetId: "deathmatch-mvp", mapId: "mvp-arena-02" }, 409, "deathmatch_shared_team");
+    await rejected(
+      {
+        ...team(2, { preset: "team_deathmatch", teamSize: 2 }),
+        mode: "deathmatch",
+        rulesetId: "deathmatch-mvp",
+        mapId: "mvp-arena-02",
+      },
+      409,
+      "deathmatch_shared_team",
+    );
     await rejected(duel({ preset: "team_deathmatch", teamSize: 2 }), 409, "rules_mode_mismatch");
   });
 });
@@ -200,7 +221,10 @@ describe("personalizado · parámetros", () => {
   it("válido 2v2 ⇒ 202; parámetros normalizados en la copia", async () => {
     const { rules } = await accepted(team(2, custom(2, P_OK)));
     expect(rules.source).toBe("custom");
-    expect(rules.params).toMatchObject({ teamSize: 2, respawn: { mode: "limited", respawnsPerBot: 2, delaySeconds: 5 } });
+    expect(rules.params).toMatchObject({
+      teamSize: 2,
+      respawn: { mode: "limited", respawnsPerBot: 2, delaySeconds: 5 },
+    });
   });
 
   it("extremos válidos (máximos) ⇒ 202", async () => {
@@ -208,7 +232,11 @@ describe("personalizado · parámetros", () => {
       team(
         4,
         custom(4, {
-          respawn: { mode: "limited", respawnsPerBot: RULES_LIMITS.respawnsPerBot.max, delaySeconds: RULES_LIMITS.delaySeconds.max },
+          respawn: {
+            mode: "limited",
+            respawnsPerBot: RULES_LIMITS.respawnsPerBot.max,
+            delaySeconds: RULES_LIMITS.delaySeconds.max,
+          },
           victory: "score_limit",
           // 4 bots × 11 vidas = 44 bajas posibles: el máximo alcanzable con este roster.
           scoreLimit: 44,
@@ -224,13 +252,41 @@ describe("personalizado · parámetros", () => {
   });
 
   const bad: [string, Record<string, unknown>, string][] = [
-    ["respawns negativos", { ...P_OK, respawn: { mode: "limited", respawnsPerBot: -1, delaySeconds: 5 } }, "rules.params.respawn.respawnsPerBot"],
-    ["respawns 0 con limitado", { ...P_OK, respawn: { mode: "limited", respawnsPerBot: 0, delaySeconds: 5 } }, "rules.params.respawn.respawnsPerBot"],
-    ["respawns por encima del máximo", { ...P_OK, respawn: { mode: "limited", respawnsPerBot: 11, delaySeconds: 5 } }, "rules.params.respawn.respawnsPerBot"],
-    ["respawns no entero", { ...P_OK, respawn: { mode: "limited", respawnsPerBot: 1.5, delaySeconds: 5 } }, "rules.params.respawn.respawnsPerBot"],
-    ["respawns como texto", { ...P_OK, respawn: { mode: "limited", respawnsPerBot: "2", delaySeconds: 5 } }, "rules.params.respawn.respawnsPerBot"],
-    ["retardo 0", { ...P_OK, respawn: { mode: "limited", respawnsPerBot: 2, delaySeconds: 0 } }, "rules.params.respawn.delaySeconds"],
-    ["retardo 31 s", { ...P_OK, respawn: { mode: "limited", respawnsPerBot: 2, delaySeconds: 31 } }, "rules.params.respawn.delaySeconds"],
+    [
+      "respawns negativos",
+      { ...P_OK, respawn: { mode: "limited", respawnsPerBot: -1, delaySeconds: 5 } },
+      "rules.params.respawn.respawnsPerBot",
+    ],
+    [
+      "respawns 0 con limitado",
+      { ...P_OK, respawn: { mode: "limited", respawnsPerBot: 0, delaySeconds: 5 } },
+      "rules.params.respawn.respawnsPerBot",
+    ],
+    [
+      "respawns por encima del máximo",
+      { ...P_OK, respawn: { mode: "limited", respawnsPerBot: 11, delaySeconds: 5 } },
+      "rules.params.respawn.respawnsPerBot",
+    ],
+    [
+      "respawns no entero",
+      { ...P_OK, respawn: { mode: "limited", respawnsPerBot: 1.5, delaySeconds: 5 } },
+      "rules.params.respawn.respawnsPerBot",
+    ],
+    [
+      "respawns como texto",
+      { ...P_OK, respawn: { mode: "limited", respawnsPerBot: "2", delaySeconds: 5 } },
+      "rules.params.respawn.respawnsPerBot",
+    ],
+    [
+      "retardo 0",
+      { ...P_OK, respawn: { mode: "limited", respawnsPerBot: 2, delaySeconds: 0 } },
+      "rules.params.respawn.delaySeconds",
+    ],
+    [
+      "retardo 31 s",
+      { ...P_OK, respawn: { mode: "limited", respawnsPerBot: 2, delaySeconds: 31 } },
+      "rules.params.respawn.delaySeconds",
+    ],
     ["tiempo 0", { ...P_OK, timeLimitMinutes: 0 }, "rules.params.timeLimitMinutes"],
     ["tiempo 31 min", { ...P_OK, timeLimitMinutes: 31 }, "rules.params.timeLimitMinutes"],
     ["tiempo enorme", { ...P_OK, timeLimitMinutes: 1e12 }, "rules.params.timeLimitMinutes"],
@@ -239,13 +295,38 @@ describe("personalizado · parámetros", () => {
     ["masa negativa", { ...P_OK, botMassKg: -5 }, "rules.params.botMassKg"],
     ["masa de equipo excesiva", { ...P_OK, teamMassKg: 40_001 }, "rules.params.teamMassKg"],
     ["campo desconocido", { ...P_OK, godMode: true }, "rules.params.godMode"],
-    ["eliminación con respawn ilimitado", { ...P_OK, respawn: { mode: "unlimited", delaySeconds: 5 } }, "rules.params.victory"],
+    [
+      "eliminación con respawn ilimitado",
+      { ...P_OK, respawn: { mode: "unlimited", delaySeconds: 5 } },
+      "rules.params.victory",
+    ],
     ["tiempo sin respawn", { ...P_OK, respawn: { mode: "none" }, victory: "time_score" }, "rules.params.victory"],
-    ["límite de bajas inalcanzable sin respawn", { ...P_OK, respawn: { mode: "none" }, victory: "score_limit", scoreLimit: 3 }, "rules.params.scoreLimit"],
+    [
+      "límite de bajas inalcanzable sin respawn",
+      { ...P_OK, respawn: { mode: "none" }, victory: "score_limit", scoreLimit: 3 },
+      "rules.params.scoreLimit",
+    ],
     ["límite de bajas sin victoria por bajas", { ...P_OK, scoreLimit: 5 }, "rules.params.scoreLimit"],
-    ["respawnsPerBot con ilimitado", { ...P_OK, victory: "score_limit", scoreLimit: 5, respawn: { mode: "unlimited", respawnsPerBot: 2, delaySeconds: 5 } }, "rules.params.respawn.respawnsPerBot"],
-    ["retardo sin respawn", { ...P_OK, respawn: { mode: "none", delaySeconds: 5 } }, "rules.params.respawn.delaySeconds"],
-    ["modo de respawn inventado", { ...P_OK, respawn: { mode: "infinite", delaySeconds: 5 } }, "rules.params.respawn.mode"],
+    [
+      "respawnsPerBot con ilimitado",
+      {
+        ...P_OK,
+        victory: "score_limit",
+        scoreLimit: 5,
+        respawn: { mode: "unlimited", respawnsPerBot: 2, delaySeconds: 5 },
+      },
+      "rules.params.respawn.respawnsPerBot",
+    ],
+    [
+      "retardo sin respawn",
+      { ...P_OK, respawn: { mode: "none", delaySeconds: 5 } },
+      "rules.params.respawn.delaySeconds",
+    ],
+    [
+      "modo de respawn inventado",
+      { ...P_OK, respawn: { mode: "infinite", delaySeconds: 5 } },
+      "rules.params.respawn.mode",
+    ],
     ["fuego amigo no booleano", { ...P_OK, friendlyFire: "yes" }, "rules.params.friendlyFire"],
   ];
   for (const [name, params, field] of bad) {
@@ -275,7 +356,9 @@ describe("personalizado · topes de créditos y masa (loadouts reales)", () => {
     const r = await rejected(tdm2({ botCredits: GUN.cost - 1 }), 422, "composition_invalid");
     const v = r.body.composition.violations;
     expect(v).toHaveLength(4);
-    expect(v.every((x: any) => x.code === "bot_credits_exceeded" && x.excess === 1 && x.actual === GUN.cost)).toBe(true);
+    expect(v.every((x: any) => x.code === "bot_credits_exceeded" && x.excess === 1 && x.actual === GUN.cost)).toBe(
+      true,
+    );
   });
 
   it("créditos por equipo: 2×coste ⇒ 202; 2×coste − 1 ⇒ 422 team_credits_exceeded en los dos bandos", async () => {
@@ -352,7 +435,9 @@ describe("POST /battles/rules-check (FASE 11)", () => {
   });
 
   it("anónimo ⇒ 401", async () => {
-    const r = await request(app).post("/battles/rules-check").send(duel({ preset: "duel", teamSize: 1 }));
+    const r = await request(app)
+      .post("/battles/rules-check")
+      .send(duel({ preset: "duel", teamSize: 1 }));
     expect(r.status).toBe(401);
   });
 });
