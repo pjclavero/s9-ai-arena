@@ -176,6 +176,14 @@ Con `?mode=X` devuelve los de ese modo y los agnósticos (`mode: null`).
 
 **Pendiente de B:** `createPracticeBattle` (`battles.ts`, área de B) todavía hace sus propias consultas y no comprueba ni el modo del ruleset ni el del mapa. La propuesta está en COORD y en el informe DEV-C.
 
+## Reglas de batalla: presets, personalizado y copia inmutable (ADR-021)
+
+- **Modelo:** `packages/game-rules/battle-rules.ts` (`RulesParams`, `RULES_PRESETS`, `RULES_LIMITS`, `resolveRulesRequest`, `engineRulesetFor`, `checkComposition`, `statsProfileOf`). Puro: lo usan API, worker, stats y web.
+- **Motor:** dos campos opcionales del `Ruleset`: `respawn.maxRespawns` (reapariciones por vehículo; agotadas, eliminado) y `timeoutTiebreak` (`score`/`lives`/`hull`). Sin ellos, 0.3.0 tal cual (hashes fijados en `apps/arena-engine/tests/rules-respawn-tiebreak.test.ts`). `vehicle_eliminated` es público (replay/espectador) y no se reparte a los bots.
+- **API:** `POST /battles` acepta `rules: { preset | "custom", teamSize, params? }` y guarda la copia en `battles.rules` (migración `015_battle_rules`); 400 `rules_invalid`/`rules_team_size`, 409 `rules_mode_mismatch`, 422 `composition_invalid`. `POST /battles/rules-check` hace lo mismo sin crear. `GET /rulesets` añade `presets` y `custom.limits`.
+- **Worker:** con copia juega `rules.engineRuleset` con `rules.catalogVersion`; sin copia (anteriores, torneos), el camino de siempre.
+- **Stats:** con respawn limitado, `lives`, `respawnsRemaining`, `eliminated` por bot y `respawnsRemaining` por bando; `respawns` por bando siempre. `GET /battles/{id}/stats` añade `profile` (`elimination`, `limited_respawn`, `deathmatch`, `time`, `classic`).
+
 ## Compatibilidad con mapas
 
 Hay tres comprobaciones distintas, que no se coordinan entre sí:
