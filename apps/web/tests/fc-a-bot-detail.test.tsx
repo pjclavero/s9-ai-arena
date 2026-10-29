@@ -149,7 +149,7 @@ describe("A9.19 · BotDetailPage", () => {
   });
 
   it("si el servidor rechaza la versión por el loadout (422), el aviso dice el motivo y qué munición usar", async () => {
-    const base = apiMock.getMockImplementation()!;
+    const base = apiMock.getMockImplementation() as (method: string, path: string, body?: unknown) => Promise<unknown>;
     const message =
       "La revisión 1 del loadout ya no es válida: El módulo weapon.cannon@1 no admite ammo.standard@1. Municiones compatibles: ammo.ap, ammo.he. Guarda una revisión corregida y úsala.";
     apiMock.mockImplementation(async (method: string, path: string, body?: unknown) => {
