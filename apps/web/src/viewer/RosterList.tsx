@@ -10,7 +10,9 @@ export function RosterList({ roster, testId }: { roster: ViewerRoster; testId: s
   const ids = [...roster.keys()];
   const groups: { team: string | null; ids: string[] }[] = rosterTeams(roster).map((t) => ({
     team: t,
-    ids: ids.filter((id) => roster.get(id)?.team === t),
+    ids: ids
+      .filter((id) => roster.get(id)?.team === t)
+      .sort((x, y) => vehicleLabel(roster, x).localeCompare(vehicleLabel(roster, y), "es", { numeric: true })),
   }));
   const loose = ids.filter((id) => !roster.get(id)?.team);
   if (loose.length > 0) groups.push({ team: null, ids: loose });

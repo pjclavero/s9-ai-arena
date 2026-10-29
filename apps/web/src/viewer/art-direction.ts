@@ -192,8 +192,11 @@ export function participantsTitle(raw: unknown): string | null {
   if (names.length === 0) return null;
   const sided = [...bySide.keys()].filter((t) => t !== "");
   if (sided.length >= 2 && [...bySide.values()].some((l) => l.length > 1)) {
-    const part = (list: string[]) =>
-      list.length <= 4 ? list.join(", ") : `${list.slice(0, 4).join(", ")} y ${list.length - 4} más`;
+    // Orden estable dentro del bando (la nómina puede llegar en cualquier orden).
+    const part = (raw: string[]) => {
+      const list = [...raw].sort((x, y) => x.localeCompare(y, "es", { numeric: true }));
+      return list.length <= 4 ? list.join(", ") : `${list.slice(0, 4).join(", ")} y ${list.length - 4} más`;
+    };
     const groups = sortTeams(sided).map((t) => `${part(bySide.get(t)!)} (${sideText(t)})`);
     if (bySide.has("")) groups.push(part(bySide.get("")!));
     return groups.join(" vs ");

@@ -274,6 +274,15 @@ function sideRank(t: string): number {
   return t === "red" ? 0 : t === "blue" ? 1 : 2;
 }
 
+/**
+ * 4v4 · Orden estable de nombres DENTRO de un bando (numérico: «A-2» antes que
+ * «A-10»). La API no garantiza el orden de los participantes (se leen sin ORDER BY):
+ * sin esto el mismo 4v4 se titulaba distinto en cada recarga.
+ */
+export function byName(a: string, b: string): number {
+  return a.localeCompare(b, "es", { numeric: true });
+}
+
 /** Participantes agrupados por BANDO (`team`), en orden estable; sin bando, al final. */
 export function groupBySide<T extends { team?: string }>(ps: T[]): { team: string | null; items: T[] }[] {
   const map = new Map<string, T[]>();
@@ -304,7 +313,9 @@ export function sidesTitle<T extends { team?: string }>(
   if (groups.every((g) => g.items.length <= 1)) {
     return ps.map((p) => `${label(p)}${opts.withSide && p.team ? ` (${teamText(p.team)})` : ""}`).join(" vs ");
   }
-  return groups.map((g) => `${g.items.map(label).join(", ")}${g.team ? ` (${teamText(g.team)})` : ""}`).join(" vs ");
+  return groups
+    .map((g) => `${g.items.map(label).sort(byName).join(", ")}${g.team ? ` (${teamText(g.team)})` : ""}`)
+    .join(" vs ");
 }
 
 export interface SideResult {
@@ -343,7 +354,7 @@ export function sideResults(b: BattleLike & { participants?: ParticipantLike[] }
     out.push({
       team,
       label: teamText(team),
-      bots: g.items.map(botVersionLabel),
+      bots: g.items.map(botVersionLabel).sort(byName),
       score: Object.hasOwn(score, team) && Number.isFinite(pts) ? pts : null,
       outcome,
     });
