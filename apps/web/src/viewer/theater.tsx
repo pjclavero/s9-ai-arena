@@ -21,6 +21,7 @@ import type { HealthPref, NamePref, TagPrefs } from "./vehicle-tags.js";
 
 export const THEATER_CSS = `
 main.page-wide{max-width:none}
+.s9v [hidden]{display:none!important}
 .s9v{display:flex;flex-direction:column;gap:.5rem;min-width:0}
 .s9v-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:.15rem 1rem;min-width:0}
 .s9v-head h2{margin:0;font-size:1.2rem;min-width:0}
