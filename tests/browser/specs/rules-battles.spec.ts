@@ -386,7 +386,11 @@ test.describe("@rules R-RULES · batallas reales por conjunto de reglas", () => 
     ).id;
 
     // --- UI de la personalizada: checklist con el bot pesado (✗) en «Nueva batalla» -------
+    // Tras crear el Duelo la página sigue en «Batalla encolada» con el MISMO hash: se
+    // pasa por la lista para que «Nueva batalla» se monte de nuevo.
+    await go(page, "#/battles");
     await go(page, "#/battles/new");
+    await expect(page.getByTestId("battle-rules")).toBeVisible();
     await page.getByLabel("reglas Personalizado").check();
     await page.getByLabel("Créditos máximos por bot: sin restricción").uncheck();
     const cr = page.getByLabel("Créditos máximos por bot", { exact: true });
