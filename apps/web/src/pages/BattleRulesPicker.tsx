@@ -66,6 +66,16 @@ export function effectiveParams(catalog: RulesCatalog, choice: RulesChoice, team
   return p ? { ...p.params, teamSize } : null;
 }
 
+/** Presentación local: cada opción y cada campo en su línea (el CSS global es de UX). */
+const ROW = { display: "block", margin: "0.35rem 0" } as const;
+const CARD = {
+  display: "block",
+  margin: "0.5rem 0",
+  padding: "0.4rem 0.6rem",
+  border: "1px solid rgba(127,127,127,0.35)",
+  borderRadius: 6,
+} as const;
+
 function NumberField(props: {
   label: string;
   testid: string;
@@ -85,7 +95,7 @@ function NumberField(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
   return (
-    <label>
+    <label style={ROW}>
       {label}{" "}
       {nullable && (
         <>
@@ -143,7 +153,7 @@ export function BattleRulesPicker(props: {
     <fieldset data-testid="battle-rules">
       <legend>Conjunto de reglas</legend>
       {presets.map((p) => (
-        <label key={p.id} data-testid={`rules-preset-${p.id}`}>
+        <label key={p.id} data-testid={`rules-preset-${p.id}`} style={CARD}>
           <input
             type="radio"
             name="battle-rules"
@@ -161,7 +171,7 @@ export function BattleRulesPicker(props: {
         </label>
       ))}
       {catalog.custom && (
-        <label data-testid="rules-preset-custom">
+        <label data-testid="rules-preset-custom" style={CARD}>
           <input
             type="radio"
             name="battle-rules"
@@ -172,7 +182,7 @@ export function BattleRulesPicker(props: {
           <strong>Personalizado</strong> · Configura las reglas manualmente.
         </label>
       )}
-      <label data-testid="rules-preset-classic">
+      <label data-testid="rules-preset-classic" style={CARD}>
         <input
           type="radio"
           name="battle-rules"
@@ -186,7 +196,7 @@ export function BattleRulesPicker(props: {
 
       {custom && (
         <div data-testid="rules-custom">
-          <label>
+          <label style={ROW}>
             Respawn{" "}
             <select
               aria-label="respawn"
@@ -232,7 +242,7 @@ export function BattleRulesPicker(props: {
               onChange={(v) => setCustom((p) => ({ ...p, respawn: { ...p.respawn, delaySeconds: v } }))}
             />
           )}
-          <label>
+          <label style={ROW}>
             Condición de victoria{" "}
             <select
               aria-label="victoria"
@@ -306,7 +316,7 @@ export function BattleRulesPicker(props: {
                 limit={L.teamMassKg}
                 onChange={(v) => setCustom((p) => ({ ...p, teamMassKg: v }))}
               />
-              <label>
+              <label style={ROW}>
                 <input
                   type="checkbox"
                   aria-label="fuego amigo"
