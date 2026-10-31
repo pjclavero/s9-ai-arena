@@ -8,8 +8,11 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { loadCatalog } from "../../../packages/module-catalog/loadCatalog.js";
 import {
   VIOLATION_CLASS,
+  canonicalUuid,
   classifyViolations,
   clearEligibilityCache,
+  eligibilityKey,
+  eligibilityOf,
   evaluateLoadout,
 } from "./services/version-eligibility.js";
 
@@ -155,5 +158,21 @@ describe("clasificación (H4/H15)", () => {
     const before = JSON.stringify(r);
     evaluateLoadout(r, catalog);
     expect(JSON.stringify(r)).toBe(before);
+  });
+});
+
+describe("ELIG-REVIEW P1 · claves canónicas y fallo cerrado", () => {
+  const id = "0b9d6c1e-7f3a-4a51-9c2e-3d4f5a6b7c8d";
+  it("MAYÚSCULAS, {llaves} y sin guiones dan la misma clave", () => {
+    for (const f of [id.toUpperCase(), `{${id}}`, id.replace(/-/g, ""), ` ${id} `]) {
+      expect(canonicalUuid(f)).toBe(id);
+      expect(eligibilityKey(f, 2)).toBe(eligibilityKey(id, 2));
+    }
+    expect(canonicalUuid("no-es-uuid")).toBe("no-es-uuid");
+  });
+
+  it("una ref sin resultado es UNKNOWN y NO elegible (nunca se da por buena)", () => {
+    const e = eligibilityOf(new Map(), { botId: id, version: 1 });
+    expect(e).toMatchObject({ eligible: false, category: "UNKNOWN", reason: "loadout_unverifiable" });
   });
 });

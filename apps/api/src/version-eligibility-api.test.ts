@@ -439,3 +439,143 @@ describe("H5/H15 · inventario admin de SOLO LECTURA", () => {
     expect(only.body.summary).toEqual(s);
   });
 });
+
+describe("ELIG-REVIEW P1 · fallo cerrado con ids en otra forma", () => {
+  it("MAYÚSCULAS, {llaves} y sin guiones → 409 y ninguna batalla; el participante queda canónico", async () => {
+    const before = await counts();
+    for (const id of [aDef.toUpperCase(), `{${aDef}}`, aDef.replace(/-/g, "")]) {
+      const r = await request(app)
+        .post("/battles")
+        .set(as(devTok))
+        .send(
+          battle([
+            { botId: id, version: 2, team: "red" },
+            { botId: atk, version: 1, team: "blue" },
+          ]),
+        );
+      expect(r.status, `${id}: ${JSON.stringify(r.body)}`).toBe(409);
+      expect(r.body.error).toBe("bot_version_not_eligible");
+    }
+    expect(await counts()).toEqual(before);
+    const ok = await request(app)
+      .post("/battles")
+      .set(as(devTok))
+      .send(
+        battle([
+          { botId: aDef.toUpperCase(), version: 3, team: "red" },
+          { botId: atk, version: 1, team: "blue" },
+        ]),
+      );
+    expect(ok.status).toBe(202);
+    expect(ok.body.participants.map((p: { botId: string }) => p.botId)).toContain(aDef);
+  });
+
+  it("el mismo bot en dos formas distintas es un duplicado → 400 (antes posible 500 por PK)", async () => {
+    const r = await request(app)
+      .post("/battles")
+      .set(as(devTok))
+      .send(
+        battle([
+          { botId: atk, version: 1, team: "red" },
+          { botId: atk.toUpperCase(), version: 1, team: "blue" },
+        ]),
+      );
+    expect(r.status).toBe(400);
+  });
+});
+
+describe("ELIG-REVIEW P2 · detalle sólo para quien puede leer el loadout", () => {
+  it("anónimo: veredicto sin message ni violations; con sesión, el detalle", async () => {
+    const anon = await request(app).get(`/bots/${alienPub}/versions`);
+    expect(anon.status).toBe(200);
+    expect(anon.body[0].battleEligibility).toEqual({
+      eligible: false,
+      reason: "loadout_no_longer_valid",
+      category: "INVALID_AMMO",
+      violations: [],
+    });
+    expect(JSON.stringify(anon.body)).not.toMatch(/weapon\.|ammo\.|chassis\./);
+    expect((await request(app).get(`/bots/${alienPub}/loadouts`)).status).toBe(401);
+    const one = await request(app).get(`/bots/${alienPub}/versions/1`);
+    expect(JSON.stringify(one.body)).not.toMatch(/weapon\.|ammo\./);
+    const logged = await request(app).get(`/bots/${alienPub}/versions`).set(as(devTok));
+    expect(logged.body[0].battleEligibility.message).toContain("ammo.standard@1");
+  });
+});
+
+describe("ELIG-REVIEW P2 · excluir una inscripción pendiente no elegible", () => {
+  async function pending(name: string) {
+    const t = (
+      await request(app)
+        .post("/tournaments")
+        .set(as(orgTok))
+        .send({ name, format: "round_robin", mode: "deathmatch", rulesetId: DEFAULT_RULESET_ID })
+    ).body.id as string;
+    const [e] = await h
+      .db("entries")
+      .insert({ tournament_id: t, bot_id: bDef, version: 1, loadout_revision: 1, frozen: false })
+      .returning("*");
+    return { t, entryId: e.id as string };
+  }
+
+  it("dueño ausente: el organizador la excluye (auditado: quién, motivo, versión) y el cierre se desbloquea", async () => {
+    const { t, entryId } = await pending("elig-excluir");
+    await request(app).post(`/tournaments/${t}/entries`).set(as(devTok)).send({ botId: scout, version: 1 });
+    await request(app).post(`/tournaments/${t}/entries`).set(as(devTok)).send({ botId: prueba1, version: 1 });
+    const blocked = await request(app).post(`/tournaments/${t}/actions/close-entries`).set(as(orgTok)).send({});
+    expect(blocked.status).toBe(409);
+    const noReason = await request(app)
+      .post(`/tournaments/${t}/entries/${entryId}/actions/exclude`)
+      .set(as(orgTok))
+      .send({});
+    expect(noReason.status).toBe(400);
+    const r = await request(app)
+      .post(`/tournaments/${t}/entries/${entryId}/actions/exclude`)
+      .set(as(orgTok))
+      .send({ reason: "dueño ausente; versión no elegible" });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body).toMatchObject({ entryId, excluded: true, by: "organizer" });
+    expect(await h.db("entries").where({ id: entryId })).toHaveLength(0);
+    const orgId = (await h.db("users").where({ email: DEV_USERS.organizer }).first()).id;
+    const [a] = await h.db("audit_log").where({ action: "tournament.entry.excluded", target: `tournament:${t}` });
+    expect(a.actor_id).toBe(orgId);
+    expect(a.at).toBeTruthy();
+    const detail = typeof a.detail === "string" ? JSON.parse(a.detail) : a.detail;
+    expect(detail).toMatchObject({ entryId, botId: bDef, version: 1, by: "organizer", eligible: false });
+    expect(detail.reason).toMatch(/dueño ausente/);
+    expect((await h.db("bot_versions").where({ bot_id: bDef, version: 1 }).first()).state).toBe("published");
+    const close = await request(app).post(`/tournaments/${t}/actions/close-entries`).set(as(orgTok)).send({});
+    expect(close.status, JSON.stringify(close.body)).toBe(200);
+  });
+
+  it("organizador no excluye una elegible; un tercero nada; el dueño retira la suya; cerrado → 409", async () => {
+    const { t } = await pending("elig-excluir-limites");
+    const ok = await request(app).post(`/tournaments/${t}/entries`).set(as(devTok)).send({ botId: scout, version: 2 });
+    expect(ok.status).toBe(201);
+    const eligible = await request(app)
+      .post(`/tournaments/${t}/entries/${ok.body.id}/actions/exclude`)
+      .set(as(orgTok))
+      .send({ reason: "x" });
+    expect(eligible.status).toBe(409);
+    expect(eligible.body.error).toBe("entry_eligible");
+    const bad = await h.db("entries").where({ tournament_id: t, bot_id: bDef }).first();
+    const third = await request(app)
+      .post(`/tournaments/${t}/entries/${bad.id}/actions/exclude`)
+      .set(as(userTok))
+      .send({ reason: "x" });
+    expect(third.status).toBe(403);
+    const own = await request(app)
+      .post(`/tournaments/${t}/entries/${ok.body.id}/actions/exclude`)
+      .set(as(devTok))
+      .send({ reason: "me retiro" });
+    expect(own.status).toBe(200);
+    expect(own.body.by).toBe("owner");
+    await h.db("tournaments").where({ id: t }).update({ state: "closed" });
+    const closed = await request(app)
+      .post(`/tournaments/${t}/entries/${bad.id}/actions/exclude`)
+      .set(as(orgTok))
+      .send({ reason: "x" });
+    expect(closed.status).toBe(409);
+    expect(await h.db("entries").where({ id: bad.id })).toHaveLength(1);
+  });
+});

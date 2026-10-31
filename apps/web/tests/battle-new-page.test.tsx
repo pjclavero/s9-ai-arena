@@ -49,6 +49,14 @@ function mockLists(maps: unknown[], bots: unknown[], runCap = { enabled: false, 
     if (method === "GET" && path === "/rulesets") return Promise.resolve(RULESETS);
     if (method === "GET" && path === "/teams?limit=100") return Promise.resolve({ items: [] });
     if (method === "GET" && path === "/system/status") return Promise.resolve({ realBattleRuns: runCap });
+    // ELIG · sin versiones cargadas la elegibilidad no es verificable: se sirven las del listado.
+    const vm = /^\/bots\/([^/]+)\/versions$/.exec(path);
+    if (method === "GET" && vm) {
+      const b = (bots as { id: string; latestPublishedVersion?: number | null }[]).find((x) => x.id === vm[1]);
+      return Promise.resolve(
+        b?.latestPublishedVersion ? [{ version: b.latestPublishedVersion, state: "published" }] : [],
+      );
+    }
     if (method === "POST" && path === "/battles") return Promise.resolve({ id: "btl_1" });
     if (method === "POST" && path === "/battles/btl_1/run")
       return Promise.resolve({ status: "completed", replay: { ingested: true } });
@@ -194,6 +202,10 @@ describe("R9 · #/battles/new", () => {
       if (method === "GET" && path === "/bots?limit=100") return Promise.resolve({ items: BOTS });
       if (method === "GET" && path === "/rulesets") return Promise.resolve(RULESETS);
       if (method === "GET" && path === "/teams?limit=100") return Promise.resolve({ items: [] });
+      if (method === "GET" && path === "/bots/bot_r/versions")
+        return Promise.resolve([{ version: 3, state: "published" }]);
+      if (method === "GET" && path === "/bots/bot_b/versions")
+        return Promise.resolve([{ version: 1, state: "published" }]);
       return Promise.reject(new Error(`unexpected ${method} ${path}`));
     });
     render(<BattleNewPage me={ME} />);
