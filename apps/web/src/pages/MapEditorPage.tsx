@@ -1,213 +1,94 @@
 /**
- * R10 + FC-C (TD-010) · Editor visual de mapas PERSISTENTE.
+ * R10 + FC-C (TD-010) + UX-EDITOR · Editor visual de mapas PERSISTENTE.
  *
- * Qué cambia respecto al slice 1 (que era solo cliente y exportaba un formato de
- * autoría que «Mapas» no sabía importar, 500):
+ * Persistencia (sin cambios respecto a FC-C):
  *  - El editor trabaja directamente sobre el FORMATO INTERNO (InternalMap, metros):
  *    lo mismo que guarda la API (map_versions.content), lo que importa «Mapas» y lo
  *    que valida E4. Exportar = ese documento; por eso export ↔ import es simétrico.
- *  - Guardar = POST /maps/drafts: el borrador vive en el SERVIDOR (BD). Mientras siga
- *    en `draft` se reescribe en sitio; tras publicarlo, guardar crea la versión
- *    siguiente. La URL (#/maps/editor?map=<id>&v=<n>) identifica lo abierto, así que
- *    F5 o cerrar y volver reabre el mapa desde la API, no desde memoria.
- *  - Abrir (mis mapas), duplicar (guardar como otro id), publicar, y la validación
- *    REAL de E4 que devuelve la API (checks) a la vista.
- *  - Importa también el JSON de autoría antiguo (px) convirtiéndolo (10 px = 1 m).
+ *  - Guardar = POST /maps/drafts: el borrador vive en el SERVIDOR (BD). La URL
+ *    (#/maps/editor?map=<id>&v=<n>) identifica lo abierto; F5 lo reabre desde la API.
+ *  - Importa también el JSON de autoría antiguo (px), convirtiéndolo (10 px = 1 m).
+ *
+ * UX-EDITOR (edición visual):
+ *  - paleta (clic en el mapa para colocar), seleccionar, arrastrar para mover,
+ *    tiradores para redimensionar, borrar, duplicar, copiar/pegar;
+ *  - panel de propiedades sincronizado; rejilla y ajuste opcionales, coordenadas del
+ *    cursor, guías de alineación; zoom (rueda, +/−, encajar, 100 %) y pan con el
+ *    módulo común shared/view-transform.ts;
+ *  - deshacer/rehacer (Ctrl+Z, Ctrl+Shift+Z / Ctrl+Y);
+ *  - validación en vivo antes de guardar (map-editor/validation.ts, que además corre
+ *    el validador real del servidor en el navegador);
+ *  - borrador local que sobrevive a recargar (además de guardar en el servidor).
  *
  * La autorización la hace la API (solo el dueño guarda/publica su mapa); la UI solo
- * informa. La validación de cliente es una ayuda; la autoridad es validateMap (E4).
+ * informa. La validación del cliente es una ayuda; la autoridad es validateMap (E4)
+ * en la API al guardar y publicar.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiRequestError } from "../api.js";
 import { ErrorState, LoadingState } from "../ui/primitives.js";
-import { safeLookup } from "../../../../packages/game-rules/safe-lookup.js";
+import { modeName } from "../battle-result.js";
+import {
+  PLATFORM_MODES,
+  newMap,
+  parseImport,
+  resize,
+  toDocument,
+  toggleMode,
+  type EditorMap,
+  type ObjKind,
+  type ObjRef,
+  type Vec2,
+} from "../map-editor/model.js";
+import {
+  allRefs,
+  createAt,
+  duplicateObj,
+  getObj,
+  insertCopy,
+  objLabel,
+  patchObj,
+  removeObj,
+  refKey,
+  translateObj,
+  replaceObj,
+  TOOLS,
+  type AnyObj,
+  type Tool,
+} from "../map-editor/objects.js";
+import {
+  canRedo,
+  canUndo,
+  commit,
+  commitFrom,
+  createHistory,
+  live,
+  redo,
+  undo,
+  type History,
+} from "../map-editor/history.js";
+import { fullValidation, issuesByObject, liveIssues } from "../map-editor/validation.js";
+import { clearDraft, readDraft, sameOrigin, writeDraft, type DraftOrigin } from "../map-editor/draft-storage.js";
+import { EditorCanvas, PX_PER_M_100, teamColor, zoomLimits, type GridOpts } from "../map-editor/EditorCanvas.js";
+import { PropertiesPanel, NumField } from "../map-editor/PropertiesPanel.js";
+import { EDITOR_CSS } from "../map-editor/editor-styles.js";
+import { clampCenter, fitView, zoomTo, type Size, type View } from "../shared/view-transform.js";
+import type { Check } from "../../../map-service/src/validate/result.js";
 
-export const PLATFORM_MODES = ["deathmatch", "team_deathmatch", "capture_the_flag", "zone_control"] as const;
+// API pública histórica de este módulo (tests y otras páginas la importan de aquí).
+export {
+  PLATFORM_MODES,
+  newMap,
+  resize,
+  toggleMode,
+  fromLegacyAuthoring,
+  parseImport,
+  toDocument,
+  validateDraft,
+} from "../map-editor/model.js";
+export type { Vec2, RectShape, EditorMap, ObjKind, ObjRef } from "../map-editor/model.js";
 
-export interface Vec2 {
-  x: number;
-  y: number;
-}
-export interface RectShape {
-  shape: "rect";
-  position: Vec2;
-  widthM: number;
-  heightM: number;
-  rotation?: number;
-}
-export interface EditorMap {
-  schemaVersion: 1;
-  mapId: string;
-  version: number;
-  checksum?: string;
-  widthM: number;
-  heightM: number;
-  navCellSizeM?: number;
-  materials: {
-    id: string;
-    name?: string;
-    blocksMovement: boolean;
-    blocksVision: boolean;
-    hp?: number;
-    damagePerSecond?: number;
-  }[];
-  layers: {
-    ground: { tileSizeM: number; cols: number; rows: number; data: number[] };
-    walls: RectShape[];
-    destructibles?: (RectShape & { objectId: string; material: string })[];
-    zones?: {
-      shape: "circle";
-      position: Vec2;
-      radiusM: number;
-      objectId: string;
-      zoneType: "capture" | "damage";
-      damagePerSecond?: number;
-      team?: string;
-    }[];
-    spawns: { objectId: string; team: string; position: Vec2; heading: number }[];
-    bases?: (RectShape & { objectId: string; team: string })[];
-    flags?: { objectId: string; team: string; position: Vec2 }[];
-    [k: string]: unknown;
-  };
-  meta: { name?: string; author: string; license: string; supportedModes: string[]; [k: string]: unknown };
-  [k: string]: unknown;
-}
-
-export type ObjKind = "wall" | "destructible" | "spawn" | "base" | "flag" | "zone";
-export interface ObjRef {
-  kind: ObjKind;
-  index: number;
-}
-
-const TILE = 2;
-const DEFAULT_MATERIALS: EditorMap["materials"] = [
-  { id: "floor", name: "Suelo", blocksMovement: false, blocksVision: false },
-  { id: "concrete", name: "Muro de hormigón", blocksMovement: true, blocksVision: true },
-  { id: "crate", name: "Caja destructible", blocksMovement: true, blocksVision: true, hp: 120 },
-  { id: "acid", name: "Zona corrosiva", blocksMovement: false, blocksVision: false, damagePerSecond: 8 },
-];
-
-function ground(widthM: number, heightM: number) {
-  const cols = Math.max(1, Math.ceil(widthM / TILE));
-  const rows = Math.max(1, Math.ceil(heightM / TILE));
-  return { tileSizeM: TILE, cols, rows, data: new Array(cols * rows).fill(0) };
-}
-
-/** Mapa nuevo: 120×80 m, dos spawns enfrentados, deathmatch + team_deathmatch. */
-export function newMap(mapId = "mi-mapa", name = "Mi mapa"): EditorMap {
-  const widthM = 120;
-  const heightM = 80;
-  return {
-    schemaVersion: 1,
-    mapId,
-    version: 1,
-    widthM,
-    heightM,
-    navCellSizeM: 0.5,
-    materials: DEFAULT_MATERIALS.map((m) => ({ ...m })),
-    layers: {
-      ground: ground(widthM, heightM),
-      walls: [],
-      destructibles: [],
-      zones: [],
-      spawns: [
-        { objectId: "sp_red_1", team: "red", position: { x: 10, y: 40 }, heading: 0 },
-        { objectId: "sp_blue_1", team: "blue", position: { x: 110, y: 40 }, heading: Math.PI },
-      ],
-      bases: [],
-      flags: [],
-    },
-    meta: { name, author: "editor", license: "CC-BY-4.0", supportedModes: ["deathmatch", "team_deathmatch"] },
-  };
-}
-
-/** Cambia dimensiones regenerando la rejilla de suelo (cols*rows debe cuadrar, E4 geometry). */
-export function resize(m: EditorMap, widthM: number, heightM: number): EditorMap {
-  return { ...m, widthM, heightM, layers: { ...m.layers, ground: ground(widthM, heightM) } };
-}
-
-export function toggleMode(m: EditorMap, mode: string): EditorMap {
-  const has = m.meta.supportedModes.includes(mode);
-  const supportedModes = has ? m.meta.supportedModes.filter((x) => x !== mode) : [...m.meta.supportedModes, mode];
-  return { ...m, meta: { ...m.meta, supportedModes } };
-}
-
-const PX_PER_M = 10;
-/** Formato de autoría antiguo (slice 1, px) → InternalMap (m). */
-export function fromLegacyAuthoring(raw: Record<string, unknown>): EditorMap {
-  const num = (v: unknown, d = 0) => (typeof v === "number" && Number.isFinite(v) ? v : d);
-  const str = (v: unknown, d: string) => (typeof v === "string" && v ? v : d);
-  const arr = (v: unknown) => (Array.isArray(v) ? (v as Record<string, unknown>[]) : []);
-  const widthM = Math.round(num(raw.width, 800) / PX_PER_M);
-  const heightM = Math.round(num(raw.height, 600) / PX_PER_M);
-  const slug =
-    str(raw.id, "importado")
-      .toLowerCase()
-      .replace(/[^a-z0-9-]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "importado";
-  const m = newMap(slug.length >= 2 ? slug : `${slug}-mapa`, str(raw.name, "Mapa importado"));
-  const rect = (r: Record<string, unknown>): RectShape => ({
-    shape: "rect",
-    position: { x: num(r.x) / PX_PER_M, y: num(r.y) / PX_PER_M },
-    widthM: num(r.width, 10) / PX_PER_M,
-    heightM: num(r.height, 10) / PX_PER_M,
-  });
-  return {
-    ...resize(m, widthM, heightM),
-    layers: {
-      ...resize(m, widthM, heightM).layers,
-      walls: arr(raw.walls).map(rect),
-      destructibles: arr(raw.obstacles).map((r, i) => ({
-        ...rect(r),
-        objectId: str(r.id, `crate-${i}`),
-        material: "crate",
-      })),
-      spawns: arr(raw.spawns).map((r, i) => ({
-        objectId: str(r.id, `spawn-${i}`),
-        team: str(r.team, "red"),
-        position: { x: num(r.x) / PX_PER_M, y: num(r.y) / PX_PER_M },
-        heading: num(r.heading),
-      })),
-    },
-  };
-}
-
-/** Import del editor: InternalMap tal cual, o autoría antigua convertida. Lanza si no es ninguno. */
-export function parseImport(text: string): EditorMap {
-  const raw = JSON.parse(text) as Record<string, unknown>;
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("El JSON no es un objeto de mapa");
-  if (raw.layers && typeof raw.mapId === "string") {
-    const m = raw as unknown as EditorMap;
-    if (!m.layers.ground || !Array.isArray(m.layers.walls) || !Array.isArray(m.layers.spawns) || !m.meta) {
-      throw new Error("Mapa interno incompleto (faltan layers.ground/walls/spawns o meta)");
-    }
-    return m;
-  }
-  if (typeof raw.id === "string" && typeof raw.width === "number") return fromLegacyAuthoring(raw);
-  throw new Error("Formato no reconocido: se espera un mapa interno (mapId, layers) o el JSON de autoría antiguo");
-}
-
-/** Documento a enviar/exportar: sin version/checksum (los fija el servidor). */
-export function toDocument(m: EditorMap): EditorMap {
-  const { checksum: _c, ...rest } = m;
-  return rest as EditorMap;
-}
-
-/** Validación de autoría en cliente (ayuda; la autoridad es E4 en la API). */
-export function validateDraft(m: EditorMap): string[] {
-  const errs: string[] = [];
-  if (!/^[a-z0-9][a-z0-9-]{1,62}$/.test(m.mapId)) errs.push("id de mapa: minúsculas, dígitos y guiones (2-63)");
-  const inside = (p: Vec2, id: string) => {
-    if (p.x < 0 || p.y < 0 || p.x > m.widthM || p.y > m.heightM) errs.push(`"${id}" está fuera de los límites`);
-  };
-  m.layers.spawns.forEach((s) => inside(s.position, s.objectId));
-  m.layers.walls.forEach((w, i) => inside(w.position, `muro ${i + 1}`));
-  if (m.layers.spawns.length === 0) errs.push("el mapa no tiene ningún spawn");
-  if (m.meta.supportedModes.length === 0) errs.push("marca al menos un modo soportado");
-  return errs;
-}
-
-interface Check {
+interface ServerCheck {
   check: string;
   severity: string;
   message: string;
@@ -217,7 +98,7 @@ interface SavedVersion {
   version: number;
   state: string;
   name?: string;
-  checks?: Check[];
+  checks?: ServerCheck[];
 }
 
 function readHash(): { map?: string; v?: number } {
@@ -231,28 +112,80 @@ function writeHash(mapId: string, version: number) {
   if (window.location.hash !== next) window.history.replaceState(null, "", next);
 }
 
-const TEAM_COLORS: Record<string, string> = { red: "#c0392b", blue: "#2471a3" };
-let seq = 0;
+const STATE_NAME: Record<string, string> = { draft: "borrador", published: "publicado", archived: "archivado" };
+const stateName = (s: string) => (Object.prototype.hasOwnProperty.call(STATE_NAME, s) ? STATE_NAME[s] : s);
+
+function isTypingTarget(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null;
+  if (!el || !el.tagName) return false;
+  const tag = el.tagName.toLowerCase();
+  return tag === "input" || tag === "textarea" || tag === "select" || el.isContentEditable === true;
+}
+
+const fmt = (v: number) => (Math.round(v * 10) / 10).toLocaleString("es-ES", { minimumFractionDigits: 1 });
 
 export function MapEditorPage() {
-  const [map, setMap] = useState<EditorMap>(() => newMap());
+  const [hist, setHist] = useState<History<EditorMap>>(() => createHistory(newMap()));
+  const map = hist.present;
+  const histRef = useRef(hist);
+  histRef.current = hist;
   const [saved, setSaved] = useState<SavedVersion | null>(null);
   const [dirty, setDirty] = useState(false);
   const [selected, setSelected] = useState<ObjRef | null>(null);
-  const [checks, setChecks] = useState<Check[]>([]);
+  const [tool, setTool] = useState<Tool | null>(null);
+  const [view, setView] = useState<View | null>(null);
+  const [vp, setVp] = useState<Size>({ w: 800, h: 500 });
+  const [grid, setGrid] = useState<GridOpts>({ show: true, snap: false, step: 1 });
+  const [cursor, setCursor] = useState<Vec2 | null>(null);
+  const [checks, setChecks] = useState<ServerCheck[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [restored, setRestored] = useState(false);
   const [mine, setMine] = useState<SavedVersion[] | null>(null);
   // UX-R · si «mis mapas» falla se dice (con reintento), no «Cargando…» eterno.
   const [mineError, setMineError] = useState<unknown>(null);
   const [importText, setImportText] = useState("");
   const [copyId, setCopyId] = useState("");
+  const [gestureActive, setGestureActive] = useState(false);
+  const gestureBefore = useRef<EditorMap | null>(null);
+  const clipboard = useRef<{ kind: ObjKind; obj: AnyObj; pastes: number } | null>(null);
+  const savedRef = useRef<SavedVersion | null>(null);
+  savedRef.current = saved;
 
-  const clientErrors = useMemo(() => validateDraft(map), [map]);
+  const issues = useMemo(() => liveIssues(map), [map]);
+  const flagged = useMemo(() => issuesByObject(issues), [issues]);
   const exportJson = useMemo(() => JSON.stringify(toDocument(map), null, 2), [map]);
 
-  async function open(mapId: string, version: number) {
+  // Validador completo del servidor, en diferido y nunca durante un gesto.
+  const [full, setFull] = useState<Check[] | null>(null);
+  useEffect(() => {
+    if (gestureActive) return;
+    const t = setTimeout(() => setFull(fullValidation(map)), 350);
+    return () => clearTimeout(t);
+  }, [map, gestureActive]);
+
+  // Salir del max-width de main (clase acordada con UX-MOBILE).
+  useEffect(() => {
+    const main = document.querySelector("main");
+    main?.classList.add("page-wide");
+    return () => main?.classList.remove("page-wide");
+  }, []);
+
+  /** Sustituye el mapa entero (abrir, importar, nuevo): historial y vista desde cero. */
+  function resetTo(m: EditorMap) {
+    setHist(createHistory(m));
+    setSelected(null);
+    setTool(null);
+    setView(null);
+  }
+
+  function edit(fn: (m: EditorMap) => EditorMap, key?: string) {
+    setHist((h) => commit(h, fn(h.present), key));
+    setDirty(true);
+  }
+
+  async function open(mapId: string, version: number, localOverride?: EditorMap) {
     setError("");
     setBusy(true);
     try {
@@ -260,13 +193,20 @@ export function MapEditorPage() {
         api<SavedVersion>("GET", `/maps/${encodeURIComponent(mapId)}/versions/${version}`),
         api<EditorMap>("GET", `/maps/${encodeURIComponent(mapId)}/versions/${version}/content`),
       ]);
-      setMap(content);
       setSaved(meta);
-      setDirty(false);
-      setSelected(null);
       setChecks([]);
       writeHash(mapId, version);
-      setNotice(`Abierto ${mapId} v${version} (${meta.state}).`);
+      if (localOverride) {
+        resetTo(localOverride);
+        setDirty(true);
+        setRestored(true);
+        setNotice(`Abierto ${mapId} v${version} con los cambios sin guardar que quedaron en este navegador.`);
+      } else {
+        resetTo(content);
+        setDirty(false);
+        setRestored(false);
+        setNotice(`Abierto ${mapId} v${version} (${stateName(meta.state)}).`);
+      }
     } catch (e) {
       setError(`No se pudo abrir ${mapId} v${version}: ${(e as Error).message}`);
     } finally {
@@ -285,17 +225,37 @@ export function MapEditorPage() {
   }
 
   // F5 / volver al editor: la URL dice qué mapa está abierto; se reabre DESDE LA API.
+  // Si este navegador guardó cambios sin guardar de ESE mismo origen, se recuperan.
   useEffect(() => {
     const h = readHash();
-    if (h.map && h.v) void open(h.map, h.v);
+    const draft = readDraft();
+    const target: DraftOrigin | null = h.map && h.v ? { mapId: h.map, version: h.v } : (draft?.origin ?? null);
+    if (target) {
+      void open(target.mapId, target.version, draft && sameOrigin(draft.origin, target) ? draft.map : undefined);
+    } else if (draft) {
+      resetTo(draft.map);
+      setDirty(true);
+      setRestored(true);
+      setNotice("Se han recuperado los cambios sin guardar que quedaron en este navegador.");
+    }
     void loadMine();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function edit(fn: (m: EditorMap) => EditorMap) {
-    setMap((m) => fn(m));
-    setDirty(true);
-  }
+  // Borrador local: cada cambio sin guardar se escribe (en diferido) en este navegador.
+  useEffect(() => {
+    if (!dirty) return;
+    const t = setTimeout(() => {
+      const s = savedRef.current;
+      writeDraft({ origin: s ? { mapId: s.mapId, version: s.version } : null, map, savedAt: Date.now() });
+    }, 250);
+    return () => clearTimeout(t);
+  }, [map, dirty]);
+
+  // Una selección que ya no existe (deshacer, borrar) se suelta.
+  useEffect(() => {
+    if (selected && !getObj(map, selected)) setSelected(null);
+  }, [map, selected]);
 
   async function save(doc: EditorMap = map) {
     setError("");
@@ -305,8 +265,11 @@ export function MapEditorPage() {
       const r = await api<SavedVersion>("POST", "/maps/drafts", toDocument(doc));
       setSaved(r);
       setChecks(r.checks ?? []);
-      setMap({ ...doc, version: r.version });
+      // El historial se conserva: guardar no es un cambio del mapa.
+      setHist((h) => ({ ...h, present: { ...doc, version: r.version } }));
       setDirty(false);
+      setRestored(false);
+      clearDraft();
       writeHash(r.mapId, r.version);
       setNotice(`Guardado en el servidor: ${r.mapId} v${r.version} (borrador).`);
       await loadMine();
@@ -333,7 +296,7 @@ export function MapEditorPage() {
       setNotice(`Publicado ${r.mapId} v${r.version}: ya se puede usar en batallas.`);
       await loadMine();
     } catch (e) {
-      const body = e instanceof ApiRequestError ? (e.body as { checks?: Check[] }) : {};
+      const body = e instanceof ApiRequestError ? (e.body as { checks?: ServerCheck[] }) : {};
       if (Array.isArray(body.checks)) setChecks(body.checks);
       setError(`No se pudo publicar: ${(e as Error).message}`);
     } finally {
@@ -341,79 +304,113 @@ export function MapEditorPage() {
     }
   }
 
-  function addObject(kind: ObjKind) {
-    seq += 1;
-    const c = { x: Math.round(map.widthM / 2), y: Math.round(map.heightM / 2) };
-    edit((m) => {
-      const L = { ...m.layers };
-      const rect = (w: number, h: number): RectShape => ({ shape: "rect", position: { ...c }, widthM: w, heightM: h });
-      if (kind === "wall") L.walls = [...L.walls, rect(4, 12)];
-      if (kind === "destructible")
-        L.destructibles = [...(L.destructibles ?? []), { ...rect(2, 2), objectId: `crate-${seq}`, material: "crate" }];
-      if (kind === "spawn")
-        L.spawns = [...L.spawns, { objectId: `sp-${seq}`, team: "red", position: { ...c }, heading: 0 }];
-      if (kind === "base") L.bases = [...(L.bases ?? []), { ...rect(8, 12), objectId: `base-${seq}`, team: "red" }];
-      if (kind === "flag") L.flags = [...(L.flags ?? []), { objectId: `flag-${seq}`, team: "red", position: { ...c } }];
-      if (kind === "zone")
-        L.zones = [
-          ...(L.zones ?? []),
-          { shape: "circle", position: { ...c }, radiusM: 6, objectId: `zone-${seq}`, zoneType: "capture" },
-        ];
-      return { ...m, layers: L };
-    });
-  }
+  // --- acciones de edición ----------------------------------------------------
+  const doUndo = useCallback(() => {
+    setHist((h) => undo(h));
+    setDirty(true);
+  }, []);
+  const doRedo = useCallback(() => {
+    setHist((h) => redo(h));
+    setDirty(true);
+  }, []);
 
-  const listOf = (kind: ObjKind): { position: Vec2; [k: string]: unknown }[] => {
-    const L = map.layers;
-    return (
-      ((kind === "wall"
-        ? L.walls
-        : kind === "destructible"
-          ? L.destructibles
-          : kind === "spawn"
-            ? L.spawns
-            : kind === "base"
-              ? L.bases
-              : kind === "flag"
-                ? L.flags
-                : L.zones) as never) ?? []
-    );
-  };
-  const layerKey: Record<ObjKind, string> = {
-    wall: "walls",
-    destructible: "destructibles",
-    spawn: "spawns",
-    base: "bases",
-    flag: "flags",
-    zone: "zones",
-  };
-  function patch(ref: ObjRef, fn: (o: Record<string, unknown>) => Record<string, unknown>) {
-    edit((m) => {
-      const key = layerKey[ref.kind];
-      const arr = [...((m.layers[key] as Record<string, unknown>[]) ?? [])];
-      arr[ref.index] = fn(arr[ref.index]);
-      return { ...m, layers: { ...m.layers, [key]: arr } };
-    });
+  function place(t: Tool, p: Vec2) {
+    const r = createAt(histRef.current.present, t, p);
+    edit(() => r.map);
+    setSelected(r.ref);
+    setTool(null);
   }
-  function remove(ref: ObjRef) {
-    edit((m) => {
-      const key = layerKey[ref.kind];
-      const arr = ((m.layers[key] as unknown[]) ?? []).filter((_, i) => i !== ref.index);
-      return { ...m, layers: { ...m.layers, [key]: arr } };
-    });
+  function deleteSelected() {
+    const sel = selected;
+    if (!sel || !getObj(map, sel)) return;
+    edit((m) => removeObj(m, sel));
     setSelected(null);
   }
+  function duplicateSelected() {
+    const sel = selected;
+    if (!sel) return;
+    const r = duplicateObj(histRef.current.present, sel);
+    if (!r) return;
+    edit(() => r.map);
+    setSelected(r.ref);
+  }
+  function copySelected() {
+    const o = getObj(map, selected);
+    if (!selected || !o) return;
+    clipboard.current = { kind: selected.kind, obj: JSON.parse(JSON.stringify(o)) as AnyObj, pastes: 0 };
+    setNotice(`Copiado: ${objLabel(map, selected)}.`);
+  }
+  function paste() {
+    const c = clipboard.current;
+    if (!c) return;
+    c.pastes += 1;
+    const off = 2 * c.pastes;
+    const r = insertCopy(histRef.current.present, c.kind, c.obj, off, off);
+    edit(() => r.map);
+    setSelected(r.ref);
+  }
+  function nudge(dx: number, dy: number) {
+    const sel = selected;
+    const o = getObj(map, sel);
+    if (!sel || !o) return;
+    edit((m) => replaceObj(m, sel, translateObj(o, dx, dy)), `nudge:${refKey(sel)}`);
+  }
 
-  const sel = selected ? (listOf(selected.kind)[selected.index] as Record<string, unknown> | undefined) : undefined;
-  const scale = Math.min(640 / map.widthM, 480 / map.heightM);
-  const allObjects: (ObjRef & { label: string })[] = (
-    ["wall", "destructible", "spawn", "base", "flag", "zone"] as ObjKind[]
-  ).flatMap((kind) =>
-    listOf(kind).map((o, index) => ({ kind, index, label: `${kind} · ${(o.objectId as string) ?? index + 1}` })),
-  );
+  function zoomBy(f: number) {
+    const v = view ?? fitView({ w: map.widthM, h: map.heightM }, vp);
+    setView(clampCenter(zoomTo(v, v.zoom * f, vp, zoomLimits(map, vp)), { w: map.widthM, h: map.heightM }));
+  }
+  function zoom100() {
+    const v = view ?? fitView({ w: map.widthM, h: map.heightM }, vp);
+    setView(zoomTo(v, PX_PER_M_100, vp, zoomLimits(map, vp)));
+  }
+
+  // Teclado: atajos del editor fuera de los campos de texto.
+  const keyRef = useRef<(e: KeyboardEvent) => void>(() => undefined);
+  keyRef.current = (e: KeyboardEvent) => {
+    if (isTypingTarget(e.target)) return;
+    const mod = e.ctrlKey || e.metaKey;
+    const k = e.key.toLowerCase();
+    if (mod && k === "z" && !e.shiftKey) return (e.preventDefault(), doUndo());
+    if ((mod && k === "z" && e.shiftKey) || (mod && k === "y")) return (e.preventDefault(), doRedo());
+    if (mod && k === "c") return copySelected();
+    if (mod && k === "v") return (e.preventDefault(), paste());
+    if (mod && k === "d") return (e.preventDefault(), duplicateSelected());
+    if (mod) return;
+    if (e.key === "Delete" || e.key === "Backspace") {
+      if (selected) e.preventDefault();
+      return deleteSelected();
+    }
+    if (e.key === "Escape") return (setTool(null), setSelected(null));
+    const step = (grid.snap ? grid.step : 0.5) * (e.shiftKey ? 5 : 1);
+    const arrows: Record<string, [number, number]> = {
+      ArrowLeft: [-step, 0],
+      ArrowRight: [step, 0],
+      ArrowUp: [0, -step],
+      ArrowDown: [0, step],
+    };
+    if (selected && Object.prototype.hasOwnProperty.call(arrows, e.key)) {
+      e.preventDefault();
+      nudge(...arrows[e.key]);
+    }
+  };
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => keyRef.current(e);
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, []);
+
+  const refs = allRefs(map);
+  const errorsN = issues.filter((i) => i.severity === "error").length;
+  const warnsN = issues.length - errorsN;
+  const fullErrors = (full ?? []).filter((c) => c.severity === "error");
+  const fullWarns = (full ?? []).filter((c) => c.severity !== "error");
+  const zoomPct = Math.round(((view ?? fitView({ w: map.widthM, h: map.heightM }, vp)).zoom / PX_PER_M_100) * 100);
+  const cursorInside = cursor && cursor.x >= 0 && cursor.y >= 0 && cursor.x <= map.widthM && cursor.y <= map.heightM;
 
   return (
-    <section aria-label="Editor de mapas">
+    <section aria-label="Editor de mapas" className="s9-me">
+      <style>{EDITOR_CSS}</style>
       <h1>Editor de mapas</h1>
       <p role="note">
         Los mapas se guardan <strong>en el servidor</strong> como borrador; publícalo para poder usarlo en una batalla.
@@ -424,10 +421,10 @@ export function MapEditorPage() {
             <code data-testid="editor-current">
               {saved.mapId} v{saved.version}
             </code>{" "}
-            ({saved.state}){dirty ? " · cambios sin guardar" : " · guardado"}
+            ({stateName(saved.state)}){dirty ? " · cambios sin guardar" : " · guardado"}
           </>
         ) : (
-          " Mapa nuevo, aún sin guardar."
+          <> Mapa nuevo, aún sin guardar{dirty ? " (los cambios se conservan en este navegador al recargar)" : ""}.</>
         )}
       </p>
       {error && (
@@ -440,44 +437,66 @@ export function MapEditorPage() {
           {notice}
         </p>
       )}
-      <fieldset>
+      {restored && (
+        <p className="s9-me-note" data-testid="editor-restored">
+          Estás viendo cambios que no se llegaron a guardar en el servidor.{" "}
+          <button
+            type="button"
+            onClick={() => {
+              clearDraft();
+              setRestored(false);
+              if (saved) void open(saved.mapId, saved.version);
+              else {
+                resetTo(newMap());
+                setDirty(false);
+              }
+            }}
+          >
+            Descartar cambios locales
+          </button>
+        </p>
+      )}
+
+      <fieldset className="s9-me-fieldset">
         <legend>Mapa</legend>
-        <label>
-          Id{" "}
-          <input
-            aria-label="id del mapa"
-            value={map.mapId}
-            onChange={(e) => edit((m) => ({ ...m, mapId: e.target.value }))}
-          />
-        </label>{" "}
-        <label>
-          Nombre{" "}
-          <input
-            aria-label="nombre del mapa"
-            value={map.meta.name ?? ""}
-            onChange={(e) => edit((m) => ({ ...m, meta: { ...m.meta, name: e.target.value } }))}
-          />
-        </label>{" "}
-        <label>
-          Ancho (m){" "}
-          <input
-            type="number"
-            aria-label="ancho del mapa"
+        <div className="s9-me-row">
+          <label className="s9-me-field">
+            <span>Nombre</span>
+            <input
+              aria-label="nombre del mapa"
+              value={map.meta.name ?? ""}
+              onChange={(e) => edit((m) => ({ ...m, meta: { ...m.meta, name: e.target.value } }), "map-name")}
+            />
+          </label>
+          <label className="s9-me-field">
+            <span>Identificador (en la dirección del mapa)</span>
+            <input
+              aria-label="id del mapa"
+              value={map.mapId}
+              onChange={(e) => edit((m) => ({ ...m, mapId: e.target.value }), "map-id")}
+            />
+          </label>
+          <NumField
+            label="Anchura del mapa"
+            unit="m"
+            min={1}
+            step={1}
             value={map.widthM}
-            onChange={(e) => edit((m) => resize(m, Number(e.target.value), m.heightM))}
+            testId="map-width"
+            onChange={(v) => v > 0 && edit((m) => resize(m, v, m.heightM), "map-size")}
           />
-        </label>{" "}
-        <label>
-          Alto (m){" "}
-          <input
-            type="number"
-            aria-label="alto del mapa"
+          <NumField
+            label="Altura del mapa"
+            unit="m"
+            min={1}
+            step={1}
             value={map.heightM}
-            onChange={(e) => edit((m) => resize(m, m.widthM, Number(e.target.value)))}
+            testId="map-height"
+            onChange={(v) => v > 0 && edit((m) => resize(m, m.widthM, v), "map-size")}
           />
-        </label>
-        <div role="group" aria-label="modos soportados">
-          Modos:{" "}
+        </div>
+        <div role="group" aria-label="modos soportados" className="s9-me-modes">
+          <span>Modos de juego:</span>
           {PLATFORM_MODES.map((mode) => (
             <label key={mode}>
               <input
@@ -485,23 +504,26 @@ export function MapEditorPage() {
                 aria-label={`modo ${mode}`}
                 checked={map.meta.supportedModes.includes(mode)}
                 onChange={() => edit((m) => toggleMode(m, mode))}
-              />
-              {mode}{" "}
+              />{" "}
+              {modeName(mode)}
             </label>
           ))}
         </div>
       </fieldset>
-      <p data-testid="editor-perimeter-note">
+      <p data-testid="editor-perimeter-note" className="s9-me-muted">
         El borde del mapa es un muro: en batalla nadie sale del rectángulo de {map.widthM}×{map.heightM} m, así que no
         hace falta dibujar el perímetro. Los spawns y muros deben quedar dentro.
       </p>
-      <div role="toolbar" aria-label="Herramientas">
+
+      <div role="toolbar" aria-label="Herramientas" className="s9-me-bar">
         <button
           type="button"
           onClick={() => {
-            setMap(newMap());
+            clearDraft();
+            resetTo(newMap());
             setSaved(null);
             setDirty(false);
+            setRestored(false);
             setChecks([]);
             window.history.replaceState(null, "", "#/maps/editor");
           }}
@@ -519,220 +541,269 @@ export function MapEditorPage() {
         >
           Publicar
         </button>
-        {" | "}
-        {(["wall", "destructible", "spawn", "base", "flag", "zone"] as ObjKind[]).map((k) => (
-          <button key={k} type="button" onClick={() => addObject(k)}>
-            Añadir {k}
+        <span className="s9-me-sep" aria-hidden="true" />
+        <button type="button" disabled={!canUndo(hist)} onClick={doUndo} title="Ctrl+Z" data-testid="editor-undo">
+          Deshacer
+        </button>
+        <button
+          type="button"
+          disabled={!canRedo(hist)}
+          onClick={doRedo}
+          title="Ctrl+Shift+Z o Ctrl+Y"
+          data-testid="editor-redo"
+        >
+          Rehacer
+        </button>
+        <button type="button" disabled={!selected} onClick={copySelected} title="Ctrl+C">
+          Copiar
+        </button>
+        <button type="button" disabled={!clipboard.current} onClick={paste} title="Ctrl+V">
+          Pegar
+        </button>
+      </div>
+
+      <div role="group" aria-label="Paleta de objetos" className="s9-me-bar s9-me-palette" data-testid="editor-palette">
+        <button
+          type="button"
+          aria-pressed={tool === null}
+          onClick={() => setTool(null)}
+          title="Seleccionar y mover objetos (Esc)"
+        >
+          Seleccionar
+        </button>
+        {TOOLS.map((t) => (
+          <button
+            key={t.tool}
+            type="button"
+            aria-pressed={tool === t.tool}
+            data-tool={t.tool}
+            title={`${t.help} Elige y haz clic en el mapa.`}
+            onClick={() => setTool((cur) => (cur === t.tool ? null : t.tool))}
+          >
+            <span
+              className="s9-me-swatch"
+              aria-hidden="true"
+              style={{
+                background: t.team
+                  ? teamColor(t.team)
+                  : t.tool === "wall"
+                    ? "#66736e"
+                    : t.tool === "crate"
+                      ? "#b09858"
+                      : t.tool === "damage-zone"
+                        ? "#e5534b"
+                        : "#f1c40f",
+                borderRadius: t.kind === "spawn" || t.kind === "zone" ? "50%" : 2,
+              }}
+            />
+            {t.label}
           </button>
         ))}
       </div>
-      <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-        <svg
-          role="img"
-          aria-label={`Lienzo del mapa ${map.meta.name ?? map.mapId}`}
-          width={map.widthM * scale}
-          height={map.heightM * scale}
-          viewBox={`0 0 ${map.widthM} ${map.heightM}`}
-          style={{ border: "1px solid #888", background: "#f4f4f0" }}
-        >
-          {map.layers.walls.map((w, i) => (
-            <rect
-              key={`w${i}`}
-              x={w.position.x - w.widthM / 2}
-              y={w.position.y - w.heightM / 2}
-              width={w.widthM}
-              height={w.heightM}
-              fill="#666"
-              onClick={() => setSelected({ kind: "wall", index: i })}
-            />
-          ))}
-          {(map.layers.destructibles ?? []).map((d, i) => (
-            <rect
-              key={`d${i}`}
-              x={d.position.x - d.widthM / 2}
-              y={d.position.y - d.heightM / 2}
-              width={d.widthM}
-              height={d.heightM}
-              fill="#a0642d"
-              onClick={() => setSelected({ kind: "destructible", index: i })}
-            />
-          ))}
-          {(map.layers.zones ?? []).map((z, i) => (
-            <circle
-              key={`z${i}`}
-              cx={z.position.x}
-              cy={z.position.y}
-              r={z.radiusM}
-              fill={z.zoneType === "capture" ? "#f1c40f55" : "#27ae6055"}
-              onClick={() => setSelected({ kind: "zone", index: i })}
-            />
-          ))}
-          {(map.layers.bases ?? []).map((b, i) => (
-            <rect
-              key={`b${i}`}
-              x={b.position.x - b.widthM / 2}
-              y={b.position.y - b.heightM / 2}
-              width={b.widthM}
-              height={b.heightM}
-              fill="none"
-              stroke={safeLookup(TEAM_COLORS, b.team) ?? "#555"}
-              strokeWidth={0.6}
-              onClick={() => setSelected({ kind: "base", index: i })}
-            />
-          ))}
-          {(map.layers.flags ?? []).map((f, i) => (
-            <rect
-              key={`f${i}`}
-              x={f.position.x - 0.8}
-              y={f.position.y - 0.8}
-              width={1.6}
-              height={1.6}
-              fill={safeLookup(TEAM_COLORS, f.team) ?? "#555"}
-              onClick={() => setSelected({ kind: "flag", index: i })}
-            />
-          ))}
-          {map.layers.spawns.map((s, i) => (
-            <circle
-              key={`s${i}`}
-              cx={s.position.x}
-              cy={s.position.y}
-              r={1.6}
-              fill={safeLookup(TEAM_COLORS, s.team) ?? "#555"}
-              onClick={() => setSelected({ kind: "spawn", index: i })}
-              role="img"
-              aria-label={`spawn ${s.objectId} (${s.team})`}
-            />
-          ))}
-        </svg>
 
-        <div style={{ minWidth: 260 }}>
-          <h2>Objetos ({allObjects.length})</h2>
-          <ul>
-            {allObjects.map((o) => (
-              <li key={`${o.kind}-${o.index}`}>
-                <button
-                  type="button"
-                  aria-pressed={selected?.kind === o.kind && selected.index === o.index}
-                  onClick={() => setSelected({ kind: o.kind, index: o.index })}
-                >
-                  {o.label}
-                </button>
-              </li>
-            ))}
-          </ul>
-          {selected && sel && (
-            <fieldset>
-              <legend>Editar {selected.kind}</legend>
-              <label>
-                x{" "}
-                <input
-                  type="number"
-                  aria-label="x"
-                  value={(sel.position as Vec2).x}
-                  onChange={(e) =>
-                    patch(selected, (o) => ({ ...o, position: { ...(o.position as Vec2), x: Number(e.target.value) } }))
-                  }
-                />
-              </label>
-              <label>
-                y{" "}
-                <input
-                  type="number"
-                  aria-label="y"
-                  value={(sel.position as Vec2).y}
-                  onChange={(e) =>
-                    patch(selected, (o) => ({ ...o, position: { ...(o.position as Vec2), y: Number(e.target.value) } }))
-                  }
-                />
-              </label>
-              {"widthM" in sel && (
-                <>
-                  <label>
-                    ancho{" "}
-                    <input
-                      type="number"
-                      aria-label="ancho"
-                      value={sel.widthM as number}
-                      onChange={(e) => patch(selected, (o) => ({ ...o, widthM: Number(e.target.value) }))}
-                    />
-                  </label>
-                  <label>
-                    alto{" "}
-                    <input
-                      type="number"
-                      aria-label="alto"
-                      value={sel.heightM as number}
-                      onChange={(e) => patch(selected, (o) => ({ ...o, heightM: Number(e.target.value) }))}
-                    />
-                  </label>
-                </>
-              )}
-              {"radiusM" in sel && (
-                <label>
-                  radio{" "}
-                  <input
-                    type="number"
-                    aria-label="radio"
-                    value={sel.radiusM as number}
-                    onChange={(e) => patch(selected, (o) => ({ ...o, radiusM: Number(e.target.value) }))}
-                  />
-                </label>
-              )}
-              {"team" in sel && (
-                <label>
-                  equipo{" "}
-                  <select
-                    aria-label="equipo"
-                    value={sel.team as string}
-                    onChange={(e) => patch(selected, (o) => ({ ...o, team: e.target.value }))}
-                  >
-                    <option value="red">red</option>
-                    <option value="blue">blue</option>
-                  </select>
-                </label>
-              )}
-              {"zoneType" in sel && (
-                <label>
-                  tipo{" "}
-                  <select
-                    aria-label="tipo de zona"
-                    value={sel.zoneType as string}
-                    onChange={(e) => patch(selected, (o) => ({ ...o, zoneType: e.target.value }))}
-                  >
-                    <option value="capture">captura</option>
-                    <option value="damage">daño</option>
-                  </select>
-                </label>
-              )}
-              <button type="button" onClick={() => remove(selected)}>
-                Eliminar objeto
-              </button>
-            </fieldset>
-          )}
-          {clientErrors.length > 0 && (
-            <div role="alert" data-testid="editor-client-errors">
-              <strong>Avisos (cliente):</strong>
-              <ul>
-                {clientErrors.map((e, i) => (
-                  <li key={i}>{e}</li>
+      <div className="s9-me-layout">
+        <div className="s9-me-main">
+          <div role="group" aria-label="Vista" className="s9-me-bar">
+            <button
+              type="button"
+              aria-label="Alejar"
+              title="Alejar (rueda hacia atrás)"
+              onClick={() => zoomBy(1 / 1.25)}
+            >
+              −
+            </button>
+            <span data-testid="editor-zoom" aria-live="polite" title="100 % = 10 píxeles por metro">
+              {zoomPct} %
+            </span>
+            <button
+              type="button"
+              aria-label="Acercar"
+              title="Acercar (rueda hacia delante)"
+              onClick={() => zoomBy(1.25)}
+            >
+              +
+            </button>
+            <button type="button" onClick={() => setView(null)}>
+              Encajar mapa
+            </button>
+            <button type="button" onClick={zoom100}>
+              100 %
+            </button>
+            <span className="s9-me-sep" aria-hidden="true" />
+            <label>
+              <input
+                type="checkbox"
+                checked={grid.show}
+                onChange={(e) => setGrid({ ...grid, show: e.target.checked })}
+              />{" "}
+              Rejilla
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                aria-label="Ajustar a la rejilla"
+                checked={grid.snap}
+                onChange={(e) => setGrid({ ...grid, snap: e.target.checked })}
+              />{" "}
+              Ajustar
+            </label>
+            <label>
+              <span className="visually-hidden">Paso de la rejilla</span>
+              <select
+                aria-label="Paso de la rejilla"
+                value={grid.step}
+                onChange={(e) => setGrid({ ...grid, step: Number(e.target.value) })}
+              >
+                {[0.5, 1, 2, 5].map((s) => (
+                  <option key={s} value={s}>
+                    {String(s).replace(".", ",")} m
+                  </option>
                 ))}
-              </ul>
-            </div>
-          )}
-          {checks.length > 0 && (
-            <div data-testid="editor-checks">
-              <strong>Validación del servidor (E4):</strong>
-              <ul>
-                {checks.map((c, i) => (
-                  <li key={i} className={c.severity === "error" ? "error" : "warn"}>
-                    [{c.check}] {c.message}
+              </select>
+            </label>
+          </div>
+          <EditorCanvas
+            map={map}
+            selected={selected}
+            tool={tool}
+            view={view}
+            grid={grid}
+            flagged={flagged}
+            onView={setView}
+            onViewport={setVp}
+            onSelect={setSelected}
+            onPlace={place}
+            onGestureStart={() => {
+              gestureBefore.current = histRef.current.present;
+              setGestureActive(true);
+            }}
+            onGestureLive={(next) => setHist((h) => live(h, next))}
+            onGestureEnd={() => {
+              const before = gestureBefore.current;
+              gestureBefore.current = null;
+              setGestureActive(false);
+              if (before) {
+                setHist((h) => commitFrom(h, before));
+                setDirty(true);
+              }
+            }}
+            onCursor={setCursor}
+          />
+          <div className="s9-me-status">
+            <span data-testid="editor-cursor">
+              {cursor
+                ? `Cursor: X ${fmt(cursor.x)} m · Y ${fmt(cursor.y)} m${cursorInside ? "" : " (fuera del mapa)"}`
+                : "Cursor: fuera del lienzo"}
+            </span>
+            <span>
+              Mapa: {map.widthM} × {map.heightM} m
+            </span>
+            {tool && (
+              <span data-testid="editor-tool-hint">
+                Haz clic en el mapa para colocar: {TOOLS.find((t) => t.tool === tool)?.label}
+              </span>
+            )}
+          </div>
+          <p className="s9-me-muted" data-testid="editor-help">
+            Elige un objeto de la paleta y haz clic en el mapa para colocarlo. Arrastra un objeto para moverlo y sus
+            cuadraditos para cambiar el tamaño. Arrastra en un hueco (o con el botón central) para desplazar la vista;
+            la rueda o el pellizco hacen zoom. Ctrl+Z deshace, Ctrl+Shift+Z o Ctrl+Y rehace, Supr borra, Ctrl+D duplica,
+            las flechas mueven con precisión. Las bases cuentan en batalla como su círculo relleno.
+          </p>
+        </div>
+
+        <div className="s9-me-side">
+          <PropertiesPanel
+            map={map}
+            selected={selected}
+            onPatch={(ref, patch, field) => edit((m) => patchObj(m, ref, patch), `prop:${refKey(ref)}:${field}`)}
+            onDuplicate={duplicateSelected}
+            onDelete={deleteSelected}
+          />
+
+          <div className="s9-me-panel" data-testid="editor-validation" data-errors={errorsN} data-warnings={warnsN}>
+            <h2>Comprobaciones</h2>
+            {issues.length === 0 ? (
+              <p className="s9-me-ok" data-testid="editor-validation-ok">
+                Sin problemas a la vista.
+              </p>
+            ) : (
+              <>
+                <p className="s9-me-muted">
+                  {errorsN} {errorsN === 1 ? "problema" : "problemas"} y {warnsN} {warnsN === 1 ? "aviso" : "avisos"}.
+                  Se puede guardar igualmente; para publicar no debe quedar ningún problema.
+                </p>
+                <ul className="s9-me-issues">
+                  {issues.map((i, k) => (
+                    <li key={k} data-severity={i.severity} data-code={i.code} data-testid="editor-issue">
+                      {i.severity === "error" ? "Problema: " : "Aviso: "}
+                      {i.refs[0] ? (
+                        <button type="button" onClick={() => setSelected(i.refs[0])}>
+                          {i.message}
+                        </button>
+                      ) : (
+                        i.message
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            <details data-testid="editor-full-validation">
+              <summary>
+                Comprobación completa (la misma del servidor):{" "}
+                {full === null ? "calculando…" : `${fullErrors.length} errores, ${fullWarns.length} avisos`}
+              </summary>
+              <ul className="s9-me-issues">
+                {(full ?? []).map((c, k) => (
+                  <li key={k} data-severity={c.severity}>
+                    {c.message}
                   </li>
                 ))}
               </ul>
-            </div>
-          )}
+            </details>
+            {checks.length > 0 && (
+              <div data-testid="editor-checks">
+                <strong>Resultado del servidor al guardar:</strong>
+                <ul className="s9-me-issues">
+                  {checks.map((c, i) => (
+                    <li
+                      key={i}
+                      data-severity={c.severity === "error" ? "error" : "warning"}
+                      className={c.severity === "error" ? "error" : "warn"}
+                    >
+                      {c.message}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+
+          <div className="s9-me-panel">
+            <h2>Objetos ({refs.length})</h2>
+            <ul className="s9-me-objlist" data-testid="editor-objects">
+              {refs.map((r) => (
+                <li key={refKey(r)}>
+                  <button
+                    type="button"
+                    aria-pressed={selected?.kind === r.kind && selected.index === r.index}
+                    onClick={() => setSelected(r)}
+                  >
+                    {objLabel(map, r)}
+                    {flagged.get(refKey(r)) === "error"
+                      ? " — con problema"
+                      : flagged.get(refKey(r))
+                        ? " — con aviso"
+                        : ""}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
       </div>
+
       <h2>Mis mapas</h2>
       {mineError !== null ? (
         <ErrorState label="tus mapas" error={mineError} onRetry={() => void loadMine()} />
@@ -751,59 +822,71 @@ export function MapEditorPage() {
               >
                 Abrir
               </button>{" "}
-              {m.name ?? m.mapId} · {m.mapId} v{m.version} ({m.state})
+              {m.name ?? m.mapId} · v{m.version} ({stateName(m.state)})
             </li>
           ))}
         </ul>
       )}
-      <h2>Duplicar</h2>
-      <input
-        aria-label="id de la copia"
-        placeholder="nuevo-id"
-        value={copyId}
-        onChange={(e) => setCopyId(e.target.value)}
-      />{" "}
-      <button type="button" disabled={busy || !copyId} onClick={() => void save({ ...map, mapId: copyId, version: 1 })}>
-        Guardar como copia
-      </button>
-      <h2>Exportar JSON (mapa interno)</h2>
-      <textarea aria-label="JSON exportado" readOnly rows={8} cols={60} value={exportJson} />
-      <div>
-        <a
-          download={`${map.mapId}.json`}
-          href={`data:application/json;charset=utf-8,${encodeURIComponent(exportJson)}`}
-          data-testid="editor-download"
-        >
-          Descargar {map.mapId}.json
-        </a>{" "}
-        <small>(se puede importar tal cual en «Mapas»)</small>
-      </div>
-      <h2>Importar JSON</h2>
-      <textarea
-        aria-label="JSON a importar"
-        rows={6}
-        cols={60}
-        value={importText}
-        onChange={(e) => setImportText(e.target.value)}
-      />
-      <div>
+      <h2>Guardar una copia</h2>
+      <div className="s9-me-row">
+        <input
+          aria-label="id de la copia"
+          placeholder="identificador-de-la-copia"
+          value={copyId}
+          onChange={(e) => setCopyId(e.target.value)}
+        />
         <button
           type="button"
-          onClick={() => {
-            setError("");
-            try {
-              setMap(parseImport(importText));
-              setSaved(null);
-              setDirty(true);
-              setSelected(null);
-            } catch (e) {
-              setError(`No se pudo importar: ${(e as Error).message}`);
-            }
-          }}
+          disabled={busy || !copyId}
+          onClick={() => void save({ ...map, mapId: copyId, version: 1 })}
         >
-          Importar
+          Guardar como copia
         </button>
       </div>
+
+      <details className="s9-me-fieldset" data-testid="editor-advanced">
+        <summary>Opciones avanzadas: archivo JSON del mapa</summary>
+        <p className="s9-me-muted">
+          Para usuarios avanzados: el documento completo del mapa, el mismo que se puede subir en «Mapas».
+        </p>
+        <h3>Exportar</h3>
+        <textarea aria-label="JSON exportado" readOnly rows={8} value={exportJson} />
+        <div>
+          <a
+            download={`${map.mapId}.json`}
+            href={`data:application/json;charset=utf-8,${encodeURIComponent(exportJson)}`}
+            data-testid="editor-download"
+          >
+            Descargar {map.mapId}.json
+          </a>{" "}
+          <small>(se puede importar tal cual en «Mapas»)</small>
+        </div>
+        <h3>Importar</h3>
+        <textarea
+          aria-label="JSON a importar"
+          rows={6}
+          value={importText}
+          onChange={(e) => setImportText(e.target.value)}
+        />
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              setError("");
+              try {
+                resetTo(parseImport(importText));
+                setSaved(null);
+                setDirty(true);
+                setRestored(false);
+              } catch (e) {
+                setError(`No se pudo importar: ${(e as Error).message}`);
+              }
+            }}
+          >
+            Importar
+          </button>
+        </div>
+      </details>
     </section>
   );
 }
