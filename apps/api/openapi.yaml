@@ -32,8 +32,15 @@ info:
   # y las nuevas aplican la política de acceso (staff, dueño o equipo de un bot
   # participante, o replay público por S9_PUBLIC_REPLAYS_ENABLED); el resto
   # recibe 404, igual que un id inexistente.
+  # 0.10.0 · ELIG elegibilidad histórica (aditivo): BotVersion.battleEligibility
+  # (calculado; sólo published/frozen), errores 409 bot_version_not_eligible
+  # (createPracticeBattle, enterTournament) y entries_not_eligible (closeEntries),
+  # 200 de enterTournament al cambiar una inscripción pendiente no elegible por otra
+  # versión, y getBotVersionEligibilityInventory (admin, solo lectura).
+  # 0.11.0 · ELIG (review): excludeTournamentEntry (excluir una inscripción pendiente,
+  # auditado) y esquemas declarados de notEligible / notEligibleEntries / replacedVersion.
   # Añadir un endpoint = MINOR (docs/compatibilidad.md, §2 Semver por paquete).
-  version: 0.9.0
+  version: 0.11.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -932,8 +939,9 @@ paths:
                 botId: { type: string }
                 version: { type: integer }
       responses:
+        '200': { description: 'ELIG · el bot ya tenía una inscripción PENDIENTE con una versión que hoy no es elegible: se cambia por la versión pedida (auditado; `replacedVersion`). Nunca se sustituye sola.', content: { application/json: { schema: { $ref: '#/components/schemas/Entry' } } } }
         '201': { description: Inscrito, content: { application/json: { schema: { $ref: '#/components/schemas/Entry' } } } }
-        '409': { description: 'Inscripciones cerradas, bot no publicado o suspendido', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: 'Inscripciones cerradas, bot no publicado o suspendido, already_entered, o bot_version_not_eligible (ELIG, con `notEligible`)', content: { application/json: { schema: { $ref: '#/components/schemas/NotEligibleError' } } } }
 
   /tournaments/{tournamentId}/actions/close-entries:
     post:
@@ -944,7 +952,47 @@ paths:
       parameters: [{ $ref: '#/components/parameters/TournamentId' }]
       responses:
         '200': { description: Cerrado y calendario generado, content: { application/json: { schema: { $ref: '#/components/schemas/Tournament' } } } }
-        '409': { $ref: '#/components/responses/IllegalTransition' }
+        '409': { description: 'illegal_transition (currentState, allowedTransitions) · entries_not_eligible (ELIG: alguna inscripción pendiente usa una versión que ya no es elegible; `notEligibleEntries` con sus ids, sin motivo; no se congela ni cierra nada)', content: { application/json: { schema: { $ref: '#/components/schemas/EntriesNotEligibleError' } } } }
+
+  /tournaments/{tournamentId}/entries/{entryId}/actions/exclude:
+    post:
+      tags: [tournaments]
+      operationId: excludeTournamentEntry
+      summary: >-
+        ELIG · Excluir una inscripción PENDIENTE (torneo open, sin congelar). El organizador sólo
+        puede excluir inscripciones NO elegibles; el dueño del bot puede retirar la suya. Se
+        quita de las inscripciones y su contenido completo (quién, cuándo, motivo, versión)
+        queda en audit_log como tournament.entry.excluded en la misma transacción. Una
+        inscripción pendiente no tiene batallas ni calendario: no se toca ningún dato histórico.
+      x-min-role: user
+      parameters:
+        - { $ref: '#/components/parameters/TournamentId' }
+        - { name: entryId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 256 }
+      responses:
+        '200':
+          description: Excluida
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entryId: { type: string }
+                  tournamentId: { type: string }
+                  excluded: { type: boolean, const: true }
+                  by: { enum: [owner, organizer] }
+        '400': { description: reason obligatorio, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: Ni dueño del bot ni organizador, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'entries_closed (torneo no abierto o inscripción congelada) · entry_eligible (el organizador no puede excluir una inscripción elegible) · entry_changed (la inscripción cambió de versión mientras se procesaba: no se borra ni se audita)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /tournaments/{tournamentId}/actions/dry-run:
     post:
@@ -1111,7 +1159,7 @@ paths:
         '202': { description: Encolada (la ejecuta el tournament-worker con el código real de cada bot), content: { application/json: { schema: { $ref: '#/components/schemas/Battle' } } } }
         '400': { description: 'Modo/participantes/team/ruleset/mapa inválidos o bot repetido. 4v4 · team_composition_invalid (un modo de equipo sin exactamente 2 bandos) · team_too_large (más de 4 bots por bando).', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '404': { description: 'bot_not_found · un bot inexistente o privado ajeno (TD-005); indistinguibles a propósito', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
-        '409': { description: 'bot_not_published · ruleset_mode_mismatch · map_mode_unsupported (checkBattleContent, misma regla que la web) · 4v4 · deathmatch_shared_team (deathmatch con bandos compartidos: usa team_deathmatch)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { content: { application/json: { schema: { $ref: '#/components/schemas/NotEligibleError' } } }, description: 'bot_not_published · bot_version_not_eligible (ELIG: publicada pero su loadout histórico no cumple hoy la validación; `notEligible` con el motivo) · ruleset_mode_mismatch · map_mode_unsupported (checkBattleContent, misma regla que la web) · 4v4 · deathmatch_shared_team (deathmatch con bandos compartidos: usa team_deathmatch)' }
 
   /battles/{battleId}:
     get:
@@ -1408,6 +1456,28 @@ paths:
             application/json:
               schema: { type: array, items: { $ref: '#/components/schemas/SecurityFinding' } }
 
+  /admin/bot-version-eligibility:
+    get:
+      tags: [admin]
+      operationId: getBotVersionEligibilityInventory
+      summary: >-
+        ELIG · Inventario SOLO LECTURA de las versiones published/frozen: validación actual,
+        elegibilidad y motivo (H5/H15). Corre en una transacción READ ONLY (no escribe nada,
+        tampoco en audit_log); el acceso queda en el log estructurado del servicio (actor,
+        correlationId). Sin datos de contacto: el propietario va por id. summaryOnly=true
+        devuelve sólo los agregados.
+      x-min-role: admin
+      parameters:
+        - name: summaryOnly
+          in: query
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: Inventario
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EligibilityInventory' }
+
   /admin/audit-log:
     get:
       tags: [admin]
@@ -1674,6 +1744,94 @@ components:
         parentVersion: { type: integer, description: 'Versión de la que se creó (clonado), si aplica' }
         validatedBuildId: { type: string, description: 'Build que produjo el artefacto de esta versión' }
         publishedAt: { type: string, format: date-time }
+        battleEligibility: { $ref: '#/components/schemas/BattleEligibility' }
+
+    BattleEligibility:
+      type: object
+      description: >-
+        ELIG · Calculado en cada lectura (no se guarda), sólo para versiones published/frozen:
+        el loadout histórico EXACTO, su catálogo inmutable y el validador actual. Publicada
+        y elegible son conceptos distintos: una versión no elegible se conserva en el
+        histórico y sus replays, pero no entra en batallas ni torneos nuevos.
+      required: [eligible, category, violations]
+      properties:
+        eligible: { type: boolean }
+        reason: { enum: [loadout_no_longer_valid, loadout_unverifiable] }
+        category: { enum: [VALID, INVALID_AMMO, MISSING_AMMO, ORPHAN_AMMO, OTHER_INVALID, UNKNOWN] }
+        message: { type: string }
+        suggestedAction: { type: string }
+        violations:
+          type: array
+          items:
+            type: object
+            properties:
+              code: { type: string }
+              category: { type: string }
+              message: { type: string }
+              slot: { type: string }
+              moduleId: { type: string }
+              ammoId: { type: string }
+
+    NotEligibleError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            notEligible:
+              type: array
+              description: 'ELIG · sólo con error=bot_version_not_eligible: cada versión no elegible y su motivo.'
+              items:
+                allOf:
+                  - $ref: '#/components/schemas/BattleEligibility'
+                  - type: object
+                    properties:
+                      botId: { type: string }
+                      version: { type: integer }
+
+    EntriesNotEligibleError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            currentState: { type: string }
+            allowedTransitions: { type: array, items: { type: string } }
+            notEligibleEntries:
+              type: array
+              description: 'ELIG · sólo con error=entries_not_eligible: ids de inscripción (sin motivo).'
+              items: { type: object, properties: { entryId: { type: string } } }
+
+    EligibilityInventory:
+      type: object
+      properties:
+        generatedAt: { type: string, format: date-time }
+        rulesVersion: { type: string }
+        readOnly: { type: boolean, const: true }
+        scope: { type: string }
+        summary:
+          type: object
+          properties:
+            totalPublishedVersions: { type: integer }
+            currentlyValid: { type: integer }
+            currentlyInvalid: { type: integer }
+            invalidByReason: { type: object, additionalProperties: { type: integer } }
+            usersAffected: { type: integer }
+            botsAffected: { type: integer }
+            warningsByCode: { type: object, additionalProperties: { type: integer } }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              botId: { type: string }
+              botName: { type: string }
+              version: { type: integer }
+              state: { type: string }
+              ownerId: { type: string }
+              loadoutRevision: { type: integer }
+              currentValidation: { type: string }
+              eligible: { type: boolean }
+              reason: { type: string }
+              violations: { type: array, items: { type: object, additionalProperties: true } }
 
     BotArtifact:
       type: object
@@ -1831,6 +1989,7 @@ components:
         version: { type: integer }
         loadoutRevision: { type: integer }
         frozen: { type: boolean, description: 'Congelado al cerrar inscripciones: la combinación código+loadout ya no cambia (cap. 17.2).' }
+        replacedVersion: { type: integer, description: 'ELIG · sólo en el 200 que sustituye una inscripción pendiente no elegible: la versión anterior.' }
 
     PracticeBattleInput:
       type: object

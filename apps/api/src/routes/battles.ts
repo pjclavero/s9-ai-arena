@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
+import { assertVersionsEligible, canonicalUuid } from "../services/version-eligibility.js";
 import { audit } from "../audit.js";
 import { pathParam } from "../params.js";
 import { ROLE_RANK } from "../openapi.js";
@@ -613,6 +614,7 @@ export function battleRoutes(
       if (typeof p.team !== "string" || !/^[A-Za-z0-9_-]{1,32}$/.test(p.team)) {
         throw badRequest("participants[].team: 1-32 caracteres [A-Za-z0-9_-]");
       }
+      p.botId = canonicalUuid(p.botId); // ELIG · PG acepta MAYÚSCULAS/{llaves}: una sola forma
       if (seen.has(p.botId)) throw badRequest("participants: un bot solo puede aparecer una vez por batalla");
       seen.add(p.botId);
     }
@@ -651,6 +653,8 @@ export function battleRoutes(
         throw conflict("bot_not_published", `El bot ${p.botId} v${p.version} no está publicado`);
       }
     }
+    // ELIG · publicada ≠ elegible: el loadout histórico se revalida con el validador actual.
+    await assertVersionsEligible(db, participants);
 
     // Una sola transacción: batalla + participantes + trabajo. Antes eran tres
     // escrituras sueltas (una batalla podía quedar sin trabajo, o sin participantes).

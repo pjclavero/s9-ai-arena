@@ -36,7 +36,18 @@ La clasificación ACTIVE / PARTIAL / FUTURE de cada propiedad vive en código (`
 1. La web (`LoadoutEditor`) usa el validador compilado al navegador para mostrar coste, energía y violaciones en vivo.
 2. `POST /bots/{id}/loadouts` vuelve a validar en servidor contra el ruleset `mvp-default` (presupuesto 1000). Responde `422 loadout_invalid` con `violations` o `201` con una nueva revisión. Las revisiones guardadas son inmutables: si una antigua ya no valida (p. ej. cañón con munición estándar), se conserva, pero crear, clonar, enviar a build o publicar una versión con ella responde `422 loadout_invalid`; el pipeline también la para en `structure`.
 3. Cada versión de código fija una `loadout_revision`. En torneo, la inscripción congela la pareja código+loadout.
-4. Al empezar la batalla, el worker lee el loadout y llama a `resolveVehicle(loadout, catalog)`, que produce el `VehicleSpec`. La masa total es la del chasis más la de los módulos.
+4. **Elegibilidad** (ELIG): ver [abajo](#elegibilidad-de-versiones-históricas).
+5. Al empezar la batalla, el worker lee el loadout y llama a `resolveVehicle(loadout, catalog)`, que produce el `VehicleSpec`. La masa total es la del chasis más la de los módulos.
+
+## Elegibilidad de versiones históricas
+
+Publicada y elegible son conceptos distintos. Una versión `published`/`frozen` es inmutable (trigger `bot_version_immutable`) y se conserva con su loadout, su build, sus batallas y sus replays. Que pueda entrar en una competición **nueva** se **calcula** (no se guarda ni cambia su estado) en `apps/api/src/services/version-eligibility.ts`: loadout histórico exacto + su catálogo inmutable + validador actual (`validateLoadout`).
+
+- Clases (`VIOLATION_CLASS`, exhaustiva por tipo): `functional` (`incompatible_ammo`, `slot_type_mismatch`, `slot_size_exceeded`, `incompatible_chassis`) y `malformed` (`unknown_slot`, `duplicate_slot`, JSON ilegible) **bloquean**; `balance` (`budget_exceeded`, `module_cost_cap_exceeded`, `mass_exceeded`, `energy_deficit`, `duplicate_limit_exceeded`, `category_forbidden_by_ruleset`) sólo avisa: si una competición lo exige, lo aplica su ruleset. Un código desconocido falla cerrado.
+- Categorías del inventario: `VALID`, `INVALID_AMMO`, `MISSING_AMMO`, `ORPHAN_AMMO`, `OTHER_INVALID`, `UNKNOWN` (catálogo o revisión ausentes).
+- Dónde se aplica: `POST /battles` (409 `bot_version_not_eligible`), inscripción y cierre de torneos (409 `bot_version_not_eligible` / `entries_not_eligible`), y el worker antes de lanzar (descalificación administrativa de una batalla agendada antes del fix). La UI lo muestra como «Publicada · No elegible» (deshabilitada, con motivo), a partir del campo `battleEligibility` de `GET /bots/{id}/versions`.
+- Caché en memoria por (reglas, catálogo, huella del loadout); ambos son inmutables, así que no hay invalidación salvo despliegue (`ELIGIBILITY_RULES_VERSION`).
+- Inventario: `GET /admin/bot-version-eligibility` (admin, transacción `READ ONLY`, acceso en el log estructurado) y `scripts/ops/eligibility-inventory.mjs` (`S9_API_URL`, token en `S9_ADMIN_TOKEN_FILE` 0600 o `--token-stdin`; `--summary` para agregados).
 
 ## Chasis
 
