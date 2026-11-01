@@ -166,6 +166,19 @@ describe("R-UI · conjunto de reglas en Nueva batalla", () => {
     });
   });
 
+  it("Personalizado: «puntos al acabar el tiempo» sólo con respawn ilimitado (con limitado se pasa a eliminación)", async () => {
+    mockApi();
+    render(<BattleNewPage me={ME} />);
+    await screen.findByTestId("battle-rules");
+    await userEvent.click(screen.getByLabelText("reglas Personalizado"));
+    const box = screen.getByTestId("rules-custom");
+    await userEvent.selectOptions(within(box).getByLabelText("victoria"), "time_score");
+    await userEvent.selectOptions(within(box).getByLabelText("respawn"), "limited");
+    const victory = within(box).getByLabelText("victoria") as HTMLSelectElement;
+    expect([...victory.options].map((o) => o.value)).not.toContain("time_score");
+    expect(victory.value).toBe("elimination");
+  });
+
   it("una violación de créditos de rules-check bloquea crear y dice qué bot se pasa y cuánto", async () => {
     const violation = {
       code: "bot_credits_exceeded",

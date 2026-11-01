@@ -210,7 +210,13 @@ export function BattleRulesPicker(props: {
                     respawnsPerBot: mode === "limited" ? (p.respawn.respawnsPerBot ?? 2) : null,
                     delaySeconds: mode === "none" ? null : (p.respawn.delaySeconds ?? 5),
                   },
-                  victory: mode === "unlimited" && p.victory === "elimination" ? "score_limit" : p.victory,
+                  // Combinaciones que el servidor rechaza: se corrigen al cambiar el respawn.
+                  victory:
+                    mode === "unlimited" && p.victory === "elimination"
+                      ? "score_limit"
+                      : mode !== "unlimited" && p.victory === "time_score"
+                        ? "elimination"
+                        : p.victory,
                   scoreLimit: mode === "unlimited" && p.victory === "elimination" ? (p.scoreLimit ?? 10) : p.scoreLimit,
                 }));
               }}
@@ -258,7 +264,7 @@ export function BattleRulesPicker(props: {
             >
               {custom.respawn.mode !== "unlimited" && <option value="elimination">eliminación</option>}
               <option value="score_limit">límite de bajas</option>
-              {custom.respawn.mode !== "none" && <option value="time_score">puntos al acabar el tiempo</option>}
+              {custom.respawn.mode === "unlimited" && <option value="time_score">puntos al acabar el tiempo</option>}
             </select>
           </label>
           {custom.victory === "score_limit" && (
