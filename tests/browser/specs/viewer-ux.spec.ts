@@ -312,6 +312,8 @@ async function touchChecks(browser: Browser, id: string, tag: string, expectedBo
 
     // Un dedo: pan del escenario (el rectángulo de vista se mueve) y la página NO hace scroll.
     const v0 = await miniAttr(page, "view");
+    const stageY0 = (await box(canvas)).y;
+    const scrollPan0 = await page.evaluate(() => window.scrollY);
     await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: cx, y: cy, id: 3 }] });
     for (let i = 1; i <= 10; i++) {
       await cdp.send("Input.dispatchTouchEvent", {
@@ -321,9 +323,17 @@ async function touchChecks(browser: Browser, id: string, tag: string, expectedBo
     }
     await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
     await expect.poll(() => miniAttr(page, "view"), { message: "un dedo mueve la cámara" }).not.toBe(v0);
-    expect(await page.evaluate(() => window.scrollY), "el gesto sobre el escenario no desplaza la página").toBe(
-      scroll0,
-    );
+    // El escenario NO se mueve en pantalla con el gesto (lo que ve el usuario). scrollY
+    // sólo se anota: el anclaje de scroll del navegador lo reajusta si algo de arriba
+    // cambia de alto (run 41266210879: 415 → 383 sin que el escenario se moviera).
+    expect(
+      Math.abs((await box(canvas)).y - stageY0),
+      "el gesto sobre el escenario no desplaza la página",
+    ).toBeLessThanOrEqual(2);
+    test.info().annotations.push({
+      type: "touch-pan-scrollY",
+      description: `${scrollPan0} → ${await page.evaluate(() => window.scrollY)} (pinch desde ${scroll0})`,
+    });
 
     // Fuera del escenario el scroll vertical sigue siendo el del navegador (gesto
     // táctil real sobre la cabecera de la página).

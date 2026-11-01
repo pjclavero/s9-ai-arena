@@ -91,7 +91,9 @@ function HudStrip({ model, accent }: { model: HudModel; accent: string }) {
         <span data-testid="hud-flags">{model.flags.map((f) => `🚩 ${f.team}: ${flagLabel(f.state)}`).join(" · ")}</span>
       )}
       {lastKill && (
-        <span data-testid="hud-killfeed" style={{ opacity: 0.9, overflowWrap: "anywhere" }}>
+        // En móvil la última baja va sólo en el feed lateral: su texto cambiaba el alto
+        // de la tira y desplazaba el escenario.
+        <span data-testid="hud-killfeed" className="s9v-wide-only" style={{ opacity: 0.9, overflowWrap: "anywhere" }}>
           [{lastKill.tick}] {lastKill.text}
         </span>
       )}
