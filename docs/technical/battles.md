@@ -62,6 +62,7 @@ En orden:
 4. **Forma de cada participante**: `botId` cadena, `version` entero ≥ 1, `team` `[A-Za-z0-9_-]{1,32}`, y **cada bot una sola vez** → si no, `400` (antes un bot repetido daba `500` por la PK).
 5. **Propiedad / visibilidad** ([TD-005](../roadmap/technical-debt.md#td-005)): el bot debe ser propio, `public`, o `team` de un equipo del que el solicitante es miembro (un `admin`, cualquiera). Si no → **`404 bot_not_found`, idéntico al de un bot inexistente** (no se revela que existe).
 6. Cada `(botId, version)` en `published`/`frozen` → si no, `409 bot_not_published`.
+7. **Elegibilidad** (ELIG, [equipment.md](equipment.md#elegibilidad-de-versiones-históricas)): cada versión publicada se revalida con su loadout histórico, su catálogo y el validador actual → si incumple una regla funcional, `409 bot_version_not_eligible` (`notEligible` con el motivo). La versión sigue `published`; sólo no entra en batallas nuevas.
 
 **No valida todavía** la composición por modo (equipos compartidos en deathmatch, zonas/banderas que exija el modo; ver [Errores](#errores--limitaciones)).
 
@@ -240,6 +241,7 @@ curl https://arena.example.internal/api/v1/battles/<id>/stats  # battle_stats po
 | Bot privado ajeno o inexistente | API | `404 bot_not_found` |
 | Bot repetido / `team` inválido | API | `400` |
 | Versión no publicada | API | `409 bot_not_published` |
+| Versión publicada no elegible (loadout histórico inválido hoy) | API / worker | `409 bot_version_not_eligible`; si se agendó antes, el worker la descalifica (walkover) |
 | Sandbox no configurado en el worker (`DOCKER_PROXY_URL`, `ARENA_ENGINE_HOST`, clave de verificación o `DIGESTS.lock` ausentes) | worker | Log «EJECUCIÓN DE BATALLAS DESACTIVADA»; las batallas quedan `scheduled` |
 | No se puede lanzar un contenedor, ningún bot conecta, postura no conforme | worker | Infraestructura: reintento ×3 y `failed (infrastructure)` |
 | Un bot conecta y otro no | worker | Derrota deportiva del ausente (`bot_crash`, `endReason: sporting_failure`) |

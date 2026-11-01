@@ -63,12 +63,15 @@ describe("4v4 · P3 · «cargando» no es «falló»", () => {
   it("si la petición de versiones FALLA de verdad, entonces sí lo dice", async () => {
     mockWithVersions(() => Promise.reject(Object.assign(new Error("boom"), { status: 500 })));
     render(<BattleNewPage me={ME} />);
-    await screen.findAllByRole("option", { name: /^Red/ });
-    await userEvent.selectOptions(screen.getByLabelText("bot rojo"), "bot_r");
-    await waitFor(() =>
-      expect(screen.getByTestId("bot-status-rojo").textContent).toMatch(/no se pudieron cargar sus otras versiones/),
-    );
-    expect(screen.getByTestId("bot-status-rojo").textContent).not.toMatch(/cargando/);
+    // ELIG · y como no se sabe si su versión sigue siendo elegible, NO se ofrece como
+    // seleccionable: la opción queda deshabilitada y dice «no verificable».
+    await waitFor(() => {
+      const opt = screen.getAllByRole("option", { name: /^Red/ })[0] as HTMLOptionElement;
+      expect(opt.textContent).toMatch(/no verificable: no se pudieron cargar sus versiones/);
+      expect(opt.disabled).toBe(true);
+    });
+    const opt = screen.getAllByRole("option", { name: /^Red/ })[0] as HTMLOptionElement;
+    expect(opt.textContent).not.toMatch(/cargando/);
   });
 
   it("con las versiones cargadas no aparece ninguno de los dos avisos", async () => {

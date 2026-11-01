@@ -50,8 +50,8 @@ Datos principales de `tournaments`:
 ## Ciclo de vida
 
 1. **Crear** (`POST /tournaments`, `organizer`). Se valida formato, modo, que `rulesetId` exista en la BD y el rango del presupuesto. Se inserta con `state='open'` (no pasa por `draft`).
-2. **Inscribir** (`POST /tournaments/{id}/entries`, `user`). Sólo el dueño del bot (`403 Solo el dueño inscribe su bot`), sólo versiones `published` (`409 bot_not_published`) y una inscripción por bot (`409 already_entered`). Se copia `loadout_revision` de la versión.
-3. **Cerrar inscripciones** (`POST …/actions/close-entries`, `organizer`):
+2. **Inscribir** (`POST /tournaments/{id}/entries`, `user`). Sólo el dueño del bot (`403 Solo el dueño inscribe su bot`), sólo versiones `published` (`409 bot_not_published`) y **elegibles** (`409 bot_version_not_eligible`, ELIG) y una inscripción por bot (`409 already_entered`). Se copia `loadout_revision` de la versión. Si el bot ya tenía una inscripción **pendiente** con una versión que hoy no es elegible, inscribir otra versión elegible la sustituye (`200`, `replacedVersion`, auditado como `tournament.entry.version_replaced`); nunca se sustituye sola.
+3. **Cerrar inscripciones** (`POST …/actions/close-entries`, `organizer`). Si alguna inscripción pendiente usa una versión no elegible → `409 entries_not_eligible` con sus `entryId` (sin motivo: es del dueño) y no se congela ni se cierra nada. Si no:
    - marca `entries.frozen=true` y pasa cada versión inscrita de `published` a `frozen`;
    - aplica el commit-reveal de semillas: si el torneo publicó `seed_commitment`, el cierre debe traer `seeds` cuyo `sha256(seeds.join("|"))` coincida (`409 seeds_required` / `seed_reveal_mismatch`); si no, el servidor genera 8 semillas y su compromiso;
    - pone `state='closed'` y encola `generate_schedule`.

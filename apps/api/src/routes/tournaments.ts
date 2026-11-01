@@ -12,6 +12,13 @@ import { audit } from "../audit.js";
 import { badRequest, conflict, forbidden, notFound } from "../errors.js";
 import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
 import { applyTransition } from "../services/bots.js";
+import {
+  entryEligibilityGate,
+  excludeTournamentEntry,
+  replaceIneligibleEntry,
+} from "../services/version-eligibility.js";
+import { ROLE_RANK } from "../openapi.js";
+import { pathParam } from "../params.js";
 // H6 (issue #10) · La tabla por equipos es la de E9; se importa, no se duplica.
 import { leagueTable } from "../../../tournament-worker/src/results.js";
 import { hiddenBotIds, whereBattleReadable, type BattleVisibility } from "../battle-access.js";
@@ -229,6 +236,13 @@ export function tournamentRoutes(
     if (!v || v.state !== "published") {
       throw conflict("bot_not_published", "Solo se inscriben versiones publicadas (no suspendidas ni retiradas)");
     }
+    // ELIG · H8: publicada ≠ elegible; y una inscripción pendiente con una versión que
+    // ya no lo es se puede cambiar por otra válida (nunca se sustituye sola).
+    const replaced = await replaceIneligibleEntry(db, req.auth!.userId, t, v, req.correlationId);
+    if (replaced) {
+      res.status(200).json(replaced);
+      return;
+    }
     if (await db("entries").where({ tournament_id: t.id, bot_id: botId }).first()) {
       throw conflict("already_entered", "El bot ya está inscrito en este torneo");
     }
@@ -252,6 +266,20 @@ export function tournamentRoutes(
     });
   });
 
+  // ELIG · H8: excluir una inscripción pendiente (organizador: sólo no elegibles; dueño: la suya). Auditado.
+  defineOperation(router, "excludeTournamentEntry", async (req, res) => {
+    res.json(
+      await excludeTournamentEntry(
+        db,
+        { userId: req.auth!.userId, isOrganizer: req.auth!.rank >= ROLE_RANK.organizer },
+        pathParam(req, "tournamentId"),
+        pathParam(req, "entryId"),
+        req.body?.reason,
+        req.correlationId,
+      ),
+    );
+  });
+
   defineOperation(router, "closeEntries", async (req, res) => {
     const t = await db("tournaments")
       .where({ id: req.params.tournamentId })
@@ -266,6 +294,7 @@ export function tournamentRoutes(
     }
 
     const entries = await db("entries").where({ tournament_id: t.id });
+    await entryEligibilityGate(db, entries); // ELIG · H8: no se cierra con versiones no elegibles
     await db("entries").where({ tournament_id: t.id }).update({ frozen: true });
     // Congela las versiones inscritas (published → frozen, cap. 17.1), auditado.
     for (const e of entries) {

@@ -90,7 +90,7 @@ Forma única (`errors.ts`): `{error: <código>, message, correlationId, …extra
 | 401 | `unauthorized` | Sin credencial o credencial inválida |
 | 403 | `forbidden` | «Requiere rol organizer», «Solo el dueño del bot puede hacer esto» |
 | 404 | `not_found` | Recurso inexistente **o no visible** (no revela existencia); «Ruta no encontrada» |
-| 409 | varios | `illegal_transition` (con `currentState`, `allowedTransitions`), `bot_not_published`, `email_taken`, `immutable`, `already_entered`, `invalid_state` |
+| 409 | varios | `illegal_transition` (con `currentState`, `allowedTransitions`), `bot_not_published`, `email_taken`, `immutable`, `already_entered`, `invalid_state`, `bot_version_not_eligible` (con `notEligible`), `entries_not_eligible` (con `notEligibleEntries`) |
 | 413 | `source_too_large` | Código > 10 MB |
 | 422 | `loadout_invalid` (`violations`), `map_invalid` (`checks`) | Validadores del catálogo y de mapas |
 | 429 | `too_many_requests`, `too_many_running_battles` | Límites |

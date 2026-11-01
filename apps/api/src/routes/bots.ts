@@ -27,6 +27,7 @@ import { decodePackage, PackageValidationError } from "../services/source-packag
 import { diffFiles } from "../services/bot-version-diff.js";
 import { findVersionArtifact } from "../../../bot-manager/src/launch-verify.js";
 import type { Auth } from "../services/bots.js";
+import { battleEligibilityOf } from "../services/version-eligibility.js";
 
 const MAX_SOURCE_BYTES = 10 * 1024 * 1024; // 10 MB (E6.M)
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_SOURCE_BYTES } });
@@ -43,6 +44,9 @@ export function botToJson(bot: Record<string, unknown>, latestPublished?: number
     createdAt: (bot.created_at as Date).toISOString(),
   };
 }
+
+/** ELIG · /loadouts exige rol user: sin él, la elegibilidad no detalla módulos. */
+const canReadLoadout = (auth: Auth) => !!auth && auth.rank >= ROLE_RANK.user;
 
 export function versionToJson(v: Record<string, unknown>) {
   return {
@@ -358,7 +362,8 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
   defineOperation(router, "listBotVersions", async (req, res) => {
     const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
     const versions = await db("bot_versions").where({ bot_id: bot.id }).orderBy("version", "asc");
-    res.json(versions.map(versionToJson));
+    const elig = await battleEligibilityOf(db, versions, { detailed: canReadLoadout(req.auth) }); // ELIG
+    res.json(versions.map((v) => ({ ...versionToJson(v), ...elig(v) })));
   });
 
   defineOperation(
@@ -448,6 +453,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
       .pluck("version");
     res.json({
       ...versionToJson(v),
+      ...(await battleEligibilityOf(db, [v], { detailed: canReadLoadout(req.auth) }))(v), // ELIG
       ...(readable ? { sourceSha256: v.source_sha256 ?? undefined } : {}),
       canReadSource: readable,
       latestBuild: latest ? buildToJson(latest, { includeLogs }) : undefined,

@@ -13,6 +13,7 @@ import { api, ApiRequestError } from "../api.js";
 import { ErrorState } from "../ui/primitives.js";
 import { useSessionDraft } from "../ui/draft.js";
 import { BuildDiagnosisView, diagnoseBuild } from "../build-diagnosis.js";
+import { isBattleEligible, VersionEligibilityNote, type BattleEligibilityInfo } from "../version-eligibility.js";
 
 export interface BotInfo {
   id: string;
@@ -34,6 +35,8 @@ export interface VersionInfo {
   parentVersion?: number;
   validatedBuildId?: string;
   publishedAt?: string;
+  /** ELIG · elegibilidad para batallas nuevas (sólo published/frozen). */
+  battleEligibility?: BattleEligibilityInfo;
 }
 interface StageInfo {
   name: string;
@@ -278,7 +281,10 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
 
   const isOwner = props.meId === undefined || props.meId === bot.ownerId;
   // UX-B · B6 · la versión que usan las batallas nuevas es la publicada más alta.
-  const publishedVersions = versions.filter((v) => v.state === "published").map((v) => v.version);
+  // ELIG · y elegible: una publicada no elegible se conserva pero no juega batallas nuevas.
+  const publishedVersions = versions
+    .filter((v) => v.state === "published" && isBattleEligible(v))
+    .map((v) => v.version);
   const inBattles = publishedVersions.length ? Math.max(...publishedVersions) : undefined;
   const editable = isWebEditable(files);
 
@@ -444,6 +450,7 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
                     <td>
                       {v.state}
                       {v.state === "rejected" && v.rejectionReason ? ` — ${v.rejectionReason}` : ""}
+                      <VersionEligibilityNote version={v.version} be={v.battleEligibility} suggestVersion={inBattles} />
                       {v.version === inBattles && (
                         <strong className="ok" data-testid={`detail-in-battles-${v.version}`}>
                           {" "}
