@@ -467,7 +467,7 @@ function StatsSection({ b, s }: { b: BattleDetail; s: StatsResponse }) {
       {rows.map((p) => (
         <details key={p.botId} data-testid="module-usage">
           <summary>Uso de módulos de {botVersionLabel(p)}</summary>
-          <table className="stack-table">
+          <table className="stack-table stack-table--wide">
             <thead>
               <tr>
                 <th>Hueco</th>

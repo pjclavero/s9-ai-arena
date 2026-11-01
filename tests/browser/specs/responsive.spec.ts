@@ -15,6 +15,7 @@
  */
 import { test, expect, type Page } from "@playwright/test";
 import { REPLAY_ID, login, registerNewUser, shot } from "./helpers.js";
+import { PublicApi } from "./review-lib.js";
 import { PANEL_ROUTES, PUBLIC_ROUTES, visit } from "./ux-e-lib.js";
 
 const VIEWPORTS = [
@@ -26,10 +27,19 @@ const VIEWPORTS = [
   { name: "390", width: 390, height: 844 },
   { name: "360", width: 360, height: 800 },
 ] as const;
-type Vp = (typeof VIEWPORTS)[number];
+type Vp = { name: string; width: number; height: number };
+/**
+ * Bordes del tramo tablet (721–960 px): ahí una tabla ya no se apila (≤720) pero
+ * aún no tiene el ancho de escritorio. La revisión de la integración (PR #203)
+ * encontró #/maps desbordando 61 px a 721 y 14 px a 768 con datos reales.
+ */
+const TABLET_EDGES: Vp[] = [
+  { name: "721", width: 721, height: 1024 },
+  { name: "800", width: 800, height: 1024 },
+  { name: "960", width: 960, height: 768 },
+];
 /** Los cinco del bloque H (capturas de evidencia). */
 const H_VIEWPORTS = VIEWPORTS.filter((v) => ["1920", "1366", "1024", "430", "360"].includes(v.name));
-const MOBILE = (vp: Vp) => vp.width <= 720;
 const COLLAPSED = (vp: Vp) => vp.width <= 1024;
 
 /**
@@ -112,6 +122,24 @@ test.describe("@fase1 UX-MOBILE", () => {
     await expect(finished, "hace falta al menos una batalla terminada (fase golden)").toBeVisible();
     const battleId = REPLAY_ID || ((await finished.getAttribute("data-battle-id")) ?? "");
     const detail = `#/battles/${encodeURIComponent(battleId)}`;
+    // Datos que estresan la tabla de mapas en todos los entornos (en CI los mapas
+    // de la fase golden tenían nombres cortos y el desborde de 768 no se veía): un
+    // borrador PROPIO (⇒ «Editar» + botón «Publicar») con id y nombre largos.
+    const staff = new PublicApi(page.request, {
+      email: process.env.S9_E2E_DEV_EMAIL ?? "",
+      password: process.env.S9_E2E_DEV_PASSWORD ?? "",
+    });
+    await staff.login();
+    const base = await staff.raw("GET", "/maps/mvp-arena-01/versions/1/content");
+    expect(base.status, "contenido de mvp-arena-01").toBe(200);
+    const longId = `uxm-mapa-con-identificador-largo-para-tablet-${Date.now().toString(36)}`.slice(0, 63);
+    const saved = await staff.raw("POST", "/maps/drafts", {
+      ...base.body,
+      mapId: longId,
+      version: 1,
+      meta: { ...base.body.meta, name: "Mapa de prueba con un nombre deliberadamente largo" },
+    });
+    expect([200, 201], `borrador de mapa largo: ${JSON.stringify(saved.body)}`).toContain(saved.status);
     /** ruta → testid de fila que la tabla DEBE enseñar con estos datos. */
     const tables: [string, string, string][] = [
       ["#/battles", "battle-row", "batallas"],
@@ -120,18 +148,20 @@ test.describe("@fase1 UX-MOBILE", () => {
       ["#/maps", "", "mapas"],
       ["#/ranking", "", "ranking"],
     ];
-    for (const vp of VIEWPORTS) {
+    for (const vp of [...VIEWPORTS, ...TABLET_EDGES]) {
       for (const [route, rowId, name] of tables) {
         await check(page, route, vp, true);
         if (rowId) {
           const row = page.getByTestId(rowId).first();
           await expect(row, `${route} @${vp.name}: ${rowId}`).toBeVisible();
           const look = await row.evaluate((tr) => ({
+            // las tablas anchas (stack-table--wide) se apilan ya en ≤960 px
+            stackAt: tr.closest("table")?.classList.contains("stack-table--wide") ? 960 : 720,
             display: getComputedStyle(tr).display,
             labels: [...(tr as HTMLTableRowElement).cells].map((c) => c.getAttribute("data-label")),
             before: getComputedStyle((tr as HTMLTableRowElement).cells[0], "::before").content,
           }));
-          if (MOBILE(vp)) {
+          if (vp.width <= look.stackAt) {
             // tarjeta: la fila es un bloque y cada celda dice de qué columna es
             expect.soft(look.display, `${route} @${vp.name}`).toBe("block");
             expect

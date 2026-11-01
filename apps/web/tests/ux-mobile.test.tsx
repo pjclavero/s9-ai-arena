@@ -171,6 +171,23 @@ describe("UX-MOBILE · páginas de tablas", () => {
     expect(within(rows[0]).getByTestId("replay-open").closest("td")!.getAttribute("data-label")).toBe("Ver");
   });
 
+  it("tablas con acciones o ≥6 columnas se apilan ya en ≤960 px (stack-table--wide)", () => {
+    // Revisión PR #203: #/maps desbordaba 61 px a 721 y 14 px a 768 («Acciones»
+    // con «Editar» + «Publicar» de 44 px; mínimo de la tabla 749 px).
+    const wide: [string, number][] = [
+      ["Maps", 1],
+      ["Battles", 1],
+      ["Replays", 1],
+      ["Bots", 1], // versiones (botones Enviar/Publicar)
+      ["BattleDetail", 3], // stats, uso de módulos, resumen por bando
+    ];
+    for (const [p, n] of wide) {
+      const src = readFileSync(join(WEB, "src", "pages", `${p}Page.tsx`), "utf8");
+      const count = (src.match(/<table className="stack-table stack-table--wide"/g) ?? []).length;
+      expect(count, p).toBe(n);
+    }
+  });
+
   it("las páginas del encargo marcan sus tablas como stack-table", () => {
     const pages = ["Battles", "Replays", "Ranking", "Bots", "Teams", "Admin", "Maps", "BattleDetail"];
     for (const p of pages) {
