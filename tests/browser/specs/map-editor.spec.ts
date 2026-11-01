@@ -93,10 +93,17 @@ test.describe("@fase1 UX-EDITOR editor visual", () => {
     // DUPLICATE y DELETE (+ deshacer el borrado).
     await page.getByRole("button", { name: "Duplicar objeto", exact: true }).click();
     await expect(objects(page, "wall")).toHaveCount(2);
+    // REVIEW P3: con el foco en un botón de la barra, Retroceso/Supr NO borran.
+    await page.keyboard.press("Backspace");
+    await page.keyboard.press("Delete");
+    await expect(objects(page, "wall")).toHaveCount(2);
+    await page.getByTestId("editor-canvas").focus();
     await page.keyboard.press("Delete");
     await expect(objects(page, "wall")).toHaveCount(1);
     await page.keyboard.press("Control+z");
     await expect(objects(page, "wall")).toHaveCount(2);
+    // REVIEW P3: el objeto restaurado queda seleccionado.
+    await expect(page.getByTestId("editor-props").locator("legend")).toHaveText("Muro 2");
     await page
       .getByTestId("editor-objects")
       .getByRole("button", { name: /^Muro 2/ })
@@ -142,6 +149,20 @@ test.describe("@fase1 UX-EDITOR editor visual", () => {
     await shot(page, info, "uxed-validacion");
     await page.keyboard.press("Delete"); // se quita el spawn mal puesto
     await expect(page.getByTestId("editor-validation-ok")).toBeVisible();
+
+    // REVIEW P2: «Nuevo» con cambios sin guardar pregunta; Cancelar no pierde nada.
+    const before = await page.getByTestId("editor-obj").count();
+    await page.getByRole("button", { name: "Nuevo", exact: true }).click();
+    const dlg = page.getByRole("alertdialog", { name: "¿Empezar un mapa nuevo?" });
+    await expect(dlg).toBeVisible();
+    await shot(page, info, "uxed-confirmar-nuevo");
+    await dlg.getByRole("button", { name: "Cancelar" }).click();
+    await expect(dlg).toHaveCount(0);
+    await expect(page.getByTestId("editor-obj")).toHaveCount(before);
+    await expect(page.getByTestId("editor-undo")).toBeEnabled();
+    await expect
+      .poll(() => page.evaluate(() => window.localStorage.getItem("s9.mapEditor.draft.v1") ?? ""))
+      .toContain('"walls"');
 
     // GUARDAR en el servidor.
     await page.getByTestId("editor-save").click();

@@ -208,6 +208,70 @@ describe("editor visual", () => {
     }
   });
 
+  it("REVIEW P2: «Nuevo» con cambios sin guardar pide confirmación accesible y no borra nada hasta confirmar", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await placeWallAtCenter();
+      await act(async () => {
+        vi.advanceTimersByTime(400);
+      });
+      expect(window.localStorage.getItem(DRAFT_KEY)).toContain('"walls"');
+      fireEvent.click(btn("Nuevo"));
+      const dlg = screen.getByRole("alertdialog", { name: "¿Empezar un mapa nuevo?" });
+      expect(dlg.textContent).toMatch(/cambios sin guardar/);
+      // Nada perdido mientras no se confirma.
+      expect(objs("wall")).toHaveLength(1);
+      expect(window.localStorage.getItem(DRAFT_KEY)).toContain('"walls"');
+      fireEvent.click(within(dlg).getByRole("button", { name: "Cancelar" }));
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+      expect(objs("wall")).toHaveLength(1);
+      expect((screen.getByTestId("editor-undo") as HTMLButtonElement).disabled).toBe(false);
+      key("z", { ctrlKey: true });
+      expect(objs("wall")).toHaveLength(0); // el historial sigue vivo
+      key("z", { ctrlKey: true, shiftKey: true });
+      // Confirmar sí empieza de cero y borra la copia local.
+      fireEvent.click(btn("Nuevo"));
+      fireEvent.click(btn("Descartar cambios y empezar uno nuevo"));
+      expect(objs("wall")).toHaveLength(0);
+      expect(window.localStorage.getItem(DRAFT_KEY)).toBeNull();
+      // Sin cambios, «Nuevo» no pregunta.
+      fireEvent.click(btn("Nuevo"));
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("REVIEW P3: Supr/Retroceso con el foco en un botón de la barra NO borra; en el lienzo sí", async () => {
+    await placeWallAtCenter();
+    fireEvent.keyDown(btn("Copiar"), { key: "Backspace" });
+    fireEvent.keyDown(btn("Seleccionar"), { key: "Delete" });
+    fireEvent.keyDown(btn("Seleccionar"), { key: "ArrowLeft" });
+    expect(objs("wall")).toHaveLength(1);
+    expect(num("Posición X")).toBe(60);
+    fireEvent.keyDown(canvas(), { key: "Delete" });
+    expect(objs("wall")).toHaveLength(0);
+  });
+
+  it("REVIEW P3: deshacer un borrado deja seleccionado el objeto restaurado", async () => {
+    await placeWallAtCenter();
+    key("Delete");
+    expect(screen.queryByTestId("editor-props")).toBeNull();
+    key("z", { ctrlKey: true });
+    expect(objs("wall")[0].getAttribute("data-selected")).toBe("true");
+    expect(num("Posición X")).toBe(60);
+  });
+
+  it("REVIEW P3: la cifra del validador completo dice «calculando…» mientras va por detrás", async () => {
+    await placeWallAtCenter();
+    const sum = () => screen.getByTestId("editor-full-validation").querySelector("summary")!.textContent!;
+    await waitFor(() => expect(sum()).toMatch(/0 errores/));
+    fireEvent.click(btn("Punto de aparición azul"));
+    fireEvent.pointerDown(canvas(), { ...px(60, 40), pointerId: 1, button: 0, pointerType: "mouse" });
+    expect(sum()).toMatch(/calculando…/); // nunca el «0 errores» viejo
+    await waitFor(() => expect(sum()).toMatch(/[1-9]\d* errores/));
+  });
+
   it("OLD_MAP_REGRESSION: abrir mvp-arena-01 desde la API, mover y deshacer, guardar = mismo documento", async () => {
     const content = parseImport(readFileSync(join(REPO, "maps", "mvp-arena-01.json"), "utf8"));
     window.location.hash = "#/maps/editor?map=mvp-arena-01&v=1";

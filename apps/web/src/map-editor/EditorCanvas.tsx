@@ -182,8 +182,12 @@ export function EditorCanvas(props: Props) {
   function onPointerDown(e: React.PointerEvent<SVGSVGElement>) {
     if (e.pointerType === "mouse" && e.button !== 0 && e.button !== 1) return;
     e.preventDefault();
-    const active = document.activeElement as HTMLElement | null;
-    if (active && active !== document.body && typeof active.blur === "function") active.blur();
+    // El lienzo toma el foco: los atajos de borrado/flechas sólo actúan con él (o sin foco).
+    try {
+      (svgRef.current as unknown as HTMLElement | null)?.focus({ preventScroll: true });
+    } catch {
+      /* jsdom */
+    }
     const pt = local(e);
     pointers.current.set(e.pointerId, pt);
     try {
@@ -472,6 +476,8 @@ export function EditorCanvas(props: Props) {
       <svg
         ref={svgRef}
         role="application"
+        tabIndex={0}
+        className="s9-me-canvas"
         aria-label={`Lienzo del mapa ${map.meta.name ?? map.mapId}`}
         aria-roledescription="lienzo del editor"
         data-testid="editor-canvas"
