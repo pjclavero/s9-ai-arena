@@ -27,9 +27,17 @@ export interface HudOverlayProps {
   accent?: string;
   /** Escala tipográfica base (px). El broadcast la sube (1080p). */
   fontScale?: number;
+  /**
+   * UX-VIEW · HUD del visor interactivo como TIRA fuera del escenario (no encima):
+   * el marcador superpuesto tapaba al bot seguido en el borde superior del mapa y
+   * el kill feed tapaba la esquina inferior. Marcador, reloj, objetivo y última
+   * baja en una línea; la vida por bot va en el selector. /broadcast usa el completo.
+   */
+  compact?: boolean;
 }
 
-export function HudOverlay({ model, accent = "#ffe066", fontScale = 14 }: HudOverlayProps) {
+export function HudOverlay({ model, accent = "#ffe066", fontScale = 14, compact = false }: HudOverlayProps) {
+  if (compact) return <HudStrip model={model} accent={accent} />;
   return (
     <div data-testid="hud" style={{ position: "absolute", inset: 0, pointerEvents: "none", fontSize: fontScale }}>
       <TopBar model={model} accent={accent} />
@@ -37,6 +45,63 @@ export function HudOverlay({ model, accent = "#ffe066", fontScale = 14 }: HudOve
       <KillFeed model={model} accent={accent} />
       <ObjectivesBar model={model} accent={accent} />
       {model.matchEnd && <MatchEndBanner model={model} accent={accent} />}
+    </div>
+  );
+}
+
+/** UX-VIEW · Tira compacta (fuera del escenario): nada del HUD queda encima del mapa. */
+function HudStrip({ model, accent }: { model: HudModel; accent: string }) {
+  const lastKill = model.killFeed.at(-1);
+  return (
+    <div
+      data-testid="hud"
+      data-layout="strip"
+      role="status"
+      aria-live="off"
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "baseline",
+        gap: "0.15rem 0.9rem",
+        padding: "0.3rem 0.6rem",
+        background: "#171d26",
+        border: "1px solid #2a3340",
+        borderRadius: 6,
+        fontSize: "0.9rem",
+        minWidth: 0,
+      }}
+    >
+      <span data-testid="hud-score" style={{ fontWeight: 700, fontSize: "1.05rem" }}>
+        {model.score.length > 0
+          ? model.score.map((s, i) => (
+              <span key={s.team} style={{ color: s.leading ? accent : undefined }}>
+                {i > 0 && <span style={{ opacity: 0.6 }}> — </span>}
+                {s.team} {s.points}
+              </span>
+            ))
+          : "0 — 0"}
+      </span>
+      <span data-testid="hud-clock">
+        {model.clock.label} · {safeLookup(PHASE_LABEL, model.clock.phase) ?? model.clock.phase}
+      </span>
+      <span data-testid="hud-objective" style={{ color: accent }}>
+        {model.objective.text}
+      </span>
+      {model.flags.length > 0 && (
+        <span data-testid="hud-flags">{model.flags.map((f) => `🚩 ${f.team}: ${flagLabel(f.state)}`).join(" · ")}</span>
+      )}
+      {lastKill && (
+        // En móvil la última baja va sólo en el feed lateral: su texto cambiaba el alto
+        // de la tira y desplazaba el escenario.
+        <span data-testid="hud-killfeed" className="s9v-wide-only" style={{ opacity: 0.9, overflowWrap: "anywhere" }}>
+          [{lastKill.tick}] {lastKill.text}
+        </span>
+      )}
+      {model.matchEnd && (
+        <strong data-testid="hud-matchend" style={{ color: accent }}>
+          {model.matchEnd.headline}
+        </strong>
+      )}
     </div>
   );
 }

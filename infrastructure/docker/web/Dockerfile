@@ -10,6 +10,10 @@ COPY sdks/javascript ./sdks/javascript
 RUN npm ci --ignore-scripts
 
 COPY apps/web ./apps/web
+# UX-EDITOR · el editor de mapas ejecuta en el navegador el validador PURO del
+# servidor (sin dependencias de Node); sólo hace falta su código fuente.
+# Guarda: apps/web/tests/map-editor-web-image.test.ts.
+COPY apps/map-service/src/validate ./apps/map-service/src/validate
 RUN npx vite build apps/web
 
 FROM nginx:1.27-alpine

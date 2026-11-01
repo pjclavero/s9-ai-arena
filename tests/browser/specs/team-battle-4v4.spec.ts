@@ -216,7 +216,7 @@ async function botSubmitted(
   return bot.id;
 }
 
-/** Cuenta, en la mitad superior del canvas (fuera del minimapa), los píxeles de cada color. */
+/** Cuenta, en el canvas entero (el minimapa ya no está dentro), los píxeles de cada color. */
 async function canvasColorCounts(
   page: Page,
   canvas: Locator,
@@ -232,9 +232,11 @@ async function canvasColorCounts(
       c.height = img.height;
       const ctx = c.getContext("2d")!;
       ctx.drawImage(img, 0, 0);
-      // El minimapa va en la esquina inferior izquierda con fondo de color suelo:
-      // se mira sólo el 60 % superior para que no cuente como «suelo pintado».
-      const d = ctx.getImageData(0, 0, img.width, Math.floor(img.height * 0.6)).data;
+      // UX-VIEW · Antes se miraba sólo el 60 % superior porque el minimapa (con
+      // fondo de color suelo) iba DENTRO del canvas, abajo a la izquierda. Ahora es
+      // un panel aparte, fuera del escenario (se comprueba abajo que no se solapan):
+      // el canvas entero es mapa y se cuenta entero (equivalente más estricto).
+      const d = ctx.getImageData(0, 0, img.width, img.height).data;
       const counts: Record<string, number> = Object.fromEntries(Object.keys(colors).map((k) => [k, 0]));
       let total = 0;
       for (let i = 0; i < d.length; i += 4) {
@@ -399,6 +401,19 @@ test.describe("@golden 4v4 · batalla por equipos", () => {
         { message: "el canvas del replay no muestra suelo ni muros", timeout: 15_000, intervals: [500, 1000] },
       )
       .toBe(true);
+    // UX-VIEW · el minimapa es un panel FUERA del escenario: no se solapa con el canvas
+    // y dibuja los 8 vehículos (ninguno queda invisible debajo de él).
+    const canvasBox = await canvas.boundingBox();
+    const miniBox = await page.getByTestId("minimap-canvas").boundingBox();
+    expect(canvasBox && miniBox, "canvas y minimapa visibles").toBeTruthy();
+    expect(
+      canvasBox!.x < miniBox!.x + miniBox!.width &&
+        miniBox!.x < canvasBox!.x + canvasBox!.width &&
+        canvasBox!.y < miniBox!.y + miniBox!.height &&
+        miniBox!.y < canvasBox!.y + canvasBox!.height,
+      "el minimapa no tapa el escenario",
+    ).toBe(false);
+    await expect(page.getByTestId("minimap-canvas")).toHaveAttribute("data-dots", "8");
     await shot(page, info, "4v4-replay");
     evidence("team-4v4", { battleId, winner, score, perTeam, sent: sent.participants, pixels });
     expect(problems.filter((p) => !p.startsWith("console.error"))).toEqual([]);

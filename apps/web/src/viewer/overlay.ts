@@ -22,6 +22,8 @@ export interface FeedItem {
   tick: number;
   kind: string;
   text: string;
+  /** UX-VIEW · id del vehículo/objeto destruido, para pintar su NOMBRE (no `veh_3`). */
+  targetId?: string;
 }
 
 /**
@@ -118,7 +120,7 @@ export class OverlayState {
         );
         break;
       case "vehicle_destroyed":
-        this.push(e, `${e.targetId} destruido`);
+        this.push(e, `${e.targetId} destruido`, typeof e.targetId === "string" ? e.targetId : undefined);
         break;
       case "mine_triggered":
         this.push(e, `Mina detonada`);
@@ -161,8 +163,8 @@ export class OverlayState {
     );
   }
 
-  private push(e: any, text: string): void {
-    this.feed.push({ tick: e.tick ?? this.lastTick, kind: e.kind, text });
+  private push(e: any, text: string, targetId?: string): void {
+    this.feed.push({ tick: e.tick ?? this.lastTick, kind: e.kind, text, ...(targetId ? { targetId } : {}) });
     if (this.feed.length > FEED_LIMIT) this.feed.splice(0, this.feed.length - FEED_LIMIT);
   }
 }

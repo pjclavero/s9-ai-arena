@@ -26,8 +26,10 @@ test.describe("@fase1 UX-C mapas", () => {
     await expect(page.getByTestId("editor-perimeter-note")).toContainText("el borde del mapa es un muro", {
       ignoreCase: true,
     });
+    // UX-EDITOR: el JSON vive plegado en «Opciones avanzadas» del editor visual.
+    await page.getByText("Opciones avanzadas: archivo JSON del mapa").click();
     await page.getByLabel("JSON a importar").fill(JSON.stringify(content));
-    await page.getByRole("button", { name: "Importar" }).click();
+    await page.getByRole("button", { name: "Importar", exact: true }).click();
     await page.getByLabel("id del mapa").fill(mapId);
     await page.getByLabel("nombre del mapa").fill("UXC mapa");
     // Modos: se deja SOLO team_deathmatch (no deathmatch).
