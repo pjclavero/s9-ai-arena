@@ -94,7 +94,7 @@ También trae «Ruleset MVP por defecto», válido para cualquier modo. Al cambi
 | Equipos | **Respawn limitado** | **2 reapariciones por bot (3 vidas)** a los 5 s; gana el último equipo con vidas (10 min). |
 | Equipos | **Team Deathmatch** | Reaparición ilimitada; gana el primero en 10 bajas (8 min de seguridad). |
 | Equipos | **Resistencia por equipos** | 5 min fijos; gana el equipo con más bajas. |
-| Ambos | **Personalizado** | Eliges respawn (ninguno / limitado con N reapariciones / ilimitado), su retardo, la victoria (eliminación, límite de bajas o puntos al acabar el tiempo), la duración (1–30 min), topes de **créditos** y de **masa** por bot y por equipo y, por equipos, el fuego amigo. |
+| Ambos | **Personalizado** | Eliges respawn (ninguno / limitado con N reapariciones / ilimitado), su retardo, la victoria (eliminación, límite de bajas o, sólo con reaparición ilimitada, puntos al acabar el tiempo), la duración (1–30 min), topes de **créditos** y de **masa** por bot y por equipo y, por equipos, el fuego amigo. |
 | Ambos | **Clásico** | El ruleset de la plataforma de cada modo (incluye bandera y zonas). |
 
 Antes de crear se muestra un **resumen** y se comprueba cada bot en el servidor («✓ A-ATK-1 — 890/900 cr»). Si un bot o un equipo supera un tope, no se puede crear la batalla. La batalla guarda una **copia de sus reglas**: si un preset cambia más adelante, tus batallas y replays conservan las suyas.
