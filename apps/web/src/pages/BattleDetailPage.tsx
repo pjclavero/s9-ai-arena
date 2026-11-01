@@ -319,7 +319,7 @@ function BattleHeader({ b, audit }: { b: BattleDetail; audit: AuditView | null }
         )}
       </dl>
       <SidesTable b={b} />
-      <table data-testid="battle-participants">
+      <table className="stack-table" data-testid="battle-participants">
         <thead>
           <tr>
             <th>Bot</th>
@@ -370,7 +370,7 @@ function SidesTable({ b }: { b: BattleDetail }) {
   const sides = sideResults(b);
   if (sides.length < 2) return null;
   return (
-    <table data-testid="battle-sides">
+    <table className="stack-table" data-testid="battle-sides">
       <caption>Resultado por bando (el bando es el lado del campo, no el equipo de la sección Equipos)</caption>
       <thead>
         <tr>
@@ -417,7 +417,7 @@ function StatsSection({ b, s }: { b: BattleDetail; s: StatsResponse }) {
   const rows = participantsBySide(b.participants).filter((p) => s.perBot[p.botId]);
   return (
     <>
-      <table data-testid="battle-stats">
+      <table className="stack-table stack-table--wide" data-testid="battle-stats">
         <thead>
           <tr>
             <th>Bot</th>
@@ -467,7 +467,7 @@ function StatsSection({ b, s }: { b: BattleDetail; s: StatsResponse }) {
       {rows.map((p) => (
         <details key={p.botId} data-testid="module-usage">
           <summary>Uso de módulos de {botVersionLabel(p)}</summary>
-          <table>
+          <table className="stack-table">
             <thead>
               <tr>
                 <th>Hueco</th>
@@ -537,7 +537,7 @@ function SidesStats({ b, s, rows }: { b: BattleDetail; s: StatsResponse; rows: D
             };
           });
   return (
-    <table data-testid="battle-stats-sides">
+    <table className="stack-table stack-table--wide" data-testid="battle-stats-sides">
       <caption>Resumen por bando</caption>
       <thead>
         <tr>
@@ -583,7 +583,7 @@ function RadioStats({ s, rows }: { s: StatsResponse; rows: DetailParticipant[] }
   const withRadio = rows.filter((p) => s.perBot[p.botId]?.radio);
   if (withRadio.length === 0) return null;
   return (
-    <table data-testid="battle-stats-radio">
+    <table className="stack-table" data-testid="battle-stats-radio">
       <caption>Radio (la radio también llega al bando rival)</caption>
       <thead>
         <tr>

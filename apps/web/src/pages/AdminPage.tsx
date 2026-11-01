@@ -112,7 +112,7 @@ export function AdminPage(props: { me: Me }) {
 
       <div className="card">
         <h2>Hallazgos de seguridad</h2>
-        <table>
+        <table className="stack-table">
           <tbody>
             {findings.map((f) => (
               <tr key={f.id}>
@@ -128,7 +128,7 @@ export function AdminPage(props: { me: Me }) {
 
       <div className="card">
         <h2>Auditoría (solo inserción)</h2>
-        <table>
+        <table className="stack-table">
           <tbody>
             {auditLog.map((a) => (
               <tr key={a.id}>

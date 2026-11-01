@@ -237,7 +237,7 @@ export function MapsPage(props: { me: Me }) {
         ) : maps.length === 0 ? (
           <EmptyState message="No hay mapas todavía." />
         ) : (
-          <table>
+          <table className="stack-table">
             <thead>
               <tr>
                 <th scope="col">Mapa</th>

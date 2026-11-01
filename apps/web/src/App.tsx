@@ -16,10 +16,11 @@
  *  - error boundary global + por pantalla (un fallo de render no deja la app
  *    en blanco) y el catálogo es un recurso con carga/error/reintento.
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, bootstrapSession, logout, onSessionExpired, getToken, type Me } from "./api.js";
 import { describeApiError } from "./errors.js";
 import { setDraftOwner } from "./ui/draft.js";
+import { observeStackTables } from "./ui/stack-table.js";
 import type { ModuleDefinition } from "../../../packages/module-catalog/types.js";
 import { LoginPage } from "./pages/LoginPage.js";
 import { BotsPage } from "./pages/BotsPage.js";
@@ -162,6 +163,10 @@ export function App() {
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
+
+  // UX-MOBILE · las tablas «stack-table» llevan en cada celda la etiqueta de su
+  // columna (data-label) para que el CSS móvil las pinte como tarjetas.
+  useEffect(() => observeStackTables(document.body), []);
 
   // R3.7 · Interceptor único de 401 (api.ts): si el refresh falla, se limpia la
   // sesión y se vuelve al login con un mensaje anunciado (role="alert").
@@ -392,57 +397,103 @@ export function isNavActive(href: string, route: string): boolean {
  */
 function ShellNav(props: { me: Me | null; route: string; booting: boolean; onLogout: () => void }) {
   const { me, route } = props;
+  // UX-MOBILE · en móvil y tablet (≤1024 px, CSS de index.html) los enlaces se
+  // pliegan tras el botón «Menú»; en escritorio el botón no se pinta y la barra
+  // es la de siempre (los contenedores usan display:contents).
+  const [open, setOpen] = useState(false);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const navRef = useRef<HTMLElement>(null);
+  // Cambiar de pantalla cierra el menú.
+  useEffect(() => setOpen(false), [route]);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setOpen(false);
+      toggleRef.current?.focus();
+    };
+    const onDown = (e: PointerEvent) => {
+      if (navRef.current && !navRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onDown);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onDown);
+    };
+  }, [open]);
   const link = (href: string, label: string, testId?: string) => (
     <a href={href} data-testid={testId} aria-current={isNavActive(href, route) ? "page" : undefined}>
       {label}
     </a>
   );
   return (
-    <nav aria-label="principal" style={{ flexWrap: "wrap" }}>
-      {/* La marca no es un segundo enlace a #/: «Inicio» ya lo es (un solo destino, un solo nombre). */}
-      <strong>S9 AI Arena</strong>
-      {link("#/", "Inicio", "nav-home")}
-      {me && (
-        <>
-          {link("#/bots", "Mis bots")}
-          {link("#/teams", "Equipos")}
-          {link("#/tournaments", "Torneos")}
-          {link("#/battles", "Batallas")}
-          {link("#/replays", "Replays")}
-          {link("#/maps", "Mapas")}
-        </>
-      )}
-      {/* R11 · #/live y N6 · #/ranking son públicas (sin cuenta). */}
-      {link("#/live", "En directo")}
-      {link("#/ranking", "Ranking")}
-      {link("#/help", "Ayuda", "nav-help")}
-      {/* La interfaz solo OCULTA; la autorización la hace la API (cap. 16) */}
-      {me && isAdmin(me) && (
-        <>
-          {link("#/admin", "Administración", "admin-link")}
-          {link("#/system", "Sistema", "system-link")}
-          {link("#/audit", "Auditoría", "audit-link")}
-          {link("#/roles", "Roles", "roles-link")}
-        </>
-      )}
-      {me ? (
-        <>
-          <span style={{ marginLeft: "auto" }}>
-            {me.displayName} ({me.roles.join(", ")})
-          </span>
-          <button type="button" data-testid="logout" onClick={props.onLogout}>
-            Salir
-          </button>
-        </>
-      ) : (
-        !props.booting && (
-          <span style={{ marginLeft: "auto" }}>
-            <a href="#/" data-testid="nav-access">
-              Entrar o registrarse
-            </a>
-          </span>
-        )
-      )}
+    <nav
+      aria-label="principal"
+      className="shell-nav"
+      data-open={open ? "true" : "false"}
+      ref={navRef}
+      style={{ flexWrap: "wrap" }}
+    >
+      <div className="nav-bar">
+        {/* La marca no es un segundo enlace a #/: «Inicio» ya lo es (un solo destino, un solo nombre). */}
+        <strong>S9 AI Arena</strong>
+        <button
+          type="button"
+          className="nav-toggle"
+          data-testid="nav-toggle"
+          aria-expanded={open}
+          aria-controls="nav-menu"
+          ref={toggleRef}
+          onClick={() => setOpen((o) => !o)}
+        >
+          <span aria-hidden="true">{open ? "✕" : "☰"}</span> Menú
+        </button>
+      </div>
+      <div className="nav-menu" id="nav-menu" data-testid="nav-menu">
+        {link("#/", "Inicio", "nav-home")}
+        {me && (
+          <>
+            {link("#/bots", "Mis bots")}
+            {link("#/teams", "Equipos")}
+            {link("#/tournaments", "Torneos")}
+            {link("#/battles", "Batallas")}
+            {link("#/replays", "Replays")}
+            {link("#/maps", "Mapas")}
+          </>
+        )}
+        {/* R11 · #/live y N6 · #/ranking son públicas (sin cuenta). */}
+        {link("#/live", "En directo")}
+        {link("#/ranking", "Ranking")}
+        {link("#/help", "Ayuda", "nav-help")}
+        {/* La interfaz solo OCULTA; la autorización la hace la API (cap. 16) */}
+        {me && isAdmin(me) && (
+          <>
+            {link("#/admin", "Administración", "admin-link")}
+            {link("#/system", "Sistema", "system-link")}
+            {link("#/audit", "Auditoría", "audit-link")}
+            {link("#/roles", "Roles", "roles-link")}
+          </>
+        )}
+        {me ? (
+          <>
+            <span className="nav-user" data-testid="nav-user" style={{ marginLeft: "auto" }}>
+              {me.displayName} ({me.roles.join(", ")})
+            </span>
+            <button type="button" data-testid="logout" onClick={props.onLogout}>
+              Salir
+            </button>
+          </>
+        ) : (
+          !props.booting && (
+            <span className="nav-user" style={{ marginLeft: "auto" }}>
+              <a href="#/" data-testid="nav-access">
+                Entrar o registrarse
+              </a>
+            </span>
+          )
+        )}
+      </div>
     </nav>
   );
 }

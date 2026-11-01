@@ -89,7 +89,7 @@ export function BattlesPage(props: { botFilter?: string }) {
               />
             );
           return (
-            <table>
+            <table className="stack-table">
               <thead>
                 <tr>
                   <th>Participantes</th>
