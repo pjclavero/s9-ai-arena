@@ -594,8 +594,25 @@ export async function excludeTournamentEntry(
     throw new ApiError(409, "entry_eligible", "La inscripción es elegible: sólo su dueño puede retirarla");
   }
   await db.transaction(async (trx) => {
-    const n = await trx("entries").where({ id: entry.id, frozen: false }).del();
-    if (n !== 1) throw new ApiError(409, "entries_closed", "La inscripción ya no está pendiente");
+    // TOCTOU · se bloquea la fila y se comprueba que sigue siendo LA MISMA inscripción
+    // evaluada (versión y revisión): si el dueño la cambió entretanto (p. ej. a una
+    // versión elegible), no se borra ni se audita nada.
+    // Con la misma versión y revisión (ambas inmutables) la evaluación previa sigue
+    // siendo la de la fila bloqueada, y el audit_log describe exactamente lo borrado.
+    const locked = await trx("entries").where({ id: entry.id }).forUpdate().first();
+    if (
+      !locked ||
+      locked.frozen ||
+      Number(locked.version) !== Number(entry.version) ||
+      Number(locked.loadout_revision) !== Number(entry.loadout_revision)
+    ) {
+      throw new ApiError(409, "entry_changed", "La inscripción cambió mientras se procesaba: vuelve a revisarla");
+    }
+    const n = await trx("entries")
+      .where({ id: entry.id, frozen: false, version: entry.version, loadout_revision: entry.loadout_revision })
+      .del();
+    if (n !== 1)
+      throw new ApiError(409, "entry_changed", "La inscripción cambió mientras se procesaba: vuelve a revisarla");
     await trx("audit_log").insert({
       actor_id: actor.userId,
       action: "tournament.entry.excluded",

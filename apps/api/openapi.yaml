@@ -992,7 +992,7 @@ paths:
         '400': { description: reason obligatorio, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '403': { description: Ni dueño del bot ni organizador, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: 'entries_closed (torneo no abierto o inscripción congelada) · entry_eligible (el organizador no puede excluir una inscripción elegible)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: 'entries_closed (torneo no abierto o inscripción congelada) · entry_eligible (el organizador no puede excluir una inscripción elegible) · entry_changed (la inscripción cambió de versión mientras se procesaba: no se borra ni se audita)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /tournaments/{tournamentId}/actions/dry-run:
     post:
