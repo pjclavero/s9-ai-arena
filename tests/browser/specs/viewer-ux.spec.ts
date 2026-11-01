@@ -205,9 +205,22 @@ async function viewportPass(page: Page, id: string, tag: string, expectedBots: n
     await page.setViewportSize({ width: vp.width, height: vp.height });
     await page.reload();
     await openReplay(page, id);
+    // Revisión P2-b · el escenario se ve entero (o casi) sin hacer scroll. Con la
+    // barra de navegación plegable de UX-MOBILE es exigible; sin ella (rama sola)
+    // la barra mide ~220 px en móvil y sólo se registra.
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+    const top = await box(canvasOf(page));
+    const visible = Math.max(0, Math.min(vp.height, top.y + top.height) - Math.max(0, top.y)) / top.height;
+    const navH = (await page.locator("nav").first().boundingBox())?.height ?? 0;
+    test.info().annotations.push({
+      type: `stage-visible-${vp.name}`,
+      description: `${Math.round(visible * 100)} % visible sin scroll · y=${Math.round(top.y)} · alto ${Math.round(top.height)} · nav ${Math.round(navH)} px`,
+    });
+    if (navH <= 90) expect(visible, `${vp.name}: escenario visible sin scroll`).toBeGreaterThanOrEqual(0.85);
     // Foto estable: pausa y vista completa.
     const pause = page.getByRole("button", { name: "Pausa" });
     if (await pause.isVisible()) await pause.click();
+    await expect(page.getByTestId("replay-status")).toHaveText(/en pausa|fin del replay/);
     await ensureMinimapOpen(page);
     await expect.poll(() => miniAttr(page, "dots")).toBe(String(expectedBots));
     const cb = await box(canvasOf(page));
@@ -226,12 +239,23 @@ async function viewportPass(page: Page, id: string, tag: string, expectedBots: n
     await settled(page);
     await shotTo(page, `view-${tag}-${vp.name}-replay`);
     // Con zoom: barras de vida y nombres sobre los bots (no tapan el escenario).
-    await page.getByRole("button", { name: "Seguir", exact: false }).first().click();
+    // Revisión P2-a: «Seguir» (el 2.º bot, como en la revisión) + «Acercar».
+    await page.getByRole("button", { name: "Seguir", exact: false }).nth(1).click();
     await expect.poll(() => mode(page)).toBe("follow");
     await page.getByRole("button", { name: "Acercar" }).click();
-    // «+» parte del zoom de SEGUIMIENTO (150 %), no del de tránsito: ×1.25 ≈ 188 %.
+    // «+» parte del zoom de SEGUIMIENTO (150 %), no del de tránsito: ×1.25 ≈ 188 %…
     await settled(page);
     expect(await pct(page), `${vp.name}: «+» tras «Seguir» acerca desde el seguimiento`).toBeGreaterThanOrEqual(150);
+    // …y SIGUE en seguimiento (P3: antes pasaba a cámara libre).
+    expect(await mode(page)).toBe("follow");
+    // Nada del HUD encima del escenario y el seguido lejos del canto superior.
+    const cz = await box(canvasOf(page));
+    expect(overlap(cz, await box(page.getByTestId("hud"))), `${vp.name}: el HUD no tapa el escenario`).toBe(false);
+    await expect.poll(() => miniAttr(page, "selected-frac")).not.toBe("");
+    const [fx, fy] = (await miniAttr(page, "selected-frac")).split(",").map(Number);
+    expect(fx * cz.width, `${vp.name}: seguido dentro`).toBeGreaterThan(20);
+    expect(fy * cz.height, `${vp.name}: seguido lejos del canto superior`).toBeGreaterThanOrEqual(40);
+    expect(fy * cz.height, `${vp.name}: seguido lejos del canto inferior`).toBeLessThanOrEqual(cz.height - 20);
     await shotTo(page, `view-${tag}-${vp.name}-zoom`);
   }
 }

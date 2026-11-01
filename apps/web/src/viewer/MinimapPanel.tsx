@@ -78,6 +78,18 @@ export function MinimapPanel({ getState, onCenter, defaultOpen = true }: Minimap
       }
       canvas.dataset.dots = String(dots.length);
       canvas.dataset.inView = String(inView);
+      // Posición del seleccionado en el escenario, en fracción (0..1) de su ancho/alto:
+      // el E2E comprueba que no queda pegada al canto (ni bajo nada).
+      const sel = st.selectedId ? st.vehicles.find((v) => v.id === st.selectedId) : undefined;
+      canvas.dataset.selectedFrac =
+        sel && st.camera
+          ? [
+              ((sel.x - st.camera.centerX) * st.camera.zoom) / st.camera.viewportW + 0.5,
+              ((sel.y - st.camera.centerY) * st.camera.zoom) / st.camera.viewportH + 0.5,
+            ]
+              .map((n) => n.toFixed(3))
+              .join(",")
+          : "";
       canvas.dataset.view = rect ? [rect.x, rect.y, rect.w, rect.h].map((n) => n.toFixed(1)).join(",") : "";
       canvas.dataset.mapPx = [l.offsetX, l.offsetY, l.mapW, l.mapH].map((n) => n.toFixed(1)).join(",");
 
