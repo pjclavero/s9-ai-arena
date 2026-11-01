@@ -48,6 +48,8 @@ export interface TagInput {
   hpRatio: number | null;
   selected: boolean;
   relation: Relation;
+  /** UX-VIEW · otro vehículo a menos de CROWD_PX en pantalla (inicio del 4v4, melés). */
+  crowded?: boolean;
 }
 
 export interface TagContext {
@@ -112,7 +114,7 @@ export function planTag(t: TagInput, ctx: TagContext): TagPlan {
   if (names === "off") showName = false;
   else if (names === "selected") showName = t.selected;
   else if (names === "all") showName = true;
-  else showName = t.selected || (!low && !dense);
+  else showName = t.selected || (!low && !dense && !t.crowded);
 
   const health = ctx.prefs.health;
   const showBar =
@@ -127,7 +129,7 @@ export function planTag(t: TagInput, ctx: TagContext): TagPlan {
     showDetail: t.selected && hp !== null && t.life !== "destroyed",
     detailText: hp === null ? "" : `${hp}%`,
     // Barra FINA: 3 px (4 el seleccionado); más corta con zoom bajo para no tapar.
-    barWidthPx: t.selected ? 34 : low ? 18 : 26,
+    barWidthPx: t.selected ? 34 : low || t.crowded ? 18 : 26,
     barHeightPx: t.selected ? 4 : 3,
     offsetPx: Math.max(14, Math.min(40, ctx.cssPxPerM * 2.2)),
     shape: markerShape(t.relation, t.teamIndex),
@@ -135,6 +137,23 @@ export function planTag(t: TagInput, ctx: TagContext): TagPlan {
     dashedRing: t.life === "respawning",
     cross: t.life === "destroyed",
   };
+}
+
+/** Distancia en pantalla (px CSS) por debajo de la cual dos vehículos están «amontonados». */
+export const CROWD_PX = 56;
+
+/** Ids de los vehículos con otro a menos de `radiusPx` (posiciones en px de pantalla). */
+export function crowdedIds(points: { id: string; x: number; y: number }[], radiusPx = CROWD_PX): Set<string> {
+  const out = new Set<string>();
+  for (let i = 0; i < points.length; i++) {
+    for (let j = i + 1; j < points.length; j++) {
+      if (Math.hypot(points[i].x - points[j].x, points[i].y - points[j].y) < radiusPx) {
+        out.add(points[i].id);
+        out.add(points[j].id);
+      }
+    }
+  }
+  return out;
 }
 
 export interface LabelBox {

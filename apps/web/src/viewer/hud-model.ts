@@ -234,11 +234,28 @@ function buildTeams(overlay: OverlayState, roster: ViewerRoster | null | undefin
   });
 }
 
-function buildKillFeed(feed: FeedItem[], limit: number): HudKill[] {
+/**
+ * UX-VIEW · Nombre legible del objetivo de un evento: el bot de la nómina; un
+ * destructible del mapa (`crate_04`) como «caja»; y si no, el id abreviado.
+ */
+export function targetLabel(roster: ViewerRoster | null | undefined, id: string): string {
+  if (roster?.get(id)?.name) return vehicleLabel(roster, id);
+  const m = /^(crate|box|barrel)[_-]?0*(\d+)?$/i.exec(id);
+  if (m) return m[2] ? `caja ${m[2]}` : "caja";
+  return vehicleLabel(roster ?? null, id);
+}
+
+/** Texto de una entrada del feed con NOMBRES en vez de ids internos. */
+export function feedItemText(f: FeedItem, roster?: ViewerRoster | null): string {
+  if (f.kind === "vehicle_destroyed" && f.targetId) return `${targetLabel(roster, f.targetId)} destruido`;
+  return f.text;
+}
+
+function buildKillFeed(feed: FeedItem[], limit: number, roster: ViewerRoster | null): HudKill[] {
   return feed
     .filter((f) => f.kind === "vehicle_destroyed")
     .slice(-limit)
-    .map((f) => ({ tick: f.tick, text: f.text }));
+    .map((f) => ({ tick: f.tick, text: feedItemText(f, roster) }));
 }
 
 function buildPhase(overlay: OverlayState): MatchPhase {
@@ -290,7 +307,7 @@ export function buildHudModel(overlay: OverlayState, opts: HudModelOptions = {})
     teams: buildTeams(overlay, roster),
     flags,
     zones,
-    killFeed: buildKillFeed(overlay.feed, killLimit),
+    killFeed: buildKillFeed(overlay.feed, killLimit, roster),
     matchEnd,
   };
 }

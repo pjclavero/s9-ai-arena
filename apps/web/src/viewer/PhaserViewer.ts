@@ -54,6 +54,7 @@ import type { CameraView, MinimapVehicle, WorldSize } from "./minimap.js";
 import { cameraConfigFor, computeViewScale, zoomPercent, ZOOM_BUTTON_FACTOR, type ViewScale } from "./view-scale.js";
 import {
   DEFAULT_TAG_PREFS,
+  crowdedIds,
   declutterLabels,
   lifeState,
   markerOutline,
@@ -178,6 +179,19 @@ export class ViewerScene extends Phaser.Scene {
   private readonly viewListeners = new Set<(s: ViewStatus) => void>();
   private lastStatus: ViewStatus | null = null;
   private lastStatusAt = 0;
+  private perfOverlay: HTMLElement | null = null;
+  private perfOverlayShown: boolean | null = null;
+
+  /** La capa de rendimiento se ve con depuración activa o con `?perf=1` en la URL. */
+  private syncPerfOverlay(): void {
+    const el = this.perfOverlay;
+    if (!el) return;
+    const forced = typeof location !== "undefined" && /[?&]perf=1\b/.test(location.href);
+    const show = this.showDebug || forced;
+    if (show === this.perfOverlayShown) return;
+    this.perfOverlayShown = show;
+    el.style.display = show ? "" : "none";
+  }
   /** Último frame dibujado (posiciones para el minimapa y la selección por toque). */
   private lastFrame: Map<string, { x: number; y: number; alive: boolean; team?: string }> | null = null;
   /** R3.6 · Anuncio de FIN DE PARTIDA sobre el canvas (no sólo en el feed HTML). */
@@ -353,6 +367,9 @@ export class ViewerScene extends Phaser.Scene {
     // WebGL, publicados en window.__s9perf para la prueba de rendimiento de CI.
     const parent = (this.game.canvas?.parentElement as HTMLElement | null) ?? undefined;
     this.perf = attachRenderStats(this.game, parent ? { overlayParent: parent } : {});
+    // UX-VIEW · la capa «NN fps · draw calls» tapaba el objetivo: sólo con depuración.
+    this.perfOverlay = parent?.querySelector<HTMLElement>('[data-testid="perf-overlay"]') ?? null;
+    this.syncPerfOverlay();
     (globalThis as Record<string, unknown>).__s9perf = this.perf;
     // UX-VIEW · el minimapa ya NO es una segunda cámara dentro del canvas: es un
     // panel HTML fuera del escenario (MinimapPanel) que lee minimapState().
@@ -436,14 +453,29 @@ export class ViewerScene extends Phaser.Scene {
 
   /** Botones/teclas +/−: zoom suave alrededor del centro. */
   zoomIn(): void {
-    if (!this.ready()) return;
-    this.interaction.zoomBy(ZOOM_BUTTON_FACTOR, this.goalView());
-    this.emitStatus();
+    this.zoomButton(ZOOM_BUTTON_FACTOR);
   }
 
   zoomOut(): void {
+    this.zoomButton(1 / ZOOM_BUTTON_FACTOR);
+  }
+
+  /**
+   * UX-VIEW · +/−: siguiendo a un bot, el zoom cambia DENTRO del seguimiento (no
+   * pasa a cámara libre); en los demás modos, zoom suave alrededor del centro.
+   */
+  private zoomButton(factor: number): void {
     if (!this.ready()) return;
-    this.interaction.zoomBy(1 / ZOOM_BUTTON_FACTOR, this.goalView());
+    const mode = this.interaction.current;
+    if (mode.kind === "follow") {
+      const v = this.goalView();
+      const min = v.cfg.minZoom ?? 0.5;
+      const max = v.cfg.maxZoom ?? 40;
+      const zoom = Math.min(max, Math.max(min, v.current.zoom * factor));
+      this.cameraMode = { kind: "follow", vehicleId: mode.vehicleId, zoom };
+      return;
+    }
+    this.interaction.zoomBy(factor, this.goalView());
     this.emitStatus();
   }
 
@@ -683,6 +715,7 @@ export class ViewerScene extends Phaser.Scene {
     this.renderTags(faded, now);
     this.emitStatus();
     this.renderDebug();
+    this.syncPerfOverlay();
     // R3.6 · fin de partida ANUNCIADO sobre el canvas (no sólo en el feed HTML).
     this.renderMatchEnd();
   }
@@ -984,6 +1017,17 @@ export class ViewerScene extends Phaser.Scene {
       const y = p.y * this.pxPerM;
       if (x >= wv.x && x <= wv.x + wv.width && y >= wv.y && y <= wv.y + wv.height) visibleCount++;
     }
+    // Densidad LOCAL: vehículos amontonados en pantalla (inicio del 4v4) no llevan
+    // nombre (salvo el seleccionado) y su barra se acorta.
+    const screenPts: { id: string; x: number; y: number }[] = [];
+    for (const [vid, p] of frame.vehicles) {
+      screenPts.push({
+        id: vid,
+        x: (p.x * this.pxPerM - wv.x) * (camZoom / dpr),
+        y: (p.y * this.pxPerM - wv.y) * (camZoom / dpr),
+      });
+    }
+    const crowded = crowdedIds(screenPts);
     const boxes: LabelBox[] = [];
     const anchors = new Map<string, { x: number; y: number }>();
     for (const [id, pose] of frame.vehicles) {
@@ -1003,6 +1047,7 @@ export class ViewerScene extends Phaser.Scene {
           hpRatio,
           selected: id === this.selectedId,
           relation: relationTo(team, perspective),
+          crowded: crowded.has(id),
         },
         { prefs: this.tagPrefs, cssPxPerM, visibleCount },
       );

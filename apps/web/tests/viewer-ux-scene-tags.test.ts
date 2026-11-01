@@ -161,7 +161,46 @@ describe("escena: los botones de zoom parten del encuadre OBJETIVO, no del frame
     scene.cameraMode = { kind: "follow", vehicleId: "v1" };
     scene.zoomIn();
     const m = scene.interaction.current;
-    expect(m.kind).toBe("manual");
-    expect(m.zoom).toBeCloseTo(12 * 1.25, 6); // seguimiento = 150 % (12 px/m) × 1.25
+    // Revisión P3: «+» siguiendo a un bot NO pasa a cámara libre; acerca dentro del seguimiento.
+    expect(m).toEqual({ kind: "follow", vehicleId: "v1", zoom: expect.closeTo(12 * 1.25, 6) });
+    scene.zoomOut();
+    expect(scene.interaction.current).toEqual({ kind: "follow", vehicleId: "v1", zoom: expect.closeTo(12, 6) });
+  });
+});
+
+describe("escena: la capa «fps · draw calls» sólo con depuración", () => {
+  it("oculta por defecto; visible al activar las capas de depuración", () => {
+    const { scene } = sceneWith(1);
+    const el = { style: { display: "" } };
+    scene.perfOverlay = el;
+    scene.syncPerfOverlay();
+    expect(el.style.display).toBe("none");
+    scene.showDebug = true;
+    scene.syncPerfOverlay();
+    expect(el.style.display).toBe("");
+  });
+});
+
+describe("escena: densidad local (inicio del 4v4)", () => {
+  it("dos bots amontonados en pantalla no llevan nombre salvo el seleccionado", () => {
+    const { scene, labels } = sceneWith(2);
+    scene.overlay.applySnapshot({
+      tick: 2,
+      vehicles: [
+        { id: "v1", team: "red", alive: true, hullHp: 100, hullHpMax: 100, modules: [] },
+        { id: "v2", team: "red", alive: true, hullHp: 100, hullHpMax: 100, modules: [] },
+      ],
+    });
+    const f = {
+      vehicles: new Map([
+        ["v1", { x: 20, y: 20, heading: 0, turretHeading: 0, alive: true, alpha: 1 }],
+        ["v2", { x: 21, y: 21, heading: 0, turretHeading: 0, alive: true, alpha: 1 }],
+      ]),
+    };
+    scene.renderTags(f, 0);
+    expect(labels.every((l: any) => l.visible === false)).toBe(true);
+    scene.selectVehicle("v2");
+    scene.renderTags(f, 0);
+    expect(labels.filter((l: any) => l.visible === true)).toHaveLength(1);
   });
 });
