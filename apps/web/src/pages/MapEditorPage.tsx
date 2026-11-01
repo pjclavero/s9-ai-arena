@@ -115,6 +115,14 @@ function writeHash(mapId: string, version: number) {
 const STATE_NAME: Record<string, string> = { draft: "borrador", published: "publicado", archived: "archivado" };
 const stateName = (s: string) => (Object.prototype.hasOwnProperty.call(STATE_NAME, s) ? STATE_NAME[s] : s);
 
+/** ¿El evento de teclado viene del lienzo o de ningún control con foco? */
+function inMapScope(t: EventTarget | null): boolean {
+  const el = t as Element | null;
+  if (!el || el === (window as unknown) || el === document.body || el === document.documentElement) return true;
+  if (typeof el.closest !== "function") return true;
+  return el.closest('[data-testid="editor-stage"]') !== null;
+}
+
 function isTypingTarget(t: EventTarget | null): boolean {
   const el = t as HTMLElement | null;
   if (!el || !el.tagName) return false;
@@ -142,6 +150,7 @@ export function MapEditorPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [restored, setRestored] = useState(false);
+  const [confirmNew, setConfirmNew] = useState(false);
   const [mine, setMine] = useState<SavedVersion[] | null>(null);
   // UX-R · si «mis mapas» falla se dice (con reintento), no «Cargando…» eterno.
   const [mineError, setMineError] = useState<unknown>(null);
@@ -158,10 +167,13 @@ export function MapEditorPage() {
   const exportJson = useMemo(() => JSON.stringify(toDocument(map), null, 2), [map]);
 
   // Validador completo del servidor, en diferido y nunca durante un gesto.
-  const [full, setFull] = useState<Check[] | null>(null);
+  // `full.of` es el mapa validado: si no es el actual, la cifra va por detrás y se
+  // muestra «calculando…» en vez de un resultado viejo.
+  const [fullState, setFull] = useState<{ of: EditorMap; checks: Check[] } | null>(null);
+  const full = fullState && fullState.of === map ? fullState.checks : null;
   useEffect(() => {
     if (gestureActive) return;
-    const t = setTimeout(() => setFull(fullValidation(map)), 350);
+    const t = setTimeout(() => setFull({ of: map, checks: fullValidation(map) }), 350);
     return () => clearTimeout(t);
   }, [map, gestureActive]);
 
@@ -304,10 +316,30 @@ export function MapEditorPage() {
     }
   }
 
+  /** «Nuevo»: sólo tras confirmar si hay cambios sin guardar (el borrador local se borra aquí, no antes). */
+  function startNew() {
+    setConfirmNew(false);
+    clearDraft();
+    resetTo(newMap());
+    setSaved(null);
+    setDirty(false);
+    setRestored(false);
+    setChecks([]);
+    window.history.replaceState(null, "", "#/maps/editor");
+  }
+
   // --- acciones de edición ----------------------------------------------------
+  // Deshacer un borrado deja seleccionado el objeto restaurado.
+  const lastDeleted = useRef<{ after: EditorMap; ref: ObjRef } | null>(null);
   const doUndo = useCallback(() => {
-    setHist((h) => undo(h));
+    const h = histRef.current;
+    const d = lastDeleted.current;
+    setHist((x) => undo(x));
     setDirty(true);
+    if (d && h.present === d.after && h.past.length > 0) {
+      lastDeleted.current = null;
+      setSelected(d.ref);
+    }
   }, []);
   const doRedo = useCallback(() => {
     setHist((h) => redo(h));
@@ -323,7 +355,9 @@ export function MapEditorPage() {
   function deleteSelected() {
     const sel = selected;
     if (!sel || !getObj(map, sel)) return;
-    edit((m) => removeObj(m, sel));
+    const after = removeObj(histRef.current.present, sel);
+    lastDeleted.current = { after, ref: sel };
+    edit(() => after);
     setSelected(null);
   }
   function duplicateSelected() {
@@ -377,6 +411,9 @@ export function MapEditorPage() {
     if (mod && k === "v") return (e.preventDefault(), paste());
     if (mod && k === "d") return (e.preventDefault(), duplicateSelected());
     if (mod) return;
+    // Borrar y mover con flechas sólo con el foco en el lienzo (o en ningún control):
+    // Supr/Retroceso sobre un botón de la barra no debe borrar el objeto seleccionado.
+    if (!inMapScope(e.target)) return;
     if (e.key === "Delete" || e.key === "Backspace") {
       if (selected) e.preventDefault();
       return deleteSelected();
@@ -515,18 +552,40 @@ export function MapEditorPage() {
         hace falta dibujar el perímetro. Los spawns y muros deben quedar dentro.
       </p>
 
+      {confirmNew && (
+        <div
+          role="alertdialog"
+          aria-modal="false"
+          aria-labelledby="editor-confirm-new-title"
+          aria-describedby="editor-confirm-new-desc"
+          className="s9-me-note"
+          data-testid="editor-confirm-new"
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.stopPropagation();
+              setConfirmNew(false);
+            }
+          }}
+        >
+          <strong id="editor-confirm-new-title">¿Empezar un mapa nuevo?</strong>{" "}
+          <span id="editor-confirm-new-desc">
+            Hay cambios sin guardar en el servidor; si empiezas uno nuevo se pierden (también la copia de este
+            navegador).
+          </span>{" "}
+          <button type="button" className="danger" onClick={startNew}>
+            Descartar cambios y empezar uno nuevo
+          </button>{" "}
+          <button type="button" autoFocus onClick={() => setConfirmNew(false)}>
+            Cancelar
+          </button>
+        </div>
+      )}
       <div role="toolbar" aria-label="Herramientas" className="s9-me-bar">
         <button
           type="button"
-          onClick={() => {
-            clearDraft();
-            resetTo(newMap());
-            setSaved(null);
-            setDirty(false);
-            setRestored(false);
-            setChecks([]);
-            window.history.replaceState(null, "", "#/maps/editor");
-          }}
+          aria-haspopup="dialog"
+          aria-expanded={confirmNew}
+          onClick={() => (dirty ? setConfirmNew(true) : startNew())}
         >
           Nuevo
         </button>

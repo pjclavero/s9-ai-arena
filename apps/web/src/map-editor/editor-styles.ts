@@ -20,6 +20,8 @@ main.page-wide { max-width: min(1600px, 100%); }
 .s9-me .s9-me-swatch { display: inline-block; width: 0.8em; height: 0.8em; border-radius: 2px; margin-right: 0.35em; vertical-align: -0.05em; border: 1px solid #0006; }
 .s9-me .s9-me-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 12px; align-items: start; }
 .s9-me .s9-me-main { min-width: 0; }
+.s9-me .s9-me-canvas:focus { outline: none; }
+.s9-me .s9-me-canvas:focus-visible { outline: 2px solid #7fb4ff; outline-offset: -2px; }
 .s9-me .s9-me-stage { position: relative; width: 100%; height: clamp(320px, 64vh, 780px); overflow: hidden; background: #0b0f0c; border: 1px solid var(--me-line); border-radius: 6px; }
 .s9-me .s9-me-status { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.85rem; color: var(--me-muted); margin: 4px 0; font-variant-numeric: tabular-nums; }
 .s9-me .s9-me-side { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
