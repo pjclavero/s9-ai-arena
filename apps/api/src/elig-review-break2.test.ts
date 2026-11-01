@@ -311,4 +311,93 @@ describe("R11 · exclusión de inscripciones", () => {
       left: { version: 3 },
     });
   });
+
+  it("R12 · carrera: se congela entre la evaluación y el bloqueo → 409 y nada se borra ni audita", async () => {
+    const t = await openTournament("x-frozen-race");
+    const e = await rawEntry(t, aDef, 1, 1);
+    const racy = new Proxy(h.db, {
+      get(target, prop, recv) {
+        if (prop === "transaction") {
+          return async (fn: (trx: Knex.Transaction) => Promise<unknown>) => {
+            await target("entries").where({ id: e }).update({ frozen: true });
+            return target.transaction(fn);
+          };
+        }
+        return Reflect.get(target, prop, recv);
+      },
+      apply(target, thisArg, args) {
+        return Reflect.apply(target as never, thisArg, args);
+      },
+    }) as unknown as Knex;
+    const out = await excludeTournamentEntry(racy, { userId: orgId, isOrganizer: true }, t, e, "carrera").then(
+      () => "borrada",
+      (err: { status?: number }) => `rechazada ${err.status}`,
+    );
+    expect(out).toBe("rechazada 409");
+    expect(await h.db("entries").where({ id: e })).toHaveLength(1);
+    expect(
+      await h.db("audit_log").where({ action: "tournament.entry.excluded", target: `tournament:${t}` }),
+    ).toHaveLength(0);
+  });
+
+  it("R12 · exclusión SIMULTÁNEA dueño + organizador (x5): exactamente una gana, un solo audit, nunca 500", async () => {
+    for (let i = 0; i < 5; i++) {
+      const t = await openTournament(`x-sim-${i}`);
+      const e = await rawEntry(t, aDef, 1, 1);
+      const rs = await Promise.all([
+        exclude(devTok, t, e, { reason: "dueño" }),
+        exclude(orgTok, t, e, { reason: "organizador" }),
+      ]);
+      const st = rs.map((r) => r.status).sort();
+      expect(
+        st.filter((s) => s === 200),
+        JSON.stringify(st),
+      ).toHaveLength(1);
+      expect(
+        st.every((s) => [200, 404, 409].includes(s)),
+        JSON.stringify(st),
+      ).toBe(true);
+      expect(await h.db("entries").where({ id: e })).toHaveLength(0);
+      expect(
+        await h.db("audit_log").where({ action: "tournament.entry.excluded", target: `tournament:${t}` }),
+      ).toHaveLength(1);
+    }
+  });
+
+  it("R12 · exclusión simultánea con sustitución del dueño y con closeEntries: sin deadlock ni 500, estado coherente", async () => {
+    for (let i = 0; i < 5; i++) {
+      const t = await openTournament(`x-mix-${i}`);
+      const e = await rawEntry(t, aDef, 1, 1);
+      await rawEntry(t, atk, 1, 1);
+      const [ex, rep, close] = await Promise.all([
+        exclude(orgTok, t, e, { reason: "organizador" }),
+        request(app).post(`/tournaments/${t}/entries`).set(as(devTok)).send({ botId: aDef, version: 3 }),
+        request(app).post(`/tournaments/${t}/actions/close-entries`).set(as(orgTok)).send({}),
+      ]);
+      const sts = [ex.status, rep.status, close.status];
+      expect(
+        sts.every((s) => s < 500),
+        JSON.stringify(sts),
+      ).toBe(true);
+      const left = await h.db("entries").where({ tournament_id: t, bot_id: aDef }).first();
+      const audits = await h.db("audit_log").where({ action: "tournament.entry.excluded", target: `tournament:${t}` });
+      // Si se excluyó, no queda inscripción y hay un audit; si no, sigue (v1 o v3) y no hay audit.
+      if (ex.status === 200) {
+        // Orden serializable legítimo: excluida y, DESPUÉS, el dueño se reinscribe con v3 (201, otra fila).
+        if (left)
+          expect({ rep: rep.status, nueva: left.id !== e, v: Number(left.version) }).toEqual({
+            rep: 201,
+            nueva: true,
+            v: 3,
+          });
+        expect(audits).toHaveLength(1);
+      } else {
+        expect(left, JSON.stringify(sts)).toBeTruthy();
+        expect(audits).toHaveLength(0);
+      }
+      // Nunca se cierra con la versión no elegible dentro.
+      const tt = await h.db("tournaments").where({ id: t }).first();
+      if (tt.state === "closed" && left) expect(Number(left.version), JSON.stringify(sts)).toBe(3);
+    }
+  });
 });
