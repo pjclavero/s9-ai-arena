@@ -13,11 +13,11 @@
 import { Router } from "express";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
-import { ROLE_RANK } from "../openapi.js";
-import { ApiError, badRequest, conflict } from "../errors.js";
+import { ApiError, badRequest } from "../errors.js";
 import { checkBattleContent } from "./catalog.js";
 import { assertTeamComposition } from "./battles.js";
 import { buildBattleRules, rulesToJson } from "../services/battle-rules.js";
+import { assertParticipantsShape, assertParticipantsUsable } from "../services/battle-participants.js";
 import { MAX_BATTLE_PARTICIPANTS } from "../../../../packages/game-rules/battle-rules.js";
 
 export function battleRulesRoutes(db: Db): Router {
@@ -30,43 +30,12 @@ export function battleRulesRoutes(db: Db): Router {
     if (!Array.isArray(participants) || participants.length < 1 || participants.length > MAX_BATTLE_PARTICIPANTS) {
       throw badRequest(`participants: entre 1 y ${MAX_BATTLE_PARTICIPANTS}`);
     }
-    const seen = new Set<string>();
-    for (const p of participants) {
-      if (!p || typeof p !== "object") throw badRequest("participants: cada elemento debe ser un objeto");
-      if (typeof p.botId !== "string" || p.botId.length === 0) throw badRequest("participants[].botId obligatorio");
-      if (!Number.isInteger(p.version) || p.version < 1) throw badRequest("participants[].version: entero >= 1");
-      if (typeof p.team !== "string" || !/^[A-Za-z0-9_-]{1,32}$/.test(p.team)) {
-        throw badRequest("participants[].team: 1-32 caracteres [A-Za-z0-9_-]");
-      }
-      if (seen.has(p.botId)) throw badRequest("participants: un bot solo puede aparecer una vez por batalla");
-      seen.add(p.botId);
-    }
+    assertParticipantsShape(participants);
     assertTeamComposition(mode, participants);
 
-    // Visibilidad (TD-005): la MISMA regla que POST /battles. Invisible = 404 idéntico
-    // a inexistente: no se revela nada de un bot privado ajeno.
-    const userId = req.auth?.userId ?? null;
-    const isAdmin = (req.auth?.rank ?? 0) >= ROLE_RANK.admin;
-    for (const p of participants) {
-      const bot = await db("bots")
-        .where({ id: p.botId })
-        .first()
-        .catch(() => null);
-      let visible = Boolean(bot) && (isAdmin || bot.owner_id === userId || bot.visibility === "public");
-      if (bot && !visible && bot.visibility === "team" && bot.team_id && userId) {
-        visible = Boolean(await db("team_members").where({ team_id: bot.team_id, user_id: userId }).first());
-      }
-      if (!visible) throw new ApiError(404, "bot_not_found", `El bot ${p.botId} no existe o no es accesible`);
-    }
-    for (const p of participants) {
-      const v = await db("bot_versions")
-        .where({ bot_id: p.botId, version: p.version })
-        .first()
-        .catch(() => null);
-      if (!v || !["published", "frozen"].includes(v.state)) {
-        throw conflict("bot_not_published", `El bot ${p.botId} v${p.version} no está publicado`);
-      }
-    }
+    // Visibilidad (TD-005), versión publicada y elegibilidad (ELIG): la MISMA función
+    // que POST /battles. Invisible = 404 idéntico a inexistente.
+    await assertParticipantsUsable(db, req.auth, participants);
 
     // Reglas inválidas: 200 con ok:false y los errores por campo (la UI los pinta);
     // composición fuera de los topes: 200 con ok:false y el informe por bando/bot.
