@@ -842,3 +842,299 @@ test.describe("@fase1 REVIEWUX editor", () => {
     expect.soft(problems).toEqual([]);
   });
 });
+
+// ───────────────────────── re-revisión (7d56f8a) ─────────────────────────────
+
+const VPS2 = [
+  ...VPS,
+  { name: "t721", width: 721, height: 1000, touch: true },
+  { name: "t768", width: 768, height: 1024, touch: true },
+  { name: "t960", width: 960, height: 800, touch: true },
+] as const;
+
+/** Rectángulo del escenario frente a la tira del HUD y a la pantalla. */
+async function stageVsHud(page: Page) {
+  return page.evaluate(() => {
+    const r = (el: Element | null) => {
+      if (!el) return null;
+      const b = el.getBoundingClientRect();
+      return { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height) };
+    };
+    const host = r(document.querySelector('[data-testid="replay-canvas-host"]'));
+    const huds = [...document.querySelectorAll('[data-testid="hud"],[data-testid="hud-score"]')].map(r);
+    const overl = huds.filter(
+      (h) =>
+        h &&
+        host &&
+        h.w > 0 &&
+        h.h > 0 &&
+        h.x < host.x + host.w &&
+        host.x < h.x + h.w &&
+        h.y < host.y + host.h &&
+        host.y < h.y + h.h,
+    );
+    return {
+      vh: window.innerHeight,
+      scrollY: Math.round(window.scrollY),
+      host,
+      huds,
+      hudOverStage: overl,
+      visibleFrac: host ? Math.max(0, Math.min(window.innerHeight, host.y + host.h) - Math.max(0, host.y)) / host.h : 0,
+      fps: [...document.querySelectorAll("canvas")].length,
+      overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    };
+  });
+}
+
+test.describe("@fase1 REVIEWUX2 visor", () => {
+  test("REVIEWUX2 escenario visible, HUD fuera del escenario y seguir+zoom en el borde (8 viewports)", async ({
+    browser,
+  }) => {
+    test.setTimeout(600_000);
+    const id = battle4v4();
+    expect(id).not.toBe("");
+    const out: Record<string, unknown> = {};
+    for (const vp of VPS2) {
+      const ctx = await ctxFor(browser, vp as (typeof VPS)[number]);
+      const page = await ctx.newPage();
+      const problems = watchProblems(page);
+      await login(page, STAFF.email, STAFF.password);
+      await openReplay(page, id, 0);
+      await pause(page);
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.getByRole("button", { name: "Encajar mapa" }).click();
+      await settled(page);
+      const m: Record<string, unknown> = { atTop: await stageVsHud(page) };
+      await snap(page, `r2-view-${vp.name}-fit`);
+      // Seguir al bot 1 (aparece pegado a un canto del mapa en t=0) y acercar ×3.
+      await page.getByTestId("bot-row").first().getByRole("button").click();
+      for (let i = 0; i < 3; i++) await page.getByRole("button", { name: "Acercar" }).click();
+      await settled(page);
+      m.afterZoom = {
+        mode: await mode(page),
+        pct: await pct(page),
+        text: await page.getByTestId("camera-mode").textContent(),
+      };
+      m.zoomLayout = await stageVsHud(page);
+      await snap(page, `r2-view-${vp.name}-follow-zoom`);
+      // Alejar dentro de seguir.
+      await page.getByRole("button", { name: "Alejar" }).click();
+      await settled(page);
+      m.afterZoomOut = { mode: await mode(page), pct: await pct(page) };
+      m.problems = problems;
+      out[vp.name] = m;
+      expect.soft((m.atTop as { overflowX: number }).overflowX, `${vp.name} overflow`).toBeLessThanOrEqual(1);
+      expect
+        .soft((m.atTop as { hudOverStage: unknown[] }).hudOverStage, `${vp.name} HUD sobre el escenario`)
+        .toEqual([]);
+      expect
+        .soft((m.atTop as { visibleFrac: number }).visibleFrac, `${vp.name} escenario visible`)
+        .toBeGreaterThan(0.95);
+      expect.soft(problems, `${vp.name} consola`).toEqual([]);
+      await ctx.close();
+    }
+    dump("r2-layout", out);
+  });
+
+  test("REVIEWUX2 «Más controles» con táctil en 360 y 430", async ({ browser }) => {
+    test.setTimeout(240_000);
+    const id = battle4v4();
+    const out: Record<string, unknown> = {};
+    for (const vp of [VPS[3], VPS[4]]) {
+      const ctx = await ctxFor(browser, vp);
+      const page = await ctx.newPage();
+      const problems = watchProblems(page);
+      await login(page, STAFF.email, STAFF.password);
+      await openReplay(page, id, 0);
+      const more = page.getByTestId("more-controls");
+      const r: Record<string, unknown> = {
+        visible: await more.isVisible(),
+        expanded0: await more.getAttribute("aria-expanded"),
+        vistaGlobalVisible0: await page.getByRole("button", { name: "Vista global" }).isVisible(),
+        layout0: await stageVsHud(page),
+      };
+      const mb = (await more.boundingBox())!;
+      await page.touchscreen.tap(mb.x + mb.width / 2, mb.y + mb.height / 2);
+      await page.waitForTimeout(400);
+      r.expanded1 = await more.getAttribute("aria-expanded");
+      r.vistaGlobalVisible1 = await page.getByRole("button", { name: "Vista global" }).isVisible();
+      r.layout1 = await stageVsHud(page);
+      await snap(page, `r2-more-open-${vp.name}`);
+      // Usar un control extra con el dedo: «Bando rojo».
+      const side = page.getByTestId("camera-side").first();
+      if (await side.isVisible()) {
+        const sb = (await side.boundingBox())!;
+        await page.touchscreen.tap(sb.x + sb.width / 2, sb.y + sb.height / 2);
+        await expect.poll(() => mode(page)).toBe("team");
+      }
+      r.modeAfterSide = await mode(page);
+      const mb2 = (await more.boundingBox())!;
+      await page.touchscreen.tap(mb2.x + mb2.width / 2, mb2.y + mb2.height / 2);
+      await page.waitForTimeout(400);
+      r.expanded2 = await more.getAttribute("aria-expanded");
+      r.moreSize = { w: Math.round(mb.width), h: Math.round(mb.height) };
+      r.problems = problems;
+      out[vp.name] = r;
+      await snap(page, `r2-more-closed-${vp.name}`);
+      expect.soft(r.expanded1).toBe("true");
+      expect.soft(r.expanded2).toBe("false");
+      expect.soft(problems).toEqual([]);
+      await ctx.close();
+    }
+    dump("r2-more", out);
+  });
+});
+
+test.describe("@fase1 REVIEWUX2 tablas y selector", () => {
+  test("REVIEWUX2 tablas wide en 721/768/800/959/960/961/1024 y selector de batalla", async ({ page }) => {
+    test.setTimeout(300_000);
+    const problems = watchProblems(page);
+    await login(page, STAFF.email, STAFF.password);
+    const lr = await page.request.post("/api/v1/auth/login", { data: STAFF });
+    const auth = { Authorization: `Bearer ${((await lr.json()) as { accessToken: string }).accessToken}` };
+    // Mapa con id y nombre largos (dueño: organizer) para forzar la tabla de mapas.
+    await page.request.post("/api/v1/maps/generate", {
+      headers: auth,
+      data: {
+        seed: `rev2-${Date.now()}-con-una-semilla-muy-larga`,
+        params: { widthM: 60, heightM: 40, modes: ["deathmatch"] },
+      },
+    });
+    const bots = (await (await page.request.get("/api/v1/bots?mine=true&limit=5", { headers: auth })).json()) as {
+      items?: { id: string }[];
+    };
+    const botId = bots.items?.[0]?.id;
+    const routes: [string, string][] = [
+      ["maps", "#/maps"],
+      ["battles", "#/battles"],
+      ["replays", "#/replays"],
+      ["bots", "#/bots"],
+      ["battle-new", "#/battles/new"],
+    ];
+    if (botId) routes.push(["bot-detail", `#/bots/${botId}`]);
+    const out: Record<string, unknown> = {};
+    for (const w of [721, 768, 800, 959, 960, 961, 1024]) {
+      await page.setViewportSize({ width: w, height: 900 });
+      const row: Record<string, unknown> = {};
+      for (const [name, hash] of routes) {
+        await go(page, hash);
+        await page.waitForTimeout(1000);
+        row[name] = await page.evaluate(() => ({
+          o: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          culprits: [...document.querySelectorAll("main *")]
+            .filter((e) => e.getBoundingClientRect().right > window.innerWidth + 1)
+            .slice(0, 4)
+            .map((e) => `${e.tagName}.${(e as HTMLElement).className}`),
+        }));
+        if ([721, 768, 960, 961].includes(w)) await snap(page, `r2-${name}-${w}`, true);
+        expect.soft((row[name] as { o: number }).o, `${name} @${w}`).toBeLessThanOrEqual(1);
+      }
+      out[w] = row;
+    }
+    // Selector de batalla con la UI de elegibilidad de main: 360 y 1366.
+    for (const [w, h] of [
+      [360, 800],
+      [1366, 900],
+    ] as const) {
+      await page.setViewportSize({ width: w, height: h });
+      await go(page, "#/battles/new");
+      await page.waitForTimeout(1500);
+      out[`battle-new-${w}`] = {
+        overflow: await overflowX(page),
+        sides: await page.locator('[data-testid^="side-"], [data-testid^="team-side-"]').count(),
+        notEligible: await page.locator('[data-testid^="version-not-eligible-"]').count(),
+        selects: await page.locator("main select").count(),
+      };
+      await snap(page, `r2-battle-new-${w}`, true);
+    }
+    out.problems = problems;
+    dump("r2-tables", out);
+    expect.soft(problems).toEqual([]);
+  });
+});
+
+test.describe("@fase1 REVIEWUX2 editor", () => {
+  test("REVIEWUX2 «Nuevo» con diálogo: teclado, Esc, cancelar, descartar; borrado sólo en el lienzo", async ({
+    page,
+  }) => {
+    test.setTimeout(180_000);
+    const problems = watchProblems(page);
+    const r: Record<string, unknown> = {};
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await registerNewUser(page);
+    await go(page, "#/maps/editor");
+    await expect(page.getByTestId("editor-canvas")).toBeVisible();
+    const base = await objs(page).count();
+    // Sin cambios: «Nuevo» no pregunta.
+    await page.getByRole("button", { name: "Nuevo", exact: true }).click();
+    r.noChangesDialog = await page.getByTestId("editor-confirm-new").count();
+    // Cambio: 2 cajas.
+    for (const x of [30, 50]) {
+      await pal(page, "Caja").click();
+      const p = await toPage(page, x, 30);
+      await page.mouse.click(p.x, p.y);
+    }
+    const withBoxes = await objs(page).count();
+    const nuevo = page.getByRole("button", { name: "Nuevo", exact: true });
+    // 1) Abrir con teclado (Enter) y cerrar con Esc.
+    await nuevo.focus();
+    await page.keyboard.press("Enter");
+    const dlg = page.getByTestId("editor-confirm-new");
+    await expect(dlg).toBeVisible();
+    r.dialog = {
+      role: await dlg.getAttribute("role"),
+      expanded: await nuevo.getAttribute("aria-expanded"),
+      focused: await page.evaluate(() => document.activeElement?.textContent ?? ""),
+    };
+    await snap(page, "r2-editor-nuevo-dialog");
+    // Con el diálogo abierto: Ctrl+Z / Supr no deben tocar nada raro.
+    await page.keyboard.press("Delete");
+    r.deleteInDialog = (await objs(page).count()) === withBoxes;
+    await page.keyboard.press("Escape");
+    r.afterEsc = {
+      open: await dlg.count(),
+      count: await objs(page).count(),
+      focusBack: await page.evaluate(() => document.activeElement?.textContent ?? ""),
+    };
+    // 2) Abrir, «Cancelar» con Enter (foco inicial).
+    await nuevo.click();
+    await expect(dlg).toBeVisible();
+    await page.keyboard.press("Enter");
+    r.afterCancelEnter = { open: await dlg.count(), count: await objs(page).count() };
+    // 3) Abrir, Tab hasta «Descartar…» y confirmar.
+    await nuevo.click();
+    await expect(dlg).toBeVisible();
+    await dlg.getByRole("button", { name: /Descartar/ }).focus();
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(300);
+    r.afterDiscard = {
+      open: await dlg.count(),
+      count: await objs(page).count(),
+      draft: await page.evaluate(() => window.localStorage.getItem("s9.mapEditor.draft.v1")),
+    };
+    // Borrado: Supr con foco en un botón NO borra; en el lienzo sí.
+    await pal(page, "Muro").click();
+    const p = await toPage(page, 60, 40);
+    await page.mouse.click(p.x, p.y);
+    const n1 = await objs(page).count();
+    await page.getByTestId("editor-save").focus();
+    await page.keyboard.press("Backspace");
+    await page.keyboard.press("Delete");
+    r.deleteOnButton = (await objs(page).count()) < n1;
+    await page.mouse.click(p.x, p.y);
+    await page.keyboard.press("Delete");
+    r.deleteOnCanvas = (await objs(page).count()) < n1;
+    await page.keyboard.press("Control+z");
+    r.reselectAfterUndo = await page.locator('[data-testid="editor-obj"][data-selected="true"]').count();
+    r.base = base;
+    r.withBoxes = withBoxes;
+    r.problems = problems;
+    dump("r2-editor", r);
+    expect.soft(r.afterEsc).toMatchObject({ open: 0, count: withBoxes });
+    expect.soft(r.afterCancelEnter).toEqual({ open: 0, count: withBoxes });
+    expect.soft((r.afterDiscard as { count: number }).count).toBe(base);
+    expect.soft(r.deleteOnButton).toBe(false);
+    expect.soft(r.deleteOnCanvas).toBe(true);
+    expect.soft(problems).toEqual([]);
+  });
+});
