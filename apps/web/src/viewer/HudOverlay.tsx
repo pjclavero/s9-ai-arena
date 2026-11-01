@@ -27,14 +27,29 @@ export interface HudOverlayProps {
   accent?: string;
   /** Escala tipográfica base (px). El broadcast la sube (1080p). */
   fontScale?: number;
+  /**
+   * UX-VIEW · HUD compacto del visor interactivo: sin los paneles de equipo de
+   * 260 px (tapaban el mapa; su vida y módulos ya están en el selector de bots,
+   * fuera del escenario) y con el kill feed acotado. /broadcast usa el completo.
+   */
+  compact?: boolean;
 }
 
-export function HudOverlay({ model, accent = "#ffe066", fontScale = 14 }: HudOverlayProps) {
+export function HudOverlay({ model, accent = "#ffe066", fontScale = 14, compact = false }: HudOverlayProps) {
   return (
-    <div data-testid="hud" style={{ position: "absolute", inset: 0, pointerEvents: "none", fontSize: fontScale }}>
+    <div
+      data-testid="hud"
+      style={{
+        position: "absolute",
+        inset: 0,
+        pointerEvents: "none",
+        // UX-VIEW · compacto: en un móvil estrecho el marcador no se come el mapa.
+        fontSize: compact ? `min(${fontScale}px, 3.3vw)` : fontScale,
+      }}
+    >
       <TopBar model={model} accent={accent} />
-      <TeamPanels model={model} accent={accent} />
-      <KillFeed model={model} accent={accent} />
+      {!compact && <TeamPanels model={model} accent={accent} />}
+      <KillFeed model={model} accent={accent} compact={compact} />
       <ObjectivesBar model={model} accent={accent} />
       {model.matchEnd && <MatchEndBanner model={model} accent={accent} />}
     </div>
@@ -204,14 +219,24 @@ function BotRow({ bot }: { bot: HudBot }) {
 
 // ─────────────────────────────────── kill feed ───────────────────────────────
 
-function KillFeed({ model, accent }: { model: HudModel; accent: string }) {
+function KillFeed({ model, accent, compact = false }: { model: HudModel; accent: string; compact?: boolean }) {
   if (model.killFeed.length === 0) return null;
+  const items = compact ? model.killFeed.slice(-3) : model.killFeed;
   return (
     <div
       data-testid="hud-killfeed"
-      style={{ ...panel, position: "absolute", bottom: 8, right: 8, width: 260, fontSize: "0.85em" }}
+      style={{
+        ...panel,
+        position: "absolute",
+        bottom: 8,
+        right: 8,
+        width: compact ? "auto" : 260,
+        maxWidth: compact ? "min(260px, 45%)" : undefined,
+        fontSize: compact ? "0.75em" : "0.85em",
+        opacity: compact ? 0.85 : 1,
+      }}
     >
-      {model.killFeed.map((k, i) => (
+      {items.map((k, i) => (
         <div key={`${k.tick}-${i}`}>
           <span style={{ color: accent }}>[{k.tick}]</span> {k.text}
         </div>

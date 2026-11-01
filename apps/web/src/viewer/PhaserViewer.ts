@@ -31,7 +31,14 @@ import Phaser from "phaser";
 import { InterpolationBuffer } from "./interpolation.js";
 import { BallisticsTracker } from "./ballistics.js";
 import { OverlayState } from "./overlay.js";
-import { computeCamera, SmoothCamera, type CameraConfig, type CameraMode } from "./camera.js";
+import {
+  clampToMap,
+  computeCamera,
+  SmoothCamera,
+  type CameraConfig,
+  type CameraMode,
+  type CameraTarget,
+} from "./camera.js";
 import { CameraInteraction } from "./camera-interaction.js";
 import { FogFader, type FogOptions } from "./fog.js";
 import { applyCanvasSize, canvasSizeFor } from "./viewport.js";
@@ -43,7 +50,20 @@ import { MAX_PROJECTILE_SPRITES, visibleProjectileCount } from "./render-pools.j
 import { EffectSystem, sampleEffect, type EffectSpec } from "./effects.js";
 import { damageVisualFor } from "./damage-visuals.js";
 import { buildObjectivesLayer, type ObjectivesLayer } from "./objectives-overlay.js";
-import { MinimapController, type MinimapSceneLike, type MinimapCameraLike } from "./minimap.js";
+import type { CameraView, MinimapVehicle, WorldSize } from "./minimap.js";
+import { cameraConfigFor, computeViewScale, zoomPercent, ZOOM_BUTTON_FACTOR, type ViewScale } from "./view-scale.js";
+import {
+  DEFAULT_TAG_PREFS,
+  declutterLabels,
+  lifeState,
+  markerOutline,
+  planTag,
+  relationTo,
+  type LabelBox,
+  type TagPrefs,
+} from "./vehicle-tags.js";
+import { attachStageInput } from "./stage-input.js";
+import type { StageKeyCommand } from "./stage-gestures.js";
 import {
   S9_ENV,
   resolveTeamColors,
@@ -54,8 +74,35 @@ import {
   explosionFrameForAge,
   vehicleLabel,
   vehicleTeam,
+  sortTeams,
   type ViewerRoster,
 } from "./art-direction.js";
+
+/**
+ * UX-VIEW · Estado de la cámara que la página enseña (modo visible, % de zoom y
+ * bot seleccionado). La escena es la ÚNICA fuente de verdad del modo: la página
+ * lo refleja con `subscribeView` y sólo lo cambia ante una acción del usuario
+ * (antes un efecto de React lo reaplicaba en cada tick y pisaba el zoom/pan manual).
+ */
+export interface ViewStatus {
+  mode: CameraMode;
+  zoomPercent: number;
+  selectedId: string | null;
+}
+
+/** UX-VIEW · Lo que dibuja el minimapa HTML (fuera del canvas). */
+export interface MinimapState {
+  world: ViewerWorld;
+  vehicles: MinimapVehicle[];
+  camera: CameraView | null;
+  selectedId: string | null;
+  colorOf(team: string | undefined): number;
+}
+
+/** Radio (m) de la marca bajo el vehículo. */
+const MARKER_RADIUS_M = 2.3;
+/** Radio de selección por toque, en px CSS. */
+const TAP_PICK_PX = 28;
 
 export interface ViewerWorld {
   widthM: number;
@@ -115,8 +162,24 @@ export class ViewerScene extends Phaser.Scene {
   /** R3.5 · Última posición conocida por vehículo (para eventos sin campo position). */
   private lastVehiclePos = new Map<string, { x: number; y: number }>();
   private debugGfx: Phaser.GameObjects.Graphics | null = null;
-  /** R3.6 · Segunda cámara del minimapa (setViewport + ignore), sin duplicar entidades. */
-  private minimap: MinimapController | null = null;
+  /** UX-VIEW · Marcas bajo los vehículos (bando/relación, selección, reaparición, KO). */
+  private markersGfx: Phaser.GameObjects.Graphics | null = null;
+  /** UX-VIEW · Barras finas de vida (no rotan ni escalan con el zoom). */
+  private tagsGfx: Phaser.GameObjects.Graphics | null = null;
+  /** UX-VIEW · Nombre por vehículo, FUERA del contenedor que rota con el casco. */
+  private labels = new Map<string, Phaser.GameObjects.BitmapText>();
+  /** UX-VIEW · Vida anterior por vehículo, para detectar la reaparición (false → true). */
+  private prevAlive = new Map<string, boolean>();
+  private respawnedAt = new Map<string, number>();
+  /** UX-VIEW · Bot seleccionado (toque, «Seguir …», teclas 1–8). */
+  private selectedId: string | null = null;
+  /** UX-VIEW · Preferencias de vida/nombres que elige el espectador. */
+  tagPrefs: TagPrefs = DEFAULT_TAG_PREFS;
+  private readonly viewListeners = new Set<(s: ViewStatus) => void>();
+  private lastStatus: ViewStatus | null = null;
+  private lastStatusAt = 0;
+  /** Último frame dibujado (posiciones para el minimapa y la selección por toque). */
+  private lastFrame: Map<string, { x: number; y: number; alive: boolean; team?: string }> | null = null;
   /** R3.6 · Anuncio de FIN DE PARTIDA sobre el canvas (no sólo en el feed HTML). */
   private matchEndBanner: Phaser.GameObjects.Container | null = null;
   private matchEndText: Phaser.GameObjects.BitmapText | null = null;
@@ -127,6 +190,12 @@ export class ViewerScene extends Phaser.Scene {
   private readonly pxPerM = 8;
   /** Último encuadre aplicado (para que la interacción parta de lo que se ve). */
   private lastCamera: { centerX: number; centerY: number; zoom: number } | null = null;
+  /**
+   * UX-VIEW · Encuadre OBJETIVO del último frame (al que va la transición suave).
+   * Los botones +/−/100 %/centrar parten de él: pulsar «+» a mitad de la
+   * transición de «Seguir …» acercaba desde el zoom de tránsito y se quedaba lejos.
+   */
+  private lastGoal: CameraTarget | null = null;
 
   constructor() {
     super("viewer");
@@ -139,13 +208,18 @@ export class ViewerScene extends Phaser.Scene {
 
   set cameraMode(mode: CameraMode) {
     this.interaction.setMode(mode);
+    if (mode.kind === "follow") this.selectedId = mode.vehicleId;
+    this.emitStatus();
   }
 
   setWorld(world: ViewerWorld): void {
     this.world = world;
     this.drawStatic();
-    // R3.6 · el minimapa reencuadra al nuevo tamaño de mapa (mismo viewport).
-    this.minimap?.setWorld({ widthM: world.widthM, heightM: world.heightM }, this.scale.width, this.scale.height);
+  }
+
+  /** Mundo actual (tamaño en metros), para el minimapa. */
+  get worldSize(): WorldSize {
+    return { widthM: this.world.widthM, heightM: this.world.heightM };
   }
 
   /**
@@ -163,6 +237,13 @@ export class ViewerScene extends Phaser.Scene {
     this.teamsSignature = ""; // fuerza recálculo de colores con los equipos de la nómina
     for (const [, c] of this.vehicleGfx) c.destroy();
     this.vehicleGfx.clear();
+    for (const [, l] of this.labels) l.destroy();
+    this.labels.clear();
+  }
+
+  /** UX-VIEW · Color de bando (de game-rules) para el minimapa HTML: mismo tinte que el canvas. */
+  teamColor(team: string | undefined): number {
+    return team ? this.tintForTeam(team) : NEUTRAL_TEAM_COLOR;
   }
 
   /**
@@ -265,86 +346,260 @@ export class ViewerScene extends Phaser.Scene {
     // R3.5 · objetivos con forma (bases/zonas/minas): un Graphics reusado por frame.
     this.objectivesGfx = this.add.graphics().setDepth(2);
     this.debugGfx = this.add.graphics().setDepth(10);
-    this.wireInput();
+    // UX-VIEW · marcas bajo los vehículos (depth 2.5) y vida + nombre encima (7–8).
+    this.markersGfx = this.add.graphics().setDepth(2.5);
+    this.tagsGfx = this.add.graphics().setDepth(7);
     // Medición de rendimiento (ERR-VIS-11): FPS + draw calls reales del contexto
     // WebGL, publicados en window.__s9perf para la prueba de rendimiento de CI.
     const parent = (this.game.canvas?.parentElement as HTMLElement | null) ?? undefined;
     this.perf = attachRenderStats(this.game, parent ? { overlayParent: parent } : {});
     (globalThis as Record<string, unknown>).__s9perf = this.perf;
-    // R3.6 · MINIMAPA: una SEGUNDA cámara que reencuadra al mapa entero y muestra
-    // las MISMAS entidades (mapa, vehículos, objetivos) SIN duplicarlas; sólo
-    // ignora las capas de detalle (decals, depuración) que no aportan de lejos.
-    this.setupMinimap();
+    // UX-VIEW · el minimapa ya NO es una segunda cámara dentro del canvas: es un
+    // panel HTML fuera del escenario (MinimapPanel) que lee minimapState().
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.perf?.dispose();
       this.perf = null;
     });
   }
 
-  /**
-   * R3.6 · Crea la cámara del minimapa (UNA sola cámara adicional). El anuncio de
-   * fin de partida y las capas de detalle se ignoran en ella (chrome / ruido de
-   * vista de pájaro); todo lo demás se comparte con la cámara principal.
-   */
-  private setupMinimap(): void {
-    const adapter: MinimapSceneLike = {
-      cameras: {
-        add: (x, y, w, h, makeMain, name) =>
-          this.cameras.add(x, y, w, h, makeMain, name) as unknown as MinimapCameraLike,
-      },
-    };
-    const ignore: unknown[] = [];
-    if (this.decalLayer) ignore.push(this.decalLayer);
-    if (this.debugGfx) ignore.push(this.debugGfx);
-    this.minimap = new MinimapController(adapter, {
-      world: { widthM: this.world.widthM, heightM: this.world.heightM },
-      pxPerM: this.pxPerM,
-      layout: { corner: "bottom-left" },
-      backgroundColor: S9_ENV.ground,
-      ignore,
-    });
-    this.minimap.layout(this.scale.width, this.scale.height);
+  // ─────────────────────────── UX-VIEW · cámara e interacción
+
+  private dpr(): number {
+    const z = (this.scale as { zoom?: number } | undefined)?.zoom;
+    return typeof z === "number" && z > 0 ? 1 / z : 1;
   }
 
-  /** Añade un objeto a la lista de ignorados del minimapa (chrome/detalle). */
-  private ignoreOnMinimap(obj: unknown): void {
-    this.minimap?.camera.ignore(obj);
-  }
-
-  /** Rueda = zoom al cursor; arrastre = pan; teclas 1–8 = seguir bots; G = global. */
-  private wireInput(): void {
-    const view = () => ({
-      current: this.lastCamera ?? {
-        centerX: this.world.widthM / 2,
-        centerY: this.world.heightM / 2,
-        zoom: this.pxPerM,
-      },
-      cfg: this.cameraConfig(),
-    });
-
-    this.input.on("wheel", (pointer: Phaser.Input.Pointer, _objs: unknown, _dx: number, deltaY: number) => {
-      this.interaction.onWheel(deltaY, { x: pointer.x, y: pointer.y }, view());
-    });
-
-    this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => {
-      if (!pointer.isDown) return;
-      const dx = pointer.x - pointer.prevPosition.x;
-      const dy = pointer.y - pointer.prevPosition.y;
-      if (dx !== 0 || dy !== 0) this.interaction.onDrag(dx, dy, view());
-    });
-
-    this.input.keyboard?.on("keydown", (ev: KeyboardEvent) => {
-      // Orden estable de bots: el de aparición en el overlay (el del snapshot).
-      this.interaction.onKey(ev.key, [...this.overlay.vehicles.keys()]);
-    });
-  }
-
-  private cameraConfig(): CameraConfig {
+  private scaleInput() {
     return {
       viewportW: this.scale.width,
       viewportH: this.scale.height,
       mapW: this.world.widthM,
       mapH: this.world.heightM,
+      dpr: this.dpr(),
+      pxPerM: this.pxPerM,
+    };
+  }
+
+  private viewScale(): ViewScale {
+    return computeViewScale(this.scaleInput());
+  }
+
+  /** Límites del zoom ligados a la escala (encaje ≤ zoom ≤ 600 %), en px de búfer/m. */
+  private cameraConfig(): CameraConfig {
+    return cameraConfigFor(this.scaleInput());
+  }
+
+  private view() {
+    const cfg = this.cameraConfig();
+    return {
+      current: this.lastCamera ?? computeCamera({ kind: "global" }, { vehicles: [] }, cfg),
+      cfg,
+    };
+  }
+
+  /** Vista desde el OBJETIVO (botones): lo que se va a ver, no el frame de tránsito. */
+  private goalView() {
+    const v = this.view();
+    // Se recalcula con el modo VIGENTE: si el usuario acaba de pulsar «Seguir …» y
+    // aún no ha corrido un frame, lastGoal sería todavía el del modo anterior.
+    if (this.lastFrame) {
+      const snap = this.cameraScratch.fill(this.lastFrame, (id) => this.overlay.vehicles.get(id)?.team);
+      return { current: clampToMap(computeCamera(this.interaction.current, snap, v.cfg), v.cfg), cfg: v.cfg };
+    }
+    return this.lastGoal ? { current: this.lastGoal, cfg: v.cfg } : v;
+  }
+
+  /** Escena lista para recibir entrada (create() ya corrió). */
+  private ready(): boolean {
+    return !!this.cameras?.main;
+  }
+
+  /** Manipulación directa: el encuadre salta al objetivo (sin muelle que vaya por detrás). */
+  private jump(mode: CameraMode): void {
+    if (mode.kind !== "manual") return;
+    this.lastCamera = this.smoothCamera.jumpTo(mode, this.cameraConfig());
+    this.lastGoal = this.lastCamera;
+    this.emitStatus();
+  }
+
+  /** Pan en px de BÚFER (positivo = el mapa sigue al puntero). */
+  panBy(dx: number, dy: number): void {
+    if (!this.ready()) return;
+    this.jump(this.interaction.onDrag(dx, dy, this.view()));
+  }
+
+  /** Zoom por un factor manteniendo fijo el punto (px de búfer) bajo el puntero. */
+  zoomAtPx(factor: number, x: number, y: number): void {
+    if (!this.ready()) return;
+    this.jump(this.interaction.zoomAt(factor, { x, y }, this.view()));
+  }
+
+  /** Botones/teclas +/−: zoom suave alrededor del centro. */
+  zoomIn(): void {
+    if (!this.ready()) return;
+    this.interaction.zoomBy(ZOOM_BUTTON_FACTOR, this.goalView());
+    this.emitStatus();
+  }
+
+  zoomOut(): void {
+    if (!this.ready()) return;
+    this.interaction.zoomBy(1 / ZOOM_BUTTON_FACTOR, this.goalView());
+    this.emitStatus();
+  }
+
+  /** «Encajar mapa»: vista completa (modo global). */
+  fitMap(): void {
+    this.cameraMode = { kind: "global" };
+  }
+
+  /** «100 %»: escala nativa de la escena (1 px de escena = 1 px CSS), sin mover el centro. */
+  zoomNative(): void {
+    if (!this.ready()) return;
+    this.interaction.zoomTo(this.viewScale().native, this.goalView());
+    this.emitStatus();
+  }
+
+  /** «Centrar seleccionado»: centra una vez (cámara libre, mismo zoom) en el bot elegido. */
+  centerSelected(): void {
+    if (!this.ready() || !this.selectedId) return;
+    const p = this.lastFrame?.get(this.selectedId) ?? this.lastVehiclePos.get(this.selectedId);
+    if (!p) return;
+    this.interaction.centerOn(p.x, p.y, this.goalView());
+    this.emitStatus();
+  }
+
+  /** Centra en un punto del mundo (metros): lo usa el minimapa al pulsarlo. */
+  centerOnWorld(x: number, y: number): void {
+    if (!this.ready()) return;
+    this.jump(this.interaction.centerOn(x, y, this.view()));
+  }
+
+  /** Selecciona (o deselecciona con null) un vehículo sin cambiar la cámara. */
+  selectVehicle(id: string | null): void {
+    this.selectedId = id;
+    this.emitStatus();
+  }
+
+  get selectedVehicleId(): string | null {
+    return this.selectedId;
+  }
+
+  /** Orden estable de los bots para 1–8: el de aparición en el overlay (el del snapshot). */
+  vehicleOrder(): string[] {
+    return [...this.overlay.vehicles.keys()];
+  }
+
+  /** Toque/clic sin arrastre: selecciona el vehículo más cercano bajo el dedo. */
+  tapAtPx(x: number, y: number): void {
+    if (!this.ready() || !this.lastFrame) return;
+    const { current, cfg } = this.view();
+    const wx = current.centerX + (x - cfg.viewportW / 2) / current.zoom;
+    const wy = current.centerY + (y - cfg.viewportH / 2) / current.zoom;
+    const radiusM = Math.max((TAP_PICK_PX * this.dpr()) / current.zoom, MARKER_RADIUS_M);
+    let best: string | null = null;
+    let bestD = Infinity;
+    for (const [id, p] of this.lastFrame) {
+      const d = Math.hypot(p.x - wx, p.y - wy);
+      if (d <= radiusM && d < bestD) {
+        best = id;
+        bestD = d;
+      }
+    }
+    if (best) this.selectVehicle(best);
+  }
+
+  /** Teclado del escenario (sólo con el foco en él: stage-input.ts). */
+  handleKey(cmd: StageKeyCommand): void {
+    if (!this.ready()) return;
+    switch (cmd.kind) {
+      case "global":
+      case "fit":
+        this.fitMap();
+        return;
+      case "follow-index": {
+        const mode = this.interaction.onKey(String(cmd.index + 1), this.vehicleOrder());
+        if (mode) this.cameraMode = mode;
+        return;
+      }
+      case "zoom-in":
+        this.zoomIn();
+        return;
+      case "zoom-out":
+        this.zoomOut();
+        return;
+      case "native":
+        this.zoomNative();
+        return;
+      case "center-selected":
+        this.centerSelected();
+        return;
+      case "pan":
+        this.panBy(cmd.dx * this.dpr(), cmd.dy * this.dpr());
+        return;
+    }
+  }
+
+  /** Suscripción al estado visible de la cámara. Devuelve la baja. */
+  subscribeView(cb: (s: ViewStatus) => void): () => void {
+    this.viewListeners.add(cb);
+    cb(this.currentStatus());
+    return () => {
+      this.viewListeners.delete(cb);
+    };
+  }
+
+  private currentStatus(): ViewStatus {
+    const zoom = this.lastCamera?.zoom ?? 0;
+    return {
+      mode: this.interaction.current,
+      zoomPercent: zoomPercent(zoom, this.viewScale()),
+      selectedId: this.selectedId,
+    };
+  }
+
+  /** Avisa a la página sólo si cambió algo visible (modo, % o selección). */
+  private emitStatus(): void {
+    if (this.viewListeners.size === 0) return;
+    const next = this.currentStatus();
+    const prev = this.lastStatus;
+    const sameModeAndSelection = !!prev && prev.mode === next.mode && prev.selectedId === next.selectedId;
+    if (sameModeAndSelection && prev.zoomPercent === next.zoomPercent) return;
+    // Durante una transición suave sólo cambia el %: a ≤ 10 Hz (React no re-renderiza
+    // la página a 60 fps por un número); el valor final llega en ≤ 100 ms.
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+    if (sameModeAndSelection && now - this.lastStatusAt < 100) return;
+    this.lastStatusAt = now;
+    this.lastStatus = next;
+    for (const cb of this.viewListeners) cb(next);
+  }
+
+  /** UX-VIEW · Datos del minimapa HTML: mundo, vehículos, vista de la cámara y selección. */
+  minimapState(): MinimapState {
+    const vehicles: MinimapVehicle[] = [];
+    for (const [id, p] of this.lastFrame ?? []) {
+      vehicles.push({
+        id,
+        x: p.x,
+        y: p.y,
+        alive: p.alive,
+        team: vehicleTeam(this.roster, id, this.overlay.vehicles.get(id)?.team),
+      });
+    }
+    const cam = this.lastCamera;
+    return {
+      world: this.world,
+      vehicles,
+      camera: cam
+        ? {
+            centerX: cam.centerX,
+            centerY: cam.centerY,
+            zoom: cam.zoom,
+            viewportW: this.scale.width,
+            viewportH: this.scale.height,
+          }
+        : null,
+      selectedId: this.selectedId,
+      colorOf: (team) => this.teamColor(team),
     };
   }
 
@@ -424,6 +679,9 @@ export class ViewerScene extends Phaser.Scene {
     this.renderEffects(now);
     this.renderObjectives(faded);
     this.applyCamera(faded, delta);
+    this.lastFrame = faded.vehicles;
+    this.renderTags(faded, now);
+    this.emitStatus();
     this.renderDebug();
     // R3.6 · fin de partida ANUNCIADO sobre el canvas (no sólo en el feed HTML).
     this.renderMatchEnd();
@@ -449,8 +707,6 @@ export class ViewerScene extends Phaser.Scene {
       this.matchEndBanner = container;
       this.matchEndText = headline;
       this.matchEndSub = sub;
-      // Chrome: se ve en la cámara principal, jamás en el minimapa.
-      this.ignoreOnMinimap(container);
     }
     const headline = result.winner ? `GANA ${result.winner.toUpperCase()}` : "EMPATE";
     const scoreLine = Object.entries(result.score)
@@ -494,8 +750,6 @@ export class ViewerScene extends Phaser.Scene {
       const s = this.add.sprite(0, 0, ATLAS_KEY, "spark").setDepth(6);
       s.setVisible(false);
       this.effectPool.push(s);
-      // R3.6 · las partículas son ruido en vista de pájaro: fuera del minimapa.
-      this.ignoreOnMinimap(s);
     }
     for (let i = 0; i < this.effectPool.length; i++) {
       const s = this.effectPool[i];
@@ -625,6 +879,9 @@ export class ViewerScene extends Phaser.Scene {
     for (const [id, c] of this.vehicleGfx) {
       if (!frame.vehicles.has(id)) c.setVisible(false); // fundido terminado o destruido
     }
+    for (const [id, l] of this.labels) {
+      if (!frame.vehicles.has(id)) l.setVisible(false);
+    }
 
     // Proyectiles: pool de sprites del atlas con TECHO (R3.3). El pool crece bajo
     // demanda pero nunca por encima de MAX_PROJECTILE_SPRITES; los proyectiles
@@ -671,13 +928,170 @@ export class ViewerScene extends Phaser.Scene {
       .setOrigin(0, 0.5)
       .setTint(color);
     const turret = this.add.container(0, 0, [turretBase, barrel]).setName("turret");
-    // BitmapText del atlas (RetroFont): el NOMBRE del bot, no el UUID. Comparte
-    // textura, no genera un canvas de fuente por etiqueta ni rompe el batch.
-    const label = this.add
-      .bitmapText(0, -2 * this.pxPerM, ATLAS_FONT_KEY, vehicleLabel(this.roster, id), 10)
-      .setOrigin(0.5, 1)
-      .setTint(S9_ENV.label);
-    return this.add.container(0, 0, [body, turret, label]).setDepth(3);
+    // UX-VIEW · el NOMBRE ya no va en este contenedor (rotaba con el casco y
+    // escalaba con el zoom): es un BitmapText aparte que coloca renderTags.
+    return this.add.container(0, 0, [body, turret]).setDepth(3);
+  }
+
+  /** BitmapText del atlas (RetroFont): el NOMBRE del bot, no el UUID; comparte textura. */
+  private labelFor(id: string): Phaser.GameObjects.BitmapText {
+    let l = this.labels.get(id);
+    if (!l) {
+      l = this.add
+        .bitmapText(0, 0, ATLAS_FONT_KEY, vehicleLabel(this.roster, id), 14)
+        .setOrigin(0.5, 1)
+        .setTint(S9_ENV.label)
+        // La RetroFont es monoespaciada con celdas anchas: sin esto «A - T K - 1».
+        .setLetterSpacing(-3)
+        .setDepth(8);
+      this.labels.set(id, l);
+    }
+    return l;
+  }
+
+  /**
+   * UX-VIEW · Marcas, barra fina de vida y nombre de cada vehículo. Todo en
+   * tamaño de PANTALLA constante (se divide por el zoom de la cámara) y sin
+   * rotar; qué se enseña lo decide vehicle-tags.ts (puro y probado).
+   */
+  private renderTags(
+    frame: { vehicles: Map<string, { x: number; y: number; alive: boolean; alpha?: number }> },
+    now: number,
+  ): void {
+    const markers = this.markersGfx;
+    const tags = this.tagsGfx;
+    if (!markers || !tags) return;
+    markers.clear();
+    tags.clear();
+    const cam = this.cameras.main;
+    const camZoom = cam.zoom > 0 ? cam.zoom : 1;
+    const dpr = this.dpr();
+    const k = dpr / camZoom; // px de escena por px CSS de pantalla
+    const cssPxPerM = (camZoom * this.pxPerM) / dpr;
+    const wv = cam.worldView;
+    const teams = sortTeams(
+      [...frame.vehicles.keys()]
+        .map((id) => vehicleTeam(this.roster, id, this.overlay.vehicles.get(id)?.team))
+        .filter((t): t is string => !!t),
+    );
+    const selTeam = this.selectedId
+      ? vehicleTeam(this.roster, this.selectedId, this.overlay.vehicles.get(this.selectedId)?.team)
+      : undefined;
+    const perspective = selTeam ?? (this.fog.enabled && this.fog.team ? this.fog.team : null);
+    let visibleCount = 0;
+    for (const [, p] of frame.vehicles) {
+      const x = p.x * this.pxPerM;
+      const y = p.y * this.pxPerM;
+      if (x >= wv.x && x <= wv.x + wv.width && y >= wv.y && y <= wv.y + wv.height) visibleCount++;
+    }
+    const boxes: LabelBox[] = [];
+    const anchors = new Map<string, { x: number; y: number }>();
+    for (const [id, pose] of frame.vehicles) {
+      const ov = this.overlay.vehicles.get(id);
+      const team = vehicleTeam(this.roster, id, ov?.team);
+      const prev = this.prevAlive.get(id);
+      if (prev === false && pose.alive) this.respawnedAt.set(id, now);
+      this.prevAlive.set(id, pose.alive);
+      const hpRatio = ov && ov.hullHpMax > 0 && Number.isFinite(ov.hullHp) ? ov.hullHp / ov.hullHpMax : null;
+      const plan = planTag(
+        {
+          id,
+          label: vehicleLabel(this.roster, id),
+          team,
+          teamIndex: team ? teams.indexOf(team) : -1,
+          life: lifeState(pose.alive, this.respawnedAt.get(id), now),
+          hpRatio,
+          selected: id === this.selectedId,
+          relation: relationTo(team, perspective),
+        },
+        { prefs: this.tagPrefs, cssPxPerM, visibleCount },
+      );
+      const alpha = Math.max(0, Math.min(1, pose.alpha ?? 1));
+      const x = pose.x * this.pxPerM;
+      const y = pose.y * this.pxPerM;
+      const color = team ? this.tintForTeam(team) : NEUTRAL_TEAM_COLOR;
+      const r = Math.max(MARKER_RADIUS_M * this.pxPerM, 9 * k);
+
+      // Marca de bando/relación: la FORMA distingue sin depender del color.
+      markers.lineStyle(2 * k, color, 0.9 * alpha);
+      const outline = markerOutline(plan.shape, r);
+      if (outline.length === 0) markers.strokeCircle(x, y, r);
+      else {
+        markers.beginPath();
+        markers.moveTo(x + outline[0].x, y + outline[0].y);
+        for (let i = 1; i < outline.length; i++) markers.lineTo(x + outline[i].x, y + outline[i].y);
+        markers.closePath();
+        markers.strokePath();
+      }
+      if (plan.dashedRing) {
+        // Reaparición: anillo DISCONTINUO que gira (forma y movimiento, no color).
+        markers.lineStyle(2 * k, S9_ENV.label, 0.9 * alpha);
+        const segs = 10;
+        const rr = r + 5 * k;
+        const spin = (now / 400) % (Math.PI * 2);
+        for (let i = 0; i < segs; i++) {
+          const a0 = spin + (i / segs) * Math.PI * 2;
+          markers.beginPath();
+          markers.arc(x, y, rr, a0, a0 + (Math.PI / segs) * 0.9);
+          markers.strokePath();
+        }
+      }
+      if (plan.selectedRing) {
+        markers.lineStyle(3 * k, S9_ENV.label, 1);
+        markers.strokeCircle(x, y, r + 3 * k);
+        // Esquinas de selección (encuadre), visibles sobre cualquier fondo.
+        const e = r + 9 * k;
+        const len = 6 * k;
+        markers.lineStyle(2 * k, S9_ENV.tracer, 1);
+        for (const [sx, sy] of [
+          [-1, -1],
+          [1, -1],
+          [1, 1],
+          [-1, 1],
+        ] as const) {
+          markers.lineBetween(x + sx * e, y + sy * e, x + sx * (e - len), y + sy * e);
+          markers.lineBetween(x + sx * e, y + sy * e, x + sx * e, y + sy * (e - len));
+        }
+      }
+      if (plan.cross) {
+        const c = r * 0.75;
+        markers.lineStyle(2.5 * k, S9_ENV.label, 0.85);
+        markers.lineBetween(x - c, y - c, x + c, y + c);
+        markers.lineBetween(x - c, y + c, x + c, y - c);
+      }
+
+      // Barra FINA de vida encima del vehículo (tamaño de pantalla, no rota).
+      const top = y - plan.offsetPx * k;
+      if (plan.showBar && hpRatio !== null) {
+        const ratio = Math.max(0, Math.min(1, hpRatio));
+        const w = plan.barWidthPx * k;
+        const h = plan.barHeightPx * k;
+        tags.fillStyle(0x000000, 0.65 * alpha);
+        tags.fillRect(x - w / 2 - k, top - h - k, w + 2 * k, h + 2 * k);
+        tags.fillStyle(ratio > 0.5 ? 0x5fd35f : ratio > 0.25 ? 0xe0c040 : 0xe05a5a, alpha);
+        tags.fillRect(x - w / 2, top - h, w * ratio, h);
+      }
+      const label = this.labelFor(id);
+      label.setVisible(false);
+      if (!plan.showName) continue;
+      label.setText(plan.showDetail ? `${plan.nameText} ${plan.detailText}` : plan.nameText);
+      label.setScale(k * 0.86).setAlpha(alpha);
+      const ly = top - (plan.barHeightPx + 3) * k;
+      anchors.set(id, { x, y: ly });
+      boxes.push({
+        id,
+        x: (x - wv.x) * (camZoom / dpr),
+        y: (ly - wv.y) * (camZoom / dpr) - 6,
+        w: label.text.length * 6.1 + 4,
+        h: 13,
+        priority: id === this.selectedId ? 2 : pose.alive ? 1 : 0,
+      });
+    }
+    // Densidad: las etiquetas que se solaparían se ocultan (la del seleccionado, nunca).
+    for (const id of declutterLabels(boxes)) {
+      const a = anchors.get(id);
+      if (a) this.labels.get(id)?.setPosition(a.x, a.y).setVisible(true);
+    }
   }
 
   private applyCamera(
@@ -691,8 +1105,9 @@ export class ViewerScene extends Phaser.Scene {
     const cfg = this.cameraConfig();
     const target = computeCamera(mode, snapshotLike, cfg);
     // Amortiguación crítica + deadzone (follow) + clamp al mapa (R3.2 · ERR-VIS-07).
-    const smoothed = this.smoothCamera.update(mode, target, cfg, deltaMs);
+    const smoothed: CameraTarget = this.smoothCamera.update(mode, target, cfg, deltaMs);
     this.lastCamera = smoothed;
+    this.lastGoal = clampToMap(target, cfg);
     const cam = this.cameras.main;
     cam.centerOn(smoothed.centerX * this.pxPerM, smoothed.centerY * this.pxPerM);
     // computeCamera devuelve px/m deseados; la escena ya dibuja a pxPerM px/m.
@@ -715,6 +1130,12 @@ export interface ViewerGameOptions {
    * para no renderizar frames que la emisión nunca capturará.
    */
   targetFps?: number;
+  /**
+   * UX-VIEW · Visor interactivo (directo y replay): rueda, arrastre, pinch, toque y
+   * teclado sobre el ELEMENTO del escenario (no sobre `window`). /broadcast no lo
+   * activa: es una vista de emisión sin manos.
+   */
+  interactive?: boolean;
 }
 
 export function createViewerGame(parent: HTMLElement, opts: ViewerGameOptions = {}): Phaser.Game {
@@ -732,8 +1153,25 @@ export function createViewerGame(parent: HTMLElement, opts: ViewerGameOptions = 
     // del ScaleManager devuelve el canvas a su tamaño CSS.
     scale: { mode: Phaser.Scale.NONE, zoom: initial.zoom },
     fps: { target: opts.targetFps ?? 60 },
+    // UX-VIEW · la entrada de Phaser escuchaba el teclado en `window` y no consumía
+    // la rueda: la del visor la cablea stage-input.ts sobre el escenario.
+    input: { keyboard: false, mouse: false, touch: false, gamepad: false },
     scene: [ViewerScene],
   });
+
+  if (opts.interactive) {
+    const scene = (): ViewerScene | null => {
+      const s = game.scene?.getScene?.("viewer") as ViewerScene | null | undefined;
+      return s ?? null;
+    };
+    const detach = attachStageInput(parent, () => game.canvas ?? null, {
+      pan: (dx, dy) => scene()?.panBy(dx, dy),
+      zoomAt: (f, x, y) => scene()?.zoomAtPx(f, x, y),
+      tap: (x, y) => scene()?.tapAtPx(x, y),
+      key: (cmd) => scene()?.handleKey(cmd),
+    });
+    game.events.once(Phaser.Core.Events.DESTROY, detach);
+  }
 
   if (typeof ResizeObserver !== "undefined") {
     const observer = new ResizeObserver(() => {

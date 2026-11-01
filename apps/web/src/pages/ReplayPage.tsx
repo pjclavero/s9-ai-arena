@@ -21,6 +21,20 @@ import { RosterList } from "../viewer/RosterList.js";
 import { ReplayTickPublisher } from "../viewer/ui-throttle.js";
 import type { ViewerScene } from "../viewer/PhaserViewer.js";
 import type { CameraMode } from "../viewer/camera.js";
+import { buildHudModel } from "../viewer/hud-model.js";
+import { HudOverlay } from "../viewer/HudOverlay.js";
+import { MinimapPanel } from "../viewer/MinimapPanel.js";
+import {
+  BotSelector,
+  CameraBar,
+  TagPrefsControl,
+  TheaterGrid,
+  TheaterStyles,
+  useFitStageHeight,
+  useViewStatus,
+  useWideMain,
+} from "../viewer/theater.js";
+import { DEFAULT_TAG_PREFS, type TagPrefs } from "../viewer/vehicle-tags.js";
 
 /** Prefetch del trozo N+1 fuera del RAF, a 2 Hz: la red nunca está en el frame. */
 const PREFETCH_INTERVAL_MS = 500;
@@ -60,8 +74,14 @@ export const replayApiFetch = async (url: string) => {
 };
 
 export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; initialTick?: number }) {
+  useWideMain();
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<ViewerScene | null>(null);
+  /** UX-VIEW · la escena en estado de React (para suscribirse a su cámara). */
+  const [scene, setScene] = useState<ViewerScene | null>(null);
+  /** Modo elegido antes de que exista la escena: se aplica UNA vez al crearla. */
+  const pendingCamera = useRef<CameraMode | null>(null);
+  const [tagPrefs, setTagPrefs] = useState<TagPrefs>(DEFAULT_TAG_PREFS);
   const playerRef = useRef<ReplayPlayer | null>(null);
   const feedRef = useRef<ReplayFeed | null>(null);
   /** Tick de CADA frame (60 fps) sin re-render de React; el slider en pausa lo consulta. */
@@ -76,12 +96,13 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
   const [totalTicks, setTotalTicks] = useState(0);
   const [speed, setSpeed] = useState(1);
   const [playing, setPlaying] = useState(false);
-  const [camera, setCamera] = useState<CameraMode>({ kind: "global" });
   const [shareCopied, setShareCopied] = useState(false);
   // UX-R · «Replay Alfa vs Beta» con la nómina del índice, si la trae.
   const [title, setTitle] = useState<string | null>(null);
   /** 4v4 · nómina del índice: de ella salen los botones de cámara por bando. */
   const [roster, setRoster] = useState<ViewerRoster>(() => new Map());
+  const viewStatus = useViewStatus(scene);
+  useFitStageHeight(hostRef);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -122,7 +143,7 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
         setRoster(rosterFromMeta(player.index?.roster));
         setState("init");
         setStatus("inicializando visor…");
-        game = createViewerGame(hostRef.current, { targetFps: 60 });
+        game = createViewerGame(hostRef.current, { targetFps: 60, interactive: true });
         // FC-D (D3, TD-009): la escena NO existe hasta el READY de Phaser; se espera
         // a esa señal (y al create de la escena), nunca a un sleep.
         let scene: ViewerScene;
@@ -134,6 +155,8 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
         }
         if (!alive) return;
         sceneRef.current = scene;
+        if (pendingCamera.current) scene.cameraMode = pendingCamera.current;
+        setScene(scene);
 
         // R3.4: si el índice del replay trae nómina, sprite por chasis y NOMBRE.
         if (player.index?.roster) scene.setRoster(rosterFromMeta(player.index.roster));
@@ -194,13 +217,18 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
       if (prefetchTimer) clearInterval(prefetchTimer);
       seekAbortRef.current?.abort();
       game?.destroy(true);
+      sceneRef.current = null;
+      setScene(null);
     };
   }, [battleId, initialTick, attempt]);
 
+  // UX-VIEW · Antes un efecto hacía `scene.cameraMode = camera` en CADA tick y pisaba
+  // el zoom y el pan manuales. El modo sólo cambia ante una acción del usuario
+  // (setCamera, más abajo); las etiquetas sí se aplican al cambiar.
   useEffect(() => {
-    const scene = sceneRef.current;
-    if (scene) scene.cameraMode = camera;
-  }, [camera, tick]);
+    const s = sceneRef.current;
+    if (s) s.tagPrefs = tagPrefs;
+  }, [tagPrefs, scene]);
 
   const player = playerRef.current;
 
@@ -225,117 +253,218 @@ export function ReplayPage({ battleId, initialTick = 0 }: { battleId: string; in
       });
   };
 
+  /** Cambio de cámara por una acción del usuario: va directo a la escena (fuente de verdad). */
+  const setCamera = (mode: CameraMode) => {
+    pendingCamera.current = mode;
+    const s = sceneRef.current;
+    if (s) s.cameraMode = mode;
+  };
+  const call = (fn: (s: ViewerScene) => void) => () => {
+    const s = sceneRef.current;
+    if (s) fn(s);
+  };
+  const mode = viewStatus?.mode;
+  const overlay = sceneRef.current?.overlay;
+  const vehicles = overlay?.vehicles instanceof Map ? overlay.vehicles : undefined;
+  const failed = state === "error";
+
   return (
-    <section>
-      <h2 data-testid="replay-title" style={{ overflowWrap: "anywhere" }}>
-        {title ? `Replay: ${title}` : `Replay ${battleId}`}
-      </h2>
-      <p>
-        <a href="#/replays">← Todos los replays</a>
-      </p>
-      <p
-        data-testid="replay-status"
-        data-state={state}
-        data-error-kind={errorKind}
-        role={state === "error" ? "alert" : "status"}
-        className={state === "error" ? "error" : undefined}
-      >
-        {status}
-      </p>
-      {state === "error" && errorKind !== "notFound" && (
-        <button type="button" onClick={() => setAttempt((n) => n + 1)}>
-          Reintentar
-        </button>
-      )}
-      <div>
-        <button
-          disabled={state === "loading" || state === "init" || state === "error"}
-          onClick={() => {
-            if (!player) return;
-            if (player.playing) {
-              player.pause();
-              // El tick se publica a ~4 Hz (R3.3): sin esto, «en pausa» mostraría
-              // hasta 250 ms de tick viejo y luego saltaría al real. `advance()` sólo
-              // mueve el playhead si está reproduciendo, así que éste es el definitivo.
-              tickRef.current = player.currentTick;
-              setTick(player.currentTick);
-              setPlaying(false);
-              setState("paused");
-            } else {
-              // Al final del replay, «Reproducir» vuelve a empezar desde el tick 0.
-              if (player.finished) seekTo(0);
-              player.play();
-              setPlaying(true);
-              setState("playing");
-              setStatus("reproduciendo");
-            }
-          }}
+    <section className="s9v" style={{ ["--s9v-reserve" as string]: "250px" }}>
+      <TheaterStyles />
+      <div className="s9v-head">
+        <h2 data-testid="replay-title" style={{ overflowWrap: "anywhere" }}>
+          {title ? `Replay: ${title}` : `Replay ${battleId}`}
+        </h2>
+        <p>
+          <a href="#/replays">← Todos los replays</a>
+        </p>
+        <p
+          data-testid="replay-status"
+          data-state={state}
+          data-error-kind={errorKind}
+          role={state === "error" ? "alert" : "status"}
+          className={state === "error" ? "error" : undefined}
         >
-          {playing ? "Pausa" : "Reproducir"}
-        </button>
-        {SPEEDS.map((s) => (
+          {status}
+        </p>
+        {state === "error" && errorKind !== "notFound" && (
+          <button type="button" onClick={() => setAttempt((n) => n + 1)}>
+            Reintentar
+          </button>
+        )}
+      </div>
+      <div className="s9v-bar s9v-transport" data-testid="replay-controls">
+        <span className="s9v-group" role="group" aria-label="Reproducción">
           <button
-            key={s}
-            disabled={speed === s}
+            disabled={state === "loading" || state === "init" || state === "error"}
             onClick={() => {
-              player?.setSpeed(s);
-              setSpeed(s);
+              if (!player) return;
+              if (player.playing) {
+                player.pause();
+                // El tick se publica a ~4 Hz (R3.3): sin esto, «en pausa» mostraría
+                // hasta 250 ms de tick viejo y luego saltaría al real. `advance()` sólo
+                // mueve el playhead si está reproduciendo, así que éste es el definitivo.
+                tickRef.current = player.currentTick;
+                setTick(player.currentTick);
+                setPlaying(false);
+                setState("paused");
+              } else {
+                // Al final del replay, «Reproducir» vuelve a empezar desde el tick 0.
+                if (player.finished) seekTo(0);
+                player.play();
+                setPlaying(true);
+                setState("playing");
+                setStatus("reproduciendo");
+              }
             }}
           >
-            {s}×
+            {playing ? "Pausa" : "Reproducir"}
           </button>
-        ))}
-        <button
-          onClick={() => {
-            const link = `${window.location.origin}${window.location.pathname}${buildShareLink(battleId, tick)}`;
-            void navigator.clipboard?.writeText(link).then(() => {
-              setShareCopied(true);
-              setTimeout(() => setShareCopied(false), 1500);
-            });
-          }}
-        >
-          {shareCopied ? "¡Copiado!" : "Compartir este instante"}
-        </button>
-        <button onClick={() => setCamera({ kind: "global" })}>Vista global</button>
-        {rosterTeams(roster).map((t) => (
-          <button key={t} data-testid="camera-side" onClick={() => setCamera({ kind: "team", team: t })}>
-            Bando {sideText(t)}
+          {SPEEDS.map((s) => (
+            <button
+              key={s}
+              disabled={speed === s}
+              aria-pressed={speed === s}
+              onClick={() => {
+                player?.setSpeed(s);
+                setSpeed(s);
+              }}
+            >
+              {s}×
+            </button>
+          ))}
+          <button
+            onClick={() => {
+              const link = `${window.location.origin}${window.location.pathname}${buildShareLink(battleId, tick)}`;
+              void navigator.clipboard?.writeText(link).then(() => {
+                setShareCopied(true);
+                setTimeout(() => setShareCopied(false), 1500);
+              });
+            }}
+          >
+            {shareCopied ? "¡Copiado!" : "Compartir este instante"}
           </button>
-        ))}
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={totalTicks}
+          value={tick}
+          data-testid="timeline"
+          aria-label="Línea de tiempo del replay"
+          aria-valuetext={`tick ${tick} de ${totalTicks}`}
+          // Arrastrar sólo mueve el pulgar (barato): el tick pintado sigue al slider
+          // sin pedir datos. El SEEK real se hace al SOLTAR (R3.3), no en cada píxel.
+          onChange={(e) => setTick(Number(e.target.value))}
+          onPointerUp={(e) => seekTo(Number((e.target as HTMLInputElement).value))}
+          onKeyUp={(e) => seekTo(Number((e.target as HTMLInputElement).value))}
+          style={{ width: "100%" }}
+        />
+        <p data-testid="replay-tick" data-tick={tick} data-total={totalTicks} style={{ margin: 0 }}>
+          tick {tick} / {totalTicks} · {speed}×
+        </p>
       </div>
-      <input
-        type="range"
-        min={0}
-        max={totalTicks}
-        value={tick}
-        data-testid="timeline"
-        aria-label="Línea de tiempo del replay"
-        aria-valuetext={`tick ${tick} de ${totalTicks}`}
-        // Arrastrar sólo mueve el pulgar (barato): el tick pintado sigue al slider
-        // sin pedir datos. El SEEK real se hace al SOLTAR (R3.3), no en cada píxel.
-        onChange={(e) => setTick(Number(e.target.value))}
-        onPointerUp={(e) => seekTo(Number((e.target as HTMLInputElement).value))}
-        onKeyUp={(e) => seekTo(Number((e.target as HTMLInputElement).value))}
-        style={{ width: "100%" }}
-      />
-      <p data-testid="replay-tick" data-tick={tick} data-total={totalTicks}>
-        tick {tick} / {totalTicks} · {speed}×
-      </p>
-      <RosterList roster={roster} testId="replay-roster" />
-      <div
-        ref={hostRef}
-        data-testid="replay-canvas-host"
-        style={{ width: "100%", maxWidth: "100%", height: 640, overflow: "hidden" }}
-      />
-      {sceneRef.current && (
-        <aside>
-          <p data-testid="score">
-            {Object.entries(sceneRef.current.overlay.score)
-              .map(([t, n]) => `${t}: ${n}`)
-              .join(" · ")}
-          </p>
-        </aside>
-      )}
+      <div className="s9v-bar" data-testid="replay-camera" hidden={failed}>
+        <span className="s9v-group" role="group" aria-label="Encuadre">
+          <button aria-pressed={mode?.kind === "global"} onClick={() => setCamera({ kind: "global" })}>
+            Vista global
+          </button>
+          {rosterTeams(roster).map((t) => (
+            <button
+              key={t}
+              data-testid="camera-side"
+              aria-pressed={mode?.kind === "team" && mode.team === t}
+              onClick={() => setCamera({ kind: "team", team: t })}
+            >
+              Bando {sideText(t)}
+            </button>
+          ))}
+        </span>
+        <CameraBar
+          status={viewStatus}
+          roster={roster}
+          disabled={!scene}
+          onZoomIn={call((s) => s.zoomIn())}
+          onZoomOut={call((s) => s.zoomOut())}
+          onFit={call((s) => s.fitMap())}
+          onNative={call((s) => s.zoomNative())}
+          onCenterSelected={call((s) => s.centerSelected())}
+        />
+      </div>
+      {/* Sin replay (error) no se enseñan minimapa ni controles de bots; el host sigue en el DOM. */}
+      <div hidden={failed}>
+        <TheaterGrid
+          stage={
+            <>
+              <div style={{ position: "relative", width: "100%", maxWidth: "100%", overflow: "hidden" }}>
+                <div
+                  ref={hostRef}
+                  data-testid="replay-canvas-host"
+                  className="s9v-stage"
+                  tabIndex={0}
+                  role="application"
+                  aria-roledescription="escenario del replay"
+                  aria-label="Escenario del replay"
+                  aria-describedby="replay-help"
+                  data-camera-mode={mode?.kind ?? "global"}
+                  data-zoom-percent={viewStatus?.zoomPercent ?? 0}
+                  style={{ width: "100%", maxWidth: "100%", overflow: "hidden" }}
+                />
+                {/* UX-VIEW · el replay también lleva el HUD compacto (marcador, reloj y kill feed). */}
+                {overlay && vehicles && (
+                  <HudOverlay compact model={buildHudModel(overlay, { roster: sceneRef.current?.rosterView })} />
+                )}
+              </div>
+              <p id="replay-help" className="s9v-help">
+                Rueda o pellizco: zoom · arrastrar: mover cámara · toque: seleccionar · 1–8: seguir bots · G: vista
+                global · +/−: zoom · F: encajar · C: centrar seleccionado (con el foco en el escenario)
+              </p>
+            </>
+          }
+          side={
+            <>
+              <MinimapPanel
+                getState={() => sceneRef.current?.minimapState?.() ?? null}
+                onCenter={(x, y) => sceneRef.current?.centerOnWorld?.(x, y)}
+                defaultOpen={typeof window === "undefined" || window.innerWidth > 720}
+              />
+              {vehicles && vehicles.size > 0 && (
+                <section className="s9v-card" aria-label="Bots">
+                  <BotSelector
+                    roster={roster}
+                    vehicleIds={[...vehicles.keys()]}
+                    vehicles={vehicles}
+                    status={viewStatus}
+                    onFollow={(id) => setCamera({ kind: "follow", vehicleId: id })}
+                  />
+                </section>
+              )}
+              <section className="s9v-card" aria-label="Participantes">
+                <RosterList roster={roster} testId="replay-roster" />
+                <TagPrefsControl prefs={tagPrefs} onChange={setTagPrefs} />
+              </section>
+              {sceneRef.current && (
+                <section className="s9v-card" aria-label="Marcador y eventos">
+                  <p data-testid="score">
+                    {Object.entries(sceneRef.current.overlay?.score ?? {})
+                      .map(([t, n]) => `${t}: ${n}`)
+                      .join(" · ")}
+                  </p>
+                  {Array.isArray(overlay?.feed) && overlay.feed.length > 0 && (
+                    <ul data-testid="feed">
+                      {overlay.feed.slice(-8).map((f, i) => (
+                        <li key={i}>
+                          [{f.tick}] {f.text}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              )}
+            </>
+          }
+        />
+      </div>
     </section>
   );
 }

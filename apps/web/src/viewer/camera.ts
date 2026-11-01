@@ -29,6 +29,16 @@ export interface CameraConfig {
   maxZoom?: number;
 }
 
+/**
+ * UX-VIEW · Zoom (px/m) que ENCAJA el mapa entero en el viewport con el margen
+ * `paddingM`, SIN acotar. Es el mismo encuadre que el modo global y el suelo del
+ * zoom manual: alejarse más sólo enseñaría vacío alrededor del mapa.
+ */
+export function fitZoom(cfg: CameraConfig): number {
+  const pad = cfg.paddingM ?? 4;
+  return Math.min(cfg.viewportW / (cfg.mapW + pad * 2), cfg.viewportH / (cfg.mapH + pad * 2));
+}
+
 export function computeCamera(mode: CameraMode, snapshot: any, cfg: CameraConfig): CameraTarget {
   const pad = cfg.paddingM ?? 4;
   const minZoom = cfg.minZoom ?? 0.5;
@@ -119,6 +129,18 @@ export class SmoothCamera {
   constructor(opts: SmoothCameraOptions = {}) {
     this.omega = opts.omega ?? 6;
     this.deadzoneM = opts.deadzoneM ?? 3;
+  }
+
+  /**
+   * UX-VIEW · Manipulación DIRECTA (arrastre, pinch, rueda): el encuadre salta al
+   * objetivo y la velocidad se anula. Con el muelle el mapa iba por detrás del
+   * dedo y, al soltar, seguía deslizando: el pan tenía «aceleraciones extrañas».
+   */
+  jumpTo(target: CameraTarget, cfg: CameraConfig): CameraTarget {
+    const goal = clampToMap(target, cfg);
+    this.pos = { cx: goal.centerX, cy: goal.centerY, logZoom: Math.log(goal.zoom) };
+    this.vel = { cx: 0, cy: 0, logZoom: 0 };
+    return goal;
   }
 
   /** Reset duro (reconexión/seek): saltar directamente al objetivo, sin viaje. */
