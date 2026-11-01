@@ -5,7 +5,8 @@
 
 export type CameraMode =
   | { kind: "global" }
-  | { kind: "follow"; vehicleId: string }
+  /** UX-VIEW · `zoom` opcional: «+/−» mientras se sigue a un bot no abandona el seguimiento. */
+  | { kind: "follow"; vehicleId: string; zoom?: number }
   | { kind: "team"; team: string }
   /** R3.2 · control manual del usuario (rueda + arrastre). */
   | { kind: "manual"; centerX: number; centerY: number; zoom: number };
@@ -25,6 +26,12 @@ export interface CameraConfig {
   /** Margen en metros alrededor del encuadre. */
   paddingM?: number;
   followZoom?: number;
+  /**
+   * UX-VIEW · Margen (px de viewport) que la cámara puede pasar del borde del mapa
+   * cuando está acercada: un bot pegado al borde no queda pegado al canto de la
+   * vista (ni su nombre cortado). 0 por defecto: comportamiento R3.2.
+   */
+  overscrollPx?: number;
   minZoom?: number;
   maxZoom?: number;
 }
@@ -54,7 +61,7 @@ export function computeCamera(mode: CameraMode, snapshot: any, cfg: CameraConfig
   if (mode.kind === "follow") {
     const v = vehicles.find((x) => x.id === mode.vehicleId && x.position);
     if (!v) return global; // el bot ha muerto o no existe: no dejar la cámara colgada
-    return { centerX: v.position.x, centerY: v.position.y, zoom: clampZoom(cfg.followZoom ?? 12) };
+    return { centerX: v.position.x, centerY: v.position.y, zoom: clampZoom(mode.zoom ?? cfg.followZoom ?? 12) };
   }
 
   if (mode.kind === "manual") {
@@ -94,8 +101,11 @@ export function computeCamera(mode: CameraMode, snapshot: any, cfg: CameraConfig
 export function clampToMap(target: CameraTarget, cfg: CameraConfig): CameraTarget {
   const halfW = cfg.viewportW / (2 * target.zoom); // metros visibles a cada lado
   const halfH = cfg.viewportH / (2 * target.zoom);
-  const cx = cfg.mapW <= halfW * 2 ? cfg.mapW / 2 : Math.min(cfg.mapW - halfW, Math.max(halfW, target.centerX));
-  const cy = cfg.mapH <= halfH * 2 ? cfg.mapH / 2 : Math.min(cfg.mapH - halfH, Math.max(halfH, target.centerY));
+  const over = (cfg.overscrollPx ?? 0) / target.zoom; // metros de margen permitidos
+  const cx =
+    cfg.mapW <= halfW * 2 ? cfg.mapW / 2 : Math.min(cfg.mapW - halfW + over, Math.max(halfW - over, target.centerX));
+  const cy =
+    cfg.mapH <= halfH * 2 ? cfg.mapH / 2 : Math.min(cfg.mapH - halfH + over, Math.max(halfH - over, target.centerY));
   return { centerX: cx, centerY: cy, zoom: target.zoom };
 }
 

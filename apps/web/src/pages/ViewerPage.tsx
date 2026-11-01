@@ -17,7 +17,7 @@ import {
   type ViewerRoster,
 } from "../viewer/art-direction.js";
 import { RosterList } from "../viewer/RosterList.js";
-import { buildHudModel } from "../viewer/hud-model.js";
+import { buildHudModel, feedItemText } from "../viewer/hud-model.js";
 import { HudOverlay } from "../viewer/HudOverlay.js";
 import type { ViewerScene } from "../viewer/PhaserViewer.js";
 import type { CameraMode } from "../viewer/camera.js";
@@ -25,6 +25,7 @@ import { MinimapPanel } from "../viewer/MinimapPanel.js";
 import {
   BotSelector,
   CameraBar,
+  MoreButton,
   TagPrefsControl,
   TheaterGrid,
   TheaterStyles,
@@ -97,6 +98,8 @@ export function ViewerPage({ battleId }: { battleId: string }) {
   const [debugAvailable, setDebugAvailable] = useState(false);
   const [debugOn, setDebugOn] = useState(false);
   const [tagPrefs, setTagPrefs] = useState<TagPrefs>(DEFAULT_TAG_PREFS);
+  /** Móvil: controles secundarios detrás de «Más controles». */
+  const [moreOpen, setMoreOpen] = useState(false);
   const [overlayTick, setOverlayTick] = useState(0);
   // UX-R · «Batalla Alfa vs Beta» en cuanto la cabecera trae la nómina.
   const [title, setTitle] = useState<string | null>(null);
@@ -305,8 +308,8 @@ export function ViewerPage({ battleId }: { battleId: string }) {
           </button>
         )}
       </div>
-      <div hidden={failed} data-testid="viewer-controls" className="s9v-bar">
-        <span className="s9v-group" role="group" aria-label="Encuadre">
+      <div hidden={failed} data-testid="viewer-controls" className="s9v-bar" data-more={moreOpen ? "open" : "closed"}>
+        <span className="s9v-group s9v-extra" role="group" aria-label="Encuadre">
           <button aria-pressed={mode?.kind === "global"} onClick={() => setCamera({ kind: "global" })}>
             Vista global
           </button>
@@ -330,9 +333,10 @@ export function ViewerPage({ battleId }: { battleId: string }) {
           onFit={call((s) => s.fitMap())}
           onNative={call((s) => s.zoomNative())}
           onCenterSelected={call((s) => s.centerSelected())}
+          more={<MoreButton open={moreOpen} onToggle={() => setMoreOpen((o) => !o)} />}
         />
         {allowFog && sides.length > 0 && (
-          <span className="s9v-group">
+          <span className="s9v-group s9v-extra">
             <label>
               <input type="checkbox" checked={fogOn} onChange={(e) => setFogOn(e.target.checked)} />
               Niebla de guerra (
@@ -352,7 +356,7 @@ export function ViewerPage({ battleId }: { battleId: string }) {
           </span>
         )}
         {debugAvailable && (
-          <span className="s9v-group">
+          <span className="s9v-group s9v-extra">
             <label>
               <input type="checkbox" checked={debugOn} onChange={(e) => setDebugOn(e.target.checked)} />
               Capas de depuración
@@ -364,9 +368,15 @@ export function ViewerPage({ battleId }: { battleId: string }) {
         <TheaterGrid
           stage={
             <>
-              {/* R3.6 · El HUD (marcador, reloj/fase, objetivo y kill feed) se superpone
-                  al canvas, en versión compacta: la vida por bot va en el selector y el
-                  minimapa en el panel lateral, FUERA del escenario (UX-VIEW). */}
+              {/* UX-VIEW · El HUD (marcador, reloj/fase, objetivo y última baja) va en una
+                  TIRA encima del escenario, no superpuesto: tapaba al bot seguido en el
+                  borde del mapa. La vida por bot va en el selector y el minimapa en el panel
+                  lateral, FUERA del escenario. */}
+              {overlay && vehicles && (
+                <div style={{ marginBottom: ".4rem" }}>
+                  <HudOverlay compact model={buildHudModel(overlay, { roster: sceneRef.current?.rosterView })} />
+                </div>
+              )}
               {/* UX-R · El contenedor no deja que el canvas desborde la página en móvil
                   (como el del replay): el canvas sigue su ancho por ResizeObserver. */}
               <div
@@ -387,9 +397,6 @@ export function ViewerPage({ battleId }: { battleId: string }) {
                   data-camera-mode={mode?.kind ?? "global"}
                   data-zoom-percent={viewStatus?.zoomPercent ?? 0}
                 />
-                {overlay && vehicles && (
-                  <HudOverlay compact model={buildHudModel(overlay, { roster: sceneRef.current?.rosterView })} />
-                )}
               </div>
               <p id="viewer-help" className="s9v-help" hidden={failed}>
                 Rueda o pellizco: zoom · arrastrar: mover cámara · toque: seleccionar · 1–8: seguir bots · G: vista
@@ -431,7 +438,7 @@ export function ViewerPage({ battleId }: { battleId: string }) {
                   <ul data-testid="feed">
                     {(overlay.feed ?? []).slice(-8).map((f, i) => (
                       <li key={i}>
-                        [{f.tick}] {f.text}
+                        [{f.tick}] {feedItemText(f, roster)}
                       </li>
                     ))}
                   </ul>

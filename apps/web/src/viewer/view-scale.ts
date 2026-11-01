@@ -45,6 +45,8 @@ export const MAX_PERCENT = 600;
 export const FOLLOW_PERCENT = 150;
 /** Factor de cada pulsación de +/− (y de cada «muesca» de teclado). */
 export const ZOOM_BUTTON_FACTOR = 1.25;
+/** Margen más allá del borde del mapa (px CSS) que se permite con zoom. */
+export const OVERSCROLL_CSS_PX = 48;
 
 export function computeViewScale(input: ViewScaleInput): ViewScale {
   const dpr = Math.max(1, input.dpr || 1);
@@ -72,6 +74,8 @@ export function cameraConfigFor(input: ViewScaleInput): CameraConfig {
     minZoom: s.min,
     maxZoom: s.max,
     followZoom: s.follow,
+    // Un bot en el borde del mapa puede quedar a OVERSCROLL_CSS_PX del canto (con su nombre).
+    overscrollPx: OVERSCROLL_CSS_PX * Math.max(1, input.dpr || 1),
   };
 }
 

@@ -54,7 +54,10 @@ main.page-wide{max-width:none}
 .s9v-transport input[type=range]{flex:1 1 220px;min-width:0}
 @media (max-width:1100px){.s9v-grid{grid-template-columns:minmax(0,1fr)}.s9v-side{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));align-items:start}}
 @media (max-width:720px){.s9v-stage{height:clamp(240px,min(62vh,110vw),720px);height:clamp(240px,min(62dvh,110vw),720px)}.s9v-side{grid-template-columns:minmax(0,1fr)}.s9v-group+.s9v-group{border-left:0;padding-left:0}.s9v-head h2{font-size:1.05rem}}
-@media (min-width:721px){.s9v-stage[data-fit-h]{height:var(--s9v-fit-h)}}
+.s9v-stage[data-fit-h]{height:var(--s9v-fit-h)}
+.s9v-morebtn{display:none}
+.s9v-controls{display:flex;flex-direction:column;gap:.4rem;min-width:0}
+@media (max-width:720px){.s9v-morebtn{display:inline-flex}.s9v [data-more="closed"] .s9v-extra{display:none!important}.s9v-wide-only{display:none}.s9v-transport input[type=range]{flex:1 1 110px}.s9v-head{gap:0 .6rem}.s9v-head h2{font-size:.95rem}.s9v-help{display:none}.s9v-tick{font-size:.8rem}}
 @media (pointer:coarse){.s9v-bar button,.s9v-side button{min-height:44px;min-width:44px}}
 `;
 
@@ -87,6 +90,15 @@ export function stageHeightFor(viewportH: number, stageTopDoc: number, min = 360
   return Math.round(Math.max(min, Math.min(max, viewportH - stageTopDoc - gap)));
 }
 
+/**
+ * Límites del alto según el ancho: en móvil (≤ 720 px) el escenario no pasa de
+ * 1,1 × el ancho (con un mapa apaisado sobraría una franja vacía) ni baja de
+ * 240 px; en tablet/escritorio, entre 360 y 1600.
+ */
+export function stageHeightBounds(viewportW: number): { min: number; max: number } {
+  return viewportW <= 720 ? { min: 240, max: Math.round(viewportW * 1.1) } : { min: 360, max: 1600 };
+}
+
 /** Aplica stageHeightFor al escenario y lo recalcula al redimensionar (y si la cabecera cambia de alto). */
 export function useFitStageHeight(ref: { current: HTMLElement | null }): void {
   useEffect(() => {
@@ -95,7 +107,8 @@ export function useFitStageHeight(ref: { current: HTMLElement | null }): void {
     let last = -1;
     const fit = () => {
       const top = el.getBoundingClientRect().top + window.scrollY;
-      const h = stageHeightFor(window.innerHeight, top);
+      const b = stageHeightBounds(window.innerWidth);
+      const h = stageHeightFor(window.innerHeight, top, b.min, b.max);
       if (Math.abs(h - last) < 2) return;
       last = h;
       el.style.setProperty("--s9v-fit-h", `${h}px`);
@@ -137,6 +150,29 @@ export interface CameraBarProps {
   onFit(): void;
   onNative(): void;
   onCenterSelected(): void;
+  /** Botón «Más controles» (sólo se ve en móvil). */
+  more?: ReactNode;
+}
+
+/**
+ * UX-VIEW · En móvil (≤ 720 px) los controles secundarios (velocidades, compartir,
+ * bandos, 100 %, centrar, niebla…) van detrás de «Más controles»: con objetivos de
+ * 44 px las barras ocupaban ~330 px y el escenario quedaba bajo el pliegue.
+ */
+export function MoreButton({ open, onToggle }: { open: boolean; onToggle(): void }) {
+  return (
+    <button
+      type="button"
+      className="s9v-morebtn"
+      data-testid="more-controls"
+      aria-expanded={open}
+      aria-label={open ? "Menos controles" : "Más controles"}
+      title={open ? "Menos controles" : "Más controles"}
+      onClick={onToggle}
+    >
+      {open ? "✕" : "⋯"}
+    </button>
+  );
 }
 
 /** Modo de cámara + zoom. El resto de botones de modo (Vista global, Bando …) los pone la página. */
@@ -147,7 +183,8 @@ export function CameraBar(p: CameraBarProps) {
     <>
       <span className="s9v-group">
         <span className="s9v-badge" data-testid="camera-mode" data-mode={mode.kind} role="status" aria-live="polite">
-          Cámara: <b>{cameraModeText(mode, p.roster)}</b>
+          <span className="s9v-wide-only">Cámara: </span>
+          <b>{cameraModeText(mode, p.roster)}</b>
         </span>
       </span>
       <span className="s9v-group" role="group" aria-label="Zoom del escenario">
@@ -169,17 +206,25 @@ export function CameraBar(p: CameraBarProps) {
         >
           Encajar mapa
         </button>
-        <button type="button" title="Escala nativa (N)" disabled={p.disabled} onClick={p.onNative}>
+        <button
+          type="button"
+          className="s9v-extra"
+          title="Escala nativa (N)"
+          disabled={p.disabled}
+          onClick={p.onNative}
+        >
           100 %
         </button>
         <button
           type="button"
+          className="s9v-extra"
           title="Centrar la cámara en el bot seleccionado (C)"
           disabled={p.disabled || !p.status?.selectedId}
           onClick={p.onCenterSelected}
         >
           Centrar seleccionado
         </button>
+        {p.more}
       </span>
     </>
   );

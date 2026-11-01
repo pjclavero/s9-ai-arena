@@ -202,6 +202,25 @@ describe("ViewerPage · la cámara manual no se pisa", () => {
   });
 });
 
+describe("revisión P2 · HUD fuera del escenario y controles secundarios plegables", () => {
+  it("el HUD (marcador) no está DENTRO del escenario; «Más controles» pliega los secundarios", async () => {
+    const { ViewerPage } = await import("../src/pages/ViewerPage.js");
+    render(<ViewerPage battleId="btl_ux" />, { container: withMain() });
+    await screen.findByText("en directo");
+    const hud = screen.getByTestId("hud");
+    expect(screen.getByTestId("viewer-canvas-host").contains(hud)).toBe(false);
+    const controls = screen.getByTestId("viewer-controls");
+    expect(controls.getAttribute("data-more")).toBe("closed");
+    // Los secundarios van marcados para plegarse en móvil; zoom y Encajar no.
+    expect(screen.getByRole("button", { name: "Bando azul" }).closest(".s9v-extra")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Acercar" }).closest(".s9v-extra")).toBeNull();
+    expect(screen.getByRole("button", { name: "Encajar mapa" }).closest(".s9v-extra")).toBeNull();
+    await userEvent.click(screen.getByTestId("more-controls"));
+    expect(controls.getAttribute("data-more")).toBe("open");
+    expect(screen.getByTestId("more-controls").getAttribute("aria-expanded")).toBe("true");
+  });
+});
+
 describe("ReplayPage · la cámara manual no se pisa", () => {
   it("los ticks del replay NO reaplican el modo de cámara (antes: uno por tick publicado)", async () => {
     vi.useFakeTimers({
@@ -230,5 +249,10 @@ describe("ReplayPage · la cámara manual no se pisa", () => {
     vi.useRealTimers();
     await userEvent.click(screen.getByRole("button", { name: "Seguir Alfa" }));
     expect(calls.cameraModeSets).toEqual([{ kind: "follow", vehicleId: "veh_1" }]);
+    // Revisión P3: en pausa el estado ya no dice «reproduciendo».
+    await userEvent.click(screen.getByRole("button", { name: "Pausa" }));
+    expect(screen.getByTestId("replay-status").textContent).toBe("en pausa");
+    // Y el marcador va fuera del escenario también en el replay.
+    expect(screen.getByTestId("replay-canvas-host").contains(screen.getByTestId("hud"))).toBe(false);
   });
 });

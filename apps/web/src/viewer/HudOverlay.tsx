@@ -28,30 +28,78 @@ export interface HudOverlayProps {
   /** Escala tipográfica base (px). El broadcast la sube (1080p). */
   fontScale?: number;
   /**
-   * UX-VIEW · HUD compacto del visor interactivo: sin los paneles de equipo de
-   * 260 px (tapaban el mapa; su vida y módulos ya están en el selector de bots,
-   * fuera del escenario) y con el kill feed acotado. /broadcast usa el completo.
+   * UX-VIEW · HUD del visor interactivo como TIRA fuera del escenario (no encima):
+   * el marcador superpuesto tapaba al bot seguido en el borde superior del mapa y
+   * el kill feed tapaba la esquina inferior. Marcador, reloj, objetivo y última
+   * baja en una línea; la vida por bot va en el selector. /broadcast usa el completo.
    */
   compact?: boolean;
 }
 
 export function HudOverlay({ model, accent = "#ffe066", fontScale = 14, compact = false }: HudOverlayProps) {
+  if (compact) return <HudStrip model={model} accent={accent} />;
+  return (
+    <div data-testid="hud" style={{ position: "absolute", inset: 0, pointerEvents: "none", fontSize: fontScale }}>
+      <TopBar model={model} accent={accent} />
+      <TeamPanels model={model} accent={accent} />
+      <KillFeed model={model} accent={accent} />
+      <ObjectivesBar model={model} accent={accent} />
+      {model.matchEnd && <MatchEndBanner model={model} accent={accent} />}
+    </div>
+  );
+}
+
+/** UX-VIEW · Tira compacta (fuera del escenario): nada del HUD queda encima del mapa. */
+function HudStrip({ model, accent }: { model: HudModel; accent: string }) {
+  const lastKill = model.killFeed.at(-1);
   return (
     <div
       data-testid="hud"
+      data-layout="strip"
+      role="status"
+      aria-live="off"
       style={{
-        position: "absolute",
-        inset: 0,
-        pointerEvents: "none",
-        // UX-VIEW · compacto: en un móvil estrecho el marcador no se come el mapa.
-        fontSize: compact ? `min(${fontScale}px, 3.3vw)` : fontScale,
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "baseline",
+        gap: "0.15rem 0.9rem",
+        padding: "0.3rem 0.6rem",
+        background: "#171d26",
+        border: "1px solid #2a3340",
+        borderRadius: 6,
+        fontSize: "0.9rem",
+        minWidth: 0,
       }}
     >
-      <TopBar model={model} accent={accent} />
-      {!compact && <TeamPanels model={model} accent={accent} />}
-      <KillFeed model={model} accent={accent} compact={compact} />
-      <ObjectivesBar model={model} accent={accent} />
-      {model.matchEnd && <MatchEndBanner model={model} accent={accent} />}
+      <span data-testid="hud-score" style={{ fontWeight: 700, fontSize: "1.05rem" }}>
+        {model.score.length > 0
+          ? model.score.map((s, i) => (
+              <span key={s.team} style={{ color: s.leading ? accent : undefined }}>
+                {i > 0 && <span style={{ opacity: 0.6 }}> — </span>}
+                {s.team} {s.points}
+              </span>
+            ))
+          : "0 — 0"}
+      </span>
+      <span data-testid="hud-clock">
+        {model.clock.label} · {safeLookup(PHASE_LABEL, model.clock.phase) ?? model.clock.phase}
+      </span>
+      <span data-testid="hud-objective" style={{ color: accent }}>
+        {model.objective.text}
+      </span>
+      {model.flags.length > 0 && (
+        <span data-testid="hud-flags">{model.flags.map((f) => `🚩 ${f.team}: ${flagLabel(f.state)}`).join(" · ")}</span>
+      )}
+      {lastKill && (
+        <span data-testid="hud-killfeed" style={{ opacity: 0.9, overflowWrap: "anywhere" }}>
+          [{lastKill.tick}] {lastKill.text}
+        </span>
+      )}
+      {model.matchEnd && (
+        <strong data-testid="hud-matchend" style={{ color: accent }}>
+          {model.matchEnd.headline}
+        </strong>
+      )}
     </div>
   );
 }
@@ -219,24 +267,14 @@ function BotRow({ bot }: { bot: HudBot }) {
 
 // ─────────────────────────────────── kill feed ───────────────────────────────
 
-function KillFeed({ model, accent, compact = false }: { model: HudModel; accent: string; compact?: boolean }) {
+function KillFeed({ model, accent }: { model: HudModel; accent: string }) {
   if (model.killFeed.length === 0) return null;
-  const items = compact ? model.killFeed.slice(-3) : model.killFeed;
   return (
     <div
       data-testid="hud-killfeed"
-      style={{
-        ...panel,
-        position: "absolute",
-        bottom: 8,
-        right: 8,
-        width: compact ? "auto" : 260,
-        maxWidth: compact ? "min(260px, 45%)" : undefined,
-        fontSize: compact ? "0.75em" : "0.85em",
-        opacity: compact ? 0.85 : 1,
-      }}
+      style={{ ...panel, position: "absolute", bottom: 8, right: 8, width: 260, fontSize: "0.85em" }}
     >
-      {items.map((k, i) => (
+      {model.killFeed.map((k, i) => (
         <div key={`${k.tick}-${i}`}>
           <span style={{ color: accent }}>[{k.tick}]</span> {k.text}
         </div>
