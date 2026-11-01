@@ -55,7 +55,7 @@ export function ReplaysPage() {
               action={<a href="#/battles">Ir a Batallas</a>}
             />
           ) : (
-            <table className="stack-table">
+            <table className="stack-table stack-table--wide">
               <thead>
                 <tr>
                   <th>Batalla</th>

@@ -690,7 +690,7 @@ function BotsListPage(props: {
 
                 <div className="card">
                   <h2>Versiones de {selected.name}</h2>
-                  <table className="stack-table">
+                  <table className="stack-table stack-table--wide">
                     <tbody>
                       {d.a.map((v) => (
                         <tr key={v.version} data-testid={`version-row-${v.version}`}>
