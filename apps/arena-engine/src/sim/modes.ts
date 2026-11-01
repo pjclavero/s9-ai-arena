@@ -101,22 +101,36 @@ abstract class BaseMode implements GameMode {
     for (const [team, pts] of Object.entries(this.score)) {
       if (pts >= ctx.ruleset.scoreToWin) return team;
     }
+    // R-RULES (revisión PR #204) · con reglas R-RULES (`timeoutTiebreak` declarado) la
+    // ELIMINACIÓN se resuelve ANTES que el tiempo: una eliminación mutua en el tick del
+    // límite es tablas, como un tick antes, y no la decide el desempate. Los rulesets de
+    // 0.3.0 (sin el campo) conservan EXACTAMENTE su orden (tiempo, luego eliminación).
+    const tiebreak = ctx.ruleset.timeoutTiebreak;
+    if (tiebreak) {
+      const byElimination = this.eliminationWinner(ctx);
+      if (byElimination !== null) return byElimination;
+    }
     if (ctx.tick >= ctx.ruleset.timeLimitTicks) {
       // R-RULES (ADR-021) · desempate DECLARADO por el ruleset. Sin el campo, el
       // código de 0.3.0 tal cual (los rulesets del catálogo no lo declaran).
-      const tiebreak = ctx.ruleset.timeoutTiebreak;
       if (tiebreak) return resolveTimeoutTiebreak(tiebreak, Object.keys(this.score), this.score, ctx);
       const sorted = Object.entries(this.score).sort((a, b) => b[1] - a[1]);
       if (sorted.length > 1 && sorted[0][1] === sorted[1][1]) return "draw";
       return sorted[0]?.[0] ?? "draw";
     }
-    // Eliminación: sin respawn (0.3.0) o con respawn LIMITADO (R-RULES). Gana el único
-    // equipo con algún vehículo aún en juego; ninguno ⇒ empate.
-    if (eliminationActive(ctx.ruleset)) {
-      const alive = new Set(ctx.vehicles.filter((v) => inGame(v, ctx.ruleset)).map((v) => v.team));
-      if (alive.size === 1) return [...alive][0];
-      if (alive.size === 0) return "draw";
-    }
+    if (!tiebreak) return this.eliminationWinner(ctx);
+    return null;
+  }
+
+  /**
+   * Eliminación: sin respawn (0.3.0) o con respawn LIMITADO (R-RULES). Gana el único
+   * equipo con algún vehículo aún en juego; ninguno ⇒ empate; null si sigue abierta.
+   */
+  protected eliminationWinner(ctx: ModeContext): string | "draw" | null {
+    if (!eliminationActive(ctx.ruleset)) return null;
+    const alive = new Set(ctx.vehicles.filter((v) => inGame(v, ctx.ruleset)).map((v) => v.team));
+    if (alive.size === 1) return [...alive][0];
+    if (alive.size === 0) return "draw";
     return null;
   }
 

@@ -407,6 +407,16 @@ export function incompatibilities(p: RulesParams): RulesError[] {
       message: "con reaparición ilimitada nadie queda eliminado: usa límite de bajas o puntos al acabar el tiempo",
     });
   }
+  if (p.victory === "time_score" && p.respawn.mode === "limited") {
+    // Revisión PR #204: con vidas contadas la batalla puede acabar por ELIMINACIÓN antes
+    // del tiempo, y entonces «puntos al acabar el tiempo» engaña (resumen y perfil `time`).
+    errs.push({
+      field: `${P}victory`,
+      code: "incompatible",
+      message:
+        "con reapariciones limitadas un equipo puede quedar eliminado antes del final: usa eliminación o límite de bajas, o reaparición ilimitada",
+    });
+  }
   if (p.victory === "time_score" && p.respawn.mode === "none") {
     errs.push({
       field: `${P}victory`,
@@ -610,6 +620,14 @@ export interface CompositionReport {
 }
 
 const kg = (n: number) => Math.round(n * 100) / 100;
+/**
+ * Masa en centésimas de kg REDONDEADA HACIA ARRIBA: es la cifra que se compara con el
+ * tope Y la que se muestra (revisión PR #204: antes el bot comparaba la masa cruda y
+ * mostraba la redondeada ⇒ «supera en 0 kg (3000/3000)», y un equipo de 5000,004 kg
+ * pasaba un tope de 5000). Antes de subir se quita el ruido de coma flotante (1e-6
+ * kg) para que una suma exacta como 0,1 + 0,2 + 2999,7 no se convierta en 3000,01.
+ */
+const kgUp = (n: number) => Math.ceil(Math.round(n * 1e6) / 1e4) / 100;
 
 /**
  * Comprueba los topes de créditos y masa por bot y por bando. Límite INCLUSIVO: justo
@@ -629,7 +647,8 @@ export function checkComposition(entries: readonly CompositionEntry[], limits: C
   const teams: CompositionReport["teams"] = [];
   for (const team of order) {
     const list = byTeam.get(team)!;
-    const bots = list.map((e) => {
+    const bots = list.map((raw) => {
+      const e = { ...raw, massKg: kgUp(raw.massKg) };
       let ok = true;
       if (limits.botCredits !== null && e.costCredits > limits.botCredits) {
         ok = false;
@@ -650,15 +669,15 @@ export function checkComposition(entries: readonly CompositionEntry[], limits: C
           team,
           botId: e.botId,
           limit: limits.botMassKg,
-          actual: kg(e.massKg),
+          actual: e.massKg,
           excess: kg(e.massKg - limits.botMassKg),
-          message: `${e.label} supera la masa máxima por bot en ${kg(e.massKg - limits.botMassKg)} kg (${kg(e.massKg)}/${limits.botMassKg} kg)`,
+          message: `${e.label} supera la masa máxima por bot en ${kg(e.massKg - limits.botMassKg)} kg (${e.massKg}/${limits.botMassKg} kg)`,
         });
       }
       return { ...e, ok };
     });
     const totalCredits = list.reduce((s, e) => s + e.costCredits, 0);
-    const totalMassKg = kg(list.reduce((s, e) => s + e.massKg, 0));
+    const totalMassKg = kgUp(list.reduce((s, e) => s + e.massKg, 0));
     let teamOk = bots.every((b) => b.ok);
     if (limits.teamCredits !== null && totalCredits > limits.teamCredits) {
       teamOk = false;
