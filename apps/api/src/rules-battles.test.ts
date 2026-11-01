@@ -444,6 +444,34 @@ describe("POST /battles/rules-check (FASE 11)", () => {
     expect(JSON.stringify(r.body)).not.toContain("costCredits");
   });
 
+  it("misma regla de participantes que POST /battles: versión publicada NO elegible ⇒ 409 y uuid en mayúsculas aceptado", async () => {
+    const stale = await createPublishedBot(h.db, "rules-stale", {
+      ownerId: (await h.db("users").where({ email: DEV_USERS.user }).first()).id,
+    });
+    // Cañón con munición estándar embebida: publicada antes de RC5.3, hoy no elegible.
+    const modules = EXAMPLE_LOADOUT.modules.map((m: any) =>
+      m.moduleId === "weapon.cannon@1" ? { ...m, ammo: "ammo.standard@1" } : m,
+    );
+    await h
+      .db("bot_loadouts")
+      .where({ bot_id: stale.botId, revision: 1 })
+      .update({ modules: JSON.stringify(modules) });
+    const body = duel({ preset: "duel", teamSize: 1 }, [...side([stale], "red"), ...side([bots[1]], "blue")]);
+    const r = await check(body);
+    expect(r.status, JSON.stringify(r.body)).toBe(409);
+    expect(r.body.error).toBe("bot_version_not_eligible");
+    const created = await post(body);
+    expect(created.status).toBe(409);
+    expect(created.body.error).toBe(r.body.error);
+    // ELIG · canónico: el mismo bot con el uuid en MAYÚSCULAS también se acepta en rules-check.
+    const up = duel({ preset: "duel", teamSize: 1 }, [
+      { botId: bots[0].botId.toUpperCase(), version: 1, team: "red" },
+      ...side([bots[1]], "blue"),
+    ]);
+    const ok = await check(up);
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+  });
+
   it("anónimo ⇒ 401", async () => {
     const r = await request(app)
       .post("/battles/rules-check")

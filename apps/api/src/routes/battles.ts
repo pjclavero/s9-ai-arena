@@ -10,7 +10,6 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
-import { assertVersionsEligible, canonicalUuid } from "../services/version-eligibility.js";
 import { audit } from "../audit.js";
 import { pathParam } from "../params.js";
 import { ROLE_RANK } from "../openapi.js";
@@ -35,6 +34,7 @@ import {
 import { loadRuleset } from "../../../../packages/game-rules/index.js";
 import { resolveBattleRuleset } from "../services/battle-ruleset-resolver.js";
 import { buildBattleRules, rulesOf, rulesToJson } from "../services/battle-rules.js";
+import { assertParticipantsShape, assertParticipantsUsable } from "../services/battle-participants.js";
 import type { Request } from "express";
 
 const SPECTATE_TICKET_TTL_S = 60;
@@ -609,21 +609,9 @@ export function battleRoutes(
     if (!content.ok) throw new ApiError(content.status, content.code, content.message);
     const map = { map_id: content.map.mapId, version: content.map.version };
 
-    // DEV-B · forma de cada participante y composición mínima. PK de participants
-    // = (battle_id, bot_id): un mismo bot NO puede ir en dos bandos (ni dos veces
-    // en el mismo); antes eso acababa en un 500 por violación de PK.
-    const seen = new Set<string>();
-    for (const p of participants) {
-      if (!p || typeof p !== "object") throw badRequest("participants: cada elemento debe ser un objeto");
-      if (typeof p.botId !== "string" || p.botId.length === 0) throw badRequest("participants[].botId obligatorio");
-      if (!Number.isInteger(p.version) || p.version < 1) throw badRequest("participants[].version: entero >= 1");
-      if (typeof p.team !== "string" || !/^[A-Za-z0-9_-]{1,32}$/.test(p.team)) {
-        throw badRequest("participants[].team: 1-32 caracteres [A-Za-z0-9_-]");
-      }
-      p.botId = canonicalUuid(p.botId); // ELIG · PG acepta MAYÚSCULAS/{llaves}: una sola forma
-      if (seen.has(p.botId)) throw badRequest("participants: un bot solo puede aparecer una vez por batalla");
-      seen.add(p.botId);
-    }
+    // DEV-B · forma de cada participante (services/battle-participants.ts, la misma
+    // regla que POST /battles/rules-check).
+    assertParticipantsShape(participants);
 
     // 4v4 · COMPOSICIÓN por bando, antes de tocar bots o cola. Sin esto, una
     // combinación que el motor rechaza (DM con bandos compartidos) se encolaba y
@@ -632,35 +620,9 @@ export function battleRoutes(
     // responder antes de la comprobación de visibilidad sin filtrar nada.
     assertTeamComposition(mode, participants);
 
-    // TD-005 · PROPIEDAD/VISIBILIDAD: sólo se puede meter en una batalla un bot
-    // propio, público o de un equipo del que el solicitante es miembro (los
-    // admin, cualquiera). Un bot privado ajeno responde EXACTAMENTE igual que uno
-    // inexistente (404): no se revela que existe. Antes no se comprobaba nada.
-    const userId = req.auth?.userId ?? null;
-    const isAdmin = (req.auth?.rank ?? 0) >= ROLE_RANK.admin;
-    for (const p of participants) {
-      const bot = await db("bots")
-        .where({ id: p.botId })
-        .first()
-        .catch(() => null);
-      let visible = Boolean(bot) && (isAdmin || bot.owner_id === userId || bot.visibility === "public");
-      if (bot && !visible && bot.visibility === "team" && bot.team_id && userId) {
-        visible = Boolean(await db("team_members").where({ team_id: bot.team_id, user_id: userId }).first());
-      }
-      if (!visible) throw new ApiError(404, "bot_not_found", `El bot ${p.botId} no existe o no es accesible`);
-    }
-
-    for (const p of participants) {
-      const v = await db("bot_versions")
-        .where({ bot_id: p.botId, version: p.version })
-        .first()
-        .catch(() => null);
-      if (!v || !["published", "frozen"].includes(v.state)) {
-        throw conflict("bot_not_published", `El bot ${p.botId} v${p.version} no está publicado`);
-      }
-    }
-    // ELIG · publicada ≠ elegible: el loadout histórico se revalida con el validador actual.
-    await assertVersionsEligible(db, participants);
+    // TD-005 · visibilidad, versión publicada y (ELIG) elegibilidad: una sola regla
+    // compartida con POST /battles/rules-check (services/battle-participants.ts).
+    await assertParticipantsUsable(db, req.auth, participants);
 
     // R-RULES (ADR-021) · reglas: preset/personalizado/clásico, topes de créditos y
     // masa con los loadouts REALES, y la COPIA INMUTABLE que jugará el worker.
