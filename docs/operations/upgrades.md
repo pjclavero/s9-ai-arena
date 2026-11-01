@@ -348,6 +348,21 @@ esquema ([first-run.md](first-run.md#comandos-prohibidos-en-producción)).
 - **Datos:** sólo restauración desde restic ([restore.md](restore.md)). **No hay snapshots de VM**
   en la instalación de referencia: cualquier `qm rollback` de documentos anteriores apunta a
   snapshots que ya no existen ([TD-007](../roadmap/technical-debt.md#td-007)).
+- **Reglas de batalla (R-RULES, ADR-021, migración 015):** volver a una versión ≤ RC5.4 tras
+  desplegar R-RULES exige **restaurar la copia previa** o, antes de cambiar de versión, **vaciar las
+  batallas `scheduled` con copia de reglas** (el worker anterior ignora `battles.rules` y las jugaría
+  con otras reglas):
+
+  ```sql
+  -- Antes de la vuelta atrás, con copia hecha. Revisa el recuento antes de ejecutarlo.
+  SELECT count(*) FROM battles WHERE status = 'scheduled' AND rules IS NOT NULL;
+  UPDATE battles SET status = 'failed', failure_kind = 'infrastructure', finished_at = now()
+   WHERE status = 'scheduled' AND rules IS NOT NULL;
+  ```
+
+  Además, los replays grabados con `maxRespawns` o `timeoutTiebreak` **no se verifican** en el motor
+  anterior (darían «no coincide»; el motor no sube de versión, ver ADR-021). Aceptar ese riesgo es
+  decisión del operador.
 
 ## Errores / limitaciones
 

@@ -29,7 +29,12 @@ La regla de ADR-019/020 obliga a subir `engine.version` cuando cambia la simulac
 - Los golden (`replay-golden`, `determinism`, `spawn-4v4`, `fix-4v4-spawn-hash-identity`) siguen verdes **sin regenerar**.
 - Subir la versión invalidaría la verificación de TODOS los replays 0.3.0 grabados (RC5.2/RC5.3) a cambio de nada.
 
-**Riesgo aceptado:** si se vuelve atrás a la RC5.3, un replay grabado con `maxRespawns`/`timeoutTiebreak` lo re-simularía un motor que ignora esos campos y daría «no coincide» en vez de `engine_version_mismatch`. Mitigación: no hay vuelta atrás sin restaurar copia (el procedimiento de despliegue la hace), y los replays nuevos se identifican porque su cabecera lleva el ruleset con los campos nuevos.
+**Riesgo pendiente de aceptar por el operador (DECISIÓN DEL OPERADOR):** un motor anterior (≤ RC5.4) ignora `maxRespawns` y `timeoutTiebreak`. Si se vuelve atrás:
+
+1. Un replay grabado con esos campos lo re-simularía un motor que no los conoce y `verify` diría «no coincide» (como si estuviera manipulado) en vez de `engine_version_mismatch`. **Los replays con `maxRespawns`/`timeoutTiebreak` no se pueden verificar en motores anteriores.** Se reconocen porque su cabecera lleva el ruleset con esos campos (y la batalla, `battles.rules`).
+2. Una batalla `scheduled` con `battles.rules` que no se haya jugado la ejecutaría el worker viejo resolviendo el ruleset de plataforma (ignora la copia): se jugaría con OTRAS reglas sin avisar.
+
+**Procedimiento obligatorio de vuelta atrás a ≤ RC5.4** (también en `docs/operations/upgrades.md` § «Vuelta atrás»): o bien restaurar la copia previa al despliegue (restic, `restore.md`), o bien, ANTES de cambiar de versión, vaciar las batallas `scheduled` que tengan `rules` (marcarlas `failed` con `failure_kind = 'infrastructure'` y sin replay) y avisar de que los replays con `maxRespawns`/`timeoutTiebreak` quedan sin verificación posible en el motor anterior. Subir `engine.version` evitaría el punto 1 pero invalidaría la verificación de todos los replays 0.3.0 de RC5.2/RC5.3: se ha preferido no subirla. **La aceptación de este riesgo es del operador y queda señalada aquí.**
 
 ## Qué NO cambia
 
