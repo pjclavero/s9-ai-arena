@@ -65,7 +65,9 @@ async function newBot(key: string, name: string, ownerId: string, visibility: st
     chassis: "chassis.scout@1",
     modules: JSON.stringify([]),
   });
-  await h.db("bot_versions").insert({ bot_id: id, version: 1, state: "published", runtime: "python", loadout_revision: 1 });
+  await h
+    .db("bot_versions")
+    .insert({ bot_id: id, version: 1, state: "published", runtime: "python", loadout_revision: 1 });
   BOT[key] = id;
   BOT_NAME[key] = name;
 }
@@ -157,36 +159,54 @@ beforeAll(async () => {
   await newBot("privB", `secretoB-${RUN}`, U.B, "private");
 
   B.b1 = await newBattle({
-    bots: [{ key: "pubA", outcome: "win" }, { key: "pubC", outcome: "loss" }],
+    bots: [
+      { key: "pubA", outcome: "win" },
+      { key: "pubC", outcome: "loss" },
+    ],
     mode: "deathmatch",
     createdAt: "2026-01-10T12:00:00Z",
   });
   B.b2 = await newBattle({
-    bots: [{ key: "privA", outcome: "draw" }, { key: "pubC", outcome: "draw" }],
+    bots: [
+      { key: "privA", outcome: "draw" },
+      { key: "pubC", outcome: "draw" },
+    ],
     mode: "capture_the_flag",
     createdAt: "2026-02-10T12:00:00Z",
     winner: "draw",
   });
   // Legible por A (es dueño de pubA) pero con un bot PRIVADO de B: rival.
   B.b3 = await newBattle({
-    bots: [{ key: "pubA", outcome: "win" }, { key: "privB", outcome: "disqualified" }],
+    bots: [
+      { key: "pubA", outcome: "win" },
+      { key: "privB", outcome: "disqualified" },
+    ],
     mode: "zone_control",
     createdAt: "2026-03-10T12:00:00Z",
     failureKind: "bot_crash",
   });
   // NO legible por A: sólo bots de B (privado) y de C (team, A no es miembro).
   B.b4 = await newBattle({
-    bots: [{ key: "privB", outcome: "win" }, { key: "teamC", outcome: "loss" }],
+    bots: [
+      { key: "privB", outcome: "win" },
+      { key: "teamC", outcome: "loss" },
+    ],
     mode: "team_deathmatch",
     createdAt: "2026-04-10T12:00:00Z",
   });
   B.b5 = await newBattle({
-    bots: [{ key: "pubA2", outcome: "loss" }, { key: "pubC", outcome: "win" }],
+    bots: [
+      { key: "pubA2", outcome: "loss" },
+      { key: "pubC", outcome: "win" },
+    ],
     mode: "team_deathmatch",
     createdAt: "2026-05-10T12:00:00Z",
   });
   B.b6 = await newBattle({
-    bots: [{ key: "pubA", outcome: "loss" }, { key: "teamC", outcome: "win" }],
+    bots: [
+      { key: "pubA", outcome: "loss" },
+      { key: "teamC", outcome: "win" },
+    ],
     mode: "deathmatch",
     createdAt: "2026-06-10T12:00:00Z",
   });

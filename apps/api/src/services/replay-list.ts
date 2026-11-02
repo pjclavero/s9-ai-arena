@@ -153,7 +153,9 @@ function hasEntityFilter(f: ReplayListFilters): boolean {
 /** Condiciones de UN participante (alias `bots`) según un filtro de entidad. */
 function applyEntity(db: Db, sub: any, kind: "bot" | "team" | "user", ref: EntityRef): any {
   if (kind === "bot") {
-    return "id" in ref ? sub.where("bots.id", ref.id) : sub.whereRaw("bots.name ILIKE ? ESCAPE '\\'", [contains(ref.name)]);
+    return "id" in ref
+      ? sub.where("bots.id", ref.id)
+      : sub.whereRaw("bots.name ILIKE ? ESCAPE '\\'", [contains(ref.name)]);
   }
   if (kind === "team") {
     if ("id" in ref) return sub.where("bots.team_id", ref.id);
@@ -173,7 +175,9 @@ function applyEntity(db: Db, sub: any, kind: "bot" | "team" | "user", ref: Entit
 
 /** Subconsulta «algún participante identificable de esta batalla cumple `fn`». */
 function participantExists(db: Db, auth: Auth, fn: (sub: any) => any): any {
-  const sub = db("participants").join("bots", "bots.id", "participants.bot_id").whereRaw("participants.battle_id = battles.id");
+  const sub = db("participants")
+    .join("bots", "bots.id", "participants.bot_id")
+    .whereRaw("participants.battle_id = battles.id");
   whereBotIdentifiable(db, sub, auth);
   return fn(sub);
 }
@@ -193,9 +197,10 @@ function participantExists(db: Db, auth: Auth, fn: (sub: any) => any): any {
  */
 export function applyReplayListFilters(db: Db, q: any, f: ReplayListFilters, auth: Auth): any {
   if (f.battleId) {
-    q = "exact" in f.battleId
-      ? q.where("battles.id", f.battleId.exact)
-      : q.whereRaw("battles.id::text LIKE ?", [`${escapeLike(f.battleId.prefix)}%`]);
+    q =
+      "exact" in f.battleId
+        ? q.where("battles.id", f.battleId.exact)
+        : q.whereRaw("battles.id::text LIKE ?", [`${escapeLike(f.battleId.prefix)}%`]);
   }
   if (f.from) q = q.where("battles.created_at", ">=", f.from);
   if (f.to) q = q.where("battles.created_at", "<=", f.to);
@@ -208,7 +213,9 @@ export function applyReplayListFilters(db: Db, q: any, f: ReplayListFilters, aut
     q = q.where((w: any) =>
       w
         .whereRaw("battles.result->>'winner' = 'draw'")
-        .orWhereExists(db("participants").whereRaw("participants.battle_id = battles.id").where("participants.outcome", "draw")),
+        .orWhereExists(
+          db("participants").whereRaw("participants.battle_id = battles.id").where("participants.outcome", "draw"),
+        ),
     );
   } else if (f.result === "aborted") {
     q = q.where((w: any) =>

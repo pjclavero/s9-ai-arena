@@ -142,7 +142,9 @@ describe("EQ4 · #/replays con filtros en servidor", () => {
 
   it("paginación por cursor: Siguiente manda el cursor y Anterior vuelve a la primera página", async () => {
     mockFetch((u) =>
-      params(u).get("cursor") === "c2" ? { items: [item("btl_c")] } : { items: [item("btl_a"), item("btl_b")], nextCursor: "c2" },
+      params(u).get("cursor") === "c2"
+        ? { items: [item("btl_c")] }
+        : { items: [item("btl_a"), item("btl_b")], nextCursor: "c2" },
     );
     render(<ReplaysPage />);
     expect(await screen.findAllByTestId("replay-row")).toHaveLength(2);
