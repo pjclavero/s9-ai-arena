@@ -131,7 +131,7 @@ describe("GET /rulesets · presets y límites", () => {
 });
 
 describe("presets 1v1", () => {
-  it("Duelo ⇒ 202 y copia inmutable: sin respawn, 5 min, desempate vidas→bajas→casco", async () => {
+  it("Duelo ⇒ 202 y copia inmutable: sin respawn, 5 min, desempate vivos→vidas→bajas (ADR-022)", async () => {
     const { r, rules } = await accepted(duel({ preset: "duel", teamSize: 1 }));
     expect(rules.source).toBe("preset");
     expect(rules.presetId).toBe("duel");
@@ -142,10 +142,18 @@ describe("presets 1v1", () => {
       timeLimitTicks: 5 * 60 * 30,
       scoreToWin: Number.MAX_SAFE_INTEGER,
       respawn: { enabled: false, delayTicks: 0 },
-      timeoutTiebreak: ["lives", "score", "hull"],
+      timeoutTiebreak: ["alive", "lives", "kills"],
     });
     expect(rules.catalogVersion).toBeTruthy();
-    expect(r.body.rules.summary).toContain("Respawns: ninguno (1 vida)");
+    expect(rules.engineVersion).toBe("0.4.0");
+    expect(rules.schema).toBe(2);
+    expect(r.body.rules.summary).toContain("Reaparición: Sin reaparición (1 vida)");
+    expect(r.body.rules.tiebreak.steps).toEqual([
+      "más bots vivos",
+      "más vidas/reapariciones restantes",
+      "más bajas",
+      "empate",
+    ]);
     const g = await request(app).get(`/battles/${r.body.id}`).set("Authorization", `Bearer ${tok}`);
     expect(g.body.rules.profile).toBe("elimination");
   });
@@ -268,8 +276,8 @@ describe("personalizado · parámetros", () => {
       "rules.params.respawn.maxRespawns",
     ],
     [
-      "respawns 0 con limitado",
-      { ...P_OK, respawn: { mode: "limited", maxRespawns: 0, delaySeconds: 5 } },
+      "respawns negativos con limitado",
+      { ...P_OK, respawn: { mode: "limited", maxRespawns: -1, delaySeconds: 5 } },
       "rules.params.respawn.maxRespawns",
     ],
     [
