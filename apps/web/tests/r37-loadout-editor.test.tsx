@@ -101,8 +101,8 @@ describe("R3.7 el editor carga la revisión vigente del bot", () => {
     };
     const diff = diffDrafts(SAVED, changed);
     expect(diff.join("\n")).toContain("chasis: chassis.medium@1 → chassis.heavy@1");
-    expect(diff.join("\n")).toContain("turret_main munición: ammo.he@1 → ammo.ap@1");
-    expect(diff.join("\n")).toContain("power: power.battery@1 → (vacío)");
+    expect(diff.join("\n")).toContain("Torreta principal munición: ammo.he@1 → ammo.ap@1") // EQ4 · nombre humano del slot;
+    expect(diff.join("\n")).toContain("Energía: power.battery@1 → (vacío)");
   });
 });
 

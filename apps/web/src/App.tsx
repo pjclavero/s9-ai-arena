@@ -25,7 +25,8 @@ import type { ModuleDefinition } from "../../../packages/module-catalog/types.js
 import { LoginPage } from "./pages/LoginPage.js";
 import { BotsPage } from "./pages/BotsPage.js";
 import { TeamsPage } from "./pages/TeamsPage.js";
-import { AdminPage, isAdmin } from "./pages/AdminPage.js";
+import { AdminPage } from "./pages/AdminPage.js";
+import { AdminSubnav, isAdminRoute, visibleAdminSections } from "./admin-nav.js";
 import { ViewerPage } from "./pages/ViewerPage.js";
 import { LivePage } from "./pages/LivePage.js";
 import { RankingPage } from "./pages/RankingPage.js"; // N6 · #/ranking, solo lectura (GET /standings, público)
@@ -242,7 +243,7 @@ export function App() {
       publicView.kind === "viewer" ? (
         <ViewerPage battleId={publicView.battleId} />
       ) : publicView.kind === "live" ? (
-        <LivePage />
+        <LivePage loggedIn={!!me && !!getToken()} />
       ) : publicView.kind === "ranking" ? (
         <RankingPage />
       ) : publicView.kind === "help" ? (
@@ -330,6 +331,13 @@ export function App() {
     );
   }
 
+  const admin = (page: ReactNode) => (
+    <>
+      <AdminSubnav me={me} route={route} />
+      {page}
+    </>
+  );
+
   function renderStaticPanel(name: StaticPanelRoute | null) {
     switch (name) {
       case "home":
@@ -344,14 +352,15 @@ export function App() {
         return <MapEditorPage />;
       case "maps":
         return <MapsPage me={me!} />;
+      // EQ4 · las cuatro pantallas de Administración comparten subnavegación.
       case "system":
-        return <SystemPage me={me!} />;
+        return admin(<SystemPage me={me!} />);
       case "audit":
-        return <AuditPage me={me!} />;
+        return admin(<AuditPage me={me!} />);
       case "roles":
-        return <RolesPage me={me!} />;
+        return admin(<RolesPage me={me!} />);
       case "admin":
-        return <AdminPage me={me!} />;
+        return admin(<AdminPage me={me!} />);
       case "bots":
         return (
           <ResourceView resource={catalogRes} label="el catálogo" onRetry={reloadCatalog}>
@@ -387,6 +396,8 @@ export function isNavActive(href: string, route: string): boolean {
   const r = route || "#/";
   if (href === "#/") return matchStaticPanelRoute(r) === "home";
   if (href === "#/help") return matchPublicRoute(r)?.kind === "help";
+  // EQ4 · «Administración» agrupa sus cuatro pantallas: está activa en todas.
+  if (href === "#/admin") return isAdminRoute(r);
   return r === href || r.startsWith(`${href}/`) || r.startsWith(`${href}?`);
 }
 
@@ -422,6 +433,7 @@ function ShellNav(props: { me: Me | null; route: string; booting: boolean; onLog
       document.removeEventListener("pointerdown", onDown);
     };
   }, [open]);
+  const adminSections = visibleAdminSections(me);
   const link = (href: string, label: string, testId?: string) => (
     <a href={href} data-testid={testId} aria-current={isNavActive(href, route) ? "page" : undefined}>
       {label}
@@ -454,8 +466,14 @@ function ShellNav(props: { me: Me | null; route: string; booting: boolean; onLog
         {link("#/", "Inicio", "nav-home")}
         {me && (
           <>
-            {link("#/bots", "Mis bots")}
-            {link("#/teams", "Equipos")}
+            {/* EQ4 · «Bots y equipos»: grupo conceptual con sus dos pantallas. */}
+            <span className="nav-group" role="group" aria-labelledby="nav-group-bots" data-testid="nav-group-bots">
+              <span className="nav-group-label" id="nav-group-bots">
+                Bots y equipos
+              </span>
+              {link("#/bots", "Mis bots")}
+              {link("#/teams", "Equipos")}
+            </span>
             {link("#/tournaments", "Torneos")}
             {link("#/battles", "Batallas")}
             {link("#/replays", "Replays")}
@@ -466,15 +484,10 @@ function ShellNav(props: { me: Me | null; route: string; booting: boolean; onLog
         {link("#/live", "En directo")}
         {link("#/ranking", "Ranking")}
         {link("#/help", "Ayuda", "nav-help")}
-        {/* La interfaz solo OCULTA; la autorización la hace la API (cap. 16) */}
-        {me && isAdmin(me) && (
-          <>
-            {link("#/admin", "Administración", "admin-link")}
-            {link("#/system", "Sistema", "system-link")}
-            {link("#/audit", "Auditoría", "audit-link")}
-            {link("#/roles", "Roles", "roles-link")}
-          </>
-        )}
+        {/* EQ4 · UNA entrada «Administración» (Sistema, Auditoría y Roles van en su
+            subnavegación). Sólo si el RBAC del servidor deja usar alguna de sus
+            pantallas; la interfaz solo OCULTA, la autorización la hace la API. */}
+        {me && adminSections.length > 0 && link(adminSections[0].href, "Administración", "nav-admin")}
         {me ? (
           <>
             <span className="nav-user" data-testid="nav-user" style={{ marginLeft: "auto" }}>

@@ -175,6 +175,73 @@
       .shell-nav .nav-toggle {
         display: none;
       }
+      /* EQ4 · grupo «Bots y equipos» en la barra y subnavegación de Administración. */
+      .shell-nav .nav-group {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 0 0.5rem;
+        border: 1px solid #2a3340;
+        border-radius: 4px;
+      }
+      .shell-nav .nav-group-label {
+        font-size: 0.8rem;
+        color: #9aa4b2;
+      }
+      .subnav {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.4rem 1rem;
+        margin: 0 0 0.8rem;
+        padding: 0.4rem 0.6rem;
+        border-bottom: 1px solid #2a3340;
+      }
+      .subnav-title {
+        font-weight: 600;
+        color: #9aa4b2;
+      }
+      .subnav a[aria-current="page"] {
+        font-weight: 600;
+        text-decoration: underline;
+      }
+      /* EQ4 · maestro-detalle (Mis bots, Equipos): dos columnas sólo con sitio. */
+      .master-detail {
+        display: grid;
+        grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
+        gap: 1rem;
+        align-items: start;
+      }
+      .master-detail > * {
+        min-width: 0;
+      }
+      .master-list ul {
+        list-style: none;
+        padding-left: 0;
+        margin: 0;
+      }
+      .master-list li {
+        border-bottom: 1px solid #2a3340;
+      }
+      .master-list .master-item {
+        display: block;
+        width: 100%;
+        text-align: left;
+        padding: 0.45rem 0.4rem;
+        background: transparent;
+        border: 0;
+        color: inherit;
+        overflow-wrap: anywhere;
+      }
+      .master-list .master-item[aria-current="true"] {
+        background: #253041;
+        font-weight: 600;
+      }
+      @media (max-width: 960px) {
+        .master-detail {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
       @media (max-width: 1024px) {
         /* Móvil y tablet: marca + «Menú»; los enlaces, el usuario y «Salir» se
            despliegan debajo. Objetivos táctiles de 44 px. */
@@ -216,6 +283,14 @@
           min-height: 44px;
           padding: 0 0.5rem;
           border-radius: 4px;
+        }
+        .shell-nav .nav-group {
+          display: contents;
+        }
+        .shell-nav .nav-group-label {
+          grid-column: 1 / -1;
+          padding: 0.4rem 0.5rem 0;
+          border-top: 1px solid #2a3340;
         }
         .shell-nav .nav-menu a[aria-current="page"] {
           background: #253041;
