@@ -146,6 +146,32 @@ describe("T11.2 líneas de comando", () => {
     expect(args[args.length - 1]).toBe("--app=http://web:3000/broadcast?tournament=t1");
   });
 
+  it("EQ5 · x11grab NO dibuja el puntero del Xvfb (visto en un MP4 real: «X» en el centro)", () => {
+    for (const mode of ["rtmps", "record"] as const) {
+      const a = buildFfmpegArgs(cfg({ mode }), mode === "rtmps" ? KEY : null).args;
+      const grab = a.indexOf("x11grab");
+      const input = a.indexOf("-i");
+      const dm = a.indexOf("-draw_mouse");
+      // Opción de ENTRADA de x11grab: tiene que ir entre `-f x11grab` y su `-i`.
+      expect(dm, a.join(" ")).toBeGreaterThan(grab);
+      expect(dm).toBeLessThan(input);
+      expect(a[dm + 1]).toBe("0");
+    }
+  });
+
+  it("EQ5 · Chromium sin barra de traducción ni burbujas: nada del navegador entra en la emisión", () => {
+    const args = buildChromiumArgs(cfg(), "http://web:3000/broadcast");
+    // La página es lang="es" y el Chromium de la imagen va en inglés: sin esto,
+    // la barra de Google Translate quedaba FIJA en la esquina del vídeo (MP4 real).
+    const features = args.find((a) => a.startsWith("--disable-features="));
+    expect(features?.split("=")[1].split(",")).toContain("Translate");
+    expect(args).toContain("--lang=es");
+    // Tras un reintento (SIGTERM + relanzar) no debe salir «¿Restaurar páginas?».
+    expect(args).toContain("--hide-crash-restore-bubble");
+    expect(args).toContain("--noerrdialogs");
+    expect(args[args.length - 1]).toBe("--app=http://web:3000/broadcast");
+  });
+
   it("R3.2: WebGL forzado por SwiftShader (sin caída silenciosa a Canvas 2D)", () => {
     const args = buildChromiumArgs(cfg(), "http://web:3000/broadcast");
     expect(args).toContain("--use-gl=angle");

@@ -43,6 +43,18 @@ describe("prometheus", () => {
     }
   });
 
+  it("EQ5 · scrapea el /metrics del streamer en el puerto de control que declara el Compose", () => {
+    // Antes `streamer_up`, `streamer_fps`, `streamer_restarts_total`… existían en
+    // /metrics pero nadie los recogía (auditoría EQ5, 2026-11-02). Sin perfil
+    // `streaming` el destino sólo aparece como caído: no hay alerta genérica de `up`.
+    const job = prometheus.scrape_configs.find((j: any) => j.job_name === "streamer");
+    expect(job, "falta el job del streamer").toBeDefined();
+    const compose = parse(readFileSync(join(here, "..", "docker-compose.yml"), "utf8"));
+    const port = compose.services.streamer.environment.STREAMER_CONTROL_PORT;
+    expect(job.static_configs[0].targets).toEqual([`streamer:${port}`]);
+    expect(job.metrics_path ?? "/metrics").toBe("/metrics");
+  });
+
   it("carga las reglas de alerta y apunta a alertmanager", () => {
     expect(prometheus.rule_files).toContain("/etc/prometheus/alerts.yml");
     expect(JSON.stringify(prometheus.alerting)).toContain("alertmanager:9093");

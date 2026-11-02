@@ -51,6 +51,13 @@ scrape_configs:
     static_configs:
       - targets: ["postgres-exporter:9187"]
 
+  # Streamer (perfil `streaming`, opcional): /metrics de su API interna de
+  # control (streamer_up, fps, bitrate, frames, drops, reintentos). Sin el
+  # perfil arrancado este destino figura caído; ninguna alerta mira su `up`.
+  - job_name: streamer
+    static_configs:
+      - targets: ["streamer:8090"]
+
   - job_name: cadvisor
     static_configs:
       - targets: ["cadvisor:8080"]

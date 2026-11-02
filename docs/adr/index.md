@@ -24,7 +24,7 @@ sistema, ver [../technical/index.md](../technical/index.md) y
 | [ADR-E7-003](ADR-E7-003-panel-react-vite.md) | Panel web: React + Vite | aceptado | vigente |
 | [ADR-E9-001](ADR-E9-001-cola-postgres-redis.md) | Cola: PostgreSQL como verdad, Redis como despacho | aceptado | vigente; ver [TD-026](../roadmap/technical-debt.md#td-026) (canal de aviso sin productor) |
 | [ADR-E9-002](ADR-E9-002-rating-elo.md) | Rating Elo con K por liga | aceptado | vigente |
-| [ADR-R14-webrtc](ADR-R14-webrtc.md) | WebRTC para espectadores: no implementar | decidido | el diseño previo está archivado en [../history/disenos/R14_WEBRTC_STREAMING.md](../history/disenos/R14_WEBRTC_STREAMING.md) |
+| [ADR-R14-webrtc](ADR-R14-webrtc.md) | WebRTC para espectadores: no implementar | decidido | el diseño previo está archivado en [../history/disenos/R14_WEBRTC_STREAMING.md](../history/disenos/R14_WEBRTC_STREAMING.md); nota de corrección 2026-11-02: la emisión RTMPS de E11 existía antes del ADR y está fuera de su ámbito ([../operations/streaming.md](../operations/streaming.md)) |
 
 La numeración tiene huecos (001-009, 011-015) heredados del dosier original: no faltan ficheros.
 

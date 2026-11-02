@@ -85,6 +85,25 @@ Reabrir R14 (con diseño nuevo, no este) solo si se dan **las dos**:
 
 RTMP/YouTube/Twitch siguen explícitamente fuera de alcance, como en el plan original.
 
+> **Nota de corrección (2026-11-02, auditoría EQ5 de streaming).** La frase
+> anterior se conserva tal cual se escribió, pero **no describía el estado del
+> repositorio ni el de entonces**: la emisión por **RTMPS a YouTube** ya existía
+> desde la entrega **E11** (2026-07-16, commits `f50b523` y `e7b1e3f`: vista
+> `/broadcast` y servicio `streamer` del perfil `streaming`), cuatro días
+> **antes** de este ADR (2026-07-20). El plan R14 (2026-07-19) y este ADR
+> heredaron la frase del plan original sin contrastarla con E11.
+>
+> Lo que este ADR decide sigue vigente y no cambia: **no** se distribuye el
+> canal de espectadores por WebRTC P2P. La emisión RTMPS de E11 es otro camino
+> (vídeo codificado en el servidor hacia una plataforma externa, sin pares ni
+> señalización) y no entra en el ámbito de esta decisión.
+>
+> Cronología: E11 implementa RTMPS (2026-07-16) → plan R14 lo da por «fuera de
+> alcance» (2026-07-19) → este ADR lo repite (2026-07-20) → la auditoría EQ5
+> (2026-11-02) verifica qué funciona de verdad. El estado real (implementado vs.
+> verificado, y lo que falta para emitir en producción) está en
+> [`docs/operations/streaming.md`](../operations/streaming.md).
+
 ## Consecuencias
 
 - No se añade código: este bloque es solo documental (ADR + roadmap).

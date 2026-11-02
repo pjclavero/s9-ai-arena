@@ -77,6 +77,18 @@ interface Feed {
   sentEvents: number;
   timer: ReturnType<typeof setInterval> | null;
   finished: boolean;
+  /** Retardo anti-coaching del feed en ms (0 = directo sin retardo). */
+  delayMs: number;
+  /**
+   * EQ5 · Sólo con retardo: mensajes del stream con su instante de producción,
+   * dentro de la ventana del retardo. Sirve para que un espectador que llega
+   * tarde reciba el estado de `ahora - retardo` (no el vivo) y, a continuación,
+   * el tramo pendiente en su hora retrasada.
+   */
+  history: { at: number; msg: Record<string, unknown>; debugOnly: boolean }[];
+  /** Último snapshot (y fin de partida) YA fuera de la ventana: base del init retrasado. */
+  dueSnapshot: unknown | null;
+  dueResult: { result: unknown } | null;
 }
 
 interface SpectatorConnection {
@@ -148,6 +160,7 @@ export class SpectateGateway {
 
   /** Registra una batalla en vivo. La llama el worker (E9) o el arranque local. */
   attachBattle(battleId: string, battle: SpectatableBattle, opts: AttachOptions = {}): void {
+    const delayMs = Math.max(0, (opts.spectator?.delaySeconds ?? 0) * 1000);
     const feed: Feed = {
       battle,
       opts,
@@ -156,7 +169,19 @@ export class SpectateGateway {
       sentEvents: battle.publicEvents.length,
       timer: null,
       finished: false,
+      delayMs,
+      history: [],
+      dueSnapshot: null,
+      dueResult: null,
     };
+    // EQ5 · Con retardo, lo que ya existía al registrar la batalla se fecha AHORA
+    // (no se sabe cuándo se produjo): no se entrega hasta pasado el retardo.
+    // Falla hacia «menos información», nunca hacia el estado vivo.
+    if (delayMs > 0) {
+      const last = battle.snapshots.at(-1);
+      if (last !== undefined)
+        feed.history.push({ at: Date.now(), msg: { type: "snapshot", snapshot: last }, debugOnly: false });
+    }
     feed.timer = setInterval(() => this.pump(battleId, feed), opts.pollIntervalMs ?? 33);
     this.feeds.set(battleId, feed);
   }
@@ -252,12 +277,32 @@ export class SpectateGateway {
     const conn: SpectatorConnection = {
       ws,
       debug: claims.debug === true,
-      delayMs: Math.max(0, (feed.opts.spectator?.delaySeconds ?? 0) * 1000),
+      delayMs: feed.delayMs,
       timers: new Set(),
     };
     feed.clients.add(conn);
     ws.on("close", () => this.dropClient(feed, conn));
     ws.on("error", () => this.dropClient(feed, conn));
+
+    // EQ5 · Retardo anti-coaching: el init NO puede llevar el estado vivo. Antes
+    // salía `immediate` con `snapshots.at(-1)` y el último tick producido, así
+    // que reconectar saltaba el retardo. Ahora lleva el estado de `ahora -
+    // retardo` (o null si aún no hay ninguno tan antiguo) y el tramo intermedio
+    // se entrega después, cada mensaje en su hora de producción + retardo.
+    let snapshot: unknown = feed.battle.snapshots.at(-1) ?? null;
+    let finished = feed.battle.isFinished();
+    let result: unknown = finished ? feed.battle.getResult() : undefined;
+    let serverTimeMs = Date.now();
+    let backlog: Feed["history"] = [];
+    if (conn.delayMs > 0) {
+      this.trimHistory(feed);
+      const cutoff = Date.now() - conn.delayMs;
+      snapshot = feed.dueSnapshot;
+      finished = feed.dueResult !== null;
+      result = feed.dueResult?.result;
+      serverTimeMs = cutoff;
+      backlog = [...feed.history];
+    }
 
     // Recuperación de estado por snapshot COMPLETO (DoD de reconexión): los
     // snapshots de E2 son estado íntegro, así que el último basta para pintar.
@@ -269,19 +314,34 @@ export class SpectateGateway {
         // R3.2: reloj del servidor (opcional, compatible hacia atrás). Va a nivel
         // de MENSAJE, no dentro del snapshot: el snapshot público (D8) conserva su
         // whitelist estructural exacta (test de fugas) y los replays no cambian.
-        serverTimeMs: Date.now(),
+        serverTimeMs,
         spectator: {
           allowFogView: feed.opts.spectator?.allowFogView === true,
           delaySeconds: feed.opts.spectator?.delaySeconds ?? 0,
           debug: conn.debug,
         },
         meta: feed.opts.meta ?? {},
-        snapshot: feed.battle.snapshots.at(-1) ?? null,
-        finished: feed.battle.isFinished(),
-        result: feed.battle.isFinished() ? feed.battle.getResult() : undefined,
+        snapshot,
+        finished,
+        result,
       },
       /*immediate*/ true,
     );
+    // Tramo de la ventana del retardo: cada mensaje a su hora (producción + retardo).
+    for (const h of backlog) {
+      if (h.debugOnly && !conn.debug) continue;
+      this.sendTo(conn, h.msg, false, Math.max(0, h.at + conn.delayMs - Date.now()));
+    }
+  }
+
+  /** EQ5 · Saca de la ventana lo ya vencido, recordando el último snapshot y el fin. */
+  private trimHistory(feed: Feed): void {
+    const cutoff = Date.now() - feed.delayMs;
+    while (feed.history.length > 0 && feed.history[0].at <= cutoff) {
+      const h = feed.history.shift()!;
+      if (h.msg.type === "snapshot") feed.dueSnapshot = h.msg.snapshot;
+      if (h.msg.type === "result") feed.dueResult = { result: h.msg.result };
+    }
   }
 
   private dropClient(feed: Feed, conn: SpectatorConnection, code?: number, reason?: string): void {
@@ -322,13 +382,22 @@ export class SpectateGateway {
   }
 
   private broadcast(feed: Feed, msg: Record<string, unknown>, debugOnly = false): void {
+    if (feed.delayMs > 0) {
+      feed.history.push({ at: Date.now(), msg, debugOnly });
+      this.trimHistory(feed);
+    }
     for (const c of feed.clients) {
       if (debugOnly && !c.debug) continue;
       this.sendTo(c, msg);
     }
   }
 
-  private sendTo(conn: SpectatorConnection, msg: Record<string, unknown>, immediate = false): void {
+  private sendTo(
+    conn: SpectatorConnection,
+    msg: Record<string, unknown>,
+    immediate = false,
+    delayOverrideMs?: number,
+  ): void {
     const payload = JSON.stringify({ v: 1, id: randomUUID(), ...msg });
     const deliver = () => {
       if (conn.ws.readyState === WebSocket.OPEN) {
@@ -339,13 +408,13 @@ export class SpectateGateway {
         }
       }
     };
-    // El init va inmediato incluso con retardo: es estado YA retrasado para el
-    // que se conecta tarde; el retardo anti-coaching aplica al stream en vivo.
+    // El init va inmediato incluso con retardo: lleva estado YA retrasado (el de
+    // `ahora - retardo`, ver handleConnection); el retardo aplica al stream.
     if (conn.delayMs > 0 && !immediate) {
       const t = setTimeout(() => {
         conn.timers.delete(t);
         deliver();
-      }, conn.delayMs);
+      }, delayOverrideMs ?? conn.delayMs);
       conn.timers.add(t);
     } else {
       deliver();

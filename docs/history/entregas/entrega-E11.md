@@ -1,5 +1,16 @@
 # E11 · Streaming — entrega v1
 
+> **Estado verificado (2026-11-02, auditoría EQ5).** Este documento es la
+> entrega original y se conserva tal cual. Sus [PENDIENTE] se han ejecutado en un
+> entorno LOCAL aislado (imagen real del streamer, Chromium, Xvfb, FFmpeg, RTMPS
+> contra un servidor de ingesta local y MP4 validado con ffprobe): resultados,
+> defectos encontrados y lo que sigue sin verificar (YouTube real, 30 min, NVENC,
+> producción) en [docs/operations/streaming.md](../../operations/streaming.md).
+> Dos afirmaciones de abajo resultaron inexactas: la clave **sí** sale del proceso
+> Node (viaja en el argv de ffmpeg, visible con `ps` en el host) y el retardo
+> anti-coaching **no** está configurado en ningún ruleset del catálogo (además,
+> hasta EQ5 el `init` del espectador lo saltaba).
+
 Cubre **T11.1 y T11.2** (cap. 21 del dosier técnico) y las mejoras E11.M, sobre
 `de61d79` (E1-E10 integrados, incluidos E8 visor y E9 torneos). Rama
 `e11-streaming`. La regla de oro del capítulo se cumple por construcción: nada

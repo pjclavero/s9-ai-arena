@@ -54,7 +54,7 @@ Informe del cierre: [functional-closure-report.md](../development/functional-clo
 | Build de bots | sandbox real en aislado, en navegador y en CI; dos relojes de arranque (plataforma / bot); desde RC2, build y batalla desde contenedores por el proxy en el stack Compose real (CI) | proxy del host sin operar en producción (pasos de RC2 en [upgrades.md](../operations/upgrades.md#rc2-proxy-de-docker-red-dedicada-y-firewall)) | [TD-001](technical-debt.md#td-001), [TD-034](technical-debt.md#td-034) (cerrada en la integración) |
 | Equipamiento | catálogo, validación, persistencia; la UI dice qué campos tienen efecto | efecto parcial en batalla | [TD-016](technical-debt.md#td-016) |
 | Torneos | `round_robin` con el código real de los bots (worker integrado) | `mapPool`; `failed` bloquea el cierre | [TD-015](technical-debt.md#td-015) |
-| Visor / emisión | visor en directo con batalla viva (aislado) | emisión (`#/broadcast`) sin E2E | [TD-009](technical-debt.md#td-009) |
+| Visor / emisión | visor en directo con batalla viva (aislado); `/broadcast` y streamer verificados en Chromium y FFmpeg reales en local (2026-11-02) | emisión sin E2E en CI ni en producción (perfil `streaming` no desplegado) | [streaming.md](../operations/streaming.md) |
 | Web | estados y errores comunes en todas las páginas de A, C y D | onboarding / enlace al SDK | [TD-022](technical-debt.md#td-022) |
 | Administración | web: roles, mapas, equipos, auditoría | backup, restore, readiness y drift sólo por SSH | [TD-023](technical-debt.md#td-023) |
 | Instalación / readiness | compose preparado para la ejecución real | instalación limpia no reproducible; readiness no desplegado | [TD-024](technical-debt.md#td-024) |
