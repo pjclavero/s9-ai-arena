@@ -87,7 +87,7 @@ function team(n: number, rules: unknown, a = bots.slice(0, n), b = bots.slice(4,
 }
 const custom = (teamSize: number, params: Record<string, unknown>) => ({ preset: "custom", teamSize, params });
 const P_OK = {
-  respawn: { mode: "limited", respawnsPerBot: 2, delaySeconds: 5 },
+  respawn: { mode: "limited", maxRespawns: 2, delaySeconds: 5 },
   victory: "elimination",
   timeLimitMinutes: 10,
 };
@@ -233,7 +233,7 @@ describe("personalizado · parámetros", () => {
     expect(rules.source).toBe("custom");
     expect(rules.params).toMatchObject({
       teamSize: 2,
-      respawn: { mode: "limited", respawnsPerBot: 2, delaySeconds: 5 },
+      respawn: { mode: "limited", maxRespawns: 2, delaySeconds: 5 },
     });
   });
 
@@ -244,7 +244,7 @@ describe("personalizado · parámetros", () => {
         custom(4, {
           respawn: {
             mode: "limited",
-            respawnsPerBot: RULES_LIMITS.respawnsPerBot.max,
+            maxRespawns: RULES_LIMITS.maxRespawns.max,
             delaySeconds: RULES_LIMITS.delaySeconds.max,
           },
           victory: "score_limit",
@@ -264,37 +264,37 @@ describe("personalizado · parámetros", () => {
   const bad: [string, Record<string, unknown>, string][] = [
     [
       "respawns negativos",
-      { ...P_OK, respawn: { mode: "limited", respawnsPerBot: -1, delaySeconds: 5 } },
-      "rules.params.respawn.respawnsPerBot",
+      { ...P_OK, respawn: { mode: "limited", maxRespawns: -1, delaySeconds: 5 } },
+      "rules.params.respawn.maxRespawns",
     ],
     [
       "respawns 0 con limitado",
-      { ...P_OK, respawn: { mode: "limited", respawnsPerBot: 0, delaySeconds: 5 } },
-      "rules.params.respawn.respawnsPerBot",
+      { ...P_OK, respawn: { mode: "limited", maxRespawns: 0, delaySeconds: 5 } },
+      "rules.params.respawn.maxRespawns",
     ],
     [
       "respawns por encima del máximo",
-      { ...P_OK, respawn: { mode: "limited", respawnsPerBot: 11, delaySeconds: 5 } },
-      "rules.params.respawn.respawnsPerBot",
+      { ...P_OK, respawn: { mode: "limited", maxRespawns: 11, delaySeconds: 5 } },
+      "rules.params.respawn.maxRespawns",
     ],
     [
       "respawns no entero",
-      { ...P_OK, respawn: { mode: "limited", respawnsPerBot: 1.5, delaySeconds: 5 } },
-      "rules.params.respawn.respawnsPerBot",
+      { ...P_OK, respawn: { mode: "limited", maxRespawns: 1.5, delaySeconds: 5 } },
+      "rules.params.respawn.maxRespawns",
     ],
     [
       "respawns como texto",
-      { ...P_OK, respawn: { mode: "limited", respawnsPerBot: "2", delaySeconds: 5 } },
-      "rules.params.respawn.respawnsPerBot",
+      { ...P_OK, respawn: { mode: "limited", maxRespawns: "2", delaySeconds: 5 } },
+      "rules.params.respawn.maxRespawns",
     ],
     [
       "retardo 0",
-      { ...P_OK, respawn: { mode: "limited", respawnsPerBot: 2, delaySeconds: 0 } },
+      { ...P_OK, respawn: { mode: "limited", maxRespawns: 2, delaySeconds: 0 } },
       "rules.params.respawn.delaySeconds",
     ],
     [
       "retardo 31 s",
-      { ...P_OK, respawn: { mode: "limited", respawnsPerBot: 2, delaySeconds: 31 } },
+      { ...P_OK, respawn: { mode: "limited", maxRespawns: 2, delaySeconds: 31 } },
       "rules.params.respawn.delaySeconds",
     ],
     ["tiempo 0", { ...P_OK, timeLimitMinutes: 0 }, "rules.params.timeLimitMinutes"],
@@ -318,14 +318,14 @@ describe("personalizado · parámetros", () => {
     ],
     ["límite de bajas sin victoria por bajas", { ...P_OK, scoreLimit: 5 }, "rules.params.scoreLimit"],
     [
-      "respawnsPerBot con ilimitado",
+      "maxRespawns con ilimitado",
       {
         ...P_OK,
         victory: "score_limit",
         scoreLimit: 5,
-        respawn: { mode: "unlimited", respawnsPerBot: 2, delaySeconds: 5 },
+        respawn: { mode: "unlimited", maxRespawns: 2, delaySeconds: 5 },
       },
-      "rules.params.respawn.respawnsPerBot",
+      "rules.params.respawn.maxRespawns",
     ],
     [
       "retardo sin respawn",

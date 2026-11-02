@@ -37,7 +37,7 @@ function limitedRuleset() {
     preset: "custom",
     teamSize: 2,
     params: {
-      respawn: { mode: "limited", respawnsPerBot: 1, delaySeconds: 1 },
+      respawn: { mode: "limited", maxRespawns: 1, delaySeconds: 1 },
       victory: "elimination",
       timeLimitMinutes: 20,
     },

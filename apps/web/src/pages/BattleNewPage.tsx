@@ -56,6 +56,7 @@ import {
   RulesCheckReport,
   defaultChoice,
   rulesBody,
+  lockedModeOf,
   useRulesCheck,
   type RulesCatalog,
   type RulesChoice,
@@ -80,6 +81,8 @@ interface MapVersion {
   version: number;
   state: string;
   supportedModes?: string[];
+  /** ADR-022 · por modo: ¿compatible? y si no, por qué (GET /maps). */
+  modeCompatibility?: Record<string, { ok: boolean; declared: boolean; reasons: string[] }>;
 }
 export interface BotSummary {
   id: string;
@@ -349,7 +352,7 @@ export function BattleNewPage(props: { me: Me }) {
   // team_deathmatch); «Clásico» deja elegir cualquier modo como antes.
   const rulesFormat: "1v1" | "team" = kind === "team" ? "team" : "1v1";
   const rulesChoice: RulesChoice = rulesPick ?? defaultChoice(rulesCatalog, rulesFormat);
-  const lockedMode = rulesChoice.kind === "classic" ? null : rulesFormat === "team" ? "team_deathmatch" : "deathmatch";
+  const lockedMode = lockedModeOf(rulesCatalog, rulesChoice, rulesFormat);
   const mode =
     lockedMode && shownModes.includes(lockedMode)
       ? lockedMode
@@ -359,15 +362,19 @@ export function BattleNewPage(props: { me: Me }) {
           ? "team_deathmatch"
           : (shownModes[0] ?? "");
   const modeRulesets = rulesets.filter((r) => r.mode === mode || r.mode === null);
-  const modeMaps = maps.filter((m) => (m.supportedModes ?? []).includes(mode));
-  const mapsForMode = (md: string) => maps.filter((m) => (m.supportedModes ?? []).includes(md)).length;
+  // ADR-022 · compatibilidad mapa↔modo del SERVIDOR (declarada Y estructural), con el
+  // porqué; sin ella (API anterior), lo declarado en supportedModes como antes.
+  const fitsMode = (m: MapVersion, md: string) =>
+    m.modeCompatibility?.[md]?.ok ?? (m.supportedModes ?? []).includes(md);
+  const modeMaps = maps.filter((m) => fitsMode(m, mode));
+  const mapsForMode = (md: string) => maps.filter((m) => fitsMode(m, md)).length;
   // UX-F (DEF-R8) · el primer mapa publicado compatible con el modo viene
   // preseleccionado (como el ruleset): antes había que adivinar que faltaba elegirlo.
   const keyOf = (m: MapVersion) => `${m.mapId}@${m.version}`;
   const effectiveMapKey = modeMaps.some((m) => keyOf(m) === mapKey) ? mapKey : modeMaps[0] ? keyOf(modeMaps[0]) : "";
   const selectedMap = modeMaps.find((m) => keyOf(m) === effectiveMapKey);
   // …y se dice qué mapas publicados NO salen y por qué (p. ej. mvp-arena-01 no admite deathmatch).
-  const hiddenMaps = maps.filter((m) => !(m.supportedModes ?? []).includes(mode));
+  const hiddenMaps = maps.filter((m) => !fitsMode(m, mode));
   const effectiveRuleset = modeRulesets.some((r) => r.id === rulesetId)
     ? rulesetId
     : ((modeRulesets.find((r) => r.mode === mode) ?? modeRulesets[0])?.id ?? "");
@@ -990,16 +997,18 @@ export function BattleNewPage(props: { me: Me }) {
       {mode && hiddenMaps.length > 0 && (
         <p data-testid="maps-hidden">
           <small>
-            No aparecen porque no admiten {modeName(mode)}:{" "}
+            No aparecen porque no son compatibles con {modeName(mode)}:{" "}
             {hiddenMaps
-              .map(
-                (m) =>
-                  `${m.name ?? m.mapId} v${m.version} (${
-                    (m.supportedModes ?? []).length > 0
+              .map((m) => {
+                const why = m.modeCompatibility?.[mode]?.reasons ?? [];
+                return `${m.name ?? m.mapId} v${m.version} (${
+                  why.length > 0
+                    ? why.join("; ")
+                    : (m.supportedModes ?? []).length > 0
                       ? (m.supportedModes ?? []).map(modeName).join(", ")
                       : "sin modos declarados"
-                  })`,
-              )
+                })`;
+              })
               .join(" · ")}
             .
           </small>

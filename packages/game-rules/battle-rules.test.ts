@@ -54,7 +54,7 @@ describe("time_score + respawn limitado", () => {
       preset: "custom",
       teamSize: 2,
       params: {
-        respawn: { mode: "limited", respawnsPerBot: 2, delaySeconds: 5 },
+        respawn: { mode: "limited", maxRespawns: 2, delaySeconds: 5 },
         victory: "time_score",
         timeLimitMinutes: 5,
       },

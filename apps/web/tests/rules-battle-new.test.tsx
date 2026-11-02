@@ -133,7 +133,7 @@ describe("R-UI · conjunto de reglas en Nueva batalla", () => {
     const box = screen.getByTestId("rules-custom");
     await userEvent.selectOptions(within(box).getByLabelText("respawn"), "limited");
     const respawns = within(box).getByLabelText("Reapariciones por bot") as HTMLInputElement;
-    expect(respawns.max).toBe(String(RULES_LIMITS.respawnsPerBot.max));
+    expect(respawns.max).toBe(String(RULES_LIMITS.maxRespawns.max));
     await userEvent.clear(respawns);
     await userEvent.type(respawns, "3");
     expect(screen.getByTestId("rules-lives").textContent).toContain("4 vidas");
@@ -157,7 +157,7 @@ describe("R-UI · conjunto de reglas en Nueva batalla", () => {
       preset: "custom",
       teamSize: 1,
       params: {
-        respawn: { mode: "limited", respawnsPerBot: 3, delaySeconds: 5 },
+        respawn: { mode: "limited", maxRespawns: 3, delaySeconds: 5 },
         victory: "score_limit",
         scoreLimit: 10,
         timeLimitMinutes: 10,

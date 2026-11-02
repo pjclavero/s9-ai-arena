@@ -17,7 +17,12 @@ import { getCatalog } from "./catalog.js";
 import { loadRuleset, type Ruleset } from "../../../../packages/game-rules/index.js";
 import {
   BATTLE_RULES_SCHEMA,
+  READABLE_BATTLE_RULES_SCHEMAS,
+  TIEBREAK_RULES,
   checkComposition,
+  normalizeParams,
+  respawnLabel,
+  tiebreakFamilyOf,
   limitsOf,
   resolveRulesRequest,
   statsProfileOf,
@@ -249,7 +254,11 @@ export function rulesOf(row: Record<string, unknown> | undefined | null): Battle
   }
   if (!r || typeof r !== "object" || Array.isArray(r)) return null;
   const s = r as BattleRulesSnapshot;
-  return s.schema === BATTLE_RULES_SCHEMA && s.engineRuleset && typeof s.engineRuleset === "object" ? s : null;
+  if (!READABLE_BATTLE_RULES_SCHEMAS.includes(s.schema) || !s.engineRuleset || typeof s.engineRuleset !== "object") {
+    return null;
+  }
+  // Copias de schema 1 (rama previa a 0.4.0): se LEEN normalizadas, nunca se reescriben.
+  return s.params ? { ...s, params: normalizeParams(s.params) } : s;
 }
 
 /** Proyección pública de la copia (lo deportivo: sin nada de bots ni de propietarios). */
@@ -270,6 +279,9 @@ export function rulesToJson(s: BattleRulesSnapshot | null) {
     engineVersion: s.engineVersion,
     profile: statsProfileOf(s),
     summary: s.params ? summarizeParams(s.params) : [],
+    // ADR-022 · lectura humana del respawn y del desempate (lo que enseña la UI).
+    respawnLabel: s.params ? respawnLabel(s.params) : null,
+    tiebreak: s.params ? TIEBREAK_RULES[tiebreakFamilyOf(s.params)] : null,
     engine: {
       rulesetId: e.rulesetId,
       timeLimitTicks: e.timeLimitTicks,
@@ -277,6 +289,97 @@ export function rulesToJson(s: BattleRulesSnapshot | null) {
       respawn: e.respawn,
       friendlyFire: e.friendlyFire,
       timeoutTiebreak: e.timeoutTiebreak ?? ["score"],
+      ...(e.overtime ? { overtime: e.overtime } : {}),
+      ...(e.ctf ? { ctf: e.ctf } : {}),
     },
+  };
+}
+
+// ------------------------------------------------------------------- torneos
+
+export interface TournamentRulesInput {
+  mode: string;
+  rulesetId: string;
+  format: string;
+  /** Cuerpo `rules` de POST /tournaments; ausente = reglas clásicas del ruleset de plataforma. */
+  rules: unknown;
+  budgetCredits: number | null;
+  catalogVersion: string | null;
+}
+
+/**
+ * ADR-022 · COPIA INMUTABLE de las reglas de un TORNEO (`tournaments.rules`), hecha al
+ * crearlo. El scheduler la copia tal cual en cada batalla del torneo: cambiar después un
+ * preset, la tabla `rulesets` o el código del registro no altera el torneo.
+ *
+ * Límites de esta fase (documentados en docs/user/rules.md): en torneos no se aceptan
+ * todavía topes de composición por bot/equipo (el presupuesto del torneo sigue siendo
+ * `budgetCredits`, validado en la inscripción como siempre); el tamaño de bando del preset
+ * se comprueba al cerrar inscripciones.
+ */
+export async function buildTournamentRules(db: Db, input: TournamentRulesInput): Promise<BattleRulesSnapshot | null> {
+  const isTeams = input.format === "teams";
+  if (input.rules === undefined || input.rules === null) {
+    const engineRuleset = await classicEngineRuleset(db, input.mode, input.rulesetId);
+    if (!engineRuleset) return null;
+    return {
+      schema: BATTLE_RULES_SCHEMA,
+      source: "classic",
+      presetId: null,
+      presetVersion: null,
+      name: input.rulesetId,
+      mode: input.mode,
+      platformRulesetId: input.rulesetId,
+      params: null,
+      composition: limitsOf(null),
+      catalogVersion: input.catalogVersion,
+      // El presupuesto del torneo manda sobre el del ruleset (como en el worker, T9.4).
+      engineRuleset: input.budgetCredits ? { ...engineRuleset, budgetCredits: input.budgetCredits } : engineRuleset,
+      engineVersion: engineDeps.engine.version,
+    };
+  }
+  const r = resolveRulesRequest(input.rules);
+  if (!r.ok) throw rulesInvalid(r.errors);
+  if (r.mode !== input.mode) {
+    throw new RulesRejected(409, "rules_mode_mismatch", `${r.name} se juega en modo ${r.mode}, no ${input.mode}`, {
+      expectedMode: r.mode,
+    });
+  }
+  if (isTeams ? r.params.teamSize < 2 : r.params.teamSize !== 1) {
+    throw new RulesRejected(
+      400,
+      "rules_team_size",
+      isTeams
+        ? "un torneo por equipos necesita reglas de 2 contra 2 o más"
+        : `un torneo ${input.format} enfrenta bots de uno en uno: las reglas deben ser 1 contra 1`,
+      { teamSize: r.params.teamSize, format: input.format },
+    );
+  }
+  if (hasLimits(limitsOf(r.params))) {
+    throw rulesInvalid([
+      {
+        field: "rules.params",
+        code: "incompatible",
+        message:
+          "los topes de créditos/masa por bot o por equipo aún no se aplican en torneos: usa budgetCredits del torneo",
+      },
+    ]);
+  }
+  const engineRuleset = input.budgetCredits
+    ? { ...r.engineRuleset, budgetCredits: input.budgetCredits }
+    : r.engineRuleset;
+  return {
+    schema: BATTLE_RULES_SCHEMA,
+    source: r.source,
+    presetId: r.preset?.id ?? null,
+    presetVersion: r.preset?.version ?? null,
+    name: r.name,
+    mode: r.mode,
+    platformRulesetId: input.rulesetId,
+    params: r.params,
+    composition: limitsOf(r.params),
+    catalogVersion: input.catalogVersion,
+    engineRuleset,
+    engineVersion: engineDeps.engine.version,
   };
 }

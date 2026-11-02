@@ -332,7 +332,7 @@ test.describe("@rules R-RULES · batallas reales por conjunto de reglas", () => 
       preset: "custom",
       teamSize: 2,
       params: {
-        respawn: { mode: "limited", respawnsPerBot: 1, delaySeconds: 3 },
+        respawn: { mode: "limited", maxRespawns: 1, delaySeconds: 3 },
         victory: "elimination",
         timeLimitMinutes: 4,
         botCredits: 700,

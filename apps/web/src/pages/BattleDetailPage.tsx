@@ -553,8 +553,10 @@ function SidesStats({
 }) {
   // R-RULES (FASE 13) · sin métricas engañosas: con respawn ilimitado casi todos
   // «sobreviven»; las reapariciones sólo cuentan donde hay respawn.
-  const showSurvivors = profile !== "deathmatch" && profile !== "time";
-  const showRespawns = profile === "limited_respawn" || profile === "deathmatch" || profile === "time";
+  // CTF (ADR-022): reaparición ilimitada ⇒ «supervivientes» no dice nada; sí las reapariciones.
+  const showSurvivors = profile !== "deathmatch" && profile !== "time" && profile !== "capture_the_flag";
+  const showRespawns =
+    profile === "limited_respawn" || profile === "deathmatch" || profile === "time" || profile === "capture_the_flag";
   const showRemaining = profile === "limited_respawn";
   const groups = groupBySide(rows);
   const fromApi = Object.values(s.perTeam ?? {});

@@ -11,7 +11,11 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import {
+  CTF_OVERTIME_MAX_SECONDS,
+  TIEBREAK_RULES,
+  respawnLabel,
   summarizeParams,
+  tiebreakFamilyOf,
   type RulesParams,
   type RulesPreset,
   type CompositionReport,
@@ -21,6 +25,8 @@ export interface RulesCatalog {
   presets: RulesPreset[];
   custom: {
     defaults: Omit<RulesParams, "teamSize">;
+    /** ADR-022 · defectos del personalizado de CTF (los del preset base ctf@1). */
+    ctfDefaults?: Omit<RulesParams, "teamSize">;
     limits: Record<string, { min: number; max: number }>;
     maxParticipants: number;
   } | null;
@@ -39,9 +45,13 @@ export function rulesBody(choice: RulesChoice, teamSize: number): Record<string,
   const p = choice.params;
   // Sólo se envía lo que aplica: el servidor rechaza campos incompatibles.
   const respawn: Record<string, unknown> = { mode: p.respawn.mode };
-  if (p.respawn.mode === "limited") respawn.respawnsPerBot = p.respawn.respawnsPerBot;
+  if (p.respawn.mode === "limited") respawn.maxRespawns = p.respawn.maxRespawns;
   if (p.respawn.mode !== "none") respawn.delaySeconds = p.respawn.delaySeconds;
   const params: Record<string, unknown> = { respawn, victory: p.victory, timeLimitMinutes: p.timeLimitMinutes };
+  if (p.game === "capture_the_flag") {
+    params.game = "capture_the_flag";
+    if (p.ctf) params.ctf = { ...p.ctf };
+  }
   if (p.victory === "score_limit") params.scoreLimit = p.scoreLimit;
   for (const k of ["botCredits", "botMassKg"] as const) if (p[k] !== null) params[k] = p[k];
   if (teamSize > 1) {
@@ -49,6 +59,18 @@ export function rulesBody(choice: RulesChoice, teamSize: number): Record<string,
     params.friendlyFire = p.friendlyFire;
   }
   return { preset: "custom", teamSize, params };
+}
+
+/**
+ * ADR-022 · Modo de plataforma que FIJA una elección de reglas (null = «Clásico», deja
+ * elegir). CTF ⇒ capture_the_flag; el resto, deathmatch (1v1) o team_deathmatch.
+ */
+export function lockedModeOf(catalog: RulesCatalog, choice: RulesChoice, format: "1v1" | "team"): string | null {
+  if (choice.kind === "classic") return null;
+  const game =
+    choice.kind === "custom" ? choice.params.game : catalog.presets.find((x) => x.id === choice.presetId)?.game;
+  if (game === "capture_the_flag") return "capture_the_flag";
+  return format === "team" ? "team_deathmatch" : "deathmatch";
 }
 
 /** Preset por defecto de cada tipo de batalla. */
@@ -149,6 +171,7 @@ export function BattleRulesPicker(props: {
   const setCustom = (f: (p: Omit<RulesParams, "teamSize">) => Omit<RulesParams, "teamSize">) =>
     custom && props.onChange({ kind: "custom", params: f(custom) });
   const params = effectiveParams(catalog, choice, teamSize);
+  const ctf = custom?.game === "capture_the_flag";
   return (
     <fieldset data-testid="battle-rules">
       <legend>Conjunto de reglas</legend>
@@ -190,57 +213,98 @@ export function BattleRulesPicker(props: {
           checked={choice.kind === "classic"}
           onChange={() => props.onChange({ kind: "classic" })}
         />{" "}
-        <strong>Clásico</strong> · El ruleset de la plataforma de cada modo (incluye captura la bandera y control de
-        zona).
+        <strong>Clásico</strong> · El ruleset de la plataforma de cada modo (incluye control de zona), con sus reglas de
+        siempre.
       </label>
 
       {custom && (
         <div data-testid="rules-custom">
-          <label style={ROW}>
-            Respawn{" "}
-            <select
-              aria-label="respawn"
-              value={custom.respawn.mode}
-              onChange={(e) => {
-                const mode = e.target.value as RulesParams["respawn"]["mode"];
-                setCustom((p) => ({
-                  ...p,
-                  respawn: {
-                    mode,
-                    respawnsPerBot: mode === "limited" ? (p.respawn.respawnsPerBot ?? 2) : null,
-                    delaySeconds: mode === "none" ? null : (p.respawn.delaySeconds ?? 5),
-                  },
-                  // Combinaciones que el servidor rechaza: se corrigen al cambiar el respawn.
-                  victory:
-                    mode === "unlimited" && p.victory === "elimination"
-                      ? "score_limit"
-                      : mode !== "unlimited" && p.victory === "time_score"
-                        ? "elimination"
-                        : p.victory,
-                  scoreLimit: mode === "unlimited" && p.victory === "elimination" ? (p.scoreLimit ?? 10) : p.scoreLimit,
-                }));
-              }}
-            >
-              <option value="none">ninguno (1 vida)</option>
-              <option value="limited">limitado</option>
-              <option value="unlimited">ilimitado</option>
-            </select>
-          </label>
+          <p>
+            <small data-testid="rules-custom-scope">
+              El personalizado cambia sólo reglas competitivas (participantes, reapariciones, tiempo, objetivo,
+              presupuestos, masa, fuego amigo y opciones de CTF). La física, el daño, la vida, los sensores y la
+              munición no se pueden alterar.
+            </small>
+          </p>
+          {format === "team" && (
+            // CTF necesita bandos con base y bandera (rojo/azul): se juega desde «por equipos».
+            <label style={ROW}>
+              Juego{" "}
+              <select
+                aria-label="juego"
+                value={custom.game}
+                onChange={(e) => {
+                  const game = e.target.value as RulesParams["game"];
+                  const base =
+                    game === "capture_the_flag"
+                      ? (catalog.custom?.ctfDefaults ?? catalog.custom!.defaults)
+                      : catalog.custom!.defaults;
+                  props.onChange({ kind: "custom", params: structuredClone({ ...base, game }) });
+                }}
+              >
+                <option value="combat">Combate (bajas)</option>
+                <option value="capture_the_flag">Capturar la bandera</option>
+              </select>
+            </label>
+          )}
+          {!ctf && (
+            <label style={ROW}>
+              Reaparición{" "}
+              <select
+                aria-label="respawn"
+                value={custom.respawn.mode}
+                onChange={(e) => {
+                  const mode = e.target.value as RulesParams["respawn"]["mode"];
+                  setCustom((p) => ({
+                    ...p,
+                    respawn: {
+                      mode,
+                      maxRespawns: mode === "limited" ? (p.respawn.maxRespawns ?? 2) : null,
+                      delaySeconds: mode === "none" ? null : (p.respawn.delaySeconds ?? 5),
+                    },
+                    // Combinaciones que el servidor rechaza: se corrigen al cambiar el respawn.
+                    victory:
+                      mode === "unlimited" && p.victory === "elimination"
+                        ? "score_limit"
+                        : mode !== "unlimited" && p.victory === "time_score"
+                          ? "elimination"
+                          : p.victory,
+                    scoreLimit:
+                      mode === "unlimited" && p.victory === "elimination" ? (p.scoreLimit ?? 10) : p.scoreLimit,
+                  }));
+                }}
+              >
+                <option value="none">ninguna (1 vida)</option>
+                <option value="limited">limitada (maxRespawns)</option>
+                <option value="unlimited">ilimitada</option>
+              </select>
+            </label>
+          )}
+          {ctf && (
+            <p style={ROW}>
+              Reaparición: ilimitada <small>(en CTF la reaparición siempre es ilimitada)</small>
+            </p>
+          )}
           {custom.respawn.mode === "limited" && (
             <NumberField
-              label="Reapariciones por bot"
+              label="Reapariciones por bot (maxRespawns)"
               testid="rules-respawns"
-              value={custom.respawn.respawnsPerBot}
-              limit={L.respawnsPerBot}
-              onChange={(v) => setCustom((p) => ({ ...p, respawn: { ...p.respawn, respawnsPerBot: v } }))}
+              value={custom.respawn.maxRespawns}
+              limit={L.maxRespawns}
+              onChange={(v) => setCustom((p) => ({ ...p, respawn: { ...p.respawn, maxRespawns: v } }))}
             />
           )}
-          {custom.respawn.mode === "limited" && custom.respawn.respawnsPerBot !== null && (
-            <small data-testid="rules-lives"> = {custom.respawn.respawnsPerBot + 1} vidas por bot</small>
+          {custom.respawn.mode === "limited" && custom.respawn.maxRespawns !== null && (
+            <small data-testid="rules-lives">
+              {" "}
+              = {custom.respawn.maxRespawns + 1} {custom.respawn.maxRespawns + 1 === 1 ? "vida" : "vidas"} en total por
+              bot (la vida inicial + {custom.respawn.maxRespawns}{" "}
+              {custom.respawn.maxRespawns === 1 ? "reaparición" : "reapariciones"})
+            </small>
           )}
           {custom.respawn.mode !== "none" && (
             <NumberField
-              label="Tiempo para reaparecer"
+              label="Espera para reaparecer"
               testid="rules-delay"
               unit="s"
               value={custom.respawn.delaySeconds}
@@ -248,31 +312,33 @@ export function BattleRulesPicker(props: {
               onChange={(v) => setCustom((p) => ({ ...p, respawn: { ...p.respawn, delaySeconds: v } }))}
             />
           )}
-          <label style={ROW}>
-            Condición de victoria{" "}
-            <select
-              aria-label="victoria"
-              value={custom.victory}
-              onChange={(e) => {
-                const victory = e.target.value as RulesParams["victory"];
-                setCustom((p) => ({
-                  ...p,
-                  victory,
-                  scoreLimit: victory === "score_limit" ? (p.scoreLimit ?? 10) : null,
-                }));
-              }}
-            >
-              {custom.respawn.mode !== "unlimited" && <option value="elimination">eliminación</option>}
-              <option value="score_limit">límite de bajas</option>
-              {custom.respawn.mode === "unlimited" && <option value="time_score">puntos al acabar el tiempo</option>}
-            </select>
-          </label>
+          {!ctf && (
+            <label style={ROW}>
+              Condición de victoria{" "}
+              <select
+                aria-label="victoria"
+                value={custom.victory}
+                onChange={(e) => {
+                  const victory = e.target.value as RulesParams["victory"];
+                  setCustom((p) => ({
+                    ...p,
+                    victory,
+                    scoreLimit: victory === "score_limit" ? (p.scoreLimit ?? 10) : null,
+                  }));
+                }}
+              >
+                {custom.respawn.mode !== "unlimited" && <option value="elimination">eliminación</option>}
+                <option value="score_limit">límite de bajas</option>
+                {custom.respawn.mode === "unlimited" && <option value="time_score">puntos al acabar el tiempo</option>}
+              </select>
+            </label>
+          )}
           {custom.victory === "score_limit" && (
             <NumberField
-              label="Límite de bajas"
+              label={ctf ? "Capturas para ganar" : "Límite de bajas"}
               testid="rules-score"
               value={custom.scoreLimit}
-              limit={L.scoreLimit}
+              limit={ctf ? L.captures : L.scoreLimit}
               onChange={(v) => setCustom((p) => ({ ...p, scoreLimit: v }))}
             />
           )}
@@ -284,6 +350,37 @@ export function BattleRulesPicker(props: {
             limit={L.timeLimitMinutes}
             onChange={(v) => setCustom((p) => ({ ...p, timeLimitMinutes: v ?? 1 }))}
           />
+          {ctf && custom.ctf && (
+            <>
+              <NumberField
+                label="Retorno automático de la bandera"
+                testid="rules-flag-return"
+                unit="s"
+                value={custom.ctf.flagReturnSeconds}
+                limit={L.flagReturnSeconds}
+                onChange={(v) =>
+                  setCustom((p) => ({ ...p, ctf: { ...p.ctf!, flagReturnSeconds: v ?? p.ctf!.flagReturnSeconds } }))
+                }
+              />
+              <label style={ROW}>
+                <input
+                  type="checkbox"
+                  aria-label="bandera propia en base"
+                  checked={custom.ctf.requireOwnFlagAtBase}
+                  onChange={(e) =>
+                    setCustom((p) => ({ ...p, ctf: { ...p.ctf!, requireOwnFlagAtBase: e.target.checked } }))
+                  }
+                />{" "}
+                Exigir la bandera propia en su base para puntuar
+              </label>
+              <p style={ROW}>
+                <small data-testid="rules-overtime">
+                  Prórroga: si empatan al acabar el tiempo, se sigue jugando con el mismo estado y la siguiente captura
+                  gana; si en {CTF_OVERTIME_MAX_SECONDS / 60} minutos nadie captura, empate.
+                </small>
+              </p>
+            </>
+          )}
           <NumberField
             label="Créditos máximos por bot"
             testid="rules-bot-credits"
@@ -305,7 +402,7 @@ export function BattleRulesPicker(props: {
           {format === "team" && (
             <>
               <NumberField
-                label="Créditos máximos por equipo"
+                label="Presupuesto total del equipo"
                 testid="rules-team-credits"
                 unit="cr"
                 nullable
@@ -313,6 +410,13 @@ export function BattleRulesPicker(props: {
                 limit={L.teamCredits}
                 onChange={(v) => setCustom((p) => ({ ...p, teamCredits: v }))}
               />
+              {custom.teamCredits !== null && (
+                <small data-testid="rules-team-budget-help">
+                  {" "}
+                  Se reparte como quieras entre los bots del equipo (p. ej. 3500 cr: 1000 + 1000 + 600 + 900); el tope
+                  por bot es opcional.
+                </small>
+              )}
               <NumberField
                 label="Masa máxima por equipo"
                 testid="rules-team-mass"
@@ -329,7 +433,7 @@ export function BattleRulesPicker(props: {
                   checked={custom.friendlyFire}
                   onChange={(e) => setCustom((p) => ({ ...p, friendlyFire: e.target.checked }))}
                 />{" "}
-                Fuego amigo (un aliado destruido da un punto al rival)
+                Fuego amigo{ctf ? "" : " (un aliado destruido da un punto al rival)"}
               </label>
             </>
           )}
@@ -349,6 +453,20 @@ export function BattleRulesPicker(props: {
               <li key={l}>{l}</li>
             ))}
           </ul>
+          <p data-testid="rules-respawn-label">
+            <small>
+              {respawnLabel(params)}. «maxRespawns» es el número de veces que un bot puede volver tras morir: 0 = 1
+              vida, 1 = 2 vidas, 2 = 3 vidas.
+            </small>
+          </p>
+          <div data-testid="rules-tiebreak">
+            <strong>Desempate · {TIEBREAK_RULES[tiebreakFamilyOf(params)].label}</strong>
+            <ol>
+              {TIEBREAK_RULES[tiebreakFamilyOf(params)].steps.map((st) => (
+                <li key={st}>{st}</li>
+              ))}
+            </ol>
+          </div>
         </div>
       )}
     </fieldset>

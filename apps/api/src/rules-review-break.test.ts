@@ -88,7 +88,7 @@ const dm = (participants: P[], rules: unknown) =>
   body("deathmatch", "deathmatch-mvp", "mvp-arena-02", participants, rules);
 const custom = (teamSize: number, params: Record<string, unknown>) => ({ preset: "custom", teamSize, params });
 const LIM = {
-  respawn: { mode: "limited", respawnsPerBot: 2, delaySeconds: 5 },
+  respawn: { mode: "limited", maxRespawns: 2, delaySeconds: 5 },
   victory: "elimination",
   timeLimitMinutes: 10,
 };
@@ -138,7 +138,7 @@ describe("forma de la petición", () => {
       '{"mode":"team_deathmatch","rulesetId":"team-deathmatch-mvp","mapId":"mvp-arena-01","participants":' +
       JSON.stringify([...side(bots.slice(0, 2), "red"), ...side(bots.slice(4, 6), "blue")]) +
       ',"rules":{"preset":"custom","teamSize":2,"params":{"__proto__":{"botCredits":1},"constructor":1,' +
-      '"respawn":{"mode":"limited","respawnsPerBot":2,"delaySeconds":5},"victory":"elimination","timeLimitMinutes":10}}}';
+      '"respawn":{"mode":"limited","maxRespawns":2,"delaySeconds":5},"victory":"elimination","timeLimitMinutes":10}}}';
     const before = await counts();
     const r = await request(app)
       .post("/battles")
