@@ -18,10 +18,13 @@ import { api } from "../../api.js";
 import { MODE_NAME, modeName } from "../../battle-result.js";
 import { ENGINE_RULESETS, MODES, PLATFORM_MODES, RULE_CONSTANTS as C, VERSIONS } from "../sources.js";
 import { ENGINE_ONLY_MODE_NAME, TIEBREAK_NAME, humanize } from "../names.js";
-import { Note, Pending } from "../blocks.js";
+import { Note } from "../blocks.js";
 import { InfoTip } from "../InfoTip.js";
 import { helpHref } from "../tree.js";
 import type { Ruleset } from "../../../../../packages/game-rules/index.js";
+// Reglas OFICIALES (presets, desempates, prórroga, salvaguarda técnica): documento
+// canónico GENERADO desde el registro de reglas (scripts/generate-rules-doc.ts).
+import rulesDoc from "../../../../../docs/user/rules.json";
 
 // ------------------------------------------------------------ utilidades
 export const ticksToSeconds = (t: number) => t / C.TICK_HZ;
@@ -49,12 +52,8 @@ export function respawnText(r: Ruleset): string {
   return max === undefined ? `${base}, ilimitada` : `${base}, como máximo ${max} por vehículo`;
 }
 
-/** Criterios de desempate de PR #201 (`timeoutTiebreak`), si el ruleset los trae. Hoy (main) ninguno. */
-const TIMEOUT_CRITERION_NAME: Record<string, string> = {
-  score: "más puntos",
-  lives: "más vidas en juego",
-  hull: "más integridad de casco",
-};
+/** Criterios de desempate (`timeoutTiebreak`) de los presets oficiales: los MISMOS nombres de names.ts. */
+const TIMEOUT_CRITERION_NAME: Record<string, string> = TIEBREAK_NAME;
 
 /** Desempate al agotar el tiempo de un ruleset, desde el registro de modos (o el campo nuevo si existe). */
 export function tiebreakText(r: Ruleset): string {
@@ -294,6 +293,16 @@ export function ModeCaptureTheFlag() {
       </ul>
       <h4>Cómo termina</h4>
       <CommonEnd />
+      <h4>Preset oficial «Capturar la bandera»</h4>
+      <OfficialPreset id="ctf" />
+      <ul data-testid="help-ctf-overtime">
+        <li>
+          Si hay empate de capturas al acabar el tiempo, hay <strong>prórroga</strong> con el mismo estado: no se
+          reinician bots, banderas ni posiciones, y la siguiente captura gana.
+        </li>
+        <li>La prórroga no tiene límite de tiempo competitivo.</li>
+        <li data-testid="help-technical-limit">{TECHNICAL_LIMIT_TEXT}.</li>
+      </ul>
     </ModePage>
   );
 }
@@ -375,10 +384,9 @@ export function ModeElimination() {
           vivos y, si empatan, más derribos.
         </li>
       </ul>
-      <Pending testId="help-pending-elimination">
-        El preset oficial «Eliminación» lo está cerrando el equipo de reglas (PR #201, aún no está en esta versión).
-        Cuando se integre, esta página mostrará sus reglas reales.
-      </Pending>
+      <h4>Presets oficiales sin reaparición</h4>
+      <OfficialPreset id="team_elimination" />
+      <OfficialPreset id="duel" />
     </div>
   );
 }
@@ -386,14 +394,16 @@ export function ModeElimination() {
 export function ModeLimitedRespawn() {
   return (
     <div data-testid="help-mode-limited-respawn">
-      <p>
-        En esta versión la reaparición es <strong>ilimitada</strong> o <strong>no existe</strong>: un ruleset no puede
-        limitar el número de reapariciones.
-      </p>
-      <Pending testId="help-pending-limited-respawn">
-        El «Respawn limitado» (número máximo de reapariciones por vehículo) llega con el PR #201 del equipo de reglas.
-        Si un ruleset trae ese límite, las tablas de reglas de esta ayuda ya lo muestran («como máximo N por vehículo»).
-      </Pending>
+      <p data-testid="help-max-respawns">{rulesDoc.respawn.definition}</p>
+      <ul>
+        {rulesDoc.respawn.table.map((r) => (
+          <li key={r.maxRespawns}>
+            {r.maxRespawns} {r.maxRespawns === 1 ? "reaparición" : "reapariciones"} = {r.lives}{" "}
+            {r.lives === 1 ? "vida" : "vidas"} en total
+          </li>
+        ))}
+      </ul>
+      <OfficialPreset id="team_limited_respawn" />
     </div>
   );
 }
@@ -530,8 +540,7 @@ export function BattleRespawns() {
         </tbody>
       </table>
       <Note>
-        Respawn limitado (número máximo de reapariciones): <a href={helpHref("modos", "respawn-limitado")}>pendiente</a>
-        .
+        {rulesDoc.respawn.definition} Ver <a href={helpHref("modos", "respawn-limitado")}>Respawn limitado</a>.
       </Note>
     </div>
   );
@@ -591,11 +600,56 @@ export function BattleTiebreaks() {
         ))}
       </ul>
       <p>«Empate» significa que la batalla termina sin ganador: cuenta como empate (la E de V-D-E) en los torneos.</p>
-      <Pending testId="help-pending-tiebreaks">
-        El equipo de reglas está cerrando desempates nuevos (vidas en juego, integridad del casco) en el PR #201, que
-        aún no está en esta versión. Esta página no los da por hechos: cuando un ruleset los traiga, la tabla de{" "}
-        <a href={helpHref("referencia", "reglas")}>Reglas</a> los mostrará en su columna de desempate.
-      </Pending>
+      <h4>Presets oficiales y personalizado</h4>
+      <p>Se aplican en orden; el primer criterio que distingue decide:</p>
+      <OfficialTiebreaks />
+      <p data-testid="help-technical-limit-note">
+        <strong>Detenida por límite técnico</strong> no es un empate: {TECHNICAL_LIMIT_TEXT}.
+      </p>
+    </div>
+  );
+}
+
+// ------------------------------------------------ reglas oficiales (rules.json)
+type DocPreset = (typeof rulesDoc.presets)[number];
+const docPreset = (id: string): DocPreset | undefined => rulesDoc.presets.find((p) => p.id === id);
+/** Último punto de las reglas de CTF del documento: la salvaguarda técnica (sin resultado deportivo). */
+const TECHNICAL_LIMIT_TEXT = rulesDoc.ctf.rules[rulesDoc.ctf.rules.length - 1];
+
+/** Desempates EXACTOS de los presets oficiales y del personalizado, por familia. */
+export function OfficialTiebreaks() {
+  return (
+    <div data-testid="help-official-tiebreaks">
+      {rulesDoc.tiebreaks.map((t) => (
+        <div key={t.family} data-testid={`help-tiebreak-${t.family}`}>
+          <strong>{t.label}</strong>
+          <ol>
+            {t.steps.map((s) => (
+              <li key={s}>{s}</li>
+            ))}
+          </ol>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Ficha de un preset oficial (su versión vigente). */
+export function OfficialPreset(props: { id: string }) {
+  const p = docPreset(props.id);
+  if (!p) return null;
+  return (
+    <div data-testid={`help-preset-${p.id}`}>
+      <p>
+        <strong>{p.name}</strong> <code>{p.key}</code> ·{" "}
+        {p.format === "1v1" ? "1 contra 1" : p.teamSizes.map((n) => `${n}v${n}`).join(" / ")}
+      </p>
+      <p>{p.description}</p>
+      <ul>
+        {p.summary.map((l) => (
+          <li key={l}>{l}</li>
+        ))}
+      </ul>
     </div>
   );
 }

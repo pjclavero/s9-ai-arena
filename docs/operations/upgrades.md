@@ -348,11 +348,11 @@ esquema ([first-run.md](first-run.md#comandos-prohibidos-en-producción)).
 - **Datos:** sólo restauración desde restic ([restore.md](restore.md)). **No hay snapshots de VM**
   en la instalación de referencia: cualquier `qm rollback` de documentos anteriores apunta a
   snapshots que ya no existen ([TD-007](../roadmap/technical-debt.md#td-007)).
-- **Reglas de batalla y motor 0.4.0 (ADR-021/022, migración 015):**
+- **Reglas de batalla y motor 0.4.0 (ADR-021/022, migración 016):**
   - **Antes de desplegar:** que no haya batallas `running` (un checkpoint 0.3.0 no se reanuda con
     0.4.0). Copia de seguridad (`pg_dump -Fc`, `backup.md`) inmediatamente antes de migrar.
-  - **Migración 015** sólo añade `battles.rules` y `tournaments.rules` (jsonb, nullable); no toca
-    filas existentes. Probada en `apps/api/src/db/migration-015.test.ts` (upgrade con datos 014,
+  - **Migración 016** (`016_battle_rules`, detrás de `015_bot_retired`) sólo añade `battles.rules` y `tournaments.rules` (jsonb, nullable); no toca
+    filas existentes. Probada en `apps/api/src/db/migration-016.test.ts` (upgrade con datos previos,
     rollback, backup/restore lógico) y en un simulacro con `pg_dump -Fc`/`pg_restore` reales sobre
     `postgres:16-alpine` (informe del EQUIPO 2, 2026-11-02).
   - **Tras desplegar:** los replays 0.3.0 se verifican con 0.4.0 (`verifiedWith: "0.4.0"`); los 0.2.0
@@ -371,7 +371,7 @@ esquema ([first-run.md](first-run.md#comandos-prohibidos-en-producción)).
 
   Las batallas `running` con copia deben terminar (o marcarse `failed` igual) antes de parar el
   worker nuevo. Un motor 0.3.0 dará `engine_version_mismatch` («otra versión», no «manipulado») a los
-  replays 0.4.0. `rollback:1` de la 015 borra las copias de reglas (no resultados ni replays).
+  replays 0.4.0. `rollback:1` de la 016 borra las copias de reglas (no resultados ni replays).
 
 ## Errores / limitaciones
 

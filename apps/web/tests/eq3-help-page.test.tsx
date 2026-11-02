@@ -261,11 +261,48 @@ describe("EQ3 Centro de Ayuda · contenido desde las fuentes de verdad", () => {
     for (const l of RANKING_EMPTY_LINES) expect(empty.textContent).toContain(l);
   });
 
-  it("Desempates: lo de hoy desde el registro de modos y lo de PR #201 marcado como pendiente", async () => {
+  it("Desempates: registro de modos (clásicos) y los oficiales de docs/user/rules.json (EQ2, motor 0.4.0)", async () => {
     installFetch("ok");
     await show("#/help/batallas/desempates");
     expect(screen.getByTestId("help-tiebreak-modes").textContent).toMatch(/Control de zona.*más puntos.*empate/);
-    expect(screen.getByTestId("help-pending-tiebreaks").textContent).toMatch(/NOT TESTED.*PR #201/);
+    expect(screen.queryByTestId("help-pending-tiebreaks")).toBeNull();
+    const steps = (fam: string) =>
+      [...screen.getByTestId(`help-tiebreak-${fam}`).querySelectorAll("li")].map((l) => l.textContent);
+    expect(steps("elimination")).toEqual([
+      "más bots vivos",
+      "más vidas/reapariciones restantes",
+      "más bajas",
+      "empate",
+    ]);
+    expect(steps("limited_respawn")).toEqual([
+      "más puntos",
+      "más bots vivos",
+      "más reapariciones restantes",
+      "más bajas",
+      "empate",
+    ]);
+    expect(steps("deathmatch")).toEqual(["más puntos", "más bajas", "empate"]);
+    expect(steps("capture_the_flag").join(" ")).toMatch(/siguiente captura gana/);
+    expect(steps("capture_the_flag").join(" ")).not.toMatch(/3 min/);
+    const tl = screen.getByTestId("help-technical-limit-note").textContent ?? "";
+    expect(tl).toMatch(/Detenida por límite técnico.*no es un empate/);
+    expect(tl).toMatch(/SIN resultado deportivo/);
+  });
+
+  it("CTF: prórroga sin tope y salvaguarda técnica sin resultado deportivo; respawn limitado ya no pendiente", async () => {
+    installFetch("ok");
+    await show("#/help/modos/capture_the_flag");
+    const ot = screen.getByTestId("help-ctf-overtime").textContent ?? "";
+    expect(ot).toMatch(/siguiente captura gana/);
+    expect(ot).toMatch(/no tiene límite de tiempo competitivo/);
+    expect(screen.getByTestId("help-technical-limit").textContent).toMatch(
+      /sin resultado deportivo|SIN resultado deportivo/,
+    );
+    expect(screen.getByTestId("help-preset-ctf").textContent).toContain("ctf@1");
+    cleanup();
+    await show("#/help/modos/respawn-limitado");
+    expect(screen.queryByTestId("help-pending-limited-respawn")).toBeNull();
+    expect(screen.getByTestId("help-max-respawns").textContent).toMatch(/maxRespawns/);
   });
 
   it("Mapas: la paleta es la del editor real", async () => {

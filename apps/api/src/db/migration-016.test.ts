@@ -1,14 +1,14 @@
 /**
- * EQ2 · Migración 015_battle_rules (ADR-021/022) contra PostgreSQL REAL:
+ * EQ2 · Migración 016_battle_rules (la 015 es 015_bot_retired, PR #209) (ADR-021/022) contra PostgreSQL REAL:
  *  1. UPGRADE con datos de una base en 014 (batalla terminada 0.3.0 con replay, torneo y
  *     participantes): ninguna fila cambia y NO se rellenan copias (una batalla histórica
  *     no se reescribe como si hubiera usado reglas nuevas);
  *  2. ROLLBACK: las columnas se van, el resto de datos queda idéntico;
- *  3. BACKUP / RESTORE de datos de prueba: copia lógica de las tablas afectadas en 015
+ *  3. BACKUP / RESTORE de datos de prueba: copia lógica de las tablas afectadas en 016
  *     (con copias de reglas), rollback + upgrade (que pierde las copias: la vuelta atrás es
  *     destructiva SÓLO para ellas, documentado) y restauración: todo vuelve, copias incluidas.
  * El simulacro con `pg_dump`/`pg_restore` reales (imagen postgres) está en
- * docs/operations/upgrades.md § «Migración 015» (no hay pg_dump en el PG embebido de CI).
+ * docs/operations/upgrades.md § «Migración 016» (no hay pg_dump en el PG embebido de CI).
  */
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -59,7 +59,7 @@ afterAll(async () => {
   await h.stop();
 });
 
-describe("migración 015_battle_rules", () => {
+describe("migración 016_battle_rules", () => {
   it("es la última y sólo añade battles.rules y tournaments.rules (nullable)", async () => {
     expect(RULES).toMatch(/^\d{3}_battle_rules$/);
     expect(MIGRATIONS.at(-1)!.name).toBe(RULES);
@@ -73,7 +73,7 @@ describe("migración 015_battle_rules", () => {
     ]);
   });
 
-  it("upgrade 014 → 015 con datos, rollback y backup/restore", async () => {
+  it("upgrade (base en la migración anterior) → 016 con datos, rollback y backup/restore", async () => {
     // --- base en 014 con datos históricos ------------------------------------
     await rollbackLast(h.db);
     expect(await lastMigration()).toBe(PREVIOUS);
@@ -132,7 +132,7 @@ describe("migración 015_battle_rules", () => {
     const hist = (await h.db("battles").where({ id: battleId }).first()) as Record<string, any>;
     expect(hist.engine_versions.engine).toBe("0.3.0");
 
-    // Datos nuevos en 015: una batalla con copia de reglas.
+    // Datos nuevos en 016: una batalla con copia de reglas.
     const newId = randomUUID();
     const copy = { schema: 2, source: "preset", presetId: "duel", presetVersion: 1, engineVersion: "0.4.0" };
     await h.db("battles").insert({
@@ -149,7 +149,7 @@ describe("migración 015_battle_rules", () => {
       .where({ id: t.id })
       .update({ rules: JSON.stringify({ schema: 2, source: "classic" }) });
 
-    // --- 3a. BACKUP lógico en 015 ---------------------------------------------
+    // --- 3a. BACKUP lógico en 016 ---------------------------------------------
     const backup = await dump();
 
     // --- 2. ROLLBACK -----------------------------------------------------------

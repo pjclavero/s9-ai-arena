@@ -830,8 +830,8 @@ const m014_battle_diagnostics: Migration = {
 // «Mis bots» sin borrar versiones, batallas ni replays, y sin cambiar qué
 // versiones pueden jugar (eso lo sigue decidiendo el estado de cada versión).
 // Aditiva y reversible desde la API (PATCH /bots/{id} { retired }).
-// NOTA DE INTEGRACIÓN: el PR #201 (reglas) también usa el número 015; quien
-// mergee segundo renumera la suya a 016 (lo exige migrations-order.test.ts).
+// NOTA DE INTEGRACIÓN: el PR #201 (reglas), que entró después, renumeró la suya a
+// 016_battle_rules (lo exige migrations-order.test.ts).
 const m015_bot_retired: Migration = {
   name: "015_bot_retired",
   async up(db) {
@@ -852,10 +852,10 @@ const m015_bot_retired: Migration = {
 //
 // SÓLO añade dos columnas nullable: no toca ninguna fila existente (ni batallas, ni
 // replays, ni torneos) y NO las rellena: una batalla histórica no se reescribe como si
-// hubiera usado reglas nuevas. Probado en `migration-015.test.ts` (upgrade con datos,
+// hubiera usado reglas nuevas. Probado en `migration-016.test.ts` (upgrade con datos,
 // rollback, backup/restore con pg_dump/psql de datos de prueba).
-const m015_battle_rules: Migration = {
-  name: "015_battle_rules",
+const m016_battle_rules: Migration = {
+  name: "016_battle_rules",
   async up(db) {
     await db.raw(`ALTER TABLE battles ADD COLUMN rules jsonb`);
     await db.raw(`ALTER TABLE tournaments ADD COLUMN rules jsonb`);
@@ -884,7 +884,7 @@ export const MIGRATIONS: Migration[] = [
   m013_battle_claim,
   m014_battle_diagnostics,
   m015_bot_retired,
-  m015_battle_rules,
+  m016_battle_rules,
 ];
 
 class ProgrammaticMigrationSource {
