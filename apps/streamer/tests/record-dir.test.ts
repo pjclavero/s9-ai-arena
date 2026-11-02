@@ -19,7 +19,7 @@
  * DENTRO del directorio que el preflight validó.
  */
 import { afterEach, describe, expect, it } from "vitest";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { createServer } from "node:net";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,6 +27,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildFfmpegArgs } from "../src/ffmpeg.js";
 import { loadConfig } from "../src/config.js";
+import { killTree, spawnService } from "../../../packages/test-process/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = join(__dirname, "..", "..", "..");
@@ -34,8 +35,9 @@ const TSX = join(REPO, "node_modules", ".bin", "tsx");
 const MAIN = join(REPO, "apps", "streamer", "src", "main.ts");
 
 const vivos: ChildProcessWithoutNullStreams[] = [];
-afterEach(() => {
-  for (const p of vivos.splice(0)) p.kill("SIGKILL");
+// EQ1 · se mata el ÁRBOL (envoltorio tsx + servicio + ffmpeg/chromium), no sólo el envoltorio.
+afterEach(async () => {
+  await Promise.all(vivos.splice(0).map((p) => killTree(p)));
 });
 
 async function puertoLibre(): Promise<number> {
@@ -91,7 +93,7 @@ interface Arranque {
 /** Lanza el servicio real y espera a que escuche o muera. No hay tercer camino. */
 async function arrancar(env: Record<string, string>): Promise<Arranque> {
   const port = await puertoLibre();
-  const proc = spawn(process.execPath, [TSX, MAIN], {
+  const proc = spawnService(process.execPath, [TSX, MAIN], {
     cwd: REPO,
     env: { ...process.env, STREAMER_CONTROL_PORT: String(port), ...env },
     stdio: ["ignore", "pipe", "pipe"],
