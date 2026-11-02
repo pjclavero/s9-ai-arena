@@ -1,0 +1,553 @@
+{
+  "schema": 1,
+  "$comment": "GENERADO desde packages/game-rules/battle-rules.ts (npx tsx scripts/generate-rules-doc.ts). No editar a mano.",
+  "engineVersion": "0.4.0",
+  "respawn": {
+    "definition": "maxRespawns es el número de veces que un bot puede REAPARECER después de morir. Vidas totales = maxRespawns + 1.",
+    "table": [
+      {
+        "maxRespawns": 0,
+        "lives": 1
+      },
+      {
+        "maxRespawns": 1,
+        "lives": 2
+      },
+      {
+        "maxRespawns": 2,
+        "lives": 3
+      }
+    ],
+    "modes": {
+      "none": "sin reaparición: 1 vida",
+      "limited": "limitada: maxRespawns entre 0 y 10",
+      "unlimited": "ilimitada"
+    }
+  },
+  "tiebreaks": [
+    {
+      "family": "elimination",
+      "label": "Eliminación (sin reaparición)",
+      "criteria": [
+        "alive",
+        "lives",
+        "kills"
+      ],
+      "steps": [
+        "más bots vivos",
+        "más vidas/reapariciones restantes",
+        "más bajas",
+        "empate"
+      ]
+    },
+    {
+      "family": "limited_respawn",
+      "label": "Respawn limitado",
+      "criteria": [
+        "score",
+        "alive",
+        "respawns_left",
+        "kills"
+      ],
+      "steps": [
+        "más puntos",
+        "más bots vivos",
+        "más reapariciones restantes",
+        "más bajas",
+        "empate"
+      ]
+    },
+    {
+      "family": "deathmatch",
+      "label": "Team Deathmatch / reaparición ilimitada",
+      "criteria": [
+        "score",
+        "kills"
+      ],
+      "steps": [
+        "más puntos",
+        "más bajas",
+        "empate"
+      ]
+    },
+    {
+      "family": "capture_the_flag",
+      "label": "Capturar la bandera",
+      "criteria": [],
+      "steps": [
+        "más capturas",
+        "si empatan al acabar el tiempo: prórroga con el mismo estado (no se reinician bots, banderas ni posiciones)",
+        "en la prórroga, la siguiente captura gana",
+        "si en 3 minutos de prórroga nadie captura (límite de seguridad): empate"
+      ]
+    }
+  ],
+  "ctf": {
+    "basePreset": "ctf@1",
+    "overtimeMaxSeconds": 180,
+    "rules": [
+      "cada equipo tiene bandera y base",
+      "tocar la bandera rival a distancia válida (2 m) la recoge",
+      "el portador puede seguir combatiendo",
+      "si el portador muere o lo descalifican, la bandera cae donde estaba",
+      "un enemigo puede recoger una bandera caída; un compañero del equipo propietario puede devolverla tocándola",
+      "una bandera caída que nadie toca vuelve sola a su base tras el retorno automático configurado",
+      "llevar la bandera rival a la base propia puntúa una captura",
+      "por defecto, la bandera propia debe estar en su base para puntuar",
+      "al capturar, la bandera rival vuelve a su base",
+      "si hay empate al acabar el tiempo: prórroga con el mismo estado (no se reinician bots, banderas ni posiciones); la siguiente captura gana; si en 3 minutos nadie captura, empate (límite de seguridad)"
+    ]
+  },
+  "presets": [
+    {
+      "key": "duel@1",
+      "id": "duel",
+      "version": 1,
+      "name": "Duelo",
+      "format": "1v1",
+      "game": "combat",
+      "teamSizes": [
+        1
+      ],
+      "tagline": "Una vida. Sin reaparición.",
+      "description": "Gana el último bot operativo. Límite de 5 minutos; si se agota: gana el bot vivo; si siguen los dos, más bajas; si no, empate.",
+      "respawn": "Sin reaparición (1 vida)",
+      "tiebreakFamily": "elimination",
+      "summary": [
+        "Reaparición: Sin reaparición (1 vida)",
+        "Victoria: eliminación",
+        "Tiempo máximo: 5 min",
+        "Desempate: más bots vivos → más vidas/reapariciones restantes → más bajas → empate"
+      ],
+      "params": {
+        "game": "combat",
+        "respawn": {
+          "mode": "none",
+          "maxRespawns": null,
+          "delaySeconds": null
+        },
+        "victory": "elimination",
+        "scoreLimit": null,
+        "timeLimitMinutes": 5,
+        "botCredits": null,
+        "teamCredits": null,
+        "botMassKg": null,
+        "teamMassKg": null,
+        "friendlyFire": false,
+        "ctf": null
+      }
+    },
+    {
+      "key": "combat@1",
+      "id": "combat",
+      "version": 1,
+      "name": "Combate",
+      "format": "1v1",
+      "game": "combat",
+      "teamSizes": [
+        1
+      ],
+      "tagline": "Reapariciones y límite de bajas.",
+      "description": "Reaparición ilimitada a los 5 s. Gana el primero en llegar a 5 bajas. Límite de seguridad de 10 minutos: más puntos, luego más bajas; si no, empate.",
+      "respawn": "Reaparición ilimitada",
+      "tiebreakFamily": "deathmatch",
+      "summary": [
+        "Reaparición: Reaparición ilimitada",
+        "Espera de reaparición: 5 s",
+        "Victoria: 5 bajas",
+        "Tiempo máximo: 10 min",
+        "Desempate: más puntos → más bajas → empate"
+      ],
+      "params": {
+        "game": "combat",
+        "respawn": {
+          "mode": "unlimited",
+          "maxRespawns": null,
+          "delaySeconds": 5
+        },
+        "victory": "score_limit",
+        "scoreLimit": 5,
+        "timeLimitMinutes": 10,
+        "botCredits": null,
+        "teamCredits": null,
+        "botMassKg": null,
+        "teamMassKg": null,
+        "friendlyFire": false,
+        "ctf": null
+      }
+    },
+    {
+      "key": "endurance@1",
+      "id": "endurance",
+      "version": 1,
+      "name": "Resistencia",
+      "format": "1v1",
+      "game": "combat",
+      "teamSizes": [
+        1
+      ],
+      "tagline": "Gana quien consiga más puntos antes de terminar el tiempo.",
+      "description": "5 minutos fijos con reaparición ilimitada a los 5 s. Al acabar: más puntos, luego más bajas; si no, empate.",
+      "respawn": "Reaparición ilimitada",
+      "tiebreakFamily": "deathmatch",
+      "summary": [
+        "Reaparición: Reaparición ilimitada",
+        "Espera de reaparición: 5 s",
+        "Victoria: más puntos al acabar el tiempo",
+        "Duración: 5 min",
+        "Desempate: más puntos → más bajas → empate"
+      ],
+      "params": {
+        "game": "combat",
+        "respawn": {
+          "mode": "unlimited",
+          "maxRespawns": null,
+          "delaySeconds": 5
+        },
+        "victory": "time_score",
+        "scoreLimit": null,
+        "timeLimitMinutes": 5,
+        "botCredits": null,
+        "teamCredits": null,
+        "botMassKg": null,
+        "teamMassKg": null,
+        "friendlyFire": false,
+        "ctf": null
+      }
+    },
+    {
+      "key": "team_elimination@1",
+      "id": "team_elimination",
+      "version": 1,
+      "name": "Eliminación por equipos",
+      "format": "team",
+      "game": "combat",
+      "teamSizes": [
+        2,
+        3,
+        4
+      ],
+      "tagline": "Sin reaparición. Pierde el equipo que se queda sin vehículos.",
+      "description": "Cada bot tiene una sola vida. Gana el equipo que conserve algún vehículo operativo. Límite de 8 minutos: más bots vivos, luego más vidas restantes, luego más bajas; si no, empate.",
+      "respawn": "Sin reaparición (1 vida)",
+      "tiebreakFamily": "elimination",
+      "summary": [
+        "Reaparición: Sin reaparición (1 vida)",
+        "Victoria: eliminación",
+        "Tiempo máximo: 8 min",
+        "Fuego amigo: desactivado",
+        "Desempate: más bots vivos → más vidas/reapariciones restantes → más bajas → empate"
+      ],
+      "params": {
+        "game": "combat",
+        "respawn": {
+          "mode": "none",
+          "maxRespawns": null,
+          "delaySeconds": null
+        },
+        "victory": "elimination",
+        "scoreLimit": null,
+        "timeLimitMinutes": 8,
+        "botCredits": null,
+        "teamCredits": null,
+        "botMassKg": null,
+        "teamMassKg": null,
+        "friendlyFire": false,
+        "ctf": null
+      }
+    },
+    {
+      "key": "team_limited_respawn@1",
+      "id": "team_limited_respawn",
+      "version": 1,
+      "name": "Respawn limitado",
+      "format": "team",
+      "game": "combat",
+      "teamSizes": [
+        2,
+        3,
+        4
+      ],
+      "tagline": "2 reapariciones por bot (3 vidas). Gana el último equipo en pie.",
+      "description": "Cada bot puede reaparecer 2 veces (maxRespawns = 2: 3 vidas en total) a los 5 s. Gana el equipo que conserve vidas. Límite de 10 minutos: más puntos, luego más bots vivos, luego más reapariciones restantes, luego más bajas; si no, empate.",
+      "respawn": "2 reapariciones por bot (3 vidas en total)",
+      "tiebreakFamily": "limited_respawn",
+      "summary": [
+        "Reaparición: 2 reapariciones por bot (3 vidas en total)",
+        "Espera de reaparición: 5 s",
+        "Victoria: eliminación",
+        "Tiempo máximo: 10 min",
+        "Fuego amigo: desactivado",
+        "Desempate: más puntos → más bots vivos → más reapariciones restantes → más bajas → empate"
+      ],
+      "params": {
+        "game": "combat",
+        "respawn": {
+          "mode": "limited",
+          "maxRespawns": 2,
+          "delaySeconds": 5
+        },
+        "victory": "elimination",
+        "scoreLimit": null,
+        "timeLimitMinutes": 10,
+        "botCredits": null,
+        "teamCredits": null,
+        "botMassKg": null,
+        "teamMassKg": null,
+        "friendlyFire": false,
+        "ctf": null
+      }
+    },
+    {
+      "key": "team_deathmatch@1",
+      "id": "team_deathmatch",
+      "version": 1,
+      "name": "Team Deathmatch",
+      "format": "team",
+      "game": "combat",
+      "teamSizes": [
+        2,
+        3,
+        4
+      ],
+      "tagline": "Reaparición ilimitada. Gana el primer equipo en llegar a 10 bajas.",
+      "description": "Reaparición ilimitada a los 5 s; cada baja enemiga es un punto. Gana el primer equipo en llegar a 10. Límite de seguridad de 8 minutos: más puntos, luego más bajas; si no, empate.",
+      "respawn": "Reaparición ilimitada",
+      "tiebreakFamily": "deathmatch",
+      "summary": [
+        "Reaparición: Reaparición ilimitada",
+        "Espera de reaparición: 5 s",
+        "Victoria: 10 bajas",
+        "Tiempo máximo: 8 min",
+        "Fuego amigo: desactivado",
+        "Desempate: más puntos → más bajas → empate"
+      ],
+      "params": {
+        "game": "combat",
+        "respawn": {
+          "mode": "unlimited",
+          "maxRespawns": null,
+          "delaySeconds": 5
+        },
+        "victory": "score_limit",
+        "scoreLimit": 10,
+        "timeLimitMinutes": 8,
+        "botCredits": null,
+        "teamCredits": null,
+        "botMassKg": null,
+        "teamMassKg": null,
+        "friendlyFire": false,
+        "ctf": null
+      }
+    },
+    {
+      "key": "team_endurance@1",
+      "id": "team_endurance",
+      "version": 1,
+      "name": "Resistencia por equipos",
+      "format": "team",
+      "game": "combat",
+      "teamSizes": [
+        2,
+        3,
+        4
+      ],
+      "tagline": "Tiempo fijo. Gana el equipo con más puntos al terminar.",
+      "description": "5 minutos fijos con reaparición ilimitada a los 5 s. Al acabar: más puntos, luego más bajas; si no, empate.",
+      "respawn": "Reaparición ilimitada",
+      "tiebreakFamily": "deathmatch",
+      "summary": [
+        "Reaparición: Reaparición ilimitada",
+        "Espera de reaparición: 5 s",
+        "Victoria: más puntos al acabar el tiempo",
+        "Duración: 5 min",
+        "Fuego amigo: desactivado",
+        "Desempate: más puntos → más bajas → empate"
+      ],
+      "params": {
+        "game": "combat",
+        "respawn": {
+          "mode": "unlimited",
+          "maxRespawns": null,
+          "delaySeconds": 5
+        },
+        "victory": "time_score",
+        "scoreLimit": null,
+        "timeLimitMinutes": 5,
+        "botCredits": null,
+        "teamCredits": null,
+        "botMassKg": null,
+        "teamMassKg": null,
+        "friendlyFire": false,
+        "ctf": null
+      }
+    },
+    {
+      "key": "ctf@1",
+      "id": "ctf",
+      "version": 1,
+      "name": "Capturar la bandera",
+      "format": "team",
+      "game": "capture_the_flag",
+      "teamSizes": [
+        2,
+        3,
+        4
+      ],
+      "tagline": "3 capturas para ganar. Empate al tiempo ⇒ prórroga: la siguiente captura gana.",
+      "description": "Cada equipo tiene bandera y base. Tocar la bandera rival la recoge; el portador puede seguir combatiendo; si muere, la bandera cae: un rival puede recogerla y un compañero del dueño devolverla; si nadie la toca vuelve sola a su base a los 10 s. Llevar la bandera rival a tu base puntúa si la tuya está en su base. Gana quien llegue a 3 capturas o tenga más al acabar los 5 minutos. Empate ⇒ prórroga con el mismo estado: la siguiente captura gana; si en 3 minutos nadie captura, empate. Reaparición ilimitada a los 5 s; sin fuego amigo.",
+      "respawn": "Reaparición ilimitada",
+      "tiebreakFamily": "capture_the_flag",
+      "summary": [
+        "Reaparición: Reaparición ilimitada",
+        "Espera de reaparición: 5 s",
+        "Victoria: 3 capturas",
+        "Tiempo máximo: 5 min",
+        "Retorno automático de la bandera: 10 s",
+        "Bandera propia en base para puntuar: sí",
+        "Prórroga: la siguiente captura gana (máx. 3 min; si nadie captura, empate)",
+        "Fuego amigo: desactivado",
+        "Desempate: más capturas → si empatan al acabar el tiempo: prórroga con el mismo estado (no se reinician bots, banderas ni posiciones) → en la prórroga, la siguiente captura gana → si en 3 minutos de prórroga nadie captura (límite de seguridad): empate"
+      ],
+      "params": {
+        "game": "capture_the_flag",
+        "respawn": {
+          "mode": "unlimited",
+          "maxRespawns": null,
+          "delaySeconds": 5
+        },
+        "victory": "score_limit",
+        "scoreLimit": 3,
+        "timeLimitMinutes": 5,
+        "botCredits": null,
+        "teamCredits": null,
+        "botMassKg": null,
+        "teamMassKg": null,
+        "friendlyFire": false,
+        "ctf": {
+          "flagReturnSeconds": 10,
+          "requireOwnFlagAtBase": true
+        }
+      }
+    }
+  ],
+  "presetHistory": [
+    "duel@1",
+    "combat@1",
+    "endurance@1",
+    "team_elimination@1",
+    "team_limited_respawn@1",
+    "team_deathmatch@1",
+    "team_endurance@1",
+    "ctf@1"
+  ],
+  "custom": {
+    "limits": {
+      "teamSize": {
+        "min": 1,
+        "max": 4
+      },
+      "maxRespawns": {
+        "min": 0,
+        "max": 10
+      },
+      "delaySeconds": {
+        "min": 1,
+        "max": 30
+      },
+      "scoreLimit": {
+        "min": 1,
+        "max": 100
+      },
+      "captures": {
+        "min": 1,
+        "max": 10
+      },
+      "timeLimitMinutes": {
+        "min": 1,
+        "max": 30
+      },
+      "flagReturnSeconds": {
+        "min": 1,
+        "max": 60
+      },
+      "botCredits": {
+        "min": 200,
+        "max": 5000
+      },
+      "teamCredits": {
+        "min": 200,
+        "max": 20000
+      },
+      "botMassKg": {
+        "min": 500,
+        "max": 10000
+      },
+      "teamMassKg": {
+        "min": 500,
+        "max": 40000
+      }
+    },
+    "maxParticipants": 8,
+    "allowed": [
+      "participantes: 1v1, 2v2, 3v3 o 4v4 (2 bandos de exactamente N bots)",
+      "reaparición: ninguna, limitada (maxRespawns) o ilimitada",
+      "espera de reaparición (segundos)",
+      "tiempo máximo (minutos)",
+      "objetivo: bajas para ganar o capturas para ganar (CTF)",
+      "condición de victoria: eliminación, límite de bajas o más puntos al acabar el tiempo",
+      "créditos máximos por bot y presupuesto total por equipo (reparto libre entre bots)",
+      "masa máxima por bot y por equipo",
+      "fuego amigo (sólo por equipos)",
+      "CTF: capturas para ganar, retorno automático de la bandera y si se exige la bandera propia en base"
+    ],
+    "forbidden": [
+      "damageMultiplier",
+      "gravity",
+      "speed",
+      "speedMultiplier",
+      "hp",
+      "hullHp",
+      "sensors",
+      "sensorRange",
+      "infiniteAmmo",
+      "ammo",
+      "physics",
+      "mass",
+      "energy"
+    ],
+    "forbiddenText": "No se pueden alterar: multiplicadores de daño, gravedad, velocidad, vida (HP), sensores, munición infinita ni parámetros físicos internos.",
+    "teamBudgetExample": {
+      "teamCredits": 3500,
+      "bots": {
+        "ATK-1": 1000,
+        "ATK-2": 1000,
+        "SCOUT": 600,
+        "DEF": 900
+      }
+    }
+  },
+  "maps": [
+    {
+      "mode": "deathmatch",
+      "name": "Deathmatch",
+      "requirement": "al menos 2 spawns"
+    },
+    {
+      "mode": "team_deathmatch",
+      "name": "Deathmatch por equipos",
+      "requirement": "spawns de al menos 2 bandos"
+    },
+    {
+      "mode": "capture_the_flag",
+      "name": "Capturar la bandera",
+      "requirement": "base Y bandera de al menos 2 equipos; cada bando de la batalla debe tener las suyas (rojo/azul)"
+    },
+    {
+      "mode": "zone_control",
+      "name": "Control de zona",
+      "requirement": "al menos una zona de captura"
+    }
+  ],
+  "snapshots": "Las reglas se copian de forma INMUTABLE en cada batalla y en cada torneo al crearlos. Cambiar después un preset (o crear su versión siguiente) no altera batallas ni torneos existentes."
+}
