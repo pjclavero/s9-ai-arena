@@ -49,6 +49,13 @@ async function lastMigration(): Promise<string> {
   const r = await h.db("knex_migrations").orderBy("id", "desc").first();
   return r.name;
 }
+// EQ5b · cambio mínimo: con 017_streaming_admin detrás, 016 ya no es la última. Se
+// revierten primero las posteriores (no tocan estas tablas) y después la 016.
+const LATEST = MIGRATIONS.at(-1)!.name;
+async function rollbackRules(): Promise<void> {
+  while ((await lastMigration()) !== RULES) await rollbackLast(h.db);
+  await rollbackLast(h.db);
+}
 
 beforeAll(async () => {
   h = await startTestDb();
@@ -60,10 +67,9 @@ afterAll(async () => {
 });
 
 describe("migración 016_battle_rules", () => {
-  it("es la última y sólo añade battles.rules y tournaments.rules (nullable)", async () => {
+  it("está aplicada y sólo añade battles.rules y tournaments.rules (nullable)", async () => {
     expect(RULES).toMatch(/^\d{3}_battle_rules$/);
-    expect(MIGRATIONS.at(-1)!.name).toBe(RULES);
-    expect(await lastMigration()).toBe(RULES);
+    expect(await lastMigration()).toBe(LATEST);
     const r = await h.db.raw(
       `SELECT table_name, is_nullable, data_type FROM information_schema.columns WHERE column_name = 'rules' AND table_name IN ('battles','tournaments') ORDER BY table_name`,
     );
@@ -75,7 +81,7 @@ describe("migración 016_battle_rules", () => {
 
   it("upgrade (base en la migración anterior) → 016 con datos, rollback y backup/restore", async () => {
     // --- base en 014 con datos históricos ------------------------------------
-    await rollbackLast(h.db);
+    await rollbackRules();
     expect(await lastMigration()).toBe(PREVIOUS);
     expect(await columns("battles")).not.toContain("rules");
     expect(await columns("tournaments")).not.toContain("rules");
@@ -120,7 +126,7 @@ describe("migración 016_battle_rules", () => {
 
     // --- 1. UPGRADE ------------------------------------------------------------
     await migrateToLatest(h.db);
-    expect(await lastMigration()).toBe(RULES);
+    expect(await lastMigration()).toBe(LATEST);
     const afterUp = await dump();
     expect(strip(afterUp.battles, "rules")).toEqual(before.battles);
     expect(strip(afterUp.tournaments, "rules")).toEqual(before.tournaments);
@@ -153,7 +159,7 @@ describe("migración 016_battle_rules", () => {
     const backup = await dump();
 
     // --- 2. ROLLBACK -----------------------------------------------------------
-    await rollbackLast(h.db);
+    await rollbackRules();
     expect(await lastMigration()).toBe(PREVIOUS);
     expect(await columns("battles")).not.toContain("rules");
     expect(await columns("tournaments")).not.toContain("rules");

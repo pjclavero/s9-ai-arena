@@ -868,6 +868,75 @@ const m016_battle_rules: Migration = {
   },
 };
 
+// EQ5b · Administración → Streaming (encargo «Administración de Streaming desde la
+// web», §19). Lo NO sensible en la BD:
+//  - streaming_settings: UNA fila (id = 1) con la configuración vigente y `version`
+//    para concurrencia optimista;
+//  - streaming_credentials: METADATOS de la clave de emisión por plataforma y el
+//    SOBRE sellado con la clave PÚBLICA (RSA-OAEP-256, packages/stream-secrets).
+//    Nada en claro: ni la API ni un volcado de la BD pueden abrirlo (la privada
+//    sólo la tiene el streamer). `last4` es lo único legible (para «****ABCD»);
+//  - streaming_sessions: historial de emisiones; el índice único parcial impide
+//    DOS sesiones activas a la vez a nivel de BD.
+// La auditoría va a `audit_log` (sólo inserción), con acciones `streaming.*`.
+// Aditiva: no toca ninguna tabla existente. Probado en `migration-017.test.ts`
+// (upgrade con datos, rollback y backup/restore).
+const m017_streaming_admin: Migration = {
+  name: "017_streaming_admin",
+  async up(db) {
+    await db.raw(`
+      CREATE TABLE streaming_settings (
+        id                 smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+        enabled            boolean NOT NULL DEFAULT false,
+        mode               text NOT NULL DEFAULT 'record' CHECK (mode IN ('rtmps','record')),
+        platform           text NOT NULL DEFAULT 'youtube' CHECK (platform ~ '^[a-z0-9_-]{1,32}$'),
+        ingest_url         text CHECK (ingest_url IS NULL OR (ingest_url LIKE 'rtmps://%' AND length(ingest_url) <= 512)),
+        encoder            text NOT NULL DEFAULT 'x264' CHECK (encoder IN ('x264','nvenc')),
+        preset             text NOT NULL DEFAULT '1080p' CHECK (preset IN ('1080p','720p')),
+        fps                smallint NOT NULL DEFAULT 30 CHECK (fps IN (30,60)),
+        video_bitrate_kbps integer NOT NULL DEFAULT 4500 CHECK (video_bitrate_kbps BETWEEN 1000 AND 12000),
+        branding           jsonb NOT NULL DEFAULT '{}',
+        retention          jsonb NOT NULL DEFAULT '{"enabled":false,"maxAgeDays":14,"maxTotalBytes":null}',
+        version            integer NOT NULL DEFAULT 1,
+        updated_at         timestamptz NOT NULL DEFAULT now(),
+        updated_by         uuid REFERENCES users(id) ON DELETE SET NULL
+      );
+      INSERT INTO streaming_settings (id) VALUES (1);
+
+      CREATE TABLE streaming_credentials (
+        platform   text PRIMARY KEY CHECK (platform ~ '^[a-z0-9_-]{1,32}$'),
+        sealed     jsonb NOT NULL,
+        key_id     text NOT NULL CHECK (key_id ~ '^[0-9a-f]{16}$'),
+        last4      text NOT NULL CHECK (length(last4) <= 4),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        updated_by uuid REFERENCES users(id) ON DELETE SET NULL
+      );
+
+      CREATE TABLE streaming_sessions (
+        id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        state       text NOT NULL CHECK (state IN ('active','stopped','failed')),
+        mode        text NOT NULL CHECK (mode IN ('rtmps','record')),
+        target_kind text CHECK (target_kind IN ('battle','tournament')),
+        target_id   uuid,
+        config      jsonb NOT NULL,
+        started_by  uuid REFERENCES users(id) ON DELETE SET NULL,
+        started_at  timestamptz NOT NULL DEFAULT now(),
+        stopped_by  uuid REFERENCES users(id) ON DELETE SET NULL,
+        stopped_at  timestamptz,
+        stop_reason text,
+        CHECK ((target_kind IS NULL) = (target_id IS NULL))
+      );
+      CREATE UNIQUE INDEX streaming_sessions_one_active ON streaming_sessions ((true)) WHERE state = 'active';
+      CREATE INDEX streaming_sessions_started ON streaming_sessions (started_at DESC);
+    `);
+  },
+  // Destructivo SÓLO para la configuración de streaming, los sobres sellados y el
+  // historial de sesiones; la auditoría (audit_log) se conserva.
+  async down(db) {
+    await db.raw(`DROP TABLE streaming_sessions; DROP TABLE streaming_credentials; DROP TABLE streaming_settings;`);
+  },
+};
+
 export const MIGRATIONS: Migration[] = [
   m001_identity,
   m002_content,
@@ -885,6 +954,7 @@ export const MIGRATIONS: Migration[] = [
   m014_battle_diagnostics,
   m015_bot_retired,
   m016_battle_rules,
+  m017_streaming_admin,
 ];
 
 class ProgrammaticMigrationSource {

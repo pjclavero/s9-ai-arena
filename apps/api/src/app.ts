@@ -34,6 +34,8 @@ import { resolveTrustProxyHops } from "./middleware/proxy-trust.js";
 import type { BotManagerClient } from "./services/bot-manager.js";
 import { QueueBotManager } from "./services/bot-manager.js";
 import { keyRoutes } from "./routes/keys.js";
+import { streamingRoutes } from "./routes/streaming.js";
+import { streamerClientFromEnv, type StreamerClient } from "./services/streamer-client.js";
 import type { BotBuildLimiters } from "./routes/bots.js";
 
 export interface AppConfig {
@@ -91,6 +93,14 @@ export interface AppConfig {
    * tests; en producción se resuelve del entorno.
    */
   metricsEnabled?: boolean;
+  /**
+   * EQ5b · Administración → Streaming: cliente de la API interna de control del
+   * streamer (por defecto, de STREAMER_CONTROL_URL) y clave PÚBLICA de sellado
+   * (por defecto, de STREAM_SECRETS_PUBLIC_KEY_FILE). Inyectables en tests.
+   */
+  streamer?: StreamerClient;
+  streamingPublicKey?: () => { pem: string; kid: string } | null;
+  broadcastBaseUrl?: string;
 }
 
 export function createApp(cfg: AppConfig): express.Express {
@@ -157,6 +167,14 @@ export function createApp(cfg: AppConfig): express.Express {
   app.use(keyRoutes());
   app.use(catalogRoutes(cfg.db));
   app.use(adminRoutes(cfg.db));
+  app.use(
+    streamingRoutes(cfg.db, {
+      streamer: cfg.streamer ?? streamerClientFromEnv(),
+      publicKey: cfg.streamingPublicKey,
+      broadcastBaseUrl: cfg.broadcastBaseUrl,
+      setGauge: (n, v) => metricsRegistry.setGauge(n, v),
+    }),
+  );
   const realBattleRuns = cfg.realBattleRuns ?? battleRunConfigFromEnv();
   const publicSpectateEnabled = cfg.publicSpectateEnabled ?? publicSpectateEnabledFromEnv();
   const publicReplaysEnabled = cfg.publicReplaysEnabled ?? publicReplaysEnabledFromEnv();
