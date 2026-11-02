@@ -10,7 +10,7 @@
  *  - varios ⓘ en la misma pantalla tienen ids distintos.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { InfoTip, INFOTIP_CSS } from "../src/help/InfoTip.js";
 
@@ -169,8 +169,8 @@ describe("EQ3 InfoTip · foco perdido (EQ6-P3)", () => {
     close.focus();
     close.blur(); // el foco cae en <body>
     fireEvent.blur(close, { relatedTarget: null });
-    await new Promise((r) => setTimeout(r, 5));
-    expect(screen.queryByRole("dialog")).toBeNull();
+    // El cierre se decide en un setTimeout(0) y React lo pinta después: se espera al efecto.
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
   it("blur sin relatedTarget pero con el foco aún dentro (la ventana perdió el foco) NO cierra", async () => {
@@ -179,7 +179,7 @@ describe("EQ3 InfoTip · foco perdido (EQ6-P3)", () => {
     const dlg = screen.getByRole("dialog");
     expect(document.activeElement).toBe(dlg);
     fireEvent.blur(dlg, { relatedTarget: null });
-    await new Promise((r) => setTimeout(r, 5));
+    await new Promise((r) => setTimeout(r, 50));
     expect(screen.getByRole("dialog")).toBeTruthy();
   });
 
