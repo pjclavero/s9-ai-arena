@@ -29,6 +29,8 @@ export interface RtmpMessage {
 const EXT = 0xffffff;
 /** Tope de un mensaje entrante: el relé sólo recibe comandos y control. */
 const MAX_INCOMING_MESSAGE = 1024 * 1024;
+/** EQ5c (P3) · tope agregado de mensajes entrantes a medias (todos los csid). */
+const MAX_PARTIAL_TOTAL = 2 * 1024 * 1024;
 
 function basicHeader(fmt: number, csid: number): Buffer {
   if (csid < 2 || csid > 63) throw new Error(`csid fuera de rango: ${csid}`);
@@ -79,6 +81,8 @@ export class ChunkReader {
   private buf: Buffer = Buffer.alloc(0);
   private chunkSize = 128;
   private readonly streams = new Map<number, StreamState>();
+  /** EQ5c (P3) · bytes de mensajes entrantes a medias, sumados en TODOS los csid. */
+  private partialBytes = 0;
 
   setChunkSize(n: number): void {
     if (!Number.isInteger(n) || n < 1 || n > 0x7fffffff) throw new Error("tamaño de chunk inválido");
@@ -170,10 +174,19 @@ export class ChunkReader {
     } else {
       hasExt = st.hasExt;
     }
+    // EQ5c (P3) · tope AGREGADO: el de MAX_INCOMING_MESSAGE es por mensaje, y un
+    // servidor hostil podría abrir miles de csid con mensajes a medias.
+    if (st.received + n < st.length && this.partialBytes + n > MAX_PARTIAL_TOTAL) {
+      throw new Error("demasiados datos RTMP entrantes a medias");
+    }
     st.parts.push(b.subarray(p, p + n));
     st.received += n;
     this.buf = b.subarray(p + n);
-    if (st.received < st.length) return undefined;
+    if (st.received < st.length) {
+      this.partialBytes += n;
+      return undefined;
+    }
+    this.partialBytes -= st.received - n;
     const payload = Buffer.concat(st.parts);
     st.parts = [];
     st.received = 0;

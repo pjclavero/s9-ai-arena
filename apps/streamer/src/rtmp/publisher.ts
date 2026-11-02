@@ -114,6 +114,12 @@ export interface PublisherOptions {
   target: IngestTarget;
   streamKey: string;
   connectTimeoutMs?: number;
+  /**
+   * EQ5c (P2-1) · Plazo de CADA orden RTMP tras el handshake (connect,
+   * createStream, publish). Vencido, el relé falla y cierra el socket. Por
+   * defecto, el mismo que `connectTimeoutMs`.
+   */
+  commandTimeoutMs?: number;
   /** Inyectable en tests (servidor RTMP falso). Por defecto TCP/TLS reales. */
   dial?: (t: IngestTarget) => Duplex;
 }
@@ -181,11 +187,24 @@ export class RtmpPublisher extends EventEmitter {
     return (k ? s.split(k).join("***") : s).slice(0, 300);
   }
 
-  /** Conecta y PUBLICA. Resuelve con NetStream.Publish.Start. */
+  /**
+   * Conecta y PUBLICA. Resuelve con NetStream.Publish.Start.
+   *
+   * EQ5c (revisión EQ6b, P1) · Cualquier fallo del arranque —también el rechazo
+   * EXPLÍCITO de la ingesta (`_error` a `connect`, `onStatus BadName` a
+   * `publish`) o un plazo vencido— pasa por `fail()`: cierra el socket y emite
+   * 'error', que es lo que escucha el supervisor (estado, `lastError`
+   * redactado, reintento). Antes sólo se rechazaba la promesa y el supervisor
+   * la tragaba: la emisión se quedaba «streaming» con el relé en `connecting`.
+   */
   async start(): Promise<void> {
-    await this.open();
-    await this.connectApp();
-    await this.publish();
+    try {
+      await this.open();
+      await this.connectApp();
+      await this.publish();
+    } catch (e) {
+      throw this.failWith(e);
+    }
   }
 
   /**
@@ -195,8 +214,12 @@ export class RtmpPublisher extends EventEmitter {
    */
   async probe(): Promise<{ tlsVerified: boolean; connectMs: number }> {
     const t0 = Date.now();
-    await this.open();
-    await this.connectApp();
+    try {
+      await this.open();
+      await this.connectApp();
+    } catch (e) {
+      throw this.failWith(e);
+    }
     const connectMs = Date.now() - t0;
     this.close();
     return { tlsVerified: this.opts.target.protocol === "rtmps", connectMs };
@@ -245,6 +268,18 @@ export class RtmpPublisher extends EventEmitter {
   }
 
   // ── internos ──────────────────────────────────────────────────────────────
+
+  /** Normaliza un fallo, lo hace pasar por `fail()` (idempotente) y lo devuelve para relanzarlo. */
+  private failWith(e: unknown): RelayError {
+    const err =
+      e instanceof RelayError ? e : new RelayError(`relé RTMP: ${this.redact((e as Error)?.message ?? e)}`, "protocol");
+    this.fail(err);
+    return err;
+  }
+
+  private get commandTimeoutMs(): number {
+    return this.opts.commandTimeoutMs ?? this.opts.connectTimeoutMs ?? 10_000;
+  }
 
   private fail(err: RelayError): void {
     if (this.failed) return;
@@ -371,7 +406,8 @@ export class RtmpPublisher extends EventEmitter {
         }
         if (name === "onStatus") {
           const info = (vals[3] ?? {}) as Amf0Object;
-          const code = String(info.code ?? "");
+          // EQ5c (P3) · el `code` también viene del servidor: se redacta como la descripción.
+          const code = this.redact(info.code ?? "").slice(0, 80);
           const desc = this.redact(info.description ?? "");
           if (this.onPublishStatus) this.onPublishStatus(code, desc);
           else if (/Failed|Error|Rejected|BadName|Unpublish/i.test(code) && this.state_ === "publishing") {
@@ -405,7 +441,16 @@ export class RtmpPublisher extends EventEmitter {
   private call(name: string, args: Amf0Value[], streamId = 0): Promise<Amf0Value[]> {
     const id = ++this.txn;
     return new Promise((resolve, reject) => {
+      // EQ5c (P2-1) · plazo por orden: una ingesta que completa el handshake y
+      // calla ya no cuelga el relé (ni /control/test) para siempre.
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        const err = new RelayError(`la ingesta no respondió a ${name} a tiempo`, "timeout");
+        reject(err);
+        this.fail(err);
+      }, this.commandTimeoutMs);
       this.pending.set(id, (res, vals) => {
+        clearTimeout(timer);
         if (res === "_result") return resolve(vals);
         const info = (vals[3] ?? {}) as Amf0Object;
         reject(
@@ -436,11 +481,17 @@ export class RtmpPublisher extends EventEmitter {
     if (typeof sid !== "number" || sid <= 0) throw new RelayError("createStream sin id de stream", "protocol");
     this.publishStreamId = sid;
     await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.onPublishStatus = null;
+        reject(new RelayError("la ingesta no confirmó la publicación a tiempo", "timeout"));
+      }, this.commandTimeoutMs);
       this.onPublishStatus = (code, desc) => {
         if (code === "NetStream.Publish.Start") {
+          clearTimeout(timer);
           this.onPublishStatus = null;
           resolve();
         } else if (/Failed|Error|Rejected|BadName|Denied/i.test(code)) {
+          clearTimeout(timer);
           this.onPublishStatus = null;
           reject(new RelayError(`la ingesta rechazó la publicación (${code}${desc ? `: ${desc}` : ""})`, "rejected"));
         }
