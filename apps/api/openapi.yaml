@@ -385,6 +385,10 @@ paths:
         - name: ownerId
           in: query
           schema: { type: string }
+        - name: includeCounts
+          in: query
+          description: 'EQ4 · con `true` y `ownerId` igual al usuario autenticado, añade `counts` (total/activos/retirados de TODOS sus bots, no sólo de la página). Con otro ownerId se ignora.'
+          schema: { type: string, enum: ['true', 'false'] }
       responses:
         '200': { description: Bots, content: { application/json: { schema: { $ref: '#/components/schemas/BotPage' } } } }
     post:
@@ -1779,6 +1783,13 @@ components:
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/Bot' } }
         nextCursor: { type: string }
+        counts:
+          type: object
+          description: 'EQ4 · sólo con includeCounts=true sobre los bots propios.'
+          properties:
+            total: { type: integer }
+            active: { type: integer }
+            retired: { type: integer }
 
     BotVersion:
       type: object
