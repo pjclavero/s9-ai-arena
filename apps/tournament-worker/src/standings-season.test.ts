@@ -292,6 +292,24 @@ describe("STANDINGS_POLICY = official_played_not_reverted", () => {
     expect(await h.db("rating_events").where({ battle_id: tech })).toHaveLength(0);
   });
 
+  it("bye (pasar ronda sin rival) no es un enfrentamiento disputado: no hace aparecer ni suma", async () => {
+    const [a, b, c] = await createBots(h.db, 3, "pbye");
+    const t = await tournament({ season: "Sbye", bots: [a, b, c] });
+    await h.db("matches").insert({
+      tournament_id: t,
+      round: 1,
+      slot: "BYE1",
+      state: "finished",
+      pairing: JSON.stringify({ slot: "BYE1", round: 1, bracket: "main", home: c.botId, away: null, bye: true }),
+      winner_bot_id: c.botId,
+    });
+    await played(t, a, b, "home");
+    await update(t);
+    const rows = await table("Sbye");
+    expect(vde(rows, c)).toBeNull();
+    expect(vde(rows, a)).toEqual([1, 0, 0]);
+  });
+
   it("práctica (no oficial) no cuenta aunque cuelgue de un torneo", async () => {
     const [a, b] = await createBots(h.db, 2, "p10");
     const t = await tournament({ season: "S10", bots: [a, b] });
