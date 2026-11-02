@@ -28,7 +28,7 @@ En una batalla juega una **versión publicada** concreta de cada bot, con el **l
 
 ## Crear una batalla de práctica
 
-Pantalla «Nueva batalla de práctica»:
+Pantalla «Nueva batalla» (crea una batalla de práctica: no oficial, no cuenta para el ranking):
 
 | Campo | Qué eliges |
 |---|---|

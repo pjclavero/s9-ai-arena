@@ -17,11 +17,13 @@ import type { Request } from "express";
 import type { Db } from "../db/connection.js";
 import { badRequest } from "../errors.js";
 import { whereBotIdentifiable } from "../battle-access.js";
+import { PLATFORM_MODES, type PlatformMode } from "../routes/catalog.js";
 
 type Auth = Request["auth"];
 
-export const REPLAY_MODES = ["deathmatch", "team_deathmatch", "capture_the_flag", "zone_control"] as const;
-export type ReplayMode = (typeof REPLAY_MODES)[number];
+// Rev. EQ6 P3 · una sola fuente: los modos de la plataforma (routes/catalog.ts).
+export const REPLAY_MODES = PLATFORM_MODES;
+export type ReplayMode = PlatformMode;
 export const REPLAY_RESULTS = ["win", "loss", "draw", "aborted"] as const;
 export type ReplayResultFilter = (typeof REPLAY_RESULTS)[number];
 

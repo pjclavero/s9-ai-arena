@@ -7,7 +7,8 @@
  * oculta no se desvíe de lo que el servidor permite, cada pantalla declara las
  * operaciones del contrato que consume (`operations`, operationId de
  * apps/api/openapi.yaml) y el rol mínimo que exige (`minRole`). El test
- * `eq4-admin-nav.test.tsx` comprueba contra el contrato que `minRole` es el
+ * `apps/web/tests/eq4-ux-navegacion.test.tsx` (bloque «RBAC del apartado
+ * Administración») comprueba contra el contrato que `minRole` es el
  * máximo de los `x-min-role` de esas operaciones y que `ROLE_ORDER` es la misma
  * jerarquía que usa el servidor (ROLES de apps/api/src/db/migrations.ts). El
  * rango del usuario se calcula igual que en el middleware del servidor: el

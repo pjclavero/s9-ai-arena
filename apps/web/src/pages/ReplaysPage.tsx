@@ -21,6 +21,7 @@
  * por cursor (`nextCursor`); «Anterior» recuerda los cursores ya recorridos.
  * Sin ningún filtro la petición es exactamente la de siempre (`GET /replays`).
  */
+import { PLATFORM_MODES } from "../map-editor/model.js";
 import { useEffect, useId, useState, type FormEvent } from "react";
 import { api } from "../api.js";
 import { useResource, ResourceView } from "../resource.js";
@@ -52,12 +53,10 @@ export function formatTicksAsDuration(ticks: number): string {
 }
 
 /** Modos con su nombre humano (el de CTF lleva la sigla, que es como se le conoce). */
-export const REPLAY_MODE_OPTIONS: [string, string][] = [
-  ["deathmatch", MODE_NAME.deathmatch],
-  ["team_deathmatch", MODE_NAME.team_deathmatch],
-  ["capture_the_flag", `${MODE_NAME.capture_the_flag} (CTF)`],
-  ["zone_control", MODE_NAME.zone_control],
-];
+export const REPLAY_MODE_OPTIONS: [string, string][] = PLATFORM_MODES.map((m) => [
+  m,
+  m === "capture_the_flag" ? `${MODE_NAME[m]} (CTF)` : MODE_NAME[m],
+]);
 
 export const REPLAY_RESULT_OPTIONS: [string, string][] = [
   ["win", "Victoria"],

@@ -29,7 +29,7 @@ Tu bot es un programa en Python o JavaScript (Node). Diez veces por segundo reci
 | 4 | Subir código | «Mis bots» → «Subir código (pegado)» | **FUNCIONA ACTUALMENTE** |
 | 5 | Enviar a validación | «Enviar a validación vN» | **PARCIAL**: se procesa, pero termina siempre en `rejected` ([TD-001](../roadmap/technical-debt.md#td-001)) |
 | 6 | Publicar la versión | «Publicar vN» | **PENDIENTE**: el botón sólo aparece en versiones `validated`, y hoy ninguna llega a ese estado |
-| 7 | Jugar una batalla de práctica | «Batallas» → «+ Nueva batalla de práctica» | **PENDIENTE**: 400 «rulesetId desconocido» ([TD-003](../roadmap/technical-debt.md#td-003)) |
+| 7 | Jugar una batalla de práctica | «Batallas» → «+ Nueva batalla» | **PENDIENTE**: 400 «rulesetId desconocido» ([TD-003](../roadmap/technical-debt.md#td-003)) |
 | 8 | Inscribirse en un torneo | «Torneos» | **PARCIAL**: requiere una versión publicada |
 | 9 | Ver la batalla | Visor / replay | Replay **FUNCIONA ACTUALMENTE**; directo **PARCIAL** ([viewer.md](viewer.md), [replays.md](replays.md)) |
 | 10 | Ver tu posición | «Ranking» | **PARCIAL**: sale vacío |
