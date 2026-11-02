@@ -51,6 +51,8 @@ class FakeStreamer implements StreamerClient {
         desired: this.state === "streaming",
         capabilities: { nvenc: this.nvenc, sealedCredentials: true },
         lastError: null,
+        // EQ5d · como el streamer real: con la emisión en marcha, el relé publica.
+        relay: { state: this.state === "streaming" ? "publishing" : null, bytesOut: 0 },
         stats: { frames: 1 },
       });
     }

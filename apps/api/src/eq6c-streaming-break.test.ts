@@ -69,7 +69,11 @@ class GatedStreamer implements StreamerClient {
       if (this.stopDelayMs) await sleep(Math.random() * this.stopDelayMs);
       this.emitting = false;
       this.onStopEffect?.();
-      if (this.holdStopAfter) await this.holdStopAfter;
+      // EQ5d · la retención es de UN solo stop (el de B): el stop correctivo que
+      // hace A al detectar la cancelación no puede quedar retenido tras el de B.
+      const hold = this.holdStopAfter;
+      this.holdStopAfter = null;
+      if (hold) await hold;
       return ok({ state: "stopped" });
     }
     if (path === "/recordings") {
@@ -231,7 +235,13 @@ describe("EQ6c · P2-4 · entre DOS instancias (lo que el autor afirma cubrir co
     releaseStop(); // ahora B marca la sesión como parada
     const rb = await b;
     const inv = await invariant();
-    expect({ a: ra.status, b: rb.status }).toEqual({ a: 201, b: 200 });
+    // EQ5d · con el stop marcando la BD ANTES de llamar al streamer, la
+    // recomprobación de A ve la sesión parada: A se para y responde 409.
+    expect({ a: ra.status, aError: ra.body.error, b: rb.status }).toEqual({
+      a: 409,
+      aError: "start_cancelled",
+      b: 200,
+    });
     // Invariante: el streamer emite ⇔ hay una sesión activa.
     expect(inv).toEqual({ emitting: false, activeSessions: 0 });
   }, 30_000);
@@ -250,7 +260,11 @@ describe("EQ6c · P2-4 · entre DOS instancias (lo que el autor afirma cubrir co
     releaseStop();
     const rb = await b;
     const inv = await invariant();
-    expect({ a: ra.status, b: rb.status }).toEqual({ a: 200, b: 200 });
+    expect({ a: ra.status, aError: ra.body.error, b: rb.status }).toEqual({
+      a: 409,
+      aError: "not_active",
+      b: 200,
+    });
     expect(inv).toEqual({ emitting: false, activeSessions: 0 });
   }, 30_000);
 });
