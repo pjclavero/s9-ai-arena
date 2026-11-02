@@ -59,6 +59,8 @@ interface Bot {
   name: string;
   visibility: string;
   latestPublishedVersion?: number;
+  /** EQ4 · retirado (organizativo) o null/ausente = activo. */
+  retiredAt?: string | null;
 }
 interface BotVersion {
   version: number;
@@ -151,6 +153,28 @@ export function versionInBattles(versions: { version: number; state: string }[])
 export function matchBotDetailRoute(hash: string): string | null {
   const m = /^#\/bots\/([^/?#]+)/.exec(hash);
   return m ? decodeURIComponent(m[1]) : null;
+}
+
+/** EQ4 · visibilidad en palabras. */
+const VISIBILITY_TEXT: Record<string, string> = { private: "privado", team: "de equipo", public: "público" };
+
+/** EQ4 · secciones del detalle del bot (id del ancla en la página, texto). */
+const BOT_SECTIONS: ReadonlyArray<readonly [string, string]> = [
+  ["bot-sec-loadout", "Loadout"],
+  ["bot-sec-code", "Código / Versiones"],
+  ["bot-sec-build", "Build / Pipeline"],
+];
+
+function scrollToSection(id: string) {
+  // El pipeline sólo existe tras una subida; si no, el estado de la última versión.
+  const el =
+    document.getElementById(id) ??
+    (id === "bot-sec-build" ? document.querySelector<HTMLElement>('[data-testid="focused-version"]') : null);
+  if (!el) return;
+  el.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  const focusable = el.querySelector<HTMLElement>("h2, h3") ?? el;
+  if (!focusable.hasAttribute("tabindex")) focusable.setAttribute("tabindex", "-1");
+  focusable.focus({ preventScroll: true });
 }
 
 export function BotsPage(props: Parameters<typeof BotsListPage>[0]) {
@@ -555,41 +579,70 @@ function BotsListPage(props: {
     reloadLoadouts();
   }
 
+  const botItem = (b: Bot) => (
+    <li key={b.id} data-testid={`bot-item-${b.id}`}>
+      <button
+        type="button"
+        className="link master-item"
+        aria-current={selected?.id === b.id ? "true" : undefined}
+        onClick={() => {
+          setSelected(b);
+          setFocusRequest(null);
+        }}
+      >
+        {b.name}
+      </button>{" "}
+      <small>
+        ({VISIBILITY_TEXT[b.visibility] ?? b.visibility}
+        {b.latestPublishedVersion ? `, v${b.latestPublishedVersion} publicada` : ""})
+      </small>{" "}
+      <a href={`#/battles?bot=${encodeURIComponent(b.id)}`}>batallas</a>{" "}
+      <a href={`#/bots/${encodeURIComponent(b.id)}`} data-testid={`bot-detail-link-${b.id}`}>
+        detalle y versiones
+      </a>
+    </li>
+  );
+
+  async function setRetired(bot: Bot, retired: boolean) {
+    setError("");
+    try {
+      const updated = await api<Bot>("PATCH", `/bots/${bot.id}`, { retired });
+      setSelected((s) => (s && s.id === bot.id ? { ...s, retiredAt: updated?.retiredAt ?? (retired ? "retirado" : null) } : s));
+      reloadBots();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
   return (
-    <div>
-      <div className="card">
+    <div className="master-detail" data-testid="bots-master-detail">
+      <div className="card master-list">
         <h2>Mis bots</h2>
         <ResourceView resource={botsRes} label="tus bots" onRetry={reloadBots}>
-          {(page) =>
-            page.items.length === 0 ? (
-              <p>Aún no tienes bots: crea el primero abajo.</p>
-            ) : (
-              <ul>
-                {page.items.map((b) => (
-                  <li key={b.id}>
-                    <button
-                      type="button"
-                      className="link"
-                      onClick={() => {
-                        setSelected(b);
-                        setFocusRequest(null);
-                      }}
-                    >
-                      {b.name}
-                    </button>{" "}
-                    <small>
-                      ({b.visibility}
-                      {b.latestPublishedVersion ? `, v${b.latestPublishedVersion} publicada` : ""})
-                    </small>{" "}
-                    <a href={`#/battles?bot=${encodeURIComponent(b.id)}`}>batallas</a>{" "}
-                    <a href={`#/bots/${encodeURIComponent(b.id)}`} data-testid={`bot-detail-link-${b.id}`}>
-                      detalle y versiones
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            )
-          }
+          {(page) => {
+            if (page.items.length === 0) return <p>Aún no tienes bots: crea el primero abajo.</p>;
+            // EQ4 · los retirados no saturan la lista principal (y no se borra nada).
+            const active = page.items.filter((b) => !b.retiredAt);
+            const retired = page.items.filter((b) => !!b.retiredAt);
+            return (
+              <>
+                <h3 id="bots-active-title">Activos ({active.length})</h3>
+                {active.length === 0 ? (
+                  <p data-testid="bots-active-empty">Todos tus bots están retirados.</p>
+                ) : (
+                  <ul aria-labelledby="bots-active-title" data-testid="bots-active">
+                    {active.map(botItem)}
+                  </ul>
+                )}
+                {retired.length > 0 && (
+                  <details data-testid="bots-retired">
+                    <summary>Retirados ({retired.length})</summary>
+                    <ul>{retired.map(botItem)}</ul>
+                  </details>
+                )}
+              </>
+            );
+          }}
         </ResourceView>
         <form onSubmit={onCreateBot}>
           <label>
@@ -603,6 +656,50 @@ function BotsListPage(props: {
         <FormError error={createErr} data-testid="create-bot-error" />
       </div>
 
+      <div className="master-pane" data-testid="bot-pane">
+      {!selected && (
+        <div className="card" data-testid="bot-pane-empty">
+          <p>Elige un bot de la lista para ver su resumen, loadout, código y versiones, build, batallas y replays.</p>
+        </div>
+      )}
+      {selected && (
+        <div className="card" data-testid="bot-summary" aria-label={`resumen de ${selected.name}`} role="region">
+          <h2>{selected.name}</h2>
+          <p>
+            {VISIBILITY_TEXT[selected.visibility] ?? selected.visibility}
+            {selected.latestPublishedVersion
+              ? ` · las batallas nuevas usan la v${selected.latestPublishedVersion}`
+              : " · sin versión publicada"}
+            {selected.retiredAt ? " · retirado" : ""}
+          </p>
+          <nav aria-label={`secciones de ${selected.name}`} className="subnav">
+            <span className="subnav-title" aria-hidden="true">
+              Resumen
+            </span>
+            {BOT_SECTIONS.map(([id, label]) => (
+              <button key={id} type="button" className="link" onClick={() => scrollToSection(id)}>
+                {label}
+              </button>
+            ))}
+            <a href={`#/battles?bot=${encodeURIComponent(selected.id)}`} data-testid="bot-battles-link">
+              Batallas
+            </a>
+            <a href={`#/replays?bot=${encodeURIComponent(selected.id)}`} data-testid="bot-replays-link">
+              Replays
+            </a>
+          </nav>
+          <p>
+            <button type="button" data-testid="bot-retire" onClick={() => void setRetired(selected, !selected.retiredAt)}>
+              {selected.retiredAt ? "Reactivar bot" : "Retirar bot"}
+            </button>{" "}
+            <small>
+              {selected.retiredAt
+                ? "Vuelve a la lista de activos."
+                : "Lo pasa a «Retirados»: no borra versiones, batallas ni replays, ni cambia qué versión juega."}
+            </small>
+          </p>
+        </div>
+      )}
       {selected && (
         <ResourceView resource={detail} label={`el detalle de ${selected.name}`} onRetry={retryDetail}>
           {(d) => {
@@ -631,6 +728,7 @@ function BotsListPage(props: {
             return (
               <>
                 {/* key={bot.id}: al cambiar de bot el editor SE REMONTA con su revisión vigente. */}
+                <div id="bot-sec-loadout">
                 <LoadoutEditor
                   key={selected.id}
                   catalog={props.catalog}
@@ -645,6 +743,7 @@ function BotsListPage(props: {
                   draftKey={`loadout:${selected.id}:r${current?.revision ?? 0}`}
                   onSave={saveLoadout}
                 />
+                </div>
 
                 {/* B11 · Resumen de LA versión que el usuario está mirando. */}
                 {focused && (
@@ -688,7 +787,7 @@ function BotsListPage(props: {
                   />
                 )}
 
-                <div className="card">
+                <div className="card" id="bot-sec-code">
                   <h2>Versiones de {selected.name}</h2>
                   <table className="stack-table stack-table--wide">
                     <tbody>
@@ -805,7 +904,7 @@ function BotsListPage(props: {
 
                 {/* B11 · Pipeline SIEMPRE rotulado con su versión y leído del servidor. */}
                 {focusedVersion !== undefined && (
-                  <div className="card" data-testid="build-result">
+                  <div className="card" data-testid="build-result" id="bot-sec-build">
                     <h3>
                       Pipeline de build · v{focusedVersion} ·{" "}
                       {!builds
@@ -869,6 +968,7 @@ function BotsListPage(props: {
           }}
         </ResourceView>
       )}
+      </div>
     </div>
   );
 }
