@@ -87,7 +87,7 @@ describe("R-UI · conjunto de reglas en Nueva batalla", () => {
     expect(screen.getByText("Una vida. Sin reaparición.", { exact: false })).toBeTruthy();
     const summary = screen.getByTestId("rules-summary");
     expect(summary.textContent).toContain("1 contra 1");
-    expect(summary.textContent).toContain("Respawns: ninguno (1 vida)");
+    expect(summary.textContent).toContain("Reaparición: Sin reaparición (1 vida)");
     expect(summary.textContent).toContain("Tiempo máximo: 5 min");
     expect((screen.getByLabelText("modo") as HTMLSelectElement).value).toBe("deathmatch");
   });
@@ -132,7 +132,7 @@ describe("R-UI · conjunto de reglas en Nueva batalla", () => {
     await userEvent.click(screen.getByLabelText("reglas Personalizado"));
     const box = screen.getByTestId("rules-custom");
     await userEvent.selectOptions(within(box).getByLabelText("respawn"), "limited");
-    const respawns = within(box).getByLabelText("Reapariciones por bot") as HTMLInputElement;
+    const respawns = within(box).getByLabelText("Reapariciones por bot (maxRespawns)") as HTMLInputElement;
     expect(respawns.max).toBe(String(RULES_LIMITS.maxRespawns.max));
     await userEvent.clear(respawns);
     await userEvent.type(respawns, "3");
@@ -146,7 +146,7 @@ describe("R-UI · conjunto de reglas en Nueva batalla", () => {
     expect(within(box).queryByLabelText("Créditos máximos por equipo")).toBeNull();
     const summary = screen.getByTestId("rules-summary").textContent ?? "";
     expect(summary).toContain("Batalla personalizada");
-    expect(summary).toContain("Respawns: 3 por bot (4 vidas)");
+    expect(summary).toContain("Reaparición: 3 reapariciones por bot (4 vidas en total)");
     expect(summary).toContain("Máx. por bot: 900 cr");
     await waitFor(() =>
       expect(screen.getByTestId("battle-checklist").textContent).toContain("Reglas y presupuestos: válidos"),
@@ -254,7 +254,9 @@ describe("R-UI · conjunto de reglas en Nueva batalla", () => {
     expect((within(box).getByLabelText("reglas Team Deathmatch") as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText("modo") as HTMLSelectElement).value).toBe("team_deathmatch");
     await userEvent.click(within(box).getByLabelText("reglas Respawn limitado"));
-    expect(screen.getByTestId("rules-summary").textContent).toContain("Respawns: 2 por bot (3 vidas)");
+    expect(screen.getByTestId("rules-summary").textContent).toContain(
+      "Reaparición: 2 reapariciones por bot (3 vidas en total)",
+    );
   });
 
   it("sin presets en GET /rulesets (API anterior) no se pinta el selector y se envía sin rules", async () => {
