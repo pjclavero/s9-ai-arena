@@ -250,7 +250,7 @@ describe("EQ3 Centro de Ayuda · contenido desde las fuentes de verdad", () => {
     expect(facts).toMatch(/Sólo las batallas oficiales de torneo/);
     expect(facts).toMatch(/Victorias - Derrotas - Empates/);
     expect(facts).toMatch(/ranking independiente/);
-    expect(facts).toMatch(/por enfrentamientos del torneo, no por batallas/);
+    expect(facts).toMatch(/por enfrentamientos \(no por batallas\) y sumados en todos los torneos de la temporada/);
     expect(facts).toMatch(/Para el rating, una descalificación cuenta como derrota/);
     expect(RANKING_EMPTY_LINES).toEqual([
       "Todavía no hay clasificación oficial para este modo.",
@@ -431,7 +431,7 @@ describe("EQ3 Centro de Ayuda · navegación, accesibilidad y alias", () => {
     fireEvent.click(screen.getByTestId("tip-vde-trigger"));
     const dlg = screen.getByRole("dialog", { name: "V-D-E" });
     // EQ6 (#210): V-D-E cuenta ENFRENTAMIENTOS (leagueTable), un bye es victoria; la descalificación es cosa del Elo.
-    expect(dlg.textContent).toMatch(/enfrentamientos del torneo/);
+    expect(dlg.textContent).toMatch(/enfrentamientos de los torneos de la temporada/);
     expect(dlg.textContent).toMatch(/bye\) cuenta como victoria/);
     expect(dlg.textContent).not.toMatch(/descalificación/);
     expect(dlg.textContent).not.toMatch(/batallas oficiales/);

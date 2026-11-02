@@ -43,8 +43,9 @@ export function RatingTip(props: { testId?: string }) {
 export function VdeTip(props: { testId?: string }) {
   return (
     <InfoTip topic="V-D-E" testId={props.testId ?? "tip-vde"}>
-      Victorias - Derrotas - Empates en los enfrentamientos del torneo (un enfrentamiento puede tener varias batallas).
-      Pasar una ronda sin rival (bye) cuenta como victoria; un enfrentamiento sin ganador, como empate.
+      Victorias - Derrotas - Empates en los enfrentamientos de los torneos de la temporada en este modo (un
+      enfrentamiento puede tener varias batallas). Pasar una ronda sin rival (bye) cuenta como victoria; un
+      enfrentamiento sin ganador, como empate.
     </InfoTip>
   );
 }
@@ -107,9 +108,9 @@ export function RankingHelp() {
           batalla» son de práctica y no lo cambian.
         </li>
         <li>
-          <strong>V-D-E</strong> <VdeTip /> significa Victorias - Derrotas - Empates, contados por enfrentamientos del
-          torneo, no por batallas. La posición (#) es la de la tabla del torneo (3 puntos por victoria y 1 por empate),
-          no el rating.
+          <strong>V-D-E</strong> <VdeTip /> significa Victorias - Derrotas - Empates, contados por enfrentamientos (no
+          por batallas) y sumados en todos los torneos de la temporada en ese modo. La posición (#) es la de esa suma (3
+          puntos por victoria y 1 por empate), no el rating. Un enfrentamiento detenido por límite técnico no cuenta.
         </li>
         <li>
           <strong>Cada modo tiene su ranking independiente</strong> ({Object.values(MODE_NAME).join(", ")}): un bot
