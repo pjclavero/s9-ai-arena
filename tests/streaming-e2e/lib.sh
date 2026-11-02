@@ -28,7 +28,7 @@ gen_secrets() {
   [ -s "$STATE/private.pem" ] || openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$STATE/private.pem" 2>/dev/null
   [ -s "$STATE/public.pem" ] || openssl pkey -in "$STATE/private.pem" -pubout -out "$STATE/public.pem" 2>/dev/null
   printf 'x-streamer-auth: %s\n' "$(cat "$STATE/control_secret")" >"$STATE/auth_header"
-  chmod 0600 "$STATE"/*
+  chmod 0600 "$STATE/stream_key" "$STATE/control_secret" "$STATE/private.pem" "$STATE/public.pem" "$STATE/auth_header"
 }
 
 # Copia un fichero al volumen de secretos por stdin (0400, uid 1000).
