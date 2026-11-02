@@ -480,6 +480,7 @@ export class Battle {
         v.radioSentThisSecond++;
         this.radioQueue.push({
           from: v.id,
+          // Equipo del estado de batalla, NUNCA del comando: decide los receptores.
           team: v.team,
           data: r.data,
           sentTick: this.tick,

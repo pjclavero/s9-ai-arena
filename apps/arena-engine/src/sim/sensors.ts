@@ -17,6 +17,11 @@ import type { Vehicle } from "./vehicle.js";
 
 export interface RadioMessage {
   from: string;
+  /**
+   * Equipo del EMISOR según el estado de batalla (`Vehicle.team`, inmutable), fijado
+   * por el motor al encolar. Nunca sale del comando del bot: es lo que decide quién
+   * recibe el mensaje (ver `radioDeliverableTo`).
+   */
   team: string;
   data: string; // base64, opaco para el motor
   sentTick: number;
@@ -188,9 +193,10 @@ export function buildObservation(
 
   if (Object.keys(sensors).length > 0) obs.sensors = sensors;
 
-  // ---- Radio: solo mensajes que le tocan y que ya deben entregarse.
+  // ---- Radio: solo mensajes que le tocan y que ya deben entregarse. Un mensaje de
+  // otro equipo no entra en la observación de ninguna forma (RADIO_SCOPE=TEAM).
   const radio = inbox
-    .filter((m) => m.deliverAtTick <= tick && (!m.to || m.to === v.id) && m.from !== v.id)
+    .filter((m) => m.deliverAtTick <= tick && radioDeliverableTo(m, v))
     .map((m) => ({ from: m.from, data: m.data, sentTick: m.sentTick }));
   if (radio.length > 0) obs.radio = radio;
 
@@ -200,6 +206,22 @@ export function buildObservation(
   if (objectives.length > 0) obs.objectives = objectives;
 
   return obs;
+}
+
+/**
+ * ¿Debe recibir `receiver` el mensaje `m`? La radio es de EQUIPO (contrato de
+ * `command.schema.json`: «Mensajes de equipo»; `to` ausente = «difusión al equipo»):
+ *   - sólo vehículos del mismo equipo que el emisor, comparando los equipos del
+ *     estado de batalla (`m.team` lo puso el motor desde `Vehicle.team`);
+ *   - el emisor no se oye a sí mismo;
+ *   - con `to`, sólo ese destinatario, y sólo si es del equipo: un `to` a un rival
+ *     (o a un id inexistente) no se entrega a nadie.
+ * Es la única regla de entrega: la usan el bucle de decisión y `observationFor()`.
+ */
+export function radioDeliverableTo(m: RadioMessage, receiver: Vehicle): boolean {
+  if (m.team !== receiver.team) return false;
+  if (m.from === receiver.id) return false;
+  return !m.to || m.to === receiver.id;
 }
 
 /** Valida un mensaje de radio antes de encolarlo (D8). Devuelve el motivo del rechazo o null. */

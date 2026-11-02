@@ -194,11 +194,13 @@ describe("RADIO §16 · matriz 1v1, 2v2, 3v3 y 4v4", () => {
         const msgsA = [b64("A-0"), b64("A-1"), b64("A-2"), b64("A-3")];
         const msgsB = [b64("B-0"), b64("B-1"), b64("B-2"), b64("B-3")];
         const plans: Record<string, Plan> = {};
-        // Cada decisión par, todos los vehículos de ambos bandos emiten en el MISMO tick.
-        for (const [k, id] of ids("r", n).entries()) plans[id] = (d) => (d % 2 === 0 && d < 8 ? [{ data: msgsA[(d / 2 + k) % 4] }] : undefined);
-        for (const [k, id] of ids("b", n).entries()) plans[id] = (d) => (d % 2 === 0 && d < 8 ? [{ data: msgsB[(d / 2 + k) % 4] }] : undefined);
+        // Una vez por segundo (10 decisiones; así el rate-limit de 2/s no descarta nada),
+        // TODOS los vehículos de ambos bandos emiten en el MISMO tick.
+        const at = (d: number) => d % 10 === 0 && d < 40;
+        for (const [k, id] of ids("r", n).entries()) plans[id] = (d) => (at(d) ? [{ data: msgsA[(d / 10 + k) % 4] }] : undefined);
+        for (const [k, id] of ids("b", n).entries()) plans[id] = (d) => (at(d) ? [{ data: msgsB[(d / 10 + k) % 4] }] : undefined);
         const { b, bots } = setup({ n, plans });
-        for (let i = 0; i < 60; i++) b.step();
+        for (let i = 0; i < 150; i++) b.step();
         b.free();
         expectIsolated(bots, { red: msgsA, blue: msgsB });
         // Con compañeros, cada uno oye a TODOS sus compañeros (4 emisiones cada uno) y a nadie más.
