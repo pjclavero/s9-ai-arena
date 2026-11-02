@@ -82,6 +82,35 @@ if [ ! -f "$DIR/stream_key.txt" ]; then
 fi
 harden stream_key.txt
 
+# EQ5b §19 · Administración de streaming desde la web: secreto compartido
+# api<->streamer para la API interna de control (cabecera x-streamer-auth).
+gen streamer_control_secret.txt
+# EQ5b §19 · par RSA-3072 para SELLAR las claves de emisión que se configuran
+# desde la web: la API sólo tiene la PÚBLICA (cifra y guarda el sobre en la BD;
+# no puede descifrar), el streamer la PRIVADA (abre en memoria al emitir).
+# Rotarla invalida las credenciales guardadas: hay que volver a introducirlas.
+if [ ! -s "$DIR/stream_secrets_private.pem" ]; then
+  if command -v openssl >/dev/null; then
+    umask 077
+    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$DIR/stream_secrets_private.pem" 2>/dev/null
+    echo "generado:  stream_secrets_private.pem (RSA-3072)"
+  else
+    echo "AVISO: sin openssl; sin stream_secrets_private.pem no se pueden guardar claves de emisión desde la web"
+  fi
+fi
+[ -f "$DIR/stream_secrets_private.pem" ] && harden stream_secrets_private.pem
+if [ -s "$DIR/stream_secrets_private.pem" ] && command -v openssl >/dev/null; then
+  umask 077
+  openssl pkey -in "$DIR/stream_secrets_private.pem" -pubout -out "$DIR/stream_secrets_public.pem.tmp" 2>/dev/null &&
+    if ! cmp -s "$DIR/stream_secrets_public.pem.tmp" "$DIR/stream_secrets_public.pem" 2>/dev/null; then
+      mv "$DIR/stream_secrets_public.pem.tmp" "$DIR/stream_secrets_public.pem"
+      echo "generado:  stream_secrets_public.pem (pública de stream_secrets_private.pem)"
+    else
+      rm -f "$DIR/stream_secrets_public.pem.tmp"
+    fi
+fi
+[ -f "$DIR/stream_secrets_public.pem" ] && harden stream_secrets_public.pem
+
 # fix/backup-sftp-scheduled-runtime: clave SSH dedicada al backend sftp: de
 # restic. Se puede generar sin intervención del operador (es sólo un par de
 # claves; la parte pública hay que añadirla a authorized_keys en el host de

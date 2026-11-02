@@ -488,13 +488,21 @@ describe("HECHOS REALES de VM108 · el incidente que motiva el carril", () => {
       "S9_PUBLIC_REPLAYS_ENABLED",
       "S9_METRICS_ENABLED",
       "ARTIFACT_VERIFY_KEY_FILE",
+      // EQ5b · Administración → Streaming (no desplegado: llega con la recreación de la API).
+      "STREAMER_CONTROL_URL",
+      "STREAMER_CONTROL_SECRET_FILE",
+      "STREAM_SECRETS_PUBLIC_KEY_FILE",
+      "STREAMER_BROADCAST_BASE_URL",
     ];
     const todo = envFalta.join(" | ");
     for (const v of esperadas) expect(todo, v).toContain(v);
     expect(envFalta.length).toBe(esperadas.length);
     const otros = api.filter((x: any) => x.code !== CODIGOS.ENV_FALTA);
-    expect(codigos(otros)).toEqual([CODIGOS.SECRETO_FALTA]);
-    expect(String(otros[0].detail)).toContain("artifact_verify_key");
+    expect(codigos(otros)).toEqual([CODIGOS.SECRETO_FALTA, CODIGOS.SECRETO_FALTA, CODIGOS.SECRETO_FALTA]);
+    const secretos = otros.map((x: any) => String(x.detail)).join(" | ");
+    for (const s of ["artifact_verify_key", "stream_secrets_public", "streamer_control_secret"]) {
+      expect(secretos, s).toContain(s);
+    }
   });
 
   it("backup diverge en imagen, hostname de restic y healthcheck", () => {

@@ -4,7 +4,8 @@
 # Captura la vista /broadcast (T11.1) con Chromium en kiosco sobre un Xvfb y la
 # codifica con FFmpeg hacia YouTube RTMPS (x264 por software como base; NVENC
 # opcional si el host tiene GPU con passthrough — ver docs/streaming-runbook.md).
-# La clave de emisión entra SOLO por /run/secrets/stream_key (init-secrets.sh).
+# La clave de emisión llega SELLADA desde la web (EQ5b) o, heredado, por
+# /run/secrets/stream_key; nunca va al argv de ffmpeg (relé RTMP en el propio Node).
 FROM alpine:3.20
 
 # tsx ejecuta el supervisor TypeScript sin paso de build (mismo criterio que
@@ -32,6 +33,9 @@ COPY packages/game-rules/safe-lookup.ts /app/packages/game-rules/safe-lookup.ts
 # imagen arranca y muere con ERR_MODULE_NOT_FOUND aunque funcione en el repo
 # (lo caza infrastructure/tests/image-package-imports.test.ts, que ya lo cazó).
 COPY packages/build-info /app/packages/build-info
+# EQ5b §19 · apertura de credenciales SELLADAS (la clave de emisión llega
+# cifrada con la pública; el streamer la abre en memoria con la privada).
+COPY packages/stream-secrets /app/packages/stream-secrets
 COPY infrastructure/docker/streamer/entrypoint.sh /entrypoint.sh
 # B13 · MISMO entrypoint de datos que la imagen genérica (no un mecanismo
 # paralelo): ajusta la propiedad de ARENA_DATA_DIRS como root y baja a

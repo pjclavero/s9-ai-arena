@@ -62,7 +62,7 @@ async function ingestaMuda(): Promise<{ port: number; bytes: () => Buffer }> {
   const sockets: Socket[] = [];
   const server = createServer((s) => {
     sockets.push(s);
-    s.on("data", (b) => trozos.push(b));
+    s.on("data", (b: Buffer) => trozos.push(b));
     s.on("error", () => {});
   });
   servidores.push(server);

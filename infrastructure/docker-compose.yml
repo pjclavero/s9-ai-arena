@@ -236,7 +236,15 @@ services:
       # igual que arena_engine_internal_secret. Sin él, la ingesta responde 401
       # y se reporta `replay.ingested: false` (fail-closed, nunca se finge).
       REPLAY_INGEST_SECRET_FILE: /run/secrets/replay_ingest_secret
-    secrets: [postgres_password, jwt_secret, arena_engine_internal_secret, replay_ingest_secret, artifact_verify_key]
+      # EQ5b · Administración → Streaming. La API habla con la API interna de
+      # control del streamer (red platform) con el secreto compartido, y SELLA
+      # las claves de emisión con la clave PÚBLICA (no puede descifrarlas).
+      # Sin streamer desplegado (perfil `streaming`), la pantalla lo dice.
+      STREAMER_CONTROL_URL: ${STREAMER_CONTROL_URL:-http://streamer:8090}
+      STREAMER_CONTROL_SECRET_FILE: /run/secrets/streamer_control_secret
+      STREAM_SECRETS_PUBLIC_KEY_FILE: /run/secrets/stream_secrets_public
+      STREAMER_BROADCAST_BASE_URL: ${BROADCAST_URL:-http://web:3000/broadcast}
+    secrets: [postgres_password, jwt_secret, arena_engine_internal_secret, replay_ingest_secret, artifact_verify_key, streamer_control_secret, stream_secrets_public]
     volumes:
       # B7 · SOLO LECTURA, y justificado por el código: getReplay y
       # verifyReplay (apps/api/src/routes/battles.ts) hacen
@@ -745,7 +753,11 @@ services:
     environment:
       BROADCAST_URL: ${BROADCAST_URL:-http://web:3000/broadcast}
       RTMPS_URL: ${RTMPS_URL:-rtmps://a.rtmps.youtube.com/live2}
+      # Clave heredada de despliegue (opcional). Lo normal (EQ5b) es configurarla
+      # desde Administración → Streaming: llega SELLADA y se abre con la privada.
       STREAM_KEY_FILE: /run/secrets/stream_key
+      STREAM_SECRETS_PRIVATE_KEY_FILE: /run/secrets/stream_secrets_private
+      STREAMER_CONTROL_SECRET_FILE: /run/secrets/streamer_control_secret
       # E11/T11.2: rtmps (emitir) | record (solo grabación a arena_replays/video, E11.M)
       STREAM_MODE: ${STREAM_MODE:-rtmps}
       # x264 por software (base); nvenc exige GPU con passthrough en Proxmox (runbook)
@@ -774,7 +786,7 @@ services:
     volumes:
       # Solo para el modo grabación E11.M (clips a arena_replays/video).
       - arena_replays:/data/replays
-    secrets: [stream_key]
+    secrets: [stream_key, stream_secrets_private, streamer_control_secret]
     healthcheck:
       # La API interna de control responde aunque la emisión esté parada; el
       # estado de la emisión en sí lo vigila E10 por /metrics (streamer_up).
@@ -1231,6 +1243,15 @@ secrets:
     file: ./secrets/artifact_verify_key.pem
   stream_key:
     file: ./secrets/stream_key.txt
+  # EQ5b §19 · par RSA para sellar las claves de emisión configuradas desde la
+  # web (api: sólo la pública; streamer: la privada) y secreto del control
+  # interno api<->streamer. Los genera init-secrets.sh.
+  stream_secrets_private:
+    file: ./secrets/stream_secrets_private.pem
+  stream_secrets_public:
+    file: ./secrets/stream_secrets_public.pem
+  streamer_control_secret:
+    file: ./secrets/streamer_control_secret.txt
   grafana_admin_password:
     file: ./secrets/grafana_admin_password.txt
   restic_password:

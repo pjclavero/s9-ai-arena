@@ -5,21 +5,63 @@
  * levanta la API interna de control y, si STREAM_AUTOSTART=1, arranca la
  * emisión directamente sobre BROADCAST_URL.
  *
- * [INSPECCIÓN] En el entorno de desarrollo de esta entrega no hay docker ni
- * Chromium/FFmpeg: este cableado se prueba con procesos inyectados
- * (supervisor.test.ts / control.test.ts); la pasada real es del despliegue.
+ * EQ5b · La cadena real (Chromium + Xvfb + FFmpeg + relé RTMP contra una
+ * ingesta RTMPS local) se verifica con la imagen construida: ver
+ * docs/operations/streaming.md § «Cómo se verificó».
  */
-import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { createLogger, loadConfig, loadStreamKey } from "./config.js";
+import { execFile, spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { createLogger, loadConfig, loadStreamKey, SecretRegistry } from "./config.js";
 import { StreamSupervisor, type Spawner } from "./supervisor.js";
 import { createControlServer } from "./control.js";
+import type { Capabilities } from "./session.js";
 import { requireWritableDataDir } from "../../../packages/data-dir/index.js";
+
+/** Lee un fichero de secreto en el momento (no se cachea: rotar no exige reiniciar). */
+function readSecretFile(path: string | undefined): string | null {
+  if (!path) return null;
+  try {
+    const v = readFileSync(path, "utf8").trim();
+    return v || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * EQ5b §6 · NVENC sólo si el RUNTIME lo confirma: no basta con que el binario
+ * liste el encoder (Alpine 3.20 ni lo trae); se codifica de verdad un frame.
+ */
+function probeNvenc(ffmpegBin: string, caps: Capabilities): void {
+  // Sin dispositivo NVIDIA en el contenedor no hay NVENC posible: ni se intenta.
+  if (!existsSync("/dev/nvidiactl")) {
+    caps.nvenc = false;
+    return;
+  }
+  execFile(
+    ffmpegBin,
+    ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "nullsrc=s=256x256", "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-"],
+    { timeout: 15_000 },
+    (err) => {
+      caps.nvenc = !err;
+    },
+  );
+}
 
 export function main(env: NodeJS.ProcessEnv = process.env): void {
   const config = loadConfig(env);
-  const streamKey = loadStreamKey(env, readFileSync, config.mode);
-  const logger = createLogger(streamKey);
+  // EQ5b · la clave YA NO se lee al arrancar: llega sellada en cada orden de
+  // arranque (web) o se lee del secreto heredado en ese momento.
+  const secrets = new SecretRegistry();
+  const logger = createLogger(secrets);
+  const readLegacyKey = () => {
+    if (!env.STREAM_KEY_FILE) return null;
+    try {
+      return loadStreamKey(env, readFileSync, "record");
+    } catch {
+      return null;
+    }
+  };
 
   // B13 · Preflight del directorio de grabación (mismo mecanismo que B7 en
   // replay-service y tournament-worker, no uno paralelo).
@@ -36,17 +78,38 @@ export function main(env: NodeJS.ProcessEnv = process.env): void {
   // preflight de más ahí sería un servicio que no arranca sin motivo).
   if (config.mode === "record") requireWritableDataDir("streamer", config.recordDir);
 
-  const spawner: Spawner = (cmd, args) => spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+  // EQ5b §3 · ffmpeg recibe un 4.º descriptor (fd 3) por el que escribe el FLV
+  // que publica el relé RTMP. Chromium no lo recibe.
+  const spawner: Spawner = (cmd, args, o) =>
+    spawn(cmd, args, { stdio: o?.mediaFd ? ["ignore", "pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"] });
+  const allowPlainRtmp = env.STREAMER_ALLOW_PLAIN_RTMP === "1";
   const supervisor = new StreamSupervisor({
     config,
-    streamKey,
     spawner,
     logger,
+    secrets,
+    allowPlainRtmp,
     chromiumBin: env.CHROMIUM_BIN ?? "chromium-browser",
     ffmpegBin: env.FFMPEG_BIN ?? "ffmpeg",
   });
 
-  const server = createControlServer({ supervisor, config, logger });
+  const capabilities: Capabilities = { nvenc: null };
+  probeNvenc(env.FFMPEG_BIN ?? "ffmpeg", capabilities);
+  const controlSecret = readSecretFile(env.STREAMER_CONTROL_SECRET_FILE);
+  if (!controlSecret) {
+    logger("warn", "API de control SIN secreto compartido (STREAMER_CONTROL_SECRET_FILE): sólo para compatibilidad");
+  }
+
+  const server = createControlServer({
+    supervisor,
+    config,
+    logger,
+    capabilities,
+    controlSecret,
+    readPrivateKey: () => readSecretFile(env.STREAM_SECRETS_PRIVATE_KEY_FILE),
+    readLegacyKey,
+    allowPlainRtmp,
+  });
   server.listen(config.controlPort, () => {
     logger("info", "API de control escuchando", {
       port: config.controlPort,
@@ -55,7 +118,7 @@ export function main(env: NodeJS.ProcessEnv = process.env): void {
     });
   });
 
-  if (env.STREAM_AUTOSTART === "1") supervisor.start();
+  if (env.STREAM_AUTOSTART === "1") supervisor.start(undefined, undefined, config.mode === "rtmps" ? readLegacyKey() : null);
 
   const shutdown = () => {
     supervisor.stop();

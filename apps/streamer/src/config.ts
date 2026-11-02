@@ -19,8 +19,12 @@ export interface StreamerConfig {
   recordDir: string;
   /** x264 por software (base); nvenc exige GPU con passthrough en Proxmox. */
   encoder: "x264" | "nvenc";
+  /** Tamaño del Xvfb/Chromium (lo que se CAPTURA): siempre el de la composición 1920×1080. */
   width: number;
   height: number;
+  /** EQ5b · Tamaño CODIFICADO (preset 1080p o 720p): si difiere, ffmpeg escala. */
+  outputWidth: number;
+  outputHeight: number;
   fps: number;
   videoBitrateKbps: number;
   /** DISPLAY del Xvfb donde pinta Chromium y captura FFmpeg. */
@@ -40,6 +44,8 @@ export const DEFAULT_CONFIG: StreamerConfig = {
   encoder: "x264",
   width: 1920,
   height: 1080,
+  outputWidth: 1920,
+  outputHeight: 1080,
   fps: 30,
   videoBitrateKbps: 4500,
   display: ":99",
@@ -104,11 +110,41 @@ export function redactSecret(text: string, secret: string | null): string {
   return text.split(secret).join("***");
 }
 
+/**
+ * EQ5b · Conjunto VIVO de secretos a redactar: la clave ya no se conoce al
+ * arrancar (llega sellada en cada orden de arranque), así que el logger
+ * redacta lo que haya en el conjunto en el momento de escribir.
+ */
+export class SecretRegistry {
+  private readonly secrets = new Set<string>();
+  add(s: string | null | undefined): void {
+    if (s && s.length >= 4) this.secrets.add(s);
+  }
+  delete(s: string | null | undefined): void {
+    if (s) this.secrets.delete(s);
+  }
+  redact(text: string): string {
+    let out = text;
+    for (const s of this.secrets) out = out.split(s).join("***");
+    // También la forma escapada en JSON (comillas o barras dentro de la clave).
+    for (const s of this.secrets) {
+      const esc = JSON.stringify(s).slice(1, -1);
+      if (esc !== s) out = out.split(esc).join("***");
+    }
+    return out;
+  }
+}
+
 /** Logger JSON que REDACTA la clave en todo lo que escribe (revisión T11.2). */
-export function createLogger(secret: string | null, write: (line: string) => void = (l) => console.log(l)) {
+export function createLogger(
+  secret: string | null | SecretRegistry,
+  write: (line: string) => void = (l) => console.log(l),
+) {
+  const registry = secret instanceof SecretRegistry ? secret : new SecretRegistry();
+  if (!(secret instanceof SecretRegistry)) registry.add(secret);
   return (level: "info" | "warn" | "error", msg: string, extra: Record<string, unknown> = {}) => {
     const line = JSON.stringify({ level, service: "streamer", msg, ...extra });
-    write(redactSecret(line, secret));
+    write(registry.redact(line));
   };
 }
 export type Logger = ReturnType<typeof createLogger>;

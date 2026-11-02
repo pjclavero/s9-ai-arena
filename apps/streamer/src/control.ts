@@ -3,34 +3,107 @@
  * puerto JAMÁS se publica — el streamer solo asoma a `public` para la salida
  * RTMPS, sin puertos).
  *
- *   POST /control/start  {broadcastUrl?}  → arranca/re-apunta la emisión
- *   POST /control/stop                    → para la emisión
+ *   POST /control/start  {…SessionPlan}   → arranca/re-apunta la emisión
+ *   POST /control/stop                    → para la emisión (idempotente)
+ *   POST /control/test   {ingestUrl, credential} → TLS + handshake + connect, SIN publicar
  *   GET  /status                          → estado + métricas (SIN clave)
+ *   GET  /recordings                      → grabaciones MP4, espacio en disco
+ *   POST /recordings/retention {policy, dryRun} → retención (devuelve lo borrado para auditar)
  *   GET  /metrics                         → Prometheus para E10
  *   GET  /healthz                         → healthcheck del Compose
  *   GET  /version                         → identidad de build (ADR-016)
  *
+ * EQ5b · Con STREAMER_CONTROL_SECRET_FILE configurado, todo menos /metrics,
+ * /healthz y /version exige la cabecera `x-streamer-auth` (comparación en
+ * tiempo constante): otro contenedor de la red `platform` no puede arrancar
+ * una emisión ni leer el estado saltándose el RBAC de la API.
+ *
  * Ninguna respuesta ni log contiene la clave RTMPS: /status describe el
- * destino redactado y el body de /control/start solo admite broadcastUrl.
+ * destino redactado y la credencial sólo entra SELLADA.
  */
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server } from "node:http";
+import { timingSafeEqual } from "node:crypto";
+import type { Duplex } from "node:stream";
 import { versionPayload } from "../../../packages/build-info/index.js";
+import { openSecret, SealedSecretError } from "../../../packages/stream-secrets/index.js";
 import type { StreamSupervisor } from "./supervisor.js";
 import type { Logger, StreamerConfig } from "./config.js";
 import { renderPrometheus } from "./metrics.js";
+import { parseIngestUrl, RtmpPublisher, type IngestTarget } from "./rtmp/publisher.js";
+import { parseStartRequest, presetOf, sessionFingerprint, type Capabilities } from "./session.js";
+import { applyRetention, listRecordings, validateRetentionPolicy } from "./recordings.js";
 
-const SAFE_URL = /^https?:\/\/[^\s]{1,512}$/;
+const MAX_BODY = 16 * 1024;
 
-export function createControlServer(opts: {
+export interface ControlOptions {
   supervisor: StreamSupervisor;
   config: StreamerConfig;
   logger: Logger;
-}): Server {
+  capabilities?: Capabilities;
+  /** Secreto compartido con la API (null = control abierto, sólo compatibilidad). */
+  controlSecret?: string | null;
+  /** Lee la clave privada de apertura de credenciales (null = no configurada). */
+  readPrivateKey?: () => string | null;
+  /** Lee la clave de despliegue heredada (STREAM_KEY_FILE); null = no hay. */
+  readLegacyKey?: () => string | null;
+  allowPlainRtmp?: boolean;
+  dial?: (t: IngestTarget) => Duplex;
+  now?: () => number;
+}
+
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let raw = "";
+    let size = 0;
+    req.on("data", (c: Buffer) => {
+      size += c.length;
+      if (size > MAX_BODY) {
+        reject(new Error("too_large"));
+        req.destroy();
+        return;
+      }
+      raw += c;
+    });
+    req.on("end", () => resolve(raw));
+    req.on("error", reject);
+  });
+}
+
+function authorized(req: IncomingMessage, secret: string | null | undefined): boolean {
+  if (!secret) return true;
+  const got = req.headers["x-streamer-auth"];
+  if (typeof got !== "string") return false;
+  const a = Buffer.from(got);
+  const b = Buffer.from(secret);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+export function createControlServer(opts: ControlOptions): Server {
   const { supervisor, config, logger } = opts;
+  const caps: Capabilities = opts.capabilities ?? { nvenc: null };
+  const now = opts.now ?? Date.now;
+
+  /** Clave para una orden: sellada (web) o la heredada del despliegue. */
+  function resolveKey(credential: unknown): { key: string | null; error?: string; status?: number } {
+    if (credential) {
+      const pem = opts.readPrivateKey?.() ?? null;
+      if (!pem) return { key: null, status: 503, error: "el streamer no tiene la clave privada de credenciales" };
+      try {
+        return { key: openSecret(credential, pem) };
+      } catch (e) {
+        return { key: null, status: 409, error: e instanceof SealedSecretError ? e.message : "credencial inválida" };
+      }
+    }
+    try {
+      return { key: opts.readLegacyKey?.() ?? null };
+    } catch {
+      return { key: null };
+    }
+  }
 
   return createServer((req, res) => {
     const respond = (status: number, body: unknown, contentType = "application/json") => {
-      res.writeHead(status, { "content-type": contentType });
+      res.writeHead(status, { "content-type": contentType, "cache-control": "no-store" });
       res.end(typeof body === "string" ? body : JSON.stringify(body));
     };
     const url = (req.url ?? "").split("?")[0];
@@ -47,56 +120,163 @@ export function createControlServer(opts: {
       return respond(200, versionPayload(process.env, "streamer"));
     }
 
-    if (req.method === "GET" && url === "/status") {
-      return respond(200, {
-        state: supervisor.state,
-        mode: config.mode,
-        encoder: config.encoder,
-        broadcastUrl: supervisor.currentBroadcastUrl,
-        target: config.mode === "record" ? config.recordDir : `${config.rtmpsUrl}/***`,
-        restarts: supervisor.restarts,
-        stats: supervisor.metrics.snapshot(),
-      });
-    }
-
     if (req.method === "GET" && url === "/metrics") {
+      const started = supervisor.startedAtMs;
+      const last = Math.max(supervisor.metrics.lastProgressAt ?? 0, started ?? 0);
       const text = renderPrometheus({
         state: supervisor.state,
         restarts: supervisor.restarts,
         stats: supervisor.metrics.snapshot(),
+        desired: supervisor.desired,
+        progressAgeSeconds: supervisor.desired && started !== null ? Math.max(0, Math.round((now() - last) / 1000)) : -1,
+        relayPublishing: supervisor.relayState === "publishing",
       });
       return respond(200, text, "text/plain; version=0.0.4");
     }
 
-    if (req.method === "POST" && (url === "/control/start" || url === "/control/stop")) {
-      let raw = "";
-      req.on("data", (c) => (raw += c));
-      req.on("end", () => {
-        if (url === "/control/stop") {
-          supervisor.stop();
-          return respond(200, { state: supervisor.state });
-        }
-        let broadcastUrl: string | undefined;
+    if (!authorized(req, opts.controlSecret)) {
+      return respond(401, { error: "unauthorized" });
+    }
+
+    if (req.method === "GET" && url === "/status") {
+      const cfg = supervisor.effectiveConfig;
+      let legacyKeyConfigured = false;
+      try {
+        legacyKeyConfigured = !!opts.readLegacyKey?.();
+      } catch {
+        legacyKeyConfigured = false;
+      }
+      return respond(200, {
+        state: supervisor.state,
+        desired: supervisor.desired,
+        mode: cfg.mode,
+        encoder: cfg.encoder,
+        preset: presetOf(cfg),
+        fps: cfg.fps,
+        videoBitrateKbps: cfg.videoBitrateKbps,
+        broadcastUrl: supervisor.currentBroadcastUrl,
+        target: supervisor.describeTarget(),
+        session: supervisor.session(),
+        restarts: supervisor.restarts,
+        lastError: supervisor.lastError,
+        relay: { state: supervisor.relayState, bytesOut: supervisor.relayBytesOut },
+        recording: supervisor.recordingFile ? supervisor.recordingFile.split("/").pop() : null,
+        capabilities: { nvenc: caps.nvenc, sealedCredentials: !!opts.readPrivateKey?.() },
+        legacyKeyConfigured,
+        stats: supervisor.metrics.snapshot(),
+      });
+    }
+
+    if (req.method === "GET" && url === "/recordings") {
+      return respond(200, { dir: "arena_replays/video", ...listRecordings(config.recordDir, supervisor.recordingFile) });
+    }
+
+    if (req.method !== "POST") return respond(404, { error: "not_found" });
+    if (!["/control/start", "/control/stop", "/control/test", "/recordings/retention"].includes(url)) {
+      return respond(404, { error: "not_found" });
+    }
+
+    void readBody(req)
+      .then(async (raw) => {
+        let body: Record<string, unknown> = {};
         if (raw.trim()) {
           try {
-            const body = JSON.parse(raw);
-            if (body.broadcastUrl !== undefined) {
-              if (typeof body.broadcastUrl !== "string" || !SAFE_URL.test(body.broadcastUrl)) {
-                return respond(400, { error: "broadcastUrl inválida (http(s) requerido)" });
-              }
-              broadcastUrl = body.broadcastUrl;
-            }
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("x");
+            body = parsed;
           } catch {
             return respond(400, { error: "body JSON inválido" });
           }
         }
-        supervisor.start(broadcastUrl);
-        logger("info", "control: start", { broadcastUrl: supervisor.currentBroadcastUrl });
-        return respond(200, { state: supervisor.state, broadcastUrl: supervisor.currentBroadcastUrl });
-      });
-      return;
-    }
 
-    respond(404, { error: "not_found" });
+        if (url === "/control/stop") {
+          const wasActive = supervisor.desired;
+          supervisor.stop();
+          return respond(200, { state: supervisor.state, wasActive });
+        }
+
+        if (url === "/recordings/retention") {
+          const policy = validateRetentionPolicy(body.policy);
+          if (typeof policy === "string") return respond(400, { error: policy });
+          const result = applyRetention(config.recordDir, policy, supervisor.recordingFile, {
+            dryRun: body.dryRun === true,
+          });
+          logger("info", "retención de grabaciones", {
+            dryRun: result.dryRun,
+            deleted: result.deleted.length,
+            errors: result.errors.length,
+          });
+          return respond(200, result);
+        }
+
+        if (url === "/control/test") {
+          let target: IngestTarget;
+          try {
+            target = parseIngestUrl(String(body.ingestUrl ?? config.rtmpsUrl), opts.allowPlainRtmp);
+          } catch (e) {
+            return respond(400, { error: (e as Error).message });
+          }
+          const k = resolveKey(body.credential ?? null);
+          if (k.error) return respond(k.status ?? 409, { error: k.error });
+          // La prueba no publica: la clave no hace falta para conectar, pero se
+          // comprueba que existe y abre para no dar un «OK» engañoso.
+          const pub = new RtmpPublisher({ target, streamKey: k.key ?? "", dial: opts.dial, connectTimeoutMs: 8000 });
+          try {
+            const r = await pub.probe();
+            return respond(200, {
+              ok: true,
+              target: target.display,
+              tlsVerified: r.tlsVerified,
+              connectMs: r.connectMs,
+              credentialPresent: !!k.key,
+              keyValidated: false,
+              note: "conexión y handshake RTMP correctos; la clave no se valida sin publicar",
+            });
+          } catch (e) {
+            return respond(200, {
+              ok: false,
+              target: target.display,
+              credentialPresent: !!k.key,
+              error: (e as Error).message,
+            });
+          }
+        }
+
+        // /control/start
+        const parsed = parseStartRequest(body, config, caps, { allowPlainRtmp: opts.allowPlainRtmp });
+        if (parsed.ok === false) return respond(400, { error: (parsed as { error: string }).error });
+        const plan = parsed.plan;
+        // Idempotencia: la MISMA sesión ya activa ⇒ no se toca nada.
+        if (supervisor.active && plan.sessionId && supervisor.sessionFingerprint === sessionFingerprint(plan)) {
+          return respond(200, { state: supervisor.state, alreadyActive: true, session: supervisor.session() });
+        }
+        // Sin operaciones contradictorias: con una emisión activa hay que pedir
+        // explícitamente el reemplazo (la API lo hace sólo con «Reiniciar»).
+        if (supervisor.active && body.replace !== true) {
+          return respond(409, { error: "already_active", session: supervisor.session() });
+        }
+        let key: string | null = null;
+        if (plan.config.mode === "rtmps") {
+          const k = resolveKey(plan.credential);
+          if (k.error) return respond(k.status ?? 409, { error: k.error });
+          if (!k.key) return respond(409, { error: "no hay credencial de emisión configurada" });
+          key = k.key;
+        }
+        // Sin cuerpo (uso heredado): configuración de entorno sin plan.
+        const legacy = !raw.trim();
+        if (legacy) supervisor.start(undefined, undefined, key);
+        else supervisor.start(undefined, plan, key);
+        logger("info", "control: start", { broadcastUrl: supervisor.currentBroadcastUrl, target: supervisor.describeTarget() });
+        return respond(200, {
+          state: supervisor.state,
+          broadcastUrl: supervisor.currentBroadcastUrl,
+          session: supervisor.session(),
+        });
+      })
+      .catch((e: Error) => {
+        if (e.message === "too_large") return respond(413, { error: "body demasiado grande" });
+        logger("error", "control: error interno", { detail: e.message });
+        return respond(500, { error: "internal" });
+      });
   });
 }
