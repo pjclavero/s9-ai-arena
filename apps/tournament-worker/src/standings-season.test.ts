@@ -1,56 +1,70 @@
 /**
- * EQ2 · P2 del EQ6 · La clasificación de (temporada, modo) es el AGREGADO de todos los
- * torneos de esa temporada y modo, no la tabla del último torneo que se actualizó.
- *
- * Escenario (PostgreSQL REAL), temporada «season-1», modo deathmatch:
- *  - Torneo T1 (A, B, C): A gana a B; A y C empatan; C pasa ronda sin rival (bye).
- *  - Torneo T2 (A, D): D gana a A; y un enfrentamiento A–D cuyas batallas terminaron
- *    TODAS por la salvaguarda técnica (ADR-022): no cuenta.
- * Esperado (3/1/0, bye = victoria, sin ganador = empate):
- *  A 1-1-1 (4 pt), B 0-1-0 (0), C 1-0-1 (4), D 1-0-0 (3).
+ * EQ2 · `STANDINGS_POLICY = official_played_not_reverted` (política del operador,
+ * 2026-11-02), contra PostgreSQL REAL. La clasificación y el Elo dependen de resultados
+ * OFICIALES realmente DISPUTADOS, no del estado administrativo del torneo:
+ *  1. torneo open sin batallas ⇒ no aparecen bots 0-0-0;
+ *  2. running con una batalla terminada ⇒ aparece;
+ *  3. finished ⇒ permanece;
+ *  4. cancelled tras una batalla ⇒ permanece;
+ *  5. batalla revertida (mecanismo de Elo existente) ⇒ desaparece de V-D-E, standings y Elo;
+ *  6. dos torneos del mismo modo y temporada ⇒ suman los dos (P2 del EQ6, #220);
+ *  7. modos distintos no se mezclan;  8. temporadas distintas no se mezclan;
+ *  9. final técnico ⇒ sin Elo, sin V-D-E y sin standings.
+ * Además: orden inverso, idempotencia, concurrencia y desempate final por id.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startTestDb, type TestDbHandle } from "../../api/src/testing/test-db.js";
 import { seedDev, DEV_USERS, DEFAULT_RULESET_ID } from "../../api/src/db/seeds/dev.js";
 import { clearStandingsCache, getStandings } from "../../api/src/services/standings.js";
-import { handleUpdateStandings, recomputeSeasonStandings } from "./standings.js";
+import { handleUpdateStandings, recomputeSeasonStandings, revertOfficialBattle } from "./standings.js";
+import { applyBattleRating } from "./ratings.js";
 import { createBots, type TestBot } from "./testing/fixtures.js";
 import type { JobRow } from "./queue.js";
 
 let h: TestDbHandle;
-let A: TestBot, B: TestBot, C: TestBot, D: TestBot;
-let t1: string, t2: string;
-const SEASON = "season-1";
+let adminId: string;
 
-async function tournament(name: string, bots: TestBot[], mode = "deathmatch"): Promise<string> {
-  const admin = await h.db("users").where({ email: DEV_USERS.admin }).first();
+beforeAll(async () => {
+  h = await startTestDb();
+  await seedDev(h.db);
+  adminId = (await h.db("users").where({ email: DEV_USERS.admin }).first()).id;
+}, 120_000);
+
+afterAll(async () => {
+  await h.stop();
+});
+
+async function tournament(o: { season: string; mode?: string; state?: string; bots: TestBot[] }): Promise<string> {
   const [t] = await h
     .db("tournaments")
     .insert({
-      name,
+      name: `pol-${Math.random().toString(36).slice(2, 8)}`,
       format: "league",
-      mode,
+      mode: o.mode ?? "deathmatch",
       ruleset_id: DEFAULT_RULESET_ID,
-      state: "running",
-      created_by: admin.id,
-      season_id: SEASON,
+      state: o.state ?? "running",
+      created_by: adminId,
+      season_id: o.season,
     })
     .returning("id");
-  for (const b of bots) {
+  for (const b of o.bots) {
     await h
       .db("entries")
       .insert({ tournament_id: t.id, bot_id: b.botId, version: b.version, loadout_revision: 1, frozen: true });
   }
   return t.id as string;
 }
-async function match(
+
+/** Enfrentamiento home–away con UN juego oficial terminado (A = home en el juego 1). */
+async function played(
   tid: string,
-  slot: string,
-  home: string,
-  away: string | null,
-  winner: string | null,
-  technical = false,
-) {
+  home: TestBot,
+  away: TestBot,
+  winner: "home" | "away" | "draw" | "technical",
+  o: { mode?: string; official?: boolean } = {},
+): Promise<string> {
+  const slot = `S${Math.random().toString(36).slice(2, 8)}`;
+  const winnerBot = winner === "home" ? home.botId : winner === "away" ? away.botId : null;
   const [m] = await h
     .db("matches")
     .insert({
@@ -58,132 +72,185 @@ async function match(
       round: 1,
       slot,
       state: "finished",
-      pairing: JSON.stringify({ slot, round: 1, bracket: "main", home, away, ...(away === null ? { bye: true } : {}) }),
-      winner_bot_id: winner,
+      pairing: JSON.stringify({ slot, round: 1, bracket: "main", home: home.botId, away: away.botId }),
+      winner_bot_id: winnerBot,
     })
     .returning("id");
-  if (away !== null) {
-    await h.db("battles").insert({
+  const result =
+    winner === "technical"
+      ? { winner: null, endReason: "technical_limit", score: { A: 0, B: 0 } }
+      : {
+          winner: winner === "home" ? "A" : winner === "away" ? "B" : "draw",
+          score: { A: winner === "home" ? 1 : 0, B: winner === "away" ? 1 : 0 },
+          endReason: "completed",
+        };
+  const [b] = await h
+    .db("battles")
+    .insert({
       tournament_id: tid,
       match_id: m.id,
       status: "finished",
-      official: true,
-      mode: "deathmatch",
+      official: o.official ?? true,
+      mode: o.mode ?? "deathmatch",
       ruleset_id: DEFAULT_RULESET_ID,
       map_id: "mvp-arena-01",
       map_version: 1,
       game_index: 1,
-      result: JSON.stringify(
-        technical
-          ? { winner: null, endReason: "technical_limit", score: { A: 0, B: 0 } }
-          : {
-              winner: winner === home ? "A" : winner === away ? "B" : "draw",
-              score: { A: winner === home ? 1 : 0, B: winner === away ? 1 : 0 },
-            },
-      ),
-    });
-  }
+      result: JSON.stringify(result),
+    })
+    .returning("id");
+  const outcome = (team: "home" | "away") =>
+    winner === "technical" ? null : winner === "draw" ? "draw" : winner === team ? "win" : "loss";
+  await h.db("participants").insert([
+    { battle_id: b.id, bot_id: home.botId, version: 1, team: "A", outcome: outcome("home") },
+    { battle_id: b.id, bot_id: away.botId, version: 1, team: "B", outcome: outcome("away") },
+  ]);
+  await applyBattleRating(h.db, b.id); // Elo de la batalla oficial (no-op si técnica)
+  return b.id as string;
 }
+
 const job = (tournamentId: string) =>
   ({ id: "j", kind: "update_standings", payload: { tournamentId }, attempts: 1 }) as unknown as JobRow;
-async function table() {
-  clearStandingsCache();
-  const { standings } = await getStandings(h.db, SEASON, "deathmatch");
-  return standings.map((r) => ({ id: r.botId, rank: r.rank, w: r.wins, l: r.losses, d: r.draws }));
+async function update(tid: string) {
+  await handleUpdateStandings(job(tid), { db: h.db } as never);
 }
+async function table(season: string, mode = "deathmatch") {
+  clearStandingsCache();
+  const { standings } = await getStandings(h.db, season, mode);
+  return standings.map((r) => ({ id: r.botId, rank: r.rank, w: r.wins, l: r.losses, d: r.draws, rating: r.rating }));
+}
+const vde = (rows: Awaited<ReturnType<typeof table>>, b: TestBot) => {
+  const r = rows.find((x) => x.id === b.botId);
+  return r ? [r.w, r.l, r.d] : null;
+};
 
-beforeAll(async () => {
-  h = await startTestDb();
-  await seedDev(h.db);
-  [A, B, C, D] = await createBots(h.db, 4, "st");
-  t1 = await tournament("st-T1", [A, B, C]);
-  t2 = await tournament("st-T2", [A, D]);
-  await match(t1, "M1", A.botId, B.botId, A.botId);
-  await match(t1, "M2", A.botId, C.botId, null); // empate
-  await match(t1, "M3", C.botId, null, null); // bye de C
-  await match(t2, "N1", D.botId, A.botId, D.botId);
-  await match(t2, "N2", A.botId, D.botId, null, true); // técnico: no cuenta
-}, 120_000);
-
-afterAll(async () => {
-  await h.stop();
-});
-
-const EXPECTED = () => [
-  { id: A.botId, w: 1, l: 1, d: 1 },
-  { id: B.botId, w: 0, l: 1, d: 0 },
-  { id: C.botId, w: 1, l: 0, d: 1 },
-  { id: D.botId, w: 1, l: 0, d: 0 },
-];
-const byId = (rows: { id: string }[]) => [...rows].sort((a, b) => (a.id < b.id ? -1 : 1));
-
-describe("standings de temporada = agregado de todos los torneos del modo", () => {
-  it("T1 y luego T2: están los 4 bots con V-D-E sumados (antes sólo quedaban los de T2)", async () => {
-    await handleUpdateStandings(job(t1), { db: h.db } as never);
-    await handleUpdateStandings(job(t2), { db: h.db } as never);
-    const rows = await table();
-    expect(byId(rows.map(({ id, w, l, d }) => ({ id, w, l, d })))).toEqual(byId(EXPECTED()));
-    // Orden: A y C a 4 puntos (empataron entre sí; diferencia 0 los dos ⇒ seed: A); D 3; B 0.
-    expect(rows[0].id).toBe(A.botId);
-    expect(rows[1].id).toBe(C.botId);
-    expect(rows.map((r) => r.rank)).toEqual([1, 2, 3, 4]);
-    expect(rows.at(-1)!.id).toBe(B.botId);
-    expect(rows[2].id).toBe(D.botId);
+describe("STANDINGS_POLICY = official_played_not_reverted", () => {
+  it("1 · torneo open sin batallas: nadie aparece a 0-0-0 por estar inscrito", async () => {
+    const [a, b] = await createBots(h.db, 2, "p1");
+    const t = await tournament({ season: "S1", state: "open", bots: [a, b] });
+    await update(t);
+    expect(await table("S1")).toEqual([]);
   });
 
-  it("orden inverso e idempotencia: misma tabla exacta (rangos incluidos)", async () => {
-    const forward = await table();
-    await handleUpdateStandings(job(t2), { db: h.db } as never);
-    await handleUpdateStandings(job(t1), { db: h.db } as never);
-    expect(await table()).toEqual(forward);
-    await handleUpdateStandings(job(t1), { db: h.db } as never);
-    await handleUpdateStandings(job(t1), { db: h.db } as never);
-    expect(await table()).toEqual(forward);
-  });
-
-  it("dos recálculos simultáneos no pierden filas", async () => {
-    const forward = await table();
-    await h.db("standings").delete();
-    await Promise.all([
-      recomputeSeasonStandings(h.db, SEASON, "deathmatch"),
-      recomputeSeasonStandings(h.db, SEASON, "deathmatch"),
-      handleUpdateStandings(job(t1), { db: h.db } as never),
-      handleUpdateStandings(job(t2), { db: h.db } as never),
-    ]);
-    expect(await table()).toEqual(forward);
-  });
-
-  it("el enfrentamiento técnico (ADR-022) no suma ni empate ni derrota", async () => {
-    const a = (await table()).find((r) => r.id === A.botId)!;
-    expect(a.d).toBe(1); // sólo el empate real con C
-    expect(a.l).toBe(1); // sólo la derrota real con D
-  });
-
-  it("empate total entre torneos (mismos puntos, sin directos, misma diferencia y seed): decide el id, no el orden", async () => {
-    // Otro modo, para no tocar la tabla de arriba. Dos torneos de un bot con bye cada uno.
-    const [x, y] = await createBots(h.db, 2, "st-tie");
-    const ta = await tournament("st-tie-a", [], "team_deathmatch");
-    const tb = await tournament("st-tie-b", [], "team_deathmatch");
-    // El torneo de id MENOR recibe el bot de id MAYOR: sin desempate por id, el orden
-    // saldría del orden de los torneos y no del bot.
-    const [lowT, highT] = ta < tb ? [ta, tb] : [tb, ta];
-    const [lowBot, highBot] = x.botId < y.botId ? [x, y] : [y, x];
-    for (const [tid, bot] of [
-      [lowT, highBot],
-      [highT, lowBot],
-    ] as const) {
-      await h
-        .db("entries")
-        .insert({ tournament_id: tid, bot_id: bot.botId, version: bot.version, loadout_revision: 1, frozen: true });
-      await match(tid, `bye-${bot.botId.slice(0, 4)}`, bot.botId, null, null);
+  it("2/3/4 · running cuenta al instante; finished y cancelled conservan lo disputado", async () => {
+    const [a, b] = await createBots(h.db, 2, "p2");
+    const t = await tournament({ season: "S2", state: "running", bots: [a, b] });
+    await played(t, a, b, "home");
+    await update(t);
+    let rows = await table("S2");
+    expect(vde(rows, a)).toEqual([1, 0, 0]);
+    expect(vde(rows, b)).toEqual([0, 1, 0]);
+    for (const state of ["finished", "cancelled"]) {
+      await h.db("tournaments").where({ id: t }).update({ state });
+      await update(t);
+      rows = await table("S2");
+      expect(vde(rows, a), state).toEqual([1, 0, 0]);
+      expect(vde(rows, b), state).toEqual([0, 1, 0]);
     }
-    await recomputeSeasonStandings(h.db, SEASON, "team_deathmatch");
-    clearStandingsCache();
-    const { standings } = await getStandings(h.db, SEASON, "team_deathmatch");
-    expect(standings.map((r) => r.botId)).toEqual([lowBot.botId, highBot.botId]);
-    expect(standings.map((r) => [r.wins, r.losses, r.draws])).toEqual([
-      [1, 0, 0],
-      [1, 0, 0],
-    ]);
+    // draft no aporta nada (cubre la regla explícita de la política).
+    await h.db("tournaments").where({ id: t }).update({ state: "draft" });
+    await recomputeSeasonStandings(h.db, "S2", "deathmatch");
+    expect(await table("S2")).toEqual([]);
+  });
+
+  it("5 · batalla revertida: fuera de V-D-E y standings, y Elo devuelto (mecanismo existente)", async () => {
+    const [a, b, c] = await createBots(h.db, 3, "p5");
+    const t = await tournament({ season: "S5", bots: [a, b, c] });
+    const keep = await played(t, a, c, "home");
+    const bad = await played(t, a, b, "home");
+    await update(t);
+    expect(vde(await table("S5"), a)).toEqual([2, 0, 0]);
+    expect(await revertOfficialBattle(h.db, bad)).toBe(true);
+    const rows = await table("S5");
+    expect(vde(rows, a)).toEqual([1, 0, 0]);
+    expect(vde(rows, b)).toBeNull(); // su único enfrentamiento se revirtió
+    const ra = await h.db("ratings").where({ bot_id: a.botId, season_id: "S5", mode: "deathmatch" }).first();
+    expect([ra.wins, ra.losses, ra.draws]).toEqual([1, 0, 0]);
+    const rb = await h.db("ratings").where({ bot_id: b.botId, season_id: "S5", mode: "deathmatch" }).first();
+    expect(rb.rating).toBeCloseTo(1000, 6); // Elo de vuelta al inicial
+    expect(rows.find((r) => r.id === a.botId)!.rating).toBeCloseTo(ra.rating, 6);
+    // Idempotente: revertir otra vez no cambia nada; y la que se conserva sigue contando.
+    expect(await revertOfficialBattle(h.db, bad)).toBe(false);
+    expect(await table("S5")).toEqual(rows);
+    void keep;
+  });
+
+  it("6 · dos torneos del mismo modo y temporada contribuyen los dos (orden inverso e idempotencia)", async () => {
+    const [a, b, d] = await createBots(h.db, 3, "p6");
+    const t1 = await tournament({ season: "S6", bots: [a, b] });
+    const t2 = await tournament({ season: "S6", bots: [a, d] });
+    await played(t1, a, b, "home");
+    await played(t2, d, a, "home");
+    await update(t1);
+    await update(t2);
+    const fwd = await table("S6");
+    expect(vde(fwd, a)).toEqual([1, 1, 0]);
+    expect(vde(fwd, b)).toEqual([0, 1, 0]);
+    expect(vde(fwd, d)).toEqual([1, 0, 0]);
+    await update(t2);
+    await update(t1);
+    await update(t1);
+    expect(await table("S6")).toEqual(fwd);
+    await h.db("standings").where({ season_id: "S6" }).delete();
+    await Promise.all([update(t1), update(t2), recomputeSeasonStandings(h.db, "S6", "deathmatch")]);
+    expect(await table("S6")).toEqual(fwd);
+  });
+
+  it("7 · modos distintos no se mezclan", async () => {
+    const [a, b] = await createBots(h.db, 2, "p7");
+    const tdm = await tournament({ season: "S7", mode: "team_deathmatch", bots: [a, b] });
+    const dm = await tournament({ season: "S7", mode: "deathmatch", bots: [a, b] });
+    await played(tdm, a, b, "home", { mode: "team_deathmatch" });
+    await played(dm, b, a, "home");
+    await update(tdm);
+    await update(dm);
+    expect(vde(await table("S7", "team_deathmatch"), a)).toEqual([1, 0, 0]);
+    expect(vde(await table("S7", "deathmatch"), a)).toEqual([0, 1, 0]);
+  });
+
+  it("8 · temporadas distintas no se mezclan", async () => {
+    const [a, b] = await createBots(h.db, 2, "p8");
+    const t1 = await tournament({ season: "S8a", bots: [a, b] });
+    const t2 = await tournament({ season: "S8b", bots: [a, b] });
+    await played(t1, a, b, "home");
+    await played(t2, a, b, "draw");
+    await update(t1);
+    await update(t2);
+    expect(vde(await table("S8a"), a)).toEqual([1, 0, 0]);
+    expect(vde(await table("S8b"), a)).toEqual([0, 0, 1]);
+  });
+
+  it("9 · final técnico: sin Elo, sin V-D-E y sin standings", async () => {
+    const [a, b] = await createBots(h.db, 2, "p9");
+    const t = await tournament({ season: "S9", bots: [a, b] });
+    const bid = await played(t, a, b, "technical");
+    await update(t);
+    expect(await table("S9")).toEqual([]);
+    expect(await h.db("rating_events").where({ battle_id: bid })).toHaveLength(0);
+    expect(await h.db("ratings").where({ season_id: "S9" })).toHaveLength(0);
+  });
+
+  it("práctica (no oficial) no cuenta aunque cuelgue de un torneo", async () => {
+    const [a, b] = await createBots(h.db, 2, "p10");
+    const t = await tournament({ season: "S10", bots: [a, b] });
+    await played(t, a, b, "home", { official: false });
+    await update(t);
+    expect(await table("S10")).toEqual([]);
+  });
+
+  it("empate total entre torneos: lo decide el id del bot, no el orden de los enfrentamientos", async () => {
+    // Dos torneos, un empate en cada uno: los cuatro a 1 punto, diferencia 0; seeds 1 y 2.
+    const bots = await createBots(h.db, 4, "p11");
+    const [p, q, r, s] = bots;
+    const tx = await tournament({ season: "S11", bots: [p, q] });
+    const ty = await tournament({ season: "S11", bots: [r, s] });
+    await played(tx, p, q, "draw");
+    await played(ty, r, s, "draw");
+    // Orden esperado: seed 1 antes que seed 2 y, a igualdad, el id (determinista).
+    await recomputeSeasonStandings(h.db, "S11", "deathmatch");
+    const ids = (await table("S11")).map((x) => x.id);
+    const seed1 = [p.botId, r.botId].sort();
+    const seed2 = [q.botId, s.botId].sort();
+    expect(ids).toEqual([...seed1, ...seed2]);
   });
 });

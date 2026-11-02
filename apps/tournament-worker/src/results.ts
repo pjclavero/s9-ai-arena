@@ -27,7 +27,7 @@ interface MatchRow {
   winner_team_id: string | null;
 }
 
-function pairingOf(m: MatchRow): Pairing {
+export function pairingOf(m: Pick<MatchRow, "pairing">): Pairing {
   return typeof m.pairing === "string" ? (JSON.parse(m.pairing) as Pairing) : m.pairing;
 }
 
@@ -46,6 +46,19 @@ interface SeriesOutcome {
  */
 async function resolveSeries(db: Knex, match: MatchRow, p: Pairing): Promise<SeriesOutcome> {
   const battles = await db("battles").where({ match_id: match.id }).orderBy("game_index", "asc");
+  return seriesOutcome(battles, p);
+}
+
+/**
+ * Serie de un enfrentamiento a partir de SUS juegos (puro: lo comparten el cierre del
+ * match y la clasificación de temporada). Los juegos terminados por la salvaguarda
+ * técnica (ADR-022) no cuentan. Victorias de juego; luego puntuación; si siguen iguales,
+ * en eliminatorias decide el mejor seed (home) y en liga/RR/suizo es empate.
+ */
+export function seriesOutcome(
+  battles: Record<string, any>[],
+  p: Pairing,
+): SeriesOutcome & { homeScore: number; awayScore: number } {
   let homeWins = 0;
   let awayWins = 0;
   let homeScore = 0;
@@ -60,18 +73,19 @@ async function resolveSeries(db: Knex, match: MatchRow, p: Pairing): Promise<Ser
     homeScore += Number(result.score?.[homeTeam] ?? 0);
     awayScore += Number(result.score?.[awayTeam] ?? 0);
   }
+  const scores = { homeScore, awayScore };
   if (homeWins !== awayWins) {
     const homeWon = homeWins > awayWins;
-    return { winner: homeWon ? p.home : p.away, loser: homeWon ? p.away : p.home, draw: false };
+    return { winner: homeWon ? p.home : p.away, loser: homeWon ? p.away : p.home, draw: false, ...scores };
   }
   if (homeScore !== awayScore) {
     const homeWon = homeScore > awayScore;
-    return { winner: homeWon ? p.home : p.away, loser: homeWon ? p.away : p.home, draw: false };
+    return { winner: homeWon ? p.home : p.away, loser: homeWon ? p.away : p.home, draw: false, ...scores };
   }
   // En eliminatorias no puede haber empate de serie: decide el mejor seed
   // (orden de inscripción; documentado). En liga/RR/suizo, empate real.
-  if (p.bracket !== "main") return { winner: p.home, loser: p.away, draw: false };
-  return { winner: null, loser: null, draw: true };
+  if (p.bracket !== "main") return { winner: p.home, loser: p.away, draw: false, ...scores };
+  return { winner: null, loser: null, draw: true, ...scores };
 }
 
 // -------------------------------------------------- avance de brackets (T9.2)
