@@ -208,7 +208,7 @@ describe("EQ5c · P3 · SSRF de la ingesta", () => {
       "rtmps://127.1/live",
       "rtmps://2130706433/live",
       "rtmps://10.0.0.5/live",
-      "rtmps://192.168.1.10/live",
+      "rtmps://192.168.0.10/live",
       "rtmps://172.20.0.3/live",
       "rtmps://100.64.0.1/live",
       "rtmps://[fd00::1]/live",
