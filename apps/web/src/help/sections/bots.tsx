@@ -366,7 +366,7 @@ export function Examples() {
       <p>
         <label data-testid="help-wrap-label">
           <input type="checkbox" checked={wrap} onChange={(e) => setWrap(e.target.checked)} data-testid="help-wrap" />{" "}
-          Ajustar líneas largas{" "}
+          <span data-testid="help-wrap-text">Ajustar líneas largas</span>{" "}
           <InfoTip topic="Ajustar líneas largas" testId="tip-wrap">
             Parte las líneas largas de los ejemplos para leerlas sin desplazarte. No cambia el código que copias.
           </InfoTip>

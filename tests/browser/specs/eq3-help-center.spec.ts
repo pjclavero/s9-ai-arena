@@ -102,7 +102,7 @@ test.describe("@fase1 EQ3 Centro de Ayuda", () => {
     await page.getByRole("button", { name: "Cerrar ayuda" }).click();
     await expect(box, "la X tampoco").not.toBeChecked();
     // Control positivo: el texto del propio label SÍ alterna la casilla (la prueba no es ciega).
-    await page.getByTestId("help-wrap-label").getByText("Ajustar líneas largas", { exact: true }).click();
+    await page.getByTestId("help-wrap-text").click();
     await expect(box).toBeChecked();
   });
 
