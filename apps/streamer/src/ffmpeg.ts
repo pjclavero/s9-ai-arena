@@ -31,6 +31,14 @@ export function buildChromiumArgs(cfg: StreamerConfig, broadcastUrl: string): st
     "--enable-unsafe-swiftshader",
     "--hide-scrollbars",
     "--autoplay-policy=no-user-gesture-required",
+    // EQ5 (2026-11-02, visto en un MP4 real): la página es lang="es" y el
+    // Chromium de la imagen va en inglés ⇒ la barra de Google Translate quedaba
+    // FIJA en la esquina de la emisión. Y tras un reintento (SIGTERM + relanzar)
+    // Chromium ofrece «restaurar páginas». Nada del navegador debe entrar en vídeo.
+    "--lang=es",
+    "--disable-features=Translate",
+    "--hide-crash-restore-bubble",
+    "--noerrdialogs",
     // El contenedor ya aísla (usuario sin privilegios, no-new-privileges).
     "--no-sandbox",
     `--app=${broadcastUrl}`,
@@ -64,6 +72,11 @@ export function buildFfmpegArgs(
     // Captura del Xvfb donde pinta Chromium.
     "-f",
     "x11grab",
+    // EQ5 · x11grab dibuja el puntero por defecto: en el MP4 real salía la «X»
+    // del Xvfb en el centro mientras Chromium arrancaba. El CSS `cursor: none`
+    // de /broadcast no cubre ese tramo (ni un Chromium caído).
+    "-draw_mouse",
+    "0",
     "-framerate",
     String(cfg.fps),
     "-video_size",

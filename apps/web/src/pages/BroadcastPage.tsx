@@ -210,7 +210,10 @@ function FinishedScreen({ config, last }: { config: BroadcastConfig; last: Battl
       style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}
     >
       <h1 style={{ fontSize: 56, color: config.branding.accentColor, margin: 0 }}>{config.branding.eventName}</h1>
-      <p style={{ fontSize: 36 }}>Torneo terminado. ¡Gracias por vernos!</p>
+      <p style={{ fontSize: 36 }}>
+        {/* EQ5 · en una batalla suelta no hay torneo que terminar (visto en el MP4 real). */}
+        {config.target?.kind === "battle" ? "Batalla terminada. ¡Gracias por vernos!" : "Torneo terminado. ¡Gracias por vernos!"}
+      </p>
       {last && (
         <p data-testid="broadcast-last-score" style={{ fontSize: 30, opacity: 0.9 }}>
           Última batalla: {scoreLine(last)} · {participantsLine(last)}

@@ -107,6 +107,17 @@ describe("T11.1 BroadcastPage (jsdom)", () => {
     expect(screen.getByTestId("broadcast-round").textContent).toBe("Batalla 1 / 1");
   });
 
+  it("EQ5 · batalla suelta terminada: «Batalla terminada», no «Torneo terminado»", async () => {
+    vi.stubGlobal("fetch", async (url: any, init?: any) => {
+      fetchCalls.push({ url: String(url), init });
+      return { ok: true, json: async () => ({ ...finished, id: "b0" }) } as Response;
+    });
+    render(<BroadcastPage config={parseBroadcastConfig("?battle=b0")} />);
+    await waitFor(() => expect(screen.getByTestId("broadcast-finished")).toBeTruthy());
+    expect(screen.getByTestId("broadcast-finished").textContent).toContain("Batalla terminada");
+    expect(screen.getByTestId("broadcast-finished").textContent).not.toContain("Torneo");
+  });
+
   it("EQ5 · torneo EN CURSO con la última batalla visible terminada: intermedio, nunca «Torneo terminado»", async () => {
     mockBattles([finished], "running");
     render(<BroadcastPage config={parseBroadcastConfig("?tournament=t1")} />);
