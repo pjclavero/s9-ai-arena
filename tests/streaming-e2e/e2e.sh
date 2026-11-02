@@ -90,7 +90,8 @@ check() { # check <nombre> <condición-bash>
   if eval "$2"; then RC[$1]=0; else RC[$1]=1; fi
   log "COMPROBACIÓN $1 rc=${RC[$1]}"
 }
-ffargs() { docker top "$TAG-streamer" -eo args | grep -E '^/usr/bin/ffmpeg|^ffmpeg' | head -1; }
+# `docker top` exige la columna pid; la línea de ffmpeg es la que captura el Xvfb.
+ffargs() { docker top "$TAG-streamer" -eo pid,args | grep -- '-f x11grab' | head -1; }
 status() { ctl GET /status; }
 jget() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);console.log(eval("j."+process.argv[1]))})' "$1"; }
 ingest_bytes() { curl -s "http://127.0.0.1:$MTX_API_PORT/v3/paths/list" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);const p=(j.items||[]).find(x=>x.ready);console.log(p?p.bytesReceived:0)})'; }

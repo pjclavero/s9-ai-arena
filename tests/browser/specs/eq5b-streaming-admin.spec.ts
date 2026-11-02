@@ -113,7 +113,6 @@ async function streaming(page: Page, hash = "#/streaming") {
 }
 
 async function saveSettings(page: Page) {
-  page.once("dialog", (d) => void d.accept());
   await page.getByTestId("set-save").click();
   await expect(page.getByTestId("streaming-notice")).toContainText(/Guardado|Sin cambios/);
 }

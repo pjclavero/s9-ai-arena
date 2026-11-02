@@ -193,6 +193,8 @@ export function StreamingPage(props: { me: Me; route: string }) {
   const [actionError, setActionError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string>("");
   const [busy, setBusy] = useState<string | null>(null);
+  /** Cada acción terminada refresca la auditoría (una retención no cambia la versión). */
+  const [actions, setActions] = useState(0);
 
   const refresh = useCallback(async () => {
     try {
@@ -223,6 +225,7 @@ export function StreamingPage(props: { me: Me; route: string }) {
       setActionError(e);
     } finally {
       setBusy(null);
+      setActions((n) => n + 1);
     }
   }
 
@@ -278,7 +281,7 @@ export function StreamingPage(props: { me: Me; route: string }) {
       <CredentialsCard st={st} busy={busy} act={act} />
       <BrandingCard key={`b${st.settings.version}`} st={st} busy={busy} act={act} />
       <RecordingsCard key={`r${st.settings.version}`} st={st} busy={busy} act={act} />
-      <AuditCard version={st.settings.version} />
+      <AuditCard version={st.settings.version * 100000 + actions} />
     </div>
   );
 }
