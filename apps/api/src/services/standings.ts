@@ -59,7 +59,12 @@ export async function getStandings(
   return { standings, fromCache: false };
 }
 
-/** La escriben E9/E8 (pipeline de ratings). Invalida la caché al instante. */
+/**
+ * La escriben E9/E8 (pipeline de ratings). Invalida la caché al instante.
+ * REEMPLAZA la tabla completa de (temporada, modo): hay que pasarle la clasificación
+ * AGREGADA de todos los torneos (EQ2 · tournament-worker `recomputeSeasonStandings`),
+ * nunca la de un solo torneo. Acepta una transacción en curso.
+ */
 export async function updateStandings(
   db: Db,
   seasonId: string,
@@ -84,6 +89,11 @@ export async function updateStandings(
       );
     }
   });
+  invalidateStandingsCache(seasonId);
+}
+
+/** Invalida la caché de una temporada (también tras confirmar una transacción externa). */
+export function invalidateStandingsCache(seasonId: string): void {
   for (const key of [...cache.keys()]) {
     if (key.startsWith(`${seasonId}|`)) cache.delete(key);
   }
