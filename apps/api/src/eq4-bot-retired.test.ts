@@ -74,4 +74,33 @@ describe("EQ4 · bot retirado", () => {
     const got = await request(app).get(`/bots/${bot.body.id}`).set(auth(dev));
     expect(got.body.retiredAt).toBeNull();
   });
+
+  it("rev. EQ6 P2-2 · includeCounts da el recuento REAL de mis bots (no el de la página) y nada de otros", async () => {
+    const me = await request(app).get("/users/me").set(auth(dev));
+    const ownerId = me.body.id as string;
+    const created: string[] = [];
+    for (let i = 0; i < 23; i++) {
+      const b = await request(app).post("/bots").set(auth(dev)).send({ name: `eq4-cnt-${i}`, visibility: "private" });
+      created.push(b.body.id);
+    }
+    for (const id of created.slice(0, 3))
+      await request(app).patch(`/bots/${id}`).set(auth(dev)).send({ retired: true });
+    const [db] = await h.db("bots").where({ owner_id: ownerId }).select(
+      h.db.raw("count(*)::int AS total"),
+      h.db.raw("count(*) FILTER (WHERE retired_at IS NOT NULL)::int AS retired"),
+    );
+    const page = await request(app).get(`/bots?ownerId=${ownerId}&includeCounts=true`).set(auth(dev));
+    expect(page.status).toBe(200);
+    expect(page.body.items.length).toBe(20); // la página por defecto es parcial…
+    expect(typeof page.body.nextCursor).toBe("string");
+    // …pero el recuento es el de TODOS
+    expect(page.body.counts).toEqual({ total: db.total, active: db.total - db.retired, retired: db.retired });
+    expect(page.body.counts.total).toBeGreaterThan(20);
+    // sin pedirlo, la respuesta es la de siempre
+    const plain = await request(app).get(`/bots?ownerId=${ownerId}`).set(auth(dev));
+    expect(plain.body.counts).toBeUndefined();
+    // otro usuario no obtiene recuentos ajenos
+    const foreign = await request(app).get(`/bots?ownerId=${ownerId}&includeCounts=true`).set(auth(other));
+    expect(foreign.body.counts).toBeUndefined();
+  });
 });
