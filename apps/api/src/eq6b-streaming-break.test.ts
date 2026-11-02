@@ -75,16 +75,14 @@ let privateBattle: string;
 
 async function newBattle(privateBot = false): Promise<string> {
   const id = randomUUID();
-  await h
-    .db("battles")
-    .insert({
-      id,
-      status: "running",
-      mode: "deathmatch",
-      ruleset_id: DEFAULT_RULESET_ID,
-      map_id: "mvp-arena-01",
-      map_version: 1,
-    });
+  await h.db("battles").insert({
+    id,
+    status: "running",
+    mode: "deathmatch",
+    ruleset_id: DEFAULT_RULESET_ID,
+    map_id: "mvp-arena-01",
+    map_version: 1,
+  });
   const bot = await createPublishedBot(h.db, `eq6b-${id.slice(0, 8)}`);
   if (privateBot) await h.db("bots").where({ id: bot.botId }).update({ visibility: "private" });
   await h.db("participants").insert({ battle_id: id, bot_id: bot.botId, version: 1, team: "red" });
