@@ -430,9 +430,9 @@ describe("EQ3 Centro de Ayuda · navegación, accesibilidad y alias", () => {
     fireEvent.change(screen.getByLabelText("Buscar en la ayuda"), { target: { value: "elo" } });
     fireEvent.click(screen.getByTestId("tip-vde-trigger"));
     const dlg = screen.getByRole("dialog", { name: "V-D-E" });
-    // EQ6 (#210): V-D-E cuenta ENFRENTAMIENTOS (leagueTable), un bye es victoria; la descalificación es cosa del Elo.
-    expect(dlg.textContent).toMatch(/enfrentamientos de los torneos de la temporada/);
-    expect(dlg.textContent).toMatch(/bye\) cuenta como victoria/);
+    // EQ2 · política official_played_not_reverted: V-D-E cuenta ENFRENTAMIENTOS oficiales disputados; el bye no suma.
+    expect(dlg.textContent).toMatch(/enfrentamientos OFICIALES disputados de los torneos de la temporada/);
+    expect(dlg.textContent).toMatch(/bye\) no suma en esta clasificación/);
     expect(dlg.textContent).not.toMatch(/descalificación/);
     expect(dlg.textContent).not.toMatch(/batallas oficiales/);
     fireEvent.keyDown(dlg, { key: "Escape" });

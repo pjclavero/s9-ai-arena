@@ -6,8 +6,9 @@
  *    (scheduler.ts, official: true); «Nueva batalla» las crea con official: false
  *    (apps/api/src/routes/battles.ts);
  *  - rating por bot, temporada y MODO (ratings.mode): un ranking por modo;
- *  - V-D-E (columna de /standings) sale de leagueTable (results.ts): cuenta
- *    ENFRENTAMIENTOS del torneo (no batallas), un bye cuenta como victoria y un
+ *  - V-D-E (columna de /standings) sale de seasonTable (tournament-worker
+ *    standings.ts, política official_played_not_reverted): ENFRENTAMIENTOS oficiales
+ *    disputados (no batallas) de los torneos de la temporada; el bye no suma y un
  *    enfrentamiento sin ganador es empate; la posición (#) es la de esa tabla
  *    (3 puntos por victoria, 1 por empate), no el rating. «Descalificación =
  *    derrota» es del Elo (ratings.ts outcomeScore), no de V-D-E (EQ6, #210).
@@ -43,9 +44,10 @@ export function RatingTip(props: { testId?: string }) {
 export function VdeTip(props: { testId?: string }) {
   return (
     <InfoTip topic="V-D-E" testId={props.testId ?? "tip-vde"}>
-      Victorias - Derrotas - Empates en los enfrentamientos de los torneos de la temporada en este modo (un
-      enfrentamiento puede tener varias batallas). Pasar una ronda sin rival (bye) cuenta como victoria; un
-      enfrentamiento sin ganador, como empate.
+      Victorias - Derrotas - Empates en los enfrentamientos OFICIALES disputados de los torneos de la temporada en este
+      modo (un enfrentamiento puede tener varias batallas); un enfrentamiento sin ganador cuenta como empate. No cuentan
+      las prácticas, las batallas revertidas ni las detenidas por límite técnico, y pasar ronda sin rival (bye) no suma
+      en esta clasificación. Inscribirse no te hace aparecer.
     </InfoTip>
   );
 }
