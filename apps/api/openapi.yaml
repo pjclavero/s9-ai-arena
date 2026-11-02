@@ -1652,7 +1652,7 @@ paths:
     put:
       tags: [streaming]
       operationId: setStreamingCredential
-      summary: 'Guarda (o cambia) la clave de emisión: se SELLA con la clave pública (RSA-OAEP-256) y sólo se devuelve `****ABCD`. Sin almacén sellado ⇒ 503 y no se guarda nada.'
+      summary: 'Guarda (o cambia) la clave de emisión: se SELLA con la clave pública (RSA-OAEP-256 + AES-256-GCM) ATADA a su destino (plataforma + ingesta canónica; EQ5c) y sólo se devuelve `****ABCD`. Sin almacén sellado ⇒ 503 y no se guarda nada; RTMPS personalizado sin ingesta ⇒ 409 ingest_missing.'
       x-min-role: admin
       requestBody:
         required: true
@@ -1667,6 +1667,7 @@ paths:
         '200': { description: Guardada, content: { application/json: { schema: { $ref: '#/components/schemas/StreamingCredentialMeta' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '503': { description: Sin almacén sellado, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     delete:
       tags: [streaming]
@@ -1706,7 +1707,7 @@ paths:
     post:
       tags: [streaming]
       operationId: startStreaming
-      summary: 'Inicia la emisión (o la grabación, según el modo) hacia un destino. Idempotente para el mismo destino y configuración; 409 si hay otra activa, si el streaming está desactivado, si falta la clave o si el destino no es público.'
+      summary: 'Inicia la emisión (o la grabación, según el modo) hacia un destino. Idempotente para el mismo destino y configuración; 409 si hay otra activa, si el streaming está desactivado, si falta la clave, si la clave está sellada para otra ingesta (credential_unbound), si el destino no es público, si no se puede medir el disco o queda poco (disk_unknown, disk_low) o si un stop la canceló mientras arrancaba (start_cancelled). start, restart y stop se ejecutan en serie.'
       x-min-role: admin
       requestBody:
         required: true
@@ -2850,6 +2851,7 @@ components:
         masked: { type: string, nullable: true, example: '****ABCD' }
         updatedAt: { type: string, format: date-time, nullable: true }
         compatible: { type: boolean, nullable: true }
+        incompatibleReason: { type: string, nullable: true, enum: [key_rotated, ingest_changed, null], description: 'EQ5c · por qué hay que volver a introducir la clave: se selló con otra clave pública o para otra URL de ingesta.' }
 
     StreamingTarget:
       type: object

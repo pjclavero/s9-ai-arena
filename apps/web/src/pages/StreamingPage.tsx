@@ -50,6 +50,8 @@ interface CredentialMeta {
   masked: string | null;
   updatedAt: string | null;
   compatible: boolean | null;
+  /** EQ5c · por qué hay que volver a introducirla (la clave está atada a su ingesta). */
+  incompatibleReason?: "key_rotated" | "ingest_changed" | null;
 }
 interface StreamerView {
   state: string;
@@ -760,7 +762,9 @@ function CredentialRow(props: {
         <span data-testid={`credential-${platform.id}-state`}>
           {meta?.configured ? `configurada (${meta.masked})` : "no configurada"}
           {meta?.configured && meta.compatible === false
-            ? " — guardada con otra clave de cifrado: vuelve a introducirla"
+            ? meta.incompatibleReason === "ingest_changed"
+              ? " — guardada para otra URL de ingesta: vuelve a introducirla"
+              : " — guardada con otra clave de cifrado: vuelve a introducirla"
             : ""}
         </span>
       </p>

@@ -12,15 +12,24 @@
  *    `pendingRestart` y el operador decide «Reiniciar emisión»;
  *  - desactivar con una emisión activa exige `confirmStop` (y la para);
  *  - toda acción que cambia algo se audita en `audit_log` (`streaming.*`), sin la clave.
+ *
+ * EQ5c (revisión EQ6b):
+ *  - P2-2 · la clave se sella ATADA a su destino (plataforma + ingesta canónica);
+ *    si la ingesta cambia, la clave deja de valer y hay que volver a introducirla;
+ *  - P2-4 · start, restart y stop se SERIALIZAN (un cerrojo por proceso) y, al
+ *    responder el streamer, se vuelve a comprobar la sesión en BD: un stop
+ *    confirmado para de verdad aunque otra petición estuviera arrancando;
+ *  - P3 · sin poder medir el disco no se empieza a grabar (fail-closed);
+ *    ingestas internas rechazadas (SSRF).
  */
 import { randomUUID } from "node:crypto";
-import { Router, type Request } from "express";
+import { Router, type Request, type Response } from "express";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
 import { ApiError, badRequest, conflict, notFound } from "../errors.js";
 import { audit } from "../audit.js";
 import { parseLimit } from "../serialize.js";
-import { sealSecret } from "../../../../packages/stream-secrets/index.js";
+import { isSealedSecret, sealSecret } from "../../../../packages/stream-secrets/index.js";
 import { StreamerUnavailable, type StreamerClient } from "../services/streamer-client.js";
 import {
   appliedConfig,
@@ -28,6 +37,7 @@ import {
   bitrateRecommendation,
   broadcastUrlFor,
   CHANGE_CLASSES,
+  credentialBinding,
   effectiveIngest,
   loadSettings,
   parseTarget,
@@ -46,6 +56,27 @@ export interface StreamingDeps {
   broadcastBaseUrl?: string;
   /** Señales para las alertas (MetricsRegistry.setGauge). */
   setGauge?: (name: string, value: number) => void;
+  /**
+   * Sólo el E2E local: admite ingestas internas/loopback (por defecto
+   * STREAMING_ALLOW_INTERNAL_INGEST=1; nunca en el Compose).
+   */
+  allowInternalIngest?: boolean;
+}
+
+/** Sobre guardado en BD (jsonb o texto). */
+function parseSealed(v: unknown): unknown {
+  if (typeof v !== "string") return v;
+  try {
+    return JSON.parse(v);
+  } catch {
+    return null;
+  }
+}
+
+/** ¿El sobre guardado está atado EXACTAMENTE a `bind`? */
+function sealedBoundTo(sealed: unknown, bind: { platform: string; ingest: string } | null): boolean {
+  if (!bind || !isSealedSecret(sealed)) return false;
+  return sealed.bind.platform === bind.platform && sealed.bind.ingest === bind.ingest;
 }
 
 const unavailable = (msg: string) => new ApiError(503, "streamer_unavailable", msg);
@@ -102,7 +133,18 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
   const router = Router();
   const publicKey = deps.publicKey ?? (() => readPublicKey());
   const base = deps.broadcastBaseUrl ?? process.env.STREAMER_BROADCAST_BASE_URL ?? "http://web:3000/broadcast";
+  const allowInternalIngest = deps.allowInternalIngest ?? process.env.STREAMING_ALLOW_INTERNAL_INGEST === "1";
   const actor = (req: Request) => req.auth?.userId ?? null;
+
+  // EQ5c (P2-4) · cerrojo de las operaciones de control (start/restart/stop):
+  // en serie dentro del proceso. Entre procesos lo cubre la recomprobación de la
+  // sesión en BD tras la respuesta del streamer (ver startLocked/restartLocked).
+  let controlChain: Promise<unknown> = Promise.resolve();
+  function serialized<T>(fn: () => Promise<T>): Promise<T> {
+    const run = controlChain.then(fn, fn);
+    controlChain = run.catch(() => undefined);
+    return run;
+  }
   const log = (req: Request, action: string, target: string, detail: Record<string, unknown> = {}) =>
     audit(db, { actorId: actor(req), action, target, detail, correlationId: req.correlationId });
 
@@ -118,18 +160,25 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     }
   }
 
-  async function credentialsMeta() {
+  async function credentialsMeta(s: StreamingSettings) {
     const pk = publicKey();
-    const rows = await db("streaming_credentials").select("platform", "key_id", "last4", "updated_at");
+    const rows = await db("streaming_credentials").select("platform", "key_id", "last4", "updated_at", "sealed");
     return PLATFORMS.map((p) => {
       const r = rows.find((x: Record<string, unknown>) => x.platform === p.id);
+      // Sellada con otra clave pública (rotada) o para otra ingesta (EQ5c): hay que volver a introducirla.
+      let incompatibleReason: "key_rotated" | "ingest_changed" | null = null;
+      if (r) {
+        if (!pk || r.key_id !== pk.kid) incompatibleReason = "key_rotated";
+        else if (!sealedBoundTo(parseSealed(r.sealed), credentialBinding(s, p.id)))
+          incompatibleReason = "ingest_changed";
+      }
       return {
         platform: p.id,
         configured: !!r,
         masked: r ? `****${r.last4}` : null,
         updatedAt: r ? new Date(r.updated_at).toISOString() : null,
-        // Sellada con otra clave pública (rotada): hay que volver a introducirla.
-        compatible: r ? !!pk && r.key_id === pk.kid : null,
+        compatible: r ? incompatibleReason === null : null,
+        incompatibleReason,
       };
     });
   }
@@ -180,8 +229,17 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
       if (pk && cred.key_id !== pk.kid) {
         throw conflict("credential_stale", "La clave se guardó con otra clave de sellado: vuelve a introducirla");
       }
+      // EQ5c (P2-2) · la clave sólo viaja hacia el destino al que se selló.
+      const sealed = parseSealed(cred.sealed);
+      if (!sealedBoundTo(sealed, credentialBinding(s, s.platform))) {
+        throw conflict(
+          "credential_unbound",
+          "La clave se guardó para otra URL de ingesta (o en un formato antiguo): vuelve a introducirla",
+        );
+      }
       body.ingestUrl = ingest;
-      body.credential = typeof cred.sealed === "string" ? JSON.parse(cred.sealed) : cred.sealed;
+      body.platform = s.platform;
+      body.credential = sealed;
     }
     return body;
   }
@@ -209,7 +267,7 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     res.json({
       settings: s,
       platforms: PLATFORMS,
-      credentials: await credentialsMeta(),
+      credentials: await credentialsMeta(s),
       capabilities: {
         sealedStore: !!publicKey(),
         streamerConfigured: deps.streamer.configured,
@@ -254,7 +312,10 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
       });
     }
     const st = await streamerStatus();
-    const r = applySettingsPatch(current, patch, { nvenc: st.status?.capabilities?.nvenc ?? null });
+    const r = applySettingsPatch(current, patch, {
+      nvenc: st.status?.capabilities?.nvenc ?? null,
+      allowInternalIngest,
+    });
     if (r.errors.length) throw new ApiError(422, "invalid_settings", r.errors.join("; "), { errors: r.errors });
     const session = await activeSession();
     const disabling = current.enabled && !r.next.enabled;
@@ -295,13 +356,21 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
 
     let stopped = false;
     if (disabling && session) {
-      await stopSession(req, "disabled");
+      await serialized(() => stopSession(req, "disabled"));
       stopped = true;
     }
     const saved = await loadSettings(db);
     const after = await activeSession();
     const stamp = await credentialStamp(saved.platform);
     await refreshGauges();
+    // EQ5c · cambiar la ingesta invalida las claves selladas para la anterior: se avisa.
+    if (r.changed.some((k) => k === "ingestUrl" || k === "platform")) {
+      for (const m of await credentialsMeta(saved)) {
+        if (m.configured && m.incompatibleReason === "ingest_changed") {
+          r.warnings.push(`la clave de ${m.platform} está sellada para otra URL de ingesta: vuelve a introducirla`);
+        }
+      }
+    }
     res.json({
       settings: saved,
       changed: r.changed,
@@ -327,7 +396,12 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
         "No hay clave pública de sellado: no se pueden guardar claves",
       );
     }
-    const sealed = sealSecret(key, pk.pem);
+    // EQ5c (P2-2) · la clave se sella atada a SU destino: plataforma + ingesta.
+    const bind = credentialBinding(await loadSettings(db), platform.id);
+    if (!bind) {
+      throw conflict("ingest_missing", "Configura y guarda primero la URL de ingesta: la clave queda atada a ella");
+    }
+    const sealed = sealSecret(key, pk.pem, bind);
     const last4 = key.slice(-4);
     await db("streaming_credentials")
       .insert({
@@ -396,7 +470,11 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     const s = await loadSettings(db);
     if (s.mode !== "rtmps") throw conflict("not_rtmps", "La prueba de ingesta sólo aplica al modo RTMPS");
     const body = await buildStartBody(s, "test", { kind: "battle", id: "00000000-0000-0000-0000-000000000000" });
-    const r = await callStreamer("POST", "/control/test", { ingestUrl: body.ingestUrl, credential: body.credential });
+    const r = await callStreamer("POST", "/control/test", {
+      ingestUrl: body.ingestUrl,
+      platform: body.platform,
+      credential: body.credential,
+    });
     await log(req, "streaming.test", "streaming:ingest", {
       platform: s.platform,
       ok: (r.body as Record<string, unknown>).ok === true,
@@ -408,6 +486,32 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
   defineOperation(router, "startStreaming", async (req, res) => {
     const t = parseTarget((req.body ?? {}).target?.kind, (req.body ?? {}).target?.id);
     if (!t) throw badRequest("target {kind: battle|tournament, id: UUID} obligatorio");
+    await serialized(() => startLocked(req, res, t));
+  });
+
+  /** Si la sesión ya no está activa (un stop ganó la carrera), para el streamer de verdad. */
+  async function stopIfCancelled(req: Request, sessionId: string, action: string): Promise<boolean> {
+    const still = await db("streaming_sessions").where({ id: sessionId, state: "active" }).first();
+    if (still) return false;
+    const other = await activeSession();
+    let streamerOk = false;
+    if (!other) {
+      try {
+        streamerOk = (await deps.streamer.call("POST", "/control/stop", {})).ok;
+      } catch {
+        streamerOk = false;
+      }
+    }
+    await log(req, action, `streaming:session:${sessionId}`, {
+      reason: "stopped_during_operation",
+      streamerStopped: streamerOk,
+      otherSessionActive: !!other,
+    });
+    await refreshGauges();
+    return true;
+  }
+
+  async function startLocked(req: Request, res: Response, t: { kind: "battle" | "tournament"; id: string }) {
     const s = await loadSettings(db);
     if (!s.enabled) throw conflict("streaming_disabled", "El streaming está desactivado: actívalo antes de emitir");
     const info = await resolveTarget(db, t);
@@ -436,7 +540,11 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     if (s.mode === "record") {
       const rec = await callStreamer("GET", "/recordings");
       const free = (rec.body as { disk?: { freeBytes?: number } | null }).disk?.freeBytes;
-      if (typeof free === "number" && free < MIN_FREE_BYTES) {
+      // EQ5c (P3) · fail-closed: sin medida del disco no se empieza a grabar.
+      if (!rec.ok || typeof free !== "number" || !Number.isFinite(free)) {
+        throw conflict("disk_unknown", "El streamer no pudo medir el espacio libre: no se empieza a grabar");
+      }
+      if (free < MIN_FREE_BYTES) {
         throw conflict("disk_low", `Queda poco espacio para grabar (${Math.round(free / 1024 ** 2)} MiB libres)`);
       }
     }
@@ -480,6 +588,11 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
       const msg = String((r.body as Record<string, unknown>).error ?? "el streamer rechazó la orden");
       throw new ApiError(r.status === 409 ? 409 : 502, r.status === 409 ? "streamer_busy" : "streamer_error", msg);
     }
+    // EQ5c (P2-4) · recomprobación: si mientras el streamer arrancaba alguien
+    // (otra instancia de la API) paró la sesión, el stop confirmado manda.
+    if (await stopIfCancelled(req, sessionId, "streaming.session.start_cancelled")) {
+      throw conflict("start_cancelled", "La emisión se detuvo mientras arrancaba: no queda nada emitiendo");
+    }
     await log(req, "streaming.session.start", `streaming:session:${sessionId}`, {
       target: t,
       mode: s.mode,
@@ -494,9 +607,13 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
       alreadyActive: false,
       streamer: publicStatus(r.body as StreamerStatus),
     });
-  });
+  }
 
   defineOperation(router, "restartStreaming", async (req, res) => {
+    await serialized(() => restartLocked(req, res));
+  });
+
+  async function restartLocked(req: Request, res: Response) {
     const session = await activeSession();
     if (!session) throw conflict("not_active", "No hay emisión activa que reiniciar");
     const s = await loadSettings(db);
@@ -505,17 +622,21 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     const body = { ...(await buildStartBody(s, session.id, t)), replace: true };
     const r = await callStreamer("POST", "/control/start", body);
     if (!r.ok) throw new ApiError(502, "streamer_error", String((r.body as Record<string, unknown>).error ?? "error"));
+    // EQ5c (P2-4) · el reinicio no resucita una emisión que se paró mientras volaba.
+    if (await stopIfCancelled(req, session.id, "streaming.session.restart_cancelled")) {
+      throw conflict("not_active", "La emisión se detuvo mientras se reiniciaba: no queda nada emitiendo");
+    }
     const stamp = await credentialStamp(s.platform);
     await db("streaming_sessions")
-      .where({ id: session.id })
+      .where({ id: session.id, state: "active" })
       .update({ config: JSON.stringify(appliedConfig(s, stamp)), mode: s.mode });
     await log(req, "streaming.session.restart", `streaming:session:${session.id}`, { target: t });
     res.json({ session: { id: session.id, target: t }, restarted: true });
-  });
+  }
 
   defineOperation(router, "stopStreaming", async (req, res) => {
     const force = (req.body ?? {}).force === true;
-    const r = await stopSession(req, force ? "forced" : "operator", force);
+    const r = await serialized(() => stopSession(req, force ? "forced" : "operator", force));
     await refreshGauges();
     res.json(r);
   });

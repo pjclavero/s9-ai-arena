@@ -21,6 +21,8 @@ import type { StreamerCallResult, StreamerClient } from "./services/streamer-cli
 import { keyIdOf, openSecret } from "../../../packages/stream-secrets/index.js";
 import { createPublishedBot } from "../../tournament-worker/src/testing/fixtures.js";
 
+// EQ5c · destino al que la API ata la clave de YouTube (packages/stream-secrets).
+const YT_BIND = { platform: "youtube", ingest: "rtmps://a.rtmps.youtube.com/live2" };
 const { publicKey: PUB, privateKey: PRIV } = generateKeyPairSync("rsa", {
   modulusLength: 3072,
   publicKeyEncoding: { type: "spki", format: "pem" },
@@ -207,7 +209,12 @@ describe("EQ5b · la clave entra y no sale", () => {
 
     const row = await h.db("streaming_credentials").where({ platform: "youtube" }).first();
     expect(JSON.stringify(row)).not.toContain(KEY);
-    expect(openSecret(row.sealed, PRIV)).toBe(KEY); // sólo con la PRIVADA (que la API no tiene)
+    expect(openSecret(row.sealed, PRIV, YT_BIND)).toBe(KEY); // sólo con la PRIVADA (que la API no tiene)
+    // EQ5c · y sólo hacia SU destino: con otra ingesta o plataforma no se abre.
+    expect(() => openSecret(row.sealed, PRIV, { ...YT_BIND, ingest: "rtmps://evil.example/live2" })).toThrow(
+      /otro destino/,
+    );
+    expect(() => openSecret(row.sealed, PRIV, { ...YT_BIND, platform: "custom" })).toThrow(/otro destino/);
 
     const st = await state();
     expect(JSON.stringify(st)).not.toContain(KEY);
@@ -365,7 +372,7 @@ describe("EQ5b · controles", () => {
 
     const body = fake.starts().at(-1)!.body as Record<string, any>;
     expect(JSON.stringify(body)).not.toContain(KEY);
-    expect(openSecret(body.credential, PRIV)).toBe(KEY);
+    expect(openSecret(body.credential, PRIV, YT_BIND)).toBe(KEY);
     expect(body.ingestUrl).toBe("rtmps://a.rtmps.youtube.com/live2");
     const u = new URL(body.broadcastUrl);
     expect(u.origin + u.pathname).toBe("http://web:3000/broadcast");
@@ -442,7 +449,7 @@ describe("EQ5b · controles", () => {
     expect(r.status).toBe(200);
     const body = fake.calls.filter((c) => c.path === "/control/test").at(-1)!.body as Record<string, any>;
     expect(JSON.stringify(body)).not.toContain(KEY);
-    expect(openSecret(body.credential, PRIV)).toBe(KEY);
+    expect(openSecret(body.credential, PRIV, YT_BIND)).toBe(KEY);
   });
 });
 

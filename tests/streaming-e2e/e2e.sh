@@ -40,7 +40,7 @@ log "vite build…"
 log "entorno vivo (API + gateway + SPA + batallas reales)…"
 (cd "$REPO" && PORT="$PORT" WEB_DIST="$STATE/dist" BATTLE_SECONDS=900 \
   STREAMER_CONTROL_URL="http://127.0.0.1:$CTL_PORT" STREAMER_CONTROL_SECRET_FILE="$STATE/control_secret" \
-  STREAM_SECRETS_PUBLIC_KEY_FILE="$STATE/public.pem" \
+  STREAM_SECRETS_PUBLIC_KEY_FILE="$STATE/public.pem" STREAMING_ALLOW_INTERNAL_INGEST=1 \
   exec node_modules/.bin/tsx tests/streaming-e2e/live-env.ts) >"$OUT/live-env.log" 2>&1 &
 LIVE_PID=$!
 for _ in $(seq 1 120); do grep -q "live-env listo" "$OUT/live-env.log" && break; sleep 1; done

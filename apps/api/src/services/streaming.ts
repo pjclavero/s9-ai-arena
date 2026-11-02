@@ -11,8 +11,9 @@
  *  - estado de la emisión → el streamer (`/status`), reconciliado con la sesión en BD.
  */
 import { readFileSync } from "node:fs";
+import { isIP } from "node:net";
 import type { Db } from "../db/connection.js";
-import { keyIdOf } from "../../../../packages/stream-secrets/index.js";
+import { canonicalIngestUrl, keyIdOf } from "../../../../packages/stream-secrets/index.js";
 import { loadRuleset } from "../../../../packages/game-rules/index.js";
 import { rulesOf } from "./battle-rules.js";
 import { resolveBattleRuleset } from "./battle-ruleset-resolver.js";
@@ -125,8 +126,63 @@ export function validLogoUrl(v: string): boolean {
   }
 }
 
-/** Mismas reglas que el streamer (parseIngestUrl): sólo rtmps, sin credenciales ni query. */
-export function validIngestUrl(v: unknown): string | null {
+/**
+ * EQ5c (revisión EQ6b, P3 · SSRF) · ¿El host de la ingesta es interno? La prueba
+ * de ingesta y la emisión las hace el STREAMER desde la red del despliegue: una
+ * ingesta «personalizada» no puede apuntar a servicios internos (nombres de
+ * Docker sin punto como `postgres`/`api`), loopback, redes privadas, link-local
+ * (metadatos 169.254.169.254) ni ULA/link-local IPv6.
+ * Límite declarado: es una comprobación del NOMBRE escrito; un nombre público
+ * que resuelva a una IP interna (DNS rebinding) no se detecta aquí.
+ */
+export function isInternalIngestHost(hostname: string): boolean {
+  const h = hostname
+    .replace(/^\[|\]$/g, "")
+    .toLowerCase()
+    .replace(/\.$/, "");
+  if (!h) return true;
+  const fam = isIP(h);
+  if (fam === 4) return internalV4(h);
+  if (fam === 6) {
+    if (h === "::" || h === "::1") return true;
+    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(h);
+    if (mapped) return internalV4(mapped[1]);
+    if (/^::ffff:[0-9a-f]{1,4}:[0-9a-f]{1,4}$/.test(h)) return true; // v4 mapeada en hex: no se admite
+    const first = parseInt(h.split(":")[0] || "0", 16);
+    if ((first & 0xfe00) === 0xfc00) return true; // fc00::/7 (ULA)
+    if ((first & 0xffc0) === 0xfe80) return true; // fe80::/10 (link-local)
+    if ((first & 0xff00) === 0xff00) return true; // multicast
+    return false;
+  }
+  // IPv4 en forma no canónica (octal, hex, abreviada: `0x7f.1`, `127.1`): getaddrinfo
+  // la aceptaría como dirección; aquí no se admite ninguna dirección que no sea canónica.
+  if (/^(0x[0-9a-f]+|\d+)(\.(0x[0-9a-f]+|\d+)){0,3}\.?$/i.test(h)) return true;
+  if (!h.includes(".")) return true; // nombre de una sola etiqueta: servicio de la red interna
+  return /(^|\.)(localhost|local|internal|lan|home\.arpa|localdomain)$/.test(h);
+}
+
+function internalV4(ip: string): boolean {
+  const [a, b] = ip.split(".").map(Number);
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) || // CGNAT
+    (a === 169 && b === 254) || // link-local / metadatos
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 192 && b === 0) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    a >= 224 // multicast y reservadas
+  );
+}
+
+/**
+ * Mismas reglas que el streamer (parseIngestUrl): sólo rtmps, sin credenciales ni query.
+ * EQ5c · y sin hosts internos, salvo `allowInternal` (sólo el E2E local:
+ * STREAMING_ALLOW_INTERNAL_INGEST=1, nunca en el Compose).
+ */
+export function validIngestUrl(v: unknown, opts: { allowInternal?: boolean } = {}): string | null {
   if (typeof v !== "string" || v.length > 512) return null;
   let u: URL;
   try {
@@ -137,6 +193,12 @@ export function validIngestUrl(v: unknown): string | null {
   if (u.protocol !== "rtmps:" || !u.hostname || u.username || u.password || u.search || u.hash) return null;
   const app = decodeURIComponent(u.pathname.replace(/^\/+|\/+$/g, ""));
   if (!app || app.length > 128 || !/^[A-Za-z0-9._~\-/]+$/.test(app)) return null;
+  try {
+    canonicalIngestUrl(v); // host normalizable (sin `%xx` ni caracteres raros): la clave se ata a esta forma
+  } catch {
+    return null;
+  }
+  if (!opts.allowInternal && isInternalIngestHost(u.hostname)) return null;
   return v;
 }
 
@@ -168,7 +230,7 @@ const SETTABLE = [
 export function applySettingsPatch(
   current: StreamingSettings,
   patch: Record<string, unknown>,
-  ctx: { nvenc: boolean | null },
+  ctx: { nvenc: boolean | null; allowInternalIngest?: boolean },
 ): SettingsPatchResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -198,8 +260,11 @@ export function applySettingsPatch(
   if (has("ingestUrl")) {
     if (patch.ingestUrl === null || patch.ingestUrl === "") next.ingestUrl = null;
     else {
-      const v = validIngestUrl(patch.ingestUrl);
-      if (!v) errors.push("ingestUrl debe ser rtmps://host[:puerto]/aplicación, sin credenciales ni query");
+      const v = validIngestUrl(patch.ingestUrl, { allowInternal: ctx.allowInternalIngest });
+      if (!v)
+        errors.push(
+          "ingestUrl debe ser rtmps://host[:puerto]/aplicación, sin credenciales ni query, y con un host público (no interno, loopback ni link-local)",
+        );
       else next.ingestUrl = v;
     }
   }
@@ -330,9 +395,24 @@ export function appliedConfig(s: StreamingSettings, credentialStamp: string | nu
   };
 }
 
-export function effectiveIngest(s: StreamingSettings): string | null {
-  const p = platformById(s.platform);
+export function effectiveIngest(s: StreamingSettings, platform: string = s.platform): string | null {
+  const p = platformById(platform);
   return p?.ingestUrl ?? s.ingestUrl;
+}
+
+/**
+ * EQ5c (P2-2) · Destino al que se ata la clave de `platform` con la
+ * configuración `s`: plataforma + ingesta CANÓNICA. null = aún no hay ingesta
+ * (RTMPS personalizado sin URL).
+ */
+export function credentialBinding(s: StreamingSettings, platform: string): { platform: string; ingest: string } | null {
+  const raw = effectiveIngest(s, platform);
+  if (!raw) return null;
+  try {
+    return { platform, ingest: canonicalIngestUrl(raw) };
+  } catch {
+    return null;
+  }
 }
 
 // ── destino y retardo ───────────────────────────────────────────────────────
