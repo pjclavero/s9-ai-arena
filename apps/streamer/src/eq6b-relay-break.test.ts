@@ -9,7 +9,7 @@
  */
 import { createHmac, generateKeyPairSync, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync, chmodSync } from "node:fs";
+import { mkdtempSync, writeFileSync, chmodSync, mkdirSync, symlinkSync, linkSync, utimesSync, existsSync, readFileSync } from "node:fs";
 import { createServer, connect as netConnect, type Server, type Socket } from "node:net";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -21,6 +21,7 @@ import { parseIngestUrl, RtmpPublisher, type IngestTarget } from "./rtmp/publish
 import { createControlServer } from "./control.js";
 import { StreamSupervisor, type SpawnedProcess } from "./supervisor.js";
 import { createLogger, DEFAULT_CONFIG } from "./config.js";
+import { applyRetention } from "./recordings.js";
 import { sealSecret } from "../../../packages/stream-secrets/index.js";
 import { EventEmitter } from "node:events";
 
@@ -336,4 +337,65 @@ describe("EQ6b · API interna de control del streamer", () => {
       child.kill("SIGKILL");
     }
   }, 20_000);
+});
+
+describe("EQ6b · llenar el disco: la retención no toca lo que no debe", () => {
+  it("CONTROL · tamaño máximo mínimo (1 MiB) y edad 1 día: borra sólo MP4 regulares viejos; nunca el que se graba, ni enlaces, ni directorios, ni replays (tampoco por hardlink)", () => {
+    const root = mkdtempSync(join(tmpdir(), "eq6b-ret-"));
+    const video = join(root, "video");
+    mkdirSync(video);
+    const replay = join(root, "battle-1.replay");
+    writeFileSync(replay, Buffer.alloc(4096, 1));
+    const old = Date.now() / 1000 - 40 * 86400;
+    const mk = (name: string, size: number) => {
+      const f = join(video, name);
+      writeFileSync(f, Buffer.alloc(size));
+      utimesSync(f, old, old);
+      return f;
+    };
+    const victim = mk("broadcast-2026-01-01T00-00-00-000Z.mp4", 2 * 1024 * 1024);
+    const current = mk("broadcast-2026-01-02T00-00-00-000Z.mp4", 8 * 1024 * 1024); // en curso y ENORME
+    symlinkSync(replay, join(video, "broadcast-2026-01-03T00-00-00-000Z.mp4"));
+    linkSync(replay, join(video, "broadcast-2026-01-04T00-00-00-000Z.mp4")); // hardlink a un replay
+    mkdirSync(join(video, "broadcast-2026-01-05T00-00-00-000Z.mp4"));
+    writeFileSync(join(video, "broadcast-2026-01-05T00-00-00-000Z.mp4", "dentro.replay"), "x");
+    mk("broadcast-evil.mp4", 4096);
+    mk("../../x.mp4".replace(/[./]/g, "_"), 4096);
+    const r = applyRetention(video, { maxAgeDays: 1, maxTotalBytes: 1024 * 1024 }, current);
+    const deleted = r.deleted.map((d) => d.name).sort();
+    expect(existsSync(current)).toBe(true);
+    expect(existsSync(replay)).toBe(true);
+    expect(readFileSync(replay).length).toBe(4096);
+    expect(existsSync(join(video, "broadcast-2026-01-05T00-00-00-000Z.mp4", "dentro.replay"))).toBe(true);
+    expect(existsSync(join(video, "broadcast-evil.mp4"))).toBe(true);
+    expect(existsSync(victim)).toBe(false);
+    // El hardlink es un fichero regular con nombre de grabación: puede borrarse (sólo el enlace);
+    // lo que importa es que el replay sigue intacto (comprobado arriba).
+    expect(deleted.every((n) => /^broadcast-2026-01-0[14]T/.test(n))).toBe(true);
+  });
+});
+
+describe("EQ6b · restart loop", () => {
+  it("CONTROL · ffmpeg que muere al instante sin progreso: reintentos acotados (maxRetries) y estado terminal `failed`", async () => {
+    let spawned = 0;
+    const logger = createLogger(null, () => {});
+    const sup = new StreamSupervisor({
+      config: { ...DEFAULT_CONFIG, mode: "record", retryDelayMs: 1, maxRetries: 4 },
+      spawner: (cmd) => {
+        spawned++;
+        const c = new FakeChild();
+        if (!cmd.includes("chromium")) setTimeout(() => c.emit("exit", 1), 1);
+        return c;
+      },
+      logger,
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    });
+    sup.start();
+    await new Promise((r) => setTimeout(r, 400));
+    expect(sup.state).toBe("failed");
+    expect(sup.restarts).toBe(5);
+    const before = spawned;
+    await new Promise((r) => setTimeout(r, 200));
+    expect(spawned).toBe(before); // nada sigue relanzando
+  });
 });
