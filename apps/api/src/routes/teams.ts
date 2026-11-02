@@ -18,7 +18,7 @@ import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
 import { audit } from "../audit.js";
 import { badRequest, conflict, forbidden, notFound } from "../errors.js";
-import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
+import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCursorQuery } from "../serialize.js";
 import { ROLE_RANK } from "../openapi.js";
 import { pathParam } from "../params.js";
 
@@ -102,7 +102,7 @@ export function teamRoutes(db: Db): Router {
       ])
       .limit(limit + 1);
     q = applyCursor(q, cursor, "teams.created_at", ["teams.id"]);
-    const rows = await q;
+    const rows = await runCursorQuery(q, cursor);
     const page = rows.slice(0, limit);
     const items = await Promise.all(page.map((t: Record<string, unknown>) => teamToJson(db, t, req.auth)));
     res.json({

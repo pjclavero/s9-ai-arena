@@ -10,7 +10,7 @@ import { defineOperation, defineExtension } from "../registry.js";
 import { battleToJson, loadParticipants } from "./battles.js";
 import { audit } from "../audit.js";
 import { badRequest, conflict, forbidden, notFound } from "../errors.js";
-import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
+import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCursorQuery } from "../serialize.js";
 import { applyTransition } from "../services/bots.js";
 import {
   entryEligibilityGate,
@@ -136,7 +136,7 @@ export function tournamentRoutes(
       ])
       .limit(limit + 1);
     q = applyCursor(q, cursor, "tournaments.created_at", ["tournaments.id"]);
-    const rows = await q;
+    const rows = await runCursorQuery(q, cursor);
     const page = rows.slice(0, limit);
     res.json({
       items: page.map(tournamentToJson),

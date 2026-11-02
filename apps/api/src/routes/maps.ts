@@ -10,7 +10,7 @@ import { defineOperation } from "../registry.js";
 import { audit } from "../audit.js";
 import { ApiError, badRequest, forbidden, notFound } from "../errors.js";
 import { ROLE_RANK } from "../openapi.js";
-import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
+import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCursorQuery } from "../serialize.js";
 // Código REAL de E4 (T4.2/T4.4): validador de seis comprobaciones y generador con semilla.
 import { validateMap, isPublishable } from "../../../map-service/src/validate/index.js";
 import { generateMap as e4GenerateMap } from "../../../map-service/src/generate/index.js";
@@ -238,7 +238,7 @@ export function mapRoutes(db: Db): Router {
   defineOperation(router, "listMaps", async (req, res) => {
     const limit = parseLimit(req.query.limit);
     // Clave del orden: (created_at, map_id, version) → el cursor lleva los dos desempates.
-    const cursor = decodeCursor(req.query.cursor as string | undefined, 2);
+    const cursor = decodeCursor(req.query.cursor as string | undefined, ["text", "int4"]);
     const auth = req.auth;
     let q = db("map_versions")
       .join("maps", "maps.id", "map_versions.map_id")
@@ -260,7 +260,7 @@ export function mapRoutes(db: Db): Router {
       q = q.where("maps.created_by", auth.userId);
     }
     q = applyCursor(q, cursor, "map_versions.created_at", ["map_versions.map_id", "map_versions.version"]);
-    const rows = await q;
+    const rows = await runCursorQuery(q, cursor);
     const page = rows.slice(0, limit);
     res.json({
       items: page.map((r: Record<string, unknown>) => mapVersionToJson(r, auth)),

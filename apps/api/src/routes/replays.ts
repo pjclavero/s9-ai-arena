@@ -23,7 +23,7 @@ import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
 import { pathParam } from "../params.js";
 import { badRequest } from "../errors.js";
-import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
+import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCursorQuery } from "../serialize.js";
 import { anonQuota, type AnonQuotaConfig } from "../middleware/anon-quota.js";
 import { publicReplaysEnabledFromEnv } from "../public-replays.js";
 import { getReadableReplayBattleOr404, replayNotFound, whereReplayReadable } from "../replay-access.js";
@@ -160,7 +160,7 @@ export function replayRoutes(
       ])
       .limit(limit + 1);
     q = applyCursor(q, cursor, "battles.created_at", ["battles.id"]);
-    const rows = await q;
+    const rows = await runCursorQuery(q, cursor);
     const page = rows.slice(0, limit);
     const items = page.map((b: Record<string, any>) => {
       let index = null;

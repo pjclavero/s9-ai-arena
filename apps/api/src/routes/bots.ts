@@ -8,7 +8,7 @@ import type { Db } from "../db/connection.js";
 import { defineOperation, defineExtension } from "../registry.js";
 import { pathParam } from "../params.js";
 import { ApiError, badRequest, conflict, forbidden, notFound } from "../errors.js";
-import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
+import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCursorQuery } from "../serialize.js";
 import { ROLE_RANK } from "../openapi.js";
 import {
   applyTransition,
@@ -214,7 +214,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     if (typeof req.query.ownerId === "string") q = q.where({ owner_id: req.query.ownerId });
     q = applyCursor(q, cursor, "bots.created_at", ["bots.id"]);
 
-    const rows = await q;
+    const rows = await runCursorQuery(q, cursor);
     const visible: Record<string, unknown>[] = [];
     for (const bot of rows) {
       if (await canSeeBot(db, req.auth, bot)) visible.push(bot);

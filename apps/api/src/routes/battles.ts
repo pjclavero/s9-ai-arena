@@ -14,7 +14,7 @@ import { audit } from "../audit.js";
 import { pathParam } from "../params.js";
 import { ROLE_RANK } from "../openapi.js";
 import { ApiError, badRequest, conflict, notFound } from "../errors.js";
-import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
+import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCursorQuery } from "../serialize.js";
 import { emptyDict, safeLookup } from "../../../../packages/game-rules/safe-lookup.js";
 import { addBotToTeam, emptyTeamStats, type TeamBattleStats } from "../../../replay-service/src/team-stats.js";
 import { signSpectateTicket } from "../auth/tokens.js";
@@ -501,7 +501,7 @@ export function battleRoutes(
         ])
         .limit(limit + 1);
       q = applyCursor(q, cursor, "battles.created_at", ["battles.id"]);
-      const rows = await q;
+      const rows = await runCursorQuery(q, cursor);
       const page = rows.slice(0, limit);
       const items = await Promise.all(
         page.map(async (b: Record<string, unknown>) =>
@@ -570,7 +570,7 @@ export function battleRoutes(
     q = whereBattleReadable(db, q, req.auth, vis);
     if (typeof req.query.status === "string") q = q.where("battles.status", req.query.status);
     q = applyCursor(q, cursor, "battles.created_at", ["battles.id"]);
-    const rows = await q;
+    const rows = await runCursorQuery(q, cursor);
     const page = rows.slice(0, limit);
     const items = await Promise.all(
       page.map(async (b: Record<string, unknown>) =>

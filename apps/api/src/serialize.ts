@@ -91,10 +91,50 @@ export function encodeCursor(row: Record<string, unknown>, keys: CursorKey[]): s
 }
 
 /**
- * Decodifica un cursor v2 con `arity` desempates. Sin cursor → null (primera página).
- * Cursor antiguo o inválido → 400 (nunca se reinterpreta).
+ * Tipo de cada desempate del cursor, en el orden de la clave. Se valida en
+ * `decodeCursor` ANTES de tocar la BD (EQ6, #223: un cursor v2 forjado con un valor que
+ * PostgreSQL no puede convertir acababa en 500).
+ *  - `uuid`: columna uuid (ids de bots, equipos, torneos, batallas);
+ *  - `text`: texto acotado (map_id);
+ *  - `int4`: entero en el rango de `integer` (versión de mapa).
  */
-export function decodeCursor(cursor: string | undefined, arity = 1): PageCursor | null {
+export type CursorKeyType = "uuid" | "text" | "int4";
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const INT4_MIN = -2147483648;
+const INT4_MAX = 2147483647;
+
+function keyOk(type: CursorKeyType, x: unknown): boolean {
+  switch (type) {
+    case "uuid":
+      return typeof x === "string" && UUID_RE.test(x);
+    case "text":
+      return typeof x === "string" && x.length > 0 && x.length <= 200 && !x.includes("\0");
+    case "int4":
+      return typeof x === "number" && Number.isInteger(x) && x >= INT4_MIN && x <= INT4_MAX;
+  }
+}
+
+/**
+ * Instante exacto válido: forma `YYYY-MM-DDTHH:MM:SS.ffffffZ`, año ≥ 1 y fecha REAL. Se
+ * comprueba con una ida y vuelta por `Date`: `toISOString()` debe reproducir los 23
+ * primeros caracteres (así caen el 31 de febrero, la hora 24 o el año 0000, que la
+ * expresión regular y `Date.parse` dejan pasar y PostgreSQL rechaza con 22008).
+ */
+function instantOk(t: unknown): t is string {
+  if (typeof t !== "string" || !CURSOR_TS_RE.test(t)) return false;
+  const d = new Date(t);
+  if (Number.isNaN(d.getTime()) || d.getUTCFullYear() < 1) return false;
+  return d.toISOString().slice(0, 23) === t.slice(0, 23);
+}
+
+const CURSOR_INVALID = "Cursor de paginación inválido o caducado: vuelve a cargar el listado desde el principio";
+
+/**
+ * Decodifica un cursor v2 cuyos desempates tienen los tipos `keyTypes`. Sin cursor →
+ * null (primera página). Cursor antiguo, mal formado o con valores fuera de tipo → 400
+ * (nunca se reinterpreta, nunca llega a la BD).
+ */
+export function decodeCursor(cursor: string | undefined, keyTypes: CursorKeyType[] = ["uuid"]): PageCursor | null {
   if (cursor === undefined || cursor === "") return null;
   let parsed: unknown;
   try {
@@ -107,15 +147,31 @@ export function decodeCursor(cursor: string | undefined, arity = 1): PageCursor 
     p !== null &&
     typeof p === "object" &&
     p.v === 2 &&
-    typeof p.t === "string" &&
-    CURSOR_TS_RE.test(p.t) &&
-    !Number.isNaN(Date.parse(p.t)) &&
+    instantOk(p.t) &&
     Array.isArray(p.k) &&
-    p.k.length === arity &&
-    p.k.every((x) => (typeof x === "string" && x.length > 0 && x.length <= 200) || Number.isInteger(x));
-  if (!ok) throw badRequest("Cursor de paginación inválido o caducado: vuelve a cargar el listado desde el principio");
+    p.k.length === keyTypes.length &&
+    p.k.every((x, i) => keyOk(keyTypes[i]!, x));
+  if (!ok) throw badRequest(CURSOR_INVALID);
   const keys = p!.k as CursorKey[];
   return { createdAt: p!.t as string, id: String(keys[0]), keys };
+}
+
+/** Códigos de PostgreSQL de conversión de datos (texto→uuid/int/fecha, desbordes). */
+const PG_CONVERSION_CODES = new Set(["22P02", "22008", "22007", "22003"]);
+
+/**
+ * Ejecuta la consulta de una página con cursor. Defensa en profundidad: si, pese a la
+ * validación de `decodeCursor`, PostgreSQL rechaza CONVERTIR un valor del cursor, es un
+ * 400 del cliente y no un 500. Sólo con cursor y sólo esos códigos: cualquier otro error
+ * (o el mismo sin cursor) se propaga intacto.
+ */
+export async function runCursorQuery(q: PromiseLike<unknown>, cursor: PageCursor | null): Promise<any[]> {
+  try {
+    return (await q) as any[];
+  } catch (e) {
+    if (cursor && PG_CONVERSION_CODES.has((e as { code?: string }).code ?? "")) throw badRequest(CURSOR_INVALID);
+    throw e;
+  }
 }
 
 /**
