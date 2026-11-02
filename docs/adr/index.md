@@ -21,6 +21,7 @@ sistema, ver [../technical/index.md](../technical/index.md) y
 | [ADR-020](ADR-020-spawns-4v4-y-version-del-motor.md) | Spawns seguros para 4v4: el motor pasa a 0.3.0 | aceptado | vigente: `apps/arena-engine/src/engine-deps.json` |
 | [ADR-021](ADR-021-reglas-de-batalla-presets-y-copia.md) | Reglas de batalla: presets, personalizado y copia inmutable | propuesto | en parte sustituido por ADR-022 (versión del motor, desempates, `maxRespawns`) |
 | [ADR-022](ADR-022-motor-0-4-0-reglas-ctf-prorroga.md) | Motor 0.4.0: reglas, desempates, CTF con prórroga y verificación de replays 0.3.0 | propuesto | PR #201; reglas y desempates canónicos en [../user/rules.md](../user/rules.md) |
+| [ADR-023](ADR-023-streaming-rele-rtmp-y-credenciales-selladas.md) | Streaming: relé RTMP en el propio streamer (clave fuera del argv) y credenciales de emisión selladas | propuesto | PR #227; operación en [../operations/streaming.md](../operations/streaming.md) |
 | [ADR-E7-001](ADR-E7-001-migraciones-knex.md) | Migraciones con Knex (programático) | aceptado | vigente: `apps/api/src/db/migrations.ts` |
 | [ADR-E7-002](ADR-E7-002-postgres-embebido-en-tests.md) | PostgreSQL embebido en tests | aceptado | vigente ([../development/testing.md](../development/testing.md)) |
 | [ADR-E7-003](ADR-E7-003-panel-react-vite.md) | Panel web: React + Vite | aceptado | vigente |

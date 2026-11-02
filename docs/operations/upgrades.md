@@ -373,6 +373,20 @@ esquema ([first-run.md](first-run.md#comandos-prohibidos-en-producción)).
   worker nuevo. Un motor 0.3.0 dará `engine_version_mismatch` («otra versión», no «manipulado») a los
   replays 0.4.0. `rollback:1` de la 016 borra las copias de reglas (no resultados ni replays).
 
+- **Administración de streaming (ADR-023, migración 017):**
+  - **Antes de desplegar:** ejecutar `infrastructure/scripts/init-secrets.sh` (idempotente): genera
+    `streamer_control_secret.txt` y el par `stream_secrets_private.pem` / `stream_secrets_public.pem`.
+    Sin ellos Compose no arranca la API (son secretos declarados). Copia de seguridad (`pg_dump -Fc`)
+    inmediatamente antes de migrar.
+  - **Migración 017** (`017_streaming_admin`) sólo CREA `streaming_settings` (una fila, streaming
+    DESACTIVADO), `streaming_credentials` (metadatos y sobre sellado; nunca la clave en claro) y
+    `streaming_sessions`; no toca ninguna tabla existente. Probada en
+    `apps/api/src/db/migration-017.test.ts` (upgrade con datos, invariantes, rollback y backup/restore
+    lógico) y en un simulacro `pg_dump -Fc`/`pg_restore` reales sobre `postgres:16-alpine`.
+  - **Vuelta atrás:** parar antes la emisión desde la web. `rollback:1` de la 017 borra la
+    configuración de streaming, los sobres sellados y el historial de sesiones; la auditoría
+    (`audit_log`, acciones `streaming.*`) se conserva. Las claves habría que volver a introducirlas.
+
 ## Errores / limitaciones
 
 | Síntoma | Causa | Remedio |

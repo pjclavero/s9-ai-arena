@@ -9,8 +9,18 @@ aislado** de lo verificado en **producción** (nada de esto último: la
 producción no ejecuta el streamer). Sustituye como runbook vigente al de E11,
 que se conserva en [history/operaciones/streaming-runbook.md](../history/operaciones/streaming-runbook.md).
 
+**Actualización EQ5b (2026-11-02, rama `equipo5/streaming-admin`, PR #227):** la
+retransmisión se administra desde la web (**Administración → Streaming**), la clave de
+emisión **ya no va al argv de FFmpeg** (relé RTMP en el propio streamer) y se guarda
+**sellada** (la API no puede descifrarla). Decisión en
+[ADR-023](../adr/ADR-023-streaming-rele-rtmp-y-credenciales-selladas.md). Ver
+[Administración desde la web](#administración-desde-la-web).
+
 ## Índice
 
+- [Administración desde la web](#administración-desde-la-web)
+- [Seguridad de la clave de emisión](#seguridad-de-la-clave-de-emisión)
+- [Alertas](#alertas)
 - [Piezas](#piezas)
 - [Cronología](#cronología)
 - [Estado verificado](#estado-verificado)
@@ -18,6 +28,68 @@ que se conserva en [history/operaciones/streaming-runbook.md](../history/operaci
 - [Operación](#operación)
 - [Defectos y limitaciones conocidos](#defectos-y-limitaciones-conocidos)
 - [Cómo se verificó](#cómo-se-verificó)
+
+## Administración desde la web
+
+Pantalla **Administración → Streaming** (`#/streaming`, sólo `admin`; el RBAC lo aplica la
+API: 12 operaciones `x-min-role: admin` del contrato 0.13.0, tag `streaming`). Ayuda offline en
+**Ayuda → Administración → Streaming**. Uso normal sin SSH, `.env` ni Compose.
+
+| Sección | Qué hace |
+|---|---|
+| Estado | `uxState`: desactivado, listo, en directo, grabando, reconectando, abandonada, interrumpida, servicio no disponible; avisos de «pendiente de reinicio» y de almacén sellado ausente |
+| Monitorización | estado del streamer, destino (sin clave), FPS y bitrate reales, frames y descartes, reintentos, relé, grabación en curso y último error redactado (sondeo cada 3 s) |
+| Destino y controles | batalla o torneo (los botones **«Retransmitir»** del detalle abren esta pantalla con el destino puesto y **no emiten**); retardo del directo LEÍDO de la copia de reglas; probar (TLS + handshake, sin publicar), iniciar/detener emisión o grabación, reiniciar |
+| Configuración | activado, modo `rtmps`/`record`, plataforma (YouTube o RTMPS personalizado; catálogo extensible en `services/streaming.ts`), x264/NVENC (NVENC sólo si el runtime lo confirma codificando un frame), 1080p/720p, 30/60 FPS (60 pide confirmación), bitrate 1000-12000 kbit/s con recomendación |
+| Credenciales | por plataforma: «configurada (****ABCD)» o «no configurada»; cambiar y eliminar. La clave nunca vuelve al navegador |
+| Branding | nombre, logo (https:// o ruta propia) y colores #hex validados; vista previa = la propia `/broadcast` en su pantalla de espera |
+| Grabaciones y retención | carpeta lógica `arena_replays/video`, número, tamaño y espacio libre; retención por edad (7/14/30 días o personalizada) y tamaño total; simular y aplicar; automática cada hora si se activa |
+| Auditoría | acciones `streaming.*` de `audit_log` (sólo inserción), sin la clave |
+
+Reglas de operación:
+
+- **Una sola emisión a la vez** (índice único en BD + 409 del streamer). Iniciar el mismo
+  destino con la misma configuración es idempotente; detener también.
+- **Cambios con emisión activa** (§20): la retención se aplica al momento; modo, plataforma,
+  ingesta, codificación, branding y clave **se aplican al pulsar «Reiniciar emisión»** (nunca
+  en silencio); desactivar el streaming **detiene** la emisión y pide confirmación.
+- `/broadcast` es anónima: sólo se emiten batallas sin bots privados (la API lo rechaza con
+  `target_not_public`) y hace falta el directo público activado.
+- Despliegue: el perfil `streaming` sigue fuera del contrato de producción. Para usar la
+  pantalla hace falta el servicio `streamer` y los secretos nuevos de `init-secrets.sh`
+  (`streamer_control_secret`, `stream_secrets_private`/`stream_secrets_public`). Sin streamer
+  la pantalla dice «Servicio de emisión no disponible».
+
+## Seguridad de la clave de emisión
+
+| Superficie | Cómo se protege | Evidencia |
+|---|---|---|
+| argv de FFmpeg (`ps`, `docker top`, `/proc/*/cmdline`) | ffmpeg escribe FLV por el fd 3; el relé Node publica con la clave | `apps/streamer/tests/secret-surfaces.test.ts` (calibrada: roja en main, verde aquí); auditoría con la imagen real: 0 apariciones |
+| `/proc/*/environ`, `docker inspect` | la clave nunca va al entorno; sólo rutas de ficheros | idem |
+| logs | logger con registro vivo de secretos (también su forma escapada en JSON); el relé redacta lo que diga el servidor | tests del logger y del relé; `docker logs` 0 apariciones |
+| `/status`, `/metrics` | destino descrito como `rtmps://host:puerto/app/***` | idem |
+| API y frontend | entra por `PUT /admin/streaming/credentials/{platform}` y nunca sale (`****ABCD`); campo password, estado vaciado al enviar, nada en `localStorage`/`sessionStorage` | `apps/api/src/eq5b-streaming-admin.test.ts`, `apps/web/tests/eq5b-streaming-page.test.tsx`, spec de navegador `@streaming-e2e` (respuestas de red, DOM y storage) |
+| BD | sobre RSA-OAEP-256 con la PÚBLICA; la privada sólo la tiene el streamer | volcado de todas las tablas de streaming y `audit_log` sin la clave; el sobre sólo se abre con la privada |
+| red | TLS con certificado VERIFICADO (FFmpeg no verificaba); `rtmp://` en claro rechazado | `publisher.test.ts`, E2E contra MediaMTX con CA local |
+| API interna del streamer | secreto compartido `x-streamer-auth` | `control.ts` (401 sin cabecera) |
+
+Límite declarado: un proceso con el mismo uid que el streamer **dentro** del contenedor podría
+leer su memoria (`/proc/<pid>/mem`) o la clave privada montada; el contenedor no ejecuta nada
+más que Xvfb, Chromium y FFmpeg (sin privilegios, `no-new-privileges`).
+
+## Alertas
+
+Grupo `s9-streamer` de `infrastructure/observability/prometheus/alerts.yml`, todas
+condicionadas a emisión pedida o streaming activado (con el streaming desactivado **no** salta
+ninguna). Probadas con promtool (`alerts-streamer.test.yml`, paso del job `contracts` de la CI;
+un mutante sin las guardas falla las 4).
+
+| Alerta | Condición | Señales |
+|---|---|---|
+| `StreamerDown` | sesión activa y streaming activado en la API, y el streamer no emite (o ni existe) durante 2 min | `s9_streaming_session_active`, `s9_streaming_enabled` (API, con `S9_METRICS_ENABLED`), `streamer_up` |
+| `StreamerRestartLoop` | más de 5 reintentos en 10 min | `streamer_restarts_total`, `streamer_desired` |
+| `StreamerDroppedFramesHigh` | más del 5 % de frames descartados durante 5 min | `streamer_dropped_frames_total`, `streamer_frames_total` |
+| `StreamerNoProgress` | más de 60 s sin progreso de ffmpeg | `streamer_progress_age_seconds` |
 
 ## Piezas
 
@@ -58,7 +130,7 @@ puede probar sin algo externo · **NOT TESTED** no se ha probado.
 | API de control (`/control/start`, `/control/stop`, `/status`, `/metrics`, `/healthz`, `/version`) | PASS | ejercida contra el contenedor real |
 | Métricas Prometheus | PASS (configuración) | `/metrics` correcto; job `streamer` (`streamer:8090`) añadido a `prometheus.yml` con test que lo ata al puerto del Compose. No hay alerta sobre `streamer_up` (sólo el latido en cAdvisor). Raspado en un stack real: NOT TESTED |
 | Clave fuera de logs, `/status`, `/metrics`, `docker inspect`, entorno, repo | PASS | 0 apariciones de una clave FALSA en cada superficie |
-| Clave fuera del argv | **FAIL** | la clave viaja en el argv de FFmpeg: `docker top` y el `ps` de **cualquier usuario del host** la muestran |
+| Clave fuera del argv | **PASS** (EQ5b) | antes FAIL (`docker top` y el `ps` de cualquier usuario del host la mostraban). Ahora relé RTMP en el streamer: 0 apariciones en argv, `/proc`, entorno, logs, inspect, `/status`, `/metrics` con la imagen real emitiendo a una ingesta RTMPS local |
 | Retardo anti-coaching | PARCIAL | el gateway retrasa el stream **y ahora también el `init`** (estado de `ahora - retardo` y el tramo pendiente a su hora; test `apps/api/src/spectate/delay-init.test.ts`). Pero **ningún ruleset del catálogo** declara `spectator.delaySeconds`: en la práctica el retardo es 0 (pendiente de reglas, EQ2) |
 | Impacto en la batalla | PASS (local, con ruido) | ver [Cómo se verificó](#cómo-se-verificó) |
 | OBS (Browser Source) | PASS (equivalente headless) / NOT TESTED (OBS real) | la URL de `/broadcast` carga a 1920×1080 sin controles en Chromium headless; no hay OBS en el entorno |
@@ -94,8 +166,10 @@ docker compose exec streamer wget -qO- http://localhost:8090/status
 docker compose exec streamer wget -qO- --post-data '' http://localhost:8090/control/stop
 ```
 
-Grabación sin canal: `STREAM_MODE=record` (sin clave). Los MP4 se acumulan en
-`arena_replays/video` sin límite: bórralos a mano.
+Lo normal (EQ5b) es **Administración → Streaming**; lo de arriba queda como operación de
+emergencia (y, con `STREAMER_CONTROL_SECRET_FILE` configurado, exige la cabecera
+`x-streamer-auth`). Grabación sin canal: modo «Sólo grabar». Los MP4 se retienen según la
+política de la pantalla (antes se acumulaban sin límite).
 
 OBS: fuente «Navegador» de 1920×1080 con la misma URL de `/broadcast`; parar el
 streamer para no emitir dos veces.
@@ -108,11 +182,11 @@ streamer para no emitir dos veces.
 | EQ5-2 | P1 | «Torneo terminado» en mitad del torneo (un visitante no ve las programadas); «Batalla 1 / 1» | **corregido** (el final lo decide `tournaments.state`) |
 | EQ5-3 | P2 | Barra de Google Translate fija en el vídeo; puntero del Xvfb visible al arrancar | **corregido** (`--lang=es`, `--disable-features=Translate`, `-draw_mouse 0`); verificado en un MP4 grabado por la imagen construida desde la rama |
 | EQ5-4 | P3 | Rótulos con UUID en vez del nombre del bot; «Torneo terminado» en una batalla suelta | **corregido** |
-| EQ5-5 | P2 | Clave de emisión en el argv de FFmpeg (visible con `ps` en el host) | **abierto**: FFmpeg no lee la URL de salida de un fichero (probado: ni siquiera FFmpeg 7.1 acepta `-/rtmp_playpath <fichero>`). Mitigación del operador: `/proc` del host con `hidepid=invisible`; arreglo de verdad: un relé que lea la clave de fichero |
+| EQ5-5 | P2 | Clave de emisión en el argv de FFmpeg (visible con `ps` en el host) | **corregido** (EQ5b, ADR-023): relé RTMP(S) en el propio streamer; ffmpeg escribe FLV por el fd 3 |
 | EQ5-6 | P2 | `init` del espectador con snapshot vivo aunque haya retardo (reconectar saltaba el retardo) | **corregido** en el gateway; la declaración de `delaySeconds` en rulesets sigue **abierta** (reglas) |
-| EQ5-7 | P2 | `/metrics` del streamer sin scrape de Prometheus | **corregido** (job `streamer`); falta una alerta sobre `streamer_up` |
+| EQ5-7 | P2 | `/metrics` del streamer sin scrape de Prometheus | **corregido** (job `streamer`) y, EQ5b, alertas `StreamerDown`/`RestartLoop`/`DroppedFramesHigh`/`NoProgress` |
 | EQ5-8 | P3 | NVENC imposible con la imagen actual | **abierto** (documentado) |
-| EQ5-9 | P3 | Sin retención de MP4 en modo grabación | **abierto** |
+| EQ5-9 | P3 | Sin retención de MP4 en modo grabación | **corregido** (EQ5b): retención por edad/tamaño desde la web, auditada |
 | EQ5-11 | P3 | Tras `failed` (corte > ~1 min) no hay reintento automático; cada reintento relanza también Chromium (recarga la página); `streamer_frames_total` vuelve a 0 en cada relanzamiento de FFmpeg | **abierto** |
 | EQ5-12 | P3 | El ticker de eventos rotula ids de vehículo (`v_blue destruido`) | **abierto** (texto del evento del motor) |
 | EQ5-10 | P3 | Con el torneo en curso, la espera/intermedio no anuncian la próxima batalla (un visitante no la ve) | limitación de la política de visibilidad |
