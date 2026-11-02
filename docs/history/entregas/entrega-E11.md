@@ -8,7 +8,8 @@
 > producción) en [docs/operations/streaming.md](../../operations/streaming.md).
 > Dos afirmaciones de abajo resultaron inexactas: la clave **sí** sale del proceso
 > Node (viaja en el argv de ffmpeg, visible con `ps` en el host) y el retardo
-> anti-coaching **no** está configurado en ningún ruleset del catálogo.
+> anti-coaching **no** está configurado en ningún ruleset del catálogo (además,
+> hasta EQ5 el `init` del espectador lo saltaba).
 
 Cubre **T11.1 y T11.2** (cap. 21 del dosier técnico) y las mejoras E11.M, sobre
 `de61d79` (E1-E10 integrados, incluidos E8 visor y E9 torneos). Rama

@@ -56,10 +56,10 @@ puede probar sin algo externo · **NOT TESTED** no se ha probado.
 | YouTube privado | BLOCKED | no hay clave ni canal de prueba facilitados por el operador |
 | Recuperación ante corte de red de 30 s | PASS (local) | (a) servidor de ingesta congelado 30 s (`docker pause`): FFmpeg no muere, la conexión se reanuda sola; (b) servidor parado 30 s: 11 reintentos (`streamer_restarts_total=11`) y la emisión vuelve sola unos 10 s después de que vuelva el servidor. El motor no lo nota (step p99 0,67 ms, 1 tick > 50 ms en 4,5 min). Límite: con `STREAM_MAX_RETRIES=20` × 3 s, un corte de más de ~1 min deja el estado en `failed` sin reintentos posteriores y el healthcheck sigue sano |
 | API de control (`/control/start`, `/control/stop`, `/status`, `/metrics`, `/healthz`, `/version`) | PASS | ejercida contra el contenedor real |
-| Métricas Prometheus | PARCIAL | `/metrics` existe y es correcto, pero **Prometheus no lo raspa** (no hay job en `prometheus.yml`); la única alerta mira el latido del contenedor en cAdvisor |
+| Métricas Prometheus | PASS (configuración) | `/metrics` correcto; job `streamer` (`streamer:8090`) añadido a `prometheus.yml` con test que lo ata al puerto del Compose. No hay alerta sobre `streamer_up` (sólo el latido en cAdvisor). Raspado en un stack real: NOT TESTED |
 | Clave fuera de logs, `/status`, `/metrics`, `docker inspect`, entorno, repo | PASS | 0 apariciones de una clave FALSA en cada superficie |
 | Clave fuera del argv | **FAIL** | la clave viaja en el argv de FFmpeg: `docker top` y el `ps` de **cualquier usuario del host** la muestran |
-| Retardo anti-coaching | **FAIL** | mecanismo implementado en el gateway, pero **ningún ruleset del catálogo** declara `spectator.delaySeconds` (retardo 0 siempre), y el mensaje `init` lleva el snapshot **vivo** aunque haya retardo |
+| Retardo anti-coaching | PARCIAL | el gateway retrasa el stream **y ahora también el `init`** (estado de `ahora - retardo` y el tramo pendiente a su hora; test `apps/api/src/spectate/delay-init.test.ts`). Pero **ningún ruleset del catálogo** declara `spectator.delaySeconds`: en la práctica el retardo es 0 (pendiente de reglas, EQ2) |
 | Impacto en la batalla | PASS (local, con ruido) | ver [Cómo se verificó](#cómo-se-verificó) |
 | OBS (Browser Source) | PASS (equivalente headless) / NOT TESTED (OBS real) | la URL de `/broadcast` carga a 1920×1080 sin controles en Chromium headless; no hay OBS en el entorno |
 | NVENC | FAIL | el FFmpeg de la imagen (Alpine 3.20, 6.1.1) **no trae `h264_nvenc`**: `STREAM_ENCODER=nvenc` no puede funcionar con esta imagen aunque haya GPU |
@@ -78,9 +78,9 @@ puede probar sin algo externo · **NOT TESTED** no se ha probado.
    contenedor.
 3. **Perfil**: `docker compose --profile streaming up -d streamer` (no está en
    `production`).
-4. **Retardo**: si se quiere retardo anti-coaching, hoy hay que añadir
-   `spectator.delaySeconds` a un ruleset del motor y corregir antes la fuga del
-   `init` (ver defectos). Sin eso, la emisión va en tiempo real.
+4. **Retardo**: si se quiere retardo anti-coaching, hay que declarar
+   `spectator.delaySeconds` en el ruleset del motor (competencia de reglas). Sin
+   eso, la emisión va en tiempo real.
 
 ## Operación
 
@@ -109,8 +109,8 @@ streamer para no emitir dos veces.
 | EQ5-3 | P2 | Barra de Google Translate fija en el vídeo; puntero del Xvfb visible al arrancar | **corregido** (`--lang=es`, `--disable-features=Translate`, `-draw_mouse 0`); verificado en un MP4 grabado por la imagen construida desde la rama |
 | EQ5-4 | P3 | Rótulos con UUID en vez del nombre del bot; «Torneo terminado» en una batalla suelta | **corregido** |
 | EQ5-5 | P2 | Clave de emisión en el argv de FFmpeg (visible con `ps` en el host) | **abierto**: FFmpeg no lee la URL de salida de un fichero (probado: ni siquiera FFmpeg 7.1 acepta `-/rtmp_playpath <fichero>`). Mitigación del operador: `/proc` del host con `hidepid=invisible`; arreglo de verdad: un relé que lea la clave de fichero |
-| EQ5-6 | P2 | Retardo anti-coaching sin configurar y `init` con snapshot vivo | **abierto** (rulesets y gateway: fuera de este carril) |
-| EQ5-7 | P2 | `/metrics` del streamer sin scrape de Prometheus | **abierto** |
+| EQ5-6 | P2 | `init` del espectador con snapshot vivo aunque haya retardo (reconectar saltaba el retardo) | **corregido** en el gateway; la declaración de `delaySeconds` en rulesets sigue **abierta** (reglas) |
+| EQ5-7 | P2 | `/metrics` del streamer sin scrape de Prometheus | **corregido** (job `streamer`); falta una alerta sobre `streamer_up` |
 | EQ5-8 | P3 | NVENC imposible con la imagen actual | **abierto** (documentado) |
 | EQ5-9 | P3 | Sin retención de MP4 en modo grabación | **abierto** |
 | EQ5-11 | P3 | Tras `failed` (corte > ~1 min) no hay reintento automático; cada reintento relanza también Chromium (recarga la página); `streamer_frames_total` vuelve a 0 en cada relanzamiento de FFmpeg | **abierto** |
