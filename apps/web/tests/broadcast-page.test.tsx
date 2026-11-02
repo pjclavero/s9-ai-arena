@@ -16,9 +16,13 @@ import { parseBroadcastConfig } from "../src/broadcast/config.js";
 
 const fetchCalls: { url: string; init?: RequestInit }[] = [];
 
-function mockBattles(items: unknown[]) {
+function mockBattles(items: unknown[], tournamentState = "running") {
   vi.stubGlobal("fetch", async (url: any, init?: any) => {
     fetchCalls.push({ url: String(url), init });
+    // EQ5 · el director lee también el ESTADO del torneo (listTournaments).
+    if (String(url).startsWith("/api/v1/tournaments?")) {
+      return { ok: true, json: async () => ({ items: [{ id: "t1", state: tournamentState }] }) } as Response;
+    }
     return { ok: true, json: async () => ({ items }) } as Response;
   });
 }
@@ -72,8 +76,9 @@ describe("T11.1 BroadcastPage (jsdom)", () => {
     await waitFor(() => expect(screen.getByTestId("broadcast-intermission")).toBeTruthy());
     expect(screen.getByTestId("broadcast-last-score").textContent).toContain("red 2");
     expect(screen.getByTestId("broadcast-next").textContent).toContain("deathmatch");
-    // Progreso del torneo en cabecera
-    expect(screen.getByTestId("broadcast-round").textContent).toContain("2 / 2");
+    // Progreso del torneo en cabecera: con el torneo EN CURSO el total no se rotula
+    // (un visitante no ve las programadas; EQ5), sólo el número de batalla.
+    await waitFor(() => expect(screen.getByTestId("broadcast-round").textContent).toBe("Batalla 1"));
   });
 
   it("EQ5 · rotula a los bots por su NOMBRE (no por el UUID recortado) si la API lo da", async () => {
@@ -95,9 +100,19 @@ describe("T11.1 BroadcastPage (jsdom)", () => {
   });
 
   it("torneo terminado: pantalla final", async () => {
-    mockBattles([finished]);
+    mockBattles([finished], "finished");
     render(<BroadcastPage config={parseBroadcastConfig("?tournament=t1")} />);
     await waitFor(() => expect(screen.getByTestId("broadcast-finished")).toBeTruthy());
+    // Torneo cerrado: ahora sí el total es conocible.
+    expect(screen.getByTestId("broadcast-round").textContent).toBe("Batalla 1 / 1");
+  });
+
+  it("EQ5 · torneo EN CURSO con la última batalla visible terminada: intermedio, nunca «Torneo terminado»", async () => {
+    mockBattles([finished], "running");
+    render(<BroadcastPage config={parseBroadcastConfig("?tournament=t1")} />);
+    await waitFor(() => expect(screen.getByTestId("broadcast-intermission")).toBeTruthy());
+    expect(screen.queryByTestId("broadcast-finished")).toBeNull();
+    expect(screen.getByTestId("broadcast-next-pending").textContent).toContain("en breve");
   });
 
   it("cero datos privados: todas las peticiones son GET anónimos a rutas de visitante", async () => {
@@ -105,7 +120,7 @@ describe("T11.1 BroadcastPage (jsdom)", () => {
     render(<BroadcastPage config={parseBroadcastConfig("?tournament=t1")} />);
     await waitFor(() => expect(fetchCalls.length).toBeGreaterThan(0));
     for (const { url, init } of fetchCalls) {
-      expect(url).toMatch(/^\/api\/v1\/(battles(\?|\/|$)|tournaments\/[^/]+\/battles$)/);
+      expect(url).toMatch(/^\/api\/v1\/(battles(\?|\/|$)|tournaments\/[^/]+\/battles$|tournaments\?limit=100$)/);
       const headers = (init?.headers ?? {}) as Record<string, string>;
       expect(Object.keys(headers)).toEqual([]);
     }

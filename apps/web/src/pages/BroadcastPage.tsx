@@ -96,9 +96,16 @@ function BroadcastHeader({ config, screen }: { config: BroadcastConfig; screen: 
       <strong data-testid="broadcast-event" style={{ fontSize: 32, color: b.accentColor }}>
         {b.eventName}
       </strong>
-      {progress && progress.total > 0 && (
+      {progress && progress.total !== null && progress.total > 0 && (
         <span data-testid="broadcast-round" style={{ marginLeft: "auto", fontSize: 24 }}>
           Batalla {Math.min(progress.played + 1, progress.total)} / {progress.total}
+        </span>
+      )}
+      {/* EQ5 · torneo en curso: un visitante no ve las batallas programadas, así
+          que el total no es conocible; se rotula sólo el número de batalla. */}
+      {progress && progress.total === null && screen?.kind !== "waiting" && (
+        <span data-testid="broadcast-round" style={{ marginLeft: "auto", fontSize: 24 }}>
+          Batalla {screen?.kind === "live" ? progress.played + 1 : Math.max(progress.played, 1)}
         </span>
       )}
     </header>
@@ -144,7 +151,9 @@ function WaitingScreen({ config, next }: { config: BroadcastConfig; next: Battle
       style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}
     >
       <h1 style={{ fontSize: 64, color: config.branding.accentColor, margin: 0 }}>{config.branding.eventName}</h1>
-      <p style={{ fontSize: 36 }}>{next ? "La batalla empieza en breve" : "Esperando el inicio del torneo…"}</p>
+      <p style={{ fontSize: 36 }}>
+        {next || config.target?.kind === "battle" ? "La batalla empieza en breve" : "Esperando el inicio del torneo…"}
+      </p>
       {next && (
         <p data-testid="broadcast-next" style={{ fontSize: 28, opacity: 0.9 }}>
           Próxima batalla: {participantsLine(next)} · {next.mode}
@@ -180,9 +189,14 @@ function IntermissionScreen({
         {scoreLine(last) || "batalla terminada"}
       </p>
       <p style={{ fontSize: 26, opacity: 0.9 }}>{participantsLine(last)}</p>
-      {next && (
+      {next ? (
         <p data-testid="broadcast-next" style={{ fontSize: 30 }}>
           A continuación: {participantsLine(next)} · {next.mode}
+        </p>
+      ) : (
+        // EQ5 · la próxima batalla existe pero un visitante no la ve (programada).
+        <p data-testid="broadcast-next-pending" style={{ fontSize: 30, opacity: 0.85 }}>
+          La siguiente batalla empezará en breve
         </p>
       )}
     </section>

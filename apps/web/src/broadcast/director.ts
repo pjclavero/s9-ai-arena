@@ -18,10 +18,14 @@ export interface BattleSummary {
   result?: { score?: Record<string, number>; ticks?: number };
 }
 
-/** Progreso del torneo para la cabecera ("Batalla 3/7"). */
+/**
+ * Progreso del torneo para la cabecera ("Batalla 3/7"). `total` es null cuando
+ * NO es conocible: un visitante no ve las batallas programadas (ver
+ * `applyTournamentState`), así que mientras el torneo sigue no se inventa.
+ */
 export interface TournamentProgress {
   played: number;
-  total: number;
+  total: number | null;
 }
 
 export type BroadcastScreen = (
@@ -60,6 +64,34 @@ export function decideScreen(battles: BattleSummary[], currentBattleId: string |
   }
   if (battles.length === 0) return { kind: "waiting", nextBattle: null, progress };
   return { kind: "finished", lastBattle, progress };
+}
+
+/** Estados de torneo que cierran la emisión (tournaments.state, migración E7/E9). */
+const CLOSED_TOURNAMENT_STATES = new Set(["finished", "cancelled"]);
+
+/**
+ * EQ5 (2026-11-02) · Ajusta la pantalla al ESTADO del torneo. La vista es anónima
+ * y la política de lectura (battle-access.ts) sólo enseña a un visitante las
+ * batallas `running` (directo público) y `finished` (replay público): las
+ * `scheduled` nunca. Por eso la lista visible NO permite saber si queda torneo:
+ * con B1 terminada y B2 programada, decideScreen veía [B1] y anunciaba «Torneo
+ * terminado» en mitad del torneo (reproducido en Chromium). Regla:
+ *  - sólo hay pantalla final si el torneo está `finished`/`cancelled`;
+ *  - si no (o si el estado no se pudo leer: `null`), lo que decideScreen llamaría
+ *    final es un intermedio (con la última batalla) o una espera;
+ *  - el total de batallas sólo se rotula con el torneo cerrado.
+ */
+export function applyTournamentState(screen: BroadcastScreen, state: string | null): BroadcastScreen {
+  const closed = state !== null && CLOSED_TOURNAMENT_STATES.has(state);
+  const progress: TournamentProgress | undefined = screen.progress
+    ? { played: screen.progress.played, total: closed ? screen.progress.total : null }
+    : undefined;
+  if (screen.kind === "finished" && !closed) {
+    return screen.lastBattle
+      ? { kind: "intermission", lastBattle: screen.lastBattle, nextBattle: null, progress }
+      : { kind: "waiting", nextBattle: null, progress };
+  }
+  return { ...screen, progress };
 }
 
 /** GET anónimo de JSON. Inyectable en tests; en producción, fetch del navegador. */
@@ -153,7 +185,38 @@ export class BroadcastDirector {
     // batallas ajenas posteriores la emisión se quedaba en «esperando» con el
     // torneo en directo.
     const tid = encodeURIComponent(this.opts.target.tournamentId);
-    const page = (await this.opts.fetchJson(`/tournaments/${tid}/battles`)) as { items: BattleSummary[] };
-    return decideScreen(page.items, this.currentBattleId);
+    const [page, state] = await Promise.all([
+      this.opts.fetchJson(`/tournaments/${tid}/battles`) as Promise<{ items: BattleSummary[] }>,
+      this.tournamentState(),
+    ]);
+    return applyTournamentState(decideScreen(page.items, this.currentBattleId), state);
+  }
+
+  /**
+   * Estado del torneo por `listTournaments` (visitor; no hay GET por id). Se
+   * pagina con el cursor hasta encontrarlo (los torneos son pocos; tope de 5
+   * páginas). Cualquier fallo ⇒ null ⇒ «no cerrado»: mejor un intermedio de más
+   * que anunciar el final de un torneo que sigue.
+   */
+  private async tournamentState(): Promise<string | null> {
+    if (this.opts.target.kind !== "tournament") return null;
+    const tid = this.opts.target.tournamentId;
+    try {
+      let cursor: string | undefined;
+      for (let i = 0; i < 5; i++) {
+        const q = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
+        const page = (await this.opts.fetchJson(`/tournaments?limit=100${q}`)) as {
+          items?: { id: string; state?: string }[];
+          nextCursor?: string;
+        };
+        const t = page.items?.find((x) => x.id === tid);
+        if (t) return typeof t.state === "string" ? t.state : null;
+        if (!page.nextCursor) return null;
+        cursor = page.nextCursor;
+      }
+    } catch {
+      /* sin estado: se trata como torneo abierto */
+    }
+    return null;
   }
 }
