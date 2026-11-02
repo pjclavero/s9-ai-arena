@@ -217,6 +217,24 @@ describe("EQ5b · controles", () => {
     expect((screen.getByTestId("stream-stop") as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("EQ5d · «Iniciando» (relé aún sin publicar): no dice «En directo», «Detener» disponible e «Iniciar» bloqueado", async () => {
+    state = baseState({
+      uxState: "starting",
+      session: {
+        id: "s1",
+        mode: "rtmps",
+        target: { kind: "battle", id: BATTLE },
+        startedAt: "2026-11-02T10:00:00.000Z",
+      },
+    });
+    render(<StreamingPage me={ME} route={`#/streaming?battle=${BATTLE}`} />);
+    await screen.findByTestId("stream-delay");
+    expect(screen.getByTestId("streaming-ux-state").textContent).toBe("Iniciando");
+    expect(screen.getByTestId("streaming-state").textContent).not.toContain(UX_TEXT.live.title);
+    expect((screen.getByTestId("stream-start") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId("stream-stop") as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("60 FPS pide confirmación; si se cancela no se guarda nada", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<StreamingPage me={ME} route="#/streaming" />);

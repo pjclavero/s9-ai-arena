@@ -340,7 +340,15 @@ export function createControlServer(opts: ControlOptions): Server {
 
         // /control/start
         const parsed = parseStartRequest(body, config, caps, { allowPlainRtmp: opts.allowPlainRtmp });
-        if (parsed.ok === false) return respond(400, { error: (parsed as { error: string }).error });
+        if (parsed.ok === false) {
+          const error = (parsed as { error: string }).error;
+          // EQ5d (P3) · un sobre con formato inválido (p. ej. etiqueta GCM truncada)
+          // también queda registrado, como los que no se pueden abrir.
+          if (body.credential !== undefined && /credencial sellada/.test(error)) {
+            logger("warn", "control: credencial sellada rechazada; orden rechazada", { code: "invalid" });
+          }
+          return respond(400, { error });
+        }
         const plan = parsed.plan;
         // Idempotencia: la MISMA sesión ya activa ⇒ no se toca nada.
         if (supervisor.active && plan.sessionId && supervisor.sessionFingerprint === sessionFingerprint(plan)) {

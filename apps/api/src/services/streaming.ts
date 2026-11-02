@@ -200,7 +200,7 @@ const v4Of =(hi: number, lo: number) => `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo
  *    usa ⇒ se rechazan SIEMPRE, sea cual sea la IPv4;
  *  - `64:ff9b::/96` (NAT64 bien conocido) y `2002::/16` (6to4): se extrae la
  *    IPv4 y se aplica `internalV4`; `64:ff9b:1::/48` (NAT64 local) se rechaza;
- *  - Teredo `2001::/32`, documentación `2001:db8::/32` y descarte `100::/64`: rechazo;
+ *  - Teredo `2001::/32` (incrusta la IPv4 ofuscada) y descarte `100::/64`: rechazo;
  *  - ULA `fc00::/7`, link-local `fe80::/10`, site-local `fec0::/10` y multicast `ff00::/8`.
  */
 function internalV6(ip: string): boolean {
@@ -214,7 +214,7 @@ function internalV6(ip: string): boolean {
     return true;
   }
   if (g[0] === 0x2002) return internalV4(v4Of(g[1], g[2])); // 6to4
-  if (g[0] === 0x2001 && (g[1] === 0 || g[1] === 0xdb8)) return true; // Teredo y documentación
+  if (g[0] === 0x2001 && g[1] === 0) return true; // Teredo
   if (g[0] === 0x100 && g[1] === 0 && g[2] === 0 && g[3] === 0) return true; // descarte 100::/64
   if ((g[0] & 0xfe00) === 0xfc00) return true; // fc00::/7 (ULA)
   if ((g[0] & 0xffc0) === 0xfe80) return true; // fe80::/10 (link-local)
