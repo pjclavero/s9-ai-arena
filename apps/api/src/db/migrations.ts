@@ -826,6 +826,23 @@ const m014_battle_diagnostics: Migration = {
   },
 };
 
+// EQ4 (UX) · «Retirar» un bot es ORGANIZATIVO: lo saca de la lista principal de
+// «Mis bots» sin borrar versiones, batallas ni replays, y sin cambiar qué
+// versiones pueden jugar (eso lo sigue decidiendo el estado de cada versión).
+// Aditiva y reversible desde la API (PATCH /bots/{id} { retired }).
+// NOTA DE INTEGRACIÓN: el PR #201 (reglas) también usa el número 015; quien
+// mergee segundo renumera la suya a 016 (lo exige migrations-order.test.ts).
+const m015_bot_retired: Migration = {
+  name: "015_bot_retired",
+  async up(db) {
+    await db.raw(`ALTER TABLE bots ADD COLUMN retired_at timestamptz`);
+  },
+  // Sólo pierde la marca de «retirado» (organizativa), nada más.
+  async down(db) {
+    await db.raw(`ALTER TABLE bots DROP COLUMN retired_at`);
+  },
+};
+
 export const MIGRATIONS: Migration[] = [
   m001_identity,
   m002_content,
@@ -841,6 +858,7 @@ export const MIGRATIONS: Migration[] = [
   m012_bot_versioning,
   m013_battle_claim,
   m014_battle_diagnostics,
+  m015_bot_retired,
 ];
 
 class ProgrammaticMigrationSource {
