@@ -134,6 +134,7 @@ export function validLogoUrl(v: string): boolean {
  * (metadatos 169.254.169.254) ni ULA/link-local IPv6.
  * Límite declarado: es una comprobación del NOMBRE escrito; un nombre público
  * que resuelva a una IP interna (DNS rebinding) no se detecta aquí.
+ * EQ5d · las IPv6 que incrustan una IPv4 se normalizan (ver `internalV6`).
  */
 export function isInternalIngestHost(hostname: string): boolean {
   const h = hostname
@@ -143,22 +144,33 @@ export function isInternalIngestHost(hostname: string): boolean {
   if (!h) return true;
   const fam = isIP(h);
   if (fam === 4) return internalV4(h);
-  if (fam === 6) {
-    if (h === "::" || h === "::1") return true;
-    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(h);
-    if (mapped) return internalV4(mapped[1]);
-    if (/^::ffff:[0-9a-f]{1,4}:[0-9a-f]{1,4}$/.test(h)) return true; // v4 mapeada en hex: no se admite
-    const first = parseInt(h.split(":")[0] || "0", 16);
-    if ((first & 0xfe00) === 0xfc00) return true; // fc00::/7 (ULA)
-    if ((first & 0xffc0) === 0xfe80) return true; // fe80::/10 (link-local)
-    if ((first & 0xff00) === 0xff00) return true; // multicast
-    return false;
-  }
+  if (fam === 6) return internalV6(h);
   // IPv4 en forma no canónica (octal, hex, abreviada: `0x7f.1`, `127.1`): getaddrinfo
   // la aceptaría como dirección; aquí no se admite ninguna dirección que no sea canónica.
   if (/^(0x[0-9a-f]+|\d+)(\.(0x[0-9a-f]+|\d+)){0,3}\.?$/i.test(h)) return true;
   if (!h.includes(".")) return true; // nombre de una sola etiqueta: servicio de la red interna
   return /(^|\.)(localhost|local|internal|lan|home\.arpa|localdomain)$/.test(h);
+}
+
+/** Los 8 grupos de 16 bits de una IPv6 ya validada por `isIP` (con IPv4 final o `::`). */
+export function ipv6Hextets(ip: string): number[] | null {
+  let s = ip.toLowerCase();
+  const dotted = /^(.*:)(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(s);
+  if (dotted) {
+    const o = dotted.slice(2).map(Number);
+    if (o.some((n) => n > 255)) return null;
+    s = `${dotted[1]}${((o[0] << 8) | o[1]).toString(16)}:${((o[2] << 8) | o[3]).toString(16)}`;
+  }
+  const halves = s.split("::");
+  if (halves.length > 2) return null;
+  const part = (x: string) => (x ? x.split(":").map((g) => parseInt(g, 16)) : []);
+  const head = part(halves[0]);
+  const tail = halves.length === 2 ? part(halves[1]) : [];
+  const fill = halves.length === 2 ? 8 - head.length - tail.length : 0;
+  if (fill < 0) return null;
+  const out = [...head, ...new Array<number>(fill).fill(0), ...tail];
+  if (out.length !== 8 || out.some((g) => !Number.isInteger(g) || g < 0 || g > 0xffff)) return null;
+  return out;
 }
 
 function internalV4(ip: string): boolean {
@@ -175,6 +187,40 @@ function internalV4(ip: string): boolean {
     (a === 198 && (b === 18 || b === 19)) ||
     a >= 224 // multicast y reservadas
   );
+}
+
+const v4Of =(hi: number, lo: number) => `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+
+/**
+ * EQ5d (revisión EQ6c, P3 · SSRF IPv6) · se normaliza la dirección a sus 8
+ * grupos y se EXTRAE la IPv4 que incrusta, aplicándole la misma lista que a
+ * una IPv4 escrita tal cual:
+ *  - `::/96` (compatible, `::a.b.c.d`; obsoleta), `::ffff:0:0/96` (mapeada) y
+ *    `::ffff:0:0:0/96` (traducida, SIIT): formas que ninguna ingesta pública
+ *    usa ⇒ se rechazan SIEMPRE, sea cual sea la IPv4;
+ *  - `64:ff9b::/96` (NAT64 bien conocido) y `2002::/16` (6to4): se extrae la
+ *    IPv4 y se aplica `internalV4`; `64:ff9b:1::/48` (NAT64 local) se rechaza;
+ *  - Teredo `2001::/32`, documentación `2001:db8::/32` y descarte `100::/64`: rechazo;
+ *  - ULA `fc00::/7`, link-local `fe80::/10`, site-local `fec0::/10` y multicast `ff00::/8`.
+ */
+function internalV6(ip: string): boolean {
+  const g = ipv6Hextets(ip);
+  if (!g) return true; // no se pudo normalizar: fail-closed
+  if (g.slice(0, 5).every((x) => x === 0) && (g[5] === 0 || g[5] === 0xffff)) return true; // ::/96 y ::ffff:0:0/96
+  if (g.slice(0, 4).every((x) => x === 0) && g[4] === 0xffff && g[5] === 0) return true; // ::ffff:0:0:0/96
+  if (g[0] === 0x64 && g[1] === 0xff9b) {
+    if (g[2] === 1) return true; // 64:ff9b:1::/48 (NAT64 de uso local)
+    if (g[2] === 0 && g[3] === 0 && g[4] === 0 && g[5] === 0) return internalV4(v4Of(g[6], g[7]));
+    return true;
+  }
+  if (g[0] === 0x2002) return internalV4(v4Of(g[1], g[2])); // 6to4
+  if (g[0] === 0x2001 && (g[1] === 0 || g[1] === 0xdb8)) return true; // Teredo y documentación
+  if (g[0] === 0x100 && g[1] === 0 && g[2] === 0 && g[3] === 0) return true; // descarte 100::/64
+  if ((g[0] & 0xfe00) === 0xfc00) return true; // fc00::/7 (ULA)
+  if ((g[0] & 0xffc0) === 0xfe80) return true; // fe80::/10 (link-local)
+  if ((g[0] & 0xffc0) === 0xfec0) return true; // fec0::/10 (site-local, obsoleta)
+  if ((g[0] & 0xff00) === 0xff00) return true; // multicast
+  return false;
 }
 
 /**
