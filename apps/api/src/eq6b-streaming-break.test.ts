@@ -38,7 +38,12 @@ class SlowStreamer implements StreamerClient {
     this.calls.push({ path, body });
     const ok = (b: unknown) => ({ ok: true, status: 200, body: b as T });
     if (path === "/status")
-      return ok({ state: this.emitting ? "streaming" : "stopped", desired: this.emitting, capabilities: { nvenc: false, sealedCredentials: true }, lastError: null });
+      return ok({
+        state: this.emitting ? "streaming" : "stopped",
+        desired: this.emitting,
+        capabilities: { nvenc: false, sealedCredentials: true },
+        lastError: null,
+      });
     if (path === "/control/start") {
       const replace = (body as { replace?: boolean }).replace === true;
       if (this.startDelayMs) await sleep(this.startDelayMs);
@@ -50,8 +55,10 @@ class SlowStreamer implements StreamerClient {
       this.emitting = false;
       return ok({ state: "stopped" });
     }
-    if (path === "/recordings") return ok({ dir: "arena_replays/video", files: [], count: 0, totalBytes: 0, disk: this.disk });
-    if (path === "/recordings/retention") return ok({ dryRun: false, deleted: [], errors: [], keptCount: 0, keptBytes: 0 });
+    if (path === "/recordings")
+      return ok({ dir: "arena_replays/video", files: [], count: 0, totalBytes: 0, disk: this.disk });
+    if (path === "/recordings/retention")
+      return ok({ dryRun: false, deleted: [], errors: [], keptCount: 0, keptBytes: 0 });
     if (path === "/control/test") return ok({ ok: true });
     return { ok: false, status: 404, body: {} as T };
   }
@@ -68,7 +75,16 @@ let privateBattle: string;
 
 async function newBattle(privateBot = false): Promise<string> {
   const id = randomUUID();
-  await h.db("battles").insert({ id, status: "running", mode: "deathmatch", ruleset_id: DEFAULT_RULESET_ID, map_id: "mvp-arena-01", map_version: 1 });
+  await h
+    .db("battles")
+    .insert({
+      id,
+      status: "running",
+      mode: "deathmatch",
+      ruleset_id: DEFAULT_RULESET_ID,
+      map_id: "mvp-arena-01",
+      map_version: 1,
+    });
   const bot = await createPublishedBot(h.db, `eq6b-${id.slice(0, 8)}`);
   if (privateBot) await h.db("bots").where({ id: bot.botId }).update({ visibility: "private" });
   await h.db("participants").insert({ battle_id: id, bot_id: bot.botId, version: 1, team: "red" });
@@ -80,7 +96,10 @@ async function settings() {
 }
 async function put(patch: Record<string, unknown>) {
   const v = (await settings()).settings.version;
-  return request(app).put("/admin/streaming/settings").set(auth(admin)).send({ version: v, ...patch });
+  return request(app)
+    .put("/admin/streaming/settings")
+    .set(auth(admin))
+    .send({ version: v, ...patch });
 }
 async function activeRows() {
   return h.db("streaming_sessions").where({ state: "active" });
@@ -96,7 +115,12 @@ beforeAll(async () => {
   h = await startTestDb();
   await seedDev(h.db);
   st = new SlowStreamer();
-  app = createApp({ db: h.db, streamer: st, streamingPublicKey: () => ({ pem: PUB, kid: keyIdOf(PUB) }), broadcastBaseUrl: "http://web:3000/broadcast" });
+  app = createApp({
+    db: h.db,
+    streamer: st,
+    streamingPublicKey: () => ({ pem: PUB, kid: keyIdOf(PUB) }),
+    broadcastBaseUrl: "http://web:3000/broadcast",
+  });
   admin = await tokenFor(h.db, DEV_USERS.admin);
   for (const role of ["visitor", "user", "developer", "team_captain", "organizer", "moderator"] as const) {
     tokens[role] = await tokenFor(h.db, DEV_USERS[role]);
@@ -138,10 +162,16 @@ describe("EQ6b · RBAC de las 12 operaciones", () => {
     for (const [m, p, body] of ops()) {
       const anon = await (request(app) as any)[m](p).send(body ?? undefined);
       expect(anon.status, `${m} ${p} anónimo`).toBe(401);
-      const junk = await (request(app) as any)[m](p).set({ Authorization: "Bearer eyJhbGciOiJub25lIn0.e30." }).send(body ?? undefined);
+      const junk = await (request(app) as any)
+        [m](p)
+        .set({ Authorization: "Bearer eyJhbGciOiJub25lIn0.e30." })
+        .send(body ?? undefined);
       expect(junk.status, `${m} ${p} token alg=none`).toBe(401);
       for (const [role, tok] of Object.entries(tokens)) {
-        const r = await (request(app) as any)[m](p).set(auth(tok)).send(body ?? undefined);
+        const r = await (request(app) as any)
+          [m](p)
+          .set(auth(tok))
+          .send(body ?? undefined);
         expect(r.status, `${m} ${p} ${role}`).toBe(403);
       }
     }
@@ -156,7 +186,10 @@ describe("EQ6b · dos emisiones / operaciones cruzadas", () => {
     st.startDelayMs = 50;
     const rs = await Promise.all(
       Array.from({ length: 8 }, (_, i) =>
-        request(app).post("/admin/streaming/start").set(auth(admin)).send({ target: { kind: "battle", id: i % 2 ? publicBattle : otherPublicBattle } }),
+        request(app)
+          .post("/admin/streaming/start")
+          .set(auth(admin))
+          .send({ target: { kind: "battle", id: i % 2 ? publicBattle : otherPublicBattle } }),
       ),
     );
     expect(rs.filter((r) => r.status === 201).length).toBe(1);
@@ -165,7 +198,11 @@ describe("EQ6b · dos emisiones / operaciones cruzadas", () => {
 
   it("DEFECTO P2 · start ‖ stop: un stop durante el arranque deja al streamer EMITIENDO sin sesión activa en la BD (emisión zombi)", async () => {
     st.startDelayMs = 400;
-    const start = request(app).post("/admin/streaming/start").set(auth(admin)).send({ target: { kind: "battle", id: publicBattle } }).then((r) => r);
+    const start = request(app)
+      .post("/admin/streaming/start")
+      .set(auth(admin))
+      .send({ target: { kind: "battle", id: publicBattle } })
+      .then((r) => r);
     await sleep(120); // la sesión ya está insertada y la orden al streamer en vuelo
     const stop = await request(app).post("/admin/streaming/stop").set(auth(admin)).send({});
     expect(stop.status).toBe(200);
@@ -177,10 +214,17 @@ describe("EQ6b · dos emisiones / operaciones cruzadas", () => {
   });
 
   it("DEFECTO P2 · restart ‖ stop: el reinicio en vuelo resucita la emisión que el operador acaba de parar", async () => {
-    const s0 = await request(app).post("/admin/streaming/start").set(auth(admin)).send({ target: { kind: "battle", id: publicBattle } });
+    const s0 = await request(app)
+      .post("/admin/streaming/start")
+      .set(auth(admin))
+      .send({ target: { kind: "battle", id: publicBattle } });
     expect(s0.status).toBe(201);
     st.startDelayMs = 400;
-    const restart = request(app).post("/admin/streaming/restart").set(auth(admin)).send({}).then((r) => r);
+    const restart = request(app)
+      .post("/admin/streaming/restart")
+      .set(auth(admin))
+      .send({})
+      .then((r) => r);
     await sleep(120);
     const stop = await request(app).post("/admin/streaming/stop").set(auth(admin)).send({});
     expect(stop.status).toBe(200);
@@ -190,31 +234,68 @@ describe("EQ6b · dos emisiones / operaciones cruzadas", () => {
   });
 
   it("CONTROL · stop idempotente y start idempotente (mismo destino y configuración ⇒ misma sesión)", async () => {
-    const a = await request(app).post("/admin/streaming/start").set(auth(admin)).send({ target: { kind: "battle", id: publicBattle } });
-    const b = await request(app).post("/admin/streaming/start").set(auth(admin)).send({ target: { kind: "battle", id: publicBattle } });
+    const a = await request(app)
+      .post("/admin/streaming/start")
+      .set(auth(admin))
+      .send({ target: { kind: "battle", id: publicBattle } });
+    const b = await request(app)
+      .post("/admin/streaming/start")
+      .set(auth(admin))
+      .send({ target: { kind: "battle", id: publicBattle } });
     expect(a.status).toBe(201);
     expect(b.status).toBe(200);
     expect(b.body.session.id).toBe(a.body.session.id);
-    const c = await request(app).post("/admin/streaming/start").set(auth(admin)).send({ target: { kind: "battle", id: otherPublicBattle } });
+    const c = await request(app)
+      .post("/admin/streaming/start")
+      .set(auth(admin))
+      .send({ target: { kind: "battle", id: otherPublicBattle } });
     expect(c.status).toBe(409);
-    for (let i = 0; i < 3; i++) expect((await request(app).post("/admin/streaming/stop").set(auth(admin)).send({})).status).toBe(200);
+    for (let i = 0; i < 3; i++)
+      expect((await request(app).post("/admin/streaming/stop").set(auth(admin)).send({})).status).toBe(200);
     expect((await activeRows()).length).toBe(0);
   });
 });
 
 describe("EQ6b · destino e IDs ajenos", () => {
   it("CONTROL · batalla con bot privado de otro usuario ⇒ 409 target_not_public; id inexistente ⇒ 404; id no UUID ⇒ 400", async () => {
-    const p = await request(app).post("/admin/streaming/start").set(auth(admin)).send({ target: { kind: "battle", id: privateBattle } });
+    const p = await request(app)
+      .post("/admin/streaming/start")
+      .set(auth(admin))
+      .send({ target: { kind: "battle", id: privateBattle } });
     expect(p.status).toBe(409);
     expect(p.body.error).toBe("target_not_public");
-    expect((await request(app).post("/admin/streaming/start").set(auth(admin)).send({ target: { kind: "battle", id: randomUUID() } })).status).toBe(404);
-    expect((await request(app).post("/admin/streaming/start").set(auth(admin)).send({ target: { kind: "battle", id: "../../etc" } })).status).toBe(400);
-    expect((await request(app).post("/admin/streaming/start").set(auth(admin)).send({ target: { kind: "replay", id: publicBattle } })).status).toBe(400);
+    expect(
+      (
+        await request(app)
+          .post("/admin/streaming/start")
+          .set(auth(admin))
+          .send({ target: { kind: "battle", id: randomUUID() } })
+      ).status,
+    ).toBe(404);
+    expect(
+      (
+        await request(app)
+          .post("/admin/streaming/start")
+          .set(auth(admin))
+          .send({ target: { kind: "battle", id: "../../etc" } })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await request(app)
+          .post("/admin/streaming/start")
+          .set(auth(admin))
+          .send({ target: { kind: "replay", id: publicBattle } })
+      ).status,
+    ).toBe(400);
     expect((await activeRows()).length).toBe(0);
   });
 
   it("CONTROL · el retardo no se puede forzar: start no admite delay y la orden al streamer no lleva ningún campo de retardo", async () => {
-    const r = await request(app).post("/admin/streaming/start").set(auth(admin)).send({ target: { kind: "battle", id: publicBattle }, delaySeconds: 0 });
+    const r = await request(app)
+      .post("/admin/streaming/start")
+      .set(auth(admin))
+      .send({ target: { kind: "battle", id: publicBattle }, delaySeconds: 0 });
     // Puede ignorar o rechazar el campo extra, pero nunca propagarlo.
     expect([201, 400, 422]).toContain(r.status);
     const last = st.calls.filter((c) => c.path === "/control/start").pop();
@@ -244,7 +325,7 @@ describe("EQ6b · configuraciones inválidas", () => {
       { branding: { eventName: "<script>alert(1)</script>\u0000" } },
       { branding: { logoUrl: "javascript:alert(1)" } },
       { branding: { logoUrl: "//evil.example/x.png" } },
-      { branding: { logoUrl: "https://evil.example/x.png\"onerror=alert(1)" } },
+      { branding: { logoUrl: 'https://evil.example/x.png"onerror=alert(1)' } },
       { branding: { primaryColor: "red;background:url(x)" } },
       { foo: 1 },
     ];
@@ -284,17 +365,26 @@ describe("EQ6b · configuraciones inválidas", () => {
 describe("EQ6b · llenar el disco", () => {
   it("CONTROL · menos de 2 GiB libres ⇒ no se empieza a grabar", async () => {
     st.disk = { totalBytes: 1e12, freeBytes: 2 * 1024 ** 3 - 1 };
-    const r = await request(app).post("/admin/streaming/start").set(auth(admin)).send({ target: { kind: "battle", id: publicBattle } });
+    const r = await request(app)
+      .post("/admin/streaming/start")
+      .set(auth(admin))
+      .send({ target: { kind: "battle", id: publicBattle } });
     expect(r.status).toBe(409);
     expect(r.body.error).toBe("disk_low");
     st.disk = { totalBytes: 1e12, freeBytes: 2 * 1024 ** 3 };
-    const ok = await request(app).post("/admin/streaming/start").set(auth(admin)).send({ target: { kind: "battle", id: publicBattle } });
+    const ok = await request(app)
+      .post("/admin/streaming/start")
+      .set(auth(admin))
+      .send({ target: { kind: "battle", id: publicBattle } });
     expect(ok.status).toBe(201);
   });
 
   it("DEFECTO P3 · fail-open: si el streamer no puede medir el disco (disk: null) se empieza a grabar igualmente", async () => {
     st.disk = null;
-    const r = await request(app).post("/admin/streaming/start").set(auth(admin)).send({ target: { kind: "battle", id: publicBattle } });
+    const r = await request(app)
+      .post("/admin/streaming/start")
+      .set(auth(admin))
+      .send({ target: { kind: "battle", id: publicBattle } });
     expect(r.status).not.toBe(201);
   });
 });
@@ -304,7 +394,10 @@ describe("EQ6b · la clave no sale por la API", () => {
     const r = await request(app).put("/admin/streaming/credentials/youtube").set(auth(admin)).send({ streamKey: KEY });
     expect(r.status).toBe(200);
     expect(r.body.masked).toBe("****WXYZ");
-    const bad = await request(app).put("/admin/streaming/credentials/youtube").set(auth(admin)).send({ streamKey: `${KEY} con espacio` });
+    const bad = await request(app)
+      .put("/admin/streaming/credentials/youtube")
+      .set(auth(admin))
+      .send({ streamKey: `${KEY} con espacio` });
     expect(bad.status).toBe(400);
     const surfaces = [
       JSON.stringify(r.body),

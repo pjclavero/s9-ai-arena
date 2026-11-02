@@ -9,7 +9,17 @@
  */
 import { createHmac, generateKeyPairSync, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync, chmodSync, mkdirSync, symlinkSync, linkSync, utimesSync, existsSync, readFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  writeFileSync,
+  chmodSync,
+  mkdirSync,
+  symlinkSync,
+  linkSync,
+  utimesSync,
+  existsSync,
+  readFileSync,
+} from "node:fs";
 import { createServer, connect as netConnect, type Server, type Socket } from "node:net";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -32,7 +42,8 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((s) => new Promise((r) => s.close(r))));
 });
 
-type Behaviour = "silent_after_handshake" | "normal" | "stall_reads_after_publish" | "reject_publish" | "reject_connect";
+type Behaviour =
+  "silent_after_handshake" | "normal" | "stall_reads_after_publish" | "reject_publish" | "reject_connect";
 
 /** Ingesta RTMP falsa. Registra el nombre de stream (la CLAVE) de cada publish. */
 async function fakeIngest(behaviour: Behaviour) {
@@ -46,7 +57,13 @@ async function fakeIngest(behaviour: Behaviour) {
     const reader = new ChunkReader();
     const send = (m: RtmpMessage) => sock.write(encodeMessage(m, 128));
     const reply = (name: string, txn: number, args: unknown[], streamId = 0) =>
-      send({ csid: 3, type: MSG_COMMAND_AMF0, streamId, timestamp: 0, payload: encodeAmf0Values([name, txn, ...(args as never[])]) });
+      send({
+        csid: 3,
+        type: MSG_COMMAND_AMF0,
+        streamId,
+        timestamp: 0,
+        payload: encodeAmf0Values([name, txn, ...(args as never[])]),
+      });
     sock.on("data", (d: Buffer) => {
       buf = Buffer.concat([buf, d]);
       if (phase === "c0c1") {
@@ -72,12 +89,20 @@ async function fakeIngest(behaviour: Behaviour) {
           if (name === "connect") seen.connects++;
           if (behaviour === "silent_after_handshake") continue; // acepta TLS+handshake y calla
           if (name === "connect" && behaviour === "reject_connect") {
-            reply("_error", txn, [null, { level: "error", code: "NetConnection.Connect.Rejected", description: "app no válida" }]);
+            reply("_error", txn, [
+              null,
+              { level: "error", code: "NetConnection.Connect.Rejected", description: "app no válida" },
+            ]);
             continue;
           }
           if (name === "publish" && behaviour === "reject_publish") {
             // Clave errónea/caducada: rechazo explícito SIN cerrar el socket (Wowza y otros).
-            reply("onStatus", 0, [null, { level: "error", code: "NetStream.Publish.BadName", description: "invalid stream key" }], 1);
+            reply(
+              "onStatus",
+              0,
+              [null, { level: "error", code: "NetStream.Publish.BadName", description: "invalid stream key" }],
+              1,
+            );
             continue;
           }
           if (name === "connect") reply("_result", txn, [{}, { code: "NetConnection.Connect.Success" }]);
@@ -113,7 +138,10 @@ function flvTag(type: number, ts: number, size: number): Buffer {
 }
 
 const withTimeout = <T>(p: Promise<T>, ms: number) =>
-  Promise.race([p.then((v) => ({ settled: true as const, v })), new Promise<{ settled: false }>((r) => setTimeout(() => r({ settled: false }), ms))]);
+  Promise.race([
+    p.then((v) => ({ settled: true as const, v })),
+    new Promise<{ settled: false }>((r) => setTimeout(() => r({ settled: false }), ms)),
+  ]);
 
 describe("EQ6b · relé RTMP frente a una ingesta que responde mal", () => {
   it("DEFECTO P2 · probe(): una ingesta que completa el handshake y no contesta a `connect` cuelga la prueba para siempre (sin timeout tras el handshake)", async () => {
@@ -125,7 +153,10 @@ describe("EQ6b · relé RTMP frente a una ingesta que responde mal", () => {
       connectTimeoutMs: 300,
     });
     // connectTimeoutMs = 300 ms: con 3 s de margen la promesa DEBE haberse resuelto o rechazado.
-    const r = await withTimeout(pub.probe().catch((e) => e), 3000);
+    const r = await withTimeout(
+      pub.probe().catch((e) => e),
+      3000,
+    );
     pub.close();
     expect(ing.seen.connects).toBe(1); // el servidor recibió connect: la prueba no es trivial
     expect(r.settled).toBe(true);
@@ -204,13 +235,21 @@ const { publicKey: PUB, privateKey: PRIV } = generateKeyPairSync("rsa", {
 class FakeChild extends EventEmitter implements SpawnedProcess {
   stdout = new EventEmitter();
   stderr = new EventEmitter();
-  stdio = [null, null, null, Object.assign(new EventEmitter(), { pause() {}, resume() {} })] as unknown as ArrayLike<unknown>;
+  stdio = [
+    null,
+    null,
+    null,
+    Object.assign(new EventEmitter(), { pause() {}, resume() {} }),
+  ] as unknown as ArrayLike<unknown>;
   kill() {
     return true;
   }
 }
 
-async function controlWith(ingestDial: (t: IngestTarget) => import("node:stream").Duplex, controlSecret: string | null) {
+async function controlWith(
+  ingestDial: (t: IngestTarget) => import("node:stream").Duplex,
+  controlSecret: string | null,
+) {
   const logger = createLogger(null, () => {});
   const sup = new StreamSupervisor({
     config: { ...DEFAULT_CONFIG, retryDelayMs: 10 },
@@ -247,7 +286,12 @@ describe("EQ6b · supervisor ante un rechazo explícito de la ingesta", () => {
       });
       sup.start();
       await new Promise((r) => setTimeout(r, 1000));
-      const view = { state: sup.state, restarts: sup.restarts, lastError: sup.lastError?.message ?? null, relay: sup.relayState };
+      const view = {
+        state: sup.state,
+        restarts: sup.restarts,
+        lastError: sup.lastError?.message ?? null,
+        relay: sup.relayState,
+      };
       sup.stop();
       expect(ing.seen.connects).toBeGreaterThan(0); // la orden llegó a la ingesta
       // Lo exigible: el rechazo se ve (lastError) y se reintenta o se da por fallida.
@@ -270,7 +314,12 @@ describe("EQ6b · API interna de control del streamer", () => {
     const res = await fetch(`${base}/control/start`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-streamer-auth": secret },
-      body: JSON.stringify({ sessionId: "s1", mode: "rtmps", ingestUrl: "rtmps://attacker.example/live2", credential: sealedForYoutube }),
+      body: JSON.stringify({
+        sessionId: "s1",
+        mode: "rtmps",
+        ingestUrl: "rtmps://attacker.example/live2",
+        credential: sealedForYoutube,
+      }),
     });
     await new Promise((r) => setTimeout(r, 800));
     sup.stop();
@@ -281,9 +330,12 @@ describe("EQ6b · API interna de control del streamer", () => {
 
   it("CONTROL · con secreto configurado: sin cabecera o con cabecera errónea ⇒ 401 en /status, /control/* y /recordings*", async () => {
     const secret = randomBytes(24).toString("hex");
-    const { base } = await controlWith((() => {
-      throw new Error("no debe marcar");
-    }) as never, secret);
+    const { base } = await controlWith(
+      (() => {
+        throw new Error("no debe marcar");
+      }) as never,
+      secret,
+    );
     for (const [m, p] of [
       ["GET", "/status"],
       ["GET", "/recordings"],
@@ -294,8 +346,17 @@ describe("EQ6b · API interna de control del streamer", () => {
     ] as const) {
       // (Un espacio final NO sirve de caso: HTTP recorta el OWS de los valores de cabecera.)
       const wrong = secret.slice(0, -1) + (secret.endsWith("0") ? "1" : "0");
-      for (const h of [{}, { "x-streamer-auth": "x" }, { "x-streamer-auth": wrong }, { "x-streamer-auth": secret + secret }]) {
-        const r = await fetch(`${base}${p}`, { method: m, headers: h as Record<string, string>, body: m === "POST" ? "{}" : undefined });
+      for (const h of [
+        {},
+        { "x-streamer-auth": "x" },
+        { "x-streamer-auth": wrong },
+        { "x-streamer-auth": secret + secret },
+      ]) {
+        const r = await fetch(`${base}${p}`, {
+          method: m,
+          headers: h as Record<string, string>,
+          body: m === "POST" ? "{}" : undefined,
+        });
         expect(r.status, `${m} ${p} ${JSON.stringify(h)}`).toBe(401);
       }
     }

@@ -43,7 +43,27 @@ const ctlFile = w("streamer_control_secret.txt", ctlSecret, 0o400);
 const tlsKey = join(DIR, "tls.key");
 const tlsCrt = join(DIR, "tls.crt");
 if (!existsSync(tlsCrt)) {
-  execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", tlsKey, "-out", tlsCrt, "-days", "1", "-subj", "/CN=ingest.eq6b.test", "-addext", "subjectAltName=IP:127.0.0.1,DNS:ingest.eq6b.test"], { stdio: "ignore" });
+  execFileSync(
+    "openssl",
+    [
+      "req",
+      "-x509",
+      "-newkey",
+      "rsa:2048",
+      "-nodes",
+      "-keyout",
+      tlsKey,
+      "-out",
+      tlsCrt,
+      "-days",
+      "1",
+      "-subj",
+      "/CN=ingest.eq6b.test",
+      "-addext",
+      "subjectAltName=IP:127.0.0.1,DNS:ingest.eq6b.test",
+    ],
+    { stdio: "ignore" },
+  );
   chmodSync(tlsKey, 0o600);
 }
 const ffmpegWrapper = w(
@@ -72,7 +92,13 @@ function ingest(o: { rejectWithKeyEcho?: boolean } = {}): Promise<Ingest> {
     const reader = new ChunkReader();
     const send = (m: RtmpMessage) => sock.write(encodeMessage(m, 128));
     const reply = (name: string, txn: number, args: unknown[], sid = 0) =>
-      send({ csid: 3, type: MSG_COMMAND_AMF0, streamId: sid, timestamp: 0, payload: encodeAmf0Values([name, txn, ...(args as never[])]) });
+      send({
+        csid: 3,
+        type: MSG_COMMAND_AMF0,
+        streamId: sid,
+        timestamp: 0,
+        payload: encodeAmf0Values([name, txn, ...(args as never[])]),
+      });
     sock.on("data", (d: Buffer) => {
       buf = Buffer.concat([buf, d]);
       if (phase === 0 && buf.length >= 1537) {
@@ -100,8 +126,21 @@ function ingest(o: { rejectWithKeyEcho?: boolean } = {}): Promise<Ingest> {
             st.published.push(k);
             if (o.rejectWithKeyEcho) {
               // Servidor hostil/mal hecho: repite la clave en code Y description, también URL-codificada.
-              reply("onStatus", 0, [null, { level: "error", code: `NetStream.Publish.BadName.${k}`, description: `bad ${k} ${encodeURIComponent(k)} ${k.toUpperCase()}` }], 1);
-            } else reply("onStatus", 0, [null, { level: "status", code: "NetStream.Publish.Start", description: "ok" }], 1);
+              reply(
+                "onStatus",
+                0,
+                [
+                  null,
+                  {
+                    level: "error",
+                    code: `NetStream.Publish.BadName.${k}`,
+                    description: `bad ${k} ${encodeURIComponent(k)} ${k.toUpperCase()}`,
+                  },
+                ],
+                1,
+              );
+            } else
+              reply("onStatus", 0, [null, { level: "status", code: "NetStream.Publish.Start", description: "ok" }], 1);
           }
         }
       }
@@ -136,7 +175,10 @@ async function streamer(o: { trustCa: boolean }): Promise<Streamer> {
     BROADCAST_URL: "http://127.0.0.1:1/broadcast",
   };
   if (o.trustCa) env.NODE_EXTRA_CA_CERTS = tlsCrt;
-  const proc = spawn(process.execPath, ["--import", "tsx", "apps/streamer/src/main.ts"], { env, stdio: ["ignore", "pipe", "pipe"] });
+  const proc = spawn(process.execPath, ["--import", "tsx", "apps/streamer/src/main.ts"], {
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   proc.stdout!.on("data", (d) => (out += d));
   proc.stderr!.on("data", (d) => (out += d));
   const base = `http://127.0.0.1:${port}`;
@@ -151,7 +193,8 @@ async function streamer(o: { trustCa: boolean }): Promise<Streamer> {
   throw new Error("el streamer no arrancó");
 }
 const H = { "content-type": "application/json", "x-streamer-auth": ctlSecret };
-const post = (s: Streamer, p: string, body: unknown) => fetch(`${s.base}${p}`, { method: "POST", headers: H, body: JSON.stringify(body) });
+const post = (s: Streamer, p: string, body: unknown) =>
+  fetch(`${s.base}${p}`, { method: "POST", headers: H, body: JSON.stringify(body) });
 const get = async (s: Streamer, p: string) => (await fetch(`${s.base}${p}`, { headers: H })).text();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -176,7 +219,8 @@ function scanProc(needles: string[]): { cmdline: number; environ: number; readab
 async function main() {
   const rows: [string, number | string][] = [];
   let fail = 0;
-  const count = (t: string) => (t.split(KEY).length - 1) + (t.split(encodeURIComponent(KEY)).length - 1) + (t.split(KEY.toUpperCase()).length - 1);
+  const count = (t: string) =>
+    t.split(KEY).length - 1 + (t.split(encodeURIComponent(KEY)).length - 1) + (t.split(KEY.toUpperCase()).length - 1);
   const sealed = sealSecret(KEY, PUB);
   // Todas las formas en que podría aparecer la clave.
   const needles = [KEY, KEY.toUpperCase(), Buffer.from(KEY).toString("base64").slice(0, 24)];
@@ -184,7 +228,12 @@ async function main() {
   // 1) Emisión real con CA de confianza: la clave llega a la ingesta y a ningún otro sitio.
   const ok = await ingest();
   const s = await streamer({ trustCa: true });
-  const start = await post(s, "/control/start", { sessionId: "eq6b-1", mode: "rtmps", ingestUrl: `rtmps://127.0.0.1:${ok.port}/live2`, credential: sealed });
+  const start = await post(s, "/control/start", {
+    sessionId: "eq6b-1",
+    mode: "rtmps",
+    ingestUrl: `rtmps://127.0.0.1:${ok.port}/live2`,
+    credential: sealed,
+  });
   rows.push(["/control/start status", start.status]);
   for (let i = 0; i < 60 && ok.media < 30; i++) await sleep(200);
   rows.push(["ingesta: publish con la clave (destino legítimo)", ok.published.filter((k) => k === KEY).length]);
@@ -209,14 +258,28 @@ async function main() {
 
   // 2) Servidor que REPITE la clave en el rechazo: ¿se redacta en /status y logs?
   const evil = await ingest({ rejectWithKeyEcho: true });
-  await post(s, "/control/start", { sessionId: "eq6b-2", mode: "rtmps", ingestUrl: `rtmps://127.0.0.1:${evil.port}/live2`, credential: sealed, replace: true });
+  await post(s, "/control/start", {
+    sessionId: "eq6b-2",
+    mode: "rtmps",
+    ingestUrl: `rtmps://127.0.0.1:${evil.port}/live2`,
+    credential: sealed,
+    replace: true,
+  });
   await sleep(2500);
   const st2 = await get(s, "/status");
   rows.push(["rechazo con eco de la clave: GET /status", count(st2)]);
   if (count(st2)) fail++;
   else {
-    const j = JSON.parse(st2) as { state: string; restarts: number; relay: { state: string }; lastError: { message: string } | null };
-    rows.push(["rechazo de publish: estado/reintentos/relé tras 2,5 s", `${j.state} / ${j.restarts} / ${j.relay?.state}`]);
+    const j = JSON.parse(st2) as {
+      state: string;
+      restarts: number;
+      relay: { state: string };
+      lastError: { message: string } | null;
+    };
+    rows.push([
+      "rechazo de publish: estado/reintentos/relé tras 2,5 s",
+      `${j.state} / ${j.restarts} / ${j.relay?.state}`,
+    ]);
     rows.push(["rechazo de publish: lastError", String(j.lastError?.message ?? "ninguno").slice(0, 120)]);
     if (j.restarts === 0) fail++;
   }
@@ -228,17 +291,29 @@ async function main() {
 
   // 3) TLS: hostname que NO casa con el certificado ⇒ debe fallar.
   const t3 = await ingest();
-  const r3 = (await (await post(s, "/control/test", { ingestUrl: `rtmps://localhost:${t3.port}/live2`, credential: sealed })).json()) as Record<string, unknown>;
+  const r3 = (await (
+    await post(s, "/control/test", { ingestUrl: `rtmps://localhost:${t3.port}/live2`, credential: sealed })
+  ).json()) as Record<string, unknown>;
   rows.push(["TLS hostname distinto (localhost vs SAN 127.0.0.1)", r3.ok === false ? "RECHAZA" : "ACEPTA"]);
   if (r3.ok !== false) fail++;
-  const r3ok = (await (await post(s, "/control/test", { ingestUrl: `rtmps://127.0.0.1:${t3.port}/live2`, credential: sealed })).json()) as Record<string, unknown>;
-  rows.push(["TLS hostname correcto + CA de confianza (control positivo)", r3ok.ok === true ? "ACEPTA" : `RECHAZA ${String(r3ok.error)}`]);
+  const r3ok = (await (
+    await post(s, "/control/test", { ingestUrl: `rtmps://127.0.0.1:${t3.port}/live2`, credential: sealed })
+  ).json()) as Record<string, unknown>;
+  rows.push([
+    "TLS hostname correcto + CA de confianza (control positivo)",
+    r3ok.ok === true ? "ACEPTA" : `RECHAZA ${String(r3ok.error)}`,
+  ]);
   if (r3ok.ok !== true) fail++;
   s.proc.kill("SIGKILL");
 
   // 4) TLS: CA no confiada ⇒ debe fallar y la clave no debe llegar a la ingesta.
   const s4 = await streamer({ trustCa: false });
-  await post(s4, "/control/start", { sessionId: "eq6b-4", mode: "rtmps", ingestUrl: `rtmps://127.0.0.1:${t3.port}/live2`, credential: sealed });
+  await post(s4, "/control/start", {
+    sessionId: "eq6b-4",
+    mode: "rtmps",
+    ingestUrl: `rtmps://127.0.0.1:${t3.port}/live2`,
+    credential: sealed,
+  });
   await sleep(2500);
   const st4 = JSON.parse(await get(s4, "/status")) as { lastError?: { message: string } | null };
   rows.push(["TLS CA no confiada: publish recibido por la ingesta", t3.published.length]);
