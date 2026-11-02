@@ -43,6 +43,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { api, type Me } from "../api.js";
 import { ErrorState, FormError } from "../ui/primitives.js";
 import { modeName } from "../battle-result.js";
+import { ModeHelp } from "../mode-help.js"; // EQ4 · ⓘ de modos
 import {
   blockedVersionOptions,
   eligibilityReason,
@@ -876,6 +877,7 @@ export function BattleNewPage(props: { me: Me }) {
           ))}
         </select>
       </label>
+      <ModeHelp modes={shownModes} testId="battle-mode-help" />
       <label>
         Ruleset{" "}
         <select aria-label="ruleset" value={effectiveRuleset} onChange={(e) => setRulesetId(e.target.value)}>

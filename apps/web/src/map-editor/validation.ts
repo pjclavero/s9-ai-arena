@@ -47,7 +47,7 @@ export function liveIssues(map: EditorMap): Issue[] {
 
   // --- configuración imposible del propio mapa ------------------------------
   if (!finitePos(map.widthM) || !finitePos(map.heightM)) {
-    add("error", "map-size", "La anchura y la altura del mapa tienen que ser números mayores que cero.");
+    add("error", "map-size", "El ancho y el largo del mapa tienen que ser números mayores que cero.");
     return out;
   }
   if (!/^[a-z0-9][a-z0-9-]{1,62}$/.test(map.mapId))
@@ -78,7 +78,7 @@ export function liveIssues(map: EditorMap): Issue[] {
         (o.shape === "circle" && !finitePos(o.radiusM)) ||
         (o.shape === "polygon" && (!Array.isArray(o.points) || o.points.length < 3));
       if (bad) {
-        add("error", "size", `${label} no tiene un tamaño válido (anchura, altura o radio mayor que cero).`, [ref]);
+        add("error", "size", `${label} no tiene un tamaño válido (ancho, largo o radio mayor que cero).`, [ref]);
         return;
       }
       const b = boundsOf(kind, o);

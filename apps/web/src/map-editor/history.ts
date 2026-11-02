@@ -2,7 +2,7 @@
  * UX-EDITOR · Historial deshacer/rehacer PURO e inmutable.
  *
  * - `commit` apila el estado anterior. Con la misma `key` que el último commit
- *   (p. ej. teclear en el campo «Anchura» del mismo objeto) se FUSIONA: una sola
+ *   (p. ej. teclear en el campo «Ancho» del mismo objeto) se FUSIONA: una sola
  *   entrada por ráfaga de edición, no una por tecla.
  * - Los gestos continuos (arrastrar para mover o redimensionar) usan `live` durante
  *   el gesto (sin apilar) y `commitFrom(antes)` al soltar: un gesto = una entrada.

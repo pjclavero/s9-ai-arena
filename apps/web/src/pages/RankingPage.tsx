@@ -15,6 +15,8 @@ import { api } from "../api.js";
 import { useResource, ResourceView } from "../resource.js";
 import { EmptyState } from "../ui/primitives.js";
 import { MODE_NAME } from "../battle-result.js";
+import { InfoTip } from "../help/InfoTip.js";
+import { ModeHelp } from "../mode-help.js";
 
 export interface Standing {
   rank: number;
@@ -52,6 +54,7 @@ export function RankingPage() {
             ))}
           </select>
         </label>
+        <ModeHelp modes={MODES.map((m) => m.value)} testId="ranking-mode-help" />
       </p>
       <ResourceView resource={res} label="la clasificación" onRetry={reload}>
         {(standings) =>
@@ -63,17 +66,41 @@ export function RankingPage() {
                 <tr>
                   <th scope="col">#</th>
                   <th scope="col">Bot</th>
-                  <th scope="col">Rating</th>
-                  <th scope="col">V-D-E</th>
+                  <th scope="col">
+                    Rating
+                    <InfoTip topic="Rating" testId="ranking-help-rating">
+                      <span style={{ display: "block" }}>
+                        Puntuación Elo del bot en este modo y temporada. Todos empiezan en 1000; sube al ganar y baja al
+                        perder, más cuanto más inesperado es el resultado (K del torneo, 24 por defecto).
+                      </span>
+                      <span style={{ display: "block" }}>
+                        Sólo la cambian las batallas <strong>oficiales</strong> (las de torneo): las que creas en «Nueva
+                        batalla» no cuentan. El puesto (#) sale de los puntos de liga del torneo, no del rating.
+                      </span>
+                    </InfoTip>
+                  </th>
+                  <th scope="col">
+                    V-D-E
+                    <InfoTip topic="V-D-E" testId="ranking-help-vde">
+                      <span style={{ display: "block" }}>
+                        Victorias, derrotas y empates del bot en los enfrentamientos oficiales de este modo.
+                      </span>
+                      <span style={{ display: "block" }}>
+                        Se cuentan enfrentamientos del torneo (no batallas sueltas); pasar ronda sin rival cuenta como
+                        victoria.
+                      </span>
+                    </InfoTip>
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {standings.map((s) => (
                   <tr key={s.botId ?? `privado-${s.rank}`} data-testid="ranking-row">
-                    <td>{s.rank}</td>
-                    <td>{s.botName}</td>
-                    <td>{s.rating}</td>
-                    <td>
+                    <td data-label="#">{s.rank}</td>
+                    <td data-label="Bot">{s.botName}</td>
+                    {/* data-label a mano: el encabezado lleva el ⓘ (y su panel) dentro. */}
+                    <td data-label="Rating">{s.rating}</td>
+                    <td data-label="V-D-E">
                       {s.wins}-{s.losses}-{s.draws}
                     </td>
                   </tr>

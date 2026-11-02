@@ -61,7 +61,9 @@ export function visibleAdminSections(me: Pick<Me, "roles"> | null): AdminSection
 
 /** ¿La ruta es una de las pantallas del apartado Administración? */
 export function isAdminRoute(route: string): boolean {
-  return ADMIN_SECTIONS.some((s) => route === s.href || route.startsWith(`${s.href}/`) || route.startsWith(`${s.href}?`));
+  return ADMIN_SECTIONS.some(
+    (s) => route === s.href || route.startsWith(`${s.href}/`) || route.startsWith(`${s.href}?`),
+  );
 }
 
 /**
