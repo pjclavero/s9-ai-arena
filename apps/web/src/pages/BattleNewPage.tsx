@@ -994,7 +994,7 @@ export function BattleNewPage(props: { me: Me }) {
       {mode && hiddenMaps.length > 0 && (
         <p data-testid="maps-hidden">
           <small>
-            No aparecen porque no son compatibles con {modeName(mode)}:{" "}
+            No aparecen porque no admiten {modeName(mode)}:{" "}
             {hiddenMaps
               .map((m) => {
                 const why = m.modeCompatibility?.[mode]?.reasons ?? [];
