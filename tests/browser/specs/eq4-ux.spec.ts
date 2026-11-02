@@ -149,8 +149,9 @@ test.describe("@fase1 EQ4 navegación y organización", () => {
     expect.soft(await hScroll(page), "@360 replays: scroll horizontal").toBeLessThanOrEqual(1);
     await shot(page, info, "eq4-replays-filtros-360");
     await visit(page, "#/ranking");
-    await page.getByRole("button", { name: "Ayuda: Tipos de partida" }).click();
-    await expect(page.getByRole("dialog", { name: "Tipos de partida" })).toContainText("Control de zona");
+    await page.getByTestId("ranking-mode").selectOption("zone_control");
+    await page.getByTestId("tip-mode-zone_control-trigger").click();
+    await expect(page.getByTestId("tip-mode-zone_control-panel")).toContainText("Disputada o vacía");
     await shot(page, info, "eq4-ranking-ayuda-modos-360");
   });
 });

@@ -21,9 +21,9 @@ import { App, isNavActive } from "../src/App.js";
 import { ADMIN_SECTIONS, ROLE_ORDER, roleRank, userRank, visibleAdminSections } from "../src/admin-nav.js";
 import { ROLES } from "../../api/src/db/migrations.js";
 import { LivePage, LIVE_EMPTY_TEXT, LIVE_PUBLIC_OFF_TEXT } from "../src/pages/LivePage.js";
-import { SLOT_INFO, slotName } from "../src/slot-names.js";
+import { SLOT_NAME, SLOT_PURPOSE, slotName } from "../src/help/names.js";
 import { RankingPage } from "../src/pages/RankingPage.js";
-import { MODE_HELP, ModeHelp } from "../src/mode-help.js";
+import { ModeHelpTip } from "../src/help/sections/rules.js";
 import { MODE_NAME } from "../src/battle-result.js";
 import { ELEMENT_HELP, TOOLS } from "../src/map-editor/objects.js";
 
@@ -207,15 +207,18 @@ describe("EQ4 · nombres humanos de los slots", () => {
       for (const s of c.slots ?? []) ids.add(s.id);
     }
     expect(ids.size).toBeGreaterThan(5);
-    for (const id of ids) expect(SLOT_INFO[id], `slot sin nombre: ${id}`).toBeTruthy();
+    for (const id of ids) {
+      expect(SLOT_NAME[id], `slot sin nombre: ${id}`).toBeTruthy();
+      expect(SLOT_PURPOSE[id], `slot sin propósito: ${id}`).toBeTruthy();
+    }
   });
 
-  it("los del encargo y un slot nuevo no muestran el id crudo", () => {
+  it("los del encargo tienen nombre humano (fuente: help/names.ts)", () => {
     expect(slotName("drive")).toBe("Propulsión");
     expect(slotName("mine_bay")).toBe("Compartimento de minas");
     expect(slotName("armor_rear")).toBe("Blindaje trasero");
     expect(slotName("turret_main")).toBe("Torreta principal");
-    expect(slotName("sensor_c")).toBe("Sensor C");
+    expect(slotName("sensor_c")).toBe("sensor_c"); // política de la Ayuda: sin traducción se muestra el id, nunca se oculta
   });
 });
 
@@ -228,25 +231,29 @@ describe("EQ4 · ⓘ del ranking y de los modos", () => {
     render(<RankingPage />);
     await screen.findByTestId("ranking-row");
     fireEvent.click(screen.getByRole("button", { name: "Ayuda: Rating" }));
-    expect(screen.getByTestId("ranking-help-rating-panel").textContent).toMatch(/oficiales/);
+    expect(screen.getByTestId("ranking-help-rating-panel").textContent).toMatch(/oficial/);
     expect(screen.getByRole("button", { name: "Ayuda: V-D-E" })).toBeTruthy();
     const cells = screen.getByTestId("ranking-row").querySelectorAll("td");
     expect([...cells].map((c) => c.getAttribute("data-label"))).toEqual(["#", "Bot", "Rating", "V-D-E"]);
-    expect(screen.getByRole("button", { name: "Ayuda: Tipos de partida" })).toBeTruthy();
+    // ⓘ del modo elegido: el de la Ayuda (una sola fuente), no uno propio.
+    expect(screen.getByTestId("tip-mode-deathmatch-trigger")).toBeTruthy();
   });
 
-  it("todos los modos tienen explicación; Control de zona dice cuándo se puntúa", () => {
-    for (const m of Object.keys(MODE_NAME)) expect(MODE_HELP[m], m).toBeTruthy();
-    expect(MODE_HELP.zone_control).toMatch(/sin ningún rival/);
+  it("cada modo de la plataforma tiene su ⓘ (fuente: Ayuda) y Control de zona dice cuándo se puntúa", () => {
     // CI #209: «Ayuda: Modos de juego» casaba con getByLabel("modo") de los specs
     // (subcadena, sin mayúsculas) y rompía el golden. El ⓘ junto a un selector no
     // puede contener el nombre del selector.
-    render(<ModeHelp modes={["deathmatch"]} />);
-    const name = screen
-      .getByRole("button", { name: /^Ayuda: / })
-      .getAttribute("aria-label")!
-      .toLowerCase();
-    for (const l of ["modo", "mapa", "ruleset", "bot rojo", "bot azul", "chasis"]) expect(name).not.toContain(l);
+    for (const m of Object.keys(MODE_NAME)) {
+      cleanup();
+      render(<ModeHelpTip mode={m} />);
+      const btn = screen.getByTestId(`tip-mode-${m}-trigger`);
+      const name = btn.getAttribute("aria-label")!.toLowerCase();
+      for (const l of ["modo", "mapa", "ruleset", "bot rojo", "bot azul", "chasis"]) expect(name, m).not.toContain(l);
+      fireEvent.click(btn);
+      expect(screen.getByTestId(`tip-mode-${m}-panel`).textContent!.length, m).toBeGreaterThan(20);
+      if (m === "zone_control")
+        expect(screen.getByTestId(`tip-mode-${m}-panel`).textContent).toMatch(/Disputada o vacía/);
+    }
   });
 });
 

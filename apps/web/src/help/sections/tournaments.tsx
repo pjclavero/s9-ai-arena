@@ -26,6 +26,29 @@ export const RANKING_EMPTY_LINES = [
 /** Valores del rating, copiados de ratings.ts (no importable en el navegador); el test los compara. */
 export const RATING_FACTS = { initial: 1000, defaultK: 24 } as const;
 
+/**
+ * EQ4 · ⓘ de las columnas del ranking: UNA sola fuente para la Ayuda y para
+ * RankingPage (antes cada uno tenía su texto). `testId` permite distinguirlos.
+ */
+export function RatingTip(props: { testId?: string }) {
+  return (
+    <InfoTip topic="Rating" testId={props.testId ?? "tip-rating"}>
+      Todos los bots empiezan con {RATING_FACTS.initial}. Se calcula por cada batalla oficial: ganar a un rival con más
+      rating sube más que ganar a uno con menos, y perder resta lo mismo que gana el rival. Para el rating, una
+      descalificación cuenta como derrota.
+    </InfoTip>
+  );
+}
+
+export function VdeTip(props: { testId?: string }) {
+  return (
+    <InfoTip topic="V-D-E" testId={props.testId ?? "tip-vde"}>
+      Victorias - Derrotas - Empates en los enfrentamientos del torneo (un enfrentamiento puede tener varias batallas).
+      Pasar una ronda sin rival (bye) cuenta como victoria; un enfrentamiento sin ganador, como empate.
+    </InfoTip>
+  );
+}
+
 export function RankingEmptyState() {
   return (
     <div role="status" data-testid="ranking-empty-help">
@@ -75,27 +98,18 @@ export function RankingHelp() {
     <div data-testid="help-ranking">
       <ul data-testid="help-ranking-facts">
         <li>
-          El <strong>rating</strong> es un Elo{" "}
-          <InfoTip topic="Rating" testId="tip-rating">
-            Todos los bots empiezan con {RATING_FACTS.initial}. Se calcula por cada batalla oficial: ganar a un rival
-            con más rating sube más que ganar a uno con menos, y perder resta lo mismo que gana el rival. Para el
-            rating, una descalificación cuenta como derrota.
-          </InfoTip>{" "}
-          con valor inicial <strong>{RATING_FACTS.initial}</strong> (factor K {RATING_FACTS.defaultK} por defecto; un
-          torneo puede fijar el suyo). Para el rating, una descalificación cuenta como derrota.
+          El <strong>rating</strong> es un Elo <RatingTip /> con valor inicial <strong>{RATING_FACTS.initial}</strong>{" "}
+          (factor K {RATING_FACTS.defaultK} por defecto; un torneo puede fijar el suyo). Para el rating, una
+          descalificación cuenta como derrota.
         </li>
         <li>
           <strong>Sólo las batallas oficiales de torneo</strong> afectan al rating. Las batallas creadas con «Nueva
           batalla» son de práctica y no lo cambian.
         </li>
         <li>
-          <strong>V-D-E</strong>{" "}
-          <InfoTip topic="V-D-E" testId="tip-vde">
-            Victorias - Derrotas - Empates en los enfrentamientos del torneo (un enfrentamiento puede tener varias
-            batallas). Pasar una ronda sin rival (bye) cuenta como victoria; un enfrentamiento sin ganador, como empate.
-          </InfoTip>{" "}
-          significa Victorias - Derrotas - Empates, contados por enfrentamientos del torneo, no por batallas. La
-          posición (#) es la de la tabla del torneo (3 puntos por victoria y 1 por empate), no el rating.
+          <strong>V-D-E</strong> <VdeTip /> significa Victorias - Derrotas - Empates, contados por enfrentamientos del
+          torneo, no por batallas. La posición (#) es la de la tabla del torneo (3 puntos por victoria y 1 por empate),
+          no el rating.
         </li>
         <li>
           <strong>Cada modo tiene su ranking independiente</strong> ({Object.values(MODE_NAME).join(", ")}): un bot

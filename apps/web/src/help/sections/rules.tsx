@@ -436,7 +436,8 @@ export function BattleNew() {
   return (
     <div data-testid="help-battle-new">
       <p>
-        «Batallas» → «+ Nueva batalla de práctica». Las batallas de práctica <strong>no cambian el rating</strong>.
+        «Batallas» → «+ Nueva batalla». Las batallas que se crean ahí son de práctica y{" "}
+        <strong>no cambian el rating</strong>.
       </p>
       <ol>
         <li>

@@ -8,7 +8,7 @@
  *   POST /actions/clone y POST /versions con parentVersion.
  * Los errores se ENSEÑAN (nunca un vacío silencioso): 403 = código privado.
  */
-import { slotName } from "../slot-names.js";
+import { slotName } from "../help/names.js";
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiRequestError } from "../api.js";
 import { ErrorState } from "../ui/primitives.js";

@@ -15,8 +15,8 @@ import { api } from "../api.js";
 import { useResource, ResourceView } from "../resource.js";
 import { EmptyState } from "../ui/primitives.js";
 import { MODE_NAME } from "../battle-result.js";
-import { InfoTip } from "../help/InfoTip.js";
-import { ModeHelp } from "../mode-help.js";
+import { ModeHelpTip } from "../help/sections/rules.js";
+import { RANKING_EMPTY_LINES, RatingTip, VdeTip } from "../help/sections/tournaments.js";
 
 export interface Standing {
   rank: number;
@@ -54,12 +54,18 @@ export function RankingPage() {
             ))}
           </select>
         </label>
-        <ModeHelp modes={MODES.map((m) => m.value)} testId="ranking-mode-help" />
+        <ModeHelpTip mode={mode} />
       </p>
       <ResourceView resource={res} label="la clasificación" onRetry={reload}>
         {(standings) =>
           standings.length === 0 ? (
-            <EmptyState message="Todavía no hay clasificación para este modo." data-testid="ranking-empty" />
+            <EmptyState
+              message={RANKING_EMPTY_LINES[0]}
+              data-testid="ranking-empty"
+              action={RANKING_EMPTY_LINES.slice(1).map((l) => (
+                <p key={l}>{l}</p>
+              ))}
+            />
           ) : (
             <table className="stack-table" data-testid="ranking-table">
               <thead>
@@ -68,28 +74,11 @@ export function RankingPage() {
                   <th scope="col">Bot</th>
                   <th scope="col">
                     Rating
-                    <InfoTip topic="Rating" testId="ranking-help-rating">
-                      <span style={{ display: "block" }}>
-                        Puntuación Elo del bot en este modo y temporada. Todos empiezan en 1000; sube al ganar y baja al
-                        perder, más cuanto más inesperado es el resultado (K del torneo, 24 por defecto).
-                      </span>
-                      <span style={{ display: "block" }}>
-                        Sólo la cambian las batallas <strong>oficiales</strong> (las de torneo): las que creas en «Nueva
-                        batalla» no cuentan. El puesto (#) sale de los puntos de liga del torneo, no del rating.
-                      </span>
-                    </InfoTip>
+                    <RatingTip testId="ranking-help-rating" />
                   </th>
                   <th scope="col">
                     V-D-E
-                    <InfoTip topic="V-D-E" testId="ranking-help-vde">
-                      <span style={{ display: "block" }}>
-                        Victorias, derrotas y empates del bot en los enfrentamientos oficiales de este modo.
-                      </span>
-                      <span style={{ display: "block" }}>
-                        Se cuentan enfrentamientos del torneo (no batallas sueltas); pasar ronda sin rival cuenta como
-                        victoria.
-                      </span>
-                    </InfoTip>
+                    <VdeTip testId="ranking-help-vde" />
                   </th>
                 </tr>
               </thead>

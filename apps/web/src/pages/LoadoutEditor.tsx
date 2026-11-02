@@ -15,7 +15,7 @@
  *    (duplicar) con el diff a la vista.
  */
 import { InfoTip } from "../help/InfoTip.js";
-import { slotName, slotPurpose, categoryName } from "../slot-names.js";
+import { slotName, slotPurpose, categoryName } from "../help/names.js";
 import { useEffect, useMemo, useState } from "react";
 import { useSessionDraft } from "../ui/draft.js";
 import { emptyDict } from "../../../../packages/game-rules/safe-lookup.js";
@@ -305,7 +305,8 @@ export function LoadoutEditor(props: {
                       {slotPurpose(slot.id) ?? "Hueco del chasis para un módulo."}
                     </span>
                     <span style={{ display: "block" }}>
-                      Admite: {slot.accepts.map(categoryName).join(" o ")} · tamaño máximo {slot.maxSize}.
+                      Admite: {slot.accepts.map((c) => categoryName(c).toLowerCase()).join(" o ")} · tamaño máximo{" "}
+                      {slot.maxSize}.
                     </span>
                     {selectedDef && (
                       <span style={{ display: "block" }}>
@@ -314,7 +315,8 @@ export function LoadoutEditor(props: {
                     )}
                   </InfoTip>{" "}
                   <small>
-                    (<code>{slot.id}</code> · {slot.accepts.map(categoryName).join("/")}, ≤{slot.maxSize})
+                    (<code>{slot.id}</code> · {slot.accepts.map((c) => categoryName(c).toLowerCase()).join("/")}, ≤
+                    {slot.maxSize})
                   </small>{" "}
                   <EffectBadge
                     status={selectedDef ? categoryEffect(selectedDef.category) : categoryEffect(slot.accepts[0])}

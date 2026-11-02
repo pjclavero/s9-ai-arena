@@ -226,7 +226,7 @@ describe("R16 RankingPage — primitivas", () => {
     render(<RankingPage />);
     const empty = await screen.findByTestId("ranking-empty");
     expect(empty).toBeTruthy();
-    expect(empty.textContent).toContain("Todavía no hay clasificación para este modo.");
+    expect(empty.textContent).toContain("Todavía no hay clasificación oficial para este modo."); // EQ4 · texto de la Ayuda (RANKING_EMPTY_LINES)
   });
 
   it("EmptyState no renderiza tabla cuando no hay datos", async () => {
