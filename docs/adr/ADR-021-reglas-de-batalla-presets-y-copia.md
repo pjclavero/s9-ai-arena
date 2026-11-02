@@ -1,5 +1,7 @@
 # ADR-021 · Reglas de batalla: presets, personalizado y copia inmutable (motor sigue en 0.3.0)
 
+> **2026-11-02 · En parte SUSTITUIDO por [ADR-022](ADR-022-motor-0-4-0-reglas-ctf-prorroga.md):** el motor sí pasa a 0.4.0 (con verificación de replays 0.3.0), los desempates son los del operador (no «vidas → bajas → casco»), `respawnsPerBot` se llama `maxRespawns` y la copia también se guarda en torneos. Lo que sigue se conserva como registro de la decisión anterior.
+
 **Estado:** propuesto (2026-10-29) · **Ámbito:** `packages/game-rules` (`index.ts`, `battle-rules.ts`), `apps/arena-engine` (`sim/battle.ts`, `sim/modes.ts`, `sim/vehicle.ts`), `apps/api` (POST /battles, rules-check, migración 015), `apps/tournament-worker` (`engine-executor.ts`), `apps/replay-service` (stats), `apps/web` (`BattleNewPage.tsx`)
 
 ## Contexto
