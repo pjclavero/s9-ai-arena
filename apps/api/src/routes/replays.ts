@@ -23,7 +23,7 @@ import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
 import { pathParam } from "../params.js";
 import { badRequest } from "../errors.js";
-import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
+import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
 import { anonQuota, type AnonQuotaConfig } from "../middleware/anon-quota.js";
 import { publicReplaysEnabledFromEnv } from "../public-replays.js";
 import { getReadableReplayBattleOr404, replayNotFound, whereReplayReadable } from "../replay-access.js";
@@ -152,13 +152,14 @@ export function replayRoutes(
         "battles.replay_ref",
         "battles.created_at",
         "battles.finished_at",
+        db.raw(cursorTsSql("battles.created_at")),
       )
       .orderBy([
         { column: "battles.created_at", order: "desc" },
         { column: "battles.id", order: "desc" },
       ])
       .limit(limit + 1);
-    if (cursor) q = q.whereRaw("(battles.created_at, battles.id) < (?, ?)", [cursor.createdAt, cursor.id]);
+    q = applyCursor(q, cursor, "battles.created_at", ["battles.id"]);
     const rows = await q;
     const page = rows.slice(0, limit);
     const items = page.map((b: Record<string, any>) => {
@@ -191,7 +192,7 @@ export function replayRoutes(
     noStore(res).json({
       items,
       nextCursor:
-        rows.length > limit ? encodeCursor(page[page.length - 1].created_at, page[page.length - 1].id) : undefined,
+        rows.length > limit ? encodeCursor(page[page.length - 1], [page[page.length - 1].id]) : undefined,
       ...(total !== undefined ? { total } : {}),
     });
   });

@@ -8,7 +8,7 @@ import type { Db } from "../db/connection.js";
 import { defineOperation, defineExtension } from "../registry.js";
 import { pathParam } from "../params.js";
 import { ApiError, badRequest, conflict, forbidden, notFound } from "../errors.js";
-import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
+import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
 import { ROLE_RANK } from "../openapi.js";
 import {
   applyTransition,
@@ -205,13 +205,14 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     const limit = parseLimit(req.query.limit);
     const cursor = decodeCursor(req.query.cursor as string | undefined);
     let q = db("bots")
+      .select("bots.*", db.raw(cursorTsSql("bots.created_at")))
       .orderBy([
         { column: "created_at", order: "desc" },
         { column: "id", order: "desc" },
       ])
       .limit(200);
     if (typeof req.query.ownerId === "string") q = q.where({ owner_id: req.query.ownerId });
-    if (cursor) q = q.whereRaw("(created_at, id) < (?, ?)", [cursor.createdAt, cursor.id]);
+    q = applyCursor(q, cursor, "bots.created_at", ["bots.id"]);
 
     const rows = await q;
     const visible: Record<string, unknown>[] = [];
@@ -247,7 +248,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
       items,
       nextCursor:
         visible.length > limit
-          ? encodeCursor(page[page.length - 1].created_at as Date, page[page.length - 1].id as string)
+          ? encodeCursor(page[page.length - 1], [page[page.length - 1].id as string])
           : undefined,
       ...(counts ? { counts } : {}),
     });

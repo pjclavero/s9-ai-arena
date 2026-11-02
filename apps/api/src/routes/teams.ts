@@ -18,7 +18,7 @@ import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
 import { audit } from "../audit.js";
 import { badRequest, conflict, forbidden, notFound } from "../errors.js";
-import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
+import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
 import { ROLE_RANK } from "../openapi.js";
 import { pathParam } from "../params.js";
 
@@ -95,21 +95,20 @@ export function teamRoutes(db: Db): Router {
     const limit = parseLimit(req.query.limit);
     const cursor = decodeCursor(req.query.cursor as string | undefined);
     let q = db("teams")
+      .select("teams.*", db.raw(cursorTsSql("teams.created_at")))
       .orderBy([
         { column: "created_at", order: "desc" },
         { column: "id", order: "desc" },
       ])
       .limit(limit + 1);
-    if (cursor) {
-      q = q.whereRaw("(created_at, id) < (?, ?)", [cursor.createdAt, cursor.id]);
-    }
+    q = applyCursor(q, cursor, "teams.created_at", ["teams.id"]);
     const rows = await q;
     const page = rows.slice(0, limit);
     const items = await Promise.all(page.map((t: Record<string, unknown>) => teamToJson(db, t, req.auth)));
     res.json({
       items,
       nextCursor:
-        rows.length > limit ? encodeCursor(page[page.length - 1].created_at, page[page.length - 1].id) : undefined,
+        rows.length > limit ? encodeCursor(page[page.length - 1], [page[page.length - 1].id]) : undefined,
     });
   });
 
