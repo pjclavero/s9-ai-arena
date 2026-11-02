@@ -115,5 +115,33 @@ export async function hiddenBotIds(db: Db, auth: Auth, ids: readonly unknown[]):
   return out;
 }
 
+/**
+ * EQ4 (filtros de replays) · Versión SQL de la misma regla que `hiddenBotIds` /
+ * `canSeeBot`: restringe una consulta que tenga `bots` en el FROM/JOIN a los bots
+ * que el solicitante PUEDE identificar (públicos, propios, `team` de un equipo del
+ * que es miembro; todos para el staff). La usan los filtros del listado de
+ * replays por bot, equipo o usuario: un filtro por nombre, id, equipo o dueño de
+ * un bot que no puedes identificar no casa NUNCA, así que el filtro no sirve de
+ * oráculo para averiguar el nombre, el equipo o el dueño de un bot privado ajeno
+ * aunque la batalla sea legible (p. ej. eres su rival).
+ */
+export function whereBotIdentifiable(db: Db, q: any, auth: Auth): any {
+  if (isReplayStaff(auth)) return q;
+  const userId = auth?.userId ?? null;
+  return q.where((w: any) => {
+    w.where("bots.visibility", "public");
+    if (userId) {
+      w.orWhere("bots.owner_id", userId).orWhere((t: any) =>
+        t
+          .where("bots.visibility", "team")
+          .whereNotNull("bots.team_id")
+          .whereExists(
+            db("team_members").whereRaw("team_members.team_id = bots.team_id").where("team_members.user_id", userId),
+          ),
+      );
+    }
+  });
+}
+
 /** Texto único con el que se nombra a un participante que el solicitante no puede identificar. */
 export const PRIVATE_BOT_LABEL = "Bot privado";

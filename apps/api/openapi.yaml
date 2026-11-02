@@ -1270,9 +1270,54 @@ paths:
       operationId: listReplays
       summary: Replays que el solicitante puede ver (más recientes primero); sustituye al inventario anónimo del replay-service
       x-min-role: user
+      description: |
+        EQ4 · Filtros y paginación EN SERVIDOR (cambio aditivo: sin ninguno de los
+        parámetros nuevos la respuesta es idéntica a la anterior). Los filtros sólo
+        ESTRECHAN lo que la política de acceso a replays ya deja listar; los filtros
+        por bot, equipo, usuario y resultado win/loss sólo casan con bots que el
+        solicitante puede identificar (no sirven de oráculo sobre bots privados
+        ajenos). Valores fuera de forma ⇒ 400 bad_request. Las fechas filtran por la
+        creación de la batalla (la columna que ordena y pagina).
       parameters:
         - { $ref: '#/components/parameters/Cursor' }
         - { $ref: '#/components/parameters/Limit' }
+        - name: battleId
+          in: query
+          description: UUID completo de la batalla o un prefijo suyo (sólo 0-9, a-f y guiones)
+          schema: { type: string, pattern: '^[0-9a-fA-F][0-9a-fA-F-]{0,35}$', maxLength: 36 }
+        - name: from
+          in: query
+          description: Desde (inclusivo). AAAA-MM-DD (inicio del día UTC) o fecha-hora ISO 8601 con zona
+          schema: { type: string }
+        - name: to
+          in: query
+          description: Hasta (inclusivo). AAAA-MM-DD (final del día UTC) o fecha-hora ISO 8601 con zona
+          schema: { type: string }
+        - name: mode
+          in: query
+          schema: { type: string, enum: [deathmatch, team_deathmatch, capture_the_flag, zone_control] }
+        - name: result
+          in: query
+          description: |
+            draw = empate · aborted = con incidencia (failure_kind distinto de none, walkover o fallo deportivo) ·
+            win/loss = de los bots que cumplen los filtros bot/team/user o, sin ellos, de los bots propios (loss incluye descalificación)
+          schema: { type: string, enum: [win, loss, draw, aborted] }
+        - name: bot
+          in: query
+          description: Bot participante por UUID exacto o por nombre (subcadena, sin distinguir mayúsculas)
+          schema: { type: string, minLength: 1, maxLength: 48 }
+        - name: team
+          in: query
+          description: Equipo de algún bot participante, por UUID exacto o por nombre (subcadena)
+          schema: { type: string, minLength: 1, maxLength: 48 }
+        - name: user
+          in: query
+          description: Dueño de algún bot participante, por UUID exacto o por nombre visible (subcadena)
+          schema: { type: string, minLength: 1, maxLength: 48 }
+        - name: includeTotal
+          in: query
+          description: Si es true, la respuesta añade `total` (replays que cumplen los filtros, sin paginar)
+          schema: { type: boolean, default: false }
       responses:
         '200':
           description: Replays visibles para el solicitante
@@ -1294,6 +1339,11 @@ paths:
                         createdAt: { type: string, format: date-time }
                         sizeBytes: { type: integer }
                   nextCursor: { type: string }
+                  total:
+                    type: integer
+                    minimum: 0
+                    description: Sólo con includeTotal=true
+        '400': { description: 'Filtro, fecha o cursor con forma inválida', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
   /replays/{battleId}:
