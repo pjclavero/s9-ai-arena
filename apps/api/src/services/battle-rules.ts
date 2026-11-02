@@ -21,6 +21,7 @@ import {
   TIEBREAK_RULES,
   checkComposition,
   normalizeParams,
+  withTournamentSpectatorDelay,
   respawnLabel,
   tiebreakFamilyOf,
   limitsOf,
@@ -334,7 +335,9 @@ export async function buildTournamentRules(db: Db, input: TournamentRulesInput):
       composition: limitsOf(null),
       catalogVersion: input.catalogVersion,
       // El presupuesto del torneo manda sobre el del ruleset (como en el worker, T9.4).
-      engineRuleset: input.budgetCredits ? { ...engineRuleset, budgetCredits: input.budgetCredits } : engineRuleset,
+      engineRuleset: withTournamentSpectatorDelay(
+        input.budgetCredits ? { ...engineRuleset, budgetCredits: input.budgetCredits } : engineRuleset,
+      ),
       engineVersion: engineDeps.engine.version,
     };
   }
@@ -379,9 +382,9 @@ export async function buildTournamentRules(db: Db, input: TournamentRulesInput):
       },
     ]);
   }
-  const engineRuleset = input.budgetCredits
-    ? { ...r.engineRuleset, budgetCredits: input.budgetCredits }
-    : r.engineRuleset;
+  const engineRuleset = withTournamentSpectatorDelay(
+    input.budgetCredits ? { ...r.engineRuleset, budgetCredits: input.budgetCredits } : r.engineRuleset,
+  );
   return {
     schema: BATTLE_RULES_SCHEMA,
     source: r.source,

@@ -69,6 +69,21 @@ export interface RulesParams {
  */
 export const CTF_OVERTIME_MAX_SECONDS = 180;
 
+/**
+ * Retardo ANTI-COACHING del directo en torneos (E8.M, escalado del EQ5): segundos que el
+ * gateway de espectador difiere el directo de las batallas de torneo `delayed` (la final,
+ * `visible`, va sin retardo; lo decide el worker). Se copia en la regla del torneo
+ * (`engineRuleset.spectator.delaySeconds`) si el ruleset no declara otro. NO cambia la
+ * simulación (el motor no lee `spectator`) ni el hash. Las batallas de práctica no lo llevan.
+ */
+export const TOURNAMENT_SPECTATOR_DELAY_SECONDS = 30;
+
+/** Aplica el retardo de torneo si el ruleset no declara uno propio. */
+export function withTournamentSpectatorDelay(r: Ruleset): Ruleset {
+  if (typeof r.spectator?.delaySeconds === "number") return r;
+  return { ...r, spectator: { ...(r.spectator ?? {}), delaySeconds: TOURNAMENT_SPECTATOR_DELAY_SECONDS } };
+}
+
 /** Límites SERVER-SIDE (FASE 16). La web los lee de GET /rulesets; nunca manda ella. */
 export const RULES_LIMITS = {
   teamSize: { min: 1, max: 4 },

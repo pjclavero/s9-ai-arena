@@ -200,6 +200,10 @@ Presupuesto de equipo: el total se reparte como se quiera entre los bots. Ejempl
 
 Además, el autor del mapa debe declarar el modo. «Nueva batalla» sólo ofrece mapas compatibles y explica por qué los demás no aparecen.
 
+## Directo de torneos (retardo anti-coaching)
+
+En torneos, el directo para espectadores va con 30 s de retardo (anti-coaching), salvo las batallas marcadas como visibles (la final). Las batallas creadas con «Nueva batalla» van sin retardo. El retardo no cambia la simulación.
+
 ## Copia inmutable
 
 Las reglas se copian de forma INMUTABLE en cada batalla y en cada torneo al crearlos. Cambiar después un preset (o crear su versión siguiente) no altera batallas ni torneos existentes.
