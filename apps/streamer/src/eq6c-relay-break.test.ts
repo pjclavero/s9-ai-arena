@@ -82,7 +82,13 @@ async function fakeIngest(behaviour: Behaviour) {
     const reader = new ChunkReader();
     const send = (m: RtmpMessage) => sock.write(encodeMessage(m, 128));
     const reply = (name: string, txn: number, args: unknown[], streamId = 0) =>
-      send({ csid: 3, type: MSG_COMMAND_AMF0, streamId, timestamp: 0, payload: encodeAmf0Values([name, txn, ...(args as never[])]) });
+      send({
+        csid: 3,
+        type: MSG_COMMAND_AMF0,
+        streamId,
+        timestamp: 0,
+        payload: encodeAmf0Values([name, txn, ...(args as never[])]),
+      });
     sock.on("data", (d: Buffer) => {
       if (publishing) seen.bytesAfterPublish += d.length;
       buf = Buffer.concat([buf, d]);
@@ -125,14 +131,24 @@ async function fakeIngest(behaviour: Behaviour) {
           const key = String(v[3]);
           if (behaviour === "silent_at_publish") continue;
           if (behaviour === "reject_publish") {
-            reply("onStatus", 0, [null, { level: "error", code: "NetStream.Publish.BadName", description: "invalid key" }], 1);
+            reply(
+              "onStatus",
+              0,
+              [null, { level: "error", code: "NetStream.Publish.BadName", description: "invalid key" }],
+              1,
+            );
             continue;
           }
           if (behaviour === "echo_key_encoded") {
             // Ingesta hostil (o ruidosa) que repite la clave CODIFICADA en su rechazo.
             const b64 = Buffer.from(key).toString("base64");
             const hex = Buffer.from(key).toString("hex");
-            reply("onStatus", 0, [null, { level: "error", code: "NetStream.Publish.BadName", description: `bad ${b64} ${hex}` }], 1);
+            reply(
+              "onStatus",
+              0,
+              [null, { level: "error", code: "NetStream.Publish.BadName", description: `bad ${b64} ${hex}` }],
+              1,
+            );
             continue;
           }
           seen.published.push(key);
@@ -152,13 +168,23 @@ async function fakeIngest(behaviour: Behaviour) {
 class FakeChild extends EventEmitter implements SpawnedProcess {
   stdout = new EventEmitter();
   stderr = new EventEmitter();
-  stdio = [null, null, null, Object.assign(new EventEmitter(), { pause() {}, resume() {} })] as unknown as ArrayLike<unknown>;
+  stdio = [
+    null,
+    null,
+    null,
+    Object.assign(new EventEmitter(), { pause() {}, resume() {} }),
+  ] as unknown as ArrayLike<unknown>;
   kill() {
     return true;
   }
 }
 
-async function control(o: { dial: (t: IngestTarget) => Duplex; legacyKey?: string | null; rtmpsUrl?: string; maxRetries?: number }) {
+async function control(o: {
+  dial: (t: IngestTarget) => Duplex;
+  legacyKey?: string | null;
+  rtmpsUrl?: string;
+  maxRetries?: number;
+}) {
   const lines: string[] = [];
   const secrets = new SecretRegistry();
   const logger = createLogger(secrets, (l) => lines.push(l));
@@ -246,7 +272,13 @@ describe("EQ6c · P2-1 · plazos después del handshake", () => {
       let errored = false;
       pub.on("error", () => (errored = true));
       const t0 = Date.now();
-      const res = await Promise.race([pub.start().then(() => "ok", () => "rejected"), sleep(3000).then(() => "colgado")]);
+      const res = await Promise.race([
+        pub.start().then(
+          () => "ok",
+          () => "rejected",
+        ),
+        sleep(3000).then(() => "colgado"),
+      ]);
       for (let i = 0; i < 40 && !ing.seen.closed; i++) await sleep(25);
       pub.close();
       expect(res).toBe("rejected");
@@ -262,7 +294,11 @@ describe("EQ6c · P2-1 · plazos después del handshake", () => {
     const url = "rtmps://ingest.example/live2";
     const t0 = Date.now();
     const r = (await (
-      await c.post("/control/test", { ingestUrl: url, platform: "custom", credential: sealSecret(KEY, PUB, { platform: "custom", ingest: url }) })
+      await c.post("/control/test", {
+        ingestUrl: url,
+        platform: "custom",
+        credential: sealSecret(KEY, PUB, { platform: "custom", ingest: url }),
+      })
     ).json()) as { ok: boolean };
     expect(Date.now() - t0).toBeLessThan(3000);
     expect(r.ok).toBe(true); // probe no llega a createStream: control positivo, la prueba no publica
@@ -380,8 +416,16 @@ describe("EQ6c · P2-2 · sobre v2 atado a su destino", () => {
       { ingestUrl: evilUrl, platform: "custom", credential: s },
       { ingestUrl: "rtmps://a.rtmps.youtube.com:444/live2", platform: "youtube", credential: s },
       { ingestUrl: evilUrl, credential: s },
-      { ingestUrl: evilUrl, platform: "youtube", credential: { ...s, bind: { platform: "youtube", ingest: canonicalIngestUrl(evilUrl) } } },
-      { ingestUrl: evilUrl, platform: "custom", credential: { ...s, bind: { platform: "custom", ingest: canonicalIngestUrl(evilUrl) } } },
+      {
+        ingestUrl: evilUrl,
+        platform: "youtube",
+        credential: { ...s, bind: { platform: "youtube", ingest: canonicalIngestUrl(evilUrl) } },
+      },
+      {
+        ingestUrl: evilUrl,
+        platform: "custom",
+        credential: { ...s, bind: { platform: "custom", ingest: canonicalIngestUrl(evilUrl) } },
+      },
       { ingestUrl: YT.ingest, platform: "youtube", credential: { ...s, ct: flip(s.ct) } },
       { ingestUrl: YT.ingest, platform: "youtube", credential: { ...s, tag: flip(s.tag) } },
       { ingestUrl: YT.ingest, platform: "youtube", credential: { ...s, iv: flip(s.iv) } },
@@ -405,7 +449,14 @@ describe("EQ6c · P2-2 · sobre v2 atado a su destino", () => {
   it("CONTROL · la orden legítima (YouTube hacia YouTube) publica: el banco de pruebas no rechaza todo", async () => {
     const yt = await fakeIngest("normal");
     const c = await control({ dial: yt.dial });
-    const r = await c.post("/control/start", startBody({ ingestUrl: "rtmps://A.RTMPS.YOUTUBE.COM:443/live2/", platform: "youtube", credential: sealSecret(KEY, PUB, YT) }));
+    const r = await c.post(
+      "/control/start",
+      startBody({
+        ingestUrl: "rtmps://A.RTMPS.YOUTUBE.COM:443/live2/",
+        platform: "youtube",
+        credential: sealSecret(KEY, PUB, YT),
+      }),
+    );
     expect(r.status).toBe(200);
     for (let i = 0; i < 60 && !yt.seen.published.length; i++) await sleep(25);
     c.sup.stop();
@@ -417,8 +468,15 @@ describe("EQ6c · P2-2 · sobre v2 atado a su destino", () => {
     const c = await control({ dial: evil.dial, legacyKey: KEY, rtmpsUrl: "rtmps://deploy.example/live2" });
     const statuses: number[] = [];
     for (const credential of [undefined, null, 0, "", false]) {
-      for (const ingestUrl of ["rtmps://attacker.example/live2", "rtmps://deploy.example:444/live2", "rtmps://deploy.example/live3", "rtmps://deploy.example.attacker.example/live2"]) {
-        statuses.push((await c.post("/control/start", startBody({ ingestUrl, platform: "custom", credential }))).status);
+      for (const ingestUrl of [
+        "rtmps://attacker.example/live2",
+        "rtmps://deploy.example:444/live2",
+        "rtmps://deploy.example/live3",
+        "rtmps://deploy.example.attacker.example/live2",
+      ]) {
+        statuses.push(
+          (await c.post("/control/start", startBody({ ingestUrl, platform: "custom", credential }))).status,
+        );
       }
     }
     await sleep(400);
@@ -495,7 +553,14 @@ describe("EQ6c · P2-3 · control en cerrado con el proceso REAL", () => {
       }
     }
     for (const [name, r] of Object.entries(results)) {
-      expect(r, name).toEqual({ healthz: 503, status: 401, statusVacia: 401, statusEspacio: 401, start: 401, recordings: 401 });
+      expect(r, name).toEqual({
+        healthz: 503,
+        status: 401,
+        statusVacia: 401,
+        statusEspacio: 401,
+        start: 401,
+        recordings: 401,
+      });
     }
   }, 90_000);
 
@@ -521,7 +586,14 @@ describe("EQ6c · redacción frente a una ingesta que repite la clave codificada
     const ing = await fakeIngest("echo_key_encoded");
     const c = await control({ dial: ing.dial, maxRetries: 1 });
     const url = "rtmps://ingest.example/live2";
-    await c.post("/control/start", startBody({ ingestUrl: url, platform: "custom", credential: sealSecret(KEY, PUB, { platform: "custom", ingest: url }) }));
+    await c.post(
+      "/control/start",
+      startBody({
+        ingestUrl: url,
+        platform: "custom",
+        credential: sealSecret(KEY, PUB, { platform: "custom", ingest: url }),
+      }),
+    );
     let st = await c.status();
     for (let i = 0; i < 100 && st.state !== "failed"; i++) {
       await sleep(30);

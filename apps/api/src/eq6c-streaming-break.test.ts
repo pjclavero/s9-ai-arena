@@ -77,7 +77,13 @@ class GatedStreamer implements StreamerClient {
       if (this.holdRecordings) await this.holdRecordings;
     }
     if (path === "/recordings")
-      return ok({ dir: "arena_replays/video", files: [], count: 0, totalBytes: 0, disk: { totalBytes: 1e12, freeBytes: 1e11 } });
+      return ok({
+        dir: "arena_replays/video",
+        files: [],
+        count: 0,
+        totalBytes: 0,
+        disk: { totalBytes: 1e12, freeBytes: 1e11 },
+      });
     return { ok: false, status: 404, body: {} as T };
   }
 }
@@ -91,7 +97,11 @@ let battle: string;
 
 const auth = () => ({ Authorization: `Bearer ${admin}` });
 const activeRows = () => h.db("streaming_sessions").where({ state: "active" });
-const start = (app: Express) => request(app).post("/admin/streaming/start").set(auth()).send({ target: { kind: "battle", id: battle } });
+const start = (app: Express) =>
+  request(app)
+    .post("/admin/streaming/start")
+    .set(auth())
+    .send({ target: { kind: "battle", id: battle } });
 const stop = (app: Express) => request(app).post("/admin/streaming/stop").set(auth()).send({});
 const restart = (app: Express) => request(app).post("/admin/streaming/restart").set(auth()).send({});
 async function invariant() {
@@ -118,17 +128,38 @@ beforeAll(async () => {
   await seedDev(h.db);
   st = new GatedStreamer();
   const mk = (streamer: StreamerClient) =>
-    createApp({ db: h.db, streamer, streamingPublicKey: () => ({ pem: PUB, kid: keyIdOf(PUB) }), broadcastBaseUrl: "http://web:3000/broadcast" });
+    createApp({
+      db: h.db,
+      streamer,
+      streamingPublicKey: () => ({ pem: PUB, kid: keyIdOf(PUB) }),
+      broadcastBaseUrl: "http://web:3000/broadcast",
+    });
   // Dos instancias de la API sobre la MISMA BD y el MISMO streamer (dos procesos / réplicas).
   appA = mk(st);
   appB = mk(st);
   admin = await tokenFor(h.db, DEV_USERS.admin);
   battle = randomUUID();
-  await h.db("battles").insert({ id: battle, status: "running", mode: "deathmatch", ruleset_id: DEFAULT_RULESET_ID, map_id: "mvp-arena-01", map_version: 1 });
+  await h
+    .db("battles")
+    .insert({
+      id: battle,
+      status: "running",
+      mode: "deathmatch",
+      ruleset_id: DEFAULT_RULESET_ID,
+      map_id: "mvp-arena-01",
+      map_version: 1,
+    });
   const bot = await createPublishedBot(h.db, `eq6c-${battle.slice(0, 8)}`);
   await h.db("participants").insert({ battle_id: battle, bot_id: bot.botId, version: 1, team: "red" });
   const v = (await request(appA).get("/admin/streaming").set(auth())).body.settings.version;
-  expect((await request(appA).put("/admin/streaming/settings").set(auth()).send({ version: v, enabled: true, mode: "record" })).status).toBe(200);
+  expect(
+    (
+      await request(appA)
+        .put("/admin/streaming/settings")
+        .set(auth())
+        .send({ version: v, enabled: true, mode: "record" })
+    ).status,
+  ).toBe(200);
 }, 180_000);
 
 afterAll(async () => {
@@ -154,7 +185,8 @@ describe("EQ6c · P2-4 · carreras repetidas en UNA instancia (cerrojo de proces
       const sa = await a;
       const sb = await b;
       let inv = await invariant();
-      if (!(inv.emitting === inv.activeSessions > 0) || inv.activeSessions > 1) bad.push({ i, k: "start‖stop", sa, sb, inv });
+      if (!(inv.emitting === inv.activeSessions > 0) || inv.activeSessions > 1)
+        bad.push({ i, k: "start‖stop", sa, sb, inv });
       // restart ‖ stop
       await reset();
       expect((await start(appA)).status).toBe(201);
@@ -178,7 +210,8 @@ describe("EQ6c · P2-4 · carreras repetidas en UNA instancia (cerrojo de proces
       const se = await e;
       const sf = await f;
       inv = await invariant();
-      if (!(inv.emitting === inv.activeSessions > 0) || inv.activeSessions > 1) bad.push({ i, k: "stop‖start", se, sf, inv });
+      if (!(inv.emitting === inv.activeSessions > 0) || inv.activeSessions > 1)
+        bad.push({ i, k: "stop‖start", se, sf, inv });
     }
     expect(bad).toEqual([]);
   }, 120_000);
@@ -238,14 +271,24 @@ describe("EQ6c · desactivar ‖ start en UNA instancia", () => {
     release();
     const ra = await a;
     const ui = (await request(appA).get("/admin/streaming").set(auth())).body;
-    const view = { put: off.status, start: ra.status, emitting: st.emitting, active: (await activeRows()).length, enabled: ui.settings.enabled, uxState: ui.uxState };
+    const view = {
+      put: off.status,
+      start: ra.status,
+      emitting: st.emitting,
+      active: (await activeRows()).length,
+      enabled: ui.settings.enabled,
+      uxState: ui.uxState,
+    };
     // Restaurar para el resto de pruebas.
     await stop(appA);
     const v2 = (await request(appA).get("/admin/streaming").set(auth())).body.settings.version;
     await request(appA).put("/admin/streaming/settings").set(auth()).send({ version: v2, enabled: true });
     expect(off.status).toBe(200); // control: la desactivación se aceptó
     // Invariante: con el streaming desactivado no emite nada.
-    expect({ emitting: view.emitting, active: view.active }, JSON.stringify(view)).toEqual({ emitting: false, active: 0 });
+    expect({ emitting: view.emitting, active: view.active }, JSON.stringify(view)).toEqual({
+      emitting: false,
+      active: 0,
+    });
   }, 30_000);
 });
 
@@ -261,7 +304,8 @@ describe("EQ6c · el cerrojo no se queda bloqueado por un streamer colgado", () 
       socks.push(s);
       s.on("error", () => {});
       s.on("data", () => {
-        if (kind === "headers_then_stall") s.write("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 100\r\n\r\n{\"state\":");
+        if (kind === "headers_then_stall")
+          s.write('HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 100\r\n\r\n{"state":');
       });
     });
     servers.push(srv);
@@ -283,7 +327,10 @@ describe("EQ6c · el cerrojo no se queda bloqueado por un streamer colgado", () 
       const view = rs.map((r) => `${r.status}:${JSON.stringify(r.body).slice(0, 120)}`);
       expect(elapsed).toBeLessThan(8000);
       // Los start no pueden «salir bien» contra un streamer colgado (el stop con 200 en cabecera es aceptable).
-      expect([rs[0].status, rs[2].status, rs[3].status].every((s) => s >= 400), view.join(" | ")).toBe(true);
+      expect(
+        [rs[0].status, rs[2].status, rs[3].status].every((s) => s >= 400),
+        view.join(" | "),
+      ).toBe(true);
       expect((await activeRows()).length).toBe(0);
     }, 30_000);
   }
