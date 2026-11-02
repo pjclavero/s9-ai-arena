@@ -133,7 +133,7 @@ qué efecto tiene de verdad cada campo en el motor (algunos no lo tienen).
 ### Mapas
 
 Formato, versionado, validación, generador procedural e importación Tiled. Dónde se guardan (en la
-API, no en map-service) y por qué el editor visual aún no guarda.
+API, no en map-service) y cómo guarda y reabre el editor visual.
 
 → [maps.md](maps.md)
 

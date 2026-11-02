@@ -3,7 +3,7 @@
 ## Resumen
 
 PostgreSQL 16.14 es la base de datos de negocio **y** la cola de trabajos. El esquema se define en
-código, con 11 migraciones en `apps/api/src/db/migrations.ts` aplicadas mediante Knex, y tiene 35
+código, con 16 migraciones (`001`–`016`) en `apps/api/src/db/migrations.ts` aplicadas mediante Knex, y tiene 35
 tablas (33 de negocio más las 2 de control de Knex). **No hay tabla de replays**: los replays viven
 en disco. Todo está verificado en `27f70bb`. Este documento no contiene secretos.
 
@@ -33,6 +33,11 @@ en disco. Todo está verificado en `27f70bb`. Este documento no contiene secreto
 | `009_r24_refresh_families` | `sessions.absolute_expires_at`; `session_refresh_tokens` (familias de refresh) |
 | `010_r25_shared_limits` | `api_usage.expires_at` y `blocked_until` (límites compartidos); `artifacts.bytes` |
 | `011_battle_cpu_ms` | `participants.cpu_ms`, con un CHECK que exige un valor finito |
+| `012_bot_versioning` | `bot_versions.source_sha256`, `parent_version` (clonado) y `validated_build_id`; `artifacts.build_id` único |
+| `013_battle_claim` | `battles.claimed_by`, `lease_expires_at` y `run_attempts` (reserva atómica con lease) |
+| `014_battle_diagnostics` | `participants.diagnostics` (JSON de diagnóstico por bot) |
+| `015_bot_retired` | `bots.retired_at` (retirar un bot de la lista principal; no borra nada) |
+| `016_battle_rules` | `battles.rules` y `tournaments.rules` (copia inmutable de las reglas; nullable, sin relleno de filas históricas) |
 
 ## Cómo se aplican
 
@@ -136,8 +141,8 @@ rol `postgres`**, así que cualquier comando que use `-U postgres` falla. Las co
 
 | Afirmación | Estado | Fuente |
 |---|---|---|
-| 11 migraciones y sus tablas | CODE_VERIFIED | `apps/api/src/db/migrations.ts` (`name: "0xx_…"`, `CREATE TABLE`) |
-| 11 migraciones aplicadas y 35 tablas en producción | RUNTIME_VERIFIED (en la auditoría) | `knex_migrations` y `\dt` (sólo lectura) |
+| 16 migraciones y sus tablas (012–016 añadidas el 2026-11-02) | CODE_VERIFIED (`e3bf2fa`) | `apps/api/src/db/migrations.ts` (`name: "0xx_…"`, `CREATE TABLE`) |
+| 11 migraciones aplicadas y 35 tablas en producción | RUNTIME_VERIFIED (en la auditoría del 2026-10-15; hoy hay 16 migraciones en `main`, sin re-medir en producción) | `knex_migrations` y `\dt` (sólo lectura) |
 | Comandos del CLI | CODE_VERIFIED | `apps/api/src/db/cli.ts:2-69` |
 | Contenido de `bootstrap` | CODE_VERIFIED | `apps/api/src/db/seeds/dev.ts:75-95` |
 | Escritores y lectores | CODE_VERIFIED | análisis de `db("<tabla>")…insert/update` y SQL crudo en `apps/*/src` (sin tests) |

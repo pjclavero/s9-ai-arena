@@ -4,8 +4,8 @@
 
 Revisión, integración y prueba de los tres carriles de la fase *Production Readiness Closure* de
 S9 AI Arena sobre la base `20d827d` (HEAD verificado del cierre funcional, PR #152): DEV-SANDBOX
-([TD-034](../roadmap/technical-debt.md#td-034)), DEV-SEC ([TD-004](../roadmap/technical-debt.md#td-004))
-y DEV-CI ([TD-045](../roadmap/technical-debt.md#td-045)). Rama `integration/production-readiness`
+([TD-034](../../roadmap/technical-debt.md#td-034)), DEV-SEC ([TD-004](../../roadmap/technical-debt.md#td-004))
+y DEV-CI ([TD-045](../../roadmap/technical-debt.md#td-045)). Rama `integration/production-readiness`
 (PR #158), **fusionada en `main` el 2026-10-19** (`59322e2`).
 
 Resultado de la revisión (2026-10-18): TD-004 y TD-034 **CERRADAS**, con evidencia local y en CI
@@ -119,7 +119,7 @@ protección de rama; el [cierre de gobernanza](#cierre-de-gobernanza-2026-10-19)
   39173546382).
 - ROJO en las calibraciones sobre la integración (#159 y #160), en el primer run de #158 por una
   regresión real, y en #161 contra `main` protegida.
-- `main` protegida con los tres checks obligatorios ([ci.md](ci.md#protección-de-rama)); un rojo
+- `main` protegida con los tres checks obligatorios ([ci.md](../../development/ci.md#protección-de-rama)); un rojo
   impide el merge, también con `--admin`.
 
 ## Cierre de gobernanza (2026-10-19)
@@ -153,7 +153,7 @@ protección de rama; el [cierre de gobernanza](#cierre-de-gobernanza-2026-10-19)
   - las lecturas del replay-service no exigen credencial dentro de la red `platform`;
   - con la señal `ready` perdida, un informe de plataforma falseado antes del HELLO cuenta como infraestructura (falla cerrado).
 
-El texto de DEV-SANDBOX sobre la señal `ready` está integrado en [security.md](../technical/security.md).
+El texto de DEV-SANDBOX sobre la señal `ready` está integrado en [security.md](../../technical/security.md).
 
 ## SANDBOX
 
@@ -226,9 +226,9 @@ desplegar.
 
 ## REMAINING P1
 
-- Ninguno del alcance: [TD-045](../roadmap/technical-debt.md#td-045) quedó CERRADA en el cierre de gobernanza.
-- Fuera del alcance de esta fase: [TD-047](../roadmap/technical-debt.md#td-047),
-  [TD-033](../roadmap/technical-debt.md#td-033) y [TD-043](../roadmap/technical-debt.md#td-043).
+- Ninguno del alcance: [TD-045](../../roadmap/technical-debt.md#td-045) quedó CERRADA en el cierre de gobernanza.
+- Fuera del alcance de esta fase: [TD-047](../../roadmap/technical-debt.md#td-047),
+  [TD-033](../../roadmap/technical-debt.md#td-033) y [TD-043](../../roadmap/technical-debt.md#td-043).
 
 ## PRODUCTION CHANGES
 
@@ -254,9 +254,9 @@ gate A-G, golden path tras desplegar) necesita autorización explícita del oper
 
 ## Documentación relacionada
 
-- [functional-closure-report.md](functional-closure-report.md) · [ci.md](ci.md) · [testing.md](testing.md)
-- [current-status.md](../roadmap/current-status.md) · [known-issues.md](../roadmap/known-issues.md) · [technical-debt.md](../roadmap/technical-debt.md)
-- [security.md](../technical/security.md) · [replays.md](../technical/replays.md) · [bots.md](../technical/bots.md)
+- [functional-closure-report.md](functional-closure-report.md) · [ci.md](../../development/ci.md) · [testing.md](../../development/testing.md)
+- [current-status.md](../../roadmap/current-status.md) · [known-issues.md](../../roadmap/known-issues.md) · [technical-debt.md](../../roadmap/technical-debt.md)
+- [security.md](../../technical/security.md) · [replays.md](../../technical/replays.md) · [bots.md](../../technical/bots.md)
 
 ## Verificación
 

@@ -39,7 +39,7 @@ y en [docs/technical/services.md](../technical/services.md).
                   │                                ▲
      INSERT jobs  │                                │ ingestReplay (disco)
                   ▼                                │
-             postgres ◄──── claim jobs ──── tournament-worker  (motor EN PROCESO + stub HunterBot)
+             postgres ◄──── claim jobs ──── tournament-worker  (motor EN PROCESO + bots en contenedor)
               ▲   ▲                              │  BLPOP s9:wake:jobs (sin productor)
               │   └──── claim bot_build ──── bot-build-worker (pipeline; falla cerrado)
               │                                  ▼

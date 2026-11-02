@@ -18,6 +18,7 @@ Autenticación:
 - [Convenciones](#convenciones)
 - [Errores](#errores)
 - [Recursos por área](#recursos-por-área)
+- [Rutas del contrato no recogidas en las tablas anteriores](#rutas-del-contrato-no-recogidas-en-las-tablas-anteriores)
 - [Extensiones fuera del contrato](#extensiones-fuera-del-contrato)
 - [Límites de ritmo y cuotas](#límites-de-ritmo-y-cuotas)
 - [Endpoints sin pantalla en la web](#endpoints-sin-pantalla-en-la-web)
@@ -176,6 +177,37 @@ Rol mínimo según `x-min-role`. «anón.» = `visitor` sin credencial.
 | `GET /admin/security-findings`, `GET /admin/audit-log` | admin |
 | `GET /system/status`, `GET /system/rbac` | admin |
 
+## Rutas del contrato no recogidas en las tablas anteriores
+
+Las tablas de «Recursos por área» se escribieron sobre `27f70bb`. Estas 23 operaciones de `apps/api/openapi.yaml` (contrato
+0.12.0, `main` `e3bf2fa`) existen y no aparecen arriba; el rol mínimo sale de `x-min-role`. El contrato manda sobre este documento.
+
+| operationId | Método y ruta | Rol mínimo |
+|---|---|---|
+| `addTeamBot` | `POST /teams/{teamId}/bots` | user |
+| `removeTeamBot` | `DELETE /teams/{teamId}/bots/{botId}` | user |
+| `getBotVersionFiles` | `GET /bots/{botId}/versions/{version}/files` | user |
+| `getBotVersionArtifact` | `GET /bots/{botId}/versions/{version}/artifact` | visitor |
+| `diffBotVersions` | `GET /bots/{botId}/versions/{version}/diff` | user |
+| `cloneBotVersion` | `POST /bots/{botId}/versions/{version}/actions/clone` | developer |
+| `submitBotVersion` | `POST /bots/{botId}/versions/{version}/actions/submit` | developer |
+| `publishBotVersion` | `POST /bots/{botId}/versions/{version}/actions/publish` | developer |
+| `suspendBotVersion` | `POST /bots/{botId}/versions/{version}/actions/suspend` | moderator |
+| `retireBotVersion` | `POST /bots/{botId}/versions/{version}/actions/retire` | developer |
+| `getMapVersionContent` | `GET /maps/{mapId}/versions/{version}/content` | visitor |
+| `publishMapVersion` | `POST /maps/{mapId}/versions/{version}/actions/publish` | user |
+| `listRulesets` | `GET /rulesets` | visitor |
+| `enterTournament` | `POST /tournaments/{tournamentId}/entries` | user |
+| `closeEntries` | `POST /tournaments/{tournamentId}/actions/close-entries` | organizer |
+| `excludeTournamentEntry` | `POST /tournaments/{tournamentId}/entries/{entryId}/actions/exclude` | user |
+| `dryRunTournament` | `POST /tournaments/{tournamentId}/actions/dry-run` | organizer |
+| `listTournamentMatches` | `GET /tournaments/{tournamentId}/matches` | visitor |
+| `checkBattleRules` | `POST /battles/rules-check` | user |
+| `getReplayIndex` | `GET /replays/{battleId}/index` | visitor |
+| `getReplaySegment` | `GET /replays/{battleId}/segment` | visitor |
+| `getTeamStandings` | `GET /tournaments/{tournamentId}/team-standings` | visitor |
+| `getBotVersionEligibilityInventory` | `GET /admin/bot-version-eligibility` | admin |
+
 ## Extensiones fuera del contrato
 
 Están registradas con `defineExtension` y **no aparecen en `openapi.yaml`**. El test de conformidad las admite como extensiones documentadas.
@@ -231,6 +263,7 @@ Verificado contra `27f70bb`.
 |---|---|---|
 | Rutas y roles del contrato (tablas anteriores) | CODE_VERIFIED | `apps/api/openapi.yaml` (operaciones con `x-min-role` volcadas con un script) |
 | El rol mínimo sale del contrato | CODE_VERIFIED | `apps/api/src/registry.ts:20-60` |
+| Rutas del contrato 0.12.0 que faltaban en las tablas (sección añadida el 2026-11-02) | CODE_VERIFIED (`e3bf2fa`) | generadas leyendo `apps/api/openapi.yaml` |
 | 8 extensiones con `defineExtension` | CODE_VERIFIED | `routes/auth.ts:297,384,399`; `routes/keys.ts:19`; `routes/bots.ts:217,236`; `routes/tournaments.ts:129,143` |
 | Prefijo `/api/v1` quitado por nginx | CODE_VERIFIED | `infrastructure/gateway/nginx-behind-proxy.conf:72-76` |
 | Registro abierto con `user`+`developer` | CODE_VERIFIED | `apps/api/src/routes/auth.ts:148-174` |

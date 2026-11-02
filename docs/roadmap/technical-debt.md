@@ -4,12 +4,12 @@
 
 Registro único de la **deuda técnica confirmada** del proyecto. Cada entrada tiene un id estable
 (`TD-XXX`) que el resto de la documentación enlaza. Sólo entra aquí lo que está verificado
-contra el código de `27f70bb` o contra el runtime medido. Las ideas y las funciones diseñadas que
+contra el código de `main` o contra el runtime medido (cada entrada dice cuál). Las ideas y las funciones diseñadas que
 nunca se implementaron van en [pending-features.md](pending-features.md). Los síntomas que ve el
 usuario o el operador van en [known-issues.md](known-issues.md).
 
-- **BASE COMMIT:** `27f70bb` (origin/main, 2026-09-13). Desde la auditoría del 2026-10-15 hay 0 commits nuevos.
-- **LAST VERIFIED:** 2026-10-21 (RC2: TD-051…TD-063 añadidas desde las propuestas de RC1 y los hallazgos de RC2; TD-050 fusionada en TD-019). Antes: 2026-10-15; estados de TD-001…TD-031 revisados y TD-032…TD-049 añadidas en el cierre funcional (rama `integration/functional-closure`, base `0b8c12b`, 2026-10-18; ver [functional-closure-report.md](../development/functional-closure-report.md)).
+- **MAIN_SHA auditado:** `e3bf2fa83650559267ef269994c667fabfb29e46` (origin/main, 2026-11-02). Las 31 entradas con una línea «Auditoría 2026-11-02» se han vuelto a comprobar contra ese commit; en las demás, el campo «Evidencia» sigue siendo el de la medición original (auditoría de 2026-10-15 sobre `27f70bb`, o la de su fecha de detección) y no se ha vuelto a medir.
+- **LAST VERIFIED:** 2026-11-02 (auditoría documental DOC-B contra `e3bf2fa`). Antes: 2026-10-21 (RC2), 2026-10-18 (cierre funcional) y 2026-10-15 (auditoría original).
 - **Origen:** auditoría del 2026-10-15 ([resumen público](../audits/2026-10-15/README.md),
   [delta](../audits/2026-10-15/AUDIT-DELTA-2026-10.md)). Las excepciones son TD-026, TD-028,
   TD-029 y TD-030, que salieron de la verificación de esta consolidación, y TD-031, que salió del
@@ -32,15 +32,15 @@ Estados posibles:
 
 | Id | Título | Prioridad | Área | Estado |
 |---|---|---|---|---|
-| [TD-001](#td-001) | Build de bots sin sandbox real | P0 | Bots / build | PARCIAL |
-| [TD-002](#td-002) | Stub HunterBot y doble camino de ejecución | P0 | Batallas | CERRADA |
+| [TD-001](#td-001) | Build de bots sin sandbox real | P0 | Bots / build | CERRADA (PR #152; condición cumplida en CI) |
+| [TD-002](#td-002) | Stub HunterBot y doble camino de ejecución | P0 | Batallas | CERRADA (PR #152) |
 | [TD-003](#td-003) | Costura `rulesetId` web ↔ BD | P0 | Batallas | CERRADA |
-| [TD-004](#td-004) | Replays a anónimos por el gateway | P0 | Seguridad | CERRADA en la integración `integration/production-readiness` (REVIEW + CI real); sin desplegar |
-| [TD-005](#td-005) | Autorización de participantes | P0 | Seguridad | CERRADA |
-| [TD-006](#td-006) | Runtime mezclado sin identidad de build | P0 | Runtime | ABIERTA |
+| [TD-004](#td-004) | Replays a anónimos por el gateway | P0 | Seguridad | CERRADA (PR #158) |
+| [TD-005](#td-005) | Autorización de participantes | P0 | Seguridad | CERRADA (PR #152) |
+| [TD-006](#td-006) | Runtime mezclado sin identidad de build | P0 | Runtime | MEJORADA (producción en RC5.5; sin re-medir aquí) |
 | [TD-007](#td-007) | Backup sin alertas, sin snapshots de VM, apagado no limpio | P0 | Operación | MEJORADA |
 | [TD-008](#td-008) | Topología en el repo público | P0 | Seguridad | ABIERTA |
-| [TD-009](#td-009) | Reproductor y visor rotos (Phaser) | P1 | Web | CERRADA en `main` (producción pendiente de despliegue) |
+| [TD-009](#td-009) | Reproductor y visor rotos (Phaser) | P1 | Web | CERRADA en `main` (PR #152); incluida en producción |
 | [TD-010](#td-010) | Editor de mapas sólo cliente | P1 | Mapas | CERRADA |
 | [TD-011](#td-011) | Equipos incompletos, listado anónimo | P1 | Equipos | CERRADA |
 | [TD-012](#td-012) | Autenticación incompleta | P1 | Seguridad | ABIERTA |
@@ -53,7 +53,7 @@ Estados posibles:
 | [TD-019](#td-019) | Nightly rojo, deploy-staging falso verde | P3 | CI | ABIERTA |
 | [TD-020](#td-020) | Endpoints de salud/identidad engañosos | P2 | Operación | ABIERTA |
 | [TD-021](#td-021) | Código muerto | P4 | Motor / ratings | ABIERTA |
-| [TD-022](#td-022) | Errores y estados de la web | P2 | Web | PARCIAL |
+| [TD-022](#td-022) | Errores y estados de la web | P2 | Web | MEJORADA |
 | [TD-023](#td-023) | Administración sólo por SSH | P2 | Administración | ABIERTA |
 | [TD-024](#td-024) | Instalación no reproducible | P2 | Instalación | ABIERTA |
 | [TD-025](#td-025) | Restauración sin ensayo reciente | P1 | Operación | ABIERTA |
@@ -65,7 +65,7 @@ Estados posibles:
 | [TD-031](#td-031) | Imágenes de servicio vulnerables y sin escaneo | P1 | Seguridad / imágenes | ABIERTA |
 | [TD-032](#td-032) | Compatibilidad modo ↔ ruleset ↔ mapa sin validar en `POST /battles` | P1 | API / batallas | CERRADA |
 | [TD-033](#td-033) | Anfitrión de bots con credenciales de BD en la red `arena` | P1 | Seguridad / arquitectura | ABIERTA |
-| [TD-034](#td-034) | Límite de arranque del bot medido en tiempo de pared | P1 | Bots / build | CERRADA en la integración `integration/production-readiness` (REVIEW + CI real); sin desplegar |
+| [TD-034](#td-034) | Límite de arranque del bot medido en tiempo de pared | P1 | Bots / build | CERRADA en la integración `integration/production-readiness` (REVIEW + CI real); incluida en el commit de producción RC5.5 |
 | [TD-035](#td-035) | Volúmenes `arena_bot_sources` y `arena_build_cache` sin uso | P4 | Infraestructura | ABIERTA |
 | [TD-036](#td-036) | Procedencia del código no expuesta en la API de batallas | P3 | API / bots | ABIERTA |
 | [TD-037](#td-037) | Un bot no puede enfrentarse a otra versión de sí mismo | P3 | Batallas / BD | ABIERTA |
@@ -78,30 +78,38 @@ Estados posibles:
 | [TD-044](#td-044) | `SPECTATE_WS_URL` inservible para el navegador | P1 | Configuración / espectador | CERRADA |
 | [TD-045](#td-045) | E2E de navegador y E2E con Docker fuera de CI | P1 | CI | CERRADA (2026-10-19): `functional-e2e` obligatorio por protección de rama en `main` |
 | [TD-046](#td-046) | `absolute_redirect off` falta en la conf del contenedor web | P3 | Gateway / web | ABIERTA |
-| [TD-047](#td-047) | Batallas y estadísticas exponen participantes de bots privados | P1 | Seguridad / batallas | ABIERTA |
+| [TD-047](#td-047) | Batallas y estadísticas exponen participantes de bots privados | P1 | Seguridad / batallas | CERRADA (PR #178) |
 | [TD-048](#td-048) | `NODE_ENV` no se fija en las imágenes | P2 | Configuración | ABIERTA |
 | [TD-049](#td-049) | Fallbacks silenciosos menores | P3 | Web / API | ABIERTA |
-| [TD-051](#td-051) | Proxy de Docker sin límite de imagen, contenedor ni cliente | P0 | Seguridad / bots | CERRADA en la integración RC2 (REVIEW + CI real); sin desplegar |
+| [TD-051](#td-051) | Proxy de Docker sin límite de imagen, contenedor ni cliente | P0 | Seguridad / bots | CERRADA (PR #164, RC2) |
 | [TD-052](#td-052) | Sin E2E contenedor → proxy | P0 | CI | CERRADA (RC2): `container-proxy-e2e` obligatorio en `main` |
-| [TD-053](#td-053) | Sin firewall de host en 2375; redes internas alcanzan sshd | P1 | Seguridad / operación | CERRADA en la integración RC2; sin aplicar en producción |
+| [TD-053](#td-053) | Sin firewall de host en 2375; redes internas alcanzan sshd | P1 | Seguridad / operación | CERRADA (PR #164, RC2); aplicación en el host a cargo del operador |
 | [TD-054](#td-054) | `backup.sh` sin modo sin retención | P2 | Operación / backup | ABIERTA |
 | [TD-055](#td-055) | `deploy-contract.json` desfasado | P2 | Operación / despliegue | ABIERTA |
-| [TD-056](#td-056) | `Documentation=` de la unidad del proxy roto | P3 | Operación | CERRADA en la integración RC2; sin desplegar |
+| [TD-056](#td-056) | `Documentation=` de la unidad del proxy roto | P3 | Operación | CERRADA (PR #164, RC2) |
 | [TD-057](#td-057) | Árbol de despliegue con ficheros de root | P2 | Operación | ABIERTA (desbloqueada por TD-062: chown sólo tras migrar el proxy y con preflight VERDE) |
 | [TD-058](#td-058) | Restos de un smoke manual en producción | P3 | Operación | ABIERTA (operador) |
 | [TD-059](#td-059) | `/healthz` de la API ciego al nivel de migraciones | P2 | Operación / API | ABIERTA |
 | [TD-060](#td-060) | `.env` 0644 y `secrets/` 0755 en el host | P2 | Seguridad / operación | ABIERTA |
-| [TD-061](#td-061) | Seccomp de los bots sin `sendmmsg` (DNS roto) | P0 | Bots / sandbox | CERRADA en la integración RC2; sin desplegar |
-| [TD-062](#td-062) | El proxy ejecuta código de un árbol no sólo de root | P1 | Seguridad / operación | CERRADA en código (rama fix/td-062, pendiente REVIEW); ABIERTA en producción hasta migrar |
+| [TD-061](#td-061) | Seccomp de los bots sin `sendmmsg` (DNS roto) | P0 | Bots / sandbox | CERRADA (PR #164, RC2) |
+| [TD-062](#td-062) | El proxy ejecuta código de un árbol no sólo de root | P1 | Seguridad / operación | CERRADA en `main` (PR #167); migración de producción a cargo del operador |
 | [TD-063](#td-063) | Otros servicios del host en todas las interfaces | P3 | Seguridad / red | ABIERTA (sin medir) |
-| [TD-065](#td-065) | `status=finished` no garantiza stats materializados | P3 | API / contrato de batallas | ABIERTA (mitigada en el test) |
+| [TD-065](#td-065) | `status=finished` no garantiza stats materializados | P3 | API / contrato de batallas | CERRADA (PR #178) |
+| [TD-066](#td-066) | Streaming: clave en argv de FFmpeg, sin retención de MP4 ni alerta; YouTube sin probar | P3 | Streaming / operación | ABIERTA |
+| [TD-067](#td-067) | `runCursorQuery` atribuye al cursor errores de conversión que vienen de los filtros | P3 | API | ABIERTA |
+| [TD-068](#td-068) | `listBots` puede devolver páginas más cortas que `limit` | P3 | API | ABIERTA |
+| [TD-069](#td-069) | El comparador del desempate por enfrentamientos directos no es transitivo | P3 | Torneos | ABIERTA |
+| [TD-070](#td-070) | CTF en torneos: bandos A/B frente a bases y banderas red/blue | P3 | Torneos / reglas | ABIERTA (rechazado con motivo) |
+| [TD-071](#td-071) | El filtro `result=aborted` de replays no incluye `technical_limit` | P3 | API / replays | ABIERTA |
+| [TD-072](#td-072) | Carrera en la spec de navegador `review-h3-perimeter` | P3 | Pruebas | ABIERTA (sin reproducir) |
 
 ---
 
 <a id="td-001"></a>
 ## TD-001 — Build de bots sin sandbox real: ningún bot llega a published
 
-- **Estado:** PARCIAL — integrado (`integration/functional-closure`): código, compose (`bot-build-worker` en `arena`, proxy, host anunciado, `DIGESTS.lock` en la imagen) y E2E real en navegador; falta el `s9-docker-proxy` operativo en el host y el job de CI con Docker
+- **Estado:** CERRADA (PR #152; condición cumplida en CI)
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** La condición de cierre se cumple: un bot pegado llega a `published` por el sandbox real sin tocar la BD (`apps/api/src/fc-a-bot-pipeline-e2e.test.ts`, `apps/bot-manager/src/build-worker-wiring.ts`, `build-sandbox.ts`) y lo ejercita la CI obligatoria (`functional-e2e / golden` y `docker-e2e`). El proxy del host lo cubre RC2 (TD-051/TD-052). incluida en el commit de producción RC5.5 (`a1a6c4e` es descendiente de su merge).
 - **Prioridad:** P0 (auditoría P0-1)
 - **Área:** Bots / build (`bot-build-worker`)
 - **Detectado:** 2026-10-15
@@ -129,7 +137,8 @@ Estados posibles:
 <a id="td-002"></a>
 ## TD-002 — Batallas ejecutadas con stub HunterBot y doble camino de ejecución
 
-- **Estado:** CERRADA en la integración (`integration/functional-closure`); sin desplegar
+- **Estado:** CERRADA (PR #152)
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** Sin cambios: autoridad única en el worker (`apps/tournament-worker/src/battle-runner.ts:164,470,534`); `POST /battles/{id}/run` solo delega en la cola (`apps/api/src/routes/battles.ts:827-847`). incluida en el commit de producción RC5.5 (`a1a6c4e` es descendiente de su merge).
 - **Prioridad:** P0 (auditoría P0-2)
 - **Área:** Batallas (`api`, `tournament-worker`, `arena-engine`)
 - **Detectado:** 2026-10-15
@@ -187,7 +196,8 @@ Estados posibles:
 <a id="td-004"></a>
 ## TD-004 — Replays servidos a anónimos por el gateway
 
-- **Estado:** CERRADA en la integración `integration/production-readiness` (Production Readiness: DEV-SEC, verificada por REVIEW y en CI real); sin desplegar
+- **Estado:** CERRADA (PR #158)
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** Sin cambios: `apps/api/src/replay-access.ts`, gateway 404 en `/replays*`. incluida en el commit de producción RC5.5 (`a1a6c4e` es descendiente de su merge).
 - **Prioridad:** P0 (auditoría P0-4)
 - **Área:** Seguridad (`gateway`, `replay-service`)
 - **Detectado:** 2026-10-15
@@ -219,7 +229,8 @@ Estados posibles:
 <a id="td-005"></a>
 ## TD-005 — Autorización de participantes y datos de bots ajenos
 
-- **Estado:** CERRADA en la integración; sin desplegar
+- **Estado:** CERRADA (PR #152)
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** Sin cambios. incluida en el commit de producción RC5.5 (`a1a6c4e` es descendiente de su merge).
 - **Prioridad:** P0 (auditoría P0-5)
 - **Área:** Seguridad (`api`)
 - **Detectado:** 2026-10-15
@@ -236,7 +247,8 @@ Estados posibles:
 <a id="td-006"></a>
 ## TD-006 — Runtime con versiones mezcladas y sin identidad de build
 
-- **Estado:** ABIERTA
+- **Estado:** MEJORADA (producción en RC5.5; sin re-medir aquí)
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** main tiene identidad de build (`/version` en `apps/api/src/server.ts:29`, ADR-016). La mezcla de commits que midió la auditoría de 2026-10-15 ya no describe producción: según el registro del operador, producción corre RC5.5 (`a1a6c4e`) tras varios despliegues completos. Este repositorio no puede comprobar el 12/12 de `/version` en producción; el cierre exige esa medición (`runtime-drift-scan`) y queda a cargo del operador.
 - **Prioridad:** P0 (auditoría P0-6)
 - **Área:** Runtime / despliegue
 - **Detectado:** 2026-10-15
@@ -261,6 +273,7 @@ Estados posibles:
 ## TD-007 — Copia de seguridad sin alertas, sin snapshots de VM y apagado no limpio
 
 - **Estado:** MEJORADA (2026-10-15)
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** No re-medida (es del host). En main, las alertas de backup existen en el perfil `observability` (`infrastructure/observability/prometheus/alerts.yml:74-100`: `BackupFailed`, `BackupTooOld`, `BackupPartialSuccess`, `BackupMetricsMissing`); falta desplegar el perfil y probar que se disparan.
 - **Prioridad:** P0 (auditoría P0-7)
 - **Área:** Operación (`backup`)
 - **Detectado:** 2026-10-15
@@ -294,6 +307,7 @@ Estados posibles:
 ## TD-008 — Topología de infraestructura en el repositorio público
 
 - **Estado:** ABIERTA
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** Sigue ABIERTA. Los documentos vigentes de `docs/` (fuera de `docs/history/`) no contienen topología: lo vigila el test `NO_INTERNAL_TOPOLOGY` (`tests/acceptance/doc-b-roadmap-docs.test.ts`). Quedan 122 líneas con nombres internos (hosts, VM, dominios) en código, tests, CI y configuración fuera de la historia (búsqueda por nombres de host, de máquina virtual y de dominio sobre todo el árbol salvo `docs/history/`), p. ej. `infrastructure/gateway/nginx-behind-proxy.conf:3`, `infrastructure/.env.example`, `.github/workflows/ci.yml:317`. El PR #225 limpió dos comentarios. No hay gate de CI que parsee direcciones.
 - **Prioridad:** P0 (auditoría P0-8)
 - **Área:** Seguridad / repositorio
 - **Detectado:** 2026-10-15
@@ -311,7 +325,8 @@ Estados posibles:
 <a id="td-009"></a>
 ## TD-009 — Reproductor y visor rotos en navegador por arranque de Phaser
 
-- **Estado:** CERRADA en `main` (2026-10-19; producción pendiente de despliegue) — el golden obligatorio de CI ([TD-045](#td-045)) reproduce un replay real en Chromium, y la mutación que rompe la espera del READY de Phaser lo pone en rojo en CI real (PR #156 y #161)
+- **Estado:** CERRADA en `main` (PR #152); incluida en producción
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** Sin cambios. incluida en el commit de producción RC5.5 (`a1a6c4e` es descendiente de su merge).
 - **Prioridad:** P1 (auditoría P1-1)
 - **Área:** Web (`apps/web`)
 - **Detectado:** 2026-10-15
@@ -390,6 +405,7 @@ Estados posibles:
 ## TD-012 — Autenticación: registro abierto, IP de cliente colapsada y gestión de cuenta incompleta
 
 - **Estado:** ABIERTA
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** Sigue ABIERTA. Verificado: la recuperación de cuenta es inoperante, porque `POST /auth/recover` crea el token y lo descarta (`apps/api/src/routes/auth.ts:392`, `:440`) y no existe ningún transporte (`git grep -niE "nodemailer|smtp|sendMail" -- apps packages` vacío); no hay pantallas de 2FA (activar/desactivar), de sesiones ni de recuperación en la web (`git grep -nE "auth/(2fa|sessions|recover|reset)" -- apps/web/src` vacío). El login sí pide TOTP (`LoginPage.tsx:61-97`).
 - **Prioridad:** P1 (auditoría P1-4)
 - **Área:** Seguridad (`api`)
 - **Detectado:** 2026-10-15
@@ -421,6 +437,7 @@ Estados posibles:
 ## TD-013 — Carreras de doble envío y reglas de integridad
 
 - **Estado:** PARCIAL (parte batallas, DEV-B)
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** Sin cambios verificados: solo hay reintento por colisión en la creación de bots (`apps/api/src/routes/bots.ts:132`, código 23505); no se ha encontrado el mapeo general de violaciones de unicidad a 409.
 - **Prioridad:** P1 (auditoría P1-5)
 - **Área:** API
 - **Detectado:** 2026-10-15
@@ -439,7 +456,7 @@ Estados posibles:
 <a id="td-014"></a>
 ## TD-014 — Redirección 301 a http en la lista de replays
 
-- **Estado:** CERRADA en la integración (E2E de navegador tras TLS en verde); sin desplegar
+- **Estado:** CERRADA en la integración (E2E de navegador tras TLS en verde); incluida en el commit de producción RC5.5
 - **Prioridad:** P1 (auditoría P1-6)
 - **Área:** Gateway / web
 - **Detectado:** 2026-10-15
@@ -462,7 +479,8 @@ Estados posibles:
 <a id="td-015"></a>
 ## TD-015 — Torneos: sin pool de mapas, cierre bloqueado por failed y guardas no cableadas
 
-- **Estado:** PARCIAL (DEV-B)
+- **Estado:** PARCIAL
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** Cambios desde la medición: `artifactGuard` ya está cableado en el worker (`apps/tournament-worker/src/main.ts:75,90,129`); el pool de mapas funciona en el scheduler (`scheduler.ts:108-134,168`) y la API (`routes/tournaments.ts:155,191`). Sigue pendiente: el cierre de match/torneo exige batallas `finished` (`results.ts:378,408`, una `failed` bloquea) y la web no ofrece selector de `mapPool` (`git grep mapPool -- apps/web/src` vacío).
 - **Prioridad:** P1 (auditoría P1-7)
 - **Área:** Torneos (`tournament-worker`, `web`)
 - **Detectado:** 2026-10-15
@@ -483,6 +501,7 @@ Estados posibles:
 ## TD-016 — Loadout y catálogo con efecto parcial en batalla
 
 - **Estado:** PARCIAL
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** Matiz: ya solo existe el camino del worker, que conduce con el artefacto del bot y su loadout; el texto sobre el lanzador HTTP legado describe código sin consumidor (TD-039). El catálogo sigue marcando campos como FUTURE (`packages/module-catalog/effect-status.ts:71,92,93,118-126`: `terrain`, `weapon.rangeM`, `turretArcRad`, efectos de utilidad). `radioReaches` sigue sin llamarse (TD-021).
 - **Prioridad:** P1
 - **Área:** Motor / equipamiento
 - **Detectado:** 2026-10-15
@@ -508,6 +527,7 @@ Estados posibles:
 ## TD-017 — map-service desplegado sin uso
 
 - **Estado:** PARCIAL
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** Sigue PARCIAL: `map-service` continúa en el compose (`infrastructure/docker-compose.yml:555`) y en `infrastructure/deploy-contract.json:33`; ningún ADR decide su futuro.
 - **Prioridad:** P2
 - **Área:** Arquitectura
 - **Detectado:** 2026-10-15
@@ -550,6 +570,7 @@ Estados posibles:
 ## TD-019 — CI: nightly en rojo crónico y deploy-staging con verde falso latente
 
 - **Estado:** ABIERTA
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** Verificado: el job `nightly.yml` sigue en rojo (5 de las últimas 5 ejecuciones, hasta 2026-11-02, `gh run list --workflow nightly.yml`).
 - **Prioridad:** P3
 - **Área:** CI
 - **Detectado:** 2026-10-15
@@ -568,6 +589,7 @@ Estados posibles:
 ## TD-020 — Endpoints de salud e identidad engañosos
 
 - **Estado:** ABIERTA
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** Matiz: main ya expone `/version` (`apps/api/src/server.ts:29`), pero `/healthz` sigue siendo estático (`server.ts:28`).
 - **Prioridad:** P2
 - **Área:** Operación / observabilidad
 - **Detectado:** 2026-10-15
@@ -587,6 +609,7 @@ Estados posibles:
 ## TD-021 — Código muerto en motor y ratings
 
 - **Estado:** ABIERTA
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** Sigue ABIERTA: `radioReaches` (`apps/arena-engine/src/sim/sensors.ts:227`) solo se importa en `sim/battle.ts:48` y no se llama; `revertBattleRating` (`apps/tournament-worker/src/ratings.ts:166`) solo lo usan los tests.
 - **Prioridad:** P4
 - **Área:** Motor / ratings
 - **Detectado:** 2026-10-15
@@ -601,7 +624,8 @@ Estados posibles:
 <a id="td-022"></a>
 ## TD-022 — Errores y estados de la web sin resolver
 
-- **Estado:** PARCIAL — en la integración, TeamsPage, BattleNewPage y «Crear bot» usan `ErrorState`/`FormError`; falta onboarding/enlace al SDK
+- **Estado:** MEJORADA
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** El onboarding existe (PR #175 y #210: portada, checklist de primeros pasos, plantillas Python/JavaScript, Centro de Ayuda; `tests/browser/specs/onboarding.spec.ts`). Los formularios ya se ocultan según el rol en Mapas (`apps/web/src/pages/MapsPage.tsx:65`); no se ha re-comprobado el resto de formularios («Crear torneo»).
 - **Prioridad:** P2
 - **Área:** Web
 - **Detectado:** 2026-10-15
@@ -628,6 +652,7 @@ Estados posibles:
 ## TD-023 — Administración operativa sólo por SSH
 
 - **Estado:** ABIERTA
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** Sigue ABIERTA: `GET /system/status` no expone backup, restore, readiness ni drift (`apps/api/src/routes/system.ts:49-85`).
 - **Prioridad:** P2
 - **Área:** Administración
 - **Detectado:** 2026-10-15
@@ -678,6 +703,7 @@ Estados posibles:
 ## TD-026 — Canal de aviso Redis sin productor
 
 - **Estado:** ABIERTA
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** Sigue ABIERTA: `notify()` (`apps/tournament-worker/src/redis-signal.ts:207`) no se llama desde ningún código de producción: solo aparece su definición.
 - **Prioridad:** P4
 - **Área:** Cola
 - **Detectado:** 2026-10-15 (verificación de esta consolidación)
@@ -738,7 +764,7 @@ Estados posibles:
 
 ## TD-029 — Clasificación pública siempre vacía por desajuste de temporada
 
-- **Estado:** CERRADA en la integración; sin desplegar
+- **Estado:** CERRADA en la integración; incluida en el commit de producción RC5.5
 - **Prioridad:** P1
 - **Área:** Ranking (`api` ↔ `tournament-worker`)
 - **Detectado:** 2026-10-15, en la verificación de esta consolidación. La auditoría vio la clasificación vacía, pero no encontró la causa.
@@ -780,6 +806,7 @@ Estados posibles:
 ## TD-031 — Imágenes de servicio vulnerables y sin escaneo
 
 - **Estado:** ABIERTA
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** Sin re-medir en esta pasada. El gate de escaneo corre en la CI (`.github/workflows/ci.yml:848-876`, `scan-gate.mjs`).
 - **Prioridad:** P1
 - **Área:** Seguridad / imágenes Docker de los servicios Node (`infrastructure/docker/node-service/Dockerfile` y afines)
 - **Detectado:** 2026-10-16, durante el refresco de dependencias de PR #151.
@@ -829,7 +856,7 @@ Estados posibles:
 <a id="td-034"></a>
 ## TD-034 — Límite de arranque del bot medido en tiempo de pared
 
-- **Estado:** CERRADA en la integración `integration/production-readiness` (Production Readiness Closure: DEV-SANDBOX, verificada por REVIEW y en CI real); sin desplegar
+- **Estado:** CERRADA en la integración `integration/production-readiness` (Production Readiness Closure: DEV-SANDBOX, verificada por REVIEW y en CI real); incluida en el commit de producción RC5.5
 - **Prioridad:** P1
 - **Área:** Bots / build
 - **Detectado:** 2026-10-18, cierre funcional (REVIEW)
@@ -953,6 +980,7 @@ Estados posibles:
 ## TD-043 — El worker recibe el secreto de sesión raíz para verificar tickets
 
 - **Estado:** ABIERTA
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** Sigue ABIERTA: `tournament-worker` monta `jwt_secret` (`infrastructure/docker-compose.yml:381-382`).
 - **Prioridad:** P2
 - **Área:** Seguridad / espectador
 - **Detectado:** 2026-10-18, cierre funcional (REVIEW)
@@ -1000,6 +1028,7 @@ Estados posibles:
 ## TD-046 — `absolute_redirect off` falta en la conf del contenedor web
 
 - **Estado:** ABIERTA
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** Sigue ABIERTA: `absolute_redirect off` está en la conf del gateway (`infrastructure/gateway/nginx.conf:50,80`) pero no en `infrastructure/docker/web/nginx.conf` (`git grep absolute_redirect` no lo encuentra allí).
 - **Prioridad:** P3
 - **Área:** Gateway / web
 - **Detectado:** 2026-10-18, cierre funcional (REVIEW)
@@ -1011,7 +1040,8 @@ Estados posibles:
 <a id="td-047"></a>
 ## TD-047 — Batallas y estadísticas exponen participantes de bots privados
 
-- **Estado:** ABIERTA
+- **Estado:** CERRADA (PR #178)
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** Una sola política de lectura para lista, detalle, stats, auditoría y ticket (`apps/api/src/battle-access.ts`, commit `0ed915e`); el anónimo no ve batallas con bots privados; la CPU deja de ser pública. Tests `apps/api/src/uxd-battle-access.test.ts` y `tests/browser/specs/review-h3-perimeter.spec.ts`. incluida en el commit de producción RC5.5 (`a1a6c4e` es descendiente de su merge).
 - **Prioridad:** P1
 - **Área:** Seguridad / batallas
 - **Detectado:** 2026-10-18, cierre funcional (REVIEW)
@@ -1024,6 +1054,7 @@ Estados posibles:
 ## TD-048 — `NODE_ENV` no se fija en las imágenes
 
 - **Estado:** ABIERTA
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** Sigue ABIERTA: `git grep -n NODE_ENV -- infrastructure/docker infrastructure/docker-compose.yml` no encuentra ningún valor fijado.
 - **Prioridad:** P2
 - **Área:** Configuración
 - **Detectado:** 2026-10-18, cierre funcional (REVIEW)
@@ -1047,7 +1078,8 @@ Estados posibles:
 <a id="td-051"></a>
 ## TD-051 — El proxy de Docker no limitaba imagen, contenedor ni cliente
 
-- **Estado:** CERRADA en la integración `integration/rc2-docker-proxy` (RC2, REVIEW + CI real); sin desplegar
+- **Estado:** CERRADA (PR #164, RC2)
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** incluida en el commit de producción RC5.5 (`a1a6c4e` es descendiente de su merge).
 - **Prioridad:** P0
 - **Área:** Seguridad / bots
 - **Detectado:** 2026-10-20, RC1 (OPS-C, controles N20–N23; REVIEW)
@@ -1064,6 +1096,7 @@ Estados posibles:
 ## TD-052 — No había E2E contenedor → proxy
 
 - **Estado:** CERRADA (RC2): `functional-e2e / container-proxy-e2e` es check obligatorio de `main`
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** Vigente: `functional-e2e / container-proxy-e2e` es check obligatorio de `main` (protección de rama verificada con `gh api` el 2026-11-02).
 - **Prioridad:** P0
 - **Área:** CI
 - **Detectado:** 2026-10-20, RC1 (REVIEW, P0-3)
@@ -1076,7 +1109,8 @@ Estados posibles:
 <a id="td-053"></a>
 ## TD-053 — Sin firewall de host en 2375, y redes internas alcanzan sshd del host
 
-- **Estado:** CERRADA en la integración (RC2: firewall como código, aplicado y medido en la CI); **sin aplicar en producción** (gate del operador)
+- **Estado:** CERRADA (PR #164, RC2); aplicación en el host a cargo del operador
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** El código está en el commit de producción; que el firewall esté aplicado en el host no se puede comprobar desde el repositorio.
 - **Prioridad:** P1
 - **Área:** Seguridad / operación
 - **Detectado:** 2026-10-20, RC1 (OPS-C, REVIEW P1-1)
@@ -1113,7 +1147,8 @@ Estados posibles:
 <a id="td-056"></a>
 ## TD-056 — `Documentation=` de la unidad del proxy roto
 
-- **Estado:** CERRADA en la integración (RC2); sin desplegar
+- **Estado:** CERRADA (PR #164, RC2)
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** incluida en el commit de producción RC5.5 (`a1a6c4e` es descendiente de su merge).
 - **Prioridad:** P3
 - **Área:** Operación
 - **Detectado:** 2026-10-20, RC1 (REVIEW, P2-2)
@@ -1183,7 +1218,8 @@ Estados posibles:
 <a id="td-061"></a>
 ## TD-061 — El perfil seccomp de los bots rompía la resolución de nombres
 
-- **Estado:** CERRADA en la integración (RC2); sin desplegar
+- **Estado:** CERRADA (PR #164, RC2)
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** El seccomp incluye `sendmmsg` (`apps/bot-manager/security/seccomp-bot.json:109`). incluida en el commit de producción RC5.5 (`a1a6c4e` es descendiente de su merge).
 - **Prioridad:** P0
 - **Área:** Bots / sandbox
 - **Detectado:** 2026-10-21, RC2 (DEV-CI, run de GitHub 39606703262)
@@ -1193,7 +1229,8 @@ Estados posibles:
 <a id="td-062"></a>
 ## TD-062 — El proxy ejecuta código de un árbol que no es sólo de root
 
-- **Estado:** CERRADA en el código (rama `fix/td-062-proxy-privilege-boundary`, pendiente de REVIEW). **ABIERTA en producción** hasta migrar la unidad instalada ([upgrades.md](../operations/upgrades.md#td-062)).
+- **Estado:** CERRADA en `main` (PR #167); migración de producción a cargo del operador
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** Fusionada el 2026-10-21 (PR #167, descendiente incluido en el commit de producción). La migración de la unidad instalada en el host no se puede comprobar desde el repositorio.
 - **Prioridad:** P1
 - **Área:** Seguridad / operación
 - **Detectado:** 2026-10-21, RC2 (DEV-SECOPS; REVIEW)
@@ -1260,7 +1297,8 @@ Estados posibles:
 <a id="td-065"></a>
 ## TD-065 — `status=finished` no garantiza que existan los stats de la batalla
 
-- **Estado:** ABIERTA (mitigada en el test)
+- **Estado:** CERRADA (PR #178)
+- **Auditoría 2026-11-02 (main `e3bf2fa`):** `GET /battles/{id}/stats` devuelve `status: ready|pending|unavailable` y `Cache-Control: no-store` (`apps/api/src/routes/battles.ts:795-815`); lo cubre `apps/api/src/uxd-battle-access.test.ts:329-335` (el test del golden espera de todos modos).
 - **Prioridad:** P3
 - **Área:** API / contrato de batallas
 - **Detectado:** 2026-10-26, golden de la ventana RC4 en producción
@@ -1301,3 +1339,92 @@ Estados posibles:
 | Backup healthy tras la copia de las 04:15 UTC | RUNTIME_VERIFIED | `docker inspect .State.Health` y logs del contenedor `backup`, 2026-10-15 21:01 UTC |
 | `deploy-staging` con `ssh` comentado | CODE_VERIFIED | `.github/workflows/ci.yml:945-947` |
 | Nightly 40/40 rojo | RUNTIME_VERIFIED (en la auditoría) | historial de GitHub Actions, sin cambios desde entonces |
+
+<a id="td-066"></a>
+## TD-066 — Streaming: clave en argv de FFmpeg, sin retención de MP4 ni alerta; YouTube sin probar
+
+- **Estado:** ABIERTA
+- **Prioridad:** P3
+- **Área:** Streaming / operación (`apps/streamer`)
+- **Detectado:** 2026-11-02, auditoría EQ5 y revisión de integración
+- **Evidencia:**
+  - La URL de salida, con la clave, entra en el argv de FFmpeg: `apps/streamer/src/ffmpeg.ts:115-118` (`${cfg.rtmpsUrl}/${streamKey}`). Se redacta en logs (`redactArgs`, `:123`) pero es visible con `ps` en el host.
+  - Sin retención de los MP4 del modo grabación y sin alerta sobre `streamer_up`: `infrastructure/observability/prometheus/alerts.yml` solo tiene `StreamDown` (`:49`), basada en cAdvisor. Detalle en [streaming.md](../operations/streaming.md) (EQ5-5, EQ5-7, EQ5-9).
+  - La emisión real a YouTube está BLOCKED: no hay clave ni canal de prueba.
+- **Problema:** la clave de emisión es visible a quien pueda leer `/proc` del host; el disco puede llenarse de vídeos; nadie se entera si el streamer cae.
+- **Solución prevista:** un relé que lea la clave de un fichero; política de retención; alerta sobre `streamer_up`; una prueba real contra YouTube con una clave del operador.
+- **Condición de cierre:** `ps` no muestra la clave, existe retención probada, la alerta se dispara en una prueba y hay una emisión de prueba verificada.
+
+<a id="td-067"></a>
+## TD-067 — `runCursorQuery` atribuye al cursor errores de conversión que vienen de los filtros
+
+- **Estado:** ABIERTA
+- **Prioridad:** P3
+- **Área:** API (`apps/api/src/serialize.ts`)
+- **Detectado:** 2026-11-02, revisión de integración
+- **Evidencia:** `serialize.ts:168-175`: con cursor presente, cualquier error de PostgreSQL con código 22P02, 22008, 22007 o 22003 se convierte en `400 Cursor de paginación inválido`, aunque el fallo lo cause un valor de otro filtro de la misma consulta (por ejemplo, un `ownerId` que no es un UUID, en `listBots`).
+- **Problema:** el mensaje de error apunta al cursor cuando el culpable es el filtro.
+- **Impacto:** bajo; es un 400 en ambos casos, solo cambia el motivo que ve el cliente.
+- **Solución prevista:** validar los filtros antes de la consulta, o distinguir el origen del valor.
+- **Condición de cierre:** un test con un filtro inválido y cursor válido recibe el motivo del filtro.
+
+<a id="td-068"></a>
+## TD-068 — `listBots` puede devolver páginas más cortas que `limit`
+
+- **Estado:** ABIERTA
+- **Prioridad:** P3
+- **Área:** API (`apps/api/src/routes/bots.ts`)
+- **Detectado:** 2026-11-02, revisión de integración
+- **Evidencia:** `bots.ts:205-223`: la consulta trae como máximo 200 filas (`.limit(200)`) y la visibilidad se filtra después en memoria con `canSeeBot`; la página se corta con `visible.slice(0, limit)`. Si entre las 200 filas hay pocas visibles para el solicitante, la página sale con menos de `limit` elementos aunque haya más bots visibles detrás.
+- **Problema:** el cliente no puede deducir el final de la lista por el tamaño de la página.
+- **Impacto:** bajo; afecta a listados con muchos bots privados ajenos.
+- **Solución prevista:** aplicar la visibilidad en SQL o seguir leyendo hasta completar la página.
+- **Condición de cierre:** un test con más de 200 bots ajenos privados intercalados devuelve páginas completas.
+
+<a id="td-069"></a>
+## TD-069 — El comparador del desempate por enfrentamientos directos no es transitivo
+
+- **Estado:** ABIERTA
+- **Prioridad:** P3
+- **Área:** Torneos (`apps/tournament-worker/src/results.ts`)
+- **Detectado:** 2026-11-02, revisión de integración
+- **Evidencia:** `results.ts:275-285` (`sortTable`): ordena por puntos y, a igualdad de puntos, por el resultado directo entre los dos competidores (`headToHead`), después por diferencia de marcador, semilla e id. En un empate a puntos entre tres o más competidores con resultados cíclicos (A gana a B, B a C, C a A) la relación «va por delante» no es transitiva y el orden depende del algoritmo de ordenación.
+- **Problema:** una clasificación con un ciclo puede ordenar distinto según el orden de entrada.
+- **Impacto:** bajo; solo con ciclos de enfrentamientos directos y misma puntuación.
+- **Solución prevista:** el criterio de minitorneo (calcular los directos solo entre los empatados y ordenar por esa sub-tabla).
+- **Condición de cierre:** una propiedad con ciclos genera el mismo orden con cualquier permutación de entrada.
+
+<a id="td-070"></a>
+## TD-070 — CTF en torneos: bandos A/B frente a bases y banderas red/blue
+
+- **Estado:** ABIERTA (rechazado con motivo; no hay resultado erróneo)
+- **Prioridad:** P3
+- **Área:** Torneos / reglas
+- **Detectado:** 2026-11-02, EQ2 (hallazgo preexistente)
+- **Evidencia:** los bandos de torneo se llaman «A» y «B» (`apps/tournament-worker/src/scheduler.ts:192`), pero los mapas CTF tienen bases y banderas «red» y «blue». La API rechaza con motivo un torneo CTF con reglas: `apps/api/src/services/battle-rules.ts:353-361` («CTF todavía no se admite en torneos…»), commit `6081964`.
+- **Problema:** no se pueden jugar torneos de captura de bandera.
+- **Solución prevista:** mapear los bandos del torneo a los colores del mapa, con tests de motor.
+- **Condición de cierre:** un torneo CTF se juega de extremo a extremo con bandera, captura y devolución.
+
+<a id="td-071"></a>
+## TD-071 — El filtro `result=aborted` de replays no incluye `technical_limit`
+
+- **Estado:** ABIERTA
+- **Prioridad:** P3
+- **Área:** API / replays (`apps/api/src/services/replay-list.ts`)
+- **Detectado:** 2026-11-02, revisión de integración
+- **Evidencia:** `replay-list.ts:222-226`: `aborted` = `failure_kind` distinto de `none` o `endReason` en (`walkover`, `sporting_failure`). El final por límite técnico (`endReason = technical_limit`, PR #201, `routes/replays.ts:174-179`) no entra, de modo que esas batallas, que se detienen sin resultado deportivo, no aparecen al filtrar por «Abortada o con incidencia» (`ReplaysPage.tsx:68`).
+- **Problema:** el filtro no encuentra un tipo de batalla detenida.
+- **Solución prevista:** añadir `technical_limit` a la condición, con test.
+- **Condición de cierre:** un test lista una batalla `technical_limit` con `result=aborted`.
+
+<a id="td-072"></a>
+## TD-072 — Carrera en la spec de navegador `review-h3-perimeter`
+
+- **Estado:** ABIERTA (sin reproducir)
+- **Prioridad:** P3
+- **Área:** Pruebas (`tests/browser/specs/review-h3-perimeter.spec.ts`)
+- **Detectado:** 2026-11-02, revisión de integración
+- **Evidencia:** la revisión de integración informó de una carrera en esta spec. En esta auditoría no se ha podido aislar la condición exacta. Sí se ha comprobado que localiza sus bots con `GET /bots?limit=100` y `find` por nombre (`:109`, `:135`), lo que depende de la paginación de `listBots` (TD-068) en una base con muchos bots.
+- **Problema:** una spec de la suite de navegador puede fallar de forma intermitente.
+- **Condición de cierre:** la causa identificada, corregida y la spec estable en N ejecuciones consecutivas.
