@@ -23,7 +23,7 @@ import { ROLES } from "../../api/src/db/migrations.js";
 import { LivePage, LIVE_EMPTY_TEXT, LIVE_PUBLIC_OFF_TEXT } from "../src/pages/LivePage.js";
 import { SLOT_INFO, slotName } from "../src/slot-names.js";
 import { RankingPage } from "../src/pages/RankingPage.js";
-import { MODE_HELP } from "../src/mode-help.js";
+import { MODE_HELP, ModeHelp } from "../src/mode-help.js";
 import { MODE_NAME } from "../src/battle-result.js";
 import { ELEMENT_HELP, TOOLS } from "../src/map-editor/objects.js";
 
@@ -232,12 +232,18 @@ describe("EQ4 · ⓘ del ranking y de los modos", () => {
     expect(screen.getByRole("button", { name: "Ayuda: V-D-E" })).toBeTruthy();
     const cells = screen.getByTestId("ranking-row").querySelectorAll("td");
     expect([...cells].map((c) => c.getAttribute("data-label"))).toEqual(["#", "Bot", "Rating", "V-D-E"]);
-    expect(screen.getByRole("button", { name: "Ayuda: Modos de juego" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Ayuda: Tipos de partida" })).toBeTruthy();
   });
 
   it("todos los modos tienen explicación; Control de zona dice cuándo se puntúa", () => {
     for (const m of Object.keys(MODE_NAME)) expect(MODE_HELP[m], m).toBeTruthy();
     expect(MODE_HELP.zone_control).toMatch(/sin ningún rival/);
+    // CI #209: «Ayuda: Modos de juego» casaba con getByLabel("modo") de los specs
+    // (subcadena, sin mayúsculas) y rompía el golden. El ⓘ junto a un selector no
+    // puede contener el nombre del selector.
+    render(<ModeHelp modes={["deathmatch"]} />);
+    const name = screen.getByRole("button", { name: /^Ayuda: / }).getAttribute("aria-label")!.toLowerCase();
+    for (const l of ["modo", "mapa", "ruleset", "bot rojo", "bot azul", "chasis"]) expect(name).not.toContain(l);
   });
 });
 
