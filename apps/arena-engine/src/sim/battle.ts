@@ -12,6 +12,7 @@
 import { createHash } from "node:crypto";
 import {
   DECISION_EVERY_N_TICKS,
+  emptyDict,
   RADIO_DELIVERY_DELAY_DECISIONS,
   TICK_DT,
   TICK_HZ,
@@ -170,6 +171,11 @@ export class Battle {
   /** Eventos por bot (niebla de guerra: cada uno solo ve lo suyo) + eventos públicos. */
   private pendingEvents = new Map<string, any[]>();
   publicEvents: any[] = [];
+  /**
+   * Motor 0.4.0 (ADR-022) · bajas de vehículos ENEMIGOS por equipo (criterio de
+   * desempate `kills`). No entra en el hash: es una función del historial de muertes.
+   */
+  private teamKills: Record<string, number> = emptyDict<number>();
   snapshots: any[] = [];
   stateHashes: { tick: number; hash: string }[] = [];
   replayCommands: { tick: number; vehicleId: string; command: any }[] = [];
@@ -585,10 +591,20 @@ export class Battle {
     }
 
     // --- PASO 9 · Condición de fin
-    const w = this.mode.winner(ctx);
+    const w = this.mode.winner({ ...ctx, kills: this.teamKills });
     if (w !== null) {
       this.finish(w);
       return;
+    }
+    // Motor 0.4.0 (ADR-022) · la prórroga empieza en este tick: evento PÚBLICO (replay
+    // y espectador; no va a los bots, el esquema EVENT de arena/1 no lo declara).
+    if (this.config.ruleset.overtime && this.mode.overtimeSince === this.tick) {
+      this.publicEvents.push({
+        tick: this.tick,
+        kind: "overtime_started",
+        score: { ...this.mode.score },
+        maxTicks: this.config.ruleset.overtime.maxTicks,
+      });
     }
     this.tick++;
   }
@@ -825,6 +841,7 @@ export class Battle {
     }
 
     if (res.killed) {
+      if (ownerTeam !== target.team) this.teamKills[ownerTeam] = (this.teamKills[ownerTeam] ?? 0) + 1;
       this.emit({ kind: "vehicle_destroyed", targetId: target.id });
       this.mode.onKill?.(target, ownerTeam, {
         tick: this.tick,
@@ -859,6 +876,10 @@ export class Battle {
     const limited = respawnLimited(this.config.ruleset);
     return {
       tick: this.tick,
+      // Motor 0.4.0 · sólo con prórroga declarada (snapshots de 0.3.0 idénticos).
+      ...(this.config.ruleset.overtime
+        ? { overtime: this.mode.overtimeSince !== null && this.mode.overtimeSince !== undefined }
+        : {}),
       vehicles: this.vehicles.map((v) => {
         const p = poses.get(v.id);
         return {
@@ -938,6 +959,8 @@ export class Battle {
       destructibles: [...this.destructibleHp.entries()].sort().map(([k, v]) => [k, q(v)]),
       score: Object.entries(this.mode.score).sort(),
       objectives: this.mode.objectives(),
+      // Motor 0.4.0 (ADR-022) · estado de prórroga, SÓLO si el ruleset la declara.
+      ...(this.config.ruleset.overtime ? { ot: this.mode.overtimeSince ?? null } : {}),
     };
     return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
   }

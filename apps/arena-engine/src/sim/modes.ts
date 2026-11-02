@@ -19,6 +19,11 @@ export interface ModeContext {
   poses: Map<string, { position: Vec2; heading: number; velocity: Vec2; angularVelocity: number }>;
   map: ArenaMap;
   emit: (ev: any) => void;
+  /**
+   * Motor 0.4.0 (ADR-022) · bajas de vehículos ENEMIGOS por equipo (sin fuego amigo
+   * ni muertes ambientales). Sólo lo lee el criterio de desempate `kills`.
+   */
+  kills?: Readonly<Record<string, number>>;
 }
 
 export interface ArenaMap {
@@ -55,6 +60,11 @@ export interface GameMode {
   tick(ctx: ModeContext): void;
   /** Objetivos visibles públicamente (van en la observación de todos). */
   objectives(): any[];
+  /**
+   * Motor 0.4.0 (ADR-022) · tick en que empezó la PRÓRROGA (null si no la hay). Sólo
+   * existe con `ruleset.overtime`; la batalla lo usa para el evento público.
+   */
+  overtimeSince?: number | null;
   /** ¿Ha terminado? Devuelve el ganador o "draw". */
   winner(ctx: ModeContext): string | "draw" | null;
   /** Un vehículo ha muerto: el modo decide qué implica. */
@@ -97,9 +107,32 @@ abstract class BaseMode implements GameMode {
     return [];
   }
 
+  /** Motor 0.4.0 (ADR-022) · prórroga: tick de inicio y marcador al final del tiempo reglamentario. */
+  overtimeSince: number | null = null;
+  private overtimeBaseline: Record<string, number> | null = null;
+
   winner(ctx: ModeContext): string | "draw" | null {
     for (const [team, pts] of Object.entries(this.score)) {
       if (pts >= ctx.ruleset.scoreToWin) return team;
+    }
+    // Motor 0.4.0 (ADR-022) · PRÓRROGA en curso: gana el primero que supere su marcador
+    // del final del tiempo reglamentario; agotado el límite de seguridad, tablas. El
+    // estado (bots, banderas, posiciones) NO se reinicia: la simulación sigue igual.
+    const overtime = ctx.ruleset.overtime;
+    if (overtime && this.overtimeBaseline) {
+      const base = this.overtimeBaseline;
+      const ahead = Object.keys(this.score)
+        .sort()
+        .filter((t) => (this.score[t] ?? 0) > (base[t] ?? 0));
+      if (ahead.length === 1) return ahead[0];
+      if (ahead.length > 1) {
+        // Dos equipos puntúan en el MISMO tick (no ocurre en CTF con 2 banderas, pero
+        // se define): más puntos; si empatan, tablas.
+        const sorted = ahead.map((t) => [t, this.score[t] ?? 0] as const).sort((a, b) => b[1] - a[1]);
+        return sorted[0][1] === sorted[1][1] ? "draw" : sorted[0][0];
+      }
+      if (ctx.tick >= ctx.ruleset.timeLimitTicks + overtime.maxTicks) return "draw";
+      return null;
     }
     // R-RULES (revisión PR #204) · con reglas R-RULES (`timeoutTiebreak` declarado) la
     // ELIMINACIÓN se resuelve ANTES que el tiempo: una eliminación mutua en el tick del
@@ -111,6 +144,15 @@ abstract class BaseMode implements GameMode {
       if (byElimination !== null) return byElimination;
     }
     if (ctx.tick >= ctx.ruleset.timeLimitTicks) {
+      // Motor 0.4.0 (ADR-022) · empate a puntos entre los dos primeros ⇒ prórroga.
+      if (overtime && this.overtimeSince === null) {
+        const top = Object.values(this.score).sort((a, b) => b - a);
+        if (top.length > 1 && top[0] === top[1]) {
+          this.overtimeSince = ctx.tick;
+          this.overtimeBaseline = Object.assign(emptyDict<number>(), this.score);
+          return null;
+        }
+      }
       // R-RULES (ADR-021) · desempate DECLARADO por el ruleset. Sin el campo, el
       // código de 0.3.0 tal cual (los rulesets del catálogo no lo declaran).
       if (tiebreak) return resolveTimeoutTiebreak(tiebreak, Object.keys(this.score), this.score, ctx);
@@ -1029,6 +1071,18 @@ const TIEBREAK_VALUE: Record<
   (team: string, score: Record<string, number>, ctx: ModeContext) => number
 > = {
   score: (team, score) => score[team] ?? 0,
+  alive: (team, _s, ctx) => ctx.vehicles.filter((v) => v.team === team && v.alive && !v.disqualified).length,
+  respawns_left: (team, _s, ctx) => {
+    let left = 0;
+    for (const v of ctx.vehicles) {
+      if (v.team !== team || v.disqualified) continue;
+      const n = respawnsLeft(v, ctx.ruleset);
+      // Ilimitado: no hay recuento que comparar; cada vehículo cuenta igual (1).
+      left += Number.isFinite(n) ? n : 1;
+    }
+    return left;
+  },
+  kills: (team, _s, ctx) => ctx.kills?.[team] ?? 0,
   lives: (team, _s, ctx) => {
     let lives = 0;
     for (const v of ctx.vehicles) {
