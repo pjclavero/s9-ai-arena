@@ -54,7 +54,7 @@ puede probar sin algo externo · **NOT TESTED** no se ha probado.
 | Modo grabación (MP4) | PASS | MP4 real: H.264 High 1920×1080 30 fps + AAC, 78,5 s, se decodifica entero sin errores; fichero `broadcast-<fecha>.mp4` de `streamer:streamer` 0644 en `arena_replays/video`. **Sin retención automática**: nada lo borra |
 | RTMPS (handshake + ingesta) | PASS (local) | servidor RTMPS local con TLS: publicación aceptada, pistas H264 + MPEG-4 Audio, bytes recibidos crecientes |
 | YouTube privado | BLOCKED | no hay clave ni canal de prueba facilitados por el operador |
-| Recuperación ante corte de red | ver [Defectos](#defectos-y-limitaciones-conocidos) | ver la prueba de corte de 30 s |
+| Recuperación ante corte de red de 30 s | PASS (local) | (a) servidor de ingesta congelado 30 s (`docker pause`): FFmpeg no muere, la conexión se reanuda sola; (b) servidor parado 30 s: 11 reintentos (`streamer_restarts_total=11`) y la emisión vuelve sola unos 10 s después de que vuelva el servidor. El motor no lo nota (step p99 0,67 ms, 1 tick > 50 ms en 4,5 min). Límite: con `STREAM_MAX_RETRIES=20` × 3 s, un corte de más de ~1 min deja el estado en `failed` sin reintentos posteriores y el healthcheck sigue sano |
 | API de control (`/control/start`, `/control/stop`, `/status`, `/metrics`, `/healthz`, `/version`) | PASS | ejercida contra el contenedor real |
 | Métricas Prometheus | PARCIAL | `/metrics` existe y es correcto, pero **Prometheus no lo raspa** (no hay job en `prometheus.yml`); la única alerta mira el latido del contenedor en cAdvisor |
 | Clave fuera de logs, `/status`, `/metrics`, `docker inspect`, entorno, repo | PASS | 0 apariciones de una clave FALSA en cada superficie |
@@ -106,13 +106,15 @@ streamer para no emitir dos veces.
 |---|---|---|---|
 | EQ5-1 | P1 | Autodirector de torneo: sólo veía las 100 últimas batallas globales | **corregido** (usa `GET /tournaments/{id}/battles`) |
 | EQ5-2 | P1 | «Torneo terminado» en mitad del torneo (un visitante no ve las programadas); «Batalla 1 / 1» | **corregido** (el final lo decide `tournaments.state`) |
-| EQ5-3 | P2 | Barra de Google Translate fija en el vídeo; puntero del Xvfb visible al arrancar | **corregido** (`--lang=es`, `--disable-features=Translate`, `-draw_mouse 0`) |
+| EQ5-3 | P2 | Barra de Google Translate fija en el vídeo; puntero del Xvfb visible al arrancar | **corregido** (`--lang=es`, `--disable-features=Translate`, `-draw_mouse 0`); verificado en un MP4 grabado por la imagen construida desde la rama |
 | EQ5-4 | P3 | Rótulos con UUID en vez del nombre del bot; «Torneo terminado» en una batalla suelta | **corregido** |
 | EQ5-5 | P2 | Clave de emisión en el argv de FFmpeg (visible con `ps` en el host) | **abierto**: FFmpeg no lee la URL de salida de un fichero (probado: ni siquiera FFmpeg 7.1 acepta `-/rtmp_playpath <fichero>`). Mitigación del operador: `/proc` del host con `hidepid=invisible`; arreglo de verdad: un relé que lea la clave de fichero |
 | EQ5-6 | P2 | Retardo anti-coaching sin configurar y `init` con snapshot vivo | **abierto** (rulesets y gateway: fuera de este carril) |
 | EQ5-7 | P2 | `/metrics` del streamer sin scrape de Prometheus | **abierto** |
 | EQ5-8 | P3 | NVENC imposible con la imagen actual | **abierto** (documentado) |
 | EQ5-9 | P3 | Sin retención de MP4 en modo grabación | **abierto** |
+| EQ5-11 | P3 | Tras `failed` (corte > ~1 min) no hay reintento automático; cada reintento relanza también Chromium (recarga la página); `streamer_frames_total` vuelve a 0 en cada relanzamiento de FFmpeg | **abierto** |
+| EQ5-12 | P3 | El ticker de eventos rotula ids de vehículo (`v_blue destruido`) | **abierto** (texto del evento del motor) |
 | EQ5-10 | P3 | Con el torneo en curso, la espera/intermedio no anuncian la próxima batalla (un visitante no la ve) | limitación de la política de visibilidad |
 
 ## Cómo se verificó
