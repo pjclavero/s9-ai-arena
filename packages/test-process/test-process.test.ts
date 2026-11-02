@@ -73,7 +73,7 @@ describe.skipIf(process.platform !== "linux")("spawnService / killTree", () => {
     const tsx = join(dirname(createRequire(import.meta.url).resolve("tsx/package.json")), "dist", "cli.mjs");
     const dir = mkdtempSync(join(tmpdir(), "eq1-tsx-"));
     const main = join(dir, "main.ts");
-    writeFileSync(main, 'const n: number = process.pid; console.log(`listo ${n}`); setInterval(() => {}, 1000);\n');
+    writeFileSync(main, "const n: number = process.pid; console.log(`listo ${n}`); setInterval(() => {}, 1000);\n");
     const child = spawnService(process.execPath, [tsx, main], { stdio: ["ignore", "pipe", "ignore"] });
     const servicePid = await new Promise<number>((resolve) => {
       let out = "";

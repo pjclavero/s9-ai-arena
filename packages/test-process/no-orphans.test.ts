@@ -53,34 +53,33 @@ function marked(mark: string): { pid: number; cmd: string }[] {
 const sleepSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 describe.skipIf(process.platform !== "linux")("los tests que lanzan servicios no dejan huérfanos", () => {
-  it(
-    "tras ejecutar las suites de servicios, ningún proceso conserva su marca",
-    () => {
-      const mark = randomUUID();
-      const r = spawnSync(
-        process.execPath,
-        [join(REPO, "node_modules", "vitest", "vitest.mjs"), "run", ...SUITES],
-        { cwd: REPO, env: { ...process.env, [MARK_VAR]: mark }, encoding: "utf8", timeout: 600_000 },
-      );
-      // Margen para que un árbol que se está cerrando con normalidad termine de salir.
-      let left = marked(mark);
-      for (let i = 0; i < 20 && left.length > 0; i++) {
-        sleepSync(250);
-        left = marked(mark);
+  it("tras ejecutar las suites de servicios, ningún proceso conserva su marca", () => {
+    const mark = randomUUID();
+    const r = spawnSync(process.execPath, [join(REPO, "node_modules", "vitest", "vitest.mjs"), "run", ...SUITES], {
+      cwd: REPO,
+      env: { ...process.env, [MARK_VAR]: mark },
+      encoding: "utf8",
+      timeout: 600_000,
+    });
+    // Margen para que un árbol que se está cerrando con normalidad termine de salir.
+    let left = marked(mark);
+    for (let i = 0; i < 20 && left.length > 0; i++) {
+      sleepSync(250);
+      left = marked(mark);
+    }
+    for (const p of left) {
+      try {
+        process.kill(p.pid, "SIGKILL");
+      } catch {
+        /* ya no existe */
       }
-      for (const p of left) {
-        try {
-          process.kill(p.pid, "SIGKILL");
-        } catch {
-          /* ya no existe */
-        }
-      }
-      expect(r.status, `el vitest hijo falló:\n${(r.stdout ?? "").slice(-3000)}\n${(r.stderr ?? "").slice(-2000)}`).toBe(0);
-      expect(
-        left.map((p) => `${p.pid} ${p.cmd.slice(0, 160)}`),
-        "procesos descendientes de la suite que siguen vivos",
-      ).toEqual([]);
-    },
-    660_000,
-  );
+    }
+    expect(r.status, `el vitest hijo falló:\n${(r.stdout ?? "").slice(-3000)}\n${(r.stderr ?? "").slice(-2000)}`).toBe(
+      0,
+    );
+    expect(
+      left.map((p) => `${p.pid} ${p.cmd.slice(0, 160)}`),
+      "procesos descendientes de la suite que siguen vivos",
+    ).toEqual([]);
+  }, 660_000);
 });
