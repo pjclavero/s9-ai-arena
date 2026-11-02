@@ -243,7 +243,7 @@ describe("R16 RankingPage — primitivas", () => {
     // El mensaje de texto debe estar presente sin necesidad de color
     const p = empty.querySelector("p");
     expect(p).toBeTruthy();
-    expect(p!.textContent).toBe("Todavía no hay clasificación para este modo.");
+    expect(p!.textContent).toBe("Todavía no hay clasificación oficial para este modo."); // EQ4 · RANKING_EMPTY_LINES[0]
   });
 
   it("con datos la tabla sigue renderizándose correctamente (sin regresión)", async () => {
