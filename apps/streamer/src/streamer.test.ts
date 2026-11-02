@@ -358,7 +358,10 @@ describe("T11.2 API de control (start/stop/status/metrics)", () => {
         body: JSON.stringify({ broadcastUrl: "http://web:3000/broadcast?battle=b1" }),
       });
       expect(start.status).toBe(200);
-      expect(await start.json()).toMatchObject({ state: "streaming", broadcastUrl: "http://web:3000/broadcast?battle=b1" });
+      expect(await start.json()).toMatchObject({
+        state: "streaming",
+        broadcastUrl: "http://web:3000/broadcast?battle=b1",
+      });
 
       const status = await (await fetch(`${base}/status`)).json();
       expect(status.state).toBe("streaming");

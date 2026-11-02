@@ -62,11 +62,15 @@ describe("migración 017_streaming_admin", () => {
     await expect(h.db("streaming_settings").where({ id: 1 }).update({ ingest_url: "rtmp://x/live" })).rejects.toThrow();
     await expect(h.db("streaming_settings").where({ id: 1 }).update({ fps: 45 })).rejects.toThrow();
     await expect(
-      h.db("streaming_credentials").insert({ platform: "../etc", sealed: "{}", key_id: "0123456789abcdef", last4: "ABCD" }),
+      h
+        .db("streaming_credentials")
+        .insert({ platform: "../etc", sealed: "{}", key_id: "0123456789abcdef", last4: "ABCD" }),
     ).rejects.toThrow();
     const s1 = { id: randomUUID(), state: "active", mode: "record", config: "{}" };
     await h.db("streaming_sessions").insert(s1);
-    await expect(h.db("streaming_sessions").insert({ ...s1, id: randomUUID() })).rejects.toThrow(/streaming_sessions_one_active|duplicate/);
+    await expect(h.db("streaming_sessions").insert({ ...s1, id: randomUUID() })).rejects.toThrow(
+      /streaming_sessions_one_active|duplicate/,
+    );
     await h.db("streaming_sessions").where({ id: s1.id }).update({ state: "stopped" });
     await h.db("streaming_sessions").insert({ ...s1, id: randomUUID() }); // ya se puede otra
     await h.db("streaming_sessions").del();
@@ -119,7 +123,9 @@ describe("migración 017_streaming_admin", () => {
       await trx.raw(`TRUNCATE streaming_sessions, streaming_credentials, streaming_settings`);
       for (const t of NEW_TABLES) {
         const rows = (backup[t] as Record<string, unknown>[]).map((r) =>
-          Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v !== null && typeof v === "object" ? JSON.stringify(v) : v])),
+          Object.fromEntries(
+            Object.entries(r).map(([k, v]) => [k, v !== null && typeof v === "object" ? JSON.stringify(v) : v]),
+          ),
         );
         if (rows.length) await trx(t).insert(rows);
       }

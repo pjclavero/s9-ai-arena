@@ -95,11 +95,7 @@ export class MetricsRegistry {
       lines.push(`http_request_duration_seconds_count{service="${SERVICE}",route="${route}"} ${count}`);
     }
 
-    lines.push(
-      "# HELP api_up 1 si el proceso de la API esta sirviendo peticiones",
-      "# TYPE api_up gauge",
-      "api_up 1",
-    );
+    lines.push("# HELP api_up 1 si el proceso de la API esta sirviendo peticiones", "# TYPE api_up gauge", "api_up 1");
     for (const [name, value] of this.gauges) {
       lines.push(`# TYPE ${name} gauge`, `${name} ${value}`);
     }

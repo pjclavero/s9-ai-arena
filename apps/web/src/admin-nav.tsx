@@ -1,7 +1,7 @@
 /**
  * EQ4 · Apartado «Administración»: UNA entrada en la barra principal y una
- * subnavegación con sus cuatro pantallas (Usuarios y seguridad, Sistema,
- * Auditoría, Roles y permisos).
+ * subnavegación con sus pantallas (Usuarios y seguridad, Sistema,
+ * Auditoría, Roles y permisos y, EQ5b, Streaming).
  *
  * RBAC: la interfaz sólo OCULTA, la API autoriza (cap. 16). Para que lo que se
  * oculta no se desvíe de lo que el servidor permite, cada pantalla declara las
@@ -52,6 +52,27 @@ export const ADMIN_SECTIONS: readonly AdminSection[] = [
   { href: "#/system", label: "Sistema", testId: "system-link", operations: ["getSystemStatus"], minRole: "admin" },
   { href: "#/audit", label: "Auditoría", testId: "audit-link", operations: ["listAuditLog"], minRole: "admin" },
   { href: "#/roles", label: "Roles y permisos", testId: "roles-link", operations: ["getRbacMatrix"], minRole: "admin" },
+  // EQ5b · Administración → Streaming.
+  {
+    href: "#/streaming",
+    label: "Streaming",
+    testId: "streaming-link",
+    operations: [
+      "getStreamingAdmin",
+      "updateStreamingSettings",
+      "setStreamingCredential",
+      "deleteStreamingCredential",
+      "getStreamingTarget",
+      "testStreaming",
+      "startStreaming",
+      "restartStreaming",
+      "stopStreaming",
+      "listStreamingRecordings",
+      "applyStreamingRetention",
+      "listStreamingAudit",
+    ],
+    minRole: "admin",
+  },
 ];
 
 /** Pantallas del apartado que la sesión puede usar según el RBAC del servidor. */

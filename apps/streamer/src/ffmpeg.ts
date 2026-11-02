@@ -58,10 +58,7 @@ export interface FfmpegPlan {
 /** Descriptor heredado por el que ffmpeg entrega el FLV al relé RTMP. */
 export const MEDIA_FD = 3;
 
-export function buildFfmpegArgs(
-  cfg: StreamerConfig,
-  opts?: { now?: () => Date } | null,
-): FfmpegPlan {
+export function buildFfmpegArgs(cfg: StreamerConfig, opts?: { now?: () => Date } | null): FfmpegPlan {
   const now = (opts && typeof opts === "object" && opts.now) || (() => new Date());
   const gop = cfg.fps * 2; // keyframe cada 2 s (recomendación de ingesta de YouTube)
   const video =

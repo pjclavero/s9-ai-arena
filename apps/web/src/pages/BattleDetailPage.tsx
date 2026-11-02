@@ -17,7 +17,8 @@
  * el mismo 404 de la API («no existe o no tienes acceso»).
  */
 import { useEffect } from "react";
-import { api } from "../api.js";
+import { api, type Me } from "../api.js";
+import { BroadcastButton } from "../broadcast/BroadcastButton.js";
 import { useResource, ResourceView } from "../resource.js";
 import {
   MODE_TEXT,
@@ -218,7 +219,7 @@ const REFRESH_MS = 5000;
 const pct = (x: number | null | undefined) => (typeof x === "number" ? `${Math.round(x * 100)} %` : "—");
 const n0 = (x: number | null | undefined) => (typeof x === "number" ? String(Math.round(x)) : "no medido");
 
-export function BattleDetailPage(props: { id: string }) {
+export function BattleDetailPage(props: { id: string; me?: Me | null }) {
   const id = encodeURIComponent(props.id);
   const [battle, reloadBattle] = useResource(() => api<BattleDetail>("GET", `/battles/${id}`), [id]);
   const [stats, reloadStats] = useResource(() => api<StatsResponse>("GET", `/battles/${id}/stats`), [id]);
@@ -246,6 +247,8 @@ export function BattleDetailPage(props: { id: string }) {
         {(b) => (
           <>
             <BattleHeader b={b} audit={audit.status === "ready" ? audit.data : null} />
+            {/* EQ5b · sólo admin; abre Streaming con el destino, no emite. */}
+            <BroadcastButton me={props.me} kind="battle" id={props.id} />
             <h3>Estadísticas</h3>
             <ResourceView resource={stats} label="las estadísticas" onRetry={reloadStats}>
               {(s) => <StatsSection b={b} s={s} />}

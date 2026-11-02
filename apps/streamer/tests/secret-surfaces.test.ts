@@ -82,9 +82,12 @@ function binariosFalsos(): { ffmpeg: string; chromium: string } {
   // del relé) escribe una cabecera FLV válida y nada más.
   writeFileSync(
     ffmpeg,
-    ["#!/bin/sh", "printf 'FLV\\001\\005\\000\\000\\000\\011\\000\\000\\000\\000' >&3 2>/dev/null", "sleep 30", ""].join(
-      "\n",
-    ),
+    [
+      "#!/bin/sh",
+      "printf 'FLV\\001\\005\\000\\000\\000\\011\\000\\000\\000\\000' >&3 2>/dev/null",
+      "sleep 30",
+      "",
+    ].join("\n"),
   );
   chmodSync(ffmpeg, 0o755);
   const chromium = join(bin, "chromium-falso");

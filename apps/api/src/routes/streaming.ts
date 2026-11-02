@@ -108,7 +108,9 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     if (!deps.streamer.configured) return { reachable: false, status: null, error: "streamer no configurado" };
     try {
       const r = await deps.streamer.call<StreamerStatus>("GET", "/status");
-      return r.ok ? { reachable: true, status: r.body } : { reachable: false, status: null, error: `estado ${r.status}` };
+      return r.ok
+        ? { reachable: true, status: r.body }
+        : { reachable: false, status: null, error: `estado ${r.status}` };
     } catch (e) {
       return { reachable: false, status: null, error: (e as Error).message };
     }
@@ -153,7 +155,11 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
   }
 
   /** Orden de arranque para el streamer (la credencial va SELLADA). */
-  async function buildStartBody(s: StreamingSettings, sessionId: string, t: { kind: "battle" | "tournament"; id: string }) {
+  async function buildStartBody(
+    s: StreamingSettings,
+    sessionId: string,
+    t: { kind: "battle" | "tournament"; id: string },
+  ) {
     const body: Record<string, unknown> = {
       sessionId,
       broadcastUrl: broadcastUrlFor(base, t, s.branding),
@@ -195,8 +201,7 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     const st = await streamerStatus();
     const session = await activeSession();
     const stamp = await credentialStamp(s.platform);
-    const pendingRestart =
-      !!session && canon(session.config) !== canon(appliedConfig(s, stamp));
+    const pendingRestart = !!session && canon(session.config) !== canon(appliedConfig(s, stamp));
     await refreshGauges();
     res.setHeader("Cache-Control", "no-store");
     res.json({
@@ -279,7 +284,10 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     // Auditoría: qué campos y sus valores NO sensibles (la configuración no lleva secretos).
     const diff: Record<string, { from: unknown; to: unknown }> = {};
     for (const k of r.changed) {
-      diff[k] = { from: (current as unknown as Record<string, unknown>)[k], to: (r.next as unknown as Record<string, unknown>)[k] };
+      diff[k] = {
+        from: (current as unknown as Record<string, unknown>)[k],
+        to: (r.next as unknown as Record<string, unknown>)[k],
+      };
     }
     await log(req, "streaming.settings.update", "streaming:settings", { changed: diff });
 
@@ -311,7 +319,11 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     const pk = publicKey();
     if (!pk) {
       // §3/§19: sin almacén sellado NO se guarda nada (nunca en claro).
-      throw new ApiError(503, "sealed_store_unavailable", "No hay clave pública de sellado: no se pueden guardar claves");
+      throw new ApiError(
+        503,
+        "sealed_store_unavailable",
+        "No hay clave pública de sellado: no se pueden guardar claves",
+      );
     }
     const sealed = sealSecret(key, pk.pem);
     const last4 = key.slice(-4);
@@ -340,7 +352,8 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     const platform = platformById(req.params.platform);
     if (!platform) throw notFound("Plataforma desconocida");
     const n = await db("streaming_credentials").where({ platform: platform.id }).del();
-    if (n > 0) await log(req, "streaming.credential.delete", `streaming:credential:${platform.id}`, { platform: platform.id });
+    if (n > 0)
+      await log(req, "streaming.credential.delete", `streaming:credential:${platform.id}`, { platform: platform.id });
     res.json({ platform: platform.id, configured: false, deleted: n > 0 });
   });
 
@@ -368,7 +381,11 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
       await db("streaming_sessions")
         .where({ id: session.id, state: "active" })
         .update({ state: "stopped", stopped_at: db.fn.now(), stopped_by: actor(req), stop_reason: reason });
-      await log(req, "streaming.session.stop", `streaming:session:${session.id}`, { reason, streamerOk, forced: force });
+      await log(req, "streaming.session.stop", `streaming:session:${session.id}`, {
+        reason,
+        streamerOk,
+        forced: force,
+      });
     }
     return { wasActive: !!session, streamerOk };
   }
@@ -394,7 +411,10 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     const info = await resolveTarget(db, t);
     if (!info) throw notFound("Destino no encontrado");
     if (!info.publicBroadcastable) {
-      throw conflict("target_not_public", "La batalla tiene bots no públicos: /broadcast (anónima) no podría mostrarla");
+      throw conflict(
+        "target_not_public",
+        "La batalla tiene bots no públicos: /broadcast (anónima) no podría mostrarla",
+      );
     }
     const stamp = await credentialStamp(s.platform);
     const config = appliedConfig(s, stamp);
@@ -431,13 +451,20 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     try {
       r = await deps.streamer.call("POST", "/control/start", body);
     } catch (e) {
-      await db("streaming_sessions").where({ id: sessionId }).update({ state: "failed", stopped_at: db.fn.now(), stop_reason: "streamer_unreachable" });
+      await db("streaming_sessions")
+        .where({ id: sessionId })
+        .update({ state: "failed", stopped_at: db.fn.now(), stop_reason: "streamer_unreachable" });
       await refreshGauges();
       throw unavailable((e as Error).message);
     }
     if (!r.ok) {
-      await db("streaming_sessions").where({ id: sessionId }).update({ state: "failed", stopped_at: db.fn.now(), stop_reason: `streamer_${r.status}` });
-      await log(req, "streaming.session.start_failed", `streaming:session:${sessionId}`, { status: r.status, target: t });
+      await db("streaming_sessions")
+        .where({ id: sessionId })
+        .update({ state: "failed", stopped_at: db.fn.now(), stop_reason: `streamer_${r.status}` });
+      await log(req, "streaming.session.start_failed", `streaming:session:${sessionId}`, {
+        status: r.status,
+        target: t,
+      });
       await refreshGauges();
       const msg = String((r.body as Record<string, unknown>).error ?? "el streamer rechazó la orden");
       throw new ApiError(r.status === 409 ? 409 : 502, r.status === 409 ? "streamer_busy" : "streamer_error", msg);
@@ -451,7 +478,11 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
       videoBitrateKbps: s.videoBitrateKbps,
     });
     await refreshGauges();
-    res.status(201).json({ session: { id: sessionId, target: t }, alreadyActive: false, streamer: publicStatus(r.body as StreamerStatus) });
+    res.status(201).json({
+      session: { id: sessionId, target: t },
+      alreadyActive: false,
+      streamer: publicStatus(r.body as StreamerStatus),
+    });
   });
 
   defineOperation(router, "restartStreaming", async (req, res) => {
@@ -464,7 +495,9 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     const r = await callStreamer("POST", "/control/start", body);
     if (!r.ok) throw new ApiError(502, "streamer_error", String((r.body as Record<string, unknown>).error ?? "error"));
     const stamp = await credentialStamp(s.platform);
-    await db("streaming_sessions").where({ id: session.id }).update({ config: JSON.stringify(appliedConfig(s, stamp)), mode: s.mode });
+    await db("streaming_sessions")
+      .where({ id: session.id })
+      .update({ config: JSON.stringify(appliedConfig(s, stamp)), mode: s.mode });
     await log(req, "streaming.session.restart", `streaming:session:${session.id}`, { target: t });
     res.json({ session: { id: session.id, target: t }, restarted: true });
   });
@@ -487,7 +520,12 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
   defineOperation(router, "applyStreamingRetention", async (req, res) => {
     const dryRun = (req.body ?? {}).dryRun === true;
     const s = await loadSettings(db);
-    const result = await runRetention(db, deps.streamer, s, { dryRun, actorId: actor(req), trigger: "manual", correlationId: req.correlationId });
+    const result = await runRetention(db, deps.streamer, s, {
+      dryRun,
+      actorId: actor(req),
+      trigger: "manual",
+      correlationId: req.correlationId,
+    });
     res.json(result);
   });
 
@@ -549,7 +587,12 @@ export async function runRetention(
       actorId: o.actorId,
       action: "streaming.retention.run",
       target: "streaming:recordings",
-      detail: { trigger: o.trigger, policy, deleted: deleted.length, errors: (r.body.errors as unknown[] | undefined)?.length ?? 0 },
+      detail: {
+        trigger: o.trigger,
+        policy,
+        deleted: deleted.length,
+        errors: (r.body.errors as unknown[] | undefined)?.length ?? 0,
+      },
       correlationId: o.correlationId,
     });
   }
@@ -565,7 +608,14 @@ export function startRetentionScheduler(db: Db, streamer: StreamerClient, everyM
       if (!s.retention.enabled) return;
       await runRetention(db, streamer, s, { dryRun: false, actorId: null, trigger: "auto" });
     } catch (e) {
-      console.warn(JSON.stringify({ level: "warn", service: "api", msg: "retención de grabaciones fallida", detail: (e as Error).message }));
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          service: "api",
+          msg: "retención de grabaciones fallida",
+          detail: (e as Error).message,
+        }),
+      );
     }
   };
   const t = setInterval(() => void tick(), everyMs);

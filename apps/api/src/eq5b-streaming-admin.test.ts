@@ -130,12 +130,21 @@ beforeAll(async () => {
   admin = await tokenFor(h.db, DEV_USERS.admin);
   user = await tokenFor(h.db, DEV_USERS.user);
   moderator = await tokenFor(h.db, DEV_USERS.moderator);
-  publicBattle = await newBattle({ rules: { schema: 2, source: "preset", engineRuleset: { spectator: { delaySeconds: 30 } } } });
+  publicBattle = await newBattle({
+    rules: { schema: 2, source: "preset", engineRuleset: { spectator: { delaySeconds: 30 } } },
+  });
   privateBattle = await newBattle({ privateBot: true });
   const adminRow = await h.db("users").where({ email: DEV_USERS.admin }).first();
   const [t] = await h
     .db("tournaments")
-    .insert({ name: "Copa EQ5b", format: "league", mode: "deathmatch", ruleset_id: DEFAULT_RULESET_ID, state: "running", created_by: adminRow.id })
+    .insert({
+      name: "Copa EQ5b",
+      format: "league",
+      mode: "deathmatch",
+      ruleset_id: DEFAULT_RULESET_ID,
+      state: "running",
+      created_by: adminRow.id,
+    })
     .returning("id");
   tournament = t.id;
 }, 180_000);
@@ -169,7 +178,10 @@ describe("EQ5b · RBAC real", () => {
       const r0 = await (request(app) as any)[m](p).send(body ?? undefined);
       expect(r0.status, `${m} ${p} anónimo`).toBe(401);
       for (const tok of [user, moderator]) {
-        const r = await (request(app) as any)[m](p).set(auth(tok)).send(body ?? undefined);
+        const r = await (request(app) as any)
+          [m](p)
+          .set(auth(tok))
+          .send(body ?? undefined);
         expect(r.status, `${m} ${p}`).toBe(403);
       }
     }
@@ -203,15 +215,24 @@ describe("EQ5b · la clave entra y no sale", () => {
   });
 
   it("clave inválida 400 y plataforma desconocida 404 (sin eco de la clave)", async () => {
-    const bad = await request(app).put("/admin/streaming/credentials/youtube").set(auth(admin)).send({ streamKey: "con espacios dentro" });
+    const bad = await request(app)
+      .put("/admin/streaming/credentials/youtube")
+      .set(auth(admin))
+      .send({ streamKey: "con espacios dentro" });
     expect(bad.status).toBe(400);
     expect(JSON.stringify(bad.body)).not.toContain("con espacios");
-    expect((await request(app).put("/admin/streaming/credentials/__proto__").set(auth(admin)).send({ streamKey: KEY })).status).toBe(404);
+    expect(
+      (await request(app).put("/admin/streaming/credentials/__proto__").set(auth(admin)).send({ streamKey: KEY }))
+        .status,
+    ).toBe(404);
   });
 
   it("sin almacén sellado (sin clave pública) NO se guarda nada: 503", async () => {
     const app2 = createApp({ db: h.db, streamer: fake, streamingPublicKey: () => null });
-    const r = await request(app2).put("/admin/streaming/credentials/custom").set(auth(admin)).send({ streamKey: "otra-clave-1234" });
+    const r = await request(app2)
+      .put("/admin/streaming/credentials/custom")
+      .set(auth(admin))
+      .send({ streamKey: "otra-clave-1234" });
     expect(r.status).toBe(503);
     expect(await h.db("streaming_credentials").where({ platform: "custom" }).first()).toBeUndefined();
   });
@@ -244,8 +265,18 @@ describe("EQ5b · configuración", () => {
 
   it("concurrencia optimista: versión vieja ⇒ 409", async () => {
     const v = (await state()).settings.version;
-    expect((await request(app).put("/admin/streaming/settings").set(auth(admin)).send({ version: v, videoBitrateKbps: 5000 })).status).toBe(200);
-    const stale = await request(app).put("/admin/streaming/settings").set(auth(admin)).send({ version: v, videoBitrateKbps: 5500 });
+    expect(
+      (
+        await request(app)
+          .put("/admin/streaming/settings")
+          .set(auth(admin))
+          .send({ version: v, videoBitrateKbps: 5000 })
+      ).status,
+    ).toBe(200);
+    const stale = await request(app)
+      .put("/admin/streaming/settings")
+      .set(auth(admin))
+      .send({ version: v, videoBitrateKbps: 5500 });
     expect(stale.status).toBe(409);
     expect(stale.body.error).toBe("version_conflict");
   });
@@ -257,32 +288,66 @@ describe("EQ5b · destino y retardo", () => {
     expect(t.body).toMatchObject({ publicBroadcastable: true, delaySeconds: 30, delaySource: "snapshot" });
     const p = await request(app).get(`/admin/streaming/target?kind=battle&id=${privateBattle}`).set(auth(admin));
     expect(p.body.publicBroadcastable).toBe(false);
-    expect((await request(app).get(`/admin/streaming/target?kind=battle&id=${randomUUID()}`).set(auth(admin))).status).toBe(404);
+    expect(
+      (await request(app).get(`/admin/streaming/target?kind=battle&id=${randomUUID()}`).set(auth(admin))).status,
+    ).toBe(404);
     expect((await request(app).get(`/admin/streaming/target?kind=battle&id=1;drop`).set(auth(admin))).status).toBe(400);
-    expect((await request(app).get(`/admin/streaming/target?kind=tournament&id=${tournament}`).set(auth(admin))).status).toBe(200);
+    expect(
+      (await request(app).get(`/admin/streaming/target?kind=tournament&id=${tournament}`).set(auth(admin))).status,
+    ).toBe(200);
   });
 });
 
 describe("EQ5b · controles", () => {
   it("con el streaming desactivado no se emite (409) y el streamer no recibe start", async () => {
     const n = fake.starts().length;
-    const r = await request(app).post("/admin/streaming/start").set(auth(admin)).send({ target: { kind: "battle", id: publicBattle } });
+    const r = await request(app)
+      .post("/admin/streaming/start")
+      .set(auth(admin))
+      .send({ target: { kind: "battle", id: publicBattle } });
     expect(r.status).toBe(409);
     expect(r.body.error).toBe("streaming_disabled");
     expect(fake.starts().length).toBe(n);
   });
 
   it("start: credencial SELLADA al streamer, branding en la URL; idempotente; otra ⇒ 409; simultáneas ⇒ una", async () => {
-    expect((await put({ enabled: true, mode: "rtmps", platform: "youtube", branding: { eventName: "Copa EQ5b", accentColor: "#00ff88" } })).status).toBe(200);
     expect(
-      (await request(app).post("/admin/streaming/start").set(auth(admin)).send({ target: { kind: "battle", id: privateBattle } })).body.error,
+      (
+        await put({
+          enabled: true,
+          mode: "rtmps",
+          platform: "youtube",
+          branding: { eventName: "Copa EQ5b", accentColor: "#00ff88" },
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await request(app)
+          .post("/admin/streaming/start")
+          .set(auth(admin))
+          .send({ target: { kind: "battle", id: privateBattle } })
+      ).body.error,
     ).toBe("target_not_public");
-    expect((await request(app).post("/admin/streaming/start").set(auth(admin)).send({ target: { kind: "battle", id: randomUUID() } })).status).toBe(404);
+    expect(
+      (
+        await request(app)
+          .post("/admin/streaming/start")
+          .set(auth(admin))
+          .send({ target: { kind: "battle", id: randomUUID() } })
+      ).status,
+    ).toBe(404);
 
     // Dos peticiones a la vez: sólo una sesión.
     const [a, b] = await Promise.all([
-      request(app).post("/admin/streaming/start").set(auth(admin)).send({ target: { kind: "battle", id: publicBattle } }),
-      request(app).post("/admin/streaming/start").set(auth(admin)).send({ target: { kind: "tournament", id: tournament } }),
+      request(app)
+        .post("/admin/streaming/start")
+        .set(auth(admin))
+        .send({ target: { kind: "battle", id: publicBattle } }),
+      request(app)
+        .post("/admin/streaming/start")
+        .set(auth(admin))
+        .send({ target: { kind: "tournament", id: tournament } }),
     ]);
     const statuses = [a.status, b.status].sort();
     expect(statuses).toEqual([201, 409]);
@@ -334,7 +399,9 @@ describe("EQ5b · controles", () => {
     const ok = await put({ enabled: false, confirmStop: true });
     expect(ok.status).toBe(200);
     expect(ok.body.stopped).toBe(true);
-    expect(fake.calls.at(-2)?.path === "/control/stop" || fake.calls.some((c) => c.path === "/control/stop")).toBe(true);
+    expect(fake.calls.at(-2)?.path === "/control/stop" || fake.calls.some((c) => c.path === "/control/stop")).toBe(
+      true,
+    );
     expect(await h.db("streaming_sessions").where({ state: "active" })).toHaveLength(0);
     expect((await state()).uxState).toBe("disabled");
   });
@@ -352,7 +419,10 @@ describe("EQ5b · controles", () => {
   it("start con el streamer caído: 503 y la sesión queda failed (no bloquea la siguiente)", async () => {
     await put({ enabled: true });
     fake.down = true;
-    const r = await request(app).post("/admin/streaming/start").set(auth(admin)).send({ target: { kind: "battle", id: publicBattle } });
+    const r = await request(app)
+      .post("/admin/streaming/start")
+      .set(auth(admin))
+      .send({ target: { kind: "battle", id: publicBattle } });
     expect(r.status).toBe(503);
     expect(await h.db("streaming_sessions").where({ state: "active" })).toHaveLength(0);
     fake.down = false;
@@ -372,8 +442,18 @@ describe("EQ5b · retención auditada", () => {
     fake.retention = {
       dryRun: false,
       deleted: [
-        { name: "broadcast-2026-10-01T10-00-00-000Z.mp4", sizeBytes: 1000, modifiedAt: "2026-10-01T10:00:00.000Z", reason: "age" },
-        { name: "broadcast-2026-10-02T10-00-00-000Z.mp4", sizeBytes: 2000, modifiedAt: "2026-10-02T10:00:00.000Z", reason: "age" },
+        {
+          name: "broadcast-2026-10-01T10-00-00-000Z.mp4",
+          sizeBytes: 1000,
+          modifiedAt: "2026-10-01T10:00:00.000Z",
+          reason: "age",
+        },
+        {
+          name: "broadcast-2026-10-02T10-00-00-000Z.mp4",
+          sizeBytes: 2000,
+          modifiedAt: "2026-10-02T10:00:00.000Z",
+          reason: "age",
+        },
       ],
       errors: [],
       keptCount: 1,

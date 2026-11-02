@@ -165,6 +165,8 @@ describe("EQ3 fuentes · árbol y offline", () => {
       "modos",
       "torneos",
       "mapas",
+      // EQ5b · ayuda offline de Administración → Streaming.
+      "administracion",
       "referencia",
     ]);
     expect(ids("bots")).toEqual(

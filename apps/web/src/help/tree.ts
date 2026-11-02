@@ -104,6 +104,14 @@ export const HELP_TREE: HelpGroup[] = [
     ],
   },
   {
+    // EQ5b · ayuda offline de Administración → Streaming (sólo la usan administradores).
+    id: "administracion",
+    title: "Administración",
+    leaves: [
+      { id: "streaming", title: "Streaming", keywords: "emisión directo youtube rtmps grabar mp4 clave retransmitir" },
+    ],
+  },
+  {
     id: "referencia",
     title: "Referencia",
     leaves: [

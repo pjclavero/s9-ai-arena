@@ -56,7 +56,13 @@ async function fakeIngest(o: FakeOpts = {}) {
     const reader = new ChunkReader();
     const send = (m: RtmpMessage) => sock.write(encodeMessage(m, 128));
     const reply = (name: string, txn: number, args: unknown[], streamId = 0) =>
-      send({ csid: 3, type: MSG_COMMAND_AMF0, streamId, timestamp: 0, payload: encodeAmf0Values([name, txn, ...(args as never[])]) });
+      send({
+        csid: 3,
+        type: MSG_COMMAND_AMF0,
+        streamId,
+        timestamp: 0,
+        payload: encodeAmf0Values([name, txn, ...(args as never[])]),
+      });
     sock.on("data", (d: Buffer) => {
       buf = Buffer.concat([buf, d]);
       if (phase === "c0c1") {
@@ -93,12 +99,18 @@ async function fakeIngest(o: FakeOpts = {}) {
             const name = String(v[0]);
             const txn = Number(v[1]);
             seen.commands.push({ name, args: v.slice(2) });
-            if (name === "connect") reply("_result", txn, [{ fmsVer: "FMS/3,0,1,123" }, { code: "NetConnection.Connect.Success" }]);
+            if (name === "connect")
+              reply("_result", txn, [{ fmsVer: "FMS/3,0,1,123" }, { code: "NetConnection.Connect.Success" }]);
             if (name === "createStream") reply("_result", txn, [null, 1]);
             if (name === "publish") {
               const code = o.rejectPublish ? "NetStream.Publish.BadName" : "NetStream.Publish.Start";
               // El servidor repite el nombre del stream en la descripción: el relé debe redactarlo.
-              reply("onStatus", 0, [null, { level: o.rejectPublish ? "error" : "status", code, description: `stream ${String(v[3])}` }], 1);
+              reply(
+                "onStatus",
+                0,
+                [null, { level: o.rejectPublish ? "error" : "status", code, description: `stream ${String(v[3])}` }],
+                1,
+              );
             }
           } else if (m.type === 8 || m.type === 9 || m.type === 18) {
             seen.media.push(m);

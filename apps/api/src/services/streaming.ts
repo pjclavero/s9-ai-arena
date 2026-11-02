@@ -38,7 +38,8 @@ export const BITRATE_LIMITS = { min: 1000, max: 12000 } as const;
 
 /** Rangos recomendados (kbit/s) por preset y FPS: guía de ingesta H.264 de YouTube. */
 export function bitrateRecommendation(preset: string, fps: number): { min: number; max: number; recommended: number } {
-  if (preset === "720p") return fps === 60 ? { min: 2250, max: 6000, recommended: 4500 } : { min: 1500, max: 4000, recommended: 3000 };
+  if (preset === "720p")
+    return fps === 60 ? { min: 2250, max: 6000, recommended: 4500 } : { min: 1500, max: 4000, recommended: 3000 };
   return fps === 60 ? { min: 4500, max: 9000, recommended: 6000 } : { min: 3000, max: 6000, recommended: 4500 };
 }
 
@@ -233,7 +234,8 @@ export function applySettingsPatch(
     if (!b || typeof b !== "object" || Array.isArray(b)) errors.push("branding inválido");
     else {
       for (const k of Object.keys(b)) {
-        if (!["eventName", "logoUrl", "primaryColor", "accentColor"].includes(k)) errors.push(`branding.${k} no admitido`);
+        if (!["eventName", "logoUrl", "primaryColor", "accentColor"].includes(k))
+          errors.push(`branding.${k} no admitido`);
       }
       if (b.eventName !== undefined) {
         const v = typeof b.eventName === "string" ? b.eventName.trim() : "";
@@ -361,7 +363,10 @@ function delayOf(r: { spectator?: { delaySeconds?: number } } | null | undefined
 /** null = no existe. El retardo SALE de la copia de reglas (única fuente de verdad). */
 export async function resolveTarget(db: Db, t: { kind: TargetKind; id: string }): Promise<TargetInfo | null> {
   if (t.kind === "battle") {
-    const b = await db("battles").where({ id: t.id }).first().catch(() => null);
+    const b = await db("battles")
+      .where({ id: t.id })
+      .first()
+      .catch(() => null);
     if (!b) return null;
     const pub = await whereOnlyPublicBots(db, db("battles").where("battles.id", t.id)).first();
     let delaySeconds = 0;
@@ -391,7 +396,10 @@ export async function resolveTarget(db: Db, t: { kind: TargetKind; id: string })
       delaySource,
     };
   }
-  const tr = await db("tournaments").where({ id: t.id }).first().catch(() => null);
+  const tr = await db("tournaments")
+    .where({ id: t.id })
+    .first()
+    .catch(() => null);
   if (!tr) return null;
   const snap = rulesOf(tr);
   const d = snap ? delayOf(snap.engineRuleset) : null;

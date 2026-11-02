@@ -128,7 +128,8 @@ export function createControlServer(opts: ControlOptions): Server {
         restarts: supervisor.restarts,
         stats: supervisor.metrics.snapshot(),
         desired: supervisor.desired,
-        progressAgeSeconds: supervisor.desired && started !== null ? Math.max(0, Math.round((now() - last) / 1000)) : -1,
+        progressAgeSeconds:
+          supervisor.desired && started !== null ? Math.max(0, Math.round((now() - last) / 1000)) : -1,
         relayPublishing: supervisor.relayState === "publishing",
       });
       return respond(200, text, "text/plain; version=0.0.4");
@@ -168,7 +169,10 @@ export function createControlServer(opts: ControlOptions): Server {
     }
 
     if (req.method === "GET" && url === "/recordings") {
-      return respond(200, { dir: "arena_replays/video", ...listRecordings(config.recordDir, supervisor.recordingFile) });
+      return respond(200, {
+        dir: "arena_replays/video",
+        ...listRecordings(config.recordDir, supervisor.recordingFile),
+      });
     }
 
     if (req.method !== "POST") return respond(404, { error: "not_found" });
@@ -266,7 +270,10 @@ export function createControlServer(opts: ControlOptions): Server {
         const legacy = !raw.trim();
         if (legacy) supervisor.start(undefined, undefined, key);
         else supervisor.start(undefined, plan, key);
-        logger("info", "control: start", { broadcastUrl: supervisor.currentBroadcastUrl, target: supervisor.describeTarget() });
+        logger("info", "control: start", {
+          broadcastUrl: supervisor.currentBroadcastUrl,
+          target: supervisor.describeTarget(),
+        });
         return respond(200, {
           state: supervisor.state,
           broadcastUrl: supervisor.currentBroadcastUrl,

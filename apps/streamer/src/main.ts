@@ -40,7 +40,22 @@ function probeNvenc(ffmpegBin: string, caps: Capabilities): void {
   }
   execFile(
     ffmpegBin,
-    ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "nullsrc=s=256x256", "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-"],
+    [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-f",
+      "lavfi",
+      "-i",
+      "nullsrc=s=256x256",
+      "-frames:v",
+      "1",
+      "-c:v",
+      "h264_nvenc",
+      "-f",
+      "null",
+      "-",
+    ],
     { timeout: 15_000 },
     (err) => {
       caps.nvenc = !err;
@@ -118,7 +133,8 @@ export function main(env: NodeJS.ProcessEnv = process.env): void {
     });
   });
 
-  if (env.STREAM_AUTOSTART === "1") supervisor.start(undefined, undefined, config.mode === "rtmps" ? readLegacyKey() : null);
+  if (env.STREAM_AUTOSTART === "1")
+    supervisor.start(undefined, undefined, config.mode === "rtmps" ? readLegacyKey() : null);
 
   const shutdown = () => {
     supervisor.stop();

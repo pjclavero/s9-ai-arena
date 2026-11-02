@@ -16,7 +16,11 @@ export interface StreamerCallResult<T = Record<string, unknown>> {
 
 export interface StreamerClient {
   readonly configured: boolean;
-  call<T = Record<string, unknown>>(method: "GET" | "POST", path: string, body?: unknown): Promise<StreamerCallResult<T>>;
+  call<T = Record<string, unknown>>(
+    method: "GET" | "POST",
+    path: string,
+    body?: unknown,
+  ): Promise<StreamerCallResult<T>>;
 }
 
 export class StreamerUnavailable extends Error {

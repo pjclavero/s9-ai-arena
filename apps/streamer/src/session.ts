@@ -83,7 +83,8 @@ export function parseStartRequest(
 
   let sessionId: string | null = null;
   if (b.sessionId !== undefined) {
-    if (typeof b.sessionId !== "string" || !SESSION_ID.test(b.sessionId)) return { ok: false, error: "sessionId inválido" };
+    if (typeof b.sessionId !== "string" || !SESSION_ID.test(b.sessionId))
+      return { ok: false, error: "sessionId inválido" };
     sessionId = b.sessionId;
   }
   let broadcastUrl = base.broadcastUrl;
@@ -104,8 +105,15 @@ export function parseStartRequest(
   const fps = b.fps ?? base.fps;
   if (fps !== 30 && fps !== 60) return { ok: false, error: "fps debe ser 30 o 60" };
   const bitrate = b.videoBitrateKbps ?? base.videoBitrateKbps;
-  if (!Number.isInteger(bitrate) || (bitrate as number) < BITRATE_LIMITS.min || (bitrate as number) > BITRATE_LIMITS.max) {
-    return { ok: false, error: `videoBitrateKbps debe ser un entero entre ${BITRATE_LIMITS.min} y ${BITRATE_LIMITS.max}` };
+  if (
+    !Number.isInteger(bitrate) ||
+    (bitrate as number) < BITRATE_LIMITS.min ||
+    (bitrate as number) > BITRATE_LIMITS.max
+  ) {
+    return {
+      ok: false,
+      error: `videoBitrateKbps debe ser un entero entre ${BITRATE_LIMITS.min} y ${BITRATE_LIMITS.max}`,
+    };
   }
 
   let ingest: IngestTarget | null = null;
