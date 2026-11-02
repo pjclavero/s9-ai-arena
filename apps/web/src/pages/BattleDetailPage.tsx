@@ -60,7 +60,7 @@ interface BattleDetail extends BattleLike {
 }
 
 /** R-RULES (FASE 13) · métricas con sentido para las reglas de la batalla. */
-type StatsProfile = "elimination" | "limited_respawn" | "deathmatch" | "time" | "classic";
+type StatsProfile = "elimination" | "limited_respawn" | "deathmatch" | "time" | "capture_the_flag" | "classic";
 
 interface ModuleStatsView {
   moduleId: string | null;
