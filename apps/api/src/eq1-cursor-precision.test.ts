@@ -169,7 +169,7 @@ afterAll(async () => {
 
 describe("EQ1 · cursor con empate de milisegundo en el borde de página", () => {
   it("las 12 batallas comparten de verdad el mismo milisegundo (precondición)", async () => {
-    const rows = await h
+    const rows: { ms: Date; n: number }[] = await h
       .db("battles")
       .whereIn("id", [...VISIBLE_A, ...HIDDEN_A])
       .select(
