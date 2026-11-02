@@ -12,13 +12,16 @@
  *  - se cierra con la X (botón «Cerrar ayuda»), con Escape y al pulsar/tocar
  *    fuera; al cerrar con X o Escape el foco VUELVE al botón ⓘ;
  *  - todo el marcado es de frase (<span>): se puede poner dentro de <label>,
- *    <p>, <th> o <legend> sin anidar bloques de forma inválida;
+ *    <p>, <th> o <legend> sin anidar bloques de forma inválida; dentro de un
+ *    <label>, un clic en el texto del panel NO activa el label (no alterna su
+ *    casilla): se cancela su acción por defecto salvo en enlaces y botones;
  *  - no pierde el estado de los formularios: el disparador es `type="button"`
  *    (nunca envía el `<form>` que lo contiene), el panel se monta junto al botón
  *    sin desmontar nada y Escape no se propaga (no cierra el diálogo o editor
  *    que contenga al ⓘ);
  *  - teclado: Enter/Espacio abre; el foco pasa al panel (se lee su título);
- *    Tab recorre su contenido; salir con Tab fuera del panel lo cierra;
+ *    Tab recorre su contenido; salir con Tab fuera del panel lo cierra (también
+ *    si el foco cae en <body>, y Escape lo cierra aunque el foco esté fuera);
  *  - móvil: objetivo táctil de 44×44 px y, en pantallas estrechas, el panel es
  *    una hoja fija abajo (sin desbordar ni tapar la pantalla entera).
  *
@@ -120,11 +123,18 @@ export function InfoTip(props: InfoTipProps) {
     const onDown = (e: PointerEvent | MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) close(false);
     };
+    // Escape con el foco FUERA del ⓘ (p. ej. en <body>) también lo cierra. Con el foco
+    // dentro lo atiende onKeyDown, que detiene la propagación y este no llega a verlo.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented) close(false);
+    };
     document.addEventListener("pointerdown", onDown);
     document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("pointerdown", onDown);
       document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
     };
   }, [open, close]);
 
@@ -144,8 +154,20 @@ export function InfoTip(props: InfoTipProps) {
       }}
       onBlur={(e) => {
         // Tab fuera del ⓘ (botón + panel) cierra el popover: no se queda flotando.
+        if (!open) return;
         const next = e.relatedTarget as Node | null;
-        if (open && next && rootRef.current && !rootRef.current.contains(next)) setOpen(false);
+        if (next) {
+          if (rootRef.current && !rootRef.current.contains(next)) setOpen(false);
+          return;
+        }
+        // Sin relatedTarget (EQ6-P3): Tab desde el último enfocable de la página deja el
+        // foco en <body>. Se mira DESPUÉS a dónde fue el foco: si salió del ⓘ, se cierra.
+        // Si la ventana sólo perdió el foco (cambio de pestaña), activeElement sigue
+        // dentro del ⓘ y el panel se queda abierto.
+        setTimeout(() => {
+          const active = document.activeElement;
+          if (rootRef.current && !(active && rootRef.current.contains(active))) setOpen(false);
+        }, 0);
       }}
     >
       <button
@@ -170,6 +192,13 @@ export function InfoTip(props: InfoTipProps) {
           tabIndex={-1}
           className="infotip-panel"
           data-testid={`${tid}-panel`}
+          onClick={(e) => {
+            // EQ6-P2 · dentro de un <label>, un clic en el texto del panel ACTIVA el label
+            // (alterna su casilla, enfoca su campo). Se cancela esa acción por defecto
+            // salvo en los controles del propio panel (X, enlace a la ayuda…).
+            if (!(e.target as Element).closest?.("a, button, input, select, textarea, summary, [contenteditable]"))
+              e.preventDefault();
+          }}
         >
           <span className="infotip-head">
             <span className="infotip-title" id={titleId}>

@@ -161,6 +161,37 @@ describe("EQ3 InfoTip · cierre", () => {
   });
 });
 
+describe("EQ3 InfoTip · foco perdido (EQ6-P3)", () => {
+  it("Tab desde la X siendo el último enfocable (foco a <body>, relatedTarget null) cierra el panel", async () => {
+    render(<InfoTip topic="Último">u</InfoTip>);
+    fireEvent.click(screen.getByTestId("infotip-trigger"));
+    const close = screen.getByRole("button", { name: "Cerrar ayuda" });
+    close.focus();
+    close.blur(); // el foco cae en <body>
+    fireEvent.blur(close, { relatedTarget: null });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("blur sin relatedTarget pero con el foco aún dentro (la ventana perdió el foco) NO cierra", async () => {
+    render(<InfoTip topic="Ventana">v</InfoTip>);
+    fireEvent.click(screen.getByTestId("infotip-trigger"));
+    const dlg = screen.getByRole("dialog");
+    expect(document.activeElement).toBe(dlg);
+    fireEvent.blur(dlg, { relatedTarget: null });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("Escape con el foco fuera del ⓘ (en <body>) también lo cierra", () => {
+    render(<InfoTip topic="Esc">e</InfoTip>);
+    fireEvent.click(screen.getByTestId("infotip-trigger"));
+    (document.activeElement as HTMLElement).blur();
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
 describe("EQ3 InfoTip · formularios", () => {
   function Form(props: { onSubmit: () => void }) {
     const [name, setName] = useState("");
