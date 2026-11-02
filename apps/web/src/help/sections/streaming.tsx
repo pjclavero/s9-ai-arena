@@ -12,6 +12,7 @@ import { helpHref } from "../tree.js";
 const ORDER: UxState[] = [
   "disabled",
   "ready",
+  "starting",
   "live",
   "recording",
   "retrying",

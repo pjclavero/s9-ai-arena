@@ -21,6 +21,12 @@
  *    confirmado para de verdad aunque otra petición estuviera arrancando;
  *  - P3 · sin poder medir el disco no se empieza a grabar (fail-closed);
  *    ingestas internas rechazadas (SSRF).
+ *
+ * EQ5d (revisión EQ6c):
+ *  - P2 · desactivar lee y para la sesión DENTRO del cerrojo, y start/restart
+ *    vuelven a leer `enabled` al responder el streamer;
+ *  - P3 · el stop marca la BD ANTES de llamar al streamer (entre instancias);
+ *  - P3 · «En directo» sólo con el relé publicando (si no, «Iniciando»).
  */
 import { randomUUID } from "node:crypto";
 import { Router, type Request, type Response } from "express";
@@ -137,8 +143,9 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
   const actor = (req: Request) => req.auth?.userId ?? null;
 
   // EQ5c (P2-4) · cerrojo de las operaciones de control (start/restart/stop):
-  // en serie dentro del proceso. Entre procesos lo cubre la recomprobación de la
-  // sesión en BD tras la respuesta del streamer (ver startLocked/restartLocked).
+  // en serie dentro del proceso. Entre procesos lo cubren dos órdenes: el stop
+  // marca la BD ANTES de llamar al streamer (stopSession) y start/restart
+  // recomprueban la sesión y `enabled` DESPUÉS de su respuesta (stopIfCancelled).
   let controlChain: Promise<unknown> = Promise.resolve();
   function serialized<T>(fn: () => Promise<T>): Promise<T> {
     const run = controlChain.then(fn, fn);
@@ -250,7 +257,13 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     const state = st.status?.state;
     if (state === "failed") return "failed";
     if (state === "retrying") return "retrying";
-    if (state === "streaming") return s.mode === "record" ? "recording" : "live";
+    if (state === "streaming") {
+      if (s.mode === "record") return "recording";
+      // EQ5d (revisión EQ6c, P3) · «En directo» sólo con el relé PUBLICANDO; mientras
+      // conecta (o reconecta) es «Iniciando», no una emisión que nadie recibe.
+      const relay = (st.status as { relay?: { state?: unknown } | null } | null)?.relay;
+      return relay?.state === "publishing" ? "live" : "starting";
+    }
     if (session) return "interrupted"; // la BD dice activa y el streamer no emite
     return "ready";
   }
@@ -354,10 +367,18 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     }
     await log(req, "streaming.settings.update", "streaming:settings", { changed: diff });
 
+    // EQ5d (revisión EQ6c, P2) · «leer la sesión y pararla» DENTRO del cerrojo y
+    // DESPUÉS de guardar `enabled=false`: un start en vuelo que aún no había
+    // insertado su sesión la encuentra aquí, o bien él mismo vuelve a leer
+    // `enabled` al responder el streamer (stopIfCancelled) y se para. Entre dos
+    // instancias, una de las dos lecturas ve la otra escritura.
     let stopped = false;
-    if (disabling && session) {
-      await serialized(() => stopSession(req, "disabled"));
-      stopped = true;
+    if (disabling) {
+      stopped = await serialized(async () => {
+        if (!(await activeSession())) return false;
+        await stopSession(req, "disabled");
+        return true;
+      });
     }
     const saved = await loadSettings(db);
     const after = await activeSession();
@@ -443,27 +464,42 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     }
   }
 
+  /**
+   * EQ5d (revisión EQ6c, P3) · la sesión se marca parada en BD ANTES de pedir el
+   * stop al streamer. Así, entre dos instancias de la API, un start/restart en
+   * vuelo cuya recomprobación llegue después del marcado se para solo, y uno
+   * cuya recomprobación llegue antes tiene su efecto ANTES que este stop: en
+   * ningún orden queda el streamer emitiendo sin sesión activa. Si el streamer
+   * no responde, la sesión queda parada igualmente (la intención del operador
+   * manda) y, sin `force`, se responde 503 para que lo sepa y lo repita.
+   */
   async function stopSession(req: Request, reason: string, force = false) {
+    const session = await activeSession();
+    let marked = false;
+    if (session) {
+      marked =
+        (await db("streaming_sessions")
+          .where({ id: session.id, state: "active" })
+          .update({ state: "stopped", stopped_at: db.fn.now(), stopped_by: actor(req), stop_reason: reason })) === 1;
+    }
     let streamerOk = true;
+    let failure: Error | null = null;
     try {
       const r = await deps.streamer.call("POST", "/control/stop", {});
       streamerOk = r.ok;
     } catch (e) {
       streamerOk = false;
-      if (!force) throw unavailable((e as Error).message);
+      failure = e as Error;
     }
-    const session = await activeSession();
-    if (session) {
-      await db("streaming_sessions")
-        .where({ id: session.id, state: "active" })
-        .update({ state: "stopped", stopped_at: db.fn.now(), stopped_by: actor(req), stop_reason: reason });
+    if (marked) {
       await log(req, "streaming.session.stop", `streaming:session:${session.id}`, {
         reason,
         streamerOk,
         forced: force,
       });
     }
-    return { wasActive: !!session, streamerOk };
+    if (failure && !force) throw unavailable(failure.message);
+    return { wasActive: marked, streamerOk };
   }
 
   defineOperation(router, "testStreaming", async (req, res) => {
@@ -486,32 +522,14 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
   defineOperation(router, "startStreaming", async (req, res) => {
     const t = parseTarget((req.body ?? {}).target?.kind, (req.body ?? {}).target?.id);
     if (!t) throw badRequest("target {kind: battle|tournament, id: UUID} obligatorio");
-    await serialized(() => startLocked(req, res, t));
+    // EQ5d (P2) · comprobaciones previas (y la medida del disco, que es lenta)
+    // FUERA del cerrojo: un PUT `enabled:false` no espera detrás de ellas.
+    const pre = await startPrecheck(t);
+    await serialized(() => startLocked(req, res, t, pre));
   });
 
-  /** Si la sesión ya no está activa (un stop ganó la carrera), para el streamer de verdad. */
-  async function stopIfCancelled(req: Request, sessionId: string, action: string): Promise<boolean> {
-    const still = await db("streaming_sessions").where({ id: sessionId, state: "active" }).first();
-    if (still) return false;
-    const other = await activeSession();
-    let streamerOk = false;
-    if (!other) {
-      try {
-        streamerOk = (await deps.streamer.call("POST", "/control/stop", {})).ok;
-      } catch {
-        streamerOk = false;
-      }
-    }
-    await log(req, action, `streaming:session:${sessionId}`, {
-      reason: "stopped_during_operation",
-      streamerStopped: streamerOk,
-      otherSessionActive: !!other,
-    });
-    await refreshGauges();
-    return true;
-  }
-
-  async function startLocked(req: Request, res: Response, t: { kind: "battle" | "tournament"; id: string }) {
+  /** Comprobaciones que no cambian el estado: fallan pronto sin tomar el cerrojo. */
+  async function startPrecheck(t: { kind: "battle" | "tournament"; id: string }): Promise<{ diskCheckedFor: string }> {
     const s = await loadSettings(db);
     if (!s.enabled) throw conflict("streaming_disabled", "El streaming está desactivado: actívalo antes de emitir");
     const info = await resolveTarget(db, t);
@@ -522,6 +540,72 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
         "La batalla tiene bots no públicos: /broadcast (anónima) no podría mostrarla",
       );
     }
+    if (s.mode === "record") await checkDisk();
+    return { diskCheckedFor: s.mode };
+  }
+
+  // «Llenar el disco»: no se empieza a GRABAR con menos de MIN_FREE_BYTES libres
+  // (la retención por tamaño evita que crezca sin límite; esto evita empezar sin sitio).
+  async function checkDisk(): Promise<void> {
+    const rec = await callStreamer("GET", "/recordings");
+    const free = (rec.body as { disk?: { freeBytes?: number } | null }).disk?.freeBytes;
+    // EQ5c (P3) · fail-closed: sin medida del disco no se empieza a grabar.
+    if (!rec.ok || typeof free !== "number" || !Number.isFinite(free)) {
+      throw conflict("disk_unknown", "El streamer no pudo medir el espacio libre: no se empieza a grabar");
+    }
+    if (free < MIN_FREE_BYTES) {
+      throw conflict("disk_low", `Queda poco espacio para grabar (${Math.round(free / 1024 ** 2)} MiB libres)`);
+    }
+  }
+
+  /**
+   * Recomprobación al responder el streamer: si la sesión ya no está activa (un
+   * stop ganó la carrera) o el streaming se DESACTIVÓ mientras arrancaba
+   * (EQ5d, P2), para el streamer de verdad y lo audita. Devuelve el motivo o null.
+   */
+  async function stopIfCancelled(
+    req: Request,
+    sessionId: string,
+    action: string,
+  ): Promise<"stopped_during_operation" | "disabled_during_operation" | null> {
+    const still = await db("streaming_sessions").where({ id: sessionId, state: "active" }).first();
+    const enabled = (await loadSettings(db)).enabled;
+    if (still && enabled) return null;
+    const reason = still ? "disabled_during_operation" : "stopped_during_operation";
+    if (still) {
+      // Marcar antes de parar (mismo orden que stopSession).
+      await db("streaming_sessions")
+        .where({ id: sessionId, state: "active" })
+        .update({ state: "stopped", stopped_at: db.fn.now(), stopped_by: actor(req), stop_reason: "disabled" });
+    }
+    const other = await activeSession();
+    let streamerOk = false;
+    if (!other) {
+      try {
+        streamerOk = (await deps.streamer.call("POST", "/control/stop", {})).ok;
+      } catch {
+        streamerOk = false;
+      }
+    }
+    await log(req, action, `streaming:session:${sessionId}`, {
+      reason,
+      streamerStopped: streamerOk,
+      otherSessionActive: !!other,
+    });
+    await refreshGauges();
+    return reason;
+  }
+
+  async function startLocked(
+    req: Request,
+    res: Response,
+    t: { kind: "battle" | "tournament"; id: string },
+    pre: { diskCheckedFor: string },
+  ) {
+    // Dentro del cerrojo se VUELVE a leer la configuración: pudo cambiar (o
+    // desactivarse) mientras se hacían las comprobaciones previas.
+    const s = await loadSettings(db);
+    if (!s.enabled) throw conflict("streaming_disabled", "El streaming está desactivado: actívalo antes de emitir");
     const stamp = await credentialStamp(s.platform);
     const config = appliedConfig(s, stamp);
     const existing = await activeSession();
@@ -535,19 +619,8 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
         session: { id: existing.id, target: { kind: existing.target_kind, id: existing.target_id } },
       });
     }
-    // «Llenar el disco»: no se empieza a GRABAR con menos de MIN_FREE_BYTES libres
-    // (la retención por tamaño evita que crezca sin límite; esto evita empezar sin sitio).
-    if (s.mode === "record") {
-      const rec = await callStreamer("GET", "/recordings");
-      const free = (rec.body as { disk?: { freeBytes?: number } | null }).disk?.freeBytes;
-      // EQ5c (P3) · fail-closed: sin medida del disco no se empieza a grabar.
-      if (!rec.ok || typeof free !== "number" || !Number.isFinite(free)) {
-        throw conflict("disk_unknown", "El streamer no pudo medir el espacio libre: no se empieza a grabar");
-      }
-      if (free < MIN_FREE_BYTES) {
-        throw conflict("disk_low", `Queda poco espacio para grabar (${Math.round(free / 1024 ** 2)} MiB libres)`);
-      }
-    }
+    // Si el modo pasó a «record» después de la comprobación previa, se mide aquí.
+    if (s.mode === "record" && pre.diskCheckedFor !== "record") await checkDisk();
     const sessionId = randomUUID();
     const body = await buildStartBody(s, sessionId, t);
     try {
@@ -590,7 +663,11 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     }
     // EQ5c (P2-4) · recomprobación: si mientras el streamer arrancaba alguien
     // (otra instancia de la API) paró la sesión, el stop confirmado manda.
-    if (await stopIfCancelled(req, sessionId, "streaming.session.start_cancelled")) {
+    const cancelled = await stopIfCancelled(req, sessionId, "streaming.session.start_cancelled");
+    if (cancelled === "disabled_during_operation") {
+      throw conflict("streaming_disabled", "El streaming se desactivó mientras arrancaba: no queda nada emitiendo");
+    }
+    if (cancelled) {
       throw conflict("start_cancelled", "La emisión se detuvo mientras arrancaba: no queda nada emitiendo");
     }
     await log(req, "streaming.session.start", `streaming:session:${sessionId}`, {
@@ -623,7 +700,11 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     const r = await callStreamer("POST", "/control/start", body);
     if (!r.ok) throw new ApiError(502, "streamer_error", String((r.body as Record<string, unknown>).error ?? "error"));
     // EQ5c (P2-4) · el reinicio no resucita una emisión que se paró mientras volaba.
-    if (await stopIfCancelled(req, session.id, "streaming.session.restart_cancelled")) {
+    const cancelled = await stopIfCancelled(req, session.id, "streaming.session.restart_cancelled");
+    if (cancelled === "disabled_during_operation") {
+      throw conflict("streaming_disabled", "El streaming se desactivó mientras se reiniciaba: no queda nada emitiendo");
+    }
+    if (cancelled) {
       throw conflict("not_active", "La emisión se detuvo mientras se reiniciaba: no queda nada emitiendo");
     }
     const stamp = await credentialStamp(s.platform);

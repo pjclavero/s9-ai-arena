@@ -65,7 +65,15 @@ interface StreamerView {
   legacyKeyConfigured?: boolean;
 }
 export type UxState =
-  "disabled" | "streamer_unreachable" | "ready" | "live" | "recording" | "retrying" | "failed" | "interrupted";
+  | "disabled"
+  | "streamer_unreachable"
+  | "ready"
+  | "starting"
+  | "live"
+  | "recording"
+  | "retrying"
+  | "failed"
+  | "interrupted";
 export interface StreamingAdminState {
   settings: StreamingSettings;
   platforms: { id: string; label: string; ingestUrl: string | null }[];
@@ -121,6 +129,12 @@ export const UX_TEXT: Record<UxState, { variant: StatusVariant; title: string; t
     text: "El servicio de emisión (streamer) no responde. Si esta instalación no lo tiene desplegado, no se puede emitir desde aquí.",
   },
   ready: { variant: "ok", title: "Listo", text: "Elige un destino y pulsa «Iniciar». Nada se emite hasta entonces." },
+  // EQ5d (revisión EQ6c, P3) · emisión pedida y relé aún sin publicar: no es «En directo».
+  starting: {
+    variant: "warn",
+    title: "Iniciando",
+    text: "Conectando con la ingesta. La emisión no está en directo hasta que la plataforma acepte la publicación.",
+  },
   live: { variant: "ok", title: "En directo", text: "Se está emitiendo hacia la plataforma configurada." },
   recording: { variant: "ok", title: "Grabando", text: "Se está grabando un MP4 (modo sólo grabación, sin emitir)." },
   retrying: {
@@ -242,7 +256,8 @@ export function StreamingPage(props: { me: Me; route: string }) {
   if (!st) return <LoadingState label="la administración de streaming" />;
 
   const ux = UX_TEXT[st.uxState];
-  const active = st.uxState === "live" || st.uxState === "recording" || st.uxState === "retrying";
+  const active =
+    st.uxState === "starting" || st.uxState === "live" || st.uxState === "recording" || st.uxState === "retrying";
   return (
     <div data-testid="streaming-page">
       <div className="card">
@@ -251,7 +266,7 @@ export function StreamingPage(props: { me: Me; route: string }) {
           Emite o graba la vista <code>/broadcast</code> de una batalla o un torneo.{" "}
           <a href={helpHref("administracion", "streaming")}>Ayuda de Streaming</a>
         </p>
-        <LiveStatus data-testid="streaming-state" busy={st.uxState === "retrying"}>
+        <LiveStatus data-testid="streaming-state" busy={st.uxState === "retrying" || st.uxState === "starting"}>
           <StatusBadge variant={ux.variant} data-testid="streaming-ux-state">
             {ux.title}
           </StatusBadge>{" "}
