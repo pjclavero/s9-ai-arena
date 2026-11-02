@@ -62,13 +62,26 @@ export type GameModeId =
   | "juggernaut";
 
 /**
- * R-RULES · Criterios de desempate al acabar el tiempo (datos, no `if` por modo):
+ * R-RULES · Criterios de desempate al acabar el tiempo (datos, no `if` por modo).
+ * Motor 0.4.0 (ADR-022). Cada criterio da un número por equipo; gana el mayor:
  *  - `score`: más puntos del modo;
+ *  - `alive`: más vehículos VIVOS y no descalificados en el tick final;
  *  - `lives`: más vidas en juego (vivos + reapariciones restantes; sin respawn = vivos);
+ *  - `respawns_left`: más reapariciones restantes (suma del bando; sin respawn = 0);
+ *  - `kills`: más bajas de vehículos ENEMIGOS (el fuego amigo y la muerte ambiental no cuentan);
  *  - `hull`: más integridad (suma de casco/casco máximo de los vivos, redondeo 1e-4).
+ *    Se conserva en el motor pero ningún preset lo usa desde 0.4.0.
+ * Si todos los criterios empatan ⇒ `draw`.
  */
-export type TimeoutTiebreakCriterion = "score" | "lives" | "hull";
-export const TIMEOUT_TIEBREAK_CRITERIA: readonly TimeoutTiebreakCriterion[] = ["score", "lives", "hull"];
+export type TimeoutTiebreakCriterion = "score" | "alive" | "lives" | "respawns_left" | "kills" | "hull";
+export const TIMEOUT_TIEBREAK_CRITERIA: readonly TimeoutTiebreakCriterion[] = [
+  "score",
+  "alive",
+  "lives",
+  "respawns_left",
+  "kills",
+  "hull",
+];
 
 export interface Ruleset {
   rulesetId: string;
@@ -90,6 +103,15 @@ export interface Ruleset {
    * empatan, `draw`. Ausente = el desempate de 0.3.0 (más puntos; si no, empate).
    */
   timeoutTiebreak?: TimeoutTiebreakCriterion[];
+  /**
+   * Motor 0.4.0 (ADR-022) · PRÓRROGA. Si al agotar `timeLimitTicks` los dos primeros
+   * equipos empatan a puntos, la batalla NO termina: sigue con el MISMO estado (bots,
+   * banderas, posiciones, reapariciones) y gana el primer equipo que supere su
+   * puntuación del final del tiempo reglamentario («la siguiente captura gana»).
+   * `maxTicks` es el LÍMITE DE SEGURIDAD explícito de la prórroga: si se agota sin
+   * puntuar nadie, la batalla termina en `draw`. Ausente = sin prórroga (0.3.0).
+   */
+  overtime?: { kind: "next_score_wins"; maxTicks: number };
   sharedTeamVision: boolean;
   /** Ticks de gracia tras desconexión antes de descalificar (D2). */
   disconnectGraceTicks: number;
@@ -242,4 +264,14 @@ export function loadRuleset(id: string, overrides: Partial<Ruleset> = {}): Rules
   const rs = safeLookup(RULESETS, id);
   if (!rs) throw new Error(`Ruleset desconocido: ${id}`);
   return { ...rs, ...overrides };
+}
+
+/**
+ * Motor 0.4.0 (ADR-022) · Ticks MÁXIMOS que puede durar una batalla con este ruleset:
+ * tiempo reglamentario + límite de seguridad de la prórroga (si la declara). Es la
+ * cifra que deben usar los temporizadores de pared (contenedores, HTTP): con prórroga,
+ * `timeLimitTicks` solo ya no acota la duración.
+ */
+export function maxBattleTicks(ruleset: Pick<Ruleset, "timeLimitTicks" | "overtime">): number {
+  return ruleset.timeLimitTicks + (ruleset.overtime?.maxTicks ?? 0);
 }

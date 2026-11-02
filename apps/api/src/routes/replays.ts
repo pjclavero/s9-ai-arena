@@ -263,6 +263,9 @@ export function replayRoutes(
         // UX-F (DEF-R1) · sólo para engine_version_mismatch: «otra versión», no «manipulado».
         message: dbHashOk ? r.message : undefined,
         divergedAtTick: r.verification?.divergedAtTick ?? undefined,
+        // ADR-022 · un replay 0.3.0 se re-simula con el motor 0.4.0: se dice con cuál.
+        recordedWith: replay.header?.versions?.engine,
+        verifiedWith: r.verifiedWith,
       });
     },
     (req, res, next) => anonQuota(db, "replay-verify", quota)(req, res, next),
