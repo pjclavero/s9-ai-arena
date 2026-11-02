@@ -11,7 +11,7 @@ import { materializeBattles } from "./scheduler.js";
 import { HunterBot } from "../../arena-engine/src/stubs.js";
 import { fromJsonl } from "../../arena-engine/src/replay.js";
 import { loadRuleset } from "../../../packages/game-rules/index.js";
-import { makeEngineExecutor } from "./engine-executor.js";
+import { makeEngineExecutor, spectateDetachDelayMs } from "./engine-executor.js";
 import { createPublishedBot, type TestBot } from "./testing/fixtures.js";
 import type { BattleContext } from "./battle-runner.js";
 
@@ -230,4 +230,72 @@ describe("torneo · copia inmutable de reglas (ADR-022)", () => {
     const row = await h.db("battles").where({ id: ids[0] }).first();
     expect(row.rules).toBeNull();
   }, 60_000);
+});
+
+describe("espectador · el detach espera el retardo anti-coaching (integración EQ2/EQ6)", () => {
+  /** Ejecuta la batalla con un gateway falso y mide cuánto tarda el detach tras terminar. */
+  async function detachAfter(delaySeconds: number | undefined, spectatorMode?: string) {
+    const participants = bots.map((b, i) => ({ botId: b.botId, version: 1, team: i < 2 ? "red" : "blue" }));
+    const built = await buildBattleRules(h.db, {
+      mode: "team_deathmatch",
+      rulesetId: "team-deathmatch-mvp",
+      participants,
+      rules: { preset: "team_deathmatch", teamSize: 2 },
+    });
+    const snap = structuredClone(built.snapshot!);
+    snap.engineRuleset.timeLimitTicks = 60; // batalla corta: lo que se mide es el detach
+    if (delaySeconds !== undefined) snap.engineRuleset.spectator = { delaySeconds };
+    const { battle, participants: rows } = await insertBattle(snap);
+    if (spectatorMode) {
+      await h.db("battles").where({ id: battle.id }).update({ spectator_mode: spectatorMode });
+      battle.spectator_mode = spectatorMode;
+    }
+    let attachedDelay: number | undefined;
+    let detachedAt = 0;
+    let finishedAt = 0;
+    const detached = new Promise<void>((resolve) => {
+      const sink = {
+        attachBattle: (_id: string, _engine: unknown, o: { spectator?: { delaySeconds?: number } }) => {
+          attachedDelay = o.spectator?.delaySeconds;
+        },
+        detachBattle: () => {
+          detachedAt = Date.now();
+          resolve();
+        },
+      };
+      void (async () => {
+        await makeEngineExecutor({
+          db: h.db,
+          agentResolver: (botId) => new HunterBot(botId),
+          rulesetOverrides: {},
+          spectate: sink as never,
+          spectateDetachDelayMs: 50,
+        })(ctx(battle, rows));
+        finishedAt = Date.now();
+      })();
+    });
+    await detached;
+    return { gapMs: detachedAt - (finishedAt || detachedAt), attachedDelay };
+  }
+
+  it("con retardo de 1 s el detach llega DESPUÉS del retardo (margen 50 ms + 1000 ms)", async () => {
+    const r = await detachAfter(1);
+    expect(r.attachedDelay).toBe(1);
+    expect(r.gapMs).toBeGreaterThanOrEqual(900);
+  }, 60_000);
+
+  it("sin retardo (o batalla visible) el detach es el de siempre", async () => {
+    const a = await detachAfter(undefined);
+    expect(a.gapMs).toBeLessThan(900);
+    const b = await detachAfter(1, "visible");
+    expect(b.attachedDelay).toBe(0);
+    expect(b.gapMs).toBeLessThan(900);
+  }, 60_000);
+
+  it("spectateDetachDelayMs: base + retardo; 0, negativo o ausente = base", () => {
+    expect(spectateDetachDelayMs(3000, { delaySeconds: 30 })).toBe(33_000);
+    expect(spectateDetachDelayMs(3000, { delaySeconds: 0 })).toBe(3000);
+    expect(spectateDetachDelayMs(3000, { delaySeconds: -5 })).toBe(3000);
+    expect(spectateDetachDelayMs(3000, undefined)).toBe(3000);
+  });
 });
