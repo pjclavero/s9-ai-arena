@@ -430,6 +430,7 @@ paths:
               properties:
                 name: { type: string, maxLength: 48 }
                 visibility: { $ref: '#/components/schemas/Visibility' }
+                retired: { type: boolean, description: 'EQ4 · true retira el bot de la lista principal (conserva la fecha si ya lo estaba); false lo reactiva. Organizativo.' }
       responses:
         '200': { description: Actualizado, content: { application/json: { schema: { $ref: '#/components/schemas/Bot' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -1722,6 +1723,7 @@ components:
         latestPublishedVersion: { type: integer }
         rating: { type: number }
         createdAt: { type: string, format: date-time }
+        retiredAt: { type: string, format: date-time, nullable: true, description: 'EQ4 · el dueño lo retiró de su lista principal (organizativo: no borra versiones ni historial ni cambia qué versiones juegan). null = activo.' }
     BotPage:
       type: object
       properties:

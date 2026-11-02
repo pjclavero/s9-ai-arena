@@ -42,6 +42,8 @@ export function botToJson(bot: Record<string, unknown>, latestPublished?: number
     latestPublishedVersion: latestPublished,
     rating,
     createdAt: (bot.created_at as Date).toISOString(),
+    // EQ4 · retirado (organizativo): fecha o null.
+    retiredAt: bot.retired_at ? (bot.retired_at as Date).toISOString() : null,
   };
 }
 
@@ -275,7 +277,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
     assertOwner(req.auth, bot); // metadatos: SOLO el dueño (contrato)
     const patch: Record<string, unknown> = {};
-    const { name, visibility } = req.body ?? {};
+    const { name, visibility, retired } = req.body ?? {};
     if (name !== undefined) {
       if (typeof name !== "string" || !name || name.length > 48) throw badRequest("name inválido");
       patch.name = name;
@@ -283,6 +285,11 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     if (visibility !== undefined) {
       if (!["private", "team", "public"].includes(visibility)) throw badRequest("visibility inválida");
       patch.visibility = visibility;
+    }
+    // EQ4 · retirar/reactivar: sólo organiza la lista; no toca versiones ni historial.
+    if (retired !== undefined) {
+      if (typeof retired !== "boolean") throw badRequest("retired debe ser true o false");
+      patch.retired_at = retired ? (bot.retired_at ?? db.fn.now()) : null;
     }
     const [updated] = Object.keys(patch).length
       ? await db("bots").where({ id: bot.id }).update(patch).returning("*")
