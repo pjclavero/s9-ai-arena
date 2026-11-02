@@ -250,6 +250,8 @@ describe("EQ3 Centro de Ayuda · contenido desde las fuentes de verdad", () => {
     expect(facts).toMatch(/Sólo las batallas oficiales de torneo/);
     expect(facts).toMatch(/Victorias - Derrotas - Empates/);
     expect(facts).toMatch(/ranking independiente/);
+    expect(facts).toMatch(/por enfrentamientos del torneo, no por batallas/);
+    expect(facts).toMatch(/Para el rating, una descalificación cuenta como derrota/);
     expect(RANKING_EMPTY_LINES).toEqual([
       "Todavía no hay clasificación oficial para este modo.",
       "La clasificación sólo incluye batallas oficiales de torneo.",
@@ -272,6 +274,30 @@ describe("EQ3 Centro de Ayuda · contenido desde las fuentes de verdad", () => {
     const pal = screen.getByTestId("help-map-palette");
     for (const t of ["Muro", "Caja", "Zona de daño", "Zona de captura", "Base roja", "Bandera azul"])
       expect(pal.textContent).toContain(t);
+  });
+});
+
+describe("EQ3 API estable para EQ4 (ModeHelpTip)", () => {
+  it("ModeHelpTip: un ⓘ por modo, enlace a su hoja y nombre accesible SIN la palabra «modo» (los specs usan getByLabel('modo'))", async () => {
+    const { ModeHelpTip, modeHelpHref } = await import("../src/help/sections/rules.js");
+    const { parseHelpHash } = await import("../src/help/tree.js");
+    const { MODES } = await import("../src/help/sources.js");
+    for (const m of Object.keys(MODES)) {
+      cleanup();
+      render(<ModeHelpTip mode={m} />);
+      const btn = screen.getByTestId(`tip-mode-${m}-trigger`);
+      expect(btn.getAttribute("aria-label")).not.toMatch(/modo/i);
+      fireEvent.click(btn);
+      const href = screen.getByRole("link", { name: "Más en el Centro de Ayuda" }).getAttribute("href")!;
+      expect(href).toBe(modeHelpHref(m));
+      expect(parseHelpHash(href).notFound, `${m} enlaza a una hoja que existe`).toBe(false);
+    }
+    // Y ningún ⓘ de la propia ayuda usa «modo» en su nombre accesible.
+    installFetch("ok");
+    cleanup();
+    await show("#/help/batallas/nueva");
+    for (const b of document.querySelectorAll(".infotip-trigger"))
+      expect(b.getAttribute("aria-label")).not.toMatch(/modo/i);
   });
 });
 
@@ -367,7 +393,11 @@ describe("EQ3 Centro de Ayuda · navegación, accesibilidad y alias", () => {
     fireEvent.change(screen.getByLabelText("Buscar en la ayuda"), { target: { value: "elo" } });
     fireEvent.click(screen.getByTestId("tip-vde-trigger"));
     const dlg = screen.getByRole("dialog", { name: "V-D-E" });
-    expect(dlg.textContent).toMatch(/descalificación cuenta como derrota/);
+    // EQ6 (#210): V-D-E cuenta ENFRENTAMIENTOS (leagueTable), un bye es victoria; la descalificación es cosa del Elo.
+    expect(dlg.textContent).toMatch(/enfrentamientos del torneo/);
+    expect(dlg.textContent).toMatch(/bye\) cuenta como victoria/);
+    expect(dlg.textContent).not.toMatch(/descalificación/);
+    expect(dlg.textContent).not.toMatch(/batallas oficiales/);
     fireEvent.keyDown(dlg, { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
     expect((screen.getByLabelText("Buscar en la ayuda") as HTMLInputElement).value).toBe("elo");

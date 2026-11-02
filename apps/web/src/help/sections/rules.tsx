@@ -444,7 +444,7 @@ export function BattleNew() {
         </li>
         <li>
           <strong>Modo</strong>{" "}
-          <InfoTip topic="Modo" helpHref={helpHref("modos", "deathmatch")} testId="tip-mode">
+          <InfoTip topic="Reglas de victoria" helpHref={helpHref("modos", "deathmatch")} testId="tip-mode">
             Las reglas de victoria: {PLATFORM_MODES.map((m) => anyModeName(m)).join(", ")}.
           </InfoTip>{" "}
           y <strong>ruleset</strong> (las reglas concretas: duración, puntos, presupuesto).
@@ -623,6 +623,12 @@ export function RulesReference() {
   );
 }
 
+/** Hoja de ayuda de un modo: la suya si es de la plataforma; Eliminación u «Otros presets» si sólo es del motor. */
+export function modeHelpHref(mode: string): string {
+  if (isPlatformMode(mode)) return helpHref("modos", mode);
+  return helpHref("modos", mode === "last_man_standing" ? "eliminacion" : "otros");
+}
+
 /** ⓘ listo para el selector de modo (EQ2/EQ4): explicación corta + enlace a la página del modo. */
 export function ModeHelpTip(props: { mode: string }) {
   const short: Record<string, string> = {
@@ -633,7 +639,7 @@ export function ModeHelpTip(props: { mode: string }) {
   };
   const m = MODES[props.mode];
   return (
-    <InfoTip topic={anyModeName(props.mode)} helpHref={helpHref("modos", props.mode)} testId={`tip-mode-${props.mode}`}>
+    <InfoTip topic={anyModeName(props.mode)} helpHref={modeHelpHref(props.mode)} testId={`tip-mode-${props.mode}`}>
       {short[props.mode] ?? "Modo del motor."} {m ? `Al acabar el tiempo: ${humanize(TIEBREAK_NAME, m.tiebreak)}.` : ""}
     </InfoTip>
   );
