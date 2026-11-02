@@ -33,7 +33,7 @@ emisión **ya no va al argv de FFmpeg** (relé RTMP en el propio streamer) y se 
 
 Pantalla **Administración → Streaming** (`#/streaming`, sólo `admin`; el RBAC lo aplica la
 API: 12 operaciones `x-min-role: admin` del contrato 0.13.0, tag `streaming`). Ayuda offline en
-**Ayuda → Administración → Streaming**. Uso normal sin SSH, `.env` ni Compose.
+**Ayuda → Administración: Streaming**. Uso normal sin SSH, `.env` ni Compose.
 
 | Sección | Qué hace |
 |---|---|
