@@ -11,6 +11,9 @@
  *  5. 4v4 Team Deathmatch             (preset team_deathmatch)   — API
  *  6. Personalizada con tope de créditos (2v2) — UI: primero ✗ con un bot caro, luego ✓
  *  7. Personalizada con tope de masa (2v2)     — API: 422 con el pesado, luego 202
+ *  8. CTF preset ctf@1 2v2 (corredor + tirador por bando)                 — API (EQ2, 0.4.0)
+ *  9. CTF personalizada 1 min SIN corredores: prórroga y límite de seguridad ⇒ empate — API
+ * 10. CTF personalizada 1 min con un corredor rojo: captura (en tiempo o en prórroga) — API
  *
  * Para cada una se comprueba: resultado coherente con las reglas, copia de reglas en la
  * batalla, replay (índice con el ruleset copiado), visor del replay (canvas pintado) y
@@ -151,6 +154,31 @@ class Atacante(ArenaBot):
             cmd["move"] = self.drive(obs, goal, 1.0)
         return cmd
 `;
+/**
+ * EQ2 · Corredor de CTF: el MISMO pilotaje que SHOOTER, pero su objetivo es la bandera
+ * rival (en la base rival, pública en el WELCOME) y, con ella, su propia base. Dispara
+ * de paso si tiene a alguien a tiro.
+ */
+const RUNNER = SHOOTER.replace(
+  `    def decide(self, obs):
+        if not self.ready or not obs.get("self") or obs["self"].get("respawningInTicks"):
+            return {}`,
+  `    def decide(self, obs):
+        if not self.ready or not obs.get("self") or obs["self"].get("respawningInTicks"):
+            return {}
+        s = obs["self"]
+        me = s["position"]
+        own = [b["position"] for b in self.bases if b.get("team") == self.team]
+        foe = [b["position"] for b in self.bases if b.get("team") != self.team]
+        if own and foe:
+            goal = own[0] if s.get("carryingFlag") else foe[0]
+            return {"move": self.drive(obs, goal, 1.0)}`,
+).replace(
+  `        self.ready = True`,
+  `        self.bases = m.get("bases") or []
+        self.ready = True`,
+);
+
 /** Ligero: 690 cr · 2260 kg (chasis+módulos; masa con la munición embebida). */
 const LIGHT = {
   catalogVersion: "mvp@1",
@@ -167,6 +195,7 @@ const HEAVY = { ...LIGHT, modules: [...LIGHT.modules, { slot: "armor_front", mod
 
 const NAMES = ["R1", "R2", "R3", "R4", "B1", "B2", "B3", "B4"].map((n) => `rules-${n}-${STAMP}`);
 const HEAVY_NAME = `rules-HEAVY-${STAMP}`;
+const RUNNER_NAMES = ["RUN-R", "RUN-B"].map((n) => `rules-${n}-${STAMP}`);
 
 async function bearer(page: Page, creds: { email: string; password: string }) {
   const r = await page.request.post("/api/v1/auth/login", { data: creds });
@@ -174,13 +203,13 @@ async function bearer(page: Page, creds: { email: string; password: string }) {
   return ((await r.json()) as { accessToken: string }).accessToken;
 }
 
-async function botSubmitted(page: Page, api: PublicApi, creds: any, name: string, loadout: unknown) {
+async function botSubmitted(page: Page, api: PublicApi, creds: any, name: string, loadout: unknown, code = SHOOTER) {
   const bot = await api.ok<{ id: string }>("POST", "/bots", { name });
   const lo = await api.ok<{ revision: number }>("POST", `/bots/${bot.id}/loadouts`, loadout);
   const up = await page.request.post(`/api/v1/bots/${bot.id}/versions`, {
     headers: { Authorization: `Bearer ${await bearer(page, creds)}` },
     multipart: {
-      source: { name: "bot.py", mimeType: "text/plain", buffer: Buffer.from(SHOOTER) },
+      source: { name: "bot.py", mimeType: "text/plain", buffer: Buffer.from(code) },
       runtime: "python",
       loadoutRevision: String(lo.revision),
     },
@@ -238,7 +267,9 @@ const teamsOf = (b: any) => Object.keys(b.result?.score ?? {});
 const sum = (o: Record<string, any>, k: string) => Object.values(o).reduce((a: number, x: any) => a + (x[k] ?? 0), 0);
 
 test.describe("@rules R-RULES · batallas reales por conjunto de reglas", () => {
-  test("7 batallas reales: presets 1v1/4v4 y personalizadas con créditos y masa", async ({ page }, info) => {
+  test("10 batallas reales: presets 1v1/4v4, personalizadas con créditos y masa, CTF y prórroga", async ({
+    page,
+  }, info) => {
     test.setTimeout(5_400_000);
     const problems = watchProblems(page);
     const creds = await registerNewUser(page);
@@ -249,7 +280,9 @@ test.describe("@rules R-RULES · batallas reales por conjunto de reglas", () => 
     const ids: string[] = [];
     for (const n of NAMES) ids.push(await botSubmitted(page, api, creds, n, LIGHT));
     const heavyId = await botSubmitted(page, api, creds, HEAVY_NAME, HEAVY);
-    const all = [...ids, heavyId];
+    const runners: string[] = [];
+    for (const n of RUNNER_NAMES) runners.push(await botSubmitted(page, api, creds, n, LIGHT, RUNNER));
+    const all = [...ids, heavyId, ...runners];
     await expect
       .poll(
         async () => {
@@ -270,7 +303,8 @@ test.describe("@rules R-RULES · batallas reales por conjunto de reglas", () => 
     // --- 1 · Duelo por la UI ---------------------------------------------------------
     await go(page, "#/battles/new");
     await expect(page.getByLabel("reglas Duelo")).toBeChecked();
-    await expect(page.getByTestId("rules-summary")).toContainText("Respawns: ninguno (1 vida)");
+    await expect(page.getByTestId("rules-summary")).toContainText("Reaparición: Sin reaparición (1 vida)");
+    await expect(page.getByTestId("rules-tiebreak")).toContainText("más bots vivos");
     await page.getByLabel("mapa").selectOption({ index: 0 });
     await page.getByLabel("bot rojo").selectOption({ label: `${NAMES[0]} (v1)` });
     await page.getByLabel("bot azul").selectOption({ label: `${NAMES[4]} (v1)` });
@@ -385,6 +419,59 @@ test.describe("@rules R-RULES · batallas reales por conjunto de reglas", () => 
       )
     ).id;
 
+    // --- 8-10 · CTF (EQ2, motor 0.4.0) ---------------------------------------------------
+    const ctf = (p: P[], rules: unknown) => ({
+      mode: "capture_the_flag",
+      rulesetId: "capture-the-flag-mvp",
+      mapId: "mvp-arena-01",
+      participants: p,
+      rules,
+    });
+    const ctfId = (
+      await api.ok<any>(
+        "POST",
+        "/battles",
+        ctf([...side([runners[0], ids[2]], "red"), ...side([runners[1], ids[6]], "blue")], {
+          preset: "ctf",
+          teamSize: 2,
+        }),
+      )
+    ).id;
+    const ctfQuick = {
+      preset: "custom",
+      teamSize: 2,
+      params: {
+        game: "capture_the_flag",
+        respawn: { mode: "unlimited", delaySeconds: 5 },
+        victory: "score_limit",
+        scoreLimit: 3,
+        timeLimitMinutes: 1,
+        ctf: { flagReturnSeconds: 10, requireOwnFlagAtBase: true },
+      },
+    };
+    const otDrawId = (
+      await api.ok<any>(
+        "POST",
+        "/battles",
+        ctf([...side([ids[3], ids[1]], "red"), ...side([ids[7], ids[5]], "blue")], ctfQuick),
+      )
+    ).id;
+    const otRunId = (
+      await api.ok<any>(
+        "POST",
+        "/battles",
+        ctf([...side([runners[0], ids[0]], "red"), ...side([ids[4], ids[5]], "blue")], ctfQuick),
+      )
+    ).id;
+    const badTeams = await api.raw(
+      "POST",
+      "/battles",
+      ctf([...side([runners[0], ids[0]], "A"), ...side([ids[4], ids[5]], "B")], { preset: "ctf", teamSize: 2 }),
+    );
+    expect(badTeams.status).toBe(409);
+    expect(badTeams.body.error).toBe("map_team_mismatch");
+    evidence("rules-ctf-bandos-sin-bandera", badTeams.body);
+
     // --- UI de la personalizada: checklist con el bot pesado (✗) en «Nueva batalla» -------
     // Tras crear el Duelo la página sigue en «Batalla encolada» con el MISMO hash: se
     // pasa por la lista para que «Nueva batalla» se monte de nuevo.
@@ -453,6 +540,37 @@ test.describe("@rules R-RULES · batallas reales por conjunto de reglas", () => 
       expect(b.rules.composition.botMassKg).toBe(2300);
       expect(s.profile).toBe("deathmatch");
     });
+    const otEvents = async (battleId: string) => {
+      const idx = await api.ok<any>("GET", `/replays/${battleId}/index`).catch(() => null);
+      return idx;
+    };
+    await verifyBattle(page, api, info, "8-ctf-preset", ctfId, (b, s) => {
+      expect(b.rules.presetId).toBe("ctf");
+      expect(b.rules.engine.overtime).toEqual({ kind: "next_score_wins", maxTicks: 5400 });
+      expect(s.profile).toBe("capture_the_flag");
+      const sc = Object.values(b.result.score) as number[];
+      // Termina por 3 capturas, por más capturas al tiempo, en prórroga o empate al límite de seguridad.
+      expect(b.result.ticks).toBeLessThanOrEqual(9000 + 5400);
+      if (b.result.ticks < 9000) expect(Math.max(...sc)).toBe(3);
+    });
+    const ot = await verifyBattle(page, api, info, "9-ctf-prorroga-empate", otDrawId, (b) => {
+      expect(b.rules.engine.overtime.maxTicks).toBe(5400);
+      // Sin corredores nadie captura: 0-0 al minuto ⇒ prórroga de 3 min ⇒ empate a los 4 min.
+      if ((Object.values(b.result.score) as number[]).every((x) => x === 0)) {
+        expect(b.result.winner).toBe("draw");
+        expect(b.result.ticks).toBe(1800 + 5400);
+      }
+    });
+    evidence("rules-9-indice", await otEvents(otDrawId));
+    await verifyBattle(page, api, info, "10-ctf-corredor", otRunId, (b) => {
+      const sc = b.result.score as Record<string, number>;
+      if (b.result.ticks > 1800) {
+        // Decidida en la prórroga: la ganó quien capturó primero (marcador +1) o empate al límite.
+        if (b.result.winner !== "draw") expect(sc[b.result.winner]).toBeGreaterThan(Math.min(...Object.values(sc)));
+        else expect(b.result.ticks).toBe(1800 + 5400);
+      }
+    });
+    void ot;
     evidence("rules-problems", problems);
     expect(problems.filter((p) => !p.startsWith("console.error"))).toEqual([]);
   });
