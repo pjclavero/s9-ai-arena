@@ -170,7 +170,7 @@ export function TeamsPage(props: { me: Me }) {
             [current].map((t) => (
               <section key={t.id} className="card" data-testid={`team-${t.name}`} aria-label={`equipo ${t.name}`}>
                 <h3>
-                  {t.name} <small>{t.isCaptain ? "· eres capitán" : "· eres miembro"}</small>
+                  Equipo «{t.name}» <small>{t.isCaptain ? "· eres capitán" : "· eres miembro"}</small>
                 </h3>
                 {t.isCaptain && (
                   <p>
