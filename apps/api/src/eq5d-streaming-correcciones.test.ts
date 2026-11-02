@@ -209,6 +209,46 @@ describe("EQ5d · P2 · desactivar con un start en vuelo", () => {
     expect({ emitting: st.emitting, active: (await active()).length }).toEqual({ emitting: false, active: 0 });
   });
 
+  it("(c) entre DOS instancias: el PUT de B lee la sesión DESPUÉS de guardar ⇒ para el start de A que se coló entre su comprobación y su escritura", async () => {
+    const appB = createApp({
+      db: h.db,
+      streamer: st,
+      streamingPublicKey: () => ({ pem: PUB, kid: keyIdOf(PUB) }),
+      broadcastBaseUrl: "http://web:3000/broadcast",
+    });
+    // Un bloqueo de fila REAL retiene el UPDATE del PUT de B justo después de su
+    // comprobación previa de sesión (que no ve nada: A aún no ha empezado).
+    const trx = await h.db.transaction();
+    try {
+      await trx("streaming_settings").where({ id: 1 }).forUpdate().first();
+      const v = (await getState()).settings.version;
+      const offP = request(appB)
+        .put("/admin/streaming/settings")
+        .set(auth())
+        .send({ version: v, enabled: false })
+        .then((r) => r);
+      let waiting = 0;
+      for (let i = 0; i < 200 && waiting === 0; i++) {
+        const r = await h.db.raw(
+          "select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and query ilike 'update %streaming_settings%'",
+        );
+        waiting = r.rows[0].n;
+        if (!waiting) await new Promise((res) => setTimeout(res, 20));
+      }
+      expect(waiting).toBe(1);
+      // A arranca entero mientras B está retenido: su recomprobación aún ve enabled=true.
+      const ra = await start();
+      expect(ra.status).toBe(201);
+      expect(st.emitting).toBe(true);
+      await trx.rollback();
+      const off = await offP;
+      expect({ status: off.status, stopped: off.body.stopped }).toEqual({ status: 200, stopped: true });
+    } finally {
+      if (!trx.isCompleted()) await trx.rollback();
+    }
+    expect({ emitting: st.emitting, active: (await active()).length }).toEqual({ emitting: false, active: 0 });
+  });
+
   it("control: desactivar con una emisión activa y confirmStop la para dentro del cerrojo (stopped=true)", async () => {
     expect((await start()).status).toBe(201);
     const r = await put({ enabled: false, confirmStop: true });
