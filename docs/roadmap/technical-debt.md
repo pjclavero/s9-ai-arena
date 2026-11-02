@@ -509,11 +509,11 @@ Estados posibles:
   - `apps/api/src/services/battle-run-http-launcher.ts:141-146,638`: el camino real traduce el chasis a uno de 3 arquetipos.
   - `apps/arena-engine/src/sim/combat.ts:198`: TTL fijo de 90 ticks; `rangeM` no se usa.
   - `apps/arena-engine/src/sim/sensors.ts:227`: `radioReaches` nunca se llama.
-  - `radio-regression.test.ts:98` acepta que un enemigo intercepte la radio.
+  - ~~`radio-regression.test.ts:98` acepta que un enemigo intercepte la radio.~~ Corregido: la radio sólo llega al propio equipo (`radioDeliverableTo`, `radio-team-isolation.test.ts`).
 - **Problema:**
   - En el camino real sólo cuenta el chasis.
   - Algunos campos del catálogo no tienen efecto: `radio.rangeM`, `weapon.rangeM`, `movement.terrain`, `utility.*` y otros.
-  - La radio no tiene alcance ni filtro de equipo, en contra de lo que decide ADR-000.
+  - La radio no tiene alcance, en contra de lo que decide ADR-000 (el filtro de equipo ya se aplica).
 - **Impacto:** el usuario configura cosas que no cambian la batalla.
 - **Solución prevista:** llevar el loadout completo al camino real, dar efecto a los campos o retirarlos del catálogo, e implementar el alcance y el filtro de la radio.
 - **Condición de cierre:** hay un test por campo que demuestra su efecto en la simulación, y el test de radio exige el filtro de equipo.
