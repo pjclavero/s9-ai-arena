@@ -31,7 +31,7 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((s) => new Promise((r) => s.close(r))));
 });
 
-type Behaviour = "silent_after_handshake" | "normal" | "stall_reads_after_publish";
+type Behaviour = "silent_after_handshake" | "normal" | "stall_reads_after_publish" | "reject_publish" | "reject_connect";
 
 /** Ingesta RTMP falsa. Registra el nombre de stream (la CLAVE) de cada publish. */
 async function fakeIngest(behaviour: Behaviour) {
@@ -70,6 +70,15 @@ async function fakeIngest(behaviour: Behaviour) {
           const txn = Number(v[1]);
           if (name === "connect") seen.connects++;
           if (behaviour === "silent_after_handshake") continue; // acepta TLS+handshake y calla
+          if (name === "connect" && behaviour === "reject_connect") {
+            reply("_error", txn, [null, { level: "error", code: "NetConnection.Connect.Rejected", description: "app no válida" }]);
+            continue;
+          }
+          if (name === "publish" && behaviour === "reject_publish") {
+            // Clave errónea/caducada: rechazo explícito SIN cerrar el socket (Wowza y otros).
+            reply("onStatus", 0, [null, { level: "error", code: "NetStream.Publish.BadName", description: "invalid stream key" }], 1);
+            continue;
+          }
           if (name === "connect") reply("_result", txn, [{}, { code: "NetConnection.Connect.Success" }]);
           if (name === "createStream") reply("_result", txn, [null, 1]);
           if (name === "publish") {
@@ -222,6 +231,30 @@ async function controlWith(ingestDial: (t: IngestTarget) => import("node:stream"
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   return { sup, base };
 }
+
+describe("EQ6b · supervisor ante un rechazo explícito de la ingesta", () => {
+  for (const behaviour of ["reject_publish", "reject_connect"] as const) {
+    it(`DEFECTO P1 · ${behaviour}: el rechazo (clave errónea / app rechazada) NO llega al supervisor: queda «streaming», 0 reintentos y sin lastError`, async () => {
+      const ing = await fakeIngest(behaviour);
+      const logger = createLogger(null, () => {});
+      const sup = new StreamSupervisor({
+        config: { ...DEFAULT_CONFIG, retryDelayMs: 10, maxRetries: 2 },
+        spawner: () => new FakeChild(),
+        logger,
+        dial: ing.dial,
+        streamKey: "clave-erronea-123456",
+      });
+      sup.start();
+      await new Promise((r) => setTimeout(r, 1000));
+      const view = { state: sup.state, restarts: sup.restarts, lastError: sup.lastError?.message ?? null, relay: sup.relayState };
+      sup.stop();
+      expect(ing.seen.connects).toBeGreaterThan(0); // la orden llegó a la ingesta
+      // Lo exigible: el rechazo se ve (lastError) y se reintenta o se da por fallida.
+      expect(view.lastError, JSON.stringify(view)).not.toBeNull();
+      expect(view.restarts, JSON.stringify(view)).toBeGreaterThan(0);
+    });
+  }
+});
 
 describe("EQ6b · API interna de control del streamer", () => {
   it("DEFECTO P2 · el sobre sellado NO está atado a su destino: con el secreto interno se reenvía la clave de YouTube a una ingesta arbitraria", async () => {
