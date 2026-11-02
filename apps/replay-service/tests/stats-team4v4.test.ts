@@ -8,9 +8,9 @@
  *     equipo IGUALES al marcador del motor (`result.score`).
  *  2. `perTeam` = suma de lo deportivo de `perBot` (bajas, muertes, daño,
  *     disparos, aciertos).
- *  3. Radio observada sin cambiar el contrato (Fase 6): `radio.sent`, `received`,
+ *  3. Radio observada (Fase 6): `radio.sent`, `received`,
  *     `receivedFromTeammates`, `receivedFromEnemies` EXACTOS contra lo que los
- *     agentes vivos oyeron en la batalla original; el rival también oye.
+ *     agentes vivos oyeron en la batalla original; el rival no oye (RADIO_SCOPE=TEAM).
  *  4. Los ganchos de `resimulateWithEvents` no alteran la simulación.
  *
  * La verdad de cada comprobación sale de una fuente INDEPENDIENTE de stats.ts:
@@ -127,8 +127,9 @@ describe("4v4-STATS · radio observada (Fase 6) sin cambiar el contrato", () => 
       expect(s.perBot[id].radio.receivedFromTeammates, id).toBe(mate);
       expect(s.perBot[id].radio.receivedFromEnemies, id).toBe(enemy);
     }
-    // Contrato actual: el rival TAMBIÉN oye (sensors.ts; radio-regression.test.ts).
-    for (const id of BLUE) expect(s.perBot[id].radio.receivedFromEnemies, id).toBeGreaterThan(0);
+    // Contrato: la radio es de equipo; el rival no oye nada (radio-team-isolation.test.ts).
+    for (const id of BLUE) expect(s.perBot[id].radio.receivedFromEnemies, id).toBe(0);
+    for (const id of BLUE) expect(s.perBot[id].radio.received, id).toBe(0);
     for (const id of ["r2", "r3", "r4"]) expect(s.perBot[id].radio.receivedFromTeammates, id).toBeGreaterThan(0);
     // Sólo r1 emite: nadie oye a otro, y r1 no se oye a sí mismo.
     expect(s.perBot.r1.radio.received).toBe(0);
@@ -139,10 +140,12 @@ describe("4v4-STATS · radio observada (Fase 6) sin cambiar el contrato", () => 
     const r1 = s.perBot.r1;
     // r1 emite hasta RADIO_UNTIL_TICK y la batalla dura más: todo lo aceptado se
     // entrega. Los vivos y los muertos observan (sólo un descalificado no), así
-    // que cada broadcast aceptado lo oyen los otros 7 y cada dirigido, sólo r2.
+    // que cada difusión aceptada la oyen los otros 3 rojos, y cada dirigido, sólo r2.
+    // La radio es de equipo: los azules no oyen nada.
     expect(Object.values(s.perBot).some((b) => b.disqualified)).toBe(false);
-    const broadcastAccepted = agents.get("b1")!.heard.length;
-    for (const id of ["r3", "r4", ...BLUE]) expect(agents.get(id)!.heard.length).toBe(broadcastAccepted);
+    const broadcastAccepted = agents.get("r3")!.heard.length;
+    expect(agents.get("r4")!.heard.length).toBe(broadcastAccepted);
+    for (const id of BLUE) expect(agents.get(id)!.heard.length, id).toBe(0);
     const directedAccepted = agents.get("r2")!.heard.length - broadcastAccepted;
     expect(broadcastAccepted).toBeGreaterThan(0);
     expect(directedAccepted).toBeGreaterThan(0);

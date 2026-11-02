@@ -179,7 +179,9 @@ describe("4v4-STATS · /battles/{id}/stats con perTeam (TDM 4v4 real)", () => {
     const rival = await get("C");
     // El rival ve cuánto habló r1 y cuánto oyó cada uno (actividad de juego)...
     expect(rival.body.perBot[r1].radio.sent).toBeGreaterThan(0);
-    for (const b of BLUE) expect(rival.body.perBot[botOf[b]].radio.receivedFromEnemies).toBeGreaterThan(0);
+    for (const r of RED.filter((x) => x !== "r1")) expect(rival.body.perBot[botOf[r]].radio.receivedFromTeammates).toBeGreaterThan(0);
+    // La radio es de equipo: los azules no oyen a r1 (RADIO_SCOPE=TEAM).
+    for (const b of BLUE) expect(rival.body.perBot[botOf[b]].radio.receivedFromEnemies).toBe(0);
     // ...pero no cuánto le falla el código: ni descartes ni rechazos ni diagnóstico.
     for (const k of DIAGNOSTIC_KEYS) expect(rival.body.perBot[r1]).not.toHaveProperty(k);
     expect(rival.body.perBot[r1].perModule.radio_a).not.toHaveProperty("rejections");
