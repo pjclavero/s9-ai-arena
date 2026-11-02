@@ -41,6 +41,7 @@ import {
   type RtmpMessage,
 } from "./chunk.js";
 import { FlvReader, type FlvTag } from "./flv.js";
+import { redactSecret } from "../config.js";
 
 export interface IngestTarget {
   protocol: "rtmps" | "rtmp";
@@ -182,9 +183,8 @@ export class RtmpPublisher extends EventEmitter {
   }
 
   private redact(text: unknown): string {
-    const s = String(text ?? "");
-    const k = this.opts.streamKey;
-    return (k ? s.split(k).join("***") : s).slice(0, 300);
+    // EQ5c · misma redacción que el logger: también en mayúsculas, JSON o URL-codificada.
+    return redactSecret(String(text ?? ""), this.opts.streamKey).slice(0, 300);
   }
 
   /**

@@ -104,10 +104,21 @@ export function loadStreamKey(
   return raw || null;
 }
 
-/** Sustituye la clave por *** en cualquier texto destinado a logs/respuestas. */
-export function redactSecret(text: string, secret: string | null): string {
+const reEscape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Sustituye la clave por *** en cualquier texto destinado a logs/respuestas, en
+ * todas las formas en que un servidor (o un log) puede repetirla: tal cual,
+ * escapada en JSON y URL-codificada, y SIN distinguir mayúsculas (EQ5c: una
+ * ingesta hostil devolvía la clave en mayúsculas en el rechazo, y el rechazo
+ * ahora sí llega a `lastError` y a los logs).
+ */
+export function redactSecret(text: string, secret: string | null | undefined): string {
   if (!secret) return text;
-  return text.split(secret).join("***");
+  const forms = new Set([secret, JSON.stringify(secret).slice(1, -1), encodeURIComponent(secret)]);
+  let out = text;
+  for (const f of forms) out = out.replace(new RegExp(reEscape(f), "gi"), "***");
+  return out;
 }
 
 /**
@@ -125,12 +136,7 @@ export class SecretRegistry {
   }
   redact(text: string): string {
     let out = text;
-    for (const s of this.secrets) out = out.split(s).join("***");
-    // También la forma escapada en JSON (comillas o barras dentro de la clave).
-    for (const s of this.secrets) {
-      const esc = JSON.stringify(s).slice(1, -1);
-      if (esc !== s) out = out.split(esc).join("***");
-    }
+    for (const s of this.secrets) out = redactSecret(out, s);
     return out;
   }
 }

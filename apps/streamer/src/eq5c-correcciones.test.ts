@@ -95,7 +95,14 @@ async function fakeIngest(behaviour: Behaviour) {
               reply(
                 "onStatus",
                 0,
-                [null, { level: "error", code: `BadName.${key}`, description: `clave ${key} no válida` }],
+                [
+                  null,
+                  {
+                    level: "error",
+                    code: `BadName.${key.toUpperCase()}`,
+                    description: `clave ${key} ${key.toUpperCase()} ${encodeURIComponent(key)} no válida`,
+                  },
+                ],
                 1,
               );
               continue;
@@ -282,7 +289,7 @@ describe("EQ5c · P2-1 · /control/test tiene plazo", () => {
 });
 
 describe("EQ5c · P1 + P3 · el rechazo llega redactado y acaba en failed", () => {
-  it("servidor que repite la clave en code y descripción: lastError sin la clave, reintentos acotados y `failed`", async () => {
+  it("servidor que repite la clave (también en mayúsculas y URL-codificada) en code y descripción: lastError sin la clave, reintentos acotados y `failed`", async () => {
     const ing = await fakeIngest("reject_publish_echo");
     const c = await control({ dial: ing.dial, maxRetries: 2 });
     const sealed = sealSecret(KEY, PUB, { platform: "custom", ingest: "rtmps://ingest.example/live2" });
@@ -297,7 +304,10 @@ describe("EQ5c · P1 + P3 · el rechazo llega redactado y acaba en failed", () =
     expect(JSON.parse(st).state).toBe("failed");
     expect(JSON.parse(st).restarts).toBe(3);
     expect(JSON.parse(st).lastError.message).toMatch(/rechazó la publicación/);
-    expect(st).not.toContain(KEY);
-    expect(c.lines.join("\n")).not.toContain(KEY);
+    // Ninguna forma de la clave (tal cual, en mayúsculas o URL-codificada) en /status ni en logs.
+    for (const form of [KEY, KEY.toUpperCase(), encodeURIComponent(KEY)]) {
+      expect(st.toLowerCase()).not.toContain(form.toLowerCase());
+      expect(c.lines.join("\n").toLowerCase()).not.toContain(form.toLowerCase());
+    }
   });
 });
