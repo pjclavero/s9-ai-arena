@@ -1,7 +1,7 @@
 /**
  * EQ1 · Robustez · los tests que lanzan servicios NO dejan procesos huérfanos.
  *
- * Defecto observado en ia02 (2026-11-02): >100 procesos `node … tsx … main.ts` de
+ * Defecto observado en el host de desarrollo (2026-11-02): >100 procesos `node … tsx … main.ts` de
  * replay-service y streamer vivos con ppid=1 durante días. Causa: los tests lanzaban
  * `node tsx/cli main.ts` y al acabar mataban sólo el ENVOLTORIO de tsx con SIGKILL; el
  * nieto (el servicio de verdad, `node --require tsx/preflight --import loader main.ts`)

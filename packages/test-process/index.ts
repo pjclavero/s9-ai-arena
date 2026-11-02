@@ -4,7 +4,7 @@
  * Un servicio arrancado con tsx es un ÁRBOL: `node tsx/cli main.ts` (envoltorio) →
  * `node --require tsx/preflight --import loader main.ts` (el servicio) → sus propios
  * hijos (esbuild, ffmpeg, chromium…). Matar sólo el envoltorio deja vivo al resto, que
- * pasa a colgar de init (ppid=1) indefinidamente. Así se acumularon >100 procesos en ia02.
+ * pasa a colgar de init (ppid=1) indefinidamente. Así se acumularon >100 procesos en el host de desarrollo.
  *
  * Regla: cada servicio va en su PROPIO grupo de procesos (`detached: true` lo hace líder
  * de grupo) y se mata el GRUPO entero (`process.kill(-pgid)`), esperando a que quede
