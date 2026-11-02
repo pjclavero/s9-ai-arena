@@ -168,11 +168,14 @@ export function replayRoutes(
       } catch {
         index = null; // índice corrupto: la fila sale con los datos de la BD
       }
-      const result = (b.result ?? {}) as { winner?: string; ticks?: number };
+      const result = (b.result ?? {}) as { winner?: string; ticks?: number; endReason?: string };
+      // ADR-022 · detenida por la salvaguarda técnica: sin ganador ni empate («none» + motivo).
+      const technical = result.endReason === "technical_limit" || index?.result?.endReason === "technical_limit";
       return {
         battleId: b.id,
         ticks: index?.ticks ?? result.ticks ?? 0,
-        winner: index?.result?.winner ?? result.winner ?? "unknown",
+        winner: technical ? "none" : (index?.result?.winner ?? result.winner ?? "unknown"),
+        ...(technical ? { endReason: "technical_limit" } : {}),
         official: Boolean(b.official),
         createdAt: new Date(index?.createdAt ?? b.finished_at ?? b.created_at).toISOString(),
         sizeBytes: index?.sizeBytes ?? 0,

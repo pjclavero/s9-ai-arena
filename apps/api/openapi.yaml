@@ -1391,7 +1391,8 @@ paths:
                       properties:
                         battleId: { type: string }
                         ticks: { type: integer }
-                        winner: { type: string }
+                        winner: { type: string, description: "Equipo ganador, \"draw\", o \"none\" si se detuvo sin resultado deportivo (ADR-022)" }
+                        endReason: { type: string, description: "ADR-022 · technical_limit: detenida por la salvaguarda técnica de la prórroga (sin resultado deportivo)" }
                         official: { type: boolean }
                         createdAt: { type: string, format: date-time }
                         sizeBytes: { type: integer }
@@ -2191,11 +2192,11 @@ components:
           description: 'BATTLE_RESULT v1 (docs/technical/battles.md). El ganador POR BOT es participants[].outcome.'
           properties:
             schema: { enum: [battle-result/v1] }
-            winner: { type: string, description: 'Equipo ganador o "draw".' }
+            winner: { type: string, nullable: true, description: 'Equipo ganador o "draw"; null SÓLO con endReason technical_limit (ADR-022: detenida sin resultado deportivo).' }
             score: { type: object, additionalProperties: { type: number } }
             ticks: { type: integer }
             disqualified: { type: array, items: { type: string } }
-            endReason: { enum: [completed, walkover, sporting_failure] }
+            endReason: { enum: [completed, walkover, sporting_failure, technical_limit] }
             agents: { enum: [container, in_process_stub, scripted], description: 'Quién condujo los vehículos (container = código real del bot).' }
         failureKind:
           enum: [none, bot_timeout, bot_crash, infrastructure]
