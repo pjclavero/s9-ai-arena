@@ -7,7 +7,9 @@
  *  - modo, encoder, preset, FPS y bitrate en listas/rangos cerrados; NVENC sólo
  *    si el runtime lo ha confirmado al arrancar;
  *  - la ingesta sólo `rtmps://` y la credencial sólo SELLADA (packages/stream-secrets):
- *    la clave en claro no viaja nunca en el cuerpo.
+ *    la clave en claro no viaja nunca en el cuerpo;
+ *  - EQ5c · con credencial, la orden DEBE decir su `platform`: el sobre sólo se
+ *    abre si plataforma e ingesta de la orden casan con las selladas (control.ts).
  */
 import { isSealedSecret, type SealedSecret } from "../../../packages/stream-secrets/index.js";
 import { parseIngestUrl, type IngestTarget } from "./rtmp/publisher.js";
@@ -33,9 +35,12 @@ export interface SessionPlan {
   broadcastUrl: string;
   ingest: IngestTarget | null;
   credential: SealedSecret | null;
+  /** Plataforma declarada por la orden (obligatoria con credencial). */
+  platform: string | null;
 }
 
 const SESSION_ID = /^[0-9a-zA-Z_-]{1,64}$/;
+const PLATFORM = /^[a-z0-9_-]{1,32}$/;
 
 export function presetOf(cfg: StreamerConfig): PresetName {
   return cfg.outputHeight === 720 ? "720p" : "1080p";
@@ -77,6 +82,7 @@ export function parseStartRequest(
     "videoBitrateKbps",
     "ingestUrl",
     "credential",
+    "platform",
     "replace",
   ]);
   for (const k of Object.keys(b)) if (!known.has(k)) return { ok: false, error: `campo no admitido: ${k}` };
@@ -116,6 +122,11 @@ export function parseStartRequest(
     };
   }
 
+  let platform: string | null = null;
+  if (b.platform !== undefined && b.platform !== null) {
+    if (typeof b.platform !== "string" || !PLATFORM.test(b.platform)) return { ok: false, error: "platform inválida" };
+    platform = b.platform;
+  }
   let ingest: IngestTarget | null = null;
   let credential: SealedSecret | null = null;
   if (mode === "rtmps") {
@@ -127,6 +138,8 @@ export function parseStartRequest(
     if (b.credential !== undefined && b.credential !== null) {
       if (!isSealedSecret(b.credential)) return { ok: false, error: "credential debe ser una credencial sellada" };
       credential = b.credential;
+      if (!platform)
+        return { ok: false, error: "platform obligatoria con credencial (el sobre está atado a su destino)" };
     }
   } else if (b.credential !== undefined && b.credential !== null) {
     return { ok: false, error: "el modo record no usa credencial" };
@@ -143,7 +156,7 @@ export function parseStartRequest(
     outputHeight: size.height,
     rtmpsUrl: ingest ? `${ingest.protocol}://${ingest.host}:${ingest.port}/${ingest.app}` : base.rtmpsUrl,
   };
-  return { ok: true, plan: { sessionId, config, preset, broadcastUrl, ingest, credential } };
+  return { ok: true, plan: { sessionId, config, preset, broadcastUrl, ingest, credential, platform } };
 }
 
 /** Huella comparable de una sesión (idempotencia de start con el mismo sessionId). */
@@ -158,6 +171,7 @@ export function sessionFingerprint(p: SessionPlan): string {
     c.fps,
     c.videoBitrateKbps,
     p.ingest?.display ?? null,
+    p.platform,
     p.credential?.ct ?? null,
   ]);
 }

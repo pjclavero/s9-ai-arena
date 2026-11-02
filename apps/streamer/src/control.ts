@@ -18,6 +18,15 @@
  * tiempo constante): otro contenedor de la red `platform` no puede arrancar
  * una emisión ni leer el estado saltándose el RBAC de la API.
  *
+ * EQ5c (revisión EQ6b, P2-3) · FALLA EN CERRADO: si el secreto se exige
+ * (STREAMER_CONTROL_SECRET_FILE definido) y no se puede leer o está vacío, todo
+ * lo autenticado responde 401 y /healthz 503 (contenedor `unhealthy`, visible);
+ * nunca queda abierto. El secreto se relee en cada petición (rotar sin reiniciar).
+ *
+ * EQ5c (P2-2) · La credencial sellada sólo se abre si la plataforma y la ingesta
+ * de la orden casan con las selladas (packages/stream-secrets, `bind`).
+ * EQ5c (P2-1) · /control/test tiene un plazo total: vencido, se cierra el socket.
+ *
  * Ninguna respuesta ni log contiene la clave RTMPS: /status describe el
  * destino redactado y la credencial sólo entra SELLADA.
  */
@@ -25,7 +34,7 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import type { Duplex } from "node:stream";
 import { versionPayload } from "../../../packages/build-info/index.js";
-import { openSecret, SealedSecretError } from "../../../packages/stream-secrets/index.js";
+import { canonicalIngestUrl, openSecret, SealedSecretError } from "../../../packages/stream-secrets/index.js";
 import type { StreamSupervisor } from "./supervisor.js";
 import type { Logger, StreamerConfig } from "./config.js";
 import { renderPrometheus } from "./metrics.js";
@@ -34,14 +43,27 @@ import { parseStartRequest, presetOf, sessionFingerprint, type Capabilities } fr
 import { applyRetention, listRecordings, validateRetentionPolicy } from "./recordings.js";
 
 const MAX_BODY = 16 * 1024;
+/** Plazo total de /control/test (TLS + handshake + connect); vencido, se cierra el socket. */
+export const TEST_DEADLINE_MS = 15_000;
 
 export interface ControlOptions {
   supervisor: StreamSupervisor;
   config: StreamerConfig;
   logger: Logger;
   capabilities?: Capabilities;
-  /** Secreto compartido con la API (null = control abierto, sólo compatibilidad). */
-  controlSecret?: string | null;
+  /**
+   * Secreto compartido con la API. `null` = control abierto (sólo compatibilidad,
+   * y sólo si `requireControlSecret` es falso). Una función se evalúa en cada
+   * petición (rotación sin reinicio).
+   */
+  controlSecret?: string | null | (() => string | null);
+  /**
+   * El despliegue EXIGE secreto (STREAMER_CONTROL_SECRET_FILE definido): si no
+   * se puede obtener, se deniega todo (fail-closed), nunca se abre.
+   */
+  requireControlSecret?: boolean;
+  /** Plazo de /control/test (pruebas). */
+  testDeadlineMs?: number;
   /** Lee la clave privada de apertura de credenciales (null = no configurada). */
   readPrivateKey?: () => string | null;
   /** Lee la clave de despliegue heredada (STREAM_KEY_FILE); null = no hay. */
@@ -69,8 +91,8 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-function authorized(req: IncomingMessage, secret: string | null | undefined): boolean {
-  if (!secret) return true;
+function authorized(req: IncomingMessage, secret: string | null, required: boolean): boolean {
+  if (!secret) return !required;
   const got = req.headers["x-streamer-auth"];
   if (typeof got !== "string") return false;
   const a = Buffer.from(got);
@@ -78,22 +100,64 @@ function authorized(req: IncomingMessage, secret: string | null | undefined): bo
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+function sameIngest(a: string, b: string): boolean {
+  try {
+    return canonicalIngestUrl(a) === canonicalIngestUrl(b);
+  } catch {
+    return false;
+  }
+}
+
 export function createControlServer(opts: ControlOptions): Server {
   const { supervisor, config, logger } = opts;
   const caps: Capabilities = opts.capabilities ?? { nvenc: null };
   const now = opts.now ?? Date.now;
+  const required = opts.requireControlSecret === true;
+  const currentSecret = (): string | null => {
+    const s = opts.controlSecret;
+    if (typeof s === "function") {
+      try {
+        return s() || null;
+      } catch {
+        return null;
+      }
+    }
+    return s || null;
+  };
 
-  /** Clave para una orden: sellada (web) o la heredada del despliegue. */
-  function resolveKey(credential: unknown): { key: string | null; error?: string; status?: number } {
+  /**
+   * Clave para una orden: sellada (web) —sólo si está atada al destino de la
+   * orden— o la heredada del despliegue.
+   */
+  function resolveKey(
+    credential: unknown,
+    expected: { ingest: string; platform: string | null } | null,
+  ): { key: string | null; error?: string; status?: number } {
     if (credential) {
+      if (!expected || !expected.platform) {
+        return {
+          key: null,
+          status: 400,
+          error: "platform obligatoria con credencial (el sobre está atado a su destino)",
+        };
+      }
       const pem = opts.readPrivateKey?.() ?? null;
       if (!pem) return { key: null, status: 503, error: "el streamer no tiene la clave privada de credenciales" };
       try {
-        return { key: openSecret(credential, pem) };
+        return { key: openSecret(credential, pem, { ingest: expected.ingest, platform: expected.platform }) };
       } catch (e) {
+        if (e instanceof SealedSecretError && e.code === "binding_mismatch") {
+          logger("warn", "control: credencial sellada para otro destino; orden rechazada", {
+            target: expected.ingest.replace(/\/[^/]*$/, "/***"),
+          });
+        }
         return { key: null, status: 409, error: e instanceof SealedSecretError ? e.message : "credencial inválida" };
       }
     }
+    // Clave heredada del despliegue (STREAM_KEY_FILE): sólo hacia la ingesta del
+    // PROPIO despliegue (STREAM_RTMPS_URL). Si la orden apunta a otra ingesta, la
+    // clave no sale (misma propiedad que el sobre atado a su destino).
+    if (expected && !sameIngest(expected.ingest, config.rtmpsUrl)) return { key: null };
     try {
       return { key: opts.readLegacyKey?.() ?? null };
     } catch {
@@ -109,6 +173,10 @@ export function createControlServer(opts: ControlOptions): Server {
     const url = (req.url ?? "").split("?")[0];
 
     if (req.method === "GET" && url === "/healthz") {
+      // Secreto exigido e ilegible ⇒ unhealthy (visible), nunca «ok» con el control abierto.
+      if (required && !currentSecret()) {
+        return respond(503, { ok: false, state: supervisor.state, error: "control_secret_unavailable" });
+      }
       return respond(200, { ok: true, state: supervisor.state });
     }
 
@@ -135,8 +203,9 @@ export function createControlServer(opts: ControlOptions): Server {
       return respond(200, text, "text/plain; version=0.0.4");
     }
 
-    if (!authorized(req, opts.controlSecret)) {
-      return respond(401, { error: "unauthorized" });
+    const secret = currentSecret();
+    if (!authorized(req, secret, required)) {
+      return respond(401, { error: required && !secret ? "control_secret_unavailable" : "unauthorized" });
     }
 
     if (req.method === "GET" && url === "/status") {
@@ -220,13 +289,25 @@ export function createControlServer(opts: ControlOptions): Server {
           } catch (e) {
             return respond(400, { error: (e as Error).message });
           }
-          const k = resolveKey(body.credential ?? null);
+          const platform =
+            typeof body.platform === "string" && /^[a-z0-9_-]{1,32}$/.test(body.platform) ? body.platform : null;
+          const k = resolveKey(body.credential ?? null, { ingest: target.tcUrl, platform });
           if (k.error) return respond(k.status ?? 409, { error: k.error });
           // La prueba no publica: la clave no hace falta para conectar, pero se
           // comprueba que existe y abre para no dar un «OK» engañoso.
           const pub = new RtmpPublisher({ target, streamKey: k.key ?? "", dial: opts.dial, connectTimeoutMs: 8000 });
+          const deadlineMs = opts.testDeadlineMs ?? TEST_DEADLINE_MS;
+          let deadline: NodeJS.Timeout | null = null;
           try {
-            const r = await pub.probe();
+            const r = await Promise.race([
+              pub.probe(),
+              new Promise<never>((_, reject) => {
+                deadline = setTimeout(() => {
+                  pub.close(); // cierra el socket: nada queda colgado
+                  reject(new Error("la ingesta no completó la prueba a tiempo"));
+                }, deadlineMs);
+              }),
+            ]);
             return respond(200, {
               ok: true,
               target: target.display,
@@ -237,12 +318,15 @@ export function createControlServer(opts: ControlOptions): Server {
               note: "conexión y handshake RTMP correctos; la clave no se valida sin publicar",
             });
           } catch (e) {
+            pub.close();
             return respond(200, {
               ok: false,
               target: target.display,
               credentialPresent: !!k.key,
               error: (e as Error).message,
             });
+          } finally {
+            if (deadline) clearTimeout(deadline);
           }
         }
 
@@ -261,7 +345,10 @@ export function createControlServer(opts: ControlOptions): Server {
         }
         let key: string | null = null;
         if (plan.config.mode === "rtmps") {
-          const k = resolveKey(plan.credential);
+          const k = resolveKey(
+            plan.credential,
+            plan.ingest ? { ingest: plan.ingest.tcUrl, platform: plan.platform } : null,
+          );
           if (k.error) return respond(k.status ?? 409, { error: k.error });
           if (!k.key) return respond(409, { error: "no hay credencial de emisión configurada" });
           key = k.key;

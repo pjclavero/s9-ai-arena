@@ -27,7 +27,9 @@ const { publicKey: PUB, privateKey: PRIV } = generateKeyPairSync("rsa", {
 const KEY = "clave-sellada-EQ5b-0001";
 const SECRET = "secreto-de-control";
 // El MISMO sobre en cada orden, como hace la API (lo lee de la BD; OAEP es aleatorio).
-const SEALED = sealSecret(KEY, PUB);
+// EQ5c · atado a su destino (plataforma + ingesta), como lo sella la API.
+const BIND = { platform: "custom", ingest: "rtmps://ingest.example/live2" };
+const SEALED = sealSecret(KEY, PUB, BIND);
 
 class FakeProcess extends EventEmitter implements SpawnedProcess {
   stdout = new EventEmitter();
@@ -101,6 +103,7 @@ const startBody = (over: Record<string, unknown> = {}) => ({
   fps: 30,
   videoBitrateKbps: 4500,
   ingestUrl: "rtmps://ingest.example/live2",
+  platform: "custom",
   credential: SEALED,
   ...over,
 });
@@ -136,7 +139,7 @@ describe("EQ5b · orden de arranque", () => {
       expect(await bad({ ingestUrl: "rtmp://ingest.example/live2" })).toBe(400);
       expect(await bad({ credential: KEY })).toBe(400); // la clave en claro no se admite
       expect(await bad({ streamKey: KEY })).toBe(400);
-      expect(await bad({ credential: { ...sealSecret(KEY, PUB), kid: "0000000000000000" } })).toBe(409);
+      expect(await bad({ credential: { ...sealSecret(KEY, PUB, BIND), kid: "0000000000000000" } })).toBe(409);
     });
   });
 

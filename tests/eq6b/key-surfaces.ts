@@ -221,7 +221,13 @@ async function main() {
   let fail = 0;
   const count = (t: string) =>
     t.split(KEY).length - 1 + (t.split(encodeURIComponent(KEY)).length - 1) + (t.split(KEY.toUpperCase()).length - 1);
-  const sealed = sealSecret(KEY, PUB);
+  // EQ5c · el sobre está atado a su destino: se sella para CADA ingesta que se
+  // usa (lo que hace la API al guardar la clave de «RTMPS personalizado»).
+  const sealFor = (ingestUrl: string) => ({
+    platform: "custom",
+    ingestUrl,
+    credential: sealSecret(KEY, PUB, { platform: "custom", ingest: ingestUrl }),
+  });
   // Todas las formas en que podría aparecer la clave.
   const needles = [KEY, KEY.toUpperCase(), Buffer.from(KEY).toString("base64").slice(0, 24)];
 
@@ -231,8 +237,7 @@ async function main() {
   const start = await post(s, "/control/start", {
     sessionId: "eq6b-1",
     mode: "rtmps",
-    ingestUrl: `rtmps://127.0.0.1:${ok.port}/live2`,
-    credential: sealed,
+    ...sealFor(`rtmps://127.0.0.1:${ok.port}/live2`),
   });
   rows.push(["/control/start status", start.status]);
   for (let i = 0; i < 60 && ok.media < 30; i++) await sleep(200);
@@ -261,8 +266,7 @@ async function main() {
   await post(s, "/control/start", {
     sessionId: "eq6b-2",
     mode: "rtmps",
-    ingestUrl: `rtmps://127.0.0.1:${evil.port}/live2`,
-    credential: sealed,
+    ...sealFor(`rtmps://127.0.0.1:${evil.port}/live2`),
     replace: true,
   });
   await sleep(2500);
@@ -291,14 +295,16 @@ async function main() {
 
   // 3) TLS: hostname que NO casa con el certificado ⇒ debe fallar.
   const t3 = await ingest();
-  const r3 = (await (
-    await post(s, "/control/test", { ingestUrl: `rtmps://localhost:${t3.port}/live2`, credential: sealed })
-  ).json()) as Record<string, unknown>;
+  const r3 = (await (await post(s, "/control/test", sealFor(`rtmps://localhost:${t3.port}/live2`))).json()) as Record<
+    string,
+    unknown
+  >;
   rows.push(["TLS hostname distinto (localhost vs SAN 127.0.0.1)", r3.ok === false ? "RECHAZA" : "ACEPTA"]);
   if (r3.ok !== false) fail++;
-  const r3ok = (await (
-    await post(s, "/control/test", { ingestUrl: `rtmps://127.0.0.1:${t3.port}/live2`, credential: sealed })
-  ).json()) as Record<string, unknown>;
+  const r3ok = (await (await post(s, "/control/test", sealFor(`rtmps://127.0.0.1:${t3.port}/live2`))).json()) as Record<
+    string,
+    unknown
+  >;
   rows.push([
     "TLS hostname correcto + CA de confianza (control positivo)",
     r3ok.ok === true ? "ACEPTA" : `RECHAZA ${String(r3ok.error)}`,
@@ -311,8 +317,7 @@ async function main() {
   await post(s4, "/control/start", {
     sessionId: "eq6b-4",
     mode: "rtmps",
-    ingestUrl: `rtmps://127.0.0.1:${t3.port}/live2`,
-    credential: sealed,
+    ...sealFor(`rtmps://127.0.0.1:${t3.port}/live2`),
   });
   await sleep(2500);
   const st4 = JSON.parse(await get(s4, "/status")) as { lastError?: { message: string } | null };

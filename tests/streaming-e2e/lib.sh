@@ -121,13 +121,13 @@ ctl() { # $1 método  $2 ruta  [$3 fichero JSON del cuerpo]
 
 # Cuerpo de arranque con la credencial SELLADA (sobre leído de fichero).
 start_body() { # $1 salida  $2 broadcastUrl  [$3 bitrate] [$4 preset] [$5 fps] [$6 sessionId]
-  (cd "$REPO" && npx tsx tests/streaming-e2e/seal.ts "$STATE/public.pem" "$STATE/stream_key") >"$STATE/sealed.json"
+  (cd "$REPO" && npx tsx tests/streaming-e2e/seal.ts "$STATE/public.pem" "$STATE/stream_key" custom "$INGEST") >"$STATE/sealed.json"
   node -e '
     const fs=require("fs");
     const [out, url, br, preset, fps, sid] = process.argv.slice(1);
     const body = { sessionId: sid || "e2e-" + Date.now(), broadcastUrl: url, mode: "rtmps",
       encoder: "x264", preset: preset || "1080p", fps: Number(fps || 30), videoBitrateKbps: Number(br || 4500),
-      ingestUrl: process.env.INGEST, credential: JSON.parse(fs.readFileSync(process.env.SEALED, "utf8")) };
+      ingestUrl: process.env.INGEST, platform: "custom", credential: JSON.parse(fs.readFileSync(process.env.SEALED, "utf8")) };
     fs.writeFileSync(out, JSON.stringify(body), { mode: 0o600 });
   ' "$1" "$2" "${3:-4500}" "${4:-1080p}" "${5:-30}" "${6:-}"
 }

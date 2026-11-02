@@ -15,7 +15,18 @@ RUNTIME_GID="${RUNTIME_GID:-1000}"
 
 harden() {
   local f="$DIR/$1"
-  chown "$RUNTIME_UID:$RUNTIME_GID" "$f" 2>/dev/null || true
+  # EQ5c (revisión EQ6b, P2-3) · el chown ya no falla en silencio: si no se puede
+  # (sin privilegios) y el dueño no es el uid del runtime, el contenedor no podrá
+  # leer el secreto. Los servicios que lo EXIGEN fallan en cerrado (p. ej. el
+  # control del streamer: 401 y /healthz 503), así que se avisa aquí, en voz alta.
+  if ! chown "$RUNTIME_UID:$RUNTIME_GID" "$f" 2>/dev/null; then
+    local owner
+    owner="$(stat -c %u "$f" 2>/dev/null || echo '?')"
+    if [ "$owner" != "$RUNTIME_UID" ]; then
+      echo "AVISO: no se pudo dar $1 al uid $RUNTIME_UID (dueño actual: $owner); el contenedor no podrá leerlo." \
+        "Repite init-secrets.sh con privilegios o ajusta RUNTIME_UID/RUNTIME_GID." >&2
+    fi
+  fi
   chmod 0400 "$f"
 }
 
