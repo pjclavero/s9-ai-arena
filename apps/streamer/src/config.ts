@@ -104,20 +104,71 @@ export function loadStreamKey(
   return raw || null;
 }
 
-const reEscape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** EQ5d · Longitud mínima de un fragmento de la clave que se considera fuga. */
+export const REDACT_MIN_FRAGMENT = 8;
 
 /**
- * Sustituye la clave por *** en cualquier texto destinado a logs/respuestas, en
- * todas las formas en que un servidor (o un log) puede repetirla: tal cual,
- * escapada en JSON y URL-codificada, y SIN distinguir mayúsculas (EQ5c: una
- * ingesta hostil devolvía la clave en mayúsculas en el rechazo, y el rechazo
- * ahora sí llega a `lastError` y a los logs).
+ * Codificaciones en que la clave (o un trozo) puede reaparecer: tal cual, base64
+ * estándar y URL-safe en las TRES alineaciones de byte (un trozo de la clave
+ * dentro de un texto más largo se codifica desplazado) y hex. De cada
+ * alineación sólo se toman los grupos completos (los extremos dependen de los
+ * bytes vecinos).
+ */
+function encodedForms(secret: string): string[] {
+  const bytes = Buffer.from(secret, "utf8");
+  const forms = [secret, JSON.stringify(secret).slice(1, -1), encodeURIComponent(secret), bytes.toString("hex")];
+  for (let o = 0; o < 3 && o < bytes.length; o++) {
+    const n = Math.floor((bytes.length - o) / 3) * 3;
+    if (n <= 0) continue;
+    const b64 = bytes.subarray(o, o + n).toString("base64");
+    forms.push(b64, b64.replace(/\+/g, "-").replace(/\//g, "_"));
+  }
+  return forms.filter((f) => f.length > 0);
+}
+
+/**
+ * Sustituye la clave por *** en cualquier texto destinado a logs/respuestas.
+ *
+ * EQ5c · tal cual, escapada en JSON y URL-codificada, sin distinguir mayúsculas.
+ * EQ5d (revisión EQ6c, P3) · y además CUALQUIER fragmento de
+ * `REDACT_MIN_FRAGMENT` (8) o más caracteres de la clave, de su base64 (estándar
+ * o URL-safe) o de su hex: una ingesta hostil devolvía la clave codificada en el
+ * rechazo y llegaba a `lastError` y a los logs. Se marca toda ventana de 8
+ * caracteres que sea un 8-grama de alguna forma (sin distinguir mayúsculas) y
+ * se sustituye cada tramo marcado por ***. Si la clave (o una forma) es más
+ * corta que 8, cuenta la forma entera.
  */
 export function redactSecret(text: string, secret: string | null | undefined): string {
-  if (!secret) return text;
-  const forms = new Set([secret, JSON.stringify(secret).slice(1, -1), encodeURIComponent(secret)]);
-  let out = text;
-  for (const f of forms) out = out.replace(new RegExp(reEscape(f), "gi"), "***");
+  if (!secret || !text) return text;
+  const grams = new Map<number, Set<string>>();
+  for (const f of encodedForms(secret)) {
+    const n = Math.min(REDACT_MIN_FRAGMENT, f.length);
+    let set = grams.get(n);
+    if (!set) grams.set(n, (set = new Set()));
+    const lf = f.toLowerCase();
+    for (let i = 0; i + n <= lf.length; i++) set.add(lf.slice(i, i + n));
+  }
+  const lower = text.toLowerCase();
+  const mark = new Uint8Array(text.length);
+  let any = false;
+  for (const [n, set] of grams) {
+    for (let i = 0; i + n <= lower.length; i++) {
+      if (set.has(lower.slice(i, i + n))) {
+        mark.fill(1, i, i + n);
+        any = true;
+      }
+    }
+  }
+  if (!any) return text;
+  let out = "";
+  for (let i = 0; i < text.length;) {
+    if (!mark[i]) {
+      out += text[i++];
+      continue;
+    }
+    while (i < text.length && mark[i]) i++;
+    out += "***";
+  }
   return out;
 }
 
