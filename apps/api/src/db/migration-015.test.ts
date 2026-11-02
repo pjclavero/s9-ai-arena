@@ -15,6 +15,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startTestDb, type TestDbHandle } from "../testing/test-db.js";
 import { MIGRATIONS, migrateToLatest, rollbackLast } from "./migrations.js";
 import { DEV_USERS, DEFAULT_RULESET_ID, seedDev } from "./seeds/dev.js";
+import { createPublishedBot } from "../../../tournament-worker/src/testing/fixtures.js";
 
 let h: TestDbHandle;
 
@@ -29,7 +30,10 @@ async function columns(table: string): Promise<string[]> {
 }
 async function dump() {
   const out: Record<string, unknown[]> = {};
-  for (const t of TABLES) out[t] = JSON.parse(JSON.stringify(await h.db(t).orderBy("id").select()));
+  for (const t of TABLES) {
+    const order = t === "participants" ? ["battle_id", "bot_id"] : ["id"];
+    out[t] = JSON.parse(JSON.stringify(await h.db(t).orderBy(order).select()));
+  }
   return out;
 }
 const strip = (rows: unknown[], col: string) =>
@@ -102,7 +106,12 @@ describe("migración 015_battle_rules", () => {
       engine_versions: JSON.stringify({ engine: "0.3.0", rules: "dm_practice@1" }),
       result: JSON.stringify({ winner: "red", score: { red: 1, blue: 0 } }),
     });
+    const bot = await createPublishedBot(h.db, "hist-014-bot");
+    await h
+      .db("participants")
+      .insert({ battle_id: battleId, bot_id: bot.botId, version: 1, team: "red", outcome: "win" });
     const before = await dump();
+    expect(before.participants).toHaveLength(1);
 
     // --- 1. UPGRADE ------------------------------------------------------------
     await migrateToLatest(h.db);
