@@ -76,7 +76,7 @@ Reglas de operación:
 |---|---|---|
 | argv de FFmpeg (`ps`, `docker top`, `/proc/*/cmdline`) | ffmpeg escribe FLV por el fd 3; el relé Node publica con la clave | `apps/streamer/tests/secret-surfaces.test.ts` (calibrada: roja en main, verde aquí); auditoría con la imagen real: 0 apariciones |
 | `/proc/*/environ`, `docker inspect` | la clave nunca va al entorno; sólo rutas de ficheros | idem |
-| logs | logger con registro vivo de secretos (también su forma escapada en JSON); el relé redacta lo que diga el servidor | tests del logger y del relé; `docker logs` 0 apariciones |
+| logs | logger con registro vivo de secretos (también escapada en JSON, URL-codificada y sin distinguir mayúsculas); el relé redacta igual lo que diga el servidor | tests del logger y del relé; `docker logs` 0 apariciones |
 | `/status`, `/metrics` | destino descrito como `rtmps://host:puerto/app/***` | idem |
 | API y frontend | entra por `PUT /admin/streaming/credentials/{platform}` y nunca sale (`****ABCD`); campo password, estado vaciado al enviar, nada en `localStorage`/`sessionStorage` | `apps/api/src/eq5b-streaming-admin.test.ts`, `apps/web/tests/eq5b-streaming-page.test.tsx`, spec de navegador `@streaming-e2e` (respuestas de red, DOM y storage) |
 | BD | sobre v2 (AES-256-GCM + RSA-OAEP-256 con la PÚBLICA) **atado a plataforma e ingesta**; la privada sólo la tiene el streamer | volcado de todas las tablas de streaming y `audit_log` sin la clave; el sobre sólo se abre con la privada y hacia su destino |

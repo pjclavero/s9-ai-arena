@@ -34,9 +34,11 @@ recibía `rtmps://…/live2/<clave>` como último argumento. `docker top` y el `
   mensaje RTMP (metadatos con `@setDataFrame`). Es lo mismo que hace el protocolo `rtmp`
   de FFmpeg con la salida de su muxer FLV.
 - La clave existe sólo en la memoria de ese proceso: no se escribe, no se pasa a otro
-  proceso, no va al entorno. El logger la redacta (y su forma escapada en JSON) en todo lo
-  que escribe, y el relé la redacta en cualquier mensaje del servidor (que puede repetir
-  el nombre del stream).
+  proceso, no va al entorno. El logger la redacta en todo lo que escribe y el relé en
+  cualquier mensaje del servidor (que puede repetir el nombre del stream), en todas sus
+  formas: tal cual, escapada en JSON y URL-codificada, **sin distinguir mayúsculas**
+  (EQ5c: una ingesta hostil la devolvía en mayúsculas en el rechazo; lo detectó
+  `tests/eq6b/key-surfaces.ts` con procesos reales).
 - **Mejora de seguridad colateral:** el relé **verifica el certificado** de la ingesta
   (CA del sistema; `NODE_EXTRA_CA_CERTS` para una CA propia). FFmpeg usaba
   `tls_verify=0`: la clave se habría entregado a cualquiera que interceptara la conexión.
