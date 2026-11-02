@@ -16,6 +16,7 @@ import {
   RULES_LIMITS,
   RULES_PRESETS,
   TIEBREAK_RULES,
+  TOURNAMENT_SPECTATOR_DELAY_SECONDS,
   currentPresets,
   presetKey,
   respawnLabel,
@@ -114,6 +115,10 @@ export function rulesDocJson() {
       teamBudgetExample: { teamCredits: 3500, bots: { "ATK-1": 1000, "ATK-2": 1000, SCOUT: 600, DEF: 900 } },
     },
     maps: MAP_REQUIREMENTS,
+    spectator: {
+      tournamentDelaySeconds: TOURNAMENT_SPECTATOR_DELAY_SECONDS,
+      text: `En torneos, el directo para espectadores va con ${TOURNAMENT_SPECTATOR_DELAY_SECONDS} s de retardo (anti-coaching), salvo las batallas marcadas como visibles (la final). Las batallas creadas con «Nueva batalla» van sin retardo. El retardo no cambia la simulación.`,
+    },
     snapshots:
       "Las reglas se copian de forma INMUTABLE en cada batalla y en cada torneo al crearlos. Cambiar después un preset (o crear su versión siguiente) no altera batallas ni torneos existentes.",
   };
@@ -207,6 +212,10 @@ export function rulesDocMarkdown(): string {
   out.push(
     "Además, el autor del mapa debe declarar el modo. «Nueva batalla» sólo ofrece mapas compatibles y explica por qué los demás no aparecen.",
   );
+  out.push("");
+  out.push("## Directo de torneos (retardo anti-coaching)");
+  out.push("");
+  out.push(d.spectator.text);
   out.push("");
   out.push("## Copia inmutable");
   out.push("");

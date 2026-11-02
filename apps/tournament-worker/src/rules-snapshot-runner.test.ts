@@ -189,6 +189,7 @@ describe("torneo · copia inmutable de reglas (ADR-022)", () => {
       expect(replay.header.ruleset.timeoutTiebreak).toEqual(["alive", "lives", "kills"]);
       expect(replay.header.versions.engine).toBe("0.4.0");
       expect(out.versions.rulesetEngine).toBe("duel@1");
+      expect(replay.header.ruleset.spectator).toEqual({ delaySeconds: 30 });
     } finally {
       await h.db("rulesets").where({ id: "deathmatch-mvp" }).update({ budget_credits: 1000 });
     }

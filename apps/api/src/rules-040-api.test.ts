@@ -220,6 +220,8 @@ describe("POST /tournaments · copia inmutable de reglas", () => {
     const row = await h.db("tournaments").where({ id: r.body.id }).first();
     expect(row.rules.engineRuleset.rulesetId).toBe("team_deathmatch@1");
     expect(row.rules.engineVersion).toBe("0.4.0");
+    // Retardo anti-coaching del directo en torneos (escalado EQ5); no toca la simulación.
+    expect(row.rules.engineRuleset.spectator).toEqual({ delaySeconds: 30 });
   });
 
   it("sin reglas: copia CLÁSICA congelada al crear (cambiar después la fila de rulesets no la toca)", async () => {
@@ -229,6 +231,7 @@ describe("POST /tournaments · copia inmutable de reglas", () => {
     expect(before.source).toBe("classic");
     expect(before.engineRuleset.rulesetId).toBe("tdm_mvp@1");
     expect(before.engineRuleset.budgetCredits).toBe(900);
+    expect(before.engineRuleset.spectator.delaySeconds).toBe(30);
     await h
       .db("rulesets")
       .where({ id: "team-deathmatch-mvp" })
