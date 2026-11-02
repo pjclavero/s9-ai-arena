@@ -73,6 +73,19 @@ afterEach(() => {
   window.location.hash = "";
 });
 
+/** Referencias internas que no deben verse: «E5/T5.1», «(D8)», «cap. 12.2», «T3.4», «combat.ts:198»… */
+const INTERNAL_REF = /\bE\d{1,2}\b|\bT\d+\.\d+|\bD\d{1,2}\b|\bcap\.\s?\d|\bERR-[A-Z]+|\bTD-\d+|\b[\w-]+\.ts:\d+/g;
+
+/** Texto visible SIN código (los ejemplos y los ids se enseñan tal cual a propósito). */
+function proseOf(root: Element): string {
+  const out: string[] = [];
+  const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.parentElement?.closest("pre, code") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+  });
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) out.push(n.textContent ?? "");
+  return out.join(" ");
+}
+
 async function show(hash: string) {
   window.location.hash = hash;
   const r = render(<HelpPage loggedIn={false} />);
@@ -91,6 +104,9 @@ describe("EQ3 Centro de Ayuda · offline y sin GitHub", () => {
         expect(within(art).getByRole("heading", { level: 3 }).textContent).toBe(l.title);
         expect(screen.getByTestId("help-page").getAttribute("data-help-section")).toBe(`${g.id}/${l.id}`);
         expect(art.textContent!.length, `${g.id}/${l.id} sin contenido`).toBeGreaterThan(80);
+        // EQ6-P3 · sin referencias internas del proyecto en el texto visible (fuera de código).
+        const prose = proseOf(art);
+        expect(prose.match(INTERNAL_REF) ?? [], `${g.id}/${l.id}: referencias internas`).toEqual([]);
       }
     }
     expect(requested.filter((u) => /^https?:\/\//.test(u) && !u.startsWith(window.location.origin))).toEqual([]);
@@ -256,6 +272,25 @@ describe("EQ3 Centro de Ayuda · contenido desde las fuentes de verdad", () => {
     const pal = screen.getByTestId("help-map-palette");
     for (const t of ["Muro", "Caja", "Zona de daño", "Zona de captura", "Base roja", "Bandera azul"])
       expect(pal.textContent).toContain(t);
+  });
+});
+
+describe("EQ3 Centro de Ayuda · texto público", () => {
+  it("publicText quita las referencias internas sin romper la frase", async () => {
+    const { publicText } = await import("../src/help/blocks.js");
+    expect(publicText("El motor acepta como máximo un COMMAND por ciclo (E5/T5.1); los siguientes se descartan.")).toBe(
+      "El motor acepta como máximo un COMMAND por ciclo; los siguientes se descartan.",
+    );
+    expect(publicText("Ajuste de balance T3.4: más casco.")).toBe("Ajuste de balance: más casco.");
+    expect(publicText("Encender o apagar módulos (estado offline, cap. 12.2). Reactivar")).toBe(
+      "Encender o apagar módulos (estado offline). Reactivar",
+    );
+    expect(publicText("Límites iguales al techo de D8: no hay margen")).toBe("Límites iguales al techo: no hay margen");
+    expect(publicText("El alcance real lo fija un TTL de 90 ticks (combat.ts:198), no rangeM.")).toBe(
+      "El alcance real lo fija un TTL de 90 ticks, no rangeM.",
+    );
+    expect(publicText("Versiones exactas (cap. 8, 'versión fija').")).toBe("Versiones exactas ('versión fija').");
+    expect(publicText("Pruebas E2E del radar")).toBe("Pruebas E2E del radar");
   });
 });
 

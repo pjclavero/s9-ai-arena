@@ -51,7 +51,7 @@ import { useResource, ResourceView } from "./resource.js";
 import { NotFoundPage } from "./pages/NotFoundPage.js";
 // UX-A (G-01) · portada pública + home con primeros pasos y guía integrada.
 import { HomePage, LandingIntro } from "./pages/HomePage.js";
-import { HelpPage } from "./pages/HelpPage.js";
+import { HelpPage } from "./help/LazyHelpPage.js"; // EQ3 · carga diferida del Centro de Ayuda
 
 const BUDGET_DEFAULT = 1000; // BUDGET_CREDITS_MVP; el ruleset de cada torneo puede cambiarlo (D7)
 

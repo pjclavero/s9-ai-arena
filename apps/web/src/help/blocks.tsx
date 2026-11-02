@@ -6,7 +6,7 @@
 import { useState, type ReactNode } from "react";
 
 // ------------------------------------------------------------- código
-export function CodeBlock(props: { code: string; lang: string; label: string; testId?: string }) {
+export function CodeBlock(props: { code: string; lang: string; label: string; testId?: string; wrap?: boolean }) {
   const [copied, setCopied] = useState<"" | "ok" | "fail">("");
   const copy = async () => {
     try {
@@ -28,7 +28,11 @@ export function CodeBlock(props: { code: string; lang: string; label: string; te
           {copied === "ok" ? "Copiado." : copied === "fail" ? "No se pudo copiar: selecciónalo a mano." : ""}
         </span>
       </figcaption>
-      <pre tabIndex={0} aria-label={`Código ${props.lang}: ${props.label}`}>
+      <pre
+        tabIndex={0}
+        aria-label={`Código ${props.lang}: ${props.label}`}
+        style={props.wrap ? { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } : undefined}
+      >
         <code data-lang={props.lang}>{props.code}</code>
       </pre>
     </figure>
@@ -114,6 +118,36 @@ export function flattenSchema(schema: Json, defs: Json, prefix = "", depth = 0):
   return out;
 }
 
+// ------------------------------------------------- texto público (EQ6-P3)
+/**
+ * Las descripciones de las fuentes (esquemas, catálogo, tabla de efectos) llevan
+ * referencias internas del proyecto («E5/T5.1», «(D8)», «cap. 12.2», «T3.4»,
+ * «combat.ts:198»…) que no significan nada para quien juega. Se quitan del texto
+ * VISIBLE; la fuente no se toca. El test eq3-help-page recorre todas las hojas y
+ * falla si queda alguna.
+ */
+const REF = String.raw`(?:mejora\s+)?(?:E\d{1,2}(?:\/T\d+(?:\.\d+)*|\.M)?|T\d+(?:\.\d+)+|D\d{1,2}|cap\.\s?\d+(?:\.\d+)*|ERR-[A-Z]+-\d+|TD-\d+|ADR-[\w-]+|[\w-]+\.ts:\d+)`;
+const PAREN_ONLY_REFS = new RegExp(String.raw`\s*\((?:\s*(?:ver\s+|goldens de\s+)?${REF}\s*[,;/·]?\s*)+\)`, "g");
+const REF_IN_PAREN = new RegExp(String.raw`\(\s*${REF}\s*,\s*`, "g");
+const BARE_REF = new RegExp(String.raw`\s*(?:\b(?:de|del|por)\s+)?\b${REF}\b`, "g");
+
+export function publicText(text: string): string {
+  return text
+    .replace(PAREN_ONLY_REFS, "")
+    .replace(REF_IN_PAREN, "(")
+    .replace(BARE_REF, "")
+    .replace(/[,;]\s*\)/g, ")")
+    .replace(/\(\s*\)/g, "")
+    .replace(/\s+([.,;:])/g, "$1")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+/** Texto de una fuente, ya limpio para el público. */
+export function SourceText(props: { text: string }) {
+  return <Literal text={publicText(props.text)} />;
+}
+
 /** Los literales JSON de una descripción (`null`, `true`, `false`) se marcan como código, no como prosa. */
 export function Literal(props: { text: string }) {
   const parts = props.text.split(/\b(null|true|false)\b/);
@@ -145,7 +179,7 @@ export function SchemaFields(props: { schema: Json; defs: Json; caption: string;
               <code>{f.type}</code>
             </td>
             <td data-label="Obligatorio">{f.required ? "sí" : "no"}</td>
-            <td data-label="Qué es">{f.description ? <Literal text={f.description} /> : "—"}</td>
+            <td data-label="Qué es">{f.description ? <SourceText text={f.description} /> : "—"}</td>
           </tr>
         ))}
       </tbody>

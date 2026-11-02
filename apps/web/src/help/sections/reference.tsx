@@ -4,7 +4,7 @@
  */
 import { CATALOG, CATALOG_VERSION, SCHEMAS, VERSIONS } from "../sources.js";
 import { CATEGORY_NAME, humanize } from "../names.js";
-import { SchemaFields } from "../blocks.js";
+import { SchemaFields, SourceText } from "../blocks.js";
 import { sdkVersionMismatch } from "./bots.js";
 import { helpHref } from "../tree.js";
 
@@ -78,7 +78,7 @@ export function ProtocolReference() {
       <ul>
         {MESSAGES.map((m) => (
           <li key={m.key}>
-            <strong>{m.name}</strong> ({m.dir}): {(SCHEMAS[m.key] as any).description}
+            <strong>{m.name}</strong> ({m.dir}): <SourceText text={(SCHEMAS[m.key] as any).description} />
           </li>
         ))}
       </ul>

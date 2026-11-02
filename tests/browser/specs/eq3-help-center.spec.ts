@@ -84,6 +84,38 @@ test.describe("@fase1 EQ3 Centro de Ayuda", () => {
     await expect(page.getByRole("dialog")).toHaveCount(0);
   });
 
+  test("ⓘ dentro de un <label>: leer la ayuda NO alterna la casilla (EQ6-P2); el texto del label sí", async ({
+    page,
+  }) => {
+    await blockExternal(page);
+    await page.goto("/#/help/bots/ejemplos");
+    const box = page.getByTestId("help-wrap");
+    await expect(box).not.toBeChecked();
+    await page.getByTestId("tip-wrap-trigger").click();
+    const panel = page.getByTestId("tip-wrap-panel");
+    await expect(panel).toBeVisible();
+    await expect(box, "abrir el ⓘ no cambia la casilla").not.toBeChecked();
+    await panel.getByText("Parte las líneas largas").click();
+    await expect(box, "clic en el TEXTO del panel").not.toBeChecked();
+    await panel.locator(".infotip-title").click();
+    await expect(box, "clic en el TÍTULO del panel").not.toBeChecked();
+    await page.getByRole("button", { name: "Cerrar ayuda" }).click();
+    await expect(box, "la X tampoco").not.toBeChecked();
+    // Control positivo: el texto del propio label SÍ alterna la casilla (la prueba no es ciega).
+    await page.getByTestId("help-wrap-label").getByText("Ajustar líneas largas", { exact: true }).click();
+    await expect(box).toBeChecked();
+  });
+
+  test("Tab desde la X siendo el último enfocable cierra el panel (EQ6-P3)", async ({ page }) => {
+    await blockExternal(page);
+    await page.goto("/#/help/bots/ejemplos");
+    await page.getByTestId("tip-wrap-trigger").click();
+    await page.getByRole("button", { name: "Cerrar ayuda" }).focus();
+    // Saca el foco a <body> como lo haría un Tab desde el último enfocable.
+    await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+    await expect(page.getByTestId("tip-wrap-panel")).toHaveCount(0);
+  });
+
   test("móvil 390×844: sin desbordamiento, índice plegable de 44 px y ⓘ dentro de la pantalla", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await blockExternal(page);

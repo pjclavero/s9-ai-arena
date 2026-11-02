@@ -3,7 +3,8 @@
  * los mensajes de packages/protocol/schemas/*.json y los ejemplos son los ficheros
  * testeados del repo (bot tutorial, plantillas del editor, example-bots).
  */
-import { CodeBlock, Note, SchemaFields } from "../blocks.js";
+import { useState } from "react";
+import { CodeBlock, Note, SchemaFields, SourceText } from "../blocks.js";
 import { EXAMPLES, RULE_CONSTANTS as C, SCHEMAS, VERSIONS } from "../sources.js";
 import { HOOK_HELP } from "../../bot-templates.js";
 import { GLOSSARY } from "../content.js";
@@ -229,7 +230,9 @@ export function SdkJavascript() {
 export function Observations() {
   return (
     <div data-testid="help-observations">
-      <p>{(SCHEMAS.observation as any).description}</p>
+      <p>
+        <SourceText text={(SCHEMAS.observation as any).description} />
+      </p>
       <SchemaFields
         schema={SCHEMAS.observation}
         defs={DEFS}
@@ -244,7 +247,9 @@ export function Commands() {
   const reason = (SCHEMAS.event as any).properties.reason.description as string;
   return (
     <div data-testid="help-commands">
-      <p>{(SCHEMAS.command as any).description}</p>
+      <p>
+        <SourceText text={(SCHEMAS.command as any).description} />
+      </p>
       <p>
         El SDK rellena <code>forTick</code> por ti: tu método sólo devuelve el resto.
       </p>
@@ -256,7 +261,7 @@ export function Commands() {
       />
       <h4>Cuando una acción se rechaza</h4>
       <p>
-        Recibes un EVENT <code>rejected_action</code> con un motivo. {reason}
+        Recibes un EVENT <code>rejected_action</code> con un motivo. <SourceText text={reason} />
       </p>
     </div>
   );
@@ -265,7 +270,9 @@ export function Commands() {
 export function Events() {
   return (
     <div data-testid="help-events">
-      <p>{(SCHEMAS.event as any).description}</p>
+      <p>
+        <SourceText text={(SCHEMAS.event as any).description} />
+      </p>
       <SchemaFields
         schema={SCHEMAS.event}
         defs={DEFS}
@@ -353,8 +360,18 @@ export function Radio() {
 }
 
 export function Examples() {
+  const [wrap, setWrap] = useState(false);
   return (
     <div data-testid="help-examples">
+      <p>
+        <label data-testid="help-wrap-label">
+          <input type="checkbox" checked={wrap} onChange={(e) => setWrap(e.target.checked)} data-testid="help-wrap" />{" "}
+          Ajustar líneas largas{" "}
+          <InfoTip topic="Ajustar líneas largas" testId="tip-wrap">
+            Parte las líneas largas de los ejemplos para leerlas sin desplazarte. No cambia el código que copias.
+          </InfoTip>
+        </label>
+      </p>
       <p>
         Todos estos bots son ficheros del proyecto que se ejecutan en sus tests con el motor real y la versión{" "}
         {VERSIONS.sdkPlatform} del SDK. Cópialos tal cual en «Subir código (pegado)» eligiendo su runtime.
@@ -363,7 +380,7 @@ export function Examples() {
         <section key={e.id} aria-labelledby={`ex-${e.id}`}>
           <h4 id={`ex-${e.id}`}>{e.title}</h4>
           <Note>{e.origin}</Note>
-          <CodeBlock code={e.code} lang={e.lang} label={e.title} testId={`help-example-${e.id}`} />
+          <CodeBlock code={e.code} lang={e.lang} label={e.title} testId={`help-example-${e.id}`} wrap={wrap} />
         </section>
       ))}
       <Note>

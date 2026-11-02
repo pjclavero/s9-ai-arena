@@ -34,7 +34,10 @@ import commonSchema from "../../../../packages/protocol/schemas/common.schema.js
 import jsSdkPackage from "../../../../sdks/javascript/package.json";
 import pyInitRaw from "../../../../sdks/python/arena_sdk/__init__.py?raw";
 import pyProjectRaw from "../../../../sdks/python/pyproject.toml?raw";
-import sourcePackageRaw from "../../../api/src/services/source-package.ts?raw";
+// Versión del SDK que lleva DE VERDAD la imagen de runtime de bots (wheel fijado por hash).
+// El test eq3-help-sources exige que coincida con SDK_VERSION de la API (lo que fija
+// requirements.txt al empaquetar el código pegado) y con @arena/sdk.
+import sdkWheelLockRaw from "../../../../runtimes/python/sdk-wheel.lock?raw";
 import pyTutorialRaw from "../../../../sdks/python/tests/_tutorial_bot.py?raw";
 import jsTutorialRaw from "../../../../sdks/javascript/tests/tutorial-bot.js?raw";
 import exGunnerJs from "../../../../example-bots/javascript/gunner.js?raw";
@@ -89,7 +92,11 @@ export const VERSIONS = {
   sdkPythonPyproject: grab(pyProjectRaw, /^version\s*=\s*"([^"]+)"/m, "version de pyproject.toml"),
   sdkJs: jsSdkPackage.version as string,
   /** Versión del SDK que la PLATAFORMA instala al empaquetar el código pegado en la web. */
-  sdkPlatform: grab(sourcePackageRaw, /export const SDK_VERSION\s*=\s*"([^"]+)"/, "SDK_VERSION de la plataforma"),
+  sdkPlatform: grab(
+    sdkWheelLockRaw,
+    /^arena_sdk-([^-\s]+)-py3-none-any\.whl/m,
+    "wheel del SDK en runtimes/python/sdk-wheel.lock",
+  ),
   catalog: CATALOG_VERSION,
 } as const;
 

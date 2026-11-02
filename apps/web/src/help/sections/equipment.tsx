@@ -19,7 +19,7 @@ import {
   slotName,
 } from "../names.js";
 import { InfoTip } from "../InfoTip.js";
-import { Note } from "../blocks.js";
+import { Note, SourceText } from "../blocks.js";
 import { helpHref } from "../tree.js";
 
 /** Introducción por categoría: qué hace en la batalla (texto), las cifras salen del catálogo. */
@@ -84,7 +84,11 @@ function ModuleCard(props: { m: ModuleDefinition }) {
       <h4 id={`mod-${vid}`}>
         {m.name} <code>{vid}</code>
       </h4>
-      {m.description && <p>{m.description}</p>}
+      {m.description && (
+        <p>
+          <SourceText text={m.description} />
+        </p>
+      )}
       <table className="stack-table">
         <caption className="visually-hidden">Propiedades de {m.name}</caption>
         <thead>
@@ -103,7 +107,12 @@ function ModuleCard(props: { m: ModuleDefinition }) {
               <td data-label="Valor">{r.value}</td>
               <td data-label="Efecto real">
                 {r.status ? humanize(EFFECT_STATUS_NAME, r.status) : "—"}
-                {r.note && r.status !== "ACTIVE" ? <> — {r.note}</> : null}
+                {r.note && r.status !== "ACTIVE" ? (
+                  <>
+                    {" "}
+                    — <SourceText text={r.note} />
+                  </>
+                ) : null}
               </td>
             </tr>
           ))}
