@@ -17,7 +17,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
-import { spawn } from "node:child_process";
+import { killAllServices, killTree, spawnService } from "../../../packages/test-process/index.js";
 import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -950,7 +950,7 @@ async function freePort(): Promise<number> {
 }
 
 function runMain(env: Record<string, string>, untilLog?: RegExp, timeoutMs = 20_000) {
-  const child = spawn(TSX, [MAIN], {
+  const child = spawnService(TSX, [MAIN], {
     env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", DOCKER_SOCKET: "/nonexistent.sock", ...env },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -977,6 +977,9 @@ function runMain(env: Record<string, string>, untilLog?: RegExp, timeoutMs = 20_
 }
 
 describe("RC2 · el proceso docker-proxy-main.ts aplica la configuración (spawn real)", () => {
+  // EQ1 · red de seguridad: si un caso falla o vence su plazo, su árbol no sobrevive a la suite.
+  afterAll(() => killAllServices());
+
   it.each([
     ["sin DOCKER_PROXY_BIND", {}],
     ["bind 0.0.0.0", { DOCKER_PROXY_BIND: "0.0.0.0", DOCKER_PROXY_ALLOWED_CLIENTS: "10.89.250.0/24" }],
@@ -1012,7 +1015,7 @@ describe("RC2 · el proceso docker-proxy-main.ts aplica la configuración (spawn
       expect((await res.json()).message).toMatch(/cliente no autorizado/);
       expect(p.output()).toMatch(/"allowed":false.*cliente no autorizado: 127\.0\.0\.1/);
     } finally {
-      p.child.kill("SIGTERM");
+      await killTree(p.child, "SIGTERM");
       await p.exited;
     }
   }, 30_000);
@@ -1034,7 +1037,7 @@ describe("RC2 · el proceso docker-proxy-main.ts aplica la configuración (spawn
       expect(res.status).toBe(403);
       expect((await res.json()).message).toMatch(/cliente no autorizado/);
     } finally {
-      p.child.kill("SIGTERM");
+      await killTree(p.child, "SIGTERM");
       await p.exited;
     }
   }, 30_000);
@@ -1062,7 +1065,7 @@ describe("RC2 · el proceso docker-proxy-main.ts aplica la configuración (spawn
       expect(parsed.allowedClients).toEqual(["127.0.0.0/8", "::1/128"]);
       expect([...parsed.imageAllowlist.images].sort()).toEqual([...RUNTIME_IMAGES].sort());
     } finally {
-      p.child.kill("SIGTERM");
+      await killTree(p.child, "SIGTERM");
       await p.exited;
     }
   }, 30_000);
