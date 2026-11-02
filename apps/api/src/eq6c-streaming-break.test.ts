@@ -44,6 +44,8 @@ class GatedStreamer implements StreamerClient {
   holdStopAfter: Promise<void> | null = null; // retrasa la RESPUESTA del stop (efecto ya hecho)
   onStopEffect: (() => void) | null = null;
   onStartEffect: (() => void) | null = null;
+  holdRecordings: Promise<void> | null = null; // retrasa la medida de disco previa al start (modo record)
+  onRecordings: (() => void) | null = null;
   async call<T>(_m: "GET" | "POST", path: string, body?: unknown): Promise<StreamerCallResult<T>> {
     const ok = (b: unknown) => ({ ok: true, status: 200, body: b as T });
     if (path === "/status")
@@ -69,6 +71,10 @@ class GatedStreamer implements StreamerClient {
       this.onStopEffect?.();
       if (this.holdStopAfter) await this.holdStopAfter;
       return ok({ state: "stopped" });
+    }
+    if (path === "/recordings") {
+      this.onRecordings?.();
+      if (this.holdRecordings) await this.holdRecordings;
     }
     if (path === "/recordings")
       return ok({ dir: "arena_replays/video", files: [], count: 0, totalBytes: 0, disk: { totalBytes: 1e12, freeBytes: 1e11 } });
@@ -102,6 +108,8 @@ async function reset() {
   st.onStopEffect = null;
   st.relayState = null;
   st.stateOverride = null;
+  st.holdRecordings = null;
+  st.onRecordings = null;
   await h.db("streaming_sessions").where({ state: "active" }).update({ state: "stopped", stopped_at: h.db.fn.now() });
 }
 
@@ -213,6 +221,31 @@ describe("EQ6c · P2-4 · entre DOS instancias (lo que el autor afirma cubrir co
     const inv = await invariant();
     expect({ a: ra.status, b: rb.status }).toEqual({ a: 200, b: 200 });
     expect(inv).toEqual({ emitting: false, activeSessions: 0 });
+  }, 30_000);
+});
+
+describe("EQ6c · desactivar ‖ start en UNA instancia", () => {
+  it("DEFECTO P2 · PUT enabled:false mientras un start está en vuelo (antes de insertar la sesión) ⇒ queda emitiendo con el streaming DESACTIVADO y la UI dice «disabled»", async () => {
+    let release!: () => void;
+    let reached!: () => void;
+    const atRecordings = new Promise<void>((r) => (reached = r));
+    st.holdRecordings = new Promise<void>((r) => (release = r));
+    st.onRecordings = () => reached();
+    const a = start(appA).then((r) => r);
+    await atRecordings; // el start ya leyó enabled=true y mide el disco (aún sin sesión en BD)
+    const v = (await request(appA).get("/admin/streaming").set(auth())).body.settings.version;
+    const off = await request(appA).put("/admin/streaming/settings").set(auth()).send({ version: v, enabled: false });
+    release();
+    const ra = await a;
+    const ui = (await request(appA).get("/admin/streaming").set(auth())).body;
+    const view = { put: off.status, start: ra.status, emitting: st.emitting, active: (await activeRows()).length, enabled: ui.settings.enabled, uxState: ui.uxState };
+    // Restaurar para el resto de pruebas.
+    await stop(appA);
+    const v2 = (await request(appA).get("/admin/streaming").set(auth())).body.settings.version;
+    await request(appA).put("/admin/streaming/settings").set(auth()).send({ version: v2, enabled: true });
+    expect(off.status).toBe(200); // control: la desactivación se aceptó
+    // Invariante: con el streaming desactivado no emite nada.
+    expect({ emitting: view.emitting, active: view.active }, JSON.stringify(view)).toEqual({ emitting: false, active: 0 });
   }, 30_000);
 });
 
