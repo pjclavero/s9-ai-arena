@@ -200,6 +200,51 @@ describe("criterios de desempate de 0.4.0", () => {
 });
 
 // ----------------------------------------------------------------- vidas 0..N
+describe("reapariciones agotadas en 2v2: el bot NO vuelve aunque la batalla siga", () => {
+  for (const n of [0, 2]) {
+    it(`maxRespawns ${n}: tras ${n + 1} muertes queda fuera y su compañero mantiene la batalla`, () => {
+      const r = resolveRulesRequest({
+        preset: "custom",
+        teamSize: 2,
+        params: {
+          respawn: { mode: "limited", maxRespawns: n, delaySeconds: 1 },
+          victory: "elimination",
+          timeLimitMinutes: 10,
+        },
+      });
+      if (!r.ok) throw new Error(JSON.stringify(r.errors));
+      const b = new Battle({
+        battleId: `lives2-${n}`,
+        seed: "lives2",
+        ruleset: r.engineRuleset,
+        map: emptyArena(),
+        participants: ["red", "red", "blue", "blue"].map((team, i) => ({
+          id: `veh_${i + 1}`,
+          botId: `b${i}`,
+          team,
+          spec: gunnerLoadout(),
+        })),
+      });
+      for (let i = 1; i <= 4; i++) b.attachBot(`veh_${i}`, new IdleBot(`b${i}`));
+      const victim = b.getVehicles().find((v) => v.id === "veh_3")!;
+      let kills = 0;
+      for (let t = 0; t < 3000; t++) {
+        if (victim.alive && kills < n + 1 && t % 10 === 0) {
+          const poses = (b as any).poses();
+          (b as any).damageVehicle(victim, 1e9, poses.get("veh_1").position, poses, "veh_1", "red");
+          kills++;
+        }
+        b.step();
+      }
+      expect(b.isFinished()).toBe(false);
+      expect(kills).toBe(n + 1);
+      expect(victim.alive).toBe(false);
+      expect(victim.respawnsUsed).toBe(n);
+      b.free();
+    }, 60_000);
+  }
+});
+
 describe("maxRespawns 0, 1, 2 y N: vidas = maxRespawns + 1 en el motor", () => {
   for (const n of [0, 1, 2, 6]) {
     it(`maxRespawns ${n}: muere ${n + 1} veces, reaparece ${n} y queda eliminado (gana el rival)`, () => {
