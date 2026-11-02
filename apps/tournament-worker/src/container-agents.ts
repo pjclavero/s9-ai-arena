@@ -34,7 +34,11 @@
  */
 import { randomUUID } from "node:crypto";
 import type { WebSocketServer } from "ws";
-import { CONTAINER_BATTLE_GRACE_MS, DEFAULT_TICK_INTERVAL_MS } from "../../../packages/game-rules/index.js";
+import {
+  CONTAINER_BATTLE_GRACE_MS,
+  DEFAULT_TICK_INTERVAL_MS,
+  maxBattleTicks,
+} from "../../../packages/game-rules/index.js";
 import { protocolBotHandle } from "../../../packages/protocol/bot-handle.js";
 import { ProtocolServer, type ExpectedBot } from "../../arena-engine/src/protocol-server.js";
 import { DEFAULT_SECCOMP_PROFILE } from "../../bot-manager/src/container-battle.js";
@@ -342,7 +346,7 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
 
         server.start();
         const overallMs =
-          engine.config.ruleset.timeLimitTicks * tickIntervalMs + (opts.graceMs ?? CONTAINER_BATTLE_GRACE_MS);
+          maxBattleTicks(engine.config.ruleset) * tickIntervalMs + (opts.graceMs ?? CONTAINER_BATTLE_GRACE_MS);
         const result = await Promise.race([
           server.waitForResult(),
           new Promise<never>((_r, reject) => {

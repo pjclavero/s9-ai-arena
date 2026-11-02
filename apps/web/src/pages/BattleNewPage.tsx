@@ -51,6 +51,16 @@ import {
   NOT_ELIGIBLE_LABEL,
   type BattleEligibilityInfo,
 } from "../version-eligibility.js";
+import {
+  BattleRulesPicker,
+  RulesCheckReport,
+  defaultChoice,
+  rulesBody,
+  lockedModeOf,
+  useRulesCheck,
+  type RulesCatalog,
+  type RulesChoice,
+} from "./BattleRulesPicker.js";
 
 export interface RulesetOption {
   id: string;
@@ -71,6 +81,8 @@ interface MapVersion {
   version: number;
   state: string;
   supportedModes?: string[];
+  /** ADR-022 · por modo: ¿compatible? y si no, por qué (GET /maps). */
+  modeCompatibility?: Record<string, { ok: boolean; declared: boolean; reasons: string[] }>;
 }
 export interface BotSummary {
   id: string;
@@ -259,6 +271,9 @@ export function BattleNewPage(props: { me: Me }) {
   const [submitErr, setSubmitErr] = useState<unknown>(null);
   const [submitting, setSubmitting] = useState(false);
   const [created, setCreated] = useState<string | null>(null);
+  // R-RULES · presets/personalizado/clásico. `null` = el preset por defecto del tipo.
+  const [rulesCatalog, setRulesCatalog] = useState<RulesCatalog>({ presets: [], custom: null });
+  const [rulesPick, setRulesPick] = useState<RulesChoice | null>(null);
   useEffect(() => {
     let alive = true;
     void (async () => {
@@ -268,7 +283,12 @@ export function BattleNewPage(props: { me: Me }) {
         const [m, b, r, t] = await Promise.all([
           api<{ items: MapVersion[] }>("GET", "/maps?limit=100"),
           api<{ items: BotSummary[] }>("GET", "/bots?limit=100"),
-          api<{ modes: string[]; items: RulesetOption[] }>("GET", "/rulesets"),
+          api<{
+            modes: string[];
+            items: RulesetOption[];
+            presets?: RulesCatalog["presets"];
+            custom?: RulesCatalog["custom"];
+          }>("GET", "/rulesets"),
           api<{ items: TeamOption[] }>("GET", "/teams?limit=100"),
         ]);
         if (!alive) return;
@@ -280,6 +300,7 @@ export function BattleNewPage(props: { me: Me }) {
         setBots(relevant);
         setModes(r.modes ?? []);
         setRulesets(r.items ?? []);
+        setRulesCatalog({ presets: r.presets ?? [], custom: r.custom ?? null });
         setTeams((t.items ?? []).filter((x) => x.isMember));
         if (r.modes?.length) setMode(r.modes[0]);
         // Las versiones de cada bot: un fallo aquí no tumba la página (se cae al
@@ -327,21 +348,33 @@ export function BattleNewPage(props: { me: Me }) {
   // `setMode(modes[0])` (= deathmatch): el select de equipos lo pintaba como su
   // primera opción, pero se enviaba el ruleset de DM y la API respondía 409
   // `deathmatch_shared_team` (functional-e2e golden del PR #191).
-  const mode = shownModes.includes(modeChoice)
-    ? modeChoice
-    : kind === "team" && shownModes.includes("team_deathmatch")
-      ? "team_deathmatch"
-      : (shownModes[0] ?? "");
+  // R-RULES · un preset o el personalizado fijan el modo (1v1 → deathmatch, equipos →
+  // team_deathmatch); «Clásico» deja elegir cualquier modo como antes.
+  const rulesFormat: "1v1" | "team" = kind === "team" ? "team" : "1v1";
+  const rulesChoice: RulesChoice = rulesPick ?? defaultChoice(rulesCatalog, rulesFormat);
+  const lockedMode = lockedModeOf(rulesCatalog, rulesChoice, rulesFormat);
+  const mode =
+    lockedMode && shownModes.includes(lockedMode)
+      ? lockedMode
+      : shownModes.includes(modeChoice)
+        ? modeChoice
+        : kind === "team" && shownModes.includes("team_deathmatch")
+          ? "team_deathmatch"
+          : (shownModes[0] ?? "");
   const modeRulesets = rulesets.filter((r) => r.mode === mode || r.mode === null);
-  const modeMaps = maps.filter((m) => (m.supportedModes ?? []).includes(mode));
-  const mapsForMode = (md: string) => maps.filter((m) => (m.supportedModes ?? []).includes(md)).length;
+  // ADR-022 · compatibilidad mapa↔modo del SERVIDOR (declarada Y estructural), con el
+  // porqué; sin ella (API anterior), lo declarado en supportedModes como antes.
+  const fitsMode = (m: MapVersion, md: string) =>
+    m.modeCompatibility?.[md]?.ok ?? (m.supportedModes ?? []).includes(md);
+  const modeMaps = maps.filter((m) => fitsMode(m, mode));
+  const mapsForMode = (md: string) => maps.filter((m) => fitsMode(m, md)).length;
   // UX-F (DEF-R8) · el primer mapa publicado compatible con el modo viene
   // preseleccionado (como el ruleset): antes había que adivinar que faltaba elegirlo.
   const keyOf = (m: MapVersion) => `${m.mapId}@${m.version}`;
   const effectiveMapKey = modeMaps.some((m) => keyOf(m) === mapKey) ? mapKey : modeMaps[0] ? keyOf(modeMaps[0]) : "";
   const selectedMap = modeMaps.find((m) => keyOf(m) === effectiveMapKey);
   // …y se dice qué mapas publicados NO salen y por qué (p. ej. mvp-arena-01 no admite deathmatch).
-  const hiddenMaps = maps.filter((m) => !(m.supportedModes ?? []).includes(mode));
+  const hiddenMaps = maps.filter((m) => !fitsMode(m, mode));
   const effectiveRuleset = modeRulesets.some((r) => r.id === rulesetId)
     ? rulesetId
     : ((modeRulesets.find((r) => r.mode === mode) ?? modeRulesets[0])?.id ?? "");
@@ -478,6 +511,52 @@ export function BattleNewPage(props: { me: Me }) {
     if (nA + nB > MAX_PARTICIPANTS)
       teamChecks.push({ ok: false, label: `Demasiados participantes: ${nA + nB} (máximo ${MAX_PARTICIPANTS})` });
   }
+  // R-RULES · tamaño NvN y comprobación en servidor (reglas + topes de créditos/masa).
+  const rulesTeamSize = kind === "team" ? Math.max(nA, nB) : 1;
+  const rulesPayload = rulesBody(rulesChoice, rulesTeamSize);
+  const draftParticipants =
+    kind === "team"
+      ? (["A", "B"] as const).flatMap((side) =>
+          slots[side].map((s) => ({ botId: s.botId, version: slotVersion(s), team: SIDES[side].team })),
+        )
+      : [
+          { botId: redBot, version: rv, team: "red" },
+          { botId: blueBot, version: bv, team: "blue" },
+        ];
+  const draftComplete =
+    draftParticipants.length >= 2 &&
+    draftParticipants.every((p) => p.botId && p.version != null) &&
+    Boolean(selectedMap);
+  const rulesCheck = useRulesCheck(
+    rulesPayload && draftComplete && effectiveRuleset
+      ? {
+          mode,
+          rulesetId: effectiveRuleset,
+          mapId: selectedMap!.mapId,
+          mapVersion: selectedMap!.version,
+          participants: draftParticipants,
+          rules: rulesPayload,
+        }
+      : null,
+  );
+  const rulesChecks: { ok: boolean; label: string }[] = [];
+  if (rulesPayload && kind === "team" && nA !== nB) {
+    rulesChecks.push({
+      ok: false,
+      label: `Reglas ${nA} contra ${nB}: estas reglas exigen el mismo número de bots en cada bando`,
+    });
+  }
+  if (rulesPayload && rulesCheck.result && !rulesCheck.result.ok) {
+    const why = [
+      ...rulesCheck.result.errors.map((e) => e.message),
+      ...(rulesCheck.result.composition?.violations ?? []).map((v) => v.message),
+    ];
+    rulesChecks.push({ ok: false, label: `Reglas: ${why.join("; ") || "no válidas"}` });
+  }
+  if (rulesPayload && rulesCheck.result?.ok) rulesChecks.push({ ok: true, label: "Reglas y presupuestos: válidos" });
+  teamChecks.push(...rulesChecks);
+  checks.push(...rulesChecks);
+  const rulesBlocked = rulesChecks.some((c) => !c.ok);
   const teamValid = teamChecks.every((c) => c.ok);
 
   function chooseKind(k: "individual" | "team") {
@@ -486,6 +565,7 @@ export function BattleNewPage(props: { me: Me }) {
     setSubmitErr(null);
     setMapKey("");
     setRulesetId("");
+    setRulesPick(null);
     if (k === "team") {
       const tm = modes.filter((m) => TEAM_MODES.includes(m));
       setMode(tm.includes("team_deathmatch") ? "team_deathmatch" : (tm[0] ?? ""));
@@ -504,6 +584,8 @@ export function BattleNewPage(props: { me: Me }) {
         mapVersion: selectedMap!.version,
         ...(seed ? { seed } : {}),
         participants,
+        // R-RULES · el servidor valida y guarda la copia inmutable; ausente = clásico.
+        ...(rulesPayload ? { rules: rulesPayload } : {}),
       });
       setCreated(battle.id);
     } catch (e) {
@@ -520,7 +602,7 @@ export function BattleNewPage(props: { me: Me }) {
     if (!selectedMap) return setError("Elige un mapa publicado que soporte el modo.");
     if (!redBot || !blueBot) return setError("Elige un bot para cada bando.");
     if (redBot === blueBot) return setError("Elige dos bots distintos.");
-    if (rv == null || bv == null) {
+    if (rv == null || bv == null || rulesBlocked) {
       const bad = checks.filter((c) => !c.ok).map((c) => c.label);
       return setError(`No se puede crear la batalla: ${bad.join("; ")}.`);
     }
@@ -859,6 +941,16 @@ export function BattleNewPage(props: { me: Me }) {
       )}
       <FormError error={submitErr} />
 
+      {(rulesCatalog.presets.length > 0 || rulesCatalog.custom) && (
+        <BattleRulesPicker
+          catalog={rulesCatalog}
+          format={rulesFormat}
+          teamSize={rulesTeamSize}
+          choice={rulesChoice}
+          onChange={setRulesPick}
+        />
+      )}
+
       <label>
         Modo{" "}
         <select
@@ -868,6 +960,8 @@ export function BattleNewPage(props: { me: Me }) {
             setMode(e.target.value);
             setMapKey("");
             setRulesetId("");
+            // R-RULES · otro modo distinto del que fija el preset ⇒ reglas clásicas.
+            if (lockedMode && e.target.value !== lockedMode) setRulesPick({ kind: "classic" });
           }}
         >
           {shownModes.map((m) => (
@@ -905,14 +999,16 @@ export function BattleNewPage(props: { me: Me }) {
           <small>
             No aparecen porque no admiten {modeName(mode)}:{" "}
             {hiddenMaps
-              .map(
-                (m) =>
-                  `${m.name ?? m.mapId} v${m.version} (${
-                    (m.supportedModes ?? []).length > 0
+              .map((m) => {
+                const why = m.modeCompatibility?.[mode]?.reasons ?? [];
+                return `${m.name ?? m.mapId} v${m.version} (${
+                  why.length > 0
+                    ? why.join("; ")
+                    : (m.supportedModes ?? []).length > 0
                       ? (m.supportedModes ?? []).map(modeName).join(", ")
                       : "sin modos declarados"
-                  })`,
-              )
+                })`;
+              })
               .join(" · ")}
             .
           </small>
@@ -942,6 +1038,7 @@ export function BattleNewPage(props: { me: Me }) {
           {sideControls("rojo", redTeam, setRedTeam, redBot, setRedBot, redVersion, setRedVersion)}
           {sideControls("azul", blueTeam, setBlueTeam, blueBot, setBlueBot, blueVersion, setBlueVersion)}
 
+          <RulesCheckReport result={rulesPayload ? rulesCheck.result : null} checking={rulesCheck.checking} />
           <h3>Qué falta para crear la batalla</h3>
           <ul data-testid="battle-checklist">
             {checks.map((c) => (
@@ -951,7 +1048,7 @@ export function BattleNewPage(props: { me: Me }) {
             ))}
           </ul>
 
-          <button disabled={submitting || notEnoughBots || notEnoughMaps} onClick={submit}>
+          <button disabled={submitting || notEnoughBots || notEnoughMaps || rulesBlocked} onClick={submit}>
             Crear batalla
           </button>
           {notEnoughBots && (
@@ -983,6 +1080,7 @@ export function BattleNewPage(props: { me: Me }) {
             </p>
           </div>
 
+          <RulesCheckReport result={rulesPayload ? rulesCheck.result : null} checking={rulesCheck.checking} />
           <h3>Qué falta para crear la batalla</h3>
           <ul data-testid="battle-checklist">
             {teamChecks.map((c) => (

@@ -179,7 +179,7 @@ describe("EQ3 ayuda ↔ motor · fin de batalla y desempates (CommonEnd)", () =>
       respawn: { enabled: true, delayTicks: 150, maxRespawns: 2 },
     } as Ruleset;
     expect(tiebreakText(future)).toBe(
-      "más puntos; después, más vidas en juego; después, más integridad de casco; si todo empata, empate",
+      "más puntos; después, más vidas/reapariciones restantes; después, más integridad de casco; si todo empata, empate",
     );
     expect(respawnText(future)).toMatch(/como máximo 2 por vehículo/);
   });

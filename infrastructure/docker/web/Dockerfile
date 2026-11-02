@@ -27,6 +27,8 @@ COPY sdks/python/arena_sdk/__init__.py ./sdks/python/arena_sdk/__init__.py
 COPY sdks/python/tests/_tutorial_bot.py ./sdks/python/tests/_tutorial_bot.py
 COPY example-bots/javascript/gunner.js example-bots/javascript/miner.js ./example-bots/javascript/
 COPY example-bots/python/explorer.py example-bots/python/defender.py ./example-bots/python/
+# EQ2 · documento canónico de reglas (lo embebe el Centro de Ayuda, apps/web/src/help/sections/rules.tsx).
+COPY docs/user/rules.json ./docs/user/rules.json
 RUN npx vite build apps/web
 
 FROM nginx:1.27-alpine

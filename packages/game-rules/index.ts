@@ -61,6 +61,28 @@ export type GameModeId =
   | "domination"
   | "juggernaut";
 
+/**
+ * R-RULES · Criterios de desempate al acabar el tiempo (datos, no `if` por modo).
+ * Motor 0.4.0 (ADR-022). Cada criterio da un número por equipo; gana el mayor:
+ *  - `score`: más puntos del modo;
+ *  - `alive`: más vehículos VIVOS y no descalificados en el tick final;
+ *  - `lives`: más vidas en juego (vivos + reapariciones restantes; sin respawn = vivos);
+ *  - `respawns_left`: más reapariciones restantes (suma del bando; sin respawn = 0);
+ *  - `kills`: más bajas de vehículos ENEMIGOS (el fuego amigo y la muerte ambiental no cuentan);
+ *  - `hull`: más integridad (suma de casco/casco máximo de los vivos, redondeo 1e-4).
+ *    Se conserva en el motor pero ningún preset lo usa desde 0.4.0.
+ * Si todos los criterios empatan ⇒ `draw`.
+ */
+export type TimeoutTiebreakCriterion = "score" | "alive" | "lives" | "respawns_left" | "kills" | "hull";
+export const TIMEOUT_TIEBREAK_CRITERIA: readonly TimeoutTiebreakCriterion[] = [
+  "score",
+  "alive",
+  "lives",
+  "respawns_left",
+  "kills",
+  "hull",
+];
+
 export interface Ruleset {
   rulesetId: string;
   mode: GameModeId;
@@ -69,7 +91,28 @@ export interface Ruleset {
   timeLimitTicks: number;
   scoreToWin: number;
   friendlyFire: boolean;
-  respawn: { enabled: boolean; delayTicks: number };
+  /**
+   * `maxRespawns` (R-RULES, ADR-021) · REAPARICIONES por vehículo (no vidas: vidas =
+   * 1 + maxRespawns). Agotadas, el vehículo queda ELIMINADO y la batalla puede
+   * terminar por eliminación aunque haya respawn. Ausente = respawn ilimitado,
+   * exactamente el comportamiento de 0.3.0 (ningún ruleset del catálogo lo declara).
+   */
+  respawn: { enabled: boolean; delayTicks: number; maxRespawns?: number };
+  /**
+   * R-RULES (ADR-021) · Desempate al agotarse el tiempo: criterios en orden; si todos
+   * empatan, `draw`. Ausente = el desempate de 0.3.0 (más puntos; si no, empate).
+   */
+  timeoutTiebreak?: TimeoutTiebreakCriterion[];
+  /**
+   * Motor 0.4.0 (ADR-022) · PRÓRROGA. Si al agotar `timeLimitTicks` los dos primeros
+   * equipos empatan a puntos, la batalla NO termina: sigue con el MISMO estado (bots,
+   * banderas, posiciones, reapariciones) y gana el primer equipo que supere su
+   * puntuación del final del tiempo reglamentario («la siguiente captura gana»). SIN
+   * límite competitivo (decisión del operador, 2026-11-02): sólo la salvaguarda TÉCNICA
+   * global `OVERTIME_TECHNICAL_LIMIT_TICKS`, que no es un resultado deportivo.
+   * Ausente = sin prórroga (0.3.0).
+   */
+  overtime?: { kind: "next_score_wins" };
   sharedTeamVision: boolean;
   /** Ticks de gracia tras desconexión antes de descalificar (D2). */
   disconnectGraceTicks: number;
@@ -222,4 +265,24 @@ export function loadRuleset(id: string, overrides: Partial<Ruleset> = {}): Rules
   const rs = safeLookup(RULESETS, id);
   if (!rs) throw new Error(`Ruleset desconocido: ${id}`);
   return { ...rs, ...overrides };
+}
+
+/**
+ * Motor 0.4.0 (ADR-022) · SALVAGUARDA TÉCNICA de la prórroga: 20 minutos (36 000 ticks)
+ * más allá del tiempo reglamentario. NO es una regla de juego: si salta, la batalla se
+ * DETIENE sin resultado deportivo (`endReason: "technical_limit"`, `winner: null`), no
+ * cuenta como empate, victoria ni derrota, ni en V-D-E, clasificaciones ni Elo. Es 4
+ * veces la duración de una partida CTF base (5 min) y existe sólo para que ninguna
+ * batalla quede abierta para siempre (temporizadores de contenedor y HTTP necesitan una
+ * cota). Cambiar el valor cambia la simulación de esas batallas: exige versión de motor.
+ */
+export const OVERTIME_TECHNICAL_LIMIT_TICKS = 20 * 60 * 30;
+
+/**
+ * Motor 0.4.0 (ADR-022) · Ticks MÁXIMOS que puede durar una batalla con este ruleset:
+ * tiempo reglamentario + salvaguarda técnica si hay prórroga. Es la cifra que deben
+ * usar los temporizadores de pared (contenedores, HTTP).
+ */
+export function maxBattleTicks(ruleset: Pick<Ruleset, "timeLimitTicks" | "overtime">): number {
+  return ruleset.timeLimitTicks + (ruleset.overtime ? OVERTIME_TECHNICAL_LIMIT_TICKS : 0);
 }

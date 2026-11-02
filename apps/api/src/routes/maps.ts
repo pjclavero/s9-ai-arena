@@ -2,6 +2,7 @@
  * T7.5 · Mapas: lectura pública, importación validada con el validador REAL de E4,
  * publicación inmutable y generación procedural determinista (generador real de E4).
  */
+import { mapModeCompatibility, type MapCompatInput } from "../../../../packages/game-rules/map-compat.js";
 import { Router } from "express";
 import multer from "multer";
 import type { Db } from "../db/connection.js";
@@ -102,6 +103,9 @@ export function mapVersionToJson(m: Record<string, unknown>, viewer?: { userId: 
     widthM: m.width_m ?? undefined,
     heightM: m.height_m ?? undefined,
     supportedModes: m.supported_modes ?? [],
+    // ADR-022 · por modo: ¿se puede elegir? y si no, POR QUÉ (lo enseña «Nueva batalla»).
+    modeCompatibility:
+      content && typeof content === "object" ? mapModeCompatibility(content as MapCompatInput) : undefined,
     thumbnailUrl: m.thumbnail_url ?? undefined,
     generation: m.generation ?? undefined,
   };

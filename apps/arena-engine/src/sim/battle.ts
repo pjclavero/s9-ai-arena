@@ -12,6 +12,8 @@
 import { createHash } from "node:crypto";
 import {
   DECISION_EVERY_N_TICKS,
+  emptyDict,
+  OVERTIME_TECHNICAL_LIMIT_TICKS,
   RADIO_DELIVERY_DELAY_DECISIONS,
   TICK_DT,
   TICK_HZ,
@@ -30,7 +32,18 @@ import {
   type Projectile,
 } from "./combat.js";
 import { ARENA_BOUNDARY_ID_PREFIX } from "../arena-map.js";
-import { chooseSpawn, createMode, spawnPoolFor, type ArenaMap, type GameMode, type SpawnDisk } from "./modes.js";
+import {
+  TECHNICAL_LIMIT,
+  chooseSpawn,
+  createMode,
+  eliminatedByDeath,
+  respawnLimited,
+  respawnsLeft,
+  spawnPoolFor,
+  type ArenaMap,
+  type GameMode,
+  type SpawnDisk,
+} from "./modes.js";
 import { PhysicsWorld, clamp, finite, finiteClamped, initPhysics, type Vec2 } from "./physics.js";
 import { buildObservation, radioReaches, validateRadio, type RadioMessage } from "./sensors.js";
 import { Vehicle, type VehicleSpec } from "./vehicle.js";
@@ -79,7 +92,14 @@ export interface BattleConfig {
 
 export interface BattleResult {
   battleId: string;
-  winner: string | "draw";
+  /** Equipo ganador, "draw", o null si la batalla se detuvo SIN resultado deportivo. */
+  winner: string | "draw" | null;
+  /**
+   * Motor 0.4.0 (ADR-022) · sólo si la batalla NO terminó por las reglas:
+   * `technical_limit` = la salvaguarda técnica de la prórroga la detuvo (sin resultado
+   * deportivo). Ausente en toda batalla normal (resultados de 0.3.0 idénticos).
+   */
+  endReason?: "technical_limit";
   ticks: number;
   score: Record<string, number>;
   finalStateHash: string;
@@ -160,6 +180,11 @@ export class Battle {
   /** Eventos por bot (niebla de guerra: cada uno solo ve lo suyo) + eventos públicos. */
   private pendingEvents = new Map<string, any[]>();
   publicEvents: any[] = [];
+  /**
+   * Motor 0.4.0 (ADR-022) · bajas de vehículos ENEMIGOS por equipo (criterio de
+   * desempate `kills`). No entra en el hash: es una función del historial de muertes.
+   */
+  private teamKills: Record<string, number> = emptyDict<number>();
   snapshots: any[] = [];
   stateHashes: { tick: number; hash: string }[] = [];
   replayCommands: { tick: number; vehicleId: string; command: any }[] = [];
@@ -533,6 +558,9 @@ export class Battle {
       let respawnPoses: Map<string, any> | null = null;
       for (const v of this.vehicles) {
         if (v.alive || v.disqualified) continue;
+        // R-RULES (ADR-021) · sin reapariciones restantes, se queda fuera. Con respawn
+        // ilimitado (0.3.0) `respawnsLeft` es Infinity y esta guarda no actúa.
+        if (respawnsLeft(v, this.config.ruleset) === 0) continue;
         if (v.respawnAtTick === 0) {
           v.respawnAtTick = this.tick + this.config.ruleset.respawn.delayTicks;
         } else if (this.tick >= v.respawnAtTick) {
@@ -572,10 +600,20 @@ export class Battle {
     }
 
     // --- PASO 9 · Condición de fin
-    const w = this.mode.winner(ctx);
+    const w = this.mode.winner({ ...ctx, kills: this.teamKills });
     if (w !== null) {
       this.finish(w);
       return;
+    }
+    // Motor 0.4.0 (ADR-022) · la prórroga empieza en este tick: evento PÚBLICO (replay
+    // y espectador; no va a los bots, el esquema EVENT de arena/1 no lo declara).
+    if (this.config.ruleset.overtime && this.mode.overtimeSince === this.tick) {
+      this.publicEvents.push({
+        tick: this.tick,
+        kind: "overtime_started",
+        score: { ...this.mode.score },
+        technicalLimitTicks: OVERTIME_TECHNICAL_LIMIT_TICKS,
+      });
     }
     this.tick++;
   }
@@ -767,6 +805,7 @@ export class Battle {
             map: this.config.map,
             emit: (e: any) => this.emit(e),
           });
+          this.noteElimination(v);
         }
       }
     }
@@ -811,6 +850,7 @@ export class Battle {
     }
 
     if (res.killed) {
+      if (ownerTeam !== target.team) this.teamKills[ownerTeam] = (this.teamKills[ownerTeam] ?? 0) + 1;
       this.emit({ kind: "vehicle_destroyed", targetId: target.id });
       this.mode.onKill?.(target, ownerTeam, {
         tick: this.tick,
@@ -820,7 +860,20 @@ export class Battle {
         map: this.config.map,
         emit: (e: any) => this.emit(e),
       });
+      this.noteElimination(target);
     }
+  }
+
+  /**
+   * R-RULES (ADR-021) · Con respawn LIMITADO, la muerte que agota las reapariciones se
+   * marca con un evento PÚBLICO `vehicle_eliminated` (va al replay y al espectador).
+   * NO se reparte a los bots: el esquema EVENT del protocolo arena/1 no lo declara. Sin
+   * `maxRespawns` (todos los rulesets de 0.3.0) no se emite nada: replays idénticos.
+   */
+  private noteElimination(v: Vehicle): void {
+    if (!respawnLimited(this.config.ruleset)) return;
+    if (!eliminatedByDeath(v, this.config.ruleset)) return;
+    this.publicEvents.push({ tick: this.tick, kind: "vehicle_eliminated", targetId: v.id, team: v.team });
   }
 
   // ------------------------------------------------------ snapshot y hash
@@ -829,8 +882,13 @@ export class Battle {
    * ni el estado interno de los sensores de un bot (test de fuga en E8).
    */
   private publicSnapshot(poses: Map<string, any>): any {
+    const limited = respawnLimited(this.config.ruleset);
     return {
       tick: this.tick,
+      // Motor 0.4.0 · sólo con prórroga declarada (snapshots de 0.3.0 idénticos).
+      ...(this.config.ruleset.overtime
+        ? { overtime: this.mode.overtimeSince !== null && this.mode.overtimeSince !== undefined }
+        : {}),
       vehicles: this.vehicles.map((v) => {
         const p = poses.get(v.id);
         return {
@@ -844,6 +902,8 @@ export class Battle {
           hullHpMax: v.spec.hullHp,
           carryingFlag: v.carryingFlag,
           juggernaut: v.juggernaut,
+          // R-RULES · sólo con respawn limitado (snapshots de 0.3.0 idénticos).
+          ...(limited ? { respawnsLeft: respawnsLeft(v, this.config.ruleset) } : {}),
           modules: [...v.modules.values()].map((m) => ({
             slot: m.spec.slot,
             state: v.stateOf(m.spec.slot),
@@ -871,6 +931,7 @@ export class Battle {
     // divergencia interna de Rapier (islas de sueño, contactos) puede ser invisible
     // en las poses cuantizadas y aun así seguir viva; esto la saca a la luz.
     const solver = this.physics.solverFingerprint();
+    const limited = respawnLimited(this.config.ruleset);
     const canonical = {
       tick: this.tick,
       rng: this.rng.getState(),
@@ -897,6 +958,9 @@ export class Battle {
           armor: Object.entries(v.armor)
             .sort()
             .map(([s, a]) => [s, q(a!.hp)]),
+          // R-RULES (ADR-021) · las reapariciones usadas son estado de simulación SÓLO
+          // cuando limitan; sin `maxRespawns` no entran y el hash de 0.3.0 no cambia.
+          ...(limited ? { rsp: v.respawnsUsed } : {}),
         };
       }),
       projectiles: this.projectiles.map((p) => [p.id, q(p.position.x), q(p.position.y), q(p.damage)]),
@@ -904,6 +968,8 @@ export class Battle {
       destructibles: [...this.destructibleHp.entries()].sort().map(([k, v]) => [k, q(v)]),
       score: Object.entries(this.mode.score).sort(),
       objectives: this.mode.objectives(),
+      // Motor 0.4.0 (ADR-022) · estado de prórroga, SÓLO si el ruleset la declara.
+      ...(this.config.ruleset.overtime ? { ot: this.mode.overtimeSince ?? null } : {}),
     };
     return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
   }
@@ -917,9 +983,15 @@ export class Battle {
     // el hash de estado: no altera el determinismo.
     const last = this.snapshots[this.snapshots.length - 1];
     if (!last || last.tick !== this.tick) this.snapshots.push(this.publicSnapshot(this.poses()));
+    // Salvaguarda técnica (ADR-022): sin resultado deportivo y con el motivo explícito.
+    const technical = winner === TECHNICAL_LIMIT;
+    if (technical) {
+      this.publicEvents.push({ tick: this.tick, kind: "technical_limit", score: { ...this.mode.score } });
+    }
     this.result = {
       battleId: this.config.battleId,
-      winner,
+      winner: technical ? null : winner,
+      ...(technical ? { endReason: "technical_limit" as const } : {}),
       ticks: this.tick,
       score: { ...this.mode.score },
       finalStateHash: this.stateHash(),

@@ -145,6 +145,13 @@ export const TIEBREAK_NAME: Record<string, string> = {
   draw: "empate",
   most_score: "gana quien tenga más puntos; con igualdad, empate",
   most_alive_then_kills: "gana quien tenga más vehículos vivos; si empatan, más derribos; si siguen igual, empate",
+  // Criterios de desempate de los presets oficiales (motor 0.4.0, docs/user/rules.json).
+  score: "más puntos",
+  alive: "más bots vivos",
+  lives: "más vidas/reapariciones restantes",
+  respawns_left: "más reapariciones restantes",
+  kills: "más bajas",
+  hull: "más integridad de casco",
 };
 
 export const EFFECT_STATUS_NAME: Record<string, string> = {

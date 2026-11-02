@@ -32,6 +32,10 @@ export interface TeamBattleStats {
   flagCaptures: number;
   /** Bots vivos y no descalificados al terminar (con respawn: `aliveAtEnd`). */
   survivors: number;
+  /** R-RULES · Reapariciones usadas por el bando. */
+  respawns: number;
+  /** R-RULES · Sólo con respawn limitado: reapariciones que le quedaban al bando. */
+  respawnsRemaining?: number;
 }
 
 /** Campos de un bot que entran en la suma (todos deportivos). */
@@ -47,6 +51,8 @@ export interface TeamSummable {
   shotsFired?: unknown;
   shotsHit?: unknown;
   flagCaptures?: unknown;
+  respawns?: unknown;
+  respawnsRemaining?: unknown;
 }
 
 /** Bando vacío. */
@@ -64,6 +70,7 @@ export function emptyTeamStats(team: string, score: number): TeamBattleStats {
     shotsHit: 0,
     flagCaptures: 0,
     survivors: 0,
+    respawns: 0,
   };
 }
 
@@ -82,6 +89,9 @@ export function addBotToTeam(t: TeamBattleStats, s: TeamSummable): void {
   t.shotsFired += n(s.shotsFired);
   t.shotsHit += n(s.shotsHit);
   t.flagCaptures += n(s.flagCaptures);
+  t.respawns += n(s.respawns);
+  if (typeof s.respawnsRemaining === "number")
+    t.respawnsRemaining = (t.respawnsRemaining ?? 0) + n(s.respawnsRemaining);
   const alive = typeof s.aliveAtEnd === "boolean" ? s.aliveAtEnd : s.died !== true && s.disqualified !== true;
   if (alive) t.survivors += 1;
 }

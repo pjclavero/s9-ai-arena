@@ -10,7 +10,6 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
-import { assertVersionsEligible, canonicalUuid } from "../services/version-eligibility.js";
 import { audit } from "../audit.js";
 import { pathParam } from "../params.js";
 import { ROLE_RANK } from "../openapi.js";
@@ -23,7 +22,7 @@ import { anonQuota, type AnonQuotaConfig } from "../middleware/anon-quota.js";
 import type { BattleRunConfig } from "../battle-run.js";
 import { publicSpectateEnabledFromEnv } from "../public-spectate.js";
 import { publicReplaysEnabledFromEnv } from "../public-replays.js";
-import { checkBattleContent } from "./catalog.js";
+import { assertTeamsFitMap, checkBattleContent } from "./catalog.js";
 import { wherePublicReplay } from "../replay-access.js";
 import {
   canSeeBotDiagnostics,
@@ -34,6 +33,8 @@ import {
 } from "../battle-access.js";
 import { loadRuleset } from "../../../../packages/game-rules/index.js";
 import { resolveBattleRuleset } from "../services/battle-ruleset-resolver.js";
+import { buildBattleRules, rulesOf, rulesToJson } from "../services/battle-rules.js";
+import { assertParticipantsShape, assertParticipantsUsable } from "../services/battle-participants.js";
 import type { Request } from "express";
 
 const SPECTATE_TICKET_TTL_S = 60;
@@ -186,6 +187,8 @@ export function battleToJson(
     finishedAt: b.finished_at ? new Date(b.finished_at as string).toISOString() : undefined,
     replayAvailable: Boolean(b.replay_ref),
     replayHash: b.replay_hash ?? undefined,
+    // R-RULES · copia inmutable de las reglas (ausente en batallas anteriores).
+    rules: rulesToJson(rulesOf(b)),
   };
 }
 
@@ -280,6 +283,9 @@ const NO_STORE = "private, no-store";
 /** `maxConsecutiveTimeouts` del ruleset con el que corrió la batalla, o null si no se sabe. */
 async function maxConsecutiveTimeoutsOf(db: Db, battle: Record<string, any>): Promise<number | null> {
   const versions = (battle.engine_versions ?? {}) as Record<string, unknown>;
+  // R-RULES · con copia de reglas, la copia manda (nunca el catálogo actual).
+  const snapshot = rulesOf(battle);
+  if (snapshot) return Number(snapshot.engineRuleset.maxConsecutiveTimeouts);
   try {
     // El ruleset del MOTOR que se usó (engine-executor lo deja en engine_versions);
     // si no está (batalla sin ejecutar), la misma resolución que usa el worker.
@@ -603,21 +609,9 @@ export function battleRoutes(
     if (!content.ok) throw new ApiError(content.status, content.code, content.message);
     const map = { map_id: content.map.mapId, version: content.map.version };
 
-    // DEV-B · forma de cada participante y composición mínima. PK de participants
-    // = (battle_id, bot_id): un mismo bot NO puede ir en dos bandos (ni dos veces
-    // en el mismo); antes eso acababa en un 500 por violación de PK.
-    const seen = new Set<string>();
-    for (const p of participants) {
-      if (!p || typeof p !== "object") throw badRequest("participants: cada elemento debe ser un objeto");
-      if (typeof p.botId !== "string" || p.botId.length === 0) throw badRequest("participants[].botId obligatorio");
-      if (!Number.isInteger(p.version) || p.version < 1) throw badRequest("participants[].version: entero >= 1");
-      if (typeof p.team !== "string" || !/^[A-Za-z0-9_-]{1,32}$/.test(p.team)) {
-        throw badRequest("participants[].team: 1-32 caracteres [A-Za-z0-9_-]");
-      }
-      p.botId = canonicalUuid(p.botId); // ELIG · PG acepta MAYÚSCULAS/{llaves}: una sola forma
-      if (seen.has(p.botId)) throw badRequest("participants: un bot solo puede aparecer una vez por batalla");
-      seen.add(p.botId);
-    }
+    // DEV-B · forma de cada participante (services/battle-participants.ts, la misma
+    // regla que POST /battles/rules-check).
+    assertParticipantsShape(participants);
 
     // 4v4 · COMPOSICIÓN por bando, antes de tocar bots o cola. Sin esto, una
     // combinación que el motor rechaza (DM con bandos compartidos) se encolaba y
@@ -625,36 +619,16 @@ export function battleRoutes(
     // fallo de infraestructura. No depende de ningún dato privado: se puede
     // responder antes de la comprobación de visibilidad sin filtrar nada.
     assertTeamComposition(mode, participants);
+    // ADR-022 · en CTF, cada bando necesita su base y su bandera en el mapa.
+    assertTeamsFitMap(content, mode, participants);
 
-    // TD-005 · PROPIEDAD/VISIBILIDAD: sólo se puede meter en una batalla un bot
-    // propio, público o de un equipo del que el solicitante es miembro (los
-    // admin, cualquiera). Un bot privado ajeno responde EXACTAMENTE igual que uno
-    // inexistente (404): no se revela que existe. Antes no se comprobaba nada.
-    const userId = req.auth?.userId ?? null;
-    const isAdmin = (req.auth?.rank ?? 0) >= ROLE_RANK.admin;
-    for (const p of participants) {
-      const bot = await db("bots")
-        .where({ id: p.botId })
-        .first()
-        .catch(() => null);
-      let visible = Boolean(bot) && (isAdmin || bot.owner_id === userId || bot.visibility === "public");
-      if (bot && !visible && bot.visibility === "team" && bot.team_id && userId) {
-        visible = Boolean(await db("team_members").where({ team_id: bot.team_id, user_id: userId }).first());
-      }
-      if (!visible) throw new ApiError(404, "bot_not_found", `El bot ${p.botId} no existe o no es accesible`);
-    }
+    // TD-005 · visibilidad, versión publicada y (ELIG) elegibilidad: una sola regla
+    // compartida con POST /battles/rules-check (services/battle-participants.ts).
+    await assertParticipantsUsable(db, req.auth, participants);
 
-    for (const p of participants) {
-      const v = await db("bot_versions")
-        .where({ bot_id: p.botId, version: p.version })
-        .first()
-        .catch(() => null);
-      if (!v || !["published", "frozen"].includes(v.state)) {
-        throw conflict("bot_not_published", `El bot ${p.botId} v${p.version} no está publicado`);
-      }
-    }
-    // ELIG · publicada ≠ elegible: el loadout histórico se revalida con el validador actual.
-    await assertVersionsEligible(db, participants);
+    // R-RULES (ADR-021) · reglas: preset/personalizado/clásico, topes de créditos y
+    // masa con los loadouts REALES, y la COPIA INMUTABLE que jugará el worker.
+    const rulesBuild = await buildBattleRules(db, { mode, rulesetId, rules: req.body?.rules, participants });
 
     // Una sola transacción: batalla + participantes + trabajo. Antes eran tres
     // escrituras sueltas (una batalla podía quedar sin trabajo, o sin participantes).
@@ -668,6 +642,7 @@ export function battleRoutes(
           map_id: map.map_id,
           map_version: map.version,
           seed: seed ?? null,
+          rules: rulesBuild.snapshot ? JSON.stringify(rulesBuild.snapshot) : null,
         })
         .returning("*");
       await trx("participants").insert(
@@ -828,7 +803,17 @@ export function battleRoutes(
     res.setHeader("Cache-Control", NO_STORE);
     const perTeam: Record<string, TeamBattleStats> = emptyDict<TeamBattleStats>();
     for (const [team, t] of teams) perTeam[team] = t;
-    res.json({ battleId: battle.id, status, perBot, perTeam, diagnostics });
+    // R-RULES · perfil de métricas por modo (FASE 13), derivado de la copia de reglas.
+    const rules = rulesToJson(rulesOf(battle));
+    res.json({
+      battleId: battle.id,
+      status,
+      perBot,
+      perTeam,
+      diagnostics,
+      profile: rules?.profile ?? "classic",
+      rules,
+    });
   });
 
   // PRC (TD-004) · getReplay, getReplayIndex, getReplaySegment, verifyReplay y

@@ -82,7 +82,14 @@ export interface StoredReplayIndex {
   mapChecksum: string;
   keyframes: Keyframe[];
   /** Resultado oficial (T8.3: el reproductor compara su marcador final contra esto). */
-  result: { winner: string; ticks: number; score: Record<string, number>; finalStateHash: string };
+  result: {
+    winner: string | null;
+    /** ADR-022 · `technical_limit` si la salvaguarda técnica detuvo la batalla (winner null). */
+    endReason?: string;
+    ticks: number;
+    score: Record<string, number>;
+    finalStateHash: string;
+  };
   /**
    * T8.3 · ¿Permite el dueño abrir las capas de depuración (comandos grabados) a
    * todos en el reproductor? En directo exigen rol; en replay son opt-in del dueño.

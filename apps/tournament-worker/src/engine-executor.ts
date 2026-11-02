@@ -33,6 +33,7 @@ import { replayFromBattle, toJsonl, type Replay } from "../../arena-engine/src/r
 import { Battle, type BattleResult, type BotAgent, type Participant } from "../../arena-engine/src/sim/battle.js";
 import type { SpectateGateway } from "../../api/src/spectate/gateway.js";
 import { resolveBattleRuleset } from "../../api/src/services/battle-ruleset-resolver.js";
+import { rulesOf } from "../../api/src/services/battle-rules.js";
 import { InfrastructureFailure } from "./errors.js";
 import type { AgentsKind, BattleContext, BattleExecution, BattleExecutor } from "./battle-runner.js";
 import type { BotRunDiagnostics } from "./bot-diagnostics.js";
@@ -77,6 +78,23 @@ export interface AgentDriver {
  * (T8.2). Es un Pick del SpectateGateway REAL.
  */
 export type SpectateSink = Pick<SpectateGateway, "attachBattle" | "detachBattle">;
+
+/** Margen por defecto entre el final de la batalla y el detach del espectador. */
+export const SPECTATE_DETACH_BASE_MS = 3000;
+
+/**
+ * Integración EQ2/EQ6 (P2) · ms hasta retirar la batalla del gateway de espectador.
+ * El gateway DIFIERE el directo `spectator.delaySeconds` (anti-coaching de torneo) y el
+ * detach cancela los envíos pendientes: con el detach a 3 s fijos, un directo con 30 s
+ * de retardo perdía sus ~27 s finales y el resultado. Ahora el detach espera el retardo
+ * EFECTIVO de la batalla (el de su copia de reglas; 0 en las `visible`) más el margen.
+ * Sin retardo, el valor de siempre.
+ */
+export function spectateDetachDelayMs(baseMs: number, spectator: { delaySeconds?: number } | undefined): number {
+  const d = spectator?.delaySeconds;
+  const delayMs = typeof d === "number" && Number.isFinite(d) && d > 0 ? d * 1000 : 0;
+  return baseMs + delayMs;
+}
 
 /** Techo de ticks del bucle en proceso (mismo valor por defecto que Battle.run()). */
 const MAX_TICKS = 100000;
@@ -154,23 +172,33 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
       throw new InfrastructureFailure("map_unavailable", `mapa ${battle.map_id} no convertible: ${String(err)}`);
     }
 
-    // --- ruleset del motor (resolución única, B9) + presupuesto de BD --------
-    const resolved = await resolveBattleRuleset(db, battle.mode, battle.ruleset_id);
-    if (!resolved.ok) {
-      throw new InfrastructureFailure("engine_start_failure", `${resolved.code}: ${resolved.message}`);
-    }
-    const dbRuleset = battle.ruleset_id ? await db("rulesets").where({ id: battle.ruleset_id }).first() : null;
+    // --- R-RULES (ADR-021) · COPIA INMUTABLE de reglas: si la batalla la tiene, se
+    //     juega ESA copia (ruleset completo del motor y catálogo fijados al crearla) y
+    //     no se resuelve nada del catálogo actual. Sin copia (batallas anteriores y de
+    //     torneo): el camino de 0.3.0, sin cambios.
+    const snapshot = rulesOf(battle as unknown as Record<string, unknown>);
     const tournament = battle.tournament_id
       ? await db("tournaments").where({ id: battle.tournament_id }).first()
       : null;
-    const budgetCredits = (tournament?.budget_credits ?? dbRuleset?.budget_credits) as number | undefined;
-    const ruleset = loadRuleset(resolved.ruleset.rulesetId, {
-      ...(budgetCredits ? { budgetCredits } : {}),
-      ...(opts.rulesetOverrides ?? {}),
-    });
+    let ruleset: Ruleset;
+    if (snapshot) {
+      ruleset = { ...snapshot.engineRuleset, ...(opts.rulesetOverrides ?? {}) };
+    } else {
+      // --- ruleset del motor (resolución única, B9) + presupuesto de BD --------
+      const resolved = await resolveBattleRuleset(db, battle.mode, battle.ruleset_id);
+      if (!resolved.ok) {
+        throw new InfrastructureFailure("engine_start_failure", `${resolved.code}: ${resolved.message}`);
+      }
+      const dbRuleset = battle.ruleset_id ? await db("rulesets").where({ id: battle.ruleset_id }).first() : null;
+      const budgetCredits = (tournament?.budget_credits ?? dbRuleset?.budget_credits) as number | undefined;
+      ruleset = loadRuleset(resolved.ruleset.rulesetId, {
+        ...(budgetCredits ? { budgetCredits } : {}),
+        ...(opts.rulesetOverrides ?? {}),
+      });
+    }
 
-    // --- catálogo CONGELADO del torneo (T9.4) --------------------------------
-    const catalogVersion = (tournament?.catalog_version ?? null) as string | null;
+    // --- catálogo CONGELADO del torneo (T9.4) o de la copia de reglas ----------
+    const catalogVersion = (tournament?.catalog_version ?? snapshot?.catalogVersion ?? null) as string | null;
     let catalog: ModuleDefinition[];
     let effectiveCatalogVersion: string;
     if (catalogVersion) {
@@ -261,6 +289,10 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
       throw new InfrastructureFailure("engine_start_failure", err instanceof Error ? err.message : String(err));
     }
 
+    // E8.M anti-coaching: retardo del ruleset (de la copia de reglas, si la hay), salvo
+    // batalla 'visible'. Lo usan el attach y el detach (que debe esperar ese retardo).
+    const spectator =
+      battle.spectator_mode === "visible" ? { ...(ruleset.spectator ?? {}), delaySeconds: 0 } : ruleset.spectator;
     try {
       if (opts.spectate) {
         let round: number | null = null;
@@ -268,9 +300,6 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
           const match = await db("matches").where({ id: battle.match_id }).first();
           round = (match?.round as number) ?? null;
         }
-        // E8.M anti-coaching: retardo del ruleset, salvo batalla 'visible'.
-        const spectator =
-          battle.spectator_mode === "visible" ? { ...(ruleset.spectator ?? {}), delaySeconds: 0 } : ruleset.spectator;
         opts.spectate.attachBattle(battle.id, engine, {
           spectator,
           meta: {
@@ -313,7 +342,10 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
       } finally {
         if (opts.spectate) {
           const sink = opts.spectate;
-          const t = setTimeout(() => sink.detachBattle(battle.id), opts.spectateDetachDelayMs ?? 3000);
+          const t = setTimeout(
+            () => sink.detachBattle(battle.id),
+            spectateDetachDelayMs(opts.spectateDetachDelayMs ?? SPECTATE_DETACH_BASE_MS, spectator),
+          );
           t.unref?.();
         }
       }
@@ -328,6 +360,7 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
 
       return {
         winner: result.winner,
+        ...(result.endReason ? { endReason: result.endReason } : {}),
         ticks: result.ticks,
         score: result.score,
         finalStateHash: result.finalStateHash,
