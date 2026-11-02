@@ -65,7 +65,7 @@ Puedes usar `@arena/sdk` y `ws`, y los módulos estándar de Node salvo los que 
 
 ## Probarlo en tu ordenador
 
-Desde la raíz del repositorio, con Node.js 22 o superior y `npm install` hecho:
+Necesitas el repositorio (es público: `git clone https://github.com/pjclavero/s9-ai-arena.git`; sin él puedes escribir y validar el bot en el editor de la web, pero no usar el simulador local). Desde la raíz del repositorio, con Node.js 22 o superior y `npm install` hecho:
 
 ```bash
 npx arena-sim mi_bot.js --archetype gunner --opponent idle --ticks 1800

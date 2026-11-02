@@ -87,7 +87,7 @@ Una versión enviada, validada o publicada **no se puede modificar ni borrar**. 
 
 ## Usar el bot
 
-- **En una batalla de práctica**: dos bots con versión publicada; eliges qué versión juega cada uno ([Batallas](battles.md)).
+- **En una batalla de práctica**: en 1 contra 1, dos bots con versión publicada; en una batalla por equipos, hasta 4 bots por bando (4 contra 4, máximo 8 en total). Eliges qué versión juega cada uno ([Batallas](battles.md)).
 - **En un torneo**: inscribes una versión publicada ([Torneos](tournaments.md)). Al cerrarse las inscripciones, la versión inscrita queda `frozen`.
 - En la batalla, el vehículo lo conduce **tu código** con el equipamiento de **esa versión**.
 - **En un equipo**: añade tu bot a un [equipo](teams.md).

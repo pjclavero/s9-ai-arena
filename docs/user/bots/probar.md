@@ -4,7 +4,9 @@ Hay tres niveles de prueba, de más rápido a más real.
 
 ## 1. En tu ordenador, con el simulador local
 
-El simulador local juega tu bot con el **mismo motor y el mismo protocolo** que la plataforma, sin cuenta ni conexión. Necesitas el repositorio y Node.js 22 o superior (en Python, además, Python 3.11 o superior).
+El simulador local juega tu bot con el **mismo motor y el mismo protocolo** que la plataforma, sin cuenta ni conexión. Necesitas el repositorio (ver más abajo cómo conseguirlo) y Node.js 22 o superior (en Python, además, Python 3.11 o superior).
+
+El repositorio es público: `git clone https://github.com/pjclavero/s9-ai-arena.git` y, dentro, `npm install`. **Sin el repositorio** también puedes crear, editar y validar tu bot desde la web (el área «Código» de «Mis bots» arranca con una plantilla válida y se comprueba al enviarla a validación), pero no tendrás el simulador local.
 
 ```bash
 # JavaScript, desde la raíz del repositorio (tras `npm install`)

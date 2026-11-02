@@ -2,7 +2,7 @@
 
 Un **modo** decide cómo se gana; un **conjunto de reglas** decide los detalles (tiempo, vidas, cuántos puntos hacen falta). Al crear una batalla eliges las dos cosas.
 
-La plataforma tiene **cuatro modos**: combate libre (*Deathmatch*), combate por equipos (*Deathmatch por equipos*), *Captura la bandera* y *Control de zona*. Hay tres modos más en el motor de simulación (último en pie, dominación y juggernaut) que la plataforma todavía no ofrece: no aparecen en la web.
+Puedes usar **cuatro modos**: combate libre (*Deathmatch*, 1 contra 1), combate por equipos (*Deathmatch por equipos*), *Captura la bandera* y *Control de zona*. Son los únicos que ofrece la web y la API (`modes` del catálogo); los tres últimos se juegan por equipos. Otros modos internos del motor de simulación **no están disponibles** para el jugador y no se describen en esta guía.
 
 ## Cómo se elige: conjuntos oficiales, personalizado y clásico
 

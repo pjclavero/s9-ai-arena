@@ -60,7 +60,7 @@ Se rechazan, entre otros: `os`, `subprocess`, `socket`, `ctypes`, `multiprocessi
 
 ## Probarlo en tu ordenador
 
-Necesitas el repositorio, Python 3.11 o superior y Node.js 22 o superior (el simulador local ejecuta el **motor real**; no hay una reimplementación en Python).
+Necesitas el repositorio (es público: `git clone https://github.com/pjclavero/s9-ai-arena.git`; sin él puedes escribir y validar el bot en el editor de la web, pero no usar el simulador local), Python 3.11 o superior y Node.js 22 o superior (el simulador local ejecuta el **motor real**; no hay una reimplementación en Python).
 
 ```bash
 cd sdks/python
