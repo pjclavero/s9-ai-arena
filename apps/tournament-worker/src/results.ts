@@ -52,6 +52,7 @@ async function resolveSeries(db: Knex, match: MatchRow, p: Pairing): Promise<Ser
   let awayScore = 0;
   for (const b of battles) {
     const result = typeof b.result === "string" ? JSON.parse(b.result) : (b.result ?? {});
+    if (isTechnicalLimit(result)) continue; // ADR-022 · sin resultado deportivo
     const homeTeam = b.game_index % 2 === 1 ? "A" : "B";
     const awayTeam = b.game_index % 2 === 1 ? "B" : "A";
     if (result.winner === homeTeam) homeWins++;
@@ -251,8 +252,47 @@ export interface TableRow {
   seed: number;
 }
 
+/** ADR-022 · ¿El resultado es la salvaguarda técnica (sin resultado deportivo)? */
+export function isTechnicalLimit(result: unknown): boolean {
+  const r = typeof result === "string" ? safeJson(result) : result;
+  return Boolean(r && typeof r === "object" && (r as { endReason?: unknown }).endReason === "technical_limit");
+}
+function safeJson(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
 /** Tabla de liga/RR/suizo/equipos con los desempates documentados. */
 export async function leagueTable(db: Knex, tournamentId: string, isTeams: boolean): Promise<TableRow[]> {
+  const { rows, headToHead } = await leagueTableDetailed(db, tournamentId, isTeams);
+  return sortTable(rows.values(), headToHead);
+}
+
+/** Orden de la tabla: puntos, enfrentamientos directos, diferencia de puntuación, seed. */
+export function sortTable(rows: Iterable<TableRow>, headToHead: Map<string, number>): TableRow[] {
+  return [...rows].sort(
+    (a, b) =>
+      b.points - a.points ||
+      (headToHead.get(`${b.id}|${a.id}`) ?? 0) - (headToHead.get(`${a.id}|${b.id}`) ?? 0) ||
+      b.scoreDiff - a.scoreDiff ||
+      a.seed - b.seed ||
+      // Sólo decide al agregar torneos (en uno, los seeds son únicos): orden total.
+      (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
+}
+
+/**
+ * Filas SIN ordenar de la tabla de un torneo y sus enfrentamientos directos (para poder
+ * AGREGAR varios torneos de una temporada: standings.ts).
+ */
+export async function leagueTableDetailed(
+  db: Knex,
+  tournamentId: string,
+  isTeams: boolean,
+): Promise<{ rows: Map<string, TableRow>; headToHead: Map<string, number> }> {
   const matches = (await db("matches").where({ tournament_id: tournamentId })) as MatchRow[];
   const rows = new Map<string, TableRow>();
   const entries = await db("entries")
@@ -284,6 +324,10 @@ export async function leagueTable(db: Knex, tournamentId: string, isTeams: boole
     const home = rows.get(p.home);
     const away = rows.get(p.away);
     if (!home || !away) continue;
+    const battles = await db("battles").where({ match_id: m.id });
+    // ADR-022 · un enfrentamiento cuyas batallas terminaron TODAS por la salvaguarda
+    // técnica no tiene resultado deportivo: no puntúa ni cuenta como empate en V-D-E.
+    if (battles.length > 0 && battles.every((b: Record<string, unknown>) => isTechnicalLimit(b.result))) continue;
     if (winner === p.home) {
       home.points += 3;
       home.wins++;
@@ -301,7 +345,6 @@ export async function leagueTable(db: Knex, tournamentId: string, isTeams: boole
       away.draws++;
     }
     // diferencia de puntuación agregada de la serie
-    const battles = await db("battles").where({ match_id: m.id });
     for (const b of battles) {
       const result = typeof b.result === "string" ? JSON.parse(b.result) : (b.result ?? {});
       const homeTeam = b.game_index % 2 === 1 ? "A" : "B";
@@ -310,13 +353,7 @@ export async function leagueTable(db: Knex, tournamentId: string, isTeams: boole
       away.scoreDiff += Number(result.score?.[awayTeam] ?? 0) - Number(result.score?.[homeTeam] ?? 0);
     }
   }
-  return [...rows.values()].sort(
-    (a, b) =>
-      b.points - a.points ||
-      (headToHead.get(`${b.id}|${a.id}`) ?? 0) - (headToHead.get(`${a.id}|${b.id}`) ?? 0) ||
-      b.scoreDiff - a.scoreDiff ||
-      a.seed - b.seed,
-  );
+  return { rows, headToHead };
 }
 
 // --------------------------------------------------------------- handler
