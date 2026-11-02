@@ -24,6 +24,7 @@ import {
   tiebreakFamilyOf,
   type RulesParams,
 } from "./battle-rules.js";
+import { maxBattleTicks } from "./index.js";
 
 const canon = (v: unknown): string =>
   Array.isArray(v)
@@ -201,6 +202,17 @@ describe("CTF base ctf@1 (decisión del operador)", () => {
       params: { ...base, game: "combat" },
     });
     expect(combat.ok).toBe(false);
+  });
+});
+
+describe("duración máxima con prórroga (temporizadores de pared)", () => {
+  it("maxBattleTicks = tiempo + límite de seguridad de la prórroga; sin prórroga, el tiempo", () => {
+    const r = resolveRulesRequest({ preset: "ctf", teamSize: 2 });
+    if (!r.ok) throw new Error("ctf");
+    expect(maxBattleTicks(r.engineRuleset)).toBe(9000 + CTF_OVERTIME_MAX_SECONDS * 30);
+    const t = resolveRulesRequest({ preset: "team_deathmatch", teamSize: 2 });
+    if (!t.ok) throw new Error("tdm");
+    expect(maxBattleTicks(t.engineRuleset)).toBe(t.engineRuleset.timeLimitTicks);
   });
 });
 
