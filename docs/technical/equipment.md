@@ -173,12 +173,12 @@ Acero (`steel_*`): reducción 0.35 frontal, 0.25 lateral y 0.20 trasera; más pe
 - el mensaje es base64 opaco, con un tope de `min(maxMessageBytes, 32)` bytes;
 - se limita a `maxMessagesPerSecond` por vehículo;
 - se entrega con 1 ciclo de decisión de retraso;
-- el destino puede ser uno concreto (`to`) o difusión.
+- el destino puede ser uno concreto (`to`) o difusión;
+- sólo la reciben los vehículos del **mismo equipo** que el emisor (`radioDeliverableTo`, `sensors.ts`), según el equipo del estado de batalla; el emisor no se oye a sí mismo, y un `to` a un rival o a un id inexistente no se entrega a nadie.
 
 **Sin efecto**:
 
 - **`rangeM`**: `radioReaches()` existe pero no se llama.
-- **Equipo**: una difusión **llega también al equipo rival** a cualquier distancia.
 - **`encrypted`**.
 
 Hallazgo nuevo de esta consolidación, comunicado a A como parte de [TD-016](../roadmap/technical-debt.md#td-016).
@@ -235,7 +235,7 @@ Recalibrado en UX-01 (la auditoría FC-C sobre `0b8c12b` se midió en el camino 
 | **PARTIAL** | Sólo cuenta para validar el loadout | `chassis.maxLoadKg`; las comunes `costCredits`, `size`, `maxPerVehicle` |
 | **FUTURE** | Ningún código de simulación la lee | `movement.terrain`; `weapon.rangeM` (el alcance lo da el TTL de 90 ticks, `combat.ts:198`); `weapon.turretArcRad` (todos los datos valen 2π: la comprobación nunca actúa); `radio.rangeM` (`radioReaches` sin llamadas, `sensors.ts:227`); `utility.effect/magnitude/durationTicks` |
 
-**Para que tengan efecto hace falta cambiar el motor:** `weapon.rangeM`, `radio.rangeM` (y la radio sin filtro de equipo), `turretArcRad` con los datos actuales, `ammo.hp` como pérdida de capacidad, `movement.terrain` y `utility.*`.
+**Para que tengan efecto hace falta cambiar el motor:** `weapon.rangeM`, `radio.rangeM`, `turretArcRad` con los datos actuales, `ammo.hp` como pérdida de capacidad, `movement.terrain` y `utility.*`.
 
 ## Campos sin efecto en el motor
 
@@ -264,7 +264,7 @@ Recalibrado en UX-01 (la auditoría FC-C sobre `0b8c12b` se midió en el camino 
 ## Estado actual
 
 - **FUNCIONA ACTUALMENTE**: catálogo, validación en cliente y servidor, revisiones, resolución a `VehicleSpec`. La batalla y la partida de humo del build juegan el **loadout real** de la versión. La UI marca el efecto real de cada ranura y propiedad, sin presentar como funcional lo que el motor ignora, y enseña la carga de módulos frente a `maxLoadKg`.
-- **PARCIAL**: radio (sin alcance ni filtro de equipo).
+- **PARCIAL**: radio (sin alcance; sí limitada al propio equipo).
 - **PENDIENTE**: módulos `utility` y efecto de los campos FUTURE de la tabla anterior.
 
 ## Documentación relacionada
@@ -291,7 +291,8 @@ Verificado contra `27f70bb`; las filas del loadout real, contra `integration/ux-
 | Daño D6: suelo 10 %, 70/30, sorteo por masa | CODE_VERIFIED | `combat.ts:75-120`; `packages/game-rules/constants.ts:40-42` |
 | Estados de módulo y rendimientos | CODE_VERIFIED | `packages/game-rules/constants.ts:47-66`; `packages/game-rules/index.ts:42-49` |
 | Minas: máximo 3, `detectable` fijo | CODE_VERIFIED | `apps/arena-engine/src/sim/battle.ts:37,536-560`; `combat.ts:209-260` |
-| Radio sin alcance ni filtro de equipo | CODE_VERIFIED | `sensors.ts:192-194,227-232` (`radioReaches` sin llamadas); `apps/arena-engine/tests/radio-regression.test.ts:99-100` |
+| Radio sin alcance (`radioReaches` sin llamadas) | CODE_VERIFIED | `sensors.ts` (`radioReaches`) |
+| Radio limitada al propio equipo | CODE_VERIFIED | `sensors.ts` (`radioDeliverableTo`); `apps/arena-engine/tests/radio-team-isolation.test.ts` |
 | Validación en servidor con `mvp-default` | CODE_VERIFIED | `apps/api/src/services/bots.ts:134-160` |
 | `mine_bay` en chasis ligero → 422 `unknown_slot` | RUNTIME_VERIFIED | Auditoría 2026-10-15, B pasada 1 §B4 |
 | `HunterBot` sólo usa radar, lidar y `turret_main` | CODE_VERIFIED | `apps/arena-engine/src/stubs.ts:50-100` |

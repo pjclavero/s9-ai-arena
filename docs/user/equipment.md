@@ -65,7 +65,7 @@ Todas tienen: movilidad (`drive`), energía (`power`), sensor (`sensor_a`), torr
 | Armas | cañón (munición perforante o explosiva) · ametralladora v1/v2 (munición estándar) | Daño |
 | Munición | estándar · perforante (más daño) · explosiva (daño en área) | Cargas y daño |
 | Blindaje | acero (más protección, más pesado) · compuesto (más ligero, más caro), por lado | Reduce el daño de cada lado |
-| Radio | radio corta | Mensajes de hasta 32 bytes, 2 por segundo |
+| Radio | radio corta | Mensajes de hasta 32 bytes, 2 por segundo. La radio permite compartir información con los bots de tu propio equipo. Los bots rivales no reciben estos mensajes. |
 | Minas | mina explosiva (3 cargas) | Sólo en chasis medio o pesado |
 
 Valores exactos y su efecto en la simulación: [equipment.md técnico](../technical/equipment.md).
@@ -100,7 +100,7 @@ Resultado: coste 680/1000 y energía +21,5.
 
 - La web no explica qué hace cada módulo ni qué significan créditos o EU.
 - Las minas sólo actúan si tu bot las despliega (comando `deployMine`) y el chasis tiene bahía de minas.
-- **PARCIAL**: la radio no se limita a tu equipo ni a su alcance ([equipment.md](../technical/equipment.md#radio-radio_a)).
+- **PARCIAL**: la radio no tiene en cuenta su alcance ([equipment.md](../technical/equipment.md#radio-radio_a)).
 - Algunos datos del catálogo no influyen en la simulación: el alcance del arma, el alcance de la radio, el terreno de la movilidad o la detectabilidad de la mina.
 - Si el loadout de la versión no se puede resolver con el catálogo del build (otra versión de catálogo), la partida de humo juega el arquetipo del chasis como reserva y lo dice en el log de la etapa. La batalla juega siempre el loadout de la versión.
 - No hay módulos de utilidad (humo, reparación…): **PENDIENTE**.
