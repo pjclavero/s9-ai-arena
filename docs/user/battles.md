@@ -2,7 +2,7 @@
 
 ## Resumen
 
-Una **batalla de práctica** enfrenta a dos bots (bando rojo contra bando azul) en un mapa publicado. No cuenta para el ranking. Se crea en **«Batallas» → «+ Nueva batalla de práctica»**. Puedes usar **tus bots** (aunque sean privados), bots **públicos** de otros y bots de un **equipo** del que eres miembro; nunca los bots privados de otra persona.
+Una **batalla de práctica** enfrenta a dos bots (bando rojo contra bando azul) en un mapa publicado. No cuenta para el ranking. Se crea en **«Batallas» → «+ Nueva batalla»**. Puedes usar **tus bots** (aunque sean privados), bots **públicos** de otros y bots de un **equipo** del que eres miembro; nunca los bots privados de otra persona.
 
 En una batalla juega una **versión publicada** concreta de cada bot, con el **loadout** con el que se subió esa versión ([Equipamiento](equipment.md)). La juega el código de cada bot, cada uno en su propio contenedor aislado: lo que hace tu bot en la batalla es lo que programaste. Si la ejecución está activada en el servidor que usas lo dice [current-status.md](../roadmap/current-status.md).
 
