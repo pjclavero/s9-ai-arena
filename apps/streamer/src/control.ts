@@ -150,6 +150,14 @@ export function createControlServer(opts: ControlOptions): Server {
           logger("warn", "control: credencial sellada para otro destino; orden rechazada", {
             target: expected.ingest.replace(/\/[^/]*$/, "/***"),
           });
+        } else {
+          // EQ5d (revisión EQ6c, P3) · también se registran los sobres que no se
+          // pueden abrir (etiqueta manipulada o truncada, otra clave, formato): un
+          // goteo de `undecryptable` es la huella de alguien probando sobres.
+          logger("warn", "control: credencial sellada rechazada; orden rechazada", {
+            code: e instanceof SealedSecretError ? e.code : "invalid",
+            target: expected.ingest.replace(/\/[^/]*$/, "/***"),
+          });
         }
         return { key: null, status: 409, error: e instanceof SealedSecretError ? e.message : "credencial inválida" };
       }

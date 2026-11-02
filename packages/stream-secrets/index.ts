@@ -131,8 +131,8 @@ export function sealSecret(secret: string, publicKeyPem: string, bind: SealBindi
   if (pt.length === 0 || pt.length > MAX_SECRET_BYTES) throw new Error("longitud de secreto no admitida");
   const kid = keyIdOf(publicKeyPem);
   const cek = randomBytes(32);
-  const iv = randomBytes(12);
-  const c = createCipheriv("aes-256-gcm", cek, iv);
+  const iv = randomBytes(GCM_IV_BYTES);
+  const c = createCipheriv("aes-256-gcm", cek, iv, { authTagLength: GCM_TAG_BYTES });
   c.setAAD(aadOf(kid, b));
   const ct = Buffer.concat([c.update(pt), c.final()]);
   const tag = c.getAuthTag();
@@ -153,6 +153,19 @@ export function sealSecret(secret: string, publicKeyPem: string, bind: SealBindi
 
 const B64 = /^[A-Za-z0-9+/]+=*$/;
 const b64 = (v: unknown, max: number) => typeof v === "string" && v.length > 0 && v.length <= max && B64.test(v);
+/** Longitud de la etiqueta de GCM (bytes): sólo la completa, nunca truncada. */
+export const GCM_TAG_BYTES = 16;
+/** Longitud del IV de GCM (bytes). */
+export const GCM_IV_BYTES = 12;
+/**
+ * EQ5d (revisión EQ6c, P3) · base64 CANÓNICO de exactamente `bytes` bytes. GCM
+ * acepta etiquetas truncadas (4/8/12 bytes) si no se fija la longitud: con 4
+ * bytes, re-apuntar el sobre costaría 2^32 intentos en vez de 2^128.
+ */
+const b64Exact = (v: unknown, bytes: number) =>
+  b64(v, 64) &&
+  Buffer.from(v as string, "base64").length === bytes &&
+  Buffer.from(v as string, "base64").toString("base64") === v;
 
 export function isSealedSecret(x: unknown): x is SealedSecret {
   if (!x || typeof x !== "object") return false;
@@ -170,8 +183,8 @@ export function isSealedSecret(x: unknown): x is SealedSecret {
     typeof bind.ingest === "string" &&
     bind.ingest.length <= 512 &&
     b64(o.ek, 2048) &&
-    b64(o.iv, 32) &&
-    b64(o.tag, 32) &&
+    b64Exact(o.iv, GCM_IV_BYTES) &&
+    b64Exact(o.tag, GCM_TAG_BYTES) &&
     b64(o.ct, 1024)
   );
 }
@@ -234,7 +247,10 @@ export function openSecret(sealed: unknown, privateKeyPem: string, expected: Exp
       Buffer.from(sealed.ek, "base64"),
     );
     if (cek.length !== 32) throw new Error("cek");
-    const d = createDecipheriv("aes-256-gcm", cek, Buffer.from(sealed.iv, "base64"));
+    // EQ5d (P3) · etiqueta de 16 bytes exactos (además de isSealedSecret): defensa en profundidad.
+    const d = createDecipheriv("aes-256-gcm", cek, Buffer.from(sealed.iv, "base64"), {
+      authTagLength: GCM_TAG_BYTES,
+    });
     // El AAD se reconstruye con el destino ESPERADO: un `bind` manipulado no autentica.
     d.setAAD(aadOf(sealed.kid, want));
     d.setAuthTag(Buffer.from(sealed.tag, "base64"));
