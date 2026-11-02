@@ -99,6 +99,41 @@ describe("EQ4 · Mis bots: Activos / Retirados y maestro-detalle", () => {
   });
 });
 
+describe("rev. EQ6 P2-2 · Mis bots no se queda en la primera página", () => {
+  it("pide páginas de 100 con recuento real, cuenta sobre el TOTAL y «Cargar más» sigue el cursor", async () => {
+    const mk = (i: number, retired = false) => ({
+      id: `p${i}`,
+      name: `bot-${i}`,
+      visibility: "private",
+      retiredAt: retired ? "2026-10-01T00:00:00.000Z" : null,
+    });
+    const page1 = Array.from({ length: 100 }, (_, i) => mk(i, i >= 95));
+    const page2 = Array.from({ length: 20 }, (_, i) => mk(100 + i, i >= 15));
+    apiMock.mockImplementation((m: string, p: string) => {
+      if (m === "GET" && p.startsWith("/bots?ownerId")) {
+        const counts = { total: 120, active: 110, retired: 10 };
+        return Promise.resolve(
+          p.includes("cursor=c1") ? { items: page2, counts } : { items: page1, nextCursor: "c1", counts },
+        );
+      }
+      return Promise.resolve([]);
+    });
+    render(<BotsPage me={ME} catalog={catalog} catalogVersion={CATALOG_VERSION} budgetCredits={1000} />);
+    await screen.findByTestId("bots-active");
+    const first = apiMock.mock.calls.find((c) => String(c[1]).startsWith("/bots?ownerId"))![1] as string;
+    expect(first).toContain("limit=100");
+    expect(first).toContain("includeCounts=true");
+    expect(screen.getByText("Activos (110)")).toBeTruthy();
+    expect(screen.getByText("Retirados (10)")).toBeTruthy();
+    expect(screen.getByTestId("bots-loaded").textContent).toBe("Cargados 100 de 120.");
+    fireEvent.click(screen.getByTestId("bots-load-more"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "bot-110" })).toBeTruthy());
+    expect(apiMock.mock.calls.some((c) => String(c[1]).includes("cursor=c1"))).toBe(true);
+    expect(screen.queryByTestId("bots-load-more")).toBeNull();
+    expect(within(screen.getByTestId("bots-active")).getAllByRole("button").length).toBe(110);
+  });
+});
+
 const TEAMS = [
   {
     id: "t1",

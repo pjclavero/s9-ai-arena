@@ -155,6 +155,15 @@ export function matchBotDetailRoute(hash: string): string | null {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
+/** EQ4 · tamaño de página de «Mis bots» (máximo del contrato). */
+export const BOTS_PAGE = 100;
+
+interface BotListPage {
+  items: Bot[];
+  nextCursor?: string;
+  counts?: { total: number; active: number; retired: number };
+}
+
 /** EQ4 · visibilidad en palabras. */
 const VISIBILITY_TEXT: Record<string, string> = { private: "privado", team: "de equipo", public: "público" };
 
@@ -209,10 +218,27 @@ function BotsListPage(props: {
    */
   const maxPollWaitMs = props.maxPollWaitMs ?? 30_000;
 
-  const [botsRes, reloadBots] = useResource(
-    () => api<{ items: Bot[] }>("GET", `/bots?ownerId=${encodeURIComponent(props.me.id)}`),
-    [props.me.id],
-  );
+  // EQ4 (rev. EQ6 P2-2) · antes sólo llegaban los 20 primeros (límite por defecto)
+  // y Activos/Retirados se contaba sobre esa página parcial. Ahora: páginas de
+  // BOTS_PAGE por cursor («Cargar más») y contadores REALES del servidor
+  // (includeCounts). Una recarga trae las mismas páginas que ya se veían.
+  const botPages = useRef(1);
+  const [botsRes, reloadBots] = useResource(async () => {
+    const base = `/bots?ownerId=${encodeURIComponent(props.me.id)}&limit=${BOTS_PAGE}&includeCounts=true`;
+    const first = await api<BotListPage>("GET", base);
+    const items = [...(first.items ?? [])];
+    let cursor = first.nextCursor;
+    for (let p = 1; p < botPages.current && cursor; p++) {
+      const next = await api<BotListPage>("GET", `${base}&cursor=${encodeURIComponent(cursor)}`);
+      items.push(...(next.items ?? []));
+      cursor = next.nextCursor;
+    }
+    return { items, nextCursor: cursor, counts: first.counts };
+  }, [props.me.id]);
+  const loadMoreBots = () => {
+    botPages.current += 1;
+    reloadBots({ silent: true });
+  };
   const [selected, setSelected] = useState<Bot | null>(null);
   // Versión que el usuario está mirando. null = "la última" (se resuelve al cargar).
   const [focusRequest, setFocusRequest] = useState<number | null>(null);
@@ -626,21 +652,41 @@ function BotsListPage(props: {
             // EQ4 · los retirados no saturan la lista principal (y no se borra nada).
             const active = page.items.filter((b) => !b.retiredAt);
             const retired = page.items.filter((b) => !!b.retiredAt);
+            // Contadores del SERVIDOR (todos tus bots); si no los da, los de lo cargado.
+            const nActive = page.counts?.active ?? active.length;
+            const nRetired = page.counts?.retired ?? retired.length;
             return (
               <>
-                <h3 id="bots-active-title">Activos ({active.length})</h3>
+                <h3 id="bots-active-title">Activos ({nActive})</h3>
                 {active.length === 0 ? (
-                  <p data-testid="bots-active-empty">Todos tus bots están retirados.</p>
+                  nActive === 0 && <p data-testid="bots-active-empty">Todos tus bots están retirados.</p>
                 ) : (
                   <ul aria-labelledby="bots-active-title" data-testid="bots-active">
                     {active.map(botItem)}
                   </ul>
                 )}
-                {retired.length > 0 && (
+                {nRetired > 0 && (
                   <details data-testid="bots-retired">
-                    <summary>Retirados ({retired.length})</summary>
+                    <summary>Retirados ({nRetired})</summary>
                     <ul>{retired.map(botItem)}</ul>
+                    {retired.length < nRetired && (
+                      <p className="muted">
+                        <small>Hay más retirados: pulsa «Cargar más bots».</small>
+                      </p>
+                    )}
                   </details>
+                )}
+                {page.nextCursor && (
+                  <p>
+                    <button type="button" data-testid="bots-load-more" onClick={loadMoreBots}>
+                      Cargar más bots
+                    </button>{" "}
+                    <small data-testid="bots-loaded">
+                      {page.counts
+                        ? `Cargados ${page.items.length} de ${page.counts.total}.`
+                        : `Cargados ${page.items.length}.`}
+                    </small>
+                  </p>
                 )}
               </>
             );

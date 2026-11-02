@@ -233,12 +233,12 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
       typeof req.query.ownerId === "string" &&
       req.query.ownerId === req.auth.userId
     ) {
-      const [row] = await db("bots")
+      const [row] = (await db("bots")
         .where({ owner_id: req.auth.userId })
         .select(
           db.raw("count(*)::int AS total"),
           db.raw("count(*) FILTER (WHERE retired_at IS NOT NULL)::int AS retired"),
-        );
+        )) as { total?: number; retired?: number }[];
       const total = Number(row?.total ?? 0);
       const retired = Number(row?.retired ?? 0);
       counts = { total, active: total - retired, retired };

@@ -80,15 +80,21 @@ describe("EQ4 · bot retirado", () => {
     const ownerId = me.body.id as string;
     const created: string[] = [];
     for (let i = 0; i < 23; i++) {
-      const b = await request(app).post("/bots").set(auth(dev)).send({ name: `eq4-cnt-${i}`, visibility: "private" });
+      const b = await request(app)
+        .post("/bots")
+        .set(auth(dev))
+        .send({ name: `eq4-cnt-${i}`, visibility: "private" });
       created.push(b.body.id);
     }
     for (const id of created.slice(0, 3))
       await request(app).patch(`/bots/${id}`).set(auth(dev)).send({ retired: true });
-    const [db] = await h.db("bots").where({ owner_id: ownerId }).select(
-      h.db.raw("count(*)::int AS total"),
-      h.db.raw("count(*) FILTER (WHERE retired_at IS NOT NULL)::int AS retired"),
-    );
+    const [db] = (await h
+      .db("bots")
+      .where({ owner_id: ownerId })
+      .select(
+        h.db.raw("count(*)::int AS total"),
+        h.db.raw("count(*) FILTER (WHERE retired_at IS NOT NULL)::int AS retired"),
+      )) as { total: number; retired: number }[];
     const page = await request(app).get(`/bots?ownerId=${ownerId}&includeCounts=true`).set(auth(dev));
     expect(page.status).toBe(200);
     expect(page.body.items.length).toBe(20); // la página por defecto es parcial…
