@@ -36,7 +36,9 @@ export function StreamingHelp() {
         <li>En «Configuración», marca «Streaming activado», elige el modo (emitir o sólo grabar) y la plataforma.</li>
         <li>
           En «Credenciales», pega la clave de emisión de la plataforma y pulsa «Guardar clave». Se guarda cifrada y
-          nunca se vuelve a mostrar: sólo verás «configurada (****ABCD)». Puedes cambiarla o eliminarla.
+          nunca se vuelve a mostrar: sólo verás «configurada (****ABCD)». Puedes cambiarla o eliminarla. La clave queda
+          atada a la URL de ingesta: en «RTMPS personalizado» guarda primero la URL; si después la cambias, tendrás que
+          volver a introducir la clave.
         </li>
         <li>
           Elige el destino: escribe el id o usa el botón «Retransmitir» del detalle de una batalla o de un torneo, que

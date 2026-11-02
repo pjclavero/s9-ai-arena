@@ -53,6 +53,16 @@ Reglas de operación:
 - **Cambios con emisión activa** (§20): la retención se aplica al momento; modo, plataforma,
   ingesta, codificación, branding y clave **se aplican al pulsar «Reiniciar emisión»** (nunca
   en silencio); desactivar el streaming **detiene** la emisión y pide confirmación.
+- **La clave queda atada a su ingesta**: en «RTMPS personalizado» guarda primero la URL de
+  ingesta y después la clave. Si cambias la URL, la clave deja de valer («guardada para otra
+  URL de ingesta») y hay que volver a introducirla; iniciar o probar responden
+  `credential_unbound` sin emitir.
+- La URL de ingesta personalizada tiene que ser un host público: se rechazan nombres
+  internos (servicios del Compose, `localhost`, `.local`, `.internal`…), loopback, redes
+  privadas, link-local e IPv4 no canónica.
+- Iniciar, reiniciar y detener se ejecutan en serie: «Detener» pulsado mientras arranca
+  espera a que termine el arranque y lo para. No se empieza a grabar si el streamer no puede
+  medir el disco (`disk_unknown`) o quedan menos de 2 GiB (`disk_low`).
 - `/broadcast` es anónima: sólo se emiten batallas sin bots privados (la API lo rechaza con
   `target_not_public`) y hace falta el directo público activado.
 - Despliegue: el perfil `streaming` sigue fuera del contrato de producción. Para usar la
@@ -69,9 +79,15 @@ Reglas de operación:
 | logs | logger con registro vivo de secretos (también su forma escapada en JSON); el relé redacta lo que diga el servidor | tests del logger y del relé; `docker logs` 0 apariciones |
 | `/status`, `/metrics` | destino descrito como `rtmps://host:puerto/app/***` | idem |
 | API y frontend | entra por `PUT /admin/streaming/credentials/{platform}` y nunca sale (`****ABCD`); campo password, estado vaciado al enviar, nada en `localStorage`/`sessionStorage` | `apps/api/src/eq5b-streaming-admin.test.ts`, `apps/web/tests/eq5b-streaming-page.test.tsx`, spec de navegador `@streaming-e2e` (respuestas de red, DOM y storage) |
-| BD | sobre RSA-OAEP-256 con la PÚBLICA; la privada sólo la tiene el streamer | volcado de todas las tablas de streaming y `audit_log` sin la clave; el sobre sólo se abre con la privada |
+| BD | sobre v2 (AES-256-GCM + RSA-OAEP-256 con la PÚBLICA) **atado a plataforma e ingesta**; la privada sólo la tiene el streamer | volcado de todas las tablas de streaming y `audit_log` sin la clave; el sobre sólo se abre con la privada y hacia su destino |
+| redirección de la clave | el streamer sólo abre el sobre si `platform` e `ingestUrl` de la orden casan con las selladas; la clave heredada sólo va a la ingesta del despliegue | `apps/streamer/src/eq6b-relay-break.test.ts`, `apps/streamer/src/eq5c-correcciones.test.ts` |
 | red | TLS con certificado VERIFICADO (FFmpeg no verificaba); `rtmp://` en claro rechazado | `publisher.test.ts`, E2E contra MediaMTX con CA local |
-| API interna del streamer | secreto compartido `x-streamer-auth` | `control.ts` (401 sin cabecera) |
+| API interna del streamer | secreto compartido `x-streamer-auth`; **en cerrado** si el fichero está definido y no se puede leer (401 en todo, `/healthz` 503) | `control.ts` (401 sin cabecera), `eq6b-relay-break.test.ts` (proceso real con el secreto ilegible) |
+
+Límite declarado (backup): el repositorio restic guarda `infrastructure/secrets/` (con la
+privada `stream_secrets_private.pem`) y el volcado de la BD (con los sobres) en el mismo
+repositorio y con la misma contraseña: quien tenga ambos puede abrir las claves de emisión
+(ver ADR-023 § «Límites conocidos»).
 
 Límite declarado: un proceso con el mismo uid que el streamer **dentro** del contenedor podría
 leer su memoria (`/proc/<pid>/mem`) o la clave privada montada; el contenedor no ejecuta nada
@@ -189,6 +205,13 @@ streamer para no emitir dos veces.
 | EQ5-9 | P3 | Sin retención de MP4 en modo grabación | **corregido** (EQ5b): retención por edad/tamaño desde la web, auditada |
 | EQ5-11 | P3 | Tras `failed` (corte > ~1 min) no hay reintento automático; cada reintento relanza también Chromium (recarga la página); `streamer_frames_total` vuelve a 0 en cada relanzamiento de FFmpeg | **abierto** |
 | EQ5-12 | P3 | El ticker de eventos rotula ids de vehículo (`v_blue destruido`) | **abierto** (texto del evento del motor) |
+| EQ6b-P1 | P1 | El rechazo explícito de la ingesta (clave errónea: `BadName`; app rechazada) no llegaba al supervisor: «en directo» sin emitir, sin reintento ni `lastError` | **corregido** (EQ5c): todo fallo del arranque pasa por `fail()` |
+| EQ6b-P2-1 | P2 | Sin plazo tras el handshake: una ingesta muda colgaba el relé y `/control/test` | **corregido** (EQ5c): plazo por orden RTMP y plazo total de la prueba; se cierra el socket |
+| EQ6b-P2-2 | P2 | El sobre no estaba atado a su destino: con el secreto interno se publicaba la clave de YouTube en otra ingesta | **corregido** (EQ5c): sobre v2 atado a plataforma + ingesta (ADR-023) |
+| EQ6b-P2-3 | P2 | Control abierto si el fichero del secreto no se podía leer | **corregido** (EQ5c): fail-closed; aviso de `init-secrets.sh` |
+| EQ6b-P2-4 | P2 | Emisión zombi en carreras start‖stop y restart‖stop | **corregido** (EQ5c): en serie + recomprobación en BD |
+| EQ6b-P3 | P3 | Tope agregado del lector RTMP; SSRF de la ingesta; disco sin medir; `code` sin redactar | **corregidos** (EQ5c); SSRF por DNS rebinding y `/control/test` interno con `x-streamer-auth`: **abiertos** (ADR-023) |
+| EQ6b-P3-backup | P3 | El backup restic guarda la privada de sellado junto al volcado de la BD | **abierto** (documentado en ADR-023) |
 | EQ5-10 | P3 | Con el torneo en curso, la espera/intermedio no anuncian la próxima batalla (un visitante no la ve) | limitación de la política de visibilidad |
 
 ## Cómo se verificó
