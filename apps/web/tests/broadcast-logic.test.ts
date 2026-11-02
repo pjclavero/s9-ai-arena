@@ -260,7 +260,13 @@ describe("EQ5 · un visitante NO ve las batallas programadas: el final lo decide
   // era [B1] ⇒ decideScreen la daba por la ÚLTIMA ⇒ «Torneo terminado. ¡Gracias por
   // vernos!» en mitad del torneo, y la cabecera rotulaba «Batalla 1 / 1».
   const fetchFor = (visible: () => BattleSummary[], state: () => string) => async (path: string) => {
-    if (path.startsWith("/tournaments?")) return { items: [{ id: "otro", state: "finished" }, { id: "t1", state: state() }] };
+    if (path.startsWith("/tournaments?"))
+      return {
+        items: [
+          { id: "otro", state: "finished" },
+          { id: "t1", state: state() },
+        ],
+      };
     if (path === "/tournaments/t1/battles") return { items: visible() };
     throw new Error(`ruta inesperada ${path}`);
   };
@@ -271,7 +277,10 @@ describe("EQ5 · un visitante NO ve las batallas programadas: el final lo decide
     const screens: BroadcastScreen[] = [];
     const director = new BroadcastDirector({
       target: { kind: "tournament", tournamentId: "t1" },
-      fetchJson: fetchFor(() => visible, () => state),
+      fetchJson: fetchFor(
+        () => visible,
+        () => state,
+      ),
       onScreen: (s) => screens.push(s),
     });
     await director.tick();
@@ -289,7 +298,11 @@ describe("EQ5 · un visitante NO ve las batallas programadas: el final lo decide
     visible = [battle("b1", "finished", { red: 2, blue: 1 }), battle("b2", "finished", { red: 0, blue: 3 })];
     state = "finished";
     await director.tick();
-    expect(screens.at(-1)).toMatchObject({ kind: "finished", lastBattle: { id: "b2" }, progress: { played: 2, total: 2 } });
+    expect(screens.at(-1)).toMatchObject({
+      kind: "finished",
+      lastBattle: { id: "b2" },
+      progress: { played: 2, total: 2 },
+    });
     expect(screens.map((s) => s.kind)).toEqual(["live", "intermission", "live", "finished"]);
   });
 
@@ -311,7 +324,10 @@ describe("EQ5 · un visitante NO ve las batallas programadas: el final lo decide
     const screens: BroadcastScreen[] = [];
     const director = new BroadcastDirector({
       target: { kind: "tournament", tournamentId: "t1" },
-      fetchJson: fetchFor(() => [battle("b1", "finished")], () => "cancelled"),
+      fetchJson: fetchFor(
+        () => [battle("b1", "finished")],
+        () => "cancelled",
+      ),
       onScreen: (s) => screens.push(s),
     });
     await director.tick();
