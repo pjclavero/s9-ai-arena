@@ -242,7 +242,10 @@ describe("EQ4 · ⓘ del ranking y de los modos", () => {
     // (subcadena, sin mayúsculas) y rompía el golden. El ⓘ junto a un selector no
     // puede contener el nombre del selector.
     render(<ModeHelp modes={["deathmatch"]} />);
-    const name = screen.getByRole("button", { name: /^Ayuda: / }).getAttribute("aria-label")!.toLowerCase();
+    const name = screen
+      .getByRole("button", { name: /^Ayuda: / })
+      .getAttribute("aria-label")!
+      .toLowerCase();
     for (const l of ["modo", "mapa", "ruleset", "bot rojo", "bot azul", "chasis"]) expect(name).not.toContain(l);
   });
 });
