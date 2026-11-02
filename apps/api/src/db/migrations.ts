@@ -826,19 +826,27 @@ const m014_battle_diagnostics: Migration = {
   },
 };
 
-// R-RULES (ADR-021) · COPIA INMUTABLE de las reglas con que se juega la batalla
-// (`BattleRules` de packages/game-rules/battle-rules.ts): preset/personalizado,
-// parámetros, topes de composición, catálogo y ruleset COMPLETO del motor. La escribe
-// POST /battles al crear; el worker juega esa copia. NULL = batalla anterior (o de
-// torneo): sigue el camino de 0.3.0 (resolución en ejecución). Aditiva: nada la lee
-// si es NULL, así que la RC5.3 funciona igual sobre el esquema nuevo.
+// R-RULES (ADR-021/022) · COPIA INMUTABLE de las reglas con que se juega cada batalla y
+// cada torneo (`BattleRulesSnapshot` de packages/game-rules/battle-rules.ts):
+// preset/personalizado/clásico, parámetros, topes de composición, catálogo, ruleset
+// COMPLETO del motor y versión del motor. La escribe POST /battles (o POST /tournaments)
+// al crear; el scheduler copia la del torneo en cada batalla; el worker juega esa copia.
+// NULL = batalla o torneo anterior: sigue la resolución en ejecución de siempre.
+//
+// SÓLO añade dos columnas nullable: no toca ninguna fila existente (ni batallas, ni
+// replays, ni torneos) y NO las rellena: una batalla histórica no se reescribe como si
+// hubiera usado reglas nuevas. Probado en `migration-015.test.ts` (upgrade con datos,
+// rollback, backup/restore con pg_dump/psql de datos de prueba).
 const m015_battle_rules: Migration = {
   name: "015_battle_rules",
   async up(db) {
     await db.raw(`ALTER TABLE battles ADD COLUMN rules jsonb`);
+    await db.raw(`ALTER TABLE tournaments ADD COLUMN rules jsonb`);
   },
-  // Destructivo para las copias de reglas (no para resultados ni replays).
+  // Destructivo SÓLO para las copias de reglas (no para resultados, replays ni torneos).
+  // Antes de usarlo en un entorno con batallas pendientes: docs/operations/upgrades.md.
   async down(db) {
+    await db.raw(`ALTER TABLE tournaments DROP COLUMN rules`);
     await db.raw(`ALTER TABLE battles DROP COLUMN rules`);
   },
 };

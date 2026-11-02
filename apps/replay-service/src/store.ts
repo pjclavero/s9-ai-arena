@@ -258,7 +258,7 @@ export async function verifyLoaded(battleId: string, replay: Replay): Promise<St
     return {
       battleId,
       valid: false,
-      reason: decision.reason,
+      reason: decision.reason!,
       message: engineVersionMismatchMessage(recorded),
       verification: null,
     };

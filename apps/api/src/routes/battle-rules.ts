@@ -14,7 +14,7 @@ import { Router } from "express";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
 import { ApiError, badRequest } from "../errors.js";
-import { checkBattleContent } from "./catalog.js";
+import { assertTeamsFitMap, checkBattleContent } from "./catalog.js";
 import { assertTeamComposition } from "./battles.js";
 import { buildBattleRules, rulesToJson } from "../services/battle-rules.js";
 import { assertParticipantsShape, assertParticipantsUsable } from "../services/battle-participants.js";
@@ -32,6 +32,7 @@ export function battleRulesRoutes(db: Db): Router {
     }
     assertParticipantsShape(participants);
     assertTeamComposition(mode, participants);
+    assertTeamsFitMap(content, mode, participants);
 
     // Visibilidad (TD-005), versión publicada y elegibilidad (ELIG): la MISMA función
     // que POST /battles. Invisible = 404 idéntico a inexistente.

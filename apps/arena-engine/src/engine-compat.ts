@@ -27,7 +27,13 @@ export function rulesetUsesEngine040Rules(ruleset: unknown): string[] {
   return used;
 }
 
-export type EngineVerifyDecision = { ok: true; verifiedWith: string; compat: boolean } | { ok: false; reason: string };
+/** ok ⇒ `verifiedWith`/`compat`; !ok ⇒ `reason`. (Forma plana: el repo no usa strictNullChecks.) */
+export interface EngineVerifyDecision {
+  ok: boolean;
+  verifiedWith?: string;
+  compat?: boolean;
+  reason?: string;
+}
 
 /** Versiones anteriores que este motor reproduce (vacío si no declara ninguna). */
 export function reproducedVersions(): readonly string[] {

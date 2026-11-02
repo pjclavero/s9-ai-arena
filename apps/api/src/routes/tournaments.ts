@@ -22,6 +22,36 @@ import { pathParam } from "../params.js";
 // H6 (issue #10) · La tabla por equipos es la de E9; se importa, no se duplica.
 import { leagueTable } from "../../../tournament-worker/src/results.js";
 import { hiddenBotIds, whereBattleReadable, type BattleVisibility } from "../battle-access.js";
+import { buildTournamentRules, rulesOf, rulesToJson } from "../services/battle-rules.js";
+import { ApiError } from "../errors.js";
+
+/**
+ * ADR-022 · Con reglas NvN, cada equipo inscrito debe tener exactamente N bots al cerrar
+ * inscripciones (las batallas del torneo enfrentan rosters completos).
+ */
+async function assertRostersFitRules(db: Db, t: Record<string, unknown>): Promise<void> {
+  const snapshot = rulesOf(t);
+  if (!snapshot?.params || t.format !== "teams") return;
+  const n = snapshot.params.teamSize;
+  // El equipo de cada inscripción es el del bot (el mismo que usa el scheduler).
+  const rows = await db("entries")
+    .join("bots", "bots.id", "entries.bot_id")
+    .where({ tournament_id: t.id as string })
+    .select("bots.team_id");
+  const rosters = new Map<string, number>();
+  for (const e of rows as { team_id: string | null }[]) {
+    if (e.team_id) rosters.set(e.team_id, (rosters.get(e.team_id) ?? 0) + 1);
+  }
+  const bad = [...rosters].filter(([, k]) => k !== n);
+  if (bad.length > 0) {
+    throw new ApiError(
+      409,
+      "rules_team_size",
+      `${snapshot.name} ${n} contra ${n}: equipos con otro número de bots inscritos: ${bad.map(([id, k]) => `${id} (${k})`).join(", ")}`,
+      { teamSize: n },
+    );
+  }
+}
 
 const FORMATS = ["league", "round_robin", "single_elimination", "double_elimination", "swiss", "teams"];
 const MODES = ["deathmatch", "team_deathmatch", "capture_the_flag", "zone_control"];
@@ -41,6 +71,8 @@ export function tournamentToJson(t: Record<string, unknown>) {
     seedCommitment: t.seed_commitment ?? undefined,
     seedsRevealed: t.seeds_revealed ?? undefined,
     state: t.state,
+    // ADR-022 · copia inmutable de las reglas (ausente en torneos anteriores).
+    rules: rulesToJson(rulesOf(t)),
   };
 }
 
@@ -124,6 +156,7 @@ export function tournamentRoutes(
       roundsPerPairing,
       entriesCloseAt,
       seedCommitment,
+      rules,
     } = req.body ?? {};
     if (typeof name !== "string" || !name || name.length > 64) throw badRequest("name obligatorio (máx. 64)");
     if (!FORMATS.includes(format)) throw badRequest(`format debe ser uno de ${FORMATS.join(", ")}`);
@@ -136,11 +169,22 @@ export function tournamentRoutes(
     ) {
       throw badRequest("budgetCredits debe ser un entero en [200, 5000]");
     }
+    // ADR-022 · COPIA INMUTABLE de las reglas del torneo (preset, personalizado o clásico).
+    // El scheduler la copia en cada batalla: nada posterior la reinterpreta.
+    const snapshot = await buildTournamentRules(db, {
+      mode,
+      rulesetId,
+      format,
+      rules,
+      budgetCredits: budgetCredits ?? null,
+      catalogVersion: catalogVersion ?? null,
+    });
     const [t] = await db("tournaments")
       .insert({
         name,
         format,
         mode,
+        rules: snapshot ? JSON.stringify(snapshot) : null,
         ruleset_id: rulesetId,
         budget_credits: budgetCredits ?? null,
         catalog_version: catalogVersion ?? null,
@@ -295,6 +339,7 @@ export function tournamentRoutes(
 
     const entries = await db("entries").where({ tournament_id: t.id });
     await entryEligibilityGate(db, entries); // ELIG · H8: no se cierra con versiones no elegibles
+    await assertRostersFitRules(db, t); // ADR-022 · NvN del preset del torneo
     await db("entries").where({ tournament_id: t.id }).update({ frozen: true });
     // Congela las versiones inscritas (published → frozen, cap. 17.1), auditado.
     for (const e of entries) {

@@ -22,7 +22,7 @@ import { anonQuota, type AnonQuotaConfig } from "../middleware/anon-quota.js";
 import type { BattleRunConfig } from "../battle-run.js";
 import { publicSpectateEnabledFromEnv } from "../public-spectate.js";
 import { publicReplaysEnabledFromEnv } from "../public-replays.js";
-import { checkBattleContent } from "./catalog.js";
+import { assertTeamsFitMap, checkBattleContent } from "./catalog.js";
 import { wherePublicReplay } from "../replay-access.js";
 import {
   canSeeBotDiagnostics,
@@ -619,6 +619,8 @@ export function battleRoutes(
     // fallo de infraestructura. No depende de ningún dato privado: se puede
     // responder antes de la comprobación de visibilidad sin filtrar nada.
     assertTeamComposition(mode, participants);
+    // ADR-022 · en CTF, cada bando necesita su base y su bandera en el mapa.
+    assertTeamsFitMap(content, mode, participants);
 
     // TD-005 · visibilidad, versión publicada y (ELIG) elegibilidad: una sola regla
     // compartida con POST /battles/rules-check (services/battle-participants.ts).

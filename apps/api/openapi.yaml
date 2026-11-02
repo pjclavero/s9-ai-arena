@@ -1970,6 +1970,15 @@ components:
         widthM: { type: number }
         heightM: { type: number }
         supportedModes: { type: array, items: { type: string } }
+        modeCompatibility:
+          type: object
+          description: 'ADR-022 · por modo de plataforma: ok (declarado y estructuralmente válido), declared y reasons (por qué no es compatible)'
+          additionalProperties:
+            type: object
+            properties:
+              ok: { type: boolean }
+              declared: { type: boolean }
+              reasons: { type: array, items: { type: string } }
         thumbnailUrl: { type: string }
         generation:
           type: object
@@ -2118,9 +2127,9 @@ components:
         rules: { $ref: '#/components/schemas/BattleRules' }
     BattleRules:
       type: object
-      description: 'R-RULES (ADR-021) · COPIA INMUTABLE de las reglas con que se creó (y se juega) la batalla. Ausente en batallas anteriores a R-RULES y en las de torneo.'
+      description: 'R-RULES (ADR-021/022) · COPIA INMUTABLE de las reglas con que se creó (y se juega) la batalla o el torneo. Ausente en batallas y torneos anteriores a R-RULES.'
       properties:
-        schema: { type: integer, enum: [1] }
+        schema: { type: integer, enum: [1, 2], description: 'ADR-022 · 2 = motor 0.4.0; las copias 1 se leen normalizadas y nunca se reescriben.' }
         source: { enum: [preset, custom, classic] }
         presetId: { type: string, nullable: true }
         presetVersion: { type: integer, nullable: true }
@@ -2131,18 +2140,36 @@ components:
         composition: { type: object, additionalProperties: { type: integer, nullable: true } }
         catalogVersion: { type: string, nullable: true }
         engineVersion: { type: string }
-        profile: { enum: [elimination, limited_respawn, deathmatch, time, classic], description: 'Métricas que tienen sentido (FASE 13).' }
+        profile: { enum: [elimination, limited_respawn, deathmatch, time, capture_the_flag, classic], description: 'Métricas que tienen sentido (FASE 13).' }
         summary: { type: array, items: { type: string } }
+        respawnLabel: { type: string, nullable: true, description: 'ADR-022 · lectura humana de maxRespawns, p. ej. «2 reapariciones por bot (3 vidas en total)»' }
+        tiebreak:
+          type: object
+          nullable: true
+          description: 'ADR-022 · desempate de la familia de reglas: criterios del motor y pasos legibles en orden'
+          properties:
+            family: { enum: [elimination, limited_respawn, deathmatch, capture_the_flag] }
+            label: { type: string }
+            criteria: { type: array, items: { type: string } }
+            steps: { type: array, items: { type: string } }
         engine: { type: object, additionalProperties: true, description: 'Lo esencial del ruleset del motor copiado (tiempo, puntuación, respawn con maxRespawns, desempate).' }
     RulesParams:
       type: object
-      description: 'R-RULES · Parámetros de reglas. respawnsPerBot = REAPARICIONES (vidas = 1 + respawnsPerBot). Límites en GET /rulesets custom.limits.'
+      description: 'R-RULES · Parámetros de reglas COMPETITIVAS (nada de física, daño, HP, sensores ni munición). maxRespawns = REAPARICIONES (vidas = 1 + maxRespawns). Límites en GET /rulesets custom.limits.'
       properties:
+        game: { enum: [combat, capture_the_flag], description: 'ADR-022 · combate (bajas) o capturar la bandera. Ausente = combat.' }
+        ctf:
+          type: object
+          nullable: true
+          description: 'ADR-022 · sólo con game = capture_the_flag'
+          properties:
+            flagReturnSeconds: { type: integer, minimum: 1, maximum: 60 }
+            requireOwnFlagAtBase: { type: boolean }
         respawn:
           type: object
           properties:
             mode: { enum: [none, limited, unlimited] }
-            respawnsPerBot: { type: integer, nullable: true }
+            maxRespawns: { type: integer, nullable: true }
             delaySeconds: { type: integer, nullable: true }
         victory: { enum: [elimination, score_limit, time_score] }
         scoreLimit: { type: integer, nullable: true }
@@ -2159,6 +2186,7 @@ components:
         id: { type: string }
         version: { type: integer }
         format: { enum: ['1v1', team] }
+        game: { enum: [combat, capture_the_flag] }
         name: { type: string }
         tagline: { type: string }
         description: { type: string }
@@ -2220,7 +2248,7 @@ components:
           type: object
           description: 'UX-06 · Por botId, SÓLO los bots del solicitante (todos para staff). null en un campo = no medido.'
           additionalProperties: { $ref: '#/components/schemas/BotDiagnostics' }
-        profile: { enum: [elimination, limited_respawn, deathmatch, time, classic], description: 'R-RULES (FASE 13) · métricas con sentido para las reglas de la batalla.' }
+        profile: { enum: [elimination, limited_respawn, deathmatch, time, capture_the_flag, classic], description: 'R-RULES (FASE 13) · métricas con sentido para las reglas de la batalla.' }
         rules: { $ref: '#/components/schemas/BattleRules' }
     BotDiagnostics:
       type: object

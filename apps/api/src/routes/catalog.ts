@@ -11,14 +11,18 @@ import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
 import { pathParam } from "../params.js";
 import { audit } from "../audit.js";
-import { badRequest, conflict, notFound } from "../errors.js";
+import { ApiError, badRequest, conflict, notFound } from "../errors.js";
 import { CatalogImmutableError, getCatalog, importCatalogVersion, listCatalogVersions } from "../services/catalog.js";
 import { safeLookup } from "../../../../packages/game-rules/safe-lookup.js";
+import { mapModeProblems, teamMapProblems, type MapCompatInput } from "../../../../packages/game-rules/map-compat.js";
 import {
+  CTF_OVERTIME_MAX_SECONDS,
+  CUSTOM_CTF_DEFAULTS,
   CUSTOM_DEFAULTS,
   MAX_BATTLE_PARTICIPANTS,
   RULES_LIMITS,
-  RULES_PRESETS,
+  TIEBREAK_RULES,
+  currentPresets,
 } from "../../../../packages/game-rules/battle-rules.js";
 
 /** Modos de plataforma (contrato compartido RULESET). Orden estable para la UI. */
@@ -57,7 +61,7 @@ export type BattleContentCheck =
   | {
       ok: true;
       ruleset: ReturnType<typeof rulesetToJson>;
-      map: { mapId: string; version: number; supportedModes: string[] };
+      map: { mapId: string; version: number; supportedModes: string[]; content: MapCompatInput | null };
       status?: undefined;
       code?: undefined;
       message?: undefined;
@@ -119,7 +123,47 @@ export async function checkBattleContent(
       })`,
     };
   }
-  return { ok: true, ruleset, map: { mapId: mapRow.map_id, version: mapRow.version, supportedModes } };
+  // ADR-022 · además de lo DECLARADO, lo ESTRUCTURAL (defensa para mapas antiguos: la
+  // publicación ya lo exige desde el cap. 14.3, pero un mapa importado a mano no).
+  const content = parseJson(mapRow.content) as MapCompatInput | undefined;
+  const problems = content && typeof content === "object" ? mapModeProblems(content, mode) : [];
+  if (problems.length > 0) {
+    return {
+      ok: false,
+      status: 409,
+      code: "map_mode_unsupported",
+      message: `El mapa ${mapRow.map_id} v${mapRow.version} no sirve para ${mode}: ${problems.join("; ")}`,
+    };
+  }
+  return {
+    ok: true,
+    ruleset,
+    map: { mapId: mapRow.map_id, version: mapRow.version, supportedModes, content: content ?? null },
+  };
+}
+
+/**
+ * ADR-022 · En CTF cada bando de la batalla necesita SU base y SU bandera en el mapa.
+ * Antes de esto, un bando sin bandera llegaba al motor y la batalla fallaba al arrancar.
+ */
+export function assertTeamsFitMap(
+  check: Extract<BattleContentCheck, { ok: true }>,
+  mode: string,
+  participants: { team: string }[],
+): void {
+  if (!check.map.content) return;
+  const problems = teamMapProblems(
+    check.map.content,
+    mode,
+    participants.map((p) => p.team),
+  );
+  if (problems.length > 0) {
+    throw new ApiError(
+      409,
+      "map_team_mismatch",
+      `El mapa ${check.map.mapId} v${check.map.version}: ${problems.join("; ")}`,
+    );
+  }
 }
 
 export function catalogRoutes(db: Db): Router {
@@ -147,8 +191,17 @@ export function catalogRoutes(db: Db): Router {
     res.json({
       modes: [...PLATFORM_MODES],
       items,
-      presets: RULES_PRESETS,
-      custom: { defaults: CUSTOM_DEFAULTS, limits: RULES_LIMITS, maxParticipants: MAX_BATTLE_PARTICIPANTS },
+      // ADR-022 · sólo la versión VIGENTE de cada preset (las anteriores siguen en las
+      // copias de las batallas y torneos que las usaron; nunca se editan).
+      presets: currentPresets(),
+      custom: {
+        defaults: CUSTOM_DEFAULTS,
+        ctfDefaults: CUSTOM_CTF_DEFAULTS,
+        limits: RULES_LIMITS,
+        maxParticipants: MAX_BATTLE_PARTICIPANTS,
+        overtimeMaxSeconds: CTF_OVERTIME_MAX_SECONDS,
+      },
+      tiebreaks: TIEBREAK_RULES,
     });
   });
 

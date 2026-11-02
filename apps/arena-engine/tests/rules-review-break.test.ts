@@ -51,7 +51,7 @@ describe("vidas = respawns + 1 (exacto)", () => {
       preset: "custom",
       teamSize: 1,
       params: {
-        respawn: { mode: "limited", respawnsPerBot: 2, delaySeconds: 1 },
+        respawn: { mode: "limited", maxRespawns: 2, delaySeconds: 1 },
         victory: "elimination",
         timeLimitMinutes: 10,
       },
@@ -147,7 +147,7 @@ describe("score limit alcanzable exacto", () => {
       preset: "custom",
       teamSize: 1,
       params: {
-        respawn: { mode: "limited", respawnsPerBot: 1, delaySeconds: 1 },
+        respawn: { mode: "limited", maxRespawns: 1, delaySeconds: 1 },
         victory: "score_limit",
         scoreLimit: 2,
         timeLimitMinutes: 10,
@@ -166,7 +166,7 @@ describe("score limit alcanzable exacto", () => {
       preset: "custom",
       teamSize: 1,
       params: {
-        respawn: { mode: "limited", respawnsPerBot: 1, delaySeconds: 1 },
+        respawn: { mode: "limited", maxRespawns: 1, delaySeconds: 1 },
         victory: "score_limit",
         scoreLimit: 3,
         timeLimitMinutes: 10,

@@ -70,6 +70,8 @@ interface TournamentRow {
   state: string;
   season_id: string;
   elo_k: number;
+  /** ADR-022 · copia inmutable de reglas (jsonb; null en torneos anteriores). */
+  rules?: unknown;
 }
 
 export interface EntryInfo {
@@ -179,6 +181,9 @@ export async function materializeBattles(
         seed_reveal_proof: JSON.stringify({ batch: mctx.seeds, slot: pairing.slot, gameIndex: g }),
         game_index: g,
         spectator_mode: pairing.final ? "visible" : "delayed", // 19.1 + E8.M
+        // ADR-022 · la COPIA INMUTABLE de reglas del torneo pasa tal cual a cada batalla
+        // (NULL en torneos anteriores: resolución en ejecución de siempre).
+        rules: t.rules ? (typeof t.rules === "string" ? t.rules : JSON.stringify(t.rules)) : null,
       })
       .returning("id");
     // Intercambio de lados: en juegos impares el local es el equipo A del

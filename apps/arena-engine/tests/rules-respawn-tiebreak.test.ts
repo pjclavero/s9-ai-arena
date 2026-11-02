@@ -258,16 +258,17 @@ describe("límite de puntuación y de tiempo con presets", () => {
     b.free();
   });
 
-  it("Duelo al agotar el tiempo: gana quien conserva más casco (desempate explícito)", () => {
+  it("Duelo al agotar el tiempo: el casco YA NO desempata (ADR-022: vivos → vidas → bajas → empate)", () => {
     const r = resolveRulesRequest({ preset: "duel", teamSize: 1 });
     if (!r.ok) throw new Error(JSON.stringify(r.errors));
     const rs = { ...r.engineRuleset, timeLimitTicks: 60 };
     const b = battle(rs, roster(1, true), emptyArena(), "idle");
     runFor(b, 10);
     const [v1, v2] = b.getVehicles();
-    v2.hullHp = v2.spec.hullHp * 0.5; // dañado
+    v2.hullHp = v2.spec.hullHp * 0.5; // dañado, pero vivo: mismos vivos, vidas y bajas
     runFor(b, 1000);
-    expect(b.getResult()!.winner).toBe(v1.team);
+    expect(v1.alive && v2.alive).toBe(true);
+    expect(b.getResult()!.winner).toBe("draw");
     b.free();
   });
 
@@ -341,9 +342,11 @@ describe("engineRulesetFor", () => {
       botMassKg: null,
       teamMassKg: null,
       friendlyFire: false,
+      game: "combat" as const,
+      ctf: null,
     };
     expect(
-      engineRulesetFor({ ...base, respawn: { mode: "limited", respawnsPerBot: 2, delaySeconds: 5 } }, "x").respawn,
+      engineRulesetFor({ ...base, respawn: { mode: "limited", maxRespawns: 2, delaySeconds: 5 } }, "x").respawn,
     ).toEqual({
       enabled: true,
       delayTicks: 150,
@@ -355,13 +358,13 @@ describe("engineRulesetFor", () => {
           ...base,
           victory: "score_limit",
           scoreLimit: 3,
-          respawn: { mode: "unlimited", respawnsPerBot: null, delaySeconds: 7 },
+          respawn: { mode: "unlimited", maxRespawns: null, delaySeconds: 7 },
         },
         "x",
       ).respawn,
     ).toEqual({ enabled: true, delayTicks: 210 });
     expect(
-      engineRulesetFor({ ...base, respawn: { mode: "none", respawnsPerBot: null, delaySeconds: null } }, "x").respawn,
+      engineRulesetFor({ ...base, respawn: { mode: "none", maxRespawns: null, delaySeconds: null } }, "x").respawn,
     ).toEqual({ enabled: false, delayTicks: 0 });
   });
 });
