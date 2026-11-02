@@ -121,6 +121,13 @@ export interface PublisherOptions {
    * defecto, el mismo que `connectTimeoutMs`.
    */
   commandTimeoutMs?: number;
+  /**
+   * EQ5d (revisión EQ6c, P3) · Plazo de ESCRITURA ya publicando: si la ingesta
+   * deja de leer y el socket sigue por encima de la marca de agua (sin 'drain')
+   * más de este tiempo, el relé falla (y el supervisor reintenta). Por defecto,
+   * el mismo que `commandTimeoutMs`.
+   */
+  writeTimeoutMs?: number;
   /** Inyectable en tests (servidor RTMP falso). Por defecto TCP/TLS reales. */
   dial?: (t: IngestTarget) => Duplex;
 }
@@ -172,6 +179,7 @@ export class RtmpPublisher extends EventEmitter {
   private onPublishStatus: ((code: string, desc: string) => void) | null = null;
   private failed = false;
   private openTimer: NodeJS.Timeout | null = null;
+  private stallTimer: NodeJS.Timeout | null = null;
   bytesOut = 0;
 
   constructor(private readonly opts: PublisherOptions) {
@@ -247,7 +255,28 @@ export class RtmpPublisher extends EventEmitter {
       return this.queuedBytes < HIGH_WATER;
     }
     for (const t of tags) this.sendTag(t);
-    return (this.sock?.writableLength ?? 0) < HIGH_WATER;
+    const accepting = (this.sock?.writableLength ?? 0) < HIGH_WATER;
+    if (!accepting) this.armStall();
+    return accepting;
+  }
+
+  /**
+   * EQ5d (P3) · Contrapresión sostenida: arranca (una vez) el plazo de escritura.
+   * Lo desarma el 'drain' del socket; si vence, la ingesta no está leyendo.
+   */
+  private armStall(): void {
+    if (this.stallTimer || this.state_ !== "publishing") return;
+    this.stallTimer = setTimeout(() => {
+      this.stallTimer = null;
+      if (this.state_ !== "publishing") return;
+      if ((this.sock?.writableLength ?? 0) < HIGH_WATER) return;
+      this.fail(new RelayError("la ingesta dejó de aceptar datos (plazo de escritura vencido)", "write_timeout"));
+    }, this.writeTimeoutMs);
+  }
+
+  private disarmStall(): void {
+    if (this.stallTimer) clearTimeout(this.stallTimer);
+    this.stallTimer = null;
   }
 
   close(): void {
@@ -262,6 +291,7 @@ export class RtmpPublisher extends EventEmitter {
     }
     this.state_ = "closed";
     if (this.openTimer) clearTimeout(this.openTimer);
+    this.disarmStall();
     this.sock?.end();
     this.sock?.destroy();
     this.emit("close");
@@ -279,6 +309,10 @@ export class RtmpPublisher extends EventEmitter {
 
   private get commandTimeoutMs(): number {
     return this.opts.commandTimeoutMs ?? this.opts.connectTimeoutMs ?? 10_000;
+  }
+
+  private get writeTimeoutMs(): number {
+    return this.opts.writeTimeoutMs ?? this.commandTimeoutMs;
   }
 
   private fail(err: RelayError): void {
@@ -324,7 +358,10 @@ export class RtmpPublisher extends EventEmitter {
           this.fail(err);
         }
       });
-      sock.on("drain", () => this.emit("drain"));
+      sock.on("drain", () => {
+        this.disarmStall();
+        this.emit("drain");
+      });
       sock.on("data", (d: Buffer) => {
         try {
           this.onData(d, () => {
@@ -505,6 +542,7 @@ export class RtmpPublisher extends EventEmitter {
     this.queuedBytes = 0;
     for (const tag of q) this.sendTag(tag);
     if ((this.sock?.writableLength ?? 0) < HIGH_WATER) this.emit("drain");
+    else this.armStall();
   }
 
   private sendTag(tag: FlvTag): void {
