@@ -16,7 +16,7 @@ import { CatalogImmutableError, getCatalog, importCatalogVersion, listCatalogVer
 import { safeLookup } from "../../../../packages/game-rules/safe-lookup.js";
 import { mapModeProblems, teamMapProblems, type MapCompatInput } from "../../../../packages/game-rules/map-compat.js";
 import {
-  CTF_OVERTIME_MAX_SECONDS,
+  OVERTIME_TECHNICAL_LIMIT_MINUTES,
   CUSTOM_CTF_DEFAULTS,
   CUSTOM_DEFAULTS,
   MAX_BATTLE_PARTICIPANTS,
@@ -199,7 +199,8 @@ export function catalogRoutes(db: Db): Router {
         ctfDefaults: CUSTOM_CTF_DEFAULTS,
         limits: RULES_LIMITS,
         maxParticipants: MAX_BATTLE_PARTICIPANTS,
-        overtimeMaxSeconds: CTF_OVERTIME_MAX_SECONDS,
+        // ADR-022 · la prórroga NO tiene límite competitivo; sólo la salvaguarda técnica.
+        overtimeTechnicalLimitMinutes: OVERTIME_TECHNICAL_LIMIT_MINUTES,
       },
       tiebreaks: TIEBREAK_RULES,
     });

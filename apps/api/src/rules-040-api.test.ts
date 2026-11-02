@@ -16,7 +16,11 @@ import { DEV_USERS, seedDev } from "./db/seeds/dev.js";
 import { tokenFor } from "./testing/helpers.js";
 import { createApp } from "./app.js";
 import { createPublishedBot, type TestBot } from "../../tournament-worker/src/testing/fixtures.js";
-import { CTF_OVERTIME_MAX_SECONDS, TIEBREAK_RULES, currentPresets } from "../../../packages/game-rules/battle-rules.js";
+import {
+  OVERTIME_TECHNICAL_LIMIT_MINUTES,
+  TIEBREAK_RULES,
+  currentPresets,
+} from "../../../packages/game-rules/battle-rules.js";
 
 let h: TestDbHandle;
 let app: Express;
@@ -63,7 +67,8 @@ describe("GET /rulesets (0.4.0)", () => {
     expect(r.body.presets.find((p: any) => p.id === "ctf").game).toBe("capture_the_flag");
     expect(r.body.tiebreaks).toEqual(JSON.parse(JSON.stringify(TIEBREAK_RULES)));
     expect(r.body.custom.ctfDefaults.ctf).toEqual({ flagReturnSeconds: 10, requireOwnFlagAtBase: true });
-    expect(r.body.custom.overtimeMaxSeconds).toBe(CTF_OVERTIME_MAX_SECONDS);
+    expect(r.body.custom.overtimeMaxSeconds).toBeUndefined();
+    expect(r.body.custom.overtimeTechnicalLimitMinutes).toBe(OVERTIME_TECHNICAL_LIMIT_MINUTES);
   });
 });
 
@@ -82,12 +87,12 @@ describe("POST /battles · CTF", () => {
       timeLimitTicks: 9000,
       respawn: { enabled: true, delayTicks: 150 },
       ctf: { requireOwnFlagAtBase: true, flagReturnTicks: 300 },
-      overtime: { kind: "next_score_wins", maxTicks: CTF_OVERTIME_MAX_SECONDS * 30 },
+      overtime: { kind: "next_score_wins" },
       friendlyFire: false,
     });
     expect(r.body.rules.profile).toBe("capture_the_flag");
     expect(r.body.rules.tiebreak.family).toBe("capture_the_flag");
-    expect(r.body.rules.engine.overtime).toEqual({ kind: "next_score_wins", maxTicks: 5400 });
+    expect(r.body.rules.engine.overtime).toEqual({ kind: "next_score_wins" });
   });
 
   it("bandos sin base y bandera en el mapa (A/B) ⇒ 409 map_team_mismatch, sin crear nada", async () => {

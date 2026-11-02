@@ -56,7 +56,12 @@ const FAILURE_TEXT: Record<string, string> = {
 const END_REASON_TEXT: Record<string, string> = {
   walkover: "por incomparecencia",
   sporting_failure: "por fallo deportivo",
+  // ADR-022 · salvaguarda técnica de la prórroga: no es un resultado deportivo.
+  technical_limit: "detenida por límite técnico (sin resultado deportivo)",
 };
+
+/** Texto del final técnico (ADR-022). Nunca «empate». */
+export const TECHNICAL_LIMIT_TEXT = "Detenida por límite técnico";
 
 const AGENTS_TEXT: Record<string, string> = {
   in_process_stub: "bots simulados (stub)",
@@ -82,7 +87,9 @@ export function summarizeBattle(b: BattleLike): BattleSummaryView {
   const r = (b.result && typeof b.result === "object" ? b.result : {}) as Record<string, unknown>;
   const winner = (r.winner ?? null) as string | null;
   let outcome: string | null = null;
-  if (b.status === "finished") {
+  if (b.status === "finished" && r.endReason === "technical_limit") {
+    outcome = `${TECHNICAL_LIMIT_TEXT} (sin resultado deportivo)`;
+  } else if (b.status === "finished") {
     if (winner && winner !== "draw") outcome = `gana ${teamText(winner)}`;
     else if (winner === "draw" || (b.participants ?? []).some((p) => p.outcome === "draw")) outcome = "empate";
     else {

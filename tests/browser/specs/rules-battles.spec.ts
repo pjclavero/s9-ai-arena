@@ -12,7 +12,7 @@
  *  6. Personalizada con tope de créditos (2v2) — UI: primero ✗ con un bot caro, luego ✓
  *  7. Personalizada con tope de masa (2v2)     — API: 422 con el pesado, luego 202
  *  8. CTF preset ctf@1 2v2 (corredor + tirador por bando)                 — API (EQ2, 0.4.0)
- *  9. CTF personalizada 1 min SIN corredores: prórroga y límite de seguridad ⇒ empate — API
+ *  9. CTF personalizada 1 min SIN corredores: prórroga sin tope ⇒ salvaguarda TÉCNICA (≈21 min), sin resultado — API
  * 10. CTF personalizada 1 min con un corredor rojo: captura (en tiempo o en prórroga) — API
  *
  * Para cada una se comprueba: resultado coherente con las reglas, copia de reglas en la
@@ -546,28 +546,32 @@ test.describe("@rules R-RULES · batallas reales por conjunto de reglas", () => 
     };
     await verifyBattle(page, api, info, "8-ctf-preset", ctfId, (b, s) => {
       expect(b.rules.presetId).toBe("ctf");
-      expect(b.rules.engine.overtime).toEqual({ kind: "next_score_wins", maxTicks: 5400 });
+      expect(b.rules.engine.overtime).toEqual({ kind: "next_score_wins" });
       expect(s.profile).toBe("capture_the_flag");
       const sc = Object.values(b.result.score) as number[];
       // Termina por 3 capturas, por más capturas al tiempo, en prórroga o empate al límite de seguridad.
-      expect(b.result.ticks).toBeLessThanOrEqual(9000 + 5400);
+      expect(b.result.ticks).toBeLessThanOrEqual(9000 + 36_000);
       if (b.result.ticks < 9000) expect(Math.max(...sc)).toBe(3);
     });
-    const ot = await verifyBattle(page, api, info, "9-ctf-prorroga-empate", otDrawId, (b) => {
-      expect(b.rules.engine.overtime.maxTicks).toBe(5400);
-      // Sin corredores nadie captura: 0-0 al minuto ⇒ prórroga de 3 min ⇒ empate a los 4 min.
+    // ADR-022 (decisión del operador): la prórroga NO tiene tope competitivo. Sin corredores
+    // nadie captura ⇒ la salvaguarda TÉCNICA la detiene a los 20 min de prórroga, SIN
+    // resultado deportivo (nunca «empate»). Esta batalla dura ≈ 21 min de reloj.
+    const ot = await verifyBattle(page, api, info, "9-ctf-prorroga-limite-tecnico", otDrawId, (b) => {
+      expect(b.rules.engine.overtime).toEqual({ kind: "next_score_wins" });
       if ((Object.values(b.result.score) as number[]).every((x) => x === 0)) {
-        expect(b.result.winner).toBe("draw");
-        expect(b.result.ticks).toBe(1800 + 5400);
+        expect(b.result.endReason).toBe("technical_limit");
+        expect(b.result.winner).toBeNull();
+        expect(b.result.ticks).toBe(1800 + 36_000);
+        for (const p of b.participants) expect(p.outcome ?? null).toBeNull();
       }
     });
     evidence("rules-9-indice", await otEvents(otDrawId));
     await verifyBattle(page, api, info, "10-ctf-corredor", otRunId, (b) => {
       const sc = b.result.score as Record<string, number>;
       if (b.result.ticks > 1800) {
-        // Decidida en la prórroga: la ganó quien capturó primero (marcador +1) o empate al límite.
-        if (b.result.winner !== "draw") expect(sc[b.result.winner]).toBeGreaterThan(Math.min(...Object.values(sc)));
-        else expect(b.result.ticks).toBe(1800 + 5400);
+        // Decidida en la prórroga por la primera captura, o detenida por la salvaguarda técnica.
+        if (b.result.endReason === "technical_limit") expect(b.result.winner).toBeNull();
+        else expect(sc[b.result.winner]).toBeGreaterThan(Math.min(...Object.values(sc)));
       }
     });
     void ot;

@@ -8,7 +8,7 @@
  * o banderas, el tick cambiaría.
  */
 import { beforeAll, describe, expect, it } from "vitest";
-import { loadRuleset, type Ruleset } from "../../../packages/game-rules/index.js";
+import { OVERTIME_TECHNICAL_LIMIT_TICKS, loadRuleset, type Ruleset } from "../../../packages/game-rules/index.js";
 import { resolveRulesRequest } from "../../../packages/game-rules/battle-rules.js";
 import { Battle, type Participant } from "../src/sim/battle.js";
 import { resolveTimeoutTiebreak, type ModeContext } from "../src/sim/modes.js";
@@ -44,18 +44,53 @@ function ctfBattle(ruleset: Ruleset, runner = true) {
 }
 
 describe("CTF · prórroga (next_score_wins)", () => {
-  it("sin capturas: prórroga al acabar el tiempo y, agotado el límite de seguridad, empate", () => {
-    const rs: Ruleset = { ...ctfPreset(), timeLimitTicks: 90, overtime: { kind: "next_score_wins", maxTicks: 60 } };
+  it("sin capturas: prórroga sin límite competitivo hasta la salvaguarda TÉCNICA, que NO es un empate", () => {
+    const rs: Ruleset = { ...ctfPreset(), timeLimitTicks: 90 };
     const b = ctfBattle(rs, false);
-    const res = b.run(10_000);
-    expect(res.winner).toBe("draw");
-    expect(res.ticks).toBe(150);
+    const res = b.run(200_000);
+    // Detenida por la salvaguarda técnica: sin resultado deportivo, nunca "draw".
+    expect(res.endReason).toBe("technical_limit");
+    expect(res.winner).toBeNull();
+    expect(res.winner).not.toBe("draw");
+    expect(res.ticks).toBe(90 + OVERTIME_TECHNICAL_LIMIT_TICKS);
     const ot = b.publicEvents.filter((e: any) => e.kind === "overtime_started");
     expect(ot).toHaveLength(1);
-    expect(ot[0]).toMatchObject({ tick: 90, score: { red: 0, blue: 0 }, maxTicks: 60 });
+    expect(ot[0]).toMatchObject({
+      tick: 90,
+      score: { red: 0, blue: 0 },
+      technicalLimitTicks: OVERTIME_TECHNICAL_LIMIT_TICKS,
+    });
+    expect(b.publicEvents.filter((e: any) => e.kind === "technical_limit")).toHaveLength(1);
     expect(b.snapshots.at(-1).overtime).toBe(true);
     b.free();
-  });
+  }, 120_000);
+
+  it("prórroga SIN tope de 3 min: un empate al tiempo sigue más allá de 3 min y la primera captura gana", () => {
+    // El corredor espera quieto 8 minutos (14 400 ticks) y luego va a por la bandera.
+    const map = ctfArena();
+    const late = new FlagRunnerBot(
+      "runner",
+      map.flags.find((f) => f.team === "blue")!.position,
+      map.bases.find((x) => x.team === "red")!.position,
+    );
+    const lazy = { botId: "runner", decide: (obs: any) => (obs.tick < 14_400 ? {} : late.decide(obs)) };
+    const b = new Battle({
+      battleId: "ot-late",
+      seed: "ot-late",
+      ruleset: { ...ctfPreset(), timeLimitTicks: 90 },
+      map,
+      participants: ctfParts(),
+    });
+    b.attachBot("veh_1", lazy as never);
+    b.attachBot("veh_2", new IdleBot("idle"));
+    const res = b.run(200_000);
+    expect(res.endReason).toBeUndefined();
+    expect(res.winner).toBe("red");
+    expect(res.score).toEqual({ red: 1, blue: 0 });
+    expect(res.ticks).toBeGreaterThan(90 + 3 * 60 * 30); // más de 3 min de prórroga
+    expect(res.ticks).toBeGreaterThan(14_400);
+    b.free();
+  }, 120_000);
 
   it("la siguiente captura gana y el estado NO se reinicia (mismo tick y hash que sin límite)", () => {
     // Referencia: misma batalla sin límite de tiempo efectivo.
@@ -115,7 +150,7 @@ describe("CTF · prórroga (next_score_wins)", () => {
       },
     );
     expect(replay.header.versions.engine).toBe("0.4.0");
-    expect(replay.header.ruleset.overtime).toEqual({ kind: "next_score_wins", maxTicks: 5400 });
+    expect(replay.header.ruleset.overtime).toEqual({ kind: "next_score_wins" });
     const v = await verify(fromJsonl(toJsonl(replay)));
     expect(v.matches).toBe(true);
   }, 60_000);

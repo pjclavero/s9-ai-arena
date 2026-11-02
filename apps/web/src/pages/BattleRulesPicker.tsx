@@ -11,7 +11,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import {
-  CTF_OVERTIME_MAX_SECONDS,
   TIEBREAK_RULES,
   respawnLabel,
   summarizeParams,
@@ -376,7 +375,7 @@ export function BattleRulesPicker(props: {
               <p style={ROW}>
                 <small data-testid="rules-overtime">
                   Prórroga: si empatan al acabar el tiempo, se sigue jugando con el mismo estado y la siguiente captura
-                  gana; si en {CTF_OVERTIME_MAX_SECONDS / 60} minutos nadie captura, empate.
+                  gana. No hay límite de tiempo competitivo.
                 </small>
               </p>
             </>

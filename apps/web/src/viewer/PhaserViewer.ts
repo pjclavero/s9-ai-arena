@@ -741,7 +741,13 @@ export class ViewerScene extends Phaser.Scene {
       this.matchEndText = headline;
       this.matchEndSub = sub;
     }
-    const headline = result.winner ? `GANA ${result.winner.toUpperCase()}` : "EMPATE";
+    // ADR-022 · la salvaguarda técnica no es un empate: se dice tal cual.
+    const headline =
+      result.reason === "technical_limit"
+        ? "DETENIDA POR LÍMITE TÉCNICO"
+        : result.winner
+          ? `GANA ${result.winner.toUpperCase()}`
+          : "EMPATE";
     const scoreLine = Object.entries(result.score)
       .map(([t, n]) => `${t} ${n}`)
       .join("   ");

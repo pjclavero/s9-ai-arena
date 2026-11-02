@@ -13,6 +13,7 @@ import { createHash } from "node:crypto";
 import {
   DECISION_EVERY_N_TICKS,
   emptyDict,
+  OVERTIME_TECHNICAL_LIMIT_TICKS,
   RADIO_DELIVERY_DELAY_DECISIONS,
   TICK_DT,
   TICK_HZ,
@@ -32,6 +33,7 @@ import {
 } from "./combat.js";
 import { ARENA_BOUNDARY_ID_PREFIX } from "../arena-map.js";
 import {
+  TECHNICAL_LIMIT,
   chooseSpawn,
   createMode,
   eliminatedByDeath,
@@ -90,7 +92,14 @@ export interface BattleConfig {
 
 export interface BattleResult {
   battleId: string;
-  winner: string | "draw";
+  /** Equipo ganador, "draw", o null si la batalla se detuvo SIN resultado deportivo. */
+  winner: string | "draw" | null;
+  /**
+   * Motor 0.4.0 (ADR-022) · sólo si la batalla NO terminó por las reglas:
+   * `technical_limit` = la salvaguarda técnica de la prórroga la detuvo (sin resultado
+   * deportivo). Ausente en toda batalla normal (resultados de 0.3.0 idénticos).
+   */
+  endReason?: "technical_limit";
   ticks: number;
   score: Record<string, number>;
   finalStateHash: string;
@@ -603,7 +612,7 @@ export class Battle {
         tick: this.tick,
         kind: "overtime_started",
         score: { ...this.mode.score },
-        maxTicks: this.config.ruleset.overtime.maxTicks,
+        technicalLimitTicks: OVERTIME_TECHNICAL_LIMIT_TICKS,
       });
     }
     this.tick++;
@@ -974,9 +983,15 @@ export class Battle {
     // el hash de estado: no altera el determinismo.
     const last = this.snapshots[this.snapshots.length - 1];
     if (!last || last.tick !== this.tick) this.snapshots.push(this.publicSnapshot(this.poses()));
+    // Salvaguarda técnica (ADR-022): sin resultado deportivo y con el motivo explícito.
+    const technical = winner === TECHNICAL_LIMIT;
+    if (technical) {
+      this.publicEvents.push({ tick: this.tick, kind: "technical_limit", score: { ...this.mode.score } });
+    }
     this.result = {
       battleId: this.config.battleId,
-      winner,
+      winner: technical ? null : winner,
+      ...(technical ? { endReason: "technical_limit" as const } : {}),
       ticks: this.tick,
       score: { ...this.mode.score },
       finalStateHash: this.stateHash(),

@@ -15,7 +15,7 @@
  *    de forma determinista y la copia guarda AMBAS.
  */
 import { BUDGET_CREDITS_MAX, BUDGET_CREDITS_MIN, BUDGET_CREDITS_MVP, TICK_HZ } from "./constants.js";
-import { loadRuleset, type Ruleset, type TimeoutTiebreakCriterion } from "./index.js";
+import { OVERTIME_TECHNICAL_LIMIT_TICKS, loadRuleset, type Ruleset, type TimeoutTiebreakCriterion } from "./index.js";
 
 /** Versión del contrato de la copia. Se sube si cambia su forma. 2 = motor 0.4.0 (ADR-022). */
 export const BATTLE_RULES_SCHEMA = 2;
@@ -64,10 +64,11 @@ export interface RulesParams {
 }
 
 /**
- * Límite de SEGURIDAD de la prórroga de CTF (ADR-022): si en 3 minutos de prórroga nadie
- * captura, la batalla termina en empate. Explícito, documentado y visible en la UI.
+ * Salvaguarda TÉCNICA de la prórroga, en minutos (para textos). NO es una regla de juego:
+ * ver `OVERTIME_TECHNICAL_LIMIT_TICKS` en index.ts. Decisión del operador (2026-11-02):
+ * la prórroga de CTF no tiene límite competitivo.
  */
-export const CTF_OVERTIME_MAX_SECONDS = 180;
+export const OVERTIME_TECHNICAL_LIMIT_MINUTES = OVERTIME_TECHNICAL_LIMIT_TICKS / (60 * TICK_HZ);
 
 /**
  * Retardo ANTI-COACHING del directo en torneos (E8.M, escalado del EQ5): segundos que el
@@ -147,7 +148,7 @@ export const TIEBREAK_RULES: Readonly<Record<TiebreakFamily, TiebreakRule>> = {
       "más capturas",
       "si empatan al acabar el tiempo: prórroga con el mismo estado (no se reinician bots, banderas ni posiciones)",
       "en la prórroga, la siguiente captura gana",
-      `si en ${CTF_OVERTIME_MAX_SECONDS / 60} minutos de prórroga nadie captura (límite de seguridad): empate`,
+      "la prórroga no tiene límite de tiempo competitivo: dura hasta la siguiente captura",
     ],
   },
 };
@@ -364,7 +365,7 @@ export const RULES_PRESETS: readonly RulesPreset[] = deepFreeze([
     name: "Capturar la bandera",
     tagline: "3 capturas para ganar. Empate al tiempo ⇒ prórroga: la siguiente captura gana.",
     description:
-      "Cada equipo tiene bandera y base. Tocar la bandera rival la recoge; el portador puede seguir combatiendo; si muere, la bandera cae: un rival puede recogerla y un compañero del dueño devolverla; si nadie la toca vuelve sola a su base a los 10 s. Llevar la bandera rival a tu base puntúa si la tuya está en su base. Gana quien llegue a 3 capturas o tenga más al acabar los 5 minutos. Empate ⇒ prórroga con el mismo estado: la siguiente captura gana; si en 3 minutos nadie captura, empate. Reaparición ilimitada a los 5 s; sin fuego amigo.",
+      "Cada equipo tiene bandera y base. Tocar la bandera rival la recoge; el portador puede seguir combatiendo; si muere, la bandera cae: un rival puede recogerla y un compañero del dueño devolverla; si nadie la toca vuelve sola a su base a los 10 s. Llevar la bandera rival a tu base puntúa si la tuya está en su base. Gana quien llegue a 3 capturas o tenga más al acabar los 5 minutos. Empate ⇒ prórroga con el mismo estado: la siguiente captura gana, sin límite de tiempo competitivo. Reaparición ilimitada a los 5 s; sin fuego amigo.",
     teamSizes: [2, 3, 4],
     params: {
       game: "capture_the_flag",
@@ -814,7 +815,7 @@ export function engineRulesetFor(p: RulesParams, rulesetId: string): Ruleset {
             requireOwnFlagAtBase: p.ctf?.requireOwnFlagAtBase ?? true,
             flagReturnTicks: (p.ctf?.flagReturnSeconds ?? 10) * TICK_HZ,
           },
-          overtime: { kind: "next_score_wins" as const, maxTicks: CTF_OVERTIME_MAX_SECONDS * TICK_HZ },
+          overtime: { kind: "next_score_wins" as const },
         }
       : { timeoutTiebreak: tiebreakFor(p) }),
   });
@@ -1109,9 +1110,7 @@ export function summarizeParams(raw: RulesParams): string[] {
   if (ctf && p.ctf) {
     lines.push(`Retorno automático de la bandera: ${p.ctf.flagReturnSeconds} s`);
     lines.push(`Bandera propia en base para puntuar: ${p.ctf.requireOwnFlagAtBase ? "sí" : "no"}`);
-    lines.push(
-      `Prórroga: la siguiente captura gana (máx. ${CTF_OVERTIME_MAX_SECONDS / 60} min; si nadie captura, empate)`,
-    );
+    lines.push("Prórroga: con el mismo estado, la siguiente captura gana (sin límite de tiempo competitivo)");
   }
   if (p.botCredits !== null) lines.push(`Máx. por bot: ${p.botCredits} cr`);
   if (p.teamCredits !== null) lines.push(`Presupuesto del equipo: ${p.teamCredits} cr (reparto libre entre bots)`);

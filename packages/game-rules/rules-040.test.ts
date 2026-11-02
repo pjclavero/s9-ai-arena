@@ -10,7 +10,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
-  CTF_OVERTIME_MAX_SECONDS,
   RULES_PRESETS,
   TIEBREAK_RULES,
   checkComposition,
@@ -24,7 +23,7 @@ import {
   tiebreakFamilyOf,
   type RulesParams,
 } from "./battle-rules.js";
-import { maxBattleTicks } from "./index.js";
+import { OVERTIME_TECHNICAL_LIMIT_TICKS, maxBattleTicks } from "./index.js";
 
 const canon = (v: unknown): string =>
   Array.isArray(v)
@@ -50,7 +49,9 @@ const PUBLISHED: Record<string, string> = {
   "team_limited_respawn@1": "290e95a9b05c2e7a",
   "team_deathmatch@1": "0590a81e6cbfa4e6",
   "team_endurance@1": "a6d25e0c7e0162a1",
-  "ctf@1": "bb6e2b3c56536f9a",
+  // ctf@1: texto ajustado el 2026-11-02 (prórroga sin tope, decisión del operador) ANTES de su
+  // primer despliegue; a partir de ahí, congelado.
+  "ctf@1": "3cd7bdce265c2ca4",
 };
 
 describe("presets versionados e inmutables", () => {
@@ -154,7 +155,8 @@ describe("CTF base ctf@1 (decisión del operador)", () => {
       expect(e.respawn).toEqual({ enabled: true, delayTicks: 150 });
       expect(e.ctf).toEqual({ requireOwnFlagAtBase: true, flagReturnTicks: 300 });
       expect(e.friendlyFire).toBe(false);
-      expect(e.overtime).toEqual({ kind: "next_score_wins", maxTicks: CTF_OVERTIME_MAX_SECONDS * 30 });
+      // Sin límite competitivo (decisión del operador): sólo el tipo de prórroga.
+      expect(e.overtime).toEqual({ kind: "next_score_wins" });
       expect(e.timeoutTiebreak).toBeUndefined();
     }
     expect(resolveRulesRequest({ preset: "ctf", teamSize: 1 }).ok).toBe(false);
@@ -182,7 +184,7 @@ describe("CTF base ctf@1 (decisión del operador)", () => {
     if (ok.ok) {
       expect(ok.engineRuleset.ctf).toEqual({ requireOwnFlagAtBase: false, flagReturnTicks: 600 });
       expect(ok.engineRuleset.scoreToWin).toBe(5);
-      expect(ok.engineRuleset.overtime?.maxTicks).toBe(CTF_OVERTIME_MAX_SECONDS * 30);
+      expect(ok.engineRuleset.overtime).toEqual({ kind: "next_score_wins" });
     }
     for (const bad of [
       { ...base, scoreLimit: 11 },
@@ -209,7 +211,8 @@ describe("duración máxima con prórroga (temporizadores de pared)", () => {
   it("maxBattleTicks = tiempo + límite de seguridad de la prórroga; sin prórroga, el tiempo", () => {
     const r = resolveRulesRequest({ preset: "ctf", teamSize: 2 });
     if (!r.ok) throw new Error("ctf");
-    expect(maxBattleTicks(r.engineRuleset)).toBe(9000 + CTF_OVERTIME_MAX_SECONDS * 30);
+    expect(OVERTIME_TECHNICAL_LIMIT_TICKS).toBe(36_000); // 20 min: 4× una CTF base, no una regla de juego
+    expect(maxBattleTicks(r.engineRuleset)).toBe(9000 + OVERTIME_TECHNICAL_LIMIT_TICKS);
     const t = resolveRulesRequest({ preset: "team_deathmatch", teamSize: 2 });
     if (!t.ok) throw new Error("tdm");
     expect(maxBattleTicks(t.engineRuleset)).toBe(t.engineRuleset.timeLimitTicks);

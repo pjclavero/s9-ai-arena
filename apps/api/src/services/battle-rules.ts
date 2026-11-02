@@ -382,6 +382,11 @@ export async function buildTournamentRules(db: Db, input: TournamentRulesInput):
       },
     ]);
   }
+  // ADR-022 · ningún torneo admite prórroga (CTF en torneos está rechazado arriba): la
+  // salvaguarda técnica, sin resultado deportivo, no puede llegar a series ni clasificaciones.
+  if (r.engineRuleset.overtime) {
+    throw rulesInvalid([{ field: "rules.preset", code: "incompatible", message: "los torneos no admiten prórroga" }]);
+  }
   const engineRuleset = withTournamentSpectatorDelay(
     input.budgetCredits ? { ...r.engineRuleset, budgetCredits: input.budgetCredits } : r.engineRuleset,
   );

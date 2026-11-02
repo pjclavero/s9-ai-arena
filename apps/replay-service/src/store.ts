@@ -108,6 +108,8 @@ export function ingestReplay(dir: string, replay: Replay, opts: IngestOptions): 
     keyframes: buildKeyframes(replay.snapshots, opts.keyframeEveryNSnapshots),
     result: {
       winner: replay.result.winner,
+      // ADR-022 · sólo si NO terminó por las reglas (índices de siempre, idénticos).
+      ...(replay.result.endReason ? { endReason: replay.result.endReason } : {}),
       ticks: replay.result.ticks,
       score: replay.result.score,
       finalStateHash: replay.result.finalStateHash,
@@ -127,6 +129,8 @@ export interface ReplaySummary {
   battleId: string;
   ticks: number;
   winner: string;
+  /** ADR-022 · `technical_limit`: detenida sin resultado deportivo (winner = "none"). */
+  endReason?: string;
   official: boolean;
   createdAt: string;
   sizeBytes: number;
@@ -145,7 +149,8 @@ export function listReplays(dir: string, opts: { limit?: number; order?: "asc" |
       items.push({
         battleId: ix.battleId,
         ticks: ix.ticks,
-        winner: ix.result?.winner ?? "unknown",
+        winner: ix.result?.endReason === "technical_limit" ? "none" : (ix.result?.winner ?? "unknown"),
+        ...(ix.result?.endReason ? { endReason: ix.result.endReason } : {}),
         official: ix.official,
         createdAt: ix.createdAt,
         sizeBytes: ix.sizeBytes,

@@ -10,7 +10,7 @@
  * del repo no coincide con lo que genera el registro (nunca se desincronizan).
  */
 import {
-  CTF_OVERTIME_MAX_SECONDS,
+  OVERTIME_TECHNICAL_LIMIT_MINUTES,
   CUSTOM_FORBIDDEN_FIELDS,
   MAX_BATTLE_PARTICIPANTS,
   RULES_LIMITS,
@@ -78,7 +78,8 @@ export function rulesDocJson() {
     tiebreaks: Object.values(TIEBREAK_RULES).map((t) => ({ ...t, criteria: [...t.criteria], steps: [...t.steps] })),
     ctf: {
       basePreset: "ctf@1",
-      overtimeMaxSeconds: CTF_OVERTIME_MAX_SECONDS,
+      overtimeCompetitiveLimit: null,
+      technicalLimitMinutes: OVERTIME_TECHNICAL_LIMIT_MINUTES,
       rules: [
         "cada equipo tiene bandera y base",
         "tocar la bandera rival a distancia válida (2 m) la recoge",
@@ -89,7 +90,8 @@ export function rulesDocJson() {
         "llevar la bandera rival a la base propia puntúa una captura",
         "por defecto, la bandera propia debe estar en su base para puntuar",
         "al capturar, la bandera rival vuelve a su base",
-        `si hay empate al acabar el tiempo: prórroga con el mismo estado (no se reinician bots, banderas ni posiciones); la siguiente captura gana; si en ${CTF_OVERTIME_MAX_SECONDS / 60} minutos nadie captura, empate (límite de seguridad)`,
+        "si hay empate al acabar el tiempo: prórroga con el mismo estado (no se reinician bots, banderas ni posiciones); la siguiente captura gana; la prórroga no tiene límite de tiempo competitivo",
+        `salvaguarda TÉCNICA (no es una regla de juego): si tras ${OVERTIME_TECHNICAL_LIMIT_MINUTES} minutos de prórroga nadie ha capturado, la batalla se detiene «por límite técnico» SIN resultado deportivo: no es empate, victoria ni derrota y no cuenta en V-D-E, clasificaciones ni Elo`,
       ],
     },
     presets: currentPresets().map(presetJson),

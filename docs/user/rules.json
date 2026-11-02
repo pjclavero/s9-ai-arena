@@ -78,13 +78,14 @@
         "más capturas",
         "si empatan al acabar el tiempo: prórroga con el mismo estado (no se reinician bots, banderas ni posiciones)",
         "en la prórroga, la siguiente captura gana",
-        "si en 3 minutos de prórroga nadie captura (límite de seguridad): empate"
+        "la prórroga no tiene límite de tiempo competitivo: dura hasta la siguiente captura"
       ]
     }
   ],
   "ctf": {
     "basePreset": "ctf@1",
-    "overtimeMaxSeconds": 180,
+    "overtimeCompetitiveLimit": null,
+    "technicalLimitMinutes": 20,
     "rules": [
       "cada equipo tiene bandera y base",
       "tocar la bandera rival a distancia válida (2 m) la recoge",
@@ -95,7 +96,8 @@
       "llevar la bandera rival a la base propia puntúa una captura",
       "por defecto, la bandera propia debe estar en su base para puntuar",
       "al capturar, la bandera rival vuelve a su base",
-      "si hay empate al acabar el tiempo: prórroga con el mismo estado (no se reinician bots, banderas ni posiciones); la siguiente captura gana; si en 3 minutos nadie captura, empate (límite de seguridad)"
+      "si hay empate al acabar el tiempo: prórroga con el mismo estado (no se reinician bots, banderas ni posiciones); la siguiente captura gana; la prórroga no tiene límite de tiempo competitivo",
+      "salvaguarda TÉCNICA (no es una regla de juego): si tras 20 minutos de prórroga nadie ha capturado, la batalla se detiene «por límite técnico» SIN resultado deportivo: no es empate, victoria ni derrota y no cuenta en V-D-E, clasificaciones ni Elo"
     ]
   },
   "presets": [
@@ -395,7 +397,7 @@
         4
       ],
       "tagline": "3 capturas para ganar. Empate al tiempo ⇒ prórroga: la siguiente captura gana.",
-      "description": "Cada equipo tiene bandera y base. Tocar la bandera rival la recoge; el portador puede seguir combatiendo; si muere, la bandera cae: un rival puede recogerla y un compañero del dueño devolverla; si nadie la toca vuelve sola a su base a los 10 s. Llevar la bandera rival a tu base puntúa si la tuya está en su base. Gana quien llegue a 3 capturas o tenga más al acabar los 5 minutos. Empate ⇒ prórroga con el mismo estado: la siguiente captura gana; si en 3 minutos nadie captura, empate. Reaparición ilimitada a los 5 s; sin fuego amigo.",
+      "description": "Cada equipo tiene bandera y base. Tocar la bandera rival la recoge; el portador puede seguir combatiendo; si muere, la bandera cae: un rival puede recogerla y un compañero del dueño devolverla; si nadie la toca vuelve sola a su base a los 10 s. Llevar la bandera rival a tu base puntúa si la tuya está en su base. Gana quien llegue a 3 capturas o tenga más al acabar los 5 minutos. Empate ⇒ prórroga con el mismo estado: la siguiente captura gana, sin límite de tiempo competitivo. Reaparición ilimitada a los 5 s; sin fuego amigo.",
       "respawn": "Reaparición ilimitada",
       "tiebreakFamily": "capture_the_flag",
       "summary": [
@@ -405,9 +407,9 @@
         "Tiempo máximo: 5 min",
         "Retorno automático de la bandera: 10 s",
         "Bandera propia en base para puntuar: sí",
-        "Prórroga: la siguiente captura gana (máx. 3 min; si nadie captura, empate)",
+        "Prórroga: con el mismo estado, la siguiente captura gana (sin límite de tiempo competitivo)",
         "Fuego amigo: desactivado",
-        "Desempate: más capturas → si empatan al acabar el tiempo: prórroga con el mismo estado (no se reinician bots, banderas ni posiciones) → en la prórroga, la siguiente captura gana → si en 3 minutos de prórroga nadie captura (límite de seguridad): empate"
+        "Desempate: más capturas → si empatan al acabar el tiempo: prórroga con el mismo estado (no se reinician bots, banderas ni posiciones) → en la prórroga, la siguiente captura gana → la prórroga no tiene límite de tiempo competitivo: dura hasta la siguiente captura"
       ],
       "params": {
         "game": "capture_the_flag",

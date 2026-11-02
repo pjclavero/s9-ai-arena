@@ -109,7 +109,8 @@ describe("EQ2 · reglas 0.4.0 en Nueva batalla", () => {
     expect(tb).toContain("más capturas");
     expect(tb).toContain("prórroga con el mismo estado");
     expect(tb).toContain("la siguiente captura gana");
-    expect(tb).toContain("3 minutos de prórroga");
+    expect(tb).toContain("no tiene límite de tiempo competitivo");
+    expect(tb).not.toMatch(/3 min/);
     const summary = screen.getByTestId("rules-summary").textContent ?? "";
     expect(summary).toContain("Victoria: 3 capturas");
     expect(summary).toContain("Retorno automático de la bandera: 10 s");

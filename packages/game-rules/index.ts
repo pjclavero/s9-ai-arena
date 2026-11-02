@@ -107,11 +107,12 @@ export interface Ruleset {
    * Motor 0.4.0 (ADR-022) · PRÓRROGA. Si al agotar `timeLimitTicks` los dos primeros
    * equipos empatan a puntos, la batalla NO termina: sigue con el MISMO estado (bots,
    * banderas, posiciones, reapariciones) y gana el primer equipo que supere su
-   * puntuación del final del tiempo reglamentario («la siguiente captura gana»).
-   * `maxTicks` es el LÍMITE DE SEGURIDAD explícito de la prórroga: si se agota sin
-   * puntuar nadie, la batalla termina en `draw`. Ausente = sin prórroga (0.3.0).
+   * puntuación del final del tiempo reglamentario («la siguiente captura gana»). SIN
+   * límite competitivo (decisión del operador, 2026-11-02): sólo la salvaguarda TÉCNICA
+   * global `OVERTIME_TECHNICAL_LIMIT_TICKS`, que no es un resultado deportivo.
+   * Ausente = sin prórroga (0.3.0).
    */
-  overtime?: { kind: "next_score_wins"; maxTicks: number };
+  overtime?: { kind: "next_score_wins" };
   sharedTeamVision: boolean;
   /** Ticks de gracia tras desconexión antes de descalificar (D2). */
   disconnectGraceTicks: number;
@@ -267,11 +268,21 @@ export function loadRuleset(id: string, overrides: Partial<Ruleset> = {}): Rules
 }
 
 /**
+ * Motor 0.4.0 (ADR-022) · SALVAGUARDA TÉCNICA de la prórroga: 20 minutos (36 000 ticks)
+ * más allá del tiempo reglamentario. NO es una regla de juego: si salta, la batalla se
+ * DETIENE sin resultado deportivo (`endReason: "technical_limit"`, `winner: null`), no
+ * cuenta como empate, victoria ni derrota, ni en V-D-E, clasificaciones ni Elo. Es 4
+ * veces la duración de una partida CTF base (5 min) y existe sólo para que ninguna
+ * batalla quede abierta para siempre (temporizadores de contenedor y HTTP necesitan una
+ * cota). Cambiar el valor cambia la simulación de esas batallas: exige versión de motor.
+ */
+export const OVERTIME_TECHNICAL_LIMIT_TICKS = 20 * 60 * 30;
+
+/**
  * Motor 0.4.0 (ADR-022) · Ticks MÁXIMOS que puede durar una batalla con este ruleset:
- * tiempo reglamentario + límite de seguridad de la prórroga (si la declara). Es la
- * cifra que deben usar los temporizadores de pared (contenedores, HTTP): con prórroga,
- * `timeLimitTicks` solo ya no acota la duración.
+ * tiempo reglamentario + salvaguarda técnica si hay prórroga. Es la cifra que deben
+ * usar los temporizadores de pared (contenedores, HTTP).
  */
 export function maxBattleTicks(ruleset: Pick<Ruleset, "timeLimitTicks" | "overtime">): number {
-  return ruleset.timeLimitTicks + (ruleset.overtime?.maxTicks ?? 0);
+  return ruleset.timeLimitTicks + (ruleset.overtime ? OVERTIME_TECHNICAL_LIMIT_TICKS : 0);
 }

@@ -85,7 +85,10 @@ export type AgentsKind = "container" | "in_process_stub" | "scripted";
 
 /** Resultado que el ejecutor devuelve al runner (subconjunto de BattleResult de E2). */
 export interface BattleExecution {
-  winner: string | "draw"; // equipo ganador
+  /** Equipo ganador, "draw", o null si la batalla se detuvo sin resultado deportivo. */
+  winner: string | "draw" | null;
+  /** ADR-022 · `technical_limit` si la salvaguarda técnica del motor la detuvo. */
+  endReason?: "technical_limit";
   ticks: number;
   score: Record<string, number>;
   finalStateHash: string;
@@ -179,8 +182,10 @@ async function loadBattle(db: Knex, battleId: string): Promise<{ battle: BattleR
   return { battle, participants };
 }
 
-function outcomeFor(p: ParticipantRow, winner: string | "draw", disqualified: Set<string>): string {
+function outcomeFor(p: ParticipantRow, winner: string | "draw" | null, disqualified: Set<string>): string | null {
   if (disqualified.has(p.bot_id)) return "disqualified";
+  // ADR-022 · detenida por límite técnico: SIN resultado deportivo (ni win, ni loss, ni draw).
+  if (winner === null) return null;
   if (winner === "draw") return "draw";
   return p.team === winner ? "win" : "loss";
 }
@@ -423,7 +428,9 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
       if (aborter.signal.aborted) {
         throw new InfrastructureFailure("battle_busy", String(aborter.signal.reason));
       }
-      await finishBattle(db, battle, participants, execution, adminDq, "none", owner, "completed", deps.replaysDir);
+      // ADR-022 · la salvaguarda técnica del motor no es un resultado deportivo.
+      const endReason: EndReason = execution.endReason === "technical_limit" ? "technical_limit" : "completed";
+      await finishBattle(db, battle, participants, execution, adminDq, "none", owner, endReason, deps.replaysDir);
     } catch (err) {
       if (err instanceof LostBattleClaim) throw new InfrastructureFailure("battle_busy", err.message);
       // Cualquier otro fallo NO deportivo tras reservar (p. ej. no se pudo escribir
@@ -468,7 +475,7 @@ async function ensureRichStats(db: Knex, battleId: string, deps: BattleRunnerDep
 }
 
 /** Motivo de cierre que queda en `battles.result.endReason`. */
-export type EndReason = "completed" | "walkover" | "sporting_failure";
+export type EndReason = "completed" | "walkover" | "sporting_failure" | "technical_limit";
 
 /**
  * BATTLE_RESULT · forma de `battles.result` (jsonb), versión 1. Documentada en
@@ -478,8 +485,11 @@ export type EndReason = "completed" | "walkover" | "sporting_failure";
  */
 export interface BattleResultV1 {
   schema: "battle-result/v1";
-  /** Equipo ganador o "draw". El ganador POR BOT es `participants.outcome`. */
-  winner: string | "draw";
+  /**
+   * Equipo ganador o "draw". El ganador POR BOT es `participants.outcome`. null SÓLO con
+   * `endReason: "technical_limit"` (ADR-022): detenida sin resultado deportivo.
+   */
+  winner: string | "draw" | null;
   ticks: number;
   score: Record<string, number>;
   /** botIds descalificados (motor + administrativos + culpable deportivo). */

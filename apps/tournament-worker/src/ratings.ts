@@ -90,6 +90,8 @@ export async function applyBattleRating(
   const battle = await db("battles").where({ id: battleId }).first();
   if (!battle || battle.status !== "finished") return false;
   if (!battle.official) return false; // práctica privada: no puntúa
+  // ADR-022 · detenida por la salvaguarda técnica: sin resultado deportivo, no puntúa.
+  if (resultOf(battle)?.endReason === "technical_limit") return false;
 
   const tournament = battle.tournament_id ? await db("tournaments").where({ id: battle.tournament_id }).first() : null;
   // TD-029 · STAT_SEASON: la temporada sale de la ÚNICA fuente (season.ts).
@@ -223,4 +225,18 @@ export async function ratingHistory(db: Knex, botId: string, seasonId: string, m
     reverted: e.reverted as boolean,
     at: e.created_at as Date,
   }));
+}
+
+/** `battles.result` (jsonb o texto) de una fila. */
+function resultOf(battle: Record<string, unknown>): { endReason?: string } | null {
+  const r = battle.result;
+  if (!r) return null;
+  if (typeof r === "string") {
+    try {
+      return JSON.parse(r);
+    } catch {
+      return null;
+    }
+  }
+  return typeof r === "object" ? (r as { endReason?: string }) : null;
 }

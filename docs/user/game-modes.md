@@ -94,7 +94,7 @@ También trae «Ruleset MVP por defecto», válido para cualquier modo. Al cambi
 | Equipos | **Respawn limitado** | `maxRespawns = 2`: **2 reapariciones por bot (3 vidas)** a los 5 s; gana el último equipo con vidas (10 min). |
 | Equipos | **Team Deathmatch** | Reaparición ilimitada; gana el primero en 10 bajas (8 min de seguridad). |
 | Equipos | **Resistencia por equipos** | 5 min fijos; más puntos → más bajas → empate. |
-| Equipos | **Capturar la bandera** (`ctf@1`) | 3 capturas o más capturas a los 5 min; empate ⇒ **prórroga** con el mismo estado: la siguiente captura gana (3 min como máximo; si nadie captura, empate). |
+| Equipos | **Capturar la bandera** (`ctf@1`) | 3 capturas o más capturas a los 5 min; empate ⇒ **prórroga** con el mismo estado: la siguiente captura gana, sin límite de tiempo competitivo. |
 | Ambos | **Personalizado** | Sólo reglas competitivas: reaparición (ninguna / limitada con `maxRespawns` / ilimitada) y su espera, victoria, duración, créditos y masa por bot y presupuesto total por equipo (reparto libre), fuego amigo y, en CTF, capturas, retorno de la bandera y bandera propia en base. La física, el daño, la vida, los sensores y la munición no se tocan. |
 | Ambos | **Clásico** | El ruleset de la plataforma de cada modo (incluye control de zona). |
 

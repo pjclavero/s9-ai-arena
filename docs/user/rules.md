@@ -25,7 +25,7 @@ Deterministas: sólo dependen del estado de la batalla en el último tick. Se ap
 | Eliminación (sin reaparición) | 1. más bots vivos · 2. más vidas/reapariciones restantes · 3. más bajas · 4. empate |
 | Respawn limitado | 1. más puntos · 2. más bots vivos · 3. más reapariciones restantes · 4. más bajas · 5. empate |
 | Team Deathmatch / reaparición ilimitada | 1. más puntos · 2. más bajas · 3. empate |
-| Capturar la bandera | 1. más capturas · 2. si empatan al acabar el tiempo: prórroga con el mismo estado (no se reinician bots, banderas ni posiciones) · 3. en la prórroga, la siguiente captura gana · 4. si en 3 minutos de prórroga nadie captura (límite de seguridad): empate |
+| Capturar la bandera | 1. más capturas · 2. si empatan al acabar el tiempo: prórroga con el mismo estado (no se reinician bots, banderas ni posiciones) · 3. en la prórroga, la siguiente captura gana · 4. la prórroga no tiene límite de tiempo competitivo: dura hasta la siguiente captura |
 
 La familia la decide el tipo de reaparición: sin reaparición ⇒ Eliminación; limitada ⇒ Respawn limitado; ilimitada ⇒ Team Deathmatch; y Capturar la bandera tiene su propia regla. Los presets y el personalizado usan la misma tabla. «Bajas» = vehículos ENEMIGOS destruidos (el fuego amigo y las muertes por zona de daño no cuentan).
 
@@ -40,7 +40,8 @@ La familia la decide el tipo de reaparición: sin reaparición ⇒ Eliminación;
 - llevar la bandera rival a la base propia puntúa una captura
 - por defecto, la bandera propia debe estar en su base para puntuar
 - al capturar, la bandera rival vuelve a su base
-- si hay empate al acabar el tiempo: prórroga con el mismo estado (no se reinician bots, banderas ni posiciones); la siguiente captura gana; si en 3 minutos nadie captura, empate (límite de seguridad)
+- si hay empate al acabar el tiempo: prórroga con el mismo estado (no se reinician bots, banderas ni posiciones); la siguiente captura gana; la prórroga no tiene límite de tiempo competitivo
+- salvaguarda TÉCNICA (no es una regla de juego): si tras 20 minutos de prórroga nadie ha capturado, la batalla se detiene «por límite técnico» SIN resultado deportivo: no es empate, victoria ni derrota y no cuenta en V-D-E, clasificaciones ni Elo
 
 ## Presets oficiales
 
@@ -150,11 +151,11 @@ Tiempo fijo. Gana el equipo con más puntos al terminar.
 - Tiempo máximo: 5 min
 - Retorno automático de la bandera: 10 s
 - Bandera propia en base para puntuar: sí
-- Prórroga: la siguiente captura gana (máx. 3 min; si nadie captura, empate)
+- Prórroga: con el mismo estado, la siguiente captura gana (sin límite de tiempo competitivo)
 - Fuego amigo: desactivado
-- Desempate: más capturas → si empatan al acabar el tiempo: prórroga con el mismo estado (no se reinician bots, banderas ni posiciones) → en la prórroga, la siguiente captura gana → si en 3 minutos de prórroga nadie captura (límite de seguridad): empate
+- Desempate: más capturas → si empatan al acabar el tiempo: prórroga con el mismo estado (no se reinician bots, banderas ni posiciones) → en la prórroga, la siguiente captura gana → la prórroga no tiene límite de tiempo competitivo: dura hasta la siguiente captura
 
-Cada equipo tiene bandera y base. Tocar la bandera rival la recoge; el portador puede seguir combatiendo; si muere, la bandera cae: un rival puede recogerla y un compañero del dueño devolverla; si nadie la toca vuelve sola a su base a los 10 s. Llevar la bandera rival a tu base puntúa si la tuya está en su base. Gana quien llegue a 3 capturas o tenga más al acabar los 5 minutos. Empate ⇒ prórroga con el mismo estado: la siguiente captura gana; si en 3 minutos nadie captura, empate. Reaparición ilimitada a los 5 s; sin fuego amigo.
+Cada equipo tiene bandera y base. Tocar la bandera rival la recoge; el portador puede seguir combatiendo; si muere, la bandera cae: un rival puede recogerla y un compañero del dueño devolverla; si nadie la toca vuelve sola a su base a los 10 s. Llevar la bandera rival a tu base puntúa si la tuya está en su base. Gana quien llegue a 3 capturas o tenga más al acabar los 5 minutos. Empate ⇒ prórroga con el mismo estado: la siguiente captura gana, sin límite de tiempo competitivo. Reaparición ilimitada a los 5 s; sin fuego amigo.
 
 ## Personalizado
 

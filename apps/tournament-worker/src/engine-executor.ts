@@ -360,6 +360,7 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
 
       return {
         winner: result.winner,
+        ...(result.endReason ? { endReason: result.endReason } : {}),
         ticks: result.ticks,
         score: result.score,
         finalStateHash: result.finalStateHash,

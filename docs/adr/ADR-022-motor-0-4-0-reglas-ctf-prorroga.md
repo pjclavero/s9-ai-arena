@@ -39,9 +39,9 @@ El operador cerró estas decisiones (encargo EQUIPO 2, 2026-11-02):
 |---|---|---|
 | `respawn.maxRespawns` | reapariciones por vehículo (ADR-021) | ilimitado |
 | `timeoutTiebreak` | criterios en orden: `score`, `alive`, `lives`, `respawns_left`, `kills` (`hull` se conserva pero ningún preset lo usa) | más puntos, si no empate |
-| `overtime: { kind: "next_score_wins", maxTicks }` | **prórroga**: si al agotar `timeLimitTicks` los dos primeros empatan a puntos, la batalla sigue con el mismo estado y gana el primero que supere su marcador del final del tiempo; agotado `maxTicks` (límite de seguridad), `draw`. Evento público `overtime_started` (no va a los bots); `overtime` en el snapshot público y `ot` en el hash, sólo con el campo | sin prórroga |
+| `overtime: { kind: "next_score_wins" }` | **prórroga**: si al agotar `timeLimitTicks` los dos primeros empatan a puntos, la batalla sigue con el mismo estado y gana el primero que supere su marcador del final del tiempo. **Sin límite competitivo.** Evento público `overtime_started` (no va a los bots); `overtime` en el snapshot público y `ot` en el hash, sólo con el campo | sin prórroga |
 
-`maxBattleTicks(ruleset) = timeLimitTicks + overtime.maxTicks` alimenta el temporizador de contenedores (`container-agents.ts`): con prórroga, `timeLimitTicks` ya no acota la duración.
+**Salvaguarda técnica (no deportiva).** `OVERTIME_TECHNICAL_LIMIT_TICKS = 36 000` (20 min de prórroga). Si se agota sin captura, el motor DETIENE la batalla con `winner: null` y `endReason: "technical_limit"` (evento público `technical_limit`). `maxBattleTicks(ruleset) = timeLimitTicks + OVERTIME_TECHNICAL_LIMIT_TICKS` (con prórroga) alimenta el temporizador de contenedores (`container-agents.ts`).
 
 ### 3. Desempates (tabla única para presets y personalizado)
 
@@ -50,9 +50,23 @@ El operador cerró estas decisiones (encargo EQUIPO 2, 2026-11-02):
 | Eliminación (sin reaparición) | más bots vivos · más vidas/reapariciones restantes · más bajas · empate |
 | Respawn limitado | más puntos · más bots vivos · más reapariciones restantes · más bajas · empate |
 | Team Deathmatch / reaparición ilimitada | más puntos · más bajas · empate |
-| CTF | más capturas · prórroga (mismo estado) · la siguiente captura gana · **3 min** de prórroga sin captura ⇒ empate |
+| CTF | más capturas · prórroga (mismo estado) · la siguiente captura gana · sin límite competitivo |
 
-«Bajas» = vehículos enemigos destruidos por el equipo (fuego amigo y zonas de daño no cuentan). El límite de prórroga de 3 minutos (`CTF_OVERTIME_MAX_SECONDS`) es una **decisión explícita de este ADR**: el encargo pide que, si existe, esté definido y documentado; sin él, una batalla CTF podría no terminar nunca y los temporizadores de pared no tendrían cota.
+«Bajas» = vehículos enemigos destruidos por el equipo (fuego amigo y zonas de daño no cuentan).
+
+**Prórroga de CTF sin tope competitivo (decisión del operador, 2026-11-02).** Sustituye al límite de 3 minutos ⇒ empate de la primera redacción de este ADR. Queda sólo la salvaguarda técnica global:
+
+- **Valor:** 20 minutos de prórroga (36 000 ticks). Es 4 veces la duración de una CTF base de 5 minutos y está muy por encima de lo que tarda una captura (segundos o pocos minutos con bots reales). La duración máxima de una batalla queda en `timeLimitTicks + 36 000`: con el máximo del personalizado (30 min), 50 min = 90 000 ticks, por debajo del techo histórico del bucle en proceso (100 000).
+- **Mecanismo, reutilizando lo que existe:**
+  - `battles.status = finished` con su replay;
+  - `battles.result.endReason`, el mismo campo que ya distinguía `walkover` y `sporting_failure`, con el valor nuevo `technical_limit`;
+  - `result.winner = null` (nunca `"draw"`);
+  - `participants.outcome = NULL`, que ya era el estado «sin resultado» de la columna;
+  - `applyBattleRating` la ignora: no hay `rating_events` ni cambios en `ratings` (Elo, V-D-E).
+- **Descartado:** el final `failed`/`infrastructure`, porque reintentaría una batalla determinista y perdería el replay.
+- **Torneos:** no admiten prórroga, así que el caso no puede llegar a series ni clasificaciones.
+- **Interfaz:** la UI y el visor dicen «Detenida por límite técnico (sin resultado deportivo)», nunca «Empate».
+
 
 ### 4. Presets (v1) y CTF
 

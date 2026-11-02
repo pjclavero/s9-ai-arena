@@ -9,7 +9,16 @@ import {
   type Ruleset,
   type TimeoutTiebreakCriterion,
 } from "../../../../packages/game-rules/index.js";
+import { OVERTIME_TECHNICAL_LIMIT_TICKS } from "../../../../packages/game-rules/index.js";
 import type { Vec2 } from "./physics.js";
+
+/**
+ * Motor 0.4.0 (ADR-022) · valor INTERNO que `winner()` devuelve cuando salta la
+ * salvaguarda técnica de la prórroga. Nunca llega al resultado: `Battle.finish` lo
+ * traduce a `winner: null` + `endReason: "technical_limit"`. Contiene «:», que ninguna
+ * etiqueta de bando admite (API: [A-Za-z0-9_-]), así que no puede confundirse con un equipo.
+ */
+export const TECHNICAL_LIMIT = "technical_limit:";
 import type { Vehicle } from "./vehicle.js";
 
 export interface ModeContext {
@@ -116,7 +125,8 @@ abstract class BaseMode implements GameMode {
       if (pts >= ctx.ruleset.scoreToWin) return team;
     }
     // Motor 0.4.0 (ADR-022) · PRÓRROGA en curso: gana el primero que supere su marcador
-    // del final del tiempo reglamentario; agotado el límite de seguridad, tablas. El
+    // del final del tiempo reglamentario; sin límite competitivo (sólo la salvaguarda
+    // técnica, que detiene la batalla SIN resultado deportivo). El
     // estado (bots, banderas, posiciones) NO se reinicia: la simulación sigue igual.
     const overtime = ctx.ruleset.overtime;
     if (overtime && this.overtimeBaseline) {
@@ -131,7 +141,8 @@ abstract class BaseMode implements GameMode {
         const sorted = ahead.map((t) => [t, this.score[t] ?? 0] as const).sort((a, b) => b[1] - a[1]);
         return sorted[0][1] === sorted[1][1] ? "draw" : sorted[0][0];
       }
-      if (ctx.tick >= ctx.ruleset.timeLimitTicks + overtime.maxTicks) return "draw";
+      // Salvaguarda TÉCNICA (no deportiva): detención sin resultado.
+      if (ctx.tick >= ctx.ruleset.timeLimitTicks + OVERTIME_TECHNICAL_LIMIT_TICKS) return TECHNICAL_LIMIT;
       return null;
     }
     // R-RULES (revisión PR #204) · con reglas R-RULES (`timeoutTiebreak` declarado) la

@@ -152,14 +152,23 @@ export class OverlayState {
     const normalized: MatchResult = {
       winner,
       score,
-      reason: typeof result.reason === "string" ? result.reason : null,
+      reason:
+        typeof result.reason === "string"
+          ? result.reason
+          : typeof result.endReason === "string"
+            ? result.endReason
+            : null,
       endedTick: Number.isFinite(result.tick) ? result.tick : this.lastTick,
     };
     this.result = normalized;
     this.score = score;
     this.push(
       { kind: "match_ended", tick: normalized.endedTick },
-      winner ? `Fin de la partida · gana ${winner}` : "Fin de la partida · empate",
+      normalized.reason === "technical_limit"
+        ? "Fin de la partida · detenida por límite técnico (sin resultado deportivo)"
+        : winner
+          ? `Fin de la partida · gana ${winner}`
+          : "Fin de la partida · empate",
     );
   }
 

@@ -32,6 +32,8 @@ interface ReplaySummary {
   battleId: string;
   ticks: number;
   winner: string;
+  /** ADR-022 · `technical_limit`: detenida por límite técnico, sin resultado deportivo. */
+  endReason?: string;
   official: boolean;
   createdAt: string;
   sizeBytes: number;
@@ -357,7 +359,15 @@ export function ReplaysPage() {
                       <td>
                         <code title={r.battleId}>{r.battleId.slice(0, 8)}</code>
                       </td>
-                      <td>{r.winner === "draw" ? "empate" : r.winner ? `gana ${teamText(r.winner)}` : "—"}</td>
+                      <td>
+                        {r.endReason === "technical_limit"
+                          ? "detenida por límite técnico"
+                          : r.winner === "draw"
+                            ? "empate"
+                            : r.winner
+                              ? `gana ${teamText(r.winner)}`
+                              : "—"}
+                      </td>
                       <td>
                         {formatTicksAsDuration(r.ticks)} ({r.ticks} ticks)
                       </td>
