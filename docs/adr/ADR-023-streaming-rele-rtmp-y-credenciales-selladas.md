@@ -38,7 +38,12 @@ recibía `rtmps://…/live2/<clave>` como último argumento. `docker top` y el `
   cualquier mensaje del servidor (que puede repetir el nombre del stream), en todas sus
   formas: tal cual, escapada en JSON y URL-codificada, **sin distinguir mayúsculas**
   (EQ5c: una ingesta hostil la devolvía en mayúsculas en el rechazo; lo detectó
-  `tests/eq6b/key-surfaces.ts` con procesos reales).
+  `tests/eq6b/key-surfaces.ts` con procesos reales). Desde EQ5d (P3 de EQ6c) se redacta
+  además **cualquier fragmento de 8 o más caracteres** de la clave, de su **base64**
+  (estándar y URL-safe, en las tres alineaciones de byte, para un trozo de la clave
+  codificado dentro de un texto más largo) y de su **hex**: una ingesta que repetía la
+  clave codificada en su rechazo la hacía llegar a `/status` y a los logs. Ver los
+  límites de la redacción en «Límites conocidos».
 - **Mejora de seguridad colateral:** el relé **verifica el certificado** de la ingesta
   (CA del sistema; `NODE_EXTRA_CA_CERTS` para una CA propia). FFmpeg usaba
   `tls_verify=0`: la clave se habría entregado a cualquiera que interceptara la conexión.
@@ -57,6 +62,11 @@ recibía `rtmps://…/live2/<clave>` como último argumento. `docker top` y el `
   la confirmación de `publish`) tiene plazo (`commandTimeoutMs`, por defecto el de
   conexión); `/control/test` tiene además un plazo total de 15 s. Vencido, el relé falla
   y cierra el socket: una ingesta que completa el handshake y calla ya no deja nada colgado.
+- **Plazo de escritura ya publicando** (EQ5d, P3 de EQ6c): si tras
+  `NetStream.Publish.Start` la ingesta deja de leer y el socket sigue por encima de la
+  marca de agua (4 MiB) sin `drain` más de `writeTimeoutMs` (por defecto, el plazo de
+  orden: 10 s), el relé falla con `write_timeout` y el supervisor reintenta. Antes el relé
+  se quedaba «publicando» para siempre con el productor parado.
 - Lectura acotada: además del tope por mensaje (1 MiB), un tope **agregado** de 2 MiB de
   mensajes entrantes a medias en todos los csid.
 
@@ -77,6 +87,13 @@ recibía `rtmps://…/live2/<clave>` como último argumento. `docker top` y el `
   - La orden de arranque lleva `platform` e `ingestUrl`; el streamer sólo abre el sobre si
     **ambas casan** con las selladas (`binding_mismatch` ⇒ 409). Cambiar `bind` en el
     sobre para re-apuntarlo rompe la etiqueta de GCM (`undecryptable`).
+  - **Etiqueta de GCM completa** (EQ5d, P3 de EQ6c): `authTagLength: 16` al cifrar y al
+    descifrar, e `isSealedSecret` exige base64 canónico de **12 bytes de IV y 16 de
+    etiqueta**. Sin eso, GCM aceptaba etiquetas truncadas (4/8/12 bytes): con 4 bytes,
+    re-apuntar un sobre costaba ~2^32 intentos en vez de 2^128.
+  - El streamer **registra** cada sobre rechazado con su código (`binding_mismatch`,
+    `undecryptable`, `key_mismatch`, `invalid`), sin material secreto: un goteo de
+    `undecryptable` es la huella de alguien probando sobres.
   - Si el operador cambia la ingesta personalizada, la clave guardada deja de valer: la
     pantalla dice «guardada para otra URL de ingesta: vuelve a introducirla» y start/test
     responden 409 `credential_unbound` sin mandar nada al streamer.
@@ -117,21 +134,45 @@ clave.
 
 - Una sola emisión a la vez: índice único parcial `streaming_sessions_one_active` en BD,
   más el 409 `already_active` del streamer.
-- **Sin emisiones zombi** (EQ5c, P2-4): start, restart y stop se ejecutan **en serie**
-  dentro del proceso de la API, así que un stop pedido durante un arranque espera a que
-  termine y lo para. Entre instancias (sin cerrojo compartido), tras la respuesta del
-  streamer se **recomprueba** la sesión en BD: si un stop la paró entretanto, se manda
-  `/control/stop`, se audita `streaming.session.start_cancelled` /
-  `restart_cancelled` y se responde 409.
+- **Sin emisiones zombi** (EQ5c, P2-4; EQ5d, P2 y P3 de EQ6c). Invariante: *el streamer
+  sólo emite si hay una sesión activa en BD y el streaming está activado*.
+  - Dentro de un proceso de la API, start, restart y stop se ejecutan **en serie** (un
+    cerrojo por proceso). Las comprobaciones previas del start que no cambian nada
+    (activado, destino, disco) van **fuera** del cerrojo; dentro se **vuelve a leer** la
+    configuración antes de insertar la sesión.
+  - Entre instancias (sin cerrojo compartido) lo sostienen **dos órdenes**: (1) el stop
+    **marca la sesión parada en BD ANTES** de llamar a `/control/stop`; (2) start y
+    restart, **después** de la respuesta del streamer, recomprueban que su sesión siga
+    activa **y** que el streaming siga activado. Si no, marcan (si hace falta), mandan
+    `/control/stop`, auditan `streaming.session.start_cancelled` / `restart_cancelled`
+    (`reason`: `stopped_during_operation` o `disabled_during_operation`) y responden 409
+    (`start_cancelled`, `not_active` o `streaming_disabled`). Por qué basta: si la
+    recomprobación de A es anterior al marcado de B, el efecto del start de A es anterior
+    al stop de B (que llega al streamer después de marcar); si es posterior, A ve la
+    sesión parada y para él mismo. En ningún orden el último efecto es un start sin sesión.
+  - **Desactivar** guarda `enabled=false` y, después y **dentro del cerrojo**, lee la
+    sesión activa y la para. Un start en vuelo de otra instancia o lo ve esa lectura (si
+    insertó antes) o ve él `enabled=false` al recomprobar (si recomprueba después).
+  - Probado con dos instancias de la API sobre la misma BD real
+    (`apps/api/src/eq6c-streaming-break.test.ts`, `eq5d-streaming-correcciones.test.ts`,
+    este último con un bloqueo de fila real para forzar el entrelazado del PUT).
 - Grabación: no se empieza con menos de 2 GiB libres (`disk_low`) **ni si el streamer no
   puede medir el disco** (`disk_unknown`, fail-closed).
 - Ingesta personalizada sin hosts internos (SSRF): se rechazan nombres de una etiqueta
   (servicios de Docker), `localhost` y sufijos `.local/.internal/.lan/.home.arpa`, IPv4 de
   loopback, privadas, CGNAT, link-local (metadatos) y no canónicas (`0x7f.1`, `127.1`), e
-  IPv6 loopback/ULA/link-local/mapeadas. Sólo el E2E local las admite
-  (`STREAMING_ALLOW_INTERNAL_INGEST=1`, nunca en el Compose).
+  IPv6 loopback/ULA/link-local/site-local (`fec0::/10`)/multicast. Las IPv6 se
+  **normalizan** a sus 8 grupos (EQ5d, P3 de EQ6c): las formas que incrustan una IPv4
+  obsoletas o de transición local —compatible `::a.b.c.d`, mapeada `::ffff:0:0/96`,
+  traducida `::ffff:0:0:0/96`, NAT64 local `64:ff9b:1::/48`, Teredo— se rechazan siempre;
+  de NAT64 `64:ff9b::/96` y 6to4 `2002::/16` se **extrae** la IPv4 y se le aplica la misma
+  lista. Sólo el E2E local admite hosts internos (`STREAMING_ALLOW_INTERNAL_INGEST=1`,
+  nunca en el Compose).
 - Guardar con una emisión activa **nunca reinicia en silencio** (`pendingRestart`); el
   operador pulsa «Reiniciar emisión». Desactivar con emisión activa exige `confirmStop`.
+- **«En directo» sólo es verdad** (EQ5d, P3 de EQ6c): en RTMPS el estado de la pantalla
+  es `live` sólo con el relé **publicando**; mientras conecta (o con el relé cerrado) es
+  `starting`, «Iniciando», con «Detener» disponible.
 - El retardo anti-coaching sigue saliendo **sólo** de la copia de reglas
   (`spectator.delaySeconds`, que aplica el gateway): la pantalla lo lee, no lo guarda.
 - Retención de MP4: la decide el streamer sobre su directorio (sólo ficheros regulares con
@@ -163,10 +204,29 @@ clave.
   interna (DNS rebinding) no se detecta. Y quien tenga `x-streamer-auth` puede pedir al
   streamer un `/control/test` (handshake, sin clave) hacia cualquier host: el streamer no
   aplica la lista de hosts internos.
-- **Recomprobación entre instancias:** cierra la ventana «stop confirmado ⇒ nada emite»,
-  pero dos instancias pueden intercalar un start y un stop de forma que el streamer reciba
-  un `/control/stop` sobrante (inofensivo: el estado final es «parado»). El cerrojo es
-  por proceso.
+- **Entre instancias** (el cerrojo es por proceso; ver § 3). Corrige la afirmación de
+  EQ5c, que era falsa: la recomprobación sola NO bastaba (con el stop marcando la BD
+  después, start‖stop y restart‖stop dejaban el streamer emitiendo sin sesión; lo
+  demostró EQ6c). Con el marcado previo, lo que puede quedar es el error **contrario y
+  visible**: si otra instancia arranca una sesión nueva entre el marcado de un stop y la
+  llegada de ese stop al streamer, el stop corta la emisión nueva y la pantalla muestra
+  «Emisión interrumpida» (sesión activa, streamer parado) hasta que el operador la
+  reinicie o la detenga; nunca una emisión sin sesión. Y un restart cancelado cuya sesión
+  ya sustituyó otra no para el streamer (para no cortar la otra): la emisión puede seguir
+  con la configuración del restart bajo la sesión nueva, lo que «pendiente de reinicio»
+  hace visible. Además se emite a veces un `/control/stop` sobrante (inofensivo).
+- **Stop con el streamer caído:** la sesión queda parada en BD (la intención del operador
+  manda) y, sin `force`, la API responde 503. Si el streamer seguía emitiendo, al volver
+  la pantalla lo muestra (estado del streamer sin sesión) y un nuevo «Detener» lo para:
+  `stop` siempre llama a `/control/stop`.
+- **Redacción:** es por coincidencia de texto. Cubre la clave, cualquier fragmento suyo
+  de ≥ 8 caracteres y lo mismo de su base64 (estándar/URL-safe) y su hex, sin distinguir
+  mayúsculas. **No** cubre fragmentos de < 8 caracteres, otras codificaciones (base32,
+  doble codificación, compresión, cifrados triviales) ni una clave partida entre dos
+  líneas de log. Puede sobre-redactar texto inocente que coincida con 8 caracteres de
+  esas formas (inofensivo).
+- **Plazo de escritura:** una congestión real de más de 10 s seguidos sin `drain` se trata
+  como corte y provoca un reintento (reconexión), igual que un corte de red.
 - Un stop pedido mientras un start espera al streamer tarda lo que tarde esa llamada (como
   mucho el plazo del cliente HTTP, 10 s).
 
@@ -180,5 +240,11 @@ clave.
   `tests/eq6b/key-surfaces.ts` (procesos reales). Regresión de EQ5c, calibrada con
   mutaciones: `apps/streamer/src/eq5c-correcciones.test.ts`,
   `apps/api/src/eq5c-streaming-correcciones.test.ts`.
+- Revisión EQ6c (ronda 2): `apps/streamer/src/eq6c-relay-break.test.ts`,
+  `apps/api/src/eq6c-streaming-break.test.ts`, `apps/api/src/eq6c-ssrf.test.ts` y
+  `tests/eq6c/argv-harness.ts` (ROJAS sobre a41a903, VERDES tras EQ5d). Regresión de EQ5d,
+  calibrada con 14 mutantes (cada uno revierte una barrera y pone roja al menos una
+  prueba): `apps/streamer/src/eq5d-correcciones.test.ts`,
+  `apps/api/src/eq5d-streaming-correcciones.test.ts`, `apps/api/src/eq5d-ssrf.test.ts`.
 - `tests/streaming-e2e/secret-audit.sh` y `tests/streaming-e2e/e2e.sh` (imagen real,
   ingesta RTMPS local). Ver [docs/operations/streaming.md](../operations/streaming.md).

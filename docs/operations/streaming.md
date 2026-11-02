@@ -37,7 +37,7 @@ API: 12 operaciones `x-min-role: admin` del contrato 0.13.0, tag `streaming`). A
 
 | Sección | Qué hace |
 |---|---|
-| Estado | `uxState`: desactivado, listo, en directo, grabando, reconectando, abandonada, interrumpida, servicio no disponible; avisos de «pendiente de reinicio» y de almacén sellado ausente |
+| Estado | `uxState`: desactivado, listo, iniciando (relé aún sin publicar), en directo (sólo con el relé publicando), grabando, reconectando, abandonada, interrumpida, servicio no disponible; avisos de «pendiente de reinicio» y de almacén sellado ausente |
 | Monitorización | estado del streamer, destino (sin clave), FPS y bitrate reales, frames y descartes, reintentos, relé, grabación en curso y último error redactado (sondeo cada 3 s) |
 | Destino y controles | batalla o torneo (los botones **«Retransmitir»** del detalle abren esta pantalla con el destino puesto y **no emiten**); retardo del directo LEÍDO de la copia de reglas; probar (TLS + handshake, sin publicar), iniciar/detener emisión o grabación, reiniciar |
 | Configuración | activado, modo `rtmps`/`record`, plataforma (YouTube o RTMPS personalizado; catálogo extensible en `services/streaming.ts`), x264/NVENC (NVENC sólo si el runtime lo confirma codificando un frame), 1080p/720p, 30/60 FPS (60 pide confirmación), bitrate 1000-12000 kbit/s con recomendación |
@@ -76,10 +76,10 @@ Reglas de operación:
 |---|---|---|
 | argv de FFmpeg (`ps`, `docker top`, `/proc/*/cmdline`) | ffmpeg escribe FLV por el fd 3; el relé Node publica con la clave | `apps/streamer/tests/secret-surfaces.test.ts` (calibrada: roja en main, verde aquí); auditoría con la imagen real: 0 apariciones |
 | `/proc/*/environ`, `docker inspect` | la clave nunca va al entorno; sólo rutas de ficheros | idem |
-| logs | logger con registro vivo de secretos (también escapada en JSON, URL-codificada y sin distinguir mayúsculas); el relé redacta igual lo que diga el servidor | tests del logger y del relé; `docker logs` 0 apariciones |
+| logs y `/status` | logger con registro vivo de secretos: la clave escapada en JSON, URL-codificada, sin distinguir mayúsculas y, desde EQ5d, **cualquier fragmento de ≥ 8 caracteres** de la clave, de su base64 (estándar/URL-safe) o de su hex; el relé redacta igual lo que diga el servidor. Límites en ADR-023 | tests del logger y del relé (`eq5d-correcciones.test.ts`, ingesta hostil con eco base64/hex en `eq6c-relay-break.test.ts`); `docker logs` 0 apariciones |
 | `/status`, `/metrics` | destino descrito como `rtmps://host:puerto/app/***` | idem |
 | API y frontend | entra por `PUT /admin/streaming/credentials/{platform}` y nunca sale (`****ABCD`); campo password, estado vaciado al enviar, nada en `localStorage`/`sessionStorage` | `apps/api/src/eq5b-streaming-admin.test.ts`, `apps/web/tests/eq5b-streaming-page.test.tsx`, spec de navegador `@streaming-e2e` (respuestas de red, DOM y storage) |
-| BD | sobre v2 (AES-256-GCM + RSA-OAEP-256 con la PÚBLICA) **atado a plataforma e ingesta**; la privada sólo la tiene el streamer | volcado de todas las tablas de streaming y `audit_log` sin la clave; el sobre sólo se abre con la privada y hacia su destino |
+| BD | sobre v2 (AES-256-GCM con etiqueta de **16 bytes exactos** + RSA-OAEP-256 con la PÚBLICA) **atado a plataforma e ingesta**; la privada sólo la tiene el streamer, que registra cada sobre rechazado | volcado de todas las tablas de streaming y `audit_log` sin la clave; el sobre sólo se abre con la privada y hacia su destino |
 | redirección de la clave | el streamer sólo abre el sobre si `platform` e `ingestUrl` de la orden casan con las selladas; la clave heredada sólo va a la ingesta del despliegue | `apps/streamer/src/eq6b-relay-break.test.ts`, `apps/streamer/src/eq5c-correcciones.test.ts` |
 | red | TLS con certificado VERIFICADO (FFmpeg no verificaba); `rtmp://` en claro rechazado | `publisher.test.ts`, E2E contra MediaMTX con CA local |
 | API interna del streamer | secreto compartido `x-streamer-auth`; **en cerrado** si el fichero está definido y no se puede leer (401 en todo, `/healthz` 503) | `control.ts` (401 sin cabecera), `eq6b-relay-break.test.ts` (proceso real con el secreto ilegible) |
@@ -212,6 +212,13 @@ streamer para no emitir dos veces.
 | EQ6b-P2-4 | P2 | Emisión zombi en carreras start‖stop y restart‖stop | **corregido** (EQ5c): en serie + recomprobación en BD |
 | EQ6b-P3 | P3 | Tope agregado del lector RTMP; SSRF de la ingesta; disco sin medir; `code` sin redactar | **corregidos** (EQ5c); SSRF por DNS rebinding y `/control/test` interno con `x-streamer-auth`: **abiertos** (ADR-023) |
 | EQ6b-P3-backup | P3 | El backup restic guarda la privada de sellado junto al volcado de la BD | **abierto** (documentado en ADR-023) |
+| EQ6c-P2 | P2 | `PUT enabled:false` con un start en vuelo dejaba la emisión viva con el streaming desactivado (UI «Desactivado», alertas silenciadas) | **corregido** (EQ5d): desactivar lee y para la sesión dentro del cerrojo; el start relee la configuración en el cerrojo y recomprueba `enabled` al responder el streamer |
+| EQ6c-P3-1 | P3 | Entre dos instancias de la API, start‖stop y restart‖stop dejaban el streamer emitiendo sin sesión | **corregido** (EQ5d): el stop marca la BD antes de llamar al streamer; queda el caso contrario y visible («interrumpida», ADR-023) |
+| EQ6c-P3-2 | P3 | GCM aceptaba etiquetas truncadas (4/8/12 bytes) | **corregido** (EQ5d): `authTagLength: 16` y longitudes exactas; sobres rechazados registrados |
+| EQ6c-P3-3 | P3 | La clave codificada (base64/hex) en el rechazo de la ingesta llegaba a `/status` y a los logs | **corregido** (EQ5d): redacción de fragmentos ≥ 8 en claro, base64 y hex |
+| EQ6c-P3-4 | P3 | Relé sin plazo de escritura: una ingesta que dejaba de leer lo dejaba «publicando» para siempre | **corregido** (EQ5d): `write_timeout` y reintento |
+| EQ6c-P3-5 | P3 | «En directo» con el relé aún conectando | **corregido** (EQ5d): estado «Iniciando» |
+| EQ6c-P3-6 | P3 | SSRF con IPv6 que incrustan una IPv4 (compatible, traducida, NAT64, 6to4) y site-local | **corregido** (EQ5d): normalización IPv6 y extracción de la IPv4 |
 | EQ5-10 | P3 | Con el torneo en curso, la espera/intermedio no anuncian la próxima batalla (un visitante no la ve) | limitación de la política de visibilidad |
 
 ## Cómo se verificó
