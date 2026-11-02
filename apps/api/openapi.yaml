@@ -43,6 +43,9 @@ info:
   # (POST /battles/rules-check) y, de forma ADITIVA, `rules` opcional en
   # PracticeBattleInput, `rules` en Battle, `presets`/`custom` en listRulesets y
   # `profile`/`rules` en BattleStats. Nada se quita ni cambia de significado.
+  # ADR-022 (misma 0.12.0, aún sin publicar): `rules` en TournamentInput/Tournament,
+  # `modeCompatibility` en MapVersion, `tiebreaks` en listRulesets, `recordedWith`/
+  # `verifiedWith` en verifyReplay y códigos map_team_mismatch / engine_rules_mismatch.
   # Añadir un endpoint = MINOR (docs/compatibilidad.md, §2 Semver por paquete).
   version: 0.12.0
   description: |
@@ -940,6 +943,8 @@ paths:
             schema: { $ref: '#/components/schemas/TournamentInput' }
       responses:
         '201': { description: Creado, content: { application/json: { schema: { $ref: '#/components/schemas/Tournament' } } } }
+        '400': { description: 'Datos inválidos · ADR-022 rules_invalid / rules_team_size', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: 'ADR-022 · rules_mode_mismatch (el preset juega otro modo)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /tournaments/{tournamentId}/entries:
     post:
@@ -972,7 +977,7 @@ paths:
       parameters: [{ $ref: '#/components/parameters/TournamentId' }]
       responses:
         '200': { description: Cerrado y calendario generado, content: { application/json: { schema: { $ref: '#/components/schemas/Tournament' } } } }
-        '409': { description: 'illegal_transition (currentState, allowedTransitions) · entries_not_eligible (ELIG: alguna inscripción pendiente usa una versión que ya no es elegible; `notEligibleEntries` con sus ids, sin motivo; no se congela ni cierra nada)', content: { application/json: { schema: { $ref: '#/components/schemas/EntriesNotEligibleError' } } } }
+        '409': { description: 'illegal_transition (currentState, allowedTransitions) · entries_not_eligible (ELIG: alguna inscripción pendiente usa una versión que ya no es elegible; `notEligibleEntries` con sus ids, sin motivo; no se congela ni cierra nada) · ADR-022 rules_team_size (con reglas NvN, algún equipo inscrito no tiene exactamente N bots)', content: { application/json: { schema: { $ref: '#/components/schemas/EntriesNotEligibleError' } } } }
 
   /tournaments/{tournamentId}/entries/{entryId}/actions/exclude:
     post:
@@ -1180,7 +1185,7 @@ paths:
         '400': { description: 'Modo/participantes/team/ruleset/mapa inválidos o bot repetido. 4v4 · team_composition_invalid (un modo de equipo sin exactamente 2 bandos) · team_too_large (más de 4 bots por bando). R-RULES · rules_invalid (detalle errors[] por campo: tipo, rango, campo desconocido o combinación incompatible) · rules_team_size (el preset/personalizado NvN exige 2 bandos de exactamente N).', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '422': { description: 'R-RULES · composition_invalid · algún bot o bando supera los topes de créditos o masa de las reglas (detalle composition, informe por bando y bot calculado con los loadouts REALES).', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '404': { description: 'bot_not_found · un bot inexistente o privado ajeno (TD-005); indistinguibles a propósito', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
-        '409': { content: { application/json: { schema: { $ref: '#/components/schemas/NotEligibleError' } } }, description: 'bot_not_published · bot_version_not_eligible (ELIG: publicada pero su loadout histórico no cumple hoy la validación; `notEligible` con el motivo) · ruleset_mode_mismatch · map_mode_unsupported (checkBattleContent, misma regla que la web) · 4v4 · deathmatch_shared_team (deathmatch con bandos compartidos: usa team_deathmatch) · R-RULES · rules_mode_mismatch (el preset juega otro modo) · loadout_unavailable / catalog_unavailable (con topes de composición no se puede calcular coste o masa)' }
+        '409': { content: { application/json: { schema: { $ref: '#/components/schemas/NotEligibleError' } } }, description: 'bot_not_published · bot_version_not_eligible (ELIG: publicada pero su loadout histórico no cumple hoy la validación; `notEligible` con el motivo) · ruleset_mode_mismatch · map_mode_unsupported (checkBattleContent, misma regla que la web) · 4v4 · deathmatch_shared_team (deathmatch con bandos compartidos: usa team_deathmatch) · R-RULES · rules_mode_mismatch (el preset juega otro modo) · loadout_unavailable / catalog_unavailable (con topes de composición no se puede calcular coste o masa) · ADR-022 map_team_mismatch (en CTF un bando no tiene base y bandera en el mapa)' }
 
   /battles/rules-check:
     post:
@@ -1212,7 +1217,7 @@ paths:
                   errors: { type: array, items: { type: object, additionalProperties: true } }
         '400': { description: Contenido o participantes inválidos, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '404': { description: bot_not_found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
-        '409': { description: bot_not_published · ruleset_mode_mismatch · map_mode_unsupported · loadout_unavailable, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: bot_not_published · ruleset_mode_mismatch · map_mode_unsupported · map_team_mismatch · loadout_unavailable, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /battles/{battleId}:
     get:
@@ -2087,6 +2092,17 @@ components:
         seedCommitment:
           type: string
           description: 'Hash del lote de semillas, publicado ANTES del cierre (commit-reveal, E9/T9.4).'
+        rules:
+          type: object
+          description: |
+            ADR-022 · OPCIONAL. Reglas del torneo con el mismo formato que en POST /battles
+            ({ preset | "custom", teamSize, params? }); teamSize = 1 salvo format teams (≥ 2). Sin él, copia
+            CLÁSICA del ruleset de plataforma. Se guarda una COPIA INMUTABLE que el scheduler copia en cada
+            batalla. En esta fase no se admiten topes de créditos/masa por bot o equipo (400 rules_invalid).
+          properties:
+            preset: { type: string }
+            teamSize: { type: integer, minimum: 1, maximum: 4 }
+            params: { $ref: '#/components/schemas/RulesParams' }
 
     Tournament:
       allOf:
@@ -2096,6 +2112,7 @@ components:
             id: { type: string }
             state: { enum: [draft, open, closed, running, finished, cancelled] }
             seedsRevealed: { type: array, items: { type: string }, description: 'Se rellena al cerrar inscripciones.' }
+            rules: { $ref: '#/components/schemas/BattleRules' }
     TournamentPage:
       type: object
       properties:

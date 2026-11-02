@@ -83,21 +83,24 @@ También trae «Ruleset MVP por defecto», válido para cualquier modo. Al cambi
 
 ## Conjuntos de reglas (presets y personalizado)
 
-**IMPLEMENTADO EN LA RAMA `rules/rulesets` (ADR-021), pendiente de revisión y despliegue.** En «Nueva batalla», tras elegir el tipo (1 contra 1 o por equipos), eliges el **conjunto de reglas**:
+**IMPLEMENTADO EN LA RAMA `rules/rulesets` (ADR-021/022, motor 0.4.0), pendiente de revisión y despliegue.** Las reglas exactas, los desempates y los límites del personalizado están en **[rules.md](rules.md)** (generado desde el código; es la referencia). Resumen:
 
 | Tipo | Reglas | Qué pasa |
 |---|---|---|
-| 1 contra 1 | **Duelo** | Una vida, sin reaparición. 5 min; al acabar el tiempo gana quien conserve más casco. |
+| 1 contra 1 | **Duelo** | Una vida, sin reaparición; 5 min. Al acabar: más bots vivos → más vidas → más bajas → empate. |
 | 1 contra 1 | **Combate** | Reaparición ilimitada a los 5 s; gana el primero en 5 bajas (10 min de seguridad). |
-| 1 contra 1 | **Resistencia** | 5 min fijos con reaparición; gana quien tenga más bajas. |
+| 1 contra 1 | **Resistencia** | 5 min fijos con reaparición; más puntos → más bajas → empate. |
 | Equipos (2v2–4v4) | **Eliminación** | Sin reaparición; pierde el equipo que se queda sin vehículos (8 min). |
-| Equipos | **Respawn limitado** | **2 reapariciones por bot (3 vidas)** a los 5 s; gana el último equipo con vidas (10 min). |
+| Equipos | **Respawn limitado** | `maxRespawns = 2`: **2 reapariciones por bot (3 vidas)** a los 5 s; gana el último equipo con vidas (10 min). |
 | Equipos | **Team Deathmatch** | Reaparición ilimitada; gana el primero en 10 bajas (8 min de seguridad). |
-| Equipos | **Resistencia por equipos** | 5 min fijos; gana el equipo con más bajas. |
-| Ambos | **Personalizado** | Eliges respawn (ninguno / limitado con N reapariciones / ilimitado), su retardo, la victoria (eliminación, límite de bajas o, sólo con reaparición ilimitada, puntos al acabar el tiempo), la duración (1–30 min), topes de **créditos** y de **masa** por bot y por equipo y, por equipos, el fuego amigo. |
-| Ambos | **Clásico** | El ruleset de la plataforma de cada modo (incluye bandera y zonas). |
+| Equipos | **Resistencia por equipos** | 5 min fijos; más puntos → más bajas → empate. |
+| Equipos | **Capturar la bandera** (`ctf@1`) | 3 capturas o más capturas a los 5 min; empate ⇒ **prórroga** con el mismo estado: la siguiente captura gana (3 min como máximo; si nadie captura, empate). |
+| Ambos | **Personalizado** | Sólo reglas competitivas: reaparición (ninguna / limitada con `maxRespawns` / ilimitada) y su espera, victoria, duración, créditos y masa por bot y presupuesto total por equipo (reparto libre), fuego amigo y, en CTF, capturas, retorno de la bandera y bandera propia en base. La física, el daño, la vida, los sensores y la munición no se tocan. |
+| Ambos | **Clásico** | El ruleset de la plataforma de cada modo (incluye control de zona). |
 
-Antes de crear se muestra un **resumen** y se comprueba cada bot en el servidor («✓ A-ATK-1 — 890/900 cr»). Si un bot o un equipo supera un tope, no se puede crear la batalla. La batalla guarda una **copia de sus reglas**: si un preset cambia más adelante, tus batallas y replays conservan las suyas.
+`maxRespawns` es el número de veces que un bot puede **reaparecer** tras morir: 0 = 1 vida, 1 = 2 vidas, 2 = 3 vidas.
+
+Antes de crear se muestra un **resumen** y se comprueba cada bot en el servidor («✓ A-ATK-1 — 890/900 cr»). Si un bot o un equipo supera un tope, no se puede crear la batalla. La batalla (y el torneo) guarda una **copia de sus reglas**: si un preset cambia más adelante (se publicaría como versión nueva), tus batallas, torneos y replays conservan las suyas. Sólo salen los mapas compatibles con el modo; los demás aparecen con el motivo.
 
 ## Mapas compatibles
 
