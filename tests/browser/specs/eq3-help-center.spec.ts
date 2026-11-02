@@ -43,7 +43,9 @@ const blocking = (v: AxeViolation[]) =>
   v.filter((x) => x.impact === "critical" || x.impact === "serious").map((x) => `${x.id}: ${x.nodes.join(" , ")}`);
 
 test.describe("@fase1 EQ3 Centro de Ayuda", () => {
-  test("offline: todas las hojas cargan sin red externa, sin texto roto y sin infracciones axe graves", async ({ page }) => {
+  test("offline: todas las hojas cargan sin red externa, sin texto roto y sin infracciones axe graves", async ({
+    page,
+  }) => {
     test.setTimeout(240_000);
     const external = await blockExternal(page);
     await page.goto("/#/help");

@@ -11,7 +11,7 @@
  *    opcional al código fuente).
  */
 import { describe, expect, it } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadCatalog, CATALOG_VERSION as SEED_CATALOG_VERSION } from "../../../packages/module-catalog/loadCatalog.js";
@@ -108,6 +108,43 @@ describe("EQ3 fuentes · SDK y versiones", () => {
       expect(ex.code, id).toBe(readFileSync(join(ROOT, path), "utf8"));
       expect(ex.origin, id).toContain(path);
     }
+  });
+});
+
+describe("EQ3 fuentes · imagen web", () => {
+  it("todo fichero que el Centro de Ayuda embebe (?raw, JSON, glob) está copiado en la etapa de build del Dockerfile", () => {
+    // La guarda general (map-editor-web-image.test.ts) sólo sigue imports .ts/.tsx; aquí
+    // se cubren los que ella no ve: `?raw`, `.json` e `import.meta.glob`.
+    const helpDir = join(ROOT, "apps/web/src/help");
+    const files = [
+      join(helpDir, "sources.ts"),
+      ...readdirSync(join(helpDir, "sections")).map((f) => join(helpDir, "sections", f)),
+    ];
+    const docker = readFileSync(join(ROOT, "infrastructure/docker/web/Dockerfile"), "utf8");
+    const stage = docker.split(/\n(?=FROM\s)/).find((c) => /^FROM\s/.test(c)) ?? "";
+    const copies = stage
+      .split("\n")
+      .filter((l) => /^COPY\s/.test(l) && !/--from=/.test(l))
+      .flatMap((l) => l.trim().split(/\s+/).slice(1, -1))
+      .map((x) => x.replace(/^\.\//, "").replace(/\/$/, ""));
+    const outside: string[] = [];
+    for (const f of files) {
+      const src = readFileSync(f, "utf8");
+      for (const m of src.matchAll(/(?:from\s+|glob(?:<[^>]*>)?\(\s*)["'](\.{1,2}\/[^"']+)["']/g)) {
+        const spec = m[1].replace(/\?raw$/, "");
+        let abs = join(f, "..", spec);
+        // `./x.js` en el import es `./x.ts` (o .tsx) en disco.
+        if (abs.endsWith(".js") && !existsSync(abs)) {
+          const ts = abs.replace(/\.js$/, ".ts");
+          abs = existsSync(ts) ? ts : abs.replace(/\.js$/, ".tsx");
+        }
+        const rel = abs.slice(ROOT.length).replace(/^\//, "");
+        if (!rel.startsWith("apps/web/")) outside.push(rel.replace(/\/\*\.json$/, ""));
+      }
+    }
+    expect(outside.length).toBeGreaterThan(10);
+    const missing = outside.filter((r) => !copies.some((c) => r === c || r.startsWith(`${c}/`)));
+    expect(missing).toEqual([]);
   });
 });
 

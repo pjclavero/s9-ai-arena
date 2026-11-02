@@ -117,11 +117,7 @@ export function flattenSchema(schema: Json, defs: Json, prefix = "", depth = 0):
 /** Los literales JSON de una descripción (`null`, `true`, `false`) se marcan como código, no como prosa. */
 export function Literal(props: { text: string }) {
   const parts = props.text.split(/\b(null|true|false)\b/);
-  return (
-    <>
-      {parts.map((p, i) => (i % 2 === 1 ? <code key={i}>{p}</code> : p))}
-    </>
-  );
+  return <>{parts.map((p, i) => (i % 2 === 1 ? <code key={i}>{p}</code> : p))}</>;
 }
 
 export function SchemaFields(props: { schema: Json; defs: Json; caption: string; testId?: string; rootPath?: string }) {

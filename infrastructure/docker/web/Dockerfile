@@ -14,6 +14,19 @@ COPY apps/web ./apps/web
 # servidor (sin dependencias de Node); sólo hace falta su código fuente.
 # Guarda: apps/web/tests/map-editor-web-image.test.ts.
 COPY apps/map-service/src/validate ./apps/map-service/src/validate
+# EQ3 · el Centro de Ayuda (apps/web/src/help/sources.ts) EMBEBE en build sus
+# fuentes de verdad: registro de modos y versión del motor, versión del SDK que
+# instala la plataforma, versión y bot tutorial del SDK de Python y los bots de
+# ejemplo (packages/ y sdks/javascript ya están arriba). Sólo ficheros sueltos.
+# Guarda: apps/web/tests/eq3-help-sources.test.ts.
+COPY apps/arena-engine/src/sim/modes.ts ./apps/arena-engine/src/sim/modes.ts
+COPY apps/arena-engine/src/engine-deps.json ./apps/arena-engine/src/engine-deps.json
+COPY apps/api/src/services/source-package.ts ./apps/api/src/services/source-package.ts
+COPY sdks/python/pyproject.toml ./sdks/python/pyproject.toml
+COPY sdks/python/arena_sdk/__init__.py ./sdks/python/arena_sdk/__init__.py
+COPY sdks/python/tests/_tutorial_bot.py ./sdks/python/tests/_tutorial_bot.py
+COPY example-bots/javascript/gunner.js example-bots/javascript/miner.js ./example-bots/javascript/
+COPY example-bots/python/explorer.py example-bots/python/defender.py ./example-bots/python/
 RUN npx vite build apps/web
 
 FROM nginx:1.27-alpine
