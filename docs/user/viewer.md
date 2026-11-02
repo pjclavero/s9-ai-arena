@@ -62,7 +62,7 @@ El título dice quién juega («Batalla: Alfa vs Beta») en cuanto llega la nóm
 
 ## Vista de emisión
 
-**PARCIAL.** `/broadcast?battle=<id>` o `?tournament=<id>`: composición a pantalla completa para retransmitir. Usa la misma espera del motor gráfico que el visor; si el directo se rechaza, el marcador lo indica en lugar de «conectando…».
+**PARCIAL.** `/broadcast?battle=<id>` o `?tournament=<id>`: composición a pantalla completa para retransmitir (estado verificado y requisitos en [streaming.md](../operations/streaming.md): es anónima, así que sólo muestra batallas visibles para un visitante). Usa la misma espera del motor gráfico que el visor; si el directo se rechaza, el marcador lo indica en lugar de «conectando…».
 
 ## Errores / limitaciones
 

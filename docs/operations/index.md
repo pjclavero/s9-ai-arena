@@ -38,6 +38,7 @@ documenta [TD-023](../roadmap/technical-debt.md#td-023).
 | Cerrar el puerto del proxy y el sshd del host a los contenedores (firewall como código) | [firewall.md](firewall.md) | host (systemd, root) |
 | Descargar las imágenes de runtime de los bots antes de activar la ejecución | [installation.md](installation.md#imágenes-de-runtime-de-los-bots) | host |
 | Publicar detrás de un proxy inverso / TLS | [networking.md](networking.md) | host + proxy |
+| Retransmitir (`/broadcast`, streamer, RTMPS, grabación MP4) y saber qué está verificado | [streaming.md](streaming.md) | host (perfil `streaming`) |
 | Comprobar las copias | [backup.md](backup.md) | host |
 | Restaurar | [restore.md](restore.md) | host nuevo o aislado |
 | Saber si la instalación está lista | [readiness.md](readiness.md) | host |

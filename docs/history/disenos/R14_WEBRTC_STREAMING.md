@@ -14,6 +14,10 @@
 1. **R11 — Spectator público interno** (foundation, gateado). Primero.
 2. **R14 — WebRTC** (P2P para espectadores). Después.
 3. **RTMP / YouTube / Twitch** — **mucho** después, fuera de alcance actual.
+   *(Nota 2026-11-02, EQ5: esta línea ya era inexacta al escribirse — la emisión
+   RTMPS a YouTube existía desde E11, 2026-07-16. Ver la nota de corrección del
+   [ADR-R14](../../adr/ADR-R14-webrtc.md) y el estado verificado en
+   [docs/operations/streaming.md](../../operations/streaming.md).)*
 
 R14 **depende de**:
 
