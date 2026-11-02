@@ -153,7 +153,7 @@ test.describe("@streaming-e2e EQ5b cadena real", () => {
     await expect(page.getByTestId("stream-target-info")).toBeVisible();
     await page.getByTestId("stream-start").click();
     await expect(page.getByTestId("streaming-ux-state")).toHaveText("En directo", { timeout: 30_000 });
-    await expect(page.getByTestId("mon-rate")).toContainText(/\b(2[5-9]|30)\b fps/, { timeout: 30_000 });
+    await expect(page.getByTestId("mon-rate")).toContainText(/\b(2[5-9]|30)(\.\d+)? fps/, { timeout: 30_000 });
     await shot(page, info, "eq5b-e2e-en-directo");
     expect(await page.content()).not.toContain(key);
     expect(leaks).toEqual([]);
