@@ -20,7 +20,13 @@ import { createServer, type Socket } from "node:net";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { decodeAmf0Values, encodeAmf0Values } from "../../apps/streamer/src/rtmp/amf0.js";
-import { ChunkReader, encodeMessage, MSG_COMMAND_AMF0, MSG_SET_CHUNK_SIZE, type RtmpMessage } from "../../apps/streamer/src/rtmp/chunk.js";
+import {
+  ChunkReader,
+  encodeMessage,
+  MSG_COMMAND_AMF0,
+  MSG_SET_CHUNK_SIZE,
+  type RtmpMessage,
+} from "../../apps/streamer/src/rtmp/chunk.js";
 import { sealSecret } from "../../packages/stream-secrets/index.js";
 
 if (!process.env.EQ6C_DIR) throw new Error("EQ6C_DIR obligatorio");
@@ -51,7 +57,11 @@ const ffmpegWrapper = w(
   `#!/bin/sh\n{ printf 'ARGV:'; for a in "$@"; do printf ' %s' "$a"; done; echo; env; } >> '${dumpFile}'\nexec ffmpeg -hide_banner -nostats -loglevel error -progress pipe:1 -re -f lavfi -i testsrc=size=160x120:rate=15 -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -c:v libx264 -preset ultrafast -g 30 -c:a aac -f flv pipe:3\n`,
   0o700,
 );
-const chromiumWrapper = w("chromium.sh", `#!/bin/sh\n{ printf 'CHROMIUM:'; for a in "$@"; do printf ' %s' "$a"; done; echo; } >> '${dumpFile}'\nexec sleep 600\n`, 0o700);
+const chromiumWrapper = w(
+  "chromium.sh",
+  `#!/bin/sh\n{ printf 'CHROMIUM:'; for a in "$@"; do printf ' %s' "$a"; done; echo; } >> '${dumpFile}'\nexec sleep 600\n`,
+  0o700,
+);
 
 // ── ingesta RTMP falsa ─────────────────────────────────────────────────────
 const ing = { published: [] as string[], media: 0 };
@@ -65,7 +75,13 @@ const srv = createServer((sock) => {
   const reader = new ChunkReader();
   const send = (m: RtmpMessage) => sock.write(encodeMessage(m, 128));
   const reply = (name: string, txn: number, args: unknown[], sid = 0) =>
-    send({ csid: 3, type: MSG_COMMAND_AMF0, streamId: sid, timestamp: 0, payload: encodeAmf0Values([name, txn, ...(args as never[])]) });
+    send({
+      csid: 3,
+      type: MSG_COMMAND_AMF0,
+      streamId: sid,
+      timestamp: 0,
+      payload: encodeAmf0Values([name, txn, ...(args as never[])]),
+    });
   sock.on("data", (d: Buffer) => {
     buf = Buffer.concat([buf, d]);
     if (phase === 0 && buf.length >= 1537) {
@@ -81,7 +97,8 @@ const srv = createServer((sock) => {
     const msgs = reader.push(buf);
     buf = Buffer.alloc(0);
     for (const m of msgs) {
-      if (m.type === MSG_SET_CHUNK_SIZE && m.payload.length >= 4) reader.setChunkSize(m.payload.readUInt32BE(0) & 0x7fffffff);
+      if (m.type === MSG_SET_CHUNK_SIZE && m.payload.length >= 4)
+        reader.setChunkSize(m.payload.readUInt32BE(0) & 0x7fffffff);
       if (m.type === 8 || m.type === 9) ing.media++;
       if (m.type !== MSG_COMMAND_AMF0) continue;
       const v = decodeAmf0Values(m.payload);
@@ -98,7 +115,13 @@ const srv = createServer((sock) => {
 });
 
 function needles(k: string) {
-  return [k, k.toUpperCase(), encodeURIComponent(k), Buffer.from(k).toString("base64").slice(0, 24), Buffer.from(k).toString("hex")];
+  return [
+    k,
+    k.toUpperCase(),
+    encodeURIComponent(k),
+    Buffer.from(k).toString("base64").slice(0, 24),
+    Buffer.from(k).toString("hex"),
+  ];
 }
 const ALL = [...needles(LEGACY_KEY), ...needles(SEALED_KEY)];
 const count = (t: string) => ALL.reduce((n, x) => n + (t.split(x).length - 1), 0);
@@ -173,7 +196,11 @@ async function main() {
     rows.push(["F1 · ingesta recibió la clave heredada (control +)", ing.published.includes(LEGACY_KEY) ? "SÍ" : "NO"]);
     rows.push(["F1 · medios recibidos (control +)", ing.media]);
     if (!ing.published.includes(LEGACY_KEY) || ing.media < 20) fail++;
-    rows.push(["F1 · /proc/*/cmdline", p1.cmdline], ["F1 · /proc/*/environ", p1.environ], ["F1 · ps -eo args", count(ps1)]);
+    rows.push(
+      ["F1 · /proc/*/cmdline", p1.cmdline],
+      ["F1 · /proc/*/environ", p1.environ],
+      ["F1 · ps -eo args", count(ps1)],
+    );
     fail += p1.cmdline + p1.environ + count(ps1);
 
     // Fase 2: clave SELLADA por /control/start (reemplaza la emisión).
@@ -182,7 +209,14 @@ async function main() {
     const r = await fetch(`${base}/control/start`, {
       method: "POST",
       headers: H,
-      body: JSON.stringify({ sessionId: "eq6c-argv", mode: "rtmps", ingestUrl, platform: "custom", credential, replace: true }),
+      body: JSON.stringify({
+        sessionId: "eq6c-argv",
+        mode: "rtmps",
+        ingestUrl,
+        platform: "custom",
+        credential,
+        replace: true,
+      }),
     });
     rows.push(["F2 · /control/start", r.status]);
     for (let i = 0; i < 80 && ing.media < mediaBefore + 20; i++) await sleep(200);
@@ -195,7 +229,11 @@ async function main() {
     }
     rows.push(["F2 · ingesta recibió la clave sellada (control +)", ing.published.includes(SEALED_KEY) ? "SÍ" : "NO"]);
     if (!ing.published.includes(SEALED_KEY)) fail++;
-    rows.push(["F2 · /proc/*/cmdline", p2.cmdline], ["F2 · /proc/*/environ", p2.environ], ["F2 · ps -eo args", count(ps2)]);
+    rows.push(
+      ["F2 · /proc/*/cmdline", p2.cmdline],
+      ["F2 · /proc/*/environ", p2.environ],
+      ["F2 · ps -eo args", count(ps2)],
+    );
     fail += p2.cmdline + p2.environ + count(ps2);
     rows.push(["procesos legibles escaneados (control +)", p2.readable]);
 
