@@ -345,6 +345,20 @@ export async function buildTournamentRules(db: Db, input: TournamentRulesInput):
       expectedMode: r.mode,
     });
   }
+  if (r.params.game === "capture_the_flag") {
+    // Hallazgo EQ2 (preexistente, fuera de alcance): el scheduler etiqueta los bandos de
+    // torneo «A»/«B» y los mapas CTF tienen bases y banderas «red»/«blue»; el motor rechaza
+    // la combinación al arrancar (modeMapIncompatibilities). No se crea un torneo que no
+    // podría jugarse: se rechaza con el motivo hasta que se resuelva el reparto de bandos.
+    throw rulesInvalid([
+      {
+        field: "rules.preset",
+        code: "incompatible",
+        message:
+          "CTF todavía no se admite en torneos: los bandos de torneo (A/B) no tienen base y bandera en los mapas CTF (red/blue)",
+      },
+    ]);
+  }
   if (isTeams ? r.params.teamSize < 2 : r.params.teamSize !== 1) {
     throw new RulesRejected(
       400,

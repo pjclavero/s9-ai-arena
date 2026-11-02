@@ -280,5 +280,11 @@ describe("POST /tournaments · copia inmutable de reglas", () => {
     );
     expect(leagueDuel.status, JSON.stringify(leagueDuel.body)).toBe(201);
     expect(leagueDuel.body.rules.presetId).toBe("duel");
+    // CTF en torneos: rechazado con el motivo (bandos A/B sin bandera en los mapas CTF).
+    const ctfT = await create(
+      tbody({ mode: "capture_the_flag", rulesetId: "capture-the-flag-mvp", rules: { preset: "ctf", teamSize: 2 } }),
+    );
+    expect(ctfT.status).toBe(400);
+    expect(ctfT.body.message).toContain("CTF todavía no se admite en torneos");
   });
 });
