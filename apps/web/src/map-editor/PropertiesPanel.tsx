@@ -2,13 +2,23 @@
  * UX-EDITOR · Panel de propiedades del objeto seleccionado, sincronizado con el
  * lienzo (los mismos datos: mover en el lienzo cambia aquí y viceversa).
  *
- * Nombres para usuario normal (Posición X/Y, Anchura, Altura, Radio, Equipo, Daño
+ * Nombres para usuario normal (Posición X/Y, Ancho, Largo, Radio, Equipo, Daño
  * por segundo); sin ids internos ni nombres del motor. No hay campo de rotación: el
  * visor de batallas no la dibuja (ver objects.ts), así que no se ofrece.
  */
 import { useEffect, useState } from "react";
 import type { EditorMap, ObjRef } from "./model.js";
-import { engineBaseRadius, getObj, isPointKind, isRotated, kindName, objLabel, type AnyObj } from "./objects.js";
+import {
+  elementHelpFor,
+  engineBaseRadius,
+  getObj,
+  isPointKind,
+  isRotated,
+  kindName,
+  objLabel,
+  type AnyObj,
+} from "./objects.js";
+import { InfoTip } from "../help/InfoTip.js";
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
 
@@ -97,6 +107,14 @@ export function PropertiesPanel({ map, selected, onPatch, onDuplicate, onDelete 
       <legend>{objLabel(map, ref)}</legend>
       <p className="s9-me-muted" data-testid="editor-props-kind">
         Tipo: {kindName(ref.kind, o)}
+        {(() => {
+          const h = elementHelpFor(ref.kind, o);
+          return h ? (
+            <InfoTip topic={h.name} testId="editor-props-help">
+              {h.text}
+            </InfoTip>
+          ) : null;
+        })()}
       </p>
       {o.position && (
         <div className="s9-me-row">
@@ -106,8 +124,8 @@ export function PropertiesPanel({ map, selected, onPatch, onDuplicate, onDelete 
       )}
       {!isPointKind(ref.kind) && o.shape === "rect" && (
         <div className="s9-me-row">
-          <NumField label="Anchura" unit="m" min={0.1} value={o.widthM} onChange={(v) => set("w", { widthM: v })} />
-          <NumField label="Altura" unit="m" min={0.1} value={o.heightM} onChange={(v) => set("h", { heightM: v })} />
+          <NumField label="Ancho" unit="m" min={0.1} value={o.widthM} onChange={(v) => set("w", { widthM: v })} />
+          <NumField label="Largo" unit="m" min={0.1} value={o.heightM} onChange={(v) => set("h", { heightM: v })} />
         </div>
       )}
       {!isPointKind(ref.kind) && o.shape === "circle" && (

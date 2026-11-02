@@ -52,7 +52,7 @@ export function BattlesPage(props: { botFilter?: string }) {
     <div className="card">
       <h2>Batallas</h2>
       <p>
-        <a href="#/battles/new">+ Nueva batalla de práctica</a>
+        <a href="#/battles/new">+ Nueva batalla</a>
       </p>
       {props.botFilter && (
         <p data-testid="bot-filter">
@@ -85,7 +85,7 @@ export function BattlesPage(props: { botFilter?: string }) {
                 message={
                   props.botFilter || status ? "No hay batallas que casen con el filtro." : "Aún no hay batallas."
                 }
-                action={<a href="#/battles/new">Crear una batalla de práctica</a>}
+                action={<a href="#/battles/new">Crear una batalla nueva</a>}
               />
             );
           return (

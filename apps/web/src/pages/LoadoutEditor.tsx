@@ -14,6 +14,8 @@
  *  - comparar contra la revisión cargada y "guardar como nueva revisión"
  *    (duplicar) con el diff a la vista.
  */
+import { InfoTip } from "../help/InfoTip.js";
+import { slotName, slotPurpose, categoryName } from "../help/names.js";
 import { useEffect, useMemo, useState } from "react";
 import { useSessionDraft } from "../ui/draft.js";
 import { emptyDict } from "../../../../packages/game-rules/safe-lookup.js";
@@ -99,13 +101,13 @@ export function diffDrafts(base: LoadoutDraft, draft: LoadoutDraft): string[] {
   const draftBySlot = new Map(draft.modules.map((m) => [m.slot, m]));
   for (const [slot, m] of draftBySlot) {
     const prev = baseBySlot.get(slot);
-    if (!prev) changes.push(`${slot}: (vacío) → ${m.moduleId}`);
-    else if (prev.moduleId !== m.moduleId) changes.push(`${slot}: ${prev.moduleId} → ${m.moduleId}`);
+    if (!prev) changes.push(`${slotName(slot)}: (vacío) → ${m.moduleId}`);
+    else if (prev.moduleId !== m.moduleId) changes.push(`${slotName(slot)}: ${prev.moduleId} → ${m.moduleId}`);
     else if ((prev.ammo ?? "") !== (m.ammo ?? ""))
-      changes.push(`${slot} munición: ${prev.ammo ?? "—"} → ${m.ammo ?? "—"}`);
+      changes.push(`${slotName(slot)} munición: ${prev.ammo ?? "—"} → ${m.ammo ?? "—"}`);
   }
   for (const [slot, prev] of baseBySlot) {
-    if (!draftBySlot.has(slot)) changes.push(`${slot}: ${prev.moduleId} → (vacío)`);
+    if (!draftBySlot.has(slot)) changes.push(`${slotName(slot)}: ${prev.moduleId} → (vacío)`);
   }
   return changes;
 }
@@ -296,9 +298,25 @@ export function LoadoutEditor(props: {
             return (
               <tr key={slot.id}>
                 <td>
-                  {slot.id}{" "}
+                  {/* EQ4 · nombre humano como principal; el id interno, secundario. */}
+                  <span data-testid={`slot-name-${slot.id}`}>{slotName(slot.id)}</span>
+                  <InfoTip topic={slotName(slot.id)} testId={`slot-help-${slot.id}`}>
+                    <span style={{ display: "block" }}>
+                      {slotPurpose(slot.id) ?? "Hueco del chasis para un módulo."}
+                    </span>
+                    <span style={{ display: "block" }}>
+                      Admite: {slot.accepts.map((c) => categoryName(c).toLowerCase()).join(" o ")} · tamaño máximo{" "}
+                      {slot.maxSize}.
+                    </span>
+                    {selectedDef && (
+                      <span style={{ display: "block" }}>
+                        Montado: {selectedDef.name} · {selectedDef.costCredits} cr · {selectedDef.massKg} kg.
+                      </span>
+                    )}
+                  </InfoTip>{" "}
                   <small>
-                    ({slot.accepts.join("/")}, ≤{slot.maxSize})
+                    (<code>{slot.id}</code> · {slot.accepts.map((c) => categoryName(c).toLowerCase()).join("/")}, ≤
+                    {slot.maxSize})
                   </small>{" "}
                   <EffectBadge
                     status={selectedDef ? categoryEffect(selectedDef.category) : categoryEffect(slot.accepts[0])}

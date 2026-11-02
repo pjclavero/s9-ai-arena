@@ -76,19 +76,19 @@ test.describe("@fase1 UX-EDITOR editor visual", () => {
     const h = (await page.getByTestId("editor-handle-e").boundingBox())!;
     const hc = { x: h.x + h.width / 2, y: h.y + h.height / 2 };
     const z = Number(await page.getByTestId("editor-stage").getAttribute("data-zoom"));
-    const w0 = await value(page, "Anchura");
+    const w0 = await value(page, "Ancho");
     await mouseDrag(page, hc, { x: hc.x + 5 * z, y: hc.y });
-    expect(await value(page, "Anchura")).toBeCloseTo(w0 + 5, 0);
+    expect(await value(page, "Ancho")).toBeCloseTo(w0 + 5, 0);
     await shot(page, info, "uxed-resize");
 
     // UNDO / REDO con el teclado.
     await page.keyboard.press("Control+z");
-    expect(await value(page, "Anchura")).toBeCloseTo(w0, 1);
+    expect(await value(page, "Ancho")).toBeCloseTo(w0, 1);
     await page.keyboard.press("Control+Shift+z");
-    expect(await value(page, "Anchura")).toBeCloseTo(w0 + 5, 0);
+    expect(await value(page, "Ancho")).toBeCloseTo(w0 + 5, 0);
     await page.keyboard.press("Control+z");
     await page.keyboard.press("Control+y");
-    expect(await value(page, "Anchura")).toBeCloseTo(w0 + 5, 0);
+    expect(await value(page, "Ancho")).toBeCloseTo(w0 + 5, 0);
 
     // DUPLICATE y DELETE (+ deshacer el borrado).
     await page.getByRole("button", { name: "Duplicar objeto", exact: true }).click();
@@ -281,7 +281,7 @@ test.describe("@fase1 UX-EDITOR editor visual", () => {
     await go(page, "#/maps/editor");
     await page.getByRole("button", { name: "Nuevo", exact: true }).click();
     await openAdvancedAndImport(page, JSON.stringify(legacy));
-    await expect(page.getByLabel("Anchura del mapa")).toHaveValue("80");
+    await expect(page.getByLabel("Ancho del mapa")).toHaveValue("80");
     await expect(objects(page, "wall")).toHaveCount(1);
     await expect(objects(page, "destructible")).toHaveCount(1);
     await page
@@ -289,7 +289,7 @@ test.describe("@fase1 UX-EDITOR editor visual", () => {
       .getByRole("button", { name: /^Muro 1/ })
       .click();
     expect(await value(page, "Posición X")).toBe(40);
-    expect(await value(page, "Altura")).toBe(20);
+    expect(await value(page, "Largo")).toBe(20);
     const id3 = `uxed-px-${stamp}`;
     await page.getByLabel("id del mapa").fill(id3);
     await page.getByTestId("editor-save").click();

@@ -42,6 +42,25 @@ export const SLOT_NAME: Record<string, string> = {
   armor_rear: "Blindaje trasero",
 };
 
+/**
+ * EQ4 · Para qué sirve cada ranura (texto del ⓘ del editor de loadout). Vive aquí,
+ * junto a SLOT_NAME, para que la Ayuda y el panel tengan UNA sola fuente.
+ */
+export const SLOT_PURPOSE: Record<string, string> = {
+  drive: "Mueve el vehículo: orugas o ruedas. Fija la velocidad punta y la aceleración.",
+  power: "Generador o batería que alimenta sensores, armas y radio.",
+  sensor_a: "Lo que el bot ve de su entorno (radar, lidar, acústico…).",
+  sensor_b: "Un segundo sensor que complementa al primero.",
+  turret_main: "El arma del vehículo (cañón, ametralladora…).",
+  ammo_main: "Cargador de munición para el arma de la torreta.",
+  mine_bay: "Minas u otro equipo auxiliar que el bot puede soltar.",
+  radio_a: "Envía y recibe mensajes del resto del equipo (también los oye el rival).",
+  armor_front: "Reduce el daño de los impactos que llegan por delante.",
+  armor_left: "Reduce el daño de los impactos que llegan por la izquierda.",
+  armor_right: "Reduce el daño de los impactos que llegan por la derecha.",
+  armor_rear: "Reduce el daño de los impactos que llegan por detrás.",
+};
+
 export const SECTOR_NAME: Record<string, string> = {
   front: "frontal",
   left: "izquierdo",
@@ -141,6 +160,16 @@ export function humanize(table: Record<string, string>, id: string): string {
 
 export function slotName(id: string): string {
   return humanize(SLOT_NAME, id);
+}
+
+/** EQ4 · propósito de la ranura (o undefined si no hay texto). */
+export function slotPurpose(id: string): string | undefined {
+  return safeLookup(SLOT_PURPOSE, id);
+}
+
+/** EQ4 · categoría en palabras («movement» → «Movimiento»). */
+export function categoryName(c: string): string {
+  return humanize(CATEGORY_NAME, c);
 }
 
 export function propLabel(key: string): string {
