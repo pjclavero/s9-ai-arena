@@ -189,7 +189,7 @@ function internalV4(ip: string): boolean {
   );
 }
 
-const v4Of =(hi: number, lo: number) => `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+const v4Of = (hi: number, lo: number) => `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
 
 /**
  * EQ5d (revisión EQ6c, P3 · SSRF IPv6) · se normaliza la dirección a sus 8
