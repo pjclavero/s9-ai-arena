@@ -14,7 +14,7 @@ export interface BattleSummary {
   tournamentId?: string;
   status: "scheduled" | "running" | "finished" | "failed";
   mode: string;
-  participants: { botId: string; version: number; team: string; outcome?: string }[];
+  participants: { botId: string; botName?: string; version: number; team: string; outcome?: string }[];
   result?: { score?: Record<string, number>; ticks?: number };
 }
 
@@ -93,7 +93,7 @@ export interface DirectorOptions {
 }
 
 /**
- * Sondea el estado por la API PÚBLICA (visitor: listBattles/getBattle, cap. 16)
+ * Sondea el estado por la API PÚBLICA (visitor: listTournamentBattles/getBattle, cap. 16)
  * y emite pantallas solo cuando cambian (`kind` o batalla). El avance automático
  * a la siguiente batalla del torneo (DoD T11.1) sale solo de aquí: cuando la
  * batalla en directo pasa a `finished`, la siguiente `running` toma el relevo
@@ -145,11 +145,15 @@ export class BroadcastDirector {
       if (b.status === "scheduled") return { kind: "waiting", nextBattle: b };
       return { kind: "finished", lastBattle: b.status === "finished" ? b : null };
     }
-    // Modo torneo: listBattles es público y pagina desc por creación; se filtra
-    // por torneo en cliente y se re-ordena ascendente (orden de juego).
-    const page = (await this.opts.fetchJson(`/battles?limit=100`)) as { items: BattleSummary[] };
-    const tid = this.opts.target.tournamentId;
-    const battles = page.items.filter((b) => b.tournamentId === tid).reverse();
-    return decideScreen(battles, this.currentBattleId);
+    // Modo torneo: `GET /tournaments/{id}/battles` (listTournamentBattles,
+    // visitor) devuelve el calendario COMPLETO del torneo, ya en orden de juego
+    // (ASC por creación) y con la misma política de visibilidad que /battles.
+    // EQ5 (2026-11-02): antes se pedía `/battles?limit=100` —las 100 batallas
+    // más recientes de TODA la plataforma— y se filtraba aquí; con más de 100
+    // batallas ajenas posteriores la emisión se quedaba en «esperando» con el
+    // torneo en directo.
+    const tid = encodeURIComponent(this.opts.target.tournamentId);
+    const page = (await this.opts.fetchJson(`/tournaments/${tid}/battles`)) as { items: BattleSummary[] };
+    return decideScreen(page.items, this.currentBattleId);
   }
 }

@@ -137,8 +137,8 @@ describe("T11.1 director: encadena batallas con esperas (torneo simulado)", () =
     let phase = 0;
     const fetchJson = async (path: string) => {
       requested.push(path);
-      // listBattles pagina DESC por creación: el director debe re-ordenar él.
-      return { items: [...phases[Math.min(phase, phases.length - 1)]].reverse() };
+      // listTournamentBattles devuelve el calendario en orden de juego (ASC).
+      return { items: [...phases[Math.min(phase, phases.length - 1)]] };
     };
 
     const screens: BroadcastScreen[] = [];
@@ -159,8 +159,8 @@ describe("T11.1 director: encadena batallas con esperas (torneo simulado)", () =
     expect(screens[3]).toMatchObject({ kind: "live", battle: { id: "b2" } });
     expect(screens[4]).toMatchObject({ kind: "finished", lastBattle: { id: "b2" } });
 
-    // Cero datos privados: SOLO rutas públicas de visitante (cap. 16).
-    for (const p of requested) expect(p).toMatch(/^\/battles(\?|\/|$)/);
+    // Cero datos privados: SOLO la ruta pública de visitante del torneo (cap. 16).
+    for (const p of requested) expect(p).toBe("/tournaments/t1/battles");
   });
 
   it("modo batalla fija: scheduled→espera, running→directo, finished→final", async () => {
@@ -199,6 +199,48 @@ describe("T11.1 director: encadena batallas con esperas (torneo simulado)", () =
     fail = false;
     await director.tick();
     expect(screens.map((s) => s.kind)).toEqual(["live"]);
+  });
+});
+
+describe("EQ5 · el modo torneo lee el calendario COMPLETO del torneo, no la última página global", () => {
+  // Defecto real (auditoría EQ5, 2026-11-02): el director pedía `GET /battles?limit=100`
+  // (las 100 batallas MÁS RECIENTES de toda la plataforma, máximo de `parseLimit`) y
+  // filtraba por torneo en el cliente. Con más de 100 batallas creadas después de las
+  // del torneo (prácticas, otro torneo…) la emisión se quedaba en «Esperando el inicio
+  // del torneo…» con una batalla del torneo EN DIRECTO. La API ya tiene la ruta
+  // pública y completa: `GET /tournaments/{id}/battles` (visitor, ASC por creación).
+  const ajena = (i: number): BattleSummary => ({ ...battle(`x${i}`, "finished"), tournamentId: "otro" });
+
+  it("con la página global llena de batallas ajenas, la batalla del torneo en directo SE EMITE", async () => {
+    const requested: string[] = [];
+    const fetchJson = async (path: string) => {
+      requested.push(path);
+      if (path.startsWith("/battles?")) return { items: Array.from({ length: 100 }, (_, i) => ajena(i)) };
+      if (path === "/tournaments/t1/battles") return { items: [battle("b1", "finished"), battle("b2", "running")] };
+      throw new Error(`ruta inesperada ${path}`);
+    };
+    const screens: BroadcastScreen[] = [];
+    const director = new BroadcastDirector({
+      target: { kind: "tournament", tournamentId: "t1" },
+      fetchJson,
+      onScreen: (s) => screens.push(s),
+    });
+    await director.tick();
+    expect(screens.at(-1)).toMatchObject({ kind: "live", battle: { id: "b2" }, progress: { played: 1, total: 2 } });
+    expect(requested).toEqual(["/tournaments/t1/battles"]);
+  });
+
+  it("respeta el orden ASC de la ruta del torneo (no lo invierte): la última jugada es la última", async () => {
+    const screens: BroadcastScreen[] = [];
+    const director = new BroadcastDirector({
+      target: { kind: "tournament", tournamentId: "t1" },
+      fetchJson: async () => ({
+        items: [battle("b1", "finished", { red: 1, blue: 0 }), battle("b2", "finished", { red: 0, blue: 5 })],
+      }),
+      onScreen: (s) => screens.push(s),
+    });
+    await director.tick();
+    expect(screens.at(-1)).toMatchObject({ kind: "finished", lastBattle: { id: "b2" } });
   });
 });
 

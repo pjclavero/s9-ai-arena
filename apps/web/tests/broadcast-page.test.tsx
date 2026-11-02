@@ -76,18 +76,36 @@ describe("T11.1 BroadcastPage (jsdom)", () => {
     expect(screen.getByTestId("broadcast-round").textContent).toContain("2 / 2");
   });
 
+  it("EQ5 · rotula a los bots por su NOMBRE (no por el UUID recortado) si la API lo da", async () => {
+    const conNombre = {
+      ...scheduled,
+      participants: [
+        { botId: "0f9a1c2e-0000-4000-8000-000000000001", botName: "Martillo", version: 3, team: "red" },
+        { botId: "0f9a1c2e-0000-4000-8000-000000000002", version: 1, team: "blue" },
+      ],
+    };
+    mockBattles([conNombre]);
+    render(<BroadcastPage config={parseBroadcastConfig("?tournament=t1")} />);
+    await waitFor(() => expect(screen.getByTestId("broadcast-next")).toBeTruthy());
+    const text = screen.getByTestId("broadcast-next").textContent ?? "";
+    expect(text).toContain("Martillo v3 (red)");
+    expect(text).not.toContain("0f9a1c2e-0000-4000-8000-000000000001");
+    // Respaldo histórico: sin nombre, id recortado como antes.
+    expect(text).toContain("0f9a1c2e… v1 (blue)");
+  });
+
   it("torneo terminado: pantalla final", async () => {
     mockBattles([finished]);
     render(<BroadcastPage config={parseBroadcastConfig("?tournament=t1")} />);
     await waitFor(() => expect(screen.getByTestId("broadcast-finished")).toBeTruthy());
   });
 
-  it("cero datos privados: todas las peticiones son GET anónimos a /battles", async () => {
+  it("cero datos privados: todas las peticiones son GET anónimos a rutas de visitante", async () => {
     mockBattles([scheduled]);
     render(<BroadcastPage config={parseBroadcastConfig("?tournament=t1")} />);
     await waitFor(() => expect(fetchCalls.length).toBeGreaterThan(0));
     for (const { url, init } of fetchCalls) {
-      expect(url).toMatch(/^\/api\/v1\/battles(\?|\/|$)/);
+      expect(url).toMatch(/^\/api\/v1\/(battles(\?|\/|$)|tournaments\/[^/]+\/battles$)/);
       const headers = (init?.headers ?? {}) as Record<string, string>;
       expect(Object.keys(headers)).toEqual([]);
     }

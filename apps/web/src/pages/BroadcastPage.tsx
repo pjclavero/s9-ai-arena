@@ -118,7 +118,9 @@ function CenterCard({ accent, title, subtitle }: { accent: string; title: string
 
 function participantsLine(battle: BattleSummary | null): string {
   if (!battle) return "";
-  return battle.participants.map((p) => `${shortId(p.botId)} v${p.version} (${p.team})`).join("  ·  ");
+  // EQ5 · nombre humano del bot (battleToJson ya lo da); el id recortado sólo
+  // como respaldo de filas históricas sin nombre. Antes la emisión rotulaba UUIDs.
+  return battle.participants.map((p) => `${p.botName || shortId(p.botId)} v${p.version} (${p.team})`).join("  ·  ");
 }
 
 function scoreLine(battle: BattleSummary | null): string {
