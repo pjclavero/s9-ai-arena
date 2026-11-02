@@ -513,9 +513,7 @@ export function battleRoutes(
         enabled: true,
         items,
         nextCursor:
-          rows.length > limit
-            ? encodeCursor(page[page.length - 1], [page[page.length - 1].id as string])
-            : undefined,
+          rows.length > limit ? encodeCursor(page[page.length - 1], [page[page.length - 1].id as string]) : undefined,
       });
     },
     (req, res, next) => anonQuota(db, "public-replays-list", quota)(req, res, next),
@@ -583,8 +581,7 @@ export function battleRoutes(
     res.setHeader("Cache-Control", NO_STORE);
     res.json({
       items,
-      nextCursor:
-        rows.length > limit ? encodeCursor(page[page.length - 1], [page[page.length - 1].id]) : undefined,
+      nextCursor: rows.length > limit ? encodeCursor(page[page.length - 1], [page[page.length - 1].id]) : undefined,
     });
   });
 

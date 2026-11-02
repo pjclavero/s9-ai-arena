@@ -191,8 +191,7 @@ export function replayRoutes(
     }
     noStore(res).json({
       items,
-      nextCursor:
-        rows.length > limit ? encodeCursor(page[page.length - 1], [page[page.length - 1].id]) : undefined,
+      nextCursor: rows.length > limit ? encodeCursor(page[page.length - 1], [page[page.length - 1].id]) : undefined,
       ...(total !== undefined ? { total } : {}),
     });
   });

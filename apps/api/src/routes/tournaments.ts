@@ -140,8 +140,7 @@ export function tournamentRoutes(
     const page = rows.slice(0, limit);
     res.json({
       items: page.map(tournamentToJson),
-      nextCursor:
-        rows.length > limit ? encodeCursor(page[page.length - 1], [page[page.length - 1].id]) : undefined,
+      nextCursor: rows.length > limit ? encodeCursor(page[page.length - 1], [page[page.length - 1].id]) : undefined,
     });
   });
 

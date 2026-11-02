@@ -107,8 +107,7 @@ export function teamRoutes(db: Db): Router {
     const items = await Promise.all(page.map((t: Record<string, unknown>) => teamToJson(db, t, req.auth)));
     res.json({
       items,
-      nextCursor:
-        rows.length > limit ? encodeCursor(page[page.length - 1], [page[page.length - 1].id]) : undefined,
+      nextCursor: rows.length > limit ? encodeCursor(page[page.length - 1], [page[page.length - 1].id]) : undefined,
     });
   });
 

@@ -247,9 +247,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     res.json({
       items,
       nextCursor:
-        visible.length > limit
-          ? encodeCursor(page[page.length - 1], [page[page.length - 1].id as string])
-          : undefined,
+        visible.length > limit ? encodeCursor(page[page.length - 1], [page[page.length - 1].id as string]) : undefined,
       ...(counts ? { counts } : {}),
     });
   });
