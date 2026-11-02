@@ -14,7 +14,7 @@ import { audit } from "../audit.js";
 import { pathParam } from "../params.js";
 import { ROLE_RANK } from "../openapi.js";
 import { ApiError, badRequest, conflict, notFound } from "../errors.js";
-import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
+import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCursorQuery } from "../serialize.js";
 import { emptyDict, safeLookup } from "../../../../packages/game-rules/safe-lookup.js";
 import { addBotToTeam, emptyTeamStats, type TeamBattleStats } from "../../../replay-service/src/team-stats.js";
 import { signSpectateTicket } from "../auth/tokens.js";
@@ -493,14 +493,15 @@ export function battleRoutes(
           "battles.finished_at as finished_at",
           "battles.result as result",
           "battles.replay_ref as replay_ref",
+          db.raw(cursorTsSql("battles.created_at")),
         )
         .orderBy([
           { column: "battles.created_at", order: "desc" },
           { column: "battles.id", order: "desc" },
         ])
         .limit(limit + 1);
-      if (cursor) q = q.whereRaw("(battles.created_at, battles.id) < (?, ?)", [cursor.createdAt, cursor.id]);
-      const rows = await q;
+      q = applyCursor(q, cursor, "battles.created_at", ["battles.id"]);
+      const rows = await runCursorQuery(q, cursor);
       const page = rows.slice(0, limit);
       const items = await Promise.all(
         page.map(async (b: Record<string, unknown>) =>
@@ -512,9 +513,7 @@ export function battleRoutes(
         enabled: true,
         items,
         nextCursor:
-          rows.length > limit
-            ? encodeCursor(page[page.length - 1].created_at as Date, page[page.length - 1].id as string)
-            : undefined,
+          rows.length > limit ? encodeCursor(page[page.length - 1], [page[page.length - 1].id as string]) : undefined,
       });
     },
     (req, res, next) => anonQuota(db, "public-replays-list", quota)(req, res, next),
@@ -562,7 +561,7 @@ export function battleRoutes(
     // UX-D (G-08 · TD-047) · sólo las batallas que el solicitante puede leer.
     let q = db("battles")
       .leftJoin("maps", "maps.id", "battles.map_id")
-      .select("battles.*", "maps.name as map_name")
+      .select("battles.*", "maps.name as map_name", db.raw(cursorTsSql("battles.created_at")))
       .orderBy([
         { column: "battles.created_at", order: "desc" },
         { column: "battles.id", order: "desc" },
@@ -570,8 +569,8 @@ export function battleRoutes(
       .limit(limit + 1);
     q = whereBattleReadable(db, q, req.auth, vis);
     if (typeof req.query.status === "string") q = q.where("battles.status", req.query.status);
-    if (cursor) q = q.whereRaw("(battles.created_at, battles.id) < (?, ?)", [cursor.createdAt, cursor.id]);
-    const rows = await q;
+    q = applyCursor(q, cursor, "battles.created_at", ["battles.id"]);
+    const rows = await runCursorQuery(q, cursor);
     const page = rows.slice(0, limit);
     const items = await Promise.all(
       page.map(async (b: Record<string, unknown>) =>
@@ -582,8 +581,7 @@ export function battleRoutes(
     res.setHeader("Cache-Control", NO_STORE);
     res.json({
       items,
-      nextCursor:
-        rows.length > limit ? encodeCursor(page[page.length - 1].created_at, page[page.length - 1].id) : undefined,
+      nextCursor: rows.length > limit ? encodeCursor(page[page.length - 1], [page[page.length - 1].id]) : undefined,
     });
   });
 

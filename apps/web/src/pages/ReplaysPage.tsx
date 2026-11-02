@@ -24,6 +24,7 @@
 import { PLATFORM_MODES } from "../map-editor/model.js";
 import { useEffect, useId, useState, type FormEvent } from "react";
 import { api } from "../api.js";
+import { ApiRequestError } from "../errors.js";
 import { useResource, ResourceView } from "../resource.js";
 import { Button, EmptyState } from "../ui/primitives.js";
 import { MODE_NAME, teamText } from "../battle-result.js";
@@ -159,6 +160,8 @@ export function ReplaysPage() {
   /** Cursores de las páginas anteriores a la actual (la primera es `undefined`). */
   const [cursors, setCursors] = useState<(string | undefined)[]>([undefined]);
   const cursor = cursors[cursors.length - 1];
+  /** EQ1 · el cursor de la página caducó (400): se volvió a la primera página. */
+  const [cursorReset, setCursorReset] = useState(false);
 
   // Un enlace externo a `#/replays?…` con la página ya abierta cambia los filtros.
   useEffect(() => {
@@ -175,7 +178,19 @@ export function ReplaysPage() {
 
   const filterKey = hashForFilters(filters);
   const [list, reload] = useResource(async () => {
-    const body = await api<ReplayPage>("GET", replaysQueryPath(filters, cursor));
+    let body: ReplayPage;
+    try {
+      body = await api<ReplayPage>("GET", replaysQueryPath(filters, cursor));
+    } catch (e) {
+      // EQ1 · un cursor inválido o caducado (p. ej. de antes de un despliegue) da 400:
+      // en vez de quedarse en error con «Reintentar» (que repetiría el mismo cursor), se
+      // vuelve a la primera página con los mismos filtros. Un 400 en la primera página
+      // (filtro inválido) se muestra como siempre.
+      if (cursor === undefined || !(e instanceof ApiRequestError) || e.status !== 400) throw e;
+      setCursors([undefined]);
+      setCursorReset(true);
+      body = await api<ReplayPage>("GET", replaysQueryPath(filters));
+    }
     if (!body || !Array.isArray(body.items)) throw new Error("respuesta de la API de replays sin `items`");
     return body;
   }, [filterKey, cursor]);
@@ -186,6 +201,7 @@ export function ReplaysPage() {
     if (err) return;
     setFilters(next);
     setCursors([undefined]);
+    setCursorReset(false);
     const hash = hashForFilters(next);
     // replaceState: actualiza la URL sin disparar `hashchange` (no se re-enruta el panel).
     if (window.location.hash !== hash) window.history.replaceState(null, "", hash);
@@ -315,6 +331,11 @@ export function ReplaysPage() {
           </p>
         </fieldset>
       </form>
+      {cursorReset && (
+        <p role="status" data-testid="replays-cursor-reset">
+          La paginación había caducado: se muestra de nuevo la primera página.
+        </p>
+      )}
       <ResourceView resource={list} label="los replays" onRetry={reload}>
         {({ items, nextCursor, total }) =>
           items.length === 0 && page === 1 ? (
@@ -393,7 +414,11 @@ export function ReplaysPage() {
                   </Button>{" "}
                   <span aria-current="page">Página {page}</span>{" "}
                   <Button
-                    onClick={() => nextCursor && setCursors((c) => [...c, nextCursor])}
+                    onClick={() => {
+                      if (!nextCursor) return;
+                      setCursorReset(false);
+                      setCursors((c) => [...c, nextCursor]);
+                    }}
                     disabled={!nextCursor}
                     data-testid="replays-next"
                   >
