@@ -10,7 +10,7 @@ import { defineOperation, defineExtension } from "../registry.js";
 import { battleToJson, loadParticipants } from "./battles.js";
 import { audit } from "../audit.js";
 import { badRequest, conflict, forbidden, notFound } from "../errors.js";
-import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
+import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
 import { applyTransition } from "../services/bots.js";
 import {
   entryEligibilityGate,
@@ -129,18 +129,19 @@ export function tournamentRoutes(
     const limit = parseLimit(req.query.limit);
     const cursor = decodeCursor(req.query.cursor as string | undefined);
     let q = db("tournaments")
+      .select("tournaments.*", db.raw(cursorTsSql("tournaments.created_at")))
       .orderBy([
         { column: "created_at", order: "desc" },
         { column: "id", order: "desc" },
       ])
       .limit(limit + 1);
-    if (cursor) q = q.whereRaw("(created_at, id) < (?, ?)", [cursor.createdAt, cursor.id]);
+    q = applyCursor(q, cursor, "tournaments.created_at", ["tournaments.id"]);
     const rows = await q;
     const page = rows.slice(0, limit);
     res.json({
       items: page.map(tournamentToJson),
       nextCursor:
-        rows.length > limit ? encodeCursor(page[page.length - 1].created_at, page[page.length - 1].id) : undefined,
+        rows.length > limit ? encodeCursor(page[page.length - 1], [page[page.length - 1].id]) : undefined,
     });
   });
 
