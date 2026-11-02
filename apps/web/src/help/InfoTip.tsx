@@ -179,7 +179,12 @@ export function InfoTip(props: InfoTipProps) {
         aria-controls={open ? panelId : undefined}
         aria-haspopup="dialog"
         data-testid={`${tid}-trigger`}
-        onClick={() => (open ? close(true) : setOpen(true))}
+        onClick={(e) => {
+          // type=button no tiene acción propia; se cancela la del <label> que lo contenga.
+          e.preventDefault();
+          if (open) close(true);
+          else setOpen(true);
+        }}
       >
         <span aria-hidden="true">ⓘ</span>
       </button>
@@ -209,7 +214,13 @@ export function InfoTip(props: InfoTipProps) {
               className="infotip-close"
               aria-label="Cerrar ayuda"
               data-testid={`${tid}-close`}
-              onClick={() => close(true)}
+              onClick={(e) => {
+                // La X se DESMONTA en este mismo clic: Chromium deja de verla como
+                // contenido interactivo del <label> y lo activaría (alternando su
+                // casilla). Se cancela la acción por defecto (comprobado en navegador real).
+                e.preventDefault();
+                close(true);
+              }}
             >
               <span aria-hidden="true">×</span>
             </button>

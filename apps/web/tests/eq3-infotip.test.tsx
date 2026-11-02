@@ -228,6 +228,17 @@ describe("EQ3 InfoTip · formularios", () => {
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
+  it("dentro de un <label>, el clic en la X y en el ⓘ cancela la acción por defecto (no alterna la casilla)", () => {
+    render(
+      <label>
+        <input type="checkbox" aria-label="caja" /> Opción <InfoTip topic="Opción">o</InfoTip>
+      </label>,
+    );
+    expect(fireEvent.click(screen.getByTestId("infotip-trigger"))).toBe(false);
+    expect(fireEvent.click(screen.getByRole("button", { name: "Cerrar ayuda" }))).toBe(false);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("dentro de un <p> o un <label> no anida bloques (todo el marcado es de frase)", () => {
     render(
       <p>
