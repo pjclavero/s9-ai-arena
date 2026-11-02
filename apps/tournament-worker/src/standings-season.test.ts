@@ -22,14 +22,14 @@ let A: TestBot, B: TestBot, C: TestBot, D: TestBot;
 let t1: string, t2: string;
 const SEASON = "season-1";
 
-async function tournament(name: string, bots: TestBot[]): Promise<string> {
+async function tournament(name: string, bots: TestBot[], mode = "deathmatch"): Promise<string> {
   const admin = await h.db("users").where({ email: DEV_USERS.admin }).first();
   const [t] = await h
     .db("tournaments")
     .insert({
       name,
       format: "league",
-      mode: "deathmatch",
+      mode,
       ruleset_id: DEFAULT_RULESET_ID,
       state: "running",
       created_by: admin.id,
@@ -157,5 +157,33 @@ describe("standings de temporada = agregado de todos los torneos del modo", () =
     const a = (await table()).find((r) => r.id === A.botId)!;
     expect(a.d).toBe(1); // sólo el empate real con C
     expect(a.l).toBe(1); // sólo la derrota real con D
+  });
+
+  it("empate total entre torneos (mismos puntos, sin directos, misma diferencia y seed): decide el id, no el orden", async () => {
+    // Otro modo, para no tocar la tabla de arriba. Dos torneos de un bot con bye cada uno.
+    const [x, y] = await createBots(h.db, 2, "st-tie");
+    const ta = await tournament("st-tie-a", [], "team_deathmatch");
+    const tb = await tournament("st-tie-b", [], "team_deathmatch");
+    // El torneo de id MENOR recibe el bot de id MAYOR: sin desempate por id, el orden
+    // saldría del orden de los torneos y no del bot.
+    const [lowT, highT] = ta < tb ? [ta, tb] : [tb, ta];
+    const [lowBot, highBot] = x.botId < y.botId ? [x, y] : [y, x];
+    for (const [tid, bot] of [
+      [lowT, highBot],
+      [highT, lowBot],
+    ] as const) {
+      await h
+        .db("entries")
+        .insert({ tournament_id: tid, bot_id: bot.botId, version: bot.version, loadout_revision: 1, frozen: true });
+      await match(tid, `bye-${bot.botId.slice(0, 4)}`, bot.botId, null, null);
+    }
+    await recomputeSeasonStandings(h.db, SEASON, "team_deathmatch");
+    clearStandingsCache();
+    const { standings } = await getStandings(h.db, SEASON, "team_deathmatch");
+    expect(standings.map((r) => r.botId)).toEqual([lowBot.botId, highBot.botId]);
+    expect(standings.map((r) => [r.wins, r.losses, r.draws])).toEqual([
+      [1, 0, 0],
+      [1, 0, 0],
+    ]);
   });
 });
