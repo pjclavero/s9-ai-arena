@@ -27,6 +27,7 @@ import { decodeCursor, encodeCursor, parseLimit } from "../serialize.js";
 import { anonQuota, type AnonQuotaConfig } from "../middleware/anon-quota.js";
 import { publicReplaysEnabledFromEnv } from "../public-replays.js";
 import { getReadableReplayBattleOr404, replayNotFound, whereReplayReadable } from "../replay-access.js";
+import { applyReplayListFilters, assertCursorShape, parseReplayListFilters } from "../services/replay-list.js";
 
 const NO_STORE = "private, no-store";
 
@@ -131,8 +132,19 @@ export function replayRoutes(
   defineOperation(router, "listReplays", async (req, res) => {
     const limit = parseLimit(req.query.limit ?? 100);
     const cursor = decodeCursor(req.query.cursor as string | undefined);
-    let q = db("battles")
-      .whereNotNull("battles.replay_ref")
+    assertCursorShape(cursor);
+    // EQ4 · filtros en servidor (aditivos): se validan ANTES de tocar la BD y se
+    // aplican sobre la consulta YA restringida por la política de acceso.
+    const filters = parseReplayListFilters(req.query);
+    /** Batallas con replay legibles por el solicitante y que cumplen los filtros (sin orden ni página). */
+    const readable = () =>
+      applyReplayListFilters(
+        db,
+        whereReplayReadable(db, db("battles").whereNotNull("battles.replay_ref"), req.auth, publicReplaysEnabled),
+        filters,
+        req.auth,
+      );
+    let q = readable()
       .select(
         "battles.id",
         "battles.official",
@@ -146,7 +158,6 @@ export function replayRoutes(
         { column: "battles.id", order: "desc" },
       ])
       .limit(limit + 1);
-    q = whereReplayReadable(db, q, req.auth, publicReplaysEnabled);
     if (cursor) q = q.whereRaw("(battles.created_at, battles.id) < (?, ?)", [cursor.createdAt, cursor.id]);
     const rows = await q;
     const page = rows.slice(0, limit);
@@ -167,10 +178,18 @@ export function replayRoutes(
         sizeBytes: index?.sizeBytes ?? 0,
       };
     });
+    // `total` SÓLO si se pide (includeTotal=true): cuenta de lo legible y filtrado,
+    // independiente del cursor. Sin pedirlo, la respuesta es la histórica.
+    let total: number | undefined;
+    if (filters.includeTotal) {
+      const [{ n }] = await readable().count({ n: "*" });
+      total = Number(n);
+    }
     noStore(res).json({
       items,
       nextCursor:
         rows.length > limit ? encodeCursor(page[page.length - 1].created_at, page[page.length - 1].id) : undefined,
+      ...(total !== undefined ? { total } : {}),
     });
   });
 
