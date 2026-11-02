@@ -22,6 +22,7 @@ export const RANKING_EMPTY_LINES = [
   "Todavía no hay clasificación oficial para este modo.",
   "La clasificación sólo incluye batallas oficiales de torneo.",
   "Las batallas creadas mediante «Nueva batalla» no modifican el rating.",
+  "Inscribirse en un torneo no te hace aparecer: hace falta disputar al menos un enfrentamiento oficial.",
 ] as const;
 
 /** Valores del rating, copiados de ratings.ts (no importable en el navegador); el test los compara. */

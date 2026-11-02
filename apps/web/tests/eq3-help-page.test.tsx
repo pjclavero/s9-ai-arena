@@ -256,6 +256,7 @@ describe("EQ3 Centro de Ayuda · contenido desde las fuentes de verdad", () => {
       "Todavía no hay clasificación oficial para este modo.",
       "La clasificación sólo incluye batallas oficiales de torneo.",
       "Las batallas creadas mediante «Nueva batalla» no modifican el rating.",
+      "Inscribirse en un torneo no te hace aparecer: hace falta disputar al menos un enfrentamiento oficial.",
     ]);
     const empty = screen.getByTestId("ranking-empty-help");
     for (const l of RANKING_EMPTY_LINES) expect(empty.textContent).toContain(l);
