@@ -105,7 +105,7 @@ Todas las claves usan `req.ip`. Con un salto de proxy sin contar, colapsan en un
 | Capa | Implementación | Estado |
 |---|---|---|
 | Análisis | estructura, análisis estático y AST (`acorn` para JS, `python3` para Python), dependencias permitidas (`runtimes/*/ALLOWED-PACKAGES.md`), detección de secretos (`secret-scan.ts`) | FUNCIONA |
-| Ejecución de validación | `protocol_test`, `smoke_battle`, `resource_limits` en sandbox de contenedor | **PENDIENTE**: falta el `agentResolver`, y el build falla cerrado ([TD-001](../roadmap/technical-debt.md#td-001)) |
+| Ejecución de validación | `protocol_test`, `smoke_battle`, `resource_limits` en sandbox de contenedor | FUNCIONA en `main` (`ContainerBuildSandbox`); sin sandbox configurado el build falla cerrado ([TD-001](../roadmap/technical-debt.md#td-001), cerrada) |
 | Firma | artefactos firmados con `artifact_signing_key`; sin clave, el worker no arranca | FUNCIONA (sin artefactos todavía) |
 | Verificación antes de lanzar | `artifactGuard` en el worker | **no cableado** ([TD-015](../roadmap/technical-debt.md#td-015)) |
 | Contenedores de bot | sólo la red `arena` (sin ruta a BD, Redis ni API), `read_only`, `cap_drop: ALL`, `no-new-privileges`, límites de CPU, memoria y `pids`; imágenes de runtime fijadas por digest | definido; no se ejecuta hoy |

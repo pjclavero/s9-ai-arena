@@ -20,7 +20,7 @@ Para jugar, una versión tiene que pasar por tres pasos:
   - Lo demuestra un E2E con Docker, sin tocar la BD.
   - El worker cablea el sandbox desde `DOCKER_PROXY_URL` y `BUILD_SANDBOX_HOST`. Sin ellos sigue fallando cerrado, como antes.
   - En el despliegue hacen falta cambios de compose ([Errores / limitaciones](#errores--limitaciones)).
-- **Batallas.** Siguen sin ejecutar el código del usuario hasta que el carril de batallas consuma `resolveBotLaunch` ([TD-002](../roadmap/technical-debt.md#td-002)).
+- **Batallas.** Ejecutan el código del usuario: el worker consume `resolveBotLaunch` ([TD-002](../roadmap/technical-debt.md#td-002), cerrada).
 - **Versionado.** Ver [bot-versioning.md](bot-versioning.md).
 
 ## Índice
@@ -235,7 +235,7 @@ Para las **batallas**, el contrato para arrancar una versión publicada es `reso
 - el bootstrap;
 - el artefacto firmado y verificado.
 
-El proceso que aloja el ProtocolServer ofrece el artefacto con `SandboxHost` y pasa su `wss` al ProtocolServer. Hasta que el carril de batallas lo consuma, el camino de batallas sigue como describe [battles.md](battles.md#autoridad-única-de-ejecución). Ojo: `battle-run-http-launcher.ts` usa `artifact_hash` como `imageDigest`, y eso no arranca nada.
+El proceso que aloja el ProtocolServer ofrece el artefacto con `SandboxHost` y pasa su `wss` al ProtocolServer. El carril de batallas lo consume (ver [battles.md](battles.md#autoridad-única-de-ejecución)). Ojo: `battle-run-http-launcher.ts` usa `artifact_hash` como `imageDigest`, y eso no arranca nada.
 
 Antes de lanzar, el camino real comprueba que cada bot está `published|frozen` y tiene digest firmado (`409 bot_not_ready` / `bot_not_signed`). El worker de plataforma tiene una guarda de firma (`artifactGuard`) que **no está cableada** ([TD-015](../roadmap/technical-debt.md#td-015)).
 

@@ -216,7 +216,7 @@ Ningún mapa de serie soporta `zone_control`. Para jugarlo hay que crear un mapa
 | domination | Sí | No | No | No | No | No |
 | juggernaut | Sí | No | No | No | No | No |
 
-En el visor, el HUD reconoce objetivos de bandera, zona y juggernaut (`apps/web/src/viewer/hud-model.ts`). El visor está roto en navegador ([TD-009](../roadmap/technical-debt.md#td-009)).
+En el visor, el HUD reconoce objetivos de bandera, zona y juggernaut (`apps/web/src/viewer/hud-model.ts`). El visor funciona en navegador: lo ejerce el golden path de CI ([TD-009](../roadmap/technical-debt.md#td-009), cerrada).
 
 ## Errores / limitaciones
 

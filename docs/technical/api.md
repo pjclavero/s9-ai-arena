@@ -246,7 +246,7 @@ Los contadores se guardan en la tabla `api_usage`, compartidos entre réplicas.
 
 - **FUNCIONA ACTUALMENTE**: contrato con RBAC, autenticación con rotación de refresh, paginación y validaciones.
 - **PARCIAL**: falta cambio de contraseña y transporte de correo. Hay carreras que devuelven 500 ([TD-013](../roadmap/technical-debt.md#td-013)). Hay huecos de autorización por recurso ([TD-005](../roadmap/technical-debt.md#td-005)) y listados anónimos con identificadores ([TD-011](../roadmap/technical-debt.md#td-011)).
-- **PENDIENTE**: incorporar las extensiones al contrato; cerrar la costura `rulesetId` ([TD-003](../roadmap/technical-debt.md#td-003)).
+- **PENDIENTE**: incorporar las extensiones al contrato. La costura `rulesetId` está cerrada ([TD-003](../roadmap/technical-debt.md#td-003)).
 
 ## Documentación relacionada
 

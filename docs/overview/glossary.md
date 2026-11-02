@@ -2,7 +2,7 @@
 
 ## Resumen
 
-Términos tal y como los usa **el código** de S9 AI Arena (`27f70bb`): tablas, estados y variables
+Términos tal y como los usa **el código** de S9 AI Arena (verificado en `27f70bb`, octubre de 2026; estados revisados en `e3bf2fa`, 2026-11-02): tablas, estados y variables
 reales. Cuando el uso habitual y el del código difieren, se indica.
 
 ## Índice

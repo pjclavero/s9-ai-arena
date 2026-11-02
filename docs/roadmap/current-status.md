@@ -14,8 +14,10 @@ CÓDIGO:          main protegida; CI de main = 31 check-runs, 30 success + 1 neu
 DESPLEGADO:      RC5.5 a1a6c4e (según el registro del operador)
 MAIN VS PROD:    111 commits por delante de producción, sin desplegar
 MOTOR / API:     motor 0.4.0 · contrato OpenAPI 0.12.0 · migraciones 001–016
-P0 / P1 / P2:    ninguno abierto según la revisión de integración del 2026-11-02
-P3 CONOCIDOS:    7 (ver más abajo)
+P0 / P1 / P2:    sin hallazgos NUEVOS en la revisión de integración del 2026-11-02;
+                 el registro de deuda conserva 3 P0, 7 P1 y 13 P2 heredados de octubre
+                 (recuento del 2026-11-02, ver más abajo), pendientes de re-priorización por el operador
+P3 CONOCIDOS:    7 hallazgos de la revisión (ver más abajo); el registro tiene 18 P3 y 4 P4 abiertos
 ```
 
 ## Índice
@@ -54,9 +56,17 @@ P3 CONOCIDOS:    7 (ver más abajo)
 
 ## Prioridades abiertas
 
-**P0 / P1 / P2:** la revisión de integración del 2026-11-02 no dejó ningún hallazgo abierto de estas prioridades.
+**P0 / P1 / P2:** la revisión de integración del 2026-11-02 no encontró hallazgos nuevos de estas prioridades. El [registro de deuda](technical-debt.md) conserva, sin re-priorizar, 3 P0, 7 P1 y 13 P2 heredados de la auditoría de octubre, pendientes de que el operador decida si siguen en esa prioridad ahora que el producto funciona en `main`. Recuento del registro a 2026-11-02, contando como abiertas las que no están CERRADAS (ABIERTA, MEJORADA o PARCIAL):
 
-La deuda heredada de la auditoría del 2026-10-15 conserva la prioridad con la que se registró y no es un hallazgo nuevo. La que sigue abierta (tipo operación o seguridad del host, no bloquea el uso del producto en `main`):
+| Prioridad | Abiertas en el registro |
+|---|---|
+| P0 | 3 (TD-006, TD-007, TD-008) |
+| P1 | 7 (TD-012, TD-013, TD-015, TD-016, TD-025, TD-031, TD-033) |
+| P2 | 13 |
+| P3 | 18 |
+| P4 | 4 |
+
+La deuda heredada conserva la prioridad con la que se registró y no es un hallazgo nuevo. Las P0 y las P1 ABIERTAS o MEJORADAS (tipo operación o seguridad del host) son estas; TD-013, TD-015 y TD-016 (P1, PARCIAL) y las P2 están en el registro:
 
 | Id | Prioridad original | Estado | Resumen |
 |---|---|---|---|
@@ -160,4 +170,4 @@ Funciones pendientes de diseño: [pending-features.md](pending-features.md).
 | `a1a6c4e` es ascendiente de `main`; 111 commits de diferencia | CODE_VERIFIED | `git rev-list --count a1a6c4e..e3bf2fa` |
 | Motor 0.4.0, OpenAPI 0.12.0, migraciones 001–016 | CODE_VERIFIED | `apps/arena-engine/src/engine-deps.json`, `apps/api/openapi.yaml:50`, `apps/api/src/db/migrations.ts` |
 | Los siete P3 | CODE_VERIFIED, salvo TD-072 | ruta:línea de la tabla; TD-072 no se ha reproducido |
-| «Sin P0/P1/P2 abiertos» | REPORTADO por la revisión de integración | revisión de integración del 2026-11-02 |
+| Sin hallazgos nuevos P0/P1/P2; el registro conserva 3 P0, 7 P1 y 13 P2 heredados | REPORTADO (revisión de integración) y recuento del registro | revisión de integración del 2026-11-02; [technical-debt.md](technical-debt.md) (índice, columnas Prioridad y Estado) |

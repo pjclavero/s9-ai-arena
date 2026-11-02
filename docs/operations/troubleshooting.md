@@ -12,7 +12,7 @@ procedimiento que corresponde.
 - [Salud y versiones](#salud-y-versiones)
 - [Base de datos y cola](#base-de-datos-y-cola)
 - [Copias y restauración](#copias-y-restauración)
-- [Funcionalidad que no está disponible](#funcionalidad-que-no-está-disponible)
+- [Síntomas de octubre ya resueltos](#síntomas-de-octubre-ya-resueltos)
 - [Documentación relacionada](#documentación-relacionada)
 - [Verificación](#verificación)
 
@@ -64,18 +64,13 @@ procedimiento que corresponde.
 | Restauración «correcta» pero volúmenes vacíos | nombres `s9-ai-arena_*` de runbooks antiguos | [restore.md §6](restore.md#fase-6--volúmenes) |
 | `restore.sh` restaura otro snapshot del decidido | se usó `latest` | `--snapshot <id>` |
 
-## Funcionalidad que no está disponible
+## Síntomas de octubre ya resueltos
 
-No son fallos de la instalación sino del producto; no se arreglan desde operación.
-
-| Síntoma | Estado | Deuda |
-|---|---|---|
-| Ningún bot pasa de la validación a `published` | build fail-closed sin sandbox real | [TD-001](../roadmap/technical-debt.md#td-001) |
-| Las batallas no ejecutan el código del usuario | las ejecuta el worker con un bot stub | [TD-002](../roadmap/technical-debt.md#td-002) |
-| «Crear batalla» en la web → 400 `rulesetId desconocido` | la web envía ids de modo | [TD-003](../roadmap/technical-debt.md#td-003) |
-| El reproductor/visor no carga en el navegador | arranque de Phaser | [TD-009](../roadmap/technical-debt.md#td-009) |
-| Importar el JSON exportado por el editor de mapas → 500 | formatos distintos | [TD-010](../roadmap/technical-debt.md#td-010) |
-| Espectador en directo rechaza el ticket (4401) | worker sin secreto de verificación | [TD-028](../roadmap/technical-debt.md#td-028) |
+La tabla de «funcionalidad que no está disponible» (build sin sandbox, batallas con el bot de relleno,
+400 de `rulesetId`, visor que no carga, editor de mapas, ticket de espectador) describía el estado de la
+auditoría del 2026-10-15. Todas esas deudas están cerradas en `main`; la tabla se archivó en
+[../history/status/sintomas-resueltos-2026-10.md](../history/status/sintomas-resueltos-2026-10.md).
+Para el estado vigente, [../roadmap/current-status.md](../roadmap/current-status.md).
 
 ## Documentación relacionada
 

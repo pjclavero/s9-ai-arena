@@ -126,6 +126,7 @@ Estados del proyecto superados: las dos «fuentes de verdad» que convivían (ju
 | [status/estado-proyecto.md](status/estado-proyecto.md) | `docs/estado-proyecto.md` | Segunda 'fuente de verdad' de 2026-07-16 (pre-despliegue). | [roadmap/current-status.md](../roadmap/current-status.md) (A) |
 | [status/current-status-2026-10-21.md](status/current-status-2026-10-21.md) | `docs/roadmap/current-status.md` | Estado de 2026-10-21 (RC2, `main` = `6612868`): archivado en la auditoría de 2026-11-02 al reescribirse el estado actual. | [roadmap/current-status.md](../roadmap/current-status.md) |
 | [status/known-issues-2026-10.md](status/known-issues-2026-10.md) | `docs/roadmap/known-issues.md` | Problemas conocidos de octubre (muchos ya resueltos), archivado al reescribirse la lista vigente. | [roadmap/known-issues.md](../roadmap/known-issues.md) |
+| [status/sintomas-resueltos-2026-10.md](status/sintomas-resueltos-2026-10.md) | `docs/operations/troubleshooting.md` (sección) | Síntomas de «funcionalidad no disponible» de octubre; todos resueltos (TD-001/002/003/009/010/028 cerradas). | [roadmap/technical-debt.md](../roadmap/technical-debt.md) |
 | [status/completadas-2026-11.md](status/completadas-2026-11.md) | (nuevo) | Registro de funciones que figuraban como pendientes y están completadas, con PR y evidencia. | [roadmap/pending-features.md](../roadmap/pending-features.md) |
 
 <a id="operaciones"></a>

@@ -4,7 +4,7 @@
 
 Manual del **operador** de una instalación de S9 AI Arena: instalar desde una máquina
 nueva, configurar, arrancar, comprobar, copiar y restaurar, actualizar, apagar y
-diagnosticar. Lo que aquí se afirma estaba contrastado con el código de `main` (`27f70bb`)
+diagnosticar. Lo que aquí se afirma se contrastó con el código de `main` en `27f70bb` (octubre de 2026)
 o medido en un entorno aislado en la fecha de cada tabla «Verificación»; la reorganización del
 2026-11-02 (`main` `e3bf2fa`) sólo tocó la estructura y los enlaces. Lo que no funciona hoy se dice
 y se enlaza a la deuda técnica.

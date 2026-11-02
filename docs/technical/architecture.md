@@ -113,9 +113,10 @@ Consecuencias:
 
 ## Estado actual
 
-**PARCIAL.** La estructura es coherente en código, pero el runtime no corresponde a un único commit
-([TD-006](../roadmap/technical-debt.md#td-006)). Hay dos servicios sin uso efectivo: `map-service`
-y `arena-engine` (/run apagado).
+La estructura es coherente en código y el golden path de navegador la ejerce en CI. La identidad de
+build de producción sigue sin re-medirse aquí ([TD-006](../roadmap/technical-debt.md#td-006), MEJORADA).
+Dos servicios no son autoridad de nada: `map-service` (librería usada por la API, [TD-017](../roadmap/technical-debt.md#td-017))
+y `arena-engine` como servicio HTTP (`/run` es un camino legado sin consumidor, [TD-039](../roadmap/technical-debt.md#td-039)).
 
 ## Documentación relacionada
 

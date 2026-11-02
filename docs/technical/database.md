@@ -128,7 +128,7 @@ rol `postgres`**, así que cualquier comando que use `-U postgres` falla. Las co
 ## Errores / limitaciones
 
 - No hay tabla de replays. Si se pierde el volumen `arena_replays`, quedan `replay_ref` que apuntan a ficheros inexistentes.
-- `rulesets` sólo contiene lo que siembre `bootstrap`. La web pide otros ids ([TD-003](../roadmap/technical-debt.md#td-003)).
+- `rulesets` sólo contiene lo que siembre `bootstrap` (un ruleset por modo); la web ya no lleva ids propios y usa `GET /rulesets` ([TD-003](../roadmap/technical-debt.md#td-003), cerrada).
 - `achievements` y `security_findings` no tienen escritor.
 - La API y el worker comparten el mismo rol de BD, sin separación de privilegios.
 
