@@ -810,10 +810,11 @@ export function BattleNewPage(props: { me: Me }) {
 
   return (
     <section>
-      <h2>Nueva batalla de práctica</h2>
+      <h2>Nueva batalla</h2>
       <p className="warn" role="note">
         La batalla se <strong>encola</strong> y la ejecuta el worker de la plataforma: cada bot corre su versión
-        publicada en su contenedor aislado. El límite de ticks lo fija el ruleset.
+        publicada en su contenedor aislado. El límite de ticks lo fija el ruleset. Las batallas que creas aquí{" "}
+        <strong>no son oficiales</strong>: no cuentan para el ranking (sólo las de torneo).
       </p>
       <fieldset data-testid="battle-kind">
         <legend>Tipo de batalla</legend>

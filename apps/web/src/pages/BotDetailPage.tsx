@@ -8,6 +8,7 @@
  *   POST /actions/clone y POST /versions con parentVersion.
  * Los errores se ENSEÑAN (nunca un vacío silencioso): 403 = código privado.
  */
+import { slotName } from "../slot-names.js";
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiRequestError } from "../api.js";
 import { ErrorState } from "../ui/primitives.js";
@@ -411,7 +412,7 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
               <ul>
                 {l.modules.map((m) => (
                   <li key={m.slot}>
-                    {m.slot}: {m.moduleId}
+                    {slotName(m.slot)} <small>(<code>{m.slot}</code>)</small>: {m.moduleId}
                   </li>
                 ))}
               </ul>
