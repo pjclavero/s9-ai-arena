@@ -58,7 +58,8 @@ class Listener implements BotAgent {
   decide(obs: any) {
     this.raw.push(JSON.stringify(obs));
     if ("radio" in obs) this.radioKeys++;
-    for (const m of obs.radio ?? []) this.heard.push({ tick: obs.tick, from: m.from, data: m.data, sentTick: m.sentTick });
+    for (const m of obs.radio ?? [])
+      this.heard.push({ tick: obs.tick, from: m.from, data: m.data, sentTick: m.sentTick });
     const out: any = { forTick: obs.tick };
     const sends = this.plan?.(this.d, obs);
     if (sends && sends.length) {
@@ -144,14 +145,18 @@ function expectIsolated(bots: Map<string, Listener>, payloadsByTeam: Record<stri
       expect(m.from, `${id} se oyó a sí mismo`).not.toBe(id);
     }
     const rivalPayloads = payloadsByTeam[mine === "red" ? "blue" : "red"] ?? [];
-    for (const raw of bot.raw) for (const p of rivalPayloads) expect(raw.includes(p), `${id} ve el payload rival ${p}`).toBe(false);
+    for (const raw of bot.raw)
+      for (const p of rivalPayloads) expect(raw.includes(p), `${id} ve el payload rival ${p}`).toBe(false);
   }
 }
 
 // ======================================================================= §14
 describe("RADIO §14 · test principal: dos bandos, dos secretos en el mismo tick", () => {
   it("A2 oye RADIO_SECRET_A y no RADIO_SECRET_B; B2 oye B y no A; los emisores no se oyen", () => {
-    const once = (data: string): Plan => (d) => (d === 1 ? [{ data }] : undefined);
+    const once =
+      (data: string): Plan =>
+      (d) =>
+        d === 1 ? [{ data }] : undefined;
     const { b, bots } = setup({ n: 2, plans: { r1: once(SECRET_A), b1: once(SECRET_B) } });
     for (let i = 0; i < 30; i++) b.step();
     b.free();
@@ -197,8 +202,10 @@ describe("RADIO §16 · matriz 1v1, 2v2, 3v3 y 4v4", () => {
         // Una vez por segundo (10 decisiones; así el rate-limit de 2/s no descarta nada),
         // TODOS los vehículos de ambos bandos emiten en el MISMO tick.
         const at = (d: number) => d % 10 === 0 && d < 40;
-        for (const [k, id] of ids("r", n).entries()) plans[id] = (d) => (at(d) ? [{ data: msgsA[(d / 10 + k) % 4] }] : undefined);
-        for (const [k, id] of ids("b", n).entries()) plans[id] = (d) => (at(d) ? [{ data: msgsB[(d / 10 + k) % 4] }] : undefined);
+        for (const [k, id] of ids("r", n).entries())
+          plans[id] = (d) => (at(d) ? [{ data: msgsA[(d / 10 + k) % 4] }] : undefined);
+        for (const [k, id] of ids("b", n).entries())
+          plans[id] = (d) => (at(d) ? [{ data: msgsB[(d / 10 + k) % 4] }] : undefined);
         const { b, bots } = setup({ n, plans });
         for (let i = 0; i < 150; i++) b.step();
         b.free();
@@ -225,18 +232,29 @@ describe("RADIO §16 · matriz 1v1, 2v2, 3v3 y 4v4", () => {
         for (let i = 0; i < 30; i++) b.step();
         b.free();
         for (const id of ids("r", n).filter((x) => x !== "r1")) {
-          expect(bots.get(id)!.heard.map((m) => m.data), id).toEqual([empty, max]);
+          expect(
+            bots.get(id)!.heard.map((m) => m.data),
+            id,
+          ).toEqual([empty, max]);
         }
         for (const id of ids("b", n)) {
-          expect(bots.get(id)!.heard.every((m) => m.from === "b1"), id).toBe(true);
-          expect(bots.get(id)!.heard.some((m) => m.data === max || m.data === empty), id).toBe(false);
+          expect(
+            bots.get(id)!.heard.every((m) => m.from === "b1"),
+            id,
+          ).toBe(true);
+          expect(
+            bots.get(id)!.heard.some((m) => m.data === max || m.data === empty),
+            id,
+          ).toBe(false);
         }
         expectIsolated(bots, { red: [max], blue: [maxB] });
       });
 
       it("muerte, respawn e inmediatamente después: el rival nunca recibe; sin duplicados ni mensajes viejos", () => {
         // r1 habla en TODAS sus decisiones (rate-limit incluido); b1 también.
-        const say = (prefix: string): Plan => (d) => [{ data: b64(`${prefix}${d}`) }];
+        const say =
+          (prefix: string): Plan =>
+          (d) => [{ data: b64(`${prefix}${d}`) }];
         const { b, bots } = setup({ n, plans: { r1: say("A"), b1: say("B") } });
         const victim = b.getVehicle("b1")!; // el emisor azul y, en 1v1, el único receptor azul
         const deadAt: number[] = [];
@@ -267,7 +285,9 @@ describe("RADIO §16 · matriz 1v1, 2v2, 3v3 y 4v4", () => {
       });
 
       it("fin de batalla: nada rival en ninguna observación hasta el último tick", () => {
-        const say = (prefix: string): Plan => (d) => [{ data: b64(`${prefix}${d}`) }];
+        const say =
+          (prefix: string): Plan =>
+          (d) => [{ data: b64(`${prefix}${d}`) }];
         const { b, bots } = setup({ n, plans: { r1: say("A"), b1: say("B") }, timeLimitTicks: 60 });
         const res = b.run();
         b.free();
@@ -300,7 +320,9 @@ describe("RADIO §17 · spoofing", () => {
   it("`to` a un id inexistente o a sí mismo: nadie lo recibe", () => {
     const { b, bots } = setup({
       n: 2,
-      plans: { r1: (d) => (d === 1 ? [{ data: SECRET_A, to: "nadie" }] : d === 2 ? [{ data: SECRET_A, to: "r1" }] : undefined) },
+      plans: {
+        r1: (d) => (d === 1 ? [{ data: SECRET_A, to: "nadie" }] : d === 2 ? [{ data: SECRET_A, to: "r1" }] : undefined),
+      },
     });
     for (let i = 0; i < 30; i++) b.step();
     b.free();
@@ -308,7 +330,10 @@ describe("RADIO §17 · spoofing", () => {
   });
 
   it("team spoofing: un `team` rival en el comando no cambia los destinatarios", () => {
-    const { b, bots } = setup({ n: 2, plans: { r1: (d) => (d === 1 ? [{ data: SECRET_A, team: "blue" }] : undefined) } });
+    const { b, bots } = setup({
+      n: 2,
+      plans: { r1: (d) => (d === 1 ? [{ data: SECRET_A, team: "blue" }] : undefined) },
+    });
     for (let i = 0; i < 30; i++) b.step();
     b.free();
     expect(bots.get("r2")!.heard.map((m) => m.data)).toEqual([SECRET_A]);
@@ -343,7 +368,10 @@ describe("RADIO §16 · el filtrado no toca los límites", () => {
 // ======================================================================= §10 replay
 describe("RADIO §10 · replay: la re-simulación no reconstruye observaciones con radio rival", () => {
   it("record → verify casa, y las observaciones re-simuladas están aisladas", async () => {
-    const say = (prefix: string): Plan => (d) => (d % 2 === 0 ? [{ data: b64(`${prefix}${d}`) }] : undefined);
+    const say =
+      (prefix: string): Plan =>
+      (d) =>
+        d % 2 === 0 ? [{ data: b64(`${prefix}${d}`) }] : undefined;
     const cfg = configFor({ n: 2, seed: "radio-replay", timeLimitTicks: 300, recordReplay: true });
     const replay = await record(cfg, (b) => {
       for (const p of cfg.participants) {
@@ -373,8 +401,14 @@ describe("RADIO §10 · replay: la re-simulación no reconstruye observaciones c
 describe("RADIO §13 · determinismo con radio", () => {
   it("dos ejecuciones idénticas 4v4 con radio cruzada dan los mismos hashes y la misma radio oída", () => {
     const run = () => {
-      const say = (prefix: string): Plan => (d) => [{ data: b64(`${prefix}${d % 10}`) }];
-      const { b, bots } = setup({ n: 4, seed: "radio-det", plans: { r1: say("A"), r2: say("C"), b1: say("B"), b3: say("D") } });
+      const say =
+        (prefix: string): Plan =>
+        (d) => [{ data: b64(`${prefix}${d % 10}`) }];
+      const { b, bots } = setup({
+        n: 4,
+        seed: "radio-det",
+        plans: { r1: say("A"), r2: say("C"), b1: say("B"), b3: say("D") },
+      });
       for (let i = 0; i < 180; i++) b.step();
       const hashes = [...b.stateHashes];
       b.free();
