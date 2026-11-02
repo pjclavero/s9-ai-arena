@@ -100,9 +100,7 @@ export function LivePage(props: { loggedIn?: boolean } = {}) {
               )}
               {loggedIn && !data.publicEnabled && (
                 <p className="muted" data-testid="live-public-off-note">
-                  <small>
-                    {LIVE_PUBLIC_OFF_TEXT} Aquí ves las batallas en curso que tu cuenta puede ver.
-                  </small>
+                  <small>{LIVE_PUBLIC_OFF_TEXT} Aquí ves las batallas en curso que tu cuenta puede ver.</small>
                 </p>
               )}
             </>

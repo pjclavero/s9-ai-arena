@@ -83,7 +83,7 @@ describe("editor visual", () => {
     expect(objs("wall")[0].getAttribute("data-selected")).toBe("true");
     expect(num("Posición X")).toBe(60);
     expect(num("Posición Y")).toBe(40);
-    expect(num("Anchura")).toBe(4);
+    expect(num("Ancho")).toBe(4);
     expect(btn("Seleccionar").getAttribute("aria-pressed")).toBe("true"); // vuelve a seleccionar
     // Seleccionar otro objeto con un clic.
     fireEvent.pointerDown(canvas(), { ...px(10, 40), pointerId: 1, button: 0, pointerType: "mouse" });
@@ -115,13 +115,13 @@ describe("editor visual", () => {
     await placeWallAtCenter();
     expect(screen.getByTestId("editor-handle-e")).toBeTruthy();
     drag(px(62, 40), px(65, 40));
-    expect(num("Anchura")).toBe(7);
+    expect(num("Ancho")).toBe(7);
     expect(num("Posición X")).toBe(61.5); // borde oeste en 58
     fireEvent.click(screen.getByLabelText("Ajustar a la rejilla"));
     drag(px(65, 40), px(66.4, 40));
-    expect(num("Anchura")).toBe(8);
+    expect(num("Ancho")).toBe(8);
     key("z", { ctrlKey: true });
-    expect(num("Anchura")).toBe(7);
+    expect(num("Ancho")).toBe(7);
   });
 
   it("DELETE + DUPLICATE + copiar/pegar + propiedades", async () => {
@@ -132,15 +132,15 @@ describe("editor visual", () => {
     key("c", { ctrlKey: true });
     key("v", { ctrlKey: true });
     expect(objs("wall")).toHaveLength(3);
-    fireEvent.change(screen.getByLabelText("Altura"), { target: { value: "20" } });
-    expect(num("Altura")).toBe(20);
+    fireEvent.change(screen.getByLabelText("Largo"), { target: { value: "20" } });
+    expect(num("Largo")).toBe(20);
     key("Delete");
     expect(objs("wall")).toHaveLength(2);
     key("z", { ctrlKey: true });
     expect(objs("wall")).toHaveLength(3);
     key("z", { ctrlKey: true }); // altura
     fireEvent.click(screen.getByRole("button", { name: "Muro 3" }));
-    expect(num("Altura")).toBe(12);
+    expect(num("Largo")).toBe(12);
     fireEvent.click(btn("Eliminar objeto"));
     expect(objs("wall")).toHaveLength(2);
   });

@@ -607,7 +607,9 @@ function BotsListPage(props: {
     setError("");
     try {
       const updated = await api<Bot>("PATCH", `/bots/${bot.id}`, { retired });
-      setSelected((s) => (s && s.id === bot.id ? { ...s, retiredAt: updated?.retiredAt ?? (retired ? "retirado" : null) } : s));
+      setSelected((s) =>
+        s && s.id === bot.id ? { ...s, retiredAt: updated?.retiredAt ?? (retired ? "retirado" : null) } : s,
+      );
       reloadBots();
     } catch (e) {
       setError((e as Error).message);
@@ -657,317 +659,327 @@ function BotsListPage(props: {
       </div>
 
       <div className="master-pane" data-testid="bot-pane">
-      {!selected && (
-        <div className="card" data-testid="bot-pane-empty">
-          <p>Elige un bot de la lista para ver su resumen, loadout, código y versiones, build, batallas y replays.</p>
-        </div>
-      )}
-      {selected && (
-        <div className="card" data-testid="bot-summary" aria-label={`resumen de ${selected.name}`} role="region">
-          <h2>{selected.name}</h2>
-          <p>
-            {VISIBILITY_TEXT[selected.visibility] ?? selected.visibility}
-            {selected.latestPublishedVersion
-              ? ` · las batallas nuevas usan la v${selected.latestPublishedVersion}`
-              : " · sin versión publicada"}
-            {selected.retiredAt ? " · retirado" : ""}
-          </p>
-          <nav aria-label={`secciones de ${selected.name}`} className="subnav">
-            <span className="subnav-title" aria-hidden="true">
-              Resumen
-            </span>
-            {BOT_SECTIONS.map(([id, label]) => (
-              <button key={id} type="button" className="link" onClick={() => scrollToSection(id)}>
-                {label}
-              </button>
-            ))}
-            <a href={`#/battles?bot=${encodeURIComponent(selected.id)}`} data-testid="bot-battles-link">
-              Batallas
-            </a>
-            <a href={`#/replays?bot=${encodeURIComponent(selected.id)}`} data-testid="bot-replays-link">
-              Replays
-            </a>
-          </nav>
-          <p>
-            <button type="button" data-testid="bot-retire" onClick={() => void setRetired(selected, !selected.retiredAt)}>
-              {selected.retiredAt ? "Reactivar bot" : "Retirar bot"}
-            </button>{" "}
-            <small>
-              {selected.retiredAt
-                ? "Vuelve a la lista de activos."
-                : "Lo pasa a «Retirados»: no borra versiones, batallas ni replays, ni cambia qué versión juega."}
-            </small>
-          </p>
-        </div>
-      )}
-      {selected && (
-        <ResourceView resource={detail} label={`el detalle de ${selected.name}`} onRetry={retryDetail}>
-          {(d) => {
-            const loadouts = d.b;
-            const current = loadouts.length > 0 ? loadouts[loadouts.length - 1] : undefined;
-            const build = builds && builds.known && builds.list.length > 0 ? builds.list[0] : undefined;
-            const buildFinished = !!build && !isBuildInProgress(build.status);
-            // issue #95 (obs. 1 del re-supervisor) · `!!builds` de guarda dejaba un
-            // hueco: si la PRIMERA lectura no vuelve nunca, `builds` es null para
-            // siempre y el usuario no veía ni «desconocido» ni error — solo un
-            // «Consultando…» eterno, que es la mentira que B11 persigue. Si el sondeo
-            // se rindió, se dice, haya llegado o no una primera lectura.
-            const unknownPipeline =
-              (!!builds && (!builds.known || (pollExhausted && !!build && !buildFinished))) ||
-              (!builds && pollExhausted);
-            const focusedRejection = rejectionToShow(focused);
-            const inBattles = versionInBattles(d.a);
-            const nextVersion = d.a.length ? Math.max(...d.a.map((v) => v.version)) + 1 : 1;
-            const diagnosis = focused
-              ? diagnoseBuild({
-                  state: focused.state,
-                  rejectionReason: focused.rejectionReason,
-                  stages: build?.stages,
-                })
-              : null;
-            return (
-              <>
-                {/* key={bot.id}: al cambiar de bot el editor SE REMONTA con su revisión vigente. */}
-                <div id="bot-sec-loadout">
-                <LoadoutEditor
-                  key={selected.id}
-                  catalog={props.catalog}
-                  catalogVersion={current?.catalogVersion ?? props.catalogVersion}
-                  budgetCredits={props.budgetCredits}
-                  initial={
-                    current
-                      ? { catalogVersion: current.catalogVersion, chassis: current.chassis, modules: current.modules }
-                      : undefined
-                  }
-                  loadedRevision={current?.revision}
-                  draftKey={`loadout:${selected.id}:r${current?.revision ?? 0}`}
-                  onSave={saveLoadout}
-                />
-                </div>
-
-                {/* B11 · Resumen de LA versión que el usuario está mirando. */}
-                {focused && (
-                  <div className="card" data-testid="focused-version">
-                    <h2>
-                      Última subida: v{focused.version} · {focused.state}
-                    </h2>
-                    {/* UX-R · LiveStatus: se anuncia sin mover el foco y marca aria-busy mientras valida. */}
-                    <LiveStatus busy={focused.state === "validating"} data-testid="focused-status">
-                      {focused.state === "validating"
-                        ? "Validación en curso…"
-                        : pendingActionFor(focused.state) || "sin acciones pendientes"}
-                    </LiveStatus>
-                    {focusedRejection && (
-                      <p className="error" data-testid="focused-rejection">
-                        Motivo del rechazo de v{focused.version}: {focusedRejection}
-                      </p>
-                    )}
-                    <p data-testid="in-battles">
-                      {inBattles
-                        ? `Las batallas nuevas usan la v${inBattles} (la publicada más reciente).`
-                        : "Ninguna versión publicada: este bot todavía no puede entrar en batallas."}
-                    </p>
-                    {versionsStale && (
-                      <p className="warn" data-testid="versions-stale">
-                        No se ha podido actualizar el estado: lo que ves puede estar desfasado.
-                      </p>
-                    )}
-                    <button type="button" onClick={refreshNow}>
-                      Actualizar estado
-                    </button>
+        {!selected && (
+          <div className="card" data-testid="bot-pane-empty">
+            <p>Elige un bot de la lista para ver su resumen, loadout, código y versiones, build, batallas y replays.</p>
+          </div>
+        )}
+        {selected && (
+          <div className="card" data-testid="bot-summary" aria-label={`resumen de ${selected.name}`} role="region">
+            <h2>{selected.name}</h2>
+            <p>
+              {VISIBILITY_TEXT[selected.visibility] ?? selected.visibility}
+              {selected.latestPublishedVersion
+                ? ` · las batallas nuevas usan la v${selected.latestPublishedVersion}`
+                : " · sin versión publicada"}
+              {selected.retiredAt ? " · retirado" : ""}
+            </p>
+            <nav aria-label={`secciones de ${selected.name}`} className="subnav">
+              <span className="subnav-title" aria-hidden="true">
+                Resumen
+              </span>
+              {BOT_SECTIONS.map(([id, label]) => (
+                <button key={id} type="button" className="link" onClick={() => scrollToSection(id)}>
+                  {label}
+                </button>
+              ))}
+              <a href={`#/battles?bot=${encodeURIComponent(selected.id)}`} data-testid="bot-battles-link">
+                Batallas
+              </a>
+              <a href={`#/replays?bot=${encodeURIComponent(selected.id)}`} data-testid="bot-replays-link">
+                Replays
+              </a>
+            </nav>
+            <p>
+              <button
+                type="button"
+                data-testid="bot-retire"
+                onClick={() => void setRetired(selected, !selected.retiredAt)}
+              >
+                {selected.retiredAt ? "Reactivar bot" : "Retirar bot"}
+              </button>{" "}
+              <small>
+                {selected.retiredAt
+                  ? "Vuelve a la lista de activos."
+                  : "Lo pasa a «Retirados»: no borra versiones, batallas ni replays, ni cambia qué versión juega."}
+              </small>
+            </p>
+          </div>
+        )}
+        {selected && (
+          <ResourceView resource={detail} label={`el detalle de ${selected.name}`} onRetry={retryDetail}>
+            {(d) => {
+              const loadouts = d.b;
+              const current = loadouts.length > 0 ? loadouts[loadouts.length - 1] : undefined;
+              const build = builds && builds.known && builds.list.length > 0 ? builds.list[0] : undefined;
+              const buildFinished = !!build && !isBuildInProgress(build.status);
+              // issue #95 (obs. 1 del re-supervisor) · `!!builds` de guarda dejaba un
+              // hueco: si la PRIMERA lectura no vuelve nunca, `builds` es null para
+              // siempre y el usuario no veía ni «desconocido» ni error — solo un
+              // «Consultando…» eterno, que es la mentira que B11 persigue. Si el sondeo
+              // se rindió, se dice, haya llegado o no una primera lectura.
+              const unknownPipeline =
+                (!!builds && (!builds.known || (pollExhausted && !!build && !buildFinished))) ||
+                (!builds && pollExhausted);
+              const focusedRejection = rejectionToShow(focused);
+              const inBattles = versionInBattles(d.a);
+              const nextVersion = d.a.length ? Math.max(...d.a.map((v) => v.version)) + 1 : 1;
+              const diagnosis = focused
+                ? diagnoseBuild({
+                    state: focused.state,
+                    rejectionReason: focused.rejectionReason,
+                    stages: build?.stages,
+                  })
+                : null;
+              return (
+                <>
+                  {/* key={bot.id}: al cambiar de bot el editor SE REMONTA con su revisión vigente. */}
+                  <div id="bot-sec-loadout">
+                    <LoadoutEditor
+                      key={selected.id}
+                      catalog={props.catalog}
+                      catalogVersion={current?.catalogVersion ?? props.catalogVersion}
+                      budgetCredits={props.budgetCredits}
+                      initial={
+                        current
+                          ? {
+                              catalogVersion: current.catalogVersion,
+                              chassis: current.chassis,
+                              modules: current.modules,
+                            }
+                          : undefined
+                      }
+                      loadedRevision={current?.revision}
+                      draftKey={`loadout:${selected.id}:r${current?.revision ?? 0}`}
+                      onSave={saveLoadout}
+                    />
                   </div>
-                )}
-                {focused && diagnosis && (
-                  <BuildDiagnosisView
-                    diagnosis={diagnosis}
-                    version={focused.version}
-                    publishedVersion={inBattles}
-                    onFix={() => void loadCodeForFix(focused)}
-                    onRetry={() => void submitVersion(focused.version)}
-                  />
-                )}
 
-                <div className="card" id="bot-sec-code">
-                  <h2>Versiones de {selected.name}</h2>
-                  <table className="stack-table stack-table--wide">
-                    <tbody>
-                      {d.a.map((v) => (
-                        <tr key={v.version} data-testid={`version-row-${v.version}`}>
-                          <td>
-                            v{v.version}
-                            {v.version === focusedVersion ? " ◀ mirando" : ""}
-                            {v.version === inBattles && (
-                              <strong className="ok" data-testid={`in-battles-${v.version}`}>
-                                {" "}
-                                · en batallas
-                              </strong>
-                            )}
-                          </td>
-                          <td>
-                            {v.state}
-                            {v.state === "draft" && <strong className="warn"> · SIN ENVIAR</strong>}
-                          </td>
-                          <td>{v.runtime}</td>
-                          <td>{rejectionToShow(v) && <span className="error">{rejectionToShow(v)}</span>}</td>
-                          <td>{pendingActionFor(v.state)}</td>
-                          <td>
-                            {(v.state === "draft" || v.state === "rejected") && (
-                              <button type="button" onClick={() => submitVersion(v.version)}>
-                                {v.state === "draft" ? `Enviar a validación v${v.version}` : `Reenviar v${v.version}`}
-                              </button>
-                            )}
-                            {v.state === "validated" && (
-                              <button type="button" onClick={() => publishVersion(v.version)}>
-                                Publicar v{v.version}
-                              </button>
-                            )}
-                            {v.version !== focusedVersion && (
-                              <button type="button" onClick={() => setFocusRequest(v.version)}>
-                                Ver v{v.version}
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  <h3>Subir código (pegado)</h3>
-                  <label>
-                    Runtime{" "}
-                    <select
-                      aria-label="runtime"
-                      value={runtime}
-                      onChange={(e) => changeRuntime(e.target.value === "node" ? "node" : "python")}
-                    >
-                      <option value="python">Python</option>
-                      <option value="node">JavaScript (Node)</option>
-                    </select>
-                  </label>
-                  <p className="muted" data-testid="hook-help">
-                    {HOOK_HELP[runtime]}
-                  </p>
-                  {codeDraft.restored && !isUntouchedTemplate(pasted) && (
-                    <p className="warn" role="status" data-testid="code-draft-restored">
-                      Recuperado el código sin subir de esta sesión (aún no es ninguna versión).
-                    </p>
+                  {/* B11 · Resumen de LA versión que el usuario está mirando. */}
+                  {focused && (
+                    <div className="card" data-testid="focused-version">
+                      <h2>
+                        Última subida: v{focused.version} · {focused.state}
+                      </h2>
+                      {/* UX-R · LiveStatus: se anuncia sin mover el foco y marca aria-busy mientras valida. */}
+                      <LiveStatus busy={focused.state === "validating"} data-testid="focused-status">
+                        {focused.state === "validating"
+                          ? "Validación en curso…"
+                          : pendingActionFor(focused.state) || "sin acciones pendientes"}
+                      </LiveStatus>
+                      {focusedRejection && (
+                        <p className="error" data-testid="focused-rejection">
+                          Motivo del rechazo de v{focused.version}: {focusedRejection}
+                        </p>
+                      )}
+                      <p data-testid="in-battles">
+                        {inBattles
+                          ? `Las batallas nuevas usan la v${inBattles} (la publicada más reciente).`
+                          : "Ninguna versión publicada: este bot todavía no puede entrar en batallas."}
+                      </p>
+                      {versionsStale && (
+                        <p className="warn" data-testid="versions-stale">
+                          No se ha podido actualizar el estado: lo que ves puede estar desfasado.
+                        </p>
+                      )}
+                      <button type="button" onClick={refreshNow}>
+                        Actualizar estado
+                      </button>
+                    </div>
                   )}
-                  {editingFrom !== null && (
-                    <p className="warn" data-testid="editing-from">
-                      Editando el código de v{editingFrom}: al subirlo se crea la v{nextVersion}; v{editingFrom} no
-                      cambia.
-                    </p>
+                  {focused && diagnosis && (
+                    <BuildDiagnosisView
+                      diagnosis={diagnosis}
+                      version={focused.version}
+                      publishedVersion={inBattles}
+                      onFix={() => void loadCodeForFix(focused)}
+                      onRetry={() => void submitVersion(focused.version)}
+                    />
                   )}
-                  <p>
+
+                  <div className="card" id="bot-sec-code">
+                    <h2>Versiones de {selected.name}</h2>
+                    <table className="stack-table stack-table--wide">
+                      <tbody>
+                        {d.a.map((v) => (
+                          <tr key={v.version} data-testid={`version-row-${v.version}`}>
+                            <td>
+                              v{v.version}
+                              {v.version === focusedVersion ? " ◀ mirando" : ""}
+                              {v.version === inBattles && (
+                                <strong className="ok" data-testid={`in-battles-${v.version}`}>
+                                  {" "}
+                                  · en batallas
+                                </strong>
+                              )}
+                            </td>
+                            <td>
+                              {v.state}
+                              {v.state === "draft" && <strong className="warn"> · SIN ENVIAR</strong>}
+                            </td>
+                            <td>{v.runtime}</td>
+                            <td>{rejectionToShow(v) && <span className="error">{rejectionToShow(v)}</span>}</td>
+                            <td>{pendingActionFor(v.state)}</td>
+                            <td>
+                              {(v.state === "draft" || v.state === "rejected") && (
+                                <button type="button" onClick={() => submitVersion(v.version)}>
+                                  {v.state === "draft" ? `Enviar a validación v${v.version}` : `Reenviar v${v.version}`}
+                                </button>
+                              )}
+                              {v.state === "validated" && (
+                                <button type="button" onClick={() => publishVersion(v.version)}>
+                                  Publicar v{v.version}
+                                </button>
+                              )}
+                              {v.version !== focusedVersion && (
+                                <button type="button" onClick={() => setFocusRequest(v.version)}>
+                                  Ver v{v.version}
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <h3>Subir código (pegado)</h3>
                     <label>
-                      Código{" "}
-                      <textarea
-                        ref={codeRef}
-                        aria-label="codigo"
-                        rows={16}
-                        cols={80}
-                        spellCheck={false}
-                        value={pasted}
-                        onChange={(e) => setPasted(e.target.value)}
-                      />
+                      Runtime{" "}
+                      <select
+                        aria-label="runtime"
+                        value={runtime}
+                        onChange={(e) => changeRuntime(e.target.value === "node" ? "node" : "python")}
+                      >
+                        <option value="python">Python</option>
+                        <option value="node">JavaScript (Node)</option>
+                      </select>
                     </label>
-                  </p>
-                  <button
-                    type="button"
-                    data-testid="reset-template"
-                    onClick={() => {
-                      setPasted(BOT_TEMPLATES[runtime]);
-                      setEditingFrom(null);
-                      codeDraft.clear();
-                    }}
-                  >
-                    Restaurar la plantilla de {runtime === "node" ? "JavaScript" : "Python"}
-                  </button>{" "}
-                  <button type="button" disabled={!current} onClick={() => current && uploadPasted(current.revision)}>
-                    Subir como versión nueva
-                  </button>
-                  {current && (
-                    <small data-testid="upload-target">
-                      {" "}
-                      Se creará la v{nextVersion} con la revisión {current.revision} del loadout (borrador: después
-                      pulsa «Enviar a validación»).
-                    </small>
-                  )}
-                  {!current && (
-                    <p className="warn">Guarda antes una configuración (loadout) para poder subir código.</p>
-                  )}
-                  {error && (
-                    <p className="error" role="alert">
-                      {error}
+                    <p className="muted" data-testid="hook-help">
+                      {HOOK_HELP[runtime]}
                     </p>
-                  )}
-                </div>
-
-                {/* B11 · Pipeline SIEMPRE rotulado con su versión y leído del servidor. */}
-                {focusedVersion !== undefined && (
-                  <div className="card" data-testid="build-result" id="bot-sec-build">
-                    <h3>
-                      Pipeline de build · v{focusedVersion} ·{" "}
-                      {!builds
-                        ? "consultando…"
-                        : unknownPipeline
-                          ? "estado desconocido"
-                          : !build
-                            ? "sin enviar a validación"
-                            : build.status}
-                    </h3>
-                    {!builds && !unknownPipeline ? (
-                      // Aún no ha llegado la respuesta: no se sabe, y tampoco se
-                      // afirma "sin enviar" ni se pinta ninguna etapa. Ojo al orden:
-                      // si el sondeo ya se rindió, manda «desconocido» — quedarse en
-                      // «Consultando…» para siempre sería la mentira de B11.
-                      <p role="status" aria-live="polite">
-                        Consultando el estado del pipeline…
+                    {codeDraft.restored && !isUntouchedTemplate(pasted) && (
+                      <p className="warn" role="status" data-testid="code-draft-restored">
+                        Recuperado el código sin subir de esta sesión (aún no es ninguna versión).
                       </p>
-                    ) : unknownPipeline ? (
-                      // Sin resultado fiable NO se pinta ni una etapa: una tabla de
-                      // `pending` bajo "estado desconocido" es justo la foto que hizo
-                      // creer al usuario que su subida seguía en cola.
-                      <p className="warn" data-testid="pipeline-unknown">
-                        {builds && !builds.known
-                          ? "No se ha podido leer el estado del pipeline: estado desconocido. No se muestra un resultado inventado."
-                          : pollStop === "wait"
-                            ? // Rendirse esperando NO es haber comprobado N veces: decirlo
-                              // así era contarle al usuario comprobaciones que no se
-                              // hicieron (defecto 1 del re-supervisor).
-                              `El servidor no respondió a la última consulta en ${Math.round(maxPollWaitMs / 1000) || 1} s: estado desconocido. Pulsa «Actualizar estado» para volver a intentarlo.`
-                            : `El pipeline sigue sin dar un resultado tras ${maxPolls} comprobaciones: estado desconocido. Pulsa «Actualizar estado» para volver a intentarlo.`}
+                    )}
+                    {editingFrom !== null && (
+                      <p className="warn" data-testid="editing-from">
+                        Editando el código de v{editingFrom}: al subirlo se crea la v{nextVersion}; v{editingFrom} no
+                        cambia.
                       </p>
-                    ) : !build ? (
-                      <p className="warn">Esta versión todavía no se ha enviado a validación.</p>
-                    ) : (
-                      <>
-                        {!buildFinished && (
-                          <LiveStatus busy data-testid="pipeline-running">
-                            En curso: comprobando cada {Math.round(pollIntervalMs / 1000) || 1} s…
-                          </LiveStatus>
-                        )}
-                        <table className="stack-table">
-                          <tbody>
-                            {build.stages.map((s) => (
-                              <tr key={s.name}>
-                                <td>{s.name}</td>
-                                <td className={s.status === "passed" ? "ok" : s.status === "failed" ? "error" : "warn"}>
-                                  {s.status}
-                                </td>
-                                <td>{s.message ?? ""}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </>
+                    )}
+                    <p>
+                      <label>
+                        Código{" "}
+                        <textarea
+                          ref={codeRef}
+                          aria-label="codigo"
+                          rows={16}
+                          cols={80}
+                          spellCheck={false}
+                          value={pasted}
+                          onChange={(e) => setPasted(e.target.value)}
+                        />
+                      </label>
+                    </p>
+                    <button
+                      type="button"
+                      data-testid="reset-template"
+                      onClick={() => {
+                        setPasted(BOT_TEMPLATES[runtime]);
+                        setEditingFrom(null);
+                        codeDraft.clear();
+                      }}
+                    >
+                      Restaurar la plantilla de {runtime === "node" ? "JavaScript" : "Python"}
+                    </button>{" "}
+                    <button type="button" disabled={!current} onClick={() => current && uploadPasted(current.revision)}>
+                      Subir como versión nueva
+                    </button>
+                    {current && (
+                      <small data-testid="upload-target">
+                        {" "}
+                        Se creará la v{nextVersion} con la revisión {current.revision} del loadout (borrador: después
+                        pulsa «Enviar a validación»).
+                      </small>
+                    )}
+                    {!current && (
+                      <p className="warn">Guarda antes una configuración (loadout) para poder subir código.</p>
+                    )}
+                    {error && (
+                      <p className="error" role="alert">
+                        {error}
+                      </p>
                     )}
                   </div>
-                )}
-              </>
-            );
-          }}
-        </ResourceView>
-      )}
+
+                  {/* B11 · Pipeline SIEMPRE rotulado con su versión y leído del servidor. */}
+                  {focusedVersion !== undefined && (
+                    <div className="card" data-testid="build-result" id="bot-sec-build">
+                      <h3>
+                        Pipeline de build · v{focusedVersion} ·{" "}
+                        {!builds
+                          ? "consultando…"
+                          : unknownPipeline
+                            ? "estado desconocido"
+                            : !build
+                              ? "sin enviar a validación"
+                              : build.status}
+                      </h3>
+                      {!builds && !unknownPipeline ? (
+                        // Aún no ha llegado la respuesta: no se sabe, y tampoco se
+                        // afirma "sin enviar" ni se pinta ninguna etapa. Ojo al orden:
+                        // si el sondeo ya se rindió, manda «desconocido» — quedarse en
+                        // «Consultando…» para siempre sería la mentira de B11.
+                        <p role="status" aria-live="polite">
+                          Consultando el estado del pipeline…
+                        </p>
+                      ) : unknownPipeline ? (
+                        // Sin resultado fiable NO se pinta ni una etapa: una tabla de
+                        // `pending` bajo "estado desconocido" es justo la foto que hizo
+                        // creer al usuario que su subida seguía en cola.
+                        <p className="warn" data-testid="pipeline-unknown">
+                          {builds && !builds.known
+                            ? "No se ha podido leer el estado del pipeline: estado desconocido. No se muestra un resultado inventado."
+                            : pollStop === "wait"
+                              ? // Rendirse esperando NO es haber comprobado N veces: decirlo
+                                // así era contarle al usuario comprobaciones que no se
+                                // hicieron (defecto 1 del re-supervisor).
+                                `El servidor no respondió a la última consulta en ${Math.round(maxPollWaitMs / 1000) || 1} s: estado desconocido. Pulsa «Actualizar estado» para volver a intentarlo.`
+                              : `El pipeline sigue sin dar un resultado tras ${maxPolls} comprobaciones: estado desconocido. Pulsa «Actualizar estado» para volver a intentarlo.`}
+                        </p>
+                      ) : !build ? (
+                        <p className="warn">Esta versión todavía no se ha enviado a validación.</p>
+                      ) : (
+                        <>
+                          {!buildFinished && (
+                            <LiveStatus busy data-testid="pipeline-running">
+                              En curso: comprobando cada {Math.round(pollIntervalMs / 1000) || 1} s…
+                            </LiveStatus>
+                          )}
+                          <table className="stack-table">
+                            <tbody>
+                              {build.stages.map((s) => (
+                                <tr key={s.name}>
+                                  <td>{s.name}</td>
+                                  <td
+                                    className={s.status === "passed" ? "ok" : s.status === "failed" ? "error" : "warn"}
+                                  >
+                                    {s.status}
+                                  </td>
+                                  <td>{s.message ?? ""}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </>
+              );
+            }}
+          </ResourceView>
+        )}
       </div>
     </div>
   );

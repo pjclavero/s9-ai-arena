@@ -412,7 +412,11 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
               <ul>
                 {l.modules.map((m) => (
                   <li key={m.slot}>
-                    {slotName(m.slot)} <small>(<code>{m.slot}</code>)</small>: {m.moduleId}
+                    {slotName(m.slot)}{" "}
+                    <small>
+                      (<code>{m.slot}</code>)
+                    </small>
+                    : {m.moduleId}
                   </li>
                 ))}
               </ul>

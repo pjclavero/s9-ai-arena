@@ -17,7 +17,10 @@ export interface SlotInfo {
 }
 
 export const SLOT_INFO: Record<string, SlotInfo> = {
-  drive: { name: "Propulsión", purpose: "Mueve el vehículo: orugas o ruedas. Fija la velocidad punta y la aceleración." },
+  drive: {
+    name: "Propulsión",
+    purpose: "Mueve el vehículo: orugas o ruedas. Fija la velocidad punta y la aceleración.",
+  },
   power: { name: "Energía", purpose: "Generador o batería que alimenta sensores, armas y radio." },
   sensor_a: { name: "Sensor principal", purpose: "Lo que el bot ve de su entorno (radar, lidar, acústico…)." },
   sensor_b: { name: "Sensor secundario", purpose: "Un segundo sensor que complementa al principal." },

@@ -301,7 +301,9 @@ export function LoadoutEditor(props: {
                   {/* EQ4 · nombre humano como principal; el id interno, secundario. */}
                   <span data-testid={`slot-name-${slot.id}`}>{slotName(slot.id)}</span>
                   <InfoTip topic={slotName(slot.id)} testId={`slot-help-${slot.id}`}>
-                    <span style={{ display: "block" }}>{slotPurpose(slot.id) ?? "Hueco del chasis para un módulo."}</span>
+                    <span style={{ display: "block" }}>
+                      {slotPurpose(slot.id) ?? "Hueco del chasis para un módulo."}
+                    </span>
                     <span style={{ display: "block" }}>
                       Admite: {slot.accepts.map(categoryName).join(" o ")} · tamaño máximo {slot.maxSize}.
                     </span>

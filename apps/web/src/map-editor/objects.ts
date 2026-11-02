@@ -286,8 +286,18 @@ export interface ToolInfo {
 }
 
 export const TOOLS: ToolInfo[] = [
-  { tool: "wall", label: "Muro", kind: "wall", help: "Obstáculo fijo: bloquea el paso y la visión." },
-  { tool: "crate", label: "Caja", kind: "destructible", help: "Obstáculo destructible: se rompe a disparos." },
+  {
+    tool: "wall",
+    label: "Muro",
+    kind: "wall",
+    help: "Obstáculo fijo: bloquea el movimiento, la visión y los disparos.",
+  },
+  {
+    tool: "crate",
+    label: "Caja",
+    kind: "destructible",
+    help: "Obstáculo destructible: bloquea el movimiento y la visión mientras existe; se rompe a disparos.",
+  },
   {
     tool: "damage-zone",
     label: "Zona de daño",
@@ -481,4 +491,56 @@ export function engineBaseRadius(o: AnyObj): number {
   if (o.shape === "rect") return Math.min(o.widthM ?? 0, o.heightM ?? 0) / 2;
   const b = aabb(o as unknown as Shape);
   return Math.min((b.maxX - b.minX) / 2, (b.maxY - b.minY) / 2);
+}
+
+/**
+ * EQ4 · Ayuda contextual (ⓘ) de cada elemento del mapa, con la semántica ACTUAL
+ * del motor (apps/arena-engine): muros y cajas son el mismo tipo de obstáculo
+ * (bloquean movimiento, visión y disparos); la caja además se destruye. No hay
+ * todavía «barrera baja / foso» (bloquear el paso pero no la visión): exige una
+ * feature del motor (ver el informe LOW_BARRIER_AUDIT del EQ4).
+ */
+export const ELEMENT_HELP: ReadonlyArray<{ key: string; name: string; text: string }> = [
+  {
+    key: "wall",
+    name: "Muro",
+    text: "Obstáculo fijo e indestructible. Bloquea el movimiento, la visión (sensores) y los disparos.",
+  },
+  {
+    key: "destructible",
+    name: "Caja destructible",
+    text: "Bloquea el movimiento, la visión y los disparos mientras existe. Los disparos le quitan vida; al romperse deja el paso y la vista libres.",
+  },
+  {
+    key: "damage",
+    name: "Zona de daño",
+    text: "Círculo que quita vida cada segundo (el «daño por segundo» que pongas) a cualquier vehículo que esté dentro. No bloquea nada.",
+  },
+  {
+    key: "capture",
+    name: "Zona de captura",
+    text: "Círculo del modo Control de zona: el equipo que la ocupa sin rivales dentro la controla y suma puntos mientras la mantiene.",
+  },
+  {
+    key: "spawn",
+    name: "Punto de aparición (spawn)",
+    text: "Donde aparece un vehículo del equipo al empezar (y al reaparecer, si las reglas lo permiten). La flecha es hacia dónde mira.",
+  },
+  {
+    key: "base",
+    name: "Base",
+    text: "Base de un equipo en Captura la bandera: llevar la bandera enemiga hasta tu base es una captura. En el motor se juega como un círculo.",
+  },
+  {
+    key: "flag",
+    name: "Bandera",
+    text: "Bandera de un equipo en Captura la bandera: el rival intenta cogerla y llevarla a su base; si se cae, vuelve a su sitio pasado un tiempo.",
+  },
+];
+
+/** Texto de ayuda del objeto (por tipo y, en zonas, por subtipo). */
+export function elementHelpFor(kind: ObjKind, o?: AnyObj): { name: string; text: string } | undefined {
+  const key =
+    kind === "zone" ? (o?.zoneType === "damage" ? "damage" : o?.zoneType === "capture" ? "capture" : "") : kind;
+  return ELEMENT_HELP.find((e) => e.key === key);
 }
