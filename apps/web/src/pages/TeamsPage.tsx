@@ -86,16 +86,18 @@ export function TeamsPage(props: { me: Me }) {
 
   const mine = (teams ?? []).filter((t) => t.isMember);
   const others = (teams ?? []).filter((t) => !t.isMember);
-  const current =
-    (selectName ? mine.find((t) => t.name === selectName) : undefined) ??
-    mine.find((t) => t.id === selectedId) ??
-    mine[0];
+  // El recién creado se elige por NOMBRE en cuanto llega en la recarga; hasta
+  // entonces no se toca la selección (si no, el efecto la pisaría antes de tiempo).
+  const named = selectName ? mine.find((t) => t.name === selectName) : undefined;
+  const current = named ?? mine.find((t) => t.id === selectedId) ?? mine[0];
   useEffect(() => {
-    if (current && (current.id !== selectedId || selectName)) {
-      setSelectedId(current.id);
+    if (named) {
+      setSelectedId(named.id);
       setSelectName(null);
+    } else if (!selectName && current && current.id !== selectedId) {
+      setSelectedId(current.id);
     }
-  }, [current, selectedId, selectName]);
+  }, [named, current, selectedId, selectName]);
 
   return (
     <Panel>
@@ -154,7 +156,10 @@ export function TeamsPage(props: { me: Me }) {
                     className="link master-item"
                     aria-current={current?.id === t.id ? "true" : undefined}
                     data-testid={`team-item-${t.name}`}
-                    onClick={() => setSelectedId(t.id)}
+                    onClick={() => {
+                      setSelectName(null);
+                      setSelectedId(t.id);
+                    }}
                   >
                     {t.name}
                   </button>

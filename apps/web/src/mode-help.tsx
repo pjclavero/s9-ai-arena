@@ -1,6 +1,8 @@
 /**
  * EQ4 · ⓘ de los MODOS de juego, con la semántica actual del motor
  * (apps/arena-engine/src/sim/modes.ts). Se usa junto a los selectores de modo.
+ * OJO: el título NO puede contener «modo»: el nombre accesible del botón
+ * («Ayuda: …») casaría con `getByLabel('modo')` de los specs del selector.
  * Un modo desconocido (p. ej. uno nuevo de las reglas aún sin texto) no rompe:
  * sale con su nombre y sin descripción.
  */
@@ -23,7 +25,7 @@ export const MODE_HELP: Record<string, string> = {
 
 export function ModeHelp(props: { modes: string[]; testId?: string }) {
   return (
-    <InfoTip topic="Modos de juego" testId={props.testId ?? "mode-help"}>
+    <InfoTip topic="Tipos de partida" testId={props.testId ?? "mode-help"}>
       {props.modes.map((m) => (
         <span key={m} style={{ display: "block", marginTop: "0.3rem" }} data-mode={m}>
           <strong>{modeName(m)}:</strong> {MODE_HELP[m] ?? ""}
