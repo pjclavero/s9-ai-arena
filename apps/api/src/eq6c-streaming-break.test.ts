@@ -139,16 +139,14 @@ beforeAll(async () => {
   appB = mk(st);
   admin = await tokenFor(h.db, DEV_USERS.admin);
   battle = randomUUID();
-  await h
-    .db("battles")
-    .insert({
-      id: battle,
-      status: "running",
-      mode: "deathmatch",
-      ruleset_id: DEFAULT_RULESET_ID,
-      map_id: "mvp-arena-01",
-      map_version: 1,
-    });
+  await h.db("battles").insert({
+    id: battle,
+    status: "running",
+    mode: "deathmatch",
+    ruleset_id: DEFAULT_RULESET_ID,
+    map_id: "mvp-arena-01",
+    map_version: 1,
+  });
   const bot = await createPublishedBot(h.db, `eq6c-${battle.slice(0, 8)}`);
   await h.db("participants").insert({ battle_id: battle, bot_id: bot.botId, version: 1, team: "red" });
   const v = (await request(appA).get("/admin/streaming").set(auth())).body.settings.version;
@@ -218,7 +216,7 @@ describe("EQ6c · P2-4 · carreras repetidas en UNA instancia (cerrojo de proces
 });
 
 describe("EQ6c · P2-4 · entre DOS instancias (lo que el autor afirma cubrir con la recomprobación)", () => {
-  it("DEFECTO P2 · start(A) ‖ stop(B): B para el streamer ANTES de que llegue el start de A y marca la BD DESPUÉS de la recomprobación de A ⇒ streamer emitiendo sin sesión activa", async () => {
+  it("DEFECTO P3 (P2 con >1 réplica de la API) · start(A) ‖ stop(B): B para el streamer ANTES de que llegue el start de A y marca la BD DESPUÉS de la recomprobación de A ⇒ streamer emitiendo sin sesión activa", async () => {
     let releaseStart!: () => void;
     let releaseStop!: () => void;
     st.holdStartBefore = new Promise<void>((r) => (releaseStart = r));
@@ -238,7 +236,7 @@ describe("EQ6c · P2-4 · entre DOS instancias (lo que el autor afirma cubrir co
     expect(inv).toEqual({ emitting: false, activeSessions: 0 });
   }, 30_000);
 
-  it("DEFECTO P2 · restart(A) ‖ stop(B) con el mismo entrelazado ⇒ la emisión parada resucita", async () => {
+  it("DEFECTO P3 (P2 con >1 réplica de la API) · restart(A) ‖ stop(B) con el mismo entrelazado ⇒ la emisión parada resucita", async () => {
     expect((await start(appA)).status).toBe(201);
     let releaseStart!: () => void;
     let releaseStop!: () => void;
