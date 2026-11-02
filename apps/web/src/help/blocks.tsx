@@ -114,6 +114,16 @@ export function flattenSchema(schema: Json, defs: Json, prefix = "", depth = 0):
   return out;
 }
 
+/** Los literales JSON de una descripción (`null`, `true`, `false`) se marcan como código, no como prosa. */
+export function Literal(props: { text: string }) {
+  const parts = props.text.split(/\b(null|true|false)\b/);
+  return (
+    <>
+      {parts.map((p, i) => (i % 2 === 1 ? <code key={i}>{p}</code> : p))}
+    </>
+  );
+}
+
 export function SchemaFields(props: { schema: Json; defs: Json; caption: string; testId?: string; rootPath?: string }) {
   let node = props.schema;
   if (props.rootPath) for (const k of props.rootPath.split(".")) node = node?.properties?.[k] ?? {};
@@ -139,7 +149,7 @@ export function SchemaFields(props: { schema: Json; defs: Json; caption: string;
               <code>{f.type}</code>
             </td>
             <td data-label="Obligatorio">{f.required ? "sí" : "no"}</td>
-            <td data-label="Qué es">{f.description ?? "—"}</td>
+            <td data-label="Qué es">{f.description ? <Literal text={f.description} /> : "—"}</td>
           </tr>
         ))}
       </tbody>
