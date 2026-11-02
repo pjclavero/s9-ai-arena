@@ -18,11 +18,26 @@ import deps from "../engine-deps.json" with { type: "json" };
 export type Vec2 = { x: number; y: number };
 
 let initialized = false;
+/**
+ * FASE 19 (R-RULES) · inicialización EN CURSO, compartida. Antes `initialized` se
+ * marcaba tras el `await`, así que dos `Battle.create` concurrentes (el worker arranca
+ * varias batallas a la vez) ejecutaban `RAPIER.init()` dos veces: la segunda instancia
+ * del WASM sustituía al módulo bajo los mundos ya creados y el siguiente `setLinvel`
+ * reventaba con «recursive use of an object… unsafe aliasing», matando el proceso.
+ */
+let initializing: Promise<void> | null = null;
 
 /** Verifica el checksum del WASM y arranca Rapier. Idempotente. */
 export async function initPhysics(opts: { skipChecksum?: boolean } = {}): Promise<void> {
   if (initialized) return;
+  initializing ??= doInitPhysics(opts).catch((err) => {
+    initializing = null; // un fallo (p. ej. checksum) no deja la promesa envenenada
+    throw err;
+  });
+  return initializing;
+}
 
+async function doInitPhysics(opts: { skipChecksum?: boolean }): Promise<void> {
   if (!opts.skipChecksum) {
     // El campo "exports" del paquete no publica ni el .wasm ni su package.json como
     // subpaths, así que resolvemos el entry point principal (que sí está exportado) y
