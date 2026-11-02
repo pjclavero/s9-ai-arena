@@ -35,6 +35,7 @@ class FakeStreamer implements StreamerClient {
   nvenc: boolean | null = false;
   retention: Record<string, unknown> = { dryRun: false, deleted: [], errors: [], keptCount: 0, keptBytes: 0 };
   down = false;
+  freeBytes = 1e11;
   async call<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<StreamerCallResult<T>> {
     this.calls.push({ method, path, body });
     if (this.down) {
@@ -61,7 +62,15 @@ class FakeStreamer implements StreamerClient {
     }
     if (path === "/control/test") return ok({ ok: true, tlsVerified: true, keyValidated: false });
     if (path === "/recordings/retention") return ok(this.retention);
-    if (path === "/recordings") return ok({ dir: "arena_replays/video", files: [], count: 0, totalBytes: 0 });
+    if (path === "/recordings") {
+      return ok({
+        dir: "arena_replays/video",
+        files: [],
+        count: 0,
+        totalBytes: 0,
+        disk: { totalBytes: 1e12, freeBytes: this.freeBytes },
+      });
+    }
     return { ok: false, status: 404, body: {} as T };
   }
   starts() {
@@ -434,6 +443,28 @@ describe("EQ5b · controles", () => {
     const body = fake.calls.filter((c) => c.path === "/control/test").at(-1)!.body as Record<string, any>;
     expect(JSON.stringify(body)).not.toContain(KEY);
     expect(openSecret(body.credential, PRIV)).toBe(KEY);
+  });
+});
+
+describe("EQ5b · disco", () => {
+  it("no se empieza a grabar con el disco casi lleno (409 disk_low)", async () => {
+    await request(app).post("/admin/streaming/stop").set(auth(admin)).send({ force: true });
+    expect((await put({ enabled: true, mode: "record" })).status).toBe(200);
+    fake.freeBytes = 100 * 1024 * 1024;
+    const r = await request(app)
+      .post("/admin/streaming/start")
+      .set(auth(admin))
+      .send({ target: { kind: "battle", id: publicBattle } });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toBe("disk_low");
+    fake.freeBytes = 1e11;
+    const ok = await request(app)
+      .post("/admin/streaming/start")
+      .set(auth(admin))
+      .send({ target: { kind: "battle", id: publicBattle } });
+    expect(ok.status).toBe(201);
+    await request(app).post("/admin/streaming/stop").set(auth(admin)).send({});
+    expect((await put({ mode: "rtmps" })).status).toBe(200);
   });
 });
 

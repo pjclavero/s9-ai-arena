@@ -49,6 +49,8 @@ export interface StreamingDeps {
 }
 
 const unavailable = (msg: string) => new ApiError(503, "streamer_unavailable", msg);
+/** Espacio mínimo libre para empezar a grabar (2 GiB ≈ 1 h a 4,5 Mbit/s). */
+export const MIN_FREE_BYTES = 2 * 1024 ** 3;
 
 /** JSON canónico (claves ordenadas): jsonb de PostgreSQL reordena las claves. */
 export function canon(v: unknown): string {
@@ -428,6 +430,15 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
       throw conflict("already_active", "Ya hay una emisión activa: detenla antes de iniciar otra", {
         session: { id: existing.id, target: { kind: existing.target_kind, id: existing.target_id } },
       });
+    }
+    // «Llenar el disco»: no se empieza a GRABAR con menos de MIN_FREE_BYTES libres
+    // (la retención por tamaño evita que crezca sin límite; esto evita empezar sin sitio).
+    if (s.mode === "record") {
+      const rec = await callStreamer("GET", "/recordings");
+      const free = (rec.body as { disk?: { freeBytes?: number } | null }).disk?.freeBytes;
+      if (typeof free === "number" && free < MIN_FREE_BYTES) {
+        throw conflict("disk_low", `Queda poco espacio para grabar (${Math.round(free / 1024 ** 2)} MiB libres)`);
+      }
     }
     const sessionId = randomUUID();
     const body = await buildStartBody(s, sessionId, t);
