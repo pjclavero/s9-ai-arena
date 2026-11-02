@@ -43,6 +43,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { api, type Me } from "../api.js";
 import { ErrorState, FormError } from "../ui/primitives.js";
 import { modeName } from "../battle-result.js";
+import { ModeHelpTip } from "../help/sections/rules.js"; // EQ4 · ⓘ del modo elegido (fuente: Ayuda)
 import {
   blockedVersionOptions,
   eligibilityReason,
@@ -810,10 +811,11 @@ export function BattleNewPage(props: { me: Me }) {
 
   return (
     <section>
-      <h2>Nueva batalla de práctica</h2>
+      <h2>Nueva batalla</h2>
       <p className="warn" role="note">
         La batalla se <strong>encola</strong> y la ejecuta el worker de la plataforma: cada bot corre su versión
-        publicada en su contenedor aislado. El límite de ticks lo fija el ruleset.
+        publicada en su contenedor aislado. El límite de ticks lo fija el ruleset. Las batallas que creas aquí{" "}
+        <strong>no son oficiales</strong>: no cuentan para el ranking (sólo las de torneo).
       </p>
       <fieldset data-testid="battle-kind">
         <legend>Tipo de batalla</legend>
@@ -875,6 +877,7 @@ export function BattleNewPage(props: { me: Me }) {
           ))}
         </select>
       </label>
+      <ModeHelpTip mode={mode} />
       <label>
         Ruleset{" "}
         <select aria-label="ruleset" value={effectiveRuleset} onChange={(e) => setRulesetId(e.target.value)}>

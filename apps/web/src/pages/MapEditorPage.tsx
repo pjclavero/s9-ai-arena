@@ -53,9 +53,11 @@ import {
   translateObj,
   replaceObj,
   TOOLS,
+  ELEMENT_HELP,
   type AnyObj,
   type Tool,
 } from "../map-editor/objects.js";
+import { InfoTip } from "../help/InfoTip.js";
 import {
   canRedo,
   canUndo,
@@ -514,7 +516,7 @@ export function MapEditorPage() {
             />
           </label>
           <NumField
-            label="Anchura del mapa"
+            label="Ancho del mapa"
             unit="m"
             min={1}
             step={1}
@@ -523,7 +525,7 @@ export function MapEditorPage() {
             onChange={(v) => v > 0 && edit((m) => resize(m, v, m.heightM), "map-size")}
           />
           <NumField
-            label="Altura del mapa"
+            label="Largo del mapa"
             unit="m"
             min={1}
             step={1}
@@ -531,6 +533,11 @@ export function MapEditorPage() {
             testId="map-height"
             onChange={(v) => v > 0 && edit((m) => resize(m, m.widthM, v), "map-size")}
           />
+          <InfoTip topic="Ancho y largo" testId="map-size-help">
+            El mapa es un plano 2D visto desde arriba: el <strong>ancho</strong> es el eje X (izquierda–derecha) y el{" "}
+            <strong>largo</strong> el eje Y (arriba–abajo en el plano). No hay altura: los obstáculos no tienen eje
+            vertical.
+          </InfoTip>
         </div>
         <div role="group" aria-label="modos soportados" className="s9-me-modes">
           <span>Modos de juego:</span>
@@ -658,6 +665,13 @@ export function MapEditorPage() {
             {t.label}
           </button>
         ))}
+        <InfoTip topic="Elementos del mapa" testId="editor-elements-help">
+          {ELEMENT_HELP.map((e) => (
+            <span key={e.key} style={{ display: "block", marginTop: "0.3rem" }}>
+              <strong>{e.name}:</strong> {e.text}
+            </span>
+          ))}
+        </InfoTip>
       </div>
 
       <div className="s9-me-layout">

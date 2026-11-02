@@ -42,6 +42,8 @@ export function botToJson(bot: Record<string, unknown>, latestPublished?: number
     latestPublishedVersion: latestPublished,
     rating,
     createdAt: (bot.created_at as Date).toISOString(),
+    // EQ4 · retirado (organizativo): fecha o null.
+    retiredAt: bot.retired_at ? (bot.retired_at as Date).toISOString() : null,
   };
 }
 
@@ -221,12 +223,33 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     const items = await Promise.all(
       page.map(async (b) => botToJson(b, await latestPublishedVersion(db, b.id as string))),
     );
+    // EQ4 (rev. EQ6 P2-2) · `includeCounts=true` con `ownerId` = el propio usuario:
+    // recuento REAL de sus bots (total / activos / retirados), no el de la página.
+    // Sólo de los propios: con otro ownerId se ignora (no revela nada ajeno).
+    let counts: { total: number; active: number; retired: number } | undefined;
+    if (
+      req.query.includeCounts === "true" &&
+      req.auth &&
+      typeof req.query.ownerId === "string" &&
+      req.query.ownerId === req.auth.userId
+    ) {
+      const [row] = (await db("bots")
+        .where({ owner_id: req.auth.userId })
+        .select(
+          db.raw("count(*)::int AS total"),
+          db.raw("count(*) FILTER (WHERE retired_at IS NOT NULL)::int AS retired"),
+        )) as { total?: number; retired?: number }[];
+      const total = Number(row?.total ?? 0);
+      const retired = Number(row?.retired ?? 0);
+      counts = { total, active: total - retired, retired };
+    }
     res.json({
       items,
       nextCursor:
         visible.length > limit
           ? encodeCursor(page[page.length - 1].created_at as Date, page[page.length - 1].id as string)
           : undefined,
+      ...(counts ? { counts } : {}),
     });
   });
 
@@ -275,7 +298,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
     assertOwner(req.auth, bot); // metadatos: SOLO el dueño (contrato)
     const patch: Record<string, unknown> = {};
-    const { name, visibility } = req.body ?? {};
+    const { name, visibility, retired } = req.body ?? {};
     if (name !== undefined) {
       if (typeof name !== "string" || !name || name.length > 48) throw badRequest("name inválido");
       patch.name = name;
@@ -283,6 +306,11 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     if (visibility !== undefined) {
       if (!["private", "team", "public"].includes(visibility)) throw badRequest("visibility inválida");
       patch.visibility = visibility;
+    }
+    // EQ4 · retirar/reactivar: sólo organiza la lista; no toca versiones ni historial.
+    if (retired !== undefined) {
+      if (typeof retired !== "boolean") throw badRequest("retired debe ser true o false");
+      patch.retired_at = retired ? (bot.retired_at ?? db.fn.now()) : null;
     }
     const [updated] = Object.keys(patch).length
       ? await db("bots").where({ id: bot.id }).update(patch).returning("*")

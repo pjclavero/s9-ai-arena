@@ -109,9 +109,9 @@ export const JOURNEY: ReadonlyArray<JourneyStep> = [
   {
     id: "battle",
     title: "Lanza tu primera batalla",
-    how: "En «Batallas» → «+ Nueva batalla de práctica», elige modo, ruleset, mapa y un bot para cada bando, y pulsa «Crear batalla». Después puedes verla en directo o en replay.",
+    how: "En «Batallas» → «+ Nueva batalla», elige modo, ruleset, mapa y un bot para cada bando, y pulsa «Crear batalla». Después puedes verla en directo o en replay.",
     href: "#/battles/new",
-    linkLabel: "Nueva batalla de práctica",
+    linkLabel: "Nueva batalla",
   },
 ];
 
