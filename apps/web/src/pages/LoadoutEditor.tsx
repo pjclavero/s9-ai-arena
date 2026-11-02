@@ -1,8 +1,6 @@
 /**
  * T7.4 · Editor de loadout: presupuesto, masa y energía EN VIVO usando el
- * validador REAL de E3 compilado para navegador (import { InfoTip } from "../help/InfoTip.js";
-import { slotName, slotPurpose, categoryName } from "../slot-names.js";
-import directo del paquete).
+ * validador REAL de E3 compilado para navegador (import directo del paquete).
  * El cliente solo bloquea el guardado como ayuda; la autoridad es el servidor,
  * que re-ejecuta el mismo validador en POST /bots/{id}/loadouts (422).
  *
@@ -16,6 +14,8 @@ import directo del paquete).
  *  - comparar contra la revisión cargada y "guardar como nueva revisión"
  *    (duplicar) con el diff a la vista.
  */
+import { InfoTip } from "../help/InfoTip.js";
+import { slotName, slotPurpose, categoryName } from "../slot-names.js";
 import { useEffect, useMemo, useState } from "react";
 import { useSessionDraft } from "../ui/draft.js";
 import { emptyDict } from "../../../../packages/game-rules/safe-lookup.js";
