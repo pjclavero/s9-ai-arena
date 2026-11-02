@@ -1,0 +1,181 @@
+# EQ5b · Pruebas de las alertas del streamer con promtool (Prometheus real):
+#   docker run --rm -v "$PWD/infrastructure/observability/prometheus:/p:ro" --entrypoint promtool \
+#     prom/prometheus:v2.53.0 test rules /p/alerts-streamer.test.yml
+# Cada alerta: un caso que DISPARA y un caso con el streaming desactivado o la
+# emisión parada que NO dispara (encargo §15).
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 15s
+
+tests:
+  # ── StreamerDown ─────────────────────────────────────────────────────────
+  - interval: 15s
+    input_series:
+      - series: 's9_streaming_enabled{job="api"}'
+        values: "1x40"
+      - series: 's9_streaming_session_active{job="api"}'
+        values: "1x40"
+      - series: 'streamer_up{job="streamer"}'
+        values: "1x8 0x32"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: StreamerDown
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: StreamerDown
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "Hay una emisión activa en Administración → Streaming y el streamer no está emitiendo"
+
+  # StreamerDown: el contenedor ni siquiera existe (sin serie streamer_up) ⇒ dispara.
+  - interval: 15s
+    input_series:
+      - series: 's9_streaming_enabled{job="api"}'
+        values: "1x40"
+      - series: 's9_streaming_session_active{job="api"}'
+        values: "1x40"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: StreamerDown
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "Hay una emisión activa en Administración → Streaming y el streamer no está emitiendo"
+
+  # StreamerDown: streaming DESACTIVADO (o sin sesión) y streamer parado ⇒ NO dispara.
+  - interval: 15s
+    input_series:
+      - series: 's9_streaming_enabled{job="api"}'
+        values: "0x40"
+      - series: 's9_streaming_session_active{job="api"}'
+        values: "0x40"
+      - series: 'streamer_up{job="streamer"}'
+        values: "0x40"
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: StreamerDown
+        exp_alerts: []
+
+  # ── StreamerRestartLoop ──────────────────────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'streamer_restarts_total{job="streamer"}'
+        values: "0 2 4 6 8 10 12 14 16 18 20"
+      - series: 'streamer_desired{job="streamer"}'
+        values: "1x10"
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: StreamerRestartLoop
+        exp_alerts:
+          - exp_labels: { severity: warning, job: streamer }
+            exp_annotations:
+              summary: "El streamer se reinicia en bucle (16 reintentos en 10 min)"
+  - interval: 1m
+    input_series:
+      - series: 'streamer_restarts_total{job="streamer"}'
+        values: "0 2 4 6 8 10 12 14 16 18 20"
+      - series: 'streamer_desired{job="streamer"}'
+        values: "0x10"
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: StreamerRestartLoop
+        exp_alerts: []
+
+  # ── StreamerDroppedFramesHigh ────────────────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'streamer_frames_total{job="streamer"}'
+        values: "0+1800x15"
+      - series: 'streamer_dropped_frames_total{job="streamer"}'
+        values: "0+180x15"
+      - series: 'streamer_desired{job="streamer"}'
+        values: "1x15"
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: StreamerDroppedFramesHigh
+        exp_alerts:
+          - exp_labels: { severity: warning, job: streamer }
+            exp_annotations:
+              summary: "El streamer descarta más del 5% de los frames"
+  - interval: 1m
+    input_series:
+      - series: 'streamer_frames_total{job="streamer"}'
+        values: "0+1800x15"
+      - series: 'streamer_dropped_frames_total{job="streamer"}'
+        values: "0+180x15"
+      - series: 'streamer_desired{job="streamer"}'
+        values: "0x15"
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: StreamerDroppedFramesHigh
+        exp_alerts: []
+  # Pocos descartes (1 %) ⇒ no dispara aunque la emisión esté pedida.
+  - interval: 1m
+    input_series:
+      - series: 'streamer_frames_total{job="streamer"}'
+        values: "0+1800x15"
+      - series: 'streamer_dropped_frames_total{job="streamer"}'
+        values: "0+18x15"
+      - series: 'streamer_desired{job="streamer"}'
+        values: "1x15"
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: StreamerDroppedFramesHigh
+        exp_alerts: []
+
+  # ── StreamerNoProgress ───────────────────────────────────────────────────
+  - interval: 15s
+    input_series:
+      - series: 'streamer_progress_age_seconds{job="streamer"}'
+        values: "1x4 75 90 105 120 135 150 165 180"
+      - series: 'streamer_desired{job="streamer"}'
+        values: "1x12"
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: StreamerNoProgress
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: StreamerNoProgress
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "La emisión no avanza: 180 s sin progreso de ffmpeg"
+  # Emisión parada (desired 0, progress age -1) ⇒ no dispara.
+  - interval: 15s
+    input_series:
+      - series: 'streamer_progress_age_seconds{job="streamer"}'
+        values: "-1x12"
+      - series: 'streamer_desired{job="streamer"}'
+        values: "0x12"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: StreamerNoProgress
+        exp_alerts: []
+
+  # Calibración (cada guarda tiene un caso que la necesita):
+  # StreamerDown con sesión marcada pero streaming DESACTIVADO ⇒ NO dispara.
+  - interval: 15s
+    input_series:
+      - series: 's9_streaming_enabled{job="api"}'
+        values: "0x40"
+      - series: 's9_streaming_session_active{job="api"}'
+        values: "1x40"
+      - series: 'streamer_up{job="streamer"}'
+        values: "0x40"
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: StreamerDown
+        exp_alerts: []
+  # StreamerNoProgress con progreso viejo pero SIN emisión pedida ⇒ NO dispara.
+  - interval: 15s
+    input_series:
+      - series: 'streamer_progress_age_seconds{job="streamer"}'
+        values: "500x12"
+      - series: 'streamer_desired{job="streamer"}'
+        values: "0x12"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: StreamerNoProgress
+        exp_alerts: []
