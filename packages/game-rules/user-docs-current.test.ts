@@ -69,13 +69,10 @@ describe("NO_USER_DOC_INTERNAL_IDS · docs/user no enseña material de desarroll
     });
   }
 
-  it("rules.md (generado) sólo menciona la decisión de arquitectura en su cabecera", () => {
+  it("rules.md (generado) no menciona ninguna decisión de arquitectura (ADR)", () => {
     const text = TEXT.get(join(USER, "rules.md"))!;
     const hits = text.split("\n").filter((l) => /ADR-/.test(l));
-    expect(
-      hits.length,
-      "rules.md se genera desde battle-rules; la mención a ADR queda anotada para la integración",
-    ).toBeLessThanOrEqual(1);
+    expect(hits.length, "rules.md se genera desde rules-doc.ts: el ADR no debe aparecer ahí").toBe(0);
   });
 
   it("los enlaces relativos resuelven y sólo salen de docs/user hacia operaciones o el índice de desarrollo", () => {

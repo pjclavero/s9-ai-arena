@@ -5,7 +5,7 @@
 PostgreSQL 16.14 es la base de datos de negocio **y** la cola de trabajos. El esquema se define en
 código, con 16 migraciones (`001`–`016`) en `apps/api/src/db/migrations.ts` aplicadas mediante Knex, y tiene 35
 tablas (33 de negocio más las 2 de control de Knex). **No hay tabla de replays**: los replays viven
-en disco. Todo está verificado en `27f70bb`. Este documento no contiene secretos.
+en disco. Todo está verificado en `27f70bb` (octubre de 2026). Este documento no contiene secretos.
 
 ## Índice
 

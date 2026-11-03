@@ -1,7 +1,7 @@
 # Compatibilidad y proceso de cambio de contratos
 
 > **Estado:** política vigente (antes `docs/compatibilidad.md`). Describe el proceso acordado; las
-> referencias a equipos (E1…E12) son los roles del dosier original. Revisado contra `27f70bb` en
+> referencias a equipos (E1…E12) son los roles del dosier original. Revisado contra `27f70bb` (octubre de 2026) en
 > lo que se cita en `## Verificación`; el resto es política (DESIGN_ONLY: no hay herramienta que la
 > imponga automáticamente salvo los tests de contrato). Índice de desarrollo: [index.md](index.md).
 

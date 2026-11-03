@@ -5,7 +5,7 @@
 Este documento es el detalle técnico de la arquitectura que resume
 [docs/overview/architecture.md](../overview/architecture.md): estructura del monorepo, modelo de
 procesos, acoplamiento por código, contratos, configuración y puntos de extensión. Todo está
-verificado en `27f70bb`.
+verificado en `27f70bb` (octubre de 2026).
 
 ## Índice
 

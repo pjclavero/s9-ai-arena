@@ -179,7 +179,7 @@ Rol mínimo según `x-min-role`. «anón.» = `visitor` sin credencial.
 
 ## Rutas del contrato no recogidas en las tablas anteriores
 
-Las tablas de «Recursos por área» se escribieron sobre `27f70bb`. Estas 23 operaciones de `apps/api/openapi.yaml` (contrato
+Las tablas de «Recursos por área» se escribieron sobre `27f70bb` (octubre de 2026). Estas 23 operaciones de `apps/api/openapi.yaml` (contrato
 0.12.0, `main` `e3bf2fa`) existen y no aparecen arriba; el rol mínimo sale de `x-min-role`. El contrato manda sobre este documento.
 
 | operationId | Método y ruta | Rol mínimo |

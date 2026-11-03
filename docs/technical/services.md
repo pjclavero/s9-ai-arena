@@ -5,7 +5,7 @@
 Ficha de cada uno de los 12 servicios del perfil `production`, más el proxy Docker del host. Cada
 ficha recoge: responsabilidad, entrypoint, entrada, salida, dependencias, persistencia,
 configuración (por **nombre** de variable, nunca valores), healthcheck, errores conocidos y tests.
-Fuente: `infrastructure/docker-compose.yml` y el código de `27f70bb`. La vista resumida está en
+Fuente: `infrastructure/docker-compose.yml` y el código de `27f70bb` (octubre de 2026). La vista resumida está en
 [docs/overview/architecture.md](../overview/architecture.md).
 
 ## Índice

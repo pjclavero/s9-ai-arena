@@ -4,7 +4,7 @@
 
 Esta carpeta guarda las auditorías del proyecto como **evidencia histórica**. No es documentación de
 uso. Una auditoría dice lo que se encontró en una fecha concreta. Lo que funciona hoy está en la
-[documentación canónica](../README.md#documentación-canónica). El estado vigente está en
+[documentación canónica](../README.md#dónde-está-cada-cosa). El estado vigente está en
 [roadmap/current-status.md](../roadmap/current-status.md).
 
 Los informes de auditoría no se reescriben después de publicarse. Los cambios posteriores se
@@ -24,6 +24,7 @@ registran en un **delta** aparte.
 Auditoría documental del 2026-11-02 sobre `main` `e3bf2fa`: cada función pendiente se comprobó contra el código, el contrato
 OpenAPI, las migraciones, los tests y la CI.
 
+- [2026-11/DOCS-AUDIT.md](2026-11/DOCS-AUDIT.md): auditoría de la reorganización documental (tabla de documentos, acciones y techo de la verificación).
 - [2026-11/PENDING-AUDIT.md](2026-11/PENDING-AUDIT.md): clasificación DONE, PARTIAL, PENDING y DESCARTED con la evidencia de cada fila.
 
 ## Informes de cierre de octubre

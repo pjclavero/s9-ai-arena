@@ -134,7 +134,7 @@ export function rulesDocMarkdown(): string {
   out.push("# Reglas de batalla, modos y desempates");
   out.push("");
   out.push(
-    "> GENERADO desde el registro de reglas (`packages/game-rules/battle-rules.ts`) con `npx tsx scripts/generate-rules-doc.ts`. No editar a mano: `packages/game-rules/rules-doc.test.ts` falla si este fichero no coincide con el código. Versión del motor: **0.4.0** (ADR-022). Datos estructurados: [`rules.json`](rules.json).",
+    "> GENERADO desde el registro de reglas (`packages/game-rules/battle-rules.ts`) con `npx tsx scripts/generate-rules-doc.ts`. No editar a mano: `packages/game-rules/rules-doc.test.ts` falla si este fichero no coincide con el código. Versión del motor: **0.4.0**. Datos estructurados: [`rules.json`](rules.json).",
   );
   out.push("");
   out.push("## Reapariciones (`maxRespawns`)");

@@ -2,7 +2,7 @@
 
 ## Resumen
 
-Modelo de seguridad **real** de S9 AI Arena en `27f70bb`:
+Modelo de seguridad **real** de S9 AI Arena en `27f70bb` (octubre de 2026):
 - autenticación y sesiones;
 - roles RBAC;
 - aislamiento del código no confiable;

@@ -2,7 +2,7 @@
 
 ## Resumen
 
-Inventario de **todas** las comunicaciones entre componentes de S9 AI Arena en `27f70bb`:
+Inventario de **todas** las comunicaciones entre componentes de S9 AI Arena en `27f70bb` (octubre de 2026):
 HTTP, WebSocket, Redis, la API de Docker a través del proxy del host, PostgreSQL, ficheros
 compartidos y SFTP. Para cada una se indica productor, consumidor, contrato, autoridad, errores,
 seguridad y estado.
