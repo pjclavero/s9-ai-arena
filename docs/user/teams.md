@@ -1,46 +1,39 @@
 # Equipos
 
-## Resumen
+En **«Equipos»** gestionas tu equipo desde la web: crearlo (pasas a ser capitán), renombrarlo, borrarlo, añadir y quitar miembros **por email** y asignar o quitar bots. Un **equipo** es un grupo permanente de personas y bots; no es lo mismo que el **bando** (rojo o azul) que ocupa un bot en una batalla concreta. Para practicar no necesitas equipo.
 
-En **«Equipos»** gestionas tu equipo entero desde la web: crearlo (pasas a ser capitán), renombrarlo, borrarlo, añadir y quitar miembros **por email**, y asignar o quitar bots. Al crear una batalla puedes tomar los bots de un bando de uno de tus equipos.
+Para qué sirve un equipo:
 
-La lista pública de equipos ya **no muestra identificadores de usuarios** ([TD-011](../roadmap/technical-debt.md#td-011)).
+- **Compartir bots** con tus compañeros: los bots del equipo se pueden elegir en las batallas de cualquier miembro (sin llegar a ser públicos).
+- **Elegir bots por equipo** al crear una batalla: «Equipo A / Equipo B» en las batallas por equipos, y un filtro por equipo en cada bando de una batalla individual ([Batallas](battles.md)).
 
-## Índice
+La lista pública de equipos **no muestra identificadores de usuarios**.
 
-- [Uso](#uso)
-- [Quién puede hacer qué](#quién-puede-hacer-qué)
-- [Errores / limitaciones](#errores--limitaciones)
-- [Estado actual](#estado-actual)
-- [Documentación relacionada](#documentación-relacionada)
+## Crear un equipo
 
-## Uso
+Escribe el nombre en «nombre del equipo» (hasta 48 caracteres, único) y pulsa **«Crear equipo»**. Aparece una tarjeta con tu equipo y «eres capitán».
 
-### Crear un equipo — **FUNCIONA ACTUALMENTE**
-
-Escribe el nombre en «nombre del equipo» (hasta 48 caracteres, único) y pulsa **«Crear equipo»**. Aparece una tarjeta con tu equipo, «eres capitán».
-
-### Renombrar y borrar — **FUNCIONA ACTUALMENTE** (sólo el capitán)
+## Renombrar y borrar (sólo el capitán)
 
 - **Renombrar**: escribe el nuevo nombre y pulsa «Renombrar».
 - **Borrar**: «Borrar equipo» pide confirmación. Los bots del equipo **no se borran**: quedan sin equipo.
 
-### Miembros — **FUNCIONA ACTUALMENTE** (sólo el capitán)
+## Miembros (sólo el capitán)
 
-- **Añadir**: escribe el **email** de la persona en el campo y pulsa «Añadir miembro». Ya no hace falta su identificador interno.
+- **Añadir**: escribe el **email** de la persona y pulsa «Añadir miembro».
 - **Quitar**: «Quitar» junto a su nombre. Sus bots dejan de pertenecer al equipo.
 - La tarjeta lista a los miembros por su nombre visible, con su papel (capitán o miembro).
 
-### Bots del equipo — **FUNCIONA ACTUALMENTE**
+## Bots del equipo
 
 - **Añadir**: elige uno de **tus** bots en «— uno de mis bots —» y pulsa «Añadir bot». Cualquier miembro puede añadir sus propios bots.
 - **Quitar**: «Quitar del equipo». Puede hacerlo el dueño del bot o el capitán.
 
-### Usar el equipo en una batalla — **FUNCIONA ACTUALMENTE**
+## Usar el equipo en una batalla
 
-En «Nueva batalla», «Equipo rojo» y «Equipo azul» (opcionales) limitan los bots de ese bando a los de tu equipo. Ver [Batallas](battles.md).
+En «Nueva batalla», el tipo **batalla por equipos** te deja elegir dos equipos (hasta 4 bots por bando). En una batalla individual, «Equipo rojo» y «Equipo azul» (opcionales) limitan los bots de cada bando a los de ese equipo.
 
-### Otros equipos
+## Otros equipos
 
 En «Otros equipos» ves sólo el nombre y cuántos miembros y bots tiene cada uno.
 
@@ -49,33 +42,21 @@ En «Otros equipos» ves sólo el nombre y cuántos miembros y bots tiene cada u
 | Acción | Quién |
 |---|---|
 | Crear equipo | Cualquier usuario |
-| Renombrar, borrar, añadir o quitar miembros | Sólo el capitán (o un admin) |
+| Renombrar, borrar, añadir o quitar miembros | Sólo el capitán (o un administrador) |
 | Añadir un bot | Su dueño, si es miembro del equipo |
 | Quitar un bot | Su dueño o el capitán |
 | Ver miembros y bots | Los miembros del equipo |
 | Ver nombre y recuentos | Todo el mundo, incluso sin cuenta |
 
-## Errores / limitaciones
+## Errores frecuentes
 
 | Situación | Lo que ves |
 |---|---|
 | Email que no existe | «Usuario no encontrado (email o userId)» |
 | Nombre repetido | «Ya existe un equipo con ese nombre» |
 | Acción de capitán sin serlo | «Solo el capitán del equipo puede hacer esto» |
-| Fallo al cargar | Mensaje de error con «Reintentar» (ya no una lista vacía) |
+| Fallo al cargar | Mensaje de error con «Reintentar» |
 
-Además:
+El capitán no puede salir de su propio equipo ni ceder la capitanía. Los torneos de formato «Por equipos» no se pueden alimentar desde la web ([Torneos](tournaments.md)).
 
-- El capitán no puede salir de su propio equipo ni ceder la capitanía.
-- Al añadir por email se sabe si esa cuenta existe: la acción está reservada al capitán.
-- Los torneos por equipos (formato `teams`) siguen sin poder alimentarse desde la web ([Torneos](tournaments.md)).
-
-## Estado actual
-
-**FUNCIONA ACTUALMENTE**: gestión completa del equipo y de sus bots desde la web, y uso en el formulario de batalla. Comprobado con un navegador real. **PENDIENTE**: ceder la capitanía y los torneos por equipos desde la web.
-
-## Documentación relacionada
-
-- Usuario: [Batallas](battles.md), [Bots](bots.md), [Torneos](tournaments.md)
-- Técnica: [api.md — equipos](../technical/api.md#recursos-por-área), [tournaments.md — formatos](../technical/tournaments.md#formatos)
-- Deuda: [TD-011](../roadmap/technical-debt.md#td-011)
+Siguiente: [Batallas](battles.md) · [Torneos](tournaments.md).

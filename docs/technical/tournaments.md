@@ -9,11 +9,11 @@ Un torneo pasa por estos pasos:
 3. El organizador cierra las inscripciones: las versiones pasan a `frozen` y se revelan las semillas.
 4. El `tournament-worker` genera el calendario, juega las batallas (oficiales), resuelve las series y el cuadro, y actualiza el rating Elo y la clasificación.
 
-**Hoy es la única vía de la web que llega a jugar batallas**, porque usa el ruleset `mvp-default` de la BD. Aun así:
+Las batallas de un torneo las juega el `tournament-worker` con el ruleset elegido al crearlo y, desde el PR #201, con una copia inmutable de las reglas (ADR-022). Notas vigentes:
 
-- necesita bots publicados, que el build no produce ([TD-001](../roadmap/technical-debt.md#td-001));
-- sus batallas las ejecuta el worker con el código de cada bot en contenedores (verificado en aislado; activación en producción pendiente, [TD-002](../roadmap/technical-debt.md#td-002));
-- siempre en `mvp-arena-01`, porque la web no envía pool de mapas ([TD-015](../roadmap/technical-debt.md#td-015));
+- necesita bots publicados y elegibles (el build en el sandbox real los produce: [TD-001](../roadmap/technical-debt.md#td-001), cerrada);
+- sus batallas las ejecuta el worker con el código de cada bot en contenedores ([TD-002](../roadmap/technical-debt.md#td-002), cerrada);
+- sin pool de mapas se juega en `mvp-arena-01`: la API y el scheduler soportan el `mapPool` (`apps/tournament-worker/src/scheduler.ts:108-134`), pero la web no lo envía ([TD-015](../roadmap/technical-debt.md#td-015));
 - la temporada de la clasificación tiene ya una sola fuente (`STAT_SEASON`, ver [abajo](#clasificación-y-rating)).
 
 ## Índice
@@ -66,7 +66,7 @@ Generadores puros en `apps/tournament-worker/src/formats.ts`:
 - `league` y `round_robin`: todos contra todos.
 - `single_elimination` y `double_elimination`: cuadros.
 - `swiss`: rondas suizas.
-- `teams`: por equipos; **necesita `bots.team_id`**, que ningún endpoint ni pantalla rellena tras crear el bot ([TD-011](../roadmap/technical-debt.md#td-011)). Su clasificación propia la da `GET /tournaments/{id}/team-standings`; en cualquier otro formato responde `409 not_a_team_tournament`.
+- `teams`: por equipos; usa `bots.team_id`, que se asigna con `POST /teams/{teamId}/bots` (`addTeamBot`) o al crear el bot ([TD-011](../roadmap/technical-debt.md#td-011), cerrada); con reglas NvN exige exactamente N bots por equipo al cerrar inscripciones (`apps/api/src/routes/tournaments.ts`, `assertRostersFitRules`). Su clasificación propia la da `GET /tournaments/{id}/team-standings`; en cualquier otro formato responde `409 not_a_team_tournament`.
 
 Las series de varios juegos (`rounds_per_pairing`) se desempatan así: victorias en la serie, después puntuación agregada y después mejor *seed*, que es el orden de inscripción.
 
@@ -140,8 +140,8 @@ Tablas `tournaments`, `entries` (`UNIQUE(tournament_id, bot_id)`, FK a versión 
 ## Estado actual
 
 - **FUNCIONA ACTUALMENTE**: crear, inscribir y cerrar (con `organizer`); generación del calendario; ejecución automática; cuadro; Elo; commit-reveal de semillas. Verificado de punta a punta en navegador real en un entorno aislado, con versiones publicadas forzadas en la BD (auditoría).
-- **PARCIAL**: formato `teams` (sin forma de asignar bots a equipos).
-- **PENDIENTE**: pool de mapas y resto de parámetros en la web, clasificación por torneo en la web, inscripción de versiones nuevas tras un torneo.
+- **PARCIAL**: los formatos distintos de `single_elimination` solo tienen pruebas a nivel de generador (`formats.test.ts`); una batalla `failed` bloquea el cierre ([TD-015](../roadmap/technical-debt.md#td-015)); CTF no se admite en torneos ([TD-070](../roadmap/technical-debt.md#td-070)).
+- **PENDIENTE**: selector de pool de mapas y resto de parámetros en la web, clasificación por torneo en la web, inscripción de versiones nuevas tras un torneo.
 
 ## Documentación relacionada
 

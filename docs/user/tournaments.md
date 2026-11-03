@@ -1,84 +1,72 @@
 # Torneos
 
-## Resumen
+Un torneo enfrenta a los bots inscritos según un **formato** (liga, eliminatoria, suizo…). Sus batallas son **oficiales**: son las únicas que cambian el [ranking](rankings.md). Crear un torneo y cerrar sus inscripciones exige el rol **organizador**; cualquier jugador puede inscribir sus bots con una versión publicada.
 
-Un torneo enfrenta a los bots inscritos según un formato (liga, eliminatoria, suizo…). Sus batallas son **oficiales**: cuentan para el rating. Crear un torneo y cerrar sus inscripciones exige el rol **organizador**; cualquier usuario puede inscribir sus bots publicados.
+## Cómo funciona
 
-Hoy es la **única vía de la web que llega a jugar batallas**, pero:
+1. Un **organizador** crea el torneo con su formato y su modo. Nace con las **inscripciones abiertas**.
+2. El dueño de cada bot lo **inscribe** con una de sus versiones publicadas y elegibles (con su equipamiento).
+3. Al **cerrar las inscripciones**, las versiones inscritas quedan **congeladas** (y se revelan las semillas), la plataforma genera el calendario y **juega las batallas sola**.
+4. Cada batalla terminada actualiza el rating de sus bots. Al acabar el último enfrentamiento, el torneo termina.
 
-- necesita bots publicados, que no se pueden obtener ([TD-001](../roadmap/technical-debt.md#td-001));
-- se juega siempre en el mapa `mvp-arena-01` ([TD-015](../roadmap/technical-debt.md#td-015));
-- los vehículos los conduce el código de cada bot inscrito, en su contenedor; en este servidor la ejecución aún no está activada y las batallas quedan en cola ([TD-002](../roadmap/technical-debt.md#td-002)).
-
-## Índice
-
-- [Ver torneos](#ver-torneos)
-- [Crear un torneo](#crear-un-torneo)
-- [Inscribir un bot](#inscribir-un-bot)
-- [Cerrar inscripciones](#cerrar-inscripciones)
-- [Seguir el torneo](#seguir-el-torneo)
-- [Errores / limitaciones](#errores--limitaciones)
-- [Estado actual](#estado-actual)
-- [Documentación relacionada](#documentación-relacionada)
+Estados de un torneo: borrador, inscripciones abiertas, inscripciones cerradas, en juego, terminado o cancelado.
 
 ## Ver torneos
 
-**FUNCIONA ACTUALMENTE.** «Torneos» lista todos los torneos con nombre, formato, modo y estado, en palabras («Eliminación directa», «Deathmatch por equipos», «inscripciones abiertas»). Pulsa el nombre para abrir el detalle.
+«Torneos» lista todos los torneos con su nombre, formato, modo y estado, en palabras («Eliminación directa», «Deathmatch por equipos», «inscripciones abiertas»). Pulsa el nombre para abrir el detalle.
 
-## Crear un torneo
+## Formatos
 
-**PARCIAL: sólo organizadores.** En «Crear torneo»:
+| Formato | Cómo se juega |
+|---|---|
+| Liga | Todos contra todos. |
+| Todos contra todos (liguilla) | Todos contra todos. |
+| Eliminación directa | Cuadro: quien pierde, sale. |
+| Doble eliminación | Cuadro con repesca: hay que perder dos veces. |
+| Sistema suizo | Rondas en las que se empareja a bots con resultados parecidos. |
+| Por equipos | Clasificación por equipos. |
+
+Un enfrentamiento puede tener varias batallas. En el modo por equipos, los bots juegan en el bando de su equipo.
+
+## Crear un torneo (organizadores)
+
+En «Crear torneo»:
 
 | Campo | Opciones |
 |---|---|
-| **Nombre** | Hasta 64 caracteres |
-| **Formato** | Liga, Todos contra todos (liguilla), Eliminación directa, Doble eliminación, Sistema suizo, Por equipos |
-| **Modo** | Los 4 modos ([Modos de juego](game-modes.md)) |
-| **Ruleset** | Texto libre; déjalo en `mvp-default` |
+| **Nombre** | Hasta 64 caracteres. |
+| **Formato** | Los de la tabla de arriba. |
+| **Modo** | Los cuatro modos ([Modos de juego](game-modes.md)). |
+| **Ruleset** | Las reglas del torneo; déjalo en `mvp-default` salvo que sepas lo que haces. |
 
-Sin el rol verás «Requiere rol organizer» después de pulsar crear. El torneo se crea con las inscripciones abiertas. No se pueden configurar desde la web el mapa, el presupuesto, las fechas ni el número de partidas por enfrentamiento.
+El formulario se muestra a todos, pero sin el rol verás «Requiere rol organizer» al pulsar. Desde la web no se configuran el conjunto de mapas, el presupuesto, las fechas ni el número de partidas por enfrentamiento; por defecto el torneo se juega en el mapa de serie `mvp-arena-01`. La plataforma guarda una **copia inmutable de las reglas** del torneo al crearlo: aunque un conjunto de reglas cambie después, el torneo conserva las suyas.
 
 ## Inscribir un bot
 
-**PARCIAL.** En el detalle del torneo, **«Inscribir bot»** → elige uno de tus bots → **«Inscribir»**. Se inscribe su **última versión publicada**, junto con su loadout, y ambos quedan fijados para el torneo.
+En el detalle del torneo, **«Inscribir bot»** → elige uno de tus bots → **«Inscribir»**. Se inscribe una **versión publicada y elegible**, junto con su equipamiento, y ambos quedan fijados para el torneo.
 
 | Mensaje | Causa |
 |---|---|
-| «X inscrito (vN)» | Correcto |
-| «Ese bot no tiene ninguna versión publicada» | Hoy, siempre ([TD-001](../roadmap/technical-debt.md#td-001)) |
-| «El bot ya está inscrito en este torneo» | Ya inscrito |
-| «Las inscripciones no están abiertas» | Torneo cerrado |
+| «X inscrito (vN)» | Correcto. |
+| «Ese bot no tiene ninguna versión publicada» | Publica primero una versión ([Bots](bots.md)). |
+| «El bot ya está inscrito en este torneo» | Ya inscrito. |
+| «Las inscripciones no están abiertas» | Torneo cerrado. |
+| La versión «no es elegible» | Su equipamiento ya no cumple la validación: crea una versión nueva ([Bots](bots.md#publicar)). |
 
-## Cerrar inscripciones
+## Cerrar inscripciones (organizadores)
 
-**PARCIAL: sólo organizadores.** El botón **«Cerrar inscripciones»** se ve siempre, pero sin el rol responde «Requiere rol organizer». Al cerrar:
-
-1. Verás «Inscripciones cerradas: versiones congeladas y semillas reveladas».
-2. Las versiones inscritas quedan **congeladas** (`frozen`).
-3. La plataforma genera el calendario y empieza a jugar sola.
+El botón **«Cerrar inscripciones»** se ve siempre, pero sin el rol responde «Requiere rol organizer». Al cerrar verás «Inscripciones cerradas: versiones congeladas y semillas reveladas».
 
 ## Seguir el torneo
 
-**PARCIAL.**
+- **Detalle**: la sección «Batallas» se refresca sola. Tiene el **cuadro** por rondas y el **historial**, con enlaces «Ver en directo» o «Ver replay». Los bots aparecen por su nombre y la versión que juega.
+- **«Ver cuadro»**: por ronda, cada partido con su estado (pendiente, en juego, terminado, falló) y el ganador. Es de sólo lectura.
+- **Directo y replay**: los enlaces llevan al [visor](viewer.md) y al [reproductor](replays.md). El directo de un torneo va con un retardo de 30 segundos, salvo las batallas marcadas como visibles (la final).
+- **Clasificación**: el [ranking](rankings.md) suma los resultados de todos los torneos de la temporada en cada modo.
 
-- **Detalle**: la sección «Batallas» se refresca cada 5 s. Tiene **Cuadro** por rondas e **Historial**, con enlaces «Ver en directo» o «Ver replay». Los bots aparecen por su nombre y la versión que juega.
-- **«Ver cuadro»** (`#/tournaments/<id>/bracket`): por ronda, «Partido 1», «Partido 2»…, su estado (pendiente, en juego, terminado, falló) y el ganador de cada enfrentamiento. Es de sólo lectura. El ganador sale como «bot» y su identificador abreviado: el cuadro aún no trae los nombres.
-- **Clasificación del torneo**: no se muestra. El ranking general está en [Clasificaciones](rankings.md), que hoy sale vacío.
-- **Directo y replay**: los enlaces llevan al visor y al reproductor, que hoy no se dibujan ([TD-009](../roadmap/technical-debt.md#td-009)).
+## Cosas a tener en cuenta
 
-## Errores / limitaciones
+- Si una batalla de un torneo falla por un problema técnico, su enfrentamiento puede quedarse sin cerrar y el torneo sin terminar.
+- Una batalla de torneo de captura de bandera detenida por el límite técnico de la prórroga no tiene resultado deportivo ([Modos de juego](game-modes.md#captura-la-bandera)).
 
-- **Versiones congeladas**: después de un torneo, tu versión queda `frozen` y no puede inscribirse en otro. Una versión nueva tampoco se puede publicar hoy.
-- **Formato `teams`**: no se puede usar en la práctica, porque no hay forma de asignar bots a equipos ([TD-011](../roadmap/technical-debt.md#td-011)).
-- **Carreras**: cerrar inscripciones dos veces a la vez puede dar un error interno ([TD-013](../roadmap/technical-debt.md#td-013)).
-- **Batalla fallida**: si una batalla del torneo falla por un problema técnico, su enfrentamiento puede quedarse sin cerrar ([TD-015](../roadmap/technical-debt.md#td-015)).
-
-## Estado actual
-
-**PARCIAL**: el circuito completo funciona para un organizador con bots publicados; hoy no hay bots publicados.
-
-## Documentación relacionada
-
-- Usuario: [Batallas](battles.md), [Clasificaciones](rankings.md), [Equipos](teams.md), [Replays](replays.md)
-- Técnica: [tournaments.md](../technical/tournaments.md)
-- Deuda: [TD-015](../roadmap/technical-debt.md#td-015)
+Siguiente: [Ranking](rankings.md) · [Batallas](battles.md).

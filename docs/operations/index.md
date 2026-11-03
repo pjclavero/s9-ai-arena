@@ -4,9 +4,24 @@
 
 Manual del **operador** de una instalación de S9 AI Arena: instalar desde una máquina
 nueva, configurar, arrancar, comprobar, copiar y restaurar, actualizar, apagar y
-diagnosticar. Todo lo que aquí se afirma está contrastado con el código de `main`
-(`27f70bb`) o medido en un entorno aislado; lo que no funciona hoy se dice y se enlaza
-a la deuda técnica.
+diagnosticar. Lo que aquí se afirma se contrastó con el código de `main` en `27f70bb` (octubre de 2026)
+o medido en un entorno aislado en la fecha de cada tabla «Verificación»; la reorganización del
+2026-11-02 (`main` `e3bf2fa`) sólo tocó la estructura y los enlaces. Lo que no funciona hoy se dice
+y se enlaza a la deuda técnica.
+
+## Operador del servidor y administrador del juego
+
+Son dos papeles distintos y este manual es **sólo para el primero**:
+
+| | Operador del servidor | Administrador dentro del juego |
+|---|---|---|
+| Qué es | quien instala y mantiene la máquina y los contenedores | usuario con rol `admin` (u `organizer`, `moderator`) en la web |
+| Qué hace | instalación, configuración, primer arranque, copias y restauración, actualizaciones, red, diagnóstico, observabilidad, streaming, apagado | gestiona roles, mapas, equipos, torneos y auditoría desde la web |
+| Cómo | línea de comandos del host (este manual) | la interfaz web ([../user/administration.md](../user/administration.md)) |
+
+Lo que no es de este manual: cómo jugar ([../user/index.md](../user/index.md)), cómo está construido el sistema
+([../technical/index.md](../technical/index.md)), cómo se prueba y se desarrolla
+([../development/index.md](../development/index.md)) y la historia ([../history/index.md](../history/index.md)).
 
 ## Índice
 
@@ -39,6 +54,7 @@ documenta [TD-023](../roadmap/technical-debt.md#td-023).
 | Descargar las imágenes de runtime de los bots antes de activar la ejecución | [installation.md](installation.md#imágenes-de-runtime-de-los-bots) | host |
 | Publicar detrás de un proxy inverso / TLS | [networking.md](networking.md) | host + proxy |
 | Retransmitir (`/broadcast`, streamer, RTMPS, grabación MP4) y saber qué está verificado | [streaming.md](streaming.md) | host (perfil `streaming`) |
+| Ver métricas, alertas y logs | [observability.md](observability.md) | host (perfil `observability`) |
 | Comprobar las copias | [backup.md](backup.md) | host |
 | Restaurar | [restore.md](restore.md) | host nuevo o aislado |
 | Saber si la instalación está lista | [readiness.md](readiness.md) | host |
@@ -105,6 +121,7 @@ documenta [TD-023](../roadmap/technical-debt.md#td-023).
 - Decisiones: [../adr/index.md](../adr/index.md) (ADR-010 copias, ADR-016 identidad de build,
   ADR-017 contrato de release, ADR-018 semántica del escaneo).
 - Runbooks anteriores (históricos, no vigentes): [../history/index.md](../history/index.md#operaciones).
+- Recuperación total (histórico, sólo lo lee un test; no seguir): [../recuperacion.md](../recuperacion.md). El procedimiento vigente es [restore.md](restore.md).
 
 ## Verificación
 

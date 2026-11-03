@@ -221,7 +221,7 @@ El presupuesto en servidor es el del ruleset `mvp-default` (1000), venga el load
 
 ## Efecto real en batalla (ACTIVE / PARTIAL / FUTURE)
 
-Recalibrado en UX-01 (la auditoría FC-C sobre `0b8c12b` se midió en el camino `/run`, que ya no ejecuta batallas). Fuente única: `packages/module-catalog/effect-status.ts`, que leen el `LoadoutEditor` (insignias) y esta documentación. El test `effect-status.test.ts` exige que **toda** propiedad de juego del catálogo esté clasificada.
+Recalibrado en UX-01 (la auditoría FC-C sobre `0b8c12b` (octubre de 2026) se midió en el camino `/run`, que ya no ejecuta batallas). Fuente única: `packages/module-catalog/effect-status.ts`, que leen el `LoadoutEditor` (insignias) y esta documentación. El test `effect-status.test.ts` exige que **toda** propiedad de juego del catálogo esté clasificada.
 
 **Qué llega del loadout al motor:**
 

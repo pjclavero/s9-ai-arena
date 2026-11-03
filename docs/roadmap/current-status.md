@@ -2,142 +2,172 @@
 
 ## Resumen
 
-Esta es la **fuente única del estado del proyecto**. Sustituye a los antiguos `docs/estado-proyecto.md`
-y `docs/ESTADO_ACTUAL.md`, que quedan archivados en `docs/history/status/` y ya no son vigentes.
+Esta es la **fuente única del estado actual del proyecto**. Solo contiene el estado de hoy; lo anterior (versiones candidatas previas, SHA antiguos, el
+estado de la auditoría de octubre) está archivado en [../history/status/](../history/status/) y no es vigente.
 
-Hay dos planos y no se mezclan:
-- **Código (`main`):** contiene el cierre funcional (PR #152), el *Production Readiness Closure* (PR #158) y **RC2** (cierre del bloqueo del Docker proxy de RC1: red dedicada `bot-control`, firewall de host como código, proxy con control de cliente, allowlist de imágenes y propiedad, y el E2E contenedor → proxy obligatorio). `main` está protegida: no se fusiona nada si falla el golden path real de `functional-e2e`. Informes: [functional-closure-report.md](../development/functional-closure-report.md) y [production-readiness-report.md](../development/production-readiness-report.md).
-- **Producción:** no ha cambiado. Nada de lo fusionado se ha desplegado todavía.
+Hay dos planos y no se mezclan: lo que contiene `main` y lo que corre en producción.
 
 ```
-MAIN:           6612868 (RC2, PR #164, rama integration/rc2-docker-proxy sobre 7cf88dd); CI de main en verde
-EN CURSO:       TD-062 (frontera de privilegio del proxy) en la rama fix/td-062-proxy-privilege-boundary, pendiente de REVIEW
-LAST VERIFIED:  2026-10-21 (RC2: CI del PR en verde con container-proxy-e2e; protección de rama con 4 checks obligatorios)
-RUNTIME:        sin cambios desde la auditoría: perfil `production`, 12 servicios, imágenes de 3 commits
-VEREDICTO CÓDIGO:     el recorrido de usuario completo funciona y lo exige la CI (golden path en navegador real)
-VEREDICTO PRODUCCIÓN: NO funcional como producto hasta desplegar main (fase Release Candidate)
-READINESS:      PRODUCTION_READY (código y gobernanza); despliegue pendiente de autorización del operador
+MAIN_SHA:        e3bf2fa83650559267ef269994c667fabfb29e46  (origin/main, merge del PR #225)
+REVISADO:        2026-11-02
+CÓDIGO:          main protegida; CI de main = 31 check-runs, 30 success + 1 neutral, 0 pendientes
+DESPLEGADO:      RC5.5 a1a6c4e (según el registro del operador)
+MAIN VS PROD:    111 commits por delante de producción, sin desplegar
+MOTOR / API:     motor 0.4.0 · contrato OpenAPI 0.12.0 · migraciones 001–016
+P0 / P1 / P2:    sin hallazgos NUEVOS en la revisión de integración del 2026-11-02;
+                 el registro de deuda conserva 3 P0, 7 P1 y 13 P2 heredados de octubre
+                 (recuento del 2026-11-02, ver más abajo), pendientes de re-priorización por el operador
+P3 CONOCIDOS:    7 hallazgos de la revisión (ver más abajo); el registro tiene 18 P3 y 4 P4 abiertos
 ```
-
-Informe del cierre: [functional-closure-report.md](../development/functional-closure-report.md).
 
 ## Índice
 
+- [Código y despliegue](#código-y-despliegue)
+- [Diferencia entre main y producción](#diferencia-entre-main-y-producción)
+- [Prioridades abiertas](#prioridades-abiertas)
 - [Functional](#functional)
 - [Partial](#partial)
 - [Blocked](#blocked)
-- [Operations](#operations)
 - [Security](#security)
-- [Known issues](#known-issues)
 - [Next priorities](#next-priorities)
 - [Documentación relacionada](#documentación-relacionada)
 - [Verificación](#verificación)
 
+## Código y despliegue
+
+| Plano | Estado | Cómo se sabe |
+|---|---|---|
+| `main` | `e3bf2fa`. Protegida: cuatro checks obligatorios (`semaforo`, `functional-e2e / golden`, `functional-e2e / docker-e2e`, `functional-e2e / container-proxy-e2e`), también para administradores. CI del commit: 31 check-runs, 30 `success` y 1 `neutral`, ninguno pendiente | `gh api repos/pjclavero/s9-ai-arena/branches/main/protection`; `gh api …/commits/e3bf2fa…/check-runs` (2026-11-02) |
+| Producción | RC5.5, commit `a1a6c4e`. Es ascendiente de `main`; contiene el cierre funcional (PR #152), el *Production Readiness Closure* (PR #158), el cierre del proxy de Docker (PR #164) y la frontera de privilegio del proxy (PR #167) | registro del operador; `git merge-base --is-ancestor`. El repositorio no puede comprobar lo que corre en producción |
+
+## Diferencia entre main y producción
+
+`main` lleva 111 commits por delante de RC5.5. Nada de esto está desplegado:
+
+| Bloque | PR | Qué cambia para el usuario o el operador |
+|---|---|---|
+| Motor 0.4.0 y reglas oficiales | #201 | Reglas de batalla con presets y copia inmutable por batalla y torneo, `maxRespawns`, desempates por familia, CTF con prórroga y salvaguarda técnica de 20 min, migración `016_battle_rules` ([ADR-022](../adr/ADR-022-motor-0-4-0-reglas-ctf-prorroga.md)). El procedimiento de despliegue y de vuelta atrás está en [upgrades.md](../operations/upgrades.md) |
+| Ayuda | #207, #210 | Centro de Ayuda integrado y sin conexión, generado desde las fuentes de verdad; componente ⓘ de ayuda contextual |
+| UX | #209 | Navegación agrupada por rol, «Mis bots» y equipos maestro-detalle, replays con filtros en el servidor |
+| Streaming | #211 | Director de torneo, vídeo limpio y auditoría real de la emisión ([streaming.md](../operations/streaming.md)) |
+| Clasificación | #220 | La clasificación de temporada y modo agrega todos los torneos |
+| Paginación | #221 | Cursor con precisión completa y clave total; un cursor forjado da 400, no 500 |
+| Robustez de pruebas | #208, #214, #225 | Concurrencia de `initPhysics`, tests que no dejan procesos huérfanos, sin nombres internos en comentarios |
+
+## Prioridades abiertas
+
+**P0 / P1 / P2:** la revisión de integración del 2026-11-02 no encontró hallazgos nuevos de estas prioridades. El [registro de deuda](technical-debt.md) conserva, sin re-priorizar, 3 P0, 7 P1 y 13 P2 heredados de la auditoría de octubre, pendientes de que el operador decida si siguen en esa prioridad ahora que el producto funciona en `main`. Recuento del registro a 2026-11-02, contando como abiertas las que no están CERRADAS (ABIERTA, MEJORADA o PARCIAL):
+
+| Prioridad | Abiertas en el registro |
+|---|---|
+| P0 | 3 (TD-006, TD-007, TD-008) |
+| P1 | 7 (TD-012, TD-013, TD-015, TD-016, TD-025, TD-031, TD-033) |
+| P2 | 13 |
+| P3 | 18 |
+| P4 | 4 |
+
+La deuda heredada conserva la prioridad con la que se registró y no es un hallazgo nuevo. Las P0 y las P1 ABIERTAS o MEJORADAS (tipo operación o seguridad del host) son estas; TD-013, TD-015 y TD-016 (P1, PARCIAL) y las P2 están en el registro:
+
+| Id | Prioridad original | Estado | Resumen |
+|---|---|---|---|
+| [TD-006](technical-debt.md#td-006) | P0 | MEJORADA | confirmar con `runtime-drift-scan` que producción corre un único commit con `/version` |
+| [TD-007](technical-debt.md#td-007) | P0 | MEJORADA | alerta del backup probada, snapshot de la VM y apagado limpio |
+| [TD-008](technical-debt.md#td-008) | P0 | ABIERTA | nombres internos todavía en código, tests, CI y configuración (los documentos vigentes están limpios) |
+| [TD-012](technical-debt.md#td-012) | P1 | ABIERTA | registro abierto, recuperación de cuenta inoperante, sin pantallas de 2FA ni sesiones |
+| [TD-025](technical-debt.md#td-025) | P1 | ABIERTA | restauración sin ensayo reciente |
+| [TD-031](technical-debt.md#td-031) | P1 | ABIERTA | imágenes de servicio con vulnerabilidades HIGH/CRITICAL |
+| [TD-033](technical-debt.md#td-033) | P1 | ABIERTA (aceptada) | el anfitrión de bots tiene credenciales de BD en la red `arena` |
+
+**P3 conocidos** (cada uno comprobado en el código de `main`):
+
+| Id | Qué ocurre | Dónde |
+|---|---|---|
+| [TD-067](technical-debt.md#td-067) | `runCursorQuery` atribuye al cursor errores de conversión que vienen de los filtros | `apps/api/src/serialize.ts:168-175` |
+| [TD-072](technical-debt.md#td-072) | carrera en la spec de navegador `review-h3-perimeter` (sin reproducir) | `tests/browser/specs/review-h3-perimeter.spec.ts` |
+| [TD-068](technical-debt.md#td-068) | `listBots` puede devolver páginas más cortas que `limit` | `apps/api/src/routes/bots.ts:205-223` |
+| [TD-069](technical-debt.md#td-069) | el comparador del desempate por enfrentamientos directos no es transitivo | `apps/tournament-worker/src/results.ts:275-285` |
+| [TD-071](technical-debt.md#td-071) | el filtro `result=aborted` no incluye `technical_limit` | `apps/api/src/services/replay-list.ts:222-226` |
+| [TD-070](technical-debt.md#td-070) | CTF en torneos: bandos A/B frente a red/blue; se rechaza con motivo | `apps/api/src/services/battle-rules.ts:353-361` |
+| [TD-066](technical-debt.md#td-066) | streaming: la clave va en el argv de FFmpeg, no hay retención de MP4 ni alerta, y YouTube está BLOCKED | `apps/streamer/src/ffmpeg.ts:115-118` |
+
 ## Functional
 
-**FUNCIONA ACTUALMENTE (integración, entorno aislado).** Verificado con tests que se ponen rojos con su mutación y con el golden path en Chromium real, sin mocks de servicios de S9:
+**FUNCIONA EN `main`.** Lo ejerce la CI obligatoria (golden path en navegador real, sin mocks de servicios de S9) y las suites de cada área:
 
-- **Recorrido completo de usuario** (golden path, `tests/browser/specs/golden-path.spec.ts`): registro → bot con código pegado → build en el sandbox real (contenedor por `s9-docker-proxy`) → `published` → segundo bot → equipo → mapa (importar, guardar, F5, reabrir, publicar) → batalla en el mapa propio → la ejecuta el `tournament-worker` con el **artefacto firmado** de la versión exacta de cada bot → visor en directo → `finished` con ganador → estadísticas → replay reproducido en la web. Los bots son distinguibles (uno dispara, otro nunca): el resultado prueba que corrió SU código.
-- **Bots y versionado:** sandbox real del build ([bots.md](../technical/bots.md)); versión inmutable en BD; historial, diff, clonado y procedencia ([bot-versioning.md](../technical/bot-versioning.md)).
-- **Batallas:** una sola autoridad de ejecución (reserva atómica + lease + cierre exactamente una vez); validación modo ↔ ruleset ↔ mapa en la API; resultado `battle-result/v1`, outcome por bot, CPU real, replay verificable ([battles.md](../technical/battles.md)).
-- **Mapas, equipos y rulesets:** editor que guarda y reabre desde la API, borradores privados, equipos completos, rulesets servidos por la API ([maps.md](../technical/maps.md), [game-modes.md](../technical/game-modes.md)).
-- **Web:** estados de error comunes (timeout, red, 403/404/5xx, API caída al arrancar), 404, reproductor y visor con Phaser real, resultados de batalla ([frontend.md](../technical/frontend.md)).
-- **Ranking:** temporada activa única entre API y worker (TD-029).
-- **Motor, cuentas, cola de trabajos, backup y CI principal:** como en la auditoría ([engine.md](../technical/engine.md), [backup.md](../operations/backup.md)).
+- **Recorrido completo del jugador** (`tests/browser/specs/golden-path.spec.ts`): registro, bot con código propio, build en el sandbox real, publicación, equipo, mapa (importar, guardar, reabrir, publicar), batalla en el mapa propio ejecutada con el artefacto firmado de la versión exacta de cada bot, visor en directo, resultado con estadísticas y replay reproducido en la web.
+- **Bots y versionado:** versión inmutable, historial, diff, clonado y procedencia; plantillas Python y JavaScript; SDK reales en `sdks/python` y `sdks/javascript` ([bots.md](../technical/bots.md), [bot-versioning.md](../technical/bot-versioning.md)).
+- **Batallas:** modos `deathmatch`, `team_deathmatch`, `capture_the_flag` y `zone_control`; equipos hasta 4 contra 4; validación modo, reglas y mapa en la API; una sola autoridad de ejecución con cierre exactamente una vez; diagnóstico por bot ([battles.md](../technical/battles.md), [game-modes.md](../technical/game-modes.md)).
+- **Torneos:** los seis formatos se aceptan y se ofrecen en la web; pool de mapas; calendario generado al cerrar inscripciones ([tournaments.md](../technical/tournaments.md)).
+- **Ranking:** Elo con temporada activa única entre API y worker; clasificación de temporada agregada entre torneos.
+- **Replays y directo:** lectura gobernada por una sola autoridad (propios, equipo, staff; públicos solo con la capability); visor con zoom, minimapa y móvil ([replays.md](../technical/replays.md)).
+- **Mapas y equipos:** editor visual que guarda en el servidor, borradores privados, equipos completos.
+- **Ayuda:** Centro de Ayuda y onboarding en la web.
+- **Seguridad de la ejecución:** sandbox de bots sin `docker.sock` ni `privileged`; proxy de Docker con ámbito, red dedicada y firewall como código; protección de rama de `main` ([security.md](../technical/security.md)).
 
 ## Partial
 
-**PARCIAL:**
+Detalle completo, con evidencia, en [pending-features.md](pending-features.md#parciales).
 
-| Área | Qué funciona | Qué no | Deuda |
+| Área | Qué funciona | Qué falta | Deuda |
 |---|---|---|---|
-| Build de bots | sandbox real en aislado, en navegador y en CI; dos relojes de arranque (plataforma / bot); desde RC2, build y batalla desde contenedores por el proxy en el stack Compose real (CI) | proxy del host sin operar en producción (pasos de RC2 en [upgrades.md](../operations/upgrades.md#rc2-proxy-de-docker-red-dedicada-y-firewall)) | [TD-001](technical-debt.md#td-001), [TD-034](technical-debt.md#td-034) (cerrada en la integración) |
-| Equipamiento | catálogo, validación, persistencia; la UI dice qué campos tienen efecto | efecto parcial en batalla | [TD-016](technical-debt.md#td-016) |
-| Torneos | `round_robin` con el código real de los bots (worker integrado) | `mapPool`; `failed` bloquea el cierre | [TD-015](technical-debt.md#td-015) |
-| Visor / emisión | visor en directo con batalla viva (aislado); `/broadcast` y streamer verificados en Chromium y FFmpeg reales en local (2026-11-02) | emisión sin E2E en CI ni en producción (perfil `streaming` no desplegado) | [streaming.md](../operations/streaming.md) |
-| Web | estados y errores comunes en todas las páginas de A, C y D | onboarding / enlace al SDK | [TD-022](technical-debt.md#td-022) |
-| Administración | web: roles, mapas, equipos, auditoría | backup, restore, readiness y drift sólo por SSH | [TD-023](technical-debt.md#td-023) |
-| Instalación / readiness | compose preparado para la ejecución real | instalación limpia no reproducible; readiness no desplegado | [TD-024](technical-debt.md#td-024) |
-| Recuperación | drill de restore de agosto; `restore.sh --snapshot` | sin ensayo reciente | [TD-025](technical-debt.md#td-025) |
+| Espectador y replays públicos | código y capabilities, apagadas por defecto | decidir la activación y cumplir las condiciones del gate | [pending-features.md](pending-features.md#parciales) |
+| Torneos | seis formatos, `mapPool` | E2E de los formatos distintos de `single_elimination`; una batalla `failed` bloquea el cierre; CTF no admitido | [TD-015](technical-debt.md#td-015), [TD-070](technical-debt.md#td-070) |
+| Equipamiento | catálogo, validación, persistencia | campos del catálogo sin efecto en el motor (`effect-status.ts`) | [TD-016](technical-debt.md#td-016) |
+| Streaming | cadena local verificada | YouTube real, clave fuera del argv, retención, alerta, despliegue | [TD-066](technical-debt.md#td-066) |
+| Cuenta | login con TOTP, API de 2FA y sesiones | pantallas; la recuperación no entrega el token | [TD-012](technical-debt.md#td-012) |
+| Administración web | roles, auditoría, hallazgos, catálogo, estado | backup, restore, readiness y drift solo por CLI | [TD-023](technical-debt.md#td-023) |
+| Observabilidad | perfil con 11 alertas, entre ellas las del backup | desplegarlo y probar las alertas | [TD-007](technical-debt.md#td-007) |
 
 ## Blocked
 
-**PENDIENTE / BLOQUEADO en producción.** Los tres bloqueos de la auditoría (publicar un bot, crear una batalla, ejecutar código de usuario) están resueltos **en `main`**, no en producción. Para verlos en producción hace falta, con una ventana autorizada por el operador (fase Release Candidate):
+**BLOQUEOS REALES:**
 
-1. Construir las imágenes de `main` con su identidad de build.
-2. Generar `artifact_verify_key.pem` (`init-secrets.sh` lo deriva de la clave de firma) y operar el `s9-docker-proxy` en el host con la configuración de RC2: runtimes por digest, firewall, unidad nueva con bind en `10.89.250.1` ([upgrades.md](../operations/upgrades.md#rc2-proxy-de-docker-red-dedicada-y-firewall)) **instalada como artefacto de root** (TD-062: instalador desde un clon de root fijado al SHA, bundle + allowlist en `/etc`, VERDE con el preflight instalado; [upgrades.md](../operations/upgrades.md#td-062)). El chown del árbol ([TD-057](technical-debt.md#td-057)) va **después**, nunca antes.
-3. Recrear `api`, `tournament-worker` y `bot-build-worker` (más `backup`/`postgres`/`queue` según el contrato de despliegue) y aplicar las migraciones `012_bot_versioning` y `013_battle_claim`.
-
-## Operations
-
-**Runtime** (medido en la auditoría; sin cambios):
-
-| Commit | Servicios | Identidad de build |
-|---|---|---|
-| `4d469dc` | 9 servicios de aplicación | sin `BUILD_COMMIT` ni `/version` |
-| `0daa500` | `tournament-worker` | con `BUILD_COMMIT` |
-| `ad0a42b` | `backup` | con `BUILD_COMMIT`; bloque versionado aparte a propósito |
-
-PostgreSQL 16.14 y Redis 7.4.9 están fijados por digest. Ver [TD-006](technical-debt.md#td-006).
-
-- **Perfil:** `production`, con 12 servicios ([docker.md](../operations/docker.md)). `map-service` sigue en él ([TD-017](technical-debt.md#td-017)).
-- **Despliegue de la integración:** exige recrear `api`, `bot-build-worker` y `tournament-worker` (lo mide `infrastructure/tests/compose-canonical-check.test.ts`) y un secreto nuevo, `artifact_verify_key` ([configuration.md](../operations/configuration.md#secretos)).
-- **Backup:** opera; sin alertas, sin snapshot de la VM y sin apagado limpio garantizado ([TD-007](technical-debt.md#td-007)).
-- **CI:** `nightly.yml` en rojo crónico ([TD-019](technical-debt.md#td-019)). `functional-e2e` (golden en navegador real + E2E Docker, gateway de TD-004 incluido) corre en todo PR y en `main`, está calibrado en CI real y es **check obligatorio** de la protección de rama de `main`, que incluye a los administradores ([TD-045](technical-debt.md#td-045) CERRADA, [ci.md](../development/ci.md#protección-de-rama)). Desde RC2 también lo es `functional-e2e / container-proxy-e2e` (stack Compose real → `bot-control` → proxy → batalla; [TD-052](technical-debt.md#td-052) CERRADA).
+1. **Desplegar `main`:** exige una ventana autorizada por el operador, la migración `016_battle_rules`, el motor 0.4.0 y haber leído el procedimiento de vuelta atrás ([upgrades.md](../operations/upgrades.md)). El cambio de reglas afecta a las batallas nuevas; las históricas no se reescriben.
+2. **Emisión a YouTube:** BLOCKED hasta que el operador facilite una clave y un canal de prueba.
+3. **Espectador y replays públicos:** decisión del operador y condiciones del gate de activación.
+4. **Recuperación de contraseña:** no existe canal de entrega; ningún usuario puede recuperar su cuenta sin intervención del operador.
 
 ## Security
 
 | Problema | Estado | Deuda |
 |---|---|---|
-| Replays legibles por anónimos a través del gateway | **CERRADO en `main`** (gateway 404 en `/replays*`, API única autoridad); abierto en producción hasta desplegar | [TD-004](technical-debt.md#td-004) |
-| Batallas con bots privados ajenos; `rating-history` ajeno | **CERRADO en `main`** | [TD-005](technical-debt.md#td-005) |
-| Batallas y stats exponen participantes de bots privados | ABIERTO | [TD-047](technical-debt.md#td-047) |
+| Replays legibles por anónimos a través del gateway | CERRADO (PR #158) | [TD-004](technical-debt.md#td-004) |
+| Batallas y estadísticas con participantes de bots privados | CERRADO (PR #178) | [TD-047](technical-debt.md#td-047) |
+| Proxy de Docker sin ámbito; frontera de privilegio del proxy | CERRADO en `main` (PR #164, PR #167) | [TD-051](technical-debt.md#td-051), [TD-062](technical-debt.md#td-062) |
 | Anfitrión de bots con credenciales de BD en la red `arena` | ABIERTO (aceptado) | [TD-033](technical-debt.md#td-033) |
 | Worker con el secreto de sesión raíz | ABIERTO | [TD-043](technical-debt.md#td-043) |
-| Altas de equipo por email: oráculo de cuentas | ABIERTO | [TD-041](technical-debt.md#td-041) |
-| Runtime sin el Carril I/J ni el parche de dependencias de `main` | ABIERTO | [TD-006](technical-debt.md#td-006) |
-| Registro abierto; clave de límites colapsada a la IP del proxy | ABIERTO | [TD-012](technical-debt.md#td-012) |
-| Imágenes de servicio con vulnerabilidades HIGH/CRITICAL | ABIERTO | [TD-031](technical-debt.md#td-031) |
-| Topología de infraestructura en el repositorio público | ABIERTO | [TD-008](technical-debt.md#td-008) |
-| Proxy de Docker sin ámbito (imagen, contenedor, cliente) y alcanzable desde `gateway`/`backup` | **CERRADO en `main` (RC2)**; abierto en producción hasta desplegar | [TD-051](technical-debt.md#td-051), [TD-053](technical-debt.md#td-053) |
-| El proxy ejecuta código de un árbol no sólo de root (el usuario de despliegue puede escribir lo que corre con el grupo `docker`) | **CERRADO en código** en `fix/td-062-proxy-privilege-boundary` (REVIEW #167 ronda 1 = BLOCKED por B1/B2, corregidos; pendiente de re-REVIEW): bundle de root fuera del árbol, allowlist en `/etc`, unidad endurecida, instalador ejecutado desde un clon de root fijado al SHA y preflight **instalado** (`/usr/local/sbin/s9-docker-proxy-preflight`); **ABIERTO en producción** (unidad de RC1 con `npx tsx` desde el árbol, leída el 2026-10-21) hasta la migración ([upgrades.md](../operations/upgrades.md#td-062)) | [TD-062](technical-debt.md#td-062), [TD-057](technical-debt.md#td-057) |
-| `.env` 0644 y `secrets/` 0755 en el host | ABIERTO | [TD-060](technical-debt.md#td-060) |
-| Ejecución real y espectador público | en producción, **apagados** hasta desplegar con su gate | [docs/technical/security.md](../technical/security.md) |
-
-## Known issues
-
-Síntomas vigentes en [known-issues.md](known-issues.md).
+| Altas de equipo por email: oráculo de cuentas | ABIERTO (sin re-comprobar) | [TD-041](technical-debt.md#td-041) |
+| Registro abierto; límites por IP | ABIERTO | [TD-012](technical-debt.md#td-012) |
+| Imágenes con vulnerabilidades HIGH/CRITICAL | ABIERTO | [TD-031](technical-debt.md#td-031) |
+| Nombres internos en código, tests, CI y configuración | ABIERTO | [TD-008](technical-debt.md#td-008) |
+| Permisos de `.env` y `secrets/` en el host | ABIERTO (sin re-medir) | [TD-060](technical-debt.md#td-060) |
 
 ## Next priorities
 
-1. Fase Release Candidate, con autorización del operador: imágenes de `main`, migraciones `012`/`013`, `artifact_verify_key`, `s9-docker-proxy` con los pasos de host de RC2, backup/readiness, gate A-G, despliegue controlado y golden path tras desplegar ([Blocked](#blocked)).
-2. Mantener la protección de `main` tal como está documentada ([ci.md](../development/ci.md#protección-de-rama)); cualquier cambio de reglas es decisión del operador.
-3. [TD-047](technical-debt.md#td-047), [TD-041](technical-debt.md#td-041), [TD-012](technical-debt.md#td-012): antes de abrir a terceros.
-4. [TD-033](technical-debt.md#td-033) y [TD-043](technical-debt.md#td-043): reducir el privilegio de los procesos que hablan con bots.
-5. [TD-006](technical-debt.md#td-006) y [TD-007](technical-debt.md#td-007): runtime y backup (ventana del operador).
+1. Decidir y planificar el despliegue de `main` (motor 0.4.0 y reglas), con ventana del operador.
+2. Cerrar la cuenta: canal de recuperación de contraseña y pantallas de 2FA y sesiones ([TD-012](technical-debt.md#td-012)).
+3. Hardening antes de abrir a terceros: [TD-041](technical-debt.md#td-041), [TD-043](technical-debt.md#td-043), [TD-033](technical-debt.md#td-033).
+4. Runtime y backup en el host: [TD-006](technical-debt.md#td-006), [TD-007](technical-debt.md#td-007), [TD-025](technical-debt.md#td-025).
+5. Retirar los P3 de la lista de arriba (cursor, paginación de bots, filtro `aborted`, desempate directo).
 
 Funciones pendientes de diseño: [pending-features.md](pending-features.md).
 
 ## Documentación relacionada
 
 - [technical-debt.md](technical-debt.md) · [known-issues.md](known-issues.md) · [pending-features.md](pending-features.md)
-- [Informe del cierre funcional](../development/functional-closure-report.md)
-- [Auditoría 2026-10-15](../audits/2026-10-15/README.md) · [AUDIT-DELTA](../audits/2026-10-15/AUDIT-DELTA-2026-10.md)
+- [Auditoría de pendientes](../audits/2026-11/PENDING-AUDIT.md)
 - [Visión general](../overview/project.md) · [Arquitectura](../overview/architecture.md) · [Operación](../operations/index.md)
+- Estados anteriores (históricos): [../history/status/](../history/status/)
 
 ## Verificación
 
 | Afirmación | Estado | Fuente |
 |---|---|---|
-| Base `0b8c12b` = `origin/main` al integrar | CODE_VERIFIED | `git rev-parse origin/main` (2026-10-17) |
-| Golden path completo en navegador real | RUNTIME_VERIFIED (aislado) | `npm run test:browser`: golden rc=0, fase1 14/14, fase2 2/2, fase3 1/1, sonda TD-028 rc=0 |
-| El worker ejecuta el artefacto firmado de la versión exacta | RUNTIME_VERIFIED (aislado) | `apps/tournament-worker/src/container-battle-e2e.test.ts` (`S9_RUN_REAL_DOCKER_E2E=1`, 3/3) |
-| Mutaciones del cierre en rojo | CODE_VERIFIED | HunterBot disfrazado (golden rc=1), READY de Phaser (golden y replay rc=1), sandbox fuera (rc=1), cierre doble (rc=1), bot privado ajeno (rc=1), persistencia del mapa (rc=1); ver el informe |
-| Perfil `production` = 12 servicios | CODE_VERIFIED | `infrastructure/tests/compose.test.ts`, `deploy-contract-gate.test.ts` |
-| Runtime de producción sin cambios | DESIGN_ONLY | el cierre funcional no despliega (sin SSH ni compose contra producción) |
-| TD-004 / TD-034 cerradas en la integración PRC; `functional-e2e` verde y calibrado en CI real | RUNTIME_VERIFIED (aislado y GitHub Actions) | [production-readiness-report.md](../development/production-readiness-report.md); runs 39141675080 (verde), 39141682346 y 39141685353 (calibraciones en rojo) |
-| #152 y #158 fusionados; `main` = `59322e2` con CI en verde (`functional-e2e` y `semaforo` incluidos) | RUNTIME_VERIFIED (GitHub Actions) | `git rev-parse origin/main`; run 39173546382 (25 jobs en verde) (2026-10-19) |
-| `main` protegida y el bloqueo funciona | RUNTIME_VERIFIED | `gh api repos/…/branches/main/protection`; PR #161: merge rechazado con `functional-e2e` en rojo, también con `--admin` (2026-10-19) |
-| El check obligatorio `functional-e2e / container-proxy-e2e` bloquea el merge, también con `--admin` | RUNTIME_VERIFIED (GitHub, 2026-10-21) | PR de control #166 (cerrado sin merge): mutación `BUILD_SANDBOX_HOST` sin resolver ⇒ falló sólo `container-proxy-e2e` (y `semaforo` por arrastre); merge normal y con `--admin` rechazados: «2 of 4 required status checks are failing» |
-| RC2 en `main` | RUNTIME_VERIFIED (GitHub) | PR #164 fusionado (`main` = `6612868`) **antes** del PASS formal de REVIEW; el operador lo aceptó después; CI de `main` sobre `6612868` en verde |
-| Unidad del proxy en producción = RC1 (`npx tsx` desde el árbol; allowlist y loader escribibles por el usuario de despliegue) | RUNTIME_VERIFIED (lectura, 2026-10-21) | `systemctl cat/show`, `/proc/<pid>/cmdline` y `stat` en el host; matriz en el informe de DEV-PRIV (sin topología en el repo) |
+| `MAIN_SHA` = `e3bf2fa…` | CODE_VERIFIED | `git rev-parse origin/main` (2026-11-02) |
+| CI de `e3bf2fa`: 31 check-runs, 30 `success` y 1 `neutral` | RUNTIME_VERIFIED (GitHub) | `gh api repos/pjclavero/s9-ai-arena/commits/e3bf2fa83650559267ef269994c667fabfb29e46/check-runs` |
+| Cuatro checks obligatorios en la protección de `main` | RUNTIME_VERIFIED (GitHub) | `gh api repos/pjclavero/s9-ai-arena/branches/main/protection` |
+| Producción en `a1a6c4e` | REPORTADO por el operador (no verificable desde el repositorio) | registro del operador (encargo de la auditoría) |
+| `a1a6c4e` es ascendiente de `main`; 111 commits de diferencia | CODE_VERIFIED | `git rev-list --count a1a6c4e..e3bf2fa` |
+| Motor 0.4.0, OpenAPI 0.12.0, migraciones 001–016 | CODE_VERIFIED | `apps/arena-engine/src/engine-deps.json`, `apps/api/openapi.yaml:50`, `apps/api/src/db/migrations.ts` |
+| Los siete P3 | CODE_VERIFIED, salvo TD-072 | ruta:línea de la tabla; TD-072 no se ha reproducido |
+| Sin hallazgos nuevos P0/P1/P2; el registro conserva 3 P0, 7 P1 y 13 P2 heredados | REPORTADO (revisión de integración) y recuento del registro | revisión de integración del 2026-11-02; [technical-debt.md](technical-debt.md) (índice, columnas Prioridad y Estado) |

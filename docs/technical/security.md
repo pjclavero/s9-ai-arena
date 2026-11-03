@@ -2,7 +2,7 @@
 
 ## Resumen
 
-Modelo de seguridad **real** de S9 AI Arena en `27f70bb`:
+Modelo de seguridad **real** de S9 AI Arena en `27f70bb` (octubre de 2026):
 - autenticación y sesiones;
 - roles RBAC;
 - aislamiento del código no confiable;
@@ -105,7 +105,7 @@ Todas las claves usan `req.ip`. Con un salto de proxy sin contar, colapsan en un
 | Capa | Implementación | Estado |
 |---|---|---|
 | Análisis | estructura, análisis estático y AST (`acorn` para JS, `python3` para Python), dependencias permitidas (`runtimes/*/ALLOWED-PACKAGES.md`), detección de secretos (`secret-scan.ts`) | FUNCIONA |
-| Ejecución de validación | `protocol_test`, `smoke_battle`, `resource_limits` en sandbox de contenedor | **PENDIENTE**: falta el `agentResolver`, y el build falla cerrado ([TD-001](../roadmap/technical-debt.md#td-001)) |
+| Ejecución de validación | `protocol_test`, `smoke_battle`, `resource_limits` en sandbox de contenedor | FUNCIONA en `main` (`ContainerBuildSandbox`); sin sandbox configurado el build falla cerrado ([TD-001](../roadmap/technical-debt.md#td-001), cerrada) |
 | Firma | artefactos firmados con `artifact_signing_key`; sin clave, el worker no arranca | FUNCIONA (sin artefactos todavía) |
 | Verificación antes de lanzar | `artifactGuard` en el worker | **no cableado** ([TD-015](../roadmap/technical-debt.md#td-015)) |
 | Contenedores de bot | sólo la red `arena` (sin ruta a BD, Redis ni API), `read_only`, `cap_drop: ALL`, `no-new-privileges`, límites de CPU, memoria y `pids`; imágenes de runtime fijadas por digest | definido; no se ejecuta hoy |
@@ -164,7 +164,7 @@ La activación es una decisión de operación con sus precondiciones. Ver
 
 ## Autorización de replays
 
-[TD-004](../roadmap/technical-debt.md#td-004), integración `integration/production-readiness`, **sin desplegar**.
+[TD-004](../roadmap/technical-debt.md#td-004), PR #158 (incluida en el commit de producción RC5.5).
 
 - **Una autoridad**: la API (`apps/api/src/replay-access.ts`) decide **antes** de leer el fichero. Leen el replay de una batalla: staff (rol ≥ `organizer`), el dueño de un bot participante, los miembros del equipo de un bot participante no `private`, y cualquiera sólo si `S9_PUBLIC_REPLAYS_ENABLED` está encendida y todos los bots de la batalla son públicos.
 - **Sin enumeración**: «no autorizado», «no existe» e «id inválido» responden el mismo 404 (código, `error` y mensaje).
@@ -178,13 +178,13 @@ Detalle en [replays.md](replays.md#autorización-de-acceso-td-004).
 
 | Clase de problema | Estado | Deuda |
 |---|---|---|
-| Lectura anónima de replays a través del borde, al margen de la política de visibilidad | CERRADO en la integración `integration/production-readiness`; abierto en producción hasta desplegar | [TD-004](../roadmap/technical-debt.md#td-004) |
-| Autorización de participantes en batallas y lectura de datos de bots privados ajenos | ABIERTO | [TD-005](../roadmap/technical-debt.md#td-005) |
-| Runtime con versiones anteriores a parches de seguridad y a los gates I/J | ABIERTO | [TD-006](../roadmap/technical-debt.md#td-006) |
+| Lectura anónima de replays a través del borde, al margen de la política de visibilidad | CERRADO (PR #158, incluida en el commit de producción RC5.5) | [TD-004](../roadmap/technical-debt.md#td-004) |
+| Autorización de participantes en batallas y lectura de datos de bots privados ajenos | CERRADO (PR #152 y PR #178) | [TD-005](../roadmap/technical-debt.md#td-005) |
+| Runtime con versiones anteriores a parches de seguridad y a los gates I/J | MEJORADO (producción en RC5.5; falta confirmarlo con `runtime-drift-scan`) | [TD-006](../roadmap/technical-debt.md#td-006) |
 | Registro abierto con rol de desarrollador; límites por IP debilitados; sin cambio de contraseña | ABIERTO | [TD-012](../roadmap/technical-debt.md#td-012) |
-| Listado anónimo de equipos con identificadores de usuarios | ABIERTO | [TD-011](../roadmap/technical-debt.md#td-011) |
+| Listado anónimo de equipos con identificadores de usuarios | CERRADO | [TD-011](../roadmap/technical-debt.md#td-011) |
 | Información de infraestructura en el repositorio público | ABIERTO | [TD-008](../roadmap/technical-debt.md#td-008) |
-| Garantías documentadas no cableadas (verificación de firma y suspensiones) | ABIERTO | [TD-015](../roadmap/technical-debt.md#td-015) |
+| Garantías documentadas no cableadas (verificación de firma y suspensiones) | PARCIAL: `artifactGuard` cableado en el worker (`apps/tournament-worker/src/main.ts:90`) | [TD-015](../roadmap/technical-debt.md#td-015) |
 | Pruebas que no detectan regresiones de seguridad | ABIERTO | [TD-018](../roadmap/technical-debt.md#td-018) |
 
 Las vulnerabilidades se reportan al responsable del repositorio, no en issues públicos.

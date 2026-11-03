@@ -191,7 +191,7 @@ Hay tres comprobaciones distintas, que no se coordinan entre sí:
 
 1. **Validador de mapas** (`apps/map-service/src/validate/mode.ts`). Revisa cada modo de `meta.supportedModes`, pero **sólo conoce los 4 modos de plataforma**.
 2. **Motor** (`modeMapIncompatibilities`). Al crear la batalla comprueba equipos, respawn, banderas y bases, y número de zonas `capture`.
-3. **API**: `checkBattleContent` comprueba `supported_modes` y el modo del ruleset, pero `POST /battles` y los torneos **aún no la llaman** (B). La web de nueva batalla sólo ofrece los mapas que soportan el modo elegido.
+3. **API**: `checkBattleContent` comprueba `supported_modes` y el modo del ruleset y la llama `POST /battles` (`apps/api/src/routes/battles.ts:606`). La web de nueva batalla sólo ofrece los mapas que soportan el modo elegido.
 
 Mapas del repositorio:
 
@@ -216,11 +216,11 @@ Ningún mapa de serie soporta `zone_control`. Para jugarlo hay que crear un mapa
 | domination | Sí | No | No | No | No | No |
 | juggernaut | Sí | No | No | No | No | No |
 
-En el visor, el HUD reconoce objetivos de bandera, zona y juggernaut (`apps/web/src/viewer/hud-model.ts`). El visor está roto en navegador ([TD-009](../roadmap/technical-debt.md#td-009)).
+En el visor, el HUD reconoce objetivos de bandera, zona y juggernaut (`apps/web/src/viewer/hud-model.ts`). El visor funciona en navegador: lo ejerce el golden path de CI ([TD-009](../roadmap/technical-debt.md#td-009), cerrada).
 
 ## Errores / limitaciones
 
-- **El stub ignora los objetivos**: los vehículos de plataforma los conduce `HunterBot`, que caza por radar y no persigue banderas ni zonas. Una CTF en `mvp-arena-01` suele agotar los 9 000 ticks y acabar en empate (observado en la auditoría). Ver [battles.md](battles.md) y [TD-002](../roadmap/technical-debt.md#td-002).
+- **Los bots deciden si persiguen objetivos**: los vehículos de plataforma los conduce el código de cada bot; un bot que no persiga banderas o zonas agota el tiempo y la batalla se decide por los desempates de la familia del modo ([rules.md](../user/rules.md)). La antigua observación sobre el stub `HunterBot` ya no aplica ([TD-002](../roadmap/technical-debt.md#td-002), cerrada).
 - **Incompatibilidad tratada como fallo técnico**: una batalla `zone_control` en un mapa sin zonas de captura se acepta en la API. El motor lanza en `createMode` y el worker lo trata como fallo técnico: 3 reintentos y `failed (infrastructure)`. Derivado del código; no ejecutado en esta consolidación.
 - **Deathmatch por equipos**: la web asigna `red`/`blue` a 2 bots, así que nunca choca con la regla de equipos de deathmatch. Por API, 3 bots en 2 equipos fallan igual que el caso anterior.
 
