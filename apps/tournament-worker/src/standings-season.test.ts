@@ -541,3 +541,33 @@ describe("EQ2c · reversión independiente del Elo", () => {
     expect(await table("RV3")).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// EQ2c · H3: Elo simultáneos del mismo bot. No basta con que la suma cuadre (un incremento
+// atómico la haría cuadrar aunque el delta se calculara con un rating viejo): cada evento
+// tiene que partir del rating que dejó el anterior (cadena before/after continua).
+// ---------------------------------------------------------------------------------------
+describe("EQ2c · H3: Elo concurrente del mismo bot", () => {
+  it("cadena del libro mayor continua y rating = inicial + Σ deltas", async () => {
+    const broken: string[] = [];
+    for (let round = 0; round < 6; round++) {
+      const season = `EC-${round}`;
+      const [a, b, c, d] = await createBots(h.db, 4, `ec${round}`);
+      const t = await tournament({ season, bots: [a, b, c, d] });
+      const ids = [await scored(t, a, b, 1, 0), await scored(t, c, a, 1, 0), await scored(t, a, d, 0, 0)];
+      await Promise.all(ids.map((id) => applyBattleRating(h.db, id)));
+      const ev = await h.db("rating_events").where({ bot_id: a.botId, season_id: season }).orderBy("id", "asc");
+      if (ev.length !== 3) broken.push(`${season}: ${ev.length} eventos`);
+      for (let i = 1; i < ev.length; i++) {
+        if (Math.abs(Number(ev[i].rating_before) - Number(ev[i - 1].rating_after)) > 1e-9)
+          broken.push(`${season}: evento ${i} parte de ${ev[i].rating_before}, no de ${ev[i - 1].rating_after}`);
+      }
+      const r = await h.db("ratings").where({ bot_id: a.botId, season_id: season }).first();
+      const sum = ev.reduce((s: number, e: Record<string, unknown>) => s + Number(e.delta), 1000);
+      if (Math.abs(Number(r.rating) - sum) > 1e-9) broken.push(`${season}: rating ${r.rating} ≠ libro ${sum}`);
+      if (r.wins + r.losses + r.draws !== 3)
+        broken.push(`${season}: V-D-E del rating ${r.wins}-${r.losses}-${r.draws}`);
+    }
+    expect(broken).toEqual([]);
+  });
+});
