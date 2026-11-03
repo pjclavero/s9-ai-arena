@@ -1,117 +1,88 @@
 # Equipamiento (loadout)
 
-## Resumen
+El **loadout** es el vehículo de tu bot: un **chasis** y una **pieza por ranura** (movimiento, energía, sensores, arma con su munición, minas, radio y blindaje por lado). Lo configuras en el **«Editor de loadout»** de «Mis bots», que calcula el coste y la energía en directo; el servidor lo vuelve a validar al guardar. Cada guardado crea una **revisión** nueva.
 
-El **loadout** es el vehículo de tu bot: un chasis y un módulo por ranura (movilidad, energía, sensores, arma con su munición, minas, radio y blindaje por lado). Lo configuras en el **«Editor de loadout»** de «Mis bots», que valida el coste y la energía en vivo. El servidor lo vuelve a validar al guardar. Cada guardado crea una revisión nueva.
+**El loadout es el vehículo que juega**: el chasis y las piezas que eliges son los que se simulan en las batallas y en la partida de prueba de la validación. Cada versión de código queda ligada a la revisión con la que la subiste; guardar una revisión nueva no cambia las versiones ya subidas.
 
-**FUNCIONA ACTUALMENTE.** **El loadout es el vehículo que juega**: el chasis y los módulos que eliges son los que se simulan en las batallas y en la partida de humo del build. Cada versión de código queda ligada a la revisión de loadout con la que la subiste; guardar una revisión nueva no cambia las versiones ya subidas.
+Todas las piezas, con sus cifras exactas, están en el **[Catálogo de equipamiento](equipment-catalog.md)**, que se genera del propio catálogo del juego.
 
-El editor lo indica en cada ranura ([Qué cambia de verdad](#qué-cambia-de-verdad-en-la-batalla)).
-
-## Índice
-
-- [Uso](#uso)
-- [Qué cambia de verdad en la batalla](#qué-cambia-de-verdad-en-la-batalla)
-- [Chasis y ranuras](#chasis-y-ranuras)
-- [Módulos disponibles](#módulos-disponibles)
-- [Reglas de validación](#reglas-de-validación)
-- [Ejemplo](#ejemplo)
-- [Errores / limitaciones](#errores--limitaciones)
-- [Estado actual](#estado-actual)
-- [Documentación relacionada](#documentación-relacionada)
-
-## Uso
+## Cómo se usa el editor
 
 1. «Mis bots» → pulsa el nombre del bot → «Editor de loadout».
 2. Elige el **chasis**: aparecen sus ranuras.
-3. En cada ranura elige un módulo. Si eliges un arma, aparece el selector de **munición compatible**.
-4. Vigila **«Coste: X/1000 cr»** y **«Energía: ±N»**. Las violaciones aparecen debajo, con el motivo.
-5. Pulsa **«Guardar revisión»**. Verás «Revisión de loadout guardada.». Al volver a entrar, el editor carga la revisión vigente y muestra los «Cambios respecto a la revisión N».
-6. Para que una versión de código juegue con la revisión nueva, sube una versión nueva: la subida usa la revisión vigente («Subir como versión nueva»).
+3. En cada ranura elige una pieza. Si eliges un arma, aparece el selector de **munición compatible**.
+4. Vigila **«Coste: X/1000 cr»** y **«Energía: ±N»**. Los problemas aparecen debajo, con el motivo.
+5. Pulsa **«Guardar revisión»**: verás «Revisión de loadout guardada.». Al volver, el editor carga la revisión vigente y muestra los «Cambios respecto a la revisión N».
+6. Para que una versión de código juegue con la revisión nueva, sube una versión nueva: la subida usa la revisión vigente.
 
-Junto a la masa total, el editor muestra la **carga de módulos** frente al límite del chasis («carga de módulos X/Y kg»). Esa es la cifra que limita `mass_exceeded`.
+Junto a la masa total, el editor muestra la **carga de piezas** frente al límite del chasis. Si la sesión caduca mientras editas, al volver se recuperan los cambios sin guardar de esa pestaña.
 
-Si la sesión caduca mientras editas, al volver a entrar se recuperan los cambios sin guardar de esa pestaña, con el aviso «Recuperados los cambios sin guardar de esta sesión». Todavía no son una revisión: guárdalos o descártalos.
+## Las ranuras
+
+Cada ranura es un hueco para una categoría de pieza, con un tamaño máximo (S pequeño, M mediano, L grande, XL muy grande):
+
+| Ranura | Para qué |
+|---|---|
+| Propulsión | Orugas o ruedas: velocidad máxima, aceleración y giro. |
+| Energía | Generador o batería que alimenta sensores, armas y radio. |
+| Sensor A / Sensor B | Lo que el bot ve (radar, lidar, acústico, proximidad). El Sensor B sólo existe en el chasis pesado. |
+| Torreta principal | El arma. |
+| Munición principal | La munición del arma. |
+| Compartimento de minas | Minas. Sólo en chasis medio y pesado. |
+| Radio | Enviar mensajes al resto del equipo. |
+| Blindaje frontal / izquierdo / derecho / trasero | Reducen el daño por ese lado. |
+
+El nombre que usa **tu código** para cada ranura es su identificador (`turret_main`, `sensor_a`, `radio_a`…): lo ves en el mensaje de bienvenida, en `welcome.vehicle.modules`. Ver [Guía de programación](bots/ciclo.md#el-mensaje-de-bienvenida-welcome).
 
 ## Qué cambia de verdad en la batalla
 
-El editor muestra, arriba, una nota sobre el efecto real. Junto al chasis y a cada ranura aparece una insignia:
+Junto a cada ranura y a cada propiedad, el editor muestra una insignia:
 
 | Insignia | Significa |
 |---|---|
-| **[ACTIVE · cambia la batalla]** | El motor usa el valor del módulo que eliges |
-| **[PARTIAL · efecto parcial]** | Sólo cuenta para validar el loadout: coste, tamaño, carga máxima, límites por vehículo |
-| **[FUTURE · sin efecto en batalla]** | Ningún código lo usa todavía: no cambia nada |
+| **ACTIVE · cambia la batalla** | El motor usa el valor de la pieza que eliges. |
+| **PARTIAL · efecto parcial** | Sólo cuenta para validar el loadout (coste, tamaño, carga máxima, límites por vehículo). |
+| **FUTURE · sin efecto en batalla** | Ningún código lo usa todavía: no cambia nada. |
 
-Al elegir un módulo, «Efecto real de cada propiedad» lista sus datos con su insignia y el motivo. Ejemplos FUTURE: el alcance del arma (`rangeM`), el alcance de la radio, el terreno de la movilidad y los módulos de utilidad.
+Al elegir una pieza, «Efecto real de cada propiedad» lista sus datos con su insignia. El catálogo declara datos que **todavía no hacen nada** (el alcance del arma, el alcance de la radio, el terreno, las utilidades): la [lista actualizada](equipment-catalog.md#datos-que-no-cambian-la-batalla) está al final del catálogo.
 
-## Chasis y ranuras
+## Presupuesto, peso y energía
 
-| Chasis | Vida | Masa | Carga máx. | Coste | Ranuras especiales |
-|---|---|---|---|---|---|
-| Ligero v1 / v2 | 180 / 280 | 700 kg | 1200 kg | 150 / 190 | sin bahía de minas, 1 sensor |
-| Medio v1 / v2 | 300 / 350 | 1400 kg | 1600 kg | 220 / 240 | bahía de minas |
-| Pesado v1 | 480 | 2600 kg | 2400 kg | 280 | bahía de minas, 2 sensores |
+- **Presupuesto.** Cada pieza cuesta créditos y la suma no puede pasar del presupuesto de la batalla (1000 créditos en una práctica por defecto). Las reglas de un torneo o de una batalla personalizada pueden fijar otro, y ninguna pieza puede costar más del 35 % del presupuesto.
+- **Peso.** Las piezas no pueden superar la carga máxima del chasis. Pasarte de la **carga nominal** del movimiento te frena.
+- **Energía.** Todo consume energía (EU) cada segundo, y disparar o soltar minas gasta más. Si el consumo supera a la generación, te quedas sin energía para disparar.
 
-Todas tienen: movilidad (`drive`), energía (`power`), sensor (`sensor_a`), torreta (`turret_main`), munición (`ammo_main`), radio (`radio_a`) y blindaje frontal, izquierdo, derecho y trasero. Cada ranura admite un tamaño máximo de módulo (S, M, L, XL).
+## Equipamientos de referencia
 
-## Módulos disponibles
+Cuatro combinaciones válidas que usan los bots de ejemplo (y el simulador local):
 
-| Tipo | Módulos | Para qué |
-|---|---|---|
-| Movilidad | ruedas (rápidas, para cargas ligeras) · orugas (lentas, aguantan más peso) | Velocidad y giro. El exceso de peso te frena |
-| Energía | batería (mucha reserva) · generador v1/v2 (mucha generación) | Todo consume energía; sin ella no disparas |
-| Sensores | radar · lidar 360° · lidar frontal · proximidad · acústico | Lo único que tu bot «ve» |
-| Armas | cañón (munición perforante o explosiva) · ametralladora v1/v2 (munición estándar) | Daño |
-| Munición | estándar · perforante (más daño) · explosiva (daño en área) | Cargas y daño |
-| Blindaje | acero (más protección, más pesado) · compuesto (más ligero, más caro), por lado | Reduce el daño de cada lado |
-| Radio | radio corta | Mensajes de hasta 32 bytes, 2 por segundo |
-| Minas | mina explosiva (3 cargas) | Sólo en chasis medio o pesado |
-
-Valores exactos y su efecto en la simulación: [equipment.md técnico](../technical/equipment.md).
+| Equipamiento | Chasis | Idea | Coste |
+|---|---|---|---|
+| Explorador (`scout`) | Ligero | Rápido, lidar frontal, ametralladora, radio. | 540 |
+| Artillero (`gunner`) | Medio | Radar y cañón con blindaje frontal. | 940 |
+| Minador (`miner`) | Medio | Siembra minas, ametralladora de apoyo. | 780 |
+| Pesado (`heavy`) | Pesado | Lidar 360, cañón, mucho casco, muy lento. | 970 |
 
 ## Reglas de validación
 
 | Mensaje (código) | Causa |
 |---|---|
-| `budget_exceeded` | El total supera el presupuesto (1000 créditos) |
-| `module_cost_cap_exceeded` | Un solo módulo cuesta más del 35 % del presupuesto |
-| `mass_exceeded` | Los módulos pesan más que la carga máxima del chasis |
-| `energy_deficit` | El consumo supera a la generación |
-| `unknown_slot` | La ranura no existe en ese chasis (p. ej. minas en un chasis ligero) |
-| `slot_type_mismatch` / `slot_size_exceeded` | Módulo de otro tipo o demasiado grande para la ranura |
-| `incompatible_ammo` | Un arma no tiene munición que pueda disparar (ninguna o de otro tipo), o hay munición que ningún arma usa. Vale igual si la munición va con el arma o en su propia ranura (`ammo_main`). El mensaje dice qué municiones admite el arma (p. ej. el cañón: `ammo.ap`, `ammo.he`) |
-| `duplicate_limit_exceeded` | Más unidades de las permitidas de un módulo (p. ej. un lidar 360° por vehículo) |
+| `budget_exceeded` | El total supera el presupuesto. |
+| `module_cost_cap_exceeded` | Una sola pieza cuesta más del 35 % del presupuesto. |
+| `mass_exceeded` | Las piezas pesan más que la carga máxima del chasis. |
+| `energy_deficit` | El consumo supera a la generación. |
+| `unknown_slot` | La ranura no existe en ese chasis (por ejemplo, minas en un chasis ligero). |
+| `slot_type_mismatch` / `slot_size_exceeded` | Pieza de otro tipo, o demasiado grande para la ranura. |
+| `incompatible_ammo` | Un arma no tiene munición que pueda disparar (ninguna o de otro tipo), o hay munición que ningún arma usa. El mensaje dice qué municiones admite el arma. |
+| `duplicate_limit_exceeded` | Más unidades de las permitidas de una pieza (por ejemplo, un lidar 360 por vehículo). |
 
-## Ejemplo
+## Consejos para elegir
 
-Configuración válida usada en la auditoría:
+- **Sin sensores no ves nada.** Un bot sin sensor no puede apuntar a nadie; elige al menos uno ([Sensores](bots/sensores.md)).
+- **Radar o lidar.** El radar tiene más alcance pero da la posición con error; el lidar es exacto pero de menor alcance y no distingue bandos. Para esquivar muros, el lidar.
+- **Cañón o ametralladora.** El cañón hace mucho daño por disparo pero recarga despacio; la ametralladora, poco daño muy seguido. Las cifras, en el [catálogo](equipment-catalog.md#armas).
+- **Orugas o ruedas.** Las ruedas son más rápidas; las orugas aguantan más peso sin frenarse.
+- **Blindaje.** Pon el grueso en el frente si tu bot ataca de cara.
+- **Radio.** Sólo vale la pena en equipo, y [hoy la oyen también los rivales](bots/radio.md#lo-que-tienes-que-saber-limitaciones-de-hoy).
 
-- chasis ligero v2;
-- ruedas;
-- generador v2;
-- radar;
-- ametralladora v2 con munición estándar;
-- radio corta.
-
-Resultado: coste 680/1000 y energía +21,5.
-
-## Errores / limitaciones
-
-- La web no explica qué hace cada módulo ni qué significan créditos o EU.
-- Las minas sólo actúan si tu bot las despliega (comando `deployMine`) y el chasis tiene bahía de minas.
-- **PARCIAL**: la radio no se limita a tu equipo ni a su alcance ([equipment.md](../technical/equipment.md#radio-radio_a)).
-- Algunos datos del catálogo no influyen en la simulación: el alcance del arma, el alcance de la radio, el terreno de la movilidad o la detectabilidad de la mina.
-- Si el loadout de la versión no se puede resolver con el catálogo del build (otra versión de catálogo), la partida de humo juega el arquetipo del chasis como reserva y lo dice en el log de la etapa. La batalla juega siempre el loadout de la versión.
-- No hay módulos de utilidad (humo, reparación…): **PENDIENTE**.
-
-## Estado actual
-
-**FUNCIONA ACTUALMENTE** (configuración, validación, indicación del efecto y loadout real en batalla y en la partida de humo) · **PARCIAL** (algunas propiedades sin efecto: [FUTURE](#qué-cambia-de-verdad-en-la-batalla)).
-
-## Documentación relacionada
-
-- Usuario: [Bots](bots.md), [Modos de juego](game-modes.md)
-- Técnica: [equipment.md](../technical/equipment.md), [engine.md](../technical/engine.md)
-- Balance: [docs/balance/v1.md](../balance/v1.md)
-- Deuda: [TD-016](../roadmap/technical-debt.md#td-016) (histórico: el camino antiguo `/run` sólo enviaba el chasis)
+Siguiente: [Bots](bots.md) · [Guía de programación](bots/index.md).
