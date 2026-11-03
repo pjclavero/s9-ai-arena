@@ -570,4 +570,24 @@ describe("EQ2c · H3: Elo concurrente del mismo bot", () => {
     }
     expect(broken).toEqual([]);
   });
+
+  it("la MISMA batalla: dos Elo simultáneos puntúan una vez, y Elo junto a su reversión no deja Elo vivo", async () => {
+    const broken: string[] = [];
+    for (let round = 0; round < 6; round++) {
+      const season = `ES-${round}`;
+      const [a, b] = await createBots(h.db, 2, `es${round}`);
+      const t = await tournament({ season, bots: [a, b] });
+      // Dos jobs de la misma batalla a la vez: uno puntúa, el otro es no-op (sin error).
+      const twice = await scored(t, a, b, 1, 0);
+      const r = await Promise.allSettled([applyBattleRating(h.db, twice), applyBattleRating(h.db, twice)]);
+      const ok = r.filter((x) => x.status === "fulfilled").map((x) => (x as PromiseFulfilledResult<boolean>).value);
+      if (ok.length !== 2 || ok.filter(Boolean).length !== 1) broken.push(`${season}: doble Elo ${JSON.stringify(r)}`);
+      // Reversión de una batalla sin puntuar a la vez que su job: nunca queda Elo vivo.
+      const rev = await scored(t, b, a, 1, 0);
+      await Promise.all([revertOfficialBattle(h.db, rev), applyBattleRating(h.db, rev)]);
+      const live = await h.db("rating_events").where({ battle_id: rev, reverted: false });
+      if (live.length !== 0) broken.push(`${season}: ${live.length} eventos vivos de una batalla revertida`);
+    }
+    expect(broken).toEqual([]);
+  });
 });
