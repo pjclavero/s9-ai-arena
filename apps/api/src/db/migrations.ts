@@ -868,6 +868,27 @@ const m016_battle_rules: Migration = {
   },
 };
 
+// EQ2c · STANDINGS_POLICY (#229) · Marca de REVERSIÓN propia de la batalla, independiente del
+// Elo: `revertOfficialBattle` (tournament-worker standings.ts) la pone y la respetan la
+// clasificación de temporada (`seasonTable`) y el rating (`applyBattleRating`: una batalla
+// revertida no puntúa aunque su job llegue después). NULL = no revertida.
+// NUMERACIÓN: la 017 está reservada para `017_streaming_admin` (PR #227), que se integra
+// antes; ver la nota en migrations-order.test.ts.
+// SÓLO añade una columna nullable: no toca ninguna fila existente. Probado en
+// `migration-018.test.ts` (upgrade con datos, rollback, backup/restore lógico).
+const m018_battle_reverted: Migration = {
+  name: "018_battle_reverted",
+  async up(db) {
+    await db.raw(`ALTER TABLE battles ADD COLUMN reverted_at timestamptz`);
+  },
+  // Destructivo SÓLO para la marca: tras el rollback, una batalla revertida volvería a
+  // contar en la clasificación del código anterior (su Elo sigue devuelto en rating_events).
+  // Ver docs/operations/upgrades.md § «Migración 018».
+  async down(db) {
+    await db.raw(`ALTER TABLE battles DROP COLUMN reverted_at`);
+  },
+};
+
 export const MIGRATIONS: Migration[] = [
   m001_identity,
   m002_content,
@@ -885,6 +906,7 @@ export const MIGRATIONS: Migration[] = [
   m014_battle_diagnostics,
   m015_bot_retired,
   m016_battle_rules,
+  m018_battle_reverted,
 ];
 
 class ProgrammaticMigrationSource {

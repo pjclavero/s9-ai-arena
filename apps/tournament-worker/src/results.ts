@@ -54,10 +54,16 @@ async function resolveSeries(db: Knex, match: MatchRow, p: Pairing): Promise<Ser
  * match y la clasificación de temporada). Los juegos terminados por la salvaguarda
  * técnica (ADR-022) no cuentan. Victorias de juego; luego puntuación; si siguen iguales,
  * en eliminatorias decide el mejor seed (home) y en liga/RR/suizo es empate.
+ *
+ * EQ2c (#229) · `closed: false` = la serie SIGUE EN JUEGO (la clasificación de temporada
+ * cuenta lo ya disputado de un torneo running): el desempate por seed es de una serie
+ * CERRADA, así que una serie a medias igualada cuenta como empate, no como victoria del
+ * seed. Por defecto `closed: true` (el cierre del match no cambia).
  */
 export function seriesOutcome(
   battles: Record<string, any>[],
   p: Pairing,
+  o: { closed?: boolean } = {},
 ): SeriesOutcome & { homeScore: number; awayScore: number } {
   let homeWins = 0;
   let awayWins = 0;
@@ -84,7 +90,7 @@ export function seriesOutcome(
   }
   // En eliminatorias no puede haber empate de serie: decide el mejor seed
   // (orden de inscripción; documentado). En liga/RR/suizo, empate real.
-  if (p.bracket !== "main") return { winner: p.home, loser: p.away, draw: false, ...scores };
+  if (p.bracket !== "main" && (o.closed ?? true)) return { winner: p.home, loser: p.away, draw: false, ...scores };
   return { winner: null, loser: null, draw: true, ...scores };
 }
 
@@ -285,7 +291,15 @@ export async function leagueTable(db: Knex, tournamentId: string, isTeams: boole
   return sortTable(rows.values(), headToHead);
 }
 
-/** Orden de la tabla: puntos, enfrentamientos directos, diferencia de puntuación, seed. */
+/**
+ * Orden de la tabla: puntos, enfrentamientos directos, diferencia de puntuación, seed.
+ *
+ * DEUDA (H6 del revisor de #229, no corregida a propósito): el criterio de directos es POR
+ * PAREJAS, así que con un ciclo de victorias entre tres o más empatados a puntos (a>b, b>c,
+ * c>a) el comparador no es transitivo y el orden resultante depende del algoritmo de
+ * ordenación. El arreglo (mini-tabla de los empatados) cambia una regla de orden visible y
+ * queda pendiente de decisión del operador.
+ */
 export function sortTable(rows: Iterable<TableRow>, headToHead: Map<string, number>): TableRow[] {
   return [...rows].sort(
     (a, b) =>

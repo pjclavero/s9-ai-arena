@@ -16,7 +16,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startTestDb, type TestDbHandle } from "../../api/src/testing/test-db.js";
 import { seedDev, DEV_USERS, DEFAULT_RULESET_ID } from "../../api/src/db/seeds/dev.js";
 import { clearStandingsCache, getStandings } from "../../api/src/services/standings.js";
-import { handleUpdateStandings, recomputeSeasonStandings, revertOfficialBattle } from "./standings.js";
+import { handleUpdateStandings, recomputeSeasonStandings, revertOfficialBattle, seasonTable } from "./standings.js";
 import { applyBattleRating } from "./ratings.js";
 import { createBots, type TestBot } from "./testing/fixtures.js";
 import type { JobRow } from "./queue.js";
@@ -188,7 +188,7 @@ describe("STANDINGS_POLICY = official_played_not_reverted", () => {
     const bad = await played(t, a, b, "home");
     await update(t);
     expect(vde(await table("S5"), a)).toEqual([2, 0, 0]);
-    expect(await revertOfficialBattle(h.db, bad)).toBe(true);
+    expect(await revertOfficialBattle(h.db, bad)).toBe("reverted");
     const rows = await table("S5");
     expect(vde(rows, a)).toEqual([1, 0, 0]);
     expect(vde(rows, b)).toBeNull(); // su único enfrentamiento se revirtió
@@ -198,7 +198,7 @@ describe("STANDINGS_POLICY = official_played_not_reverted", () => {
     expect(rb.rating).toBeCloseTo(1000, 6); // Elo de vuelta al inicial
     expect(rows.find((r) => r.id === a.botId)!.rating).toBeCloseTo(ra.rating, 6);
     // Idempotente: revertir otra vez no cambia nada; y la que se conserva sigue contando.
-    expect(await revertOfficialBattle(h.db, bad)).toBe(false);
+    expect(await revertOfficialBattle(h.db, bad)).toBe("already_reverted");
     expect(await table("S5")).toEqual(rows);
     void keep;
   });
@@ -332,5 +332,212 @@ describe("STANDINGS_POLICY = official_played_not_reverted", () => {
     const seed1 = [p.botId, r.botId].sort();
     const seed2 = [q.botId, s.botId].sort();
     expect(ids).toEqual([...seed1, ...seed2]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// EQ2c · H7 del revisor (#229): cada test mata un mutante concreto de `seasonTable` y
+// comprueba PUNTOS y ORDEN (no sólo presencia), directamente sobre la tabla calculada.
+// ---------------------------------------------------------------------------------------
+
+/** Torneo de cualquier formato; las inscripciones en el orden dado fijan el seed. */
+async function tournamentF(o: { season: string; format?: string; state?: string; bots: TestBot[] }): Promise<string> {
+  const [t] = await h
+    .db("tournaments")
+    .insert({
+      name: `h7-${Math.random().toString(36).slice(2, 8)}`,
+      format: o.format ?? "league",
+      mode: "deathmatch",
+      ruleset_id: DEFAULT_RULESET_ID,
+      state: o.state ?? "running",
+      created_by: adminId,
+      season_id: o.season,
+    })
+    .returning("id");
+  for (const b of o.bots) {
+    await h
+      .db("entries")
+      .insert({ tournament_id: t.id, bot_id: b.botId, version: b.version, loadout_revision: 1, frozen: true });
+  }
+  return t.id as string;
+}
+
+/**
+ * Enfrentamiento home–away de UN juego (juego 1: home = A) con marcador `hs`-`as` y el estado
+ * de batalla indicado. Gana quien más puntúa; a igual marcador, empate. No aplica Elo.
+ */
+async function scored(
+  tid: string,
+  home: TestBot,
+  away: TestBot,
+  hs: number,
+  as: number,
+  o: { status?: string } = {},
+): Promise<string> {
+  const slot = `S${Math.random().toString(36).slice(2, 8)}`;
+  const [m] = await h
+    .db("matches")
+    .insert({
+      tournament_id: tid,
+      round: 1,
+      slot,
+      state: "finished",
+      pairing: JSON.stringify({ slot, round: 1, bracket: "main", home: home.botId, away: away.botId }),
+    })
+    .returning("id");
+  const winner = hs > as ? "A" : hs < as ? "B" : "draw";
+  const [b] = await h
+    .db("battles")
+    .insert({
+      tournament_id: tid,
+      match_id: m.id,
+      status: o.status ?? "finished",
+      official: true,
+      mode: "deathmatch",
+      ruleset_id: DEFAULT_RULESET_ID,
+      map_id: "mvp-arena-01",
+      map_version: 1,
+      game_index: 1,
+      result: JSON.stringify({ winner, score: { A: hs, B: as }, endReason: "completed" }),
+    })
+    .returning("id");
+  const out = (mine: number, theirs: number) => (mine > theirs ? "win" : mine < theirs ? "loss" : "draw");
+  await h.db("participants").insert([
+    { battle_id: b.id, bot_id: home.botId, version: 1, team: "A", outcome: out(hs, as) },
+    { battle_id: b.id, bot_id: away.botId, version: 1, team: "B", outcome: out(as, hs) },
+  ]);
+  return b.id as string;
+}
+
+/** Filas de seasonTable como [bot, puntos, V, D, E, diferencia], en su orden. */
+async function pts(season: string, names: Map<string, string>) {
+  return (await seasonTable(h.db, season, "deathmatch")).map((r) => [
+    names.get(r.id),
+    r.points,
+    r.wins,
+    r.losses,
+    r.draws,
+    r.scoreDiff,
+  ]);
+}
+const named = (bots: Record<string, TestBot>) => new Map(Object.entries(bots).map(([n, b]) => [b.botId, n]));
+
+describe("EQ2c · H7: mutantes de seasonTable (puntos y orden)", () => {
+  it("H7.1 · sólo batallas TERMINADAS: una fallida con resultado y una programada no cuentan", async () => {
+    const [a, b, c, d] = await createBots(h.db, 4, "h71");
+    const t = await tournamentF({ season: "H71", bots: [a, b, c, d] });
+    await scored(t, a, b, 3, 0, { status: "failed" }); // con resultado escrito, pero fallida
+    await scored(t, c, d, 0, 0, { status: "scheduled" }); // pendiente: no es un empate
+    await scored(t, b, a, 2, 1); // la única que cuenta
+    expect(await pts("H71", named({ a, b, c, d }))).toEqual([
+      ["b", 3, 1, 0, 0, 1],
+      ["a", 0, 0, 1, 0, -1],
+    ]);
+  });
+
+  it("H7.2 · enfrentamientos directos: a igualdad de puntos manda el directo sobre diferencia y seed", async () => {
+    // b tiene mejor seed (inscrito antes) y mejor diferencia (+4 frente a +1), pero a le ganó.
+    const [b, a, c, d] = await createBots(h.db, 4, "h72");
+    const t = await tournamentF({ season: "H72", bots: [b, a, c, d] });
+    await scored(t, a, b, 1, 0);
+    await scored(t, b, d, 5, 0);
+    await scored(t, a, c, 0, 0);
+    await scored(t, b, c, 0, 0);
+    expect(await pts("H72", named({ a, b, c, d }))).toEqual([
+      ["a", 4, 1, 0, 1, 1],
+      ["b", 4, 1, 1, 1, 4],
+      ["c", 2, 0, 0, 2, 0],
+      ["d", 0, 0, 1, 0, -5],
+    ]);
+  });
+
+  it("H7.3 · diferencia de puntuación con su signo: a igualdad de puntos y sin directo, gana la mayor", async () => {
+    // f tiene mejor seed; e, más diferencia (+3 frente a +1). h pierde por menos que g.
+    const [f, e, g, hh] = await createBots(h.db, 4, "h73");
+    const t = await tournamentF({ season: "H73", bots: [f, e, g, hh] });
+    await scored(t, e, g, 3, 0);
+    await scored(t, f, hh, 1, 0);
+    expect(await pts("H73", named({ e, f, g, h: hh }))).toEqual([
+      ["e", 3, 1, 0, 0, 3],
+      ["f", 3, 1, 0, 0, 1],
+      ["h", 0, 0, 1, 0, -1],
+      ["g", 0, 0, 1, 0, -3],
+    ]);
+  });
+
+  it("H7.4 · el empate vale 1 punto: dos empates superan a un empate y una derrota, y no a una victoria", async () => {
+    const [w, x, y, z] = await createBots(h.db, 4, "h74");
+    const t = await tournamentF({ season: "H74", bots: [z, y, x, w] }); // seeds al revés del orden esperado
+    await scored(t, w, z, 1, 0); // w 3
+    await scored(t, x, y, 0, 0); // x 1, y 1
+    await scored(t, x, z, 0, 0); // x 2, z 1
+    expect(await pts("H74", named({ w, x, y, z }))).toEqual([
+      ["w", 3, 1, 0, 0, 1],
+      ["x", 2, 0, 0, 2, 0],
+      ["y", 1, 0, 0, 1, 0],
+      ["z", 1, 0, 1, 1, -1],
+    ]);
+  });
+
+  it("H7.5 · un torneo de EQUIPOS de la misma temporada y modo no entra en la tabla por bot", async () => {
+    const [a, b, c] = await createBots(h.db, 3, "h75");
+    const tt = await tournamentF({ season: "H75", format: "teams", bots: [a, b] });
+    await scored(tt, a, b, 4, 0);
+    await scored(tt, a, b, 3, 0);
+    const tl = await tournamentF({ season: "H75", bots: [b, c] });
+    await scored(tl, c, b, 1, 0);
+    expect(await pts("H75", named({ a, b, c }))).toEqual([
+      ["c", 3, 1, 0, 0, 1],
+      ["b", 0, 0, 1, 0, -1],
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// EQ2c · H2/H5: la reversión es una marca propia de la batalla (no depende del Elo) y
+// distingue los casos en su valor de retorno; draft tampoco recibe Elo.
+// ---------------------------------------------------------------------------------------
+describe("EQ2c · reversión independiente del Elo", () => {
+  it("revertOfficialBattle distingue revertida, ya revertida y nada que revertir", async () => {
+    const [a, b] = await createBots(h.db, 2, "rv1");
+    const t = await tournament({ season: "RV1", bots: [a, b] });
+    const practice = await played(t, a, b, "home", { official: false });
+    const technical = await played(t, a, b, "technical");
+    expect(await revertOfficialBattle(h.db, "00000000-0000-0000-0000-000000000000")).toBe("nothing_to_revert");
+    expect(await revertOfficialBattle(h.db, practice)).toBe("nothing_to_revert");
+    expect(await revertOfficialBattle(h.db, technical)).toBe("nothing_to_revert");
+    expect(await h.db("battles").whereIn("id", [practice, technical]).whereNotNull("reverted_at")).toHaveLength(0);
+    const good = await played(t, a, b, "home");
+    expect(await revertOfficialBattle(h.db, good)).toBe("reverted");
+    expect(await revertOfficialBattle(h.db, good)).toBe("already_reverted");
+    expect((await h.db("battles").where({ id: good }).first()).reverted_at).not.toBeNull();
+  });
+
+  it("revertida antes de puntuar: el job que llega después no aplica Elo y no cuenta", async () => {
+    const [a, b] = await createBots(h.db, 2, "rv2");
+    const t = await tournament({ season: "RV2", bots: [a, b] });
+    const bid = await scored(t, a, b, 1, 0); // sin Elo todavía
+    await recomputeSeasonStandings(h.db, "RV2", "deathmatch");
+    expect(vde(await table("RV2"), a)).toEqual([1, 0, 0]);
+    expect(await revertOfficialBattle(h.db, bid)).toBe("reverted");
+    expect(await applyBattleRating(h.db, bid)).toBe(false);
+    await handleUpdateStandings(
+      { id: "j", kind: "update_standings", payload: { tournamentId: t, battleId: bid }, attempts: 1 } as never,
+      { db: h.db } as never,
+    );
+    expect(await h.db("rating_events").where({ battle_id: bid })).toHaveLength(0);
+    expect(await h.db("ratings").where({ season_id: "RV2" })).toHaveLength(0);
+    expect(await table("RV2")).toEqual([]);
+  });
+
+  it("draft: ni clasificación ni Elo, aunque se procese el job de su batalla", async () => {
+    const [a, b] = await createBots(h.db, 2, "rv3");
+    const t = await tournament({ season: "RV3", state: "draft", bots: [a, b] });
+    const bid = await played(t, a, b, "home"); // played() ya intenta aplicar el Elo
+    expect(await applyBattleRating(h.db, bid)).toBe(false);
+    expect(await h.db("rating_events").where({ battle_id: bid })).toHaveLength(0);
+    expect(await h.db("ratings").where({ season_id: "RV3" })).toHaveLength(0);
+    await recomputeSeasonStandings(h.db, "RV3", "deathmatch");
+    expect(await table("RV3")).toEqual([]);
   });
 });

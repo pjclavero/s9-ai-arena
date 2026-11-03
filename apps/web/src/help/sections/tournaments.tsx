@@ -46,9 +46,10 @@ export function VdeTip(props: { testId?: string }) {
   return (
     <InfoTip topic="V-D-E" testId={props.testId ?? "tip-vde"}>
       Victorias - Derrotas - Empates en los enfrentamientos OFICIALES disputados de los torneos de la temporada en este
-      modo (un enfrentamiento puede tener varias batallas); un enfrentamiento sin ganador cuenta como empate. No cuentan
-      las prácticas, las batallas revertidas ni las detenidas por límite técnico, y pasar ronda sin rival (bye) no suma
-      en esta clasificación. Inscribirse no te hace aparecer.
+      modo (un enfrentamiento puede tener varias batallas); un enfrentamiento sin ganador cuenta como empate, y una
+      serie que sigue en juego cuenta con lo ya disputado (si va igualada, como empate). No cuentan las prácticas, las
+      batallas revertidas ni las detenidas por límite técnico, y un bye (pasar ronda sin rival) no suma en esta
+      clasificación. Inscribirse no te hace aparecer.
     </InfoTip>
   );
 }

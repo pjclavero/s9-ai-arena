@@ -21,9 +21,19 @@ describe("MIGRATIONS: numeración y orden", () => {
     }
   });
 
-  it("prefijos únicos, consecutivos desde 001 y en orden de aplicación", () => {
+  // Huecos RESERVADOS, explícitos y temporales: un número reservado por otro PR abierto
+  // puede faltar, pero sólo ése. 017 = `017_streaming_admin` (PR #227); la 018 de #229
+  // (`018_battle_reverted`) va detrás. Quien integre el segundo de los dos quita el 17 de aquí.
+  const RESERVED_GAPS = new Set([17]);
+
+  it("prefijos únicos, consecutivos desde 001 (salvo huecos reservados) y en orden de aplicación", () => {
     const prefixes = names.map((n) => Number(n.slice(0, 3)));
-    expect(prefixes).toEqual(prefixes.map((_p, i) => i + 1));
+    const expected: number[] = [];
+    for (let n = 1; expected.length < prefixes.length; n++) {
+      if (RESERVED_GAPS.has(n) && !prefixes.includes(n)) continue;
+      expected.push(n);
+    }
+    expect(prefixes).toEqual(expected);
     expect([...names].sort()).toEqual(names);
     expect(new Set(names).size).toBe(names.length);
   });

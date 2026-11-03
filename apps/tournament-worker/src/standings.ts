@@ -20,7 +20,7 @@
 import type { Knex } from "knex";
 import { invalidateStandingsCache, updateStandings } from "../../api/src/services/standings.js";
 import { isTechnicalLimit, pairingOf, seriesOutcome, sortTable, type TableRow } from "./results.js";
-import { applyBattleRating, revertBattleRating, seasonRatings, INITIAL_RATING } from "./ratings.js";
+import { applyBattleRating, revertBattleRatingInTrx, seasonRatings, INITIAL_RATING } from "./ratings.js";
 import type { JobRow } from "./queue.js";
 import type { HandlerContext } from "./worker.js";
 
@@ -47,9 +47,11 @@ export async function handleUpdateStandings(job: JobRow, ctx: HandlerContext): P
 export const STANDINGS_POLICY = "official_played_not_reverted" as const;
 
 /**
- * ¿Batalla REVERTIDA? Reutiliza la marca que ya deja la reversión de Elo
- * (`revertBattleRating`, ratings.ts): tiene eventos de rating y TODOS están revertidos.
- * Una batalla sin eventos (aún no puntuada) no está revertida.
+ * ¿Batalla REVERTIDA? La autoridad es la marca propia de la batalla (`battles.reverted_at`,
+ * migración 018, puesta por `revertOfficialBattle`), que existe aunque la batalla aún no
+ * tuviera Elo. Esta función cubre además la reversión SÓLO de Elo (`revertBattleRating`,
+ * ratings.ts, sin marca): tiene eventos de rating y TODOS están revertidos. Así una batalla
+ * con su Elo devuelto nunca sigue contando en V-D-E.
  */
 async function revertedBattleIds(db: Knex, battleIds: string[]): Promise<Set<string>> {
   if (battleIds.length === 0) return new Set();
@@ -67,7 +69,7 @@ async function revertedBattleIds(db: Knex, battleIds: string[]): Promise<Set<str
  *  - de torneos que no estén en `draft` (open/running/finished/cancelled sí: cancelar NO
  *    borra lo disputado);
  *  - que no terminaron por la salvaguarda técnica (`technical_limit`, ADR-022);
- *  - que no estén REVERTIDAS (`revertedBattleIds`).
+ *  - que no estén REVERTIDAS (`battles.reverted_at`; ver `revertedBattleIds`).
  * Unidad de V-D-E: el ENFRENTAMIENTO, resuelto con SUS juegos que cuentan
  * (`seriesOutcome`, el mismo criterio que el cierre del match): 3/1/0. Un bot sólo aparece
  * si tiene al menos un enfrentamiento que cuente: inscribirse no suma, y pasar ronda sin
@@ -85,6 +87,7 @@ export async function seasonTable(db: Knex, seasonId: string, mode: string): Pro
     })
     .whereNot("tournaments.format", "teams")
     .whereNot("tournaments.state", "draft")
+    .whereNull("battles.reverted_at")
     .whereNotNull("battles.match_id")
     .orderBy([{ column: "battles.match_id" }, { column: "battles.game_index" }, { column: "battles.id" }])
     .select("battles.id", "battles.match_id", "battles.game_index", "battles.result")) as Record<string, any>[];
@@ -129,7 +132,8 @@ export async function seasonTable(db: Knex, seasonId: string, mode: string): Pro
   for (const m of matches) {
     const p = pairingOf(m as never);
     if (p.bye || !p.home || !p.away) continue;
-    const series = seriesOutcome(byMatch.get(m.id)!, p);
+    // Una serie que sigue en juego (match no cerrado) no recibe el desempate por seed.
+    const series = seriesOutcome(byMatch.get(m.id)!, p, { closed: m.state === "finished" });
     const home = row(p.home);
     const away = row(p.away);
     if (series.winner === p.home) {
@@ -182,19 +186,38 @@ export async function recomputeSeasonStandings(db: Knex, seasonId: string, mode:
   invalidateStandingsCache(seasonId);
 }
 
+/** Resultado de `revertOfficialBattle`. */
+export type RevertOutcome =
+  /** Se ha revertido ahora: marca puesta, Elo devuelto (si lo tenía) y clasificación recalculada. */
+  | "reverted"
+  /** Ya estaba revertida: no cambia nada (idempotente). */
+  | "already_reverted"
+  /** No había nada que revertir: no existe, no es oficial, no ha terminado o es técnica. */
+  | "nothing_to_revert";
+
 /**
- * Anula a efectos competitivos una batalla OFICIAL ya puntuada: deshace su Elo con el
- * mecanismo existente (`revertBattleRating`, que marca `rating_events.reverted`) y
- * recalcula la clasificación de su temporada y modo, que excluye las batallas cuyos
- * eventos están todos revertidos. Idempotente. (Hoy no la invoca ningún endpoint: es el
- * punto de entrada para quien la necesite; ver informe EQ2.)
+ * Anula a efectos competitivos una batalla OFICIAL terminada, esté o no puntuada ya.
+ * En UNA transacción con la fila de la batalla bloqueada: pone la marca propia
+ * `battles.reverted_at` (independiente del Elo) y deshace su Elo si lo tenía
+ * (`revertBattleRatingInTrx`). Si el job `update_standings` de esa batalla llega después,
+ * `applyBattleRating` ve la marca y no aplica Elo. Después recalcula la clasificación de su
+ * temporada y modo. Idempotente. (Hoy no la invoca ningún endpoint: es el punto de entrada
+ * para quien la necesite; ver informe EQ2.)
  */
-export async function revertOfficialBattle(db: Knex, battleId: string): Promise<boolean> {
-  const reverted = await revertBattleRating(db, battleId);
-  const b = await db("battles")
+export async function revertOfficialBattle(db: Knex, battleId: string): Promise<RevertOutcome> {
+  const outcome = await db.transaction(async (trx): Promise<RevertOutcome> => {
+    const b = await trx("battles").where({ id: battleId }).forUpdate().first();
+    if (!b || !b.official || b.status !== "finished" || isTechnicalLimit(b.result)) return "nothing_to_revert";
+    if (b.reverted_at) return "already_reverted";
+    await trx("battles").where({ id: battleId }).update({ reverted_at: trx.fn.now() });
+    await revertBattleRatingInTrx(trx, battleId);
+    return "reverted";
+  });
+  if (outcome === "nothing_to_revert") return outcome;
+  const t = await db("battles")
     .join("tournaments", "tournaments.id", "battles.tournament_id")
     .where({ "battles.id": battleId })
     .first("tournaments.season_id", "battles.mode", "tournaments.format");
-  if (b && b.format !== "teams") await recomputeSeasonStandings(db, b.season_id as string, b.mode as string);
-  return reverted;
+  if (t && t.format !== "teams") await recomputeSeasonStandings(db, t.season_id as string, t.mode as string);
+  return outcome;
 }

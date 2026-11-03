@@ -372,6 +372,15 @@ esquema ([first-run.md](first-run.md#comandos-prohibidos-en-producción)).
   Las batallas `running` con copia deben terminar (o marcarse `failed` igual) antes de parar el
   worker nuevo. Un motor 0.3.0 dará `engine_version_mismatch` («otra versión», no «manipulado») a los
   replays 0.4.0. `rollback:1` de la 016 borra las copias de reglas (no resultados ni replays).
+  - **Migración 018** (`018_battle_reverted`; la 017 es `017_streaming_admin`, PR #227) sólo añade
+    `battles.reverted_at` (timestamptz, nullable): la marca de reversión propia de la batalla
+    (política de clasificación `official_played_not_reverted`, PR #229). No toca filas existentes ni
+    marca nada como revertido. Probada en `apps/api/src/db/migration-018.test.ts` (upgrade con datos,
+    rollback y backup/restore lógico).
+  - **Vuelta atrás:** `rollback:1` de la 018 borra SÓLO la marca: el Elo de las batallas revertidas
+    sigue devuelto en `rating_events`, pero el código anterior volvería a contarlas en V-D-E. Antes de
+    la vuelta atrás, comprobar `SELECT count(*) FROM battles WHERE reverted_at IS NOT NULL;` y, si no
+    es 0, hacer copia de esa lista.
 
 ## Errores / limitaciones
 

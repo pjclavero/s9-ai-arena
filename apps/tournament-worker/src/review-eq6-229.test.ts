@@ -162,7 +162,8 @@ async function ledgerCoherent(season: string, mode = "deathmatch") {
   for (const s of await h.db("standings").where({ season_id: season, mode })) {
     const r = ratings.find((x: Record<string, unknown>) => x.bot_id === s.bot_id);
     const expected = r ? Number(r.rating) : INITIAL_RATING;
-    if (Math.abs(expected - Number(s.rating)) > 1e-9) bad.push(`${s.bot_id}: standings=${s.rating} ratings=${expected}`);
+    if (Math.abs(expected - Number(s.rating)) > 1e-9)
+      bad.push(`${s.bot_id}: standings=${s.rating} ratings=${expected}`);
   }
   return bad;
 }
@@ -322,10 +323,10 @@ describe("[REVIEW #229] reversión", () => {
     await game(t, await match(t, a.botId, c.botId), a, c, 1, "home");
     const bad = await game(t, await match(t, a.botId, b.botId), a, b, 1, "home");
     await update(t);
-    expect(await revertOfficialBattle(h.db, bad)).toBe(true);
+    expect(await revertOfficialBattle(h.db, bad)).toBe("reverted");
     const after = await table("V1");
     const ratingsAfter = await h.db("ratings").where({ season_id: "V1" }).orderBy("bot_id");
-    expect(await revertOfficialBattle(h.db, bad)).toBe(false);
+    expect(await revertOfficialBattle(h.db, bad)).toBe("already_reverted");
     expect(await revertBattleRating(h.db, bad)).toBe(false);
     await update(t, bad); // el job de la batalla revertida vuelve a correr (reintento)
     expect(await applyBattleRating(h.db, bad)).toBe(false);
@@ -346,7 +347,7 @@ describe("[REVIEW #229] reversión", () => {
     await update(t, bid);
     const rows = await table("V2");
     expect({ r, a: vde(rows, a), events: (await h.db("rating_events").where({ battle_id: bid })).length }).toEqual({
-      r: true,
+      r: "reverted", // EQ2c: revertOfficialBattle devuelve RevertOutcome (antes, true)
       a: null,
       events: 0,
     });
@@ -449,12 +450,32 @@ describe("[REVIEW #229] no regresión: réplica del torneo finished de producci�
     const t = await tournament({ season: "PROD", format: "single_elimination", state: "running", bots });
     const W = { bracket: "winners" };
     await match(t, by["A-ATK-2"].botId, null, { ...W, slot: "W1M1", bye: true, winner: by["A-ATK-2"].botId });
-    const m2 = await match(t, by["B-DEF"].botId, by["B-ATK-1"].botId, { ...W, slot: "W1M2", winner: by["B-ATK-1"].botId });
+    const m2 = await match(t, by["B-DEF"].botId, by["B-ATK-1"].botId, {
+      ...W,
+      slot: "W1M2",
+      winner: by["B-ATK-1"].botId,
+    });
     await match(t, by["A-DEF"].botId, null, { ...W, slot: "W1M3", bye: true, winner: by["A-DEF"].botId });
-    const m4 = await match(t, by["A-ATK-1"].botId, by["prueba1"].botId, { ...W, slot: "W1M4", winner: by["prueba1"].botId });
-    const m5 = await match(t, by["A-ATK-2"].botId, by["B-ATK-1"].botId, { ...W, slot: "W2M1", winner: by["B-ATK-1"].botId });
-    const m6 = await match(t, by["A-DEF"].botId, by["prueba1"].botId, { ...W, slot: "W2M2", winner: by["A-DEF"].botId });
-    const m7 = await match(t, by["B-ATK-1"].botId, by["A-DEF"].botId, { ...W, slot: "W3M1", winner: by["B-ATK-1"].botId });
+    const m4 = await match(t, by["A-ATK-1"].botId, by["prueba1"].botId, {
+      ...W,
+      slot: "W1M4",
+      winner: by["prueba1"].botId,
+    });
+    const m5 = await match(t, by["A-ATK-2"].botId, by["B-ATK-1"].botId, {
+      ...W,
+      slot: "W2M1",
+      winner: by["B-ATK-1"].botId,
+    });
+    const m6 = await match(t, by["A-DEF"].botId, by["prueba1"].botId, {
+      ...W,
+      slot: "W2M2",
+      winner: by["A-DEF"].botId,
+    });
+    const m7 = await match(t, by["B-ATK-1"].botId, by["A-DEF"].botId, {
+      ...W,
+      slot: "W3M1",
+      winner: by["B-ATK-1"].botId,
+    });
     await game(t, m2, by["B-DEF"], by["B-ATK-1"], 1, "away");
     await game(t, m4, by["A-ATK-1"], by["prueba1"], 1, "away");
     await game(t, m5, by["A-ATK-2"], by["B-ATK-1"], 1, "away");
@@ -474,7 +495,19 @@ describe("[REVIEW #229] no regresión: réplica del torneo finished de producci�
       "A-ATK-1 0-1-0",
       "B-DEF 0-1-0",
     ]);
-    // Gate del operador: con el único torneo finished de hoy la clasificación sale idéntica.
-    expect(pr).toEqual(main);
+    // EQ2c · H1 DECIDIDO por el operador: un bye no es un enfrentamiento disputado y no suma
+    // V-D-E (política official_played_not_reverted). Cambio VISIBLE en producción en el
+    // próximo update_standings: A-DEF 2-1-0 ⇒ 1-1-0 y A-ATK-2 1-1-0 ⇒ 0-1-0 (cada uno pierde
+    // la victoria de su bye). El resto de la tabla y el orden relativo no cambian.
+    expect(pr).toEqual([
+      "B-ATK-1 3-0-0",
+      "A-DEF 1-1-0",
+      "prueba1 1-1-0",
+      "A-ATK-2 0-1-0",
+      "A-ATK-1 0-1-0",
+      "B-DEF 0-1-0",
+    ]);
+    const changed = pr.filter((line, i) => line !== main[i]);
+    expect(changed).toEqual(["A-DEF 1-1-0", "A-ATK-2 0-1-0"]);
   });
 });
