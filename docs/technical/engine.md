@@ -183,9 +183,11 @@ El catálogo de candados está en el histórico `ENGINE_REGRESSION_LOCKS`; ver [
 
 ## Estado actual
 
-- **FUNCIONA ACTUALMENTE**: simulación determinista, 7 modos, replays verificables y estadísticas por re-simulación.
-- **PARCIAL**: radio (sin alcance ni equipo) y campos del catálogo sin efecto ([equipment.md](equipment.md#campos-sin-efecto-en-el-motor)). En la plataforma los vehículos los conduce el código de cada bot en su contenedor; la activación en producción está pendiente ([TD-002](../roadmap/technical-debt.md#td-002)). Ojo: `BattleResult.disqualified` lista **vehículos** (`veh_N`), no bots; el worker los traduce. `MatchRunner` y `checkpoint` no se usan.
-- **PENDIENTE**: ejecución de bots reales por `protocol-server` dentro de la plataforma (camino `/run`, apagado).
+Revisado el 2026-11-02 contra `main` `e3bf2fa` (motor **0.4.0**, `apps/arena-engine/src/engine-deps.json`; reproduce también replays de 0.3.0).
+
+- **FUNCIONA ACTUALMENTE**: simulación determinista, 7 modos en el motor (`deathmatch`, `team_deathmatch`, `capture_the_flag`, `zone_control`, `last_man_standing`, `domination`, `juggernaut`; la plataforma ofrece los cuatro primeros), replays verificables y estadísticas por re-simulación. Desde la 0.4.0: prórroga, desempates por familia de modo y CTF con salvaguarda técnica ([ADR-022](../adr/ADR-022-motor-0-4-0-reglas-ctf-prorroga.md)). En la plataforma, el `tournament-worker` ejecuta el motor en proceso con el código de cada bot en su contenedor (`apps/tournament-worker/src/container-agents.ts`); el camino HTTP `POST /run` del motor es un camino legado sin consumidor ([TD-039](../roadmap/technical-debt.md#td-039)).
+- **PARCIAL**: la radio no tiene alcance ni filtro de equipo (`apps/arena-engine/src/sim/sensors.ts:190-195` entrega cualquier mensaje sin destinatario a todos los vehículos; `radioReaches`, `:227`, no se llama) y hay campos del catálogo sin efecto ([equipment.md](equipment.md#campos-sin-efecto-en-el-motor), [TD-016](../roadmap/technical-debt.md#td-016)). Ojo: `BattleResult.disqualified` lista **vehículos** (`veh_N`), no bots; el worker los traduce. `MatchRunner` y `checkpoint` no se usan.
+- **PENDIENTE**: nada del motor está pendiente de activación; lo que falta está en [pending-features.md](../roadmap/pending-features.md).
 
 ## Documentación relacionada
 

@@ -4,7 +4,7 @@
 
 Cada batalla terminada deja un **replay**: el JSONL del motor, comprimido, más un índice. Se guarda **en disco** (volumen de replays). No hay tabla de replays: la BD sólo guarda la referencia en `battles.replay_ref` y `battles.replay_hash`.
 
-Lo escribe el `tournament-worker` usando la librería del replay-service. Desde la fase *Production Readiness* (2026-10, integración `integration/production-readiness`, **sin desplegar**) lo sirve **un solo camino** hacia el navegador:
+Lo escribe el `tournament-worker` usando la librería del replay-service. Desde la fase *Production Readiness* (2026-10, PR #158, incluida en el commit de producción RC5.5) lo sirve **un solo camino** hacia el navegador:
 
 - la **API** (`/api/v1/replays`, `/api/v1/replays/{id}`, `/index`, `/segment`, `/verify` y `/api/v1/public/replays*`), que aplica la [política de acceso](#autorización-de-acceso-td-004) **antes** de abrir ningún fichero;
 - el **replay-service** queda **interno**: el gateway responde 404 en `/replays*` y sólo lo alcanza la red `platform` (ingesta del worker con su secreto, diagnóstico de operador).
@@ -126,7 +126,7 @@ Responde `{matches, valid, officialHash, recomputedHash, reason, message, diverg
 
 ## Gobernanza actual
 
-- **Acceso** (integración `integration/production-readiness`, sin desplegar): una autoridad (la API) y el gateway cerrado en `/replays*`; ver [Autorización de acceso](#autorización-de-acceso-td-004). En producción sigue la apertura anónima hasta el despliegue ([TD-004](../roadmap/technical-debt.md#td-004)).
+- **Acceso** (PR #158, incluida en el commit de producción RC5.5): una autoridad (la API) y el gateway cerrado en `/replays*`; ver [Autorización de acceso](#autorización-de-acceso-td-004) y [TD-004](../roadmap/technical-debt.md#td-004) (cerrada).
 - **Esquema**: ninguna respuesta de replay redirige; `absolute_redirect off` en cada `server` y `/replays` responde 404 sin `Location` ([TD-014](../roadmap/technical-debt.md#td-014)).
 - **Escritura**: la ingesta y el barrido están autenticados. El cuerpo se lee entero (hasta 64 MB) antes del 401.
 
@@ -141,7 +141,7 @@ Responde `{matches, valid, officialHash, recomputedHash, reason, message, diverg
 
 - **FUNCIONA ACTUALMENTE**: generación e ingesta, índice, segmentos, descarga con `Range` y verificación por re-simulación (`matches:true` en la auditoría).
 - **FUNCIONA ACTUALMENTE (integración `integration/functional-closure`, entorno aislado tras TLS)**: listar → abrir → cargar → canvas → ticks → pausa → fin en Chromium real.
-- **IMPLEMENTADO, sin desplegar (integración `integration/production-readiness`)**: autorización de replays (TD-004) probada a través del gateway real y en navegador real; con el replay-service parado los replays siguen leyéndose (la API lee el volumen).
+- **FUNCIONA ACTUALMENTE (PR #158, incluida en el commit de producción RC5.5)**: autorización de replays (TD-004) probada a través del gateway real y en navegador real; con el replay-service parado los replays siguen leyéndose (la API lee el volumen).
 - **PENDIENTE**: retención programada y apertura de `debugOpen` por el dueño (no hay pantalla).
 
 ## Documentación relacionada
@@ -170,7 +170,7 @@ Verificado contra `27f70bb`; filas FC-D contra los carriles del cierre funcional
 | (TD-004) Anónimo 404 / participante 200 por nginx real | RUNTIME_VERIFIED (entorno aislado) | `infrastructure/gateway/tests/replay-gateway.test.ts` (11/11, rc=0; re-exponer el `proxy_pass` ⇒ 5 rojos, rc=1) |
 | (TD-004) La web lee por la API con sesión | CODE_VERIFIED | `apps/web/src/pages/ReplayPage.tsx:33,50`; `ReplaysPage.tsx:30`; `App.tsx:206` |
 | 7 días de TTL; barrido sin programar | CODE_VERIFIED | `store.ts:22,255-270`; búsqueda de `retention/sweep` (sólo ruta, CLI y comentario de compose) |
-| Lecturas anónimas 200 en producción con `enabled:false` (antes de TD-004; producción sin desplegar) | RUNTIME_VERIFIED | Auditoría 2026-10-15, B pasada 1 (GET anónimos) |
+| Lecturas anónimas 200 en producción con `enabled:false` (antes de TD-004, en la medición del 2026-10-15; hoy cerrada por el PR #158) | RUNTIME_VERIFIED | Auditoría 2026-10-15, B pasada 1 (GET anónimos) |
 | 301 a http y bloqueo por contenido mixto (base) | RUNTIME_VERIFIED | Auditoría B pasada 2 §4 (navegador real) |
 | Sin redirección en `/replays` (FC-D; desde TD-004, 404 sin `Location`) | RUNTIME_VERIFIED | `tests/browser/specs/replay.spec.ts`; `infrastructure/gateway/tests/replay-gateway.test.ts` (SEC-9) |
 | Reproducción completa en navegador (FC-D) | RUNTIME_VERIFIED | `tests/browser/specs/replay.spec.ts` (fase1 rc=0) |

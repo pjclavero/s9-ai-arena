@@ -88,7 +88,7 @@ Estas variables se repiten en varios servicios y se agrupan como «BD común»:
 | Configuración | `PORT`, `DOCKER_PROXY_URL` (**vacía por defecto** ⇒ sin runner ⇒ 503), `ARENA_NETWORK`, `ARENA_ENGINE_HOST`, `ARENA_ENGINE_INTERNAL_SECRET_FILE` |
 | Healthcheck | `wget http://127.0.0.1:8081/healthz` |
 | Errores | 401 sin secreto válido, 503 sin runner |
-| Estado | sin uso efectivo ([TD-002](../roadmap/technical-debt.md#td-002)) |
+| Estado | camino legado sin consumidor: la API ya no construye el lanzador HTTP ([TD-039](../roadmap/technical-debt.md#td-039)); el motor se usa como librería desde el tournament-worker |
 | Tests | 23 ficheros (motor, `service.test.ts`, regresiones y determinismo) |
 | Detalle | [engine.md](engine.md), [battles.md](battles.md) |
 
@@ -141,7 +141,7 @@ Estas variables se repiten en varios servicios y se agrupan como «BD común»:
 | Configuración | BD común; `ARTIFACT_SIGNING_KEY_FILE`, `HEARTBEAT_PATH`, `DOCKER_PROXY_URL` (por defecto `http://docker-proxy.internal:2375` → `10.89.250.1`), `BUILD_SANDBOX_HOST` |
 | Secretos montados | `postgres_password`, `artifact_signing_key` (sin clave de firma **no arranca**) |
 | Healthcheck | latido `/tmp/heartbeat` con menos de 120 s |
-| Errores | sin `agentResolver`, las etapas de ejecución son «no verificables» ⇒ versión `rejected`, build `failed` (**siempre**, [TD-001](../roadmap/technical-debt.md#td-001)) |
+| Errores | sin sandbox configurado (`DOCKER_PROXY_URL`, `BUILD_SANDBOX_HOST`) las etapas de ejecución son «no verificables» ⇒ versión `rejected`, build `failed`; con el sandbox, se ejecutan ([TD-001](../roadmap/technical-debt.md#td-001), cerrada) |
 | Tests | `pipeline.test.ts`, `static-analysis.test.ts`, `ast-analysis.test.ts`, `r25-cola-builds.test.ts` |
 | Detalle | [workers.md](workers.md), [bots.md](bots.md) |
 

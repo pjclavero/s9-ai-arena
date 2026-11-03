@@ -80,7 +80,7 @@ Hay más datos sobre Redis que conviene saber:
 
 - Sin productor del aviso, la latencia mínima es el polling (~1 s).
 - Un trabajo `needs_review` exige intervención manual. No hay pantalla web para ello ([TD-023](../roadmap/technical-debt.md#td-023)).
-- `POST /battles` encola sin comprobar si la ejecución real está activa. Es el origen de la doble ejecución latente ([TD-002](../roadmap/technical-debt.md#td-002)).
+- `POST /battles` y `POST /battles/{id}/run` sólo encolan; hay un único camino de ejecución (el worker), con reserva atómica y dedupe `run_battle:<id>` ([TD-002](../roadmap/technical-debt.md#td-002), cerrada).
 
 ## Extensión
 

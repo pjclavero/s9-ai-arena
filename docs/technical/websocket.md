@@ -153,7 +153,7 @@ Verificado contra `27f70bb`; filas FC-D contra los carriles del cierre funcional
 | Códigos de cierre 4400–4429 | CODE_VERIFIED | `gateway.ts:185-248` |
 | Mensajes `init`/`snapshot`/`event`/`debug`/`result` | CODE_VERIFIED | `gateway.ts:264-283,302-320` |
 | `attachBattle` y `detachBattle` a los 3 s | CODE_VERIFIED | `apps/tournament-worker/src/engine-executor.ts:208-254` |
-| Visor roto en navegador en la base (main y producción) | RUNTIME_VERIFIED | Auditoría 2026-10-15, B pasada 2 §1b/§4 |
+| Visor roto en navegador (estado de octubre; **cerrado**, [TD-009](../roadmap/technical-debt.md#td-009)) | HISTÓRICO | Auditoría 2026-10-15; hoy el visor lo ejerce `tests/browser/specs/golden-path.spec.ts` |
 | Worker con `jwt_secret` (FC-D) | CODE_VERIFIED | `infrastructure/docker-compose.yml:338-339`; test `apps/api/src/spectate/ticket-secret-compose.test.ts` (rc=0; quitar el secreto ⇒ 2 rojos, secreto ajeno ⇒ 1 rojo) |
 | Ticket verificado en la cadena real TLS→gateway→worker | RUNTIME_VERIFIED | `tests/browser/env/ticket-probe.ts` desde `run.sh`: compartido `{"code":4404}`, ajeno `{"code":4401}` (TD028_PROBE_RC=0) |
 | Rechazos terminales sin reconexión | RUNTIME_VERIFIED | `tests/browser/specs/viewer.spec.ts` (1 sola petición de ticket); `apps/web/src/viewer/spectator-client.ts:191,379` |

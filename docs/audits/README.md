@@ -12,10 +12,26 @@ registran en un **delta** aparte.
 
 ## Índice
 
+- [Auditoría del roadmap de 2026-11](#auditoría-del-roadmap-de-2026-11)
+- [Informes de cierre de octubre](#informes-de-cierre-de-octubre)
 - [Auditoría del 2026-10-15](#auditoría-del-2026-10-15)
 - [Consolidación documental de 2026-10](#consolidación-documental-de-2026-10)
 - [Auditorías anteriores](#auditorías-anteriores)
 - [Qué no está en el repositorio](#qué-no-está-en-el-repositorio)
+
+## Auditoría del roadmap de 2026-11
+
+Auditoría documental del 2026-11-02 sobre `main` `e3bf2fa`: cada función pendiente se comprobó contra el código, el contrato
+OpenAPI, las migraciones, los tests y la CI.
+
+- [2026-11/PENDING-AUDIT.md](2026-11/PENDING-AUDIT.md): clasificación DONE, PARTIAL, PENDING y DESCARTED con la evidencia de cada fila.
+
+## Informes de cierre de octubre
+
+Informes de las integraciones que cerraron el bloqueo funcional. Son evidencia de su fecha, no documentación de uso.
+
+- [2026-10-cierres/functional-closure-report.md](2026-10-cierres/functional-closure-report.md): cierre funcional (PR #152, base `0b8c12b`).
+- [2026-10-cierres/production-readiness-report.md](2026-10-cierres/production-readiness-report.md): *Production Readiness Closure* (PR #158).
 
 ## Auditoría del 2026-10-15
 

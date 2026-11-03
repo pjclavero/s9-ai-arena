@@ -138,7 +138,7 @@ La API comprueba primero la **forma** (`assertMapShape`) y traduce cualquier exc
 
 `checkBattleContent` (`apps/api/src/routes/catalog.ts`) cruza el modo con `supported_modes` de la versión publicada (`map_mode_unsupported`, 409). Ver [game-modes.md](game-modes.md).
 
-El formulario de nueva batalla sólo ofrece mapas que soportan el modo elegido. **El endpoint `POST /battles` (B) todavía no llama a `checkBattleContent`**: está propuesto en el informe DEV-C y en COORD.
+El formulario de nueva batalla sólo ofrece mapas que soportan el modo elegido. `POST /battles` también llama a `checkBattleContent` (`apps/api/src/routes/battles.ts:606`) y responde 409 explicado ante un modo no soportado.
 
 El mapa de serie `mvp-arena-01`:
 

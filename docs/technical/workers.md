@@ -6,8 +6,8 @@ Hay dos procesos sin HTTP de negocio que reclaman trabajos de la tabla `jobs` (v
 
 | Worker | Qué hace | Estado |
 |---|---|---|
-| **tournament-worker** | **autoridad única de ejecución**: reserva cada batalla, lanza un contenedor por bot con su código, aloja motor + `ProtocolServer` + espectador, cierra la batalla una vez; procesa resultados, calendarios y clasificaciones | **PARCIAL** (verificado en aislado e integrado con el proveedor de DEV-A; en producción no reclama `run_battle` hasta desplegar el compose con `DOCKER_PROXY_URL` y la clave pública) |
-| **bot-build-worker** | ejecuta el pipeline de validación de versiones de bot | **falla cerrado siempre**: no hay sandbox |
+| **tournament-worker** | **autoridad única de ejecución**: reserva cada batalla, lanza un contenedor por bot con su código, aloja motor + `ProtocolServer` + espectador, cierra la batalla una vez; procesa resultados, calendarios y clasificaciones | **FUNCIONA EN `main`** (golden path en CI). Reclama `run_battle` sólo si tiene `DOCKER_PROXY_URL` y `ARENA_ENGINE_HOST`; sin ellos lo anuncia en el log y no reclama (`apps/tournament-worker/src/main.ts:77-111`) |
+| **bot-build-worker** | ejecuta el pipeline de validación de versiones de bot | **FUNCIONA EN `main`**: ejecuta tres etapas en el sandbox de contenedor; sin `DOCKER_PROXY_URL`/`BUILD_SANDBOX_HOST` rechaza todo build (`build-worker-wiring.ts:42-45`) |
 
 El tournament-worker ejecuta el código de usuario en contenedores cuando tiene configurado el sandbox; sin él **no ejecuta batallas** (ya no cae al stub). Ver [TD-001](../roadmap/technical-debt.md#td-001) y [TD-002](../roadmap/technical-debt.md#td-002).
 
@@ -86,7 +86,7 @@ envía una versión a validación (`QueueBotManager`).
 
 1. Reclama el trabajo con `FOR UPDATE SKIP LOCKED`. Los trabajos `running` cuyo bloqueo tiene más de 10 min se consideran huérfanos y se vuelven a reclamar.
 2. Ejecuta `E6PipelineBotManager.enqueueBuild`, que recorre estas etapas: `structure`, `static_analysis` (AST: `acorn` para Node y `python3` para Python), `dependencies`, `build`, **`protocol_test`, `smoke_battle`, `resource_limits`**, `secret_scan`, `sign` y `publish`.
-3. Las tres etapas en negrita ejecutan el bot en el sandbox de contenedor (`build-worker-wiring.ts`), con los dos relojes de arranque de TD-034 (`SANDBOX_STARTUP_TIMEOUT_MS`, `BOT_EXECUTION_TIMEOUT_MS`; ver [bots.md](bots.md#arranque-dos-relojes-td-034)). Un valor inválido de esas variables impide arrancar el proceso. Texto anterior, aplicable sin sandbox configurado: las tres etapas **necesitan ejecutar el bot**, y para eso hace falta un `agentResolver` (sandbox en contenedor). `build-worker-main.ts` no lo pasa, así que esas etapas son «no ejecutables». El build queda `failed` y la versión `rejected` con este motivo: *«sandbox no verificado: etapa(s) de ejecución no ejecutable(s) [...]»*.
+3. Las tres etapas en negrita ejecutan el bot en el sandbox de contenedor (`build-worker-wiring.ts`), con los dos relojes de arranque de TD-034 (`SANDBOX_STARTUP_TIMEOUT_MS`, `BOT_EXECUTION_TIMEOUT_MS`; ver [bots.md](bots.md#arranque-dos-relojes-td-034)). Un valor inválido de esas variables impide arrancar el proceso. Si el sandbox no está configurado (faltan `DOCKER_PROXY_URL` o `BUILD_SANDBOX_HOST`), esas etapas son «no ejecutables»: el build queda `failed` y la versión `rejected` con este motivo: *«sandbox no verificado: etapa(s) de ejecución no ejecutable(s) [...]»*.
 4. Si el ejecutor lanza una excepción y se agotan los reintentos, el resultado es el mismo: `failed`/`rejected` «no verificable». **Nunca** queda `validated` sin el pipeline completo.
 
 ### Fail-closed
@@ -95,10 +95,10 @@ envía una versión a validación (`QueueBotManager`).
 |---|---|
 | Clave de firma (`ARTIFACT_SIGNING_KEY_FILE`) | el proceso **no arranca** |
 | Configuración de BD | el proceso no arranca |
-| `agentResolver` | todo build se rechaza (hoy, siempre) |
+| Sandbox (`DOCKER_PROXY_URL` y `BUILD_SANDBOX_HOST`, que dan el `agentResolver`) | todo build se rechaza; con el sandbox configurado, no |
 
-El rechazo es correcto como medida de seguridad. El defecto es que el sandbox nunca se cableó
-([TD-001](../roadmap/technical-debt.md#td-001)).
+El rechazo sin sandbox es la medida de seguridad deliberada. El sandbox ya está cableado
+([TD-001](../roadmap/technical-debt.md#td-001), cerrada).
 
 ## Señales de vida e identidad
 
@@ -112,8 +112,7 @@ vivo, **no** que avance. Para ver el avance hay que consultar `jobs` (ver [docs/
 
 ## Errores / limitaciones
 
-- [TD-001](../roadmap/technical-debt.md#td-001): ningún build puede aprobarse.
-- [TD-002](../roadmap/technical-debt.md#td-002): PARCIAL — camino único y código real verificados en aislado; falta activarlo en producción.
+- [TD-001](../roadmap/technical-debt.md#td-001) y [TD-002](../roadmap/technical-debt.md#td-002): cerradas (PR #152); ya no hay límite de «ningún build aprobado» ni stub.
 - [TD-015](../roadmap/technical-debt.md#td-015): guardas no cableadas; `failed` bloquea los torneos.
 - [TD-026](../roadmap/technical-debt.md#td-026): el aviso Redis no tiene productor.
 - [TD-028](../roadmap/technical-debt.md#td-028): espectador sin secreto.
