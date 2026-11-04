@@ -7,6 +7,10 @@ reunidos aquí en la consolidación de 2026-10. **No es documentación vigente**
 describe lo que se probó en su fecha, contra el commit que indica, y puede citar rutas, nombres o
 procedimientos que ya no existen. Cómo se prueba hoy: [../development/testing.md](../development/testing.md).
 
+**Para quién es:** quien desarrolla o audita el proyecto. El jugador no necesita nada de esta carpeta
+([../user/index.md](../user/index.md)). Los informes de auditoría y de cierre están en
+[../audits/README.md](../audits/README.md), no aquí.
+
 ## Contenido
 
 | Carpeta / fichero | Qué es | Origen | Lo vigente está en |

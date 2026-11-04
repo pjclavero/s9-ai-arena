@@ -1,6 +1,6 @@
 # Runtime drift scanner
 
-> **Estado:** vigente, revisado contra `27f70bb`. Herramienta de **solo lectura** que compara lo
+> **Estado:** vigente, revisado contra `27f70bb` (octubre de 2026). Herramienta de **solo lectura** que compara lo
 > declarado (compose y contrato) con lo que corre. Se usa antes y después de cada actualización
 > ([upgrades.md](upgrades.md)) y en diagnóstico ([diagnostics.md](diagnostics.md)). Índice de
 > operación: [index.md](index.md).

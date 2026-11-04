@@ -1,71 +1,67 @@
 # Primeros pasos
 
-## Resumen
+Crea tu primer bot, publícalo y míralo luchar. Son ocho pasos; el último es jugar.
 
-Este es el recorrido que la plataforma prevé para un usuario nuevo. Al lado de cada paso indicamos hasta dónde llega hoy, para que no pierdas tiempo en pasos que todavía no pueden completarse.
+> **Antes de empezar:** necesitas un navegador y una dirección de correo. Si ya tienes cuenta, empieza en el paso 2. Dentro de la web, el menú **«Ayuda»** repite este recorrido y la portada, con sesión iniciada, marca cuáles has hecho ya.
 
-**La misma guía está dentro de la web**: **«Ayuda»** en la barra de navegación (dirección `#/help`, se puede abrir sin cuenta) explica el ciclo y los términos (bot, versión, estados, runtime, loadout, chasis, build, artefacto, modo). Con sesión iniciada, la portada (`#/`) muestra la lista **«Primeros pasos»** con lo que ya has hecho y el siguiente paso.
+## 1. Crea tu cuenta
 
-## Índice
+En la pantalla inicial pulsa **«Crear cuenta»** y rellena **«Nombre visible»** (el que verán los demás), **«Email»** y **«Contraseña»** (al menos 12 caracteres). Pulsa **«Registrarse y entrar»**: entras directamente. Más en [Cuentas](accounts.md).
 
-- [Qué es](#qué-es)
-- [El ciclo de un bot](#el-ciclo-de-un-bot)
-- [Uso: tu primera sesión](#uso-tu-primera-sesión)
-- [Errores / limitaciones](#errores--limitaciones)
-- [Estado actual](#estado-actual)
-- [Documentación relacionada](#documentación-relacionada)
+## 2. Crea tu primer bot
 
-## Qué es
+Ve a **«Mis bots»**, escribe un nombre en **«Nombre del bot»** y pulsa **«Crear bot»**. Un bot es sólo la ficha: el equipamiento y el código vienen ahora.
 
-Tu bot es un programa en Python o JavaScript (Node). Diez veces por segundo recibe lo que perciben los sensores de su vehículo y responde con órdenes: moverse, apuntar, disparar, usar la radio y poner minas. El vehículo lo montas tú con un **loadout**: chasis, movilidad, energía, sensores, arma, blindaje… dentro de un presupuesto de créditos.
+## 3. Equípalo
 
-## El ciclo de un bot
+Pulsa el nombre de tu bot: aparece el **editor de loadout**. El *loadout* es el vehículo: un chasis y una pieza en cada ranura (movimiento, energía, sensor, arma con su munición, radio, blindaje…) sin pasarte del presupuesto de créditos. Para un primer bot, una combinación equilibrada y válida es el **artillero**:
 
-| # | Paso | Pantalla | Hoy |
-|---|---|---|---|
-| 1 | Crear cuenta | Inicio → «Crear cuenta» | **FUNCIONA ACTUALMENTE** |
-| 2 | Crear un bot | «Mis bots» | **FUNCIONA ACTUALMENTE** |
-| 3 | Configurar el loadout | «Mis bots» → editor de loadout | **FUNCIONA ACTUALMENTE** |
-| 4 | Subir código | «Mis bots» → «Subir código (pegado)» | **FUNCIONA ACTUALMENTE** |
-| 5 | Enviar a validación | «Enviar a validación vN» | **PARCIAL**: se procesa, pero termina siempre en `rejected` ([TD-001](../roadmap/technical-debt.md#td-001)) |
-| 6 | Publicar la versión | «Publicar vN» | **PENDIENTE**: el botón sólo aparece en versiones `validated`, y hoy ninguna llega a ese estado |
-| 7 | Jugar una batalla de práctica | «Batallas» → «+ Nueva batalla» | **PENDIENTE**: 400 «rulesetId desconocido» ([TD-003](../roadmap/technical-debt.md#td-003)) |
-| 8 | Inscribirse en un torneo | «Torneos» | **PARCIAL**: requiere una versión publicada |
-| 9 | Ver la batalla | Visor / replay | Replay **FUNCIONA ACTUALMENTE**; directo **PARCIAL** ([viewer.md](viewer.md), [replays.md](replays.md)) |
-| 10 | Ver tu posición | «Ranking» | **PARCIAL**: sale vacío |
+| Ranura | Pieza |
+|---|---|
+| Chasis | Chasis medio |
+| Propulsión | Orugas |
+| Energía | Generador básico |
+| Sensor A | Radar básico |
+| Torreta principal | Cañón de 60 mm con munición perforante |
+| Blindaje frontal | Blindaje de acero frontal |
+| Radio | Radio corta |
 
-## Uso: tu primera sesión
+Cuesta **940 créditos de 1000**. Pulsa **«Guardar revisión»**. Todas las piezas, con sus cifras, en el [catálogo de equipamiento](equipment-catalog.md); cómo elegir, en [Equipamiento](equipment.md).
 
-1. **Crea tu cuenta**: email, contraseña de al menos 12 caracteres y nombre visible. Entras directamente. Ver [Cuentas](accounts.md).
-2. **Ve a «Mis bots»**, escribe un nombre en «Nombre del bot» y pulsa «Crear bot».
-3. **Pulsa sobre el nombre del bot** para abrir su detalle y configura el **editor de loadout**:
-   - elige un chasis;
-   - llena cada ranura;
-   - vigila «Coste» y «Energía»;
-   - pulsa «Guardar revisión».
+## 4. Programa el bot
 
-   Ver [Equipamiento](equipment.md).
-4. **En «Subir código (pegado)»** elige el runtime (Python o JavaScript). El editor ya trae una **plantilla válida** de ese runtime: puedes subirla tal cual o cambiarla, y pulsar «Subir como versión nueva». Detalle en [Bots](bots.md#subir-código).
-5. **Pulsa «Enviar a validación v1»**. El panel dice «Validación en curso…» y, al terminar, la versión quedará `rejected` con un motivo que empieza por «sandbox no verificado». **No es un fallo de tu código**: la plataforma todavía no puede ejecutar bots en su entorno aislado.
+En la tarjeta **«Subir código (pegado)»** elige el *runtime* (**Python** o **JavaScript**). El área **«Código»** ya trae una **plantilla que funciona**: va hacia el rival, usa tu radar o lidar y dispara. Puedes subirla tal cual para probar el recorrido, o cambiarla.
 
-Hasta que se resuelva ese punto, no puedes avanzar más con tus propios bots. Puedes explorar «Mapas», el «Editor de mapas», «Torneos», «Equipos» y «Ranking».
+Para escribir tu propio bot, empieza por la [guía de programación](bots/index.md): un bot mínimo cabe en cuatro líneas, y los [ejemplos](bots/ejemplos.md) van de lo sencillo a jugar en equipo.
 
-## Errores / limitaciones
+Pulsa **«Subir como versión nueva»**: se crea la versión 1, en estado `draft`.
 
-- La ayuda vive en «Ayuda» (`#/help`). Dentro de algunas pantallas, los nombres de las etapas del pipeline aparecen tal cual.
-- Algunos formularios se muestran a todos aunque exigen permisos de organizador (crear torneo, generar o publicar mapa). Fallan con «Requiere rol organizer».
-- Si escribes una dirección que no existe (por ejemplo, `#/loquesea`), verás «Página no encontrada» con «Volver» y enlaces a las pantallas principales.
-- Cuando algo falla, la pantalla lo dice (permiso, inexistente, servidor caído, sin respuesta) y ofrece «Reintentar»: ver [Si algo falla](index.md#si-algo-falla).
+## 5. Valida y publica
 
-Lista completa: [known-issues.md](../roadmap/known-issues.md).
+Pulsa **«Enviar a validación v1»**. La plataforma construye tu código y lo prueba en una batalla corta. Verás las etapas y, si todo va bien, la versión pasa a `validated`; si no, `rejected`, con el fichero, la línea y qué hacer. Cuando esté `validated`, pulsa **«Publicar v1»**. Sólo las versiones publicadas combaten. Más en [Bots](bots.md).
 
-## Estado actual
+## 6. Crea un segundo bot
 
-**PARCIAL**: puedes preparar bots, pero no hacer que jueguen.
+Una batalla necesita dos bots con una versión publicada. Repite los pasos 2 a 5 con otro bot (puede ser una copia del primero, con otro nombre). Si tienes dudas con algún término, abre «Ayuda» y mira el glosario.
 
-## Documentación relacionada
+## 7. Lanza tu primera batalla
 
-- En la web: «Ayuda» (`#/help`)
-- Siguiente: [Cuentas](accounts.md) · [Bots](bots.md)
-- Técnica: [bots.md](../technical/bots.md), [battles.md](../technical/battles.md)
-- Desarrollo de bots (SDK): `sdks/python/README.md`, `sdks/javascript/README.md`, `packages/protocol/README.md`
+Ve a **«Batallas» → «+ Nueva batalla»**. Elige:
+
+- el tipo: **individual** (1 contra 1) o **por equipos**;
+- las **reglas** (un conjunto oficial como «Duelo»; los detalles, en [Modos de juego](game-modes.md));
+- un **mapa publicado** compatible con el modo;
+- el bot y la versión de cada **bando** (rojo y azul).
+
+Pulsa **«Crear batalla»**. Se encola y la plataforma la juega en cuanto hay hueco. Una batalla de práctica no cuenta para el ranking. Más en [Batallas](battles.md).
+
+## 8. Míralo jugar
+
+Desde **«Ver esta batalla»**, **«Batallas»** o **«Replays»** puedes ver cómo juega tu bot: en directo mientras está en curso ([Visor](viewer.md)) o en el [replay](replays.md) cuando termina. El detalle de la batalla trae las [estadísticas](statistics.md) y el diagnóstico de tu bot.
+
+Y ahora, a **jugar**: cambia el código, prueba otro equipamiento, publica una versión nueva y vuelve a medirte. Cuando te veas con fuerzas, [inscribe tu bot en un torneo](tournaments.md) y sube en el [ranking](rankings.md).
+
+## ¿Algo no sale?
+
+- Si una versión se rechaza, la tarjeta de rechazo te dice la causa: [errores típicos](bots/probar.md#errores-típicos-y-qué-significan).
+- Si la web muestra un aviso con «Reintentar», mira [Si algo falla](index.md#si-algo-falla).

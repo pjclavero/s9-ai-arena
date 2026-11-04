@@ -14,7 +14,7 @@ de control se ponen rojas. **Nada se ha desplegado** ni se ha tocado producción
 
 Veredicto: **FUNCTIONAL_CORE_VERIFIED** en entorno aislado, con una salvedad documentada: el límite
 de arranque del sandbox mide tiempo de pared y, con la máquina cargada, rechaza a veces un bot
-válido ([TD-034](../roadmap/technical-debt.md#td-034)).
+válido ([TD-034](../../roadmap/technical-debt.md#td-034)).
 
 > **Actualización (Production Readiness Closure, 2026-10-18):** TD-034 y TD-004 quedan cerradas y
 > TD-045 con el gate activo y calibrado en `integration/production-readiness`, construida sobre el
@@ -71,7 +71,7 @@ versiones y `BotDetailPage`. **Contratos:** `SandboxSpec` (`cmd`, `autoRemove`, 
 bots públicos con código privado: lo prueba la matriz de seguridad nueva). Hallazgos: no exportaba
 `createBattleLaunchHost` (contrato que B esperaba); `docker-sandbox-env.ts` borraba la red
 compartida `arena` si la había creado; `BotDetailPage` traga el fallo de `/loadouts`; el artefacto
-de un bot público muestra hash/firma aunque el código sea privado ([TD-049](../roadmap/technical-debt.md#td-049)).
+de un bot público muestra hash/firma aunque el código sea privado ([TD-049](../../roadmap/technical-debt.md#td-049)).
 
 **Dictamen: PASS** (con la integración de `createBattleLaunchHost` hecha por REVIEW).
 
@@ -86,7 +86,7 @@ vida, propiedad, temporada, E2E con Docker.
 camino de A) e insertaba por SQL un loadout que la API rechaza (`energy_deficit`); `server.ts`
 seguía construyendo el launcher HTTP legado; no cableaba `checkBattleContent`; caché `public` en el
 historial de rating de un bot privado (corregido); `GET /battles`, detalle y stats muestran
-participantes de bots privados (preexistente, [TD-047](../roadmap/technical-debt.md#td-047));
+participantes de bots privados (preexistente, [TD-047](../../roadmap/technical-debt.md#td-047));
 `main.ts` no cableaba el guard de firma (cableado).
 
 **Dictamen: PASS** tras la integración.
@@ -101,9 +101,9 @@ provisional en `tests/fc-c-browser`.
 
 **Revisión.** Hallazgos: E2E provisional fuera del directorio canónico (unificado); botón «Ejecutar
 batalla real» obsoleto (retirado); alta de miembros por email que revela si la cuenta existe y no
-pide consentimiento ([TD-041](../roadmap/technical-debt.md#td-041)); carrera de creación simultánea
-del mismo `mapId` (500) y `getVersionRow` que convierte un error de BD en 404 ([TD-049](../roadmap/technical-debt.md#td-049)).
-Sacar `map-service` de `production` rompe el contrato de despliegue: no se aplicó ([TD-017](../roadmap/technical-debt.md#td-017)).
+pide consentimiento ([TD-041](../../roadmap/technical-debt.md#td-041)); carrera de creación simultánea
+del mismo `mapId` (500) y `getVersionRow` que convierte un error de BD en 404 ([TD-049](../../roadmap/technical-debt.md#td-049)).
+Sacar `map-service` de `production` rompe el contrato de despliegue: no se aplicó ([TD-017](../../roadmap/technical-debt.md#td-017)).
 
 **Dictamen: PASS.**
 
@@ -115,9 +115,9 @@ reconecta ante rechazos, `/replays` sin 301 a http, resultados `battle-result/v1
 del ticket en el worker, E2E de navegador canónico (`tests/browser`, `npm run test:browser`).
 
 **Revisión.** Hallazgos: el worker recibe el secreto de sesión raíz para verificar tickets
-([TD-043](../roadmap/technical-debt.md#td-043)); el atajo `seed-replay` (sustituido por la batalla
+([TD-043](../../roadmap/technical-debt.md#td-043)); el atajo `seed-replay` (sustituido por la batalla
 del golden path); comentarios con nombres de máquina reales en ficheros nuevos (limpiados); un 200
-con JSON ilegible se trata como éxito ([TD-049](../roadmap/technical-debt.md#td-049)).
+con JSON ilegible se trata como éxito ([TD-049](../../roadmap/technical-debt.md#td-049)).
 
 **Dictamen: PASS.**
 
@@ -145,7 +145,7 @@ Conflictos semánticos (R4), cada uno con test:
 | 7 | `#/bots/<id>` y `#/maps/editor?…` conviven con la 404 | `fc-review-routes.test.tsx` |
 | 8 | `TeamsPage`, `BattleNewPage` y «Crear bot» usan `ErrorState`/`FormError` | `battle-new-page.test.tsx`, `r16-pages-primitives.test.tsx` |
 | 9 | E2E de navegador unificado en `tests/browser` (fase golden); `tests/fc-c-browser` y `seed-replay` retirados | `npm run test:browser` |
-| 10 | compose: `tournament-worker` y `bot-build-worker` en `arena` con proxy, host anunciado y `extra_hosts`; clave pública `artifact_verify_key` (la genera `init-secrets.sh`); `COPY runtimes/DIGESTS.lock` en `bot-manager` y `node-service`; `SPECTATE_WS_URL=/ws/spectate`; `map-service` se queda en `production`; TD-A1 aceptada como [TD-033](../roadmap/technical-debt.md#td-033) | tests de compose, `service-env-contract.test.ts`, stack local arrancado |
+| 10 | compose: `tournament-worker` y `bot-build-worker` en `arena` con proxy, host anunciado y `extra_hosts`; clave pública `artifact_verify_key` (la genera `init-secrets.sh`); `COPY runtimes/DIGESTS.lock` en `bot-manager` y `node-service`; `SPECTATE_WS_URL=/ws/spectate`; `map-service` se queda en `production`; TD-A1 aceptada como [TD-033](../../roadmap/technical-debt.md#td-033) | tests de compose, `service-env-contract.test.ts`, stack local arrancado |
 
 ## TESTS
 
@@ -217,7 +217,7 @@ Commit antes de mutar, ejecutar, restaurar con `git checkout`; ninguna mutación
 
 ## KNOWN LIMITATIONS
 
-- **Arranque del sandbox bajo carga** ([TD-034](../roadmap/technical-debt.md#td-034)): en 2 de las
+- **Arranque del sandbox bajo carga** ([TD-034](../../roadmap/technical-debt.md#td-034)): en 2 de las
   ejecuciones con Docker un bot válido quedó `rejected` por «arranque > 5000 ms» con la máquina
   cargada; repetidas solas, pasan. Es un falso negativo no determinista del producto, no del test.
 - **Red local**: la red `arena` del Docker rootless no es `internal` (el anfitrión es un proceso
@@ -227,7 +227,7 @@ Commit antes de mutar, ejecutar, restaurar con `git checkout`; ninguna mutación
   el host (E2E y navegador), no dentro de los contenedores de compose.
 - **Secretos en rootless**: para el stack local los ficheros de secretos se dejaron legibles (0444)
   porque el Docker rootless remapea el propietario; se borraron al terminar. No afecta al repo.
-- **E2E con Docker y de navegador fuera de CI** ([TD-045](../roadmap/technical-debt.md#td-045)).
+- **E2E con Docker y de navegador fuera de CI** ([TD-045](../../roadmap/technical-debt.md#td-045)).
 - **Emisión** (`#/broadcast`) con batalla viva sin E2E; el replay no dibuja la geometría del mapa
   importado en la captura (no verificado más allá).
 
@@ -235,35 +235,35 @@ Commit antes de mutar, ejecutar, restaurar con `git checkout`; ninguna mutación
 
 | TD | Cómo |
 |---|---|
-| [TD-002](../roadmap/technical-debt.md#td-002) | autoridad única + artefacto firmado de la versión exacta; golden y mutación HunterBot |
-| [TD-003](../roadmap/technical-debt.md#td-003) | rulesets de la API; residual `checkBattleContent` cableado |
-| [TD-005](../roadmap/technical-debt.md#td-005) | propiedad/visibilidad de participantes; `rating-history` con `Cache-Control: private` |
-| [TD-010](../roadmap/technical-debt.md#td-010), [TD-011](../roadmap/technical-debt.md#td-011) | editor persistente y equipos (DEV-C), en el golden path |
-| [TD-014](../roadmap/technical-debt.md#td-014) | `/replays` sin 301 tras TLS |
-| [TD-028](../roadmap/technical-debt.md#td-028) | ticket de la ruta real abre la batalla viva por TLS → gateway → worker |
-| [TD-029](../roadmap/technical-debt.md#td-029) | temporada única |
-| [TD-030](../roadmap/technical-debt.md#td-030) | contrato `process.env` ↔ compose ↔ `.env.example` por servicio |
-| [TD-032](../roadmap/technical-debt.md#td-032), [TD-040](../roadmap/technical-debt.md#td-040), [TD-044](../roadmap/technical-debt.md#td-044) | deuda propuesta por los carriles y cerrada en la integración |
+| [TD-002](../../roadmap/technical-debt.md#td-002) | autoridad única + artefacto firmado de la versión exacta; golden y mutación HunterBot |
+| [TD-003](../../roadmap/technical-debt.md#td-003) | rulesets de la API; residual `checkBattleContent` cableado |
+| [TD-005](../../roadmap/technical-debt.md#td-005) | propiedad/visibilidad de participantes; `rating-history` con `Cache-Control: private` |
+| [TD-010](../../roadmap/technical-debt.md#td-010), [TD-011](../../roadmap/technical-debt.md#td-011) | editor persistente y equipos (DEV-C), en el golden path |
+| [TD-014](../../roadmap/technical-debt.md#td-014) | `/replays` sin 301 tras TLS |
+| [TD-028](../../roadmap/technical-debt.md#td-028) | ticket de la ruta real abre la batalla viva por TLS → gateway → worker |
+| [TD-029](../../roadmap/technical-debt.md#td-029) | temporada única |
+| [TD-030](../../roadmap/technical-debt.md#td-030) | contrato `process.env` ↔ compose ↔ `.env.example` por servicio |
+| [TD-032](../../roadmap/technical-debt.md#td-032), [TD-040](../../roadmap/technical-debt.md#td-040), [TD-044](../../roadmap/technical-debt.md#td-044) | deuda propuesta por los carriles y cerrada en la integración |
 
-PARCIAL: [TD-001](../roadmap/technical-debt.md#td-001) (proxy del host y CI con Docker),
-[TD-009](../roadmap/technical-debt.md#td-009) (CI), [TD-013](../roadmap/technical-debt.md#td-013),
-[TD-015](../roadmap/technical-debt.md#td-015), [TD-016](../roadmap/technical-debt.md#td-016),
-[TD-017](../roadmap/technical-debt.md#td-017), [TD-022](../roadmap/technical-debt.md#td-022) (onboarding).
+PARCIAL: [TD-001](../../roadmap/technical-debt.md#td-001) (proxy del host y CI con Docker),
+[TD-009](../../roadmap/technical-debt.md#td-009) (CI), [TD-013](../../roadmap/technical-debt.md#td-013),
+[TD-015](../../roadmap/technical-debt.md#td-015), [TD-016](../../roadmap/technical-debt.md#td-016),
+[TD-017](../../roadmap/technical-debt.md#td-017), [TD-022](../../roadmap/technical-debt.md#td-022) (onboarding).
 
 ## DEBT REMAINING
 
 Nueva (ids asignados por REVIEW; equivalencias con las propuestas de los carriles):
-[TD-033](../roadmap/technical-debt.md#td-033) (TD-A1), [TD-034](../roadmap/technical-debt.md#td-034) (TD-A2),
-[TD-035](../roadmap/technical-debt.md#td-035) (TD-A3), [TD-036](../roadmap/technical-debt.md#td-036) (TD-A4),
-[TD-037](../roadmap/technical-debt.md#td-037), [TD-038](../roadmap/technical-debt.md#td-038) y
-[TD-039](../roadmap/technical-debt.md#td-039) (DEV-B; TD-039 absorbe TD-NEW-C2),
-[TD-041](../roadmap/technical-debt.md#td-041) (TD-NEW-C3), [TD-042](../roadmap/technical-debt.md#td-042) (TD-NEW-C4),
-[TD-043](../roadmap/technical-debt.md#td-043) (D1), [TD-045](../roadmap/technical-debt.md#td-045) (D3),
-[TD-046](../roadmap/technical-debt.md#td-046) (D4), y de la revisión [TD-047](../roadmap/technical-debt.md#td-047),
-[TD-048](../roadmap/technical-debt.md#td-048), [TD-049](../roadmap/technical-debt.md#td-049).
+[TD-033](../../roadmap/technical-debt.md#td-033) (TD-A1), [TD-034](../../roadmap/technical-debt.md#td-034) (TD-A2),
+[TD-035](../../roadmap/technical-debt.md#td-035) (TD-A3), [TD-036](../../roadmap/technical-debt.md#td-036) (TD-A4),
+[TD-037](../../roadmap/technical-debt.md#td-037), [TD-038](../../roadmap/technical-debt.md#td-038) y
+[TD-039](../../roadmap/technical-debt.md#td-039) (DEV-B; TD-039 absorbe TD-NEW-C2),
+[TD-041](../../roadmap/technical-debt.md#td-041) (TD-NEW-C3), [TD-042](../../roadmap/technical-debt.md#td-042) (TD-NEW-C4),
+[TD-043](../../roadmap/technical-debt.md#td-043) (D1), [TD-045](../../roadmap/technical-debt.md#td-045) (D3),
+[TD-046](../../roadmap/technical-debt.md#td-046) (D4), y de la revisión [TD-047](../../roadmap/technical-debt.md#td-047),
+[TD-048](../../roadmap/technical-debt.md#td-048), [TD-049](../../roadmap/technical-debt.md#td-049).
 TD-NEW-C1 y el «mapa↔modo» de B se fusionaron en TD-032 (cerrada); D2 es TD-044 (cerrada).
 
-Siguen abiertas de la auditoría, entre otras: [TD-004](../roadmap/technical-debt.md#td-004)
+Siguen abiertas de la auditoría, entre otras: [TD-004](../../roadmap/technical-debt.md#td-004)
 (re-verificada: `GET /replays` anónimo responde 200 por el gateway), TD-006, TD-007, TD-008,
 TD-012, TD-019, TD-031.
 
@@ -281,16 +281,16 @@ el host y dar `DOCKER_PROXY_URL` al worker.
 ## NEXT STEPS
 
 1. Revisión humana y fusión de `integration/functional-closure` (coordinador).
-2. Job de CI con Docker para el golden path y los E2E de sandbox/batalla ([TD-045](../roadmap/technical-debt.md#td-045)).
-3. Estabilizar el límite de arranque ([TD-034](../roadmap/technical-debt.md#td-034)) antes de abrir el build a usuarios.
-4. Antes de abrir a terceros: [TD-004](../roadmap/technical-debt.md#td-004), [TD-047](../roadmap/technical-debt.md#td-047), [TD-041](../roadmap/technical-debt.md#td-041), [TD-033](../roadmap/technical-debt.md#td-033), [TD-043](../roadmap/technical-debt.md#td-043).
-5. Despliegue con ventana del operador; tras él, actualizar [current-status.md](../roadmap/current-status.md) y el bloque de estado del README.
+2. Job de CI con Docker para el golden path y los E2E de sandbox/batalla ([TD-045](../../roadmap/technical-debt.md#td-045)).
+3. Estabilizar el límite de arranque ([TD-034](../../roadmap/technical-debt.md#td-034)) antes de abrir el build a usuarios.
+4. Antes de abrir a terceros: [TD-004](../../roadmap/technical-debt.md#td-004), [TD-047](../../roadmap/technical-debt.md#td-047), [TD-041](../../roadmap/technical-debt.md#td-041), [TD-033](../../roadmap/technical-debt.md#td-033), [TD-043](../../roadmap/technical-debt.md#td-043).
+5. Despliegue con ventana del operador; tras él, actualizar [current-status.md](../../roadmap/current-status.md) y el bloque de estado del README.
 
 ## Documentación relacionada
 
-- [current-status.md](../roadmap/current-status.md) · [known-issues.md](../roadmap/known-issues.md) · [technical-debt.md](../roadmap/technical-debt.md)
-- [battles.md](../technical/battles.md) · [bots.md](../technical/bots.md) · [bot-versioning.md](../technical/bot-versioning.md) · [frontend.md](../technical/frontend.md) · [maps.md](../technical/maps.md)
-- [configuration.md](../operations/configuration.md) · [testing.md](testing.md)
+- [current-status.md](../../roadmap/current-status.md) · [known-issues.md](../../roadmap/known-issues.md) · [technical-debt.md](../../roadmap/technical-debt.md)
+- [battles.md](../../technical/battles.md) · [bots.md](../../technical/bots.md) · [bot-versioning.md](../../technical/bot-versioning.md) · [frontend.md](../../technical/frontend.md) · [maps.md](../../technical/maps.md)
+- [configuration.md](../../operations/configuration.md) · [testing.md](../../development/testing.md)
 
 ## Verificación
 

@@ -1,173 +1,93 @@
-# Bots: crear, código, versiones y publicación
+# Bots: crear, versiones y publicación
 
-## Resumen
+En **«Mis bots»** creas bots, configuras su equipamiento, subes versiones de código y las envías a validación. Cada envío se **ejecuta en un entorno aislado** y se prueba en una batalla corta; si la supera, puedes **publicar** la versión, y sólo las versiones publicadas combaten. Cada versión conserva su propio código, equipamiento y paquete, y **no cambia nunca**: para modificarla creas una versión nueva a partir de ella.
 
-En **«Mis bots»** creas bots, configuras su equipamiento, subes versiones de código y las envías a validación. Cada envío pasa por un *pipeline* de comprobaciones que **ejecuta tu código en un contenedor aislado** y lo enfrenta a un bot de referencia. Si las supera, puedes **publicar** la versión, y sólo las versiones publicadas juegan. Cada versión conserva su propio código, build y artefacto, y no cambia nunca: para modificarla creas una versión nueva desde ella.
-
-Importante: esto funciona en la rama del cierre funcional con Docker. En la instalación desplegada falta configurar el sandbox del worker de builds ([TD-001](../roadmap/technical-debt.md#td-001)). Mientras no se configure, los envíos terminan «rejected» con «sandbox no verificado», y eso no es un fallo de tu código.
-
-## Índice
-
-- [Crear un bot](#crear-un-bot)
-- [Configurar el equipamiento](#configurar-el-equipamiento)
-- [Subir código](#subir-código)
-- [Versiones y estados](#versiones-y-estados)
-- [Enviar a validación (build)](#enviar-a-validación-build)
-- [Publicar](#publicar)
-- [Ver un bot y sus versiones](#ver-un-bot-y-sus-versiones)
-- [Usar el bot](#usar-el-bot)
-- [Errores / limitaciones](#errores--limitaciones)
-- [Estado actual](#estado-actual)
-- [Documentación relacionada](#documentación-relacionada)
+Cómo se **programa** un bot (ciclo, observaciones, órdenes, sensores, radio) está en la [guía de programación](bots/index.md).
 
 ## Crear un bot
 
-**FUNCIONA ACTUALMENTE.**
+1. «Mis bots» → campo **«Nombre del bot»** (hasta 48 caracteres, único entre tus bots) → **«Crear bot»**. Un nombre vacío, demasiado largo o repetido se explica junto al formulario («Ya tienes un bot llamado «Tanque».»).
+2. Aparece en la lista de **Activos** con su visibilidad entre paréntesis. Todos los bots nacen **privados**.
 
-1. «Mis bots» → campo **«Nombre del bot»** (hasta 48 caracteres, único entre tus bots) → **«Crear bot»**. Un nombre vacío, demasiado largo o repetido se explica junto al formulario («Ya tienes un bot llamado «Tanque».»). Pulsar dos veces crea un solo bot.
-2. Aparece en la lista como `nombre (private)`. Junto a cada bot hay un enlace **«batallas»** que lleva a sus batallas.
+Pulsa el nombre del bot para abrir su detalle: ahí está el editor de equipamiento, la subida de código, las versiones y el estado de la validación.
 
-Si no tienes ninguno verás «Aún no tienes bots: crea el primero abajo.». Todos los bots nacen **privados**. Desde la web no puedes cambiar la visibilidad, renombrar ni borrar un bot (**PENDIENTE**).
+**Retirar un bot.** En el detalle, «Retirar bot» lo pasa a la lista de **Retirados**: no borra versiones, batallas ni replays ni cambia qué versión juega; «Reactivar bot» lo devuelve a Activos. No hay forma de borrar un bot, ni de cambiar su visibilidad o su nombre desde la web.
 
-## Configurar el equipamiento
+## Equiparlo
 
-**FUNCIONA ACTUALMENTE.** Pulsa sobre el nombre del bot y aparece el **«Editor de loadout»**. Elige el chasis, llena las ranuras y pulsa **«Guardar revisión»**; después, «Guardar como nueva revisión». Detalle en [Equipamiento](equipment.md). **Necesitas un loadout guardado para poder subir código.** Si no lo tienes, verás «Guarda antes una configuración (loadout) para poder subir código.».
+Pulsa el nombre del bot y aparece el **«Editor de loadout»**: elige el chasis, llena las ranuras y pulsa **«Guardar revisión»**. Detalle en [Equipamiento](equipment.md). **Necesitas un loadout guardado para poder subir código**: si no lo tienes, verás «Guarda antes una configuración (loadout) para poder subir código.».
 
 ## Subir código
 
-**PARCIAL.**
-
 1. En la tarjeta «Versiones de *bot*» → **«Subir código (pegado)»**.
-2. Elige el **Runtime**: Python o JavaScript (Node). Debajo se resume qué debe contener el código.
-3. El área **«Código»** arranca con una **plantilla válida** del runtime: patrulla y, si el radar ve a alguien, apunta y dispara con las armas de tu loadout. Pasa el build tal cual. Si cambias de runtime sin haberla tocado, se cambia por la del otro; si ya escribiste algo, se respeta. «Restaurar la plantilla» vuelve a ella.
-4. Pulsa **«Subir como versión nueva»**. Se crea la versión siguiente (v1, v2…) en estado `draft`, ligada a tu revisión de loadout actual.
+2. Elige el **Runtime**: Python o JavaScript (Node).
+3. El área **«Código»** arranca con una **plantilla válida**: va hacia el rival, usa tu radar o lidar y dispara con las armas de tu loadout. Pasa la validación tal cual. Si cambias de runtime sin haberla tocado, se cambia por la del otro; si ya escribiste algo, se respeta. «Restaurar la plantilla» vuelve a ella.
+4. Pulsa **«Subir como versión nueva»**: se crea la versión siguiente (v1, v2…) en estado `draft`, ligada a tu revisión de loadout actual.
 
-Si la sesión caduca mientras escribes, al volver a entrar el código sin subir de esa pestaña se recupera, con el aviso «Recuperado el código sin subir de esta sesión». Lo mismo en el editor de la pestaña Code del detalle del bot.
+Si la sesión caduca mientras escribes, el código sin subir de esa pestaña se recupera al volver a entrar.
 
-Límites y particularidades:
+Detalles del código:
 
-- Sólo se puede **pegar** texto; no hay botón para elegir un archivo.
-- El código se empaqueta solo con el SDK oficial (`arena-sdk`), así que no puedes añadir dependencias desde la web.
-- Tamaño máximo: 10 MB.
-- Ejemplos de bots: `example-bots/python/`, `example-bots/javascript/`. SDK: `sdks/python`, `sdks/javascript`.
-- **Qué debe contener tu código**:
-  - **Python** (3.11): una clase que herede de `arena_sdk.ArenaBot` (llámala `Bot` si defines varias) con `on_observation(self, observation)` devolviendo el comando.
-  - **JavaScript** (Node 20): un **módulo ES** (`import` / `export`, no `require`) que exporte (`export default` o `export class Bot`) una clase que extienda `ArenaBot` de `@arena/sdk`, con `onObservation(observation)`. **TypeScript no se acepta**: el runtime no lo ejecuta y el build lo rechaza diciendo que es TypeScript. Los ejemplos JavaScript del repositorio (`example-bots/javascript/`) y el tutorial del SDK son JavaScript ESM que se pueden subir tal cual.
-
-  No hace falta conectar nada: la plataforma instancia tu clase y la conecta a la batalla.
-- **El hook es obligatorio.** Si tu clase no implementa `on_observation` (Python) u `onObservation` (JavaScript), por ejemplo porque el nombre tiene una errata, el build lo **rechaza**: «tu clase Bot no implementa on_observation(self, observation): sin él el bot no hace nada en la batalla. ¿Quisiste decir «on_observaton»? Renómbralo a «on_observation».». Antes un bot así pasaba todas las etapas sin hacer nada. Un bot que sí lo implementa y devuelve `{}` («sin cambios») pasa.
-
-Ejemplo mínimo en Python:
-
-```python
-from arena_sdk import ArenaBot
-
-
-class Bot(ArenaBot):
-    def on_observation(self, observation):
-        return {"move": {"throttle": 0.8, "steer": 0.2}}
-```
+- Sólo se puede **pegar** texto; no hay botón para elegir un archivo. Máximo 10 MB.
+- No puedes añadir dependencias desde la web: el código se empaqueta con el SDK oficial. Qué se puede importar: [Probar tu bot](bots/probar.md#qué-comprueba-la-validación).
+- **Python** (3.11): una clase que herede de `ArenaBot` (llámala `Bot` si defines varias) con `on_observation(self, observation)`. **JavaScript** (Node 20): un **módulo ES** que exporte una clase que extienda `ArenaBot` con `onObservation(observation)`. **TypeScript no se acepta**.
+- **El hook es obligatorio.** Si tu clase no lo implementa —por ejemplo, por una errata en el nombre— la validación lo rechaza y te dice cómo escribirlo. Un bot que sí lo implementa y devuelve `{}` («sin cambios») es válido.
+- Un paquete de varios ficheros no se puede subir desde la web (la web edita el fichero de entrada).
 
 ## Versiones y estados
 
 La tabla de versiones muestra para cada una su número, estado, runtime, motivo de rechazo y la acción pendiente:
 
-| Estado | Qué significa | Lo que ves |
+| Estado | Qué significa | Qué ves |
 |---|---|---|
-| `draft` | Subida, sin enviar | «SIN ENVIAR» · «sin enviar — pulsa «Enviar a validación»» |
-| `validating` | En el pipeline | «Validación en curso…» |
-| `rejected` | No superó la validación | Motivo en rojo · «corrige el código y vuelve a enviarla» · botón «Reenviar vN» |
-| `validated` | Superó la validación | «pendiente de publicar» · botón «Publicar vN» |
-| `published` | Jugable | `vN publicada` junto al nombre del bot |
-| `frozen` | Congelada por un torneo | — |
-| `suspended`, `retired` | Suspendida por moderación / retirada | — |
+| `draft` | Subida, sin enviar. | «sin enviar — pulsa «Enviar a validación»» |
+| `validating` | En validación. | «Validación en curso…» |
+| `rejected` | No superó la validación. | El motivo, y «Reenviar vN» o «Corregir el código» |
+| `validated` | Superó la validación. | «pendiente de publicar» y el botón «Publicar vN» |
+| `published` | Jugable. | `vN publicada` junto al nombre del bot |
+| `frozen` | Congelada al cerrarse las inscripciones del torneo en el que participa. Sigue pudiendo jugar. | — |
+| `suspended`, `retired` | Suspendida por moderación / retirada. | — |
 
-La tarjeta **«Última subida: vN · estado»** resume la versión que estás mirando («◀ mirando»). Puedes cambiar con «Ver vN» y refrescar con **«Actualizar estado»**.
+La tarjeta **«Última subida: vN · estado»** resume la versión que estás mirando; cambia con «Ver vN» y refresca con **«Actualizar estado»**.
 
-## Enviar a validación (build)
-
-**FUNCIONA ACTUALMENTE** en la rama del cierre funcional, con el sandbox configurado. **PENDIENTE** de configurar en la instalación desplegada.
+## Enviar a validación
 
 1. Pulsa **«Enviar a validación vN»**.
-2. La tarjeta **«Pipeline de build · vN · …»** muestra las etapas: `structure`, `static_analysis`, `dependencies`, `build`, `protocol_test`, `smoke_battle`, `resource_limits`, `secret_scan`, `sign` y `publish`. Mientras dura dice «En curso: comprobando cada 2 s…».
-3. Al terminar, el build queda `passed` y la versión `validated`, o `failed` con la versión `rejected` y el motivo.
+2. La tarjeta **«Pipeline de build · vN»** muestra las etapas y «En curso: comprobando cada 2 s…».
+3. Al terminar, la versión queda `validated` o `rejected` con el motivo.
 
-Qué comprueban las etapas de ejecución:
-
-- `protocol_test`: que tu bot arranca, se conecta y envía comandos válidos.
-- `smoke_battle`: que juega una partida corta contra un bot de referencia sin ser descalificado.
-- `resource_limits`: que arranca en menos de 5 s y decide en menos de 100 ms.
+Qué comprueba cada etapa y cuáles son los errores típicos: [Probar tu bot](bots/probar.md#2-en-la-plataforma-la-validación).
 
 Si la versión no supera la validación, la tarjeta **«vN: Tu bot no ha superado la validación»** te dice:
 
 - el **origen**: tu código, o la plataforma («tu código no tiene la culpa»);
-- la **fase** en la que falló;
-- **dónde**: el **fichero y la línea** de tu código («`src/bot.py`, línea 7»), sin rutas internas de la plataforma;
-- el motivo, la última línea del error («NameError: name 'x' is not defined»);
-- que **vN NO está publicada** y no puede usarse en batallas, y qué versión publicada sigue en juego, si la hay;
-- qué hacer. Si el fallo es de tu código, el botón **«Corregir el código de vN»** lo carga en el editor y lo guardarás como versión nueva. Si es de la plataforma, **«Reenviar vN a validación sin cambios»**.
+- la **fase** en la que falló y **dónde**: el fichero y la línea de tu código;
+- el **motivo**, que es la última línea del error;
+- que **vN NO está publicada**, y qué versión publicada sigue en juego, si la hay;
+- qué hacer: el botón **«Corregir el código de vN»** lo carga en el editor para guardarlo como versión nueva, o **«Reenviar vN a validación sin cambios»** si el fallo fue de la plataforma.
 
-Motivos típicos y qué hacer:
-
-| Motivo | Qué significa |
-|---|---|
-| «tu clase … no implementa on_observation…» / «…onObservation…» | falta el hook o tiene una errata: renómbralo como sugiere el mensaje |
-| «el bot no completó el handshake…» | tu código no llegó a conectarse: un bucle o una espera al importar, o un error. Si se ve, el fichero y la línea del error van al final |
-| «ningún COMMAND válido… (runtime: … Traceback …)» | tu bot lanzó una excepción. La última línea de la traza aparece en el motivo |
-| «mensaje(s) fuera de protocolo…» | devuelves un comando con valores fuera de rango, por ejemplo `throttle` fuera de [-1, 1] |
-| «candidato descalificado en la partida de humo» | no respondió a tiempo demasiadas veces seguidas |
-| «construcción(es) dinámica(s) prohibida(s)», «import(s) de paquete no permitido», «secreto(s) detectado(s)» | lo detecta el análisis estático, antes de ejecutar nada |
-| «build no verificable: …» | falló la plataforma (el entorno aislado no estaba disponible), no tu código. Reenvía más tarde |
-
-En la vista de detalle del bot (ver abajo), **«Ver build»** muestra cada etapa con su mensaje, sus
-logs y sus métricas: tiempo de arranque, tiempo de decisión, comandos válidos y CPU.
-
-Si el pipeline no responde, tras unas 30 comprobaciones verás «El pipeline sigue sin dar un resultado tras 30 comprobaciones: estado desconocido. Pulsa «Actualizar estado»…».
+**«Ver build»** (en el detalle del bot) muestra cada etapa con su mensaje, su registro y sus métricas: tiempo de arranque, tiempo de decisión, órdenes válidas y CPU. Si la validación no responde, tras unos 30 sondeos verás «El pipeline sigue sin dar un resultado… Pulsa «Actualizar estado»».
 
 ## Publicar
 
-**FUNCIONA ACTUALMENTE** (con el sandbox configurado). El botón **«Publicar vN»** sólo aparece en versiones `validated`. Al publicar, el código **no** se hace público: la web siempre publica con el código privado.
+El botón **«Publicar vN»** sólo aparece en versiones `validated`. Al publicar, el código **no** se hace público: la web siempre publica con el código privado. Una versión publicada antigua **sigue pudiendo jugar** aunque la última esté rechazada o en validación.
 
-## Ver un bot y sus versiones
+**«Publicada · No elegible».** Si el equipamiento de una versión publicada ya no cumple la validación actual (por ejemplo, un cañón con munición que no puede disparar), aparece así, deshabilitada y con el motivo. Se conserva con su historia y sus replays se siguen viendo, pero no puede entrar en batallas ni torneos nuevos: usa otra versión o crea una nueva con el equipamiento corregido.
 
-**FUNCIONA ACTUALMENTE.** En «Mis bots», pulsa **«detalle y versiones»** junto al bot (`#/bots/<id>`). Tiene cuatro pestañas:
+## El detalle del bot
 
-- **Overview**: visibilidad, última versión publicada, número de versiones y enlace a sus batallas.
-- **Code**: elige una versión y verás sus ficheros. Puedes editar el código y pulsar **«Guardar como versión nueva desde vN»**: se crea la versión siguiente en `draft` y **vN no cambia**. Si el código no es tuyo y es privado, verás «No tienes permiso para ver el código de esta versión».
-- **Equipment**: las revisiones de loadout y qué versiones usa cada una. Para editar, usa el editor de «Mis bots».
-- **Versions**: tabla con versión (y de cuál se creó), fecha, estado y motivo, resultado del build, artefacto (hash) y publicación. Tiene estas acciones:
-  - «Ver código»;
-  - «Ver build»;
-  - «Nueva versión desde ésta», que copia el código tal cual;
-  - «Comparar con vN-1», que muestra las diferencias línea a línea y permite elegir otra versión con la que comparar.
+En «Mis bots», pulsa el nombre del bot. Tiene cuatro pestañas:
 
-Una versión enviada, validada o publicada **no se puede modificar ni borrar**. Las batallas
-guardan qué versión jugó cada bot, así que publicar una versión nueva no cambia lo que jugó una
-batalla anterior.
+- **Overview**: visibilidad, última versión publicada, número de versiones y enlaces a sus batallas y replays.
+- **Code**: elige una versión y ve sus ficheros; puedes editar y pulsar **«Guardar como versión nueva desde vN»**. Si el código no es tuyo y es privado, verás «No tienes permiso para ver el código de esta versión».
+- **Equipment**: las revisiones de loadout y qué versiones usa cada una.
+- **Versions**: versión (y de cuál se creó), fecha, estado y motivo, resultado del build, paquete (huella) y publicación; con las acciones «Ver código», «Ver build», «Nueva versión desde ésta» y «Comparar con vN-1», que muestra las diferencias línea a línea.
+
+Una versión enviada, validada o publicada **no se puede modificar ni borrar**. Las batallas guardan qué versión jugó cada bot, así que publicar una versión nueva no cambia lo que jugó una batalla anterior.
 
 ## Usar el bot
 
-- **En una batalla de práctica**: necesitas 2 bots con versión publicada; eliges qué versión publicada juega cada uno. Ver [Batallas](battles.md).
-- **En un torneo**: inscribes la última versión publicada. Ver [Torneos](tournaments.md). **PARCIAL.**
-- En la batalla, el vehículo lo conduce **tu código** con el **loadout** de esa versión ([Equipamiento](equipment.md)).
-
-## Errores / limitaciones
-
-- **Asignar el bot a un equipo**: **PENDIENTE** ([Equipos](teams.md)).
-- **Ver el código de una versión**: **FUNCIONA ACTUALMENTE** en la pestaña Code.
-- **Paquetes de varios ficheros**: la web edita el fichero de entrada. Un paquete completo (`{"files":[…]}`) se sube por API.
-- **Versión `frozen` tras un torneo**: no puede inscribirse en otro torneo.
-
-## Estado actual
-
-**PARCIAL**:
-
-- Crear, configurar, subir, validar en el sandbox, publicar y consultar o comparar versiones funcionan en la rama del cierre funcional.
-- En la instalación desplegada falta configurar el sandbox del worker de builds ([TD-001](../roadmap/technical-debt.md#td-001)).
-- En el código integrado las batallas ejecutan tu código con tu loadout; si está activado en un servidor concreto lo dice [current-status.md](../roadmap/current-status.md).
-
-## Documentación relacionada
-
-- Usuario: [Equipamiento](equipment.md), [Batallas](battles.md), [Torneos](tournaments.md)
-- Técnica: [bots.md](../technical/bots.md), [bot-versioning.md](../technical/bot-versioning.md), [equipment.md](../technical/equipment.md), [frontend.md](../technical/frontend.md)
-- Problemas conocidos: [known-issues.md](../roadmap/known-issues.md), [TD-001](../roadmap/technical-debt.md#td-001), [TD-002](../roadmap/technical-debt.md#td-002)
+- **En una batalla de práctica**: en 1 contra 1, dos bots con versión publicada; en una batalla por equipos, hasta 4 bots por bando (4 contra 4, máximo 8 en total). Eliges qué versión juega cada uno ([Batallas](battles.md)).
+- **En un torneo**: inscribes una versión publicada ([Torneos](tournaments.md)). Al cerrarse las inscripciones, la versión inscrita queda `frozen`.
+- En la batalla, el vehículo lo conduce **tu código** con el equipamiento de **esa versión**.
+- **En un equipo**: añade tu bot a un [equipo](teams.md).

@@ -3,8 +3,10 @@
 ## Resumen
 
 Explica cómo está construido S9 AI Arena: qué servicios hay, qué datos mueven, dónde se guardan y
-qué reglas aplican. Todo está verificado contra el código de `27f70bb`. Cada documento termina con
-una tabla de **Verificación** que da la línea de código de cada afirmación clave.
+qué reglas aplican. Verificado en `27f70bb` (octubre de 2026); el estado de funcionamiento que cita se
+revisó en `e3bf2fa` (2026-11-02), pero la estructura de varios documentos no se ha re-auditado entera
+(documentación técnica parcialmente re-verificada). Cada documento termina con una tabla de
+**Verificación** que da la línea de código y el SHA de evidencia de cada afirmación clave.
 
 Si solo vas a leer un documento, que sea [battles.md](battles.md). Recorre el sistema entero
 siguiendo una batalla.
@@ -133,7 +135,7 @@ qué efecto tiene de verdad cada campo en el motor (algunos no lo tienen).
 ### Mapas
 
 Formato, versionado, validación, generador procedural e importación Tiled. Dónde se guardan (en la
-API, no en map-service) y por qué el editor visual aún no guarda.
+API, no en map-service) y cómo guarda y reabre el editor visual.
 
 → [maps.md](maps.md)
 

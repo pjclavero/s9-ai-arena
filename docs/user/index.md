@@ -1,69 +1,69 @@
-# Guía de usuario de S9 AI Arena
+# Guía de S9 AI Arena
 
-## Resumen
+## ¿Qué es S9 AI Arena?
 
-S9 AI Arena es una arena de programación: escribes el código de un bot que conduce un vehículo 2D, eliges su equipamiento y lo enfrentas a otros bots en batallas y torneos. Esta guía explica **qué puedes hacer hoy desde la web**, con las pantallas, los campos y los mensajes que vas a ver. No hace falta conocer la arquitectura interna.
+S9 AI Arena es una arena de programación. **Escribes el código de un bot** (en Python o JavaScript) que conduce un vehículo en un mapa 2D, **eliges su equipamiento** y lo **enfrentas a otros bots** en batallas y torneos. Durante la batalla no controlas nada en directo: tu programa recibe, varias veces por segundo, lo que perciben los sensores del vehículo y responde con órdenes —moverse, apuntar, disparar, soltar una mina, hablar por radio—. Gana el mejor programa.
 
-Antes de empezar, lo más importante: **el recorrido completo todavía no funciona**. Hoy puedes registrarte, crear bots, configurar su equipamiento y subir código. El recorrido se corta en dos puntos:
+El camino de un jugador es siempre el mismo:
 
-1. **La validación del código**: todas las versiones acaban «rechazadas», así que ningún bot llega a estar publicado.
-2. **La creación de batallas** desde la web, que siempre responde «rulesetId desconocido».
+```text
+crear bot → programarlo → equiparlo → publicar una versión → batallas → equipos → torneos → replays → mejorar
+```
 
-Cada página indica lo que **FUNCIONA ACTUALMENTE**, lo **PARCIAL** y lo **PENDIENTE**, y enlaza los problemas conocidos.
+1. **Bot.** Es tu jugador: un nombre con sus versiones de código y su equipamiento.
+2. **Programarlo.** Escribes el código en la web o en tu editor y lo pegas. [Guía de programación](bots/index.md).
+3. **Equiparlo.** Eliges chasis, motor, sensores, arma, blindaje… dentro de un presupuesto de créditos. [Equipamiento](equipment.md).
+4. **Publicar una versión.** La plataforma la valida en un entorno aislado y, si la supera, la publicas. Sólo las versiones publicadas combaten. [Bots](bots.md).
+5. **Batallas.** Lanzas batallas de práctica contra otros bots, en el modo y el mapa que elijas. [Batallas](battles.md).
+6. **Equipos.** Te juntas con otros jugadores para batallas por equipos. [Equipos](teams.md).
+7. **Torneos.** Los organizadores enfrentan a muchos bots en rondas; sus batallas son las oficiales y mueven el ranking. [Torneos](tournaments.md) y [Ranking](rankings.md).
+8. **Replays y directo.** Revives cualquier batalla terminada o ves una en curso. [Replays](replays.md) y [Visor](viewer.md).
+9. **Mejorar.** Miras las estadísticas y el diagnóstico de tu bot, cambias el código o el equipo, y publicas una versión nueva. [Estadísticas](statistics.md).
 
-## Índice
+## Por dónde empezar
 
-Recomendamos leer en este orden, porque es el orden del ciclo real de un bot:
+**[Primeros pasos](getting-started.md)** te lleva, en unos veinte minutos, de cero a tu primera batalla con un bot propio.
 
-1. [Primeros pasos](getting-started.md): qué esperar y por dónde empezar.
-2. [Cuentas](accounts.md): registro, inicio y cierre de sesión, roles.
-3. [Bots](bots.md): crear, subir código, versiones, validación y publicación.
-4. [Equipamiento](equipment.md): chasis y módulos (loadout).
-5. [Mapas](maps.md): importar, generar, publicar y el editor visual.
-6. [Modos de juego](game-modes.md): reglas y condiciones de victoria.
-7. [Batallas](battles.md): crear una batalla de práctica y ver el resultado.
-8. [Torneos](tournaments.md): crear, inscribirse, cerrar y seguir el cuadro.
-9. [Equipos](teams.md): crear equipos e invitar miembros.
-10. [Visor y espectador](viewer.md): ver una batalla en directo.
-11. [Replays](replays.md): volver a ver una batalla terminada.
-12. [Clasificaciones](rankings.md): el ranking público.
-13. [Estadísticas](statistics.md): qué datos existen y dónde verlos.
-14. [Administración](administration.md): lo que puede hacer un administrador desde la web.
+## Índice de la guía
 
-## Estado actual de un vistazo
+| Quiero… | Lee |
+|---|---|
+| Crear la cuenta y entender los roles | [Cuentas](accounts.md) |
+| Crear un bot, subir código y publicarlo | [Bots](bots.md) |
+| **Aprender a programar un bot** | [Guía de programación](bots/index.md) y [ejemplos](bots/ejemplos.md) |
+| Elegir chasis, sensores y armas | [Equipamiento](equipment.md) · [catálogo completo](equipment-catalog.md) |
+| Saber qué reglas tiene cada modo | [Modos de juego](game-modes.md) · [Reglas de batalla](rules.md) |
+| Lanzar una batalla | [Batallas](battles.md) |
+| Competir en un torneo | [Torneos](tournaments.md) |
+| Entender el ranking | [Ranking](rankings.md) |
+| Crear o editar mapas | [Mapas](maps.md) |
+| Jugar con otras personas | [Equipos](teams.md) |
+| Ver una batalla en directo | [Visor y espectador](viewer.md) |
+| Revisar una batalla terminada | [Replays](replays.md) |
+| Medir cómo juega mi bot | [Estadísticas](statistics.md) |
+| Gestionar la plataforma (administradores) | [Administración](administration.md) |
 
-| Área | Estado | Motivo principal |
-|---|---|---|
-| Cuentas | **FUNCIONA ACTUALMENTE** (registro, login, sesión) · **PENDIENTE** (cambio de contraseña, recuperación) | [TD-012](../roadmap/technical-debt.md#td-012) |
-| Bots y equipamiento | **PARCIAL**: se crean y configuran, pero ninguna versión se publica | [TD-001](../roadmap/technical-debt.md#td-001) |
-| Mapas | **PARCIAL**: importar sí; el editor no guarda | [TD-010](../roadmap/technical-debt.md#td-010) |
-| Batallas | **PENDIENTE desde la web**: 400 al crear | [TD-003](../roadmap/technical-debt.md#td-003) |
-| Torneos | **PARCIAL**: funcionan para organizadores con bots publicados | [TD-001](../roadmap/technical-debt.md#td-001), [TD-015](../roadmap/technical-debt.md#td-015) |
-| Replays | **FUNCIONA ACTUALMENTE** (rama de cierre funcional): lista tras HTTPS, reproductor que dibuja y avanza | [TD-009](../roadmap/technical-debt.md#td-009), [TD-014](../roadmap/technical-debt.md#td-014) |
-| Visor en directo | **PARCIAL**: arranca y explica cada rechazo; ver una batalla viva depende de que haya batallas con bots publicados | [TD-028](../roadmap/technical-debt.md#td-028) |
-| Ranking | **PARCIAL**: la página existe pero sale vacía | [tournaments.md](../technical/tournaments.md#clasificación-y-rating) |
+## La ayuda está también dentro de la web
 
-Además: aunque una batalla llegue a jugarse, **los vehículos no ejecutan tu código**. Los conduce un bot de prueba interno de la plataforma ([TD-002](../roadmap/technical-debt.md#td-002)).
+El menú **«Ayuda»** abre el Centro de Ayuda (sin necesidad de cuenta): explica los mismos conceptos con las pantallas delante, y sus tablas de equipamiento, reglas y mensajes salen de los mismos datos que usa el juego.
 
 ## Si algo falla
 
-La web ya no enseña pantallas vacías cuando algo va mal. Verás uno de estos avisos, con el detalle real y, cuando tiene sentido, un botón **«Reintentar»**:
+La web no enseña pantallas vacías cuando algo va mal: te dice qué ha pasado y, si tiene sentido, ofrece un botón **«Reintentar»**.
 
 | Aviso | Qué significa |
 |---|---|
-| «Datos no válidos» | El formulario tiene un error; el mensaje dice cuál |
-| «No tienes permiso para esto» | Tu rol no permite esa acción o pantalla |
-| «No existe o no está disponible» | El elemento no existe (o no es visible para ti) |
-| «Error del servidor (500)» | Fallo interno; reintenta o avisa al administrador |
-| «Servicio no disponible (502/503/504)» | Un servicio de la plataforma está caído |
-| «El servidor tarda demasiado» | No hubo respuesta en 15 s |
-| «Sin conexión con el servidor» | Tu red o la plataforma no responden |
-| «Página no encontrada» | La dirección no corresponde a ninguna pantalla; usa «Volver» |
-| «No se puede contactar con la plataforma» | Al recargar, la API no respondía; **tu sesión no se ha cerrado** |
+| «Datos no válidos» | El formulario tiene un error; el mensaje dice cuál. |
+| «Necesitas iniciar sesión» | La sesión ha caducado. Vuelve a entrar. |
+| «No tienes permiso para esto» | Tu rol no permite esa acción o pantalla. |
+| «No existe o no está disponible» | El elemento no existe, o no es visible para ti. |
+| «Conflicto con el estado actual» | Alguien lo cambió antes o la acción ya no procede. |
+| «Error del servidor» | Fallo interno: reintenta o avisa al administrador. |
+| «Servicio no disponible» | Un servicio de la plataforma está caído un momento. |
+| «El servidor tarda demasiado» | No hubo respuesta en 15 segundos. |
+| «Sin conexión con el servidor» | Falla tu red o la plataforma no responde. |
+| «Página no encontrada» | La dirección no corresponde a ninguna pantalla; usa «Volver». |
 
-## Documentación relacionada
+## ¿Quieres desarrollar S9?
 
-- Problemas conocidos: [known-issues.md](../roadmap/known-issues.md)
-- Estado del proyecto: [current-status.md](../roadmap/current-status.md)
-- Documentación técnica: [índice técnico](../technical/index.md)
-- Instalación y operación (para quien despliega la plataforma): [operations](../operations/index.md)
+Esta guía es para jugar. Si quieres colaborar en el propio proyecto, empieza por la [documentación de desarrollo](../development/index.md).

@@ -20,6 +20,8 @@ export const DOC_LINKS: ReadonlyArray<{ label: string; href: string }> = [
   { label: "Bots: código, versiones y validación", href: `${BLOB}/docs/user/bots.md` },
   { label: "Equipamiento (loadout): chasis y módulos", href: `${BLOB}/docs/user/equipment.md` },
   { label: "Modos de juego y rulesets", href: `${BLOB}/docs/user/game-modes.md` },
+  { label: "Programar un bot: guía", href: `${BLOB}/docs/user/bots/index.md` },
+  { label: "Ejemplos de bots comentados", href: `${BLOB}/docs/user/bots/ejemplos.md` },
   { label: "SDK de Python", href: `${BLOB}/sdks/python/README.md` },
   { label: "SDK de JavaScript", href: `${BLOB}/sdks/javascript/README.md` },
   { label: "Bots de ejemplo", href: `${REPO_URL}/tree/main/example-bots` },

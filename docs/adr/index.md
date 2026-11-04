@@ -10,17 +10,17 @@ sistema, ver [../technical/index.md](../technical/index.md) y
 
 ## Índice de ADR
 
-| ADR | Título | Estado declarado | Notas de vigencia (2026-10) |
+| ADR | Título | Estado declarado | Notas de vigencia (revisadas el 2026-11-02, `main` `e3bf2fa`) |
 |---|---|---|---|
 | [ADR-000](ADR-000-decisiones-fundacionales.md) | Decisiones fundacionales | aceptado | cita `packages/game-rules/engine-deps.json`; el fichero está en `apps/arena-engine/src/engine-deps.json`. `packages/game-rules/constants.ts` lo declara su fuente de verdad |
-| [ADR-010](ADR-010-devops-ci-observabilidad-backup.md) | DevOps: workspace, versionado, observabilidad y copias | aceptado | la observabilidad descrita no está desplegada; copias en [../operations/backup.md](../operations/backup.md) |
-| [ADR-016](ADR-016-identidad-de-build.md) | Identidad de build: procedencia de imagen observable | aceptado | 9 de 12 imágenes de la instalación de referencia no la cumplen ([TD-006](../roadmap/technical-debt.md#td-006)) |
+| [ADR-010](ADR-010-devops-ci-observabilidad-backup.md) | DevOps: workspace, versionado, observabilidad y copias | aceptado | el perfil de observabilidad existe pero es opcional ([../operations/observability.md](../operations/observability.md)); copias en [../operations/backup.md](../operations/backup.md) |
+| [ADR-016](ADR-016-identidad-de-build.md) | Identidad de build: procedencia de imagen observable | aceptado | `main` la implementa (`/version`); si producción la cumple en todos los servicios lo confirma el escaneo de deriva ([TD-006](../roadmap/technical-debt.md#td-006)) |
 | [ADR-017](ADR-017-contrato-de-release.md) | Contrato de release: BUILD y DEPLOY son fases distintas | aceptado | procedimiento en [../operations/upgrades.md](../operations/upgrades.md) |
 | [ADR-018](ADR-018-semantica-del-scan.md) | Semántica del scan: cinco estados | aceptado | aplicado por `infrastructure/scripts/scan-gate.mjs` |
 | [ADR-019](ADR-019-perimetro-y-version-del-motor.md) | Perímetro de la arena: el motor pasa a 0.2.0 | aceptado | sustituido en la versión por ADR-020; la regla de versión sigue vigente |
-| [ADR-020](ADR-020-spawns-4v4-y-version-del-motor.md) | Spawns seguros para 4v4: el motor pasa a 0.3.0 | aceptado | vigente: `apps/arena-engine/src/engine-deps.json` |
-| [ADR-021](ADR-021-reglas-de-batalla-presets-y-copia.md) | Reglas de batalla: presets, personalizado y copia inmutable | propuesto | en parte sustituido por ADR-022 (versión del motor, desempates, `maxRespawns`) |
-| [ADR-022](ADR-022-motor-0-4-0-reglas-ctf-prorroga.md) | Motor 0.4.0: reglas, desempates, CTF con prórroga y verificación de replays 0.3.0 | propuesto | PR #201; reglas y desempates canónicos en [../user/rules.md](../user/rules.md) |
+| [ADR-020](ADR-020-spawns-4v4-y-version-del-motor.md) | Spawns seguros para 4v4: el motor pasa a 0.3.0 | aceptado | sustituido en la versión por ADR-022 (el motor está en 0.4.0, `apps/arena-engine/src/engine-deps.json`); la regla de spawns sigue vigente |
+| [ADR-021](ADR-021-reglas-de-batalla-presets-y-copia.md) | Reglas de batalla: presets, personalizado y copia inmutable | propuesto | implementado en `main` por el PR #201 (migración `016_battle_rules`); en parte sustituido por ADR-022 (versión del motor, desempates, `maxRespawns`) |
+| [ADR-022](ADR-022-motor-0-4-0-reglas-ctf-prorroga.md) | Motor 0.4.0: reglas, desempates, CTF con prórroga y verificación de replays 0.3.0 | propuesto | implementado por el PR #201 (fusionado el 2026-11-02, motor 0.4.0); reglas y desempates canónicos en [../user/rules.md](../user/rules.md) |
 | [ADR-023](ADR-023-streaming-rele-rtmp-y-credenciales-selladas.md) | Streaming: relé RTMP en el propio streamer (clave fuera del argv) y credenciales de emisión selladas | propuesto | PR #227; operación en [../operations/streaming.md](../operations/streaming.md) |
 | [ADR-E7-001](ADR-E7-001-migraciones-knex.md) | Migraciones con Knex (programático) | aceptado | vigente: `apps/api/src/db/migrations.ts` |
 | [ADR-E7-002](ADR-E7-002-postgres-embebido-en-tests.md) | PostgreSQL embebido en tests | aceptado | vigente ([../development/testing.md](../development/testing.md)) |
