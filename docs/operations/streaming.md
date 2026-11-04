@@ -76,7 +76,7 @@ Reglas de operación:
 |---|---|---|
 | argv de FFmpeg (`ps`, `docker top`, `/proc/*/cmdline`) | ffmpeg escribe FLV por el fd 3; el relé Node publica con la clave | `apps/streamer/tests/secret-surfaces.test.ts` (calibrada: roja en main, verde aquí); auditoría con la imagen real: 0 apariciones |
 | `/proc/*/environ`, `docker inspect` | la clave nunca va al entorno; sólo rutas de ficheros | idem |
-| logs y `/status` | logger con registro vivo de secretos: la clave escapada en JSON, URL-codificada, sin distinguir mayúsculas y, desde EQ5d, **cualquier fragmento de ≥ 8 caracteres** de la clave, de su base64 (estándar/URL-safe) o de su hex; el relé redacta igual lo que diga el servidor. Límites en ADR-023 | tests del logger y del relé (`eq5d-correcciones.test.ts`, ingesta hostil con eco base64/hex en `eq6c-relay-break.test.ts`); `docker logs` 0 apariciones |
+| logs y `/status` | logger con registro vivo de secretos: la clave escapada en JSON, URL-codificada, sin distinguir mayúsculas y, desde EQ5d, **cualquier fragmento de ≥ 8 caracteres** de la clave, de su base64 (estándar/URL-safe) o de su hex, y desde EQ5e con un plegado de mayúsculas que no cambia la longitud (U+0130 «İ» ya no desplaza la marca); el relé redacta igual lo que diga el servidor. Puede sobre-redactar una palabra común contenida en la clave (`"service":"***"`). Límites en ADR-023 | tests del logger y del relé (`eq5d-correcciones.test.ts`, ingesta hostil con eco base64/hex en `eq6c-relay-break.test.ts`); `docker logs` 0 apariciones |
 | `/status`, `/metrics` | destino descrito como `rtmps://host:puerto/app/***` | idem |
 | API y frontend | entra por `PUT /admin/streaming/credentials/{platform}` y nunca sale (`****ABCD`); campo password, estado vaciado al enviar, nada en `localStorage`/`sessionStorage` | `apps/api/src/eq5b-streaming-admin.test.ts`, `apps/web/tests/eq5b-streaming-page.test.tsx`, spec de navegador `@streaming-e2e` (respuestas de red, DOM y storage) |
 | BD | sobre v2 (AES-256-GCM con etiqueta de **16 bytes exactos** + RSA-OAEP-256 con la PÚBLICA) **atado a plataforma e ingesta**; la privada sólo la tiene el streamer, que registra cada sobre rechazado | volcado de todas las tablas de streaming y `audit_log` sin la clave; el sobre sólo se abre con la privada y hacia su destino |
@@ -219,6 +219,12 @@ streamer para no emitir dos veces.
 | EQ6c-P3-4 | P3 | Relé sin plazo de escritura: una ingesta que dejaba de leer lo dejaba «publicando» para siempre | **corregido** (EQ5d): `write_timeout` y reintento |
 | EQ6c-P3-5 | P3 | «En directo» con el relé aún conectando | **corregido** (EQ5d): estado «Iniciando» |
 | EQ6c-P3-6 | P3 | SSRF con IPv6 que incrustan una IPv4 (compatible, traducida, NAT64, 6to4) y site-local | **corregido** (EQ5d): normalización IPv6 y extracción de la IPv4 |
+| R3-A | P3 | `redactSecret` calculaba los índices sobre `toLowerCase()` (que cambia la longitud con «İ») y la clave salía entera | **corregido** (EQ5e): `foldSameLength` |
+| R3-B | P3 | start(A) ‖ stop(B) ‖ start(C en B) entre dos instancias dejaba una emisión sin sesión | **corregido** (EQ5e): reconciliación de huérfanas tras el 409 del streamer, en la recomprobación y cada 30 s; con una réplica (Compose) no se da; multi-réplica = límite declarado (ADR-023) |
+| R3-C | P3 | El plazo de escritura del relé no se rearmaba si la ingesta leía un poco y se colgaba | **corregido** (EQ5e): rearme mientras haya datos pendientes sin `drain` y avance |
+| R3-D | P3 | El estado de la pantalla usaba el modo guardado, no el de la emisión, con un cambio pendiente de reinicio | **corregido** (EQ5e): modo del streamer o de la sesión |
+| R3-E | P3 | Un start aplicado cuya respuesta se perdía (plazo, 503) dejaba una emisión sin sesión | **corregido** (EQ5e): stop compensatorio auditado (`streaming.session.start_compensated`) y reconciliación |
+| R3-F | P3 | La prueba de la 017 y su vuelta atrás suponían que la 017 era la última (la 018 de #229 va detrás) | **corregido** (EQ5e): `rollback:name 017_streaming_admin`; prueba con una migración posterior simulada |
 | EQ5-10 | P3 | Con el torneo en curso, la espera/intermedio no anuncian la próxima batalla (un visitante no la ve) | limitación de la política de visibilidad |
 
 ## Cómo se verificó

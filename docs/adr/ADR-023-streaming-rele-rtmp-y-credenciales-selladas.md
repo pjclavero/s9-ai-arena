@@ -42,8 +42,11 @@ recibía `rtmps://…/live2/<clave>` como último argumento. `docker top` y el `
   además **cualquier fragmento de 8 o más caracteres** de la clave, de su **base64**
   (estándar y URL-safe, en las tres alineaciones de byte, para un trozo de la clave
   codificado dentro de un texto más largo) y de su **hex**: una ingesta que repetía la
-  clave codificada en su rechazo la hacía llegar a `/status` y a los logs. Ver los
-  límites de la redacción en «Límites conocidos».
+  clave codificada en su rechazo la hacía llegar a `/status` y a los logs. Desde EQ5e
+  (R3-A de la ronda 3) la comparación sin distinguir mayúsculas **conserva la longitud**
+  (`foldSameLength`): con `toLowerCase`, 'İ' (U+0130) pasa a dos unidades, los índices
+  de la marca se desplazaban y la clave salía entera. Ver los límites de la redacción en
+  «Límites conocidos».
 - **Mejora de seguridad colateral:** el relé **verifica el certificado** de la ingesta
   (CA del sistema; `NODE_EXTRA_CA_CERTS` para una CA propia). FFmpeg usaba
   `tls_verify=0`: la clave se habría entregado a cualquiera que interceptara la conexión.
@@ -66,7 +69,10 @@ recibía `rtmps://…/live2/<clave>` como último argumento. `docker top` y el `
   `NetStream.Publish.Start` la ingesta deja de leer y el socket sigue por encima de la
   marca de agua (4 MiB) sin `drain` más de `writeTimeoutMs` (por defecto, el plazo de
   orden: 10 s), el relé falla con `write_timeout` y el supervisor reintenta. Antes el relé
-  se quedaba «publicando» para siempre con el productor parado.
+  se quedaba «publicando» para siempre con el productor parado. Desde EQ5e (R3-C) el plazo
+  se **rearma** mientras siga habiendo datos pendientes sin `drain`: por debajo de la marca
+  de agua sólo sigue esperando si hubo avance desde el vencimiento anterior; sin avance,
+  falla igual (una ingesta que lee un poco y se cuelga ya no lo deja «publicando»).
 - Lectura acotada: además del tope por mensaje (1 MiB), un tope **agregado** de 2 MiB de
   mensajes entrantes a medias en todos los csid.
 
@@ -156,6 +162,20 @@ clave.
   - Probado con dos instancias de la API sobre la misma BD real
     (`apps/api/src/eq6c-streaming-break.test.ts`, `eq5d-streaming-correcciones.test.ts`,
     este último con un bloqueo de fila real para forzar el entrelazado del PUT).
+  - **Start sin respuesta** (EQ5e, R3-E): si el start vence el plazo del cliente, falla
+    la red o el streamer responde 5xx, la orden pudo aplicarse igualmente. La sesión se
+    marca `failed` y se manda un `/control/stop` **compensatorio** (a ciegas si no hay otra
+    sesión activa; si la hay, sólo se para lo huérfano), auditado como
+    `streaming.session.start_compensated` (`cause`, `outcome`).
+  - **Reconciliación de huérfanas** (EQ5e, R3-B): `reconcileOrphanEmission` para el
+    streamer si emite (o reintenta) y la BD no tiene una sesión activa, o la tiene pero el
+    streamer declara otra (`session.sessionId`). Lee primero el streamer y después la BD:
+    un start legítimo inserta su sesión antes de llamar al streamer, y mientras el streamer
+    emite algo huérfano ningún start sin `replace` puede prosperar (409), así que no corta
+    una emisión legítima. Se ejecuta tras un 409 del streamer a un start, en la
+    recomprobación cuando hay otra sesión activa y **cada 30 s** desde `server.ts`
+    (`startOrphanReconciler`). Cada parada se audita como `streaming.session.orphan_stopped`.
+    Cubre start(A) ‖ stop(B) ‖ start(C en B) y la respuesta de un start que llega tarde.
 - Grabación: no se empieza con menos de 2 GiB libres (`disk_low`) **ni si el streamer no
   puede medir el disco** (`disk_unknown`, fail-closed).
 - Ingesta personalizada sin hosts internos (SSRF): se rechazan nombres de una etiqueta
@@ -215,6 +235,13 @@ clave.
   ya sustituyó otra no para el streamer (para no cortar la otra): la emisión puede seguir
   con la configuración del restart bajo la sesión nueva, lo que «pendiente de reinicio»
   hace visible. Además se emite a veces un `/control/stop` sobrante (inofensivo).
+  Con tres o más operaciones entre instancias (R3-B) puede quedar, durante como mucho un
+  ciclo de reconciliación (30 s) o hasta el siguiente start, una emisión sin sesión; la
+  reconciliación la para y la audita. El Compose despliega **una** réplica de la API: el
+  caso multi-réplica es un límite declarado, no la configuración de referencia.
+- **Start cuya respuesta se pierde** (R3-E): el stop compensatorio sale cuando vence el
+  plazo; si la orden de start llega al streamer DESPUÉS del stop (red muy lenta), la
+  emisión huérfana dura hasta la siguiente reconciliación (≤ 30 s).
 - **Stop con el streamer caído:** la sesión queda parada en BD (la intención del operador
   manda) y, sin `force`, la API responde 503. Si el streamer seguía emitiendo, al volver
   la pantalla lo muestra (estado del streamer sin sesión) y un nuevo «Detener» lo para:
@@ -224,7 +251,12 @@ clave.
   mayúsculas. **No** cubre fragmentos de < 8 caracteres, otras codificaciones (base32,
   doble codificación, compresión, cifrados triviales) ni una clave partida entre dos
   líneas de log. Puede sobre-redactar texto inocente que coincida con 8 caracteres de
-  esas formas (inofensivo).
+  esas formas (inofensivo): si la clave contiene una palabra de 8 o más letras que aparece
+  en el log (p. ej. `streamer`), `"service":"streamer"` sale como `"service":"***"`. Se
+  acepta (sobre-redacción, nunca fuga): distinguir «palabra común» de «trozo de la clave»
+  obligaría a dejar pasar trozos de la clave. Desde EQ5e el plegado de mayúsculas es
+  **completo y de longitud constante**: cada carácter se pasa a minúsculas por separado y,
+  si eso cambiaría su longitud (U+0130), se toma su primera unidad (İ → i).
 - **Plazo de escritura:** una congestión real de más de 10 s seguidos sin `drain` se trata
   como corte y provoca un reintento (reconexión), igual que un corte de red.
 - Un stop pedido mientras un start espera al streamer tarda lo que tarde esa llamada (como
@@ -246,5 +278,11 @@ clave.
   calibrada con 14 mutantes (cada uno revierte una barrera y pone roja al menos una
   prueba): `apps/streamer/src/eq5d-correcciones.test.ts`,
   `apps/api/src/eq5d-streaming-correcciones.test.ts`, `apps/api/src/eq5d-ssrf.test.ts`.
+- Revisión ronda 3: `apps/streamer/src/r3-relay-break.test.ts` y
+  `apps/api/src/r3-streaming-break.test.ts` (7 ROJAS sobre 787db33, VERDES tras EQ5e),
+  calibradas con 6 mutantes en serie (uno por hallazgo); regresión propia en
+  `apps/streamer/src/eq5e-redaccion.test.ts` (U+0130, ß, ﬁ, combinantes, emojis, Kelvin,
+  letras astrales) y `apps/api/src/db/migration-017.test.ts` (con una migración posterior
+  simulada detrás de la 017).
 - `tests/streaming-e2e/secret-audit.sh` y `tests/streaming-e2e/e2e.sh` (imagen real,
   ingesta RTMPS local). Ver [docs/operations/streaming.md](../operations/streaming.md).
