@@ -735,6 +735,32 @@ describe("[R2 #229] H3 · concurrencia del Elo", () => {
     }
     expect(bad).toEqual([]);
   });
+
+  it("C3 · interbloqueos: reversiones y Elo de batallas entre los MISMOS dos bots (lados alternos), 25 rondas", async () => {
+    const bad: string[] = [];
+    for (let round = 0; round < 25; round++) {
+      const season = `C3-${round}`;
+      const [a, b] = await createBots(h.db, 2, `rc3${round}`);
+      const t = await tournament({ season, bots: [a, b] });
+      const pre: string[] = [];
+      const fresh: string[] = [];
+      for (let i = 0; i < 8; i++) {
+        const [x, y] = i % 2 ? [a, b] : [b, a];
+        const id = await game(t, await match(t, x.botId, y.botId), x, y, 1, "home");
+        if (i < 4) {
+          await applyBattleRating(h.db, id);
+          pre.push(id);
+        } else fresh.push(id);
+      }
+      const res = await Promise.allSettled([
+        ...pre.map((id) => revertOfficialBattle(h.db, id)),
+        ...fresh.map((id) => applyBattleRating(h.db, id)),
+      ]);
+      for (const r of res) if (r.status === "rejected") bad.push(`${season}: ${String(r.reason)}`);
+      bad.push(...(await ledgerAudit(season)));
+    }
+    expect(bad).toEqual([]);
+  });
 });
 
 // ------------------------------------------------------------------ H4 / H5 / política
