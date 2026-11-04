@@ -127,6 +127,31 @@ function encodedForms(secret: string): string[] {
 }
 
 /**
+ * EQ5e (revisión ronda 3, R3-A) · Paso a minúsculas que NO cambia la longitud.
+ * `String#toLowerCase` no conserva la longitud ('İ' U+0130 → 'i' + U+0307), y
+ * los índices calculados sobre el texto en minúsculas se aplicaban al original:
+ * la marca se desplazaba y la clave salía entera. Aquí cada punto de código se
+ * pliega por separado y sólo se acepta el plegado si mide lo mismo (UTF-16); si
+ * no, se toma su primera unidad cuando el original mide una (İ → i) o se deja
+ * tal cual. Resultado: `foldSameLength(t).length === t.length` y el índice i
+ * del plegado corresponde al índice i del original.
+ */
+export function foldSameLength(text: string): string {
+  // Camino rápido: ASCII puro no cambia de longitud al pasar a minúsculas.
+  if (!/[^\x00-\x7f]/.test(text)) return text.toLowerCase();
+  let out = "";
+  for (let i = 0; i < text.length;) {
+    const cp = text.codePointAt(i)!;
+    const w = cp > 0xffff ? 2 : 1;
+    const ch = text.slice(i, i + w);
+    const low = ch.toLowerCase();
+    out += low.length === w ? low : w === 1 ? low[0] : ch;
+    i += w;
+  }
+  return out;
+}
+
+/**
  * Sustituye la clave por *** en cualquier texto destinado a logs/respuestas.
  *
  * EQ5c · tal cual, escapada en JSON y URL-codificada, sin distinguir mayúsculas.
@@ -137,6 +162,16 @@ function encodedForms(secret: string): string[] {
  * caracteres que sea un 8-grama de alguna forma (sin distinguir mayúsculas) y
  * se sustituye cada tramo marcado por ***. Si la clave (o una forma) es más
  * corta que 8, cuenta la forma entera.
+ *
+ * EQ5e (R3-A) · la comparación usa `foldSameLength` (texto y formas): los
+ * índices de la marca valen tal cual sobre el texto original.
+ *
+ * Falso positivo ACEPTADO (documentado en docs/operations/streaming.md): si la
+ * clave contiene una palabra de 8 o más letras que aparece en el log (p. ej.
+ * `streamer`), esa palabra también se redacta (`"service":"***"`). Se
+ * sobre-redacta, nunca se fuga: con una clave aleatoria la probabilidad es
+ * despreciable y distinguir «palabra común» de «trozo de la clave» exigiría
+ * dejar pasar trozos de la clave.
  */
 export function redactSecret(text: string, secret: string | null | undefined): string {
   if (!secret || !text) return text;
@@ -145,10 +180,10 @@ export function redactSecret(text: string, secret: string | null | undefined): s
     const n = Math.min(REDACT_MIN_FRAGMENT, f.length);
     let set = grams.get(n);
     if (!set) grams.set(n, (set = new Set()));
-    const lf = f.toLowerCase();
+    const lf = foldSameLength(f);
     for (let i = 0; i + n <= lf.length; i++) set.add(lf.slice(i, i + n));
   }
-  const lower = text.toLowerCase();
+  const lower = foldSameLength(text);
   const mark = new Uint8Array(text.length);
   let any = false;
   for (const [n, set] of grams) {
