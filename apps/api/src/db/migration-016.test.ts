@@ -40,9 +40,13 @@ async function dump() {
   }
   return out;
 }
+// EQ2c · `battles.reverted_at` es de una migración POSTERIOR (018_battle_reverted), que
+// rollbackRules revierte antes y migrateToLatest vuelve a aplicar: no es objeto de este test.
+const LATER_COLUMNS = ["reverted_at"];
 const strip = (rows: unknown[], col: string) =>
   rows.map((r) => {
     const { [col]: _drop, ...rest } = r as Record<string, unknown>;
+    for (const c of LATER_COLUMNS) delete rest[c];
     return rest;
   });
 async function lastMigration(): Promise<string> {

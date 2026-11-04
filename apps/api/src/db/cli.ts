@@ -13,7 +13,7 @@
  * desarrollo. `bootstrap` aplica únicamente el contenido base (ruleset,
  * catálogo y mapa) y es el comando apto para un entorno real.
  *
- * `rollback:1` revierte SOLO la última migración aplicada (exactamente una migración, no un lote).
+ * `rollback:1` revierte SOLO la última migración DE LA LISTA entre las aplicadas (exactamente una, no un lote).
  * `rollback:name <NNN_tema>` (EQ5e) revierte UNA migración concreta por nombre,
  * esté o no al final de la historia (no depende del orden de integración).
  * `rollback:all` revierte TODAS las migraciones: es DESTRUCTIVA, borra el

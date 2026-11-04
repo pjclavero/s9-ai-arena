@@ -21,9 +21,19 @@ describe("MIGRATIONS: numeración y orden", () => {
     }
   });
 
-  it("prefijos únicos, consecutivos desde 001 y en orden de aplicación", () => {
+  // Huecos RESERVADOS, explícitos y temporales: un número reservado por otro PR abierto
+  // puede faltar, pero sólo ése. EQ5e · con `017_streaming_admin` (PR #227) integrada detrás
+  // de `018_battle_reverted` (#229) ya no queda ninguno: la numeración vuelve a ser consecutiva.
+  const RESERVED_GAPS = new Set<number>();
+
+  it("prefijos únicos, consecutivos desde 001 (salvo huecos reservados) y en orden de aplicación", () => {
     const prefixes = names.map((n) => Number(n.slice(0, 3)));
-    expect(prefixes).toEqual(prefixes.map((_p, i) => i + 1));
+    const expected: number[] = [];
+    for (let n = 1; expected.length < prefixes.length; n++) {
+      if (RESERVED_GAPS.has(n) && !prefixes.includes(n)) continue;
+      expected.push(n);
+    }
+    expect(prefixes).toEqual(expected);
     expect([...names].sort()).toEqual(names);
     expect(new Set(names).size).toBe(names.length);
   });

@@ -338,9 +338,10 @@ La API no migra al arrancar. Tras desplegar una versión con migraciones nuevas:
 $DC exec -w /app api npx tsx apps/api/src/db/cli.ts migrate
 ```
 
-Hazlo con copia previa. `rollback:1` revierte exactamente una migración: la ÚLTIMA aplicada, que
-depende del orden en que se integraron los PR. Para revertir una migración concreta, usa
-`rollback:name <NNN_tema>`, que la revierte esté donde esté. `rollback:all` destruye el
+Hazlo con copia previa. `rollback:1` revierte exactamente una migración: la última DE LA LISTA
+entre las aplicadas, que no tiene por qué ser la última aplicada (ver «Orden 017/018» en «Vuelta
+atrás»). Para revertir una migración concreta, usa `rollback:name <NNN_tema>`, que la revierte esté
+donde esté. `rollback:all` destruye el
 esquema ([first-run.md](first-run.md#comandos-prohibidos-en-producción)).
 
 ## Vuelta atrás
@@ -383,21 +384,40 @@ esquema ([first-run.md](first-run.md#comandos-prohibidos-en-producción)).
     inmediatamente antes de migrar.
   - **Migración 017** (`017_streaming_admin`) sólo CREA `streaming_settings` (una fila, streaming
     DESACTIVADO), `streaming_credentials` (metadatos y sobre sellado; nunca la clave en claro) y
-    `streaming_sessions`; no toca ninguna tabla existente. Probada en
+    `streaming_sessions`; no toca ninguna tabla existente. En una BD que ya tenga la 018, `migrate`
+    aplica la 017 pendiente (queda DETRÁS de la 018 en `knex_migrations`). Probada en
     `apps/api/src/db/migration-017.test.ts` (upgrade con datos, invariantes, rollback y backup/restore
-    lógico) y en un simulacro `pg_dump -Fc`/`pg_restore` reales sobre `postgres:16-alpine`.
-  - **Vuelta atrás:** parar antes la emisión desde la web. Revertir la 017 POR NOMBRE, no con
-    `rollback:1`. La 017 no tiene por qué ser la última: la `018_battle_reverted` del PR #229 se
-    integra antes y queda detrás, y `rollback:1` revertiría ésa.
+    lógico, también con la 018 detrás) y en un simulacro `pg_dump -Fc`/`pg_restore` reales sobre
+    `postgres:16-alpine`.
+  - **Vuelta atrás:** parar antes la emisión desde la web y revertir la 017 POR NOMBRE, nunca con
+    `rollback:1` (ver «Orden 017/018» abajo: `rollback:1` revertiría la 018):
 
     ```bash
     $DC exec -w /app api npx tsx apps/api/src/db/cli.ts rollback:name 017_streaming_admin
     ```
 
-    La 017 sólo crea sus tres tablas, así que revertirla no toca las migraciones posteriores. Está
-    probado en `migration-017.test.ts`, también con una migración posterior simulada detrás. Revertirla
+    La 017 sólo crea sus tres tablas, así que revertirla no toca la 018 ni ninguna otra. Revertirla
     borra la configuración de streaming, los sobres sellados y el historial de sesiones; la auditoría
     (`audit_log`, acciones `streaming.*`) se conserva. Las claves habría que volver a introducirlas.
+
+- **Clasificación: marca de reversión (PR #229, migración 018):**
+  - **Migración 018** (`018_battle_reverted`) sólo añade
+    `battles.reverted_at` (timestamptz, nullable): la marca de reversión propia de la batalla
+    (política de clasificación `official_played_not_reverted`, PR #229). No toca filas existentes ni
+    marca nada como revertido. Probada en `apps/api/src/db/migration-018.test.ts` (upgrade con datos,
+    rollback y backup/restore lógico).
+  - **Vuelta atrás:** revertir la 018 (`rollback:name 018_battle_reverted`) borra SÓLO la marca: el
+    Elo de las batallas revertidas sigue devuelto en `rating_events`, pero el código anterior volvería
+    a contarlas en V-D-E. Antes de la vuelta atrás, comprobar
+    `SELECT count(*) FROM battles WHERE reverted_at IS NOT NULL;` y, si no es 0, hacer copia de esa
+    lista.
+  - **Orden 017/018 (P3, «N1»):** `rollback:1` (`rollbackLast`) revierte la última migración **de la
+    lista** entre las aplicadas, no la última aplicada. Con la lista 017 → 018, `rollback:1` revierte
+    SIEMPRE la 018, aunque la 017 se aplicara después (BD que ya tenía la 018): deshacer el
+    despliegue del streaming con `rollback:1` borraría `battles.reverted_at` y dejaría puesta la 017.
+    Instrucción segura: antes de cualquier vuelta atrás, comprobar
+    `SELECT name FROM knex_migrations ORDER BY id;` y revertir la migración que se quiere **por
+    nombre** con `rollback:name <NNN_tema>`, no con `rollback:1`.
 
 ## Errores / limitaciones
 

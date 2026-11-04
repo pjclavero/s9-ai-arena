@@ -9,7 +9,7 @@ Un torneo enfrenta a los bots inscritos según un **formato** (liga, eliminatori
 3. Al **cerrar las inscripciones**, las versiones inscritas quedan **congeladas** (y se revelan las semillas), la plataforma genera el calendario y **juega las batallas sola**.
 4. Cada batalla terminada actualiza el rating de sus bots. Al acabar el último enfrentamiento, el torneo termina.
 
-Estados de un torneo: borrador, inscripciones abiertas, inscripciones cerradas, en juego, terminado o cancelado.
+Estados de un torneo: borrador, inscripciones abiertas, inscripciones cerradas, en juego, terminado o cancelado. Cancelar un torneo **no borra lo ya jugado**: sus batallas oficiales terminadas siguen contando en el [ranking](rankings.md), salvo las que se hayan anulado. Un torneo en borrador no cuenta nada, e inscribirse no te hace aparecer en el ranking hasta que disputes un enfrentamiento.
 
 ## Ver torneos
 
