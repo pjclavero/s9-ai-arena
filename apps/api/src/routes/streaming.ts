@@ -27,6 +27,15 @@
  *    vuelven a leer `enabled` al responder el streamer;
  *  - P3 · el stop marca la BD ANTES de llamar al streamer (entre instancias);
  *  - P3 · «En directo» sólo con el relé publicando (si no, «Iniciando»).
+ *
+ * EQ5e (revisión ronda 3):
+ *  - R3-D · el estado de la UI usa el modo de la EMISIÓN (streamer/sesión), no el
+ *    guardado pendiente de reinicio;
+ *  - R3-E · un start cuya respuesta se pierde (plazo, error de red, 5xx) manda
+ *    un stop COMPENSATORIO y lo audita;
+ *  - R3-B · `reconcileOrphanEmission`: un streamer que emite una sesión que la BD
+ *    no tiene activa se para (tras un 409 del streamer, en la recomprobación y
+ *    periódicamente desde server.ts).
  */
 import { randomUUID } from "node:crypto";
 import { Router, type Request, type Response } from "express";
@@ -105,7 +114,7 @@ export function canon(v: unknown): string {
 interface StreamerStatus {
   state?: string;
   desired?: boolean;
-  session?: { sessionId?: string | null } | null;
+  session?: { sessionId?: string | null; mode?: string } | null;
   capabilities?: { nvenc?: boolean | null; sealedCredentials?: boolean };
   lastError?: { message: string; at: string } | null;
   [k: string]: unknown;
@@ -251,14 +260,22 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     return body;
   }
 
-  function uxState(s: StreamingSettings, st: { reachable: boolean; status: StreamerStatus | null }, session: unknown) {
+  function uxState(
+    s: StreamingSettings,
+    st: { reachable: boolean; status: StreamerStatus | null },
+    session: { mode?: unknown } | null | undefined,
+  ) {
     if (!s.enabled) return "disabled";
     if (!st.reachable) return "streamer_unreachable";
     const state = st.status?.state;
     if (state === "failed") return "failed";
     if (state === "retrying") return "retrying";
     if (state === "streaming") {
-      if (s.mode === "record") return "recording";
+      // EQ5e (R3-D) · el modo de la EMISIÓN en curso (el del streamer; si no lo
+      // dice, el de la sesión), no el guardado: con un cambio de modo pendiente de
+      // reinicio, la configuración ya no describe lo que se está emitiendo.
+      const mode = emissionMode(st.status) ?? session?.mode ?? s.mode;
+      if (mode === "record") return "recording";
       // EQ5d (revisión EQ6c, P3) · «En directo» sólo con el relé PUBLICANDO; mientras
       // conecta (o reconecta) es «Iniciando», no una emisión que nadie recibe.
       const relay = (st.status as { relay?: { state?: unknown } | null } | null)?.relay;
@@ -586,6 +603,15 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
       } catch {
         streamerOk = false;
       }
+    } else {
+      // EQ5e (R3-B) · hay OTRA sesión activa: sólo se para si el streamer dice
+      // que emite una sesión distinta de ella (la nuestra, ya cancelada).
+      streamerOk =
+        (await reconcileOrphanEmission(db, deps.streamer, {
+          trigger: action,
+          actorId: actor(req),
+          correlationId: req.correlationId,
+        })) === "stopped";
     }
     await log(req, action, `streaming:session:${sessionId}`, {
       reason,
@@ -594,6 +620,36 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     });
     await refreshGauges();
     return reason;
+  }
+
+  /**
+   * EQ5e (R3-E) · stop compensatorio tras un start sin respuesta fiable. Si no
+   * hay otra sesión activa, se para a ciegas (nada legítimo puede estar
+   * emitiendo: esta sesión tenía el único hueco); si la hay, sólo se para lo
+   * huérfano. Queda auditado con el resultado.
+   */
+  async function compensateStart(req: Request, sessionId: string, cause: string): Promise<void> {
+    const other = await activeSession();
+    let outcome: string;
+    if (!other) {
+      try {
+        outcome = (await deps.streamer.call("POST", "/control/stop", {})).ok ? "stopped" : "stop_rejected";
+      } catch {
+        outcome = "stop_unreachable";
+      }
+    } else {
+      outcome =
+        (await reconcileOrphanEmission(db, deps.streamer, {
+          trigger: "start_compensation",
+          actorId: actor(req),
+          correlationId: req.correlationId,
+        })) ?? "not_orphan";
+    }
+    await log(req, "streaming.session.start_compensated", `streaming:session:${sessionId}`, {
+      cause,
+      outcome,
+      otherSessionActive: !!other,
+    });
   }
 
   async function startLocked(
@@ -646,6 +702,9 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
       await db("streaming_sessions")
         .where({ id: sessionId })
         .update({ state: "failed", stopped_at: db.fn.now(), stop_reason: "streamer_unreachable" });
+      // EQ5e (R3-E) · el plazo pudo vencer DESPUÉS de que el streamer aplicara la
+      // orden: sin respuesta no se sabe, así que se compensa con un stop.
+      await compensateStart(req, sessionId, "streamer_unreachable");
       await refreshGauges();
       throw unavailable((e as Error).message);
     }
@@ -657,6 +716,18 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
         status: r.status,
         target: t,
       });
+      if (r.status >= 500) {
+        // EQ5e (R3-E) · un 5xx tampoco garantiza que la orden no se aplicara.
+        await compensateStart(req, sessionId, `streamer_${r.status}`);
+      } else if (r.status === 409) {
+        // EQ5e (R3-B) · el streamer YA emite algo y esta sesión no llegó a emitir:
+        // si lo que emite no es una sesión activa en BD, es huérfano y se para.
+        await reconcileOrphanEmission(db, deps.streamer, {
+          trigger: "start_conflict",
+          actorId: actor(req),
+          correlationId: req.correlationId,
+        });
+      }
       await refreshGauges();
       const msg = String((r.body as Record<string, unknown>).error ?? "el streamer rechazó la orden");
       throw new ApiError(r.status === 409 ? 409 : 502, r.status === 409 ? "streamer_busy" : "streamer_error", msg);
@@ -758,6 +829,86 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
   });
 
   return router;
+}
+
+/** Modo de la emisión en curso según el streamer (`session.mode`, si no `mode`). */
+function emissionMode(st: StreamerStatus | null): string | null {
+  if (!st) return null;
+  const sm = (st.session as { mode?: unknown } | null | undefined)?.mode;
+  if (typeof sm === "string") return sm;
+  const m = (st as Record<string, unknown>).mode;
+  return typeof m === "string" ? m : null;
+}
+
+/**
+ * EQ5e (R3-B, R3-E) · Reconciliación: para un streamer que EMITE (o lo intenta)
+ * sin una sesión activa en BD que le corresponda. Huérfana = no hay sesión
+ * activa, o el streamer dice qué sesión emite y no es la activa.
+ *
+ * Orden: primero el estado del streamer y DESPUÉS la BD. Un start legítimo
+ * inserta su sesión ANTES de llamar al streamer, así que si el streamer ya la
+ * emite, la BD leída después la tiene activa. Y mientras el streamer emite algo
+ * huérfano, ningún start sin `replace` puede prosperar (409), así que parar lo
+ * huérfano no corta una emisión legítima; en el peor caso una sesión recién
+ * creada queda «interrumpida» (BD activa, nada emite), que es el lado seguro.
+ * Devuelve "stopped", "stop_failed" o null (nada que hacer / sin señal).
+ */
+export async function reconcileOrphanEmission(
+  db: Db,
+  streamer: StreamerClient,
+  o: { trigger: string; actorId?: string | null; correlationId?: string },
+): Promise<"stopped" | "stop_failed" | null> {
+  if (!streamer.configured) return null;
+  let st: StreamerStatus;
+  try {
+    const r = await streamer.call<StreamerStatus>("GET", "/status");
+    if (!r.ok) return null;
+    st = r.body;
+  } catch {
+    return null;
+  }
+  const emitting = st.desired === true || st.state === "streaming" || st.state === "retrying";
+  if (!emitting) return null;
+  const emittingId = st.session?.sessionId ?? null;
+  const act = await db("streaming_sessions").where({ state: "active" }).first();
+  const orphan = !act || (emittingId !== null && emittingId !== act.id);
+  if (!orphan) return null;
+  let ok = false;
+  try {
+    ok = (await streamer.call("POST", "/control/stop", {})).ok;
+  } catch {
+    ok = false;
+  }
+  await audit(db, {
+    actorId: o.actorId ?? null,
+    action: "streaming.session.orphan_stopped",
+    target: `streaming:session:${emittingId ?? "desconocida"}`,
+    detail: { trigger: o.trigger, emittingSession: emittingId, activeSession: act?.id ?? null, streamerStopped: ok },
+    correlationId: o.correlationId,
+  });
+  return ok ? "stopped" : "stop_failed";
+}
+
+/** EQ5e (R3-B/R3-E) · Reconciliación periódica (por defecto cada 30 s). Sólo la arranca server.ts. */
+export function startOrphanReconciler(db: Db, streamer: StreamerClient, everyMs = 30_000): NodeJS.Timeout | null {
+  if (!streamer.configured) return null;
+  const tick = async () => {
+    try {
+      await reconcileOrphanEmission(db, streamer, { trigger: "periodic" });
+    } catch (e) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          service: "api",
+          msg: "reconciliación de emisión fallida",
+          detail: (e as Error).message,
+        }),
+      );
+    }
+  };
+  const t = setInterval(() => void tick(), everyMs);
+  t.unref();
+  return t;
 }
 
 /**

@@ -4,7 +4,7 @@ import { createDb } from "./db/connection.js";
 import { createApp } from "./app.js";
 import { mountVersionEndpoint } from "../../../packages/build-info/index.js";
 import { resolveTrustProxyHops } from "./middleware/proxy-trust.js";
-import { startRetentionScheduler } from "./routes/streaming.js";
+import { startOrphanReconciler, startRetentionScheduler } from "./routes/streaming.js";
 import { streamerClientFromEnv } from "./services/streamer-client.js";
 
 const db = createDb();
@@ -37,6 +37,9 @@ root.use(createApp({ db, trustProxyHops }));
 // EQ5b · retención programada de grabaciones MP4 (sólo si hay streamer configurado
 // y la política está activa en Administración → Streaming; cada borrado se audita).
 startRetentionScheduler(db, streamerClientFromEnv());
+// EQ5e (R3-B/R3-E) · para lo que emita sin sesión activa (start sin respuesta
+// aplicado tarde, carreras entre instancias); cada parada se audita.
+startOrphanReconciler(db, streamerClientFromEnv());
 
 root.listen(port, () => {
   console.log(JSON.stringify({ level: "info", service: "api", msg: `API de plataforma escuchando en :${port}` }));
