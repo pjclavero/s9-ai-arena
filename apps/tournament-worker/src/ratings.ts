@@ -81,6 +81,13 @@ function outcomeScore(outcome: string | null): number {
  * Aplica el rating de una batalla OFICIAL terminada. Idempotente por
  * battle_id: si ya hay eventos en el libro mayor, no-op (DoD: reprocesar una
  * batalla no aplica el rating dos veces).
+ *
+ * EQ2c (#229) · Tampoco puntúa una batalla REVERTIDA (`battles.reverted_at`, puesta por
+ * `revertOfficialBattle` aunque aún no tuviera Elo) ni la de un torneo en `draft` (la
+ * clasificación tampoco la cuenta). Concurrencia: la fila de la batalla se bloquea primero
+ * (`FOR UPDATE`, serializa con su reversión) y después las filas de `ratings` de sus bots,
+ * en orden de bot_id (`lockRatings`): dos Elo simultáneos del mismo bot, o un Elo junto a
+ * una reversión, ya no se pisan; el rating cuadra con el libro mayor rating_events.
  */
 export async function applyBattleRating(
   db: Knex,
@@ -94,26 +101,36 @@ export async function applyBattleRating(
   if (resultOf(battle)?.endReason === "technical_limit") return false;
 
   const tournament = battle.tournament_id ? await db("tournaments").where({ id: battle.tournament_id }).first() : null;
+  // EQ2c · STANDINGS_POLICY: draft no aporta, ni a la clasificación ni al Elo.
+  if (tournament?.state === "draft") return false;
   // TD-029 · STAT_SEASON: la temporada sale de la ÚNICA fuente (season.ts).
   const seasonId = resolveSeasonId(tournament?.season_id);
   const mode = battle.mode as string;
   const k = (tournament?.elo_k as number) ?? DEFAULT_K;
 
   return db.transaction(async (trx) => {
-    // Idempotencia: candado por batalla contra aplicaciones concurrentes.
-    const existing = await trx("rating_events").where({ battle_id: battleId }).forUpdate().first();
+    // Candado por batalla: serializa aplicaciones concurrentes y la reversión.
+    const locked = await trx("battles").where({ id: battleId }).forUpdate().first("reverted_at");
+    if (!locked || locked.reverted_at) return false; // revertida antes de puntuar
+    // Idempotencia por battle_id.
+    const existing = await trx("rating_events").where({ battle_id: battleId }).first();
     if (existing) return false;
 
     const participants = await trx("participants").where({ battle_id: battleId });
     if (participants.length < 2) return false;
 
+    const current = await lockRatings(
+      trx,
+      participants.map((p: Record<string, unknown>) => p.bot_id as string),
+      seasonId,
+      mode,
+    );
     const sides: RatedSide[] = [];
     for (const p of participants) {
-      const current = await trx("ratings").where({ bot_id: p.bot_id, season_id: seasonId, mode }).first();
       sides.push({
         botId: p.bot_id,
         team: p.team,
-        rating: (current?.rating as number) ?? INITIAL_RATING,
+        rating: current.get(p.bot_id) ?? INITIAL_RATING,
         score: outcomeScore(p.outcome),
       });
     }
@@ -134,23 +151,14 @@ export async function applyBattleRating(
         delta,
         rating_after: after,
       });
+      // La fila ya existe y está bloqueada (lockRatings): incremento atómico.
       await trx("ratings")
-        .insert({
-          bot_id: p.bot_id,
-          season_id: seasonId,
-          mode,
-          rating: after,
-          wins: side.score === 1 ? 1 : 0,
-          losses: side.score === 0 ? 1 : 0,
-          draws: side.score === 0.5 ? 1 : 0,
-          updated_at: trx.fn.now(),
-        })
-        .onConflict(["bot_id", "season_id", "mode"])
-        .merge({
-          rating: after,
-          wins: trx.raw("ratings.wins + ?", [side.score === 1 ? 1 : 0]),
-          losses: trx.raw("ratings.losses + ?", [side.score === 0 ? 1 : 0]),
-          draws: trx.raw("ratings.draws + ?", [side.score === 0.5 ? 1 : 0]),
+        .where({ bot_id: p.bot_id, season_id: seasonId, mode })
+        .update({
+          rating: trx.raw("rating + ?", [delta]),
+          wins: trx.raw("wins + ?", [side.score === 1 ? 1 : 0]),
+          losses: trx.raw("losses + ?", [side.score === 0 ? 1 : 0]),
+          draws: trx.raw("draws + ?", [side.score === 0.5 ? 1 : 0]),
           updated_at: trx.fn.now(),
         });
     }
@@ -159,33 +167,72 @@ export async function applyBattleRating(
 }
 
 /**
+ * EQ2c · Bloquea (`SELECT … FOR UPDATE`) las filas de `ratings` de esos bots en (temporada,
+ * modo), en orden de bot_id para no interbloquear, creándolas antes con el rating inicial si
+ * no existen (`ON CONFLICT DO NOTHING`: un `FOR UPDATE` sobre una fila inexistente no
+ * bloquea nada). Devuelve el rating vigente de cada uno. Sólo dentro de una transacción.
+ */
+async function lockRatings(
+  trx: Knex.Transaction,
+  botIds: string[],
+  seasonId: string,
+  mode: string,
+): Promise<Map<string, number>> {
+  const ids = [...new Set(botIds)].sort();
+  const out = new Map<string, number>();
+  for (const id of ids) {
+    await trx("ratings")
+      .insert({ bot_id: id, season_id: seasonId, mode, rating: INITIAL_RATING, wins: 0, losses: 0, draws: 0 })
+      .onConflict(["bot_id", "season_id", "mode"])
+      .ignore();
+    const row = await trx("ratings").where({ bot_id: id, season_id: seasonId, mode }).forUpdate().first("rating");
+    out.set(id, Number(row.rating));
+  }
+  return out;
+}
+
+/**
  * Revierte el efecto de una batalla ANULADA (p. ej. fallo técnico detectado a
  * posteriori): aplica el delta inverso y marca los eventos como revertidos.
- * Idempotente: los eventos ya revertidos no se tocan.
+ * Idempotente: los eventos ya revertidos no se tocan. Sólo el Elo: la anulación
+ * competitiva completa (marca de la batalla + clasificación) es `revertOfficialBattle`.
  */
 export async function revertBattleRating(db: Knex, battleId: string): Promise<boolean> {
-  return db.transaction(async (trx) => {
-    const events = await trx("rating_events").where({ battle_id: battleId, reverted: false }).forUpdate();
-    if (events.length === 0) return false;
-    const participants = await trx("participants").where({ battle_id: battleId });
-    const scoreByBot = new Map<string, number>(
-      participants.map((p: Record<string, unknown>) => [p.bot_id as string, outcomeScore(p.outcome as string | null)]),
-    );
-    for (const e of events) {
-      const score = scoreByBot.get(e.bot_id as string) ?? 0;
-      await trx("ratings")
-        .where({ bot_id: e.bot_id, season_id: e.season_id, mode: e.mode })
-        .update({
-          rating: trx.raw("rating - ?", [e.delta]),
-          wins: trx.raw("greatest(wins - ?, 0)", [score === 1 ? 1 : 0]),
-          losses: trx.raw("greatest(losses - ?, 0)", [score === 0 ? 1 : 0]),
-          draws: trx.raw("greatest(draws - ?, 0)", [score === 0.5 ? 1 : 0]),
-          updated_at: trx.fn.now(),
-        });
-      await trx("rating_events").where({ id: e.id }).update({ reverted: true });
-    }
-    return true;
-  });
+  return db.transaction((trx) => revertBattleRatingInTrx(trx, battleId));
+}
+
+/**
+ * Núcleo de `revertBattleRating` dentro de una transacción ya abierta (lo usa también
+ * `revertOfficialBattle`, standings.ts, junto con la marca de la batalla). Bloquea los
+ * eventos y las filas de `ratings` (en orden de bot_id) antes de restar el delta.
+ */
+export async function revertBattleRatingInTrx(trx: Knex.Transaction, battleId: string): Promise<boolean> {
+  // Mismo orden de cerrojos que applyBattleRating: batalla → eventos → ratings (por bot_id).
+  await trx("battles").where({ id: battleId }).forUpdate().first("id");
+  const events = await trx("rating_events")
+    .where({ battle_id: battleId, reverted: false })
+    .orderBy("bot_id", "asc")
+    .forUpdate();
+  if (events.length === 0) return false;
+  const participants = await trx("participants").where({ battle_id: battleId });
+  const scoreByBot = new Map<string, number>(
+    participants.map((p: Record<string, unknown>) => [p.bot_id as string, outcomeScore(p.outcome as string | null)]),
+  );
+  for (const e of events) {
+    await trx("ratings").where({ bot_id: e.bot_id, season_id: e.season_id, mode: e.mode }).forUpdate().first("bot_id");
+    const score = scoreByBot.get(e.bot_id as string) ?? 0;
+    await trx("ratings")
+      .where({ bot_id: e.bot_id, season_id: e.season_id, mode: e.mode })
+      .update({
+        rating: trx.raw("rating - ?", [e.delta]),
+        wins: trx.raw("greatest(wins - ?, 0)", [score === 1 ? 1 : 0]),
+        losses: trx.raw("greatest(losses - ?, 0)", [score === 0 ? 1 : 0]),
+        draws: trx.raw("greatest(draws - ?, 0)", [score === 0.5 ? 1 : 0]),
+        updated_at: trx.fn.now(),
+      });
+    await trx("rating_events").where({ id: e.id }).update({ reverted: true });
+  }
+  return true;
 }
 
 /** Ratings vigentes de una temporada/modo (para standings materializados). */

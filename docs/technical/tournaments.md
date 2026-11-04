@@ -97,13 +97,37 @@ La ejecución de cada batalla es la descrita en [battles.md](battles.md). El loa
 
 1. Aplica el Elo de la batalla oficial, idempotente por batalla (`ratings`, `rating_events`; rating inicial 1000, K del torneo).
 2. Recalcula la tabla de liga del torneo.
-3. En formatos que no son `teams`, llama a `updateStandings(db, t.season_id, t.mode, …)`, que reescribe `standings` e invalida la caché de 60 s.
+3. En formatos que no son `teams`, recalcula `standings` de (temporada, modo) con `seasonTable` (política `official_played_not_reverted`, [abajo](#política-de-clasificación)) y llama a `updateStandings(db, t.season_id, t.mode, …)`, que la escribe e invalida la caché de 60 s.
 
 ## Clasificación y rating
 
 - **STAT_SEASON** (TD-029): la temporada activa es `ACTIVE_SEASON_ID = "season-1"` en `apps/tournament-worker/src/season.ts`, única fuente que usan API y worker; coincide con el `DEFAULT` de `tournaments.season_id` (un test lo compara).
 - `GET /standings?mode=&seasonId=` es anónimo, con caché de 60 s. `seasonId` ausente, vacío o `"current"` ⇒ la temporada activa; la respuesta la indica en la cabecera `X-S9-Season`. La web `#/ranking` no envía `seasonId` y ya ve lo que escribe el worker.
 - El worker puntúa en `tournaments.season_id` resuelto con la misma función (`ratings.ts`).
+
+### Política de clasificación
+
+`STANDINGS_POLICY = official_played_not_reverted` (`apps/tournament-worker/src/standings.ts`): la clasificación de (temporada, modo) y su Elo dependen de resultados oficiales realmente disputados, no del estado administrativo del torneo. `seasonTable` parte de las **batallas**, no de las inscripciones ni de `matches.state`, y sólo cuenta las que son:
+
+- oficiales (`battles.official`), terminadas (`status = finished`), del modo y de un torneo no `teams` de la temporada;
+- de un torneo que no esté en `draft` (`open`, `closed`, `running`, `finished` y `cancelled` aportan lo ya disputado);
+- no detenidas por la salvaguarda técnica (`technical_limit`, ADR-022);
+- no revertidas: `battles.reverted_at` (migración `018_battle_reverted`) o, además, una batalla cuyos eventos de `rating_events` están todos revertidos.
+
+| Estado del torneo | Efecto |
+|---|---|
+| `draft` | no aporta: ni clasificación ni Elo |
+| `open` sin batallas | nadie aparece (nada de 0-0-0) |
+| `running` | cuenta al momento; una serie en juego cuenta lo ya disputado y, si va igualada, es empate (`seriesOutcome(..., { closed: false })` no aplica el desempate por seed) |
+| `finished` | normal |
+| `cancelled` | conserva lo jugado, salvo lo revertido |
+
+- **Unidad de V-D-E:** el enfrentamiento, resuelto con `seriesOutcome` (`results.ts`, el mismo criterio que el cierre del match); 3/1/0 puntos. Un **bye no suma V-D-E** (decisión del operador); `leagueTable`, la tabla interna del torneo, sí lo cuenta como victoria.
+- **Orden:** puntos, enfrentamientos directos, diferencia de puntuación, mejor seed de inscripción, id.
+- **Reversión:** `revertOfficialBattle(db, battleId)` (transacción con la batalla bloqueada) pone `battles.reverted_at` y devuelve el Elo si lo tenía. No depende del Elo: si el job `update_standings` llega después, `applyBattleRating` ve la marca y no aplica Elo. Devuelve `reverted`, `already_reverted` o `nothing_to_revert` (no existe, no es oficial, no ha terminado o es técnica). Hoy ningún endpoint ni job la invoca; sólo los tests.
+- **Concurrencia del Elo:** `applyBattleRating` bloquea la batalla y luego las filas de `ratings` (por `bot_id`); la reversión sigue el mismo orden de cerrojos.
+- **Deuda conocida:** [TD-073](../roadmap/technical-debt.md#td-073) (`sortTable` no transitivo con ciclos de directos).
+- Despliegue y vuelta atrás de la migración 018: [upgrades.md](../operations/upgrades.md).
 
 Es un hallazgo nuevo de esta consolidación: [TD-029](../roadmap/technical-debt.md#td-029). La auditoría vio la clasificación vacía, pero no encontró la causa.
 

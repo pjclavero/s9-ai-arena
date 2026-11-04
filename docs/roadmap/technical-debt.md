@@ -102,6 +102,7 @@ Estados posibles:
 | [TD-070](#td-070) | CTF en torneos: bandos A/B frente a bases y banderas red/blue | P3 | Torneos / reglas | ABIERTA (rechazado con motivo) |
 | [TD-071](#td-071) | El filtro `result=aborted` de replays no incluye `technical_limit` | P3 | API / replays | ABIERTA |
 | [TD-072](#td-072) | Carrera en la spec de navegador `review-h3-perimeter` | P3 | Pruebas | ABIERTA (sin reproducir) |
+| [TD-073](#td-073) | `sortTable` no transitivo con ciclos de enfrentamientos directos | P3 | Clasificación | ABIERTA |
 
 ---
 
@@ -1428,3 +1429,15 @@ Estados posibles:
 - **Evidencia:** la revisión de integración informó de una carrera en esta spec. En esta auditoría no se ha podido aislar la condición exacta. Sí se ha comprobado que localiza sus bots con `GET /bots?limit=100` y `find` por nombre (`:109`, `:135`), lo que depende de la paginación de `listBots` (TD-068) en una base con muchos bots.
 - **Problema:** una spec de la suite de navegador puede fallar de forma intermitente.
 - **Condición de cierre:** la causa identificada, corregida y la spec estable en N ejecuciones consecutivas.
+
+<a id="td-073"></a>
+## TD-073 — `sortTable` no es transitivo con ciclos de enfrentamientos directos
+
+- **Estado:** ABIERTA
+- **Prioridad:** P3
+- **Área:** Clasificación (`apps/tournament-worker/src/results.ts`, `sortTable`)
+- **Detectado:** 2026-11-04, revisión independiente de #229 (hallazgo H6)
+- **Evidencia:** el criterio de enfrentamientos directos se compara por parejas. Con un ciclo a>b, b>c, c>a entre bots empatados a puntos el comparador no es transitivo y el orden resultante depende del algoritmo de ordenación. Está anotado en el comentario de `sortTable`.
+- **Problema:** en un empate a puntos con ciclo, el orden mostrado en la clasificación no está bien definido.
+- **Solución prevista:** calcular una mini-tabla entre los empatados. Cambia una regla de orden visible, así que necesita decisión del operador.
+- **Condición de cierre:** decisión del operador, mini-tabla implementada y un test con un ciclo de tres que da siempre el mismo orden.
