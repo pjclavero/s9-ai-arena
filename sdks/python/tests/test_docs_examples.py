@@ -6,8 +6,9 @@ se ejecutan aquí de verdad con el SDK real contra el motor real (LocalSimulator
 COMMAND que envían se valida contra el esquema arena/1 de packages/protocol. Además, el
 bloque de código de la guía (docs/user/bots/ejemplos.md) es idéntico al fichero.
 
-Límite honesto: LocalSimulator reparte los bots en equipos alternos (rojo, azul). La
-cooperación REAL de dos compañeros del mismo equipo se prueba con los ejemplos JavaScript
+Límite honesto: LocalSimulator reparte los bots en equipos alternos (rojo, azul). Con tres
+bots, el primero y el tercero son compañeros: así se prueba 05_radio (dos compañeros y un
+rival). La cooperación REAL de 06_equipo se prueba con los ejemplos JavaScript
 (sdks/javascript/tests/docs-examples.test.ts); aquí 06_equipo se ejecuta en solitario
 (sin compañeros), que es el caso "escuadra de uno" de su propia lógica.
 """
@@ -74,8 +75,8 @@ def _assert_valid_commands(bot) -> None:
         assert errors == [], f"COMMAND inválido {m}: {errors}"
 
 
-def _sim(ticks: int, map: str = "empty") -> LocalSimulator:
-    return LocalSimulator(map=map, ruleset="dm_practice@1", ticks=ticks, seed="doc-a-" + str(ticks), tick_interval_ms=6)
+def _sim(ticks: int, map: str = "empty", ruleset: str = "dm_practice@1") -> LocalSimulator:
+    return LocalSimulator(map=map, ruleset=ruleset, ticks=ticks, seed="doc-a-" + str(ticks), tick_interval_ms=6)
 
 
 def test_hay_seis_ejemplos() -> None:
@@ -127,13 +128,23 @@ def test_04_sensores_con_cada_sensor(archetype: str) -> None:
 
 def test_05_radio_envia_y_recibe() -> None:
     cls = _recorded(_load("05_radio.py"))
-    a, b = cls("bot_ex05a"), cls("bot_ex05b")
-    result = _sim(900).run([(a, "gunner"), (b, "gunner")])
+    # Bandos alternos: veh_1 y veh_3 son compañeros (rojo); veh_2 es el rival (azul).
+    a, rival, b = cls("bot_ex05a"), cls("bot_ex05r"), cls("bot_ex05b")
+    result = _sim(900, ruleset="tdm_mvp@1").run([(a, "gunner"), (rival, "gunner"), (b, "gunner")])
     assert result["disqualified"] == []
     _assert_valid_commands(a)
+    assert a.teammates == ["veh_3"] and b.teammates == ["veh_1"] and rival.teammates == []
     assert any("radio" in m["payload"] for m in a.sent + b.sent)
-    assert a.heard + b.heard, "nadie recibió ni decodificó un mensaje de radio"
+    # Los compañeros se oyen entre ellos, y sólo entre ellos.
+    assert a.heard + b.heard, "ningún compañero recibió ni decodificó un mensaje de radio"
+    assert all(h["from"] == "veh_3" for h in a.heard)
+    assert all(h["from"] == "veh_1" for h in b.heard)
     assert all(h["x"] >= 0 and h["y"] >= 0 for h in a.heard + b.heard)
+    # El rival no recibe nada: ni mensajes ni una clave "radio" en su observación.
+    assert rival.heard == []
+    assert not any("radio" in o for o in rival.observations)
+    # Sin compañeros, el ejemplo no gasta radio.
+    assert not any("radio" in m["payload"] for m in rival.sent)
 
 
 def test_06_equipo_en_solitario_es_atacante_y_no_falla() -> None:
