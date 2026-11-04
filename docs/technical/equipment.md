@@ -175,6 +175,7 @@ Acero (`steel_*`): reducción 0.35 frontal, 0.25 lateral y 0.20 trasera; más pe
 - se entrega con 1 ciclo de decisión de retraso;
 - el destino puede ser uno concreto (`to`) o difusión;
 - sólo la reciben los vehículos del **mismo equipo** que el emisor (`radioDeliverableTo`, `sensors.ts`), según el equipo del estado de batalla; el emisor no se oye a sí mismo, y un `to` a un rival o a un id inexistente no se entrega a nadie.
+- el replay sí guarda la radio de los dos bandos (son comandos grabados): tras la batalla la ve quien pueda leer el replay, un participante incluido ([replays.md](replays.md#autorización-de-acceso-td-004)).
 
 **Sin efecto**:
 

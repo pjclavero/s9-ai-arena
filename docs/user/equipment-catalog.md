@@ -96,7 +96,7 @@ Cada pieza protege un sector (frontal, izquierdo, derecho o trasero). Reduce el 
 
 ## Radio
 
-Permite enviar mensajes cortos a otros vehículos (ver la [guía de radio](bots/radio.md)). Hoy los oyen todos los vehículos, también los rivales.
+Permite enviar mensajes cortos (ver la [guía de radio](bots/radio.md)). La radio permite compartir información con los bots de tu propio equipo. Los bots rivales no reciben estos mensajes.
 
 | Nombre | Tamaño máximo de mensaje (bytes) | Mensajes por segundo | Masa (kg) | Coste (créditos) | Consumo pasivo (EU/s) | Tamaño |
 |---|---|---|---|---|---|---|

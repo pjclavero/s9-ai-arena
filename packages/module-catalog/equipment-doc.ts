@@ -146,7 +146,7 @@ const INTRO: Record<ModuleCategory, string> = {
   ammo: "La munición se monta con el arma. Cada tipo cambia el daño y el número de disparos.",
   armor: `Cada pieza protege un sector (frontal, izquierdo, derecho o trasero). Reduce el daño que entra por ese lado, nunca por debajo del ${pct(DMG_MIN_FRACTION)} del daño original, y se desgasta con lo que absorbe.`,
   radio:
-    "Permite enviar mensajes cortos a otros vehículos (ver la [guía de radio](bots/radio.md)). Hoy los oyen todos los vehículos, también los rivales.",
+    "Permite enviar mensajes cortos (ver la [guía de radio](bots/radio.md)). La radio permite compartir información con los bots de tu propio equipo. Los bots rivales no reciben estos mensajes.",
   mine: "La mina se suelta con el comando `deployMine` y sólo cabe en la bahía de minas de los chasis medio y pesado.",
   utility: "",
 };
