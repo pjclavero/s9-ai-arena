@@ -338,7 +338,9 @@ La API no migra al arrancar. Tras desplegar una versión con migraciones nuevas:
 $DC exec -w /app api npx tsx apps/api/src/db/cli.ts migrate
 ```
 
-Hazlo con copia previa. `rollback:1` revierte exactamente una migración; `rollback:all` destruye el
+Hazlo con copia previa. `rollback:1` revierte exactamente una migración: la ÚLTIMA aplicada, que
+depende del orden en que se integraron los PR. Para revertir una migración concreta, usa
+`rollback:name <NNN_tema>`, que la revierte esté donde esté. `rollback:all` destruye el
 esquema ([first-run.md](first-run.md#comandos-prohibidos-en-producción)).
 
 ## Vuelta atrás
@@ -371,7 +373,8 @@ esquema ([first-run.md](first-run.md#comandos-prohibidos-en-producción)).
 
   Las batallas `running` con copia deben terminar (o marcarse `failed` igual) antes de parar el
   worker nuevo. Un motor 0.3.0 dará `engine_version_mismatch` («otra versión», no «manipulado») a los
-  replays 0.4.0. `rollback:1` de la 016 borra las copias de reglas (no resultados ni replays).
+  replays 0.4.0. Revertir la 016 (`rollback:name 016_battle_rules`; ya no es la última) borra las
+  copias de reglas (no resultados ni replays).
 
 - **Administración de streaming (ADR-023, migración 017):**
   - **Antes de desplegar:** ejecutar `infrastructure/scripts/init-secrets.sh` (idempotente): genera
@@ -383,8 +386,17 @@ esquema ([first-run.md](first-run.md#comandos-prohibidos-en-producción)).
     `streaming_sessions`; no toca ninguna tabla existente. Probada en
     `apps/api/src/db/migration-017.test.ts` (upgrade con datos, invariantes, rollback y backup/restore
     lógico) y en un simulacro `pg_dump -Fc`/`pg_restore` reales sobre `postgres:16-alpine`.
-  - **Vuelta atrás:** parar antes la emisión desde la web. `rollback:1` de la 017 borra la
-    configuración de streaming, los sobres sellados y el historial de sesiones; la auditoría
+  - **Vuelta atrás:** parar antes la emisión desde la web. Revertir la 017 POR NOMBRE, no con
+    `rollback:1`. La 017 no tiene por qué ser la última: la `018_battle_reverted` del PR #229 se
+    integra antes y queda detrás, y `rollback:1` revertiría ésa.
+
+    ```bash
+    $DC exec -w /app api npx tsx apps/api/src/db/cli.ts rollback:name 017_streaming_admin
+    ```
+
+    La 017 sólo crea sus tres tablas, así que revertirla no toca las migraciones posteriores. Está
+    probado en `migration-017.test.ts`, también con una migración posterior simulada detrás. Revertirla
+    borra la configuración de streaming, los sobres sellados y el historial de sesiones; la auditoría
     (`audit_log`, acciones `streaming.*`) se conserva. Las claves habría que volver a introducirlas.
 
 ## Errores / limitaciones

@@ -984,3 +984,21 @@ export async function rollbackAll(db: Knex): Promise<void> {
 export async function rollbackLast(db: Knex): Promise<void> {
   await db.migrate.down(config);
 }
+
+/**
+ * EQ5e (revisión ronda 3, R3-F) · Revierte UNA migración concreta por NOMBRE,
+ * esté donde esté en la historia: no depende de que sea la última (con la 018
+ * de #229 detrás, `rollbackLast` revertiría la 018, no la 017). Falla si esa
+ * migración no está aplicada o no existe. Sólo es seguro para migraciones
+ * independientes de las posteriores (la 017 sólo crea sus propias tablas).
+ */
+export async function rollbackNamed(db: Knex, name: string): Promise<void> {
+  if (!MIGRATIONS.some((m) => m.name === name)) throw new Error(`Migración desconocida: ${name}`);
+  await db.migrate.down({ ...config, name });
+}
+
+/** EQ5e (R3-F) · Aplica UNA migración pendiente concreta por NOMBRE. */
+export async function migrateNamed(db: Knex, name: string): Promise<void> {
+  if (!MIGRATIONS.some((m) => m.name === name)) throw new Error(`Migración desconocida: ${name}`);
+  await db.migrate.up({ ...config, name });
+}

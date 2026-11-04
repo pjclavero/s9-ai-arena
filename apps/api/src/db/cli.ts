@@ -4,6 +4,7 @@
  *   DATABASE_URL=postgres://... npx tsx apps/api/src/db/cli.ts migrate
  *   DATABASE_URL=postgres://... npx tsx apps/api/src/db/cli.ts rollback:1
  *   DATABASE_URL=postgres://... npx tsx apps/api/src/db/cli.ts rollback:all
+ *   DATABASE_URL=postgres://... npx tsx apps/api/src/db/cli.ts rollback:name <NNN_tema>
  *   DATABASE_URL=postgres://... npx tsx apps/api/src/db/cli.ts seed
  *   DATABASE_URL=postgres://... npx tsx apps/api/src/db/cli.ts bootstrap
  *   DATABASE_URL=postgres://... npx tsx apps/api/src/db/cli.ts demo-teams <email> [equipo...]
@@ -13,6 +14,8 @@
  * catálogo y mapa) y es el comando apto para un entorno real.
  *
  * `rollback:1` revierte SOLO la última migración aplicada (exactamente una migración, no un lote).
+ * `rollback:name <NNN_tema>` (EQ5e) revierte UNA migración concreta por nombre,
+ * esté o no al final de la historia (no depende del orden de integración).
  * `rollback:all` revierte TODAS las migraciones: es DESTRUCTIVA, borra el
  * esquema entero (todas las tablas), no solo la última. No hay `rollback`
  * a secas: un operador debe elegir explícitamente cuál de las dos quiere,
@@ -23,7 +26,7 @@
  * versiones quedan en `draft`: la validación en sandbox no se salta.
  */
 import { createDb } from "./connection.js";
-import { migrateToLatest, rollbackAll, rollbackLast } from "./migrations.js";
+import { migrateToLatest, rollbackAll, rollbackLast, rollbackNamed } from "./migrations.js";
 import { seedContent, seedDev } from "./seeds/dev.js";
 import { formatDemoTeamsResult, seedDemoTeams } from "./seeds/demo-teams.js";
 
@@ -37,6 +40,15 @@ try {
   } else if (cmd === "rollback:1") {
     await rollbackLast(db);
     console.log("Última migración revertida (una migración, no un lote).");
+  } else if (cmd === "rollback:name") {
+    const name = process.argv[3];
+    if (!name) {
+      console.error("Uso: cli.ts rollback:name <NNN_tema> (p. ej. 017_streaming_admin)");
+      process.exitCode = 2;
+    } else {
+      await rollbackNamed(db, name);
+      console.log(`Migración ${name} revertida (sólo ésa).`);
+    }
   } else if (cmd === "rollback:all") {
     console.warn("ATENCIÓN: rollback:all revierte TODAS las migraciones y destruye el esquema completo.");
     await rollbackAll(db);
@@ -66,7 +78,7 @@ try {
       console.log(formatDemoTeamsResult(r));
     }
   } else {
-    console.error("Uso: cli.ts <migrate|rollback:1|rollback:all|seed|bootstrap|demo-teams>");
+    console.error("Uso: cli.ts <migrate|rollback:1|rollback:name|rollback:all|seed|bootstrap|demo-teams>");
     process.exitCode = 2;
   }
 } finally {
