@@ -757,6 +757,8 @@ describe("[R2 #229] H3 · concurrencia del Elo", () => {
         ...fresh.map((id) => applyBattleRating(h.db, id)),
       ]);
       for (const r of res) if (r.status === "rejected") bad.push(`${season}: ${String(r.reason)}`);
+      // applyBattleRating a secas no recalcula standings (lo hace el job): recálculo final antes de auditar.
+      await recomputeSeasonStandings(h.db, season, "deathmatch");
       bad.push(...(await ledgerAudit(season)));
     }
     expect(bad).toEqual([]);
