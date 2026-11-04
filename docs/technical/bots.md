@@ -20,7 +20,7 @@ Para jugar, una versión tiene que pasar por tres pasos:
   - Lo demuestra un E2E con Docker, sin tocar la BD.
   - El worker cablea el sandbox desde `DOCKER_PROXY_URL` y `BUILD_SANDBOX_HOST`. Sin ellos sigue fallando cerrado, como antes.
   - En el despliegue hacen falta cambios de compose ([Errores / limitaciones](#errores--limitaciones)).
-- **Batallas.** Siguen sin ejecutar el código del usuario hasta que el carril de batallas consuma `resolveBotLaunch` ([TD-002](../roadmap/technical-debt.md#td-002)).
+- **Batallas.** Ejecutan el código del usuario: el worker consume `resolveBotLaunch` ([TD-002](../roadmap/technical-debt.md#td-002), cerrada).
 - **Versionado.** Ver [bot-versioning.md](bot-versioning.md).
 
 ## Índice
@@ -235,7 +235,7 @@ Para las **batallas**, el contrato para arrancar una versión publicada es `reso
 - el bootstrap;
 - el artefacto firmado y verificado.
 
-El proceso que aloja el ProtocolServer ofrece el artefacto con `SandboxHost` y pasa su `wss` al ProtocolServer. Hasta que el carril de batallas lo consuma, el camino de batallas sigue como describe [battles.md](battles.md#autoridad-única-de-ejecución). Ojo: `battle-run-http-launcher.ts` usa `artifact_hash` como `imageDigest`, y eso no arranca nada.
+El proceso que aloja el ProtocolServer ofrece el artefacto con `SandboxHost` y pasa su `wss` al ProtocolServer. El carril de batallas lo consume (ver [battles.md](battles.md#autoridad-única-de-ejecución)). Ojo: `battle-run-http-launcher.ts` usa `artifact_hash` como `imageDigest`, y eso no arranca nada.
 
 Antes de lanzar, el camino real comprueba que cada bot está `published|frozen` y tiene digest firmado (`409 bot_not_ready` / `bot_not_signed`). El worker de plataforma tiene una guarda de firma (`artifactGuard`) que **no está cableada** ([TD-015](../roadmap/technical-debt.md#td-015)).
 
@@ -249,16 +249,16 @@ Tablas `bots`, `bot_loadouts`, `loadout_modules`, `bot_versions`, `builds`, `art
 - **Acciones de dueño**: metadatos, loadouts, versiones, `submit`, `publish` y `retire` requieren ser el dueño (`assertOwner`). Si no, `403 Solo el dueño del bot puede hacer esto`.
 - **Código fuente**: `GET …/versions/{v}/source` lo devuelve al dueño, a sus compañeros de equipo, a staff, o a cualquiera si la versión es `published` con `code_public=true`. La web siempre publica con `codePublic:false`.
 - **Cerrado en la integración** ([TD-005](../roadmap/technical-debt.md#td-005)): un bot privado ajeno ya no entra en una batalla (`404`) y su `rating-history` da `404` (con `Cache-Control: private` para el dueño). Lo prueba `apps/api/src/fc-review-security.test.ts`.
-- **Hueco conocido** ([TD-047](../roadmap/technical-debt.md#td-047)): `GET /battles`, `/battles/{id}` y sus stats muestran `botId` y versión de los participantes aunque el bot sea privado.
+- **Cerrado** ([TD-047](../roadmap/technical-debt.md#td-047), PR #178): `GET /battles`, `/battles/{id}`, sus stats y su auditoría aplican la misma política de lectura (`apps/api/src/battle-access.ts`); un anónimo no ve batallas con bots privados.
 
 ## Errores / limitaciones
 
-- **Despliegue pendiente** ([TD-001](../roadmap/technical-debt.md#td-001)). Integrado por REVIEW: el compose ya da al `bot-build-worker` la red `arena`, `DOCKER_PROXY_URL`, `extra_hosts` y `BUILD_SANDBOX_HOST`, y las imágenes copian `runtimes/DIGESTS.lock`. Falta desplegarlo (recrear el servicio) con el `s9-docker-proxy` corriendo en el host. Sin proxy, el worker arranca y lo anuncia («sin sandbox: todo build se rechazará»).
+- **Cerrado** ([TD-001](../roadmap/technical-debt.md#td-001), PR #152). Integrado: el compose ya da al `bot-build-worker` la red `arena`, `DOCKER_PROXY_URL`, `extra_hosts` y `BUILD_SANDBOX_HOST`, y las imágenes copian `runtimes/DIGESTS.lock`. Requiere el `s9-docker-proxy` corriendo en el host. Sin proxy, el worker arranca y lo anuncia («sin sandbox: todo build se rechazará»).
 - **Lanzamiento en batalla**: `createBattleLaunchHost` (`apps/bot-manager/src/bot-launch.ts`) es el contrato con el tournament-worker: verifica con la clave PÚBLICA (`ARTIFACT_VERIFY_KEY_FILE`) y sirve el artefacto firmado de la versión exacta. Ver [battles.md](battles.md#7-worker-motor-y-agentes).
 - **Superficie nueva** ([TD-033](../roadmap/technical-debt.md#td-033)): el worker de builds (y el de batallas) escucha, en la red `arena`, un puerto efímero con token mientras dura cada sesión, y ese mismo proceso tiene credenciales de BD (red `data`). Deuda aceptada.
-- **Arranque** ([TD-034](../roadmap/technical-debt.md#td-034), cerrado en la integración `integration/production-readiness`, verificado por REVIEW y en CI real; sin desplegar): dos relojes separados por la señal `ready` del bootstrap ([detalle](#arranque-dos-relojes-td-034)). Límite que queda: el reloj del bot sigue siendo de pared, así que un bot cuyo import consume mucha CPU puede acercarse a los 5 s con 0,5 CPU y el host saturado (en la prueba de saturación, `botReadyToHelloMs` máx. 619 ms).
+- **Arranque** ([TD-034](../roadmap/technical-debt.md#td-034), cerrado en la integración `integration/production-readiness`, verificado por REVIEW y en CI real; incluida en el commit de producción RC5.5): dos relojes separados por la señal `ready` del bootstrap ([detalle](#arranque-dos-relojes-td-034)). Límite que queda: el reloj del bot sigue siendo de pared, así que un bot cuyo import consume mucha CPU puede acercarse a los 5 s con 0,5 CPU y el host saturado (en la prueba de saturación, `botReadyToHelloMs` máx. 619 ms).
 - **Red del E2E local**: la red `arena` del Docker rootless no es `internal`, porque el worker es el proceso de test en el host. En compose sí lo es.
-- El código subido se ejecuta en batallas de plataforma (integración REVIEW, [TD-002](../roadmap/technical-debt.md#td-002)) en entorno aislado; en producción, al desplegar.
+- El código subido se ejecuta en batallas de plataforma ([TD-002](../roadmap/technical-debt.md#td-002), PR #152), dentro del contenedor aislado.
 - Bot↔equipo: sólo se asigna con `teamId` al crear el bot por API. `PATCH /bots/{id}` sólo acepta `name` y `visibility` ([TD-011](../roadmap/technical-debt.md#td-011)).
 - No existe borrado de bots ni de versiones.
 - Doble clic en «Crear bot»: la carrera con `UNIQUE(owner_id,name)` puede dar `500` ([TD-013](../roadmap/technical-debt.md#td-013)).

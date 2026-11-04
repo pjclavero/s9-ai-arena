@@ -1,130 +1,107 @@
 # Modos de juego
 
-## Resumen
+Un **modo** decide cómo se gana; un **conjunto de reglas** decide los detalles (tiempo, vidas, cuántos puntos hacen falta). Al crear una batalla eliges las dos cosas.
 
-Desde la web puedes elegir **4 modos**: combate libre (`deathmatch`), combate por equipos (`team_deathmatch`), captura de bandera (`capture_the_flag`) y control de zonas (`zone_control`). El motor de simulación tiene 3 modos más (último en pie, dominación y juggernaut) que todavía **no se pueden usar** desde la plataforma.
+Puedes usar **cuatro modos**: combate libre (*Deathmatch*, 1 contra 1), combate por equipos (*Deathmatch por equipos*), *Captura la bandera* y *Control de zona*. Son los únicos que ofrece la web y la API (`modes` del catálogo); los tres últimos se juegan por equipos. Otros modos internos del motor de simulación **no están disponibles** para el jugador y no se describen en esta guía.
 
-Hoy:
+## Cómo se elige: conjuntos oficiales, personalizado y clásico
 
-- en «Nueva batalla» eliges el **modo** y un **ruleset** (las reglas: límite de tiempo, puntos y presupuesto), que salen de la plataforma; el selector de mapas sólo muestra los que admiten ese modo, y la batalla se crea ([TD-003](../roadmap/technical-debt.md#td-003));
-- los vehículos los conduce un bot de prueba que no persigue banderas ni zonas ([TD-002](../roadmap/technical-debt.md#td-002)).
+En **«Nueva batalla»** primero eliges el tipo (1 contra 1 o por equipos) y luego el conjunto de reglas:
 
-## Índice
+- **Conjuntos oficiales** (Duelo, Combate, Resistencia, Eliminación por equipos, Respawn limitado, Team Deathmatch, Resistencia por equipos y Captura la bandera). Están versionados: si una regla cambia, se publica una versión nueva y tus batallas, torneos y replays conservan **las reglas con las que se crearon**. Todos los detalles, con los desempates, están en **[Reglas de batalla](rules.md)**, que se genera del propio código del juego.
+- **Personalizado**: sólo reglas competitivas (reaparición, tiempo, objetivo de bajas o capturas, créditos y masa, fuego amigo y, en bandera, capturas y retorno). La física, el daño, la vida, los sensores y la munición no se tocan. Límites y reglas: [Reglas de batalla](rules.md#personalizado).
+- **Clásico**: el conjunto de reglas de la plataforma para cada modo (abajo). Es la única forma de jugar **Control de zona**.
 
-- [Modos disponibles](#modos-disponibles)
-- [Modos sólo del motor](#modos-sólo-del-motor)
-- [Rulesets](#rulesets)
-- [Mapas compatibles](#mapas-compatibles)
-- [Errores / limitaciones](#errores--limitaciones)
-- [Estado actual](#estado-actual)
-- [Documentación relacionada](#documentación-relacionada)
+Antes de crear, la web muestra un **resumen** de las reglas y comprueba cada bot en el servidor («✓ A-ATK-1 — 890/900 cr»). Si un bot o un equipo supera un tope, no se puede crear la batalla.
 
-## Modos disponibles
+## Vidas y reapariciones
 
-Reglas comunes:
+`maxRespawns` es el número de veces que un bot puede **reaparecer** tras morir:
 
-- duración máxima de 5 minutos de juego (9 000 *ticks*);
-- sin fuego amigo;
-- reaparición a los 5 segundos, salvo que se indique otra cosa.
+| `maxRespawns` | Vidas totales |
+|---|---|
+| 0 | 1 |
+| 1 | 2 |
+| 2 | 3 |
 
-### Combate libre — `deathmatch`
+(Siempre una más que `maxRespawns`.) «Sin reaparición» es una sola vida; «ilimitada» reaparece siempre, tras una espera. Un vehículo sin vidas queda eliminado.
 
-- **Objetivo**: destruir a los rivales; cada vehículo juega por su cuenta.
-- **Victoria**: el primero en llegar a **5 derribos**. Si se acaba el tiempo, gana quien más tenga. **Sin reaparición**: también gana el último que queda en pie.
+## Los cuatro modos
+
+Reglas comunes de las batallas clásicas: **5 minutos** de juego, **sin fuego amigo** (tus proyectiles atraviesan a tus compañeros). Cuando el tiempo se agota, gana quien tenga **más puntos**; con igualdad, empate. (Los conjuntos oficiales tienen sus propios tiempos y desempates, en [Reglas de batalla](rules.md#desempates).)
+
+### Deathmatch
+
+- **Objetivo**: destruir a los rivales; cada vehículo juega por su cuenta (es el modo de 1 contra 1).
+- **Inicio**: cada vehículo nace en un punto de aparición del mapa.
+- **Puntuación**: **1 punto por cada vehículo enemigo destruido**.
+- **Victoria**: el primero en llegar al marcador, o el último vehículo que queda en pie.
+- **Muerte**: en las reglas clásicas, **sin reaparición**: el vehículo destruido queda eliminado.
+- **Fin del tiempo**: gana quien tenga más puntos; empate si hay igualdad.
 - **Mapa**: al menos 2 puntos de aparición.
-- **Equipamiento relevante**: arma, blindaje y radar.
+- **Equipamiento útil**: arma, blindaje y un buen sensor.
 
-### Combate por equipos — `team_deathmatch`
+### Deathmatch por equipos
 
-- **Objetivo**: derribos por equipo. Con fuego amigo activo, matar a un compañero da el punto al rival.
-- **Victoria**: **8 derribos** o, al acabar el tiempo, el equipo con más.
-- **Mapa**: puntos de aparición de al menos 2 equipos.
-- **Equipamiento relevante**: arma, blindaje y radio (coordinación).
+- **Objetivo**: destruir a los vehículos del otro equipo.
+- **Puntuación**: 1 punto por baja enemiga. Con fuego amigo activo, matar a un compañero da el punto al rival.
+- **Victoria**: el primer equipo que llegue al marcador de bajas.
+- **Muerte**: en las reglas clásicas, reaparición ilimitada tras una espera.
+- **Fin del tiempo**: más puntos; empate si hay igualdad.
+- **Mapa**: puntos de aparición de al menos 2 bandos.
+- **Equipamiento útil**: arma, blindaje y radio para coordinarse.
 
-### Captura de bandera — `capture_the_flag`
+### Captura la bandera
 
 - **Objetivo**: coger la bandera rival y llevarla a tu base.
+- **Inicio**: cada equipo tiene su base y su bandera; la tuya empieza en tu base.
 - **Reglas**:
-  - la bandera se coge tocándola y cae si muere quien la lleva;
-  - vuelve sola a su base a los 10 segundos, o antes si la toca su equipo;
-  - **no puedes capturar si tu propia bandera no está en tu base**.
-- **Victoria**: **3 capturas** o, al acabar el tiempo, el equipo con más. Si hay igualdad, empate.
-- **Mapa**: exactamente 2 equipos, con **una bandera y una base por equipo**.
-- **Equipamiento relevante**: movilidad (velocidad), sensores para localizar la bandera rival (su posición sólo es visible para todos cuando está en su base) y radio.
+  - tocar la bandera rival (a unos 2 metros) la recoge; quien la lleva puede seguir combatiendo;
+  - si el portador muere o es descalificado, la bandera **cae** donde estaba; un rival puede recogerla y un compañero del dueño puede **devolverla tocándola**;
+  - si nadie la toca, **vuelve sola a su base** pasado un tiempo;
+  - **sólo puntúas si tu propia bandera está en tu base**;
+  - al capturar, la bandera rival vuelve a su base.
+- **Puntuación**: 1 punto por captura.
+- **Victoria**: el primer equipo que llegue al número de capturas, o el que tenga más al acabar el tiempo.
+- **Muerte**: reaparición ilimitada tras una espera.
+- **Fin del tiempo**: más capturas. **Si hay empate, prórroga**: sigue la batalla con el mismo estado (no se reinician bots, banderas ni posiciones) y **gana la siguiente captura**. La prórroga **no tiene límite de tiempo competitivo**.
+- **Salvaguarda técnica**: por seguridad, si tras 20 minutos de prórroga nadie ha capturado, la batalla se **detiene por límite técnico**. No es una regla de juego: no hay empate, victoria ni derrota, y no cuenta para V-D-E, clasificaciones ni Elo.
+- **Mapa**: base y bandera de dos equipos, rojo y azul.
+- **Equipamiento útil**: velocidad, sensores para encontrar la bandera rival (su posición sólo es pública en su base) y radio.
 
-### Control de zonas — `zone_control`
+### Control de zona
 
 - **Objetivo**: ocupar las zonas de captura.
-- **Reglas**: una zona sólo da puntos si **un único equipo** está dentro. Vacía o disputada, no puntúa nadie. 1 punto por *tick* (30 por segundo).
-- **Victoria**: **500 puntos** o, al acabar el tiempo, el equipo con más.
-- **Mapa**: al menos 1 zona de captura.
-- **Equipamiento relevante**: blindaje y energía, para aguantar dentro de la zona.
+- **Puntuación**: una zona da puntos mientras **un único equipo** esté dentro (1 punto por tick, 30 por segundo). Vacía o disputada, no puntúa nadie.
+- **Victoria**: el primer equipo que llegue al marcador, o el que tenga más al acabar el tiempo.
+- **Muerte**: reaparición ilimitada tras una espera.
+- **Mapa**: al menos una zona de captura. Ningún mapa de serie la tiene: crea uno en el [editor](maps.md).
+- **Equipamiento útil**: blindaje y energía, para aguantar dentro de la zona.
 
-## Modos sólo del motor
+## Resumen de los conjuntos de reglas clásicos
 
-**PENDIENTE en la plataforma.** No aparecen en la web; la plataforma los rechaza («mode inválido»):
+| Modo | Conjunto de reglas | Tiempo | Gana quien llegue a | Reaparición | Fuego amigo |
+|---|---|---|---|---|---|
+| Deathmatch | Deathmatch (práctica) | 5 min | 5 puntos | no | no |
+| Deathmatch por equipos | Team deathmatch (MVP) | 5 min | 8 puntos | 5 s | no |
+| Captura la bandera | Captura la bandera (MVP) | 5 min | 3 puntos | 5 s | no |
+| Control de zona | Control de zona (MVP) | 5 min | 500 puntos | 5 s | no |
 
-- **Último en pie** (`last_man_standing`): sin reaparición; gana el último equipo con vehículos vivos. Al mejor de 3 rondas.
-- **Dominación** (`domination`): varias zonas; una zona sigue siendo tuya al salir de ella. Necesita al menos 2 zonas.
-- **Juggernaut** (`juggernaut`): un vehículo marcado al que todos quieren abatir. 3 puntos por abatirlo.
-
-## Rulesets
-
-**FUNCIONA ACTUALMENTE.** La plataforma trae uno por modo:
-
-| Ruleset | Modo |
-|---|---|
-| Deathmatch (práctica) | combate libre |
-| Team deathmatch (MVP) | por equipos |
-| Captura la bandera (MVP) | bandera |
-| Control de zona (MVP) | zonas |
-
-También trae «Ruleset MVP por defecto», válido para cualquier modo. Al cambiar de modo, el formulario elige el ruleset de ese modo.
-
-## Conjuntos de reglas (presets y personalizado)
-
-**IMPLEMENTADO EN LA RAMA `rules/rulesets` (ADR-021/022, motor 0.4.0), pendiente de revisión y despliegue.** Las reglas exactas, los desempates y los límites del personalizado están en **[rules.md](rules.md)** (generado desde el código; es la referencia). Resumen:
-
-| Tipo | Reglas | Qué pasa |
-|---|---|---|
-| 1 contra 1 | **Duelo** | Una vida, sin reaparición; 5 min. Al acabar: más bots vivos → más vidas → más bajas → empate. |
-| 1 contra 1 | **Combate** | Reaparición ilimitada a los 5 s; gana el primero en 5 bajas (10 min de seguridad). |
-| 1 contra 1 | **Resistencia** | 5 min fijos con reaparición; más puntos → más bajas → empate. |
-| Equipos (2v2–4v4) | **Eliminación** | Sin reaparición; pierde el equipo que se queda sin vehículos (8 min). |
-| Equipos | **Respawn limitado** | `maxRespawns = 2`: **2 reapariciones por bot (3 vidas)** a los 5 s; gana el último equipo con vidas (10 min). |
-| Equipos | **Team Deathmatch** | Reaparición ilimitada; gana el primero en 10 bajas (8 min de seguridad). |
-| Equipos | **Resistencia por equipos** | 5 min fijos; más puntos → más bajas → empate. |
-| Equipos | **Capturar la bandera** (`ctf@1`) | 3 capturas o más capturas a los 5 min; empate ⇒ **prórroga** con el mismo estado: la siguiente captura gana, sin límite de tiempo competitivo. |
-| Ambos | **Personalizado** | Sólo reglas competitivas: reaparición (ninguna / limitada con `maxRespawns` / ilimitada) y su espera, victoria, duración, créditos y masa por bot y presupuesto total por equipo (reparto libre), fuego amigo y, en CTF, capturas, retorno de la bandera y bandera propia en base. La física, el daño, la vida, los sensores y la munición no se tocan. |
-| Ambos | **Clásico** | El ruleset de la plataforma de cada modo (incluye control de zona). |
-
-`maxRespawns` es el número de veces que un bot puede **reaparecer** tras morir: 0 = 1 vida, 1 = 2 vidas, 2 = 3 vidas.
-
-Antes de crear se muestra un **resumen** y se comprueba cada bot en el servidor («✓ A-ATK-1 — 890/900 cr»). Si un bot o un equipo supera un tope, no se puede crear la batalla. La batalla (y el torneo) guarda una **copia de sus reglas**: si un preset cambia más adelante (se publicaría como versión nueva), tus batallas, torneos y replays conservan las suyas. Sólo salen los mapas compatibles con el modo; los demás aparecen con el motivo.
+También existe el «Ruleset MVP por defecto», válido para cualquier modo.
 
 ## Mapas compatibles
 
-Cada mapa **declara** sus modos, y el validador comprueba que tenga lo necesario: spawns, banderas y bases, o zonas de captura.
+Cada mapa **declara** los modos que soporta y el validador comprueba que tenga lo necesario. En «Nueva batalla» sólo aparecen los mapas que admiten el modo elegido; los demás se listan con el motivo.
 
-| Mapa | Modos declarados | Combate libre | Por equipos | Bandera | Zonas |
-|---|---|---|---|---|---|
-| `mvp-arena-01` (de serie) | bandera, por equipos | — | sí | sí | **no** (sólo tiene zonas de ácido, que hacen daño) |
-| `mvp-arena-02` (de serie, misma arena) | libre, por equipos, bandera | sí | sí | sí | **no** |
+| Modo | El mapa necesita |
+|---|---|
+| Deathmatch | al menos 2 puntos de aparición |
+| Deathmatch por equipos | puntos de aparición de al menos 2 bandos |
+| Captura la bandera | una base y una bandera de cada equipo (rojo y azul) |
+| Control de zona | al menos una zona de captura |
 
-- En «Nueva batalla» **sólo aparecen los mapas que admiten el modo elegido**.
-- Para jugar a control de zonas, crea un mapa en el editor con al menos una zona de captura y marca el modo.
-
-## Errores / limitaciones
-
-- **Por API**, `POST /battles` todavía acepta un modo que el mapa no admite; la web no lo permite. Esa batalla acaba fallando.
-- **Bandera y zonas**: con el bot de prueba de la plataforma, estas partidas suelen acabar en empate por tiempo, porque ese bot no persigue objetivos.
-- Ningún mapa de serie admite control de zonas.
-
-## Estado actual
-
-**FUNCIONA ACTUALMENTE**: los 4 modos, con rulesets reales, se eligen al crear una batalla de práctica (202, comprobado en un navegador real). **PARCIAL**: el bot de prueba no persigue objetivos. **PENDIENTE**: 3 modos sólo existen en el motor.
+Los mapas de serie son `mvp-arena-01` (bandera y por equipos) y `mvp-arena-02` (la misma arena, que además admite deathmatch). Cómo crear los tuyos: [Mapas](maps.md).
 
 ## Documentación relacionada
 
-- Técnica: [game-modes.md](../technical/game-modes.md) (inventario completo, rulesets y estado por capa)
-- Usuario: [Batallas](battles.md), [Mapas](maps.md), [Equipamiento](equipment.md), [Torneos](tournaments.md)
+[Reglas de batalla](rules.md) · [Batallas](battles.md) · [Torneos](tournaments.md) · [Mapas](maps.md) · [Equipamiento](equipment.md)

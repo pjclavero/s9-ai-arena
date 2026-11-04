@@ -182,7 +182,7 @@ pruebas están como máximo a **2 clics**, y desde el README se alcanzan 196 doc
   mapas, comunicaciones, PostgreSQL, Redis, cómo arrancar, cómo ejecutar los tests, cómo hacer un
   PR, qué está roto y qué viene después.
 
-Además, [docs/README.md](../README.md#preguntas-frecuentes-y-dónde-se-responden) tiene una tabla
+Además, [docs/README.md](../README.md#elige-tu-entrada) tiene una tabla
 que va directamente de cada pregunta a su documento.
 
 ## Huecos documentales que quedan

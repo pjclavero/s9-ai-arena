@@ -2,7 +2,7 @@
 
 ## Resumen
 
-Mapa del monorepo tal como está en `27f70bb`: qué contiene cada carpeta, qué es código de la
+Mapa del monorepo (verificado en `27f70bb` y revisado el 2026-11-02 contra `e3bf2fa`, que añade `packages/test-process`): qué contiene cada carpeta, qué es código de la
 plataforma v2 (lo que se despliega), qué es contrato compartido y qué es resto del prototipo v1.
 La arquitectura funcional (cómo se hablan los servicios) está en
 [../technical/architecture.md](../technical/architecture.md) y [../technical/services.md](../technical/services.md).
@@ -63,6 +63,7 @@ docs/            documentación (ver docs/README.md)
 | `build-info` | identidad de build ADR-016 (`/version`, `BUILD_COMMIT`) |
 | `data-dir` | comprobación de directorios de datos escribibles |
 | `readiness` | motor y sondas de readiness R17 ([../operations/readiness.md](../operations/readiness.md)) |
+| `test-process` | utilidad de tests para lanzar servicios sin dejar procesos huérfanos (grupo de procesos propio y limpieza al salir; PR #214) |
 | `first-run` | modelo del asistente de primer arranque (13 dominios) |
 | `shared-types` | placeholder (sólo README) |
 

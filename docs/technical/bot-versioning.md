@@ -40,7 +40,7 @@ forma correlativa (v1, v2…) por bot. La clave natural es `(bot_id, version)`, 
 
 ## Decisión de backend
 
-Lo que se encontró al auditar `0b8c12b`:
+Lo que se encontró al auditar `0b8c12b` (octubre de 2026):
 
 | Pieza | ¿Existe? | Qué es |
 |---|---|---|

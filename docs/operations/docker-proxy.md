@@ -1,6 +1,6 @@
 # Proxy de la API de Docker (host)
 
-> **Estado:** vigente, revisado contra RC2 (`rc2/dev-proxy`, base `7cf88dd`). El proxy se instala en
+> **Estado:** vigente, revisado contra RC2 (`rc2/dev-proxy`, base `7cf88dd` (octubre de 2026)). El proxy se instala en
 > el host como unidad systemd y es el único proceso con `/var/run/docker.sock`. RC2 cambia su
 > alcance de red (red dedicada `bot-control`) y su política (control de cliente, allowlist de
 > imágenes y propiedad de contenedores). La **ejecución real de bots sigue apagada** por defecto:

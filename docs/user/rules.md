@@ -1,6 +1,6 @@
 # Reglas de batalla, modos y desempates
 
-> GENERADO desde el registro de reglas (`packages/game-rules/battle-rules.ts`) con `npx tsx scripts/generate-rules-doc.ts`. No editar a mano: `packages/game-rules/rules-doc.test.ts` falla si este fichero no coincide con el código. Versión del motor: **0.4.0** (ADR-022). Datos estructurados: [`rules.json`](rules.json).
+> GENERADO desde el registro de reglas (`packages/game-rules/battle-rules.ts`) con `npx tsx scripts/generate-rules-doc.ts`. No editar a mano: `packages/game-rules/rules-doc.test.ts` falla si este fichero no coincide con el código. Versión del motor: **0.4.0**. Datos estructurados: [`rules.json`](rules.json).
 
 ## Reapariciones (`maxRespawns`)
 

@@ -4,7 +4,7 @@
 
 Referencia de las variables de configuración de una instalación: dónde se definen, qué servicio
 las lee, su valor por defecto y si son obligatorias. Contrastada con
-`infrastructure/docker-compose.yml`, `infrastructure/.env.example` y el código de `27f70bb`.
+`infrastructure/docker-compose.yml`, `infrastructure/.env.example` y el código; verificado en `27f70bb` (octubre de 2026), sin re-leer entera en `e3bf2fa` (2026-11-02).
 Ningún valor secreto aparece aquí.
 
 ## Índice
