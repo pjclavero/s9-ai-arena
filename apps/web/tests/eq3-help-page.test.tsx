@@ -256,6 +256,7 @@ describe("EQ3 Centro de Ayuda · contenido desde las fuentes de verdad", () => {
       "Todavía no hay clasificación oficial para este modo.",
       "La clasificación sólo incluye batallas oficiales de torneo.",
       "Las batallas creadas mediante «Nueva batalla» no modifican el rating.",
+      "Inscribirse en un torneo no te hace aparecer: hace falta disputar al menos un enfrentamiento oficial.",
     ]);
     const empty = screen.getByTestId("ranking-empty-help");
     for (const l of RANKING_EMPTY_LINES) expect(empty.textContent).toContain(l);
@@ -430,9 +431,13 @@ describe("EQ3 Centro de Ayuda · navegación, accesibilidad y alias", () => {
     fireEvent.change(screen.getByLabelText("Buscar en la ayuda"), { target: { value: "elo" } });
     fireEvent.click(screen.getByTestId("tip-vde-trigger"));
     const dlg = screen.getByRole("dialog", { name: "V-D-E" });
-    // EQ6 (#210): V-D-E cuenta ENFRENTAMIENTOS (leagueTable), un bye es victoria; la descalificación es cosa del Elo.
-    expect(dlg.textContent).toMatch(/enfrentamientos de los torneos de la temporada/);
-    expect(dlg.textContent).toMatch(/bye\) cuenta como victoria/);
+    // EQ2 · política official_played_not_reverted: V-D-E cuenta ENFRENTAMIENTOS oficiales disputados; el bye no suma.
+    expect(dlg.textContent).toMatch(/enfrentamientos OFICIALES disputados de los torneos de la temporada/);
+    expect(dlg.textContent).toMatch(/un bye \(pasar ronda sin rival\) no suma en esta clasificación/);
+    // EQ2c · H4: una serie a medias igualada no es una victoria del seed.
+    expect(dlg.textContent).toMatch(
+      /serie que sigue en juego cuenta con lo ya disputado \(si va igualada, como empate\)/,
+    );
     expect(dlg.textContent).not.toMatch(/descalificación/);
     expect(dlg.textContent).not.toMatch(/batallas oficiales/);
     fireEvent.keyDown(dlg, { key: "Escape" });
