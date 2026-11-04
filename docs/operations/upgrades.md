@@ -381,6 +381,7 @@ esquema ([first-run.md](first-run.md#comandos-prohibidos-en-producción)).
     sigue devuelto en `rating_events`, pero el código anterior volvería a contarlas en V-D-E. Antes de
     la vuelta atrás, comprobar `SELECT count(*) FROM battles WHERE reverted_at IS NOT NULL;` y, si no
     es 0, hacer copia de esa lista.
+  - **Orden 017/018 (P3, «N1»):** si la 018 (este cambio) se aplica antes que la 017 (`017_streaming_admin`, PR #227), `rollback:1` (`rollbackLast`) revierte la última migración **de la lista**, no la última aplicada. Deshacer el despliegue del streaming con `rollback:1` borraría entonces `battles.reverted_at` (la 018) y dejaría puesta la 017. Instrucción segura: antes de cualquier `rollback:1`, comprobar `SELECT name FROM knex_migrations ORDER BY id;` y confirmar que la que se va a deshacer es la que se quiere; si no lo es, revertir esa migración **por nombre** (no con `rollback:1`) o aplicar siempre las dos en el orden de la lista (017 y después 018).
 
 ## Errores / limitaciones
 

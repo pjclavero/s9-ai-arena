@@ -50,7 +50,7 @@ P3 CONOCIDOS:    7 hallazgos de la revisión (ver más abajo); el registro tiene
 | Ayuda | #207, #210 | Centro de Ayuda integrado y sin conexión, generado desde las fuentes de verdad; componente ⓘ de ayuda contextual |
 | UX | #209 | Navegación agrupada por rol, «Mis bots» y equipos maestro-detalle, replays con filtros en el servidor |
 | Streaming | #211 | Director de torneo, vídeo limpio y auditoría real de la emisión ([streaming.md](../operations/streaming.md)) |
-| Clasificación | #220 | La clasificación de temporada y modo agrega todos los torneos |
+| Clasificación | #220, #229 | La clasificación de temporada y modo agrega todos los torneos y sigue la política `official_played_not_reverted`: sólo batallas oficiales disputadas y no revertidas; el borrador no cuenta, inscribirse no hace aparecer a nadie, el bye no suma V-D-E y la reversión tiene marca propia (migración 018). Pendiente de merge y sin desplegar |
 | Paginación | #221 | Cursor con precisión completa y clave total; un cursor forjado da 400, no 500 |
 | Robustez de pruebas | #208, #214, #225 | Concurrencia de `initPhysics`, tests que no dejan procesos huérfanos, sin nombres internos en comentarios |
 
