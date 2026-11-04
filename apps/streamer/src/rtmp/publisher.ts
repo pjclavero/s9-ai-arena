@@ -263,13 +263,24 @@ export class RtmpPublisher extends EventEmitter {
   /**
    * EQ5d (P3) · Contrapresión sostenida: arranca (una vez) el plazo de escritura.
    * Lo desarma el 'drain' del socket; si vence, la ingesta no está leyendo.
+   *
+   * EQ5e (revisión ronda 3, R3-C) · al vencer, si sigue habiendo datos sin
+   * escribir (el productor está en pausa hasta un 'drain' que no ha llegado):
+   *  - por encima del umbral ⇒ falla (como antes);
+   *  - por debajo, pero con AVANCE desde la vez anterior ⇒ se REARMA;
+   *  - por debajo y SIN avance ⇒ falla: la ingesta leyó un poco y se colgó.
+   * Antes salía sin fallar en cuanto bajaba del umbral y nada lo volvía a armar:
+   * el relé quedaba «publishing» para siempre con el productor parado.
    */
-  private armStall(): void {
+  private armStall(lastPending: number | null = null): void {
     if (this.stallTimer || this.state_ !== "publishing") return;
     this.stallTimer = setTimeout(() => {
       this.stallTimer = null;
       if (this.state_ !== "publishing") return;
-      if ((this.sock?.writableLength ?? 0) < HIGH_WATER) return;
+      const pending = this.sock?.writableLength ?? 0;
+      if (pending === 0) return; // vaciado: el 'drain' reanuda al productor
+      const progressed = lastPending === null || pending < lastPending;
+      if (pending < HIGH_WATER && progressed) return this.armStall(pending);
       this.fail(new RelayError("la ingesta dejó de aceptar datos (plazo de escritura vencido)", "write_timeout"));
     }, this.writeTimeoutMs);
   }
