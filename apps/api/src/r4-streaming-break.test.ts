@@ -160,7 +160,7 @@ beforeEach(async () => {
 });
 
 describe("R4 · reconciliador periódico: carrera «leer streamer» → «leer BD» (una sola réplica)", () => {
-  it("DEFECTO P2 · foto de /status ANTERIOR a un stop(A)+start(B) del operador ⇒ el reconciliador para B, que es LEGÍTIMA y está activa en BD", async () => {
+  it("DEFECTO P3 · foto de /status ANTERIOR a un stop(A)+start(B) del operador ⇒ el reconciliador para B, que es LEGÍTIMA y está activa en BD", async () => {
     // A emite y está activa.
     expect((await start()).status).toBe(201);
     const [a] = await activeRows();
@@ -186,7 +186,7 @@ describe("R4 · reconciliador periódico: carrera «leer streamer» → «leer B
     });
   });
 
-  it("DEFECTO P2 · el stop del reconciliador va en vuelo (no condicionado a la sesión) y aterriza tras un start(B) ⇒ corta B", async () => {
+  it("DEFECTO P3 · el stop del reconciliador va en vuelo (no condicionado a la sesión) y aterriza tras un start(B) ⇒ corta B", async () => {
     // Huérfana real (sin sesión en BD) que el reconciliador decide parar...
     st.active = randomUUID();
     let release!: () => void;
