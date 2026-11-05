@@ -1,11 +1,12 @@
 import { ArenaBot, angleDiff, angleTo, distance } from "@arena/sdk";
 
 /**
- * Avisa por radio de dónde ve a un rival (x, y en decímetros, 4 bytes) y guarda
- * lo que oye. Respeta el límite de mensajes por segundo.
+ * Avisa a su equipo por radio de dónde ve a un rival (x, y en decímetros, 4 bytes)
+ * y guarda lo que oye. Respeta el límite de mensajes por segundo.
  */
 export default class Bot extends ArenaBot {
   radioSlot = null;
+  teammates = [];
   lastSent = -1000;
   center = { x: 60, y: 40 };
   heard = [];
@@ -13,6 +14,8 @@ export default class Bot extends ArenaBot {
   onWelcome(welcome) {
     this.center = { x: welcome.map.widthM / 2, y: welcome.map.heightM / 2 };
     this.radioSlot = welcome.vehicle.modules.find((m) => m.category === "radio")?.slot ?? null;
+    // La radio sólo llega a tu equipo: sin compañeros, no hay a quién avisar.
+    this.teammates = welcome.teammates ?? [];
   }
 
   onObservation(observation) {
@@ -29,7 +32,7 @@ export default class Bot extends ArenaBot {
     }
 
     const rivales = (observation.sensors?.radar ?? []).flatMap((r) => r.contacts).filter((c) => c.team === undefined);
-    if (rivales.length > 0 && this.radioSlot && tick - this.lastSent >= 30) {
+    if (rivales.length > 0 && this.radioSlot && this.teammates.length > 0 && tick - this.lastSent >= 30) {
       // a lo sumo 1 mensaje por segundo
       const blanco = rivales.reduce((a, b) =>
         distance(me.position, a.position) <= distance(me.position, b.position) ? a : b,

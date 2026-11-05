@@ -173,32 +173,49 @@ describe("DOC-A · los ejemplos JavaScript juegan de verdad (motor real, SDK rea
     }, 60000);
   }
 
-  it("05_radio: envía mensajes válidos y los recibe y decodifica", async () => {
+  it("05_radio: dos compañeros se mandan mensajes y el rival no recibe nada (TDM)", async () => {
     const Bot = recorded(await load("05_radio.js"));
+    // El simulador reparte los bandos en orden alterno: veh_1 y veh_3 son rojos, veh_2 azul.
     const a = new Bot("bot_ex05a");
+    const rival = new Bot("bot_ex05r");
     const b = new Bot("bot_ex05b");
     const battle = await startLocalBattle({
       externalBots: [
         { botId: "bot_ex05a", archetype: "gunner" },
+        { botId: "bot_ex05r", archetype: "gunner" },
         { botId: "bot_ex05b", archetype: "gunner" },
       ],
+      ruleset: "tdm_mvp@1",
       ticks: 900,
     });
+    const url = `ws://127.0.0.1:${battle.port}`;
     await Promise.all([
-      a.run(`ws://127.0.0.1:${battle.port}`, battle.battleTokenFor.get("bot_ex05a")!),
-      b.run(`ws://127.0.0.1:${battle.port}`, battle.battleTokenFor.get("bot_ex05b")!),
+      a.run(url, battle.battleTokenFor.get("bot_ex05a")!),
+      rival.run(url, battle.battleTokenFor.get("bot_ex05r")!),
+      b.run(url, battle.battleTokenFor.get("bot_ex05b")!),
     ]);
     const result = await battle.waitForResult();
     battle.free();
     expect(result.disqualified).toEqual([]);
     expectValidCommands(a);
+    expect(a.welcome.teammates).toEqual(["veh_3"]);
+    expect(b.welcome.teammates).toEqual(["veh_1"]);
+    expect(rival.welcome.teammates).toEqual([]);
     const sent = a.sent.concat(b.sent).filter((m: any) => m.payload.radio);
     expect(sent.length).toBeGreaterThan(0);
+    // Los compañeros se oyen entre ellos, y sólo entre ellos.
     expect(a.heard.length + b.heard.length).toBeGreaterThan(0);
+    expect(a.heard.every((h: any) => h.from === "veh_3")).toBe(true);
+    expect(b.heard.every((h: any) => h.from === "veh_1")).toBe(true);
     for (const h of a.heard.concat(b.heard)) {
       expect(h.x).toBeGreaterThanOrEqual(0);
       expect(h.y).toBeGreaterThanOrEqual(0);
     }
+    // El rival no recibe nada: ni mensajes ni una clave `radio` en su observación.
+    expect(rival.heard).toEqual([]);
+    expect(rival.observations.some((o: any) => "radio" in o)).toBe(false);
+    // Sin compañeros, el ejemplo no gasta radio.
+    expect(rival.sent.some((m: any) => m.payload.radio)).toBe(false);
   }, 60000);
 
   it("06_equipo: dos compañeros del MISMO equipo reparten papeles distintos (CTF 2v2)", async () => {

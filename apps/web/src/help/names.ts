@@ -54,7 +54,7 @@ export const SLOT_PURPOSE: Record<string, string> = {
   turret_main: "El arma del vehículo (cañón, ametralladora…).",
   ammo_main: "Cargador de munición para el arma de la torreta.",
   mine_bay: "Minas u otro equipo auxiliar que el bot puede soltar.",
-  radio_a: "Envía y recibe mensajes del resto del equipo (también los oye el rival).",
+  radio_a: "Envía y recibe mensajes del resto del equipo. Los bots rivales no los reciben.",
   armor_front: "Reduce el daño de los impactos que llegan por delante.",
   armor_left: "Reduce el daño de los impactos que llegan por la izquierda.",
   armor_right: "Reduce el daño de los impactos que llegan por la derecha.",
