@@ -419,7 +419,12 @@ describe("R4b · reconciliador con el streaming DESACTIVADO", () => {
 describe("R4b · proceso REAL: el timer del reconciliador no retiene el cierre", () => {
   const FIX = fileURLToPath(new URL("./r4-reconciler-exit.fixture.ts", import.meta.url));
   const run = (url: string) => {
-    const r = spawnSync("npx", ["tsx", FIX, url], { encoding: "utf8", timeout: 60_000 });
+    // node directo (no npx): el plazo mata al proceso que se mide, no a un envoltorio.
+    const r = spawnSync(process.execPath, ["--import", "tsx", FIX, url], {
+      encoding: "utf8",
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
     return { rc: r.status, out: `${r.stdout}${r.stderr}`.trim() };
   };
 
