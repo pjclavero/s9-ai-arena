@@ -142,16 +142,17 @@ export interface BotBattleStats {
 }
 
 /**
- * 4v4-STATS (Fase 6) · Radio observada SIN cambiar el contrato: la radio se
- * sigue entregando también al rival (`sensors.ts`, fijado por
- * `radio-regression.test.ts`); esto sólo lo MIDE.
+ * 4v4-STATS (Fase 6) · Radio observada: esto sólo MIDE lo que el motor entregó.
+ * La radio es de equipo (`radioDeliverableTo` en `sensors.ts`, fijado por
+ * `radio-team-isolation.test.ts`).
  *  - `sent`: mensajes aceptados por el motor (los de `command.radio` aplicados
  *    estando vivo, menos los `radio_dropped` del emisor). Bajo latencia simulada
  *    el tick de aplicación no está en el replay y se usa el de decisión.
  *  - `received`: suma de `obs.radio.length` de todas sus observaciones.
  *  - `receivedFromTeammates` / `receivedFromEnemies`: el mismo total partido por
- *    el bando del emisor. `receivedFromEnemies > 0` es la prueba de que el rival
- *    oye la radio ajena según el contrato actual.
+ *    el bando del emisor. Con la radio de equipo `receivedFromEnemies` es 0; se
+ *    conserva en el contrato de stats (sin cambiar la API) como prueba observable
+ *    del aislamiento.
  * Son contadores de actividad de juego, no de fallo del código: públicos en `perBot`.
  */
 export interface RadioActivity {

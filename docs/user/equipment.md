@@ -83,6 +83,6 @@ Cuatro combinaciones válidas que usan los bots de ejemplo (y el simulador local
 - **Cañón o ametralladora.** El cañón hace mucho daño por disparo pero recarga despacio; la ametralladora, poco daño muy seguido. Las cifras, en el [catálogo](equipment-catalog.md#armas).
 - **Orugas o ruedas.** Las ruedas son más rápidas; las orugas aguantan más peso sin frenarse.
 - **Blindaje.** Pon el grueso en el frente si tu bot ataca de cara.
-- **Radio.** Sólo vale la pena en equipo, y [hoy la oyen también los rivales](bots/radio.md#lo-que-tienes-que-saber-limitaciones-de-hoy).
+- **Radio.** Sólo vale la pena en equipo: la radio permite compartir información con los bots de tu propio equipo. Los bots rivales no reciben estos mensajes ([Radio](bots/radio.md)).
 
 Siguiente: [Bots](bots.md) · [Guía de programación](bots/index.md).

@@ -336,10 +336,10 @@ export default class Bot extends ArenaBot {
 
 ## 5. Radio
 
-Avisa por radio de dónde ve a un rival (dos coordenadas en 4 bytes) y decodifica lo que oye. Respeta el límite de **2 mensajes por segundo** y acota los números al rango del formato.
+Avisa a su equipo por radio de dónde ve a un rival (dos coordenadas en 4 bytes) y decodifica lo que oye. Si juega sin compañeros, no gasta radio. Respeta el límite de **2 mensajes por segundo** y acota los números al rango del formato.
 
 - **Loadout:** Necesita **radio** y **radar** (por ejemplo, `gunner`).
-- **Verificación:** Dos instancias se mandan mensajes en el simulador, y se comprueba que se entregan y se decodifican. Recuerda que hoy una difusión también la oyen los rivales ([Radio](radio.md)).
+- **Verificación:** Dos compañeros del mismo equipo se mandan mensajes en el simulador, en una batalla por equipos (`tdm_mvp@1`) contra un rival, y se comprueba que se entregan y se decodifican y que el rival no recibe nada. La radio permite compartir información con los bots de tu propio equipo. Los bots rivales no reciben estos mensajes ([Radio](radio.md)).
 
 **Python**
 
@@ -351,15 +351,18 @@ from arena_sdk import ArenaBot, angle_diff, angle_to, distance
 
 
 class Bot(ArenaBot):
-    """Avisa por radio de dónde ve a un rival (x, y en decímetros, 4 bytes) y
-    guarda lo que oye. Respeta el límite de mensajes por segundo."""
+    """Avisa a su equipo por radio de dónde ve a un rival (x, y en decímetros,
+    4 bytes) y guarda lo que oye. Respeta el límite de mensajes por segundo."""
 
     radio_slot = None
+    teammates = []
     last_sent = -1000
     center = {"x": 60, "y": 40}
 
     def on_welcome(self, welcome):
         self.heard = []
+        # La radio sólo llega a tu equipo: sin compañeros, no hay a quién avisar.
+        self.teammates = welcome.get("teammates", [])
         self.center = {"x": welcome["map"]["widthM"] / 2, "y": welcome["map"]["heightM"] / 2}
         self.radio_slot = next(
             (m["slot"] for m in welcome["vehicle"]["modules"] if m["category"] == "radio"), None
@@ -379,7 +382,7 @@ class Bot(ArenaBot):
 
         radar = observation.get("sensors", {}).get("radar", [])
         rivales = [c for r in radar for c in r["contacts"] if "team" not in c]
-        if rivales and self.radio_slot and tick - self.last_sent >= 30:  # a lo sumo 1 mensaje por segundo
+        if rivales and self.radio_slot and self.teammates and tick - self.last_sent >= 30:  # a lo sumo 1 mensaje por segundo
             blanco = min(rivales, key=lambda c: distance(me["position"], c["position"]))
             # Máximo 32 bytes por mensaje; aquí son 4. Se acota para que quepa en 16 bits.
             x = max(0, min(65535, int(blanco["position"]["x"] * 10)))
@@ -396,11 +399,12 @@ class Bot(ArenaBot):
 import { ArenaBot, angleDiff, angleTo, distance } from "@arena/sdk";
 
 /**
- * Avisa por radio de dónde ve a un rival (x, y en decímetros, 4 bytes) y guarda
- * lo que oye. Respeta el límite de mensajes por segundo.
+ * Avisa a su equipo por radio de dónde ve a un rival (x, y en decímetros, 4 bytes)
+ * y guarda lo que oye. Respeta el límite de mensajes por segundo.
  */
 export default class Bot extends ArenaBot {
   radioSlot = null;
+  teammates = [];
   lastSent = -1000;
   center = { x: 60, y: 40 };
   heard = [];
@@ -408,6 +412,8 @@ export default class Bot extends ArenaBot {
   onWelcome(welcome) {
     this.center = { x: welcome.map.widthM / 2, y: welcome.map.heightM / 2 };
     this.radioSlot = welcome.vehicle.modules.find((m) => m.category === "radio")?.slot ?? null;
+    // La radio sólo llega a tu equipo: sin compañeros, no hay a quién avisar.
+    this.teammates = welcome.teammates ?? [];
   }
 
   onObservation(observation) {
@@ -424,7 +430,7 @@ export default class Bot extends ArenaBot {
     }
 
     const rivales = (observation.sensors?.radar ?? []).flatMap((r) => r.contacts).filter((c) => c.team === undefined);
-    if (rivales.length > 0 && this.radioSlot && tick - this.lastSent >= 30) {
+    if (rivales.length > 0 && this.radioSlot && this.teammates.length > 0 && tick - this.lastSent >= 30) {
       // a lo sumo 1 mensaje por segundo
       const blanco = rivales.reduce((a, b) =>
         distance(me.position, a.position) <= distance(me.position, b.position) ? a : b,

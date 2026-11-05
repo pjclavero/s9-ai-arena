@@ -84,7 +84,7 @@ describe("[REVIEW-4v4] stats TDM 4v4 con ácido", () => {
 });
 
 describe("[REVIEW-4v4] radio exacta contra la batalla original", () => {
-  it("sent/received/fromTeammates/fromEnemies exactos; el rival oye; hooks sin efecto en el hash", async () => {
+  it("sent/received/fromTeammates/fromEnemies exactos; el rival NO oye; hooks sin efecto en el hash", async () => {
     const heard = new Map<string, { tm: number; en: number; all: number }>();
     const accepted = new Map<string, number>();
     class Talk {
@@ -154,7 +154,8 @@ describe("[REVIEW-4v4] radio exacta contra la batalla original", () => {
       expect(r.received, `${id} received`).toBe(h.all);
       expect(r.receivedFromTeammates, `${id} tm`).toBe(h.tm);
       expect(r.receivedFromEnemies, `${id} en`).toBe(h.en);
-      expect(r.receivedFromEnemies).toBeGreaterThan(0); // contrato: el rival oye
+      expect(r.receivedFromEnemies).toBe(0); // contrato: la radio es de equipo (RADIO_SCOPE=TEAM)
+      expect(r.receivedFromTeammates).toBeGreaterThan(0);
     }
     const plain = await resimulateWithEvents(replay, () => {});
     const hooked = await resimulateWithEvents(replay, () => {}, {

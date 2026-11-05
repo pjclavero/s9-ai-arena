@@ -117,7 +117,7 @@ export const PROPERTY_EFFECTS: Record<ModuleCategory, Record<string, PropertyEff
     rangeM: p(
       "FUTURE",
       false,
-      "radioReaches no se llama nunca (sensors.ts:227): la radio no tiene alcance ni filtro de equipo.",
+      "radioReaches no se llama nunca (sensors.ts): la radio no tiene alcance; sí se limita al propio equipo.",
     ),
   },
   utility: {

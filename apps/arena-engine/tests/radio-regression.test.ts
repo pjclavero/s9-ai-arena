@@ -7,7 +7,8 @@
  * global que se acumule durante toda la batalla. Estos candados fijan la conducta correcta:
  *   - una batalla nueva no ve mensajes de otra (sin estado global compartido);
  *   - un mensaje dirigido `to` solo llega a su destinatario; el emisor no se oye a sí mismo;
- *   - un mensaje sin `to` es broadcast (lo oyen los demás, no el emisor);
+ *   - un mensaje sin `to` es difusión AL EQUIPO (la oyen los compañeros, no el emisor ni el
+ *     rival: RADIO_SCOPE=TEAM, ver radio-team-isolation.test.ts);
  *   - el contador por vehículo se reinicia cada segundo (se puede volver a emitir) y queda acotado;
  *   - el hash de estado es idéntico en runs repetidos (determinismo intacto).
  *
@@ -78,8 +79,8 @@ function makeBattle(seed: string, bots: Record<string, RadioBot>) {
 const DIRECTED = b64("to-veh2");
 const BROADCAST = b64("broadcast");
 
-describe("R13.0 · radio dirigida vs broadcast, sin auto-recepción", () => {
-  it("un mensaje dirigido solo llega al destinatario; broadcast llega a los demás; el emisor no se oye", () => {
+describe("R13.0 · radio dirigida vs difusión al equipo, sin auto-recepción", () => {
+  it("un mensaje dirigido solo llega al destinatario; la difusión llega al compañero y no al rival; el emisor no se oye", () => {
     // veh_1 envía dirigido a veh_2 en la 1ª decisión y broadcast en la 4ª.
     const sender = new RadioBot("b1", (d) => {
       if (d === 0) return [{ data: DIRECTED, to: "veh_2" }];
@@ -95,9 +96,9 @@ describe("R13.0 · radio dirigida vs broadcast, sin auto-recepción", () => {
     // Dirigido: solo veh_2.
     expect(v2.received.some((m) => m.from === "veh_1" && m.data === DIRECTED)).toBe(true);
     expect(v3.received.some((m) => m.data === DIRECTED)).toBe(false);
-    // Broadcast: veh_2 y veh_3 (incluso el enemigo lo intercepta: no hay filtro de equipo).
+    // Difusión: la oye veh_2 (compañero); veh_3 (rival) no recibe nada (RADIO_SCOPE=TEAM).
     expect(v2.received.some((m) => m.data === BROADCAST)).toBe(true);
-    expect(v3.received.some((m) => m.data === BROADCAST)).toBe(true);
+    expect(v3.received).toHaveLength(0);
     // El emisor jamás se oye a sí mismo.
     expect(sender.received).toHaveLength(0);
   });

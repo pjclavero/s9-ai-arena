@@ -642,7 +642,7 @@ function RadioStats({ s, rows }: { s: StatsResponse; rows: DetailParticipant[] }
   if (withRadio.length === 0) return null;
   return (
     <table className="stack-table" data-testid="battle-stats-radio">
-      <caption>Radio (la radio también llega al bando rival)</caption>
+      <caption>Radio (sólo entre compañeros de equipo)</caption>
       <thead>
         <tr>
           <th>Bot</th>
