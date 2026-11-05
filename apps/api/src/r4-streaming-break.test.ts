@@ -10,8 +10,10 @@
  * cliente HTTP real (`HttpStreamerClient`) contra puertos locales o nombres que
  * no resuelven: nada sale de 127.0.0.1.
  */
+import { spawnSync } from "node:child_process";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
+import { fileURLToPath } from "node:url";
 import type { AddressInfo } from "node:net";
 import request from "supertest";
 import type { Express } from "express";
@@ -54,6 +56,10 @@ class Streamer implements StreamerClient {
   startFailure: "throw" | 503 | "503-not-applied" | null = null;
   holdNextStatus: Promise<void> | null = null;
   holdNextStop: Promise<void> | null = null;
+  /** R4b · el GET /status se RECIBE (cuenta) pero la foto se toma al soltarlo. */
+  holdBeforeStatus: Promise<void> | null = null;
+  /** R4b · se ejecuta dentro de POST /control/start, tras aplicar el efecto y antes del fallo. */
+  startHook: ((sessionId: string) => Promise<void>) | null = null;
   statusCalls = 0;
   snapshot() {
     const emitting = !!this.active || this.autostart;
@@ -70,6 +76,9 @@ class Streamer implements StreamerClient {
     const ok = (b: unknown) => ({ ok: true, status: 200, body: b as T });
     if (path === "/status") {
       this.statusCalls++;
+      const pre = this.holdBeforeStatus;
+      this.holdBeforeStatus = null;
+      if (pre) await pre;
       const snap = this.snapshot();
       const hold = this.holdNextStatus;
       this.holdNextStatus = null;
@@ -83,6 +92,9 @@ class Streamer implements StreamerClient {
         return { ok: false, status: 409, body: { error: "already_active" } as T };
       this.active = b.sessionId;
       this.autostart = false;
+      const hook = this.startHook;
+      this.startHook = null;
+      if (hook) await hook(b.sessionId);
       if (this.startFailure === "throw") throw new StreamerUnavailable("el streamer no responde");
       if (this.startFailure === 503) return { ok: false, status: 503, body: { error: "ocupado" } as T };
       return ok({ state: "streaming" });
@@ -154,8 +166,11 @@ beforeEach(async () => {
     startFailure: null,
     holdNextStatus: null,
     holdNextStop: null,
+    holdBeforeStatus: null,
+    startHook: null,
     statusCalls: 0,
   });
+  await h.db("streaming_settings").where({ id: 1 }).update({ enabled: true, mode: "record" });
   await h.db("streaming_sessions").where({ state: "active" }).update({ state: "stopped", stopped_at: h.db.fn.now() });
 });
 
@@ -333,5 +348,127 @@ describe("R4 · R3-E · stop compensatorio", () => {
     const [b] = await activeRows();
     expect(await reconcileOrphanEmission(h.db, st, { trigger: "periodic" })).toBeNull();
     expect(st.active).toBe(b.id);
+  });
+});
+
+// ── R4b · continuación de la ronda 4 (segundo revisor) ─────────────────────
+describe("R4b · falso positivo con una sesión RECIÉN creada (lectura de la BD «antes del commit»)", () => {
+  it("CONTROL · el tick recibe /status ANTES del start pero toma la foto DESPUÉS: con el orden streamer → BD no se para la sesión nueva (mata al mutante «BD antes que streamer»)", async () => {
+    let release!: () => void;
+    st.holdBeforeStatus = new Promise<void>((r) => (release = r));
+    const tick = reconcileOrphanEmission(h.db, st, { trigger: "periodic" });
+    // La petición /status ya llegó (en el mutante, DESPUÉS de leer la BD sin sesión activa).
+    while (st.statusCalls === 0) await sleep(1);
+    expect((await start()).status).toBe(201);
+    const [a] = await activeRows();
+    release();
+    expect({ outcome: await tick, emitting: st.active, stops: st.stops }).toEqual({
+      outcome: null,
+      emitting: a.id,
+      stops: 0,
+    });
+  });
+
+  it("CONTROL · 200 ticks intercalados con start/stop reales: nunca se para una sesión activa en BD que emite", async () => {
+    let wrong = 0;
+    for (let i = 0; i < 200; i++) {
+      const ticks = [reconcileOrphanEmission(h.db, st, { trigger: "periodic" })];
+      const op = i % 2 === 0 ? start() : stop();
+      ticks.push(reconcileOrphanEmission(h.db, st, { trigger: "periodic" }));
+      await op;
+      await Promise.all(ticks);
+      const act = await activeRows();
+      if (act.length === 1 && st.active !== act[0].id) wrong++;
+    }
+    expect(wrong).toBe(0);
+  }, 120_000);
+});
+
+describe("R4b · reconciliador con el streaming DESACTIVADO", () => {
+  it("CONTROL · desactivado y el streamer sin emitir: 1 GET /status por tick, 0 consultas a la BD, nada en consola", async () => {
+    await h.db("streaming_settings").where({ id: 1 }).update({ enabled: false });
+    const queries: string[] = [];
+    const onQuery = (q: { sql: string }) => queries.push(q.sql);
+    const spies = [vi.spyOn(console, "warn"), vi.spyOn(console, "error"), vi.spyOn(console, "log")];
+    h.db.on("query", onQuery);
+    try {
+      for (let i = 0; i < 5; i++) expect(await reconcileOrphanEmission(h.db, st, { trigger: "periodic" })).toBeNull();
+      expect({ status: st.statusCalls, queries: queries.length, stops: st.stops }).toEqual({
+        status: 5,
+        queries: 0,
+        stops: 0,
+      });
+      expect(spies.map((s) => s.mock.calls.length)).toEqual([0, 0, 0]);
+    } finally {
+      h.db.removeListener("query", onQuery);
+      for (const s of spies) s.mockRestore();
+    }
+  });
+
+  it("CONTROL · desactivado y el streamer EMITE (huérfano) ⇒ se para y se audita UNA vez (fail-closed); el tick siguiente no repite", async () => {
+    await h.db("streaming_settings").where({ id: 1 }).update({ enabled: false });
+    st.active = randomUUID();
+    const before = (await auditOf("streaming.session.orphan_stopped")).length;
+    expect(await reconcileOrphanEmission(h.db, st, { trigger: "periodic" })).toBe("stopped");
+    expect(await reconcileOrphanEmission(h.db, st, { trigger: "periodic" })).toBeNull();
+    expect(st.active).toBeNull();
+    expect((await auditOf("streaming.session.orphan_stopped")).length - before).toBe(1);
+  });
+});
+
+describe("R4b · proceso REAL: el timer del reconciliador no retiene el cierre", () => {
+  const FIX = fileURLToPath(new URL("./r4-reconciler-exit.fixture.ts", import.meta.url));
+  const run = (url: string) => {
+    const r = spawnSync("npx", ["tsx", FIX, url], { encoding: "utf8", timeout: 60_000 });
+    return { rc: r.status, out: `${r.stdout}${r.stderr}`.trim() };
+  };
+
+  it("CONTROL · streamer ausente (puerto cerrado, sin perfil `streaming`): ≥ 3 ticks, el proceso termina solo, sin salida y sin tocar la BD", () => {
+    const r = run("http://127.0.0.1:1");
+    expect(r.rc, r.out).toBe(0);
+    expect(r.out).toMatch(/^status=\d+ db=0$/);
+    expect(Number(/status=(\d+)/.exec(r.out)![1])).toBeGreaterThanOrEqual(3);
+  }, 90_000);
+
+  it("CONTROL · STREAMER_CONTROL_URL vacía ⇒ no se arma", () => {
+    const r = run("");
+    expect(r.rc, r.out).toBe(0);
+    expect(r.out).toBe("not_armed");
+  }, 90_000);
+});
+
+describe("R4b · R3-E · el stop compensatorio no corta la emisión válida de OTRA sesión", () => {
+  it("CONTROL · start(A) en vuelo; otra instancia para A y arranca B (emitiendo); A expira ⇒ compensación `not_orphan`, B intacta y auditado", async () => {
+    let bId = "";
+    st.startFailure = "throw";
+    st.startHook = async (aId) => {
+      // Otra instancia: stop(A) marca la BD y para el streamer; start(B) inserta y emite.
+      await h.db("streaming_sessions").where({ id: aId }).update({ state: "stopped", stopped_at: h.db.fn.now() });
+      st.active = null;
+      bId = randomUUID();
+      await h.db("streaming_sessions").insert({
+        id: bId,
+        state: "active",
+        mode: "record",
+        target_kind: "battle",
+        target_id: battle,
+        config: JSON.stringify({}),
+      });
+      st.active = bId;
+    };
+    const r = await start();
+    expect(r.status).toBe(503);
+    const [a] = await auditOf("streaming.session.start_compensated");
+    expect({
+      emitting: st.active,
+      active: (await activeRows()).map((x) => x.id),
+      stops: st.stops,
+      detail: a.detail,
+    }).toEqual({
+      emitting: bId,
+      active: [bId],
+      stops: 0,
+      detail: { cause: "streamer_unreachable", outcome: "not_orphan", otherSessionActive: true },
+    });
   });
 });

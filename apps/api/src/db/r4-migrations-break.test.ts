@@ -12,7 +12,7 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startTestDb, type TestDbHandle } from "../testing/test-db.js";
-import { MIGRATIONS, migrateNamed, migrateToLatest, rollbackNamed } from "./migrations.js";
+import { MIGRATIONS, migrateNamed, migrateToLatest, rollbackLast, rollbackNamed } from "./migrations.js";
 
 const CLI = fileURLToPath(new URL("./cli.ts", import.meta.url));
 const ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
@@ -129,6 +129,74 @@ describe("R4 · upgrade 014 → última y vuelta atrás por nombre (BD real)", (
     expect(up.rc, up.out).toBe(0);
     expect((await applied(h)).sort()).toEqual([...names].sort());
   }, 300_000);
+});
+
+// ── R4b · continuación (segundo revisor): lo que la documentación afirma ────
+describe("R4b · `upgrades.md` dice la verdad (BD real, lista 016 → 017 → 018)", () => {
+  let h: TestDbHandle;
+  beforeAll(async () => {
+    h = await startTestDb();
+  }, 180_000);
+  afterAll(async () => {
+    await h.stop();
+  });
+  const streamingTables = async () => (await tables(h)).filter((t) => t.startsWith("streaming_")).sort();
+
+  it("CONTROL · `rollback:name 016_battle_rules` borra SÓLO battles/tournaments.rules; 017 (tablas) y 018 (reverted_at) intactas; re-up la devuelve", async () => {
+    await rollbackNamed(h.db, "016_battle_rules");
+    expect(await applied(h)).toEqual(names.filter((n) => n !== "016_battle_rules"));
+    expect(await columns(h, "battles")).not.toContain("rules");
+    expect(await columns(h, "tournaments")).not.toContain("rules");
+    expect(await columns(h, "battles")).toContain("reverted_at");
+    expect(await streamingTables()).toEqual(["streaming_credentials", "streaming_sessions", "streaming_settings"]);
+    await migrateToLatest(h.db);
+    expect(await columns(h, "battles")).toEqual(expect.arrayContaining(["rules", "reverted_at"]));
+    expect([...(await applied(h))].sort()).toEqual([...names].sort());
+  });
+
+  it("CONTROL · `rollback:name 018_battle_reverted` borra SÓLO battles.reverted_at; 016 y 017 intactas", async () => {
+    await rollbackNamed(h.db, "018_battle_reverted");
+    expect(await columns(h, "battles")).not.toContain("reverted_at");
+    expect(await columns(h, "battles")).toContain("rules");
+    expect(await streamingTables()).toHaveLength(3);
+    await migrateToLatest(h.db);
+    expect(await columns(h, "battles")).toContain("reverted_at");
+  });
+
+  it("CONTROL · «la auditoría `streaming.*` se conserva» al revertir la 017 (y el streaming renace DESACTIVADO al re-up)", async () => {
+    await h.db("streaming_settings").where({ id: 1 }).update({ enabled: true });
+    await h.db("audit_log").insert({ action: "streaming.session.start", target: "streaming:session:x", detail: "{}" });
+    const n = Number((await h.db("audit_log").where("action", "like", "streaming.%").count({ c: "*" }))[0].c);
+    await rollbackNamed(h.db, "017_streaming_admin");
+    expect(Number((await h.db("audit_log").where("action", "like", "streaming.%").count({ c: "*" }))[0].c)).toBe(n);
+    await migrateToLatest(h.db);
+    const [s] = await h.db("streaming_settings");
+    expect(s.enabled).toBe(false);
+  });
+
+  it("CONTROL · N1: con la 017 aplicada DESPUÉS de la 018, `rollback:1` revierte la 018 (lo que avisa el documento), no la 017", async () => {
+    // Estado del test anterior: knex_migrations termina en 018, 017 (re-up por migrate).
+    expect((await applied(h)).slice(-2)).toEqual(["018_battle_reverted", "017_streaming_admin"]);
+    await rollbackLast(h.db);
+    expect(await applied(h)).not.toContain("018_battle_reverted");
+    expect(await applied(h)).toContain("017_streaming_admin");
+    await migrateToLatest(h.db);
+  });
+
+  it("CONTROL · el docstring «falla si esa migración no está aplicada»: rollbackNamed de una pendiente ⇒ error y nada cambia", async () => {
+    await rollbackNamed(h.db, "017_streaming_admin");
+    const before = await applied(h);
+    const cols = await columns(h, "battles");
+    await expect(rollbackNamed(h.db, "017_streaming_admin")).rejects.toThrow();
+    expect(await applied(h)).toEqual(before);
+    expect(await columns(h, "battles")).toEqual(cols);
+    await migrateNamed(h.db, "017_streaming_admin");
+    // migrateNamed de una YA aplicada: no duplica ni rompe (lo medido se informa).
+    let again = "ok";
+    await migrateNamed(h.db, "017_streaming_admin").catch((e: Error) => (again = `error: ${e.message}`));
+    expect((await applied(h)).filter((n) => n === "017_streaming_admin")).toHaveLength(1);
+    expect(again).toMatch(/^(ok|error: .+)$/);
+  });
 });
 
 describe("R4 · `rollback:name` acepta CUALQUIER migración aplicada, también la 001", () => {

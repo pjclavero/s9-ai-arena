@@ -373,3 +373,150 @@ describe("R4 · R3-C · plazo de escritura", () => {
     expect(view).toEqual({ state: "publishing", err: null });
   }, 20_000);
 });
+
+// ── R4b · continuación (segundo revisor) ───────────────────────────────────
+/** Clave con la forma de YouTube: 5 grupos de 4 [a-z0-9]. */
+function youtubeKey() {
+  const a = "abcdefghijklmnopqrstuvwxyz0123456789";
+  return Array.from({ length: 5 }, () => Array.from({ length: 4 }, () => a[rnd(a.length)]).join("")).join("-");
+}
+const SHORT_ESC: Record<string, string> = { b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
+/**
+ * Texto que la INGESTA (que conoce la clave) devuelve: un carácter de control cuyo
+ * escape JSON termina en K[j] (`\n` si K[j]='n'; `\u001X` si K[j] es hexadecimal)
+ * seguido de los 7 caracteres siguientes de la clave. 7 < 8: el texto crudo no se
+ * redacta (límite declarado); ya serializado, la ventana `K[j..j+8)` sí casa y la
+ * marca empieza DESPUÉS de la barra del escape.
+ */
+function escapeSplitting(key: string): string | null {
+  for (let j = 0; j + 8 <= key.length; j++) {
+    const c = key[j];
+    if (c in SHORT_ESC) return SHORT_ESC[c] + key.slice(j + 1, j + 8);
+    if (/[0-9a-f]/.test(c)) return String.fromCharCode(0x10 + parseInt(c, 16)) + key.slice(j + 1, j + 8);
+  }
+  return null;
+}
+
+describe("R4b · la redacción sobre la línea YA serializada rompe el JSON del log", () => {
+  it("DEFECTO P3 · ingesta hostil: rechaza `publish` con un carácter de control + 7 caracteres de la clave (forma YouTube) ⇒ la línea «relé RTMP: corte de la ingesta» deja de ser JSON (`\\***`)", async () => {
+    const key = "abcd-efgh-ijkn-mnop-qrst";
+    const ing = await fakeIngest({ rejectWith: (k) => `no: ${escapeSplitting(k)}` });
+    const pub = new RtmpPublisher({
+      target: parseIngestUrl("rtmps://ingest.example/live2"),
+      streamKey: key,
+      dial: ing.dial,
+      connectTimeoutMs: 2000,
+    });
+    const reg = new SecretRegistry();
+    reg.add(key);
+    const lines: string[] = [];
+    const log = createLogger(reg, (l) => lines.push(l));
+    // Lo mismo que hace el supervisor (supervisor.ts: `publisher.on("error", …)`).
+    pub.on("error", (e: Error) => log("warn", "relé RTMP: corte de la ingesta", { detail: e.message }));
+    await pub.start().catch(() => undefined);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].includes(key)).toBe(false); // sin fuga: el defecto es de integridad
+    let parsed = true;
+    try {
+      JSON.parse(lines[0]);
+    } catch {
+      parsed = false;
+    }
+    expect({ line: lines[0], parsed }).toMatchObject({ parsed: true });
+  }, 20_000);
+
+  it("DEFECTO P3 · barrido con 500 claves aleatorias con forma YouTube: toda clave admite el ataque y TODA línea sale rota", () => {
+    let broken = 0;
+    let attackable = 0;
+    for (let k = 0; k < 500; k++) {
+      const key = youtubeKey();
+      const txt = escapeSplitting(key);
+      if (!txt) continue;
+      attackable++;
+      const lines: string[] = [];
+      createLogger(key, (l) => lines.push(l))("warn", "relé RTMP: corte de la ingesta", {
+        detail: `la ingesta rechazó publish: ${redactSecret(txt, key)}`,
+      });
+      try {
+        JSON.parse(lines[0]);
+      } catch {
+        broken++;
+      }
+    }
+    expect(attackable).toBeGreaterThan(490);
+    expect(broken).toBe(0);
+  });
+
+  it("CONTROL (calibración) · el mismo texto SIN el carácter de control: la línea sigue siendo JSON y no lleva la clave", () => {
+    for (let k = 0; k < 500; k++) {
+      const key = youtubeKey();
+      const lines: string[] = [];
+      createLogger(key, (l) => lines.push(l))("warn", "x", { detail: `no: ${key.slice(3, 11)} ${key}` });
+      expect(() => JSON.parse(lines[0])).not.toThrow();
+      expect(lines[0].includes(key)).toBe(false);
+    }
+  });
+
+  it("CONTROL · /status: `lastError` se redacta ANTES de serializar ⇒ el mismo ataque deja un JSON válido (la rotura es sólo del log)", () => {
+    const key = "abcd-efgh-ijkn-mnop-qrst";
+    const lastError = redactSecret(`la ingesta rechazó publish: no: ${escapeSplitting(key)}`, key);
+    expect(() => JSON.parse(JSON.stringify({ lastError }))).not.toThrow();
+  });
+
+  it("OBS · límite declarado (no es hallazgo nuevo): dobles codificaciones (hex∘base64, base64∘hex) y la clave invertida no se redactan", () => {
+    const key = youtubeKey();
+    const b64 = Buffer.from(key).toString("base64");
+    const hex = Buffer.from(key).toString("hex");
+    const survivors = [
+      Buffer.from(b64).toString("hex"),
+      Buffer.from(hex).toString("base64"),
+      [...key].reverse().join(""),
+    ].filter((f) => redactSecret(`x ${f} y`, key).includes(f));
+    expect(survivors).toHaveLength(3);
+  });
+});
+
+describe("R4b · R3-C · el plazo de escritura en la ingesta lenta legítima", () => {
+  it("CONTROL · ingesta LENTA legítima (lee ~60 % del caudal del productor, sin pararse): el plazo se ARMA y se REARMA, pero no corta", async () => {
+    const W = 200;
+    let tick: NodeJS.Timeout | null = null;
+    // Productor ≈ 160 Mbit/s (20 MB/s) para llegar a la marca de 4 MiB en tiempo de test;
+    // la ingesta suelta 1,2 MB cada 100 ms ≈ 12 MB/s.
+    const r = await relayWith(W, (gd) => {
+      tick = setInterval(() => gd.release(1_200_000), 100);
+    });
+    let armed = 0;
+    let drains = 0;
+    r.pub.on("drain", () => drains++);
+    const probe = setInterval(() => {
+      if ((r.pub as unknown as { stallTimer: unknown }).stallTimer) armed++;
+    }, 10);
+    const p = pump(r.pub, 0, 160_000);
+    await sleep(W * 15);
+    p.stop();
+    clearInterval(probe);
+    if (tick) clearInterval(tick);
+    const view = { state: r.pub.state, err: r.err?.message ?? null };
+    r.pub.close();
+    expect(view).toEqual({ state: "publishing", err: null });
+    // Calibración del escenario: hubo contrapresión de verdad (plazo armado y drenajes).
+    expect(armed).toBeGreaterThan(0);
+    expect(drains).toBeGreaterThan(0);
+    expect((r.pub as unknown as { stallTimer: unknown }).stallTimer).toBeNull();
+  }, 20_000);
+
+  it("CONTROL · ingesta que lee un poco y se CUELGA (por debajo del umbral, sin avance): write_timeout en ≤ 3 plazos", async () => {
+    const W = 300;
+    const r = await relayWith(W, (gd) => {
+      setTimeout(() => gd.release(64 * 1024), W / 2);
+    });
+    const p = pump(r.pub, 0, 200_000);
+    const t0 = Date.now();
+    while (!r.err && Date.now() - t0 < W * 10) await sleep(20);
+    p.stop();
+    const elapsed = Date.now() - t0;
+    r.pub.close();
+    expect(r.err?.message ?? "").toMatch(/plazo de escritura/);
+    expect(elapsed).toBeLessThanOrEqual(W * 3 + 400);
+  }, 20_000);
+});
