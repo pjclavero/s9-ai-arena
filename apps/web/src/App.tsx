@@ -37,6 +37,7 @@ import { BracketPage } from "./pages/BracketPage.js"; // R12 (slice 1, solo lect
 import { BattlesPage } from "./pages/BattlesPage.js";
 // R9 · crear batalla de práctica desde la UI (usa POST /battles seguro; ver BattleNewPage).
 import { BattleNewPage } from "./pages/BattleNewPage.js";
+import { StreamingPage } from "./pages/StreamingPage.js"; // EQ5b · Administración → Streaming
 import { BattleDetailPage } from "./pages/BattleDetailPage.js"; // UX-D · #/battles/<uuid>
 import { MapsPage } from "./pages/MapsPage.js";
 import { MapEditorPage } from "./pages/MapEditorPage.js";
@@ -127,7 +128,18 @@ export function matchPanelRoute(
  * Las rutas con parámetros siguen en `matchPanelRoute` / `matchPublicRoute`.
  */
 export type StaticPanelRoute =
-  "home" | "bots" | "teams" | "tournaments" | "replays" | "mapEditor" | "maps" | "system" | "audit" | "roles" | "admin";
+  | "home"
+  | "bots"
+  | "teams"
+  | "tournaments"
+  | "replays"
+  | "mapEditor"
+  | "maps"
+  | "system"
+  | "audit"
+  | "roles"
+  | "streaming"
+  | "admin";
 
 export const STATIC_PANEL_ROUTES: ReadonlyArray<{ name: StaticPanelRoute; pattern: RegExp }> = [
   // UX-A · la raíz es «Inicio» (checklist de primeros pasos), ya no «Mis bots».
@@ -141,6 +153,8 @@ export const STATIC_PANEL_ROUTES: ReadonlyArray<{ name: StaticPanelRoute; patter
   { name: "system", pattern: /^#\/system(?:[/?].*)?$/ },
   { name: "audit", pattern: /^#\/audit(?:[/?].*)?$/ },
   { name: "roles", pattern: /^#\/roles(?:[/?].*)?$/ },
+  // EQ5b · Administración → Streaming (`?battle=<id>` / `?tournament=<id>` preselecciona).
+  { name: "streaming", pattern: /^#\/streaming(?:[/?].*)?$/ },
   { name: "admin", pattern: /^#\/admin(?:[/?].*)?$/ },
 ];
 
@@ -359,6 +373,8 @@ export function App() {
         return admin(<AuditPage me={me!} />);
       case "roles":
         return admin(<RolesPage me={me!} />);
+      case "streaming":
+        return admin(<StreamingPage me={me!} route={route} />);
       case "admin":
         return admin(<AdminPage me={me!} />);
       case "bots":
@@ -382,7 +398,7 @@ export function App() {
     ) : panelRoute?.kind === "battle-new" ? ( // R9
       <BattleNewPage me={me} />
     ) : panelRoute?.kind === "battle" ? (
-      <BattleDetailPage key={panelRoute.id} id={panelRoute.id} />
+      <BattleDetailPage key={panelRoute.id} id={panelRoute.id} me={me} />
     ) : panelRoute?.kind === "battles" ? (
       <BattlesPage botFilter={panelRoute.botFilter} />
     ) : (

@@ -46,8 +46,12 @@ info:
   # ADR-022 (misma 0.12.0, aún sin publicar): `rules` en TournamentInput/Tournament,
   # `modeCompatibility` en MapVersion, `tiebreaks` en listRulesets, `recordedWith`/
   # `verifiedWith` en verifyReplay y códigos map_team_mismatch / engine_rules_mismatch.
+  # 0.13.0 · EQ5b Administración → Streaming (aditivo, admin): getStreamingAdmin,
+  # updateStreamingSettings, set/deleteStreamingCredential, getStreamingTarget,
+  # testStreaming, start/restart/stopStreaming, listStreamingRecordings,
+  # applyStreamingRetention y listStreamingAudit (tag streaming).
   # Añadir un endpoint = MINOR (docs/compatibilidad.md, §2 Semver por paquete).
-  version: 0.12.0
+  version: 0.13.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -78,6 +82,7 @@ tags:
   - name: replays
   - name: standings
   - name: admin
+  - name: streaming
   - name: system
 
 security:
@@ -1603,6 +1608,198 @@ paths:
             application/json:
               schema: { type: array, items: { $ref: '#/components/schemas/AuditEntry' } }
 
+  # ------------------------------------------------------------ STREAMING (EQ5b)
+  # Administración → Streaming. Todo admin. La clave de emisión ENTRA y nunca
+  # SALE (sólo `configured` y `masked: ****ABCD`): se sella con la clave pública
+  # y únicamente el streamer puede abrirla.
+  /admin/streaming:
+    get:
+      tags: [streaming]
+      operationId: getStreamingAdmin
+      summary: 'Estado de la administración de streaming: configuración, credenciales (enmascaradas), capacidades, estado del streamer, sesión activa y estado de UX.'
+      x-min-role: admin
+      responses:
+        '200':
+          description: Estado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StreamingAdminState' }
+
+  /admin/streaming/settings:
+    put:
+      tags: [streaming]
+      operationId: updateStreamingSettings
+      summary: >-
+        Cambia la configuración NO sensible (concurrencia optimista por `version`). Con una
+        emisión activa NUNCA reinicia en silencio: responde `pendingRestart` e `impact`
+        (hot | restart | stop). Desactivar con emisión activa exige `confirmStop`; pasar a
+        60 FPS exige `confirmHighFps`; NVENC sólo si el runtime lo confirma.
+      x-min-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StreamingSettingsPatch' }
+      responses:
+        '200': { description: Guardado, content: { application/json: { schema: { type: object } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { description: Configuración inválida, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/streaming/credentials/{platform}:
+    parameters:
+      - { name: platform, in: path, required: true, schema: { type: string, pattern: '^[a-z0-9_-]{1,32}$' } }
+    put:
+      tags: [streaming]
+      operationId: setStreamingCredential
+      summary: 'Guarda (o cambia) la clave de emisión: se SELLA con la clave pública (RSA-OAEP-256 + AES-256-GCM) ATADA a su destino (plataforma + ingesta canónica; EQ5c) y sólo se devuelve `****ABCD`. Sin almacén sellado ⇒ 503 y no se guarda nada; RTMPS personalizado sin ingesta ⇒ 409 ingest_missing.'
+      x-min-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [streamKey]
+              properties:
+                streamKey: { type: string, minLength: 8, maxLength: 256, x-private: true }
+      responses:
+        '200': { description: Guardada, content: { application/json: { schema: { $ref: '#/components/schemas/StreamingCredentialMeta' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { description: Sin almacén sellado, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    delete:
+      tags: [streaming]
+      operationId: deleteStreamingCredential
+      summary: Elimina la clave de emisión de la plataforma (auditado).
+      x-min-role: admin
+      responses:
+        '200': { description: Eliminada, content: { application/json: { schema: { $ref: '#/components/schemas/StreamingCredentialMeta' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/streaming/target:
+    get:
+      tags: [streaming]
+      operationId: getStreamingTarget
+      summary: 'Destino de emisión (batalla o torneo): existencia, si /broadcast (anónima) puede mostrarlo y el retardo que aplica su copia de reglas (fuente única; aquí sólo se lee).'
+      x-min-role: admin
+      parameters:
+        - { name: kind, in: query, required: true, schema: { type: string, enum: [battle, tournament] } }
+        - { name: id, in: query, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Destino, content: { application/json: { schema: { $ref: '#/components/schemas/StreamingTarget' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/streaming/test:
+    post:
+      tags: [streaming]
+      operationId: testStreaming
+      summary: 'Prueba de configuración SIN emisión pública: TLS (certificado verificado) + handshake RTMP + connect a la aplicación. No publica, así que no valida la clave.'
+      x-min-role: admin
+      responses:
+        '200': { description: Resultado de la prueba, content: { application/json: { schema: { type: object } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { description: Streamer no disponible, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/streaming/start:
+    post:
+      tags: [streaming]
+      operationId: startStreaming
+      summary: 'Inicia la emisión (o la grabación, según el modo) hacia un destino. Idempotente para el mismo destino y configuración; 409 si hay otra activa, si el streaming está desactivado, si falta la clave, si la clave está sellada para otra ingesta (credential_unbound), si el destino no es público, si no se puede medir el disco o queda poco (disk_unknown, disk_low) o si un stop la canceló mientras arrancaba (start_cancelled). start, restart y stop se ejecutan en serie.'
+      x-min-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target]
+              properties:
+                target:
+                  type: object
+                  required: [kind, id]
+                  properties:
+                    kind: { type: string, enum: [battle, tournament] }
+                    id: { type: string, format: uuid }
+      responses:
+        '200': { description: Ya activa (idempotente), content: { application/json: { schema: { type: object } } } }
+        '201': { description: Iniciada, content: { application/json: { schema: { type: object } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { description: Streamer no disponible, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/streaming/restart:
+    post:
+      tags: [streaming]
+      operationId: restartStreaming
+      summary: 'Reinicia la emisión activa aplicando la configuración guardada (el único camino para aplicar cambios de tipo restart).'
+      x-min-role: admin
+      responses:
+        '200': { description: Reiniciada, content: { application/json: { schema: { type: object } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /admin/streaming/stop:
+    post:
+      tags: [streaming]
+      operationId: stopStreaming
+      summary: 'Detiene la emisión o la grabación (idempotente). `force` marca la sesión como parada aunque el streamer no responda.'
+      x-min-role: admin
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                force: { type: boolean }
+      responses:
+        '200': { description: Parada, content: { application/json: { schema: { type: object } } } }
+        '503': { description: Streamer no disponible, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/streaming/recordings:
+    get:
+      tags: [streaming]
+      operationId: listStreamingRecordings
+      summary: 'Grabaciones MP4 del modo record: ruta lógica, número, tamaño y espacio libre.'
+      x-min-role: admin
+      responses:
+        '200': { description: Grabaciones, content: { application/json: { schema: { type: object } } } }
+        '503': { description: Streamer no disponible, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/streaming/retention:
+    post:
+      tags: [streaming]
+      operationId: applyStreamingRetention
+      summary: 'Aplica la política de retención de MP4 ahora (o la simula con dryRun). Nunca borra replays, otros ficheros ni la grabación en curso; cada borrado se audita.'
+      x-min-role: admin
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dryRun: { type: boolean }
+      responses:
+        '200': { description: Resultado, content: { application/json: { schema: { type: object } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '503': { description: Streamer no disponible, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/streaming/audit:
+    get:
+      tags: [streaming]
+      operationId: listStreamingAudit
+      summary: 'Auditoría de streaming (acciones streaming.* de audit_log, sólo inserción). Nunca contiene la clave.'
+      x-min-role: admin
+      parameters: [{ $ref: '#/components/parameters/Limit' }]
+      responses:
+        '200':
+          description: Entradas
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/AuditEntry' } }
+
   # --------------------------------------------------------------- SYSTEM (R8)
   /system/status:
     get:
@@ -1659,6 +1856,9 @@ components:
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
     NotFound:
       description: No existe o no es visible para el solicitante
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    BadRequest:
+      description: Petición inválida
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
     Conflict:
       description: Conflicto de estado
@@ -2590,6 +2790,95 @@ components:
         target: { type: string }
         correlationId: { type: string }
         at: { type: string, format: date-time }
+
+    # EQ5b · Administración → Streaming
+    StreamingBranding:
+      type: object
+      properties:
+        eventName: { type: string, maxLength: 80 }
+        logoUrl: { type: string, nullable: true, maxLength: 512, description: 'https:// o ruta del propio sitio' }
+        primaryColor: { type: string, pattern: '^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$' }
+        accentColor: { type: string, pattern: '^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$' }
+
+    StreamingRetention:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        maxAgeDays: { type: integer, nullable: true, minimum: 1, maximum: 3650 }
+        maxTotalBytes: { type: integer, nullable: true, minimum: 1048576 }
+
+    StreamingSettings:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        mode: { type: string, enum: [rtmps, record] }
+        platform: { type: string }
+        ingestUrl: { type: string, nullable: true, description: 'Sólo RTMPS personalizado; rtmps:// sin credenciales' }
+        encoder: { type: string, enum: [x264, nvenc] }
+        preset: { type: string, enum: [1080p, 720p] }
+        fps: { type: integer, enum: [30, 60] }
+        videoBitrateKbps: { type: integer, minimum: 1000, maximum: 12000 }
+        branding: { $ref: '#/components/schemas/StreamingBranding' }
+        retention: { $ref: '#/components/schemas/StreamingRetention' }
+        version: { type: integer }
+        updatedAt: { type: string, format: date-time }
+        updatedBy: { type: string, nullable: true }
+
+    StreamingSettingsPatch:
+      type: object
+      required: [version]
+      properties:
+        version: { type: integer }
+        confirmStop: { type: boolean }
+        confirmHighFps: { type: boolean }
+        enabled: { type: boolean }
+        mode: { type: string, enum: [rtmps, record] }
+        platform: { type: string }
+        ingestUrl: { type: string, nullable: true }
+        encoder: { type: string, enum: [x264, nvenc] }
+        preset: { type: string, enum: [1080p, 720p] }
+        fps: { type: integer, enum: [30, 60] }
+        videoBitrateKbps: { type: integer }
+        branding: { $ref: '#/components/schemas/StreamingBranding' }
+        retention: { $ref: '#/components/schemas/StreamingRetention' }
+
+    StreamingCredentialMeta:
+      type: object
+      description: 'Metadatos de la clave de emisión. NUNCA contiene la clave: como mucho los 4 últimos caracteres enmascarados.'
+      properties:
+        platform: { type: string }
+        configured: { type: boolean }
+        masked: { type: string, nullable: true, example: '****ABCD' }
+        updatedAt: { type: string, format: date-time, nullable: true }
+        compatible: { type: boolean, nullable: true }
+        incompatibleReason: { type: string, nullable: true, enum: [key_rotated, ingest_changed, null], description: 'EQ5c · por qué hay que volver a introducir la clave: se selló con otra clave pública o para otra URL de ingesta.' }
+
+    StreamingTarget:
+      type: object
+      properties:
+        kind: { type: string, enum: [battle, tournament] }
+        id: { type: string, format: uuid }
+        label: { type: string }
+        status: { type: string }
+        publicBroadcastable: { type: boolean }
+        delaySeconds: { type: number }
+        delaySource: { type: string, enum: [snapshot, ruleset, final_visible, none] }
+
+    StreamingAdminState:
+      type: object
+      properties:
+        settings: { $ref: '#/components/schemas/StreamingSettings' }
+        platforms: { type: array, items: { type: object } }
+        credentials: { type: array, items: { $ref: '#/components/schemas/StreamingCredentialMeta' } }
+        capabilities: { type: object }
+        streamer: { type: object, nullable: true }
+        session: { type: object, nullable: true }
+        pendingRestart: { type: boolean }
+        uxState:
+          type: string
+          enum: [disabled, streamer_unreachable, ready, live, recording, retrying, failed, interrupted]
+        bitrate: { type: object }
+        changeClasses: { type: object }
 
     SystemStatus:
       type: object

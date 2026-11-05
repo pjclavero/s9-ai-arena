@@ -338,7 +338,10 @@ La API no migra al arrancar. Tras desplegar una versión con migraciones nuevas:
 $DC exec -w /app api npx tsx apps/api/src/db/cli.ts migrate
 ```
 
-Hazlo con copia previa. `rollback:1` revierte exactamente una migración; `rollback:all` destruye el
+Hazlo con copia previa. `rollback:1` revierte exactamente una migración: la última DE LA LISTA
+entre las aplicadas, que no tiene por qué ser la última aplicada (ver «Orden 017/018» en «Vuelta
+atrás»). Para revertir una migración concreta, usa `rollback:name <NNN_tema>`, que la revierte esté
+donde esté. `rollback:all` destruye el
 esquema ([first-run.md](first-run.md#comandos-prohibidos-en-producción)).
 
 ## Vuelta atrás
@@ -371,17 +374,50 @@ esquema ([first-run.md](first-run.md#comandos-prohibidos-en-producción)).
 
   Las batallas `running` con copia deben terminar (o marcarse `failed` igual) antes de parar el
   worker nuevo. Un motor 0.3.0 dará `engine_version_mismatch` («otra versión», no «manipulado») a los
-  replays 0.4.0. `rollback:1` de la 016 borra las copias de reglas (no resultados ni replays).
-  - **Migración 018** (`018_battle_reverted`; la 017 es `017_streaming_admin`, PR #227) sólo añade
+  replays 0.4.0. Revertir la 016 (`rollback:name 016_battle_rules`; ya no es la última) borra las
+  copias de reglas (no resultados ni replays).
+
+- **Administración de streaming (ADR-023, migración 017):**
+  - **Antes de desplegar:** ejecutar `infrastructure/scripts/init-secrets.sh` (idempotente): genera
+    `streamer_control_secret.txt` y el par `stream_secrets_private.pem` / `stream_secrets_public.pem`.
+    Sin ellos Compose no arranca la API (son secretos declarados). Copia de seguridad (`pg_dump -Fc`)
+    inmediatamente antes de migrar.
+  - **Migración 017** (`017_streaming_admin`) sólo CREA `streaming_settings` (una fila, streaming
+    DESACTIVADO), `streaming_credentials` (metadatos y sobre sellado; nunca la clave en claro) y
+    `streaming_sessions`; no toca ninguna tabla existente. En una BD que ya tenga la 018, `migrate`
+    aplica la 017 pendiente (queda DETRÁS de la 018 en `knex_migrations`). Probada en
+    `apps/api/src/db/migration-017.test.ts` (upgrade con datos, invariantes, rollback y backup/restore
+    lógico, también con la 018 detrás) y en un simulacro `pg_dump -Fc`/`pg_restore` reales sobre
+    `postgres:16-alpine`.
+  - **Vuelta atrás:** parar antes la emisión desde la web y revertir la 017 POR NOMBRE, nunca con
+    `rollback:1` (ver «Orden 017/018» abajo: `rollback:1` revertiría la 018):
+
+    ```bash
+    $DC exec -w /app api npx tsx apps/api/src/db/cli.ts rollback:name 017_streaming_admin
+    ```
+
+    La 017 sólo crea sus tres tablas, así que revertirla no toca la 018 ni ninguna otra. Revertirla
+    borra la configuración de streaming, los sobres sellados y el historial de sesiones; la auditoría
+    (`audit_log`, acciones `streaming.*`) se conserva. Las claves habría que volver a introducirlas.
+
+- **Clasificación: marca de reversión (PR #229, migración 018):**
+  - **Migración 018** (`018_battle_reverted`) sólo añade
     `battles.reverted_at` (timestamptz, nullable): la marca de reversión propia de la batalla
     (política de clasificación `official_played_not_reverted`, PR #229). No toca filas existentes ni
     marca nada como revertido. Probada en `apps/api/src/db/migration-018.test.ts` (upgrade con datos,
     rollback y backup/restore lógico).
-  - **Vuelta atrás:** `rollback:1` de la 018 borra SÓLO la marca: el Elo de las batallas revertidas
-    sigue devuelto en `rating_events`, pero el código anterior volvería a contarlas en V-D-E. Antes de
-    la vuelta atrás, comprobar `SELECT count(*) FROM battles WHERE reverted_at IS NOT NULL;` y, si no
-    es 0, hacer copia de esa lista.
-  - **Orden 017/018 (P3, «N1»):** si la 018 (este cambio) se aplica antes que la 017 (`017_streaming_admin`, PR #227), `rollback:1` (`rollbackLast`) revierte la última migración **de la lista**, no la última aplicada. Deshacer el despliegue del streaming con `rollback:1` borraría entonces `battles.reverted_at` (la 018) y dejaría puesta la 017. Instrucción segura: antes de cualquier `rollback:1`, comprobar `SELECT name FROM knex_migrations ORDER BY id;` y confirmar que la que se va a deshacer es la que se quiere; si no lo es, revertir esa migración **por nombre** (no con `rollback:1`) o aplicar siempre las dos en el orden de la lista (017 y después 018).
+  - **Vuelta atrás:** revertir la 018 (`rollback:name 018_battle_reverted`) borra SÓLO la marca: el
+    Elo de las batallas revertidas sigue devuelto en `rating_events`, pero el código anterior volvería
+    a contarlas en V-D-E. Antes de la vuelta atrás, comprobar
+    `SELECT count(*) FROM battles WHERE reverted_at IS NOT NULL;` y, si no es 0, hacer copia de esa
+    lista.
+  - **Orden 017/018 (P3, «N1»):** `rollback:1` (`rollbackLast`) revierte la última migración **de la
+    lista** entre las aplicadas, no la última aplicada. Con la lista 017 → 018, `rollback:1` revierte
+    SIEMPRE la 018, aunque la 017 se aplicara después (BD que ya tenía la 018): deshacer el
+    despliegue del streaming con `rollback:1` borraría `battles.reverted_at` y dejaría puesta la 017.
+    Instrucción segura: antes de cualquier vuelta atrás, comprobar
+    `SELECT name FROM knex_migrations ORDER BY id;` y revertir la migración que se quiere **por
+    nombre** con `rollback:name <NNN_tema>`, no con `rollback:1`.
 
 ## Errores / limitaciones
 

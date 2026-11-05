@@ -6,6 +6,7 @@
  */
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, type Me } from "../api.js";
+import { BroadcastButton } from "../broadcast/BroadcastButton.js";
 import { useResource, ResourceView, type Resource } from "../resource.js";
 import type { Tournament } from "./TournamentsPage.js";
 import {
@@ -137,6 +138,8 @@ export function TournamentDetailPage(props: { id: string; me: Me }) {
           {(t) => (
             <>
               <h2>{t.name}</h2>
+              {/* EQ5b · sólo admin; abre Streaming con el destino, no emite. */}
+              <BroadcastButton me={props.me} kind="tournament" id={props.id} />
               <p>
                 {labelOf(TOURNAMENT_FORMAT_NAME, t.format)} · {modeName(t.mode)} · estado{" "}
                 <strong data-testid="tournament-state" data-state={t.state}>

@@ -55,6 +55,7 @@ import {
   MapZones,
 } from "../help/sections/maps.js";
 import { CatalogReference, ProtocolReference, VersionsReference } from "../help/sections/reference.js";
+import { StreamingHelp } from "../help/sections/streaming.js";
 
 function GettingStarted(props: { loggedIn: boolean }) {
   return (
@@ -161,6 +162,7 @@ export const HELP_CONTENT: Record<string, (p: { loggedIn: boolean }) => ReactNod
   "modos/otros": () => <ModeOthers />,
   "torneos/torneos": () => <TournamentsHelp />,
   "torneos/ranking": () => <RankingHelp />,
+  "administracion/streaming": () => <StreamingHelp />,
   "mapas/editor": () => <MapEditorHelp />,
   "mapas/spawns": () => <MapSpawns />,
   "mapas/bases": () => <MapBases />,

@@ -103,3 +103,47 @@ groups:
         labels: { severity: warning }
         annotations:
           summary: "No hay métricas de backup: ¿servicio backup parado?"
+
+  # EQ5b · Alertas del streamer. TODAS van condicionadas a que haya una emisión
+  # PEDIDA (`streamer_desired == 1`, la expone el propio streamer) o, en
+  # StreamerDown, a que la API diga que el streaming está ACTIVADO y con una
+  # sesión activa (gauges s9_streaming_* de la API; exigen S9_METRICS_ENABLED).
+  # Con el streaming desactivado o la emisión parada, ninguna puede saltar.
+  # Probadas con promtool: infrastructure/observability/prometheus/alerts-streamer.test.yml.
+  - name: s9-streamer
+    rules:
+      # La API tiene una sesión activa y el streamer no emite (o ni responde).
+      - alert: StreamerDown
+        expr: |
+          (max(s9_streaming_session_active) == 1 and on() max(s9_streaming_enabled) == 1)
+            unless on() (max(streamer_up) == 1)
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Hay una emisión activa en Administración → Streaming y el streamer no está emitiendo"
+
+      # Cortes encadenados: más de 5 reintentos en 10 min con la emisión pedida.
+      - alert: StreamerRestartLoop
+        expr: increase(streamer_restarts_total[10m]) > 5 and on() max(streamer_desired) == 1
+        for: 1m
+        labels: { severity: warning }
+        annotations:
+          summary: "El streamer se reinicia en bucle ({{ $value | humanize }} reintentos en 10 min)"
+
+      # Más del 5 % de frames descartados durante 5 min (CPU insuficiente o ingesta lenta).
+      - alert: StreamerDroppedFramesHigh
+        expr: |
+          (rate(streamer_dropped_frames_total[5m]) / clamp_min(rate(streamer_frames_total[5m]), 1)) > 0.05
+            and on() max(streamer_desired) == 1
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "El streamer descarta más del 5% de los frames"
+
+      # La emisión está pedida pero ffmpeg no informa progreso desde hace más de 60 s.
+      - alert: StreamerNoProgress
+        expr: max(streamer_progress_age_seconds) > 60 and on() max(streamer_desired) == 1
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "La emisión no avanza: {{ $value | humanize }} s sin progreso de ffmpeg"

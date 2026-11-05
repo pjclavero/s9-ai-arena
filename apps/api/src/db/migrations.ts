@@ -868,12 +868,81 @@ const m016_battle_rules: Migration = {
   },
 };
 
+// EQ5b · Administración → Streaming (encargo «Administración de Streaming desde la
+// web», §19). Lo NO sensible en la BD:
+//  - streaming_settings: UNA fila (id = 1) con la configuración vigente y `version`
+//    para concurrencia optimista;
+//  - streaming_credentials: METADATOS de la clave de emisión por plataforma y el
+//    SOBRE sellado con la clave PÚBLICA (RSA-OAEP-256, packages/stream-secrets).
+//    Nada en claro: ni la API ni un volcado de la BD pueden abrirlo (la privada
+//    sólo la tiene el streamer). `last4` es lo único legible (para «****ABCD»);
+//  - streaming_sessions: historial de emisiones; el índice único parcial impide
+//    DOS sesiones activas a la vez a nivel de BD.
+// La auditoría va a `audit_log` (sólo inserción), con acciones `streaming.*`.
+// Aditiva: no toca ninguna tabla existente. Probado en `migration-017.test.ts`
+// (upgrade con datos, rollback y backup/restore).
+const m017_streaming_admin: Migration = {
+  name: "017_streaming_admin",
+  async up(db) {
+    await db.raw(`
+      CREATE TABLE streaming_settings (
+        id                 smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+        enabled            boolean NOT NULL DEFAULT false,
+        mode               text NOT NULL DEFAULT 'record' CHECK (mode IN ('rtmps','record')),
+        platform           text NOT NULL DEFAULT 'youtube' CHECK (platform ~ '^[a-z0-9_-]{1,32}$'),
+        ingest_url         text CHECK (ingest_url IS NULL OR (ingest_url LIKE 'rtmps://%' AND length(ingest_url) <= 512)),
+        encoder            text NOT NULL DEFAULT 'x264' CHECK (encoder IN ('x264','nvenc')),
+        preset             text NOT NULL DEFAULT '1080p' CHECK (preset IN ('1080p','720p')),
+        fps                smallint NOT NULL DEFAULT 30 CHECK (fps IN (30,60)),
+        video_bitrate_kbps integer NOT NULL DEFAULT 4500 CHECK (video_bitrate_kbps BETWEEN 1000 AND 12000),
+        branding           jsonb NOT NULL DEFAULT '{}',
+        retention          jsonb NOT NULL DEFAULT '{"enabled":false,"maxAgeDays":14,"maxTotalBytes":null}',
+        version            integer NOT NULL DEFAULT 1,
+        updated_at         timestamptz NOT NULL DEFAULT now(),
+        updated_by         uuid REFERENCES users(id) ON DELETE SET NULL
+      );
+      INSERT INTO streaming_settings (id) VALUES (1);
+
+      CREATE TABLE streaming_credentials (
+        platform   text PRIMARY KEY CHECK (platform ~ '^[a-z0-9_-]{1,32}$'),
+        sealed     jsonb NOT NULL,
+        key_id     text NOT NULL CHECK (key_id ~ '^[0-9a-f]{16}$'),
+        last4      text NOT NULL CHECK (length(last4) <= 4),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        updated_by uuid REFERENCES users(id) ON DELETE SET NULL
+      );
+
+      CREATE TABLE streaming_sessions (
+        id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        state       text NOT NULL CHECK (state IN ('active','stopped','failed')),
+        mode        text NOT NULL CHECK (mode IN ('rtmps','record')),
+        target_kind text CHECK (target_kind IN ('battle','tournament')),
+        target_id   uuid,
+        config      jsonb NOT NULL,
+        started_by  uuid REFERENCES users(id) ON DELETE SET NULL,
+        started_at  timestamptz NOT NULL DEFAULT now(),
+        stopped_by  uuid REFERENCES users(id) ON DELETE SET NULL,
+        stopped_at  timestamptz,
+        stop_reason text,
+        CHECK ((target_kind IS NULL) = (target_id IS NULL))
+      );
+      CREATE UNIQUE INDEX streaming_sessions_one_active ON streaming_sessions ((true)) WHERE state = 'active';
+      CREATE INDEX streaming_sessions_started ON streaming_sessions (started_at DESC);
+    `);
+  },
+  // Destructivo SÓLO para la configuración de streaming, los sobres sellados y el
+  // historial de sesiones; la auditoría (audit_log) se conserva.
+  async down(db) {
+    await db.raw(`DROP TABLE streaming_sessions; DROP TABLE streaming_credentials; DROP TABLE streaming_settings;`);
+  },
+};
+
 // EQ2c · STANDINGS_POLICY (#229) · Marca de REVERSIÓN propia de la batalla, independiente del
 // Elo: `revertOfficialBattle` (tournament-worker standings.ts) la pone y la respetan la
 // clasificación de temporada (`seasonTable`) y el rating (`applyBattleRating`: una batalla
 // revertida no puntúa aunque su job llegue después). NULL = no revertida.
-// NUMERACIÓN: la 017 está reservada para `017_streaming_admin` (PR #227), que se integra
-// antes; ver la nota en migrations-order.test.ts.
+// NUMERACIÓN: la 017 es `017_streaming_admin` (PR #227), integrada DESPUÉS que esta; en una BD
+// que ya tenga la 018, `migrate` aplica la 017 pendiente (ver docs/operations/upgrades.md).
 // SÓLO añade una columna nullable: no toca ninguna fila existente. Probado en
 // `migration-018.test.ts` (upgrade con datos, rollback, backup/restore lógico).
 const m018_battle_reverted: Migration = {
@@ -906,6 +975,7 @@ export const MIGRATIONS: Migration[] = [
   m014_battle_diagnostics,
   m015_bot_retired,
   m016_battle_rules,
+  m017_streaming_admin,
   m018_battle_reverted,
 ];
 
@@ -935,4 +1005,22 @@ export async function rollbackAll(db: Knex): Promise<void> {
 /** Revierte SOLO la última migración aplicada (exactamente una migración, no un lote). */
 export async function rollbackLast(db: Knex): Promise<void> {
   await db.migrate.down(config);
+}
+
+/**
+ * EQ5e (revisión ronda 3, R3-F) · Revierte UNA migración concreta por NOMBRE,
+ * esté donde esté en la historia: no depende de que sea la última (con la 018
+ * de #229 detrás, `rollbackLast` revertiría la 018, no la 017). Falla si esa
+ * migración no está aplicada o no existe. Sólo es seguro para migraciones
+ * independientes de las posteriores (la 017 sólo crea sus propias tablas).
+ */
+export async function rollbackNamed(db: Knex, name: string): Promise<void> {
+  if (!MIGRATIONS.some((m) => m.name === name)) throw new Error(`Migración desconocida: ${name}`);
+  await db.migrate.down({ ...config, name });
+}
+
+/** EQ5e (R3-F) · Aplica UNA migración pendiente concreta por NOMBRE. */
+export async function migrateNamed(db: Knex, name: string): Promise<void> {
+  if (!MIGRATIONS.some((m) => m.name === name)) throw new Error(`Migración desconocida: ${name}`);
+  await db.migrate.up({ ...config, name });
 }

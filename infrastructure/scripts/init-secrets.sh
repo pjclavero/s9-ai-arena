@@ -15,7 +15,18 @@ RUNTIME_GID="${RUNTIME_GID:-1000}"
 
 harden() {
   local f="$DIR/$1"
-  chown "$RUNTIME_UID:$RUNTIME_GID" "$f" 2>/dev/null || true
+  # EQ5c (revisión EQ6b, P2-3) · el chown ya no falla en silencio: si no se puede
+  # (sin privilegios) y el dueño no es el uid del runtime, el contenedor no podrá
+  # leer el secreto. Los servicios que lo EXIGEN fallan en cerrado (p. ej. el
+  # control del streamer: 401 y /healthz 503), así que se avisa aquí, en voz alta.
+  if ! chown "$RUNTIME_UID:$RUNTIME_GID" "$f" 2>/dev/null; then
+    local owner
+    owner="$(stat -c %u "$f" 2>/dev/null || echo '?')"
+    if [ "$owner" != "$RUNTIME_UID" ]; then
+      echo "AVISO: no se pudo dar $1 al uid $RUNTIME_UID (dueño actual: $owner); el contenedor no podrá leerlo." \
+        "Repite init-secrets.sh con privilegios o ajusta RUNTIME_UID/RUNTIME_GID." >&2
+    fi
+  fi
   chmod 0400 "$f"
 }
 
@@ -81,6 +92,35 @@ if [ ! -f "$DIR/stream_key.txt" ]; then
   echo "creado vacío: stream_key.txt (rellenar con la clave de YouTube si se usa streaming)"
 fi
 harden stream_key.txt
+
+# EQ5b §19 · Administración de streaming desde la web: secreto compartido
+# api<->streamer para la API interna de control (cabecera x-streamer-auth).
+gen streamer_control_secret.txt
+# EQ5b §19 · par RSA-3072 para SELLAR las claves de emisión que se configuran
+# desde la web: la API sólo tiene la PÚBLICA (cifra y guarda el sobre en la BD;
+# no puede descifrar), el streamer la PRIVADA (abre en memoria al emitir).
+# Rotarla invalida las credenciales guardadas: hay que volver a introducirlas.
+if [ ! -s "$DIR/stream_secrets_private.pem" ]; then
+  if command -v openssl >/dev/null; then
+    umask 077
+    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$DIR/stream_secrets_private.pem" 2>/dev/null
+    echo "generado:  stream_secrets_private.pem (RSA-3072)"
+  else
+    echo "AVISO: sin openssl; sin stream_secrets_private.pem no se pueden guardar claves de emisión desde la web"
+  fi
+fi
+[ -f "$DIR/stream_secrets_private.pem" ] && harden stream_secrets_private.pem
+if [ -s "$DIR/stream_secrets_private.pem" ] && command -v openssl >/dev/null; then
+  umask 077
+  openssl pkey -in "$DIR/stream_secrets_private.pem" -pubout -out "$DIR/stream_secrets_public.pem.tmp" 2>/dev/null &&
+    if ! cmp -s "$DIR/stream_secrets_public.pem.tmp" "$DIR/stream_secrets_public.pem" 2>/dev/null; then
+      mv "$DIR/stream_secrets_public.pem.tmp" "$DIR/stream_secrets_public.pem"
+      echo "generado:  stream_secrets_public.pem (pública de stream_secrets_private.pem)"
+    else
+      rm -f "$DIR/stream_secrets_public.pem.tmp"
+    fi
+fi
+[ -f "$DIR/stream_secrets_public.pem" ] && harden stream_secrets_public.pem
 
 # fix/backup-sftp-scheduled-runtime: clave SSH dedicada al backend sftp: de
 # restic. Se puede generar sin intervención del operador (es sólo un par de

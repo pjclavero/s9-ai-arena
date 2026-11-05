@@ -142,6 +142,7 @@ de la creación por API ([TD-011](../roadmap/technical-debt.md#td-011)).
 | `cli.ts seed` | migra y crea **usuarios de desarrollo con contraseña conocida del repositorio** |
 | `cli.ts rollback:all` | revierte todas las migraciones: **destruye el esquema completo** |
 | `cli.ts rollback:1` | revierte la última migración; sólo con un plan de vuelta atrás probado |
+| `cli.ts rollback:name <NNN_tema>` | revierte esa migración concreta, esté donde esté; mismo requisito |
 | `cli.ts rollback` | no existe (el CLI lo rechaza con código 2, para no confundir los dos anteriores) |
 | `psql -U postgres …` / `pg_dumpall -U postgres` | el rol no existe; usar `-U arena` |
 
@@ -173,7 +174,7 @@ la instalación. El diseño original está archivado en
 | Afirmación | Estado | Evidencia |
 |---|---|---|
 | `bootstrap` = `migrateToLatest` + `seedContent`, sin usuarios; idempotente | CODE_VERIFIED + RUNTIME_VERIFIED | `apps/api/src/db/cli.ts:56-59`; ejecutado dos veces en el entorno aislado |
-| `seed` crea usuarios de desarrollo; `rollback:all` destruye el esquema; `rollback` a secas rechazado | CODE_VERIFIED | `apps/api/src/db/cli.ts:11-19,36-55` |
+| `seed` crea usuarios de desarrollo; `rollback:all` destruye el esquema; `rollback` a secas rechazado; `rollback:name` revierte una migración concreta | CODE_VERIFIED | `apps/api/src/db/cli.ts:12-22,37-67` |
 | Los roles los crean las migraciones | CODE_VERIFIED | `apps/api/src/db/migrations.ts:20,97-105` |
 | El registro asigna `user` + `developer` | CODE_VERIFIED | `apps/api/src/routes/auth.ts:167-171` |
 | No existe endpoint ni comando para el primer admin; roles por `PUT /users/{id}/roles` | CODE_VERIFIED | `apps/api/src/routes/users.ts:51-53`; `cli.ts` sin comando |

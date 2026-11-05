@@ -109,11 +109,13 @@ describe("EQ4 · RBAC del apartado Administración = contrato del servidor", () 
       "#/system",
       "#/audit",
       "#/roles",
+      "#/streaming", // EQ5b
     ]);
   });
 
   it("«Administración» está activa en sus cuatro pantallas", () => {
-    for (const r of ["#/admin", "#/system", "#/audit", "#/roles"]) expect(isNavActive("#/admin", r)).toBe(true);
+    for (const r of ["#/admin", "#/system", "#/audit", "#/roles", "#/streaming"])
+      expect(isNavActive("#/admin", r)).toBe(true);
     expect(isNavActive("#/admin", "#/bots")).toBe(false);
   });
 });
@@ -139,6 +141,7 @@ describe("EQ4 · barra principal agrupada", () => {
       "Sistema",
       "Auditoría",
       "Roles y permisos",
+      "Streaming", // EQ5b
     ]);
     expect(within(sub).getByRole("link", { name: "Auditoría" }).getAttribute("aria-current")).toBe("page");
   });

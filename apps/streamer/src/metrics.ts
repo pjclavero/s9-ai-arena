@@ -33,6 +33,9 @@ export class ProgressParser {
    * una lectura posterior heredando de `Object.prototype`.
    */
   private pending: Record<string, string> = emptyDict<string>();
+  /** EQ5b · instante (ms) del último bloque de progreso; null = ninguno aún. */
+  lastProgressAt: number | null = null;
+  constructor(private readonly clock: () => number = Date.now) {}
 
   /** Alimenta bytes del stdout de ffmpeg (troceados como lleguen). */
   push(chunk: string | Buffer): void {
@@ -55,6 +58,7 @@ export class ProgressParser {
 
   private commit(): void {
     const p = this.pending;
+    this.lastProgressAt = this.clock();
     // B8 · el reseteo también debe ser sin prototipo, o el fix duraría un ciclo.
     this.pending = emptyDict<string>();
     const num = (v: string | undefined) => {
@@ -89,6 +93,12 @@ export interface MetricsView {
   state: string;
   restarts: number;
   stats: StreamStats;
+  /** EQ5b · 1 si hay una emisión PEDIDA (streaming, retrying o failed). */
+  desired?: boolean;
+  /** EQ5b · segundos desde el último progreso de ffmpeg (-1 si no hay sesión). */
+  progressAgeSeconds?: number;
+  /** EQ5b · 1 si el relé RTMP está publicando. */
+  relayPublishing?: boolean;
 }
 
 /** Texto Prometheus (contrato con E10: scrape en la red platform). */
@@ -113,6 +123,21 @@ export function renderPrometheus(view: MetricsView): string {
     "# HELP streamer_restarts_total Reintentos de emision (cortes RTMPS)",
     "# TYPE streamer_restarts_total counter",
     `streamer_restarts_total ${view.restarts}`,
+    // EQ5b · señales para las alertas (alerts.yml, grupo streamer): todas se
+    // condicionan a `streamer_desired == 1`, así que con la emisión parada o
+    // el streaming desactivado ninguna alerta puede saltar.
+    "# HELP streamer_desired 1 si hay una emision pedida (activa, reintentando o agotada)",
+    "# TYPE streamer_desired gauge",
+    `streamer_desired ${view.desired ? 1 : 0}`,
+    "# HELP streamer_progress_age_seconds Segundos desde el ultimo progreso de ffmpeg (-1 sin sesion)",
+    "# TYPE streamer_progress_age_seconds gauge",
+    `streamer_progress_age_seconds ${view.progressAgeSeconds ?? -1}`,
+    "# HELP streamer_relay_publishing 1 si el rele RTMP esta publicando en la ingesta",
+    "# TYPE streamer_relay_publishing gauge",
+    `streamer_relay_publishing ${view.relayPublishing ? 1 : 0}`,
+    "# HELP streamer_failed 1 si la emision se abandono por reintentos agotados",
+    "# TYPE streamer_failed gauge",
+    `streamer_failed ${view.state === "failed" ? 1 : 0}`,
     "",
   ].join("\n");
 }

@@ -285,7 +285,11 @@ describe("hechos reales de producción (fixture capturado del daemon)", () => {
     // REVIEW (cierre funcional): la única deriva de `api` es el secreto NUEVO de la
     // clave pública de verificación (aún no desplegado). Los VOLÚMENES casan, que es
     // lo que este caso protege (normalización del prefijo).
-    expect(por("api").spec_drift).toBe("secreto ausente: artifact_verify_key");
+    // EQ5b · y los dos de Administración → Streaming (sello de claves y control
+    // interno del streamer), tampoco desplegados.
+    expect(por("api").spec_drift).toBe(
+      "secreto ausente: artifact_verify_key,stream_secrets_public,streamer_control_secret",
+    );
   });
 
   it("la salida no lleva topología real al repositorio público", () => {
