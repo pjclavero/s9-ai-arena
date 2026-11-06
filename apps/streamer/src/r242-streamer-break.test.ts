@@ -45,7 +45,7 @@ describe("R242 · §20 la salida de Chromium no se consume (pipe sin lector)", (
   for (const [label, bytes, expectBlocked] of [
     ["CONTROL (calibración) · 4 KiB a stderr: el «chromium» sigue vivo y avanza", 4096, false],
     [
-      "DEFECTO P3 · 1 MiB a stderr: el «chromium» se queda BLOQUEADO en write() y deja de avanzar (latente: Chromium real escribió ~15 KB al arrancar y 0 B en los 90 s siguientes)",
+      "CIERRE (STREAMER-2 H1; era DEFECTO P3 en #243) · 1 MiB a stderr: el «chromium» NO se bloquea en write() y avanza (sobre 588c842 se quedaba BLOQUEADO)",
       1024 * 1024,
       true,
     ],

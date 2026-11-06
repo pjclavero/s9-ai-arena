@@ -48,6 +48,12 @@ export type Spawner = (command: string, args: string[], opts?: { mediaFd?: boole
 /** Espera tras SIGTERM antes de SIGKILL (§12). */
 export const STOP_GRACE_MS = 5000;
 
+/**
+ * STREAMER-2 (H1) · Cola de la salida de Chromium que se conserva para el
+ * diagnóstico (bytes). El resto se lee y se descarta.
+ */
+export const CHROMIUM_OUTPUT_TAIL_BYTES = 2048;
+
 export type SupervisorState = "idle" | "streaming" | "retrying" | "stopped" | "failed";
 
 export interface SupervisorOptions {
@@ -355,12 +361,32 @@ export class StreamSupervisor {
   private launchChromium(): void {
     const gen = this.generation;
     const args = buildChromiumArgs(this.effectiveConfig, this.broadcastUrl);
-    this.chromium = this.opts.spawner(this.opts.chromiumBin ?? "chromium-browser", args);
-    this.chromium.on("exit", (code: unknown) => {
+    const chromium = this.opts.spawner(this.opts.chromiumBin ?? "chromium-browser", args);
+    this.chromium = chromium;
+    // STREAMER-2 (H1) · stdout y stderr de Chromium se LEEN SIEMPRE y se
+    // descartan. Un pipe sin lector se llena (64 KiB del kernel + el búfer de
+    // Node) y Chromium se bloquea en write(): la emisión seguiría «streaming»
+    // con la imagen congelada y sin ninguna alerta. El lector no aplica
+    // backpressure (no pausa nunca) y sólo guarda una cola acotada del stderr
+    // para el log de una caída; se redacta al registrarla (logger).
+    let tail = Buffer.alloc(0);
+    const keepTail = (chunk: string | Buffer) => {
+      const b = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+      tail = Buffer.concat([tail, b]);
+      if (tail.length > CHROMIUM_OUTPUT_TAIL_BYTES) tail = tail.subarray(tail.length - CHROMIUM_OUTPUT_TAIL_BYTES);
+    };
+    chromium.stdout?.on("data", () => {});
+    chromium.stderr?.on("data", keepTail);
+    chromium.stdout?.on("error", () => {});
+    chromium.stderr?.on("error", () => {});
+    chromium.on("exit", (code: unknown) => {
       if (gen !== this.generation || this.state_ === "stopped") return;
       // Chromium caído = pantalla negra: cuenta como corte y se relanza junto a ffmpeg.
       this.setError(`chromium terminó (código ${String(code)})`);
-      this.opts.logger("warn", "chromium terminó; se relanza", { code });
+      this.opts.logger("warn", "chromium terminó; se relanza", {
+        code,
+        outputTail: Buffer.from(tail).toString("utf8").trim(),
+      });
       void this.retry();
     });
   }
@@ -432,8 +458,13 @@ export class StreamSupervisor {
     });
     child.stderr?.on("data", (chunk: string | Buffer) => {
       const detail = chunk.toString().trim().slice(0, 500);
-      this.setError(`ffmpeg: ${detail}`);
-      this.opts.logger("error", "ffmpeg stderr", { detail });
+      // STREAMER-2 (H2) · guarda de generación: lo que ffmpeg escribe DESPUÉS de
+      // que esta emisión se diera por cortada (la parada que sigue a un rechazo
+      // de la ingesta: «Terminated», «Nothing was written into output file…»)
+      // se registra, pero NO sustituye la causa raíz en `lastError`.
+      const current = gen === this.generation && this.state_ !== "stopped";
+      if (current) this.setError(`ffmpeg: ${detail}`);
+      this.opts.logger("error", "ffmpeg stderr", current ? { detail } : { detail, superseded: true });
     });
     child.on("exit", (code: unknown) => {
       if (gen !== this.generation || this.state_ === "stopped") return;
