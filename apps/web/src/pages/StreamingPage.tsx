@@ -97,6 +97,11 @@ interface TargetInfo {
   id: string;
   label: string;
   status: string;
+  /** VISIBILIDAD · autorizado para retransmisión (no exige bots públicos). */
+  broadcastable?: boolean;
+  broadcastBlockedReason?: "battle_not_public" | "tournament_not_broadcastable" | null;
+  tournamentBroadcast?: boolean | null;
+  /** @deprecated alias de `broadcastable`. */
   publicBroadcastable: boolean;
   delaySeconds: number;
   delaySource: "snapshot" | "ruleset" | "final_visible" | "none";
@@ -399,7 +404,7 @@ function ControlsCard(props: {
     st.capabilities.streamerReachable &&
     !active &&
     !st.session &&
-    !!target?.publicBroadcastable &&
+    !!(target?.broadcastable ?? target?.publicBroadcastable) &&
     credOk;
   const startLabel = mode === "record" ? "Iniciar grabación" : "Iniciar emisión";
   const stopLabel = mode === "record" ? "Detener grabación" : "Detener emisión";
@@ -450,9 +455,22 @@ function ControlsCard(props: {
                   : "sin retardo declarado"}
             ). Se cambia en las reglas, no aquí.
           </p>
-          {!target.publicBroadcastable && (
-            <p className="error" role="alert" data-testid="stream-target-private">
-              Tiene bots no públicos: la vista /broadcast (anónima) no podría mostrarla. No se puede emitir.
+          {!(target.broadcastable ?? target.publicBroadcastable) && (
+            <p
+              className="error"
+              role="alert"
+              data-testid="stream-target-private"
+              data-reason={target.broadcastBlockedReason ?? "target_not_broadcastable"}
+            >
+              {target.broadcastBlockedReason === "tournament_not_broadcastable"
+                ? "No se puede emitir: la batalla tiene bots no públicos y su torneo se creó sin retransmisión pública (tournament_not_broadcastable)."
+                : "No se puede emitir: es una batalla suelta con bots no públicos; sólo un torneo con retransmisión pública autoriza mostrarlos (battle_not_public)."}
+            </p>
+          )}
+          {(target.broadcastable ?? target.publicBroadcastable) && target.tournamentBroadcast && (
+            <p className="note" data-testid="stream-target-broadcast">
+              Torneo con retransmisión pública: los bots privados o de equipo salen con sus datos de competición
+              (nombre, versión, equipo y resultado). Su ficha y su código siguen privados.
             </p>
           )}
         </div>

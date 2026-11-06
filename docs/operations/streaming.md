@@ -63,8 +63,17 @@ Reglas de operación:
 - Iniciar, reiniciar y detener se ejecutan en serie: «Detener» pulsado mientras arranca
   espera a que termine el arranque y lo para. No se empieza a grabar si el streamer no puede
   medir el disco (`disk_unknown`) o quedan menos de 2 GiB (`disk_low`).
-- `/broadcast` es anónima: sólo se emiten batallas sin bots privados (la API lo rechaza con
-  `target_not_public`) y hace falta el directo público activado.
+- `/broadcast` es anónima y hace falta el directo público activado. Se emite lo que un visitante
+  puede leer (`wherePubliclyShowable`, `apps/api/src/replay-access.ts`): batallas sin bots no públicos
+  y **todas** las batallas de un torneo creado con `broadcast: true`, con la proyección de
+  competición de sus bots privados o de equipo (nombre, versión, bando; nunca dueño, código ni
+  diagnóstico). Emitir no cambia ninguna visibilidad. Motivos de rechazo (antes `target_not_public`):
+  `battle_not_public` para una batalla suelta con bots no públicos (no hay flag por batalla, porque sólo
+  un torneo anuncia la retransmisión antes de la inscripción) y `tournament_not_broadcastable` para una
+  batalla de un torneo sin `broadcast` con bots no públicos. Un torneo sin `broadcast` se puede emitir
+  igual que antes: el director sólo muestra sus batallas sin bots no públicos. `GET
+  /admin/streaming/target` devuelve `broadcastable`, `broadcastBlockedReason` y `tournamentBroadcast`;
+  `publicBroadcastable` se mantiene como alias obsoleto.
 - Despliegue: el perfil `streaming` sigue fuera del contrato de producción. Para usar la
   pantalla hace falta el servicio `streamer` y los secretos nuevos de `init-secrets.sh`
   (`streamer_control_secret`, `stream_secrets_private`/`stream_secrets_public`). Sin streamer

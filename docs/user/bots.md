@@ -11,7 +11,7 @@ Cómo se **programa** un bot (ciclo, observaciones, órdenes, sensores, radio) e
 
 Pulsa el nombre del bot para abrir su detalle: ahí está el editor de equipamiento, la subida de código, las versiones y el estado de la validación.
 
-**Retirar un bot.** En el detalle, «Retirar bot» lo pasa a la lista de **Retirados**: no borra versiones, batallas ni replays ni cambia qué versión juega; «Reactivar bot» lo devuelve a Activos. No hay forma de borrar un bot, ni de cambiar su visibilidad o su nombre desde la web.
+**Retirar un bot.** En el detalle, «Retirar bot» lo pasa a la lista de **Retirados**: no borra versiones, batallas ni replays ni cambia qué versión juega; «Reactivar bot» lo devuelve a Activos. No hay forma de borrar un bot ni de cambiar su nombre desde la web. La **visibilidad del bot** se cambia en Overview y la **del código**, versión a versión, en Versions ([Visibilidad](visibility.md)).
 
 ## Equiparlo
 
@@ -70,7 +70,7 @@ Si la versión no supera la validación, la tarjeta **«vN: Tu bot no ha superad
 
 ## Publicar
 
-El botón **«Publicar vN»** sólo aparece en versiones `validated`. Al publicar, el código **no** se hace público: la web siempre publica con el código privado. Una versión publicada antigua **sigue pudiendo jugar** aunque la última esté rechazada o en validación.
+El botón **«Publicar vN»** sólo aparece en versiones `validated`. Al publicar, el código **no** se hace público: la web siempre publica con el código privado. Para hacerlo público (o volver a ocultarlo) usa «Código de vN [Privado][Público]» en Versions ([Visibilidad](visibility.md)). Una versión publicada antigua **sigue pudiendo jugar** aunque la última esté rechazada o en validación.
 
 **«Publicada · No elegible».** Si el equipamiento de una versión publicada ya no cumple la validación actual (por ejemplo, un cañón con munición que no puede disparar), aparece así, deshabilitada y con el motivo. Se conserva con su historia y sus replays se siguen viendo, pero no puede entrar en batallas ni torneos nuevos: usa otra versión o crea una nueva con el equipamiento corregido.
 
@@ -78,10 +78,10 @@ El botón **«Publicar vN»** sólo aparece en versiones `validated`. Al publica
 
 En «Mis bots», pulsa el nombre del bot. Tiene cuatro pestañas:
 
-- **Overview**: visibilidad, última versión publicada, número de versiones y enlaces a sus batallas y replays.
+- **Overview**: visibilidad (el dueño la cambia aquí: Privado, Equipo o Público), última versión publicada, número de versiones y enlaces a sus batallas y replays.
 - **Code**: elige una versión y ve sus ficheros; puedes editar y pulsar **«Guardar como versión nueva desde vN»**. Si el código no es tuyo y es privado, verás «No tienes permiso para ver el código de esta versión».
 - **Equipment**: las revisiones de loadout y qué versiones usa cada una.
-- **Versions**: versión (y de cuál se creó), fecha, estado y motivo, resultado del build, paquete (huella) y publicación; con las acciones «Ver código», «Ver build», «Nueva versión desde ésta» y «Comparar con vN-1», que muestra las diferencias línea a línea.
+- **Versions**: versión (y de cuál se creó), fecha, estado y motivo, resultado del build, paquete (huella), publicación y visibilidad del código (el dueño la cambia aquí); con las acciones «Ver código», «Ver build», «Nueva versión desde ésta» y «Comparar con vN-1», que muestra las diferencias línea a línea.
 
 Una versión enviada, validada o publicada **no se puede modificar ni borrar**. Las batallas guardan qué versión jugó cada bot, así que publicar una versión nueva no cambia lo que jugó una batalla anterior.
 

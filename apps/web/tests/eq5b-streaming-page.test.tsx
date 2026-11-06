@@ -86,6 +86,8 @@ function baseState(over: Partial<StreamingAdminState> = {}): StreamingAdminState
 }
 
 let state: StreamingAdminState;
+/** VISIBILIDAD · campos del destino que cada test sobrescribe. */
+let targetOver: Record<string, unknown> = {};
 const calls: { method: string; path: string; body: unknown }[] = [];
 function route(method: string, path: string, body?: unknown): unknown {
   calls.push({ method, path, body });
@@ -99,6 +101,7 @@ function route(method: string, path: string, body?: unknown): unknown {
       publicBroadcastable: true,
       delaySeconds: 30,
       delaySource: "snapshot",
+      ...targetOver,
     };
   }
   if (path === "/admin/streaming/recordings")
@@ -128,6 +131,7 @@ function route(method: string, path: string, body?: unknown): unknown {
 
 beforeEach(() => {
   state = baseState();
+  targetOver = {};
   calls.length = 0;
   apiMock.mockReset();
   apiMock.mockImplementation(async (m: string, p: string, b?: unknown) => route(m, p, b));
@@ -190,6 +194,33 @@ describe("EQ5b · controles", () => {
     expect(calls.find((c) => c.path === "/admin/streaming/start")!.body).toEqual({
       target: { kind: "battle", id: BATTLE },
     });
+  });
+
+  it.each([
+    ["battle_not_public", /batalla suelta con bots no públicos/],
+    ["tournament_not_broadcastable", /torneo se creó sin retransmisión pública/],
+  ])("VISIBILIDAD · destino bloqueado por %s: motivo REAL y «Iniciar» deshabilitado", async (reason, text) => {
+    targetOver = { broadcastable: false, publicBroadcastable: false, broadcastBlockedReason: reason };
+    render(<StreamingPage me={ME} route={`#/streaming?battle=${BATTLE}`} />);
+    const msg = await screen.findByTestId("stream-target-private");
+    expect(msg.getAttribute("data-reason")).toBe(reason);
+    expect(msg.textContent).toMatch(text);
+    expect((screen.getByTestId("stream-start") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("VISIBILIDAD · batalla de torneo retransmisible con bots privados: se puede iniciar y se explica qué se muestra", async () => {
+    targetOver = {
+      broadcastable: true,
+      publicBroadcastable: true,
+      broadcastBlockedReason: null,
+      tournamentBroadcast: true,
+    };
+    render(<StreamingPage me={ME} route={`#/streaming?battle=${BATTLE}`} />);
+    expect((await screen.findByTestId("stream-target-broadcast")).textContent).toMatch(
+      /ficha y su código siguen privados/,
+    );
+    expect(screen.queryByTestId("stream-target-private")).toBeNull();
+    expect((screen.getByTestId("stream-start") as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("sin destino, con emisión activa o con el streaming desactivado, «Iniciar» está deshabilitado", async () => {

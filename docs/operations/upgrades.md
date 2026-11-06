@@ -419,6 +419,20 @@ esquema ([first-run.md](first-run.md#comandos-prohibidos-en-producción)).
     `SELECT name FROM knex_migrations ORDER BY id;` y revertir la migración que se quiere **por
     nombre** con `rollback:name <NNN_tema>`, no con `rollback:1`.
 
+- **Visibilidad y retransmisión (encargo VISIBILIDAD, migración 019):**
+  - **Migración 019** (`019_visibility_broadcast`) hace dos cosas. Añade
+    `tournaments.broadcast` (boolean NOT NULL DEFAULT false), con el que el torneo autoriza su
+    retransmisión pública; todos los torneos existentes quedan en `false`, así que se comportan igual que
+    antes. Y reescribe `s9_bot_version_guard()` sin la cláusula que hacía irreversible `code_public`
+    (enmienda a D9); el resto del guardián no cambia. No toca ninguna fila. Probada en
+    `apps/api/src/db/migration-019.test.ts` (upgrade con datos, rollback y backup/restore lógico).
+  - **Vuelta atrás** (`rollback:name 019_visibility_broadcast`). El guardián vuelve a imponer D9: las
+    versiones cuyo código se ocultó siguen ocultas, porque no se toca ninguna fila; sólo deja de poder
+    volver a ocultarse lo público. Se pierde **sólo** la marca `broadcast` de los torneos: sus
+    batallas con bots no públicos vuelven a ser privadas y su emisión se rechaza. Antes de la vuelta
+    atrás, guardar `SELECT id FROM tournaments WHERE broadcast;` para restaurar la marca tras el
+    re-upgrade (`UPDATE tournaments SET broadcast = true WHERE id IN (…)`).
+
 ## Errores / limitaciones
 
 | Síntoma | Causa | Remedio |

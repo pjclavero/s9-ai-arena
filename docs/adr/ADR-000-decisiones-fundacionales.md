@@ -170,6 +170,11 @@ Sin penetración por ángulo, sin tipos de material frente a tipos de munición,
 
 **Impacto.** E7 modela `visibility` en bot y `codePublic` en bot_version. E7/T7.5 verifica por contrato que ningún endpoint público filtre código privado.
 
+**Enmienda (2026-11-06, encargo «VISIBILIDAD»).** Decisión de producto del operador: `codePublic` deja de ser irreversible. El dueño, y sólo él, puede volver a poner en privado el código de una versión (`PUT /bots/{id}/versions/{v}/code-visibility`, auditado como `bot.code_visibility_changed`). Lo aplica la migración `019_visibility_broadcast`, que quita sólo esa cláusula del guardián `s9_bot_version_guard`; el resto de la inmutabilidad de la versión sigue igual. Volver a privado corta todas las lecturas del código desde la plataforma (`canReadSource`: source, files, diff, `sourceSha256`). No puede retirar copias ya descargadas, y la web lo advierte. Además:
+
+- La visibilidad del bot, la visibilidad de su código, la elegibilidad para competir y la visibilidad en una retransmisión son **cuatro conceptos separados**. Participar o retransmitirse no cambia ni la visibilidad del bot ni `codePublic`.
+- Lo que se muestra en público de un bot no público queda restringido a lo que permite el torneo: sólo las batallas de un torneo creado con `broadcast` lo exponen. Lo que se expone es la **proyección de competición**: nombre, versión, bando, loadout en el campo, estadísticas deportivas y hash del artefacto. **No** se exponen el propietario, el código, el diagnóstico ni la CPU. Esto acota la frase «siempre son públicos… nombre, propietario…» de arriba, que el código ya no aplicaba desde UX-D/UX-F: el propietario no se publica.
+
 ---
 
 ## Constantes derivadas

@@ -255,13 +255,13 @@ describe("EQ6b · dos emisiones / operaciones cruzadas", () => {
 });
 
 describe("EQ6b · destino e IDs ajenos", () => {
-  it("CONTROL · batalla con bot privado de otro usuario ⇒ 409 target_not_public; id inexistente ⇒ 404; id no UUID ⇒ 400", async () => {
+  it("CONTROL · batalla con bot privado de otro usuario ⇒ 409 battle_not_public (batalla suelta, VISIBILIDAD); id inexistente ⇒ 404; id no UUID ⇒ 400", async () => {
     const p = await request(app)
       .post("/admin/streaming/start")
       .set(auth(admin))
       .send({ target: { kind: "battle", id: privateBattle } });
     expect(p.status).toBe(409);
-    expect(p.body.error).toBe("target_not_public");
+    expect(p.body.error).toBe("battle_not_public");
     expect(
       (
         await request(app)

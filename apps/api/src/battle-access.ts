@@ -14,8 +14,13 @@
  *  1-3. STAFF, PARTICIPANTE (dueño de un bot de B) o EQUIPO (bot no privado de
  *       B en un equipo del que eres miembro): igual que replay-access.ts, en
  *       cualquier estado (programada, en curso, terminada, fallida).
- *  4.   PÚBLICO con `S9_PUBLIC_REPLAYS_ENABLED`: B `finished` y sin bots no públicos.
- *  5.   PÚBLICO con `S9_PUBLIC_SPECTATE_ENABLED`: B `running` y sin bots no públicos.
+ *  4.   PÚBLICO con `S9_PUBLIC_REPLAYS_ENABLED`: B `finished` y mostrable en público.
+ *  5.   PÚBLICO con `S9_PUBLIC_SPECTATE_ENABLED`: B `running` y mostrable en público.
+ *  «Mostrable en público» (`wherePubliclyShowable`, replay-access.ts) = sin bots no
+ *  públicos o de un torneo con `broadcast` (VISIBILIDAD 2026-11). Mostrar la batalla
+ *  NO hace visible la ficha ni el código de sus bots: lo que sale es la proyección de
+ *  competición de `battleToJson` (nombre, versión, bando, resultado; sin dueño, sin
+ *  CPU ni diagnóstico, que siguen siendo de `canSeeBotDiagnostics`).
  * Fuera de eso: 404 uniforme, idéntico al de un id inexistente.
  *
  * Los DIAGNÓSTICOS por bot (y la CPU) son un nivel más estricto: sólo el dueño
@@ -25,7 +30,7 @@
 import type { Request } from "express";
 import type { Db } from "./db/connection.js";
 import { notFound } from "./errors.js";
-import { isReplayStaff, whereReplayReadable } from "./replay-access.js";
+import { isReplayStaff, wherePubliclyShowable, whereReplayReadable } from "./replay-access.js";
 
 type Auth = Request["auth"];
 
@@ -38,15 +43,11 @@ export interface BattleVisibility {
 export const BATTLE_NOT_FOUND_MESSAGE = "Batalla no encontrada";
 export const battleNotFound = () => notFound(BATTLE_NOT_FOUND_MESSAGE);
 
-/** Ningún bot participante de la batalla es no-público. */
-export function whereOnlyPublicBots(db: Db, q: any): any {
-  return q.whereNotExists(
-    db("participants")
-      .join("bots", "bots.id", "participants.bot_id")
-      .whereRaw("participants.battle_id = battles.id")
-      .whereNot("bots.visibility", "public"),
-  );
-}
+/**
+ * VISIBILIDAD · La batalla se puede mostrar en público: sin bots no públicos o de
+ * un torneo autorizado para retransmisión. Definición ÚNICA en replay-access.ts.
+ */
+export { wherePubliclyShowable };
 
 /** Restringe una consulta sobre `battles` a las que el solicitante puede leer. */
 export function whereBattleReadable(db: Db, q: any, auth: Auth, vis: BattleVisibility): any {
@@ -58,7 +59,7 @@ export function whereBattleReadable(db: Db, q: any, auth: Auth, vis: BattleVisib
     });
     // Vía 5: el directo público.
     if (vis.publicSpectate) {
-      w.orWhere((sub: any) => whereOnlyPublicBots(db, sub.where("battles.status", "running")));
+      w.orWhere((sub: any) => wherePubliclyShowable(db, sub.where("battles.status", "running")));
     }
   });
 }

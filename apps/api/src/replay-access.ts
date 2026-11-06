@@ -16,10 +16,15 @@
  *     criterio que TD-005 (`POST /battles`, `rating-history`): un bot `private`
  *     no se comparte ni con su equipo.
  *  4. PÚBLICO (anónimos y ajenos): SÓLO si `S9_PUBLIC_REPLAYS_ENABLED` está
- *     activada explícitamente Y B está `finished` Y NINGÚN bot participante es
- *     no-público (`private`/`team`). Activar la capability NO publica todos los
- *     ficheros: una batalla con un bot privado sigue siendo privada (coherente
- *     con la visibilidad de bots, TD-005/TD-047).
+ *     activada explícitamente Y B está `finished` Y B es MOSTRABLE EN PÚBLICO
+ *     (`wherePubliclyShowable`): NINGÚN bot participante es no-público
+ *     (`private`/`team`), o B pertenece a un torneo AUTORIZADO para retransmisión
+ *     (`tournaments.broadcast`, VISIBILIDAD 2026-11). Activar la capability NO
+ *     publica todos los ficheros: una batalla suelta con un bot privado sigue
+ *     siendo privada (coherente con la visibilidad de bots, TD-005/TD-047).
+ *     Mostrar una batalla en público NO publica sus bots: sólo su proyección de
+ *     competición (nombre, versión, bando, resultado, stats deportivas); la ficha
+ *     (`GET /bots/{id}`) y el código siguen detrás de `canSeeBot`/`canReadSource`.
  *
  * En cualquier otro caso: 404 `not_found`, IDÉNTICO al de un id que no existe o
  * de una batalla sin replay (sin enumeración por UUID: ni el código ni el
@@ -102,16 +107,36 @@ export async function getReadableReplayBattleOr404(
 }
 
 /**
+ * VISIBILIDAD (2026-11) · ÚNICA definición de «la batalla se puede MOSTRAR en
+ * público» (BROADCAST_VISIBILITY ≠ BOT_VISIBILITY). Cualquiera de:
+ *  - ningún bot participante es no-público (la regla histórica), o
+ *  - la batalla es de un torneo con `broadcast = true`: el torneo autoriza su
+ *    retransmisión pública. Lo fija el organizador al crearlo y no cambia; quien
+ *    inscribe un bot lo sabe antes de inscribirlo. La política es del TORNEO,
+ *    nunca del bot: participar no cambia `bots.visibility` ni `code_public`.
+ * La usan el replay público (vía 4), el directo público (battle-access, vía 5),
+ * las rutas `/public/*` y el precheck de streaming: lo que la administración deja
+ * emitir es exactamente lo que /broadcast (anónima) puede leer.
+ */
+export function wherePubliclyShowable(db: Knexish, q: any): any {
+  return q.where((w: any) =>
+    w
+      .whereNotExists(
+        db("participants")
+          .join("bots", "bots.id", "participants.bot_id")
+          .whereRaw("participants.battle_id = battles.id")
+          .whereNot("bots.visibility", "public"),
+      )
+      .orWhereExists(
+        db("tournaments").whereRaw("tournaments.id = battles.tournament_id").where("tournaments.broadcast", true),
+      ),
+  );
+}
+
+/**
  * Predicado de replay PÚBLICO (vía 4) para las rutas `/public/replays*`, que no
- * miran la sesión: finished + capability + ningún bot no-público.
+ * miran la sesión: finished + capability + mostrable en público.
  */
 export function wherePublicReplay(db: Knexish, q: any): any {
-  return q
-    .where("battles.status", "finished")
-    .whereNotExists(
-      db("participants")
-        .join("bots", "bots.id", "participants.bot_id")
-        .whereRaw("participants.battle_id = battles.id")
-        .whereNot("bots.visibility", "public"),
-    );
+  return wherePubliclyShowable(db, q.where("battles.status", "finished"));
 }

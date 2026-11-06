@@ -30,7 +30,17 @@ export interface TournamentBattle {
 interface OwnBot {
   id: string;
   name: string;
+  visibility?: string;
   latestPublishedVersion?: number;
+}
+
+/** VISIBILIDAD (§26) · texto ÚNICO para inscribir un bot no público: nunca «hazlo público». */
+export function entryPrivacyNote(visibility: string | undefined, broadcast: boolean | undefined): string | null {
+  if (visibility === "public" || visibility === undefined) return null;
+  const quien = visibility === "team" ? "Este bot es de equipo." : "Este bot es privado.";
+  return broadcast
+    ? `${quien} Durante las batallas públicas se mostrarán únicamente sus datos de competición; su código seguirá privado.`
+    : `${quien} Puede participar igual; sus batallas sólo las verán sus participantes, su equipo y la organización.`;
 }
 
 const POLL_MS = 5000;
@@ -146,6 +156,12 @@ export function TournamentDetailPage(props: { id: string; me: Me }) {
                   {labelOf(TOURNAMENT_STATE_NAME, t.state)}
                 </strong>{" "}
                 · {t.entryCount ?? 0} inscritos
+                {t.broadcast && (
+                  <>
+                    {" "}
+                    · <strong data-testid="tournament-broadcast-badge">retransmisión pública</strong>
+                  </>
+                )}
               </p>
               {t.state === "open" && (
                 <form onSubmit={onEnter}>
@@ -163,6 +179,16 @@ export function TournamentDetailPage(props: { id: string; me: Me }) {
                     </select>
                   </label>{" "}
                   <button type="submit">Inscribir</button>{" "}
+                  {(() => {
+                    const chosen =
+                      ownBots.status === "ready" ? ownBots.data.items.find((b) => b.id === entryBot) : undefined;
+                    const note = chosen ? entryPrivacyNote(chosen.visibility, t.broadcast) : null;
+                    return note ? (
+                      <p className="note" data-testid="entry-privacy-note">
+                        {note}
+                      </p>
+                    ) : null;
+                  })()}
                   <button type="button" onClick={onCloseEntries}>
                     Cerrar inscripciones
                   </button>

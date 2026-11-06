@@ -95,10 +95,14 @@ export function StreamingHelp() {
       </p>
       <h4>Branding</h4>
       <p>Nombre del evento, logo (https:// o una ruta del propio sitio) y dos colores #hex, con vista previa.</p>
-      <h4>Sólo se emite lo público</h4>
+      <h4>Qué se puede emitir</h4>
       <p>
-        <code>/broadcast</code> es una vista anónima: sólo puede mostrar batallas cuyos bots sean públicos (y la
-        instalación tiene que tener activado el directo público).
+        <code>/broadcast</code> es una vista anónima (y la instalación tiene que tener activado el directo público).
+        Puede mostrar las batallas cuyos bots son todos públicos y todas las batallas de un torneo creado con
+        «Retransmisión pública», también las de bots privados o de equipo. De esos bots sólo salen sus datos de
+        competición (nombre, versión, equipo, vehículo, marcador y resultado). Emitir no cambia la visibilidad de ningún
+        bot ni de su código. Una batalla de práctica con bots no públicos se rechaza con <code>battle_not_public</code>;
+        la de un torneo sin retransmisión pública, con <code>tournament_not_broadcastable</code>.
       </p>
     </div>
   );

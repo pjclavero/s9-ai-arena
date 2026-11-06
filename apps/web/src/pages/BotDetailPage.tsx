@@ -15,11 +15,13 @@ import { ErrorState } from "../ui/primitives.js";
 import { useSessionDraft } from "../ui/draft.js";
 import { BuildDiagnosisView, diagnoseBuild } from "../build-diagnosis.js";
 import { isBattleEligible, VersionEligibilityNote, type BattleEligibilityInfo } from "../version-eligibility.js";
+import { BotVisibilityControl, CodeVisibilityControl, botVisibilityLabel, BOT_VISIBILITY_NOTE } from "../visibility.js";
 
 export interface BotInfo {
   id: string;
   name: string;
   ownerId: string;
+  teamId?: string;
   visibility: string;
   latestPublishedVersion?: number;
   createdAt: string;
@@ -32,6 +34,8 @@ export interface VersionInfo {
   loadoutRevision: number;
   artifactHash?: string;
   rejectionReason?: string;
+  /** VISIBILIDAD · el código de ESTA versión es público (independiente de bot.visibility). */
+  codePublic?: boolean;
   createdAt: string;
   parentVersion?: number;
   validatedBuildId?: string;
@@ -281,6 +285,8 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
   if (!bot || !versions) return <p role="status">Cargando el bot…</p>;
 
   const isOwner = props.meId === undefined || props.meId === bot.ownerId;
+  // VISIBILIDAD · los controles de visibilidad sólo para el dueño IDENTIFICADO (la API manda igual).
+  const canEditVisibility = props.meId !== undefined && props.meId === bot.ownerId;
   // UX-B · B6 · la versión que usan las batallas nuevas es la publicada más alta.
   // ELIG · y elegible: una publicada no elegible se conserva pero no juega batallas nuevas.
   const publishedVersions = versions
@@ -329,7 +335,18 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
 
       {tab === "overview" && (
         <div className="card" data-testid="panel-overview">
-          <p>Visibilidad: {bot.visibility}</p>
+          {canEditVisibility ? (
+            <BotVisibilityControl
+              botId={bot.id}
+              visibility={bot.visibility}
+              hasTeam={!!bot.teamId}
+              onChanged={(visibility) => setBot({ ...bot, visibility })}
+            />
+          ) : (
+            <p data-testid="bot-visibility-readonly">
+              Visibilidad: {botVisibilityLabel(bot.visibility)} <small>· {BOT_VISIBILITY_NOTE}</small>
+            </p>
+          )}
           <p>
             Versión publicada más reciente: {bot.latestPublishedVersion ? `v${bot.latestPublishedVersion}` : "ninguna"}
           </p>
@@ -439,6 +456,7 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
                 <th>Build</th>
                 <th>Artefacto</th>
                 <th>Publicada</th>
+                <th>Código</th>
                 <th>Acciones</th>
               </tr>
             </thead>
@@ -466,6 +484,24 @@ export function BotDetailPage(props: { botId: string; meId?: string; initialTab?
                     <td>{d?.latestBuild ? d.latestBuild.status : "sin build"}</td>
                     <td title={d?.artifact?.hash}>{short(d?.artifact?.hash ?? v.artifactHash)}</td>
                     <td>{v.publishedAt ? when(v.publishedAt) : v.state === "published" ? "sí" : "no"}</td>
+                    <td data-testid={`code-cell-${v.version}`}>
+                      {canEditVisibility ? (
+                        <CodeVisibilityControl
+                          botId={bot.id}
+                          version={v.version}
+                          codePublic={v.codePublic === true}
+                          onChanged={(codePublic) =>
+                            setVersions((cur) =>
+                              cur ? cur.map((x) => (x.version === v.version ? { ...x, codePublic } : x)) : cur,
+                            )
+                          }
+                        />
+                      ) : v.codePublic ? (
+                        "público"
+                      ) : (
+                        "privado"
+                      )}
+                    </td>
                     <td>
                       <button
                         type="button"
