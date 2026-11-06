@@ -3,7 +3,7 @@
  *  - #241 R4-3 · el logger redacta POR VALOR (replacer), no la línea serializada:
  *    con `\n` + 7 caracteres de la clave la línea dejaba de ser JSON (`\***`);
  *  - #241 R4-1 · `/control/stop` CONDICIONADO a la sesión (`ifSession`);
- *  - §12 · SIGTERM y SIGKILL tras la espera, al GRUPO de procesos;
+ *  - §12 · SIGTERM y SIGKILL tras la espera, al ÁRBOL de procesos;
  *  - §20/§31 NO_ORPHAN_PROCESS con procesos REALES (hijos de un «chromium» de prueba);
  *  - §31 FFMPEG_START_FAILURE con el ffmpeg REAL del sistema (x11grab sin display);
  *  - §28 métricas `stream_*`; §30 rotación de la clave heredada sin reiniciar;
@@ -405,7 +405,7 @@ const alive = (pid: number) => {
 
 describe("STREAMER · §20/§31 NO_ORPHAN_PROCESS con procesos reales", () => {
   for (const ignoreTerm of [false, true]) {
-    it(`tras STOP no queda NINGÚN proceso del grupo (hijos incluidos)${ignoreTerm ? " aunque ignoren SIGTERM (SIGKILL al grupo)" : ""}`, async () => {
+    it(`tras STOP no queda NINGÚN proceso del árbol (hijos incluidos)${ignoreTerm ? " aunque ignoren SIGTERM (SIGKILL al árbol)" : ""}`, async () => {
       const dir = mkdtempSync(join(tmpdir(), "s9-orphan-"));
       const browser = fakeBrowser(dir, ignoreTerm);
       const ff = fakeBrowser(join(dir), ignoreTerm);
@@ -414,7 +414,7 @@ describe("STREAMER · §20/§31 NO_ORPHAN_PROCESS con procesos reales", () => {
         config: { ...DEFAULT_CONFIG, mode: "record", recordDir: dir },
         spawner: realSpawner,
         logger: createLogger(null, (l) => lines.push(l)),
-        processGroups: true,
+        processTree: true,
         stopGraceMs: 300,
         chromiumBin: browser.bin,
         ffmpegBin: ff.bin,
@@ -447,7 +447,7 @@ describe.skipIf(!hasFfmpeg && !mustRunFfmpeg)("STREAMER · §31 FFMPEG_START_FAI
       config: { ...DEFAULT_CONFIG, mode: "record", recordDir: dir, display: ":987", maxRetries: 2, retryDelayMs: 50 },
       spawner: realSpawner,
       logger: createLogger(null, (l) => lines.push(l)),
-      processGroups: true,
+      processTree: true,
       stopGraceMs: 300,
       chromiumBin: browser.bin,
       ffmpegBin: "ffmpeg",

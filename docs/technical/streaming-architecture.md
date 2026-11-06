@@ -66,7 +66,7 @@ cabecera). No tiene lógica de juego.
 | Pantalla de administración | `apps/web/src/pages/StreamingPage.tsx` | estado, destino, configuración, credenciales (sólo `****ABCD`), Start/Stop/Reiniciar |
 | API de administración | `apps/api/src/routes/streaming.ts`, `apps/api/src/services/streaming.ts` | RBAC admin, configuración, sellado, sesiones en BD, cerrojo, compensación, reconciliador, retención |
 | Cliente del control | `apps/api/src/services/streamer-client.ts` | HTTP con `x-streamer-auth` (secreto releído en cada llamada), plazo de 10 s |
-| Entrypoint del streamer | `apps/streamer/src/main.ts`, `infrastructure/docker/streamer/entrypoint.sh` | Xvfb, API de control, spawner real con grupos de procesos, apagado ordenado |
+| Entrypoint del streamer | `apps/streamer/src/main.ts`, `infrastructure/docker/streamer/entrypoint.sh` | Xvfb, API de control, spawner real, apagado ordenado |
 | Supervisor | `apps/streamer/src/supervisor.ts` | lanza Chromium y ffmpeg, reintentos, SIGTERM→SIGKILL, contadores |
 | Control interno | `apps/streamer/src/control.ts` | `/control/start`, `/control/stop`, `/control/test`, `/status`, `/metrics`, `/healthz`, `/version`, grabaciones |
 | Plan de sesión | `apps/streamer/src/session.ts` | valida la orden (SSRF de `/broadcast`, rangos, NVENC confirmado, credencial sellada) |
@@ -153,12 +153,16 @@ Ninguno contiene la clave, la credencial ni la línea de ffmpeg con secretos (ff
 - **API:** marca la sesión `stopped` en BD **antes** de llamar al streamer, dentro del cerrojo. Es
   idempotente (`wasActive: false`). Si el streamer no responde, la sesión queda parada y la API
   responde 503 `streamer_unavailable`, salvo con `force`.
-- **Streamer:** cierra el relé y manda SIGTERM al **grupo de procesos** de ffmpeg y al de Chromium.
-  Cada hijo se lanza con `detached`, de modo que zygote, GPU y renderers caen juntos. Pasada la gracia
-  de 5 s (`STOP_GRACE_MS`), manda SIGKILL al grupo y lo cuenta en `stream_killed_total`. Un stop
+- **Streamer:** cierra el relé y manda SIGTERM al **árbol** de ffmpeg y al de Chromium, es decir,
+  al proceso y a todos sus descendientes (zygote, GPU, renderers). El árbol se lee de `/proc` por
+  ppid y cada pid se guarda con su instante de arranque, para no señalar un pid reutilizado. Pasada la
+  gracia de 5 s (`STOP_GRACE_MS`), vuelve a leer el árbol, manda SIGKILL a lo que siga vivo y lo
+  cuenta en `stream_killed_total`. Los hijos **siguen en el grupo de procesos del servicio**, así que
+  si el servicio muere de golpe, su grupo se los lleva. Un primer intento con `detached` los sacaba
+  del grupo, y lo detectó `packages/test-process/no-orphans.test.ts` en la CI. Un stop
   repetido no rompe nada. No hay ficheros temporales ni locks propios. En modo grabación, ffmpeg cierra
   el MP4 al recibir SIGTERM.
-- **Contenedor:** `init: true` (tini) recoge los descendientes que se salen del grupo, como los
+- **Contenedor:** `init: true` (tini) recoge los descendientes que se salen del árbol, como los
   `chrome_crashpad_handler` que se re-parentan a PID 1. Al recibir SIGTERM, el proceso espera hasta
   6 s a que los hijos salgan.
 
@@ -323,7 +327,7 @@ Auditoría frente a las 39 secciones del encargo STREAMER (2026-11-06). **Exist�
 | 9 Perfil | 1080p30 4500k | medido (ver streaming.md) |
 | 10 Audio | `anullsrc` | decisión documentada |
 | 11 START | RBAC, destino público, credencial atada, LIVE sólo con el relé publicando | **recuperación**: START tras FAILED o tras reiniciar el streamer |
-| 12 STOP | idempotente, sólo SIGTERM | SIGTERM → 5 s → SIGKILL al **grupo** |
+| 12 STOP | idempotente, sólo SIGTERM | SIGTERM → 5 s → SIGKILL al **árbol** de procesos |
 | 13 Crash | reintentos → `failed` | re-START (RESTART_RECOVERY), probado con ffmpeg real y SIGKILL |
 | 14 Reconciliador | 30 s, foto del streamer y luego la BD | **R4-1**: doble lectura, stop condicionado, auditoría sin bucle, sin solapes |
 | 15 Servicio | healthcheck, restart, límites | `pids` e `init` |
@@ -349,7 +353,7 @@ Auditoría frente a las 39 secciones del encargo STREAMER (2026-11-06). **Exist�
 | ffmpeg sin destino ni clave | `apps/streamer/src/ffmpeg.ts` (`pipe:3`), `apps/streamer/tests/secret-surfaces.test.ts` |
 | Stop condicionado | `apps/streamer/src/control.ts` (`ifSession`), `apps/streamer/src/streamer-real.test.ts` |
 | Doble lectura del reconciliador | `apps/api/src/routes/streaming.ts` (`reconcileOrphanEmission`), `apps/api/src/streamer-real.test.ts` |
-| SIGKILL al grupo y ningún huérfano | `apps/streamer/src/supervisor.ts` (`terminate`), `apps/streamer/src/main.ts` (`realSpawner`), `streamer-real.test.ts` |
+| SIGKILL al árbol y ningún huérfano | `apps/streamer/src/supervisor.ts` (`terminate`, `processTree`), `apps/streamer/src/main.ts` (`realSpawner`), `streamer-real.test.ts`, `packages/test-process/no-orphans.test.ts` |
 | Log con JSON válido | `apps/streamer/src/config.ts` (`createLogger`), `streamer-real.test.ts` |
 | Lista cerrada de migraciones | `apps/api/src/db/migrations.ts` (`NAMED_ROLLBACK_ALLOWED`) |
 | Aislamiento | `infrastructure/docker-compose.yml` (servicio `streamer`), `tests/streaming-e2e/measure.sh` (`hardening.txt`) |

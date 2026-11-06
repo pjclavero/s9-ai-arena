@@ -18,7 +18,7 @@ emisión **ya no va al argv de FFmpeg** (relé RTMP en el propio streamer) y se 
 
 **Actualización STREAMER (2026-11-06, rama `equipo5/streamer-real`):** cierre del streamer para
 producción. Corrige los P3 de #241 (R4-1 reconciliador, R4-2 `rollback:name`, R4-3 JSON del log) y
-añade: parada con SIGKILL al grupo de procesos (sin Chromium huérfanos), START tras una emisión
+añade: parada con SIGKILL al árbol de procesos (sin Chromium huérfanos), START tras una emisión
 abandonada o un reinicio del streamer, `lastSession`, métricas `stream_*` y aislamiento del servicio
 (`cap_drop: ALL`, `init`, `pids`, `shm_size`). Incluye recursos medidos, rotación, backup/restore y el
 plan de despliegue y rollback. La arquitectura comprobada contra el código está en
@@ -265,9 +265,13 @@ Medición del 2026-11-06 con `tests/streaming-e2e/measure.sh`, en local y nunca 
   legible. `/broadcast` **no tiene minimapa**. Defecto de UX fuera de alcance (STR-6): a veces un
   tanque queda bajo el marcador superior.
 
+Una segunda medición más corta (90 s en LIVE, con la imagen final de la rama) dio CPU_AVG 221 %,
+CPU_PEAK 274 %, RSS_AVG 640 MiB y RSS_PEAK **693 MiB**, con `/dev/shm` en 55 MiB y 14/14
+comprobaciones. La memoria varía entre ejecuciones: hay que contar con **hasta ~0,7 GiB**.
+
 **Extrapolación al host de producción (con incertidumbre):** no se ha medido allí, por la regla de
 no tocar producción. Con el mismo tipo de vCPU, una emisión 1080p30 necesita **unas 2,6 vCPU
-sostenidas (picos de 3)** y **unos 0,5 GiB**, más un margen para escenas con más bots y efectos. EQ5
+sostenidas (picos de 3)** y **entre 0,5 y 0,7 GiB**, más un margen para escenas con más bots y efectos. EQ5
 midió del orden de 2,6 CPU en otra batalla. Con 720p30 la carga del codificador baja, pero Chromium
 sigue componiendo a 1920×1080 (SwiftShader), que es buena parte del coste. Las fuentes de
 incertidumbre son:
@@ -405,7 +409,7 @@ autorización:
 | «Reconectando» en bucle | alerta `StreamerRestartLoop`, `stream_reconnects_total` | cortes de red o la ingesta cierra la conexión |
 | «Abandonada» | `stream_failures_total`, `lastError` | más de 20 reintentos seguidos; corrige la causa y pulsa **Iniciar** |
 | Pantalla negra o congelada | alerta `StreamerNoProgress`, fotogramas del MP4 | Chromium caído (se relanza solo); `/broadcast` sin directo público |
-| Procesos acumulados | `docker compose exec streamer ps -o pid,ppid,stat,args`, `stream_killed_total` | no debería ocurrir (grupos de procesos + init); si `stream_killed_total` sube, hay hijos que no atienden SIGTERM |
+| Procesos acumulados | `docker compose exec streamer ps -o pid,ppid,stat,args`, `stream_killed_total` | no debería ocurrir (parada del árbol + init); si `stream_killed_total` sube, hay hijos que no atienden SIGTERM |
 
 ## Pruebas (§31)
 
@@ -473,7 +477,7 @@ scripts locales). Las marcadas con ⚙ ejecutan **ffmpeg o procesos reales**.
 | R4-2 (#241) | P3 | `rollback:name 001_identity` ejecutaba `DROP … CASCADE` sin salvaguarda | **corregido** (STREAMER): lista cerrada 016/017/018 |
 | R4-3 (#241) | P3 | La redacción sobre la línea ya serializada dejaba líneas de log que no eran JSON (`\***`) | **corregido** (STREAMER): redacción por valor en el `replacer` |
 | R4-obs (#241) | P3 | `orphan_stopped` en cada tick si el stop falla; `outcome: stopped` sin nada emitiendo; AUTOSTART parado sin documentar | **corregidos** (una auditoría por emisión; `nothing_to_stop`; documentado en la arquitectura) |
-| STR-1 | P2 | STOP sólo con SIGTERM al proceso padre: un hijo que no lo atendiera, o los hijos de Chromium, podían quedar vivos | **corregido**: grupos de procesos, SIGKILL tras 5 s e `init: true` |
+| STR-1 | P2 | STOP sólo con SIGTERM al proceso padre: un hijo que no lo atendiera, o los hijos de Chromium, podían quedar vivos | **corregido**: SIGTERM al árbol (leído de `/proc`), SIGKILL tras 5 s e `init: true` |
 | STR-2 | P2 | START tras una emisión abandonada o un reinicio del streamer respondía `alreadyActive` y no emitía | **corregido**: la sesión muerta se cierra (`not_emitting`, auditado) y se arranca |
 | STR-3 | P3 | El contrato no declaraba `starting` en `uxState` | **corregido** (contrato 0.14.0) |
 | STR-4 | P3 | Servicio sin `cap_drop`, sin límite de pids y con el /dev/shm por defecto (54 de 64 MiB usados en 12 min) | **corregido** en el Compose |

@@ -64,17 +64,15 @@ function probeNvenc(ffmpegBin: string, caps: Capabilities): void {
 }
 
 /**
- * STREAMER §12/§20 · spawner REAL: cada hijo en su PROPIO grupo de procesos
- * (`detached`), y el supervisor (processGroups) manda SIGTERM —y SIGKILL tras la
- * espera— al grupo entero: no quedan renderers/zygote de Chromium huérfanos.
+ * STREAMER §12/§20 · spawner REAL. Los hijos se quedan en el grupo de procesos
+ * del servicio (si el servicio muere de golpe, su grupo se los lleva) y el
+ * supervisor (`processTree`) para el ÁRBOL de cada uno leyendo /proc: no quedan
+ * renderers/zygote de Chromium huérfanos.
  * EQ5b §3 · ffmpeg recibe un 4.º descriptor (fd 3) por el que escribe el FLV que
  * publica el relé RTMP; Chromium no lo recibe.
  */
 export const realSpawner: Spawner = (cmd, args, o) =>
-  spawn(cmd, args, {
-    stdio: o?.mediaFd ? ["ignore", "pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"],
-    detached: o?.group === true,
-  });
+  spawn(cmd, args, { stdio: o?.mediaFd ? ["ignore", "pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"] });
 
 export function main(env: NodeJS.ProcessEnv = process.env): void {
   const config = loadConfig(env);
@@ -114,7 +112,7 @@ export function main(env: NodeJS.ProcessEnv = process.env): void {
     logger,
     secrets,
     allowPlainRtmp,
-    processGroups: true,
+    processTree: true,
     chromiumBin: env.CHROMIUM_BIN ?? "chromium-browser",
     ffmpegBin: env.FFMPEG_BIN ?? "ffmpeg",
   });

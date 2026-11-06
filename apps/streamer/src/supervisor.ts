@@ -22,6 +22,7 @@
  * y empuja vídeo hacia fuera.
  */
 import { EventEmitter } from "node:events";
+import { readdirSync, readFileSync } from "node:fs";
 import type { Readable } from "node:stream";
 import type { Duplex } from "node:stream";
 import { buildChromiumArgs, buildFfmpegArgs, MEDIA_FD, redactArgs } from "./ffmpeg.js";
@@ -42,16 +43,7 @@ export interface SpawnedProcess extends EventEmitter {
   kill(signal?: NodeJS.Signals): boolean | void;
 }
 
-/**
- * `group`: el hijo encabeza su PROPIO grupo de procesos (spawn `detached`), de
- * modo que la señal llega también a sus descendientes (Chromium lanza zygote,
- * GPU y renderers: matar sólo al padre los dejaba huérfanos).
- */
-export type Spawner = (
-  command: string,
-  args: string[],
-  opts?: { mediaFd?: boolean; group?: boolean },
-) => SpawnedProcess;
+export type Spawner = (command: string, args: string[], opts?: { mediaFd?: boolean }) => SpawnedProcess;
 
 /** Espera tras SIGTERM antes de SIGKILL (§12). */
 export const STOP_GRACE_MS = 5000;
@@ -75,11 +67,11 @@ export interface SupervisorOptions {
   /** Sólo pruebas locales: admite `rtmp://` sin TLS (STREAMER_ALLOW_PLAIN_RTMP=1). */
   allowPlainRtmp?: boolean;
   /**
-   * El spawner real crea grupos de procesos (`group`): las señales se mandan al
-   * GRUPO (`kill(-pid)`). Nunca con procesos falsos (un pid inventado sería un
-   * grupo ajeno).
+   * Procesos REALES: la parada señala el ÁRBOL entero de cada hijo (sus
+   * descendientes, leídos de /proc). Nunca con procesos falsos (un pid inventado
+   * sería un proceso ajeno).
    */
-  processGroups?: boolean;
+  processTree?: boolean;
   /** Espera entre SIGTERM y SIGKILL (por defecto STOP_GRACE_MS). */
   stopGraceMs?: number;
 }
@@ -123,8 +115,8 @@ export class StreamSupervisor {
   private fingerprint: string | null = null;
   private readonly secrets: SecretRegistry;
   readonly counters: StreamCounters = { starts: 0, stops: 0, failures: 0, killed: 0 };
-  /** Hijos señalados que aún no han salido (huérfanos potenciales). */
-  private readonly terminating = new Set<SpawnedProcess>();
+  /** Paradas en curso: hijos (y sus descendientes) señalados que aún no han salido. */
+  private readonly terminating = new Set<{ alive: () => boolean }>();
 
   constructor(private readonly opts: SupervisorOptions) {
     this.broadcastUrl = opts.config.broadcastUrl;
@@ -260,41 +252,78 @@ export class StreamSupervisor {
 
   /** Procesos hijos señalados que todavía no han terminado (0 = sin huérfanos pendientes). */
   get pendingChildren(): number {
-    return this.terminating.size;
+    let n = 0;
+    for (const t of [...this.terminating]) {
+      if (t.alive()) n++;
+      else this.terminating.delete(t);
+    }
+    return n;
   }
 
   /**
-   * §12 · SIGTERM y, si el proceso no ha salido en `stopGraceMs`, SIGKILL. Con
-   * grupos de procesos la señal va al GRUPO entero (Chromium y sus hijos).
+   * §12/§20 · SIGTERM al proceso y a TODOS sus descendientes y, si alguno sigue
+   * vivo pasados `stopGraceMs`, SIGKILL. Con procesos reales (`processTree`) el
+   * árbol se lee de /proc (ppid) al parar y otra vez al escalar, y cada pid se
+   * guarda con su instante de arranque para no señalar a un proceso ajeno que
+   * reutilice el pid. Los hijos NO se sacan del grupo de procesos del servicio:
+   * si el propio servicio muere de golpe (SIGKILL al grupo, el contenedor que
+   * se para), su grupo se los lleva también.
    */
   private terminate(proc: SpawnedProcess | null, name: string): void {
     if (!proc) return;
+    const grace = this.opts.stopGraceMs ?? STOP_GRACE_MS;
+    if (this.opts.processTree && proc.pid) {
+      const tracked = processTree(proc.pid);
+      const alive = () => [...tracked].some(([pid, start]) => sameProcess(pid, start));
+      const signalAll = (sig: NodeJS.Signals) => {
+        for (const [pid, start] of tracked) {
+          if (!sameProcess(pid, start)) continue;
+          try {
+            process.kill(pid, sig);
+          } catch {
+            /* ya no existe */
+          }
+        }
+      };
+      if (!alive()) return;
+      const t = { alive };
+      this.terminating.add(t);
+      signalAll("SIGTERM");
+      const timer = setTimeout(() => {
+        // Los que nacieron entre la lectura y la señal (o siguen colgando del padre).
+        for (const [pid, start] of processTree(proc.pid!)) tracked.set(pid, start);
+        if (alive()) {
+          this.counters.killed++;
+          this.opts.logger("warn", "proceso sin salir tras SIGTERM: SIGKILL", { process: name });
+          signalAll("SIGKILL");
+        }
+        this.terminating.delete(t);
+      }, grace);
+      timer.unref?.();
+      return;
+    }
+    // Procesos inyectados (pruebas): sólo el propio proceso.
     const exited = () => (proc.exitCode !== undefined && proc.exitCode !== null) || !!proc.signalCode;
     if (exited()) return;
-    const signal = (sig: NodeJS.Signals) => {
-      try {
-        if (this.opts.processGroups && proc.pid) process.kill(-proc.pid, sig);
-        else proc.kill(sig);
-      } catch {
-        /* ya no existe */
+    let done = false;
+    const t = { alive: () => !done };
+    proc.once("exit", () => {
+      done = true;
+    });
+    this.terminating.add(t);
+    try {
+      proc.kill("SIGTERM");
+    } catch {}
+    const timer = setTimeout(() => {
+      if (!done) {
+        this.counters.killed++;
+        this.opts.logger("warn", "proceso sin salir tras SIGTERM: SIGKILL", { process: name });
+        try {
+          proc.kill("SIGKILL");
+        } catch {}
       }
-    };
-    this.terminating.add(proc);
-    let timer: NodeJS.Timeout | null = null;
-    const done = () => {
-      this.terminating.delete(proc);
-      if (timer) clearTimeout(timer);
-      timer = null;
-    };
-    proc.once("exit", done);
-    signal("SIGTERM");
-    timer = setTimeout(() => {
-      timer = null;
-      if (!this.terminating.has(proc)) return;
-      this.counters.killed++;
-      this.opts.logger("warn", "proceso sin salir tras SIGTERM: SIGKILL", { process: name });
-      signal("SIGKILL");
-    }, this.opts.stopGraceMs ?? STOP_GRACE_MS);
+      this.terminating.delete(t);
+    }, grace);
     timer.unref?.();
   }
 
@@ -326,7 +355,7 @@ export class StreamSupervisor {
   private launchChromium(): void {
     const gen = this.generation;
     const args = buildChromiumArgs(this.effectiveConfig, this.broadcastUrl);
-    this.chromium = this.opts.spawner(this.opts.chromiumBin ?? "chromium-browser", args, { group: true });
+    this.chromium = this.opts.spawner(this.opts.chromiumBin ?? "chromium-browser", args);
     this.chromium.on("exit", (code: unknown) => {
       if (gen !== this.generation || this.state_ === "stopped") return;
       // Chromium caído = pantalla negra: cuenta como corte y se relanza junto a ffmpeg.
@@ -373,10 +402,7 @@ export class StreamSupervisor {
       });
     }
 
-    const child = this.opts.spawner(this.opts.ffmpegBin ?? "ffmpeg", plan.args, {
-      mediaFd: cfg.mode === "rtmps",
-      group: true,
-    });
+    const child = this.opts.spawner(this.opts.ffmpegBin ?? "ffmpeg", plan.args, { mediaFd: cfg.mode === "rtmps" });
     this.ffmpeg = child;
     // Solo argv REDACTADO sale por el logger (y desde EQ5b ya no contiene la clave).
     this.opts.logger("info", "ffmpeg lanzado", {
@@ -441,4 +467,53 @@ export class StreamSupervisor {
     this.opts.logger("info", "reintento de emisión", { attempt: this.attempts });
     this.launch();
   }
+}
+
+/** Campos de /proc/<pid>/stat tras el nombre: [estado, ppid, …, starttime (índice 19)]. */
+function statFields(pid: number): string[] | null {
+  try {
+    const st = readFileSync(`/proc/${pid}/stat`, "utf8");
+    return st.slice(st.lastIndexOf(")") + 2).split(" ");
+  } catch {
+    return null;
+  }
+}
+
+/** ¿El pid sigue siendo EL MISMO proceso (mismo arranque) y no es un zombi? */
+function sameProcess(pid: number, start: string): boolean {
+  const f = statFields(pid);
+  return !!f && f[19] === start && f[0] !== "Z";
+}
+
+/** `root` y todos sus descendientes vivos (pid → instante de arranque), leídos de /proc. */
+export function processTree(root: number): Map<number, string> {
+  const children = new Map<number, number[]>();
+  const starts = new Map<number, string>();
+  let entries: string[] = [];
+  try {
+    entries = readdirSync("/proc");
+  } catch {
+    entries = [];
+  }
+  for (const d of entries) {
+    if (!/^\d+$/.test(d)) continue;
+    const f = statFields(Number(d));
+    if (!f || f[0] === "Z") continue;
+    const pid = Number(d);
+    const ppid = Number(f[1]);
+    starts.set(pid, f[19]);
+    const list = children.get(ppid);
+    if (list) list.push(pid);
+    else children.set(ppid, [pid]);
+  }
+  const out = new Map<number, string>();
+  const queue = [root];
+  while (queue.length) {
+    const pid = queue.shift()!;
+    const start = starts.get(pid);
+    if (start === undefined || out.has(pid)) continue;
+    out.set(pid, start);
+    queue.push(...(children.get(pid) ?? []));
+  }
+  return out;
 }
