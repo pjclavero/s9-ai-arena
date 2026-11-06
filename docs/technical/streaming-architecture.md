@@ -218,7 +218,7 @@ recomprobaciones cubren las carreras (ADR-023). El Compose despliega una sola r�
   framebuffer con `x11grab -draw_mouse 0`. No depende de ninguna sesión gráfica humana.
 - **Codificación** (`ffmpeg.ts`): `libx264 -preset veryfast -tune zerolatency`, `-b:v` = `-maxrate` =
   bitrate configurado, `-bufsize` = 2× el bitrate (**VBR con techo**, no CBR: x264 sólo se acerca al
-  techo con escenas complejas; medido de 339 a ≈ 985 kbit/s en la ingesta frente a 3000-4500 kbit/s
+  techo con escenas complejas; medido de ≈ 270 a ≈ 1130 kbit/s en la ingesta frente a 3000-4500 kbit/s
   configurados. Con NVENC sí se pide `-rc cbr`), `yuv420p`, GOP = 2 × FPS (un keyframe cada 2 s,
   como pide YouTube) y AAC a 128 kbit/s. El preset 720p escala con `scale=…:flags=bicubic`. NVENC
   sólo se usa si el runtime lo confirma codificando un frame, y la imagen Alpine no lo incluye.
@@ -281,7 +281,7 @@ rotación, el backup y el restore se describen en [streaming.md](../operations/s
   `stream_reconnects_total`, `stream_uptime_seconds`, `stream_frames_total`,
   `stream_dropped_frames_total` y `stream_killed_total`. Frames y descartes son el `frame` y el
   `drop_frames` del `-progress` del ffmpeg en curso (se reinician al relanzarlo). Los descartes no
-  son 0 en la práctica (≈ 0,7-0,8 % medido; ver streaming.md).
+  son 0 en la práctica (≈ 0,6-0,8 % medido; ver streaming.md).
 - **Métricas de la API:** `s9_streaming_enabled` y `s9_streaming_session_active`.
 - **Healthcheck del contenedor:** `wget http://localhost:8090/healthz` cada 30 s. El estado de la
   emisión se vigila con las alertas, no con el healthcheck: una emisión `failed` no reinicia el

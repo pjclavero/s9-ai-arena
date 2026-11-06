@@ -253,7 +253,8 @@ Medición del 2026-11-06 con `tests/streaming-e2e/measure.sh`, en local y nunca 
 
 - **Carga mínima (§26):** en 12 min hubo 21 640 frames (30,0 fps), 0 frames descartados, 0
   reconexiones y 0 errores. **Los descartes no son siempre 0:** la segunda medición de 90 s
-  descartó **21 de 2852** (0,7 %) y la revisión independiente midió **82 en 6 min** (≈ 0,8 %). Son
+  descartó **21 de 2852** (0,7 %), la revisión independiente midió **82 en 6 min** (≈ 0,8 %) y la
+  pasada de 120 s de STREAMER-2 (imagen `bc5c3c1`) **23 de 3832** (0,6 %). Son
   los `drop_frames` que reporta ffmpeg (x11grab no llega a tiempo a algún fotograma con la CPU
   compartida); la alerta `StreamerDroppedFramesHigh` salta por encima del 5 %. La métrica
   `stream_dropped_frames_total` es exactamente ese valor (comprobado con ffmpeg real en
@@ -264,9 +265,9 @@ Medición del 2026-11-06 con `tests/streaming-e2e/measure.sh`, en local y nunca 
   por eso el Compose fija `shm_size: 256m`.
 - **Ancho de banda (§24):** `VIDEO_BITRATE` = 4500 kbit/s (techo: `-b:v` = `-maxrate`, con
   `-bufsize` de 9000k) y `AUDIO_BITRATE` = 128 kbit/s. Es **VBR con techo**, no CBR: el
-  `TOTAL_BITRATE` medido en la ingesta va de **339 a ≈ 985 kbit/s** según la ejecución y la escena
-  (339 en los 12 min, 808 en la de 90 s, hasta 952 en la revisión independiente y ≈ 985 en el
-  E2E de STREAMER-2 a 3000k), frente a los
+  `TOTAL_BITRATE` medido en la ingesta va de **≈ 270 a ≈ 1130 kbit/s** según la ejecución y la
+  escena (339 en los 12 min, 808 en la de 90 s, hasta 952 en la revisión independiente; en
+  STREAMER-2, 272 en `measure.sh` a 4500k y 985-1131 en el E2E a 3000k), frente a los
   techos de vídeo configurados en esas mediciones (3000 y 4500 kbit/s). La escena real (arena,
   pocos tanques y HUD) se comprime muchísimo y x264 no rellena hasta el techo. Para dimensionar la subida hay que usar el **techo**:
   ≈ **4,7 Mbit/s** sostenidos más la sobrecarga RTMP/TLS (unos 5 Mbit/s), o ≈ 2,6 Mbit/s con el
@@ -284,11 +285,15 @@ Medición del 2026-11-06 con `tests/streaming-e2e/measure.sh`, en local y nunca 
 
 Una segunda medición más corta (90 s en LIVE, con la imagen final de la rama) dio CPU_AVG 221 %,
 CPU_PEAK 274 %, RSS_AVG 640 MiB y RSS_PEAK **693 MiB**, con `/dev/shm` en 55 MiB, ≈ 808 kbit/s en
-la ingesta, 21 frames descartados de 2852 y 14/14 comprobaciones. La memoria varía entre ejecuciones: hay que contar con **hasta ~0,7 GiB**.
+la ingesta, 21 frames descartados de 2852 y 14/14 comprobaciones. La pasada de 120 s de STREAMER-2
+(imagen `bc5c3c1`, ya con `shm_size: 256m`) dio CPU_AVG 225 %, CPU_PEAK 268 %, RSS_AVG 754 MiB y
+RSS_PEAK **805 MiB** (600 → 802 MiB entre el primer y el último cuarto), `/dev/shm` en 64 MiB y
+14/14. La memoria de la cgroup incluye `/dev/shm` y varía entre ejecuciones: hay que contar con
+**hasta ~0,8 GiB**, y la ventana de 120 s no basta para descartar crecimiento.
 
 **Extrapolación al host de producción (con incertidumbre):** no se ha medido allí, por la regla de
 no tocar producción. Con el mismo tipo de vCPU, una emisión 1080p30 necesita **unas 2,6 vCPU
-sostenidas (picos de 3)** y **entre 0,5 y 0,7 GiB**, más un margen para escenas con más bots y efectos. EQ5
+sostenidas (picos de 3)** y **entre 0,5 y 0,8 GiB**, más un margen para escenas con más bots y efectos. EQ5
 midió del orden de 2,6 CPU en otra batalla. Con 720p30 la carga del codificador baja, pero Chromium
 sigue componiendo a 1920×1080 (SwiftShader), que es buena parte del coste. Las fuentes de
 incertidumbre son:
