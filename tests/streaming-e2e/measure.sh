@@ -109,8 +109,8 @@ b1=$(ingest_bytes); t1=$(date +%s)
 TOTAL_KBPS=$(( (b1 - b0) * 8 / (t1 - t0) / 1000 ))
 status >"$OUT/status-live-end.json"
 curl -s "http://127.0.0.1:$CTL_PORT/metrics" >"$OUT/metrics-live.txt"
-log "LIVE ${LIVE_SECONDS}s: TOTAL_BITRATE≈${TOTAL_KBPS} kbit/s medido en la ingesta (vídeo ${BITRATE}k + audio 128k configurados); pistas=$(ingest_tracks)"
-log "frames=$(jget stats.frames <"$OUT/status-live-end.json") dropped=$(jget stats.droppedFrames <"$OUT/status-live-end.json") reintentos=$(jget restarts <"$OUT/status-live-end.json")"
+log "LIVE ${LIVE_SECONDS}s: TOTAL_BITRATE≈${TOTAL_KBPS} kbit/s medido en la ingesta (techos configurados: vídeo VBR ${BITRATE}k con -maxrate + audio 128k); pistas=$(ingest_tracks)"
+log "frames=$(jget stats.frames <"$OUT/status-live-end.json") dropped=$(jget stats.droppedFrames <"$OUT/status-live-end.json") (drop_frames de ffmpeg; se registra, no es una comprobación) reintentos=$(jget restarts <"$OUT/status-live-end.json")"
 check frames_positive '[ "$(jget stats.frames <"$OUT/status-live-end.json" | cut -d. -f1)" -gt 0 ]'
 check ingest_tracks '[ "$(ingest_tracks)" = "H264+MPEG-4 Audio" ]'
 check no_reconnects_live '[ "$(jget restarts <"$OUT/status-live-end.json")" = 0 ]'
@@ -159,7 +159,24 @@ c() { grep -cF -f "$STATE/stream_key" || true; }
 leaks=$(( $(c <"$OUT/streamer.log") + $(docker inspect "$TAG-streamer" | c) + $(status | c) + $(c <"$OUT/metrics-live.txt") + $(c <"$OUT/live-env.log") ))
 log "clave en logs/inspect/status/metrics/entorno: $leaks"
 check key_not_leaked '[ "$leaks" = 0 ]'
-check log_lines_json 'node -e "const l=require(\"fs\").readFileSync(process.argv[1],\"utf8\").split(\"\\n\").filter(x=>x.startsWith(\"{\"));let bad=0;for(const x of l){try{JSON.parse(x)}catch{bad++}}process.exit(bad?1:0)" "$OUT/streamer.log"'
+# STREAMER-2 (H3) · TODAS las líneas, no sólo las que empiezan por `{`: las del
+# proceso Node tienen que ser JSON y la única excepción admitida es la que Xvfb
+# escribe al arrancar sin root (`_XSERVTrans…: euid != 0`), que se cuenta aparte.
+cat >"$STATE/log-lines.js" <<'JS'
+const l = require("fs").readFileSync(process.argv[2], "utf8").split("\n").filter((x) => x.trim());
+const r = { total: l.length, json: 0, xvfb: 0, other: [] };
+for (const x of l) {
+  try {
+    if (typeof JSON.parse(x) === "object") { r.json++; continue; }
+  } catch {}
+  if (/^_XSERVTrans/.test(x)) r.xvfb++;
+  else r.other.push(x.slice(0, 120));
+}
+console.log(`líneas=${r.total} JSON=${r.json} Xvfb(no JSON, admitidas)=${r.xvfb} otras_no_JSON=${r.other.length} ${JSON.stringify(r.other.slice(0, 3))}`);
+process.exit(r.other.length ? 1 : 0);
+JS
+log "logs del contenedor: $(node "$STATE/log-lines.js" "$OUT/streamer.log")"
+check log_lines_json 'node "$STATE/log-lines.js" "$OUT/streamer.log" >/dev/null'
 check log_useful 'grep -q "emisión arrancada" "$OUT/streamer.log" && grep -q "emisión parada por control" "$OUT/streamer.log" && grep -q "ffmpeg terminó" "$OUT/streamer.log" && grep -q "reintento de emisión" "$OUT/streamer.log" && grep -q "relé RTMP publicando" "$OUT/streamer.log"'
 
 # ── §21 · grabación MP4 y fotogramas ────────────────────────────────────────

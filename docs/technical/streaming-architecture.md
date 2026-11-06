@@ -217,7 +217,9 @@ recomprobaciones cubren las carreras (ADR-023). El Compose despliega una sola r�
   1920×1080×24, con WebGL por **SwiftShader** (render por software, sin GPU). ffmpeg captura el
   framebuffer con `x11grab -draw_mouse 0`. No depende de ninguna sesión gráfica humana.
 - **Codificación** (`ffmpeg.ts`): `libx264 -preset veryfast -tune zerolatency`, `-b:v` = `-maxrate` =
-  bitrate configurado, `-bufsize` = 2× el bitrate, `yuv420p`, GOP = 2 × FPS (un keyframe cada 2 s,
+  bitrate configurado, `-bufsize` = 2× el bitrate (**VBR con techo**, no CBR: x264 sólo se acerca al
+  techo con escenas complejas; medido de 339 a 952 kbit/s en la ingesta frente a 3000-4500 kbit/s
+  configurados. Con NVENC sí se pide `-rc cbr`), `yuv420p`, GOP = 2 × FPS (un keyframe cada 2 s,
   como pide YouTube) y AAC a 128 kbit/s. El preset 720p escala con `scale=…:flags=bicubic`. NVENC
   sólo se usa si el runtime lo confirma codificando un frame, y la imagen Alpine no lo incluye.
 - **Salida:** `-f flv pipe:3`. ffmpeg **no conoce** ni el destino ni la clave. Usa `-loglevel error`
@@ -265,7 +267,9 @@ rotación, el backup y el restore se describen en [streaming.md](../operations/s
 
 ## Logs, métricas y healthchecks
 
-- **Logs:** una línea JSON por evento. Se registran: `emisión arrancada` (con `sessionId`), `emisión
+- **Logs:** una línea JSON por evento del proceso Node. En `docker logs` aparece además **una línea
+  que no es JSON**, la que escribe Xvfb al arrancar sin root
+  (`_XSERVTransmkdir: ERROR: euid != 0,directory /tmp/.X11-unix will not be created.`). Se registran: `emisión arrancada` (con `sessionId`), `emisión
   parada por control`, `ffmpeg lanzado` (argv sin secretos), `ffmpeg terminó`, `relé RTMP publicando`,
   `relé RTMP: corte de la ingesta`, `reintento de emisión`, `emisión abandonada: reintentos agotados`
   y `proceso sin salir tras SIGTERM: SIGKILL`. La redacción se aplica **a cada valor** antes de
@@ -275,7 +279,9 @@ rotación, el backup y el restore se describen en [streaming.md](../operations/s
 - **Métricas del streamer:** `streamer_*` (EQ5b) y los nombres del encargo, añadidos en el mismo
   endpoint: `stream_active`, `stream_start_total`, `stream_stop_total`, `stream_failures_total`,
   `stream_reconnects_total`, `stream_uptime_seconds`, `stream_frames_total`,
-  `stream_dropped_frames_total` y `stream_killed_total`.
+  `stream_dropped_frames_total` y `stream_killed_total`. Frames y descartes son el `frame` y el
+  `drop_frames` del `-progress` del ffmpeg en curso (se reinician al relanzarlo). Los descartes no
+  son 0 en la práctica (≈ 0,7-0,8 % medido; ver streaming.md).
 - **Métricas de la API:** `s9_streaming_enabled` y `s9_streaming_session_active`.
 - **Healthcheck del contenedor:** `wget http://localhost:8090/healthz` cada 30 s. El estado de la
   emisión se vigila con las alertas, no con el healthcheck: una emisión `failed` no reinicia el
@@ -323,7 +329,7 @@ Auditoría frente a las 39 secciones del encargo STREAMER (2026-11-06). **Exist�
 | 5 YouTube | RTMPS oficial, clave sellada | BLOCKED: no hay clave autorizada |
 | 6 Secretos | 3 secretos, cada uno montado sólo donde hace falta | tabla y operación unificadas |
 | 7 Redacción | n-gramas, base64/hex, `İ` | **R4-3**: redacción por valor; el JSON no se rompe |
-| 8 ffmpeg | x264, CBR, GOP de 2 s, AAC, fd 3 | documentado; parada con SIGKILL |
+| 8 ffmpeg | x264 VBR con techo (`-b:v` = `-maxrate`), GOP de 2 s, AAC, fd 3 | documentado; parada con SIGKILL; STREAMER-2: el stderr tardío de ffmpeg no pisa la causa raíz |
 | 9 Perfil | 1080p30 4500k | medido (ver streaming.md) |
 | 10 Audio | `anullsrc` | decisión documentada |
 | 11 START | RBAC, destino público, credencial atada, LIVE sólo con el relé publicando | **recuperación**: START tras FAILED o tras reiniciar el streamer |
@@ -334,11 +340,11 @@ Auditoría frente a las 39 secciones del encargo STREAMER (2026-11-06). **Exist�
 | 16 Aislamiento | sin socket ni BD, `no-new-privileges` | `cap_drop: [ALL]` + 3 capacidades; `CapEff` 0 medido |
 | 17 Errores | códigos propios | tabla de equivalencias STREAM_* y test |
 | 18 UI | estado, destino, inicio, error, Start/Stop | sin cambios |
-| 19-20 Fuente / Chromium | Xvfb + Chromium | prueba de huérfanos (unitaria con procesos reales y en contenedor) |
+| 19-20 Fuente / Chromium | Xvfb + Chromium | prueba de huérfanos (unitaria con procesos reales y en contenedor); STREAMER-2: su salida se lee siempre (sin backpressure) |
 | 21 Calidad | MP4 verificado (EQ5b) | fotogramas, `blackdetect` y `freezedetect` |
 | 22/32 Destino seguro / E2E | E2E con MediaMTX | medición sostenida reproducible (`measure.sh`) |
 | 24-26 BW/CPU/RSS | sin medir | medidos |
-| 27 Logs | líneas útiles | test de logs útiles y JSON válido |
+| 27 Logs | líneas útiles | test de logs útiles y JSON válido del proceso Node (la línea de Xvfb no es JSON y se declara) |
 | 28 Métricas | `streamer_*` | `stream_*` |
 | 29 Backup | restic | permisos verificados tras restore local |
 | 30 Rotación | relectura de ficheros | documentada y probada |
@@ -354,6 +360,9 @@ Auditoría frente a las 39 secciones del encargo STREAMER (2026-11-06). **Exist�
 | Stop condicionado | `apps/streamer/src/control.ts` (`ifSession`), `apps/streamer/src/streamer-real.test.ts` |
 | Doble lectura del reconciliador | `apps/api/src/routes/streaming.ts` (`reconcileOrphanEmission`), `apps/api/src/streamer-real.test.ts` |
 | SIGKILL al árbol y ningún huérfano | `apps/streamer/src/supervisor.ts` (`terminate`, `processTree`), `apps/streamer/src/main.ts` (`realSpawner`), `streamer-real.test.ts`, `packages/test-process/no-orphans.test.ts` |
-| Log con JSON válido | `apps/streamer/src/config.ts` (`createLogger`), `streamer-real.test.ts` |
+| Log con JSON válido | `apps/streamer/src/config.ts` (`createLogger`), `streamer-real.test.ts`; `measure.sh` (`log_lines_json`, todas las líneas) |
+| Salida de Chromium sin backpressure | `apps/streamer/src/supervisor.ts` (`launchChromium`), `streamer-2.test.ts`, `r242-streamer-break.test.ts` |
+| Causa raíz en `lastError` | `apps/streamer/src/supervisor.ts` (stderr de ffmpeg con guarda de generación), `streamer-2.test.ts` |
+| Descartes = `drop_frames` de ffmpeg | `apps/streamer/src/metrics.ts`, `streamer-2.test.ts` (ffmpeg real) |
 | Lista cerrada de migraciones | `apps/api/src/db/migrations.ts` (`NAMED_ROLLBACK_ALLOWED`) |
 | Aislamiento | `infrastructure/docker-compose.yml` (servicio `streamer`), `tests/streaming-e2e/measure.sh` (`hardening.txt`) |

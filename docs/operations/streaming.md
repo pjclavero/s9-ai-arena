@@ -25,6 +25,13 @@ plan de despliegue y rollback. La arquitectura comprobada contra el código est�
 [streaming-architecture.md](../technical/streaming-architecture.md). YouTube real:
 **BLOCKED_BY_AUTHORIZATION**.
 
+**STREAMER-2 (2026-11-06, misma rama):** tres P3 de la revisión independiente. **H1:** la salida
+de Chromium se lee siempre (antes nadie la leía y Chromium podía quedarse bloqueado con la imagen
+congelada). **H2:** `lastError` conserva la causa raíz cuando la ingesta rechaza la clave. **H3:**
+el perfil es **VBR con techo** (no CBR), los frames descartados son los medidos (no 0) y no todas
+las líneas del log del contenedor son JSON (Xvfb escribe una). Ver
+[Recursos medidos](#recursos-medidos) y la tabla de defectos (STR-7 y STR-8).
+
 ## Índice
 
 - [Administración desde la web](#administración-desde-la-web)
@@ -230,7 +237,8 @@ Medición del 2026-11-06 con `tests/streaming-e2e/measure.sh`, en local y nunca 
 - **Cadena:** batalla REAL del motor (HunterBot contra HunterBot, 30 Hz) → `/broadcast` → imagen del
   streamer construida desde esta rama, con el **mismo aislamiento del Compose** (`init`,
   `cap_drop: ALL` + 3 capacidades, 512 pids) → RTMPS local (MediaMTX con TLS verificado).
-- **Perfil:** 1080p30, x264 veryfast, vídeo de 4500 kbit/s y audio de 128 kbit/s.
+- **Perfil:** 1080p30, x264 veryfast, vídeo **VBR con techo** de 4500 kbit/s (`-b:v` = `-maxrate`)
+  y audio de 128 kbit/s. No es CBR: x264 no rellena hasta el techo (ver «Ancho de banda»).
 - **Duración:** 12 min en LIVE, con una muestra cada ~6,6 s (109 muestras en LIVE).
 - **Host de medida:** 8 vCPU Intel Xeon E5-2680 v4 a 2,40 GHz (Broadwell, sin SMT en la VM) y 8,7 GiB
   de RAM, **compartido** con otras cargas.
@@ -243,15 +251,23 @@ Medición del 2026-11-06 con `tests/streaming-e2e/measure.sh`, en local y nunca 
 | LIVE (720 s) | **259 %** | **297 %** | **450 MiB** | **462 MiB** | 16-18 |
 | STOP (60 s) | 0,1 % | 0,2 % | 73 MiB | 73 MiB | 5 |
 
-- **Carga mínima (§26):** en 12 min hubo 21 640 frames (30,0 fps), **0 frames descartados**, 0
-  reconexiones y 0 errores. La memoria es estable (448 MiB en el primer cuarto y 450 MiB en el
+- **Carga mínima (§26):** en 12 min hubo 21 640 frames (30,0 fps), 0 frames descartados, 0
+  reconexiones y 0 errores. **Los descartes no son siempre 0:** la segunda medición de 90 s
+  descartó **21 de 2852** (0,7 %) y la revisión independiente midió **82 en 6 min** (≈ 0,8 %). Son
+  los `drop_frames` que reporta ffmpeg (x11grab no llega a tiempo a algún fotograma con la CPU
+  compartida); la alerta `StreamerDroppedFramesHigh` salta por encima del 5 %. La métrica
+  `stream_dropped_frames_total` es exactamente ese valor (comprobado con ffmpeg real en
+  `apps/streamer/src/streamer-2.test.ts`) y, como `stream_frames_total`, se reinicia con cada
+  relanzamiento de ffmpeg (EQ5-11). La memoria es estable (448 MiB en el primer cuarto y 450 MiB en el
   último): no se ven fugas en esa ventana. Los procesos no se acumulan: 5 tras STOP y tras cada uno de
   5 ciclos start/stop, 0 zombis. `/dev/shm` llega a **54 MiB** del límite por defecto de 64 MiB, y
   por eso el Compose fija `shm_size: 256m`.
 - **Ancho de banda (§24):** `VIDEO_BITRATE` = 4500 kbit/s (techo: `-b:v` = `-maxrate`, con
-  `-bufsize` de 9000k) y `AUDIO_BITRATE` = 128 kbit/s. `TOTAL_BITRATE` medido en la ingesta durante
-  los 12 min fue de **≈ 339 kbit/s**: la escena real (arena vacía, dos tanques y HUD) se comprime
-  muchísimo y x264 no rellena hasta el techo. Para dimensionar la subida hay que usar el **techo**:
+  `-bufsize` de 9000k) y `AUDIO_BITRATE` = 128 kbit/s. Es **VBR con techo**, no CBR: el
+  `TOTAL_BITRATE` medido en la ingesta va de **339 a 952 kbit/s** según la ejecución y la escena
+  (339 en los 12 min, 808 en la de 90 s y hasta 952 en la revisión independiente), frente a los
+  techos de vídeo configurados en esas mediciones (3000 y 4500 kbit/s). La escena real (arena,
+  pocos tanques y HUD) se comprime muchísimo y x264 no rellena hasta el techo. Para dimensionar la subida hay que usar el **techo**:
   ≈ **4,7 Mbit/s** sostenidos más la sobrecarga RTMP/TLS (unos 5 Mbit/s), o ≈ 2,6 Mbit/s con el
   preset de 720p a 2500k. `UPLOAD_AVAILABLE` no se ha medido: no hay forma segura de hacerlo sin
   emitir fuera, y queda como paso del despliegue.
@@ -266,8 +282,8 @@ Medición del 2026-11-06 con `tests/streaming-e2e/measure.sh`, en local y nunca 
   tanque queda bajo el marcador superior.
 
 Una segunda medición más corta (90 s en LIVE, con la imagen final de la rama) dio CPU_AVG 221 %,
-CPU_PEAK 274 %, RSS_AVG 640 MiB y RSS_PEAK **693 MiB**, con `/dev/shm` en 55 MiB y 14/14
-comprobaciones. La memoria varía entre ejecuciones: hay que contar con **hasta ~0,7 GiB**.
+CPU_PEAK 274 %, RSS_AVG 640 MiB y RSS_PEAK **693 MiB**, con `/dev/shm` en 55 MiB, ≈ 808 kbit/s en
+la ingesta, 21 frames descartados de 2852 y 14/14 comprobaciones. La memoria varía entre ejecuciones: hay que contar con **hasta ~0,7 GiB**.
 
 **Extrapolación al host de producción (con incertidumbre):** no se ha medido allí, por la regla de
 no tocar producción. Con el mismo tipo de vCPU, una emisión 1080p30 necesita **unas 2,6 vCPU
@@ -408,7 +424,7 @@ autorización:
 | «Iniciando» que no pasa a «En directo» | `lastError` en la pantalla, `relay.state` en `/status` | ingesta inalcanzable, clave rechazada (`BadName`), TLS no verificado |
 | «Reconectando» en bucle | alerta `StreamerRestartLoop`, `stream_reconnects_total` | cortes de red o la ingesta cierra la conexión |
 | «Abandonada» | `stream_failures_total`, `lastError` | más de 20 reintentos seguidos; corrige la causa y pulsa **Iniciar** |
-| Pantalla negra o congelada | alerta `StreamerNoProgress`, fotogramas del MP4 | Chromium caído (se relanza solo); `/broadcast` sin directo público |
+| Pantalla negra o congelada | alerta `StreamerNoProgress`, fotogramas del MP4; si Chromium cayó, el log `chromium terminó; se relanza` lleva `outputTail` (los últimos 2 KiB de su stderr, redactados) | Chromium caído (se relanza solo); `/broadcast` sin directo público. `StreamerNoProgress` mira a ffmpeg, no a Chromium: una imagen congelada con ffmpeg sano no la detecta ninguna alerta |
 | Procesos acumulados | `docker compose exec streamer ps -o pid,ppid,stat,args`, `stream_killed_total` | no debería ocurrir (parada del árbol + init); si `stream_killed_total` sube, hay hijos que no atienden SIGTERM |
 
 ## Pruebas (§31)
@@ -432,7 +448,9 @@ scripts locales). Las marcadas con ⚙ ejecutan **ffmpeg o procesos reales**.
 | `RECONCILER_START_RACE` | Nueva | `apps/api/src/streamer-real.test.ts` (foto vieja de `/status`) |
 | `RECONCILER_STOP_RACE` | Nueva | la misma (stop en vuelo) y `apps/streamer/src/streamer-real.test.ts` (`ifSession`) |
 | `NO_ORPHAN_PROCESS` | Nueva ⚙ | `apps/streamer/src/streamer-real.test.ts` (procesos reales con hijos, también si ignoran SIGTERM); ⚙ `measure.sh` (contenedor real: STOP y 5 ciclos) |
-| `SECRET_NOT_IN_LOGS` | Existía + nueva | `secret-surfaces.test.ts`, `eq5d`/`eq5e`; nueva: JSON válido con ingesta hostil (R4-3); ⚙ `measure.sh` (`key_not_leaked`, `log_lines_json`) |
+| `SECRET_NOT_IN_LOGS` | Existía + nueva | `secret-surfaces.test.ts`, `eq5d`/`eq5e`; nueva: JSON válido con ingesta hostil (R4-3); ⚙ `measure.sh` (`key_not_leaked`, `log_lines_json`: desde STREAMER-2 revisa **todas** las líneas; la única no JSON admitida es la de Xvfb, `_XSERVTrans…`) |
+| `CHROMIUM_BACKPRESSURE` | Nueva (STREAMER-2) | `apps/streamer/src/streamer-2.test.ts` (Chromium con > 2 MiB de salida sigue avanzando y los frames suben) y `r242-streamer-break.test.ts` (§20, de #243) |
+| `ROOT_ERROR_PRESERVED` | Nueva (STREAMER-2) | `apps/streamer/src/streamer-2.test.ts` (relé real contra una ingesta que rechaza la clave; ffmpeg que escribe al pararlo) |
 | `SECRET_NOT_IN_API` | Existía + nueva | `eq5b-streaming-admin.test.ts`, spec `@streaming-e2e`; nueva: `lastSession` sin sobre ni config |
 | `PERMISSION_DENIED` | Existía + nueva | `conformance.test.ts` (RBAC del contrato); nueva: un usuario normal recibe 403 en start, stop, estado y credencial |
 | `RESTART_RECOVERY` | Nueva | `apps/api/src/streamer-real.test.ts` (START tras `failed` y tras reiniciar el streamer) |
@@ -483,6 +501,9 @@ scripts locales). Las marcadas con ⚙ ejecutan **ffmpeg o procesos reales**.
 | STR-4 | P3 | Servicio sin `cap_drop`, sin límite de pids y con el /dev/shm por defecto (54 de 64 MiB usados en 12 min) | **corregido** en el Compose |
 | STR-5 | P3 | Sin `read_only` en el contenedor (Chromium escribe en `$HOME` y Xvfb en `/tmp`) | **abierto** (deuda declarada) |
 | STR-6 | P3 | El escenario de la batalla tapa a veces el marcador superior (un tanque bajo el rótulo) | **abierto**: UX de `/broadcast`, fuera del alcance de STREAMER |
+| STR-7 (H1) | P3 | Nadie leía el stdout/stderr de Chromium: con más de 128-256 KiB de salida se bloqueaba en `write()` y la emisión seguía «en directo» con la imagen congelada y sin alerta | **corregido** (STREAMER-2): se leen siempre y se descartan; sólo se guarda una cola de 2 KiB del stderr, redactada al registrarla |
+| STR-8 (H2) | P3 | Con la clave rechazada por la ingesta, `lastError` acababa mostrando el ruido de la parada de ffmpeg (`Nothing was written into output file…`) en vez del rechazo | **corregido** (STREAMER-2): guarda de generación en el stderr de ffmpeg; ese ruido se registra (`superseded: true`) pero no sustituye la causa |
+| STR-9 (H3) | P3 | La documentación y la evidencia decían CBR, 0 frames descartados y «todas las líneas de log son JSON» (y `measure.sh` sólo miraba las que empiezan por `{`) | **corregido** (STREAMER-2): VBR con techo, descartes medidos, Xvfb declarado y `measure.sh` revisa todas las líneas |
 
 ## Cómo se verificó
 
