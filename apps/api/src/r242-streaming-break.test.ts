@@ -260,10 +260,15 @@ describe("R242 · §17 API_AUTHORIZATION · las 12 operaciones con cada rol no a
     const auditBefore = (await h.db("audit_log").where("action", "like", "streaming.%")).length;
     for (const [m, p, b] of ops) {
       for (const [role, tok] of Object.entries(tokens)) {
-        const r = await (request(app) as unknown as Record<string, (p: string) => request.Test>)[m](p).set(auth(tok)).send(b as object);
+        const r = await (request(app) as unknown as Record<string, (p: string) => request.Test>)
+          [m](p)
+          .set(auth(tok))
+          .send(b as object);
         if (r.status !== 403) bad.push(`${role} ${m.toUpperCase()} ${p} ⇒ ${r.status}`);
       }
-      const anon = await (request(app) as unknown as Record<string, (p: string) => request.Test>)[m](p).send(b as object);
+      const anon = await (request(app) as unknown as Record<string, (p: string) => request.Test>)
+        [m](p)
+        .send(b as object);
       if (anon.status !== 401) bad.push(`anónimo ${m.toUpperCase()} ${p} ⇒ ${anon.status}`);
     }
     expect(bad).toEqual([]);

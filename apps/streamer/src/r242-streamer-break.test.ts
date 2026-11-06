@@ -79,9 +79,16 @@ function harness(over: Partial<StreamerConfig> = {}, sleepFn?: (ms: number) => P
 
 async function withControl(
   h: ReturnType<typeof harness>,
-  fn: (call: (m: string, p: string, b?: unknown) => Promise<{ status: number; body: Record<string, unknown> }>) => Promise<void>,
+  fn: (
+    call: (m: string, p: string, b?: unknown) => Promise<{ status: number; body: Record<string, unknown> }>,
+  ) => Promise<void>,
 ) {
-  const server = createControlServer({ supervisor: h.sup, config: h.config, logger: h.logger, capabilities: { nvenc: false } });
+  const server = createControlServer({
+    supervisor: h.sup,
+    config: h.config,
+    logger: h.logger,
+    capabilities: { nvenc: false },
+  });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const port = (server.address() as { port: number }).port;
   const call = async (method: string, path: string, body?: unknown) => {
@@ -121,7 +128,9 @@ describe("R242 · §36 dos streams a la vez (API de control real, procesos falso
   it("CONTROL · 40 START simultáneos de sesiones distintas ⇒ exactamente 1 aceptado, 39 × 409 already_active, nunca más de 1 ffmpeg + 1 chromium vivos", async () => {
     const h = harness();
     await withControl(h, async (call) => {
-      const rs = await Promise.all(Array.from({ length: 40 }, (_, i) => call("POST", "/control/start", recordStart(`s${i}`))));
+      const rs = await Promise.all(
+        Array.from({ length: 40 }, (_, i) => call("POST", "/control/start", recordStart(`s${i}`))),
+      );
       const ok = rs.filter((r) => r.status === 200);
       expect(ok).toHaveLength(1);
       expect(rs.filter((r) => r.status === 409 && r.body.error === "already_active")).toHaveLength(39);
@@ -231,23 +240,35 @@ describe("R242 · §20 la salida de Chromium no se consume (pipe sin lector)", (
   // que cabe en el pipe + el búfer de Node se BLOQUEA en write(2).
   for (const [label, bytes, expectBlocked] of [
     ["CONTROL (calibración) · 4 KiB a stderr: el «chromium» sigue vivo y avanza", 4096, false],
-    ["DEFECTO P3 · 1 MiB a stderr: el «chromium» se queda BLOQUEADO en write() y deja de avanzar (latente: Chromium real escribió ~15 KB al arrancar y 0 B en los 90 s siguientes)", 1024 * 1024, true],
+    [
+      "DEFECTO P3 · 1 MiB a stderr: el «chromium» se queda BLOQUEADO en write() y deja de avanzar (latente: Chromium real escribió ~15 KB al arrancar y 0 B en los 90 s siguientes)",
+      1024 * 1024,
+      true,
+    ],
   ] as const) {
-    it(label, async () => {
-      const dir = mkdtempSync(join(tmpdir(), "s9-r242-pipe-"));
-      const marker = join(dir, "avanzo");
-      const chromium = script(dir, "chromium.sh", `head -c ${bytes} /dev/zero | tr '\\0' 'x' >&2\ntouch ${marker}\nexec sleep 300`);
-      const ffmpeg = script(dir, "ffmpeg.sh", "exec sleep 300");
-      const { sup } = realSup(dir, chromium, ffmpeg);
-      sup.start();
-      for (let i = 0; i < 100 && !existsSync(marker); i++) await sleep(20);
-      const advanced = existsSync(marker);
-      sup.stop();
-      await sleep(400);
-      // DEFECTO afirma lo correcto: el navegador NO debe bloquearse por su propia salida.
-      if (expectBlocked) expect({ advanced }).toEqual({ advanced: true });
-      else expect(advanced).toBe(true);
-    }, 15_000);
+    it(
+      label,
+      async () => {
+        const dir = mkdtempSync(join(tmpdir(), "s9-r242-pipe-"));
+        const marker = join(dir, "avanzo");
+        const chromium = script(
+          dir,
+          "chromium.sh",
+          `head -c ${bytes} /dev/zero | tr '\\0' 'x' >&2\ntouch ${marker}\nexec sleep 300`,
+        );
+        const ffmpeg = script(dir, "ffmpeg.sh", "exec sleep 300");
+        const { sup } = realSup(dir, chromium, ffmpeg);
+        sup.start();
+        for (let i = 0; i < 100 && !existsSync(marker); i++) await sleep(20);
+        const advanced = existsSync(marker);
+        sup.stop();
+        await sleep(400);
+        // DEFECTO afirma lo correcto: el navegador NO debe bloquearse por su propia salida.
+        if (expectBlocked) expect({ advanced }).toEqual({ advanced: true });
+        else expect(advanced).toBe(true);
+      },
+      15_000,
+    );
   }
 });
 
@@ -262,7 +283,8 @@ describe("R242 · §36.4 STOP del árbol cuando el padre muere antes (ppid reasi
     );
     const ffmpeg = script(dir, "ffmpeg.sh", "exec sleep 300");
     const { sup } = realSup(dir, chromium, ffmpeg);
-    const pids = () => (existsSync(pidFile) ? readFileSync(pidFile, "utf8").split("\n").filter(Boolean).map(Number) : []);
+    const pids = () =>
+      existsSync(pidFile) ? readFileSync(pidFile, "utf8").split("\n").filter(Boolean).map(Number) : [];
     try {
       sup.start();
       for (let i = 0; i < 100 && pids().length < 3; i++) await sleep(20);
