@@ -227,16 +227,34 @@ export class SecretRegistry {
   }
 }
 
-/** Logger JSON que REDACTA la clave en todo lo que escribe (revisión T11.2). */
+/**
+ * Logger JSON que REDACTA la clave en todo lo que escribe (revisión T11.2).
+ *
+ * STREAMER (#241, R4-3) · la redacción se aplica a CADA VALOR de texto en el
+ * `replacer` de `JSON.stringify`, ANTES de escaparlo, y no sobre la línea ya
+ * serializada. Redactar la línea serializada podía partir un escape JSON
+ * (`\n` + 7 caracteres de la clave ⇒ `\***`) y dejar una línea que no es JSON.
+ * Los nombres de campo los pone el código (no llevan datos), pero también se
+ * redactan por si una clave aparece como nombre: se reconstruye el objeto.
+ */
 export function createLogger(
   secret: string | null | SecretRegistry,
   write: (line: string) => void = (l) => console.log(l),
 ) {
   const registry = secret instanceof SecretRegistry ? secret : new SecretRegistry();
   if (!(secret instanceof SecretRegistry)) registry.add(secret);
+  const replacer = function (this: unknown, _k: string, v: unknown): unknown {
+    if (typeof v === "string") return registry.redact(v);
+    if (v && typeof v === "object" && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype) {
+      const out: Record<string, unknown> = {};
+      for (const [k, val] of Object.entries(v as Record<string, unknown>)) out[registry.redact(k)] = val;
+      return out;
+    }
+    if (v instanceof Error) return registry.redact(v.message);
+    return v;
+  };
   return (level: "info" | "warn" | "error", msg: string, extra: Record<string, unknown> = {}) => {
-    const line = JSON.stringify({ level, service: "streamer", msg, ...extra });
-    write(registry.redact(line));
+    write(JSON.stringify({ level, service: "streamer", msg, ...extra }, replacer));
   };
 }
 export type Logger = ReturnType<typeof createLogger>;

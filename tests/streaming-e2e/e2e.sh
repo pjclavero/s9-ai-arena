@@ -163,13 +163,14 @@ log "MP4: $(tr '\n' ' ' <"$OUT/ffprobe-mp4.txt")"
 check record_mp4 'grep -q "codec_name=h264|width=1920|height=1080|r_frame_rate=30/1" "$OUT/ffprobe-mp4.txt" && grep -q "codec_name=aac" "$OUT/ffprobe-mp4.txt"'
 
 # ── 8 · retención desde la web: borra SÓLO MP4 viejos ───────────────────────
-docker exec "$TAG-streamer" sh -c '
+# STREAMER · como uid 1000 (el dueño del volumen): con `cap_drop: ALL` el root del
+# contenedor ya no tiene CAP_DAC_OVERRIDE y no puede escribir en un directorio ajeno.
+docker exec -u 1000:1000 "$TAG-streamer" sh -c '
   cd /data/replays/video
   for n in broadcast-2026-09-01T00-00-00-000Z.mp4 broadcast-2026-09-02T00-00-00-000Z.mp4; do head -c 2048 /dev/urandom > $n; touch -d "2026-09-03 00:00:00" $n; done
   echo nota > notas.txt; touch -d "2026-09-03 00:00:00" notas.txt
   head -c 1024 /dev/urandom > /data/replays/viejo.replay; touch -d "2026-09-03 00:00:00" /data/replays/viejo.replay
   ln -sf /data/replays/viejo.replay broadcast-2026-09-04T00-00-00-000Z.mp4
-  chown -h 1000:1000 *.mp4 notas.txt /data/replays/viejo.replay
   ls -la /data/replays/video /data/replays' >"$OUT/retention-before.txt" 2>&1
 pw retention "@streaming-e2e-retention"
 docker exec "$TAG-streamer" sh -c 'ls -la /data/replays/video /data/replays' >"$OUT/retention-after.txt" 2>&1
