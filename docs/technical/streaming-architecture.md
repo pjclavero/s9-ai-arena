@@ -218,7 +218,7 @@ recomprobaciones cubren las carreras (ADR-023). El Compose despliega una sola r�
   framebuffer con `x11grab -draw_mouse 0`. No depende de ninguna sesión gráfica humana.
 - **Codificación** (`ffmpeg.ts`): `libx264 -preset veryfast -tune zerolatency`, `-b:v` = `-maxrate` =
   bitrate configurado, `-bufsize` = 2× el bitrate (**VBR con techo**, no CBR: x264 sólo se acerca al
-  techo con escenas complejas; medido de 339 a 952 kbit/s en la ingesta frente a 3000-4500 kbit/s
+  techo con escenas complejas; medido de 339 a ≈ 985 kbit/s en la ingesta frente a 3000-4500 kbit/s
   configurados. Con NVENC sí se pide `-rc cbr`), `yuv420p`, GOP = 2 × FPS (un keyframe cada 2 s,
   como pide YouTube) y AAC a 128 kbit/s. El preset 720p escala con `scale=…:flags=bicubic`. NVENC
   sólo se usa si el runtime lo confirma codificando un frame, y la imagen Alpine no lo incluye.

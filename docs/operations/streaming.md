@@ -264,8 +264,9 @@ Medición del 2026-11-06 con `tests/streaming-e2e/measure.sh`, en local y nunca 
   por eso el Compose fija `shm_size: 256m`.
 - **Ancho de banda (§24):** `VIDEO_BITRATE` = 4500 kbit/s (techo: `-b:v` = `-maxrate`, con
   `-bufsize` de 9000k) y `AUDIO_BITRATE` = 128 kbit/s. Es **VBR con techo**, no CBR: el
-  `TOTAL_BITRATE` medido en la ingesta va de **339 a 952 kbit/s** según la ejecución y la escena
-  (339 en los 12 min, 808 en la de 90 s y hasta 952 en la revisión independiente), frente a los
+  `TOTAL_BITRATE` medido en la ingesta va de **339 a ≈ 985 kbit/s** según la ejecución y la escena
+  (339 en los 12 min, 808 en la de 90 s, hasta 952 en la revisión independiente y ≈ 985 en el
+  E2E de STREAMER-2 a 3000k), frente a los
   techos de vídeo configurados en esas mediciones (3000 y 4500 kbit/s). La escena real (arena,
   pocos tanques y HUD) se comprime muchísimo y x264 no rellena hasta el techo. Para dimensionar la subida hay que usar el **techo**:
   ≈ **4,7 Mbit/s** sostenidos más la sobrecarga RTMP/TLS (unos 5 Mbit/s), o ≈ 2,6 Mbit/s con el
