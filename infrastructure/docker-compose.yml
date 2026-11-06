@@ -797,7 +797,22 @@ services:
       start_period: 60s
     deploy:
       resources:
-        limits: { cpus: "4.0", memory: 4G }
+        limits: { cpus: "4.0", memory: 4G, pids: 512 }
+    # STREAMER §15-§16 · aislamiento:
+    #  - init: tini como PID 1 recoge a los descendientes huérfanos (Chromium
+    #    lanza zygote/GPU/renderers); sin él quedarían zombis en el contenedor.
+    #  - cap_drop ALL y sólo lo que necesita el entrypoint de datos como root
+    #    durante un instante (chown del volumen y su-exec a uid 1000); después
+    #    el proceso corre como `streamer` sin capacidades (no-new-privileges).
+    #  - limits.pids acota una fuga de procesos/hilos de Chromium y ffmpeg.
+    #  - shm_size: con el /dev/shm por defecto (64 MiB) Chromium llegó a usar
+    #    54 MiB en una emisión real de 12 min (tests/streaming-e2e/measure.sh);
+    #    agotarlo tumba el renderer (pantalla negra). 256 MiB deja margen.
+    #  - Sin docker.sock, sin red `data` (no alcanza la BD) y sólo sus secretos.
+    init: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETUID, SETGID]
+    shm_size: 256m
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
     logging: *default-logging

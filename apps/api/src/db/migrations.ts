@@ -1016,8 +1016,29 @@ export async function rollbackLast(db: Knex): Promise<void> {
  */
 export async function rollbackNamed(db: Knex, name: string): Promise<void> {
   if (!MIGRATIONS.some((m) => m.name === name)) throw new Error(`Migración desconocida: ${name}`);
+  // STREAMER (#241, R4-2) · LISTA CERRADA: sólo las migraciones independientes de
+  // las posteriores se pueden revertir por nombre. Sin esto, `rollback:name
+  // 001_identity` ejecutaba `DROP … CASCADE` con 17 migraciones encima.
+  if (!NAMED_ROLLBACK_ALLOWED.includes(name)) {
+    throw new Error(
+      `La migración ${name} no se puede revertir por nombre (sólo ${NAMED_ROLLBACK_ALLOWED.join(", ")}); ` +
+        "usa rollback:1 en orden o restaura el backup",
+    );
+  }
   await db.migrate.down({ ...config, name });
 }
+
+/**
+ * STREAMER (#241, R4-2) · Migraciones que `rollbackNamed` admite: cada una sólo
+ * crea o quita sus PROPIAS columnas/tablas, sin dependencias de las posteriores
+ * (comprobado en migration-016/017/018.test.ts). Una nueva entra aquí sólo con
+ * su test de vuelta atrás por nombre.
+ */
+export const NAMED_ROLLBACK_ALLOWED: readonly string[] = Object.freeze([
+  "016_battle_rules",
+  "017_streaming_admin",
+  "018_battle_reverted",
+]);
 
 /** EQ5e (R3-F) · Aplica UNA migración pendiente concreta por NOMBRE. */
 export async function migrateNamed(db: Knex, name: string): Promise<void> {

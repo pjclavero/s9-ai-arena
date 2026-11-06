@@ -203,6 +203,27 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     return db("streaming_sessions").where({ state: "active" }).first();
   }
 
+  /** STREAMER §3 · última sesión terminada (sin la config: no hace falta y es más superficie). */
+  async function lastSessionView() {
+    const r = await db("streaming_sessions")
+      .whereNot({ state: "active" })
+      .orderBy([
+        { column: "stopped_at", order: "desc", nulls: "last" },
+        { column: "started_at", order: "desc" },
+      ])
+      .first();
+    if (!r) return null;
+    return {
+      id: r.id,
+      state: r.state,
+      mode: r.mode,
+      target: r.target_kind ? { kind: r.target_kind, id: r.target_id } : null,
+      startedAt: new Date(r.started_at).toISOString(),
+      stoppedAt: r.stopped_at ? new Date(r.stopped_at).toISOString() : null,
+      stopReason: r.stop_reason ?? null,
+    };
+  }
+
   async function refreshGauges(): Promise<void> {
     if (!deps.setGauge) return;
     try {
@@ -315,6 +336,7 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
             startedBy: session.started_by,
           }
         : null,
+      lastSession: await lastSessionView(),
       pendingRestart,
       uxState: uxState(s, st, session),
       bitrate: bitrateRecommendation(s.preset, s.fps),
@@ -599,7 +621,9 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     let streamerOk = false;
     if (!other) {
       try {
-        streamerOk = (await deps.streamer.call("POST", "/control/stop", {})).ok;
+        // STREAMER · condicionado a ESTA sesión: sólo se para lo que ella arrancó.
+        const r = await deps.streamer.call("POST", "/control/stop", { ifSession: sessionId });
+        streamerOk = r.ok || r.status === 409;
       } catch {
         streamerOk = false;
       }
@@ -624,16 +648,26 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
 
   /**
    * EQ5e (R3-E) · stop compensatorio tras un start sin respuesta fiable. Si no
-   * hay otra sesión activa, se para a ciegas (nada legítimo puede estar
-   * emitiendo: esta sesión tenía el único hueco); si la hay, sólo se para lo
-   * huérfano. Queda auditado con el resultado.
+   * hay otra sesión activa, se para ESTA sesión (stop condicionado `ifSession`,
+   * STREAMER/#241); si la hay, sólo se para lo huérfano. Queda auditado con el
+   * resultado (`stopped`, `nothing_to_stop`, `stop_rejected`, `stop_unreachable`).
    */
   async function compensateStart(req: Request, sessionId: string, cause: string): Promise<void> {
     const other = await activeSession();
     let outcome: string;
     if (!other) {
       try {
-        outcome = (await deps.streamer.call("POST", "/control/stop", {})).ok ? "stopped" : "stop_rejected";
+        // STREAMER · condicionado a ESTA sesión (no corta otra que hubiera
+        // ocupado el streamer) y, #241 (obs.), `stopped` sólo si de verdad emitía.
+        const r = await deps.streamer.call<{ wasActive?: boolean }>("POST", "/control/stop", {
+          ifSession: sessionId,
+        });
+        outcome =
+          r.status === 409 || (r.ok && r.body?.wasActive === false)
+            ? "nothing_to_stop"
+            : r.ok
+              ? "stopped"
+              : "stop_rejected";
       } catch {
         outcome = "stop_unreachable";
       }
@@ -664,7 +698,29 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     if (!s.enabled) throw conflict("streaming_disabled", "El streaming está desactivado: actívalo antes de emitir");
     const stamp = await credentialStamp(s.platform);
     const config = appliedConfig(s, stamp);
-    const existing = await activeSession();
+    let existing = await activeSession();
+    if (existing) {
+      // STREAMER §13 (RESTART_RECOVERY) · la BD dice «activa» pero el streamer,
+      // que RESPONDE, no emite nada (reintentos agotados, streamer reiniciado,
+      // proceso caído): la sesión está muerta. Antes, un START devolvía
+      // `alreadyActive` y no emitía nada; ahora se cierra como `failed`
+      // (auditado) y se arranca de nuevo. Si el streamer no responde no se toca
+      // nada (no se sabe si emite).
+      const st = await streamerStatus();
+      const emitting = st.reachable && (st.status?.state === "streaming" || st.status?.state === "retrying");
+      if (st.reachable && !emitting) {
+        const closed = await db("streaming_sessions")
+          .where({ id: existing.id, state: "active" })
+          .update({ state: "failed", stopped_at: db.fn.now(), stop_reason: "not_emitting" });
+        if (closed === 1) {
+          await log(req, "streaming.session.recovered", `streaming:session:${existing.id}`, {
+            streamerState: st.status?.state ?? "unknown",
+            lastError: st.status?.lastError?.message ?? null,
+          });
+        }
+        existing = await activeSession();
+      }
+    }
     if (existing) {
       // Idempotencia: el MISMO destino y configuración ⇒ la misma sesión, sin tocar nada.
       if (existing.target_kind === t.kind && existing.target_id === t.id && canon(existing.config) === canon(config)) {
@@ -847,38 +903,72 @@ function emissionMode(st: StreamerStatus | null): string | null {
  *
  * Orden: primero el estado del streamer y DESPUÉS la BD. Un start legítimo
  * inserta su sesión ANTES de llamar al streamer, así que si el streamer ya la
- * emite, la BD leída después la tiene activa. Y mientras el streamer emite algo
- * huérfano, ningún start sin `replace` puede prosperar (409), así que parar lo
- * huérfano no corta una emisión legítima; en el peor caso una sesión recién
- * creada queda «interrumpida» (BD activa, nada emite), que es el lado seguro.
- * Devuelve "stopped", "stop_failed" o null (nada que hacer / sin señal).
+ * emite, la BD leída después la tiene activa.
+ *
+ * STREAMER (#241, R4-1) · esa foto del streamer puede ser VIEJA (latencia, o un
+ * stop(A)+start(B) del operador entre la foto y la lectura de la BD) y el stop
+ * puede aterrizar DESPUÉS de un start nuevo. Por eso:
+ *  1. tras leer la BD se VUELVE a leer `/status`: sólo es huérfana si la segunda
+ *     foto sigue emitiendo la MISMA sesión y la BD no la tiene activa;
+ *  2. el stop va CONDICIONADO a esa sesión (`ifSession`): si al llegar el
+ *     streamer emite otra, responde 409 `session_mismatch` y no para nada.
+ * Así el reconciliador ya no puede cortar una sesión legítima aunque no tome el
+ * cerrojo de la ruta (que es por proceso y no cubre otras instancias).
+ *
+ * Devuelve "stopped", "stop_failed" o null (nada que hacer / sin señal / la
+ * emisión cambió entretanto). `memo` (sólo el reconciliador periódico) evita
+ * repetir la auditoría `stop_failed` de la MISMA emisión en cada tick.
  */
-export async function reconcileOrphanEmission(
-  db: Db,
-  streamer: StreamerClient,
-  o: { trigger: string; actorId?: string | null; correlationId?: string },
-): Promise<"stopped" | "stop_failed" | null> {
-  if (!streamer.configured) return null;
-  let st: StreamerStatus;
+export interface ReconcileMemo {
+  lastFailed?: string | null;
+}
+
+async function emittingSnapshot(streamer: StreamerClient): Promise<{ emitting: boolean; id: string | null } | null> {
   try {
     const r = await streamer.call<StreamerStatus>("GET", "/status");
     if (!r.ok) return null;
-    st = r.body;
+    const st = r.body;
+    const emitting = st.desired === true || st.state === "streaming" || st.state === "retrying";
+    return { emitting, id: st.session?.sessionId ?? null };
   } catch {
     return null;
   }
-  const emitting = st.desired === true || st.state === "streaming" || st.state === "retrying";
-  if (!emitting) return null;
-  const emittingId = st.session?.sessionId ?? null;
+}
+
+export async function reconcileOrphanEmission(
+  db: Db,
+  streamer: StreamerClient,
+  o: { trigger: string; actorId?: string | null; correlationId?: string; memo?: ReconcileMemo },
+): Promise<"stopped" | "stop_failed" | null> {
+  if (!streamer.configured) return null;
+  const first = await emittingSnapshot(streamer);
+  if (!first || !first.emitting) {
+    if (o.memo) o.memo.lastFailed = null;
+    return null;
+  }
+  const emittingId = first.id;
   const act = await db("streaming_sessions").where({ state: "active" }).first();
   const orphan = !act || (emittingId !== null && emittingId !== act.id);
   if (!orphan) return null;
+  // R4-1 (1) · segunda foto DESPUÉS de la BD: si ya no emite, o emite otra sesión,
+  // la primera era vieja y no se toca nada (el siguiente tick decidirá).
+  const second = await emittingSnapshot(streamer);
+  if (!second || !second.emitting || second.id !== emittingId) return null;
+  if (act && second.id === act.id) return null;
   let ok = false;
+  let mismatch = false;
   try {
-    ok = (await streamer.call("POST", "/control/stop", {})).ok;
+    // R4-1 (2) · stop condicionado: sólo para ESA emisión.
+    const r = await streamer.call("POST", "/control/stop", { ifSession: emittingId });
+    ok = r.ok;
+    mismatch = r.status === 409;
   } catch {
     ok = false;
   }
+  if (mismatch) return null; // otra emisión ocupó el streamer: ya no es la huérfana
+  const key = emittingId ?? "sin-sesion";
+  if (!ok && o.memo && o.memo.lastFailed === key) return "stop_failed"; // ya auditado
+  if (o.memo) o.memo.lastFailed = ok ? null : key;
   await audit(db, {
     actorId: o.actorId ?? null,
     action: "streaming.session.orphan_stopped",
@@ -892,9 +982,14 @@ export async function reconcileOrphanEmission(
 /** EQ5e (R3-B/R3-E) · Reconciliación periódica (por defecto cada 30 s). Sólo la arranca server.ts. */
 export function startOrphanReconciler(db: Db, streamer: StreamerClient, everyMs = 30_000): NodeJS.Timeout | null {
   if (!streamer.configured) return null;
+  const memo: ReconcileMemo = {};
+  let running = false;
   const tick = async () => {
+    // Un tick lento (streamer que tarda) no se solapa con el siguiente.
+    if (running) return;
+    running = true;
     try {
-      await reconcileOrphanEmission(db, streamer, { trigger: "periodic" });
+      await reconcileOrphanEmission(db, streamer, { trigger: "periodic", memo });
     } catch (e) {
       console.warn(
         JSON.stringify({
@@ -904,6 +999,8 @@ export function startOrphanReconciler(db: Db, streamer: StreamerClient, everyMs 
           detail: (e as Error).message,
         }),
       );
+    } finally {
+      running = false;
     }
   };
   const t = setInterval(() => void tick(), everyMs);

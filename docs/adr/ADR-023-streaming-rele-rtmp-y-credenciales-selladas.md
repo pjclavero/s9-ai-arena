@@ -164,15 +164,21 @@ clave.
     este último con un bloqueo de fila real para forzar el entrelazado del PUT).
   - **Start sin respuesta** (EQ5e, R3-E): si el start vence el plazo del cliente, falla
     la red o el streamer responde 5xx, la orden pudo aplicarse igualmente. La sesión se
-    marca `failed` y se manda un `/control/stop` **compensatorio** (a ciegas si no hay otra
-    sesión activa; si la hay, sólo se para lo huérfano), auditado como
-    `streaming.session.start_compensated` (`cause`, `outcome`).
+    marca `failed` y se manda un `/control/stop` **compensatorio** (condicionado a esa sesión,
+    `ifSession`, si no hay otra activa; si la hay, sólo se para lo huérfano), auditado como
+    `streaming.session.start_compensated` (`cause`, `outcome`: `stopped`, `nothing_to_stop`,
+    `stop_rejected`, `stop_unreachable`, `not_orphan`).
   - **Reconciliación de huérfanas** (EQ5e, R3-B): `reconcileOrphanEmission` para el
     streamer si emite (o reintenta) y la BD no tiene una sesión activa, o la tiene pero el
-    streamer declara otra (`session.sessionId`). Lee primero el streamer y después la BD:
-    un start legítimo inserta su sesión antes de llamar al streamer, y mientras el streamer
-    emite algo huérfano ningún start sin `replace` puede prosperar (409), así que no corta
-    una emisión legítima. Se ejecuta tras un 409 del streamer a un start, en la
+    streamer declara otra (`session.sessionId`). Lee primero el streamer y después la BD
+    (un start legítimo inserta su sesión antes de llamar al streamer). **Corrección
+    (STREAMER, #241 R4-1):** eso solo NO bastaba: la foto del streamer podía ser anterior a
+    un stop(A)+start(B) del operador, y el stop, no condicionado, podía aterrizar después
+    de un start nuevo, así que sí podía cortar una emisión legítima durante una ventana de
+    milisegundos. Ahora, tras leer la BD, **vuelve a leer `/status`** y sólo actúa si la
+    segunda foto sigue emitiendo la misma sesión huérfana, y el stop va **condicionado**
+    (`/control/stop {ifSession}`: 409 `session_mismatch` si el streamer ya emite otra). Si
+    el stop falla, la auditoría se escribe una vez por emisión, no en cada tick. Se ejecuta tras un 409 del streamer a un start, en la
     recomprobación cuando hay otra sesión activa y **cada 30 s** desde `server.ts`
     (`startOrphanReconciler`). Cada parada se audita como `streaming.session.orphan_stopped`.
     Cubre start(A) ‖ stop(B) ‖ start(C en B) y la respuesta de un start que llega tarde.

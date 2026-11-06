@@ -47,6 +47,14 @@ standalone o detrás de un proxy, y los casos conocidos de `/replays` y del endp
 
 → [gateway.md](gateway.md)
 
+### Streamer
+
+Arquitectura del streamer real, comprobada contra el código: el camino de una batalla hasta la
+ingesta RTMPS, el protocolo de control, los estados, START/STOP, el reconciliador, ffmpeg, el audio,
+los secretos, el aislamiento y la tabla de qué existe y qué falta.
+
+→ [streaming-architecture.md](streaming-architecture.md)
+
 ### Workers
 
 Los dos procesos que reclaman trabajo de la cola. `tournament-worker` ejecuta batallas y torneos,

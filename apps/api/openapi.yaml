@@ -51,7 +51,10 @@ info:
   # testStreaming, start/restart/stopStreaming, listStreamingRecordings,
   # applyStreamingRetention y listStreamingAudit (tag streaming).
   # Añadir un endpoint = MINOR (docs/compatibilidad.md, §2 Semver por paquete).
-  version: 0.13.0
+  # 0.14.0 · STREAMER (aditivo, admin): StreamingAdminState.lastSession (última
+  # sesión terminada: stoppedAt, stopReason, sin secretos) y `starting` en el enum
+  # de uxState (el código ya lo devolvía desde EQ5d; el contrato no lo declaraba).
+  version: 0.14.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -2873,10 +2876,14 @@ components:
         capabilities: { type: object }
         streamer: { type: object, nullable: true }
         session: { type: object, nullable: true }
+        lastSession:
+          type: object
+          nullable: true
+          description: 'Última sesión TERMINADA (stopped/failed): id, modo, destino, startedAt, stoppedAt, stopReason. Nunca la clave ni la credencial.'
         pendingRestart: { type: boolean }
         uxState:
           type: string
-          enum: [disabled, streamer_unreachable, ready, live, recording, retrying, failed, interrupted]
+          enum: [disabled, streamer_unreachable, ready, starting, live, recording, retrying, failed, interrupted]
         bitrate: { type: object }
         changeClasses: { type: object }
 
