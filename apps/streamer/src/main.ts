@@ -63,6 +63,19 @@ function probeNvenc(ffmpegBin: string, caps: Capabilities): void {
   );
 }
 
+/**
+ * STREAMER §12/§20 · spawner REAL: cada hijo en su PROPIO grupo de procesos
+ * (`detached`), y el supervisor (processGroups) manda SIGTERM —y SIGKILL tras la
+ * espera— al grupo entero: no quedan renderers/zygote de Chromium huérfanos.
+ * EQ5b §3 · ffmpeg recibe un 4.º descriptor (fd 3) por el que escribe el FLV que
+ * publica el relé RTMP; Chromium no lo recibe.
+ */
+export const realSpawner: Spawner = (cmd, args, o) =>
+  spawn(cmd, args, {
+    stdio: o?.mediaFd ? ["ignore", "pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"],
+    detached: o?.group === true,
+  });
+
 export function main(env: NodeJS.ProcessEnv = process.env): void {
   const config = loadConfig(env);
   // EQ5b · la clave YA NO se lee al arrancar: llega sellada en cada orden de
@@ -93,10 +106,7 @@ export function main(env: NodeJS.ProcessEnv = process.env): void {
   // preflight de más ahí sería un servicio que no arranca sin motivo).
   if (config.mode === "record") requireWritableDataDir("streamer", config.recordDir);
 
-  // EQ5b §3 · ffmpeg recibe un 4.º descriptor (fd 3) por el que escribe el FLV
-  // que publica el relé RTMP. Chromium no lo recibe.
-  const spawner: Spawner = (cmd, args, o) =>
-    spawn(cmd, args, { stdio: o?.mediaFd ? ["ignore", "pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"] });
+  const spawner = realSpawner;
   const allowPlainRtmp = env.STREAMER_ALLOW_PLAIN_RTMP === "1";
   const supervisor = new StreamSupervisor({
     config,
@@ -104,6 +114,7 @@ export function main(env: NodeJS.ProcessEnv = process.env): void {
     logger,
     secrets,
     allowPlainRtmp,
+    processGroups: true,
     chromiumBin: env.CHROMIUM_BIN ?? "chromium-browser",
     ffmpegBin: env.FFMPEG_BIN ?? "ffmpeg",
   });
@@ -147,9 +158,17 @@ export function main(env: NodeJS.ProcessEnv = process.env): void {
   if (env.STREAM_AUTOSTART === "1")
     supervisor.start(undefined, undefined, config.mode === "rtmps" ? readLegacyKey() : null);
 
+  // Parada del contenedor: para la emisión y espera (como mucho la gracia del
+  // SIGKILL + 1 s) a que los hijos salgan antes de terminar el proceso.
   const shutdown = () => {
     supervisor.stop();
-    server.close(() => process.exit(0));
+    server.close();
+    const deadline = Date.now() + 6000;
+    const wait = () => {
+      if (supervisor.pendingChildren === 0 || Date.now() > deadline) process.exit(0);
+      setTimeout(wait, 100);
+    };
+    wait();
   };
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);

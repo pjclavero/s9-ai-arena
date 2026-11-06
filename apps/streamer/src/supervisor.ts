@@ -36,10 +36,25 @@ export interface SpawnedProcess extends EventEmitter {
   stderr?: EventEmitter | null;
   /** stdio[3] = salida FLV hacia el relé (sólo si se pidió `mediaFd`). */
   stdio?: ArrayLike<unknown> | null;
+  pid?: number;
+  exitCode?: number | null;
+  signalCode?: NodeJS.Signals | string | null;
   kill(signal?: NodeJS.Signals): boolean | void;
 }
 
-export type Spawner = (command: string, args: string[], opts?: { mediaFd?: boolean }) => SpawnedProcess;
+/**
+ * `group`: el hijo encabeza su PROPIO grupo de procesos (spawn `detached`), de
+ * modo que la señal llega también a sus descendientes (Chromium lanza zygote,
+ * GPU y renderers: matar sólo al padre los dejaba huérfanos).
+ */
+export type Spawner = (
+  command: string,
+  args: string[],
+  opts?: { mediaFd?: boolean; group?: boolean },
+) => SpawnedProcess;
+
+/** Espera tras SIGTERM antes de SIGKILL (§12). */
+export const STOP_GRACE_MS = 5000;
 
 export type SupervisorState = "idle" | "streaming" | "retrying" | "stopped" | "failed";
 
@@ -59,6 +74,23 @@ export interface SupervisorOptions {
   now?: () => number;
   /** Sólo pruebas locales: admite `rtmp://` sin TLS (STREAMER_ALLOW_PLAIN_RTMP=1). */
   allowPlainRtmp?: boolean;
+  /**
+   * El spawner real crea grupos de procesos (`group`): las señales se mandan al
+   * GRUPO (`kill(-pid)`). Nunca con procesos falsos (un pid inventado sería un
+   * grupo ajeno).
+   */
+  processGroups?: boolean;
+  /** Espera entre SIGTERM y SIGKILL (por defecto STOP_GRACE_MS). */
+  stopGraceMs?: number;
+}
+
+/** Contadores de §28 (stream_*), acumulados desde que arrancó el proceso. */
+export interface StreamCounters {
+  starts: number;
+  stops: number;
+  failures: number;
+  /** Escalados a SIGKILL (proceso que no atendió SIGTERM a tiempo). */
+  killed: number;
 }
 
 export interface ActiveSessionView {
@@ -90,6 +122,9 @@ export class StreamSupervisor {
   private recordFile_: string | null = null;
   private fingerprint: string | null = null;
   private readonly secrets: SecretRegistry;
+  readonly counters: StreamCounters = { starts: 0, stops: 0, failures: 0, killed: 0 };
+  /** Hijos señalados que aún no han salido (huérfanos potenciales). */
+  private readonly terminating = new Set<SpawnedProcess>();
 
   constructor(private readonly opts: SupervisorOptions) {
     this.broadcastUrl = opts.config.broadcastUrl;
@@ -124,6 +159,10 @@ export class StreamSupervisor {
   }
   get relayBytesOut(): number {
     return this.publisher?.bytesOut ?? 0;
+  }
+  /** Sesión de la emisión pedida (null = sin sesión: heredada o STREAM_AUTOSTART). */
+  get currentSessionId(): string | null {
+    return this.plan?.sessionId ?? null;
   }
   get sessionFingerprint(): string | null {
     return this.desired ? this.fingerprint : null;
@@ -177,8 +216,11 @@ export class StreamSupervisor {
     if (plan) {
       this.plan = plan;
       this.broadcastUrl = plan.broadcastUrl;
-    } else if (broadcastUrl) {
-      this.broadcastUrl = broadcastUrl;
+    } else {
+      // STREAMER · un arranque SIN plan (heredado o STREAM_AUTOSTART) no hereda
+      // la sesión anterior: si no, /status y el stop condicionado verían el
+      // sessionId de una sesión que ya no es la que emite.
+      this.broadcastUrl = broadcastUrl ?? this.opts.config.broadcastUrl;
       this.plan = null;
     }
     if (streamKey !== undefined) {
@@ -195,8 +237,10 @@ export class StreamSupervisor {
     this.lastError_ = null;
     this.startedAt = this.now();
     this.state_ = "streaming";
+    this.counters.starts++;
     this.launch();
     this.opts.logger("info", "emisión arrancada", {
+      sessionId: this.plan?.sessionId ?? null,
       broadcastUrl: this.broadcastUrl,
       mode: this.effectiveConfig.mode,
       target: this.describeTarget(),
@@ -210,19 +254,56 @@ export class StreamSupervisor {
     this.state_ = "stopped";
     this.startedAt = null;
     this.fingerprint = null;
-    if (was !== "stopped") this.opts.logger("info", "emisión parada por control");
+    if (was === "streaming" || was === "retrying" || was === "failed") this.counters.stops++;
+    if (was !== "stopped") this.opts.logger("info", "emisión parada por control", { previous: was });
+  }
+
+  /** Procesos hijos señalados que todavía no han terminado (0 = sin huérfanos pendientes). */
+  get pendingChildren(): number {
+    return this.terminating.size;
+  }
+
+  /**
+   * §12 · SIGTERM y, si el proceso no ha salido en `stopGraceMs`, SIGKILL. Con
+   * grupos de procesos la señal va al GRUPO entero (Chromium y sus hijos).
+   */
+  private terminate(proc: SpawnedProcess | null, name: string): void {
+    if (!proc) return;
+    const exited = () => (proc.exitCode !== undefined && proc.exitCode !== null) || !!proc.signalCode;
+    if (exited()) return;
+    const signal = (sig: NodeJS.Signals) => {
+      try {
+        if (this.opts.processGroups && proc.pid) process.kill(-proc.pid, sig);
+        else proc.kill(sig);
+      } catch {
+        /* ya no existe */
+      }
+    };
+    this.terminating.add(proc);
+    let timer: NodeJS.Timeout | null = null;
+    const done = () => {
+      this.terminating.delete(proc);
+      if (timer) clearTimeout(timer);
+      timer = null;
+    };
+    proc.once("exit", done);
+    signal("SIGTERM");
+    timer = setTimeout(() => {
+      timer = null;
+      if (!this.terminating.has(proc)) return;
+      this.counters.killed++;
+      this.opts.logger("warn", "proceso sin salir tras SIGTERM: SIGKILL", { process: name });
+      signal("SIGKILL");
+    }, this.opts.stopGraceMs ?? STOP_GRACE_MS);
+    timer.unref?.();
   }
 
   private stopProcesses(): void {
     try {
       this.publisher?.close();
     } catch {}
-    try {
-      this.ffmpeg?.kill("SIGTERM");
-    } catch {}
-    try {
-      this.chromium?.kill("SIGTERM");
-    } catch {}
+    this.terminate(this.ffmpeg, "ffmpeg");
+    this.terminate(this.chromium, "chromium");
     this.publisher = null;
     this.ffmpeg = null;
     this.chromium = null;
@@ -234,6 +315,7 @@ export class StreamSupervisor {
       // Sin clave no hay nada que reintentar: estado terminal y visible.
       this.setError("modo rtmps sin credencial de emisión configurada");
       this.state_ = "failed";
+      this.counters.failures++;
       this.opts.logger("error", "emisión imposible: no hay credencial de emisión");
       return;
     }
@@ -244,7 +326,7 @@ export class StreamSupervisor {
   private launchChromium(): void {
     const gen = this.generation;
     const args = buildChromiumArgs(this.effectiveConfig, this.broadcastUrl);
-    this.chromium = this.opts.spawner(this.opts.chromiumBin ?? "chromium-browser", args);
+    this.chromium = this.opts.spawner(this.opts.chromiumBin ?? "chromium-browser", args, { group: true });
     this.chromium.on("exit", (code: unknown) => {
       if (gen !== this.generation || this.state_ === "stopped") return;
       // Chromium caído = pantalla negra: cuenta como corte y se relanza junto a ffmpeg.
@@ -270,6 +352,7 @@ export class StreamSupervisor {
         } catch (e) {
           this.setError(`ingesta RTMPS no válida: ${(e as Error).message}`);
           this.state_ = "failed";
+          this.counters.failures++;
           this.stopProcesses();
           return;
         }
@@ -290,7 +373,10 @@ export class StreamSupervisor {
       });
     }
 
-    const child = this.opts.spawner(this.opts.ffmpegBin ?? "ffmpeg", plan.args, { mediaFd: cfg.mode === "rtmps" });
+    const child = this.opts.spawner(this.opts.ffmpegBin ?? "ffmpeg", plan.args, {
+      mediaFd: cfg.mode === "rtmps",
+      group: true,
+    });
     this.ffmpeg = child;
     // Solo argv REDACTADO sale por el logger (y desde EQ5b ya no contiene la clave).
     this.opts.logger("info", "ffmpeg lanzado", {
@@ -341,6 +427,7 @@ export class StreamSupervisor {
     this.restarts_++;
     if (this.attempts > this.opts.config.maxRetries) {
       this.state_ = "failed";
+      this.counters.failures++;
       this.stopProcesses();
       this.opts.logger("error", "emisión abandonada: reintentos agotados", { attempts: this.attempts - 1 });
       return;
