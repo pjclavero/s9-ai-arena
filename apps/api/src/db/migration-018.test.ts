@@ -39,9 +39,16 @@ async function columns(table: string): Promise<string[]> {
   );
   return r.rows.map((x: { column_name: string }) => x.column_name);
 }
+// VISIBILIDAD · `tournaments.broadcast` es de una migración POSTERIOR (019_visibility_broadcast),
+// que rollbackReverted revierte antes y migrateToLatest vuelve a aplicar: no es objeto de este test.
+const LATER_COLUMNS = ["broadcast"];
 async function dump() {
   const out: Record<string, unknown[]> = {};
-  for (const t of TABLES) out[t] = JSON.parse(JSON.stringify(await h.db(t).orderBy(ORDER[t]).select()));
+  for (const t of TABLES) {
+    const rows = JSON.parse(JSON.stringify(await h.db(t).orderBy(ORDER[t]).select())) as Record<string, unknown>[];
+    for (const r of rows) for (const c of LATER_COLUMNS) delete r[c];
+    out[t] = rows;
+  }
   return out;
 }
 const strip = (rows: unknown[], col: string) =>
