@@ -241,7 +241,15 @@ export function createControlServer(opts: ControlOptions): Server {
         lastError: supervisor.lastError,
         counters: supervisor.counters,
         pendingChildren: supervisor.pendingChildren,
-        relay: { state: supervisor.relayState, bytesOut: supervisor.relayBytesOut },
+        relay: {
+          state: supervisor.relayState,
+          bytesOut: supervisor.relayBytesOut,
+          // STREAMING-UX (§22, §24) · qué ingesta se usa y el último error de cada una (redactado).
+          ingest: supervisor.effectiveConfig.mode === "rtmps" ? supervisor.ingestRole : null,
+          backupAvailable: supervisor.backupAvailable,
+          failedOver: supervisor.failedOver,
+          ingestErrors: supervisor.ingestErrors,
+        },
         recording: supervisor.recordingFile ? supervisor.recordingFile.split("/").pop() : null,
         capabilities: { nvenc: caps.nvenc, sealedCredentials: !!opts.readPrivateKey?.() },
         legacyKeyConfigured,
@@ -384,6 +392,7 @@ export function createControlServer(opts: ControlOptions): Server {
           return respond(409, { error: "already_active", session: supervisor.session() });
         }
         let key: string | null = null;
+        let backupKey: string | null = null;
         if (plan.config.mode === "rtmps") {
           const k = resolveKey(
             plan.credential,
@@ -392,11 +401,20 @@ export function createControlServer(opts: ControlOptions): Server {
           if (k.error) return respond(k.status ?? 409, { error: k.error });
           if (!k.key) return respond(409, { error: "no hay credencial de emisión configurada" });
           key = k.key;
+          // STREAMING-UX (§23) · el sobre de RESPALDO se abre SÓLO para la URL de respaldo
+          // de la orden: si no casa, la orden entera se rechaza (fail-closed), igual que
+          // con la principal.
+          if (plan.backupIngest) {
+            const kb = resolveKey(plan.backupCredential, { ingest: plan.backupIngest.tcUrl, platform: plan.platform });
+            if (kb.error || !kb.key)
+              return respond(kb.status ?? 409, { error: `respaldo: ${kb.error ?? "sin clave"}` });
+            backupKey = kb.key;
+          }
         }
         // Sin cuerpo (uso heredado): configuración de entorno sin plan.
         const legacy = !raw.trim();
         if (legacy) supervisor.start(undefined, undefined, key);
-        else supervisor.start(undefined, plan, key);
+        else supervisor.start(undefined, plan, key, backupKey);
         logger("info", "control: start", {
           broadcastUrl: supervisor.currentBroadcastUrl,
           target: supervisor.describeTarget(),

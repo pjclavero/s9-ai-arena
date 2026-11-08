@@ -56,6 +56,21 @@ export const CHROMIUM_OUTPUT_TAIL_BYTES = 2048;
 
 export type SupervisorState = "idle" | "streaming" | "retrying" | "stopped" | "failed";
 
+/**
+ * STREAMING-UX (§23-§25) · política de failover principal → respaldo:
+ *  - SÓLO cuentan los fallos de red, transporte o handshake ANTES de que la ingesta
+ *    conteste a `connect` (códigos del relé `timeout`, `network`, `closed_by_server`
+ *    y `protocol`). Una clave rechazada, un error de autorización (`rejected`), un
+ *    certificado inválido (`tls`) o una configuración local mala no cambian de
+ *    ingesta, porque el respaldo fallaría igual o sería inseguro cambiar;
+ *  - hacen falta FAILOVER_AFTER fallos SEGUIDOS de la principal: uno transitorio no basta;
+ *  - tras el cambio, el respaldo se queda hasta el final de la sesión (sin saltar
+ *    de una a otra); la siguiente sesión (start) vuelve a empezar por la principal.
+ */
+export const FAILOVER_AFTER = 3;
+export const FAILOVER_CODES: ReadonlySet<string> = new Set(["timeout", "network", "closed_by_server", "protocol"]);
+export type IngestRole = "primary" | "backup";
+
 export interface SupervisorOptions {
   config: StreamerConfig;
   /** Clave fija (tests y compatibilidad). En producción se resuelve en cada arranque. */
@@ -115,6 +130,11 @@ export class StreamSupervisor {
   private generation = 0; // invalida reintentos en vuelo tras stop()/start()
   private plan: SessionPlan | null = null;
   private key: string | null = null;
+  private backupKey: string | null = null;
+  private ingestRole_: IngestRole = "primary";
+  private connectFailures = 0;
+  private failedOver_ = false;
+  private ingestErrors_: { primary: string | null; backup: string | null } = { primary: null, backup: null };
   private startedAt: number | null = null;
   private lastError_: { message: string; at: string } | null = null;
   private recordFile_: string | null = null;
@@ -158,6 +178,24 @@ export class StreamSupervisor {
   get relayBytesOut(): number {
     return this.publisher?.bytesOut ?? 0;
   }
+  /** STREAMING-UX (§22) · ingesta que usa (o intenta) la emisión en curso. */
+  get ingestRole(): IngestRole {
+    return this.ingestRole_;
+  }
+  get backupAvailable(): boolean {
+    return !!this.plan?.backupIngest && !!this.backupKey;
+  }
+  get failedOver(): boolean {
+    return this.failedOver_;
+  }
+  /** Último error de cada ingesta en esta sesión (redactado; null = sin error). */
+  get ingestErrors(): { primary: string | null; backup: string | null } {
+    return { ...this.ingestErrors_ };
+  }
+  private currentTarget(): IngestTarget | null {
+    if (this.ingestRole_ === "backup" && this.plan?.backupIngest) return this.plan.backupIngest;
+    return this.plan?.ingest ?? null;
+  }
   /** Sesión de la emisión pedida (null = sin sesión: heredada o STREAM_AUTOSTART). */
   get currentSessionId(): string | null {
     return this.plan?.sessionId ?? null;
@@ -191,7 +229,8 @@ export class StreamSupervisor {
   describeTarget(): string {
     const c = this.effectiveConfig;
     if (c.mode === "record") return c.recordDir;
-    if (this.plan?.ingest) return this.plan.ingest.display;
+    const t = this.currentTarget();
+    if (t) return t.display;
     try {
       return parseIngestUrl(c.rtmpsUrl, true).display;
     } catch {
@@ -210,7 +249,17 @@ export class StreamSupervisor {
    * Arranca (o re-apunta) la emisión. Con `plan` (orden de la API) aplica su
    * configuración y su clave ya abierta; sin él, la configuración de entorno.
    */
-  start(broadcastUrl?: string, plan?: SessionPlan, streamKey?: string | null): void {
+  start(broadcastUrl?: string, plan?: SessionPlan, streamKey?: string | null, backupKey?: string | null): void {
+    // STREAMING-UX (§25) · cada sesión nueva empieza por la PRINCIPAL.
+    if (this.backupKey && this.backupKey !== streamKey && this.backupKey !== this.opts.streamKey) {
+      this.secrets.delete(this.backupKey);
+    }
+    this.backupKey = plan?.backupIngest ? (backupKey ?? null) : null;
+    this.secrets.add(this.backupKey);
+    this.ingestRole_ = "primary";
+    this.connectFailures = 0;
+    this.failedOver_ = false;
+    this.ingestErrors_ = { primary: null, backup: null };
     if (plan) {
       this.plan = plan;
       this.broadcastUrl = plan.broadcastUrl;
@@ -400,7 +449,9 @@ export class StreamSupervisor {
 
     let publisher: RtmpPublisher | null = null;
     if (cfg.mode === "rtmps") {
-      let target = this.plan?.ingest ?? null;
+      let target = this.currentTarget();
+      const role = this.ingestRole_;
+      const key = role === "backup" ? this.backupKey : this.key;
       if (!target) {
         try {
           target = parseIngestUrl(cfg.rtmpsUrl, this.opts.allowPlainRtmp);
@@ -412,16 +463,22 @@ export class StreamSupervisor {
           return;
         }
       }
-      publisher = new RtmpPublisher({ target, streamKey: this.key!, dial: this.opts.dial });
-      this.publisher = publisher;
-      publisher.on("error", (e: Error) => {
+      const pub = new RtmpPublisher({ target, streamKey: key!, dial: this.opts.dial });
+      publisher = pub;
+      this.publisher = pub;
+      pub.on("error", (e: Error & { code?: string }) => {
         if (gen !== this.generation || this.state_ === "stopped") return;
         this.setError(e.message);
-        this.opts.logger("warn", "relé RTMP: corte de la ingesta", { detail: e.message });
+        this.ingestErrors_[role] = this.secrets.redact(e.message).slice(0, 200);
+        this.noteIngestFailure(role, e.code ?? "", pub.appConnected);
+        this.opts.logger("warn", "relé RTMP: corte de la ingesta", { detail: e.message, ingest: role });
         void this.retry();
       });
-      publisher.on("publishing", () => {
-        if (gen === this.generation) this.opts.logger("info", "relé RTMP publicando", { target: target.display });
+      pub.on("publishing", () => {
+        if (gen !== this.generation) return;
+        this.connectFailures = 0;
+        this.ingestErrors_[role] = null;
+        this.opts.logger("info", "relé RTMP publicando", { target: target.display, ingest: role });
       });
       publisher.start().catch(() => {
         /* el mismo fallo llega por 'error' */
@@ -472,6 +529,30 @@ export class StreamSupervisor {
       this.opts.logger("warn", "ffmpeg terminó", { code });
       void this.retry();
     });
+  }
+
+  /**
+   * STREAMING-UX (§23) · cuenta un fallo del relé y, si toca, pasa al respaldo para el
+   * resto de la sesión. Ver FAILOVER_AFTER / FAILOVER_CODES.
+   */
+  private noteIngestFailure(role: IngestRole, code: string, appConnected: boolean): void {
+    const network = !appConnected && FAILOVER_CODES.has(code);
+    if (!network) {
+      // Clave, autorización, certificado o configuración: no es de red, no se cambia
+      // de ingesta y la racha se corta (no son «fallos seguidos de conexión»).
+      this.connectFailures = 0;
+      return;
+    }
+    this.connectFailures++;
+    if (role === "primary" && this.backupAvailable && this.connectFailures >= FAILOVER_AFTER) {
+      this.ingestRole_ = "backup";
+      this.failedOver_ = true;
+      this.connectFailures = 0;
+      this.opts.logger("warn", "ingesta principal no disponible: se pasa al respaldo para esta sesión", {
+        failures: FAILOVER_AFTER,
+        target: this.plan?.backupIngest?.display ?? null,
+      });
+    }
   }
 
   /** Corte de RTMPS o proceso muerto: espera y relanza, hasta maxRetries seguidos. */

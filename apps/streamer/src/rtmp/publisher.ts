@@ -196,6 +196,15 @@ export class RtmpPublisher extends EventEmitter {
   private windowAck = 2_500_000;
   private onPublishStatus: ((code: string, desc: string) => void) | null = null;
   private failed = false;
+  /**
+   * STREAMING-UX (§23) · la ingesta CONTESTÓ a `connect`. Un fallo antes de eso es de
+   * red, transporte o handshake (candidato a failover); después, es de la publicación
+   * (clave, autorización): el respaldo fallaría igual y no se cambia.
+   */
+  private appConnected_ = false;
+  get appConnected(): boolean {
+    return this.appConnected_;
+  }
   private openTimer: NodeJS.Timeout | null = null;
   private stallTimer: NodeJS.Timeout | null = null;
   bytesOut = 0;
@@ -574,6 +583,7 @@ export class RtmpPublisher extends EventEmitter {
     await this.call("connect", [
       { app: t.app, type: "nonprivate", flashVer: "FMLE/3.0 (compatible; S9 AI Arena)", tcUrl: t.tcUrl },
     ]);
+    this.appConnected_ = true;
   }
 
   private async publish(): Promise<void> {
