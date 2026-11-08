@@ -38,12 +38,13 @@ En «Crear torneo»:
 | **Formato** | Los de la tabla de arriba. |
 | **Modo** | Los cuatro modos ([Modos de juego](game-modes.md)). |
 | **Ruleset** | Las reglas del torneo; déjalo en `mvp-default` salvo que sepas lo que haces. |
+| **Retransmisión pública** | Si se marca, las batallas del torneo se pueden ver y emitir en público con los datos de competición de cada bot, también de los privados o de equipo. No cambia la visibilidad de ningún bot ni de su código. **No se puede cambiar después** ([Visibilidad](visibility.md)). |
 
 El formulario se muestra a todos, pero sin el rol verás «Requiere rol organizer» al pulsar. Desde la web no se configuran el conjunto de mapas, el presupuesto, las fechas ni el número de partidas por enfrentamiento; por defecto el torneo se juega en el mapa de serie `mvp-arena-01`. La plataforma guarda una **copia inmutable de las reglas** del torneo al crearlo: aunque un conjunto de reglas cambie después, el torneo conserva las suyas.
 
 ## Inscribir un bot
 
-En el detalle del torneo, **«Inscribir bot»** → elige uno de tus bots → **«Inscribir»**. Se inscribe una **versión publicada y elegible**, junto con su equipamiento, y ambos quedan fijados para el torneo.
+En el detalle del torneo, **«Inscribir bot»** → elige uno de tus bots → **«Inscribir»**. Se inscribe una **versión publicada y elegible**, junto con su equipamiento, y ambos quedan fijados para el torneo. Puedes inscribir bots **privados, de equipo o públicos**: inscribirlo no cambia su visibilidad ni la de su código. Si el torneo tiene retransmisión pública y el bot no es público, la web te avisa: «Este bot es privado. Durante las batallas públicas se mostrarán únicamente sus datos de competición; su código seguirá privado.»
 
 | Mensaje | Causa |
 |---|---|

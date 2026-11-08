@@ -9,7 +9,7 @@ Puedes ver el replay de una batalla (lista, reproductor y descarga) si:
 - **uno de tus bots participó** en ella;
 - eres **miembro del equipo** de un bot participante y ese bot no es privado (visibilidad «equipo» o «pública»);
 - tienes rol de **organizador, moderador o administrador**;
-- o la plataforma tiene activado el **acceso público a replays** y **todos** los bots de la batalla son públicos. Activarlo no hace públicas las batallas en las que participa algún bot privado o de equipo.
+- o la plataforma tiene activado el **acceso público a replays** y **todos** los bots de la batalla son públicos, o la batalla es de un torneo con **retransmisión pública** ([Visibilidad](visibility.md)). Activarlo no hace públicas las demás batallas en las que participa algún bot privado o de equipo. En un replay público de un bot privado se ven su nombre, su equipo, sus acciones en el campo y sus estadísticas deportivas; nunca su código ni su ficha.
 
 En cualquier otro caso el replay **no existe para ti**: la lista no lo muestra y el reproductor dice «no existe o no está disponible», exactamente igual que con un identificador inventado. Un enlace a un replay público se abre sin cuenta.
 

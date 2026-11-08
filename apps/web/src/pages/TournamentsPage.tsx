@@ -15,6 +15,8 @@ export interface Tournament {
   mode: string;
   state: string;
   entryCount?: number;
+  /** VISIBILIDAD · el torneo autoriza su retransmisión pública (fijado al crearlo). */
+  broadcast?: boolean;
 }
 
 // UX-R · los valores son los de la API; lo que se ENSEÑA son sus nombres.
@@ -27,6 +29,7 @@ export function TournamentsPage(_props: { me: Me }) {
   const [format, setFormat] = useState("single_elimination");
   const [mode, setMode] = useState("deathmatch");
   const [rulesetId, setRulesetId] = useState("mvp-default");
+  const [broadcast, setBroadcast] = useState(false);
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
 
@@ -35,7 +38,7 @@ export function TournamentsPage(_props: { me: Me }) {
     setError("");
     setCreating(true);
     try {
-      const t = await api<Tournament>("POST", "/tournaments", { name, format, mode, rulesetId });
+      const t = await api<Tournament>("POST", "/tournaments", { name, format, mode, rulesetId, broadcast });
       setName("");
       reload();
       window.location.hash = `#/tournaments/${t.id}`;
@@ -72,7 +75,10 @@ export function TournamentsPage(_props: { me: Me }) {
                       </td>
                       <td>{labelOf(TOURNAMENT_FORMAT_NAME, t.format)}</td>
                       <td>{modeName(t.mode)}</td>
-                      <td>{labelOf(TOURNAMENT_STATE_NAME, t.state)}</td>
+                      <td>
+                        {labelOf(TOURNAMENT_STATE_NAME, t.state)}
+                        {t.broadcast ? " · retransmisión pública" : ""}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -116,6 +122,22 @@ export function TournamentsPage(_props: { me: Me }) {
             <label>
               Ruleset <input aria-label="ruleset" value={rulesetId} onChange={(e) => setRulesetId(e.target.value)} />
             </label>
+          </p>
+          <p>
+            <label>
+              <input
+                type="checkbox"
+                data-testid="tournament-broadcast"
+                checked={broadcast}
+                onChange={(e) => setBroadcast(e.target.checked)}
+              />{" "}
+              Retransmisión pública
+            </label>{" "}
+            <small>
+              Sus batallas se podrán emitir y ver en público con el nombre, la versión, el equipo y el resultado de cada
+              bot, también de los privados o de equipo. No cambia la visibilidad de ningún bot ni de su código. No se
+              puede cambiar después de crear el torneo.
+            </small>
           </p>
           {error && (
             <p className="error" role="alert">

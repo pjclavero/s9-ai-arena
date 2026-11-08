@@ -573,10 +573,14 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     if (!s.enabled) throw conflict("streaming_disabled", "El streaming está desactivado: actívalo antes de emitir");
     const info = await resolveTarget(db, t);
     if (!info) throw notFound("Destino no encontrado");
-    if (!info.publicBroadcastable) {
+    // VISIBILIDAD · la condición ya NO es «todos los bots públicos» sino «el destino está
+    // autorizado para retransmisión» (resolveTarget → wherePubliclyShowable), con el motivo real.
+    if (!info.broadcastable) {
       throw conflict(
-        "target_not_public",
-        "La batalla tiene bots no públicos: /broadcast (anónima) no podría mostrarla",
+        info.broadcastBlockedReason ?? "target_not_broadcastable",
+        info.broadcastBlockedReason === "tournament_not_broadcastable"
+          ? "La batalla tiene bots no públicos y su torneo no autoriza la retransmisión"
+          : "La batalla no es de un torneo retransmisible y tiene bots no públicos: /broadcast (anónima) no podría mostrarla",
       );
     }
     if (s.mode === "record") await checkDisk();

@@ -71,6 +71,8 @@ export function tournamentToJson(t: Record<string, unknown>) {
     seedCommitment: t.seed_commitment ?? undefined,
     seedsRevealed: t.seeds_revealed ?? undefined,
     state: t.state,
+    // VISIBILIDAD · el torneo autoriza su retransmisión pública (fijado al crearlo).
+    broadcast: t.broadcast === true,
     // ADR-022 · copia inmutable de las reglas (ausente en torneos anteriores).
     rules: rulesToJson(rulesOf(t)),
   };
@@ -85,7 +87,12 @@ export function tournamentToJson(t: Record<string, unknown>) {
  * privado» sin revelar quién es. Sin `hidden` (llamadas internas), todo tal cual.
  * En torneos de equipos `home`/`away` son equipos, no bots: no se tocan.
  */
-export function tournamentMatchToJson(m: Record<string, unknown>, hidden?: Set<string>, isTeams = false) {
+export function tournamentMatchToJson(
+  m: Record<string, unknown>,
+  hidden?: Set<string>,
+  isTeams = false,
+  names?: Map<string, string>,
+) {
   const hide = (id: unknown) => hidden !== undefined && typeof id === "string" && hidden.has(id);
   let pairing = (m.pairing ?? {}) as Record<string, unknown>;
   if (typeof pairing === "string") pairing = JSON.parse(pairing);
@@ -97,6 +104,9 @@ export function tournamentMatchToJson(m: Record<string, unknown>, hidden?: Set<s
     };
   }
   const winnerHidden = hide(m.winner_bot_id);
+  // VISIBILIDAD-3 (P3-6) · «bracket con nombre» (§13): nombre ACTUAL del bot (no hay
+  // instantánea, §25), sólo si el solicitante puede identificarlo; oculto ⇒ nada.
+  const winnerName = !winnerHidden && typeof m.winner_bot_id === "string" ? names?.get(m.winner_bot_id) : undefined;
   return {
     id: m.id,
     round: m.round,
@@ -105,6 +115,7 @@ export function tournamentMatchToJson(m: Record<string, unknown>, hidden?: Set<s
     state: m.state,
     winnerBotId: winnerHidden ? null : (m.winner_bot_id ?? null),
     ...(winnerHidden ? { winnerPrivate: true } : {}),
+    ...(winnerName !== undefined ? { winnerBotName: winnerName } : {}),
     winnerTeamId: m.winner_team_id ?? null,
     final: m.final,
   };
@@ -157,6 +168,7 @@ export function tournamentRoutes(
       entriesCloseAt,
       seedCommitment,
       rules,
+      broadcast,
     } = req.body ?? {};
     if (typeof name !== "string" || !name || name.length > 64) throw badRequest("name obligatorio (máx. 64)");
     if (!FORMATS.includes(format)) throw badRequest(`format debe ser uno de ${FORMATS.join(", ")}`);
@@ -169,6 +181,9 @@ export function tournamentRoutes(
     ) {
       throw badRequest("budgetCredits debe ser un entero en [200, 5000]");
     }
+    // VISIBILIDAD · autorización de retransmisión: del TORNEO, nunca del bot. Se fija aquí y
+    // no cambia (no hay edición de torneos): quien inscribe un bot lo sabe de antemano.
+    if (broadcast !== undefined && typeof broadcast !== "boolean") throw badRequest("broadcast debe ser true o false");
     // ADR-022 · COPIA INMUTABLE de las reglas del torneo (preset, personalizado o clásico).
     // El scheduler la copia en cada batalla: nada posterior la reinterpreta.
     const snapshot = await buildTournamentRules(db, {
@@ -193,6 +208,7 @@ export function tournamentRoutes(
         entries_close_at: entriesCloseAt ?? null,
         seed_commitment: seedCommitment ?? null,
         state: "open",
+        broadcast: broadcast === true,
         created_by: req.auth!.userId,
       })
       .returning("*");
@@ -200,6 +216,7 @@ export function tournamentRoutes(
       actorId: req.auth!.userId,
       action: "tournament.created",
       target: `tournament:${t.id}`,
+      detail: { broadcast: t.broadcast === true },
       correlationId: req.correlationId,
     });
     res.status(201).json(tournamentToJson(t));
@@ -420,13 +437,36 @@ export function tournamentRoutes(
       ])
       .select("id", "round", "slot", "pairing", "state", "winner_bot_id", "winner_team_id", "final");
     const isTeams = t.format === "teams";
+    // VISIBILIDAD · en un torneo retransmisible los inscritos se identifican EN SU CUADRO
+    // (BROADCAST_VISIBILITY): id y ganador de competición, nunca la ficha ni el código. En
+    // los demás, un bot privado ajeno sigue saliendo como «Bot privado» (UX-F).
+    // El contexto del torneo entra en `hiddenBotIds`: la regla vive en replay-access.ts.
     const hidden = await hiddenBotIds(
       db,
       req.auth,
       isTeams ? rows.map((m: Record<string, unknown>) => m.winner_bot_id) : rows.flatMap(botIdsOfMatch),
+      { tournamentId: t.id },
+    );
+    // VISIBILIDAD-3 (P3-6) · nombres sólo de los ganadores que el solicitante puede
+    // identificar (la misma `hidden`): la proyección de competición, nunca la ficha.
+    const visibleWinners = [
+      ...new Set(
+        rows
+          .map((m: Record<string, unknown>) => m.winner_bot_id)
+          .filter((id: unknown): id is string => typeof id === "string" && !hidden.has(id)),
+      ),
+    ];
+    const names = new Map<string, string>(
+      visibleWinners.length === 0
+        ? []
+        : (await db("bots").whereIn("id", visibleWinners).select("id", "name")).map(
+            (b: { id: string; name: string }) => [b.id, b.name] as [string, string],
+          ),
     );
     res.setHeader("Cache-Control", NO_STORE);
-    res.json({ matches: rows.map((m: Record<string, unknown>) => tournamentMatchToJson(m, hidden, isTeams)) });
+    res.json({
+      matches: rows.map((m: Record<string, unknown>) => tournamentMatchToJson(m, hidden, isTeams, names)),
+    });
   });
 
   /**

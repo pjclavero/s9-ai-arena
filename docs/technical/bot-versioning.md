@@ -83,7 +83,7 @@ El trigger `bot_versions_guard` (BEFORE INSERT/UPDATE/DELETE) aplica estas regla
 - **Siempre fijos**: `id`, `bot_id`, `version`, `parent_version` y `created_at`.
 - **Fijos fuera de `draft`**: `source`, `source_filename`, `runtime` y `loadout_revision`.
 - **`artifact_hash` y `validated_build_id`**: sólo cambian cuando la versión está en `validating`, que es el momento en que `completeBuild` la valida.
-- **`code_public`**: una vez a `true`, no vuelve a `false` (D9).
+- **`code_public`**: hasta la migración 019 no podía volver de `true` a `false` (D9). Desde la 019 (enmienda a D9) el dueño puede cambiarlo en los dos sentidos con `setBotVersionCodeVisibility`; el guardián ya no lo bloquea.
 - **Borrado**: una versión que no es `draft` no se puede borrar.
 
 Cualquier violación lanza `bot_version_immutable` (SQLSTATE `23000`), venga de la API, de un

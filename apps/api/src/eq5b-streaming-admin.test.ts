@@ -346,7 +346,7 @@ describe("EQ5b · controles", () => {
           .set(auth(admin))
           .send({ target: { kind: "battle", id: privateBattle } })
       ).body.error,
-    ).toBe("target_not_public");
+    ).toBe("battle_not_public");
     expect(
       (
         await request(app)

@@ -86,8 +86,17 @@ Reglas de operación:
 - Iniciar, reiniciar y detener se ejecutan en serie: «Detener» pulsado mientras arranca
   espera a que termine el arranque y lo para. No se empieza a grabar si el streamer no puede
   medir el disco (`disk_unknown`) o quedan menos de 2 GiB (`disk_low`).
-- `/broadcast` es anónima: sólo se emiten batallas sin bots privados (la API lo rechaza con
-  `target_not_public`) y hace falta el directo público activado.
+- `/broadcast` es anónima y hace falta el directo público activado. Se emite lo que un visitante
+  puede leer (`wherePubliclyShowable`, `apps/api/src/replay-access.ts`): batallas sin bots no públicos
+  y **todas** las batallas de un torneo creado con `broadcast: true`, con la proyección de
+  competición de sus bots privados o de equipo (nombre, versión, bando; nunca dueño, código ni
+  diagnóstico). Emitir no cambia ninguna visibilidad. Motivos de rechazo (antes `target_not_public`):
+  `battle_not_public` para una batalla suelta con bots no públicos (no hay flag por batalla, porque sólo
+  un torneo anuncia la retransmisión antes de la inscripción) y `tournament_not_broadcastable` para una
+  batalla de un torneo sin `broadcast` con bots no públicos. Un torneo sin `broadcast` se puede emitir
+  igual que antes: el director sólo muestra sus batallas sin bots no públicos. `GET
+  /admin/streaming/target` devuelve `broadcastable`, `broadcastBlockedReason` y `tournamentBroadcast`;
+  `publicBroadcastable` se mantiene como alias obsoleto.
 - Despliegue: el perfil `streaming` sigue fuera del contrato de producción. Para usar la
   pantalla hace falta el servicio `streamer` y los secretos nuevos de `init-secrets.sh`
   (`streamer_control_secret`, `stream_secrets_private`/`stream_secrets_public`). Sin streamer
@@ -224,7 +233,7 @@ esta equivalencia, que fija `apps/api/src/streamer-real.test.ts`:
 | `STREAM_NOT_CONFIGURED` | `streaming_disabled`, `credential_missing`, `ingest_missing`, `credential_stale`, `credential_unbound`; `sealed_store_unavailable` al guardar una clave | 409 (503 el último) | streaming desactivado, sin clave, clave sellada con otro par o para otra ingesta, sin clave pública |
 | `STREAM_ALREADY_ACTIVE` | `already_active` (API), `streamer_busy` (el streamer ya emite) | 409 | hay otra emisión; **no** se toca la activa |
 | `STREAM_NOT_ACTIVE` | `not_active` | 409 | reiniciar sin emisión. **Detener sin emisión no es error**: 200 con `wasActive: false` (idempotente) |
-| `STREAM_START_FAILED` | `streamer_unavailable` (503), `streamer_error` (502), `start_cancelled` (409), `target_not_public` (409), `disk_low` / `disk_unknown` (409), `not_found` (404) | — | el streamer no responde o rechaza la orden, se detuvo mientras arrancaba, batalla no emitible o inexistente |
+| `STREAM_START_FAILED` | `streamer_unavailable` (503), `streamer_error` (502), `start_cancelled` (409), `battle_not_public` / `tournament_not_broadcastable` (409; antes `target_not_public`), `disk_low` / `disk_unknown` (409), `not_found` (404) | — | el streamer no responde o rechaza la orden, se detuvo mientras arrancaba, batalla no emitible o inexistente |
 | `STREAM_STOP_FAILED` | `streamer_unavailable` | 503 | el streamer no responde al stop; la sesión **queda parada** en BD igualmente (`force` lo silencia) |
 
 La API interna del streamer tiene sus propios códigos: `already_active`, `session_mismatch` (stop
@@ -509,6 +518,7 @@ scripts locales). Las marcadas con ⚙ ejecutan **ffmpeg o procesos reales**.
 | STR-6 | P3 | El escenario de la batalla tapa a veces el marcador superior (un tanque bajo el rótulo) | **abierto**: UX de `/broadcast`, fuera del alcance de STREAMER |
 | STR-7 (H1) | P3 | Nadie leía el stdout/stderr de Chromium: con más de 128-256 KiB de salida se bloqueaba en `write()` y la emisión seguía «en directo» con la imagen congelada y sin alerta | **corregido** (STREAMER-2): se leen siempre y se descartan; sólo se guarda una cola de 2 KiB del stderr, redactada al registrarla |
 | STR-8 (H2) | P3 | Con la clave rechazada por la ingesta, `lastError` acababa mostrando el ruido de la parada de ffmpeg (`Nothing was written into output file…`) en vez del rechazo | **corregido** (STREAMER-2): guarda de generación en el stderr de ffmpeg; ese ruido se registra (`superseded: true`) pero no sustituye la causa |
+| VIS-obs (#244) | P3 | Si el dueño pasa a privado un bot de una batalla suelta en emisión, la sesión no se para sola: `/broadcast` deja de leer la batalla (404) y el destino pasa a `broadcastable: false`, pero la parada es manual (RV-S3) | **abierto** (documentado; en torneos con `broadcast` no aplica) |
 | STR-9 (H3) | P3 | La documentación y la evidencia decían CBR, 0 frames descartados y «todas las líneas de log son JSON» (y `measure.sh` sólo miraba las que empiezan por `{`) | **corregido** (STREAMER-2): VBR con techo, descartes medidos, Xvfb declarado y `measure.sh` revisa todas las líneas |
 
 ## Cómo se verificó

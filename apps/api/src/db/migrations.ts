@@ -958,6 +958,82 @@ const m018_battle_reverted: Migration = {
   },
 };
 
+// VISIBILIDAD (2026-11) · «participar ≠ hacer público el bot; salir en streaming ≠ hacer público
+// el bot; bot público ≠ código público». Dos cambios mínimos:
+//  1. `tournaments.broadcast`: el torneo AUTORIZA su retransmisión pública. Pertenece al torneo
+//     (nunca al bot), lo fija el organizador AL CREARLO y no cambia después (no hay operación
+//     de edición de torneos): quien inscribe un bot sabe ANTES de inscribirse si el torneo se
+//     retransmite. Con él, las batallas del torneo se pueden mostrar en público con la
+//     PROYECCIÓN DE COMPETICIÓN de sus participantes aunque sus bots sean privados o de equipo
+//     (battle-access.ts / replay-access.ts); la ficha y el código siguen protegidos.
+//  2. `code_public` deja de ser irreversible (enmienda a D9, decisión de producto del encargo
+//     «VISIBILIDAD», §6/§30): el dueño puede volver a ocultar el código de una versión. Sólo se
+//     quita esa cláusula del guardián `s9_bot_version_guard`; el resto (identidad, código,
+//     runtime, loadout, artefacto, borrado) sigue igual.
+// Aditiva para los datos: ninguna fila cambia (todos los torneos existentes quedan sin
+// retransmisión: comportamiento idéntico al anterior). Probado en `migration-019.test.ts`.
+const BOT_VERSION_GUARD_HEAD = `
+      CREATE OR REPLACE FUNCTION s9_bot_version_guard() RETURNS trigger LANGUAGE plpgsql AS $fn$
+      BEGIN
+        IF TG_OP = 'DELETE' THEN
+          IF OLD.state <> 'draft' THEN
+            RAISE EXCEPTION 'bot_version_immutable: la versión % del bot % está en % y no se puede borrar',
+              OLD.version, OLD.bot_id, OLD.state USING ERRCODE = 'integrity_constraint_violation';
+          END IF;
+          RETURN OLD;
+        END IF;
+
+        IF TG_OP = 'INSERT' THEN
+          NEW.source_sha256 := CASE WHEN NEW.source IS NULL THEN NULL ELSE encode(sha256(NEW.source), 'hex') END;
+          RETURN NEW;
+        END IF;
+
+        -- UPDATE
+        IF NEW.id IS DISTINCT FROM OLD.id OR NEW.bot_id IS DISTINCT FROM OLD.bot_id
+           OR NEW.version IS DISTINCT FROM OLD.version OR NEW.parent_version IS DISTINCT FROM OLD.parent_version
+           OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+          RAISE EXCEPTION 'bot_version_immutable: la identidad de la versión % del bot % no se puede cambiar',
+            OLD.version, OLD.bot_id USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+        IF OLD.state <> 'draft' AND (
+             NEW.source IS DISTINCT FROM OLD.source OR NEW.source_filename IS DISTINCT FROM OLD.source_filename
+             OR NEW.runtime IS DISTINCT FROM OLD.runtime OR NEW.loadout_revision IS DISTINCT FROM OLD.loadout_revision) THEN
+          RAISE EXCEPTION 'bot_version_immutable: la versión % del bot % está en % y su código/runtime/loadout no se puede cambiar (crea una versión nueva)',
+            OLD.version, OLD.bot_id, OLD.state USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+        IF OLD.state <> 'validating' AND (
+             NEW.artifact_hash IS DISTINCT FROM OLD.artifact_hash
+             OR NEW.validated_build_id IS DISTINCT FROM OLD.validated_build_id) THEN
+          RAISE EXCEPTION 'bot_version_immutable: el artefacto de la versión % del bot % sólo se fija al validar',
+            OLD.version, OLD.bot_id USING ERRCODE = 'integrity_constraint_violation';
+        END IF;`;
+const BOT_VERSION_GUARD_D9_IRREVERSIBLE = `
+        IF OLD.code_public AND NOT NEW.code_public THEN
+          RAISE EXCEPTION 'bot_version_immutable: code_public es irreversible (D9)'
+            USING ERRCODE = 'integrity_constraint_violation';
+        END IF;`;
+const BOT_VERSION_GUARD_TAIL = `
+        NEW.source_sha256 := CASE WHEN NEW.source IS NULL THEN NULL ELSE encode(sha256(NEW.source), 'hex') END;
+        RETURN NEW;
+      END
+      $fn$;`;
+
+const m019_visibility_broadcast: Migration = {
+  name: "019_visibility_broadcast",
+  async up(db) {
+    await db.raw(`ALTER TABLE tournaments ADD COLUMN broadcast boolean NOT NULL DEFAULT false`);
+    await db.raw(BOT_VERSION_GUARD_HEAD + BOT_VERSION_GUARD_TAIL);
+  },
+  // Vuelta atrás: el guardián recupera la irreversibilidad de D9 (las versiones cuyo código se
+  // ocultó siguen ocultas: no se toca ninguna fila) y se pierde SÓLO la marca de retransmisión de
+  // los torneos (sus batallas con bots no públicos vuelven a ser privadas). Ver
+  // docs/operations/upgrades.md § «Migración 019».
+  async down(db) {
+    await db.raw(BOT_VERSION_GUARD_HEAD + BOT_VERSION_GUARD_D9_IRREVERSIBLE + BOT_VERSION_GUARD_TAIL);
+    await db.raw(`ALTER TABLE tournaments DROP COLUMN broadcast`);
+  },
+};
+
 export const MIGRATIONS: Migration[] = [
   m001_identity,
   m002_content,
@@ -977,6 +1053,7 @@ export const MIGRATIONS: Migration[] = [
   m016_battle_rules,
   m017_streaming_admin,
   m018_battle_reverted,
+  m019_visibility_broadcast,
 ];
 
 class ProgrammaticMigrationSource {
@@ -1033,11 +1110,20 @@ export async function rollbackNamed(db: Knex, name: string): Promise<void> {
  * crea o quita sus PROPIAS columnas/tablas, sin dependencias de las posteriores
  * (comprobado en migration-016/017/018.test.ts). Una nueva entra aquí sólo con
  * su test de vuelta atrás por nombre.
+ *
+ * VISIBILIDAD (#244, P2-1) · la 019 entra porque su runbook
+ * (docs/operations/upgrades.md) usa `rollback:name 019_visibility_broadcast`
+ * (RV-M2 en review-244-migration.test.ts y migration-019.test.ts). Su down quita
+ * `tournaments.broadcast` y REESCRIBE la función compartida `s9_bot_version_guard`
+ * con la definición de la 012 (D9 irreversible). Por eso **la 019 sale de esta
+ * lista si otra migración posterior vuelve a reescribir `s9_bot_version_guard`**:
+ * revertirla por nombre pisaría esa versión más nueva del guardián.
  */
 export const NAMED_ROLLBACK_ALLOWED: readonly string[] = Object.freeze([
   "016_battle_rules",
   "017_streaming_admin",
   "018_battle_reverted",
+  "019_visibility_broadcast",
 ]);
 
 /** EQ5e (R3-F) · Aplica UNA migración pendiente concreta por NOMBRE. */

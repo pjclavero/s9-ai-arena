@@ -54,7 +54,16 @@ info:
   # 0.14.0 · STREAMER (aditivo, admin): StreamingAdminState.lastSession (última
   # sesión terminada: stoppedAt, stopReason, sin secretos) y `starting` en el enum
   # de uxState (el código ya lo devolvía desde EQ5d; el contrato no lo declaraba).
-  version: 0.14.0
+  # 0.15.0 · VISIBILIDAD (aditivo): setBotVersionCodeVisibility (PUT
+  # /bots/{botId}/versions/{version}/code-visibility, sólo el dueño; D9 enmendada:
+  # codePublic es reversible), `broadcast` en TournamentInput/Tournament (fijado al
+  # crear), y en StreamingTarget `broadcastable`, `broadcastBlockedReason`
+  # (battle_not_public | tournament_not_broadcastable) y `tournamentBroadcast`;
+  # `publicBroadcastable` queda como alias deprecado. startStreaming ya no responde
+  # 409 target_not_public sino con el motivo real. TournamentMatch.winnerBotName
+  # (nombre de competición del ganador, «bracket con nombre»). getBotSource,
+  # getBotVersionFiles y diffBotVersions responden con `Cache-Control: private, no-store`.
+  version: 0.15.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -643,7 +652,7 @@ paths:
     post:
       tags: [bots]
       operationId: publishBotVersion
-      summary: 'validated → published. La versión pasa a ser INMUTABLE. codePublic es irreversible (D9).'
+      summary: 'validated → published. La versión pasa a ser INMUTABLE. codePublic=true publica también el código; se puede volver a ocultar con setBotVersionCodeVisibility (D9 enmendada).'
       x-min-role: developer
       parameters: [{ $ref: '#/components/parameters/BotId' }, { $ref: '#/components/parameters/Version' }]
       requestBody:
@@ -657,6 +666,32 @@ paths:
         '200': { description: Publicada, content: { application/json: { schema: { $ref: '#/components/schemas/BotVersion' } } } }
         '409': { $ref: '#/components/responses/IllegalTransition' }
         '422': { $ref: '#/components/responses/LoadoutInvalid' }
+
+  /bots/{botId}/versions/{version}/code-visibility:
+    put:
+      tags: [bots]
+      operationId: setBotVersionCodeVisibility
+      summary: |
+        VISIBILIDAD · Poner el CÓDIGO de una versión en privado (codePublic=false) o en público
+        (codePublic=true). Solo el dueño (ni el staff ni el equipo). Independiente de la visibilidad
+        del bot, de la publicación, de la elegibilidad y de los torneos. Volver a privado (enmienda a
+        D9) corta las lecturas públicas del código; quien ya lo descargó conserva su copia. Auditado.
+      x-min-role: user
+      parameters: [{ $ref: '#/components/parameters/BotId' }, { $ref: '#/components/parameters/Version' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [codePublic]
+              properties:
+                codePublic: { type: boolean }
+      responses:
+        '200': { description: Hecho, content: { application/json: { schema: { $ref: '#/components/schemas/BotVersion' } } } }
+        '400': { description: codePublic no booleano, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Bot o versión inexistente o no visible, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /bots/{botId}/versions/{version}/actions/suspend:
     post:
@@ -1710,7 +1745,7 @@ paths:
     post:
       tags: [streaming]
       operationId: startStreaming
-      summary: 'Inicia la emisión (o la grabación, según el modo) hacia un destino. Idempotente para el mismo destino y configuración; 409 si hay otra activa, si el streaming está desactivado, si falta la clave, si la clave está sellada para otra ingesta (credential_unbound), si el destino no es público, si no se puede medir el disco o queda poco (disk_unknown, disk_low) o si un stop la canceló mientras arrancaba (start_cancelled). start, restart y stop se ejecutan en serie.'
+      summary: 'Inicia la emisión (o la grabación, según el modo) hacia un destino. Idempotente para el mismo destino y configuración; 409 si hay otra activa, si el streaming está desactivado, si falta la clave, si la clave está sellada para otra ingesta (credential_unbound), si el destino no está autorizado para retransmisión (battle_not_public: batalla suelta con bots no públicos; tournament_not_broadcastable: batalla de un torneo sin broadcast con bots no públicos), si no se puede medir el disco o queda poco (disk_unknown, disk_low) o si un stop la canceló mientras arrancaba (start_cancelled). start, restart y stop se ejecutan en serie.'
       x-min-role: admin
       requestBody:
         required: true
@@ -2059,7 +2094,7 @@ components:
         runtime: { $ref: '#/components/schemas/Runtime' }
         loadoutRevision: { type: integer }
         artifactHash: { type: string, description: 'sha256 del artefacto firmado. Público: permite auditar sin revelar código.' }
-        codePublic: { type: boolean, description: 'Irreversible una vez publicada (D9).' }
+        codePublic: { type: boolean, description: 'El código de esta versión es público. Lo cambia sólo el dueño (setBotVersionCodeVisibility; D9 enmendada).' }
         rejectionReason: { type: string }
         createdAt: { type: string, format: date-time }
         id: { type: string, description: 'bot_versions.id (uuid); la clave natural es (botId, version)' }
@@ -2296,6 +2331,14 @@ components:
         seedCommitment:
           type: string
           description: 'Hash del lote de semillas, publicado ANTES del cierre (commit-reveal, E9/T9.4).'
+        broadcast:
+          type: boolean
+          default: false
+          description: |
+            VISIBILIDAD · el torneo AUTORIZA su retransmisión pública. Sus batallas se muestran en
+            /broadcast, en el directo y en el replay públicos con la proyección de competición de cada
+            participante (nombre, versión, bando, resultado) AUNQUE el bot sea privado o de equipo. No
+            cambia la visibilidad del bot ni la de su código. Se fija al crear el torneo y no cambia.
         rules:
           type: object
           description: |
@@ -2764,6 +2807,7 @@ components:
         state: { enum: [scheduled, running, finished, failed] }
         winnerBotId: { type: string, nullable: true, description: 'UX-F (DEF-R3) · null también si el ganador es un bot privado ajeno (winnerPrivate)' }
         winnerPrivate: { type: boolean, description: 'el ganador es un bot que el solicitante no puede identificar' }
+        winnerBotName: { type: string, description: 'VISIBILIDAD (0.15.0) · nombre de competición del ganador (nombre actual del bot), sólo si el solicitante puede identificarlo (torneo con broadcast o bot visible); ausente si winnerPrivate' }
         winnerTeamId: { type: string, nullable: true }
         final: { type: boolean, description: 'true si es la final del torneo (modo visible, cap. 19.1)' }
 
@@ -2863,7 +2907,10 @@ components:
         id: { type: string, format: uuid }
         label: { type: string }
         status: { type: string }
-        publicBroadcastable: { type: boolean }
+        broadcastable: { type: boolean, description: 'VISIBILIDAD · autorizado para retransmisión (misma regla que la lectura pública de /broadcast). No exige bots públicos.' }
+        broadcastBlockedReason: { type: string, nullable: true, enum: [battle_not_public, tournament_not_broadcastable, null], description: 'battle_not_public · batalla suelta con bots no públicos (sólo un torneo con broadcast autoriza mostrarlos). tournament_not_broadcastable · batalla de un torneo sin broadcast con bots no públicos.' }
+        tournamentBroadcast: { type: boolean, nullable: true }
+        publicBroadcastable: { type: boolean, deprecated: true, description: 'Alias de broadcastable.' }
         delaySeconds: { type: number }
         delaySource: { type: string, enum: [snapshot, ruleset, final_visible, none] }
 

@@ -93,15 +93,17 @@ describe("R12 · GET /tournaments/{tournamentId}/matches (slice 1, solo lectura)
     ]);
 
     // Proyección EXPLÍCITA: solo las claves del contrato, nada más (sin tournament_id/created_at...).
+    // VISIBILIDAD-3 (P3-6): un ganador identificable añade `winnerBotName`; sin ganador, no.
     for (const m of res.body.matches) {
-      expect(Object.keys(m).sort()).toEqual(
-        ["final", "id", "pairing", "round", "slot", "state", "winnerBotId", "winnerTeamId"].sort(),
-      );
+      const keys = ["final", "id", "pairing", "round", "slot", "state", "winnerBotId", "winnerTeamId"];
+      if (m.winnerBotId) keys.push("winnerBotName");
+      expect(Object.keys(m).sort()).toEqual(keys.sort());
     }
 
     const first = res.body.matches[0];
     expect(first.state).toBe("finished");
     expect(first.winnerBotId).toBe(bots[0].botId);
+    expect(typeof first.winnerBotName).toBe("string");
     expect(first.winnerTeamId).toBeNull();
     expect(first.final).toBe(false);
 

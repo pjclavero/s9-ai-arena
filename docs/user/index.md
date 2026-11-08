@@ -30,6 +30,7 @@ crear bot → programarlo → equiparlo → publicar una versión → batallas �
 |---|---|
 | Crear la cuenta y entender los roles | [Cuentas](accounts.md) |
 | Crear un bot, subir código y publicarlo | [Bots](bots.md) |
+| Decidir quién ve mi bot y mi código; qué se ve en un torneo retransmitido | [Visibilidad](visibility.md) |
 | **Aprender a programar un bot** | [Guía de programación](bots/index.md) y [ejemplos](bots/ejemplos.md) |
 | Elegir chasis, sensores y armas | [Equipamiento](equipment.md) · [catálogo completo](equipment-catalog.md) |
 | Saber qué reglas tiene cada modo | [Modos de juego](game-modes.md) · [Reglas de batalla](rules.md) |

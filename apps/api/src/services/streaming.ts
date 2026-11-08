@@ -17,7 +17,7 @@ import { canonicalIngestUrl, keyIdOf } from "../../../../packages/stream-secrets
 import { loadRuleset } from "../../../../packages/game-rules/index.js";
 import { rulesOf } from "./battle-rules.js";
 import { resolveBattleRuleset } from "./battle-ruleset-resolver.js";
-import { whereOnlyPublicBots } from "../battle-access.js";
+import { publicShowabilityOf, type BroadcastBlockedReason } from "../replay-access.js";
 
 // ── catálogo de plataformas (extensible: añadir una entrada aquí) ───────────
 export interface PlatformDef {
@@ -470,7 +470,24 @@ export interface TargetInfo {
   id: string;
   label: string;
   status: string;
-  /** /broadcast es ANÓNIMA: sólo se emite lo que un visitante puede ver. */
+  /**
+   * VISIBILIDAD · el destino está AUTORIZADO para retransmisión: /broadcast (anónima)
+   * puede mostrarlo con la proyección de competición (`wherePubliclyShowable`). NO
+   * exige que los bots sean públicos: basta con que la batalla sea de un torneo con
+   * `broadcast`. Ningún bot cambia de visibilidad por emitirse.
+   */
+  broadcastable: boolean;
+  /**
+   * Motivo REAL cuando no se puede emitir (null si se puede):
+   *  - `battle_not_public`: batalla suelta (sin torneo) con bots no públicos. Sólo un
+   *    torneo autoriza mostrar bots privados o de equipo; no hay flag por batalla.
+   *  - `tournament_not_broadcastable`: batalla de un torneo creado sin `broadcast`
+   *    que tiene bots no públicos.
+   */
+  broadcastBlockedReason: BroadcastBlockedReason | null;
+  /** El torneo autoriza la retransmisión (destino torneo, o batalla de un torneo). */
+  tournamentBroadcast: boolean | null;
+  /** @deprecated alias de `broadcastable` (compatibilidad con clientes anteriores). */
   publicBroadcastable: boolean;
   delaySeconds: number;
   delaySource: "snapshot" | "ruleset" | "final_visible" | "none";
@@ -494,7 +511,11 @@ export async function resolveTarget(db: Db, t: { kind: TargetKind; id: string })
       .first()
       .catch(() => null);
     if (!b) return null;
-    const pub = await whereOnlyPublicBots(db, db("battles").where("battles.id", t.id)).first();
+    // VISIBILIDAD · la MISMA regla que usa la lectura pública (/broadcast): se puede
+    // emitir exactamente lo que un visitante puede ver, ni más ni menos.
+    const show = await publicShowabilityOf(db, t.id);
+    if (!show) return null;
+    const pub = show.showable;
     let delaySeconds = 0;
     let delaySource: TargetInfo["delaySource"] = "none";
     if (b.spectator_mode === "visible") {
@@ -517,7 +538,10 @@ export async function resolveTarget(db: Db, t: { kind: TargetKind; id: string })
       id: t.id,
       label: `Batalla ${t.id.slice(0, 8)} (${b.mode})`,
       status: b.status,
-      publicBroadcastable: !!pub,
+      broadcastable: pub,
+      broadcastBlockedReason: show.reason,
+      tournamentBroadcast: show.tournamentBroadcast,
+      publicBroadcastable: pub,
       delaySeconds,
       delaySource,
     };
@@ -534,7 +558,12 @@ export async function resolveTarget(db: Db, t: { kind: TargetKind; id: string })
     id: t.id,
     label: String(tr.name ?? `Torneo ${t.id.slice(0, 8)}`).slice(0, 120),
     status: tr.state,
-    // El director de torneo sólo muestra batallas sin bots privados (lo filtra la API pública).
+    // Un torneo siempre se puede emitir (compatibilidad): el director muestra las batallas
+    // que la API pública deja leer. Con `broadcast`, TODAS (con la proyección de competición
+    // de sus bots privados o de equipo); sin él, sólo las que no tienen bots no públicos.
+    broadcastable: true,
+    broadcastBlockedReason: null,
+    tournamentBroadcast: tr.broadcast === true,
     publicBroadcastable: true,
     delaySeconds: d ?? 0,
     delaySource: d !== null ? "snapshot" : "none",

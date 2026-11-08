@@ -28,6 +28,14 @@ import { diffFiles } from "../services/bot-version-diff.js";
 import { findVersionArtifact } from "../../../bot-manager/src/launch-verify.js";
 import type { Auth } from "../services/bots.js";
 import { battleEligibilityOf } from "../services/version-eligibility.js";
+import { audit } from "../audit.js";
+
+/**
+ * VISIBILIDAD-3 (#244, P3-2) · el código (source, files, diff) depende de quién
+ * pregunta y puede dejar de ser legible (`code_public` es reversible desde la
+ * 019): nunca en una caché compartida ni en la del navegador.
+ */
+const CODE_NO_STORE = "private, no-store";
 
 const MAX_SOURCE_BYTES = 10 * 1024 * 1024; // 10 MB (E6.M)
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_SOURCE_BYTES } });
@@ -314,6 +322,16 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     const [updated] = Object.keys(patch).length
       ? await db("bots").where({ id: bot.id }).update(patch).returning("*")
       : [bot];
+    // VISIBILIDAD · el cambio de visibilidad de la ficha queda auditado (quién, de qué a qué).
+    if (patch.visibility !== undefined && patch.visibility !== bot.visibility) {
+      await audit(db, {
+        actorId: req.auth!.userId,
+        action: "bot.visibility_changed",
+        target: `bot:${bot.id}`,
+        detail: { from: bot.visibility, to: patch.visibility },
+        correlationId: req.correlationId,
+      });
+    }
     res.json(botToJson(updated, await latestPublishedVersion(db, bot.id as string)));
   });
 
@@ -455,6 +473,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     const filename = sanitizeSourceFilename(v.source_filename) ?? fallback;
     res
       .status(200)
+      .setHeader("Cache-Control", CODE_NO_STORE)
       .setHeader("Content-Type", "application/octet-stream")
       .setHeader("Content-Disposition", contentDispositionAttachment(filename))
       .send(v.source);
@@ -496,6 +515,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
       throw forbidden("El código de un bot es privado salvo publicación explícita (D9)");
     }
     const { packaged, files } = decodeVersionFiles(v);
+    res.setHeader("Cache-Control", CODE_NO_STORE);
     res.json({ botId: bot.id, version: v.version, sourceSha256: v.source_sha256 ?? undefined, packaged, files });
   });
 
@@ -520,6 +540,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
         throw forbidden("El código de un bot es privado salvo publicación explícita (D9)");
       }
     }
+    res.setHeader("Cache-Control", CODE_NO_STORE);
     res.json({
       botId: bot.id,
       from: from.version,
@@ -608,6 +629,36 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
       { published_at: db.fn.now(), ...(codePublic ? { code_public: true } : {}) },
       req.correlationId,
     );
+    res.json(versionToJson(updated));
+  });
+
+  /**
+   * VISIBILIDAD (CODE_VISIBILITY) · el dueño pone el CÓDIGO de una versión en privado o en
+   * público. Independiente de la visibilidad del bot, de la publicación, de la elegibilidad y
+   * de los torneos: nada más cambia `code_public` (la publicación sólo lo pone a true si se
+   * pide explícitamente). SÓLO el dueño: ni el staff (no tenía esta capacidad) ni el equipo.
+   * Quien no ve el bot recibe 404 (no se revela su existencia); quien lo ve sin ser dueño, 403.
+   * Volver a privado (enmienda a D9, migración 019) corta TODAS las vías de lectura pública
+   * del código (`canReadSource`: source, files, diff, sourceSha256), que leen el valor vigente;
+   * quien ya lo descargó conserva su copia. No toca artefacto, replays ni inscripciones.
+   */
+  defineOperation(router, "setBotVersionCodeVisibility", async (req, res) => {
+    const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
+    assertOwner(req.auth, bot);
+    const v = await getVersionOr404(db, bot.id as string, pathParam(req, "version"));
+    const codePublic = (req.body ?? {}).codePublic;
+    if (typeof codePublic !== "boolean") throw badRequest("codePublic debe ser true o false");
+    let updated = v;
+    if (v.code_public !== codePublic) {
+      [updated] = await db("bot_versions").where({ id: v.id }).update({ code_public: codePublic }).returning("*");
+      await audit(db, {
+        actorId: req.auth!.userId,
+        action: "bot.code_visibility_changed",
+        target: `bot:${bot.id}:v${v.version}`,
+        detail: { from: v.code_public === true, to: codePublic },
+        correlationId: req.correlationId,
+      });
+    }
     res.json(versionToJson(updated));
   });
 
