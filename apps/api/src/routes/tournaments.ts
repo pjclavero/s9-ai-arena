@@ -106,8 +106,7 @@ export function tournamentMatchToJson(
   const winnerHidden = hide(m.winner_bot_id);
   // VISIBILIDAD-3 (P3-6) · «bracket con nombre» (§13): nombre ACTUAL del bot (no hay
   // instantánea, §25), sólo si el solicitante puede identificarlo; oculto ⇒ nada.
-  const winnerName =
-    !winnerHidden && typeof m.winner_bot_id === "string" ? names?.get(m.winner_bot_id) : undefined;
+  const winnerName = !winnerHidden && typeof m.winner_bot_id === "string" ? names?.get(m.winner_bot_id) : undefined;
   return {
     id: m.id,
     round: m.round,
