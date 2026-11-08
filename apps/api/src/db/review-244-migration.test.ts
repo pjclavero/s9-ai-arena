@@ -57,6 +57,7 @@ describe("RV-M2 · integración con #242: el runbook de la 019 usa `rollback:nam
     // En a20c017 `rollbackNamed` no tiene lista cerrada y esto pasa. En main 124aee4 (#242)
     // sólo admite NAMED_ROLLBACK_ALLOWED = 016/017/018: tras el merge esta prueba se pone
     // ROJA con «no se puede revertir por nombre» y el runbook de la 019 deja de funcionar.
+    // VISIBILIDAD-3 (P2-1): la 019 entra en NAMED_ROLLBACK_ALLOWED y vuelve a verde.
     expect(await last()).toBe("019_visibility_broadcast");
     await rollbackNamed(h.db, "019_visibility_broadcast");
     expect(await last()).toBe("018_battle_reverted");

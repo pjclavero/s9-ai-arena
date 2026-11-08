@@ -342,8 +342,9 @@ Hazlo con copia previa. `rollback:1` revierte exactamente una migración: la úl
 entre las aplicadas, que no tiene por qué ser la última aplicada (ver «Orden 017/018» en «Vuelta
 atrás»). Para revertir una migración concreta, usa `rollback:name <NNN_tema>`, que la revierte esté
 donde esté. Sólo admite una **lista cerrada** (`NAMED_ROLLBACK_ALLOWED` en
-`apps/api/src/db/migrations.ts`: `016_battle_rules`, `017_streaming_admin`, `018_battle_reverted`,
-las que sólo tocan sus propias tablas o columnas); cualquier otra, `001_identity` incluida, se rechaza
+`apps/api/src/db/migrations.ts`: `016_battle_rules`, `017_streaming_admin`, `018_battle_reverted`
+y `019_visibility_broadcast`, las que sólo tocan sus propias tablas o columnas; la 019 además
+reescribe la función compartida `s9_bot_version_guard`, ver su vuelta atrás); cualquier otra, `001_identity` incluida, se rechaza
 sin tocar la BD (#241, R4-2). `rollback:all` destruye el
 esquema ([first-run.md](first-run.md#comandos-prohibidos-en-producción)).
 
@@ -435,6 +436,14 @@ esquema ([first-run.md](first-run.md#comandos-prohibidos-en-producción)).
     batallas con bots no públicos vuelven a ser privadas y su emisión se rechaza. Antes de la vuelta
     atrás, guardar `SELECT id FROM tournaments WHERE broadcast;` para restaurar la marca tras el
     re-upgrade (`UPDATE tournaments SET broadcast = true WHERE id IN (…)`).
+  - **Por qué la 019 está en `NAMED_ROLLBACK_ALLOWED`** (#244, P2-1). El procedimiento anterior usa
+    `rollback:name`, y desde #242 esa orden sólo acepta la lista cerrada; sin la 019 en ella, la orden
+    se rechazaba y esta vuelta atrás no funcionaba (RV-M2, `review-244-migration.test.ts`). Su down
+    no sólo quita `tournaments.broadcast`: también **reescribe `s9_bot_version_guard`** con la
+    definición de la 012. Por eso **la 019 sale de la lista si otra migración posterior vuelve a
+    reescribir `s9_bot_version_guard`**: revertirla por nombre pisaría el guardián más nuevo. Quien
+    añada esa migración debe quitarla de la lista (y de la aserción de
+    `apps/api/src/streamer-real.test.ts`) y dejar aquí `rollback:1` en orden como única vía.
 
 ## Errores / limitaciones
 

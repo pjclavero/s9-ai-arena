@@ -132,7 +132,8 @@ Ninguno contiene la clave, la credencial ni la línea de ffmpeg con secretos (ff
 
 1. **RBAC:** la operación `startStreaming` tiene `x-min-role: admin` en el contrato.
 2. **Comprobación previa, fuera del cerrojo:** el streaming tiene que estar activado, el destino
-   tiene que existir (404) y debe ser público (`target_not_public`). En modo grabación se mide además
+   tiene que existir (404) y debe estar autorizado para retransmitirse (#244: `battle_not_public` o
+   `tournament_not_broadcastable`, que sustituyen a `target_not_public`). En modo grabación se mide además
    el disco (`disk_unknown` / `disk_low`).
 3. **Dentro del cerrojo:** se relee la configuración. Si hay una sesión activa **y el streamer
    responde sin emitir** (reintentos agotados o streamer reiniciado), esa sesión se cierra como
@@ -364,5 +365,5 @@ Auditoría frente a las 39 secciones del encargo STREAMER (2026-11-06). **Exist�
 | Salida de Chromium sin backpressure | `apps/streamer/src/supervisor.ts` (`launchChromium`), `streamer-2.test.ts`, `r242-streamer-break.test.ts` |
 | Causa raíz en `lastError` | `apps/streamer/src/supervisor.ts` (stderr de ffmpeg con guarda de generación), `streamer-2.test.ts` |
 | Descartes = `drop_frames` de ffmpeg | `apps/streamer/src/metrics.ts`, `streamer-2.test.ts` (ffmpeg real) |
-| Lista cerrada de migraciones | `apps/api/src/db/migrations.ts` (`NAMED_ROLLBACK_ALLOWED`) |
+| Lista cerrada de migraciones | `apps/api/src/db/migrations.ts` (`NAMED_ROLLBACK_ALLOWED`: 016-019; la 019 sale si otra migración reescribe `s9_bot_version_guard`) |
 | Aislamiento | `infrastructure/docker-compose.yml` (servicio `streamer`), `tests/streaming-e2e/measure.sh` (`hardening.txt`) |

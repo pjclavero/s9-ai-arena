@@ -1110,11 +1110,20 @@ export async function rollbackNamed(db: Knex, name: string): Promise<void> {
  * crea o quita sus PROPIAS columnas/tablas, sin dependencias de las posteriores
  * (comprobado en migration-016/017/018.test.ts). Una nueva entra aquí sólo con
  * su test de vuelta atrás por nombre.
+ *
+ * VISIBILIDAD (#244, P2-1) · la 019 entra porque su runbook
+ * (docs/operations/upgrades.md) usa `rollback:name 019_visibility_broadcast`
+ * (RV-M2 en review-244-migration.test.ts y migration-019.test.ts). Su down quita
+ * `tournaments.broadcast` y REESCRIBE la función compartida `s9_bot_version_guard`
+ * con la definición de la 012 (D9 irreversible). Por eso **la 019 sale de esta
+ * lista si otra migración posterior vuelve a reescribir `s9_bot_version_guard`**:
+ * revertirla por nombre pisaría esa versión más nueva del guardián.
  */
 export const NAMED_ROLLBACK_ALLOWED: readonly string[] = Object.freeze([
   "016_battle_rules",
   "017_streaming_admin",
   "018_battle_reverted",
+  "019_visibility_broadcast",
 ]);
 
 /** EQ5e (R3-F) · Aplica UNA migración pendiente concreta por NOMBRE. */

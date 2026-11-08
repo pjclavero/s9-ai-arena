@@ -233,7 +233,7 @@ esta equivalencia, que fija `apps/api/src/streamer-real.test.ts`:
 | `STREAM_NOT_CONFIGURED` | `streaming_disabled`, `credential_missing`, `ingest_missing`, `credential_stale`, `credential_unbound`; `sealed_store_unavailable` al guardar una clave | 409 (503 el último) | streaming desactivado, sin clave, clave sellada con otro par o para otra ingesta, sin clave pública |
 | `STREAM_ALREADY_ACTIVE` | `already_active` (API), `streamer_busy` (el streamer ya emite) | 409 | hay otra emisión; **no** se toca la activa |
 | `STREAM_NOT_ACTIVE` | `not_active` | 409 | reiniciar sin emisión. **Detener sin emisión no es error**: 200 con `wasActive: false` (idempotente) |
-| `STREAM_START_FAILED` | `streamer_unavailable` (503), `streamer_error` (502), `start_cancelled` (409), `target_not_public` (409), `disk_low` / `disk_unknown` (409), `not_found` (404) | — | el streamer no responde o rechaza la orden, se detuvo mientras arrancaba, batalla no emitible o inexistente |
+| `STREAM_START_FAILED` | `streamer_unavailable` (503), `streamer_error` (502), `start_cancelled` (409), `battle_not_public` / `tournament_not_broadcastable` (409; antes `target_not_public`), `disk_low` / `disk_unknown` (409), `not_found` (404) | — | el streamer no responde o rechaza la orden, se detuvo mientras arrancaba, batalla no emitible o inexistente |
 | `STREAM_STOP_FAILED` | `streamer_unavailable` | 503 | el streamer no responde al stop; la sesión **queda parada** en BD igualmente (`force` lo silencia) |
 
 La API interna del streamer tiene sus propios códigos: `already_active`, `session_mismatch` (stop
