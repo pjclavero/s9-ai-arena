@@ -13,7 +13,7 @@
 import { readFileSync } from "node:fs";
 import { isIP } from "node:net";
 import type { Db } from "../db/connection.js";
-import { canonicalIngestUrl, keyIdOf } from "../../../../packages/stream-secrets/index.js";
+import { BACKUP_QUERY, canonicalIngestUrl, keyIdOf } from "../../../../packages/stream-secrets/index.js";
 import { loadRuleset } from "../../../../packages/game-rules/index.js";
 import { rulesOf } from "./battle-rules.js";
 import { resolveBattleRuleset } from "./battle-ruleset-resolver.js";
@@ -23,13 +23,84 @@ import { publicShowabilityOf, type BroadcastBlockedReason } from "../replay-acce
 export interface PlatformDef {
   id: string;
   label: string;
-  /** Ingesta fija; null = la escribe el operador (RTMPS personalizado). */
+  /**
+   * Ingesta principal POR DEFECTO (la que se usa mientras el operador no guarde
+   * otra en `streaming_ingests`); null = la escribe el operador (RTMPS personalizado).
+   * STREAMING-UX (§17) · ya no es fija: es sólo el valor inicial editable.
+   */
   ingestUrl: string | null;
+  /** Ingesta de respaldo por defecto (null = sin respaldo hasta que se configure). */
+  backupIngestUrl: string | null;
+  /** §20 · ¿admite `?backup=1` en la ingesta de respaldo? (sólo YouTube). */
+  backupQuery: boolean;
 }
 export const PLATFORMS: readonly PlatformDef[] = [
-  { id: "youtube", label: "YouTube", ingestUrl: "rtmps://a.rtmps.youtube.com/live2" },
-  { id: "custom", label: "RTMPS personalizado", ingestUrl: null },
+  {
+    id: "youtube",
+    label: "YouTube",
+    ingestUrl: "rtmps://a.rtmps.youtube.com/live2",
+    backupIngestUrl: "rtmps://b.rtmps.youtube.com/live2?backup=1",
+    backupQuery: true,
+  },
+  { id: "custom", label: "RTMPS personalizado", ingestUrl: null, backupIngestUrl: null, backupQuery: false },
 ];
+
+/** STREAMING-UX · §16-§22 · Ingestas efectivas de una plataforma (tal cual se configuraron). */
+export interface PlatformIngests {
+  platform: string;
+  primaryIngestUrl: string | null;
+  backupIngestUrl: string | null;
+  /** `default` = las del catálogo (no hay fila en `streaming_ingests`). */
+  source: "configured" | "default";
+}
+
+export interface IngestRow {
+  platform: string;
+  primary_ingest_url: string;
+  backup_ingest_url: string | null;
+}
+
+/**
+ * Autoridad de cada URL:
+ *  - con fila en `streaming_ingests` ⇒ la fila (lo que guardó el operador, sin transformar);
+ *  - sin fila ⇒ el catálogo; en RTMPS personalizado la principal es `settings.ingestUrl`
+ *    (compatibilidad con 0.15: es el campo que ya existía).
+ * Para `custom` la principal SIEMPRE es `settings.ingestUrl` (la fila sólo aporta el
+ * respaldo): una sola autoridad por dato, nunca dos copias que puedan divergir.
+ */
+export function ingestsOf(s: StreamingSettings, rows: readonly IngestRow[], platform: string): PlatformIngests {
+  const p = platformById(platform);
+  const row = rows.find((r) => r.platform === platform);
+  if (p && p.ingestUrl === null) {
+    return {
+      platform,
+      primaryIngestUrl: s.ingestUrl,
+      backupIngestUrl: row?.backup_ingest_url ?? null,
+      source: row ? "configured" : "default",
+    };
+  }
+  if (row) {
+    return {
+      platform,
+      primaryIngestUrl: row.primary_ingest_url,
+      backupIngestUrl: row.backup_ingest_url,
+      source: "configured",
+    };
+  }
+  return {
+    platform,
+    primaryIngestUrl: p?.ingestUrl ?? null,
+    backupIngestUrl: p?.backupIngestUrl ?? null,
+    source: "default",
+  };
+}
+
+export async function loadIngestRows(db: Db): Promise<IngestRow[]> {
+  // Sin la 020 (BD sin migrar) se usan los valores del catálogo: es lo honesto.
+  return db("streaming_ingests")
+    .select("platform", "primary_ingest_url", "backup_ingest_url")
+    .catch(() => [] as IngestRow[]);
+}
 export function platformById(id: unknown): PlatformDef | undefined {
   return typeof id === "string" ? PLATFORMS.find((p) => p.id === id) : undefined;
 }
@@ -228,7 +299,10 @@ function internalV6(ip: string): boolean {
  * EQ5c · y sin hosts internos, salvo `allowInternal` (sólo el E2E local:
  * STREAMING_ALLOW_INTERNAL_INGEST=1, nunca en el Compose).
  */
-export function validIngestUrl(v: unknown, opts: { allowInternal?: boolean } = {}): string | null {
+export function validIngestUrl(
+  v: unknown,
+  opts: { allowInternal?: boolean; allowBackupQuery?: boolean } = {},
+): string | null {
   if (typeof v !== "string" || v.length > 512) return null;
   let u: URL;
   try {
@@ -236,7 +310,15 @@ export function validIngestUrl(v: unknown, opts: { allowInternal?: boolean } = {
   } catch {
     return null;
   }
-  if (u.protocol !== "rtmps:" || !u.hostname || u.username || u.password || u.search || u.hash) return null;
+  if (u.protocol !== "rtmps:" || !u.hostname || u.username || u.password || u.hash) return null;
+  // STREAMING-UX (§20) · el ÚNICO caso con query: la ingesta de RESPALDO de YouTube con
+  // exactamente `?backup=1` (`allowBackupQuery` sólo lo pone quien valida ese campo de esa
+  // plataforma). Ni otra clave, ni otro valor, ni parámetros añadidos, ni `?` vacío: la
+  // forma se compara con el texto ORIGINAL, no con la URL ya normalizada.
+  if (u.search || v.includes("?")) {
+    if (!opts.allowBackupQuery || u.search !== BACKUP_QUERY || !v.endsWith(BACKUP_QUERY)) return null;
+    if (v.indexOf("?") !== v.length - BACKUP_QUERY.length) return null;
+  }
   const app = decodeURIComponent(u.pathname.replace(/^\/+|\/+$/g, ""));
   if (!app || app.length > 128 || !/^[A-Za-z0-9._~\-/]+$/.test(app)) return null;
   try {
@@ -426,12 +508,17 @@ export const CHANGE_CLASSES: Record<string, "hot" | "restart" | "stop"> = {
   enabled: "stop",
 };
 
-/** Configuración que se aplica a una emisión (lo que se compara para «pendiente de reinicio»). */
-export function appliedConfig(s: StreamingSettings, credentialStamp: string | null) {
+/**
+ * Configuración que se aplica a una emisión (lo que se compara para «pendiente de reinicio»).
+ * STREAMING-UX · incluye la ingesta de RESPALDO: cambiarla también pide reiniciar.
+ */
+export function appliedConfig(s: StreamingSettings, credentialStamp: string | null, rows: readonly IngestRow[] = []) {
+  const ing = ingestsOf(s, rows, s.platform);
   return {
     mode: s.mode,
     platform: s.platform,
-    ingestUrl: s.mode === "rtmps" ? effectiveIngest(s) : null,
+    ingestUrl: s.mode === "rtmps" ? ing.primaryIngestUrl : null,
+    backupIngestUrl: s.mode === "rtmps" ? ing.backupIngestUrl : null,
     encoder: s.encoder,
     preset: s.preset,
     fps: s.fps,
@@ -441,18 +528,35 @@ export function appliedConfig(s: StreamingSettings, credentialStamp: string | nu
   };
 }
 
-export function effectiveIngest(s: StreamingSettings, platform: string = s.platform): string | null {
-  const p = platformById(platform);
-  return p?.ingestUrl ?? s.ingestUrl;
+/** Ingesta PRINCIPAL efectiva de `platform` (tal cual se configuró). */
+export function effectiveIngest(
+  s: StreamingSettings,
+  platform: string = s.platform,
+  rows: readonly IngestRow[] = [],
+): string | null {
+  return ingestsOf(s, rows, platform).primaryIngestUrl;
 }
+
+export type IngestRole = "primary" | "backup";
 
 /**
  * EQ5c (P2-2) · Destino al que se ata la clave de `platform` con la
  * configuración `s`: plataforma + ingesta CANÓNICA. null = aún no hay ingesta
- * (RTMPS personalizado sin URL).
+ * (RTMPS personalizado sin URL, o plataforma sin respaldo).
+ *
+ * STREAMING-UX · hay UN sobre por papel: el principal se ata a la ingesta
+ * principal y el de respaldo a la de respaldo (`sealed_backup`). Ningún sobre
+ * vale para dos destinos, así que la clave sólo puede publicarse en las dos
+ * URLs que estaban configuradas al sellarla.
  */
-export function credentialBinding(s: StreamingSettings, platform: string): { platform: string; ingest: string } | null {
-  const raw = effectiveIngest(s, platform);
+export function credentialBinding(
+  s: StreamingSettings,
+  platform: string,
+  rows: readonly IngestRow[] = [],
+  role: IngestRole = "primary",
+): { platform: string; ingest: string } | null {
+  const ing = ingestsOf(s, rows, platform);
+  const raw = role === "primary" ? ing.primaryIngestUrl : ing.backupIngestUrl;
   if (!raw) return null;
   try {
     return { platform, ingest: canonicalIngestUrl(raw) };
@@ -533,10 +637,21 @@ export async function resolveTarget(db: Db, t: { kind: TargetKind; id: string })
         delaySource = d !== null ? "ruleset" : "none";
       }
     }
+    // STREAMING-UX (§4) · nombre legible; el UUID queda en los detalles técnicos.
+    const parts = await db("participants")
+      .leftJoin("bots", "bots.id", "participants.bot_id")
+      .where("participants.battle_id", t.id)
+      .orderBy(["participants.team", "bots.name"])
+      .select("participants.team", "bots.name as bot_name")
+      .catch(() => []);
     return {
       kind: "battle",
       id: t.id,
-      label: `Batalla ${t.id.slice(0, 8)} (${b.mode})`,
+      label: parts.length
+        ? battleLabel(
+            parts.map((p: { team: string; bot_name: string | null }) => ({ team: p.team, botName: p.bot_name })),
+          )
+        : `Batalla ${t.id.slice(0, 8)} (${b.mode})`,
       status: b.status,
       broadcastable: pub,
       broadcastBlockedReason: show.reason,
@@ -580,6 +695,176 @@ export function broadcastUrlFor(base: string, t: { kind: TargetKind; id: string 
   u.searchParams.set("primary", b.primaryColor);
   u.searchParams.set("accent", b.accentColor);
   return u.toString();
+}
+
+// ── STREAMING-UX · ingestas editables (§16-§21) ─────────────────────────────
+export interface IngestsPatchResult {
+  primaryIngestUrl: string | null;
+  backupIngestUrl: string | null;
+  errors: string[];
+}
+
+/**
+ * Valida el cambio de ingestas de una plataforma. Reglas (§20, §21):
+ *  - la principal es obligatoria, sin query y con las reglas de siempre (rtmps,
+ *    sin credenciales y con un host público);
+ *  - la de respaldo es opcional (null = sin respaldo), con las mismas reglas, y
+ *    SÓLO en YouTube admite exactamente `?backup=1`; cualquier otra query se rechaza;
+ *  - la principal y la de respaldo no pueden ser el mismo destino;
+ *  - se guardan TAL CUAL llegan (sin recortar ni concatenar nada).
+ */
+export function validateIngestsPatch(
+  platform: PlatformDef,
+  body: Record<string, unknown>,
+  ctx: { allowInternalIngest?: boolean } = {},
+): IngestsPatchResult {
+  const errors: string[] = [];
+  for (const k of Object.keys(body)) {
+    if (k !== "primaryIngestUrl" && k !== "backupIngestUrl") errors.push(`campo no admitido: ${k}`);
+  }
+  const primary = validIngestUrl(body.primaryIngestUrl, { allowInternal: ctx.allowInternalIngest });
+  if (!primary) {
+    errors.push(
+      "Servidor principal: debe ser rtmps://host[:puerto]/aplicación, sin credenciales ni query, y con un host público",
+    );
+  }
+  let backup: string | null = null;
+  if (body.backupIngestUrl !== undefined && body.backupIngestUrl !== null && body.backupIngestUrl !== "") {
+    backup = validIngestUrl(body.backupIngestUrl, {
+      allowInternal: ctx.allowInternalIngest,
+      allowBackupQuery: platform.backupQuery,
+    });
+    if (!backup) {
+      errors.push(
+        platform.backupQuery
+          ? "Servidor de respaldo: debe ser rtmps://host[:puerto]/aplicación con un host público; la única query admitida es ?backup=1"
+          : "Servidor de respaldo: debe ser rtmps://host[:puerto]/aplicación, sin credenciales ni query, y con un host público",
+      );
+    }
+  }
+  if (primary && backup) {
+    try {
+      if (canonicalIngestUrl(primary) === canonicalIngestUrl(backup)) {
+        errors.push("El servidor de respaldo no puede ser el mismo que el principal");
+      }
+    } catch {
+      /* ya validadas arriba */
+    }
+  }
+  return { primaryIngestUrl: primary, backupIngestUrl: backup, errors };
+}
+
+// ── STREAMING-UX · selector de destinos sin UUID (§4, §6) ───────────────────
+export interface DestinationItem {
+  kind: TargetKind;
+  id: string;
+  /** Nombre legible: «Bot A vs Bot B», «Rojo vs Azul (4v4)» o el nombre del torneo. */
+  label: string;
+  status: string;
+  mode: string | null;
+  tournamentName: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+  broadcastable: boolean;
+  broadcastBlockedReason: BroadcastBlockedReason | null;
+  tournamentBroadcast: boolean | null;
+}
+
+const iso = (v: unknown): string | null => (v ? new Date(v as string).toISOString() : null);
+
+/** Nombre humano de una batalla a partir de sus participantes (admin: ve todos los nombres). */
+export function battleLabel(parts: { team: string; botName: string | null }[]): string {
+  const teams = new Map<string, string[]>();
+  for (const p of parts) {
+    const list = teams.get(p.team) ?? [];
+    list.push(p.botName || "bot");
+    teams.set(p.team, list);
+  }
+  if (teams.size === 0) return "Batalla sin participantes";
+  const groups = [...teams.entries()];
+  if (groups.every(([, bots]) => bots.length === 1)) return groups.map(([, bots]) => bots[0]).join(" vs ");
+  const size = groups.map(([, bots]) => bots.length).join("v");
+  return `${groups.map(([team]) => team).join(" vs ")} (${size})`;
+}
+
+/**
+ * Batallas en curso y terminadas (las en curso primero; dentro de cada grupo, de la más
+ * reciente a la más antigua) y torneos, con su nombre legible y si se pueden retransmitir,
+ * aplicando la MISMA regla que `resolveTarget` (y que la lectura pública de /broadcast).
+ */
+export async function listDestinations(
+  db: Db,
+  o: { limit?: number } = {},
+): Promise<{ battles: DestinationItem[]; tournaments: DestinationItem[] }> {
+  const limit = Math.min(Math.max(o.limit ?? 20, 1), 50);
+  const rows = await db("battles")
+    .leftJoin("tournaments", "tournaments.id", "battles.tournament_id")
+    .whereIn("battles.status", ["running", "finished"])
+    .orderByRaw("CASE WHEN battles.status = 'running' THEN 0 ELSE 1 END")
+    .orderByRaw("COALESCE(battles.finished_at, battles.started_at, battles.created_at) DESC")
+    .limit(limit)
+    .select(
+      "battles.id",
+      "battles.status",
+      "battles.mode",
+      "battles.created_at",
+      "battles.started_at",
+      "battles.finished_at",
+      "tournaments.name as tournament_name",
+    );
+  const ids = rows.map((r: { id: string }) => r.id);
+  const parts = ids.length
+    ? await db("participants")
+        .leftJoin("bots", "bots.id", "participants.bot_id")
+        .whereIn("participants.battle_id", ids)
+        .orderBy(["participants.team", "bots.name"])
+        .select("participants.battle_id", "participants.team", "bots.name as bot_name")
+    : [];
+  const battles: DestinationItem[] = [];
+  for (const r of rows) {
+    const show = await publicShowabilityOf(db, r.id);
+    battles.push({
+      kind: "battle",
+      id: r.id,
+      label: battleLabel(
+        parts
+          .filter((p: { battle_id: string }) => p.battle_id === r.id)
+          .map((p: { team: string; bot_name: string | null }) => ({ team: p.team, botName: p.bot_name })),
+      ),
+      status: r.status,
+      mode: r.mode ?? null,
+      tournamentName: r.tournament_name ?? null,
+      startedAt: iso(r.started_at),
+      finishedAt: iso(r.finished_at),
+      createdAt: iso(r.created_at)!,
+      broadcastable: !!show?.showable,
+      broadcastBlockedReason: show?.reason ?? null,
+      tournamentBroadcast: show?.tournamentBroadcast ?? null,
+    });
+  }
+  const trs = await db("tournaments")
+    .whereNotIn("state", ["draft", "cancelled"])
+    .orderByRaw("CASE WHEN state = 'running' THEN 0 ELSE 1 END")
+    .orderBy("created_at", "desc")
+    .limit(limit)
+    .select("id", "name", "state", "mode", "created_at", "broadcast");
+  const tournaments: DestinationItem[] = trs.map((t: Record<string, unknown>) => ({
+    kind: "tournament" as const,
+    id: t.id as string,
+    label: String(t.name ?? "Torneo").slice(0, 120),
+    status: t.state as string,
+    mode: (t.mode as string) ?? null,
+    tournamentName: String(t.name ?? ""),
+    startedAt: null,
+    finishedAt: null,
+    createdAt: iso(t.created_at)!,
+    // Misma regla que resolveTarget: un torneo siempre se puede emitir.
+    broadcastable: true,
+    broadcastBlockedReason: null,
+    tournamentBroadcast: t.broadcast === true,
+  }));
+  return { battles, tournaments };
 }
 
 // ── clave pública de sellado ────────────────────────────────────────────────

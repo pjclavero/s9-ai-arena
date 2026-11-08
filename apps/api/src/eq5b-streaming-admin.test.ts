@@ -449,7 +449,10 @@ describe("EQ5b · controles", () => {
   it("prueba de configuración (sin emisión): manda la credencial SELLADA al streamer", async () => {
     const r = await request(app).post("/admin/streaming/test").set(auth(admin)).send({});
     expect(r.status).toBe(200);
-    const body = fake.calls.filter((c) => c.path === "/control/test").at(-1)!.body as Record<string, any>;
+    // STREAMING-UX · ahora se prueban las dos ingestas: ésta es la de la PRINCIPAL.
+    const body = fake.calls
+      .filter((c) => c.path === "/control/test" && (c.body as { ingestUrl?: string }).ingestUrl === YT_BIND.ingest)
+      .at(-1)!.body as Record<string, any>;
     expect(JSON.stringify(body)).not.toContain(KEY);
     expect(openSecret(body.credential, PRIV, YT_BIND)).toBe(KEY);
   });

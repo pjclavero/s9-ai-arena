@@ -91,7 +91,12 @@ export function canonicalIngestUrl(raw: string): string {
   }
   const proto = u.protocol.replace(/:$/, "");
   if (proto !== "rtmps" && proto !== "rtmp") throw new Error("la ingesta debe ser rtmps://");
-  if (u.username || u.password || u.search || u.hash || !u.hostname) throw new Error("URL de ingesta no canónica");
+  // STREAMING-UX (§20) · la ÚNICA query admitida es `?backup=1` (ingesta de respaldo de
+  // YouTube). Forma parte del destino sellado: un sobre atado a la principal no abre para
+  // la de respaldo, y al revés.
+  if (u.username || u.password || u.hash || !u.hostname || (u.search && u.search !== BACKUP_QUERY)) {
+    throw new Error("URL de ingesta no canónica");
+  }
   // En esquemas no especiales (rtmps:) WHATWG deja el host «opaco»: sin pasar a
   // minúsculas ni decodificar. Se normaliza aquí y se rechaza lo que no sea un
   // nombre DNS o una IPv6 entre corchetes (nada de `%xx`, `_`, etc.).
@@ -102,8 +107,11 @@ export function canonicalIngestUrl(raw: string): string {
   const port = u.port ? Number(u.port) : proto === "rtmps" ? 443 : 1935;
   const app = decodeURIComponent(u.pathname.replace(/^\/+|\/+$/g, ""));
   if (!app || app.length > 128 || !APP_RE.test(app)) throw new Error("aplicación RTMP inválida");
-  return `${proto}://${host}:${port}/${app}`;
+  return `${proto}://${host}:${port}/${app}${u.search}`;
 }
+
+/** STREAMING-UX · única query admitida en una ingesta (la de respaldo de YouTube). */
+export const BACKUP_QUERY = "?backup=1";
 
 function aadOf(kid: string, bind: SealBinding): Buffer {
   // Orden fijo de campos: el AAD es una serialización estable, no un JSON libre.
