@@ -6,7 +6,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startTestDb, type TestDbHandle } from "../testing/test-db.js";
-import { MIGRATIONS, migrateToLatest, rollbackLast } from "./migrations.js";
+import { MIGRATIONS, migrateNamed, migrateToLatest, rollbackLast } from "./migrations.js";
 
 let h: TestDbHandle;
 const norm = (s: string) => s.replace(/\s+/g, " ").trim();
@@ -31,8 +31,12 @@ describe("RV-M · migración 019 frente al guardián de la 012", () => {
     expect(await last()).toBe(MIGRATIONS[MIGRATIONS.length - 1].name);
     expect(await last()).toBe("019_visibility_broadcast");
     const at019 = await guardDef();
-    // Hasta justo después de la 012 (la que crea el guardián).
-    while ((await last()) !== "012_bot_versioning") await rollbackLast(h.db);
+    // El guardián GENUINO de la 012: se baja por debajo de ella y se aplica SÓLO la 012.
+    // (Bajar sólo hasta la 012 dejaría el guardián que escribió el down de la 019: no
+    // serviría de referencia; así lo vio el mutante M11 de la calibración.)
+    while ((await last()) !== "011_battle_cpu_ms") await rollbackLast(h.db);
+    await migrateNamed(h.db, "012_bot_versioning");
+    expect(await last()).toBe("012_bot_versioning");
     const at012 = await guardDef();
     expect(at012).toContain(D9);
     expect(at019).not.toContain("irreversible");
