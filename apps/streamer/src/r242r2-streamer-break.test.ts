@@ -314,3 +314,71 @@ describe.skipIf(!hasFfmpeg)("R2 · H3 · métrica de descartes tras un relanzami
     expect(view.metrica.droppedFrames, JSON.stringify(view)).toBe(b.drop); // rojo: conserva el del anterior
   }, 20_000);
 });
+
+// ── Complemento de la re-revisión (2.º revisor) ─────────────────────────────
+describe("R2b · H2 · la guarda también deja ver el fallo de la generación que lanza retry()", () => {
+  it("ffmpeg cae → retry() relanza: el ruido tardío del ffmpeg caído no pisa la causa y el error del ffmpeg relanzado sí se ve", async () => {
+    const { sup, children } = fakeSup();
+    sup.start();
+    const f1 = children.find((c) => c.cmd === "ffmpeg")!;
+    f1.exitCode = 1;
+    f1.emit("exit", 1);
+    await sleep(10);
+    const f2 = children.filter((c) => c.cmd === "ffmpeg").at(-1)!;
+    expect(f2, "CONTROL: retry() relanzó ffmpeg").not.toBe(f1);
+    expect(sup.state).toBe("streaming");
+    expect(sup.lastError?.message).toMatch(/ffmpeg terminó \(código 1\)/); // causa del corte
+    f1.stderr.write("Nothing was written into output file (ruido del ffmpeg caído)\n");
+    await sleep(10);
+    expect(sup.lastError?.message).toMatch(/ffmpeg terminó \(código 1\)/);
+    f2.stderr.write("Error opening output (fallo real del relanzado)\n");
+    await sleep(10);
+    expect(sup.lastError?.message).toMatch(/Error opening output/);
+  });
+});
+
+describe("R2b · H1 · techo de la redacción en el borde de la cola (8-gramas, REDACT_MIN_FRAGMENT)", () => {
+  // TECHO DECLARADO, no defecto bloqueante: la cola se recorta ANTES de redactar,
+  // así que si el corte deja dentro < 8 caracteres de la clave, ningún 8-grama
+  // casa y ese sufijo sale tal cual en outputTail. Chromium no recibe la clave
+  // (sólo la URL de /broadcast), así que en producción no es alcanzable. Si se
+  // corrige (redactar con margen y recortar después), esta prueba debe invertirse.
+  for (const inside of [7, 8]) {
+    it(`quedan ${inside} caracteres de la clave dentro de la cola: ${inside < 8 ? "el sufijo SALE sin redactar (techo)" : "se redacta"}`, async () => {
+      const children: FakeChild[] = [];
+      const lines: string[] = [];
+      const secrets = new SecretRegistry();
+      const key = `r2b-${randomBytes(14).toString("hex")}`;
+      const sup = new StreamSupervisor({
+        config: { ...DEFAULT_CONFIG, mode: "record", recordDir: tmpdir(), retryDelayMs: 0, maxRetries: 0 },
+        spawner: (cmd) => {
+          const c = new FakeChild(cmd);
+          children.push(c);
+          return c;
+        },
+        logger: createLogger(secrets, (l) => lines.push(l)),
+        secrets,
+        streamKey: key,
+        stopGraceMs: 50,
+        chromiumBin: "chromium",
+        ffmpegBin: "ffmpeg",
+        sleep: async () => {},
+      });
+      sups.push(sup);
+      sup.start();
+      const chromium = children.find((c) => c.cmd === "chromium")!;
+      chromium.stderr.write(key);
+      chromium.stderr.write(Buffer.alloc(CHROMIUM_OUTPUT_TAIL_BYTES - inside, "p"));
+      await sleep(10);
+      chromium.exitCode = 1;
+      chromium.emit("exit", 1);
+      const tail = (JSON.parse(lines.find((l) => l.includes("chromium terminó"))!) as { outputTail: string }).outputTail;
+      const suffix = key.slice(-inside);
+      if (inside < 8) expect(tail.startsWith(suffix), tail.slice(0, 20)).toBe(true);
+      else {
+        expect(tail.startsWith("***"), tail.slice(0, 20)).toBe(true);
+        expect(tail).not.toContain(suffix);
+      }
+    });
+  }
+});
