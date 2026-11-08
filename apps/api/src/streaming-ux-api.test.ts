@@ -75,7 +75,7 @@ let admin: string;
 let user: string;
 const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
 const state = async () => (await request(app).get("/admin/streaming").set(auth(admin))).body;
-const putIngests = (platform: string, body: unknown, token = admin) =>
+const putIngests = (platform: string, body: object, token = admin) =>
   request(app).put(`/admin/streaming/ingests/${platform}`).set(auth(token)).send(body);
 
 async function battle(o: { status: string; privateBot?: boolean; finishedAt?: Date; names: [string, string] }) {
