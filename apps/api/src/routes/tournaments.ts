@@ -87,7 +87,12 @@ export function tournamentToJson(t: Record<string, unknown>) {
  * privado» sin revelar quién es. Sin `hidden` (llamadas internas), todo tal cual.
  * En torneos de equipos `home`/`away` son equipos, no bots: no se tocan.
  */
-export function tournamentMatchToJson(m: Record<string, unknown>, hidden?: Set<string>, isTeams = false) {
+export function tournamentMatchToJson(
+  m: Record<string, unknown>,
+  hidden?: Set<string>,
+  isTeams = false,
+  names?: Map<string, string>,
+) {
   const hide = (id: unknown) => hidden !== undefined && typeof id === "string" && hidden.has(id);
   let pairing = (m.pairing ?? {}) as Record<string, unknown>;
   if (typeof pairing === "string") pairing = JSON.parse(pairing);
@@ -99,6 +104,10 @@ export function tournamentMatchToJson(m: Record<string, unknown>, hidden?: Set<s
     };
   }
   const winnerHidden = hide(m.winner_bot_id);
+  // VISIBILIDAD-3 (P3-6) · «bracket con nombre» (§13): nombre ACTUAL del bot (no hay
+  // instantánea, §25), sólo si el solicitante puede identificarlo; oculto ⇒ nada.
+  const winnerName =
+    !winnerHidden && typeof m.winner_bot_id === "string" ? names?.get(m.winner_bot_id) : undefined;
   return {
     id: m.id,
     round: m.round,
@@ -107,6 +116,7 @@ export function tournamentMatchToJson(m: Record<string, unknown>, hidden?: Set<s
     state: m.state,
     winnerBotId: winnerHidden ? null : (m.winner_bot_id ?? null),
     ...(winnerHidden ? { winnerPrivate: true } : {}),
+    ...(winnerName !== undefined ? { winnerBotName: winnerName } : {}),
     winnerTeamId: m.winner_team_id ?? null,
     final: m.final,
   };
@@ -438,8 +448,26 @@ export function tournamentRoutes(
       isTeams ? rows.map((m: Record<string, unknown>) => m.winner_bot_id) : rows.flatMap(botIdsOfMatch),
       { tournamentId: t.id },
     );
+    // VISIBILIDAD-3 (P3-6) · nombres sólo de los ganadores que el solicitante puede
+    // identificar (la misma `hidden`): la proyección de competición, nunca la ficha.
+    const visibleWinners = [
+      ...new Set(
+        rows
+          .map((m: Record<string, unknown>) => m.winner_bot_id)
+          .filter((id: unknown): id is string => typeof id === "string" && !hidden.has(id)),
+      ),
+    ];
+    const names = new Map<string, string>(
+      visibleWinners.length === 0
+        ? []
+        : (await db("bots").whereIn("id", visibleWinners).select("id", "name")).map(
+            (b: { id: string; name: string }) => [b.id, b.name] as [string, string],
+          ),
+    );
     res.setHeader("Cache-Control", NO_STORE);
-    res.json({ matches: rows.map((m: Record<string, unknown>) => tournamentMatchToJson(m, hidden, isTeams)) });
+    res.json({
+      matches: rows.map((m: Record<string, unknown>) => tournamentMatchToJson(m, hidden, isTeams, names)),
+    });
   });
 
   /**

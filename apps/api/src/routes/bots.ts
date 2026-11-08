@@ -30,6 +30,13 @@ import type { Auth } from "../services/bots.js";
 import { battleEligibilityOf } from "../services/version-eligibility.js";
 import { audit } from "../audit.js";
 
+/**
+ * VISIBILIDAD-3 (#244, P3-2) · el código (source, files, diff) depende de quién
+ * pregunta y puede dejar de ser legible (`code_public` es reversible desde la
+ * 019): nunca en una caché compartida ni en la del navegador.
+ */
+const CODE_NO_STORE = "private, no-store";
+
 const MAX_SOURCE_BYTES = 10 * 1024 * 1024; // 10 MB (E6.M)
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_SOURCE_BYTES } });
 
@@ -466,6 +473,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
     const filename = sanitizeSourceFilename(v.source_filename) ?? fallback;
     res
       .status(200)
+      .setHeader("Cache-Control", CODE_NO_STORE)
       .setHeader("Content-Type", "application/octet-stream")
       .setHeader("Content-Disposition", contentDispositionAttachment(filename))
       .send(v.source);
@@ -507,6 +515,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
       throw forbidden("El código de un bot es privado salvo publicación explícita (D9)");
     }
     const { packaged, files } = decodeVersionFiles(v);
+    res.setHeader("Cache-Control", CODE_NO_STORE);
     res.json({ botId: bot.id, version: v.version, sourceSha256: v.source_sha256 ?? undefined, packaged, files });
   });
 
@@ -531,6 +540,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
         throw forbidden("El código de un bot es privado salvo publicación explícita (D9)");
       }
     }
+    res.setHeader("Cache-Control", CODE_NO_STORE);
     res.json({
       botId: bot.id,
       from: from.version,

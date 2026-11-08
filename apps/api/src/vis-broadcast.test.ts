@@ -324,6 +324,20 @@ describe("§30 · visibilidad del código (por versión)", () => {
     expect((await get(`/bots/${BOT.AVIS}/versions/1/diff?against=1`, tok.B)).status).toBe(200);
   });
 
+  it("VISIBILIDAD-3 · P3-2 · source, files y diff llevan `Cache-Control: private, no-store` (dueño y tercero)", async () => {
+    for (const who of [tok.A, tok.B]) {
+      for (const path of [
+        `/bots/${BOT.AVIS}/versions/1/source`,
+        `/bots/${BOT.AVIS}/versions/1/files`,
+        `/bots/${BOT.AVIS}/versions/1/diff?against=1`,
+      ]) {
+        const r = await get(path, who);
+        expect(r.status, path).toBe(200);
+        expect(r.headers["cache-control"], path).toBe("private, no-store");
+      }
+    }
+  });
+
   it("OWNER_CAN_SET_CODE_PRIVATE (público → privado, enmienda a D9) y PRIVATE_CODE_REMAINS_HIDDEN", async () => {
     const r = await put(tok.A, BOT.AVIS, false);
     expect(r.status).toBe(200);
@@ -564,9 +578,14 @@ describe("§19/§20 · casos A–E y no revelar existencia", () => {
     const mb = (await get(`/tournaments/${T.TB}/matches`)).body.matches.find((m: any) => m.round === 9);
     expect(mb.winnerBotId).toBe(BOT.APRIV);
     expect(mb.pairing.home).toBe(BOT.APRIV);
+    // VISIBILIDAD-3 · P3-6 · «bracket con nombre» (§13): el nombre de competición del
+    // ganador, con la misma autorización (hiddenBotIds con el contexto del torneo).
+    expect(mb.winnerBotName).toBe("A-DEF");
     const mn = (await get(`/tournaments/${T.TN}/matches`)).body.matches.find((m: any) => m.round === 9);
     expect(mn.winnerBotId).toBeNull();
     expect(mn.winnerPrivate).toBe(true);
+    expect(mn).not.toHaveProperty("winnerBotName");
+    expect(JSON.stringify(mn)).not.toContain("A-DEF");
     expect((await get(`/public/replays/${BAT.tbFinPriv}`)).status).toBe(200);
     expect((await get(`/replays/${BAT.tbFinPriv}`)).status).toBe(200);
   });

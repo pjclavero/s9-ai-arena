@@ -60,7 +60,9 @@ info:
   # crear), y en StreamingTarget `broadcastable`, `broadcastBlockedReason`
   # (battle_not_public | tournament_not_broadcastable) y `tournamentBroadcast`;
   # `publicBroadcastable` queda como alias deprecado. startStreaming ya no responde
-  # 409 target_not_public sino con el motivo real.
+  # 409 target_not_public sino con el motivo real. TournamentMatch.winnerBotName
+  # (nombre de competición del ganador, «bracket con nombre»). getBotSource,
+  # getBotVersionFiles y diffBotVersions responden con `Cache-Control: private, no-store`.
   version: 0.15.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
@@ -2805,6 +2807,7 @@ components:
         state: { enum: [scheduled, running, finished, failed] }
         winnerBotId: { type: string, nullable: true, description: 'UX-F (DEF-R3) · null también si el ganador es un bot privado ajeno (winnerPrivate)' }
         winnerPrivate: { type: boolean, description: 'el ganador es un bot que el solicitante no puede identificar' }
+        winnerBotName: { type: string, description: 'VISIBILIDAD (0.15.0) · nombre de competición del ganador (nombre actual del bot), sólo si el solicitante puede identificarlo (torneo con broadcast o bot visible); ausente si winnerPrivate' }
         winnerTeamId: { type: string, nullable: true }
         final: { type: boolean, description: 'true si es la final del torneo (modo visible, cap. 19.1)' }
 
