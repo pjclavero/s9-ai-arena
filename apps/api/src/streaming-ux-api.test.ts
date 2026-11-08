@@ -314,17 +314,15 @@ describe("STREAMING-UX · selector de destinos sin UUID", () => {
       finishedAt: new Date(Date.now() - 60_000),
     });
     const adminRow = await h.db("users").where({ email: DEV_USERS.admin }).first();
-    await h
-      .db("tournaments")
-      .insert({
-        name: "Copa UX",
-        format: "league",
-        mode: "deathmatch",
-        ruleset_id: DEFAULT_RULESET_ID,
-        state: "running",
-        created_by: adminRow.id,
-        broadcast: true,
-      });
+    await h.db("tournaments").insert({
+      name: "Copa UX",
+      format: "league",
+      mode: "deathmatch",
+      ruleset_id: DEFAULT_RULESET_ID,
+      state: "running",
+      created_by: adminRow.id,
+      broadcast: true,
+    });
     const r = await request(app).get("/admin/streaming/destinations?limit=50").set(auth(admin));
     expect(r.status).toBe(200);
     const ids = r.body.battles.map((b: { id: string }) => b.id);
