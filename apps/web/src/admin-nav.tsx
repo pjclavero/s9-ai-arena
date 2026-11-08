@@ -70,6 +70,8 @@ export const ADMIN_SECTIONS: readonly AdminSection[] = [
       "listStreamingRecordings",
       "applyStreamingRetention",
       "listStreamingAudit",
+      "setStreamingIngests",
+      "listStreamingDestinations",
     ],
     minRole: "admin",
   },
