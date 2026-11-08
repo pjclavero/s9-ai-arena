@@ -17,7 +17,7 @@ import { canonicalIngestUrl, keyIdOf } from "../../../../packages/stream-secrets
 import { loadRuleset } from "../../../../packages/game-rules/index.js";
 import { rulesOf } from "./battle-rules.js";
 import { resolveBattleRuleset } from "./battle-ruleset-resolver.js";
-import { wherePubliclyShowable } from "../battle-access.js";
+import { publicShowabilityOf, type BroadcastBlockedReason } from "../replay-access.js";
 
 // ── catálogo de plataformas (extensible: añadir una entrada aquí) ───────────
 export interface PlatformDef {
@@ -484,7 +484,7 @@ export interface TargetInfo {
    *  - `tournament_not_broadcastable`: batalla de un torneo creado sin `broadcast`
    *    que tiene bots no públicos.
    */
-  broadcastBlockedReason: "battle_not_public" | "tournament_not_broadcastable" | null;
+  broadcastBlockedReason: BroadcastBlockedReason | null;
   /** El torneo autoriza la retransmisión (destino torneo, o batalla de un torneo). */
   tournamentBroadcast: boolean | null;
   /** @deprecated alias de `broadcastable` (compatibilidad con clientes anteriores). */
@@ -513,13 +513,9 @@ export async function resolveTarget(db: Db, t: { kind: TargetKind; id: string })
     if (!b) return null;
     // VISIBILIDAD · la MISMA regla que usa la lectura pública (/broadcast): se puede
     // emitir exactamente lo que un visitante puede ver, ni más ni menos.
-    const pub = await wherePubliclyShowable(db, db("battles").where("battles.id", t.id)).first();
-    const tr = b.tournament_id ? await db("tournaments").where({ id: b.tournament_id }).first("broadcast") : null;
-    const broadcastBlockedReason: TargetInfo["broadcastBlockedReason"] = pub
-      ? null
-      : b.tournament_id
-        ? "tournament_not_broadcastable"
-        : "battle_not_public";
+    const show = await publicShowabilityOf(db, t.id);
+    if (!show) return null;
+    const pub = show.showable;
     let delaySeconds = 0;
     let delaySource: TargetInfo["delaySource"] = "none";
     if (b.spectator_mode === "visible") {
@@ -542,10 +538,10 @@ export async function resolveTarget(db: Db, t: { kind: TargetKind; id: string })
       id: t.id,
       label: `Batalla ${t.id.slice(0, 8)} (${b.mode})`,
       status: b.status,
-      broadcastable: !!pub,
-      broadcastBlockedReason,
-      tournamentBroadcast: tr ? tr.broadcast === true : null,
-      publicBroadcastable: !!pub,
+      broadcastable: pub,
+      broadcastBlockedReason: show.reason,
+      tournamentBroadcast: show.tournamentBroadcast,
+      publicBroadcastable: pub,
       delaySeconds,
       delaySource,
     };

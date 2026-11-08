@@ -174,6 +174,8 @@ Sin penetración por ángulo, sin tipos de material frente a tipos de munición,
 
 - La visibilidad del bot, la visibilidad de su código, la elegibilidad para competir y la visibilidad en una retransmisión son **cuatro conceptos separados**. Participar o retransmitirse no cambia ni la visibilidad del bot ni `codePublic`.
 - Lo que se muestra en público de un bot no público queda restringido a lo que permite el torneo: sólo las batallas de un torneo creado con `broadcast` lo exponen. Lo que se expone es la **proyección de competición**: nombre, versión, bando, loadout en el campo, estadísticas deportivas y hash del artefacto. **No** se exponen el propietario, el código, el diagnóstico ni la CPU. Esto acota la frase «siempre son públicos… nombre, propietario…» de arriba, que el código ya no aplicaba desde UX-D/UX-F: el propietario no se publica.
+- La proyección conserva el `botId` real (§21 del encargo). No abre una vía de descubrimiento: con ese id, `GET /bots/{id}`, sus versiones, loadouts, código e historial de rating siguen respondiendo 404 a quien no puede ver la ficha, idéntico a un id inexistente (`apps/api/src/vis-broadcast.test.ts`, casos B/C). Un id de competición aparte sólo se introduciría si apareciera una evidencia de riesgo.
+- Una batalla suelta (práctica, fuera de torneo) con un bot no público **no** se puede retransmitir (`battle_not_public`): no existe autorización por batalla, porque sólo el torneo se anuncia antes de inscribirse. Una batalla de un torneo sin `broadcast` con bots no públicos se rechaza con `tournament_not_broadcastable`. Ambos motivos los calcula el mismo predicado (`publicShowabilityOf`, `apps/api/src/replay-access.ts`) que decide la lectura pública.
 
 ---
 

@@ -321,6 +321,7 @@ describe("§30 · visibilidad del código (por versión)", () => {
     expect(Buffer.from(src.body).toString("utf8")).toContain(SECRET_CODE);
     expect((await get(`/bots/${BOT.AVIS}/versions/1/files`, tok.B)).status).toBe(200);
     expect((await get(`/bots/${BOT.AVIS}/versions/1`, tok.B)).body.canReadSource).toBe(true);
+    expect((await get(`/bots/${BOT.AVIS}/versions/1/diff?against=1`, tok.B)).status).toBe(200);
   });
 
   it("OWNER_CAN_SET_CODE_PRIVATE (público → privado, enmienda a D9) y PRIVATE_CODE_REMAINS_HIDDEN", async () => {
@@ -331,6 +332,7 @@ describe("§30 · visibilidad del código (por versión)", () => {
     for (const who of [tok.B, undefined]) {
       expect((await get(`/bots/${BOT.AVIS}/versions/1/source`, who)).status).not.toBe(200);
       expect((await get(`/bots/${BOT.AVIS}/versions/1/files`, who)).status).not.toBe(200);
+      expect((await get(`/bots/${BOT.AVIS}/versions/1/diff?against=1`, who)).status).not.toBe(200);
       const d = await get(`/bots/${BOT.AVIS}/versions/1`, who);
       expect(d.body.canReadSource).toBe(false);
       expect(d.body.sourceSha256).toBeUndefined();
@@ -372,27 +374,21 @@ describe("§30 · visibilidad del código (por versión)", () => {
 // ───────────────────────────────────────────── §31 · torneos
 describe("§31 · torneos: participar no cambia ninguna visibilidad", () => {
   it("crear con broadcast lo fija; tipo inválido 400; sin él, false", async () => {
-    const bad = await request(app)
-      .post("/tournaments")
-      .set(auth(tok.organizer))
-      .send({
-        name: "vis-bad",
-        format: "round_robin",
-        mode: "deathmatch",
-        rulesetId: DEFAULT_RULESET_ID,
-        broadcast: "sí",
-      });
+    const bad = await request(app).post("/tournaments").set(auth(tok.organizer)).send({
+      name: "vis-bad",
+      format: "round_robin",
+      mode: "deathmatch",
+      rulesetId: DEFAULT_RULESET_ID,
+      broadcast: "sí",
+    });
     expect(bad.status).toBe(400);
-    const tb = await request(app)
-      .post("/tournaments")
-      .set(auth(tok.organizer))
-      .send({
-        name: "vis-TB",
-        format: "round_robin",
-        mode: "deathmatch",
-        rulesetId: DEFAULT_RULESET_ID,
-        broadcast: true,
-      });
+    const tb = await request(app).post("/tournaments").set(auth(tok.organizer)).send({
+      name: "vis-TB",
+      format: "round_robin",
+      mode: "deathmatch",
+      rulesetId: DEFAULT_RULESET_ID,
+      broadcast: true,
+    });
     expect(tb.status).toBe(201);
     expect(tb.body.broadcast).toBe(true);
     T.TB = tb.body.id;

@@ -30,7 +30,12 @@
 import type { Request } from "express";
 import type { Db } from "./db/connection.js";
 import { notFound } from "./errors.js";
-import { isReplayStaff, wherePubliclyShowable, whereReplayReadable } from "./replay-access.js";
+import {
+  isReplayStaff,
+  tournamentAuthorizesBroadcast,
+  wherePubliclyShowable,
+  whereReplayReadable,
+} from "./replay-access.js";
 
 type Auth = Request["auth"];
 
@@ -87,14 +92,25 @@ export function canSeeBotDiagnostics(auth: Auth, botOwnerId: string | null | und
  * UX-F (DEF-R3) · De estos ids, cuáles son bots que el solicitante NO puede
  * identificar (id, nombre, versión, resultado). Misma regla que la ficha del bot
  * (`canSeeBot`): se identifican el público, los propios, todos para el staff y los
- * `team` de un equipo del que eres miembro. Lo usan las vistas que nombran
+ * `team` de un equipo del que eres miembro; con `ctx.tournamentId` de un torneo
+ * con `broadcast`, ninguno (VISIBILIDAD). Lo usan las vistas que nombran
  * participantes fuera del detalle de una batalla (cuadro de un torneo,
  * clasificación) para proyectarlos como «Bot privado». Un id que no es de ningún
  * bot (p. ej. `bye` o un hueco del cuadro) no se oculta.
  */
-export async function hiddenBotIds(db: Db, auth: Auth, ids: readonly unknown[]): Promise<Set<string>> {
+export async function hiddenBotIds(
+  db: Db,
+  auth: Auth,
+  ids: readonly unknown[],
+  ctx?: { tournamentId?: unknown },
+): Promise<Set<string>> {
   const wanted = [...new Set(ids.filter((x): x is string => typeof x === "string" && x.length > 0))];
   if (wanted.length === 0 || isReplayStaff(auth)) return new Set();
+  // VISIBILIDAD · en el contexto de un torneo con `broadcast` (BROADCAST_VISIBILITY) los
+  // inscritos se identifican con su proyección de competición. MISMA cláusula que
+  // `wherePubliclyShowable` (replay-access.ts). Fuera de ese contexto (clasificación de
+  // temporada, otros torneos) la regla de la ficha sigue igual.
+  if (ctx?.tournamentId !== undefined && (await tournamentAuthorizesBroadcast(db, ctx.tournamentId))) return new Set();
   // Sólo ids con forma de UUID llegan a la consulta (bots.id es uuid).
   const uuids = wanted.filter((x) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(x));
   if (uuids.length === 0) return new Set();

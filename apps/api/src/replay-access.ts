@@ -127,10 +127,59 @@ export function wherePubliclyShowable(db: Knexish, q: any): any {
           .whereRaw("participants.battle_id = battles.id")
           .whereNot("bots.visibility", "public"),
       )
-      .orWhereExists(
-        db("tournaments").whereRaw("tournaments.id = battles.tournament_id").where("tournaments.broadcast", true),
-      ),
+      .orWhereExists(broadcastTournaments(db).whereRaw("tournaments.id = battles.tournament_id")),
   );
+}
+
+/**
+ * VISIBILIDAD · ÚNICA cláusula «el torneo autoriza la retransmisión»: la comparten
+ * `wherePubliclyShowable` (lectura pública, replay, directo, precheck) y
+ * `tournamentAuthorizesBroadcast` (cuadro, vía `hiddenBotIds`).
+ */
+function broadcastTournaments(db: Knexish): any {
+  return db("tournaments").where("tournaments.broadcast", true);
+}
+
+/** El torneo existe y autoriza su retransmisión pública (cuadro: `hiddenBotIds`). */
+export async function tournamentAuthorizesBroadcast(db: Knexish, tournamentId: unknown): Promise<boolean> {
+  if (typeof tournamentId !== "string" || !tournamentId) return false;
+  const row = await broadcastTournaments(db)
+    .where("tournaments.id", tournamentId)
+    .first("tournaments.id")
+    .catch(() => null);
+  return !!row;
+}
+
+/**
+ * Motivos REALES por los que una batalla no se puede mostrar (ni emitir) en público.
+ *  - `battle_not_public`: batalla suelta (sin torneo) con bots no públicos. Sólo un torneo
+ *    autoriza mostrar bots privados o de equipo; no hay autorización por batalla.
+ *  - `tournament_not_broadcastable`: batalla de un torneo creado sin `broadcast` con bots
+ *    no públicos.
+ */
+export type BroadcastBlockedReason = "battle_not_public" | "tournament_not_broadcastable";
+
+/**
+ * Veredicto de `wherePubliclyShowable` para UNA batalla, con su motivo. null = no existe.
+ * Lo usa el precheck de streaming: lo que se deja emitir es lo que /broadcast puede leer.
+ */
+export async function publicShowabilityOf(
+  db: Knexish,
+  battleId: string,
+): Promise<{ showable: boolean; reason: BroadcastBlockedReason | null; tournamentBroadcast: boolean | null } | null> {
+  const b = await db("battles")
+    .where({ id: battleId })
+    .first("id", "tournament_id")
+    .catch(() => null);
+  if (!b) return null;
+  const showable = !!(await wherePubliclyShowable(db, db("battles").where("battles.id", battleId)).first("battles.id"));
+  const tournamentBroadcast = b.tournament_id ? await tournamentAuthorizesBroadcast(db, b.tournament_id) : null;
+  const reason: BroadcastBlockedReason | null = showable
+    ? null
+    : b.tournament_id
+      ? "tournament_not_broadcastable"
+      : "battle_not_public";
+  return { showable, reason, tournamentBroadcast };
 }
 
 /**

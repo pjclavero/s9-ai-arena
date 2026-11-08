@@ -25,7 +25,8 @@ vi.mock("../src/api.js", () => {
 
 import { api } from "../src/api.js";
 import { BotDetailPage } from "../src/pages/BotDetailPage.js";
-import { entryPrivacyNote } from "../src/pages/TournamentDetailPage.js";
+import { TournamentDetailPage, entryPrivacyNote } from "../src/pages/TournamentDetailPage.js";
+import { TournamentsPage } from "../src/pages/TournamentsPage.js";
 import { BOT_VISIBILITY_NOTE, CODE_PRIVATE_AGAIN_WARNING } from "../src/visibility.js";
 
 const apiMock = api as unknown as ReturnType<typeof vi.fn>;
@@ -138,4 +139,80 @@ describe("VISIBILIDAD · torneos (§26)", () => {
       for (const b of [true, false]) expect(entryPrivacyNote(v, b)).not.toMatch(/hac(er|lo) público|Debes/i);
     }
   });
+});
+
+describe("VISIBILIDAD · UI de torneos (§26) renderizada", () => {
+  const ME = { id: "u1", displayName: "Ana", email: "a@a.es", roles: ["organizer"], twoFactorEnabled: false };
+
+  it("crear torneo: la casilla «Retransmisión pública» viaja como broadcast (false por defecto)", async () => {
+    apiMock.mockImplementation(async (method: string, path: string, body?: any) => {
+      calls.push({ method, path, body });
+      if (method === "GET" && path === "/tournaments") return { items: [] };
+      if (method === "POST" && path === "/tournaments") return { id: "t1", ...body, state: "open" };
+      throw new Error(`ruta no simulada: ${method} ${path}`);
+    });
+    render(<TournamentsPage me={ME} />);
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText("nombre del torneo"), "Copa");
+    await user.click(screen.getByRole("button", { name: /crear/i }));
+    await waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
+    expect(calls.find((c) => c.method === "POST")!.body).toMatchObject({ name: "Copa", broadcast: false });
+    calls.length = 0;
+    await user.type(screen.getByLabelText("nombre del torneo"), "Copa TV");
+    await user.click(screen.getByTestId("tournament-broadcast"));
+    await user.click(screen.getByRole("button", { name: /crear/i }));
+    await waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
+    expect(calls.find((c) => c.method === "POST")!.body).toMatchObject({ name: "Copa TV", broadcast: true });
+  });
+
+  it.each([
+    [
+      true,
+      "Este bot es privado. Durante las batallas públicas se mostrarán únicamente sus datos de competición; su código seguirá privado.",
+    ],
+    [
+      false,
+      "Este bot es privado. Puede participar igual; sus batallas sólo las verán sus participantes, su equipo y la organización.",
+    ],
+  ])(
+    "inscribir un bot privado (broadcast=%s): aviso real, nunca «hazlo público»; el público no lleva aviso",
+    async (broadcast, text) => {
+      apiMock.mockImplementation(async (method: string, path: string, body?: any) => {
+        calls.push({ method, path, body });
+        if (method === "GET" && path === "/tournaments/t1")
+          return {
+            id: "t1",
+            name: "Copa",
+            format: "single_elimination",
+            mode: "deathmatch",
+            state: "open",
+            entryCount: 0,
+            broadcast,
+          };
+        if (method === "GET" && path === "/tournaments/t1/battles") return { items: [] };
+        if (method === "GET" && path.startsWith("/bots?ownerId="))
+          return {
+            items: [
+              { id: "bp", name: "A-DEF", visibility: "private", latestPublishedVersion: 4 },
+              { id: "bq", name: "B-PUB", visibility: "public", latestPublishedVersion: 1 },
+            ],
+          };
+        if (method === "GET") return { items: [], matches: [] };
+        throw new Error(`ruta no simulada: ${method} ${path}`);
+      });
+      render(<TournamentDetailPage id="t1" me={ME} />);
+      const user = userEvent.setup();
+      const select = await screen.findByLabelText("bot a inscribir");
+      await screen.findByRole("option", { name: /A-DEF/ });
+      if (broadcast) expect(screen.getByTestId("tournament-broadcast-badge").textContent).toBe("retransmisión pública");
+      else expect(screen.queryByTestId("tournament-broadcast-badge")).toBeNull();
+      await user.selectOptions(select, "bp");
+      expect(screen.getByTestId("entry-privacy-note").textContent).toBe(text);
+      expect(document.body.textContent).not.toMatch(/Debes|hac(er|lo) público/i);
+      await user.selectOptions(select, "bq");
+      expect(screen.queryByTestId("entry-privacy-note")).toBeNull();
+      // Mostrar el aviso no toca el bot: ninguna escritura sale de esta pantalla.
+      expect(calls.filter((c) => c.method !== "GET")).toEqual([]);
+    },
+  );
 });

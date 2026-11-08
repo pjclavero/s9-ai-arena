@@ -431,14 +431,13 @@ export function tournamentRoutes(
     // VISIBILIDAD · en un torneo retransmisible los inscritos se identifican EN SU CUADRO
     // (BROADCAST_VISIBILITY): id y ganador de competición, nunca la ficha ni el código. En
     // los demás, un bot privado ajeno sigue saliendo como «Bot privado» (UX-F).
-    const hidden =
-      t.broadcast === true
-        ? new Set<string>()
-        : await hiddenBotIds(
-            db,
-            req.auth,
-            isTeams ? rows.map((m: Record<string, unknown>) => m.winner_bot_id) : rows.flatMap(botIdsOfMatch),
-          );
+    // El contexto del torneo entra en `hiddenBotIds`: la regla vive en replay-access.ts.
+    const hidden = await hiddenBotIds(
+      db,
+      req.auth,
+      isTeams ? rows.map((m: Record<string, unknown>) => m.winner_bot_id) : rows.flatMap(botIdsOfMatch),
+      { tournamentId: t.id },
+    );
     res.setHeader("Cache-Control", NO_STORE);
     res.json({ matches: rows.map((m: Record<string, unknown>) => tournamentMatchToJson(m, hidden, isTeams)) });
   });

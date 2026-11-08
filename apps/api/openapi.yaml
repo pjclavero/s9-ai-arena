@@ -51,7 +51,15 @@ info:
   # testStreaming, start/restart/stopStreaming, listStreamingRecordings,
   # applyStreamingRetention y listStreamingAudit (tag streaming).
   # Añadir un endpoint = MINOR (docs/compatibilidad.md, §2 Semver por paquete).
-  version: 0.13.0
+  # 0.14.0 · reservada para STREAMER (#242).
+  # 0.15.0 · VISIBILIDAD (aditivo): setBotVersionCodeVisibility (PUT
+  # /bots/{botId}/versions/{version}/code-visibility, sólo el dueño; D9 enmendada:
+  # codePublic es reversible), `broadcast` en TournamentInput/Tournament (fijado al
+  # crear), y en StreamingTarget `broadcastable`, `broadcastBlockedReason`
+  # (battle_not_public | tournament_not_broadcastable) y `tournamentBroadcast`;
+  # `publicBroadcastable` queda como alias deprecado. startStreaming ya no responde
+  # 409 target_not_public sino con el motivo real.
+  version: 0.15.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 

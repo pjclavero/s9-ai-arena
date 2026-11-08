@@ -54,8 +54,8 @@ const MUTANTS = [
   {
     name: "emitir pasa los bots de la batalla a public automáticamente",
     file: "apps/api/src/services/streaming.ts",
-    from: '    const pub = await wherePubliclyShowable(db, db("battles").where("battles.id", t.id)).first();',
-    to: '    await db("bots").whereIn("id", db("participants").where({ battle_id: t.id }).select("bot_id")).update({ visibility: "public" });\n    const pub = await wherePubliclyShowable(db, db("battles").where("battles.id", t.id)).first();',
+    from: "    const show = await publicShowabilityOf(db, t.id);",
+    to: '    await db("bots").whereIn("id", db("participants").where({ battle_id: t.id }).select("bot_id")).update({ visibility: "public" });\n    const show = await publicShowabilityOf(db, t.id);',
     tests: API,
   },
   {
@@ -63,6 +63,41 @@ const MUTANTS = [
     file: "apps/api/src/routes/tournaments.ts",
     from: '    if (!t) throw notFound();\n    if (t.state !== "open") {\n      throw conflict("illegal_transition"',
     to: '    if (!t) throw notFound();\n    await db.raw("UPDATE bot_versions v SET code_public = true FROM entries e WHERE e.bot_id = v.bot_id AND e.version = v.version AND e.tournament_id = ?", [t.id]);\n    if (t.state !== "open") {\n      throw conflict("illegal_transition"',
+    tests: API,
+  },
+  {
+    name: "inscribir pone code_public=true a la versión inscrita",
+    file: "apps/api/src/routes/tournaments.ts",
+    from: "    // Congela la COMBINACIÓN exacta código+loadout (cap. 17.2).",
+    to: '    await db("bot_versions").where({ bot_id: botId }).update({ code_public: true });\n    // Congela la COMBINACIÓN exacta código+loadout (cap. 17.2).',
+    tests: API,
+  },
+  {
+    name: "volver el código a privado no se aplica (D9 irreversible de hecho)",
+    file: "apps/api/src/routes/bots.ts",
+    from: "update({ code_public: codePublic }).returning",
+    to: "update({ code_public: codePublic || v.code_public === true }).returning",
+    tests: API,
+  },
+  {
+    name: "el precheck usa un motivo genérico (sin distinguir torneo sin broadcast)",
+    file: "apps/api/src/replay-access.ts",
+    from: '    : b.tournament_id\n      ? "tournament_not_broadcastable"',
+    to: '    : false\n      ? "tournament_not_broadcastable"',
+    tests: API,
+  },
+  {
+    name: "la ficha de un bot privado deja de dar 404 a terceros (salir en el stream lo revela)",
+    file: "apps/api/src/services/bots.ts",
+    from: "  if (!bot || !(await canSeeBot(db, auth, bot))) throw notFound();",
+    to: "  if (!bot) throw notFound();",
+    tests: API,
+  },
+  {
+    name: "el cuadro de un torneo CON broadcast oculta a sus inscritos (se ignora el contexto)",
+    file: "apps/api/src/battle-access.ts",
+    from: "  if (ctx?.tournamentId !== undefined && (await tournamentAuthorizesBroadcast(db, ctx.tournamentId))) return new Set();",
+    to: "  if (ctx?.tournamentId !== undefined && false && (await tournamentAuthorizesBroadcast(db, ctx.tournamentId))) return new Set();",
     tests: API,
   },
   {
@@ -82,8 +117,8 @@ const MUTANTS = [
   {
     name: "el torneo con broadcast deja de autorizar (vuelve «todos los bots públicos»)",
     file: "apps/api/src/replay-access.ts",
-    from: '        db("tournaments").whereRaw("tournaments.id = battles.tournament_id").where("tournaments.broadcast", true),',
-    to: '        db("tournaments").whereRaw("false"),',
+    from: '  return db("tournaments").where("tournaments.broadcast", true);',
+    to: '  return db("tournaments").whereRaw("false");',
     tests: API,
   },
   {
@@ -95,9 +130,9 @@ const MUTANTS = [
   },
   {
     name: "el cuadro deja de ocultar bots privados en torneos SIN broadcast",
-    file: "apps/api/src/routes/tournaments.ts",
-    from: "      t.broadcast === true\n        ? new Set<string>()",
-    to: "      true\n        ? new Set<string>()",
+    file: "apps/api/src/battle-access.ts",
+    from: "  if (ctx?.tournamentId !== undefined && (await tournamentAuthorizesBroadcast(db, ctx.tournamentId))) return new Set();",
+    to: "  if (ctx?.tournamentId !== undefined) return new Set();",
     tests: API,
   },
   {
@@ -120,6 +155,20 @@ const MUTANTS = [
     from: '  const quien = visibility === "team" ? "Este bot es de equipo." : "Este bot es privado.";',
     to: '  const quien = "Debes hacerlo público.";',
     tests: WEB,
+  },
+  {
+    name: "crear torneo ignora la casilla «Retransmisión pública»",
+    file: "apps/web/src/pages/TournamentsPage.tsx",
+    from: "{ name, format, mode, rulesetId, broadcast }",
+    to: "{ name, format, mode, rulesetId, broadcast: false }",
+    tests: WEB,
+  },
+  {
+    name: "la página de Streaming vuelve a un motivo único para todo destino bloqueado",
+    file: "apps/web/src/pages/StreamingPage.tsx",
+    from: '              {target.broadcastBlockedReason === "tournament_not_broadcastable"',
+    to: "              {false",
+    tests: ["apps/web/tests/eq5b-streaming-page.test.tsx"],
   },
 ];
 
