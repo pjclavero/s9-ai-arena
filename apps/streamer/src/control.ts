@@ -38,7 +38,7 @@ import { canonicalIngestUrl, openSecret, SealedSecretError } from "../../../pack
 import type { StreamSupervisor } from "./supervisor.js";
 import type { Logger, StreamerConfig } from "./config.js";
 import { renderPrometheus } from "./metrics.js";
-import { parseIngestUrl, RtmpPublisher, type IngestTarget } from "./rtmp/publisher.js";
+import { parseIngestUrl, RtmpPublisher, type Dialer, type IngestTarget } from "./rtmp/publisher.js";
 import { parseStartRequest, presetOf, sessionFingerprint, type Capabilities } from "./session.js";
 import { applyRetention, listRecordings, validateRetentionPolicy } from "./recordings.js";
 
@@ -69,7 +69,7 @@ export interface ControlOptions {
   /** Lee la clave de despliegue heredada (STREAM_KEY_FILE); null = no hay. */
   readLegacyKey?: () => string | null;
   allowPlainRtmp?: boolean;
-  dial?: (t: IngestTarget) => Duplex;
+  dial?: Dialer;
   now?: () => number;
 }
 

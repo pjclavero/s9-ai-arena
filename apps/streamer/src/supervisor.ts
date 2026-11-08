@@ -28,7 +28,7 @@ import type { Duplex } from "node:stream";
 import { buildChromiumArgs, buildFfmpegArgs, MEDIA_FD, redactArgs } from "./ffmpeg.js";
 import { ProgressParser } from "./metrics.js";
 import { SecretRegistry, type Logger, type StreamerConfig } from "./config.js";
-import { parseIngestUrl, RtmpPublisher, type IngestTarget } from "./rtmp/publisher.js";
+import { parseIngestUrl, RtmpPublisher, type Dialer, type IngestTarget } from "./rtmp/publisher.js";
 import { presetOf, sessionFingerprint, type PresetName, type SessionPlan } from "./session.js";
 
 /** Contrato mínimo de un proceso hijo (ChildProcess lo cumple). */
@@ -68,7 +68,7 @@ export interface SupervisorOptions {
   chromiumBin?: string;
   ffmpegBin?: string;
   /** Inyectable en tests: transporte hacia la ingesta. */
-  dial?: (t: IngestTarget) => Duplex;
+  dial?: Dialer;
   now?: () => number;
   /** Sólo pruebas locales: admite `rtmp://` sin TLS (STREAMER_ALLOW_PLAIN_RTMP=1). */
   allowPlainRtmp?: boolean;

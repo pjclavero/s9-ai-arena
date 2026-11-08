@@ -23,9 +23,8 @@
  */
 import { EventEmitter } from "node:events";
 import { createHmac, randomBytes } from "node:crypto";
-import { connect as netConnect, isIP } from "node:net";
-import { connect as tlsConnect } from "node:tls";
 import type { Duplex } from "node:stream";
+import { DialError, dialIngest } from "./dial.js";
 import { decodeAmf0Values, encodeAmf0, encodeAmf0Values, type Amf0Object, type Amf0Value } from "./amf0.js";
 import {
   ChunkReader,
@@ -47,11 +46,24 @@ export interface IngestTarget {
   protocol: "rtmps" | "rtmp";
   host: string;
   port: number;
+  /**
+   * Aplicación RTMP tal y como va en `connect` (y en el tcUrl). Con la ingesta
+   * de respaldo de YouTube incluye la query (`live2?backup=1`), igual que
+   * librtmp, OBS y FFmpeg: la query forma parte de la aplicación, no del stream.
+   */
   app: string;
   tcUrl: string;
   /** Destino apto para logs, /status y la API: SIN clave. */
   display: string;
 }
+
+/**
+ * STREAMING-UX · §20 · Única query admitida en una URL de ingesta: la de la
+ * ingesta de RESPALDO de YouTube. Cualquier otra se rechaza. Qué plataforma y
+ * qué papel (principal o respaldo) pueden llevarla lo decide la API; aquí sólo
+ * se admite esta forma exacta.
+ */
+export const BACKUP_QUERY = "?backup=1";
 
 /**
  * Valida y descompone la URL de ingesta. `rtmp://` (sin TLS) sólo con
@@ -69,12 +81,15 @@ export function parseIngestUrl(raw: string, allowPlain = false): IngestTarget {
     throw new Error("la ingesta debe ser rtmps:// (TLS)");
   }
   if (u.username || u.password) throw new Error("la URL de ingesta no admite credenciales");
-  if (u.search || u.hash) throw new Error("la URL de ingesta no admite query ni fragmento");
+  if (u.hash || (u.search && u.search !== BACKUP_QUERY)) {
+    throw new Error("la URL de ingesta no admite query (salvo ?backup=1) ni fragmento");
+  }
   const host = u.hostname.replace(/^\[|\]$/g, "");
   if (!host) throw new Error("URL de ingesta sin host");
   const port = u.port ? Number(u.port) : protocol === "rtmps" ? 443 : 1935;
-  const app = decodeURIComponent(u.pathname.replace(/^\/+|\/+$/g, ""));
-  if (!app || app.length > 128 || !/^[A-Za-z0-9._~\-/]+$/.test(app)) throw new Error("aplicación RTMP inválida");
+  const path = decodeURIComponent(u.pathname.replace(/^\/+|\/+$/g, ""));
+  if (!path || path.length > 128 || !/^[A-Za-z0-9._~\-/]+$/.test(path)) throw new Error("aplicación RTMP inválida");
+  const app = `${path}${u.search}`;
   const hostPort = `${u.hostname}:${port}`;
   return {
     protocol: protocol as "rtmps" | "rtmp",
@@ -128,24 +143,20 @@ export interface PublisherOptions {
    * el mismo que `commandTimeoutMs`.
    */
   writeTimeoutMs?: number;
-  /** Inyectable en tests (servidor RTMP falso). Por defecto TCP/TLS reales. */
-  dial?: (t: IngestTarget) => Duplex;
+  /**
+   * Inyectable en tests (servidor RTMP falso). Por defecto `dialIngest`: IPv4
+   * primero, plazo por intento y TLS verificado contra el nombre (§27).
+   */
+  dial?: Dialer;
 }
+
+export type Dialer = (t: IngestTarget) => Duplex | Promise<Duplex>;
 
 const OUT_CHUNK_SIZE = 4096;
 const HIGH_WATER = 4 * 1024 * 1024;
 const MAX_PENDING = 32 * 1024 * 1024;
 
-function defaultDial(t: IngestTarget): Duplex {
-  if (t.protocol === "rtmp") return netConnect({ host: t.host, port: t.port });
-  return tlsConnect({
-    host: t.host,
-    port: t.port,
-    // SNI sólo con nombre (no con IP); la verificación del certificado queda ACTIVA.
-    servername: isIP(t.host) ? undefined : t.host,
-    rejectUnauthorized: true,
-  });
-}
+const defaultDial: Dialer = (t) => dialIngest(t);
 
 /**
  * Error del relé: el mensaje nunca contiene la clave (se redacta todo lo que
@@ -168,7 +179,14 @@ export class RtmpPublisher extends EventEmitter {
   private hsBuf: Buffer = Buffer.alloc(0);
   private hsDone = false;
   private c1: Buffer | null = null;
-  private txn = 1;
+  /**
+   * STREAMING-UX · §27 · Último id de transacción usado. `connect` DEBE llevar
+   * el 1, como en FFmpeg, OBS y librtmp: la ingesta de YouTube ignora en
+   * silencio un `connect` con otro id. Era la causa del «la ingesta no respondió
+   * a connect a tiempo» de producción, que MediaMTX no detecta porque acepta
+   * cualquier id.
+   */
+  private txn = 0;
   private readonly pending = new Map<number, (cmd: string, args: Amf0Value[]) => void>();
   private publishStreamId = 0;
   private queued: FlvTag[] = [];
@@ -347,11 +365,16 @@ export class RtmpPublisher extends EventEmitter {
         reject(e);
         this.fail(e);
       }, timeoutMs));
-      const sock = (this.opts.dial ?? defaultDial)(this.opts.target);
-      this.sock = sock;
       const onErr = (e: Error & { code?: string }) => {
         clearTimeout(timer);
-        const tls = /CERT|SELF_SIGNED|UNABLE_TO_VERIFY|ERR_TLS/.test(String(e.code ?? e.message));
+        if (e instanceof DialError) {
+          // §27/§24 · ninguna dirección respondió: el motivo por familia va al detalle.
+          const err = new RelayError(this.redact(e.message), e.code === "timeout" ? "timeout" : "network");
+          reject(err);
+          this.fail(err);
+          return;
+        }
+        const tls = /CERT|SELF_SIGNED|UNABLE_TO_VERIFY|ERR_TLS|HOSTNAME|ALTNAME/.test(String(e.code ?? e.message));
         const err = new RelayError(
           tls
             ? `certificado TLS de la ingesta no válido (${this.redact(e.code ?? e.message)})`
@@ -361,7 +384,41 @@ export class RtmpPublisher extends EventEmitter {
         reject(err);
         this.fail(err);
       };
-      sock.once("error", onErr);
+      let dialed: Duplex | Promise<Duplex>;
+      try {
+        dialed = (this.opts.dial ?? defaultDial)(this.opts.target);
+      } catch (e) {
+        onErr(e as Error);
+        return;
+      }
+      void Promise.resolve(dialed).then(
+        (sock) => {
+          if (this.state_ === "closed") {
+            // Plazo vencido o close() mientras se marcaba: no se deja un socket colgado.
+            sock.destroy();
+            return;
+          }
+          this.attach(sock, timer, resolve, reject, onErr);
+        },
+        (e) => {
+          if (this.state_ !== "closed") onErr(e as Error);
+        },
+      );
+    });
+  }
+
+  private attach(
+    sock: Duplex,
+    timer: NodeJS.Timeout,
+    resolve: () => void,
+    reject: (e: Error) => void,
+    onErr: (e: Error & { code?: string }) => void,
+  ): void {
+    {
+      this.sock = sock;
+      // `on` y no `once`: un segundo 'error' del socket (TLS que se rompe tras
+      // el primero) sin oyente tumbaría el proceso; `fail()` es idempotente.
+      sock.on("error", onErr);
       sock.on("close", () => {
         if (this.state_ !== "closed") {
           const err = new RelayError("la ingesta cerró la conexión", "closed_by_server");
@@ -388,7 +445,7 @@ export class RtmpPublisher extends EventEmitter {
       // C0 + C1 en cuanto haya transporte (en TLS, net encola hasta el handshake).
       this.c1 = buildC1();
       sock.write(Buffer.concat([Buffer.from([3]), this.c1]));
-    });
+    }
   }
 
   private onData(d: Buffer, handshakeDone: () => void): void {
