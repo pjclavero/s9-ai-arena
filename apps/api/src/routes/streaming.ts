@@ -743,10 +743,17 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
   // (la retención por tamaño evita que crezca sin límite; esto evita empezar sin sitio).
   async function checkDisk(): Promise<void> {
     const rec = await callStreamer("GET", "/recordings");
-    const free = (rec.body as { disk?: { freeBytes?: number } | null }).disk?.freeBytes;
+    const recBody = rec.body as { disk?: { freeBytes?: number } | null; dirError?: string | null };
+    const free = recBody.disk?.freeBytes;
     // EQ5c (P3) · fail-closed: sin medida del disco no se empieza a grabar.
+    // #249 · si el streamer dice por qué (directorio imposible), se cuenta.
     if (!rec.ok || typeof free !== "number" || !Number.isFinite(free)) {
-      throw conflict("disk_unknown", "El streamer no pudo medir el espacio libre: no se empieza a grabar");
+      throw conflict(
+        "disk_unknown",
+        recBody.dirError
+          ? `El directorio de grabación no es utilizable (${String(recBody.dirError).slice(0, 200)}): no se empieza a grabar`
+          : "El streamer no pudo medir el espacio libre: no se empieza a grabar",
+      );
     }
     if (free < MIN_FREE_BYTES) {
       throw conflict("disk_low", `Queda poco espacio para grabar (${Math.round(free / 1024 ** 2)} MiB libres)`);

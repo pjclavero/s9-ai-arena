@@ -41,6 +41,7 @@ import { renderPrometheus } from "./metrics.js";
 import { parseIngestUrl, RtmpPublisher, type Dialer, type IngestTarget } from "./rtmp/publisher.js";
 import { parseStartRequest, presetOf, sessionFingerprint, type Capabilities } from "./session.js";
 import { applyRetention, listRecordings, validateRetentionPolicy } from "./recordings.js";
+import { checkWritableDataDir } from "../../../packages/data-dir/index.js";
 
 const MAX_BODY = 16 * 1024;
 /** Plazo total de /control/test (TLS + handshake + connect); vencido, se cierra el socket. */
@@ -258,9 +259,20 @@ export function createControlServer(opts: ControlOptions): Server {
     }
 
     if (req.method === "GET" && url === "/recordings") {
+      // #249 · el directorio de grabación se CREA bajo demanda, sin privilegios
+      // (el volumen `arena_replays` ya pertenece al usuario del servicio por el
+      // entrypoint). Antes sólo lo creaba el preflight cuando el contenedor arrancaba
+      // en modo record. Con STREAM_MODE=rtmps no existía, statfs fallaba y «Sólo
+      // grabar» desde la web daba disk_unknown. Si no se puede crear o escribir, se
+      // dice por qué y el disco queda sin medir: la API no empieza a grabar
+      // (fail-closed).
+      const dirCheck = checkWritableDataDir(config.recordDir);
+      const view = listRecordings(config.recordDir, supervisor.recordingFile);
       return respond(200, {
         dir: "arena_replays/video",
-        ...listRecordings(config.recordDir, supervisor.recordingFile),
+        ...view,
+        disk: dirCheck.ok ? view.disk : null,
+        dirError: dirCheck.ok ? null : dirCheck.reason,
       });
     }
 
@@ -382,6 +394,18 @@ export function createControlServer(opts: ControlOptions): Server {
           return respond(400, { error });
         }
         const plan = parsed.plan;
+        // #249 · grabar exige un directorio de grabación utilizable AHORA (se crea si
+        // falta). Si no lo es, la orden se rechaza en vez de lanzar un ffmpeg que muere
+        // al abrir el fichero.
+        if (plan.config.mode === "record") {
+          const dirCheck = checkWritableDataDir(plan.config.recordDir);
+          if (!dirCheck.ok) {
+            logger("error", "control: directorio de grabación no utilizable; orden rechazada", {
+              reason: dirCheck.reason,
+            });
+            return respond(409, { error: "record_dir_unavailable", reason: dirCheck.reason });
+          }
+        }
         // Idempotencia: la MISMA sesión ya activa ⇒ no se toca nada.
         if (supervisor.active && plan.sessionId && supervisor.sessionFingerprint === sessionFingerprint(plan)) {
           return respond(200, { state: supervisor.state, alreadyActive: true, session: supervisor.session() });

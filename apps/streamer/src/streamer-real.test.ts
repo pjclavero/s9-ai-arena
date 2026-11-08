@@ -126,7 +126,9 @@ function harness(
   const lines: string[] = [];
   const secrets = new SecretRegistry();
   const logger = createLogger(secrets, (l) => lines.push(l));
-  const config: StreamerConfig = { ...DEFAULT_CONFIG, retryDelayMs: 1, mode: "record", ...over };
+  // #249 · grabar exige un directorio utilizable: el de cada prueba, temporal.
+  const recordDir = join(mkdtempSync(join(tmpdir(), "s9-streamer-real-")), "video");
+  const config: StreamerConfig = { ...DEFAULT_CONFIG, retryDelayMs: 1, mode: "record", recordDir, ...over };
   const sup = new StreamSupervisor({
     config,
     spawner,
