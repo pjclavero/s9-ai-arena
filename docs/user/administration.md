@@ -2,7 +2,7 @@
 
 Esta página es para quien tiene un rol de **administrador dentro del juego**. No es la guía del **operador del servidor** (instalar, hacer copias, actualizar), que está en [operaciones](../operations/index.md).
 
-Una cuenta con rol **admin** ve en la barra una entrada **«Administración»** con cuatro pantallas: **Usuarios y seguridad**, **Sistema**, **Auditoría** y **Roles y permisos**. Un usuario sin el rol que abre una de ellas ve «No tienes permiso para esto».
+Una cuenta con rol **admin** ve en la barra una entrada **«Administración»** con cuatro pantallas: **Usuarios y seguridad**, **Sistema**, **Auditoría** y **Roles y permisos**, y además **Streaming** (ver [Streaming](#streaming)). Un usuario sin el rol que abre una de ellas ve «No tienes permiso para esto».
 
 No hay gestión de usuarios propiamente dicha: no hay listado, búsqueda, bloqueo ni borrado.
 
@@ -24,6 +24,28 @@ Tabla de las últimas 100 acciones: fecha, acción (por ejemplo `tournament.crea
 ## Roles y permisos
 
 La jerarquía de roles con su rango y la **matriz** de qué rol mínimo exige cada acción, con un filtro por ruta, método o rol.
+
+## Streaming
+
+Pantalla **Administración → Streaming**: emite una batalla (o un torneo) en directo hacia YouTube u
+otra ingesta RTMPS, o la graba en MP4. Sólo para admin; un usuario normal no puede iniciar, parar,
+cambiar el destino ni ver la clave. La ayuda completa está en **Ayuda → Administración: Streaming**
+y la operación en [streaming.md](../operations/streaming.md).
+
+- **Iniciar:** elige el destino (los botones «Retransmitir» del detalle de una batalla lo rellenan) y
+  pulsa **Iniciar emisión**. Sólo puede haber **una** emisión: si ya hay otra, la pantalla lo dice y
+  no la toca. El estado pasa por **Iniciando** y sólo marca **En directo** cuando la ingesta acepta
+  el vídeo.
+- **Detener:** **Detener emisión**. Pulsarlo dos veces no rompe nada.
+- **Estados:** desactivado, listo, iniciando, en directo, grabando, reconectando, abandonada (los
+  reintentos se agotaron), interrumpida (la emisión se cortó; por ejemplo, se reinició el servicio)
+  y servicio no disponible. Desde **abandonada** o **interrumpida** basta con volver a pulsar
+  **Iniciar emisión** (o **Reiniciar emisión**).
+- **Errores habituales:** «ya hay una emisión activa», «el streaming está desactivado», «no hay clave
+  de emisión configurada», «la clave se guardó para otra URL de ingesta» y «servicio de emisión no
+  disponible». El último error del servicio se muestra redactado: nunca aparece la clave.
+- **La clave:** se escribe una vez en **Credenciales** y después sólo se ve «configurada (****ABCD)».
+  Para cambiarla, escribe la nueva; se aplica en el siguiente inicio o reinicio.
 
 ## Acciones de organizador y moderador
 

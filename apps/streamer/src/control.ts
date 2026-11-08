@@ -4,7 +4,7 @@
  * RTMPS, sin puertos).
  *
  *   POST /control/start  {…SessionPlan}   → arranca/re-apunta la emisión
- *   POST /control/stop                    → para la emisión (idempotente)
+ *   POST /control/stop  {ifSession?}      → para la emisión (idempotente; condicionada a la sesión)
  *   POST /control/test   {ingestUrl, credential} → TLS + handshake + connect, SIN publicar
  *   GET  /status                          → estado + métricas (SIN clave)
  *   GET  /recordings                      → grabaciones MP4, espacio en disco
@@ -207,6 +207,8 @@ export function createControlServer(opts: ControlOptions): Server {
         progressAgeSeconds:
           supervisor.desired && started !== null ? Math.max(0, Math.round((now() - last) / 1000)) : -1,
         relayPublishing: supervisor.relayState === "publishing",
+        counters: supervisor.counters,
+        uptimeSeconds: supervisor.active && started !== null ? Math.max(0, Math.round((now() - started) / 1000)) : 0,
       });
       return respond(200, text, "text/plain; version=0.0.4");
     }
@@ -237,6 +239,8 @@ export function createControlServer(opts: ControlOptions): Server {
         session: supervisor.session(),
         restarts: supervisor.restarts,
         lastError: supervisor.lastError,
+        counters: supervisor.counters,
+        pendingChildren: supervisor.pendingChildren,
         relay: { state: supervisor.relayState, bytesOut: supervisor.relayBytesOut },
         recording: supervisor.recordingFile ? supervisor.recordingFile.split("/").pop() : null,
         capabilities: { nvenc: caps.nvenc, sealedCredentials: !!opts.readPrivateKey?.() },
@@ -271,6 +275,26 @@ export function createControlServer(opts: ControlOptions): Server {
         }
 
         if (url === "/control/stop") {
+          // STREAMER (#241, R4-1) · stop CONDICIONADO: con `ifSession` sólo para si
+          // la emisión pedida es ESA sesión (null = emisión sin sesión: heredada o
+          // STREAM_AUTOSTART). Un stop del reconciliador que aterriza tarde no corta
+          // una sesión legítima arrancada entretanto. Sin `ifSession`, stop a secas
+          // (operador, idempotente).
+          if (Object.prototype.hasOwnProperty.call(body, "ifSession")) {
+            const want = body.ifSession;
+            if (want !== null && (typeof want !== "string" || !/^[0-9a-zA-Z_-]{1,64}$/.test(want))) {
+              return respond(400, { error: "ifSession inválido" });
+            }
+            const current = supervisor.desired ? supervisor.currentSessionId : undefined;
+            if (current === undefined || current !== want) {
+              return respond(409, {
+                error: "session_mismatch",
+                state: supervisor.state,
+                wasActive: supervisor.desired,
+                session: current ?? null,
+              });
+            }
+          }
           const wasActive = supervisor.desired;
           supervisor.stop();
           return respond(200, { state: supervisor.state, wasActive });
