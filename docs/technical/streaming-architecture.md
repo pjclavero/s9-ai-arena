@@ -240,6 +240,23 @@ diseño propio de captura.
 
 ## RTMPS y claves
 
+- **STREAMING-UX · dos ingestas.** La orden de arranque lleva `ingestUrl` + `credential` (principal)
+  y, si hay respaldo, `backupIngestUrl` + `backupCredential`: cada sobre atado a SU URL, y el del
+  respaldo sólo se abre para la URL de respaldo de la orden. Si no casa, la orden entera se rechaza.
+  El supervisor empieza por la principal y pasa al respaldo tras `FAILOVER_AFTER` (3) fallos seguidos
+  de red, transporte o handshake antes del `connect` (`FAILOVER_CODES`). El respaldo se queda toda la
+  sesión y la sesión nueva vuelve a la principal. `/status.relay` expone `ingest`, `backupAvailable`,
+  `failedOver` e `ingestErrors` (redactados).
+- **STREAMING-UX · marcado (`rtmp/dial.ts`).** Happy Eyeballs (RFC 8305): `dns.lookup({all,
+  verbatim})`, orden del DNS con las familias intercaladas, escalón de 250 ms sin cancelar el intento
+  anterior, plazo de 5 s por intento y cancelación de los perdedores. El TLS va sobre el TCP ganador,
+  con `servername` = host y `rejectUnauthorized`. No se usa `autoSelectFamily` de Node: en producción,
+  `tls.connect` con el Node 20 de la imagen dio TIMEOUT con la AAAA primero, su algoritmo es secuencial
+  y no deja inyectar el transporte para probar una ruta IPv6 agujero negro. **Nada del host cambia.**
+- **STREAMING-UX · `connect` con id de transacción 1** (como FFmpeg/OBS/librtmp): YouTube ignora en
+  silencio un `connect` con otro id. Era la causa principal del «la ingesta no respondió a connect a
+  tiempo». MediaMTX acepta cualquiera, y por eso el E2E local no lo detectaba.
+  `relay-ingest-regression.test.ts` lleva una ingesta estricta como YouTube.
 - **Destino:** por defecto `rtmps://a.rtmps.youtube.com/live2`, el endpoint oficial. `rtmp://` en claro
   se rechaza salvo `STREAMER_ALLOW_PLAIN_RTMP=1`, que sólo se usa en pruebas locales. El TLS se
   verifica contra el almacén del sistema (o contra `NODE_EXTRA_CA_CERTS` en la CA local del E2E).

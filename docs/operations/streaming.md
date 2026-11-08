@@ -55,10 +55,53 @@ las líneas del log del contenedor son JSON (Xvfb escribe una). Ver
 ## Administración desde la web
 
 Pantalla **Administración → Streaming** (`#/streaming`, sólo `admin`; el RBAC lo aplica la
-API: 12 operaciones `x-min-role: admin` del contrato 0.13.0, tag `streaming`). Ayuda offline en
+API: 14 operaciones `x-min-role: admin` del contrato 0.16.0, tag `streaming`). Ayuda offline en
 **Ayuda → Administración: Streaming**. Uso normal sin SSH, `.env` ni Compose.
 
-| Sección | Qué hace |
+### STREAMING-UX (contrato 0.16.0): operación simple y configuración avanzada aparte
+
+Menú a la **izquierda** (en móvil, pestañas horizontales con scroll): **Streaming** ·
+**Configuración avanzada** · **Grabaciones** · **Auditoría** (`#/streaming?tab=advanced|recordings|audit`).
+
+| Vista | Qué hay |
+|---|---|
+| Streaming (lista) | estado en lenguaje humano («● Listo», «Conectando con YouTube…»); **Tipo** (Batalla/Torneo); selector legible «Team A vs Team B · Finalizada · hace 12 min» (en curso primero, luego por recencia; `GET /admin/streaming/destinations`); **Retransmisible / No retransmisible** con la explicación en frase (el código `battle_not_public`… sólo en «Ver detalles técnicos»); **Canal** con el estado de la clave enmascarada; **Calidad** 1080p30 / 720p30 / 1080p60 / 720p60 (fija el bitrate recomendado); **INICIAR**. No se escribe ningún UUID |
+| Streaming (en directo) | «● EN DIRECTO», destino, canal, calidad, duración, FPS, bitrate, frames descartados, reintentos e **Ingesta activa: Principal \| Respaldo** («Principal no disponible · Usando servidor de respaldo» tras un failover); **DETENER** en una barra fija arriba (visible sin desplazarse en escritorio y móvil); INICIAR no aparece; tabla técnica plegada |
+| Configuración avanzada | destino manual (el ÚNICO sitio con UUID); activación, modo RTMPS/sólo grabar, plataforma, encoder, resolución, FPS y bitrate manual; **servidores principal y de respaldo** con «Probar ingesta» (Principal: OK / Respaldo: …); clave («Configurada · ****ABCD», Reemplazar, Eliminar); branding; diagnóstico (relé, ffmpeg, ingesta sin clave, sesión, errores por ingesta) |
+
+**Ingestas de YouTube.** Por defecto, principal `rtmps://a.rtmps.youtube.com/live2` y respaldo
+`rtmps://b.rtmps.youtube.com/live2?backup=1` (catálogo de `services/streaming.ts`). Se editan desde
+la web (`PUT /admin/streaming/ingests/{platform}`, tabla `streaming_ingests` de la migración 020)
+y se guardan **tal cual**: no se deriva el respaldo de la principal ni se concatena nada. El
+validador sólo admite `?backup=1` en la **ingesta de respaldo de YouTube**; se rechazan
+`?foo=bar`, `?backup=2`, `?backup=1&foo=bar`, `?redirect=…`, `?token=…` y `?backup=1` en la
+principal. La query va en la aplicación RTMP (`live2?backup=1`), como en librtmp/OBS.
+
+**Sellado con dos ingestas.** La clave se sella **dos veces**: un sobre atado a (plataforma,
+principal) en `sealed` y otro atado a (plataforma, respaldo) en `sealed_backup`. Ningún sobre vale
+para dos destinos, así que la clave sólo puede publicarse en las dos URLs que había configuradas
+al guardarla. Si cambias el respaldo, el sobre de respaldo deja de valer (`backup: needs_key`), la
+emisión sale **sin respaldo** y la pantalla pide volver a introducir la clave. Una clave guardada
+antes de la 020 sigue valiendo para la principal.
+
+**Failover** (streamer, `supervisor.ts`). Primero la principal. Tras **3 fallos seguidos de red,
+transporte o handshake** ANTES de que la ingesta conteste a `connect` (`timeout`, `network`,
+`closed_by_server`, `protocol`) se pasa al respaldo, que se queda **toda la sesión** aunque la
+principal vuelva. La sesión siguiente empieza por la principal. **No hay failover** por clave
+rechazada, autorización, certificado inválido o configuración local, porque el respaldo fallaría
+igual o no sería seguro. Si fallan las dos: «No se pudo conectar con YouTube» y, en detalles,
+«Principal: … / Respaldo: …».
+
+**Red del relé (causa del «la ingesta no respondió a connect a tiempo»).** (1) El `connect` salía
+con id de transacción 2 y YouTube ignora en silencio un `connect` que no sea el 1 (FFmpeg/OBS
+mandan 1): ahora va el 1. (2) Con IPv6 sin salida y la AAAA primero en el DNS, el marcado es
+Happy Eyeballs (RFC 8305, `rtmp/dial.ts`): respeta el orden del DNS, intercala familias, lanza el
+siguiente intento a los 250 ms sin cancelar el anterior, se queda con el primero que conecta y
+destruye el resto. **El arreglo está en el cliente de salida del producto: no se toca nada del
+host** (ni nftables, ni sysctl, ni rutas, ni la configuración IPv6 de la VM). Reproducción:
+`tests/streaming-e2e/network.sh`.
+
+| Sección (detalle) | Qué hace |
 |---|---|
 | Estado | `uxState`: desactivado, listo, iniciando (relé aún sin publicar), en directo (sólo con el relé publicando), grabando, reconectando, abandonada, interrumpida, servicio no disponible; avisos de «pendiente de reinicio» y de almacén sellado ausente |
 | Monitorización | estado del streamer, destino (sin clave), FPS y bitrate reales, frames y descartes, reintentos, relé, grabación en curso y último error redactado (sondeo cada 3 s) |
@@ -237,7 +280,19 @@ esta equivalencia, que fija `apps/api/src/streamer-real.test.ts`:
 | `STREAM_STOP_FAILED` | `streamer_unavailable` | 503 | el streamer no responde al stop; la sesión **queda parada** en BD igualmente (`force` lo silencia) |
 
 La API interna del streamer tiene sus propios códigos: `already_active`, `session_mismatch` (stop
-condicionado), `unauthorized` y `control_secret_unavailable`. `lastError` siempre va redactado.
+condicionado), `unauthorized`, `control_secret_unavailable` y, desde #249, `record_dir_unavailable`
+(orden de grabar con el directorio de grabación imposible de crear o escribir). `lastError` siempre
+va redactado. STREAMING-UX añade `invalid_ingest` (422, `PUT /admin/streaming/ingests/{platform}`).
+La web traduce los códigos a frases («No hay una clave de YouTube configurada.», «El servicio de
+streaming no está disponible.», «Esta batalla no puede retransmitirse públicamente.», «YouTube no
+respondió a la conexión.») y deja el código en «Ver detalles técnicos».
+
+**#249 · «Sólo grabar» con el contenedor arrancado en `rtmps`.** El directorio `/data/replays/video`
+ya no depende del preflight del modo record: se crea bajo demanda y sin privilegios (al arrancar en
+rtmps sin abortar, en cada `GET /recordings` y antes de una orden de grabar). Si no se puede crear o
+escribir, falla cerrado: `disk: null` con `dirError`, `409 record_dir_unavailable` y, en la API,
+`disk_unknown` con el motivo. En el host no se crea nada a mano. Reproducción con la imagen:
+`tests/streaming-e2e/issue-249.sh`.
 
 ## Recursos medidos
 

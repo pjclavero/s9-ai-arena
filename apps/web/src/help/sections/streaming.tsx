@@ -32,22 +32,67 @@ export function StreamingHelp() {
         o graba un MP4, la vista <code>/broadcast</code> de una batalla o de un torneo. Todo se hace desde esta
         pantalla: no hace falta entrar al servidor ni tocar ficheros.
       </p>
-      <h4>Paso a paso</h4>
-      <ol>
-        <li>En «Configuración», marca «Streaming activado», elige el modo (emitir o sólo grabar) y la plataforma.</li>
+      <p>
+        La pantalla tiene un menú con cuatro apartados: <strong>Streaming</strong> (lo de todos los días),{" "}
+        <strong>Configuración avanzada</strong>, <strong>Grabaciones</strong> y <strong>Auditoría</strong>. En el móvil
+        son pestañas en la parte de arriba.
+      </p>
+      <h4>Emitir una batalla (lo normal)</h4>
+      <ol data-testid="help-streaming-simple">
         <li>
-          En «Credenciales», pega la clave de emisión de la plataforma y pulsa «Guardar clave». Se guarda cifrada y
-          nunca se vuelve a mostrar: sólo verás «configurada (****ABCD)». Puedes cambiarla o eliminarla. La clave queda
-          atada a la URL de ingesta: en «RTMPS personalizado» guarda primero la URL; si después la cambias, tendrás que
-          volver a introducir la clave.
+          En «Streaming», elige <strong>Tipo</strong> (Batalla o Torneo) y, en la lista, la batalla por su nombre, por
+          ejemplo «Team A vs Team B · Finalizada · hace 12 min». Las que están en curso salen primero. No hace falta
+          ningún identificador.
         </li>
         <li>
-          Elige el destino: escribe el id o usa el botón «Retransmitir» del detalle de una batalla o de un torneo, que
-          abre esta pantalla con el destino ya puesto (sin empezar a emitir). Pulsa «Comprobar destino».
+          Debajo verás si se puede <strong>retransmitir</strong> y, si no, por qué, en una frase. El código técnico está
+          en «Ver detalles técnicos».
         </li>
-        <li>Opcional: «Probar configuración» comprueba la conexión segura con la plataforma sin emitir nada.</li>
-        <li>Pulsa «Iniciar emisión» (o «Iniciar grabación»). Para terminar, «Detener».</li>
+        <li>
+          Elige el <strong>Canal</strong> (YouTube, RTMPS propio o «Sólo grabar») y la <strong>Calidad</strong> (1080p o
+          720p, a 30 o 60 FPS). El bitrate se ajusta solo.
+        </li>
+        <li>
+          Pulsa <strong>INICIAR EMISIÓN</strong>. Mientras conecta verás «Conectando con YouTube…»: todavía no está en
+          directo. Cuando YouTube acepta, «● EN DIRECTO», con la duración, los FPS, el bitrate, los frames descartados y
+          qué servidor se usa (Principal o Respaldo). <strong>DETENER</strong> siempre está arriba.
+        </li>
       </ol>
+      <p>
+        El botón «Retransmitir» del detalle de una batalla o de un torneo abre esta pantalla con ella ya elegida, sin
+        empezar a emitir.
+      </p>
+      <h4>Primera vez: configuración avanzada</h4>
+      <ol>
+        <li>Marca «Streaming activado» y elige el modo (emitir o sólo grabar) y la plataforma.</li>
+        <li>
+          <strong>Servidores de YouTube</strong>: vienen puestos el principal (
+          <code>rtmps://a.rtmps.youtube.com/live2</code>) y el de respaldo (
+          <code>rtmps://b.rtmps.youtube.com/live2?backup=1</code>). Puedes cambiarlos y se guardan tal cual. En el de
+          respaldo de YouTube sólo se admite «?backup=1»; cualquier otra cosa detrás de «?» se rechaza.
+        </li>
+        <li>
+          <strong>Clave de emisión</strong>: pégala y pulsa «Guardar clave». Se guarda cifrada y no se vuelve a ver:
+          sólo «Configurada · ****ABCD», con «Reemplazar clave» y «Eliminar clave». Queda atada a los servidores
+          principal y de respaldo. Si cambias alguno, vuelve a introducirla.
+        </li>
+        <li>
+          «Probar ingesta» comprueba los dos servidores por separado sin emitir nada: «Principal: OK / Respaldo: OK» o
+          el problema de cada uno.
+        </li>
+      </ol>
+      <h4>Si el servidor principal falla</h4>
+      <p>
+        Si el principal no responde tres veces seguidas por problemas de conexión, la emisión pasa al de respaldo y se
+        queda en él hasta que la detengas («Principal no disponible · Usando servidor de respaldo»). La siguiente
+        emisión vuelve a empezar por el principal. Si el problema es la clave, no se cambia de servidor, porque fallaría
+        igual.
+      </p>
+      <h4>Batallas terminadas</h4>
+      <p>
+        Al emitir una batalla terminada se muestra su pantalla de resultado; todavía no se puede emitir su repetición
+        completa.
+      </p>
       <h4>Estados</h4>
       <dl data-testid="help-streaming-states">
         {ORDER.map((s) => (

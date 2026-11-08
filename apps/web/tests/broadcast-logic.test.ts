@@ -18,6 +18,7 @@ import {
   sanitizeColor,
   sanitizeLogoUrl,
 } from "../src/broadcast/config.js";
+// STREAMING-UX §7 (al final) · REPLAY_STREAMING_CURRENT_BEHAVIOR = sólo el estado final.
 import {
   BroadcastDirector,
   createPublicApi,
@@ -354,5 +355,31 @@ describe("T11.1 createPublicApi: jamás viaja Authorization", () => {
       const headers = (init.headers ?? {}) as Record<string, string>;
       expect(Object.keys(headers)).toEqual([]); // ni Authorization ni cookies manuales
     }
+  });
+});
+
+// ───────────────────────────────── STREAMING-UX §7 · REPLAY_STREAMING_CURRENT_BEHAVIOR
+describe("STREAMING-UX §7 · /broadcast?battle=<finalizada> muestra SÓLO el estado final (no reproduce)", () => {
+  it("una batalla terminada da la pantalla `finished` con el marcador, en cada sondeo, y nunca `live`", async () => {
+    const requested: string[] = [];
+    const fetchJson = async (path: string) => {
+      requested.push(path);
+      return battle("b-fin", "finished", { red: 3, blue: 1 });
+    };
+    const screens: BroadcastScreen[] = [];
+    const director = new BroadcastDirector({
+      target: { kind: "battle", battleId: "b-fin" },
+      fetchJson,
+      onScreen: (s) => screens.push(s),
+    });
+    for (let i = 0; i < 5; i++) await director.tick();
+    // Una sola pantalla (nunca cambia) y es la del final: ni tick 0, ni progreso, ni visor.
+    expect(screens.map((s) => s.kind)).toEqual(["finished"]);
+    expect(screens[0]).toMatchObject({
+      kind: "finished",
+      lastBattle: { id: "b-fin", result: { score: { red: 3, blue: 1 } } },
+    });
+    // Sólo se lee el resumen de la batalla: ni ticket de espectador ni replay.
+    expect(requested.every((p) => p === "/battles/b-fin")).toBe(true);
   });
 });
