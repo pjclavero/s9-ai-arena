@@ -15,7 +15,7 @@ import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { createLogger, DEFAULT_CONFIG, SecretRegistry, type StreamerConfig } from "./config.js";
 import { realSpawner } from "./main.js";
-import { ProgressParser } from "./metrics.js";
+import { ProgressParser, renderPrometheus } from "./metrics.js";
 import { CHROMIUM_OUTPUT_TAIL_BYTES, StreamSupervisor, type SpawnedProcess, type Spawner } from "./supervisor.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -334,6 +334,29 @@ describe("R2b · H2 · la guarda también deja ver el fallo de la generación qu
     f2.stderr.write("Error opening output (fallo real del relanzado)\n");
     await sleep(10);
     expect(sup.lastError?.message).toMatch(/Error opening output/);
+  });
+});
+
+describe("R2b · H3 · el defecto de descartes llega a /metrics a través del supervisor", () => {
+  it("DEFECTO (P3) · ffmpeg con drop_frames=58 cae y retry() lo relanza: stream_dropped_frames_total debe ser el del ffmpeg en curso (0), como dicen las docs", async () => {
+    const { sup, children } = fakeSup();
+    sup.start();
+    const f1 = children.find((c) => c.cmd === "ffmpeg")!;
+    f1.stdout.write("frame=60\nfps=30\ndrop_frames=58\nprogress=continue\n");
+    await sleep(10);
+    expect(sup.metrics.snapshot().droppedFrames).toBe(58); // CONTROL: primer ffmpeg exacto
+    f1.exitCode = 1;
+    f1.emit("exit", 1);
+    await sleep(10);
+    const f2 = children.filter((c) => c.cmd === "ffmpeg").at(-1)!;
+    expect(f2).not.toBe(f1); // CONTROL: relanzado
+    f2.stdout.write("frame=30\nfps=30\ndrop_frames=0\nprogress=continue\n");
+    await sleep(10);
+    const snap = sup.metrics.snapshot();
+    const prom = renderPrometheus({ state: sup.state, restarts: sup.restarts, stats: snap });
+    expect(snap.frames, JSON.stringify(snap)).toBe(30); // CONTROL: frames sí sigue al ffmpeg en curso
+    expect(prom).toMatch(/^stream_frames_total 30$/m);
+    expect(prom, prom).toMatch(/^stream_dropped_frames_total 0$/m); // rojo: 58 (el del ffmpeg anterior)
   });
 });
 
