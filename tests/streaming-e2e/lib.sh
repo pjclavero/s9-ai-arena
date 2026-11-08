@@ -16,6 +16,14 @@ CTL_PORT="${S9_STREAM_E2E_CTL_PORT:-48190}"
 RTMPS_PORT="${S9_STREAM_E2E_RTMPS_PORT:-41946}"
 MTX_API_PORT="${S9_STREAM_E2E_MTX_API_PORT:-49987}"
 BROADCAST_BASE="${S9_STREAM_E2E_BROADCAST_BASE:-http://127.0.0.1:1/broadcast}"
+# STREAMER §15-§16 · el MISMO aislamiento que declara el Compose (servicio
+# `streamer`): init, cap_drop ALL + CHOWN/SETUID/SETGID, límite de pids y /dev/shm.
+# S9_STREAM_E2E_HARDENING=0 lo quita (sólo para comparar).
+if [ "${S9_STREAM_E2E_HARDENING:-1}" = 1 ]; then
+  STREAMER_HARDENING="--init --cap-drop ALL --cap-add CHOWN --cap-add SETUID --cap-add SETGID --pids-limit 512 --shm-size 256m"
+else
+  STREAMER_HARDENING=""
+fi
 
 mkdir -p "$STATE"
 chmod 0700 "$STATE"
@@ -84,6 +92,7 @@ streamer_up() { # $1 modo por defecto (rtmps|record)
   docker rm -f "$TAG-streamer" >/dev/null 2>&1
   docker run -d --name "$TAG-streamer" --network host \
     --cpus 4 --memory 4g --security-opt no-new-privileges:true \
+    $STREAMER_HARDENING \
     -e BROADCAST_URL="$BROADCAST_BASE" \
     -e RTMPS_URL="rtmps://127.0.0.1:$RTMPS_PORT/live2" \
     -e STREAM_SECRETS_PRIVATE_KEY_FILE=/run/s9/stream_secrets_private \

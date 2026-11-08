@@ -51,7 +51,9 @@ info:
   # testStreaming, start/restart/stopStreaming, listStreamingRecordings,
   # applyStreamingRetention y listStreamingAudit (tag streaming).
   # Añadir un endpoint = MINOR (docs/compatibilidad.md, §2 Semver por paquete).
-  # 0.14.0 · reservada para STREAMER (#242).
+  # 0.14.0 · STREAMER (aditivo, admin): StreamingAdminState.lastSession (última
+  # sesión terminada: stoppedAt, stopReason, sin secretos) y `starting` en el enum
+  # de uxState (el código ya lo devolvía desde EQ5d; el contrato no lo declaraba).
   # 0.15.0 · VISIBILIDAD (aditivo): setBotVersionCodeVisibility (PUT
   # /bots/{botId}/versions/{version}/code-visibility, sólo el dueño; D9 enmendada:
   # codePublic es reversible), `broadcast` en TournamentInput/Tournament (fijado al
@@ -2918,10 +2920,14 @@ components:
         capabilities: { type: object }
         streamer: { type: object, nullable: true }
         session: { type: object, nullable: true }
+        lastSession:
+          type: object
+          nullable: true
+          description: 'Última sesión TERMINADA (stopped/failed): id, modo, destino, startedAt, stoppedAt, stopReason. Nunca la clave ni la credencial.'
         pendingRestart: { type: boolean }
         uxState:
           type: string
-          enum: [disabled, streamer_unreachable, ready, live, recording, retrying, failed, interrupted]
+          enum: [disabled, streamer_unreachable, ready, starting, live, recording, retrying, failed, interrupted]
         bitrate: { type: object }
         changeClasses: { type: object }
 

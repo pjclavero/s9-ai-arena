@@ -341,7 +341,10 @@ $DC exec -w /app api npx tsx apps/api/src/db/cli.ts migrate
 Hazlo con copia previa. `rollback:1` revierte exactamente una migración: la última DE LA LISTA
 entre las aplicadas, que no tiene por qué ser la última aplicada (ver «Orden 017/018» en «Vuelta
 atrás»). Para revertir una migración concreta, usa `rollback:name <NNN_tema>`, que la revierte esté
-donde esté. `rollback:all` destruye el
+donde esté. Sólo admite una **lista cerrada** (`NAMED_ROLLBACK_ALLOWED` en
+`apps/api/src/db/migrations.ts`: `016_battle_rules`, `017_streaming_admin`, `018_battle_reverted`,
+las que sólo tocan sus propias tablas o columnas); cualquier otra, `001_identity` incluida, se rechaza
+sin tocar la BD (#241, R4-2). `rollback:all` destruye el
 esquema ([first-run.md](first-run.md#comandos-prohibidos-en-producción)).
 
 ## Vuelta atrás
