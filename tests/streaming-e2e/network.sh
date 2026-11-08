@@ -153,7 +153,9 @@ done
 wait_relay publishing 30
 RC[A_relay_publishing]=$?
 ctl GET /status >"$OUT/status-a.json"
-docker logs "$TAG-mtx1" >"$OUT/mtx1-a.log" 2>&1
+# Sólo las líneas de conexión: el log de la ingesta incluye la ruta del stream, que
+# es la clave de PRUEBA, y no debe acabar en las evidencias.
+docker logs "$TAG-mtx1" 2>&1 | grep -E "\[conn [^]]+\] opened" | grep -vF -f "$STATE/stream_key" >"$OUT/mtx1-a.log"
 STREAMER_V4=$(docker inspect -f "{{(index .NetworkSettings.Networks \"$NET\").IPAddress}}" "$TAG-streamer")
 grep -qE "conn $STREAMER_V4:[0-9]+\] opened" "$OUT/mtx1-a.log"
 RC[A_ingest_saw_ipv4]=$?
