@@ -44,10 +44,14 @@ test.describe("@fase1 EQ5b Administración → Streaming", () => {
     // Recién migrado: desactivado; sin almacén sellado en este entorno.
     await expect(page.getByTestId("streaming-ux-state")).toHaveText("Desactivado");
     await expect(page.getByTestId("sealed-store-missing")).toBeVisible();
-    await expect(page.getByTestId("credential-youtube-input")).toBeDisabled();
     await expect(page.getByTestId("stream-start")).toBeDisabled();
     expect(await blockingAxe(page)).toEqual([]);
     await shot(page, info, "eq5b-streaming-1366");
+    // STREAMING-UX · la clave vive en «Configuración avanzada».
+    await page.getByTestId("streaming-tab-advanced").click();
+    await expect(page.getByTestId("credential-youtube-input")).toBeDisabled();
+    expect(await blockingAxe(page)).toEqual([]);
+    await page.getByTestId("streaming-tab-streaming").click();
     await page.setViewportSize({ width: 390, height: 844 });
     await visit(page, "#/streaming");
     await expect(page.getByTestId("streaming-page")).toBeVisible();
@@ -67,9 +71,14 @@ test.describe("@fase1 EQ5b Administración → Streaming", () => {
     await visit(page, `#/battles/${REPLAY_ID}`);
     await page.getByTestId("broadcast-battle").click();
     await expect(page).toHaveURL(new RegExp(`#/streaming\\?battle=${REPLAY_ID}`));
+    // STREAMING-UX · preseleccionada en el selector de la vista simple (sin UUID a la vista)…
+    await expect(page.getByTestId("simple-destination")).toHaveValue(`battle:${REPLAY_ID}`);
+    await expect(page.getByTestId("stream-target-info")).toBeVisible();
+    await shot(page, info, "eq5b-retransmitir");
+    // …y el destino manual de «Avanzada» la comprueba con su retardo.
+    await page.getByTestId("streaming-tab-advanced").click();
     await expect(page.getByTestId("stream-target-id")).toHaveValue(REPLAY_ID);
     await expect(page.getByTestId("stream-delay")).toContainText("Retardo del directo");
-    await shot(page, info, "eq5b-retransmitir");
     expect(starts).toEqual([]);
   });
 
@@ -117,13 +126,33 @@ async function saveSettings(page: Page) {
   await expect(page.getByTestId("streaming-notice")).toContainText(/Guardado|Sin cambios/);
 }
 
+/**
+ * STREAMING-UX · UUID_NOT_REQUIRED · elige en el selector la batalla EN CURSO por su
+ * TEXTO visible («… · En curso · …»), como lo haría una persona: nada se teclea.
+ */
+async function pickLiveBattle(page: Page): Promise<string> {
+  const sel = page.getByTestId("simple-destination");
+  await expect(sel.locator("option", { hasText: "En curso" }).first()).toBeAttached({ timeout: 15_000 });
+  const label = (await sel.locator("option", { hasText: "En curso" }).first().textContent())!.trim();
+  await sel.selectOption({ label });
+  await expect(page.getByTestId("simple-broadcastable")).toContainText("Retransmisible");
+  return label;
+}
+
+/** STOP_ALWAYS_VISIBLE · «Detener» entero dentro de la ventana, sin desplazarse. */
+async function stopInViewport(page: Page): Promise<boolean> {
+  const box = await page.getByTestId("stream-stop").boundingBox();
+  const vp = page.viewportSize()!;
+  return !!box && box.y >= 0 && box.x >= 0 && box.y + box.height <= vp.height && box.x + box.width <= vp.width;
+}
+
 test.describe("@streaming-e2e EQ5b cadena real", () => {
   test.skip(!KEY_FILE, "sólo con tests/streaming-e2e/e2e.sh");
 
   test("@streaming-e2e-config credencial (no vuelve), RTMPS personalizado y bitrate desde la web", async ({ page }) => {
     const key = readFileSync(KEY_FILE, "utf8").trim();
     const leaks = watchKey(page, key);
-    await streaming(page);
+    await streaming(page, "#/streaming?tab=advanced");
     await page.getByTestId("set-enabled").check();
     await page.getByTestId("set-mode").selectOption("rtmps");
     await page.getByTestId("set-platform").selectOption("custom");
@@ -132,38 +161,71 @@ test.describe("@streaming-e2e EQ5b cadena real", () => {
     await saveSettings(page);
     await page.getByTestId("credential-custom-input").fill(key);
     await page.getByTestId("credential-custom").getByRole("button", { name: "Guardar clave" }).click();
-    await expect(page.getByTestId("credential-custom-state")).toContainText(`****${key.slice(-4)}`);
+    await expect(page.getByTestId("credential-custom-state")).toContainText(`Configurada · ****${key.slice(-4)}`);
     await expect(page.getByTestId("credential-custom-input")).toHaveValue("");
+    // YOUTUBE_WEB_CONFIGURATION · se reabre la página y lo guardado sigue ahí; la clave, nunca.
+    await page.reload();
+    await page.getByTestId("streaming-tab-advanced").click();
+    await expect(page.getByTestId("ing-primary")).toHaveValue(INGEST);
+    await expect(page.getByTestId("credential-custom-state")).toContainText(`****${key.slice(-4)}`);
     expect(await page.content()).not.toContain(key);
     const storage = await page.evaluate(() => JSON.stringify({ l: { ...localStorage }, s: { ...sessionStorage } }));
     expect(storage).not.toContain(key);
     expect(leaks).toEqual([]);
   });
 
-  test("@streaming-e2e-test probar configuración (sin emitir)", async ({ page }) => {
-    await streaming(page);
+  test("@streaming-e2e-test probar ingesta (sin emitir)", async ({ page }) => {
+    await streaming(page, "#/streaming?tab=advanced");
     await page.getByTestId("stream-test").click();
     await expect(page.getByTestId("streaming-notice")).toContainText("Prueba correcta");
+    await expect(page.getByTestId("ingest-test-primary")).toContainText("Principal: OK");
   });
 
-  test("@streaming-e2e-start iniciar desde la web: EN DIRECTO", async ({ page }, info) => {
+  test("@streaming-e2e-start iniciar desde la web SIN escribir ningún UUID: EN DIRECTO", async ({ page }, info) => {
     const key = readFileSync(KEY_FILE, "utf8").trim();
     const leaks = watchKey(page, key);
-    await streaming(page, `#/streaming?battle=${BATTLE}`);
-    await expect(page.getByTestId("stream-target-info")).toBeVisible();
+    // Streaming → batalla (por su nombre) → canal → INICIAR. Ni la URL lleva el destino.
+    await streaming(page, "#/streaming");
+    await pickLiveBattle(page);
+    await expect(page.getByTestId("simple-channel")).toHaveValue("platform:custom");
     await page.getByTestId("stream-start").click();
     await expect(page.getByTestId("streaming-ux-state")).toHaveText("En directo", { timeout: 30_000 });
-    await expect(page.getByTestId("mon-rate")).toContainText(/\b(2[5-9]|30)(\.\d+)? fps/, { timeout: 30_000 });
+    await expect(page.getByTestId("live-badge")).toContainText("EN DIRECTO");
+    // ffmpeg informa sus primeros FPS al cabo de unos segundos de publicar (Chromium arrancando).
+    await expect(page.getByTestId("mon-rate")).toContainText(/\b(2[5-9]|30)(\.\d+)? fps/, { timeout: 60_000 });
+    await expect(page.getByTestId("active-ingest")).toHaveText("Principal");
     await shot(page, info, "eq5b-e2e-en-directo");
     expect(await page.content()).not.toContain(key);
     expect(leaks).toEqual([]);
   });
 
+  test("@streaming-e2e-liveux STOP siempre visible en escritorio y en móvil, sin scroll lateral", async ({
+    page,
+  }, info) => {
+    await streaming(page, "#/streaming");
+    await expect(page.getByTestId("live-badge")).toContainText("EN DIRECTO", { timeout: 30_000 });
+    await page.setViewportSize({ width: 1366, height: 768 });
+    expect(await stopInViewport(page)).toBe(true);
+    await page.screenshot({ path: `/out/${process.env.PW_STEP}/live-1366.png` });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await visit(page, "#/streaming");
+    await expect(page.getByTestId("live-badge")).toContainText("EN DIRECTO");
+    expect(await stopInViewport(page)).toBe(true);
+    expect(await hScroll(page)).toBeLessThanOrEqual(1);
+    await page.screenshot({ path: `/out/${process.env.PW_STEP}/live-390.png` });
+    // Bajando, la barra con DETENER sigue arriba (sticky).
+    await page.mouse.wheel(0, 2000);
+    await page.waitForTimeout(300);
+    expect(await stopInViewport(page)).toBe(true);
+    await shot(page, info, "streaming-ux-live-390");
+  });
+
   test("@streaming-e2e-restart cambiar bitrate con emisión activa: aviso y «Reiniciar»", async ({ page }) => {
-    await streaming(page);
+    await streaming(page, "#/streaming?tab=advanced");
     await page.getByTestId("set-bitrate").fill(String(BITRATE - 500));
     await saveSettings(page);
     await expect(page.getByTestId("pending-restart")).toBeVisible();
+    await page.getByTestId("streaming-tab-streaming").click();
     await page.getByTestId("stream-restart").click();
     await expect(page.getByTestId("pending-restart")).toHaveCount(0, { timeout: 15_000 });
     await expect(page.getByTestId("streaming-ux-state")).toHaveText("En directo", { timeout: 30_000 });
@@ -174,13 +236,15 @@ test.describe("@streaming-e2e EQ5b cadena real", () => {
     page.once("dialog", (d) => void d.accept());
     await page.getByTestId("stream-stop").click();
     await expect(page.getByTestId("streaming-ux-state")).toHaveText("Listo", { timeout: 15_000 });
+    await expect(page.getByTestId("stream-start")).toBeVisible();
   });
 
   test("@streaming-e2e-record grabar desde la web", async ({ page }) => {
-    await streaming(page, `#/streaming?battle=${BATTLE}`);
+    await streaming(page, "#/streaming?tab=advanced");
     await page.getByTestId("set-mode").selectOption("record");
     await saveSettings(page);
-    await expect(page.getByTestId("stream-target-info")).toBeVisible();
+    await page.getByTestId("streaming-tab-streaming").click();
+    await pickLiveBattle(page);
     await page.getByTestId("stream-start").click();
     await expect(page.getByTestId("streaming-ux-state")).toHaveText("Grabando", { timeout: 30_000 });
     await page.waitForTimeout(15_000);
@@ -190,13 +254,14 @@ test.describe("@streaming-e2e EQ5b cadena real", () => {
   });
 
   test("@streaming-e2e-retention retención 7 días aplicada desde la web y auditada", async ({ page }, info) => {
-    await streaming(page);
+    await streaming(page, "#/streaming?tab=recordings");
     await page.getByTestId("ret-age").selectOption("7");
     await page.getByTestId("ret-save").click();
     await expect(page.getByTestId("streaming-notice")).toContainText("Retención guardada");
     page.once("dialog", (d) => void d.accept());
     await page.getByTestId("ret-apply").click();
     await expect(page.getByTestId("streaming-notice")).toContainText(/Retención aplicada: [1-9]\d* grabaciones/);
+    await page.getByTestId("streaming-tab-audit").click();
     await expect(page.getByTestId("streaming-audit")).toContainText("streaming.recording.deleted");
     await shot(page, info, "eq5b-e2e-retencion");
   });

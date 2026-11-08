@@ -131,6 +131,10 @@ done
 log "clave en superficies con emisión en vivo: $leaks"
 check key_live '[ "$leaks" = 0 ]'
 
+# ── 3b · STREAMING-UX · vista en directo: DETENER dentro de la ventana (1366 y 390) ──
+pw liveux "@streaming-e2e-liveux"
+check stop_visible_shots '[ -s "$OUT/liveux/live-1366.png" ] && [ -s "$OUT/liveux/live-390.png" ]'
+
 # ── 4 · reconexión: ingesta congelada 30 s y caída 20 s ─────────────────────
 r0=$(status | jget restarts)
 ingest_pause; sleep 30; ingest_unpause
