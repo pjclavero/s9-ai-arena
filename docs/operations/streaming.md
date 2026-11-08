@@ -518,6 +518,7 @@ scripts locales). Las marcadas con ⚙ ejecutan **ffmpeg o procesos reales**.
 | STR-6 | P3 | El escenario de la batalla tapa a veces el marcador superior (un tanque bajo el rótulo) | **abierto**: UX de `/broadcast`, fuera del alcance de STREAMER |
 | STR-7 (H1) | P3 | Nadie leía el stdout/stderr de Chromium: con más de 128-256 KiB de salida se bloqueaba en `write()` y la emisión seguía «en directo» con la imagen congelada y sin alerta | **corregido** (STREAMER-2): se leen siempre y se descartan; sólo se guarda una cola de 2 KiB del stderr, redactada al registrarla |
 | STR-8 (H2) | P3 | Con la clave rechazada por la ingesta, `lastError` acababa mostrando el ruido de la parada de ffmpeg (`Nothing was written into output file…`) en vez del rechazo | **corregido** (STREAMER-2): guarda de generación en el stderr de ffmpeg; ese ruido se registra (`superseded: true`) pero no sustituye la causa |
+| VIS-obs (#244) | P3 | Si el dueño pasa a privado un bot de una batalla suelta en emisión, la sesión no se para sola: `/broadcast` deja de leer la batalla (404) y el destino pasa a `broadcastable: false`, pero la parada es manual (RV-S3) | **abierto** (documentado; en torneos con `broadcast` no aplica) |
 | STR-9 (H3) | P3 | La documentación y la evidencia decían CBR, 0 frames descartados y «todas las líneas de log son JSON» (y `measure.sh` sólo miraba las que empiezan por `{`) | **corregido** (STREAMER-2): VBR con techo, descartes medidos, Xvfb declarado y `measure.sh` revisa todas las líneas |
 
 ## Cómo se verificó

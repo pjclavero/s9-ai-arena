@@ -49,4 +49,12 @@ Al inscribir un bot privado en un torneo con retransmisión pública verás: «E
 
 La autorización para mostrar en público a un bot privado la da **el torneo**, porque se anuncia antes de inscribirse. Una batalla de práctica no tiene ese aviso previo, y el dueño de un bot privado no ha aceptado que se vea. Por eso la administración de Streaming la rechaza con el motivo `battle_not_public`. Si quieres emitir una batalla de práctica, sus bots tienen que ser públicos. Si la batalla es de un torneo sin retransmisión pública, el motivo es `tournament_not_broadcastable`.
 
+## Detalles que conviene saber
+
+- **El nombre que ves es el actual.** El replay, el cuadro y la emisión muestran el nombre que el bot tiene hoy. Si lo renombras, tus batallas pasadas muestran el nombre nuevo. La versión y el equipo que jugaron sí se guardan con cada batalla.
+- **El equipamiento se ve en el replay.** Un replay público muestra el vehículo y el equipamiento con que jugó cada bot, igual que la emisión. No muestra el historial de cambios de equipamiento de tu ficha.
+- **El cuadro de un torneo con retransmisión pública muestra el nombre** del ganador de cada partido. En un torneo sin retransmisión, un ganador privado que no puedes ver sale como «Bot privado».
+- **Si pasas a privado un bot mientras se emite una batalla de práctica**, la batalla deja de verse en público al momento, pero la emisión no se para sola: la detiene la administración de Streaming. En un torneo con retransmisión pública, cambiar la visibilidad no afecta a la emisión.
+- **La organización de torneos no ve tu bot privado.** Quien organiza un torneo decide si se retransmite, pero no ve tu ficha ni tu código; sólo la moderación y la administración pueden verlos.
+
 Siguiente: [Bots](bots.md) · [Torneos](tournaments.md) · [Replays](replays.md).
