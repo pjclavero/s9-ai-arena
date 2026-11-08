@@ -71,7 +71,10 @@ export class ProgressParser {
       // ffmpeg emite "4500.1kbits/s" o "N/A"
       bitrateKbps: num((p.bitrate ?? "").replace(/kbits\/s$/, "")),
       outTimeSeconds: p.out_time_us ? num(p.out_time_us) / 1e6 : this.stats.outTimeSeconds,
-      droppedFrames: num(p.drop_frames) || this.stats.droppedFrames,
+      // Revisión #242 r2 (H3-1): un `drop_frames=0` del ffmpeg recién relanzado
+      // es un 0 real, no un dato ausente; sólo se conserva el anterior si ffmpeg
+      // no informa la clave. Así la métrica es exactamente la del ffmpeg en curso.
+      droppedFrames: p.drop_frames !== undefined ? num(p.drop_frames) : this.stats.droppedFrames,
       reporting: true,
     };
   }

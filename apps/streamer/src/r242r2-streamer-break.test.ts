@@ -301,7 +301,7 @@ function runFfmpeg(parser: ProgressParser, inRate: number): Promise<{ frame: num
 
 const hasFfmpeg = spawnSync("ffmpeg", ["-version"], { stdio: "ignore" }).status === 0;
 describe.skipIf(!hasFfmpeg)("R2 · H3 · métrica de descartes tras un relanzamiento (ffmpeg REAL)", () => {
-  it("DEFECTO (P3) · tras relanzar ffmpeg, droppedFrames debe ser el drop_frames del ffmpeg EN CURSO (no el del anterior)", async () => {
+  it("CIERRE (P3) · tras relanzar ffmpeg, droppedFrames debe ser el drop_frames del ffmpeg EN CURSO (no el del anterior)", async () => {
     const parser = new ProgressParser();
     const a = await runFfmpeg(parser, 60); // con descartes
     expect(a.drop).toBeGreaterThan(0); // CONTROL
@@ -338,7 +338,7 @@ describe("R2b · H2 · la guarda también deja ver el fallo de la generación qu
 });
 
 describe("R2b · H3 · el defecto de descartes llega a /metrics a través del supervisor", () => {
-  it("DEFECTO (P3) · ffmpeg con drop_frames=58 cae y retry() lo relanza: stream_dropped_frames_total debe ser el del ffmpeg en curso (0), como dicen las docs", async () => {
+  it("CIERRE (P3) · ffmpeg con drop_frames=58 cae y retry() lo relanza: stream_dropped_frames_total debe ser el del ffmpeg en curso (0), como dicen las docs", async () => {
     const { sup, children } = fakeSup();
     sup.start();
     const f1 = children.find((c) => c.cmd === "ffmpeg")!;
@@ -395,7 +395,8 @@ describe("R2b · H1 · techo de la redacción en el borde de la cola (8-gramas, 
       await sleep(10);
       chromium.exitCode = 1;
       chromium.emit("exit", 1);
-      const tail = (JSON.parse(lines.find((l) => l.includes("chromium terminó"))!) as { outputTail: string }).outputTail;
+      const tail = (JSON.parse(lines.find((l) => l.includes("chromium terminó"))!) as { outputTail: string })
+        .outputTail;
       const suffix = key.slice(-inside);
       if (inside < 8) expect(tail.startsWith(suffix), tail.slice(0, 20)).toBe(true);
       else {
