@@ -6,7 +6,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startTestDb, type TestDbHandle } from "../testing/test-db.js";
-import { MIGRATIONS, migrateNamed, migrateToLatest, rollbackLast } from "./migrations.js";
+import { MIGRATIONS, migrateNamed, migrateToLatest, rollbackLast, rollbackNamed } from "./migrations.js";
 
 let h: TestDbHandle;
 const norm = (s: string) => s.replace(/\s+/g, " ").trim();
@@ -49,5 +49,22 @@ describe("RV-M · migración 019 frente al guardián de la 012", () => {
     expect(await guardDef()).toBe(at012);
     await migrateToLatest(h.db);
     expect(await guardDef()).toBe(at019);
+  }, 180_000);
+});
+
+describe("RV-M2 · integración con #242: el runbook de la 019 usa `rollback:name`", () => {
+  it("RV-M2 · `rollbackNamed('019_visibility_broadcast')` (lo que documenta upgrades.md) revierte y se puede volver a subir", async () => {
+    // En a20c017 `rollbackNamed` no tiene lista cerrada y esto pasa. En main 124aee4 (#242)
+    // sólo admite NAMED_ROLLBACK_ALLOWED = 016/017/018: tras el merge esta prueba se pone
+    // ROJA con «no se puede revertir por nombre» y el runbook de la 019 deja de funcionar.
+    expect(await last()).toBe("019_visibility_broadcast");
+    await rollbackNamed(h.db, "019_visibility_broadcast");
+    expect(await last()).toBe("018_battle_reverted");
+    const cols = (
+      await h.db.raw(`SELECT column_name FROM information_schema.columns WHERE table_name='tournaments'`)
+    ).rows.map((r: { column_name: string }) => r.column_name);
+    expect(cols).not.toContain("broadcast");
+    await migrateToLatest(h.db);
+    expect(await last()).toBe("019_visibility_broadcast");
   }, 180_000);
 });
