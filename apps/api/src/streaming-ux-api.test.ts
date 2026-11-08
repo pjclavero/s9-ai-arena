@@ -21,7 +21,7 @@ import { DEFAULT_RULESET_ID, DEV_USERS, seedDev } from "./db/seeds/dev.js";
 import { tokenFor } from "./testing/helpers.js";
 import { createApp } from "./app.js";
 import type { StreamerCallResult, StreamerClient } from "./services/streamer-client.js";
-import { keyIdOf, openSecret } from "../../../packages/stream-secrets/index.js";
+import { canonicalIngestUrl, keyIdOf, openSecret } from "../../../packages/stream-secrets/index.js";
 import { createPublishedBot } from "../../tournament-worker/src/testing/fixtures.js";
 import { PLATFORMS, battleLabel, validateIngestsPatch, validIngestUrl } from "./services/streaming.js";
 
@@ -116,6 +116,14 @@ afterAll(async () => {
 });
 
 describe("STREAMING-UX · validador de ingestas (puro)", () => {
+  it("capa 2 · la forma canónica que se SELLA conserva `?backup=1` y rechaza cualquier otra query", () => {
+    expect(canonicalIngestUrl(B)).toBe("rtmps://b.rtmps.youtube.com:443/live2?backup=1");
+    expect(canonicalIngestUrl(A)).toBe("rtmps://a.rtmps.youtube.com:443/live2");
+    for (const q of ["?foo=bar", "?backup=2", "?backup=1&foo=bar", "?token=abc", "?redirect=https://evil.example"]) {
+      expect(() => canonicalIngestUrl(`rtmps://b.rtmps.youtube.com/live2${q}`), q).toThrow();
+    }
+  });
+
   it("YOUTUBE_PRIMARY_INGEST_ACCEPTED y YOUTUBE_BACKUP_INGEST_ACCEPTED · las dos de YouTube, tal cual", () => {
     const r = validateIngestsPatch(YT, { primaryIngestUrl: A, backupIngestUrl: B });
     expect(r.errors).toEqual([]);
