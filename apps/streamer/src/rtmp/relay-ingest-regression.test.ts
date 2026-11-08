@@ -11,10 +11,12 @@
  *     sin publicar). El relé mandaba un 2. El servidor falso `strictTxn` se porta
  *     como YouTube: calla.
  *  2. LA FAMILIA DE DIRECCIONES. El DNS del contenedor devolvía la AAAA primero
- *     y el host no tenía ruta IPv6. El marcado prueba antes las IPv4 y pone un
- *     plazo a cada intento. Aquí el DNS devuelve una AAAA que nunca conecta (un
- *     agujero negro) y una A que sí: el relé tiene que llegar por IPv4, con el TLS
- *     verificado contra el NOMBRE.
+ *     y el host no tenía ruta IPv6. El marcado es Happy Eyeballs (RFC 8305):
+ *     respeta el orden del DNS, intercala las familias y lanza el siguiente
+ *     intento a los 250 ms sin cancelar el anterior (no hay «IPv4 siempre
+ *     primero»). Aquí el DNS devuelve una AAAA que nunca conecta (agujero negro)
+ *     o que no tiene ruta, y una A que sí: el relé tiene que llegar por IPv4 sin
+ *     quedarse esperando a la IPv6, con el TLS verificado contra el NOMBRE.
  */
 import { execFileSync } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
@@ -172,66 +174,110 @@ beforeAll(() => {
 });
 afterAll(() => rmSync(certDir, { recursive: true, force: true }));
 
-/** TCP hacia una IPv6 sin ruta: el SYN se pierde y el socket NO conecta nunca (como en VM108). */
-function blackholeOr(port: number) {
+/**
+ * Red simulada: la familia 6 o es un agujero negro (el SYN se pierde y el socket
+ * NO conecta nunca, como en el contenedor de producción) o no tiene ruta
+ * (ENETUNREACH inmediato). La familia 4 llega de verdad a la ingesta local.
+ */
+function fakeNet(port: number, v6: "blackhole" | "unreachable") {
   const tried: number[] = [];
-  const sockets: Socket[] = [];
-  const tcp = (address: string, p: number, family: number) => {
+  const v6Sockets: Socket[] = [];
+  const tcp = (_address: string, p: number, family: number) => {
     tried.push(family);
     if (family === 6) {
       const s = new Socket(); // nunca emite 'connect'
-      sockets.push(s);
+      v6Sockets.push(s);
+      if (v6 === "unreachable") {
+        setImmediate(() => s.emit("error", Object.assign(new Error("ENETUNREACH"), { code: "ENETUNREACH" })));
+      }
       return s;
     }
     return netConnect({ host: "127.0.0.1", port: p === 443 ? port : p });
   };
-  return { tcp, tried, sockets };
+  return { tcp, tried, v6Sockets };
 }
 
-describe("§27 (2) · DNS con AAAA inalcanzable primero y A alcanzable", () => {
-  const lookup = async () => [
-    { address: "2001:db8::200c", family: 6 },
-    { address: "192.0.2.44", family: 4 },
-  ];
+/** DNS como el del contenedor: la AAAA PRIMERO, luego la A. */
+const lookupV6First = async () => [
+  { address: "2001:db8::200c", family: 6 },
+  { address: "192.0.2.44", family: 4 },
+];
 
-  it("orden de marcado: IPv4 antes que IPv6", () => {
-    expect(
-      dialOrder([
-        { address: "2001:db8::1", family: 6 },
-        { address: "192.0.2.1", family: 4 },
-      ]).map((a) => a.family),
-    ).toEqual([4, 6]);
+async function tlsIngest() {
+  const seen = { connectTxn: [] as number[], sni: undefined as string | undefined };
+  const srv = tlsServer({ cert, key }, (s) => {
+    seen.sni = (s as TLSSocket & { servername?: string }).servername || undefined;
+    serveRtmp(s, { strictTxn: true }, seen);
+  });
+  return { port: await listen(srv), seen };
+}
+
+describe("§27 (2) · Happy Eyeballs: DNS con AAAA inalcanzable primero y A alcanzable", () => {
+  it("orden RFC 8305: se respeta la preferencia del DNS y se intercalan familias (NO «IPv4 siempre primero»)", () => {
+    const v6 = (n: number) => ({ address: `2001:db8::${n}`, family: 6 });
+    const v4 = (n: number) => ({ address: `192.0.2.${n}`, family: 4 });
+    expect(dialOrder([v6(1), v6(2), v4(1)]).map((a) => a.address)).toEqual(["2001:db8::1", "192.0.2.1", "2001:db8::2"]);
+    expect(dialOrder([v4(1), v6(1)]).map((a) => a.family)).toEqual([4, 6]);
+    expect(dialOrder([v6(1), v4(1)]).map((a) => a.family)).toEqual([6, 4]);
   });
 
-  it("el relé llega por IPv4, verifica el certificado contra el NOMBRE y conecta", async () => {
-    const seen = { connectTxn: [] as number[], sni: undefined as string | undefined };
-    const srv = tlsServer({ cert, key }, (s) => {
-      seen.sni = (s as TLSSocket & { servername?: string }).servername || undefined;
-      serveRtmp(s, { strictTxn: true }, seen);
-    });
-    const port = await listen(srv);
-    const net = blackholeOr(port);
-    const target = parseIngestUrl("rtmps://ingest.test/live2");
+  it("IPV6_UNROUTABLE_IPV4_WORKS · IPv6 sin ruta (ENETUNREACH) ⇒ conecta por IPv4 sin esperar al escalón", async () => {
+    const { port, seen } = await tlsIngest();
+    const net = fakeNet(port, "unreachable");
+    const t0 = Date.now();
     const pub = new RtmpPublisher({
-      target,
+      target: parseIngestUrl("rtmps://ingest.test/live2"),
       streamKey: "clave-de-prueba-0000",
-      // El plazo TOTAL es corto a propósito: sólo cabe si no se espera a la IPv6.
-      connectTimeoutMs: 2500,
-      dial: (t) => dialIngest(t, { lookup, tcpConnect: net.tcp, attemptTimeoutMs: 1000, tls: { ca } }),
+      connectTimeoutMs: 3000,
+      dial: (t) => dialIngest(t, { lookup: lookupV6First, tcpConnect: net.tcp, attemptDelayMs: 2000, tls: { ca } }),
+    });
+    await pub.probe();
+    expect(net.tried).toEqual([6, 4]); // v6 primero (preferencia del DNS), v4 nada más fallar
+    expect(Date.now() - t0).toBeLessThan(1500); // no esperó el escalón de 2 s
+    expect(seen.connectTxn).toEqual([1]);
+  });
+
+  it("HAPPY_EYEBALLS_CONNECTS_IPV4 · IPv6 agujero negro: gana la IPv4, TLS verificado contra el NOMBRE, la IPv6 se cancela", async () => {
+    const { port, seen } = await tlsIngest();
+    const net = fakeNet(port, "blackhole");
+    const pub = new RtmpPublisher({
+      target: parseIngestUrl("rtmps://ingest.test/live2"),
+      streamKey: "clave-de-prueba-0000",
+      connectTimeoutMs: 3000,
+      dial: (t) => dialIngest(t, { lookup: lookupV6First, tcpConnect: net.tcp, tls: { ca } }),
     });
     const r = await pub.probe();
     expect(r.tlsVerified).toBe(true);
-    expect(net.tried[0]).toBe(4); // la primera dirección marcada es la IPv4
+    expect(net.tried).toEqual([6, 4]);
     expect(seen.sni).toBe("ingest.test");
     expect(seen.connectTxn).toEqual([1]);
-    net.sockets.forEach((s) => s.destroy());
+    expect(net.v6Sockets.every((s) => s.destroyed)).toBe(true); // la perdedora no queda colgada
+  });
+
+  it("NO_LONG_IPV6_STALL · la IPv6 colgada cuesta un escalón (250 ms), no su plazo entero (5 s)", async () => {
+    const { port } = await tlsIngest();
+    const net = fakeNet(port, "blackhole");
+    const t0 = Date.now();
+    const sock = await dialIngest(parseIngestUrl("rtmps://ingest.test/live2"), {
+      lookup: lookupV6First,
+      tcpConnect: net.tcp,
+      attemptTimeoutMs: 5000,
+      tls: { ca },
+    });
+    await new Promise<void>((resolve, reject) => {
+      sock.once("secureConnect", () => resolve());
+      sock.once("error", reject);
+    });
+    const ms = Date.now() - t0;
+    sock.destroy();
+    expect(ms).toBeGreaterThanOrEqual(200); // sí se dio su oportunidad a la IPv6 preferida
+    expect(ms).toBeLessThan(1500); // y no se esperó a su plazo de 5 s
   });
 
   it("si sólo hay AAAA muerta: falla por plazo de intento, con el motivo por familia", async () => {
-    const net = blackholeOr(1);
-    const t = parseIngestUrl("rtmps://ingest.test/live2");
+    const net = fakeNet(1, "blackhole");
     await expect(
-      dialIngest(t, {
+      dialIngest(parseIngestUrl("rtmps://ingest.test/live2"), {
         lookup: async () => [{ address: "2001:db8::1", family: 6 }],
         tcpConnect: net.tcp,
         attemptTimeoutMs: 100,
@@ -242,16 +288,14 @@ describe("§27 (2) · DNS con AAAA inalcanzable primero y A alcanzable", () => {
   it("el TLS sigue verificando: un certificado de otro nombre se rechaza aunque la IP conecte", async () => {
     const srv = tlsServer({ cert, key }, (s) => s.on("error", () => {}));
     const port = await listen(srv);
-    const net = blackholeOr(port);
-    const target = parseIngestUrl("rtmps://otro-nombre.test/live2");
+    const net = fakeNet(port, "blackhole");
     const pub = new RtmpPublisher({
-      target,
+      target: parseIngestUrl("rtmps://otro-nombre.test/live2"),
       streamKey: "clave-de-prueba-0000",
       connectTimeoutMs: 2500,
-      dial: (t) => dialIngest(t, { lookup, tcpConnect: net.tcp, attemptTimeoutMs: 500, tls: { ca } }),
+      dial: (t) => dialIngest(t, { lookup: lookupV6First, tcpConnect: net.tcp, tls: { ca } }),
     });
     await expect(pub.probe()).rejects.toMatchObject({ code: "tls" });
-    net.sockets.forEach((s) => s.destroy());
   });
 });
 

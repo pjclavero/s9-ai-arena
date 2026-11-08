@@ -144,8 +144,8 @@ export interface PublisherOptions {
    */
   writeTimeoutMs?: number;
   /**
-   * Inyectable en tests (servidor RTMP falso). Por defecto `dialIngest`: IPv4
-   * primero, plazo por intento y TLS verificado contra el nombre (§27).
+   * Inyectable en tests (servidor RTMP falso). Por defecto `dialIngest`: Happy
+   * Eyeballs (RFC 8305), plazo por intento y TLS verificado contra el nombre (§27).
    */
   dial?: Dialer;
 }
