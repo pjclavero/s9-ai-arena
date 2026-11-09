@@ -566,15 +566,61 @@
         .streaming-big {
           width: 100%;
         }
-        /* Ronda 1 (P3) · en «Listo», INICIAR quedaba bajo el pliegue: se queda fijo abajo
-           mientras se rellena el formulario, como DETENER arriba en directo. */
-        .streaming-start-row {
-          position: sticky;
+        /* Ronda 2 (MOBILE_CTA_NO_CONTENT_OVERLAP) · INICIAR/DETENER fijos abajo SIN tapar nada.
+           En la ronda 1 INICIAR era sticky y, fijo, tapaba el campo Canal. Ahora, mientras se ve
+           un CTA (clase puesta por StreamingPage), <body> deja abajo una franja reservada con
+           relleno = altura del CTA + safe-area, y lo que se desplaza es #root, que acaba encima
+           de esa franja: ningún campo puede pasar por debajo del CTA en ningún punto del scroll,
+           y al fondo el último campo queda entero encima. */
+        html.streaming-cta-shell {
+          --streaming-cta-h: 4.25rem;
+          height: 100%;
+          overflow: hidden;
+        }
+        html.streaming-cta-shell body {
+          box-sizing: border-box;
+          height: 100%;
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+          padding-bottom: calc(var(--streaming-cta-h) + env(safe-area-inset-bottom, 0px));
+        }
+        html.streaming-cta-shell #root {
+          flex: 1 1 auto;
+          min-height: 0;
+          overflow-y: auto;
+          overscroll-behavior: contain;
+        }
+        .streaming-start-row.streaming-cta {
+          position: fixed;
+          z-index: 3;
+          left: 0;
+          right: 0;
           bottom: 0;
-          z-index: 2;
+          box-sizing: border-box;
+          height: calc(var(--streaming-cta-h) + env(safe-area-inset-bottom, 0px));
           margin: 0;
-          padding: 0.5rem 0;
+          padding: 0.5rem 0.75rem calc(0.5rem + env(safe-area-inset-bottom, 0px));
           background: #171d26;
+          border-top: 1px solid #2a3442;
+        }
+        .streaming-start-row.streaming-cta .streaming-big {
+          height: 100%;
+        }
+        /* DETENER: el mismo sitio y tamaño que INICIAR (el pulgar no cambia de zona). La barra
+           de estado deja de ser sticky en móvil: si no, taparía al desplazarse. */
+        .streaming-live-bar {
+          position: static;
+        }
+        .streaming-big.stop.streaming-cta {
+          position: fixed;
+          z-index: 3;
+          left: 0.75rem;
+          right: 0.75rem;
+          bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+          width: auto;
+          height: calc(var(--streaming-cta-h) - 1rem);
+          margin: 0;
         }
       }
     </style>

@@ -14,7 +14,7 @@
  *    vuelve: ni en respuestas de la API, ni en el DOM, ni en storage.
  */
 import { readFileSync } from "node:fs";
-import { test, expect, type Page, type Response } from "@playwright/test";
+import { test, expect, type Page, type Response, type TestInfo } from "@playwright/test";
 import { login, registerNewUser, shot, REPLAY_ID } from "./helpers.js";
 import { forbiddenLines, runAxe, visit } from "./ux-e-lib.js";
 
@@ -27,7 +27,133 @@ async function blockingAxe(page: Page): Promise<string[]> {
     .map((v) => `${v.id} (${v.impact}): ${v.nodes.join(" , ")}`);
 }
 async function hScroll(page: Page): Promise<number> {
-  return page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  // Ronda 2 · con el armazón del CTA en móvil quien se desplaza es #root: se mide también.
+  return page.evaluate(() =>
+    Math.max(...[document.documentElement, document.getElementById("root")!].map((e) => e.scrollWidth - e.clientWidth)),
+  );
+}
+
+const OUT_DIR = process.env.S9_E2E_OUT ?? "/out";
+/**
+ * Ronda 2 (MOBILE_CTA_NO_CONTENT_OVERLAP) · geometría del CTA fijo (INICIAR o DETENER) frente
+ * a TODOS los controles visibles de la página (select, input, textarea, button, label, enlace,
+ * summary), en la posición de scroll `frac` (0 = arriba, 1 = al fondo) del contenedor que se
+ * desplaza. «Visible» = la parte del control que no recortan la ventana ni sus antecesores con
+ * overflow ≠ visible. Un control cuenta si esa parte se cruza con la caja del CTA.
+ */
+async function ctaGeometry(page: Page, frac: number) {
+  return page.evaluate((f) => {
+    type R = { left: number; top: number; right: number; bottom: number };
+    const cta = document.querySelector<HTMLElement>(".streaming-cta");
+    if (!cta) throw new Error("no hay CTA");
+    const root = document.getElementById("root")!;
+    const rs = getComputedStyle(root).overflowY;
+    const scroller =
+      (rs === "auto" || rs === "scroll") && root.scrollHeight > root.clientHeight
+        ? root
+        : (document.scrollingElement as HTMLElement);
+    scroller.scrollTop = Math.round((scroller.scrollHeight - scroller.clientHeight) * f);
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const box = (r: R) => ({ x: r.left, y: r.top, w: Math.max(0, r.right - r.left), h: Math.max(0, r.bottom - r.top) });
+    const cut = (a: R, b: R): R => ({
+      left: Math.max(a.left, b.left),
+      top: Math.max(a.top, b.top),
+      right: Math.min(a.right, b.right),
+      bottom: Math.min(a.bottom, b.bottom),
+    });
+    /** Parte visible: recortada por la ventana y por cada antecesor que recorta. */
+    function visiblePart(el: Element): R {
+      let r: R = cut(el.getBoundingClientRect(), { left: 0, top: 0, right: vw, bottom: vh });
+      for (let a = el.parentElement; a && a !== document.documentElement; a = a.parentElement) {
+        const cs = getComputedStyle(a);
+        if (cs.overflowX !== "visible" || cs.overflowY !== "visible") r = cut(r, a.getBoundingClientRect());
+      }
+      return r;
+    }
+    const c = cta.getBoundingClientRect();
+    const sel = "select, input:not([type=hidden]), textarea, button, label, a[href], summary";
+    const controls = [...document.querySelectorAll(sel)].filter((el) => {
+      if (cta === el || cta.contains(el)) return false;
+      const cs = getComputedStyle(el);
+      if (cs.visibility === "hidden" || cs.display === "none") return false;
+      const v = visiblePart(el);
+      return v.right - v.left > 0.5 && v.bottom - v.top > 0.5;
+    });
+    const overlaps = controls
+      .map((el) => {
+        const v = cut(visiblePart(el), c);
+        return { el, area: Math.max(0, v.right - v.left) * Math.max(0, v.bottom - v.top) };
+      })
+      .filter((o) => o.area > 0.5)
+      .map(({ el, area }) => {
+        const id = el.getAttribute("data-testid") ?? el.getAttribute("for") ?? el.textContent?.trim().slice(0, 30);
+        return `${el.tagName.toLowerCase()}[${id}] ${Math.round(area)}px²`;
+      });
+    // El último control del contenido (orden de documento, fuera de los menús) y el campo Calidad.
+    const content = controls.filter((el) => !el.closest("nav"));
+    const last = content[content.length - 1];
+    const quality = document.querySelector('[data-testid="simple-quality"]');
+    const button = cta.matches("button") ? cta : cta.querySelector("button")!;
+    const b = button.getBoundingClientRect();
+    const hit = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+    const scrollBottom = scroller === root ? root.getBoundingClientRect().bottom : vh;
+    return {
+      scroller: scroller === root ? "#root" : "document",
+      scrollTop: scroller.scrollTop,
+      maxScroll: scroller.scrollHeight - scroller.clientHeight,
+      vw,
+      vh,
+      cta: box(c),
+      button: box(b),
+      buttonHit: !!hit && (hit === button || button.contains(hit)),
+      /** Franja reservada bajo el área que se desplaza (≥ alto del CTA). */
+      reserved: vh - scrollBottom,
+      bodyPaddingBottom: parseFloat(getComputedStyle(document.body).paddingBottom),
+      overlaps,
+      last: last ? { what: last.tagName.toLowerCase(), ...box(last.getBoundingClientRect()) } : null,
+      quality: quality ? box(quality.getBoundingClientRect()) : null,
+    };
+  }, frac);
+}
+function assertNoOverlap(g: Awaited<ReturnType<typeof ctaGeometry>>, where: string) {
+  expect(g.overlaps, `${where}: controles bajo el CTA`).toEqual([]);
+  // START/STOP alcanzables: enteros en la ventana, casi a lo ancho, ≥ 44 px y sin nada encima.
+  expect(g.button.y, where).toBeGreaterThanOrEqual(0);
+  expect(g.button.y + g.button.h, where).toBeLessThanOrEqual(g.vh + 0.5);
+  expect(g.button.h, where).toBeGreaterThanOrEqual(44);
+  expect(g.button.w, where).toBeGreaterThanOrEqual(g.vw * 0.8);
+  expect(g.buttonHit, `${where}: el centro del botón es el botón`).toBe(true);
+  // Franja reservada: el relleno inferior cubre el alto del CTA y nada se desplaza por ella.
+  expect(g.bodyPaddingBottom, where).toBeGreaterThanOrEqual(g.cta.h - 0.5);
+  expect(g.reserved, where).toBeGreaterThanOrEqual(g.cta.h - 0.5);
+}
+/** Arriba, en medio y al fondo (más dos intermedios); al fondo, el último campo entero encima. */
+async function checkCtaAtScrollPoints(page: Page, info: TestInfo, tag: string) {
+  const vp = page.viewportSize()!;
+  for (const [name, frac] of [
+    ["arriba", 0],
+    ["25", 0.25],
+    ["medio", 0.5],
+    ["75", 0.75],
+    ["fondo", 1],
+  ] as const) {
+    const g = await ctaGeometry(page, frac);
+    const where = `${tag} ${vp.width}x${vp.height} ${name} (scroll ${g.scrollTop}/${g.maxScroll}, ${g.scroller})`;
+    assertNoOverlap(g, where);
+    if (name === "fondo") {
+      expect(g.last, where).not.toBeNull();
+      expect(g.last!.y + g.last!.h, `${where}: último control encima del CTA`).toBeLessThanOrEqual(g.cta.y + 0.5);
+      if (g.quality) expect(g.quality.y + g.quality.h, `${where}: Calidad`).toBeLessThanOrEqual(g.cta.y + 0.5);
+      await info.attach(`r2-cta-${tag}-${vp.width}x${vp.height}`, {
+        body: JSON.stringify(g, null, 2),
+        contentType: "application/json",
+      });
+    }
+    if (name !== "25" && name !== "75") {
+      await page.screenshot({ path: `${OUT_DIR}/shots/r2-cta-${tag}-${vp.width}x${vp.height}-${name}.png` });
+    }
+  }
 }
 /** Ronda 1 (LEFT_ALIGNED_NAV) · geometría real del menú de Streaming. */
 async function navGeometry(page: Page) {
@@ -100,6 +226,75 @@ test.describe("@fase1 EQ5b Administración → Streaming", () => {
     expect(startBox!.y + startBox!.height).toBeLessThanOrEqual(844 + 1);
     expect(await blockingAxe(page)).toEqual([]);
     await shot(page, info, "eq5b-streaming-390");
+    expect(starts).toEqual([]);
+  });
+
+  test("Ronda 2 · MOBILE_CTA_NO_CONTENT_OVERLAP: INICIAR/DETENER fijos no tapan ningún control", async ({
+    page,
+  }, info) => {
+    const starts: string[] = [];
+    page.on("request", (r) => {
+      if (r.method() === "POST" && r.url().includes("/admin/streaming/start")) starts.push(r.url());
+    });
+    await login(page, ADMIN_EMAIL, PASSWORD);
+    // 360×640 y 390×844 (estrechos) y 390×664 (barra inferior del navegador: ventana más baja).
+    for (const vp of [
+      { width: 360, height: 640 },
+      { width: 390, height: 844 },
+      { width: 390, height: 664 },
+    ]) {
+      await page.setViewportSize(vp);
+      await visit(page, "#/streaming");
+      await expect(page.getByTestId("stream-start")).toBeVisible();
+      expect(await hScroll(page)).toBeLessThanOrEqual(1);
+      await checkCtaAtScrollPoints(page, info, "iniciar");
+    }
+    // DETENER · sesión EN DIRECTO SIMULADA, sólo para la geometría (este entorno no tiene
+    // streamer): se reescribe la respuesta real de GET /admin/streaming con una sesión activa.
+    const STATE_URL = /\/api\/v1\/admin\/streaming$/;
+    await page.route(STATE_URL, async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      const res = await route.fetch();
+      const st = await res.json();
+      await route.fulfill({
+        response: res,
+        json: {
+          ...st,
+          uxState: "live",
+          pendingRestart: true,
+          session: {
+            id: "r2-geom",
+            mode: "rtmps",
+            target: { kind: "battle", id: "00000000-0000-4000-8000-000000000000" },
+            startedAt: new Date().toISOString(),
+          },
+          streamer: { state: "streaming", desired: true, lastError: null, restarts: 0 },
+        },
+      });
+    });
+    for (const vp of [
+      { width: 360, height: 640 },
+      { width: 390, height: 664 },
+    ]) {
+      await page.setViewportSize(vp);
+      await visit(page, "#/audit");
+      await visit(page, "#/streaming");
+      await expect(page.getByTestId("stream-stop")).toBeVisible();
+      await expect(page.getByTestId("stream-restart")).toBeVisible();
+      await checkCtaAtScrollPoints(page, info, "detener");
+    }
+    await page.unroute(STATE_URL);
+    // Escritorio: el armazón no cambia nada (la página se desplaza como siempre).
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await visit(page, "#/audit");
+    await visit(page, "#/streaming");
+    await expect(page.getByTestId("stream-start")).toBeVisible();
+    const desk = await page.evaluate(() => [
+      getComputedStyle(document.body).paddingBottom,
+      getComputedStyle(document.getElementById("root")!).overflowY,
+      getComputedStyle(document.querySelector(".streaming-cta")!).position,
+    ]);
+    expect(desk).toEqual(["0px", "visible", "static"]);
     expect(starts).toEqual([]);
   });
 

@@ -676,6 +676,21 @@ function SimpleView(props: {
   return <ReadyView {...props} />;
 }
 
+/**
+ * Ronda 2 (MOBILE_CTA_NO_CONTENT_OVERLAP) · mientras se ve INICIAR o DETENER, la página usa el
+ * «armazón con CTA»: en móvil (index.html, ≤720 px) el CTA queda fijo abajo en una franja
+ * RESERVADA (relleno inferior de <body> = altura del CTA + safe-area) y lo que se desplaza es
+ * #root, que termina encima de esa franja. Así ningún campo pasa nunca por debajo del CTA. En
+ * escritorio la clase no tiene efecto.
+ */
+function useBottomCtaShell() {
+  useEffect(() => {
+    const html = document.documentElement;
+    html.classList.add("streaming-cta-shell");
+    return () => html.classList.remove("streaming-cta-shell");
+  }, []);
+}
+
 function ReadyView(props: {
   st: StreamingAdminState;
   route: string;
@@ -685,6 +700,7 @@ function ReadyView(props: {
   onAdvanced: () => void;
 }) {
   const { st, busy, act } = props;
+  useBottomCtaShell();
   const pre = preselectedTarget(props.route);
   const [kind, setKind] = useState<"battle" | "tournament">(pre?.kind ?? "battle");
   const [list, setList] = useState<{ battles: Destination[]; tournaments: Destination[] } | null>(null);
@@ -912,7 +928,7 @@ function ReadyView(props: {
           ))}
         </select>
       </div>
-      <p className="streaming-start-row">
+      <p className="streaming-start-row streaming-cta" data-testid="streaming-cta">
         <button
           type="button"
           className="streaming-big start"
@@ -963,6 +979,7 @@ function fmtDuration(ms: number): string {
 /** §12, §13 · Vista en directo: lo esencial y DETENER siempre a la vista. */
 function LiveView(props: { st: StreamingAdminState; busy: string | null; act: Act; channel: string }) {
   const { st, busy, act } = props;
+  useBottomCtaShell();
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -991,7 +1008,7 @@ function LiveView(props: { st: StreamingAdminState; busy: string | null; act: Ac
         </strong>
         <button
           type="button"
-          className="streaming-big stop"
+          className="streaming-big stop streaming-cta"
           data-testid="stream-stop"
           disabled={busy !== null}
           onClick={() => stopNow(act, record ? "record" : "rtmps")}
