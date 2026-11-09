@@ -438,6 +438,8 @@ describe("Ronda 1 · H-4 · guardado = efectivo: se rechazan las formas no canó
       "rtmps://b.rtmps.youtube.com/./live2?backup=1",
       "rtmps://b.rtmps.youtube.com/live%32?backup=1",
       "rtmps://b.rtmps.youtube.com:0/live2?backup=1",
+      "rtmps://b.rtmps.you\ttube.com/live2?backup=1", // TAB en el host: WHATWG lo borra en silencio
+      "rtmps://b.rtmps.youtube.com/li\nve2?backup=1",
     ]) {
       expect(validIngestUrl(bad, { allowBackupQuery: true }), JSON.stringify(bad)).toBeNull();
     }

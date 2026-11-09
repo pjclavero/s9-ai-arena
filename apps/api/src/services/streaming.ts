@@ -333,7 +333,6 @@ export function validIngestUrl(
   // `//`, `/./`, `/../`, `%xx` ni barra final, que el relé normaliza a otra cosa.
   const rawPath = /^rtmps:\/\/[^/?#]*(\/[^?#]*)?/i.exec(v)?.[1] ?? "";
   const segs = rawPath.split("/").slice(1);
-  if (!segs.length || segs.some((g) => g === "" || g === "." || g === ".." || g.includes("%"))) return null;
   // STREAMING-UX (§20) · el ÚNICO caso con query: la ingesta de RESPALDO de YouTube con
   // exactamente `?backup=1` (`allowBackupQuery` sólo lo pone quien valida ese campo de esa
   // plataforma). Ni otra clave, ni otro valor, ni parámetros añadidos, ni `?` vacío: la
@@ -344,7 +343,9 @@ export function validIngestUrl(
   }
   const app = decodeURIComponent(u.pathname.replace(/^\/+|\/+$/g, ""));
   if (!app || app.length > 128 || !/^[A-Za-z0-9._~\-/]+$/.test(app)) return null;
-  if (app !== segs.join("/")) return null; // el path normalizado no es el escrito
+  // Una sola guarda para todo eso: lo que el relé usará (`app`, ya normalizado y decodificado)
+  // tiene que ser carácter a carácter lo escrito.
+  if (app !== segs.join("/")) return null;
   // Ronda 1 (R-H6) · «URL + clave» pegada en el campo del servidor (cualquier plataforma).
   if (opts.fixedApp !== undefined && opts.fixedApp !== null && app !== opts.fixedApp) return null;
   if (looksLikeStreamKeyPath(segs)) return null;
