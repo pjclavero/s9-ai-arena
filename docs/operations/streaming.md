@@ -1,5 +1,19 @@
 # Retransmisión: `/broadcast`, streamer y RTMPS
 
+
+> **Actualización RC8 — 2026-11-10.** RC8 `b254e3d` está desplegada en producción y el streamer
+> ha publicado una sesión real en YouTube. La conectividad/handshake RTMP quedó validada, pero la
+> primera batalla **en vivo** retransmitida mostró imagen completamente blanca. El defecto se sigue
+> en [#256](https://github.com/pjclavero/s9-ai-arena/issues/256). Hasta cerrarlo, distinguir:
+> `RTMPS_CONNECTED=PASS` de `BROADCAST_VISUAL_CONTENT=FAIL`.
+>
+> Las grabaciones locales usadas en la validación RC8 no ejercían exactamente el mismo camino que la
+> batalla viva con canvas Phaser/WebGL. El diagnóstico vigente debe comparar DOM → canvas → Xvfb →
+> FFmpeg → FLV/relay → YouTube y añadir una regresión automática contra frames blancos/uniformes.
+>
+> La credencial de emisión utilizada durante las pruebas anteriores debe considerarse comprometida:
+> revocarla en YouTube Studio y cargar una nueva únicamente desde la UI de S9 antes de otra prueba real.
+
 ## Resumen
 
 Estado **verificado** de la retransmisión de S9 AI Arena (auditoría EQ5,
@@ -22,8 +36,7 @@ añade: parada con SIGKILL al árbol de procesos (sin Chromium huérfanos), STAR
 abandonada o un reinicio del streamer, `lastSession`, métricas `stream_*` y aislamiento del servicio
 (`cap_drop: ALL`, `init`, `pids`, `shm_size`). Incluye recursos medidos, rotación, backup/restore y el
 plan de despliegue y rollback. La arquitectura comprobada contra el código está en
-[streaming-architecture.md](../technical/streaming-architecture.md). YouTube real:
-**BLOCKED_BY_AUTHORIZATION**.
+[streaming-architecture.md](../technical/streaming-architecture.md). YouTube real: **PUBLICACIÓN CONFIRMADA; CONTENIDO VISUAL BLOQUEADO POR #256**.
 
 **STREAMER-2 (2026-11-06, misma rama):** tres P3 de la revisión independiente. **H1:** la salida
 de Chromium se lee siempre (antes nadie la leía y Chromium podía quedarse bloqueado con la imagen
