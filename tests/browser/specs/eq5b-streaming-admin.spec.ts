@@ -29,6 +29,30 @@ async function blockingAxe(page: Page): Promise<string[]> {
 async function hScroll(page: Page): Promise<number> {
   return page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 }
+/** Ronda 1 (LEFT_ALIGNED_NAV) · geometría real del menú de Streaming. */
+async function navGeometry(page: Page) {
+  return page.getByTestId("streaming-nav").evaluate((nav) => {
+    const n = nav.getBoundingClientRect();
+    const cs = getComputedStyle(nav);
+    const buttons = [...nav.querySelectorAll("button")].map((b) => {
+      const r = b.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(b);
+      const t = range.getBoundingClientRect();
+      const pl = parseFloat(getComputedStyle(b).paddingLeft);
+      return { x: r.x, y: r.y, w: r.width, textOffset: t.x - r.x - pl };
+    });
+    return {
+      x: n.x,
+      w: n.width,
+      flexWrap: cs.flexWrap,
+      overflowX: cs.overflowX,
+      scrollW: nav.scrollWidth,
+      clientW: nav.clientWidth,
+      buttons,
+    };
+  });
+}
 
 test.describe("@fase1 EQ5b Administración → Streaming", () => {
   test("admin: subnavegación, estado sin streamer, axe y móvil", async ({ page }, info) => {
@@ -46,6 +70,15 @@ test.describe("@fase1 EQ5b Administración → Streaming", () => {
     await expect(page.getByTestId("sealed-store-missing")).toBeVisible();
     await expect(page.getByTestId("stream-start")).toBeDisabled();
     expect(await blockingAxe(page)).toEqual([]);
+    // Ronda 1 (LEFT_ALIGNED_NAV) · escritorio: cada botón ocupa la columna entera, pegado a
+    // su borde izquierdo, y el texto empieza a la izquierda (no centrado).
+    const desk = await navGeometry(page);
+    expect(desk.buttons).toHaveLength(4);
+    for (const b of desk.buttons) {
+      expect(Math.abs(b.x - desk.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(b.w - desk.w)).toBeLessThanOrEqual(1);
+      expect(Math.abs(b.textOffset)).toBeLessThanOrEqual(2);
+    }
     await shot(page, info, "eq5b-streaming-1366");
     // STREAMING-UX · la clave vive en «Configuración avanzada».
     await page.getByTestId("streaming-tab-advanced").click();
@@ -56,6 +89,15 @@ test.describe("@fase1 EQ5b Administración → Streaming", () => {
     await visit(page, "#/streaming");
     await expect(page.getByTestId("streaming-page")).toBeVisible();
     expect(await hScroll(page)).toBeLessThanOrEqual(1);
+    // Ronda 1 (LEFT_ALIGNED_NAV) · móvil: pestañas en UNA fila con scroll horizontal propio.
+    const mob = await navGeometry(page);
+    expect(new Set(mob.buttons.map((b) => Math.round(b.y))).size).toBe(1);
+    expect(mob.flexWrap).toBe("nowrap");
+    expect(mob.overflowX).toBe("auto");
+    // Ronda 1 (P3) · INICIAR dentro de la ventana sin desplazarse (fijo abajo).
+    const startBox = await page.getByTestId("stream-start").boundingBox();
+    expect(startBox).not.toBeNull();
+    expect(startBox!.y + startBox!.height).toBeLessThanOrEqual(844 + 1);
     expect(await blockingAxe(page)).toEqual([]);
     await shot(page, info, "eq5b-streaming-390");
     expect(starts).toEqual([]);

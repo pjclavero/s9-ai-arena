@@ -464,9 +464,16 @@
         gap: 1rem;
         align-items: start;
       }
+      /* Ronda 1 (LEFT_ALIGNED_NAV) · es un <nav>, y la regla global de nav (barra superior)
+         le ponía align-items:center (botones encogidos y centrados en la columna),
+         flex-wrap:wrap (dos filas en móvil), relleno y fondo. Se anulan aquí. */
       .streaming-nav {
         display: flex;
         flex-direction: column;
+        flex-wrap: nowrap;
+        align-items: stretch;
+        padding: 0;
+        background: transparent;
         gap: 0.25rem;
         position: sticky;
         top: 0.5rem;
@@ -558,6 +565,16 @@
         }
         .streaming-big {
           width: 100%;
+        }
+        /* Ronda 1 (P3) · en «Listo», INICIAR quedaba bajo el pliegue: se queda fijo abajo
+           mientras se rellena el formulario, como DETENER arriba en directo. */
+        .streaming-start-row {
+          position: sticky;
+          bottom: 0;
+          z-index: 2;
+          margin: 0;
+          padding: 0.5rem 0;
+          background: #171d26;
         }
       }
     </style>

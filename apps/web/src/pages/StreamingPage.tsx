@@ -883,7 +883,7 @@ function ReadyView(props: {
           ))}
         </select>
       </div>
-      <p>
+      <p className="streaming-start-row">
         <button
           type="button"
           className="streaming-big start"
