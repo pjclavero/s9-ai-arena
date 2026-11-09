@@ -1001,14 +1001,14 @@ Si no contribuye al gate de la fase actual, va al backlog.
 Estado actual:
 
 ~~~text
-LAST_UPDATED:        2026-11-09
+LAST_UPDATED:        2026-11-10
 BRANCH:              mejoras-visuales-fase-0-inventario (base: mejoras-visuales @ 983d2f5; «mejoras-visuales/…» no es creable mientras exista la rama mejoras-visuales)
 BASE_MAIN_SHA:       b254e3dac1ab25f39f9b4565b3349aa66a9f3963
 CURRENT_PHASE:       FASE 0 — Descubrimiento y contrato visual (IN_PROGRESS)
 LAST_MERGED_VIS_PR:  ninguno
-ACTIVE_VIS_PR:       #253 (draft, FASE 0, base mejoras-visuales; ronda 1 de correcciones aplicada, pendiente de re-revisión)
-NEXT_ACTION:         re-revisión independiente de la ronda 1; decisiones de producto D-01..D-07
-BLOCKERS:            ninguno técnico; FASE 0 no pasa a PASS sin revisión independiente
+ACTIVE_VIS_PR:       #253 (draft, FASE 0, base mejoras-visuales; ronda 2 de correcciones aplicada, pendiente de re-revisión)
+NEXT_ACTION:         re-revisión independiente de la ronda 2; decisiones de producto D-01..D-08
+BLOCKERS:            ninguno técnico; FASE 0 no pasa a PASS sin revisión independiente; PRE-1 (backend) en otro PR contra main
 ~~~
 
 Entregables de FASE 0: [VISUAL_COMPONENT_INVENTORY](VISUAL_COMPONENT_INVENTORY.md),
