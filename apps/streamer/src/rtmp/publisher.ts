@@ -181,10 +181,12 @@ export class RtmpPublisher extends EventEmitter {
   private c1: Buffer | null = null;
   /**
    * STREAMING-UX · §27 · Último id de transacción usado. `connect` DEBE llevar
-   * el 1, como en FFmpeg, OBS y librtmp: la ingesta de YouTube ignora en
-   * silencio un `connect` con otro id. Era la causa del «la ingesta no respondió
-   * a connect a tiempo» de producción, que MediaMTX no detecta porque acepta
-   * cualquier id.
+   * el 1, como en FFmpeg, OBS y librtmp. La ingesta de YouTube NO calla: contesta a
+   * cualquier `connect` con un `_result` de txn 1, sea cual sea el id pedido (medido
+   * contra la ingesta real). El relé antiguo mandaba el 2 y esperaba la respuesta en
+   * `pending.get(2)`, así que descartaba la de txn 1 y vencía el plazo: era el «la
+   * ingesta no respondió a connect a tiempo» de producción. MediaMTX no lo detecta
+   * porque devuelve el mismo id que recibe.
    */
   private txn = 0;
   private readonly pending = new Map<number, (cmd: string, args: Amf0Value[]) => void>();

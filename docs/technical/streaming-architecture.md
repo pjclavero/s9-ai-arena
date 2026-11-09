@@ -253,10 +253,12 @@ diseño propio de captura.
   con `servername` = host y `rejectUnauthorized`. No se usa `autoSelectFamily` de Node: en producción,
   `tls.connect` con el Node 20 de la imagen dio TIMEOUT con la AAAA primero, su algoritmo es secuencial
   y no deja inyectar el transporte para probar una ruta IPv6 agujero negro. **Nada del host cambia.**
-- **STREAMING-UX · `connect` con id de transacción 1** (como FFmpeg/OBS/librtmp): YouTube ignora en
-  silencio un `connect` con otro id. Era la causa principal del «la ingesta no respondió a connect a
-  tiempo». MediaMTX acepta cualquiera, y por eso el E2E local no lo detectaba.
-  `relay-ingest-regression.test.ts` lleva una ingesta estricta como YouTube.
+- **STREAMING-UX · `connect` con id de transacción 1** (como FFmpeg/OBS/librtmp). YouTube no calla:
+  contesta a cualquier `connect` con un `_result` de txn 1, pida el cliente el id que pida. El relé
+  antiguo mandaba el 2, esperaba la respuesta 2 y descartaba la de txn 1 hasta vencer el plazo: era
+  la causa principal del «la ingesta no respondió a connect a tiempo». MediaMTX devuelve el mismo id
+  que recibe, y por eso el E2E local no lo detectaba. `relay-ingest-regression.test.ts` lleva una
+  ingesta falsa en «modo YouTube real» (`replyTxn: "always1"`) en la que el relé antiguo falla.
 - **Destino:** por defecto `rtmps://a.rtmps.youtube.com/live2`, el endpoint oficial. `rtmp://` en claro
   se rechaza salvo `STREAMER_ALLOW_PLAIN_RTMP=1`, que sólo se usa en pruebas locales. El TLS se
   verifica contra el almacén del sistema (o contra `NODE_EXTRA_CA_CERTS` en la CA local del E2E).

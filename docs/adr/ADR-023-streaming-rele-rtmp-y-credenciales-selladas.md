@@ -208,10 +208,10 @@ clave.
 ### 4. Adenda STREAMING-UX (2026-11): dos ingestas, Happy Eyeballs y `connect` con txn 1
 
 - **Interoperabilidad con YouTube corregida.** El relé mandaba `connect` con id de transacción 2.
-  YouTube ignora en silencio un `connect` cuyo id no sea 1, que es el que mandan FFmpeg, OBS y
-  librtmp. Era el «la ingesta no respondió a connect a tiempo» de producción. Se reprodujo desde un
+  YouTube contesta a cualquier `connect`, pero siempre con un `_result` de txn 1 (el id que mandan
+  FFmpeg, OBS y librtmp); el relé esperaba la respuesta 2 y descartaba la buena. Era el «la ingesta no respondió a connect a tiempo» de producción. Se reprodujo desde un
   host de pruebas contra la ingesta real (sólo TLS, handshake y `connect`, sin clave ni publicación).
-  Con txn 1 la ingesta contesta. La consecuencia «no probado contra YouTube» de abajo pasa a «probado
+  Con txn 1 la respuesta (txn 1) es la que el relé espera. La consecuencia «no probado contra YouTube» de abajo pasa a «probado
   hasta `connect`, sin publicar».
 - **Familia de direcciones.** El marcado es Happy Eyeballs (RFC 8305) en el propio cliente
   (`rtmp/dial.ts`). No se fuerza IPv4 ni se toca nada del host.

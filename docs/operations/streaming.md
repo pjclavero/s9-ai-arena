@@ -93,8 +93,10 @@ igual o no sería seguro. Si fallan las dos: «No se pudo conectar con YouTube»
 «Principal: … / Respaldo: …».
 
 **Red del relé (causa del «la ingesta no respondió a connect a tiempo»).** (1) El `connect` salía
-con id de transacción 2 y YouTube ignora en silencio un `connect` que no sea el 1 (FFmpeg/OBS
-mandan 1): ahora va el 1. (2) Con IPv6 sin salida y la AAAA primero en el DNS, el marcado es
+con id de transacción 2. YouTube **no calla**: contesta a cualquier `connect` con un `_result`
+que lleva siempre el txn 1 (medido contra la ingesta real). El relé antiguo esperaba la respuesta
+con el txn 2, descartaba la de txn 1 y vencía el plazo. Ahora `connect` va con el 1, como en
+FFmpeg/OBS/librtmp. (2) Con IPv6 sin salida y la AAAA primero en el DNS, el marcado es
 Happy Eyeballs (RFC 8305, `rtmp/dial.ts`): respeta el orden del DNS, intercala familias, lanza el
 siguiente intento a los 250 ms sin cancelar el anterior, se queda con el primero que conecta y
 destruye el resto. **El arreglo está en el cliente de salida del producto: no se toca nada del

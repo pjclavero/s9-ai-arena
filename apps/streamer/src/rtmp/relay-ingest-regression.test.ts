@@ -5,11 +5,14 @@
  *
  * Hay dos causas, y cada una tiene aquí su prueba (cada prueba se pone roja con
  * su mutante; ver docs/operations/streaming.md):
- *  1. EL ID DE TRANSACCIÓN DE `connect`. La ingesta de YouTube ignora en
- *     silencio un `connect` cuyo id no es 1. Se reprodujo desde un host de
- *     pruebas contra la ingesta real (sólo TLS, handshake y connect, sin clave y
- *     sin publicar). El relé mandaba un 2. El servidor falso `strictTxn` se porta
- *     como YouTube: calla.
+ *  1. EL ID DE TRANSACCIÓN DE `connect`. La ingesta de YouTube NO calla: contesta
+ *     a CUALQUIER `connect` (txn 0, 1, 2, 3…) con un `_result` que lleva SIEMPRE el
+ *     txn 1. Medido desde un host de pruebas contra la ingesta real (sólo TLS,
+ *     handshake y connect, sin clave y sin publicar; ronda 1 de revisión). El relé
+ *     antiguo mandaba connect con txn 2 y esperaba la respuesta en `pending.get(2)`:
+ *     la de txn 1 se descartaba y vencía el plazo. El servidor falso
+ *     `replyTxn: "always1"` se porta como YouTube de verdad; `replyTxn: "never"` es
+ *     una ingesta genérica que no contesta (el SÍNTOMA de producción, no YouTube).
  *  2. LA FAMILIA DE DIRECCIONES. El DNS del contenedor devolvía la AAAA primero
  *     y el host no tenía ruta IPv6. El marcado es Happy Eyeballs (RFC 8305):
  *     respeta el orden del DNS, intercala las familias y lanza el siguiente
@@ -36,8 +39,14 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((s) => new Promise((r) => s.close(r))));
 });
 
-/** Ingesta RTMP falsa sobre un socket ya aceptado. `strictTxn`: como YouTube, calla si connect no lleva txn 1. */
-function serveRtmp(sock: Socket | TLSSocket, o: { strictTxn?: boolean }, seen: { connectTxn: number[]; sni?: string }) {
+/**
+ * Ingesta RTMP falsa sobre un socket ya aceptado. Respuesta a `connect` según `replyTxn`:
+ *  - `"echo"` (por defecto): con el MISMO txn de la petición (MediaMTX, nginx-rtmp);
+ *  - `"always1"`: con txn 1 SIEMPRE, pida lo que pida el cliente (YouTube, medido);
+ *  - `"never"`: no contesta nunca (síntoma de producción: el relé se queda en connect).
+ */
+type ReplyTxn = "echo" | "always1" | "never";
+function serveRtmp(sock: Socket | TLSSocket, o: { replyTxn?: ReplyTxn }, seen: { connectTxn: number[]; sni?: string }) {
   sock.on("error", () => {});
   let buf = Buffer.alloc(0);
   let phase: "c0c1" | "c2" | "chunks" = "c0c1";
@@ -83,8 +92,10 @@ function serveRtmp(sock: Socket | TLSSocket, o: { strictTxn?: boolean }, seen: {
           const v = decodeAmf0Values(m.payload);
           if (String(v[0]) === "connect") {
             seen.connectTxn.push(Number(v[1]));
-            if (o.strictTxn && Number(v[1]) !== 1) continue; // YouTube: silencio
-            reply("_result", Number(v[1]), [{ fmsVer: "FMS/3,0,1,123" }, { code: "NetConnection.Connect.Success" }]);
+            const mode = o.replyTxn ?? "echo";
+            if (mode === "never") continue;
+            const txn = mode === "always1" ? 1 : Number(v[1]);
+            reply("_result", txn, [{ fmsVer: "FMS/3,0,1,123" }, { code: "NetConnection.Connect.Success" }]);
           }
         }
       }
@@ -99,9 +110,9 @@ async function listen(s: Server): Promise<number> {
 }
 
 describe("§27 (1) · connect con id de transacción 1 (como FFmpeg/OBS/librtmp)", () => {
-  it("una ingesta estricta como YouTube responde: la prueba de ingesta conecta", async () => {
+  it("modo YouTube REAL (contesta siempre con txn 1): la prueba de ingesta conecta", async () => {
     const seen = { connectTxn: [] as number[] };
-    const port = await listen(netServer((s) => serveRtmp(s, { strictTxn: true }, seen)));
+    const port = await listen(netServer((s) => serveRtmp(s, { replyTxn: "always1" }, seen)));
     const target = parseIngestUrl(`rtmp://127.0.0.1:${port}/live2`, true);
     const pub = new RtmpPublisher({ target, streamKey: "clave-de-prueba-0000", connectTimeoutMs: 1500 });
     const r = await pub.probe();
@@ -109,14 +120,24 @@ describe("§27 (1) · connect con id de transacción 1 (como FFmpeg/OBS/librtmp)
     expect(seen.connectTxn).toEqual([1]);
   });
 
-  it("caso de producción: sin respuesta a connect ⇒ error claro y nunca 'publishing'", async () => {
-    // Ingesta que completa el handshake y no contesta NUNCA a connect.
+  it("modo YouTube REAL: el relé ANTIGUO (connect con txn 2) recibe un _result txn 1 que no espera ⇒ timeout", async () => {
+    // Control del modelo: así fallaba producción. La ingesta SÍ contesta (txn 1), pero el
+    // relé antiguo esperaba la respuesta 2 y la descartaba.
     const seen = { connectTxn: [] as number[] };
-    const port = await listen(netServer((s) => serveRtmp(s, { strictTxn: true }, seen)));
+    const port = await listen(netServer((s) => serveRtmp(s, { replyTxn: "always1" }, seen)));
+    const target = parseIngestUrl(`rtmp://127.0.0.1:${port}/live2`, true);
+    const pub = new RtmpPublisher({ target, streamKey: "clave-de-prueba-0000", connectTimeoutMs: 400 });
+    (pub as unknown as { txn: number }).txn = 1; // el siguiente id será el 2, como en el relé antiguo
+    await expect(pub.probe()).rejects.toMatchObject({ code: "timeout" });
+    expect(seen.connectTxn).toEqual([2]); // llegó, y la ingesta contestó: no «calló»
+  });
+
+  it("caso de producción: sin respuesta a connect ⇒ error claro y nunca 'publishing'", async () => {
+    // Síntoma de producción: ingesta que completa el handshake y no contesta NUNCA a connect.
+    const seen = { connectTxn: [] as number[] };
+    const port = await listen(netServer((s) => serveRtmp(s, { replyTxn: "never" }, seen)));
     const target = parseIngestUrl(`rtmp://127.0.0.1:${port}/live2`, true);
     const pub = new RtmpPublisher({ target, streamKey: "clave-de-prueba-0000", connectTimeoutMs: 300 });
-    // Forzamos un txn distinto de 1 para reproducir lo que hacía el relé antiguo.
-    (pub as unknown as { txn: number }).txn = 1;
     const states: string[] = [];
     pub.on("publishing", () => states.push("publishing"));
     pub.on("error", () => {});
@@ -207,7 +228,7 @@ async function tlsIngest() {
   const seen = { connectTxn: [] as number[], sni: undefined as string | undefined };
   const srv = tlsServer({ cert, key }, (s) => {
     seen.sni = (s as TLSSocket & { servername?: string }).servername || undefined;
-    serveRtmp(s, { strictTxn: true }, seen);
+    serveRtmp(s, { replyTxn: "always1" }, seen); // como YouTube de verdad
   });
   return { port: await listen(srv), seen };
 }
