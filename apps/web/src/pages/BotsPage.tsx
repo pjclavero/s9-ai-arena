@@ -41,13 +41,28 @@
  *    loadouts NO se sondea nunca (es el que remonta el editor y no hace falta
  *    para el pipeline); el de versiones se revalida solo cuando el build llega a
  *    un estado terminal, que es cuando puede haber cambiado.
+ *
+ * #255 · UNA sola navegación del bot (ver ./bot-nav.ts). Antes convivían esta
+ * página larga con su índice por `scrollIntoView` (EQ4), una segunda vista del
+ * mismo bot con pestañas propias (`BotDetailPage`, DEV-A A9.19) y un enlace
+ * «detalle y versiones» entre ambas: dos tablas de versiones, dos editores de
+ * código, dos vistas de build y la visibilidad del bot y la del código en
+ * pestañas distintas. Ahora: [lista de bots] | [menú de secciones | UNA sección].
+ * Cambiar de sección cambia el hash (`#/bots/<id>/<sección>`), pinta sólo esa
+ * sección y lleva el foco a su encabezado; no desplaza la página. Lo que hacía
+ * `BotDetailPage` (visor de código, diff, clonado, build con logs, visibilidad)
+ * vive en la sección que le toca, una sola vez.
  */
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import { api, type Me } from "../api.js";
 import { LoadoutEditor, type LoadoutDraft } from "./LoadoutEditor.js";
-import { BotDetailPage } from "./BotDetailPage.js";
 import { useResource, ResourceView, type Resource } from "../resource.js";
 import { FormError, LiveStatus } from "../ui/primitives.js";
+import { BOT_PANEL_SECTIONS, botHref, parseBotsRoute, sectionLabel, type BotSection } from "./bot-nav.js";
+import { BotVisibilityCard, botVisibilityLabel } from "../visibility.js";
+import { isBattleEligible, VersionEligibilityNote, type BattleEligibilityInfo } from "../version-eligibility.js";
+import { slotName } from "../help/names.js";
+import { BotBattlesSection, BotReplaysSection } from "./BotActivity.js";
 import { useSessionDraft } from "../ui/draft.js";
 import { BOT_TEMPLATES, HOOK_HELP, isUntouchedTemplate, type BotRuntime } from "../bot-templates.js";
 import { BuildDiagnosisView, diagnoseBuild } from "../build-diagnosis.js";
@@ -58,6 +73,10 @@ interface Bot {
   id: string;
   name: string;
   visibility: string;
+  /** Ausente en dobles de prueba de la lista propia (la lista es `ownerId=<yo>`). */
+  ownerId?: string;
+  teamId?: string;
+  createdAt?: string;
   latestPublishedVersion?: number;
   /** EQ4 · retirado (organizativo) o null/ausente = activo. */
   retiredAt?: string | null;
@@ -68,6 +87,14 @@ interface BotVersion {
   runtime: string;
   loadoutRevision: number;
   rejectionReason?: string;
+  /** VISIBILIDAD · el código de ESTA versión es público (independiente de bot.visibility). */
+  codePublic?: boolean;
+  createdAt?: string;
+  parentVersion?: number;
+  publishedAt?: string;
+  artifactHash?: string;
+  /** ELIG · elegibilidad para batallas nuevas (sólo published/frozen). */
+  battleEligibility?: BattleEligibilityInfo;
 }
 interface Loadout {
   revision: number;
@@ -79,7 +106,8 @@ interface Build {
   id: string;
   version?: number;
   status: string;
-  stages: { name: string; status: string; message?: string }[];
+  stages: { name: string; status: string; message?: string; logs?: string[]; metrics?: Record<string, number> }[];
+  artifactHash?: string;
 }
 /** Builds de la versión enfocada. `known:false` = no se sabe (y así se dice). */
 interface BuildsView {
@@ -149,7 +177,7 @@ export function versionInBattles(versions: { version: number; state: string }[])
   return published.length ? Math.max(...published) : undefined;
 }
 
-/** DEV-A · A9.19 · `#/bots/<botId>` → vista de detalle del bot (Overview/Code/Equipment/Versions). */
+/** DEV-A · A9.19 · `#/bots/<botId>` → bot elegido en el panel único (#255; ver bot-nav.ts). */
 export function matchBotDetailRoute(hash: string): string | null {
   const m = /^#\/bots\/([^/?#]+)/.exec(hash);
   return m ? decodeURIComponent(m[1]) : null;
@@ -167,32 +195,58 @@ interface BotListPage {
 /** EQ4 · visibilidad en palabras. */
 const VISIBILITY_TEXT: Record<string, string> = { private: "privado", team: "de equipo", public: "público" };
 
-/** EQ4 · secciones del detalle del bot (id del ancla en la página, texto). */
-const BOT_SECTIONS: ReadonlyArray<readonly [string, string]> = [
-  ["bot-sec-loadout", "Loadout"],
-  ["bot-sec-code", "Código / Versiones"],
-  ["bot-sec-build", "Build / Pipeline"],
-];
-
-function scrollToSection(id: string) {
-  // El pipeline sólo existe tras una subida; si no, el estado de la última versión.
-  const el =
-    document.getElementById(id) ??
-    (id === "bot-sec-build" ? document.querySelector<HTMLElement>('[data-testid="focused-version"]') : null);
-  if (!el) return;
-  el.scrollIntoView?.({ behavior: "smooth", block: "start" });
-  const focusable = el.querySelector<HTMLElement>("h2, h3") ?? el;
-  if (!focusable.hasAttribute("tabindex")) focusable.setAttribute("tabindex", "-1");
-  focusable.focus({ preventScroll: true });
+export function BotsPage(props: Parameters<typeof BotsWorkspace>[0]) {
+  return <BotsWorkspace {...props} />;
 }
 
-export function BotsPage(props: Parameters<typeof BotsListPage>[0]) {
-  const detailId = matchBotDetailRoute(typeof window !== "undefined" ? window.location.hash : "");
-  if (detailId) return <BotDetailPage key={detailId} botId={detailId} meId={props.me.id} />;
-  return <BotsListPage {...props} />;
+/** El hash vigente, vivo (las secciones y el bot elegido viven en él). */
+function useHash(): [string, (href: string) => void] {
+  const [hash, setHash] = useState(() => (typeof window !== "undefined" ? window.location.hash : ""));
+  useEffect(() => {
+    const on = () => setHash(window.location.hash);
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+  }, []);
+  const go = (href: string) => {
+    if (window.location.hash !== href) window.location.hash = href;
+    setHash(href);
+  };
+  return [hash, go];
 }
 
-function BotsListPage(props: {
+/** Ficheros de una versión (visor de código). */
+interface FilesInfo {
+  version: number;
+  packaged: boolean;
+  files: { path: string; content: string }[];
+}
+interface DiffInfo {
+  from: number;
+  to: number;
+  files: { path: string; status: string; additions: number; deletions: number; diff: string }[];
+}
+
+/**
+ * UX-B · G-15 · ¿se puede editar esta versión en la web sin perder nada? Sólo si se
+ * subió como UN fichero pegado (`packaged: false`). Un paquete `{"files": [...]}`
+ * puede traer varios ficheros, y el editor web sólo reenvía uno.
+ */
+export function isWebEditable(files: { packaged: boolean } | null): boolean {
+  return !!files && !files.packaged;
+}
+
+const MAIN_ENTRY = /(^|\/)(bot|main)\.(py|js|mjs)$/;
+const when = (iso?: string) => (iso ? new Date(iso).toLocaleString() : "—");
+const short = (h?: string) => (h ? `${h.slice(0, 12)}…` : "—");
+/** Se clasifica por FORMA (status), como ErrorState: no depende de la clase concreta. */
+const errText = (e: unknown) => {
+  const status = (e as { status?: number } | null)?.status;
+  if (status === 403) return "No tienes permiso para ver el código de esta versión (es privado).";
+  if (status === 404) return "No existe o no es visible para ti.";
+  return String((e as Error)?.message ?? e);
+};
+
+function BotsWorkspace(props: {
   me: Me;
   catalog: ModuleDefinition[];
   catalogVersion: string;
@@ -239,7 +293,27 @@ function BotsListPage(props: {
     botPages.current += 1;
     reloadBots({ silent: true });
   };
-  const [selected, setSelected] = useState<Bot | null>(null);
+  // #255 · el bot elegido y la sección viven en el HASH (F5 los conserva).
+  const [hash, go] = useHash();
+  const route = parseBotsRoute(hash);
+  const section: BotSection = route.botId ? route.section : "resumen";
+  const listed =
+    route.botId && botsRes.status === "ready" ? botsRes.data.items.find((b) => b.id === route.botId) : undefined;
+  // Un bot que no está en «Mis bots» (p. ej. el de un compañero de equipo, enlazado
+  // desde una batalla) se lee de la API: si no es visible, la API dice 404.
+  // (Y también si «Mis bots» no ha cargado: el panel del bot no depende de la lista.)
+  const needsFetch = !!route.botId && (botsRes.status === "error" || (botsRes.status === "ready" && !listed));
+  const [extBotRes, reloadExtBot] = useResource<Bot | null>(
+    async () => (needsFetch && route.botId ? api<Bot>("GET", `/bots/${encodeURIComponent(route.botId)}`) : null),
+    [needsFetch, route.botId],
+  );
+  // Lo que acaba de confirmar la API (PATCH) se ve ya, sin esperar a recargar la lista.
+  const [patched, setPatched] = useState<Record<string, Partial<Bot>>>({});
+  const base: Bot | null = listed ?? (needsFetch && extBotRes.status === "ready" ? extBotRes.data : null) ?? null;
+  const selected: Bot | null = base ? { ...base, ...(patched[base.id] ?? {}) } : null;
+  const patchBot = (id: string, p: Partial<Bot>) => setPatched((cur) => ({ ...cur, [id]: { ...cur[id], ...p } }));
+  // El dueño es quien edita; la lista propia no trae `ownerId` en todos los dobles.
+  const isOwner = !!selected && (selected.ownerId === undefined || selected.ownerId === props.me.id);
   // Versión que el usuario está mirando. null = "la última" (se resuelve al cargar).
   const [focusRequest, setFocusRequest] = useState<number | null>(null);
   const [newName, setNewName] = useState("");
@@ -473,6 +547,64 @@ function BotsListPage(props: {
     reloadBuilds({ silent: true });
   }
 
+  // ------------------------------------------------- navegación y sección
+  const sectionHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const editorFocusPending = useRef(false);
+  const navMounted = useRef(false);
+  // Al cambiar de sección (o de bot) el foco va al encabezado de la sección, SIN
+  // desplazar la página (`preventScroll`): el lector de pantalla lo anuncia y el
+  // teclado sigue desde ahí. No en el primer montaje (no se roba el foco al entrar).
+  useEffect(() => {
+    if (!navMounted.current) {
+      navMounted.current = true;
+      return;
+    }
+    if (editorFocusPending.current) return;
+    sectionHeadingRef.current?.focus({ preventScroll: true });
+  }, [section, selected?.id]);
+  useEffect(() => {
+    if (!editorFocusPending.current || section !== "codigo") return;
+    if (!codeRef.current) return;
+    editorFocusPending.current = false;
+    codeRef.current.focus({ preventScroll: true });
+  });
+
+  /** Enlace interno: cambia el hash y la sección sin recargar ni desplazar. */
+  const navTo = (href: string) => (e: MouseEvent<HTMLAnchorElement>) => {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    go(href);
+  };
+  const openSection = (s: BotSection) => {
+    if (selected) go(botHref(selected.id, s));
+  };
+
+  // Versión que se mira en «Código» (visor) y comparación pedida.
+  const [codeVersion, setCodeVersion] = useState<number | null>(null);
+  const [diffAgainst, setDiffAgainst] = useState<number | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    setCodeVersion(null);
+    setDiffAgainst(null);
+    setNotice(null);
+  }, [selected?.id]);
+  const viewerVersion =
+    codeVersion ?? (versions && versions.length ? Math.max(...versions.map((v) => v.version)) : null);
+  const [filesRes] = useResource<FilesInfo | null>(
+    async () =>
+      selected && section === "codigo" && viewerVersion !== null
+        ? api<FilesInfo>("GET", `/bots/${selected.id}/versions/${viewerVersion}/files`)
+        : null,
+    [selected?.id, section === "codigo", viewerVersion],
+  );
+  const [diffRes] = useResource<DiffInfo | null>(
+    async () =>
+      selected && section === "codigo" && viewerVersion !== null && diffAgainst !== null
+        ? api<DiffInfo>("GET", `/bots/${selected.id}/versions/${viewerVersion}/diff?against=${diffAgainst}`)
+        : null,
+    [selected?.id, section === "codigo", viewerVersion, diffAgainst],
+  );
+
   // --------------------------------------------------------------- acciones
   async function onCreateBot(e: FormEvent) {
     e.preventDefault(); // Enter crea el bot (a11y R3.7)
@@ -491,10 +623,10 @@ function BotsListPage(props: {
       const created = await api<Bot>("POST", "/bots", { name: newName.trim() });
       setNewName("");
       reloadBots();
-      // El paso siguiente es su loadout: se abre el bot recién creado.
+      // El paso siguiente es su equipamiento: se abre el bot recién creado ahí.
       if (created?.id) {
-        setSelected(created);
         setFocusRequest(null);
+        go(botHref(created.id, "equipamiento"));
       }
     } catch (err) {
       setCreateErr(err ?? new Error("error desconocido"));
@@ -509,6 +641,15 @@ function BotsListPage(props: {
     setRuntime(next);
   }
 
+  /** Carga el código de una versión en el ÚNICO editor (la versión no cambia). */
+  function editFrom(v: BotVersion, content: string) {
+    setRuntime(v.runtime === "node" ? "node" : "python");
+    setPasted(content);
+    setEditingFrom(v.version);
+    editorFocusPending.current = true;
+    openSection("codigo");
+  }
+
   /** UX-02 · «Corregir»: carga el código de la versión rechazada en el editor. */
   async function loadCodeForFix(v: BotVersion) {
     if (!selected) return;
@@ -518,15 +659,12 @@ function BotsListPage(props: {
         "GET",
         `/bots/${selected.id}/versions/${v.version}/files`,
       );
-      const entry = f.files.find((x) => /(^|\/)(bot|main)\.(py|js|mjs)$/.test(x.path)) ?? f.files[0];
+      const entry = f.files.find((x) => MAIN_ENTRY.test(x.path)) ?? f.files[0];
       if (!entry) throw new Error("la versión no tiene ficheros de código");
-      setRuntime(v.runtime === "node" ? "node" : "python");
-      setPasted(entry.content);
-      setEditingFrom(v.version);
-      codeRef.current?.focus();
-      codeRef.current?.scrollIntoView?.({ block: "center" });
+      editFrom(v, entry.content);
     } catch (e) {
       setError(`No se pudo cargar el código de v${v.version}: ${(e as Error).message}`);
+      openSection("codigo");
     }
   }
 
@@ -565,6 +703,10 @@ function BotsListPage(props: {
       pollsRef.current = 0;
       setPollExhausted(false);
       reloadVersions({ silent: true });
+      // #255 · el paso siguiente (enviarla a validación) está en «Versiones y build»:
+      // se abre esa sección (una sola acción en un solo sitio, sin desplazar).
+      setNotice(created?.version ? `Creada v${created.version} (borrador). Envíala a validación.` : null);
+      openSection("versiones");
     } catch (e) {
       setError((e as Error).message);
     }
@@ -579,6 +721,7 @@ function BotsListPage(props: {
       pollsRef.current = 0;
       setPollExhausted(false);
       reconciledRef.current = "";
+      setNotice(null);
       reloadVersions({ silent: true });
       reloadBuilds({ silent: true });
     } catch (e) {
@@ -590,10 +733,37 @@ function BotsListPage(props: {
     if (!selected) return;
     setError("");
     try {
+      // El código NUNCA se hace público al publicar: eso se decide en «Visibilidad».
       await api("POST", `/bots/${selected.id}/versions/${v}/actions/publish`, { codePublic: false });
       setFocusRequest(v);
       reloadVersions({ silent: true });
-      reloadBots();
+      reloadBots({ silent: true });
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  /** DEV-A · copia exacta de una versión como borrador nuevo (sirve también para paquetes). */
+  async function cloneFrom(v: number) {
+    if (!selected) return;
+    setError("");
+    try {
+      const created = await api<BotVersion>("POST", `/bots/${selected.id}/versions/${v}/actions/clone`, {});
+      setNotice(`Creada v${created.version} (borrador) desde v${v}. v${v} no cambia.`);
+      setFocusRequest(created.version);
+      reloadVersions({ silent: true });
+    } catch (e) {
+      setError(`No se pudo crear la versión: ${errText(e)}`);
+    }
+  }
+
+  async function setRetired(bot: Bot, retired: boolean) {
+    setError("");
+    try {
+      const updated = await api<Bot>("PATCH", `/bots/${bot.id}`, { retired });
+      patchBot(bot.id, { retiredAt: updated?.retiredAt ?? (retired ? new Date().toISOString() : null) });
+      reloadBots({ silent: true });
+      if (needsFetch) reloadExtBot({ silent: true });
     } catch (e) {
       setError((e as Error).message);
     }
@@ -607,39 +777,635 @@ function BotsListPage(props: {
 
   const botItem = (b: Bot) => (
     <li key={b.id} data-testid={`bot-item-${b.id}`}>
-      <button
-        type="button"
-        className="link master-item"
+      <a
+        href={botHref(b.id, section)}
+        className="master-item"
         aria-current={selected?.id === b.id ? "true" : undefined}
-        onClick={() => {
-          setSelected(b);
+        onClick={(e) => {
           setFocusRequest(null);
+          navTo(botHref(b.id, selected ? section : "resumen"))(e);
         }}
       >
         {b.name}
-      </button>{" "}
-      <small>
+      </a>
+      <small className="master-item-meta">
         ({VISIBILITY_TEXT[b.visibility] ?? b.visibility}
         {b.latestPublishedVersion ? `, v${b.latestPublishedVersion} publicada` : ""})
-      </small>{" "}
-      <a href={`#/battles?bot=${encodeURIComponent(b.id)}`}>batallas</a>{" "}
-      <a href={`#/bots/${encodeURIComponent(b.id)}`} data-testid={`bot-detail-link-${b.id}`}>
-        detalle y versiones
-      </a>
+      </small>
     </li>
   );
 
-  async function setRetired(bot: Bot, retired: boolean) {
-    setError("");
-    try {
-      const updated = await api<Bot>("PATCH", `/bots/${bot.id}`, { retired });
-      setSelected((s) =>
-        s && s.id === bot.id ? { ...s, retiredAt: updated?.retiredAt ?? (retired ? "retirado" : null) } : s,
-      );
-      reloadBots();
-    } catch (e) {
-      setError((e as Error).message);
+  // ------------------------------------------------------------ secciones
+  function renderSection() {
+    if (!selected) return null;
+    switch (section) {
+      case "resumen":
+        return (
+          <ResourceView resource={versionsRes} label={`el detalle de ${selected.name}`} onRetry={reloadVersions}>
+            {(vs) => {
+              const eligible = versionInBattles(vs.filter((v) => isBattleEligible(v)));
+              return (
+                <>
+                  <dl data-testid="bot-overview">
+                    <dt>Visibilidad</dt>
+                    <dd data-testid="overview-visibility">
+                      {botVisibilityLabel(selected.visibility)} ·{" "}
+                      <a
+                        href={botHref(selected.id, "visibilidad")}
+                        onClick={navTo(botHref(selected.id, "visibilidad"))}
+                      >
+                        {isOwner ? "cambiar la del bot o la del código" : "ver detalle"}
+                      </a>
+                    </dd>
+                    <dt>En batallas</dt>
+                    <dd data-testid="in-battles">
+                      {eligible
+                        ? `Las batallas nuevas usan la v${eligible} (la publicada elegible más reciente). Una versión rechazada o en borrador nunca entra en batalla.`
+                        : "Ninguna versión publicada y elegible: este bot todavía no puede entrar en batallas."}
+                    </dd>
+                    <dt>Versiones</dt>
+                    <dd>
+                      {vs.length} ·{" "}
+                      <a href={botHref(selected.id, "versiones")} onClick={navTo(botHref(selected.id, "versiones"))}>
+                        ver versiones y build
+                      </a>
+                    </dd>
+                    {selected.createdAt && (
+                      <>
+                        <dt>Creado</dt>
+                        <dd>{when(selected.createdAt)}</dd>
+                      </>
+                    )}
+                    <dt>Estado</dt>
+                    <dd>{selected.retiredAt ? "retirado" : "activo"}</dd>
+                  </dl>
+                  {isOwner && (
+                    <p>
+                      <button
+                        type="button"
+                        data-testid="bot-retire"
+                        onClick={() => void setRetired(selected, !selected.retiredAt)}
+                      >
+                        {selected.retiredAt ? "Reactivar bot" : "Retirar bot"}
+                      </button>{" "}
+                      <small>
+                        {selected.retiredAt
+                          ? "Vuelve a la lista de activos."
+                          : "Lo pasa a «Retirados»: no borra versiones, batallas ni replays, ni cambia qué versión juega."}
+                      </small>
+                    </p>
+                  )}
+                </>
+              );
+            }}
+          </ResourceView>
+        );
+      case "visibilidad":
+        return (
+          <ResourceView resource={versionsRes} label={`el detalle de ${selected.name}`} onRetry={reloadVersions}>
+            {(vs) => (
+              <BotVisibilityCard
+                botId={selected.id}
+                visibility={selected.visibility}
+                hasTeam={!!selected.teamId}
+                versions={vs}
+                canEdit={isOwner}
+                onBotChanged={(visibility) => {
+                  patchBot(selected.id, { visibility });
+                  reloadBots({ silent: true });
+                  if (needsFetch) reloadExtBot({ silent: true });
+                }}
+                onCodeChanged={() => reloadVersions({ silent: true })}
+              />
+            )}
+          </ResourceView>
+        );
+      case "equipamiento":
+        return (
+          <ResourceView resource={detail} label={`el detalle de ${selected.name}`} onRetry={retryDetail}>
+            {(d) => {
+              const loadouts = d.b;
+              const current = loadouts.length > 0 ? loadouts[loadouts.length - 1] : undefined;
+              return (
+                <>
+                  {isOwner && (
+                    // key={bot.id}: al cambiar de bot el editor SE REMONTA con su revisión vigente.
+                    <LoadoutEditor
+                      key={selected.id}
+                      catalog={props.catalog}
+                      catalogVersion={current?.catalogVersion ?? props.catalogVersion}
+                      budgetCredits={props.budgetCredits}
+                      initial={
+                        current
+                          ? {
+                              catalogVersion: current.catalogVersion,
+                              chassis: current.chassis,
+                              modules: current.modules,
+                            }
+                          : undefined
+                      }
+                      loadedRevision={current?.revision}
+                      draftKey={`loadout:${selected.id}:r${current?.revision ?? 0}`}
+                      onSave={saveLoadout}
+                    />
+                  )}
+                  <details className="card" data-testid="loadout-history" open={!isOwner}>
+                    <summary>Historial de revisiones del equipamiento ({loadouts.length})</summary>
+                    {loadouts.length === 0 && <p>Sin revisiones de equipamiento.</p>}
+                    {[...loadouts].reverse().map((l) => (
+                      <div key={l.revision}>
+                        <h4>
+                          Revisión {l.revision} · {l.chassis}
+                        </h4>
+                        <p>
+                          Usada por:{" "}
+                          {d.a
+                            .filter((v) => v.loadoutRevision === l.revision)
+                            .map((v) => `v${v.version}`)
+                            .join(", ") || "ninguna versión"}
+                        </p>
+                        <ul>
+                          {l.modules.map((m) => (
+                            <li key={m.slot}>
+                              {slotName(m.slot)}{" "}
+                              <small>
+                                (<code>{m.slot}</code>)
+                              </small>
+                              : {m.moduleId}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </details>
+                </>
+              );
+            }}
+          </ResourceView>
+        );
+      case "codigo":
+        return (
+          <ResourceView resource={detail} label={`el detalle de ${selected.name}`} onRetry={retryDetail}>
+            {(d) => renderCode(d.a, d.b)}
+          </ResourceView>
+        );
+      case "versiones":
+        return (
+          <ResourceView resource={detail} label={`el detalle de ${selected.name}`} onRetry={retryDetail}>
+            {(d) => renderVersions(d.a)}
+          </ResourceView>
+        );
+      case "batallas":
+        return <BotBattlesSection botId={selected.id} botName={selected.name} />;
+      case "replays":
+        return <BotReplaysSection botId={selected.id} botName={selected.name} />;
     }
+  }
+
+  function renderCode(vs: BotVersion[], loadouts: Loadout[]) {
+    if (!selected) return null;
+    const current = loadouts.length > 0 ? loadouts[loadouts.length - 1] : undefined;
+    const nextVersion = vs.length ? Math.max(...vs.map((v) => v.version)) + 1 : 1;
+    const viewed = vs.find((v) => v.version === viewerVersion);
+    const files = filesRes.status === "ready" ? filesRes.data : null;
+    const editable = isWebEditable(files);
+    return (
+      <>
+        {isOwner && (
+          <div className="card" data-testid="code-editor">
+            <h4>Nueva versión</h4>
+            <label>
+              Runtime{" "}
+              <select
+                aria-label="runtime"
+                value={runtime}
+                onChange={(e) => changeRuntime(e.target.value === "node" ? "node" : "python")}
+              >
+                <option value="python">Python</option>
+                <option value="node">JavaScript (Node)</option>
+              </select>
+            </label>
+            <p className="muted" data-testid="hook-help">
+              {HOOK_HELP[runtime]}
+            </p>
+            {codeDraft.restored && !isUntouchedTemplate(pasted) && (
+              <p className="warn" role="status" data-testid="code-draft-restored">
+                Recuperado el código sin subir de esta sesión (aún no es ninguna versión).
+              </p>
+            )}
+            {editingFrom !== null && (
+              <p className="warn" data-testid="editing-from">
+                Editando el código de v{editingFrom}: al subirlo se crea la v{nextVersion}; v{editingFrom} no cambia.
+              </p>
+            )}
+            <p>
+              <label>
+                Código{" "}
+                <textarea
+                  ref={codeRef}
+                  className="code-editor"
+                  aria-label="codigo"
+                  rows={16}
+                  cols={80}
+                  spellCheck={false}
+                  value={pasted}
+                  onChange={(e) => setPasted(e.target.value)}
+                />
+              </label>
+            </p>
+            <button
+              type="button"
+              data-testid="reset-template"
+              onClick={() => {
+                setPasted(BOT_TEMPLATES[runtime]);
+                setEditingFrom(null);
+                codeDraft.clear();
+              }}
+            >
+              Restaurar la plantilla de {runtime === "node" ? "JavaScript" : "Python"}
+            </button>{" "}
+            <button type="button" disabled={!current} onClick={() => current && uploadPasted(current.revision)}>
+              Subir como versión nueva
+            </button>
+            {current && (
+              <small data-testid="upload-target">
+                {" "}
+                Se creará la v{nextVersion} con la revisión {current.revision} del equipamiento (borrador: después pulsa
+                «Enviar a validación» en «Versiones y build»).
+              </small>
+            )}
+            {!current && (
+              <p className="warn">
+                Guarda antes una configuración en{" "}
+                <a href={botHref(selected.id, "equipamiento")} onClick={navTo(botHref(selected.id, "equipamiento"))}>
+                  Equipamiento
+                </a>{" "}
+                para poder subir código.
+              </p>
+            )}
+            {error && (
+              <p className="error" role="alert">
+                {error}
+              </p>
+            )}
+          </div>
+        )}
+
+        <div className="card" data-testid="code-viewer">
+          <h4>Código de una versión</h4>
+          {vs.length === 0 ? (
+            <p>Este bot todavía no tiene versiones.</p>
+          ) : (
+            <>
+              <p>
+                <label>
+                  Versión{" "}
+                  <select
+                    aria-label="version-codigo"
+                    value={viewerVersion ?? ""}
+                    onChange={(e) => {
+                      setCodeVersion(Number(e.target.value));
+                      setDiffAgainst(null);
+                    }}
+                  >
+                    {[...vs].reverse().map((v) => (
+                      <option key={v.version} value={v.version}>
+                        v{v.version} · {v.state}
+                      </option>
+                    ))}
+                  </select>
+                </label>{" "}
+                {vs.length > 1 && viewerVersion !== null && (
+                  <label>
+                    Comparar con{" "}
+                    <select
+                      aria-label="diff-contra"
+                      value={diffAgainst ?? ""}
+                      onChange={(e) => setDiffAgainst(e.target.value === "" ? null : Number(e.target.value))}
+                    >
+                      <option value="">— sin comparar —</option>
+                      {vs
+                        .filter((x) => x.version !== viewerVersion)
+                        .map((x) => (
+                          <option key={x.version} value={x.version}>
+                            v{x.version}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                )}
+              </p>
+              {filesRes.status === "loading" && <p role="status">Cargando código…</p>}
+              {filesRes.status === "error" && <p role="alert">{errText(filesRes.error ?? filesRes.message)}</p>}
+              {files &&
+                files.files.map((f) => (
+                  <details key={f.path} open={MAIN_ENTRY.test(f.path)}>
+                    <summary>{f.path}</summary>
+                    <pre data-testid={`file-${f.path}`}>{f.content}</pre>
+                  </details>
+                ))}
+              {files && isOwner && !editable && (
+                <p className="warn" role="note" data-testid="multi-file-locked">
+                  v{viewerVersion} se subió como paquete ({files.files.length} ficheros). El editor web sólo guarda un
+                  fichero y perdería el resto, así que no se puede editar aquí: sube el paquete completo por la API, o
+                  usa «Nueva versión desde ésta» en «Versiones y build» para clonarla tal cual.
+                </p>
+              )}
+              {files && isOwner && editable && viewed && (
+                <button
+                  type="button"
+                  data-testid="edit-as-new"
+                  onClick={() => {
+                    const entry = files.files.find((x) => MAIN_ENTRY.test(x.path)) ?? files.files[0];
+                    if (entry) editFrom(viewed, entry.content);
+                  }}
+                >
+                  Editar en una versión nueva desde v{viewerVersion}
+                </button>
+              )}
+              {diffAgainst !== null && (
+                <div data-testid="diff-view">
+                  <h4>
+                    Diferencias v{diffAgainst} → v{viewerVersion}
+                  </h4>
+                  {diffRes.status === "loading" && <p role="status">Calculando diferencias…</p>}
+                  {diffRes.status === "error" && <p role="alert">{errText(diffRes.error ?? diffRes.message)}</p>}
+                  {diffRes.status === "ready" &&
+                    diffRes.data &&
+                    diffRes.data.files
+                      .filter((f) => f.status !== "unchanged")
+                      .map((f) => (
+                        <div key={f.path}>
+                          <h5>
+                            {f.path} · {f.status} (+{f.additions} −{f.deletions})
+                          </h5>
+                          <pre data-testid={`diff-${f.path}`}>{f.diff}</pre>
+                        </div>
+                      ))}
+                  {diffRes.status === "ready" &&
+                    diffRes.data &&
+                    diffRes.data.files.every((f) => f.status === "unchanged") && <p>Sin diferencias de código.</p>}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </>
+    );
+  }
+
+  function renderVersions(vs: BotVersion[]) {
+    if (!selected) return null;
+    const build = builds && builds.known && builds.list.length > 0 ? builds.list[0] : undefined;
+    const buildFinished = !!build && !isBuildInProgress(build.status);
+    // issue #95 (obs. 1 del re-supervisor) · `!!builds` de guarda dejaba un
+    // hueco: si la PRIMERA lectura no vuelve nunca, `builds` es null para
+    // siempre y el usuario no veía ni «desconocido» ni error — solo un
+    // «Consultando…» eterno, que es la mentira que B11 persigue. Si el sondeo
+    // se rindió, se dice, haya llegado o no una primera lectura.
+    const unknownPipeline =
+      (!!builds && (!builds.known || (pollExhausted && !!build && !buildFinished))) || (!builds && pollExhausted);
+    const focusedRejection = rejectionToShow(focused);
+    const inBattles = versionInBattles(vs.filter((v) => isBattleEligible(v)));
+    const diagnosis = focused
+      ? diagnoseBuild({ state: focused.state, rejectionReason: focused.rejectionReason, stages: build?.stages })
+      : null;
+    return (
+      <>
+        {notice && (
+          <p role="status" className="ok" data-testid="bot-notice">
+            {notice}
+          </p>
+        )}
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
+        {/* B11 · Resumen de LA versión que el usuario está mirando. */}
+        {focused && (
+          <div className="card" data-testid="focused-version">
+            <h4>
+              Mirando v{focused.version} · {focused.state}
+            </h4>
+            {/* UX-R · LiveStatus: se anuncia sin mover el foco y marca aria-busy mientras valida. */}
+            <LiveStatus busy={focused.state === "validating"} data-testid="focused-status">
+              {focused.state === "validating"
+                ? "Validación en curso…"
+                : pendingActionFor(focused.state) || "sin acciones pendientes"}
+            </LiveStatus>
+            {focusedRejection && (
+              <p className="error" data-testid="focused-rejection">
+                Motivo del rechazo de v{focused.version}: {focusedRejection}
+              </p>
+            )}
+            {versionsStale && (
+              <p className="warn" data-testid="versions-stale">
+                No se ha podido actualizar el estado: lo que ves puede estar desfasado.
+              </p>
+            )}
+            <button type="button" onClick={refreshNow}>
+              Actualizar estado
+            </button>
+          </div>
+        )}
+        {focused && diagnosis && (
+          <BuildDiagnosisView
+            diagnosis={diagnosis}
+            version={focused.version}
+            publishedVersion={inBattles}
+            {...(isOwner
+              ? { onFix: () => void loadCodeForFix(focused), onRetry: () => void submitVersion(focused.version) }
+              : {})}
+          />
+        )}
+
+        <div className="card table-wide" data-testid="versions-card">
+          <h4>Versiones de {selected.name}</h4>
+          {vs.length === 0 && (
+            <p>
+              Todavía no hay versiones: sube código en{" "}
+              <a href={botHref(selected.id, "codigo")} onClick={navTo(botHref(selected.id, "codigo"))}>
+                Código
+              </a>
+              .
+            </p>
+          )}
+          {vs.length > 0 && (
+            <div className="table-scroll">
+              <table className="stack-table stack-table--wide">
+                <thead>
+                  <tr>
+                    <th>Versión</th>
+                    <th>Estado</th>
+                    <th>Runtime</th>
+                    <th>Código</th>
+                    <th>Motivo</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...vs].reverse().map((v) => (
+                    <tr key={v.version} data-testid={`version-row-${v.version}`}>
+                      <td>
+                        v{v.version}
+                        {v.parentVersion ? ` (desde v${v.parentVersion})` : ""}
+                        {v.version === focusedVersion ? " ◀ mirando" : ""}
+                        {v.version === inBattles && (
+                          <strong className="ok" data-testid={`in-battles-${v.version}`}>
+                            {" "}
+                            · en batallas
+                          </strong>
+                        )}
+                      </td>
+                      <td>
+                        {v.state}
+                        {v.state === "draft" && <strong className="warn"> · SIN ENVIAR</strong>}
+                        {pendingActionFor(v.state) && <small> · {pendingActionFor(v.state)}</small>}
+                        {v.createdAt && (
+                          <>
+                            <br />
+                            <small className="muted">{when(v.createdAt)}</small>
+                          </>
+                        )}
+                        <VersionEligibilityNote
+                          version={v.version}
+                          be={v.battleEligibility}
+                          suggestVersion={inBattles}
+                        />
+                      </td>
+                      <td>{v.runtime}</td>
+                      {/* Sólo se MUESTRA: se cambia en «Visibilidad» (una sola fuente de verdad). */}
+                      <td data-testid={`code-cell-${v.version}`}>{v.codePublic ? "público" : "privado"}</td>
+                      <td>{rejectionToShow(v) && <span className="error">{rejectionToShow(v)}</span>}</td>
+                      <td>
+                        {isOwner && (v.state === "draft" || v.state === "rejected") && (
+                          <button type="button" onClick={() => submitVersion(v.version)}>
+                            {v.state === "draft" ? `Enviar a validación v${v.version}` : `Reenviar v${v.version}`}
+                          </button>
+                        )}
+                        {isOwner && v.state === "validated" && (
+                          <button type="button" onClick={() => publishVersion(v.version)}>
+                            Publicar v{v.version}
+                          </button>
+                        )}
+                        {v.version !== focusedVersion && (
+                          <button type="button" onClick={() => setFocusRequest(v.version)}>
+                            Ver v{v.version}
+                          </button>
+                        )}{" "}
+                        <button
+                          type="button"
+                          className="link"
+                          data-testid={`view-code-${v.version}`}
+                          onClick={() => {
+                            setCodeVersion(v.version);
+                            setDiffAgainst(null);
+                            openSection("codigo");
+                          }}
+                        >
+                          Ver código
+                        </button>{" "}
+                        {isOwner && (
+                          <button
+                            type="button"
+                            className="link"
+                            data-testid={`clone-${v.version}`}
+                            onClick={() => void cloneFrom(v.version)}
+                          >
+                            Nueva versión desde ésta
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* B11 · Pipeline SIEMPRE rotulado con su versión y leído del servidor. */}
+        {focusedVersion !== undefined && (
+          <div className="card" data-testid="build-result">
+            <h4>
+              Pipeline de build · v{focusedVersion} ·{" "}
+              {!builds
+                ? "consultando…"
+                : unknownPipeline
+                  ? "estado desconocido"
+                  : !build
+                    ? "sin enviar a validación"
+                    : build.status}
+            </h4>
+            {!builds && !unknownPipeline ? (
+              // Aún no ha llegado la respuesta: no se sabe, y tampoco se
+              // afirma "sin enviar" ni se pinta ninguna etapa. Ojo al orden:
+              // si el sondeo ya se rindió, manda «desconocido».
+              <p role="status" aria-live="polite">
+                Consultando el estado del pipeline…
+              </p>
+            ) : unknownPipeline ? (
+              // Sin resultado fiable NO se pinta ni una etapa.
+              <p className="warn" data-testid="pipeline-unknown">
+                {builds && !builds.known
+                  ? "No se ha podido leer el estado del pipeline: estado desconocido. No se muestra un resultado inventado."
+                  : pollStop === "wait"
+                    ? // Rendirse esperando NO es haber comprobado N veces.
+                      `El servidor no respondió a la última consulta en ${Math.round(maxPollWaitMs / 1000) || 1} s: estado desconocido. Pulsa «Actualizar estado» para volver a intentarlo.`
+                    : `El pipeline sigue sin dar un resultado tras ${maxPolls} comprobaciones: estado desconocido. Pulsa «Actualizar estado» para volver a intentarlo.`}
+              </p>
+            ) : !build ? (
+              <p className="warn">Esta versión todavía no se ha enviado a validación.</p>
+            ) : (
+              <>
+                {!buildFinished && (
+                  <LiveStatus busy data-testid="pipeline-running">
+                    En curso: comprobando cada {Math.round(pollIntervalMs / 1000) || 1} s…
+                  </LiveStatus>
+                )}
+                <table className="stack-table">
+                  <tbody>
+                    {build.stages.map((s) => (
+                      <tr key={s.name}>
+                        <td>{s.name}</td>
+                        <td className={s.status === "passed" ? "ok" : s.status === "failed" ? "error" : "warn"}>
+                          {s.status}
+                        </td>
+                        <td>
+                          {s.message ?? ""}
+                          {s.metrics && (
+                            <small>
+                              {" "}
+                              (
+                              {Object.entries(s.metrics)
+                                .map(([k, val]) => `${k}=${Math.round(val * 10) / 10}`)
+                                .join(", ")}
+                              )
+                            </small>
+                          )}
+                          {s.logs && s.logs.length > 0 && (
+                            <details>
+                              <summary>logs</summary>
+                              <pre>{s.logs.join("\n")}</pre>
+                            </details>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {build.artifactHash && (
+                  <p>
+                    <small title={build.artifactHash}>Artefacto firmado: {short(build.artifactHash)}</small>
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </>
+    );
   }
 
   return (
@@ -649,14 +1415,15 @@ function BotsListPage(props: {
         <ResourceView resource={botsRes} label="tus bots" onRetry={reloadBots}>
           {(page) => {
             if (page.items.length === 0) return <p>Aún no tienes bots: crea el primero abajo.</p>;
+            const items = page.items.map((b) => ({ ...b, ...(patched[b.id] ?? {}) }));
             // EQ4 · los retirados no saturan la lista principal (y no se borra nada).
-            const active = page.items.filter((b) => !b.retiredAt);
-            const retired = page.items.filter((b) => !!b.retiredAt);
+            const active = items.filter((b) => !b.retiredAt);
+            const retired = items.filter((b) => !!b.retiredAt);
             // Contadores del SERVIDOR (todos tus bots); si no los da, los de lo cargado.
             const nActive = page.counts?.active ?? active.length;
             const nRetired = page.counts?.retired ?? retired.length;
             return (
-              <>
+              <nav aria-label="tus bots">
                 <h3 id="bots-active-title">Activos ({nActive})</h3>
                 {active.length === 0 ? (
                   nActive === 0 && <p data-testid="bots-active-empty">Todos tus bots están retirados.</p>
@@ -688,7 +1455,7 @@ function BotsListPage(props: {
                     </small>
                   </p>
                 )}
-              </>
+              </nav>
             );
           }}
         </ResourceView>
@@ -705,326 +1472,72 @@ function BotsListPage(props: {
       </div>
 
       <div className="master-pane" data-testid="bot-pane">
-        {!selected && (
+        {!route.botId && (
           <div className="card" data-testid="bot-pane-empty">
-            <p>Elige un bot de la lista para ver su resumen, loadout, código y versiones, build, batallas y replays.</p>
+            <p>
+              Elige un bot de la lista para ver su resumen, visibilidad, equipamiento, código, versiones y build,
+              batallas y replays.
+            </p>
           </div>
         )}
-        {selected && (
-          <div className="card" data-testid="bot-summary" aria-label={`resumen de ${selected.name}`} role="region">
-            <h2>{selected.name}</h2>
+        {route.botId && !selected && (
+          <div className="card" data-testid="bot-pane-missing">
+            {!needsFetch || extBotRes.status === "loading" ? (
+              <p role="status">Cargando el bot…</p>
+            ) : (
+              <ResourceView resource={extBotRes} label="el bot" onRetry={reloadExtBot}>
+                {() => <p>Este bot no existe o no es visible para ti.</p>}
+              </ResourceView>
+            )}
             <p>
-              {VISIBILITY_TEXT[selected.visibility] ?? selected.visibility}
-              {selected.latestPublishedVersion
-                ? ` · las batallas nuevas usan la v${selected.latestPublishedVersion}`
-                : " · sin versión publicada"}
-              {selected.retiredAt ? " · retirado" : ""}
-            </p>
-            <nav aria-label={`secciones de ${selected.name}`} className="subnav">
-              <span className="subnav-title" aria-hidden="true">
-                Resumen
-              </span>
-              {BOT_SECTIONS.map(([id, label]) => (
-                <button key={id} type="button" className="link" onClick={() => scrollToSection(id)}>
-                  {label}
-                </button>
-              ))}
-              <a href={`#/battles?bot=${encodeURIComponent(selected.id)}`} data-testid="bot-battles-link">
-                Batallas
+              <a href="#/bots" onClick={navTo("#/bots")}>
+                ← Mis bots
               </a>
-              <a href={`#/replays?bot=${encodeURIComponent(selected.id)}`} data-testid="bot-replays-link">
-                Replays
-              </a>
-            </nav>
-            <p>
-              <button
-                type="button"
-                data-testid="bot-retire"
-                onClick={() => void setRetired(selected, !selected.retiredAt)}
-              >
-                {selected.retiredAt ? "Reactivar bot" : "Retirar bot"}
-              </button>{" "}
-              <small>
-                {selected.retiredAt
-                  ? "Vuelve a la lista de activos."
-                  : "Lo pasa a «Retirados»: no borra versiones, batallas ni replays, ni cambia qué versión juega."}
-              </small>
             </p>
           </div>
         )}
         {selected && (
-          <ResourceView resource={detail} label={`el detalle de ${selected.name}`} onRetry={retryDetail}>
-            {(d) => {
-              const loadouts = d.b;
-              const current = loadouts.length > 0 ? loadouts[loadouts.length - 1] : undefined;
-              const build = builds && builds.known && builds.list.length > 0 ? builds.list[0] : undefined;
-              const buildFinished = !!build && !isBuildInProgress(build.status);
-              // issue #95 (obs. 1 del re-supervisor) · `!!builds` de guarda dejaba un
-              // hueco: si la PRIMERA lectura no vuelve nunca, `builds` es null para
-              // siempre y el usuario no veía ni «desconocido» ni error — solo un
-              // «Consultando…» eterno, que es la mentira que B11 persigue. Si el sondeo
-              // se rindió, se dice, haya llegado o no una primera lectura.
-              const unknownPipeline =
-                (!!builds && (!builds.known || (pollExhausted && !!build && !buildFinished))) ||
-                (!builds && pollExhausted);
-              const focusedRejection = rejectionToShow(focused);
-              const inBattles = versionInBattles(d.a);
-              const nextVersion = d.a.length ? Math.max(...d.a.map((v) => v.version)) + 1 : 1;
-              const diagnosis = focused
-                ? diagnoseBuild({
-                    state: focused.state,
-                    rejectionReason: focused.rejectionReason,
-                    stages: build?.stages,
-                  })
-                : null;
-              return (
-                <>
-                  {/* key={bot.id}: al cambiar de bot el editor SE REMONTA con su revisión vigente. */}
-                  <div id="bot-sec-loadout">
-                    <LoadoutEditor
-                      key={selected.id}
-                      catalog={props.catalog}
-                      catalogVersion={current?.catalogVersion ?? props.catalogVersion}
-                      budgetCredits={props.budgetCredits}
-                      initial={
-                        current
-                          ? {
-                              catalogVersion: current.catalogVersion,
-                              chassis: current.chassis,
-                              modules: current.modules,
-                            }
-                          : undefined
-                      }
-                      loadedRevision={current?.revision}
-                      draftKey={`loadout:${selected.id}:r${current?.revision ?? 0}`}
-                      onSave={saveLoadout}
-                    />
-                  </div>
-
-                  {/* B11 · Resumen de LA versión que el usuario está mirando. */}
-                  {focused && (
-                    <div className="card" data-testid="focused-version">
-                      <h2>
-                        Última subida: v{focused.version} · {focused.state}
-                      </h2>
-                      {/* UX-R · LiveStatus: se anuncia sin mover el foco y marca aria-busy mientras valida. */}
-                      <LiveStatus busy={focused.state === "validating"} data-testid="focused-status">
-                        {focused.state === "validating"
-                          ? "Validación en curso…"
-                          : pendingActionFor(focused.state) || "sin acciones pendientes"}
-                      </LiveStatus>
-                      {focusedRejection && (
-                        <p className="error" data-testid="focused-rejection">
-                          Motivo del rechazo de v{focused.version}: {focusedRejection}
-                        </p>
-                      )}
-                      <p data-testid="in-battles">
-                        {inBattles
-                          ? `Las batallas nuevas usan la v${inBattles} (la publicada más reciente).`
-                          : "Ninguna versión publicada: este bot todavía no puede entrar en batallas."}
-                      </p>
-                      {versionsStale && (
-                        <p className="warn" data-testid="versions-stale">
-                          No se ha podido actualizar el estado: lo que ves puede estar desfasado.
-                        </p>
-                      )}
-                      <button type="button" onClick={refreshNow}>
-                        Actualizar estado
-                      </button>
-                    </div>
-                  )}
-                  {focused && diagnosis && (
-                    <BuildDiagnosisView
-                      diagnosis={diagnosis}
-                      version={focused.version}
-                      publishedVersion={inBattles}
-                      onFix={() => void loadCodeForFix(focused)}
-                      onRetry={() => void submitVersion(focused.version)}
-                    />
-                  )}
-
-                  <div className="card" id="bot-sec-code">
-                    <h2>Versiones de {selected.name}</h2>
-                    <table className="stack-table stack-table--wide">
-                      <tbody>
-                        {d.a.map((v) => (
-                          <tr key={v.version} data-testid={`version-row-${v.version}`}>
-                            <td>
-                              v{v.version}
-                              {v.version === focusedVersion ? " ◀ mirando" : ""}
-                              {v.version === inBattles && (
-                                <strong className="ok" data-testid={`in-battles-${v.version}`}>
-                                  {" "}
-                                  · en batallas
-                                </strong>
-                              )}
-                            </td>
-                            <td>
-                              {v.state}
-                              {v.state === "draft" && <strong className="warn"> · SIN ENVIAR</strong>}
-                            </td>
-                            <td>{v.runtime}</td>
-                            <td>{rejectionToShow(v) && <span className="error">{rejectionToShow(v)}</span>}</td>
-                            <td>{pendingActionFor(v.state)}</td>
-                            <td>
-                              {(v.state === "draft" || v.state === "rejected") && (
-                                <button type="button" onClick={() => submitVersion(v.version)}>
-                                  {v.state === "draft" ? `Enviar a validación v${v.version}` : `Reenviar v${v.version}`}
-                                </button>
-                              )}
-                              {v.state === "validated" && (
-                                <button type="button" onClick={() => publishVersion(v.version)}>
-                                  Publicar v{v.version}
-                                </button>
-                              )}
-                              {v.version !== focusedVersion && (
-                                <button type="button" onClick={() => setFocusRequest(v.version)}>
-                                  Ver v{v.version}
-                                </button>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    <h3>Subir código (pegado)</h3>
-                    <label>
-                      Runtime{" "}
-                      <select
-                        aria-label="runtime"
-                        value={runtime}
-                        onChange={(e) => changeRuntime(e.target.value === "node" ? "node" : "python")}
+          <div className="card bot-workspace" data-testid="bot-workspace">
+            <header className="bot-head" data-testid="bot-summary">
+              <h2>{selected.name}</h2>
+              {selected.retiredAt && <small className="warn"> retirado</small>}
+              {!isOwner && <small className="muted"> · bot de otra persona: sólo lectura</small>}
+            </header>
+            <div className="bot-sections">
+              <nav aria-label={`secciones de ${selected.name}`} className="section-nav" data-testid="bot-section-nav">
+                <ul>
+                  {BOT_PANEL_SECTIONS.map((s) => (
+                    <li key={s.id}>
+                      <a
+                        href={botHref(selected.id, s.id)}
+                        aria-current={section === s.id ? "page" : undefined}
+                        data-testid={`bot-section-link-${s.id}`}
+                        onClick={navTo(botHref(selected.id, s.id))}
                       >
-                        <option value="python">Python</option>
-                        <option value="node">JavaScript (Node)</option>
-                      </select>
-                    </label>
-                    <p className="muted" data-testid="hook-help">
-                      {HOOK_HELP[runtime]}
-                    </p>
-                    {codeDraft.restored && !isUntouchedTemplate(pasted) && (
-                      <p className="warn" role="status" data-testid="code-draft-restored">
-                        Recuperado el código sin subir de esta sesión (aún no es ninguna versión).
-                      </p>
-                    )}
-                    {editingFrom !== null && (
-                      <p className="warn" data-testid="editing-from">
-                        Editando el código de v{editingFrom}: al subirlo se crea la v{nextVersion}; v{editingFrom} no
-                        cambia.
-                      </p>
-                    )}
-                    <p>
-                      <label>
-                        Código{" "}
-                        <textarea
-                          ref={codeRef}
-                          aria-label="codigo"
-                          rows={16}
-                          cols={80}
-                          spellCheck={false}
-                          value={pasted}
-                          onChange={(e) => setPasted(e.target.value)}
-                        />
-                      </label>
-                    </p>
-                    <button
-                      type="button"
-                      data-testid="reset-template"
-                      onClick={() => {
-                        setPasted(BOT_TEMPLATES[runtime]);
-                        setEditingFrom(null);
-                        codeDraft.clear();
-                      }}
-                    >
-                      Restaurar la plantilla de {runtime === "node" ? "JavaScript" : "Python"}
-                    </button>{" "}
-                    <button type="button" disabled={!current} onClick={() => current && uploadPasted(current.revision)}>
-                      Subir como versión nueva
-                    </button>
-                    {current && (
-                      <small data-testid="upload-target">
-                        {" "}
-                        Se creará la v{nextVersion} con la revisión {current.revision} del loadout (borrador: después
-                        pulsa «Enviar a validación»).
-                      </small>
-                    )}
-                    {!current && (
-                      <p className="warn">Guarda antes una configuración (loadout) para poder subir código.</p>
-                    )}
-                    {error && (
-                      <p className="error" role="alert">
-                        {error}
-                      </p>
-                    )}
-                  </div>
-
-                  {/* B11 · Pipeline SIEMPRE rotulado con su versión y leído del servidor. */}
-                  {focusedVersion !== undefined && (
-                    <div className="card" data-testid="build-result" id="bot-sec-build">
-                      <h3>
-                        Pipeline de build · v{focusedVersion} ·{" "}
-                        {!builds
-                          ? "consultando…"
-                          : unknownPipeline
-                            ? "estado desconocido"
-                            : !build
-                              ? "sin enviar a validación"
-                              : build.status}
-                      </h3>
-                      {!builds && !unknownPipeline ? (
-                        // Aún no ha llegado la respuesta: no se sabe, y tampoco se
-                        // afirma "sin enviar" ni se pinta ninguna etapa. Ojo al orden:
-                        // si el sondeo ya se rindió, manda «desconocido» — quedarse en
-                        // «Consultando…» para siempre sería la mentira de B11.
-                        <p role="status" aria-live="polite">
-                          Consultando el estado del pipeline…
-                        </p>
-                      ) : unknownPipeline ? (
-                        // Sin resultado fiable NO se pinta ni una etapa: una tabla de
-                        // `pending` bajo "estado desconocido" es justo la foto que hizo
-                        // creer al usuario que su subida seguía en cola.
-                        <p className="warn" data-testid="pipeline-unknown">
-                          {builds && !builds.known
-                            ? "No se ha podido leer el estado del pipeline: estado desconocido. No se muestra un resultado inventado."
-                            : pollStop === "wait"
-                              ? // Rendirse esperando NO es haber comprobado N veces: decirlo
-                                // así era contarle al usuario comprobaciones que no se
-                                // hicieron (defecto 1 del re-supervisor).
-                                `El servidor no respondió a la última consulta en ${Math.round(maxPollWaitMs / 1000) || 1} s: estado desconocido. Pulsa «Actualizar estado» para volver a intentarlo.`
-                              : `El pipeline sigue sin dar un resultado tras ${maxPolls} comprobaciones: estado desconocido. Pulsa «Actualizar estado» para volver a intentarlo.`}
-                        </p>
-                      ) : !build ? (
-                        <p className="warn">Esta versión todavía no se ha enviado a validación.</p>
-                      ) : (
-                        <>
-                          {!buildFinished && (
-                            <LiveStatus busy data-testid="pipeline-running">
-                              En curso: comprobando cada {Math.round(pollIntervalMs / 1000) || 1} s…
-                            </LiveStatus>
-                          )}
-                          <table className="stack-table">
-                            <tbody>
-                              {build.stages.map((s) => (
-                                <tr key={s.name}>
-                                  <td>{s.name}</td>
-                                  <td
-                                    className={s.status === "passed" ? "ok" : s.status === "failed" ? "error" : "warn"}
-                                  >
-                                    {s.status}
-                                  </td>
-                                  <td>{s.message ?? ""}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </>
-                      )}
-                    </div>
-                  )}
-                </>
-              );
-            }}
-          </ResourceView>
+                        {s.label}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </nav>
+              <section
+                className="bot-section"
+                data-testid="bot-section"
+                data-section={section}
+                aria-labelledby="bot-section-heading"
+              >
+                <h3 id="bot-section-heading" ref={sectionHeadingRef} tabIndex={-1}>
+                  {sectionLabel(section)}
+                </h3>
+                {renderSection()}
+                {error && section !== "codigo" && section !== "versiones" && (
+                  <p className="error" role="alert">
+                    {error}
+                  </p>
+                )}
+              </section>
+            </div>
+          </div>
         )}
       </div>
     </div>
