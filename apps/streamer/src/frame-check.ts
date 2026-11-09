@@ -12,9 +12,12 @@
  *     gris de un compositor sin pintar…);
  *   - si no, VISIBLE.
  *
- * Calibración (ver docs/streaming-runbook.md §#256): la pantalla de una batalla
- * en directo y la pantalla final de /broadcast dan desviaciones > 15; un frame
- * blanco o negro de Xvfb da 0. Los umbrales dejan margen a ambos lados.
+ * Calibración MEDIDA con la imagen real del streamer (docs/operations/streaming.md, #256):
+ *   - batalla en directo en /broadcast: media ≈25, desviación ≈12.7;
+ *   - pantalla final de /broadcast (sólo DOM): media ≈21-23, desviación ≈11.2-11.4;
+ *   - ventana de Chromium sin pintar (el blanco de YouTube): media 254.6, desviación 3.1;
+ *   - Xvfb vacío: media 1, desviación 0.1; fondo del escenario sin texto: 19 / 0.1.
+ * Ninguna pantalla útil baja de desviación 11; blanco y uniforme quedan por debajo de 3.2.
  *
  * La extracción de luma usa ffmpeg (lo hay en la imagen del streamer, en la CI y
  * en la máquina de pruebas); el cálculo es puro y se prueba sin ffmpeg.

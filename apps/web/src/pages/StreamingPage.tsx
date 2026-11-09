@@ -389,6 +389,16 @@ export function destinationText(d: Destination, now = Date.now()): string {
   return [d.label, st, when].filter(Boolean).join(" · ") + (d.broadcastable ? "" : " · No retransmisible");
 }
 
+/**
+ * #256 · REPLAY_STREAMING_SUPPORTED = NO. Una batalla TERMINADA no se vuelve a jugar en la
+ * emisión: /broadcast sólo muestra su pantalla final (marcador y participantes). Se dice
+ * claramente antes de emitir, para que nadie espere ver la partida.
+ */
+export function finishedBattleNotice(d: Pick<Destination, "kind" | "status">): string | null {
+  if (d.kind !== "battle" || d.status !== "finished") return null;
+  return "Esta batalla ya terminó: la emisión mostrará sólo su pantalla final con el resultado. La repetición no se retransmite.";
+}
+
 /** §6 · Explicación humana de si un destino se puede retransmitir. */
 export function eligibilityText(
   d: Pick<Destination, "kind" | "broadcastable" | "broadcastBlockedReason" | "tournamentBroadcast">,
@@ -866,6 +876,11 @@ function ReadyView(props: {
           >
             {eligibilityText(dest)}
           </p>
+          {finishedBattleNotice(dest) && (
+            <p data-testid="stream-target-finished" className="warn" role="status">
+              {finishedBattleNotice(dest)}
+            </p>
+          )}
           <TechDetails testId="simple-target-tech">
             <p>
               {dest.kind} <code data-testid="simple-target-id">{dest.id}</code>
