@@ -24,6 +24,10 @@ import { publicSpectateEnabledFromEnv } from "../public-spectate.js";
 import { publicReplaysEnabledFromEnv } from "../public-replays.js";
 import { assertTeamsFitMap, checkBattleContent } from "./catalog.js";
 import { wherePublicReplay } from "../replay-access.js";
+import { projectReplayDocument } from "../replay-projection.js";
+import { viewerMetaOf } from "./replays.js";
+import { fromJsonl } from "../../../arena-engine/src/replay.js";
+import { decompress, sha256 } from "../../../replay-service/src/format.js";
 import {
   canSeeBotDiagnostics,
   getReadableBattleOr404,
@@ -540,17 +544,19 @@ export function battleRoutes(
       if (!publicReplaysEnabled) throw notFound();
       const battleId = pathParam(req, "battleId");
       const battle = await getFinishedBattleWithReplayOr404(db, battleId);
-      let bytes: Buffer;
+      // PRE-1 · NUNCA el fichero crudo (semilla + comandos + loadouts permiten
+      // re-simular y revelan radio, minas y equipamiento): la PROYECCIÓN pública de
+      // competición (replay-projection.ts), igual para todos los visitantes.
+      let doc: Record<string, unknown>;
       try {
-        bytes = await readFile(battle.replay_ref as string);
+        const bytes = await readFile(battle.replay_ref as string);
+        const replay = fromJsonl(decompress(bytes).toString("utf8"));
+        const meta = await viewerMetaOf(db, battle, sha256(bytes));
+        doc = projectReplayDocument(replay, meta);
       } catch {
         throw notFound("Replay no disponible");
       }
-      res
-        .status(200)
-        .setHeader("Content-Type", "application/octet-stream")
-        .setHeader("Cache-Control", "public, max-age=3600, immutable")
-        .send(bytes);
+      res.status(200).setHeader("Cache-Control", "public, max-age=3600, immutable").json(doc);
     },
     (req, res, next) => anonQuota(db, "public-replay-download", quota)(req, res, next),
   );

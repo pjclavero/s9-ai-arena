@@ -1185,17 +1185,33 @@ paths:
       tags: [battles]
       operationId: downloadPublicReplay
       summary: >-
-        R11 · Descarga del archivo de replay de una batalla FINALIZADA, sin
-        cuenta. Mismo gate y mismas condiciones que getPublicReplay (apagado o
-        batalla no finalizada/sin replay → 404).
+        R11 · Descarga de la PROYECCIÓN PÚBLICA de competición del replay de una
+        batalla FINALIZADA, sin cuenta (PRE-1: nunca el fichero crudo). Mismo gate
+        y mismas condiciones que getPublicReplay (apagado o batalla no
+        finalizada/sin replay → 404).
+      description: |
+        PRE-1 · Documento JSON con lo que ve un espectador: mundo, nómina pública,
+        snapshots públicos, eventos públicos y resultado deportivo. No incluye
+        semilla, comandos de los bots (radio, minas…), loadouts, hashes por tick
+        ni metadatos de almacenamiento: con él no se puede re-simular la batalla.
       x-min-role: visitor
       security: []
       parameters: [{ $ref: '#/components/parameters/BattleId' }]
       responses:
         '200':
-          description: Archivo de replay (binario)
+          description: Proyección pública del replay
           content:
-            application/octet-stream: { schema: { type: string, format: binary } }
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                required: [projection, battleId, snapshots, events, result]
+                properties:
+                  projection: { type: string, enum: [s9.replay.public-competition.v1] }
+                  battleId: { type: string }
+                  snapshots: { type: array, items: { type: object, additionalProperties: true } }
+                  events: { type: array, items: { type: object, additionalProperties: true } }
+                  result: { type: object, additionalProperties: true }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -1458,7 +1474,12 @@ paths:
     get:
       tags: [replays]
       operationId: getReplay
-      summary: Replay de datos (no vídeo), comprimido. Sujeto a la política de acceso a replays (404 si no es visible)
+      summary: Replay CRUDO de datos (no vídeo), comprimido. Sólo con acceso al crudo (PRE-1); 404 en otro caso
+      description: |
+        PRE-1 · El fichero crudo (semilla, comandos y loadouts) sólo lo reciben moderator/admin y el
+        dueño de TODOS los bots participantes. Cualquier otro lector (participante con rivales, equipo,
+        organizer, público aunque `S9_PUBLIC_REPLAYS_ENABLED` esté activado) recibe el mismo 404 que un
+        replay inexistente y usa el índice y los segmentos proyectados.
       x-min-role: visitor
       security: []
       parameters: [{ $ref: '#/components/parameters/BattleId' }]
@@ -1474,7 +1495,7 @@ paths:
     get:
       tags: [replays]
       operationId: getReplayIndex
-      summary: Índice del replay (keyframes, resultado, nómina) para el reproductor. Sujeto a la política de acceso a replays
+      summary: Índice del replay (keyframes, resultado, nómina) para el reproductor. Sujeto a la política de acceso a replays; proyectado (PRE-1) salvo con acceso al crudo
       x-min-role: visitor
       security: []
       parameters: [{ $ref: '#/components/parameters/BattleId' }]
@@ -1486,7 +1507,7 @@ paths:
     get:
       tags: [replays]
       operationId: getReplaySegment
-      summary: Segmento decodificado por rango de ticks (salto temporal). Sujeto a la política de acceso a replays
+      summary: Segmento decodificado por rango de ticks (salto temporal). Sujeto a la política de acceso a replays; proyectado (sin comandos, PRE-1) salvo con acceso al crudo
       x-min-role: visitor
       security: []
       parameters:
