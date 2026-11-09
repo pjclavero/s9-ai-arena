@@ -65,9 +65,16 @@ Menú a la **izquierda** (en móvil, pestañas horizontales con scroll): **Strea
 
 | Vista | Qué hay |
 |---|---|
-| Streaming (lista) | estado en lenguaje humano («● Listo», «Conectando con YouTube…»); **Tipo** (Batalla/Torneo); selector legible «Team A vs Team B · Finalizada · hace 12 min» (en curso primero, luego por recencia; `GET /admin/streaming/destinations`); **Retransmisible / No retransmisible** con la explicación en frase (el código `battle_not_public`… sólo en «Ver detalles técnicos»); **Canal** con el estado de la clave enmascarada; **Calidad** 1080p30 / 720p30 / 1080p60 / 720p60 (fija el bitrate recomendado); **INICIAR**. No se escribe ningún UUID |
-| Streaming (en directo) | «● EN DIRECTO», destino, canal, calidad, duración, FPS, bitrate, frames descartados, reintentos e **Ingesta activa: Principal \| Respaldo** («Principal no disponible · Usando servidor de respaldo» tras un failover); **DETENER** en una barra fija arriba (visible sin desplazarse en escritorio y móvil); INICIAR no aparece; tabla técnica plegada |
+| Streaming (lista) | estado en lenguaje humano («● Listo», «Conectando con YouTube…»); **Tipo** (Batalla/Torneo); selector legible «Team A vs Team B · Finalizada · hace 12 min» (en curso primero, luego por recencia; `GET /admin/streaming/destinations`); **Retransmisible / No retransmisible** con la explicación en frase (el código `battle_not_public`… sólo en «Ver detalles técnicos»); **Canal** con el estado de la clave enmascarada; **Calidad** 1080p30 / 720p30 / 1080p60 / 720p60 (fija el bitrate recomendado); **INICIAR**. No se escribe ningún UUID. Al iniciar sale el aviso «Emisión iniciada: conectando…»; si el sondeo trae después «Error» o «Emisión interrumpida», el aviso se retira y manda el error |
+| Streaming (en directo) | «● EN DIRECTO», destino, canal, calidad, duración, FPS, bitrate, frames descartados, reintentos e **Ingesta activa: Principal \| Respaldo** («Principal no disponible · Usando servidor de respaldo» tras un failover); **DETENER** siempre visible (escritorio: barra de estado fija arriba; móvil: en el mismo sitio que INICIAR, fijo abajo); INICIAR no aparece; tabla técnica plegada |
 | Configuración avanzada | destino manual (el ÚNICO sitio con UUID); activación, modo RTMPS/sólo grabar, plataforma, encoder, resolución, FPS y bitrate manual; **servidores principal y de respaldo** con «Probar ingesta» (Principal: OK / Respaldo: …); clave («Configurada · ****ABCD», Reemplazar, Eliminar); branding; diagnóstico (relé, ffmpeg, ingesta sin clave, sesión, errores por ingesta) |
+
+**Móvil (≤720 px): CTA fijo sin tapar nada.** Mientras se ve INICIAR o DETENER, la página pone
+`streaming-cta-shell` en `<html>`: `<body>` reserva abajo una franja con relleno = altura del CTA +
+`env(safe-area-inset-bottom)` y lo que se desplaza es `#root`, que termina encima de esa franja. El
+CTA vive en la franja, así que ningún campo pasa por debajo en ningún punto del scroll y, al fondo,
+el último campo queda entero encima (test @fase1 «MOBILE_CTA_NO_CONTENT_OVERLAP» a 360×640, 390×844
+y 390×664). En escritorio la clase no tiene efecto.
 
 **Ingestas de YouTube.** Por defecto, principal `rtmps://a.rtmps.youtube.com/live2` y respaldo
 `rtmps://b.rtmps.youtube.com/live2?backup=1` (catálogo de `services/streaming.ts`). Se editan desde
