@@ -70,7 +70,11 @@ info:
   # StreamingCredentialMeta y `primary`/`backup` en la respuesta de testStreaming
   # (los campos de la principal siguen también en la raíz), y `actorName` en AuditEntry
   # (listStreamingAudit: nombre del usuario; el UUID sigue en actorId).
-  version: 0.16.0
+  # 0.17.0 · #255 (aditivo): publishTeamBots (POST /teams/{teamId}/actions/publish-bots):
+  # un miembro hace públicos, en UNA transacción, los bots del equipo de los que es
+  # DUEÑO (misma regla que updateBot); previsualización con dryRun y resultado por bot
+  # (not_authorized incluido). El código sólo con includeCode explícito.
+  version: 0.17.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -371,6 +375,65 @@ paths:
       parameters: [{ $ref: '#/components/parameters/TeamId' }, { $ref: '#/components/parameters/BotId' }]
       responses:
         '204': { description: Quitado }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /teams/{teamId}/actions/publish-bots:
+    post:
+      tags: [teams]
+      operationId: publishTeamBots
+      summary: |
+        #255 · Hacer PÚBLICOS los bots del equipo que administra quien lo pide. Lo puede pedir
+        un miembro del equipo (o admin); cada bot sólo cambia si quien lo pide es su DUEÑO
+        (la misma regla que updateBot: ser capitán no da autoridad sobre bots ajenos). Los
+        autorizados cambian en una sola transacción; el resto sale como `not_authorized` sin
+        tocarse. `dryRun: true` previsualiza sin escribir. El código fuente NUNCA se publica
+        salvo `includeCode: true` explícito, y entonces sólo el de la versión publicada más
+        reciente de cada bot autorizado. No toca versiones ni equipamiento. Auditado por bot.
+      x-min-role: user
+      parameters: [{ $ref: '#/components/parameters/TeamId' }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dryRun: { type: boolean, default: false }
+                includeCode: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Resultado por bot (también en los parciales)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  teamId: { type: string, format: uuid }
+                  dryRun: { type: boolean }
+                  includeCode: { type: boolean }
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        botId: { type: string, format: uuid }
+                        name: { type: string }
+                        outcome: { type: string, enum: [made_public, would_make_public, already_public, not_authorized] }
+                        previousVisibility: { type: string, enum: [private, team, public], description: 'Sólo en los bots autorizados.' }
+                        code:
+                          type: object
+                          description: 'Sólo con includeCode y en los bots autorizados.'
+                          properties:
+                            version: { type: integer, nullable: true }
+                            outcome: { type: string, enum: [made_public, would_make_public, already_public, no_published_version] }
+                  summary:
+                    type: object
+                    properties:
+                      changed: { type: integer }
+                      alreadyPublic: { type: integer }
+                      notAuthorized: { type: integer }
+        '400': { description: dryRun o includeCode no booleanos, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 

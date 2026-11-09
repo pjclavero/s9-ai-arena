@@ -11,7 +11,10 @@
  *  - renombrar, borrar, añadir/quitar miembros: capitán del equipo (o admin);
  *  - añadir un bot: su DUEÑO, que además debe ser miembro del equipo (o admin);
  *  - quitar un bot: su dueño o el capitán del equipo (o admin);
- *  - ver miembros y bots: miembros del equipo (o staff); el resto ve solo recuentos.
+ *  - ver miembros y bots: miembros del equipo (o staff); el resto ve solo recuentos;
+ *  - #255 · hacer públicos los bots del equipo: lo pide un miembro (o admin), pero cada
+ *    bot sólo cambia si quien lo pide es su DUEÑO (`isBotOwner`, la misma regla que
+ *    PATCH /bots/{id}). Ser capitán no da autoridad sobre bots ajenos.
  */
 import { Router } from "express";
 import type { Db } from "../db/connection.js";
@@ -21,6 +24,7 @@ import { badRequest, conflict, forbidden, notFound } from "../errors.js";
 import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCursorQuery } from "../serialize.js";
 import { ROLE_RANK } from "../openapi.js";
 import { pathParam } from "../params.js";
+import { isBotOwner } from "../services/bots.js";
 
 type Auth = { userId: string; rank: number } | undefined;
 
@@ -269,6 +273,119 @@ export function teamRoutes(db: Db): Router {
       correlationId: req.correlationId,
     });
     res.status(204).end();
+  });
+
+  /**
+   * #255 · «Hacer públicos los bots que administras» desde la pantalla de Equipo.
+   *
+   * Por qué un endpoint y no N × PATCH /bots/{id} desde la web (B17): (1) la
+   * PREVISUALIZACIÓN tiene que salir de la misma regla que el cambio, y sólo el
+   * servidor la conoce (si la web decidiera qué bots «puede» cambiar, duplicaría la
+   * autorización); (2) los bots autorizados cambian en UNA transacción (todos o
+   * ninguno), y el resultado por bot dice la verdad también en los parciales
+   * (autorizados y no autorizados), sin ocultar los rechazos.
+   *
+   * Reglas:
+   *  - quien pide: miembro del equipo o admin (si no, 403);
+   *  - cada bot: SÓLO su dueño (`isBotOwner`); el resto → `not_authorized`, sin tocarlo
+   *    y sin revelar su visibilidad;
+   *  - `dryRun: true` no escribe nada (previsualización);
+   *  - el CÓDIGO nunca se publica por defecto: sólo con `includeCode: true` explícito, y
+   *    sólo el de la versión publicada más reciente del bot autorizado (misma autoridad
+   *    que PUT …/code-visibility: el dueño). Versiones, equipamiento y código del resto
+   *    de versiones no se tocan.
+   *  - cada cambio se audita igual que el individual (bot.visibility_changed /
+   *    bot.code_visibility_changed), con `via: team_bulk`.
+   */
+  defineOperation(router, "publishTeamBots", async (req, res) => {
+    const team = await getTeamOr404(db, pathParam(req, "teamId"));
+    const auth = req.auth!;
+    const body = req.body ?? {};
+    if (body.dryRun !== undefined && typeof body.dryRun !== "boolean") throw badRequest("dryRun debe ser booleano");
+    if (body.includeCode !== undefined && typeof body.includeCode !== "boolean") {
+      throw badRequest("includeCode debe ser booleano");
+    }
+    const dryRun = body.dryRun === true;
+    const includeCode = body.includeCode === true;
+    const member = await db("team_members").where({ team_id: team.id, user_id: auth.userId }).first();
+    if (!member && !isAdmin(auth)) throw forbidden("Solo los miembros del equipo pueden hacer esto");
+
+    type CodeResult = { version: number | null; outcome: string };
+    type BotResult = {
+      botId: string;
+      name: string;
+      outcome: "made_public" | "would_make_public" | "already_public" | "not_authorized";
+      previousVisibility?: string;
+      code?: CodeResult;
+    };
+    const results: BotResult[] = await db.transaction(async (trx) => {
+      // Cerrojo de fila: lo que se previsualiza o cambia es el estado vigente, no uno
+      // que otra petición esté modificando a la vez.
+      const bots = await trx("bots").where({ team_id: team.id }).orderBy("name", "asc").forUpdate();
+      const out: BotResult[] = [];
+      for (const bot of bots) {
+        const base = { botId: bot.id as string, name: bot.name as string };
+        if (!isBotOwner(auth, bot)) {
+          out.push({ ...base, outcome: "not_authorized" });
+          continue;
+        }
+        const already = bot.visibility === "public";
+        let code: CodeResult | undefined;
+        if (includeCode) {
+          const v = await trx("bot_versions")
+            .where({ bot_id: bot.id, state: "published" })
+            .orderBy("version", "desc")
+            .first();
+          if (!v) code = { version: null, outcome: "no_published_version" };
+          else if (v.code_public === true) code = { version: v.version, outcome: "already_public" };
+          else if (dryRun) code = { version: v.version, outcome: "would_make_public" };
+          else {
+            await trx("bot_versions").where({ id: v.id }).update({ code_public: true });
+            await audit(trx, {
+              actorId: auth.userId,
+              action: "bot.code_visibility_changed",
+              target: `bot:${bot.id}:v${v.version}`,
+              detail: { from: false, to: true, via: "team_bulk", teamId: team.id },
+              correlationId: req.correlationId,
+            });
+            code = { version: v.version, outcome: "made_public" };
+          }
+        }
+        if (already) {
+          out.push({ ...base, outcome: "already_public", previousVisibility: "public", ...(code ? { code } : {}) });
+          continue;
+        }
+        if (!dryRun) {
+          await trx("bots").where({ id: bot.id }).update({ visibility: "public" });
+          await audit(trx, {
+            actorId: auth.userId,
+            action: "bot.visibility_changed",
+            target: `bot:${bot.id}`,
+            detail: { from: bot.visibility, to: "public", via: "team_bulk", teamId: team.id },
+            correlationId: req.correlationId,
+          });
+        }
+        out.push({
+          ...base,
+          outcome: dryRun ? "would_make_public" : "made_public",
+          previousVisibility: bot.visibility as string,
+          ...(code ? { code } : {}),
+        });
+      }
+      return out;
+    });
+    const count = (o: BotResult["outcome"]) => results.filter((r) => r.outcome === o).length;
+    res.json({
+      teamId: team.id,
+      dryRun,
+      includeCode,
+      results,
+      summary: {
+        changed: count(dryRun ? "would_make_public" : "made_public"),
+        alreadyPublic: count("already_public"),
+        notAuthorized: count("not_authorized"),
+      },
+    });
   });
 
   return router;

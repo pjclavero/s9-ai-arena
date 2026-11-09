@@ -186,6 +186,7 @@ Las tablas de «Recursos por área» se escribieron sobre `27f70bb` (octubre de 
 |---|---|---|
 | `addTeamBot` | `POST /teams/{teamId}/bots` | user |
 | `removeTeamBot` | `DELETE /teams/{teamId}/bots/{botId}` | user |
+| `publishTeamBots` | `POST /teams/{teamId}/actions/publish-bots` | user (miembro; cada bot sólo si eres su dueño · #255, contrato 0.17.0) |
 | `getBotVersionFiles` | `GET /bots/{botId}/versions/{version}/files` | user |
 | `getBotVersionArtifact` | `GET /bots/{botId}/versions/{version}/artifact` | visitor |
 | `diffBotVersions` | `GET /bots/{botId}/versions/{version}/diff` | user |
