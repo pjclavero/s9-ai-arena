@@ -512,7 +512,10 @@ export const CHANGE_CLASSES: Record<string, "hot" | "restart" | "stop"> = {
  * Configuración que se aplica a una emisión (lo que se compara para «pendiente de reinicio»).
  * STREAMING-UX · incluye la ingesta de RESPALDO: cambiarla también pide reiniciar.
  */
-export function appliedConfig(s: StreamingSettings, credentialStamp: string | null, rows: readonly IngestRow[] = []) {
+// Ronda 1 (Q-H1) · `rows` es OBLIGATORIO: con el `= []` de antes, start y restart guardaban
+// en la sesión las ingestas del catálogo mientras el estado comparaba con las configuradas, y
+// el aviso «pendiente de reinicio» salía siempre (y no se iba al reiniciar).
+export function appliedConfig(s: StreamingSettings, credentialStamp: string | null, rows: readonly IngestRow[]) {
   const ing = ingestsOf(s, rows, s.platform);
   return {
     mode: s.mode,

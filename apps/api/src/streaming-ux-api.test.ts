@@ -355,3 +355,38 @@ describe("STREAMING-UX · selector de destinos sin UUID", () => {
     });
   });
 });
+
+// ── Ronda 1 de correcciones ─────────────────────────────────────────────────
+describe("Ronda 1 · Q-H1 · sin «cambios pendientes» falsos con las ingestas de YouTube configuradas desde la web", () => {
+  it("start y restart guardan la ingesta configurada: pendingRestart=false; cambiarla de verdad ⇒ true", async () => {
+    const P2 = "rtmps://a.rtmps.youtube.com:443/live2";
+    const B2 = "rtmps://c.rtmps.youtube.com/live2?backup=1";
+    expect((await putIngests("youtube", { primaryIngestUrl: P2, backupIngestUrl: B2 })).status).toBe(200);
+    await request(app)
+      .put("/admin/streaming/settings")
+      .set(auth(admin))
+      .send({ version: (await state()).settings.version, enabled: true, mode: "rtmps", platform: "youtube" });
+    expect(
+      (await request(app).put("/admin/streaming/credentials/youtube").set(auth(admin)).send({ streamKey: KEY })).status,
+    ).toBe(200);
+    const id = await battle({ status: "running", names: ["Pend", "Ing"] });
+    const r = await request(app)
+      .post("/admin/streaming/start")
+      .set(auth(admin))
+      .send({ target: { kind: "battle", id } });
+    expect(r.status).toBe(201);
+    expect((await state()).pendingRestart).toBe(false);
+    const rr = await request(app).post("/admin/streaming/restart").set(auth(admin)).send({});
+    expect(rr.status).toBe(200);
+    expect((await state()).pendingRestart).toBe(false);
+    // control positivo: un cambio REAL del respaldo sí deja la emisión pendiente de reinicio
+    const p = await putIngests("youtube", {
+      primaryIngestUrl: P2,
+      backupIngestUrl: "rtmps://d.rtmps.youtube.com/live2?backup=1",
+    });
+    expect(p.body.pendingRestart).toBe(true);
+    expect((await state()).pendingRestart).toBe(true);
+    await request(app).post("/admin/streaming/stop").set(auth(admin)).send({});
+    await putIngests("youtube", { primaryIngestUrl: A, backupIngestUrl: B });
+  });
+});

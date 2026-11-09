@@ -860,7 +860,7 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     const s = await loadSettings(db);
     if (!s.enabled) throw conflict("streaming_disabled", "El streaming está desactivado: actívalo antes de emitir");
     const stamp = await credentialStamp(s.platform);
-    const config = appliedConfig(s, stamp);
+    const config = appliedConfig(s, stamp, await loadIngestRows(db));
     let existing = await activeSession();
     if (existing) {
       // STREAMER §13 (RESTART_RECOVERY) · la BD dice «activa» pero el streamer,
@@ -1000,7 +1000,7 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     const stamp = await credentialStamp(s.platform);
     await db("streaming_sessions")
       .where({ id: session.id, state: "active" })
-      .update({ config: JSON.stringify(appliedConfig(s, stamp)), mode: s.mode });
+      .update({ config: JSON.stringify(appliedConfig(s, stamp, await loadIngestRows(db))), mode: s.mode });
     await log(req, "streaming.session.restart", `streaming:session:${session.id}`, { target: t });
     res.json({ session: { id: session.id, target: t }, restarted: true });
   }
