@@ -54,7 +54,12 @@ async function until(cond: () => boolean, ms = 4000) {
 }
 
 /** Ingesta falsa: `reject` = rechaza la publicación (clave mala). Anota la app de cada connect. */
-async function fakeIngest(o: { reject?: boolean; dropAfterPublish?: boolean } = {}) {
+/**
+ * Ingesta falsa. `reject`: rechaza la publicación con onStatus (clave mala); `closeOnPublish`:
+ * acepta connect y CIERRA el socket al recibir publish (otra forma real de rechazar una clave:
+ * `closed_by_server` DESPUÉS de connect); `dropAfterPublish`: publica y corta a los 30 ms.
+ */
+async function fakeIngest(o: { reject?: boolean; dropAfterPublish?: boolean; closeOnPublish?: boolean } = {}) {
   const seen = { apps: [] as string[], published: [] as string[] };
   const server = createServer((sock) => {
     sockets.push(sock);
@@ -103,6 +108,10 @@ async function fakeIngest(o: { reject?: boolean; dropAfterPublish?: boolean } = 
           }
           if (name === "createStream") reply("_result", txn, [null, 1]);
           if (name === "publish") {
+            if (o.closeOnPublish) {
+              sock.destroy();
+              continue;
+            }
             if (o.reject) {
               reply("onStatus", 0, [null, { level: "error", code: "NetStream.Publish.BadName" }], 1);
               continue;
@@ -295,6 +304,26 @@ describe("STREAMING-UX · failover principal → respaldo", () => {
     expect(r4.status).toBe(400);
     await sleep(100);
     expect(ing.seen.published).toEqual([]);
+  });
+
+  it("Ronda 1 (H-5) · la principal ACEPTA connect y CIERRA al recibir publish, ×N ⇒ NO hay failover", async () => {
+    // `closed_by_server` es un código de failover, pero DESPUÉS de connect es un problema de la
+    // publicación (clave o autorización): el respaldo fallaría igual. Lo defiende la guarda
+    // `!appConnected` del supervisor. (Test calibrado por la revisión; con `dropAfterPublish`
+    // no servía, porque `publishing` resetea la racha.)
+    const primary = await fakeIngest({ closeOnPublish: true });
+    const dials: string[] = [];
+    const c = await control((t) => {
+      dials.push(t.host);
+      return netConnect({ host: "127.0.0.1", port: primary.port });
+    });
+    await c.post("/control/start", order("s1"));
+    expect(await until(() => dials.length >= FAILOVER_AFTER + 3, 8000)).toBe(true);
+    expect(dials.every((h) => h === "a.rtmps.youtube.com")).toBe(true);
+    expect(primary.seen.apps.length).toBeGreaterThanOrEqual(FAILOVER_AFTER + 1); // connect sí se aceptó
+    expect(c.sup.ingestRole).toBe("primary");
+    expect(c.sup.failedOver).toBe(false);
+    c.sup.stop();
   });
 });
 
