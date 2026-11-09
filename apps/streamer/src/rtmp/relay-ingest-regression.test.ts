@@ -320,6 +320,55 @@ describe("§27 (2) · Happy Eyeballs: DNS con AAAA inalcanzable primero y A alca
   });
 });
 
+describe("Ronda 1 · P3 del marcador (H-2, H-3 y ganador sin oyente)", () => {
+  it("H-2 · un intento ESCALONADO que lanza de forma síncrona no sale como uncaughtException", async () => {
+    const uncaught: unknown[] = [];
+    const onUncaught = (e: unknown) => uncaught.push(e);
+    process.prependListener("uncaughtException", onUncaught);
+    try {
+      const tried: number[] = [];
+      const tcp = (_a: string, _p: number, family: number) => {
+        tried.push(family);
+        if (family === 4) throw Object.assign(new Error("boom"), { code: "EBOOM" }); // 2.º intento, en el timer
+        return new Socket(); // la IPv6 nunca conecta
+      };
+      await expect(
+        dialIngest(parseIngestUrl("rtmps://ingest.test/live2"), {
+          lookup: lookupV6First,
+          tcpConnect: tcp,
+          attemptDelayMs: 20,
+          attemptTimeoutMs: 150,
+        }),
+      ).rejects.toMatchObject({ code: "network", message: expect.stringContaining("IPv4: EBOOM") });
+      expect(tried).toEqual([6, 4]);
+      expect(uncaught).toEqual([]);
+    } finally {
+      process.removeListener("uncaughtException", onUncaught);
+    }
+  });
+
+  it("H-3 · un DNS que no contesta nunca falla por plazo (no queda pendiente)", async () => {
+    const t0 = Date.now();
+    await expect(
+      dialIngest(parseIngestUrl("rtmps://ingest.test/live2"), {
+        lookup: () => new Promise(() => {}),
+        lookupTimeoutMs: 150,
+      }),
+    ).rejects.toMatchObject({ code: "dns", message: expect.stringContaining("ETIMEDOUT") });
+    expect(Date.now() - t0).toBeLessThan(1500);
+  });
+
+  it("el socket ganador se entrega con un oyente de 'error' (un error temprano no lanza)", async () => {
+    const port = await listen(netServer((s) => s.on("error", () => {})));
+    const sock = await dialIngest(parseIngestUrl(`rtmp://127.0.0.1:${port}/live2`, true), {});
+    try {
+      expect(() => sock.emit("error", new Error("temprano"))).not.toThrow();
+    } finally {
+      sock.destroy();
+    }
+  });
+});
+
 describe("§20 · URL de respaldo de YouTube en el relé", () => {
   it("?backup=1 forma parte de la aplicación (como librtmp/OBS); otra query se rechaza", () => {
     const t = parseIngestUrl("rtmps://b.rtmps.youtube.com/live2?backup=1");

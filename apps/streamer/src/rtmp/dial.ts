@@ -42,12 +42,15 @@ export interface DialOptions {
   attemptDelayMs?: number;
   /** Plazo de CADA intento TCP. Por defecto 5 s. */
   attemptTimeoutMs?: number;
+  /** Ronda 1 (H-3) · plazo de la resolución DNS. Por defecto 5 s. */
+  lookupTimeoutMs?: number;
   /** Sólo tests: CA propia (en producción, la del sistema o NODE_EXTRA_CA_CERTS). */
   tls?: Pick<ConnectionOptions, "ca">;
 }
 
 export const DEFAULT_ATTEMPT_DELAY_MS = 250;
 export const DEFAULT_ATTEMPT_TIMEOUT_MS = 5000;
+export const DEFAULT_LOOKUP_TIMEOUT_MS = 5000;
 
 const defaultLookup: LookupAll = (host) =>
   new Promise((resolve, reject) =>
@@ -124,7 +127,18 @@ export function raceTcp(
     const launch = () => {
       if (done || next >= addrs.length) return;
       const a = addrs[next++];
-      const sock = o.tcp(a.address, port, a.family);
+      let sock: Socket;
+      try {
+        sock = o.tcp(a.address, port, a.family);
+      } catch (e) {
+        // Ronda 1 (H-2) · un intento ESCALONADO corre dentro de un setTimeout: sin esto, una
+        // excepción síncrona salía como uncaughtException y tumbaba el streamer.
+        attempts.push({ family: a.family, reason: String((e as { code?: string }).code ?? "EXCEPTION") });
+        if (stagger) clearTimeout(stagger);
+        launch();
+        failIfExhausted();
+        return;
+      }
       live.add(sock);
       const drop = (reason: string) => {
         if (!live.delete(sock)) return;
@@ -150,6 +164,10 @@ export function raceTcp(
         for (const s of live) s.destroy();
         live.clear();
         sock.removeAllListeners("error");
+        // Ronda 1 (P3) · entre resolver y que el publisher ponga su oyente hay un microtask:
+        // un 'error' ahí, sin oyentes, lanzaría. El no-op sólo evita eso; los oyentes que
+        // se añadan después lo siguen recibiendo.
+        sock.on("error", () => {});
         resolve({ sock, address: a });
       });
       if (next < addrs.length) stagger = setTimeout(launch, o.attemptDelayMs);
@@ -169,10 +187,21 @@ export async function dialIngest(t: DialTarget, o: DialOptions = {}): Promise<Du
   let addrs: LookupAddress[];
   if (fam) addrs = [{ address: t.host, family: fam }];
   else {
+    // Ronda 1 (H-3) · la resolución también tiene plazo: un DNS que no contesta no deja el
+    // marcado pendiente para siempre.
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(Object.assign(new Error("ETIMEDOUT"), { code: "ETIMEDOUT" })),
+        o.lookupTimeoutMs ?? DEFAULT_LOOKUP_TIMEOUT_MS,
+      );
+    });
     try {
-      addrs = dialOrder(await (o.lookup ?? defaultLookup)(t.host));
+      addrs = dialOrder(await Promise.race([(o.lookup ?? defaultLookup)(t.host), deadline]));
     } catch (e) {
       throw new DialError(`no se pudo resolver la ingesta (${(e as { code?: string }).code ?? "DNS"})`, "dns");
+    } finally {
+      clearTimeout(timer);
     }
   }
   if (addrs.length === 0) throw new DialError("la ingesta no tiene direcciones", "dns");
