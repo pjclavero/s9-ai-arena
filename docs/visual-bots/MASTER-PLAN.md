@@ -998,10 +998,26 @@ Si no contribuye al gate de la fase actual, va al backlog.
 
 ## 22. Roadmap status
 
-Estado inicial:
+Estado actual:
 
 ~~~text
-PHASE_0_DISCOVERY             NOT_STARTED
+LAST_UPDATED:        2026-11-09
+BRANCH:              mejoras-visuales/fase-0-inventario (base: mejoras-visuales @ 983d2f5)
+BASE_MAIN_SHA:       b254e3dac1ab25f39f9b4565b3349aa66a9f3963
+CURRENT_PHASE:       FASE 0 — Descubrimiento y contrato visual (IN_PROGRESS)
+LAST_MERGED_VIS_PR:  ninguno
+ACTIVE_VIS_PR:       PR draft de FASE 0 contra mejoras-visuales (pendiente de revisión independiente)
+NEXT_ACTION:         revisión independiente de los entregables de FASE 0; decisiones de producto D-01..D-06
+BLOCKERS:            ninguno técnico; FASE 0 no pasa a PASS sin revisión independiente
+~~~
+
+Entregables de FASE 0: [VISUAL_COMPONENT_INVENTORY](VISUAL_COMPONENT_INVENTORY.md),
+[VISUAL_COMPONENT_MATRIX](VISUAL_COMPONENT_MATRIX.md), [MOUNT_TYPE_DRAFT](MOUNT_TYPE_DRAFT.md),
+[ADR-VIS-001](adr/ADR-VIS-001-svg-vs-raster.md), [ADR-VIS-002](adr/ADR-VIS-002-catalog-versioning.md),
+[ADR-VIS-003](adr/ADR-VIS-003-mount-coordinate-system.md).
+
+~~~text
+PHASE_0_DISCOVERY             IN_PROGRESS
 PHASE_1_VISUAL_CORE           NOT_STARTED
 PHASE_2_VERTICAL_SLICE        NOT_STARTED
 PHASE_3_BASE_CATALOG          NOT_STARTED
