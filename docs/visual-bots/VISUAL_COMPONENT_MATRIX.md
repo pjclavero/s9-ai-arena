@@ -424,7 +424,7 @@ exige generador. La inferencia por cinemática, que no es de ranura, está en §
 | `chassis.light/drive` | `movement.wheels@1` | IDENTITY | Tracción del ligero pública (las orugas son L y no caben). |
 | `chassis.light/power` | `power.battery@1`, `power.generator@1`, `power.generator@2` | PRESENCE | Se sabe que lleva energía, no cuál. |
 | `chassis.light/sensor_a` | `sensor.acoustic@1`, `sensor.lidar360@1`, `sensor.lidar_front@1`, `sensor.proximity@1`, `sensor.radar@1` | PRESENCE |  |
-| `chassis.light/turret_main` | `weapon.mg@1`, `weapon.mg@2` | IDENTITY | Arma del ligero pública (el tipo; la versión no). El cañón es L y no cabe. |
+| `chassis.light/turret_main` | `weapon.mg@1`, `weapon.mg@2` | IDENTITY | Arma del ligero pública por la ranura (el tipo; la versión, sólo tras impactos: §12.2). El cañón es L y no cabe. |
 | `chassis.light/ammo_main` | `ammo.standard@1` | IDENTITY | Regla arma↔munición: la única arma que cabe sólo acepta `ammo.standard`. |
 | `chassis.light/radio_a` | `radio.short@1` | IDENTITY | Identidad de la radio pública. |
 | `chassis.light/armor_front` | — | NEVER | Ninguna placa frontal cabe (L frente a M): la ranura nunca aparece. |
