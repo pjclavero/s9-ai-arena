@@ -166,6 +166,7 @@ interface Recordings {
 interface AuditRow {
   id: string;
   actorId?: string;
+  actorName?: string;
   action: string;
   target: string;
   at: string;
@@ -481,7 +482,7 @@ export function StreamingPage(props: { me: Me; route: string }) {
   const [st, setSt] = useState<StreamingAdminState | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [actionError, setActionError] = useState<unknown>(null);
-  const [notice, setNotice] = useState<string>("");
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [section, setSection] = useState<Section>(() => initialSection(props.route));
   /** Cada acción terminada refresca la auditoría (una retención no cambia la versión). */
@@ -500,7 +501,7 @@ export function StreamingPage(props: { me: Me; route: string }) {
   // conectando…» ya es falso: se retira.
   const stopped = st?.uxState === "failed" || st?.uxState === "interrupted";
   useEffect(() => {
-    if (stopped) setNotice("");
+    if (stopped) setNotice(null);
   }, [stopped]);
   useEffect(() => {
     void refresh();
@@ -513,10 +514,10 @@ export function StreamingPage(props: { me: Me; route: string }) {
   async function act(name: string, fn: () => Promise<string | void>) {
     setBusy(name);
     setActionError(null);
-    setNotice("");
+    setNotice(null);
     try {
       const msg = await fn();
-      if (msg) setNotice(msg);
+      if (msg) setNotice(typeof msg === "string" ? { text: msg, variant: "ok" } : msg);
       await refresh();
     } catch (e) {
       setActionError(e);
@@ -587,8 +588,8 @@ export function StreamingPage(props: { me: Me; route: string }) {
             </p>
           )}
           {notice && (
-            <p className="ok" role="status" data-testid="streaming-notice">
-              {notice}
+            <p className={notice.variant} role="status" data-testid="streaming-notice">
+              {notice.text}
             </p>
           )}
           <HumanError error={actionError} channel={channel} data-testid="streaming-error" />
@@ -631,7 +632,12 @@ export function StreamingPage(props: { me: Me; route: string }) {
   );
 }
 
-type Act = (name: string, fn: () => Promise<string | void>) => Promise<void>;
+/** Aviso tras una acción: verde si salió bien; ámbar si fue a medias (p. ej. respaldo caído). */
+interface Notice {
+  text: string;
+  variant: "ok" | "warn";
+}
+type Act = (name: string, fn: () => Promise<string | Notice | void>) => Promise<void>;
 
 function isActive(st: StreamingAdminState): boolean {
   return st.uxState === "starting" || st.uxState === "live" || st.uxState === "recording" || st.uxState === "retrying";
@@ -1330,9 +1336,15 @@ function IngestsCard({ st, busy, act }: { st: StreamingAdminState; busy: string 
                   backup: r.backup ?? null,
                 };
                 setTest(res);
-                return res.primary.ok
-                  ? `Prueba correcta: TLS verificado y conexión RTMP en ${res.primary.connectMs} ms (la clave no se valida sin publicar).`
-                  : `La prueba falló: ${humanReason(null, res.primary.error ?? "", label)}`;
+                if (!res.primary.ok) return `La prueba falló: ${humanReason(null, res.primary.error ?? "", label)}`;
+                // Ronda 1 (P3) · con el respaldo caído no es «Prueba correcta» en verde: estado mixto.
+                if (res.backup && !res.backup.ok) {
+                  return {
+                    variant: "warn",
+                    text: `Prueba a medias: la principal conecta (TLS verificado, ${res.primary.connectMs} ms), pero el respaldo NO: ${humanReason(null, res.backup.error ?? "", label)} Si la principal cae, no habrá a dónde cambiar.`,
+                  };
+                }
+                return `Prueba correcta: TLS verificado y conexión RTMP en ${res.primary.connectMs} ms (la clave no se valida sin publicar).`;
               })
             }
           >
@@ -1364,6 +1376,11 @@ function SettingsCard({ st, busy, act }: { st: StreamingAdminState; busy: string
     videoBitrateKbps: s0.videoBitrateKbps,
   });
   const platform = st.platforms.find((p) => p.id === f.platform);
+  // Ronda 1 (P3) · la ingesta EFECTIVA (la configurada en «Servidores»), no la de fábrica del catálogo.
+  const configuredPrimary =
+    platform?.ingestUrl === null
+      ? null
+      : (st.ingests?.find((i) => i.platform === f.platform)?.primaryIngestUrl ?? platform?.ingestUrl ?? null);
   const rec = recommendation(f.preset, f.fps);
   const outOfRange = f.videoBitrateKbps < rec.min || f.videoBitrateKbps > rec.max;
 
@@ -1439,7 +1456,7 @@ function SettingsCard({ st, busy, act }: { st: StreamingAdminState; busy: string
                   </option>
                 ))}
               </select>{" "}
-              {platform?.ingestUrl && <small>Ingesta: {platform.ingestUrl}</small>}
+              {configuredPrimary && <small data-testid="set-platform-ingest">Ingesta: {configuredPrimary}</small>}
             </p>
             {platform && platform.ingestUrl === null && (
               <p>
@@ -1931,7 +1948,14 @@ function AuditCard({ version }: { version: number }) {
                 <td>{new Date(r.at).toLocaleString("es-ES")}</td>
                 <td>{r.action}</td>
                 <td>{r.target}</td>
-                <td>{r.actorId ?? "sistema"}</td>
+                <td>
+                  {r.actorId ? (r.actorName ?? "usuario") : "sistema"}
+                  {r.actorId && (
+                    <TechDetails>
+                      <code>{r.actorId}</code>
+                    </TechDetails>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

@@ -1034,11 +1034,18 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
 
   defineOperation(router, "listStreamingAudit", async (req, res) => {
     const limit = parseLimit(req.query.limit);
-    const rows = await db("audit_log").where("action", "like", "streaming.%").orderBy("id", "desc").limit(limit);
+    const rows = await db("audit_log")
+      .leftJoin("users", "users.id", "audit_log.actor_id")
+      .where("audit_log.action", "like", "streaming.%")
+      .orderBy("audit_log.id", "desc")
+      .limit(limit)
+      .select("audit_log.*", "users.display_name as actor_name");
     res.json(
       rows.map((r: Record<string, unknown>) => ({
         id: String(r.id),
         actorId: r.actor_id ?? undefined,
+        // Ronda 1 (P3) · nombre legible; el UUID queda en `actorId` (detalles técnicos).
+        actorName: r.actor_name ?? undefined,
         action: r.action,
         target: r.target,
         detail: r.detail,

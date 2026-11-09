@@ -201,6 +201,13 @@ describe("STREAMING-UX · validador de ingestas (puro)", () => {
         { team: "blue", botName: "d" },
       ]),
     ).toBe("red vs blue (2v2)");
+    // Ronda 1 (P3) · orden del enfrentamiento aunque la consulta traiga primero «blue»
+    expect(
+      battleLabel([
+        { team: "blue", botName: "Team B" },
+        { team: "red", botName: "Team A" },
+      ]),
+    ).toBe("Team A vs Team B");
   });
 });
 
@@ -508,6 +515,17 @@ describe("Ronda 1 · R-H6 · el centinela rechazado no llega a la BD, la auditor
     expect(logged.some(has)).toBe(false);
     // control positivo: el detector de este test SÍ ve el centinela cuando está
     expect(has(`x/${SENT}`)).toBe(true);
+  });
+});
+
+describe("Ronda 1 · P3 · auditoría con el nombre del usuario", () => {
+  it("listStreamingAudit devuelve actorName (nombre visible) además de actorId", async () => {
+    const r = await request(app).get("/admin/streaming/audit?limit=50").set(auth(admin));
+    expect(r.status).toBe(200);
+    const adminRow = await h.db("users").where({ email: DEV_USERS.admin }).first();
+    const mine = r.body.filter((e: { actorId?: string }) => e.actorId === adminRow.id);
+    expect(mine.length).toBeGreaterThan(0);
+    for (const e of mine) expect(e.actorName).toBe(adminRow.display_name);
   });
 });
 

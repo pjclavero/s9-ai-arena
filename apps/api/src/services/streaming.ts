@@ -847,7 +847,10 @@ export function battleLabel(parts: { team: string; botName: string | null }[]): 
     teams.set(p.team, list);
   }
   if (teams.size === 0) return "Batalla sin participantes";
-  const groups = [...teams.entries()];
+  // Ronda 1 (P3) · orden del enfrentamiento: rojo (equipo A) primero y azul después, como los
+  // asigna el lanzador; la consulta ordena por nombre de equipo y salía «Team B vs Team A».
+  const rank = (t: string) => (t === "red" ? 0 : t === "blue" ? 1 : 2);
+  const groups = [...teams.entries()].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b));
   if (groups.every(([, bots]) => bots.length === 1)) return groups.map(([, bots]) => bots[0]).join(" vs ");
   const size = groups.map(([, bots]) => bots.length).join("v");
   return `${groups.map(([team]) => team).join(" vs ")} (${size})`;

@@ -68,7 +68,8 @@ info:
   # sólo en el respaldo de YouTube), listStreamingDestinations (selector sin UUID),
   # `ingests` en StreamingAdminState, `backup` (none | ready | needs_key) en
   # StreamingCredentialMeta y `primary`/`backup` en la respuesta de testStreaming
-  # (los campos de la principal siguen también en la raíz).
+  # (los campos de la principal siguen también en la raíz), y `actorName` en AuditEntry
+  # (listStreamingAudit: nombre del usuario; el UUID sigue en actorId).
   version: 0.16.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
@@ -2882,6 +2883,7 @@ components:
       properties:
         id: { type: string }
         actorId: { type: string }
+        actorName: { type: string, description: 'Nombre visible del actor (listStreamingAudit); el UUID sigue en actorId' }
         action: { type: string }
         target: { type: string }
         correlationId: { type: string }

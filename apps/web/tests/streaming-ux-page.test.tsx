@@ -484,6 +484,31 @@ describe("STREAMING-UX · en directo", () => {
   });
 });
 
+describe("Ronda 1 (P3) · Auditoría", () => {
+  it("«Quién» muestra el nombre del usuario; el UUID, sólo en «Ver detalles técnicos»", async () => {
+    const uuid = "55555555-5555-4555-8555-555555555555";
+    apiMock.mockImplementation(async (m: string, p: string, b?: unknown) =>
+      p.startsWith("/admin/streaming/audit")
+        ? [
+            { id: "1", actorId: uuid, actorName: "Ana", action: "streaming.start", target: "x", at: ago(1) },
+            { id: "2", action: "streaming.session.recovered", target: "y", at: ago(2) },
+          ]
+        : route(m, p, b),
+    );
+    render(<StreamingPage me={ME} route="#/streaming?tab=audit" />);
+    const card = await screen.findByTestId("streaming-audit");
+    await waitFor(() => expect(within(card).getAllByRole("row").length).toBe(3));
+    const cells = within(card)
+      .getAllByRole("row")
+      .slice(1)
+      .map((r) => r.querySelectorAll("td")[3]);
+    expect(cells[0].firstChild!.textContent).toBe("Ana");
+    expect(cells[0].querySelector("details")!.hasAttribute("open")).toBe(false);
+    expect(cells[0].querySelector("details code")!.textContent).toBe(uuid);
+    expect(cells[1].textContent).toBe("sistema");
+  });
+});
+
 describe("STREAMING-UX · Avanzada → servidores", () => {
   it("principal y respaldo editables, guardados tal cual; «Probar ingesta» dice Principal y Respaldo por separado", async () => {
     testResponse = {
@@ -507,5 +532,35 @@ describe("STREAMING-UX · Avanzada → servidores", () => {
     fireEvent.click(screen.getByTestId("stream-test"));
     expect((await screen.findByTestId("ingest-test-primary")).textContent).toBe("Principal: OK (40 ms)");
     expect(screen.getByTestId("ingest-test-backup").textContent).toBe("Respaldo: YouTube no respondió a la conexión.");
+    // Ronda 1 (P3) · respaldo caído ⇒ NO «Prueba correcta» en verde: aviso ámbar de estado mixto
+    const n = await screen.findByTestId("streaming-notice");
+    expect(n.className).toBe("warn");
+    expect(n.textContent).toMatch(/^Prueba a medias: la principal conecta .* el respaldo NO/);
+    expect(n.textContent).not.toContain("Prueba correcta");
+  });
+
+  it("Ronda 1 (P3) · las dos OK ⇒ «Prueba correcta» en verde", async () => {
+    testResponse = {
+      ok: true,
+      connectMs: 40,
+      primary: { ok: true, connectMs: 40 },
+      backup: { ok: true, connectMs: 30 },
+    };
+    render(<StreamingPage me={ME} route="#/streaming?tab=advanced" />);
+    fireEvent.click(await screen.findByTestId("stream-test"));
+    const n = await screen.findByTestId("streaming-notice");
+    expect(n.className).toBe("ok");
+    expect(n.textContent).toMatch(/^Prueba correcta/);
+  });
+
+  it("Ronda 1 (P3) · la tarjeta de emisión muestra la ingesta CONFIGURADA, no la de fábrica", async () => {
+    const configured = "rtmps://otra-ingesta.example.com/live2";
+    state = baseState({
+      ingests: baseState().ingests!.map((i) =>
+        i.platform === "youtube" ? { ...i, primaryIngestUrl: configured, source: "configured" } : i,
+      ),
+    });
+    render(<StreamingPage me={ME} route="#/streaming?tab=advanced" />);
+    expect((await screen.findByTestId("set-platform-ingest")).textContent).toBe(`Ingesta: ${configured}`);
   });
 });
