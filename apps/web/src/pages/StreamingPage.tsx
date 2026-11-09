@@ -2,18 +2,33 @@
  * EQ5b · Administración → Streaming. ADMINISTRA lo que ya existe (streamer,
  * /broadcast, director, retardo del ruleset); no lo reimplementa.
  *
- * Reglas de esta pantalla (encargo §4, §17, §20):
+ * STREAMING-UX (2026-11) · la pantalla se separa en cuatro secciones con menú a la
+ * IZQUIERDA (en móvil, pestañas horizontales con scroll):
+ *  - «Streaming» (operación normal): estado en lenguaje humano, qué retransmitir
+ *    (selector de batallas y torneos con nombre legible, SIN UUID), canal, calidad
+ *    (cuatro preajustes) e INICIAR. Con una emisión activa, la vista en directo:
+ *    «● EN DIRECTO», destino, canal, calidad, duración, FPS, bitrate, frames
+ *    descartados, ingesta activa y DETENER siempre a la vista;
+ *  - «Configuración avanzada»: destino manual (UUID), plataforma y modo, servidores
+ *    principal y de respaldo, clave, codificación y bitrate, branding y diagnóstico;
+ *  - «Grabaciones» y «Auditoría», lejos de INICIAR y DETENER.
+ * Los códigos internos (`battle_not_public`, `credential_missing`…) sólo salen en
+ * «Ver detalles técnicos».
+ *
+ * Reglas que se mantienen (encargo EQ5b §4, §17, §20):
  *  - la clave de emisión se escribe en un campo de contraseña y se envía; el
  *    estado de React se VACÍA en cuanto sale la petición y nunca se guarda en
  *    localStorage/sessionStorage. La API sólo devuelve «configurada» y `****ABCD`;
  *  - guardar con una emisión activa NO reinicia: se avisa «pendiente de reinicio»
  *    y el operador pulsa «Reiniciar emisión»; desactivar pide confirmación;
- *  - los botones contradictorios se deshabilitan (no se puede iniciar con una
- *    emisión activa ni detener lo que no existe);
- *  - el retardo se MUESTRA (sale de la copia de reglas del destino); no se edita.
+ *  - los botones contradictorios se deshabilitan;
  *  - la UI sólo oculta: el RBAC lo aplica la API (x-min-role admin).
+ *
+ * Preparada para perfiles de canal por usuario (siguiente carril): el selector
+ * «Canal» recibe una lista de `ChannelOption` (hoy, una por plataforma más «Sólo
+ * grabar»); un perfil sería otra opción con su propio id, sin tocar la vista.
  */
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { api, type Me } from "../api.js";
 import { ErrorState, FormError, LoadingState, LiveStatus, StatusBadge, type StatusVariant } from "../ui/primitives.js";
 import { helpHref } from "../help/tree.js";
@@ -52,6 +67,23 @@ interface CredentialMeta {
   compatible: boolean | null;
   /** EQ5c · por qué hay que volver a introducirla (la clave está atada a su ingesta). */
   incompatibleReason?: "key_rotated" | "ingest_changed" | null;
+  /** STREAMING-UX · sobre de la ingesta de respaldo. */
+  backup?: "none" | "ready" | "needs_key";
+}
+export interface IngestsView {
+  platform: string;
+  primaryIngestUrl: string | null;
+  backupIngestUrl: string | null;
+  source: "configured" | "default";
+  backupQueryAllowed: boolean;
+}
+interface RelayView {
+  state: string | null;
+  bytesOut: number;
+  ingest?: "primary" | "backup" | null;
+  backupAvailable?: boolean;
+  failedOver?: boolean;
+  ingestErrors?: { primary: string | null; backup: string | null };
 }
 interface StreamerView {
   state: string;
@@ -59,10 +91,11 @@ interface StreamerView {
   target?: string;
   restarts?: number;
   lastError: { message: string; at: string } | null;
-  relay?: { state: string | null; bytesOut: number };
+  relay?: RelayView;
   recording?: string | null;
   stats?: { frames: number; fps: number; bitrateKbps: number; droppedFrames: number; outTimeSeconds: number };
   legacyKeyConfigured?: boolean;
+  session?: { sessionId?: string | null } | null;
 }
 export type UxState =
   | "disabled"
@@ -77,6 +110,7 @@ export type UxState =
 export interface StreamingAdminState {
   settings: StreamingSettings;
   platforms: { id: string; label: string; ingestUrl: string | null }[];
+  ingests?: IngestsView[];
   credentials: CredentialMeta[];
   capabilities: {
     sealedStore: boolean;
@@ -106,64 +140,173 @@ interface TargetInfo {
   delaySeconds: number;
   delaySource: "snapshot" | "ruleset" | "final_visible" | "none";
 }
+/** STREAMING-UX · elemento del selector de destinos (listStreamingDestinations). */
+export interface Destination {
+  kind: "battle" | "tournament";
+  id: string;
+  label: string;
+  status: string;
+  mode: string | null;
+  tournamentName: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+  broadcastable: boolean;
+  broadcastBlockedReason: "battle_not_public" | "tournament_not_broadcastable" | null;
+  tournamentBroadcast: boolean | null;
+}
 interface Recordings {
   dir: string;
   count: number;
   totalBytes: number;
   disk: { totalBytes: number; freeBytes: number } | null;
+  dirError?: string | null;
   files: { name: string; sizeBytes: number; modifiedAt: string; inProgress: boolean }[];
 }
 interface AuditRow {
   id: string;
   actorId?: string;
+  actorName?: string;
   action: string;
   target: string;
   at: string;
 }
 
-// ── textos de estado (§17) ──────────────────────────────────────────────────
+// ── textos de estado (§11, lenguaje humano) ─────────────────────────────────
 export const UX_TEXT: Record<UxState, { variant: StatusVariant; title: string; text: string }> = {
   disabled: {
     variant: "neutral",
     title: "Desactivado",
-    text: "El streaming está desactivado. Actívalo en «Configuración» para poder emitir o grabar.",
+    text: "El streaming está desactivado. Actívalo para poder emitir o grabar.",
   },
   streamer_unreachable: {
     variant: "error",
-    title: "Servicio de emisión no disponible",
-    text: "El servicio de emisión (streamer) no responde. Si esta instalación no lo tiene desplegado, no se puede emitir desde aquí.",
+    title: "Servicio no disponible",
+    text: "El servicio de streaming no está disponible.",
   },
-  ready: { variant: "ok", title: "Listo", text: "Elige un destino y pulsa «Iniciar». Nada se emite hasta entonces." },
-  // EQ5d (revisión EQ6c, P3) · emisión pedida y relé aún sin publicar: no es «En directo».
+  ready: { variant: "ok", title: "Listo", text: "Listo para emitir. Nada se emite hasta que pulses «Iniciar»." },
+  // EQ5d · emisión pedida y relé aún sin publicar: no es «En directo».
   starting: {
     variant: "warn",
     title: "Iniciando",
-    text: "Conectando con la ingesta. La emisión no está en directo hasta que la plataforma acepte la publicación.",
+    text: "Conectando con la plataforma… Todavía no está en directo.",
   },
-  live: { variant: "ok", title: "En directo", text: "Se está emitiendo hacia la plataforma configurada." },
-  recording: { variant: "ok", title: "Grabando", text: "Se está grabando un MP4 (modo sólo grabación, sin emitir)." },
+  live: { variant: "ok", title: "En directo", text: "Se está emitiendo." },
+  recording: { variant: "ok", title: "Grabando", text: "Se está grabando un MP4 (sin emitir)." },
   retrying: {
     variant: "warn",
     title: "Reconectando",
-    text: "Se ha cortado la conexión con la ingesta y se está reintentando automáticamente.",
+    text: "Se cortó la conexión y se está reintentando automáticamente.",
   },
   failed: {
     variant: "error",
-    title: "Emisión abandonada",
-    text: "Se agotaron los reintentos. Revisa el último error y la configuración, y vuelve a iniciar.",
+    title: "Error",
+    text: "La emisión se detuvo tras varios intentos. Revisa el motivo y vuelve a iniciar.",
   },
   interrupted: {
     variant: "error",
     title: "Emisión interrumpida",
-    text: "La sesión figura como activa pero el streamer no está emitiendo (¿se reinició?). Detén la sesión o reiníciala.",
+    text: "La emisión figura como activa pero el servicio no está emitiendo. Detenla y vuelve a iniciarla.",
   },
 };
+
+/** Texto del estado con el nombre del canal («Conectando con YouTube…»). */
+export function uxText(ux: UxState, channel: string, record = false): string {
+  if (record && ux === "starting") return "Preparando la grabación…";
+  if (record && ux === "retrying") return "La grabación se interrumpió y se está reintentando automáticamente.";
+  if (record && ux === "failed")
+    return "La grabación se detuvo tras varios intentos. Revisa el motivo y vuelve a iniciar.";
+  if (ux === "starting") return `Conectando con ${channel}… Todavía no está en directo.`;
+  if (ux === "live") return `Se está emitiendo en ${channel}.`;
+  return UX_TEXT[ux].text;
+}
+
+/**
+ * Ronda 1 (Q-H2) · Insignia de la barra en directo. El ERROR y el REINTENTO van ANTES que el
+ * modo: antes, `record ? "GRABANDO" : …` tapaba «Reconectando» y «Detenida por error» en
+ * «Sólo grabar», y la barra decía «● GRABANDO» sin grabar nada.
+ */
+export function liveBadgeText(ux: UxState, record: boolean): string {
+  if (ux === "failed" || ux === "interrupted") return "DETENIDA POR ERROR";
+  if (ux === "retrying") return "RECONECTANDO";
+  if (ux === "recording" || (record && ux === "live")) return "GRABANDO";
+  if (ux === "live") return "EN DIRECTO";
+  return record ? "PREPARANDO GRABACIÓN…" : "CONECTANDO…";
+}
 
 export const IMPACT_TEXT: Record<"hot" | "restart" | "stop", string> = {
   hot: "se aplica al momento",
   restart: "se aplicará al reiniciar la emisión",
   stop: "detiene la emisión en curso",
 };
+
+// ── errores en lenguaje humano (§35, §36) ───────────────────────────────────
+const TIMEOUT_RE = /no respondió|ETIMEDOUT|timeout|a tiempo/i;
+export function humanReason(code: string | null | undefined, message: string | null | undefined, channel = "YouTube") {
+  switch (code) {
+    case "credential_missing":
+      return `No hay una clave de ${channel} configurada.`;
+    case "credential_stale":
+    case "credential_unbound":
+      return "La clave guardada ya no vale para este servidor: vuelve a introducirla en «Configuración avanzada».";
+    case "streamer_unavailable":
+    case "streamer_unreachable":
+      return "El servicio de streaming no está disponible.";
+    case "battle_not_public":
+      return "Esta batalla no puede retransmitirse públicamente.";
+    case "tournament_not_broadcastable":
+      return "Esta batalla no puede retransmitirse públicamente: su torneo no tiene la retransmisión pública activada.";
+    case "streaming_disabled":
+      return "El streaming está desactivado.";
+    case "already_active":
+    case "streamer_busy":
+      return "Ya hay una emisión en marcha. Detenla antes de iniciar otra.";
+    case "disk_low":
+      return "Queda poco espacio en disco para grabar.";
+    case "disk_unknown":
+    case "record_dir_unavailable":
+      return "No se puede grabar: el disco de grabaciones no está disponible.";
+    case "ingest_missing":
+      return "Falta el servidor de emisión: configúralo en «Configuración avanzada».";
+    case "backup_key_missing":
+      return "La clave no está guardada para el servidor de respaldo: vuelve a introducirla.";
+  }
+  if (message && TIMEOUT_RE.test(message)) return `${channel} no respondió a la conexión.`;
+  if (message && /certificado/i.test(message)) return `No se pudo verificar el certificado de ${channel}.`;
+  if (message && /rechaz/i.test(message)) return `${channel} rechazó la emisión (¿la clave es correcta?).`;
+  if (message && /conexión con la ingesta|ECONNREFUSED|ENETUNREACH/i.test(message))
+    return `No se pudo conectar con ${channel}.`;
+  return message || "Algo ha fallado.";
+}
+
+function TechDetails(props: { children: ReactNode; testId?: string }) {
+  return (
+    <details data-testid={props.testId}>
+      <summary>Ver detalles técnicos</summary>
+      <div style={{ fontSize: "0.9rem", opacity: 0.9 }}>{props.children}</div>
+    </details>
+  );
+}
+
+/** Error de una acción: frase humana y, plegado, el código y el mensaje técnicos. */
+function HumanError(props: { error: unknown; channel: string; "data-testid"?: string }) {
+  if (props.error === null || props.error === undefined) return null;
+  const body = ((props.error as { body?: Record<string, unknown> })?.body ?? {}) as Record<string, unknown>;
+  const code = typeof body.error === "string" ? body.error : null;
+  const message =
+    typeof body.message === "string" ? body.message : ((props.error as Error)?.message ?? String(props.error));
+  return (
+    <div role="alert" className="error" data-testid={props["data-testid"]} data-code={code ?? undefined}>
+      <strong>{humanReason(code, message, props.channel)}</strong>
+      <TechDetails>
+        <p>
+          Código: <code>{code ?? "—"}</code>
+        </p>
+        <p>{message}</p>
+      </TechDetails>
+    </div>
+  );
+}
 
 const HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 export function validLogo(v: string): boolean {
@@ -206,14 +349,142 @@ export function preselectedTarget(route: string): { kind: "battle" | "tournament
   return null;
 }
 
+// ── selector de destinos (§4, §6) ───────────────────────────────────────────
+/** «hace 12 min», «hace 3 h», «hace 2 días». */
+export function relativeTime(iso: string | null, now = Date.now()): string {
+  if (!iso) return "";
+  const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000));
+  if (s < 60) return "hace un momento";
+  const m = Math.round(s / 60);
+  if (m < 60) return `hace ${m} min`;
+  const h = Math.round(m / 60);
+  if (h < 48) return `hace ${h} h`;
+  return `hace ${Math.round(h / 24)} días`;
+}
+
+const STATUS_HUMAN: Record<string, string> = {
+  running: "En curso",
+  finished: "Finalizada",
+  scheduled: "Programada",
+  failed: "Fallida",
+  open: "Inscripción abierta",
+  closed: "Inscripción cerrada",
+  draft: "Borrador",
+  cancelled: "Cancelado",
+};
+
+/** Texto de una opción del selector: «Team A vs Team B · Finalizada · hace 12 min». */
+export function destinationText(d: Destination, now = Date.now()): string {
+  if (d.kind === "tournament") {
+    const st =
+      d.status === "running"
+        ? "En curso"
+        : d.status === "finished"
+          ? "Terminado"
+          : (STATUS_HUMAN[d.status] ?? d.status);
+    return `${d.label} · ${st}`;
+  }
+  const st = STATUS_HUMAN[d.status] ?? d.status;
+  const when = d.status === "running" ? relativeTime(d.startedAt, now) : relativeTime(d.finishedAt ?? d.createdAt, now);
+  return [d.label, st, when].filter(Boolean).join(" · ") + (d.broadcastable ? "" : " · No retransmisible");
+}
+
+/** §6 · Explicación humana de si un destino se puede retransmitir. */
+export function eligibilityText(
+  d: Pick<Destination, "kind" | "broadcastable" | "broadcastBlockedReason" | "tournamentBroadcast">,
+): string {
+  if (d.broadcastable) {
+    if (d.kind === "tournament") {
+      return d.tournamentBroadcast
+        ? "Retransmisible: torneo con retransmisión pública. Se emiten todas sus batallas."
+        : "Retransmisible: se emiten las batallas del torneo que son públicas.";
+    }
+    return d.tournamentBroadcast
+      ? "Retransmisible: pertenece a un torneo con retransmisión pública. Los bots privados salen sólo con su nombre, versión, equipo y resultado; su ficha y su código siguen privados."
+      : "Retransmisible: todos sus bots son públicos.";
+  }
+  return d.broadcastBlockedReason === "tournament_not_broadcastable"
+    ? "No retransmisible: esta batalla no puede retransmitirse porque contiene bots privados y su torneo se creó sin retransmisión pública."
+    : "No retransmisible: esta batalla no puede retransmitirse porque contiene bots privados y no pertenece a un torneo con retransmisión pública.";
+}
+
+// ── canal y calidad (§3, §32, §33) ──────────────────────────────────────────
+/**
+ * Opción del selector «Canal». Hoy sale de las plataformas configuradas (y «Sólo
+ * grabar»); el siguiente carril («user streaming profiles») añadirá perfiles con su
+ * propio `id` sin cambiar la vista.
+ */
+export interface ChannelOption {
+  id: string;
+  label: string;
+  mode: "rtmps" | "record";
+  platform: string | null;
+  /** Lista para emitir (clave configurada y válida, o grabación). */
+  ready: boolean;
+  /** Estado en lenguaje humano: «Clave configurada · ****ABCD», «Sin clave»… */
+  detail: string;
+}
+
+export function channelOptions(st: StreamingAdminState): ChannelOption[] {
+  const out: ChannelOption[] = st.platforms.map((p) => {
+    const c = st.credentials.find((x) => x.platform === p.id);
+    const ok = !!c?.configured && c.compatible !== false;
+    return {
+      id: `platform:${p.id}`,
+      label: p.label,
+      mode: "rtmps" as const,
+      platform: p.id,
+      ready: ok,
+      detail: !c?.configured
+        ? "Sin clave de emisión"
+        : c.compatible === false
+          ? "La clave hay que volver a introducirla"
+          : `Clave configurada · ${c.masked}`,
+    };
+  });
+  out.push({
+    id: "record",
+    label: "Sólo grabar (MP4)",
+    mode: "record",
+    platform: null,
+    ready: true,
+    detail: "Graba sin emitir",
+  });
+  return out;
+}
+
+function currentChannelId(s: StreamingSettings): string {
+  return s.mode === "record" ? "record" : `platform:${s.platform}`;
+}
+
+export const QUALITY_PRESETS = [
+  { id: "1080p@30", label: "1080p · 30 FPS", preset: "1080p", fps: 30 },
+  { id: "720p@30", label: "720p · 30 FPS", preset: "720p", fps: 30 },
+  { id: "1080p@60", label: "1080p · 60 FPS", preset: "1080p", fps: 60 },
+  { id: "720p@60", label: "720p · 60 FPS", preset: "720p", fps: 60 },
+] as const;
+
 const POLL_MS = 3000;
+type Section = "streaming" | "advanced" | "recordings" | "audit";
+const SECTIONS: { id: Section; label: string }[] = [
+  { id: "streaming", label: "Streaming" },
+  { id: "advanced", label: "Configuración avanzada" },
+  { id: "recordings", label: "Grabaciones" },
+  { id: "audit", label: "Auditoría" },
+];
+
+function initialSection(route: string): Section {
+  const t = new URLSearchParams(route.split("?")[1] ?? "").get("tab");
+  return SECTIONS.some((s) => s.id === t) ? (t as Section) : "streaming";
+}
 
 export function StreamingPage(props: { me: Me; route: string }) {
   const [st, setSt] = useState<StreamingAdminState | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [actionError, setActionError] = useState<unknown>(null);
-  const [notice, setNotice] = useState<string>("");
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [section, setSection] = useState<Section>(() => initialSection(props.route));
   /** Cada acción terminada refresca la auditoría (una retención no cambia la versión). */
   const [actions, setActions] = useState(0);
 
@@ -226,6 +497,12 @@ export function StreamingPage(props: { me: Me; route: string }) {
       setLoadError(e);
     }
   }, []);
+  // Ronda 1 (P3) · con la emisión parada por error, el aviso verde «Emisión iniciada:
+  // conectando…» ya es falso: se retira.
+  const stopped = st?.uxState === "failed" || st?.uxState === "interrupted";
+  useEffect(() => {
+    if (stopped) setNotice(null);
+  }, [stopped]);
   useEffect(() => {
     void refresh();
     const t = setInterval(() => {
@@ -237,10 +514,10 @@ export function StreamingPage(props: { me: Me; route: string }) {
   async function act(name: string, fn: () => Promise<string | void>) {
     setBusy(name);
     setActionError(null);
-    setNotice("");
+    setNotice(null);
     try {
       const msg = await fn();
-      if (msg) setNotice(msg);
+      if (msg) setNotice(typeof msg === "string" ? { text: msg, variant: "ok" } : msg);
       await refresh();
     } catch (e) {
       setActionError(e);
@@ -260,124 +537,627 @@ export function StreamingPage(props: { me: Me; route: string }) {
   }
   if (!st) return <LoadingState label="la administración de streaming" />;
 
-  const ux = UX_TEXT[st.uxState];
-  const active =
-    st.uxState === "starting" || st.uxState === "live" || st.uxState === "recording" || st.uxState === "retrying";
+  const channel =
+    st.settings.mode === "record"
+      ? "la grabación"
+      : (st.platforms.find((p) => p.id === st.settings.platform)?.label ?? "la plataforma");
   return (
-    <div data-testid="streaming-page">
-      <div className="card">
-        <h2>Streaming</h2>
-        <p>
-          Emite o graba la vista <code>/broadcast</code> de una batalla o un torneo.{" "}
-          <a href={helpHref("administracion", "streaming")}>Ayuda de Streaming</a>
-        </p>
-        <LiveStatus data-testid="streaming-state" busy={st.uxState === "retrying" || st.uxState === "starting"}>
-          <StatusBadge variant={ux.variant} data-testid="streaming-ux-state">
-            {ux.title}
-          </StatusBadge>{" "}
-          {ux.text}
-        </LiveStatus>
-        {!st.capabilities.sealedStore && (
-          <p className="warn" role="status" data-testid="sealed-store-missing">
-            No hay almacén seguro de claves en esta instalación: no se pueden guardar claves de emisión (sólo es posible
-            grabar).
+    <div data-testid="streaming-page" className="streaming-layout">
+      <nav aria-label="Secciones de streaming" className="streaming-nav" data-testid="streaming-nav">
+        {SECTIONS.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            data-testid={`streaming-tab-${s.id}`}
+            aria-current={section === s.id ? "page" : undefined}
+            onClick={() => setSection(s.id)}
+          >
+            {s.label}
+          </button>
+        ))}
+      </nav>
+      <div style={{ minWidth: 0 }}>
+        <div className="card">
+          <h2>
+            {SECTIONS.find((s) => s.id === section)!.label === "Streaming"
+              ? "Streaming"
+              : SECTIONS.find((s) => s.id === section)!.label}
+          </h2>
+          <LiveStatus data-testid="streaming-state" busy={st.uxState === "retrying" || st.uxState === "starting"}>
+            <span
+              aria-hidden="true"
+              className={UX_TEXT[st.uxState].variant === "neutral" ? undefined : UX_TEXT[st.uxState].variant}
+            >
+              ●{" "}
+            </span>
+            <StatusBadge variant={UX_TEXT[st.uxState].variant} data-testid="streaming-ux-state">
+              {UX_TEXT[st.uxState].title}
+            </StatusBadge>{" "}
+            {uxText(st.uxState, channel, st.session?.mode === "record")}
+          </LiveStatus>
+          {!st.capabilities.sealedStore && (
+            <p className="warn" role="status" data-testid="sealed-store-missing">
+              No hay almacén seguro de claves en esta instalación: no se pueden guardar claves de emisión (sólo es
+              posible grabar).
+            </p>
+          )}
+          {st.pendingRestart && (
+            <p className="warn" role="status" data-testid="pending-restart">
+              Hay cambios guardados que la emisión en curso aún no usa. Se aplicarán al pulsar «Reiniciar emisión»
+              (corte de unos segundos).
+            </p>
+          )}
+          {notice && (
+            <p className={notice.variant} role="status" data-testid="streaming-notice">
+              {notice.text}
+            </p>
+          )}
+          <HumanError error={actionError} channel={channel} data-testid="streaming-error" />
+          <p style={{ marginBottom: 0 }}>
+            <small>
+              <a href={helpHref("administracion", "streaming")}>Ayuda de Streaming</a>
+            </small>
           </p>
+        </div>
+
+        {section === "streaming" && (
+          <SimpleView
+            st={st}
+            route={props.route}
+            busy={busy}
+            act={act}
+            channel={channel}
+            onAdvanced={() => setSection("advanced")}
+          />
         )}
-        {st.pendingRestart && (
-          <p className="warn" role="status" data-testid="pending-restart">
-            Hay cambios guardados que la emisión en curso aún no usa. Se aplicarán al pulsar «Reiniciar emisión» (corte
-            de unos segundos).
-          </p>
+        {section === "advanced" && (
+          <>
+            <ManualTargetCard st={st} route={props.route} busy={busy} act={act} />
+            <SettingsCard key={`s${st.settings.version}`} st={st} busy={busy} act={act} />
+            <IngestsCard
+              key={`i${st.settings.version}-${JSON.stringify(st.ingests ?? [])}`}
+              st={st}
+              busy={busy}
+              act={act}
+            />
+            <CredentialsCard st={st} busy={busy} act={act} />
+            <BrandingCard key={`b${st.settings.version}`} st={st} busy={busy} act={act} />
+            <MonitorCard st={st} />
+          </>
         )}
-        {notice && (
-          <p className="ok" role="status" data-testid="streaming-notice">
-            {notice}
-          </p>
-        )}
-        <FormError error={actionError} data-testid="streaming-error" />
+        {section === "recordings" && <RecordingsCard key={`r${st.settings.version}`} st={st} busy={busy} act={act} />}
+        {section === "audit" && <AuditCard version={st.settings.version * 100000 + actions} />}
       </div>
-
-      <MonitorCard st={st} />
-      <ControlsCard st={st} route={props.route} busy={busy} act={act} active={active} />
-      <SettingsCard key={`s${st.settings.version}`} st={st} busy={busy} act={act} />
-      <CredentialsCard st={st} busy={busy} act={act} />
-      <BrandingCard key={`b${st.settings.version}`} st={st} busy={busy} act={act} />
-      <RecordingsCard key={`r${st.settings.version}`} st={st} busy={busy} act={act} />
-      <AuditCard version={st.settings.version * 100000 + actions} />
     </div>
   );
 }
 
-type Act = (name: string, fn: () => Promise<string | void>) => Promise<void>;
+/** Aviso tras una acción: verde si salió bien; ámbar si fue a medias (p. ej. respaldo caído). */
+interface Notice {
+  text: string;
+  variant: "ok" | "warn";
+}
+type Act = (name: string, fn: () => Promise<string | Notice | void>) => Promise<void>;
 
-function MonitorCard({ st }: { st: StreamingAdminState }) {
-  const s = st.streamer;
-  return (
-    <div className="card" data-testid="streaming-monitor">
-      <h3>Monitorización</h3>
-      {!s ? (
-        <p>Sin datos del streamer{st.capabilities.streamerError ? `: ${st.capabilities.streamerError}` : ""}.</p>
-      ) : (
-        <table>
-          <tbody>
-            <tr>
-              <td>Estado del streamer</td>
-              <td data-testid="mon-state">{s.state}</td>
-            </tr>
-            <tr>
-              <td>Destino</td>
-              <td data-testid="mon-target">{s.target ?? "—"}</td>
-            </tr>
-            <tr>
-              <td>FPS / bitrate</td>
-              <td data-testid="mon-rate">
-                {s.stats ? `${s.stats.fps} fps · ${Math.round(s.stats.bitrateKbps)} kbit/s` : "—"}
-              </td>
-            </tr>
-            <tr>
-              <td>Frames (descartados)</td>
-              <td>{s.stats ? `${s.stats.frames} (${s.stats.droppedFrames})` : "—"}</td>
-            </tr>
-            <tr>
-              <td>Reintentos</td>
-              <td>{s.restarts ?? 0}</td>
-            </tr>
-            <tr>
-              <td>Relé RTMP</td>
-              <td>{s.relay?.state ?? "—"}</td>
-            </tr>
-            <tr>
-              <td>Grabación en curso</td>
-              <td>{s.recording ?? "—"}</td>
-            </tr>
-            <tr>
-              <td>Último error</td>
-              <td data-testid="mon-last-error">
-                {s.lastError ? `${s.lastError.message} (${new Date(s.lastError.at).toLocaleString("es-ES")})` : "—"}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      )}
-    </div>
-  );
+function isActive(st: StreamingAdminState): boolean {
+  return st.uxState === "starting" || st.uxState === "live" || st.uxState === "recording" || st.uxState === "retrying";
 }
 
-function ControlsCard(props: {
+/** Botón de inicio común (vista simple y destino manual). */
+async function startTo(target: { kind: string; id: string }, mode: string): Promise<string> {
+  const r = await api<{ alreadyActive: boolean }>("POST", "/admin/streaming/start", {
+    target: { kind: target.kind, id: target.id },
+  });
+  if (r.alreadyActive) return "Ya estaba activa con este destino.";
+  return mode === "record" ? "Grabación iniciada." : "Emisión iniciada: conectando…";
+}
+
+function stopNow(act: Act, mode: string) {
+  const label = mode === "record" ? "Detener grabación" : "Detener emisión";
+  if (!window.confirm(`¿${label}? Se corta lo que se está emitiendo.`)) return;
+  void act("stop", async () => {
+    await api("POST", "/admin/streaming/stop", {});
+    return "Detenida.";
+  });
+}
+
+// ── vista simple (§3, §12, §13) ─────────────────────────────────────────────
+function SimpleView(props: {
   st: StreamingAdminState;
   route: string;
   busy: string | null;
   act: Act;
-  active: boolean;
+  channel: string;
+  onAdvanced: () => void;
 }) {
-  const { st, act, busy, active } = props;
+  const { st, busy, act } = props;
+  const active = isActive(st);
+  if (active || st.session) return <LiveView {...props} />;
+  return <ReadyView {...props} />;
+}
+
+/**
+ * Ronda 2 (MOBILE_CTA_NO_CONTENT_OVERLAP) · mientras se ve INICIAR o DETENER, la página usa el
+ * «armazón con CTA»: en móvil (index.html, ≤720 px) el CTA queda fijo abajo en una franja
+ * RESERVADA (relleno inferior de <body> = altura del CTA + safe-area) y lo que se desplaza es
+ * #root, que termina encima de esa franja. Así ningún campo pasa nunca por debajo del CTA. En
+ * escritorio la clase no tiene efecto.
+ */
+function useBottomCtaShell() {
+  useEffect(() => {
+    const html = document.documentElement;
+    html.classList.add("streaming-cta-shell");
+    return () => html.classList.remove("streaming-cta-shell");
+  }, []);
+}
+
+function ReadyView(props: {
+  st: StreamingAdminState;
+  route: string;
+  busy: string | null;
+  act: Act;
+  channel: string;
+  onAdvanced: () => void;
+}) {
+  const { st, busy, act } = props;
+  useBottomCtaShell();
+  const pre = preselectedTarget(props.route);
+  const [kind, setKind] = useState<"battle" | "tournament">(pre?.kind ?? "battle");
+  const [list, setList] = useState<{ battles: Destination[]; tournaments: Destination[] } | null>(null);
+  const [listError, setListError] = useState<unknown>(null);
+  const [selected, setSelected] = useState<string>(pre ? `${pre.kind}:${pre.id}` : "");
+  const [extra, setExtra] = useState<Destination | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setList(
+        await api<{ battles: Destination[]; tournaments: Destination[] }>(
+          "GET",
+          "/admin/streaming/destinations?limit=30",
+        ),
+      );
+      setListError(null);
+    } catch (e) {
+      setListError(e);
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  // «Retransmitir» desde una batalla o torneo: si no está entre los recientes, se
+  // comprueba (lectura) y se añade al selector. Nunca arranca nada.
+  const preKey = pre ? `${pre.kind}:${pre.id}` : "";
+  useEffect(() => {
+    if (!pre || !list) return;
+    const all = [...list.battles, ...list.tournaments];
+    if (all.some((d) => `${d.kind}:${d.id}` === preKey)) return;
+    void api<TargetInfo>("GET", `/admin/streaming/target?kind=${pre.kind}&id=${encodeURIComponent(pre.id)}`)
+      .then((t) =>
+        setExtra({
+          kind: t.kind,
+          id: t.id,
+          label: t.label,
+          status: t.status,
+          mode: null,
+          tournamentName: null,
+          startedAt: null,
+          finishedAt: null,
+          createdAt: new Date().toISOString(),
+          broadcastable: !!(t.broadcastable ?? t.publicBroadcastable),
+          broadcastBlockedReason: t.broadcastBlockedReason ?? null,
+          tournamentBroadcast: t.tournamentBroadcast ?? null,
+        }),
+      )
+      .catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preKey, list]);
+
+  const options = useMemo(() => {
+    const base = kind === "battle" ? (list?.battles ?? []) : (list?.tournaments ?? []);
+    return extra && extra.kind === kind && !base.some((d) => d.id === extra.id) ? [extra, ...base] : base;
+  }, [list, kind, extra]);
+  const dest = options.find((d) => `${d.kind}:${d.id}` === selected) ?? null;
+
+  const channels = channelOptions(st);
+  const channelId = currentChannelId(st.settings);
+  const ch = channels.find((c) => c.id === channelId);
+  const quality = `${st.settings.preset}@${st.settings.fps}`;
+
+  const blockers: string[] = [];
+  if (!st.settings.enabled) blockers.push("El streaming está desactivado.");
+  if (!st.capabilities.streamerReachable) blockers.push("El servicio de streaming no está disponible.");
+  if (!dest) blockers.push(kind === "battle" ? "Elige una batalla." : "Elige un torneo.");
+  else if (!dest.broadcastable) blockers.push("Este destino no se puede retransmitir.");
+  if (ch && !ch.ready)
+    blockers.push(st.settings.mode === "rtmps" ? `No hay una clave de ${props.channel} configurada.` : "");
+  const canStart = blockers.filter(Boolean).length === 0;
+
+  function changeChannel(id: string) {
+    const c = channels.find((x) => x.id === id);
+    if (!c) return;
+    const patch: Record<string, unknown> = { version: st.settings.version, mode: c.mode };
+    if (c.platform) patch.platform = c.platform;
+    void act("channel", async () => {
+      await api("PUT", "/admin/streaming/settings", patch);
+      return `Canal: ${c.label}.`;
+    });
+  }
+  function changeQuality(id: string) {
+    const q = QUALITY_PRESETS.find((x) => x.id === id);
+    if (!q) return;
+    const patch: Record<string, unknown> = {
+      version: st.settings.version,
+      preset: q.preset,
+      fps: q.fps,
+      videoBitrateKbps: recommendation(q.preset, q.fps).recommended,
+    };
+    if (q.fps === 60 && st.settings.fps !== 60) {
+      if (!window.confirm("60 FPS dobla el coste de CPU y el ancho de banda. ¿Seguro?")) return;
+      patch.confirmHighFps = true;
+    }
+    void act("quality", async () => {
+      await api("PUT", "/admin/streaming/settings", patch);
+      return `Calidad: ${q.label}.`;
+    });
+  }
+
+  return (
+    <div className="card" data-testid="streaming-simple">
+      <h3>Retransmitir</h3>
+      {!st.settings.enabled && (
+        <p>
+          <button
+            type="button"
+            data-testid="simple-enable"
+            disabled={busy !== null}
+            onClick={() =>
+              void act("enable", async () => {
+                await api("PUT", "/admin/streaming/settings", { version: st.settings.version, enabled: true });
+                return "Streaming activado.";
+              })
+            }
+          >
+            Activar streaming
+          </button>
+        </p>
+      )}
+      <div className="streaming-field">
+        <label htmlFor="simple-kind">Tipo</label>
+        <select
+          id="simple-kind"
+          data-testid="simple-kind"
+          value={kind}
+          onChange={(e) => {
+            setKind(e.target.value as "battle" | "tournament");
+            setSelected("");
+          }}
+        >
+          <option value="battle">Batalla</option>
+          <option value="tournament">Torneo</option>
+        </select>
+      </div>
+      <div className="streaming-field">
+        <label htmlFor="simple-destination">{kind === "battle" ? "Batalla" : "Torneo"}</label>
+        <select
+          id="simple-destination"
+          data-testid="simple-destination"
+          value={selected}
+          onChange={(e) => setSelected(e.target.value)}
+        >
+          <option value="">
+            {list ? (options.length ? "— Elige —" : "No hay nada que retransmitir") : "Cargando…"}
+          </option>
+          {options.map((d) => (
+            <option key={d.id} value={`${d.kind}:${d.id}`} data-broadcastable={d.broadcastable ? "1" : "0"}>
+              {destinationText(d)}
+            </option>
+          ))}
+        </select>
+        {listError ? <FormError error={listError} /> : null}
+      </div>
+      {dest && (
+        <div data-testid="stream-target-info">
+          <p
+            data-testid={dest.broadcastable ? "simple-broadcastable" : "stream-target-private"}
+            data-reason={dest.broadcastBlockedReason ?? undefined}
+            className={dest.broadcastable ? "ok" : "error"}
+            role={dest.broadcastable ? undefined : "alert"}
+          >
+            {eligibilityText(dest)}
+          </p>
+          <TechDetails testId="simple-target-tech">
+            <p>
+              {dest.kind} <code data-testid="simple-target-id">{dest.id}</code>
+            </p>
+            {dest.broadcastBlockedReason && (
+              <p>
+                Motivo: <code>{dest.broadcastBlockedReason}</code>
+              </p>
+            )}
+          </TechDetails>
+        </div>
+      )}
+      <div className="streaming-field">
+        <label htmlFor="simple-channel">Canal</label>
+        <select
+          id="simple-channel"
+          data-testid="simple-channel"
+          value={channelId}
+          disabled={busy !== null}
+          onChange={(e) => changeChannel(e.target.value)}
+        >
+          {channels.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+        <small data-testid="channel-status" className={ch?.ready ? "ok" : "warn"}>
+          {ch?.detail}
+          {ch && !ch.ready && (
+            <>
+              {" "}
+              ·{" "}
+              <a
+                href="#/streaming?tab=advanced"
+                onClick={(e) => {
+                  e.preventDefault();
+                  props.onAdvanced();
+                }}
+              >
+                Configurar la clave
+              </a>
+            </>
+          )}
+        </small>
+      </div>
+      <div className="streaming-field">
+        <label htmlFor="simple-quality">Calidad</label>
+        <select
+          id="simple-quality"
+          data-testid="simple-quality"
+          value={quality}
+          disabled={busy !== null}
+          onChange={(e) => changeQuality(e.target.value)}
+        >
+          {QUALITY_PRESETS.map((q) => (
+            <option key={q.id} value={q.id}>
+              {q.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <p className="streaming-start-row streaming-cta" data-testid="streaming-cta">
+        <button
+          type="button"
+          className="streaming-big start"
+          data-testid="stream-start"
+          disabled={busy !== null || !canStart}
+          onClick={() => void act("start", () => startTo(dest!, st.settings.mode))}
+        >
+          {st.settings.mode === "record" ? "INICIAR GRABACIÓN" : "INICIAR EMISIÓN"}
+        </button>
+      </p>
+      {!canStart && (
+        <ul data-testid="start-blockers" className="warn">
+          {blockers.filter(Boolean).map((b) => (
+            <li key={b}>{b}</li>
+          ))}
+        </ul>
+      )}
+      <p>
+        <a
+          href="#/streaming?tab=advanced"
+          data-testid="simple-advanced-link"
+          onClick={(e) => {
+            e.preventDefault();
+            props.onAdvanced();
+          }}
+        >
+          Configuración avanzada &gt;
+        </a>
+      </p>
+      <p>
+        <small data-testid="replay-note">
+          Las batallas finalizadas se emiten con su pantalla de resultado; la reproducción completa (replay) aún no se
+          puede emitir.
+        </small>
+      </p>
+    </div>
+  );
+}
+
+function fmtDuration(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const hh = Math.floor(s / 3600);
+  const mm = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  return `${hh > 0 ? `${hh}:` : ""}${String(mm).padStart(hh > 0 ? 2 : 1, "0")}:${String(ss).padStart(2, "0")}`;
+}
+
+/** §12, §13 · Vista en directo: lo esencial y DETENER siempre a la vista. */
+function LiveView(props: { st: StreamingAdminState; busy: string | null; act: Act; channel: string }) {
+  const { st, busy, act } = props;
+  useBottomCtaShell();
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const [label, setLabel] = useState<string | null>(null);
+  const target = st.session?.target ?? null;
+  useEffect(() => {
+    if (!target) return;
+    void api<TargetInfo>("GET", `/admin/streaming/target?kind=${target.kind}&id=${encodeURIComponent(target.id)}`)
+      .then((t) => setLabel(t.label))
+      .catch(() => setLabel(null));
+  }, [target?.kind, target?.id]);
+  const s = st.streamer;
+  const relay = s?.relay;
+  const record = st.session?.mode === "record" || st.uxState === "recording";
+  const live = st.uxState === "live" || st.uxState === "recording";
+  const quality = `${st.settings.preset} · ${st.settings.fps} FPS`;
+  const failed = st.uxState === "failed" || st.uxState === "interrupted";
+  const errs = relay?.ingestErrors;
+  return (
+    <div className="card" data-testid="streaming-live">
+      <div className="streaming-live-bar">
+        <strong data-testid="live-badge" className={live ? "error" : "warn"} style={{ fontSize: "1.3rem" }}>
+          ● {liveBadgeText(st.uxState, record)}
+        </strong>
+        <button
+          type="button"
+          className="streaming-big stop streaming-cta"
+          data-testid="stream-stop"
+          disabled={busy !== null}
+          onClick={() => stopNow(act, record ? "record" : "rtmps")}
+        >
+          {record ? "DETENER GRABACIÓN" : "DETENER EMISIÓN"}
+        </button>
+      </div>
+      {failed && (
+        <div role="alert" className="error" data-testid="live-failure">
+          <strong>
+            {humanReason(null, s?.lastError?.message ?? "", props.channel) ||
+              `No se pudo conectar con ${props.channel}`}
+          </strong>
+          {errs && (errs.primary || errs.backup) && (
+            <p data-testid="live-failure-ingests">
+              Principal: {errs.primary ? humanReason(null, errs.primary, props.channel) : "OK"}
+              {relay?.backupAvailable
+                ? ` / Respaldo: ${errs.backup ? humanReason(null, errs.backup, props.channel) : "sin probar"}`
+                : ""}
+            </p>
+          )}
+        </div>
+      )}
+      <div className="streaming-facts">
+        <div>
+          <span>Destino</span>
+          <strong data-testid="live-destination">
+            {label ?? (target ? (target.kind === "battle" ? "Batalla" : "Torneo") : "—")}
+          </strong>
+        </div>
+        <div>
+          <span>Canal</span>
+          <strong data-testid="live-channel">{record ? "Grabación local" : props.channel}</strong>
+        </div>
+        <div>
+          <span>Calidad</span>
+          <strong>{quality}</strong>
+        </div>
+        <div>
+          <span>Duración</span>
+          <strong data-testid="live-duration">
+            {st.session ? fmtDuration(now - new Date(st.session.startedAt).getTime()) : "—"}
+          </strong>
+        </div>
+        <div>
+          <span>FPS · bitrate</span>
+          <strong data-testid="mon-rate">
+            {s?.stats && !failed ? `${s.stats.fps} fps · ${Math.round(s.stats.bitrateKbps)} kbit/s` : "—"}
+          </strong>
+        </div>
+        <div>
+          <span>Frames descartados</span>
+          <strong data-testid="live-dropped">{s?.stats && !failed ? s.stats.droppedFrames : "—"}</strong>
+        </div>
+        <div>
+          <span>Reintentos</span>
+          <strong>{s?.restarts ?? 0}</strong>
+        </div>
+        {!record && (
+          <div>
+            <span>Ingesta activa</span>
+            <strong data-testid="active-ingest">{relay?.ingest === "backup" ? "Respaldo" : "Principal"}</strong>
+          </div>
+        )}
+      </div>
+      {!record && relay?.failedOver && (
+        <p className="warn" data-testid="failover-notice">
+          Principal no disponible · Usando servidor de respaldo
+        </p>
+      )}
+      {st.pendingRestart && (
+        <p>
+          <button
+            type="button"
+            data-testid="stream-restart"
+            disabled={busy !== null || !st.session}
+            onClick={() =>
+              void act("restart", async () => {
+                await api("POST", "/admin/streaming/restart", {});
+                return "Reiniciada con la configuración guardada.";
+              })
+            }
+          >
+            Reiniciar emisión (aplica los cambios guardados)
+          </button>
+        </p>
+      )}
+      <TechDetails testId="live-tech">
+        <MonitorTable st={st} />
+      </TechDetails>
+    </div>
+  );
+}
+
+function MonitorTable({ st }: { st: StreamingAdminState }) {
+  const s = st.streamer;
+  if (!s)
+    return <p>Sin datos del streamer{st.capabilities.streamerError ? `: ${st.capabilities.streamerError}` : ""}.</p>;
+  const rows: [string, ReactNode, string?][] = [
+    ["Estado interno del streamer", s.state, "mon-state"],
+    ["Relé RTMP", s.relay?.state ?? "—", "mon-relay"],
+    ["Ingesta (URL, sin clave)", s.target ?? "—", "mon-target"],
+    ["Ingesta activa", s.relay?.ingest ?? "—"],
+    ["Error de la principal", s.relay?.ingestErrors?.primary ?? "—"],
+    ["Error del respaldo", s.relay?.ingestErrors?.backup ?? "—"],
+    ["Frames", s.stats ? `${s.stats.frames} (${s.stats.droppedFrames} descartados)` : "—"],
+    ["Sesión", st.session?.id ?? "—", "mon-session"],
+    ["Grabación en curso", s.recording ?? "—"],
+    [
+      "Último error",
+      s.lastError ? `${s.lastError.message} (${new Date(s.lastError.at).toLocaleString("es-ES")})` : "—",
+      "mon-last-error",
+    ],
+  ];
+  return (
+    <table className="stack-table">
+      <tbody>
+        {rows.map(([k, v, id]) => (
+          <tr key={k}>
+            <th scope="row">{k}</th>
+            <td data-label={k} data-testid={id}>
+              {v}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+/** Avanzada → Diagnóstico: la tabla técnica completa. */
+function MonitorCard({ st }: { st: StreamingAdminState }) {
+  return (
+    <div className="card" data-testid="streaming-monitor">
+      <h3>Diagnóstico</h3>
+      <MonitorTable st={st} />
+    </div>
+  );
+}
+
+/** Avanzada → Destino manual (UUID): el único sitio donde se escribe un UUID (§5). */
+function ManualTargetCard(props: { st: StreamingAdminState; route: string; busy: string | null; act: Act }) {
+  const { st, act, busy } = props;
   const pre = preselectedTarget(props.route);
   const [kind, setKind] = useState<"battle" | "tournament">(pre?.kind ?? "battle");
   const [id, setId] = useState(pre?.id ?? "");
   const [target, setTarget] = useState<TargetInfo | null>(null);
   const [targetError, setTargetError] = useState<unknown>(null);
   const checked = useRef<string>("");
-
   const check = useCallback(async (k: string, i: string) => {
     setTargetError(null);
     setTarget(null);
@@ -389,29 +1169,22 @@ function ControlsCard(props: {
     }
   }, []);
   useEffect(() => {
-    // Destino preseleccionado por «Retransmitir»: se comprueba (lectura), no se emite.
     if (pre && checked.current !== `${pre.kind}:${pre.id}`) {
       checked.current = `${pre.kind}:${pre.id}`;
       void check(pre.kind, pre.id);
     }
   }, [pre, check]);
-
-  const mode = st.settings.mode;
+  const active = isActive(st);
   const cred = st.credentials.find((c) => c.platform === st.settings.platform);
-  const credOk = mode === "record" || !!cred?.configured;
-  const canStart =
-    st.settings.enabled &&
-    st.capabilities.streamerReachable &&
-    !active &&
-    !st.session &&
-    !!(target?.broadcastable ?? target?.publicBroadcastable) &&
-    credOk;
-  const startLabel = mode === "record" ? "Iniciar grabación" : "Iniciar emisión";
-  const stopLabel = mode === "record" ? "Detener grabación" : "Detener emisión";
-
+  const credOk = st.settings.mode === "record" || !!cred?.configured;
+  const ok = !!(target?.broadcastable ?? target?.publicBroadcastable);
+  const canStart = st.settings.enabled && st.capabilities.streamerReachable && !active && !st.session && ok && credOk;
   return (
     <div className="card" data-testid="streaming-controls">
-      <h3>Destino y controles</h3>
+      <h3>Destino manual</h3>
+      <p>
+        <small>Sólo si el destino no aparece en el selector de «Streaming». Se escribe su identificador (UUID).</small>
+      </p>
       <form
         onSubmit={(e: FormEvent) => {
           e.preventDefault();
@@ -440,9 +1213,9 @@ function ControlsCard(props: {
       </form>
       <FormError error={targetError} data-testid="stream-target-error" />
       {target && (
-        <div data-testid="stream-target-info">
+        <div data-testid="manual-target-info">
           <p>
-            <strong>{target.label}</strong> · estado {target.status}
+            <strong>{target.label}</strong> · {STATUS_HUMAN[target.status] ?? target.status}
           </p>
           <p data-testid="stream-delay">
             Retardo del directo: <strong>{target.delaySeconds} s</strong> (
@@ -455,99 +1228,152 @@ function ControlsCard(props: {
                   : "sin retardo declarado"}
             ). Se cambia en las reglas, no aquí.
           </p>
-          {!(target.broadcastable ?? target.publicBroadcastable) && (
-            <p
-              className="error"
-              role="alert"
-              data-testid="stream-target-private"
-              data-reason={target.broadcastBlockedReason ?? "target_not_broadcastable"}
+          <p
+            className={ok ? "ok" : "error"}
+            data-testid="manual-target-eligibility"
+            data-reason={target.broadcastBlockedReason ?? undefined}
+          >
+            {eligibilityText({
+              kind: target.kind,
+              broadcastable: ok,
+              broadcastBlockedReason: target.broadcastBlockedReason ?? null,
+              tournamentBroadcast: target.tournamentBroadcast ?? null,
+            })}
+          </p>
+          <p>
+            <button
+              type="button"
+              data-testid="manual-start"
+              disabled={busy !== null || !canStart}
+              onClick={() => void act("start", () => startTo(target, st.settings.mode))}
             >
-              {target.broadcastBlockedReason === "tournament_not_broadcastable"
-                ? "No se puede emitir: la batalla tiene bots no públicos y su torneo se creó sin retransmisión pública (tournament_not_broadcastable)."
-                : "No se puede emitir: es una batalla suelta con bots no públicos; sólo un torneo con retransmisión pública autoriza mostrarlos (battle_not_public)."}
-            </p>
-          )}
-          {(target.broadcastable ?? target.publicBroadcastable) && target.tournamentBroadcast && (
-            <p className="note" data-testid="stream-target-broadcast">
-              Torneo con retransmisión pública: los bots privados o de equipo salen con sus datos de competición
-              (nombre, versión, equipo y resultado). Su ficha y su código siguen privados.
-            </p>
-          )}
+              Iniciar con este destino
+            </button>
+          </p>
         </div>
       )}
-      {mode === "rtmps" && !cred?.configured && (
-        <p className="warn" data-testid="stream-no-credential">
-          Falta la clave de emisión de {st.platforms.find((p) => p.id === st.settings.platform)?.label}. Añádela en
-          «Credenciales».
+    </div>
+  );
+}
+
+/** Avanzada → Servidores de YouTube (o de la plataforma): principal y respaldo (§16-§21, §26). */
+function IngestsCard({ st, busy, act }: { st: StreamingAdminState; busy: string | null; act: Act }) {
+  const platform = st.settings.platform;
+  const ing = st.ingests?.find((i) => i.platform === platform) ?? null;
+  const label = st.platforms.find((p) => p.id === platform)?.label ?? platform;
+  const [primary, setPrimary] = useState(ing?.primaryIngestUrl ?? "");
+  const [backup, setBackup] = useState(ing?.backupIngestUrl ?? "");
+  const [test, setTest] = useState<{
+    primary: { ok: boolean; error?: string; connectMs?: number };
+    backup: { ok: boolean; error?: string; code?: string; connectMs?: number } | null;
+  } | null>(null);
+  const cred = st.credentials.find((c) => c.platform === platform);
+  if (st.settings.mode !== "rtmps") return null;
+  const line = (r: { ok: boolean; error?: string; connectMs?: number } | null) =>
+    !r
+      ? "sin respaldo configurado"
+      : r.ok
+        ? `OK (${r.connectMs ?? "?"} ms)`
+        : humanReason((r as { code?: string }).code ?? null, r.error ?? "", label);
+  return (
+    <div className="card" data-testid="streaming-ingests">
+      <h3>Servidores de {label}</h3>
+      <form
+        onSubmit={(e: FormEvent) => {
+          e.preventDefault();
+          void act("ingests", async () => {
+            const r = await api<{ warnings: string[]; changed: boolean }>(
+              "PUT",
+              `/admin/streaming/ingests/${platform}`,
+              {
+                primaryIngestUrl: primary,
+                backupIngestUrl: backup || null,
+              },
+            );
+            return r.changed
+              ? `Servidores guardados.${r.warnings.length ? ` ${r.warnings.join(" ")}` : ""}`
+              : "Sin cambios.";
+          });
+        }}
+      >
+        <div className="streaming-field">
+          <label htmlFor="ing-primary">Servidor principal</label>
+          <input
+            id="ing-primary"
+            data-testid="ing-primary"
+            value={primary}
+            onChange={(e) => setPrimary(e.target.value)}
+            placeholder="rtmps://servidor/aplicacion"
+          />
+        </div>
+        <div className="streaming-field">
+          <label htmlFor="ing-backup">Servidor de respaldo (opcional)</label>
+          <input
+            id="ing-backup"
+            data-testid="ing-backup"
+            value={backup}
+            onChange={(e) => setBackup(e.target.value)}
+            placeholder={
+              ing?.backupQueryAllowed ? "rtmps://servidor/aplicacion?backup=1" : "rtmps://servidor/aplicacion"
+            }
+          />
+          <small>
+            Se guardan tal cual, sin la clave.{" "}
+            {ing?.backupQueryAllowed
+              ? "En YouTube, el respaldo lleva «?backup=1»; no se admite ninguna otra query."
+              : "Sin query."}
+            {cred?.configured && cred.backup === "needs_key" && (
+              <strong className="warn" data-testid="backup-needs-key">
+                {" "}
+                Para usar el respaldo, vuelve a introducir la clave.
+              </strong>
+            )}
+          </small>
+        </div>
+        <p>
+          <button type="submit" data-testid="ing-save" disabled={busy !== null || !primary}>
+            Guardar servidores
+          </button>{" "}
+          <button
+            type="button"
+            data-testid="stream-test"
+            disabled={busy !== null || !cred?.configured || !st.capabilities.streamerReachable}
+            onClick={() =>
+              void act("test", async () => {
+                setTest(null);
+                const r = await api<{
+                  ok: boolean;
+                  error?: string;
+                  connectMs?: number;
+                  primary?: { ok: boolean; error?: string; connectMs?: number };
+                  backup?: { ok: boolean; error?: string; code?: string } | null;
+                }>("POST", "/admin/streaming/test", {});
+                const res = {
+                  primary: r.primary ?? { ok: r.ok, error: r.error, connectMs: r.connectMs },
+                  backup: r.backup ?? null,
+                };
+                setTest(res);
+                if (!res.primary.ok) return `La prueba falló: ${humanReason(null, res.primary.error ?? "", label)}`;
+                // Ronda 1 (P3) · con el respaldo caído no es «Prueba correcta» en verde: estado mixto.
+                if (res.backup && !res.backup.ok) {
+                  return {
+                    variant: "warn",
+                    text: `Prueba a medias: la principal conecta (TLS verificado, ${res.primary.connectMs} ms), pero el respaldo NO: ${humanReason(null, res.backup.error ?? "", label)} Si la principal cae, no habrá a dónde cambiar.`,
+                  };
+                }
+                return `Prueba correcta: TLS verificado y conexión RTMP en ${res.primary.connectMs} ms (la clave no se valida sin publicar).`;
+              })
+            }
+          >
+            Probar ingesta
+          </button>
         </p>
-      )}
-      <p>
-        <button
-          type="button"
-          data-testid="stream-test"
-          disabled={busy !== null || mode !== "rtmps" || !credOk || !st.capabilities.streamerReachable}
-          onClick={() =>
-            void act("test", async () => {
-              const r = await api<{ ok: boolean; error?: string; connectMs?: number; note?: string }>(
-                "POST",
-                "/admin/streaming/test",
-                {},
-              );
-              return r.ok
-                ? `Prueba correcta: TLS verificado y handshake RTMP en ${r.connectMs} ms. ${r.note ?? ""}`
-                : `La prueba falló: ${r.error}`;
-            })
-          }
-        >
-          Probar configuración
-        </button>{" "}
-        <button
-          type="button"
-          data-testid="stream-start"
-          disabled={busy !== null || !canStart}
-          onClick={() =>
-            void act("start", async () => {
-              const r = await api<{ alreadyActive: boolean }>("POST", "/admin/streaming/start", {
-                target: { kind: target!.kind, id: target!.id },
-              });
-              return r.alreadyActive ? "Ya estaba activa con este destino." : `${startLabel}: orden enviada.`;
-            })
-          }
-        >
-          {startLabel}
-        </button>{" "}
-        <button
-          type="button"
-          data-testid="stream-stop"
-          disabled={busy !== null || (!active && !st.session)}
-          onClick={() => {
-            if (!window.confirm(`¿${stopLabel}? Se corta lo que se está emitiendo.`)) return;
-            void act("stop", async () => {
-              await api("POST", "/admin/streaming/stop", {});
-              return "Detenida.";
-            });
-          }}
-        >
-          {stopLabel}
-        </button>{" "}
-        <button
-          type="button"
-          data-testid="stream-restart"
-          disabled={busy !== null || !st.session || !st.pendingRestart}
-          onClick={() =>
-            void act("restart", async () => {
-              await api("POST", "/admin/streaming/restart", {});
-              return "Reiniciada con la configuración guardada.";
-            })
-          }
-        >
-          Reiniciar emisión
-        </button>
-      </p>
-      {st.session && (
-        <p data-testid="stream-session">
-          Sesión activa desde {new Date(st.session.startedAt).toLocaleString("es-ES")}
-          {st.session.target ? ` · ${st.session.target.kind} ${st.session.target.id}` : ""}
+      </form>
+      {test && (
+        <p data-testid="ingest-test-result">
+          <span data-testid="ingest-test-primary">Principal: {line(test.primary)}</span>
+          {" / "}
+          <span data-testid="ingest-test-backup">Respaldo: {line(test.backup)}</span>
         </p>
       )}
     </div>
@@ -567,6 +1393,11 @@ function SettingsCard({ st, busy, act }: { st: StreamingAdminState; busy: string
     videoBitrateKbps: s0.videoBitrateKbps,
   });
   const platform = st.platforms.find((p) => p.id === f.platform);
+  // Ronda 1 (P3) · la ingesta EFECTIVA (la configurada en «Servidores»), no la de fábrica del catálogo.
+  const configuredPrimary =
+    platform?.ingestUrl === null
+      ? null
+      : (st.ingests?.find((i) => i.platform === f.platform)?.primaryIngestUrl ?? platform?.ingestUrl ?? null);
   const rec = recommendation(f.preset, f.fps);
   const outOfRange = f.videoBitrateKbps < rec.min || f.videoBitrateKbps > rec.max;
 
@@ -601,7 +1432,7 @@ function SettingsCard({ st, busy, act }: { st: StreamingAdminState; busy: string
 
   return (
     <div className="card" data-testid="streaming-settings">
-      <h3>Configuración</h3>
+      <h3>Emisión: activación, plataforma, modo y codificación</h3>
       <form onSubmit={save}>
         <p>
           <label>
@@ -642,7 +1473,7 @@ function SettingsCard({ st, busy, act }: { st: StreamingAdminState; busy: string
                   </option>
                 ))}
               </select>{" "}
-              {platform?.ingestUrl && <small>Ingesta: {platform.ingestUrl}</small>}
+              {configuredPrimary && <small data-testid="set-platform-ingest">Ingesta: {configuredPrimary}</small>}
             </p>
             {platform && platform.ingestUrl === null && (
               <p>
@@ -740,7 +1571,7 @@ export function recommendation(preset: string, fps: number) {
 function CredentialsCard({ st, busy, act }: { st: StreamingAdminState; busy: string | null; act: Act }) {
   return (
     <div className="card" data-testid="streaming-credentials">
-      <h3>Credenciales</h3>
+      <h3>Clave de emisión</h3>
       <p>
         La clave de emisión se guarda cifrada y <strong>nunca se vuelve a mostrar</strong>: sólo verás si está
         configurada y sus 4 últimos caracteres.
@@ -793,7 +1624,7 @@ function CredentialRow(props: {
       <p>
         <strong>{platform.label}</strong>:{" "}
         <span data-testid={`credential-${platform.id}-state`}>
-          {meta?.configured ? `configurada (${meta.masked})` : "no configurada"}
+          {meta?.configured ? `Configurada · ${meta.masked}` : "No configurada"}
           {meta?.configured && meta.compatible === false
             ? meta.incompatibleReason === "ingest_changed"
               ? " — guardada para otra URL de ingesta: vuelve a introducirla"
@@ -814,7 +1645,7 @@ function CredentialRow(props: {
           disabled={!props.st.capabilities.sealedStore}
         />{" "}
         <button type="submit" disabled={busy !== null || key.length < 8 || !props.st.capabilities.sealedStore}>
-          Guardar clave
+          {meta?.configured ? "Reemplazar clave" : "Guardar clave"}
         </button>{" "}
         {meta?.configured && (
           <button
@@ -1134,7 +1965,14 @@ function AuditCard({ version }: { version: number }) {
                 <td>{new Date(r.at).toLocaleString("es-ES")}</td>
                 <td>{r.action}</td>
                 <td>{r.target}</td>
-                <td>{r.actorId ?? "sistema"}</td>
+                <td>
+                  {r.actorId ? (r.actorName ?? "usuario") : "sistema"}
+                  {r.actorId && (
+                    <TechDetails>
+                      <code>{r.actorId}</code>
+                    </TechDetails>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

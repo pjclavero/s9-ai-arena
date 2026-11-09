@@ -1034,6 +1034,40 @@ const m019_visibility_broadcast: Migration = {
   },
 };
 
+// STREAMING-UX (§16-§28) · Ingestas principal y de RESPALDO por plataforma, editables
+// desde la web, y el segundo sobre sellado de la clave, atado a la ingesta de respaldo.
+//  - `streaming_ingests`: una fila por plataforma, con la clave primaria en
+//    `platform` y no en una fila única fija. Así un PR posterior puede añadir
+//    perfiles de canal por usuario sin rehacer la tabla (§31). Sin fila, la API
+//    usa las ingestas por defecto del catálogo (YouTube: a.rtmps / b.rtmps
+//    ?backup=1). La URL se guarda TAL CUAL se configuró (§21), nunca con la clave.
+//  - `streaming_credentials.sealed_backup`: la MISMA clave sellada otra vez, atada a
+//    (plataforma, ingesta de respaldo). Cada sobre sigue atado a UN destino, así que
+//    la garantía de EQ5c no cambia: la clave sólo puede ir a la principal o a la de
+//    respaldo configuradas al sellar, nunca a otra.
+// Aditiva e independiente (no toca filas existentes): entra en NAMED_ROLLBACK_ALLOWED.
+// Probada en `migration-020.test.ts` (upgrade con datos, rollback por nombre, backup/restore).
+const m020_streaming_ingests: Migration = {
+  name: "020_streaming_ingests",
+  async up(db) {
+    await db.raw(`
+      CREATE TABLE streaming_ingests (
+        platform           text PRIMARY KEY CHECK (platform ~ '^[a-z0-9_-]{1,32}$'),
+        primary_ingest_url text NOT NULL CHECK (primary_ingest_url LIKE 'rtmps://%' AND length(primary_ingest_url) <= 512),
+        backup_ingest_url  text CHECK (backup_ingest_url IS NULL OR (backup_ingest_url LIKE 'rtmps://%' AND length(backup_ingest_url) <= 512)),
+        updated_at         timestamptz NOT NULL DEFAULT now(),
+        updated_by         uuid REFERENCES users(id) ON DELETE SET NULL
+      );
+      ALTER TABLE streaming_credentials ADD COLUMN sealed_backup jsonb;
+    `);
+  },
+  // Vuelta atrás: se pierden SÓLO las ingestas editadas (se vuelve a la ingesta fija del
+  // catálogo) y el sobre de respaldo; la clave principal sellada sigue valiendo.
+  async down(db) {
+    await db.raw(`ALTER TABLE streaming_credentials DROP COLUMN sealed_backup; DROP TABLE streaming_ingests;`);
+  },
+};
+
 export const MIGRATIONS: Migration[] = [
   m001_identity,
   m002_content,
@@ -1054,6 +1088,7 @@ export const MIGRATIONS: Migration[] = [
   m017_streaming_admin,
   m018_battle_reverted,
   m019_visibility_broadcast,
+  m020_streaming_ingests,
 ];
 
 class ProgrammaticMigrationSource {
@@ -1124,6 +1159,7 @@ export const NAMED_ROLLBACK_ALLOWED: readonly string[] = Object.freeze([
   "017_streaming_admin",
   "018_battle_reverted",
   "019_visibility_broadcast",
+  "020_streaming_ingests",
 ]);
 
 /** EQ5e (R3-F) · Aplica UNA migración pendiente concreta por NOMBRE. */

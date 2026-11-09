@@ -38,9 +38,10 @@ import { canonicalIngestUrl, openSecret, SealedSecretError } from "../../../pack
 import type { StreamSupervisor } from "./supervisor.js";
 import type { Logger, StreamerConfig } from "./config.js";
 import { renderPrometheus } from "./metrics.js";
-import { parseIngestUrl, RtmpPublisher, type IngestTarget } from "./rtmp/publisher.js";
+import { parseIngestUrl, RtmpPublisher, type Dialer, type IngestTarget } from "./rtmp/publisher.js";
 import { parseStartRequest, presetOf, sessionFingerprint, type Capabilities } from "./session.js";
 import { applyRetention, listRecordings, validateRetentionPolicy } from "./recordings.js";
+import { checkWritableDataDir } from "../../../packages/data-dir/index.js";
 
 const MAX_BODY = 16 * 1024;
 /** Plazo total de /control/test (TLS + handshake + connect); vencido, se cierra el socket. */
@@ -69,7 +70,7 @@ export interface ControlOptions {
   /** Lee la clave de despliegue heredada (STREAM_KEY_FILE); null = no hay. */
   readLegacyKey?: () => string | null;
   allowPlainRtmp?: boolean;
-  dial?: (t: IngestTarget) => Duplex;
+  dial?: Dialer;
   now?: () => number;
 }
 
@@ -241,7 +242,15 @@ export function createControlServer(opts: ControlOptions): Server {
         lastError: supervisor.lastError,
         counters: supervisor.counters,
         pendingChildren: supervisor.pendingChildren,
-        relay: { state: supervisor.relayState, bytesOut: supervisor.relayBytesOut },
+        relay: {
+          state: supervisor.relayState,
+          bytesOut: supervisor.relayBytesOut,
+          // STREAMING-UX (§22, §24) · qué ingesta se usa y el último error de cada una (redactado).
+          ingest: supervisor.effectiveConfig.mode === "rtmps" ? supervisor.ingestRole : null,
+          backupAvailable: supervisor.backupAvailable,
+          failedOver: supervisor.failedOver,
+          ingestErrors: supervisor.ingestErrors,
+        },
         recording: supervisor.recordingFile ? supervisor.recordingFile.split("/").pop() : null,
         capabilities: { nvenc: caps.nvenc, sealedCredentials: !!opts.readPrivateKey?.() },
         legacyKeyConfigured,
@@ -250,9 +259,20 @@ export function createControlServer(opts: ControlOptions): Server {
     }
 
     if (req.method === "GET" && url === "/recordings") {
+      // #249 · el directorio de grabación se CREA bajo demanda, sin privilegios
+      // (el volumen `arena_replays` ya pertenece al usuario del servicio por el
+      // entrypoint). Antes sólo lo creaba el preflight cuando el contenedor arrancaba
+      // en modo record. Con STREAM_MODE=rtmps no existía, statfs fallaba y «Sólo
+      // grabar» desde la web daba disk_unknown. Si no se puede crear o escribir, se
+      // dice por qué y el disco queda sin medir: la API no empieza a grabar
+      // (fail-closed).
+      const dirCheck = checkWritableDataDir(config.recordDir);
+      const view = listRecordings(config.recordDir, supervisor.recordingFile);
       return respond(200, {
         dir: "arena_replays/video",
-        ...listRecordings(config.recordDir, supervisor.recordingFile),
+        ...view,
+        disk: dirCheck.ok ? view.disk : null,
+        dirError: dirCheck.ok ? null : dirCheck.reason,
       });
     }
 
@@ -374,6 +394,18 @@ export function createControlServer(opts: ControlOptions): Server {
           return respond(400, { error });
         }
         const plan = parsed.plan;
+        // #249 · grabar exige un directorio de grabación utilizable AHORA (se crea si
+        // falta). Si no lo es, la orden se rechaza en vez de lanzar un ffmpeg que muere
+        // al abrir el fichero.
+        if (plan.config.mode === "record") {
+          const dirCheck = checkWritableDataDir(plan.config.recordDir);
+          if (!dirCheck.ok) {
+            logger("error", "control: directorio de grabación no utilizable; orden rechazada", {
+              reason: dirCheck.reason,
+            });
+            return respond(409, { error: "record_dir_unavailable", reason: dirCheck.reason });
+          }
+        }
         // Idempotencia: la MISMA sesión ya activa ⇒ no se toca nada.
         if (supervisor.active && plan.sessionId && supervisor.sessionFingerprint === sessionFingerprint(plan)) {
           return respond(200, { state: supervisor.state, alreadyActive: true, session: supervisor.session() });
@@ -384,6 +416,7 @@ export function createControlServer(opts: ControlOptions): Server {
           return respond(409, { error: "already_active", session: supervisor.session() });
         }
         let key: string | null = null;
+        let backupKey: string | null = null;
         if (plan.config.mode === "rtmps") {
           const k = resolveKey(
             plan.credential,
@@ -392,11 +425,20 @@ export function createControlServer(opts: ControlOptions): Server {
           if (k.error) return respond(k.status ?? 409, { error: k.error });
           if (!k.key) return respond(409, { error: "no hay credencial de emisión configurada" });
           key = k.key;
+          // STREAMING-UX (§23) · el sobre de RESPALDO se abre SÓLO para la URL de respaldo
+          // de la orden: si no casa, la orden entera se rechaza (fail-closed), igual que
+          // con la principal.
+          if (plan.backupIngest) {
+            const kb = resolveKey(plan.backupCredential, { ingest: plan.backupIngest.tcUrl, platform: plan.platform });
+            if (kb.error || !kb.key)
+              return respond(kb.status ?? 409, { error: `respaldo: ${kb.error ?? "sin clave"}` });
+            backupKey = kb.key;
+          }
         }
         // Sin cuerpo (uso heredado): configuración de entorno sin plan.
         const legacy = !raw.trim();
         if (legacy) supervisor.start(undefined, undefined, key);
-        else supervisor.start(undefined, plan, key);
+        else supervisor.start(undefined, plan, key, backupKey);
         logger("info", "control: start", {
           broadcastUrl: supervisor.currentBroadcastUrl,
           target: supervisor.describeTarget(),

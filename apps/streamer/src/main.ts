@@ -15,7 +15,7 @@ import { createLogger, loadConfig, loadStreamKey, SecretRegistry } from "./confi
 import { StreamSupervisor, type Spawner } from "./supervisor.js";
 import { createControlServer } from "./control.js";
 import type { Capabilities } from "./session.js";
-import { requireWritableDataDir } from "../../../packages/data-dir/index.js";
+import { checkWritableDataDir, requireWritableDataDir } from "../../../packages/data-dir/index.js";
 
 /** Lee un fichero de secreto en el momento (no se cachea: rotar no exige reiniciar). */
 function readSecretFile(path: string | undefined): string | null {
@@ -103,6 +103,14 @@ export function main(env: NodeJS.ProcessEnv = process.env): void {
   // En modo `rtmps` no se escribe nada en disco: no se comprueba nada (un
   // preflight de más ahí sería un servicio que no arranca sin motivo).
   if (config.mode === "record") requireWritableDataDir("streamer", config.recordDir);
+  else {
+    // #249 · en rtmps también se deja creado (sin privilegios y sin abortar): la web
+    // puede pasar a «Sólo grabar» sin reiniciar el contenedor. Si no se puede, se
+    // avisa ahora y /recordings y la orden de grabar lo vuelven a comprobar (fail-closed).
+    const c = checkWritableDataDir(config.recordDir);
+    if (!c.ok)
+      logger("warn", "directorio de grabación no utilizable (sólo afecta a «Sólo grabar»)", { reason: c.reason });
+  }
 
   const spawner = realSpawner;
   const allowPlainRtmp = env.STREAMER_ALLOW_PLAIN_RTMP === "1";

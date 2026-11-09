@@ -35,6 +35,9 @@ export interface SessionPlan {
   broadcastUrl: string;
   ingest: IngestTarget | null;
   credential: SealedSecret | null;
+  /** STREAMING-UX · ingesta de RESPALDO (null = sin respaldo) y su sobre, atado a ELLA. */
+  backupIngest: IngestTarget | null;
+  backupCredential: SealedSecret | null;
   /** Plataforma declarada por la orden (obligatoria con credencial). */
   platform: string | null;
 }
@@ -82,6 +85,8 @@ export function parseStartRequest(
     "videoBitrateKbps",
     "ingestUrl",
     "credential",
+    "backupIngestUrl",
+    "backupCredential",
     "platform",
     "replace",
   ]);
@@ -129,6 +134,8 @@ export function parseStartRequest(
   }
   let ingest: IngestTarget | null = null;
   let credential: SealedSecret | null = null;
+  let backupIngest: IngestTarget | null = null;
+  let backupCredential: SealedSecret | null = null;
   if (mode === "rtmps") {
     try {
       ingest = parseIngestUrl(typeof b.ingestUrl === "string" ? b.ingestUrl : base.rtmpsUrl, opts.allowPlainRtmp);
@@ -141,7 +148,28 @@ export function parseStartRequest(
       if (!platform)
         return { ok: false, error: "platform obligatoria con credencial (el sobre está atado a su destino)" };
     }
+    // STREAMING-UX (§23) · respaldo opcional: URL y sobre van juntos (nunca uno sin otro)
+    // y el sobre se abre en control.ts sólo si está atado a ESTA URL de respaldo.
+    const hasBackupUrl = b.backupIngestUrl !== undefined && b.backupIngestUrl !== null;
+    const hasBackupCred = b.backupCredential !== undefined && b.backupCredential !== null;
+    if (hasBackupUrl !== hasBackupCred) {
+      return { ok: false, error: "backupIngestUrl y backupCredential van juntos" };
+    }
+    if (hasBackupUrl) {
+      if (!credential) return { ok: false, error: "el respaldo exige credencial sellada también en la principal" };
+      try {
+        backupIngest = parseIngestUrl(String(b.backupIngestUrl), opts.allowPlainRtmp);
+      } catch (e) {
+        return { ok: false, error: `respaldo: ${(e as Error).message}` };
+      }
+      if (!isSealedSecret(b.backupCredential)) {
+        return { ok: false, error: "backupCredential debe ser una credencial sellada" };
+      }
+      backupCredential = b.backupCredential;
+    }
   } else if (b.credential !== undefined && b.credential !== null) {
+    return { ok: false, error: "el modo record no usa credencial" };
+  } else if (b.backupCredential !== undefined && b.backupCredential !== null) {
     return { ok: false, error: "el modo record no usa credencial" };
   }
 
@@ -156,7 +184,10 @@ export function parseStartRequest(
     outputHeight: size.height,
     rtmpsUrl: ingest ? `${ingest.protocol}://${ingest.host}:${ingest.port}/${ingest.app}` : base.rtmpsUrl,
   };
-  return { ok: true, plan: { sessionId, config, preset, broadcastUrl, ingest, credential, platform } };
+  return {
+    ok: true,
+    plan: { sessionId, config, preset, broadcastUrl, ingest, credential, platform, backupIngest, backupCredential },
+  };
 }
 
 /** Huella comparable de una sesión (idempotencia de start con el mismo sessionId). */
@@ -173,5 +204,7 @@ export function sessionFingerprint(p: SessionPlan): string {
     p.ingest?.display ?? null,
     p.platform,
     p.credential?.ct ?? null,
+    p.backupIngest?.display ?? null,
+    p.backupCredential?.ct ?? null,
   ]);
 }

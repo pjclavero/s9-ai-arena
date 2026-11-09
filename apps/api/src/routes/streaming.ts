@@ -54,6 +54,11 @@ import {
   CHANGE_CLASSES,
   credentialBinding,
   effectiveIngest,
+  ingestsOf,
+  listDestinations,
+  loadIngestRows,
+  validateIngestsPatch,
+  type IngestRow,
   loadSettings,
   parseTarget,
   platformById,
@@ -176,18 +181,44 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     }
   }
 
-  async function credentialsMeta(s: StreamingSettings) {
+  /** Filas de credenciales; sin la 020 (BD a medio migrar) no hay `sealed_backup`. */
+  async function credentialRows(): Promise<Record<string, any>[]> {
+    try {
+      return await db("streaming_credentials").select(
+        "platform",
+        "key_id",
+        "last4",
+        "updated_at",
+        "sealed",
+        "sealed_backup",
+      );
+    } catch {
+      return await db("streaming_credentials").select("platform", "key_id", "last4", "updated_at", "sealed");
+    }
+  }
+
+  async function credentialsMeta(s: StreamingSettings, ingestRows?: IngestRow[]) {
     const pk = publicKey();
-    const rows = await db("streaming_credentials").select("platform", "key_id", "last4", "updated_at", "sealed");
+    const ingRows = ingestRows ?? (await loadIngestRows(db));
+    const rows = await credentialRows();
     return PLATFORMS.map((p) => {
       const r = rows.find((x: Record<string, unknown>) => x.platform === p.id);
       // Sellada con otra clave pública (rotada) o para otra ingesta (EQ5c): hay que volver a introducirla.
       let incompatibleReason: "key_rotated" | "ingest_changed" | null = null;
       if (r) {
         if (!pk || r.key_id !== pk.kid) incompatibleReason = "key_rotated";
-        else if (!sealedBoundTo(parseSealed(r.sealed), credentialBinding(s, p.id)))
+        else if (!sealedBoundTo(parseSealed(r.sealed), credentialBinding(s, p.id, ingRows)))
           incompatibleReason = "ingest_changed";
       }
+      // STREAMING-UX · el sobre de RESPALDO: `none` = la plataforma no tiene respaldo
+      // configurado; `ready` = sellado para la ingesta de respaldo actual; `needs_key` =
+      // hay respaldo pero la clave se guardó antes (o para otra URL): reintroducirla.
+      const backupBind = credentialBinding(s, p.id, ingRows, "backup");
+      const backup: "none" | "ready" | "needs_key" = !backupBind
+        ? "none"
+        : r && incompatibleReason === null && sealedBoundTo(parseSealed(r.sealed_backup), backupBind)
+          ? "ready"
+          : "needs_key";
       return {
         platform: p.id,
         configured: !!r,
@@ -195,8 +226,14 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
         updatedAt: r ? new Date(r.updated_at).toISOString() : null,
         compatible: r ? incompatibleReason === null : null,
         incompatibleReason,
+        backup,
       };
     });
+  }
+
+  /** STREAMING-UX · ingestas efectivas de cada plataforma (lo que muestra «Avanzada»). */
+  function ingestsView(s: StreamingSettings, rows: IngestRow[]) {
+    return PLATFORMS.map((p) => ({ ...ingestsOf(s, rows, p.id), backupQueryAllowed: p.backupQuery }));
   }
 
   async function activeSession() {
@@ -258,9 +295,10 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
       videoBitrateKbps: s.videoBitrateKbps,
     };
     if (s.mode === "rtmps") {
-      const ingest = effectiveIngest(s);
+      const rows = await loadIngestRows(db);
+      const ingest = effectiveIngest(s, s.platform, rows);
       if (!ingest) throw conflict("ingest_missing", "RTMPS personalizado sin URL de ingesta");
-      const cred = await db("streaming_credentials").where({ platform: s.platform }).first();
+      const cred = (await credentialRows()).find((r) => r.platform === s.platform);
       if (!cred) throw conflict("credential_missing", "No hay clave de emisión configurada para esta plataforma");
       const pk = publicKey();
       if (pk && cred.key_id !== pk.kid) {
@@ -268,7 +306,7 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
       }
       // EQ5c (P2-2) · la clave sólo viaja hacia el destino al que se selló.
       const sealed = parseSealed(cred.sealed);
-      if (!sealedBoundTo(sealed, credentialBinding(s, s.platform))) {
+      if (!sealedBoundTo(sealed, credentialBinding(s, s.platform, rows))) {
         throw conflict(
           "credential_unbound",
           "La clave se guardó para otra URL de ingesta (o en un formato antiguo): vuelve a introducirla",
@@ -277,6 +315,14 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
       body.ingestUrl = ingest;
       body.platform = s.platform;
       body.credential = sealed;
+      // STREAMING-UX (§23) · respaldo: sólo si hay ingesta de respaldo Y su sobre está
+      // atado a ELLA. Si no, la emisión sale sin respaldo (y la UI dice por qué).
+      const backupBind = credentialBinding(s, s.platform, rows, "backup");
+      const sealedBackup = parseSealed(cred.sealed_backup);
+      if (backupBind && sealedBoundTo(sealedBackup, backupBind)) {
+        body.backupIngestUrl = ingestsOf(s, rows, s.platform).backupIngestUrl;
+        body.backupCredential = sealedBackup;
+      }
     }
     return body;
   }
@@ -312,13 +358,15 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     const st = await streamerStatus();
     const session = await activeSession();
     const stamp = await credentialStamp(s.platform);
-    const pendingRestart = !!session && canon(session.config) !== canon(appliedConfig(s, stamp));
+    const ingRows = await loadIngestRows(db);
+    const pendingRestart = !!session && canon(session.config) !== canon(appliedConfig(s, stamp, ingRows));
     await refreshGauges();
     res.setHeader("Cache-Control", "no-store");
     res.json({
       settings: s,
       platforms: PLATFORMS,
-      credentials: await credentialsMeta(s),
+      ingests: ingestsView(s, ingRows),
+      credentials: await credentialsMeta(s, ingRows),
       capabilities: {
         sealedStore: !!publicKey(),
         streamerConfigured: deps.streamer.configured,
@@ -422,10 +470,11 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     const saved = await loadSettings(db);
     const after = await activeSession();
     const stamp = await credentialStamp(saved.platform);
+    const ingRows = await loadIngestRows(db);
     await refreshGauges();
     // EQ5c · cambiar la ingesta invalida las claves selladas para la anterior: se avisa.
     if (r.changed.some((k) => k === "ingestUrl" || k === "platform")) {
-      for (const m of await credentialsMeta(saved)) {
+      for (const m of await credentialsMeta(saved, ingRows)) {
         if (m.configured && m.incompatibleReason === "ingest_changed") {
           r.warnings.push(`la clave de ${m.platform} está sellada para otra URL de ingesta: vuelve a introducirla`);
         }
@@ -436,9 +485,77 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
       changed: r.changed,
       warnings: r.warnings,
       impact: Object.fromEntries(r.changed.map((k) => [k, CHANGE_CLASSES[k] ?? "hot"])),
-      pendingRestart: !!after && canon(after.config) !== canon(appliedConfig(saved, stamp)),
+      pendingRestart: !!after && canon(after.config) !== canon(appliedConfig(saved, stamp, ingRows)),
       stopped,
     });
+  });
+
+  // ── STREAMING-UX · ingestas principal y de respaldo (§16-§22) ─────────────
+  defineOperation(router, "setStreamingIngests", async (req, res) => {
+    const platform = platformById(req.params.platform);
+    if (!platform) throw notFound("Plataforma desconocida");
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    if (typeof body !== "object" || Array.isArray(body)) throw badRequest("cuerpo inválido");
+    const v = validateIngestsPatch(platform, body, { allowInternalIngest });
+    if (v.errors.length) throw new ApiError(422, "invalid_ingest", v.errors.join("; "), { errors: v.errors });
+    const before = ingestsOf(await loadSettings(db), await loadIngestRows(db), platform.id);
+    const changed = before.primaryIngestUrl !== v.primaryIngestUrl || before.backupIngestUrl !== v.backupIngestUrl;
+    if (changed) {
+      await db.transaction(async (trx) => {
+        await trx("streaming_ingests")
+          .insert({
+            platform: platform.id,
+            // §21 · tal cual: sin recortar, sin concatenar nada (ni la clave ni `?backup=1`).
+            primary_ingest_url: v.primaryIngestUrl,
+            backup_ingest_url: v.backupIngestUrl,
+            updated_at: trx.fn.now(),
+            updated_by: actor(req),
+          })
+          .onConflict("platform")
+          .merge();
+        // RTMPS personalizado: la principal sigue teniendo UNA autoridad, `settings.ingestUrl`
+        // (el campo de 0.15), así que se escribe ahí también (con su versión).
+        if (platform.ingestUrl === null && before.primaryIngestUrl !== v.primaryIngestUrl) {
+          await trx("streaming_settings")
+            .where({ id: 1 })
+            .update({
+              ingest_url: v.primaryIngestUrl,
+              version: trx.raw("version + 1"),
+              updated_at: trx.fn.now(),
+              updated_by: actor(req),
+            });
+        }
+      });
+      await log(req, "streaming.ingests.update", `streaming:ingests:${platform.id}`, {
+        platform: platform.id,
+        primary: { from: before.primaryIngestUrl, to: v.primaryIngestUrl },
+        backup: { from: before.backupIngestUrl, to: v.backupIngestUrl },
+      });
+    }
+    const s = await loadSettings(db);
+    const rows = await loadIngestRows(db);
+    const meta = (await credentialsMeta(s, rows)).find((m) => m.platform === platform.id)!;
+    const warnings: string[] = [];
+    if (meta.configured && meta.incompatibleReason === "ingest_changed") {
+      warnings.push("La clave de emisión está guardada para el servidor principal anterior: vuelve a introducirla.");
+    } else if (meta.configured && meta.backup === "needs_key") {
+      warnings.push("Para usar el servidor de respaldo, vuelve a introducir la clave de emisión.");
+    }
+    const session = await activeSession();
+    res.json({
+      ingests: { ...ingestsOf(s, rows, platform.id), backupQueryAllowed: platform.backupQuery },
+      changed,
+      warnings,
+      credential: meta,
+      pendingRestart:
+        !!session && canon(session.config) !== canon(appliedConfig(s, await credentialStamp(s.platform), rows)),
+    });
+  });
+
+  defineOperation(router, "listStreamingDestinations", async (req, res) => {
+    const limit = parseLimit(req.query.limit);
+    res.setHeader("Cache-Control", "no-store");
+    res.json(await listDestinations(db, { limit }));
   });
 
   // ── credenciales ──────────────────────────────────────────────────────────
@@ -457,16 +574,22 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
       );
     }
     // EQ5c (P2-2) · la clave se sella atada a SU destino: plataforma + ingesta.
-    const bind = credentialBinding(await loadSettings(db), platform.id);
+    const s = await loadSettings(db);
+    const ingRows = await loadIngestRows(db);
+    const bind = credentialBinding(s, platform.id, ingRows);
     if (!bind) {
       throw conflict("ingest_missing", "Configura y guarda primero la URL de ingesta: la clave queda atada a ella");
     }
     const sealed = sealSecret(key, pk.pem, bind);
+    // STREAMING-UX · segundo sobre, atado SÓLO a la ingesta de respaldo (si la hay).
+    const backupBind = credentialBinding(s, platform.id, ingRows, "backup");
+    const sealedBackup = backupBind ? sealSecret(key, pk.pem, backupBind) : null;
     const last4 = key.slice(-4);
     await db("streaming_credentials")
       .insert({
         platform: platform.id,
         sealed: JSON.stringify(sealed),
+        sealed_backup: sealedBackup ? JSON.stringify(sealedBackup) : null,
         key_id: sealed.kid,
         last4,
         updated_at: db.fn.now(),
@@ -474,12 +597,16 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
       })
       .onConflict("platform")
       .merge();
-    await log(req, "streaming.credential.set", `streaming:credential:${platform.id}`, { platform: platform.id });
+    await log(req, "streaming.credential.set", `streaming:credential:${platform.id}`, {
+      platform: platform.id,
+      backup: !!sealedBackup,
+    });
     const session = await activeSession();
     res.json({
       platform: platform.id,
       configured: true,
       masked: `****${last4}`,
+      backup: sealedBackup ? "ready" : "none",
       appliesOnNextStart: !!session,
     });
   });
@@ -545,17 +672,42 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     const s = await loadSettings(db);
     if (s.mode !== "rtmps") throw conflict("not_rtmps", "La prueba de ingesta sólo aplica al modo RTMPS");
     const body = await buildStartBody(s, "test", { kind: "battle", id: "00000000-0000-0000-0000-000000000000" });
+    // STREAMING-UX (§26) · se prueban LAS DOS ingestas (en serie: una prueba no
+    // consume el plazo de la otra) y se devuelve el resultado de cada una.
     const r = await callStreamer("POST", "/control/test", {
       ingestUrl: body.ingestUrl,
       platform: body.platform,
       credential: body.credential,
     });
+    if (!r.ok) throw new ApiError(502, "streamer_error", String((r.body as Record<string, unknown>).error ?? "error"));
+    const primary = r.body as Record<string, unknown>;
+    const ing = ingestsOf(s, await loadIngestRows(db), s.platform);
+    let backup: Record<string, unknown> | null = null;
+    if (ing.backupIngestUrl) {
+      if (body.backupCredential) {
+        const rb = await callStreamer("POST", "/control/test", {
+          ingestUrl: body.backupIngestUrl,
+          platform: body.platform,
+          credential: body.backupCredential,
+        });
+        backup = rb.ok
+          ? (rb.body as Record<string, unknown>)
+          : { ok: false, error: String((rb.body as Record<string, unknown>).error ?? "error"), code: "streamer_error" };
+      } else {
+        backup = {
+          ok: false,
+          code: "backup_key_missing",
+          error: "la clave de emisión no está guardada para el servidor de respaldo: vuelve a introducirla",
+        };
+      }
+    }
     await log(req, "streaming.test", "streaming:ingest", {
       platform: s.platform,
-      ok: (r.body as Record<string, unknown>).ok === true,
+      ok: primary.ok === true,
+      backupOk: backup ? backup.ok === true : null,
     });
-    if (!r.ok) throw new ApiError(502, "streamer_error", String((r.body as Record<string, unknown>).error ?? "error"));
-    res.json(r.body);
+    // Compatibilidad 0.15: los campos de la principal siguen en la raíz.
+    res.json({ ...primary, primary, backup });
   });
 
   defineOperation(router, "startStreaming", async (req, res) => {
@@ -591,10 +743,17 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
   // (la retención por tamaño evita que crezca sin límite; esto evita empezar sin sitio).
   async function checkDisk(): Promise<void> {
     const rec = await callStreamer("GET", "/recordings");
-    const free = (rec.body as { disk?: { freeBytes?: number } | null }).disk?.freeBytes;
+    const recBody = rec.body as { disk?: { freeBytes?: number } | null; dirError?: string | null };
+    const free = recBody.disk?.freeBytes;
     // EQ5c (P3) · fail-closed: sin medida del disco no se empieza a grabar.
+    // #249 · si el streamer dice por qué (directorio imposible), se cuenta.
     if (!rec.ok || typeof free !== "number" || !Number.isFinite(free)) {
-      throw conflict("disk_unknown", "El streamer no pudo medir el espacio libre: no se empieza a grabar");
+      throw conflict(
+        "disk_unknown",
+        recBody.dirError
+          ? `El directorio de grabación no es utilizable (${String(recBody.dirError).slice(0, 200)}): no se empieza a grabar`
+          : "El streamer no pudo medir el espacio libre: no se empieza a grabar",
+      );
     }
     if (free < MIN_FREE_BYTES) {
       throw conflict("disk_low", `Queda poco espacio para grabar (${Math.round(free / 1024 ** 2)} MiB libres)`);
@@ -701,7 +860,7 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     const s = await loadSettings(db);
     if (!s.enabled) throw conflict("streaming_disabled", "El streaming está desactivado: actívalo antes de emitir");
     const stamp = await credentialStamp(s.platform);
-    const config = appliedConfig(s, stamp);
+    const config = appliedConfig(s, stamp, await loadIngestRows(db));
     let existing = await activeSession();
     if (existing) {
       // STREAMER §13 (RESTART_RECOVERY) · la BD dice «activa» pero el streamer,
@@ -841,7 +1000,7 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     const stamp = await credentialStamp(s.platform);
     await db("streaming_sessions")
       .where({ id: session.id, state: "active" })
-      .update({ config: JSON.stringify(appliedConfig(s, stamp)), mode: s.mode });
+      .update({ config: JSON.stringify(appliedConfig(s, stamp, await loadIngestRows(db))), mode: s.mode });
     await log(req, "streaming.session.restart", `streaming:session:${session.id}`, { target: t });
     res.json({ session: { id: session.id, target: t }, restarted: true });
   }
@@ -875,11 +1034,18 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
 
   defineOperation(router, "listStreamingAudit", async (req, res) => {
     const limit = parseLimit(req.query.limit);
-    const rows = await db("audit_log").where("action", "like", "streaming.%").orderBy("id", "desc").limit(limit);
+    const rows = await db("audit_log")
+      .leftJoin("users", "users.id", "audit_log.actor_id")
+      .where("audit_log.action", "like", "streaming.%")
+      .orderBy("audit_log.id", "desc")
+      .limit(limit)
+      .select("audit_log.*", "users.display_name as actor_name");
     res.json(
       rows.map((r: Record<string, unknown>) => ({
         id: String(r.id),
         actorId: r.actor_id ?? undefined,
+        // Ronda 1 (P3) · nombre legible; el UUID queda en `actorId` (detalles técnicos).
+        actorName: r.actor_name ?? undefined,
         action: r.action,
         target: r.target,
         detail: r.detail,

@@ -25,7 +25,14 @@ vi.mock("../src/api.js", () => ({
 }));
 
 import { api } from "../src/api.js";
-import { previewUrl, StreamingPage, UX_TEXT, validLogo, type StreamingAdminState } from "../src/pages/StreamingPage.js";
+import {
+  previewUrl,
+  StreamingPage,
+  UX_TEXT,
+  uxText,
+  validLogo,
+  type StreamingAdminState,
+} from "../src/pages/StreamingPage.js";
 import { BroadcastButton } from "../src/broadcast/BroadcastButton.js";
 
 const apiMock = api as unknown as ReturnType<typeof vi.fn>;
@@ -92,6 +99,7 @@ const calls: { method: string; path: string; body: unknown }[] = [];
 function route(method: string, path: string, body?: unknown): unknown {
   calls.push({ method, path, body });
   if (method === "GET" && path === "/admin/streaming") return state;
+  if (path.startsWith("/admin/streaming/destinations")) return { battles: [], tournaments: [] };
   if (path.startsWith("/admin/streaming/target")) {
     return {
       kind: "battle",
@@ -149,7 +157,7 @@ describe("EQ5b · estados de la UX", () => {
     render(<StreamingPage me={ME} route="#/streaming" />);
     const badge = await screen.findByTestId("streaming-ux-state");
     expect(badge.textContent).toBe(UX_TEXT[ux].title);
-    expect(screen.getByTestId("streaming-state").textContent).toContain(UX_TEXT[ux].text);
+    expect(screen.getByTestId("streaming-state").textContent).toContain(uxText(ux, "YouTube"));
   });
 
   it("pendiente de reinicio y sin almacén seguro se avisan", async () => {
@@ -162,7 +170,7 @@ describe("EQ5b · estados de la UX", () => {
 
 describe("EQ5b · la clave en el navegador", () => {
   it("campo password; al guardar se vacía; nada en storage; sólo se pinta ****ABCD", async () => {
-    render(<StreamingPage me={ME} route="#/streaming" />);
+    render(<StreamingPage me={ME} route="#/streaming?tab=advanced" />);
     const input = (await screen.findByTestId("credential-youtube-input")) as HTMLInputElement;
     expect(input.type).toBe("password");
     expect(input.autocomplete).toBe("new-password");
@@ -182,29 +190,35 @@ describe("EQ5b · la clave en el navegador", () => {
 });
 
 describe("EQ5b · controles", () => {
-  it("«Retransmitir» preselecciona y comprueba el destino SIN arrancar; muestra el retardo de las reglas", async () => {
+  it("«Retransmitir» preselecciona el destino en la vista simple SIN arrancar; el destino manual (avanzada) muestra el retardo", async () => {
     render(<StreamingPage me={ME} route={`#/streaming?battle=${BATTLE}`} />);
-    expect(((await screen.findByTestId("stream-target-id")) as HTMLInputElement).value).toBe(BATTLE);
-    expect((await screen.findByTestId("stream-delay")).textContent).toMatch(/30 s.*copia de reglas/);
+    const sel = (await screen.findByTestId("simple-destination")) as HTMLSelectElement;
+    await waitFor(() => expect(sel.value).toBe(`battle:${BATTLE}`));
     expect(calls.some((c) => c.path === "/admin/streaming/start")).toBe(false);
     const start = screen.getByTestId("stream-start") as HTMLButtonElement;
-    expect(start.disabled).toBe(false);
+    await waitFor(() => expect(start.disabled).toBe(false));
     fireEvent.click(start);
     await waitFor(() => expect(calls.some((c) => c.path === "/admin/streaming/start")).toBe(true));
     expect(calls.find((c) => c.path === "/admin/streaming/start")!.body).toEqual({
       target: { kind: "battle", id: BATTLE },
     });
+    cleanup();
+    render(<StreamingPage me={ME} route={`#/streaming?tab=advanced&battle=${BATTLE}`} />);
+    expect(((await screen.findByTestId("stream-target-id")) as HTMLInputElement).value).toBe(BATTLE);
+    expect((await screen.findByTestId("stream-delay")).textContent).toMatch(/30 s.*copia de reglas/);
   });
 
   it.each([
-    ["battle_not_public", /batalla suelta con bots no públicos/],
-    ["tournament_not_broadcastable", /torneo se creó sin retransmisión pública/],
-  ])("VISIBILIDAD · destino bloqueado por %s: motivo REAL y «Iniciar» deshabilitado", async (reason, text) => {
+    ["battle_not_public", /no pertenece a un torneo con retransmisión pública/],
+    ["tournament_not_broadcastable", /su torneo se creó sin retransmisión pública/],
+  ])("VISIBILIDAD · destino bloqueado por %s: motivo legible y «Iniciar» deshabilitado", async (reason, text) => {
     targetOver = { broadcastable: false, publicBroadcastable: false, broadcastBlockedReason: reason };
     render(<StreamingPage me={ME} route={`#/streaming?battle=${BATTLE}`} />);
     const msg = await screen.findByTestId("stream-target-private");
     expect(msg.getAttribute("data-reason")).toBe(reason);
     expect(msg.textContent).toMatch(text);
+    expect(msg.textContent).not.toContain(reason); // el código sólo en los detalles técnicos
+    expect(screen.getByTestId("simple-target-tech").textContent).toContain(reason);
     expect((screen.getByTestId("stream-start") as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -216,16 +230,17 @@ describe("EQ5b · controles", () => {
       tournamentBroadcast: true,
     };
     render(<StreamingPage me={ME} route={`#/streaming?battle=${BATTLE}`} />);
-    expect((await screen.findByTestId("stream-target-broadcast")).textContent).toMatch(
+    expect((await screen.findByTestId("simple-broadcastable")).textContent).toMatch(
       /ficha y su código siguen privados/,
     );
     expect(screen.queryByTestId("stream-target-private")).toBeNull();
-    expect((screen.getByTestId("stream-start") as HTMLButtonElement).disabled).toBe(false);
+    await waitFor(() => expect((screen.getByTestId("stream-start") as HTMLButtonElement).disabled).toBe(false));
   });
 
-  it("sin destino, con emisión activa o con el streaming desactivado, «Iniciar» está deshabilitado", async () => {
+  it("sin destino o con el streaming desactivado, «Iniciar» está deshabilitado; con emisión activa sólo hay «Detener»", async () => {
     render(<StreamingPage me={ME} route="#/streaming" />);
     expect(((await screen.findByTestId("stream-start")) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId("start-blockers").textContent).toMatch(/Elige una batalla/);
     cleanup();
     state = baseState({
       uxState: "live",
@@ -237,18 +252,18 @@ describe("EQ5b · controles", () => {
       },
     });
     render(<StreamingPage me={ME} route={`#/streaming?battle=${BATTLE}`} />);
-    await screen.findByTestId("stream-delay");
-    expect((screen.getByTestId("stream-start") as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByTestId("stream-stop") as HTMLButtonElement).disabled).toBe(false);
+    expect(((await screen.findByTestId("stream-stop")) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByTestId("stream-start")).toBeNull();
     cleanup();
     state = baseState({ uxState: "disabled", settings: { ...baseState().settings, enabled: false } });
     render(<StreamingPage me={ME} route={`#/streaming?battle=${BATTLE}`} />);
-    await screen.findByTestId("stream-delay");
+    await screen.findByTestId("stream-target-info");
     expect((screen.getByTestId("stream-start") as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByTestId("stream-stop") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId("simple-enable")).toBeTruthy();
+    expect(screen.queryByTestId("stream-stop")).toBeNull();
   });
 
-  it("EQ5d · «Iniciando» (relé aún sin publicar): no dice «En directo», «Detener» disponible e «Iniciar» bloqueado", async () => {
+  it("EQ5d · «Iniciando» (relé aún sin publicar): no dice «En directo», «Detener» disponible e «Iniciar» oculto", async () => {
     state = baseState({
       uxState: "starting",
       session: {
@@ -259,16 +274,18 @@ describe("EQ5b · controles", () => {
       },
     });
     render(<StreamingPage me={ME} route={`#/streaming?battle=${BATTLE}`} />);
-    await screen.findByTestId("stream-delay");
+    await screen.findByTestId("streaming-live");
     expect(screen.getByTestId("streaming-ux-state").textContent).toBe("Iniciando");
+    expect(screen.getByTestId("streaming-state").textContent).toContain("Conectando con YouTube");
     expect(screen.getByTestId("streaming-state").textContent).not.toContain(UX_TEXT.live.title);
-    expect((screen.getByTestId("stream-start") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId("live-badge").textContent).not.toContain("EN DIRECTO");
+    expect(screen.queryByTestId("stream-start")).toBeNull();
     expect((screen.getByTestId("stream-stop") as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("60 FPS pide confirmación; si se cancela no se guarda nada", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-    render(<StreamingPage me={ME} route="#/streaming" />);
+    render(<StreamingPage me={ME} route="#/streaming?tab=advanced" />);
     fireEvent.change(await screen.findByTestId("set-fps"), { target: { value: "60" } });
     fireEvent.click(screen.getByTestId("set-save"));
     expect(confirm).toHaveBeenCalled();
@@ -292,7 +309,7 @@ describe("EQ5b · controles", () => {
       uxState: "live",
       session: { id: "s1", mode: "rtmps", target: null, startedAt: "2026-11-02T10:00:00.000Z" },
     });
-    render(<StreamingPage me={ME} route="#/streaming" />);
+    render(<StreamingPage me={ME} route="#/streaming?tab=advanced" />);
     fireEvent.click(await screen.findByTestId("set-enabled"));
     fireEvent.click(screen.getByTestId("set-save"));
     await waitFor(() => expect(calls.some((c) => c.path === "/admin/streaming/settings")).toBe(true));
@@ -303,7 +320,7 @@ describe("EQ5b · controles", () => {
   });
 
   it("NVENC deshabilitado si el runtime no lo confirma", async () => {
-    render(<StreamingPage me={ME} route="#/streaming" />);
+    render(<StreamingPage me={ME} route="#/streaming?tab=advanced" />);
     const sel = (await screen.findByTestId("set-encoder")) as HTMLSelectElement;
     const nv = [...sel.options].find((o) => o.value === "nvenc")!;
     expect(nv.disabled).toBe(true);
@@ -317,7 +334,7 @@ describe("EQ5b · branding", () => {
     expect(validLogo("//evil.example/x.png")).toBe(false);
     expect(validLogo("https://cdn.example/logo.png")).toBe(true);
     expect(validLogo("/logo.png")).toBe(true);
-    render(<StreamingPage me={ME} route="#/streaming" />);
+    render(<StreamingPage me={ME} route="#/streaming?tab=advanced" />);
     const preview = (await screen.findByTestId("br-preview")) as HTMLIFrameElement;
     expect(preview.getAttribute("src")).toBe(previewUrl(state.settings.branding));
     expect(preview.getAttribute("src")).toMatch(/^\/broadcast\?event=Copa&primary=%2310141f&accent=%23ffb300$/);

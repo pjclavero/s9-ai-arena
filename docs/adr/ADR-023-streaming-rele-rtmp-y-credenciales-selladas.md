@@ -205,6 +205,25 @@ clave.
   el nombre exacto de ffmpeg.ts, nunca la grabación en curso, nunca fuera de
   `video/`); la API audita **cada** borrado en `audit_log`.
 
+### 4. Adenda STREAMING-UX (2026-11): dos ingestas, Happy Eyeballs y `connect` con txn 1
+
+- **Interoperabilidad con YouTube corregida.** El relé mandaba `connect` con id de transacción 2.
+  YouTube contesta a cualquier `connect`, pero siempre con un `_result` de txn 1 (el id que mandan
+  FFmpeg, OBS y librtmp); el relé esperaba la respuesta 2 y descartaba la buena. Era el «la ingesta no respondió a connect a tiempo» de producción. Se reprodujo desde un
+  host de pruebas contra la ingesta real (sólo TLS, handshake y `connect`, sin clave ni publicación).
+  Con txn 1 la respuesta (txn 1) es la que el relé espera. La consecuencia «no probado contra YouTube» de abajo pasa a «probado
+  hasta `connect`, sin publicar».
+- **Familia de direcciones.** El marcado es Happy Eyeballs (RFC 8305) en el propio cliente
+  (`rtmp/dial.ts`). No se fuerza IPv4 ni se toca nada del host.
+- **Dos ingestas por plataforma** (`streaming_ingests`, migración 020) y **un sobre por ingesta**
+  (`sealed` para la principal y `sealed_backup` para el respaldo). Se mantiene la garantía de §2: cada
+  sobre está atado a UN destino, así que la clave sólo puede ir a las dos URLs configuradas al
+  sellarla. Se descartó un único sobre atado a las dos URLs: habría exigido un AAD v3 y abrir la clave
+  para cualquiera de los dos destinos con una sola comprobación. Con dos sobres v2 no cambia la
+  criptografía y el streamer abre cada uno sólo para su URL.
+- **Failover acotado** (3 fallos seguidos de red, transporte o handshake antes de `connect`). El
+  respaldo es fijo durante la sesión y no hay failover por clave, autorización ni configuración.
+
 ## Consecuencias
 
 - **Código propio de protocolo** (≈ 500 líneas): riesgo de interoperabilidad. Mitigación:

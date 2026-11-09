@@ -63,7 +63,14 @@ info:
   # 409 target_not_public sino con el motivo real. TournamentMatch.winnerBotName
   # (nombre de competición del ganador, «bracket con nombre»). getBotSource,
   # getBotVersionFiles y diffBotVersions responden con `Cache-Control: private, no-store`.
-  version: 0.15.0
+  # 0.16.0 · STREAMING-UX (aditivo, admin): setStreamingIngests (PUT
+  # /admin/streaming/ingests/{platform}: servidor principal y de respaldo; `?backup=1`
+  # sólo en el respaldo de YouTube), listStreamingDestinations (selector sin UUID),
+  # `ingests` en StreamingAdminState, `backup` (none | ready | needs_key) en
+  # StreamingCredentialMeta y `primary`/`backup` en la respuesta de testStreaming
+  # (los campos de la principal siguen también en la raíz), y `actorName` en AuditEntry
+  # (listStreamingAudit: nombre del usuario; el UUID sigue en actorId).
+  version: 0.16.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -1716,6 +1723,49 @@ paths:
         '200': { description: Eliminada, content: { application/json: { schema: { $ref: '#/components/schemas/StreamingCredentialMeta' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /admin/streaming/ingests/{platform}:
+    parameters:
+      - { name: platform, in: path, required: true, schema: { type: string, pattern: '^[a-z0-9_-]{1,32}$' } }
+    put:
+      tags: [streaming]
+      operationId: setStreamingIngests
+      summary: 'STREAMING-UX · Servidor principal y de respaldo de la plataforma, guardados TAL CUAL (sin transformar ni concatenar nada). Sólo rtmps:// con host público; la ÚNICA query admitida es `?backup=1` en el respaldo de YouTube. En YouTube la aplicación es EXACTAMENTE `live2` (y `live2?backup=1` en el respaldo); en cualquier plataforma se rechaza un path no canónico o con forma de clave de emisión (la clave va en su campo, nunca en la URL). Cambiar una URL invalida el sobre sellado para ella (hay que volver a introducir la clave). Auditado (streaming.ingests.update).'
+      x-min-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [primaryIngestUrl]
+              additionalProperties: false
+              properties:
+                primaryIngestUrl: { type: string, maxLength: 512 }
+                backupIngestUrl: { type: string, nullable: true, maxLength: 512 }
+      responses:
+        '200': { description: Guardadas, content: { application/json: { schema: { type: object } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: URL inválida, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/streaming/destinations:
+    get:
+      tags: [streaming]
+      operationId: listStreamingDestinations
+      summary: 'STREAMING-UX · Destinos para el selector sin UUID: batallas en curso y terminadas (las en curso primero, de la más reciente a la más antigua) y torneos, con nombre legible y si se pueden retransmitir (misma regla que getStreamingTarget).'
+      x-min-role: admin
+      parameters: [{ $ref: '#/components/parameters/Limit' }]
+      responses:
+        '200':
+          description: Destinos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  battles: { type: array, items: { $ref: '#/components/schemas/StreamingDestination' } }
+                  tournaments: { type: array, items: { $ref: '#/components/schemas/StreamingDestination' } }
+
   /admin/streaming/target:
     get:
       tags: [streaming]
@@ -2833,6 +2883,7 @@ components:
       properties:
         id: { type: string }
         actorId: { type: string }
+        actorName: { type: string, description: 'Nombre visible del actor (listStreamingAudit); el UUID sigue en actorId' }
         action: { type: string }
         target: { type: string }
         correlationId: { type: string }
@@ -2899,6 +2950,7 @@ components:
         updatedAt: { type: string, format: date-time, nullable: true }
         compatible: { type: boolean, nullable: true }
         incompatibleReason: { type: string, nullable: true, enum: [key_rotated, ingest_changed, null], description: 'EQ5c · por qué hay que volver a introducir la clave: se selló con otra clave pública o para otra URL de ingesta.' }
+        backup: { type: string, enum: [none, ready, needs_key], description: 'STREAMING-UX · sobre de la ingesta de respaldo: none = sin respaldo; ready = sellado para el respaldo actual; needs_key = volver a introducir la clave para usarlo.' }
 
     StreamingTarget:
       type: object
@@ -2914,11 +2966,37 @@ components:
         delaySeconds: { type: number }
         delaySource: { type: string, enum: [snapshot, ruleset, final_visible, none] }
 
+    StreamingDestination:
+      type: object
+      properties:
+        kind: { type: string, enum: [battle, tournament] }
+        id: { type: string, format: uuid }
+        label: { type: string }
+        status: { type: string }
+        mode: { type: string, nullable: true }
+        tournamentName: { type: string, nullable: true }
+        startedAt: { type: string, format: date-time, nullable: true }
+        finishedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        broadcastable: { type: boolean }
+        broadcastBlockedReason: { type: string, nullable: true, enum: [battle_not_public, tournament_not_broadcastable, null] }
+        tournamentBroadcast: { type: boolean, nullable: true }
+
+    StreamingIngests:
+      type: object
+      properties:
+        platform: { type: string }
+        primaryIngestUrl: { type: string, nullable: true }
+        backupIngestUrl: { type: string, nullable: true }
+        source: { type: string, enum: [configured, default] }
+        backupQueryAllowed: { type: boolean }
+
     StreamingAdminState:
       type: object
       properties:
         settings: { $ref: '#/components/schemas/StreamingSettings' }
         platforms: { type: array, items: { type: object } }
+        ingests: { type: array, items: { $ref: '#/components/schemas/StreamingIngests' } }
         credentials: { type: array, items: { $ref: '#/components/schemas/StreamingCredentialMeta' } }
         capabilities: { type: object }
         streamer: { type: object, nullable: true }

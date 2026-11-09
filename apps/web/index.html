@@ -456,6 +456,173 @@
           min-height: 44px;
         }
       }
+      /* STREAMING-UX · menú del apartado a la IZQUIERDA (escritorio) y pestañas
+         horizontales con scroll (móvil); botones de emisión grandes. */
+      .streaming-layout {
+        display: grid;
+        grid-template-columns: 13rem minmax(0, 1fr);
+        gap: 1rem;
+        align-items: start;
+      }
+      /* Ronda 1 (LEFT_ALIGNED_NAV) · es un <nav>, y la regla global de nav (barra superior)
+         le ponía align-items:center (botones encogidos y centrados en la columna),
+         flex-wrap:wrap (dos filas en móvil), relleno y fondo. Se anulan aquí. */
+      .streaming-nav {
+        display: flex;
+        flex-direction: column;
+        flex-wrap: nowrap;
+        align-items: stretch;
+        padding: 0;
+        background: transparent;
+        gap: 0.25rem;
+        position: sticky;
+        top: 0.5rem;
+      }
+      .streaming-nav button {
+        text-align: left;
+        justify-content: flex-start;
+        background: transparent;
+        border: 1px solid transparent;
+        color: #e6e8eb;
+        padding: 0.6rem 0.75rem;
+        border-radius: 6px;
+        min-height: 44px;
+        cursor: pointer;
+      }
+      .streaming-nav button[aria-current="page"] {
+        background: #1f2a3a;
+        border-color: #7fb4ff;
+        color: #a9cdff;
+      }
+      .streaming-big {
+        font-size: 1.15rem;
+        padding: 0.8rem 1.4rem;
+        min-height: 52px;
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .streaming-big.start {
+        background: #1f7a3f;
+        color: white;
+        border: 1px solid #2fa05a;
+      }
+      .streaming-big.stop {
+        background: #a32a2a;
+        color: white;
+        border: 1px solid #d04545;
+      }
+      .streaming-big:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .streaming-live-bar {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .streaming-field {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        margin-bottom: 0.8rem;
+        max-width: 36rem;
+      }
+      .streaming-field select,
+      .streaming-field input {
+        min-height: 44px;
+        font-size: 1rem;
+      }
+      .streaming-facts {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+        gap: 0.5rem 1rem;
+        margin: 0.5rem 0;
+      }
+      .streaming-facts div span {
+        display: block;
+        color: #9aa4b2;
+        font-size: 0.85rem;
+      }
+      @media (max-width: 720px) {
+        .streaming-layout {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .streaming-nav {
+          flex-direction: row;
+          overflow-x: auto;
+          position: static;
+          white-space: nowrap;
+          -webkit-overflow-scrolling: touch;
+        }
+        .streaming-nav button {
+          flex: 0 0 auto;
+        }
+        .streaming-big {
+          width: 100%;
+        }
+        /* Ronda 2 (MOBILE_CTA_NO_CONTENT_OVERLAP) · INICIAR/DETENER fijos abajo SIN tapar nada.
+           En la ronda 1 INICIAR era sticky y, fijo, tapaba el campo Canal. Ahora, mientras se ve
+           un CTA (clase puesta por StreamingPage), <body> deja abajo una franja reservada con
+           relleno = altura del CTA + safe-area, y lo que se desplaza es #root, que acaba encima
+           de esa franja: ningún campo puede pasar por debajo del CTA en ningún punto del scroll,
+           y al fondo el último campo queda entero encima. */
+        html.streaming-cta-shell {
+          --streaming-cta-h: 4.25rem;
+          height: 100%;
+          overflow: hidden;
+        }
+        html.streaming-cta-shell body {
+          box-sizing: border-box;
+          height: 100%;
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+          padding-bottom: calc(var(--streaming-cta-h) + env(safe-area-inset-bottom, 0px));
+        }
+        html.streaming-cta-shell #root {
+          flex: 1 1 auto;
+          min-height: 0;
+          overflow-y: auto;
+          overscroll-behavior: contain;
+        }
+        .streaming-start-row.streaming-cta {
+          position: fixed;
+          z-index: 3;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          box-sizing: border-box;
+          height: calc(var(--streaming-cta-h) + env(safe-area-inset-bottom, 0px));
+          margin: 0;
+          padding: 0.5rem 0.75rem calc(0.5rem + env(safe-area-inset-bottom, 0px));
+          background: #171d26;
+          border-top: 1px solid #2a3442;
+        }
+        .streaming-start-row.streaming-cta .streaming-big {
+          height: 100%;
+        }
+        /* DETENER: el mismo sitio y tamaño que INICIAR (el pulgar no cambia de zona). La barra
+           de estado deja de ser sticky en móvil: si no, taparía al desplazarse. */
+        .streaming-live-bar {
+          position: static;
+        }
+        .streaming-big.stop.streaming-cta {
+          position: fixed;
+          z-index: 3;
+          left: 0.75rem;
+          right: 0.75rem;
+          bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+          width: auto;
+          height: calc(var(--streaming-cta-h) - 1rem);
+          margin: 0;
+        }
+      }
     </style>
   </head>
   <body>

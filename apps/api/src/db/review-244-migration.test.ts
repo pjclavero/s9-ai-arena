@@ -19,10 +19,16 @@ const D9 = norm(`IF OLD.code_public AND NOT NEW.code_public THEN
             USING ERRCODE = 'integrity_constraint_violation';
         END IF;`);
 
+// STREAMING-UX · esta revisión trata a la 019 como la PUNTA de la historia (sus
+// `rollbackLast` y `last()` lo suponen). Las migraciones posteriores (la 020, que no
+// toca el guardián) se apartan mientras dura el fichero y se devuelven al final.
+let later: typeof MIGRATIONS = [];
 beforeAll(async () => {
+  later = MIGRATIONS.splice(MIGRATIONS.findIndex((m) => m.name === "019_visibility_broadcast") + 1);
   h = await startTestDb();
 }, 180_000);
 afterAll(async () => {
+  MIGRATIONS.push(...later);
   await h.stop();
 });
 
