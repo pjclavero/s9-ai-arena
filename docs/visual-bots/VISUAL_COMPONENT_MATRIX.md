@@ -50,7 +50,10 @@ nueva del catálogo, y esta tabla y su test lo detectarán.
 - **MAY_RENDER** — visible, pero pequeño o poco informativo; sólo en detalle/ficha y si sobra presupuesto.
 - **DO_NOT_RENDER** — interno, invisible desde fuera, o su representación filtraría información (ver §12).
 
-**VISIBILITY_CLASS** (en las tablas de decisión) clasifica **la presencia/identidad** del componente con las clases de §12.
+**VISIBILITY_CLASS** (en las tablas de decisión) clasifica **la identidad** del componente con las clases de §12. La
+**presencia** de un módulo (que su ranura está ocupada) es PUBLIC para todos, porque el snapshot la publica
+(`data.slot_occupancy`, §12.1). Cuando la presencia de la ranura más el catálogo dejan un único candidato, la identidad
+también es pública de hecho, y la fila lo dice como «PUBLIC por inferencia» (§12.1).
 
 ## 5. Decisión por componente del catálogo
 
@@ -62,8 +65,8 @@ nueva del catálogo, y esta tabla y su test lo detectarán.
 | `chassis.medium@2` | MUST_RENDER | PUBLIC | Igual que @1. |
 | `chassis.heavy@1` | MUST_RENDER | PUBLIC | Identidad base. |
 | `weapon.cannon@1` | MUST_RENDER | OBSERVER_DEPENDENT | Arma principal (PRD-01). Físicamente visible, pero hoy NO se publica qué arma lleva cada vehículo (ver §14, D-01). |
-| `weapon.mg@1` | MUST_RENDER | OBSERVER_DEPENDENT | Arma principal. |
-| `weapon.mg@2` | MUST_RENDER | OBSERVER_DEPENDENT | Arma principal; misma forma que @1. |
+| `weapon.mg@1` | MUST_RENDER | OBSERVER_DEPENDENT | Arma principal. PUBLIC por inferencia en `chassis.light`: allí `turret_main` sólo admite `weapon.mg` (§12.1). |
+| `weapon.mg@2` | MUST_RENDER | OBSERVER_DEPENDENT | Arma principal; misma forma que @1. PUBLIC por inferencia en `chassis.light` (el tipo, no la versión; §12.1). |
 | `armor.steel_front@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Placa visible; dice qué sectores protege. Sin estado de daño público (H-01). |
 | `armor.steel_left@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Placa lateral visible. |
 | `armor.steel_right@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Placa lateral visible (mirror de left). |
@@ -73,20 +76,20 @@ nueva del catálogo, y esta tabla y su test lo detectarán.
 | `armor.composite_right@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Placa lateral visible. |
 | `armor.composite_rear@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Placa trasera visible. |
 | `movement.tracks@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Muy reconocible (orugas frente a ruedas); su estado público (`drive`) ya existe. |
-| `movement.wheels@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Muy reconocible. |
+| `movement.wheels@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Muy reconocible. PUBLIC por inferencia en `chassis.light`: allí `drive` sólo admite las ruedas (§12.1). |
 | `sensor.lidar360@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Cúpula superior visible. |
 | `sensor.radar@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Antena visible. |
 | `sensor.lidar_front@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Lente frontal visible; orientada con el casco. |
 | `sensor.proximity@1` | MAY_RENDER | OBSERVER_DEPENDENT | Pequeño; su forma no debe sugerir alcance ni detección (§7). |
 | `sensor.acoustic@1` | MAY_RENDER | OBSERVER_DEPENDENT | Pequeño y pasivo; nunca animado (§7). |
-| `radio.short@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Antena visible. Que transmita es ALLY_ONLY (§12). |
-| `power.battery@1` | DO_NOT_RENDER | SELF_ONLY | Interno; el estado energético es privado del bot. Ficha: sólo texto/icono. |
+| `radio.short@1` | SHOULD_RENDER | PUBLIC | Antena visible. PUBLIC por inferencia: `radio_a` sólo admite este módulo, así que la ranura en el snapshot ya dice cuál es (§12.1). Que transmita es ALLY_ONLY y el contenido NEVER_VISUALIZE (§12). |
+| `power.battery@1` | DO_NOT_RENDER | SELF_ONLY | Interno; el estado energético es privado del bot. Ficha: sólo texto/icono. La presencia de la ranura `power` es PUBLIC (§12.1); cuál de los tres módulos, no. |
 | `power.generator@1` | DO_NOT_RENDER | SELF_ONLY | Interno. |
 | `power.generator@2` | DO_NOT_RENDER | SELF_ONLY | Interno. |
-| `ammo.standard@1` | DO_NOT_RENDER | SELF_ONLY | Cargador interno; tipo y munición restante son privados. |
+| `ammo.standard@1` | DO_NOT_RENDER | SELF_ONLY | Cargador interno; munición restante privada. PUBLIC por inferencia en `chassis.light`: la única arma que cabe es `weapon.mg`, que sólo acepta esta munición (§12.1). En medio y pesado el tipo sigue siendo privado. |
 | `ammo.ap@1` | DO_NOT_RENDER | SELF_ONLY | Interno. Variante de proyectil = futuro, sujeta a D-02. |
 | `ammo.he@1` | DO_NOT_RENDER | SELF_ONLY | Interno. |
-| `mine.explosive@1` | DO_NOT_RENDER | SELF_ONLY | Lo que hay en la bahía y las cargas que quedan son privados; como mucho, una compuerta genérica en la ficha (MAY). |
+| `mine.explosive@1` | DO_NOT_RENDER | PUBLIC | PUBLIC por inferencia: `mine_bay` sólo admite este módulo (`utility` no tiene ninguno), así que la ranura en el snapshot ya dice que lleva minas (§12.1). Las cargas que quedan y las minas desplegadas siguen siendo privadas. Como mucho, una compuerta genérica (MAY); ver D-07. |
 
 ## 6. Decisión por elemento de batalla (runtime)
 
@@ -183,6 +186,12 @@ Como las versiones de cada chasis tienen las mismas ranuras, cada bloque cubre t
 }
 ```
 
+Con el catálogo de hoy (cálculo de encaje del test, §12.1), en el ligero **ningún** blindaje cabe (`armor_front` M frente
+a placas L; laterales y trasera S frente a placas M) ni caben las orugas (`movement.tracks@1` es L y `drive` es M), y el
+cañón tampoco (L frente a `turret_main` M). Los mounts `armor*` se declaran REQUIRED porque la ranura existe, pero un
+ligero **nunca** muestra placas ni orugas hasta que el catálogo tenga módulos que quepan. Afecta a la elección del
+vertical slice.
+
 ### 9.2 chassis.medium
 
 ```json
@@ -246,11 +255,14 @@ Notas:
 - **Munición.** Interna. El tipo (`ammo.ap/he/standard`) y las rondas restantes son SELF_ONLY (`self.modules[].ammo` en la
   observación). En público sólo existe el proyectil, sin tipo. Distinguir AP/HE en el proyectil exigiría publicar el
   tipo: decisión de producto (D-02), no de esta fase.
-- **Radio.** La antena (presencia) es OBSERVER_DEPENDENT. La actividad no tiene evento público: los mensajes sólo se
+- **Radio.** La antena (presencia **e identidad**) es PUBLIC por inferencia: `radio_a` sólo admite `radio.short@1` (§12.1). La actividad no tiene evento público: los mensajes sólo se
   entregan al propio equipo (`radioDeliverableTo`). Un pulso de «transmitiendo» en el broadcast revelaría al rival el
   ritmo de comunicación del equipo: **ALLY_ONLY**, nunca en vistas públicas en directo. El contenido es NEVER_VISUALIZE.
 - **Minas.** Las desplegadas no están en el snapshot público y sólo el dueño recibe `mine_deployed`; el único hecho
-  público es `mine_triggered` (posición de la explosión). Cargas restantes y contenido de la bahía: SELF_ONLY.
+  público es `mine_triggered` (posición de la explosión). Cargas restantes: SELF_ONLY. Que la bahía lleva minas es PUBLIC
+  por inferencia (§12.1).
+- **Fichero de replay crudo.** Todo lo anterior vale para lo que se **renderiza**. El fichero de replay que descarga quien
+  puede leerlo lleva semilla, equipamiento y comandos de todos los participantes: ver H-05 y la nota de alcance de §12.
 
 ## 11. Qué datos tiene hoy cada contexto
 
@@ -276,6 +288,22 @@ Clases:
   vista con niebla del espectador, replay posterior).
 - **NEVER_VISUALIZE** — no se representa en ninguna vista de espectador.
 
+**Alcance de las clases.** SELF_ONLY, ALLY_ONLY y NEVER_VISUALIZE se aplican a las **vistas renderizadas** (visor en
+directo, replay en el visor, broadcast, ficha). **No** se aplican al **fichero de replay crudo**: hoy se entrega entero, sin
+proyección, a quien pueda leerlo, y lleva semilla, equipamiento y comandos de cada bot, de modo que una re-simulación
+reconstruye después de la batalla datos que aquí son privados (radio, minas, observaciones). Ver H-05 (§14) y PRE-1. Esta
+fase sólo lo documenta; un renderer no debe dar por protegido lo que el fichero crudo ya entrega.
+
+**Inferencia por ranuras ocupadas.** El snapshot público lista sólo las ranuras **con módulo** (`modules: [{slot, state}]`,
+`Battle.publicSnapshot()`; el vehículo sólo crea entradas para los módulos de su spec, `vehicle.ts`). La nómina publica
+el chasis. Cruzando ambas cosas con el catálogo (público) y las reglas del validador (categoría aceptada, tamaño,
+sector, chasis requerido y compatibilidad arma↔munición), un espectador sabe **qué ranuras van ocupadas** y, cuando una
+ranura admite un único módulo base, **qué módulo es**. La regla es:
+
+> presencia de la ranura + catálogo ⇒ identidad, cuando sólo hay un candidato.
+
+La tabla de encaje está en §12.1; la calcula el test a partir del catálogo real y del validador, no se escribe a mano.
+
 | DATA_ID | DATA | CLASSIFICATION | SOURCE | NOTES |
 | --- | --- | --- | --- | --- |
 | `data.chassis_identity` | Chasis del vehículo | PUBLIC | `init.meta.roster.chassis`; cabecera del replay | Ya se pinta por arquetipo. |
@@ -287,26 +315,33 @@ Clases:
 | `data.module_state` | Estado de cada ranura (operational/damaged/critical/destroyed/offline) | PUBLIC | snapshot `modules[].state` | Incluye `offline` (apagado voluntario): ver D-04. |
 | `data.module_health_exact` | Fracción de vida exacta de cada módulo | SELF_ONLY | observación `self.modules[].healthFraction` | No está en el snapshot. |
 | `data.armor_sector_hp` | Vida de blindaje por sector | SELF_ONLY | observación `self.armor` | Ni siquiera en el snapshot público (sólo en el hash). |
-| `data.module_identity` | Qué módulo concreto hay en cada ranura | OBSERVER_DEPENDENT | loadout (ficha); cabecera del replay | Hoy NO viaja en el directo. Ver D-01 y H-05. |
-| `data.sensor_installed` | Que un sensor está montado, y cuál | OBSERVER_DEPENDENT | ranura en el snapshot (`sensor_a/b`) + identidad (D-01) | La presencia de la ranura ya es pública; el tipo, no. |
+| `data.slot_occupancy` | Qué ranuras del chasis llevan módulo | PUBLIC | snapshot `modules[].slot` (sólo las ocupadas) + `roster.chassis` | Regla de inferencia: presencia de ranura + catálogo ⇒ identidad cuando sólo hay un candidato (§12.1). Ver H-04 y D-07. |
+| `data.module_identity` | Qué módulo concreto hay en cada ranura | OBSERVER_DEPENDENT | loadout (ficha); cabecera del replay | El `moduleId` no viaja en el directo, pero en varias ranuras se infiere (§12.1). Ver D-01, H-04 y H-05. |
+| `data.sensor_installed` | Que un sensor está montado, y cuál | OBSERVER_DEPENDENT | ranura en el snapshot (`sensor_a/b`) + identidad (D-01) | La presencia es PUBLIC (`data.slot_occupancy`); el tipo no se infiere: varias opciones en `sensor_a` y en `sensor_b` (§12.1). |
 | `data.sensor_destroyed` | Sensor destruido | PUBLIC | snapshot `modules[].state = destroyed` | |
 | `data.radar_operating` | Radar funcionando (no destruido ni apagado) | PUBLIC | derivado de `modules[].state` | Si en un ciclo concreto dio lectura (`moduleActs`) es interno: ver `data.sensor_cycle_output`. |
 | `data.sensor_cycle_output` | Si el sensor produjo lectura en un ciclo | NEVER_VISUALIZE | `moduleActs` en `sensors.ts` | |
-| `data.sensor_readings` | Rayos, contactos, rumbos, sonidos percibidos | NEVER_VISUALIZE | `buildObservation` (`sensors.ts`) | Es la observación privada del bot. |
+| `data.sensor_readings` | Rayos, contactos, rumbos, sonidos percibidos | NEVER_VISUALIZE | `buildObservation` (`sensors.ts`) | Es la observación privada del bot. Re-simulable desde el fichero de replay crudo: H-05. |
 | `data.sensor_range_fov` | Alcance y cono de un sensor concreto dibujados sobre ese bot | OBSERVER_DEPENDENT | catálogo (público) + identidad (D-01) | Dibujarlo sobre un bot revela su capacidad real; nunca en directo público mientras D-01 no lo permita. |
-| `data.radio_installed` | Lleva radio (antena) | OBSERVER_DEPENDENT | ranura `radio_a` en el snapshot + identidad | |
+| `data.radio_installed` | Lleva radio, y cuál | PUBLIC | ranura `radio_a` en el snapshot + catálogo | PUBLIC por inferencia: `radio_a` sólo admite `radio.short@1` (§12.1). |
 | `data.radio_active` | Está transmitiendo | ALLY_ONLY | cola de radio del motor; sin evento público | Nunca en directo público. |
-| `data.radio_content` | Contenido de los mensajes | NEVER_VISUALIZE | `RadioMessage.data` | |
-| `data.ammo_type` | Tipo de munición | SELF_ONLY | loadout / spec | |
+| `data.radio_content` | Contenido de los mensajes | NEVER_VISUALIZE | `RadioMessage.data` | En vistas renderizadas. El fichero de replay crudo lo contiene (`radio[].data` de cada comando): H-05, PRE-1. |
+| `data.ammo_type` | Tipo de munición | SELF_ONLY | loadout / spec | En medio y pesado. En el ligero es PUBLIC por inferencia (`data.light_ammo_type`). El fichero de replay crudo lo lleva en el spec: H-05. |
+| `data.ammo_installed` | Lleva munición | PUBLIC | ranura `ammo_main` en el snapshot | PUBLIC por inferencia (presencia; §12.1). |
+| `data.light_ammo_type` | Tipo de munición de un ligero | PUBLIC | `roster.chassis` + ranuras + catálogo + regla arma↔munición | PUBLIC por inferencia: la única arma base que cabe en el ligero es `weapon.mg`, que sólo acepta `ammo.standard` (§12.1). |
 | `data.ammo_remaining` | Munición restante | SELF_ONLY | observación `self.modules[].ammo` | MASTER-PLAN §13: «no por defecto». |
 | `data.out_of_ammo` | Sin munición | SELF_ONLY | rechazo privado `no_ammo` | |
 | `data.weapon_cooldown` | Cooldown / recarga | SELF_ONLY | observación `self.modules[].cooldownTicks` | |
 | `data.firing` | Ha disparado | PUBLIC | proyectil nuevo en el snapshot | Sin atribución al vehículo en el dato. |
 | `data.projectile_origin` | Qué arma o munición disparó el proyectil | OBSERVER_DEPENDENT | no se publica hoy | Exigiría cambiar el snapshot (fuera de fase). D-02. |
-| `data.energy_state` | Energía almacenada y flujo | SELF_ONLY | observación `self.energy` | |
-| `data.mine_bay_contents` | Mina en la bahía y cargas restantes | SELF_ONLY | observación `self.modules[].ammo` (cargas) | La ranura `mine_bay` sí aparece en el snapshot (H-04). |
-| `data.mine_position` | Posición de una mina desplegada | SELF_ONLY | evento privado `mine_deployed` | Excluida del snapshot público por diseño. |
+| `data.energy_state` | Energía almacenada y flujo | SELF_ONLY | observación `self.energy` | En vistas renderizadas. Con el fichero de replay crudo se re-simula: H-05. |
+| `data.power_installed` | Lleva módulo de energía | PUBLIC | ranura `power` en el snapshot | PUBLIC por inferencia (presencia). Cuál de los tres, no (§12.1). |
+| `data.mine_installed` | Lleva minas en la bahía | PUBLIC | ranura `mine_bay` en el snapshot + catálogo | PUBLIC por inferencia: `mine_bay` sólo admite `mine.explosive@1` (§12.1). |
+| `data.mine_bay_contents` | Cargas que quedan en la bahía | SELF_ONLY | observación `self.modules[].ammo` (cargas) | Que lleva minas es PUBLIC (`data.mine_installed`); cuántas quedan, no. |
+| `data.mine_position` | Posición de una mina desplegada | SELF_ONLY | evento privado `mine_deployed` | Excluida del snapshot público por diseño. En el fichero de replay crudo, los `deployMine` de cada comando permiten reconstruirla: H-05. |
 | `data.mine_triggered` | Explosión de mina | PUBLIC | evento público `mine_triggered` | |
+| `data.light_weapon_identity` | Arma de un ligero | PUBLIC | `roster.chassis` + ranura `turret_main` + catálogo | PUBLIC por inferencia: en el ligero `turret_main` sólo admite `weapon.mg` (@1 o @2; la versión no se infiere). §12.1. |
+| `data.light_drive_identity` | Tracción de un ligero | PUBLIC | `roster.chassis` + ranura `drive` + catálogo | PUBLIC por inferencia: en el ligero `drive` sólo admite `movement.wheels@1`. §12.1. |
 | `data.carrying_flag` | Lleva la bandera | PUBLIC | snapshot `carryingFlag` | |
 | `data.juggernaut` | Es el juggernaut | PUBLIC | snapshot `juggernaut` | |
 | `data.vehicle_alive` | Vivo o destruido | PUBLIC | snapshot `alive`, evento `vehicle_destroyed` | |
@@ -315,13 +350,61 @@ Clases:
 | `data.hit_details` | Sector impactado, daño recibido, atacante | SELF_ONLY | eventos privados `hit_taken` / `hit_dealt` | |
 | `data.full_loadout` | Ficha completa del bot | OBSERVER_DEPENDENT | API, según BOT_VISIBILITY | |
 
+### 12.1 Encaje por ranura: qué revela la ranura ocupada
+
+Calculado por `TEST 7 · SLOT_INFERENCE` de `packages/module-catalog/visual-contract.test.ts` con el catálogo real
+(`loadCatalog()`) y el validador real (`validateLoadout`: categoría aceptada, tamaño, sector y chasis requerido; para
+munición y arma, además, la regla arma↔munición contra lo que cabe en ese chasis). Si el catálogo cambia y esta tabla
+no, la CI se pone en rojo. Las versiones de un mismo chasis admiten lo mismo (el test lo comprueba), así que hay una
+fila por chasis y ranura.
+
+- `IDENTITY`: un único módulo base candidato. Ver la ranura en el snapshot equivale a saber cuál es: PUBLIC por inferencia.
+- `PRESENCE`: varios candidatos. Sólo es pública la presencia (`data.slot_occupancy`).
+- `NEVER`: ningún módulo cabe; con el catálogo de hoy la ranura no aparece nunca en un loadout válido.
+
+| CHASSIS_SLOT | CANDIDATES | INFERENCE | NOTES |
+| --- | --- | --- | --- |
+| `chassis.light/drive` | `movement.wheels@1` | IDENTITY | Tracción del ligero pública (las orugas son L y no caben). |
+| `chassis.light/power` | `power.battery@1`, `power.generator@1`, `power.generator@2` | PRESENCE | Se sabe que lleva energía, no cuál. |
+| `chassis.light/sensor_a` | `sensor.acoustic@1`, `sensor.lidar360@1`, `sensor.lidar_front@1`, `sensor.proximity@1`, `sensor.radar@1` | PRESENCE |  |
+| `chassis.light/turret_main` | `weapon.mg@1`, `weapon.mg@2` | IDENTITY | Arma del ligero pública (el tipo; la versión no). El cañón es L y no cabe. |
+| `chassis.light/ammo_main` | `ammo.standard@1` | IDENTITY | Regla arma↔munición: la única arma que cabe sólo acepta `ammo.standard`. |
+| `chassis.light/radio_a` | `radio.short@1` | IDENTITY | Identidad de la radio pública. |
+| `chassis.light/armor_front` | — | NEVER | Ninguna placa frontal cabe (L frente a M): la ranura nunca aparece. |
+| `chassis.light/armor_left` | — | NEVER | Las placas laterales son M y la ranura es S. |
+| `chassis.light/armor_right` | — | NEVER | Ídem. |
+| `chassis.light/armor_rear` | — | NEVER | La placa trasera es M y la ranura es S. |
+| `chassis.medium/drive` | `movement.tracks@1`, `movement.wheels@1` | PRESENCE |  |
+| `chassis.medium/power` | `power.battery@1`, `power.generator@1`, `power.generator@2` | PRESENCE |  |
+| `chassis.medium/sensor_a` | `sensor.acoustic@1`, `sensor.lidar360@1`, `sensor.lidar_front@1`, `sensor.proximity@1`, `sensor.radar@1` | PRESENCE |  |
+| `chassis.medium/turret_main` | `weapon.cannon@1`, `weapon.mg@1`, `weapon.mg@2` | PRESENCE |  |
+| `chassis.medium/ammo_main` | `ammo.ap@1`, `ammo.he@1`, `ammo.standard@1` | PRESENCE |  |
+| `chassis.medium/mine_bay` | `mine.explosive@1` | IDENTITY | Que lleva minas es público (`utility` no tiene módulos). |
+| `chassis.medium/radio_a` | `radio.short@1` | IDENTITY |  |
+| `chassis.medium/armor_front` | `armor.composite_front@1`, `armor.steel_front@1` | PRESENCE | El sector lo da la ranura; acero o compuesto, no. |
+| `chassis.medium/armor_left` | `armor.composite_left@1`, `armor.steel_left@1` | PRESENCE |  |
+| `chassis.medium/armor_right` | `armor.composite_right@1`, `armor.steel_right@1` | PRESENCE |  |
+| `chassis.medium/armor_rear` | `armor.composite_rear@1`, `armor.steel_rear@1` | PRESENCE |  |
+| `chassis.heavy/drive` | `movement.tracks@1`, `movement.wheels@1` | PRESENCE |  |
+| `chassis.heavy/power` | `power.battery@1`, `power.generator@1`, `power.generator@2` | PRESENCE |  |
+| `chassis.heavy/sensor_a` | `sensor.acoustic@1`, `sensor.lidar360@1`, `sensor.lidar_front@1`, `sensor.proximity@1`, `sensor.radar@1` | PRESENCE |  |
+| `chassis.heavy/sensor_b` | `sensor.acoustic@1`, `sensor.lidar_front@1`, `sensor.proximity@1` | PRESENCE |  |
+| `chassis.heavy/turret_main` | `weapon.cannon@1`, `weapon.mg@1`, `weapon.mg@2` | PRESENCE |  |
+| `chassis.heavy/ammo_main` | `ammo.ap@1`, `ammo.he@1`, `ammo.standard@1` | PRESENCE |  |
+| `chassis.heavy/mine_bay` | `mine.explosive@1` | IDENTITY |  |
+| `chassis.heavy/radio_a` | `radio.short@1` | IDENTITY |  |
+| `chassis.heavy/armor_front` | `armor.composite_front@1`, `armor.steel_front@1` | PRESENCE |  |
+| `chassis.heavy/armor_left` | `armor.composite_left@1`, `armor.steel_left@1` | PRESENCE |  |
+| `chassis.heavy/armor_right` | `armor.composite_right@1`, `armor.steel_right@1` | PRESENCE |  |
+| `chassis.heavy/armor_rear` | `armor.composite_rear@1`, `armor.steel_rear@1` | PRESENCE |  |
+
 ## 13. Estados visuales
 
 | STATE | STATUS | CODE_REFERENCE | NOTES |
 | --- | --- | --- | --- |
 | healthy | CURRENT | `MODULE_STATES` «operational» (`packages/game-rules/constants.ts`); casco > 60 % sin humo (`damage-visuals.ts`) | Por módulo y por casco. |
 | damaged | CURRENT | `stateFromHealth` < 0.66 (`packages/game-rules/index.ts`); humo de casco (`smokeLevel`) | Los tramos de vida del vehículo del MASTER-PLAN §12 (>70/30-70/<30) NO existen en código. |
-| critical | CURRENT | `stateFromHealth` < 0.33; fallo intermitente `moduleActs` | Sólo a nivel de módulo. |
+| critical | CURRENT | `stateFromHealth` < 0.33 y fallo intermitente `moduleActs` (`packages/game-rules/index.ts`), aplicado en `sensors.ts` | Sólo a nivel de módulo. |
 | destroyed | CURRENT | `stateFromHealth` ≤ 0 → «destroyed»; `turretLocked`/`mobilityCrippled` (`damage-visuals.ts`) | Blindaje: nunca por daño (H-01). |
 | offline | CURRENT | `ModuleRuntime.offline`, `Vehicle.stateOf` (`vehicle.ts`); snapshot `modules[].state` | Apagado voluntario, público hoy (D-04). |
 | firing | CURRENT | Deducido de proyectil nuevo: `EffectsSystem.ingestProjectiles` (`apps/web/src/viewer/effects.ts`) | No hay evento de disparo en el motor; no se atribuye al vehículo. |
@@ -340,13 +423,30 @@ Hallazgos (hechos del repo, documentados sin cambiar nada):
 - **H-01** — el blindaje no cambia de estado público por daño (ver inventario §6).
 - **H-02** — la nómina en directo sólo trae el chasis; el snapshot no trae `moduleId`.
 - **H-03** — la cabecera del replay sí lleva el equipamiento completo (`participants[].spec`).
-- **H-04** — el snapshot revela qué ranuras hay ocupadas (p. ej. `mine_bay`, `sensor_b`) y su estado.
-- **H-05** — `GET /api/v1/replays/{battleId}` (`getReplay`) entrega el fichero de replay entero a quien pueda leerlo
-  (incluido un anónimo si los replays públicos están activados), y ese fichero lleva el equipamiento y los comandos de
-  cada participante. El equipamiento ya es, de hecho, visible después de la batalla para quien puede leer el replay.
-- **H-06** — `visual-bots/MASTER-PLAN.md` no está enlazado desde `docs/README.md`: el test de alcanzabilidad
-  `tests/acceptance/doc-c-integracion-docs.test.ts` falla en la base `983d2f5` (antes de esta fase). Arreglarlo exige
-  tocar `docs/README.md`, fuera del ámbito `docs/visual-bots/**`.
+- **H-04** — el snapshot público lista sólo las ranuras con módulo, con su estado. Junto con el chasis de la nómina y
+  el catálogo, eso revela **qué** lleva el vehículo cuando la ranura admite un único módulo base: hoy, la mina
+  (`mine_bay`), la radio (`radio_a`) y, en el ligero, la tracción (`drive`), el arma (`turret_main`) y el tipo de
+  munición; y revela siempre la **presencia** de munición y de energía (§12.1). No es sólo «que lleva algo».
+- **H-05** — **el fichero de replay crudo se entrega sin proyección.** `getReplay` (`apps/api/src/routes/replays.ts`) y
+  la descarga del replay público (`apps/api/src/routes/battles.ts`) envían el fichero tal cual. Ese fichero
+  (`apps/arena-engine/src/replay.ts`, `replayFromBattle`) lleva:
+  - la `seed` de la batalla;
+  - `participants[].spec`: el equipamiento completo de cada bot, con ids versionados;
+  - todos los comandos (`cmd`) tal como los entregó cada bot (`battle.ts`, `replayCommands`), incluidos `radio[].data`
+    (contenido de los mensajes, `command.schema.json`) y `deployMine`;
+  - además de los snapshots y eventos públicos.
+
+  Con semilla y comandos, `verify()` re-simula la batalla entera, así que quien lee el fichero obtiene después de la
+  batalla el contenido de la radio de cada bot, la posición de sus minas y sus observaciones privadas.
+  **Quién lo lee:** los participantes y los equipos rivales de la batalla, **siempre** (vías de acceso por participación
+  de `replay-access.ts`); y los **anónimos**, sólo si está activa la capability `S9_PUBLIC_REPLAYS_ENABLED`, apagada por
+  defecto y hoy desactivada en producción. Las clases de §12 valen para las vistas renderizadas, no para este fichero.
+  Es la clase de problema «artefacto crudo servido sin proyección por audiencia»: **PRE-1, hallazgo de seguridad
+  preexistente, gestionado aparte** (fuera de esta fase y de este PR; no se toca el motor ni el fichero de replay).
+- **H-06** — `visual-bots/MASTER-PLAN.md` no estaba enlazado desde `docs/README.md`: el test de alcanzabilidad
+  `tests/acceptance/doc-c-integracion-docs.test.ts` fallaba ya en la base `983d2f5`. **Resuelto en esta fase** con una
+  línea en `docs/README.md` que enlaza `visual-bots/`; el MASTER-PLAN enlaza los seis entregables desde su §22. Esa suite
+  no corre en la CI de PR (sólo en la nocturna).
 
 Decisiones que necesitan validación de producto:
 
@@ -360,5 +460,11 @@ Decisiones que necesitan validación de producto:
   fuera de esta fase).
 - **D-03 · ¿Vida exacta en público?** Hoy el HUD la enseña. El MASTER-PLAN propone tramos para el renderer.
 - **D-04 · ¿Debe ser público el `offline` voluntario?** Hoy lo es (snapshot) y delata una decisión táctica.
+- **D-07 · ¿Debe el snapshot omitir las ranuras de módulos internos u ocultos?** Hoy el snapshot lista sólo las ranuras
+  ocupadas y eso ya publica, por inferencia, la presencia de minas, munición y energía y la identidad de la radio y del
+  equipo del ligero (H-04, §12.1). Opciones: (a) aceptarlo y documentarlo como público; (b) listar siempre todas las
+  ranuras del chasis, ocupadas o no; (c) omitir del snapshot público las ranuras internas (`power`, `ammo_main`,
+  `mine_bay`) y publicar sólo su estado agregado. Es una fuga **ya existente**: esta fase sólo la documenta y no toca
+  el motor. Hasta decidir, el renderer trata como PUBLIC lo que §12.1 marca como inferible.
 - **D-05 · Arquetipo frente a versión.** El visor actual agrupa por chasis (`chassisKind`): dos versiones del mismo
   chasis se ven iguales. Se propone mantenerlo (la versión cambia balance, no forma).

@@ -14,16 +14,26 @@
  *                                          los datos mínimos de fog of war y los 13 estados están clasificados.
  *   TEST 5 · CHASSIS_MOUNT_CONTRACT         los mounts JSON de la matriz cubren exactamente las ranuras reales.
  *   TEST 6 · SENSOR/WEAPON_VISUAL_CONTRACT  todo sensor y arma del catálogo tiene su fila de contrato.
+ *   TEST 7 · SLOT_INFERENCE (fog of war)    la tabla de encaje por ranura de la matriz (§12.1) es EXACTAMENTE la
+ *                                          que sale del catálogo y del validador reales, y lo que se infiere de
+ *                                          ella está clasificado como PUBLIC (por inferencia).
+ *   TEST 0 · ESTRUCTURA                     el parser no puede saltarse filas en silencio: una línea con `|` pegada
+ *                                          a una tabla, o ids fuera de una tabla reconocida, son error; el número
+ *                                          de filas parseadas coincide con el texto bruto; las decisiones sólo
+ *                                          hablan de elementos del inventario; un estado CURRENT cita un fichero
+ *                                          que existe.
  *
  * Sin BD, sin red y sin motor: sólo ficheros. Fase documental: no toca reglas ni renderer.
  */
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 import { loadCatalog, DATA_DIR } from "./loadCatalog.js";
+import { validateLoadout } from "./validator/index.js";
 import type { ModuleDefinition } from "./types.js";
 
-const DOCS = resolve(DATA_DIR, "..", "..", "..", "docs", "visual-bots");
+const REPO = resolve(DATA_DIR, "..", "..", "..");
+const DOCS = join(REPO, "docs", "visual-bots");
 const SCHEMA_PATH = join(DATA_DIR, "..", "schema", "module.schema.json");
 
 const INVENTORY = readFileSync(join(DOCS, "VISUAL_COMPONENT_INVENTORY.md"), "utf8");
@@ -47,10 +57,12 @@ const clean = (s: string): string =>
  * las filas como objetos cabecera→celda. Una fila con distinto número de celdas que la cabecera
  * es un error (tabla rota), no una fila que se ignora.
  */
+const splitRow = (l: string): string[] => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(clean);
+
 function tables(md: string, firstHeader: string): Row[] {
   const lines = md.split("\n");
   const rows: Row[] = [];
-  const split = (l: string): string[] => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(clean);
+  const split = splitRow;
   for (let i = 0; i < lines.length; i++) {
     if (!lines[i].trim().startsWith("|")) continue;
     const header = split(lines[i]);
@@ -66,6 +78,12 @@ function tables(md: string, firstHeader: string): Row[] {
       }
       rows.push(Object.fromEntries(header.map((h, k) => [h, cells[k]])));
     }
+    // P2-4 (a) · Una línea con `|` interno pegada a la tabla (p. ej. una fila a la que se le ha caído el `|`
+    // inicial, que GFM sigue pintando como fila) cortaría la tabla en silencio: es un error, no el final.
+    const after = lines[j]?.trim() ?? "";
+    if (after !== "" && after.includes("|")) {
+      throw new Error(`tabla «${firstHeader}» cortada en la línea ${j + 1}: línea con «|» pegada a la tabla`);
+    }
     i = j;
   }
   return rows;
@@ -76,6 +94,8 @@ const decisionRows = (): Row[] => tables(MATRIX, "DOMAIN_ID");
 
 const VISIBILITY = new Set(["PUBLIC", "SELF_ONLY", "ALLY_ONLY", "OBSERVER_DEPENDENT", "NEVER_VISUALIZE"]);
 const DECISIONS = new Set(["MUST_RENDER", "SHOULD_RENDER", "MAY_RENDER", "DO_NOT_RENDER"]);
+/** Filas de §12 tras la ronda 1 de revisión: §12 no puede encoger sin que el test lo note. */
+const MIN_DATA_ROWS = 43;
 
 describe("TEST 1 · VISUAL_INVENTORY_COVERAGE", () => {
   it("el catálogo real no está vacío (si lo estuviera, la cobertura sería trivialmente verde)", () => {
@@ -323,5 +343,282 @@ describe("TEST 6 · SENSOR_VISUAL_CONTRACT / WEAPON_VISUAL_CONTRACT", () => {
   it("toda arma del catálogo (id y versión) tiene fila en el contrato de armas", () => {
     expect(catalog.some((m) => m.category === "weapon")).toBe(true);
     expect(covers(tables(MATRIX, "WEAPON_ID"), "WEAPON_ID", "weapon")).toEqual([]);
+  });
+});
+
+/* ─────────────── TEST 0 · ESTRUCTURA: el parser no se salta filas en silencio (P2-4) ─────────────── */
+
+/** Cabeceras (primera columna) de las tablas que el test parsea, por documento. */
+const RECOGNIZED: Record<string, string[]> = {
+  INVENTORY: ["DOMAIN_ID"],
+  MATRIX: ["REAL_CATEGORY", "DOMAIN_ID", "SENSOR_ID", "WEAPON_ID", "DATA_ID", "STATE", "CHASSIS_SLOT"],
+};
+/** Un id de los que el test usa como clave: `data.x`, `runtime.x` o `familia.modulo@N`, entre backticks. */
+const ID_IN_TEXT = /`(?:data\.[a-z0-9_]+|runtime\.[a-z0-9_]+|[a-z][a-z0-9_]*\.[a-z0-9_]+@\d+)`/;
+
+/**
+ * Recorre el documento (fuera de los bloques ``` ) y devuelve las líneas con `|` que contienen un id
+ * y NO pertenecen a una tabla con cabecera reconocida: una fila suelta tras una línea en blanco, una
+ * fila sin `|` inicial o una tabla con otra cabecera. Cualquiera de ellas sería invisible para el test.
+ */
+function strayIdLines(md: string, recognized: string[]): string[] {
+  const lines = md.split("\n");
+  const consumed = new Set<number>();
+  let fenced = false;
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (t.startsWith("```")) {
+      fenced = !fenced;
+      consumed.add(i);
+      continue;
+    }
+    if (fenced) {
+      consumed.add(i);
+      continue;
+    }
+    if (!t.startsWith("|") || !/^\|\s*-{3}/.test(lines[i + 1]?.trim() ?? "")) continue;
+    if (!recognized.includes(splitRow(t)[0])) continue;
+    consumed.add(i);
+    consumed.add(i + 1);
+    let j = i + 2;
+    for (; j < lines.length && lines[j].trim().startsWith("|"); j++) consumed.add(j);
+    i = j - 1;
+  }
+  return lines
+    .map((l, i) => ({ l, i }))
+    .filter(({ l, i }) => !consumed.has(i) && l.includes("|") && ID_IN_TEXT.test(l))
+    .map(({ l, i }) => `línea ${i + 1}: ${l.trim().slice(0, 80)}`);
+}
+
+/** Líneas del texto bruto cuya primera celda (con o sin `|` inicial) es un id de la familia dada. */
+const rawRows = (md: string, id: RegExp): number =>
+  md.split("\n").filter((l) => new RegExp(`^\\s*\\|?\\s*\`${id.source}\`\\s*\\|`).test(l)).length;
+
+const CATALOG_OR_RUNTIME_ID = /(?:runtime\.[a-z0-9_]+|[a-z][a-z0-9_]*\.[a-z0-9_]+@\d+)/;
+const DATA_ID_RE = /data\.[a-z0-9_]+/;
+
+/** Índice de ficheros de apps/ y packages/ (sin node_modules ni dist) para validar referencias de código. */
+function sourceFiles(): Set<string> {
+  const names = new Set<string>();
+  const walk = (dir: string): void => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (e.name === "node_modules" || e.name === "dist" || e.name.startsWith(".")) continue;
+      if (e.isDirectory()) walk(join(dir, e.name));
+      else names.add(e.name);
+    }
+  };
+  walk(join(REPO, "apps"));
+  walk(join(REPO, "packages"));
+  return names;
+}
+
+describe("TEST 0 · ESTRUCTURA de los documentos (sin falsos verdes del parser)", () => {
+  it("(a) ninguna línea con un id queda fuera de una tabla reconocida (suelta, sin `|` inicial o sin cabecera)", () => {
+    expect(strayIdLines(INVENTORY, RECOGNIZED.INVENTORY), "VISUAL_COMPONENT_INVENTORY.md").toEqual([]);
+    expect(strayIdLines(MATRIX, RECOGNIZED.MATRIX), "VISUAL_COMPONENT_MATRIX.md").toEqual([]);
+  });
+
+  it("(b) el número de filas parseadas coincide con el texto bruto, y cada tabla tiene su mínimo", () => {
+    const inv = inventoryRows();
+    const dec = decisionRows();
+    const data = tables(MATRIX, "DATA_ID");
+    expect(inv.length, "filas DOMAIN_ID del inventario").toBe(rawRows(INVENTORY, CATALOG_OR_RUNTIME_ID));
+    expect(dec.length, "filas DOMAIN_ID de la matriz").toBe(rawRows(MATRIX, CATALOG_OR_RUNTIME_ID));
+    expect(data.length, "filas DATA_ID de §12").toBe(rawRows(MATRIX, DATA_ID_RE));
+    // Mínimos: todo el catálogo + algún elemento runtime; §12 no puede encoger por debajo de lo revisado.
+    const real = new Set([...schemaCategories, ...catalog.map((m) => m.category)]);
+    const ids = (cat: string): number => new Set(catalog.filter((m) => m.category === cat).map((m) => m.id)).size;
+    expect(inv.filter((r) => r.CATEGORY !== "runtime").length).toBeGreaterThanOrEqual(catalog.length);
+    expect(inv.filter((r) => r.CATEGORY === "runtime").length).toBeGreaterThan(0);
+    expect(dec.length).toBeGreaterThanOrEqual(inv.length);
+    expect(data.length).toBeGreaterThanOrEqual(MIN_DATA_ROWS);
+    expect(tables(MATRIX, "STATE").length).toBe(13);
+    expect(tables(MATRIX, "REAL_CATEGORY").length).toBe(real.size);
+    expect(tables(MATRIX, "SENSOR_ID").length).toBe(ids("sensor"));
+    expect(tables(MATRIX, "WEAPON_ID").length).toBe(ids("weapon"));
+  });
+
+  it("(c) toda fila de decisión de la matriz habla de un elemento del inventario o del catálogo", () => {
+    const known = new Set([...inventoryRows().map((r) => r.DOMAIN_ID), ...catalog.map(versioned)]);
+    expect(
+      decisionRows()
+        .map((r) => r.DOMAIN_ID)
+        .filter((id) => !known.has(id)),
+    ).toEqual([]);
+  });
+
+  it("(d) la CODE_REFERENCE de todo estado CURRENT nombra al menos un fichero, y todos los que nombra existen", () => {
+    const names = sourceFiles();
+    const bad: string[] = [];
+    for (const r of tables(MATRIX, "STATE").filter((x) => x.STATUS === "CURRENT")) {
+      const refs = [...r.CODE_REFERENCE.matchAll(/[\w./-]+\.(?:tsx?|json)\b/g)].map((m) => m[0]);
+      if (refs.length === 0) bad.push(`${r.STATE}: CURRENT sin fichero en CODE_REFERENCE`);
+      for (const ref of refs) {
+        const ok = ref.includes("/") ? existsSync(join(REPO, ref)) : names.has(basename(ref));
+        if (!ok) bad.push(`${r.STATE}: «${ref}» no existe`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+});
+
+/* ─────────────── TEST 7 · SLOT_INFERENCE: lo que el snapshot revela por ranura ocupada (P2-1) ─────────────── */
+
+/**
+ * El snapshot público lista las ranuras OCUPADAS (`modules: [{slot, state}]`) y la nómina el chasis.
+ * Candidatos de una ranura = módulos del catálogo que el VALIDADOR REAL acepta en ella (categoría,
+ * tamaño, sector, chasis requerido); para munición y arma, además, la regla arma↔munición del mismo
+ * validador contra las armas/municiones que caben en ese chasis. Un único id base ⇒ identidad pública.
+ */
+const SLOT_CODES = new Set([
+  "slot_type_mismatch",
+  "slot_size_exceeded",
+  "unknown_slot",
+  "incompatible_chassis",
+  "category_forbidden_by_ruleset",
+]);
+
+const violationsOf = (chassis: ModuleDefinition, modules: { slot: string; moduleId: string }[]) =>
+  validateLoadout(
+    {
+      loadoutId: "slot-inference",
+      revision: 1,
+      catalogVersion: "slot-inference",
+      chassis: versioned(chassis),
+      modules,
+    },
+    catalog,
+    Number.MAX_SAFE_INTEGER,
+  );
+
+function slotCandidates(chassis: ModuleDefinition): Map<string, string[]> {
+  const slots = chassis.slots ?? [];
+  const fit = new Map<string, ModuleDefinition[]>();
+  for (const s of slots) {
+    const ok = catalog.filter(
+      (m) =>
+        m.category !== "chassis" &&
+        !violationsOf(chassis, [{ slot: s.id, moduleId: versioned(m) }]).some((v) => SLOT_CODES.has(v.code)),
+    );
+    fit.set(s.id, ok);
+  }
+  const weaponSlots = slots.filter((s) => s.accepts.includes("weapon")).map((s) => s.id);
+  const ammoSlots = slots.filter((s) => s.accepts.includes("ammo")).map((s) => s.id);
+  /** ¿Acepta el validador esta pareja arma/munición sin `incompatible_ammo`? */
+  const pairOk = (w: ModuleDefinition, ws: string, a: ModuleDefinition, as: string): boolean =>
+    !violationsOf(chassis, [
+      { slot: ws, moduleId: versioned(w) },
+      { slot: as, moduleId: versioned(a) },
+    ]).some((v) => v.code === "incompatible_ammo");
+  const out = new Map<string, string[]>();
+  for (const s of slots) {
+    let cands = fit.get(s.id) ?? [];
+    if (ammoSlots.includes(s.id)) {
+      cands = cands.filter(
+        (a) =>
+          a.category !== "ammo" ||
+          weaponSlots.some((ws) => (fit.get(ws) ?? []).some((w) => w.category === "weapon" && pairOk(w, ws, a, s.id))),
+      );
+    }
+    if (weaponSlots.includes(s.id)) {
+      cands = cands.filter(
+        (w) =>
+          w.category !== "weapon" ||
+          ammoSlots.some((as) => (fit.get(as) ?? []).some((a) => a.category === "ammo" && pairOk(w, s.id, a, as))),
+      );
+    }
+    out.set(s.id, cands.map(versioned).sort());
+  }
+  return out;
+}
+
+const inferenceOf = (cands: string[]): string => {
+  const bases = new Set(cands.map((c) => c.slice(0, c.lastIndexOf("@"))));
+  return bases.size === 0 ? "NEVER" : bases.size === 1 ? "IDENTITY" : "PRESENCE";
+};
+
+/** Tabla calculada `chassis.id/slot` → candidatos; exige que todas las versiones de un chasis coincidan. */
+function computedSlotTable(): Map<string, string[]> {
+  const table = new Map<string, string[]>();
+  const byId = new Map<string, ModuleDefinition[]>();
+  for (const c of catalog.filter((m) => m.category === "chassis")) byId.set(c.id, [...(byId.get(c.id) ?? []), c]);
+  for (const [id, versions] of byId) {
+    const per = versions.map((v) => slotCandidates(v));
+    for (const other of per.slice(1)) {
+      if (JSON.stringify([...other]) !== JSON.stringify([...per[0]])) {
+        throw new Error(`${id}: sus versiones no admiten lo mismo; la tabla §12.1 tendría que ir por versión`);
+      }
+    }
+    for (const [slot, cands] of per[0]) table.set(`${id}/${slot}`, cands);
+  }
+  return table;
+}
+
+/** Datos de §12 que la inferencia hace PUBLIC hoy (los exige la ronda 1 de revisión de FASE 0). */
+const INFERRED_PUBLIC = [
+  "data.slot_occupancy",
+  "data.mine_installed",
+  "data.radio_installed",
+  "data.light_weapon_identity",
+  "data.light_drive_identity",
+  "data.light_ammo_type",
+  "data.ammo_installed",
+  "data.power_installed",
+];
+
+describe("TEST 7 · SLOT_INFERENCE (fog of war por ranuras ocupadas)", () => {
+  it("la tabla de encaje de §12.1 es EXACTAMENTE la que sale del catálogo y del validador reales", () => {
+    const computed = computedSlotTable();
+    expect(computed.size).toBeGreaterThan(0);
+    const declared = new Map(tables(MATRIX, "CHASSIS_SLOT").map((r) => [r.CHASSIS_SLOT, r]));
+    const bad: string[] = [];
+    for (const [key, cands] of computed) {
+      const r = declared.get(key);
+      if (!r) {
+        bad.push(`${key}: sin fila (candidatos reales: ${cands.join(", ") || "ninguno"})`);
+        continue;
+      }
+      const doc =
+        r.CANDIDATES === "—"
+          ? []
+          : r.CANDIDATES.split(/[,\s]+/)
+              .map(clean)
+              .filter(Boolean)
+              .sort();
+      if (JSON.stringify(doc) !== JSON.stringify(cands))
+        bad.push(`${key}: CANDIDATES «${doc.join(", ")}» ≠ real «${cands.join(", ")}»`);
+      if (r.INFERENCE !== inferenceOf(cands)) bad.push(`${key}: INFERENCE ${r.INFERENCE} ≠ ${inferenceOf(cands)}`);
+    }
+    for (const key of declared.keys()) if (!computed.has(key)) bad.push(`${key}: ranura inexistente`);
+    expect(bad).toEqual([]);
+  });
+
+  it("todo módulo cuya identidad se infiere de una ranura es PUBLIC o lo declara «PUBLIC por inferencia»", () => {
+    const decisions = new Map(decisionRows().map((r) => [r.DOMAIN_ID, r]));
+    const bad: string[] = [];
+    for (const [key, cands] of computedSlotTable()) {
+      if (inferenceOf(cands) !== "IDENTITY") continue;
+      for (const id of cands) {
+        const d = decisions.get(id);
+        if (!d) bad.push(`${id} (${key}): sin fila de decisión`);
+        else if (d.VISIBILITY_CLASS !== "PUBLIC" && !d.WHY.includes("PUBLIC por inferencia"))
+          bad.push(`${id} (${key}): ${d.VISIBILITY_CLASS} sin «PUBLIC por inferencia»`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("§12 declara PUBLIC la ocupación de ranuras y lo que hoy se infiere de ella", () => {
+    const data = new Map(tables(MATRIX, "DATA_ID").map((r) => [r.DATA_ID, r.CLASSIFICATION]));
+    expect(INFERRED_PUBLIC.filter((id) => data.get(id) !== "PUBLIC")).toEqual([]);
+  });
+
+  it("§12 avisa de que las clases privadas no cubren el fichero de replay crudo (H-05)", () => {
+    const notes = new Map(tables(MATRIX, "DATA_ID").map((r) => [r.DATA_ID, r.NOTES]));
+    const missing = ["data.radio_content", "data.mine_position", "data.ammo_type", "data.energy_state"].filter(
+      (id) => !(notes.get(id) ?? "").includes("H-05"),
+    );
+    expect(missing).toEqual([]);
+    expect(MATRIX).toContain("**No** se aplican al **fichero de replay crudo**");
   });
 });
