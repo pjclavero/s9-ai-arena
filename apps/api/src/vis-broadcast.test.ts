@@ -587,7 +587,12 @@ describe("§19/§20 · casos A–E y no revelar existencia", () => {
     expect(mn).not.toHaveProperty("winnerBotName");
     expect(JSON.stringify(mn)).not.toContain("A-DEF");
     expect((await get(`/public/replays/${BAT.tbFinPriv}`)).status).toBe(200);
-    expect((await get(`/replays/${BAT.tbFinPriv}`)).status).toBe(200);
+    // PRE-1 · el torneo retransmitido se MUESTRA (proyección para el visor), pero el
+    // fichero crudo (semilla, comandos, loadouts) no sale a un visitante.
+    const idx = await get(`/replays/${BAT.tbFinPriv}/index`);
+    expect(idx.status).toBe(200);
+    expect(idx.body.projection).toBe("s9.replay.public-competition.v1");
+    expect((await get(`/replays/${BAT.tbFinPriv}`)).status).toBe(404);
   });
 
   it("D/E: público con código privado ⇒ ficha pública, código privado; con código público ⇒ ambos", async () => {
@@ -601,7 +606,7 @@ describe("§19/§20 · casos A–E y no revelar existencia", () => {
     for (const v of ["public", "private", "team", "private"]) {
       await request(app).patch(`/bots/${BOT.APRIV}`).set(auth(tok.A)).send({ visibility: v }).expect(200);
       expect((await get(`/battles/${BAT.tbRunPriv}`)).status).toBe(200);
-      expect((await get(`/replays/${BAT.tbFinPriv}`)).status).toBe(200);
+      expect((await get(`/replays/${BAT.tbFinPriv}/index`)).status).toBe(200);
       expect((await get(`/tournaments/${T.TB}/battles`)).body.items.length).toBeGreaterThanOrEqual(3);
     }
     // Código a privado/público tampoco rompe el replay de una batalla en que se usó.
@@ -610,7 +615,7 @@ describe("§19/§20 · casos A–E y no revelar existencia", () => {
       .put(`/bots/${BOT.APRIV}/versions/1/code-visibility`)
       .set(auth(tok.A))
       .send({ codePublic: false });
-    expect((await get(`/replays/${BAT.tbFinPriv}`)).status).toBe(200);
+    expect((await get(`/replays/${BAT.tbFinPriv}/index`)).status).toBe(200);
     expect((await get(`/bots/${BOT.APRIV}/versions/1/source`, tok.B)).status).toBe(404);
     expect((await h.db("bots").where({ id: BOT.APRIV }).first()).visibility).toBe("private");
   });
@@ -651,7 +656,10 @@ describe("§33 · fuga: sólo la proyección de competición sale del contexto p
     expect(JSON.stringify(matches.body)).not.toContain("winnerPrivate");
     await push("publicLive", `/public/battles/live`);
     await push("publicReplay", `/public/replays/${BAT.tbFinPriv}`);
-    await push("replayFile", `/replays/${BAT.tbFinPriv}`);
+    // PRE-1 · el visitante lee índice y segmentos PROYECTADOS; el fichero crudo, 404.
+    await push("replayIndex", `/replays/${BAT.tbFinPriv}/index`);
+    await push("replaySegment", `/replays/${BAT.tbFinPriv}/segment?fromTick=0&toTick=1000`);
+    expect((await get(`/replays/${BAT.tbFinPriv}`)).status).toBe(404);
     await push("replayDownload", `/public/replays/${BAT.tbFinPriv}/download`);
     await push("audit", `/battles/${BAT.tbFinPriv}/audit`);
     for (const [label, text] of surfaces) assertClean(label, text);

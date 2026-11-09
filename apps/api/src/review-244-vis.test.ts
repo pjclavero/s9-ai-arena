@@ -497,7 +497,7 @@ describe("RV-O · oráculos de existencia por id", () => {
       tournamentId: T.TB,
       withReplay: true,
     });
-    expect((await get(`/replays/${BAT.tbFin}`)).status).toBe(200);
+    expect((await get(`/replays/${BAT.tbFin}/index`)).status).toBe(200);
     // `listReplays` exige sesión (anónimo ⇒ 401): se ataca con un ajeno y con un miembro del equipo.
     expect((await get(`/replays?bot=${BOT.APRIV}`)).status).toBe(401);
     expect((await get(`/bots?ownerId=${U.A}&limit=100`)).body.items.map((b: any) => b.id)).not.toContain(BOT.APRIV);
@@ -554,18 +554,15 @@ describe("RV-P · proyección pública de una batalla retransmitida", () => {
       }
     }
     expect(ok).toBeGreaterThanOrEqual(10); // calibración: las vías existen y responden
-    const replay = await request(app)
-      .get(`/replays/${BAT.tbFin}`)
-      .buffer(true)
-      .parse((res, cb) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (c: Buffer) => chunks.push(c));
-        res.on("end", () => cb(null, Buffer.concat(chunks)));
-      });
-    expect(replay.status).toBe(200);
-    const raw = (replay.body as Buffer).toString("latin1");
-    expect(raw.length).toBeGreaterThan(100);
-    for (const m of MARKS) expect(raw).not.toContain(m);
+    // PRE-1 · el fichero crudo NO sale a un visitante aunque la batalla se retransmita;
+    // la descarga pública es la proyección: sin marcas, sin semilla, sin spec ni comandos.
+    expect((await request(app).get(`/replays/${BAT.tbFin}`)).status).toBe(404);
+    const dl = await request(app).get(`/public/replays/${BAT.tbFin}/download`);
+    expect(dl.status).toBe(200);
+    const doc = JSON.stringify(dl.body);
+    expect(doc.length).toBeGreaterThan(100);
+    for (const m of MARKS) expect(doc).not.toContain(m);
+    for (const k of ['"seed"', '"spec"', '"commands"', '"radio"', '"deployMine"']) expect(doc, k).not.toContain(k);
   });
 
   it("RV-P2 · ninguna vía pública devuelve el objeto bot completo (visibility, ownerId, teamId, codePublic…)", async () => {
@@ -640,7 +637,7 @@ describe("RV-S · streaming: destinos ajenos, motivos reales y cambios de visibi
     expect(tgt.body.broadcastable).toBe(false);
     expect((await stop()).status).toBeLessThan(300);
     expect((await get(`/battles/${BAT.tbRun}`)).status).toBe(200);
-    expect((await get(`/replays/${BAT.tbFin}`)).status).toBe(200);
+    expect((await get(`/replays/${BAT.tbFin}/index`)).status).toBe(200);
     expect((await get(`/bots/${BOT.CPUB}`)).status).toBe(404);
     expect((await request(app).patch(`/bots/${BOT.CPUB}`).set(auth(tok.C)).send({ visibility: "public" })).status).toBe(
       200,
