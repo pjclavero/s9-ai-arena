@@ -102,6 +102,7 @@ test.describe("@golden [REVIEW] H3 versión antigua + perímetro + diagnóstico 
     const apiA = new PublicApi(pageA.request, credsA);
     await apiA.login();
     await createBotWithLoadout(pageA, BOT_A, LOADOUT);
+    await pageA.getByTestId("bot-section-link-codigo").click();
     await pageA.getByLabel("runtime").selectOption("node");
     await submitVersion(pageA, 1, JS_FUGA);
     await expectState(pageA, 1, "validated");
@@ -128,7 +129,7 @@ test.describe("@golden [REVIEW] H3 versión antigua + perímetro + diagnóstico 
     await shot(page, info, "review-h3-v1-elegible-con-v2-rechazada");
 
     await go(page, "#/bots");
-    await page.getByRole("button", { name: BOT_B, exact: true }).click();
+    await page.getByRole("link", { name: BOT_B, exact: true }).click();
     await submitVersion(page, 3, PY_STILL);
     await expectState(page, 3, "validated");
     await publish(page, 3);
