@@ -210,10 +210,27 @@ export const UX_TEXT: Record<UxState, { variant: StatusVariant; title: string; t
 };
 
 /** Texto del estado con el nombre del canal («Conectando con YouTube…»). */
-export function uxText(ux: UxState, channel: string): string {
+export function uxText(ux: UxState, channel: string, record = false): string {
+  if (record && ux === "starting") return "Preparando la grabación…";
+  if (record && ux === "retrying") return "La grabación se interrumpió y se está reintentando automáticamente.";
+  if (record && ux === "failed")
+    return "La grabación se detuvo tras varios intentos. Revisa el motivo y vuelve a iniciar.";
   if (ux === "starting") return `Conectando con ${channel}… Todavía no está en directo.`;
   if (ux === "live") return `Se está emitiendo en ${channel}.`;
   return UX_TEXT[ux].text;
+}
+
+/**
+ * Ronda 1 (Q-H2) · Insignia de la barra en directo. El ERROR y el REINTENTO van ANTES que el
+ * modo: antes, `record ? "GRABANDO" : …` tapaba «Reconectando» y «Detenida por error» en
+ * «Sólo grabar», y la barra decía «● GRABANDO» sin grabar nada.
+ */
+export function liveBadgeText(ux: UxState, record: boolean): string {
+  if (ux === "failed" || ux === "interrupted") return "DETENIDA POR ERROR";
+  if (ux === "retrying") return "RECONECTANDO";
+  if (ux === "recording" || (record && ux === "live")) return "GRABANDO";
+  if (ux === "live") return "EN DIRECTO";
+  return record ? "PREPARANDO GRABACIÓN…" : "CONECTANDO…";
 }
 
 export const IMPACT_TEXT: Record<"hot" | "restart" | "stop", string> = {
@@ -479,6 +496,12 @@ export function StreamingPage(props: { me: Me; route: string }) {
       setLoadError(e);
     }
   }, []);
+  // Ronda 1 (P3) · con la emisión parada por error, el aviso verde «Emisión iniciada:
+  // conectando…» ya es falso: se retira.
+  const stopped = st?.uxState === "failed" || st?.uxState === "interrupted";
+  useEffect(() => {
+    if (stopped) setNotice("");
+  }, [stopped]);
   useEffect(() => {
     void refresh();
     const t = setInterval(() => {
@@ -549,7 +572,7 @@ export function StreamingPage(props: { me: Me; route: string }) {
             <StatusBadge variant={UX_TEXT[st.uxState].variant} data-testid="streaming-ux-state">
               {UX_TEXT[st.uxState].title}
             </StatusBadge>{" "}
-            {uxText(st.uxState, channel)}
+            {uxText(st.uxState, channel, st.session?.mode === "record")}
           </LiveStatus>
           {!st.capabilities.sealedStore && (
             <p className="warn" role="status" data-testid="sealed-store-missing">
@@ -958,16 +981,7 @@ function LiveView(props: { st: StreamingAdminState; busy: string | null; act: Ac
     <div className="card" data-testid="streaming-live">
       <div className="streaming-live-bar">
         <strong data-testid="live-badge" className={live ? "error" : "warn"} style={{ fontSize: "1.3rem" }}>
-          ●{" "}
-          {record
-            ? "GRABANDO"
-            : st.uxState === "live"
-              ? "EN DIRECTO"
-              : failed
-                ? "DETENIDA POR ERROR"
-                : st.uxState === "retrying"
-                  ? "RECONECTANDO"
-                  : "CONECTANDO…"}
+          ● {liveBadgeText(st.uxState, record)}
         </strong>
         <button
           type="button"
@@ -1019,12 +1033,12 @@ function LiveView(props: { st: StreamingAdminState; busy: string | null; act: Ac
         <div>
           <span>FPS · bitrate</span>
           <strong data-testid="mon-rate">
-            {s?.stats ? `${s.stats.fps} fps · ${Math.round(s.stats.bitrateKbps)} kbit/s` : "—"}
+            {s?.stats && !failed ? `${s.stats.fps} fps · ${Math.round(s.stats.bitrateKbps)} kbit/s` : "—"}
           </strong>
         </div>
         <div>
           <span>Frames descartados</span>
-          <strong data-testid="live-dropped">{s?.stats ? s.stats.droppedFrames : "—"}</strong>
+          <strong data-testid="live-dropped">{s?.stats && !failed ? s.stats.droppedFrames : "—"}</strong>
         </div>
         <div>
           <span>Reintentos</span>

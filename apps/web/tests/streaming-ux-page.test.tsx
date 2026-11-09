@@ -26,6 +26,7 @@ import { api } from "../src/api.js";
 import {
   destinationText,
   humanReason,
+  liveBadgeText,
   QUALITY_PRESETS,
   relativeTime,
   StreamingPage,
@@ -437,6 +438,47 @@ describe("STREAMING-UX · en directo", () => {
       "Principal: YouTube no respondió a la conexión. / Respaldo: YouTube no respondió a la conexión.",
     );
     expect((screen.getByTestId("stream-stop") as HTMLButtonElement).disabled).toBe(false);
+    // Ronda 1 (P3) · parada por error: nada de fps ni frames rancios de la cola del render.
+    expect(screen.getByTestId("mon-rate").textContent).toBe("—");
+    expect(screen.getByTestId("live-dropped").textContent).toBe("—");
+  });
+
+  it("Ronda 1 (Q-H2) · en «Sólo grabar», «● GRABANDO» no tapa Reconectando ni Error", async () => {
+    const rec = (uxState: StreamingAdminState["uxState"], streamerState: string) =>
+      live({
+        uxState,
+        settings: { ...baseState().settings, mode: "record" },
+        session: { id: "s1", mode: "record", target: { kind: "battle", id: B_LIVE.id }, startedAt: ago(5) },
+        streamer: {
+          state: streamerState,
+          desired: true,
+          restarts: 5,
+          lastError: uxState === "failed" ? { message: "Cannot open display", at: ago(1) } : null,
+          stats: { frames: 10, fps: 0, bitrateKbps: 0, droppedFrames: 0, outTimeSeconds: 0 },
+        },
+      });
+    for (const [ux, ss, badge] of [
+      ["retrying", "retrying", "RECONECTANDO"],
+      ["failed", "failed", "DETENIDA POR ERROR"],
+      ["recording", "streaming", "GRABANDO"],
+    ] as const) {
+      state = rec(ux, ss);
+      render(<StreamingPage me={ME} route="#/streaming" />);
+      expect((await screen.findByTestId("live-badge")).textContent, ux).toBe(`● ${badge}`);
+      expect(screen.getByTestId("stream-stop").textContent).toBe("DETENER GRABACIÓN");
+      if (ux === "retrying") {
+        // y el texto de estado no habla de «conexión» en una grabación local
+        expect(screen.getByTestId("streaming-state").textContent).toContain("La grabación se interrumpió");
+      }
+      cleanup();
+    }
+    // tabla completa (la prioridad: error > reintento > modo)
+    expect(liveBadgeText("interrupted", true)).toBe("DETENIDA POR ERROR");
+    expect(liveBadgeText("failed", false)).toBe("DETENIDA POR ERROR");
+    expect(liveBadgeText("retrying", false)).toBe("RECONECTANDO");
+    expect(liveBadgeText("live", false)).toBe("EN DIRECTO");
+    expect(liveBadgeText("starting", false)).toBe("CONECTANDO…");
+    expect(liveBadgeText("starting", true)).toBe("PREPARANDO GRABACIÓN…");
   });
 });
 
