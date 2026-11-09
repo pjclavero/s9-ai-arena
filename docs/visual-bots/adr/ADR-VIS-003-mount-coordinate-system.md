@@ -56,6 +56,19 @@
    largos que el diámetro del círculo). Se declara en la definición del chasis `metersPerUnit` para colocar efectos que
    el motor sitúa en metros (boca del arma, explosiones) sin inventar posiciones.
 
+9. **Paso a pantalla (sin flip de y).** El compositor trabaja en el sistema del motor y el renderer lo lleva a pantalla
+   **como hace hoy el visor**: `setPosition(x · pxPerM, y · pxPerM)` y `setRotation(heading)` sin invertir y
+   (`PhaserViewer.ts`). Phaser tiene y hacia abajo, así que la imagen en pantalla es el espejo del dibujo matemático
+   (antihorario en el motor = horario en pantalla), pero **todo** se refleja igual: casco, torreta, proyectiles,
+   explosiones y mounts. Reglas que de ello se siguen:
+   - `armor.side` del sector **left** (`rel > 0` en `sectorOfImpact`, `combat.ts`) se coloca en **+y del motor**; en
+     pantalla queda a la **derecha visual** del morro, que es justo el lado por el que llegan en pantalla los impactos
+     que el motor clasifica como «left». No se corrige con un flip: hacerlo separaría la placa del sector que protege.
+   - Las coordenadas de mount, `rotation` y `mirror` se expresan siempre en el sistema del motor; ningún asset ni
+     ningún mount compensa la y de la pantalla.
+   - Un render fuera del visor (ficha, SVG estático) aplica la **misma** transformación (sin flip), para que el mismo
+     bot se vea igual en todas partes.
+
 ## Consecuencias
 
 - FASE 1: el schema de chasis visual incluye `bounds`, `overflow`, `metersPerUnit` y mounts con
