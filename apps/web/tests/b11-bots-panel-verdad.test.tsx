@@ -984,12 +984,13 @@ describe("issue #102 · el presupuesto de sondeos es POR BOT", () => {
     renderPage({ pollIntervalMs: 10, maxPolls: MAX });
 
     // Bot A: se agota su presupuesto hasta que el panel dice «desconocido».
-    await userEvent.click(await screen.findByRole("button", { name: "Tanque" }));
+    await selectBot();
     await screen.findByTestId("pipeline-unknown", {}, { timeout: 10_000 });
     const lecturasA = st.builds.b1 ?? 0;
 
     // Bot B: el usuario cambia de bot. Su pipeline está vivo y es consultable.
-    await userEvent.click(screen.getByRole("button", { name: "Escorpión" }));
+    // #255 · cambiar de bot conserva la sección abierta («Versiones y build»).
+    await userEvent.click(screen.getByRole("link", { name: "Escorpión" }));
     // Que llegue a decir «desconocido» prueba que ha SONDEADO hasta agotarse,
     // no que se haya rendido de entrada con el presupuesto del bot anterior.
     await screen.findByTestId("pipeline-unknown", {}, { timeout: 10_000 });

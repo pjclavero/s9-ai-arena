@@ -73,14 +73,21 @@ export function TeamBulkPublic(props: { team: { id: string; name: string }; onCh
     setIncludeCode(false);
     void loadPreview(false);
   }
+  // Al cerrar, el foco vuelve al botón que abrió el diálogo. Tras pintar: mientras el
+  // diálogo está abierto el botón está deshabilitado y no admite el foco.
+  const returnFocus = useRef(false);
   function close() {
     setOpen(false);
     setPreview(null);
     setError(null);
-    triggerRef.current?.focus();
+    returnFocus.current = true;
   }
   useEffect(() => {
     if (open) titleRef.current?.focus();
+    else if (returnFocus.current) {
+      returnFocus.current = false;
+      triggerRef.current?.focus();
+    }
   }, [open]);
 
   async function confirm() {
@@ -89,10 +96,10 @@ export function TeamBulkPublic(props: { team: { id: string; name: string }; onCh
     try {
       const r = await api<BulkResult>("POST", path, { dryRun: false, includeCode });
       setResult(r);
+      returnFocus.current = true;
       setOpen(false);
       setPreview(null);
       props.onChanged();
-      triggerRef.current?.focus();
     } catch (e) {
       setError(e ?? new Error("error desconocido"));
     } finally {

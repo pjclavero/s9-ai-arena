@@ -150,6 +150,18 @@ export function pendingActionFor(state: string): string {
   return "";
 }
 
+/** #255 · una lectura etiquetada con el bot al que pertenece. */
+interface ForBot<T> {
+  for: string | null;
+  list: T;
+}
+/** Una lectura de OTRO bot no es de éste: se presenta como «cargando». */
+function forBot<T>(r: Resource<ForBot<T>>, botId: string | undefined): Resource<T> {
+  if (r.status !== "ready") return r;
+  if (r.data.for !== (botId ?? null)) return { status: "loading" };
+  return { status: "ready", data: r.data.list, staleError: r.staleError };
+}
+
 /** Gating conjunto de dos recursos sin anidar dos ResourceView. */
 function combine<A, B>(a: Resource<A>, b: Resource<B>): Resource<{ a: A; b: B }> {
   if (a.status === "error") return a;
@@ -351,10 +363,18 @@ function BotsWorkspace(props: {
   // Tres recursos INDEPENDIENTES a propósito: el sondeo solo toca el de builds
   // (y el de versiones cuando el build termina). El de loadouts, que es el que
   // alimenta el editor, no se sondea nunca.
-  const [versionsRes, reloadVersions] = useResource<BotVersion[]>(
-    async () => (selected ? api<BotVersion[]>("GET", `/bots/${selected.id}/versions`) : []),
+  // #255 · cada lectura lleva el bot al que pertenece: al cambiar de bot (o de sección
+  // a otro bot) hay un render en el que el recurso aún tiene la lectura ANTERIOR; sin
+  // esta marca se pintaba un instante «Ninguna versión publicada» de un bot que sí la
+  // tiene (la mentira de B11 por otra puerta). Lectura de otro bot = cargando.
+  const [versionsRaw, reloadVersions] = useResource<ForBot<BotVersion[]>>(
+    async () => ({
+      for: selected?.id ?? null,
+      list: selected ? await api<BotVersion[]>("GET", `/bots/${selected.id}/versions`) : [],
+    }),
     [selected?.id],
   );
+  const versionsRes = forBot(versionsRaw, selected?.id);
   // N1: la marca de "desfasado" la lleva el PROPIO recurso, no un estado que
   // fije el loader. Marcarla desde el loader es una carrera: con dos lecturas
   // solapadas, la vieja resolvía con éxito después de que la nueva fallara y
@@ -362,10 +382,14 @@ function BotsWorkspace(props: {
   // lectura vigente (la que `useResource` considera viva) puede tocarla.
   const versionsStale = versionsRes.status === "ready" && versionsRes.staleError !== undefined;
 
-  const [loadoutsRes, reloadLoadouts] = useResource<Loadout[]>(
-    async () => (selected ? api<Loadout[]>("GET", `/bots/${selected.id}/loadouts`) : []),
+  const [loadoutsRaw, reloadLoadouts] = useResource<ForBot<Loadout[]>>(
+    async () => ({
+      for: selected?.id ?? null,
+      list: selected ? await api<Loadout[]>("GET", `/bots/${selected.id}/loadouts`) : [],
+    }),
     [selected?.id],
   );
+  const loadoutsRes = forBot(loadoutsRaw, selected?.id);
 
   const versions = versionsRes.status === "ready" ? versionsRes.data : null;
   // La enfocada es la pedida explícitamente; si no, la MÁS ALTA (la última

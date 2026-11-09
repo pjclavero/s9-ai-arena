@@ -199,7 +199,7 @@ describe("UX-R 9-10 · detalle del bot", () => {
     atBotSection("b1");
     renderPanel();
     const box = await screen.findByTestId("bot-pane-missing");
-    const alert = within(box).getByRole("alert");
+    const alert = await within(box).findByRole("alert");
     expect(alert.getAttribute("data-error-kind")).toBe("notFound");
     expect(within(alert).getByTestId("error-title").textContent).toBe("No existe o no está disponible");
     expect(alert.textContent).toContain("No se pudo cargar el bot: Bot no encontrado");

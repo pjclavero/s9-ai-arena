@@ -135,10 +135,10 @@ describe("rev. EQ6 P2-2 · Mis bots no se queda en la primera página", () => {
     expect(screen.getByText("Retirados (10)")).toBeTruthy();
     expect(screen.getByTestId("bots-loaded").textContent).toBe("Cargados 100 de 120.");
     fireEvent.click(screen.getByTestId("bots-load-more"));
-    await waitFor(() => expect(screen.getByRole("button", { name: "bot-110" })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("link", { name: "bot-110" })).toBeTruthy());
     expect(apiMock.mock.calls.some((c) => String(c[1]).includes("cursor=c1"))).toBe(true);
     expect(screen.queryByTestId("bots-load-more")).toBeNull();
-    expect(within(screen.getByTestId("bots-active")).getAllByRole("button").length).toBe(110);
+    expect(within(screen.getByTestId("bots-active")).getAllByRole("link").length).toBe(110);
   });
 });
 
