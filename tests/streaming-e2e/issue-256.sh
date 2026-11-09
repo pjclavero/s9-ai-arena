@@ -79,7 +79,11 @@ for _ in $(seq 1 60); do curl -s "$BASE/api/v1/battles/$FIN_ID" | grep -q '"stat
 log "batalla EN CURSO=$LIVE_ID ($(curl -s "$BASE/api/v1/battles/$LIVE_ID" | grep -o '"status":"[a-z]*"')) · TERMINADA=$FIN_ID ($(curl -s "$BASE/api/v1/battles/$FIN_ID" | grep -o '"status":"[a-z]*"'))"
 
 ingest_up
-STREAMER_EXTRA_ARGS="-v $DIAG:/diag:ro -e CHROMIUM_BIN=/diag/chromium-diag.sh -e FFMPEG_BIN=/diag/ffmpeg-diag.sh -e DIAG_CDP_PORT=$CDP_PORT ${S9_256_EXTRA_ARGS:-}"
+# S9_256_CDP=0 ⇒ Chromium SIN puerto de depuración y sin sonda CDP (sólo Xvfb y vídeo):
+# así se descarta que la propia sonda provoque lo que se observa.
+CDP_ON=${S9_256_CDP:-1}
+[ "$CDP_ON" = 1 ] && CDP_ENV="-e DIAG_CDP_PORT=$CDP_PORT" || CDP_ENV=""
+STREAMER_EXTRA_ARGS="-v $DIAG:/diag:ro -e CHROMIUM_BIN=/diag/chromium-diag.sh -e FFMPEG_BIN=/diag/ffmpeg-diag.sh $CDP_ENV ${S9_256_EXTRA_ARGS:-}"
 export STREAMER_EXTRA_ARGS
 BROADCAST_BASE="$BASE/broadcast"
 streamer_up rtmps || exit 2
@@ -105,7 +109,7 @@ run_case() { # run_case <record|rtmps> <live|finished>
   local mode=$1 which=$2 label="$1-$2" id url
   [ "$which" = live ] && id=$LIVE_ID || id=$FIN_ID
   url="$BASE/broadcast?battle=$id"
-  docker exec "$TAG-streamer" sh -c 'rm -f /tmp/diag/*.flv /tmp/diag/*-argv-*.txt /data/replays/video/*.mp4' 2>/dev/null
+  docker exec "$TAG-streamer" sh -c 'rm -f /tmp/diag/*.flv /tmp/diag/*-argv-*.txt /tmp/diag/chromium-stderr-*.log /data/replays/video/*.mp4' 2>/dev/null
   if [ "$mode" = rtmps ]; then
     start_body "$STATE/start-$label.json" "$url" 4500 1080p 30 "s256-$label"
   else
@@ -114,8 +118,10 @@ run_case() { # run_case <record|rtmps> <live|finished>
   log "── CASO $label · /broadcast?battle=<$which> · $mode 1080p30 4500k"
   ctl POST /control/start "$STATE/start-$label.json" >"$OUT/$label-start.json"
   local t0=$SECONDS
-  for _ in $(seq 1 60); do cdp_up && break; sleep 0.5; done
-  cdp_up || log "CDP no responde en $label"
+  if [ "$CDP_ON" = 1 ]; then
+    for _ in $(seq 1 60); do cdp_up && break; sleep 0.5; done
+    cdp_up || log "CDP no responde en $label"
+  fi
   [ "$mode" = rtmps ] && for _ in $(seq 1 60); do [ "$(ctl GET /status | jget 'relay?.state')" = publishing ] && break; sleep 0.5; done
   local recv_at=$((SECONDS_PER_CASE / 3)) next
   for at in 3 $((SECONDS_PER_CASE / 2)) $((SECONDS_PER_CASE - 3)); do
@@ -124,9 +130,12 @@ run_case() { # run_case <record|rtmps> <live|finished>
       sleep 0.5
     done
     next="$label-t$at"
-    "$TSX" "$REPO/tests/streaming-e2e/cdp-probe.ts" "$CDP_PORT" "$OUT" "$next" >"$OUT/$next.cdp.txt" 2>&1
-    log "CDP $(tr '\n' ' ' <"$OUT/$next.cdp.txt")"
-    detect "$next-chromium" "$OUT/$next-chromium.png"
+    if [ "$CDP_ON" = 1 ]; then
+      timeout 60 "$TSX" "$REPO/tests/streaming-e2e/cdp-probe.ts" "$CDP_PORT" "$OUT" "$next" >"$OUT/$next.cdp.txt" 2>&1
+      log "CDP $(tr '\n' ' ' <"$OUT/$next.cdp.txt")"
+      [ -s "$OUT/$next-chromium.png" ] && detect "$next-chromium" "$OUT/$next-chromium.png"
+    fi
+    bash "$DIAG/procsnap.sh" "$TAG-streamer" "$OUT/$next-procs.txt"
     xgrab "$next" && detect "$next-xvfb" "$OUT/$next-xvfb.png"
   done
   ctl GET /status >"$OUT/$label-status.json"
@@ -137,6 +146,7 @@ run_case() { # run_case <record|rtmps> <live|finished>
   for _ in $(seq 1 30); do docker top "$TAG-streamer" -eo args | grep -q -- '-f x11grab' || break; sleep 0.5; done
   docker exec "$TAG-streamer" sh -c 'cat /tmp/diag/ffmpeg-argv-*.txt' >"$OUT/$label-ffmpeg-argv.txt" 2>/dev/null
   docker exec "$TAG-streamer" sh -c 'cat /tmp/diag/chromium-argv-*.txt' >"$OUT/$label-chromium-argv.txt" 2>/dev/null
+  docker exec "$TAG-streamer" sh -c 'cat /tmp/diag/chromium-stderr-*.log' >"$OUT/$label-chromium-stderr.log" 2>/dev/null
   if [ "$mode" = record ]; then
     local f
     f=$(docker exec "$TAG-streamer" sh -c 'ls -t /data/replays/video/broadcast-*.mp4 | head -1')

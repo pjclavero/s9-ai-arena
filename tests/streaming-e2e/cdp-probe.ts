@@ -20,6 +20,9 @@ import WebSocket from "ws";
 
 const [portArg, outDir, label] = process.argv.slice(2);
 const port = Number(portArg);
+const CDP_TIMEOUT_MS = Number(process.env.CDP_TIMEOUT_MS ?? 10_000);
+/** Órdenes CDP que no contestaron a tiempo (renderer atascado). */
+const timeouts: string[] = [];
 
 async function json(path: string): Promise<any> {
   const r = await fetch(`http://127.0.0.1:${port}${path}`);
@@ -46,10 +49,22 @@ class Cdp {
       ws.once("error", rej);
     });
   }
-  send(method: string, params: Record<string, unknown> = {}): Promise<any> {
+  /**
+   * Cada orden con PLAZO: un renderer con el hilo principal atascado no contesta nunca
+   * (visto en #256) y la sonda no debe colgar el diagnóstico. Sin respuesta ⇒ `{ timeout }`.
+   */
+  send(method: string, params: Record<string, unknown> = {}, timeoutMs = CDP_TIMEOUT_MS): Promise<any> {
     const id = ++this.id;
     return new Promise((res) => {
-      this.pending.set(id, res);
+      const t = setTimeout(() => {
+        this.pending.delete(id);
+        timeouts.push(method);
+        res({ timeout: method });
+      }, timeoutMs);
+      this.pending.set(id, (m) => {
+        clearTimeout(t);
+        res(m);
+      });
       this.ws.send(JSON.stringify({ id, method, params }));
     });
   }
@@ -150,12 +165,14 @@ const cdp = await Cdp.open(page.webSocketDebuggerUrl);
 await cdp.send("Runtime.enable");
 await cdp.send("Log.enable"); // reenvía las entradas de log ya recogidas
 const dom = (await cdp.send("Runtime.evaluate", { expression: PAGE_PROBE, returnByValue: true })).result?.result?.value;
-const phaser = await phaserState(cdp);
+const phaser = dom ? await phaserState(cdp) : { found: false, reason: "renderer sin respuesta" };
 const shot = await cdp.send("Page.captureScreenshot", { format: "png" });
-writeFileSync(join(outDir, `${label}-chromium.png`), Buffer.from(shot.result?.data ?? "", "base64"));
+// Sin captura (compositor sin frame) NO se escribe PNG: el detector lo verá ausente.
+if (shot.result?.data) writeFileSync(join(outDir, `${label}-chromium.png`), Buffer.from(shot.result.data, "base64"));
 // Info de GPU del navegador (lo que muestra chrome://gpu) por el endpoint del navegador.
 const browser = await Cdp.open(version.webSocketDebuggerUrl);
 const sys = await browser.send("SystemInfo.getInfo");
+// El endpoint del navegador (proceso browser) contesta aunque el renderer esté atascado.
 browser.close();
 await new Promise((r) => setTimeout(r, 300)); // deja llegar las entradas de Log.enable
 const logs = cdp.events
@@ -169,10 +186,12 @@ const logs = cdp.events
   );
 cdp.close();
 const gpu = sys.result?.gpu ?? null;
-const out = { label, userAgent: version["User-Agent"], dom, phaser, logs, gpu: gpu && { devices: gpu.devices, featureStatus: gpu.featureStatus, driverBugWorkarounds: gpu.driverBugWorkarounds, auxAttributes: gpu.auxAttributes } };
+const out = { label, rendererUnresponsive: timeouts.length > 0, timeouts, userAgent: version["User-Agent"], dom, phaser, logs, gpu: gpu && { devices: gpu.devices, featureStatus: gpu.featureStatus, driverBugWorkarounds: gpu.driverBugWorkarounds, auxAttributes: gpu.auxAttributes } };
 writeFileSync(join(outDir, `${label}-cdp.json`), JSON.stringify(out, null, 2));
 const g0 = phaser.games?.[0];
 console.log(`${label} broadcast_stage=${dom?.stage ? `${dom.stage.box.w}x${dom.stage.box.h}` : "AUSENTE"} stage_background=${dom?.stage?.background} screens=${dom?.screens?.join(",") || "ninguna"} header=${dom?.header} hud=${dom?.hud} ticker=${dom?.ticker !== null}`);
 console.log(`${label} canvas_width=${dom?.canvas?.width ?? "NA"} canvas_height=${dom?.canvas?.height ?? "NA"} canvas_box=${dom?.canvas ? `${dom.canvas.box.w}x${dom.canvas.box.h}@${dom.canvas.box.x},${dom.canvas.box.y}` : "NA"} context=${dom?.ctxType} context_lost=${dom?.contextLost}`);
 console.log(`${label} renderer=${g0?.rendererType ?? "NA"} webgl_vendor=${JSON.stringify(dom?.unmaskedVendor)} webgl_renderer=${JSON.stringify(dom?.unmaskedRenderer)} scene_status=${g0?.scene?.status ?? "NA"} phaser_frame=${g0?.frame ?? "NA"} phaser_fps=${g0?.actualFps?.toFixed?.(1) ?? "NA"}`);
+console.log(`${label} renderer_unresponsive=${timeouts.length > 0 ? 1 : 0} cdp_timeouts=${timeouts.join(",") || "ninguno"}`);
 console.log(`${label} js_errors=${logs.filter((l) => l.level === "error" || l.level === "exception").length} log_entries=${logs.length}`);
+process.exit(0);
