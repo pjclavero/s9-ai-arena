@@ -18,6 +18,7 @@ Antes ([TD-004](../roadmap/technical-debt.md#td-004)) el gateway hacía *proxy* 
 - [Almacenamiento e índice](#almacenamiento-e-índice)
 - [Escritura (ingesta)](#escritura-ingesta)
 - [Autorización de acceso (TD-004)](#autorización-de-acceso-td-004)
+- [Replay crudo y proyección pública (PRE-1)](#replay-crudo-y-proyección-pública-pre-1)
 - [Lectura: API](#lectura-api)
 - [Lectura: replay-service (interno)](#lectura-replay-service-interno)
 - [Verificación](#verificación-de-un-replay)
@@ -68,17 +69,52 @@ El servicio arranca sólo si el directorio es escribible (`requireWritableDataDi
 | Staff | rol ≥ `organizer` (`organizer`, `moderator`, `admin`) |
 | Participante | dueño (`bots.owner_id`) de algún bot de `participants` de *B* |
 | Equipo | miembro (`team_members`) del `bots.team_id` de algún bot participante con visibilidad `team` o `public` (un bot `private` no se comparte ni con su equipo; mismo criterio que [TD-005](../roadmap/technical-debt.md#td-005)) |
-| Público | `S9_PUBLIC_REPLAYS_ENABLED` activada **y** *B* `finished` **y** ningún bot participante con visibilidad distinta de `public` |
+| Público | `S9_PUBLIC_REPLAYS_ENABLED` activada **y** *B* `finished` **y** *B* mostrable en público (ningún bot participante con visibilidad distinta de `public`, o *B* de un torneo con `broadcast`) |
 
 Fuera de eso: **404 `not_found`** con el mensaje «Replay no encontrado», idéntico al de un id inexistente, un id mal formado o una batalla sin replay (sin enumeración por UUID). Las respuestas autorizadas llevan `Cache-Control: private, no-store`.
 
 **`S9_PUBLIC_REPLAYS_ENABLED`** (`1`/`true`, apagada por defecto, `apps/api/src/public-replays.ts`): activarla **no** publica todos los ficheros. Sólo pasan a públicas las batallas finalizadas cuyos bots son todos públicos; el mismo predicado (`wherePublicReplay`) gobierna `/public/replays*`, el reproductor y el listado. Una batalla con un bot privado o de equipo sigue privada.
 
-**Radio en el replay: dato de administración frente a dato observable.** El replay graba los comandos de todos los vehículos, incluidos los `radio` (payload, `to` y slot) de **los dos bandos**. Es el dato de la batalla completa, para el visor, la verificación y las estadísticas, no lo que observó un bot: durante la batalla, la observación de un bot sólo trae la radio de su propio equipo ([equipment.md](equipment.md#radio-radio_a)), y la re-simulación tampoco mete radio rival en ninguna observación. Pero **cualquiera que pueda leer el replay según la tabla anterior, un participante incluido, ve la radio de ambos bandos al terminar la batalla**. Lo mismo vale para los eventos y logs de motor, runtime y worker: lo que ve el staff no es lo que observa el bot rival.
+**Leer no es recibir el crudo.** La tabla anterior decide quién puede **leer** el replay de *B* (listado, índice, segmentos, verificación). Qué **representación** recibe lo decide [PRE-1](#replay-crudo-y-proyección-pública-pre-1): el fichero crudo sólo con autorización explícita; el resto, la proyección pública de competición.
+
+**Radio en el replay: dato de administración frente a dato observable.** El fichero crudo graba los comandos de todos los vehículos, incluidos los `radio` (payload, `to` y slot) de **los dos bandos**. Es el dato de la batalla completa, para la verificación y las estadísticas en servidor, no lo que observó un bot: durante la batalla, la observación de un bot sólo trae la radio de su propio equipo ([equipment.md](equipment.md#radio-radio_a)). Desde PRE-1 esos comandos **no salen** de la API salvo a quien recibe el crudo (moderator/admin o el dueño de todos los bots de la batalla); ningún participante con rivales, miembro de equipo ni visitante los ve.
 
 **Gateway**: `location = /replays` y `location /replays/` responden `404` JSON sin `Location`, para cualquier método y subruta (`infrastructure/gateway/nginx.conf` y `nginx-behind-proxy.conf`). Nginx normaliza la URI antes de elegir `location` (`//replays`, `/%72eplays`, `/api/v1/../../replays` caen ahí).
 
 **Web**: `ReplayPage` pide `/api/v1/replays/<id>/index` y `/segment` con `api()` (Bearer + refresh); `ReplaysPage` usa `GET /api/v1/replays`. La ruta `#/replay/<id>` sigue siendo pública, pero espera a recuperar la sesión desde la cookie antes de pedir el replay (`apps/web/src/App.tsx`).
+
+## Replay crudo y proyección pública (PRE-1)
+
+Política: **replay público ⇒ proyección saneada de competición; replay crudo ⇒ restringido.** La aplica la API (`apps/api/src/replay-projection.ts`), nunca el navegador, y es la misma con `S9_PUBLIC_REPLAYS_ENABLED` activada o desactivada: la bandera amplía quién puede **leer**, nunca quién recibe el crudo.
+
+**Quién recibe el crudo** (fichero, índice de almacén completo y segmentos sin proyectar), además de poder leer la batalla:
+
+| Vía | Condición | Motivo |
+|---|---|---|
+| Rol interno | `moderator` o `admin` | supervisión de juego limpio e incidencias |
+| Dueño | dueño de **todos** los bots participantes | el fichero sólo contiene datos suyos |
+
+Nadie más: ni `organizer`, ni un participante con rivales, ni un miembro de equipo, ni un visitante. Un dueño con rivales recibe la proyección porque el fichero lleva también la semilla, los comandos (radio, minas, órdenes) y el loadout de los rivales, y no se puede recortar a «sólo lo suyo» sin dejar de ser el fichero verificable por hash. `GET /replays/{id}` responde a quien no tiene el crudo el **mismo 404** que a un replay inexistente.
+
+**Qué lleva la proyección** (lista blanca: lo que el espectador en directo ya recibe):
+
+- mundo (tamaño, muros, destructibles, bases) y nómina pública (vehículo, bot, bando, chasis, nombre de competición);
+- snapshots públicos del motor (posiciones, rumbo, vida, módulos por ranura y estado, proyectiles, marcador, objetivos del modo);
+- eventos públicos (marcador, destrucciones, minas que **explotan**, banderas, zonas, juggernaut, prórroga, límite técnico); un tipo de evento nuevo no sale hasta añadirlo a la lista a propósito;
+- resultado deportivo (ganador, motivo de fin, ticks, marcador y hash final, que permite auditar con `verify`);
+- para el reproductor: `ticks`, `snapshotCount`, `keyframes`, `official`, `createdAt` y `debugOpen: false`.
+
+**Qué no lleva nunca**: semilla, ruleset completo, comandos de los bots (tampoco con `debugOpen`), carga de radio, despliegue de minas, `participants[].spec` (loadout), eventos privados de un bot (impactos recibidos, acciones rechazadas…), hashes por tick ni metadatos de almacén (sha, algoritmo, tamaño, caducidad, checksum del mapa, rutas). Sin semilla ni comandos la batalla **no se puede re-simular** con lo publicado.
+
+| Recurso | Con crudo | Sin crudo (lector autorizado) |
+|---|---|---|
+| `GET /replays/{id}` | fichero comprimido | 404 uniforme |
+| `GET /replays/{id}/index` | índice de almacén + mundo + nómina | índice proyectado (`projection: "s9.replay.public-competition.v1"`) |
+| `GET /replays/{id}/segment` | segmento tal cual (comandos sólo con `debugOpen`) | segmento proyectado, sin comandos |
+| `POST /replays/{id}/verify` | booleano y hashes | igual (no entrega contenido) |
+| `GET /public/replays/{id}/download` | — (ruta pública) | documento JSON proyectado completo, para todos (admin incluido) |
+
+El reproductor web consume sólo índice y segmentos y funciona igual con la proyección (lo comprueba `apps/api/src/pre1-replay-projection.test.ts` con el `ReplayPlayer` real).
 
 ## Lectura: API
 
@@ -87,11 +123,11 @@ Fuera de eso: **404 `not_found`** con el mensaje «Replay no encontrado», idén
 | Ruta | Rol mínimo | Nota |
 |---|---|---|
 | `GET /api/v1/replays?limit=&cursor=` | `user` (anónimo ⇒ 401) | `{items:[{battleId, ticks, winner, official, createdAt, sizeBytes}], nextCursor}`: sólo lo que el usuario puede leer. Sale de `battles`, no del inventario de ficheros |
-| `GET /api/v1/replays/{id}` | visitante (cuota anónima) | Fichero comprimido (`battles.replay_ref`) |
-| `GET /api/v1/replays/{id}/index` | visitante (cuota anónima) | El índice (`<replay_ref>.json`) |
-| `GET /api/v1/replays/{id}/segment?fromTick&toTick` | visitante (cuota anónima) | Snapshots y eventos desde el keyframe anterior; `commands` sólo con `debugOpen`. Comprueba el sha256 del índice antes de decodificar; caché acotada (8 replays) por proceso |
+| `GET /api/v1/replays/{id}` | visitante (cuota anónima) | Fichero comprimido (`battles.replay_ref`), **sólo con acceso al crudo** ([PRE-1](#replay-crudo-y-proyección-pública-pre-1)) |
+| `GET /api/v1/replays/{id}/index` | visitante (cuota anónima) | El índice (`<replay_ref>.json`) con acceso al crudo; si no, el índice proyectado |
+| `GET /api/v1/replays/{id}/segment?fromTick&toTick` | visitante (cuota anónima) | Snapshots y eventos desde el keyframe anterior; con acceso al crudo, `commands` sólo con `debugOpen`; sin él, proyectado y sin comandos. Comprueba el sha256 del índice antes de decodificar; caché acotada (8 replays) por proceso |
 | `POST /api/v1/replays/{id}/verify` | visitante (cuota propia) | Ver [abajo](#verificación-de-un-replay) |
-| `GET /api/v1/public/replays`, `/{id}`, `/{id}/download` | visitante | Sólo con `S9_PUBLIC_REPLAYS_ENABLED` y el predicado público; con la bandera apagada, `{enabled:false, items:[]}` o 404. Proyección sin seed ni ruta interna |
+| `GET /api/v1/public/replays`, `/{id}`, `/{id}/download` | visitante | Sólo con `S9_PUBLIC_REPLAYS_ENABLED` y el predicado público; con la bandera apagada, `{enabled:false, items:[]}` o 404. Proyección sin seed ni ruta interna; `/download` entrega el documento proyectado en JSON, nunca el fichero crudo |
 
 La API monta el volumen de replays en sólo lectura (`arena_replays:/data/replays:ro`); no escribe replays.
 
