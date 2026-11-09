@@ -1002,7 +1002,7 @@ Estado actual:
 
 ~~~text
 LAST_UPDATED:        2026-11-09
-BRANCH:              mejoras-visuales/fase-0-inventario (base: mejoras-visuales @ 983d2f5)
+BRANCH:              mejoras-visuales-fase-0-inventario (base: mejoras-visuales @ 983d2f5; «mejoras-visuales/…» no es creable mientras exista la rama mejoras-visuales)
 BASE_MAIN_SHA:       b254e3dac1ab25f39f9b4565b3349aa66a9f3963
 CURRENT_PHASE:       FASE 0 — Descubrimiento y contrato visual (IN_PROGRESS)
 LAST_MERGED_VIS_PR:  ninguno
