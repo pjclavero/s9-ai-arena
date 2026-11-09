@@ -35,7 +35,8 @@ versión ya no está disponible, la representación compatible más cercana (SRS
 **¿Versionado por catálogo o por asset?** **Por catálogo, con hash por asset.** Una batalla guarda una sola referencia
 (`visualCatalogVersion`); cada asset dentro del catálogo lleva su `sha256` para detectar manipulación y para la caché.
 Versionar asset a asset obligaría a cada batalla a guardar N referencias y complicaría el determinismo (SRS-F04: la
-entrada de la composición es `snapshot + versión de catálogo`).
+entrada de la composición es `snapshot + versión de catálogo`; con audiencia, ver abajo: la entrada es la proyección
+para esa audiencia más la versión de catálogo).
 
 **¿Cómo evitar que un replay viejo cambie de aspecto?**
 
@@ -44,8 +45,10 @@ dónde está cada mount, con qué rotación, espejo y escala, y qué se pinta cu
 reglas viven en el código del compositor, cualquier despliegue las cambia y la versión del catálogo no protege nada.
 Por eso:
 
-1. La composición se calcula sólo con datos congelados: equipamiento de la cabecera del replay (no el loadout actual) +
-   `visualCatalogVersion` registrada para esa batalla.
+1. La composición se calcula sólo con datos congelados y **proyectados por audiencia**:
+   `proyección(equipamiento de la batalla, audiencia, política D-01) + visualCatalogVersion` registrada para esa batalla.
+   El equipamiento de la batalla es el de la cabecera del replay (no el loadout actual), pero una vista pública sólo
+   recibe su proyección (ver «¿Qué ve cada audiencia?» más abajo).
 2. **`visualCatalogVersion` fija también las reglas de composición, declaradas como DATOS dentro del catálogo
    versionado:**
    - la tabla de capas (`LAYER_GROUP` → orden z, MOUNT_TYPE_DRAFT §3);
@@ -64,8 +67,80 @@ Por eso:
    `sha256`, transformación y color; no píxeles), con un corpus de batallas grabadas:
    - publicar un catálogo nuevo no cambia la composición de un replay ya grabado;
    - cambiar una regla (capas, mounts, fallback) en la versión N+1 no cambia la composición de una batalla de la N;
-   - un cambio del código del compositor o del renderer produce el **mismo** plan de composición para el corpus.
+   - un cambio del código del compositor o del renderer produce el **mismo** plan de composición para el corpus;
+   - todo lo anterior se comprueba **por perfil de vista**, y el plan público no contiene identidades no públicas.
 6. Nombre del bot: decisión de producto aparte (D-06 abajo); no es un asset, pero hoy sí cambia en replays viejos.
+
+**¿Qué ve cada audiencia? Separación entre lo intrínseco y la proyección (VIEWER_AWARE_VISUAL_PROJECTION).**
+
+La composición de un vehículo no es una sola: depende de **quién mira**. La matriz clasifica la identidad de sensores,
+blindajes, munición y energía como OBSERVER_DEPENDENT o SELF_ONLY ([VISUAL_COMPONENT_MATRIX §5 y §12](../VISUAL_COMPONENT_MATRIX.md)),
+y la cabecera del replay crudo lleva el equipamiento completo. Si el compositor recibiera ese equipamiento sin proyectar
+y su resultado se cacheara por bot, una composición hecha para el dueño acabaría servida a un espectador. Es la misma
+clase de problema que PRE-1 («artefacto completo servido sin proyección por audiencia»), trasladada al renderer: un
+CROSS_VIEW_LEAK (matriz §12.3, `cross.composition_cache`). Por eso se separan dos capas:
+
+- **BOT_INTRINSIC_VISUAL** — lo que no depende de la audiencia: geometría del chasis, mounts, tabla de capas, assets
+  aprobados de cada **componente**, paleta. Se versiona con `visualCatalogVersion` y no contiene el equipamiento de
+  ningún bot concreto.
+- **VIEWER_PROJECTION** — lo que sí depende: permisos de visibilidad (BOT_VISIBILITY), política de espectador (D-01),
+  fog of war, equipamiento público o privado, permisos de equipo u observador, estados ocultos y, si D-08 elige
+  revelar el arma tras el primer disparo, qué identidades ya se han revelado en ese instante.
+
+**Entrada del compositor:** `proyección(equipamiento, audiencia, política D-01) + visualCatalogVersion`. El compositor no
+recibe nunca el equipamiento sin proyectar en una vista pública, y la proyección la hace el backend (el frontend no es
+un control de seguridad). Las vistas públicas toman el equipamiento del canal de espectador o de la proyección saneada
+del replay, nunca del replay crudo (política PRE-1).
+
+**Perfiles de vista.** Cada perfil dice qué clases de la matriz §12 ve. Lo comprueba `TEST 9 · VIEWER_PROJECTION` de
+`packages/module-catalog/visual-contract.test.ts`, que calcula con la tabla §12 real el conjunto de datos visibles por
+perfil.
+
+| VIEW_PROFILE | VIEWER_ROLE | SEES_CLASSES | OBSERVER_DEPENDENT | EQUIPMENT_SOURCE |
+| --- | --- | --- | --- | --- |
+| `view.public_live` | spectator | PUBLIC | HIDDEN | canal de espectador |
+| `view.public_replay` | spectator | PUBLIC | HIDDEN | proyección saneada del replay |
+| `view.broadcast` | spectator | PUBLIC | HIDDEN | canal de espectador |
+| `view.ally` | team | PUBLIC, ALLY_ONLY | HIDDEN | canal de espectador + datos del equipo |
+| `view.owner` | owner | PUBLIC, ALLY_ONLY, SELF_ONLY | SHOWN | loadout del bot o replay crudo autorizado |
+| `view.internal` | internal | PUBLIC, ALLY_ONLY, SELF_ONLY | SHOWN | replay crudo autorizado |
+
+NEVER_VISUALIZE no lo ve ningún perfil. OBSERVER_DEPENDENT queda `HIDDEN` en las vistas públicas mientras D-01 no se
+decida; cuando se decida, cambia esta tabla (y su `spectatorPolicyVersion`), no el compositor.
+
+**Clave de caché.** Dos cachés con claves distintas, y ninguna composición privilegiada reutilizable para el público:
+
+- **Caché intrínseca** (assets y geometría por componente, sin equipamiento de un bot):
+  `(componentVisualId, visualCatalogVersion, renderTarget)`. Se puede compartir entre audiencias porque no dice qué
+  lleva nadie.
+- **Caché de composición** (un vehículo concreto):
+  `(hash del equipamiento YA proyectado, visibilityProfile, viewerRole, spectatorPolicyVersion, visualCatalogVersion, renderTarget)`.
+  Una entrada sólo se sirve a un visor con el mismo `visibilityProfile`; nunca se indexa sólo por `botVersionId`. Si se
+  quiere una composición por `botVersionId + visualCatalogVersion + renderTarget` (la del dueño), lleva
+  `visibilityProfile = view.owner` en la clave y sólo la leen `view.owner` y `view.internal`.
+
+**Ejemplo trabajado: PRIVATE_VIEW ≠ PUBLIC_VIEW.** Un `chassis.medium@2` con `weapon.cannon@1` y `ammo.ap@1`,
+`sensor.radar@1`, `armor.steel_front@1`, `movement.tracks@1`, `power.battery@1`, `radio.short@1` y `mine.explosive@1`.
+
+| Capa | `view.owner` | `view.public_live` antes del primer disparo | `view.public_live` después |
+| --- | --- | --- | --- |
+| Chasis | medio | medio (PUBLIC) | medio |
+| Arma | cañón | torreta genérica (identidad OBSERVER_DEPENDENT) | cañón (PUBLIC por inferencia, si D-08 = a) |
+| Sensor | radar | sensor genérico en `sensor_a` (presencia PUBLIC) | igual |
+| Blindaje frontal | acero | placa genérica (presencia PUBLIC) | igual |
+| Tracción | orugas | genérica (dos candidatos en el medio) | igual |
+| Radio y bahía de minas | antena y compuerta | antena y compuerta (PUBLIC por inferencia, §12.1) | igual |
+| Munición, energía | ap, batería (sólo ficha) | nada | nada |
+
+Las dos composiciones difieren en arma, sensor, blindaje y tracción; con la caché por `botVersionId` sola, el
+espectador recibiría la columna del dueño. Con la clave de arriba son entradas distintas.
+
+**Test de no-fuga exigido para la fase de implementación** (FASE 1 o la primera que componga vehículos): para cada
+batalla del corpus y cada perfil público, el plan de composición no contiene ningún `componentVisualId` cuya identidad no
+sea PUBLIC (o PUBLIC por inferencia en ese instante) según la matriz; y la composición de `view.owner` difiere de la
+pública siempre que el equipamiento tenga alguna identidad no pública. El test de determinismo histórico (punto 5) se
+ejecuta **por perfil**.
+
 
 **Alternativa considerada: `composerVersion` por batalla.** Registrar en cada batalla la versión del código del
 compositor y conservar ejecutables las versiones antiguas. Se descarta como mecanismo principal porque obliga a
@@ -82,7 +157,7 @@ por batalla, y las batallas anteriores se seguirían componiendo con la regla an
 | Interfaz fuera de la composición del vehículo: controles, línea de tiempo, HUD textual | Qué asset se elige para un módulo (incluida la regla id base / versionado) |
 | Efectos transitorios no declarados en el catálogo (fogonazo, explosión, humo): fuera de la garantía hasta que se declaren | Reglas de fallback y de deprecación |
 | | El contenido de un asset (su `sha256`) |
-| | La paleta de equipo y su asignación (hoy en `resolveTeamColors`, código de `packages/game-rules`; pasa a ser dato del catálogo o se congela su versión) |
+| | La paleta de equipo y su asignación (hoy en `resolveTeamColors`, código de `packages/game-rules`; pasa a ser **dato del catálogo visual versionado**: ver «Decisión») |
 
 Lo de la columna izquierda puede cambiar cómo **se ve** a nivel de píxel, pero no **qué** se compone; lo de la derecha
 cambia el plan de composición y por tanto exige versión nueva.
@@ -91,8 +166,12 @@ cambia el plan de composición y por tanto exige versión nueva.
 estado del motor, para no tocar el determinismo de la simulación). La forma exacta (columna o metadato del replay) la
 fija FASE 6; esta ADR sólo exige que exista y sea inmutable. No se toca el motor en FASE 0.
 
-**Caché.** Clave = `(botVersionId o hash del equipamiento, visualCatalogVersion, renderTarget, palette)` (SRS-F09). Como
-las versiones publicadas son inmutables, una entrada de caché no caduca por contenido; sólo por espacio.
+**Caché.** Dos cachés, con las claves de «¿Qué ve cada audiencia?»: la intrínseca
+`(componentVisualId, visualCatalogVersion, renderTarget)` y la de composición
+`(hash del equipamiento ya proyectado, visibilityProfile, viewerRole, spectatorPolicyVersion, visualCatalogVersion, renderTarget)`
+(SRS-F09). Nunca una clave sólo por `botVersionId`. La paleta va dentro de `visualCatalogVersion`, así que no hace falta
+como componente aparte. Como las versiones publicadas son inmutables, una entrada de caché no caduca por contenido; sólo
+por espacio.
 Las respuestas HTTP de assets publicados pueden ser `immutable` si su URL incluye versión o hash. Las respuestas de
 replays siguen `private, no-store` como hoy (contenido autorizado por usuario).
 
@@ -108,6 +187,13 @@ fallback compatible y se registra el cambio.
 - La versión del catálogo incluye las **reglas de composición como datos** (capas, mounts, coordenadas, fallback); el
   compositor las interpreta y no decide nada por su cuenta.
 - Cada batalla nueva registra su `visualCatalogVersion`; la composición histórica usa **sólo** datos congelados.
+- El compositor recibe `proyección(equipamiento, audiencia, D-01) + visualCatalogVersion`: separa BOT_INTRINSIC_VISUAL de
+  VIEWER_PROJECTION, y la caché de composición lleva en la clave la proyección y el perfil de vista. Las vistas públicas
+  no consumen nunca el replay crudo (PRE-1).
+- **Paleta (P3-5):** la paleta de equipo y su regla de asignación pasan a ser **dato del catálogo visual versionado**
+  (como la tabla de capas). Se descarta «congelar la versión de la paleta» como mecanismo aparte porque obligaría a
+  registrar por batalla una segunda referencia. Las batallas anteriores al catálogo visual se resuelven con la paleta
+  de la versión «base» (punto 4), que reproduce el `resolveTeamColors` actual.
 - Hoy (atlas procedural) no hay garantía histórica; existe desde la primera versión publicada del catálogo.
 - Se mantiene la forma visual por **id base** de módulo (las versiones de balance comparten forma: `weapon.mg@1` y
   `@2`), salvo que una versión nueva cambie la forma física; entonces la definición visual apunta al id versionado.
@@ -117,7 +203,11 @@ fallback compatible y se registra el cambio.
 - FASE 1 incluye en el schema `catalogVersion`, `status` y `sha256` (SRS-F03), y además la tabla de capas, los mounts y
   las reglas de fallback como datos versionados del catálogo.
 - FASE 6 añade el registro de `visualCatalogVersion` por batalla y el test de determinismo histórico sobre el plan de
-  composición, incluidos los cambios de reglas y de código del compositor.
+  composición, incluidos los cambios de reglas y de código del compositor, por perfil de vista.
+- La primera fase que componga vehículos incluye el test de no-fuga (plan público sin identidades no públicas) y la
+  caché separada intrínseca / composición.
+- La proyección por audiencia la hace el backend; el arreglo de PRE-1 (replay público saneado, crudo restringido) va en
+  otro PR contra `main`.
 - Hay que decidir el tratamiento del nombre de bot en replays (D-06).
 
 ## Decisiones de producto abiertas
