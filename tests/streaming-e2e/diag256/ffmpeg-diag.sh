@@ -5,6 +5,8 @@
 # byte a byte ese FLV —el que recibe el relé— a /tmp/diag/pre-relay-<n>.flv: la etapa
 # «FLV antes del relé» se observa sin cambiar nada de lo que ffmpeg hace.
 mkdir -p /tmp/diag
+# Las lecturas de 1 frame de la puerta de render (#256) no son la emisión: pasan sin registro.
+case " $* " in *" -frames:v 1 "*) exec "${DIAG_REAL_FFMPEG:-/usr/bin/ffmpeg}" "$@" ;; esac
 n=$(date +%s%N)
 printf '%s\n' "$@" >"/tmp/diag/ffmpeg-argv-$n.txt"
 REAL="${DIAG_REAL_FFMPEG:-/usr/bin/ffmpeg}"

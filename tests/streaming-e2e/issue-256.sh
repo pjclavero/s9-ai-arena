@@ -109,7 +109,8 @@ run_case() { # run_case <record|rtmps> <live|finished>
   local mode=$1 which=$2 label="$1-$2" id url
   [ "$which" = live ] && id=$LIVE_ID || id=$FIN_ID
   url="$BASE/broadcast?battle=$id"
-  docker exec "$TAG-streamer" sh -c 'rm -f /tmp/diag/*.flv /tmp/diag/*-argv-*.txt /tmp/diag/chromium-stderr-*.log /data/replays/video/*.mp4' 2>/dev/null
+  # Como uid 1000: con cap_drop ALL el root del contenedor no puede borrar en /tmp/diag (de streamer).
+  docker exec -u 1000:1000 "$TAG-streamer" sh -c 'rm -f /tmp/diag/*.flv /tmp/diag/*-argv-*.txt /tmp/diag/chromium-stderr-*.log /data/replays/video/*.mp4' 2>/dev/null
   if [ "$mode" = rtmps ]; then
     start_body "$STATE/start-$label.json" "$url" 4500 1080p 30 "s256-$label"
   else
@@ -137,6 +138,12 @@ run_case() { # run_case <record|rtmps> <live|finished>
     fi
     bash "$DIAG/procsnap.sh" "$TAG-streamer" "$OUT/$next-procs.txt"
     xgrab "$next" && detect "$next-xvfb" "$OUT/$next-xvfb.png"
+    # S9_256_GDB=1 (contenedor con --cap-add SYS_PTRACE): si el Xvfb no es visible, pila
+    # nativa de los renderers y del proceso GPU (dónde gira el hilo) — sólo diagnóstico.
+    if [ "${S9_256_GDB:-0}" = 1 ] && ! grep -q "all_visible=1" "$OUT/$next-xvfb.detect.txt" 2>/dev/null; then
+      bash "$DIAG/gdbtrace.sh" "$TAG-streamer" "$OUT/$next-gdb.txt"
+      log "GDB $next: $(grep -c '^#' "$OUT/$next-gdb.txt") marcos en $next-gdb.txt"
+    fi
   done
   ctl GET /status >"$OUT/$label-status.json"
   log "estado: $(jget state <"$OUT/$label-status.json") relé=$(jget 'relay?.state' <"$OUT/$label-status.json") fps=$(jget 'stats?.fps' <"$OUT/$label-status.json")"

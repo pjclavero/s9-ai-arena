@@ -210,6 +210,8 @@ export function createControlServer(opts: ControlOptions): Server {
         relayPublishing: supervisor.relayState === "publishing",
         counters: supervisor.counters,
         uptimeSeconds: supervisor.active && started !== null ? Math.max(0, Math.round((now() - started) / 1000)) : 0,
+        renderReady: supervisor.render.state === "ready",
+        renderBlankEvents: supervisor.render.blankEvents,
       });
       return respond(200, text, "text/plain; version=0.0.4");
     }
@@ -255,6 +257,8 @@ export function createControlServer(opts: ControlOptions): Server {
         capabilities: { nvenc: caps.nvenc, sealedCredentials: !!opts.readPrivateKey?.() },
         legacyKeyConfigured,
         stats: supervisor.metrics.snapshot(),
+        // #256 · puerta BROADCAST_RENDER_READY: estado y última lectura del display.
+        render: supervisor.render,
       });
     }
 

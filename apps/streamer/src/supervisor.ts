@@ -30,6 +30,35 @@ import { ProgressParser } from "./metrics.js";
 import { SecretRegistry, type Logger, type StreamerConfig } from "./config.js";
 import { parseIngestUrl, RtmpPublisher, type Dialer, type IngestTarget } from "./rtmp/publisher.js";
 import { presetOf, sessionFingerprint, type PresetName, type SessionPlan } from "./session.js";
+import { classifyFrame, type FrameVerdict, type LumaStats } from "./frame-check.js";
+
+/**
+ * #256 · BROADCAST_RENDER_READY. La emisión real de YouTube salió en BLANCO durante toda
+ * la sesión: el renderer de Chromium se quedaba atascado antes de su primer frame y el
+ * Xvfb conservaba el fondo blanco de la ventana; ffmpeg, el FLV y el relé lo
+ * transportaban fielmente y nada lo detectaba (ver docs/operations/streaming.md, #256).
+ *
+ * Regla: NO se arranca ffmpeg (ni, en rtmps, el relé) hasta que el framebuffer del Xvfb
+ * —exactamente lo que capturaría ffmpeg— muestre RENDER_READY_CONSECUTIVE frames
+ * seguidos VISIBLES (ni blanco ni uniforme, frame-check.ts). Es una condición
+ * comprobada, no una espera fija: se sondea cada RENDER_POLL_MS hasta un plazo. Si el
+ * plazo vence, Chromium se relanza (reintento contado): nunca se emite una pantalla
+ * blanca. Con la emisión en marcha, un vigilante sondea cada RENDER_WATCH_INTERVAL_MS y,
+ * con RENDER_BLANK_STRIKES lecturas seguidas no visibles, corta y relanza.
+ */
+export const RENDER_READY_TIMEOUT_MS = 30_000;
+export const RENDER_POLL_MS = 500;
+export const RENDER_READY_CONSECUTIVE = 2;
+export const RENDER_WATCH_INTERVAL_MS = 5_000;
+export const RENDER_BLANK_STRIKES = 3;
+
+export type RenderState = "off" | "waiting" | "ready" | "blank";
+export interface RenderFrameView {
+  verdict: FrameVerdict | "error";
+  lumaMean: number | null;
+  lumaStddev: number | null;
+  at: string;
+}
 
 /** Contrato mínimo de un proceso hijo (ChildProcess lo cumple). */
 export interface SpawnedProcess extends EventEmitter {
@@ -95,6 +124,15 @@ export interface SupervisorOptions {
   processTree?: boolean;
   /** Espera entre SIGTERM y SIGKILL (por defecto STOP_GRACE_MS). */
   stopGraceMs?: number;
+  /**
+   * #256 · Lectura de UN frame del Xvfb (luma). Con ella se activa la puerta
+   * BROADCAST_RENDER_READY y el vigilante de frame en blanco; main.ts siempre la pasa
+   * (x11grab real). Sin ella (pruebas antiguas con procesos falsos) no hay puerta.
+   */
+  renderProbe?: () => Promise<LumaStats>;
+  renderReadyTimeoutMs?: number;
+  renderPollMs?: number;
+  renderWatchIntervalMs?: number;
 }
 
 /** Contadores de §28 (stream_*), acumulados desde que arrancó el proceso. */
@@ -141,6 +179,10 @@ export class StreamSupervisor {
   private fingerprint: string | null = null;
   private readonly secrets: SecretRegistry;
   readonly counters: StreamCounters = { starts: 0, stops: 0, failures: 0, killed: 0 };
+  private renderState_: RenderState = "off";
+  private renderFrame_: RenderFrameView | null = null;
+  /** #256 · veces que la puerta venció o el vigilante vio la pantalla en blanco. */
+  renderBlankEvents = 0;
   /** Paradas en curso: hijos (y sus descendientes) señalados que aún no han salido. */
   private readonly terminating = new Set<{ alive: () => boolean }>();
 
@@ -165,6 +207,10 @@ export class StreamSupervisor {
   }
   get active(): boolean {
     return this.state_ === "streaming" || this.state_ === "retrying";
+  }
+  /** #256 · estado de la puerta de render y última lectura del Xvfb (para /status). */
+  get render(): { state: RenderState; lastFrame: RenderFrameView | null; blankEvents: number } {
+    return { state: this.desired ? this.renderState_ : "off", lastFrame: this.renderFrame_, blankEvents: this.renderBlankEvents };
   }
   get lastError(): { message: string; at: string } | null {
     return this.lastError_;
@@ -404,7 +450,99 @@ export class StreamSupervisor {
       return;
     }
     this.launchChromium();
-    this.launchFfmpeg();
+    if (!this.opts.renderProbe) {
+      this.launchFfmpeg();
+      return;
+    }
+    // #256 · ffmpeg (y el relé) sólo cuando el Xvfb muestre la página pintada.
+    this.renderState_ = "waiting";
+    void this.awaitRenderReady(this.generation);
+  }
+
+  /** Una lectura del Xvfb; `null` si la sonda falla (cuenta como no visible). */
+  private async readFrame(): Promise<FrameVerdict | "error"> {
+    let verdict: FrameVerdict | "error" = "error";
+    let stats: LumaStats | null = null;
+    try {
+      stats = await this.opts.renderProbe!();
+      verdict = classifyFrame(stats);
+    } catch {
+      verdict = "error";
+    }
+    this.renderFrame_ = {
+      verdict,
+      lumaMean: stats ? Number(stats.mean.toFixed(2)) : null,
+      lumaStddev: stats ? Number(stats.stddev.toFixed(2)) : null,
+      at: new Date(this.now()).toISOString(),
+    };
+    return verdict;
+  }
+
+  private describeFrame(): string {
+    const f = this.renderFrame_;
+    if (!f) return "sin lectura";
+    return f.verdict === "error"
+      ? "no se pudo leer el display"
+      : `frame ${f.verdict === "white" ? "BLANCO" : f.verdict === "uniform" ? "UNIFORME" : "visible"} (luma media ${f.lumaMean}, desviación ${f.lumaStddev})`;
+  }
+
+  private sleepMs(ms: number): Promise<void> {
+    const sleep = this.opts.sleep ?? ((t) => new Promise<void>((r) => setTimeout(r, t)));
+    return sleep(ms);
+  }
+
+  /** BROADCAST_RENDER_READY: sondea el Xvfb hasta N frames visibles seguidos o el plazo. */
+  private async awaitRenderReady(gen: number): Promise<void> {
+    const timeout = this.opts.renderReadyTimeoutMs ?? RENDER_READY_TIMEOUT_MS;
+    const poll = this.opts.renderPollMs ?? RENDER_POLL_MS;
+    const deadline = this.now() + timeout;
+    let seen = 0;
+    for (;;) {
+      if (gen !== this.generation || this.state_ !== "streaming") return;
+      const v = await this.readFrame();
+      if (gen !== this.generation || this.state_ !== "streaming") return;
+      seen = v === "visible" ? seen + 1 : 0;
+      if (seen >= RENDER_READY_CONSECUTIVE) {
+        this.renderState_ = "ready";
+        this.opts.logger("info", "render listo: la página está pintada en el display", {
+          lumaMean: this.renderFrame_?.lumaMean,
+          lumaStddev: this.renderFrame_?.lumaStddev,
+        });
+        this.launchFfmpeg();
+        void this.watchRender(gen);
+        return;
+      }
+      if (this.now() >= deadline) {
+        this.renderState_ = "blank";
+        this.renderBlankEvents++;
+        this.setError(`render_not_ready: la página no se pintó en ${Math.round(timeout / 1000)} s; ${this.describeFrame()}`);
+        this.opts.logger("warn", "render no listo: no se emite y se relanza Chromium", { detail: this.describeFrame() });
+        void this.retry();
+        return;
+      }
+      await this.sleepMs(poll);
+    }
+  }
+
+  /** Vigilante con la emisión en marcha: una pantalla que se queda en blanco corta y relanza. */
+  private async watchRender(gen: number): Promise<void> {
+    const every = this.opts.renderWatchIntervalMs ?? RENDER_WATCH_INTERVAL_MS;
+    let strikes = 0;
+    for (;;) {
+      await this.sleepMs(every);
+      if (gen !== this.generation || this.state_ !== "streaming") return;
+      const v = await this.readFrame();
+      if (gen !== this.generation || this.state_ !== "streaming") return;
+      strikes = v === "visible" ? 0 : strikes + 1;
+      if (strikes >= RENDER_BLANK_STRIKES) {
+        this.renderState_ = "blank";
+        this.renderBlankEvents++;
+        this.setError(`render_blank: la pantalla de emisión dejó de verse; ${this.describeFrame()}`);
+        this.opts.logger("warn", "pantalla de emisión en blanco: se corta y se relanza", { detail: this.describeFrame() });
+        void this.retry();
+        return;
+      }
+    }
   }
 
   private launchChromium(): void {
