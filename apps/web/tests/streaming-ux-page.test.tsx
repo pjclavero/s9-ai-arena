@@ -10,7 +10,7 @@
  * en tests/browser/specs/streaming-ux.spec.ts.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 vi.mock("../src/api.js", () => ({
   api: vi.fn(),
@@ -481,6 +481,84 @@ describe("STREAMING-UX · en directo", () => {
     expect(liveBadgeText("live", false)).toBe("EN DIRECTO");
     expect(liveBadgeText("starting", false)).toBe("CONECTANDO…");
     expect(liveBadgeText("starting", true)).toBe("PREPARANDO GRABACIÓN…");
+  });
+
+  it("Ronda 2 (ERROR_STATE_CLEARS_START_NOTICE) · START → conectando → error: el aviso verde desaparece y manda el error", async () => {
+    // Sólo se falsea el sondeo (setInterval); setTimeout sigue real para waitFor/findBy.
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      render(<StreamingPage me={ME} route="#/streaming" />);
+      await pick(`battle:${B_LIVE.id}`);
+      // START: la API acepta y el siguiente estado es «conectando» (uxState=starting).
+      const session = { id: "s1", mode: "rtmps", target: { kind: "battle", id: B_LIVE.id }, startedAt: ago(0) };
+      apiMock.mockImplementation(async (m: string, p: string, b?: unknown) => {
+        if (p === "/admin/streaming/start")
+          state = live({
+            uxState: "starting",
+            session,
+            streamer: { state: "starting", desired: true, lastError: null },
+          });
+        return route(m, p, b);
+      });
+      fireEvent.click(screen.getByTestId("stream-start"));
+      const notice = await screen.findByTestId("streaming-notice");
+      expect(notice.textContent).toBe("Emisión iniciada: conectando…");
+      expect(notice.className).toBe("ok");
+      expect((await screen.findByTestId("live-badge")).textContent).toBe("● CONECTANDO…");
+      expect(screen.getByTestId("streaming-ux-state").textContent).toBe("Iniciando");
+
+      // El streamer agota sus intentos: el SONDEO (no una acción del usuario) trae «failed».
+      state = live({
+        uxState: "failed",
+        session,
+        streamer: {
+          state: "failed",
+          desired: true,
+          restarts: 5,
+          lastError: { message: "la ingesta no respondió a la conexión (IPv4: ETIMEDOUT)", at: ago(0) },
+          stats: { frames: 10, fps: 30, bitrateKbps: 65, droppedFrames: 0, outTimeSeconds: 1 },
+          relay: {
+            state: null,
+            bytesOut: 0,
+            ingest: "primary",
+            backupAvailable: false,
+            failedOver: false,
+            ingestErrors: { primary: "la ingesta no respondió a la conexión", backup: null },
+          },
+        },
+      });
+      const polls = calls.filter((c) => c.method === "GET" && c.path === "/admin/streaming").length;
+      await act(async () => {
+        vi.advanceTimersByTime(3000);
+      });
+      await waitFor(() =>
+        expect(calls.filter((c) => c.method === "GET" && c.path === "/admin/streaming").length).toBeGreaterThan(polls),
+      );
+      // Domina el error…
+      await waitFor(() => expect(screen.getByTestId("streaming-ux-state").textContent).toBe("Error"));
+      expect(screen.getByTestId("live-badge").textContent).toBe("● DETENIDA POR ERROR");
+      expect(screen.getByTestId("live-failure").querySelector("strong")!.textContent).toBe(
+        "YouTube no respondió a la conexión.",
+      );
+      // …y el aviso verde de inicio ya no está.
+      expect(screen.queryByTestId("streaming-notice")).toBeNull();
+      // Ningún mensaje contradictorio en toda la página.
+      const text = document.body.textContent ?? "";
+      for (const contradiction of [
+        "Emisión iniciada",
+        "conectando…",
+        "Conectando",
+        "CONECTANDO",
+        "EN DIRECTO",
+        "Todavía no está en directo",
+        "Se está emitiendo",
+      ]) {
+        expect(text, contradiction).not.toContain(contradiction);
+      }
+      expect(document.querySelectorAll("[role=status].ok, p.ok[data-testid=streaming-notice]").length).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
