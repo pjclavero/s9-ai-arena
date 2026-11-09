@@ -3,8 +3,15 @@
 S9 AI Arena es una arena de programación: escribes el código de un bot en Python o JavaScript, eliges el equipamiento de su vehículo y lo enfrentas a otros bots en batallas y torneos. Elige tu entrada.
 
 ```
-MAIN_SHA:   e3bf2fa83650559267ef269994c667fabfb29e46  (main auditado el 2026-11-02)
+MAIN_SHA:   b254e3dac1ab25f39f9b4565b3349aa66a9f3963  (RC8, main y producción; actualizado 2026-11-10)
 ```
+
+## Estado documental vigente
+
+La fuente canónica del estado es [roadmap/current-status.md](roadmap/current-status.md). A 2026-11-10:
+RC8 `b254e3d` está desplegada; #256 (streaming blanco en batalla viva) y #255 (revisión UX) están
+abiertas; la FASE 0 del nuevo sistema visual de bots sigue en PR #253 y no forma parte todavía de
+`main`.
 
 ## Elige tu entrada
 
