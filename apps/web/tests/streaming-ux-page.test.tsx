@@ -418,6 +418,8 @@ describe("STREAMING-UX · en directo", () => {
         state: "failed",
         desired: true,
         lastError: { message: "la ingesta no respondió a la conexión (IPv4: ETIMEDOUT)", at: ago(1) },
+        // cola del render (lo que vio QA: 30.07 fps · 65 kbit/s junto a «DETENIDA POR ERROR»)
+        stats: { frames: 9000, fps: 30.07, bitrateKbps: 65, droppedFrames: 3, outTimeSeconds: 10 },
         relay: {
           state: null,
           bytesOut: 0,
