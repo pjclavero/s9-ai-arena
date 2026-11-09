@@ -520,6 +520,10 @@ describe("Ronda 1 · R-H6 · el centinela rechazado no llega a la BD, la auditor
 
 describe("Ronda 1 · P3 · auditoría con el nombre del usuario", () => {
   it("listStreamingAudit devuelve actorName (nombre visible) además de actorId", async () => {
+    // acción auditada propia (el test no depende de los anteriores)
+    const other = "rtmps://e.rtmps.youtube.com/live2?backup=1";
+    expect((await putIngests("youtube", { primaryIngestUrl: A, backupIngestUrl: other })).status).toBe(200);
+    expect((await putIngests("youtube", { primaryIngestUrl: A, backupIngestUrl: B })).status).toBe(200);
     const r = await request(app).get("/admin/streaming/audit?limit=50").set(auth(admin));
     expect(r.status).toBe(200);
     const adminRow = await h.db("users").where({ email: DEV_USERS.admin }).first();
