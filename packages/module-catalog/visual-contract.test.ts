@@ -17,7 +17,11 @@
  *   TEST 7 · SLOT_INFERENCE (fog of war)    la tabla de encaje por ranura de la matriz (§12.1) es EXACTAMENTE la
  *                                          que sale del catálogo y del validador reales, y lo que se infiere de
  *                                          ella está clasificado como PUBLIC (por inferencia).
- *   TEST 0 · ESTRUCTURA                     el parser no puede saltarse filas en silencio: una línea con `|` pegada
+ *   TEST 8 · PROJECTILE_INFERENCE           la tabla de cinemática de proyectiles (§12.2) es la que sale del catálogo
+ *                                          y de las constantes reales, y lo que se infiere de ella es PUBLIC.
+ *   TEST 9 · VIEWER_PROJECTION              los perfiles de vista de ADR-VIS-002 aplicados a §12: ninguna vista ve
+ *                                          NEVER_VISUALIZE, las públicas ven exactamente lo PUBLIC y PRIVATE ≠ PUBLIC.
+ *   TEST 0 · ESTRUCTURA                    el parser no puede saltarse filas en silencio: una línea con `|` pegada
  *                                          a una tabla, o ids fuera de una tabla reconocida, son error; el número
  *                                          de filas parseadas coincide con el texto bruto; las decisiones sólo
  *                                          hablan de elementos del inventario; un estado CURRENT cita un fichero
@@ -31,6 +35,12 @@ import { basename, join, resolve } from "node:path";
 import { loadCatalog, DATA_DIR } from "./loadCatalog.js";
 import { validateLoadout } from "./validator/index.js";
 import type { ModuleDefinition } from "./types.js";
+import {
+  CHASSIS_DAMAGE_SHARE,
+  DECISION_EVERY_N_TICKS,
+  MODULE_STATE_PERFORMANCE,
+  TICK_HZ,
+} from "../game-rules/constants.js";
 
 const REPO = resolve(DATA_DIR, "..", "..", "..");
 const DOCS = join(REPO, "docs", "visual-bots");
@@ -38,6 +48,7 @@ const SCHEMA_PATH = join(DATA_DIR, "..", "schema", "module.schema.json");
 
 const INVENTORY = readFileSync(join(DOCS, "VISUAL_COMPONENT_INVENTORY.md"), "utf8");
 const MATRIX = readFileSync(join(DOCS, "VISUAL_COMPONENT_MATRIX.md"), "utf8");
+const ADR2 = readFileSync(join(DOCS, "adr", "ADR-VIS-002-catalog-versioning.md"), "utf8");
 const catalog: ModuleDefinition[] = loadCatalog();
 const schemaCategories: string[] = JSON.parse(readFileSync(SCHEMA_PATH, "utf8")).properties.category.enum;
 
@@ -59,8 +70,43 @@ const clean = (s: string): string =>
  */
 const splitRow = (l: string): string[] => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(clean);
 
+/**
+ * P3-4 · Texto que un lector VE: las líneas dentro de bloques ``` o de comentarios HTML se vacían (sin
+ * cambiar la numeración). Una tabla escondida ahí no cuenta como cobertura.
+ */
+function visibleLines(md: string): string[] {
+  const out: string[] = [];
+  let fenced = false;
+  let comment = false;
+  for (const line of md.split("\n")) {
+    if (!comment && line.trim().startsWith("```")) {
+      fenced = !fenced;
+      out.push("");
+      continue;
+    }
+    if (fenced) {
+      out.push("");
+      continue;
+    }
+    let rest = line;
+    let kept = "";
+    while (rest.length > 0) {
+      const mark = comment ? rest.indexOf("-->") : rest.indexOf("<!--");
+      if (mark < 0) {
+        if (!comment) kept += rest;
+        break;
+      }
+      if (!comment) kept += rest.slice(0, mark);
+      rest = rest.slice(mark + (comment ? 3 : 4));
+      comment = !comment;
+    }
+    out.push(kept);
+  }
+  return out;
+}
+
 function tables(md: string, firstHeader: string): Row[] {
-  const lines = md.split("\n");
+  const lines = visibleLines(md);
   const rows: Row[] = [];
   const split = splitRow;
   for (let i = 0; i < lines.length; i++) {
@@ -94,8 +140,70 @@ const decisionRows = (): Row[] => tables(MATRIX, "DOMAIN_ID");
 
 const VISIBILITY = new Set(["PUBLIC", "SELF_ONLY", "ALLY_ONLY", "OBSERVER_DEPENDENT", "NEVER_VISUALIZE"]);
 const DECISIONS = new Set(["MUST_RENDER", "SHOULD_RENDER", "MAY_RENDER", "DO_NOT_RENDER"]);
-/** Filas de §12 tras la ronda 1 de revisión: §12 no puede encoger sin que el test lo note. */
-const MIN_DATA_ROWS = 43;
+/**
+ * P3-4 · Conjunto CANÓNICO de datos de §12 (revisados en las rondas 1 y 2). No es un recuento: quitar uno
+ * y añadir otro inventado es rojo. Añadir un dato nuevo exige añadirlo aquí a propósito.
+ */
+const CANONICAL_DATA_IDS = [
+  "data.chassis_identity",
+  "data.team_identity",
+  "data.bot_name",
+  "data.pose",
+  "data.turret_heading",
+  "data.hull_hp_exact",
+  "data.module_state",
+  "data.module_health_exact",
+  "data.armor_sector_hp",
+  "data.slot_occupancy",
+  "data.module_identity",
+  "data.sensor_installed",
+  "data.sensor_destroyed",
+  "data.radar_operating",
+  "data.sensor_cycle_output",
+  "data.sensor_readings",
+  "data.sensor_range_fov",
+  "data.radio_installed",
+  "data.radio_active",
+  "data.radio_content",
+  "data.ammo_type",
+  "data.ammo_installed",
+  "data.light_ammo_type",
+  "data.ammo_remaining",
+  "data.out_of_ammo",
+  "data.weapon_cooldown",
+  "data.firing",
+  "data.projectile_origin",
+  "data.weapon_identity",
+  "data.weapon_version",
+  "data.energy_state",
+  "data.power_installed",
+  "data.mine_installed",
+  "data.mine_bay_contents",
+  "data.mine_position",
+  "data.mine_triggered",
+  "data.light_weapon_identity",
+  "data.light_drive_identity",
+  "data.carrying_flag",
+  "data.juggernaut",
+  "data.vehicle_alive",
+  "data.respawns_left",
+  "data.engine_activity",
+  "data.engine_throttle",
+  "data.hit_details",
+  "data.full_loadout",
+];
+/** Fugas entre vistas que §12.3 tiene que tratar (CROSS_VIEW_LEAK). */
+const CANONICAL_CROSS_VIEWS = [
+  "cross.raw_replay",
+  "cross.composition_cache",
+  "cross.thumbnail",
+  "cross.team_capture",
+  "cross.debug_overlay",
+  "cross.client_payload",
+];
+const DISCLOSURE = new Set(["YES", "NO", "PARTIAL"]);
+const dupes = (ids: string[]): string[] => [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
+const sorted = (a: Iterable<string>): string[] => [...a].sort();
 
 describe("TEST 1 · VISUAL_INVENTORY_COVERAGE", () => {
   it("el catálogo real no está vacío (si lo estuviera, la cobertura sería trivialmente verde)", () => {
@@ -147,14 +255,60 @@ describe("TEST 1 · VISUAL_INVENTORY_COVERAGE", () => {
 });
 
 describe("TEST 2 · VISUAL_INVENTORY_UNIQUE_IDS", () => {
-  const dupes = (ids: string[]): string[] => [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
-
   it("ningún DOMAIN_ID se repite en el inventario", () => {
     expect(dupes(inventoryRows().map((r) => r.DOMAIN_ID))).toEqual([]);
   });
 
   it("ningún DOMAIN_ID se repite en las tablas de decisión de la matriz", () => {
     expect(dupes(decisionRows().map((r) => r.DOMAIN_ID))).toEqual([]);
+  });
+
+  // P2-7 · Unicidad en TODAS las tablas con clave, sumando todas las tablas con la misma cabecera: una
+  // fila repetida (aunque esté en otra tabla, o con otra clase) es rojo, nunca «gana la última».
+  const KEYED: [string, string, string][] = [
+    ["MATRIX", "REAL_CATEGORY", MATRIX],
+    ["MATRIX", "SENSOR_ID", MATRIX],
+    ["MATRIX", "WEAPON_ID", MATRIX],
+    ["MATRIX", "DATA_ID", MATRIX],
+    ["MATRIX", "STATE", MATRIX],
+    ["MATRIX", "CHASSIS_SLOT", MATRIX],
+    ["MATRIX", "WEAPON_KIN", MATRIX],
+    ["MATRIX", "CROSS_VIEW_ID", MATRIX],
+    ["ADR-VIS-002", "VIEW_PROFILE", ADR2],
+  ];
+  for (const [doc, key, md] of KEYED) {
+    it(`ninguna clave ${key} se repite en ${doc} (sumando todas sus tablas)`, () => {
+      const rows = tables(md, key);
+      expect(rows.length, `${doc}: tabla ${key}`).toBeGreaterThan(0);
+      expect(dupes(rows.map((r) => r[key]))).toEqual([]);
+    });
+  }
+
+  it("cada módulo real tiene EXACTAMENTE una fila en el inventario y una decisión en la matriz (ni falta ni sobra)", () => {
+    const real = sorted(catalog.map(versioned));
+    const inv = sorted(
+      inventoryRows()
+        .filter((r) => r.CATEGORY !== "runtime")
+        .map((r) => r.DOMAIN_ID),
+    );
+    const dec = sorted(
+      decisionRows()
+        .map((r) => r.DOMAIN_ID)
+        .filter((id) => !id.startsWith("runtime.")),
+    );
+    expect(inv, "inventario frente al catálogo").toEqual(real);
+    expect(dec, "decisiones de la matriz frente al catálogo").toEqual(real);
+    const runtimeInv = sorted(
+      inventoryRows()
+        .filter((r) => r.CATEGORY === "runtime")
+        .map((r) => r.DOMAIN_ID),
+    );
+    const runtimeDec = sorted(
+      decisionRows()
+        .map((r) => r.DOMAIN_ID)
+        .filter((id) => id.startsWith("runtime.")),
+    );
+    expect(runtimeDec, "decisiones runtime frente al inventario").toEqual(runtimeInv);
   });
 });
 
@@ -232,6 +386,53 @@ describe("TEST 4 · VISUAL_INFORMATION_CLASSIFIED", () => {
     ];
     const present = new Set(rows.map((r) => r.DATA_ID));
     expect(required.filter((id) => !present.has(id))).toEqual([]);
+  });
+
+  it("§12: los DATA_ID son EXACTAMENTE el conjunto canónico revisado (ni faltan ni sobran)", () => {
+    expect(sorted(tables(MATRIX, "DATA_ID").map((r) => r.DATA_ID))).toEqual(sorted(CANONICAL_DATA_IDS));
+  });
+
+  it("§12: DIRECT/DERIVED_DISCLOSURE válidos; YES ⇒ PUBLIC; PUBLIC ⇒ algún YES/PARTIAL; PARTIAL ⇒ NOTES lo explica", () => {
+    const bad: string[] = [];
+    for (const r of tables(MATRIX, "DATA_ID")) {
+      const d = r.DIRECT_DISCLOSURE;
+      const v = r.DERIVED_DISCLOSURE;
+      if (!DISCLOSURE.has(d) || !DISCLOSURE.has(v)) {
+        bad.push(`${r.DATA_ID}: DIRECT «${d}» / DERIVED «${v}»`);
+        continue;
+      }
+      if ((d === "YES" || v === "YES") && r.CLASSIFICATION !== "PUBLIC")
+        bad.push(`${r.DATA_ID}: se divulga (YES) pero es ${r.CLASSIFICATION}`);
+      if (r.CLASSIFICATION === "PUBLIC" && d === "NO" && v === "NO")
+        bad.push(`${r.DATA_ID}: PUBLIC sin divulgación directa ni derivada`);
+      if (v === "YES" && d !== "YES" && !r.NOTES.includes("PUBLIC por inferencia"))
+        bad.push(`${r.DATA_ID}: sólo derivado y sin «PUBLIC por inferencia» en NOTES`);
+      if ((d === "PARTIAL" || v === "PARTIAL") && r.NOTES.length < 20)
+        bad.push(`${r.DATA_ID}: PARTIAL sin explicación en NOTES`);
+    }
+    expect(bad).toEqual([]);
+    // La taxonomía obligatoria está escrita en el contrato.
+    expect(MATRIX).toContain("VISUAL_INFORMATION_LEAK = DIRECT_LEAK + DERIVED_LEAK + CROSS_VIEW_LEAK");
+  });
+
+  it("§12.3: las fugas entre vistas canónicas están tratadas y todas van hacia una vista con menos privilegio", () => {
+    const rows = tables(MATRIX, "CROSS_VIEW_ID");
+    expect(sorted(rows.map((r) => r.CROSS_VIEW_ID))).toEqual(sorted(CANONICAL_CROSS_VIEWS));
+    const VIEWS = ["PUBLIC_VIEW", "ALLY_VIEW", "OWNER_VIEW", "RAW_REPLAY", "INTERNAL_VIEW"];
+    const rank: Record<string, number> = {
+      PUBLIC_VIEW: 0,
+      ALLY_VIEW: 1,
+      OWNER_VIEW: 2,
+      RAW_REPLAY: 3,
+      INTERNAL_VIEW: 3,
+    };
+    const bad = rows
+      .filter(
+        (r) =>
+          !VIEWS.includes(r.FROM_VIEW) || !VIEWS.includes(r.TO_VIEW) || rank[r.FROM_VIEW] <= rank[r.TO_VIEW] || !r.RULE,
+      )
+      .map((r) => r.CROSS_VIEW_ID);
+    expect(bad).toEqual([]);
   });
 
   it("§13: los 13 estados visuales están marcados CURRENT (con referencia de código) o FUTURE", () => {
@@ -351,7 +552,17 @@ describe("TEST 6 · SENSOR_VISUAL_CONTRACT / WEAPON_VISUAL_CONTRACT", () => {
 /** Cabeceras (primera columna) de las tablas que el test parsea, por documento. */
 const RECOGNIZED: Record<string, string[]> = {
   INVENTORY: ["DOMAIN_ID"],
-  MATRIX: ["REAL_CATEGORY", "DOMAIN_ID", "SENSOR_ID", "WEAPON_ID", "DATA_ID", "STATE", "CHASSIS_SLOT"],
+  MATRIX: [
+    "REAL_CATEGORY",
+    "DOMAIN_ID",
+    "SENSOR_ID",
+    "WEAPON_ID",
+    "DATA_ID",
+    "STATE",
+    "CHASSIS_SLOT",
+    "WEAPON_KIN",
+    "CROSS_VIEW_ID",
+  ],
 };
 /** Un id de los que el test usa como clave: `data.x`, `runtime.x` o `familia.modulo@N`, entre backticks. */
 const ID_IN_TEXT = /`(?:data\.[a-z0-9_]+|runtime\.[a-z0-9_]+|[a-z][a-z0-9_]*\.[a-z0-9_]+@\d+)`/;
@@ -396,6 +607,7 @@ const rawRows = (md: string, id: RegExp): number =>
 
 const CATALOG_OR_RUNTIME_ID = /(?:runtime\.[a-z0-9_]+|[a-z][a-z0-9_]*\.[a-z0-9_]+@\d+)/;
 const DATA_ID_RE = /data\.[a-z0-9_]+/;
+const CHASSIS_SLOT_RE = /[a-z][a-z0-9_]*\.[a-z0-9_]+\/[a-z0-9_]+/;
 
 /** Índice de ficheros de apps/ y packages/ (sin node_modules ni dist) para validar referencias de código. */
 function sourceFiles(): Set<string> {
@@ -423,15 +635,26 @@ describe("TEST 0 · ESTRUCTURA de los documentos (sin falsos verdes del parser)"
     const dec = decisionRows();
     const data = tables(MATRIX, "DATA_ID");
     expect(inv.length, "filas DOMAIN_ID del inventario").toBe(rawRows(INVENTORY, CATALOG_OR_RUNTIME_ID));
-    expect(dec.length, "filas DOMAIN_ID de la matriz").toBe(rawRows(MATRIX, CATALOG_OR_RUNTIME_ID));
+    // Las filas WEAPON_KIN (§12.2) también empiezan por un id de catálogo: se descuentan.
+    const kin = tables(MATRIX, "WEAPON_KIN");
+    expect(dec.length + kin.length, "filas DOMAIN_ID + WEAPON_KIN de la matriz").toBe(
+      rawRows(MATRIX, CATALOG_OR_RUNTIME_ID),
+    );
+    expect(kin.length, "filas WEAPON_KIN = armas del catálogo").toBe(
+      catalog.filter((m) => m.category === "weapon").length,
+    );
     expect(data.length, "filas DATA_ID de §12").toBe(rawRows(MATRIX, DATA_ID_RE));
+    // P2-7 · §12.1 tiene EXACTAMENTE una fila por ranura calculada (sin duplicados que cuenten como cobertura).
+    const slotRows = tables(MATRIX, "CHASSIS_SLOT");
+    expect(slotRows.length, "filas CHASSIS_SLOT = ranuras calculadas").toBe(computedSlotTable().size);
+    expect(slotRows.length, "filas CHASSIS_SLOT en el texto bruto").toBe(rawRows(MATRIX, CHASSIS_SLOT_RE));
     // Mínimos: todo el catálogo + algún elemento runtime; §12 no puede encoger por debajo de lo revisado.
     const real = new Set([...schemaCategories, ...catalog.map((m) => m.category)]);
     const ids = (cat: string): number => new Set(catalog.filter((m) => m.category === cat).map((m) => m.id)).size;
     expect(inv.filter((r) => r.CATEGORY !== "runtime").length).toBeGreaterThanOrEqual(catalog.length);
     expect(inv.filter((r) => r.CATEGORY === "runtime").length).toBeGreaterThan(0);
     expect(dec.length).toBeGreaterThanOrEqual(inv.length);
-    expect(data.length).toBeGreaterThanOrEqual(MIN_DATA_ROWS);
+    expect(data.length).toBe(CANONICAL_DATA_IDS.length);
     expect(tables(MATRIX, "STATE").length).toBe(13);
     expect(tables(MATRIX, "REAL_CATEGORY").length).toBe(real.size);
     expect(tables(MATRIX, "SENSOR_ID").length).toBe(ids("sensor"));
@@ -619,6 +842,221 @@ describe("TEST 7 · SLOT_INFERENCE (fog of war por ranuras ocupadas)", () => {
       (id) => !(notes.get(id) ?? "").includes("H-05"),
     );
     expect(missing).toEqual([]);
-    expect(MATRIX).toContain("**No** se aplican al **fichero de replay crudo**");
+    expect(MATRIX).toContain("**no** se aplican al **fichero de replay crudo**");
+  });
+
+  it("PRE-1: el contrato dice que el renderer público consume sólo la proyección saneada, nunca el crudo", () => {
+    expect(MATRIX).toContain("**PUBLIC_REPLAY = proyección saneada de competición.**");
+    expect(MATRIX).toContain("**RAW_REPLAY = restringido**");
+    expect(MATRIX).toContain(
+      "consume **sólo** el canal de\n   espectador o la proyección saneada, **nunca** el replay crudo",
+    );
+  });
+});
+
+/* ─────────────── TEST 8 · PROJECTILE_INFERENCE: lo que delata la cinemática del proyectil (P2-5) ─────────────── */
+
+/**
+ * Hechos del motor que usa el cálculo (citados en §12.2): velocidad = `projectileSpeedMs`; el disparo sólo
+ * se resuelve en ticks de decisión; cooldown = round(cooldownTicks / max(0.25, rendimiento)) (`combat.ts`);
+ * al casco va `CHASSIS_DAMAGE_SHARE` del daño. El `ttlTicks` se lee del propio `combat.ts`, no se copia.
+ */
+const COMBAT_SRC = readFileSync(join(REPO, "apps", "arena-engine", "src", "sim", "combat.ts"), "utf8");
+const TTL_TICKS = Number(/ttlTicks:\s*(\d+)/.exec(COMBAT_SRC)?.[1] ?? NaN);
+const COOLDOWN_SRC =
+  /Math\.round\(\(w\.spec\.cooldownTicks \?\? 30\) \/ Math\.max\(0\.25, v\.performanceOf\(slot\)\)\)/;
+
+const num = (x: number): string => String(Number(x.toFixed(2)));
+const fireInterval = (cooldownTicks: number, perf: number): number =>
+  Math.ceil(Math.round(cooldownTicks / Math.max(0.25, perf)) / DECISION_EVERY_N_TICKS) * DECISION_EVERY_N_TICKS;
+
+interface Kin {
+  speed: number;
+  reach: number;
+  interval: number[];
+  hullDamage: string;
+}
+
+function weaponKinematics(): Map<string, Kin> {
+  const out = new Map<string, Kin>();
+  const ammo = catalog.filter((m) => m.category === "ammo");
+  for (const w of catalog.filter((m) => m.category === "weapon")) {
+    const speed = w.projectileSpeedMs ?? NaN;
+    const perfs = [
+      MODULE_STATE_PERFORMANCE.operational,
+      MODULE_STATE_PERFORMANCE.damaged,
+      MODULE_STATE_PERFORMANCE.critical,
+    ];
+    const hull = (w.acceptsAmmo ?? [])
+      .slice()
+      .sort()
+      .map((base) => {
+        const a = ammo.find((x) => x.id === base);
+        return `${base} ${num((w.damage ?? NaN) * (a?.damageMultiplier ?? NaN) * CHASSIS_DAMAGE_SHARE)}`;
+      })
+      .join("; ");
+    out.set(versioned(w), {
+      speed,
+      reach: (speed * TTL_TICKS) / TICK_HZ,
+      interval: perfs.map((p) => fireInterval(w.cooldownTicks ?? NaN, p)),
+      hullDamage: hull,
+    });
+  }
+  return out;
+}
+
+function expectedKinRows(): Map<string, Record<string, string>> {
+  const kin = weaponKinematics();
+  const rows = new Map<string, Record<string, string>>();
+  for (const [id, k] of kin) {
+    const base = id.slice(0, id.lastIndexOf("@"));
+    const otherBases = [...kin].filter(([o]) => o.slice(0, o.lastIndexOf("@")) !== base);
+    const siblings = [...kin].filter(([o]) => o !== id && o.slice(0, o.lastIndexOf("@")) === base);
+    const signals = new Set<string>();
+    for (const [, s] of siblings) {
+      if (s.speed !== k.speed) signals.add("SPEED");
+      if (s.interval[0] !== k.interval[0]) signals.add("INTERVAL");
+      if (s.interval.slice(1).join() !== k.interval.slice(1).join()) signals.add("INTERVAL_DEGRADED");
+      if (s.hullDamage !== k.hullDamage) signals.add("HULL_DAMAGE");
+    }
+    rows.set(id, {
+      SPEED_MS: num(k.speed),
+      REACH_M: num(k.reach),
+      INTERVAL_TICKS: k.interval.join(" / "),
+      HULL_DAMAGE: k.hullDamage,
+      IDENTITY_BY_SPEED: otherBases.some(([, o]) => o.speed === k.speed) ? "AMBIGUOUS" : "IDENTITY",
+      VERSION_SIGNAL: signals.size ? sorted(signals).join(", ") : "—",
+    });
+  }
+  return rows;
+}
+
+describe("TEST 8 · PROJECTILE_INFERENCE (fog of war por cinemática y daño del proyectil)", () => {
+  it("las premisas del motor que usa el cálculo siguen en el código (ttl y fórmula del cooldown)", () => {
+    expect(Number.isFinite(TTL_TICKS) && TTL_TICKS > 0).toBe(true);
+    expect(COMBAT_SRC).toMatch(COOLDOWN_SRC);
+    expect(COMBAT_SRC).toContain("const speed = w.spec.projectileSpeedMs");
+  });
+
+  it("la tabla WEAPON_KIN de §12.2 es EXACTAMENTE la que sale del catálogo y de las constantes reales", () => {
+    const expected = expectedKinRows();
+    const declared = tables(MATRIX, "WEAPON_KIN");
+    expect(sorted(declared.map((r) => r.WEAPON_KIN))).toEqual(sorted(expected.keys()));
+    const bad: string[] = [];
+    for (const r of declared) {
+      const e = expected.get(r.WEAPON_KIN);
+      if (!e) continue;
+      for (const [col, v] of Object.entries(e))
+        if (r[col] !== v) bad.push(`${r.WEAPON_KIN}.${col}: «${r[col]}» ≠ «${v}»`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("si las armas base se distinguen por velocidad, su identidad y el origen del proyectil son PUBLIC por inferencia", () => {
+    const expected = expectedKinRows();
+    const anyIdentity = [...expected.values()].some((r) => r.IDENTITY_BY_SPEED === "IDENTITY");
+    const anyVersion = [...expected.values()].some((r) => r.VERSION_SIGNAL !== "—");
+    const data = new Map(tables(MATRIX, "DATA_ID").map((r) => [r.DATA_ID, r]));
+    const decisions = new Map(decisionRows().map((r) => [r.DOMAIN_ID, r]));
+    const bad: string[] = [];
+    if (anyIdentity) {
+      for (const id of ["data.weapon_identity", "data.projectile_origin"]) {
+        const r = data.get(id);
+        if (r?.CLASSIFICATION !== "PUBLIC" || r.DERIVED_DISCLOSURE !== "YES")
+          bad.push(`${id}: debe ser PUBLIC derivado`);
+      }
+      for (const [id, r] of expected) {
+        if (r.IDENTITY_BY_SPEED !== "IDENTITY") continue;
+        const d = decisions.get(id);
+        if (d && d.VISIBILITY_CLASS !== "PUBLIC" && !d.WHY.includes("PUBLIC por inferencia"))
+          bad.push(`${id}: identificable por velocidad y sin «PUBLIC por inferencia»`);
+      }
+    }
+    if (anyVersion && data.get("data.weapon_version")?.CLASSIFICATION !== "PUBLIC")
+      bad.push("data.weapon_version: hay señal de versión y no es PUBLIC");
+    expect(bad).toEqual([]);
+  });
+
+  it("si las municiones de un arma tienen daño distinto, su decisión lo declara «Inferible con ruido»", () => {
+    const decisions = new Map(decisionRows().map((r) => [r.DOMAIN_ID, r]));
+    const bad: string[] = [];
+    for (const w of catalog.filter((m) => m.category === "weapon")) {
+      const ammo = catalog.filter((m) => m.category === "ammo" && (w.acceptsAmmo ?? []).includes(m.id));
+      if (new Set(ammo.map((a) => `${a.damageMultiplier}/${a.explosionRadiusM}`)).size < 2) continue;
+      for (const a of ammo) {
+        const d = decisions.get(versioned(a));
+        if (d && d.VISIBILITY_CLASS !== "PUBLIC" && !d.WHY.includes("Inferible con ruido"))
+          bad.push(`${versioned(a)}: distinguible por daño y sin «Inferible con ruido»`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+});
+
+/* ─────────────── TEST 9 · VIEWER_PROJECTION: la vista depende de la audiencia (P2-6) ─────────────── */
+
+describe("TEST 9 · VIEWER_PROJECTION (ADR-VIS-002: PRIVATE_VIEW ≠ PUBLIC_VIEW)", () => {
+  const profiles = (): Row[] => tables(ADR2, "VIEW_PROFILE");
+  const visibleFor = (p: Row): Set<string> => {
+    const classes = new Set(p.SEES_CLASSES.split(",").map((c) => c.trim()));
+    if (p.OBSERVER_DEPENDENT === "SHOWN") classes.add("OBSERVER_DEPENDENT");
+    return new Set(
+      tables(MATRIX, "DATA_ID")
+        .filter((r) => classes.has(r.CLASSIFICATION))
+        .map((r) => r.DATA_ID),
+    );
+  };
+
+  it("los perfiles son válidos y ninguno ve NEVER_VISUALIZE", () => {
+    const bad: string[] = [];
+    expect(profiles().length).toBeGreaterThan(0);
+    for (const p of profiles()) {
+      const classes = p.SEES_CLASSES.split(",").map((c) => c.trim());
+      if (classes.some((c) => !VISIBILITY.has(c) || c === "NEVER_VISUALIZE" || c === "OBSERVER_DEPENDENT"))
+        bad.push(`${p.VIEW_PROFILE}: SEES_CLASSES «${p.SEES_CLASSES}»`);
+      if (!["SHOWN", "HIDDEN"].includes(p.OBSERVER_DEPENDENT)) bad.push(`${p.VIEW_PROFILE}: OBSERVER_DEPENDENT`);
+      if (!["spectator", "team", "owner", "internal"].includes(p.VIEWER_ROLE))
+        bad.push(`${p.VIEW_PROFILE}: VIEWER_ROLE`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("las vistas de espectador ven EXACTAMENTE lo PUBLIC de §12 y nunca leen el replay crudo", () => {
+    const pub = sorted(
+      tables(MATRIX, "DATA_ID")
+        .filter((r) => r.CLASSIFICATION === "PUBLIC")
+        .map((r) => r.DATA_ID),
+    );
+    const spect = profiles().filter((p) => p.VIEWER_ROLE === "spectator");
+    expect(spect.length).toBeGreaterThan(0);
+    const bad: string[] = [];
+    for (const p of spect) {
+      if (JSON.stringify(sorted(visibleFor(p))) !== JSON.stringify(pub))
+        bad.push(`${p.VIEW_PROFILE}: ve algo no PUBLIC`);
+      if (/crudo/i.test(p.EQUIPMENT_SOURCE)) bad.push(`${p.VIEW_PROFILE}: lee el replay crudo`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("PRIVATE_VIEW ≠ PUBLIC_VIEW: el dueño ve estrictamente más que cualquier espectador", () => {
+    const owner = profiles().find((p) => p.VIEWER_ROLE === "owner");
+    expect(owner, "perfil de dueño").toBeDefined();
+    const ownerSees = visibleFor(owner!);
+    for (const p of profiles().filter((x) => x.VIEWER_ROLE === "spectator")) {
+      const pubSees = visibleFor(p);
+      expect(
+        [...pubSees].filter((id) => !ownerSees.has(id)),
+        `${p.VIEW_PROFILE} ⊆ dueño`,
+      ).toEqual([]);
+      expect([...ownerSees].filter((id) => !pubSees.has(id)).length, `dueño − ${p.VIEW_PROFILE}`).toBeGreaterThan(0);
+    }
+  });
+
+  it("la clave de la caché de composición incluye la proyección y el perfil, nunca sólo botVersionId", () => {
+    expect(ADR2).toContain(
+      "`(hash del equipamiento YA proyectado, visibilityProfile, viewerRole, spectatorPolicyVersion, visualCatalogVersion, renderTarget)`",
+    );
+    expect(ADR2).toContain("nunca se indexa sólo por `botVersionId`");
+    expect(ADR2).not.toContain("Clave = `(botVersionId o hash del equipamiento");
   });
 });
