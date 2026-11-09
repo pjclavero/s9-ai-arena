@@ -52,7 +52,7 @@ test.describe("@fase1 UX-B versionado", () => {
     await expectInBattles(page, "usan la v3");
     for (const v of [1, 2, 3]) await expect(page.getByTestId(`version-row-${v}`)).toBeVisible();
     await openBotSection(page, "codigo");
-    await page.getByLabel("version-codigo").selectOption("3");
+    await page.getByLabel("version-visor").selectOption("3");
     await page.getByLabel("diff-contra").selectOption("2");
     await expect(page.getByTestId("diff-view")).toContainText("v2 → v3");
     await expect(page.getByTestId("diff-src/bot.py")).toContainText("throttle");

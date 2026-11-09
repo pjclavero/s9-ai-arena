@@ -1085,7 +1085,7 @@ function BotsWorkspace(props: {
                 <label>
                   Versión{" "}
                   <select
-                    aria-label="version-codigo"
+                    aria-label="version-visor"
                     value={viewerVersion ?? ""}
                     onChange={(e) => {
                       setCodeVersion(Number(e.target.value));
