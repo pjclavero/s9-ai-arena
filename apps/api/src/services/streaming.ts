@@ -33,6 +33,12 @@ export interface PlatformDef {
   backupIngestUrl: string | null;
   /** §20 · ¿admite `?backup=1` en la ingesta de respaldo? (sólo YouTube). */
   backupQuery: boolean;
+  /**
+   * Ronda 1 (R-H6) · aplicación RTMP OBLIGATORIA, si la plataforma la fija. En YouTube es
+   * `live2` (y `live2?backup=1` en el respaldo): un segundo segmento de path sólo puede ser
+   * la clave pegada por error en el campo del servidor, y se rechaza antes de guardarla.
+   */
+  fixedApp: string | null;
 }
 export const PLATFORMS: readonly PlatformDef[] = [
   {
@@ -41,8 +47,16 @@ export const PLATFORMS: readonly PlatformDef[] = [
     ingestUrl: "rtmps://a.rtmps.youtube.com/live2",
     backupIngestUrl: "rtmps://b.rtmps.youtube.com/live2?backup=1",
     backupQuery: true,
+    fixedApp: "live2",
   },
-  { id: "custom", label: "RTMPS personalizado", ingestUrl: null, backupIngestUrl: null, backupQuery: false },
+  {
+    id: "custom",
+    label: "RTMPS personalizado",
+    ingestUrl: null,
+    backupIngestUrl: null,
+    backupQuery: false,
+    fixedApp: null,
+  },
 ];
 
 /** STREAMING-UX · §16-§22 · Ingestas efectivas de una plataforma (tal cual se configuraron). */
@@ -301,7 +315,7 @@ function internalV6(ip: string): boolean {
  */
 export function validIngestUrl(
   v: unknown,
-  opts: { allowInternal?: boolean; allowBackupQuery?: boolean } = {},
+  opts: { allowInternal?: boolean; allowBackupQuery?: boolean; fixedApp?: string | null } = {},
 ): string | null {
   if (typeof v !== "string" || v.length > 512) return null;
   let u: URL;
@@ -311,6 +325,15 @@ export function validIngestUrl(
     return null;
   }
   if (u.protocol !== "rtmps:" || !u.hostname || u.username || u.password || u.hash) return null;
+  // Ronda 1 (H-4) · guardado = efectivo. Sólo ASCII visible: WHATWG borra TAB y saltos de
+  // línea en silencio, así que la API guardaría un carácter de control que el relé no usa.
+  if (!/^[\x21-\x7e]+$/.test(v)) return null;
+  if (u.port === "0") return null; // puerto 0: no es un destino
+  // …y el path TAL CUAL se escribió tiene que ser ya la aplicación que usará el relé: nada de
+  // `//`, `/./`, `/../`, `%xx` ni barra final, que el relé normaliza a otra cosa.
+  const rawPath = /^rtmps:\/\/[^/?#]*(\/[^?#]*)?/i.exec(v)?.[1] ?? "";
+  const segs = rawPath.split("/").slice(1);
+  if (!segs.length || segs.some((g) => g === "" || g === "." || g === ".." || g.includes("%"))) return null;
   // STREAMING-UX (§20) · el ÚNICO caso con query: la ingesta de RESPALDO de YouTube con
   // exactamente `?backup=1` (`allowBackupQuery` sólo lo pone quien valida ese campo de esa
   // plataforma). Ni otra clave, ni otro valor, ni parámetros añadidos, ni `?` vacío: la
@@ -321,6 +344,10 @@ export function validIngestUrl(
   }
   const app = decodeURIComponent(u.pathname.replace(/^\/+|\/+$/g, ""));
   if (!app || app.length > 128 || !/^[A-Za-z0-9._~\-/]+$/.test(app)) return null;
+  if (app !== segs.join("/")) return null; // el path normalizado no es el escrito
+  // Ronda 1 (R-H6) · «URL + clave» pegada en el campo del servidor (cualquier plataforma).
+  if (opts.fixedApp !== undefined && opts.fixedApp !== null && app !== opts.fixedApp) return null;
+  if (looksLikeStreamKeyPath(segs)) return null;
   try {
     canonicalIngestUrl(v); // host normalizable (sin `%xx` ni caracteres raros): la clave se ata a esta forma
   } catch {
@@ -328,6 +355,30 @@ export function validIngestUrl(
   }
   if (!opts.allowInternal && isInternalIngestHost(u.hostname)) return null;
   return v;
+}
+
+/**
+ * Ronda 1 (R-H6) · ¿algún segmento del path tiene forma de clave de emisión? Decisión para
+ * «RTMPS personalizado» (donde la aplicación es libre): RECHAZAR, no avisar. Un aviso no
+ * impediría que la URL se guardase en claro en la BD, en la auditoría (`from`/`to`), en la UI
+ * y en el `display` del relé (logs y `/status`): el daño ya estaría hecho. El rechazo es
+ * barato de corregir (el mensaje dice qué hacer) y no tiene falsos positivos en las
+ * aplicaciones reales conocidas (`live`, `live2`, `app`, `rtmp`, `live/app`…), que son
+ * palabras cortas. Formas que se rechazan:
+ *  - la de YouTube: 4+ grupos de 4 alfanuméricos separados por guiones (`xxxx-xxxx-xxxx-xxxx`);
+ *  - la de Twitch: `live_<dígitos>_<alfanuméricos>`;
+ *  - la de Facebook: `FB-…`;
+ *  - cualquier segmento largo (≥ 20 caracteres) con letras Y dígitos: ningún nombre de
+ *    aplicación RTMP real lo es, y casi cualquier clave sí.
+ */
+export function looksLikeStreamKeyPath(segs: readonly string[]): boolean {
+  return segs.some(
+    (g) =>
+      /^[A-Za-z0-9]{4}(?:-[A-Za-z0-9]{4}){3,}$/.test(g) ||
+      /^live_\d+_[A-Za-z0-9]+$/.test(g) ||
+      /^FB-/i.test(g) ||
+      (g.length >= 20 && /[A-Za-z]/.test(g) && /\d/.test(g)),
+  );
 }
 
 /** Clave de emisión: ASCII imprimible sin espacios (YouTube/Twitch/RTMPS genérico). */
@@ -391,7 +442,7 @@ export function applySettingsPatch(
       const v = validIngestUrl(patch.ingestUrl, { allowInternal: ctx.allowInternalIngest });
       if (!v)
         errors.push(
-          "ingestUrl debe ser rtmps://host[:puerto]/aplicación, sin credenciales ni query, y con un host público (no interno, loopback ni link-local)",
+          "ingestUrl debe ser rtmps://host[:puerto]/aplicación, sin credenciales, query, barras sobrantes ni la clave en la ruta (va en su propio campo), y con un host público (no interno, loopback ni link-local)",
         );
       else next.ingestUrl = v;
     }
@@ -725,10 +776,15 @@ export function validateIngestsPatch(
   for (const k of Object.keys(body)) {
     if (k !== "primaryIngestUrl" && k !== "backupIngestUrl") errors.push(`campo no admitido: ${k}`);
   }
-  const primary = validIngestUrl(body.primaryIngestUrl, { allowInternal: ctx.allowInternalIngest });
+  const primary = validIngestUrl(body.primaryIngestUrl, {
+    allowInternal: ctx.allowInternalIngest,
+    fixedApp: platform.fixedApp,
+  });
   if (!primary) {
     errors.push(
-      "Servidor principal: debe ser rtmps://host[:puerto]/aplicación, sin credenciales ni query, y con un host público",
+      platform.fixedApp
+        ? `Servidor principal: debe ser rtmps://host[:puerto]/${platform.fixedApp}, sin nada más en la ruta (la clave va en su propio campo, nunca en la URL), sin query y con un host público`
+        : "Servidor principal: debe ser rtmps://host[:puerto]/aplicación, sin credenciales, query, barras sobrantes ni la clave en la ruta (va en su propio campo), y con un host público",
     );
   }
   let backup: string | null = null;
@@ -736,18 +792,23 @@ export function validateIngestsPatch(
     backup = validIngestUrl(body.backupIngestUrl, {
       allowInternal: ctx.allowInternalIngest,
       allowBackupQuery: platform.backupQuery,
+      fixedApp: platform.fixedApp,
     });
+    // R-H6 · en YouTube el respaldo es EXACTAMENTE `live2?backup=1` (la query es obligatoria).
+    if (backup && platform.fixedApp && platform.backupQuery && !backup.endsWith(BACKUP_QUERY)) backup = null;
     if (!backup) {
       errors.push(
-        platform.backupQuery
-          ? "Servidor de respaldo: debe ser rtmps://host[:puerto]/aplicación con un host público; la única query admitida es ?backup=1"
-          : "Servidor de respaldo: debe ser rtmps://host[:puerto]/aplicación, sin credenciales ni query, y con un host público",
+        platform.fixedApp && platform.backupQuery
+          ? `Servidor de respaldo: debe ser rtmps://host[:puerto]/${platform.fixedApp}${BACKUP_QUERY}, sin nada más en la ruta (la clave va en su propio campo, nunca en la URL) y con un host público`
+          : "Servidor de respaldo: debe ser rtmps://host[:puerto]/aplicación, sin credenciales, query, barras sobrantes ni la clave en la ruta (va en su propio campo), y con un host público",
       );
     }
   }
   if (primary && backup) {
     try {
-      if (canonicalIngestUrl(primary) === canonicalIngestUrl(backup)) {
+      // El mismo servidor con o sin `?backup=1` sigue siendo el mismo servidor.
+      const server = (u: string) => canonicalIngestUrl(u).replace(/\?.*$/, "");
+      if (server(primary) === server(backup)) {
         errors.push("El servidor de respaldo no puede ser el mismo que el principal");
       }
     } catch {

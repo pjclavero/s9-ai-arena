@@ -1728,7 +1728,7 @@ paths:
     put:
       tags: [streaming]
       operationId: setStreamingIngests
-      summary: 'STREAMING-UX · Servidor principal y de respaldo de la plataforma, guardados TAL CUAL (sin transformar ni concatenar nada). Sólo rtmps:// con host público; la ÚNICA query admitida es `?backup=1` en el respaldo de YouTube. Cambiar una URL invalida el sobre sellado para ella (hay que volver a introducir la clave). Auditado (streaming.ingests.update).'
+      summary: 'STREAMING-UX · Servidor principal y de respaldo de la plataforma, guardados TAL CUAL (sin transformar ni concatenar nada). Sólo rtmps:// con host público; la ÚNICA query admitida es `?backup=1` en el respaldo de YouTube. En YouTube la aplicación es EXACTAMENTE `live2` (y `live2?backup=1` en el respaldo); en cualquier plataforma se rechaza un path no canónico o con forma de clave de emisión (la clave va en su campo, nunca en la URL). Cambiar una URL invalida el sobre sellado para ella (hay que volver a introducir la clave). Auditado (streaming.ingests.update).'
       x-min-role: admin
       requestBody:
         required: true

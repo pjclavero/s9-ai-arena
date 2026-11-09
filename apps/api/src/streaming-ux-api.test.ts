@@ -15,7 +15,7 @@
 import { generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
 import request from "supertest";
 import type { Express } from "express";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { startTestDb, type TestDbHandle } from "./testing/test-db.js";
 import { DEFAULT_RULESET_ID, DEV_USERS, seedDev } from "./db/seeds/dev.js";
 import { tokenFor } from "./testing/helpers.js";
@@ -23,7 +23,13 @@ import { createApp } from "./app.js";
 import type { StreamerCallResult, StreamerClient } from "./services/streamer-client.js";
 import { canonicalIngestUrl, keyIdOf, openSecret } from "../../../packages/stream-secrets/index.js";
 import { createPublishedBot } from "../../tournament-worker/src/testing/fixtures.js";
-import { PLATFORMS, battleLabel, validateIngestsPatch, validIngestUrl } from "./services/streaming.js";
+import {
+  PLATFORMS,
+  battleLabel,
+  looksLikeStreamKeyPath,
+  validateIngestsPatch,
+  validIngestUrl,
+} from "./services/streaming.js";
 
 const { publicKey: PUB, privateKey: PRIV } = generateKeyPairSync("rsa", {
   modulusLength: 3072,
@@ -164,7 +170,13 @@ describe("STREAMING-UX · validador de ingestas (puro)", () => {
     expect(
       validateIngestsPatch(YT, {
         primaryIngestUrl: A,
-        backupIngestUrl: "rtmps://A.rtmps.youtube.com:443/live2",
+        backupIngestUrl: "rtmps://A.rtmps.youtube.com:443/live2?backup=1",
+      }).errors.join(),
+    ).toMatch(/mismo/);
+    expect(
+      validateIngestsPatch(CUSTOM, {
+        primaryIngestUrl: "rtmps://x.example.com/live",
+        backupIngestUrl: "rtmps://X.example.com:443/live",
       }).errors.join(),
     ).toMatch(/mismo/);
     expect(validateIngestsPatch(YT, { primaryIngestUrl: A, backupIngestUrl: null })).toMatchObject({
@@ -357,6 +369,146 @@ describe("STREAMING-UX · selector de destinos sin UUID", () => {
 });
 
 // ── Ronda 1 de correcciones ─────────────────────────────────────────────────
+/**
+ * Centinela con FORMA de clave de YouTube (xxxx-xxxx-xxxx-xxxx-xxxx), inventado en cada
+ * ejecución. Nunca se imprime: las comprobaciones son booleanas (`includes`), así que ni un
+ * fallo lo vuelca en la salida de vitest.
+ */
+const SENT = Array.from({ length: 5 }, () => randomBytes(2).toString("hex")).join("-");
+const has = (x: unknown) => (typeof x === "string" ? x : JSON.stringify(x ?? null)).includes(SENT);
+
+describe("Ronda 1 · R-H6 · «URL + clave» pegada en el campo del servidor (puro)", () => {
+  it("YouTube: la aplicación es EXACTAMENTE live2 (principal) y live2?backup=1 (respaldo)", () => {
+    for (const bad of [
+      `rtmps://a.rtmps.youtube.com/live2/${SENT}`,
+      "rtmps://a.rtmps.youtube.com/live",
+      "rtmps://a.rtmps.youtube.com/live2/x",
+      "rtmps://a.rtmps.youtube.com/live3",
+    ]) {
+      expect(validateIngestsPatch(YT, { primaryIngestUrl: bad }).primaryIngestUrl).toBeNull();
+    }
+    for (const bad of [
+      `rtmps://b.rtmps.youtube.com/live2/${SENT}?backup=1`,
+      `rtmps://b.rtmps.youtube.com/live2/${SENT}`,
+      "rtmps://b.rtmps.youtube.com/live2", // el respaldo de YouTube lleva ?backup=1
+      "rtmps://b.rtmps.youtube.com/live/x?backup=1",
+    ]) {
+      const r = validateIngestsPatch(YT, { primaryIngestUrl: A, backupIngestUrl: bad });
+      expect(r.backupIngestUrl).toBeNull();
+      expect(r.errors.length).toBe(1);
+      expect(has(r.errors)).toBe(false); // el mensaje de error nunca repite la URL
+    }
+    expect(validateIngestsPatch(YT, { primaryIngestUrl: A, backupIngestUrl: B }).errors).toEqual([]);
+    expect(validateIngestsPatch(YT, { primaryIngestUrl: "rtmps://A.rtmps.youtube.com:443/live2" }).errors).toEqual([]);
+  });
+
+  it("RTMPS personalizado: se RECHAZA un path con forma de clave (decisión: rechazo, no aviso)", () => {
+    expect(looksLikeStreamKeyPath([SENT])).toBe(true);
+    for (const key of [SENT, "live_123456789_AbCdEfGhIjKlMn", "FB-1234567890-0-AbC", "a1b2c3d4e5f6g7h8i9j0k1"]) {
+      expect(validIngestUrl(`rtmps://ingest.example.com/live/${key}`)).toBeNull();
+      expect(
+        validateIngestsPatch(CUSTOM, {
+          primaryIngestUrl: "rtmps://x.example.com/live",
+          backupIngestUrl: `rtmps://y.example.com/app/${key}`,
+        }).backupIngestUrl,
+      ).toBeNull();
+    }
+    // las aplicaciones reales conocidas siguen valiendo
+    for (const ok of [
+      "rtmps://live.twitch.tv/app",
+      "rtmps://x.example.com/live",
+      "rtmps://x.example.com/live/app",
+      "rtmps://x.example.com:443/rtmp",
+      "rtmps://x.example.com/live2",
+    ]) {
+      expect(validIngestUrl(ok), ok).toBe(ok);
+    }
+  });
+});
+
+describe("Ronda 1 · H-4 · guardado = efectivo: se rechazan las formas no canónicas", () => {
+  it("nada de `//`, `.`, `..`, `%xx`, barra final, caracteres de control ni puerto 0", () => {
+    for (const bad of [
+      "rtmps://b.rtmps.youtube.com//live2//?backup=1",
+      "rtmps://b.rtmps.youtube.com/live2/../x?backup=1",
+      "rtmps://b.rtmps.youtube.com/live2/%2e%2e/x?backup=1",
+      "rtmps://b.rtmps.youtube.com/live2/?backup=1",
+      "rtmps://b.rtmps.youtube.com/live2\t?backup=1",
+      "rtmps://b.rtmps.youtube.com/live2\n?backup=1",
+      "rtmps://b.rtmps.youtube.com/./live2?backup=1",
+      "rtmps://b.rtmps.youtube.com/live%32?backup=1",
+      "rtmps://b.rtmps.youtube.com:0/live2?backup=1",
+    ]) {
+      expect(validIngestUrl(bad, { allowBackupQuery: true }), JSON.stringify(bad)).toBeNull();
+    }
+    for (const bad of ["rtmps://x.example.com//live", "rtmps://x.example.com/live/", "rtmps://x.example.com/a/../b"]) {
+      expect(validIngestUrl(bad), bad).toBeNull();
+    }
+    expect(validIngestUrl(B, { allowBackupQuery: true })).toBe(B);
+  });
+});
+
+describe("Ronda 1 · R-H6 · el centinela rechazado no llega a la BD, la auditoría, el estado ni los logs", () => {
+  it("YouTube (principal y respaldo) y RTMPS personalizado (ajuste ingestUrl y respaldo)", async () => {
+    const logged: string[] = [];
+    const spies = (["log", "info", "warn", "error", "debug"] as const).map((m) =>
+      vi.spyOn(console, m).mockImplementation((...a: unknown[]) => {
+        logged.push(
+          a.map((x) => (typeof x === "string" ? x : String((x as Error)?.stack ?? JSON.stringify(x)))).join(" "),
+        );
+      }),
+    );
+    const outWrite = process.stdout.write.bind(process.stdout);
+    const errWrite = process.stderr.write.bind(process.stderr);
+    const capture = (w: typeof outWrite) =>
+      ((chunk: unknown, ...rest: unknown[]) => {
+        logged.push(String(chunk));
+        return (w as (...a: unknown[]) => boolean)(has(String(chunk)) ? "[centinela suprimido]\n" : chunk, ...rest);
+      }) as typeof outWrite;
+    process.stdout.write = capture(outWrite);
+    process.stderr.write = capture(errWrite);
+    fake.calls = [];
+    const bodies: unknown[] = [];
+    try {
+      for (const body of [
+        { primaryIngestUrl: `rtmps://a.rtmps.youtube.com/live2/${SENT}`, backupIngestUrl: B },
+        { primaryIngestUrl: A, backupIngestUrl: `rtmps://b.rtmps.youtube.com/live2/${SENT}?backup=1` },
+      ]) {
+        const r = await putIngests("youtube", body);
+        expect(r.status).toBe(422);
+        bodies.push(r.body);
+      }
+      const rc = await putIngests("custom", {
+        primaryIngestUrl: "rtmps://x.example.com/live",
+        backupIngestUrl: `rtmps://y.example.com/app/${SENT}`,
+      });
+      expect(rc.status).toBe(422);
+      bodies.push(rc.body);
+      const rs = await request(app)
+        .put("/admin/streaming/settings")
+        .set(auth(admin))
+        .send({ version: (await state()).settings.version, ingestUrl: `rtmps://x.example.com/live/${SENT}` });
+      expect(rs.status).toBeGreaterThanOrEqual(400);
+      expect(rs.status).toBeLessThan(500);
+      bodies.push(rs.body);
+      const st = await state(); // estado admin, que incluye el `/status` del streamer
+      bodies.push(st);
+    } finally {
+      for (const sp of spies) sp.mockRestore();
+      process.stdout.write = outWrite;
+      process.stderr.write = errWrite;
+    }
+    expect(bodies.some(has)).toBe(false); // ni el 422 ni el estado la repiten
+    expect(has(await h.db("streaming_ingests").select())).toBe(false);
+    expect(has(await h.db("streaming_settings").select())).toBe(false);
+    expect(has(await h.db("audit_log").select())).toBe(false);
+    expect(has(fake.calls)).toBe(false); // nunca llega al streamer (ni a su /status)
+    expect(logged.some(has)).toBe(false);
+    // control positivo: el detector de este test SÍ ve el centinela cuando está
+    expect(has(`x/${SENT}`)).toBe(true);
+  });
+});
+
 describe("Ronda 1 · Q-H1 · sin «cambios pendientes» falsos con las ingestas de YouTube configuradas desde la web", () => {
   it("start y restart guardan la ingesta configurada: pendingRestart=false; cambiarla de verdad ⇒ true", async () => {
     const P2 = "rtmps://a.rtmps.youtube.com:443/live2";
