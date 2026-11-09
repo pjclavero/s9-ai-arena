@@ -76,6 +76,13 @@ y se guardan **tal cual**: no se deriva el respaldo de la principal ni se concat
 validador sólo admite `?backup=1` en la **ingesta de respaldo de YouTube**; se rechazan
 `?foo=bar`, `?backup=2`, `?backup=1&foo=bar`, `?redirect=…`, `?token=…` y `?backup=1` en la
 principal. La query va en la aplicación RTMP (`live2?backup=1`), como en librtmp/OBS.
+Además (ronda 1 de revisión): en YouTube la aplicación es **exactamente** `live2` en la principal
+y `live2?backup=1` en el respaldo, así que pegar «URL + clave» en el campo del servidor se
+rechaza (422) y la clave no llega a la BD, a la auditoría, a `/status` ni a los logs. En «RTMPS
+personalizado» se **rechaza** (no se avisa) un segmento de ruta con forma de clave: un aviso
+dejaría la URL guardada y auditada en claro. En cualquier plataforma se rechazan las formas que
+el relé normalizaría a otra cosa (`//`, `.`, `..`, `%xx`, barra final, caracteres de control,
+puerto 0): lo guardado es lo que se usa.
 
 **Sellado con dos ingestas.** La clave se sella **dos veces**: un sobre atado a (plataforma,
 principal) en `sealed` y otro atado a (plataforma, respaldo) en `sealed_backup`. Ningún sobre vale
@@ -572,6 +579,7 @@ scripts locales). Las marcadas con ⚙ ejecutan **ffmpeg o procesos reales**.
 | STR-3 | P3 | El contrato no declaraba `starting` en `uxState` | **corregido** (contrato 0.14.0) |
 | STR-4 | P3 | Servicio sin `cap_drop`, sin límite de pids y con el /dev/shm por defecto (54 de 64 MiB usados en 12 min) | **corregido** en el Compose |
 | STR-5 | P3 | Sin `read_only` en el contenedor (Chromium escribe en `$HOME` y Xvfb en `/tmp`) | **abierto** (deuda declarada) |
+| #251 | P1 | Tras `docker restart` del mismo contenedor, el lock y el socket de Xvfb sobrevivían: Xvfb no arrancaba y ffmpeg daba «Cannot open display» (preexistente) | **corregido**: el entrypoint borra el lock sólo si su PID no es un Xvfb vivo y falla cerrado si Xvfb no arranca; `tests/streaming-e2e/issue-251-restart.sh` (imagen real, restart ×2) |
 | STR-6 | P3 | El escenario de la batalla tapa a veces el marcador superior (un tanque bajo el rótulo) | **abierto**: UX de `/broadcast`, fuera del alcance de STREAMER |
 | STR-7 (H1) | P3 | Nadie leía el stdout/stderr de Chromium: con más de 128-256 KiB de salida se bloqueaba en `write()` y la emisión seguía «en directo» con la imagen congelada y sin alerta | **corregido** (STREAMER-2): se leen siempre y se descartan; sólo se guarda una cola de 2 KiB del stderr, redactada al registrarla |
 | STR-8 (H2) | P3 | Con la clave rechazada por la ingesta, `lastError` acababa mostrando el ruido de la parada de ffmpeg (`Nothing was written into output file…`) en vez del rechazo | **corregido** (STREAMER-2): guarda de generación en el stderr de ffmpeg; ese ruido se registra (`superseded: true`) pero no sustituye la causa |
