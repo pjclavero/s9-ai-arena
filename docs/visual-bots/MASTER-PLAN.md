@@ -1006,8 +1006,8 @@ BRANCH:              mejoras-visuales-fase-0-inventario (base: mejoras-visuales 
 BASE_MAIN_SHA:       b254e3dac1ab25f39f9b4565b3349aa66a9f3963
 CURRENT_PHASE:       FASE 0 — Descubrimiento y contrato visual (IN_PROGRESS)
 LAST_MERGED_VIS_PR:  ninguno
-ACTIVE_VIS_PR:       #253 (draft, FASE 0, base mejoras-visuales; pendiente de revisión independiente)
-NEXT_ACTION:         revisión independiente de los entregables de FASE 0; decisiones de producto D-01..D-06
+ACTIVE_VIS_PR:       #253 (draft, FASE 0, base mejoras-visuales; ronda 1 de correcciones aplicada, pendiente de re-revisión)
+NEXT_ACTION:         re-revisión independiente de la ronda 1; decisiones de producto D-01..D-07
 BLOCKERS:            ninguno técnico; FASE 0 no pasa a PASS sin revisión independiente
 ~~~
 
