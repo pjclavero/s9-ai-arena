@@ -72,10 +72,10 @@ test.describe("@fase1 EQ4 navegación y organización", () => {
     for (const n of names) {
       await page.getByLabel("nuevo-bot").fill(n);
       await page.getByRole("button", { name: "Crear bot" }).click();
-      await expect(page.getByTestId("bots-active").getByRole("button", { name: n })).toBeVisible();
+      await expect(page.getByTestId("bots-active").getByRole("link", { name: n })).toBeVisible();
     }
     await page.setViewportSize({ width: 1366, height: 900 });
-    await page.getByTestId("bots-active").getByRole("button", { name: names[0] }).click();
+    await page.getByTestId("bots-active").getByRole("link", { name: names[0] }).click();
     await expect(page.getByTestId("bot-summary")).toBeVisible();
     // escritorio: lista y detalle lado a lado
     const list = (await page.locator(".master-list").first().boundingBox())!;
@@ -87,19 +87,19 @@ test.describe("@fase1 EQ4 navegación y organización", () => {
     // retirar ⇒ sale de Activos y entra en Retirados (desplegable); reactivar ⇒ vuelve
     await page.getByTestId("bot-retire").click();
     await expect(page.getByTestId("bots-retired")).toContainText("Retirados (1)");
-    await expect(page.getByTestId("bots-active").getByRole("button", { name: names[0] })).toHaveCount(0);
+    await expect(page.getByTestId("bots-active").getByRole("link", { name: names[0] })).toHaveCount(0);
     await page.reload();
     await expect(page.getByTestId("bots-retired")).toContainText("Retirados (1)"); // persiste en el servidor
     await shot(page, info, "eq4-bots-retirados-1366");
     await page.getByTestId("bots-retired").locator("summary").click();
-    await page.getByTestId("bots-retired").getByRole("button", { name: names[0] }).click();
+    await page.getByTestId("bots-retired").getByRole("link", { name: names[0] }).click();
     await page.getByTestId("bot-retire").click();
-    await expect(page.getByTestId("bots-active").getByRole("button", { name: names[0] })).toBeVisible();
+    await expect(page.getByTestId("bots-active").getByRole("link", { name: names[0] })).toBeVisible();
 
     for (const w of [430, 360]) {
       await page.setViewportSize({ width: w, height: 800 });
       await visit(page, "#/bots");
-      await page.getByTestId("bots-active").getByRole("button", { name: names[1] }).click();
+      await page.getByTestId("bots-active").getByRole("link", { name: names[1] }).click();
       await expect(page.getByTestId("bot-summary")).toBeVisible();
       const l = (await page.locator(".master-list").first().boundingBox())!;
       const p = (await page.getByTestId("bot-pane").boundingBox())!;

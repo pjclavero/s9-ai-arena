@@ -5,6 +5,7 @@
 import { test, expect } from "@playwright/test";
 import { registerNewUser, shot, watchProblems } from "./helpers.js";
 import { expectVersionState, newBotWithLoadout, uploadAndSubmit } from "./uxb-helpers.js";
+import { openBotSection } from "./uxb-helpers.js";
 
 test.describe("@fase1 UX-B plantilla Python", () => {
   test("la plantilla Python del editor construye y se publica sin tocarla", async ({ page }, info) => {
@@ -12,6 +13,7 @@ test.describe("@fase1 UX-B plantilla Python", () => {
     const problems = watchProblems(page);
     await registerNewUser(page);
     await newBotWithLoadout(page, `uxb-tpl-py-${Date.now().toString(36)}`);
+    await openBotSection(page, "codigo");
 
     const area = page.getByLabel("codigo");
     await expect(area).toHaveValue(/class Bot\(ArenaBot\):/);

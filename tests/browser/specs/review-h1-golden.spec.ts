@@ -64,6 +64,7 @@ test.describe("@golden [REVIEW] H1 usuario nuevo de extremo a extremo", () => {
     // --- bot Python: loadout + PLANTILLA sin tocar --------------------------------
     await createBotWithLoadout(page, PY, PY_LOADOUT);
     await expect(page.getByTestId("effect-note")).toContainText("es el vehículo que juega");
+    await page.getByTestId("bot-section-link-codigo").click();
     await expect(page.getByLabel("runtime")).toHaveValue("python");
     await expect(page.getByLabel("codigo")).toHaveValue(/def on_observation\(self, observation\)/);
     await submitVersion(page, 1);
@@ -73,6 +74,7 @@ test.describe("@golden [REVIEW] H1 usuario nuevo de extremo a extremo", () => {
 
     // --- bot JavaScript: runtime node + PLANTILLA sin tocar -----------------------
     await createBotWithLoadout(page, JS, JS_LOADOUT);
+    await page.getByTestId("bot-section-link-codigo").click();
     await page.getByLabel("runtime").selectOption("node");
     await expect(page.getByLabel("codigo")).toHaveValue(/export default class Bot extends ArenaBot/);
     await submitVersion(page, 1);

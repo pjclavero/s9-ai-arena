@@ -6,7 +6,14 @@
  */
 import { test, expect } from "@playwright/test";
 import { go, registerNewUser, shot, watchProblems } from "./helpers.js";
-import { PY_STILL, expectVersionState, newBotWithLoadout, uploadAndSubmit } from "./uxb-helpers.js";
+import {
+  PY_STILL,
+  expectInBattles,
+  expectVersionState,
+  newBotWithLoadout,
+  openBotSection,
+  uploadAndSubmit,
+} from "./uxb-helpers.js";
 
 const PY_BROKEN = PY_STILL.replace("class Bot(ArenaBot):", "class Bot(ArenaBot)");
 const PY_V3 = PY_STILL.replace("return {}", 'return {"move": {"throttle": 0.4, "steer": 0.1}}');
@@ -32,7 +39,7 @@ test.describe("@fase1 UX-B versionado", () => {
       "v2 NO está publicada y no puede usarse en batallas. Sigue en juego la v1 publicada.",
     );
     await expect(page.getByTestId("in-battles-1")).toBeVisible();
-    await expect(page.getByTestId("in-battles")).toContainText("usan la v1");
+    await expectInBattles(page, "usan la v1");
 
     await uploadAndSubmit(page, 3, PY_V3);
     await expectVersionState(page, 3, "validated");
@@ -41,21 +48,17 @@ test.describe("@fase1 UX-B versionado", () => {
     await expect(page.getByTestId("in-battles-3")).toBeVisible();
     await expect(page.getByTestId("in-battles-1")).toHaveCount(0);
 
-    // Detalle del bot: historial, diff y clonado.
-    await page
-      .getByRole("listitem")
-      .filter({ hasText: name })
-      .getByRole("link", { name: "detalle y versiones" })
-      .click();
-    await expect(page.getByTestId("overview-in-battles")).toContainText("usan la v3");
-    await page.getByTestId("tab-versions").click();
+    // #255 · todo en el MISMO panel, por secciones: historial, diff y clonado.
+    await expectInBattles(page, "usan la v3");
     for (const v of [1, 2, 3]) await expect(page.getByTestId(`version-row-${v}`)).toBeVisible();
-    await expect(page.getByTestId("detail-in-battles-3")).toBeVisible();
-    await page.getByTestId("compare-3").click();
+    await openBotSection(page, "codigo");
+    await page.getByLabel("version-codigo").selectOption("3");
+    await page.getByLabel("diff-contra").selectOption("2");
     await expect(page.getByTestId("diff-view")).toContainText("v2 → v3");
     await expect(page.getByTestId("diff-src/bot.py")).toContainText("throttle");
+    await openBotSection(page, "versiones");
     await page.getByTestId("clone-3").click();
-    await expect(page.getByTestId("bot-detail-notice")).toContainText("Creada v4 (draft) desde v3. v3 no cambia.");
+    await expect(page.getByTestId("bot-notice")).toContainText("Creada v4 (borrador) desde v3. v3 no cambia.");
     await expect(page.getByTestId("version-row-4")).toContainText("(desde v3)");
     await expect(page.getByTestId("version-row-4")).toContainText("draft");
     await shot(page, info, "uxb-versionado-historial");

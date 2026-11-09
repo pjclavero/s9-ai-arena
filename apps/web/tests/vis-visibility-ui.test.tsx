@@ -24,10 +24,12 @@ vi.mock("../src/api.js", () => {
 });
 
 import { api } from "../src/api.js";
-import { BotDetailPage } from "../src/pages/BotDetailPage.js";
+import { BotsPage } from "../src/pages/BotsPage.js";
+import { atBotSection } from "./bot-panel-helpers.js";
+import { loadCatalog, CATALOG_VERSION } from "../../../packages/module-catalog/loadCatalog.js";
 import { TournamentDetailPage, entryPrivacyNote } from "../src/pages/TournamentDetailPage.js";
 import { TournamentsPage } from "../src/pages/TournamentsPage.js";
-import { BOT_VISIBILITY_NOTE, CODE_PRIVATE_AGAIN_WARNING } from "../src/visibility.js";
+import { BOT_VISIBILITY_NOTE, CODE_VISIBILITY_NOTE, CODE_PRIVATE_AGAIN_WARNING } from "../src/visibility.js";
 
 const apiMock = api as unknown as ReturnType<typeof vi.fn>;
 let bot: Record<string, unknown>;
@@ -57,7 +59,10 @@ beforeEach(() => {
   ];
   apiMock.mockImplementation(async (method: string, path: string, body?: any) => {
     calls.push({ method, path, body });
+    if (method === "GET" && path.startsWith("/bots?ownerId="))
+      return { items: path.includes("ownerId=u1") ? [bot] : [] };
     if (method === "GET" && path === "/bots/b1") return bot;
+    if (method === "GET" && /\/builds$/.test(path)) return [];
     if (method === "GET" && path === "/bots/b1/versions") return versions;
     if (method === "GET" && path === "/bots/b1/loadouts") return [];
     if (method === "GET" && path === "/bots/b1/versions/4")
@@ -73,16 +78,36 @@ beforeEach(() => {
     throw new Error(`ruta no simulada: ${method} ${path}`);
   });
 });
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  window.location.hash = "";
+});
+
+/** #255 · la visibilidad del bot y la del código viven JUNTAS en la sección «Visibilidad». */
+const renderPanel = (meId: string, section = "visibilidad") => {
+  atBotSection("b1", section);
+  return render(
+    <BotsPage
+      me={{ id: meId, displayName: "Ana", email: "a@a.es", roles: ["user"], twoFactorEnabled: false }}
+      catalog={loadCatalog()}
+      catalogVersion={CATALOG_VERSION}
+      budgetCredits={1000}
+    />,
+  );
+};
 
 describe("VISIBILIDAD · ficha del bot", () => {
   it("WEB_BOT_VISIBILITY_EDIT · el dueño cambia private → team → public por PATCH /bots/{id}", async () => {
-    render(<BotDetailPage botId="b1" meId="u1" />);
+    renderPanel("u1");
     const ctl = await screen.findByTestId("bot-visibility-control");
     expect(within(ctl).getByText(/Sólo tú/)).toBeTruthy();
     expect(within(ctl).getByText(/miembros del equipo/)).toBeTruthy();
     expect(within(ctl).getByText(/Cualquier usuario o visitante/)).toBeTruthy();
-    expect(screen.getByTestId("bot-visibility-note").textContent).toBe(BOT_VISIBILITY_NOTE);
+    // B3 · las dos visibilidades, juntas y explicadas como independientes (en los dos sentidos).
+    const independence = screen.getByTestId("visibility-independence").textContent ?? "";
+    expect(independence).toContain(BOT_VISIBILITY_NOTE);
+    expect(independence).toContain(CODE_VISIBILITY_NOTE);
+    expect(within(screen.getByTestId("visibility-card")).getByTestId("code-visibility-4")).toBeTruthy();
     await userEvent.click(screen.getByTestId("bot-visibility-team"));
     await waitFor(() => expect((screen.getByTestId("bot-visibility-team") as HTMLInputElement).checked).toBe(true));
     await userEvent.click(screen.getByTestId("bot-visibility-public"));
@@ -94,14 +119,19 @@ describe("VISIBILIDAD · ficha del bot", () => {
   });
 
   it("quien no es el dueño no ve el control (sólo el texto)", async () => {
-    render(<BotDetailPage botId="b1" meId="otro" />);
+    renderPanel("otro");
     await screen.findByTestId("bot-visibility-readonly");
     expect(screen.queryByTestId("bot-visibility-control")).toBeNull();
+    expect(screen.getByTestId("code-visibility-readonly-4").textContent).toBe("Código de v4: privado");
+    expect(screen.queryByTestId("code-public-4")).toBeNull();
   });
 
   it("WEB_CODE_VISIBILITY_EDIT · «Código de v4 [Privado][Público]» sólo para el dueño, con aviso al hacerlo público", async () => {
-    render(<BotDetailPage botId="b1" meId="u1" initialTab="versions" />);
+    renderPanel("u1");
     const ctl = await screen.findByTestId("code-visibility-4");
+    // B4 · acción rápida: la versión PUBLICADA arriba, sin buscarla en ninguna tabla.
+    expect(within(screen.getByTestId("code-visibility-published")).getByTestId("code-visibility-4")).toBe(ctl);
+    expect(screen.getByTestId("visibility-quick").textContent).toMatch(/Bot ● Privado · Código v4 ● Privado/);
     expect(ctl.textContent).toMatch(/Código de v4/);
     expect(screen.queryByTestId("code-private-warning-4")).toBeNull();
     await userEvent.click(screen.getByTestId("code-public-4"));
@@ -119,8 +149,16 @@ describe("VISIBILIDAD · ficha del bot", () => {
     expect(calls.some((c) => c.method === "PATCH")).toBe(false);
   });
 
+  it("UNA sola fuente de verdad: la tabla de versiones MUESTRA el código, no lo edita", async () => {
+    renderPanel("u1", "versiones");
+    const cell = await screen.findByTestId("code-cell-4");
+    expect(cell.textContent).toBe("privado");
+    expect(within(cell).queryByRole("button")).toBeNull();
+    expect(screen.queryByTestId("code-visibility-4")).toBeNull();
+  });
+
   it("quien no es el dueño ve «privado»/«público» sin botones", async () => {
-    render(<BotDetailPage botId="b1" meId="otro" initialTab="versions" />);
+    renderPanel("otro", "versiones");
     const cell = await screen.findByTestId("code-cell-4");
     expect(cell.textContent).toBe("privado");
     expect(screen.queryByTestId("code-public-4")).toBeNull();

@@ -9,6 +9,7 @@
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { OUT, go } from "./helpers.js";
+import { openBotSection } from "./uxb-helpers.js";
 
 export const BUILD_MS = 240_000;
 
@@ -37,7 +38,11 @@ export class PublicApi {
   }
 
   /** Petición cruda (estado + cuerpo); renueva el token una vez si caduca. */
-  async raw(method: "GET" | "POST" | "PATCH", path: string, data?: unknown): Promise<{ status: number; body: any }> {
+  async raw(
+    method: "GET" | "POST" | "PATCH" | "PUT",
+    path: string,
+    data?: unknown,
+  ): Promise<{ status: number; body: any }> {
     const send = () =>
       this.req.fetch(`/api/v1${path}`, { method, headers: this.headers(), ...(data !== undefined ? { data } : {}) });
     let r = await send();
@@ -78,7 +83,7 @@ export async function createBotWithLoadout(page: Page, name: string, loadout: Lo
   await go(page, "#/bots");
   await page.getByLabel("nuevo-bot").fill(name);
   await page.getByRole("button", { name: "Crear bot" }).click();
-  await page.getByRole("button", { name, exact: true }).click();
+  await page.getByRole("link", { name, exact: true }).click();
   await page.getByLabel("chasis").selectOption(loadout.chassis);
   for (const [slot, mod] of Object.entries(loadout.slots)) await page.getByLabel(`slot-${slot}`).selectOption(mod);
   await page.getByTestId("save-loadout").click();
@@ -87,6 +92,7 @@ export async function createBotWithLoadout(page: Page, name: string, loadout: Lo
 
 /** Sube lo que haya en el editor (o `code`) como versión `v` y la envía a validación. */
 export async function submitVersion(page: Page, v: number, code?: string): Promise<void> {
+  await openBotSection(page, "codigo");
   if (code !== undefined) await page.getByLabel("codigo").fill(code);
   await page.getByRole("button", { name: "Subir como versión nueva" }).click();
   await expect(page.getByTestId(`version-row-${v}`)).toContainText("draft");

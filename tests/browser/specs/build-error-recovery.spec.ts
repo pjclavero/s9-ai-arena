@@ -7,6 +7,7 @@
 import { test, expect } from "@playwright/test";
 import { registerNewUser, shot, watchProblems } from "./helpers.js";
 import { PY_STILL, expectVersionState, newBotWithLoadout, uploadAndSubmit } from "./uxb-helpers.js";
+import { expectInBattles } from "./uxb-helpers.js";
 
 const PY_SYNTAX = `from arena_sdk import ArenaBot
 
@@ -30,7 +31,7 @@ test.describe("@fase1 UX-B recuperación de un error de build", () => {
     await expect(page.getByTestId("build-diagnosis-stage")).toContainText("análisis estático");
     await expect(page.getByTestId("build-diagnosis-location")).toContainText("src/bot.py, línea 4");
     await expect(page.getByTestId("build-diagnosis-not-published")).toContainText("v1 NO está publicada");
-    await expect(page.getByTestId("in-battles")).toContainText("Ninguna versión publicada");
+    await expectInBattles(page, "Ninguna versión publicada");
     await shot(page, info, "uxb-build-error-diagnostico");
 
     await page.getByTestId("build-diagnosis-fix").click();
