@@ -356,7 +356,7 @@ describe("Ronda 1 · P3 del marcador (H-2, H-3 y ganador sin oyente)", () => {
       }),
     ).rejects.toMatchObject({ code: "dns", message: expect.stringContaining("ETIMEDOUT") });
     expect(Date.now() - t0).toBeLessThan(1500);
-  });
+  }, 5000);
 
   it("el socket ganador se entrega con un oyente de 'error' (un error temprano no lanza)", async () => {
     const port = await listen(netServer((s) => s.on("error", () => {})));
