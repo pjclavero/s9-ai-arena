@@ -29,11 +29,19 @@ import { createApp } from "./app.js";
 import { loadRuleset } from "../../../packages/game-rules/index.js";
 import { initPhysics } from "../../arena-engine/src/sim/physics.js";
 import { fromJsonl, record, verify, type Replay } from "../../arena-engine/src/replay.js";
-import { emptyArena, minerLoadout, scoutLoadout } from "../../arena-engine/src/fixtures.js";
+import { emptyArena, gunnerLoadout, minerLoadout, scoutLoadout } from "../../arena-engine/src/fixtures.js";
 import { HunterBot } from "../../arena-engine/src/stubs.js";
 import { ingestReplay } from "../../replay-service/src/store.js";
 import { decompress } from "../../replay-service/src/format.js";
-import { PUBLIC_EVENT_KINDS, PUBLIC_PROJECTION_FORMAT } from "./replay-projection.js";
+import {
+  PUBLIC_EVENT_KINDS,
+  PUBLIC_PROJECTION_FORMAT,
+  projectEvents,
+  projectIndex,
+  projectReplayDocument,
+  projectSegment,
+  projectSnapshot,
+} from "./replay-projection.js";
 import { ReplayPlayer, httpReplaySource } from "../../web/src/viewer/replay-player.js";
 
 const SEED = "PRE1-SEED-7f3a9c";
@@ -59,6 +67,7 @@ let off: Express;
 let on: Express;
 let dir: string;
 let base: Replay;
+let catalogVersion: string;
 const tok: Record<string, string> = {};
 const B: Record<string, string> = {};
 const rawFile: Record<string, string> = {};
@@ -78,17 +87,28 @@ async function newUser(label: string): Promise<{ id: string; token: string }> {
 async function newBot(ownerId: string, visibility: string, teamId: string | null = null): Promise<string> {
   const id = randomUUID();
   await h.db("bots").insert({ id, name: `pre1-${id.slice(0, 8)}`, owner_id: ownerId, visibility, team_id: teamId });
+  // participants(bot_id, version) referencia bot_versions: versión publicada con su loadout.
+  await h.db("bot_loadouts").insert({
+    bot_id: id,
+    revision: 1,
+    catalog_version: catalogVersion,
+    chassis: "chassis.scout@1",
+    modules: JSON.stringify([]),
+  });
+  await h
+    .db("bot_versions")
+    .insert({ bot_id: id, version: 1, state: "published", runtime: "python", loadout_revision: 1 });
   return id;
 }
 
-async function newBattle(botIds: string[], tournamentId: string | null = null): Promise<string> {
+async function newBattle(botIds: string[], tournamentId: string | null = null, debugOpen = false): Promise<string> {
   const id = randomUUID();
   const header = {
     ...base.header,
     battleId: id,
-    participants: base.header.participants.map((p: any, i: number) => ({ ...p, botId: botIds[i] })),
+    participants: base.header.participants.map((p: any, i: number) => ({ ...p, botId: botIds[i % botIds.length] })),
   };
-  const stored = ingestReplay(dir, { ...base, header }, { official: false });
+  const stored = ingestReplay(dir, { ...base, header }, { official: false, debugOpen });
   rawFile[id] = stored.path;
   await h.db("battles").insert({
     id,
@@ -117,6 +137,7 @@ beforeAll(async () => {
   await initPhysics();
   h = await startTestDb();
   await seedDev(h.db);
+  catalogVersion = (await h.db("catalog_versions").first()).catalog_version;
   const quota = { max: 100_000, windowMs: 3600_000 };
   off = createApp({ db: h.db, anonQuota: quota, publicReplaysEnabled: false });
   on = createApp({ db: h.db, anonQuota: quota, publicReplaysEnabled: true });
@@ -125,16 +146,23 @@ beforeAll(async () => {
     {
       battleId: "pre1-base",
       seed: SEED,
-      ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: 150 }),
-      map: emptyArena(),
+      // Arena pequeña, 900 ticks y dos artilleros: hay destrucciones y cambios de marcador
+      // (eventos públicos que el visor debe recibir); sin ellos la comprobación de eventos
+      // del visor y la de la lista blanca no probarían nada.
+      ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: 900 }),
+      map: emptyArena(40, 30),
       participants: [
         { id: "v_red", botId: "bot_red", team: "red", spec: scoutLoadout() },
         { id: "v_blue", botId: "bot_blue", team: "blue", spec: minerLoadout() },
+        { id: "v_green", botId: "bot_red", team: "green", spec: gunnerLoadout() },
+        { id: "v_yellow", botId: "bot_blue", team: "yellow", spec: gunnerLoadout() },
       ],
     },
     (b) => {
       b.attachBot("v_red", new RadioHunter("bot_red"));
       b.attachBot("v_blue", new MinerHunter("bot_blue"));
+      b.attachBot("v_green", new HunterBot("bot_red"));
+      b.attachBot("v_yellow", new HunterBot("bot_blue"));
     },
   );
 
@@ -170,6 +198,9 @@ beforeAll(async () => {
   B.pub = await newBattle([await newBot(A.id, "public"), await newBot(C.id, "public")]);
   B.bcast = await newBattle([await newBot(A.id, "private"), await newBot(C.id, "public")], tb.body.id);
   B.team = await newBattle([await newBot(C.id, "team", team.id), await newBot(A.id, "public")]);
+  // Depuración abierta en el almacén (el dueño «abrió las capas»): los comandos crudos
+  // siguen siendo crudo y la proyección NO los entrega, ni con el flag activado.
+  B.dbg = await newBattle([await newBot(A.id, "public"), await newBot(C.id, "public")], null, true);
 }, 240_000);
 
 afterAll(async () => {
@@ -278,6 +309,8 @@ describe("PRE-1 · calibración: el CRUDO contiene lo que la proyección debe qu
     expect(replay.commands.some((c) => Array.isArray(c.command?.radio))).toBe(true);
     expect(replay.commands.some((c) => c.command?.deployMine)).toBe(true);
     expect(replay.snapshots.length).toBeGreaterThan(5);
+    // y eventos públicos reales (si no, «el visor recibe todos los eventos» sería 0 = 0)
+    expect(replay.events.filter((e: any) => PUBLIC_EVENT_KINDS.has(e.kind)).length).toBeGreaterThan(0);
   });
 
   it("un actor con crudo recibe exactamente esos bytes (moderator, flag on y off)", async () => {
@@ -418,7 +451,7 @@ describe("PRE-1 · el visor de replays funciona con la proyección (anónimo, fl
     expect(player.index!.ticks).toBe(base.result.ticks);
     expect(player.debugOpen).toBe(false);
     expect(player.index!.world?.widthM).toBeGreaterThan(0);
-    expect(player.index!.roster?.length).toBe(2);
+    expect(player.index!.roster?.length).toBe(base.header.participants.length);
     // Salto temporal por keyframe y reproducción hasta el final a 8×.
     await player.seekTick(Math.floor(base.result.ticks / 2));
     expect(Math.abs(player.currentTick - Math.floor(base.result.ticks / 2))).toBeLessThanOrEqual(1);
@@ -451,5 +484,120 @@ describe("PRE-1 · el visor de replays funciona con la proyección (anónimo, fl
     const kinds = new Set(base.events.map((e: any) => String(e.kind)));
     expect(kinds.size).toBeGreaterThan(0);
     for (const k of kinds) expect(PUBLIC_EVENT_KINDS.has(k), k).toBe(true);
+  });
+});
+
+// ======================================================= depuración abierta (debugOpen)
+describe("PRE-1 · `debugOpen` no abre los comandos a quien no tiene el crudo", () => {
+  it("calibración: con depuración abierta, el moderator recibe los comandos crudos con la radio", async () => {
+    const seg = await get(on, "moderator", `/replays/${B.dbg}/segment?fromTick=0&toTick=${base.result.ticks}`);
+    expect(seg.status).toBe(200);
+    expect(Array.isArray(seg.body.commands)).toBe(true);
+    expect(JSON.stringify(seg.body.commands)).toContain(RADIO_SECRET);
+    const index = await get(on, "moderator", `/replays/${B.dbg}/index`);
+    expect(index.body.debugOpen).toBe(true);
+  });
+
+  for (const actor of ["anon", "S", "A", "C", "organizer"] as const) {
+    it(`flag on · ${actor}: índice con debugOpen=false y segmento sin comandos`, async () => {
+      const index = await get(on, actor, `/replays/${B.dbg}/index`);
+      const seg = await get(on, actor, `/replays/${B.dbg}/segment?fromTick=0&toTick=${base.result.ticks}`);
+      expect([index.status, seg.status]).toEqual([200, 200]);
+      expect(index.body.debugOpen).toBe(false);
+      expect(seg.body.commands).toBeUndefined();
+      assertClean(`index dbg ${actor}`, index.body);
+      assertClean(`segment dbg ${actor}`, seg.body);
+    });
+  }
+});
+
+// ===================================================== proyección pura (red de seguridad)
+describe("PRE-1 · proyección pura: lista blanca + saneado a cualquier profundidad", () => {
+  /** Entrada HOSTIL: lo prohibido metido en cada sitio por el que podría colarse. */
+  const hostile = {
+    battleId: "b1",
+    seed: SEED,
+    fromKeyframeTick: 0,
+    commands: [
+      { tick: 1, vehicleId: "v", command: { radio: [{ slot: "radio_a", data: RADIO_SECRET }], deployMine: {} } },
+    ],
+    snapshots: [
+      {
+        tick: 1,
+        seed: SEED,
+        vehicles: [
+          {
+            id: "v",
+            team: "red",
+            alive: true,
+            position: { x: 1, y: 2, data: RADIO_SECRET },
+            spec: { modules: ["mine.explosive@1"] },
+            radio: [{ data: RADIO_SECRET }],
+          },
+        ],
+        projectiles: [],
+        score: { red: 1 },
+        objectives: [{ id: "zone", owner: "red", radio: [{ data: RADIO_SECRET }], seed: SEED }],
+        observations: { v: { enemies: [] } },
+      },
+    ],
+    events: [
+      // tipo público con carga prohibida anidada
+      { tick: 1, kind: "score_changed", team: "red", radio: [{ data: RADIO_SECRET }], extra: { seed: SEED, spec: {} } },
+      // tipos PRIVADOS (observación de un bot): no salen
+      { tick: 1, kind: "hit_taken", vehicleId: "v" },
+      { tick: 1, kind: "mine_deployed", vehicleId: "v" },
+      { tick: 1, kind: "radio_dropped", vehicleId: "v" },
+    ],
+  };
+
+  it("projectSegment: sin comandos, sin radio.data, sin semilla, sin spec, sin eventos privados", () => {
+    const out = projectSegment(hostile);
+    assertClean("segment hostil", out);
+    expect((out.events as any[]).map((e) => e.kind)).toEqual(["score_changed"]);
+    expect((out.snapshots as any[])[0].objectives).toEqual([{ id: "zone", owner: "red" }]);
+  });
+
+  it("projectEvents: un tipo público con radio/semilla/spec anidados sale saneado", () => {
+    const [e] = projectEvents(hostile.events);
+    expect(e).toEqual({ tick: 1, kind: "score_changed", team: "red", extra: {} });
+  });
+
+  it("projectSnapshot: lista blanca por vehículo (ni radio, ni spec, ni carga en la posición)", () => {
+    const s = projectSnapshot(hostile.snapshots[0]);
+    expect(JSON.stringify(s)).not.toContain(RADIO_SECRET);
+    expect((s.vehicles as any[])[0].position).toEqual({ x: 1, y: 2 });
+    expect(s).not.toHaveProperty("observations");
+  });
+
+  it("projectIndex y projectReplayDocument: sin almacén ni receta, debugOpen siempre false", () => {
+    const idx = projectIndex(
+      {
+        battleId: "b1",
+        ticks: 10,
+        snapshotCount: 1,
+        keyframes: [{ tick: 0, snapshotIndex: 0, offset: 99 }],
+        sha256: "f".repeat(64),
+        algo: "gzip",
+        expiresAt: "2026-12-01T00:00:00Z",
+        mapChecksum: "x",
+        debugOpen: true,
+        result: { winner: "red", ticks: 10, score: { red: 1 }, seed: SEED },
+      },
+      { world: { widthM: 10, heightM: 10, seed: SEED }, roster: [{ id: "v", botId: "b", team: "red" }] },
+    );
+    assertClean("index hostil", idx);
+    expect(idx.debugOpen).toBe(false);
+    const doc = projectReplayDocument(
+      {
+        header: { battleId: "b1", seed: SEED, participants: [{ spec: { modules: ["mine.explosive@1"] } }] },
+        events: hostile.events,
+        snapshots: hostile.snapshots,
+        result: { winner: "red", ticks: 10, score: { red: 1 } },
+      },
+      null,
+    );
+    assertClean("documento hostil", doc);
+    expect(doc).not.toHaveProperty("participants");
   });
 });

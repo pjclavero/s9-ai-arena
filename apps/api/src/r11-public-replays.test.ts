@@ -70,6 +70,50 @@ async function seedFinishedBattleWithReplay(overrides: Record<string, unknown> =
   return { battleId: row.id as string, replayPath };
 }
 
+/**
+ * PRE-1 · Sustituye el fichero de bytes opacos por un replay crudo LEGIBLE mínimo, con
+ * todo lo que no puede salir (semilla, spec y un comando con radio y mina): la
+ * descarga pública proyecta el fichero, y uno ilegible responde 404.
+ */
+function writeLegibleReplay(battleId: string, replayPath: string): void {
+  const jsonl = [
+    {
+      t: "header",
+      formatVersion: 1,
+      battleId,
+      seed: "top-secret-seed-should-never-leak",
+      rulesetId: "r",
+      ruleset: {},
+      map: { widthM: 10, heightM: 10 },
+      participants: [
+        { id: "v1", botId: "b1", team: "A", spec: { chassisId: "chassis.light@1", modules: ["mine.explosive@1"] } },
+      ],
+      versions: {},
+      recordedAt: "2026-01-01T00:00:00.000Z",
+    },
+    {
+      t: "cmd",
+      tick: 0,
+      vehicleId: "v1",
+      command: { radio: [{ slot: "radio_a", data: "radio-should-never-leak" }], deployMine: { slot: "mine_bay" } },
+    },
+    { t: "snap", tick: 0, vehicles: [], projectiles: [], score: { A: 0 }, objectives: [] },
+    {
+      t: "result",
+      battleId,
+      winner: "A",
+      ticks: 3,
+      score: { A: 1 },
+      finalStateHash: "h",
+      disqualified: [],
+      versions: {},
+    },
+  ]
+    .map((l) => JSON.stringify(l))
+    .join("\n");
+  writeFileSync(replayPath, gzipSync(Buffer.from(jsonl + "\n")));
+}
+
 describe("R11 · publicReplaysEnabledFromEnv (default OFF)", () => {
   it("es false cuando S9_PUBLIC_REPLAYS_ENABLED no está definida o vale distinto de 1/true", () => {
     expect(publicReplaysEnabledFromEnv({})).toBe(false);
@@ -172,43 +216,7 @@ describe("R11 · capability encendida", () => {
   it("GET /public/replays/{battleId}/download sirve la PROYECCIÓN pública, nunca el fichero crudo (PRE-1)", async () => {
     const app: Express = createApp({ db: h.db, publicReplaysEnabled: true });
     const { battleId, replayPath } = await seedFinishedBattleWithReplay();
-    // Fichero crudo mínimo pero con todo lo que no puede salir: semilla, spec y un comando con radio y mina.
-    const jsonl = [
-      {
-        t: "header",
-        formatVersion: 1,
-        battleId,
-        seed: "top-secret-seed-should-never-leak",
-        rulesetId: "r",
-        ruleset: {},
-        map: { widthM: 10, heightM: 10 },
-        participants: [
-          { id: "v1", botId: "b1", team: "A", spec: { chassisId: "chassis.light@1", modules: ["mine.explosive@1"] } },
-        ],
-        versions: {},
-        recordedAt: "2026-01-01T00:00:00.000Z",
-      },
-      {
-        t: "cmd",
-        tick: 0,
-        vehicleId: "v1",
-        command: { radio: [{ slot: "radio_a", data: "radio-should-never-leak" }], deployMine: { slot: "mine_bay" } },
-      },
-      { t: "snap", tick: 0, vehicles: [], projectiles: [], score: { A: 0 }, objectives: [] },
-      {
-        t: "result",
-        battleId,
-        winner: "A",
-        ticks: 3,
-        score: { A: 1 },
-        finalStateHash: "h",
-        disqualified: [],
-        versions: {},
-      },
-    ]
-      .map((l) => JSON.stringify(l))
-      .join("\n");
-    writeFileSync(replayPath, gzipSync(Buffer.from(jsonl + "\n")));
+    writeLegibleReplay(battleId, replayPath);
     const res = await request(app).get(`/public/replays/${battleId}/download`);
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toContain("application/json");
@@ -365,7 +373,8 @@ describe("R11 · cuota anónima (candado de no-regresión)", () => {
 
   it("GET /public/replays/{battleId}/download corta con 429 al superar la cuota (route propia)", async () => {
     await h.db("api_usage").where({ route: "public-replay-download" }).delete();
-    const { battleId } = await seedFinishedBattleWithReplay();
+    const { battleId, replayPath } = await seedFinishedBattleWithReplay();
+    writeLegibleReplay(battleId, replayPath);
     const strict = createApp({ db: h.db, publicReplaysEnabled: true, anonQuota: { max: 2, windowMs: 3600_000 } });
     for (let i = 0; i < 2; i++) {
       const ok = await request(strict).get(`/public/replays/${battleId}/download`);
