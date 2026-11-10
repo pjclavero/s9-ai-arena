@@ -15,7 +15,7 @@
  *   tsx apps/streamer/src/render-selftest.ts   (rc 0 = ambos controles correctos)
  */
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger, DEFAULT_CONFIG, type StreamerConfig } from "./config.js";
 import {
@@ -130,21 +130,26 @@ async function run(kind: keyof typeof PAGES): Promise<boolean> {
   return ok;
 }
 
-mkdirSync(DIR, { recursive: true });
-const xvfb = spawn("Xvfb", [DISPLAY, "-screen", "0", "1920x1080x24", "-nolisten", "tcp"], { stdio: "ignore" });
-const sock = `/tmp/.X11-unix/X${DISPLAY.replace(/^:/, "").split(".")[0]}`;
-let rc = 1;
-try {
-  const { existsSync } = await import("node:fs");
-  if (!(await until(() => existsSync(sock), 10_000))) throw new Error(`Xvfb no creó ${sock}`);
-  const positive = await run("ok");
-  const negative = await run("white");
-  log(`RESULTADO positivo=${positive ? "OK" : "FALLO"} negativo=${negative ? "OK" : "FALLO"}`);
-  rc = positive && negative ? 0 : 1;
-} catch (e) {
-  log(`error: ${(e as Error).message}`);
-} finally {
-  xvfb.kill("SIGTERM");
-  rmSync(DIR, { recursive: true, force: true });
+// Sin top-level await: en la imagen no hay package.json con "type": "module" y tsx
+// transforma este fichero a CommonJS (lo cazó la CI).
+async function selftest(): Promise<number> {
+  mkdirSync(DIR, { recursive: true });
+  const xvfb = spawn("Xvfb", [DISPLAY, "-screen", "0", "1920x1080x24", "-nolisten", "tcp"], { stdio: "ignore" });
+  const sock = `/tmp/.X11-unix/X${DISPLAY.replace(/^:/, "").split(".")[0]}`;
+  let rc = 1;
+  try {
+    if (!(await until(() => existsSync(sock), 10_000))) throw new Error(`Xvfb no creó ${sock}`);
+    const positive = await run("ok");
+    const negative = await run("white");
+    log(`RESULTADO positivo=${positive ? "OK" : "FALLO"} negativo=${negative ? "OK" : "FALLO"}`);
+    rc = positive && negative ? 0 : 1;
+  } catch (e) {
+    log(`error: ${(e as Error).message}`);
+  } finally {
+    xvfb.kill("SIGTERM");
+    rmSync(DIR, { recursive: true, force: true });
+  }
+  return rc;
 }
-process.exit(rc);
+
+void selftest().then((rc) => process.exit(rc));
