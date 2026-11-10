@@ -1017,11 +1017,11 @@ Estado actual:
 LAST_UPDATED:        2026-11-10
 BRANCH:              mejoras-visuales-fase-0-inventario (base: mejoras-visuales @ 983d2f5; «mejoras-visuales/…» no es creable mientras exista la rama mejoras-visuales)
 BASE_MAIN_SHA:       b254e3dac1ab25f39f9b4565b3349aa66a9f3963
-CURRENT_PHASE:       FASE 0 — FINAL_CORRECTION
+CURRENT_PHASE:       FASE 0 — PENDING_FINAL_REVIEW
 LAST_MERGED_VIS_PR:  ninguno
-ACTIVE_VIS_PR:       #253 (draft, FASE 0, base mejoras-visuales; ronda 3 FINAL_CORRECTION en curso)
-NEXT_ACTION:         cerrar P2-9 y P2-10; después, revisión final independiente; decisiones de producto D-01..D-08
-BLOCKERS:            P2-9 (proyección por pareja visor↔vehículo), P2-10 (falsos verdes); FASE 0 no pasa a PASS sin revisión independiente; PRE-1 (backend) en otro PR contra main
+ACTIVE_VIS_PR:       #253 (draft, FASE 0, base mejoras-visuales; ronda 3 FINAL_CORRECTION aplicada: P2-9 y P2-10 con evidencia, ENGINE_DERIVED clasificado)
+NEXT_ACTION:         revisión final independiente; decisiones de producto D-01..D-08
+BLOCKERS:            ninguno abierto por el AUTHOR (P2-9 y P2-10 pendientes de verificación independiente); FASE 0 no pasa a PASS sin revisión independiente; PRE-1 (backend) en otro PR contra main
 ENGINE_ISSUES:       #261 (identidad/orden de entidades), #262 (cinemática de torreta), #263 (respuesta al daño/blindaje): fuera de FASE 0
 ~~~
 
@@ -1032,7 +1032,7 @@ Entregables de FASE 0: [VISUAL_COMPONENT_INVENTORY](VISUAL_COMPONENT_INVENTORY.m
 [VISUAL_CONTRACT_TESTS](VISUAL_CONTRACT_TESTS.md).
 
 ~~~text
-PHASE_0_DISCOVERY             FINAL_CORRECTION
+PHASE_0_DISCOVERY             PENDING_FINAL_REVIEW
 PHASE_1_VISUAL_CORE           NOT_STARTED
 PHASE_2_VERTICAL_SLICE        NOT_STARTED
 PHASE_3_BASE_CATALOG          NOT_STARTED
