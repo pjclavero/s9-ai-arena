@@ -12,7 +12,7 @@
  * también público el código de la versión publicada».
  */
 import { useEffect, useRef, useState } from "react";
-import { api } from "../api.js";
+import { api, ApiRequestError } from "../api.js";
 import { FormError } from "../ui/primitives.js";
 
 /** Respuesta de publishTeamBots (contrato 0.17.0). */
@@ -22,10 +22,24 @@ export interface BulkResult {
   results: {
     botId: string;
     name: string;
-    outcome: "made_public" | "would_make_public" | "already_public" | "not_authorized";
+    outcome: "made_public" | "would_make_public" | "already_public" | "not_authorized" | "retired";
     code?: { version: number | null; outcome: string };
   }[];
-  summary: { changed: number; alreadyPublic: number; notAuthorized: number };
+  summary: { changed: number; alreadyPublic: number; notAuthorized: number; retired?: number };
+}
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * #255 R1 (P3-3) · el botón dice lo que va a pasar de verdad: si sólo cambia el
+ * código, no «hacer públicos 0 bots».
+ */
+export function confirmLabel(bots: number, codes: number): string {
+  const b = `hacer ${bots === 1 ? "público" : "públicos"} ${plural(bots, "bot", "bots")}`;
+  const c = `hacer público el código de ${plural(codes, "versión", "versiones")}`;
+  if (bots > 0 && codes > 0) return `Confirmar: ${b} y ${c.replace("hacer público ", "")}`;
+  if (codes > 0) return `Confirmar: ${c}`;
+  return `Confirmar: ${b}`;
 }
 
 function codeText(code: { version: number | null; outcome: string } | undefined): string {
@@ -51,6 +65,8 @@ export function TeamBulkPublic(props: { team: { id: string; name: string }; onCh
   const [result, setResult] = useState<BulkResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  // #255 R1 (P3-1) · el equipo cambió entre la previsualización y la confirmación.
+  const [stale, setStale] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const titleRef = useRef<HTMLHeadingElement | null>(null);
   const path = `/teams/${encodeURIComponent(team.id)}/actions/publish-bots`;
@@ -69,6 +85,7 @@ export function TeamBulkPublic(props: { team: { id: string; name: string }; onCh
   }
   function openDialog() {
     setOpen(true);
+    setStale(false);
     setResult(null);
     setIncludeCode(false);
     void loadPreview(false);
@@ -78,6 +95,7 @@ export function TeamBulkPublic(props: { team: { id: string; name: string }; onCh
   const returnFocus = useRef(false);
   function close() {
     setOpen(false);
+    setStale(false);
     setPreview(null);
     setError(null);
     returnFocus.current = true;
@@ -91,16 +109,27 @@ export function TeamBulkPublic(props: { team: { id: string; name: string }; onCh
   }, [open]);
 
   async function confirm() {
+    if (!preview) return;
     setBusy(true);
     setError(null);
     try {
-      const r = await api<BulkResult>("POST", path, { dryRun: false, includeCode });
+      // #255 R1 (P3-1) · la confirmación va atada a lo previsualizado: si el servidor
+      // ve otro conjunto de bots, responde 409 y no cambia nada.
+      const expectBotIds = preview.results.map((r) => r.botId);
+      const r = await api<BulkResult>("POST", path, { dryRun: false, includeCode, expectBotIds });
       setResult(r);
       returnFocus.current = true;
       setOpen(false);
       setPreview(null);
       props.onChanged();
     } catch (e) {
+      if (e instanceof ApiRequestError && e.status === 409 && e.body?.error === "team_bots_changed") {
+        // No se ha cambiado nada: se vuelve a previsualizar y se pide confirmar otra vez.
+        setStale(true);
+        setBusy(false);
+        await loadPreview(includeCode);
+        return;
+      }
       setError(e ?? new Error("error desconocido"));
     } finally {
       setBusy(false);
@@ -110,6 +139,7 @@ export function TeamBulkPublic(props: { team: { id: string; name: string }; onCh
   const will = preview?.results.filter((r) => r.outcome === "would_make_public") ?? [];
   const already = preview?.results.filter((r) => r.outcome === "already_public") ?? [];
   const denied = preview?.results.filter((r) => r.outcome === "not_authorized") ?? [];
+  const retired = preview?.results.filter((r) => r.outcome === "retired") ?? [];
   const codeChanges = preview?.results.filter((r) => r.code?.outcome === "would_make_public") ?? [];
   const nothingToDo = !!preview && will.length === 0 && codeChanges.length === 0;
   const titleId = `bulk-title-${team.id}`;
@@ -142,6 +172,12 @@ export function TeamBulkPublic(props: { team: { id: string; name: string }; onCh
           </h5>
           {busy && !preview && <p role="status">Comprobando qué bots puedes cambiar…</p>}
           <FormError error={error} data-testid="team-bulk-error" />
+          {stale && (
+            <p className="warn" role="status" data-testid="team-bulk-stale">
+              Los bots del equipo han cambiado desde la previsualización: no se ha cambiado nada. Revisa la lista nueva
+              y vuelve a confirmar.
+            </p>
+          )}
           {preview && (
             <>
               <div data-testid="team-bulk-will">
@@ -184,6 +220,18 @@ export function TeamBulkPublic(props: { team: { id: string; name: string }; onCh
                   </ul>
                 </div>
               )}
+              {retired.length > 0 && (
+                <div data-testid="team-bulk-retired">
+                  <strong>No se modificarán porque están retirados ({retired.length}):</strong>
+                  <ul>
+                    {retired.map((r) => (
+                      <li key={r.botId} data-testid={`bulk-retired-${r.name}`}>
+                        – {r.name} (si quieres hacerlo público, reactívalo o cámbialo en su ficha)
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <p data-testid="team-bulk-untouched">
                 <strong>No se modificarán:</strong>{" "}
                 {includeCode
@@ -221,7 +269,7 @@ export function TeamBulkPublic(props: { team: { id: string; name: string }; onCh
               disabled={busy || !preview || nothingToDo}
               onClick={() => void confirm()}
             >
-              {busy && preview ? "Aplicando…" : `Confirmar: hacer públicos ${will.length} bots`}
+              {busy && preview ? "Aplicando…" : confirmLabel(will.length, codeChanges.length)}
             </button>{" "}
             <button type="button" data-testid="team-bulk-cancel" onClick={close}>
               Cancelar
@@ -238,7 +286,7 @@ export function TeamBulkPublic(props: { team: { id: string; name: string }; onCh
               {result.summary.notAuthorized > 0
                 ? ` · ${result.summary.notAuthorized} sin autorización: no se han tocado`
                 : ""}
-              .
+              {(result.summary.retired ?? 0) > 0 ? ` · ${result.summary.retired} retirado(s): no se han tocado` : ""}.
             </strong>
           </p>
           <ul>
@@ -248,7 +296,9 @@ export function TeamBulkPublic(props: { team: { id: string; name: string }; onCh
                   ? `✓ ${r.name}: ahora es público`
                   : r.outcome === "already_public"
                     ? `· ${r.name}: ya era público`
-                    : `✗ ${r.name}: sin autorización (sólo su dueño puede cambiar su visibilidad)`}
+                    : r.outcome === "retired"
+                      ? `– ${r.name}: retirado, no se ha tocado`
+                      : `✗ ${r.name}: sin autorización (sólo su dueño puede cambiar su visibilidad)`}
                 {r.code?.outcome === "made_public" ? ` · el código de v${r.code.version} ahora es público` : ""}
               </li>
             ))}

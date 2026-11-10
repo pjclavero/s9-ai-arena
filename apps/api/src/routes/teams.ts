@@ -295,7 +295,16 @@ export function teamRoutes(db: Db): Router {
    *    que PUT …/code-visibility: el dueño). Versiones, equipamiento y código del resto
    *    de versiones no se tocan.
    *  - cada cambio se audita igual que el individual (bot.visibility_changed /
-   *    bot.code_visibility_changed), con `via: team_bulk`.
+   *    bot.code_visibility_changed), con `via: team_bulk`;
+   *  - #255 R1 (P3-2) · un bot RETIRADO del dueño no cambia: sale como `retired`.
+   *    «Retirado» lo saca de «Mis bots» activos (migración 015); una acción masiva
+   *    sobre «los bots que administras» no debe publicar uno archivado sin que su
+   *    dueño lo decida en su ficha (PATCH /bots/{id} lo sigue permitiendo). Los
+   *    ajenos salen como `not_authorized` ANTES de mirar si están retirados: de un
+   *    bot ajeno no se revela nada más;
+   *  - #255 R1 (P3-1) · `expectBotIds` ata la confirmación a lo previsualizado: si
+   *    el conjunto de bots del equipo ya no es ese (entró o salió alguno), 409
+   *    `team_bots_changed` sin escribir nada, y la web vuelve a previsualizar.
    */
   defineOperation(router, "publishTeamBots", async (req, res) => {
     const team = await getTeamOr404(db, pathParam(req, "teamId"));
@@ -304,6 +313,17 @@ export function teamRoutes(db: Db): Router {
     if (body.dryRun !== undefined && typeof body.dryRun !== "boolean") throw badRequest("dryRun debe ser booleano");
     if (body.includeCode !== undefined && typeof body.includeCode !== "boolean") {
       throw badRequest("includeCode debe ser booleano");
+    }
+    let expected: Set<string> | null = null;
+    if (body.expectBotIds !== undefined) {
+      if (
+        !Array.isArray(body.expectBotIds) ||
+        body.expectBotIds.length > 1000 ||
+        body.expectBotIds.some((x: unknown) => typeof x !== "string")
+      ) {
+        throw badRequest("expectBotIds debe ser una lista de ids de bot");
+      }
+      expected = new Set(body.expectBotIds as string[]);
     }
     const dryRun = body.dryRun === true;
     const includeCode = body.includeCode === true;
@@ -314,7 +334,7 @@ export function teamRoutes(db: Db): Router {
     type BotResult = {
       botId: string;
       name: string;
-      outcome: "made_public" | "would_make_public" | "already_public" | "not_authorized";
+      outcome: "made_public" | "would_make_public" | "already_public" | "not_authorized" | "retired";
       previousVisibility?: string;
       code?: CodeResult;
     };
@@ -322,11 +342,25 @@ export function teamRoutes(db: Db): Router {
       // Cerrojo de fila: lo que se previsualiza o cambia es el estado vigente, no uno
       // que otra petición esté modificando a la vez.
       const bots = await trx("bots").where({ team_id: team.id }).orderBy("name", "asc").forUpdate();
+      if (expected) {
+        const now = new Set(bots.map((b: { id: string }) => b.id));
+        const same = now.size === expected.size && [...now].every((id) => expected!.has(id));
+        if (!same) {
+          throw conflict(
+            "team_bots_changed",
+            "Los bots del equipo han cambiado desde la previsualización: revisa la lista nueva antes de confirmar.",
+          );
+        }
+      }
       const out: BotResult[] = [];
       for (const bot of bots) {
         const base = { botId: bot.id as string, name: bot.name as string };
         if (!isBotOwner(auth, bot)) {
           out.push({ ...base, outcome: "not_authorized" });
+          continue;
+        }
+        if (bot.retired_at) {
+          out.push({ ...base, outcome: "retired", previousVisibility: bot.visibility as string });
           continue;
         }
         const already = bot.visibility === "public";
@@ -384,6 +418,7 @@ export function teamRoutes(db: Db): Router {
         changed: count(dryRun ? "would_make_public" : "made_public"),
         alreadyPublic: count("already_public"),
         notAuthorized: count("not_authorized"),
+        retired: count("retired"),
       },
     });
   });

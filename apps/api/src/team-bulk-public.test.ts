@@ -104,7 +104,7 @@ describe("#255 · publishTeamBots", () => {
     expect(by[B.memTeam].outcome).toBe("not_authorized");
     // De un bot ajeno no se revela la visibilidad.
     expect(by[B.memPriv].previousVisibility).toBeUndefined();
-    expect(r.body.summary).toEqual({ changed: 2, alreadyPublic: 1, notAuthorized: 2 });
+    expect(r.body.summary).toEqual({ changed: 2, alreadyPublic: 1, notAuthorized: 2, retired: 0 });
     expect(await vis(B.capPriv)).toBe("private");
     expect(await vis(B.capTeam)).toBe("team");
   });
@@ -124,7 +124,7 @@ describe("#255 · publishTeamBots", () => {
     const r = await call(teamId, captain.token, {});
     expect(r.status).toBe(200);
     expect(r.body.dryRun).toBe(false);
-    expect(r.body.summary).toEqual({ changed: 2, alreadyPublic: 1, notAuthorized: 2 });
+    expect(r.body.summary).toEqual({ changed: 2, alreadyPublic: 1, notAuthorized: 2, retired: 0 });
     expect(await vis(B.capPriv)).toBe("public");
     expect(await vis(B.capTeam)).toBe("public");
     expect(await vis(B.memPriv)).toBe("private");
@@ -153,5 +153,95 @@ describe("#255 · publishTeamBots", () => {
     expect(await codePublic(B.memPriv)).toBe(true);
     // Los bots de la capitana: código intacto (no son del miembro).
     expect(await codePublic(B.capPriv)).toBe(false);
+  });
+});
+
+/**
+ * #255 · ronda 1 (REVIEWER-B P3-1 y P3-2), escritas desde la política:
+ *  - la confirmación va atada a lo previsualizado: si el conjunto de bots del equipo
+ *    cambió, 409 `team_bots_changed` y NADA se escribe (un bot que entra después de
+ *    la previsualización no se publica sin haberse previsualizado);
+ *  - un bot RETIRADO de quien pide no se publica en bloque: sale como `retired`
+ *    (distinguible) y queda intacto; uno ajeno, retirado o no, sólo `not_authorized`.
+ */
+describe("#255 R1 · publishTeamBots: previsualización atada y retirados", () => {
+  let owner: { id: string; token: string };
+  let other: { id: string; token: string };
+  let tId: string;
+  const R1: Record<string, string> = {};
+
+  beforeAll(async () => {
+    owner = await newUser("r1-duena");
+    other = await newUser("r1-otro");
+    const [t] = await h
+      .db("teams")
+      .insert({ name: `bulk-r1-${randomUUID().slice(0, 6)}`, captain_id: owner.id })
+      .returning("id");
+    tId = t.id;
+    await h.db("team_members").insert([
+      { team_id: tId, user_id: owner.id, role: "captain" },
+      { team_id: tId, user_id: other.id, role: "member" },
+    ]);
+    R1.live = await newBot(owner.id, `r1-live-${randomUUID().slice(0, 4)}`, "private", tId);
+    R1.retired = await newBot(owner.id, `r1-ret-${randomUUID().slice(0, 4)}`, "private", tId);
+    await h.db("bots").where({ id: R1.retired }).update({ retired_at: h.db.fn.now() });
+    R1.otherRetired = await newBot(other.id, `r1-oret-${randomUUID().slice(0, 4)}`, "private", tId);
+    await h.db("bots").where({ id: R1.otherRetired }).update({ retired_at: h.db.fn.now() });
+  }, 120_000);
+
+  it("P3-2 · el retirado propio sale como `retired` y no cambia (ni con includeCode); el ajeno retirado, sólo not_authorized", async () => {
+    const pre = await call(tId, owner.token, { dryRun: true, includeCode: true });
+    expect(pre.status).toBe(200);
+    const by = byBot(pre.body.results);
+    expect(by[R1.live].outcome).toBe("would_make_public");
+    expect(by[R1.retired].outcome).toBe("retired");
+    expect(by[R1.retired].code).toBeUndefined();
+    expect(by[R1.otherRetired]).toEqual({
+      botId: R1.otherRetired,
+      name: expect.any(String),
+      outcome: "not_authorized",
+    });
+    expect(pre.body.summary).toEqual({ changed: 1, alreadyPublic: 0, notAuthorized: 1, retired: 1 });
+    const ids = pre.body.results.map((x: R) => x.botId);
+    const r = await call(tId, owner.token, { includeCode: true, expectBotIds: ids });
+    expect(r.status).toBe(200);
+    expect(byBot(r.body.results)[R1.retired].outcome).toBe("retired");
+    expect(await vis(R1.retired)).toBe("private");
+    expect(await codePublic(R1.retired)).toBe(false);
+    expect(await vis(R1.live)).toBe("public");
+    await h.db("bots").where({ id: R1.live }).update({ visibility: "private" });
+    await h.db("bot_versions").where({ bot_id: R1.live }).update({ code_public: false });
+  });
+
+  it("P3-1 · un bot que entra tras la previsualización → 409 team_bots_changed y no se escribe nada", async () => {
+    const pre = await call(tId, owner.token, { dryRun: true });
+    const ids = pre.body.results.map((x: R) => x.botId);
+    const intruder = await newBot(owner.id, `r1-new-${randomUUID().slice(0, 4)}`, "private", tId);
+    const auditsBefore = (await h.db("audit_log").where({ actor_id: owner.id })).length;
+    const r = await call(tId, owner.token, { expectBotIds: ids });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toBe("team_bots_changed");
+    expect(await vis(intruder)).toBe("private");
+    expect(await vis(R1.live)).toBe("private");
+    expect((await h.db("audit_log").where({ actor_id: owner.id })).length).toBe(auditsBefore);
+    // Un bot que SALE también invalida la previsualización.
+    const pre2 = await call(tId, owner.token, { dryRun: true });
+    const ids2 = pre2.body.results.map((x: R) => x.botId);
+    await h.db("bots").where({ id: intruder }).update({ team_id: null });
+    const r2 = await call(tId, owner.token, { expectBotIds: ids2 });
+    expect(r2.status).toBe(409);
+    expect(await vis(R1.live)).toBe("private");
+    // Con el conjunto vigente, sí.
+    const pre3 = await call(tId, owner.token, { dryRun: true });
+    const r3 = await call(tId, owner.token, { expectBotIds: pre3.body.results.map((x: R) => x.botId) });
+    expect(r3.status).toBe(200);
+    expect(await vis(R1.live)).toBe("public");
+  });
+
+  it("P3-1 · expectBotIds mal formado → 400 y nada cambia", async () => {
+    await h.db("bots").where({ id: R1.live }).update({ visibility: "private" });
+    expect((await call(tId, owner.token, { expectBotIds: "todos" })).status).toBe(400);
+    expect((await call(tId, owner.token, { expectBotIds: [1, 2] })).status).toBe(400);
+    expect(await vis(R1.live)).toBe("private");
   });
 });

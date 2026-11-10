@@ -172,7 +172,7 @@ describe("#255 · TeamBulkPublic (unitario)", () => {
     expect(changed).not.toHaveBeenCalled();
     await userEvent.click(within(dlg).getByTestId("team-bulk-confirm"));
     const res = await screen.findByTestId("team-bulk-result");
-    expect(bodies[1]).toEqual({ dryRun: false, includeCode: false });
+    expect(bodies[1]).toEqual({ dryRun: false, includeCode: false, expectBotIds: ["a", "m"] });
     expect(within(res).getByTestId("bulk-result-A").getAttribute("data-outcome")).toBe("made_public");
     expect(changed).toHaveBeenCalledTimes(1);
   });

@@ -74,6 +74,9 @@ info:
   # un miembro hace públicos, en UNA transacción, los bots del equipo de los que es
   # DUEÑO (misma regla que updateBot); previsualización con dryRun y resultado por bot
   # (not_authorized incluido). El código sólo con includeCode explícito.
+  # (#255 R1, mismo 0.17.0 aún no publicado: `expectBotIds` → 409 team_bots_changed si
+  # el conjunto de bots cambió tras la previsualización; outcome `retired` y
+  # summary.retired: los bots retirados del dueño no se tocan.)
   version: 0.17.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
@@ -401,6 +404,13 @@ paths:
               properties:
                 dryRun: { type: boolean, default: false }
                 includeCode: { type: boolean, default: false }
+                expectBotIds:
+                  type: array
+                  maxItems: 1000
+                  items: { type: string }
+                  description: |
+                    Ids de TODOS los bots que salieron en la previsualización. Si el conjunto
+                    actual de bots del equipo es otro, 409 team_bots_changed y no se escribe nada.
       responses:
         '200':
           description: Resultado por bot (también en los parciales)
@@ -419,7 +429,7 @@ paths:
                       properties:
                         botId: { type: string, format: uuid }
                         name: { type: string }
-                        outcome: { type: string, enum: [made_public, would_make_public, already_public, not_authorized] }
+                        outcome: { type: string, enum: [made_public, would_make_public, already_public, not_authorized, retired] }
                         previousVisibility: { type: string, enum: [private, team, public], description: 'Sólo en los bots autorizados.' }
                         code:
                           type: object
@@ -433,9 +443,11 @@ paths:
                       changed: { type: integer }
                       alreadyPublic: { type: integer }
                       notAuthorized: { type: integer }
-        '400': { description: dryRun o includeCode no booleanos, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+                      retired: { type: integer }
+        '400': { description: dryRun o includeCode no booleanos o expectBotIds inválido, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /teams/{teamId}/members:
     post:

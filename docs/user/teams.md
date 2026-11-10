@@ -39,6 +39,10 @@ En la tarjeta del equipo, **«Hacer públicos los bots que administras»** pone 
 
 Los bots que sí cambian lo hacen todos a la vez; cada cambio queda registrado como si lo hubieras hecho en el bot.
 
+- Tus bots **retirados** salen aparte («No se modificarán porque están retirados») y no cambian: si quieres hacer público uno, reactívalo o cambia su visibilidad en su ficha.
+- La confirmación aplica **exactamente la lista que has visto**. Si entre la previsualización y «Confirmar» entra o sale algún bot del equipo, no se cambia nada: se avisa, se muestra la lista nueva y tienes que volver a confirmar.
+- El botón dice lo que va a pasar: «hacer públicos N bots», «hacer público el código de N versiones» o ambas cosas.
+
 ## Usar el equipo en una batalla
 
 En «Nueva batalla», el tipo **batalla por equipos** te deja elegir dos equipos (hasta 4 bots por bando). En una batalla individual, «Equipo rojo» y «Equipo azul» (opcionales) limitan los bots de cada bando a los de ese equipo.
