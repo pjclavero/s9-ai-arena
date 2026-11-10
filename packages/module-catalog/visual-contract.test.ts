@@ -19,8 +19,14 @@
  *                                          ella está clasificado como PUBLIC (por inferencia).
  *   TEST 8 · PROJECTILE_INFERENCE           la tabla de cinemática de proyectiles (§12.2) es la que sale del catálogo
  *                                          y de las constantes reales, y lo que se infiere de ella es PUBLIC.
- *   TEST 9 · VIEWER_PROJECTION              los perfiles de vista de ADR-VIS-002 aplicados a §12: ninguna vista ve
- *                                          NEVER_VISUALIZE, las públicas ven exactamente lo PUBLIC y PRIVATE ≠ PUBLIC.
+ *   TEST 9 · VIEWER_PROJECTION              los perfiles de vista de ADR-VIS-002 aplicados a §12: lista canónica de
+ *                                          perfiles con su rol, ninguna vista ve NEVER_VISUALIZE, las públicas ven
+ *                                          exactamente lo PUBLIC y PRIVATE ≠ PUBLIC.
+ *   TEST 10 · VIEWER_ENTITY_PAIR (P2-9)     la proyección se resuelve por pareja (visor, vehículo observado): el
+ *                                          contexto, la matriz mínima de parejas contra una función de referencia y el
+ *                                          aislamiento de la caché (Intrinsic frente a Projected).
+ *   TEST 11 · ENGINE_DERIVED                las fugas del motor de §12.4 están clasificadas, atadas a su issue
+ *                                          (#261/#262/#263) y coinciden en los dos sentidos con §12, §5 y §6.
  *   TEST 0 · ESTRUCTURA                    el parser no puede saltarse filas en silencio: una línea con `|` pegada
  *                                          a una tabla, o ids fuera de una tabla reconocida, son error; el número
  *                                          de filas parseadas coincide con el texto bruto; las decisiones sólo
@@ -49,6 +55,15 @@ const SCHEMA_PATH = join(DATA_DIR, "..", "schema", "module.schema.json");
 const INVENTORY = readFileSync(join(DOCS, "VISUAL_COMPONENT_INVENTORY.md"), "utf8");
 const MATRIX = readFileSync(join(DOCS, "VISUAL_COMPONENT_MATRIX.md"), "utf8");
 const ADR2 = readFileSync(join(DOCS, "adr", "ADR-VIS-002-catalog-versioning.md"), "utf8");
+const MOUNTS_DOC = readFileSync(join(DOCS, "MOUNT_TYPE_DRAFT.md"), "utf8");
+const MASTER = readFileSync(join(DOCS, "MASTER-PLAN.md"), "utf8");
+const ENGINE_SRC = (rel: string): string => readFileSync(join(REPO, "apps", "arena-engine", "src", "sim", rel), "utf8");
+/** Texto sin comentarios HTML ni negritas y con los espacios colapsados (para buscar frases, no líneas). */
+const prose = (md: string): string =>
+  md
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/\*\*/g, "")
+    .replace(/\s+/g, " ");
 const catalog: ModuleDefinition[] = loadCatalog();
 const schemaCategories: string[] = JSON.parse(readFileSync(SCHEMA_PATH, "utf8")).properties.category.enum;
 
@@ -154,6 +169,7 @@ const CANONICAL_DATA_IDS = [
   "data.module_state",
   "data.module_health_exact",
   "data.armor_sector_hp",
+  "data.armor_material",
   "data.slot_occupancy",
   "data.module_identity",
   "data.sensor_installed",
@@ -200,8 +216,69 @@ const CANONICAL_CROSS_VIEWS = [
   "cross.team_capture",
   "cross.debug_overlay",
   "cross.client_payload",
+  "cross.owner_to_rival",
 ];
+/** Elementos de batalla (runtime) revisados: un id runtime inventado en inventario y matriz a la vez es rojo. */
+const CANONICAL_RUNTIME_IDS = [
+  "runtime.turret",
+  "runtime.projectile",
+  "runtime.muzzle_flash",
+  "runtime.mine_deployed",
+  "runtime.explosion",
+  "runtime.smoke",
+  "runtime.wreck",
+  "runtime.flag",
+  "runtime.juggernaut_marker",
+  "runtime.team_color",
+  "runtime.bot_label",
+];
+/** Los 13 estados visuales del encargo: conjunto EXACTO (ni falta ni sobra). */
+const CANONICAL_STATES = [
+  "healthy",
+  "damaged",
+  "critical",
+  "destroyed",
+  "offline",
+  "firing",
+  "reloading",
+  "out_of_ammo",
+  "engine_active",
+  "radio_active",
+  "sensor_active",
+  "carrying_flag",
+  "destroyed_vehicle",
+];
+/** Taxonomía de MOUNT_TYPE_DRAFT §2: conjunto EXACTO. */
+const CANONICAL_MOUNT_TYPES = [
+  "hull.base",
+  "weapon.primary",
+  "weapon.secondary",
+  "sensor.front",
+  "sensor.top",
+  "sensor.omni",
+  "sensor.flank",
+  "radio.top",
+  "armor.front",
+  "armor.side",
+  "armor.rear",
+  "mobility.left",
+  "mobility.right",
+  "bay.rear",
+  "internal",
+  "fx.muzzle",
+  "ui.overhead",
+];
+/** Mount types que no salen de una ranura (ancla del casco, efectos, UI): no aparecen en los bloques JSON de §9. */
+const NON_SLOT_MOUNT_TYPES = ["hull.base", "fx.muzzle", "ui.overhead"];
 const DISCLOSURE = new Set(["YES", "NO", "PARTIAL"]);
+/** Referencias válidas de la columna ENGINE_DERIVED de §12 (issue de motor, decisión de producto o BY_DESIGN). */
+const ENGINE_ISSUES = ["#261", "#262", "#263"];
+const ENGINE_REF = /^(?:#26[123]|D-0[1-8]|BY_DESIGN)$/;
+const refsOf = (cell: string | undefined): string[] =>
+  (cell ?? "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
 const dupes = (ids: string[]): string[] => [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
 const sorted = (a: Iterable<string>): string[] => [...a].sort();
 
@@ -274,7 +351,12 @@ describe("TEST 2 · VISUAL_INVENTORY_UNIQUE_IDS", () => {
     ["MATRIX", "CHASSIS_SLOT", MATRIX],
     ["MATRIX", "WEAPON_KIN", MATRIX],
     ["MATRIX", "CROSS_VIEW_ID", MATRIX],
+    ["MATRIX", "LEAK_CLASS", MATRIX],
+    ["MATRIX", "ENGINE_LEAK_ID", MATRIX],
     ["ADR-VIS-002", "VIEW_PROFILE", ADR2],
+    ["ADR-VIS-002", "PAIR_CASE", ADR2],
+    ["ADR-VIS-002", "CACHE_ID", ADR2],
+    ["MOUNT_TYPE_DRAFT", "MOUNT_TYPE", MOUNTS_DOC],
   ];
   for (const [doc, key, md] of KEYED) {
     it(`ninguna clave ${key} se repite en ${doc} (sumando todas sus tablas)`, () => {
@@ -309,6 +391,20 @@ describe("TEST 2 · VISUAL_INVENTORY_UNIQUE_IDS", () => {
         .filter((id) => id.startsWith("runtime.")),
     );
     expect(runtimeDec, "decisiones runtime frente al inventario").toEqual(runtimeInv);
+    expect(runtimeInv, "elementos runtime frente al conjunto canónico").toEqual(sorted(CANONICAL_RUNTIME_IDS));
+  });
+
+  it("P2-10 · ninguna fila de clave queda con la clasificación vacía o nula", () => {
+    const bad: string[] = [];
+    const empty = (v: string | undefined): boolean => v === undefined || v === "" || /^(null|undefined|-)$/i.test(v);
+    for (const r of decisionRows()) {
+      if (empty(r.DECISION) || empty(r.VISIBILITY_CLASS)) bad.push(`${r.DOMAIN_ID}: decisión o clase vacía`);
+    }
+    for (const r of inventoryRows()) if (empty(r.VISUAL_RELEVANCE)) bad.push(`${r.DOMAIN_ID}: relevancia vacía`);
+    for (const r of tables(MATRIX, "DATA_ID")) if (empty(r.CLASSIFICATION)) bad.push(`${r.DATA_ID}: clase vacía`);
+    for (const r of tables(MATRIX, "STATE")) if (empty(r.STATUS)) bad.push(`${r.STATE}: estado vacío`);
+    for (const r of tables(MATRIX, "CROSS_VIEW_ID")) if (empty(r.RULE)) bad.push(`${r.CROSS_VIEW_ID}: regla vacía`);
+    expect(bad).toEqual([]);
   });
 });
 
@@ -409,6 +505,15 @@ describe("TEST 4 · VISUAL_INFORMATION_CLASSIFIED", () => {
         bad.push(`${r.DATA_ID}: sólo derivado y sin «PUBLIC por inferencia» en NOTES`);
       if ((d === "PARTIAL" || v === "PARTIAL") && r.NOTES.length < 20)
         bad.push(`${r.DATA_ID}: PARTIAL sin explicación en NOTES`);
+      // ENGINE_DERIVED: lo derivado lo permite el motor y va atado a una issue, una decisión o BY_DESIGN.
+      const refs = refsOf(r.ENGINE_DERIVED);
+      if (v === "NO" && r.ENGINE_DERIVED !== "—")
+        bad.push(`${r.DATA_ID}: sin derivación pero ENGINE_DERIVED «${r.ENGINE_DERIVED}»`);
+      if (v !== "NO") {
+        if (refs.length === 0 || refs.some((x) => !ENGINE_REF.test(x)))
+          bad.push(`${r.DATA_ID}: ENGINE_DERIVED «${r.ENGINE_DERIVED}» no válido`);
+        if (dupes(refs).length) bad.push(`${r.DATA_ID}: ENGINE_DERIVED repetido`);
+      }
     }
     expect(bad).toEqual([]);
     // La taxonomía obligatoria está escrita en el contrato.
@@ -437,21 +542,8 @@ describe("TEST 4 · VISUAL_INFORMATION_CLASSIFIED", () => {
 
   it("§13: los 13 estados visuales están marcados CURRENT (con referencia de código) o FUTURE", () => {
     const rows = tables(MATRIX, "STATE");
-    const states = [
-      "healthy",
-      "damaged",
-      "critical",
-      "destroyed",
-      "offline",
-      "firing",
-      "reloading",
-      "out_of_ammo",
-      "engine_active",
-      "radio_active",
-      "sensor_active",
-      "carrying_flag",
-      "destroyed_vehicle",
-    ];
+    const states = CANONICAL_STATES;
+    expect(sorted(rows.map((r) => r.STATE)), "STATE: conjunto exacto").toEqual(sorted(states));
     const byState = new Map(rows.map((r) => [r.STATE, r]));
     const bad: string[] = [];
     for (const s of states) {
@@ -480,16 +572,33 @@ describe("TEST 5 · CHASSIS_MOUNT_CONTRACT", () => {
     appliesToVersions: number[];
     mounts: Record<string, Mount>;
   }
+  // P2-10 · Sólo cuentan los bloques que un lector ve (fuera de comentarios HTML), y TODO bloque ```json debe ser
+  // un bloque de mounts: un JSON que no lo sea, o que no parsee, es rojo, no algo que se ignora.
   const blocks = (): ChassisMounts[] =>
-    [...MATRIX.matchAll(/```json\n([\s\S]*?)```/g)]
-      .map((m) => JSON.parse(m[1]) as ChassisMounts)
-      .filter((b) => typeof b.chassis === "string");
+    [...MATRIX.replace(/<!--[\s\S]*?-->/g, "").matchAll(/```json\n([\s\S]*?)```/g)].map((m) => {
+      const b = JSON.parse(m[1]) as ChassisMounts;
+      if (typeof b.chassis !== "string" || !Array.isArray(b.appliesToVersions) || typeof b.mounts !== "object")
+        throw new Error(`bloque JSON de la matriz que no es un bloque de mounts: ${m[1].slice(0, 60)}`);
+      return b;
+    });
 
-  it("cada versión de cada chasis del catálogo tiene un bloque de mounts", () => {
-    const covered = new Set(blocks().flatMap((b) => b.appliesToVersions.map((v) => `${b.chassis}@${v}`)));
+  it("cada versión de cada chasis del catálogo tiene EXACTAMENTE un bloque de mounts (chasis@versión único)", () => {
+    const coveredList = blocks().flatMap((b) => b.appliesToVersions.map((v) => `${b.chassis}@${v}`));
     const chassis = catalog.filter((m) => m.category === "chassis").map(versioned);
     expect(chassis.length).toBeGreaterThan(0);
-    expect(chassis.filter((c) => !covered.has(c))).toEqual([]);
+    expect(dupes(coveredList), "chasis@versión representado en más de un bloque").toEqual([]);
+    expect(dupes(blocks().map((b) => b.chassis)), "chasis con más de un bloque").toEqual([]);
+    expect(sorted(coveredList), "bloques frente a los chasis del catálogo").toEqual(sorted(chassis));
+  });
+
+  it("los MOUNT_TYPE son EXACTAMENTE la taxonomía canónica, y los bloques de §9 usan exactamente los de ranura", () => {
+    const declared = tables(MOUNTS_DOC, "MOUNT_TYPE").map((r) => r.MOUNT_TYPE);
+    expect(dupes(declared)).toEqual([]);
+    expect(sorted(declared), "MOUNT_TYPE_DRAFT §2").toEqual(sorted(CANONICAL_MOUNT_TYPES));
+    const used = new Set(blocks().flatMap((b) => Object.values(b.mounts).flatMap((mt) => mt.MOUNT_TYPE)));
+    expect(sorted(used), "MOUNT_TYPE usados en §9").toEqual(
+      sorted(CANONICAL_MOUNT_TYPES.filter((t) => !NON_SLOT_MOUNT_TYPES.includes(t))),
+    );
   });
 
   it("los mounts de cada chasis cubren EXACTAMENTE sus ranuras reales, con su maxSize", () => {
@@ -536,14 +645,19 @@ describe("TEST 6 · SENSOR_VISUAL_CONTRACT / WEAPON_VISUAL_CONTRACT", () => {
       .map(versioned);
   };
 
-  it("todo sensor del catálogo (id y versión) tiene fila en el contrato de sensores", () => {
+  const bases = (category: string): string[] =>
+    sorted(new Set(catalog.filter((m) => m.category === category).map((m) => m.id)));
+
+  it("todo sensor del catálogo (id y versión) tiene fila en el contrato de sensores, y ninguna sobra", () => {
     expect(catalog.some((m) => m.category === "sensor")).toBe(true);
     expect(covers(tables(MATRIX, "SENSOR_ID"), "SENSOR_ID", "sensor")).toEqual([]);
+    expect(sorted(tables(MATRIX, "SENSOR_ID").map((r) => r.SENSOR_ID))).toEqual(bases("sensor"));
   });
 
-  it("toda arma del catálogo (id y versión) tiene fila en el contrato de armas", () => {
+  it("toda arma del catálogo (id y versión) tiene fila en el contrato de armas, y ninguna sobra", () => {
     expect(catalog.some((m) => m.category === "weapon")).toBe(true);
     expect(covers(tables(MATRIX, "WEAPON_ID"), "WEAPON_ID", "weapon")).toEqual([]);
+    expect(sorted(tables(MATRIX, "WEAPON_ID").map((r) => r.WEAPON_ID))).toEqual(bases("weapon"));
   });
 });
 
@@ -562,6 +676,8 @@ const RECOGNIZED: Record<string, string[]> = {
     "CHASSIS_SLOT",
     "WEAPON_KIN",
     "CROSS_VIEW_ID",
+    "LEAK_CLASS",
+    "ENGINE_LEAK_ID",
   ],
 };
 /** Un id de los que el test usa como clave: `data.x`, `runtime.x` o `familia.modulo@N`, entre backticks. */
@@ -659,6 +775,14 @@ describe("TEST 0 · ESTRUCTURA de los documentos (sin falsos verdes del parser)"
     expect(tables(MATRIX, "REAL_CATEGORY").length).toBe(real.size);
     expect(tables(MATRIX, "SENSOR_ID").length).toBe(ids("sensor"));
     expect(tables(MATRIX, "WEAPON_ID").length).toBe(ids("weapon"));
+    // Tablas nuevas de la ronda 3: tantas filas parseadas como líneas brutas con su id.
+    expect(tables(MATRIX, "ENGINE_LEAK_ID").length, "filas ENGINE_LEAK_ID").toBe(rawRows(MATRIX, /engine\.[a-z0-9_]+/));
+    expect(tables(ADR2, "PAIR_CASE").length, "filas PAIR_CASE").toBe(rawRows(ADR2, /pair\.[a-z0-9_.]+/));
+    expect(tables(ADR2, "CACHE_ID").length, "filas CACHE_ID").toBe(rawRows(ADR2, /cache\.[a-z0-9_]+/));
+    expect(tables(ADR2, "VIEW_PROFILE").length, "filas VIEW_PROFILE").toBe(rawRows(ADR2, /view\.[a-z0-9_]+/));
+    expect(tables(MOUNTS_DOC, "MOUNT_TYPE").length, "filas MOUNT_TYPE").toBe(
+      rawRows(MOUNTS_DOC, /[a-z]+(?:\.[a-z]+)?/),
+    );
   });
 
   it("(c) toda fila de decisión de la matriz habla de un elemento del inventario o del catálogo", () => {
@@ -852,6 +976,45 @@ describe("TEST 7 · SLOT_INFERENCE (fog of war por ranuras ocupadas)", () => {
       "consume **sólo** el canal de\n   espectador o la proyección saneada, **nunca** el replay crudo",
     );
   });
+
+  // P3-9 · No basta con que la frase literal exista: la regla de §12.3 y la prosa tienen que seguir prohibiendo.
+  it("PRE-1 · las reglas de §12.3 prohíben, y ningún texto permite al renderer público leer el crudo", () => {
+    const rule = new Map(tables(MATRIX, "CROSS_VIEW_ID").map((r) => [r.CROSS_VIEW_ID, r.RULE]));
+    const bad: string[] = [];
+    for (const id of ["cross.raw_replay", "cross.owner_to_rival"]) {
+      if (!(rule.get(id) ?? "").startsWith("Prohibido")) bad.push(`${id}: la regla no empieza por «Prohibido»`);
+      if (!(rule.get(id) ?? "").includes("proyección saneada"))
+        bad.push(`${id}: la regla no cita la proyección saneada`);
+    }
+    for (const [id, r] of rule) if (/permitid/i.test(r)) bad.push(`${id}: regla permisiva «${r.slice(0, 60)}»`);
+    for (const [name, md] of [
+      ["MATRIX", MATRIX],
+      ["ADR-VIS-002", ADR2],
+    ] as const) {
+      const text = prose(md);
+      const permissive =
+        /(renderer|vista|perfil)[^.]{0,20}p[úu]blic[oa][^.]{0,40}\b(puede|pueden|podr[áa]n?)\b[^.]{0,40}\b(leer|consumir|usar|recibir)\b[^.]{0,40}crudo/i.exec(
+          text,
+        );
+      if (permissive) bad.push(`${name}: «${permissive[0]}»`);
+    }
+    const m = prose(MATRIX);
+    if (!m.includes("El contrato tiene que ser seguro aunque se activen los replays públicos"))
+      bad.push("MATRIX: falta «seguro aunque se activen los replays públicos»");
+    if (!m.includes("que hoy estén apagados por configuración no cuenta como protección"))
+      bad.push("MATRIX: falta «apagados por configuración no cuenta como protección»");
+    if (!m.includes("«RAW_REPLAY ⇒ dueño» se resuelve por pareja"))
+      bad.push("MATRIX: «RAW_REPLAY ⇒ dueño» no es por pareja");
+    expect(bad).toEqual([]);
+  });
+
+  it("P3-10 · el flag `debugOpen` del formato de replay está inventariado como CROSS_VIEW latente", () => {
+    const fmt = readFileSync(join(REPO, "apps", "replay-service", "src", "format.ts"), "utf8");
+    expect(fmt, "premisa: el formato sigue teniendo debugOpen").toMatch(/\bdebugOpen\s*:\s*boolean/);
+    const dbg = tables(MATRIX, "CROSS_VIEW_ID").find((r) => r.CROSS_VIEW_ID === "cross.debug_overlay");
+    expect(dbg?.VECTOR ?? "").toContain("`debugOpen`");
+    expect(dbg?.RULE ?? "").toContain("`debugOpen`");
+  });
 });
 
 /* ─────────────── TEST 8 · PROJECTILE_INFERENCE: lo que delata la cinemática del proyectil (P2-5) ─────────────── */
@@ -875,6 +1038,8 @@ interface Kin {
   reach: number;
   interval: number[];
   hullDamage: string;
+  /** Ritmo máximo de giro de la torreta por estado (operational/damaged/critical): turretRateRads × rendimiento. */
+  turret: number[];
 }
 
 function weaponKinematics(): Map<string, Kin> {
@@ -900,6 +1065,7 @@ function weaponKinematics(): Map<string, Kin> {
       reach: (speed * TTL_TICKS) / TICK_HZ,
       interval: perfs.map((p) => fireInterval(w.cooldownTicks ?? NaN, p)),
       hullDamage: hull,
+      turret: perfs.map((p) => (w.turretRateRads ?? NaN) * p),
     });
   }
   return out;
@@ -919,12 +1085,19 @@ function expectedKinRows(): Map<string, Record<string, string>> {
       if (s.interval.slice(1).join() !== k.interval.slice(1).join()) signals.add("INTERVAL_DEGRADED");
       if (s.hullDamage !== k.hullDamage) signals.add("HULL_DAMAGE");
     }
+    // #262 · Con el `state` público conocido, se compara el ritmo de giro estado a estado con las otras armas base.
+    const turretShared = k.turret.some((r, i) =>
+      otherBases.some(([, o]) => Number(num(o.turret[i])) === Number(num(r))),
+    );
+    const turretFastest = k.turret.every((r, i) => otherBases.every(([, o]) => r > o.turret[i]));
     rows.set(id, {
       SPEED_MS: num(k.speed),
       REACH_M: num(k.reach),
       INTERVAL_TICKS: k.interval.join(" / "),
       HULL_DAMAGE: k.hullDamage,
       IDENTITY_BY_SPEED: otherBases.some(([, o]) => o.speed === k.speed) ? "AMBIGUOUS" : "IDENTITY",
+      TURRET_RATE_RADS: k.turret.map(num).join(" / "),
+      IDENTITY_BY_TURRET: turretShared ? "AMBIGUOUS" : turretFastest ? "IDENTITY" : "EXCLUSION",
       VERSION_SIGNAL: signals.size ? sorted(signals).join(", ") : "—",
     });
   }
@@ -936,6 +1109,63 @@ describe("TEST 8 · PROJECTILE_INFERENCE (fog of war por cinemática y daño del
     expect(Number.isFinite(TTL_TICKS) && TTL_TICKS > 0).toBe(true);
     expect(COMBAT_SRC).toMatch(COOLDOWN_SRC);
     expect(COMBAT_SRC).toContain("const speed = w.spec.projectileSpeedMs");
+  });
+
+  // P3-8 · «El disparo sólo se resuelve en ticks de decisión» es una premisa de la tabla: se vigila en battle.ts.
+  it("premisa del motor: los comandos (y con ellos el disparo) sólo se rellenan en ticks de decisión", () => {
+    const src = ENGINE_SRC("battle.ts");
+    expect(src).toMatch(/isDecisionTick\(\): boolean \{\s*return this\.tick % DECISION_EVERY_N_TICKS === 0;\s*\}/);
+    const open = /const commands = new Map<string, any>\(\);\s*if \(this\.isDecisionTick\(\)\) \{/.exec(src);
+    expect(open, "el mapa de comandos se rellena bajo isDecisionTick()").not.toBeNull();
+    // Fin del bloque `if (this.isDecisionTick()) { … }` por conteo de llaves.
+    const start = open!.index + open![0].length;
+    let depth = 1;
+    let end = start;
+    for (; end < src.length && depth > 0; end++) {
+      if (src[end] === "{") depth++;
+      else if (src[end] === "}") depth--;
+    }
+    const sets = [...src.matchAll(/\bcommands\.set\(/g)].map((x) => x.index ?? -1);
+    expect(sets.length).toBeGreaterThan(0);
+    expect(
+      sets.filter((i) => i < start || i > end),
+      "commands.set fuera del bloque de decisión",
+    ).toEqual([]);
+    expect(src.indexOf("this.resolveFiring(commands,")).toBeGreaterThan(end);
+  });
+
+  it("premisa del motor (#262): la torreta gira a turretRateRads × rendimiento y su rumbo va en cada snapshot", () => {
+    expect(ENGINE_SRC("vehicle.ts")).toContain("(w.spec.turretRateRads ?? 0) * this.performanceOf(w.spec.slot)");
+    const battle = ENGINE_SRC("battle.ts");
+    expect(battle).toContain("const maxStep = rate * TICK_DT;");
+    expect(battle).toContain("turretHeading: round6(v.turretHeading)");
+  });
+
+  it("#262 · si el giro de la torreta separa las armas base, sus decisiones lo atan a la issue", () => {
+    const decisions = new Map(decisionRows().map((r) => [r.DOMAIN_ID, r]));
+    const bad: string[] = [];
+    for (const [id, r] of expectedKinRows()) {
+      if (r.IDENTITY_BY_TURRET === "AMBIGUOUS") continue;
+      const why = decisions.get(id)?.WHY ?? "";
+      if (!why.includes("ENGINE_DERIVED") || !why.includes("#262"))
+        bad.push(`${id}: giro distinguible sin ENGINE_DERIVED #262`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("#263 · si dos placas del mismo sector reducen distinto, su decisión dice que el material es ENGINE_DERIVED", () => {
+    const decisions = new Map(decisionRows().map((r) => [r.DOMAIN_ID, r]));
+    const armor = catalog.filter((m) => m.category === "armor");
+    expect(armor.length).toBeGreaterThan(0);
+    const bad: string[] = [];
+    for (const a of armor) {
+      const distinct = armor.some((o) => o !== a && o.sector === a.sector && o.reduction !== a.reduction);
+      if (!distinct) continue;
+      const why = decisions.get(versioned(a))?.WHY ?? "";
+      if (!why.includes("ENGINE_DERIVED") || !why.includes("#263"))
+        bad.push(`${versioned(a)}: sin ENGINE_DERIVED #263`);
+    }
+    expect(bad).toEqual([]);
   });
 
   it("la tabla WEAPON_KIN de §12.2 es EXACTAMENTE la que sale del catálogo y de las constantes reales", () => {
@@ -993,19 +1223,118 @@ describe("TEST 8 · PROJECTILE_INFERENCE (fog of war por cinemática y daño del
   });
 });
 
-/* ─────────────── TEST 9 · VIEWER_PROJECTION: la vista depende de la audiencia (P2-6) ─────────────── */
+/* ─────────────── TEST 9 · VIEWER_PROJECTION: la vista depende de la audiencia (P2-6, P2-10) ─────────────── */
+
+/** P2-10 · Lista canónica de perfiles: [VIEWER_ROLE, SEES_CLASSES, OBSERVER_DEPENDENT]. Comparación exacta. */
+const CANONICAL_VIEW_PROFILES: Record<string, string[]> = {
+  "view.public_live": ["spectator", "PUBLIC", "HIDDEN"],
+  "view.public_replay": ["spectator", "PUBLIC", "HIDDEN"],
+  "view.broadcast": ["spectator", "PUBLIC", "HIDDEN"],
+  "view.ally": ["team", "PUBLIC, ALLY_ONLY", "HIDDEN"],
+  "view.owner": ["owner", "PUBLIC, ALLY_ONLY, SELF_ONLY", "SHOWN"],
+  "view.internal": ["internal", "PUBLIC, ALLY_ONLY, SELF_ONLY", "SHOWN"],
+};
+/** Perfiles públicos y la ÚNICA fuente de equipamiento que pueden tener (nunca el replay crudo, PRE-1). */
+const PUBLIC_EQUIPMENT_SOURCE: Record<string, string> = {
+  "view.public_live": "canal de espectador",
+  "view.public_replay": "proyección saneada del replay",
+  "view.broadcast": "canal de espectador",
+};
+/** P2-9 · Campos de VisualProjectionContext (ADR-VIS-002) y si son opcionales. */
+const CANONICAL_PROJECTION_CONTEXT: Record<string, string> = {
+  viewerId: "optional",
+  viewerRole: "required",
+  viewerTeamIds: "optional",
+  observedBotId: "required",
+  observedBotVersionId: "required",
+  observedBotOwnerId: "optional",
+  observedTeamId: "optional",
+  spectatorMode: "required",
+  spectatorPolicyVersion: "required",
+  visibilityPolicyVersion: "required",
+};
+/** P2-9 · Matriz mínima de parejas: [VIEWER, CHANNEL, OBSERVED]. */
+const CANONICAL_PAIR_CASES: Record<string, string[]> = {
+  "pair.owner_a.sees_a": ["owner(A)", "private", "A"],
+  "pair.owner_a.sees_b": ["owner(A)", "private", "B"],
+  "pair.owner_b.sees_a": ["owner(B)", "private", "A"],
+  "pair.team_a.sees_a": ["team(A)", "private", "A"],
+  "pair.team_a.sees_b": ["team(A)", "private", "B"],
+  "pair.admin.sees_a": ["admin", "internal", "A"],
+  "pair.admin.public_live_a": ["admin", "live_public", "A"],
+  "pair.anonymous.sees_a": ["anonymous", "live_public", "A"],
+  "pair.spectator.sees_a": ["spectator", "live_public", "A"],
+  "pair.broadcast.sees_a": ["broadcast", "broadcast", "A"],
+  "pair.public_replay.sees_a": ["anonymous", "public_replay", "A"],
+  "pair.owner_a.public_live_a": ["owner(A)", "live_public", "A"],
+  "pair.owner_a.public_replay_a": ["owner(A)", "public_replay", "A"],
+};
+/** P2-9 · Niveles de caché y si se sirven al cliente. */
+const CANONICAL_CACHES: Record<string, string> = {
+  "cache.asset": "YES",
+  "cache.intrinsic_composition": "NO",
+  "cache.projected_composition": "YES",
+};
+const PROJECTED_KEY_REQUIRED = [
+  "observedBotId",
+  "viewerRelation",
+  "resolvedProfile",
+  "spectatorMode",
+  "spectatorPolicyVersion",
+  "visibilityPolicyVersion",
+  "visualCatalogVersion",
+  "renderTarget",
+];
+/** §12.4 · Fugas del motor y su issue. */
+const CANONICAL_ENGINE_LEAKS: Record<string, string> = {
+  "engine.entity_identity_order": "#261",
+  "engine.turret_kinematics": "#262",
+  "engine.damage_response": "#263",
+};
+/** §12 · Datos atados a cada issue de motor (columna ENGINE_DERIVED). */
+const CANONICAL_ENGINE_DATA: Record<string, string[]> = {
+  "#261": ["data.mine_bay_contents", "data.mine_position"],
+  "#262": ["data.full_loadout", "data.module_identity", "data.weapon_identity"],
+  "#263": [
+    "data.armor_material",
+    "data.armor_sector_hp",
+    "data.full_loadout",
+    "data.hit_details",
+    "data.module_identity",
+  ],
+};
+
+/** Datos de §12 que ve un perfil de ADR-VIS-002. */
+const visibleFor = (p: Row): Set<string> => {
+  const classes = new Set(p.SEES_CLASSES.split(",").map((c) => c.trim()));
+  if (p.OBSERVER_DEPENDENT === "SHOWN") classes.add("OBSERVER_DEPENDENT");
+  return new Set(
+    tables(MATRIX, "DATA_ID")
+      .filter((r) => classes.has(r.CLASSIFICATION))
+      .map((r) => r.DATA_ID),
+  );
+};
 
 describe("TEST 9 · VIEWER_PROJECTION (ADR-VIS-002: PRIVATE_VIEW ≠ PUBLIC_VIEW)", () => {
   const profiles = (): Row[] => tables(ADR2, "VIEW_PROFILE");
-  const visibleFor = (p: Row): Set<string> => {
-    const classes = new Set(p.SEES_CLASSES.split(",").map((c) => c.trim()));
-    if (p.OBSERVER_DEPENDENT === "SHOWN") classes.add("OBSERVER_DEPENDENT");
-    return new Set(
-      tables(MATRIX, "DATA_ID")
-        .filter((r) => classes.has(r.CLASSIFICATION))
-        .map((r) => r.DATA_ID),
+
+  it("P2-10 · los perfiles son EXACTAMENTE la lista canónica, con su rol, sus clases y su OBSERVER_DEPENDENT", () => {
+    const got = Object.fromEntries(
+      profiles().map((p) => [p.VIEW_PROFILE, [p.VIEWER_ROLE, p.SEES_CLASSES, p.OBSERVER_DEPENDENT]]),
     );
-  };
+    expect(dupes(profiles().map((p) => p.VIEW_PROFILE))).toEqual([]);
+    expect(got).toEqual(CANONICAL_VIEW_PROFILES);
+  });
+
+  it("las vistas públicas toman el equipamiento sólo del canal de espectador o de la proyección saneada", () => {
+    const src = new Map(profiles().map((p) => [p.VIEW_PROFILE, p.EQUIPMENT_SOURCE]));
+    const bad = Object.entries(PUBLIC_EQUIPMENT_SOURCE)
+      .filter(([id, s]) => src.get(id) !== s)
+      .map(([id]) => `${id}: «${src.get(id)}»`);
+    for (const [id, s] of src)
+      if (!(id in PUBLIC_EQUIPMENT_SOURCE) && !/autorizad/i.test(s ?? "")) bad.push(`${id}: privado sin autorización`);
+    expect(bad).toEqual([]);
+  });
 
   it("los perfiles son válidos y ninguno ve NEVER_VISUALIZE", () => {
     const bad: string[] = [];
@@ -1021,28 +1350,32 @@ describe("TEST 9 · VIEWER_PROJECTION (ADR-VIS-002: PRIVATE_VIEW ≠ PUBLIC_VIEW
     expect(bad).toEqual([]);
   });
 
-  it("las vistas de espectador ven EXACTAMENTE lo PUBLIC de §12 y nunca leen el replay crudo", () => {
-    const pub = sorted(
-      tables(MATRIX, "DATA_ID")
-        .filter((r) => r.CLASSIFICATION === "PUBLIC")
-        .map((r) => r.DATA_ID),
+  it("las vistas de espectador ven EXACTAMENTE lo PUBLIC de §12; la de equipo, sólo PUBLIC ∪ ALLY_ONLY", () => {
+    const data = tables(MATRIX, "DATA_ID");
+    const pub = sorted(data.filter((r) => r.CLASSIFICATION === "PUBLIC").map((r) => r.DATA_ID));
+    const allyMax = new Set(
+      data.filter((r) => r.CLASSIFICATION === "PUBLIC" || r.CLASSIFICATION === "ALLY_ONLY").map((r) => r.DATA_ID),
     );
-    const spect = profiles().filter((p) => p.VIEWER_ROLE === "spectator");
-    expect(spect.length).toBeGreaterThan(0);
     const bad: string[] = [];
-    for (const p of spect) {
-      if (JSON.stringify(sorted(visibleFor(p))) !== JSON.stringify(pub))
-        bad.push(`${p.VIEW_PROFILE}: ve algo no PUBLIC`);
-      if (/crudo/i.test(p.EQUIPMENT_SOURCE)) bad.push(`${p.VIEW_PROFILE}: lee el replay crudo`);
+    for (const id of Object.keys(PUBLIC_EQUIPMENT_SOURCE)) {
+      const p = profiles().find((x) => x.VIEW_PROFILE === id);
+      if (!p) bad.push(`${id}: falta`);
+      else if (JSON.stringify(sorted(visibleFor(p))) !== JSON.stringify(pub)) bad.push(`${id}: ve algo no PUBLIC`);
+    }
+    const ally = profiles().find((x) => x.VIEW_PROFILE === "view.ally");
+    if (!ally) bad.push("view.ally: falta");
+    else {
+      const extra = [...visibleFor(ally)].filter((id) => !allyMax.has(id));
+      if (extra.length) bad.push(`view.ally ve fuera de PUBLIC ∪ ALLY_ONLY: ${extra.join(", ")}`);
     }
     expect(bad).toEqual([]);
   });
 
   it("PRIVATE_VIEW ≠ PUBLIC_VIEW: el dueño ve estrictamente más que cualquier espectador", () => {
-    const owner = profiles().find((p) => p.VIEWER_ROLE === "owner");
+    const owner = profiles().find((p) => p.VIEW_PROFILE === "view.owner");
     expect(owner, "perfil de dueño").toBeDefined();
     const ownerSees = visibleFor(owner!);
-    for (const p of profiles().filter((x) => x.VIEWER_ROLE === "spectator")) {
+    for (const p of profiles().filter((x) => x.VIEW_PROFILE in PUBLIC_EQUIPMENT_SOURCE)) {
       const pubSees = visibleFor(p);
       expect(
         [...pubSees].filter((id) => !ownerSees.has(id)),
@@ -1051,12 +1384,237 @@ describe("TEST 9 · VIEWER_PROJECTION (ADR-VIS-002: PRIVATE_VIEW ≠ PUBLIC_VIEW
       expect([...ownerSees].filter((id) => !pubSees.has(id)).length, `dueño − ${p.VIEW_PROFILE}`).toBeGreaterThan(0);
     }
   });
+});
 
-  it("la clave de la caché de composición incluye la proyección y el perfil, nunca sólo botVersionId", () => {
-    expect(ADR2).toContain(
-      "`(hash del equipamiento YA proyectado, visibilityProfile, viewerRole, spectatorPolicyVersion, visualCatalogVersion, renderTarget)`",
+/* ─────────────── TEST 10 · VIEWER_ENTITY_PAIR: la proyección se decide por pareja (P2-9) ─────────────── */
+
+/**
+ * Función de referencia de ADR-VIS-002 («Proyección por pareja»), escrita aquí de forma independiente de la tabla:
+ * la relación sale del visor y del vehículo OBSERVADO; el perfil, del canal y de esa relación.
+ */
+const relationOf = (viewer: string, observed: string): string => {
+  const m = /^(owner|team)\(([A-Z])\)$/.exec(viewer);
+  if (m) return m[2] !== observed ? "NONE" : m[1] === "owner" ? "OWNER" : "TEAMMATE";
+  if (viewer === "admin") return "INTERNAL";
+  return ["anonymous", "spectator", "broadcast"].includes(viewer) ? "NONE" : `?${viewer}`;
+};
+const profileOf = (channel: string, relation: string): string => {
+  if (channel === "live_public") return "view.public_live";
+  if (channel === "public_replay") return "view.public_replay";
+  if (channel === "broadcast") return "view.broadcast";
+  if (channel === "private")
+    return relation === "OWNER" ? "view.owner" : relation === "TEAMMATE" ? "view.ally" : "view.public_live";
+  if (channel === "internal") return relation === "INTERNAL" ? "view.internal" : "view.public_live";
+  return `?${channel}`;
+};
+
+describe("TEST 10 · VIEWER_ENTITY_PAIR (P2-9: visor + vehículo observado + relación + política)", () => {
+  const pairs = (): Row[] => tables(ADR2, "PAIR_CASE");
+  const byCase = (): Map<string, Row> => new Map(pairs().map((r) => [r.PAIR_CASE, r]));
+  const profile = (id: string): Row | undefined => tables(ADR2, "VIEW_PROFILE").find((p) => p.VIEW_PROFILE === id);
+
+  it("VisualProjectionContext declara EXACTAMENTE los campos exigidos (visor, vehículo observado, relación, políticas)", () => {
+    const blocks = [...ADR2.matchAll(/```ts\n(interface VisualProjectionContext \{[\s\S]*?\n\})\n```/g)];
+    expect(blocks.length, "un único bloque VisualProjectionContext").toBe(1);
+    const fields = Object.fromEntries(
+      [...blocks[0][1].matchAll(/^\s+([A-Za-z]+)(\??):/gm)].map((f) => [f[1], f[2] === "?" ? "optional" : "required"]),
     );
-    expect(ADR2).toContain("nunca se indexa sólo por `botVersionId`");
-    expect(ADR2).not.toContain("Clave = `(botVersionId o hash del equipamiento");
+    expect(fields).toEqual(CANONICAL_PROJECTION_CONTEXT);
+    // Los canales de la matriz de parejas son exactamente los de `spectatorMode`.
+    const modes = /spectatorMode:\s*([^;]+);/.exec(blocks[0][1])?.[1] ?? "";
+    const declared = sorted([...modes.matchAll(/"([a-z_]+)"/g)].map((x) => x[1]));
+    expect(sorted(new Set(pairs().map((r) => r.CHANNEL)))).toEqual(declared);
+  });
+
+  it("la matriz mínima de parejas es EXACTAMENTE la canónica (visor, canal y vehículo observado)", () => {
+    const got = Object.fromEntries(pairs().map((r) => [r.PAIR_CASE, [r.VIEWER, r.CHANNEL, r.OBSERVED]]));
+    expect(dupes(pairs().map((r) => r.PAIR_CASE))).toEqual([]);
+    expect(got).toEqual(CANONICAL_PAIR_CASES);
+  });
+
+  it("RELATION y RESOLVED_PROFILE son los que da la función de referencia (por pareja, no por rol)", () => {
+    const bad: string[] = [];
+    for (const r of pairs()) {
+      const rel = relationOf(r.VIEWER, r.OBSERVED);
+      if (r.RELATION !== rel) bad.push(`${r.PAIR_CASE}: RELATION «${r.RELATION}» ≠ «${rel}»`);
+      const prof = profileOf(r.CHANNEL, rel);
+      if (r.RESOLVED_PROFILE !== prof) bad.push(`${r.PAIR_CASE}: RESOLVED_PROFILE «${r.RESOLVED_PROFILE}» ≠ «${prof}»`);
+      if (!profile(r.RESOLVED_PROFILE)) bad.push(`${r.PAIR_CASE}: perfil «${r.RESOLVED_PROFILE}» inexistente`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("owner(A)/A ≠ owner(A)/B y team(A)/A ≠ team(A)/B: las composiciones difieren donde difieren los permisos", () => {
+    const c = byCase();
+    const seen = (id: string): Set<string> => {
+      const p = profile(c.get(id)?.RESOLVED_PROFILE ?? "");
+      return p ? visibleFor(p) : new Set();
+    };
+    for (const [self, rival] of [
+      ["pair.owner_a.sees_a", "pair.owner_a.sees_b"],
+      ["pair.team_a.sees_a", "pair.team_a.sees_b"],
+    ]) {
+      const a = seen(self);
+      const b = seen(rival);
+      expect(
+        [...b].filter((x) => !a.has(x)),
+        `${rival} ⊆ ${self}`,
+      ).toEqual([]);
+      expect([...a].filter((x) => !b.has(x)).length, `${self} ve más que ${rival}`).toBeGreaterThan(0);
+    }
+    // El dueño de A ve al rival B exactamente como un espectador ve A.
+    expect(sorted(seen("pair.owner_a.sees_b"))).toEqual(sorted(seen("pair.spectator.sees_a")));
+  });
+
+  it("P2_9_CACHE_ISOLATION · Intrinsic no se sirve; la clave Projected separa parejas con distinto vehículo o perfil", () => {
+    const caches = tables(ADR2, "CACHE_ID");
+    expect(sorted(caches.map((r) => r.CACHE_ID))).toEqual(sorted(Object.keys(CANONICAL_CACHES)));
+    const keyOf = (id: string): string[] =>
+      (caches.find((r) => r.CACHE_ID === id)?.KEY_FIELDS ?? "")
+        .split(",")
+        .map((x) => clean(x))
+        .filter(Boolean);
+    const bad: string[] = [];
+    for (const r of caches) {
+      if (r.SERVED_TO_CLIENT !== CANONICAL_CACHES[r.CACHE_ID])
+        bad.push(`${r.CACHE_ID}: SERVED_TO_CLIENT «${r.SERVED_TO_CLIENT}»`);
+      const k = keyOf(r.CACHE_ID);
+      // Al cliente nunca se le sirve una entrada indexada por el bot sin el vehículo observado y el perfil resuelto.
+      if (
+        r.SERVED_TO_CLIENT === "YES" &&
+        k.includes("botVersionId") &&
+        !(k.includes("observedBotId") && k.includes("resolvedProfile"))
+      )
+        bad.push(`${r.CACHE_ID}: servida al cliente e indexada por botVersionId sin pareja`);
+    }
+    const asset = keyOf("cache.asset");
+    for (const f of ["botVersionId", "observedBotId", "viewerRelation"])
+      if (asset.includes(f)) bad.push(`cache.asset: su clave lleva ${f}`);
+    const projected = keyOf("cache.projected_composition");
+    for (const f of PROJECTED_KEY_REQUIRED)
+      if (!projected.includes(f)) bad.push(`cache.projected_composition: falta ${f}`);
+    if (projected.includes("viewerId"))
+      bad.push("cache.projected_composition: la relación, no el viewerId, va en la clave");
+    expect(bad).toEqual([]);
+    // Simulación: valor de la clave proyectada para cada pareja de la matriz mínima.
+    const value = (r: Row): string =>
+      projected
+        .map((f) =>
+          f === "observedBotId"
+            ? r.OBSERVED
+            : f === "botVersionId"
+              ? `${r.OBSERVED}@v`
+              : f === "viewerRelation"
+                ? r.RELATION
+                : f === "resolvedProfile"
+                  ? r.RESOLVED_PROFILE
+                  : f === "spectatorMode"
+                    ? r.CHANNEL
+                    : "const",
+        )
+        .join("|");
+    const collisions: string[] = [];
+    const rows = pairs();
+    for (let i = 0; i < rows.length; i++)
+      for (let j = i + 1; j < rows.length; j++) {
+        const a = rows[i];
+        const b = rows[j];
+        const mustDiffer = a.OBSERVED !== b.OBSERVED || a.RESOLVED_PROFILE !== b.RESOLVED_PROFILE;
+        if (mustDiffer && value(a) === value(b)) collisions.push(`${a.PAIR_CASE} = ${b.PAIR_CASE}`);
+      }
+    expect(collisions).toEqual([]);
+    const c = byCase();
+    expect(value(c.get("pair.owner_a.sees_a")!)).not.toBe(value(c.get("pair.owner_a.sees_b")!));
+  });
+
+  it("§12.3 y PRE-1: el dueño de un participante no recibe lo privado de los demás (cross.owner_to_rival)", () => {
+    expect(prose(ADR2)).toContain("«RAW_REPLAY ⇒ dueño» quiere decir «el dueño de A recibe la parte cruda de A»");
+    const r = tables(MATRIX, "CROSS_VIEW_ID").find((x) => x.CROSS_VIEW_ID === "cross.owner_to_rival");
+    expect(r?.FROM_VIEW).toBe("OWNER_VIEW");
+    expect(r?.RULE ?? "").toContain("por pareja");
+  });
+});
+
+/* ─────────────── TEST 11 · ENGINE_DERIVED: fugas del motor clasificadas y atadas a su issue ─────────────── */
+
+describe("TEST 11 · ENGINE_DERIVED (INFORMATION_LEAK_CLASSIFICATION)", () => {
+  const engineRows = (): Row[] => tables(MATRIX, "ENGINE_LEAK_ID");
+  const listOf = (cell: string | undefined): string[] =>
+    (cell ?? "")
+      .split(",")
+      .map((x) => clean(x))
+      .filter(Boolean);
+
+  it("la taxonomía tiene EXACTAMENTE cuatro clases y separa fuga visual de fuga de motor", () => {
+    const got = Object.fromEntries(
+      tables(MATRIX, "LEAK_CLASS").map((r) => [r.LEAK_CLASS, r.RESPONSABLE.split(" ")[0]]),
+    );
+    expect(got).toEqual({ DIRECT: "FASE", DERIVED: "FASE", CROSS_VIEW: "FASE", ENGINE_DERIVED: "Motor:" });
+    expect(MATRIX).toContain("`ENGINE_INFORMATION_LEAK != VISUAL_CONTRACT_LEAK`");
+    expect(MASTER).toContain("`ENGINE_INFORMATION_LEAK != VISUAL_CONTRACT_LEAK`");
+  });
+
+  it("§12.4 lista EXACTAMENTE las fugas de motor canónicas, cada una con su issue", () => {
+    expect(dupes(engineRows().map((r) => r.ENGINE_LEAK_ID))).toEqual([]);
+    expect(Object.fromEntries(engineRows().map((r) => [r.ENGINE_LEAK_ID, r.ISSUE]))).toEqual(CANONICAL_ENGINE_LEAKS);
+    for (const r of engineRows()) expect(r.VISUAL_RULE.length, `${r.ENGINE_LEAK_ID}: VISUAL_RULE`).toBeGreaterThan(20);
+  });
+
+  it("DATA_IDS de cada issue = filas de §12 que la citan en ENGINE_DERIVED = conjunto canónico", () => {
+    const data = tables(MATRIX, "DATA_ID");
+    const bad: string[] = [];
+    for (const issue of ENGINE_ISSUES) {
+      const row = engineRows().find((r) => r.ISSUE === issue);
+      const declared = sorted(listOf(row?.DATA_IDS));
+      const real = sorted(data.filter((r) => refsOf(r.ENGINE_DERIVED).includes(issue)).map((r) => r.DATA_ID));
+      const canon = sorted(CANONICAL_ENGINE_DATA[issue]);
+      if (JSON.stringify(declared) !== JSON.stringify(real)) bad.push(`${issue}: §12.4 «${declared}» ≠ §12 «${real}»`);
+      if (JSON.stringify(real) !== JSON.stringify(canon)) bad.push(`${issue}: §12 «${real}» ≠ canónico «${canon}»`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("DOMAIN_IDS de cada issue = decisiones de §5/§6 cuyo WHY la cita = lo que sale del catálogo", () => {
+    const dec = decisionRows();
+    const kin = expectedKinRows();
+    const armor = catalog.filter((m) => m.category === "armor");
+    const computed: Record<string, string[]> = {
+      "#261": [...catalog.filter((m) => m.category === "mine").map(versioned), "runtime.mine_deployed"],
+      "#262": [...[...kin].filter(([, r]) => r.IDENTITY_BY_TURRET !== "AMBIGUOUS").map(([id]) => id), "runtime.turret"],
+      "#263": armor
+        .filter((a) => armor.some((o) => o !== a && o.sector === a.sector && o.reduction !== a.reduction))
+        .map(versioned),
+    };
+    const bad: string[] = [];
+    for (const issue of ENGINE_ISSUES) {
+      const row = engineRows().find((r) => r.ISSUE === issue);
+      const declared = sorted(listOf(row?.DOMAIN_IDS));
+      const citing = sorted(dec.filter((r) => r.WHY.includes(issue)).map((r) => r.DOMAIN_ID));
+      const real = sorted(computed[issue]);
+      if (JSON.stringify(declared) !== JSON.stringify(citing))
+        bad.push(`${issue}: §12.4 «${declared}» ≠ WHY «${citing}»`);
+      if (JSON.stringify(citing) !== JSON.stringify(real)) bad.push(`${issue}: WHY «${citing}» ≠ catálogo «${real}»`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("las filas de P2-8 son ENGINE_DERIVED: privadas para el renderer pero con su derivación declarada", () => {
+    const data = new Map(tables(MATRIX, "DATA_ID").map((r) => [r.DATA_ID, r]));
+    const bad: string[] = [];
+    for (const id of ["data.mine_position", "data.mine_bay_contents", "data.armor_material", "data.armor_sector_hp"]) {
+      const r = data.get(id);
+      if (!r) bad.push(`${id}: falta`);
+      else {
+        if (r.DERIVED_DISCLOSURE === "NO") bad.push(`${id}: DERIVED_DISCLOSURE NO`);
+        if (r.CLASSIFICATION === "PUBLIC") bad.push(`${id}: no debe pintarse como PUBLIC`);
+        if (!r.NOTES.includes("ENGINE_DERIVED")) bad.push(`${id}: NOTES sin ENGINE_DERIVED`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("el roadmap del MASTER-PLAN referencia las tres issues de motor", () => {
+    const line = MASTER.split("\n").find((l) => l.startsWith("ENGINE_ISSUES:")) ?? "";
+    expect(ENGINE_ISSUES.filter((i) => !line.includes(i))).toEqual([]);
   });
 });
