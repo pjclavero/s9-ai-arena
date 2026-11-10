@@ -123,6 +123,16 @@ run_case() { # run_case <record|rtmps> <live|finished>
     for _ in $(seq 1 60); do cdp_up && break; sleep 0.5; done
     cdp_up || log "CDP no responde en $label"
   fi
+  # Con la puerta BROADCAST_RENDER_READY (imagen con #256) la emisión empieza cuando la
+  # página está pintada: se espera a ESA condición (y se registra cuánto tardó y cuántas
+  # veces hubo que relanzar Chromium). La imagen vieja no tiene `render`: no se espera.
+  if [ "$(ctl GET /status | jget 'render?.state')" != undefined ]; then
+    local w0=$SECONDS
+    for _ in $(seq 1 240); do [ "$(ctl GET /status | jget 'render?.state')" = ready ] && break; sleep 0.5; done
+    ctl GET /status >"$OUT/$label-status-ready.json"
+    log "puerta de render: $(jget 'render.state' <"$OUT/$label-status-ready.json") en $((SECONDS - w0)) s · relanzamientos por blanco=$(jget 'render.blankEvents' <"$OUT/$label-status-ready.json") · lastError=$(jget 'lastError?.message' <"$OUT/$label-status-ready.json")"
+    t0=$SECONDS
+  fi
   [ "$mode" = rtmps ] && for _ in $(seq 1 60); do [ "$(ctl GET /status | jget 'relay?.state')" = publishing ] && break; sleep 0.5; done
   local recv_at=$((SECONDS_PER_CASE / 3)) next
   for at in 3 $((SECONDS_PER_CASE / 2)) $((SECONDS_PER_CASE - 3)); do
