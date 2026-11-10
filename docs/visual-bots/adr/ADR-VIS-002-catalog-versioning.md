@@ -92,8 +92,12 @@ recibe nunca el equipamiento sin proyectar en una vista pública, y la proyecci�
 un control de seguridad). Las vistas públicas toman el equipamiento del canal de espectador o de la proyección saneada
 del replay, nunca del replay crudo (política PRE-1).
 
-**Perfiles de vista.** Cada perfil dice qué clases de la matriz §12 ve. Lo comprueba `TEST 9 · VIEWER_PROJECTION` de
-`packages/module-catalog/visual-contract.test.ts`, que calcula con la tabla §12 real el conjunto de datos visibles por
+**Perfiles de vista.** Cada perfil dice qué clases de la matriz §12 ve. Un perfil **no** es una propiedad del visor:
+se resuelve para cada pareja (visor, vehículo observado), ver «Proyección por pareja» más abajo. `VIEWER_ROLE` es la
+relación del visor con el vehículo **observado** que exige el perfil: `spectator` = ninguna, `team` = mismo equipo,
+`owner` = dueño de ese vehículo, `internal` = administración en el canal interno. Lo comprueba `TEST 9 ·
+VIEWER_PROJECTION` de `packages/module-catalog/visual-contract.test.ts`, que compara la tabla con una lista canónica
+(perfil, rol, clases, OBSERVER_DEPENDENT y fuente) y calcula con la tabla §12 real el conjunto de datos visibles por
 perfil.
 
 | VIEW_PROFILE | VIEWER_ROLE | SEES_CLASSES | OBSERVER_DEPENDENT | EQUIPMENT_SOURCE |
@@ -102,22 +106,80 @@ perfil.
 | `view.public_replay` | spectator | PUBLIC | HIDDEN | proyección saneada del replay |
 | `view.broadcast` | spectator | PUBLIC | HIDDEN | canal de espectador |
 | `view.ally` | team | PUBLIC, ALLY_ONLY | HIDDEN | canal de espectador + datos del equipo |
-| `view.owner` | owner | PUBLIC, ALLY_ONLY, SELF_ONLY | SHOWN | loadout del bot o replay crudo autorizado |
-| `view.internal` | internal | PUBLIC, ALLY_ONLY, SELF_ONLY | SHOWN | replay crudo autorizado |
+| `view.owner` | owner | PUBLIC, ALLY_ONLY, SELF_ONLY | SHOWN | loadout del vehículo observado o su parte del replay crudo, autorizada por pareja |
+| `view.internal` | internal | PUBLIC, ALLY_ONLY, SELF_ONLY | SHOWN | replay crudo autorizado en el canal interno |
 
 NEVER_VISUALIZE no lo ve ningún perfil. OBSERVER_DEPENDENT queda `HIDDEN` en las vistas públicas mientras D-01 no se
 decida; cuando se decida, cambia esta tabla (y su `spectatorPolicyVersion`), no el compositor.
 
-**Clave de caché.** Dos cachés con claves distintas, y ninguna composición privilegiada reutilizable para el público:
+**Proyección por pareja (VIEWER_ENTITY_PAIR_POLICY).** La decisión visual distingue cuatro cosas: el visor, el
+vehículo observado, la relación entre ambos y la política. Un mismo humano es dueño de su bot y espectador de los
+demás en la misma batalla: owner(A) viendo A es privilegiado; owner(A) viendo B, no. La entrada de la proyección es:
 
-- **Caché intrínseca** (assets y geometría por componente, sin equipamiento de un bot):
-  `(componentVisualId, visualCatalogVersion, renderTarget)`. Se puede compartir entre audiencias porque no dice qué
-  lleva nadie.
-- **Caché de composición** (un vehículo concreto):
-  `(hash del equipamiento YA proyectado, visibilityProfile, viewerRole, spectatorPolicyVersion, visualCatalogVersion, renderTarget)`.
-  Una entrada sólo se sirve a un visor con el mismo `visibilityProfile`; nunca se indexa sólo por `botVersionId`. Si se
-  quiere una composición por `botVersionId + visualCatalogVersion + renderTarget` (la del dueño), lleva
-  `visibilityProfile = view.owner` en la clave y sólo la leen `view.owner` y `view.internal`.
+```ts
+interface VisualProjectionContext {
+  viewerId?: string; // ausente = anónimo
+  viewerRole: "anonymous" | "user" | "admin" | "broadcast_renderer";
+  viewerTeamIds?: string[];
+  observedBotId: string;
+  observedBotVersionId: string;
+  observedBotOwnerId?: string;
+  observedTeamId?: string;
+  spectatorMode: "live_public" | "public_replay" | "broadcast" | "private" | "internal";
+  spectatorPolicyVersion: string;
+  visibilityPolicyVersion: string;
+}
+```
+
+- **Relación** (la calcula el backend en cada petición, nunca la envía el cliente): `OWNER` si
+  `viewerId = observedBotOwnerId`; `TEAMMATE` si `observedTeamId ∈ viewerTeamIds`; `INTERNAL` si `viewerRole = admin`;
+  `NONE` en otro caso. `owner` y `team` son relaciones con un vehículo, no roles del visor.
+- **Perfil resuelto** = f(`spectatorMode`, relación):
+  - `live_public`, `public_replay` y `broadcast` son canales públicos: dan siempre su perfil público (`view.public_live`,
+    `view.public_replay`, `view.broadcast`), sea cual sea la relación. El dueño que mira el directo o un replay público
+    ve lo mismo que cualquiera.
+  - `private` (ficha, editor, replay propio o de equipo, servido por el backend tras autorizar la pareja): `OWNER` ⇒
+    `view.owner`; `TEAMMATE` ⇒ `view.ally`; `NONE` o `INTERNAL` ⇒ `view.public_live`.
+  - `internal`: `INTERNAL` ⇒ `view.internal`; cualquier otra ⇒ `view.public_live`.
+- En una batalla con varios participantes, cada vehículo se proyecta con su propia pareja. «RAW_REPLAY ⇒ dueño» quiere
+  decir «el dueño de A recibe la parte cruda de A»; para B recibe la proyección saneada (PRE-1, matriz §12.3
+  `cross.owner_to_rival`). La política PRE-1 no cambia.
+
+Matriz mínima (la comprueba TEST 9 contra esa función, con la relación calculada a partir de `VIEWER` y `OBSERVED`):
+
+| PAIR_CASE | VIEWER | CHANNEL | OBSERVED | RELATION | RESOLVED_PROFILE |
+| --- | --- | --- | --- | --- | --- |
+| `pair.owner_a.sees_a` | owner(A) | private | A | OWNER | `view.owner` |
+| `pair.owner_a.sees_b` | owner(A) | private | B | NONE | `view.public_live` |
+| `pair.owner_b.sees_a` | owner(B) | private | A | NONE | `view.public_live` |
+| `pair.team_a.sees_a` | team(A) | private | A | TEAMMATE | `view.ally` |
+| `pair.team_a.sees_b` | team(A) | private | B | NONE | `view.public_live` |
+| `pair.admin.sees_a` | admin | internal | A | INTERNAL | `view.internal` |
+| `pair.admin.public_live_a` | admin | live_public | A | INTERNAL | `view.public_live` |
+| `pair.anonymous.sees_a` | anonymous | live_public | A | NONE | `view.public_live` |
+| `pair.spectator.sees_a` | spectator | live_public | A | NONE | `view.public_live` |
+| `pair.broadcast.sees_a` | broadcast | broadcast | A | NONE | `view.broadcast` |
+| `pair.public_replay.sees_a` | anonymous | public_replay | A | NONE | `view.public_replay` |
+| `pair.owner_a.public_live_a` | owner(A) | live_public | A | OWNER | `view.public_live` |
+| `pair.owner_a.public_replay_a` | owner(A) | public_replay | A | OWNER | `view.public_replay` |
+
+**Caché (P2_9_CACHE_ISOLATION).** Tres niveles con claves distintas; sólo se sirve al cliente lo que no lleva
+equipamiento de un bot o lo que ya está proyectado para su pareja:
+
+| CACHE_ID | KEY_FIELDS | CONTAINS | SERVED_TO_CLIENT |
+| --- | --- | --- | --- |
+| `cache.asset` | componentVisualId, visualCatalogVersion, renderTarget | Assets y geometría de un componente; no dice qué lleva nadie | YES |
+| `cache.intrinsic_composition` | botVersionId, visualCatalogVersion, renderTarget | IntrinsicComposition: la composición completa del bot, con el equipamiento sin proyectar; es material de dueño o interno | NO |
+| `cache.projected_composition` | observedBotId, botVersionId, viewerRelation, resolvedProfile, spectatorMode, spectatorPolicyVersion, visibilityPolicyVersion, visualCatalogVersion, renderTarget | ProjectedComposition: la IntrinsicComposition filtrada para una pareja (perfil del visor + vehículo observado + relación + políticas) | YES |
+
+- La IntrinsicComposition vive sólo en el backend y nunca llega a un cliente: cualquier respuesta es una
+  ProjectedComposition.
+- La clave proyectada lleva `observedBotId` y la relación: owner(A)/A y owner(A)/B son entradas distintas, y owner(A)/A
+  no la puede leer owner(B), porque su relación con A es `NONE` y le corresponde otra entrada. La relación de la clave
+  se recalcula en el backend en cada petición; nunca se toma del cliente ni de la propia clave.
+- No lleva `viewerId`: dos espectadores sin relación con el vehículo comparten entrada, y eso es seguro porque su
+  proyección es la misma.
+- Nunca se indexa sólo por `botVersionId` una composición que se sirva al cliente.
 
 **Ejemplo trabajado: PRIVATE_VIEW ≠ PUBLIC_VIEW.** Un `chassis.medium@2` con `weapon.cannon@1` y `ammo.ap@1`,
 `sensor.radar@1`, `armor.steel_front@1`, `movement.tracks@1`, `power.battery@1`, `radio.short@1` y `mine.explosive@1`.
@@ -125,21 +187,24 @@ decida; cuando se decida, cambia esta tabla (y su `spectatorPolicyVersion`), no 
 | Capa | `view.owner` | `view.public_live` antes del primer disparo | `view.public_live` después |
 | --- | --- | --- | --- |
 | Chasis | medio | medio (PUBLIC) | medio |
-| Arma | cañón | torreta genérica (identidad OBSERVER_DEPENDENT) | cañón (PUBLIC por inferencia, si D-08 = a) |
+| Arma | cañón | torreta genérica (identidad OBSERVER_DEPENDENT; el motor la sugiere por el giro, ENGINE_DERIVED #262, y el renderer no se adelanta) | cañón (PUBLIC por inferencia, si D-08 = a) |
 | Sensor | radar | sensor genérico en `sensor_a` (presencia PUBLIC) | igual |
-| Blindaje frontal | acero | placa genérica (presencia PUBLIC) | igual |
+| Blindaje frontal | acero | placa genérica (presencia PUBLIC; material ENGINE_DERIVED tras impactos, #263) | igual |
 | Tracción | orugas | genérica (dos candidatos en el medio) | igual |
 | Radio y bahía de minas | antena y compuerta | antena y compuerta (PUBLIC por inferencia, §12.1) | igual |
 | Munición, energía | ap, batería (sólo ficha) | nada | nada |
 
-Las dos composiciones difieren en arma, sensor, blindaje y tracción; con la caché por `botVersionId` sola, el
-espectador recibiría la columna del dueño. Con la clave de arriba son entradas distintas.
+Las dos composiciones difieren en arma, sensor, blindaje y tracción. Si la IntrinsicComposition (clave `botVersionId`)
+se sirviera al cliente, el espectador recibiría la columna del dueño; con la ProjectedComposition, cuya clave lleva el
+vehículo observado, la relación y el perfil resuelto, son entradas distintas. El ejemplo es explicativo: la autoridad
+son las tablas de perfiles, parejas y cachés, que comprueba el test.
 
 **Test de no-fuga exigido para la fase de implementación** (FASE 1 o la primera que componga vehículos): para cada
 batalla del corpus y cada perfil público, el plan de composición no contiene ningún `componentVisualId` cuya identidad no
 sea PUBLIC (o PUBLIC por inferencia en ese instante) según la matriz; y la composición de `view.owner` difiere de la
-pública siempre que el equipamiento tenga alguna identidad no pública. El test de determinismo histórico (punto 5) se
-ejecuta **por perfil**.
+pública siempre que el equipamiento tenga alguna identidad no pública; y, en una batalla con varios participantes, el
+dueño de A ve cada vehículo B ≠ A con el plan público (la ProjectedComposition de owner(A)/B es la de un espectador). El
+test de determinismo histórico (punto 5) se ejecuta **por perfil**.
 
 
 **Alternativa considerada: `composerVersion` por batalla.** Registrar en cada batalla la versión del código del
@@ -166,10 +231,8 @@ cambia el plan de composición y por tanto exige versión nueva.
 estado del motor, para no tocar el determinismo de la simulación). La forma exacta (columna o metadato del replay) la
 fija FASE 6; esta ADR sólo exige que exista y sea inmutable. No se toca el motor en FASE 0.
 
-**Caché.** Dos cachés, con las claves de «¿Qué ve cada audiencia?»: la intrínseca
-`(componentVisualId, visualCatalogVersion, renderTarget)` y la de composición
-`(hash del equipamiento ya proyectado, visibilityProfile, viewerRole, spectatorPolicyVersion, visualCatalogVersion, renderTarget)`
-(SRS-F09). Nunca una clave sólo por `botVersionId`. La paleta va dentro de `visualCatalogVersion`, así que no hace falta
+**Caché.** Los tres niveles de «Proyección por pareja» (`cache.asset`, `cache.intrinsic_composition` y
+`cache.projected_composition`, SRS-F09). Al cliente nunca se le sirve una entrada indexada sólo por `botVersionId`. La paleta va dentro de `visualCatalogVersion`, así que no hace falta
 como componente aparte. Como las versiones publicadas son inmutables, una entrada de caché no caduca por contenido; sólo
 por espacio.
 Las respuestas HTTP de assets publicados pueden ser `immutable` si su URL incluye versión o hash. Las respuestas de
@@ -188,8 +251,9 @@ fallback compatible y se registra el cambio.
   compositor las interpreta y no decide nada por su cuenta.
 - Cada batalla nueva registra su `visualCatalogVersion`; la composición histórica usa **sólo** datos congelados.
 - El compositor recibe `proyección(equipamiento, audiencia, D-01) + visualCatalogVersion`: separa BOT_INTRINSIC_VISUAL de
-  VIEWER_PROJECTION, y la caché de composición lleva en la clave la proyección y el perfil de vista. Las vistas públicas
-  no consumen nunca el replay crudo (PRE-1).
+  VIEWER_PROJECTION. La proyección se resuelve **por pareja** con `VisualProjectionContext` (visor, vehículo observado,
+  relación y políticas), y la caché que se sirve al cliente (ProjectedComposition) lleva en la clave el vehículo
+  observado, la relación y el perfil resuelto. Las vistas públicas no consumen nunca el replay crudo (PRE-1).
 - **Paleta (P3-5):** la paleta de equipo y su regla de asignación pasan a ser **dato del catálogo visual versionado**
   (como la tabla de capas). Se descarta «congelar la versión de la paleta» como mecanismo aparte porque obligaría a
   registrar por batalla una segunda referencia. Las batallas anteriores al catálogo visual se resuelven con la paleta
