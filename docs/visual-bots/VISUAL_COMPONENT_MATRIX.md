@@ -70,6 +70,21 @@ como «PUBLIC por inferencia tras el primer disparo».
 No basta con ocultar los campos directos: cada fila de §12 se juzga por lo que el espectador **observa más lo que puede
 inferir**, y lo que puede inferir es PUBLIC.
 
+**Fuga visual frente a fuga de motor.** `ENGINE_INFORMATION_LEAK != VISUAL_CONTRACT_LEAK`. Hay cuatro clases de fuga:
+
+| LEAK_CLASS | QUÉ ES | RESPONSABLE |
+| --- | --- | --- |
+| DIRECT | La vista expone el dato explícitamente (lo pinta o lo envía). | FASE 0 (contrato visual) |
+| DERIVED | El dato se infiere de la **representación visual** (sprite, animación, color o forma que añade información). | FASE 0 (contrato visual) |
+| CROSS_VIEW | El dato pasa de una vista o caché privilegiada a otra con menos privilegio (§12.3). | FASE 0 (contrato visual) |
+| ENGINE_DERIVED | El dato se infiere del snapshot o de la telemetría que **ya entrega el motor**, sin que intervenga el renderer. | Motor: se documenta y se referencia a su issue (§12.4) |
+
+Las columnas `DIRECT_DISCLOSURE` y `DERIVED_DISCLOSURE` de §12 describen lo que ya entrega el canal público del motor;
+cuando `DERIVED_DISCLOSURE` no es `NO`, la columna `ENGINE_DERIVED` dice a qué issue o decisión de producto está atada esa
+inferencia. La regla de la capa visual es que **no amplifica** una fuga del motor: no calcula ni pinta la parte deducible
+de un dato privado, ni la anticipa antes de que el canal público la haga deducible. La FASE 0 no se bloquea esperando a
+corregir toda inferencia posible del motor: eso va en las issues #261, #262 y #263 (§12.4).
+
 ## 5. Decisión por componente del catálogo
 
 | DOMAIN_ID | DECISION | VISIBILITY_CLASS | WHY |
@@ -79,19 +94,19 @@ inferir**, y lo que puede inferir es PUBLIC.
 | `chassis.medium@1` | MUST_RENDER | PUBLIC | Identidad base. |
 | `chassis.medium@2` | MUST_RENDER | PUBLIC | Igual que @1. |
 | `chassis.heavy@1` | MUST_RENDER | PUBLIC | Identidad base. |
-| `weapon.cannon@1` | MUST_RENDER | OBSERVER_DEPENDENT | Arma principal (PRD-01). El `moduleId` no viaja en el directo, pero es PUBLIC por inferencia tras el primer disparo: el proyectil del cañón va a 120 m/s y el de la mg a 200 m/s, y nace en la boca del vehículo (§12.2). Antes del primer disparo, OBSERVER_DEPENDENT (D-01, D-08). |
-| `weapon.mg@1` | MUST_RENDER | OBSERVER_DEPENDENT | Arma principal. PUBLIC por inferencia en `chassis.light` (ranura, §12.1) y, en cualquier chasis, PUBLIC por inferencia tras el primer disparo (velocidad del proyectil, §12.2). La versión se infiere tras impactos por el daño (§12.2). |
-| `weapon.mg@2` | MUST_RENDER | OBSERVER_DEPENDENT | Arma principal; misma forma que @1. PUBLIC por inferencia como @1 (ranura en el ligero; velocidad del proyectil tras el primer disparo). La versión se distingue de @1 por el daño y, con el arma dañada, por la cadencia (§12.2). |
-| `armor.steel_front@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Placa visible; dice qué sectores protege. Sin estado de daño público (H-01). |
-| `armor.steel_left@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Placa lateral visible. |
-| `armor.steel_right@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Placa lateral visible (mirror de left). |
-| `armor.steel_rear@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Placa trasera visible. |
-| `armor.composite_front@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Placa visible; acabado distinto del acero. |
-| `armor.composite_left@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Placa lateral visible. |
-| `armor.composite_right@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Placa lateral visible. |
-| `armor.composite_rear@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Placa trasera visible. |
-| `movement.tracks@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Muy reconocible (orugas frente a ruedas); su estado público (`drive`) ya existe. |
-| `movement.wheels@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Muy reconocible. PUBLIC por inferencia en `chassis.light`: allí `drive` sólo admite las ruedas (§12.1). |
+| `weapon.cannon@1` | MUST_RENDER | OBSERVER_DEPENDENT | Arma principal (PRD-01). El `moduleId` no viaja en el directo, pero es PUBLIC por inferencia tras el primer disparo: el proyectil del cañón va a 120 m/s y el de la mg a 200 m/s, y nace en la boca del vehículo (§12.2). Antes del primer disparo, OBSERVER_DEPENDENT para el renderer (D-01, D-08), aunque el motor ya deja una pista con ruido: una torreta que nunca gira más deprisa que el cañón en su estado público lo sugiere (ENGINE_DERIVED, #262; §12.2). |
+| `weapon.mg@1` | MUST_RENDER | OBSERVER_DEPENDENT | Arma principal. PUBLIC por inferencia en `chassis.light` (ranura, §12.1) y, en cualquier chasis, PUBLIC por inferencia tras el primer disparo (velocidad del proyectil, §12.2). Antes del primer disparo, también por la cinemática de la torreta: gira más deprisa de lo que puede el cañón en el mismo estado (ENGINE_DERIVED, #262; §12.2). La versión se infiere tras impactos por el daño (§12.2). |
+| `weapon.mg@2` | MUST_RENDER | OBSERVER_DEPENDENT | Arma principal; misma forma que @1. PUBLIC por inferencia como @1 (ranura en el ligero; velocidad del proyectil tras el primer disparo; giro de la torreta antes, ENGINE_DERIVED, #262). La versión se distingue de @1 por el daño y, con el arma dañada, por la cadencia (§12.2). |
+| `armor.steel_front@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Placa visible; dice qué sectores protege. Sin estado de daño público (H-01). El material (acero o compuesto) es ENGINE_DERIVED (#263): inferible con ruido tras impactos en el sector, porque la reducción es distinta por material (§12.4). |
+| `armor.steel_left@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Placa lateral visible. El material (acero o compuesto) es ENGINE_DERIVED (#263): inferible con ruido tras impactos en el sector, porque la reducción es distinta por material (§12.4). |
+| `armor.steel_right@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Placa lateral visible (mirror de left). El material (acero o compuesto) es ENGINE_DERIVED (#263): inferible con ruido tras impactos en el sector, porque la reducción es distinta por material (§12.4). |
+| `armor.steel_rear@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Placa trasera visible. El material (acero o compuesto) es ENGINE_DERIVED (#263): inferible con ruido tras impactos en el sector, porque la reducción es distinta por material (§12.4). |
+| `armor.composite_front@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Placa visible; acabado distinto del acero. El material (acero o compuesto) es ENGINE_DERIVED (#263): inferible con ruido tras impactos en el sector, porque la reducción es distinta por material (§12.4). |
+| `armor.composite_left@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Placa lateral visible. El material (acero o compuesto) es ENGINE_DERIVED (#263): inferible con ruido tras impactos en el sector, porque la reducción es distinta por material (§12.4). |
+| `armor.composite_right@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Placa lateral visible. El material (acero o compuesto) es ENGINE_DERIVED (#263): inferible con ruido tras impactos en el sector, porque la reducción es distinta por material (§12.4). |
+| `armor.composite_rear@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Placa trasera visible. El material (acero o compuesto) es ENGINE_DERIVED (#263): inferible con ruido tras impactos en el sector, porque la reducción es distinta por material (§12.4). |
+| `movement.tracks@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Muy reconocible (orugas frente a ruedas); su estado público (`drive`) ya existe. Inferible con ruido por cinemática en medio y pesado: con carga ligera, una velocidad o un giro por encima del tope de las orugas delata las ruedas; con carga pesada no se distingue (escalado por `ratedLoadKg`, `vehicle.ts`). |
+| `movement.wheels@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Muy reconocible. PUBLIC por inferencia en `chassis.light`: allí `drive` sólo admite las ruedas (§12.1). En medio y pesado, inferible con ruido por cinemática (ver orugas). |
 | `sensor.lidar360@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Cúpula superior visible. |
 | `sensor.radar@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Antena visible. |
 | `sensor.lidar_front@1` | SHOULD_RENDER | OBSERVER_DEPENDENT | Lente frontal visible; orientada con el casco. |
@@ -104,16 +119,16 @@ inferir**, y lo que puede inferir es PUBLIC.
 | `ammo.standard@1` | DO_NOT_RENDER | SELF_ONLY | Cargador interno; munición restante privada. PUBLIC por inferencia en `chassis.light`: la única arma que cabe es `weapon.mg`, que sólo acepta esta munición (§12.1). En medio y pesado el tipo sigue siendo privado. |
 | `ammo.ap@1` | DO_NOT_RENDER | SELF_ONLY | Interno. Variante de proyectil = futuro, sujeta a D-02. Inferible con ruido tras impactos: ×1.2 de daño en el `hullHp` público y sin explosión (§12.2). |
 | `ammo.he@1` | DO_NOT_RENDER | SELF_ONLY | Interno. Inferible con ruido tras impactos: ×0.9 de daño y daño de área (radio 5 m) en el `hullHp` público de los vecinos (§12.2). |
-| `mine.explosive@1` | DO_NOT_RENDER | PUBLIC | PUBLIC por inferencia: `mine_bay` sólo admite este módulo (`utility` no tiene ninguno), así que la ranura en el snapshot ya dice que lleva minas (§12.1). Las cargas que quedan y las minas desplegadas siguen siendo privadas. Como mucho, una compuerta genérica (MAY); ver D-07. |
+| `mine.explosive@1` | DO_NOT_RENDER | PUBLIC | PUBLIC por inferencia: `mine_bay` sólo admite este módulo (`utility` no tiene ninguno), así que la ranura en el snapshot ya dice que lleva minas (§12.1). Las cargas que quedan y las minas desplegadas siguen siendo SELF_ONLY para el renderer, pero el motor deja inferirlas en ciertas condiciones (ENGINE_DERIVED, #261; §12.4). Como mucho, una compuerta genérica (MAY); ver D-07. |
 
 ## 6. Decisión por elemento de batalla (runtime)
 
 | DOMAIN_ID | DECISION | VISIBILITY_CLASS | WHY |
 | --- | --- | --- | --- |
-| `runtime.turret` | MUST_RENDER | PUBLIC | `turretHeading` es público y ya se pinta; soporte del arma. |
+| `runtime.turret` | MUST_RENDER | PUBLIC | `turretHeading` es público y ya se pinta; soporte del arma. Su cinemática (ritmo de giro) delata el arma: ENGINE_DERIVED (#262). El sprite gira con el dato público, sin suavizar ni exagerar el ritmo. |
 | `runtime.projectile` | MUST_RENDER | PUBLIC | Posición e `id` estable públicos en el snapshot; ya se pinta. Su cinemática identifica el arma (§12.2): el sprite no debe añadir información que el dato público no tenga (D-08). |
 | `runtime.muzzle_flash` | SHOULD_RENDER | PUBLIC | Deducido de un proyectil nuevo (dato público). |
-| `runtime.mine_deployed` | DO_NOT_RENDER | SELF_ONLY | El motor la oculta del snapshot público («información oculta hasta que explotan», battle.ts). |
+| `runtime.mine_deployed` | DO_NOT_RENDER | SELF_ONLY | El motor la excluye del snapshot público («información oculta hasta que explotan», battle.ts), pero su despliegue es inferible en ciertas condiciones a partir de la identidad u orden de las entidades públicas: ENGINE_DERIVED (#261). El renderer no la pinta ni la deduce. |
 | `runtime.explosion` | SHOULD_RENDER | PUBLIC | Eventos públicos `vehicle_destroyed` / `mine_triggered`. |
 | `runtime.smoke` | SHOULD_RENDER | PUBLIC | Derivado del casco público. |
 | `runtime.wreck` | MUST_RENDER | PUBLIC | `alive=false` público. |
@@ -152,7 +167,8 @@ a `radiusM + 0.3` m del centro a lo largo de `turretHeading` (`battle.ts`); el p
 público no trae un campo con el arma ni el dueño del proyectil, pero **no hace falta**: el `id` es estable y la velocidad
 es la `projectileSpeedMs` del arma, así que con dos snapshots se sabe qué arma es, y por el punto de nacimiento qué
 vehículo disparó. El propio visor ya estima esa velocidad (`ballistics.ts`). Es PUBLIC por inferencia tras el primer
-disparo (§12.2).
+disparo (§12.2). Antes del primer disparo, el ritmo de giro de la torreta (`turretRateRads` × rendimiento, con
+`turretHeading` público en cada snapshot) también separa las armas base: ENGINE_DERIVED, #262 (§12.2, §12.4).
 
 | WEAPON_ID | VERSIONS | MOUNT_TYPE | ORIENTATION_REQUIRED | TURRET_OR_HULL | PROJECTILE_VISUAL_RELEVANCE | MUZZLE_FLASH_POSSIBLE | RELOAD_COOLDOWN_VISUAL_RELEVANCE | AMMO_VISUAL_RELEVANCE | DESTROYED_STATE |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -278,8 +294,10 @@ Notas:
   entregan al propio equipo (`radioDeliverableTo`). Un pulso de «transmitiendo» en el broadcast revelaría al rival el
   ritmo de comunicación del equipo: **ALLY_ONLY**, nunca en vistas públicas en directo. El contenido es NEVER_VISUALIZE.
 - **Minas.** Las desplegadas no están en el snapshot público y sólo el dueño recibe `mine_deployed`; el único hecho
-  público es `mine_triggered` (posición de la explosión). Cargas restantes: SELF_ONLY. Que la bahía lleva minas es PUBLIC
-  por inferencia (§12.1).
+  público explícito es `mine_triggered` (posición de la explosión). Cargas restantes y posición: SELF_ONLY para el
+  renderer. El motor deja inferir ambas en ciertas condiciones por la identidad u orden de las entidades públicas: es
+  ENGINE_DERIVED (#261, §12.4), no una fuga de la capa visual, y el renderer no la amplifica. Que la bahía lleva minas es
+  PUBLIC por inferencia (§12.1).
 - **Fichero de replay crudo.** Todo lo anterior vale para lo que se **renderiza** en vistas públicas. El replay crudo lleva
   semilla, equipamiento y comandos de todos los participantes: es RAW_REPLAY, restringido, y el renderer público no lo
   consume nunca (política PRE-1 en §12; H-05; §12.3).
@@ -326,19 +344,30 @@ Implicaciones visuales, que son contrato de este documento:
    `seed` ni los comandos.
 2. Las clases de este apartado se juzgan contra ese canal público. El contrato tiene que ser seguro aunque se activen los
    replays públicos: que hoy estén apagados por configuración no cuenta como protección.
-3. SELF_ONLY, ALLY_ONLY y NEVER_VISUALIZE **no** se aplican al **fichero de replay crudo**: lleva semilla, equipamiento y
+3. «RAW_REPLAY ⇒ dueño» se resuelve **por pareja** (visor, vehículo observado), no por batalla: en una batalla con
+   varios participantes, el dueño de A sólo ve A con `view.owner`; a los demás vehículos los ve con el perfil público.
+   La capa visual no alimenta `view.owner` con el crudo de varios participantes sin filtrarlo antes por vehículo
+   (ADR-VIS-002, «Proyección por pareja»; §12.3 `cross.owner_to_rival`). La política PRE-1 no cambia.
+4. Una vista pública tampoco recibe comandos ni observaciones de otros participantes aunque el formato de replay tenga
+   abierta la depuración: el flag `debugOpen` del formato (`apps/replay-service/src/format.ts`) es un vector CROSS_VIEW
+   **latente** (§12.3 `cross.debug_overlay`).
+5. SELF_ONLY, ALLY_ONLY y NEVER_VISUALIZE **no** se aplican al **fichero de replay crudo**: lleva semilla, equipamiento y
    comandos de cada bot, y una re-simulación reconstruye lo privado (radio, minas, observaciones). Por eso es RAW_REPLAY
    y sólo lo abre una vista privilegiada; que llegue a una vista pública es un CROSS_VIEW_LEAK (§12.3, H-05).
 
 **Columnas de divulgación.** `DIRECT_DISCLOSURE`: el dato viaja tal cual en el canal público. `DERIVED_DISCLOSURE`: se
 deduce de lo que viaja más información pública (catálogo, validador, constantes del motor). Valores `YES`, `NO` o
-`PARTIAL`. Reglas, que comprueba el test:
+`PARTIAL`. `ENGINE_DERIVED`: si `DERIVED_DISCLOSURE` no es `NO`, la inferencia la permite el motor y la columna dice a qué
+está atada: una issue de motor (`#261`, `#262`, `#263`, §12.4), una decisión de producto (`D-01`…`D-08`) o `BY_DESIGN`
+(el dato público existe a propósito, como el movimiento o el tramo de estado); si es `NO`, `—`. Reglas, que comprueba el
+test:
 
 - `YES` en cualquiera de las dos ⇒ la clase es PUBLIC (lo que se deduce siempre es público de hecho).
 - `PARTIAL` ⇒ sólo una parte, o sólo en ciertas condiciones; la clase vale para el resto, y NOTES dice qué se deduce y
   dónde (§12.1, §12.2). El renderer **no** calcula ni dibuja la parte deducible de un dato privado: deducirla no es lo
   mismo que regalarla ya hecha (D-08).
 - PUBLIC con `NO` en las dos es un error.
+- `DERIVED_DISCLOSURE` = `NO` ⇔ `ENGINE_DERIVED` = `—`.
 
 **Inferencia por ranuras ocupadas.** El snapshot público lista sólo las ranuras **con módulo** (`modules: [{slot, state}]`,
 `Battle.publicSnapshot()`; el vehículo sólo crea entradas para los módulos de su spec, `vehicle.ts`). La nómina publica
@@ -351,54 +380,55 @@ ranura admite un único módulo base, **qué módulo es**. La regla es:
 La tabla de encaje está en §12.1; la calcula el test a partir del catálogo real y del validador, no se escribe a mano.
 La inferencia por cinemática de los proyectiles está en §12.2, y las fugas entre vistas en §12.3.
 
-| DATA_ID | DATA | CLASSIFICATION | DIRECT_DISCLOSURE | DERIVED_DISCLOSURE | SOURCE | NOTES |
-| --- | --- | --- | --- | --- | --- | --- |
-| `data.chassis_identity` | Chasis del vehículo | PUBLIC | YES | NO | `init.meta.roster.chassis`; cabecera del replay | Ya se pinta por arquetipo. |
-| `data.team_identity` | Equipo | PUBLIC | YES | NO | snapshot `team`, nómina | |
-| `data.bot_name` | Nombre del bot | PUBLIC | YES | NO | nómina | COMPETITION_NOTE lo permite. |
-| `data.pose` | Posición y rumbo del casco | PUBLIC | YES | NO | snapshot `position`, `heading` | La vista con niebla del espectador es una aproximación por radio (`fog.ts`). |
-| `data.turret_heading` | Rumbo de la torreta | PUBLIC | YES | NO | snapshot `turretHeading` | |
-| `data.hull_hp_exact` | Vida exacta del casco | PUBLIC | YES | NO | snapshot `hullHp`, `hullHpMax` (el HUD lo enseña) | Hoy es pública. Propuesta: el renderer del vehículo usa tramos; mantener o no la cifra exacta en el HUD es D-03. Su variación delata el daño de cada impacto (§12.2). |
-| `data.module_state` | Estado de cada ranura (operational/damaged/critical/destroyed/offline) | PUBLIC | YES | NO | snapshot `modules[].state` | Incluye `offline` (apagado voluntario): ver D-04. |
-| `data.module_health_exact` | Fracción de vida exacta de cada módulo | SELF_ONLY | NO | PARTIAL | observación `self.modules[].healthFraction` | No está en el snapshot. El `state` público da el tramo (≥ 0.66, < 0.66, < 0.33, 0), no la cifra. |
-| `data.armor_sector_hp` | Vida de blindaje por sector | SELF_ONLY | NO | PARTIAL | observación `self.armor` | Ni siquiera en el snapshot público (sólo en el hash). Con ruido: si un impacto en un sector con placa baja el `hullHp` como uno sin placa, la placa está agotada (`applyDamage`, §12.2). |
-| `data.slot_occupancy` | Qué ranuras del chasis llevan módulo | PUBLIC | YES | NO | snapshot `modules[].slot` (sólo las ocupadas) + `roster.chassis` | Regla de inferencia: presencia de ranura + catálogo ⇒ identidad cuando sólo hay un candidato (§12.1). Ver H-04 y D-07. |
-| `data.module_identity` | Qué módulo concreto hay en cada ranura | OBSERVER_DEPENDENT | NO | PARTIAL | loadout (ficha); cabecera del replay crudo | El `moduleId` no viaja en el directo, pero se infiere en varias ranuras (§12.1) y en el arma tras el primer disparo (§12.2). Ver D-01, H-04, H-05 y H-07. |
-| `data.sensor_installed` | Que un sensor está montado, y cuál | OBSERVER_DEPENDENT | PARTIAL | NO | ranura en el snapshot (`sensor_a/b`) + identidad (D-01) | La presencia viaja (`data.slot_occupancy`); el tipo no se infiere: varias opciones en `sensor_a` y en `sensor_b` (§12.1). Ver la nota de §12.1 sobre restricciones conjuntas. |
-| `data.sensor_destroyed` | Sensor destruido | PUBLIC | YES | NO | snapshot `modules[].state = destroyed` | |
-| `data.radar_operating` | Radar funcionando (no destruido ni apagado) | PUBLIC | YES | NO | `modules[].state` de la ranura del sensor | Lo público es el estado de la ranura; que esa ranura sea un radar depende de `data.sensor_installed`. Si en un ciclo concreto dio lectura (`moduleActs`) es interno: `data.sensor_cycle_output`. |
-| `data.sensor_cycle_output` | Si el sensor produjo lectura en un ciclo | NEVER_VISUALIZE | NO | NO | `moduleActs` en `sensors.ts` | |
-| `data.sensor_readings` | Rayos, contactos, rumbos, sonidos percibidos | NEVER_VISUALIZE | NO | PARTIAL | `buildObservation` (`sensors.ts`) | Es la observación privada del bot. El comportamiento del bot (giros, disparos) delata algo de lo que percibe; eso no se pinta. Re-simulable desde el replay crudo: H-05 (CROSS_VIEW, §12.3). |
-| `data.sensor_range_fov` | Alcance y cono de un sensor concreto dibujados sobre ese bot | OBSERVER_DEPENDENT | NO | PARTIAL | catálogo (público) + identidad (D-01) | Se deduce del catálogo si se conoce la identidad. Dibujarlo sobre un bot revela su capacidad real; nunca en directo público mientras D-01 no lo permita. |
-| `data.radio_installed` | Lleva radio, y cuál | PUBLIC | PARTIAL | YES | ranura `radio_a` en el snapshot + catálogo | La presencia viaja; la identidad es PUBLIC por inferencia: `radio_a` sólo admite `radio.short@1` (§12.1). |
-| `data.radio_active` | Está transmitiendo | ALLY_ONLY | NO | NO | cola de radio del motor; sin evento público | Nunca en directo público. |
-| `data.radio_content` | Contenido de los mensajes | NEVER_VISUALIZE | NO | NO | `RadioMessage.data` | En el canal público y en la proyección saneada. El replay crudo lo contiene (`radio[].data` de cada comando): H-05, PRE-1, CROSS_VIEW (§12.3). |
-| `data.ammo_type` | Tipo de munición | SELF_ONLY | NO | PARTIAL | loadout / spec | En el ligero es PUBLIC por inferencia (`data.light_ammo_type`). En medio y pesado, ap/he es inferible con ruido tras impactos (§12.2). El replay crudo lo lleva en el spec: H-05. |
-| `data.ammo_installed` | Lleva munición | PUBLIC | YES | NO | ranura `ammo_main` en el snapshot | Presencia (§12.1). |
-| `data.light_ammo_type` | Tipo de munición de un ligero | PUBLIC | NO | YES | `roster.chassis` + ranuras + catálogo + regla arma↔munición | PUBLIC por inferencia: la única arma base que cabe en el ligero es `weapon.mg`, que sólo acepta `ammo.standard` (§12.1). |
-| `data.ammo_remaining` | Munición restante | SELF_ONLY | NO | PARTIAL | observación `self.modules[].ammo` | MASTER-PLAN §13: «no por defecto». Con el tipo conocido, `rounds` del catálogo menos los proyectiles contados da una estimación (cada disparo gasta una ronda, `combat.ts`; se escapa el que impacta antes del siguiente snapshot). §12.2. |
-| `data.out_of_ammo` | Sin munición | SELF_ONLY | NO | PARTIAL | rechazo privado `no_ammo` | Se sospecha cuando la cuenta de §12.2 llega a cero y el vehículo deja de disparar. |
-| `data.weapon_cooldown` | Cooldown / recarga | SELF_ONLY | NO | PARTIAL | observación `self.modules[].cooldownTicks` | Con el arma y la versión inferidas, el último proyectil más el intervalo de §12.2 da el cooldown restante. |
-| `data.firing` | Ha disparado | PUBLIC | YES | YES | proyectil nuevo en el snapshot | El dato no trae el vehículo, pero se atribuye por inferencia: el proyectil nace en la boca de quien dispara (§12.2). |
-| `data.projectile_origin` | Qué vehículo y qué arma disparó el proyectil | PUBLIC | NO | YES | `id` estable + posiciones del proyectil + `turretHeading` + catálogo | PUBLIC por inferencia tras el primer disparo: velocidad = `projectileSpeedMs`, origen = boca a `radiusM + 0.3` m (§12.2, H-07). D-08. |
-| `data.weapon_identity` | Arma de un vehículo que ya ha disparado | PUBLIC | NO | YES | cinemática del proyectil + catálogo | PUBLIC por inferencia tras el primer disparo: cada arma base tiene su `projectileSpeedMs` (§12.2). Antes del primer disparo, `data.module_identity`. |
-| `data.weapon_version` | Versión del arma (`weapon.mg@1` o `@2`) | PUBLIC | NO | YES | `hullHp` público tras impactos + `modules[].state` del arma + catálogo | PUBLIC por inferencia tras impactos: el daño al casco es `damage × multiplicador × rendimiento × 0.7`, exacto en un sector sin placa (siempre en el ligero). Con el arma dañada, también por la cadencia (§12.2). |
-| `data.energy_state` | Energía almacenada y flujo | SELF_ONLY | NO | PARTIAL | observación `self.energy` | En las vistas renderizadas. Con ruido: un vehículo que deja de disparar con munición y el arma sana puede ir sin energía (`no_energy`). Con el replay crudo se re-simula: H-05. |
-| `data.power_installed` | Lleva módulo de energía | PUBLIC | YES | NO | ranura `power` en el snapshot | Presencia. Cuál de los tres, no (§12.1). |
-| `data.mine_installed` | Lleva minas en la bahía | PUBLIC | PARTIAL | YES | ranura `mine_bay` en el snapshot + catálogo | PUBLIC por inferencia: `mine_bay` sólo admite `mine.explosive@1` (§12.1). |
-| `data.mine_bay_contents` | Cargas que quedan en la bahía | SELF_ONLY | NO | NO | observación `self.modules[].ammo` (cargas) | Que lleva minas es PUBLIC (`data.mine_installed`); cuántas quedan, no: los despliegues no son públicos y `mine_triggered` no dice de quién es la mina. |
-| `data.mine_position` | Posición de una mina desplegada | SELF_ONLY | NO | NO | evento privado `mine_deployed` | Excluida del snapshot público por diseño. En el replay crudo, los `deployMine` de cada comando permiten reconstruirla: H-05, CROSS_VIEW (§12.3). |
-| `data.mine_triggered` | Explosión de mina | PUBLIC | YES | NO | evento público `mine_triggered` | |
-| `data.light_weapon_identity` | Arma de un ligero | PUBLIC | NO | YES | `roster.chassis` + ranura `turret_main` + catálogo | PUBLIC por inferencia: en el ligero `turret_main` sólo admite `weapon.mg` (§12.1), aun sin disparar. La versión, por `data.weapon_version`. |
-| `data.light_drive_identity` | Tracción de un ligero | PUBLIC | NO | YES | `roster.chassis` + ranura `drive` + catálogo | PUBLIC por inferencia: en el ligero `drive` sólo admite `movement.wheels@1`. §12.1. |
-| `data.carrying_flag` | Lleva la bandera | PUBLIC | YES | NO | snapshot `carryingFlag` | |
-| `data.juggernaut` | Es el juggernaut | PUBLIC | YES | NO | snapshot `juggernaut` | |
-| `data.vehicle_alive` | Vivo o destruido | PUBLIC | YES | NO | snapshot `alive`, evento `vehicle_destroyed` | |
-| `data.respawns_left` | Reapariciones restantes | PUBLIC | YES | NO | snapshot `respawnsLeft` (sólo con respawn limitado) | |
-| `data.engine_activity` | Motor en marcha (el vehículo se mueve o gira) | PUBLIC | NO | YES | cambio de `position` y `heading` entre snapshots | PUBLIC por inferencia: se deriva del movimiento público. El acelerador sin movimiento es `data.engine_throttle`. |
-| `data.engine_throttle` | Acelerador pedido aunque el vehículo no se mueva (p. ej., contra un muro) | SELF_ONLY | NO | NO | `lastMove.throttle` interno (`battle.ts`); sonido «engine» | Sólo lo oye el acústico de otro bot; nunca se pinta. |
-| `data.hit_details` | Sector impactado, daño recibido, atacante | SELF_ONLY | NO | PARTIAL | eventos privados `hit_taken` / `hit_dealt` | El daño al casco (variación de `hullHp`) y el atacante (origen del proyectil, §12.2) se deducen; el sector, por geometría y con ruido; el daño al módulo y al blindaje, no. |
-| `data.full_loadout` | Ficha completa del bot | OBSERVER_DEPENDENT | NO | PARTIAL | API, según BOT_VISIBILITY | Lo deducible está en §12.1 y §12.2. |
+| DATA_ID | DATA | CLASSIFICATION | DIRECT_DISCLOSURE | DERIVED_DISCLOSURE | ENGINE_DERIVED | SOURCE | NOTES |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `data.chassis_identity` | Chasis del vehículo | PUBLIC | YES | NO | — | `init.meta.roster.chassis`; cabecera del replay | Ya se pinta por arquetipo. |
+| `data.team_identity` | Equipo | PUBLIC | YES | NO | — | snapshot `team`, nómina | |
+| `data.bot_name` | Nombre del bot | PUBLIC | YES | NO | — | nómina | COMPETITION_NOTE lo permite. |
+| `data.pose` | Posición y rumbo del casco | PUBLIC | YES | NO | — | snapshot `position`, `heading` | La vista con niebla del espectador es una aproximación por radio (`fog.ts`). |
+| `data.turret_heading` | Rumbo de la torreta | PUBLIC | YES | NO | — | snapshot `turretHeading` | |
+| `data.hull_hp_exact` | Vida exacta del casco | PUBLIC | YES | NO | — | snapshot `hullHp`, `hullHpMax` (el HUD lo enseña) | Hoy es pública. Propuesta: el renderer del vehículo usa tramos; mantener o no la cifra exacta en el HUD es D-03. Su variación delata el daño de cada impacto (§12.2). |
+| `data.module_state` | Estado de cada ranura (operational/damaged/critical/destroyed/offline) | PUBLIC | YES | NO | — | snapshot `modules[].state` | Incluye `offline` (apagado voluntario): ver D-04. |
+| `data.module_health_exact` | Fracción de vida exacta de cada módulo | SELF_ONLY | NO | PARTIAL | BY_DESIGN | observación `self.modules[].healthFraction` | No está en el snapshot. El `state` público da el tramo (≥ 0.66, < 0.66, < 0.33, 0), no la cifra. |
+| `data.armor_sector_hp` | Vida de blindaje por sector | SELF_ONLY | NO | PARTIAL | #263 | observación `self.armor` | Ni siquiera en el snapshot público (sólo en el hash). Con ruido: si un impacto en un sector con placa baja el `hullHp` como uno sin placa, la placa está agotada (`applyDamage`, §12.2). |
+| `data.armor_material` | Material de la placa de un sector (acero o compuesto) | OBSERVER_DEPENDENT | NO | PARTIAL | #263 | `hullHp` público tras impactos + sector por geometría + arma inferida (§12.2) + catálogo | El sector lo da la ranura (§12.1); el material no viaja, pero la reducción del daño es distinta por material, así que la caída del `hullHp` tras impactos en un sector lo sugiere con ruido (ENGINE_DERIVED, #263, §12.4). El renderer no lo deduce: placa genérica hasta D-01. |
+| `data.slot_occupancy` | Qué ranuras del chasis llevan módulo | PUBLIC | YES | NO | — | snapshot `modules[].slot` (sólo las ocupadas) + `roster.chassis` | Regla de inferencia: presencia de ranura + catálogo ⇒ identidad cuando sólo hay un candidato (§12.1). Ver H-04 y D-07. |
+| `data.module_identity` | Qué módulo concreto hay en cada ranura | OBSERVER_DEPENDENT | NO | PARTIAL | #262, #263, D-07, D-08 | loadout (ficha); cabecera del replay crudo | El `moduleId` no viaja en el directo, pero se infiere en varias ranuras (§12.1) y en el arma tras el primer disparo (§12.2); antes, por el giro de la torreta (#262); el material del blindaje tras impactos (#263); la tracción, con ruido, por cinemática. Ver D-01, H-04, H-05 y H-07. |
+| `data.sensor_installed` | Que un sensor está montado, y cuál | OBSERVER_DEPENDENT | PARTIAL | NO | — | ranura en el snapshot (`sensor_a/b`) + identidad (D-01) | La presencia viaja (`data.slot_occupancy`); el tipo no se infiere: varias opciones en `sensor_a` y en `sensor_b` (§12.1). Ver la nota de §12.1 sobre restricciones conjuntas. |
+| `data.sensor_destroyed` | Sensor destruido | PUBLIC | YES | NO | — | snapshot `modules[].state = destroyed` | |
+| `data.radar_operating` | Radar funcionando (no destruido ni apagado) | PUBLIC | YES | NO | — | `modules[].state` de la ranura del sensor | Lo público es el estado de la ranura; que esa ranura sea un radar depende de `data.sensor_installed`. Si en un ciclo concreto dio lectura (`moduleActs`) es interno: `data.sensor_cycle_output`. |
+| `data.sensor_cycle_output` | Si el sensor produjo lectura en un ciclo | NEVER_VISUALIZE | NO | NO | — | `moduleActs` en `sensors.ts` | |
+| `data.sensor_readings` | Rayos, contactos, rumbos, sonidos percibidos | NEVER_VISUALIZE | NO | PARTIAL | BY_DESIGN | `buildObservation` (`sensors.ts`) | Es la observación privada del bot. El comportamiento del bot (giros, disparos) delata algo de lo que percibe; eso no se pinta. Re-simulable desde el replay crudo: H-05 (CROSS_VIEW, §12.3). |
+| `data.sensor_range_fov` | Alcance y cono de un sensor concreto dibujados sobre ese bot | OBSERVER_DEPENDENT | NO | PARTIAL | D-01 | catálogo (público) + identidad (D-01) | Se deduce del catálogo si se conoce la identidad. Dibujarlo sobre un bot revela su capacidad real; nunca en directo público mientras D-01 no lo permita. |
+| `data.radio_installed` | Lleva radio, y cuál | PUBLIC | PARTIAL | YES | D-07 | ranura `radio_a` en el snapshot + catálogo | La presencia viaja; la identidad es PUBLIC por inferencia: `radio_a` sólo admite `radio.short@1` (§12.1). |
+| `data.radio_active` | Está transmitiendo | ALLY_ONLY | NO | NO | — | cola de radio del motor; sin evento público | Nunca en directo público. |
+| `data.radio_content` | Contenido de los mensajes | NEVER_VISUALIZE | NO | NO | — | `RadioMessage.data` | En el canal público y en la proyección saneada. El replay crudo lo contiene (`radio[].data` de cada comando): H-05, PRE-1, CROSS_VIEW (§12.3). |
+| `data.ammo_type` | Tipo de munición | SELF_ONLY | NO | PARTIAL | D-07, D-08 | loadout / spec | En el ligero es PUBLIC por inferencia (`data.light_ammo_type`). En medio y pesado, ap/he es inferible con ruido tras impactos (§12.2). El replay crudo lo lleva en el spec: H-05. |
+| `data.ammo_installed` | Lleva munición | PUBLIC | YES | NO | — | ranura `ammo_main` en el snapshot | Presencia (§12.1). |
+| `data.light_ammo_type` | Tipo de munición de un ligero | PUBLIC | NO | YES | D-07 | `roster.chassis` + ranuras + catálogo + regla arma↔munición | PUBLIC por inferencia: la única arma base que cabe en el ligero es `weapon.mg`, que sólo acepta `ammo.standard` (§12.1). |
+| `data.ammo_remaining` | Munición restante | SELF_ONLY | NO | PARTIAL | D-08 | observación `self.modules[].ammo` | MASTER-PLAN §13: «no por defecto». Con el tipo conocido, `rounds` del catálogo menos los proyectiles contados da una estimación (cada disparo gasta una ronda, `combat.ts`; se escapa el que impacta antes del siguiente snapshot). §12.2. |
+| `data.out_of_ammo` | Sin munición | SELF_ONLY | NO | PARTIAL | D-08 | rechazo privado `no_ammo` | Se sospecha cuando la cuenta de §12.2 llega a cero y el vehículo deja de disparar. |
+| `data.weapon_cooldown` | Cooldown / recarga | SELF_ONLY | NO | PARTIAL | D-08 | observación `self.modules[].cooldownTicks` | Con el arma y la versión inferidas, el último proyectil más el intervalo de §12.2 da el cooldown restante. |
+| `data.firing` | Ha disparado | PUBLIC | YES | YES | D-08 | proyectil nuevo en el snapshot | El dato no trae el vehículo, pero se atribuye por inferencia: el proyectil nace en la boca de quien dispara (§12.2). |
+| `data.projectile_origin` | Qué vehículo y qué arma disparó el proyectil | PUBLIC | NO | YES | D-08 | `id` estable + posiciones del proyectil + `turretHeading` + catálogo | PUBLIC por inferencia tras el primer disparo: velocidad = `projectileSpeedMs`, origen = boca a `radiusM + 0.3` m (§12.2, H-07). D-08. |
+| `data.weapon_identity` | Arma de un vehículo que ya ha disparado o ha girado la torreta a su ritmo máximo | PUBLIC | NO | YES | #262, D-08 | cinemática del proyectil + `turretHeading` + catálogo | PUBLIC por inferencia tras el primer disparo: cada arma base tiene su `projectileSpeedMs` (§12.2). Antes, la mg se delata por el giro de la torreta en cuanto supera el ritmo máximo del cañón en el mismo estado (ENGINE_DERIVED, #262, §12.2); hasta entonces, `data.module_identity`. |
+| `data.weapon_version` | Versión del arma (`weapon.mg@1` o `@2`) | PUBLIC | NO | YES | D-03, D-08 | `hullHp` público tras impactos + `modules[].state` del arma + catálogo | PUBLIC por inferencia tras impactos: el daño al casco es `damage × multiplicador × rendimiento × 0.7`, exacto en un sector sin placa (siempre en el ligero). Con el arma dañada, también por la cadencia (§12.2). |
+| `data.energy_state` | Energía almacenada y flujo | SELF_ONLY | NO | PARTIAL | BY_DESIGN | observación `self.energy` | En las vistas renderizadas. Con ruido: un vehículo que deja de disparar con munición y el arma sana puede ir sin energía (`no_energy`). Con el replay crudo se re-simula: H-05. |
+| `data.power_installed` | Lleva módulo de energía | PUBLIC | YES | NO | — | ranura `power` en el snapshot | Presencia. Cuál de los tres, no (§12.1). |
+| `data.mine_installed` | Lleva minas en la bahía | PUBLIC | PARTIAL | YES | D-07 | ranura `mine_bay` en el snapshot + catálogo | PUBLIC por inferencia: `mine_bay` sólo admite `mine.explosive@1` (§12.1). |
+| `data.mine_bay_contents` | Cargas que quedan en la bahía | SELF_ONLY | NO | PARTIAL | #261 | observación `self.modules[].ammo` (cargas) | Que lleva minas es PUBLIC (`data.mine_installed`). Cuántas quedan es SELF_ONLY para el renderer, pero el motor deja inferir los despliegues en ciertas condiciones por la identidad u orden de las entidades públicas (ENGINE_DERIVED, #261, §12.4); `mine_triggered` no dice de quién es la mina. El renderer no lo cuenta ni lo pinta. |
+| `data.mine_position` | Posición de una mina desplegada | SELF_ONLY | NO | PARTIAL | #261 | evento privado `mine_deployed` | Excluida del snapshot público, pero el motor deja inferir en ciertas condiciones el instante y la posición de un despliegue por la identidad u orden de las entidades públicas (ENGINE_DERIVED, #261, §12.4). El renderer no la calcula ni la pinta. En el replay crudo, los `deployMine` de cada comando permiten reconstruirla: H-05, CROSS_VIEW (§12.3). |
+| `data.mine_triggered` | Explosión de mina | PUBLIC | YES | NO | — | evento público `mine_triggered` | |
+| `data.light_weapon_identity` | Arma de un ligero | PUBLIC | NO | YES | D-07 | `roster.chassis` + ranura `turret_main` + catálogo | PUBLIC por inferencia: en el ligero `turret_main` sólo admite `weapon.mg` (§12.1), aun sin disparar. La versión, por `data.weapon_version`. |
+| `data.light_drive_identity` | Tracción de un ligero | PUBLIC | NO | YES | D-07 | `roster.chassis` + ranura `drive` + catálogo | PUBLIC por inferencia: en el ligero `drive` sólo admite `movement.wheels@1`. §12.1. |
+| `data.carrying_flag` | Lleva la bandera | PUBLIC | YES | NO | — | snapshot `carryingFlag` | |
+| `data.juggernaut` | Es el juggernaut | PUBLIC | YES | NO | — | snapshot `juggernaut` | |
+| `data.vehicle_alive` | Vivo o destruido | PUBLIC | YES | NO | — | snapshot `alive`, evento `vehicle_destroyed` | |
+| `data.respawns_left` | Reapariciones restantes | PUBLIC | YES | NO | — | snapshot `respawnsLeft` (sólo con respawn limitado) | |
+| `data.engine_activity` | Motor en marcha (el vehículo se mueve o gira) | PUBLIC | NO | YES | BY_DESIGN | cambio de `position` y `heading` entre snapshots | PUBLIC por inferencia: se deriva del movimiento público. El acelerador sin movimiento es `data.engine_throttle`. |
+| `data.engine_throttle` | Acelerador pedido aunque el vehículo no se mueva (p. ej., contra un muro) | SELF_ONLY | NO | NO | — | `lastMove.throttle` interno (`battle.ts`); sonido «engine» | Sólo lo oye el acústico de otro bot; nunca se pinta. |
+| `data.hit_details` | Sector impactado, daño recibido, atacante | SELF_ONLY | NO | PARTIAL | #263, D-08 | eventos privados `hit_taken` / `hit_dealt` | El daño al casco (variación de `hullHp`) y el atacante (origen del proyectil, §12.2) se deducen; el sector, por geometría y con ruido; el daño al módulo y al blindaje, no. |
+| `data.full_loadout` | Ficha completa del bot | OBSERVER_DEPENDENT | NO | PARTIAL | #262, #263, D-07, D-08 | API, según BOT_VISIBILITY | Lo deducible está en §12.1 y §12.2. |
 
 ### 12.1 Encaje por ranura: qué revela la ranura ocupada
 
@@ -438,7 +468,7 @@ exige generador. La inferencia por cinemática, que no es de ranura, está en §
 | `chassis.medium/ammo_main` | `ammo.ap@1`, `ammo.he@1`, `ammo.standard@1` | PRESENCE |  |
 | `chassis.medium/mine_bay` | `mine.explosive@1` | IDENTITY | Que lleva minas es público (`utility` no tiene módulos). |
 | `chassis.medium/radio_a` | `radio.short@1` | IDENTITY |  |
-| `chassis.medium/armor_front` | `armor.composite_front@1`, `armor.steel_front@1` | PRESENCE | El sector lo da la ranura; acero o compuesto, no. |
+| `chassis.medium/armor_front` | `armor.composite_front@1`, `armor.steel_front@1` | PRESENCE | El sector lo da la ranura; acero o compuesto, la ranura sola no (tras impactos, ENGINE_DERIVED #263, §12.4). |
 | `chassis.medium/armor_left` | `armor.composite_left@1`, `armor.steel_left@1` | PRESENCE |  |
 | `chassis.medium/armor_right` | `armor.composite_right@1`, `armor.steel_right@1` | PRESENCE |  |
 | `chassis.medium/armor_rear` | `armor.composite_rear@1`, `armor.steel_rear@1` | PRESENCE |  |
@@ -469,6 +499,8 @@ Hechos del motor:
   `round(cooldownTicks / max(0.25, rendimiento))` (`combat.ts`); el rendimiento sale del `state` público del módulo
   (`MODULE_STATE_PERFORMANCE`);
 - cada disparo gasta una ronda (`fire`, `combat.ts`);
+- la torreta gira como mucho `turretRate() × dt` por tick, con `turretRate()` = máximo de `turretRateRads × rendimiento`
+  de las armas (`vehicle.ts`), y el `turretHeading` va en cada snapshot (`battle.ts`);
 - el daño de un impacto es `damage × damageMultiplier × rendimiento`; al casco va el 70 % (`CHASSIS_DAMAGE_SHARE`) tras
   la reducción de la placa del sector, si la hay (`applyDamage`, `combat.ts`); el `hullHp` exacto es público.
 
@@ -486,17 +518,25 @@ constantes reales: si el catálogo cambia y la tabla no, la CI se pone en rojo.
 - `HULL_DAMAGE`: daño al casco por impacto, por munición compatible, a pleno rendimiento y en un sector sin placa (todos
   los del ligero).
 - `IDENTITY_BY_SPEED`: `IDENTITY` si ninguna otra arma base comparte velocidad; si no, `AMBIGUOUS`.
+- `TURRET_RATE_RADS`: ritmo máximo de giro de la torreta con el arma operational / damaged / critical.
+- `IDENTITY_BY_TURRET` (ENGINE_DERIVED, #262): `IDENTITY` si, en cada estado, gira más deprisa que cualquier otra arma
+  base en ese mismo estado (un giro a tope la delata antes del primer disparo); `EXCLUSION` si alguna otra base gira más
+  deprisa (sólo una observación larga sin superarla lo sugiere, con ruido); `AMBIGUOUS` si comparte ritmo con otra base.
 - `VERSION_SIGNAL`: qué distingue esta versión de las otras del mismo arma (`SPEED`, `INTERVAL`, `INTERVAL_DEGRADED`,
   `HULL_DAMAGE`), o `—`.
 
-| WEAPON_KIN | SPEED_MS | REACH_M | INTERVAL_TICKS | HULL_DAMAGE | IDENTITY_BY_SPEED | VERSION_SIGNAL |
-| --- | --- | --- | --- | --- | --- | --- |
-| `weapon.cannon@1` | 120 | 360 | 30 / 51 / 120 | ammo.ap 37.8; ammo.he 28.35 | IDENTITY | — |
-| `weapon.mg@1` | 200 | 600 | 6 / 12 / 24 | ammo.standard 8.4 | IDENTITY | HULL_DAMAGE, INTERVAL_DEGRADED |
-| `weapon.mg@2` | 200 | 600 | 6 / 9 / 21 | ammo.standard 12.6 | IDENTITY | HULL_DAMAGE, INTERVAL_DEGRADED |
+| WEAPON_KIN | SPEED_MS | REACH_M | INTERVAL_TICKS | HULL_DAMAGE | IDENTITY_BY_SPEED | TURRET_RATE_RADS | IDENTITY_BY_TURRET | VERSION_SIGNAL |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `weapon.cannon@1` | 120 | 360 | 30 / 51 / 120 | ammo.ap 37.8; ammo.he 28.35 | IDENTITY | 1 / 0.6 / 0.25 | EXCLUSION | — |
+| `weapon.mg@1` | 200 | 600 | 6 / 12 / 24 | ammo.standard 8.4 | IDENTITY | 2.2 / 1.32 / 0.55 | IDENTITY | HULL_DAMAGE, INTERVAL_DEGRADED |
+| `weapon.mg@2` | 200 | 600 | 6 / 9 / 21 | ammo.standard 12.6 | IDENTITY | 2.2 / 1.32 / 0.55 | IDENTITY | HULL_DAMAGE, INTERVAL_DEGRADED |
 
 A pleno rendimiento la cadencia **no** distingue `weapon.mg@1` de `@2` (5 frente a 6 ticks de cooldown, pero el disparo
 sólo se resuelve cada 3, así que las dos disparan cada 6); el daño sí, y con el arma dañada o crítica también la cadencia.
+
+**La autoridad es la tabla calculada, no la prosa.** Las frases cuantitativas de este apartado (la cadencia de arriba, los
+ejemplos) son explicación: lo que el test vigila son las columnas de `WEAPON_KIN`, calculadas con el catálogo y las
+constantes reales, y la premisa del motor de que el disparo sólo se resuelve en ticks de decisión (`battle.ts`).
 
 Atributos del proyectil revisados (qué distingue el arma, hoy y con un sprite futuro):
 
@@ -514,7 +554,8 @@ Atributos del proyectil revisados (qué distingue el arma, hoy y con un sprite f
 | Sprite futuro | No existe | Por arma base: no añade; por versión o munición: añadiría | Hasta D-08, sprite por arma base como mucho. |
 
 Combinaciones inequívocas hoy: la **velocidad sola** identifica el arma base; velocidad más punto de nacimiento, qué
-vehículo; el daño en un sector sin placa, la versión de la mg. Tamaño, color y lifetime no aportan nada.
+vehículo; el daño en un sector sin placa, la versión de la mg. Antes del primer disparo, un giro de torreta más rápido
+que el del cañón en el mismo estado identifica la mg (ENGINE_DERIVED, #262). Tamaño, color y lifetime no aportan nada.
 
 ### 12.3 Fugas entre vistas (CROSS_VIEW_LEAK)
 
@@ -528,8 +569,24 @@ broadcast, replay público saneado, miniaturas), `ALLY_VIEW` (equipo), `OWNER_VI
 | `cross.composition_cache` | OWNER_VIEW | PUBLIC_VIEW | Una composición del vehículo hecha para el dueño se cachea por bot y se sirve al público | Caché intrínseca separada de la proyección por audiencia; nunca se cachea una composición privilegiada reutilizable (ADR-VIS-002). |
 | `cross.thumbnail` | OWNER_VIEW | PUBLIC_VIEW | Miniaturas o imágenes de la ficha generadas con el equipamiento completo y usadas en listados públicos | Se generan desde la proyección pública, con su `visibilityProfile` en la clave. |
 | `cross.team_capture` | ALLY_VIEW | PUBLIC_VIEW | El broadcast captura una vista de equipo (actividad de radio, niebla del equipo) | El streamer captura sólo `PUBLIC_VIEW`. |
-| `cross.debug_overlay` | INTERNAL_VIEW | PUBLIC_VIEW | Overlays de depuración (rayos, alcances, contactos) activables en el visor público | No existen en la vista pública; su activación la autoriza el backend, no un flag de cliente. |
+| `cross.debug_overlay` | INTERNAL_VIEW | PUBLIC_VIEW | Overlays de depuración (rayos, alcances, contactos) activables en el visor público; y, latente, el flag `debugOpen` del formato de replay, con el que un segmento llevaría los comandos de todos los participantes | No existen en la vista pública; su activación la autoriza el backend, no un flag de cliente. Una vista pública no recibe comandos ni observaciones ajenas aunque `debugOpen` esté activo (PRE-1). |
+| `cross.owner_to_rival` | OWNER_VIEW | PUBLIC_VIEW | El perfil del dueño se resuelve por rol y no por pareja: el dueño de A ve también el vehículo rival B con SELF_ONLY, o una composición de dueño cacheada se sirve a otro dueño; en un replay crudo con varios participantes, «RAW_REPLAY ⇒ dueño» daría al dueño de A lo privado de B | Prohibido: el perfil se resuelve por pareja (visor, vehículo observado) y para los vehículos ajenos sólo llega la proyección saneada; el dueño de A ve B con el perfil público y el backend autoriza cada pareja (ADR-VIS-002, «Proyección por pareja»; PRE-1). |
 | `cross.client_payload` | OWNER_VIEW | PUBLIC_VIEW | El cliente público recibe datos que no pinta (ocultos por CSS o por el renderer) | El frontend no es un control: lo que una audiencia no debe ver no se le envía. |
+
+### 12.4 Fugas del motor (ENGINE_DERIVED)
+
+Inferencias que permite **el motor** con lo que ya publica, sin que intervenga el renderer. La FASE 0 no las corrige: las
+documenta, las ata a su issue y fija qué hace la capa visual para no amplificarlas. Cada issue describe la clase del
+problema; este documento no da pasos para explotarlas.
+
+| ENGINE_LEAK_ID | ISSUE | CLASS_OF_PROBLEM | DATA_IDS | DOMAIN_IDS | VISUAL_RULE |
+| --- | --- | --- | --- | --- | --- |
+| `engine.entity_identity_order` | #261 | La identidad u orden públicos de las entidades permite inferir despliegues no visibles (instante y posición de una mina, y con ello las cargas que quedan) | `data.mine_bay_contents`, `data.mine_position` | `mine.explosive@1`, `runtime.mine_deployed` | El renderer no pinta minas no públicas, no numera ni ordena entidades por su id y no deriva nada de los huecos o del orden de los ids. |
+| `engine.turret_kinematics` | #262 | La cinemática pública de la torreta (ritmo de giro y precisión de `turretHeading`) permite inferir el arma antes del primer disparo | `data.full_loadout`, `data.module_identity`, `data.weapon_identity` | `runtime.turret`, `weapon.cannon@1`, `weapon.mg@1`, `weapon.mg@2` | La torreta gira con el `turretHeading` público, sin suavizado que cambie el ritmo; el sprite del arma no se anticipa a la inferencia (genérico hasta el primer disparo, D-08). |
+| `engine.damage_response` | #263 | La respuesta pública al daño (variación exacta de `hullHp`) permite inferir el material del blindaje del sector | `data.armor_material`, `data.armor_sector_hp`, `data.full_loadout`, `data.hit_details`, `data.module_identity` | `armor.composite_front@1`, `armor.composite_left@1`, `armor.composite_rear@1`, `armor.composite_right@1`, `armor.steel_front@1`, `armor.steel_left@1`, `armor.steel_rear@1`, `armor.steel_right@1` | Placa genérica (sin acabado por material) en vistas públicas mientras D-01 no lo decida; ningún «número de daño» por impacto (D-03). |
+
+Los `DATA_IDS` de cada fila son exactamente los de §12 cuya columna `ENGINE_DERIVED` cita esa issue, y los `DOMAIN_IDS`
+los de §5 y §6 cuyo WHY la cita; el test lo comprueba en los dos sentidos.
 
 ## 13. Estados visuales
 
@@ -570,12 +627,12 @@ Hallazgos (hechos del repo, documentados sin cambiar nada):
     (contenido de los mensajes, `command.schema.json`) y `deployMine`;
   - además de los snapshots y eventos públicos.
 
-  Con semilla y comandos, `verify()` re-simula la batalla entera, así que quien lee el fichero obtiene después de la
-  batalla el contenido de la radio de cada bot, la posición de sus minas y sus observaciones privadas.
-  **Quién lo lee:** los participantes y los equipos rivales de la batalla, **siempre** (vías de acceso por participación
-  de `replay-access.ts`); y los **anónimos**, si se activa la capability `S9_PUBLIC_REPLAYS_ENABLED` (apagada por
-  defecto). Que hoy esté apagada **no** es la solución: el contrato tiene que ser seguro con ella activa. Las clases de
-  §12 valen para el canal público y la proyección saneada, no para este fichero.
+  Con semilla y comandos, `verify()` re-simula la batalla entera, así que quien lea el fichero crudo puede reconstruir
+  después de la batalla el contenido de la radio de cada bot, la posición de sus minas y sus observaciones privadas.
+  Quién puede leerlo lo decide la política de acceso a replays (PRE-1); este contrato no describe el estado de acceso
+  actual ni sus vías. Que el acceso anónimo dependa de una capability apagada por defecto **no** es la solución: el
+  contrato tiene que ser seguro con ella activa. Las clases de §12 valen para el canal público y la proyección saneada,
+  no para este fichero.
   Es la clase de problema «artefacto crudo servido sin proyección por audiencia»: **PRE-1, hallazgo de seguridad
   preexistente**. Su política ya está decidida (replay público = proyección saneada de competición; replay crudo =
   restringido, con autorización en el backend; §12) y su arreglo de backend va en otro PR contra `main`. Este PR sólo
@@ -590,6 +647,12 @@ Hallazgos (hechos del repo, documentados sin cambiar nada):
   identifican el arma base y el tirador desde el primer disparo, en cualquier chasis; el daño al casco público delata la
   versión de la mg y, con ruido, la munición del cañón (§12.2, calculado por el test). Es la misma clase que H-04 en
   dinámico: DERIVED_LEAK. Esta fase no toca el motor.
+
+- **H-08** — **fugas del motor (ENGINE_DERIVED).** Además de H-04 y H-07, el motor deja inferir con lo que ya publica:
+  despliegues de minas no visibles por la identidad u orden de las entidades públicas (#261), el arma antes del primer
+  disparo por la cinemática de la torreta (#262) y el material del blindaje por la respuesta al daño (#263). Son
+  `ENGINE_INFORMATION_LEAK`, no fugas del contrato visual: se documentan en §12.4 con su issue, y la capa visual se
+  compromete a no amplificarlas. Esta fase no toca el motor.
 
 Decisiones que necesitan validación de producto:
 
@@ -615,7 +678,9 @@ Decisiones que necesitan validación de producto:
   Opciones: (a) aceptarlo y documentar el arma como PUBLIC tras el primer disparo; (b) reducir la resolución pública
   (ids no correlacionables entre snapshots, posición cuantizada, velocidades iguales); (c) publicar el arma de forma
   explícita y dejar de fingir que es privada. Es una fuga **ya existente**; esta fase no cambia las reglas. Hasta
-  decidir: el renderer trata el arma como PUBLIC desde el primer disparo y, antes, como OBSERVER_DEPENDENT; no calcula ni
-  pinta lo PARTIAL de §12 (cooldown, rondas, munición) y no distingue en el sprite ni la versión ni la munición.
+  decidir: el renderer trata el arma como PUBLIC desde el primer disparo y, antes, como OBSERVER_DEPENDENT, aunque el
+  motor ya la deje inferir antes por el giro de la torreta (ENGINE_DERIVED, #262: el renderer no se adelanta a esa
+  inferencia); no calcula ni pinta lo PARTIAL de §12 (cooldown, rondas, munición) y no distingue en el sprite ni la
+  versión ni la munición.
 - **D-05 · Arquetipo frente a versión.** El visor actual agrupa por chasis (`chassisKind`): dos versiones del mismo
   chasis se ven iguales. Se propone mantenerlo (la versión cambia balance, no forma).
