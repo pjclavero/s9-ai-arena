@@ -105,7 +105,7 @@ perfil.
 | `view.public_live` | spectator | PUBLIC | HIDDEN | canal de espectador |
 | `view.public_replay` | spectator | PUBLIC | HIDDEN | proyección saneada del replay |
 | `view.broadcast` | spectator | PUBLIC | HIDDEN | canal de espectador |
-| `view.ally` | team | PUBLIC, ALLY_ONLY | HIDDEN | canal de espectador + datos del equipo |
+| `view.ally` | team | PUBLIC, ALLY_ONLY | HIDDEN | canal de espectador + datos del equipo, autorizados por pareja |
 | `view.owner` | owner | PUBLIC, ALLY_ONLY, SELF_ONLY | SHOWN | loadout del vehículo observado o su parte del replay crudo, autorizada por pareja |
 | `view.internal` | internal | PUBLIC, ALLY_ONLY, SELF_ONLY | SHOWN | replay crudo autorizado en el canal interno |
 

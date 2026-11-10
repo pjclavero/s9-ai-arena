@@ -557,6 +557,19 @@ Ejemplos:
 - munición restante exacta: no por defecto;
 - radio activa: sólo si es observable según reglas.
 
+**Fuga visual frente a fuga de motor** (FASE 0, ronda 3). `ENGINE_INFORMATION_LEAK != VISUAL_CONTRACT_LEAK`:
+
+- una **fuga visual** la introduce la capa visual: pinta o envía un dato que la audiencia no debe ver (DIRECT), lo deja
+  inferir por cómo lo representa (DERIVED: un sprite por versión, una animación de recarga, el cono de un sensor) o pasa
+  el contenido de una vista privilegiada a otra con menos privilegio (CROSS_VIEW: caché, captura, replay crudo);
+- una **fuga de motor** (ENGINE_DERIVED) ya existe sin renderer: el snapshot o la telemetría que entrega el motor
+  bastan para inferir el dato.
+
+La FASE 0 responde de DIRECT, DERIVED y CROSS_VIEW. Lo ENGINE_DERIVED se documenta y se referencia a su issue de motor
+(#261, #262, #263; [matriz §12.4](VISUAL_COMPONENT_MATRIX.md)), y la capa visual se compromete a **no amplificarlo**: no
+calcula ni pinta la parte deducible de un dato privado ni se adelanta a la inferencia. La FASE 0 no se bloquea esperando
+a corregir toda inferencia posible del motor.
+
 Gate obligatorio:
 
 ~~~text
@@ -1004,20 +1017,22 @@ Estado actual:
 LAST_UPDATED:        2026-11-10
 BRANCH:              mejoras-visuales-fase-0-inventario (base: mejoras-visuales @ 983d2f5; «mejoras-visuales/…» no es creable mientras exista la rama mejoras-visuales)
 BASE_MAIN_SHA:       b254e3dac1ab25f39f9b4565b3349aa66a9f3963
-CURRENT_PHASE:       FASE 0 — Descubrimiento y contrato visual (IN_PROGRESS)
+CURRENT_PHASE:       FASE 0 — FINAL_CORRECTION
 LAST_MERGED_VIS_PR:  ninguno
-ACTIVE_VIS_PR:       #253 (draft, FASE 0, base mejoras-visuales; ronda 2 de correcciones aplicada, pendiente de re-revisión)
-NEXT_ACTION:         re-revisión independiente de la ronda 2; decisiones de producto D-01..D-08
-BLOCKERS:            ninguno técnico; FASE 0 no pasa a PASS sin revisión independiente; PRE-1 (backend) en otro PR contra main
+ACTIVE_VIS_PR:       #253 (draft, FASE 0, base mejoras-visuales; ronda 3 FINAL_CORRECTION en curso)
+NEXT_ACTION:         cerrar P2-9 y P2-10; después, revisión final independiente; decisiones de producto D-01..D-08
+BLOCKERS:            P2-9 (proyección por pareja visor↔vehículo), P2-10 (falsos verdes); FASE 0 no pasa a PASS sin revisión independiente; PRE-1 (backend) en otro PR contra main
+ENGINE_ISSUES:       #261 (identidad/orden de entidades), #262 (cinemática de torreta), #263 (respuesta al daño/blindaje): fuera de FASE 0
 ~~~
 
 Entregables de FASE 0: [VISUAL_COMPONENT_INVENTORY](VISUAL_COMPONENT_INVENTORY.md),
 [VISUAL_COMPONENT_MATRIX](VISUAL_COMPONENT_MATRIX.md), [MOUNT_TYPE_DRAFT](MOUNT_TYPE_DRAFT.md),
 [ADR-VIS-001](adr/ADR-VIS-001-svg-vs-raster.md), [ADR-VIS-002](adr/ADR-VIS-002-catalog-versioning.md),
-[ADR-VIS-003](adr/ADR-VIS-003-mount-coordinate-system.md).
+[ADR-VIS-003](adr/ADR-VIS-003-mount-coordinate-system.md). Qué vigila cada test del contrato:
+[VISUAL_CONTRACT_TESTS](VISUAL_CONTRACT_TESTS.md).
 
 ~~~text
-PHASE_0_DISCOVERY             IN_PROGRESS
+PHASE_0_DISCOVERY             FINAL_CORRECTION
 PHASE_1_VISUAL_CORE           NOT_STARTED
 PHASE_2_VERTICAL_SLICE        NOT_STARTED
 PHASE_3_BASE_CATALOG          NOT_STARTED

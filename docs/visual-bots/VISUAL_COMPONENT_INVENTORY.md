@@ -135,3 +135,7 @@ repositorio; cuando un dato no existe en el código, se dice («NO EXISTE EN EL 
   largo de su `turretHeading` público. Desde el primer disparo se sabe qué arma lleva y quién disparó, en cualquier
   chasis, y tras impactos el `hullHp` público delata la versión de la mg. Lo calcula un test (matriz §12.2); la decisión
   es D-08 (matriz §14). Esta fase no toca el motor.
+- **H-08 · Fugas del motor (ENGINE_DERIVED).** Con lo que ya publica, el motor deja inferir también despliegues de minas
+  no visibles (identidad u orden de las entidades públicas, #261), el arma antes del primer disparo (cinemática de la
+  torreta, #262) y el material del blindaje (respuesta al daño, #263). No son fugas de la capa visual: se documentan en
+  la matriz §12.4 con su issue, y el renderer no las amplifica. Esta fase no toca el motor.
