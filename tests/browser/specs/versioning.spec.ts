@@ -51,6 +51,11 @@ test.describe("@fase1 UX-B versionado", () => {
     // #255 · todo en el MISMO panel, por secciones: historial, diff y clonado.
     await expectInBattles(page, "usan la v3");
     for (const v of [1, 2, 3]) await expect(page.getByTestId(`version-row-${v}`)).toBeVisible();
+    // #255 R1 (P3-5) · antes se comprobaba la marca de la v3 en la SEGUNDA tabla del detalle
+    // (`detail-in-battles-3`); esa tabla ya no existe (una sola tabla de versiones). Se
+    // comprueba la misma marca en la tabla única: sólo la v3 está en batallas.
+    await expect(page.getByTestId("in-battles-3")).toBeVisible();
+    for (const v of [1, 2]) await expect(page.getByTestId(`in-battles-${v}`)).toHaveCount(0);
     await openBotSection(page, "codigo");
     await page.getByLabel("version-visor").selectOption("3");
     await page.getByLabel("diff-contra").selectOption("2");
@@ -61,6 +66,9 @@ test.describe("@fase1 UX-B versionado", () => {
     await expect(page.getByTestId("bot-notice")).toContainText("Creada v4 (borrador) desde v3. v3 no cambia.");
     await expect(page.getByTestId("version-row-4")).toContainText("(desde v3)");
     await expect(page.getByTestId("version-row-4")).toContainText("draft");
+    // El clon (borrador) no se lleva la marca: sigue en batallas la v3.
+    await expect(page.getByTestId("in-battles-3")).toBeVisible();
+    await expect(page.getByTestId("in-battles-4")).toHaveCount(0);
     await shot(page, info, "uxb-versionado-historial");
 
     await go(page, "#/bots");
