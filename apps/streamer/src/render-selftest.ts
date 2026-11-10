@@ -30,6 +30,10 @@ import { realSpawner } from "./main.js";
 import { StreamSupervisor } from "./supervisor.js";
 
 const DISPLAY = process.env.SELFTEST_DISPLAY ?? ":95";
+// Chromium toma el display del ENTORNO (buildChromiumArgs no lo pasa): en producción el
+// entrypoint arranca el Xvfb en $DISPLAY; aquí el Xvfb propio va en DISPLAY y el entorno
+// heredado por los hijos tiene que apuntar a él (la CI lo cazó: la imagen trae DISPLAY=:99).
+process.env.DISPLAY = DISPLAY;
 const DIR = process.env.SELFTEST_DIR ?? "/tmp/render-selftest";
 const CHROMIUM = process.env.CHROMIUM_BIN ?? "chromium-browser";
 const FFMPEG = process.env.FFMPEG_BIN ?? "ffmpeg";
@@ -69,7 +73,10 @@ async function run(kind: keyof typeof PAGES): Promise<boolean> {
   const sup = new StreamSupervisor({
     config,
     spawner: realSpawner,
-    logger: createLogger(null, () => {}),
+    // Avisos y errores del supervisor a la salida del build (diagnóstico si falla).
+    logger: createLogger(null, (l) => {
+      if (/"level":"(warn|error)"/.test(l)) console.log(`render-selftest: [${kind}] ${l.slice(0, 600)}`);
+    }),
     processTree: true,
     chromiumBin: CHROMIUM,
     ffmpegBin: FFMPEG,
