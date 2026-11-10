@@ -100,7 +100,10 @@ RUN ARENA_DATA_DIRS=/data/replays /data-dir-entrypoint.sh sh -euc '\
 # BROADCAST_RENDER_READY y TODOS los frames del MP4 son visibles, el primero incluido;
 # (−) una página blanca NO la abre, no se graba nada y acaba en `render_not_ready`. Si
 # cualquiera de los dos falla, el build falla aquí.
-RUN /data-dir-entrypoint.sh tsx /app/apps/streamer/src/render-selftest.ts
+# Y no deja rastro: ni perfil de Chromium (su SingletonLock bloquearía al Chromium real:
+# «profile in use», código 21) ni nada más en el HOME del servicio.
+RUN /data-dir-entrypoint.sh tsx /app/apps/streamer/src/render-selftest.ts \
+ && if [ -n "$(ls -A /home/streamer)" ]; then echo "la autoprueba dejó ficheros en /home/streamer:"; ls -la /home/streamer; exit 1; fi
 
 ENTRYPOINT ["/data-dir-entrypoint.sh", "/entrypoint.sh"]
 

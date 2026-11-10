@@ -34,7 +34,12 @@ const DISPLAY = process.env.SELFTEST_DISPLAY ?? ":95";
 // entrypoint arranca el Xvfb en $DISPLAY; aquí el Xvfb propio va en DISPLAY y el entorno
 // heredado por los hijos tiene que apuntar a él (la CI lo cazó: la imagen trae DISPLAY=:99).
 process.env.DISPLAY = DISPLAY;
+// HOME PROPIO y desechable: el perfil de Chromium vive en $HOME/.config/chromium. Si la
+// autoprueba usara el HOME de `streamer`, su perfil (con el SingletonLock del Chromium
+// que se para aquí, «buildkitsandbox») quedaría DENTRO DE LA IMAGEN y el Chromium real
+// moriría siempre con «profile in use» (código 21). Lo cazó el E2E con la imagen local.
 const DIR = process.env.SELFTEST_DIR ?? "/tmp/render-selftest";
+process.env.HOME = join(DIR, "home");
 const CHROMIUM = process.env.CHROMIUM_BIN ?? "chromium-browser";
 const FFMPEG = process.env.FFMPEG_BIN ?? "ffmpeg";
 
@@ -140,7 +145,7 @@ async function run(kind: keyof typeof PAGES): Promise<boolean> {
 // Sin top-level await: en la imagen no hay package.json con "type": "module" y tsx
 // transforma este fichero a CommonJS (lo cazó la CI).
 async function selftest(): Promise<number> {
-  mkdirSync(DIR, { recursive: true });
+  mkdirSync(join(DIR, "home"), { recursive: true });
   const xvfb = spawn("Xvfb", [DISPLAY, "-screen", "0", "1920x1080x24", "-nolisten", "tcp"], { stdio: "ignore" });
   const sock = `/tmp/.X11-unix/X${DISPLAY.replace(/^:/, "").split(".")[0]}`;
   let rc = 1;
