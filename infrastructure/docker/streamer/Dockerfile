@@ -94,6 +94,14 @@ RUN ARENA_DATA_DIRS=/data/replays /data-dir-entrypoint.sh sh -euc '\
       rmdir /tmp/probe-ro' \
  && test "$(stat -c %u:%g /data/replays)" = "1000:1000"
 
+# #256 · AUTOPRUEBA DE RENDER en cada build (la emisión de YouTube salió en BLANCO con el
+# vídeo «válido»: nadie miraba el contenido). Con el Chromium, el Xvfb, el ffmpeg y el
+# supervisor REALES de la imagen, sin red: (+) una página con contenido abre la puerta
+# BROADCAST_RENDER_READY y TODOS los frames del MP4 son visibles, el primero incluido;
+# (−) una página blanca NO la abre, no se graba nada y acaba en `render_not_ready`. Si
+# cualquiera de los dos falla, el build falla aquí.
+RUN /data-dir-entrypoint.sh tsx /app/apps/streamer/src/render-selftest.ts
+
 ENTRYPOINT ["/data-dir-entrypoint.sh", "/entrypoint.sh"]
 
 # -- ADR-016 - IDENTIDAD DE BUILD (procedencia de imagen) ---------------------
