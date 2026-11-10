@@ -207,6 +207,20 @@ interface BotListPage {
 /** EQ4 · visibilidad en palabras. */
 const VISIBILITY_TEXT: Record<string, string> = { private: "privado", team: "de equipo", public: "público" };
 
+/**
+ * #255 R1 (P2-1) · linaje guardado del editor: `{botId, version}`. Sólo vale si es
+ * del bot que se está editando; cualquier otra cosa (otro bot, basura) = sin linaje.
+ */
+function parseEditingFrom(raw: string, botId: string | undefined): number | null {
+  if (!raw || !botId) return null;
+  try {
+    const v = JSON.parse(raw) as { botId?: unknown; version?: unknown };
+    return v.botId === botId && Number.isInteger(v.version) && (v.version as number) > 0 ? (v.version as number) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function BotsPage(props: Parameters<typeof BotsWorkspace>[0]) {
   return <BotsWorkspace {...props} />;
 }
@@ -332,14 +346,27 @@ function BotsWorkspace(props: {
   // UX-B · B3: el editor arranca con una plantilla VÁLIDA del runtime, nunca vacío.
   // UX-R · código y runtime en BORRADOR de sesión (useSessionDraft): si la sesión
   // caduca de verdad y el panel se desmonta, lo escrito vuelve al iniciar sesión.
-  const runtimeDraft = useSessionDraft("bots:upload:runtime", "python");
+  // #255 R1 (P2-1) · el borrador es de UN bot: la clave lleva su id. Con la clave
+  // global, al cambiar de bot el editor conservaba el código (y el linaje) del
+  // anterior, y «Subir» creaba en el bot B una versión con el código de A.
+  const draftBot = selected?.id ?? "-";
+  const runtimeDraft = useSessionDraft(`bot:${draftBot}:upload:runtime`, "python");
   const runtime: BotRuntime = runtimeDraft.value === "node" ? "node" : "python";
   const setRuntime = (r: BotRuntime) => runtimeDraft.setValue(r);
-  const codeDraft = useSessionDraft("bots:upload:code", BOT_TEMPLATES.python);
+  const codeDraft = useSessionDraft(`bot:${draftBot}:upload:code`, BOT_TEMPLATES.python);
   const pasted = codeDraft.value;
   const setPasted = codeDraft.setValue;
-  // Versión de la que se cargó el código del editor (para decir qué se edita).
-  const [editingFrom, setEditingFrom] = useState<number | null>(null);
+  // Versión de la que se cargó el código del editor (para decir qué se edita). Va
+  // en el MISMO borrador por bot, como `{botId, version}`: así sobrevive a una
+  // sesión caducada junto al código (P3-4) y sólo vale para el bot que la cargó.
+  const fromDraft = useSessionDraft(`bot:${draftBot}:upload:from`, "");
+  const editingFrom = parseEditingFrom(fromDraft.value, selected?.id);
+  const setEditingFrom = (v: number | null) => {
+    if (v === null || !selected) {
+      fromDraft.setValue("");
+      fromDraft.clear();
+    } else fromDraft.setValue(JSON.stringify({ botId: selected.id, version: v }));
+  };
   const [creating, setCreating] = useState(false);
   const codeRef = useRef<HTMLTextAreaElement | null>(null);
   const [error, setError] = useState("");
@@ -724,6 +751,7 @@ function BotsWorkspace(props: {
       // Ya está en el servidor: el borrador local deja de hacer falta.
       codeDraft.clear();
       runtimeDraft.clear();
+      fromDraft.clear();
       pollsRef.current = 0;
       setPollExhausted(false);
       reloadVersions({ silent: true });
@@ -1019,7 +1047,7 @@ function BotsWorkspace(props: {
             )}
             {editingFrom !== null && (
               <p className="warn" data-testid="editing-from">
-                Editando el código de v{editingFrom}: al subirlo se crea la v{nextVersion}; v{editingFrom} no cambia.
+                {`Editando «${selected.name}» · código de v${editingFrom}: al subirlo se crea la v${nextVersion}; v${editingFrom} no cambia.`}
               </p>
             )}
             <p>

@@ -36,6 +36,7 @@ import { RankingPage } from "../src/pages/RankingPage.js";
 import { TournamentsPage } from "../src/pages/TournamentsPage.js";
 import { BracketPage } from "../src/pages/BracketPage.js";
 import { BotsPage } from "../src/pages/BotsPage.js";
+import { BOT_TEMPLATES } from "../src/bot-templates.js";
 import { atBotSection } from "./bot-panel-helpers.js";
 import { loadCatalog, CATALOG_VERSION } from "../../../packages/module-catalog/loadCatalog.js";
 import { AdminPage } from "../src/pages/AdminPage.js";
@@ -220,9 +221,13 @@ describe("UX-R 9-10 · detalle del bot", () => {
     renderPanel();
     await waitFor(() => expect((screen.getByLabelText("codigo") as HTMLTextAreaElement).value).toBe("mis cambios"));
     expect(screen.getByTestId("code-draft-restored").textContent).toMatch(/aún no es ninguna versión/);
+    // #255 R1 (P3-4) · el borrador recuperado conserva su linaje (bot y versión de origen).
+    expect(screen.getByTestId("editing-from").textContent).toMatch(/«Ana-bot» · código de v1/);
     await userEvent.click(screen.getByTestId("reset-template"));
-    expect((screen.getByLabelText("codigo") as HTMLTextAreaElement).value).not.toBe("mis cambios");
+    // #255 R1 (P3-5) · se restaura la aserción exacta: descartar = la plantilla del runtime.
+    expect((screen.getByLabelText("codigo") as HTMLTextAreaElement).value).toBe(BOT_TEMPLATES.python);
     expect(screen.queryByTestId("code-draft-restored")).toBeNull();
+    expect(screen.queryByTestId("editing-from")).toBeNull();
   });
 });
 
