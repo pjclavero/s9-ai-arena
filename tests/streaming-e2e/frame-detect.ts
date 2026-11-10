@@ -13,7 +13,13 @@
  * no se pudo leer ningún frame. Necesita ffmpeg en el PATH (FFMPEG_BIN para otro).
  */
 import { execFileSync } from "node:child_process";
-import { classifyFrame, describeFrame, GRAY_FILTER, lumaStats, splitGrayFrames } from "../../apps/streamer/src/frame-check.js";
+import {
+  classifyFrame,
+  describeFrame,
+  GRAY_FILTER,
+  lumaStats,
+  splitGrayFrames,
+} from "../../apps/streamer/src/frame-check.js";
 
 const [label, file, fpsArg] = process.argv.slice(2);
 if (!label || !file) {
@@ -24,9 +30,13 @@ const isImage = /\.(png|jpe?g|bmp|xwd)$/i.test(file);
 const vf = isImage ? GRAY_FILTER : `fps=${Number(fpsArg) > 0 ? Number(fpsArg) : 1},${GRAY_FILTER}`;
 let raw: Buffer;
 try {
-  raw = execFileSync(process.env.FFMPEG_BIN ?? "ffmpeg", ["-nostdin", "-loglevel", "error", "-i", file, "-vf", vf, "-f", "rawvideo", "pipe:1"], {
-    maxBuffer: 512 * 1024 * 1024,
-  });
+  raw = execFileSync(
+    process.env.FFMPEG_BIN ?? "ffmpeg",
+    ["-nostdin", "-loglevel", "error", "-i", file, "-vf", vf, "-f", "rawvideo", "pipe:1"],
+    {
+      maxBuffer: 512 * 1024 * 1024,
+    },
+  );
 } catch (e) {
   // ffmpeg puede salir con error al final de un FLV truncado y aun así haber dado frames.
   raw = ((e as { stdout?: Buffer }).stdout ?? Buffer.alloc(0)) as Buffer;

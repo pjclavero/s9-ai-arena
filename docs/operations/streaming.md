@@ -32,8 +32,14 @@ el perfil es **VBR con techo** (no CBR), los frames descartados son los medidos 
 las líneas del log del contenedor son JSON (Xvfb escribe una). Ver
 [Recursos medidos](#recursos-medidos) y la tabla de defectos (STR-7 y STR-8).
 
+**#256 (2026-11-10, rama `fix/256-streaming-blanco`):** la prueba real de RC8 en YouTube recibió
+señal **en blanco**. Diagnóstico por etapas con la imagen real y la puerta
+**BROADCAST_RENDER_READY**: ffmpeg y el relé no arrancan hasta que el display muestra la página
+pintada. Ver [Emisión en blanco (#256)](#emisión-en-blanco-256).
+
 ## Índice
 
+- [Emisión en blanco (#256)](#emisión-en-blanco-256)
 - [Administración desde la web](#administración-desde-la-web)
 - [Seguridad de la clave de emisión](#seguridad-de-la-clave-de-emisión)
 - [Alertas](#alertas)
@@ -506,6 +512,7 @@ autorización:
 
 | Síntoma | Mirar | Causa habitual |
 |---|---|---|
+| **Emisión en blanco** (#256) | `/status` → `render` (`state`, `lastFrame` con media y desviación de luma), `lastError` `render_not_ready` / `render_blank`, métricas `streamer_render_ready` y `streamer_render_blank_total`, alerta `StreamerRenderNotReady` | Chromium no llegó a pintar la página en el display (ver [Emisión en blanco](#emisión-en-blanco-256)). Desde #256 no se emite: la puerta relanza Chromium y, si no lo consigue, la emisión acaba en `failed` |
 | «Servicio de emisión no disponible» | `docker compose ps streamer`, `docker compose logs --tail 50 streamer` | perfil sin desplegar; contenedor `unhealthy` (secreto de control ilegible ⇒ `/healthz` 503) |
 | «Iniciando» que no pasa a «En directo» | `lastError` en la pantalla, `relay.state` en `/status` | ingesta inalcanzable, clave rechazada (`BadName`), TLS no verificado |
 | «Reconectando» en bucle | alerta `StreamerRestartLoop`, `stream_reconnects_total` | cortes de red o la ingesta cierra la conexión |
@@ -540,6 +547,10 @@ scripts locales). Las marcadas con ⚙ ejecutan **ffmpeg o procesos reales**.
 | `SECRET_NOT_IN_API` | Existía + nueva | `eq5b-streaming-admin.test.ts`, spec `@streaming-e2e`; nueva: `lastSession` sin sobre ni config |
 | `PERMISSION_DENIED` | Existía + nueva | `conformance.test.ts` (RBAC del contrato); nueva: un usuario normal recibe 403 en start, stop, estado y credencial |
 | `RESTART_RECOVERY` | Nueva | `apps/api/src/streamer-real.test.ts` (START tras `failed` y tras reiniciar el streamer) |
+| `WHITE_FRAME_REGRESSION` (#256) | Nueva | `apps/streamer/src/render-gate.test.ts` (display en blanco ⇒ ni ffmpeg ni relé, `render_not_ready`, `failed`); `frame-check.test.ts` (blanco codificado de verdad con x264/yuv420p); ⚙ autoprueba negativa del Dockerfile |
+| `BROADCAST_DOM_RENDER` / `PHASER_CANVAS_RENDER` (#256) | Nueva ⚙ | `tests/streaming-e2e/issue-256.sh` con `S9_256_CDP=1` (sonda CDP del Chromium real: `broadcast-stage`, canvas, contexto, escena) — local |
+| `XVFB_FRAME_VISIBLE` / `FFMPEG_FRAME_VISIBLE` (#256) | Nueva ⚙ | autoprueba del Dockerfile (`render-selftest.ts`, en cada build de la CI: todos los frames del MP4 visibles, el primero incluido); `issue-256.sh` (Xvfb, MP4, FLV antes del relé y lo recibido por MediaMTX) — local |
+| `RECORD_AND_RTMPS_RENDER_PATH_EQUIVALENT` (#256) | Nueva ⚙ | `issue-256.sh`: matriz {record, rtmps} × {en curso, terminada}; argv de Chromium y FFmpeg comparados (A3) |
 
 ## Defectos y limitaciones conocidos
 

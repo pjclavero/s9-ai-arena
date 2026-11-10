@@ -18,7 +18,14 @@ import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger, DEFAULT_CONFIG, type StreamerConfig } from "./config.js";
-import { classifyFrame, describeFrame, grabDisplayLuma, GRAY_FILTER, lumaStats, splitGrayFrames } from "./frame-check.js";
+import {
+  classifyFrame,
+  describeFrame,
+  grabDisplayLuma,
+  GRAY_FILTER,
+  lumaStats,
+  splitGrayFrames,
+} from "./frame-check.js";
 import { realSpawner } from "./main.js";
 import { StreamSupervisor } from "./supervisor.js";
 
@@ -77,13 +84,30 @@ async function run(kind: keyof typeof PAGES): Promise<boolean> {
     sup.stop();
     await until(() => sup.pendingChildren === 0, 10_000);
     const mp4 = readdirSync(rec).filter((f) => f.endsWith(".mp4"));
-    log(`positivo: render=${sup.render.state} frames_codificados=${sup.metrics.snapshot().frames} mp4=${mp4.length} lastError=${sup.lastError?.message ?? "ninguno"}`);
+    log(
+      `positivo: render=${sup.render.state} frames_codificados=${sup.metrics.snapshot().frames} mp4=${mp4.length} lastError=${sup.lastError?.message ?? "ninguno"}`,
+    );
     if (!recorded || mp4.length === 0) return false;
     let raw: Buffer;
     try {
-      raw = execFileSync(FFMPEG, ["-nostdin", "-loglevel", "error", "-i", join(rec, mp4[0]), "-vf", `fps=4,${GRAY_FILTER}`, "-f", "rawvideo", "pipe:1"], {
-        maxBuffer: 64 * 1024 * 1024,
-      });
+      raw = execFileSync(
+        FFMPEG,
+        [
+          "-nostdin",
+          "-loglevel",
+          "error",
+          "-i",
+          join(rec, mp4[0]),
+          "-vf",
+          `fps=4,${GRAY_FILTER}`,
+          "-f",
+          "rawvideo",
+          "pipe:1",
+        ],
+        {
+          maxBuffer: 64 * 1024 * 1024,
+        },
+      );
     } catch (e) {
       raw = ((e as { stdout?: Buffer }).stdout ?? Buffer.alloc(0)) as Buffer;
     }
@@ -95,7 +119,9 @@ async function run(kind: keyof typeof PAGES): Promise<boolean> {
   } else {
     await until(() => sup.state === "failed", 60_000);
     const mp4 = readdirSync(rec).filter((f) => f.endsWith(".mp4"));
-    log(`negativo: estado=${sup.state} render=${sup.render.state} mp4=${mp4.length} lastError=${sup.lastError?.message ?? "ninguno"}`);
+    log(
+      `negativo: estado=${sup.state} render=${sup.render.state} mp4=${mp4.length} lastError=${sup.lastError?.message ?? "ninguno"}`,
+    );
     ok = sup.state === "failed" && mp4.length === 0 && (sup.lastError?.message ?? "").startsWith("render_not_ready");
     sup.stop();
     await until(() => sup.pendingChildren === 0, 10_000);

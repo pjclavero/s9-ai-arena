@@ -77,13 +77,46 @@ describe("#256 · detector de frame blanco/uniforme", () => {
   it.skipIf(!hasFfmpeg)("con ffmpeg real: blanco codificado x264/yuv420p ⇒ WHITE; patrón de prueba ⇒ VISIBLE", () => {
     const enc = (src: string) =>
       execFileSync("ffmpeg", [
-        "-nostdin", "-loglevel", "error", "-f", "lavfi", "-i", src, "-frames:v", "1",
-        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-f", "h264", "pipe:1",
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        src,
+        "-frames:v",
+        "1",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        "-pix_fmt",
+        "yuv420p",
+        "-f",
+        "h264",
+        "pipe:1",
       ]);
     const gray = (h264: Buffer) =>
-      execFileSync("ffmpeg", ["-nostdin", "-loglevel", "error", "-f", "h264", "-i", "pipe:0", "-vf", GRAY_FILTER, "-f", "rawvideo", "pipe:1"], {
-        input: h264,
-      });
+      execFileSync(
+        "ffmpeg",
+        [
+          "-nostdin",
+          "-loglevel",
+          "error",
+          "-f",
+          "h264",
+          "-i",
+          "pipe:0",
+          "-vf",
+          GRAY_FILTER,
+          "-f",
+          "rawvideo",
+          "pipe:1",
+        ],
+        {
+          input: h264,
+        },
+      );
     const white = splitGrayFrames(gray(enc("color=c=white:s=640x360")))[0];
     const black = splitGrayFrames(gray(enc("color=c=black:s=640x360")))[0];
     const bars = splitGrayFrames(gray(enc("testsrc2=s=640x360")))[0];

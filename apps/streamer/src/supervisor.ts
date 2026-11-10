@@ -210,7 +210,11 @@ export class StreamSupervisor {
   }
   /** #256 · estado de la puerta de render y última lectura del Xvfb (para /status). */
   get render(): { state: RenderState; lastFrame: RenderFrameView | null; blankEvents: number } {
-    return { state: this.desired ? this.renderState_ : "off", lastFrame: this.renderFrame_, blankEvents: this.renderBlankEvents };
+    return {
+      state: this.desired ? this.renderState_ : "off",
+      lastFrame: this.renderFrame_,
+      blankEvents: this.renderBlankEvents,
+    };
   }
   get lastError(): { message: string; at: string } | null {
     return this.lastError_;
@@ -515,8 +519,12 @@ export class StreamSupervisor {
       if (this.now() >= deadline) {
         this.renderState_ = "blank";
         this.renderBlankEvents++;
-        this.setError(`render_not_ready: la página no se pintó en ${Math.round(timeout / 1000)} s; ${this.describeFrame()}`);
-        this.opts.logger("warn", "render no listo: no se emite y se relanza Chromium", { detail: this.describeFrame() });
+        this.setError(
+          `render_not_ready: la página no se pintó en ${Math.round(timeout / 1000)} s; ${this.describeFrame()}`,
+        );
+        this.opts.logger("warn", "render no listo: no se emite y se relanza Chromium", {
+          detail: this.describeFrame(),
+        });
         void this.retry();
         return;
       }
@@ -538,7 +546,9 @@ export class StreamSupervisor {
         this.renderState_ = "blank";
         this.renderBlankEvents++;
         this.setError(`render_blank: la pantalla de emisión dejó de verse; ${this.describeFrame()}`);
-        this.opts.logger("warn", "pantalla de emisión en blanco: se corta y se relanza", { detail: this.describeFrame() });
+        this.opts.logger("warn", "pantalla de emisión en blanco: se corta y se relanza", {
+          detail: this.describeFrame(),
+        });
         void this.retry();
         return;
       }

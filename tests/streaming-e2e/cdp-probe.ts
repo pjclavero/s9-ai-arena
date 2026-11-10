@@ -176,22 +176,63 @@ const sys = await browser.send("SystemInfo.getInfo");
 browser.close();
 await new Promise((r) => setTimeout(r, 300)); // deja llegar las entradas de Log.enable
 const logs = cdp.events
-  .filter((e) => e.method === "Log.entryAdded" || e.method === "Runtime.exceptionThrown" || e.method === "Runtime.consoleAPICalled")
+  .filter(
+    (e) =>
+      e.method === "Log.entryAdded" ||
+      e.method === "Runtime.exceptionThrown" ||
+      e.method === "Runtime.consoleAPICalled",
+  )
   .map((e) =>
     e.method === "Log.entryAdded"
       ? { level: e.params.entry.level, source: e.params.entry.source, text: String(e.params.entry.text).slice(0, 300) }
       : e.method === "Runtime.exceptionThrown"
-        ? { level: "exception", text: String(e.params.exceptionDetails?.exception?.description ?? e.params.exceptionDetails?.text).slice(0, 300) }
-        : { level: e.params.type, text: (e.params.args ?? []).map((a: any) => a.value ?? a.description).join(" ").slice(0, 300) },
+        ? {
+            level: "exception",
+            text: String(e.params.exceptionDetails?.exception?.description ?? e.params.exceptionDetails?.text).slice(
+              0,
+              300,
+            ),
+          }
+        : {
+            level: e.params.type,
+            text: (e.params.args ?? [])
+              .map((a: any) => a.value ?? a.description)
+              .join(" ")
+              .slice(0, 300),
+          },
   );
 cdp.close();
 const gpu = sys.result?.gpu ?? null;
-const out = { label, rendererUnresponsive: timeouts.length > 0, timeouts, userAgent: version["User-Agent"], dom, phaser, logs, gpu: gpu && { devices: gpu.devices, featureStatus: gpu.featureStatus, driverBugWorkarounds: gpu.driverBugWorkarounds, auxAttributes: gpu.auxAttributes } };
+const out = {
+  label,
+  rendererUnresponsive: timeouts.length > 0,
+  timeouts,
+  userAgent: version["User-Agent"],
+  dom,
+  phaser,
+  logs,
+  gpu: gpu && {
+    devices: gpu.devices,
+    featureStatus: gpu.featureStatus,
+    driverBugWorkarounds: gpu.driverBugWorkarounds,
+    auxAttributes: gpu.auxAttributes,
+  },
+};
 writeFileSync(join(outDir, `${label}-cdp.json`), JSON.stringify(out, null, 2));
 const g0 = phaser.games?.[0];
-console.log(`${label} broadcast_stage=${dom?.stage ? `${dom.stage.box.w}x${dom.stage.box.h}` : "AUSENTE"} stage_background=${dom?.stage?.background} screens=${dom?.screens?.join(",") || "ninguna"} header=${dom?.header} hud=${dom?.hud} ticker=${dom?.ticker !== null}`);
-console.log(`${label} canvas_width=${dom?.canvas?.width ?? "NA"} canvas_height=${dom?.canvas?.height ?? "NA"} canvas_box=${dom?.canvas ? `${dom.canvas.box.w}x${dom.canvas.box.h}@${dom.canvas.box.x},${dom.canvas.box.y}` : "NA"} context=${dom?.ctxType} context_lost=${dom?.contextLost}`);
-console.log(`${label} renderer=${g0?.rendererType ?? "NA"} webgl_vendor=${JSON.stringify(dom?.unmaskedVendor)} webgl_renderer=${JSON.stringify(dom?.unmaskedRenderer)} scene_status=${g0?.scene?.status ?? "NA"} phaser_frame=${g0?.frame ?? "NA"} phaser_fps=${g0?.actualFps?.toFixed?.(1) ?? "NA"}`);
-console.log(`${label} renderer_unresponsive=${timeouts.length > 0 ? 1 : 0} cdp_timeouts=${timeouts.join(",") || "ninguno"}`);
-console.log(`${label} js_errors=${logs.filter((l) => l.level === "error" || l.level === "exception").length} log_entries=${logs.length}`);
+console.log(
+  `${label} broadcast_stage=${dom?.stage ? `${dom.stage.box.w}x${dom.stage.box.h}` : "AUSENTE"} stage_background=${dom?.stage?.background} screens=${dom?.screens?.join(",") || "ninguna"} header=${dom?.header} hud=${dom?.hud} ticker=${dom?.ticker !== null}`,
+);
+console.log(
+  `${label} canvas_width=${dom?.canvas?.width ?? "NA"} canvas_height=${dom?.canvas?.height ?? "NA"} canvas_box=${dom?.canvas ? `${dom.canvas.box.w}x${dom.canvas.box.h}@${dom.canvas.box.x},${dom.canvas.box.y}` : "NA"} context=${dom?.ctxType} context_lost=${dom?.contextLost}`,
+);
+console.log(
+  `${label} renderer=${g0?.rendererType ?? "NA"} webgl_vendor=${JSON.stringify(dom?.unmaskedVendor)} webgl_renderer=${JSON.stringify(dom?.unmaskedRenderer)} scene_status=${g0?.scene?.status ?? "NA"} phaser_frame=${g0?.frame ?? "NA"} phaser_fps=${g0?.actualFps?.toFixed?.(1) ?? "NA"}`,
+);
+console.log(
+  `${label} renderer_unresponsive=${timeouts.length > 0 ? 1 : 0} cdp_timeouts=${timeouts.join(",") || "ninguno"}`,
+);
+console.log(
+  `${label} js_errors=${logs.filter((l) => l.level === "error" || l.level === "exception").length} log_entries=${logs.length}`,
+);
 process.exit(0);
