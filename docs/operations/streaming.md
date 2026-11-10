@@ -120,7 +120,11 @@ avisa y `/broadcast` lo rotula.
 garantiza que lo pintado sea la escena correcta (eso lo cubren las pruebas de `/broadcast`). El
 binario de Chromium de Alpine no trae símbolos: el bucle del renderer se ha localizado (hilo
 principal, PC dentro del binario, distinto en cada volcado de gdb) y su disparador medido (el
-fallo de inicialización del proceso GPU), pero no atribuido a una función concreta de Chromium.
+fallo de inicialización del proceso GPU), pero no atribuido a una función concreta de Chromium. Con
+`--disable-gpu` el cuelgue no se ha visto en el contenedor del servicio (0/50 arranques en
+laboratorio), pero sí una vez en el primer arranque de la autoprueba dentro del `docker build`
+(sin `init` y con 64 MiB de `/dev/shm`): por eso la puerta se queda como defensa y no se afirma
+que el cuelgue haya desaparecido en todo contexto.
 
 ## Administración desde la web
 
