@@ -77,6 +77,8 @@ test.describe("@fase1 EQ4 navegación y organización", () => {
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.getByTestId("bots-active").getByRole("link", { name: names[0] }).click();
     await expect(page.getByTestId("bot-summary")).toBeVisible();
+    // #255 · cambiar de bot conserva la sección abierta; «Retirar bot» está en «Resumen».
+    await page.getByTestId("bot-section-link-resumen").click();
     // escritorio: lista y detalle lado a lado
     const list = (await page.locator(".master-list").first().boundingBox())!;
     const pane = (await page.getByTestId("bot-pane").boundingBox())!;
