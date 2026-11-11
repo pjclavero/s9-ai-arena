@@ -7,7 +7,17 @@
  *
  * Algoritmo: xoshiro128** — enteros de 32 bits, sin dependencia de float ni de la
  * plataforma. La aritmética se hace con Math.imul y >>> 0 para forzar 32 bits sin signo.
+ *
+ * OLA2-MD · Flujos con nombre (`RngStreams`, contrato §13): la simulación ya no comparte
+ * UN flujo entre combate, sensores y latencia. Cada flujo se deriva de la semilla por
+ * etiqueta (sha256), SIN consumir de ningún padre, así que una tirada de más en un
+ * subsistema no desplaza la secuencia de los demás.
  */
+import { createHash } from "node:crypto";
+
+/** Estado serializable de un Rng (xoshiro128**: 4 palabras de 32 bits). */
+export type RngState = [number, number, number, number];
+
 export class Rng {
   private s0: number;
   private s1: number;
@@ -92,8 +102,21 @@ export class Rng {
   }
 
   /** Estado serializable, para incluirlo en snapshots y verificar la reanudación de replays. */
-  getState(): [number, number, number, number] {
+  getState(): RngState {
     return [this.s0, this.s1, this.s2, this.s3];
+  }
+
+  /** Rng con un estado exacto (copia sin compartir: avanzar uno no avanza el otro). */
+  static fromState(st: RngState): Rng {
+    const r = new Rng(0);
+    r.setState([st[0] >>> 0, st[1] >>> 0, st[2] >>> 0, st[3] >>> 0]);
+    if ((r.s0 | r.s1 | r.s2 | r.s3) === 0) r.s0 = 1;
+    return r;
+  }
+
+  /** Copia independiente del estado actual (para lecturas que no deben avanzar el original). */
+  clone(): Rng {
+    return Rng.fromState(this.getState());
   }
 
   setState(st: [number, number, number, number]): void {
@@ -112,4 +135,73 @@ function hashString(s: string): number {
     h = Math.imul(h, 16777619) >>> 0;
   }
   return h >>> 0;
+}
+
+// ===========================================================================
+//  OLA2-MD · Flujos de RNG con nombre (contrato engine-v2 §13, `RngStreamName`)
+// ===========================================================================
+
+/**
+ * Nombres de flujo, en el ORDEN CANÓNICO en que entran en el hash. Es el mismo conjunto
+ * que `RngStreamName` de packages/module-catalog/contracts/engine-v2.ts (lo fija un test).
+ */
+export const RNG_STREAM_NAMES = ["combat", "sensors", "effects", "guidance", "latency"] as const;
+export type RngStreamNameV2 = (typeof RNG_STREAM_NAMES)[number];
+
+/** Identificador del esquema de derivación: va en la cabecera del replay v2. */
+export const RNG_DERIVATION = "sha256(seed,label)/xoshiro128**/v1";
+
+/**
+ * Estado inicial del flujo `label` para la semilla `seed`: los 16 primeros bytes de
+ * sha256("s9-arena/rng/v1\0" + label + "\0" + seed) como 4 palabras big-endian.
+ * Es función PURA de (seed, label): no consume de ningún padre ni depende del orden en
+ * que se pidan los flujos. El separador \0 evita colisiones de concatenación.
+ */
+export function deriveStreamState(seed: string, label: string): RngState {
+  const d = createHash("sha256").update(`s9-arena/rng/v1\0${label}\0${seed}`, "utf8").digest();
+  return [d.readUInt32BE(0), d.readUInt32BE(4), d.readUInt32BE(8), d.readUInt32BE(12)];
+}
+
+/** Error de la ruta de lectura: un RNG de sólo lectura se ha intentado consumir. */
+export class RngReadOnlyError extends Error {
+  constructor(label: string) {
+    super(`RNG de sólo lectura (${label}): una ruta de lectura (proyección, inspector) intentó consumir aleatoriedad de la simulación`);
+    this.name = "RngReadOnlyError";
+  }
+}
+
+/**
+ * RNG para rutas de LECTURA (proyección, inspector, observación fuera del bucle): falla en
+ * voz alta si se consume. Así ninguna lectura puede desincronizar la simulación.
+ */
+export class ReadOnlyRng extends Rng {
+  constructor(private readonly label = "read-only") {
+    super(0);
+  }
+  override nextUint32(): number {
+    throw new RngReadOnlyError(this.label);
+  }
+}
+
+/**
+ * Conjunto de flujos con nombre de UNA batalla. Cada flujo es un Rng independiente;
+ * `getState()` devuelve todos en el orden canónico (es lo que entra en el componente
+ * `rng` del hash de estado).
+ */
+export class RngStreams {
+  private readonly streams = new Map<RngStreamNameV2, Rng>();
+
+  constructor(seed: string) {
+    for (const name of RNG_STREAM_NAMES) this.streams.set(name, Rng.fromState(deriveStreamState(seed, name)));
+  }
+
+  stream(name: RngStreamNameV2): Rng {
+    const r = this.streams.get(name);
+    if (!r) throw new Error(`Flujo de RNG desconocido: ${String(name)}`);
+    return r;
+  }
+
+  getState(): [RngStreamNameV2, RngState][] {
+    return RNG_STREAM_NAMES.map((n) => [n, this.stream(n).getState()]);
+  }
 }
