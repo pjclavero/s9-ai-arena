@@ -62,12 +62,13 @@ function runBattle(seed: string, extra: Partial<BattleConfig> = {}) {
  * cualquier divergencia de la ruta "latencia ausente" lo pone rojo.
  * Valores anteriores: final 698a73c6…c78f, primeros 2f1afefc…/cab1982f…/42226433….
  */
-const PRE_N2_FINAL_HASH = "54c447a2c73b0f186281335bb68d93b681a8d4c81b8cba2e54063edece0e1193";
+// OLA2-MD · regenerado: hash v2 por componentes + flujos RNG con nombre (cambian las tiradas).
+const PRE_N2_FINAL_HASH = "e559098fc00b47892e767caec3610406a141669074831b7e8c967e981e8737ce";
 const PRE_N2_HASH_COUNT = 20;
 const PRE_N2_FIRST_HASHES = [
-  "e935fc4b8748585f577c2e1fcbe3ffbde8fd2f8860cd49ead2809cd38d5ff39e",
-  "d04f0aa3676ad928afabe0c438d34efa6c0f0b8dce0b869f49d6b09c05b780b6",
-  "9309491ea3975101f3a577618c9ed2f18f0052fc1716eb558d49efd12cf3cf5d",
+  "360a3a3507e41befd5b9003a666dbf49a1772efb94af19a1e57d44ac292ffda8",
+  "7fba406d5dfcfb295a644fa22e49ac58763fd98de82002d9ff4351b6073c7687",
+  "2bd952d07b7c2887576521bbecaa398b30a01a1ec87fb8136370684a1a90e2f1",
 ];
 
 describe("N2 · latencia simulada — garantía de cero regresión (latencia OFF)", () => {

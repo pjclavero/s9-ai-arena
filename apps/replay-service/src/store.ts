@@ -245,7 +245,11 @@ export interface StoredVerifyResult {
 export async function verifyStored(dir: string, battleId: string): Promise<StoredVerifyResult> {
   const loaded = loadStored(dir, battleId);
   if (!loaded.valid || !loaded.replay) {
-    return { battleId, valid: false, reason: loaded.reason, verification: null };
+    // OLA2-MD · formato antiguo: «otra versión», nunca «manipulado».
+    const message = loaded.reason?.startsWith("format_version_mismatch")
+      ? "Este replay usa un formato anterior al actual (v1) y este motor ya no lo re-simula. NO significa que esté manipulado."
+      : undefined;
+    return { battleId, valid: false, reason: loaded.reason, ...(message ? { message } : {}), verification: null };
   }
   return verifyLoaded(battleId, loaded.replay);
 }

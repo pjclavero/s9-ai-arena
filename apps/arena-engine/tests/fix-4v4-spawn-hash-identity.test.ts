@@ -22,11 +22,12 @@ beforeAll(async () => {
 const realMap = (): ArenaMap =>
   toEngineMap(JSON.parse(readFileSync(new URL("../../../maps/mvp-arena-01.json", import.meta.url), "utf8")));
 
+// OLA2-MD · regenerado: hash v2 por componentes + flujos RNG con nombre (cambian las tiradas).
 const PRE_FIX_HASHES: Record<string, string> = {
-  "1v1-real": "2f720d64d435c96a1742ea376c5284186d392cf4a87486c1fc3c80900ec70a62",
-  "2v2-real": "053b7848dcfc9dfdf2c06cf03c2450323322e7324de8c6127dbaadec42b0d41e",
-  "2v2-open": "11712f5ab7e16460e4be50d25d10371890e6541622921135c57c30bfbab98b58",
-  "4v4-real": "ca54080f7c7d129e3f68f7c0da2bbb6ab03335a343e876d61dcc00c68938ab34",
+  "1v1-real": "d531a8a5985159afbc16b81784e9b226253a11623857d69090cff8c78a2bfee6",
+  "2v2-real": "d60432ef194833a1e5f6e2cb743c322c93e9bf3e680b2fac2bbbf84f37bfb366",
+  "2v2-open": "caab00a212f0237e874bb0ddb786c3d3c2f4446c0716c474d009f7bf75919982",
+  "4v4-real": "66e41b3a3b5c584d8f61f523aa528dcf64bd7f8288c5ad96049043ed892852c2",
 };
 
 function run(name: string, n: number, map: ArenaMap): string {

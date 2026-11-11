@@ -35,6 +35,11 @@ import { getReadableReplayBattleOr404, replayNotFound, whereReplayReadable } fro
 import { applyReplayListFilters, assertCursorShape, parseReplayListFilters } from "../services/replay-list.js";
 import { projectIndex, projectSegment, rawReplayAllowed } from "../replay-projection.js";
 
+/** OLA2-MD · texto humano del `format_version_mismatch` (replays v1 tras el replay v2). */
+export const FORMAT_VERSION_MESSAGE =
+  "Este replay usa un formato anterior al actual (v1) y este motor ya no lo re-simula. " +
+  "NO significa que esté manipulado.";
+
 const NO_STORE = "private, no-store";
 
 /**
@@ -288,7 +293,13 @@ export function replayRoutes(
       try {
         replay = fromJsonl(decompress(bytes).toString("utf8"));
       } catch (e) {
-        res.json({ matches: false, valid: false, reason: `corrupt_file: ${(e as Error).message}` });
+        const msg = (e as Error).message;
+        // OLA2-MD · un replay de formato antiguo (v1) no está corrupto ni manipulado.
+        if (msg.startsWith("format_version_mismatch")) {
+          res.json({ matches: false, valid: false, reason: msg, message: FORMAT_VERSION_MESSAGE });
+          return;
+        }
+        res.json({ matches: false, valid: false, reason: `corrupt_file: ${msg}` });
         return;
       }
       const r = await verifyLoaded(battle.id, replay);
