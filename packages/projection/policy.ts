@@ -126,6 +126,8 @@ export const DEFAULT_DISCLOSURE_POLICY: DisclosurePolicy = {
     "stats.respawnsRemaining": PUBLIC,
     "stats.eliminated": PUBLIC,
     "stats.battle": PUBLIC,
+    "stats.vehicleId": PRIVATE, // id INTERNO del motor: nunca sale
+    "stats.decisionTimeouts": ownerOnly(), // diagnóstico del código del bot (TD-047)
     // R2 · revelan el equipamiento (módulo por ranura, minas, radio):
     "stats.perModule": ownerOnly(),
     "stats.minesDeployed": ownerOnly(),
