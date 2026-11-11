@@ -71,10 +71,8 @@ export function PublicAccessSettings() {
 
   const load = useCallback(() => {
     api<PublicAccessSettingsView>("GET", "/admin/settings/public-access")
-      .then((v) => {
-        setView(v);
-        setError(null);
-      })
+      // Recarga tras un fallo: se pinta lo guardado, pero el error SIGUE a la vista.
+      .then((v) => setView(v))
       .catch((e) => setError(e));
   }, []);
   useEffect(load, [load]);
