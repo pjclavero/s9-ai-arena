@@ -187,6 +187,13 @@ export function fire(v: Vehicle, slot: string, tick: number, origin: Vec2, rng: 
 
   const damage = (w.spec.damage ?? 10) * (ammo.spec.damageMultiplier ?? 1) * v.performanceOf(slot);
 
+  // P-2 · la vida del proyectil sale del catálogo (weapon.rangeM, resuelta por
+  // resolveVehicle). Sin ella no hay alcance verdadero: fail-closed, nunca un TTL propio.
+  const ttlTicks = w.spec.projectileLifetimeTicks;
+  if (!Number.isInteger(ttlTicks) || (ttlTicks as number) < 1) {
+    throw new Error(`${w.spec.moduleId}: arma sin projectileLifetimeTicks resuelto (resolveVehicle)`);
+  }
+
   return {
     id: `proj_${seq}`,
     ownerId: v.id,
@@ -195,7 +202,7 @@ export function fire(v: Vehicle, slot: string, tick: number, origin: Vec2, rng: 
     velocity: { x: Math.cos(angle) * speed, y: Math.sin(angle) * speed },
     damage,
     explosionRadiusM: ammo.spec.explosionRadiusM ?? 0,
-    ttlTicks: 90,
+    ttlTicks: ttlTicks as number,
   };
 }
 
