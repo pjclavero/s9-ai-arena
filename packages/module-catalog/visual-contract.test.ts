@@ -1826,15 +1826,26 @@ describe("TEST 12 · CROSS_VIEW_VISIBILITY_TRANSITION (la proyección depende de
   });
 
   it("T6 · el replay público es, en cada estado, la proyección de un espectador: sólo lo PUBLIC y lo ya revelado", () => {
-    const pub = new Set(tables(MATRIX, "DATA_ID").filter((r) => r.CLASSIFICATION === "PUBLIC").map((r) => r.DATA_ID));
+    const pub = new Set(
+      tables(MATRIX, "DATA_ID")
+        .filter((r) => r.CLASSIFICATION === "PUBLIC")
+        .map((r) => r.DATA_ID),
+    );
     const hiddenUntilReveal = [...revealedData().values()].flat();
     const owner = ctxOf("vt.owner_to_public_replay", "FROM");
     for (const revealed of [[], ["reveal.weapon"]]) {
       const replay: VisCtx = { ...ctxOf("vt.owner_to_public_replay", "TO"), revealed };
       const live: VisCtx = { ...replay, viewer: "spectator", channel: "live_public" };
       const seen = composeFor(replay).split(":")[1].split(",").filter(Boolean);
-      expect(seen.filter((d) => !pub.has(d)), "sólo PUBLIC").toEqual([]);
-      if (!revealed.length) expect(seen.filter((d) => hiddenUntilReveal.includes(d)), "nada sin revelar").toEqual([]);
+      expect(
+        seen.filter((d) => !pub.has(d)),
+        "sólo PUBLIC",
+      ).toEqual([]);
+      if (!revealed.length)
+        expect(
+          seen.filter((d) => hiddenUntilReveal.includes(d)),
+          "nada sin revelar",
+        ).toEqual([]);
       expect(composeFor(replay)).toBe(composeFor(live));
       expect(serve([{ ...owner, revealed }, replay], projectedKey())[1]).toBe(composeFor(replay));
     }
