@@ -137,13 +137,17 @@
     {
       "if": { "properties": { "category": { "const": "weapon" } }, "required": ["category"] },
       "then": {
-        "required": ["damage", "cooldownTicks", "projectileSpeedMs", "acceptsAmmo", "turretArcRad", "turretRateRads"],
+        "required": ["damage", "cooldownTicks", "projectileSpeedMs", "rangeM", "acceptsAmmo", "turretArcRad", "turretRateRads"],
         "properties": {
           "damage": { "type": "number", "exclusiveMinimum": 0 },
           "cooldownTicks": { "type": "integer", "minimum": 1 },
           "projectileSpeedMs": { "type": "number", "exclusiveMinimum": 0 },
           "spreadRad": { "type": "number", "minimum": 0, "default": 0 },
-          "rangeM": { "type": "number", "exclusiveMinimum": 0 },
+          "rangeM": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Alcance REAL del proyectil (P-2): resolveVehicle lo convierte en su vida (rangeM·TICK_HZ/projectileSpeedMs ticks, entero)."
+          },
           "acceptsAmmo": {
             "type": "array",
             "minItems": 1,
