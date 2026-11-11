@@ -48,6 +48,15 @@ import { InfrastructureFailure, SportingFailure } from "./errors.js";
 import { enqueueJob, type JobRow } from "./queue.js";
 import type { HandlerContext, JobHandler } from "./worker.js";
 import type { BotRunDiagnostics } from "./bot-diagnostics.js";
+import {
+  BattleAbort,
+  classifyEnd,
+  defaultBattleResources,
+  type BattleEndReason,
+  type BattleResourceRegistry,
+  type CleanupReport,
+} from "./battle-resources.js";
+import { BattleMemoryMeter, type BattleMemoryReport } from "./battle-memory.js";
 
 export interface BattleRow {
   id: string;
@@ -144,6 +153,20 @@ export interface BattleRunnerDeps {
   replaysDir?: string;
   /** Duración del lease de la reserva (ms). Se renueva cada leaseMs/3. Def. 45 s. */
   leaseMs?: number;
+  /** OLA2-MF · registro de recursos de batalla (def. el del proceso). */
+  resources?: BattleResourceRegistry;
+  /** OLA2-MF · se llama al CERRAR operacionalmente cada batalla (tras el teardown). */
+  onBattleClosed?: (closed: BattleClosed) => void;
+  /** OLA2-MF · periodo del muestreo de memoria durante la batalla (ms). Def. 1000. */
+  memorySampleMs?: number;
+}
+
+/** OLA2-MF · cierre operacional de una batalla: motivo, teardown y memoria. */
+export interface BattleClosed {
+  battleId: string;
+  reason: BattleEndReason;
+  cleanup: CleanupReport;
+  memory: BattleMemoryReport;
 }
 
 /** Lease por defecto: por DEBAJO del lockTimeout de la cola (60 s) para que, cuando
@@ -330,10 +353,16 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
       );
     }
     const battle = claimed;
-    const participants = await loadBattleParticipants(db, battleId);
+    // OLA2-MF · desde la reserva, TODO final pasa por el teardown único (finally).
+    const res = deps.resources ?? defaultBattleResources;
+    const meter = new BattleMemoryMeter(battleId, undefined, deps.memorySampleMs ?? 1000);
+    if (meter.handle) res.registerTimer(battleId, "memory_sampler", meter.handle, "runner");
+    let endOk = false;
+    let endErr: unknown;
 
     // Lease vivo mientras dura la batalla; si se pierde, se aborta la ejecución.
     const aborter = new AbortController();
+    const forgetAborter = res.registerAborter(battleId, aborter);
     const renewEvery = Math.max(250, Math.floor(leaseMs / 3));
     let renewing = false;
     const timer = setInterval(() => {
@@ -349,8 +378,10 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
         });
     }, renewEvery);
     timer.unref?.();
+    res.registerTimer(battleId, "lease_renewer", timer, "runner");
 
     try {
+      const participants = await loadBattleParticipants(db, battleId);
       const adminDq = await adminDisqualifications(db, battleId, participants, deps);
       const activeTeams = new Set(participants.filter((p) => !adminDq.includes(p.bot_id)).map((p) => p.team));
 
@@ -374,6 +405,7 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
           owner,
           "walkover",
         );
+        endOk = true;
         return;
       }
 
@@ -381,7 +413,14 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
       try {
         execution = await deps.executor({ battle, participants, adminDisqualified: adminDq, signal: aborter.signal });
       } catch (err) {
+        endErr = err; // OLA2-MF · el error ORIGINAL decide el motivo del teardown
         if (aborter.signal.aborted) {
+          if (aborter.signal.reason instanceof BattleAbort) {
+            // OLA2-MF · aborto pedido (manual o parada del worker): la reserva SIGUE
+            // siendo nuestra; se devuelve a `scheduled` y la cola decide.
+            await releaseBattleClaim(db, battleId, owner);
+            throw new InfrastructureFailure("battle_aborted", aborter.signal.reason.message);
+          }
           // Perdimos la reserva: otro titular la tiene. No se toca nada.
           throw new InfrastructureFailure("battle_busy", String(aborter.signal.reason ?? err));
         }
@@ -431,7 +470,9 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
       // ADR-022 · la salvaguarda técnica del motor no es un resultado deportivo.
       const endReason: EndReason = execution.endReason === "technical_limit" ? "technical_limit" : "completed";
       await finishBattle(db, battle, participants, execution, adminDq, "none", owner, endReason, deps.replaysDir);
+      endOk = true;
     } catch (err) {
+      if (endErr === undefined) endErr = err;
       if (err instanceof LostBattleClaim) throw new InfrastructureFailure("battle_busy", err.message);
       // Cualquier otro fallo NO deportivo tras reservar (p. ej. no se pudo escribir
       // el replay dentro de la transacción de cierre, que hizo rollback): se libera
@@ -441,6 +482,21 @@ export function makeRunBattleHandler(deps: BattleRunnerDeps): JobHandler {
       throw err;
     } finally {
       clearInterval(timer);
+      forgetAborter();
+      // OLA2-MF · TEARDOWN ÚNICO, en TODOS los finales. Nunca lanza.
+      meter.markFinished();
+      const reason = classifyEnd({
+        ok: endOk,
+        error: endErr,
+        abortReason: aborter.signal.aborted ? aborter.signal.reason : undefined,
+      });
+      const cleanup = await res.cleanupBattleResources(battleId, reason);
+      const memory = meter.markCleaned();
+      try {
+        deps.onBattleClosed?.({ battleId, reason, cleanup, memory });
+      } catch {
+        /* la observabilidad nunca tumba la batalla */
+      }
     }
     // H2 (issue #6) · Stats RICAS de E8 (T8.4) al archivar el replay: el mismo
     // runStatsJob que usan el replay-service y los agregados de E9. Va DESPUÉS
