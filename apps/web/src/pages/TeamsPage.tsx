@@ -6,10 +6,17 @@
  *
  * Errores: nunca se tragan (antes `refresh().catch(() => {})`). Un fallo de carga se
  * anuncia con role="alert" y botón de reintento; un fallo de acción, también.
+ *
+ * #255 · B5-B7 · «Hacer públicos los bots que administras» (`TeamBulkPublic`): la
+ * previsualización y el cambio salen del MISMO endpoint del servidor
+ * (POST /teams/{id}/actions/publish-bots, `dryRun`), que es quien decide qué bots
+ * puede cambiar cada uno (sólo su dueño). La web no repite esa regla: pinta lo que
+ * el servidor responde, también los no autorizados y los parciales.
  */
 import { useEffect, useState } from "react";
 import { api, type Me } from "../api.js";
 import { Panel, Button, ErrorState, FormError } from "../ui/primitives.js";
+import { TeamBulkPublic } from "./TeamBulkPublic.js";
 
 interface TeamMember {
   userId: string;
@@ -293,6 +300,7 @@ export function TeamsPage(props: { me: Me }) {
                     Añadir bot
                   </Button>
                 </p>
+                {(t.bots ?? []).length > 0 && <TeamBulkPublic team={t} onChanged={() => void refresh()} />}
                 <p>
                   <small>
                     Acciones disponibles:{" "}

@@ -21,7 +21,7 @@
  *  - si la sesión CADUCA y vuelve a entrar el MISMO usuario, el borrador se
  *    recupera (es para lo que existe, UX-E); si entra otro, se borra antes.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 
 export const DRAFT_PREFIX = "s9_draft:";
 /** Quién es el dueño de los borradores guardados en esta pestaña. */
@@ -96,30 +96,33 @@ export interface Draft {
  * del servidor. Un borrador igual al inicial no cuenta como recuperado.
  */
 export function useSessionDraft(key: string, initial: string): Draft {
-  const [state, setState] = useState(() => {
-    const saved = read(key);
-    return saved !== null && saved !== initial ? { value: saved, restored: true } : { value: initial, restored: false };
-  });
-  const keyRef = useRef(key);
-  useEffect(() => {
-    if (keyRef.current === key) return;
-    keyRef.current = key;
-    const saved = read(key);
-    setState(
-      saved !== null && saved !== initial ? { value: saved, restored: true } : { value: initial, restored: false },
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+  const [state, setState] = useState(() => load(key, initial));
+  // #255 R1 (P2-1) · cuando cambia la clave (p. ej. otro bot), el valor de la clave
+  // NUEVA se usa en ESTE mismo render. Antes se cambiaba en un efecto y durante un
+  // render el documento nuevo mostraba (y podía enviar) el valor de la clave anterior.
+  let cur = state;
+  if (state.key !== key) {
+    cur = load(key, initial);
+    setState(cur);
+  }
   const setValue = useCallback(
     (v: string) => {
       write(key, v);
-      setState((s) => ({ value: v, restored: s.restored }));
+      setState((s) => ({ key, value: v, restored: s.key === key ? s.restored : false }));
     },
     [key],
   );
   const clear = useCallback(() => {
     write(key, null);
-    setState((s) => ({ value: s.value, restored: false }));
+    setState((s) => (s.key === key ? { ...s, restored: false } : load(key, initial)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
-  return { value: state.value, setValue, clear, restored: state.restored };
+  return { value: cur.value, setValue, clear, restored: cur.restored };
+}
+
+function load(key: string, initial: string): { key: string; value: string; restored: boolean } {
+  const saved = read(key);
+  return saved !== null && saved !== initial
+    ? { key, value: saved, restored: true }
+    : { key, value: initial, restored: false };
 }

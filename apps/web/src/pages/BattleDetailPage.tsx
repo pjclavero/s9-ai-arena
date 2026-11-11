@@ -15,10 +15,18 @@
  *
  * Una batalla en curso o en cola se refresca sola. Un id ajeno o inexistente es
  * el mismo 404 de la API («no existe o no tienes acceso»).
+ *
+ * #255 · B8-B10 · UN bloque «Directo y retransmisión» (`LiveAndBroadcast`). Antes
+ * «Ver en directo» iba dentro del estado y «Retransmitir» suelto debajo, también en
+ * batallas terminadas. Ahora: en cola o en curso, [Ver en directo] y, para admin,
+ * [Retransmitir] con su retransmisibilidad explicada (abre Streaming con la batalla
+ * preseleccionada; no emite); terminada, «Ver resultado», «Replay: no disponible
+ * para retransmisión» y el replay normal si existe. Nunca «Retransmitir replay».
  */
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { api, type Me } from "../api.js";
-import { BroadcastButton } from "../broadcast/BroadcastButton.js";
+import { streamingHref } from "../broadcast/BroadcastButton.js";
+import { roleRank, userRank } from "../admin-nav.js";
 import { useResource, ResourceView } from "../resource.js";
 import {
   MODE_TEXT,
@@ -237,6 +245,7 @@ export function BattleDetailPage(props: { id: string; me?: Me | null }) {
     }, REFRESH_MS);
     return () => clearInterval(t);
   }, [live, statsPending, reloadBattle, reloadStats]);
+  const statsRef = useRef<HTMLHeadingElement | null>(null);
 
   return (
     <div className="card" data-testid="battle-detail">
@@ -246,10 +255,12 @@ export function BattleDetailPage(props: { id: string; me?: Me | null }) {
       <ResourceView resource={battle} label="la batalla" onRetry={reloadBattle}>
         {(b) => (
           <>
-            <BattleHeader b={b} audit={audit.status === "ready" ? audit.data : null} />
-            {/* EQ5b · sólo admin; abre Streaming con el destino, no emite. */}
-            <BroadcastButton me={props.me} kind="battle" id={props.id} />
-            <h3>Estadísticas</h3>
+            <BattleHeader b={b} />
+            <LiveAndBroadcast b={b} me={props.me} onShowResult={() => statsRef.current?.focus()} />
+            <BattleFacts b={b} audit={audit.status === "ready" ? audit.data : null} />
+            <h3 id="battle-stats-title" ref={statsRef} tabIndex={-1}>
+              Estadísticas
+            </h3>
             <ResourceView resource={stats} label="las estadísticas" onRetry={reloadStats}>
               {(s) => <StatsSection b={b} s={s} />}
             </ResourceView>
@@ -263,10 +274,8 @@ export function BattleDetailPage(props: { id: string; me?: Me | null }) {
   );
 }
 
-function BattleHeader({ b, audit }: { b: BattleDetail; audit: AuditView | null }) {
+function BattleHeader({ b }: { b: BattleDetail }) {
   const v = summarizeBattle(b);
-  const r = (b.result && typeof b.result === "object" ? b.result : {}) as { ticks?: number };
-  const ticks = Number(r.ticks);
   return (
     <>
       <h2 data-testid="battle-title">
@@ -293,10 +302,19 @@ function BattleHeader({ b, audit }: { b: BattleDetail; audit: AuditView | null }
         <LiveStatus busy data-testid="battle-live-note">
           {b.status === "scheduled"
             ? "En cola: la ejecutará el servicio de batallas en cuanto haya hueco. Esta página se actualiza sola."
-            : "En curso. Esta página se actualiza sola; el resultado aparecerá al terminar."}{" "}
-          {b.status === "running" && <a href={`#/viewer/${encodeURIComponent(b.id)}`}>Ver en directo</a>}
+            : "En curso. Esta página se actualiza sola; el resultado aparecerá al terminar."}
         </LiveStatus>
       )}
+    </>
+  );
+}
+
+function BattleFacts({ b, audit }: { b: BattleDetail; audit: AuditView | null }) {
+  const v = summarizeBattle(b);
+  const r = (b.result && typeof b.result === "object" ? b.result : {}) as { ticks?: number };
+  const ticks = Number(r.ticks);
+  return (
+    <>
       <dl data-testid="battle-facts">
         <dt>Modo</dt>
         <dd>{MODE_TEXT[b.mode] ?? b.mode}</dd>
@@ -373,16 +391,112 @@ function BattleHeader({ b, audit }: { b: BattleDetail; audit: AuditView | null }
           ))}
         </tbody>
       </table>
-      <p>
-        {v.hasReplay ? (
-          <a href={`#/replay/${encodeURIComponent(b.id)}?t=0`} data-testid="battle-replay-link">
-            Ver replay
-          </a>
-        ) : b.status === "finished" ? (
-          <span>Sin replay: la batalla terminó sin jugarse (incomparecencia o fallo de arranque de un bot).</span>
-        ) : null}
-      </p>
     </>
+  );
+}
+
+/** Motivo de no retransmisión en palabras (la regla es de la API: getStreamingTarget). */
+export const BROADCAST_BLOCKED_TEXT: Record<string, string> = {
+  battle_not_public:
+    "No se puede retransmitir: es una batalla suelta con bots que no son públicos. Sólo un torneo creado con la retransmisión autorizada puede mostrar bots privados o de equipo, y hacer público un bot es decisión de su dueño.",
+  tournament_not_broadcastable:
+    "No se puede retransmitir: el torneo de esta batalla se creó sin autorizar la retransmisión y hay bots que no son públicos.",
+};
+
+interface TargetView {
+  broadcastable: boolean;
+  broadcastBlockedReason: string | null;
+}
+
+/**
+ * #255 · B8-B10 · Bloque ÚNICO «Directo y retransmisión». Sólo enlaces: ver en
+ * directo abre el visor; «Retransmitir» (sólo admin; la API autoriza) abre
+ * Administración → Streaming con la batalla preseleccionada y NO emite nada.
+ */
+function LiveAndBroadcast({ b, me, onShowResult }: { b: BattleDetail; me?: Me | null; onShowResult: () => void }) {
+  const isAdmin = !!me && userRank(me) >= roleRank("admin");
+  const live = b.status === "scheduled" || b.status === "running";
+  const [target] = useResource<TargetView | null>(
+    async () =>
+      isAdmin && live
+        ? api<TargetView>("GET", `/admin/streaming/target?kind=battle&id=${encodeURIComponent(b.id)}`)
+        : null,
+    [isAdmin, live, b.id],
+  );
+  const v = summarizeBattle(b);
+  return (
+    <section className="card live-block" data-testid="live-broadcast" aria-labelledby="live-broadcast-title">
+      <h3 id="live-broadcast-title">Directo y retransmisión</h3>
+      {live && (
+        <>
+          <p className="live-actions">
+            {b.status === "running" ? (
+              <a className="button-link" href={`#/viewer/${encodeURIComponent(b.id)}`} data-testid="watch-live">
+                Ver en directo
+              </a>
+            ) : (
+              <span data-testid="watch-live-pending">Ver en directo: disponible en cuanto la batalla arranque.</span>
+            )}{" "}
+            {isAdmin &&
+              (target.status === "ready" && target.data && !target.data.broadcastable ? (
+                <button type="button" disabled data-testid="broadcast-battle-blocked">
+                  Retransmitir
+                </button>
+              ) : (
+                <a
+                  className="button-link"
+                  href={streamingHref("battle", b.id)}
+                  data-testid="broadcast-battle"
+                  title="Abre Administración → Streaming con esta batalla seleccionada. No empieza a emitir hasta que pulses «Iniciar»."
+                >
+                  Retransmitir
+                </a>
+              ))}
+          </p>
+          {isAdmin && (
+            <p data-testid="broadcast-status" role="status">
+              {target.status === "loading"
+                ? "Comprobando si se puede retransmitir…"
+                : target.status === "error"
+                  ? "No se ha podido comprobar si se puede retransmitir; Streaming lo volverá a comprobar antes de emitir."
+                  : target.data?.broadcastable
+                    ? "Se puede retransmitir. «Retransmitir» abre Streaming con esta batalla seleccionada; no empieza a emitir hasta que pulses «Iniciar» allí."
+                    : (BROADCAST_BLOCKED_TEXT[target.data?.broadcastBlockedReason ?? ""] ??
+                      "No se puede retransmitir esta batalla.")}
+            </p>
+          )}
+        </>
+      )}
+      {b.status === "finished" && (
+        <>
+          <p className="live-actions">
+            <button type="button" data-testid="show-result" onClick={onShowResult}>
+              Ver resultado
+            </button>{" "}
+            {v.hasReplay && (
+              <a
+                className="button-link"
+                href={`#/replay/${encodeURIComponent(b.id)}?t=0`}
+                data-testid="battle-replay-link"
+              >
+                Ver replay
+              </a>
+            )}
+          </p>
+          <p data-testid="replay-not-broadcastable">
+            La batalla ha terminado: ya no hay directo. Replay: no disponible para retransmisión.
+          </p>
+          {!v.hasReplay && (
+            <p data-testid="no-replay">
+              Sin replay: la batalla terminó sin jugarse (incomparecencia o fallo de arranque de un bot).
+            </p>
+          )}
+        </>
+      )}
+      {b.status === "failed" && (
+        <p data-testid="live-failed">La batalla no se pudo jugar: no hay directo, ni replay, ni retransmisión.</p>
+      )}
+    </section>
   );
 }
 

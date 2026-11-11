@@ -47,9 +47,20 @@ export async function getVisibleBot(db: Db, auth: Auth, botId: string): Promise<
   return bot;
 }
 
+/**
+ * #255 · ÚNICA regla de autoridad sobre los metadatos de un bot (visibilidad de la
+ * ficha) y sobre la visibilidad del código de sus versiones: SÓLO su dueño. La usan
+ * `assertOwner` (PATCH /bots/{id}, PUT …/code-visibility) y la publicación masiva de
+ * un equipo (POST /teams/{id}/actions/publish-bots): ser capitán NO da autoridad
+ * sobre bots ajenos, y la regla no se repite en ningún otro sitio.
+ */
+export function isBotOwner(auth: Auth | { userId: string } | undefined, bot: Record<string, unknown>): boolean {
+  return !!auth && auth.userId === bot.owner_id;
+}
+
 export function assertOwner(auth: Auth, bot: Record<string, unknown>, allowStaff = false): void {
   if (!auth) throw forbidden();
-  if (auth.userId === bot.owner_id) return;
+  if (isBotOwner(auth, bot)) return;
   if (allowStaff && isStaff(auth)) return;
   throw forbidden("Solo el dueño del bot puede hacer esto");
 }

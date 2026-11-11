@@ -28,6 +28,7 @@ vi.mock("../src/api.js", () => ({
 import { api } from "../src/api.js";
 import { BotsPage, workInProgress, rejectionToShow, pendingActionFor } from "../src/pages/BotsPage.js";
 import { loadCatalog, CATALOG_VERSION } from "../../../packages/module-catalog/loadCatalog.js";
+import { openBot, openSection } from "./bot-panel-helpers.js";
 
 const apiMock = api as unknown as ReturnType<typeof vi.fn>;
 const ME = { id: "u1", displayName: "Ana", email: "a@a.es", roles: ["user"], twoFactorEnabled: false };
@@ -141,8 +142,13 @@ function renderPage(overrides: { pollIntervalMs?: number; maxPolls?: number; max
   );
 }
 
-async function selectBot() {
-  await userEvent.click(await screen.findByRole("button", { name: "Tanque" }));
+/**
+ * #255 · abre «Tanque» y la sección pedida (por defecto «Versiones y build», que es
+ * donde viven la versión enfocada y el pipeline). El panel pinta UNA sección.
+ */
+async function selectBot(section = "Versiones y build") {
+  await openBot("Tanque");
+  await openSection(section);
 }
 
 /** El estado exacto que había en producción para el bot del usuario. */
@@ -174,6 +180,7 @@ const PRODUCCION: VersionRow[] = [
 afterEach(cleanup);
 beforeEach(() => {
   apiMock.mockReset();
+  window.location.hash = "";
 });
 
 describe("B11 · qué versión y qué error se enseñan", () => {
@@ -213,9 +220,12 @@ describe("B11 · qué versión y qué error se enseñan", () => {
     await selectBot();
     await screen.findByTestId("focused-version");
 
-    await userEvent.click(screen.getByRole("button", { name: "Subir como versión nueva" }));
+    await openSection("Código");
+    await userEvent.click(await screen.findByRole("button", { name: "Subir como versión nueva" }));
 
-    await waitFor(() => expect(screen.getByTestId("focused-version").querySelector("h2")?.textContent).toContain("v5"));
+    // #255 · el paso siguiente (enviarla) está en «Versiones y build»: el panel va solo ahí.
+    await waitFor(() => expect(screen.getByTestId("focused-version").querySelector("h4")?.textContent).toContain("v5"));
+    expect(screen.getByTestId("bot-section").getAttribute("data-section")).toBe("versiones");
     const resumen = screen.getByTestId("focused-version");
     expect(resumen.textContent).toContain("draft");
     // Ningún motivo de rechazo heredado de v4.
@@ -225,10 +235,8 @@ describe("B11 · qué versión y qué error se enseñan", () => {
   it("la subida usa la revisión de loadout VIGENTE, no un 1 fijo", async () => {
     const st = fakeBackend({ versions: PRODUCCION });
     renderPage();
-    await selectBot();
-    await screen.findByTestId("focused-version");
-
-    await userEvent.click(screen.getByRole("button", { name: "Subir como versión nueva" }));
+    await selectBot("Código");
+    await userEvent.click(await screen.findByRole("button", { name: "Subir como versión nueva" }));
     await waitFor(() => expect(st.versions.some((v) => v.version === 5)).toBe(true));
 
     const fd = apiMock.mock.calls.find((c) => c[0] === "POST" && c[1] === "/bots/b1/versions")?.[3]
@@ -257,8 +265,8 @@ describe("B11 · el pipeline refleja el resultado final", () => {
     await selectBot();
 
     const card = await screen.findByTestId("build-result");
-    expect(card.querySelector("h3")?.textContent).toContain("v4");
-    expect(card.querySelector("h3")?.textContent).toContain("failed");
+    expect(card.querySelector("h4")?.textContent).toContain("v4");
+    expect(card.querySelector("h4")?.textContent).toContain("failed");
     expect(card.textContent).toContain("sintaxis");
     // NO puede quedarse anunciando "en curso" un trabajo terminado.
     expect(within(card).queryByTestId("pipeline-running")).toBeNull();
@@ -287,7 +295,7 @@ describe("B11 · el pipeline refleja el resultado final", () => {
     ];
 
     await waitFor(
-      () => expect(screen.getByTestId("build-result").querySelector("h3")?.textContent).toContain("failed"),
+      () => expect(screen.getByTestId("build-result").querySelector("h4")?.textContent).toContain("failed"),
       { timeout: 3000 },
     );
     // El estado de la versión llega en la revalidación que dispara el final del
@@ -336,9 +344,9 @@ describe("B11 · el pipeline refleja el resultado final", () => {
 
     const aviso = await screen.findByTestId("pipeline-unknown", {}, { timeout: 3000 });
     expect(aviso.textContent).toContain("estado desconocido");
-    expect(screen.getByTestId("build-result").querySelector("h3")?.textContent).toContain("estado desconocido");
+    expect(screen.getByTestId("build-result").querySelector("h4")?.textContent).toContain("estado desconocido");
     // Y no se ha inventado un "passed"/"failed".
-    expect(screen.getByTestId("build-result").querySelector("h3")?.textContent).not.toContain("passed");
+    expect(screen.getByTestId("build-result").querySelector("h4")?.textContent).not.toContain("passed");
   });
 
   it("issue #95 · una lectura que NO VUELVE tampoco deja el panel diciendo «en curso» para siempre", async () => {
@@ -478,7 +486,7 @@ describe("B11 · el pipeline refleja el resultado final", () => {
     await selectBot();
 
     const card = await screen.findByTestId("build-result");
-    expect(card.querySelector("h3")?.textContent).toContain("estado desconocido");
+    expect(card.querySelector("h4")?.textContent).toContain("estado desconocido");
     expect(within(card).getByTestId("pipeline-unknown")).toBeTruthy();
     expect(card.querySelector("table")).toBeNull(); // ni una etapa inventada
   });
@@ -490,7 +498,7 @@ describe("B11 · el pipeline refleja el resultado final", () => {
 
     const card = await screen.findByTestId("build-result");
     expect(card.textContent).toContain("no se ha enviado a validación");
-    expect(card.querySelector("h3")?.textContent).not.toContain("queued");
+    expect(card.querySelector("h4")?.textContent).not.toContain("queued");
     expect(card.querySelector("table")).toBeNull();
   });
 });
@@ -516,8 +524,8 @@ describe("B11 · un draft sin enviar es visible como tal", () => {
     await screen.findByTestId("focused-version");
 
     await userEvent.click(screen.getByRole("button", { name: "Ver v3" }));
-    await waitFor(() => expect(screen.getByTestId("focused-version").querySelector("h2")?.textContent).toContain("v3"));
-    expect(screen.getByTestId("build-result").querySelector("h3")?.textContent).toContain("v3");
+    await waitFor(() => expect(screen.getByTestId("focused-version").querySelector("h4")?.textContent).toContain("v3"));
+    expect(screen.getByTestId("build-result").querySelector("h4")?.textContent).toContain("v3");
     expect(screen.getByTestId("focused-version").textContent).toContain("pulsa «Enviar a validación»");
   });
 });
@@ -643,15 +651,24 @@ describe("B11-fix · el sondeo no desmonta el panel ni tira trabajo del usuario"
   });
 
   it("conserva el foco, el nodo del área de código y los cambios SIN GUARDAR del editor", async () => {
-    enCurso();
-    renderPage({ pollIntervalMs: 10, maxPolls: 8 });
+    const st = enCurso();
+    renderPage({ pollIntervalMs: 10, maxPolls: 1_000 });
     await selectBot();
     await screen.findByTestId("build-result");
 
-    // El usuario cambia el chasis (sin guardar) y escribe código.
-    const chasis = screen.getByLabelText("chasis") as HTMLSelectElement;
+    // #255 · el sondeo sigue vivo con otra sección a la vista: primero el equipamiento.
+    await openSection("Equipamiento");
+    const chasis = (await screen.findByLabelText("chasis")) as HTMLSelectElement;
     await userEvent.selectOptions(chasis, "chassis.heavy@1");
-    const area = screen.getByLabelText("codigo") as HTMLTextAreaElement;
+    const lecturasAntes = st.calls.filter((c) => c.includes("/builds")).length;
+    await new Promise((r) => setTimeout(r, 200)); // varios ciclos de sondeo
+    expect(st.calls.filter((c) => c.includes("/builds")).length).toBeGreaterThan(lecturasAntes);
+    expect(screen.getByLabelText("chasis")).toBe(chasis);
+    expect((screen.getByLabelText("chasis") as HTMLSelectElement).value).toBe("chassis.heavy@1");
+
+    // …y el código.
+    await openSection("Código");
+    const area = (await screen.findByLabelText("codigo")) as HTMLTextAreaElement;
     await userEvent.clear(area); // UX-B · B3: el área arranca con la plantilla del runtime
     await userEvent.type(area, "print('hola')");
     area.focus();
@@ -663,8 +680,6 @@ describe("B11-fix · el sondeo no desmonta el panel ni tira trabajo del usuario"
     expect(screen.getByLabelText("codigo")).toBe(area);
     expect(document.activeElement).toBe(area);
     expect(area.value).toBe("print('hola')");
-    // Y la elección sin guardar del usuario sigue siendo la suya.
-    expect((screen.getByLabelText("chasis") as HTMLSelectElement).value).toBe("chassis.heavy@1");
   });
 
   it("el sondeo NO vuelve a pedir los loadouts (es lo que remontaba el editor)", async () => {
@@ -703,9 +718,9 @@ describe("B11-fix · el sondeo no desmonta el panel ni tira trabajo del usuario"
     await selectBot();
     await screen.findByTestId("pipeline-running", {}, { timeout: 15_000 });
 
-    const chasis = screen.getByLabelText("chasis") as HTMLSelectElement;
-    await userEvent.selectOptions(chasis, "chassis.heavy@1");
-    const area = screen.getByLabelText("codigo") as HTMLTextAreaElement;
+    // #255 · el usuario escribe en «Código» mientras el sondeo (del contenedor) sigue.
+    await openSection("Código");
+    const area = (await screen.findByLabelText("codigo")) as HTMLTextAreaElement;
     await userEvent.clear(area); // UX-B · B3: el área arranca con la plantilla del runtime
     await userEvent.type(area, "sin guardar");
     area.focus();
@@ -715,14 +730,14 @@ describe("B11-fix · el sondeo no desmonta el panel ni tira trabajo del usuario"
     ];
     st.builds = [{ id: "b-1", version: 1, status: "failed", stages: [{ name: "build", status: "failed" }] }];
 
-    await waitFor(() => expect(screen.getByTestId("focused-version").textContent).toContain("rejected"), {
+    // La revalidación de versiones llegó (el selector del visor ya dice «rejected»)…
+    await waitFor(() => expect(screen.getByRole("option", { name: "v1 · rejected" })).toBeTruthy(), {
       timeout: 3000,
     });
-    // Mismo nodo, mismo foco, mismo trabajo sin guardar.
+    // …y mismo nodo, mismo foco, mismo trabajo sin guardar.
     expect(screen.getByLabelText("codigo")).toBe(area);
     expect(document.activeElement).toBe(area);
     expect(area.value).toBe("sin guardar");
-    expect((screen.getByLabelText("chasis") as HTMLSelectElement).value).toBe("chassis.heavy@1");
   });
 
   it("si la revalidación de versiones FALLA, se avisa y no se borra lo que ya había", async () => {
@@ -916,7 +931,7 @@ describe("B11-fix · sin resultado fiable no se pinta ninguna etapa", () => {
 
     const card = await screen.findByTestId("build-result");
     await within(card).findByTestId("pipeline-unknown", {}, { timeout: 3000 });
-    expect(card.querySelector("h3")?.textContent).toContain("estado desconocido");
+    expect(card.querySelector("h4")?.textContent).toContain("estado desconocido");
     expect(card.querySelector("table")).toBeNull();
     expect(card.textContent).not.toContain("pending");
     expect(within(card).queryByTestId("pipeline-running")).toBeNull();
@@ -969,12 +984,13 @@ describe("issue #102 · el presupuesto de sondeos es POR BOT", () => {
     renderPage({ pollIntervalMs: 10, maxPolls: MAX });
 
     // Bot A: se agota su presupuesto hasta que el panel dice «desconocido».
-    await userEvent.click(await screen.findByRole("button", { name: "Tanque" }));
+    await selectBot();
     await screen.findByTestId("pipeline-unknown", {}, { timeout: 10_000 });
     const lecturasA = st.builds.b1 ?? 0;
 
     // Bot B: el usuario cambia de bot. Su pipeline está vivo y es consultable.
-    await userEvent.click(screen.getByRole("button", { name: "Escorpión" }));
+    // #255 · cambiar de bot conserva la sección abierta («Versiones y build»).
+    await userEvent.click(screen.getByRole("link", { name: "Escorpión" }));
     // Que llegue a decir «desconocido» prueba que ha SONDEADO hasta agotarse,
     // no que se haya rendido de entrada con el presupuesto del bot anterior.
     await screen.findByTestId("pipeline-unknown", {}, { timeout: 10_000 });
@@ -1061,32 +1077,34 @@ describe("UX-R · borradores de sesión y estado vivo en «Mis bots»", () => {
   it("si el panel se DESMONTA (sesión caducada) el código y el loadout sin guardar vuelven al montar", async () => {
     fakeBackend({ versions: [{ version: 1, state: "published", runtime: "python", loadoutRevision: 7 }] });
     const first = renderPage();
-    await selectBot();
+    await selectBot("Código");
     const area = (await screen.findByLabelText("codigo")) as HTMLTextAreaElement;
     await userEvent.clear(area);
     await userEvent.type(area, "trabajo sin subir");
-    await userEvent.selectOptions(screen.getByLabelText("chasis"), "chassis.heavy@1");
+    await openSection("Equipamiento");
+    await userEvent.selectOptions(await screen.findByLabelText("chasis"), "chassis.heavy@1");
     first.unmount(); // lo que hace el App al volver al login
 
     renderPage();
-    await selectBot();
+    await selectBot("Equipamiento");
+    expect(((await screen.findByLabelText("chasis")) as HTMLSelectElement).value).toBe("chassis.heavy@1");
+    expect(screen.getByTestId("loadout-draft-restored")).toBeTruthy();
+    await openSection("Código");
     expect(((await screen.findByLabelText("codigo")) as HTMLTextAreaElement).value).toBe("trabajo sin subir");
     expect(screen.getByTestId("code-draft-restored").textContent).toMatch(/Recuperado/);
-    expect((screen.getByLabelText("chasis") as HTMLSelectElement).value).toBe("chassis.heavy@1");
-    expect(screen.getByTestId("loadout-draft-restored")).toBeTruthy();
   });
 
   it("subido el código, el borrador se borra (no se «recupera» lo que ya es una versión)", async () => {
     fakeBackend({ versions: [{ version: 1, state: "published", runtime: "python", loadoutRevision: 7 }] });
     renderPage();
-    await selectBot();
+    await selectBot("Código");
     const area = (await screen.findByLabelText("codigo")) as HTMLTextAreaElement;
     await userEvent.clear(area);
     await userEvent.type(area, "v2 lista");
-    // UX-F (DEF-R2) · la clave lleva la cuenta (`anon`: el App no fija dueño en este test).
-    expect(window.sessionStorage.getItem("s9_draft:anon:bots:upload:code")).toBe("v2 lista");
+    // UX-F (DEF-R2) · la clave lleva la cuenta (`anon`: el App no fija dueño en este test) y, desde #255 R1, el bot.
+    expect(window.sessionStorage.getItem("s9_draft:anon:bot:b1:upload:code")).toBe("v2 lista");
     await userEvent.click(screen.getByRole("button", { name: "Subir como versión nueva" }));
-    await waitFor(() => expect(window.sessionStorage.getItem("s9_draft:anon:bots:upload:code")).toBeNull());
+    await waitFor(() => expect(window.sessionStorage.getItem("s9_draft:anon:bot:b1:upload:code")).toBeNull());
   });
 
   it("build en curso: LiveStatus (aria-live) con aria-busy", async () => {

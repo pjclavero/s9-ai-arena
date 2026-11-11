@@ -21,7 +21,8 @@ export async function newBotWithLoadout(page: Page, name: string): Promise<void>
   await go(page, "#/bots");
   await page.getByLabel("nuevo-bot").fill(name);
   await page.getByRole("button", { name: "Crear bot" }).click();
-  await page.getByRole("button", { name, exact: true }).click();
+  // #255 · el bot recién creado queda abierto en «Equipamiento»; su nombre es un ENLACE.
+  await page.getByRole("link", { name, exact: true }).click();
   await page.getByLabel("chasis").selectOption("chassis.medium@1");
   await page.getByLabel("slot-drive").selectOption("movement.wheels@1");
   await page.getByLabel("slot-power").selectOption("power.battery@1");
@@ -33,8 +34,11 @@ export async function newBotWithLoadout(page: Page, name: string): Promise<void>
 
 /** Sube el código que haya en el editor como versión nueva y la envía a validación. */
 export async function uploadAndSubmit(page: Page, version: number, code?: string): Promise<void> {
+  await openBotSection(page, "codigo");
   if (code !== undefined) await page.getByLabel("codigo").fill(code);
   await page.getByRole("button", { name: "Subir como versión nueva" }).click();
+  // #255 · subir lleva solo a «Versiones y build», donde está «Enviar a validación».
+  await expect(page.getByTestId("bot-section")).toHaveAttribute("data-section", "versiones");
   await expect(page.getByTestId(`version-row-${version}`)).toContainText("draft");
   await page.getByRole("button", { name: `Enviar a validación v${version}` }).click();
 }
@@ -42,4 +46,20 @@ export async function uploadAndSubmit(page: Page, version: number, code?: string
 /** Espera al estado terminal REAL del build de la versión (validated o rejected). */
 export async function expectVersionState(page: Page, version: number, state: "validated" | "rejected") {
   await expect(page.getByTestId(`version-row-${version}`)).toContainText(state, { timeout: BUILD_TIMEOUT_MS });
+}
+
+/** #255 · abre una sección del panel del bot (cambia el contenido central, no hace scroll). */
+export async function openBotSection(
+  page: Page,
+  section: "resumen" | "visibilidad" | "equipamiento" | "codigo" | "versiones" | "batallas" | "replays",
+): Promise<void> {
+  await page.getByTestId(`bot-section-link-${section}`).click();
+  await expect(page.getByTestId("bot-section")).toHaveAttribute("data-section", section);
+}
+
+/** #255 · «En batallas» vive en «Resumen»: se mira allí y se vuelve a «Versiones y build». */
+export async function expectInBattles(page: Page, text: string): Promise<void> {
+  await openBotSection(page, "resumen");
+  await expect(page.getByTestId("in-battles")).toContainText(text);
+  await openBotSection(page, "versiones");
 }

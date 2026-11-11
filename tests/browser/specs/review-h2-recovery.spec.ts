@@ -9,6 +9,7 @@
 import { test, expect } from "@playwright/test";
 import { go, registerNewUser, shot, watchProblems } from "./helpers.js";
 import { GARBAGE, createBotWithLoadout, evidence, expectState, publish, submitVersion } from "./review-lib.js";
+import { expectInBattles } from "./uxb-helpers.js";
 
 const SYNTAX = `from arena_sdk import ArenaBot
 
@@ -52,7 +53,7 @@ test.describe("@fase1 [REVIEW] H2 error → entender → corregir → publicar",
     const loc1 = await page.getByTestId("build-diagnosis-location").innerText();
     const text1 = await diag.innerText();
     await expect(page.getByTestId("build-diagnosis-not-published")).toContainText("v1 NO está publicada");
-    await expect(page.getByTestId("in-battles")).toContainText("Ninguna versión publicada");
+    await expectInBattles(page, "Ninguna versión publicada");
     await shot(page, info, "review-h2-sintaxis");
     expect(text1).not.toMatch(GARBAGE);
     // El usuario tiene que ver fichero y línea del error (Python señala la línea 6 o la 5).

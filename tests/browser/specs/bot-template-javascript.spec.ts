@@ -5,6 +5,7 @@
 import { test, expect } from "@playwright/test";
 import { registerNewUser, shot, watchProblems } from "./helpers.js";
 import { expectVersionState, newBotWithLoadout, uploadAndSubmit } from "./uxb-helpers.js";
+import { openBotSection } from "./uxb-helpers.js";
 
 test.describe("@fase1 UX-B plantilla JavaScript", () => {
   test("la plantilla JavaScript del editor construye sin tocarla", async ({ page }, info) => {
@@ -12,6 +13,7 @@ test.describe("@fase1 UX-B plantilla JavaScript", () => {
     const problems = watchProblems(page);
     await registerNewUser(page);
     await newBotWithLoadout(page, `uxb-tpl-js-${Date.now().toString(36)}`);
+    await openBotSection(page, "codigo");
 
     await page.getByLabel("runtime").selectOption("node");
     const area = page.getByLabel("codigo");

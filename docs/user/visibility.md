@@ -15,13 +15,15 @@ Participar en un torneo o salir en una retransmisión **no cambia ninguna de las
 | **Equipo** | Tú y los miembros del equipo del bot. Si el bot no tiene equipo, es como «Privado». |
 | **Público** | Cualquier usuario o visitante. |
 
-Se cambia en **Mis bots → el bot → Overview → «Visibilidad del bot»**. Sólo el dueño ve el control y sólo él puede cambiarla; ni otros usuarios ni la organización pueden. Cada cambio queda registrado.
+Se cambia en **Mis bots → el bot → Visibilidad**. Esa tarjeta reúne la visibilidad del bot y la del código de cada versión, y es el único sitio donde se cambian (el resto de la web sólo las muestra). Arriba resume el estado actual, por ejemplo «Bot ● Público · Código v5 ● Privado». Sólo el dueño ve los controles y sólo él puede cambiarlas; ni otros usuarios ni la organización pueden. Cada cambio queda registrado.
 
-La visibilidad del bot **no controla** la visibilidad de su código fuente.
+**Hacer público el bot NO hace público automáticamente su código**, y hacer público el código de una versión NO hace público el bot.
 
 ## Visibilidad del código
 
-Cada versión tiene su propio interruptor: **«Código de vN [Privado][Público]»**, en la pestaña **Versions** del bot. Sólo lo ve y lo usa el dueño.
+Cada versión tiene su propio interruptor: **«Código de vN [Privado][Público]»**, en la misma tarjeta **Visibilidad**: el de la versión publicada más reciente arriba, como acción rápida, y el de las demás en «Código de las demás versiones». Sólo lo ve y lo usa el dueño. La tabla de «Versiones y build» enseña si el código es público o privado, pero no lo cambia.
+
+Desde **Equipos** puedes hacer públicos de una vez los bots del equipo **de los que eres dueño** ([Equipos](teams.md#hacer-públicos-los-bots-que-administras)); su código no cambia salvo que marques la casilla aparte.
 
 | | Bot privado | Bot de equipo | Bot público |
 |---|---|---|---|

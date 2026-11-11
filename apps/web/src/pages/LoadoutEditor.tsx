@@ -282,7 +282,9 @@ export function LoadoutEditor(props: {
         </select>
       </label>{" "}
       <EffectBadge status={CHASSIS_CHOICE_EFFECT.status} title={CHASSIS_CHOICE_EFFECT.note} testId="effect-chassis" />
-      <table>
+      {/* #255 · en móvil cada ranura es una tarjeta (stack-table): antes la tabla
+          desplazaba en horizontal y los selectores quedaban fuera de la pantalla. */}
+      <table className="stack-table">
         <tbody>
           {(chassisDef.slots ?? []).map((slot) => {
             const candidates = props.catalog.filter(
