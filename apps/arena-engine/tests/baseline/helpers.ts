@@ -76,7 +76,9 @@ export function assertBaselineGolden(name: string, actual: unknown): void {
 }
 
 export function sha256(x: unknown): string {
-  return createHash("sha256").update(typeof x === "string" ? x : JSON.stringify(x)).digest("hex");
+  return createHash("sha256")
+    .update(typeof x === "string" ? x : JSON.stringify(x))
+    .digest("hex");
 }
 
 // ------------------------------------------------------------------ catálogo y loadouts

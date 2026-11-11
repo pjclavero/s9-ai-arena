@@ -90,38 +90,48 @@ describe("MA · PublicEntityId: ningún id interno sale (I1, F1)", () => {
 
   contractIt("MA", "el replay público proyectado y su índice no contienen ids internos", async () => {
     const r = await recordReference();
-    const meta = { world: {}, roster: r.header.participants.map((p: any) => ({ id: p.id, botId: p.botId, team: p.team })) };
+    const meta = {
+      world: {},
+      roster: r.header.participants.map((p: any) => ({ id: p.id, botId: p.botId, team: p.team })),
+    };
     const doc = projectReplayDocument(r, meta);
-    const idx = projectIndex({ battleId: "me", ticks: r.result.ticks, snapshotCount: 1, keyframes: [], result: r.result }, meta);
+    const idx = projectIndex(
+      { battleId: "me", ticks: r.result.ticks, snapshotCount: 1, keyframes: [], result: r.result },
+      meta,
+    );
     expect(allStrings(doc).filter((s) => INTERNAL_ID.test(s))).toEqual([]);
     expect(allStrings(idx).filter((s) => INTERNAL_ID.test(s))).toEqual([]);
   });
 
-  contractIt("MA", "la observación del bot no entrega el id interno del vehículo detectado (espacio BotEntityRef)", () => {
-    const map = emptyArena(200, 80);
-    map.spawns = [
-      { team: "red", position: { x: 40, y: 40 }, heading: 0 },
-      { team: "blue", position: { x: 55, y: 40 }, heading: Math.PI },
-    ];
-    const b = new Battle({
-      battleId: "me_botids",
-      seed: "me-botids",
-      ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: 60 }),
-      map,
-      participants: [
-        { id: "veh_1", botId: "b1", team: "red", spec: gunnerLoadout() },
-        { id: "veh_2", botId: "b2", team: "blue", spec: gunnerLoadout() },
-      ],
-    });
-    const obs: any[] = [];
-    b.attachBot("veh_1", new ScriptBot("b1", (_t, o) => (obs.push(o), undefined)));
-    b.attachBot("veh_2", new IdleBot("b2"));
-    for (let t = 0; t < 10; t++) b.step();
-    b.free();
-    const contacts = obs.flatMap((o) => (o.sensors?.radar ?? []).flatMap((r: any) => r.contacts ?? []));
-    expect(contacts.length).toBeGreaterThan(0); // control: el radar SÍ ve al rival
-    expect(allStrings(contacts).filter((s) => s === "veh_2")).toEqual([]);
-  });
+  contractIt(
+    "MA",
+    "la observación del bot no entrega el id interno del vehículo detectado (espacio BotEntityRef)",
+    () => {
+      const map = emptyArena(200, 80);
+      map.spawns = [
+        { team: "red", position: { x: 40, y: 40 }, heading: 0 },
+        { team: "blue", position: { x: 55, y: 40 }, heading: Math.PI },
+      ];
+      const b = new Battle({
+        battleId: "me_botids",
+        seed: "me-botids",
+        ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: 60 }),
+        map,
+        participants: [
+          { id: "veh_1", botId: "b1", team: "red", spec: gunnerLoadout() },
+          { id: "veh_2", botId: "b2", team: "blue", spec: gunnerLoadout() },
+        ],
+      });
+      const obs: any[] = [];
+      b.attachBot("veh_1", new ScriptBot("b1", (_t, o) => (obs.push(o), undefined)));
+      b.attachBot("veh_2", new IdleBot("b2"));
+      for (let t = 0; t < 10; t++) b.step();
+      b.free();
+      const contacts = obs.flatMap((o) => (o.sensors?.radar ?? []).flatMap((r: any) => r.contacts ?? []));
+      expect(contacts.length).toBeGreaterThan(0); // control: el radar SÍ ve al rival
+      expect(allStrings(contacts).filter((s) => s === "veh_2")).toEqual([]);
+    },
+  );
 });
 
 describe("MA · ids densos por audiencia: lo oculto no consume número (I3, P-1, #261)", () => {
@@ -150,7 +160,12 @@ describe("MA · equipamiento privado (D-B1 = R2) en las salidas públicas", () =
     const r = await recordReference();
     const meta = {
       world: {},
-      roster: r.header.participants.map((p: any) => ({ id: p.id, botId: p.botId, team: p.team, chassis: p.spec.chassisId })),
+      roster: r.header.participants.map((p: any) => ({
+        id: p.id,
+        botId: p.botId,
+        team: p.team,
+        chassis: p.spec.chassisId,
+      })),
     };
     const keys = allKeys([projectReplayDocument(r, meta), projectIndex({ battleId: "me", result: r.result }, meta)]);
     expect(EQUIPMENT_KEYS.filter((k) => keys.has(k))).toEqual([]);

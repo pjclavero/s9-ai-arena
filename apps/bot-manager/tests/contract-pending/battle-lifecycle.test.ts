@@ -53,7 +53,12 @@ function playBot(spec: SandboxSpec): WebSocket {
         proto: "arena/1",
         type: "HELLO",
         seq: seq++,
-        payload: { botId: spec.env.BOT_ID, botVersion: "0.1.0", sdk: { name: "custom", version: "0" }, battleToken: spec.env.BATTLE_TOKEN },
+        payload: {
+          botId: spec.env.BOT_ID,
+          botVersion: "0.1.0",
+          sdk: { name: "custom", version: "0" },
+          battleToken: spec.env.BATTLE_TOKEN,
+        },
       }),
     );
   });
@@ -66,7 +71,15 @@ function playBot(spec: SandboxSpec): WebSocket {
     }
     if (msg.type === "OBSERVATION" && typeof msg.payload?.tick === "number") {
       const forTick = msg.payload.tick + 3;
-      ws.send(JSON.stringify({ proto: "arena/1", type: "COMMAND", seq: seq++, tick: forTick, payload: { forTick, move: { throttle: 0.5, steer: 0.1 } } }));
+      ws.send(
+        JSON.stringify({
+          proto: "arena/1",
+          type: "COMMAND",
+          seq: seq++,
+          tick: forTick,
+          payload: { forTick, move: { throttle: 0.5, steer: 0.1 } },
+        }),
+      );
     }
   });
   ws.on("error", () => {});
@@ -81,7 +94,10 @@ interface Ledger {
 }
 
 /** Runner instrumentado. `mode`: qué hace cada bot lanzado. */
-function ledgerRunner(opts: { silentBots?: string[]; throwingStop?: string[] } = {}): { runner: ContainerRunner; ledger: Ledger } {
+function ledgerRunner(opts: { silentBots?: string[]; throwingStop?: string[] } = {}): {
+  runner: ContainerRunner;
+  ledger: Ledger;
+} {
   const ledger: Ledger = { launched: [], stops: {}, wsUrl: null };
   const runner: ContainerRunner = {
     async launch(spec: SandboxSpec): Promise<ContainerHandle> {

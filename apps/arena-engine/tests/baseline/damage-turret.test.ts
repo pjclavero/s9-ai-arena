@@ -22,7 +22,12 @@ beforeAll(async () => {
 });
 
 const r6 = (n: number) => Math.round(n * 1e6) / 1e6;
-const FROM = { front: { x: 10, y: 0 }, rear: { x: -10, y: 0 }, left: { x: 0, y: 10 }, right: { x: 0, y: -10 } } as const;
+const FROM = {
+  front: { x: 10, y: 0 },
+  rear: { x: -10, y: 0 },
+  left: { x: 0, y: 10 },
+  right: { x: 0, y: -10 },
+} as const;
 
 describe("baseline · applyDamage (D6) tabla numérica", () => {
   it("tabla por sector × daño base × loadout con semilla fija (golden)", () => {
@@ -34,7 +39,14 @@ describe("baseline · applyDamage (D6) tabla numérica", () => {
       for (const sector of Object.keys(FROM) as (keyof typeof FROM)[]) {
         for (const base of [10, 45, 100]) {
           const v = new Vehicle("veh_t", "red", "bot_t", mk());
-          const res = applyDamage(v, base, FROM[sector], { x: 0, y: 0 }, 0, new Rng(`me-dmg-${name}-${sector}-${base}`));
+          const res = applyDamage(
+            v,
+            base,
+            FROM[sector],
+            { x: 0, y: 0 },
+            0,
+            new Rng(`me-dmg-${name}-${sector}-${base}`),
+          );
           rows.push({
             loadout: name,
             sector,

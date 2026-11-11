@@ -21,7 +21,12 @@ beforeAll(async () => {
  * El minero (veh_1, red) siembra en el tick 0 en (20,40) y se aparta en el 1; en el tick `placeAt`
  * se coloca a la víctima (veh_2) sobre la mina. Devuelve el tick de `mine_triggered`.
  */
-function mineScenario(opts: { placeAt: number; victimTeam: "blue" | "red"; friendlyFire?: boolean; withFire?: boolean }) {
+function mineScenario(opts: {
+  placeAt: number;
+  victimTeam: "blue" | "red";
+  friendlyFire?: boolean;
+  withFire?: boolean;
+}) {
   const map = emptyArena(200, 80);
   map.spawns = [
     { team: "red", position: { x: 20, y: 40 }, heading: Math.PI / 2 },

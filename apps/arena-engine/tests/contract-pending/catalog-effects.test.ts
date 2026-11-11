@@ -36,7 +36,11 @@ function statusOf(category: string, prop: string): string | undefined {
 
 describe("MC · movement.terrain eliminado (REMOVE)", () => {
   contractIt("MC", "ningún módulo del catálogo declara terrain", () => {
-    expect(catalog().filter((d: any) => d.terrain !== undefined).map((d) => d.id)).toEqual([]);
+    expect(
+      catalog()
+        .filter((d: any) => d.terrain !== undefined)
+        .map((d) => d.id),
+    ).toEqual([]);
   });
 
   contractIt("MC", "el esquema de módulo ya no admite terrain", () => {
@@ -90,7 +94,10 @@ function radioRun(distanceM: number): boolean {
     ],
   });
   let heard = false;
-  b.attachBot("veh_1", new ScriptBot("b1", (t) => (t === 0 ? { radio: [{ slot: "radio_a", data: "aGk=" }] } : undefined)));
+  b.attachBot(
+    "veh_1",
+    new ScriptBot("b1", (t) => (t === 0 ? { radio: [{ slot: "radio_a", data: "aGk=" }] } : undefined)),
+  );
   b.attachBot("veh_2", new ScriptBot("b2", (_t, o) => ((heard ||= (o.radio ?? []).length > 0), undefined)));
   b.attachBot("veh_3", new IdleBot("b3"));
   for (let t = 0; t < 30; t++) b.step();

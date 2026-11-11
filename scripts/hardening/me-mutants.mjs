@@ -85,7 +85,8 @@ function runVitest(m, tag) {
   for (const f of rep.testResults ?? []) {
     for (const a of f.assertionResults ?? []) tests.push({ file: f.name, name: a.fullName, status: a.status });
     // Fichero que no carga (error de import/compilación): cuenta como error, no como test.
-    if ((f.assertionResults ?? []).length === 0 && f.status === "failed") tests.push({ file: f.name, name: "<suite-error>", status: "failed" });
+    if ((f.assertionResults ?? []).length === 0 && f.status === "failed")
+      tests.push({ file: f.name, name: "<suite-error>", status: "failed" });
   }
   return { rc: r.status, tests };
 }
@@ -166,7 +167,9 @@ for (const m of mutants) {
     ...(m.kind === "fix" ? { passed: passedNames } : {}),
     seconds: Math.round((Date.now() - t0) / 1000),
   });
-  console.log(`${m.id.padEnd(22)} ${verdict.padEnd(13)} ${ok ? "OK" : "<<< NO ESPERADO"} (${failedNames.length} rojos, rc=${res.rc ?? "-"})`);
+  console.log(
+    `${m.id.padEnd(22)} ${verdict.padEnd(13)} ${ok ? "OK" : "<<< NO ESPERADO"} (${failedNames.length} rojos, rc=${res.rc ?? "-"})`,
+  );
 }
 
 const head = git("rev-parse", "HEAD").stdout.trim();

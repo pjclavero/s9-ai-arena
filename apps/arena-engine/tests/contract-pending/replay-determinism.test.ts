@@ -98,31 +98,104 @@ describe("MD · el stateHash cubre todo el estado vivo que determina el futuro",
     const b = liveStateBattle();
     const p = (b as any).projectiles[0];
     const v = b.getVehicle("veh_2")!;
-    const ok = hashSees(b, () => (p.position.x += 1), () => (p.position.x -= 1)) &&
-      hashSees(b, () => (v.hullHp -= 1), () => (v.hullHp += 1));
+    const ok =
+      hashSees(
+        b,
+        () => (p.position.x += 1),
+        () => (p.position.x -= 1),
+      ) &&
+      hashSees(
+        b,
+        () => (v.hullHp -= 1),
+        () => (v.hullHp += 1),
+      );
     b.free();
     expect(ok).toBe(true);
   });
 
   const probes: [string, (b: Battle) => [() => void, () => void]][] = [
-    ["TTL del proyectil", (b) => { const p = (b as any).projectiles[0]; return [() => p.ttlTicks--, () => p.ttlTicks++]; }],
-    ["owner del proyectil", (b) => { const p = (b as any).projectiles[0]; const o = p.ownerId; return [() => (p.ownerId = "veh_2"), () => (p.ownerId = o)]; }],
-    ["equipo del proyectil", (b) => { const p = (b as any).projectiles[0]; const o = p.team; return [() => (p.team = "blue"), () => (p.team = o)]; }],
-    ["armedAtTick de la mina", (b) => { const m = b.getMines()[0]; return [() => m.armedAtTick++, () => m.armedAtTick--]; }],
-    ["expiresAtTick de la mina", (b) => { const m = b.getMines()[0]; return [() => m.expiresAtTick++, () => m.expiresAtTick--]; }],
-    ["owner de la mina", (b) => { const m = b.getMines()[0]; const o = m.ownerId; return [() => (m.ownerId = "veh_2"), () => (m.ownerId = o)]; }],
+    [
+      "TTL del proyectil",
+      (b) => {
+        const p = (b as any).projectiles[0];
+        return [() => p.ttlTicks--, () => p.ttlTicks++];
+      },
+    ],
+    [
+      "owner del proyectil",
+      (b) => {
+        const p = (b as any).projectiles[0];
+        const o = p.ownerId;
+        return [() => (p.ownerId = "veh_2"), () => (p.ownerId = o)];
+      },
+    ],
+    [
+      "equipo del proyectil",
+      (b) => {
+        const p = (b as any).projectiles[0];
+        const o = p.team;
+        return [() => (p.team = "blue"), () => (p.team = o)];
+      },
+    ],
+    [
+      "armedAtTick de la mina",
+      (b) => {
+        const m = b.getMines()[0];
+        return [() => m.armedAtTick++, () => m.armedAtTick--];
+      },
+    ],
+    [
+      "expiresAtTick de la mina",
+      (b) => {
+        const m = b.getMines()[0];
+        return [() => m.expiresAtTick++, () => m.expiresAtTick--];
+      },
+    ],
+    [
+      "owner de la mina",
+      (b) => {
+        const m = b.getMines()[0];
+        const o = m.ownerId;
+        return [() => (m.ownerId = "veh_2"), () => (m.ownerId = o)];
+      },
+    ],
     ["entitySeq (asignador de ids)", (b) => [() => (b as any).entitySeq++, () => (b as any).entitySeq--]],
-    ["respawnAtTick", (b) => { const v = b.getVehicle("veh_2")!; return [() => (v.respawnAtTick = 999), () => (v.respawnAtTick = 0)]; }],
-    ["cola de radio", (b) => [
-      () => (b as any).radioQueue.push({ from: "veh_1", team: "red", data: "AA==", sentTick: 6, deliverAtTick: 12 }),
-      () => (b as any).radioQueue.pop(),
-    ]],
-    ["comandos en vuelo (latencia)", (b) => [
-      () => (b as any).pendingLatencyCommands.push({ readyAtTick: 9, vehicleId: "veh_1", command: {} }),
-      () => (b as any).pendingLatencyCommands.pop(),
-    ]],
-    ["última orden de movimiento (lastMove)", (b) => { const v = b.getVehicle("veh_1")!; const o = v.lastMove; return [() => (v.lastMove = { throttle: 1, steer: 1 }), () => (v.lastMove = o)]; }],
-    ["timeouts consecutivos", (b) => { const v = b.getVehicle("veh_1")!; return [() => v.consecutiveTimeouts++, () => v.consecutiveTimeouts--]; }],
+    [
+      "respawnAtTick",
+      (b) => {
+        const v = b.getVehicle("veh_2")!;
+        return [() => (v.respawnAtTick = 999), () => (v.respawnAtTick = 0)];
+      },
+    ],
+    [
+      "cola de radio",
+      (b) => [
+        () => (b as any).radioQueue.push({ from: "veh_1", team: "red", data: "AA==", sentTick: 6, deliverAtTick: 12 }),
+        () => (b as any).radioQueue.pop(),
+      ],
+    ],
+    [
+      "comandos en vuelo (latencia)",
+      (b) => [
+        () => (b as any).pendingLatencyCommands.push({ readyAtTick: 9, vehicleId: "veh_1", command: {} }),
+        () => (b as any).pendingLatencyCommands.pop(),
+      ],
+    ],
+    [
+      "última orden de movimiento (lastMove)",
+      (b) => {
+        const v = b.getVehicle("veh_1")!;
+        const o = v.lastMove;
+        return [() => (v.lastMove = { throttle: 1, steer: 1 }), () => (v.lastMove = o)];
+      },
+    ],
+    [
+      "timeouts consecutivos",
+      (b) => {
+        const v = b.getVehicle("veh_1")!;
+        return [() => v.consecutiveTimeouts++, () => v.consecutiveTimeouts--];
+      },
+    ],
   ];
   for (const [name, probe] of probes) {
     contractIt("MD", `el stateHash cambia si cambia: ${name}`, () => {
