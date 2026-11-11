@@ -51,6 +51,21 @@ export function broadcastReasonText(reason: string | null | undefined): string {
   }
 }
 
+/** Una respuesta con otra forma (API antigua, proxy) no tumba el panel: se trata como error. */
+function validView(v: unknown): PublicAccessSettingsView {
+  const o = v as PublicAccessSettingsView | null;
+  if (
+    !o ||
+    typeof o.publicSpectateEnabled !== "boolean" ||
+    typeof o.publicReplaysEnabled !== "boolean" ||
+    !o.effective ||
+    typeof o.effective.broadcastLiveAvailable !== "boolean"
+  ) {
+    throw new Error("Respuesta inesperada de /admin/settings/public-access");
+  }
+  return o;
+}
+
 const SWITCHES: { key: "publicSpectateEnabled" | "publicReplaysEnabled"; label: string; help: string }[] = [
   {
     key: "publicSpectateEnabled",
@@ -72,7 +87,7 @@ export function PublicAccessSettings() {
   const load = useCallback(() => {
     api<PublicAccessSettingsView>("GET", "/admin/settings/public-access")
       // Recarga tras un fallo: se pinta lo guardado, pero el error SIGUE a la vista.
-      .then((v) => setView(v))
+      .then((v) => setView(validView(v)))
       .catch((e) => setError(e));
   }, []);
   useEffect(load, [load]);
@@ -81,7 +96,7 @@ export function PublicAccessSettings() {
     setBusy(true);
     try {
       // Lo que se pinta es la RESPUESTA (estado real guardado), no el valor pedido.
-      setView(await api<PublicAccessSettingsView>("PATCH", "/admin/settings/public-access", { [key]: value }));
+      setView(validView(await api<unknown>("PATCH", "/admin/settings/public-access", { [key]: value })));
       setError(null);
     } catch (e) {
       setError(e);

@@ -91,4 +91,11 @@ describe("MG · PublicAccessSettings refleja el estado real", () => {
     expect(eff.getAttribute("data-reason")).toBe("streaming_not_configured");
     expect(eff.textContent).toMatch(/No hay servicio de streaming configurado/);
   });
+  it("una respuesta con otra forma no tumba el panel: se muestra como error", async () => {
+    apiMock.mockResolvedValueOnce([]);
+    render(<PublicAccessSettings />);
+    expect(await screen.findByTestId("public-access-error")).toBeTruthy();
+    expect(screen.getByTestId("public-access-settings")).toBeTruthy();
+    expect(screen.queryByTestId("public-access-effective")).toBeNull();
+  });
 });
