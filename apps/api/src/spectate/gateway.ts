@@ -8,11 +8,13 @@
  *  - El ticket es de UN SOLO USO (jti): un ticket robado del historial de red no
  *    sirve para abrir una segunda conexión. Reconectar = pedir otro ticket a la
  *    API (gratis para el visor: son 60 s de TTL y cuota anónima aparte).
- *  - El gateway NO toca la simulación: lee `battle.snapshots` y
- *    `battle.publicEvents`, los arrays PÚBLICOS que E2 mantiene (T2.6, "el
- *    snapshot público jamás contiene observaciones privadas"). Nada de
- *    observationFor() aquí: ese método es del canal de BOT (E5), no del de
- *    espectador. La prueba de fuga de gateway.test recorre el stream real.
+ *  - OLA 2 · MA · El gateway NO toca la simulación ni envía estado crudo del
+ *    motor: `battle.snapshots` son FRAMES INTERNOS (ids internos, estado exacto,
+ *    minas) y `battle.publicEvents` lleva ids internos. Todo sale por
+ *    `projectFrame()` de packages/projection, con UN proyector por AUDIENCIA
+ *    (`public_live`, `broadcast`, `staff`): mapper de ids, historial del retardo
+ *    y último estado separados por audiencia. La audiencia viaja FIRMADA en el
+ *    ticket (`view`). Nada de observationFor() aquí: es del canal de BOT (E5).
  *  - Capas de depuración (sensores/colisiones/minas ocultas): solo si el ticket
  *    trae `debug: true`, y ese flag lo FIRMA la API según el rol (T8.2).
  *  - Retardo de espectador (E8.M, anti-coaching): si el ruleset declara
@@ -25,7 +27,12 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
-import { verifySpectateTicket, type VerifiedSpectateTicket } from "../auth/tokens.js";
+import {
+  AudienceProjector,
+  audienceKey,
+  type InternalRosterEntry,
+} from "../../../../packages/projection/index.js";
+import { verifySpectateTicket, type SpectatorView, type VerifiedSpectateTicket } from "../auth/tokens.js";
 import { publicSpectateEnabledFromEnv } from "../public-spectate.js";
 
 /**
@@ -46,9 +53,9 @@ export function spectateProtocols(ticket: string): string[] {
 
 /** Lo que el gateway necesita de una batalla de E2. Estructural: no importa la clase. */
 export interface SpectatableBattle {
-  /** Snapshots públicos acumulados (E2 los añade cada snapshotEveryNTicks). */
+  /** Frames INTERNOS acumulados (el motor los añade cada snapshotEveryNTicks). Nunca salen tal cual. */
   snapshots: any[];
-  /** Eventos públicos acumulados (marcador, banderas, destrucciones…). */
+  /** Eventos «públicos por definición» del motor, con ids INTERNOS: se proyectan por audiencia. */
   publicEvents: any[];
   isFinished(): boolean;
   getResult(): unknown | null;
@@ -57,8 +64,15 @@ export interface SpectatableBattle {
 export interface AttachOptions {
   /** Config de espectador del ruleset (ADR-000: todo configurable por ruleset). */
   spectator?: { allowFogView?: boolean; delaySeconds?: number };
-  /** Info pública de cabecera para el mensaje init (mapa, modo, equipos…). */
+  /**
+   * Cabecera para el mensaje init (mapa, modo, equipos…). Lista blanca: sólo salen las
+   * claves de `META_KEYS`; `meta.roster` es la nómina INTERNA y se proyecta por audiencia.
+   */
   meta?: Record<string, unknown>;
+  /** Nómina interna (id interno ↔ bot). Si falta, se toma de `meta.roster`. */
+  roster?: InternalRosterEntry[];
+  /** Ids PÚBLICOS del mapa (muros, destructibles, zonas) que pueden aparecer en eventos/objetivos. */
+  mapEntityIds?: string[];
   /**
    * Capas de depuración para tickets autorizados. Es un PROVEEDOR explícito:
    * el gateway no escarba en los privados de Battle. Quien registra la batalla
@@ -69,26 +83,41 @@ export interface AttachOptions {
   pollIntervalMs?: number;
 }
 
+/** Audiencias del canal de espectador (cerradas; la firma la API en el ticket). */
+const FEED_VIEWS: readonly SpectatorView[] = ["public_live", "broadcast", "staff"];
+
+/** Claves de `meta` que pueden salir en el init (el resto no sale). */
+const META_KEYS = ["mode", "mapId", "mapVersion", "tournamentId", "matchId", "round", "official", "world"] as const;
+
+/** Estado de UNA audiencia de una batalla: nunca se comparte con otra (M3). */
+interface AudienceFeed {
+  view: SpectatorView;
+  projector: AudienceProjector;
+  clients: Set<SpectatorConnection>;
+  /** Cabecera ya proyectada para esta audiencia. */
+  meta: Record<string, unknown>;
+  /** Último snapshot YA proyectado (base del init sin retardo). */
+  lastSnapshot: unknown | null;
+  /**
+   * EQ5 · Sólo con retardo: mensajes YA PROYECTADOS para esta audiencia con su instante
+   * de producción, dentro de la ventana del retardo.
+   */
+  history: { at: number; msg: Record<string, unknown>; debugOnly: boolean }[];
+  /** Último snapshot (y fin de partida) YA fuera de la ventana: base del init retrasado. */
+  dueSnapshot: unknown | null;
+  dueResult: { result: unknown } | null;
+}
+
 interface Feed {
   battle: SpectatableBattle;
   opts: AttachOptions;
-  clients: Set<SpectatorConnection>;
   sentSnapshots: number;
   sentEvents: number;
   timer: ReturnType<typeof setInterval> | null;
   finished: boolean;
   /** Retardo anti-coaching del feed en ms (0 = directo sin retardo). */
   delayMs: number;
-  /**
-   * EQ5 · Sólo con retardo: mensajes del stream con su instante de producción,
-   * dentro de la ventana del retardo. Sirve para que un espectador que llega
-   * tarde reciba el estado de `ahora - retardo` (no el vivo) y, a continuación,
-   * el tramo pendiente en su hora retrasada.
-   */
-  history: { at: number; msg: Record<string, unknown>; debugOnly: boolean }[];
-  /** Último snapshot (y fin de partida) YA fuera de la ventana: base del init retrasado. */
-  dueSnapshot: unknown | null;
-  dueResult: { result: unknown } | null;
+  audiences: Map<SpectatorView, AudienceFeed>;
 }
 
 interface SpectatorConnection {
@@ -161,27 +190,52 @@ export class SpectateGateway {
   /** Registra una batalla en vivo. La llama el worker (E9) o el arranque local. */
   attachBattle(battleId: string, battle: SpectatableBattle, opts: AttachOptions = {}): void {
     const delayMs = Math.max(0, (opts.spectator?.delaySeconds ?? 0) * 1000);
+    const rawMeta = opts.meta ?? {};
+    const roster: InternalRosterEntry[] =
+      opts.roster ?? (Array.isArray(rawMeta.roster) ? (rawMeta.roster as InternalRosterEntry[]) : []);
+    const audiences = new Map<SpectatorView, AudienceFeed>();
+    const at = Date.now();
+    for (const view of FEED_VIEWS) {
+      const projector = new AudienceProjector({
+        battleId,
+        audience: audienceKey(view),
+        roster,
+        mapEntityIds: opts.mapEntityIds,
+      });
+      // Lo que ya existía al registrar la batalla se proyecta EN ORDEN (la numeración
+      // pública es por primera visibilidad desde el tick 0).
+      let lastSnapshot: unknown | null = null;
+      for (const f of battle.snapshots) lastSnapshot = projector.project(f).body;
+      const meta: Record<string, unknown> = {};
+      for (const k of META_KEYS) if (rawMeta[k] !== undefined) meta[k] = rawMeta[k];
+      meta.roster = projector.projectRoster(roster);
+      const af: AudienceFeed = {
+        view,
+        projector,
+        clients: new Set(),
+        meta,
+        lastSnapshot,
+        history: [],
+        dueSnapshot: null,
+        dueResult: null,
+      };
+      // EQ5 · Con retardo, lo que ya existía se fecha AHORA: no se entrega hasta pasado
+      // el retardo. Falla hacia «menos información», nunca hacia el estado vivo.
+      if (delayMs > 0 && lastSnapshot !== null)
+        af.history.push({ at, msg: { type: "snapshot", snapshot: lastSnapshot, mappingId: projector.mappingId }, debugOnly: false });
+      audiences.set(view, af);
+    }
+    // Los eventos ya emitidos no se reenvían (igual que antes): el stream sigue desde aquí.
     const feed: Feed = {
       battle,
       opts,
-      clients: new Set(),
       sentSnapshots: battle.snapshots.length, // el init entrega el último; el stream sigue desde aquí
       sentEvents: battle.publicEvents.length,
       timer: null,
       finished: false,
       delayMs,
-      history: [],
-      dueSnapshot: null,
-      dueResult: null,
+      audiences,
     };
-    // EQ5 · Con retardo, lo que ya existía al registrar la batalla se fecha AHORA
-    // (no se sabe cuándo se produjo): no se entrega hasta pasado el retardo.
-    // Falla hacia «menos información», nunca hacia el estado vivo.
-    if (delayMs > 0) {
-      const last = battle.snapshots.at(-1);
-      if (last !== undefined)
-        feed.history.push({ at: Date.now(), msg: { type: "snapshot", snapshot: last }, debugOnly: false });
-    }
     feed.timer = setInterval(() => this.pump(battleId, feed), opts.pollIntervalMs ?? 33);
     this.feeds.set(battleId, feed);
   }
@@ -190,7 +244,7 @@ export class SpectateGateway {
     const feed = this.feeds.get(battleId);
     if (!feed) return;
     if (feed.timer) clearInterval(feed.timer);
-    for (const c of feed.clients) this.dropClient(feed, c, 1001, "battle_detached");
+    for (const af of feed.audiences.values()) for (const c of af.clients) this.dropClient(af, c, 1001, "battle_detached");
     this.feeds.delete(battleId);
   }
 
@@ -265,62 +319,69 @@ export class SpectateGateway {
       ws.close(4404, "battle_not_live");
       return;
     }
-    // R13.2 (hardening) · límite de conexiones por batalla: rechaza ANTES de
-    // reservar el ticket (el jti ya se marcó usado arriba a propósito — un
-    // ticket rechazado por saturación no debe poder reintentarse indefinidamente
-    // con el mismo ticket para amplificar el intento).
-    if (feed.clients.size >= this.maxClientsPerBattle) {
+    // OLA 2 · MA · la audiencia viene FIRMADA en el ticket; sin ella el ticket ya se
+    // rechazó en verifySpectateTicket. Cada audiencia tiene su proyector y su historial.
+    const af = feed.audiences.get(claims.view);
+    if (!af) {
+      ws.close(4403, "invalid_ticket_audience");
+      return;
+    }
+    // R13.2 (hardening) · límite de conexiones por batalla (todas las audiencias): el
+    // jti ya se marcó usado arriba a propósito — un ticket rechazado por saturación no
+    // debe poder reintentarse indefinidamente para amplificar el intento.
+    let total = 0;
+    for (const x of feed.audiences.values()) total += x.clients.size;
+    if (total >= this.maxClientsPerBattle) {
       ws.close(4429, "too_many_spectators");
       return;
     }
 
     const conn: SpectatorConnection = {
       ws,
-      debug: claims.debug === true,
+      // Las capas de depuración sólo van con la audiencia `staff` (y su flag firmado).
+      debug: claims.debug === true && claims.view === "staff",
       delayMs: feed.delayMs,
       timers: new Set(),
     };
-    feed.clients.add(conn);
-    ws.on("close", () => this.dropClient(feed, conn));
-    ws.on("error", () => this.dropClient(feed, conn));
+    af.clients.add(conn);
+    ws.on("close", () => this.dropClient(af, conn));
+    ws.on("error", () => this.dropClient(af, conn));
 
-    // EQ5 · Retardo anti-coaching: el init NO puede llevar el estado vivo. Antes
-    // salía `immediate` con `snapshots.at(-1)` y el último tick producido, así
-    // que reconectar saltaba el retardo. Ahora lleva el estado de `ahora -
-    // retardo` (o null si aún no hay ninguno tan antiguo) y el tramo intermedio
-    // se entrega después, cada mensaje en su hora de producción + retardo.
-    let snapshot: unknown = feed.battle.snapshots.at(-1) ?? null;
+    // EQ5 · Retardo anti-coaching: el init NO puede llevar el estado vivo. Lleva el
+    // estado de `ahora - retardo` (o null si aún no hay ninguno tan antiguo) y el tramo
+    // intermedio se entrega después, cada mensaje en su hora de producción + retardo.
+    // Todo lo que sale aquí está YA proyectado para la audiencia del ticket.
+    let snapshot: unknown = af.lastSnapshot;
     let finished = feed.battle.isFinished();
-    let result: unknown = finished ? feed.battle.getResult() : undefined;
+    let result: unknown = finished ? af.projector.projectResult(feed.battle.getResult()) : undefined;
     let serverTimeMs = Date.now();
-    let backlog: Feed["history"] = [];
+    let backlog: AudienceFeed["history"] = [];
     if (conn.delayMs > 0) {
-      this.trimHistory(feed);
+      this.trimHistory(af, feed.delayMs);
       const cutoff = Date.now() - conn.delayMs;
-      snapshot = feed.dueSnapshot;
-      finished = feed.dueResult !== null;
-      result = feed.dueResult?.result;
+      snapshot = af.dueSnapshot;
+      finished = af.dueResult !== null;
+      result = af.dueResult?.result;
       serverTimeMs = cutoff;
-      backlog = [...feed.history];
+      backlog = [...af.history];
     }
 
-    // Recuperación de estado por snapshot COMPLETO (DoD de reconexión): los
-    // snapshots de E2 son estado íntegro, así que el último basta para pintar.
+    // Recuperación de estado por snapshot COMPLETO (DoD de reconexión).
     this.sendTo(
       conn,
       {
         type: "init",
         battleId,
-        // R3.2: reloj del servidor (opcional, compatible hacia atrás). Va a nivel
-        // de MENSAJE, no dentro del snapshot: el snapshot público (D8) conserva su
-        // whitelist estructural exacta (test de fugas) y los replays no cambian.
+        // Opaco: cambia con la audiencia. El cliente vacía sus cachés si cambia.
+        mappingId: af.projector.mappingId,
+        // R3.2: reloj del servidor, a nivel de MENSAJE (no dentro del snapshot).
         serverTimeMs,
         spectator: {
           allowFogView: feed.opts.spectator?.allowFogView === true,
           delaySeconds: feed.opts.spectator?.delaySeconds ?? 0,
           debug: conn.debug,
         },
-        meta: feed.opts.meta ?? {},
+        meta: af.meta,
         snapshot,
         finished,
         result,
@@ -335,19 +396,19 @@ export class SpectateGateway {
   }
 
   /** EQ5 · Saca de la ventana lo ya vencido, recordando el último snapshot y el fin. */
-  private trimHistory(feed: Feed): void {
-    const cutoff = Date.now() - feed.delayMs;
-    while (feed.history.length > 0 && feed.history[0].at <= cutoff) {
-      const h = feed.history.shift()!;
-      if (h.msg.type === "snapshot") feed.dueSnapshot = h.msg.snapshot;
-      if (h.msg.type === "result") feed.dueResult = { result: h.msg.result };
+  private trimHistory(af: AudienceFeed, delayMs: number): void {
+    const cutoff = Date.now() - delayMs;
+    while (af.history.length > 0 && af.history[0].at <= cutoff) {
+      const h = af.history.shift()!;
+      if (h.msg.type === "snapshot") af.dueSnapshot = h.msg.snapshot;
+      if (h.msg.type === "result") af.dueResult = { result: h.msg.result };
     }
   }
 
-  private dropClient(feed: Feed, conn: SpectatorConnection, code?: number, reason?: string): void {
+  private dropClient(af: AudienceFeed, conn: SpectatorConnection, code?: number, reason?: string): void {
     for (const t of conn.timers) clearTimeout(t);
     conn.timers.clear();
-    feed.clients.delete(conn);
+    af.clients.delete(conn);
     if (code && conn.ws.readyState === WebSocket.OPEN) conn.ws.close(code, reason);
   }
 
@@ -359,34 +420,59 @@ export class SpectateGateway {
   }
 
   // ---------------------------------------------------------------- bombeo
+  /**
+   * PUBLIC_PROJECTION_BOUNDARY · cada frame interno y cada evento pasan por el proyector
+   * de CADA audiencia (aunque no tenga clientes: la numeración es por primera visibilidad
+   * desde el tick 0). Nunca se envía un elemento de `battle.snapshots`/`publicEvents`.
+   */
   private pump(battleId: string, feed: Feed): void {
     const { battle } = feed;
     while (feed.sentSnapshots < battle.snapshots.length) {
-      const snapshot = battle.snapshots[feed.sentSnapshots++];
-      // serverTimeMs a nivel de mensaje (R3.2): campo opcional, ver init.
-      this.broadcast(feed, { type: "snapshot", snapshot, serverTimeMs: Date.now() });
-      if (feed.opts.debugLayers) {
-        // Solo la reciben los tickets con debug firmado; ver sendTo().
-        this.broadcast(feed, { type: "debug", tick: snapshot.tick, layers: feed.opts.debugLayers() }, true);
+      const frame = battle.snapshots[feed.sentSnapshots++];
+      const now = Date.now();
+      for (const af of feed.audiences.values()) {
+        const projected = af.projector.project(frame);
+        af.lastSnapshot = projected.body;
+        // serverTimeMs a nivel de mensaje (R3.2): campo opcional, ver init.
+        this.broadcast(feed, af, {
+          type: "snapshot",
+          snapshot: projected.body,
+          mappingId: projected.mappingId,
+          serverTimeMs: now,
+        });
+      }
+      const staff = feed.audiences.get("staff");
+      if (feed.opts.debugLayers && staff) {
+        // Sólo la audiencia staff con debug firmado; ver sendTo(). Lo decide quien
+        // registra la batalla (proveedor explícito), no el gateway.
+        this.broadcast(feed, staff, { type: "debug", tick: frame.tick, layers: feed.opts.debugLayers() }, true);
       }
     }
     while (feed.sentEvents < battle.publicEvents.length) {
-      this.broadcast(feed, { type: "event", event: battle.publicEvents[feed.sentEvents++] });
+      const ev = battle.publicEvents[feed.sentEvents++];
+      for (const af of feed.audiences.values()) {
+        const projected = af.projector.projectEvent(ev);
+        if (projected) this.broadcast(feed, af, { type: "event", event: projected });
+      }
     }
     if (battle.isFinished() && !feed.finished) {
       feed.finished = true;
-      this.broadcast(feed, { type: "result", result: battle.getResult() });
+      const result = battle.getResult();
+      for (const af of feed.audiences.values()) {
+        this.broadcast(feed, af, { type: "result", result: af.projector.projectResult(result) });
+      }
       if (feed.timer) clearInterval(feed.timer);
       feed.timer = null;
     }
+    void battleId;
   }
 
-  private broadcast(feed: Feed, msg: Record<string, unknown>, debugOnly = false): void {
+  private broadcast(feed: Feed, af: AudienceFeed, msg: Record<string, unknown>, debugOnly = false): void {
     if (feed.delayMs > 0) {
-      feed.history.push({ at: Date.now(), msg, debugOnly });
-      this.trimHistory(feed);
+      af.history.push({ at: Date.now(), msg, debugOnly });
+      this.trimHistory(af, feed.delayMs);
     }
-    for (const c of feed.clients) {
+    for (const c of af.clients) {
       if (debugOnly && !c.debug) continue;
       this.sendTo(c, msg);
     }

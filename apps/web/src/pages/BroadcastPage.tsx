@@ -270,7 +270,8 @@ function LiveScreen({ config, battle }: { config: BroadcastConfig; battle: Battl
 
         client = new SpectatorClient({
           // Ticket ANÓNIMO: la vista broadcast jamás lleva sesión (cero datos privados).
-          getTicket: () => api.post(`/battles/${battle.id}/spectate-ticket`),
+          // OLA 2 · audiencia `broadcast` firmada en el ticket (feed e historial propios).
+          getTicket: () => api.post(`/battles/${battle.id}/spectate-ticket?audience=broadcast`),
         });
         const c = client;
         client.on("init", (msg) => {

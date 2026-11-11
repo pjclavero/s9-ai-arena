@@ -1406,7 +1406,16 @@ paths:
         batalla (misma política que getBattle); sin sesión, además, exige S9_PUBLIC_SPECTATE_ENABLED.
       x-min-role: visitor
       security: []
-      parameters: [{ $ref: '#/components/parameters/BattleId' }]
+      parameters:
+        - { $ref: '#/components/parameters/BattleId' }
+        - name: audience
+          in: query
+          description: |
+            OLA 2 · audiencia del canal (va FIRMADA en el ticket). `broadcast` para la página de
+            emisión; por defecto `public_live`. Los roles de staff reciben siempre `staff` salvo
+            que pidan `broadcast`. No concede nada: todas las audiencias públicas reciben la misma
+            proyección, separada por mapper de ids e historial.
+          schema: { type: string, enum: [public_live, broadcast] }
       responses:
         '201':
           description: Ticket
