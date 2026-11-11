@@ -1,15 +1,20 @@
 /**
- * R13.5 · Save/restore de batalla — slice 1: CHECKPOINT POR RESIMULACIÓN.
+ * R13.5 · Save/restore de batalla — CHECKPOINT POR RESIMULACIÓN. OLA2-MD · formato v2.
  *
  * Un checkpoint NO serializa el estado del mundo físico: es la receta para volver
  * a él. Igual que un replay es "cabecera + comandos" (replay.ts), un checkpoint es
- * "cabecera + comandos hasta el tick N + el hash de estado observado en N".
- * Restaurar = re-simular determinísticamente hasta N y VERIFICAR que el hash
- * coincide bit a bit; si no coincide, error explícito — jamás continuar en silencio.
+ * "cabecera v2 + comandos hasta el tick N + el hash de estado observado en N, con su
+ * desglose por componentes". Restaurar = re-simular determinísticamente hasta N y
+ * VERIFICAR que el hash coincide bit a bit; si no coincide, error explícito con los
+ * COMPONENTES que divergen — jamás continuar en silencio.
  *
  * Contrato del índice N (fijado en el DESIGN-GATE, docs/R13_5_SAVE_SHARDING.md):
  * N es `battle.tick` en el momento del save — el estado TRAS ejecutar los ticks
  * 0..N-1. Los comandos grabados son estrictamente los de tick < N.
+ *
+ * Además (v2) se puede reanudar desde un checkpoint GRABADO EN UN REPLAY
+ * (`restoreFromReplayCheckpoint`): el replay v2 lleva checkpoints cada
+ * `cadences.checkpointEveryNTicks`, tomados en el paso 8 del tick T.
  *
  * OJO: la resimulación itera `step()` a mano, NUNCA `run(N)`: `run()` remata la
  * batalla con finish("draw") al agotar maxTicks, y una batalla restaurada tiene
@@ -20,12 +25,22 @@
  * vive en su proceso, no aquí); ese límite está documentado en el diseño.
  */
 import { Battle, type BotAgent } from "./sim/battle.js";
-import { ReplayAgent, type ReplayHeader } from "./replay.js";
-import deps from "./engine-deps.json" with { type: "json" };
-import { nowIso } from "./wall-clock.js";
+import {
+  ReplayAgent,
+  REPLAY_FORMAT_VERSION,
+  buildHeaderV2,
+  configFromHeader,
+  headerIncompatibility,
+  runningVersions,
+  type Replay,
+  type ReplayHeader,
+} from "./replay.js";
+import { diffComponents, type StateHashComponentV2 } from "./sim/state-hash.js";
+
+export const CHECKPOINT_FORMAT_VERSION = 2 as const;
 
 export interface BattleCheckpoint {
-  formatVersion: 1;
+  formatVersion: 2;
   header: ReplayHeader;
   /** Tick del checkpoint: estado tras ejecutar los ticks 0..tick-1. */
   tick: number;
@@ -33,16 +48,8 @@ export interface BattleCheckpoint {
   commands: { tick: number; vehicleId: string; command: any }[];
   /** stateHash() canónico observado en N. El restore DEBE reproducirlo o fallar. */
   stateHash: string;
-}
-
-/** Versiones del motor en ejecución, en el mismo formato que BattleResult.versions. */
-function runtimeVersions(rulesetId: string): Record<string, string> {
-  return {
-    engine: deps.engine.version,
-    physics: `${deps.physics.package}@${deps.physics.version}`,
-    rules: rulesetId,
-    protocol: deps.protocol,
-  };
+  /** Desglose por componentes del hash en N (diagnóstico de la divergencia). */
+  components: Record<StateHashComponentV2, string>;
 }
 
 /**
@@ -62,37 +69,33 @@ export function saveCheckpoint(b: Battle): BattleCheckpoint {
   // Copia profunda: el checkpoint debe quedar congelado aunque la batalla siga
   // ejecutándose y empujando más comandos al mismo array.
   const commands = structuredClone(b.replayCommands.filter((c) => c.tick < tick));
+  const bd = b.stateHashBreakdown();
   return {
-    formatVersion: 1,
-    header: {
-      formatVersion: 1,
-      battleId: b.config.battleId,
-      seed: b.config.seed,
-      rulesetId: b.config.ruleset.rulesetId,
-      ruleset: structuredClone(b.config.ruleset),
-      map: structuredClone(b.config.map),
-      participants: structuredClone(b.config.participants),
-      versions: runtimeVersions(b.config.ruleset.rulesetId),
-      // Metadato de pared, NO entra en la simulación ni en el hash (vía wall-clock.ts,
-      // única fuente sancionada, ERR-ENG-02).
-      recordedAt: nowIso(),
-      // N2 · sin esto, restoreCheckpoint() resimularía sin latencia y divergiría del
-      // stateHash guardado en cuanto hubiera un comando aceptado bajo latencia.
-      simulatedLatency: b.config.simulatedLatency,
-    },
+    formatVersion: CHECKPOINT_FORMAT_VERSION,
+    header: structuredClone(buildHeaderV2(b.config, runningVersions(b.config.ruleset.rulesetId))),
     tick,
     commands,
-    stateHash: b.stateHash(),
+    stateHash: bd.hash,
+    components: bd.components,
   };
 }
 
-/** Rechazo estricto en mismatch de versión: mensaje con ambos valores, sin modo tolerante. */
-function checkVersion(field: string, saved: string | undefined, current: string): void {
-  if (saved !== current) {
-    throw new Error(
-      `restoreCheckpoint: versión incompatible de ${field}: el checkpoint se guardó con "${saved}" y este motor es "${current}"`,
-    );
+function agentsCheck(participants: any[], agents: Record<string, BotAgent>, who: string): void {
+  const ids = new Set(participants.map((p: any) => p.id));
+  for (const id of Object.keys(agents)) {
+    if (!ids.has(id)) throw new Error(`${who}: agente para vehículo desconocido: ${id}`);
   }
+  const missing = [...ids].filter((id) => !(id in agents));
+  if (missing.length > 0) throw new Error(`${who}: faltan agentes para: ${missing.join(", ")}`);
+}
+
+function attachReplayAgents(b: Battle, participants: any[], commands: { tick: number; vehicleId: string; command: any }[]) {
+  const byVehicle = new Map<string, { tick: number; command: any }[]>();
+  for (const c of commands) {
+    if (!byVehicle.has(c.vehicleId)) byVehicle.set(c.vehicleId, []);
+    byVehicle.get(c.vehicleId)!.push({ tick: c.tick, command: c.command });
+  }
+  for (const p of participants) b.attachBot(p.id, new ReplayAgent(p.botId, byVehicle.get(p.id) ?? []));
 }
 
 /**
@@ -103,28 +106,16 @@ function checkVersion(field: string, saved: string | undefined, current: string)
  * error de operación, no una opción por defecto.
  */
 export async function restoreCheckpoint(ckpt: BattleCheckpoint, agents: Record<string, BotAgent>): Promise<Battle> {
-  if (ckpt.formatVersion !== 1) {
+  if (ckpt.formatVersion !== CHECKPOINT_FORMAT_VERSION) {
     throw new Error(
-      `restoreCheckpoint: formatVersion desconocida: ${JSON.stringify(ckpt.formatVersion)} (soportada: 1)`,
+      `restoreCheckpoint: formatVersion desconocida: ${JSON.stringify(ckpt.formatVersion)} (soportada: ${CHECKPOINT_FORMAT_VERSION})`,
     );
   }
-  const current = runtimeVersions(ckpt.header.rulesetId);
-  checkVersion("engine", ckpt.header.versions?.engine, current.engine);
-  checkVersion("physics", ckpt.header.versions?.physics, current.physics);
-  checkVersion("protocol", ckpt.header.versions?.protocol, current.protocol);
-  if (ckpt.header.rulesetId !== ckpt.header.ruleset?.rulesetId) {
-    throw new Error(
-      `restoreCheckpoint: checkpoint corrupto: rulesetId "${ckpt.header.rulesetId}" no coincide con el ruleset embebido "${ckpt.header.ruleset?.rulesetId}"`,
-    );
-  }
-  const ids = new Set(ckpt.header.participants.map((p: any) => p.id));
-  for (const id of Object.keys(agents)) {
-    if (!ids.has(id)) throw new Error(`restoreCheckpoint: agente para vehículo desconocido: ${id}`);
-  }
-  const missing = [...ids].filter((id) => !(id in agents));
-  if (missing.length > 0) {
-    throw new Error(`restoreCheckpoint: faltan agentes para: ${missing.join(", ")}`);
-  }
+  // Mismo criterio de compatibilidad que verify(): formato, motor, física, runtime,
+  // catálogo y esquemas. Rechazo estricto con motivo explícito, sin modo tolerante.
+  const why = headerIncompatibility(ckpt.header);
+  if (why) throw new Error(`restoreCheckpoint: incompatible: ${why}`);
+  agentsCheck(ckpt.header.participants, agents, "restoreCheckpoint");
   for (const c of ckpt.commands) {
     if (c.tick >= ckpt.tick) {
       throw new Error(
@@ -135,26 +126,9 @@ export async function restoreCheckpoint(ckpt: BattleCheckpoint, agents: Record<s
 
   // recordReplay: true — la batalla restaurada re-graba los comandos resimulados y
   // sigue grabando la continuación: se puede volver a checkpointear o emitir replay.
-  const b = await Battle.create({
-    battleId: ckpt.header.battleId,
-    seed: ckpt.header.seed,
-    ruleset: ckpt.header.ruleset,
-    map: ckpt.header.map,
-    participants: ckpt.header.participants,
-    recordReplay: true,
-    // N2 · idem saveCheckpoint(): reconstruir la MISMA BattleConfig, latencia incluida.
-    simulatedLatency: ckpt.header.simulatedLatency,
-  });
+  const b = await Battle.create(configFromHeader(ckpt.header, true));
   try {
-    const byVehicle = new Map<string, { tick: number; command: any }[]>();
-    for (const c of ckpt.commands) {
-      if (!byVehicle.has(c.vehicleId)) byVehicle.set(c.vehicleId, []);
-      byVehicle.get(c.vehicleId)!.push({ tick: c.tick, command: c.command });
-    }
-    for (const p of ckpt.header.participants) {
-      b.attachBot(p.id, new ReplayAgent(p.botId, byVehicle.get(p.id) ?? []));
-    }
-
+    attachReplayAgents(b, ckpt.header.participants, ckpt.commands);
     while (!b.isFinished() && b.tick < ckpt.tick) b.step();
 
     if (b.isFinished() || b.tick !== ckpt.tick) {
@@ -163,11 +137,12 @@ export async function restoreCheckpoint(ckpt: BattleCheckpoint, agents: Record<s
           `(terminó=${b.isFinished()} en el tick ${b.tick}): checkpoint corrupto o motor incompatible`,
       );
     }
-    const recomputed = b.stateHash();
-    if (recomputed !== ckpt.stateHash) {
+    const bd = b.stateHashBreakdown();
+    if (bd.hash !== ckpt.stateHash) {
+      const comps = diffComponents(ckpt.components ?? {}, bd.components);
       throw new Error(
         `restoreCheckpoint: divergencia de estado en el tick ${ckpt.tick}: ` +
-          `hash guardado ${ckpt.stateHash} ≠ recalculado ${recomputed}. ` +
+          `hash guardado ${ckpt.stateHash} ≠ recalculado ${bd.hash} (componentes: ${comps.join(",") || "?"}). ` +
           `El checkpoint fue manipulado o el motor no reproduce la ejecución original; NO se continúa`,
       );
     }
@@ -182,13 +157,61 @@ export async function restoreCheckpoint(ckpt: BattleCheckpoint, agents: Record<s
 }
 
 /**
+ * OLA2-MD · Reanuda desde el checkpoint de un REPLAY v2 grabado en el tick T (paso 8 del
+ * tick T). Re-simula con los comandos de tick ≤ T hasta que la batalla registra su propio
+ * checkpoint en T, exige el mismo hash (si no, lista los componentes que divergen) y acopla
+ * los agentes reales. La batalla queda VIVA en el tick T+1.
+ */
+export async function restoreFromReplayCheckpoint(
+  replay: Replay,
+  tick: number,
+  agents: Record<string, BotAgent>,
+): Promise<Battle> {
+  const why = headerIncompatibility(replay.header);
+  if (why) throw new Error(`restoreFromReplayCheckpoint: incompatible: ${why}`);
+  const rec = (replay.checkpoints ?? []).find((c) => c.tick === tick);
+  if (!rec) throw new Error(`restoreFromReplayCheckpoint: el replay no tiene checkpoint en el tick ${tick}`);
+  if (rec.tick === replay.result?.ticks && rec.hash === replay.result?.finalStateHash) {
+    throw new Error("restoreFromReplayCheckpoint: es el checkpoint FINAL; una batalla terminada no se reanuda");
+  }
+  agentsCheck(replay.header.participants, agents, "restoreFromReplayCheckpoint");
+  const b = await Battle.create(configFromHeader(replay.header, true));
+  try {
+    attachReplayAgents(b, replay.header.participants, replay.commands.filter((c) => c.tick <= tick));
+    const mine = () => b.checkpoints.find((c) => c.tick === tick);
+    while (!b.isFinished() && !mine() && b.tick <= tick) b.step();
+    const got = mine();
+    if (!got || b.isFinished()) {
+      throw new Error(`restoreFromReplayCheckpoint: la resimulación no alcanzó el checkpoint ${tick} viva`);
+    }
+    if (got.hash !== rec.hash) {
+      throw new Error(
+        `restoreFromReplayCheckpoint: divergencia en el tick ${tick} (componentes: ` +
+          `${diffComponents(rec.components ?? {}, got.components).join(",") || "?"}); NO se continúa`,
+      );
+    }
+    for (const p of replay.header.participants) b.attachBot(p.id, agents[p.id]);
+    return b;
+  } catch (err) {
+    b.free();
+    throw err;
+  }
+}
+
+/**
  * Serialización JSONL, mismo formato de línea que replay.ts (una línea por registro,
  * campo `t`): `ckpt` (metadatos) + `header` + `cmd`*. Sin contenedor binario nuevo.
  */
 export function checkpointToJsonl(ckpt: BattleCheckpoint): string {
   const lines: string[] = [];
   lines.push(
-    JSON.stringify({ t: "ckpt", formatVersion: ckpt.formatVersion, tick: ckpt.tick, stateHash: ckpt.stateHash }),
+    JSON.stringify({
+      t: "ckpt",
+      formatVersion: ckpt.formatVersion,
+      tick: ckpt.tick,
+      stateHash: ckpt.stateHash,
+      components: ckpt.components,
+    }),
   );
   lines.push(JSON.stringify({ t: "header", ...ckpt.header }));
   for (const c of ckpt.commands) lines.push(JSON.stringify({ t: "cmd", ...c }));
@@ -196,7 +219,7 @@ export function checkpointToJsonl(ckpt: BattleCheckpoint): string {
 }
 
 export function checkpointFromJsonl(jsonl: string): BattleCheckpoint {
-  let meta: { formatVersion: 1; tick: number; stateHash: string } | null = null;
+  let meta: { formatVersion: 2; tick: number; stateHash: string; components: any } | null = null;
   let header: ReplayHeader | null = null;
   const commands: BattleCheckpoint["commands"] = [];
   for (const line of jsonl.split("\n")) {
@@ -205,9 +228,11 @@ export function checkpointFromJsonl(jsonl: string): BattleCheckpoint {
     const { t, ...rest } = rec;
     switch (t) {
       case "ckpt":
+        if (meta) throw new Error("Checkpoint corrupto: más de un registro ckpt");
         meta = rest as any;
         break;
       case "header":
+        if (header) throw new Error("Checkpoint corrupto: más de una cabecera");
         header = rest as ReplayHeader;
         break;
       case "cmd":
@@ -215,11 +240,21 @@ export function checkpointFromJsonl(jsonl: string): BattleCheckpoint {
         break;
       default:
         // Estricto a propósito: un registro desconocido en un checkpoint es corrupción,
-        // no una extensión a ignorar (a diferencia del replay, aquí hay que REANUDAR).
+        // no una extensión a ignorar (aquí hay que REANUDAR).
         throw new Error(`Checkpoint corrupto: registro desconocido t=${JSON.stringify(t)}`);
     }
   }
   if (!meta) throw new Error("Checkpoint sin registro ckpt: archivo corrupto");
   if (!header) throw new Error("Checkpoint sin cabecera: archivo corrupto");
-  return { formatVersion: meta.formatVersion, header, tick: meta.tick, stateHash: meta.stateHash, commands };
+  if (header.formatVersion !== REPLAY_FORMAT_VERSION) {
+    throw new Error(`Checkpoint: cabecera con formatVersion ${JSON.stringify(header.formatVersion)} (soportada: 2)`);
+  }
+  return {
+    formatVersion: meta.formatVersion,
+    header,
+    tick: meta.tick,
+    stateHash: meta.stateHash,
+    components: meta.components,
+    commands,
+  };
 }
