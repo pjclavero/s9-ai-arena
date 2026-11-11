@@ -26,6 +26,11 @@
  *     competición (nombre, versión, bando, resultado, stats deportivas); la ficha
  *     (`GET /bots/{id}`) y el código siguen detrás de `canSeeBot`/`canReadSource`.
  *
+ * PRE-1 · Esto decide quién LEE. Qué representación recibe (fichero crudo o
+ * proyección pública de competición) lo decide `replay-projection.ts`: el crudo
+ * sólo para moderator/admin o el dueño de TODOS los bots participantes, con
+ * `S9_PUBLIC_REPLAYS_ENABLED` activada o no.
+ *
  * En cualquier otro caso: 404 `not_found`, IDÉNTICO al de un id que no existe o
  * de una batalla sin replay (sin enumeración por UUID: ni el código ni el
  * mensaje distinguen «no existe» de «no autorizado»).

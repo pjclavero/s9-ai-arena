@@ -30,6 +30,7 @@ import { testStubAgents } from "./testing/stub-agents.js";
 let h: TestDbHandle;
 let app: Express;
 let organizer: string;
+let admin: string;
 let bots: TestBot[];
 let worker: TournamentWorker;
 
@@ -45,6 +46,7 @@ beforeAll(async () => {
   await seedDev(h.db);
   app = createApp({ db: h.db, botManager: new FakeBotManager(h.db), anonQuota: { max: 10_000, windowMs: 3600_000 } });
   organizer = await tokenFor(h.db, DEV_USERS.organizer);
+  admin = await tokenFor(h.db, DEV_USERS.admin);
   bots = await createBots(h.db, 4, "jus");
 
   const wired = await makeDefaultHandlers({
@@ -180,11 +182,12 @@ describe("T9.4 · commit-reveal de semillas", () => {
 
       // Re-simulación: el replay descargado se verifica (replay-service verify
       // = verify() real del motor E2, hashes intermedios incluidos).
-      // PRC (TD-004): replay de bots no públicos ⇒ lo descarga el staff (organizer).
-      const replayRes = await request(app)
-        .get(`/replays/${b.id}`)
-        .set("Authorization", `Bearer ${organizer}`)
-        .buffer(true);
+      // PRC (TD-004): replay de bots no públicos ⇒ lo descarga el staff. PRE-1: el
+      // fichero crudo sólo para moderator/admin (el organizer lo verifica en servidor).
+      const orgVerify = await request(app).post(`/replays/${b.id}/verify`).set("Authorization", `Bearer ${organizer}`);
+      expect(orgVerify.status).toBe(200);
+      expect(orgVerify.body.matches).toBe(true);
+      const replayRes = await request(app).get(`/replays/${b.id}`).set("Authorization", `Bearer ${admin}`).buffer(true);
       expect(replayRes.status).toBe(200);
       // H2: el worker archiva por el almacén de E8 (comprimido); se descomprime como el visor.
       const replay = fromJsonl(decompress(Buffer.from(replayRes.body)).toString("utf8"));
