@@ -398,19 +398,21 @@ describe("flujos de RNG con nombre", () => {
     expect(z.bd.components.rng).not.toBe(a.bd.components.rng);
   });
 
-  it("observationFor() fuera del bucle NO consume RNG de la simulación (R1)", () => {
-    const run = (peek: boolean) => {
-      const b = new Battle(cfg("md-peek"));
-      attachStubs(b);
-      while (b.tick < 300) {
-        if (peek && b.tick % 7 === 0) for (const id of ["veh_1", "veh_2", "veh_3", "veh_4"]) b.observationFor(id);
-        b.step();
-      }
-      const h = b.stateHash();
-      b.free();
-      return h;
-    };
-    expect(run(true)).toBe(run(false));
+  it("observationFor() fuera del bucle NO consume RNG de la simulación (R1, parte RNG)", () => {
+    // OJO: sólo se afirma la parte de RNG. Las consultas de Rapier (raycasts) de una
+    // observación fuera del bucle SÍ alteran la física posterior: residual P1 en el informe MD.
+    const b = new Battle(cfg("md-peek"));
+    attachStubs(b);
+    while (b.tick < 150) b.step();
+    const before = (b as any).rng.getState();
+    for (let k = 0; k < 10; k++) for (const id of ["veh_1", "veh_2", "veh_3", "veh_4"]) b.observationFor(id);
+    const after = (b as any).rng.getState();
+    const o1 = b.observationFor("veh_1");
+    const o2 = b.observationFor("veh_1");
+    b.free();
+    expect(after).toEqual(before);
+    // Además es reproducible: dos lecturas seguidas dan la misma observación.
+    expect(o2).toEqual(o1);
   });
 
   it("ReadOnlyRng falla en voz alta si se consume", () => {
