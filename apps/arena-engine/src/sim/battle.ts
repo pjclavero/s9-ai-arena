@@ -45,7 +45,7 @@ import {
   type SpawnDisk,
 } from "./modes.js";
 import { PhysicsWorld, clamp, finite, finiteClamped, initPhysics, type Vec2 } from "./physics.js";
-import { buildObservation, radioReaches, validateRadio, type RadioMessage } from "./sensors.js";
+import { buildObservation, radioRangeOf, validateRadio, type RadioMessage } from "./sensors.js";
 import { Vehicle, type VehicleSpec } from "./vehicle.js";
 
 const MAX_MINES_PER_VEHICLE = 3;
@@ -486,6 +486,9 @@ export class Battle {
           sentTick: this.tick,
           deliverAtTick: this.tick + RADIO_DELIVERY_DELAY_DECISIONS * DECISION_EVERY_N_TICKS,
           to: r.to,
+          // P-2 · alcance real (radio.rangeM), del estado de batalla al emitir.
+          origin: { ...poses.get(v.id)!.position },
+          rangeM: radioRangeOf(v, r.slot),
         });
       }
     }
