@@ -712,11 +712,7 @@ export class Battle {
             continue;
           }
           directTarget = target.id;
-          this.damageVehicle(
-            target,
-            this.packet(p.damage, DEFAULT_DIRECT_DAMAGE_TYPE, impact, p.ownerId, p.team, "projectile"),
-            poses,
-          );
+          this.damageVehicle(target, p.damage, impact, poses, p.ownerId, p.team, DEFAULT_DIRECT_DAMAGE_TYPE, "projectile");
         } else if (this.destructibleHp.has(hit.entityId)) {
           const hp = (this.destructibleHp.get(hit.entityId) ?? 0) - p.damage;
           this.destructibleHp.set(hit.entityId, hp);
@@ -798,7 +794,7 @@ export class Battle {
       if (f <= 0) continue;
       // Una explosión no atraviesa muros.
       if (!this.physics.hasLineOfSight(center, p.position)) continue;
-      this.damageVehicle(v, this.packet(damage * f, DEFAULT_EXPLOSION_DAMAGE_TYPE, center, ownerId, team, sourceKind), poses);
+      this.damageVehicle(v, damage * f, center, poses, ownerId, team, DEFAULT_EXPLOSION_DAMAGE_TYPE, sourceKind);
     }
   }
 
@@ -814,32 +810,40 @@ export class Battle {
         if (Math.hypot(p.position.x - z.position.x, p.position.y - z.position.y) > z.radiusM) continue;
         // El daño ambiental va directo al chasis (perfil `environmental`: sin blindaje,
         // sin sector, sin módulo, sin RNG), pero por la MISMA puerta que el resto.
-        this.damageVehicle(v, this.packet(dps * TICK_DT, ZONE_DAMAGE_TYPE, z.position, null, null, "zone"), poses);
+        this.damageVehicle(v, dps * TICK_DT, z.position, poses, null, null, ZONE_DAMAGE_TYPE, "zone");
       }
     }
   }
 
-  /** Construye un paquete de daño interno; `seq` = orden de resolución dentro del tick. */
-  private packet(
-    amount: number,
-    type: EnginePacket["type"],
-    from: Vec2,
-    owner: string | null,
-    ownerTeam: string | null,
-    sourceKind: DamageSourceKind,
-  ): EnginePacket {
-    return { amount, type, penetration: 0, from, owner, ownerTeam, sourceKind, seq: this.tickDamage.length };
-  }
-
   /**
-   * ÚNICA puerta de daño de vehículo del bucle: resuelve el paquete (damage.ts) y emite
-   * los eventos. Muerte y onKill en UN solo sitio, sea cual sea el origen.
+   * ÚNICA puerta de daño de vehículo del bucle: construye el DamagePacket, lo resuelve
+   * (damage.ts) y emite los eventos. Muerte y onKill en UN solo sitio, sea cual sea el
+   * origen. La firma posicional (target, amount, from, poses, ownerId, ownerTeam, …) se
+   * conserva: replay.ts (resimulateWithEvents) lee `ownerId` en la posición 4.
    */
-  private damageVehicle(target: Vehicle, packet: EnginePacket, poses: Map<string, any>): void {
+  private damageVehicle(
+    target: Vehicle,
+    amount: number,
+    from: Vec2,
+    poses: Map<string, any>,
+    ownerId: string | null,
+    ownerTeam: string | null,
+    type: EnginePacket["type"] = DEFAULT_DIRECT_DAMAGE_TYPE,
+    sourceKind: DamageSourceKind = "projectile",
+  ): void {
+    const packet: EnginePacket = {
+      amount,
+      type,
+      penetration: 0,
+      from,
+      owner: ownerId,
+      ownerTeam,
+      sourceKind,
+      seq: this.tickDamage.length,
+    };
     const tp = poses.get(target.id)!;
     const res = resolveDamage(packet, target, tp, this.rng, this.tick);
     this.tickDamage.push(res);
-    const ownerId = packet.owner;
 
     // Daño ambiental (sin atacante): sin hit_taken ni hit_dealt, como siempre.
     if (ownerId !== null) {
@@ -873,7 +877,6 @@ export class Battle {
     }
 
     if (res.killed) {
-      const ownerTeam = packet.ownerTeam;
       if (ownerTeam !== null && ownerTeam !== target.team) {
         this.teamKills[ownerTeam] = (this.teamKills[ownerTeam] ?? 0) + 1;
       }
