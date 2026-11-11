@@ -57,8 +57,9 @@ describe("UX-MOBILE · CSS global (index.html)", () => {
       expect(r.length, sel).toBe(1);
       expect(r[0].rule.style.maxWidth).toBe("none");
     }
-    // y main sigue limitado a 960 px por defecto
-    expect(find("main", null).some((x) => x.rule.style.maxWidth === "960px")).toBe(true);
+    // y main sigue limitado por defecto: #255 · área útil progresiva (nunca menos de 960 px
+    // ni más de 1480 px), en vez de 960 px fijos en cualquier escritorio.
+    expect(find("main", null).some((x) => x.rule.style.maxWidth === "clamp(960px, 90vw, 1480px)")).toBe(true);
   });
 
   it("barra: en escritorio sin botón ni cajas; ≤1024 px menú plegado salvo data-open", () => {

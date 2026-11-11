@@ -27,12 +27,13 @@ test.describe("@fase1 UX-C selector de batalla", () => {
     await go(page, "#/bots");
     await page.getByLabel("nuevo-bot").fill(name);
     await page.getByRole("button", { name: "Crear bot" }).click();
-    await page.getByRole("button", { name, exact: true }).click();
+    await page.getByRole("link", { name, exact: true }).click();
     await page.getByLabel("chasis").selectOption("chassis.medium@1");
     await page.getByLabel("slot-drive").selectOption("movement.wheels@1");
     await page.getByLabel("slot-power").selectOption("power.battery@1");
     await page.getByTestId("save-loadout").click();
     await expect(page.getByTestId("saved")).toBeVisible();
+    await page.getByTestId("bot-section-link-codigo").click();
     await page.getByLabel("codigo").fill(CODE);
     await page.getByRole("button", { name: "Subir como versión nueva" }).click();
     await expect(page.getByTestId("version-row-1")).toBeVisible();

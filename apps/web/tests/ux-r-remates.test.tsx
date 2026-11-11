@@ -35,7 +35,10 @@ import { BattleNewPage } from "../src/pages/BattleNewPage.js";
 import { RankingPage } from "../src/pages/RankingPage.js";
 import { TournamentsPage } from "../src/pages/TournamentsPage.js";
 import { BracketPage } from "../src/pages/BracketPage.js";
-import { BotDetailPage } from "../src/pages/BotDetailPage.js";
+import { BotsPage } from "../src/pages/BotsPage.js";
+import { BOT_TEMPLATES } from "../src/bot-templates.js";
+import { atBotSection } from "./bot-panel-helpers.js";
+import { loadCatalog, CATALOG_VERSION } from "../../../packages/module-catalog/loadCatalog.js";
 import { AdminPage } from "../src/pages/AdminPage.js";
 import { MODE_NAME } from "../src/battle-result.js";
 
@@ -187,11 +190,17 @@ describe("UX-R 9-10 · detalle del bot", () => {
     });
   }
 
+  const ME = { id: "u1", displayName: "Ana", email: "a@a.es", roles: ["user"], twoFactorEnabled: false };
+  const renderPanel = () =>
+    render(<BotsPage me={ME} catalog={loadCatalog()} catalogVersion={CATALOG_VERSION} budgetCredits={1000} />);
+
   it("un fallo al cargar el bot se muestra con ErrorState CLASIFICADO y reintento", async () => {
     apiMock.mockRejectedValue(httpError(404, "Bot no encontrado"));
-    render(<BotDetailPage botId="b1" meId="u1" />);
-    const box = await screen.findByTestId("bot-detail-error");
-    const alert = within(box).getByRole("alert");
+    // #255 · el detalle del bot es el panel único de «Mis bots» (#/bots/<id>).
+    atBotSection("b1");
+    renderPanel();
+    const box = await screen.findByTestId("bot-pane-missing");
+    const alert = await within(box).findByRole("alert");
     expect(alert.getAttribute("data-error-kind")).toBe("notFound");
     expect(within(alert).getByTestId("error-title").textContent).toBe("No existe o no está disponible");
     expect(alert.textContent).toContain("No se pudo cargar el bot: Bot no encontrado");
@@ -200,20 +209,25 @@ describe("UX-R 9-10 · detalle del bot", () => {
 
   it("el código editado sin guardar sobrevive al desmontaje (sesión caducada) y se anuncia", async () => {
     backend();
-    const first = render(<BotDetailPage botId="b1" meId="u1" initialTab="code" />);
-    const area = (await screen.findByLabelText("codigo-editado")) as HTMLTextAreaElement;
-    expect(area.value).toBe("del servidor\n");
+    atBotSection("b1", "codigo");
+    const first = renderPanel();
+    // «Editar en una versión nueva desde v1» carga su código en el ÚNICO editor.
+    await userEvent.click(await screen.findByTestId("edit-as-new"));
+    const area = screen.getByLabelText("codigo") as HTMLTextAreaElement;
+    await waitFor(() => expect(area.value).toBe("del servidor\n"));
     fireEvent.change(area, { target: { value: "mis cambios" } });
     first.unmount();
 
-    render(<BotDetailPage botId="b1" meId="u1" initialTab="code" />);
-    await waitFor(() =>
-      expect((screen.getByLabelText("codigo-editado") as HTMLTextAreaElement).value).toBe("mis cambios"),
-    );
-    expect(screen.getByTestId("code-draft-restored").textContent).toMatch(/no está en el servidor/);
-    await userEvent.click(screen.getByRole("button", { name: "Descartar borrador" }));
-    expect((screen.getByLabelText("codigo-editado") as HTMLTextAreaElement).value).toBe("del servidor\n");
+    renderPanel();
+    await waitFor(() => expect((screen.getByLabelText("codigo") as HTMLTextAreaElement).value).toBe("mis cambios"));
+    expect(screen.getByTestId("code-draft-restored").textContent).toMatch(/aún no es ninguna versión/);
+    // #255 R1 (P3-4) · el borrador recuperado conserva su linaje (bot y versión de origen).
+    expect(screen.getByTestId("editing-from").textContent).toMatch(/«Ana-bot» · código de v1/);
+    await userEvent.click(screen.getByTestId("reset-template"));
+    // #255 R1 (P3-5) · se restaura la aserción exacta: descartar = la plantilla del runtime.
+    expect((screen.getByLabelText("codigo") as HTMLTextAreaElement).value).toBe(BOT_TEMPLATES.python);
     expect(screen.queryByTestId("code-draft-restored")).toBeNull();
+    expect(screen.queryByTestId("editing-from")).toBeNull();
   });
 });
 

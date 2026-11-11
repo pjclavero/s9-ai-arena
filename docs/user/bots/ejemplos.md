@@ -1,6 +1,6 @@
 # Ejemplos de bots
 
-Seis bots completos, de menor a mayor. Cada uno está en **Python** y en **JavaScript**: son el mismo bot con la sintaxis de cada lenguaje. Se pueden **pegar tal cual** en «Subir código (pegado)» (el hook obligatorio es `on_observation` / `onObservation`).
+Seis bots completos, de menor a mayor. Cada uno está en **Python** y en **JavaScript**: son el mismo bot con la sintaxis de cada lenguaje. Se pueden **pegar tal cual** en «Código → Nueva versión» (el hook obligatorio es `on_observation` / `onObservation`).
 
 **Están verificados.** Los ficheros viven en `docs/user/bots/examples/` y se ejecutan contra el motor real y el SDK real en las pruebas del repositorio, validando cada orden que envían contra el contrato `arena/1`; además, el código que ves aquí es idéntico al de los ficheros (si alguien lo edita en un sitio y no en el otro, una prueba falla). Qué se comprueba exactamente aparece en cada ejemplo.
 

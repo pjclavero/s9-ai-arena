@@ -16,7 +16,8 @@ test.describe("@fase1 [REVIEW] aislamiento de borradores entre cuentas", () => {
     await go(page, "#/bots");
     await page.getByLabel("nuevo-bot").fill(`rv-draft-a-${Date.now().toString(36)}`);
     await page.getByRole("button", { name: "Crear bot" }).click();
-    await page.getByRole("button", { name: /^rv-draft-a-/ }).click();
+    await page.getByRole("link", { name: /^rv-draft-a-/ }).click();
+    await page.getByTestId("bot-section-link-codigo").click();
     await page.getByLabel("codigo").fill(`# ${marker}\nfrom arena_sdk import ArenaBot\n`);
     await page.getByTestId("logout").click();
     await expect(page.getByTestId("logout")).toHaveCount(0);
@@ -25,7 +26,8 @@ test.describe("@fase1 [REVIEW] aislamiento de borradores entre cuentas", () => {
     await go(page, "#/bots");
     await page.getByLabel("nuevo-bot").fill(`rv-draft-b-${Date.now().toString(36)}`);
     await page.getByRole("button", { name: "Crear bot" }).click();
-    await page.getByRole("button", { name: /^rv-draft-b-/ }).click();
+    await page.getByRole("link", { name: /^rv-draft-b-/ }).click();
+    await page.getByTestId("bot-section-link-codigo").click();
     const seen = await page.getByLabel("codigo").inputValue();
     const restored = await page.getByTestId("code-draft-restored").count();
     evidence("draft-isolation", { leaked: seen.includes(marker), restoredBanner: restored, head: seen.slice(0, 120) });

@@ -60,7 +60,8 @@ test.describe("@fase1 Onboarding (UX-A)", () => {
     await steps.getByTestId("first-steps-progress").getByRole("link", { name: "Ir a Mis bots" }).click();
     await page.getByLabel("nuevo-bot").fill(`onb-${Date.now().toString(36)}`);
     await page.getByRole("button", { name: "Crear bot" }).click();
-    await expect(page.getByTestId(/^bot-detail-link-/).first()).toBeVisible();
+    // #255 · el bot creado queda abierto en su siguiente paso («Equipamiento»).
+    await expect(page.getByTestId("bot-section")).toHaveAttribute("data-section", "equipamiento");
     await nav.getByRole("link", { name: "Inicio" }).click();
     await expect(steps.getByTestId("first-step-bot")).toHaveAttribute("data-done", "true");
     await expect(steps.getByTestId("first-steps-next")).toHaveText("Configura su equipamiento (loadout)");

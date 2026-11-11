@@ -30,7 +30,7 @@ export default class Bot extends ArenaBot {
 }
 ```
 
-Pégalo en «Mis bots» → «Subir código (pegado)» y el vehículo avanzará recto. A partir de aquí todo es leer la observación y dar mejores órdenes.
+Pégalo en «Mis bots» → el bot → «Código» → «Nueva versión» y el vehículo avanzará recto. A partir de aquí todo es leer la observación y dar mejores órdenes.
 
 ## Índice de la guía
 

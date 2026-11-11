@@ -306,7 +306,13 @@ test.describe("@fase1 EQ5b Administración → Streaming", () => {
     });
     await login(page, ADMIN_EMAIL, PASSWORD);
     await visit(page, `#/battles/${REPLAY_ID}`);
-    await page.getByTestId("broadcast-battle").click();
+    // #255 · la batalla del golden está TERMINADA: su bloque «Directo y retransmisión»
+    // no ofrece «Retransmitir» (un replay no se retransmite; ver ux255-…spec para el
+    // botón en una batalla en curso). El enlace de Streaming con ?battle= sigue
+    // preseleccionando el destino.
+    await expect(page.getByTestId("replay-not-broadcastable")).toBeVisible();
+    await expect(page.getByTestId("broadcast-battle")).toHaveCount(0);
+    await visit(page, `#/streaming?battle=${REPLAY_ID}`);
     await expect(page).toHaveURL(new RegExp(`#/streaming\\?battle=${REPLAY_ID}`));
     // STREAMING-UX · preseleccionada en el selector de la vista simple (sin UUID a la vista)…
     await expect(page.getByTestId("simple-destination")).toHaveValue(`battle:${REPLAY_ID}`);

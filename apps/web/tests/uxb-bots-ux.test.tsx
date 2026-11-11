@@ -26,7 +26,7 @@ vi.mock("../src/api.js", () => ({
 
 import { api } from "../src/api.js";
 import { BotsPage, botNameProblem, versionInBattles } from "../src/pages/BotsPage.js";
-import { BotDetailPage } from "../src/pages/BotDetailPage.js";
+import { openBot, openSection, atBotSection } from "./bot-panel-helpers.js";
 import { diagnoseBuild, locateInMessage } from "../src/build-diagnosis.js";
 import { BOT_TEMPLATES, JAVASCRIPT_TEMPLATE, PYTHON_TEMPLATE } from "../src/bot-templates.js";
 import { analyze } from "../../bot-manager/src/static-analysis.js";
@@ -73,7 +73,8 @@ describe("B3 · plantillas del editor", () => {
       return [];
     });
     renderBots();
-    await userEvent.click(await screen.findByRole("button", { name: "Tanque" }));
+    await openBot("Tanque");
+    await openSection("Código");
     const area = (await screen.findByLabelText("codigo")) as HTMLTextAreaElement;
     expect(area.value).toBe(BOT_TEMPLATES.python);
     expect(screen.getByTestId("hook-help").textContent).toMatch(/on_observation/);
@@ -84,7 +85,7 @@ describe("B3 · plantillas del editor", () => {
     fireEvent.change(screen.getByLabelText("codigo"), { target: { value: "mi código" } });
     await userEvent.selectOptions(screen.getByLabelText("runtime"), "python");
     expect((screen.getByLabelText("codigo") as HTMLTextAreaElement).value).toBe("mi código");
-    expect(screen.getByTestId("upload-target").textContent).toMatch(/v1 con la revisión 2 del loadout/);
+    expect(screen.getByTestId("upload-target").textContent).toMatch(/v1 con la revisión 2 del equipamiento/);
   });
 });
 
@@ -120,7 +121,9 @@ describe("B1 · crear bot", () => {
     expect(posts).toEqual([{ name: "Nuevo" }]);
     expect(screen.getByRole("button", { name: "Creando…" })).toHaveProperty("disabled", true);
     release();
-    await screen.findByText(/Guarda antes una configuración/); // el bot creado queda abierto
+    // #255 · el bot creado queda abierto en su siguiente paso: «Equipamiento».
+    await waitFor(() => expect(window.location.hash).toBe("#/bots/b2/equipamiento"));
+    expect((await screen.findByTestId("bot-section")).getAttribute("data-section")).toBe("equipamiento");
     expect(posts).toHaveLength(1);
   });
 
@@ -239,7 +242,8 @@ describe("UX-02 · diagnóstico del build", () => {
       return [];
     });
     renderBots();
-    await userEvent.click(await screen.findByRole("button", { name: "Tanque" }));
+    await openBot("Tanque");
+    await openSection("Versiones y build");
     const diag = await screen.findByTestId("build-diagnosis");
     expect(diag.getAttribute("data-fault")).toBe("user");
     expect(within(diag).getByTestId("build-diagnosis-location").textContent).toMatch(/src\/bot\.py, línea 3/);
@@ -247,8 +251,9 @@ describe("UX-02 · diagnóstico del build", () => {
       /v2 NO está publicada.*Sigue en juego la v1 publicada/,
     );
     expect(screen.getByTestId("in-battles-1")).toBeTruthy();
-    expect(screen.getByTestId("in-battles").textContent).toMatch(/usan la v1/);
     await userEvent.click(within(diag).getByTestId("build-diagnosis-fix"));
+    // «Corregir» lleva a «Código» (cambio de sección, no de scroll) con el código cargado.
+    await waitFor(() => expect(window.location.hash).toBe("#/bots/b1/codigo"));
     await waitFor(() => expect((screen.getByLabelText("codigo") as HTMLTextAreaElement).value).toBe("codigo roto"));
     expect(screen.getByTestId("editing-from").textContent).toMatch(
       /código de v2: al subirlo se crea la v3; v2 no cambia/,
@@ -295,15 +300,17 @@ describe("G-15 · el editor web no destruye un paquete multi-fichero", () => {
 
   it("paquete subido como {files}: no se ofrece «Guardar como versión nueva» y se explica por qué", async () => {
     detailBackend(true);
-    render(<BotDetailPage botId="b1" meId="u1" initialTab="code" />);
+    atBotSection("b1", "codigo");
+    renderBots();
     expect((await screen.findByTestId("multi-file-locked")).textContent).toMatch(/perdería el resto/);
-    expect(screen.queryByTestId("save-as-new")).toBeNull();
+    expect(screen.queryByTestId("edit-as-new")).toBeNull();
   });
 
   it("código pegado (un fichero): sí se puede editar en una versión nueva", async () => {
     detailBackend(false);
-    render(<BotDetailPage botId="b1" meId="u1" initialTab="code" />);
-    expect(await screen.findByTestId("save-as-new")).toBeTruthy();
+    atBotSection("b1", "codigo");
+    renderBots();
+    expect(await screen.findByTestId("edit-as-new")).toBeTruthy();
     expect(screen.queryByTestId("multi-file-locked")).toBeNull();
   });
 });

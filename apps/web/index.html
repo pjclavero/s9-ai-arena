@@ -58,10 +58,20 @@
         clip: rect(0 0 0 0);
         white-space: nowrap;
       }
+      /* #255 · B11-B13 · área útil progresiva (antes 960 px fijos en cualquier
+         escritorio): ~1480 px a ≥1650, ~1150-1300 entre 1280 y 1440, 960 px
+         hasta 1066. El texto conserva una medida legible (regla de abajo); las
+         tablas, el editor y los mapas sí aprovechan el ancho. */
       main {
-        max-width: 960px;
+        max-width: clamp(960px, 90vw, 1480px);
         margin: 1.5rem auto;
         padding: 0 1rem;
+      }
+      main :where(p, li, dd, legend, summary) {
+        max-width: 80ch;
+      }
+      .muted {
+        color: #9aa4b2;
       }
       /* UX-MOBILE · páginas anchas (visor/replay): anulan el máximo de 960 px
          cuando <main> lleva la clase .page-wide o contiene un elemento con ella.
@@ -205,11 +215,13 @@
         font-weight: 600;
         text-decoration: underline;
       }
-      /* EQ4 · maestro-detalle (Mis bots, Equipos): dos columnas sólo con sitio. */
+      /* EQ4 · maestro-detalle (Mis bots, Equipos): dos columnas sólo con sitio.
+         #255 · la lista se reduce PROGRESIVAMENTE con el ancho (clamp), pegada al
+         inicio del área útil, y el panel central se lleva el resto. */
       .master-detail {
         display: grid;
-        grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
-        gap: 1rem;
+        grid-template-columns: clamp(11rem, 16vw, 17rem) minmax(0, 1fr);
+        gap: clamp(0.75rem, 1.2vw, 1.25rem);
         align-items: start;
       }
       .master-detail > * {
@@ -237,9 +249,142 @@
         background: #253041;
         font-weight: 600;
       }
-      @media (max-width: 960px) {
+      a.master-item {
+        text-decoration: none;
+        box-sizing: border-box;
+      }
+      .master-item-meta {
+        color: #9aa4b2;
+        font-weight: 400;
+      }
+      /* #255 · panel del bot: [menú de secciones | UNA sección]. */
+      .bot-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 0.25rem 0.75rem;
+        margin-bottom: 0.5rem;
+      }
+      .bot-head h2 {
+        margin: 0;
+        overflow-wrap: anywhere;
+      }
+      .bot-sections {
+        display: grid;
+        grid-template-columns: minmax(8.5rem, 11rem) minmax(0, 1fr);
+        gap: 1rem;
+        align-items: start;
+      }
+      .bot-sections > * {
+        min-width: 0;
+      }
+      .section-nav {
+        /* la regla global de nav es la barra superior: aquí se anula */
+        display: block;
+        padding: 0;
+        background: transparent;
+        position: sticky;
+        top: 0.75rem;
+      }
+      .section-nav ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .section-nav a {
+        display: block;
+        padding: 0.5rem 0.6rem;
+        border-left: 3px solid transparent;
+        border-radius: 0 4px 4px 0;
+        text-decoration: none;
+        color: #c7d2e0;
+      }
+      .section-nav a:hover {
+        background: #1d2633;
+      }
+      .section-nav a[aria-current="page"] {
+        border-left-color: #7fb4ff;
+        background: #253041;
+        color: #ffffff;
+        font-weight: 600;
+      }
+      .bot-section > h3:first-child {
+        margin-top: 0;
+      }
+      .bot-section h3:focus {
+        outline: 2px solid #7fb4ff;
+        outline-offset: 2px;
+      }
+      .table-scroll {
+        max-width: 100%;
+        overflow-x: auto;
+      }
+      .master-list .master-item-meta {
+        display: block;
+        padding: 0 0.4rem 0.4rem;
+        font-size: 0.85rem;
+      }
+      textarea.code-editor {
+        width: 100%;
+        font-family: ui-monospace, monospace;
+      }
+      .button-link {
+        display: inline-block;
+        background: #2f6fdb;
+        color: white !important;
+        padding: 0.45rem 0.9rem;
+        border-radius: 4px;
+        text-decoration: none;
+      }
+      .confirm-panel {
+        border: 1px solid #7fb4ff;
+        border-radius: 6px;
+        padding: 0.75rem;
+        background: #10141a;
+      }
+      .live-actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      /* Tablet y escritorio estrecho: el menú de secciones pasa a pestañas encima. */
+      @media (max-width: 1199px) {
+        .bot-sections {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .section-nav {
+          position: static;
+          overflow-x: auto;
+          border-bottom: 1px solid #2a3340;
+        }
+        .section-nav ul {
+          display: flex;
+          gap: 0.25rem;
+        }
+        .section-nav a {
+          white-space: nowrap;
+          border-left: 0;
+          border-bottom: 3px solid transparent;
+          border-radius: 4px 4px 0 0;
+        }
+        .section-nav a[aria-current="page"] {
+          border-bottom-color: #7fb4ff;
+        }
+      }
+      /* Móvil: una sola columna; la lista de bots no empuja el panel fuera de la vista. */
+      @media (max-width: 720px) {
         .master-detail {
           grid-template-columns: minmax(0, 1fr);
+        }
+        .master-list nav ul {
+          max-height: 40vh;
+          overflow-y: auto;
+        }
+        .section-nav a {
+          min-height: 44px;
+          display: flex;
+          align-items: center;
         }
       }
       @media (max-width: 1024px) {

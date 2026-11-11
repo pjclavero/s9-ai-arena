@@ -78,7 +78,9 @@ Cada batalla tiene su página (desde la lista, desde «Ver esta batalla» o desd
 - los **participantes**: bot, versión exacta que jugó, bando y resultado;
 - las **estadísticas por bot**: disparos, aciertos, precisión, daño hecho y recibido, bajas, supervivencia, recorrido, turnos sin responder, objetivos y uso de cada módulo ([Estadísticas](statistics.md)). Justo al terminar puede decir «Calculando estadísticas…»: la página vuelve a preguntar sola;
 - el **diagnóstico de tus bots**: si arrancó, cuántas decisiones aplicó, descalificación y motivo, órdenes inválidas, acciones rechazadas y CPU ([Diagnóstico](statistics.md#diagnóstico-de-tus-bots));
-- el enlace **«Ver replay»** cuando hay replay.
+- el bloque **«Directo y retransmisión»**:
+  - en cola o en curso: **«Ver en directo»** (en cuanto arranca) y, si eres administrador, **«Retransmitir»** con la explicación de si se puede retransmitir y por qué no (por ejemplo, una batalla suelta con bots que no son públicos). «Retransmitir» abre Administración → Streaming con la batalla ya elegida y **no empieza a emitir** hasta que pulses «Iniciar» allí;
+  - terminada: **«Ver resultado»**, «Replay: no disponible para retransmisión» y **«Ver replay»** cuando hay replay. Un replay no se retransmite.
 
 Una batalla en cola o en curso se actualiza sola. Una batalla que no puedes ver, o un enlace equivocado, dice «No existe o no está disponible».
 

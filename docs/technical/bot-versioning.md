@@ -147,7 +147,8 @@ restauran con el esquema.
 
 ## Uso
 
-Desde la web: **«Mis bots» → «detalle y versiones»** (`#/bots/<id>`) → pestaña **Versions**
+Desde la web: **«Mis bots» → el bot → «Versiones y build»** (`#/bots/<id>/versiones`; código y
+comparación en `#/bots/<id>/codigo`)
 ([guía de usuario](../user/bots.md)). Por API: las rutas de la tabla anterior.
 
 ## Ejemplo

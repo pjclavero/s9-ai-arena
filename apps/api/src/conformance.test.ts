@@ -35,8 +35,9 @@ describe("T7.5 conformidad con el contrato de E1", () => {
   // + 2 de elegibilidad histórica (ELIG, contratos 0.10.0-0.11.0: getBotVersionEligibilityInventory, excludeTournamentEntry)
   // + 1 de reglas de batalla (R-RULES, contrato 0.12.0: checkBattleRules)
   // + 12 de Administración → Streaming (EQ5b, contrato 0.13.0, tag streaming).
-  it("el contrato tiene 98 operaciones (65 de R11 + 5 de versionado A9 + 7 de contenido FC-C + 3 de replays TD-004 + 2 ELIG + 1 R-RULES + 14 streaming + 1 VISIBILIDAD)", () => {
-    expect(loadContract().operations.length).toBe(98);
+  // + 1 de equipos (#255, contrato 0.17.0: publishTeamBots).
+  it("el contrato tiene 99 operaciones (65 de R11 + 5 de versionado A9 + 7 de contenido FC-C + 3 de replays TD-004 + 2 ELIG + 1 R-RULES + 14 streaming + 1 VISIBILIDAD + 1 #255)", () => {
+    expect(loadContract().operations.length).toBe(99);
   });
 
   it("toda operación del contrato está implementada o declarada pendiente con motivo", () => {

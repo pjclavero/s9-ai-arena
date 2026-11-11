@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 /**
- * DEV-A · A9.19 — vista de bot con Overview · Code · Equipment · Versions.
- * Monta la página contra un backend falso con las formas REALES de la API de
- * versionado y comprueba lo que se RENDERIZA y qué peticiones salen.
+ * DEV-A · A9.19 — lo que hacía la vista aparte del bot (Overview · Code · Equipment ·
+ * Versions) vive ahora, una sola vez, en las secciones del panel único de «Mis bots»
+ * (#255): Resumen, Código, Equipamiento y «Versiones y build». Se monta contra un
+ * backend falso con las formas REALES de la API de versionado y se comprueba lo que
+ * se RENDERIZA y qué peticiones salen.
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, waitFor, cleanup, within } from "@testing-library/react";
@@ -21,8 +23,10 @@ vi.mock("../src/api.js", () => {
 });
 
 import { api, ApiRequestError } from "../src/api.js";
-import { BotDetailPage } from "../src/pages/BotDetailPage.js";
-import { matchBotDetailRoute } from "../src/pages/BotsPage.js";
+import { BotsPage, matchBotDetailRoute } from "../src/pages/BotsPage.js";
+import { parseBotsRoute, botHref } from "../src/pages/bot-nav.js";
+import { atBotSection } from "./bot-panel-helpers.js";
+import { loadCatalog, CATALOG_VERSION } from "../../../packages/module-catalog/loadCatalog.js";
 
 const apiMock = api as unknown as ReturnType<typeof vi.fn>;
 const BOT = {
@@ -79,7 +83,14 @@ beforeEach(() => {
   filesForbidden = false;
   apiMock.mockImplementation(async (method: string, path: string, body?: unknown) => {
     calls.push({ method, path, body });
+    if (method === "GET" && path.startsWith("/bots?ownerId="))
+      return { items: path.includes("ownerId=u1") ? [BOT] : [] };
     if (method === "GET" && path === "/bots/b1") return BOT;
+    const bm = /^\/bots\/b1\/versions\/(\d+)\/builds$/.exec(path);
+    if (method === "GET" && bm) {
+      const d = detail(VERSIONS[Number(bm[1]) - 1]);
+      return d.latestBuild ? [{ ...d.latestBuild, version: d.version, artifactHash: d.artifact?.hash }] : [];
+    }
     if (method === "GET" && path === "/bots/b1/versions") return VERSIONS;
     if (method === "GET" && path === "/bots/b1/loadouts")
       return [
@@ -112,39 +123,57 @@ beforeEach(() => {
     throw new Error(`ruta no simulada: ${method} ${path}`);
   });
 });
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  window.location.hash = "";
+});
 
-describe("A9.19 · BotDetailPage", () => {
-  it("la ruta #/bots/<id> se reconoce; #/bots no", () => {
+const renderAt = (section: string, meId = "u1") => {
+  atBotSection("b1", section);
+  return render(
+    <BotsPage
+      me={{ id: meId, displayName: "Ana", email: "a@a.es", roles: ["user"], twoFactorEnabled: false }}
+      catalog={loadCatalog()}
+      catalogVersion={CATALOG_VERSION}
+      budgetCredits={1000}
+    />,
+  );
+};
+
+describe("A9.19 → #255 · secciones del panel único del bot", () => {
+  it("rutas: #/bots/<id>[/<sección>] se reconocen; #/bots no elige bot; una sección desconocida es Resumen", () => {
     expect(matchBotDetailRoute("#/bots/b1")).toBe("b1");
     expect(matchBotDetailRoute("#/bots")).toBeNull();
     expect(matchBotDetailRoute("#/battles?bot=b1")).toBeNull();
+    expect(parseBotsRoute("#/bots/b1/versiones")).toEqual({ botId: "b1", section: "versiones" });
+    expect(parseBotsRoute("#/bots/b1/inventada")).toEqual({ botId: "b1", section: "resumen" });
+    expect(parseBotsRoute("#/bots")).toEqual({ botId: null, section: "resumen" });
+    expect(botHref("b1")).toBe("#/bots/b1");
+    expect(botHref("b1", "codigo")).toBe("#/bots/b1/codigo");
   });
 
-  it("Versions: lista versión, estado, build, artefacto y publicada; el build muestra etapas, motivo y métricas", async () => {
-    render(<BotDetailPage botId="b1" meId="u1" initialTab="versions" />);
-    await screen.findByTestId("panel-versions");
-    await waitFor(() => expect(within(screen.getByTestId("version-row-1")).getByText("passed")).toBeTruthy());
-    const r1 = screen.getByTestId("version-row-1");
+  it("Versiones y build: versión, estado, motivo y procedencia; el build de la versión mirada con etapas, logs, métricas y artefacto", async () => {
+    renderAt("versiones");
+    const r1 = await screen.findByTestId("version-row-1");
     expect(within(r1).getByText("published")).toBeTruthy();
-    expect(within(r1).getByText(/aaaaaaaaaaaa…/)).toBeTruthy();
     const r2 = screen.getByTestId("version-row-2");
-    expect(within(r2).getByText(/rejected — protocol_test: ningún COMMAND válido/)).toBeTruthy();
-    expect(within(r2).getByText("failed")).toBeTruthy();
+    expect(within(r2).getByText("rejected")).toBeTruthy();
+    expect(within(r2).getByText(/protocol_test: ningún COMMAND válido/)).toBeTruthy();
     expect(within(screen.getByTestId("version-row-3")).getByText(/v3 \(desde v1\)/)).toBeTruthy();
-    expect(within(screen.getByTestId("version-row-3")).getByText("sin build")).toBeTruthy();
-
-    await userEvent.click(screen.getByTestId("show-build-2"));
-    const b = screen.getByTestId("build-detail");
-    expect(within(b).getByText(/— ningún COMMAND válido/)).toBeTruthy();
+    // Se mira la más alta (v3, sin enviar): su pipeline lo dice.
+    await waitFor(() => expect(screen.getByTestId("build-result").textContent).toMatch(/v3 · sin enviar/));
+    await userEvent.click(within(r2).getByRole("button", { name: "Ver v2" }));
+    const b = screen.getByTestId("build-result");
+    await waitFor(() => expect(within(b).getByText(/ningún COMMAND válido/)).toBeTruthy());
     expect(within(b).getByText(/startupMs=412/)).toBeTruthy();
+    await userEvent.click(within(screen.getByTestId("version-row-1")).getByRole("button", { name: "Ver v1" }));
+    await waitFor(() => expect(screen.getByTestId("build-result").textContent).toMatch(/aaaaaaaaaaaa…/));
   });
 
   it("«Nueva versión desde ésta» hace POST clone y avisa de que la original no cambia", async () => {
-    render(<BotDetailPage botId="b1" meId="u1" initialTab="versions" />);
-    await screen.findByTestId("clone-1");
-    await userEvent.click(screen.getByTestId("clone-1"));
-    await screen.findByText(/Creada v4 \(draft\) desde v1\. v1 no cambia\./);
+    renderAt("versiones");
+    await userEvent.click(await screen.findByTestId("clone-1"));
+    await screen.findByText(/Creada v4 \(borrador\) desde v1\. v1 no cambia\./);
     expect(calls.some((c) => c.method === "POST" && c.path === "/bots/b1/versions/1/actions/clone")).toBe(true);
   });
 
@@ -158,38 +187,39 @@ describe("A9.19 · BotDetailPage", () => {
       }
       return base(method, path, body);
     });
-    render(<BotDetailPage botId="b1" meId="u1" initialTab="versions" />);
+    renderAt("versiones");
     await userEvent.click(await screen.findByTestId("clone-1"));
-    expect((await screen.findByTestId("bot-detail-notice")).textContent).toBe(
-      `No se pudo crear la versión: ${message}`,
-    );
+    expect((await screen.findByRole("alert")).textContent).toBe(`No se pudo crear la versión: ${message}`);
   });
 
-  it("Comparar pide el diff al backend y lo pinta (sólo ficheros cambiados)", async () => {
-    render(<BotDetailPage botId="b1" meId="u1" initialTab="versions" />);
-    await userEvent.click(await screen.findByTestId("compare-3"));
+  it("Código · Comparar pide el diff al backend y lo pinta (sólo ficheros cambiados)", async () => {
+    renderAt("codigo");
+    await userEvent.selectOptions(await screen.findByLabelText("diff-contra"), "2");
     const pre = await screen.findByTestId("diff-src/bot.py");
     expect(pre.textContent).toContain("+b");
     expect(screen.queryByTestId("diff-requirements.txt")).toBeNull();
     expect(calls.some((c) => c.path === "/bots/b1/versions/3/diff?against=2")).toBe(true);
   });
 
-  it("Code: muestra los ficheros; si el código es privado lo dice (403), no pinta un vacío", async () => {
-    render(<BotDetailPage botId="b1" meId="u1" initialTab="code" />);
+  it("Código: muestra los ficheros; si el código es privado lo dice (403), no pinta un vacío", async () => {
+    renderAt("codigo");
     expect((await screen.findByTestId("file-src/bot.py")).textContent).toContain("class Bot");
     cleanup();
     filesForbidden = true;
-    render(<BotDetailPage botId="b1" meId="otro" initialTab="code" />);
+    renderAt("codigo", "otro");
     await screen.findByText(/No tienes permiso para ver el código de esta versión/);
-    expect(screen.queryByTestId("save-as-new")).toBeNull();
+    // Sin ser dueño: ni editor ni «editar en una versión nueva».
+    expect(screen.queryByTestId("edit-as-new")).toBeNull();
+    expect(screen.queryByTestId("code-editor")).toBeNull();
   });
 
-  it("Overview y Equipment se renderizan con datos de la API", async () => {
-    render(<BotDetailPage botId="b1" meId="u1" />);
-    await screen.findByTestId("panel-overview");
-    expect(screen.getByText(/Versión publicada más reciente: v1/)).toBeTruthy();
-    await userEvent.click(screen.getByTestId("tab-equipment"));
-    expect(screen.getByText(/Revisión 1 · chassis.medium@1/)).toBeTruthy();
+  it("Resumen y Equipamiento se renderizan con datos de la API", async () => {
+    renderAt("");
+    expect((await screen.findByTestId("in-battles")).textContent).toMatch(/usan la v1/);
+    expect(screen.getByTestId("bot-overview").textContent).toMatch(/Versiones3/);
+    cleanup();
+    renderAt("equipamiento");
+    expect(await screen.findByText(/Revisión 1 · chassis.medium@1/)).toBeTruthy();
     expect(screen.getByText(/Usada por: v1, v2, v3/)).toBeTruthy();
   });
 });
