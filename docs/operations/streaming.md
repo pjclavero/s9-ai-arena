@@ -32,8 +32,14 @@ el perfil es **VBR con techo** (no CBR), los frames descartados son los medidos 
 las líneas del log del contenedor son JSON (Xvfb escribe una). Ver
 [Recursos medidos](#recursos-medidos) y la tabla de defectos (STR-7 y STR-8).
 
+**#256 (2026-11-10, rama `fix/256-streaming-blanco`):** la prueba real de RC8 en YouTube recibió
+señal **en blanco**. Diagnóstico por etapas con la imagen real y la puerta
+**BROADCAST_RENDER_READY**: ffmpeg y el relé no arrancan hasta que el display muestra la página
+pintada. Ver [Emisión en blanco (#256)](#emisión-en-blanco-256).
+
 ## Índice
 
+- [Emisión en blanco (#256)](#emisión-en-blanco-256)
 - [Administración desde la web](#administración-desde-la-web)
 - [Seguridad de la clave de emisión](#seguridad-de-la-clave-de-emisión)
 - [Alertas](#alertas)
@@ -51,6 +57,74 @@ las líneas del log del contenedor son JSON (Xvfb escribe una). Ver
 - [Pruebas (§31)](#pruebas-31)
 - [Defectos y limitaciones conocidos](#defectos-y-limitaciones-conocidos)
 - [Cómo se verificó](#cómo-se-verificó)
+
+## Emisión en blanco (#256)
+
+**Síntoma (producción, RC8 `b254e3d`):** sesión a YouTube en `rtmps` 1080p30 4500 kbit/s sobre
+una batalla en curso; el relé llegó a `publishing`, sin errores en el log, y la imagen fue
+**blanca**. Las grabaciones locales (batalla terminada) eran correctas. Ninguna prueba miraba el
+contenido del vídeo, sólo su formato.
+
+**Cómo se diagnosticó** (local, imagen GHCR de `b254e3d`, ingesta RTMPS con MediaMTX, clave
+centinela): `tests/streaming-e2e/issue-256.sh` recorre la matriz {record, rtmps} × {en curso,
+terminada} y, en la MISMA sesión, captura cada etapa: DOM y canvas (sonda CDP opcional, con
+plazos), compositor de Chromium, **framebuffer del Xvfb** (`x11grab` de 1 frame), MP4 o **FLV
+antes del relé** (copia byte a byte de lo que ffmpeg entrega por el fd 3) y lo **recibido por la
+ingesta**. Cada PNG o vídeo pasa por el detector `frame-check.ts` (luma media y desviación:
+VISIBLE / WHITE_FAIL / UNIFORM_FAIL). Los envoltorios de `diag256/` sólo añaden el puerto CDP o
+la copia del FLV: el argv que construye el streamer no cambia y se registra.
+
+**Primera etapa en blanco: el Xvfb, porque Chromium no llega a pintar.** El renderer se queda con
+el hilo principal al 100 % desde el arranque, sin componer ningún frame, y el display conserva el
+fondo blanco de la ventana (luma 254.6 / 3.1). FFmpeg, el FLV y el relé transportan fielmente lo
+que hay: blanco entra blanco, visible entra visible. Es **intermitente por arranque** y no depende
+del modo (record o rtmps) ni de la batalla (en curso o terminada, con o sin canvas).
+
+**Causa raíz: el arranque fallido del proceso GPU.** Los flags de R3.2
+(`--use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader`) hacen que Chromium 131 de
+Alpine intente ANGLE/SwiftShader-Vulkan, que en la imagen **no inicializa** (`VK_KHR_surface` y
+`VK_KHR_xcb_surface` no soportados ⇒ «Exiting GPU process due to errors during initialization»).
+Tras ese fallo, en una fracción de los arranques el renderer se queda girando sin pintar. A/B con
+la imagen real y el mismo argv, 20 arranques seguidos en el mismo contenedor (como el streamer
+entre sesiones), ffmpeg capturando a la vez: **9/20 en blanco con los flags de R3.2, 0/20 con
+`--disable-gpu`** (p ≈ 0,0006), con la misma imagen en los visibles. También ocurrió en el primer
+arranque de un contenedor limpio en la CI. WebGL nunca funcionó en la imagen: Phaser ya pintaba
+por Canvas 2D, así que quitar el proceso GPU no cambia lo que se ve.
+
+| Hipótesis | Resultado | Prueba |
+|---|---|---|
+| H1 WebGL/SwiftShader no compone sobre Xvfb | **Validada (disparador)**, aunque no por el canvas | ANGLE/SwiftShader **no inicializa** en la imagen y ese fallo del proceso GPU deja al renderer girando sin componer NADA (ni el DOM): 9/20 arranques en blanco frente a 0/20 con `--disable-gpu`. No hay WebGL en ningún caso: Phaser usa Canvas 2D, y el blanco salió también en la pantalla final, sin canvas |
+| H2 canvas de tamaño incorrecto o cero | Descartada | Sonda CDP: `broadcast-stage` 1920×1080; cuando hay blanco, no hay frame compuesto en absoluto |
+| H3 `/broadcast` antes del layout | Descartada | El blanco persiste minutos; no es una carrera de carga |
+| H4 FFmpeg captura antes del primer pintado | **Confirmada (transitoria)** | Todos los vídeos empezaban con 1-2 s blancos o negros (ventana sin pintar, Xvfb vacío) |
+| H5 pantalla equivocada | Descartada | DOM `finished` en terminada y HUD en vivo cuando se pinta |
+| H6 batalla terminada ⇒ vacío | Descartada | La terminada pinta su pantalla final (media 22.7 / desv. 11.2); también se quedó en blanco en un arranque |
+| H7 diferencias record/rtmps | Descartada | argv de Chromium idéntico; ffmpeg sólo cambia la salida (`mp4` frente a `flv pipe:3`); mismo `h264 yuv420p 1920×1080 30/1` |
+| H8 color/pix_fmt | Descartada | Un frame visible sigue visible tras x264/yuv420p (detector sobre MP4, FLV y recibido) |
+| H9 el relé altera la señal | Descartada | Recibido por MediaMTX = FLV antes del relé (10/10 visibles o 10/10 blancos según el Xvfb) |
+| H10 sólo YouTube | Descartada | El blanco existe ya antes del relé |
+
+**Arreglo 1: `--disable-gpu`** en lugar de los flags de R3.2 (`ffmpeg.ts`; la prueba de R3.2 se
+sustituye por la de #256).
+
+**Arreglo 2: puerta BROADCAST_RENDER_READY** (`supervisor.ts`). ffmpeg y el relé **no arrancan**
+hasta que el Xvfb muestra 2 frames seguidos VISIBLES (sondeo cada 0,5 s, sin esperas fijas). Si
+en 30 s no ocurre, `render_not_ready` y se relanza Chromium (reintento contado; agotados, `failed`).
+Con la emisión en marcha, un vigilante lee el display cada 5 s y, con 3 lecturas seguidas no
+visibles, corta (`render_blank`) y relanza. Estado en `/status.render`; métricas
+`streamer_render_ready` y `streamer_render_blank_total`; alerta `StreamerRenderNotReady`. Una
+batalla terminada sigue sin repetición (REPLAY_STREAMING_SUPPORTED = NO): la administración lo
+avisa y `/broadcast` lo rotula.
+
+**Límites declarados.** La puerta garantiza que no se emite una pantalla blanca o plana; no
+garantiza que lo pintado sea la escena correcta (eso lo cubren las pruebas de `/broadcast`). El
+binario de Chromium de Alpine no trae símbolos: el bucle del renderer se ha localizado (hilo
+principal, PC dentro del binario, distinto en cada volcado de gdb) y su disparador medido (el
+fallo de inicialización del proceso GPU), pero no atribuido a una función concreta de Chromium. Con
+`--disable-gpu` el cuelgue no se ha visto en el contenedor del servicio (0/50 arranques en
+laboratorio), pero sí una vez en el primer arranque de la autoprueba dentro del `docker build`
+(sin `init` y con 64 MiB de `/dev/shm`): por eso la puerta se queda como defensa y no se afirma
+que el cuelgue haya desaparecido en todo contexto.
 
 ## Administración desde la web
 
@@ -506,6 +580,7 @@ autorización:
 
 | Síntoma | Mirar | Causa habitual |
 |---|---|---|
+| **Emisión en blanco** (#256) | `/status` → `render` (`state`, `lastFrame` con media y desviación de luma), `lastError` `render_not_ready` / `render_blank`, métricas `streamer_render_ready` y `streamer_render_blank_total`, alerta `StreamerRenderNotReady` | Chromium no llegó a pintar la página en el display (ver [Emisión en blanco](#emisión-en-blanco-256)). Desde #256 no se emite: la puerta relanza Chromium y, si no lo consigue, la emisión acaba en `failed` |
 | «Servicio de emisión no disponible» | `docker compose ps streamer`, `docker compose logs --tail 50 streamer` | perfil sin desplegar; contenedor `unhealthy` (secreto de control ilegible ⇒ `/healthz` 503) |
 | «Iniciando» que no pasa a «En directo» | `lastError` en la pantalla, `relay.state` en `/status` | ingesta inalcanzable, clave rechazada (`BadName`), TLS no verificado |
 | «Reconectando» en bucle | alerta `StreamerRestartLoop`, `stream_reconnects_total` | cortes de red o la ingesta cierra la conexión |
@@ -540,6 +615,10 @@ scripts locales). Las marcadas con ⚙ ejecutan **ffmpeg o procesos reales**.
 | `SECRET_NOT_IN_API` | Existía + nueva | `eq5b-streaming-admin.test.ts`, spec `@streaming-e2e`; nueva: `lastSession` sin sobre ni config |
 | `PERMISSION_DENIED` | Existía + nueva | `conformance.test.ts` (RBAC del contrato); nueva: un usuario normal recibe 403 en start, stop, estado y credencial |
 | `RESTART_RECOVERY` | Nueva | `apps/api/src/streamer-real.test.ts` (START tras `failed` y tras reiniciar el streamer) |
+| `WHITE_FRAME_REGRESSION` (#256) | Nueva | `apps/streamer/src/render-gate.test.ts` (display en blanco ⇒ ni ffmpeg ni relé, `render_not_ready`, `failed`); `frame-check.test.ts` (blanco codificado de verdad con x264/yuv420p); ⚙ autoprueba negativa del Dockerfile |
+| `BROADCAST_DOM_RENDER` / `PHASER_CANVAS_RENDER` (#256) | Nueva ⚙ | `tests/streaming-e2e/issue-256.sh` con `S9_256_CDP=1` (sonda CDP del Chromium real: `broadcast-stage`, canvas, contexto, escena) — local |
+| `XVFB_FRAME_VISIBLE` / `FFMPEG_FRAME_VISIBLE` (#256) | Nueva ⚙ | autoprueba del Dockerfile (`render-selftest.ts`, en cada build de la CI: todos los frames del MP4 visibles, el primero incluido); `issue-256.sh` (Xvfb, MP4, FLV antes del relé y lo recibido por MediaMTX) — local |
+| `RECORD_AND_RTMPS_RENDER_PATH_EQUIVALENT` (#256) | Nueva ⚙ | `issue-256.sh`: matriz {record, rtmps} × {en curso, terminada}; argv de Chromium y FFmpeg comparados (A3) |
 
 ## Defectos y limitaciones conocidos
 
@@ -591,6 +670,8 @@ scripts locales). Las marcadas con ⚙ ejecutan **ffmpeg o procesos reales**.
 | STR-7 (H1) | P3 | Nadie leía el stdout/stderr de Chromium: con más de 128-256 KiB de salida se bloqueaba en `write()` y la emisión seguía «en directo» con la imagen congelada y sin alerta | **corregido** (STREAMER-2): se leen siempre y se descartan; sólo se guarda una cola de 2 KiB del stderr, redactada al registrarla |
 | STR-8 (H2) | P3 | Con la clave rechazada por la ingesta, `lastError` acababa mostrando el ruido de la parada de ffmpeg (`Nothing was written into output file…`) en vez del rechazo | **corregido** (STREAMER-2): guarda de generación en el stderr de ffmpeg; ese ruido se registra (`superseded: true`) pero no sustituye la causa |
 | VIS-obs (#244) | P3 | Si el dueño pasa a privado un bot de una batalla suelta en emisión, la sesión no se para sola: `/broadcast` deja de leer la batalla (404) y el destino pasa a `broadcastable: false`, pero la parada es manual (RV-S3) | **abierto** (documentado; en torneos con `broadcast` no aplica) |
+| #256 | P1 | Emisión en YouTube **en blanco** con el relé publicando: Chromium no llegaba a pintar (renderer atascado al arrancar, intermitente) y ffmpeg emitía el fondo blanco de la ventana; además cada vídeo empezaba con 1-2 s en blanco | **corregido** en la rama `fix/256-streaming-blanco`: `--disable-gpu` (causa) + puerta BROADCAST_RENDER_READY, vigilante y alerta (defensa); ver [Emisión en blanco](#emisión-en-blanco-256) |
+| #256-webgl | P3 | En la imagen (Chromium 131 de Alpine) ANGLE/SwiftShader no inicializa: no hay WebGL y Phaser usa Canvas 2D, al contrario de lo que decía R3.2 | **asumido** con `--disable-gpu` (Canvas 2D explícito; la emisión se ve igual). WebGL en la emisión exigiría otra pila gráfica: fuera de #256 |
 | STR-9 (H3) | P3 | La documentación y la evidencia decían CBR, 0 frames descartados y «todas las líneas de log son JSON» (y `measure.sh` sólo miraba las que empiezan por `{`) | **corregido** (STREAMER-2): VBR con techo, descartes medidos, Xvfb declarado y `measure.sh` revisa todas las líneas |
 
 ## Cómo se verificó

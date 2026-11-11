@@ -105,6 +105,7 @@ describe("T11.1 BroadcastPage (jsdom)", () => {
     await waitFor(() => expect(screen.getByTestId("broadcast-finished")).toBeTruthy());
     // Torneo cerrado: ahora sí el total es conocible.
     expect(screen.getByTestId("broadcast-round").textContent).toBe("Batalla 1 / 1");
+    expect(screen.queryByTestId("broadcast-no-replay")).toBeNull(); // sólo para una batalla suelta
   });
 
   it("EQ5 · batalla suelta terminada: «Batalla terminada», no «Torneo terminado»", async () => {
@@ -116,6 +117,8 @@ describe("T11.1 BroadcastPage (jsdom)", () => {
     await waitFor(() => expect(screen.getByTestId("broadcast-finished")).toBeTruthy());
     expect(screen.getByTestId("broadcast-finished").textContent).toContain("Batalla terminada");
     expect(screen.getByTestId("broadcast-finished").textContent).not.toContain("Torneo");
+    // #256 · REPLAY_STREAMING_SUPPORTED = NO: se dice claramente, no se finge una repetición.
+    expect(screen.getByTestId("broadcast-no-replay").textContent).toContain("no se retransmite");
   });
 
   it("EQ5 · torneo EN CURSO con la última batalla visible terminada: intermedio, nunca «Torneo terminado»", async () => {
