@@ -147,3 +147,14 @@ groups:
         labels: { severity: critical }
         annotations:
           summary: "La emisión no avanza: {{ $value | humanize }} s sin progreso de ffmpeg"
+
+      # #256 · la emisión de YouTube salió en BLANCO con ffmpeg sano y el relé publicando: la
+      # página no estaba pintada en el display. La puerta BROADCAST_RENDER_READY ya no emite
+      # en blanco (relanza Chromium), pero si la página no llega a pintarse durante 2 min
+      # con la emisión pedida, nadie la está viendo: alerta.
+      - alert: StreamerRenderNotReady
+        expr: max(streamer_render_ready) == 0 and on() max(streamer_desired) == 1
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "La página de emisión no se pinta (pantalla en blanco o sin dibujar): no se emite"

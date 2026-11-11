@@ -179,6 +179,7 @@ describe("EQ5b · alertas del streamer condicionadas al streaming activo", () =>
     StreamerRestartLoop: /and on\(\) max\(streamer_desired\) == 1/,
     StreamerDroppedFramesHigh: /and on\(\) max\(streamer_desired\) == 1/,
     StreamerNoProgress: /and on\(\) max\(streamer_desired\) == 1/,
+    StreamerRenderNotReady: /and on\(\) max\(streamer_desired\) == 1/,
   };
   it.each(Object.keys(guard))("%s existe, está guardada y tiene caso promtool", (name) => {
     const rule = rules.find((r: any) => r.alert === name);

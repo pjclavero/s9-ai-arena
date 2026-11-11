@@ -25,6 +25,7 @@ vi.mock("../src/api.js", () => ({
 import { api } from "../src/api.js";
 import {
   destinationText,
+  finishedBattleNotice,
   humanReason,
   liveBadgeText,
   QUALITY_PRESETS,
@@ -185,6 +186,14 @@ async function pick(value: string) {
   await waitFor(() => expect(sel.options.length).toBeGreaterThan(1));
   fireEvent.change(sel, { target: { value } });
 }
+
+describe("#256 · batalla terminada (REPLAY_STREAMING_SUPPORTED = NO)", () => {
+  it("avisa de que sólo se emitirá la pantalla final; nada para batallas en curso ni torneos", () => {
+    expect(finishedBattleNotice({ kind: "battle", status: "finished" })).toMatch(/pantalla final.*no se retransmite/);
+    expect(finishedBattleNotice({ kind: "battle", status: "running" })).toBeNull();
+    expect(finishedBattleNotice({ kind: "tournament", status: "finished" })).toBeNull();
+  });
+});
 
 describe("STREAMING-UX · vista simple", () => {
   it("STREAMING_SIMPLE_VIEW + LEFT_ALIGNED_NAV + ADVANCED_SETTINGS_SEPARATED · lo esencial delante; lo técnico, aparte", async () => {

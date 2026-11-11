@@ -70,11 +70,19 @@ function binariosFalsos(): { ffmpeg: string; chromium: string } {
   const ffmpeg = join(bin, "ffmpeg-falso");
   // Escribe en el ÚLTIMO argumento (es donde ffmpeg.ts pone el fichero de
   // salida en modo record) y se queda vivo, como el ffmpeg real emitiendo.
+  // #256 · Las lecturas de UN frame de la puerta BROADCAST_RENDER_READY (`-frames:v 1`)
+  // reciben un frame gris CON CONTENIDO (bytes aleatorios: desviación alta): el display
+  // «está pintado» y la puerta se abre. La puerta en sí se prueba en render-gate.test.ts.
   writeFileSync(
     ffmpeg,
-    ["#!/bin/sh", 'for a in "$@"; do salida=$a; done', 'printf video-falso > "$salida" || exit 1', "sleep 20", ""].join(
-      "\n",
-    ),
+    [
+      "#!/bin/sh",
+      'case " $* " in *" -frames:v 1 "*) head -c 20736 /dev/urandom; exit 0 ;; esac',
+      'for a in "$@"; do salida=$a; done',
+      'printf video-falso > "$salida" || exit 1',
+      "sleep 20",
+      "",
+    ].join("\n"),
   );
   chmodSync(ffmpeg, 0o755);
   const chromium = join(bin, "chromium-falso");
