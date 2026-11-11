@@ -96,10 +96,11 @@ function projectVehicle(v: InternalVehicleState, ctx: FrameContext): PublicVehic
   if (emits(P, "vehicle.respawnsLeft", a) && typeof v.respawnsLeft === "number") out.respawnsLeft = v.respawnsLeft;
   // vehicle.hullHp (exacto), hullHpMax y modules: sólo si la política los declarase
   // PUBLIC (R1). Con R2 son PRIVATE y no hay rama que los emita.
-  if (hpLevel === "PUBLIC") (out as Record<string, unknown>).hullHp = num(v.hullHp);
-  if (fieldLevel(P, "vehicle.hullHpMax", a) === "PUBLIC") (out as Record<string, unknown>).hullHpMax = num(v.hullHpMax);
+  const extra = out as unknown as Record<string, unknown>;
+  if (hpLevel === "PUBLIC") extra.hullHp = num(v.hullHp);
+  if (fieldLevel(P, "vehicle.hullHpMax", a) === "PUBLIC") extra.hullHpMax = num(v.hullHpMax);
   if (fieldLevel(P, "vehicle.modules", a) === "PUBLIC") {
-    (out as Record<string, unknown>).modules = (v.modules ?? []).map((m) => ({
+    extra.modules = (v.modules ?? []).map((m) => ({
       slot: String(m.slot),
       state: String(m.state),
     }));
