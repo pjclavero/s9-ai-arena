@@ -78,14 +78,16 @@ describe("EQUIPMENT_DOCS_CURRENT · docs/user/equipment-catalog.md (generado)", 
         .filter(([, e]) => e.status === "FUTURE")
         .map(([p]) => `${cat}.${p}`),
     );
-    expect(futures.length).toBeGreaterThan(0);
-    // armas, radio y movimiento tienen su línea; las utilidades una sola, común.
+    // P-2 (OLA 2): los campos falsos se eliminaron o pasaron a ACTIVE; si vuelve a haber
+    // alguno FUTURE, tiene su línea. Las utilidades (sin campos propios), una sola común.
     for (const f of futures.filter((x) => !x.startsWith("utility."))) {
       const [cat, prop] = f.split(".");
       expect(effectOf(cat as never, prop)?.status).toBe("FUTURE");
       expect(section).toMatch(/Movimiento|Armas|Radio/);
     }
     expect(section).toContain("Utilidades");
+    // ...y los alcances reales ya no se presentan como «sin efecto».
+    expect(section).not.toMatch(/Alcance|Terreno/);
   });
 });
 

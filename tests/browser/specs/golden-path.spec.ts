@@ -90,7 +90,9 @@ async function publishedBot(page: Page, name: string, code: string) {
   await expect(page.getByTestId("effect-slot-turret_main")).toHaveAttribute("data-effect", "ACTIVE");
   await page.getByTestId("effect-detail-turret_main").locator("summary").click();
   await expect(page.getByTestId("effect-detail-turret_main")).toContainText("rangeM");
-  await expect(page.getByTestId("effect-detail-turret_main")).toContainText("FUTURE");
+  // P-2 (OLA 2): rangeM es el alcance real del cañón; ninguna de sus propiedades es FUTURE.
+  await expect(page.getByTestId("effect-detail-turret_main")).toContainText("ACTIVE");
+  await expect(page.getByTestId("effect-detail-turret_main")).not.toContainText("FUTURE");
   await page.getByTestId("save-loadout").click();
   await expect(page.getByTestId("saved")).toBeVisible();
   await page.getByTestId("bot-section-link-codigo").click();
