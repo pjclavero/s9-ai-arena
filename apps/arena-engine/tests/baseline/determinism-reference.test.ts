@@ -68,6 +68,15 @@ describe("baseline · batalla de referencia (determinismo, resultado, replay)", 
     expect(v.recomputedResult.winner).toBe(r.result.winner);
   });
 
+  it("verify() rechaza un replay con un comando manipulado (hashes de la grabación original)", async () => {
+    const r = await recordReference();
+    const tampered = JSON.parse(JSON.stringify(r));
+    const i = tampered.commands.findIndex((c: any) => c.vehicleId === "veh_1" && c.command?.move);
+    tampered.commands[i].command.move = { throttle: -1, steer: 1 };
+    const v = await verify(tampered);
+    expect(v.matches).toBe(false);
+  });
+
   it("la batalla de referencia ejercita lo que dice ejercitar (control: hay disparos, minas e impactos)", async () => {
     const r = await recordReference();
     const projIds = new Set(r.snapshots.flatMap((s: any) => s.projectiles.map((p: any) => p.id)));
