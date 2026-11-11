@@ -219,8 +219,6 @@ export const MODULES = {
     cooldownTicks: 30,
     projectileSpeedMs: 120,
     spreadRad: 0.01,
-    turretArcRad: Math.PI * 2,
-    turretRateRads: 1.0,
     acceptsAmmo: ["ammo.ap", "ammo.he"],
   }),
   mg: mod({
@@ -236,8 +234,6 @@ export const MODULES = {
     cooldownTicks: 6,
     projectileSpeedMs: 200,
     spreadRad: 0.05,
-    turretArcRad: Math.PI * 2,
-    turretRateRads: 2.2,
     acceptsAmmo: ["ammo.standard"],
   }),
   ammoAp: mod({

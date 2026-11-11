@@ -20,7 +20,5 @@
     "ammo.ap",
     "ammo.he"
   ],
-  "turretArcRad": 6.2832,
-  "turretRateRads": 1,
   "maxPerVehicle": 1
 }

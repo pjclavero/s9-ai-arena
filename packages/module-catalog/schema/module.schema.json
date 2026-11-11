@@ -85,8 +85,21 @@
                   "unevaluatedProperties": false,
                   "required": ["x", "y"],
                   "properties": { "x": { "type": "number" }, "y": { "type": "number" } }
+                },
+                "mount": {
+                  "type": "object",
+                  "unevaluatedProperties": false,
+                  "required": ["turretRateRads", "turretArcRad"],
+                  "description": "D-B2 · Montura de torreta (sólo en ranuras de arma): tasa de giro y arco centrado en el morro. Es dato del CHASIS, no del arma.",
+                  "properties": {
+                    "turretRateRads": { "type": "number", "exclusiveMinimum": 0 },
+                    "turretArcRad": { "type": "number", "exclusiveMinimum": 0, "maximum": 6.2832 }
+                  }
                 }
-              }
+              },
+              "if": { "properties": { "accepts": { "contains": { "const": "weapon" } } }, "required": ["accepts"] },
+              "then": { "required": ["mount"] },
+              "else": { "not": { "required": ["mount"] } }
             }
           }
         }
@@ -137,7 +150,7 @@
     {
       "if": { "properties": { "category": { "const": "weapon" } }, "required": ["category"] },
       "then": {
-        "required": ["damage", "cooldownTicks", "projectileSpeedMs", "acceptsAmmo", "turretArcRad", "turretRateRads"],
+        "required": ["damage", "cooldownTicks", "projectileSpeedMs", "acceptsAmmo"],
         "properties": {
           "damage": { "type": "number", "exclusiveMinimum": 0 },
           "cooldownTicks": { "type": "integer", "minimum": 1 },
@@ -149,9 +162,7 @@
             "minItems": 1,
             "items": { "type": "string", "pattern": "^ammo\\.[a-z0-9_]+$" },
             "description": "Compatibilidad arma–munición (cap. 10.2)."
-          },
-          "turretArcRad": { "type": "number", "exclusiveMinimum": 0, "maximum": 6.2832 },
-          "turretRateRads": { "type": "number", "exclusiveMinimum": 0 }
+          }
         }
       }
     },
