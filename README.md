@@ -5,12 +5,13 @@ equipa con módulos (chasis, armas, sensores, radio…) y lo enfrenta a otros en
 simulación 2D determinista. Las batallas se ven en directo o se repiten después como replay, y los
 torneos generan clasificaciones Elo.
 
-> **Estado actual (2026-10-18).** En **producción** (sin cambios desde la auditoría sobre
-> `27f70bb`) **no es funcional de extremo a extremo**: ningún bot de usuario llega a `published` y
-> las batallas las juega un bot de relleno. El **cierre funcional** (rama
-> `integration/functional-closure`, aún sin fusionar ni desplegar) resuelve ese recorrido y lo
-> demuestra en un entorno aislado con navegador real: bot propio → build en sandbox → batalla con
-> su código → resultado, estadísticas y replay.
+> **Estado actual (2026-11-10).** `main` y producción están en **RC8 `b254e3d`**. El recorrido
+> completo de jugador (crear/versionar/publicar bot, equiparlo, ejecutar batallas, ver resultados y
+> replays) funciona. La retransmisión RTMPS real llegó a publicar en YouTube, pero la primera prueba
+> de una batalla en vivo mostró **imagen blanca**; se sigue en [#256](https://github.com/pjclavero/s9-ai-arena/issues/256).
+> La revisión UX de Bots/Equipos/Batallas está abierta en
+> [#255](https://github.com/pjclavero/s9-ai-arena/issues/255). El proyecto de composición visual de
+> bots sigue aislado en la rama `mejoras-visuales` / PR #253 y todavía está en FASE 0.
 > Detalle: [docs/roadmap/current-status.md](docs/roadmap/current-status.md).
 
 ## Qué es
@@ -37,12 +38,12 @@ Más contexto: [docs/overview/project.md](docs/overview/project.md).
 | Motor de simulación (física, armas, sensores, modos, determinismo, replay) | **Funciona** |
 | Cuentas, login, roles | **Funciona**, con huecos (sin cambio de contraseña ni recuperación por correo) |
 | Bots: crear, versionar código, configurar loadout | **Funciona** |
-| Build y publicación de bots | **Bloqueado**: el sandbox de validación no está conectado ([TD-001](docs/roadmap/technical-debt.md#td-001)) |
-| Batallas | **Parcial**: la web falla al crearlas ([TD-003](docs/roadmap/technical-debt.md#td-003)) y se ejecutan con un bot de relleno ([TD-002](docs/roadmap/technical-debt.md#td-002)) |
-| Torneos y ranking Elo | **Parcial**: funcionan con el bot de relleno; la clasificación pública sale vacía ([TD-029](docs/roadmap/technical-debt.md#td-029)) |
-| Mapas | **Parcial**: importar, generar y publicar sí; el editor visual no guarda ([TD-010](docs/roadmap/technical-debt.md#td-010)) |
-| Visor en directo y reproductor de replays | **Roto en navegador** ([TD-009](docs/roadmap/technical-debt.md#td-009)) |
-| Operación (backup, restore, despliegue) | **Parcial**: el backup funciona; faltan alertas, snapshots y alineación de versiones ([TD-006](docs/roadmap/technical-debt.md#td-006), [TD-007](docs/roadmap/technical-debt.md#td-007)) |
+| Build y publicación de bots | **Funciona**: validación, sandbox, publicación y artefactos firmados |
+| Batallas | **Funciona**: ejecución real con el código publicado de cada bot |
+| Torneos y ranking Elo | **Funciona**, con incidencias/limitaciones conocidas documentadas en el roadmap |
+| Mapas | **Funciona**: creación/importación, edición, guardado y publicación |
+| Visor en directo y reproductor de replays | **Funciona** en web; retransmisión externa tiene abierto el bug #256 (vídeo blanco en batalla en vivo) |
+| Operación (backup, restore, despliegue) | **RC8 desplegada**; backup/restore/snapshot y rollback verificados en el despliegue
 
 Fuente única del estado: [docs/roadmap/current-status.md](docs/roadmap/current-status.md).
 Problemas visibles y su solución temporal: [docs/roadmap/known-issues.md](docs/roadmap/known-issues.md).
@@ -127,7 +128,7 @@ usuario crea la batalla en la web
   → visor en directo y reproductor en la web
 ```
 
-Hoy ese flujo se corta en varios puntos (build, ruleset, bot de relleno, visor). Paso a paso, con
+Ese flujo está cerrado en RC8 para el recorrido normal. Paso a paso, con
 tablas, estados y errores: [docs/technical/battles.md](docs/technical/battles.md).
 
 ## Inicio rápido

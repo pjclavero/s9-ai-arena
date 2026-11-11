@@ -95,7 +95,7 @@ Estados posibles:
 | [TD-062](#td-062) | El proxy ejecuta código de un árbol no sólo de root | P1 | Seguridad / operación | CERRADA en `main` (PR #167); migración de producción a cargo del operador |
 | [TD-063](#td-063) | Otros servicios del host en todas las interfaces | P3 | Seguridad / red | ABIERTA (sin medir) |
 | [TD-065](#td-065) | `status=finished` no garantiza stats materializados | P3 | API / contrato de batallas | CERRADA (PR #178) |
-| [TD-066](#td-066) | Streaming: clave en argv de FFmpeg, sin retención de MP4 ni alerta; YouTube sin probar | P3 | Streaming / operación | ABIERTA |
+| [TD-066](#td-066) | Streaming: secreto en argv / retención / alerta / YouTube sin probar | P3 | Streaming / operación | CERRADA/SUPERADA en RC8; ver TD-074 para el defecto visual real |
 | [TD-067](#td-067) | `runCursorQuery` atribuye al cursor errores de conversión que vienen de los filtros | P3 | API | ABIERTA |
 | [TD-068](#td-068) | `listBots` puede devolver páginas más cortas que `limit` | P3 | API | ABIERTA |
 | [TD-069](#td-069) | El comparador del desempate por enfrentamientos directos no es transitivo | P3 | Torneos | ABIERTA |
@@ -103,6 +103,7 @@ Estados posibles:
 | [TD-071](#td-071) | El filtro `result=aborted` de replays no incluye `technical_limit` | P3 | API / replays | ABIERTA |
 | [TD-072](#td-072) | Carrera en la spec de navegador `review-h3-perimeter` | P3 | Pruebas | ABIERTA (sin reproducir) |
 | [TD-073](#td-073) | `sortTable` no transitivo con ciclos de enfrentamientos directos | P3 | Clasificación | ABIERTA |
+| [TD-074](#td-074) | Streaming real publica pero una batalla viva llega como imagen blanca | P1 | Streaming / producción | ABIERTA (#256) |
 
 ---
 
@@ -1342,19 +1343,22 @@ Estados posibles:
 | Nightly 40/40 rojo | RUNTIME_VERIFIED (en la auditoría) | historial de GitHub Actions, sin cambios desde entonces |
 
 <a id="td-066"></a>
-## TD-066 — Streaming: clave en argv de FFmpeg, sin retención de MP4 ni alerta; YouTube sin probar
+## TD-066 — Streaming: secreto en argv, retención/alerta y YouTube sin prueba real
 
-- **Estado:** ABIERTA
-- **Prioridad:** P3
+- **Estado:** CERRADA / SUPERADA por RC8
+- **Prioridad original:** P3
 - **Área:** Streaming / operación (`apps/streamer`)
-- **Detectado:** 2026-11-02, auditoría EQ5 y revisión de integración
-- **Evidencia:**
-  - La URL de salida, con la clave, entra en el argv de FFmpeg: `apps/streamer/src/ffmpeg.ts:115-118` (`${cfg.rtmpsUrl}/${streamKey}`). Se redacta en logs (`redactArgs`, `:123`) pero es visible con `ps` en el host.
-  - Sin retención de los MP4 del modo grabación y sin alerta sobre `streamer_up`: `infrastructure/observability/prometheus/alerts.yml` solo tiene `StreamDown` (`:49`), basada en cAdvisor. Detalle en [streaming.md](../operations/streaming.md) (EQ5-5, EQ5-7, EQ5-9).
-  - La emisión real a YouTube está BLOCKED: no hay clave ni canal de prueba.
-- **Problema:** la clave de emisión es visible a quien pueda leer `/proc` del host; el disco puede llenarse de vídeos; nadie se entera si el streamer cae.
-- **Solución prevista:** un relé que lea la clave de un fichero; política de retención; alerta sobre `streamer_up`; una prueba real contra YouTube con una clave del operador.
-- **Condición de cierre:** `ps` no muestra la clave, existe retención probada, la alerta se dispara en una prueba y hay una emisión de prueba verificada.
+- **Detectado:** 2026-11-02
+- **Cierre RC8 (2026-11-10):**
+  - la clave ya no viaja en el argv de FFmpeg; el streamer usa un relay RTMP interno;
+  - la credencial se guarda sellada y la API no la devuelve;
+  - existe operación desde Administración → Streaming;
+  - la cadena real llegó a `publishing` en YouTube;
+  - el despliegue RC8 verificó aislamiento del secreto, record mode y reinicio del streamer.
+- **Nota:** la primera prueba real descubrió un defecto distinto: el vídeo de una batalla en vivo llegó
+  completamente blanco. Ese problema no reabre TD-066; se sigue como [TD-074](#td-074) / issue #256.
+- **Condición de cierre:** cumplida para el alcance original de exposición de clave y prueba de ingesta.
+  La calidad/contenido visual de la emisión tiene su propio gate.
 
 <a id="td-067"></a>
 ## TD-067 — `runCursorQuery` atribuye al cursor errores de conversión que vienen de los filtros
@@ -1441,3 +1445,26 @@ Estados posibles:
 - **Problema:** en un empate a puntos con ciclo, el orden mostrado en la clasificación no está bien definido.
 - **Solución prevista:** calcular una mini-tabla entre los empatados. Cambia una regla de orden visible, así que necesita decisión del operador.
 - **Condición de cierre:** decisión del operador, mini-tabla implementada y un test con un ciclo de tres que da siempre el mismo orden.
+
+
+<a id="td-074"></a>
+## TD-074 — Streaming real: batalla viva publicada con imagen blanca
+
+- **Estado:** ABIERTA
+- **Prioridad:** P1
+- **Área:** Streaming / producción (`BroadcastPage`, Phaser/WebGL, Chromium/Xvfb, FFmpeg/relay)
+- **Detectado:** 2026-11-10, primera prueba real de RC8 en YouTube
+- **Seguimiento:** [issue #256](https://github.com/pjclavero/s9-ai-arena/issues/256)
+- **Evidencia de runtime:** el streamer arrancó y el relay llegó a `publishing`; YouTube recibió señal,
+  pero el contenido visible fue completamente blanco durante una batalla en vivo.
+- **Dato de diagnóstico:** las grabaciones locales buenas usadas durante la validación RC8 correspondían
+  a otra batalla y no ejercían exactamente el mismo camino Phaser/WebGL de una batalla viva.
+- **Problema:** el sistema puede declarar una sesión técnicamente activa sin demostrar que el framebuffer
+  contiene contenido visual válido.
+- **Impacto:** alto para streaming: una emisión puede estar conectada y ser inútil para el espectador.
+- **Investigación obligatoria:** localizar el primer punto blanco en
+  `Broadcast DOM → Phaser canvas → Chromium → Xvfb → FFmpeg → FLV/relay → YouTube`.
+- **Solución requerida:** corregir la causa raíz y añadir una regresión automática que falle ante frames
+  blancos/prácticamente uniformes; no se acepta un `sleep` fijo como gate de readiness.
+- **Condición de cierre:** frame no blanco verificado antes del relay y en una prueba real; regresión de
+  frame blanco PASS; revisión independiente PASS.
