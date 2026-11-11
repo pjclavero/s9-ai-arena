@@ -23,7 +23,7 @@ import { ARMOR_REDUCTION_MAX, DAMAGE_TYPE_PROFILES, damageProfileOf } from "../.
 import { safeLookup } from "../../../../packages/game-rules/safe-lookup.js";
 import type { Rng } from "../rng.js";
 import type { Vec2 } from "./physics.js";
-import { sectorOfImpact } from "./combat.js";
+import type { Sector } from "../../../../packages/game-rules/index.js";
 import type { Vehicle } from "./vehicle.js";
 
 /** Paquete tal y como lo construye el motor hoy (ids internos como string). */
@@ -32,6 +32,21 @@ export type EngineDamageRecord = Omit<DamageRecord, "target" | "owner"> & {
   readonly target: string;
   readonly owner: string | null;
 };
+
+/**
+ * Sector impactado: se calcula con el ángulo del impacto RELATIVO al morro del vehículo.
+ * ±45° = frontal, ±135° = trasero, resto laterales.
+ */
+export function sectorOfImpact(vehicleHeading: number, impactFrom: Vec2, vehiclePos: Vec2): Sector {
+  const a = Math.atan2(impactFrom.y - vehiclePos.y, impactFrom.x - vehiclePos.x);
+  let rel = a - vehicleHeading;
+  while (rel > Math.PI) rel -= 2 * Math.PI;
+  while (rel < -Math.PI) rel += 2 * Math.PI;
+  const d = Math.abs(rel);
+  if (d <= Math.PI / 4) return "front";
+  if (d >= (3 * Math.PI) / 4) return "rear";
+  return rel > 0 ? "left" : "right";
+}
 
 const clamp01 = (x: number, max: number) => (x < 0 ? 0 : x > max ? max : x);
 

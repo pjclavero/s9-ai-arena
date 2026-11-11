@@ -13,6 +13,8 @@ import { SECTORS, moduleActs, type Sector } from "../../../../packages/game-rule
 import type { Rng } from "../rng.js";
 import type { PhysicsWorld, Vec2 } from "./physics.js";
 import type { Vehicle } from "./vehicle.js";
+import { resolveDamage } from "./damage.js";
+import { DEFAULT_DIRECT_DAMAGE_TYPE } from "../../../../packages/game-rules/damage-contract.js";
 
 export interface Projectile {
   id: string;
@@ -38,23 +40,59 @@ export interface Mine {
   detectable: boolean;
 }
 
-/**
- * Sector impactado: se calcula con el ángulo del impacto RELATIVO al morro del vehículo.
- * ±45° = frontal, ±135° = trasero, resto laterales.
- */
-export function sectorOfImpact(vehicleHeading: number, impactFrom: Vec2, vehiclePos: Vec2): Sector {
-  const a = Math.atan2(impactFrom.y - vehiclePos.y, impactFrom.x - vehiclePos.x);
-  let rel = a - vehicleHeading;
-  while (rel > Math.PI) rel -= 2 * Math.PI;
-  while (rel < -Math.PI) rel += 2 * Math.PI;
-  const d = Math.abs(rel);
-  if (d <= Math.PI / 4) return "front";
-  if (d >= (3 * Math.PI) / 4) return "rear";
-  return rel > 0 ? "left" : "right";
+// La puerta única de daño de vehículo es `resolveDamage()` (./damage.ts, OLA 2 · MB).
+export { sectorOfImpact } from "./damage.js";
+
+/** Forma histórica del resultado de `applyDamage` (la usan tests de caracterización). */
+export interface DamageResult {
+  sector: Sector;
+  effectiveDamage: number;
+  hullDamage: number;
+  moduleSlot: string | null;
+  moduleDamage: number;
+  moduleDestroyed: boolean;
+  killed: boolean;
 }
 
-// La puerta única de daño de vehículo es `resolveDamage()` (./damage.ts, OLA 2 · MB):
-// el antiguo `applyDamage()` se retiró para que no quede un segundo camino de daño.
+/**
+ * Envoltura de COMPATIBILIDAD: un impacto cinético directo por la puerta única. No es un
+ * segundo camino de daño (delega en resolveDamage); existe para que la caracterización
+ * histórica (tabla D6) siga ejecutándose con la misma firma.
+ */
+export function applyDamage(
+  target: Vehicle,
+  baseDamage: number,
+  from: Vec2,
+  targetPos: Vec2,
+  targetHeading: number,
+  rng: Rng,
+): DamageResult {
+  const r = resolveDamage(
+    {
+      amount: baseDamage,
+      type: DEFAULT_DIRECT_DAMAGE_TYPE,
+      penetration: 0,
+      from,
+      owner: null,
+      ownerTeam: null,
+      sourceKind: "projectile",
+      seq: 0,
+    },
+    target,
+    { position: targetPos, heading: targetHeading },
+    rng,
+    0,
+  );
+  return {
+    sector: r.sector as Sector,
+    effectiveDamage: r.effective,
+    hullDamage: r.hull,
+    moduleSlot: r.moduleSlot,
+    moduleDamage: r.moduleDamage,
+    moduleDestroyed: r.moduleDestroyed,
+    killed: r.killed,
+  };
+}
 
 /**
  * ¿Puede este arma disparar ahora? Comprueba TODO lo que el bot no controla:
