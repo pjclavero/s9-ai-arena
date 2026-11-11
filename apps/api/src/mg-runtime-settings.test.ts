@@ -71,10 +71,11 @@ async function newBattle(status: string, opts: { privateBot?: boolean } = {}): P
   return id;
 }
 
-async function patch(body: unknown, token: string | undefined = admin) {
+/** `who`: "anon" = sin cabecera (OJO: `undefined` NO sirve, activaría el valor por defecto). */
+async function patch(body: unknown, who: string = admin) {
   return request(app)
     .patch(PATH)
-    .set(auth(token))
+    .set(auth(who === "anon" ? undefined : who))
     .send(body as object);
 }
 
@@ -122,7 +123,7 @@ describe("MG · ADMIN_RUNTIME_SETTINGS · RBAC, booleanos estrictos y auditoría
     const before = await h.db("app_runtime_settings").first();
     expect((await anonGet(PATH)).status).toBe(401);
     expect((await request(app).get(PATH).set(auth(user))).status).toBe(403);
-    expect((await patch({ publicSpectateEnabled: true }, undefined)).status).toBe(401);
+    expect((await patch({ publicSpectateEnabled: true }, "anon")).status).toBe(401);
     expect((await patch({ publicSpectateEnabled: true }, user)).status).toBe(403);
     expect(await h.db("app_runtime_settings").first()).toEqual(before);
     expect(store.publicVisibility().publicSpectate).toBe(false);

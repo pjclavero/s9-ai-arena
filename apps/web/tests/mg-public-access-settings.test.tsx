@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * MG · «Acceso público / Broadcast» en Administración: la UI refleja el estado REAL que
  * devuelve la API (no el valor pedido), muestra el motivo cuando no se puede retransmitir
