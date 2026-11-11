@@ -229,10 +229,11 @@ describe("OLA2-MF · teardown tras cada final", () => {
   }, 30_000);
 
   it("cancelación (MANUAL_ABORT a mitad) → aborta y nada queda", async () => {
-    const s = setup(() => ({ decisionMs: 20 }));
+    // Bots quietos: nadie gana antes del aborto.
+    const s = setup(() => ({ idle: true }));
     const ac = new AbortController();
     const run = s.agents.run(await input("mf-cancel", 3000, ac.signal));
-    setTimeout(() => ac.abort(new BattleAbort("MANUAL_ABORT", "test")), 1500);
+    setTimeout(() => ac.abort(new BattleAbort("MANUAL_ABORT", "test")), 600);
     const err = await run.catch((e) => e);
     expect(err).toBeInstanceOf(BattleAbort);
     await expectNothingLeft(s, "mf-cancel");
