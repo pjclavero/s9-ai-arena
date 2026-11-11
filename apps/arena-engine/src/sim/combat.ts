@@ -170,6 +170,13 @@ export function ammoFor(v: Vehicle, accepts: string[]) {
   return null;
 }
 
+/**
+ * Vida de proyectil de los motores ANTERIORES a P-2 (OLA 2), que no la leían del catálogo.
+ * Sólo para re-simular specs grabados sin `projectileLifetimeTicks`; toda spec nueva la
+ * trae resuelta por resolveVehicle (lo vigila packages/module-catalog/catalog-contract.test.ts).
+ */
+export const LEGACY_PROJECTILE_LIFETIME_TICKS = 90;
+
 /** Crea el proyectil. Consume munición, energía y arranca el cooldown. */
 export function fire(v: Vehicle, slot: string, tick: number, origin: Vec2, rng: Rng, seq: number): Projectile | null {
   const w = v.modules.get(slot)!;
@@ -188,10 +195,13 @@ export function fire(v: Vehicle, slot: string, tick: number, origin: Vec2, rng: 
   const damage = (w.spec.damage ?? 10) * (ammo.spec.damageMultiplier ?? 1) * v.performanceOf(slot);
 
   // P-2 · la vida del proyectil sale del catálogo (weapon.rangeM, resuelta por
-  // resolveVehicle). Sin ella no hay alcance verdadero: fail-closed, nunca un TTL propio.
-  const ttlTicks = w.spec.projectileLifetimeTicks;
-  if (!Number.isInteger(ttlTicks) || (ttlTicks as number) < 1) {
-    throw new Error(`${w.spec.moduleId}: arma sin projectileLifetimeTicks resuelto (resolveVehicle)`);
+  // resolveVehicle). Campo AUSENTE = spec anterior a P-2 (cabecera de replay o checkpoint
+  // grabados por un motor que fijaba 90 ticks): se aplica ESA regla, no un valor inventado.
+  // Presente e inválido = fail-closed.
+  const ttlTicks =
+    w.spec.projectileLifetimeTicks === undefined ? LEGACY_PROJECTILE_LIFETIME_TICKS : w.spec.projectileLifetimeTicks;
+  if (!Number.isInteger(ttlTicks) || ttlTicks < 1) {
+    throw new Error(`${w.spec.moduleId}: projectileLifetimeTicks inválido (${ttlTicks})`);
   }
 
   return {
@@ -202,7 +212,7 @@ export function fire(v: Vehicle, slot: string, tick: number, origin: Vec2, rng: 
     velocity: { x: Math.cos(angle) * speed, y: Math.sin(angle) * speed },
     damage,
     explosionRadiusM: ammo.spec.explosionRadiusM ?? 0,
-    ttlTicks: ttlTicks as number,
+    ttlTicks,
   };
 }
 
