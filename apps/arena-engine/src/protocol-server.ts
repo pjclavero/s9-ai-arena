@@ -37,6 +37,7 @@ import {
 } from "../../../packages/game-rules/index.js";
 import { Battle, type BattleResult, type BotAgent } from "./sim/battle.js";
 import { replayFromBattle, type Replay } from "./replay.js";
+import { projectWelcomeModule } from "../../../packages/projection/equipment.js";
 import deps from "./engine-deps.json" with { type: "json" };
 import { assertBotIdDelCable } from "../../../packages/protocol/bot-handle.js";
 
@@ -580,10 +581,10 @@ export class ProtocolServer {
     const ruleset = this.battle.config.ruleset;
     const map = this.battle.config.map;
 
-    const modules = vehicle.spec.modules.map((m) => {
-      const { slot, moduleId, category, ...specs } = m;
-      return { slot, moduleId, category, specs };
-    });
+    // OLA 2 · MA · WELCOME = proyección `bot_team`/`self` de SU vehículo (contrato §12):
+    // nunca el ModuleSpec entero; sólo propiedades de catálogo con efecto real o de
+    // validación. Ningún aliado recibe el loadout de otro (teammates = sólo ids).
+    const modules = vehicle.spec.modules.map((m) => projectWelcomeModule(m as unknown as Record<string, unknown>));
 
     const teammates = this.battle
       .getVehicles()
