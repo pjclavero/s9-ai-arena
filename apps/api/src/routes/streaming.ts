@@ -164,9 +164,9 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
   const actor = (req: Request) => req.auth?.userId ?? null;
   const visibility = deps.visibility ?? (() => ({ publicSpectate: false, publicReplays: false }));
   /** MG · sin streamer configurado no hay retransmisión, aunque /broadcast pudiera leerlo. */
-  function withStreamerState<T extends { broadcastAvailable: boolean; reason: string | null; publicBroadcastable?: boolean }>(
-    x: T,
-  ): T {
+  function withStreamerState<
+    T extends { broadcastAvailable: boolean; reason: string | null; publicBroadcastable?: boolean },
+  >(x: T): T {
     if (deps.streamer.configured || !x.broadcastAvailable) return x;
     const out = { ...x, broadcastAvailable: false, reason: "streaming_not_configured" };
     if ("publicBroadcastable" in x) out.publicBroadcastable = false;

@@ -72,7 +72,10 @@ async function newBattle(status: string, opts: { privateBot?: boolean } = {}): P
 }
 
 async function patch(body: unknown, token: string | undefined = admin) {
-  return request(app).patch(PATH).set(auth(token)).send(body as object);
+  return request(app)
+    .patch(PATH)
+    .set(auth(token))
+    .send(body as object);
 }
 
 async function setFlags(publicSpectateEnabled: boolean, publicReplaysEnabled: boolean) {
@@ -386,7 +389,10 @@ describe("MG · RUNTIME_CONFIG_PERSISTENCE", () => {
 
   it("cambio en caliente en OTRO proceso (otra réplica / worker) en ≤ refreshMs, sin reiniciarlo", async () => {
     await setFlags(false, false);
-    const other = new RuntimeSettingsStore(h.db, { defaults: { publicSpectate: false, publicReplays: false }, refreshMs: 100 });
+    const other = new RuntimeSettingsStore(h.db, {
+      defaults: { publicSpectate: false, publicReplays: false },
+      refreshMs: 100,
+    });
     await other.refresh();
     other.start();
     try {
@@ -462,7 +468,9 @@ describe("MG · NO_SECRET_LEAK · la clave de emisión no sale tras guardarla", 
   it("ni respuestas de la API (admin incluida), ni logs, ni métricas, ni argv, ni auditoría", async () => {
     const logged: string[] = [];
     for (const m of ["log", "info", "warn", "error", "debug"] as const) {
-      spies.push(vi.spyOn(console, m).mockImplementation((...a: unknown[]) => void logged.push(a.map(String).join(" "))));
+      spies.push(
+        vi.spyOn(console, m).mockImplementation((...a: unknown[]) => void logged.push(a.map(String).join(" "))),
+      );
     }
     const appM = createApp({
       db: h.db,
@@ -471,7 +479,10 @@ describe("MG · NO_SECRET_LEAK · la clave de emisión no sale tras guardarla", 
       streamingPublicKey: () => ({ pem: PUB, kid: keyIdOf(PUB) }),
       metricsEnabled: true,
     });
-    const put = await request(appM).put("/admin/streaming/credentials/youtube").set(auth(admin)).send({ streamKey: KEY });
+    const put = await request(appM)
+      .put("/admin/streaming/credentials/youtube")
+      .set(auth(admin))
+      .send({ streamKey: KEY });
     expect(put.status).toBe(200);
     const bodies: string[] = [JSON.stringify(put.body)];
     for (const p of [

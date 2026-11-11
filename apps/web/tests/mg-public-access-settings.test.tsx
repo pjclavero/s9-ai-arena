@@ -52,9 +52,7 @@ describe("MG · PublicAccessSettings refleja el estado real", () => {
     render(<PublicAccessSettings />);
     await screen.findByTestId("public-access-effective");
     fireEvent.click(box("publicSpectateEnabled"));
-    await waitFor(() =>
-      expect(screen.getByTestId("public-access-effective").getAttribute("data-available")).toBe("1"),
-    );
+    await waitFor(() => expect(screen.getByTestId("public-access-effective").getAttribute("data-available")).toBe("1"));
     expect(apiMock).toHaveBeenLastCalledWith("PATCH", "/admin/settings/public-access", {
       publicSpectateEnabled: true,
     });

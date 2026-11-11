@@ -37,7 +37,9 @@ describe("migración 021_runtime_settings", () => {
     await expect(
       h.db("app_runtime_settings").insert({ id: 2, public_spectate_enabled: true, public_replays_enabled: false }),
     ).rejects.toThrow();
-    await expect(h.db("app_runtime_settings").where({ id: 1 }).update({ public_spectate_enabled: null })).rejects.toThrow();
+    await expect(
+      h.db("app_runtime_settings").where({ id: 1 }).update({ public_spectate_enabled: null }),
+    ).rejects.toThrow();
     const cols = (
       await h.db.raw(`SELECT column_name FROM information_schema.columns WHERE table_name = 'app_runtime_settings'`)
     ).rows.map((x: { column_name: string }) => x.column_name);

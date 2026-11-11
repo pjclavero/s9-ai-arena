@@ -124,4 +124,3 @@ export async function tournamentBroadcastState(
   if (t.state === "finished") return vis.publicReplays ? out(true, null) : out(false, "public_replays_disabled");
   return vis.publicSpectate ? out(true, null) : out(false, "public_spectate_disabled");
 }
-

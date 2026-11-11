@@ -203,15 +203,7 @@ export function createApp(cfg: AppConfig): express.Express {
   const realBattleRuns = cfg.realBattleRuns ?? battleRunConfigFromEnv();
   // R-RULES · antes que battleRoutes: POST /battles/rules-check es una ruta fija.
   app.use(battleRulesRoutes(cfg.db));
-  app.use(
-    battleRoutes(
-      cfg.db,
-      cfg.anonQuota ?? DEFAULT_ANON_QUOTA,
-      realBattleRuns,
-      spectateOn,
-      replaysOn,
-    ),
-  );
+  app.use(battleRoutes(cfg.db, cfg.anonQuota ?? DEFAULT_ANON_QUOTA, realBattleRuns, spectateOn, replaysOn));
   // PRC (TD-004) · replays para el navegador, con la política única de acceso.
   app.use(replayRoutes(cfg.db, cfg.anonQuota ?? DEFAULT_ANON_QUOTA, replaysOn));
   app.use(standingsRoutes(cfg.db));

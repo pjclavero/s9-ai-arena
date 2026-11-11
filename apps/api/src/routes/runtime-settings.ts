@@ -38,7 +38,10 @@ function view(store: RuntimeSettingsStore, deps: RuntimeSettingsDeps) {
     updatedAt: s.updatedAt,
     updatedBy: s.updatedBy,
     propagationMaxMs: s.refreshMs,
-    defaults: { publicSpectateEnabled: store.defaults.publicSpectate, publicReplaysEnabled: store.defaults.publicReplays },
+    defaults: {
+      publicSpectateEnabled: store.defaults.publicSpectate,
+      publicReplaysEnabled: store.defaults.publicReplays,
+    },
     effective: {
       publicSpectate: s.publicSpectate,
       publicReplays: s.publicReplays,

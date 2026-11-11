@@ -960,22 +960,23 @@ export async function listDestinations(
     .limit(limit)
     .select("id", "name", "state", "mode", "created_at", "broadcast");
   const tournaments: DestinationItem[] = [];
-  for (const t of trs as Record<string, unknown>[]) tournaments.push({
-    kind: "tournament" as const,
-    id: t.id as string,
-    label: String(t.name ?? "Torneo").slice(0, 120),
-    status: t.state as string,
-    mode: (t.mode as string) ?? null,
-    tournamentName: String(t.name ?? ""),
-    startedAt: null,
-    finishedAt: null,
-    createdAt: iso(t.created_at)!,
-    // Misma regla que resolveTarget: un torneo siempre se puede emitir.
-    broadcastable: true,
-    broadcastBlockedReason: null,
-    tournamentBroadcast: t.broadcast === true,
-    ...effectiveFields(await tournamentBroadcastState(db, t.id as string, vis)),
-  });
+  for (const t of trs as Record<string, unknown>[])
+    tournaments.push({
+      kind: "tournament" as const,
+      id: t.id as string,
+      label: String(t.name ?? "Torneo").slice(0, 120),
+      status: t.state as string,
+      mode: (t.mode as string) ?? null,
+      tournamentName: String(t.name ?? ""),
+      startedAt: null,
+      finishedAt: null,
+      createdAt: iso(t.created_at)!,
+      // Misma regla que resolveTarget: un torneo siempre se puede emitir.
+      broadcastable: true,
+      broadcastBlockedReason: null,
+      tournamentBroadcast: t.broadcast === true,
+      ...effectiveFields(await tournamentBroadcastState(db, t.id as string, vis)),
+    });
   return { battles, tournaments };
 }
 

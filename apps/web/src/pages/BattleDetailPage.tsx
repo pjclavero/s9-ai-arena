@@ -447,7 +447,9 @@ function LiveAndBroadcast({ b, me, onShowResult }: { b: BattleDetail; me?: Me | 
               <span data-testid="watch-live-pending">Ver en directo: disponible en cuanto la batalla arranque.</span>
             )}{" "}
             {isAdmin &&
-              (target.status === "ready" && target.data && (!target.data.broadcastable || effectivelyBlocked(target.data)) ? (
+              (target.status === "ready" &&
+              target.data &&
+              (!target.data.broadcastable || effectivelyBlocked(target.data)) ? (
                 <button type="button" disabled data-testid="broadcast-battle-blocked">
                   Retransmitir
                 </button>
@@ -471,9 +473,9 @@ function LiveAndBroadcast({ b, me, onShowResult }: { b: BattleDetail; me?: Me | 
                   : effectivelyBlocked(target.data)
                     ? `No se puede retransmitir ahora: ${broadcastReasonText(target.data?.reason)}`
                     : target.data?.broadcastable
-                    ? "Se puede retransmitir. «Retransmitir» abre Streaming con esta batalla seleccionada; no empieza a emitir hasta que pulses «Iniciar» allí."
-                    : (BROADCAST_BLOCKED_TEXT[target.data?.broadcastBlockedReason ?? ""] ??
-                      "No se puede retransmitir esta batalla.")}
+                      ? "Se puede retransmitir. «Retransmitir» abre Streaming con esta batalla seleccionada; no empieza a emitir hasta que pulses «Iniciar» allí."
+                      : (BROADCAST_BLOCKED_TEXT[target.data?.broadcastBlockedReason ?? ""] ??
+                        "No se puede retransmitir esta batalla.")}
             </p>
           )}
         </>
