@@ -201,6 +201,9 @@ describe("OLA2-MF · teardown tras cada final", () => {
     const s = setup();
     const out = await s.agents.run(await input("mf-normal"));
     expect(out.result.ticks).toBeGreaterThan(0);
+    // La propia capa de agentes ya hizo su teardown (sin esperar a la orquestación).
+    expect(s.runner.existing("mf-normal")).toEqual([]);
+    expect(s.resources.pending("mf-normal")).toEqual([]);
     await expectNothingLeft(s, "mf-normal");
   }, 30_000);
 

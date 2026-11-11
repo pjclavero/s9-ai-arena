@@ -184,7 +184,7 @@ const worker = new TournamentWorker({
 });
 
 // OLA2-MF · verificación del teardown contra el proxy (¿queda algún contenedor
-// de esa batalla?) y REAPER como segunda barrera (cada REAPER_INTERVAL_MS).
+// de esa batalla?) y REAPER como segunda barrera (cada 60 s).
 let stopReaper: (() => void) | undefined;
 if (proxyRunner) {
   const runner = proxyRunner;
@@ -196,7 +196,7 @@ if (proxyRunner) {
   stopReaper = startReaper({
     db,
     runner,
-    everyMs: Number(process.env.REAPER_INTERVAL_MS ?? 60_000) || 60_000,
+    everyMs: 60_000,
     onReport: (r) => {
       if (r.removed.length || r.errors.length || r.inProcessRetried.length)
         log("battle_reaper", { removed: r.removed, inProcessRetried: r.inProcessRetried, errors: r.errors });
