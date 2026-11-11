@@ -179,3 +179,43 @@ tests:
       - eval_time: 3m
         alertname: StreamerNoProgress
         exp_alerts: []
+
+  # ── StreamerRenderNotReady (#256) ────────────────────────────────────────
+  # Emisión pedida y la página sin pintar 3 min ⇒ dispara (a los 30 s todavía no).
+  - interval: 15s
+    input_series:
+      - series: 'streamer_render_ready{job="streamer"}'
+        values: "0x12"
+      - series: 'streamer_desired{job="streamer"}'
+        values: "1x12"
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: StreamerRenderNotReady
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: StreamerRenderNotReady
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "La página de emisión no se pinta (pantalla en blanco o sin dibujar): no se emite"
+  # Página pintada ⇒ NO dispara. Sin emisión pedida ⇒ NO dispara.
+  - interval: 15s
+    input_series:
+      - series: 'streamer_render_ready{job="streamer"}'
+        values: "1x12"
+      - series: 'streamer_desired{job="streamer"}'
+        values: "1x12"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: StreamerRenderNotReady
+        exp_alerts: []
+  - interval: 15s
+    input_series:
+      - series: 'streamer_render_ready{job="streamer"}'
+        values: "0x12"
+      - series: 'streamer_desired{job="streamer"}'
+        values: "0x12"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: StreamerRenderNotReady
+        exp_alerts: []

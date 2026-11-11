@@ -182,13 +182,15 @@ describe("T11.2 líneas de comando", () => {
     expect(args[args.length - 1]).toBe("--app=http://web:3000/broadcast");
   });
 
-  it("R3.2: WebGL forzado por SwiftShader (sin caída silenciosa a Canvas 2D)", () => {
+  it("#256: sin proceso GPU (el arranque fallido de SwANGLE dejaba la emisión en blanco)", () => {
+    // Sustituye a R3.2: en la imagen real SwANGLE no inicializa (no había WebGL) y ese
+    // fallo del proceso GPU deja intermitentemente al renderer girando sin pintar
+    // (9/20 arranques en blanco frente a 0/20 con --disable-gpu; ffmpeg.ts).
     const args = buildChromiumArgs(cfg(), "http://web:3000/broadcast");
-    expect(args).toContain("--use-gl=angle");
-    expect(args).toContain("--use-angle=swiftshader");
-    expect(args).toContain("--enable-unsafe-swiftshader");
-    // `--disable-gpu` desactivaría también SwiftShader-WebGL en Chromium modernos.
-    expect(args).not.toContain("--disable-gpu");
+    expect(args).toContain("--disable-gpu");
+    expect(args).not.toContain("--use-gl=angle");
+    expect(args).not.toContain("--use-angle=swiftshader");
+    expect(args).not.toContain("--enable-unsafe-swiftshader");
   });
 });
 

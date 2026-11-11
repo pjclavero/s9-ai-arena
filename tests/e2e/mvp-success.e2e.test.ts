@@ -371,10 +371,14 @@ describe("T12.1 · el MVP funciona (26.1), en 6 pasos con evidencia", () => {
     expect(viaApi.body.matches).toBe(true);
     expect(viaApi.body.recomputedHash).toBe(state.result.finalStateHash);
 
-    // El replay también se DESCARGA (23.1), con la misma autorización.
+    // PRE-1 · el fichero CRUDO lleva semilla, comandos y loadouts de los RIVALES:
+    // el dueño de UN bot participante no lo descarga (mismo 404 que inexistente);
+    // lee la proyección (índice y segmentos) como el visor.
     const download = await request(app).get(`/replays/${state.battleDbId}`).set(owner);
-    expect(download.status).toBe(200);
-    expect(download.body.length).toBeGreaterThan(0);
+    expect(download.status).toBe(404);
+    const idx = await request(app).get(`/replays/${state.battleDbId}/index`).set(owner);
+    expect(idx.status).toBe(200);
+    expect(idx.body.projection).toBe("s9.replay.public-competition.v1");
 
     evidence.paso5 = {
       replayPath: state.stored.path,

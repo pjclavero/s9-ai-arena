@@ -25,12 +25,18 @@ export function buildChromiumArgs(cfg: StreamerConfig, broadcastUrl: string): st
     "--kiosk",
     "--no-first-run",
     "--disable-infobars",
-    // R3.2 (ERR-VIS-08): WebGL FORZADO por SwiftShader (rasterizador software de
-    // ANGLE). Con `--disable-gpu` a secas, Phaser caía a Canvas 2D y el render de
-    // la emisión no era el mismo camino que el del visor en un navegador normal.
-    "--use-gl=angle",
-    "--use-angle=swiftshader",
-    "--enable-unsafe-swiftshader",
+    // #256 · SIN proceso GPU. R3.2 forzaba WebGL por ANGLE/SwiftShader
+    // (`--use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader`), pero
+    // en la imagen real (Chromium 131 de Alpine) SwANGLE NO inicializa
+    // (`VK_KHR_surface` no soportado ⇒ «Exiting GPU process due to errors during
+    // initialization»): nunca hubo WebGL y Phaser ya pintaba por Canvas 2D. Y ese
+    // arranque fallido del proceso GPU deja, de forma intermitente, al renderer con
+    // el hilo principal girando al 100 % sin componer ningún frame: el Xvfb se queda
+    // con el fondo BLANCO de la ventana y eso es lo que llegó a YouTube. Medido con
+    // la imagen real y el mismo argv (20 arranques seguidos, ffmpeg capturando):
+    // con los flags de R3.2 9/20 en blanco; con `--disable-gpu` 0/20 y la MISMA
+    // imagen (luma 25.3 / 12.5). Ver docs/operations/streaming.md, #256.
+    "--disable-gpu",
     "--hide-scrollbars",
     "--autoplay-policy=no-user-gesture-required",
     // EQ5 (2026-11-02, visto en un MP4 real): la página es lang="es" y el

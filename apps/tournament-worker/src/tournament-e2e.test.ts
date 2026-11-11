@@ -32,6 +32,7 @@ import { testStubAgents } from "./testing/stub-agents.js";
 let h: TestDbHandle;
 let app: Express;
 let organizer: string;
+let admin: string;
 let bots: TestBot[];
 let worker: TournamentWorker;
 let replaysDir: string;
@@ -51,6 +52,7 @@ beforeAll(async () => {
   clearStandingsCache();
   app = createApp({ db: h.db, botManager: new FakeBotManager(h.db), anonQuota: { max: 10_000, windowMs: 3600_000 } });
   organizer = await tokenFor(h.db, DEV_USERS.organizer);
+  admin = await tokenFor(h.db, DEV_USERS.admin);
   bots = await createBots(h.db, 8, "e2e");
 
   replaysDir = mkdtempSync(join(tmpdir(), "e9-replays-"));
@@ -171,9 +173,16 @@ describe("T9.2 · torneo eliminatorio de 8 bots de principio a fin", () => {
     }
 
     // PRC (TD-004): el replay de bots no públicos NO es anónimo (404, como
-    // inexistente); el organizador (staff) lo descarga por la API de E7.
+    // inexistente). PRE-1: el organizador (staff) lo LEE proyectado, pero el
+    // fichero crudo sólo lo reciben moderator/admin.
     expect((await request(app).get(`/replays/${battles[0].id}`)).status).toBe(404);
-    const replay = await request(app).get(`/replays/${battles[0].id}`).set("Authorization", `Bearer ${organizer}`);
+    expect(
+      (await request(app).get(`/replays/${battles[0].id}`).set("Authorization", `Bearer ${organizer}`)).status,
+    ).toBe(404);
+    const idx = await request(app).get(`/replays/${battles[0].id}/index`).set("Authorization", `Bearer ${organizer}`);
+    expect(idx.status).toBe(200);
+    expect(idx.body.projection).toBe("s9.replay.public-competition.v1");
+    const replay = await request(app).get(`/replays/${battles[0].id}`).set("Authorization", `Bearer ${admin}`);
     expect(replay.status).toBe(200);
     expect(replay.body.length).toBeGreaterThan(0);
 

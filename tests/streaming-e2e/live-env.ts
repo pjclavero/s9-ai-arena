@@ -108,14 +108,14 @@ const pct = (a: number[], p: number) => {
 };
 const running = new Map<string, any>();
 
-async function startBattle(key: string): Promise<void> {
+async function startBattle(key: string, seconds = BATTLE_SECONDS): Promise<void> {
   const id = ids[key];
   if (!id || running.has(id)) return;
   const b = await Battle.create({
     battleId: id,
     seed: id,
     ruleset: loadRuleset("dm_practice@1", {
-      timeLimitTicks: BATTLE_SECONDS * 30,
+      timeLimitTicks: seconds * 30,
       scoreToWin: 1000,
       respawn: { enabled: true, delayTicks: 60 },
     } as any),
@@ -176,8 +176,11 @@ async function startBattle(key: string): Promise<void> {
 // ── servidor de un solo origen ────────────────────────────────────────────────
 const root = express();
 root.get("/harness/ids", (_q, r) => r.json(ids));
+// #256 · `?seconds=N` (1..3600) acorta UNA batalla: así el diagnóstico tiene a la vez una
+// batalla EN CURSO y otra TERMINADA (la matriz {en vivo, terminada}).
 root.post("/harness/start/:key", async (q, r) => {
-  await startBattle(q.params.key);
+  const s = Number(q.query.seconds);
+  await startBattle(q.params.key, Number.isInteger(s) && s >= 1 && s <= 3600 ? s : BATTLE_SECONDS);
   r.json({ ok: true, id: ids[q.params.key] });
 });
 root.get("/harness/stats", (_q, r) =>

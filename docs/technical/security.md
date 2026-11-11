@@ -156,7 +156,7 @@ Procedimientos: [docs/operations/configuration.md](../operations/configuration.m
 |---|---|---|---|
 | `S9_ENABLE_REAL_BATTLE_RUNS` | apagada ⇒ `/run` responde 503 `real_battle_runs_disabled` | Carril I: reserva atómica `scheduled→running`, techo de concurrencia (`S9_MAX_CONCURRENT_REAL_BATTLE_RUNS`, por defecto 1), auditoría y liberación en caso de error. **Pendientes:** I-8 (cierre del ciclo de vida) e I-9 (autorización por propiedad) | **no activar** antes de resolver [TD-002](../roadmap/technical-debt.md#td-002) |
 | `S9_PUBLIC_SPECTATE_ENABLED` | apagada | Carril J: la API no emite tickets anónimos y el gateway de espectador rechaza los marcados `anon` | en `main`; **no desplegado** ([TD-006](../roadmap/technical-debt.md#td-006)) |
-| `S9_PUBLIC_REPLAYS_ENABLED` | apagada | encendida, hace públicos (anónimos incluidos) **sólo** los replays de batallas `finished` cuyos bots son todos `public`, en todas las rutas de replay de la API; el gateway ya no sirve `/replays/*` ([TD-004](../roadmap/technical-debt.md#td-004)) | integración `integration/production-readiness`, **no desplegado** |
+| `S9_PUBLIC_REPLAYS_ENABLED` | apagada | encendida, deja **leer** (anónimos incluidos) **sólo** la proyección pública de competición de las batallas `finished` mostrables en público (todos sus bots `public` o torneo con `broadcast`); nunca el replay crudo ([PRE-1](replays.md#replay-crudo-y-proyección-pública-pre-1)); el gateway ya no sirve `/replays/*` ([TD-004](../roadmap/technical-debt.md#td-004)) | integración `integration/production-readiness`, **no desplegado** |
 | `S9_METRICS_ENABLED` | apagada ⇒ `/metrics` no existe | — | — |
 
 La activación es una decisión de operación con sus precondiciones. Ver
@@ -167,6 +167,7 @@ La activación es una decisión de operación con sus precondiciones. Ver
 [TD-004](../roadmap/technical-debt.md#td-004), PR #158 (incluida en el commit de producción RC5.5).
 
 - **Una autoridad**: la API (`apps/api/src/replay-access.ts`) decide **antes** de leer el fichero. Leen el replay de una batalla: staff (rol ≥ `organizer`), el dueño de un bot participante, los miembros del equipo de un bot participante no `private`, y cualquiera sólo si `S9_PUBLIC_REPLAYS_ENABLED` está encendida y todos los bots de la batalla son públicos.
+- **Crudo restringido (PRE-1)**: leer no es recibir el fichero. El replay crudo (semilla, comandos de los bots con radio y minas, loadouts) sólo lo reciben `moderator`/`admin` y el dueño de **todos** los bots de la batalla, con la bandera pública activada o no. Todos los demás lectores, y toda ruta pública, reciben la proyección saneada de competición (`apps/api/src/replay-projection.ts`): lo que ya ve un espectador, sin nada que permita re-simular la batalla. La decisión es del backend; el visor no la toma.
 - **Sin enumeración**: «no autorizado», «no existe» e «id inválido» responden el mismo 404 (código, `error` y mensaje).
 - **Borde cerrado**: el gateway responde 404 en `/replays` y `/replays/*` (cualquier método). El replay-service sólo es alcanzable por la red interna `platform`; su ingesta sigue autenticada con `replay_ingest_secret`.
 - **Sin caché compartida**: las respuestas autorizadas llevan `Cache-Control: private, no-store`.
@@ -198,6 +199,7 @@ Las vulnerabilidades se reportan al responsable del repositorio, no en issues p�
 | Fallo cerrado del ticket | `j-fail-closed-ticket.test.ts` |
 | Rutas públicas | `h6-public-routes.test.ts` |
 | Autorización de replays (matriz actor × batalla × recurso, enumeración, bandera pública) | `apps/api/src/td004-replay-access.test.ts` |
+| Replay crudo restringido y proyección pública (matriz con bandera on/off, ausencia de semilla/comandos/radio/minas/loadout, no re-simulación, visor con la proyección) | `apps/api/src/pre1-replay-projection.test.ts` |
 | Bypass del gateway con nginx real (conf del repo, API y replay-service reales) | `infrastructure/gateway/tests/replay-gateway.test.ts` (opt-in `S9_RUN_GATEWAY_SECURITY_E2E=1`, Docker; obligatorio en el job `functional-e2e / docker-e2e` de CI) |
 | Sandbox | `apps/bot-manager/tests/sandbox-escape-suite.test.ts` y `tests/sandbox-escape/` |
 | Análisis estático y secretos | `static-analysis`, `secret-scan` |

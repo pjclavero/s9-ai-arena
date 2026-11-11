@@ -10,6 +10,7 @@
  * docs/operations/streaming.md § «Cómo se verificó».
  */
 import { execFile, spawn } from "node:child_process";
+import { grabDisplayLuma } from "./frame-check.js";
 import { existsSync, readFileSync } from "node:fs";
 import { createLogger, loadConfig, loadStreamKey, SecretRegistry } from "./config.js";
 import { StreamSupervisor, type Spawner } from "./supervisor.js";
@@ -123,6 +124,9 @@ export function main(env: NodeJS.ProcessEnv = process.env): void {
     processTree: true,
     chromiumBin: env.CHROMIUM_BIN ?? "chromium-browser",
     ffmpegBin: env.FFMPEG_BIN ?? "ffmpeg",
+    // #256 · puerta BROADCAST_RENDER_READY y vigilante: un frame del MISMO display que
+    // captura la emisión (x11grab), clasificado por frame-check.ts.
+    renderProbe: () => grabDisplayLuma(env.FFMPEG_BIN ?? "ffmpeg", config.display, config.width, config.height),
   });
 
   const capabilities: Capabilities = { nvenc: null };

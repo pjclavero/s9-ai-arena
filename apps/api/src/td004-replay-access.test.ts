@@ -207,6 +207,18 @@ const EXPECT: Record<"off" | "on", Record<string, Partial<Record<Actor, boolean>
   },
 };
 const ACTORS: Actor[] = ["anon", "A", "B", "T", "Tp", "C", "developer", "organizer", "moderator", "admin"];
+/**
+ * PRE-1 · el FICHERO crudo exige además acceso al crudo: moderator/admin o dueño de
+ * TODOS los bots participantes (C es dueño de los dos bots de team, privTeam y pub).
+ * Igual con la bandera on/off. Índice y segmento siguen la tabla de lectura de arriba
+ * (proyectados sin crudo: lo cubre pre1-replay-projection.test.ts).
+ */
+const RAW: Record<string, Actor[]> = {
+  priv: ["moderator", "admin"],
+  team: ["C", "moderator", "admin"],
+  privTeam: ["C", "moderator", "admin"],
+  pub: ["C", "moderator", "admin"],
+};
 
 describe("TD-004 · matriz actor × batalla × recurso (índice, segmento, archivo)", () => {
   for (const flag of ["off", "on"] as const) {
@@ -217,8 +229,9 @@ describe("TD-004 · matriz actor × batalla × recurso (índice, segmento, archi
           const app = flag === "on" ? on : off;
           for (const res of RESOURCES) {
             const r = await get(app, actor, pathFor(B[battle], res));
-            expect(r.status, `${res} ${battle} ${actor} flag=${flag}`).toBe(allowed ? 200 : 404);
-            if (allowed) {
+            const ok = allowed && (res !== "file" || RAW[battle].includes(actor));
+            expect(r.status, `${res} ${battle} ${actor} flag=${flag}`).toBe(ok ? 200 : 404);
+            if (ok) {
               expect(r.headers["cache-control"]).toBe("private, no-store");
               if (res === "index") expect(r.body.battleId).toBe(B[battle]);
               if (res === "segment") expect(r.body.snapshots.length).toBeGreaterThan(0);

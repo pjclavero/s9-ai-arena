@@ -10,6 +10,11 @@
  * (`arena_replays:/data/replays:ro`) y lee `battles.replay_ref`; el
  * replay-service queda interno (ingesta del worker).
  *
+ * PRE-1 · Leer no es recibir el crudo: el fichero, el índice de almacén y los
+ * segmentos sin proyectar sólo salen con `rawReplayAllowed` (replay-projection.ts);
+ * cualquier otro lector recibe índice y segmentos PROYECTADOS (sin semilla, sin
+ * comandos, sin loadouts) y un 404 uniforme en el fichero.
+ *
  * Toda respuesta lleva `Cache-Control: private, no-store`: un contenido
  * autorizado por usuario no se puede quedar en una caché compartida.
  */
@@ -28,6 +33,7 @@ import { anonQuota, type AnonQuotaConfig } from "../middleware/anon-quota.js";
 import { publicReplaysEnabledFromEnv } from "../public-replays.js";
 import { getReadableReplayBattleOr404, replayNotFound, whereReplayReadable } from "../replay-access.js";
 import { applyReplayListFilters, assertCursorShape, parseReplayListFilters } from "../services/replay-list.js";
+import { projectIndex, projectSegment, rawReplayAllowed } from "../replay-projection.js";
 
 const NO_STORE = "private, no-store";
 
@@ -40,7 +46,7 @@ const NO_STORE = "private, no-store";
  * tabla `bots` para los nombres. Sólo geometría pública y nombres: ni semilla,
  * ni loadouts, ni nada que el visor del directo no reciba ya.
  */
-interface ReplayViewerMeta {
+export interface ReplayViewerMeta {
   world: {
     widthM: number;
     heightM: number;
@@ -53,7 +59,7 @@ interface ReplayViewerMeta {
 
 const viewerMetaCache = new Map<string, ReplayViewerMeta>(); // `${battleId}:${sha}` → meta
 
-async function viewerMetaOf(db: Db, battle: Record<string, any>, sha: string): Promise<ReplayViewerMeta | null> {
+export async function viewerMetaOf(db: Db, battle: Record<string, any>, sha: string): Promise<ReplayViewerMeta | null> {
   const key = `${battle.id}:${sha}`;
   const hit = viewerMetaCache.get(key);
   if (hit) return hit;
@@ -202,6 +208,10 @@ export function replayRoutes(
     "getReplay",
     async (req, res) => {
       const battle = await getReadableReplayBattleOr404(db, pathParam(req, "battleId"), req.auth, publicReplaysEnabled);
+      // PRE-1 · el FICHERO CRUDO (semilla + comandos + loadouts) sólo con autorización
+      // explícita (replay-projection.ts). Quien sólo puede leer la proyección recibe el
+      // MISMO 404 que un replay inexistente: el visor usa índice y segmentos.
+      if (!(await rawReplayAllowed(db, battle.id, req.auth))) throw replayNotFound();
       // Política 23.1: el replay vive en un archivo; la BD solo guarda la referencia.
       let bytes: Buffer;
       try {
@@ -222,7 +232,12 @@ export function replayRoutes(
       const battle = await getReadableReplayBattleOr404(db, pathParam(req, "battleId"), req.auth, publicReplaysEnabled);
       const index = indexOf(battle);
       const meta = await viewerMetaOf(db, battle, index.sha256);
-      noStore(res).json(meta ? { ...index, world: meta.world, roster: meta.roster } : index);
+      // PRE-1 · índice de almacén completo sólo con acceso al crudo; el resto, proyectado.
+      if (await rawReplayAllowed(db, battle.id, req.auth)) {
+        noStore(res).json(meta ? { ...index, world: meta.world, roster: meta.roster } : index);
+        return;
+      }
+      noStore(res).json(projectIndex(index, meta));
     },
     (req, res, next) => anonQuota(db, "replay-index", quota)(req, res, next),
   );
@@ -238,7 +253,10 @@ export function replayRoutes(
       if (!d) throw replayNotFound();
       const seg = sliceSegment(index, d, req.query.fromTick, req.query.toTick);
       if (!seg.ok) throw badRequest("Rango de ticks inválido (fromTick <= toTick, numéricos)");
-      noStore(res).json(seg.body);
+      // PRE-1 · sin acceso al crudo: snapshots y eventos públicos, NUNCA comandos
+      // (tampoco con `debugOpen`).
+      const raw = await rawReplayAllowed(db, battle.id, req.auth);
+      noStore(res).json(raw ? seg.body : projectSegment(seg.body));
     },
     (req, res, next) => anonQuota(db, "replay-segment", quota)(req, res, next),
   );

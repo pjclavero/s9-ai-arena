@@ -221,6 +221,12 @@ function FinishedScreen({ config, last }: { config: BroadcastConfig; last: Battl
           Última batalla: {scoreLine(last)} · {participantsLine(last)}
         </p>
       )}
+      {/* #256 · REPLAY_STREAMING_SUPPORTED = NO: se dice, no se finge una repetición. */}
+      {config.target?.kind === "battle" && (
+        <p data-testid="broadcast-no-replay" style={{ fontSize: 24, opacity: 0.75 }}>
+          La repetición de esta batalla no se retransmite.
+        </p>
+      )}
     </section>
   );
 }

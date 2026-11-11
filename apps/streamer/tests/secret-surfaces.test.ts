@@ -84,6 +84,9 @@ function binariosFalsos(): { ffmpeg: string; chromium: string } {
     ffmpeg,
     [
       "#!/bin/sh",
+      // #256 · lectura de 1 frame de la puerta de render: frame con contenido ⇒ la puerta
+      // se abre y arranca el ffmpeg DE EMISIÓN (el que mide esta prueba), no sólo la sonda.
+      'case " $* " in *" -frames:v 1 "*) head -c 20736 /dev/urandom; exit 0 ;; esac',
       "printf 'FLV\\001\\005\\000\\000\\000\\011\\000\\000\\000\\000' >&3 2>/dev/null",
       "sleep 30",
       "",
@@ -195,8 +198,12 @@ describe("EQ5b §3 · la clave de emisión NO está en el argv de ffmpeg", () =>
       expect(start.status).toBe(200);
 
       // Espera a que ffmpeg (falso) esté vivo: sin él la prueba sería vacía.
+      // #256 · el de EMISIÓN (con -f x11grab y sin -frames:v), no la sonda de la puerta de render.
       const conFfmpeg = await esperar(() =>
-        arbol(s.proc.pid!).some((pid) => leer(`/proc/${pid}/cmdline`).includes("ffmpeg-falso")),
+        arbol(s.proc.pid!).some((pid) => {
+          const c = leer(`/proc/${pid}/cmdline`);
+          return c.includes("ffmpeg-falso") && c.includes("pipe:3");
+        }),
       );
       expect(conFfmpeg, "ffmpeg no llegó a lanzarse: la prueba no mediría nada").toBe(true);
 

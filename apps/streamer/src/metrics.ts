@@ -106,6 +106,10 @@ export interface MetricsView {
   counters?: { starts: number; stops: number; failures: number; killed: number };
   /** STREAMER §28 · segundos desde el arranque de la emisión pedida (0 sin emisión). */
   uptimeSeconds?: number;
+  /** #256 · puerta de render: 1 si la página está pintada en el display (frame visible). */
+  renderReady?: boolean;
+  /** #256 · veces que la puerta venció o el vigilante vio la pantalla en blanco. */
+  renderBlankEvents?: number;
 }
 
 /** Texto Prometheus (contrato con E10: scrape en la red platform). */
@@ -175,6 +179,13 @@ export function renderPrometheus(view: MetricsView): string {
     "# HELP stream_killed_total Procesos hijos que hubo que matar con SIGKILL",
     "# TYPE stream_killed_total counter",
     `stream_killed_total ${view.counters?.killed ?? 0}`,
+    // #256 · la emisión de YouTube salió en blanco con todas las métricas en verde.
+    "# HELP streamer_render_ready 1 si el display muestra la pagina pintada (frame no blanco ni uniforme)",
+    "# TYPE streamer_render_ready gauge",
+    `streamer_render_ready ${view.renderReady ? 1 : 0}`,
+    "# HELP streamer_render_blank_total Veces que la pagina no se pinto a tiempo o la pantalla se quedo en blanco",
+    "# TYPE streamer_render_blank_total counter",
+    `streamer_render_blank_total ${view.renderBlankEvents ?? 0}`,
     "",
   ].join("\n");
 }
