@@ -568,7 +568,7 @@ export function evaluateProxyRequest(
     const allRaw = url.searchParams.get("all");
     if (allRaw !== null && !["0", "1", "true", "false"].includes(allRaw)) return deny(`all no válido: ${allRaw}`);
     const f = parseListFilters(url.searchParams.get("filters"));
-    if (!f.ok) return deny(f.reason);
+    if (f.ok === false) return deny(f.reason);
     const all = allRaw === "1" || allRaw === "true";
     const owner = Object.entries(ownerLabels(policy)).map(([k, v]) => `${k}=${v}`);
     const filters = JSON.stringify({ label: [...owner, ...f.labels] });
