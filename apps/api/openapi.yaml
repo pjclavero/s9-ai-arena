@@ -77,7 +77,15 @@ info:
   # (#255 R1, mismo 0.17.0 aún no publicado: `expectBotIds` → 409 team_bots_changed si
   # el conjunto de bots cambió tras la previsualización; outcome `retired` y
   # summary.retired: los bots retirados del dueño no se tocan.)
-  version: 0.17.0
+  # 0.18.0 · MG (aditivo, admin): getPublicAccessSettings / updatePublicAccessSettings
+  # (GET/PATCH /admin/settings/public-access): los flags de espectador y replays públicos
+  # pasan a ser ajustes de RUNTIME persistidos (el entorno es sólo bootstrap y fallback),
+  # con booleanos estrictos y auditoría. StreamingTarget y StreamingDestination ganan
+  # `broadcastAvailable`, `reason`, `publicSpectateEffective` y `publicReplaysEffective`
+  # (estado EFECTIVO: lo que /broadcast anónima puede leer de verdad con la política
+  # única); `publicBroadcastable` deja de ser alias de `broadcastable` y vale lo mismo
+  # que `broadcastAvailable`.
+  version: 0.18.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -1984,6 +1992,39 @@ paths:
             application/json:
               schema: { type: array, items: { $ref: '#/components/schemas/AuditEntry' } }
 
+  # ------------------------------------------- MG · ajustes de runtime (admin)
+  /admin/settings/public-access:
+    get:
+      tags: [admin]
+      operationId: getPublicAccessSettings
+      summary: >-
+        MG · Acceso público / Broadcast: valor VIGENTE del espectador público y de los
+        replays públicos (persistidos; el entorno es sólo el bootstrap y el fallback), su
+        origen, el último cambio, la latencia máxima de propagación a los demás procesos y
+        el estado efectivo global con su motivo. Sin secretos.
+      x-min-role: admin
+      responses:
+        '200': { description: Ajustes, content: { application/json: { schema: { $ref: '#/components/schemas/PublicAccessSettings' } } } }
+    patch:
+      tags: [admin]
+      operationId: updatePublicAccessSettings
+      summary: >-
+        MG · Cambia en caliente (sin recrear servicios) el espectador público y/o los
+        replays públicos. Booleanos ESTRICTOS (ni cadenas, ni números, ni null; claves
+        desconocidas ⇒ 400). Cada cambio se audita en audit_log
+        (`settings.public_access.update`: actor, instante, valor anterior y nuevo). El
+        proceso que lo guarda lo aplica al instante; los demás (otras réplicas de la API y
+        el tournament-worker) en ≤ `propagationMaxMs`.
+      x-min-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublicAccessSettingsPatch' }
+      responses:
+        '200': { description: Guardado, content: { application/json: { schema: { $ref: '#/components/schemas/PublicAccessSettings' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
   # --------------------------------------------------------------- SYSTEM (R8)
   /system/status:
     get:
@@ -3058,7 +3099,11 @@ components:
         broadcastable: { type: boolean, description: 'VISIBILIDAD · autorizado para retransmisión (misma regla que la lectura pública de /broadcast). No exige bots públicos.' }
         broadcastBlockedReason: { type: string, nullable: true, enum: [battle_not_public, tournament_not_broadcastable, null], description: 'battle_not_public · batalla suelta con bots no públicos (sólo un torneo con broadcast autoriza mostrarlos). tournament_not_broadcastable · batalla de un torneo sin broadcast con bots no públicos.' }
         tournamentBroadcast: { type: boolean, nullable: true }
-        publicBroadcastable: { type: boolean, deprecated: true, description: 'Alias de broadcastable.' }
+        publicBroadcastable: { type: boolean, deprecated: true, description: 'MG · igual que broadcastAvailable (antes alias de broadcastable).' }
+        broadcastAvailable: { type: boolean, description: 'MG · /broadcast (anónima) puede mostrar el destino AHORA: misma política (whereBattleReadable para un anónimo) con los ajustes públicos vigentes, el estado de la batalla, la visibilidad de los bots y del torneo, y un streamer configurado.' }
+        reason: { $ref: '#/components/schemas/BroadcastUnavailableReason' }
+        publicSpectateEffective: { type: boolean, description: 'MG · un anónimo puede ver este destino en directo ahora.' }
+        publicReplaysEffective: { type: boolean, description: 'MG · un anónimo puede leer esta batalla terminada ahora.' }
         delaySeconds: { type: number }
         delaySource: { type: string, enum: [snapshot, ruleset, final_visible, none] }
 
@@ -3077,6 +3122,71 @@ components:
         broadcastable: { type: boolean }
         broadcastBlockedReason: { type: string, nullable: true, enum: [battle_not_public, tournament_not_broadcastable, null] }
         tournamentBroadcast: { type: boolean, nullable: true }
+        broadcastAvailable: { type: boolean }
+        reason: { $ref: '#/components/schemas/BroadcastUnavailableReason' }
+        publicSpectateEffective: { type: boolean }
+        publicReplaysEffective: { type: boolean }
+
+    BroadcastUnavailableReason:
+      type: string
+      nullable: true
+      description: >-
+        MG · motivo REAL por el que /broadcast no puede mostrar el destino (null si puede).
+        public_spectate_disabled · espectador público desactivado; public_replays_disabled ·
+        replays públicos desactivados (batalla o torneo terminado); battle_not_public /
+        tournament_not_broadcastable · la batalla no es retransmisible por la visibilidad
+        de sus bots o de su torneo; battle_not_started · programada (se verá al empezar);
+        battle_not_available · fallida o revertida; target_not_available · torneo
+        cancelado; streaming_not_configured · sin streamer; other · otro.
+      enum:
+        - public_spectate_disabled
+        - public_replays_disabled
+        - battle_not_public
+        - tournament_not_broadcastable
+        - battle_not_started
+        - battle_not_available
+        - target_not_available
+        - streaming_not_configured
+        - other
+        - null
+
+    PublicAccessSettings:
+      type: object
+      properties:
+        publicSpectateEnabled: { type: boolean }
+        publicReplaysEnabled: { type: boolean }
+        source: { type: string, enum: [database, environment], description: 'De dónde sale el valor vigente en el proceso que responde.' }
+        updatedAt: { type: string, format: date-time, nullable: true }
+        updatedBy: { type: string, format: uuid, nullable: true }
+        propagationMaxMs: { type: integer, description: 'Latencia máxima de un cambio en los demás procesos (intervalo de relectura).' }
+        defaults:
+          type: object
+          description: 'Valores del entorno de este proceso (bootstrap y fallback).'
+          properties:
+            publicSpectateEnabled: { type: boolean }
+            publicReplaysEnabled: { type: boolean }
+        effective:
+          type: object
+          properties:
+            publicSpectate: { type: boolean }
+            publicReplays: { type: boolean }
+            broadcastLiveAvailable: { type: boolean, description: 'Requisitos GLOBALES para retransmitir una batalla en directo (espectador público y streamer). El detalle por destino lo da getStreamingTarget.' }
+            reason: { $ref: '#/components/schemas/BroadcastUnavailableReason' }
+        changed: { type: boolean, description: 'Sólo en la respuesta del PATCH.' }
+        before:
+          type: object
+          description: 'Sólo en la respuesta del PATCH: valores anteriores.'
+          properties:
+            publicSpectateEnabled: { type: boolean }
+            publicReplaysEnabled: { type: boolean }
+
+    PublicAccessSettingsPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        publicSpectateEnabled: { type: boolean }
+        publicReplaysEnabled: { type: boolean }
 
     StreamingIngests:
       type: object
@@ -3123,10 +3233,10 @@ components:
           description: 'true si SMOKE_BOT_DIGEST está definido. NO se expone el valor.'
         publicSpectateEnabled:
           type: boolean
-          description: 'R11 · Lectura de S9_PUBLIC_SPECTATE_ENABLED: si es false, /public/battles/live responde enabled=false, battles=[].'
+          description: 'R11 · Valor VIGENTE del espectador público (ajuste de runtime, MG; S9_PUBLIC_SPECTATE_ENABLED es sólo el bootstrap): si es false, /public/battles/live responde enabled=false, battles=[].'
         publicReplaysEnabled:
           type: boolean
-          description: 'R11 · Lectura de S9_PUBLIC_REPLAYS_ENABLED: si es false, /public/replays responde enabled=false, items=[].'
+          description: 'R11 · Valor VIGENTE de los replays públicos (ajuste de runtime, MG; S9_PUBLIC_REPLAYS_ENABLED es sólo el bootstrap): si es false, /public/replays responde enabled=false, items=[].'
         battlesByStatus: { type: object, additionalProperties: { type: integer } }
         buildsByStatus: { type: object, additionalProperties: { type: integer } }
         botVersionsByState: { type: object, additionalProperties: { type: integer } }

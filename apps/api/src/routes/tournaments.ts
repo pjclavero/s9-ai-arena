@@ -132,9 +132,11 @@ const NO_STORE = "private, no-store";
 
 export function tournamentRoutes(
   db: Db,
-  vis: BattleVisibility = { publicReplays: false, publicSpectate: false },
+  // MG · visibilidad fija (tests) o getter de los ajustes de runtime: se lee por petición.
+  visibility: BattleVisibility | (() => BattleVisibility) = { publicReplays: false, publicSpectate: false },
 ): Router {
   const router = Router();
+  const vis = (): BattleVisibility => (typeof visibility === "function" ? visibility() : visibility);
 
   defineOperation(router, "listTournaments", async (req, res) => {
     const limit = parseLimit(req.query.limit);
@@ -261,7 +263,7 @@ export function tournamentRoutes(
         db,
         db("battles").where("battles.tournament_id", t.id).select("battles.*"),
         req.auth,
-        vis,
+        vis(),
       ).orderBy("battles.created_at", "asc");
       const matches = await db("matches").where({ tournament_id: t.id });
       const roundByMatch = new Map(matches.map((m: Record<string, unknown>) => [m.id as string, Number(m.round)]));

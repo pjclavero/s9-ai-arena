@@ -6,6 +6,7 @@ import { mountVersionEndpoint } from "../../../packages/build-info/index.js";
 import { resolveTrustProxyHops } from "./middleware/proxy-trust.js";
 import { startOrphanReconciler, startRetentionScheduler } from "./routes/streaming.js";
 import { streamerClientFromEnv } from "./services/streamer-client.js";
+import { RuntimeSettingsStore } from "./runtime-settings.js";
 
 const db = createDb();
 const port = Number(process.env.PORT ?? 8080);
@@ -32,7 +33,13 @@ root.get("/healthz", (_req, res) => res.json({ status: "ok", service: "api" }));
 // es señal de infraestructura y el test de conformidad prohíbe rutas fuera del
 // contrato de E1 dentro de la app.
 mountVersionEndpoint(root, "api");
-root.use(createApp({ db, trustProxyHops }));
+// MG · ajustes de runtime: la API CREA la fila si falta con los valores de su entorno
+// (bootstrap: desplegar no cambia el comportamiento) y después manda lo persistido.
+// Se relee cada S9_RUNTIME_SETTINGS_REFRESH_MS (5 s por defecto).
+const runtimeSettings = new RuntimeSettingsStore(db, { bootstrap: true });
+await runtimeSettings.refresh();
+runtimeSettings.start();
+root.use(createApp({ db, trustProxyHops, runtimeSettings }));
 
 // EQ5b · retención programada de grabaciones MP4 (sólo si hay streamer configurado
 // y la política está activa en Administración → Streaming; cada borrado se audita).

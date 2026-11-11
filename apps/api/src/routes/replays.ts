@@ -31,6 +31,7 @@ import { badRequest } from "../errors.js";
 import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCursorQuery } from "../serialize.js";
 import { anonQuota, type AnonQuotaConfig } from "../middleware/anon-quota.js";
 import { publicReplaysEnabledFromEnv } from "../public-replays.js";
+import { flagSource } from "../runtime-settings.js";
 import { getReadableReplayBattleOr404, replayNotFound, whereReplayReadable } from "../replay-access.js";
 import { applyReplayListFilters, assertCursorShape, parseReplayListFilters } from "../services/replay-list.js";
 import { projectIndex, projectSegment, rawReplayAllowed } from "../replay-projection.js";
@@ -120,9 +121,11 @@ function noStore(res: Response): Response {
 export function replayRoutes(
   db: Db,
   quota: AnonQuotaConfig,
-  publicReplaysEnabled: boolean = publicReplaysEnabledFromEnv(),
+  // MG · booleano fijo (tests) o getter de los ajustes de runtime: se lee por petición.
+  publicReplaysEnabled?: boolean | (() => boolean),
 ): Router {
   const router = Router();
+  const replaysOn = flagSource(publicReplaysEnabled, () => publicReplaysEnabledFromEnv());
   const decoded = new DecodedReplayCache();
 
   /** Índice del replay de una batalla YA autorizada, o 404 uniforme. */
@@ -146,7 +149,7 @@ export function replayRoutes(
     const readable = () =>
       applyReplayListFilters(
         db,
-        whereReplayReadable(db, db("battles").whereNotNull("battles.replay_ref"), req.auth, publicReplaysEnabled),
+        whereReplayReadable(db, db("battles").whereNotNull("battles.replay_ref"), req.auth, replaysOn()),
         filters,
         req.auth,
       );
@@ -207,7 +210,7 @@ export function replayRoutes(
     router,
     "getReplay",
     async (req, res) => {
-      const battle = await getReadableReplayBattleOr404(db, pathParam(req, "battleId"), req.auth, publicReplaysEnabled);
+      const battle = await getReadableReplayBattleOr404(db, pathParam(req, "battleId"), req.auth, replaysOn());
       // PRE-1 · el FICHERO CRUDO (semilla + comandos + loadouts) sólo con autorización
       // explícita (replay-projection.ts). Quien sólo puede leer la proyección recibe el
       // MISMO 404 que un replay inexistente: el visor usa índice y segmentos.
@@ -229,7 +232,7 @@ export function replayRoutes(
     router,
     "getReplayIndex",
     async (req, res) => {
-      const battle = await getReadableReplayBattleOr404(db, pathParam(req, "battleId"), req.auth, publicReplaysEnabled);
+      const battle = await getReadableReplayBattleOr404(db, pathParam(req, "battleId"), req.auth, replaysOn());
       const index = indexOf(battle);
       const meta = await viewerMetaOf(db, battle, index.sha256);
       // PRE-1 · índice de almacén completo sólo con acceso al crudo; el resto, proyectado.
@@ -247,7 +250,7 @@ export function replayRoutes(
     router,
     "getReplaySegment",
     async (req, res) => {
-      const battle = await getReadableReplayBattleOr404(db, pathParam(req, "battleId"), req.auth, publicReplaysEnabled);
+      const battle = await getReadableReplayBattleOr404(db, pathParam(req, "battleId"), req.auth, replaysOn());
       const index = indexOf(battle);
       const d = decoded.get(battle.id, battle.replay_ref, index);
       if (!d) throw replayNotFound();
@@ -271,7 +274,7 @@ export function replayRoutes(
     router,
     "verifyReplay",
     async (req, res) => {
-      const battle = await getReadableReplayBattleOr404(db, pathParam(req, "battleId"), req.auth, publicReplaysEnabled);
+      const battle = await getReadableReplayBattleOr404(db, pathParam(req, "battleId"), req.auth, replaysOn());
       let bytes: Buffer;
       try {
         bytes = await readFile(battle.replay_ref);

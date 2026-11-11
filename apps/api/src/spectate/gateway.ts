@@ -117,8 +117,12 @@ export interface SpectateGatewayOptions {
    * Que la API deje de emitir tickets anónimos y que el gateway rechace los
    * anónimos son dos controles independientes A PROPÓSITO: un despliegue con la
    * variable puesta en un servicio y no en el otro falla CERRADO en el canal.
+   *
+   * MG · booleano fijo (tests) o getter SÍNCRONO de los ajustes de runtime
+   * (RuntimeSettingsStore.getter en el tournament-worker): se evalúa en cada
+   * conexión, así que un cambio desde la admin se aplica sin reiniciar el worker.
    */
-  publicSpectateEnabled?: boolean;
+  publicSpectateEnabled?: boolean | (() => boolean);
 }
 
 /** R13.2 (hardening) · frame WS entrante máximo (protege contra floods de payload). */
@@ -134,11 +138,12 @@ export class SpectateGateway {
   /** jti ya consumidos → epoch ms de expiración (para poder purgarlos). */
   private readonly usedTickets = new Map<string, number>();
   private readonly maxClientsPerBattle: number;
-  private readonly publicSpectateEnabled: boolean;
+  private readonly publicSpectateEnabled: () => boolean;
 
   constructor(opts: SpectateGatewayOptions = {}) {
     this.maxClientsPerBattle = opts.maxClientsPerBattle ?? DEFAULT_MAX_CLIENTS_PER_BATTLE;
-    this.publicSpectateEnabled = opts.publicSpectateEnabled ?? publicSpectateEnabledFromEnv();
+    const ps = opts.publicSpectateEnabled ?? publicSpectateEnabledFromEnv();
+    this.publicSpectateEnabled = typeof ps === "function" ? ps : () => ps;
     if (opts.wss) {
       this.wss = opts.wss;
       this.ownsWss = false;
@@ -246,7 +251,7 @@ export class SpectateGateway {
     // los feeds: el rechazo no distingue "batalla en directo" de "batalla
     // inexistente" (no filtra la existencia de un id concreto, igual que
     // getPublicLiveBattle responde 404 con la capability apagada).
-    if (claims.anon === true && !this.publicSpectateEnabled) {
+    if (claims.anon === true && !this.publicSpectateEnabled()) {
       ws.close(4403, "public_spectate_disabled");
       return;
     }

@@ -18,6 +18,35 @@ import { loadRuleset } from "../../../../packages/game-rules/index.js";
 import { rulesOf } from "./battle-rules.js";
 import { resolveBattleRuleset } from "./battle-ruleset-resolver.js";
 import { publicShowabilityOf, type BroadcastBlockedReason } from "../replay-access.js";
+import type { BattleVisibility } from "../battle-access.js";
+import {
+  battleBroadcastState,
+  tournamentBroadcastState,
+  type BroadcastEffectiveState,
+  type BroadcastUnavailableReason,
+} from "../broadcast-effective.js";
+
+/** MG · visibilidad pública por defecto si el llamador no pasa la vigente (fail-closed). */
+const NO_PUBLIC: BattleVisibility = { publicSpectate: false, publicReplays: false };
+
+/** MG · campos de estado EFECTIVO que acompañan a un destino (broadcast-effective.ts). */
+export interface BroadcastEffectiveFields {
+  /** /broadcast (anónima) puede mostrar el destino AHORA (misma política que lee la página). */
+  broadcastAvailable: boolean;
+  /** Motivo real si no (null si sí). */
+  reason: BroadcastUnavailableReason | null;
+  publicSpectateEffective: boolean;
+  publicReplaysEffective: boolean;
+}
+
+function effectiveFields(e: BroadcastEffectiveState | null): BroadcastEffectiveFields {
+  return {
+    broadcastAvailable: !!e?.broadcastAvailable,
+    reason: e ? e.reason : "other",
+    publicSpectateEffective: !!e?.publicSpectateEffective,
+    publicReplaysEffective: !!e?.publicReplaysEffective,
+  };
+}
 
 // ── catálogo de plataformas (extensible: añadir una entrada aquí) ───────────
 export interface PlatformDef {
@@ -624,7 +653,7 @@ export function credentialBinding(
 export type TargetKind = "battle" | "tournament";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export interface TargetInfo {
+export interface TargetInfo extends BroadcastEffectiveFields {
   kind: TargetKind;
   id: string;
   label: string;
@@ -646,7 +675,10 @@ export interface TargetInfo {
   broadcastBlockedReason: BroadcastBlockedReason | null;
   /** El torneo autoriza la retransmisión (destino torneo, o batalla de un torneo). */
   tournamentBroadcast: boolean | null;
-  /** @deprecated alias de `broadcastable` (compatibilidad con clientes anteriores). */
+  /**
+   * @deprecated MG · ya NO es alias de `broadcastable`: vale lo mismo que
+   * `broadcastAvailable` (antes decía `true` con el espectador público apagado).
+   */
   publicBroadcastable: boolean;
   delaySeconds: number;
   delaySource: "snapshot" | "ruleset" | "final_visible" | "none";
@@ -663,7 +695,11 @@ function delayOf(r: { spectator?: { delaySeconds?: number } } | null | undefined
 }
 
 /** null = no existe. El retardo SALE de la copia de reglas (única fuente de verdad). */
-export async function resolveTarget(db: Db, t: { kind: TargetKind; id: string }): Promise<TargetInfo | null> {
+export async function resolveTarget(
+  db: Db,
+  t: { kind: TargetKind; id: string },
+  vis: BattleVisibility = NO_PUBLIC,
+): Promise<TargetInfo | null> {
   if (t.kind === "battle") {
     const b = await db("battles")
       .where({ id: t.id })
@@ -675,6 +711,7 @@ export async function resolveTarget(db: Db, t: { kind: TargetKind; id: string })
     const show = await publicShowabilityOf(db, t.id);
     if (!show) return null;
     const pub = show.showable;
+    const eff = effectiveFields(await battleBroadcastState(db, t.id, vis));
     let delaySeconds = 0;
     let delaySource: TargetInfo["delaySource"] = "none";
     if (b.spectator_mode === "visible") {
@@ -711,7 +748,8 @@ export async function resolveTarget(db: Db, t: { kind: TargetKind; id: string })
       broadcastable: pub,
       broadcastBlockedReason: show.reason,
       tournamentBroadcast: show.tournamentBroadcast,
-      publicBroadcastable: pub,
+      publicBroadcastable: eff.broadcastAvailable,
+      ...eff,
       delaySeconds,
       delaySource,
     };
@@ -723,6 +761,7 @@ export async function resolveTarget(db: Db, t: { kind: TargetKind; id: string })
   if (!tr) return null;
   const snap = rulesOf(tr);
   const d = snap ? delayOf(snap.engineRuleset) : null;
+  const teff = effectiveFields(await tournamentBroadcastState(db, t.id, vis));
   return {
     kind: "tournament",
     id: t.id,
@@ -734,7 +773,8 @@ export async function resolveTarget(db: Db, t: { kind: TargetKind; id: string })
     broadcastable: true,
     broadcastBlockedReason: null,
     tournamentBroadcast: tr.broadcast === true,
-    publicBroadcastable: true,
+    publicBroadcastable: teff.broadcastAvailable,
+    ...teff,
     delaySeconds: d ?? 0,
     delaySource: d !== null ? "snapshot" : "none",
   };
@@ -820,7 +860,7 @@ export function validateIngestsPatch(
 }
 
 // ── STREAMING-UX · selector de destinos sin UUID (§4, §6) ───────────────────
-export interface DestinationItem {
+export interface DestinationItem extends BroadcastEffectiveFields {
   kind: TargetKind;
   id: string;
   /** Nombre legible: «Bot A vs Bot B», «Rojo vs Azul (4v4)» o el nombre del torneo. */
@@ -863,8 +903,9 @@ export function battleLabel(parts: { team: string; botName: string | null }[]): 
  */
 export async function listDestinations(
   db: Db,
-  o: { limit?: number } = {},
+  o: { limit?: number; vis?: BattleVisibility } = {},
 ): Promise<{ battles: DestinationItem[]; tournaments: DestinationItem[] }> {
+  const vis = o.vis ?? NO_PUBLIC;
   const limit = Math.min(Math.max(o.limit ?? 20, 1), 50);
   const rows = await db("battles")
     .leftJoin("tournaments", "tournaments.id", "battles.tournament_id")
@@ -909,6 +950,7 @@ export async function listDestinations(
       broadcastable: !!show?.showable,
       broadcastBlockedReason: show?.reason ?? null,
       tournamentBroadcast: show?.tournamentBroadcast ?? null,
+      ...effectiveFields(await battleBroadcastState(db, r.id, vis)),
     });
   }
   const trs = await db("tournaments")
@@ -917,7 +959,8 @@ export async function listDestinations(
     .orderBy("created_at", "desc")
     .limit(limit)
     .select("id", "name", "state", "mode", "created_at", "broadcast");
-  const tournaments: DestinationItem[] = trs.map((t: Record<string, unknown>) => ({
+  const tournaments: DestinationItem[] = [];
+  for (const t of trs as Record<string, unknown>[]) tournaments.push({
     kind: "tournament" as const,
     id: t.id as string,
     label: String(t.name ?? "Torneo").slice(0, 120),
@@ -931,7 +974,8 @@ export async function listDestinations(
     broadcastable: true,
     broadcastBlockedReason: null,
     tournamentBroadcast: t.broadcast === true,
-  }));
+    ...effectiveFields(await tournamentBroadcastState(db, t.id as string, vis)),
+  });
   return { battles, tournaments };
 }
 

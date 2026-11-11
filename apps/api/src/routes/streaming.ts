@@ -46,6 +46,7 @@ import { audit } from "../audit.js";
 import { parseLimit } from "../serialize.js";
 import { isSealedSecret, sealSecret } from "../../../../packages/stream-secrets/index.js";
 import { StreamerUnavailable, type StreamerClient } from "../services/streamer-client.js";
+import type { BattleVisibility } from "../battle-access.js";
 import {
   appliedConfig,
   applySettingsPatch,
@@ -81,6 +82,12 @@ export interface StreamingDeps {
    * STREAMING_ALLOW_INTERNAL_INGEST=1; nunca en el Compose).
    */
   allowInternalIngest?: boolean;
+  /**
+   * MG · visibilidad pública VIGENTE (RuntimeSettingsStore.getter). Con ella el
+   * destino dice si /broadcast (anónima) puede leerlo de verdad. Sin ella, fail-closed
+   * (ningún flag público).
+   */
+  visibility?: () => BattleVisibility;
 }
 
 /** Sobre guardado en BD (jsonb o texto). */
@@ -155,6 +162,16 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
   const base = deps.broadcastBaseUrl ?? process.env.STREAMER_BROADCAST_BASE_URL ?? "http://web:3000/broadcast";
   const allowInternalIngest = deps.allowInternalIngest ?? process.env.STREAMING_ALLOW_INTERNAL_INGEST === "1";
   const actor = (req: Request) => req.auth?.userId ?? null;
+  const visibility = deps.visibility ?? (() => ({ publicSpectate: false, publicReplays: false }));
+  /** MG · sin streamer configurado no hay retransmisión, aunque /broadcast pudiera leerlo. */
+  function withStreamerState<T extends { broadcastAvailable: boolean; reason: string | null; publicBroadcastable?: boolean }>(
+    x: T,
+  ): T {
+    if (deps.streamer.configured || !x.broadcastAvailable) return x;
+    const out = { ...x, broadcastAvailable: false, reason: "streaming_not_configured" };
+    if ("publicBroadcastable" in x) out.publicBroadcastable = false;
+    return out;
+  }
 
   // EQ5c (P2-4) · cerrojo de las operaciones de control (start/restart/stop):
   // en serie dentro del proceso. Entre procesos lo cubren dos órdenes: el stop
@@ -395,9 +412,10 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
   defineOperation(router, "getStreamingTarget", async (req, res) => {
     const t = parseTarget(req.query.kind, req.query.id);
     if (!t) throw badRequest("kind (battle|tournament) e id (UUID) obligatorios");
-    const info = await resolveTarget(db, t);
+    const info = await resolveTarget(db, t, visibility());
     if (!info) throw notFound("Destino no encontrado");
-    res.json(info);
+    res.setHeader("Cache-Control", "no-store");
+    res.json(withStreamerState(info));
   });
 
   // ── configuración ─────────────────────────────────────────────────────────
@@ -555,7 +573,8 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
   defineOperation(router, "listStreamingDestinations", async (req, res) => {
     const limit = parseLimit(req.query.limit);
     res.setHeader("Cache-Control", "no-store");
-    res.json(await listDestinations(db, { limit }));
+    const d = await listDestinations(db, { limit, vis: visibility() });
+    res.json({ battles: d.battles.map(withStreamerState), tournaments: d.tournaments.map(withStreamerState) });
   });
 
   // ── credenciales ──────────────────────────────────────────────────────────
@@ -723,7 +742,7 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
   async function startPrecheck(t: { kind: "battle" | "tournament"; id: string }): Promise<{ diskCheckedFor: string }> {
     const s = await loadSettings(db);
     if (!s.enabled) throw conflict("streaming_disabled", "El streaming está desactivado: actívalo antes de emitir");
-    const info = await resolveTarget(db, t);
+    const info = await resolveTarget(db, t, visibility());
     if (!info) throw notFound("Destino no encontrado");
     // VISIBILIDAD · la condición ya NO es «todos los bots públicos» sino «el destino está
     // autorizado para retransmisión» (resolveTarget → wherePubliclyShowable), con el motivo real.

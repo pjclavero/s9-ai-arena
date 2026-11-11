@@ -13,6 +13,7 @@ import { versionPayload } from "../../../packages/build-info/index.js";
 import { requireWritableDataDir } from "../../replay-service/src/data-dir.js";
 import { createDb } from "../../api/src/db/connection.js";
 import { SpectateGateway } from "../../api/src/spectate/gateway.js";
+import { RuntimeSettingsStore } from "../../api/src/runtime-settings.js";
 import { makeRunBattleHandler, markBattleForReview } from "./battle-runner.js";
 import { makeEngineExecutor } from "./engine-executor.js";
 import { containerAgents } from "./container-agents.js";
@@ -63,7 +64,17 @@ requireWritableDataDir("tournament-worker", replaysDir);
 // simulan en este proceso; attachBattle() necesita el objeto Battle en memoria.
 // El nginx del gateway enruta /ws/ a este puerto.
 const spectatePort = Number(process.env.SPECTATE_PORT ?? 8081);
-const spectate = new SpectateGateway({ port: spectatePort });
+// MG · el flag de espectador público sale de los ajustes de runtime persistidos (la
+// MISMA fila que cambia la admin), releídos cada S9_RUNTIME_SETTINGS_REFRESH_MS: un
+// cambio se aplica aquí sin recrear el contenedor. Este proceso NO crea la fila (no
+// recibe S9_PUBLIC_REPLAYS_ENABLED); hasta que la API la cree, manda su entorno.
+const runtimeSettings = new RuntimeSettingsStore(db, { bootstrap: false });
+await runtimeSettings.refresh();
+runtimeSettings.start();
+const spectate = new SpectateGateway({
+  port: spectatePort,
+  publicSpectateEnabled: () => runtimeSettings.publicVisibility().publicSpectate,
+});
 
 // run_battle (DEV-B · TD-002): AUTORIDAD ÚNICA de ejecución. El motor corre EN
 // ESTE proceso (aloja el ProtocolServer y el espectador) y los vehículos los
