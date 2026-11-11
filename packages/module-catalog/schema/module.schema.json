@@ -104,8 +104,7 @@
             "type": "number",
             "exclusiveMinimum": 0,
             "description": "Masa total para la que las prestaciones son nominales. Por encima, se degradan con MASS_SPEED_FLOOR (D7)."
-          },
-          "terrain": { "type": "array", "items": { "enum": ["road", "rough", "sand", "water"] }, "uniqueItems": true }
+          }
         }
       }
     },
@@ -115,8 +114,7 @@
         "required": ["capacityEU", "generationEUs"],
         "properties": {
           "capacityEU": { "type": "number", "minimum": 0 },
-          "generationEUs": { "type": "number", "minimum": 0 },
-          "peakEUs": { "type": "number", "minimum": 0 }
+          "generationEUs": { "type": "number", "minimum": 0 }
         }
       }
     },
@@ -129,8 +127,7 @@
           "rangeM": { "type": "number", "exclusiveMinimum": 0 },
           "fovRad": { "type": "number", "exclusiveMinimum": 0, "maximum": 6.2832 },
           "rays": { "type": "integer", "minimum": 1, "maximum": 256, "description": "Solo lidar. Limitado para proteger el presupuesto de tick." },
-          "errorM": { "type": "number", "minimum": 0, "description": "Solo radar: error de posición del contacto (D8)." },
-          "refreshEveryNDecisions": { "type": "integer", "minimum": 1, "default": 1 }
+          "errorM": { "type": "number", "minimum": 0, "description": "Solo radar: error de posición del contacto (D8)." }
         }
       }
     },
@@ -181,8 +178,7 @@
           "explosionRadiusM": { "type": "number", "exclusiveMinimum": 0 },
           "armDelayTicks": { "type": "integer", "minimum": 0 },
           "cooldownTicks": { "type": "integer", "minimum": 1 },
-          "lifetimeTicks": { "type": "integer", "minimum": 1 },
-          "detectable": { "type": "boolean", "default": true }
+          "lifetimeTicks": { "type": "integer", "minimum": 1 }
         }
       }
     },
@@ -208,21 +204,7 @@
         "properties": {
           "rangeM": { "type": "number", "exclusiveMinimum": 0 },
           "maxMessageBytes": { "type": "integer", "minimum": 1, "maximum": 32 },
-          "maxMessagesPerSecond": { "type": "number", "exclusiveMinimum": 0, "maximum": 2 },
-          "encrypted": { "type": "boolean", "default": false }
-        }
-      }
-    },
-    {
-      "if": { "properties": { "category": { "const": "utility" } }, "required": ["category"] },
-      "then": {
-        "required": ["effect", "charges", "cooldownTicks"],
-        "properties": {
-          "effect": { "enum": ["smoke", "repair", "jammer", "drone"] },
-          "charges": { "type": "integer", "minimum": 1 },
-          "cooldownTicks": { "type": "integer", "minimum": 1 },
-          "magnitude": { "type": "number", "minimum": 0 },
-          "durationTicks": { "type": "integer", "minimum": 1 }
+          "maxMessagesPerSecond": { "type": "number", "exclusiveMinimum": 0, "maximum": 2 }
         }
       }
     },

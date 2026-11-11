@@ -292,7 +292,6 @@ const TEST_CATALOG: ModuleDefinition[] = [
     costCredits: 10,
     size: "S",
     hp: 10,
-    effect: "smoke",
     charges: 1,
     cooldownTicks: 1,
   },
