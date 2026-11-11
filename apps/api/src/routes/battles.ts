@@ -24,7 +24,8 @@ import { publicSpectateEnabledFromEnv } from "../public-spectate.js";
 import { publicReplaysEnabledFromEnv } from "../public-replays.js";
 import { assertTeamsFitMap, checkBattleContent } from "./catalog.js";
 import { wherePublicReplay } from "../replay-access.js";
-import { projectReplayDocument } from "../replay-projection.js";
+import { PROJECTED_HTTP_CACHE_CONTROL, projectReplayDocument, projectedEtag } from "../replay-projection.js";
+import { projectBotStats } from "../../../../packages/projection/index.js";
 import { viewerMetaOf } from "./replays.js";
 import { fromJsonl } from "../../../arena-engine/src/replay.js";
 import { decompress, sha256 } from "../../../replay-service/src/format.js";
@@ -531,8 +532,11 @@ export function battleRoutes(
       const battleId = pathParam(req, "battleId");
       const battle = await getFinishedBattleWithReplayOr404(db, battleId);
       const participants = await db("participants").where({ battle_id: battle.id });
-      res.setHeader("Cache-Control", "public, max-age=3600, immutable");
-      res.json(publicReplayBattleToJson(battle, participants));
+      // OLA 2 · MA · respuesta pública proyectada: sin `immutable`, ETag versionado.
+      const body = publicReplayBattleToJson(battle, participants);
+      res.setHeader("Cache-Control", PROJECTED_HTTP_CACHE_CONTROL);
+      res.setHeader("ETag", projectedEtag("public-replay", JSON.stringify(body)));
+      res.json(body);
     },
     (req, res, next) => anonQuota(db, "public-replay", quota)(req, res, next),
   );
@@ -548,15 +552,22 @@ export function battleRoutes(
       // re-simular y revelan radio, minas y equipamiento): la PROYECCIÓN pública de
       // competición (replay-projection.ts), igual para todos los visitantes.
       let doc: Record<string, unknown>;
+      let sha = "";
       try {
         const bytes = await readFile(battle.replay_ref as string);
+        sha = sha256(bytes);
         const replay = fromJsonl(decompress(bytes).toString("utf8"));
-        const meta = await viewerMetaOf(db, battle, sha256(bytes));
-        doc = projectReplayDocument(replay, meta);
+        const meta = await viewerMetaOf(db, battle, sha);
+        doc = projectReplayDocument(replay, meta, sha);
       } catch {
         throw notFound("Replay no disponible");
       }
-      res.status(200).setHeader("Cache-Control", "public, max-age=3600, immutable").json(doc);
+      // OLA 2 · MA · sin `immutable`: el ETag cambia con projectionVersion y las políticas.
+      res
+        .status(200)
+        .setHeader("Cache-Control", PROJECTED_HTTP_CACHE_CONTROL)
+        .setHeader("ETag", projectedEtag("public-replay-download", sha))
+        .json(doc);
     },
     (req, res, next) => anonQuota(db, "public-replay-download", quota)(req, res, next),
   );
@@ -685,11 +696,16 @@ export function battleRoutes(
       // E8/T8.2: jti ⇒ el gateway hace el ticket de UN SOLO USO; debug ⇒ capas de
       // depuración (sensores, rutas, colisiones) solo para roles autorizados: el flag
       // viaja FIRMADO por la API, el visor no puede autoconcedérselo.
-      const debug = (req.auth?.rank ?? 0) >= ROLE_RANK.moderator;
+      // OLA 2 · MA · audiencia FIRMADA (`view`): el gateway separa mapper de ids e
+      // historial por audiencia. `broadcast` lo pide la página de emisión y nunca lleva
+      // capas de depuración; el staff recibe `staff` (con debug) salvo que pida broadcast.
+      const wantsBroadcast = req.query.audience === "broadcast";
+      const debug = !wantsBroadcast && (req.auth?.rank ?? 0) >= ROLE_RANK.moderator;
+      const view = wantsBroadcast ? "broadcast" : debug ? "staff" : "public_live";
       // `anon` viaja FIRMADO por la API para que el gateway (otro proceso) pueda
       // aplicar la capability sin consultar la BD ni creerse al cliente.
       const ticket = signSpectateTicket(
-        { battleId: battle.id, jti: randomUUID(), debug, anon: !req.auth },
+        { battleId: battle.id, jti: randomUUID(), debug, anon: !req.auth, view },
         SPECTATE_TICKET_TTL_S,
       );
       // El canal transporta SOLO snapshots públicos (D8): lo sirve el gateway (E8/E10).
@@ -764,21 +780,13 @@ export function battleRoutes(
         // 4v4-STATS · los descartes de radio miden el fallo del código del bot
         // (rate-limit, tamaño): diagnóstico, igual que rejectionsByReason. La
         // actividad de radio (`radio`: enviados/oídos) es juego: se queda.
-        const { cpuMs: _cpu, decisions: _dec, rejectionsByReason: _rej, radioDroppedByReason: _drop, ...sporting } = s;
-        // UX-F (DEF-R12) · los turnos sin responder y los rechazos por módulo
-        // también son diagnóstico (cuánto falla TU código), no deporte: un rival no
-        // los ve. Daño, disparos, aciertos y estado final de los módulos, sí.
-        if (!owner) {
-          delete sporting.decisionTimeouts;
-          if (sporting.perModule && typeof sporting.perModule === "object") {
-            sporting.perModule = Object.fromEntries(
-              Object.entries(sporting.perModule as Record<string, Record<string, unknown>>).map(([slot, m]) => {
-                const { rejections: _r, ...rest } = m ?? {};
-                return [slot, rest];
-              }),
-            );
-          }
-        }
+        const { cpuMs: _cpu, decisions: _dec, rejectionsByReason: _rej, radioDroppedByReason: _drop, ...rest } = s;
+        // OLA 2 · MA · EQUIPMENT_PRIVATE (D-B1 = R2) · lista BLANCA de la política de
+        // divulgación (`stats.*`): quien no es dueño ni staff no recibe el desglose por
+        // ranura (`perModule`: moduleId de cada ranura = loadout), ni minas, ni radio, ni
+        // los turnos sin responder (diagnóstico, UX-F); tampoco el id interno del vehículo.
+        // Lo deportivo observable (daño, disparos, aciertos, bajas…) se queda.
+        const sporting = projectBotStats(rest, owner ? "owner" : "public_replay") as Record<string, any>;
         perBot[botId] = { ...sporting, botName: p.bot_name ?? undefined, version: p.version };
         // 4v4-STATS · `perTeam` se agrega SÓLO de lo que acaba de entrar en
         // `perBot` (lo deportivo, igual para cualquier lector): por construcción
