@@ -96,6 +96,7 @@ export const DEFAULT_DISCLOSURE_POLICY: DisclosurePolicy = {
     "roster.name": PUBLIC,
     "roster.chassis": PRIVATE, // equipamiento
     // ------------------------------------------------------------ resultado
+    "result.battleId": PUBLIC,
     "result.winner": PUBLIC,
     "result.endReason": PUBLIC,
     "result.ticks": PUBLIC,

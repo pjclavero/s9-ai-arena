@@ -186,6 +186,17 @@ Sin penetración por ángulo, sin tipos de material frente a tipos de munición,
 - **Observación · una emisión en curso no se para sola.** Si el dueño pasa a privado un bot de una batalla suelta que se está emitiendo, la sesión de streaming sigue activa. Desde ese momento `/broadcast` y el ticket de espectador ya no leen la batalla (404) y el destino pasa a `broadcastable: false` (RV-S3), así que la emisión deja de mostrar la batalla, pero la parada la hace el administrador. En un torneo con `broadcast` el cambio no afecta: la autorización es del torneo.
 - **Observación · `organizer` no es staff.** El rol `organizer` crea torneos y fija `broadcast`, pero no ve bots ni código privados ajenos (`isStaff` empieza en `moderator`): con el id de un bot privado recibe 404, como cualquier tercero (RV-C1). Autorizar la retransmisión de un torneo no le da acceso a las fichas de los inscritos.
 
+
+**Enmienda (2026-11-12, OLA 2 · D-B1 = R2, EQUIPMENT_PRIVATE).** Decisión fijada por el propietario. **Sustituye** la frase «Siempre son públicos [...] loadout completo, estadísticas» en lo que toca al equipamiento, y deja sin efecto el P3-5 en lo que se refiere a lo público:
+
+- El **equipamiento y el loadout completo son privados por defecto** en el WELCOME (para cualquier bot que no sea el propio), `getBattleStats`, el espectador en directo, el broadcast, el replay público y la API pública. Quien sí los ve: el dueño del bot y el staff que audita.
+- Siguen públicos nombre, propietario, versión, hash del artefacto, resultado y las estadísticas **deportivas** observables (daño, disparos, aciertos, bajas, distancia…). Dejan de serlo, para terceros, el desglose por ranura (`perModule`, con el `moduleId` de cada una), las minas y la actividad de radio.
+- El stream público lleva el casco **cuantizado** (`hullLevel`, N = 20) y no lleva `hullHp`/`hullHpMax` (el máximo revela el chasis) ni el estado por ranura. La nómina pública no lleva el chasis.
+- La auditoría sigue siendo posible: el replay **crudo** (receta: semilla, comandos y loadouts) se conserva íntegro y lo verifica quien tiene derecho al crudo (PRE-1). El hash del artefacto sigue público.
+- Lo que se puede inferir físicamente de lo público (trayectoria, velocidad, giro, cadencia, velocidad y alcance del proyectil, radio de las explosiones visibles, impactos hasta destruir, tamaño por colisiones, posición de una mina al explotar) es **residual aceptado**: está enumerado en `docs/technical/security.md` («Equipamiento privado») y como `ACCEPTED_RESIDUAL` en `packages/projection/policy.ts`. No justifica dejar salir un campo.
+- La política es un **dato** versionado (`DEFAULT_DISCLOSURE_POLICY`, régimen `R2`); cambiarla cambia su versión, que entra en la clave de toda caché proyectada y en el ETag de las respuestas públicas.
+
+**Justificación de la enmienda.** El argumento de 2026-10 («ocultar el loadout haría el espectáculo incomprensible») no se sostiene frente al coste competitivo: con el loadout público, un rival prepara su bot contra la configuración exacta del contrario. El espectáculo se conserva con lo visible (movimiento, disparos, explosiones y daño cuantizado).
 ---
 
 ## Constantes derivadas

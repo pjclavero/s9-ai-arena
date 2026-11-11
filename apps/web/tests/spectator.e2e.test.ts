@@ -258,7 +258,9 @@ describe("T8.2 canal de espectador (ticket E7 → gateway E8 → motor E2)", () 
     expect(parsed.every((m) => m.type !== "debug")).toBe(true);
     // 3) Whitelist estructural del snapshot público (T2.6/D8).
     for (const m of parsed.filter((x) => x.type === "snapshot")) {
-      expect(Object.keys(m.snapshot).sort()).toEqual(["objectives", "projectiles", "score", "tick", "vehicles"]);
+      // OLA 2 · MA · `deployables` sólo lleva lo REVELADO a la audiencia: vacío en público.
+      expect(Object.keys(m.snapshot).sort()).toEqual(["deployables", "objectives", "projectiles", "score", "tick", "vehicles"]);
+      expect(m.snapshot.deployables).toEqual([]);
       for (const v of m.snapshot.vehicles) {
         expect(Object.keys(v).sort()).toEqual(
           // "juggernaut" (R3.8) es pública por definición del modo: quién es el marcado
@@ -266,12 +268,12 @@ describe("T8.2 canal de espectador (ticket E7 → gateway E8 → motor E2)", () 
           [
             "alive",
             "carryingFlag",
+            // OLA 2 · MA · EQUIPMENT_PRIVATE: casco cuantizado (hullLevel, N=20); sin
+            // hullHp/hullHpMax (revelan el chasis) ni módulos (revelan el loadout).
             "heading",
-            "hullHp",
-            "hullHpMax",
+            "hullLevel",
             "id",
             "juggernaut",
-            "modules",
             "position",
             "team",
             "turretHeading",

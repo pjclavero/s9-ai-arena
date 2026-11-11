@@ -126,10 +126,11 @@ describe("PUBLIC_PROJECTION_BOUNDARY · directo y broadcast sólo por projectFra
     const internalProjectileSeqs = new Set<number>();
     while (!b.isFinished()) {
       for (let i = 0; i < 6 && !b.isFinished(); i++) b.step();
-      const f = b.snapshots.at(-1);
+      await sleep(2);
+    }
+    for (const f of b.snapshots) {
       internalMines = Math.max(internalMines, f?.deployables?.length ?? 0);
       for (const p of f?.projectiles ?? []) internalProjectileSeqs.add(Number(String(p.id).split("_")[1]));
-      await sleep(2);
     }
     await sleep(150);
     expect(internalMines, "control: el minador sembró minas").toBeGreaterThan(0);

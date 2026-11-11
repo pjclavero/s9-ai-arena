@@ -243,6 +243,7 @@ export function projectResult(r: unknown, ctx: FrameContext): Record<string, unk
   const P = ctx.policy;
   const technical = src.endReason === "technical_limit";
   const out: Record<string, unknown> = {};
+  if (emits(P, "result.battleId", a) && typeof src.battleId === "string") out.battleId = src.battleId;
   if (emits(P, "result.winner", a)) out.winner = technical ? null : typeof src.winner === "string" ? src.winner : null;
   if (technical && emits(P, "result.endReason", a)) out.endReason = "technical_limit";
   if (emits(P, "result.ticks", a)) out.ticks = num(src.ticks);

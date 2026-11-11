@@ -298,8 +298,10 @@ describe("UX-06 · diagnóstico por bot: sólo el dueño de ESE bot y el staff",
     // UX-F (DEF-R12) · turnos sin responder y rechazos por módulo: diagnóstico,
     // sólo para el dueño. El uso y el daño del módulo siguen siendo públicos.
     expect(sporting.decisionTimeouts).toBeUndefined();
-    expect(sporting.perModule.turret_main).toMatchObject({ uses: 10, damageDealt: 120 });
-    expect(sporting.perModule.turret_main.rejections).toBeUndefined();
+    // OLA 2 · MA · EQUIPMENT_PRIVATE (D-B1 = R2): el desglose por ranura (moduleId de
+    // cada ranura = loadout) ya no lo ve un tercero, ni tampoco el id interno del vehículo.
+    expect(sporting.perModule).toBeUndefined();
+    expect(sporting.vehicleId).toBeUndefined();
     const ownSporting = r.body.perBot[BOT.privA];
     expect(ownSporting.decisionTimeouts).toBe(2);
     expect(ownSporting.perModule.turret_main.rejections).toBe(5);
