@@ -3,8 +3,8 @@
  * EQ4 · «Mis bots» y «Equipos» en maestro-detalle.
  *  - Activos/Retirados: los retirados no están en la lista principal (van en un
  *    desplegable) y «Retirar bot» llama a PATCH /bots/{id} { retired } — no borra;
- *  - el detalle (derecha) es del bot seleccionado, con resumen, secciones y
- *    enlaces a Batallas y Replays filtrados por ese bot;
+ *  - el detalle (derecha) es del bot seleccionado, con su menú de secciones (#255:
+ *    UNA sección a la vista) y enlaces a Batallas y Replays filtrados por ese bot;
  *  - Equipos: lista a la izquierda y configurador del equipo seleccionado.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
@@ -23,6 +23,7 @@ vi.mock("../src/api.js", () => ({
 import { api } from "../src/api.js";
 import { BotsPage } from "../src/pages/BotsPage.js";
 import { TeamsPage } from "../src/pages/TeamsPage.js";
+import { openSection } from "./bot-panel-helpers.js";
 import { loadCatalog, CATALOG_VERSION } from "../../../packages/module-catalog/loadCatalog.js";
 
 const apiMock = api as unknown as ReturnType<typeof vi.fn>;
@@ -56,13 +57,13 @@ describe("EQ4 · Mis bots: Activos / Retirados y maestro-detalle", () => {
     mockBots();
     render(<BotsPage me={ME} catalog={catalog} catalogVersion={CATALOG_VERSION} budgetCredits={1000} />);
     const active = await screen.findByTestId("bots-active");
-    expect(within(active).getByRole("button", { name: "Activo-1" })).toBeTruthy();
-    expect(within(active).queryByRole("button", { name: "Viejo" })).toBeNull();
+    expect(within(active).getByRole("link", { name: "Activo-1" })).toBeTruthy();
+    expect(within(active).queryByRole("link", { name: "Viejo" })).toBeNull();
     const retired = screen.getByTestId("bots-retired");
     expect(retired.tagName).toBe("DETAILS");
     expect((retired as HTMLDetailsElement).open).toBe(false);
     expect(within(retired).getByText("Retirados (1)")).toBeTruthy();
-    expect(within(retired).getByRole("button", { name: "Viejo" })).toBeTruthy();
+    expect(within(retired).getByRole("link", { name: "Viejo" })).toBeTruthy();
     expect(screen.getByText("Activos (1)")).toBeTruthy();
   });
 
@@ -71,16 +72,23 @@ describe("EQ4 · Mis bots: Activos / Retirados y maestro-detalle", () => {
     render(<BotsPage me={ME} catalog={catalog} catalogVersion={CATALOG_VERSION} budgetCredits={1000} />);
     await screen.findByTestId("bots-active");
     expect(screen.getByTestId("bot-pane-empty")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Activo-1" }));
+    fireEvent.click(screen.getByRole("link", { name: "Activo-1" }));
     const summary = await screen.findByTestId("bot-summary");
     expect(within(summary).getByRole("heading", { name: "Activo-1" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Activo-1" }).getAttribute("aria-current")).toBe("true");
-    const sections = within(summary).getByRole("navigation", { name: "secciones de Activo-1" });
-    expect(within(sections).getByRole("button", { name: "Loadout" })).toBeTruthy();
-    expect(within(sections).getByRole("button", { name: "Código / Versiones" })).toBeTruthy();
-    expect(within(sections).getByRole("button", { name: "Build / Pipeline" })).toBeTruthy();
-    expect(screen.getByTestId("bot-battles-link").getAttribute("href")).toBe("#/battles?bot=b1");
-    expect(screen.getByTestId("bot-replays-link").getAttribute("href")).toBe("#/replays?bot=b1");
+    expect(screen.getByRole("link", { name: "Activo-1" }).getAttribute("aria-current")).toBe("true");
+    // #255 · UN menú de secciones (enlaces con aria-current), sin anclas de scroll.
+    const sections = screen.getByRole("navigation", { name: "secciones de Activo-1" });
+    expect(
+      within(sections)
+        .getAllByRole("link")
+        .map((a) => a.textContent),
+    ).toEqual(["Resumen", "Visibilidad", "Equipamiento", "Código", "Versiones y build", "Batallas", "Replays"]);
+    expect(within(sections).getByRole("link", { name: "Resumen" }).getAttribute("aria-current")).toBe("page");
+    await openSection("Batallas");
+    expect((await screen.findByTestId("bot-battles-link")).getAttribute("href")).toBe("#/battles?bot=b1");
+    await openSection("Replays");
+    expect((await screen.findByTestId("bot-replays-link")).getAttribute("href")).toBe("#/replays?bot=b1");
+    expect(screen.queryByTestId("bot-battles-link")).toBeNull();
     expect(screen.queryByTestId("bot-pane-empty")).toBeNull();
   });
 
@@ -88,10 +96,10 @@ describe("EQ4 · Mis bots: Activos / Retirados y maestro-detalle", () => {
     mockBots();
     render(<BotsPage me={ME} catalog={catalog} catalogVersion={CATALOG_VERSION} budgetCredits={1000} />);
     await screen.findByTestId("bots-active");
-    fireEvent.click(screen.getByRole("button", { name: "Activo-1" }));
+    fireEvent.click(screen.getByRole("link", { name: "Activo-1" }));
     const btn = await screen.findByTestId("bot-retire");
     expect(btn.textContent).toBe("Retirar bot");
-    expect(screen.getByTestId("bot-summary").textContent).toMatch(/no borra versiones, batallas ni replays/);
+    expect(screen.getByTestId("bot-section").textContent).toMatch(/no borra versiones, batallas ni replays/);
     fireEvent.click(btn);
     await waitFor(() => expect(apiMock).toHaveBeenCalledWith("PATCH", "/bots/b1", { retired: true }));
     expect(apiMock.mock.calls.some((c) => c[0] === "DELETE")).toBe(false);
@@ -127,10 +135,10 @@ describe("rev. EQ6 P2-2 · Mis bots no se queda en la primera página", () => {
     expect(screen.getByText("Retirados (10)")).toBeTruthy();
     expect(screen.getByTestId("bots-loaded").textContent).toBe("Cargados 100 de 120.");
     fireEvent.click(screen.getByTestId("bots-load-more"));
-    await waitFor(() => expect(screen.getByRole("button", { name: "bot-110" })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("link", { name: "bot-110" })).toBeTruthy());
     expect(apiMock.mock.calls.some((c) => String(c[1]).includes("cursor=c1"))).toBe(true);
     expect(screen.queryByTestId("bots-load-more")).toBeNull();
-    expect(within(screen.getByTestId("bots-active")).getAllByRole("button").length).toBe(110);
+    expect(within(screen.getByTestId("bots-active")).getAllByRole("link").length).toBe(110);
   });
 });
 

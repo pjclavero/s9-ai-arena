@@ -374,7 +374,7 @@ export function Examples() {
       </p>
       <p>
         Todos estos bots son ficheros del proyecto que se ejecutan en sus tests con el motor real y la versión{" "}
-        {VERSIONS.sdkPlatform} del SDK. Cópialos tal cual en «Subir código (pegado)» eligiendo su runtime.
+        {VERSIONS.sdkPlatform} del SDK. Cópialos tal cual en «Código → Nueva versión» eligiendo su runtime.
       </p>
       {EXAMPLES.map((e) => (
         <section key={e.id} aria-labelledby={`ex-${e.id}`}>

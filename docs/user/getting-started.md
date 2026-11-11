@@ -30,7 +30,7 @@ Cuesta **940 créditos de 1000**. Pulsa **«Guardar revisión»**. Todas las pie
 
 ## 4. Programa el bot
 
-En la tarjeta **«Subir código (pegado)»** elige el *runtime* (**Python** o **JavaScript**). El área **«Código»** ya trae una **plantilla que funciona**: va hacia el rival, usa tu radar o lidar y dispara. Puedes subirla tal cual para probar el recorrido, o cambiarla.
+En la sección **Código** del bot, tarjeta **«Nueva versión»**, elige el *runtime* (**Python** o **JavaScript**). El área **«Código»** ya trae una **plantilla que funciona**: va hacia el rival, usa tu radar o lidar y dispara. Puedes subirla tal cual para probar el recorrido, o cambiarla.
 
 Para escribir tu propio bot, empieza por la [guía de programación](bots/index.md): un bot mínimo cabe en cuatro líneas, y los [ejemplos](bots/ejemplos.md) van de lo sencillo a jugar en equipo.
 

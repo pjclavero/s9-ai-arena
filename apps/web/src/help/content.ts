@@ -76,7 +76,7 @@ export const JOURNEY: ReadonlyArray<JourneyStep> = [
   {
     id: "code",
     title: "Programa el bot",
-    how: "En «Subir código (pegado)» elige el runtime (Python o Node) y pega tu código; pulsa «Subir como versión nueva». Se crea una versión en estado draft.",
+    how: "En «Código → Nueva versión» elige el runtime (Python o Node) y pega tu código; pulsa «Subir como versión nueva». Se crea una versión en estado draft.",
     href: "#/bots",
     linkLabel: "Subir código",
   },

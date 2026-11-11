@@ -5,7 +5,7 @@
  */
 import { test, expect, type Page } from "@playwright/test";
 import { registerNewUser, shot, watchProblems } from "./helpers.js";
-import { PY_STILL, expectVersionState, newBotWithLoadout, uploadAndSubmit } from "./uxb-helpers.js";
+import { PY_STILL, expectVersionState, newBotWithLoadout, openBotSection, uploadAndSubmit } from "./uxb-helpers.js";
 
 const PY_TYPO = `from arena_sdk import ArenaBot
 
@@ -47,10 +47,12 @@ test.describe("@fase1 UX-B hook inválido", () => {
     await expectHookRejection(page, 1, "on_observation", "on_observaton");
     await shot(page, info, "uxb-hook-python-rechazado");
 
+    await openBotSection(page, "codigo");
     await page.getByLabel("runtime").selectOption("node");
     await uploadAndSubmit(page, 2, JS_TYPO);
     await expectHookRejection(page, 2, "onObservation", "onObservaton");
 
+    await openBotSection(page, "codigo");
     await page.getByLabel("runtime").selectOption("python");
     await uploadAndSubmit(page, 3, PY_STILL);
     await expectVersionState(page, 3, "validated");
