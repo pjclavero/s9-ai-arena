@@ -24,6 +24,7 @@ MAIN_SHA:   e3bf2fa83650559267ef269994c667fabfb29e46  (main auditado el 2026-11-
 | [development/](development/index.md), [overview/](overview/index.md), [technical/](technical/index.md) | desarrollador | Cómo trabajar en el código y cómo está construido el sistema. |
 | [roadmap/](roadmap/index.md) | quien decide | Estado actual, deuda técnica, problemas conocidos, funciones pendientes. |
 | [audits/](audits/README.md), [testing/](testing/index.md), [adr/](adr/index.md) | desarrollador | Evidencia: auditorías, informes de pruebas y decisiones de arquitectura. Describen una fecha, no el presente. |
+| [visual-bots/](visual-bots/MASTER-PLAN.md) | desarrollador | Plan maestro y contrato visual de los bots componibles (inventario, matriz, mounts y ADR). |
 | [history/](history/index.md) | archivo | DOCUMENTACIÓN HISTÓRICA: estados, entregas y diseños anteriores. No es vigente. |
 
 Qué pasó con cada documento antiguo: [DOC-MIGRATION-MAP.md](DOC-MIGRATION-MAP.md). Auditoría de esta reorganización: [audits/2026-11/DOCS-AUDIT.md](audits/2026-11/DOCS-AUDIT.md).
