@@ -1,0 +1,63 @@
+{
+  "id": "test.fixture_beacon_event",
+  "version": 1,
+  "name": "Fixture: baliza que reacciona a la muerte del dueño",
+  "actions": [
+    {
+      "kind": "deploy",
+      "cooldownTicks": 200,
+      "cost": {
+        "energyEU": 5,
+        "charges": 1
+      },
+      "deployable": {
+        "lifetimeTicks": 1800,
+        "armDelayTicks": 10,
+        "maxActivePerOwner": 1,
+        "trigger": {
+          "kind": "event",
+          "event": "owner_destroyed"
+        },
+        "consumeOnTrigger": true,
+        "effects": [
+          {
+            "primitive": "sensorModifier",
+            "strength": 0.25,
+            "channels": [
+              "lidar",
+              "radar"
+            ],
+            "stat": "range",
+            "radiusM": 30,
+            "falloff": "none",
+            "durationTicks": 150,
+            "targets": {
+              "relations": [
+                "ally"
+              ],
+              "kinds": [
+                "vehicle"
+              ]
+            },
+            "stacking": "max"
+          }
+        ],
+        "visibility": {
+          "allies": "revealed",
+          "enemies": "detected",
+          "spectator": "revealed",
+          "signature": {
+            "acoustic": 0.2,
+            "proximity": 0.5
+          }
+        },
+        "placement": {
+          "mode": "at_self"
+        },
+        "ownership": {
+          "friendlyTrigger": "never"
+        }
+      }
+    }
+  ]
+}
