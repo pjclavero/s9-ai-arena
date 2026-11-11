@@ -2,7 +2,7 @@
 
 **Proyecto:** visuales componibles de bots ([MASTER-PLAN](MASTER-PLAN.md)) · **Fase:** FASE 0
 **Fichero:** `packages/module-catalog/visual-contract.test.ts` (corre en el job `unit` de la CI).
-**Estado:** borrador del AUTHOR (ronda 3, 2026-11-10), pendiente de revisión independiente.
+**Estado:** borrador del AUTHOR (ronda 4, 2026-11-11), pendiente de revisión independiente.
 
 El test lee el catálogo real (`loadCatalog()`, el `enum` de `module.schema.json`), el validador real, constantes y
 fragmentos del motor, y parsea las tablas Markdown y los bloques JSON y TypeScript de los documentos de
@@ -34,6 +34,8 @@ repetirse sumando todas las tablas con la misma cabecera:
 | Perfiles de vista (VIEW_PROFILE) | Lista canónica con rol, clases y OBSERVER_DEPENDENT | ADR-VIS-002 |
 | Parejas visor↔vehículo (PAIR_CASE) | Matriz mínima canónica + función de referencia | ADR-VIS-002 |
 | Cachés (CACHE_ID) | Tres niveles canónicos | ADR-VIS-002 |
+| Revelaciones (REVEAL_ID) | Lista canónica; sus datos = filas de §12 «PUBLIC por inferencia tras el primer disparo» | ADR-VIS-002 |
+| Transiciones de visibilidad (VIS_TRANSITION) | Casos canónicos T1-T6, relación y políticas + función de referencia | ADR-VIS-002 |
 
 Con eso se detectan, en rojo: una fila duplicada idéntica, un id repetido (también con otra clasificación o en otra
 sección), un id real que falta, un id inventado, un bloque JSON repetido (con los mismos valores o con otros), un
@@ -62,6 +64,14 @@ código o en un comentario HTML no cuenta como cobertura, y una línea con `|` p
   contra una función de referencia escrita en el test (relación a partir del visor y del vehículo **observado**; perfil a
   partir del canal y de la relación); owner(A)/A ≠ owner(A)/B; la IntrinsicComposition no se sirve al cliente y la clave
   de la ProjectedComposition separa cualquier par de parejas con distinto vehículo o distinto perfil.
+- **TEST 12 · Transiciones de visibilidad (CROSS_VIEW_VISIBILITY_TRANSITION).** La regla «ProjectedComposition cache
+  MUST NOT survive a visibility transition that changes what the viewer may observe» está en ADR-VIS-002 y en
+  `cross.composition_cache`; la clave proyectada lleva `visibilityStateVersion` (el estado, recalculado en cada
+  petición); `CHANGES` y `KEY` de cada caso salen de una función de referencia; una caché **simulada** con la clave
+  declarada en el ADR nunca sirve, tras una transición (revelación, vuelta a oculto en replay o en otra batalla, otro
+  visor, dueño → anónimo, espectador → broadcast, cambio de equipo o de política), la composición de antes, en ningún
+  orden; el replay público es, en cada estado, la proyección de un espectador; y ningún par de contextos que vean cosas
+  distintas comparte clave (parejas × estados × casos).
 - **TEST 11 · ENGINE_DERIVED.** Las cuatro clases de fuga; §12.4 con exactamente #261, #262 y #263; sus `DATA_IDS` y
   `DOMAIN_IDS` coinciden en los dos sentidos con §12, §5 y §6 y con lo que sale del catálogo; el roadmap cita las tres
   issues.

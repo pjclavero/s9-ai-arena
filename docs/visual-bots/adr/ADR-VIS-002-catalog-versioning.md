@@ -85,7 +85,9 @@ CROSS_VIEW_LEAK (matriz §12.3, `cross.composition_cache`). Por eso se separan d
   ningún bot concreto.
 - **VIEWER_PROJECTION** — lo que sí depende: permisos de visibilidad (BOT_VISIBILITY), política de espectador (D-01),
   fog of war, equipamiento público o privado, permisos de equipo u observador, estados ocultos y, si D-08 elige
-  revelar el arma tras el primer disparo, qué identidades ya se han revelado en ese instante.
+  revelar el arma tras el primer disparo, qué identidades ya se han revelado en ese instante. Esto último es el
+  **estado de visibilidad** del vehículo observado (`visibilityStateVersion`, ver «Transiciones de visibilidad»): cambia
+  durante la batalla, así que la proyección depende también del instante, no sólo de la pareja.
 
 **Entrada del compositor:** `proyección(equipamiento, audiencia, política D-01) + visualCatalogVersion`. El compositor no
 recibe nunca el equipamiento sin proyectar en una vista pública, y la proyección la hace el backend (el frontend no es
@@ -128,6 +130,7 @@ interface VisualProjectionContext {
   spectatorMode: "live_public" | "public_replay" | "broadcast" | "private" | "internal";
   spectatorPolicyVersion: string;
   visibilityPolicyVersion: string;
+  visibilityStateVersion: string; // estado de visibilidad del vehículo observado en ese instante
 }
 ```
 
@@ -170,7 +173,7 @@ equipamiento de un bot o lo que ya está proyectado para su pareja:
 | --- | --- | --- | --- |
 | `cache.asset` | componentVisualId, visualCatalogVersion, renderTarget | Assets y geometría de un componente; no dice qué lleva nadie | YES |
 | `cache.intrinsic_composition` | botVersionId, visualCatalogVersion, renderTarget | IntrinsicComposition: la composición completa del bot, con el equipamiento sin proyectar; es material de dueño o interno | NO |
-| `cache.projected_composition` | observedBotId, botVersionId, viewerRelation, resolvedProfile, spectatorMode, spectatorPolicyVersion, visibilityPolicyVersion, visualCatalogVersion, renderTarget | ProjectedComposition: la IntrinsicComposition filtrada para una pareja (perfil del visor + vehículo observado + relación + políticas) | YES |
+| `cache.projected_composition` | observedBotId, botVersionId, viewerRelation, resolvedProfile, spectatorMode, spectatorPolicyVersion, visibilityPolicyVersion, visibilityStateVersion, visualCatalogVersion, renderTarget | ProjectedComposition: la IntrinsicComposition filtrada para una pareja (perfil del visor + vehículo observado + relación + políticas) en un estado de visibilidad | YES |
 
 - La IntrinsicComposition vive sólo en el backend y nunca llega a un cliente: cualquier respuesta es una
   ProjectedComposition.
@@ -180,6 +183,60 @@ equipamiento de un bot o lo que ya está proyectado para su pareja:
 - No lleva `viewerId`: dos espectadores sin relación con el vehículo comparten entrada, y eso es seguro porque su
   proyección es la misma.
 - Nunca se indexa sólo por `botVersionId` una composición que se sirva al cliente.
+- La clave proyectada lleva `visibilityStateVersion`: la composición de antes de una revelación y la de después son
+  entradas distintas (ver «Transiciones de visibilidad»).
+
+**Transiciones de visibilidad (CROSS_VIEW_VISIBILITY_TRANSITION).** Lo que un visor puede ver de un vehículo cambia
+durante la batalla aunque la pareja no cambie: con D-08 interino, el arma pasa de OBSERVER_DEPENDENT a PUBLIC por
+inferencia en el primer disparo (matriz D-08, §12.2). Una caché indexada sólo por la pareja serviría la composición de
+después del disparo («cañón») a un espectador de antes, en la misma batalla (un replay buscado hacia atrás) o en otra
+batalla del mismo `botVersionId`; y la de antes («torreta genérica») después. Es un CROSS_VIEW_LEAK (matriz §12.3,
+`cross.composition_cache`), no una fuga del motor. Regla obligatoria:
+
+> **ProjectedComposition cache MUST NOT survive a visibility transition that changes what the viewer may observe.**
+
+Una transición así es cualquier cambio de: estado de visibilidad del vehículo observado (oculto → revelado o revelado →
+oculto), relación visor↔vehículo (incluido el cambio de equipo), visor (por ejemplo, de dueño a anónimo), canal,
+política de espectador o política de visibilidad. Cada uno es un campo de la clave proyectada, así que ninguna entrada
+hecha antes de la transición se sirve después.
+
+- **`visibilityStateVersion`** = forma canónica del conjunto de revelaciones (tabla `REVEAL_ID`) que el vehículo observado
+  ya ha hecho **en el instante que se proyecta** (`∅` si ninguna), ordenado. Lo calcula el backend en cada petición o
+  frame a partir de ese instante, igual que la relación; nunca lo envía el cliente ni se toma de la primera composición.
+- Es el **estado**, no un contador ni un epoch por batalla: el mismo estado da la misma clave en cualquier instante o
+  batalla (y es seguro, porque la composición es la misma), y un estado distinto da otra clave en los dos sentidos.
+- **Revelado → oculto.** En directo la revelación es monótona (D-08 interino: el arma no vuelve a ocultarse en la misma
+  batalla), así que esa transición no existe en directo. Sí existe al buscar hacia atrás en un replay y entre batallas
+  del mismo `botVersionId`, y la clave la cubre porque el estado vuelve a `∅`.
+- Los perfiles privilegiados (`OBSERVER_DEPENDENT` = `SHOWN`) ven la identidad desde el principio; para ellos el estado
+  no cambia lo que ven, pero sigue en la clave (una composición de dueño revelada no se comparte con nadie más).
+
+| REVEAL_ID | DATA_IDS | REVEALED_WHEN | LIVE_REVERSIBLE |
+| --- | --- | --- | --- |
+| `reveal.weapon` | data.weapon_identity, data.projectile_origin | Primer disparo del vehículo observado (D-08 interino; §12.2) | NO (sólo al buscar hacia atrás en un replay o en otra batalla) |
+
+Casos de transición (los comprueba `TEST 12` con una caché simulada y una composición de referencia escrita en el test;
+cada contexto es `visor / canal / vehículo observado / revelaciones / spectatorPolicyVersion / visibilityPolicyVersion`):
+
+| VIS_TRANSITION | CASE | FROM | TO | CHANGES | KEY |
+| --- | --- | --- | --- | --- | --- |
+| `vt.reveal` | T1 | spectator / live_public / A / ∅ / sp1 / vp1 | spectator / live_public / A / reveal.weapon / sp1 / vp1 | visibilityStateVersion | DIFFERENT |
+| `vt.replay_seek_back` | T2 | anonymous / public_replay / A / reveal.weapon / sp1 / vp1 | anonymous / public_replay / A / ∅ / sp1 / vp1 | visibilityStateVersion | DIFFERENT |
+| `vt.next_battle` | T2 | spectator / live_public / A / reveal.weapon / sp1 / vp1 | spectator / live_public / A / ∅ / sp1 / vp1 | visibilityStateVersion | DIFFERENT |
+| `vt.two_viewers` | T3 | anonymous / public_replay / A / ∅ / sp1 / vp1 | spectator / public_replay / A / reveal.weapon / sp1 / vp1 | visibilityStateVersion | DIFFERENT |
+| `vt.two_viewers_same_state` | T3 | anonymous / live_public / A / reveal.weapon / sp1 / vp1 | spectator / live_public / A / reveal.weapon / sp1 / vp1 | — | SAME |
+| `vt.owner_to_anonymous` | T4 | owner(A) / private / A / ∅ / sp1 / vp1 | anonymous / live_public / A / ∅ / sp1 / vp1 | viewerRelation, resolvedProfile, spectatorMode | DIFFERENT |
+| `vt.owner_revealed_to_anonymous` | T4 | owner(A) / private / A / reveal.weapon / sp1 / vp1 | anonymous / live_public / A / reveal.weapon / sp1 / vp1 | viewerRelation, resolvedProfile, spectatorMode | DIFFERENT |
+| `vt.spectator_to_broadcast` | T5 | spectator / live_public / A / reveal.weapon / sp1 / vp1 | broadcast / broadcast / A / reveal.weapon / sp1 / vp1 | resolvedProfile, spectatorMode | DIFFERENT |
+| `vt.owner_to_public_replay` | T6 | owner(A) / private / A / reveal.weapon / sp1 / vp1 | owner(A) / public_replay / A / reveal.weapon / sp1 / vp1 | resolvedProfile, spectatorMode | DIFFERENT |
+| `vt.team_change` | RELATION | team(A) / private / A / ∅ / sp1 / vp1 | team(B) / private / A / ∅ / sp1 / vp1 | viewerRelation, resolvedProfile | DIFFERENT |
+| `vt.spectator_policy` | POLICY | spectator / live_public / A / ∅ / sp1 / vp1 | spectator / live_public / A / ∅ / sp2 / vp1 | spectatorPolicyVersion | DIFFERENT |
+| `vt.visibility_policy` | POLICY | spectator / live_public / A / ∅ / sp1 / vp1 | spectator / live_public / A / ∅ / sp1 / vp2 | visibilityPolicyVersion | DIFFERENT |
+
+`CHANGES` son los campos de la clave proyectada que cambian; `KEY` = `DIFFERENT` si cambia alguno. `SAME` es el control:
+dos espectadores sin relación con el vehículo y en el mismo estado comparten entrada, porque ven lo mismo. En T6 la
+proyección de un replay público es, en cada estado, la de un espectador: sólo lo PUBLIC y lo ya revelado, aunque quien
+mire sea el dueño (PRE-1).
 
 **Ejemplo trabajado: PRIVATE_VIEW ≠ PUBLIC_VIEW.** Un `chassis.medium@2` con `weapon.cannon@1` y `ammo.ap@1`,
 `sensor.radar@1`, `armor.steel_front@1`, `movement.tracks@1`, `power.battery@1`, `radio.short@1` y `mine.explosive@1`.
@@ -194,14 +251,17 @@ equipamiento de un bot o lo que ya está proyectado para su pareja:
 | Radio y bahía de minas | antena y compuerta | antena y compuerta (PUBLIC por inferencia, §12.1) | igual |
 | Munición, energía | ap, batería (sólo ficha) | nada | nada |
 
-Las dos composiciones difieren en arma, sensor, blindaje y tracción. Si la IntrinsicComposition (clave `botVersionId`)
+Las dos composiciones difieren en arma, sensor, blindaje y tracción. Las dos columnas públicas son la misma pareja en
+dos estados de visibilidad (`visibilityStateVersion` `∅` y `reveal.weapon`): son entradas distintas de la caché, y la
+de «después» no se sirve nunca «antes» (ni al buscar hacia atrás en un replay ni en otra batalla). Si la IntrinsicComposition (clave `botVersionId`)
 se sirviera al cliente, el espectador recibiría la columna del dueño; con la ProjectedComposition, cuya clave lleva el
 vehículo observado, la relación y el perfil resuelto, son entradas distintas. El ejemplo es explicativo: la autoridad
 son las tablas de perfiles, parejas y cachés, que comprueba el test.
 
 **Test de no-fuga exigido para la fase de implementación** (FASE 1 o la primera que componga vehículos): para cada
 batalla del corpus y cada perfil público, el plan de composición no contiene ningún `componentVisualId` cuya identidad no
-sea PUBLIC (o PUBLIC por inferencia en ese instante) según la matriz; y la composición de `view.owner` difiere de la
+sea PUBLIC (o PUBLIC por inferencia en ese instante) según la matriz, con la composición servida desde la caché
+proyectada con el `visibilityStateVersion` de ese instante (también al buscar hacia atrás en un replay); y la composición de `view.owner` difiere de la
 pública siempre que el equipamiento tenga alguna identidad no pública; y, en una batalla con varios participantes, el
 dueño de A ve cada vehículo B ≠ A con el plan público (la ProjectedComposition de owner(A)/B es la de un espectador). El
 test de determinismo histórico (punto 5) se ejecuta **por perfil**.
@@ -252,8 +312,9 @@ fallback compatible y se registra el cambio.
 - Cada batalla nueva registra su `visualCatalogVersion`; la composición histórica usa **sólo** datos congelados.
 - El compositor recibe `proyección(equipamiento, audiencia, D-01) + visualCatalogVersion`: separa BOT_INTRINSIC_VISUAL de
   VIEWER_PROJECTION. La proyección se resuelve **por pareja** con `VisualProjectionContext` (visor, vehículo observado,
-  relación y políticas), y la caché que se sirve al cliente (ProjectedComposition) lleva en la clave el vehículo
-  observado, la relación y el perfil resuelto. Las vistas públicas no consumen nunca el replay crudo (PRE-1).
+  relación, políticas y estado de visibilidad), y la caché que se sirve al cliente (ProjectedComposition) lleva en la
+  clave el vehículo observado, la relación, el perfil resuelto y `visibilityStateVersion`: no sobrevive a una transición
+  de visibilidad. Las vistas públicas no consumen nunca el replay crudo (PRE-1).
 - **Paleta (P3-5):** la paleta de equipo y su regla de asignación pasan a ser **dato del catálogo visual versionado**
   (como la tabla de capas). Se descarta «congelar la versión de la paleta» como mecanismo aparte porque obligaría a
   registrar por batalla una segunda referencia. Las batallas anteriores al catálogo visual se resuelven con la paleta

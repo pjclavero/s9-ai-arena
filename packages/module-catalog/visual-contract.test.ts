@@ -27,6 +27,10 @@
  *                                          aislamiento de la caché (Intrinsic frente a Projected).
  *   TEST 11 · ENGINE_DERIVED                las fugas del motor de §12.4 están clasificadas, atadas a su issue
  *                                          (#261/#262/#263) y coinciden en los dos sentidos con §12, §5 y §6.
+ *   TEST 12 · CROSS_VIEW_VISIBILITY_TRANSITION  la clave de la ProjectedComposition lleva el estado de
+ *                                          visibilidad: una caché simulada con la clave declarada nunca sirve,
+ *                                          tras una transición (revelación, visor, relación, canal o política),
+ *                                          la composición de antes (T1-T6).
  *   TEST 0 · ESTRUCTURA                    el parser no puede saltarse filas en silencio: una línea con `|` pegada
  *                                          a una tabla, o ids fuera de una tabla reconocida, son error; el número
  *                                          de filas parseadas coincide con el texto bruto; las decisiones sólo
@@ -356,6 +360,8 @@ describe("TEST 2 · VISUAL_INVENTORY_UNIQUE_IDS", () => {
     ["ADR-VIS-002", "VIEW_PROFILE", ADR2],
     ["ADR-VIS-002", "PAIR_CASE", ADR2],
     ["ADR-VIS-002", "CACHE_ID", ADR2],
+    ["ADR-VIS-002", "VIS_TRANSITION", ADR2],
+    ["ADR-VIS-002", "REVEAL_ID", ADR2],
     ["MOUNT_TYPE_DRAFT", "MOUNT_TYPE", MOUNTS_DOC],
   ];
   for (const [doc, key, md] of KEYED) {
@@ -1252,6 +1258,7 @@ const CANONICAL_PROJECTION_CONTEXT: Record<string, string> = {
   spectatorMode: "required",
   spectatorPolicyVersion: "required",
   visibilityPolicyVersion: "required",
+  visibilityStateVersion: "required",
 };
 /** P2-9 · Matriz mínima de parejas: [VIEWER, CHANNEL, OBSERVED]. */
 const CANONICAL_PAIR_CASES: Record<string, string[]> = {
@@ -1282,6 +1289,7 @@ const PROJECTED_KEY_REQUIRED = [
   "spectatorMode",
   "spectatorPolicyVersion",
   "visibilityPolicyVersion",
+  "visibilityStateVersion",
   "visualCatalogVersion",
   "renderTarget",
 ];
@@ -1616,5 +1624,240 @@ describe("TEST 11 · ENGINE_DERIVED (INFORMATION_LEAK_CLASSIFICATION)", () => {
   it("el roadmap del MASTER-PLAN referencia las tres issues de motor", () => {
     const line = MASTER.split("\n").find((l) => l.startsWith("ENGINE_ISSUES:")) ?? "";
     expect(ENGINE_ISSUES.filter((i) => !line.includes(i))).toEqual([]);
+  });
+});
+
+/* ─────────── TEST 12 · CROSS_VIEW_VISIBILITY_TRANSITION: la caché proyectada no sobrevive a una transición ─────────── */
+
+/** Casos canónicos de transición de ADR-VIS-002 y su caso del encargo (T1-T6, relación y políticas). */
+const CANONICAL_VIS_TRANSITIONS: Record<string, string> = {
+  "vt.reveal": "T1",
+  "vt.replay_seek_back": "T2",
+  "vt.next_battle": "T2",
+  "vt.two_viewers": "T3",
+  "vt.two_viewers_same_state": "T3",
+  "vt.owner_to_anonymous": "T4",
+  "vt.owner_revealed_to_anonymous": "T4",
+  "vt.spectator_to_broadcast": "T5",
+  "vt.owner_to_public_replay": "T6",
+  "vt.team_change": "RELATION",
+  "vt.spectator_policy": "POLICY",
+  "vt.visibility_policy": "POLICY",
+};
+/** Revelaciones canónicas (D-08 interino) y los datos de §12 que destapan. */
+const CANONICAL_REVEALS: Record<string, string[]> = {
+  "reveal.weapon": ["data.projectile_origin", "data.weapon_identity"],
+};
+const VISIBILITY_TRANSITION_RULE =
+  "ProjectedComposition cache MUST NOT survive a visibility transition that changes what the viewer may observe.";
+
+/** Contexto de una celda `visor / canal / vehículo observado / revelaciones / spectatorPolicy / visibilityPolicy`. */
+type VisCtx = { viewer: string; channel: string; observed: string; revealed: string[]; sp: string; vp: string };
+const parseCtx = (cell: string): VisCtx => {
+  const f = cell.split("/").map((x) => x.trim());
+  if (f.length !== 6 || f.some((x) => !x)) throw new Error(`contexto mal formado: «${cell}»`);
+  const revealed = f[3] === "∅" ? [] : f[3].split("+").map((x) => x.trim());
+  return { viewer: f[0], channel: f[1], observed: f[2], revealed, sp: f[4], vp: f[5] };
+};
+/** Forma canónica del estado de visibilidad: conjunto ordenado de revelaciones, `∅` si ninguna (no un contador). */
+const stateVersionOf = (revealed: string[]): string => sorted(new Set(revealed)).join("+") || "∅";
+/** Clave canónica completa (referencia): la exigida en TEST 10 más el vehículo observado. */
+const CANONICAL_PROJECTED_KEY = [...new Set(["observedBotId", ...PROJECTED_KEY_REQUIRED])];
+
+/** Valor de la clave para un contexto: todo se recalcula a partir del contexto de ESTA petición. */
+const keyFor = (ctx: VisCtx, fields: string[]): string => {
+  const rel = relationOf(ctx.viewer, ctx.observed);
+  const value: Record<string, string> = {
+    observedBotId: ctx.observed,
+    botVersionId: `${ctx.observed}@v`,
+    viewerRelation: rel,
+    resolvedProfile: profileOf(ctx.channel, rel),
+    spectatorMode: ctx.channel,
+    spectatorPolicyVersion: ctx.sp,
+    visibilityPolicyVersion: ctx.vp,
+    visibilityStateVersion: stateVersionOf(ctx.revealed),
+  };
+  return fields.map((f) => `${f}=${value[f] ?? "const"}`).join("|");
+};
+
+describe("TEST 12 · CROSS_VIEW_VISIBILITY_TRANSITION (la proyección depende del estado de visibilidad)", () => {
+  const transitions = (): Row[] => tables(ADR2, "VIS_TRANSITION");
+  const projectedKey = (): string[] =>
+    (tables(ADR2, "CACHE_ID").find((r) => r.CACHE_ID === "cache.projected_composition")?.KEY_FIELDS ?? "")
+      .split(",")
+      .map((x) => clean(x))
+      .filter(Boolean);
+  const revealedData = (): Map<string, string[]> =>
+    new Map(
+      tables(ADR2, "REVEAL_ID").map((r) => [
+        r.REVEAL_ID,
+        r.DATA_IDS.split(",")
+          .map((x) => clean(x))
+          .filter(Boolean),
+      ]),
+    );
+
+  /** Composición de referencia: lo que el visor PUEDE ver de ese vehículo en ese instante, calculada desde cero. */
+  const composeFor = (ctx: VisCtx): string => {
+    const prof = profileOf(ctx.channel, relationOf(ctx.viewer, ctx.observed));
+    const p = tables(ADR2, "VIEW_PROFILE").find((x) => x.VIEW_PROFILE === prof);
+    if (!p) return `?${prof}`;
+    const seen = visibleFor(p);
+    if (p.OBSERVER_DEPENDENT !== "SHOWN")
+      for (const [id, data] of revealedData()) if (!ctx.revealed.includes(id)) for (const d of data) seen.delete(d);
+    return `${ctx.observed}:${sorted(seen).join(",")}`;
+  };
+
+  /** Caché simulada: indexa por la clave DECLARADA en ADR-VIS-002 y compone sólo si falta la entrada. */
+  const serve = (steps: VisCtx[], fields: string[]): string[] => {
+    const cache = new Map<string, string>();
+    return steps.map((ctx) => {
+      const k = keyFor(ctx, fields);
+      if (!cache.has(k)) cache.set(k, composeFor(ctx));
+      return cache.get(k) ?? "";
+    });
+  };
+
+  const ctxOf = (id: string, side: "FROM" | "TO"): VisCtx => {
+    const r = transitions().find((x) => x.VIS_TRANSITION === id);
+    if (!r) throw new Error(`falta ${id}`);
+    return parseCtx(r[side]);
+  };
+
+  it("la regla obligatoria está escrita en ADR-VIS-002 y en la regla de §12.3 `cross.composition_cache`", () => {
+    expect(prose(ADR2)).toContain(VISIBILITY_TRANSITION_RULE);
+    const rule = tables(MATRIX, "CROSS_VIEW_ID").find((r) => r.CROSS_VIEW_ID === "cross.composition_cache")?.RULE;
+    expect(rule ?? "").toContain(VISIBILITY_TRANSITION_RULE);
+    expect(prose(MATRIX)).toContain("Ese primer disparo es una transición de visibilidad dentro de la batalla");
+  });
+
+  it("la clave proyectada lleva `visibilityStateVersion`, recalculado en cada petición: el estado, no un contador", () => {
+    expect(projectedKey()).toContain("visibilityStateVersion");
+    // VIEWER_PROJECTION (lo que depende de la audiencia) incluye el estado de revelación de ese instante.
+    const vp = /- VIEWER_PROJECTION — [^]*?(?=\n\n)/.exec(ADR2.replace(/\*\*/g, ""))?.[0] ?? "";
+    expect(vp.replace(/\s+/g, " ")).toContain("qué identidades ya se han revelado en ese instante");
+    expect(vp).toContain("`visibilityStateVersion`");
+    const text = prose(ADR2);
+    expect(text).toContain("Lo calcula el backend en cada petición o frame a partir de ese instante");
+    expect(text).toContain("nunca lo envía el cliente ni se toma de la primera composición");
+    expect(text).toContain("Es el estado, no un contador ni un epoch por batalla");
+  });
+
+  it("REVEAL_ID es EXACTAMENTE el canónico y destapa justo las filas PUBLIC «tras el primer disparo» de §12", () => {
+    const rows = tables(ADR2, "REVEAL_ID");
+    expect(dupes(rows.map((r) => r.REVEAL_ID))).toEqual([]);
+    expect(Object.fromEntries([...revealedData()].map(([id, d]) => [id, sorted(d)]))).toEqual(CANONICAL_REVEALS);
+    const fromMatrix = tables(MATRIX, "DATA_ID")
+      .filter((r) => r.NOTES.includes("PUBLIC por inferencia tras el primer disparo"))
+      .map((r) => r.DATA_ID);
+    expect(sorted(fromMatrix)).toEqual(sorted(CANONICAL_REVEALS["reveal.weapon"]));
+    for (const r of tables(MATRIX, "DATA_ID").filter((x) => fromMatrix.includes(x.DATA_ID)))
+      expect(r.CLASSIFICATION, r.DATA_ID).toBe("PUBLIC");
+    // T2 · revelado → oculto no existe en directo (la revelación es monótona), y se declara así.
+    for (const r of rows) expect(r.LIVE_REVERSIBLE.startsWith("NO"), `${r.REVEAL_ID}: LIVE_REVERSIBLE`).toBe(true);
+  });
+
+  it("los casos de transición son EXACTAMENTE los canónicos y cubren T1-T6, la relación y las políticas", () => {
+    expect(dupes(transitions().map((r) => r.VIS_TRANSITION))).toEqual([]);
+    expect(Object.fromEntries(transitions().map((r) => [r.VIS_TRANSITION, r.CASE]))).toEqual(CANONICAL_VIS_TRANSITIONS);
+    expect(sorted(new Set(transitions().map((r) => r.CASE)))).toEqual(
+      sorted(["T1", "T2", "T3", "T4", "T5", "T6", "RELATION", "POLICY"]),
+    );
+  });
+
+  it("CHANGES y KEY de cada caso son los de la función de referencia (clave canónica completa)", () => {
+    const bad: string[] = [];
+    for (const r of transitions()) {
+      const a = parseCtx(r.FROM);
+      const b = parseCtx(r.TO);
+      const changed = CANONICAL_PROJECTED_KEY.filter((f) => keyFor(a, [f]) !== keyFor(b, [f]));
+      const declared = r.CHANGES === "—" ? [] : r.CHANGES.split(",").map((x) => clean(x));
+      if (JSON.stringify(sorted(declared)) !== JSON.stringify(sorted(changed)))
+        bad.push(`${r.VIS_TRANSITION}: CHANGES «${r.CHANGES}» ≠ «${changed.join(", ") || "—"}»`);
+      const key = changed.length ? "DIFFERENT" : "SAME";
+      if (r.KEY !== key) bad.push(`${r.VIS_TRANSITION}: KEY «${r.KEY}» ≠ «${key}»`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("T1/T2 · misma pareja antes y después de revelar el arma: composición y clave distintas, en los dos sentidos", () => {
+    for (const id of ["vt.reveal", "vt.replay_seek_back", "vt.next_battle"]) {
+      const from = ctxOf(id, "FROM");
+      const to = ctxOf(id, "TO");
+      expect(composeFor(from), `${id}: la proyección TIENE que cambiar`).not.toBe(composeFor(to));
+      expect(keyFor(from, projectedKey()), `${id}: clave`).not.toBe(keyFor(to, projectedKey()));
+      expect(serve([from, to], projectedKey()), `${id}: la entrada de antes no sobrevive`).toEqual([
+        composeFor(from),
+        composeFor(to),
+      ]);
+    }
+  });
+
+  it("T1-T6 · la caché con la clave declarada nunca sirve la composición de otro estado, visor, relación o política", () => {
+    const bad: string[] = [];
+    for (const r of transitions()) {
+      const from = parseCtx(r.FROM);
+      const to = parseCtx(r.TO);
+      // En los dos órdenes y alternando (dos visores a la vez, T3).
+      for (const steps of [
+        [from, to],
+        [to, from],
+        [from, to, from, to],
+      ]) {
+        const served = serve(steps, projectedKey());
+        steps.forEach((ctx, i) => {
+          if (served[i] !== composeFor(ctx)) bad.push(`${r.VIS_TRANSITION}: paso ${i} servido de otro contexto`);
+        });
+      }
+      const same = keyFor(from, projectedKey()) === keyFor(to, projectedKey());
+      if (r.KEY === "DIFFERENT" && same) bad.push(`${r.VIS_TRANSITION}: misma clave`);
+      if (r.KEY === "SAME" && !same) bad.push(`${r.VIS_TRANSITION}: el control SAME no comparte entrada`);
+    }
+    expect([...new Set(bad)]).toEqual([]);
+  });
+
+  it("T4 · la composición privilegiada (antes o después de revelar) no se reutiliza para otro visor", () => {
+    for (const id of ["vt.owner_to_anonymous", "vt.owner_revealed_to_anonymous"]) {
+      const owner = ctxOf(id, "FROM");
+      const anon = ctxOf(id, "TO");
+      expect(composeFor(owner), `${id}: el dueño ve más`).not.toBe(composeFor(anon));
+      expect(serve([owner, anon], projectedKey())[1], id).toBe(composeFor(anon));
+    }
+  });
+
+  it("T6 · el replay público es, en cada estado, la proyección de un espectador: sólo lo PUBLIC y lo ya revelado", () => {
+    const pub = new Set(tables(MATRIX, "DATA_ID").filter((r) => r.CLASSIFICATION === "PUBLIC").map((r) => r.DATA_ID));
+    const hiddenUntilReveal = [...revealedData().values()].flat();
+    const owner = ctxOf("vt.owner_to_public_replay", "FROM");
+    for (const revealed of [[], ["reveal.weapon"]]) {
+      const replay: VisCtx = { ...ctxOf("vt.owner_to_public_replay", "TO"), revealed };
+      const live: VisCtx = { ...replay, viewer: "spectator", channel: "live_public" };
+      const seen = composeFor(replay).split(":")[1].split(",").filter(Boolean);
+      expect(seen.filter((d) => !pub.has(d)), "sólo PUBLIC").toEqual([]);
+      if (!revealed.length) expect(seen.filter((d) => hiddenUntilReveal.includes(d)), "nada sin revelar").toEqual([]);
+      expect(composeFor(replay)).toBe(composeFor(live));
+      expect(serve([{ ...owner, revealed }, replay], projectedKey())[1]).toBe(composeFor(replay));
+    }
+    const src = tables(ADR2, "VIEW_PROFILE").find((p) => p.VIEW_PROFILE === "view.public_replay")?.EQUIPMENT_SOURCE;
+    expect(src).toBe("proyección saneada del replay");
+  });
+
+  it("simulación global: dos contextos que ven cosas distintas nunca comparten clave (parejas × estados × casos)", () => {
+    const ctxs: VisCtx[] = [];
+    for (const r of tables(ADR2, "PAIR_CASE"))
+      for (const revealed of [[], ["reveal.weapon"]])
+        ctxs.push({ viewer: r.VIEWER, channel: r.CHANNEL, observed: r.OBSERVED, revealed, sp: "sp1", vp: "vp1" });
+    for (const r of transitions()) ctxs.push(parseCtx(r.FROM), parseCtx(r.TO));
+    const key = projectedKey();
+    const comp = ctxs.map(composeFor);
+    const keys = ctxs.map((c) => keyFor(c, key));
+    const collisions: string[] = [];
+    for (let i = 0; i < ctxs.length; i++)
+      for (let j = i + 1; j < ctxs.length; j++)
+        if (comp[i] !== comp[j] && keys[i] === keys[j])
+          collisions.push(`${JSON.stringify(ctxs[i])} = ${JSON.stringify(ctxs[j])}`);
+    expect(collisions.slice(0, 3)).toEqual([]);
+    const served = serve(ctxs, key);
+    expect(ctxs.filter((_, i) => served[i] !== comp[i]).length, "entradas servidas de otro contexto").toBe(0);
   });
 });

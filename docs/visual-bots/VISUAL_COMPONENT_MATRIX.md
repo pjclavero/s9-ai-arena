@@ -566,7 +566,7 @@ broadcast, replay público saneado, miniaturas), `ALLY_VIEW` (equipo), `OWNER_VI
 | CROSS_VIEW_ID | FROM_VIEW | TO_VIEW | VECTOR | RULE |
 | --- | --- | --- | --- | --- |
 | `cross.raw_replay` | RAW_REPLAY | PUBLIC_VIEW | El renderer público se alimenta del replay crudo (equipamiento, semilla, comandos) | Prohibido: el renderer público consume sólo la proyección saneada (PRE-1). H-05. |
-| `cross.composition_cache` | OWNER_VIEW | PUBLIC_VIEW | Una composición del vehículo hecha para el dueño se cachea por bot y se sirve al público | Caché intrínseca separada de la proyección por audiencia; nunca se cachea una composición privilegiada reutilizable (ADR-VIS-002). |
+| `cross.composition_cache` | OWNER_VIEW | PUBLIC_VIEW | Una composición del vehículo hecha para el dueño se cachea por bot y se sirve al público; o una composición hecha en otro estado de visibilidad (después de que el arma se revele, D-08) se sirve antes de la revelación, al buscar hacia atrás en un replay o en otra batalla del mismo bot | Caché intrínseca separada de la proyección por audiencia; nunca se cachea una composición privilegiada reutilizable. ProjectedComposition cache MUST NOT survive a visibility transition that changes what the viewer may observe. La clave proyectada lleva `visibilityStateVersion` (ADR-VIS-002, «Transiciones de visibilidad»). |
 | `cross.thumbnail` | OWNER_VIEW | PUBLIC_VIEW | Miniaturas o imágenes de la ficha generadas con el equipamiento completo y usadas en listados públicos | Se generan desde la proyección pública, con su `visibilityProfile` en la clave. |
 | `cross.team_capture` | ALLY_VIEW | PUBLIC_VIEW | El broadcast captura una vista de equipo (actividad de radio, niebla del equipo) | El streamer captura sólo `PUBLIC_VIEW`. |
 | `cross.debug_overlay` | INTERNAL_VIEW | PUBLIC_VIEW | Overlays de depuración (rayos, alcances, contactos) activables en el visor público; y, latente, el flag `debugOpen` del formato de replay, con el que un segmento llevaría los comandos de todos los participantes | No existen en la vista pública; su activación la autoriza el backend, no un flag de cliente. Una vista pública no recibe comandos ni observaciones ajenas aunque `debugOpen` esté activo (PRE-1). |
@@ -681,6 +681,8 @@ Decisiones que necesitan validación de producto:
   decidir: el renderer trata el arma como PUBLIC desde el primer disparo y, antes, como OBSERVER_DEPENDENT, aunque el
   motor ya la deje inferir antes por el giro de la torreta (ENGINE_DERIVED, #262: el renderer no se adelanta a esa
   inferencia); no calcula ni pinta lo PARTIAL de §12 (cooldown, rondas, munición) y no distingue en el sprite ni la
-  versión ni la munición.
+  versión ni la munición. Ese primer disparo es una **transición de visibilidad** dentro de la batalla: la composición
+  pública de antes («torreta genérica») y la de después («cañón») tienen `visibilityStateVersion` distinto y son
+  entradas distintas de la caché proyectada; ninguna sobrevive a la transición (ADR-VIS-002, `reveal.weapon`).
 - **D-05 · Arquetipo frente a versión.** El visor actual agrupa por chasis (`chassisKind`): dos versiones del mismo
   chasis se ven iguales. Se propone mantenerlo (la versión cambia balance, no forma).
