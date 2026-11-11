@@ -951,6 +951,12 @@ services:
     deploy:
       resources:
         limits: { cpus: "1.0", memory: 512M }
+    # OLA2-MF · tini como PID 1. Sin él, PID 1 era `crond` (exec del
+    # entrypoint), que sólo espera a SUS trabajos: los huérfanos reparentados a
+    # PID 1 —el `ssh` que lanza restic para el backend sftp:, los hijos de los
+    # `docker exec` del healthcheck— quedaban zombis para siempre (44 `ssh`
+    # zombis colgando de crond en producción). Mismo criterio que el streamer.
+    init: true
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
     logging: *default-logging
