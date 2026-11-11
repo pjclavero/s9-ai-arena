@@ -244,6 +244,8 @@ export function createControlServer(opts: ControlOptions): Server {
         lastError: supervisor.lastError,
         counters: supervisor.counters,
         pendingChildren: supervisor.pendingChildren,
+        // OLA2-MF · hijos de emisión vivos (sin emisión: todo a 0).
+        streamChildren: supervisor.streamChildren,
         relay: {
           state: supervisor.relayState,
           bytesOut: supervisor.relayBytesOut,

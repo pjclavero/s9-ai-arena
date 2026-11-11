@@ -16,6 +16,7 @@ import { createLogger, loadConfig, loadStreamKey, SecretRegistry } from "./confi
 import { StreamSupervisor, type Spawner } from "./supervisor.js";
 import { createControlServer } from "./control.js";
 import type { Capabilities } from "./session.js";
+import { XvfbDisplay } from "./xvfb.js";
 import { checkWritableDataDir, requireWritableDataDir } from "../../../packages/data-dir/index.js";
 
 /** Lee un fichero de secreto en el momento (no se cachea: rotar no exige reiniciar). */
@@ -114,6 +115,12 @@ export function main(env: NodeJS.ProcessEnv = process.env): void {
   }
 
   const spawner = realSpawner;
+  // OLA2-MF · Xvfb A DEMANDA (por defecto): sólo existe mientras hay emisión.
+  // STREAMER_XVFB_ON_DEMAND=0 vuelve al Xvfb permanente del entrypoint.
+  const display =
+    env.STREAMER_XVFB_ON_DEMAND === "0"
+      ? undefined
+      : new XvfbDisplay({ spawner, display: config.display, width: config.width, height: config.height });
   const allowPlainRtmp = env.STREAMER_ALLOW_PLAIN_RTMP === "1";
   const supervisor = new StreamSupervisor({
     config,
@@ -122,6 +129,7 @@ export function main(env: NodeJS.ProcessEnv = process.env): void {
     secrets,
     allowPlainRtmp,
     processTree: true,
+    ...(display ? { display } : {}),
     chromiumBin: env.CHROMIUM_BIN ?? "chromium-browser",
     ffmpegBin: env.FFMPEG_BIN ?? "ffmpeg",
     // #256 · puerta BROADCAST_RENDER_READY y vigilante: un frame del MISMO display que
@@ -175,7 +183,7 @@ export function main(env: NodeJS.ProcessEnv = process.env): void {
     server.close();
     const deadline = Date.now() + 6000;
     const wait = () => {
-      if (supervisor.pendingChildren === 0 || Date.now() > deadline) process.exit(0);
+      if ((supervisor.pendingChildren === 0 && !(display?.terminating ?? 0)) || Date.now() > deadline) process.exit(0);
       setTimeout(wait, 100);
     };
     wait();
