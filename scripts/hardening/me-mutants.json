@@ -547,8 +547,8 @@
       "tests": [
         "apps/arena-engine/tests/contract-pending/catalog-effects.test.ts"
       ],
-      "testNamePattern": "rangeM",
-      "expect": "rangeM",
+      "testNamePattern": "weapon.rangeM es la fuente",
+      "expect": "weapon.rangeM es la fuente",
       "env": {
         "S9_CONTRACT_ENFORCE": "MC"
       }
