@@ -1,20 +1,15 @@
 /**
  * Combate (T2.3): armas, proyectiles, minas, explosiones y daño.
  *
- * Modelo de daño = D6 del ADR-000, íntegramente:
- *   dañoEfectivo = max(DMG_MIN_FRACTION * base, base * (1 - reducciónBlindajeSector))
- *   reparto: 70 % al chasis, 30 % a un módulo del sector impactado (sorteo con el PRNG).
- * Sin penetración por ángulo, sin materiales, sin calor. El interés táctico está en
- * PERDER CAPACIDADES (quedar ciego, inmóvil o desarmado), no en una tabla de penetración.
+ * Modelo de daño = D6 del ADR-000, ahora como contrato explícito por datos
+ * (packages/game-rules/damage-contract.ts) y resuelto en UNA puerta (./damage.ts):
+ *   dañoEfectivo = max(minFraction * base, base * (1 - reducción))
+ *   reparto: hullShare al chasis, moduleShare a UN módulo vivo no-blindaje del vehículo
+ *   (sorteo ponderado por masa con el PRNG; no se restringe al sector).
+ * Sin variación aleatoria del importe (D-B3). El interés táctico está en PERDER
+ * CAPACIDADES (quedar ciego, inmóvil o desarmado), no en una tabla de penetración.
  */
-import {
-  CHASSIS_DAMAGE_SHARE,
-  DMG_MIN_FRACTION,
-  MODULE_DAMAGE_SHARE,
-  SECTORS,
-  moduleActs,
-  type Sector,
-} from "../../../../packages/game-rules/index.js";
+import { SECTORS, moduleActs, type Sector } from "../../../../packages/game-rules/index.js";
 import type { Rng } from "../rng.js";
 import type { PhysicsWorld, Vec2 } from "./physics.js";
 import type { Vehicle } from "./vehicle.js";
@@ -58,66 +53,8 @@ export function sectorOfImpact(vehicleHeading: number, impactFrom: Vec2, vehicle
   return rel > 0 ? "left" : "right";
 }
 
-export interface DamageResult {
-  sector: Sector;
-  effectiveDamage: number;
-  hullDamage: number;
-  moduleSlot: string | null;
-  moduleDamage: number;
-  moduleDestroyed: boolean;
-  killed: boolean;
-}
-
-/**
- * Aplica daño a un vehículo. Única puerta de entrada de daño en todo el motor:
- * proyectiles, minas, explosiones y zonas pasan por aquí.
- */
-export function applyDamage(
-  target: Vehicle,
-  baseDamage: number,
-  from: Vec2,
-  targetPos: Vec2,
-  targetHeading: number,
-  rng: Rng,
-): DamageResult {
-  const sector = sectorOfImpact(targetHeading, from, targetPos);
-  const armor = target.armor[sector];
-
-  // El blindaje reduce, pero NUNCA anula: suelo del 10 % (D6).
-  const reduction = armor && armor.hp > 0 ? armor.reduction : 0;
-  const effective = Math.max(DMG_MIN_FRACTION * baseDamage, baseDamage * (1 - reduction));
-
-  // El blindaje se desgasta con lo que absorbe.
-  if (armor && armor.hp > 0) {
-    armor.hp = Math.max(0, armor.hp - (baseDamage - effective));
-  }
-
-  const hullDamage = effective * CHASSIS_DAMAGE_SHARE;
-  const moduleBudget = effective * MODULE_DAMAGE_SHARE;
-
-  target.hullHp = Math.max(0, target.hullHp - hullDamage);
-
-  // Reparto del 30 % a un módulo del sector: sorteo ponderado por masa (los módulos
-  // grandes son más fáciles de acertar). Solo módulos aún no destruidos.
-  const candidates = [...target.modules.values()].filter((m) => m.hp > 0 && m.spec.category !== "armor");
-  let moduleSlot: string | null = null;
-  let moduleDamage = 0;
-  let moduleDestroyed = false;
-
-  if (candidates.length > 0 && moduleBudget > 0) {
-    const idx = rng.weighted(candidates.map((m) => Math.max(1, m.spec.massKg)));
-    const m = candidates[idx];
-    moduleDamage = Math.min(m.hp, moduleBudget);
-    m.hp = Math.max(0, m.hp - moduleBudget);
-    moduleSlot = m.spec.slot;
-    moduleDestroyed = m.hp <= 0;
-  }
-
-  const killed = target.hullHp <= 0 && target.alive;
-  if (killed) target.alive = false;
-
-  return { sector, effectiveDamage: effective, hullDamage, moduleSlot, moduleDamage, moduleDestroyed, killed };
-}
+// La puerta única de daño de vehículo es `resolveDamage()` (./damage.ts, OLA 2 · MB):
+// el antiguo `applyDamage()` se retiró para que no quede un segundo camino de daño.
 
 /**
  * ¿Puede este arma disparar ahora? Comprueba TODO lo que el bot no controla:
@@ -143,16 +80,18 @@ export function canFire(v: Vehicle, slot: string, tick: number, rng: Rng): FireR
   const cost = w.spec.perActionEU ?? 0;
   if (v.energyEU < cost) return "no_energy";
 
-  // Arco de torreta: el ángulo de torreta ya está limitado por el motor, pero un
-  // arco parcial puede dejar objetivos fuera. Se valida contra el morro del chasis.
+  // Arco de torreta (D-B2): es de la MONTURA de la ranura, no del arma. El giro ya lo
+  // limita Vehicle.stepTurret() al arco más restrictivo; esto es la red de seguridad por
+  // arma (una montura más estrecha que la torreta no dispara fuera de la suya).
   // v.heading lo mantiene el bucle desde la física (ERR-ENG-05: antes era un WeakMap
   // global de este módulo que devolvía 0 para vehículos aún no registrados).
-  const arc = w.spec.turretArcRad ?? Math.PI * 2;
+  const arc = v.mountArcOf(slot);
   if (arc < Math.PI * 2 - 1e-6) {
     let rel = v.turretHeading - v.heading;
     while (rel > Math.PI) rel -= 2 * Math.PI;
     while (rel < -Math.PI) rel += 2 * Math.PI;
-    if (Math.abs(rel) > arc / 2) return "out_of_arc";
+    // Tolerancia de redondeo: la torreta limitada queda EXACTAMENTE en el borde del arco.
+    if (Math.abs(rel) > arc / 2 + 1e-9) return "out_of_arc";
   }
   return null;
 }
