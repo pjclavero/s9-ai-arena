@@ -1,0 +1,410 @@
+[
+  {
+    "loadout": "gunner",
+    "sector": "front",
+    "base": 10,
+    "res": {
+      "sector": "front",
+      "effective": 6.5,
+      "hull": 4.55,
+      "moduleSlot": "turret_main",
+      "moduleDamage": 1.95,
+      "moduleDestroyed": false,
+      "killed": false
+    },
+    "hullHpAfter": 295.45,
+    "armorAfter": {
+      "front": 196.5
+    }
+  },
+  {
+    "loadout": "gunner",
+    "sector": "front",
+    "base": 45,
+    "res": {
+      "sector": "front",
+      "effective": 29.25,
+      "hull": 20.475,
+      "moduleSlot": "power",
+      "moduleDamage": 8.775,
+      "moduleDestroyed": false,
+      "killed": false
+    },
+    "hullHpAfter": 279.525,
+    "armorAfter": {
+      "front": 184.25
+    }
+  },
+  {
+    "loadout": "gunner",
+    "sector": "front",
+    "base": 100,
+    "res": {
+      "sector": "front",
+      "effective": 65,
+      "hull": 45.5,
+      "moduleSlot": "drive",
+      "moduleDamage": 19.5,
+      "moduleDestroyed": false,
+      "killed": false
+    },
+    "hullHpAfter": 254.5,
+    "armorAfter": {
+      "front": 165
+    }
+  },
+  {
+    "loadout": "gunner",
+    "sector": "rear",
+    "base": 10,
+    "res": {
+      "sector": "rear",
+      "effective": 10,
+      "hull": 7,
+      "moduleSlot": "drive",
+      "moduleDamage": 3,
+      "moduleDestroyed": false,
+      "killed": false
+    },
+    "hullHpAfter": 293,
+    "armorAfter": {
+      "front": 200
+    }
+  },
+  {
+    "loadout": "gunner",
+    "sector": "rear",
+    "base": 45,
+    "res": {
+      "sector": "rear",
+      "effective": 45,
+      "hull": 31.5,
+      "moduleSlot": "drive",
+      "moduleDamage": 13.5,
+      "moduleDestroyed": false,
+      "killed": false
+    },
+    "hullHpAfter": 268.5,
+    "armorAfter": {
+      "front": 200
+    }
+  },
+  {
+    "loadout": "gunner",
+    "sector": "rear",
+    "base": 100,
+    "res": {
+      "sector": "rear",
+      "effective": 100,
+      "hull": 70,
+      "moduleSlot": "turret_main",
+      "moduleDamage": 30,
+      "moduleDestroyed": false,
+      "killed": false
+    },
+    "hullHpAfter": 230,
+    "armorAfter": {
+      "front": 200
+    }
+  },
+  {
+    "loadout": "gunner",
+    "sector": "left",
+    "base": 10,
+    "res": {
+      "sector": "left",
+      "effective": 10,
+      "hull": 7,
+      "moduleSlot": "drive",
+      "moduleDamage": 3,
+      "moduleDestroyed": false,
+      "killed": false
+    },
+    "hullHpAfter": 293,
+    "armorAfter": {
+      "front": 200
+    }
+  },
+  {
+    "loadout": "gunner",
+    "sector": "left",
+    "base": 45,
+    "res": {
+      "sector": "left",
+      "effective": 45,
+      "hull": 31.5,
+      "moduleSlot": "drive",
+      "moduleDamage": 13.5,
+      "moduleDestroyed": false,
+      "killed": false
+    },
+    "hullHpAfter": 268.5,
+    "armorAfter": {
+      "front": 200
+    }
+  },
+  {
+    "loadout": "gunner",
+    "sector": "left",
+    "base": 100,
+    "res": {
+      "sector": "left",
+      "effective": 100,
+      "hull": 70,
+      "moduleSlot": "turret_main",
+      "moduleDamage": 30,
+      "moduleDestroyed": false,
+      "killed": false
+    },
+    "hullHpAfter": 230,
+    "armorAfter": {
+      "front": 200
+    }
+  },
+  {
+    "loadout": "gunner",
+    "sector": "right",
+    "base": 10,
+    "res": {
+      "sector": "right",
+      "effective": 10,
+      "hull": 7,
+      "moduleSlot": "drive",
+      "moduleDamage": 3,
+      "moduleDestroyed": false,
+      "killed": false
+    },
+    "hullHpAfter": 293,
+    "armorAfter": {
+      "front": 200
+    }
+  },
+  {
+    "loadout": "gunner",
+    "sector": "right",
+    "base": 45,
+    "res": {
+      "sector": "right",
+      "effective": 45,
+      "hull": 31.5,
+      "moduleSlot": "power",
+      "moduleDamage": 13.5,
+      "moduleDestroyed": false,
+      "killed": false
+    },
+    "hullHpAfter": 268.5,
+    "armorAfter": {
+      "front": 200
+    }
+  },
+  {
+    "loadout": "gunner",
+    "sector": "right",
+    "base": 100,
+    "res": {
+      "sector": "right",
+      "effective": 100,
+      "hull": 70,
+      "moduleSlot": "drive",
+      "moduleDamage": 30,
+      "moduleDestroyed": false,
+      "killed": false
+    },
+    "hullHpAfter": 230,
+    "armorAfter": {
+      "front": 200
+    }
+  },
+  {
+    "loadout": "sandbag",
+    "sector": "front",
+    "base": 10,
+    "res": {
+      "sector": "front",
+      "effective": 10,
+      "hull": 7,
+      "moduleSlot": "drive",
+      "moduleDamage": 3,
+      "moduleDestroyed": false,
+      "killed": false
+    },
+    "hullHpAfter": 173,
+    "armorAfter": {}
+  },
+  {
+    "loadout": "sandbag",
+    "sector": "front",
+    "base": 45,
+    "res": {
+      "sector": "front",
+      "effective": 45,
+      "hull": 31.5,
+      "moduleSlot": "power",
+      "moduleDamage": 13.5,
+      "moduleDestroyed": false,
+      "killed": false
+    },
+    "hullHpAfter": 148.5,
+    "armorAfter": {}
+  },
+  {
+    "loadout": "sandbag",
+    "sector": "front",
+    "base": 100,
+    "res": {
+      "sector": "front",
+      "effective": 100,
+      "hull": 70,
+      "moduleSlot": "drive",
+      "moduleDamage": 30,
+      "moduleDestroyed": false,
+      "killed": false
+    },
+    "hullHpAfter": 110,
+    "armorAfter": {}
+  },
+  {
+    "loadout": "sandbag",
+    "sector": "rear",
+    "base": 10,
+    "res": {
+      "sector": "rear",
+      "effective": 10,
+      "hull": 7,
+      "moduleSlot": "power",
+      "moduleDamage": 3,
+      "moduleDestroyed": false,
+      "killed": false
+    },
+    "hullHpAfter": 173,
+    "armorAfter": {}
+  },
+  {
+    "loadout": "sandbag",
+    "sector": "rear",
+    "base": 45,
+    "res": {
+      "sector": "rear",
+      "effective": 45,
+      "hull": 31.5,
+      "moduleSlot": "power",
+      "moduleDamage": 13.5,
+      "moduleDestroyed": false,
+      "killed": false
+    },
+    "hullHpAfter": 148.5,
+    "armorAfter": {}
+  },
+  {
+    "loadout": "sandbag",
+    "sector": "rear",
+    "base": 100,
+    "res": {
+      "sector": "rear",
+      "effective": 100,
+      "hull": 70,
+      "moduleSlot": "drive",
+      "moduleDamage": 30,
+      "moduleDestroyed": false,
+      "killed": false
+    },
+    "hullHpAfter": 110,
+    "armorAfter": {}
+  },
+  {
+    "loadout": "sandbag",
+    "sector": "left",
+    "base": 10,
+    "res": {
+      "sector": "left",
+      "effective": 10,
+      "hull": 7,
+      "moduleSlot": "drive",
+      "moduleDamage": 3,
+      "moduleDestroyed": false,
+      "killed": false
+    },
+    "hullHpAfter": 173,
+    "armorAfter": {}
+  },
+  {
+    "loadout": "sandbag",
+    "sector": "left",
+    "base": 45,
+    "res": {
+      "sector": "left",
+      "effective": 45,
+      "hull": 31.5,
+      "moduleSlot": "drive",
+      "moduleDamage": 13.5,
+      "moduleDestroyed": false,
+      "killed": false
+    },
+    "hullHpAfter": 148.5,
+    "armorAfter": {}
+  },
+  {
+    "loadout": "sandbag",
+    "sector": "left",
+    "base": 100,
+    "res": {
+      "sector": "left",
+      "effective": 100,
+      "hull": 70,
+      "moduleSlot": "drive",
+      "moduleDamage": 30,
+      "moduleDestroyed": false,
+      "killed": false
+    },
+    "hullHpAfter": 110,
+    "armorAfter": {}
+  },
+  {
+    "loadout": "sandbag",
+    "sector": "right",
+    "base": 10,
+    "res": {
+      "sector": "right",
+      "effective": 10,
+      "hull": 7,
+      "moduleSlot": "power",
+      "moduleDamage": 3,
+      "moduleDestroyed": false,
+      "killed": false
+    },
+    "hullHpAfter": 173,
+    "armorAfter": {}
+  },
+  {
+    "loadout": "sandbag",
+    "sector": "right",
+    "base": 45,
+    "res": {
+      "sector": "right",
+      "effective": 45,
+      "hull": 31.5,
+      "moduleSlot": "power",
+      "moduleDamage": 13.5,
+      "moduleDestroyed": false,
+      "killed": false
+    },
+    "hullHpAfter": 148.5,
+    "armorAfter": {}
+  },
+  {
+    "loadout": "sandbag",
+    "sector": "right",
+    "base": 100,
+    "res": {
+      "sector": "right",
+      "effective": 100,
+      "hull": 70,
+      "moduleSlot": "power",
+      "moduleDamage": 30,
+      "moduleDestroyed": false,
+      "killed": false
+    },
+    "hullHpAfter": 110,
+    "armorAfter": {}
+  }
+]

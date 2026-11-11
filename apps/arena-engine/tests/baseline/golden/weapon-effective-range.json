@@ -1,0 +1,23 @@
+[
+  {
+    "weapon": "weapon.cannon@1",
+    "declaredRangeM": 60,
+    "projectileSpeedMs": 120,
+    "ttlTicks": 90,
+    "effectiveRangeM": 360
+  },
+  {
+    "weapon": "weapon.mg@1",
+    "declaredRangeM": 55,
+    "projectileSpeedMs": 200,
+    "ttlTicks": 90,
+    "effectiveRangeM": 600
+  },
+  {
+    "weapon": "weapon.mg@2",
+    "declaredRangeM": 55,
+    "projectileSpeedMs": 200,
+    "ttlTicks": 90,
+    "effectiveRangeM": 600
+  }
+]

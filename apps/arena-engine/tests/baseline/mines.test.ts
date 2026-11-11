@@ -67,7 +67,7 @@ function mineScenario(opts: { placeAt: number; victimTeam: "blue" | "red"; frien
     armedAtTick ??= b.getMines()[0]?.armedAtTick ?? null;
     const ev = b.publicEvents.find((e) => e.kind === "mine_triggered");
     if (ev && triggeredAt === null) triggeredAt = ev.tick;
-    if (JSON.stringify(b.snapshots).includes("mine_")) minePublic = true;
+    if (/mine_\d/.test(JSON.stringify(b.snapshots))) minePublic = true; // "mine_bay" (ranura) no cuenta
   }
   const victimHp = b.getVehicle("veh_2")!.hullHp;
   const mines = b.getMines().length;

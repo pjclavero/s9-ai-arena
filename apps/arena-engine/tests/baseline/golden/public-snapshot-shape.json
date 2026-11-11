@@ -1,0 +1,49 @@
+{
+  "top": [
+    "objectives",
+    "projectiles",
+    "score",
+    "tick",
+    "vehicles"
+  ],
+  "vehicle": [
+    "alive",
+    "carryingFlag",
+    "heading",
+    "hullHp",
+    "hullHpMax",
+    "id",
+    "juggernaut",
+    "modules",
+    "position",
+    "team",
+    "turretHeading"
+  ],
+  "module": [
+    "slot",
+    "state"
+  ],
+  "projectile": [
+    "id",
+    "position"
+  ],
+  "moduleSlots": [
+    [
+      "drive",
+      "power",
+      "sensor_a",
+      "mine_bay",
+      "turret_main",
+      "ammo_main",
+      "armor_rear"
+    ],
+    [
+      "drive",
+      "power",
+      "sensor_a",
+      "turret_main",
+      "ammo_main",
+      "radio_a"
+    ]
+  ]
+}
