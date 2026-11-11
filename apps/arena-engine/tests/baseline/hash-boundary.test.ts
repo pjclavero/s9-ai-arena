@@ -10,9 +10,9 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { loadRuleset } from "../../../../packages/game-rules/index.js";
 import { Battle } from "../../src/sim/battle.js";
 import { initPhysics } from "../../src/sim/physics.js";
-import { gunnerLoadout, minerLoadout, mvpArena } from "../../src/fixtures.js";
+import { gunnerLoadout, minerLoadout } from "../../src/fixtures.js";
 import { HunterBot } from "../../src/stubs.js";
-import { MinerHunterBot } from "./reference-battle.js";
+import { MinerHunterBot, referenceMap } from "./reference-battle.js";
 
 beforeAll(async () => {
   await initPhysics();
@@ -23,7 +23,7 @@ function run(opts: { snapshotEveryNTicks: number; projectEveryTick: boolean }) {
     battleId: "me_hashb",
     seed: "me-hash-boundary",
     ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: 450 }),
-    map: mvpArena(),
+    map: referenceMap(),
     snapshotEveryNTicks: opts.snapshotEveryNTicks,
     hashEveryNTicks: 15,
     participants: [

@@ -72,8 +72,8 @@ function liveStateBattle(): Battle {
   b.attachBot(
     "veh_1",
     new ScriptBot("b1", (t) => {
-      if (t === 0) return { deployMine: { slot: "mine_bay", armDelayTicks: 200 } };
-      if (t === 3) return { fire: ["turret_main"], turret: { targetHeading: Math.PI / 2 } };
+      if (t === 0) return { fire: ["turret_main"], deployMine: { slot: "mine_bay", armDelayTicks: 200 } };
+      if (t === 6) return { fire: ["turret_main"], turret: { targetHeading: Math.PI / 2 } };
       return undefined;
     }),
   );

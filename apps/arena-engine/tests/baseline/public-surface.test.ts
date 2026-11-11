@@ -46,7 +46,9 @@ function minerIdBattle() {
     "veh_1",
     new ScriptBot("b1", (t) => {
       if (t === 0 || t === 30) return { fire: ["turret_main"], turret: { targetHeading: Math.PI / 2 } };
-      if (t === 3) return { deployMine: { slot: "mine_bay" }, turret: { targetHeading: Math.PI / 2 } };
+      // fire + deployMine: en la base deployMine sólo se procesa junto a un fire no vacío
+      // (ver mine-deploy-quirk). El fire del tick 3 se rechaza por cooldown y NO consume id.
+      if (t === 3) return { fire: ["turret_main"], deployMine: { slot: "mine_bay" }, turret: { targetHeading: Math.PI / 2 } };
       return { turret: { targetHeading: Math.PI / 2 } };
     }),
   );

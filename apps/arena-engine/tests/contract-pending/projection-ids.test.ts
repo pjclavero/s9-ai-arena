@@ -52,7 +52,9 @@ function idBattle(withMine: boolean) {
     "veh_1",
     new ScriptBot("b1", (t) => {
       if (t === 0 || t === 30) return { fire: ["turret_main"], ...aim };
-      if (t === 3 && withMine) return { deployMine: { slot: "mine_bay" }, ...aim };
+      // Con y sin mina el comando del tick 3 lleva fire (rechazado por cooldown): así la
+      // única diferencia entre las dos batallas es la mina oculta.
+      if (t === 3) return { fire: ["turret_main"], ...(withMine ? { deployMine: { slot: "mine_bay" } } : {}), ...aim };
       return aim;
     }),
   );
