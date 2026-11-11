@@ -79,12 +79,6 @@
                 "sector": {
                   "enum": ["front", "left", "right", "rear"],
                   "description": "Obligatorio en ranuras de blindaje."
-                },
-                "offsetM": {
-                  "type": "object",
-                  "unevaluatedProperties": false,
-                  "required": ["x", "y"],
-                  "properties": { "x": { "type": "number" }, "y": { "type": "number" } }
                 }
               }
             }
@@ -124,11 +118,31 @@
         "required": ["sensorType", "rangeM"],
         "properties": {
           "sensorType": { "enum": ["lidar", "radar", "proximity", "acoustic"] },
-          "rangeM": { "type": "number", "exclusiveMinimum": 0 },
-          "fovRad": { "type": "number", "exclusiveMinimum": 0, "maximum": 6.2832 },
-          "rays": { "type": "integer", "minimum": 1, "maximum": 256, "description": "Solo lidar. Limitado para proteger el presupuesto de tick." },
-          "errorM": { "type": "number", "minimum": 0, "description": "Solo radar: error de posición del contacto (D8)." }
-        }
+          "rangeM": { "type": "number", "exclusiveMinimum": 0 }
+        },
+        "allOf": [
+          {
+            "description": "P-2: fovRad y rays sólo los lee la primitiva lidar (sensors.ts); en otro tipo serían campos falsos.",
+            "if": { "properties": { "sensorType": { "const": "lidar" } }, "required": ["sensorType"] },
+            "then": {
+              "required": ["fovRad", "rays"],
+              "properties": {
+                "fovRad": { "type": "number", "exclusiveMinimum": 0, "maximum": 6.2832 },
+                "rays": { "type": "integer", "minimum": 1, "maximum": 256, "description": "Limitado para proteger el presupuesto de tick." }
+              }
+            }
+          },
+          {
+            "description": "P-2: errorM sólo lo lee la primitiva radar.",
+            "if": { "properties": { "sensorType": { "const": "radar" } }, "required": ["sensorType"] },
+            "then": {
+              "required": ["errorM"],
+              "properties": {
+                "errorM": { "type": "number", "minimum": 0, "description": "Error de posición del contacto (D8)." }
+              }
+            }
+          }
+        ]
       }
     },
     {

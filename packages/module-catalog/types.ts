@@ -17,7 +17,6 @@ export interface ChassisSlot {
   accepts: ModuleCategory[];
   maxSize: Size;
   sector?: Sector;
-  offsetM?: { x: number; y: number };
 }
 
 export interface ModuleDefinition {
