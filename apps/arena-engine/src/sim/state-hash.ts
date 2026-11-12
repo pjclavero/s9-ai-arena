@@ -92,10 +92,11 @@ export function canonicalize(value: unknown, opts: CanonicalizeOptions = {}): un
     if (seen.has(o)) throw new Error("canonicalize: referencia cíclica en el estado de simulación");
     seen.add(o);
     try {
-      if (Array.isArray(o)) return o.map((x) => {
-        const c = walk(x);
-        return c === undefined ? null : c;
-      });
+      if (Array.isArray(o))
+        return o.map((x) => {
+          const c = walk(x);
+          return c === undefined ? null : c;
+        });
       if (o instanceof Map) {
         const entries = [...o.entries()].map(([k, x]) => [walk(k), walk(x)] as [unknown, unknown]);
         entries.sort((a, b) => codeUnitCompare(JSON.stringify(a[0]), JSON.stringify(b[0])));
@@ -139,9 +140,7 @@ export function computeStateHash(input: StateHashInput, opts?: CanonicalizeOptio
   const given = Object.keys(input).sort(codeUnitCompare);
   const expected = [...STATE_HASH_COMPONENTS].sort(codeUnitCompare);
   if (given.length !== expected.length || given.some((k, i) => k !== expected[i])) {
-    throw new Error(
-      `computeStateHash: componentes ${JSON.stringify(given)} ≠ contrato ${JSON.stringify(expected)}`,
-    );
+    throw new Error(`computeStateHash: componentes ${JSON.stringify(given)} ≠ contrato ${JSON.stringify(expected)}`);
   }
   const components = {} as Record<StateHashComponentV2, string>;
   for (const name of STATE_HASH_COMPONENTS) {

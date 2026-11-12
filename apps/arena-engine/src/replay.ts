@@ -15,7 +15,13 @@ import { Battle, type BattleConfig, type BattleResult, type BotAgent } from "./s
 import { nowIso } from "./wall-clock.js";
 import deps from "./engine-deps.json" with { type: "json" };
 import { RNG_DERIVATION, RNG_STREAM_NAMES } from "./rng.js";
-import { canonicalize, diffComponents, hashFromComponents, STATE_HASH_SCHEME, type StateHashComponentV2 } from "./sim/state-hash.js";
+import {
+  canonicalize,
+  diffComponents,
+  hashFromComponents,
+  STATE_HASH_SCHEME,
+  type StateHashComponentV2,
+} from "./sim/state-hash.js";
 import { CATALOG_VERSION } from "../../../packages/module-catalog/loadCatalog.js";
 
 /**
@@ -584,7 +590,12 @@ export function compareResults(official: BattleResult, recomputed: BattleResult)
   cmp("ticks", official?.ticks, recomputed.ticks, strict);
   cmp("score", official?.score, recomputed.score, (x, y) => canon(x) === canon(y));
   // El orden de `disqualified` es el de this.vehicles (estable): se compara tal cual.
-  cmp("disqualified", official?.disqualified, recomputed.disqualified, (x, y) => JSON.stringify(x) === JSON.stringify(y));
+  cmp(
+    "disqualified",
+    official?.disqualified,
+    recomputed.disqualified,
+    (x, y) => JSON.stringify(x) === JSON.stringify(y),
+  );
   cmp("versions", official?.versions, recomputed.versions, (x, y) => canon(x) === canon(y));
   cmp("finalStateHash", official?.finalStateHash, recomputed.finalStateHash, strict);
   return out;
@@ -622,7 +633,11 @@ function compareCheckpoints(
     return {
       tick: null,
       components: [],
-      mismatch: { field: "checkpoints", official: official.map((c) => c.tick), recomputed: recomputed.map((c) => c.tick) },
+      mismatch: {
+        field: "checkpoints",
+        official: official.map((c) => c.tick),
+        recomputed: recomputed.map((c) => c.tick),
+      },
     };
   }
   return { tick: null, components: [], mismatch: null };
@@ -632,7 +647,11 @@ function judge(replay: Replay, resim: Resimulation): VerifyResult {
   const mismatches: VerifyMismatch[] = [];
   const divergedAtTick = compareStateHashes(replay.stateHashes ?? [], resim.stateHashes);
   if (divergedAtTick !== null) {
-    mismatches.push({ field: "stateHashes", official: replay.stateHashes?.length ?? 0, recomputed: resim.stateHashes.length });
+    mismatches.push({
+      field: "stateHashes",
+      official: replay.stateHashes?.length ?? 0,
+      recomputed: resim.stateHashes.length,
+    });
   }
   const official = replay.checkpoints ?? [];
   const ck = compareCheckpoints(official, resim.checkpoints);
@@ -640,7 +659,11 @@ function judge(replay: Replay, resim: Resimulation): VerifyResult {
   // El checkpoint final del replay ES el estado final: debe cuadrar con el resultado.
   const lastOfficial = official[official.length - 1];
   if (!lastOfficial || lastOfficial.hash !== replay.result?.finalStateHash) {
-    mismatches.push({ field: "checkpoints", official: lastOfficial?.hash ?? null, recomputed: replay.result?.finalStateHash });
+    mismatches.push({
+      field: "checkpoints",
+      official: lastOfficial?.hash ?? null,
+      recomputed: replay.result?.finalStateHash,
+    });
   }
   mismatches.push(...compareResults(replay.result, resim.result));
   return {

@@ -20,14 +20,7 @@ import {
   type Replay,
 } from "../src/replay.js";
 import { restoreFromReplayCheckpoint } from "../src/checkpoint.js";
-import {
-  deriveStreamState,
-  ReadOnlyRng,
-  Rng,
-  RngReadOnlyError,
-  RngStreams,
-  RNG_STREAM_NAMES,
-} from "../src/rng.js";
+import { deriveStreamState, ReadOnlyRng, Rng, RngReadOnlyError, RngStreams, RNG_STREAM_NAMES } from "../src/rng.js";
 import { canonicalize, computeStateHash, hashFromComponents, STATE_HASH_COMPONENTS } from "../src/sim/state-hash.js";
 
 beforeAll(async () => {
@@ -300,9 +293,24 @@ const LIVE_FIELDS: [string, string, (b: any) => void, (b: any) => void][] = [
     () => {},
     (b) => ([...b.vehicles[0].modules.values()][0].reactivateAtTick = 999),
   ],
-  ["TTL de proyectil", "projectiles", (b) => b.projectiles.push(projectile()), (b) => (b.projectiles.at(-1).ttlTicks -= 1)],
-  ["owner de proyectil", "projectiles", (b) => b.projectiles.push(projectile()), (b) => (b.projectiles.at(-1).ownerId = "veh_3")],
-  ["velocidad de proyectil", "projectiles", (b) => b.projectiles.push(projectile()), (b) => (b.projectiles.at(-1).velocity.y = 1)],
+  [
+    "TTL de proyectil",
+    "projectiles",
+    (b) => b.projectiles.push(projectile()),
+    (b) => (b.projectiles.at(-1).ttlTicks -= 1),
+  ],
+  [
+    "owner de proyectil",
+    "projectiles",
+    (b) => b.projectiles.push(projectile()),
+    (b) => (b.projectiles.at(-1).ownerId = "veh_3"),
+  ],
+  [
+    "velocidad de proyectil",
+    "projectiles",
+    (b) => b.projectiles.push(projectile()),
+    (b) => (b.projectiles.at(-1).velocity.y = 1),
+  ],
   ["armado de mina", "deployables", (b) => b.mines.push(mine()), (b) => (b.mines.at(-1).armedAtTick = 201)],
   ["owner de mina", "deployables", (b) => b.mines.push(mine()), (b) => (b.mines.at(-1).ownerId = "veh_1")],
   [
@@ -360,7 +368,21 @@ describe("stateHash v2 cubre TODO el estado vivo (cada campo, su componente)", (
 
   it("canonicalize: orden de claves/Map irrelevante, NaN no se traga como null, -0 = 0", () => {
     expect(canonicalize({ b: 1, a: 2 })).toEqual(canonicalize({ a: 2, b: 1 }));
-    expect(canonicalize(new Map([["y", 1], ["x", 2]]))).toEqual(canonicalize(new Map([["x", 2], ["y", 1]])));
+    expect(
+      canonicalize(
+        new Map([
+          ["y", 1],
+          ["x", 2],
+        ]),
+      ),
+    ).toEqual(
+      canonicalize(
+        new Map([
+          ["x", 2],
+          ["y", 1],
+        ]),
+      ),
+    );
     expect(JSON.stringify(canonicalize([NaN]))).not.toBe(JSON.stringify(canonicalize([null])));
     expect(canonicalize(-0)).toBe(0);
     const cyc: any = {};

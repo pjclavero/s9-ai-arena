@@ -165,7 +165,9 @@ export function deriveStreamState(seed: string, label: string): RngState {
 /** Error de la ruta de lectura: un RNG de sólo lectura se ha intentado consumir. */
 export class RngReadOnlyError extends Error {
   constructor(label: string) {
-    super(`RNG de sólo lectura (${label}): una ruta de lectura (proyección, inspector) intentó consumir aleatoriedad de la simulación`);
+    super(
+      `RNG de sólo lectura (${label}): una ruta de lectura (proyección, inspector) intentó consumir aleatoriedad de la simulación`,
+    );
     this.name = "RngReadOnlyError";
   }
 }

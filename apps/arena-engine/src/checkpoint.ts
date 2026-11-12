@@ -89,7 +89,11 @@ function agentsCheck(participants: any[], agents: Record<string, BotAgent>, who:
   if (missing.length > 0) throw new Error(`${who}: faltan agentes para: ${missing.join(", ")}`);
 }
 
-function attachReplayAgents(b: Battle, participants: any[], commands: { tick: number; vehicleId: string; command: any }[]) {
+function attachReplayAgents(
+  b: Battle,
+  participants: any[],
+  commands: { tick: number; vehicleId: string; command: any }[],
+) {
   const byVehicle = new Map<string, { tick: number; command: any }[]>();
   for (const c of commands) {
     if (!byVehicle.has(c.vehicleId)) byVehicle.set(c.vehicleId, []);
@@ -177,7 +181,11 @@ export async function restoreFromReplayCheckpoint(
   agentsCheck(replay.header.participants, agents, "restoreFromReplayCheckpoint");
   const b = await Battle.create(configFromHeader(replay.header, true));
   try {
-    attachReplayAgents(b, replay.header.participants, replay.commands.filter((c) => c.tick <= tick));
+    attachReplayAgents(
+      b,
+      replay.header.participants,
+      replay.commands.filter((c) => c.tick <= tick),
+    );
     const mine = () => b.checkpoints.find((c) => c.tick === tick);
     while (!b.isFinished() && !mine() && b.tick <= tick) b.step();
     const got = mine();
