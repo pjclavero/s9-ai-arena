@@ -22,7 +22,7 @@ import type { VehicleSpec } from "../../src/sim/vehicle.js";
 import { IdleBot } from "../../src/stubs.js";
 import * as fieldStatus from "../../../../packages/module-catalog/effect-status.js";
 import { NON_GAMEPLAY_KEYS } from "../../../../packages/module-catalog/effect-status.js";
-import { ScriptBot, catalog, contractIt, loadout, rangeArena } from "../baseline/helpers.js";
+import { ScriptBot, catalog, contractIt, fixtureGuard, loadout, rangeArena } from "../baseline/helpers.js";
 
 beforeAll(async () => {
   await initPhysics();
@@ -147,6 +147,7 @@ function flight(spec: VehicleSpec) {
     } else if (seen) break;
   }
   b.free();
+  fixtureGuard(seen, "flight: el arma no disparó ningún proyectil (el escenario no mide nada)");
   return maxDist;
 }
 
@@ -155,18 +156,26 @@ const SHOOTERS = [
   { weapon: "weapon.mg@1", ammo: "ammo.standard@1", chassis: "chassis.light@1" },
 ] as const;
 
+/**
+ * Fixture de alcance. `spreadRad = 0` en la ranura del arma: la dispersión del mg@1 sacaba
+ * la bala de la `rangeArena` (100 m de alto) a los ~140 m y el test medía el perímetro, no
+ * el alcance. Sin dispersión la trayectoria es recta a lo largo de +X (1000 m de arena).
+ */
 function shooterSpec(w: (typeof SHOOTERS)[number], rangeOverride?: number): VehicleSpec {
   const s = loadout(w.chassis, [
     { slot: "drive", moduleId: "movement.wheels@1" },
     { slot: "power", moduleId: "power.battery@1" },
     { slot: "turret_main", moduleId: w.weapon, ammo: w.ammo },
   ]);
-  if (rangeOverride === undefined) return s;
   return {
     ...s,
-    modules: s.modules.map((m) =>
-      m.slot === "turret_main" ? { ...m, moduleId: "test.fixture_weapon_range@1", rangeM: rangeOverride } : m,
-    ),
+    modules: s.modules.map((m) => {
+      if (m.slot !== "turret_main") return m;
+      const straight = { ...m, spreadRad: 0 };
+      return rangeOverride === undefined
+        ? straight
+        : { ...straight, moduleId: "test.fixture_weapon_range@1", rangeM: rangeOverride };
+    }),
   };
 }
 

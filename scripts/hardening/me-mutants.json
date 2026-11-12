@@ -573,6 +573,66 @@
       "env": {
         "S9_CONTRACT_ENFORCE": "MF"
       }
+    },
+    {
+      "id": "K19-armor-rounded",
+      "kind": "kill",
+      "team": null,
+      "contract": "MB: D-B4 blindaje interno exacto (guarda de baseline)",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/combat.ts",
+          "from": "    armor.hp = Math.max(0, armor.hp - (baseDamage - effective));",
+          "to": "    armor.hp = Math.max(0, Math.round(armor.hp - (baseDamage - effective)));"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/armor-exact.test.ts"
+      ],
+      "expect": "blindaje interno exacto",
+      "expectMessage": "expected"
+    },
+    {
+      "id": "F12-mb-armor-broken",
+      "kind": "fix",
+      "team": "MB",
+      "contract": "MB: rotura de blindaje visible (armorBroken público)",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "          hullHpMax: v.spec.hullHp,\n          carryingFlag: v.carryingFlag,",
+          "to": "          hullHpMax: v.spec.hullHp,\n          armorBroken: Object.fromEntries(Object.entries(v.armor).map(([s, a]) => [s, a!.hp <= 0])),\n          carryingFlag: v.carryingFlag,"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/armor-exact.test.ts"
+      ],
+      "testNamePattern": "armorBroken",
+      "expect": "armorBroken",
+      "env": {
+        "S9_CONTRACT_ENFORCE": "MB"
+      }
+    },
+    {
+      "id": "F13-ma-stats-no-moduleid",
+      "kind": "fix",
+      "team": "MA",
+      "contract": "MA: estadísticas públicas sin moduleId de catálogo",
+      "edits": [
+        {
+          "file": "apps/replay-service/src/stats.ts",
+          "from": "        moduleId: m.moduleId,\n        usesKind: usesKindOf(m.category),",
+          "to": "        usesKind: usesKindOf(m.category),"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/equipment-privacy.test.ts"
+      ],
+      "testNamePattern": "sin moduleId de catálogo",
+      "expect": "sin moduleId de catálogo",
+      "env": {
+        "S9_CONTRACT_ENFORCE": "MA"
+      }
     }
   ]
 }

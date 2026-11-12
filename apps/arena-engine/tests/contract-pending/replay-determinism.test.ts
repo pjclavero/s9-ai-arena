@@ -14,7 +14,7 @@ import { initPhysics } from "../../src/sim/physics.js";
 import { verify, type Replay } from "../../src/replay.js";
 import { emptyArena, gunnerLoadout, minerLoadout, scoutLoadout } from "../../src/fixtures.js";
 import { HunterBot, IdleBot } from "../../src/stubs.js";
-import { ScriptBot, contractIt } from "../baseline/helpers.js";
+import { ScriptBot, contractIt, fixtureGuard } from "../baseline/helpers.js";
 import { recordReference } from "../baseline/reference-battle.js";
 
 beforeAll(async () => {
@@ -79,7 +79,18 @@ function liveStateBattle(): Battle {
   );
   b.attachBot("veh_2", new IdleBot("b2"));
   for (let t = 0; t < 7; t++) b.step();
+  // Controles positivos del ESCENARIO: sin proyectil y sin mina vivos, mutar `[0]` daría
+  // un TypeError (rojo por la razón equivocada). Un fallo aquí es de fixture, no de contrato.
+  fixtureGuard((b as any).projectiles.length > 0, "liveStateBattle: no hay ningún proyectil vivo en el tick 7");
+  fixtureGuard(b.getMines().length > 0, "liveStateBattle: no hay ninguna mina viva en el tick 7");
   return b;
+}
+
+/** Garantiza que el campo sondeado EXISTE (si se renombra, la sonda no puede dar un falso rojo). */
+function need<T extends object>(o: T | undefined, ...keys: string[]): T {
+  fixtureGuard(o !== undefined, "sonda: la entidad a mutar no existe");
+  for (const k of keys) fixtureGuard(k in o!, `sonda: el campo «${k}» no existe en la entidad`);
+  return o!;
 }
 
 /** Aplica `mutate`, comprueba que el hash cambia y deshace con `undo`. */
@@ -96,7 +107,7 @@ describe("MD · el stateHash cubre todo el estado vivo que determina el futuro",
   // Control positivo: lo que el hash YA cubre (sin esto, un «false» de abajo no prueba nada).
   it("(control, verde en la base) posición de proyectil y vida de casco ya están en el hash", () => {
     const b = liveStateBattle();
-    const p = (b as any).projectiles[0];
+    const p = need((b as any).projectiles[0], "position");
     const v = b.getVehicle("veh_2")!;
     const ok =
       hashSees(
@@ -117,14 +128,14 @@ describe("MD · el stateHash cubre todo el estado vivo que determina el futuro",
     [
       "TTL del proyectil",
       (b) => {
-        const p = (b as any).projectiles[0];
+        const p = need((b as any).projectiles[0], "ttlTicks");
         return [() => p.ttlTicks--, () => p.ttlTicks++];
       },
     ],
     [
       "owner del proyectil",
       (b) => {
-        const p = (b as any).projectiles[0];
+        const p = need((b as any).projectiles[0], "ownerId");
         const o = p.ownerId;
         return [() => (p.ownerId = "veh_2"), () => (p.ownerId = o)];
       },
@@ -132,7 +143,7 @@ describe("MD · el stateHash cubre todo el estado vivo que determina el futuro",
     [
       "equipo del proyectil",
       (b) => {
-        const p = (b as any).projectiles[0];
+        const p = need((b as any).projectiles[0], "team");
         const o = p.team;
         return [() => (p.team = "blue"), () => (p.team = o)];
       },
@@ -140,51 +151,61 @@ describe("MD · el stateHash cubre todo el estado vivo que determina el futuro",
     [
       "armedAtTick de la mina",
       (b) => {
-        const m = b.getMines()[0];
+        const m = need(b.getMines()[0], "armedAtTick");
         return [() => m.armedAtTick++, () => m.armedAtTick--];
       },
     ],
     [
       "expiresAtTick de la mina",
       (b) => {
-        const m = b.getMines()[0];
+        const m = need(b.getMines()[0], "expiresAtTick");
         return [() => m.expiresAtTick++, () => m.expiresAtTick--];
       },
     ],
     [
       "owner de la mina",
       (b) => {
-        const m = b.getMines()[0];
+        const m = need(b.getMines()[0], "ownerId");
         const o = m.ownerId;
         return [() => (m.ownerId = "veh_2"), () => (m.ownerId = o)];
       },
     ],
-    ["entitySeq (asignador de ids)", (b) => [() => (b as any).entitySeq++, () => (b as any).entitySeq--]],
+    [
+      "entitySeq (asignador de ids)",
+      (b) => (need(b as any, "entitySeq"), [() => (b as any).entitySeq++, () => (b as any).entitySeq--]),
+    ],
     [
       "respawnAtTick",
       (b) => {
-        const v = b.getVehicle("veh_2")!;
+        const v = need(b.getVehicle("veh_2"), "respawnAtTick");
         return [() => (v.respawnAtTick = 999), () => (v.respawnAtTick = 0)];
       },
     ],
     [
       "cola de radio",
-      (b) => [
-        () => (b as any).radioQueue.push({ from: "veh_1", team: "red", data: "AA==", sentTick: 6, deliverAtTick: 12 }),
-        () => (b as any).radioQueue.pop(),
-      ],
+      (b) => (
+        need(b as any, "radioQueue"),
+        [
+          () =>
+            (b as any).radioQueue.push({ from: "veh_1", team: "red", data: "AA==", sentTick: 6, deliverAtTick: 12 }),
+          () => (b as any).radioQueue.pop(),
+        ]
+      ),
     ],
     [
       "comandos en vuelo (latencia)",
-      (b) => [
-        () => (b as any).pendingLatencyCommands.push({ readyAtTick: 9, vehicleId: "veh_1", command: {} }),
-        () => (b as any).pendingLatencyCommands.pop(),
-      ],
+      (b) => (
+        need(b as any, "pendingLatencyCommands"),
+        [
+          () => (b as any).pendingLatencyCommands.push({ readyAtTick: 9, vehicleId: "veh_1", command: {} }),
+          () => (b as any).pendingLatencyCommands.pop(),
+        ]
+      ),
     ],
     [
       "última orden de movimiento (lastMove)",
       (b) => {
-        const v = b.getVehicle("veh_1")!;
+        const v = need(b.getVehicle("veh_1"), "lastMove");
         const o = v.lastMove;
         return [() => (v.lastMove = { throttle: 1, steer: 1 }), () => (v.lastMove = o)];
       },
@@ -192,7 +213,7 @@ describe("MD · el stateHash cubre todo el estado vivo que determina el futuro",
     [
       "timeouts consecutivos",
       (b) => {
-        const v = b.getVehicle("veh_1")!;
+        const v = need(b.getVehicle("veh_1"), "consecutiveTimeouts");
         return [() => v.consecutiveTimeouts++, () => v.consecutiveTimeouts--];
       },
     ],

@@ -12,9 +12,10 @@
  *  - CONTRATO PENDIENTE (`apps/arena-engine/tests/contract-pending/*.test.ts` y
  *    `apps/bot-manager/tests/contract-pending/*.test.ts`): describe lo que el equipo dueño
  *    tiene que conseguir. Se declaran con `contractIt(TEAM, …)`:
- *      · por defecto es `it.fails`: la CI de la base sigue verde PORQUE el test falla;
- *      · si el equipo lo implementa, `it.fails` pasa a «unexpected pass» y la CI se pone
- *        roja: así nadie arregla un contrato sin activarlo a propósito;
+ *      · por defecto es «rojo esperado»: verde SÓLO si falla con una ASERCIÓN (un
+ *        TypeError/ReferenceError es un error de infraestructura y rompe el test);
+ *      · si el equipo lo implementa, pasa a «unexpected pass» y la CI se pone roja:
+ *        así nadie arregla un contrato sin activarlo a propósito;
  *      · activación: el equipo dueño cambia su `contractIt("MX", …)` por `it(…)` en su PR
  *        (o, para verlo en rojo real antes de implementar, ejecuta con
  *        `S9_CONTRACT_ENFORCE=MX` —o `ALL`— y el test corre como `it` normal).
@@ -22,33 +23,22 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { expect, it } from "vitest";
+import { expect } from "vitest";
 import { loadCatalog } from "../../../../packages/module-catalog/loadCatalog.js";
 import { resolveVehicle } from "../../../../packages/module-catalog/resolve/index.js";
 import type { LoadoutInput, ModuleDefinition } from "../../../../packages/module-catalog/types.js";
 import type { ArenaMap } from "../../src/sim/modes.js";
 import type { VehicleSpec } from "../../src/sim/vehicle.js";
 
-export type OwnerTeam = "MF" | "MD" | "MA" | "MB" | "MC";
-
-function enforced(team: OwnerTeam): boolean {
-  const raw = process.env.S9_CONTRACT_ENFORCE ?? "";
-  const set = raw
-    .split(",")
-    .map((s) => s.trim().toUpperCase())
-    .filter(Boolean);
-  return set.includes(team) || set.includes("ALL");
-}
-
-/**
- * Test de contrato pendiente del equipo `team`. Ver la cabecera del fichero.
- * El nombre lleva el prefijo `[contract-pending <TEAM>]` para filtrarlo con `-t`.
- */
-export function contractIt(team: OwnerTeam, name: string, fn: () => unknown | Promise<unknown>, timeout?: number) {
-  const title = `[contract-pending ${team}] ${name}`;
-  if (enforced(team)) return it(title, fn, timeout);
-  return it.fails(title, fn, timeout);
-}
+// `contractIt` y su política viven en un helper compartido (también lo usa bot-manager).
+export {
+  contractIt,
+  enforced,
+  fixtureGuard,
+  FixtureError,
+  isAssertionError,
+} from "../../../../packages/test-contracts/contract-it.js";
+export type { OwnerTeam } from "../../../../packages/test-contracts/contract-it.js";
 
 // ------------------------------------------------------------------ golden de baseline
 

@@ -83,12 +83,25 @@ function runVitest(m, tag) {
   const rep = JSON.parse(readFileSync(out, "utf8"));
   const tests = [];
   for (const f of rep.testResults ?? []) {
-    for (const a of f.assertionResults ?? []) tests.push({ file: f.name, name: a.fullName, status: a.status });
+    for (const a of f.assertionResults ?? [])
+      tests.push({
+        file: f.name,
+        name: a.fullName,
+        status: a.status,
+        message: (a.failureMessages ?? []).join("\n").slice(0, 1500),
+      });
     // Fichero que no carga (error de import/compilación): cuenta como error, no como test.
     if ((f.assertionResults ?? []).length === 0 && f.status === "failed")
-      tests.push({ file: f.name, name: "<suite-error>", status: "failed" });
+      tests.push({ file: f.name, name: "<suite-error>", status: "failed", message: f.message ?? "" });
   }
   return { rc: r.status, tests };
+}
+
+/** ¿El mensaje de fallo de vitest es el de una aserción (y no de una excepción de código)? */
+function isAssertionMessage(msg) {
+  const text = msg ?? "";
+  if (/^\s*(TypeError|ReferenceError|SyntaxError|RangeError)\b|INFRA:|FixtureError/m.test(text)) return false;
+  return /AssertionError|expected .* to |toMatchSnapshot|Snapshot/i.test(text);
 }
 
 function judge(m, res) {
@@ -101,7 +114,13 @@ function judge(m, res) {
   if (m.kind === "kill") {
     if (failed.length === 0) return "SOBREVIVE";
     if (failed.some((t) => t.name === "<suite-error>")) return "ROJO_ERRONEO";
-    return re && !failed.some((t) => re.test(t.name)) ? "ROJO_ERRONEO" : "ROJA_OK";
+    // El nombre del test NO basta: el fallo debe ser una ASERCIÓN (no un TypeError/ReferenceError/
+    // INFRA) y, si el manifiesto fija `expectMessage`, su MENSAJE debe casar con ese patrón.
+    const named = re ? failed.filter((t) => re.test(t.name)) : failed;
+    if (named.length === 0) return "ROJO_ERRONEO";
+    const reMsg = m.expectMessage ? new RegExp(m.expectMessage, "s") : null;
+    const good = named.filter((t) => isAssertionMessage(t.message) && (!reMsg || reMsg.test(t.message ?? "")));
+    return good.length > 0 ? "ROJA_OK" : "ROJO_ERRONEO";
   }
   if (m.kind === "fix") {
     const target = res.tests.filter((t) => (re ? re.test(t.name) : true));
@@ -163,6 +182,7 @@ for (const m of mutants) {
     ok,
     vitestRc: res.rc ?? null,
     failed: failedNames,
+    failureMessages: (res.tests ?? []).filter((t) => t.status === "failed").map((t) => (t.message ?? "").split("\n")[0].slice(0, 300)),
     passedCount: passedNames.length,
     ...(m.kind === "fix" ? { passed: passedNames } : {}),
     seconds: Math.round((Date.now() - t0) / 1000),

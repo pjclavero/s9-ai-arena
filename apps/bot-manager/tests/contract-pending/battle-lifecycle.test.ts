@@ -11,6 +11,8 @@
  * MF los activa cambiándolos a `it` en su PR (o los ve en rojo con S9_CONTRACT_ENFORCE=MF).
  * Interfaz usada: `runContainerBattle`/`ContainerRunner`/`ContainerHandle` del BASE_SHA.
  */
+import v8 from "node:v8";
+import vm from "node:vm";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 import { loadRuleset } from "../../../../packages/game-rules/index.js";
@@ -20,7 +22,7 @@ import { ProtocolServer } from "../../../arena-engine/src/protocol-server.js";
 import { emptyArena, scoutLoadout } from "../../../arena-engine/src/fixtures.js";
 import type { ContainerHandle, ContainerRunner, SandboxSpec } from "../../src/container-runner.js";
 import { runContainerBattle, type ContainerBattleBot } from "../../src/container-battle.js";
-import { contractIt } from "../../../arena-engine/tests/baseline/helpers.js";
+import { contractIt } from "../../../../packages/test-contracts/contract-it.js";
 
 const DIGEST =
   "ghcr.io/pjclavero/s9-ai-arena/bot-runtime-python@sha256:a337716702a710a5d3497c81e422ab08e07ddfab5186eb824efce9940306e6aa";
@@ -94,21 +96,27 @@ interface Ledger {
 }
 
 /** Runner instrumentado. `mode`: qué hace cada bot lanzado. */
-function ledgerRunner(opts: { silentBots?: string[]; throwingStop?: string[] } = {}): {
+function ledgerRunner(
+  opts: { silentBots?: string[]; throwingStop?: string[]; hangingLaunch?: string[]; hangingStop?: string[] } = {},
+): {
   runner: ContainerRunner;
   ledger: Ledger;
 } {
   const ledger: Ledger = { launched: [], stops: {}, wsUrl: null };
   const runner: ContainerRunner = {
     async launch(spec: SandboxSpec): Promise<ContainerHandle> {
-      ledger.launched.push(spec.botId);
       ledger.wsUrl = spec.env.WS_URL;
+      // `docker run` colgado: el launch NO resuelve nunca (no se registra como lanzado).
+      if (opts.hangingLaunch?.includes(spec.botId)) return new Promise<ContainerHandle>(() => {});
+      ledger.launched.push(spec.botId);
       const ws = opts.silentBots?.includes(spec.botId) ? null : playBot(spec);
       return {
         id: `mock-${spec.botId}`,
         async stop() {
           ledger.stops[spec.botId] = (ledger.stops[spec.botId] ?? 0) + 1;
           ws?.close();
+          // `docker stop` colgado: ni resuelve ni rechaza.
+          if (opts.hangingStop?.includes(spec.botId)) return new Promise<void>(() => {});
           if (opts.throwingStop?.includes(spec.botId)) throw new Error(`stop simulado falla: ${spec.botId}`);
         },
         async posture() {
@@ -231,4 +239,93 @@ describe("MF · idempotencia del teardown", () => {
     battle.free();
     expect(() => battle.free()).not.toThrow();
   });
+});
+
+// ------------------------------------------------------------------ reaper y límites de espera
+
+/** Resuelve con «done» o con «hung» si la promesa no termina en `ms` (nunca cuelga el test). */
+async function settlesWithin(p: Promise<unknown>, ms: number): Promise<"done" | "hung"> {
+  let timer: NodeJS.Timeout | undefined;
+  const hung = new Promise<"hung">((r) => (timer = setTimeout(() => r("hung"), ms)));
+  const done = p.then(
+    () => "done" as const,
+    () => "done" as const,
+  );
+  try {
+    return await Promise.race([done, hung]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+describe("MF · reaper: ninguna batalla queda colgada por un runner que no responde", () => {
+  contractIt(
+    "MF",
+    "un launch() que nunca resuelve: la batalla termina por overallTimeoutMs y lo ya lanzado se para",
+    async () => {
+      const { runner, ledger } = ledgerRunner({ hangingLaunch: ["bot_b"] });
+      const outcome = await settlesWithin(runContainerBattle(cfg(runner, { overallTimeoutMs: 1_500 })), 8_000);
+      expect(outcome, "runContainerBattle sigue colgado tras overallTimeoutMs + margen").toBe("done");
+      expect(ledger.stops.bot_a, "el contenedor ya lanzado no se paró").toBe(1);
+    },
+    20_000,
+  );
+
+  contractIt(
+    "MF",
+    "un stop() que nunca resuelve no cuelga el teardown: runContainerBattle acaba y el puerto se cierra",
+    async () => {
+      const { runner, ledger } = ledgerRunner({ hangingStop: ["bot_a"] });
+      const outcome = await settlesWithin(runContainerBattle(cfg(runner, { overallTimeoutMs: 3_000 })), 12_000);
+      expect(outcome, "el teardown quedó esperando un stop() eterno").toBe("done");
+      expect(ledger.stops.bot_b).toBe(1);
+      expect(await portAccepts(ledger.wsUrl!)).toBe(false);
+    },
+    30_000,
+  );
+});
+
+// ------------------------------------------------------------------ memoria
+
+/** GC forzado sin `--expose-gc` en la línea de comandos. */
+function forceGc(): void {
+  v8.setFlagsFromString("--expose-gc");
+  const gc = vm.runInNewContext("gc") as () => void;
+  gc();
+  gc();
+}
+
+function nativeAndHeapBytes(): number {
+  forceGc();
+  const m = process.memoryUsage();
+  return m.heapUsed + m.external + m.arrayBuffers;
+}
+
+describe("MF · memoria: crear y liberar batallas no acumula", () => {
+  contractIt(
+    "MF",
+    "40 batallas create/step/free seguidas no hacen crecer heap+external+arrayBuffers más de 16 MiB tras el calentamiento",
+    async () => {
+      const runOne = async (i: number) => {
+        const b = await Battle.create({
+          battleId: `me_mem_${i}`,
+          seed: `me-mem-${i}`,
+          ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: 60 }),
+          map: emptyArena(),
+          participants: [
+            { id: "veh_1", botId: "bm1", team: "red", spec: scoutLoadout() },
+            { id: "veh_2", botId: "bm2", team: "blue", spec: scoutLoadout() },
+          ],
+        });
+        for (let t = 0; t < 30; t++) b.step();
+        b.free();
+      };
+      for (let i = 0; i < 8; i++) await runOne(i); // calentamiento (JIT, wasm, cachés)
+      const base = nativeAndHeapBytes();
+      for (let i = 8; i < 48; i++) await runOne(i);
+      const growth = nativeAndHeapBytes() - base;
+      expect(growth, `crecimiento ${(growth / 1048576).toFixed(1)} MiB tras 40 batallas`).toBeLessThan(16 * 1048576);
+    },
+    120_000,
+  );
 });
