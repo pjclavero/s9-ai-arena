@@ -104,7 +104,7 @@ Nadie más: ni `organizer`, ni un participante con rivales, ni un miembro de equ
 - resultado deportivo (ganador, motivo de fin, ticks, marcador y hash final, que permite auditar con `verify`);
 - para el reproductor: `ticks`, `snapshotCount`, `keyframes`, `official`, `createdAt` y `debugOpen: false`.
 
-**Qué no lleva nunca**: semilla, ruleset completo, comandos de los bots (tampoco con `debugOpen`), carga de radio, despliegue de minas, `participants[].spec` (loadout), eventos privados de un bot (impactos recibidos, acciones rechazadas…), hashes por tick ni metadatos de almacén (sha, algoritmo, tamaño, caducidad, checksum del mapa, rutas). Sin semilla ni comandos la batalla **no se puede re-simular** con lo publicado.
+**Qué no lleva nunca**: semilla, ruleset completo, comandos de los bots (tampoco con `debugOpen`), carga de radio, despliegue de minas, `participants[].spec` (loadout), eventos privados de un bot (impactos recibidos, acciones rechazadas…), hashes por tick ni metadatos de almacén (sha, algoritmo, tamaño, caducidad, checksum del mapa, rutas). Lo publicado **no permite re-simular** la batalla porque no contiene los **comandos** privados de los bots: sin ellos, ni siquiera conociendo la semilla se reproduce el resultado. La seguridad de la proyección no depende de ocultar la semilla (la vista de auditoría de batalla puede revelarla; ver #264).
 
 | Recurso | Con crudo | Sin crudo (lector autorizado) |
 |---|---|---|
