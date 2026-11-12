@@ -30,7 +30,6 @@ import { pathParam } from "../params.js";
 import { badRequest } from "../errors.js";
 import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCursorQuery } from "../serialize.js";
 import { anonQuota, type AnonQuotaConfig } from "../middleware/anon-quota.js";
-import { publicReplaysEnabledFromEnv } from "../public-replays.js";
 import { flagSource } from "../runtime-settings.js";
 import { getReadableReplayBattleOr404, replayNotFound, whereReplayReadable } from "../replay-access.js";
 import { applyReplayListFilters, assertCursorShape, parseReplayListFilters } from "../services/replay-list.js";
@@ -125,7 +124,7 @@ export function replayRoutes(
   publicReplaysEnabled?: boolean | (() => boolean),
 ): Router {
   const router = Router();
-  const replaysOn = flagSource(publicReplaysEnabled, () => publicReplaysEnabledFromEnv());
+  const replaysOn = flagSource(publicReplaysEnabled, () => false);
   const decoded = new DecodedReplayCache();
 
   /** Índice del replay de una batalla YA autorizada, o 404 uniforme. */

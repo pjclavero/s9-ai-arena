@@ -13,7 +13,7 @@ import { versionPayload } from "../../../packages/build-info/index.js";
 import { requireWritableDataDir } from "../../replay-service/src/data-dir.js";
 import { createDb } from "../../api/src/db/connection.js";
 import { SpectateGateway } from "../../api/src/spectate/gateway.js";
-import { RuntimeSettingsStore } from "../../api/src/runtime-settings.js";
+import { startWorkerRuntimeSettings } from "./runtime-settings-wiring.js";
 import { makeRunBattleHandler, markBattleForReview } from "./battle-runner.js";
 import { makeEngineExecutor } from "./engine-executor.js";
 import { containerAgents } from "./container-agents.js";
@@ -66,14 +66,13 @@ requireWritableDataDir("tournament-worker", replaysDir);
 const spectatePort = Number(process.env.SPECTATE_PORT ?? 8081);
 // MG · el flag de espectador público sale de los ajustes de runtime persistidos (la
 // MISMA fila que cambia la admin), releídos cada S9_RUNTIME_SETTINGS_REFRESH_MS: un
-// cambio se aplica aquí sin recrear el contenedor. Este proceso NO crea la fila (no
-// recibe S9_PUBLIC_REPLAYS_ENABLED); hasta que la API la cree, manda su entorno.
-const runtimeSettings = new RuntimeSettingsStore(db, { bootstrap: false });
-await runtimeSettings.refresh();
-runtimeSettings.start();
+// cambio se aplica aquí sin recrear el contenedor. FAIL-CLOSED: sin lectura válida de
+// la BD (arranque con BD caída o sin fila) vale FALSE, nunca el entorno; con la BD
+// caída en caliente, el último valor sólo durante 3 × el intervalo (ver el wiring).
+const { publicSpectateEnabled } = await startWorkerRuntimeSettings(db);
 const spectate = new SpectateGateway({
   port: spectatePort,
-  publicSpectateEnabled: () => runtimeSettings.publicVisibility().publicSpectate,
+  publicSpectateEnabled,
 });
 
 // run_battle (DEV-B · TD-002): AUTORIDAD ÚNICA de ejecución. El motor corre EN

@@ -20,8 +20,6 @@ import { addBotToTeam, emptyTeamStats, type TeamBattleStats } from "../../../rep
 import { signSpectateTicket } from "../auth/tokens.js";
 import { anonQuota, type AnonQuotaConfig } from "../middleware/anon-quota.js";
 import type { BattleRunConfig } from "../battle-run.js";
-import { publicSpectateEnabledFromEnv } from "../public-spectate.js";
-import { publicReplaysEnabledFromEnv } from "../public-replays.js";
 import { flagSource } from "../runtime-settings.js";
 import { assertTeamsFitMap, checkBattleContent } from "./catalog.js";
 import { wherePublicReplay } from "../replay-access.js";
@@ -384,8 +382,8 @@ export function battleRoutes(
   publicReplaysEnabled?: boolean | (() => boolean),
 ): Router {
   const router = Router();
-  const spectateOn = flagSource(publicSpectateEnabled, () => publicSpectateEnabledFromEnv());
-  const replaysOn = flagSource(publicReplaysEnabled, () => publicReplaysEnabledFromEnv());
+  const spectateOn = flagSource(publicSpectateEnabled, () => false);
+  const replaysOn = flagSource(publicReplaysEnabled, () => false);
   // UX-D (G-08) · una sola política de lectura para listado, detalle, stats,
   // auditoría, ticket de espectador y /run (battle-access.ts).
   const vis = (): BattleVisibility => ({ publicReplays: replaysOn(), publicSpectate: spectateOn() });

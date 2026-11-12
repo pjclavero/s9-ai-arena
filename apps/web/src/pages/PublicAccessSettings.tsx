@@ -12,7 +12,7 @@ import { FormError } from "../ui/primitives.js";
 export interface PublicAccessSettingsView {
   publicSpectateEnabled: boolean;
   publicReplaysEnabled: boolean;
-  source: "database" | "environment";
+  source: "database" | "environment" | "unavailable";
   updatedAt: string | null;
   updatedBy: string | null;
   propagationMaxMs: number;
@@ -144,7 +144,11 @@ export function PublicAccessSettings() {
             <small data-testid="public-access-meta">
               Espectador público: {view.effective.publicSpectate ? "activado" : "desactivado"} · Replays públicos:{" "}
               {view.effective.publicReplays ? "activados" : "desactivados"} · Origen:{" "}
-              {view.source === "database" ? "guardado en la aplicación" : "entorno (.env)"}
+              {view.source === "database"
+                ? "guardado en la aplicación"
+                : view.source === "unavailable"
+                  ? "sin lectura válida de la base de datos (acceso público cerrado)"
+                  : "entorno (.env)"}
               {view.updatedAt ? ` · Último cambio: ${new Date(view.updatedAt).toLocaleString()}` : ""} · Los demás
               servicios lo aplican en ≤ {Math.ceil(view.propagationMaxMs / 1000)} s, sin reiniciar.
             </small>

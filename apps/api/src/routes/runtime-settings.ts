@@ -47,6 +47,9 @@ function view(store: RuntimeSettingsStore, deps: RuntimeSettingsDeps) {
       publicReplays: s.publicReplays,
       broadcastLiveAvailable: reason === null,
       reason,
+      // Replays públicos: estado global (la lectura por batalla/bots la da getStreamingTarget).
+      publicReplaysAvailable: s.publicReplays,
+      replaysReason: (s.publicReplays ? null : "public_replays_disabled") as BroadcastUnavailableReason | null,
     },
   };
 }

@@ -26,7 +26,6 @@ import { randomUUID } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 import { verifySpectateTicket, type VerifiedSpectateTicket } from "../auth/tokens.js";
-import { publicSpectateEnabledFromEnv } from "../public-spectate.js";
 
 /**
  * R2.6 (ERR-SEC-16): el ticket viaja FUERA de la URL, como subprotocolo
@@ -142,7 +141,7 @@ export class SpectateGateway {
 
   constructor(opts: SpectateGatewayOptions = {}) {
     this.maxClientsPerBattle = opts.maxClientsPerBattle ?? DEFAULT_MAX_CLIENTS_PER_BATTLE;
-    const ps = opts.publicSpectateEnabled ?? publicSpectateEnabledFromEnv();
+    const ps = opts.publicSpectateEnabled ?? false;
     this.publicSpectateEnabled = typeof ps === "function" ? ps : () => ps;
     if (opts.wss) {
       this.wss = opts.wss;

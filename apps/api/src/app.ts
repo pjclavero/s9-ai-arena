@@ -22,8 +22,6 @@ import { battleRoutes } from "./routes/battles.js";
 import { battleRulesRoutes } from "./routes/battle-rules.js";
 import { replayRoutes } from "./routes/replays.js";
 import { battleRunConfigFromEnv, realBattleRunsCapability, type BattleRunConfig } from "./battle-run.js";
-import { publicSpectateEnabledFromEnv } from "./public-spectate.js";
-import { publicReplaysEnabledFromEnv } from "./public-replays.js";
 import { RuntimeSettingsStore } from "./runtime-settings.js";
 import { runtimeSettingsRoutes } from "./routes/runtime-settings.js";
 import { MetricsRegistry, metricsEnabledFromEnv, metricsMiddleware } from "./metrics.js";
@@ -120,9 +118,12 @@ export function createApp(cfg: AppConfig): express.Express {
     cfg.runtimeSettings ??
     new RuntimeSettingsStore(cfg.db, {
       defaults: {
-        publicSpectate: cfg.publicSpectateEnabled ?? publicSpectateEnabledFromEnv(),
-        publicReplays: cfg.publicReplaysEnabled ?? publicReplaysEnabledFromEnv(),
+        publicSpectate: cfg.publicSpectateEnabled ?? false,
+        publicReplays: cfg.publicReplaysEnabled ?? false,
       },
+      // Sin store inyectado (sólo tests): los flags explícitos valen como lectura válida;
+      // sin ellos, cerrado. Producción (server.ts) inyecta el store persistido y FAIL-CLOSED.
+      fixed: true,
     });
   const visibility = runtimeSettings.getter;
   const spectateOn = () => visibility().publicSpectate;

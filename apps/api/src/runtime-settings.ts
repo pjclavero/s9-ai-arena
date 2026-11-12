@@ -19,8 +19,16 @@
  *    políticas de acceso por petición) y es la única lectura de los flags: nadie
  *    más consulta `process.env.S9_PUBLIC_*`.
  *
- * Fallos: si la lectura de la BD falla se conserva el ÚLTIMO valor conocido (si
- * nunca se leyó, el del entorno). Sin tabla (BD sin migrar) se usa el entorno.
+ * FAIL-CLOSED (revisión MG): los flags públicos sólo valen TRUE mientras haya una
+ * lectura válida de la BD reciente.
+ *  - Si la lectura falla se conserva el último valor sólo durante una ventana de
+ *    staleness acotada: `staleMs` (por defecto 3 × refreshMs, `DEFAULT_STALE_FACTOR`).
+ *    Pasada la ventana sin una lectura válida, AMBOS flags valen FALSE hasta que la BD
+ *    vuelva a responder: una revocación (PATCH a false) no puede quedar sin efecto
+ *    indefinidamente por una BD caída.
+ *  - En el ARRANQUE sin lectura válida (BD caída, sin migrar o, en el worker, sin fila
+ *    todavía) los flags valen FALSE, nunca el entorno. El entorno sólo se usa como
+ *    valor del INSERT de bootstrap cuando la BD responde y no hay fila (sólo la API).
  */
 import type { Db } from "./db/connection.js";
 import { audit } from "./audit.js";
@@ -38,6 +46,9 @@ export type PublicVisibilitySource = () => PublicVisibility;
 
 export const RUNTIME_SETTINGS_TABLE = "app_runtime_settings";
 export const DEFAULT_REFRESH_MS = 5_000;
+/** Ventana de staleness por defecto = este factor × refreshMs. */
+export const DEFAULT_STALE_FACTOR = 3;
+export const CLOSED: PublicVisibility = Object.freeze({ publicSpectate: false, publicReplays: false });
 /** Acción de auditoría de un cambio de los ajustes públicos. */
 export const AUDIT_ACTION = "settings.public_access.update";
 export const AUDIT_TARGET = "settings:public_access";
@@ -51,7 +62,8 @@ export function refreshMsFromEnv(env: NodeJS.ProcessEnv = process.env): number {
   return Number.isInteger(n) && n >= 500 && n <= 60_000 ? n : DEFAULT_REFRESH_MS;
 }
 
-export type SettingsSource = "database" | "environment";
+/** `unavailable`: sin lectura válida reciente de la BD (los flags valen FALSE). */
+export type SettingsSource = "database" | "environment" | "unavailable";
 
 export interface PublicAccessSnapshot extends PublicVisibility {
   /** De dónde sale el valor vigente en ESTE proceso. */
@@ -99,7 +111,7 @@ interface Row {
 }
 
 export interface RuntimeSettingsOptions {
-  /** Valor por defecto / bootstrap / fallback. Por defecto, el entorno del proceso. */
+  /** Valor por defecto: SÓLO el INSERT de bootstrap (API) cuando la BD responde y no hay fila. Por defecto, el entorno. */
   defaults?: PublicVisibility;
   /** Cada cuánto se relee la fila (ms). */
   refreshMs?: number;
@@ -108,10 +120,24 @@ export interface RuntimeSettingsOptions {
    * tournament-worker no recibe `S9_PUBLIC_REPLAYS_ENABLED` y no debe fijarlo.
    */
   bootstrap?: boolean;
+  /** Ventana (ms) durante la que se conserva el último valor si la BD falla. Por defecto 3 × refreshMs. */
+  staleMs?: number;
+  /** Reloj inyectable (tests). */
+  now?: () => number;
+  /**
+   * SÓLO montajes sin BD de ajustes (tests de `createApp` con flags explícitos): los
+   * `defaults` valen como lectura válida permanente. Producción nunca lo activa.
+   */
+  fixed?: boolean;
 }
 
 export class RuntimeSettingsStore {
   private current: PublicVisibility;
+  /** Instante (ms) de la última lectura/escritura VÁLIDA de la BD; null = nunca. */
+  private lastGoodAt: number | null = null;
+  private readonly fixed: boolean;
+  readonly staleMs: number;
+  private readonly now: () => number;
   private source: SettingsSource = "environment";
   private updatedAt: string | null = null;
   private updatedBy: string | null = null;
@@ -128,11 +154,20 @@ export class RuntimeSettingsStore {
     this.current = { ...this.defaults };
     this.refreshMs = opts.refreshMs ?? refreshMsFromEnv();
     this.bootstrap = opts.bootstrap ?? false;
+    this.now = opts.now ?? Date.now;
+    this.fixed = opts.fixed ?? false;
+    this.staleMs = opts.staleMs ?? this.refreshMs * DEFAULT_STALE_FACTOR;
   }
 
-  /** Getter ÚNICO y síncrono de la visibilidad pública vigente. */
+  /** ¿El valor en memoria procede de una lectura válida y reciente de la BD? */
+  isFresh(): boolean {
+    if (this.fixed) return true;
+    return this.lastGoodAt !== null && this.now() - this.lastGoodAt <= this.staleMs;
+  }
+
+  /** Getter ÚNICO y síncrono de la visibilidad pública vigente (FAIL-CLOSED). */
   publicVisibility(): PublicVisibility {
-    return { ...this.current };
+    return this.isFresh() ? { ...this.current } : { ...CLOSED };
   }
 
   /** Lo mismo como función suelta (para inyectar en rutas y gateway). */
@@ -140,8 +175,8 @@ export class RuntimeSettingsStore {
 
   snapshot(): PublicAccessSnapshot {
     return {
-      ...this.current,
-      source: this.source,
+      ...this.publicVisibility(),
+      source: this.isFresh() ? this.source : "unavailable",
       updatedAt: this.updatedAt,
       updatedBy: this.updatedBy,
       refreshMs: this.refreshMs,
@@ -151,6 +186,7 @@ export class RuntimeSettingsStore {
   private apply(row: Row): void {
     this.current = { publicSpectate: row.public_spectate_enabled, publicReplays: row.public_replays_enabled };
     this.source = "database";
+    this.lastGoodAt = this.now();
     this.updatedAt = new Date(row.updated_at).toISOString();
     this.updatedBy = row.updated_by ?? null;
   }
@@ -172,7 +208,8 @@ export class RuntimeSettingsStore {
 
   /**
    * Relee la fila. Sin fila: la API la crea con los valores por defecto (bootstrap);
-   * el worker sigue con el entorno. Cualquier error conserva el último valor.
+   * el worker no tiene valor válido (FALSE) hasta que exista. Un error conserva el
+   * último valor sólo durante `staleMs` (ver cabecera).
    */
   async refresh(): Promise<void> {
     try {
@@ -183,7 +220,7 @@ export class RuntimeSettingsStore {
       }
       if (row) this.apply(row);
     } catch {
-      /* BD caída o sin migrar: último valor conocido (o el entorno si nunca se leyó). */
+      /* BD caída o sin migrar: no se renueva la lectura; `publicVisibility()` cierra al vencer `staleMs`. */
     }
   }
 
@@ -249,7 +286,10 @@ export class RuntimeSettingsStore {
  * Normaliza lo que reciben las rutas: un booleano fijo (tests y compatibilidad) o un
  * getter (producción, `RuntimeSettingsStore.getter`).
  */
-export function flagSource(v: boolean | (() => boolean) | undefined, fallback: () => boolean): () => boolean {
+export function flagSource(
+  v: boolean | (() => boolean) | undefined,
+  fallback: () => boolean = () => false,
+): () => boolean {
   if (typeof v === "function") return v;
   if (typeof v === "boolean") return () => v;
   return fallback;

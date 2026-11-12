@@ -16,7 +16,7 @@
  */
 import type { Db } from "./db/connection.js";
 import { whereBattleReadable, type BattleVisibility } from "./battle-access.js";
-import { publicShowabilityOf } from "./replay-access.js";
+import { publicShowabilityOf, wherePubliclyShowable } from "./replay-access.js";
 
 export type BroadcastUnavailableReason =
   /** El espectador público está desactivado: /broadcast no puede leer batallas en directo. */
@@ -99,9 +99,17 @@ export async function battleBroadcastState(
 }
 
 /**
- * Estado efectivo de un torneo: el director lee sus batallas con la misma política;
- * las que están en directo exigen el espectador público y, con el torneo terminado,
- * la pantalla final exige los replays públicos. null = no existe.
+ * Estado efectivo de un torneo, con la política REAL (la de `GET /tournaments/{id}/battles`
+ * que lee /broadcast, anónima):
+ *  - el estado (cancelado ⇒ `target_not_available`);
+ *  - el flag que exige el estado: en curso ⇒ espectador público; terminado ⇒ replays públicos;
+ *  - la visibilidad de los bots y `tournament.broadcast`: si el torneo no autoriza la
+ *    retransmisión y alguna de sus batallas tiene bots no públicos (`wherePubliclyShowable`)
+ *    ⇒ `tournament_not_broadcastable`;
+ *  - `whereBattleReadable` anónimo sobre las batallas del torneo que /broadcast muestra
+ *    (en directo si está en curso, terminadas si ha terminado): si alguna no se puede
+ *    leer ⇒ `other`.
+ * null = no existe.
  */
 export async function tournamentBroadcastState(
   db: Db,
@@ -110,17 +118,33 @@ export async function tournamentBroadcastState(
 ): Promise<BroadcastEffectiveState | null> {
   const t = await db("tournaments")
     .where({ id: tournamentId })
-    .first("id", "state")
+    .first("id", "state", "broadcast")
     .catch(() => null);
   if (!t) return null;
+  const count = async (q: any): Promise<number> => {
+    const r = await q.count({ n: "battles.id" }).first();
+    return Number(r?.n ?? 0);
+  };
+  const base = () => db("battles").where("battles.tournament_id", tournamentId);
+  const total = await count(base());
+  const showable = await count(wherePubliclyShowable(db, base()));
+  const botsBlocked = total > showable;
+  const finished = t.state === "finished";
   const out = (available: boolean, reason: BroadcastUnavailableReason | null): BroadcastEffectiveState => ({
-    publicSpectateEffective: vis.publicSpectate,
-    publicReplaysEffective: vis.publicReplays,
+    publicSpectateEffective: vis.publicSpectate && !botsBlocked,
+    publicReplaysEffective: vis.publicReplays && !botsBlocked,
     broadcastAvailable: available,
     reason: available ? null : reason,
     effective: { ...vis },
   });
   if (t.state === "cancelled") return out(false, "target_not_available");
-  if (t.state === "finished") return vis.publicReplays ? out(true, null) : out(false, "public_replays_disabled");
-  return vis.publicSpectate ? out(true, null) : out(false, "public_spectate_disabled");
+  if (finished ? !vis.publicReplays : !vis.publicSpectate) {
+    return out(false, finished ? "public_replays_disabled" : "public_spectate_disabled");
+  }
+  if (botsBlocked) return out(false, "tournament_not_broadcastable");
+  const shown = base().where("battles.status", finished ? "finished" : "running");
+  const shownTotal = await count(shown.clone());
+  const readable = await count(whereBattleReadable(db, shown.clone(), undefined, vis));
+  if (readable < shownTotal) return out(false, "other");
+  return out(true, null);
 }

@@ -3155,7 +3155,7 @@ components:
       properties:
         publicSpectateEnabled: { type: boolean }
         publicReplaysEnabled: { type: boolean }
-        source: { type: string, enum: [database, environment], description: 'De dónde sale el valor vigente en el proceso que responde.' }
+        source: { type: string, enum: [database, environment, unavailable], description: 'De dónde sale el valor vigente en el proceso que responde.' }
         updatedAt: { type: string, format: date-time, nullable: true }
         updatedBy: { type: string, format: uuid, nullable: true }
         propagationMaxMs: { type: integer, description: 'Latencia máxima de un cambio en los demás procesos (intervalo de relectura).' }
@@ -3172,6 +3172,8 @@ components:
             publicReplays: { type: boolean }
             broadcastLiveAvailable: { type: boolean, description: 'Requisitos GLOBALES para retransmitir una batalla en directo (espectador público y streamer). El detalle por destino lo da getStreamingTarget.' }
             reason: { $ref: '#/components/schemas/BroadcastUnavailableReason' }
+            publicReplaysAvailable: { type: boolean, description: 'Replays públicos activos (estado global).' }
+            replaysReason: { $ref: '#/components/schemas/BroadcastUnavailableReason' }
         changed: { type: boolean, description: 'Sólo en la respuesta del PATCH.' }
         before:
           type: object
