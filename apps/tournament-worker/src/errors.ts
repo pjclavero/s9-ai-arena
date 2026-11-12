@@ -28,6 +28,9 @@ export const INFRASTRUCTURE_FAILURE_CODES = [
   // duplicado) o este worker perdió la reserva a mitad: no se ejecuta ni se
   // finaliza dos veces; el reintento la verá `finished` si el titular la cierra.
   "battle_busy",
+  // OLA2-MF · aborto pedido de una batalla propia (MANUAL_ABORT o parada del
+  // worker): la reserva se devuelve a `scheduled` tras el teardown.
+  "battle_aborted",
 ] as const;
 
 export type SportingFailureCode = (typeof SPORTING_FAILURE_CODES)[number];

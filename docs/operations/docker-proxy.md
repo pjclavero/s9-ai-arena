@@ -34,9 +34,23 @@ configuración del proceso en `apps/bot-manager/src/docker-proxy-config.ts`, ent
 
 Operaciones permitidas (todo lo demás → 403): `POST /containers/create`, `POST /containers/{id}/start`,
 `POST /containers/{id}/stop[?t=0..300]`, `GET /containers/{id}/json`,
-`GET /containers/{id}/stats?stream=false`. No hay `DELETE`, `wait`, `logs`, `kill` ni `exec`: los
-flujos reales usan `AutoRemove` y `state()` sobre el inspect (`ProxyContainerRunner`), y no hay
-código que necesite más.
+`GET /containers/{id}/stats?stream=false`, y desde OLA2-MF `DELETE /containers/{id}[?force=…]` y
+`GET /containers/json?all=…&filters=…`. No hay `wait`, `logs`, `kill` ni `exec`.
+
+OLA2-MF · por qué se añadieron borrado y listado, y sus límites:
+
+- Sin borrado el proxy podía **crear** contenedores que nadie podía quitar: un create cuyo start
+  falla queda `Created` para siempre (AutoRemove sólo actúa sobre un contenedor que arrancó) y el
+  camino `/run` (sin AutoRemove) dejaba contenedores `Exited`. El borrado exige lo mismo que `stop`:
+  Id completo, inspección previa y labels de propiedad de esta instancia (ajeno → 403). Sólo admite
+  `force`.
+- Sin listado no hay reconciliador (reaper del tournament-worker). El listado exige
+  `filters={"label":[…]}` con labels `arena.*` (nunca un listado de todo el host), el proxy añade
+  siempre sus labels de propiedad al filtro, vuelve a filtrar la respuesta (sólo propios) y la reduce
+  a `Id`, labels `arena.*`, `State` y `Created`.
+- **Despliegue:** el proxy corre en el host (unidad systemd); el borrado y el listado sólo existen
+  cuando se reinstala el bundle de esta versión. Un proxy antiguo responde 403 y el teardown y el
+  reaper lo registran como fallo (no rompen la batalla: AutoRemove sigue limpiando lo arrancado).
 
 ## Alcance de red
 

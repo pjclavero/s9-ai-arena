@@ -1,0 +1,46 @@
+{
+  "id": "test.fixture_interference_zone",
+  "version": 1,
+  "name": "Fixture: zona de interferencia (lidar+acústico)",
+  "actions": [
+    {
+      "kind": "activate",
+      "cooldownTicks": 90,
+      "cost": {
+        "energyEU": 5,
+        "charges": 1
+      },
+      "effects": [
+        {
+          "primitive": "interference",
+          "strength": 0.8,
+          "radiusM": 6,
+          "durationTicks": 150,
+          "falloff": "linear",
+          "targets": {
+            "relations": [
+              "any"
+            ],
+            "kinds": [
+              "vehicle",
+              "projectile"
+            ]
+          },
+          "stacking": "max",
+          "profile": {
+            "channels": {
+              "lidar": {
+                "strength": 0.9,
+                "mode": "block"
+              },
+              "acoustic": {
+                "strength": 0.5,
+                "mode": "attenuate"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+[
+  {
+    "i": 0,
+    "effective": 35.1,
+    "armorFront": 181.1,
+    "hull": 275.43
+  },
+  {
+    "i": 1,
+    "effective": 35.1,
+    "armorFront": 162.2,
+    "hull": 250.86
+  },
+  {
+    "i": 2,
+    "effective": 35.1,
+    "armorFront": 143.3,
+    "hull": 226.29
+  },
+  {
+    "i": 3,
+    "effective": 35.1,
+    "armorFront": 124.4,
+    "hull": 201.72
+  },
+  {
+    "i": 4,
+    "effective": 35.1,
+    "armorFront": 105.5,
+    "hull": 177.15
+  },
+  {
+    "i": 5,
+    "effective": 35.1,
+    "armorFront": 86.6,
+    "hull": 152.58
+  },
+  {
+    "i": 6,
+    "effective": 35.1,
+    "armorFront": 67.7,
+    "hull": 128.01
+  },
+  {
+    "i": 7,
+    "effective": 35.1,
+    "armorFront": 48.8,
+    "hull": 103.44
+  },
+  {
+    "i": 8,
+    "effective": 35.1,
+    "armorFront": 29.9,
+    "hull": 78.87
+  },
+  {
+    "i": 9,
+    "effective": 35.1,
+    "armorFront": 11,
+    "hull": 54.3
+  },
+  {
+    "i": 10,
+    "effective": 35.1,
+    "armorFront": 0,
+    "hull": 29.73
+  },
+  {
+    "i": 11,
+    "effective": 54,
+    "armorFront": 0,
+    "hull": 0
+  }
+]

@@ -38,6 +38,7 @@ import { ProtocolServer, type ExpectedBot } from "../../arena-engine/src/protoco
 import type { Replay } from "../../arena-engine/src/replay.js";
 import {
   DEFAULT_LIMITS,
+  battleLabels,
   type ContainerHandle,
   type ContainerLimits,
   type ContainerRunner,
@@ -201,6 +202,8 @@ export async function runContainerBattle(cfg: ContainerBattleConfig): Promise<Co
         },
         limits,
         seccompProfilePath,
+        // OLA2-MF · identidad de batalla (reconciliador).
+        labels: battleLabels(cfg.battleId),
       };
       // Si el lanzamiento de un bot falla, el `finally` limpia los ya lanzados.
       handles.push(await cfg.runner.launch(spec));
@@ -267,6 +270,9 @@ export async function runContainerBattle(cfg: ContainerBattleConfig): Promise<Co
     if (timeoutTimer) clearTimeout(timeoutTimer);
     // Limpieza incondicional: parar TODOS los contenedores (no dejar colgados).
     await Promise.allSettled(handles.map((h) => h.stop()));
+    // OLA2-MF · y BORRARLOS: este camino no usa AutoRemove (lee postura y CPU
+    // tras el resultado), así que cada batalla dejaba sus contenedores `Exited`.
+    await Promise.allSettled(handles.map((h) => h.remove?.()));
     server.stop();
     battle.free();
   }

@@ -22,11 +22,14 @@ beforeAll(async () => {
 const realMap = (): ArenaMap =>
   toEngineMap(JSON.parse(readFileSync(new URL("../../../maps/mvp-arena-01.json", import.meta.url), "utf8")));
 
+// RE-ANCLADO en la integración OLA2 (M0-I, MD+MB): hash v2 por componentes + flujos RNG con nombre (MD)
+// y contrato de daño de MB (orden por slot, hp del blindaje = hp del módulo, turretHeading normalizado,
+// armor.profile en el estado del vehículo). Atribución: m0-atribucion.py (INTEGRACION.md).
 const PRE_FIX_HASHES: Record<string, string> = {
-  "1v1-real": "2f720d64d435c96a1742ea376c5284186d392cf4a87486c1fc3c80900ec70a62",
-  "2v2-real": "053b7848dcfc9dfdf2c06cf03c2450323322e7324de8c6127dbaadec42b0d41e",
-  "2v2-open": "11712f5ab7e16460e4be50d25d10371890e6541622921135c57c30bfbab98b58",
-  "4v4-real": "ca54080f7c7d129e3f68f7c0da2bbb6ab03335a343e876d61dcc00c68938ab34",
+  "1v1-real": "3f1bb8bb19304936512e7f8bfa9f52c3ab5ebb0f390c6e9ea281f63e6513ecc1",
+  "2v2-real": "587aa2e1fb5f32515d35f1d17d2de1eda9cc764c4dfaf6ca48e150ff142a8e40",
+  "2v2-open": "e4ab04bdbc7db18c54c9046f10d1ebc9fd060c8160c04d30b0de81ade4bec0ed",
+  "4v4-real": "bc7231c2f169744d68c6ecf1627c6c047d05ea3dd57fa77f491c0c0c0d5bf237",
 };
 
 function run(name: string, n: number, map: ArenaMap): string {

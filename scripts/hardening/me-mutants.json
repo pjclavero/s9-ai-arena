@@ -1,0 +1,638 @@
+{
+  "description": "OLA 2 · ME · mutantes de calibración. kill = la baseline debe ponerse ROJA; fix = el contrato en enforce debe pasar a VERDE; identity = debe SOBREVIVIR. Runner: scripts/hardening/me-mutants.mjs (sólo VM112).",
+  "mutants": [
+    {
+      "id": "K01-ttl91",
+      "kind": "kill",
+      "team": null,
+      "contract": "MC: alcance efectivo actual (TTL 90)",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/combat.ts",
+          "from": "    ttlTicks: 90,",
+          "to": "    ttlTicks: 91,"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/baseline/weapon-range.test.ts"
+      ],
+      "expect": "alcance|TTL|rangeM"
+    },
+    {
+      "id": "K02-armor-wear",
+      "kind": "kill",
+      "team": null,
+      "contract": "MB: desgaste del blindaje (MD-03)",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/combat.ts",
+          "from": "    armor.hp = Math.max(0, armor.hp - (baseDamage - effective));",
+          "to": "    armor.hp = Math.max(0, armor.hp - effective);"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/baseline/damage-turret.test.ts"
+      ],
+      "expect": "desgaste|tabla"
+    },
+    {
+      "id": "K03-hull-share",
+      "kind": "kill",
+      "team": null,
+      "contract": "MB: reparto 70/30 (MD-04)",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/combat.ts",
+          "from": "  const hullDamage = effective * CHASSIS_DAMAGE_SHARE;",
+          "to": "  const hullDamage = effective * 0.75;"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/baseline/damage-turret.test.ts"
+      ],
+      "expect": "tabla|D-B3"
+    },
+    {
+      "id": "K04-module-rng",
+      "kind": "kill",
+      "team": null,
+      "contract": "MB: sorteo de módulo con el RNG del motor (MD-05)",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/combat.ts",
+          "from": "    const idx = rng.weighted(candidates.map((m) => Math.max(1, m.spec.massKg)));",
+          "to": "    const idx = 0;"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/baseline/damage-turret.test.ts"
+      ],
+      "expect": "tabla"
+    },
+    {
+      "id": "K05-he-no-splash",
+      "kind": "kill",
+      "team": null,
+      "contract": "MB: HE caracterizado (doble daño)",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "        if (p.explosionRadiusM > 0) this.explode(",
+          "to": "        if (false) this.explode("
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/baseline/damage-turret.test.ts"
+      ],
+      "expect": "HE"
+    },
+    {
+      "id": "K06-mine-own-seq",
+      "kind": "kill",
+      "team": null,
+      "contract": "MA: ids proj_N/mine_N con entitySeq compartido (#261)",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "            finiteClamped(cmd.deployMine.armDelayTicks, 0, 300, 0),\n            this.entitySeq++,",
+          "to": "            finiteClamped(cmd.deployMine.armDelayTicks, 0, 300, 0),\n            1000 + this.entitySeq,"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/baseline/public-surface.test.ts"
+      ],
+      "expect": "entitySeq"
+    },
+    {
+      "id": "K07-no-hullhpmax",
+      "kind": "kill",
+      "team": null,
+      "contract": "MA/MB: forma del snapshot público",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "          hullHpMax: v.spec.hullHp,\n",
+          "to": ""
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/baseline/public-surface.test.ts"
+      ],
+      "expect": "snapshot"
+    },
+    {
+      "id": "K08-welcome-strip",
+      "kind": "kill",
+      "team": null,
+      "contract": "MA: forma del WELCOME",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/protocol-server.ts",
+          "from": "      const { slot, moduleId, category, ...specs } = m;",
+          "to": "      const { slot, moduleId, category, rangeM: _r, turretArcRad: _a, ...specs } = m;"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/baseline/public-surface.test.ts"
+      ],
+      "expect": "WELCOME"
+    },
+    {
+      "id": "K09-mine-arm-early",
+      "kind": "kill",
+      "team": null,
+      "contract": "MC: armado exacto de mina (ME-04)",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "      if (this.tick < m.armedAtTick) {",
+          "to": "      if (this.tick < m.armedAtTick - 1) {"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/baseline/mines.test.ts"
+      ],
+      "expect": "C-MINE-1"
+    },
+    {
+      "id": "K10-mine-friendly",
+      "kind": "kill",
+      "team": null,
+      "contract": "MC: ownership de la mina (ME-03)",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "        if (v.team === m.team && !this.config.ruleset.friendlyFire) continue;\n",
+          "to": ""
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/baseline/mines.test.ts"
+      ],
+      "expect": "C-MINE-2"
+    },
+    {
+      "id": "K11-epoch-in-hash",
+      "kind": "kill",
+      "team": null,
+      "contract": "MA/MD: visibilityEpoch fuera del hash (F3)",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "      tick: this.tick,\n      rng: this.rng.getState(),",
+          "to": "      tick: this.tick,\n      epoch: this.snapshots.length,\n      rng: this.rng.getState(),"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/baseline/hash-boundary.test.ts"
+      ],
+      "expect": "proyec|cadencia"
+    },
+    {
+      "id": "K12-cooldown+1",
+      "kind": "kill",
+      "team": null,
+      "contract": "MD: resultado deportivo de la referencia",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/combat.ts",
+          "from": "  w.cooldownUntilTick = tick + Math.round((w.spec.cooldownTicks ?? 30) / Math.max(0.25, v.performanceOf(slot)));",
+          "to": "  w.cooldownUntilTick = tick + Math.round(((w.spec.cooldownTicks ?? 30) + 1) / Math.max(0.25, v.performanceOf(slot)));"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/baseline/determinism-reference.test.ts"
+      ],
+      "expect": "resultado deportivo"
+    },
+    {
+      "id": "K13-verify-always",
+      "kind": "kill",
+      "team": null,
+      "contract": "MD: verify detecta manipulación",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/replay.ts",
+          "from": "  const matches = divergedAtTick === null && resim.result.finalStateHash === replay.result.finalStateHash;\n\n  return {\n    matches,",
+          "to": "  const matches = true || (divergedAtTick === null && resim.result.finalStateHash === replay.result.finalStateHash);\n\n  return {\n    matches,"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/baseline/determinism-reference.test.ts"
+      ],
+      "expect": "manipulad"
+    },
+    {
+      "id": "K14-turret-rate",
+      "kind": "kill",
+      "team": null,
+      "contract": "MB: velocidad de torreta (C-TUR-1, MT-02)",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "        const maxStep = rate * TICK_DT;",
+          "to": "        const maxStep = rate * TICK_DT * 1.1;"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/baseline/damage-turret.test.ts"
+      ],
+      "expect": "C-TUR-1|turretRateRads"
+    },
+    {
+      "id": "K15-proj-doc-hpmax",
+      "kind": "kill",
+      "team": null,
+      "contract": "MA: replay público proyectado",
+      "edits": [
+        {
+          "file": "apps/api/src/replay-projection.ts",
+          "from": "      hullHpMax: num(v?.hullHpMax),\n",
+          "to": ""
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/baseline/public-surface.test.ts"
+      ],
+      "expect": "replay público"
+    },
+    {
+      "id": "K16-stats-moduleid",
+      "kind": "kill",
+      "team": null,
+      "contract": "MA/MB: estadísticas por módulo",
+      "edits": [
+        {
+          "file": "apps/replay-service/src/stats.ts",
+          "from": "        moduleId: m.moduleId,",
+          "to": "        moduleId: null,"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/baseline/public-surface.test.ts"
+      ],
+      "expect": "estadísticas"
+    },
+    {
+      "id": "K17-mf-skip-stop",
+      "kind": "kill",
+      "team": "MF",
+      "contract": "MF: cada contenedor se para una vez",
+      "edits": [
+        {
+          "file": "apps/bot-manager/src/container-battle.ts",
+          "from": "    await Promise.allSettled(handles.map((h) => h.stop()));",
+          "to": "    await Promise.allSettled(handles.slice(1).map((h) => h.stop()));"
+        }
+      ],
+      "tests": [
+        "apps/bot-manager/tests/contract-pending/battle-lifecycle.test.ts"
+      ],
+      "expect": "EXACTAMENTE una vez|nunca hace HELLO"
+    },
+    {
+      "id": "K18-mf-no-server-stop",
+      "kind": "kill",
+      "team": "MF",
+      "contract": "MF: puerto cerrado tras el teardown",
+      "edits": [
+        {
+          "file": "apps/bot-manager/src/container-battle.ts",
+          "from": "    server.stop();\n    battle.free();",
+          "to": "    battle.free();"
+        }
+      ],
+      "tests": [
+        "apps/bot-manager/tests/contract-pending/battle-lifecycle.test.ts"
+      ],
+      "expect": "puerto"
+    },
+    {
+      "id": "I01-identity-ttl",
+      "kind": "identity",
+      "contract": "control del runner",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/combat.ts",
+          "from": "    ttlTicks: 90,",
+          "to": "    ttlTicks: 90, // mutante identidad"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/baseline/weapon-range.test.ts"
+      ]
+    },
+    {
+      "id": "I02-identity-snapshot",
+      "kind": "identity",
+      "contract": "control del runner",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "          hullHpMax: v.spec.hullHp,",
+          "to": "          hullHpMax: v.spec.hullHp, // mutante identidad"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/baseline/public-surface.test.ts",
+        "apps/arena-engine/tests/baseline/hash-boundary.test.ts"
+      ]
+    },
+    {
+      "id": "F01-md-verify-winner",
+      "kind": "fix",
+      "team": "MD",
+      "contract": "verify compara winner",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/replay.ts",
+          "from": "  const matches = divergedAtTick === null && resim.result.finalStateHash === replay.result.finalStateHash;\n\n  return {\n    matches,",
+          "to": "  const matches =\n    divergedAtTick === null && resim.result.finalStateHash === replay.result.finalStateHash && resim.result.winner === replay.result.winner;\n\n  return {\n    matches,"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/replay-determinism.test.ts"
+      ],
+      "testNamePattern": "winner manipulado",
+      "expect": "winner manipulado",
+      "env": {
+        "S9_CONTRACT_ENFORCE": "MD"
+      }
+    },
+    {
+      "id": "F02-md-hash-ttl",
+      "kind": "fix",
+      "team": "MD",
+      "contract": "stateHash cubre TTL",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "      projectiles: this.projectiles.map((p) => [p.id, q(p.position.x), q(p.position.y), q(p.damage)]),",
+          "to": "      projectiles: this.projectiles.map((p) => [p.id, q(p.position.x), q(p.position.y), q(p.damage), p.ttlTicks]),"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/replay-determinism.test.ts"
+      ],
+      "testNamePattern": "TTL del proyectil",
+      "expect": "TTL del proyectil",
+      "env": {
+        "S9_CONTRACT_ENFORCE": "MD"
+      }
+    },
+    {
+      "id": "F03-md-hash-seq",
+      "kind": "fix",
+      "team": "MD",
+      "contract": "stateHash cubre entitySeq",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "      tick: this.tick,\n      rng: this.rng.getState(),",
+          "to": "      tick: this.tick,\n      seq: this.entitySeq,\n      rng: this.rng.getState(),"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/replay-determinism.test.ts"
+      ],
+      "testNamePattern": "entitySeq",
+      "expect": "entitySeq",
+      "env": {
+        "S9_CONTRACT_ENFORCE": "MD"
+      }
+    },
+    {
+      "id": "F04-md-obs-rng",
+      "kind": "fix",
+      "team": "MD",
+      "contract": "observationFor no consume el RNG de simulación",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "      this.mode.objectives(),\n      this.rng,\n    );",
+          "to": "      this.mode.objectives(),\n      new Rng(this.config.seed + \":obs\"),\n    );"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/replay-determinism.test.ts"
+      ],
+      "testNamePattern": "observationFor",
+      "expect": "observationFor",
+      "env": {
+        "S9_CONTRACT_ENFORCE": "MD"
+      }
+    },
+    {
+      "id": "F05-ma-dense-ids",
+      "kind": "fix",
+      "team": "MA",
+      "contract": "ids densos; lo no visto no consume id",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "            finiteClamped(cmd.deployMine.armDelayTicks, 0, 300, 0),\n            this.entitySeq++,",
+          "to": "            finiteClamped(cmd.deployMine.armDelayTicks, 0, 300, 0),\n            1000 + this.entitySeq,"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/projection-ids.test.ts"
+      ],
+      "testNamePattern": "densos|no consume id",
+      "expect": "densos|no consume id",
+      "env": {
+        "S9_CONTRACT_ENFORCE": "MA"
+      }
+    },
+    {
+      "id": "F06-ma-welcome",
+      "kind": "fix",
+      "team": "MA",
+      "contract": "WELCOME sin campos FUTURE",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/protocol-server.ts",
+          "from": "      const { slot, moduleId, category, ...specs } = m;",
+          "to": "      const { slot, moduleId, category, ...all } = m;\n      const specs = category === \"weapon\" || category === \"radio\" ? (({ rangeM: _r, turretArcRad: _a, ...k }: any) => k)(all) : all;"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/projection-ids.test.ts"
+      ],
+      "testNamePattern": "WELCOME",
+      "expect": "WELCOME",
+      "env": {
+        "S9_CONTRACT_ENFORCE": "MA"
+      }
+    },
+    {
+      "id": "F07-mb-he-single",
+      "kind": "fix",
+      "team": "MB",
+      "contract": "HE sin doble daño",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "        if (p.explosionRadiusM > 0) this.explode(",
+          "to": "        if (p.explosionRadiusM > 0 && !target) this.explode("
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/damage-turret.test.ts"
+      ],
+      "testNamePattern": "UN único paquete",
+      "expect": "UN único paquete",
+      "env": {
+        "S9_CONTRACT_ENFORCE": "MB"
+      }
+    },
+    {
+      "id": "F08-mb-hulllevel",
+      "kind": "fix",
+      "team": "MB",
+      "contract": "hullLevel N=20 en lo público",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "          hullHp: round6(v.hullHp),\n          hullHpMax: v.spec.hullHp,",
+          "to": "          hullLevel: Math.ceil((20 * v.hullHp) / v.spec.hullHp),"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/damage-turret.test.ts"
+      ],
+      "testNamePattern": "hullLevel|estado público de daño",
+      "expect": "hullLevel|estado público de daño",
+      "env": {
+        "S9_CONTRACT_ENFORCE": "MB"
+      }
+    },
+    {
+      "id": "F09-mc-terrain",
+      "kind": "fix",
+      "team": "MC",
+      "contract": "terrain eliminado del catálogo",
+      "edits": [
+        {
+          "file": "packages/module-catalog/data/movement.tracks@1.json",
+          "from": ",\n  \"terrain\": [\"road\", \"rough\", \"sand\"]",
+          "to": ""
+        },
+        {
+          "file": "packages/module-catalog/data/movement.wheels@1.json",
+          "from": ",\n  \"terrain\": [\"road\"]",
+          "to": ""
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/catalog-effects.test.ts"
+      ],
+      "testNamePattern": "ningún módulo del catálogo declara terrain",
+      "expect": "ningún módulo del catálogo declara terrain",
+      "env": {
+        "S9_CONTRACT_ENFORCE": "MC"
+      }
+    },
+    {
+      "id": "F10-mc-weapon-range",
+      "kind": "fix",
+      "team": "MC",
+      "contract": "weapon.rangeM fuente del alcance",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/combat.ts",
+          "from": "    ttlTicks: 90,",
+          "to": "    ttlTicks: Math.round((w.spec.rangeM ?? 0) / (speed / 30)),"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/catalog-effects.test.ts"
+      ],
+      "testNamePattern": "weapon.rangeM es la fuente",
+      "expect": "weapon.rangeM es la fuente",
+      "env": {
+        "S9_CONTRACT_ENFORCE": "MC"
+      }
+    },
+    {
+      "id": "F11-mf-free-idem",
+      "kind": "fix",
+      "team": "MF",
+      "contract": "Battle.free idempotente",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "  free(): void {\n    this.physics.free();",
+          "to": "  free(): void {\n    if ((this as any).__freed) return;\n    (this as any).__freed = true;\n    this.physics.free();"
+        }
+      ],
+      "tests": [
+        "apps/bot-manager/tests/contract-pending/battle-lifecycle.test.ts"
+      ],
+      "testNamePattern": "free\\(\\) dos veces",
+      "expect": "free\\(\\) dos veces",
+      "env": {
+        "S9_CONTRACT_ENFORCE": "MF"
+      }
+    },
+    {
+      "id": "K19-armor-rounded",
+      "kind": "kill",
+      "team": null,
+      "contract": "MB: D-B4 blindaje interno exacto (guarda de baseline)",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/combat.ts",
+          "from": "    armor.hp = Math.max(0, armor.hp - (baseDamage - effective));",
+          "to": "    armor.hp = Math.max(0, Math.round(armor.hp - (baseDamage - effective)));"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/armor-exact.test.ts"
+      ],
+      "expect": "blindaje interno exacto",
+      "expectMessage": "expected"
+    },
+    {
+      "id": "F12-mb-armor-broken",
+      "kind": "fix",
+      "team": "MB",
+      "contract": "MB: rotura de blindaje visible (armorBroken público)",
+      "edits": [
+        {
+          "file": "apps/arena-engine/src/sim/battle.ts",
+          "from": "          hullHpMax: v.spec.hullHp,\n          carryingFlag: v.carryingFlag,",
+          "to": "          hullHpMax: v.spec.hullHp,\n          armorBroken: Object.fromEntries(Object.entries(v.armor).map(([s, a]) => [s, a!.hp <= 0])),\n          carryingFlag: v.carryingFlag,"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/armor-exact.test.ts"
+      ],
+      "testNamePattern": "armorBroken",
+      "expect": "armorBroken",
+      "env": {
+        "S9_CONTRACT_ENFORCE": "MB"
+      }
+    },
+    {
+      "id": "F13-ma-stats-no-moduleid",
+      "kind": "fix",
+      "team": "MA",
+      "contract": "MA: estadísticas públicas sin moduleId de catálogo",
+      "edits": [
+        {
+          "file": "apps/replay-service/src/stats.ts",
+          "from": "        moduleId: m.moduleId,\n        usesKind: usesKindOf(m.category),",
+          "to": "        usesKind: usesKindOf(m.category),"
+        }
+      ],
+      "tests": [
+        "apps/arena-engine/tests/contract-pending/equipment-privacy.test.ts"
+      ],
+      "testNamePattern": "no llevan moduleId de catálogo",
+      "expect": "no llevan moduleId de catálogo",
+      "env": {
+        "S9_CONTRACT_ENFORCE": "MA"
+      }
+    }
+  ]
+}

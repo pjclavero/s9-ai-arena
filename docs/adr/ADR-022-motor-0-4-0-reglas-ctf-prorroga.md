@@ -104,3 +104,12 @@ Migración `016_battle_rules` (numerada 015 en el encargo; renumerada al integra
 - Toda batalla nueva graba `engine: "0.4.0"`. La verificación de un replay 0.3.0 dice «verificado con 0.4.0».
 - `BATTLE_RULES_SCHEMA` pasa a 2 (`game`, `ctf`, `maxRespawns`); las copias de schema 1 (sólo existieron en entornos de prueba de la rama) se leen normalizadas y nunca se reescriben.
 - Añadir una versión a `engine.reproduces` exige replays reales de esa versión en un test.
+
+## Enmienda (OLA 2, integración del hardening del motor, 2026-11-12)
+
+**`engine.reproduces` deja de existir y la compatibilidad con replays anteriores se retira** (BACKWARD_COMPATIBILITY_REQUIRED=NO). Esta enmienda deja sin efecto, desde la integración de la OLA 2, la compatibilidad 0.3.0 descrita arriba (la línea «Por qué es correcto para 0.3.0» y la consecuencia «La verificación de un replay 0.3.0 dice "verificado con 0.4.0"»):
+
+- MD (replay v2): hash de estado por componentes, flujos de RNG con nombre y verificador de **versión única** (`engine-compat.ts`); `engine-deps.json` ya no declara `engine.reproduces`.
+- MB (contrato de daño) y MC (`weapon.rangeM` real, sin la regla fija de 90 ticks) cambian la trayectoria: los replays 0.3.0 con armas ya no se re-simulan idénticos.
+- Se retiran `apps/replay-service/tests/engine-0.3.0-compat.test.ts`, `review-4v4-engine-0.2.0` y sus fixtures.
+- En producción, los replays 0.2.0, 0.3.0 y 0.4.0 anteriores al contrato dejan de reproducirse: se archivan o se borran (decisión al desplegar).

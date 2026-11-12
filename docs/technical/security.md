@@ -175,6 +175,52 @@ La activación es una decisión de operación con sus precondiciones. Ver
 
 Detalle en [replays.md](replays.md#autorización-de-acceso-td-004).
 
+## Frontera de proyección pública y equipamiento privado
+
+OLA 2 (MA). Contrato completo en [engine-v2-contracts.md](engine-v2-contracts.md) (§2-§5).
+
+```text
+ENGINE INTERNAL STATE  (Battle.snapshots = frames internos, publicEvents con ids internos)
+        ↓ projectFrame()           packages/projection  — la ÚNICA frontera
+VIEWER / PUBLIC STATE  (espectador, broadcast, replay público, API pública, WELCOME)
+```
+
+- **Una sola frontera.** El motor ya no fabrica un snapshot «público»: `captureInternalFrame()` produce el estado interno exacto (con las minas y su dueño) y todo consumidor externo recibe `projectFrame()` de `packages/projection`. El gateway proyecta cada frame y cada evento **por audiencia** (`public_live`, `broadcast`, `staff`), con mapper de ids, historial del retardo y nómina propios; la audiencia viaja **firmada** en el ticket (claim `view`) y un ticket sin ella se rechaza. El replay público, la descarga pública y el inspector pasan por la misma frontera. Eventos y objetivos son lista blanca por tipo **y por campo**.
+- **Ids públicos por audiencia (#261).** `v_`, `p_`, `d_`… densos, en orden de primera visibilidad para esa audiencia, sin derivar de la semilla (que es pública). Lo que una audiencia no ve no consume número: la secuencia pública no tiene huecos que delaten entidades ocultas. Los ids internos del motor no salen nunca; una referencia que no se puede traducir se omite.
+- **visibilityEpoch.** Vive en la proyección y en las claves de caché (`buildProjectionKey`: audiencia, entidad, relación, perfil, políticas, digest de epochs, versión, destino), nunca en `stateHash`. Proyectar no cambia la simulación.
+- **HTTP público.** Las respuestas públicas proyectadas no son `immutable`; su ETag incluye la versión de proyección y las políticas.
+
+### Equipamiento privado (D-B1 = R2)
+
+El equipamiento y el loadout completo son privados por defecto para terceros (ver la enmienda de [ADR-000 D9](../adr/ADR-000-decisiones-fundacionales.md)). La política es un dato (`DEFAULT_DISCLOSURE_POLICY` en `packages/projection/policy.ts`, régimen `R2`):
+
+| Superficie | Qué deja de salir para terceros |
+|---|---|
+| Espectador, broadcast, replay público | `hullHp` exacto (sale `hullLevel` 0..20), `hullHpMax`, estado por ranura (`modules`), minas |
+| Nómina pública (init, índice, descarga) | chasis |
+| `getBattleStats` | `perModule` (moduleId por ranura), `minesDeployed`, `minesTriggered`, `radio`, `decisionTimeouts`, id interno del vehículo; `shotsHit` (pasos de 5) y `accuracy` (derivada de los aciertos cuantizados, pasos de 1/20) salen cuantizados, y el daño ABSOLUTO (`damageDealt`, `damageTaken`: en un 1v1 reconstruye el casco del destruido) no sale a terceros ni a equipo, ni por bot ni en `perTeam` (sólo dueño y staff, exacto): el valor exacto es sólo del dueño y del staff |
+| `GET /bots/{id}/loadouts` | todo para quien no sea dueño ni staff, **también con un bot público** (404 uniforme) |
+| HUD del visor | no hay «N/M módulos» ni «módulos caídos»: el recuento es privado; el visor sólo pinta lo que la proyección emite (casco cuantizado) |
+| Canal del bot (WELCOME, OBSERVATION, EVENT, COMMAND) | ids públicos de la audiencia del bot (`v_N`, estables en la batalla); nunca `veh_N`/`proj_N`/`mine_N`, tampoco en `objectives[].id` (el marcado del juggernaut) ni en ningún otro campo (red de seguridad `BotIdBook.scrub`); un `radio.to` con id interno o desconocido no se entrega; una radio de un rival aún no percibido se DESCARTA (no se le revela) |
+| 409 `bot_version_not_eligible` (POST /battles, rules-check, inscripción en torneo) | para quien no es dueño ni staff del bot (también si es público): veredicto («la versión no es elegible»), `violations: []`, y SÍ `reason` (`loadout_no_longer_valid` / `loadout_unverifiable`) y `category` (una de `INVALID_AMMO`, `MISSING_AMMO`, `ORPHAN_AMMO`, `OTHER_INVALID`, `UNKNOWN`: la CLASE del fallo, p. ej. «problema de munición», no qué módulo, ranura, munición ni límite; ni mensajes del loadout). Es decisión consciente: la UI y el cliente distinguen «hay que actualizar la versión» de «no verificable» |
+| 409 `loadout_unavailable` (POST /battles y rules-check con topes de composición; P2-C, revisión 3) | para quien no es dueño ni staff del bot: «no se puede calcular su composición» sin moduleId, ranura ni catálogo; dueño y staff, el detalle del error del catálogo |
+| WELCOME | el bot recibe sólo SUS módulos y, de cada uno, sólo propiedades de catálogo con efecto real o de validación (nunca el `ModuleSpec` entero); de sus aliados, sólo el id |
+
+**Residual aceptado (ACCEPTED_RESIDUAL).** Es lo que se puede inferir de lo que sí es público a lo largo del tiempo. No se emite como dato y no justifica dejar salir un campo que se pueda quitar:
+
+| Inferencia | De dónde sale |
+|---|---|
+| Trayectoria, velocidad máxima, aceleración y giro del casco | posiciones y rumbo públicos |
+| Giro de la torreta | ángulo público de la torreta; la tasa es de la montura, pública (D-B2) |
+| Cadencia de disparo | cada proyectil aparece en el frame público |
+| Velocidad y alcance efectivo del proyectil | dos frames y la distancia a la que desaparece |
+| Radio de una explosión visible | su efecto sobre el casco cuantizado de los vehículos cercanos |
+| Impactos hasta destruir | `hullLevel` (cuantizado a 20 niveles) |
+| Tamaño del vehículo | distancias de contacto en las colisiones |
+| Posición de una mina | sólo en el instante en que explota (`mine_triggered`) |
+
+**Masa y coste de composición (cerrado, D-B1=R2).** `POST /battles/rules-check` y el 422 `composition_invalid` (crear batalla) dan masa (kg) y coste (cr) exactos sólo de los bots PROPIOS del solicitante (staff, rol ≥ moderador: de todos). De un bot ajeno, también público, sólo «cumple»/«excede» y el límite (`figuresHidden:true`, sin `actual`/`excess` ni cifras en el mensaje). El total de un bando que contiene algún bot ajeno va sin cifras (restando las propias se obtendría lo ajeno); si todos los bots del bando son propios, o es staff, cifras exactas. Revisadas sin cifras ajenas: ficha del bot, versiones, torneos (sin topes de composición; su 409 de elegibilidad lleva veredicto, `reason` y `category` gruesa, ver la fila del 409) y elegibilidad. Residual: el «cumple/excede» repetido con composiciones distintas permite acotar por búsqueda binaria el coste de un bot ajeno frente a los topes; es inherente a poder componer. Aplica por separado a la masa y al coste (códigos de violación distintos) y, en un bando mixto, al umbral propio+ajeno. `rules-check` no crea batalla ni escribe, y no tiene cota de tasa propia (sólo la general de la API); un límite de tasa por usuario sólo ralentizaría la búsqueda (cuentas baratas), así que NO se añade: el límite real es que el resultado es un cumple/excede por bot, nunca la cifra. Fuga por error interno: revisados todos los `err.message` de `apps/api/src/{routes,services}`; los únicos que mezclan datos de un bot ajeno en una respuesta HTTP eran el 409 `loadout_unavailable` (cerrado) y el 409 de elegibilidad (cerrado en P2-B); el resto (rutas del propio dueño, mapa/ruleset, lanzador interno) no lleva datos de bots de terceros.
+
 ## Superficies abiertas conocidas
 
 | Clase de problema | Estado | Deuda |

@@ -1,0 +1,18 @@
+{
+  "winner": "red",
+  "endReason": null,
+  "ticks": 375,
+  "score": {
+    "blue": 0,
+    "red": 1
+  },
+  "disqualified": [],
+  "publicEventKinds": {
+    "score_changed": 1,
+    "vehicle_destroyed": 1
+  },
+  "publicEventsDigest": "ded133bdff31b8bf059315d79eecc9dd70791bb79f75b5b5fe3ace064a80baf7",
+  "snapshotCount": 126,
+  "commandCount": 252,
+  "maxTicks": 900
+}

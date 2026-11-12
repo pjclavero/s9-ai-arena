@@ -31,6 +31,7 @@ import { SecretRegistry, type Logger, type StreamerConfig } from "./config.js";
 import { parseIngestUrl, RtmpPublisher, type Dialer, type IngestTarget } from "./rtmp/publisher.js";
 import { presetOf, sessionFingerprint, type PresetName, type SessionPlan } from "./session.js";
 import { classifyFrame, type FrameVerdict, type LumaStats } from "./frame-check.js";
+import type { DisplayManager } from "./xvfb.js";
 
 /**
  * #256 · BROADCAST_RENDER_READY. La emisión real de YouTube salió en BLANCO durante toda
@@ -130,6 +131,12 @@ export interface SupervisorOptions {
    * (x11grab real). Sin ella (pruebas antiguas con procesos falsos) no hay puerta.
    */
   renderProbe?: () => Promise<LumaStats>;
+  /**
+   * OLA2-MF · display A DEMANDA (Xvfb): se arranca al lanzar la emisión y se para
+   * cuando ésta termina (stop o agotada). Sin él (pruebas y autoprueba de render,
+   * que traen su propio Xvfb) el display es cosa de otro.
+   */
+  display?: DisplayManager;
   renderReadyTimeoutMs?: number;
   renderPollMs?: number;
   renderWatchIntervalMs?: number;
@@ -347,12 +354,27 @@ export class StreamSupervisor {
   stop(): void {
     this.generation++;
     this.stopProcesses();
+    this.opts.display?.release();
     const was = this.state_;
     this.state_ = "stopped";
     this.startedAt = null;
     this.fingerprint = null;
     if (was === "streaming" || was === "retrying" || was === "failed") this.counters.stops++;
     if (was !== "stopped") this.opts.logger("info", "emisión parada por control", { previous: was });
+  }
+
+  /**
+   * OLA2-MF · hijos de emisión VIVOS ahora mismo (gate STREAM_CHILDREN=0 sin
+   * emisión): Chromium, FFmpeg, relé, display a demanda y paradas en curso.
+   */
+  get streamChildren(): { chromium: number; ffmpeg: number; relay: number; xvfb: number; terminating: number } {
+    return {
+      chromium: this.chromium ? 1 : 0,
+      ffmpeg: this.ffmpeg ? 1 : 0,
+      relay: this.publisher ? 1 : 0,
+      xvfb: this.opts.display?.running ? 1 : 0,
+      terminating: this.pendingChildren + (this.opts.display?.terminating ?? 0),
+    };
   }
 
   /** Procesos hijos señalados que todavía no han terminado (0 = sin huérfanos pendientes). */
@@ -451,8 +473,30 @@ export class StreamSupervisor {
       this.state_ = "failed";
       this.counters.failures++;
       this.opts.logger("error", "emisión imposible: no hay credencial de emisión");
+      this.opts.display?.release();
       return;
     }
+    if (this.opts.display) {
+      // OLA2-MF · el display existe sólo mientras se emite: se arranca aquí.
+      const gen = this.generation;
+      this.opts.display.ensure().then(
+        () => {
+          if (gen !== this.generation || this.state_ !== "streaming") return;
+          this.launchPipeline();
+        },
+        (e: unknown) => {
+          if (gen !== this.generation || this.state_ !== "streaming") return;
+          this.setError(`display: ${e instanceof Error ? e.message : String(e)}`);
+          this.opts.logger("warn", "display no disponible; se reintenta", { detail: String(e) });
+          void this.retry();
+        },
+      );
+      return;
+    }
+    this.launchPipeline();
+  }
+
+  private launchPipeline(): void {
     this.launchChromium();
     if (!this.opts.renderProbe) {
       this.launchFfmpeg();
@@ -608,6 +652,7 @@ export class StreamSupervisor {
           this.state_ = "failed";
           this.counters.failures++;
           this.stopProcesses();
+          this.opts.display?.release();
           return;
         }
       }
@@ -715,6 +760,7 @@ export class StreamSupervisor {
       this.state_ = "failed";
       this.counters.failures++;
       this.stopProcesses();
+      this.opts.display?.release();
       this.opts.logger("error", "emisión abandonada: reintentos agotados", { attempts: this.attempts - 1 });
       return;
     }

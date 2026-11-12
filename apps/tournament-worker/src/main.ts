@@ -27,6 +27,9 @@ import { handleGenerateSchedule, handleTournamentDryRun } from "./scheduler.js";
 import { handleProcessResult } from "./results.js";
 import { handleUpdateStandings } from "./standings.js";
 import { TournamentWorker } from "./worker.js";
+import { defaultBattleResources } from "./battle-resources.js";
+import { startReaper } from "./battle-reaper.js";
+import { LABEL_BATTLE_ID, LABEL_ROLE, ROLE_BATTLE_BOT } from "../../bot-manager/src/container-runner.js";
 
 // ADR-016 · el worker NO expone HTTP (su señal de vida es un fichero), así que
 // su identidad de build se publica igual: como fichero, con el MISMO cuerpo del
@@ -83,6 +86,7 @@ const spectate = new SpectateGateway({
 // se quedan `scheduled`, visibles como pendientes) en vez de jugarlas con
 // HunterBot. Lo dice al arrancar.
 let artifactGuard: DbArtifactLaunchGuard | undefined;
+let proxyRunner: ProxyContainerRunner | undefined;
 async function buildExecutor() {
   const proxyUrl = process.env.DOCKER_PROXY_URL;
   const engineHost = process.env.ARENA_ENGINE_HOST;
@@ -102,7 +106,7 @@ async function buildExecutor() {
       db,
       spectate,
       agents: containerAgents({
-        runner: new ProxyContainerRunner(proxyUrl),
+        runner: (proxyRunner = new ProxyContainerRunner(proxyUrl)),
         provider,
         network: process.env.ARENA_NETWORK || "arena",
         engineHost,
@@ -136,7 +140,31 @@ if (process.env.REDIS_URL) {
 const worker = new TournamentWorker({
   db,
   handlers: {
-    ...(executor ? { run_battle: makeRunBattleHandler({ executor, replaysDir, artifactGuard }) } : {}),
+    ...(executor
+      ? {
+          run_battle: makeRunBattleHandler({
+            executor,
+            replaysDir,
+            artifactGuard,
+            // OLA2-MF · cierre operacional: motivo, teardown y memoria por batalla.
+            onBattleClosed: ({ battleId, reason, cleanup, memory }) =>
+              log("battle_closed", {
+                battleId,
+                reason,
+                clean: cleanup.clean,
+                released: cleanup.steps.filter((s) => s.outcome === "released").length,
+                failed: cleanup.steps.filter((s) => s.outcome === "failed").map((s) => `${s.kind}: ${s.error}`),
+                draining: cleanup.draining,
+                remaining: cleanup.remaining.length,
+                externalLeftovers: cleanup.externalLeftovers.length,
+                RAM_IDLE_BEFORE: memory.RAM_IDLE_BEFORE,
+                RAM_PEAK: memory.RAM_PEAK,
+                RAM_AFTER_FINISH: memory.RAM_AFTER_FINISH,
+                RAM_AFTER_CLEANUP: memory.RAM_AFTER_CLEANUP,
+              }),
+          }),
+        }
+      : {}),
     generate_schedule: handleGenerateSchedule,
     process_result: handleProcessResult,
     update_standings: handleUpdateStandings,
@@ -165,6 +193,27 @@ const worker = new TournamentWorker({
   onExhausted: (job, ctx) => markBattleForReview(ctx.db, job),
 });
 
+// OLA2-MF · verificación del teardown contra el proxy (¿queda algún contenedor
+// de esa batalla?) y REAPER como segunda barrera (cada 60 s).
+let stopReaper: (() => void) | undefined;
+if (proxyRunner) {
+  const runner = proxyRunner;
+  defaultBattleResources.setVerifier(async (battleId) =>
+    (await runner.list({ [LABEL_ROLE]: ROLE_BATTLE_BOT, [LABEL_BATTLE_ID]: battleId }))
+      .filter((c) => c.state !== "removing")
+      .map((c) => c.id.slice(0, 12)),
+  );
+  stopReaper = startReaper({
+    db,
+    runner,
+    everyMs: 60_000,
+    onReport: (r) => {
+      if (r.removed.length || r.errors.length || r.inProcessRetried.length)
+        log("battle_reaper", { removed: r.removed, inProcessRetried: r.inProcessRetried, errors: r.errors });
+    },
+  });
+}
+
 publicarIdentidadDeBuild();
 beat();
 const heartbeat = setInterval(beat, HEARTBEAT_MS);
@@ -179,6 +228,11 @@ log(`worker ${worker.workerId} en marcha`, {
 async function shutdown(sig: string): Promise<void> {
   log(`${sig}: parando`);
   clearInterval(heartbeat);
+  stopReaper?.();
+  // OLA2-MF · las batallas vivas se abortan (WORKER_ERROR): cada una pasa por su
+  // teardown en el finally del handler y vuelve a `scheduled` para otro worker.
+  const aborted = defaultBattleResources.abortAll("WORKER_ERROR", sig);
+  if (aborted.length) log("batallas abortadas por parada del worker", { battles: aborted });
   await worker.stop().catch(() => undefined);
   await db.destroy().catch(() => undefined);
   process.exit(0);

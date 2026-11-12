@@ -1,0 +1,45 @@
+{
+  "id": "test.fixture_waypoint",
+  "version": 1,
+  "name": "Fixture: proyectil por waypoints",
+  "actions": [
+    {
+      "kind": "fire",
+      "cooldownTicks": 60,
+      "cost": {
+        "energyEU": 6,
+        "ammo": 1
+      },
+      "projectile": {
+        "speedMs": 40,
+        "lifetimeTicks": 150,
+        "spreadRad": 0.01,
+        "guidance": {
+          "mode": "waypoint",
+          "turnRateRads": 2,
+          "maxWaypoints": 3,
+          "trackingErrorRad": 0
+        },
+        "onImpact": [
+          {
+            "primitive": "explosion",
+            "strength": 30,
+            "radiusM": 3,
+            "falloff": "step",
+            "damageType": "explosive",
+            "targets": {
+              "relations": [
+                "enemy"
+              ],
+              "kinds": [
+                "vehicle",
+                "deployable"
+              ]
+            },
+            "stacking": "none"
+          }
+        ]
+      }
+    }
+  ]
+}
