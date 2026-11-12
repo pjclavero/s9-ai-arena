@@ -19,7 +19,7 @@ import { Vehicle } from "../../src/sim/vehicle.js";
 import { Rng } from "../../src/rng.js";
 import { emptyArena, gunnerLoadout, sandbagLoadout } from "../../src/fixtures.js";
 import { IdleBot } from "../../src/stubs.js";
-import { contractIt, fixtureGuard } from "../baseline/helpers.js";
+import { contractIt, fixtureGuard, publicStream } from "../baseline/helpers.js";
 
 beforeAll(async () => {
   await initPhysics();
@@ -71,7 +71,9 @@ describe("D-B4 · rotura de blindaje visible en lo público", () => {
     for (let t = 0; t < 2; t++) b.step();
     target.armor.front!.hp = 0; // blindaje frontal roto (estado interno)
     for (let t = 0; t < 2; t++) b.step();
-    const frame: any = b.snapshots[b.snapshots.length - 1];
+    // Integración OLA 2 (M0): adaptador a MA (frame público = proyección public_live).
+    const pubFrames = publicStream(b).snapshots;
+    const frame: any = pubFrames[pubFrames.length - 1];
     b.free();
     fixtureGuard(frame && Array.isArray(frame.vehicles), "no hay frame público tras la rotura");
     return frame;

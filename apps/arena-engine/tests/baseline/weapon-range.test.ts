@@ -131,18 +131,25 @@ describe("baseline · alcance efectivo de las armas (TTL fijo 90)", () => {
     expect(far.hit).toBe(false);
   });
 
-  it("characterizes-defect: weapon.rangeM NO influye en el alcance (el TTL 90 es un hardcode)", () => {
+  // INVERTIDO en la integración OLA 2 (M0) por el arreglo de MC (P-2, weapon.rangeM = fuente real del
+  // alcance; resolve/projectile.ts + combat.ts projectileLifetimeOf): antes «rangeM NO influye en el
+  // alcance (TTL 90 hardcode)». rangeM 10 ya no es válido (no es múltiplo del avance por tick: fail-closed),
+  // así que se usan 120 m y 240 m (30 y 60 ticks a 120 m/s).
+  it("corregido (MC): weapon.rangeM fija el alcance (el doble de rangeM, el doble de vuelo)", () => {
     const base = shooter("weapon.cannon@1", "ammo.ap@1", "chassis.medium@1");
     const withRange = (rangeM: number): VehicleSpec => ({
       ...base,
       modules: base.modules.map((m) =>
-        m.slot === "turret_main" ? { ...m, moduleId: "test.fixture_cannon_range@1", rangeM } : m,
+        // projectileLifetimeTicks derivado y coherente (MC: incoherente = fail-closed): rangeM·30/120.
+        m.slot === "turret_main"
+          ? { ...m, moduleId: "test.fixture_cannon_range@1", rangeM, projectileLifetimeTicks: (rangeM * 30) / 120 }
+          : m,
       ),
     });
-    const short = measureFlight(withRange(10));
-    const long = measureFlight(withRange(5000));
-    // DEFECTO (P-2): con rangeM 10 o 5000 el proyectil vuela exactamente igual.
-    expect(short.aliveTicks).toBe(long.aliveTicks);
-    expect(short.maxDist).toBe(long.maxDist);
+    const short = measureFlight(withRange(120));
+    const long = measureFlight(withRange(240));
+    expect(short.aliveTicks).toBe(29); // 30 pasos: se observa vivo tras 29 (como el 90 → 89)
+    expect(long.aliveTicks).toBe(59);
+    expect(long.maxDist).toBeGreaterThan(short.maxDist * 1.9);
   });
 });

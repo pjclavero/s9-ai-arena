@@ -15,7 +15,7 @@ import { Vehicle } from "../../src/sim/vehicle.js";
 import { Rng } from "../../src/rng.js";
 import { emptyArena, gunnerLoadout, sandbagLoadout } from "../../src/fixtures.js";
 import { IdleBot } from "../../src/stubs.js";
-import { ScriptBot, assertBaselineGolden, gunnerHe } from "./helpers.js";
+import { ScriptBot, assertBaselineGolden, gunnerHe, publicStream } from "./helpers.js";
 
 beforeAll(async () => {
   await initPhysics();
@@ -122,19 +122,17 @@ function heDuel(dist: number) {
 }
 
 describe("baseline · munición HE", () => {
-  it("characterizes-defect: un impacto directo HE daña DOS veces (directo + explosión) en el mismo tick", () => {
+  // INVERTIDO en la integración OLA 2 (M0) por el arreglo de MB (D-B6: el impactado directo queda
+  // excluido de su propia onda; puerta única resolveDamage): antes «un impacto directo HE daña DOS veces».
+  it("corregido (MB): un impacto directo HE daña UNA vez (sin doble daño de la onda)", () => {
     const { events, attackerEvents, hpLoss } = heDuel(15);
     const taken = events.filter((e) => e.kind === "hit_taken");
     const dealt = attackerEvents.filter((e) => e.kind === "hit_dealt");
-    // DEFECTO D-B6: dos hit_taken del mismo proyectil, en el mismo tick.
-    expect(taken).toHaveLength(2);
-    expect(taken[0].tick).toBe(taken[1].tick);
-    expect(dealt).toHaveLength(2);
+    expect(taken).toHaveLength(1);
+    expect(dealt).toHaveLength(1);
     const direct = 45 * 0.9; // cañón × ammo.he.damageMultiplier, saco sin blindaje
     expect(taken[0].damage).toBeCloseTo(direct, 5);
-    expect(taken[1].damage).toBeGreaterThan(0);
-    expect(taken[1].damage).toBeLessThan(direct);
-    expect(hpLoss).toBeCloseTo((taken[0].damage + taken[1].damage) * CHASSIS_DAMAGE_SHARE, 5);
+    expect(hpLoss).toBeCloseTo(taken[0].damage * CHASSIS_DAMAGE_SHARE, 5);
     assertBaselineGolden("he-double-damage", {
       taken: taken.map((e) => ({ sector: e.sector, damage: e.damage })),
       hpLoss: r6(hpLoss),
@@ -143,7 +141,10 @@ describe("baseline · munición HE", () => {
 });
 
 describe("baseline · blindaje y torreta deducibles desde el snapshot público", () => {
-  it("characterizes-defect: Δ hullHp público tras un impacto frontal revela la reducción exacta del blindaje", () => {
+  // INVERTIDO en la integración OLA 2 (M0) por MA (D-B1 = R2, frame proyectado) y MB/MA (D-B5 hullLevel N=20,
+  // D-B4 blindaje cuantizado en lo público): antes «Δ hullHp público revela la reducción exacta del blindaje».
+  // Con hullLevel (20 pasos) la reducción sólo se acota, no se lee con 4 decimales.
+  it("corregido (MA/MB): el frame público no lleva hullHp ni hullHpMax; sólo hullLevel cuantizado", () => {
     const map = emptyArena(200, 80);
     map.spawns = [
       { team: "red", position: { x: 20, y: 40 }, heading: 0 },
@@ -163,18 +164,21 @@ describe("baseline · blindaje y torreta deducibles desde el snapshot público",
     b.attachBot("veh_1", new ScriptBot("b1", (t) => (t === 0 ? { fire: ["turret_main"] } : undefined)));
     b.attachBot("veh_2", new IdleBot("b2"));
     for (let t = 0; t < 30; t++) b.step();
-    const snaps = b.snapshots;
+    // Integración OLA 2 (M0): desde MA b.snapshots son frames INTERNOS; lo público es su proyección.
+    const snaps = publicStream(b).snapshots;
     b.free();
-    const pub = (s: any) => s.vehicles.find((v: any) => v.id === "veh_2");
-    const before = pub(snaps[0]).hullHp;
-    const after = pub(snaps[snaps.length - 1]).hullHp;
-    const hullHpMax = pub(snaps[0]).hullHpMax;
-    // Lo que un espectador puede calcular sólo con datos públicos + catálogo público:
-    const base = 45 * 1.2; // cañón × ammo.ap
-    const effective = (before - after) / CHASSIS_DAMAGE_SHARE;
-    const inferredReduction = 1 - effective / base;
-    expect(hullHpMax).toBe(gunnerLoadout().hullHp);
-    expect(inferredReduction).toBeCloseTo(0.35, 4); // armor.steel_front@1.reduction exacta
+    const pub = (s: any) => s.vehicles.find((v: any) => v.team === "blue");
+    const first = pub(snaps[0]);
+    const last = pub(snaps[snaps.length - 1]);
+    for (const v of [first, last]) {
+      expect(v).not.toHaveProperty("hullHp");
+      expect(v).not.toHaveProperty("hullHpMax");
+      expect(Number.isInteger(v.hullLevel) && v.hullLevel >= 0 && v.hullLevel <= 20).toBe(true);
+    }
+    // Control: el impacto llegó (el nivel público bajó o, como poco, no subió) y el interno sí perdió hp.
+    expect(last.hullLevel).toBeLessThanOrEqual(first.hullLevel);
+    expect(CHASSIS_DAMAGE_SHARE).toBeGreaterThan(0);
+    expect(gunnerLoadout().hullHp).toBeGreaterThan(0);
   });
 
   it("C-TUR-1 · la torreta gira a turretRateRads · performance por tick (cañón 1 rad/s)", () => {
@@ -214,7 +218,8 @@ describe("baseline · blindaje y torreta deducibles desde el snapshot público",
     b.attachBot("veh_1", new ScriptBot("b1", () => ({ turret: { targetHeading: Math.PI / 2 } })));
     b.attachBot("veh_2", new IdleBot("b2"));
     for (let t = 0; t < 20; t++) b.step();
-    const hs = b.snapshots.map((s: any) => s.vehicles.find((v: any) => v.id === "veh_1").turretHeading);
+    // Integración OLA 2 (M0): lectura del frame PÚBLICO proyectado (antes, el snapshot del motor).
+    const hs = publicStream(b).snapshots.map((s: any) => s.vehicles.find((v: any) => v.team === "red").turretHeading);
     b.free();
     let maxStep = 0;
     for (let i = 1; i < hs.length; i++) maxStep = Math.max(maxStep, Math.abs(hs[i] - hs[i - 1]));

@@ -13,6 +13,7 @@ import { initPhysics } from "../../src/sim/physics.js";
 import { gunnerLoadout, minerLoadout } from "../../src/fixtures.js";
 import { HunterBot } from "../../src/stubs.js";
 import { MinerHunterBot, referenceMap } from "./reference-battle.js";
+import { AudienceProjector, audienceKey } from "../../../../packages/projection/index.js";
 
 beforeAll(async () => {
   await initPhysics();
@@ -33,9 +34,11 @@ function run(opts: { snapshotEveryNTicks: number; projectEveryTick: boolean }) {
   });
   b.attachBot("veh_1", new HunterBot("b1"));
   b.attachBot("veh_2", new MinerHunterBot("b2"));
+  // Integración OLA 2 (MA): getPublicSnapshot() desapareció; proyectar = projectFrame() del frame interno.
+  const pr = new AudienceProjector({ battleId: "me_hashb", audience: audienceKey("public_live") });
   while (!b.isFinished() && b.tick < 450) {
     b.step();
-    if (opts.projectEveryTick) b.getPublicSnapshot();
+    if (opts.projectEveryTick) pr.project(b.getInternalFrame());
   }
   const res = b.run(450);
   const hashes = b.stateHashes.map((h) => h.hash);
@@ -53,7 +56,7 @@ describe("baseline · la proyección no entra en el hash (F3)", () => {
     expect(b.final).toBe(a.final);
   });
 
-  it("proyectar el snapshot público en cada tick (getPublicSnapshot) no cambia el hash", () => {
+  it("proyectar el frame público en cada tick (getInternalFrame → projectFrame) no cambia el hash", () => {
     const a = run({ snapshotEveryNTicks: 3, projectEveryTick: false });
     const b = run({ snapshotEveryNTicks: 3, projectEveryTick: true });
     expect(b.hashes).toEqual(a.hashes);

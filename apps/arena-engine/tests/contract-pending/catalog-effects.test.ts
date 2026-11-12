@@ -14,7 +14,7 @@
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { beforeAll, describe, expect } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { TICK_DT, TICK_HZ, loadRuleset } from "../../../../packages/game-rules/index.js";
 import { Battle } from "../../src/sim/battle.js";
 import { initPhysics } from "../../src/sim/physics.js";
@@ -22,7 +22,7 @@ import type { VehicleSpec } from "../../src/sim/vehicle.js";
 import { IdleBot } from "../../src/stubs.js";
 import * as fieldStatus from "../../../../packages/module-catalog/effect-status.js";
 import { NON_GAMEPLAY_KEYS } from "../../../../packages/module-catalog/effect-status.js";
-import { ScriptBot, catalog, contractIt, fixtureGuard, loadout, rangeArena } from "../baseline/helpers.js";
+import { ScriptBot, catalog, fixtureGuard, loadout, rangeArena } from "../baseline/helpers.js";
 
 beforeAll(async () => {
   await initPhysics();
@@ -35,7 +35,7 @@ function statusOf(category: string, prop: string): string | undefined {
 }
 
 describe("MC · movement.terrain eliminado (REMOVE)", () => {
-  contractIt("MC", "ningún módulo del catálogo declara terrain", () => {
+  it("[contrato MC cumplido · integración OLA 2] ningún módulo del catálogo declara terrain", () => {
     expect(
       catalog()
         .filter((d: any) => d.terrain !== undefined)
@@ -43,19 +43,19 @@ describe("MC · movement.terrain eliminado (REMOVE)", () => {
     ).toEqual([]);
   });
 
-  contractIt("MC", "el esquema de módulo ya no admite terrain", () => {
+  it("[contrato MC cumplido · integración OLA 2] el esquema de módulo ya no admite terrain", () => {
     const schemas = readdirSync(SCHEMA_DIR).filter((f) => f.endsWith(".json"));
     const withTerrain = schemas.filter((f) => /"terrain"\s*:/.test(readFileSync(join(SCHEMA_DIR, f), "utf8")));
     expect(withTerrain).toEqual([]);
   });
 
-  contractIt("MC", "la tabla de estado de campos no clasifica terrain", () => {
+  it("[contrato MC cumplido · integración OLA 2] la tabla de estado de campos no clasifica terrain", () => {
     expect(statusOf("movement", "terrain")).toBeUndefined();
   });
 });
 
 describe("MC · ningún campo declarado sin efecto (NO_SILENT_FAKE_FIELDS)", () => {
-  contractIt("MC", "ningún campo de un módulo del catálogo real está en estado FUTURE", () => {
+  it("[contrato MC cumplido · integración OLA 2] ningún campo de un módulo del catálogo real está en estado FUTURE", () => {
     const fake: string[] = [];
     for (const d of catalog()) {
       for (const k of Object.keys(d)) {
@@ -106,7 +106,7 @@ function radioRun(distanceM: number): boolean {
 }
 
 describe("MC · radio.rangeM aplicado", () => {
-  contractIt("MC", "un compañero a 150 m (radio.short rangeM 80) NO recibe el mensaje; a 50 m sí", () => {
+  it("[contrato MC cumplido · integración OLA 2] un compañero a 150 m (radio.short rangeM 80) NO recibe el mensaje; a 50 m sí", () => {
     expect(radioRun(50)).toBe(true); // control positivo
     expect(radioRun(150)).toBe(false);
   });
@@ -188,7 +188,7 @@ function shooterSpec(w: (typeof SHOOTERS)[number], rangeOverride?: number): Vehi
 
 describe("MC · weapon.rangeM es la fuente del alcance (sin rebalancear)", () => {
   for (const w of SHOOTERS) {
-    contractIt("MC", `${w.weapon}: el proyectil recorre rangeM (± un paso de tick) y desaparece`, () => {
+    it(`[contrato MC cumplido · integración OLA 2] ${w.weapon}: el proyectil recorre rangeM (± un paso de tick) y desaparece`, () => {
       const spec = shooterSpec(w);
       const m = spec.modules.find((x) => x.slot === "turret_main")!;
       const step = m.projectileSpeedMs! * TICK_DT;
@@ -196,7 +196,7 @@ describe("MC · weapon.rangeM es la fuente del alcance (sin rebalancear)", () =>
     });
   }
 
-  contractIt("MC", "cambiar rangeM en un fixture cambia el alcance en proporción", () => {
+  it("[contrato MC cumplido · integración OLA 2] cambiar rangeM en un fixture cambia el alcance en proporción", () => {
     const w = SHOOTERS[0];
     const short = flight(shooterSpec(w, 100));
     const long = flight(shooterSpec(w, 300));

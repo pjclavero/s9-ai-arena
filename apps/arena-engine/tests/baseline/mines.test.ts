@@ -11,7 +11,7 @@ import { Battle } from "../../src/sim/battle.js";
 import { initPhysics } from "../../src/sim/physics.js";
 import { emptyArena, minerLoadout, sandbagLoadout } from "../../src/fixtures.js";
 import { IdleBot } from "../../src/stubs.js";
-import { ScriptBot } from "./helpers.js";
+import { ScriptBot, publicStream } from "./helpers.js";
 
 beforeAll(async () => {
   await initPhysics();
@@ -72,8 +72,12 @@ function mineScenario(opts: {
     armedAtTick ??= b.getMines()[0]?.armedAtTick ?? null;
     const ev = b.publicEvents.find((e) => e.kind === "mine_triggered");
     if (ev && triggeredAt === null) triggeredAt = ev.tick;
-    if (/mine_\d/.test(JSON.stringify(b.snapshots))) minePublic = true; // "mine_bay" (ranura) no cuenta
   }
+  // Integración OLA 2 (MA): b.snapshots son frames INTERNOS (llevan la mina con su dueño); lo público
+  // es su proyección para public_live. "mine_bay" (ranura) no cuenta.
+  const pub = publicStream(b);
+  if (/mine_\d|"d_\d/.test(JSON.stringify(pub.snapshots))) minePublic = true;
+  if (pub.snapshots.some((s: any) => (s.deployables ?? []).length > 0)) minePublic = true;
   const victimHp = b.getVehicle("veh_2")!.hullHp;
   const mines = b.getMines().length;
   b.free();
@@ -111,9 +115,12 @@ describe("baseline · minas", () => {
     expect(r.minePublic).toBe(false);
   });
 
-  it("characterizes-defect: deployMine SIN fire en el mismo comando se ignora en silencio (ni mina ni rechazo)", () => {
+  // INVERTIDO en la integración OLA 2 (M0) por el arreglo de MC (7788fbe `battle.ts:` resolveFiring ya no
+  // hace `continue` sin fire): antes «deployMine SIN fire se ignora en silencio (ni mina ni rechazo)».
+  it("corregido (MC): deployMine SIN fire en el mismo comando siembra la mina y se arma igual", () => {
     const r = mineScenario({ placeAt: 15, victimTeam: "blue", withFire: false });
-    expect(r.mines).toBe(0);
-    expect(r.triggeredAt).toBeNull();
+    expect(r.armedAtTick).toBe(30);
+    expect(r.triggeredAt).toBe(30);
+    expect(r.victimHp).toBeLessThan(r.victimHpMax);
   });
 });

@@ -13,7 +13,7 @@
  * Contratos: packages/projection/contracts.ts (I1-I7, F1, P-1) y §3-§5 y §12 de
  * docs/technical/engine-v2-contracts.md.
  */
-import { beforeAll, describe, expect } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { loadRuleset } from "../../../../packages/game-rules/index.js";
 import { Battle } from "../../src/sim/battle.js";
 import { initPhysics } from "../../src/sim/physics.js";
@@ -22,7 +22,7 @@ import { emptyArena, gunnerLoadout, minerLoadout, scoutLoadout } from "../../src
 import { IdleBot } from "../../src/stubs.js";
 import { projectIndex, projectReplayDocument } from "../../../api/src/replay-projection.js";
 import { effectOf } from "../../../../packages/module-catalog/effect-status.js";
-import { ScriptBot, allKeys, allStrings, contractIt } from "../baseline/helpers.js";
+import { ScriptBot, allKeys, allStrings, contractIt, publicStream } from "../baseline/helpers.js";
 import { recordReference } from "../baseline/reference-battle.js";
 
 beforeAll(async () => {
@@ -60,8 +60,11 @@ function idBattle(withMine: boolean) {
   );
   b.attachBot("veh_2", new IdleBot("b2"));
   for (let t = 0; t < 40; t++) b.step();
-  const frames = b.snapshots; // = lo que el gateway reenvía (battle.snapshots) a spectator/broadcast
-  const events = b.publicEvents;
+  // Integración OLA 2 (M0): adaptador a la frontera de MA. Lo que reciben spectator/broadcast es la
+  // proyección public_live de los frames internos (antes: battle.snapshots tal cual).
+  const pub = publicStream(b);
+  const frames = pub.snapshots;
+  const events = pub.events;
   b.free();
   return { frames, events };
 }
@@ -72,13 +75,13 @@ function projectileIds(frames: any[]): string[] {
 }
 
 describe("MA · PublicEntityId: ningún id interno sale (I1, F1)", () => {
-  contractIt("MA", "los frames públicos (spectator/broadcast) no contienen ids internos veh_/proj_/mine_", () => {
+  it("[contrato MA cumplido · integración OLA 2] los frames públicos (spectator/broadcast) no contienen ids internos veh_/proj_/mine_", () => {
     const { frames } = idBattle(true);
     const leaked = allStrings(frames).filter((s) => INTERNAL_ID.test(s));
     expect(leaked).toEqual([]);
   });
 
-  contractIt("MA", "todo id de entidad en un frame público usa un prefijo de clase pública (v, p, d, z, c)", () => {
+  it("[contrato MA cumplido · integración OLA 2] todo id de entidad en un frame público usa un prefijo de clase pública (v, p, d, z, c)", () => {
     const { frames } = idBattle(true);
     const ids = frames.flatMap((s: any) => [
       ...(s.vehicles ?? []).map((v: any) => String(v.id)),
@@ -88,7 +91,7 @@ describe("MA · PublicEntityId: ningún id interno sale (I1, F1)", () => {
     expect(ids.filter((id: string) => !PUBLIC_ID.test(id))).toEqual([]);
   });
 
-  contractIt("MA", "el replay público proyectado y su índice no contienen ids internos", async () => {
+  it("[contrato MA cumplido · integración OLA 2] el replay público proyectado y su índice no contienen ids internos", async () => {
     const r = await recordReference();
     const meta = {
       world: {},
@@ -135,14 +138,14 @@ describe("MA · PublicEntityId: ningún id interno sale (I1, F1)", () => {
 });
 
 describe("MA · ids densos por audiencia: lo oculto no consume número (I3, P-1, #261)", () => {
-  contractIt("MA", "los ids públicos de proyectil son densos (sin huecos) aunque haya una mina oculta", () => {
+  it("[contrato MA cumplido · integración OLA 2] los ids públicos de proyectil son densos (sin huecos) aunque haya una mina oculta", () => {
     const ids = projectileIds(idBattle(true).frames);
     expect(ids).toHaveLength(2);
     const nums = ids.map((id) => Number(id.split("_")[1]));
     expect(nums[1] - nums[0]).toBe(1);
   });
 
-  contractIt("MA", "una entidad no vista (mina) no consume id: la secuencia pública es la misma con y sin mina", () => {
+  it("[contrato MA cumplido · integración OLA 2] una entidad no vista (mina) no consume id: la secuencia pública es la misma con y sin mina", () => {
     expect(projectileIds(idBattle(true).frames)).toEqual(projectileIds(idBattle(false).frames));
   });
 });
@@ -151,12 +154,12 @@ describe("MA · ids densos por audiencia: lo oculto no consume número (I3, P-1,
 const EQUIPMENT_KEYS = ["hullHpMax", "modules", "chassis", "moduleId", "loadout", "spec", "specs"];
 
 describe("MA · equipamiento privado (D-B1 = R2) en las salidas públicas", () => {
-  contractIt("MA", "spectator/broadcast: los frames públicos no llevan hullHpMax, módulos ni chasis", () => {
+  it("[contrato MA cumplido · integración OLA 2] spectator/broadcast: los frames públicos no llevan hullHpMax, módulos ni chasis", () => {
     const keys = allKeys(idBattle(true).frames);
     expect(EQUIPMENT_KEYS.filter((k) => keys.has(k))).toEqual([]);
   });
 
-  contractIt("MA", "replay público e índice: sin hullHpMax, módulos ni chasis en snapshots ni nómina", async () => {
+  it("[contrato MA cumplido · integración OLA 2] replay público e índice: sin hullHpMax, módulos ni chasis en snapshots ni nómina", async () => {
     const r = await recordReference();
     const meta = {
       world: {},
@@ -171,7 +174,7 @@ describe("MA · equipamiento privado (D-B1 = R2) en las salidas públicas", () =
     expect(EQUIPMENT_KEYS.filter((k) => keys.has(k))).toEqual([]);
   });
 
-  contractIt("MA", "WELCOME: specs sólo con campos ACTIVE o VALIDATION_ONLY (nunca FUTURE ni derivados)", async () => {
+  it("[contrato MA cumplido · integración OLA 2] WELCOME: specs sólo con campos ACTIVE o VALIDATION_ONLY (nunca FUTURE ni derivados)", async () => {
     const battle = await Battle.create({
       battleId: "me_welcome_c",
       seed: "me-welcome-c",
@@ -202,12 +205,20 @@ describe("MA · equipamiento privado (D-B1 = R2) en las salidas públicas", () =
     expect(bad).toEqual([]);
   });
 
-  contractIt("MA", "eventos públicos (replay y directo): ningún id interno ni campo de equipamiento", async () => {
+  it("[contrato MA cumplido · integración OLA 2] eventos públicos (replay y directo): ningún id interno ni campo de equipamiento", async () => {
     const r = await recordReference();
     // Control: la batalla de referencia produce eventos públicos (si no, el test es vacío).
     expect(r.events.length).toBeGreaterThan(0);
-    const keys = allKeys(r.events);
-    expect(allStrings(r.events).filter((s) => INTERNAL_ID.test(s))).toEqual([]);
+    // Integración OLA 2 (M0): adaptador a MA. Los eventos públicos son los del documento de replay
+    // proyectado (r.events es el CRUDO del motor, que sólo lee el staff).
+    const meta = {
+      world: {},
+      roster: r.header.participants.map((p: any) => ({ id: p.id, botId: p.botId, team: p.team })),
+    };
+    const events = (projectReplayDocument(r, meta) as any).events;
+    expect(events.length).toBeGreaterThan(0);
+    const keys = allKeys(events);
+    expect(allStrings(events).filter((s) => INTERNAL_ID.test(s))).toEqual([]);
     expect(EQUIPMENT_KEYS.filter((k) => keys.has(k))).toEqual([]);
   });
 });

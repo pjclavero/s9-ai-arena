@@ -7,7 +7,7 @@
       "sector": "front",
       "effective": 6.5,
       "hull": 4.55,
-      "moduleSlot": "turret_main",
+      "moduleSlot": "power",
       "moduleDamage": 1.95,
       "moduleDestroyed": false,
       "killed": false
@@ -25,7 +25,7 @@
       "sector": "front",
       "effective": 29.25,
       "hull": 20.475,
-      "moduleSlot": "power",
+      "moduleSlot": "drive",
       "moduleDamage": 8.775,
       "moduleDestroyed": false,
       "killed": false
@@ -43,7 +43,7 @@
       "sector": "front",
       "effective": 65,
       "hull": 45.5,
-      "moduleSlot": "drive",
+      "moduleSlot": "ammo_main",
       "moduleDamage": 19.5,
       "moduleDestroyed": false,
       "killed": false
@@ -151,7 +151,7 @@
       "sector": "left",
       "effective": 100,
       "hull": 70,
-      "moduleSlot": "turret_main",
+      "moduleSlot": "sensor_a",
       "moduleDamage": 30,
       "moduleDestroyed": false,
       "killed": false
@@ -187,7 +187,7 @@
       "sector": "right",
       "effective": 45,
       "hull": 31.5,
-      "moduleSlot": "power",
+      "moduleSlot": "drive",
       "moduleDamage": 13.5,
       "moduleDestroyed": false,
       "killed": false

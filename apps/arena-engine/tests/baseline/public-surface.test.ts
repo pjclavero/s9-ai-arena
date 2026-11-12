@@ -18,7 +18,7 @@ import { IdleBot } from "../../src/stubs.js";
 import { projectReplayDocument } from "../../../api/src/replay-projection.js";
 import { computeBattleStats } from "../../../replay-service/src/stats.js";
 import { effectOf } from "../../../../packages/module-catalog/effect-status.js";
-import { ScriptBot, allKeys, assertBaselineGolden } from "./helpers.js";
+import { ScriptBot, allKeys, allStrings, assertBaselineGolden, publicStream } from "./helpers.js";
 import { recordReference } from "./reference-battle.js";
 
 beforeAll(async () => {
@@ -58,55 +58,74 @@ function minerIdBattle() {
 }
 
 describe("baseline · ids de entidad (proj_N / mine_N, entitySeq compartido, #261)", () => {
-  it("characterizes-defect: proyectiles y minas consumen el MISMO entitySeq; el hueco en proj_N delata la mina oculta", () => {
+  // INVERTIDO en la integración OLA 2 (M0) por el arreglo de MA (P-1: PublicEntityId por audiencia, densos,
+  // una entidad no vista no consume id): antes «el hueco en proj_N delata la mina oculta». El asignador
+  // INTERNO sigue compartido (entitySeq 3: proj_0, mine_1, proj_2); lo que ya no sale es ese número.
+  it("corregido (MA): los ids públicos de proyectil son densos y no delatan la mina oculta", () => {
     const b = minerIdBattle();
     for (let t = 0; t < 40; t++) b.step();
     const mines = b.getMines().map((m) => m.id);
-    const publicProj = [...new Set(b.snapshots.flatMap((s: any) => s.projectiles.map((p: any) => p.id)))];
-    const publicKeys = allKeys(b.snapshots);
+    const pub = publicStream(b);
+    const publicProj = [
+      ...new Set(pub.snapshots.flatMap((s: any) => (s.projectiles ?? []).map((p: any) => String(p.id)))),
+    ];
+    const publicKeys = allKeys(pub.snapshots);
     const entitySeq = (b as any).entitySeq;
     b.free();
     expect(mines).toEqual(["mine_1"]);
-    expect(publicProj).toEqual(["proj_0", "proj_2"]); // DEFECTO: falta proj_1 ⇒ alguien sembró algo oculto
     expect(entitySeq).toBe(3);
-    // La mina en sí no sale en el snapshot público (eso SÍ es contrato vigente).
-    expect(JSON.stringify(b.snapshots)).not.toContain("mine_1");
+    expect(publicProj).toHaveLength(2);
+    expect(publicProj.every((id) => /^p_\d+$/.test(id))).toBe(true);
+    const nums = publicProj.map((id) => Number(id.split("_")[1]));
+    expect(nums[1]! - nums[0]!).toBe(1);
+    // La mina no sale en el frame público (contrato vigente).
+    expect(JSON.stringify(pub.snapshots)).not.toMatch(/mine_\d|"d_\d/);
     expect(publicKeys.has("mines")).toBe(false);
   });
 
-  it("characterizes-defect: el id público del vehículo ES el id interno del participante (veh_N)", () => {
+  // INVERTIDO en la integración OLA 2 (M0) por el arreglo de MA (ids públicos v_N; los internos nunca salen):
+  // antes «el id público del vehículo ES el id interno (veh_N)».
+  it("corregido (MA): el id público del vehículo NO es el interno (v_N, no veh_N)", () => {
     const b = minerIdBattle();
     b.step();
-    const ids = b.getPublicSnapshot().vehicles.map((v: any) => v.id);
+    const ids = (publicStream(b).snapshots[0] as any).vehicles.map((v: any) => String(v.id));
     b.free();
-    expect(ids).toEqual(["veh_1", "veh_2"]);
+    expect(ids).toHaveLength(2);
+    expect(ids.every((id: string) => /^v_\d+$/.test(id))).toBe(true);
   });
 });
 
 describe("baseline · forma del snapshot público del motor (espectador, broadcast, replay)", () => {
   it("claves exactas por vehículo y por proyectil (golden)", () => {
+    // REGENERADO en la integración OLA 2 (M0) por MA: la forma pública es la del frame PROYECTADO
+    // (projectFrame, audiencia public_live), sin módulos ni ranuras (D-B1 = R2) y con hullLevel (D-B5).
     const b = minerIdBattle();
     b.step();
-    const s = b.getPublicSnapshot();
+    const s: any = publicStream(b).snapshots[0];
     b.free();
     assertBaselineGolden("public-snapshot-shape", {
       top: Object.keys(s).sort(),
       vehicle: Object.keys(s.vehicles[0]).sort(),
-      module: Object.keys(s.vehicles[0].modules[0]).sort(),
-      projectile: s.projectiles.length ? Object.keys(s.projectiles[0]).sort() : [],
-      moduleSlots: s.vehicles.map((v: any) => v.modules.map((m: any) => m.slot)),
+      projectile: (s.projectiles ?? []).length ? Object.keys(s.projectiles[0]).sort() : [],
     });
   });
 
-  it("characterizes-defect: el snapshot público expone hullHp exacto, hullHpMax del chasis y las ranuras de cada módulo", () => {
+  // INVERTIDO en la integración OLA 2 (M0) por MA (D-B1 = R2, frame proyectado) y MB/MA (D-B5 hullLevel N=20):
+  // antes «el snapshot público expone hullHp exacto, hullHpMax del chasis y las ranuras de cada módulo».
+  it("corregido (MA/MB): el frame público no expone hullHp, hullHpMax ni ranuras; lleva hullLevel en [0, 20]", () => {
     const b = minerIdBattle();
     b.step();
-    const v = b.getPublicSnapshot().vehicles.find((x: any) => x.id === "veh_1");
+    const vs = (publicStream(b).snapshots[0] as any).vehicles as any[];
     b.free();
-    expect(v.hullHpMax).toBe(minerLoadout().hullHp); // identifica el chasis
-    expect(typeof v.hullHp).toBe("number"); // hp absoluto, no hullLevel
-    expect(v.hullLevel).toBeUndefined();
-    expect(v.modules.map((m: any) => m.slot)).toContain("mine_bay"); // revela que lleva minas
+    expect(vs).toHaveLength(2);
+    for (const v of vs) {
+      expect(v).not.toHaveProperty("hullHp");
+      expect(v).not.toHaveProperty("hullHpMax");
+      expect(v).not.toHaveProperty("modules");
+      expect(Number.isInteger(v.hullLevel) && v.hullLevel >= 0 && v.hullLevel <= 20).toBe(true);
+    }
+    expect(allStrings(vs)).not.toContain("mine_bay"); // ya no revela que lleva minas
+    expect(minerLoadout().hullHp).toBeGreaterThan(0);
   });
 });
 
@@ -146,7 +165,10 @@ describe("baseline · WELCOME (protocol-server.buildWelcome)", () => {
     });
   });
 
-  it("characterizes-defect: WELCOME.specs incluye campos FUTURE (sin efecto) como weapon.rangeM y turretArcRad", async () => {
+  // INVERTIDO en la integración OLA 2 (M0) por MC (P-2: weapon.rangeM y radio.rangeM son reales, ningún campo
+  // FUTURE), MB (D-B2: turretArcRad sale del arma) y MA (ficha WELCOME sólo ACTIVE/validación):
+  // antes «WELCOME.specs incluye campos FUTURE como weapon.rangeM y turretArcRad».
+  it("corregido (MC/MB/MA): WELCOME.specs no lleva ningún campo FUTURE ni turretArcRad en el arma", async () => {
     const w = await welcomeFor();
     const leaked: string[] = [];
     for (const m of w.vehicle.modules) {
@@ -155,12 +177,17 @@ describe("baseline · WELCOME (protocol-server.buildWelcome)", () => {
         if (effectOf(m.category, k)?.status === "FUTURE") leaked.push(`${m.category}.${k}`);
       }
     }
-    expect(leaked).toEqual(expect.arrayContaining(["weapon.rangeM", "weapon.turretArcRad", "radio.rangeM"]));
+    expect(leaked).toEqual([]);
+    const weapon = w.vehicle.modules.find((m: any) => m.category === "weapon");
+    expect(weapon).toBeDefined();
+    expect(weapon.specs).not.toHaveProperty("turretArcRad");
   });
 });
 
 describe("baseline · replay público proyectado y estadísticas (API / replay-service)", () => {
-  it("characterizes-defect: el documento de replay público conserva hullHpMax, ranuras de módulos, proj_N e ids veh_N", async () => {
+  // INVERTIDO en la integración OLA 2 (M0) por MA (proyección del replay público: ids públicos, sin hullHpMax,
+  // módulos ni chasis): antes «el documento de replay público conserva hullHpMax, ranuras, proj_N e ids veh_N».
+  it("corregido (MA): el documento de replay público no lleva hullHpMax, módulos, chasis ni ids internos", async () => {
     const r = await recordReference();
     const doc: any = projectReplayDocument(r, {
       world: {},
@@ -172,12 +199,14 @@ describe("baseline · replay público proyectado y estadísticas (API / replay-s
       })),
     });
     const v0 = doc.snapshots[0].vehicles[0];
-    expect(v0.id).toBe("veh_1");
-    expect(typeof v0.hullHpMax).toBe("number");
-    expect(Array.isArray(v0.modules)).toBe(true);
-    expect(doc.roster[0].chassis).toBe("chassis.medium@1");
-    const projIds = doc.snapshots.flatMap((s: any) => s.projectiles.map((p: any) => p.id));
-    expect(projIds.every((id: string) => /^proj_\d+$/.test(id))).toBe(true);
+    expect(v0.id).toMatch(/^v_\d+$/);
+    expect(v0).not.toHaveProperty("hullHpMax");
+    expect(v0).not.toHaveProperty("modules");
+    expect(doc.roster[0]).not.toHaveProperty("chassis");
+    const projIds = doc.snapshots.flatMap((s: any) => (s.projectiles ?? []).map((p: any) => String(p.id)));
+    expect(projIds.length).toBeGreaterThan(0);
+    expect(projIds.every((id: string) => /^p_\d+$/.test(id))).toBe(true);
+    expect(allStrings(doc).filter((s) => /\b(veh|proj|mine)_\d+\b/.test(s))).toEqual([]);
     // Contrato vigente que NO debe romperse: sin seed, sin comandos, sin spec.
     const keys = allKeys(doc);
     for (const k of ["seed", "commands", "spec", "loadout", "stateHashes"]) expect(keys.has(k)).toBe(false);

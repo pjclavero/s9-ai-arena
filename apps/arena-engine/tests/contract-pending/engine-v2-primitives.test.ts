@@ -16,9 +16,8 @@
  * Dependencia de equipo: MC (packages/module-catalog). Ningún contenido real nuevo:
  * sólo literales de test.
  */
-import { describe, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { ActionDef, EffectDef } from "../../../../packages/module-catalog/contracts/engine-v2.js";
-import { contractIt } from "../baseline/helpers.js";
 
 type Issue = { path: string; message: string };
 type Validator = (def: unknown) => Issue[];
@@ -157,40 +156,40 @@ async function rejects(valid: unknown, mutate: (d: any) => void, field: string):
 }
 
 describe("MC · Action (fire / deploy)", () => {
-  contractIt("MC", "una acción fire con projectile y una deploy con deployable son válidas", async () => {
+  it("[contrato MC cumplido · integración OLA 2] una acción fire con projectile y una deploy con deployable son válidas", async () => {
     await accepts(fireAction, "fire");
     await accepts(mineAction, "deploy");
   });
 
-  contractIt("MC", "una acción con projectile Y deployable a la vez se rechaza (exactamente un producto)", async () => {
+  it("[contrato MC cumplido · integración OLA 2] una acción con projectile Y deployable a la vez se rechaza (exactamente un producto)", async () => {
     await rejects(fireAction, (d) => (d.deployable = clone(mineAction.deployable)), "deployable");
   });
 
-  contractIt("MC", "una acción de un kind desconocido se rechaza señalando `kind`", async () => {
+  it("[contrato MC cumplido · integración OLA 2] una acción de un kind desconocido se rechaza señalando `kind`", async () => {
     await rejects(fireAction, (d) => (d.kind = "teleport"), "kind");
   });
 });
 
 describe("MC · Effect", () => {
-  contractIt("MC", "un efecto de área sin falloff se rechaza (radiusM > 0 exige falloff)", async () => {
+  it("[contrato MC cumplido · integración OLA 2] un efecto de área sin falloff se rechaza (radiusM > 0 exige falloff)", async () => {
     await rejects(mineAction, (d) => delete d.deployable.effects[0].falloff, "falloff");
   });
 
-  contractIt("MC", "una primitiva de efecto desconocida se rechaza señalando `primitive`", async () => {
+  it("[contrato MC cumplido · integración OLA 2] una primitiva de efecto desconocida se rechaza señalando `primitive`", async () => {
     await rejects(fireAction, (d) => (d.projectile.onImpact[0].primitive = "teleport"), "primitive");
   });
 
-  contractIt("MC", "un damageType fuera del registro se rechaza señalando `damageType`", async () => {
+  it("[contrato MC cumplido · integración OLA 2] un damageType fuera del registro se rechaza señalando `damageType`", async () => {
     await rejects(fireAction, (d) => (d.projectile.onImpact[0].damageType = "magic"), "damageType");
   });
 });
 
 describe("MC · Interference", () => {
-  contractIt("MC", "un perfil de interferencia por canales (radio block + radar noise) es válido", async () => {
+  it("[contrato MC cumplido · integración OLA 2] un perfil de interferencia por canales (radio block + radar noise) es válido", async () => {
     await accepts(jammerAction, "jammer");
   });
 
-  contractIt("MC", "el canal `optical` (sin consumidor) se rechaza: no hay campos falsos", async () => {
+  it("[contrato MC cumplido · integración OLA 2] el canal `optical` (sin consumidor) se rechaza: no hay campos falsos", async () => {
     await rejects(
       jammerAction,
       (d) => (d.deployable.effects[0].profile.channels = { optical: { strength: 1, mode: "block" } }),
@@ -198,35 +197,35 @@ describe("MC · Interference", () => {
     );
   });
 
-  contractIt("MC", "una fuerza de canal fuera de [0, 1] se rechaza señalando `strength`", async () => {
+  it("[contrato MC cumplido · integración OLA 2] una fuerza de canal fuera de [0, 1] se rechaza señalando `strength`", async () => {
     await rejects(jammerAction, (d) => (d.deployable.effects[0].profile.channels.radio.strength = 1.5), "strength");
   });
 });
 
 describe("MC · Deployable", () => {
-  contractIt("MC", "un trigger timer sin afterTicks se rechaza señalando `afterTicks`", async () => {
+  it("[contrato MC cumplido · integración OLA 2] un trigger timer sin afterTicks se rechaza señalando `afterTicks`", async () => {
     await rejects(jammerAction, (d) => delete d.deployable.trigger.afterTicks, "afterTicks");
   });
 
-  contractIt("MC", "sin maxActivePerOwner el deployable se rechaza (sustituye a MAX_MINES_PER_VEHICLE)", async () => {
+  it("[contrato MC cumplido · integración OLA 2] sin maxActivePerOwner el deployable se rechaza (sustituye a MAX_MINES_PER_VEHICLE)", async () => {
     await rejects(mineAction, (d) => delete d.deployable.maxActivePerOwner, "maxActivePerOwner");
   });
 
-  contractIt("MC", "un trigger de kind desconocido se rechaza señalando `kind`", async () => {
+  it("[contrato MC cumplido · integración OLA 2] un trigger de kind desconocido se rechaza señalando `kind`", async () => {
     await rejects(mineAction, (d) => (d.deployable.trigger.kind = "psychic"), "kind");
   });
 });
 
 describe("MC · Guidance", () => {
-  contractIt("MC", "guiado a blanco con lockRequirements y onLockLost es válido", async () => {
+  it("[contrato MC cumplido · integración OLA 2] guiado a blanco con lockRequirements y onLockLost es válido", async () => {
     await accepts(guidedAction, "guided");
   });
 
-  contractIt("MC", "guiado a blanco sin lockRequirements se rechaza señalando `lockRequirements`", async () => {
+  it("[contrato MC cumplido · integración OLA 2] guiado a blanco sin lockRequirements se rechaza señalando `lockRequirements`", async () => {
     await rejects(guidedAction, (d) => delete d.projectile.guidance.lockRequirements, "lockRequirements");
   });
 
-  contractIt("MC", "un modo de guiado desconocido se rechaza señalando `mode`", async () => {
+  it("[contrato MC cumplido · integración OLA 2] un modo de guiado desconocido se rechaza señalando `mode`", async () => {
     await rejects(guidedAction, (d) => (d.projectile.guidance.mode = "psychic"), "mode");
   });
 });

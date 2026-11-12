@@ -29,6 +29,7 @@ import { resolveVehicle } from "../../../../packages/module-catalog/resolve/inde
 import type { LoadoutInput, ModuleDefinition } from "../../../../packages/module-catalog/types.js";
 import type { ArenaMap } from "../../src/sim/modes.js";
 import type { VehicleSpec } from "../../src/sim/vehicle.js";
+import { audienceKey, projectReplayStream } from "../../../../packages/projection/index.js";
 
 // `contractIt` y su política viven en un helper compartido (también lo usa bot-manager).
 export {
@@ -69,6 +70,28 @@ export function sha256(x: unknown): string {
   return createHash("sha256")
     .update(typeof x === "string" ? x : JSON.stringify(x))
     .digest("hex");
+}
+
+// ------------------------------------------------------------------ salida pública (OLA 2 · MA)
+
+/**
+ * Integración OLA 2 (M0): desde MA `battle.snapshots` son FRAMES INTERNOS (captureInternalFrame) y
+ * `getPublicSnapshot()` ya no existe; lo que reciben espectador, broadcast y replay público es la
+ * proyección de `packages/projection` (audiencia public_live). Este es el ÚNICO adaptador de la
+ * baseline y de los contratos a esa frontera (antes leían el snapshot del motor tal cual).
+ */
+export function publicStream(b: {
+  config: { battleId: string; participants: readonly { id: string; botId: string; team: string }[] };
+  snapshots: readonly unknown[];
+  publicEvents: readonly unknown[];
+}) {
+  return projectReplayStream({
+    battleId: b.config.battleId,
+    audience: audienceKey("public_live"),
+    roster: b.config.participants.map((p) => ({ id: p.id, botId: p.botId, team: p.team })),
+    snapshots: b.snapshots,
+    events: b.publicEvents,
+  });
 }
 
 // ------------------------------------------------------------------ catálogo y loadouts

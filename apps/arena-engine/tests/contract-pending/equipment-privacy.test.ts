@@ -15,8 +15,9 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { projectIndex, projectReplayDocument } from "../../../api/src/replay-projection.js";
 import { computeBattleStats } from "../../../replay-service/src/stats.js";
+import { projectBotStats } from "../../../../packages/projection/index.js";
 import { initPhysics } from "../../src/sim/physics.js";
-import { allKeys, allStrings, contractIt, fixtureGuard } from "../baseline/helpers.js";
+import { allKeys, allStrings, fixtureGuard } from "../baseline/helpers.js";
 import { recordReference } from "../baseline/reference-battle.js";
 
 beforeAll(async () => {
@@ -34,19 +35,23 @@ async function publicStats(): Promise<any> {
   fixtureGuard(stats && typeof stats === "object", "computeBattleStats no devolvió un objeto");
   const perBot = stats.perBot ?? stats.bots;
   fixtureGuard(perBot && Object.keys(perBot).length === 2, "las estadísticas de referencia no traen 2 bots");
-  return stats;
+  // Integración OLA 2 (M0): adaptador a MA. getBattleStats (apps/api/src/routes/battles.ts) publica por
+  // bot `projectBotStats(stats, "public_replay")`, sin el diagnóstico (cpuMs, decisions, rechazos); esto
+  // reproduce esa salida pública. computeBattleStats es el cálculo INTERNO de replay-service.
+  const pub: Record<string, unknown> = {};
+  for (const [k, s] of Object.entries(perBot as Record<string, any>)) {
+    const { cpuMs: _c, decisions: _d, rejectionsByReason: _r, radioDroppedByReason: _x, ...rest } = s;
+    pub[String(s.botId ?? k)] = projectBotStats(rest, "public_replay");
+  }
+  return { perBot: pub };
 }
 
 describe("MA · D-B1 · getBattleStats (computeBattleStats) no revela el equipamiento", () => {
-  contractIt(
-    "MA",
-    "las estadísticas públicas no llevan moduleId de catálogo (ni valor ni clave `moduleId`)",
-    async () => {
-      const stats = await publicStats();
-      expect(allStrings(stats).filter((s) => CATALOG_ID.test(s))).toEqual([]);
-      expect([...allKeys(stats)].filter((k) => k === "moduleId")).toEqual([]);
-    },
-  );
+  it("[contrato MA cumplido · integración OLA 2] las estadísticas públicas no llevan moduleId de catálogo (ni valor ni clave `moduleId`)", async () => {
+    const stats = await publicStats();
+    expect(allStrings(stats).filter((s) => CATALOG_ID.test(s))).toEqual([]);
+    expect([...allKeys(stats)].filter((k) => k === "moduleId")).toEqual([]);
+  });
 
   it("(guarda de baseline, verde en el BASE_SHA) las estadísticas públicas no llevan el loadout ni el chasis", async () => {
     const stats = await publicStats();
@@ -56,13 +61,13 @@ describe("MA · D-B1 · getBattleStats (computeBattleStats) no revela el equipam
     }
   });
 
-  contractIt("MA", "las estadísticas públicas no llevan ids internos de vehículo/proyectil/mina", async () => {
+  it("[contrato MA cumplido · integración OLA 2] las estadísticas públicas no llevan ids internos de vehículo/proyectil/mina", async () => {
     const stats = await publicStats();
     expect(allStrings(stats).filter((s) => INTERNAL_ID.test(s))).toEqual([]);
     expect([...allKeys(stats)].filter((k) => INTERNAL_ID.test(k))).toEqual([]);
   });
 
-  contractIt("MA", "sin daño ABSOLUTO público: ni damageDealt/damageTaken numéricos ni daño por módulo", async () => {
+  it("[contrato MA cumplido · integración OLA 2] sin daño ABSOLUTO público: ni damageDealt/damageTaken numéricos ni daño por módulo", async () => {
     const stats = await publicStats();
     const keys = allKeys(stats);
     for (const k of ["damageDealt", "damageTaken", "hullHp", "hullHpMax"]) {
@@ -72,7 +77,7 @@ describe("MA · D-B1 · getBattleStats (computeBattleStats) no revela el equipam
 });
 
 describe("MA · D-B1 · replay público: nómina e índice sin equipamiento", () => {
-  contractIt("MA", "la nómina (roster) del replay público no lleva chasis de catálogo", async () => {
+  it("[contrato MA cumplido · integración OLA 2] la nómina (roster) del replay público no lleva chasis de catálogo", async () => {
     const r = await recordReference();
     const meta = {
       world: {},

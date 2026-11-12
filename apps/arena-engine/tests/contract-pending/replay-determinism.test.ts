@@ -14,7 +14,7 @@ import { initPhysics } from "../../src/sim/physics.js";
 import { verify, type Replay } from "../../src/replay.js";
 import { emptyArena, gunnerLoadout, minerLoadout, scoutLoadout } from "../../src/fixtures.js";
 import { HunterBot, IdleBot } from "../../src/stubs.js";
-import { ScriptBot, contractIt, fixtureGuard } from "../baseline/helpers.js";
+import { ScriptBot, fixtureGuard } from "../baseline/helpers.js";
 import { recordReference } from "../baseline/reference-battle.js";
 
 beforeAll(async () => {
@@ -29,25 +29,25 @@ async function ref(): Promise<Replay> {
 const clone = <T>(x: T): T => JSON.parse(JSON.stringify(x));
 
 describe("MD · verify() v2 compara el RESULTADO, no sólo los hashes", () => {
-  contractIt("MD", "un replay con winner manipulado (hashes intactos) NO verifica", async () => {
+  it("[contrato MD cumplido · integración OLA 2] un replay con winner manipulado (hashes intactos) NO verifica", async () => {
     const r = clone(await ref());
     r.result.winner = r.result.winner === "red" ? "blue" : "red";
     expect((await verify(r)).matches).toBe(false);
   });
 
-  contractIt("MD", "un replay con endReason manipulado NO verifica", async () => {
+  it("[contrato MD cumplido · integración OLA 2] un replay con endReason manipulado NO verifica", async () => {
     const r = clone(await ref());
     (r.result as any).endReason = "technical_limit";
     expect((await verify(r)).matches).toBe(false);
   });
 
-  contractIt("MD", "un replay con score manipulado NO verifica", async () => {
+  it("[contrato MD cumplido · integración OLA 2] un replay con score manipulado NO verifica", async () => {
     const r = clone(await ref());
     r.result.score = { ...r.result.score, red: (r.result.score.red ?? 0) + 7 };
     expect((await verify(r)).matches).toBe(false);
   });
 
-  contractIt("MD", "un replay con disqualifications manipuladas NO verifica", async () => {
+  it("[contrato MD cumplido · integración OLA 2] un replay con disqualifications manipuladas NO verifica", async () => {
     const r = clone(await ref());
     r.result.disqualified = [...r.result.disqualified, "veh_2"];
     expect((await verify(r)).matches).toBe(false);
@@ -219,7 +219,7 @@ describe("MD · el stateHash cubre todo el estado vivo que determina el futuro",
     ],
   ];
   for (const [name, probe] of probes) {
-    contractIt("MD", `el stateHash cambia si cambia: ${name}`, () => {
+    it(`[contrato MD cumplido · integración OLA 2] el stateHash cambia si cambia: ${name}`, () => {
       const b = liveStateBattle();
       const [m, u] = probe(b);
       const seen = hashSees(b, m, u);
@@ -230,7 +230,7 @@ describe("MD · el stateHash cubre todo el estado vivo que determina el futuro",
 });
 
 describe("MD · RNG con nombre: la observación no consume el flujo de simulación", () => {
-  contractIt("MD", "llamar a observationFor() fuera del bucle no cambia el finalStateHash", () => {
+  it("[contrato MD cumplido · integración OLA 2] llamar a observationFor() fuera del bucle no cambia el finalStateHash", () => {
     const run = (observe: boolean) => {
       const map = emptyArena(200, 80);
       map.spawns = [

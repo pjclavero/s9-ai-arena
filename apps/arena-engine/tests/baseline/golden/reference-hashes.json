@@ -1,8 +1,8 @@
 {
-  "finalStateHash": "10dfc62150b54694c684bb7823344252ba5390e175cda92c70e866d34bc9afa6",
-  "stateHashCount": 9,
-  "stateHashesDigest": "2ed12f2cda0558ca7dd8abfd1afe7fbabf3a19197c2cc6380a6426bca0fbc420",
-  "snapshotsDigest": "34ef7c5d13abae3415b417650e6a50639c97e4f56e8a91662db250da21b71b29",
+  "finalStateHash": "c999229c84bac75ea5e31ca56349dc4535e2a1aa29093d91221501820d08dd60",
+  "stateHashCount": 13,
+  "stateHashesDigest": "d7b3cd8e3d6a0251dab6aecc38d7a17bef717505b9a3317a21fbb960a9275bc5",
+  "snapshotsDigest": "fd1766a11cced59bac26a995eb868e9c161cfb69c2a2f11d59599ddef58803dd",
   "versions": {
     "engine": "0.4.0",
     "physics": "@dimforge/rapier2d-compat@0.19.3",
