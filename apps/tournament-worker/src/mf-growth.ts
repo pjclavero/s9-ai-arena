@@ -72,7 +72,8 @@ export function evaluateGrowth(
   const violations: string[] = [];
   if (!(rssSlope < L.rssSlopeMax))
     violations.push(`pendiente RSS 2ª mitad ${rssSlope.toFixed(2)} >= ${L.rssSlopeMax} MB/batalla`);
-  if (!(rssAbs < L.rssAbsMax)) violations.push(`RSS final - mediana 1ª mitad ${rssAbs.toFixed(1)} >= ${L.rssAbsMax} MB`);
+  if (!(rssAbs < L.rssAbsMax))
+    violations.push(`RSS final - mediana 1ª mitad ${rssAbs.toFixed(1)} >= ${L.rssAbsMax} MB`);
   if (heapSlope !== null && !(heapSlope < L.heapSlopeMax))
     violations.push(`pendiente heapUsed(gc) 2ª mitad ${heapSlope.toFixed(2)} >= ${L.heapSlopeMax} MB/batalla`);
   if (!(availSlope > -L.availSlopeMax))
