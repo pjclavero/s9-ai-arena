@@ -277,6 +277,40 @@ describe("H14.10 · autorización", () => {
     expect(loadouts.status).toBe(404);
   });
 
+  it("OLA 2 · el 409 bot_version_not_eligible de un bot PÚBLICO ajeno no filtra el loadout; dueño y staff, con detalle", async () => {
+    const body = battle([
+      { botId: alienPub, version: 1, team: "red" },
+      { botId: atk, version: 1, team: "blue" },
+    ]);
+    const LEAK = /ammo\.|weapon\.|turret_main|ammo_main|slot|moduleId|ammoId|munici|cañón|se conserva/i;
+    const third = await request(app).post("/battles").set(as(devTok)).send(body);
+    expect(third.status, JSON.stringify(third.body)).toBe(409);
+    expect(third.body.error).toBe("bot_version_not_eligible");
+    expect(third.body.message).toContain("la versión no es elegible");
+    expect(third.body.notEligible).toEqual([
+      expect.objectContaining({ botId: alienPub, version: 1, eligible: false, violations: [] }),
+    ]);
+    expect(JSON.stringify(third.body)).not.toMatch(LEAK);
+    // el dueño (userTok) ve el detalle de SU loadout; su segundo bot es válido
+    const userOk = await histBot("user-ok", userId, [ATK], [1], "private");
+    const owner = await request(app)
+      .post("/battles")
+      .set(as(userTok))
+      .send(
+        battle([
+          { botId: alienPub, version: 1, team: "red" },
+          { botId: userOk, version: 1, team: "blue" },
+        ]),
+      );
+    expect(owner.status, JSON.stringify(owner.body)).toBe(409);
+    expect(owner.body.message).toContain("se conserva para el histórico");
+    expect(owner.body.notEligible[0].violations.length).toBeGreaterThan(0);
+    expect(JSON.stringify(owner.body)).toContain("ammo.standard@1");
+    const staff = await request(app).post("/battles").set(as(adminTok)).send(body);
+    expect(staff.status).toBe(409);
+    expect(staff.body.notEligible[0].violations.length).toBeGreaterThan(0);
+  });
+
   it("el inventario es sólo admin: anónimo 401, usuario/organizador 403", async () => {
     expect((await request(app).get("/admin/bot-version-eligibility")).status).toBe(401);
     expect((await request(app).get("/admin/bot-version-eligibility").set(as(userTok))).status).toBe(403);

@@ -214,4 +214,12 @@ describe("4v4-STATS · BattleDetailPage", () => {
       expect(c[6], "daño recibido del bando").toBe("—");
     }
   });
+
+  it("P3-D · la columna de aciertos avisa de que la cifra pública va de 5 en 5 (un 0 no es «ninguno»)", async () => {
+    const perBot = Object.fromEntries(participants.map((p) => [p.botId, stat(p.team, {})]));
+    mockStats({ status: "ready", perBot, perTeam: {}, diagnostics: {} });
+    render(<BattleDetailPage id="btl_st" />);
+    await screen.findAllByTestId("stats-row");
+    expect(screen.getAllByText(/Aciertos \(de 5 en 5\)/).length).toBeGreaterThanOrEqual(2);
+  });
 });

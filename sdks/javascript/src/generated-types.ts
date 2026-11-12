@@ -57,7 +57,7 @@ export interface HELLOBotMotor {
 export interface WELCOMEMotorBot {
   battleId: string;
   /**
-   * Identificador opaco de entidad dentro de la batalla (p. ej. veh_3, proj_a1).
+   * Identificador opaco de entidad dentro de la batalla (p. ej. v_3; en el canal del bot son siempre v_N, ver docs/user/bots/radio.md).
    */
   selfId: string;
   team: string;
@@ -275,7 +275,7 @@ export interface OBSERVATIONMotorBot {
        */
       contacts: {
         /**
-         * Identificador opaco de entidad dentro de la batalla (p. ej. veh_3, proj_a1).
+         * Identificador opaco de entidad dentro de la batalla (p. ej. v_3; en el canal del bot son siempre v_N, ver docs/user/bots/radio.md).
          */
         entityId?: string;
         kind?: "vehicle" | "projectile" | "mine" | "wall" | "destructible" | "flag" | "base" | "zone" | "unknown";
@@ -317,7 +317,7 @@ export interface OBSERVATIONMotorBot {
    */
   radio?: {
     /**
-     * Identificador opaco de entidad dentro de la batalla (p. ej. veh_3, proj_a1).
+     * Identificador opaco de entidad dentro de la batalla (p. ej. v_3; en el canal del bot son siempre v_N, ver docs/user/bots/radio.md).
      */
     from: string;
     /**
@@ -1803,7 +1803,7 @@ export interface EVENTMotorBot {
    */
   sourceId?: string;
   /**
-   * Identificador opaco de entidad dentro de la batalla (p. ej. veh_3, proj_a1).
+   * Identificador opaco de entidad dentro de la batalla (p. ej. v_3; en el canal del bot son siempre v_N, ver docs/user/bots/radio.md).
    */
   targetId?: string;
   team?: string;

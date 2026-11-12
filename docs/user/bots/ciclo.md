@@ -62,7 +62,7 @@ Es la ficha de tu batalla. Guárdate en `on_welcome` lo que vayas a necesitar:
 
 | Campo | Qué es |
 |---|---|
-| `battleId`, `selfId`, `team` | Identificador de la batalla, el de **tu vehículo** (`veh_1`…) y tu bando (`red`, `blue`…). |
+| `battleId`, `selfId`, `team` | Identificador de la batalla, el de **tu vehículo** (`v_1`…; ids públicos de tu partida, no los internos del motor `veh_N`: cambio incompatible de la OLA 2, ver [Radio](radio.md)) y tu bando (`red`, `blue`…). |
 | `teammates` | Ids de tus compañeros de equipo (no dice dónde están). Vacío si juegas solo. |
 | `timing` | `tickHz`, `decisionEveryNTicks`, `decisionDeadlineMs`, `maxConsecutiveTimeouts`. |
 | `rules` | `mode` (`deathmatch`, `team_deathmatch`, `capture_the_flag`, `zone_control`), `rulesetId`, `budgetCredits`, `timeLimitTicks`, `scoreToWin`, `friendlyFire`, `respawn` (`enabled`, `delayTicks`, `maxRespawns`), `sharedTeamVision` y los límites de `radio`. Los opcionales pueden faltar. |

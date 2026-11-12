@@ -4,7 +4,7 @@
   "seq": 1,
   "payload": {
     "battleId": "btl_2026_07_13_0001",
-    "selfId": "veh_3",
+    "selfId": "v_3",
     "team": "red",
     "timing": {
       "tickHz": 30,
@@ -127,7 +127,7 @@
       ]
     },
     "teammates": [
-      "veh_4"
+      "v_4"
     ],
     "versions": {
       "engine": "0.4.0",

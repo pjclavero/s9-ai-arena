@@ -562,7 +562,7 @@ function StatsSection({ b, s }: { b: BattleDetail; s: StatsResponse }) {
           <tr>
             <th>Bot</th>
             <th>Disparos</th>
-            <th>Aciertos</th>
+            <th title="Cifra aproximada: se publica redondeada de 5 en 5">Aciertos (de 5 en 5)</th>
             <th>Precisión</th>
             <th>Daño hecho</th>
             <th>Daño recibido</th>
@@ -715,7 +715,7 @@ function SidesStats({
           <th>Daño hecho</th>
           <th>Daño recibido</th>
           <th>Disparos</th>
-          <th>Aciertos</th>
+          <th title="Cifra aproximada: se publica redondeada de 5 en 5">Aciertos (de 5 en 5)</th>
           {showRespawns && <th>Respawns</th>}
           {showRemaining && <th>Respawns restantes</th>}
           {showSurvivors && <th>Supervivientes</th>}
