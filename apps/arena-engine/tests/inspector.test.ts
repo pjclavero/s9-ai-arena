@@ -16,6 +16,7 @@ import { loadRuleset } from "../../../packages/game-rules/index.js";
 import { mvpArena, gunnerLoadout, scoutLoadout } from "../src/fixtures.js";
 import { CircleBot, ForwardBot, HunterBot } from "../src/stubs.js";
 import { createInspector, type Inspector } from "../src/inspector.js";
+import { AudienceProjector, audienceKey } from "../../../packages/projection/index.js";
 
 beforeAll(async () => {
   await initPhysics();
@@ -90,7 +91,7 @@ describe("inspector HTTP", () => {
     b.free();
   });
 
-  it("GET /snapshot === JSON de battle.getPublicSnapshot()", async () => {
+  it("GET /snapshot === proyección public_live del último frame interno (nunca el frame crudo)", async () => {
     const b = makeBattle("seed-insp-3");
     for (let i = 0; i < 15; i++) b.step();
     const inspector = await createInspector({ battle: b });
@@ -98,7 +99,16 @@ describe("inspector HTTP", () => {
 
     const { status, body } = await fetchJson(inspector.port, "/snapshot");
     expect(status).toBe(200);
-    expect(body).toEqual(JSON.parse(JSON.stringify(b.getPublicSnapshot())));
+    const pr = new AudienceProjector({
+      battleId: b.config.battleId,
+      audience: audienceKey("public_live"),
+      roster: b.config.participants.map((p) => ({ id: p.id, botId: p.botId, team: p.team })),
+    });
+    let last: unknown = null;
+    for (const f of b.snapshots) last = pr.project(f).body;
+    expect(body).toEqual(JSON.parse(JSON.stringify(last)));
+    // OLA 2 · MA · ids públicos, nunca los internos del motor.
+    expect(JSON.stringify(body)).not.toMatch(/"(veh|proj|mine)_\d+"/);
     b.free();
   });
 
@@ -110,7 +120,7 @@ describe("inspector HTTP", () => {
 
     const { body } = await fetchJson(inspector.port, "/snapshot");
     const serialized = JSON.stringify(body);
-    for (const forbidden of ["seed", "rng", "mines", "velocity", "energyEU"]) {
+    for (const forbidden of ["seed", "rng", "mines", "velocity", "energyEU", "hullHpMax", "modules", "ownerId"]) {
       expect(serialized.includes(`"${forbidden}"`), `no debe contener la clave "${forbidden}"`).toBe(false);
     }
     b.free();

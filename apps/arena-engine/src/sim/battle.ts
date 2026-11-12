@@ -45,6 +45,7 @@ import {
   type SpawnDisk,
 } from "./modes.js";
 import { PhysicsWorld, clamp, finite, finiteClamped, initPhysics, type Vec2 } from "./physics.js";
+import { captureInternalFrame } from "./internal-frame.js";
 import { buildObservation, radioReaches, validateRadio, type RadioMessage } from "./sensors.js";
 import { Vehicle, type VehicleSpec } from "./vehicle.js";
 
@@ -590,7 +591,7 @@ export class Battle {
     // --- PASO 8 · Snapshots y hash de estado
     const snapEvery = this.config.snapshotEveryNTicks ?? 3;
     if (this.tick % snapEvery === 0) {
-      this.snapshots.push(this.publicSnapshot(posesAfter));
+      this.snapshots.push(this.internalFrame(posesAfter));
     }
     // Cadencia del hash: config > ruleset > 30. Va en el ruleset (ERR-ENG-04) para que
     // viaje en la cabecera del replay y una auditoría con hash por tick sea reproducible.
@@ -887,48 +888,30 @@ export class Battle {
     this.publicEvents.push({ tick: this.tick, kind: "vehicle_eliminated", targetId: v.id, team: v.team });
   }
 
-  // ------------------------------------------------------ snapshot y hash
+  // ------------------------------------------------------ frame interno y hash
   /**
-   * Snapshot PÚBLICO: lo que ve un espectador. Jamás contiene observaciones privadas
-   * ni el estado interno de los sensores de un bot (test de fuga en E8).
+   * OLA 2 · MA · INTERNAL FRAME del tick (contrato §2, A2). Ya no hay snapshot «público»
+   * fabricado por el motor: cada audiencia lo deriva `projectFrame()` (packages/projection).
+   * `this.snapshots` guarda estos frames internos; nunca salen sin proyectar.
    */
-  private publicSnapshot(poses: Map<string, any>): any {
+  private internalFrame(poses: Map<string, any>): any {
     const limited = respawnLimited(this.config.ruleset);
-    return {
+    return captureInternalFrame({
+      battleId: this.config.battleId,
       tick: this.tick,
-      // Motor 0.4.0 · sólo con prórroga declarada (snapshots de 0.3.0 idénticos).
+      // Motor 0.4.0 · sólo con prórroga declarada.
       ...(this.config.ruleset.overtime
         ? { overtime: this.mode.overtimeSince !== null && this.mode.overtimeSince !== undefined }
         : {}),
-      vehicles: this.vehicles.map((v) => {
-        const p = poses.get(v.id);
-        return {
-          id: v.id,
-          team: v.team,
-          alive: v.alive,
-          position: p ? { x: round6(p.position.x), y: round6(p.position.y) } : null,
-          heading: p ? round6(p.heading) : 0,
-          turretHeading: round6(v.turretHeading),
-          hullHp: round6(v.hullHp),
-          hullHpMax: v.spec.hullHp,
-          carryingFlag: v.carryingFlag,
-          juggernaut: v.juggernaut,
-          // R-RULES · sólo con respawn limitado (snapshots de 0.3.0 idénticos).
-          ...(limited ? { respawnsLeft: respawnsLeft(v, this.config.ruleset) } : {}),
-          modules: [...v.modules.values()].map((m) => ({
-            slot: m.spec.slot,
-            state: v.stateOf(m.spec.slot),
-          })),
-        };
-      }),
-      projectiles: this.projectiles.map((p) => ({
-        id: p.id,
-        position: { x: round6(p.position.x), y: round6(p.position.y) },
-      })),
-      // Las minas NO van en el snapshot público: son información oculta hasta que explotan.
-      score: { ...this.mode.score },
+      vehicles: this.vehicles,
+      poses,
+      projectiles: this.projectiles,
+      mines: this.mines,
+      score: this.mode.score,
       objectives: this.mode.objectives(),
-    };
+      // R-RULES · sólo con respawn limitado.
+      ...(limited ? { respawnsLeft: (v: Vehicle) => respawnsLeft(v, this.config.ruleset) } : {}),
+    });
   }
 
   /**
@@ -990,7 +973,7 @@ export class Battle {
     // cambiar las trayectorias con el perímetro de UX-07). Los snapshots no entran en
     // el hash de estado: no altera el determinismo.
     const last = this.snapshots[this.snapshots.length - 1];
-    if (!last || last.tick !== this.tick) this.snapshots.push(this.publicSnapshot(this.poses()));
+    if (!last || last.tick !== this.tick) this.snapshots.push(this.internalFrame(this.poses()));
     // Salvaguarda técnica (ADR-022): sin resultado deportivo y con el motivo explícito.
     const technical = winner === TECHNICAL_LIMIT;
     if (technical) {
@@ -1035,11 +1018,11 @@ export class Battle {
   }
 
   /**
-   * Snapshot público del estado actual, calculado on-demand. Es EXACTAMENTE lo mismo
-   * que se guarda periódicamente en `this.snapshots` (R13.1 · inspector de solo lectura).
+   * Frame INTERNO del estado actual, on-demand: lo mismo que se guarda periódicamente en
+   * `this.snapshots`. Sólo para proyectarlo (inspector, tests); nunca se publica tal cual.
    */
-  getPublicSnapshot(): any {
-    return this.publicSnapshot(this.poses());
+  getInternalFrame(): any {
+    return this.internalFrame(this.poses());
   }
 
   /** Observación de un bot concreto: la usan el servidor de protocolo (E5) y los tests. */

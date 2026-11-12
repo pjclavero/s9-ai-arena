@@ -33,7 +33,7 @@ import { anonQuota, type AnonQuotaConfig } from "../middleware/anon-quota.js";
 import { flagSource } from "../runtime-settings.js";
 import { getReadableReplayBattleOr404, replayNotFound, whereReplayReadable } from "../replay-access.js";
 import { applyReplayListFilters, assertCursorShape, parseReplayListFilters } from "../services/replay-list.js";
-import { projectIndex, projectSegment, rawReplayAllowed } from "../replay-projection.js";
+import { projectIndex, projectSegment, projectedReplayStream, rawReplayAllowed } from "../replay-projection.js";
 
 /** OLA2-MD · texto humano del `format_version_mismatch` (replays v1 tras el replay v2). */
 export const FORMAT_VERSION_MESSAGE =
@@ -59,7 +59,10 @@ export interface ReplayViewerMeta {
     destructibles: { position: { x: number; y: number }; halfW: number; halfH: number }[];
     bases: { team: string; position: { x: number; y: number }; radiusM?: number }[];
   };
+  /** Nómina INTERNA (ids del motor, chasis): intrínseca; sólo sale proyectada o en el crudo. */
   roster: { id: string; botId: string; team: string; chassis?: string; name?: string }[];
+  /** OLA 2 · MA · ids públicos del mapa (lista blanca del mapper de ids). */
+  mapEntityIds: string[];
 }
 
 const viewerMetaCache = new Map<string, ReplayViewerMeta>(); // `${battleId}:${sha}` → meta
@@ -93,7 +96,10 @@ export async function viewerMetaOf(db: Db, battle: Record<string, any>, sha: str
       .catch(() => []);
     for (const r of rows as { id: string; name: string }[]) names.set(String(r.id), r.name);
   }
+  const idsOf = (xs: unknown) =>
+    (Array.isArray(xs) ? xs : []).map((x: any) => x?.id).filter((x: unknown): x is string => typeof x === "string");
   const meta: ReplayViewerMeta = {
+    mapEntityIds: [...idsOf(map.walls), ...idsOf(map.destructibles), ...idsOf(map.zones)],
     world: {
       widthM: Number(map.widthM) || 0,
       heightM: Number(map.heightM) || 0,
@@ -263,7 +269,19 @@ export function replayRoutes(
       // PRE-1 · sin acceso al crudo: snapshots y eventos públicos, NUNCA comandos
       // (tampoco con `debugOpen`).
       const raw = await rawReplayAllowed(db, battle.id, req.auth);
-      noStore(res).json(raw ? seg.body : projectSegment(seg.body));
+      if (raw) {
+        noStore(res).json(seg.body);
+        return;
+      }
+      // OLA 2 · MA · los ids públicos salen del stream COMPLETO proyectado (cacheado por
+      // clave de proyección + sha): cualquier segmento usa los mismos ids que el documento.
+      const meta = await viewerMetaOf(db, battle, index.sha256);
+      const full = projectedReplayStream(
+        { header: { battleId: battle.id }, snapshots: d.snapshots, events: d.events },
+        meta,
+        index.sha256,
+      );
+      noStore(res).json(projectSegment(seg.body, full));
     },
     (req, res, next) => anonQuota(db, "replay-segment", quota)(req, res, next),
   );
