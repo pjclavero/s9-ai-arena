@@ -504,11 +504,10 @@ async function run(o: RunOpts) {
       }
       if (i % 16 === 15) await sleep(1);
     }
-    let last = -1;
-    for (let i = 0; i < 300 && ing.seen.bytes !== last; i++) {
-      last = ing.seen.bytes;
-      await sleep(20);
-    }
+    // Espera a que la ingesta haya recibido TODO lo que el relé escribió: C2 (1536, escrito
+    // directamente) + cada mensaje RTMP (bytesOut). Con carga, «sin cambios en 20 ms» no basta.
+    for (let i = 0; i < 1000 && ing.seen.bytes !== 1536 + sup.relayBytesOut; i++) await sleep(10);
+    expect(ing.seen.bytes).toBe(1536 + sup.relayBytesOut);
     const relayHash = sha(ing.seen.afterC1);
     const result = {
       relayHash,
