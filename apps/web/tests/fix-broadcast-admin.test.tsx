@@ -157,7 +157,11 @@ describe("FIX-BROADCAST · texto del destino", () => {
   it("torneo: nombre, estado y batallas en curso; batalla suelta: dice que no pertenece a ningún torneo", () => {
     expect(targetSummaryText(T_INFO as never)).toBe('Torneo "prueba" (terminado, 0 en curso)');
     expect(
-      targetSummaryText({ ...T_INFO, status: "running", battleCounts: { scheduled: 2, running: 1, finished: 0, failed: 0 } } as never),
+      targetSummaryText({
+        ...T_INFO,
+        status: "running",
+        battleCounts: { scheduled: 2, running: 1, finished: 0, failed: 0 },
+      } as never),
     ).toBe('Torneo "prueba" (en curso, 1 en curso, 2 programadas)');
     expect(targetSummaryText(B_INFO as never)).toBe(
       "Batalla suelta Alfa vs Beta (en curso; no pertenece a ningún torneo)",

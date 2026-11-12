@@ -37,11 +37,7 @@ export interface TournamentProgress {
  *  - unreachable: N fallos transitorios seguidos (red, 5xx, 429).
  */
 export type SourceErrorReason =
-  | "target_not_found"
-  | "invalid_json"
-  | "invalid_payload"
-  | "unreachable"
-  | `http_${number}`;
+  "target_not_found" | "invalid_json" | "invalid_payload" | "unreachable" | `http_${number}`;
 
 export type BroadcastScreen = (
   | { kind: "waiting"; nextBattle: BattleSummary | null }
@@ -63,12 +59,7 @@ export type BroadcastScreen = (
  *  - SOURCE_ERROR: la fuente falla de forma permanente o repetida.
  */
 export type DirectorState =
-  | "LIVE"
-  | "INTERMISSION"
-  | "WAITING_VALID"
-  | "TARGET_FINISHED"
-  | "TARGET_CANCELLED"
-  | "SOURCE_ERROR";
+  "LIVE" | "INTERMISSION" | "WAITING_VALID" | "TARGET_FINISHED" | "TARGET_CANCELLED" | "SOURCE_ERROR";
 
 export function directorStateOf(screen: BroadcastScreen | null): DirectorState {
   switch (screen?.kind) {
@@ -198,7 +189,11 @@ const BATTLE_STATUSES = new Set(["scheduled", "running", "finished", "failed"]);
 function validBattle(b: unknown): b is BattleSummary {
   const o = b as BattleSummary | null;
   return (
-    !!o && typeof o === "object" && typeof o.id === "string" && BATTLE_STATUSES.has(o.status) && Array.isArray(o.participants)
+    !!o &&
+    typeof o === "object" &&
+    typeof o.id === "string" &&
+    BATTLE_STATUSES.has(o.status) &&
+    Array.isArray(o.participants)
   );
 }
 

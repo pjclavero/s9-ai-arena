@@ -76,7 +76,10 @@ describe("FIX-BROADCAST · estados terminales del torneo", () => {
 
   it("pura: applyTournamentState(waiting, finished) ⇒ finished; (intermission, finished) ⇒ finished con la última", () => {
     expect(applyTournamentState(decideScreen([], null), "finished").kind).toBe("finished");
-    const s = applyTournamentState(decideScreen([battle("b1", "finished"), battle("b2", "scheduled")], null), "finished");
+    const s = applyTournamentState(
+      decideScreen([battle("b1", "finished"), battle("b2", "scheduled")], null),
+      "finished",
+    );
     expect(s).toMatchObject({ kind: "finished", lastBattle: { id: "b1" } });
     // Con una batalla en directo, el directo manda aunque el estado diga cerrado.
     expect(applyTournamentState(decideScreen([battle("b1", "running")], null), "finished").kind).toBe("live");

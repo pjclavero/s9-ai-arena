@@ -500,7 +500,11 @@ function TargetSummary(props: { target: TargetInfo; prefix?: string; testId: str
   if (!t.targetType) return null; // API anterior a 0.19.0: no hay resumen
   const unavailable = t.broadcastAvailable === false;
   return (
-    <div data-testid={props.testId} data-phase={t.broadcastPhase} data-reason={unavailable ? (t.reason ?? "other") : undefined}>
+    <div
+      data-testid={props.testId}
+      data-phase={t.broadcastPhase}
+      data-reason={unavailable ? (t.reason ?? "other") : undefined}
+    >
       <p>
         <strong data-testid={`${props.testId}-text`}>
           {props.prefix ?? ""}

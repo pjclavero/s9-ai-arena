@@ -119,10 +119,7 @@ async function setFlags(publicSpectate: boolean, publicReplays: boolean) {
 const target = (kind: string, id: string) =>
   request(app).get(`/admin/streaming/target?kind=${kind}&id=${id}`).set(auth(admin));
 const start = (kind: string, id: string) =>
-  request(app)
-    .post("/admin/streaming/start")
-    .set(auth(admin))
-    .send({ target: { kind, id } });
+  request(app).post("/admin/streaming/start").set(auth(admin)).send({ target: { kind, id } });
 
 async function stopAll() {
   await request(app).post("/admin/streaming/stop").set(auth(admin)).send({ force: true });
