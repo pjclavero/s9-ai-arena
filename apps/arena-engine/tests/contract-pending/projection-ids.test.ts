@@ -122,15 +122,15 @@ describe("MA · PublicEntityId: ningún id interno sale (I1, F1)", () => {
       ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: 120 }),
       map,
       participants: [
-        { id: "veh_1", botId: "b1", team: "red", spec: gunnerLoadout() },
-        { id: "veh_2", botId: "b2", team: "blue", spec: gunnerLoadout() },
+        { id: "veh_1", botId: "bot_1", team: "red", spec: gunnerLoadout() },
+        { id: "veh_2", botId: "bot_2", team: "blue", spec: gunnerLoadout() },
       ],
     });
-    battle.attachBot("veh_2", new HunterBot("b2"));
+    battle.attachBot("veh_2", new HunterBot("bot_2"));
     const server = new ProtocolServer({
       battle,
       catalogVersion: "mvp@1",
-      expected: [{ botId: "b1", vehicleId: "veh_1", battleToken: "t".repeat(16) }],
+      expected: [{ botId: "bot_1", vehicleId: "veh_1", battleToken: "t".repeat(16) }],
       tickIntervalMs: 3,
       decisionDeadlineMs: 40,
     });
@@ -147,7 +147,7 @@ describe("MA · PublicEntityId: ningún id interno sale (I1, F1)", () => {
           type: "HELLO",
           seq: 0,
           payload: {
-            botId: "b1",
+            botId: "bot_1",
             botVersion: "1",
             sdk: { name: "custom", version: "0" },
             battleToken: "t".repeat(16),

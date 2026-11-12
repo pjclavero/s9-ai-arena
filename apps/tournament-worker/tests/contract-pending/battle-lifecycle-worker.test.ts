@@ -195,67 +195,80 @@ async function settlesWithin<T>(p: Promise<T>, ms: number): Promise<{ hung: true
 }
 
 describe("MF · reaper y límites de espera (verificados en el tournament-worker)", () => {
-  // Cota: arranque de plataforma (1,5 s) + espera ACOTADA del lanzamiento en vuelo del teardown (30 s
-  // fijos en container-agents). No es `overallTimeoutMs` de bot-manager: es el límite real de MF.
-  const BOUND_MS = 45_000;
+  // launch() colgado. La cota REAL de MF no es `overallTimeoutMs` (bot-manager): es el reloj de arranque
+  // de plataforma (1,5 s) + la espera ACOTADA del lanzamiento en vuelo en el teardown (30 s fijos).
+  const LAUNCH_BOUND_MS = 45_000;
+  let hangLaunch: ReturnType<typeof runHangLaunch> | undefined;
+  async function runHangLaunch() {
+    const s = setup({ hangLaunchAt: 1 });
+    const out = await settlesWithin(s.agents.run(await input("g2-hang-launch")), LAUNCH_BOUND_MS);
+    return { s, out };
+  }
+  const scenario = () => (hangLaunch ??= runHangLaunch());
 
+  it("[contrato MF cumplido · G2] un launch() que nunca resuelve: la batalla termina (infraestructura), lo ya lanzado se para y no queda ningún contenedor", async () => {
+    const { s, out } = await scenario();
+    expect(out.hung, "run() sigue colgado tras el plazo").toBe(false);
+    expect((out as { value: unknown }).value).toBeInstanceOf(InfrastructureFailure);
+    // El contenedor ya lanzado (el 1.º) se paró y se borró; ninguno existe tras el final.
+    expect(s.runner.ledger[0]!.stops.length, "el contenedor ya lanzado no se paró").toBeGreaterThanOrEqual(1);
+    expect(s.runner.existing("g2-hang-launch"), "contenedores que siguen existiendo").toEqual([]);
+    // Lo ÚNICO que sigue registrado es el propio lanzamiento en vuelo, marcado `failed` (no se oculta).
+    expect(
+      s.resources.pending("g2-hang-launch").map((p) => `${p.kind}:${p.state}`),
+      "recursos registrados tras el final",
+    ).toEqual(["container_launch_in_flight:failed"]);
+  }, 60_000);
+
+  // HALLAZGO G2 (P2): el contrato original pedía «no queda nada registrado». MF NO lo garantiza con un
+  // launch() eterno: el teardown espera 30 s fijos y deja el recurso en `failed` (sólo el reaper, por
+  // label, recoge un contenedor tardío). Se mantiene el contrato ESTRICTO como pendiente de MF.
   contractIt(
     "MF",
-    "un launch() que nunca resuelve: la batalla termina (infraestructura), lo ya lanzado se para y no queda nada registrado",
+    "un launch() que nunca resuelve: tras el teardown no queda NADA registrado de la batalla",
     async () => {
-      const s = setup({ hangLaunchAt: 1 });
-      const out = await settlesWithin(s.agents.run(await input("g2-hang-launch")), BOUND_MS);
-      expect(out.hung, "run() sigue colgado tras el plazo").toBe(false);
-      const err = (out as { value: unknown }).value as InfrastructureFailure;
-      expect(err).toBeInstanceOf(InfrastructureFailure);
-      // El contenedor ya lanzado (el 1.º) se paró y se borró.
-      expect(s.runner.ledger[0]!.stops.length, "el contenedor ya lanzado no se paró").toBeGreaterThanOrEqual(1);
-      expect(s.runner.existing("g2-hang-launch")).toEqual([]);
-      expect(s.resources.pending("g2-hang-launch"), "recursos que siguen registrados").toEqual([]);
+      const { s } = await scenario();
+      expect(s.resources.pending("g2-hang-launch"), "recursos registrados tras el final").toEqual([]);
     },
-    BOUND_MS + 15_000,
+    60_000,
   );
 
+  // HALLAZGO G2 (P2): `terminateContainer` acota el stop(TERM) (deadline) pero el escalado stop(t=0) NO
+  // tiene cota: con un runner cuyo stop() no responde nunca, el teardown (y run()) quedan colgados.
+  // Contrato ESTRICTO pendiente de MF; cota de la prueba = deadline del TERM (6 s) + margen.
   contractIt(
     "MF",
     "un stop() que nunca resuelve no cuelga el teardown: la batalla acaba, el otro contenedor se para y el colgado se borra",
     async () => {
       const s = setup({ hangStopAt: 0 });
-      const out = await settlesWithin(s.agents.run(await input("g2-hang-stop")), BOUND_MS);
+      const out = await settlesWithin(s.agents.run(await input("g2-hang-stop")), 20_000);
       expect(out.hung, "el teardown quedó esperando un stop() eterno").toBe(false);
       expect(s.runner.ledger[1]!.stops.length, "el otro contenedor no se paró").toBeGreaterThanOrEqual(1);
       expect(s.runner.existing("g2-hang-stop"), "contenedores que siguen existiendo").toEqual([]);
-      expect(s.resources.pending("g2-hang-stop")).toEqual([]);
     },
-    BOUND_MS + 15_000,
+    40_000,
   );
 });
 
 describe("MF · el fallo de teardown no se oculta (verificado en el tournament-worker)", () => {
-  contractIt(
-    "MF",
-    "si parar Y borrar un contenedor fallan, el teardown NO es «limpio»: el informe nombra el fallo y el recurso sigue registrado hasta reintentarse",
-    async () => {
-      const s = setup({ brokenAt: 0 });
-      // La batalla (el resultado deportivo) no se pierde por un fallo de teardown de un contenedor.
-      await s.agents.run(await input("g2-teardown-fail")).catch(() => undefined);
-      const first = await s.resources.cleanupBattleResources("g2-teardown-fail", "FINISHED");
-      expect(first.clean, "un contenedor que no se pudo parar ni borrar se dio por limpio").toBe(false);
-      const failed = first.steps.filter((x) => x.outcome === "failed");
-      expect(failed.length, "ningún paso de teardown informó el fallo").toBeGreaterThan(0);
-      expect(failed.map((x) => x.error).join(" | ")).toMatch(/simulado falla/);
-      expect(
-        s.resources.pending("g2-teardown-fail").length,
-        "el recurso fallido ya no está registrado",
-      ).toBeGreaterThan(0);
-      expect(s.runner.existing("g2-teardown-fail").length, "control: el contenedor sigue existiendo").toBe(1);
-      // Reintento (lo que hace el reaper cuando el proxy se recupera): ahora sí queda todo.
-      s.runner.broken.value = false;
-      const retry = await s.resources.cleanupBattleResources("g2-teardown-fail", "FINISHED");
-      expect(retry.clean).toBe(true);
-      expect(s.runner.existing("g2-teardown-fail")).toEqual([]);
-      expect(s.resources.pending("g2-teardown-fail")).toEqual([]);
-    },
-    60_000,
-  );
+  it("[contrato MF cumplido · G2] si parar Y borrar un contenedor fallan, el teardown NO es «limpio»: el informe nombra el fallo y el recurso sigue registrado hasta reintentarse", async () => {
+    const s = setup({ brokenAt: 0 });
+    // La batalla (el resultado deportivo) no se pierde por un fallo de teardown de un contenedor.
+    await s.agents.run(await input("g2-teardown-fail")).catch(() => undefined);
+    const first = await s.resources.cleanupBattleResources("g2-teardown-fail", "FINISHED");
+    expect(first.clean, "un contenedor que no se pudo parar ni borrar se dio por limpio").toBe(false);
+    const failed = first.steps.filter((x) => x.outcome === "failed");
+    expect(failed.length, "ningún paso de teardown informó el fallo").toBeGreaterThan(0);
+    expect(failed.map((x) => x.error).join(" | ")).toMatch(/simulado falla/);
+    expect(s.resources.pending("g2-teardown-fail").length, "el recurso fallido ya no está registrado").toBeGreaterThan(
+      0,
+    );
+    expect(s.runner.existing("g2-teardown-fail").length, "control: el contenedor sigue existiendo").toBe(1);
+    // Reintento (lo que hace el reaper cuando el proxy se recupera): ahora sí queda todo.
+    s.runner.broken.value = false;
+    const retry = await s.resources.cleanupBattleResources("g2-teardown-fail", "FINISHED");
+    expect(retry.clean).toBe(true);
+    expect(s.runner.existing("g2-teardown-fail")).toEqual([]);
+    expect(s.resources.pending("g2-teardown-fail")).toEqual([]);
+  }, 60_000);
 });
