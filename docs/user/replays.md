@@ -13,13 +13,17 @@ Puedes ver el replay de una batalla (lista y reproductor) si:
 
 ### Qué ves: la proyección de competición
 
-Lo que reproduce el visor (y lo que entrega la descarga pública) es la **proyección de competición**: lo mismo que ve un espectador en directo (posiciones, vida, módulos, proyectiles, marcador, objetivos, eventos públicos y resultado). No incluye la semilla de la batalla, las órdenes de los bots (radio, minas, campo `debug`…), el equipamiento completo ni datos internos del almacén. La regla la aplica el servidor y no cambia aunque el acceso público a replays esté activado.
+Lo que reproduce el visor (y lo que entrega la descarga pública) es la **proyección de competición**: lo mismo que ve un espectador en directo (posiciones, vida, módulos, proyectiles, marcador, objetivos, eventos públicos y resultado). No incluye las órdenes privadas de los bots (radio, minas, campo `debug`…), el equipamiento completo ni datos internos del almacén. **La protección no depende de ocultar la semilla**: depende de no entregar los comandos ni el estado privado necesarios para reproducir a los rivales. La regla la aplica el servidor y no cambia aunque el acceso público a replays esté activado.
 
 El **fichero completo** del replay (con semilla y órdenes de todos los bots) sólo lo reciben **moderadores y administradores**, y tú si **todos** los bots de la batalla son tuyos. En una batalla contra bots de otras personas recibes la proyección, como el resto: el fichero llevaría también las órdenes y el equipamiento de tus rivales. Los organizadores ven todos los replays, también proyectados; para comprobar una batalla está la verificación en servidor, que no necesita el fichero.
 
 La **descarga pública** (`/public/replays/<id>/download`, sólo con el acceso público activado) entrega un documento JSON con la proyección de la batalla entera, no el fichero completo.
 
 En cualquier otro caso el replay **no existe para ti**: la lista no lo muestra y el reproductor dice «no existe o no está disponible», exactamente igual que con un identificador inventado. Un enlace a un replay público se abre sin cuenta.
+
+## Replay v2 de OLA 2 (pendiente de integración)
+
+El PR #271 refuerza el formato y la verificación del replay: resultado completo, `stateHash` más completo y RNG con nombre. El PR #272 aplica la nueva proyección pública a espectadores y replays. Estas garantías se documentarán como comportamiento actual cuando el conjunto OLA 2 pase `ENGINE_HARDENING_READY=PASS`; por ahora siguen siendo trabajo revisado pero no integrado.
 
 ## Lista de replays
 
