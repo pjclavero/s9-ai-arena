@@ -20,33 +20,6 @@
     "description": { "type": "string", "maxLength": 256 },
     "massKg": { "type": "number", "minimum": 0 },
     "costCredits": { "type": "number", "minimum": 0 },
-    "size": {
-      "enum": ["S", "M", "L", "XL"],
-      "description": "Volumen ocupado (cap. 10.2). Los chasis no lo declaran."
-    },
-    "power": {
-      "type": "object",
-      "unevaluatedProperties": false,
-      "properties": {
-        "passiveEUs": { "type": "number", "minimum": 0, "description": "Consumo continuo en EU/s." },
-        "perActionEU": { "type": "number", "minimum": 0, "description": "Coste puntual por acción (disparo, despliegue)." }
-      }
-    },
-    "maxPerVehicle": {
-      "type": "integer",
-      "minimum": 1,
-      "description": "Límite de duplicados (cap. 10.2)."
-    },
-    "requiresChassis": {
-      "type": "array",
-      "items": { "type": "string", "pattern": "^chassis\\.[a-z0-9_]+$" },
-      "description": "Si está presente, solo puede montarse en estos chasis."
-    },
-    "hp": {
-      "type": "number",
-      "exclusiveMinimum": 0,
-      "description": "Salud del módulo. Determina sus estados según MODULE_STATE_THRESHOLDS."
-    },
     "tags": { "type": "array", "items": { "type": "string", "maxLength": 24 }, "uniqueItems": true }
   },
 
@@ -80,12 +53,6 @@
                   "enum": ["front", "left", "right", "rear"],
                   "description": "Obligatorio en ranuras de blindaje."
                 },
-                "offsetM": {
-                  "type": "object",
-                  "unevaluatedProperties": false,
-                  "required": ["x", "y"],
-                  "properties": { "x": { "type": "number" }, "y": { "type": "number" } }
-                },
                 "mount": {
                   "type": "object",
                   "unevaluatedProperties": false,
@@ -117,8 +84,7 @@
             "type": "number",
             "exclusiveMinimum": 0,
             "description": "Masa total para la que las prestaciones son nominales. Por encima, se degradan con MASS_SPEED_FLOOR (D7)."
-          },
-          "terrain": { "type": "array", "items": { "enum": ["road", "rough", "sand", "water"] }, "uniqueItems": true }
+          }
         }
       }
     },
@@ -128,8 +94,7 @@
         "required": ["capacityEU", "generationEUs"],
         "properties": {
           "capacityEU": { "type": "number", "minimum": 0 },
-          "generationEUs": { "type": "number", "minimum": 0 },
-          "peakEUs": { "type": "number", "minimum": 0 }
+          "generationEUs": { "type": "number", "minimum": 0 }
         }
       }
     },
@@ -139,24 +104,47 @@
         "required": ["sensorType", "rangeM"],
         "properties": {
           "sensorType": { "enum": ["lidar", "radar", "proximity", "acoustic"] },
-          "rangeM": { "type": "number", "exclusiveMinimum": 0 },
-          "fovRad": { "type": "number", "exclusiveMinimum": 0, "maximum": 6.2832 },
-          "rays": { "type": "integer", "minimum": 1, "maximum": 256, "description": "Solo lidar. Limitado para proteger el presupuesto de tick." },
-          "errorM": { "type": "number", "minimum": 0, "description": "Solo radar: error de posición del contacto (D8)." },
-          "refreshEveryNDecisions": { "type": "integer", "minimum": 1, "default": 1 }
-        }
+          "rangeM": { "type": "number", "exclusiveMinimum": 0 }
+        },
+        "allOf": [
+          {
+            "description": "P-2: fovRad y rays sólo los lee la primitiva lidar (sensors.ts); en otro tipo serían campos falsos.",
+            "if": { "properties": { "sensorType": { "const": "lidar" } }, "required": ["sensorType"] },
+            "then": {
+              "required": ["fovRad", "rays"],
+              "properties": {
+                "fovRad": { "type": "number", "exclusiveMinimum": 0, "maximum": 6.2832 },
+                "rays": { "type": "integer", "minimum": 1, "maximum": 256, "description": "Limitado para proteger el presupuesto de tick." }
+              }
+            }
+          },
+          {
+            "description": "P-2: errorM sólo lo lee la primitiva radar.",
+            "if": { "properties": { "sensorType": { "const": "radar" } }, "required": ["sensorType"] },
+            "then": {
+              "required": ["errorM"],
+              "properties": {
+                "errorM": { "type": "number", "minimum": 0, "description": "Error de posición del contacto (D8)." }
+              }
+            }
+          }
+        ]
       }
     },
     {
       "if": { "properties": { "category": { "const": "weapon" } }, "required": ["category"] },
       "then": {
-        "required": ["damage", "cooldownTicks", "projectileSpeedMs", "acceptsAmmo"],
+        "required": ["damage", "cooldownTicks", "projectileSpeedMs", "rangeM", "acceptsAmmo"],
         "properties": {
           "damage": { "type": "number", "exclusiveMinimum": 0 },
           "cooldownTicks": { "type": "integer", "minimum": 1 },
           "projectileSpeedMs": { "type": "number", "exclusiveMinimum": 0 },
           "spreadRad": { "type": "number", "minimum": 0, "default": 0 },
-          "rangeM": { "type": "number", "exclusiveMinimum": 0 },
+          "rangeM": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Alcance REAL del proyectil (P-2): resolveVehicle lo convierte en su vida (rangeM·TICK_HZ/projectileSpeedMs ticks, entero)."
+          },
           "acceptsAmmo": {
             "type": "array",
             "minItems": 1,
@@ -188,8 +176,7 @@
           "explosionRadiusM": { "type": "number", "exclusiveMinimum": 0 },
           "armDelayTicks": { "type": "integer", "minimum": 0 },
           "cooldownTicks": { "type": "integer", "minimum": 1 },
-          "lifetimeTicks": { "type": "integer", "minimum": 1 },
-          "detectable": { "type": "boolean", "default": true }
+          "lifetimeTicks": { "type": "integer", "minimum": 1 }
         }
       }
     },
@@ -215,23 +202,17 @@
         "properties": {
           "rangeM": { "type": "number", "exclusiveMinimum": 0 },
           "maxMessageBytes": { "type": "integer", "minimum": 1, "maximum": 32 },
-          "maxMessagesPerSecond": { "type": "number", "exclusiveMinimum": 0, "maximum": 2 },
-          "encrypted": { "type": "boolean", "default": false }
+          "maxMessagesPerSecond": { "type": "number", "exclusiveMinimum": 0, "maximum": 2 }
         }
       }
     },
     {
-      "if": { "properties": { "category": { "const": "utility" } }, "required": ["category"] },
-      "then": {
-        "required": ["effect", "charges", "cooldownTicks"],
-        "properties": {
-          "effect": { "enum": ["smoke", "repair", "jammer", "drone"] },
-          "charges": { "type": "integer", "minimum": 1 },
-          "cooldownTicks": { "type": "integer", "minimum": 1 },
-          "magnitude": { "type": "number", "minimum": 0 },
-          "durationTicks": { "type": "integer", "minimum": 1 }
-        }
-      }
+      "description": "OLA 2 · power.perActionEU sólo lo gastan las acciones (disparo, despliegue): en otra categoría sería un campo falso.",
+      "if": {
+        "properties": { "category": { "not": { "enum": ["weapon", "mine"] } } },
+        "required": ["category"]
+      },
+      "then": { "properties": { "power": { "properties": { "perActionEU": false } } } }
     },
     {
       "if": {
@@ -240,7 +221,36 @@
       },
       "then": {
         "required": ["size", "hp"],
-        "description": "Todo módulo no-chasis ocupa volumen y es dañable (cap. 12.2)."
+        "description": "Todo módulo no-chasis ocupa volumen y es dañable (cap. 12.2). OLA 2: size, power, maxPerVehicle, requiresChassis y hp sólo existen aquí; en un chasis no los lee nadie.",
+        "properties": {
+          "size": {
+            "enum": ["S", "M", "L", "XL"],
+            "description": "Volumen ocupado (cap. 10.2). Los chasis no lo declaran."
+          },
+          "power": {
+            "type": "object",
+            "unevaluatedProperties": false,
+            "properties": {
+              "passiveEUs": { "type": "number", "minimum": 0, "description": "Consumo continuo en EU/s." },
+              "perActionEU": { "type": "number", "minimum": 0, "description": "Coste puntual por acción (disparo, despliegue)." }
+            }
+          },
+          "maxPerVehicle": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Límite de duplicados (cap. 10.2)."
+          },
+          "requiresChassis": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^chassis\\.[a-z0-9_]+$" },
+            "description": "Si está presente, solo puede montarse en estos chasis."
+          },
+          "hp": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Salud del módulo. Determina sus estados según MODULE_STATE_THRESHOLDS."
+          }
+        }
       }
     }
   ]

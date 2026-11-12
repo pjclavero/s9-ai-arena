@@ -367,7 +367,9 @@ describe("PRIVATE_EQUIPMENT · R2 (D-B1)", () => {
     expect(w.slot).toBe("turret_main");
     expect(w.moduleId).toBe("weapon.cannon@1");
     expect(w.specs).not.toHaveProperty("turretArcRad");
-    expect(w.specs).not.toHaveProperty("rangeM");
+    // Integración OLA2 (MA+MC): weapon.rangeM es ACTIVE (alcance real, P-2) y la ficha propia lleva
+    // los campos ACTIVE; antes era FUTURE y por eso se excluía.
+    expect(w.specs).toHaveProperty("rangeM", 60);
     expect(w.specs).not.toHaveProperty("internalDerived");
     expect(w.specs).toMatchObject({ damage: 25, cooldownTicks: 15, perActionEU: 5, massKg: 300 });
   });

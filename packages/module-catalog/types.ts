@@ -17,7 +17,6 @@ export interface ChassisSlot {
   accepts: ModuleCategory[];
   maxSize: Size;
   sector?: Sector;
-  offsetM?: { x: number; y: number };
   /** D-B2 · Montura de torreta de una ranura de arma: tasa (rad/s) y arco (rad) del giro. */
   mount?: { turretRateRads: number; turretArcRad: number };
 }
@@ -48,12 +47,10 @@ export interface ModuleDefinition {
   accelerationMs2?: number;
   turnRateRads?: number;
   ratedLoadKg?: number;
-  terrain?: ("road" | "rough" | "sand" | "water")[];
 
   // power
   capacityEU?: number;
   generationEUs?: number;
-  peakEUs?: number;
 
   // sensor
   sensorType?: "lidar" | "radar" | "proximity" | "acoustic";
@@ -61,7 +58,6 @@ export interface ModuleDefinition {
   fovRad?: number;
   rays?: number;
   errorM?: number;
-  refreshEveryNDecisions?: number;
 
   // weapon
   damage?: number;
@@ -81,7 +77,6 @@ export interface ModuleDefinition {
   triggerRadiusM?: number;
   armDelayTicks?: number;
   lifetimeTicks?: number;
-  detectable?: boolean;
 
   // armor
   sector?: Sector;
@@ -90,12 +85,6 @@ export interface ModuleDefinition {
   // radio
   maxMessageBytes?: number;
   maxMessagesPerSecond?: number;
-  encrypted?: boolean;
-
-  // utility
-  effect?: "smoke" | "repair" | "jammer" | "drone";
-  magnitude?: number;
-  durationTicks?: number;
 }
 
 export interface LoadoutModuleEntry {

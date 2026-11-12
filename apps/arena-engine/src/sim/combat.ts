@@ -10,9 +10,10 @@
  * CAPACIDADES (quedar ciego, inmóvil o desarmado), no en una tabla de penetración.
  */
 import { SECTORS, moduleActs, type Sector } from "../../../../packages/game-rules/index.js";
+import { projectileLifetimeTicks } from "../../../../packages/module-catalog/resolve/projectile.js";
 import type { Rng } from "../rng.js";
 import type { PhysicsWorld, Vec2 } from "./physics.js";
-import type { Vehicle } from "./vehicle.js";
+import type { ModuleSpec, Vehicle } from "./vehicle.js";
 import { resolveDamage } from "./damage.js";
 import { DEFAULT_DIRECT_DAMAGE_TYPE } from "../../../../packages/game-rules/damage-contract.js";
 
@@ -147,6 +148,23 @@ export function ammoFor(v: Vehicle, accepts: string[]) {
   return null;
 }
 
+/** Vida del proyectil de un spec de arma: derivada de rangeM y velocidad; incoherente = lanza. */
+export function projectileLifetimeOf(spec: ModuleSpec): number {
+  if (spec.rangeM === undefined || spec.projectileSpeedMs === undefined) {
+    throw new Error(`${spec.moduleId}: arma sin rangeM o projectileSpeedMs (no se puede derivar el alcance)`);
+  }
+  const ttl = projectileLifetimeTicks(spec.rangeM, spec.projectileSpeedMs);
+  if (!Number.isInteger(ttl) || ttl < 1) {
+    throw new Error(`${spec.moduleId}: vida de proyectil inválida (${ttl})`);
+  }
+  if (spec.projectileLifetimeTicks !== undefined && spec.projectileLifetimeTicks !== ttl) {
+    throw new Error(
+      `${spec.moduleId}: projectileLifetimeTicks=${spec.projectileLifetimeTicks} incoherente con rangeM/velocidad (${ttl})`,
+    );
+  }
+  return ttl;
+}
+
 /** Crea el proyectil. Consume munición, energía y arranca el cooldown. */
 export function fire(v: Vehicle, slot: string, tick: number, origin: Vec2, rng: Rng, seq: number): Projectile | null {
   const w = v.modules.get(slot)!;
@@ -164,6 +182,12 @@ export function fire(v: Vehicle, slot: string, tick: number, origin: Vec2, rng: 
 
   const damage = (w.spec.damage ?? 10) * (ammo.spec.damageMultiplier ?? 1) * v.performanceOf(slot);
 
+  // P-2 · UNA sola regla de alcance: la vida del proyectil se deriva SIEMPRE de rangeM y de la
+  // velocidad del propio spec (la misma función que usa resolveVehicle). No hay regla heredada
+  // de 90 ticks. Un spec sin rangeM/velocidad, o cuyo projectileLifetimeTicks (derivado)
+  // discrepa, es incoherente: falla, no se impone en silencio.
+  const ttlTicks = projectileLifetimeOf(w.spec);
+
   return {
     id: `proj_${seq}`,
     ownerId: v.id,
@@ -172,7 +196,7 @@ export function fire(v: Vehicle, slot: string, tick: number, origin: Vec2, rng: 
     velocity: { x: Math.cos(angle) * speed, y: Math.sin(angle) * speed },
     damage,
     explosionRadiusM: ammo.spec.explosionRadiusM ?? 0,
-    ttlTicks: 90,
+    ttlTicks,
   };
 }
 

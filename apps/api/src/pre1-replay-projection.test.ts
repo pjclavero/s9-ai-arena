@@ -56,10 +56,27 @@ class RadioHunter extends HunterBot {
     return { ...c, radio: [{ slot: "radio_a", data: RADIO_SECRET }] };
   }
 }
-/** Bot que, además de cazar, intenta sembrar minas en cada decisión. */
+/**
+ * Bot que, además de cazar, pide sembrar una mina al FINAL de la partida (tick >= SEED_MINE_FROM).
+ * Antes pedía deployMine en cada decisión, pero el motor sólo lo procesaba si el comando traía
+ * también `fire` (defecto, corregido en OLA 2: deployMine se procesa sin fire). Con el arreglo,
+ * ese bot sembraba minas desde el tick 0 y, con la semilla fija, la partida cambiaba de
+ * trayectoria: nadie moría ni había eventos en 900 ticks y el test dejaba de probar nada.
+ * Sembrar sólo al final no puede alterar lo ocurrido antes (los ticks previos son idénticos a la
+ * partida sin mina, causalidad), así que los eventos públicos de la partida siguen existiendo; el
+ * crudo conserva `deployMine` y `mine.explosive@1`, que es lo que la calibración exige.
+ */
+// Integración OLA2 (M0, MB+MC+MD): con el motor integrado y la MISMA semilla, la partida sin minas acaba
+// por eliminación en el tick 782 (primer evento público en 614: v_red destruido; v_blue vive hasta 782;
+// medido en VM112). El umbral va entre ambos, cerca del final: los eventos de 614 son idénticos por
+// causalidad y el minador sigue vivo para sembrar de verdad (se comprueba con una mina viva en un snapshot crudo).
+// Con 2980 (la cifra de las notas, pensada para una partida que llegara al límite de 3000) no se
+// sembraba nada: la partida termina antes.
+const SEED_MINE_FROM = 690;
 class MinerHunter extends HunterBot {
   decide(obs: any) {
     const c = (super.decide(obs) ?? {}) as Record<string, unknown>;
+    if (obs.tick < SEED_MINE_FROM) return c;
     return { ...c, deployMine: { slot: "mine_bay", armDelayTicks: 0 } };
   }
 }
@@ -331,6 +348,10 @@ describe("PRE-1 · calibración: el CRUDO contiene lo que la proyección debe qu
     expect(replay.commands.length).toBeGreaterThan(10);
     expect(replay.commands.some((c) => Array.isArray(c.command?.radio))).toBe(true);
     expect(replay.commands.some((c) => c.command?.deployMine)).toBe(true);
+    // Mina REAL (P2-A de MC): el motor la sembró de verdad, no sólo se pidió. `mine_deployed` es un
+    // evento dirigido al dueño y no va al fichero; la prueba es una mina viva en un snapshot crudo.
+    const liveMine = (sn: any) => (sn.deployables ?? []).some((d: any) => d.kind === "mine" && d.ownerId === "v_blue");
+    expect(replay.snapshots.some(liveMine)).toBe(true);
     expect(replay.snapshots.length).toBeGreaterThan(5);
     // y eventos públicos reales (si no, «el visor recibe todos los eventos» sería 0 = 0)
     expect(replay.events.filter((e: any) => PUBLIC_EVENT_KINDS.has(e.kind)).length).toBeGreaterThan(0);

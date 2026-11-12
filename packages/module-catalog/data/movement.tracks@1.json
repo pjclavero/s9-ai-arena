@@ -12,6 +12,5 @@
   "maxSpeedMs": 9,
   "accelerationMs2": 6,
   "turnRateRads": 1.2,
-  "ratedLoadKg": 2600,
-  "terrain": ["road", "rough", "sand"]
+  "ratedLoadKg": 2600
 }

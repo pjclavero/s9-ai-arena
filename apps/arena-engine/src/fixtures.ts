@@ -11,6 +11,7 @@ import type { ArenaMap } from "./sim/modes.js";
 import type { ModuleSpec, VehicleSpec } from "./sim/vehicle.js";
 import { loadCatalog } from "../../../packages/module-catalog/loadCatalog.js";
 import { resolveVehicle } from "../../../packages/module-catalog/resolve/index.js";
+import { projectileLifetimeTicks } from "../../../packages/module-catalog/resolve/projectile.js";
 import { ARCHETYPES } from "../../../packages/module-catalog/resolve/archetypes.js";
 import type { LoadoutInput } from "../../../packages/module-catalog/types.js";
 
@@ -218,6 +219,8 @@ export const MODULES = {
     damage: 45,
     cooldownTicks: 30,
     projectileSpeedMs: 120,
+    rangeM: 360,
+    projectileLifetimeTicks: projectileLifetimeTicks(360, 120),
     spreadRad: 0.01,
     acceptsAmmo: ["ammo.ap", "ammo.he"],
   }),
@@ -233,6 +236,8 @@ export const MODULES = {
     damage: 12,
     cooldownTicks: 6,
     projectileSpeedMs: 200,
+    rangeM: 600,
+    projectileLifetimeTicks: projectileLifetimeTicks(600, 200),
     spreadRad: 0.05,
     acceptsAmmo: ["ammo.standard"],
   }),

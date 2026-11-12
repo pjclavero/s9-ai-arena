@@ -1,0 +1,65 @@
+{
+  "id": "test.fixture_proximity_mine",
+  "version": 1,
+  "name": "Fixture: mina de proximidad como deployable",
+  "actions": [
+    {
+      "kind": "deploy",
+      "cooldownTicks": 60,
+      "cost": {
+        "energyEU": 4,
+        "charges": 1
+      },
+      "deployable": {
+        "lifetimeTicks": 5400,
+        "armDelayTicks": 30,
+        "maxActivePerOwner": 3,
+        "trigger": {
+          "kind": "proximity",
+          "radiusM": 2.5,
+          "targets": {
+            "relations": [
+              "enemy"
+            ],
+            "kinds": [
+              "vehicle"
+            ]
+          }
+        },
+        "consumeOnTrigger": true,
+        "effects": [
+          {
+            "primitive": "explosion",
+            "strength": 90,
+            "radiusM": 6,
+            "falloff": "linear",
+            "damageType": "explosive",
+            "targets": {
+              "relations": [
+                "any"
+              ],
+              "kinds": [
+                "vehicle"
+              ]
+            },
+            "stacking": "none"
+          }
+        ],
+        "visibility": {
+          "allies": "revealed",
+          "enemies": "hidden",
+          "spectator": "hidden",
+          "signature": {
+            "proximity": 1
+          }
+        },
+        "placement": {
+          "mode": "at_self"
+        },
+        "ownership": {
+          "friendlyTrigger": "inherit"
+        }
+      }
+    }
+  ]
+}

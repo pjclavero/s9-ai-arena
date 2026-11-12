@@ -68,7 +68,6 @@ export const PROPERTY_EFFECTS: Record<ModuleCategory, Record<string, PropertyEff
     accelerationMs2: p("ACTIVE", false, USED),
     turnRateRads: p("ACTIVE", false, USED),
     ratedLoadKg: p("ACTIVE", false, USED),
-    terrain: p("FUTURE", false, NONE),
   },
   power: {
     capacityEU: p("ACTIVE", false, USED),
@@ -88,7 +87,7 @@ export const PROPERTY_EFFECTS: Record<ModuleCategory, Record<string, PropertyEff
     spreadRad: p("ACTIVE", false, USED),
     acceptsAmmo: p("ACTIVE", true, USED),
     "power.perActionEU": p("ACTIVE", false, USED),
-    rangeM: p("FUTURE", false, "El alcance real lo fija un TTL de proyectil de 90 ticks (combat.ts:198), no rangeM."),
+    rangeM: p("ACTIVE", false, "Alcance real del proyectil: resolveVehicle lo convierte en su vida en ticks (P-2)."),
   },
   ammo: {
     damageMultiplier: p("ACTIVE", false, USED),
@@ -113,16 +112,14 @@ export const PROPERTY_EFFECTS: Record<ModuleCategory, Record<string, PropertyEff
     maxMessageBytes: p("ACTIVE", false, USED),
     maxMessagesPerSecond: p("ACTIVE", false, USED),
     rangeM: p(
-      "FUTURE",
+      "ACTIVE",
       false,
-      "radioReaches no se llama nunca (sensors.ts): la radio no tiene alcance; sí se limita al propio equipo.",
+      "Alcance real (P-2): sólo reciben los compañeros dentro de rangeM del punto de emisión (× rendimiento).",
     ),
   },
-  utility: {
-    effect: p("FUTURE", false, NONE),
-    magnitude: p("FUTURE", false, NONE),
-    durationTicks: p("FUTURE", false, NONE),
-  },
+  // Sin propiedades propias: effect/magnitude/durationTicks se ELIMINARON (P-2, OLA 2). Una
+  // utilidad declarará `actions` (contracts/engine-v2.ts) cuando exista su consumidor.
+  utility: {},
 };
 
 /** Claves de identidad/descripción: no son propiedades de juego. */
@@ -149,6 +146,8 @@ export function effectOf(category: ModuleCategory, prop: string): PropertyEffect
 export function categoryEffect(category: ModuleCategory): EffectStatus {
   if (category === "chassis") return "ACTIVE";
   const all = Object.values(PROPERTY_EFFECTS[category] ?? {});
+  // Categoría sin ninguna propiedad de juego (utility hoy): nada suyo cambia la batalla.
+  if (all.length === 0) return "FUTURE";
   if (all.length > 0 && all.every((e) => e.status === "FUTURE")) return "FUTURE";
   return all.some((e) => e.status === "ACTIVE") ? "ACTIVE" : "PARTIAL";
 }

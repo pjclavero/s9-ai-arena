@@ -60,6 +60,12 @@ export interface ModuleSpec {
   // D-B2 · la tasa y el arco de la torreta NO son del arma: son de la montura
   // (VehicleSpec.turretMounts, por ranura del chasis).
   acceptsAmmo?: string[];
+  /**
+   * SÓLO DERIVADO (informativo): lo calcula resolveVehicle() desde weapon.rangeM y la velocidad.
+   * El motor NO lo lee como entrada: deriva la vida de rangeM/velocidad (combat.ts
+   * projectileLifetimeOf) y, si este campo discrepa, lanza (spec incoherente).
+   */
+  projectileLifetimeTicks?: number;
   // ammo
   rounds?: number;
   damageMultiplier?: number;

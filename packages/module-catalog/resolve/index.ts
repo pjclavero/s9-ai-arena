@@ -11,6 +11,7 @@ import type { ModuleCategory, ModuleSpec, VehicleSpec } from "../../../apps/aren
 import type { TurretMountDef } from "../contracts/engine-v2.js";
 import { emptyDict } from "../../game-rules/safe-lookup.js";
 import { findModule, type LoadoutInput, type ModuleDefinition } from "../types.js";
+import { InvalidProjectileRangeError, projectileLifetimeTicks } from "./projectile.js";
 
 export class UnresolvableLoadoutError extends Error {}
 
@@ -20,6 +21,21 @@ function toModuleSpec(slot: string, def: ModuleDefinition): ModuleSpec {
   }
   if (def.hp == null) {
     throw new UnresolvableLoadoutError(`${def.id}: módulo no-chasis sin hp (viola module.schema.json)`);
+  }
+
+  // P-2 · weapon.rangeM es la fuente real del alcance: se resuelve aquí a la vida del
+  // proyectil (contrato G1); el motor no fija TTL propio.
+  let projectileLifetime: number | undefined;
+  if (def.category === "weapon") {
+    if (def.rangeM == null || def.projectileSpeedMs == null) {
+      throw new UnresolvableLoadoutError(`${def.id}: arma sin rangeM/projectileSpeedMs (viola module.schema.json)`);
+    }
+    try {
+      projectileLifetime = projectileLifetimeTicks(def.rangeM, def.projectileSpeedMs);
+    } catch (e) {
+      if (e instanceof InvalidProjectileRangeError) throw new UnresolvableLoadoutError(`${def.id}: ${e.message}`);
+      throw e;
+    }
   }
 
   return {
@@ -51,6 +67,7 @@ function toModuleSpec(slot: string, def: ModuleDefinition): ModuleSpec {
     projectileSpeedMs: def.projectileSpeedMs,
     spreadRad: def.spreadRad,
     acceptsAmmo: def.acceptsAmmo,
+    projectileLifetimeTicks: projectileLifetime,
     // ammo
     rounds: def.rounds,
     damageMultiplier: def.damageMultiplier,

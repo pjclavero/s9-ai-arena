@@ -13,6 +13,6 @@
   "cooldownTicks": 5,
   "projectileSpeedMs": 200,
   "spreadRad": 0.05,
-  "rangeM": 55,
+  "rangeM": 600,
   "acceptsAmmo": ["ammo.standard"]
 }
