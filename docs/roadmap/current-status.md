@@ -8,7 +8,8 @@ Esta es la **fuente única del estado actual del proyecto**. Distingue siempre e
 MAIN_SHA:        f5909474bb25aeef8f17a5476c6b7319aa96422a
 REVISADO:        2026-11-12
 CÓDIGO:          main protegida; último merge funcional: PR #269 (MG, ajustes runtime de acceso público)
-PRODUCCIÓN:      núcleo RC9 7bddda9; web con #274 desplegado (b32fcff), según registro del operador
+DESPLEGADO:      núcleo RC9 7bddda9; web con #274 desplegado (b32fcff), según registro del operador
+P0 / P1 / P2:    sin recuento nuevo hasta re-auditar tras la integración OLA 2; ver technical-debt.md
 STREAMING REAL:  BATTLE_VISIBLE_ON_STREAM=PASS (YouTube real, mapa/tanques/movimiento/HUD, 0 frames descartados)
 OLA 2:           7 PR revisados/CI verde; todavía NO integrados como conjunto
 STREAMING V2:    MS-1 (#275) = DESIGN_ONLY; D1-D4 decididas; MS-2 no iniciado
@@ -45,7 +46,7 @@ El estado de producción se anota como **REPORTADO por el operador** cuando no p
 - El espectador público está activado en producción; los replays públicos siguen apagados.
 - #274 está desplegado sólo en `web`.
 - `BATTLE_VISIBLE_ON_STREAM=PASS`: una batalla real llegó a YouTube con mapa, vehículos, movimiento y HUD, sin pantalla blanca y con 0 frames descartados.
-- La presión de ia02 desapareció al parar/deshabilitar Paperclip y OpenCode web; `prodguard` volvió a OK.
+- La presión de la máquina de orquestación desapareció al parar/deshabilitar servicios no usados; el guard de producción volvió a OK.
 - La sesión de emisión de la prueba puede cerrarse sin perder configuración ni credenciales.
 
 ## Diferencia entre main, hardening y producción
