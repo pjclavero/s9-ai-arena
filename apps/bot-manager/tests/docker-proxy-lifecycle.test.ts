@@ -91,7 +91,15 @@ function fakeEngine(opts: { failStart?: boolean } = {}) {
         const f = JSON.parse(url.searchParams.get("filters") ?? "{}").label as string[];
         const out = [...cs.values()]
           .filter((c) => f.every((kv) => c.labels[kv.split("=")[0]] === kv.slice(kv.indexOf("=") + 1)))
-          .map((c) => ({ Id: c.id, Names: [`/${c.name}`], Image: "secret-image", Labels: c.labels, State: c.state, Created: 1000, Mounts: [{ Source: "/etc" }] }));
+          .map((c) => ({
+            Id: c.id,
+            Names: [`/${c.name}`],
+            Image: "secret-image",
+            Labels: c.labels,
+            State: c.state,
+            Created: 1000,
+            Mounts: [{ Source: "/etc" }],
+          }));
         return { status: 200, body: JSON.stringify(out) };
       }
       const del = /^\/containers\/([0-9a-f]{64})$/.exec(url.pathname);
@@ -180,7 +188,14 @@ describe("OLA2-MF · decisión del proxy: DELETE y listado acotados", () => {
     const out = JSON.parse(
       sanitizeContainerList(
         JSON.stringify([
-          { Id: HEX("1"), Labels: { ...OWN, "arena.battle-id": "b", other: "x" }, State: "exited", Created: 5, Image: "i", Names: ["/n"] },
+          {
+            Id: HEX("1"),
+            Labels: { ...OWN, "arena.battle-id": "b", other: "x" },
+            State: "exited",
+            Created: 5,
+            Image: "i",
+            Names: ["/n"],
+          },
           { Id: HEX("2"), Labels: { [LABEL_MANAGED]: "true" }, State: "running", Created: 5 },
           { Id: "corto", Labels: OWN, State: "running" },
         ]),
@@ -214,7 +229,10 @@ describe("OLA2-MF · servidor real + Engine simulada", () => {
       labels: { ...OWN, [LABEL_ROLE]: ROLE_BATTLE_BOT, [LABEL_BATTLE_ID]: "b-x" },
       state: "exited",
     });
-    const listed = await new ProxyContainerRunner(url).list({ [LABEL_ROLE]: ROLE_BATTLE_BOT, [LABEL_BATTLE_ID]: "b-x" });
+    const listed = await new ProxyContainerRunner(url).list({
+      [LABEL_ROLE]: ROLE_BATTLE_BOT,
+      [LABEL_BATTLE_ID]: "b-x",
+    });
     expect(listed.map((c) => c.id)).toEqual([mine]);
     expect(listed[0]).toMatchObject({ state: "exited", createdAtMs: 1_000_000 });
     expect(Object.keys(listed[0].labels).every((k) => k.startsWith("arena."))).toBe(true);
@@ -225,7 +243,11 @@ describe("OLA2-MF · servidor real + Engine simulada", () => {
     const a = await r.launch(spec("b-same"));
     const b = await r.launch(spec("b-same"));
     expect(a.id).not.toBe(b.id);
-    expect(fake.cs.get(a.id)!.labels).toMatchObject({ ...OWN, [LABEL_BATTLE_ID]: "b-same", [LABEL_ROLE]: ROLE_BATTLE_BOT });
+    expect(fake.cs.get(a.id)!.labels).toMatchObject({
+      ...OWN,
+      [LABEL_BATTLE_ID]: "b-same",
+      [LABEL_ROLE]: ROLE_BATTLE_BOT,
+    });
     await a.remove!();
     await b.remove!();
     expect(fake.cs.has(a.id) || fake.cs.has(b.id)).toBe(false);

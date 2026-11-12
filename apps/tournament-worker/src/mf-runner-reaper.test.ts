@@ -50,17 +50,28 @@ const okExecution = (): BattleExecution => ({
 });
 
 /** Ejecutor que REGISTRA recursos como lo haría el real y luego hace `then`. */
-function executorWith(res: BattleResourceRegistry, released: string[], then: (ctx: BattleContext) => Promise<BattleExecution>) {
+function executorWith(
+  res: BattleResourceRegistry,
+  released: string[],
+  then: (ctx: BattleContext) => Promise<BattleExecution>,
+) {
   return async (ctx: BattleContext) => {
     for (const kind of ["protocol_server", "container:veh_1", "container_remove:veh_1", "sandbox_host"]) {
-      const phase = kind.startsWith("container_remove") ? "containers" : kind === "protocol_server" ? "stop_generation" : "terminate";
+      const phase = kind.startsWith("container_remove")
+        ? "containers"
+        : kind === "protocol_server"
+          ? "stop_generation"
+          : "terminate";
       res.register(ctx.battle.id, { kind, phase, release: () => void released.push(kind) });
     }
     return then(ctx);
   };
 }
 
-async function runCase(then: (ctx: BattleContext) => Promise<BattleExecution>, opts: { abort?: (res: BattleResourceRegistry, id: string) => void } = {}) {
+async function runCase(
+  then: (ctx: BattleContext) => Promise<BattleExecution>,
+  opts: { abort?: (res: BattleResourceRegistry, id: string) => void } = {},
+) {
   const res = new BattleResourceRegistry();
   const released: string[] = [];
   const closed: BattleClosed[] = [];
@@ -83,11 +94,41 @@ async function runCase(then: (ctx: BattleContext) => Promise<BattleExecution>, o
 describe("OLA2-MF · battle-runner: teardown único en todos los finales", () => {
   const cases: [string, BattleEndReason, (ctx: BattleContext) => Promise<BattleExecution>][] = [
     ["normal", "FINISHED", async () => okExecution()],
-    ["bot crash", "BOT_CRASH", async () => { throw new SportingFailure("bot_crash", bots[0].botId, "x", "container"); }],
-    ["bot timeout", "TIMEOUT", async () => { throw new SportingFailure("bot_timeout", bots[0].botId, "x", "container"); }],
-    ["infra", "FAILED", async () => { throw new InfrastructureFailure("container_unavailable", "proxy caído"); }],
-    ["motor", "ENGINE_ERROR", async () => { throw new InfrastructureFailure("engine_start_failure", "motor"); }],
-    ["bug", "EXCEPTION", async () => { throw new TypeError("bug"); }],
+    [
+      "bot crash",
+      "BOT_CRASH",
+      async () => {
+        throw new SportingFailure("bot_crash", bots[0].botId, "x", "container");
+      },
+    ],
+    [
+      "bot timeout",
+      "TIMEOUT",
+      async () => {
+        throw new SportingFailure("bot_timeout", bots[0].botId, "x", "container");
+      },
+    ],
+    [
+      "infra",
+      "FAILED",
+      async () => {
+        throw new InfrastructureFailure("container_unavailable", "proxy caído");
+      },
+    ],
+    [
+      "motor",
+      "ENGINE_ERROR",
+      async () => {
+        throw new InfrastructureFailure("engine_start_failure", "motor");
+      },
+    ],
+    [
+      "bug",
+      "EXCEPTION",
+      async () => {
+        throw new TypeError("bug");
+      },
+    ],
   ];
   for (const [name, reason, then] of cases) {
     it(`${name} → cleanupBattleResources(${reason}) y no queda nada registrado`, async () => {

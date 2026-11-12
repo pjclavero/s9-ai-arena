@@ -50,14 +50,28 @@ function liveSession() {
     return p;
   };
   const display = new XvfbDisplay({
-    spawner, display: ":99", width: 1920, height: 1080, readyTimeoutMs: 200, stopGraceMs: 20,
-    exists: (p) => files.has(p), readFile: () => { throw new Error("no existe"); },
-    remove: (p) => void files.delete(p), sleep: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5))),
+    spawner,
+    display: ":99",
+    width: 1920,
+    height: 1080,
+    readyTimeoutMs: 200,
+    stopGraceMs: 20,
+    exists: (p) => files.has(p),
+    readFile: () => {
+      throw new Error("no existe");
+    },
+    remove: (p) => void files.delete(p),
+    sleep: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5))),
   });
   const sup = new StreamSupervisor({
     config: { ...DEFAULT_CONFIG, mode: "record", maxRetries: 1, retryDelayMs: 1 },
-    streamKey: null, spawner, logger: createLogger("centinela-mf", () => undefined),
-    chromiumBin: "chromium", ffmpegBin: "ffmpeg", stopGraceMs: 20, display,
+    streamKey: null,
+    spawner,
+    logger: createLogger("centinela-mf", () => undefined),
+    chromiumBin: "chromium",
+    ffmpegBin: "ffmpeg",
+    stopGraceMs: 20,
+    display,
   });
   const alive = (cmd: string) => spawned.filter((p) => p.cmd === cmd && p.alive).length;
   return { sup, spawned, alive };
@@ -76,7 +90,11 @@ describe("OLA2-MF · una sesión de streaming activa sobrevive al cleanup de la 
       const res = new BattleResourceRegistry();
       const released: string[] = [];
       for (const kind of ["protocol_server", "container:veh_1", "container_remove:veh_1", "sandbox_host"]) {
-        res.register("b-live", { kind, phase: kind.startsWith("container") ? "containers" : "terminate", release: () => void released.push(kind) });
+        res.register("b-live", {
+          kind,
+          phase: kind.startsWith("container") ? "containers" : "terminate",
+          release: () => void released.push(kind),
+        });
       }
       const rep = await res.cleanupBattleResources("b-live", reason);
       expect(released.sort()).toEqual(["container:veh_1", "container_remove:veh_1", "protocol_server", "sandbox_host"]);
@@ -99,10 +117,17 @@ describe("OLA2-MF · una sesión de streaming activa sobrevive al cleanup de la 
     const s = liveSession();
     s.sup.start();
     await tick();
-    const streamerCt: ManagedContainer = { id: "streamer0000000000", state: "running", createdAtMs: 0, labels: { [LABEL_ROLE]: "streamer" } } as ManagedContainer;
+    const streamerCt: ManagedContainer = {
+      id: "streamer0000000000",
+      state: "running",
+      createdAtMs: 0,
+      labels: { [LABEL_ROLE]: "streamer" },
+    } as ManagedContainer;
     const asked: Record<string, string>[] = [];
     const removed: string[] = [];
-    const db = (() => { throw new Error("la BD no debe consultarse sin contenedores de batalla"); }) as unknown as Knex;
+    const db = (() => {
+      throw new Error("la BD no debe consultarse sin contenedores de batalla");
+    }) as unknown as Knex;
     const r = await reapOnce({
       db,
       resources: new BattleResourceRegistry(),
@@ -112,7 +137,9 @@ describe("OLA2-MF · una sesión de streaming activa sobrevive al cleanup de la 
           asked.push(labels);
           return [streamerCt].filter((c) => Object.entries(labels).every(([k, v]) => c.labels[k] === v));
         },
-        async removeById(id) { removed.push(id); },
+        async removeById(id) {
+          removed.push(id);
+        },
       },
       now: () => 10 ** 12,
     });

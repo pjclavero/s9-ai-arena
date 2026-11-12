@@ -367,7 +367,8 @@ export function makeEngineExecutor(opts: EngineExecutorOptions): BattleExecutor 
       } finally {
         // OLA2-MF · el feed del espectador se cierra con el teardown único: drena
         // (FINISHED) o se retira ya (cualquier otro final).
-        if (opts.spectate) await res.cleanupBattleResources(battle.id, ok ? "FINISHED" : "FAILED", { scope: "executor" });
+        if (opts.spectate)
+          await res.cleanupBattleResources(battle.id, ok ? "FINISHED" : "FAILED", { scope: "executor" });
       }
       const { result, replay } = out;
 

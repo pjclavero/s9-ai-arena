@@ -51,7 +51,11 @@ class LedgerRunner implements ContainerRunner {
   readonly inner: FakeBootstrapRunner;
   constructor(
     per: (i: number) => FakeBootstrapBehaviour,
-    private readonly extra: (i: number) => { ignoreTerm?: boolean; stopThrows?: boolean; noRemove?: boolean } = () => ({}),
+    private readonly extra: (i: number) => {
+      ignoreTerm?: boolean;
+      stopThrows?: boolean;
+      noRemove?: boolean;
+    } = () => ({}),
   ) {
     this.inner = new FakeBootstrapRunner((_s, i) => per(i));
   }
@@ -108,7 +112,12 @@ class LedgerRunner implements ContainerRunner {
   async list(labels: Record<string, string>): Promise<ManagedContainer[]> {
     return this.ledger
       .filter((e) => e.exists && e.battleId === labels[LABEL_BATTLE_ID])
-      .map((e) => ({ id: e.id, labels: { [LABEL_BATTLE_ID]: e.battleId }, state: e.running ? "running" : "exited", createdAtMs: 0 }));
+      .map((e) => ({
+        id: e.id,
+        labels: { [LABEL_BATTLE_ID]: e.battleId },
+        state: e.running ? "running" : "exited",
+        createdAtMs: 0,
+      }));
   }
   existing(battleId: string): LedgerEntry[] {
     return this.ledger.filter((e) => e.battleId === battleId && e.exists);
@@ -158,7 +167,14 @@ async function input(battleId: string, ticks = 60, signal?: AbortSignal): Promis
     team: b.team,
     spec: resolveVehicle(ARCHETYPES.gunner, catalog),
   }));
-  const engine = await Battle.create({ battleId, seed: "mf", ruleset, map: emptyArena(), participants, recordReplay: true });
+  const engine = await Battle.create({
+    battleId,
+    seed: "mf",
+    ruleset,
+    map: emptyArena(),
+    participants,
+    recordReplay: true,
+  });
   return { battleId, engine, vehicles: BOTS, ruleset, catalogVersion: CATALOG_VERSION, signal, owner: "w:job:1" };
 }
 
@@ -265,7 +281,10 @@ describe("OLA2-MF · teardown tras cada final", () => {
   }, 30_000);
 
   it("excepción DURANTE el teardown (stop de un contenedor lanza) → el resto se limpia igual", async () => {
-    const s = setup(() => ({}), (i) => (i === 0 ? { stopThrows: true } : {}));
+    const s = setup(
+      () => ({}),
+      (i) => (i === 0 ? { stopThrows: true } : {}),
+    );
     const out = await s.agents.run(await input("mf-tdthrow"));
     expect(out.result.ticks).toBeGreaterThan(0);
     // Se borra igualmente (remove forzado de la fase `containers`).
@@ -273,7 +292,10 @@ describe("OLA2-MF · teardown tras cada final", () => {
   }, 30_000);
 
   it("runner que IGNORA TERM → recibe KILL (t=0) y no queda vivo", async () => {
-    const s = setup(() => ({}), (i) => (i === 1 ? { ignoreTerm: true, noRemove: true } : {}));
+    const s = setup(
+      () => ({}),
+      (i) => (i === 1 ? { ignoreTerm: true, noRemove: true } : {}),
+    );
     await s.agents.run(await input("mf-ignterm"));
     const e = s.runner.ledger[1];
     expect(e.stops).toEqual([1, 0]);

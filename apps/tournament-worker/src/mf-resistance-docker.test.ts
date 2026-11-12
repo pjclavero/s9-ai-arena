@@ -41,7 +41,11 @@ import {
   type ContainerRunner,
   type SandboxSpec,
 } from "../../bot-manager/src/container-runner.js";
-import { DOCKER_E2E, startDockerSandboxEnv, type DockerSandboxEnv } from "../../bot-manager/tests/docker-sandbox-env.js";
+import {
+  DOCKER_E2E,
+  startDockerSandboxEnv,
+  type DockerSandboxEnv,
+} from "../../bot-manager/tests/docker-sandbox-env.js";
 import { PY_BAD_PROTOCOL, PY_CRASH, PY_GOOD, PY_HANG, pyFiles } from "../../bot-manager/tests/sandbox-bots.js";
 import { containerAgents, type BotLaunchProvider } from "./container-agents.js";
 import { BattleResourceRegistry } from "./battle-resources.js";
@@ -90,7 +94,13 @@ function provider(code: (i: number) => string): BotLaunchProvider {
             offer,
             hookPolicy: "warn",
           });
-          return { imageDigest: spec.imageDigest, env: spec.env, cmd: spec.cmd!, autoRemove: true, startup: offer.signals };
+          return {
+            imageDigest: spec.imageDigest,
+            env: spec.env,
+            cmd: spec.cmd!,
+            autoRemove: true,
+            startup: offer.signals,
+          };
         },
         close: () => host.close(),
       };
@@ -107,7 +117,14 @@ async function engineFor(battleId: string) {
     team: b.team,
     spec: resolveVehicle(ARCHETYPES.gunner, catalog),
   }));
-  const engine = await Battle.create({ battleId, seed: battleId, ruleset, map: emptyArena(), participants, recordReplay: true });
+  const engine = await Battle.create({
+    battleId,
+    seed: battleId,
+    ruleset,
+    map: emptyArena(),
+    participants,
+    recordReplay: true,
+  });
   return { battleId, engine, vehicles: BOTS, ruleset, catalogVersion: CATALOG_VERSION, owner: "mf-res:job:1" };
 }
 
@@ -261,61 +278,72 @@ describe.skipIf(!DOCKER_E2E)("OLA2-MF · resistencia: N batallas reales seguidas
     return row;
   }
 
-  it(`${N} batallas normales seguidas: 0 contenedores, cgroups, procesos y recursos tras cada una`, async () => {
-    // Calentamiento (carga de módulos, JIT, primera descarga de capas): no cuenta para la tendencia.
-    await oneBattle(-1, () => PY_GOOD);
-    baselineHandles = handles();
-    for (let i = 0; i < N; i++) {
-      const r = await oneBattle(i, () => PY_GOOD);
-      expect(r.outcome, `batalla ${i}`).toBe("FINISHED");
-      expect(r.containersLeft, `FINISHED_BATTLE_CONTAINERS batalla ${i}`).toBe(0);
-      expect(r.cgroupsLeft, `ORPHAN_CGROUPS batalla ${i}`).toBe(0);
-      expect(r.processesLeft, `ORPHAN_PROCESSES batalla ${i}`).toBe(0);
-      expect(r.registryLeft, `ORPHAN_JOBS batalla ${i} ${JSON.stringify(r.registryDetail)}`).toBe(0);
-      for (const k of ["Timeout", "TCPServerWrap", "TCPSocketWrap"])
-        expect(r.handles[k] ?? 0, `handles ${k} batalla ${i}`).toBeLessThanOrEqual((baselineHandles[k] ?? 0) + 2);
-    }
-    // MULTI_BATTLE_MEMORY_GROWTH: pendiente (mínimos cuadrados) de la RSS idle y de MemAvailable en la
-    // SEGUNDA MITAD de la serie. La primera mitad es calentamiento de V8/malloc (la RSS sube y se
-    // estabiliza en una meseta: JIT, arenas de Rapier/WASM); una fuga real seguiría subiendo después.
-    const all = rows.filter((r) => r.i >= 0);
-    const xs = all.slice(Math.floor(all.length / 2));
-    const slope = (set: Row[], key: "rssMb" | "availableMb") => {
-      const n = set.length;
-      const mx = set.reduce((a, r) => a + r.i, 0) / n;
-      const my = set.reduce((a, r) => a + r[key], 0) / n;
-      const num = set.reduce((a, r) => a + (r.i - mx) * (r[key] - my), 0);
-      const den = set.reduce((a, r) => a + (r.i - mx) ** 2, 0);
-      return den === 0 ? 0 : num / den;
-    };
-    const rssSlope = slope(xs, "rssMb");
-    const availSlope = slope(xs, "availableMb");
-    console.log(
-      JSON.stringify({
-        mf_resistance: {
-          N,
-          rssSlopeMbPerBattle_secondHalf: rssSlope,
-          availSlopeMbPerBattle_secondHalf: availSlope,
-          rssSlopeMbPerBattle_all: slope(all, "rssMb"),
-          rssFirst: all[0]?.rssMb,
-          rssLast: all[all.length - 1]?.rssMb,
-          rssMax: Math.max(...all.map((r) => r.rssMb)),
-        },
-      }),
-    );
-    // Sin crecimiento sostenido: < 1 MB/batalla de RSS y < 2 MB/batalla de MemAvailable perdida.
-    expect(rssSlope).toBeLessThan(1);
-    expect(availSlope).toBeGreaterThan(-2);
-  }, 60 * 60_000);
+  it(
+    `${N} batallas normales seguidas: 0 contenedores, cgroups, procesos y recursos tras cada una`,
+    async () => {
+      // Calentamiento (carga de módulos, JIT, primera descarga de capas): no cuenta para la tendencia.
+      await oneBattle(-1, () => PY_GOOD);
+      baselineHandles = handles();
+      for (let i = 0; i < N; i++) {
+        const r = await oneBattle(i, () => PY_GOOD);
+        expect(r.outcome, `batalla ${i}`).toBe("FINISHED");
+        expect(r.containersLeft, `FINISHED_BATTLE_CONTAINERS batalla ${i}`).toBe(0);
+        expect(r.cgroupsLeft, `ORPHAN_CGROUPS batalla ${i}`).toBe(0);
+        expect(r.processesLeft, `ORPHAN_PROCESSES batalla ${i}`).toBe(0);
+        expect(r.registryLeft, `ORPHAN_JOBS batalla ${i} ${JSON.stringify(r.registryDetail)}`).toBe(0);
+        for (const k of ["Timeout", "TCPServerWrap", "TCPSocketWrap"])
+          expect(r.handles[k] ?? 0, `handles ${k} batalla ${i}`).toBeLessThanOrEqual((baselineHandles[k] ?? 0) + 2);
+      }
+      // MULTI_BATTLE_MEMORY_GROWTH: pendiente (mínimos cuadrados) de la RSS idle y de MemAvailable en la
+      // SEGUNDA MITAD de la serie. La primera mitad es calentamiento de V8/malloc (la RSS sube y se
+      // estabiliza en una meseta: JIT, arenas de Rapier/WASM); una fuga real seguiría subiendo después.
+      const all = rows.filter((r) => r.i >= 0);
+      const xs = all.slice(Math.floor(all.length / 2));
+      const slope = (set: Row[], key: "rssMb" | "availableMb") => {
+        const n = set.length;
+        const mx = set.reduce((a, r) => a + r.i, 0) / n;
+        const my = set.reduce((a, r) => a + r[key], 0) / n;
+        const num = set.reduce((a, r) => a + (r.i - mx) * (r[key] - my), 0);
+        const den = set.reduce((a, r) => a + (r.i - mx) ** 2, 0);
+        return den === 0 ? 0 : num / den;
+      };
+      const rssSlope = slope(xs, "rssMb");
+      const availSlope = slope(xs, "availableMb");
+      console.log(
+        JSON.stringify({
+          mf_resistance: {
+            N,
+            rssSlopeMbPerBattle_secondHalf: rssSlope,
+            availSlopeMbPerBattle_secondHalf: availSlope,
+            rssSlopeMbPerBattle_all: slope(all, "rssMb"),
+            rssFirst: all[0]?.rssMb,
+            rssLast: all[all.length - 1]?.rssMb,
+            rssMax: Math.max(...all.map((r) => r.rssMb)),
+          },
+        }),
+      );
+      // Sin crecimiento sostenido: < 1 MB/batalla de RSS y < 2 MB/batalla de MemAvailable perdida.
+      expect(rssSlope).toBeLessThan(1);
+      expect(availSlope).toBeGreaterThan(-2);
+    },
+    60 * 60_000,
+  );
 
-  it("batallas con bot que falla (excepción, protocolo roto, cuelgue): el teardown también deja 0 de todo", async () => {
-    // El resultado deportivo depende del SDK (una excepción en on_observation la absorbe el SDK y la
-    // batalla acaba); lo que se exige aquí es el teardown, no el resultado.
-    const bots = [PY_CRASH, PY_BAD_PROTOCOL, PY_HANG];
-    for (let i = 0; i < bots.length; i++) {
-      const r = await oneBattle(1000 + i, (n) => (n === 0 ? bots[i] : PY_GOOD));
-      console.log(JSON.stringify({ mf_bad_bot: { i, outcome: r.outcome } }));
-      expect([r.containersLeft, r.cgroupsLeft, r.processesLeft, r.registryLeft], `bot malo ${i} ${r.outcome}`).toEqual([0, 0, 0, 0]);
-    }
-  }, 10 * 60_000);
+  it(
+    "batallas con bot que falla (excepción, protocolo roto, cuelgue): el teardown también deja 0 de todo",
+    async () => {
+      // El resultado deportivo depende del SDK (una excepción en on_observation la absorbe el SDK y la
+      // batalla acaba); lo que se exige aquí es el teardown, no el resultado.
+      const bots = [PY_CRASH, PY_BAD_PROTOCOL, PY_HANG];
+      for (let i = 0; i < bots.length; i++) {
+        const r = await oneBattle(1000 + i, (n) => (n === 0 ? bots[i] : PY_GOOD));
+        console.log(JSON.stringify({ mf_bad_bot: { i, outcome: r.outcome } }));
+        expect(
+          [r.containersLeft, r.cgroupsLeft, r.processesLeft, r.registryLeft],
+          `bot malo ${i} ${r.outcome}`,
+        ).toEqual([0, 0, 0, 0]);
+      }
+    },
+    10 * 60_000,
+  );
 });

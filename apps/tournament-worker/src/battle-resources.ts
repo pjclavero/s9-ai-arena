@@ -111,7 +111,10 @@ export interface CleanupOptions {
 export type ExternalVerifier = (battleId: string) => Promise<string[]>;
 
 export class BattleAbort extends Error {
-  constructor(readonly reason: Extract<BattleEndReason, "MANUAL_ABORT" | "WORKER_ERROR" | "CANCELLED">, detail = "") {
+  constructor(
+    readonly reason: Extract<BattleEndReason, "MANUAL_ABORT" | "WORKER_ERROR" | "CANCELLED">,
+    detail = "",
+  ) {
     super(`[battle_aborted:${reason}] ${detail}`.trim());
     this.name = "BattleAbort";
   }
@@ -370,11 +373,7 @@ export async function terminateContainer(
 }
 
 /** Clasifica el final de una batalla a partir de lo que pasó en la orquestación. */
-export function classifyEnd(input: {
-  ok: boolean;
-  error?: unknown;
-  abortReason?: unknown;
-}): BattleEndReason {
+export function classifyEnd(input: { ok: boolean; error?: unknown; abortReason?: unknown }): BattleEndReason {
   if (input.abortReason instanceof BattleAbort) return input.abortReason.reason;
   if (input.abortReason !== undefined && input.abortReason !== null) return "CANCELLED";
   if (input.ok) return "FINISHED";

@@ -134,9 +134,7 @@ function sameOwner(claimedBy: string, label: string): boolean {
  * Bucle del reaper: una pasada cada `everyMs`, sin solaparse. Devuelve `stop()`.
  * El temporizador no retiene el proceso (unref).
  */
-export function startReaper(
-  deps: ReaperDeps & { everyMs?: number; onReport?: (r: ReapReport) => void },
-): () => void {
+export function startReaper(deps: ReaperDeps & { everyMs?: number; onReport?: (r: ReapReport) => void }): () => void {
   let busy = false;
   const t = setInterval(() => {
     if (busy) return;

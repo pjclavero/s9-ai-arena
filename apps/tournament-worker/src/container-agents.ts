@@ -188,7 +188,12 @@ export function containerAgents(opts: ContainerAgentsOptions): AgentDriver {
       });
       // Parar el ProtocolServer = dejar de generar ticks/observaciones y cerrar
       // las conexiones de los bots (fase 1 del teardown).
-      res.register(battleId, { kind: "protocol_server", phase: "stop_generation", scope: SCOPE, release: () => server.stop() });
+      res.register(battleId, {
+        kind: "protocol_server",
+        phase: "stop_generation",
+        scope: SCOPE,
+        release: () => server.stop(),
+      });
       const port = host.wss ? host.port : server.port;
       if (!port) {
         await res.cleanupBattleResources(battleId, "FAILED", { scope: SCOPE });

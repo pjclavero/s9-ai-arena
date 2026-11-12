@@ -951,7 +951,9 @@ export class ProxyContainerRunner implements ContainerRunner {
    * va en las labels, no en el nombre.
    */
   static containerName(spec: SandboxSpec, suffix: string = randomBytes(3).toString("hex")): string {
-    return `bot-${spec.botId}-v${spec.version}-${spec.battleId}-${suffix}`.replace(/[^A-Za-z0-9_.-]/g, "-").slice(0, 120);
+    return `bot-${spec.botId}-v${spec.version}-${spec.battleId}-${suffix}`
+      .replace(/[^A-Za-z0-9_.-]/g, "-")
+      .slice(0, 120);
   }
 
   /** OLA2-MF · borrado forzado por Id completo; 404 (ya no existe) = éxito. */

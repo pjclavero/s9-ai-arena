@@ -48,7 +48,12 @@ function memAvailableMb(): number | null {
 export function sampleMemory(): MemorySample {
   const u = process.memoryUsage();
   const cg = readNumberFile("/sys/fs/cgroup/memory.current");
-  return { rssMb: mb(u.rss), heapUsedMb: mb(u.heapUsed), cgroupMb: cg === null ? null : mb(cg), availableMb: memAvailableMb() };
+  return {
+    rssMb: mb(u.rss),
+    heapUsedMb: mb(u.heapUsed),
+    cgroupMb: cg === null ? null : mb(cg),
+    availableMb: memAvailableMb(),
+  };
 }
 
 export interface BattleMemoryReport {

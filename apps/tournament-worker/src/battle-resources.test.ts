@@ -20,7 +20,8 @@ describe("cleanupBattleResources · orden, idempotencia y aislamiento", () => {
   it("libera en el ORDEN de las fases, sea cual sea el orden de registro", async () => {
     const reg = new BattleResourceRegistry();
     const seen: string[] = [];
-    for (const phase of [...PHASES].reverse()) reg.register("A", { kind: phase, phase, release: () => void seen.push(phase) });
+    for (const phase of [...PHASES].reverse())
+      reg.register("A", { kind: phase, phase, release: () => void seen.push(phase) });
     const r = await reg.cleanupBattleResources("A", "FINISHED");
     expect(seen).toEqual([...PHASES]);
     expect(r.clean).toBe(true);
@@ -52,7 +53,8 @@ describe("cleanupBattleResources · orden, idempotencia y aislamiento", () => {
     const reg = new BattleResourceRegistry();
     const released: string[] = [];
     for (const id of ["A", "B"])
-      for (const phase of PHASES) reg.register(id, { kind: `${id}:${phase}`, phase, release: () => void released.push(id) });
+      for (const phase of PHASES)
+        reg.register(id, { kind: `${id}:${phase}`, phase, release: () => void released.push(id) });
     await reg.cleanupBattleResources("A", "FINISHED");
     expect(new Set(released)).toEqual(new Set(["A"]));
     expect(reg.pending("B")).toHaveLength(PHASES.length);
@@ -87,7 +89,12 @@ describe("cleanupBattleResources · orden, idempotencia y aislamiento", () => {
   it("scope: la capa interna limpia SÓLO lo suyo; la llamada sin scope, todo", async () => {
     const reg = new BattleResourceRegistry();
     const out: string[] = [];
-    reg.register("A", { kind: "lease", phase: "stop_generation", scope: "runner", release: () => void out.push("lease") });
+    reg.register("A", {
+      kind: "lease",
+      phase: "stop_generation",
+      scope: "runner",
+      release: () => void out.push("lease"),
+    });
     reg.register("A", { kind: "srv", phase: "stop_generation", scope: "agents", release: () => void out.push("srv") });
     await reg.cleanupBattleResources("A", "FAILED", { scope: "agents" });
     expect(out).toEqual(["srv"]);
@@ -130,8 +137,20 @@ describe("cleanupBattleResources · orden, idempotencia y aislamiento", () => {
 
   it("cleanup nunca lanza aunque release lance de forma síncrona o asíncrona", async () => {
     const reg = new BattleResourceRegistry();
-    reg.register("A", { kind: "s", phase: "terminate", release: () => { throw new Error("x"); } });
-    reg.register("A", { kind: "a", phase: "terminate", release: async () => { throw new Error("y"); } });
+    reg.register("A", {
+      kind: "s",
+      phase: "terminate",
+      release: () => {
+        throw new Error("x");
+      },
+    });
+    reg.register("A", {
+      kind: "a",
+      phase: "terminate",
+      release: async () => {
+        throw new Error("y");
+      },
+    });
     await expect(reg.cleanupBattleResources("A", "EXCEPTION")).resolves.toMatchObject({ clean: false });
   });
 });
@@ -215,7 +234,10 @@ describe("classifyEnd · los nueve finales", () => {
     expect(classifyEnd({ ok: false, error: new SportingFailure("bot_crash", "b", "x") })).toBe("BOT_CRASH");
     expect(classifyEnd({ ok: false, error: new SportingFailure("bot_timeout", "b", "x") })).toBe("TIMEOUT");
     expect(
-      classifyEnd({ ok: false, error: new InfrastructureFailure("engine_start_failure", "timeout global de la batalla tras 9 ms") }),
+      classifyEnd({
+        ok: false,
+        error: new InfrastructureFailure("engine_start_failure", "timeout global de la batalla tras 9 ms"),
+      }),
     ).toBe("TIMEOUT");
     expect(classifyEnd({ ok: false, error: new InfrastructureFailure("engine_start_failure", "motor") })).toBe(
       "ENGINE_ERROR",
