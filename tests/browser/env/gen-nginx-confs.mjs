@@ -47,6 +47,16 @@ writeFileSync(join(out, "gateway.conf"), g);
 
 let w = readFileSync(join(repo, "infrastructure/docker/web/nginx.conf"), "utf8");
 w = must(w, "listen 3000;", `listen 127.0.0.1:${web};`, "listen del web");
+// BROADCAST-PUBLIC-ACCESS · el web reenvía /api/v1/ y /ws/ como el gateway (para el
+// Chromium del streamer, que no pasa por él). Mismas sustituciones que arriba.
+w = must(
+  w,
+  "resolver 127.0.0.11 valid=10s ipv6=off;",
+  "# resolver: no hace falta con upstreams IP",
+  "resolver Docker (web)",
+);
+w = must(w, "http://api:8080", `http://127.0.0.1:${api}`, "upstream api (web)");
+w = must(w, "http://tournament-worker:8081", `http://127.0.0.1:${ws}`, "upstream ws (web)");
 writeFileSync(join(out, "web.conf"), w);
 
 const t = `# Proxy TLS del entorno E2E (papel del proxy inverso externo). Generado.

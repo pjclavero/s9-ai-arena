@@ -23,6 +23,7 @@
  * preseleccionada; no emite); terminada, «Ver resultado», «Replay: no disponible
  * para retransmisión» y el replay normal si existe. Nunca «Retransmitir replay».
  */
+import { broadcastReasonText } from "./PublicAccessSettings.js";
 import { useEffect, useRef } from "react";
 import { api, type Me } from "../api.js";
 import { streamingHref } from "../broadcast/BroadcastButton.js";
@@ -406,6 +407,22 @@ export const BROADCAST_BLOCKED_TEXT: Record<string, string> = {
 interface TargetView {
   broadcastable: boolean;
   broadcastBlockedReason: string | null;
+  /** MG · /broadcast puede leerla de verdad (ajustes públicos vigentes); ausente en APIs < 0.18.0. */
+  broadcastAvailable?: boolean;
+  reason?: string | null;
+}
+
+/** MG · autorizada por visibilidad pero la página pública no podría leerla (p. ej. espectador público apagado). */
+function effectivelyBlocked(t: TargetView | null | undefined): boolean {
+  // `battle_not_started` (espera) y `streaming_not_configured` (el botón sólo ABRE Streaming, que
+  // explica el estado del streamer) no bloquean el enlace; los motivos de lectura pública sí.
+  return (
+    !!t &&
+    t.broadcastable &&
+    t.broadcastAvailable === false &&
+    t.reason !== "battle_not_started" &&
+    t.reason !== "streaming_not_configured"
+  );
 }
 
 /**
@@ -438,7 +455,9 @@ function LiveAndBroadcast({ b, me, onShowResult }: { b: BattleDetail; me?: Me | 
               <span data-testid="watch-live-pending">Ver en directo: disponible en cuanto la batalla arranque.</span>
             )}{" "}
             {isAdmin &&
-              (target.status === "ready" && target.data && !target.data.broadcastable ? (
+              (target.status === "ready" &&
+              target.data &&
+              (!target.data.broadcastable || effectivelyBlocked(target.data)) ? (
                 <button type="button" disabled data-testid="broadcast-battle-blocked">
                   Retransmitir
                 </button>
@@ -459,10 +478,16 @@ function LiveAndBroadcast({ b, me, onShowResult }: { b: BattleDetail; me?: Me | 
                 ? "Comprobando si se puede retransmitir…"
                 : target.status === "error"
                   ? "No se ha podido comprobar si se puede retransmitir; Streaming lo volverá a comprobar antes de emitir."
-                  : target.data?.broadcastable
-                    ? "Se puede retransmitir. «Retransmitir» abre Streaming con esta batalla seleccionada; no empieza a emitir hasta que pulses «Iniciar» allí."
-                    : (BROADCAST_BLOCKED_TEXT[target.data?.broadcastBlockedReason ?? ""] ??
-                      "No se puede retransmitir esta batalla.")}
+                  : effectivelyBlocked(target.data)
+                    ? `No se puede retransmitir ahora: ${broadcastReasonText(target.data?.reason)}`
+                    : target.data?.broadcastable
+                      ? `Se puede retransmitir. «Retransmitir» abre Streaming con esta batalla seleccionada; no empieza a emitir hasta que pulses «Iniciar» allí.${
+                          target.data?.reason === "streaming_not_configured"
+                            ? " Aviso: este despliegue no tiene streamer configurado; Streaming lo indicará."
+                            : ""
+                        }`
+                      : (BROADCAST_BLOCKED_TEXT[target.data?.broadcastBlockedReason ?? ""] ??
+                        "No se puede retransmitir esta batalla.")}
             </p>
           )}
         </>

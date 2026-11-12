@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 import { api, type Me } from "../api.js";
 import { FormError } from "../ui/primitives.js";
+import { PublicAccessSettings } from "./PublicAccessSettings.js";
 
 export function isAdmin(me: Me | null): boolean {
   return !!me && me.roles.includes("admin");
@@ -69,6 +70,8 @@ export function AdminPage(props: { me: Me }) {
 
   return (
     <div data-testid="admin-panel">
+      {/* MG · espectador y replays públicos: ajustes de runtime, en caliente. */}
+      <PublicAccessSettings />
       <div className="card">
         <h2>Roles de usuario</h2>
         <input

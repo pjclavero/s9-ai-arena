@@ -4,6 +4,7 @@
  * runner real ni VM108, y NUNCA expone secretos: de S9_RUN_REAL_DOCKER_E2E y
  * SMOKE_BOT_DIGEST solo se publica un booleano, jamás su valor.
  */
+import { flagSource } from "../runtime-settings.js";
 import { Router } from "express";
 import type { Db } from "../db/connection.js";
 import { defineOperation } from "../registry.js";
@@ -25,10 +26,13 @@ async function countBy(db: Db, table: string, column: string): Promise<Record<st
 export function systemRoutes(
   db: Db,
   realBattleRuns: { enabled: boolean; available: boolean } = { enabled: false, available: false },
-  publicSpectateEnabled = false,
-  publicReplaysEnabled = false,
+  // MG · booleano fijo (tests) o getter de los ajustes de runtime (se lee por petición).
+  publicSpectateEnabled: boolean | (() => boolean) = false,
+  publicReplaysEnabled: boolean | (() => boolean) = false,
 ): Router {
   const router = Router();
+  const spectateOn = flagSource(publicSpectateEnabled, () => false);
+  const replaysOn = flagSource(publicReplaysEnabled, () => false);
 
   defineOperation(router, "getSystemStatus", async (_req, res) => {
     let databaseOk = true;
@@ -57,12 +61,12 @@ export function systemRoutes(
       // UI? (enabled = flag on; available = flag on Y runner cableado). Nunca secretos.
       realBattleRuns,
       // R11 · capability para la UI: ¿la emisión pública de espectador (sin cuenta)
-      // está activada en este entorno? Lectura de S9_PUBLIC_SPECTATE_ENABLED.
-      publicSpectateEnabled,
+      // está activada? Valor VIGENTE de los ajustes de runtime (MG; el entorno es el bootstrap).
+      publicSpectateEnabled: spectateOn(),
       // R11 · capability para la UI: ¿el acceso público a replay/batalla
       // finalizada (sin cuenta) está activado en este entorno? Lectura de
-      // S9_PUBLIC_REPLAYS_ENABLED.
-      publicReplaysEnabled,
+      // ajustes de runtime (MG).
+      publicReplaysEnabled: replaysOn(),
       battlesByStatus,
       buildsByStatus,
       botVersionsByState,
