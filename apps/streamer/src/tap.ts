@@ -418,7 +418,10 @@ export class IngestTap {
     const keySeq = this.lastKeySeq;
     const flv = buildMiniFlv(this.meta, this.seq, key.bytes);
     const seq = this.nextSeq++;
-    const stamp = new Date(this.now()).toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+    const stamp = new Date(this.now())
+      .toISOString()
+      .replace(/[-:]/g, "")
+      .replace(/\.\d+Z$/, "Z");
     const base = `tap-${String(seq).padStart(8, "0")}-${stamp}`;
     const capture: TapCapture = {
       seq,
@@ -454,7 +457,10 @@ export class IngestTap {
       await this.fs.writeFile(join(dir, `${base}.flv.tmp`), flv);
       await this.fs.rename(join(dir, `${base}.flv.tmp`), join(dir, `${base}.flv`));
       await this.fs.writeFile(join(dir, `${base}.json`), json);
-      this.files.push({ name: `${base}.flv`, bytes: flv.length }, { name: `${base}.json`, bytes: Buffer.byteLength(json) });
+      this.files.push(
+        { name: `${base}.flv`, bytes: flv.length },
+        { name: `${base}.json`, bytes: Buffer.byteLength(json) },
+      );
       await this.fs.writeFile(join(dir, `${TAP_LATEST}.tmp`), json);
       await this.fs.rename(join(dir, `${TAP_LATEST}.tmp`), join(dir, TAP_LATEST));
       this.latest_ = capture;
@@ -473,9 +479,7 @@ export class IngestTap {
 
   /** Borra las capturas más antiguas hasta cumplir `maxFiles` (capturas) y `maxBytes`. */
   private async rotate(): Promise<void> {
-    const captures = (): string[] => [
-      ...new Set(this.files.map((f) => f.name.replace(/\.(flv|json)$/, ""))),
-    ];
+    const captures = (): string[] => [...new Set(this.files.map((f) => f.name.replace(/\.(flv|json)$/, "")))];
     const total = () => this.files.reduce((a, f) => a + f.bytes, 0);
     let list = captures().sort();
     while (list.length > 1 && (list.length > this.config.maxFiles || total() > this.config.maxBytes)) {
@@ -533,7 +537,22 @@ export function decodeTapJpeg(ffmpegBin: string, flvPath: string, timeoutMs = 10
   return new Promise((resolve, reject) => {
     const child = spawn(
       ffmpegBin,
-      ["-hide_banner", "-loglevel", "error", "-threads", "1", "-i", flvPath, "-frames:v", "1", "-f", "image2", "-c:v", "mjpeg", "pipe:1"],
+      [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-threads",
+        "1",
+        "-i",
+        flvPath,
+        "-frames:v",
+        "1",
+        "-f",
+        "image2",
+        "-c:v",
+        "mjpeg",
+        "pipe:1",
+      ],
       { stdio: ["ignore", "pipe", "ignore"] },
     );
     const out: Buffer[] = [];

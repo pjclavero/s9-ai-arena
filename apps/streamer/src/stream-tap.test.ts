@@ -168,7 +168,10 @@ describe("G6 · captura el ÚLTIMO keyframe que recibió el relé, con su timest
     const results: Buffer[] = [];
     for (const [name, chunks] of [
       ["aleatorio", chunked(s.bytes)],
-      ["byte a byte", Array.from(s.bytes.subarray(0, 300_000), (x) => Buffer.from([x])).concat([s.bytes.subarray(300_000)])],
+      [
+        "byte a byte",
+        Array.from(s.bytes.subarray(0, 300_000), (x) => Buffer.from([x])).concat([s.bytes.subarray(300_000)]),
+      ],
       ["entero", [s.bytes]],
     ] as const) {
       const dir = tmp("g6");
@@ -302,7 +305,9 @@ describe("G4 · almacenamiento limitado y rotado", () => {
     t.start();
     await feedCapturing(t, s);
     expect(t.stats.written).toBe(20);
-    const flvs = tapFiles(dir).filter((n) => n.endsWith(".flv")).sort();
+    const flvs = tapFiles(dir)
+      .filter((n) => n.endsWith(".flv"))
+      .sort();
     expect(flvs.length).toBe(3);
     expect(tapFiles(dir).length).toBe(6);
     const latest = JSON.parse(readFileSync(join(dir, TAP_LATEST), "utf8"));
@@ -366,7 +371,13 @@ async function fakeIngest() {
     const reader = new ChunkReader();
     const send = (m: RtmpMessage) => sock.write(encodeMessage(m, 128));
     const reply = (name: string, txn: number, args: unknown[], streamId = 0) =>
-      send({ csid: 3, type: MSG_COMMAND_AMF0, streamId, timestamp: 0, payload: encodeAmf0Values([name, txn, ...(args as never[])]) });
+      send({
+        csid: 3,
+        type: MSG_COMMAND_AMF0,
+        streamId,
+        timestamp: 0,
+        payload: encodeAmf0Values([name, txn, ...(args as never[])]),
+      });
     sock.on("data", (d: Buffer) => {
       if (phase !== "c0c1") {
         seen.afterC1.push(Buffer.from(d));
@@ -441,7 +452,8 @@ function leaked(b: Buffer | string, k = KEY): string[] {
   const forms = [k, Buffer.from(k).toString("hex"), Buffer.from(k).toString("base64").replace(/=+$/, "")];
   const out: string[] = [];
   for (const f of forms)
-    for (let i = 0; i + 8 <= f.length; i++) if (text.includes(f.slice(i, i + 8).toLowerCase())) out.push(f.slice(i, i + 8));
+    for (let i = 0; i + 8 <= f.length; i++)
+      if (text.includes(f.slice(i, i + 8).toLowerCase())) out.push(f.slice(i, i + 8));
   return out;
 }
 
@@ -496,7 +508,15 @@ async function run(o: RunOpts) {
       await sleep(20);
     }
     const relayHash = sha(ing.seen.afterC1);
-    const result = { relayHash, relayBytes: ing.seen.bytes, fedHash: sha(fed), pauses: media.pauses, emitErrors, lines, sup };
+    const result = {
+      relayHash,
+      relayBytes: ing.seen.bytes,
+      fedHash: sha(fed),
+      pauses: media.pauses,
+      emitErrors,
+      lines,
+      sup,
+    };
     sup.stop();
     return result;
   } finally {
@@ -557,7 +577,9 @@ describe("G5 · ningún secreto en ficheros, nombres, logs ni respuestas del tap
   it("emisión con clave y tap encendido: ni los ficheros, ni sus nombres, ni los logs, ni /diag/tap* llevan la clave", async () => {
     const dir = tmp("secret");
     const logs: string[] = [];
-    const tap = new IngestTap(cfg(dir, { intervalMs: 5 }), { log: (l, m, e) => logs.push(JSON.stringify({ l, m, e })) });
+    const tap = new IngestTap(cfg(dir, { intervalMs: 5 }), {
+      log: (l, m, e) => logs.push(JSON.stringify({ l, m, e })),
+    });
     tap.start();
     const s = syntheticFlv(300);
     const r = await run({ tap, chunks: chunked(s.bytes, 13, 32_768) });
@@ -618,7 +640,10 @@ describe("G5 · ningún secreto en ficheros, nombres, logs ni respuestas del tap
     const base = `http://127.0.0.1:${(control.address() as AddressInfo).port}`;
     const h = { "x-streamer-auth": "diag-secret" };
     expect((await fetch(`${base}/diag/tap/latest`)).status).toBe(401);
-    expect(await (await fetch(`${base}/diag/tap`, { headers: h })).json()).toMatchObject({ enabled: false, stats: null });
+    expect(await (await fetch(`${base}/diag/tap`, { headers: h })).json()).toMatchObject({
+      enabled: false,
+      stats: null,
+    });
     expect((await fetch(`${base}/diag/tap/latest`, { headers: h })).status).toBe(404);
     expect((await fetch(`${base}/diag/tap/latest.jpg`, { headers: h })).status).toBe(404);
   });
@@ -639,7 +664,22 @@ const mustRunFfmpeg = process.env.CI === "true";
 function meanRgb(jpg: Buffer): number[] {
   const raw = execFileSync(
     "ffmpeg",
-    ["-hide_banner", "-loglevel", "error", "-f", "image2pipe", "-i", "pipe:0", "-vf", "scale=1:1", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"],
+    [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-f",
+      "image2pipe",
+      "-i",
+      "pipe:0",
+      "-vf",
+      "scale=1:1",
+      "-f",
+      "rawvideo",
+      "-pix_fmt",
+      "rgb24",
+      "pipe:1",
+    ],
     { input: jpg },
   );
   return [raw[0], raw[1], raw[2]];
@@ -653,12 +693,34 @@ describe.skipIf(!hasFfmpeg && !mustRunFfmpeg)("G6 · con el FLV REAL de ffmpeg (
     const flv = execFileSync(
       "ffmpeg",
       [
-        "-hide_banner", "-loglevel", "error",
-        "-f", "lavfi", "-i", "color=c=red:s=160x120:r=30:d=1",
-        "-f", "lavfi", "-i", "color=c=blue:s=160x120:r=30:d=1",
-        "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0",
-        "-c:v", "libx264", "-preset", "veryfast", "-g", "15", "-bf", "2", "-pix_fmt", "yuv420p",
-        "-flvflags", "no_duration_filesize", "-f", "flv", "pipe:1",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=red:s=160x120:r=30:d=1",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=blue:s=160x120:r=30:d=1",
+        "-filter_complex",
+        "[0:v][1:v]concat=n=2:v=1:a=0",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-g",
+        "15",
+        "-bf",
+        "2",
+        "-pix_fmt",
+        "yuv420p",
+        "-flvflags",
+        "no_duration_filesize",
+        "-f",
+        "flv",
+        "pipe:1",
       ],
       { maxBuffer: 64 * 1024 * 1024 },
     );
