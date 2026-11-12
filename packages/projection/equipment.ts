@@ -15,7 +15,6 @@ import type { AudienceClass, DisclosurePolicy } from "./contracts.js";
 import {
   DEFAULT_DISCLOSURE_POLICY,
   STATS_ACCURACY_N,
-  STATS_DAMAGE_STEP,
   STATS_HITS_STEP,
   emits,
   fieldLevel,
@@ -40,13 +39,6 @@ export function projectBotStats(
     const n = num(x);
     return n === null ? x : Math.floor(Math.max(0, n) / st) * st;
   };
-  if ("damageDealt" in out && q("damageDealt")) out.damageDealt = step(out.damageDealt, STATS_DAMAGE_STEP);
-  if ("damageTaken" in out && q("damageTaken")) {
-    // M0 · el daño recibido de un bot DESTRUIDO ≈ su casco total (revela el chasis): para un
-    // tercero se omite (queda `died`/`deaths`: KO). El exacto es sólo del dueño y del staff.
-    if (stats.died === true || (typeof stats.deaths === "number" && stats.deaths > 0)) delete out.damageTaken;
-    else out.damageTaken = step(out.damageTaken, STATS_DAMAGE_STEP);
-  }
   if ("shotsHit" in out && q("shotsHit")) out.shotsHit = step(out.shotsHit, STATS_HITS_STEP);
   if ("accuracy" in out && q("accuracy")) {
     const fired = num((stats as Record<string, unknown>).shotsFired);

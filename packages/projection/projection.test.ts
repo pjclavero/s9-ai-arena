@@ -15,7 +15,6 @@ import {
   ENTITY_ID_SCHEMA_RE,
   HULL_LEVEL_N,
   STATS_ACCURACY_N,
-  STATS_DAMAGE_STEP,
   STATS_HITS_STEP,
   ProjectionCache,
   VisibilityTracker,
@@ -441,65 +440,33 @@ describe("CROSS_VIEW · clave de proyección con audiencia y visibilityEpoch", (
   });
 });
 
-describe("estadísticas públicas cuantizadas (hallazgo P2-5)", () => {
-  const stats = {
-    botId: "bot-a",
-    team: "red",
-    damageDealt: 1234,
-    damageTaken: 301,
-    shotsFired: 77,
-    shotsHit: 33,
-    accuracy: 33 / 77,
-  };
+describe("estadísticas públicas sin daño absoluto (M0)", () => {
+  const stats = { botId: "bot-a", team: "red", damageDealt: 1234, damageTaken: 301, shotsFired: 77, shotsHit: 33, accuracy: 33 / 77, died: true, deaths: 1 };
 
-  it("un tercero recibe daño en pasos de STATS_DAMAGE_STEP, aciertos en pasos de STATS_HITS_STEP y precisión derivada de los aciertos cuantizados", () => {
+  it("un tercero o equipo NO recibe damageDealt ni damageTaken (HP absolutos reconstruyen el casco); dueño y staff, exactos", () => {
+    for (const aud of ["public_replay", "public_live", "broadcast", "team", "bot_team"] as const) {
+      const t = projectBotStats(stats, aud);
+      expect(t, aud).not.toHaveProperty("damageDealt");
+      expect(t, aud).not.toHaveProperty("damageTaken");
+      expect(t, aud).toMatchObject({ died: true, deaths: 1 }); // KO se indica
+    }
+    for (const aud of ["owner", "staff"] as const)
+      expect(projectBotStats(stats, aud)).toMatchObject({ damageDealt: 1234, damageTaken: 301, shotsHit: 33 });
+  });
+
+  it("aciertos en pasos de STATS_HITS_STEP y precisión derivada de los aciertos cuantizados", () => {
     const t = projectBotStats(stats, "public_replay") as Record<string, number>;
-    expect(t.damageDealt).toBe(Math.floor(1234 / STATS_DAMAGE_STEP) * STATS_DAMAGE_STEP);
-    expect(t.damageTaken).toBe(Math.floor(301 / STATS_DAMAGE_STEP) * STATS_DAMAGE_STEP);
     expect(t.shotsHit).toBe(Math.floor(33 / STATS_HITS_STEP) * STATS_HITS_STEP);
     expect(t.accuracy).toBe(Math.floor((t.shotsHit / 77) * STATS_ACCURACY_N) / STATS_ACCURACY_N);
     expect(t.shotsFired).toBe(77); // cadencia visible: residual, no se toca
-    // control positivo: el exacto existe y los pasos lo cambian de verdad
-    expect(stats.damageDealt % STATS_DAMAGE_STEP).not.toBe(0);
-    expect(t.damageDealt).not.toBe(stats.damageDealt);
-  });
-
-  it("dos baterías con daño EXACTO distinto dentro del mismo paso son indistinguibles para un tercero (y no para el dueño)", () => {
-    const a = projectBotStats({ ...stats, damageDealt: 1201, shotsHit: 31, accuracy: 31 / 77 }, "public_replay");
-    const b = projectBotStats({ ...stats, damageDealt: 1223, shotsHit: 34, accuracy: 34 / 77 }, "public_replay");
+    expect(t.accuracy).not.toBeCloseTo(33 / 77, 3);
+    const a = projectBotStats({ ...stats, shotsHit: 31, accuracy: 31 / 77 }, "public_replay");
+    const b = projectBotStats({ ...stats, shotsHit: 34, accuracy: 34 / 77 }, "public_replay");
     expect(a).toEqual(b);
-    const oa = projectBotStats({ ...stats, damageDealt: 1201 }, "owner");
-    const ob = projectBotStats({ ...stats, damageDealt: 1223 }, "owner");
-    expect(oa).not.toEqual(ob);
-  });
-
-  it("dueño y staff ven el valor exacto; la precisión pública NO se calcula con los aciertos exactos", () => {
-    for (const aud of ["owner", "staff"] as const) {
-      const o = projectBotStats(stats, aud) as Record<string, number>;
-      expect(o).toMatchObject({ damageDealt: 1234, damageTaken: 301, shotsHit: 33 });
-      expect(o.accuracy).toBeCloseTo(33 / 77, 10);
-    }
-    const t = projectBotStats(stats, "team") as Record<string, number>;
-    expect(t.damageDealt % STATS_DAMAGE_STEP).toBe(0);
-  });
-
-  it("un bot DESTRUIDO no publica damageTaken a terceros (≈ casco total); dueño y staff sí; vivo: cuantizado", () => {
-    const dead = { ...stats, died: true, deaths: 1, damageTaken: 301 };
-    expect(projectBotStats(dead, "public_replay")).not.toHaveProperty("damageTaken");
-    expect(projectBotStats(dead, "team")).not.toHaveProperty("damageTaken");
-    expect(projectBotStats(dead, "public_replay")).toMatchObject({ died: true }); // se indica KO
-    for (const aud of ["owner", "staff"] as const)
-      expect(projectBotStats(dead, aud)).toMatchObject({ damageTaken: 301 });
-    expect(projectBotStats({ ...stats, died: false, deaths: 0 }, "public_replay")).toMatchObject({
-      damageTaken: Math.floor(301 / STATS_DAMAGE_STEP) * STATS_DAMAGE_STEP,
-    });
   });
 
   it("sin disparos la precisión es null (no se inventa)", () => {
-    const t = projectBotStats(
-      { botId: "b", team: "r", damageDealt: 0, shotsFired: 0, shotsHit: 0, accuracy: null },
-      "public_replay",
-    );
+    const t = projectBotStats({ botId: "b", team: "r", shotsFired: 0, shotsHit: 0, accuracy: null }, "public_replay");
     expect(t.accuracy).toBeNull();
   });
 });

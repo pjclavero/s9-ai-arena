@@ -28,12 +28,12 @@ export const HULL_LEVEL_N = 20;
  * Cuantización pública de las estadísticas (D-B1/R2, hallazgo P2-5 de la revisión): el daño
  * y los aciertos EXACTOS delatan el daño por impacto (arma/munición) y el casco total de un
  * bot destruido. Para quien no es dueño ni staff salen en PASOS:
- *  - daño: `STATS_DAMAGE_STEP` = casco máximo del catálogo (480) / N (20) = 24 HP;
+ *  - daño ABSOLUTO (damageDealt/damageTaken): no sale a terceros ni a equipo (decisión de M0:
+ *    en un 1v1 el daño del rival reconstruye el casco del destruido); sólo dueño y staff;
  *  - aciertos: de `STATS_HITS_STEP` en `STATS_HITS_STEP`;
  *  - precisión: DERIVADA de los aciertos ya cuantizados (nunca de los exactos), en pasos de 1/N.
  * Los valores exactos son sólo del dueño y del staff.
  */
-export const STATS_DAMAGE_STEP = 24;
 export const STATS_HITS_STEP = 5;
 export const STATS_ACCURACY_N = HULL_LEVEL_N;
 
@@ -125,8 +125,8 @@ export const DEFAULT_DISCLOSURE_POLICY: DisclosurePolicy = {
     // ------------------------------------------- estadísticas post-batalla
     "stats.botId": PUBLIC,
     "stats.team": PUBLIC,
-    "stats.damageDealt": exactForOwnerElseQuantized(), // daño/impacto delata arma y munición
-    "stats.damageTaken": exactForOwnerElseQuantized(), // ≈ casco total si el bot cae
+    "stats.damageDealt": ownerOnly(), // HP absolutos: en un 1v1 reconstruyen el casco del destruido (M0)
+    "stats.damageTaken": ownerOnly(), // ≈ casco total si el bot cae (M0)
     "stats.shotsFired": PUBLIC, // cadencia: residual físico (disparos visibles)
     "stats.shotsHit": exactForOwnerElseQuantized(),
     "stats.accuracy": exactForOwnerElseQuantized(), // derivada de shotsHit CUANTIZADO
@@ -164,7 +164,6 @@ export const DEFAULT_DISCLOSURE_POLICY: DisclosurePolicy = {
     "residual.explosionRadius": RESIDUAL,
     "residual.impactsToKill": RESIDUAL,
     "residual.collisionRadius": RESIDUAL,
-    "residual.damagePerHit": RESIDUAL,
     "residual.mineTriggerPosition": RESIDUAL,
   },
 };
@@ -212,7 +211,5 @@ export const ACCEPTED_RESIDUALS: Readonly<Record<string, string>> = {
   "residual.explosionRadius": "El radio de una explosión visible, por sus efectos sobre el casco ajeno.",
   "residual.impactsToKill": "Cuántos impactos hacen falta para destruir un vehículo (con hullLevel cuantizado).",
   "residual.collisionRadius": "El tamaño del vehículo, por las distancias de contacto en las colisiones.",
-  "residual.damagePerHit":
-    "El daño medio por impacto (decisión de M0): es inferible físicamente de la barra hullLevel cuantizada, que cae por impacto; los agregados damageDealt/shotsHit cuantizados no añaden más que eso con totales grandes.",
   "residual.mineTriggerPosition": "La posición de una mina en el instante en que explota (evento público).",
 };

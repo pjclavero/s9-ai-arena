@@ -77,7 +77,7 @@ interface ModuleStatsView {
   uses: number;
   /** UX-F (DEF-R12) · sólo para el dueño y el staff (diagnóstico). */
   rejections?: number;
-  damageDealt: number;
+  damageDealt?: number;
   finalState: string;
 }
 
@@ -85,7 +85,7 @@ interface BotStatsView {
   botName?: string;
   version?: number;
   team: string;
-  damageDealt: number;
+  damageDealt?: number;
   damageTaken?: number;
   shotsFired: number;
   shotsHit: number;
@@ -154,7 +154,7 @@ interface TeamStatsView {
   kills: number;
   teamKills?: number;
   deaths?: number;
-  damageDealt: number;
+  damageDealt?: number;
   damageTaken?: number;
   shotsFired: number;
   shotsHit: number;
@@ -587,7 +587,7 @@ function StatsSection({ b, s }: { b: BattleDetail; s: StatsResponse }) {
                 <td>{st.shotsFired}</td>
                 <td>{st.shotsHit}</td>
                 <td>{pct(st.accuracy)}</td>
-                <td>{Math.round(st.damageDealt)}</td>
+                <td>{typeof st.damageDealt === "number" ? Math.round(st.damageDealt) : "—"}</td>
                 <td>{typeof st.damageTaken === "number" ? Math.round(st.damageTaken) : "—"}</td>
                 <td>
                   {st.kills}
@@ -695,7 +695,7 @@ function SidesStats({
               kills: sum((x) => x.kills),
               teamKills: sum((x) => x.teamKills),
               deaths: st.every((x) => typeof x.deaths === "number") ? sum((x) => x.deaths) : undefined,
-              damageDealt: sum((x) => x.damageDealt),
+              damageDealt: st.every((x) => typeof x.damageDealt === "number") ? sum((x) => x.damageDealt) : undefined,
               damageTaken: st.every((x) => typeof x.damageTaken === "number") ? sum((x) => x.damageTaken) : undefined,
               shotsFired: sum((x) => x.shotsFired),
               shotsHit: sum((x) => x.shotsHit),
@@ -732,7 +732,7 @@ function SidesStats({
               {t.teamKills ? ` (+${t.teamKills} de fuego amigo)` : ""}
             </td>
             <td>{typeof t.deaths === "number" ? t.deaths : "—"}</td>
-            <td>{Math.round(t.damageDealt)}</td>
+            <td>{typeof t.damageDealt === "number" ? Math.round(t.damageDealt) : "—"}</td>
             <td>{typeof t.damageTaken === "number" ? Math.round(t.damageTaken) : "—"}</td>
             <td>{t.shotsFired}</td>
             <td>{t.shotsHit}</td>

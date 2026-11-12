@@ -27,7 +27,7 @@ import type { Replay } from "../../arena-engine/src/replay.js";
 import { ingestReplay } from "../../replay-service/src/store.js";
 import { runStatsJob } from "../../replay-service/src/stats.js";
 import { BLUE, RED, play4v4 } from "../../replay-service/tests/fixtures/team4v4.js";
-import { STATS_DAMAGE_STEP, STATS_HITS_STEP } from "../../../packages/projection/policy.js";
+import { STATS_HITS_STEP } from "../../../packages/projection/policy.js";
 
 let h: TestDbHandle;
 let app: Express;
@@ -163,15 +163,14 @@ describe("4v4-STATS · /battles/{id}/stats con perTeam (TDM 4v4 real)", () => {
         // lo que el dueño ve de SUS bots es exacto, así que se cuantiza igual (idempotente en los ajenos).
         const sumQ = (k: string, step: number) => bots.reduce((a, b) => a + Math.floor(b[k] / step) * step, 0);
         expect(t.shotsHit, `${actor} ${team} shotsHit`).toBe(sumQ("shotsHit", STATS_HITS_STEP));
-        expect(t.damageDealt).toBeCloseTo(sumQ("damageDealt", STATS_DAMAGE_STEP), 6);
-        // M0 · si algún bot del bando fue destruido, su damageTaken no se publica NI en perTeam
-        // (restar los demás reconstruiría el casco oculto); si no, se suma lo cuantizado.
-        if (bots.some((b) => b.died === true || b.deaths > 0)) {
-          expect(t, `${actor} ${team}`).not.toHaveProperty("damageTaken");
-          for (const b of bots.filter((x) => x.died === true || x.deaths > 0)) {
-            if (actor === "C" && team === "red") expect(b).not.toHaveProperty("damageTaken");
-          }
-        } else expect(t.damageTaken).toBeCloseTo(sumQ("damageTaken", STATS_DAMAGE_STEP), 6);
+        // M0 · sin daño ABSOLUTO en perTeam para ningún lector; perBot sólo lo lleva al dueño de ese bot.
+        expect(t, `${actor} ${team}`).not.toHaveProperty("damageDealt");
+        expect(t, `${actor} ${team}`).not.toHaveProperty("damageTaken");
+        for (const b of bots) {
+          const mine = actor === "admin" || (actor === "A" && team === "red") || (actor === "C" && team === "blue");
+          if (mine) expect(typeof b.damageDealt).toBe("number");
+          else expect(b).not.toHaveProperty("damageDealt");
+        }
         expect(t.survivors).toBe(bots.filter((b) => b.aliveAtEnd).length);
       }
     }
