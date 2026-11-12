@@ -14,6 +14,7 @@ import {
   emptyDict,
   OVERTIME_TECHNICAL_LIMIT_TICKS,
   RADIO_DELIVERY_DELAY_DECISIONS,
+  respawnRearmPolicyOf,
   TICK_DT,
   TICK_HZ,
   type Ruleset,
@@ -564,6 +565,7 @@ export class Battle {
       // reaparecido en este mismo bucle (dos reapariciones simultáneas no pueden
       // elegir el mismo punto). Copia perezosa: sin reapariciones, coste cero.
       let respawnPoses: Map<string, any> | null = null;
+      let respawnedThisTick = 0;
       for (const v of this.vehicles) {
         if (v.alive || v.disqualified) continue;
         // R-RULES (ADR-021) · sin reapariciones restantes, se queda fuera. Con respawn
@@ -585,7 +587,15 @@ export class Battle {
           body?.rb.setTranslation(sp, true);
           body?.rb.setLinvel({ x: 0, y: 0 }, true);
           this.emit({ kind: "respawned", position: sp }, v.id);
+          respawnedThisTick += 1;
         }
+      }
+      // OLA2-G3 · RESPAWN_REARM_POLICY (regla del ruleset, ver game-rules `RespawnRearmPolicy`).
+      // Con `all_alive_participants`, tras TODAS las reapariciones del tick (y antes del hash
+      // del PASO 8) cada vivo no descalificado vuelve a su munición máxima. Una sola pasada por
+      // tick aunque reaparezcan varios; `rearm()` asigna el máximo, nunca suma.
+      if (respawnedThisTick > 0 && respawnRearmPolicyOf(this.config.ruleset) === "all_alive_participants") {
+        for (const v of this.vehicles) if (v.alive && !v.disqualified) v.rearm();
       }
     }
 
