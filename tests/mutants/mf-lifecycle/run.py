@@ -64,7 +64,7 @@ MUTANTS = [
      "      try {\n        this.battle.step();\n      } catch (err) {\n        throw err;",
      "apps/tournament-worker/src/mf-battle-teardown.test.ts"),
     ("M14-proxy-start-fallido", "apps/bot-manager/src/docker-proxy.ts",
-     "      await this.removeById(id).catch(() => undefined);",
+     "      await this.removeById(id, spec.battleId).catch(() => undefined);",
      "      void 0;",
      "apps/bot-manager/tests/docker-proxy-lifecycle.test.ts"),
     ("M15-proxy-lista-ajenos", "apps/bot-manager/src/docker-proxy.ts",
