@@ -32,6 +32,12 @@
  *    cada decisión y emite por radio cada decisión.
  *  - A (rojo, compañero) a 30 m de E: escucha la radio.
  *  - X (azul): persigue a E pasando por encima de sus minas y le dispara.
+ *  - W (azul, G1): inmóvil junto al muro este, en la línea de tiro de E. Los proyectiles de E
+ *    que impactan en el muro cerca de W lo alcanzan con su ONDA: así el radio de explosión de
+ *    la munición tiene efecto observable (al impacto directo, el impactado queda excluido de
+ *    su propia onda, D-B6, y X no se acerca a los muros).
+ *  - G1: E siembra durante más tiempo (hasta la decisión 120) para que las cargas y el
+ *    enfriamiento de la mina limiten de verdad cuántas minas hay en el terreno.
  * Selección de módulos: por categoría y datos (slot que acepta la categoría, sector del
  * blindaje, arma que acepta la munición), nunca por id de módulo.
  */
@@ -70,6 +76,16 @@ const ALLY: LoadoutInput = {
     { slot: "drive", moduleId: "movement.wheels@1" },
     { slot: "power", moduleId: "power.battery@1" },
     { slot: "radio_a", moduleId: "radio.short@1" },
+  ],
+};
+/** W: blanco inmóvil junto al muro (sin blindaje ni armas). */
+const WALL_SITTER: LoadoutInput = {
+  ...PROBE_BASE,
+  loadoutId: "ldt_probe04",
+  chassis: "chassis.light@1",
+  modules: [
+    { slot: "drive", moduleId: "movement.wheels@1" },
+    { slot: "power", moduleId: "power.battery@1" },
   ],
 };
 const ENEMY: LoadoutInput = {
@@ -155,8 +171,10 @@ class Exerciser implements BotAgent {
       move: { throttle, steer },
       turret: { targetHeading: Math.sin(d * 0.15) * 2.5 },
       fire: ["turret_main"],
-      // Minas al final del avance: quedan en la línea y=40, entre E (que retrocede) y X.
-      ...(d >= 12 && d < 40 ? { deployMine: { slot: "mine_bay" } } : {}),
+      // Minas desde el final del avance: la primera queda en la línea y=40, entre E (que
+      // retrocede) y X; el resto, donde E se detiene. La ventana (decisiones 12-119) da para
+      // más de una siembra con el enfriamiento real, así que cargas y enfriamiento cuentan.
+      ...(d >= 12 && d < 120 ? { deployMine: { slot: "mine_bay" } } : {}),
       radio: [{ slot: "radio_a", data: b64(`probe-${String(d).padStart(10, "0")}`) }],
     };
   }
@@ -271,6 +289,7 @@ export function probeTrace(catalog: ModuleDefinition[], testedRef: string, loado
     { team: "red", position: { x: 20, y: 40 }, heading: 0 },
     { team: "red", position: { x: 20, y: 70 }, heading: 0 },
     { team: "blue", position: { x: 100, y: 40 }, heading: Math.PI },
+    { team: "blue", position: { x: 117, y: 44 }, heading: Math.PI },
   ];
   const rec = new Recorder();
   const battle = new Battle({
@@ -282,6 +301,7 @@ export function probeTrace(catalog: ModuleDefinition[], testedRef: string, loado
       { id: "veh_1", botId: "bE", team: "red", spec: resolveVehicle(loadout ?? loadoutWith(tested, catalog), catalog) },
       { id: "veh_2", botId: "bA", team: "red", spec: resolveVehicle(ALLY, catalog) },
       { id: "veh_3", botId: "bX", team: "blue", spec: resolveVehicle(ENEMY, catalog) },
+      { id: "veh_4", botId: "bW", team: "blue", spec: resolveVehicle(WALL_SITTER, catalog) },
     ],
   });
   const chaser = new Chaser("bX", rec);
@@ -289,6 +309,7 @@ export function probeTrace(catalog: ModuleDefinition[], testedRef: string, loado
   battle.attachBot("veh_1", new Exerciser("bE", rec));
   battle.attachBot("veh_2", new Listener("bA", "A", rec));
   battle.attachBot("veh_3", chaser);
+  battle.attachBot("veh_4", new Listener("bW", "W", rec));
   try {
     for (let i = 0; i < PROBE_TICKS; i++) {
       battle.step();
