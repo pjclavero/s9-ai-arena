@@ -220,7 +220,7 @@ describe("FIX-BROADCAST · en directo: qué se está emitiendo", () => {
       streamer: { state: "recording", desired: true, lastError: null, restarts: 0 },
     });
 
-  it("sesión sobre el torneo «prueba»: «Emitiendo: Torneo "prueba" (terminado, 0 en curso)» y el motivo", async () => {
+  it('sesión sobre el torneo «prueba»: «Emitiendo: Torneo "prueba" (terminado, 0 en curso)» y el motivo', async () => {
     state = live({ kind: "tournament", id: T_ID });
     render(<StreamingPage me={ME} route="#/streaming" />);
     expect((await screen.findByTestId("live-target-text")).textContent).toBe(
