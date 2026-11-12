@@ -63,12 +63,14 @@ function runBattle(seed: string, extra: Partial<BattleConfig> = {}) {
  * Valores anteriores: final 698a73c6…c78f, primeros 2f1afefc…/cab1982f…/42226433….
  */
 // OLA2-MD · regenerado: hash v2 por componentes + flujos RNG con nombre (cambian las tiradas).
-const PRE_N2_FINAL_HASH = "e559098fc00b47892e767caec3610406a141669074831b7e8c967e981e8737ce";
+// Integración OLA2 (M0-I, MD+MB) · regenerado: contrato de daño de MB (orden por slot, hp del blindaje =
+// hp del módulo, turretHeading normalizado, armor.profile en el estado). MD: final e559098f….
+const PRE_N2_FINAL_HASH = "22b1365aab9a8345fb1548dd7e38c95e59df187e9244319e7f5670a2da756620";
 const PRE_N2_HASH_COUNT = 20;
 const PRE_N2_FIRST_HASHES = [
-  "360a3a3507e41befd5b9003a666dbf49a1772efb94af19a1e57d44ac292ffda8",
-  "7fba406d5dfcfb295a644fa22e49ac58763fd98de82002d9ff4351b6073c7687",
-  "2bd952d07b7c2887576521bbecaa398b30a01a1ec87fb8136370684a1a90e2f1",
+  "27cc106b8478e59ff2031b83d33bc30900d6c7652e39e02bc04c99512454bd0e",
+  "41657ca974f7f12f9f5812083d5387688cd7020510f8b36220064c04f9cfe51f",
+  "5015b0109c5a49f5619e7a4a3fac0037b294074a3c17d673735d1d87f101ec86",
 ];
 
 describe("N2 · latencia simulada — garantía de cero regresión (latencia OFF)", () => {

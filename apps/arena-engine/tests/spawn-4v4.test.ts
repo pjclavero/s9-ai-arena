@@ -315,6 +315,8 @@ describe("Respawn TDM · nunca encima de un vehículo", () => {
   });
 });
 
-// OLA2-MD · regenerado: hash v2 por componentes + flujos RNG con nombre (cambian las tiradas).
-const GOLDEN_1V1_HASH_E902B0A = "aa0577c3befc46ed2e6cd83647e91445ab92eadb6d03c762ff762a13c9c3acb2";
-const GOLDEN_1V1_REALMAP_HASH_E902B0A = "e48fb9238677bbf02d42027338edcfa476095ccc8d17242df449becd763b30a7";
+// RE-ANCLADO en la integración OLA2 (M0-I, MD+MB): hash v2 por componentes + flujos RNG con nombre (MD)
+// y contrato de daño de MB (orden por slot, hp del blindaje = hp del módulo, turretHeading normalizado,
+// armor.profile en el estado del vehículo). Atribución: m0-atribucion.py (INTEGRACION.md).
+const GOLDEN_1V1_HASH_E902B0A = "2fec122af7cb6cae1add29e13e777ae1cf8ed5ce88a8f3a7a4a0a64a9b1c9f52";
+const GOLDEN_1V1_REALMAP_HASH_E902B0A = "43f0f3b9cc7b6240dc03ffdc89d44b94fb516d75ebe0d7025e0fc0176b301a3e";

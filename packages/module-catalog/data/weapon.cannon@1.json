@@ -15,7 +15,5 @@
   "spreadRad": 0.01,
   "rangeM": 60,
   "acceptsAmmo": ["ammo.ap", "ammo.he"],
-  "turretArcRad": 6.2832,
-  "turretRateRads": 1.0,
   "maxPerVehicle": 1
 }

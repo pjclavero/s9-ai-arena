@@ -106,7 +106,6 @@ const COLUMNS: Record<ModuleCategory, string[]> = {
     "cooldownTicks",
     "projectileSpeedMs",
     "spreadRad",
-    "turretRateRads",
     "power.perActionEU",
     "massKg",
     "costCredits",
@@ -165,7 +164,10 @@ function slotsTable(chassis: ModuleDefinition[]): string {
     "|---|---|",
   ];
   for (const c of chassis) {
-    const slots = (c.slots ?? []).map((s) => `${slotName(s.id)} (${s.maxSize})`).join(" · ");
+    // D-B2 · la torreta gira según la MONTURA de la ranura del chasis, no según el arma.
+    const slots = (c.slots ?? [])
+      .map((s) => `${slotName(s.id)} (${s.maxSize}${s.mount ? `, torreta ${num(s.mount.turretRateRads)} rad/s` : ""})`)
+      .join(" · ");
     lines.push(`| ${displayName(c, ALL)} | ${slots} |`);
   }
   return lines.join("\n");
@@ -174,7 +176,6 @@ function slotsTable(chassis: ModuleDefinition[]): string {
 /** Qué decir al jugador de cada dato sin efecto (el texto técnico de effect-status.ts no es para jugadores). */
 const FUTURE_NOTE: Record<string, string> = {
   "weapon.rangeM": "el alcance real lo marca cuánto tiempo vive el proyectil en vuelo, no este dato.",
-  "weapon.turretArcRad": "todas las torretas giran 360°, no hay límite de arco.",
   "radio.rangeM": "la radio no tiene alcance: llega a cualquier distancia.",
   "movement.terrain": "el terreno no influye en la velocidad.",
 };

@@ -49,15 +49,21 @@ function runFor(b: Battle, ticks: number) {
   for (let t = 0; t < ticks && !b.isFinished(); t++) b.step();
 }
 
-// Medidos con el motor de 9aaad79 (`.local/scratch/hashes.ts` sobre `git archive origin/main`).
-// OLA2-MD · regenerado: hash v2 por componentes + flujos RNG con nombre (cambian las tiradas).
+// Anclas de 9aaad79 (`.local/scratch/hashes.ts` sobre `git archive origin/main`), RE-ANCLADAS en OLA2-MB
+// con los valores medidos en 741a2a7: las cambian (a) el orden por slot de los candidatos de módulo,
+// (b) el hp del blindaje (= hp del módulo) y (c) la normalización de turretHeading. Con las tres
+// revertidas vuelven EXACTAMENTE los hashes de 9aaad79 (experimento mb-atribucion.py).
+// RE-ANCLADAS otra vez en la integración OLA2 (M0-I, MD+MB): hash v2 por componentes + flujos RNG con
+// nombre (MD) + las causas a/b/c de MB + armor.profile en el estado. Con a/b/c revertidas, los ticks
+// vuelven a ser los de MD (778/2801/1084…) y sólo difiere el componente `vehicles` (armor.profile).
+// tdm_4v4_norespawn llega ahora al límite de tiempo (6000) en vez de acabar por eliminación.
 const HASHES_9AAAD79 = {
-  dm_1v1: { hash: "e6791b5202344a1e11f6904bc032ac8610f231e8a708783567e90f4369d91a6b", tick: 778 },
-  tdm_1v1: { hash: "31ee1e06a3892825503429f79d0c0eae65a56843f0bd70e9c14535c938865ef8", tick: 3000 },
-  tdm_2v2: { hash: "91096c98fbddc5f4487c517f2577b9b25a182f544273a38ec6d297aed674e12f", tick: 3000 },
-  tdm_4v4: { hash: "55772780b56044bdb69c161b1102ab64c8dbb7994e3b9c7bdbf0d0aff9763aba", tick: 2801 },
-  tdm_4v4_norespawn: { hash: "d8d40bbfb94bd6b00fd488d5a602fe2edd10ea81a9f91f74909626c6b2c17bb9", tick: 1084 },
-  ctf_1v1: { hash: "0e7f385f06e6edf9aa60f0ca15ecc6616d02f641de44ea7b6ecffdc3a1f1cb88", tick: 2000 },
+  dm_1v1: { hash: "7b1b74e3c8b05e4e87aef8b56b10c44f4dc4139a6b4f94218448c802b226161f", tick: 469 },
+  tdm_1v1: { hash: "df7b19ab8c88a3e1da243c93d76c837fc0ec0b06900259f4e92ead2f405c83f8", tick: 3000 },
+  tdm_2v2: { hash: "0af19ee467fcb2ff76059fcafb8e3010daa8ea9bfe80e1e0e9bca50d9d27a2a5", tick: 3000 },
+  tdm_4v4: { hash: "682cd1e9276a3ca00aa465efc44dfb842fe85b00778972208f2a37284d4eefbb", tick: 2371 },
+  tdm_4v4_norespawn: { hash: "86544a85f9a0ae80752970b3fcaafb18a9e8a6b2295059db6734b14574092b98", tick: 6000 },
+  ctf_1v1: { hash: "960c80cc76e70e3028d2bac75eaa30df4db63da3ce7215e39357dbda2d1e4578", tick: 2000 },
 };
 
 describe("regresión · configuraciones existentes = hash de 9aaad79", () => {
@@ -146,14 +152,35 @@ describe("respawn limitado", () => {
   });
 
   it("2v2 con 1 respawn: la batalla no acaba mientras un bando conserve vidas, y acaba al agotarlas", () => {
-    // OLA2-MD · con los flujos RNG v2 la semilla común lleva este 2v2 a tablas técnicas
-    // (no termina en 40 000 ticks); el escenario necesita una que acabe por eliminación.
-    const b = battle(limited(1), roster(2), emptyArena(), "hunter", SEED_2V2_ELIM);
-    runFor(b, 40_000);
+    // Termina POR CONSTRUCCIÓN: rojo caza, azul está inmóvil (IdleBot) y rojo parte con munición
+    // sobrada. Diagnóstico (MB, VM112): con la dotación de serie, el artillero rojo gasta sus 40 AP
+    // hacia el tick 1392 y la munición SÓLO se repone al reaparecer (regla de juego, no hay
+    // reabastecimiento de supervivientes), y el explorador rojo no lleva radar (HunterBot nunca ve
+    // contactos): el combate se estanca con azul vivo. Eso es idéntico en f07ff6f (previo a MB).
+    // Aquí la munición no es el factor: el resultado no depende de la trayectoria ni del RNG.
+    const parts = roster(2);
+    const b = new Battle({
+      battleId: "rr",
+      seed: "rules-seed",
+      ruleset: limited(1),
+      map: emptyArena(),
+      participants: parts,
+      recordReplay: true,
+    });
+    for (const p of parts) b.attachBot(p.id, p.team === "red" ? new HunterBot(p.botId) : new IdleBot(p.botId));
+    for (const v of b.getVehicles().filter((x) => x.team === "red"))
+      for (const a of v.modulesOf("ammo")) a.ammo = 100_000;
+    const blue = () => b.getVehicles().filter((v) => v.team === "blue");
+    for (let t = 0; t < 40_000 && !b.isFinished(); t++) {
+      b.step();
+      // Invariante de vidas: mientras la batalla siga, algún azul vive o aún tiene un respawn por gastar.
+      if (!b.isFinished()) expect(blue().some((v) => v.alive || v.respawnsUsed < 1)).toBe(true);
+    }
+    expect(b.isFinished()).toBe(true);
     const r = b.getResult()!;
-    expect(r.winner).not.toBe("draw");
-    const losers = b.getVehicles().filter((v) => v.team !== r.winner);
-    for (const v of losers) {
+    expect(r.ticks).toBeLessThan(40_000); // eliminación, no tiempo
+    expect(r.winner).toBe("red");
+    for (const v of blue()) {
       expect(v.alive).toBe(false);
       expect(v.respawnsUsed).toBe(1);
     }
@@ -161,7 +188,13 @@ describe("respawn limitado", () => {
       eliminations(b)
         .map((e: any) => e.targetId)
         .sort(),
-    ).toEqual(expect.arrayContaining(losers.map((v) => v.id).sort()));
+    ).toEqual(
+      expect.arrayContaining(
+        blue()
+          .map((v) => v.id)
+          .sort(),
+      ),
+    );
     b.free();
   });
 

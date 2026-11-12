@@ -60,7 +60,7 @@ export const PROPERTY_EFFECTS: Record<ModuleCategory, Record<string, PropertyEff
     slots: p(
       "ACTIVE",
       true,
-      "Deciden qué puedes montar y el nombre de ranura que usas en los comandos (fire, deployMine).",
+      "Deciden qué puedes montar y el nombre de ranura que usas en los comandos (fire, deployMine). La ranura de arma lleva la MONTURA de torreta (mount: turretRateRads, turretArcRad): el giro y el arco son del chasis, no del arma.",
     ),
   },
   movement: {
@@ -86,11 +86,9 @@ export const PROPERTY_EFFECTS: Record<ModuleCategory, Record<string, PropertyEff
     cooldownTicks: p("ACTIVE", false, USED),
     projectileSpeedMs: p("ACTIVE", false, USED),
     spreadRad: p("ACTIVE", false, USED),
-    turretRateRads: p("ACTIVE", false, USED),
     acceptsAmmo: p("ACTIVE", true, USED),
     "power.perActionEU": p("ACTIVE", false, USED),
     rangeM: p("FUTURE", false, "El alcance real lo fija un TTL de proyectil de 90 ticks (combat.ts:198), no rangeM."),
-    turretArcRad: p("FUTURE", false, "Todos los módulos declaran 2π: la comprobación de arco nunca se activa."),
   },
   ammo: {
     damageMultiplier: p("ACTIVE", false, USED),

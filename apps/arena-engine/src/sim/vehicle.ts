@@ -18,7 +18,12 @@ import {
   type Sector,
 } from "../../../../packages/game-rules/index.js";
 import { clamp } from "./physics.js";
-import { emptyDict } from "../../../../packages/game-rules/safe-lookup.js";
+import { emptyDict, safeLookup } from "../../../../packages/game-rules/safe-lookup.js";
+import { normalizeAngle } from "../../../../packages/game-rules/damage-contract.js";
+import type { ArmorProfile, TurretMountDef } from "../../../../packages/module-catalog/contracts/engine-v2.js";
+
+/** Arco completo: a partir de aquí la montura no limita el giro. */
+const FULL_ARC = Math.PI * 2 - 1e-6;
 
 export type ModuleCategory =
   "movement" | "power" | "sensor" | "weapon" | "ammo" | "mine" | "armor" | "radio" | "utility";
@@ -52,8 +57,8 @@ export interface ModuleSpec {
   cooldownTicks?: number;
   projectileSpeedMs?: number;
   spreadRad?: number;
-  turretArcRad?: number;
-  turretRateRads?: number;
+  // D-B2 · la tasa y el arco de la torreta NO son del arma: son de la montura
+  // (VehicleSpec.turretMounts, por ranura del chasis).
   acceptsAmmo?: string[];
   // ammo
   rounds?: number;
@@ -78,6 +83,24 @@ export interface VehicleSpec {
   radiusM: number;
   massKg: number;
   modules: ModuleSpec[];
+  /**
+   * D-B2 · Monturas de torreta por RANURA del chasis (dato del chasis, público por diseño).
+   * Una ranura de arma sin montura no gira la torreta ni dispara fuera del frente.
+   */
+  turretMounts?: Record<string, TurretMountDef>;
+}
+
+/**
+ * Estado de un sector de blindaje. FUENTE ÚNICA: `hp` ES el hp del módulo de blindaje
+ * (ModuleRuntime de su ranura); no hay una segunda copia que pueda divergir.
+ */
+export interface ArmorSectorState {
+  readonly slot: string;
+  readonly hpMax: number;
+  readonly profile: ArmorProfile;
+  /** Compatibilidad de lectura: resistencia por defecto (`resist.default`). */
+  readonly reduction: number;
+  hp: number;
 }
 
 export interface ModuleRuntime {
@@ -121,22 +144,18 @@ export class Vehicle {
   juggernaut = false;
 
   /**
-   * Salud del blindaje por sector, en fracción 0..1. Sin blindaje = sin entrada.
+   * Blindaje por sector (hp ABSOLUTO del módulo de blindaje de ese sector; sin blindaje =
+   * sin entrada). Fuente única: cada entrada lee y escribe el `hp` del módulo.
    *
    * B8 (barrido, 2ª pasada) · `emptyDict()`, NO `{}`. Se rellena con
    * `this.armor[m.sector] = ...` y `m.sector` sale del CATÁLOGO de módulos
    * (JSON de datos, no código). Con `{}`, un `sector: "__proto__"` no crearía la
    * entrada: reemplazaría el prototipo del objeto, y a partir de ahí la lectura
-   * de CUALQUIER otro sector (`this.armor[s]`, línea ~322) heredaría ese
-   * blindaje. Además `armor` entra en el hash canónico de estado, así que el
-   * daño sería silencioso Y determinista-incompatible.
+   * de CUALQUIER otro sector (`this.armor[s]`) heredaría ese blindaje. Además
+   * `armor` entra en el hash canónico de estado, así que el daño sería silencioso Y
+   * determinista-incompatible.
    */
-  armor: Partial<Record<Sector, { hp: number; hpMax: number; reduction: number; slot: string }>> = emptyDict<{
-    hp: number;
-    hpMax: number;
-    reduction: number;
-    slot: string;
-  }>();
+  armor: Partial<Record<Sector, ArmorSectorState>> = emptyDict<ArmorSectorState>();
   modules = new Map<string, ModuleRuntime>();
 
   /** Contabilidad para timeouts y descalificación (D2). */
@@ -175,11 +194,23 @@ export class Vehicle {
         charges: m.charges ?? 0,
       });
       if (m.category === "armor" && m.sector) {
+        const rt = this.modules.get(m.slot)!;
+        const reduction = m.reduction ?? 0;
+        const profile: ArmorProfile = Object.freeze({
+          resist: Object.freeze({ default: reduction }),
+          degradation: "binary" as const,
+        });
         this.armor[m.sector] = {
-          hp: m.hp,
-          hpMax: m.hp,
-          reduction: m.reduction ?? 0,
           slot: m.slot,
+          hpMax: m.hp,
+          profile,
+          reduction,
+          get hp() {
+            return rt.hp;
+          },
+          set hp(v: number) {
+            rt.hp = v;
+          },
         };
       }
     }
@@ -280,18 +311,78 @@ export class Vehicle {
     };
   }
 
+  /** D-B2 · Montura de la ranura (dato del chasis). Lectura segura frente a `__proto__`. */
+  mountOf(slot: string): TurretMountDef | undefined {
+    const mounts = this.spec.turretMounts;
+    return mounts ? safeLookup(mounts, slot) : undefined;
+  }
+
   /**
    * ¿Puede girar la torreta? Es INDEPENDIENTE del movimiento: un vehículo con las
    * orugas destruidas sigue girando la torreta y disparando (criterio de T2.3).
+   * La tasa es la de la MONTURA de cada arma activa (D-B2), degradada por el estado del
+   * arma; manda la mejor.
    */
   turretRate(): number {
-    const weapons = this.activeModulesOf("weapon");
-    if (weapons.length === 0) return 0;
     let rate = 0;
-    for (const w of weapons) {
-      rate = Math.max(rate, (w.spec.turretRateRads ?? 0) * this.performanceOf(w.spec.slot));
+    for (const w of this.activeModulesOf("weapon")) {
+      const mount = this.mountOf(w.spec.slot);
+      if (!mount) continue;
+      rate = Math.max(rate, mount.turretRateRads * this.performanceOf(w.spec.slot));
     }
     return rate;
+  }
+
+  /**
+   * Arco de giro de la torreta respecto al morro (rad, centrado). Una sola torreta lleva
+   * todas las armas: manda la montura MÁS restrictiva entre las armas activas. Sin armas
+   * activas, la torreta no gira (tasa 0) y el arco es irrelevante: se devuelve 2π.
+   */
+  turretArc(): number {
+    let arc = Math.PI * 2;
+    for (const w of this.activeModulesOf("weapon")) {
+      arc = Math.min(arc, this.mountArcOf(w.spec.slot));
+    }
+    return arc;
+  }
+
+  /** Arco de la montura de una ranura de arma; sin montura = 0 (sólo el frente exacto). */
+  mountArcOf(slot: string): number {
+    return this.mountOf(slot)?.turretArcRad ?? 0;
+  }
+
+  /**
+   * Un tick de torreta: gira hacia el objetivo limitado por la tasa de la montura y, si
+   * el arco no es completo, LIMITA EL GIRO al arco (antes sólo se comprobaba al
+   * disparar). El ángulo queda normalizado a (−π, π].
+   */
+  stepTurret(dt: number): void {
+    const rate = this.turretRate();
+    const arc = this.turretArc();
+    const limited = arc < FULL_ARC;
+    const half = arc / 2;
+    if (limited) {
+      // En el marco del casco, el arco es un intervalo contiguo [−half, half]: se mueve
+      // sin envolver para no cruzar nunca la zona prohibida.
+      let rel = clamp(normalizeAngle(this.turretHeading - this.heading), -half, half);
+      if (this.lastTurretTarget != null && rate > 0) {
+        const want = clamp(normalizeAngle(this.lastTurretTarget - this.heading), -half, half);
+        const maxStep = rate * dt;
+        rel += clamp(want - rel, -maxStep, maxStep);
+      }
+      this.turretHeading = normalizeAngle(this.heading + rel);
+      return;
+    }
+    if (this.lastTurretTarget != null && rate > 0) {
+      // Mismo envolvimiento que el bucle histórico ([−π, π]): conserva el sentido de giro
+      // en el empate exacto de ±π (caracterización).
+      let diff = this.lastTurretTarget - this.turretHeading;
+      while (diff > Math.PI) diff -= 2 * Math.PI;
+      while (diff < -Math.PI) diff += 2 * Math.PI;
+      const maxStep = rate * dt;
+      this.turretHeading += clamp(diff, -maxStep, maxStep);
+    }
+    this.turretHeading = normalizeAngle(this.turretHeading);
   }
 
   // -------------------------------------------------------------- apagar/encender

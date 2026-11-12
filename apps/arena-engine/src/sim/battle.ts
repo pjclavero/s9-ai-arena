@@ -21,16 +21,7 @@ import {
 import { RngStreams } from "../rng.js";
 import { computeStateHash, type StateHashBreakdown } from "./state-hash.js";
 import deps from "../engine-deps.json" with { type: "json" };
-import {
-  applyDamage,
-  canDeployMine,
-  canFire,
-  deployMine,
-  explosionFalloff,
-  fire,
-  type Mine,
-  type Projectile,
-} from "./combat.js";
+import { canDeployMine, canFire, deployMine, explosionFalloff, fire, type Mine, type Projectile } from "./combat.js";
 import { ARENA_BOUNDARY_ID_PREFIX } from "../arena-map.js";
 import {
   TECHNICAL_LIMIT,
@@ -44,10 +35,17 @@ import {
   type GameMode,
   type SpawnDisk,
 } from "./modes.js";
-import { PhysicsWorld, clamp, finite, finiteClamped, initPhysics, type Vec2 } from "./physics.js";
+import { PhysicsWorld, finite, finiteClamped, initPhysics, type Vec2 } from "./physics.js";
 import { captureInternalFrame } from "./internal-frame.js";
 import { buildObservation, radioReaches, validateRadio, type RadioMessage } from "./sensors.js";
 import { Vehicle, type VehicleSpec } from "./vehicle.js";
+import { resolveDamage, type EngineDamageRecord, type EnginePacket } from "./damage.js";
+import {
+  DEFAULT_DIRECT_DAMAGE_TYPE,
+  DEFAULT_EXPLOSION_DAMAGE_TYPE,
+  ZONE_DAMAGE_TYPE,
+} from "../../../../packages/game-rules/damage-contract.js";
+import type { DamageSourceKind } from "../../../../packages/module-catalog/contracts/engine-v2.js";
 
 const MAX_MINES_PER_VEHICLE = 3;
 /**
@@ -177,6 +175,12 @@ export class Battle {
   private destructibleHp = new Map<string, number>();
 
   private entitySeq = 0;
+  /**
+   * OLA 2 · MB · Registros EXACTOS de daño del tick en curso (INTERNAL_DAMAGE_STATE), en
+   * orden de resolución. Derivados: no entran en el hash ni en el replay; los consume la
+   * etapa interna (captureInternalFrame, MA) y el damageLog derivado (MD).
+   */
+  private tickDamage: EngineDamageRecord[] = [];
   tick = 0;
   private finished = false;
   private result: BattleResult | null = null;
@@ -514,15 +518,8 @@ export class Battle {
         this.physics.driveVehicle(v.id, 0, 0, { maxSpeedMs: 0, accelerationMs2: 100, turnRateRads: 0 });
       }
 
-      // Giro de torreta hacia el objetivo, limitado por la velocidad del módulo.
-      const rate = v.turretRate();
-      if (v.lastTurretTarget != null && rate > 0) {
-        let diff = v.lastTurretTarget - v.turretHeading;
-        while (diff > Math.PI) diff -= 2 * Math.PI;
-        while (diff < -Math.PI) diff += 2 * Math.PI;
-        const maxStep = rate * TICK_DT;
-        v.turretHeading += clamp(diff, -maxStep, maxStep);
-      }
+      // Giro de torreta hacia el objetivo: tasa y arco de la MONTURA (D-B2), en vehicle.ts.
+      v.stepTurret(TICK_DT);
     }
     this.physics.step();
     // Perímetro DURO (UX-07): el muro implícito para el movimiento; esta corrección
@@ -541,6 +538,7 @@ export class Battle {
     }
 
     // --- PASO 5 · Combate: disparos, proyectiles, minas, explosiones, daño
+    this.tickDamage = [];
     this.resolveFiring(commands, posesAfter);
     this.resolveProjectiles(posesAfter);
     this.resolveMines(posesAfter);
@@ -704,6 +702,9 @@ export class Battle {
 
       if (hit && hit.entityId) {
         const impact = hit.point;
+        // D-B6 · el vehículo impactado directamente recibe el impacto directo y queda
+        // EXCLUIDO de la onda de su propio proyectil: un paquete por vehículo y detonación.
+        let directTarget: string | null = null;
         const target = this.vehicles.find((v) => v.id === hit.entityId);
 
         if (target) {
@@ -713,7 +714,17 @@ export class Battle {
             survivors.push({ ...p, position: to, ttlTicks: p.ttlTicks - 1 });
             continue;
           }
-          this.damageVehicle(target, p.damage, impact, poses, p.ownerId, p.team);
+          directTarget = target.id;
+          this.damageVehicle(
+            target,
+            p.damage,
+            impact,
+            poses,
+            p.ownerId,
+            p.team,
+            DEFAULT_DIRECT_DAMAGE_TYPE,
+            "projectile",
+          );
         } else if (this.destructibleHp.has(hit.entityId)) {
           const hp = (this.destructibleHp.get(hit.entityId) ?? 0) - p.damage;
           this.destructibleHp.set(hit.entityId, hp);
@@ -724,7 +735,9 @@ export class Battle {
           }
         }
 
-        if (p.explosionRadiusM > 0) this.explode(impact, p.damage, p.explosionRadiusM, poses, p.ownerId, p.team);
+        if (p.explosionRadiusM > 0) {
+          this.explode(impact, p.damage, p.explosionRadiusM, poses, p.ownerId, p.team, "explosion", directTarget);
+        }
         this.sounds.push({ position: impact, kind: "explosion", intensity: 1 });
         continue; // el proyectil muere al impactar
       }
@@ -763,7 +776,7 @@ export class Battle {
 
       if (triggered) {
         this.emit({ kind: "mine_triggered", position: m.position });
-        this.explode(m.position, m.damage, m.explosionRadiusM, poses, m.ownerId, m.team);
+        this.explode(m.position, m.damage, m.explosionRadiusM, poses, m.ownerId, m.team, "deployable", null);
         this.sounds.push({ position: m.position, kind: "explosion", intensity: 1 });
       } else {
         survivors.push(m);
@@ -779,9 +792,12 @@ export class Battle {
     poses: Map<string, any>,
     ownerId: string,
     team: string,
+    sourceKind: DamageSourceKind,
+    excludeId: string | null,
   ): void {
     for (const v of this.vehicles) {
       if (!v.alive || v.disqualified) continue;
+      if (v.id === excludeId) continue;
       if (v.team === team && !this.config.ruleset.friendlyFire) continue;
       const p = poses.get(v.id);
       if (!p) continue;
@@ -790,7 +806,7 @@ export class Battle {
       if (f <= 0) continue;
       // Una explosión no atraviesa muros.
       if (!this.physics.hasLineOfSight(center, p.position)) continue;
-      this.damageVehicle(v, damage * f, center, poses, ownerId, team);
+      this.damageVehicle(v, damage * f, center, poses, ownerId, team, DEFAULT_EXPLOSION_DAMAGE_TYPE, sourceKind);
     }
   }
 
@@ -804,49 +820,61 @@ export class Battle {
         const p = poses.get(v.id);
         if (!p) continue;
         if (Math.hypot(p.position.x - z.position.x, p.position.y - z.position.y) > z.radiusM) continue;
-        // El daño ambiental va directo al chasis: no hay blindaje contra el ácido.
-        v.hullHp = Math.max(0, v.hullHp - dps * TICK_DT);
-        if (v.hullHp <= 0 && v.alive) {
-          v.alive = false;
-          this.emit({ kind: "vehicle_destroyed", targetId: v.id });
-          this.mode.onKill?.(v, null, {
-            tick: this.tick,
-            ruleset: this.config.ruleset,
-            vehicles: this.vehicles,
-            poses,
-            map: this.config.map,
-            emit: (e: any) => this.emit(e),
-          });
-          this.noteElimination(v);
-        }
+        // El daño ambiental va directo al chasis (perfil `environmental`: sin blindaje,
+        // sin sector, sin módulo, sin RNG), pero por la MISMA puerta que el resto.
+        this.damageVehicle(v, dps * TICK_DT, z.position, poses, null, null, ZONE_DAMAGE_TYPE, "zone");
       }
     }
   }
 
+  /**
+   * ÚNICA puerta de daño de vehículo del bucle: construye el DamagePacket, lo resuelve
+   * (damage.ts) y emite los eventos. Muerte y onKill en UN solo sitio, sea cual sea el
+   * origen. La firma posicional (target, amount, from, poses, ownerId, ownerTeam, …) se
+   * conserva: replay.ts (resimulateWithEvents) lee `ownerId` en la posición 4.
+   */
   private damageVehicle(
     target: Vehicle,
-    damage: number,
+    amount: number,
     from: Vec2,
     poses: Map<string, any>,
-    ownerId: string,
-    ownerTeam: string,
+    ownerId: string | null,
+    ownerTeam: string | null,
+    type: EnginePacket["type"] = DEFAULT_DIRECT_DAMAGE_TYPE,
+    sourceKind: DamageSourceKind = "projectile",
   ): void {
+    const packet: EnginePacket = {
+      amount,
+      type,
+      penetration: 0,
+      from,
+      owner: ownerId,
+      ownerTeam,
+      sourceKind,
+      seq: this.tickDamage.length,
+    };
     const tp = poses.get(target.id)!;
-    const res = applyDamage(target, damage, from, tp.position, tp.heading, this.rng.stream("combat"));
+    // Integración OLA2 (MD+MB): el sector del impacto se sortea del flujo RNG con nombre "combat"
+    // (el mismo que usaba applyDamage en MD).
+    const res = resolveDamage(packet, target, tp, this.rng.stream("combat"), this.tick);
+    this.tickDamage.push(res);
 
-    // El objetivo SIEMPRE sabe que le han dado y en qué sector: lo nota.
-    // Pero el sourceId solo se revela si podía verlo (D8): un disparo desde la niebla
-    // te hiere sin decirte quién ha sido.
-    const canSee = this.physics.hasLineOfSight(tp.position, from, target.id);
-    this.emit(
-      {
-        kind: "hit_taken",
-        sector: res.sector,
-        damage: round6(res.effectiveDamage),
-        ...(canSee ? { sourceId: ownerId } : {}),
-      },
-      target.id,
-    );
+    // Daño ambiental (sin atacante): sin hit_taken ni hit_dealt, como siempre.
+    if (ownerId !== null) {
+      // El objetivo SIEMPRE sabe que le han dado y en qué sector: lo nota.
+      // Pero el sourceId solo se revela si podía verlo (D8): un disparo desde la niebla
+      // te hiere sin decirte quién ha sido.
+      const canSee = this.physics.hasLineOfSight(tp.position, packet.from, target.id);
+      this.emit(
+        {
+          kind: "hit_taken",
+          sector: res.sector,
+          damage: round6(res.effective),
+          ...(canSee ? { sourceId: ownerId } : {}),
+        },
+        target.id,
+      );
+    }
 
     if (res.moduleSlot && res.moduleDestroyed) {
       this.emit(
@@ -856,13 +884,16 @@ export class Battle {
     }
 
     // El atacante sabe que ha acertado (ve el impacto).
-    const attacker = this.vehicles.find((v) => v.id === ownerId);
+    // DEPENDENCIA MD (arena/2): `damage` exacto → `impact` (impactClassOf en damage-contract).
+    const attacker = ownerId !== null ? this.vehicles.find((v) => v.id === ownerId) : undefined;
     if (attacker) {
-      this.emit({ kind: "hit_dealt", targetId: target.id, damage: round6(res.effectiveDamage) }, attacker.id);
+      this.emit({ kind: "hit_dealt", targetId: target.id, damage: round6(res.effective) }, attacker.id);
     }
 
     if (res.killed) {
-      if (ownerTeam !== target.team) this.teamKills[ownerTeam] = (this.teamKills[ownerTeam] ?? 0) + 1;
+      if (ownerTeam !== null && ownerTeam !== target.team) {
+        this.teamKills[ownerTeam] = (this.teamKills[ownerTeam] ?? 0) + 1;
+      }
       this.emit({ kind: "vehicle_destroyed", targetId: target.id });
       this.mode.onKill?.(target, ownerTeam, {
         tick: this.tick,
@@ -874,6 +905,11 @@ export class Battle {
       });
       this.noteElimination(target);
     }
+  }
+
+  /** OLA 2 · MB · Registros exactos de daño del último tick (INTERNOS; para la etapa interna). */
+  damageRecordsOfLastTick(): readonly EngineDamageRecord[] {
+    return this.tickDamage;
   }
 
   /**
