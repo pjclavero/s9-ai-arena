@@ -188,6 +188,14 @@ describe("BROADCAST-PUBLIC-ACCESS · nginx de web enruta /api/v1 y /ws como el g
     checkWebConf(webSrc, gwSrc);
   });
 
+  it("el index.html (destino del fallback de SPA) se sirve con Cache-Control: no-cache", () => {
+    const web = serverOn(parseNginx(webSrc), "3000");
+    const idx = resolveLocation(web, "/index.html")!;
+    expect(idx.args).toEqual(["=", "/index.html"]);
+    const cc = directive(idx, "add_header").find((d) => d[1]?.toLowerCase() === "cache-control");
+    expect(cc?.[2]).toMatch(/no-cache|no-store/);
+  });
+
   it("CALIBRACIÓN · la conf anterior (sólo estáticos + SPA) se pone ROJA", () => {
     // La conf de RC9 7bddda9, reducida a su forma: sin las location de proxy.
     const before = `server {
