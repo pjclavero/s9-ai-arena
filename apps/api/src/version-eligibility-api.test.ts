@@ -266,13 +266,15 @@ describe("H14.10 · autorización", () => {
     expect(vs.status).toBe(404);
   });
 
-  it("bot PÚBLICO ajeno: el motivo sólo repite lo que ya es legible (su loadout)", async () => {
+  it("bot PÚBLICO ajeno: el loadout es privado (404) y la elegibilidad sólo da el veredicto, sin módulos", async () => {
     const vs = await request(app).get(`/bots/${alienPub}/versions`).set(as(devTok));
     expect(vs.status).toBe(200);
     expect(vs.body[0].battleEligibility.eligible).toBe(false);
+    // OLA 2 · EQUIPMENT_PRIVATE: sin detalle de módulos para quien no es dueño ni staff
+    expect(vs.body[0].battleEligibility.violations).toEqual([]);
+    expect(JSON.stringify(vs.body)).not.toContain("ammo.standard@1");
     const loadouts = await request(app).get(`/bots/${alienPub}/loadouts`).set(as(devTok));
-    expect(loadouts.status).toBe(200);
-    expect(JSON.stringify(loadouts.body)).toContain("ammo.standard@1");
+    expect(loadouts.status).toBe(404);
   });
 
   it("el inventario es sólo admin: anónimo 401, usuario/organizador 403", async () => {
@@ -485,7 +487,7 @@ describe("ELIG-REVIEW P1 · fallo cerrado con ids en otra forma", () => {
 });
 
 describe("ELIG-REVIEW P2 · detalle sólo para quien puede leer el loadout", () => {
-  it("anónimo: veredicto sin message ni violations; con sesión, el detalle", async () => {
+  it("anónimo y tercero con sesión: veredicto sin message ni violations; el dueño y el staff, el detalle (OLA 2)", async () => {
     const anon = await request(app).get(`/bots/${alienPub}/versions`);
     expect(anon.status).toBe(200);
     expect(anon.body[0].battleEligibility).toEqual({
@@ -498,8 +500,15 @@ describe("ELIG-REVIEW P2 · detalle sólo para quien puede leer el loadout", () 
     expect((await request(app).get(`/bots/${alienPub}/loadouts`)).status).toBe(401);
     const one = await request(app).get(`/bots/${alienPub}/versions/1`);
     expect(JSON.stringify(one.body)).not.toMatch(/weapon\.|ammo\./);
-    const logged = await request(app).get(`/bots/${alienPub}/versions`).set(as(devTok));
-    expect(logged.body[0].battleEligibility.message).toContain("ammo.standard@1");
+    // OLA 2 · EQUIPMENT_PRIVATE: el loadout es privado también para un bot público, así que un
+    // tercero con sesión tampoco ve los módulos implicados; sólo el dueño (alien-pub es de userTok) y el staff.
+    const third = await request(app).get(`/bots/${alienPub}/versions`).set(as(devTok));
+    expect(third.body[0].battleEligibility.violations).toEqual([]);
+    expect(JSON.stringify(third.body)).not.toMatch(/weapon\.|ammo\.|chassis\./);
+    const owner = await request(app).get(`/bots/${alienPub}/versions`).set(as(userTok));
+    expect(owner.body[0].battleEligibility.message).toContain("ammo.standard@1");
+    const staff = await request(app).get(`/bots/${alienPub}/versions`).set(as(adminTok));
+    expect(staff.body[0].battleEligibility.message).toContain("ammo.standard@1");
   });
 });
 

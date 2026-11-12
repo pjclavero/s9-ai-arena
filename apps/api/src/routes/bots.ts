@@ -9,7 +9,6 @@ import { defineOperation, defineExtension } from "../registry.js";
 import { pathParam } from "../params.js";
 import { ApiError, badRequest, conflict, forbidden, notFound } from "../errors.js";
 import { applyCursor, cursorTsSql, decodeCursor, encodeCursor, parseLimit, runCursorQuery } from "../serialize.js";
-import { ROLE_RANK } from "../openapi.js";
 import {
   applyTransition,
   assertLoadoutRevisionUsable,
@@ -56,8 +55,12 @@ export function botToJson(bot: Record<string, unknown>, latestPublished?: number
   };
 }
 
-/** ELIG · /loadouts exige rol user: sin él, la elegibilidad no detalla módulos. */
-const canReadLoadout = (auth: Auth) => !!auth && auth.rank >= ROLE_RANK.user;
+/**
+ * ELIG · OLA 2 (EQUIPMENT_PRIVATE): el loadout de un bot sólo lo lee su dueño y el staff
+ * (también si el bot es público), así que sólo ellos reciben la elegibilidad DETALLADA
+ * (módulos implicados); el resto, sólo el veredicto.
+ */
+const canReadLoadout = (auth: Auth, bot: Record<string, unknown>) => !!auth && (isBotOwner(auth, bot) || isStaff(auth));
 
 export function versionToJson(v: Record<string, unknown>) {
   return {
@@ -413,7 +416,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
   defineOperation(router, "listBotVersions", async (req, res) => {
     const bot = await getVisibleBot(db, req.auth, pathParam(req, "botId"));
     const versions = await db("bot_versions").where({ bot_id: bot.id }).orderBy("version", "asc");
-    const elig = await battleEligibilityOf(db, versions, { detailed: canReadLoadout(req.auth) }); // ELIG
+    const elig = await battleEligibilityOf(db, versions, { detailed: canReadLoadout(req.auth, bot) }); // ELIG
     res.json(versions.map((v) => ({ ...versionToJson(v), ...elig(v) })));
   });
 
@@ -505,7 +508,7 @@ export function botRoutes(db: Db, botManager: BotManagerClient, limiters?: BotBu
       .pluck("version");
     res.json({
       ...versionToJson(v),
-      ...(await battleEligibilityOf(db, [v], { detailed: canReadLoadout(req.auth) }))(v), // ELIG
+      ...(await battleEligibilityOf(db, [v], { detailed: canReadLoadout(req.auth, bot) }))(v), // ELIG
       ...(readable ? { sourceSha256: v.source_sha256 ?? undefined } : {}),
       canReadSource: readable,
       latestBuild: latest ? buildToJson(latest, { includeLogs }) : undefined,
