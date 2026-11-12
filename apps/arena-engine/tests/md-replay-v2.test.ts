@@ -467,6 +467,29 @@ describe("determinismo v2: misma semilla + mismos comandos ⇒ mismo hash y resu
     }
   });
 
+  it("latencia simulada: consume el flujo latency y NO desplaza combat", async () => {
+    const run = async (latency: boolean) => {
+      const b = await Battle.create({
+        ...cfg("md-seed-1"),
+        recordReplay: false,
+        ...(latency ? { simulatedLatency: { minCycles: 1, maxCycles: 3 } } : {}),
+      });
+      attachStubs(b);
+      while (!b.isFinished() && b.tick < 120) b.step();
+      const out = {
+        latency: (b as any).rng.stream("latency").getState(),
+        combat0: JSON.stringify((b as any).rng.stream("combat").getState()),
+      };
+      b.free();
+      return out;
+    };
+    const off = await run(false);
+    const on = await run(true);
+    expect(on.latency).not.toEqual(off.latency);
+    const fresh = new RngStreams("md-seed-1").stream("latency").getState();
+    expect(off.latency).toEqual(fresh);
+  });
+
   it("cambiar UN comando cambia el hash", () => {
     const ref = scripted("md-det");
     const t = scripted("md-det", { vehicle: "veh_2", tick: 60 });
