@@ -627,13 +627,15 @@ export class Battle {
     for (const v of this.vehicles) {
       if (!v.alive || v.disqualified) continue;
       const cmd = commands.get(v.id);
-      if (!cmd?.fire?.length || !Array.isArray(cmd.fire)) continue;
+      if (!cmd) continue;
+      const wantsFire = Array.isArray(cmd.fire) && cmd.fire.length > 0;
+      if (!wantsFire && !cmd.deployMine) continue; // minar no exige disparar en el mismo comando
       const pose = poses.get(v.id)!;
 
       // Sanea la lista de ranuras: solo strings, y sin repetidos (un bot que envía la
       // misma arma 100 veces no dispara 100 veces; la cadencia manda igualmente, pero
       // deduplicar evita gastar 100 tiradas del RNG y desplazar la secuencia).
-      const slots: string[] = [...new Set<string>(cmd.fire.filter((s: unknown): s is string => typeof s === "string"))];
+      const slots: string[] = !wantsFire ? [] : [...new Set<string>(cmd.fire.filter((s: unknown): s is string => typeof s === "string"))];
 
       for (const slot of slots) {
         const rejection = canFire(v, slot, this.tick, this.rng);
