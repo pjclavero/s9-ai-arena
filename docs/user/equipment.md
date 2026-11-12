@@ -46,6 +46,19 @@ Junto a cada ranura y a cada propiedad, el editor muestra una insignia:
 
 Al elegir una pieza, «Efecto real de cada propiedad» lista sus datos con su insignia. El catálogo declara datos que **todavía no hacen nada** (el alcance del arma, el alcance de la radio, el terreno, las utilidades): la [lista actualizada](equipment-catalog.md#datos-que-no-cambian-la-batalla) está al final del catálogo.
 
+## OLA 2: catálogo y combate (pendiente de integración)
+
+El hardening OLA 2 corrige varias diferencias entre catálogo y motor. Cuando se integre el conjunto:
+
+- `weapon.rangeM` será la fuente real del alcance del arma;
+- `radio.rangeM` tendrá efecto real;
+- los campos decorativos que no tenían implementación se retirarán del contrato en lugar de presentarse como funcionales;
+- la velocidad/arco de torreta dependerán de la montura;
+- el contrato de daño evitará aplicar dos veces el daño HE por accidente;
+- las minas quedarán cubiertas por el contrato corregido de despliegue.
+
+Hasta que pase `ENGINE_HARDENING_READY=PASS`, las tablas ACTIVE/PARTIAL/FUTURE de esta guía describen el comportamiento de `main`, no el de las ramas OLA 2.
+
 ## Presupuesto, peso y energía
 
 - **Presupuesto.** Cada pieza cuesta créditos y la suma no puede pasar del presupuesto de la batalla (1000 créditos en una práctica por defecto). Las reglas de un torneo o de una batalla personalizada pueden fijar otro, y ninguna pieza puede costar más del 35 % del presupuesto.
