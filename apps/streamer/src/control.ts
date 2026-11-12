@@ -317,7 +317,10 @@ export function createControlServer(opts: ControlOptions): Server {
         if (jpegBusy) return respond(429, { error: "decode_in_progress" });
         jpegBusy = true;
         const decode = opts.decodeJpeg ?? ((p: string) => decodeTapJpeg(opts.ffmpegBin ?? "ffmpeg", p));
-        void decode(found.flvPath)
+        // Promise.resolve().then: un `decode` que lance de forma síncrona acaba igualmente
+        // en el .finally que libera jpegBusy (nunca queda en 429 permanente).
+        void Promise.resolve()
+          .then(() => decode(found.flvPath))
           .then(
             (jpg) => {
               res.writeHead(200, {

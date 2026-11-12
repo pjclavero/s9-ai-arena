@@ -70,15 +70,61 @@ M = [
      "frameType === 1) {",
      "frameType >= 1) {",
      "trozos aleatorios"),
+    ("TAP-M13", "P2 el tap añade latencia al relé (busy-wait de 40 ms en observe)", TAP,
+     "      this.stats.bytesSeen += chunk.length;\n",
+     "      this.stats.bytesSeen += chunk.length;\n"
+     "      for (const t0 = Date.now(); Date.now() - t0 < 40;) { /* busy-wait */ }\n",
+     "p95 < 2 ms"),
+    ("TAP-M14", "P3 el tap observa ANTES de la pausa por backpressure", SUP,
+     "        if (!accepting) media.pause();\n"
+     "        // DIAG · el tap observa DESPUÉS del relé y de la pausa, y no decide nada: su\n"
+     "        // resultado no existe para el control de flujo (sólo `accepting` pausa a ffmpeg).\n"
+     "        if (tap) {\n"
+     "          try {\n"
+     "            tap.observe(chunk);\n"
+     "          } catch {\n"
+     "            /* observe() no lanza; defensa en profundidad: el relé nunca se entera */\n"
+     "          }\n"
+     "        }\n",
+     "        if (tap) {\n"
+     "          try {\n"
+     "            tap.observe(chunk);\n"
+     "          } catch {\n"
+     "            /* observe() no lanza; defensa en profundidad: el relé nunca se entera */\n"
+     "          }\n"
+     "        }\n"
+     "        if (!accepting) media.pause();\n",
+     "orden en el camino caliente"),
+    ("TAP-M15", "P3 el .flv queda huérfano si falla el .json", TAP,
+     "        await this.fs.unlink(join(dir, `${base}.flv`)).catch(() => {});\n",
+     "",
+     "sin huérfanos"),
+    ("TAP-M16", "P3 rotate cuenta rotatedFiles aunque unlink falle", TAP,
+     "          await this.fs.unlink(join(this.config.dir, name));\n          this.stats.rotatedFiles++;\n",
+     "          this.stats.rotatedFiles++;\n          await this.fs.unlink(join(this.config.dir, name));\n",
+     "rotate no cuenta"),
+    ("TAP-M17", "P3 jpegBusy se queda activo si decode lanza síncrono", "apps/streamer/src/control.ts",
+     "        void Promise.resolve()\n          .then(() => decode(found.flvPath))\n",
+     "        void decode(found.flvPath)\n",
+     "jpegBusy se libera"),
+    ("TAP-M18", "P3 flush() del temporizador sin try/catch", TAP,
+     "      try {\n        this.flush();\n      } catch {\n        // flush() no debería lanzar; si lo hiciera, nunca debe tumbar el proceso del streamer.\n        this.stats.writeErrors++;\n      }\n",
+     "      this.flush();\n",
+     "flush() lanzando desde el temporizador"),
 ]
+
+# Mutantes lentos por construcción (otros tests alimentan byte a byte): se ejecutan sólo
+# con el test que los debe matar, para que la muerte sea por ASERCIÓN y no por timeout.
+ONLY_TEST = {"TAP-M13": "P2 ·"}
 
 
 def sh(cmd):
     return subprocess.run(cmd, cwd=ROOT, shell=True, capture_output=True, text=True)
 
 
-def vitest():
-    r = sh(f"timeout 300 npx vitest run {TEST} 2>&1")
+def vitest(name_filter=None):
+    flt = f" -t '{name_filter}'" if name_filter else ""
+    r = sh(f"timeout 300 npx vitest run {TEST}{flt} 2>&1")
     out = re.sub(r"\x1b\[[0-9;]*m", "", r.stdout + r.stderr)
     m = re.search(r"Tests\s+(?:(\d+) failed \| )?(\d+) passed", out)
     return r.returncode, out, m.group(0) if m else None
@@ -121,11 +167,14 @@ for tag, guarantee, path, old, new, frag in M:
         continue
     open(p, "w").write(src.replace(old, new))
     try:
-        rc, out, line = vitest()
+        rc, out, line = vitest(ONLY_TEST.get(tag))
         open(f"/tmp/stream-tap-mut-{tag}.log", "w").write(out)
         red = rc != 0 and re.search(r"\d+ failed", out) is not None
         failed_lines = [l for l in out.splitlines() if "×" in l or "FAIL" in l]
         reason = any(frag in l for l in failed_lines)
+        by_assertion = "AssertionError" in out and "timed out" not in out and rc != 124
+        reason = reason and by_assertion
+        entry["by_assertion"] = by_assertion
         verdict = "ROJO-OK" if (red and reason) else ("ROJO-RAZON?" if red else "VERDE (mutante vivo)")
         if verdict != "ROJO-OK":
             fails += 1

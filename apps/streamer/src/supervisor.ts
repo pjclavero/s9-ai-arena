@@ -658,8 +658,10 @@ export class StreamSupervisor {
       tap?.beginStream();
       media.on("data", (chunk: Buffer) => {
         const accepting = publisher!.writeFlv(chunk);
-        // DIAG · el tap observa DESPUÉS del relé y no decide nada: su resultado no
-        // existe para el control de flujo (sólo `accepting` pausa a ffmpeg).
+        // La decisión de backpressure va ANTES que el tap: observar nunca la retrasa.
+        if (!accepting) media.pause();
+        // DIAG · el tap observa DESPUÉS del relé y de la pausa, y no decide nada: su
+        // resultado no existe para el control de flujo (sólo `accepting` pausa a ffmpeg).
         if (tap) {
           try {
             tap.observe(chunk);
@@ -667,7 +669,6 @@ export class StreamSupervisor {
             /* observe() no lanza; defensa en profundidad: el relé nunca se entera */
           }
         }
-        if (!accepting) media.pause();
       });
       media.on("error", () => {});
       publisher.on("drain", () => media.resume());

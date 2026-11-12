@@ -239,7 +239,14 @@ export class IngestTap {
         reason: (e as NodeJS.ErrnoException)?.code ?? "error",
       });
     }
-    this.timer = setInterval(() => this.flush(), this.config.intervalMs);
+    this.timer = setInterval(() => {
+      try {
+        this.flush();
+      } catch {
+        // flush() no debería lanzar; si lo hiciera, nunca debe tumbar el proceso del streamer.
+        this.stats.writeErrors++;
+      }
+    }, this.config.intervalMs);
     this.timer.unref?.();
   }
 
@@ -457,7 +464,14 @@ export class IngestTap {
     try {
       await this.fs.writeFile(join(dir, `${base}.flv.tmp`), flv);
       await this.fs.rename(join(dir, `${base}.flv.tmp`), join(dir, `${base}.flv`));
-      await this.fs.writeFile(join(dir, `${base}.json`), json);
+      try {
+        await this.fs.writeFile(join(dir, `${base}.json`), json);
+      } catch (e) {
+        // Sin .json no hay captura válida: no dejar el .flv huérfano fuera de `files`.
+        await this.fs.unlink(join(dir, `${base}.flv`)).catch(() => {});
+        await this.fs.unlink(join(dir, `${base}.json.tmp`)).catch(() => {});
+        throw e;
+      }
       this.files.push(
         { name: `${base}.flv`, bytes: flv.length },
         { name: `${base}.json`, bytes: Buffer.byteLength(json) },
@@ -490,10 +504,11 @@ export class IngestTap {
         if (!TAP_FILE.test(name)) continue;
         try {
           await this.fs.unlink(join(this.config.dir, name));
-        } catch {
-          /* ya no estaba */
+          this.stats.rotatedFiles++;
+        } catch (e) {
+          // ENOENT: ya no estaba (no cuenta). Otro error: no se contabiliza como rotado.
+          if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") this.stats.writeErrors++;
         }
-        this.stats.rotatedFiles++;
       }
       this.files = this.files.filter((f) => !f.name.startsWith(`${victim}.`));
       list = captures().sort();

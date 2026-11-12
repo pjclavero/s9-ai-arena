@@ -124,6 +124,138 @@ const cfg = (dir: string, o: Partial<TapConfig> = {}): TapConfig => ({
   ...o,
 });
 
+// ── P2 · la latencia que el tap añade al relé está ACOTADA ───────────────────
+describe("P2 · coste temporal de observe() acotado (capaz de ponerse rojo)", () => {
+  it("trozos de ≥64 KB: p95 < 2 ms y máximo < 10 ms por trozo (mejor de 3 pasadas, tras calentar)", () => {
+    const s = syntheticFlv(900); // ~5 MB con keyframes de 40 KB
+    const chunks: Buffer[] = [];
+    for (let i = 0; i < s.bytes.length; i += 65_536) chunks.push(Buffer.from(s.bytes.subarray(i, i + 65_536)));
+    expect(chunks.length).toBeGreaterThanOrEqual(60);
+    const pass = () => {
+      const t = new IngestTap(cfg(tmp("lat")));
+      t.beginStream();
+      const times: number[] = [];
+      for (const c of chunks) {
+        const a = process.hrtime.bigint();
+        t.observe(c);
+        times.push(Number(process.hrtime.bigint() - a) / 1e6);
+      }
+      expect(t.stats.keyframes).toBe(s.keyframes.length); // el tap trabajó de verdad
+      times.sort((x, y) => x - y);
+      return { p95: times[Math.floor(times.length * 0.95)], max: times[times.length - 1] };
+    };
+    pass(); // calentamiento (JIT)
+    const runs = [pass(), pass(), pass()];
+    const p95 = Math.min(...runs.map((r) => r.p95));
+    const max = Math.min(...runs.map((r) => r.max));
+    expect(p95, `p95 ${p95.toFixed(3)} ms`).toBeLessThan(2);
+    expect(max, `max ${max.toFixed(3)} ms`).toBeLessThan(10);
+  });
+
+  it("orden en el camino caliente: relé → pausa por backpressure → tap (el tap no retrasa la pausa)", async () => {
+    order.length = 0;
+    const seenByTap: string[][] = [];
+    const spy = {
+      beginStream() {},
+      observe() {
+        seenByTap.push([...order]);
+      },
+    };
+    const chunks = chunked(syntheticFlv(31).bytes, 5, 16_384).slice(0, 3);
+    await run({ tap: spy, chunks, backpressure: true });
+    expect(seenByTap.length).toBe(3);
+    // Cuando el tap observa el trozo n, el relé ya lo escribió y la pausa ya se pidió.
+    seenByTap.forEach((o, i) => {
+      expect(o.filter((e) => e === "relay").length).toBe(i + 1);
+      expect(o.filter((e) => e === "pause").length).toBe(i + 1);
+    });
+  }, 30_000);
+});
+
+// ── P3 · robustez de escritura y rotación ────────────────────────────────────
+describe("P3 · fallos de disco no dejan huérfanos ni descuadran la rotación", () => {
+  it("si falla el .json tras renombrar el .flv, el .flv se borra (sin huérfanos) y se cuenta el error", async () => {
+    const removed: string[] = [];
+    const fsx: TapFs = {
+      writeFile: async (f: string) => {
+        if (String(f).endsWith(".json")) throw Object.assign(new Error("EIO"), { code: "EIO" });
+      },
+      rename: async () => {},
+      unlink: async (f: string) => {
+        removed.push(String(f));
+      },
+    };
+    const t = new IngestTap(cfg(tmp("orph")), { fs: fsx });
+    t.beginStream();
+    t.observe(syntheticFlv(31).bytes);
+    t.flush();
+    await t.whenIdle();
+    expect([t.stats.writeErrors, t.stats.written]).toEqual([1, 0]);
+    expect(removed.some((f) => f.endsWith(".flv"))).toBe(true);
+  });
+
+  it("rotate no cuenta rotatedFiles si unlink falla (salvo ENOENT, que tampoco cuenta)", async () => {
+    const dir = tmp("rotfail");
+    const fsx: TapFs = {
+      writeFile: async () => {},
+      rename: async () => {},
+      unlink: async () => {
+        throw Object.assign(new Error("EPERM"), { code: "EPERM" });
+      },
+    };
+    const t = new IngestTap(cfg(dir, { maxFiles: 1 }), { fs: fsx });
+    await feedCapturing(t, syntheticFlv(91));
+    expect(t.stats.written).toBeGreaterThan(1);
+    expect(t.stats.rotatedFiles).toBe(0);
+  });
+
+  it("flush() lanzando desde el temporizador no tumba el proceso", async () => {
+    const t = new IngestTap(cfg(tmp("timer"), { intervalMs: 5 }));
+    (t as unknown as { flush(): void }).flush = () => {
+      throw new Error("flush roto");
+    };
+    const errs: unknown[] = [];
+    const h = (e: unknown) => errs.push(e);
+    process.on("uncaughtException", h);
+    try {
+      t.start();
+      await sleep(40);
+      t.stop();
+    } finally {
+      process.off("uncaughtException", h);
+    }
+    expect(errs).toEqual([]);
+  });
+
+  it("jpegBusy se libera aunque decode lance de forma SÍNCRONA (no queda en 429)", async () => {
+    const tap = new IngestTap(cfg(tmp("jpg")));
+    tap.beginStream();
+    tap.observe(syntheticFlv(31).bytes);
+    tap.flush();
+    await tap.whenIdle();
+    const sup = new StreamSupervisor({ config: { ...DEFAULT_CONFIG }, spawner: () => new FakeChild(), logger: createLogger(null, () => {}), secrets: new SecretRegistry(), streamKey: KEY, tap });
+    const control = createControlServer({
+      supervisor: sup,
+      config: { ...DEFAULT_CONFIG },
+      logger: createLogger(null, () => {}),
+      controlSecret: "diag-secret",
+      requireControlSecret: true,
+      tap,
+      decodeJpeg: () => {
+        throw new Error("síncrono");
+      },
+    });
+    servers.push(control as unknown as Server);
+    await new Promise<void>((res) => control.listen(0, "127.0.0.1", res));
+    const base = `http://127.0.0.1:${(control.address() as AddressInfo).port}`;
+    const h = { "x-streamer-auth": "diag-secret" };
+    for (let i = 0; i < 2; i++) {
+      const res = await fetch(`${base}/diag/tap/latest.jpg`, { headers: h });
+      expect(res.status).toBe(502); // nunca 429
+    }
+  });
+});
+
 // ── G1 · OFF por defecto ─────────────────────────────────────────────────────
 describe("G1 · el tap está APAGADO por defecto", () => {
   it("sin variables, vacío, 'false', '0' o cualquier otra cosa ⇒ apagado y SIN objeto", () => {
@@ -430,9 +562,12 @@ async function fakeIngest() {
   return { seen, dial: (_t: IngestTarget) => netConnect({ host: "127.0.0.1", port }) as Duplex };
 }
 
+/** Orden de eventos de un trozo (ver «el tap observa DESPUÉS de la pausa»). */
+const order: string[] = [];
 class FakeMedia extends EventEmitter {
   pauses = 0;
   pause() {
+    order.push("pause");
     this.pauses++;
   }
   resume() {}
@@ -462,6 +597,8 @@ function leaked(b: Buffer | string, k = KEY): string[] {
 interface RunOpts {
   tap?: IngestTap | { beginStream(): void; observe(c: Buffer): void } | null;
   chunks: Buffer[];
+  /** El relé declara backpressure (writeFlv devuelve false) tras escribir. */
+  backpressure?: boolean;
 }
 /** Una emisión con el supervisor REAL y el relé REAL contra la ingesta falsa. */
 async function run(o: RunOpts) {
@@ -475,7 +612,9 @@ async function run(o: RunOpts) {
   const orig = RtmpPublisher.prototype.writeFlv;
   RtmpPublisher.prototype.writeFlv = function (this: RtmpPublisher, c: Buffer) {
     fed.push(Buffer.from(c));
-    return orig.call(this, c);
+    order.push("relay");
+    const ok = orig.call(this, c);
+    return o.backpressure ? false : ok;
   };
   try {
     const sup = new StreamSupervisor({
