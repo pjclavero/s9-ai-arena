@@ -20,11 +20,11 @@ import { addBotToTeam, emptyTeamStats, type TeamBattleStats } from "../../../rep
 import { signSpectateTicket } from "../auth/tokens.js";
 import { anonQuota, type AnonQuotaConfig } from "../middleware/anon-quota.js";
 import type { BattleRunConfig } from "../battle-run.js";
-import { publicSpectateEnabledFromEnv } from "../public-spectate.js";
-import { publicReplaysEnabledFromEnv } from "../public-replays.js";
+import { flagSource } from "../runtime-settings.js";
 import { assertTeamsFitMap, checkBattleContent } from "./catalog.js";
 import { wherePublicReplay } from "../replay-access.js";
-import { projectReplayDocument } from "../replay-projection.js";
+import { PROJECTED_HTTP_CACHE_CONTROL, projectReplayDocument, projectedEtag } from "../replay-projection.js";
+import { projectBotStats } from "../../../../packages/projection/index.js";
 import { viewerMetaOf } from "./replays.js";
 import { fromJsonl } from "../../../arena-engine/src/replay.js";
 import { decompress, sha256 } from "../../../replay-service/src/format.js";
@@ -37,7 +37,7 @@ import {
 } from "../battle-access.js";
 import { loadRuleset } from "../../../../packages/game-rules/index.js";
 import { resolveBattleRuleset } from "../services/battle-ruleset-resolver.js";
-import { buildBattleRules, rulesOf, rulesToJson } from "../services/battle-rules.js";
+import { buildBattleRules, compositionViewer, rulesOf, rulesToJson } from "../services/battle-rules.js";
 import { assertParticipantsShape, assertParticipantsUsable } from "../services/battle-participants.js";
 import type { Request } from "express";
 
@@ -377,13 +377,17 @@ export function battleRoutes(
   quota: AnonQuotaConfig,
   // Se mantiene la firma (app.ts la pasa); `/run` ya no usa el launcher (TD-002).
   _runCfg?: BattleRunConfig,
-  publicSpectateEnabled: boolean = publicSpectateEnabledFromEnv(),
-  publicReplaysEnabled: boolean = publicReplaysEnabledFromEnv(),
+  // MG · booleano fijo (tests) o getter de los ajustes de runtime (RuntimeSettingsStore):
+  // los flags se leen EN CADA PETICIÓN, así un cambio en caliente se aplica sin reiniciar.
+  publicSpectateEnabled?: boolean | (() => boolean),
+  publicReplaysEnabled?: boolean | (() => boolean),
 ): Router {
   const router = Router();
+  const spectateOn = flagSource(publicSpectateEnabled, () => false);
+  const replaysOn = flagSource(publicReplaysEnabled, () => false);
   // UX-D (G-08) · una sola política de lectura para listado, detalle, stats,
   // auditoría, ticket de espectador y /run (battle-access.ts).
-  const vis: BattleVisibility = { publicReplays: publicReplaysEnabled, publicSpectate: publicSpectateEnabled };
+  const vis = (): BattleVisibility => ({ publicReplays: replaysOn(), publicSpectate: spectateOn() });
 
   // R11 · Slice mínimo de espectador público: gateado por S9_PUBLIC_SPECTATE_ENABLED
   // (apagado por defecto). Responde 200 SIEMPRE, sin cuenta; si está apagado,
@@ -392,7 +396,7 @@ export function battleRoutes(
     router,
     "listPublicLiveBattles",
     async (_req, res) => {
-      if (!publicSpectateEnabled) {
+      if (!spectateOn()) {
         res.json({ enabled: false, battles: [] });
         return;
       }
@@ -437,7 +441,7 @@ export function battleRoutes(
     router,
     "getPublicLiveBattle",
     async (req, res) => {
-      if (!publicSpectateEnabled) throw notFound();
+      if (!spectateOn()) throw notFound();
       const battleId = pathParam(req, "battleId");
       const battle = await wherePubliclyShowable(
         db,
@@ -476,7 +480,7 @@ export function battleRoutes(
     router,
     "listPublicReplays",
     async (req, res) => {
-      if (!publicReplaysEnabled) {
+      if (!replaysOn()) {
         res.json({ enabled: false, items: [] });
         return;
       }
@@ -527,12 +531,15 @@ export function battleRoutes(
     router,
     "getPublicReplay",
     async (req, res) => {
-      if (!publicReplaysEnabled) throw notFound();
+      if (!replaysOn()) throw notFound();
       const battleId = pathParam(req, "battleId");
       const battle = await getFinishedBattleWithReplayOr404(db, battleId);
       const participants = await db("participants").where({ battle_id: battle.id });
-      res.setHeader("Cache-Control", "public, max-age=3600, immutable");
-      res.json(publicReplayBattleToJson(battle, participants));
+      // OLA 2 · MA · respuesta pública proyectada: sin `immutable`, ETag versionado.
+      const body = publicReplayBattleToJson(battle, participants);
+      res.setHeader("Cache-Control", PROJECTED_HTTP_CACHE_CONTROL);
+      res.setHeader("ETag", projectedEtag("public-replay", JSON.stringify(body)));
+      res.json(body);
     },
     (req, res, next) => anonQuota(db, "public-replay", quota)(req, res, next),
   );
@@ -541,22 +548,29 @@ export function battleRoutes(
     router,
     "downloadPublicReplay",
     async (req, res) => {
-      if (!publicReplaysEnabled) throw notFound();
+      if (!replaysOn()) throw notFound();
       const battleId = pathParam(req, "battleId");
       const battle = await getFinishedBattleWithReplayOr404(db, battleId);
       // PRE-1 · NUNCA el fichero crudo (semilla + comandos + loadouts permiten
       // re-simular y revelan radio, minas y equipamiento): la PROYECCIÓN pública de
       // competición (replay-projection.ts), igual para todos los visitantes.
       let doc: Record<string, unknown>;
+      let sha = "";
       try {
         const bytes = await readFile(battle.replay_ref as string);
+        sha = sha256(bytes);
         const replay = fromJsonl(decompress(bytes).toString("utf8"));
-        const meta = await viewerMetaOf(db, battle, sha256(bytes));
-        doc = projectReplayDocument(replay, meta);
+        const meta = await viewerMetaOf(db, battle, sha);
+        doc = projectReplayDocument(replay, meta, sha);
       } catch {
         throw notFound("Replay no disponible");
       }
-      res.status(200).setHeader("Cache-Control", "public, max-age=3600, immutable").json(doc);
+      // OLA 2 · MA · sin `immutable`: el ETag cambia con projectionVersion y las políticas.
+      res
+        .status(200)
+        .setHeader("Cache-Control", PROJECTED_HTTP_CACHE_CONTROL)
+        .setHeader("ETag", projectedEtag("public-replay-download", sha))
+        .json(doc);
     },
     (req, res, next) => anonQuota(db, "public-replay-download", quota)(req, res, next),
   );
@@ -573,7 +587,7 @@ export function battleRoutes(
         { column: "battles.id", order: "desc" },
       ])
       .limit(limit + 1);
-    q = whereBattleReadable(db, q, req.auth, vis);
+    q = whereBattleReadable(db, q, req.auth, vis());
     if (typeof req.query.status === "string") q = q.where("battles.status", req.query.status);
     q = applyCursor(q, cursor, "battles.created_at", ["battles.id"]);
     const rows = await runCursorQuery(q, cursor);
@@ -592,7 +606,7 @@ export function battleRoutes(
   });
 
   defineOperation(router, "getBattle", async (req, res) => {
-    const battle = await withMapName(db, await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis));
+    const battle = await withMapName(db, await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis()));
     res.setHeader("Cache-Control", NO_STORE);
     res.json(battleToJson(battle, await loadParticipants(db, battle.id), req.auth ?? null));
   });
@@ -632,7 +646,11 @@ export function battleRoutes(
 
     // R-RULES (ADR-021) · reglas: preset/personalizado/clásico, topes de créditos y
     // masa con los loadouts REALES, y la COPIA INMUTABLE que jugará el worker.
-    const rulesBuild = await buildBattleRules(db, { mode, rulesetId, rules: req.body?.rules, participants });
+    const rulesBuild = await buildBattleRules(
+      db,
+      { mode, rulesetId, rules: req.body?.rules, participants },
+      { viewer: compositionViewer(req.auth) },
+    );
 
     // Una sola transacción: batalla + participantes + trabajo. Antes eran tres
     // escrituras sueltas (una batalla podía quedar sin trabajo, o sin participantes).
@@ -677,19 +695,24 @@ export function battleRoutes(
       // ya no se emite: 404 (mismo trato que getPublicLiveBattle, para no revelar
       // si el id existe). Una sesión autenticada sigue pudiendo espectar: el
       // espectador interno del producto no es "espectador público".
-      if (!publicSpectateEnabled && !req.auth) throw notFound();
+      if (!spectateOn() && !req.auth) throw notFound();
       // UX-D (G-08) · el ticket sigue la MISMA política que el resto de vistas de
       // la batalla: antes cualquier sesión (y, con el directo público, cualquier
       // anónimo) obtenía ticket para la batalla de un bot privado ajeno.
-      const battle = await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis);
+      const battle = await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis());
       // E8/T8.2: jti ⇒ el gateway hace el ticket de UN SOLO USO; debug ⇒ capas de
       // depuración (sensores, rutas, colisiones) solo para roles autorizados: el flag
       // viaja FIRMADO por la API, el visor no puede autoconcedérselo.
-      const debug = (req.auth?.rank ?? 0) >= ROLE_RANK.moderator;
+      // OLA 2 · MA · audiencia FIRMADA (`view`): el gateway separa mapper de ids e
+      // historial por audiencia. `broadcast` lo pide la página de emisión y nunca lleva
+      // capas de depuración; el staff recibe `staff` (con debug) salvo que pida broadcast.
+      const wantsBroadcast = req.query.audience === "broadcast";
+      const debug = !wantsBroadcast && (req.auth?.rank ?? 0) >= ROLE_RANK.moderator;
+      const view = wantsBroadcast ? "broadcast" : debug ? "staff" : "public_live";
       // `anon` viaja FIRMADO por la API para que el gateway (otro proceso) pueda
       // aplicar la capability sin consultar la BD ni creerse al cliente.
       const ticket = signSpectateTicket(
-        { battleId: battle.id, jti: randomUUID(), debug, anon: !req.auth },
+        { battleId: battle.id, jti: randomUUID(), debug, anon: !req.auth, view },
         SPECTATE_TICKET_TTL_S,
       );
       // El canal transporta SOLO snapshots públicos (D8): lo sirve el gateway (E8/E10).
@@ -708,7 +731,7 @@ export function battleRoutes(
   );
 
   defineOperation(router, "getBattleAudit", async (req, res) => {
-    const battle = await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis);
+    const battle = await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis());
     const map = await db("map_versions").where({ map_id: battle.map_id, version: battle.map_version }).first();
     const participants = await db("participants").where({ battle_id: battle.id });
     const artifacts = [];
@@ -737,7 +760,7 @@ export function battleRoutes(
   });
 
   defineOperation(router, "getBattleStats", async (req, res) => {
-    const battle = await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis);
+    const battle = await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis());
     const rows = await db("battle_stats").where({ battle_id: battle.id });
     const participants = await loadParticipants(db, battle.id);
     const statsByBot = new Map<string, Record<string, any>>();
@@ -764,21 +787,13 @@ export function battleRoutes(
         // 4v4-STATS · los descartes de radio miden el fallo del código del bot
         // (rate-limit, tamaño): diagnóstico, igual que rejectionsByReason. La
         // actividad de radio (`radio`: enviados/oídos) es juego: se queda.
-        const { cpuMs: _cpu, decisions: _dec, rejectionsByReason: _rej, radioDroppedByReason: _drop, ...sporting } = s;
-        // UX-F (DEF-R12) · los turnos sin responder y los rechazos por módulo
-        // también son diagnóstico (cuánto falla TU código), no deporte: un rival no
-        // los ve. Daño, disparos, aciertos y estado final de los módulos, sí.
-        if (!owner) {
-          delete sporting.decisionTimeouts;
-          if (sporting.perModule && typeof sporting.perModule === "object") {
-            sporting.perModule = Object.fromEntries(
-              Object.entries(sporting.perModule as Record<string, Record<string, unknown>>).map(([slot, m]) => {
-                const { rejections: _r, ...rest } = m ?? {};
-                return [slot, rest];
-              }),
-            );
-          }
-        }
+        const { cpuMs: _cpu, decisions: _dec, rejectionsByReason: _rej, radioDroppedByReason: _drop, ...rest } = s;
+        // OLA 2 · MA · EQUIPMENT_PRIVATE (D-B1 = R2) · lista BLANCA de la política de
+        // divulgación (`stats.*`): quien no es dueño ni staff no recibe el desglose por
+        // ranura (`perModule`: moduleId de cada ranura = loadout), ni minas, ni radio, ni
+        // los turnos sin responder (diagnóstico, UX-F); tampoco el id interno del vehículo.
+        // Lo deportivo observable (daño, disparos, aciertos, bajas…) se queda.
+        const sporting = projectBotStats(rest, owner ? "owner" : "public_replay") as Record<string, any>;
         perBot[botId] = { ...sporting, botName: p.bot_name ?? undefined, version: p.version };
         // 4v4-STATS · `perTeam` se agrega SÓLO de lo que acaba de entrar en
         // `perBot` (lo deportivo, igual para cualquier lector): por construcción
@@ -790,7 +805,10 @@ export function battleRoutes(
           t = emptyTeamStats(team, Number.isFinite(score) ? score : 0);
           teams.set(team, t);
         }
-        addBotToTeam(t, sporting);
+        // TD-047 · `perTeam` es IGUAL para cualquier lector: se suma siempre lo que ve un
+        // tercero (estadísticas cuantizadas), nunca los exactos del dueño.
+        const forTeam = owner ? (projectBotStats(rest, "public_replay") as Record<string, any>) : sporting;
+        addBotToTeam(t, forTeam);
       }
       if (owner) {
         diagnostics[botId] = buildDiagnostics(p, s, result, maxTimeouts);
@@ -806,7 +824,14 @@ export function battleRoutes(
     else if (battle.status === "finished" && battle.replay_ref) status = "pending";
     res.setHeader("Cache-Control", NO_STORE);
     const perTeam: Record<string, TeamBattleStats> = emptyDict<TeamBattleStats>();
-    for (const [team, t] of teams) perTeam[team] = t;
+    for (const [team, t] of teams) {
+      const copy: Record<string, unknown> = { ...t };
+      // M0 · sin daño ABSOLUTO en lo público (ni por bot ni por bando, igual para todo lector):
+      // el dueño lo suma de su perBot exacto.
+      delete copy.damageDealt;
+      delete copy.damageTaken;
+      perTeam[team] = copy as unknown as TeamBattleStats;
+    }
     // R-RULES · perfil de métricas por modo (FASE 13), derivado de la copia de reglas.
     const rules = rulesToJson(rulesOf(battle));
     res.json({
@@ -834,7 +859,7 @@ export function battleRoutes(
     const battleId = pathParam(req, "battleId");
     // UX-D (G-08) · misma política de lectura: antes cualquier usuario «tocaba» por
     // id la batalla de otro.
-    const battle = await getReadableBattleOr404(db, battleId, req.auth, vis);
+    const battle = await getReadableBattleOr404(db, battleId, req.auth, vis());
     if (battle.status !== "scheduled") {
       res.status(409).json({ error: "invalid_state", message: `La batalla está en estado ${battle.status}` });
       return;

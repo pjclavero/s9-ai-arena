@@ -1120,3 +1120,104 @@ export function summarizeParams(raw: RulesParams): string[] {
   lines.push(`Desempate: ${TIEBREAK_RULES[tiebreakFamilyOf(p)].steps.join(" → ")}`);
   return lines;
 }
+
+// ------------------------------------------- composición: vista según lector
+// OLA 2 (EQUIPMENT_PRIVATE, D-B1=R2): masa y coste de un bot AJENO son equipamiento
+// privado. El lector ve cifras exactas de sus bots (y todo el staff); de los ajenos sólo
+// «cumple»/«excede» y el límite. Un total por bando con algún bot ajeno tampoco lleva
+// cifras (restando los propios se obtendría lo ajeno).
+
+export interface PublicCompositionEntry {
+  botId: string;
+  label: string;
+  team: string;
+  ok: boolean;
+  /** true ⇒ sin `costCredits`/`massKg` (bot ajeno al lector). */
+  figuresHidden: boolean;
+  costCredits?: number;
+  massKg?: number;
+}
+
+export interface PublicCompositionViolation {
+  code: CompositionViolationCode;
+  team: string;
+  botId?: string;
+  limit: number;
+  /** Ausentes cuando la cifra depende de algún bot ajeno. */
+  actual?: number;
+  excess?: number;
+  message: string;
+}
+
+export interface PublicCompositionReport {
+  ok: boolean;
+  limits: CompositionLimits;
+  teams: {
+    team: string;
+    ok: boolean;
+    /** true ⇒ el bando contiene algún bot ajeno: sin totales. */
+    figuresHidden: boolean;
+    totalCredits?: number;
+    totalMassKg?: number;
+    bots: PublicCompositionEntry[];
+  }[];
+  violations: PublicCompositionViolation[];
+}
+
+const VIOLATION_LIMIT_TEXT: Record<CompositionViolationCode, (team: string) => string> = {
+  bot_credits_exceeded: () => "supera el presupuesto máximo por bot",
+  bot_mass_exceeded: () => "supera la masa máxima por bot",
+  team_credits_exceeded: (team) => `el bando ${team} supera el presupuesto de equipo`,
+  team_mass_exceeded: (team) => `el bando ${team} supera la masa máxima de equipo`,
+};
+
+/**
+ * Vista del informe para un lector. `canSeeBot(botId)` = el lector es dueño del bot o es
+ * staff (moderador+). Sin cifras ajenas ni en `bots[]`, ni en los totales mixtos, ni en
+ * `violations[]` ni en sus mensajes.
+ */
+export function redactComposition(
+  report: CompositionReport,
+  canSeeBot: (botId: string) => boolean,
+): PublicCompositionReport {
+  const teamHidden = new Map<string, boolean>();
+  const teams = report.teams.map((t) => {
+    const figuresHidden = t.bots.some((b) => !canSeeBot(b.botId));
+    teamHidden.set(t.team, figuresHidden);
+    const bots: PublicCompositionEntry[] = t.bots.map((b) => {
+      const own = canSeeBot(b.botId);
+      return {
+        botId: b.botId,
+        label: b.label,
+        team: b.team,
+        ok: b.ok,
+        figuresHidden: !own,
+        ...(own ? { costCredits: b.costCredits, massKg: b.massKg } : {}),
+      };
+    });
+    return {
+      team: t.team,
+      ok: t.ok,
+      figuresHidden,
+      ...(figuresHidden ? {} : { totalCredits: t.totalCredits, totalMassKg: t.totalMassKg }),
+      bots,
+    };
+  });
+  const labelOf = new Map<string, string>();
+  for (const t of report.teams) for (const b of t.bots) labelOf.set(b.botId, b.label);
+  const violations: PublicCompositionViolation[] = report.violations.map((v) => {
+    const isBot = v.botId !== undefined;
+    const hidden = isBot ? !canSeeBot(v.botId!) : (teamHidden.get(v.team) ?? true);
+    if (!hidden) return { ...v };
+    const unit = v.code.endsWith("credits_exceeded") ? "cr" : "kg";
+    const subject = isBot ? `${labelOf.get(v.botId!) ?? v.botId} ` : "";
+    return {
+      code: v.code,
+      team: v.team,
+      ...(isBot ? { botId: v.botId } : {}),
+      limit: v.limit,
+      message: `${subject}${VIOLATION_LIMIT_TEXT[v.code](v.team)} (límite ${v.limit} ${unit})`,
+    };
+  });
+  return { ok: report.ok, limits: report.limits, teams, violations };
+}

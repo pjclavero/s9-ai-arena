@@ -40,7 +40,7 @@ let gateway: SpectateGateway;
 let replaysDir: string;
 
 /** Registro de attaches: verifica el meta (round) sin abrir la caja del gateway. */
-const attached: { battleId: string; meta: Record<string, unknown> }[] = [];
+const attached: { battleId: string; meta: Record<string, unknown>; roster?: unknown[] }[] = [];
 
 beforeAll(async () => {
   h = await startTestDb();
@@ -70,7 +70,7 @@ beforeAll(async () => {
     replaysDir,
     spectate: {
       attachBattle: (battleId: string, battle: SpectatableBattle, opts: AttachOptions = {}) => {
-        attached.push({ battleId, meta: (opts.meta ?? {}) as Record<string, unknown> });
+        attached.push({ battleId, meta: (opts.meta ?? {}) as Record<string, unknown>, roster: opts.roster });
         gateway.attachBattle(battleId, battle, { ...opts, pollIntervalMs: 5 });
       },
       detachBattle: (battleId: string) => gateway.detachBattle(battleId),
@@ -181,12 +181,20 @@ describe("H2 · el worker cablea el espectador en vivo y las stats ricas de E8",
     expect(attached[0].meta.round).toBe(2);
     expect(attached[0].meta.mode).toBe("deathmatch");
     expect(attached[0].meta.tournamentId).toBe(t.id);
-    // R3.4 (ERR-VIS-05): la cabecera lleva la nómina pública (id de vehículo → bot)
-    // para que el visor pinte sprite por chasis y NOMBRE en vez del UUID.
-    const roster = attached[0].meta.roster as { id: string; team: string; chassis: string }[];
+    // R3.4 (ERR-VIS-05) + OLA 2 · MA: el worker entrega la nómina INTERNA (id del motor,
+    // chasis) aparte del meta; el gateway la proyecta. Lo que recibe el espectador son ids
+    // PÚBLICOS y sin chasis (EQUIPMENT_PRIVATE).
+    const roster = attached[0].roster as { id: string; team: string; chassis: string }[];
     expect(Array.isArray(roster)).toBe(true);
     expect(roster.length).toBeGreaterThan(0);
     expect(roster.every((r) => typeof r.id === "string" && typeof r.chassis === "string" && !!r.team)).toBe(true);
+    expect(attached[0].meta).not.toHaveProperty("roster");
+    const pubRoster = (init.meta?.roster ?? []) as { id: string; team: string; chassis?: string }[];
+    expect(pubRoster.length).toBe(roster.length);
+    for (const r of pubRoster) {
+      expect(r.id).toMatch(/^v_\d+$/);
+      expect(r).not.toHaveProperty("chassis");
+    }
   }, 120_000);
 
   it("al archivar el replay quedan el almacén de E8 y las stats RICAS de runStatsJob", async () => {

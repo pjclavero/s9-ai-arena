@@ -215,7 +215,7 @@ function TeamPanelView({ team, accent }: { team: HudTeamPanel; accent: string })
   );
 }
 
-/** Resumen táctico compacto del equipo (R16.3): vivos/total · HP% · módulos caídos. */
+/** Resumen táctico compacto del equipo (R16.3): vivos/total · HP%. */
 function TacticalRow({ team }: { team: HudTeamPanel }) {
   const t = team.tactical;
   return (
@@ -225,12 +225,6 @@ function TacticalRow({ team }: { team: HudTeamPanel }) {
       </span>
       {" · "}
       <span data-testid="hud-team-tactical-hp">HP {t.hpPercent}%</span>
-      {t.modulesOffline > 0 && (
-        <>
-          {" · "}
-          <span data-testid="hud-team-tactical-modules">{t.modulesOffline} módulos caídos</span>
-        </>
-      )}
     </div>
   );
 }
@@ -254,14 +248,11 @@ function BotRow({ bot }: { bot: HudBot }) {
       <div style={{ height: 5, background: "rgba(255,255,255,0.15)", borderRadius: 3, overflow: "hidden" }}>
         <div style={{ width: `${bot.hpPercent}%`, height: "100%", background: barColor }} />
       </div>
-      {/* Módulos: iconos de estado (arma/blindaje/movilidad) + recuento fuera de combate */}
+      {/* Iconos de estado (arma/blindaje/movilidad): sólo si el frame los trae (hoy no: EQUIPMENT_PRIVATE; lo decide MB, D-B4). Sin recuento de módulos. */}
       <div style={{ fontSize: "0.85em", opacity: 0.85 }}>
         {bot.turretLocked ? "🔫✖ " : ""}
         {bot.armorBroken ? "🛡✖ " : ""}
         {bot.mobilityCrippled ? "⚙✖ " : ""}
-        <span data-testid="hud-bot-modules">
-          {bot.modulesTotal - bot.modulesDown}/{bot.modulesTotal} módulos
-        </span>
       </div>
     </div>
   );

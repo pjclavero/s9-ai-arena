@@ -291,15 +291,22 @@ describe("UX-06 · diagnóstico por bot: sólo el dueño de ESE bot y el staff",
     const rc = await call(closed, "C", "get", `/battles/${B.priv}/stats`);
     expect(Object.keys(rc.body.diagnostics)).toEqual([BOT.pub1]);
     const sporting = rc.body.perBot[BOT.privA];
-    expect(sporting).toMatchObject({ shotsFired: 10, shotsHit: 4, damageDealt: 120, botName: "AUDIT-UXD-privado" });
+    // OLA 2 (M0) · el rival recibe los aciertos CUANTIZADOS (5 en 5: 4 ⇒ 0) y NINGÚN daño absoluto.
+    expect(sporting).toMatchObject({ shotsFired: 10, shotsHit: 0, botName: "AUDIT-UXD-privado" });
+    expect(sporting).not.toHaveProperty("damageDealt");
+    expect(sporting).not.toHaveProperty("damageTaken");
+    // el dueño recibe el valor exacto de SU bot
+    expect(r.body.perBot[BOT.privA]).toMatchObject({ shotsHit: 4, damageDealt: 120 });
     expect(sporting.cpuMs).toBeUndefined();
     expect(sporting.rejectionsByReason).toBeUndefined();
     expect(sporting.decisions).toBeUndefined();
     // UX-F (DEF-R12) · turnos sin responder y rechazos por módulo: diagnóstico,
     // sólo para el dueño. El uso y el daño del módulo siguen siendo públicos.
     expect(sporting.decisionTimeouts).toBeUndefined();
-    expect(sporting.perModule.turret_main).toMatchObject({ uses: 10, damageDealt: 120 });
-    expect(sporting.perModule.turret_main.rejections).toBeUndefined();
+    // OLA 2 · MA · EQUIPMENT_PRIVATE (D-B1 = R2): el desglose por ranura (moduleId de
+    // cada ranura = loadout) ya no lo ve un tercero, ni tampoco el id interno del vehículo.
+    expect(sporting.perModule).toBeUndefined();
+    expect(sporting.vehicleId).toBeUndefined();
     const ownSporting = r.body.perBot[BOT.privA];
     expect(ownSporting.decisionTimeouts).toBe(2);
     expect(ownSporting.perModule.turret_main.rejections).toBe(5);

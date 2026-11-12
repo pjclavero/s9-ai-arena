@@ -7,6 +7,9 @@
 
 export type FlagState = "at_base" | "carried" | "dropped";
 
+/** D-B5 · granularidad pública del casco (packages/projection/policy.ts: HULL_LEVEL_N). */
+const HULL_LEVEL_N = 20;
+
 export interface VehicleOverlay {
   id: string;
   team: string;
@@ -67,8 +70,11 @@ export class OverlayState {
         id: v.id,
         team: v.team,
         alive: v.alive,
-        hullHp: v.hullHp,
-        hullHpMax: v.hullHpMax,
+        // OLA 2 · el frame público lleva el casco CUANTIZADO (`hullLevel` 0..20, D-B5) y
+        // no lleva hullHp/hullHpMax (revelan el chasis, EQUIPMENT_PRIVATE). El visor sólo
+        // usa la fracción, así que se expresa como hullLevel/20.
+        hullHp: typeof v.hullLevel === "number" ? v.hullLevel : v.hullHp,
+        hullHpMax: typeof v.hullLevel === "number" ? HULL_LEVEL_N : v.hullHpMax,
         carryingFlag: v.carryingFlag ?? null,
         modules: Object.fromEntries((v.modules ?? []).map((m: any) => [m.slot, m.state])),
       });

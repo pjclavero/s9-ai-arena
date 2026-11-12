@@ -41,7 +41,9 @@ import {
   projectReplayDocument,
   projectSegment,
   projectSnapshot,
+  projectedReplayStream,
 } from "./replay-projection.js";
+import { audienceKey, projectReplayStream } from "../../../packages/projection/index.js";
 import { ReplayPlayer, httpReplaySource } from "../../web/src/viewer/replay-player.js";
 
 const SEED = "PRE1-SEED-7f3a9c";
@@ -71,6 +73,23 @@ let catalogVersion: string;
 const tok: Record<string, string> = {};
 const B: Record<string, string> = {};
 const rawFile: Record<string, string> = {};
+
+/**
+ * OLA 2 · MA · proyección public_replay del stream interno de `base`. Los ids de vehículo
+ * siguen el orden público (bando, botId): aquí los bandos son distintos, así que no
+ * dependen del botId que cada batalla de prueba asigna.
+ */
+function fullProjection() {
+  return projectReplayStream({
+    battleId: base.header.battleId,
+    audience: audienceKey("public_replay"),
+    roster: base.header.participants.map((p: any) => ({ id: p.id, botId: p.botId, team: p.team })),
+    mapEntityIds: [],
+    snapshots: base.snapshots,
+    events: base.events,
+    result: base.result,
+  });
+}
 
 type Actor = "anon" | "A" | "C" | "T" | "S" | "organizer" | "moderator" | "admin";
 const ACTORS: Actor[] = ["anon", "A", "C", "T", "S", "organizer", "moderator", "admin"];
@@ -471,17 +490,24 @@ describe("PRE-1 · el visor de replays funciona con la proyección (anónimo, fl
     }
     expect(player.finished).toBe(true);
     expect(last.score).toEqual(base.result.score);
-    // Lo que pinta el visor con la proyección es EXACTAMENTE el snapshot público del motor.
-    const lastRaw = base.snapshots[base.snapshots.length - 1];
-    expect(last).toEqual(JSON.parse(JSON.stringify(lastRaw)));
+    // OLA 2 · MA · lo que pinta el visor es EXACTAMENTE la proyección public_replay del
+    // stream interno del motor (projectFrame), nunca el frame interno.
+    const expected = fullProjection().snapshots.at(-1);
+    expect(last).toEqual(JSON.parse(JSON.stringify(expected)));
+    expect(JSON.stringify(last)).not.toMatch(/"(veh|proj|mine)_\d+"|"v_red"|"v_blue"/);
     // Y los eventos públicos del motor llegan todos.
     expect(seen.length).toBe(base.events.filter((e) => PUBLIC_EVENT_KINDS.has(e.kind)).length);
   }, 120_000);
 
-  it("la proyección de snapshots es SIN PÉRDIDA para el visor (deriva del motor ⇒ rojo)", async () => {
+  it("el segmento público ES la proyección del stream completo (cualquier deriva ⇒ rojo)", async () => {
     const r = await get(on, "anon", `/replays/${B.pub}/segment?fromTick=0&toTick=${base.result.ticks}`);
     expect(r.status).toBe(200);
-    expect(r.body.snapshots).toEqual(JSON.parse(JSON.stringify(base.snapshots)));
+    expect(r.body.snapshots).toEqual(JSON.parse(JSON.stringify(fullProjection().snapshots)));
+    // Un segmento parcial usa los MISMOS ids que el documento completo (salto temporal).
+    const mid = Math.floor(base.result.ticks / 2);
+    const part = await get(on, "anon", `/replays/${B.pub}/segment?fromTick=${mid}&toTick=${mid + 30}`);
+    const byTick = new Map(fullProjection().snapshots.map((x) => [x.tick, x]));
+    for (const snap of part.body.snapshots) expect(snap).toEqual(JSON.parse(JSON.stringify(byTick.get(snap.tick))));
   });
 
   it("todo evento público que emite el motor está en la lista blanca (un tipo nuevo ⇒ rojo, se decide a propósito)", () => {
@@ -556,15 +582,17 @@ describe("PRE-1 · proyección pura: lista blanca + saneado a cualquier profundi
   };
 
   it("projectSegment: sin comandos, sin radio.data, sin semilla, sin spec, sin eventos privados", () => {
-    const out = projectSegment(hostile);
+    const meta = { world: {}, roster: [], mapEntityIds: ["zone"] };
+    const out = projectSegment(hostile, projectedReplayStream({ header: { battleId: "b1" }, ...hostile }, meta));
     assertClean("segment hostil", out);
     expect((out.events as any[]).map((e) => e.kind)).toEqual(["score_changed"]);
-    expect((out.snapshots as any[])[0].objectives).toEqual([{ id: "zone", owner: "red" }]);
+    // Lista blanca POR CAMPO del objetivo: `owner` no está declarado, no sale.
+    expect((out.snapshots as any[])[0].objectives).toEqual([{ id: "zone" }]);
   });
 
-  it("projectEvents: un tipo público con radio/semilla/spec anidados sale saneado", () => {
+  it("projectEvents: un tipo público con radio/semilla/spec anidados sale saneado (lista blanca por campo)", () => {
     const [e] = projectEvents(hostile.events);
-    expect(e).toEqual({ tick: 1, kind: "score_changed", team: "red", extra: {} });
+    expect(e).toEqual({ tick: 1, kind: "score_changed", team: "red" });
   });
 
   it("projectSnapshot: lista blanca por vehículo (ni radio, ni spec, ni carga en la posición)", () => {

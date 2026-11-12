@@ -33,8 +33,14 @@ function roster(perSide: number, dm = false): Participant[] {
   return parts;
 }
 
-function battle(ruleset: Ruleset, parts: Participant[], map = emptyArena(), bot: "hunter" | "idle" = "hunter") {
-  const b = new Battle({ battleId: "rr", seed: "rules-seed", ruleset, map, participants: parts, recordReplay: true });
+function battle(
+  ruleset: Ruleset,
+  parts: Participant[],
+  map = emptyArena(),
+  bot: "hunter" | "idle" = "hunter",
+  seed = "rules-seed",
+) {
+  const b = new Battle({ battleId: "rr", seed, ruleset, map, participants: parts, recordReplay: true });
   for (const p of parts) b.attachBot(p.id, bot === "hunter" ? new HunterBot(p.botId) : new IdleBot(p.botId));
   return b;
 }
@@ -47,13 +53,17 @@ function runFor(b: Battle, ticks: number) {
 // con los valores medidos en 741a2a7: las cambian (a) el orden por slot de los candidatos de módulo,
 // (b) el hp del blindaje (= hp del módulo) y (c) la normalización de turretHeading. Con las tres
 // revertidas vuelven EXACTAMENTE los hashes de 9aaad79 (experimento mb-atribucion.py).
+// RE-ANCLADAS otra vez en la integración OLA2 (M0-I, MD+MB): hash v2 por componentes + flujos RNG con
+// nombre (MD) + las causas a/b/c de MB + armor.profile en el estado. Con a/b/c revertidas, los ticks
+// vuelven a ser los de MD (778/2801/1084…) y sólo difiere el componente `vehicles` (armor.profile).
+// tdm_4v4_norespawn llega ahora al límite de tiempo (6000) en vez de acabar por eliminación.
 const HASHES_9AAAD79 = {
-  dm_1v1: { hash: "2f08024eaa04bd46de4e9b28435df905671ca088969fe2488216de1d718650dc", tick: 435 },
-  tdm_1v1: { hash: "0cbfaf858d437ada52035dde4a159d5755c0a18fdf3ce6bcca5e39aa4cf71f5c", tick: 3000 },
-  tdm_2v2: { hash: "a9ac53b80436a3be2fb8c7c3ab8e32e6353fdbae8e0579323bc626470fdc6a29", tick: 3000 },
-  tdm_4v4: { hash: "f3fdffe0868fde35a2f1e2d718193dcd78b503fcf2b640ff9ebccda74ac10599", tick: 2338 },
-  tdm_4v4_norespawn: { hash: "69c259ab03ad2bf04a8151b0ab19b7da510bfc4f84546fea13cbca32706cadf3", tick: 1090 },
-  ctf_1v1: { hash: "af819a46e9bbd4d653d92b01a35445d2f436c402bd873b00a913dd0d7ffe7110", tick: 2000 },
+  dm_1v1: { hash: "7b1b74e3c8b05e4e87aef8b56b10c44f4dc4139a6b4f94218448c802b226161f", tick: 469 },
+  tdm_1v1: { hash: "df7b19ab8c88a3e1da243c93d76c837fc0ec0b06900259f4e92ead2f405c83f8", tick: 3000 },
+  tdm_2v2: { hash: "0af19ee467fcb2ff76059fcafb8e3010daa8ea9bfe80e1e0e9bca50d9d27a2a5", tick: 3000 },
+  tdm_4v4: { hash: "682cd1e9276a3ca00aa465efc44dfb842fe85b00778972208f2a37284d4eefbb", tick: 2371 },
+  tdm_4v4_norespawn: { hash: "86544a85f9a0ae80752970b3fcaafb18a9e8a6b2295059db6734b14574092b98", tick: 6000 },
+  ctf_1v1: { hash: "960c80cc76e70e3028d2bac75eaa30df4db63da3ce7215e39357dbda2d1e4578", tick: 2000 },
 };
 
 describe("regresión · configuraciones existentes = hash de 9aaad79", () => {
@@ -91,6 +101,9 @@ function limited(maxRespawns: number, delayTicks = 30): Ruleset {
     respawn: { enabled: true, delayTicks, maxRespawns },
   });
 }
+
+/** OLA2-MD · semilla en la que los 2v2 de respawn limitado acaban por eliminación (buscada). */
+const SEED_2V2_ELIM = "rules-seed-3";
 
 function eliminations(b: Battle) {
   return b.publicEvents.filter((e: any) => e.kind === "vehicle_eliminated");
@@ -216,7 +229,7 @@ describe("respawn limitado", () => {
     b2.free();
   });
 
-  it("el contador de respawns entra en el hash SÓLO con respawn limitado", () => {
+  it("el contador de respawns entra en el hash (v2: siempre)", () => {
     const b = battle(limited(2), roster(1));
     runFor(b, 5);
     const h1 = b.stateHash();
@@ -227,14 +240,15 @@ describe("respawn limitado", () => {
     runFor(old, 5);
     const h2 = old.stateHash();
     old.getVehicles()[0].respawnsUsed = 1;
-    expect(old.stateHash()).toBe(h2);
+    // OLA2-MD · hash v2: TODO el estado de Vehicle entra, también sin respawn limitado.
+    expect(old.stateHash()).not.toBe(h2);
     old.free();
   });
 
   it("los bots NO reciben vehicle_eliminated (no está en el esquema EVENT de arena/1)", () => {
     // 2v2 con una sola vida: tras la PRIMERA eliminación la batalla sigue y todos los
     // bots vuelven a decidir, así que un evento repartido les llegaría por onEvent.
-    const b = battle(limited(0), roster(2));
+    const b = battle(limited(0), roster(2), emptyArena(), "hunter", SEED_2V2_ELIM);
     const seen: string[] = [];
     for (const v of b.getVehicles()) {
       const inner = new HunterBot(v.botId);
