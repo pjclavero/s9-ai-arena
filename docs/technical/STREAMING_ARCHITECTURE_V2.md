@@ -1195,14 +1195,16 @@ merge ni deploy automáticos.
 Las pestañas se van añadiendo con su PR detrás del flag (MS-3: lista de comprobación en Directo; MS-4:
 Cola; MS-6: Batallas/Fuentes; MS-7: Replays). MS-8 es sobre todo reorganización y retirada.
 
-## 24. Decisiones abiertas
+## 24. Decisiones (DECIDED por el operador, 2026-11-12)
 
-| # | Decisión | Opciones | Recomendación |
+Las cuatro quedan **DECIDED**. Cualquier cambio requiere una nueva decisión explícita del operador.
+
+| # | Decisión | Estado | Resolución |
 |---|---|---|---|
-| D1 | Cómo se suscribe el programa a una batalla aún no empezada | (a) ticket de pre-roll firmado con claim `program`, sólo para batallas de su cola; (b) abrir las batallas `scheduled` y retenidas a cualquier visitante | **(a)**. No cambia la política pública y lo mide el servidor |
-| D2 | Modo de inicio por defecto | Manual para batalla suelta y Automático para torneo; o Manual siempre | **Manual / Automático** según el caso; el operador puede cambiarlo en cada preparación |
-| D3 | Torneo con política serial y `BATTLE_CONCURRENCY > 1` | (a) `serial`: el torneo se juega de una en una; (b) `serial_partial`: las que no caben corren sin emitir y quedan como replay | **(a)** para eventos emitidos; (b) como opción posterior si el torneo se hace demasiado largo |
-| D4 | Qué pasa con una batalla retenida si se abandona su emisión | (a) se queda retenida hasta que alguien la suelte; (b) se suelta y se juega sin emisión | **(a)** (P4: abandonar no inicia nada), con aviso en el panel y la acción a un clic |
+| D1 | Cómo se suscribe el programa a una batalla aún no empezada | **DECIDED** | **(a)** Ticket de pre-roll firmado con claim `program`, para preparar una batalla `scheduled` antes de arrancarla. Sólo vale para las batallas de la cola de ESE programa. Las batallas programadas **no** se hacen públicas para visitantes normales; la política pública no cambia. |
+| D2 | Modo de inicio por defecto | **DECIDED** | Batalla suelta → **MANUAL**; torneo → **AUTOMÁTICO**. Se puede cambiar en cada emisión. En manual, `BROADCAST_READY` habilita el botón `EMPEZAR BATALLA`; en automático, al llegar a `BROADCAST_READY` S9 inicia la batalla. |
+| D3 | Torneo con una única salida YouTube y `BATTLE_CONCURRENCY > 1` | **DECIDED** | **En serie** (`serial`). No arrancan varias batallas a la vez para perder las que no se emiten: la siguiente queda retenida hasta que le toca y el broadcast está listo. Sólo afecta a las batallas que forman parte del programa retransmitido. El paralelismo se podrá permitir más adelante para las fuentes externas/OBS (`external_production`). `serial_partial` queda descartado por ahora. |
+| D4 | Qué pasa con una batalla retenida si se abandona o cancela su emisión | **DECIDED** | **NO ARRANCA SOLA.** Sigue retenida hasta una acción explícita: reanudar o asignar la emisión, liberar la batalla o cancelarla. Cerrar una emisión nunca debe provocar el comienzo de una batalla (invariante P4, con su test y su mutante). |
 
 ## 25. Riesgos
 
