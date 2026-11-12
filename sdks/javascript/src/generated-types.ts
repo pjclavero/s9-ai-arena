@@ -88,6 +88,10 @@ export interface WELCOMEMotorBot {
        * R-RULES (ADR-021) · Reapariciones permitidas por vehículo (vidas = 1 + maxRespawns). Ausente = ilimitadas (si enabled). Agotadas, el vehículo queda eliminado.
        */
       maxRespawns?: number;
+      /**
+       * OLA2-G3 · RESPAWN_REARM_POLICY. self: al reaparecer sólo el que reaparece recupera su munición. all_alive_participants: cuando reaparece cualquier vehículo, todos los vivos (incluido el que reaparece) vuelven a su munición máxima, una vez por tick. Ausente = self.
+       */
+      rearmPolicy?: "self" | "all_alive_participants";
     };
     sharedTeamVision?: boolean;
     radio?: {
