@@ -30,10 +30,19 @@ import { validateLoadout } from "./validator/index.js";
 import { effectOf } from "./effect-status.js";
 import { CATEGORY_FIELDS, COMMON_FIELDS, IDENTITY_FIELDS, REMOVED_FIELDS, fieldContract } from "./field-status.js";
 import { loadoutWith, probeDigest } from "./catalog-probe.js";
-import type { ModuleCategory, ModuleDefinition } from "./types.js";
+import type { LoadoutInput, LoadoutModuleEntry, ModuleCategory, ModuleDefinition } from "./types.js";
 
 const schema = JSON.parse(readFileSync(join(DATA_DIR, "..", "schema", "module.schema.json"), "utf8"));
-const catalog = loadCatalog();
+const realCatalog = loadCatalog();
+/**
+ * Una categoría sin ninguna pieza real (utility hoy) se prueba con una pieza SINTÉTICA de
+ * este test (no es contenido: no está en data/): sus campos comunes también tienen que
+ * tener consumidor.
+ */
+const SYNTHETIC: ModuleDefinition[] = (schema.properties.category.enum as ModuleCategory[])
+  .filter((cat) => !realCatalog.some((m) => m.category === cat))
+  .map((cat) => ({ id: `${cat}.probe`, version: 1, category: cat, name: "sonda", massKg: 10, costCredits: 10, size: "S", hp: 10 }));
+const catalog = [...realCatalog, ...SYNTHETIC];
 const CATEGORIES = schema.properties.category.enum as ModuleCategory[];
 
 // ------------------------------------------------------------------ campos declarados por el esquema
@@ -44,7 +53,8 @@ type Json = Record<string, any>;
 function propsOf(node: Json | undefined, prefix = ""): string[] {
   const out: string[] = [];
   for (const [k, sub] of Object.entries((node?.properties ?? {}) as Json)) {
-    if (sub.type === "object" && sub.properties) out.push(...propsOf(sub, `${prefix}${k}.`));
+    if (sub === false) continue; // prohibido explícitamente (ver forbiddenIn)
+    if (sub.properties && (sub.type === "object" || sub.type === undefined)) out.push(...propsOf(sub, `${prefix}${k}.`));
     else if (sub.type === "array" && sub.items?.type === "object") out.push(...propsOf(sub.items, `${prefix}${k}[].`));
     else out.push(`${prefix}${k}`);
   }
@@ -61,12 +71,35 @@ function thenProps(node: Json | undefined): string[] {
 
 const COMMON_DECLARED = propsOf(schema);
 
+/** ¿Aplica la rama `if` de categoría a `cat`? (const, not-const y not-enum). */
+function branchApplies(branch: Json, cat: ModuleCategory): boolean {
+  const c = branch.if?.properties?.category;
+  if (!c) return false;
+  if (c.const !== undefined) return c.const === cat;
+  if (c.not?.const !== undefined) return c.not.const !== cat;
+  if (Array.isArray(c.not?.enum)) return !c.not.enum.includes(cat);
+  return false;
+}
+
+/** Rutas que una rama aplicable PROHÍBE con el esquema `false`. */
+function forbiddenIn(node: Json | undefined, prefix = ""): string[] {
+  const out: string[] = [];
+  for (const [k, sub] of Object.entries((node?.properties ?? {}) as Json)) {
+    if (sub === false) out.push(`${prefix}${k}`);
+    else if (sub && typeof sub === "object" && sub.properties) out.push(...forbiddenIn(sub, `${prefix}${k}.`));
+  }
+  return out;
+}
+
 function declaredFor(cat: ModuleCategory): string[] {
   const own: string[] = [];
+  const forbidden = new Set<string>();
   for (const branch of schema.allOf as Json[]) {
-    if (branch.if?.properties?.category?.const === cat) own.push(...thenProps(branch.then));
+    if (!branchApplies(branch, cat)) continue;
+    own.push(...thenProps(branch.then));
+    for (const f of forbiddenIn(branch.then)) forbidden.add(f);
   }
-  return [...new Set([...COMMON_DECLARED, ...own])];
+  return [...new Set([...COMMON_DECLARED, ...own])].filter((f) => !forbidden.has(f));
 }
 
 /** Campos que DECLARA un módulo concreto (mismas rutas que el esquema). */
@@ -117,12 +150,45 @@ function anyOf(cat: ModuleCategory): ModuleDefinition | undefined {
   return catalog.find((m) => m.category === cat);
 }
 
-const verdict = (cat: ModuleDefinition[], target: ModuleDefinition): string =>
+const verdict = (cat: ModuleDefinition[], loadout: LoadoutInput): string =>
   JSON.stringify(
-    validateLoadout(loadoutWith(target, cat), cat, 1000)
+    validateLoadout(loadout, cat, 1000)
       .map((v) => `${v.code}:${v.slot ?? ""}:${v.moduleId ?? ""}`)
       .sort(),
   );
+
+/**
+ * Para maxPerVehicle hacen falta DOS copias: se añade al chasis de la sonda una ranura extra
+ * («dup») que acepta la categoría y se monta la segunda copia (la munición, en un arma que
+ * la acepte). Devuelve el catálogo con esa ranura y el loadout con la copia.
+ */
+function withDuplicate(
+  cat: ModuleDefinition[],
+  target: ModuleDefinition,
+): { cat: ModuleDefinition[]; loadout: LoadoutInput } {
+  const loadout = structuredClone(loadoutWith(target, cat));
+  const tRef = `${target.id}@${target.version}`;
+  let entry: LoadoutModuleEntry = { slot: "dup", moduleId: tRef };
+  let accepts: ModuleCategory = target.category;
+  if (target.category === "ammo") {
+    const w = cat.find((m) => m.category === "weapon" && (m.acceptsAmmo ?? []).includes(target.id))!;
+    entry = { slot: "dup", moduleId: `${w.id}@${w.version}`, ammo: tRef };
+    accepts = "weapon";
+  }
+  loadout.modules.push(entry);
+  const out = cat.map((m) =>
+    `${m.id}@${m.version}` === loadout.chassis
+      ? ({
+          ...m,
+          slots: [
+            ...(m.slots ?? []),
+            { id: "dup", accepts: [accepts], maxSize: "XL", ...(target.sector ? { sector: target.sector } : {}) },
+          ],
+        } as ModuleDefinition)
+      : m,
+  );
+  return { cat: out, loadout };
+}
 
 beforeAll(async () => {
   await initPhysics();
@@ -243,17 +309,20 @@ interface Case {
   injected: boolean;
 }
 
-function cases(status: "ACTIVE" | "VALIDATION_ONLY"): Case[] {
-  const out: Case[] = [];
+/** Casos por (categoría, campo declarado). Sin portador ni `sample` ⇒ queda SIN PRUEBA (rojo). */
+function cases(status: "ACTIVE" | "VALIDATION_ONLY"): { list: Case[]; uncovered: string[] } {
+  const list: Case[] = [];
+  const uncovered: string[] = [];
   for (const cat of CATEGORIES)
     for (const f of declaredFor(cat)) {
       const c = fieldContract(cat, f);
       if (!c || c.status !== status) continue;
       const t = carrier(cat, f);
-      if (t) out.push({ cat, field: f, target: t, injected: false });
-      else if (c.sample !== undefined && anyOf(cat)) out.push({ cat, field: f, target: anyOf(cat)!, injected: true });
+      if (t) list.push({ cat, field: f, target: t, injected: false });
+      else if (c.sample !== undefined && anyOf(cat)) list.push({ cat, field: f, target: anyOf(cat)!, injected: true });
+      else uncovered.push(`${cat}.${f}`);
     }
-  return out;
+  return { list, uncovered };
 }
 
 const baseDigests = new Map<string, string>();
@@ -264,19 +333,15 @@ function baseDigest(t: ModuleDefinition): string {
 }
 
 describe("CATALOG_CONTRACT · D1 · todo campo ACTIVE tiene consumidor en la simulación", () => {
-  const list = cases("ACTIVE");
-  it("hay casos para todas las categorías con campos ACTIVE", () => {
-    const cats = new Set(list.map((c) => c.cat));
-    for (const cat of CATEGORIES) {
-      const anyActive = declaredFor(cat).some((f) => fieldContract(cat, f)?.status === "ACTIVE");
-      if (anyActive && anyOf(cat)) expect(cats, `sin casos para ${cat}`).toContain(cat);
-    }
+  const { list, uncovered } = cases("ACTIVE");
+  it("todo campo ACTIVE declarado, en TODA categoría, tiene caso (portador real o sample)", () => {
+    expect(uncovered).toEqual([]);
   });
   for (const c of list) {
-    it(`${c.cat}.${c.field} (${c.target.id}@${c.target.version}) cambia la batalla`, () => {
+    it(`${c.cat}.${c.field} (${c.target.id}@${c.target.version}${c.injected ? ", inyectado" : ""}) cambia la batalla`, () => {
       const contract = fieldContract(c.cat, c.field)!;
-      const before = getPath(c.target as unknown as Json, c.field);
-      const after = contract.perturb!(before, c.target);
+      const before = c.injected ? undefined : getPath(c.target as unknown as Json, c.field);
+      const after = contract.perturb!(c.injected ? contract.sample : before, c.target);
       expect(after, "la mutación no cambia el valor").not.toEqual(before);
       const mutated = withField(catalog, c.target, c.field, after);
       expect(probeDigest(mutated, `${c.target.id}@${c.target.version}`)).not.toBe(baseDigest(c.target));
@@ -285,23 +350,29 @@ describe("CATALOG_CONTRACT · D1 · todo campo ACTIVE tiene consumidor en la sim
 });
 
 describe("CATALOG_CONTRACT · D2 · todo campo VALIDATION_ONLY cambia el veredicto y NO la batalla", () => {
-  for (const c of cases("VALIDATION_ONLY")) {
+  const { list, uncovered } = cases("VALIDATION_ONLY");
+  it("todo campo VALIDATION_ONLY declarado, en TODA categoría, tiene caso", () => {
+    expect(uncovered).toEqual([]);
+  });
+  for (const c of list) {
     it(`${c.cat}.${c.field} (${c.target.id}@${c.target.version}${c.injected ? ", inyectado" : ""})`, () => {
       const contract = fieldContract(c.cat, c.field)!;
       const before = c.injected ? undefined : getPath(c.target as unknown as Json, c.field);
-      const after = contract.perturb!(before ?? contract.sample, c.target);
-      // Base: el campo tal cual (o ausente si se inyecta); mutado: con el valor de la mutación.
-      const mutated = withField(catalog, c.target, c.field, after);
-      const mutatedTarget = mutated[catalog.indexOf(c.target)];
-      expect(verdict(mutated, mutatedTarget), "el validador no lo usa").not.toBe(verdict(catalog, c.target));
-      // ...y la simulación no lo lee (si el loadout mutado aún resuelve).
-      let digest: string | null = null;
-      try {
-        digest = probeDigest(mutated, `${c.target.id}@${c.target.version}`);
-      } catch {
-        digest = null; // un loadout ilegal que ni resuelve: el validador ya lo rechaza arriba
+      const after = contract.perturb!(c.injected ? contract.sample : before, c.target);
+      expect(after, "la mutación no cambia el valor").not.toEqual(before);
+      // Mismo loadout (construido con el catálogo SIN mutar) contra los dos catálogos.
+      const dup = c.field === "maxPerVehicle" ? withDuplicate(catalog, c.target) : null;
+      const baseCat = dup ? dup.cat : catalog;
+      const loadout = dup ? dup.loadout : loadoutWith(c.target, catalog);
+      const mutated = withField(baseCat, baseCat[catalog.indexOf(c.target)], c.field, after);
+      expect(verdict(mutated, loadout), "el validador no lo usa").not.toBe(verdict(baseCat, loadout));
+      // ...y la simulación no lo lee: mismo loadout, catálogo mutado ⇒ misma batalla.
+      if (!dup) {
+        const ref = `${c.target.id}@${c.target.version}`;
+        expect(probeDigest(mutated, ref, loadout), "un campo de validación cambia la batalla").toBe(
+          baseDigest(c.target),
+        );
       }
-      if (digest !== null) expect(digest, "un campo de validación cambia la batalla").toBe(baseDigest(c.target));
     });
   }
 });

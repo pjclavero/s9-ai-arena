@@ -118,7 +118,8 @@ class Exerciser implements BotAgent {
       move: { throttle, steer },
       turret: { targetHeading: Math.sin(d * 0.15) * 2.5 },
       fire: ["turret_main"],
-      ...(d >= 3 && d < 15 ? { deployMine: { slot: "mine_bay" } } : {}),
+      // Minas al final del avance: quedan en la línea y=40, entre E (que retrocede) y X.
+      ...(d >= 12 && d < 40 ? { deployMine: { slot: "mine_bay" } } : {}),
       radio: [{ slot: "radio_a", data: b64(`probe-${String(d).padStart(10, "0")}`) }],
     };
   }
@@ -171,8 +172,11 @@ class Chaser implements BotAgent {
 
 export const PROBE_TICKS = 450;
 
-/** Digest de la batalla de sonda con `testedRef` instalado, resuelto contra `catalog`. */
-export function probeDigest(catalog: ModuleDefinition[], testedRef: string): string {
+/**
+ * Digest de la batalla de sonda con `testedRef` instalado, resuelto contra `catalog`.
+ * `loadout` fija el loadout de E (por defecto, loadoutWith sobre el mismo catálogo).
+ */
+export function probeDigest(catalog: ModuleDefinition[], testedRef: string, loadout?: LoadoutInput): string {
   const tested = findModule(catalog, testedRef);
   if (!tested) throw new Error(`sonda: ${testedRef} no está en el catálogo`);
   const map = emptyArena(120, 80);
@@ -188,7 +192,7 @@ export function probeDigest(catalog: ModuleDefinition[], testedRef: string): str
     ruleset: loadRuleset("tdm_mvp@1", { timeLimitTicks: 100000, scoreToWin: 999 }),
     map,
     participants: [
-      { id: "veh_1", botId: "bE", team: "red", spec: resolveVehicle(loadoutWith(tested, catalog), catalog) },
+      { id: "veh_1", botId: "bE", team: "red", spec: resolveVehicle(loadout ?? loadoutWith(tested, catalog), catalog) },
       { id: "veh_2", botId: "bA", team: "red", spec: resolveVehicle(ALLY, catalog) },
       { id: "veh_3", botId: "bX", team: "blue", spec: resolveVehicle(ENEMY, catalog) },
     ],

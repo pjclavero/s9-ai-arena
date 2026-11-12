@@ -65,9 +65,10 @@ export const COMMON_FIELDS: Readonly<Record<string, FieldContract>> = {
   costCredits: V("validator: budget_exceeded / module_cost_cap_exceeded", scale(50, 1000)),
   size: V("validator: slot_size_exceeded (SIZE_RANK de la ranura)", (v) => (v === "XL" ? "S" : "XL")),
   hp: A("vehicle.ts ModuleRuntime.hp → stateFromHealth / applyDamage", scale(0.25)),
-  "power.passiveEUs": A("vehicle.ts passiveDrain → energía", scale(6, 1)),
+  "power.passiveEUs": { ...A("vehicle.ts passiveDrain → energía", scale(6, 1)), sample: 2 },
   "power.perActionEU": A("combat.ts canFire / fire / canDeployMine / deployMine (coste por acción)", scale(8, 5)),
-  maxPerVehicle: V("validator: duplicate_limit_exceeded (maxPerVehicle)", set(1), 1),
+  // El gate lo prueba con DOS copias del módulo (ver catalog-contract.test.ts).
+  maxPerVehicle: V("validator: duplicate_limit_exceeded (maxPerVehicle)", (v) => (v === 1 ? 3 : 1), 3),
   requiresChassis: V("validator: incompatible_chassis (requiresChassis)", set(["chassis.nonexistent"]), [
     "chassis.nonexistent",
   ]),
@@ -123,7 +124,7 @@ export const CATEGORY_FIELDS: Readonly<Record<ModuleCategory, Readonly<Record<st
     damage: A("combat.ts deployMine → battle.ts resolveMines", scale(3)),
     triggerRadiusM: A("combat.ts deployMine → battle.ts resolveMines", scale(5)),
     explosionRadiusM: A("combat.ts deployMine → battle.ts explode", scale(3)),
-    armDelayTicks: A("combat.ts deployMine (armedAtTick)", set(300)),
+    armDelayTicks: A("combat.ts deployMine (armedAtTick)", set(400)),
     cooldownTicks: A("combat.ts deployMine (cooldownUntilTick)", intScale(4)),
     lifetimeTicks: A("combat.ts deployMine (expiresAtTick)", set(45)),
   },
