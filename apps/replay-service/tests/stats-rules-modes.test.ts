@@ -26,20 +26,20 @@ beforeAll(async () => {
 async function play(ruleset: any, perSide: number, byConstruction = false): Promise<Replay> {
   const participants = [];
   for (let i = 0; i < perSide * 2; i++) {
-    participants.push({
-      id: `veh_${i + 1}`,
-      botId: `bot_${i + 1}`,
-      team: perSide === 1 ? `t${i}` : i % 2 === 0 ? "red" : "blue",
-      spec: gunnerLoadout(),
-    });
+    const team = perSide === 1 ? `t${i}` : i % 2 === 0 ? "red" : "blue";
+    const base = gunnerLoadout();
+    // La munición sobrada va en el SPEC (queda en la cabecera del replay y verify() la reproduce);
+    // tocarla en caliente no se grabaría y la re-simulación divergiría.
+    const spec =
+      byConstruction && team === "red"
+        ? { ...base, modules: base.modules.map((m) => (m.category === "ammo" ? { ...m, rounds: 100_000 } : m)) }
+        : base;
+    participants.push({ id: `veh_${i + 1}`, botId: `bot_${i + 1}`, team, spec });
   }
   return record({ battleId: "stats-rules", seed: "stats-rules", ruleset, map: emptyArena(), participants }, (b) => {
     for (const p of participants) {
       const red = p.team === "red";
       b.attachBot(p.id, byConstruction && !red ? new IdleBot(p.botId) : new HunterBot(p.botId));
-      if (byConstruction && red)
-        for (const v of b.getVehicles().filter((x) => x.id === p.id))
-          for (const a of v.modulesOf("ammo")) a.ammo = 100_000;
     }
   });
 }

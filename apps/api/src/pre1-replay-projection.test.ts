@@ -146,10 +146,14 @@ beforeAll(async () => {
     {
       battleId: "pre1-base",
       seed: SEED,
-      // Arena pequeña, 900 ticks y dos artilleros: hay destrucciones y cambios de marcador
+      // Arena pequeña, 3000 ticks y dos artilleros: hay destrucciones y cambios de marcador
       // (eventos públicos que el visor debe recibir); sin ellos la comprobación de eventos
       // del visor y la de la lista blanca no probarían nada.
-      ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: 900 }),
+      // OLA2-MB · antes 900: con el contrato de daño (orden de candidatos por slot, torreta de la
+      // montura, hp de blindaje = hp de módulo) la trayectoria cambia y en 900 ticks no cae nadie
+      // (0 eventos públicos; medido en VM112: 900 → {}, 3000 → 2 destrucciones + 2 cambios de marcador).
+      // Se alarga el límite de tiempo, NO se busca otra semilla: la semilla sigue siendo SEED.
+      ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: 3000 }),
       map: emptyArena(40, 30),
       participants: [
         { id: "v_red", botId: "bot_red", team: "red", spec: scoutLoadout() },
