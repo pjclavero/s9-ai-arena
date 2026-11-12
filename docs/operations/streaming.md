@@ -228,8 +228,21 @@ Reglas de operación:
   un torneo anuncia la retransmisión antes de la inscripción) y `tournament_not_broadcastable` para una
   batalla de un torneo sin `broadcast` con bots no públicos. Un torneo sin `broadcast` se puede emitir
   igual que antes: el director sólo muestra sus batallas sin bots no públicos. `GET
-  /admin/streaming/target` devuelve `broadcastable`, `broadcastBlockedReason` y `tournamentBroadcast`;
-  `publicBroadcastable` se mantiene como alias obsoleto.
+  /admin/streaming/target` devuelve `broadcastable` (autorización por visibilidad), `broadcastBlockedReason`
+  y `tournamentBroadcast`, y además (MG, contrato 0.18.0) el estado EFECTIVO: `broadcastAvailable` y
+  `reason` (`public_spectate_disabled`, `public_replays_disabled` para una batalla terminada,
+  `battle_not_public`, `tournament_not_broadcastable`, `battle_not_started`, `battle_not_available`,
+  `target_not_available`, `streaming_not_configured`, `other`), calculados con la MISMA política que
+  aplica `/broadcast` a un anónimo (`whereBattleReadable`) y los ajustes públicos vigentes.
+  `publicBroadcastable` (obsoleto) vale ahora lo mismo que `broadcastAvailable`.
+- Acceso público (MG): el espectador público y los replays públicos se cambian en Administración →
+  «Acceso público / Broadcast» (`PATCH /admin/settings/public-access`), sin editar `.env` ni recrear
+  servicios. Se guardan en `app_runtime_settings` (migración 021); `S9_PUBLIC_SPECTATE_ENABLED` y
+  `S9_PUBLIC_REPLAYS_ENABLED` sólo dan el valor inicial (la primera API que arranca sin fila la crea
+  con su entorno) y el fallback si la BD no responde. La API y el tournament-worker releen la fila cada
+  `S9_RUNTIME_SETTINGS_REFRESH_MS` (5 s por defecto, 0,5-60 s): ésa es la latencia máxima de un
+  cambio en los demás procesos; el que lo guarda lo aplica al instante. Cada cambio queda en
+  `audit_log` (`settings.public_access.update`, con valor anterior y nuevo).
 - Despliegue: el perfil `streaming` sigue fuera del contrato de producción. Para usar la
   pantalla hace falta el servicio `streamer` y los secretos nuevos de `init-secrets.sh`
   (`streamer_control_secret`, `stream_secrets_private`/`stream_secrets_public`). Sin streamer

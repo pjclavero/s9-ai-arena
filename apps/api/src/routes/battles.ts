@@ -20,8 +20,7 @@ import { addBotToTeam, emptyTeamStats, type TeamBattleStats } from "../../../rep
 import { signSpectateTicket } from "../auth/tokens.js";
 import { anonQuota, type AnonQuotaConfig } from "../middleware/anon-quota.js";
 import type { BattleRunConfig } from "../battle-run.js";
-import { publicSpectateEnabledFromEnv } from "../public-spectate.js";
-import { publicReplaysEnabledFromEnv } from "../public-replays.js";
+import { flagSource } from "../runtime-settings.js";
 import { assertTeamsFitMap, checkBattleContent } from "./catalog.js";
 import { wherePublicReplay } from "../replay-access.js";
 import { PROJECTED_HTTP_CACHE_CONTROL, projectReplayDocument, projectedEtag } from "../replay-projection.js";
@@ -378,13 +377,17 @@ export function battleRoutes(
   quota: AnonQuotaConfig,
   // Se mantiene la firma (app.ts la pasa); `/run` ya no usa el launcher (TD-002).
   _runCfg?: BattleRunConfig,
-  publicSpectateEnabled: boolean = publicSpectateEnabledFromEnv(),
-  publicReplaysEnabled: boolean = publicReplaysEnabledFromEnv(),
+  // MG · booleano fijo (tests) o getter de los ajustes de runtime (RuntimeSettingsStore):
+  // los flags se leen EN CADA PETICIÓN, así un cambio en caliente se aplica sin reiniciar.
+  publicSpectateEnabled?: boolean | (() => boolean),
+  publicReplaysEnabled?: boolean | (() => boolean),
 ): Router {
   const router = Router();
+  const spectateOn = flagSource(publicSpectateEnabled, () => false);
+  const replaysOn = flagSource(publicReplaysEnabled, () => false);
   // UX-D (G-08) · una sola política de lectura para listado, detalle, stats,
   // auditoría, ticket de espectador y /run (battle-access.ts).
-  const vis: BattleVisibility = { publicReplays: publicReplaysEnabled, publicSpectate: publicSpectateEnabled };
+  const vis = (): BattleVisibility => ({ publicReplays: replaysOn(), publicSpectate: spectateOn() });
 
   // R11 · Slice mínimo de espectador público: gateado por S9_PUBLIC_SPECTATE_ENABLED
   // (apagado por defecto). Responde 200 SIEMPRE, sin cuenta; si está apagado,
@@ -393,7 +396,7 @@ export function battleRoutes(
     router,
     "listPublicLiveBattles",
     async (_req, res) => {
-      if (!publicSpectateEnabled) {
+      if (!spectateOn()) {
         res.json({ enabled: false, battles: [] });
         return;
       }
@@ -438,7 +441,7 @@ export function battleRoutes(
     router,
     "getPublicLiveBattle",
     async (req, res) => {
-      if (!publicSpectateEnabled) throw notFound();
+      if (!spectateOn()) throw notFound();
       const battleId = pathParam(req, "battleId");
       const battle = await wherePubliclyShowable(
         db,
@@ -477,7 +480,7 @@ export function battleRoutes(
     router,
     "listPublicReplays",
     async (req, res) => {
-      if (!publicReplaysEnabled) {
+      if (!replaysOn()) {
         res.json({ enabled: false, items: [] });
         return;
       }
@@ -528,7 +531,7 @@ export function battleRoutes(
     router,
     "getPublicReplay",
     async (req, res) => {
-      if (!publicReplaysEnabled) throw notFound();
+      if (!replaysOn()) throw notFound();
       const battleId = pathParam(req, "battleId");
       const battle = await getFinishedBattleWithReplayOr404(db, battleId);
       const participants = await db("participants").where({ battle_id: battle.id });
@@ -545,7 +548,7 @@ export function battleRoutes(
     router,
     "downloadPublicReplay",
     async (req, res) => {
-      if (!publicReplaysEnabled) throw notFound();
+      if (!replaysOn()) throw notFound();
       const battleId = pathParam(req, "battleId");
       const battle = await getFinishedBattleWithReplayOr404(db, battleId);
       // PRE-1 · NUNCA el fichero crudo (semilla + comandos + loadouts permiten
@@ -584,7 +587,7 @@ export function battleRoutes(
         { column: "battles.id", order: "desc" },
       ])
       .limit(limit + 1);
-    q = whereBattleReadable(db, q, req.auth, vis);
+    q = whereBattleReadable(db, q, req.auth, vis());
     if (typeof req.query.status === "string") q = q.where("battles.status", req.query.status);
     q = applyCursor(q, cursor, "battles.created_at", ["battles.id"]);
     const rows = await runCursorQuery(q, cursor);
@@ -603,7 +606,7 @@ export function battleRoutes(
   });
 
   defineOperation(router, "getBattle", async (req, res) => {
-    const battle = await withMapName(db, await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis));
+    const battle = await withMapName(db, await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis()));
     res.setHeader("Cache-Control", NO_STORE);
     res.json(battleToJson(battle, await loadParticipants(db, battle.id), req.auth ?? null));
   });
@@ -692,11 +695,11 @@ export function battleRoutes(
       // ya no se emite: 404 (mismo trato que getPublicLiveBattle, para no revelar
       // si el id existe). Una sesión autenticada sigue pudiendo espectar: el
       // espectador interno del producto no es "espectador público".
-      if (!publicSpectateEnabled && !req.auth) throw notFound();
+      if (!spectateOn() && !req.auth) throw notFound();
       // UX-D (G-08) · el ticket sigue la MISMA política que el resto de vistas de
       // la batalla: antes cualquier sesión (y, con el directo público, cualquier
       // anónimo) obtenía ticket para la batalla de un bot privado ajeno.
-      const battle = await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis);
+      const battle = await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis());
       // E8/T8.2: jti ⇒ el gateway hace el ticket de UN SOLO USO; debug ⇒ capas de
       // depuración (sensores, rutas, colisiones) solo para roles autorizados: el flag
       // viaja FIRMADO por la API, el visor no puede autoconcedérselo.
@@ -728,7 +731,7 @@ export function battleRoutes(
   );
 
   defineOperation(router, "getBattleAudit", async (req, res) => {
-    const battle = await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis);
+    const battle = await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis());
     const map = await db("map_versions").where({ map_id: battle.map_id, version: battle.map_version }).first();
     const participants = await db("participants").where({ battle_id: battle.id });
     const artifacts = [];
@@ -757,7 +760,7 @@ export function battleRoutes(
   });
 
   defineOperation(router, "getBattleStats", async (req, res) => {
-    const battle = await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis);
+    const battle = await getReadableBattleOr404(db, pathParam(req, "battleId"), req.auth, vis());
     const rows = await db("battle_stats").where({ battle_id: battle.id });
     const participants = await loadParticipants(db, battle.id);
     const statsByBot = new Map<string, Record<string, any>>();
@@ -856,7 +859,7 @@ export function battleRoutes(
     const battleId = pathParam(req, "battleId");
     // UX-D (G-08) · misma política de lectura: antes cualquier usuario «tocaba» por
     // id la batalla de otro.
-    const battle = await getReadableBattleOr404(db, battleId, req.auth, vis);
+    const battle = await getReadableBattleOr404(db, battleId, req.auth, vis());
     if (battle.status !== "scheduled") {
       res.status(409).json({ error: "invalid_state", message: `La batalla está en estado ${battle.status}` });
       return;

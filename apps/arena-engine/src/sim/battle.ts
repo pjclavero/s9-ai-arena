@@ -9,7 +9,6 @@
  *   4. Un bot lento no cambia el resultado: si no responde a tiempo, acción segura y a otra cosa.
  * El hash del estado final es la prueba: mismo seed ⇒ mismo hash, siempre.
  */
-import { createHash } from "node:crypto";
 import {
   DECISION_EVERY_N_TICKS,
   emptyDict,
@@ -19,7 +18,8 @@ import {
   TICK_HZ,
   type Ruleset,
 } from "../../../../packages/game-rules/index.js";
-import { Rng } from "../rng.js";
+import { RngStreams } from "../rng.js";
+import { computeStateHash, type StateHashBreakdown } from "./state-hash.js";
 import deps from "../engine-deps.json" with { type: "json" };
 import {
   applyDamage,
@@ -75,6 +75,8 @@ export interface BattleConfig {
   snapshotEveryNTicks?: number;
   /** Cada cuántos ticks se emite un hash de estado para verificar replays. */
   hashEveryNTicks?: number;
+  /** OLA2-MD · cada cuántos ticks se graba un checkpoint con el desglose por componentes (defecto 300). */
+  checkpointEveryNTicks?: number;
   recordReplay?: boolean;
   /**
    * N2 · Latencia simulada (DETERMINISTA, off por defecto). Cuando está presente, el
@@ -153,7 +155,8 @@ function insideArena(p: Vec2, map: Pick<ArenaMap, "widthM" | "heightM">): boolea
 
 export class Battle {
   readonly config: BattleConfig;
-  private rng: Rng;
+  /** OLA2-MD · flujos de RNG con nombre (combat, sensors, effects, guidance, latency). */
+  private rng: RngStreams;
   private physics: PhysicsWorld;
   private mode: GameMode;
   private vehicles: Vehicle[] = [];
@@ -183,11 +186,13 @@ export class Battle {
   publicEvents: any[] = [];
   /**
    * Motor 0.4.0 (ADR-022) · bajas de vehículos ENEMIGOS por equipo (criterio de
-   * desempate `kills`). No entra en el hash: es una función del historial de muertes.
+   * desempate `kills`). SÍ entra en el hash (componente `mode`, state-hash v2).
    */
   private teamKills: Record<string, number> = emptyDict<number>();
   snapshots: any[] = [];
   stateHashes: { tick: number; hash: string }[] = [];
+  /** OLA2-MD · checkpoints del replay v2: hash + desglose por componentes (incluye el final). */
+  checkpoints: { tick: number; hash: string; components: StateHashBreakdown["components"] }[] = [];
   replayCommands: { tick: number; vehicleId: string; command: any }[] = [];
   /**
    * N2 · Comandos "en vuelo" bajo latencia simulada: readyAtTick es el tick de
@@ -199,7 +204,7 @@ export class Battle {
 
   constructor(config: BattleConfig) {
     this.config = config;
-    this.rng = new Rng(config.seed);
+    this.rng = new RngStreams(config.seed);
     this.physics = new PhysicsWorld();
     const teams = [...new Set(config.participants.map((p) => p.team))].sort();
     // El modo puede RECHAZAR la lista de participantes (ERR-ENG-07): deathmatch exige
@@ -358,7 +363,7 @@ export class Battle {
           this.radioQueue,
           this.mode.score,
           objectives,
-          this.rng,
+          this.rng.stream("sensors"),
         );
 
         // Los eventos pendientes de ESTE bot se le entregan y se vacían.
@@ -396,7 +401,7 @@ export class Battle {
             // campo ausente esta rama entera no se ejecuta y no se toca this.rng,
             // que es la garantía de cero-regresión con latencia OFF.
             const span = Math.max(0, latency.maxCycles - latency.minCycles) + 1;
-            const d = latency.minCycles + this.rng.int(span);
+            const d = latency.minCycles + this.rng.stream("latency").int(span);
             if (d <= 0) {
               // Sin retardo efectivo: mismo comportamiento que sin latencia.
               commands.set(v.id, cmd);
@@ -591,8 +596,13 @@ export class Battle {
     // Cadencia del hash: config > ruleset > 30. Va en el ruleset (ERR-ENG-04) para que
     // viaje en la cabecera del replay y una auditoría con hash por tick sea reproducible.
     const hashEvery = this.config.hashEveryNTicks ?? this.config.ruleset.hashEveryNTicks ?? 30;
-    if (this.tick % hashEvery === 0) {
-      this.stateHashes.push({ tick: this.tick, hash: this.stateHash() });
+    const ckptEvery = this.config.checkpointEveryNTicks ?? 300;
+    const wantHash = this.tick % hashEvery === 0;
+    const wantCkpt = ckptEvery > 0 && this.tick % ckptEvery === 0;
+    if (wantHash || wantCkpt) {
+      const bd = this.stateHashBreakdown();
+      if (wantHash) this.stateHashes.push({ tick: this.tick, hash: bd.hash });
+      if (wantCkpt) this.checkpoints.push({ tick: this.tick, hash: bd.hash, components: bd.components });
     }
 
     // Purga de radio ya entregada. Solo si hay algo: filter() sobre una cola vacía
@@ -634,7 +644,7 @@ export class Battle {
       const slots: string[] = [...new Set<string>(cmd.fire.filter((s: unknown): s is string => typeof s === "string"))];
 
       for (const slot of slots) {
-        const rejection = canFire(v, slot, this.tick, this.rng);
+        const rejection = canFire(v, slot, this.tick, this.rng.stream("combat"));
         if (rejection) {
           this.emit({ kind: "rejected_action", slot, reason: rejection }, v.id);
           continue;
@@ -643,7 +653,7 @@ export class Battle {
           x: pose.position.x + Math.cos(v.turretHeading) * (v.spec.radiusM + 0.3),
           y: pose.position.y + Math.sin(v.turretHeading) * (v.spec.radiusM + 0.3),
         };
-        const p = fire(v, slot, this.tick, muzzle, this.rng, this.entitySeq++);
+        const p = fire(v, slot, this.tick, muzzle, this.rng.stream("combat"), this.entitySeq++);
         if (p) {
           this.projectiles.push(p);
           this.sounds.push({ position: muzzle, kind: "gunshot", intensity: 1 });
@@ -822,7 +832,7 @@ export class Battle {
     ownerTeam: string,
   ): void {
     const tp = poses.get(target.id)!;
-    const res = applyDamage(target, damage, from, tp.position, tp.heading, this.rng);
+    const res = applyDamage(target, damage, from, tp.position, tp.heading, this.rng.stream("combat"));
 
     // El objetivo SIEMPRE sabe que le han dado y en qué sector: lo nota.
     // Pero el sourceId solo se revela si podía verlo (D8): un disparo desde la niebla
@@ -906,56 +916,53 @@ export class Battle {
 
   /**
    * Hash canónico del estado de simulación. Es LA prueba de determinismo.
-   * Incluye el estado del RNG: dos batallas con el mismo hash han consumido
-   * exactamente la misma aleatoriedad.
+   * OLA2-MD · v2 por componentes (state-hash.ts): cubre TODO el estado vivo que decide el
+   * futuro, incluidos los flujos de RNG con nombre. Nada de proyección ni visibilidad.
    */
   stateHash(): string {
+    return this.stateHashBreakdown().hash;
+  }
+
+  /** OLA2-MD · desglose por componentes (contrato §13). Los campos los nombra stateHashInput(). */
+  stateHashBreakdown(): StateHashBreakdown {
+    return computeStateHash(this.stateHashInput(), { skipKeys: STATE_HASH_SKIP });
+  }
+
+  /**
+   * Estado vivo por componente. Regla: todo campo mutable de la simulación entra aquí (los
+   * objetos se serializan ENTEROS con canonicalize, así que un campo nuevo de Vehicle,
+   * proyectil, mina o modo entra solo). Sólo se omite `spec` (configuración inmutable que
+   * ya viaja en la cabecera). `effects`, `effectQueue`, `interference` y `botRefs` están
+   * vacíos hasta que MC/MA los rellenen en su fase.
+   */
+  private stateHashInput() {
     const poses = this.poses();
-    // Huella del solver (ERR-ENG-04): cuerpos despiertos + pares de contacto. Una
-    // divergencia interna de Rapier (islas de sueño, contactos) puede ser invisible
-    // en las poses cuantizadas y aun así seguir viva; esto la saca a la luz.
+    // Huella del solver (ERR-ENG-04): cuerpos despiertos + pares de contacto.
     const solver = this.physics.solverFingerprint();
-    const limited = respawnLimited(this.config.ruleset);
-    const canonical = {
+    return {
       tick: this.tick,
       rng: this.rng.getState(),
+      allocator: { nextSeq: this.entitySeq, ownCounters: {}, contactCounters: {} },
       solver: [solver.awakeBodies, solver.contactPairs],
-      vehicles: this.vehicles.map((v) => {
-        const p = poses.get(v.id);
-        return {
-          id: v.id,
-          pos: p ? [q(p.position.x), q(p.position.y)] : null,
-          h: p ? q(p.heading) : 0,
-          vel: p ? [q(p.velocity.x), q(p.velocity.y)] : null,
-          turret: q(v.turretHeading),
-          hp: q(v.hullHp),
-          energy: q(v.energyEU),
-          alive: v.alive,
-          dq: v.disqualified,
-          flag: v.carryingFlag,
-          // R3.8 · la marca de juggernaut es estado de simulación: va en el hash como
-          // carryingFlag. Añadirla invalida los goldens con hash (regenerados y documentados).
-          jug: v.juggernaut,
-          modules: [...v.modules.values()]
-            .sort((a, b) => a.spec.slot.localeCompare(b.spec.slot))
-            .map((m) => [m.spec.slot, q(m.hp), m.offline, m.ammo, m.charges, m.cooldownUntilTick]),
-          armor: Object.entries(v.armor)
-            .sort()
-            .map(([s, a]) => [s, q(a!.hp)]),
-          // R-RULES (ADR-021) · las reapariciones usadas son estado de simulación SÓLO
-          // cuando limitan; sin `maxRespawns` no entran y el hash de 0.3.0 no cambia.
-          ...(limited ? { rsp: v.respawnsUsed } : {}),
-        };
-      }),
-      projectiles: this.projectiles.map((p) => [p.id, q(p.position.x), q(p.position.y), q(p.damage)]),
-      mines: this.mines.map((m) => [m.id, q(m.position.x), q(m.position.y)]),
-      destructibles: [...this.destructibleHp.entries()].sort().map(([k, v]) => [k, q(v)]),
-      score: Object.entries(this.mode.score).sort(),
-      objectives: this.mode.objectives(),
-      // Motor 0.4.0 (ADR-022) · estado de prórroga, SÓLO si el ruleset la declara.
-      ...(this.config.ruleset.overtime ? { ot: this.mode.overtimeSince ?? null } : {}),
+      vehicles: this.vehicles.map((v) => ({ pose: poses.get(v.id) ?? null, state: v })),
+      projectiles: this.projectiles,
+      deployables: this.mines,
+      effects: [],
+      effectQueue: [],
+      interference: [],
+      destructibles: this.destructibleHp,
+      // Colas de entrega hacia los bots: radio en vuelo, búferes de sonido y eventos
+      // privados aún no entregados (deciden la próxima observación).
+      radioQueue: {
+        radio: this.radioQueue,
+        sounds: this.sounds,
+        observedSounds: this.observedSounds,
+        pendingEvents: this.pendingEvents,
+      },
+      pendingCommands: this.pendingLatencyCommands,
+      botRefs: {},
+      mode: { state: this.mode, objectives: this.mode.objectives(), teamKills: this.teamKills },
     };
-    return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
   }
 
   private finish(winner: string | "draw"): void {
@@ -972,13 +979,19 @@ export class Battle {
     if (technical) {
       this.publicEvents.push({ tick: this.tick, kind: "technical_limit", score: { ...this.mode.score } });
     }
+    // OLA2-MD · checkpoint FINAL garantizado (desglose por componentes del estado final).
+    const finalHash = this.stateHashBreakdown();
+    const lastCkpt = this.checkpoints[this.checkpoints.length - 1];
+    if (!lastCkpt || lastCkpt.tick !== this.tick) {
+      this.checkpoints.push({ tick: this.tick, hash: finalHash.hash, components: finalHash.components });
+    }
     this.result = {
       battleId: this.config.battleId,
       winner: technical ? null : winner,
       ...(technical ? { endReason: "technical_limit" as const } : {}),
       ticks: this.tick,
       score: { ...this.mode.score },
-      finalStateHash: this.stateHash(),
+      finalStateHash: finalHash.hash,
       disqualified: this.vehicles.filter((v) => v.disqualified).map((v) => v.id),
       versions: {
         engine: deps.engine.version,
@@ -1014,6 +1027,15 @@ export class Battle {
 
   /** Observación de un bot concreto: la usan el servidor de protocolo (E5) y los tests. */
   observationFor(vehicleId: string): any {
+    // OLA2-MD · GUARDA (review MD P2): los raycasts de Rapier fuera del bucle (y el step
+    // dt=0 de syncQueries tras un alta/baja de cuerpo) alteran contactos/sueño y por tanto
+    // la física posterior. En una batalla GRABADA (oficial) eso rompería verify(), así que
+    // no se admite. Residual: batallas sin recordReplay (tests, spectator) no son verificables.
+    if (this.config.recordReplay) {
+      throw new Error(
+        "observationFor() no se puede llamar fuera del bucle en una batalla grabada (recordReplay): altera la física y rompe verify()",
+      );
+    }
     const v = this.vehicles.find((x) => x.id === vehicleId);
     if (!v) throw new Error(`Vehículo desconocido: ${vehicleId}`);
     return buildObservation(
@@ -1031,7 +1053,9 @@ export class Battle {
       this.radioQueue,
       this.mode.score,
       this.mode.objectives(),
-      this.rng,
+      // OLA2-MD · COPIA del flujo de sensores: una observación pedida fuera del bucle no
+      // avanza el RNG de la simulación (cierra R1). Ver residual en el informe MD.
+      this.rng.stream("sensors").clone(),
     );
   }
 
@@ -1056,10 +1080,8 @@ export class Battle {
   }
 }
 
-/** Cuantización para el hash: elimina el ruido del último bit sin ocultar divergencias reales. */
-function q(n: number): number {
-  return Math.round(n * 1e5) / 1e5;
-}
+/** OLA2-MD · configuración inmutable (ya en la cabecera del replay): fuera del hash. */
+const STATE_HASH_SKIP: ReadonlySet<string> = new Set(["spec"]);
 function round6(n: number): number {
   return Math.round(n * 1e6) / 1e6;
 }

@@ -315,5 +315,6 @@ describe("Respawn TDM · nunca encima de un vehículo", () => {
   });
 });
 
-const GOLDEN_1V1_HASH_E902B0A = "e40ee855cb479a2a5f05cc214f9309edd2f4e5611ce31b9d9552873ce8626794";
-const GOLDEN_1V1_REALMAP_HASH_E902B0A = "6a9c139d094b1f8b6d933d6dfc9b6056d045ef6a9a9215066727759121c81abc";
+// OLA2-MD · regenerado: hash v2 por componentes + flujos RNG con nombre (cambian las tiradas).
+const GOLDEN_1V1_HASH_E902B0A = "aa0577c3befc46ed2e6cd83647e91445ab92eadb6d03c762ff762a13c9c3acb2";
+const GOLDEN_1V1_REALMAP_HASH_E902B0A = "e48fb9238677bbf02d42027338edcfa476095ccc8d17242df449becd763b30a7";

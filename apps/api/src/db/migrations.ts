@@ -1068,6 +1068,32 @@ const m020_streaming_ingests: Migration = {
   },
 };
 
+// MG · 021_runtime_settings: ajustes de RUNTIME de la aplicación (acceso público /
+// broadcast), sin secretos. UNA fila (id = 1). La migración NO la crea: la crea la
+// primera API que arranca (RuntimeSettingsStore.refresh con bootstrap) con los valores
+// de SU entorno (S9_PUBLIC_SPECTATE_ENABLED / S9_PUBLIC_REPLAYS_ENABLED), para que un
+// despliegue no cambie el comportamiento aunque la migración se ejecute en un proceso
+// sin esas variables. Aditiva e independiente: entra en NAMED_ROLLBACK_ALLOWED.
+// Probada en `migration-021.test.ts`.
+const m021_runtime_settings: Migration = {
+  name: "021_runtime_settings",
+  async up(db) {
+    await db.raw(`
+      CREATE TABLE app_runtime_settings (
+        id                      smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+        public_spectate_enabled boolean NOT NULL,
+        public_replays_enabled  boolean NOT NULL,
+        updated_at              timestamptz NOT NULL DEFAULT now(),
+        updated_by              uuid REFERENCES users(id) ON DELETE SET NULL
+      );
+    `);
+  },
+  // Vuelta atrás: se pierde lo guardado y se vuelve a leer el entorno.
+  async down(db) {
+    await db.raw(`DROP TABLE app_runtime_settings;`);
+  },
+};
+
 export const MIGRATIONS: Migration[] = [
   m001_identity,
   m002_content,
@@ -1089,6 +1115,7 @@ export const MIGRATIONS: Migration[] = [
   m018_battle_reverted,
   m019_visibility_broadcast,
   m020_streaming_ingests,
+  m021_runtime_settings,
 ];
 
 class ProgrammaticMigrationSource {
@@ -1160,6 +1187,7 @@ export const NAMED_ROLLBACK_ALLOWED: readonly string[] = Object.freeze([
   "018_battle_reverted",
   "019_visibility_broadcast",
   "020_streaming_ingests",
+  "021_runtime_settings",
 ]);
 
 /** EQ5e (R3-F) · Aplica UNA migración pendiente concreta por NOMBRE. */
