@@ -55,20 +55,19 @@ class RadioHunter extends HunterBot {
   }
 }
 /**
- * Bot que, además de cazar, siembra UNA mina en su primera decisión.
+ * Bot que, además de cazar, siembra minas SÓLO en las decisiones en que dispara.
  * Antes pedía deployMine en cada decisión, pero el motor sólo lo procesaba si el comando traía
- * también `fire` (defecto). Con el arreglo de OLA 2 (deployMine se procesa sin fire) ese bot
- * sembraba minas continuamente desde el tick 0 y, con la semilla fija, nadie moría en 900 ticks
- * (el replay quedaba sin eventos públicos y la calibración «eventos reales» daba 0 = 0). Una
- * sola mina conserva lo que el test necesita (`deployMine` y `mine.explosive@1` en el crudo)
- * sin cambiar el desenlace de la partida por construcción.
+ * también `fire` (defecto, corregido en OLA 2: deployMine se procesa sin fire). Con el arreglo,
+ * ese bot sembraba minas desde el tick 0 (también una sola, en el primer tick) y, con la semilla
+ * fija, la partida cambiaba de trayectoria: nadie moría ni había eventos en 900 ticks, y el
+ * test dejaba de probar nada. Pidiendo la mina sólo junto a `fire` el comando es el mismo que
+ * el motor aceptaba antes del arreglo, así que la partida (semilla, eventos, final) es la
+ * misma POR CONSTRUCCIÓN y el crudo sigue llevando `deployMine` y `mine.explosive@1`.
  */
 class MinerHunter extends HunterBot {
-  private seeded = false;
   decide(obs: any) {
     const c = (super.decide(obs) ?? {}) as Record<string, unknown>;
-    if (this.seeded) return c;
-    this.seeded = true;
+    if (!Array.isArray(c.fire) || c.fire.length === 0) return c;
     return { ...c, deployMine: { slot: "mine_bay", armDelayTicks: 0 } };
   }
 }

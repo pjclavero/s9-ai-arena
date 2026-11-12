@@ -60,7 +60,20 @@ describe("ADR-022 · el motor 0.4.0 verifica los replays históricos 0.3.0", () 
     expect((engineDeps.engine as { reproduces?: string[] }).reproduces).toEqual(["0.3.0"]);
   });
 
-  for (const n of Object.keys(RECORDED)) {
+  // OLA 2 · MC (decisión de M0: BACKWARD_COMPATIBILITY_REQUIRED=NO): el alcance del proyectil
+  // se deriva SIEMPRE de weapon.rangeM y la velocidad; ya no existe la regla heredada de 90
+  // ticks. Los replays 0.3.0 con armas (specs grabadas con rangeM 60/55 y TTL fijo 90) dejan de
+  // re-simularse idénticos: la verificación DEBE detectarlo (divergencia), no darlo por bueno.
+  // El replay sin disparos (ctf-1v1) sigue siendo idéntico.
+  const ARMED_NOT_REPRODUCIBLE = new Set(["dm-1v1", "tdm-4v4"]);
+  for (const n of Object.keys(RECORDED).filter((k) => ARMED_NOT_REPRODUCIBLE.has(k))) {
+    it(`${n}: ya NO se re-simula idéntico (sin regla heredada de 90 ticks): la divergencia se detecta`, async () => {
+      const raw = await verify(load(n));
+      expect(raw.matches).toBe(false);
+      expect(raw.divergedAtTick).not.toBeNull();
+    }, 120_000);
+  }
+  for (const n of Object.keys(RECORDED).filter((k) => !ARMED_NOT_REPRODUCIBLE.has(k))) {
     it(`${n}: re-simulación idéntica tick a tick y verificación válida «con 0.4.0»`, async () => {
       const replay = load(n);
       expect(replay.header.versions.engine).toBe("0.3.0");
