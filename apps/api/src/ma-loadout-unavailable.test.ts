@@ -50,9 +50,9 @@ afterAll(async () => {
 });
 
 const body = (red: TestBot, blue: TestBot) => ({
-  mode: "team_deathmatch",
-  rulesetId: "team-deathmatch-mvp",
-  mapId: "mvp-arena-01",
+  mode: "deathmatch",
+  rulesetId: "deathmatch-mvp",
+  mapId: "mvp-arena-02",
   participants: [
     { botId: red.botId, version: 1, team: "red" },
     { botId: blue.botId, version: 1, team: "blue" },
@@ -64,10 +64,8 @@ const body = (red: TestBot, blue: TestBot) => ({
       respawn: { mode: "limited", maxRespawns: 2, delaySeconds: 5 },
       victory: "elimination",
       timeLimitMinutes: 10,
-      botCredits: 100000,
-      teamCredits: 100000,
-      botMassKg: 100000,
-      teamMassKg: 100000,
+      botCredits: 5000,
+      botMassKg: 10000,
     },
   },
 });
@@ -97,13 +95,13 @@ describe("409 loadout_unavailable: detalle sólo para dueño y staff", () => {
 
   it("staff: detalle", async () => {
     const r = await check(body(foreign, mine), staffTok);
-    expect(r.status).toBe(409);
+    expect(r.status, JSON.stringify(r.body)).toBe(409);
     expect(r.body.message).toMatch(/weapon\.cannon/);
   });
 
   it("sin dueño en el bando pero dueño de OTRO bot: no ve el detalle del ajeno", async () => {
     const r = await check(body(foreign, mine), ownerTok);
-    expect(r.status).toBe(409);
+    expect(r.status, JSON.stringify(r.body)).toBe(409);
     expect(JSON.stringify(r.body)).not.toMatch(LEAK);
   });
 });
