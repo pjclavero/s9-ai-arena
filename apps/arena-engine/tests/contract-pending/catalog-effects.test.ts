@@ -15,7 +15,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect } from "vitest";
-import { TICK_DT, loadRuleset } from "../../../../packages/game-rules/index.js";
+import { TICK_DT, TICK_HZ, loadRuleset } from "../../../../packages/game-rules/index.js";
 import { Battle } from "../../src/sim/battle.js";
 import { initPhysics } from "../../src/sim/physics.js";
 import type { VehicleSpec } from "../../src/sim/vehicle.js";
@@ -174,7 +174,14 @@ function shooterSpec(w: (typeof SHOOTERS)[number], rangeOverride?: number): Vehi
       const straight = { ...m, spreadRad: 0 };
       return rangeOverride === undefined
         ? straight
-        : { ...straight, moduleId: "test.fixture_weapon_range@1", rangeM: rangeOverride };
+        : {
+            ...straight,
+            moduleId: "test.fixture_weapon_range@1",
+            rangeM: rangeOverride,
+            // Con MC la vida del proyectil se DERIVA de rangeM y velocidad y un valor
+            // incoherente es fail-closed; en el BASE el campo se ignora (TTL fijo de 90).
+            projectileLifetimeTicks: Math.round((rangeOverride * TICK_HZ) / m.projectileSpeedMs!),
+          };
     }),
   };
 }
