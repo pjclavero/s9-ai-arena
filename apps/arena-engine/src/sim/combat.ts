@@ -15,6 +15,7 @@ import {
   moduleActs,
   type Sector,
 } from "../../../../packages/game-rules/index.js";
+import { projectileLifetimeTicks } from "../../../../packages/module-catalog/resolve/projectile.js";
 import type { Rng } from "../rng.js";
 import type { PhysicsWorld, Vec2 } from "./physics.js";
 import type { Vehicle } from "./vehicle.js";
@@ -198,8 +199,14 @@ export function fire(v: Vehicle, slot: string, tick: number, origin: Vec2, rng: 
   // resolveVehicle). Campo AUSENTE = spec anterior a P-2 (cabecera de replay o checkpoint
   // grabados por un motor que fijaba 90 ticks): se aplica ESA regla, no un valor inventado.
   // Presente e inválido = fail-closed.
-  const ttlTicks =
+  let ttlTicks =
     w.spec.projectileLifetimeTicks === undefined ? LEGACY_PROJECTILE_LIFETIME_TICKS : w.spec.projectileLifetimeTicks;
+  // Spec del régimen P-2 (trae la vida resuelta): la fuente es el rangeM del PROPIO spec, de modo
+  // que cambiar weapon.rangeM cambia el alcance aunque se haya editado tras resolver (contrato
+  // ME/MC). Resolver y motor usan la misma función, así que para un spec coherente coinciden.
+  if (w.spec.projectileLifetimeTicks !== undefined && w.spec.rangeM !== undefined && w.spec.projectileSpeedMs !== undefined) {
+    ttlTicks = projectileLifetimeTicks(w.spec.rangeM, w.spec.projectileSpeedMs);
+  }
   if (!Number.isInteger(ttlTicks) || ttlTicks < 1) {
     throw new Error(`${w.spec.moduleId}: projectileLifetimeTicks inválido (${ttlTicks})`);
   }
