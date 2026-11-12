@@ -414,15 +414,9 @@ interface TargetView {
 
 /** MG · autorizada por visibilidad pero la página pública no podría leerla (p. ej. espectador público apagado). */
 function effectivelyBlocked(t: TargetView | null | undefined): boolean {
-  // `battle_not_started` (espera) y `streaming_not_configured` (el botón sólo ABRE Streaming, que
+  // `streaming_not_configured` (el botón sólo ABRE Streaming, que
   // explica el estado del streamer) no bloquean el enlace; los motivos de lectura pública sí.
-  return (
-    !!t &&
-    t.broadcastable &&
-    t.broadcastAvailable === false &&
-    t.reason !== "battle_not_started" &&
-    t.reason !== "streaming_not_configured"
-  );
+  return !!t && t.broadcastable && t.broadcastAvailable === false && t.reason !== "streaming_not_configured";
 }
 
 /**

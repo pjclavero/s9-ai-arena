@@ -27,8 +27,6 @@ export type BroadcastUnavailableReason =
   | "battle_not_public"
   /** Batalla de un torneo sin `broadcast` con bots no públicos. */
   | "tournament_not_broadcastable"
-  /** Batalla programada: /broadcast mostrará la espera y la verá cuando empiece. */
-  | "battle_not_started"
   /** Batalla fallida, revertida o en un estado que nunca se muestra en público. */
   | "battle_not_available"
   /** Torneo cancelado. */
@@ -166,7 +164,11 @@ export async function tournamentBroadcastState(
   if (readable < shownTotal) return out(false, "other");
   // FIX-BROADCAST · terminado y sin ninguna batalla terminada legible: no hay NADA que
   // emitir (la emisión se quedaba en «Esperando el inicio del torneo…» para siempre).
-  if (finished && readable === 0) return out(false, "tournament_no_content");
+  // Una batalla REVERTIDA no cuenta como contenido (coherente con battleBroadcastState).
+  const emittable = await count(
+    whereBattleReadable(db, shown.clone().whereNull("battles.reverted_at"), undefined, vis),
+  );
+  if (finished && emittable === 0) return out(false, "tournament_no_content");
   return out(true, null);
 }
 

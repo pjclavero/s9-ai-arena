@@ -36,9 +36,9 @@ function tournamentDirector(visible: () => unknown, state: () => string | null) 
   const director = new BroadcastDirector({
     target: { kind: "tournament", tournamentId: "t1" },
     fetchJson: async (path) => {
-      if (path.startsWith("/tournaments?")) {
+      if (path === "/tournaments/t1") {
         const s = state();
-        return { items: s === null ? [] : [{ id: "t1", state: s }] };
+        return s === null ? { id: "t1" } : { id: "t1", state: s };
       }
       if (path === "/tournaments/t1/battles") return visible();
       throw new Error(`ruta inesperada ${path}`);
@@ -98,7 +98,7 @@ describe("FIX-BROADCAST · estados terminales del torneo", () => {
   });
 
   it("torneo abierto/en curso con lista vacía (las programadas no se ven) ⇒ WAITING_VALID", async () => {
-    for (const st of ["running", "open", "closed", null]) {
+    for (const st of ["running", "open", "closed"]) {
       const { director, screens } = tournamentDirector(
         () => ({ items: [] }),
         () => st,
@@ -106,6 +106,66 @@ describe("FIX-BROADCAST · estados terminales del torneo", () => {
       await director.tick();
       expect(states(screens), String(st)).toEqual(["WAITING_VALID"]);
     }
+  });
+
+  describe("la consulta del estado del torneo entra en la contabilidad de fallos (R3)", () => {
+    const empty = { items: [] };
+    function stateFailing(stateCall: () => unknown, maxTransientFailures?: number) {
+      const screens: BroadcastScreen[] = [];
+      const errors: string[] = [];
+      const director = new BroadcastDirector({
+        target: { kind: "tournament", tournamentId: "t1" },
+        fetchJson: async (path) => {
+          if (path === "/tournaments/t1") return stateCall();
+          if (path === "/tournaments/t1/battles") return empty;
+          throw new Error(`ruta inesperada ${path}`);
+        },
+        onScreen: (s) => screens.push(s),
+        onSourceError: (e) => errors.push(`${e.reason}#${e.consecutive}`),
+        maxTransientFailures,
+      });
+      return { director, screens, errors };
+    }
+
+    it("la consulta del torneo falla (5xx) ⇒ reintenta y, a los N seguidos, SOURCE_ERROR; nunca «Esperando»", async () => {
+      const { director, screens, errors } = stateFailing(() => {
+        throw new PublicApiError("HTTP 503 en GET /tournaments/t1", 503, "http");
+      });
+      await director.tick();
+      await director.tick();
+      expect(states(screens)).toEqual([]);
+      await director.tick();
+      expect(states(screens)).toEqual(["SOURCE_ERROR"]);
+      expect(screens[0]).toMatchObject({ kind: "error", reason: "unreachable" });
+      expect(errors).toEqual(["unreachable#1", "unreachable#2", "unreachable#3"]);
+    });
+
+    it("la consulta del torneo falla una vez y se recupera ⇒ ni error ni «Esperando» por el camino", async () => {
+      let n = 0;
+      const { director, screens } = stateFailing(() => {
+        if (n++ === 0) throw new PublicApiError("HTTP 503", 503, "http");
+        return { id: "t1", state: "finished" };
+      });
+      await director.tick();
+      expect(states(screens)).toEqual([]);
+      await director.tick();
+      expect(states(screens)).toEqual(["TARGET_FINISHED"]);
+    });
+
+    it("torneo no encontrado (404) ⇒ SOURCE_ERROR target_not_found en el acto, no «abierto»", async () => {
+      const { director, screens } = stateFailing(() => {
+        throw new PublicApiError("HTTP 404 en GET /tournaments/t1", 404, "http");
+      });
+      await director.tick();
+      expect(states(screens)).toEqual(["SOURCE_ERROR"]);
+      expect(screens[0]).toMatchObject({ kind: "error", reason: "target_not_found" });
+    });
+
+    it("respuesta del torneo sin estado ⇒ SOURCE_ERROR invalid_payload", async () => {
+      const { director, screens } = stateFailing(() => ({ id: "t1" }));
+      await director.tick();
+      expect(screens[0]).toMatchObject({ kind: "error", reason: "invalid_payload" });
+    });
   });
 
   it("batalla programada (visible) ⇒ WAITING_VALID", async () => {

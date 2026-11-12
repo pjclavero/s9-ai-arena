@@ -19,9 +19,9 @@ const fetchCalls: { url: string; init?: RequestInit }[] = [];
 function mockBattles(items: unknown[], tournamentState = "running") {
   vi.stubGlobal("fetch", async (url: any, init?: any) => {
     fetchCalls.push({ url: String(url), init });
-    // EQ5 · el director lee también el ESTADO del torneo (listTournaments).
-    if (String(url).startsWith("/api/v1/tournaments?")) {
-      return { ok: true, json: async () => ({ items: [{ id: "t1", state: tournamentState }] }) } as Response;
+    // EQ5 · el director lee también el ESTADO del torneo (getTournament).
+    if (String(url) === "/api/v1/tournaments/t1") {
+      return { ok: true, json: async () => ({ id: "t1", state: tournamentState }) } as Response;
     }
     return { ok: true, json: async () => ({ items }) } as Response;
   });

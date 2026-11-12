@@ -173,6 +173,11 @@ beforeAll(async () => {
   T.finEmpty = await newTournament("finEmpty", "finished");
   T.finFailed = await newTournament("finFailed", "finished");
   await newBattle("failed", { tournamentId: T.finFailed });
+  T.finReverted = await newTournament("finReverted", "finished");
+  await newBattle("finished", { tournamentId: T.finReverted, reverted: true });
+  T.finMixed = await newTournament("finMixed", "finished");
+  await newBattle("finished", { tournamentId: T.finMixed, reverted: true });
+  await newBattle("finished", { tournamentId: T.finMixed });
   T.cancelled = await newTournament("cancelled", "cancelled");
   T.draft = await newTournament("draft", "draft");
   T.runSched = await newTournament("runSched", "running");
@@ -231,6 +236,12 @@ describe("FIX-BROADCAST · START_REJECT_REASONS", () => {
   it("torneo terminado SIN ninguna batalla emitible ⇒ tournament_no_content (vacío o sólo fallidas)", async () => {
     await expectRejected("tournament", T.finEmpty, "tournament_no_content");
     await expectRejected("tournament", T.finFailed, "tournament_no_content");
+  });
+
+  it("torneo terminado cuyas únicas batallas están REVERTIDAS ⇒ tournament_no_content (no cuentan como contenido)", async () => {
+    await expectRejected("tournament", T.finReverted, "tournament_no_content");
+    // control positivo: con una batalla válida además de la revertida, se emite.
+    await expectStarted("tournament", T.finMixed);
   });
 
   it("torneo cancelado ⇒ target_not_available; borrador ⇒ tournament_not_started", async () => {

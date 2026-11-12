@@ -272,7 +272,6 @@ export function humanReason(code: string | null | undefined, message: string | n
     case "tournament_no_content":
     case "tournament_not_started":
     case "target_not_available":
-    case "battle_not_started":
     case "battle_not_available":
     case "target_not_found":
       return broadcastReasonText(code);
@@ -436,8 +435,8 @@ type Eligibility = Pick<Destination, "kind" | "broadcastable" | "broadcastBlocke
 /**
  * MG · ¿Se puede retransmitir? Autorizado por visibilidad (`broadcastable`) Y con contenido
  * que /broadcast puede mostrar (`broadcastAvailable`, si la API lo da).
- * FIX-BROADCAST · una batalla programada YA NO cuenta: la página pública no puede leerla
- * hasta que empiece (la API rechaza el start con battle_not_started).
+ * FIX-BROADCAST · el motivo y la disponibilidad vienen de la API (`broadcastAvailable`): una
+ * programada con espectador público ON es espera legítima y se acepta.
  */
 export function canBroadcast(d: Eligibility): boolean {
   if (!d.broadcastable) return false;

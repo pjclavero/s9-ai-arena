@@ -171,8 +171,6 @@ export function targetRejectMessage(reason: string): string {
       return "El torneo está en borrador: todavía no hay nada que emitir";
     case "target_not_available":
       return "El torneo está cancelado";
-    case "battle_not_started":
-      return "La batalla aún no ha empezado: /broadcast no puede leerla hasta que esté en curso";
     case "battle_not_available":
       return "La batalla no está disponible (fallida o revertida)";
     case "battle_not_public":

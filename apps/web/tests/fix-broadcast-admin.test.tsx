@@ -181,7 +181,6 @@ describe("FIX-BROADCAST · texto del destino", () => {
       "tournament_no_content",
       "tournament_not_started",
       "target_not_available",
-      "battle_not_started",
       "battle_not_available",
       "target_not_found",
     ]) {
@@ -255,8 +254,8 @@ describe("FIX-BROADCAST · /broadcast pública: estado distinguible y reportable
 
   it("torneo terminado con la lista vacía ⇒ «Torneo terminado» y data-director-state=TARGET_FINISHED", async () => {
     stubFetch((url) =>
-      url.startsWith("/api/v1/tournaments?")
-        ? { ok: true, status: 200, body: () => ({ items: [{ id: "t1", state: "finished" }] }) }
+      url === "/api/v1/tournaments/t1"
+        ? { ok: true, status: 200, body: () => ({ id: "t1", state: "finished" }) }
         : { ok: true, status: 200, body: () => ({ items: [] }) },
     );
     render(<BroadcastPage config={parseBroadcastConfig("?tournament=t1")} />);
@@ -268,8 +267,8 @@ describe("FIX-BROADCAST · /broadcast pública: estado distinguible y reportable
 
   it("torneo cancelado ⇒ pantalla de cancelado (TARGET_CANCELLED)", async () => {
     stubFetch((url) =>
-      url.startsWith("/api/v1/tournaments?")
-        ? { ok: true, status: 200, body: () => ({ items: [{ id: "t1", state: "cancelled" }] }) }
+      url === "/api/v1/tournaments/t1"
+        ? { ok: true, status: 200, body: () => ({ id: "t1", state: "cancelled" }) }
         : { ok: true, status: 200, body: () => ({ items: [] }) },
     );
     render(<BroadcastPage config={parseBroadcastConfig("?tournament=t1")} />);

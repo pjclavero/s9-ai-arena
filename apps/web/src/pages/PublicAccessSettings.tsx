@@ -38,8 +38,6 @@ export function broadcastReasonText(reason: string | null | undefined): string {
       return "La batalla tiene bots no públicos y no es de un torneo con retransmisión pública.";
     case "tournament_not_broadcastable":
       return "La batalla tiene bots no públicos y su torneo se creó sin retransmisión pública.";
-    case "battle_not_started":
-      return "La batalla aún no ha empezado: la página pública no puede mostrarla hasta que esté en curso. Emítela cuando empiece (o emite su torneo).";
     case "battle_not_available":
       return "La batalla no está disponible (fallida o revertida): no se puede retransmitir.";
     case "target_not_available":

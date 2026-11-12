@@ -139,9 +139,9 @@ describe("T11.1 director: encadena batallas con esperas (torneo simulado)", () =
     const fetchJson = async (path: string) => {
       requested.push(path);
       const cur = phases[Math.min(phase, phases.length - 1)];
-      if (path.startsWith("/tournaments?")) {
+      if (path === "/tournaments/t1") {
         const done = cur.every((b) => b.status === "finished");
-        return { items: [{ id: "t1", state: done ? "finished" : "running" }] };
+        return { id: "t1", state: done ? "finished" : "running" };
       }
       // listTournamentBattles devuelve el calendario en orden de juego (ASC).
       return { items: [...cur] };
@@ -223,7 +223,7 @@ describe("EQ5 · el modo torneo lee el calendario COMPLETO del torneo, no la úl
       requested.push(path);
       if (path.startsWith("/battles?")) return { items: Array.from({ length: 100 }, (_, i) => ajena(i)) };
       if (path === "/tournaments/t1/battles") return { items: [battle("b1", "finished"), battle("b2", "running")] };
-      if (path === "/tournaments?limit=100") return { items: [{ id: "t1", state: "running" }] };
+      if (path === "/tournaments/t1") return { id: "t1", state: "running" };
       throw new Error(`ruta inesperada ${path}`);
     };
     const screens: BroadcastScreen[] = [];
@@ -243,8 +243,8 @@ describe("EQ5 · el modo torneo lee el calendario COMPLETO del torneo, no la úl
     const director = new BroadcastDirector({
       target: { kind: "tournament", tournamentId: "t1" },
       fetchJson: async (path) =>
-        path.startsWith("/tournaments?")
-          ? { items: [{ id: "t1", state: "finished" }] }
+        path === "/tournaments/t1"
+          ? { id: "t1", state: "finished" }
           : { items: [battle("b1", "finished", { red: 1, blue: 0 }), battle("b2", "finished", { red: 0, blue: 5 })] },
       onScreen: (s) => screens.push(s),
     });
@@ -261,13 +261,7 @@ describe("EQ5 · un visitante NO ve las batallas programadas: el final lo decide
   // era [B1] ⇒ decideScreen la daba por la ÚLTIMA ⇒ «Torneo terminado. ¡Gracias por
   // vernos!» en mitad del torneo, y la cabecera rotulaba «Batalla 1 / 1».
   const fetchFor = (visible: () => BattleSummary[], state: () => string) => async (path: string) => {
-    if (path.startsWith("/tournaments?"))
-      return {
-        items: [
-          { id: "otro", state: "finished" },
-          { id: "t1", state: state() },
-        ],
-      };
+    if (path === "/tournaments/t1") return { id: "t1", state: state() };
     if (path === "/tournaments/t1/battles") return { items: visible() };
     throw new Error(`ruta inesperada ${path}`);
   };
@@ -307,18 +301,22 @@ describe("EQ5 · un visitante NO ve las batallas programadas: el final lo decide
     expect(screens.map((s) => s.kind)).toEqual(["live", "intermission", "live", "finished"]);
   });
 
-  it("si el estado del torneo no se puede leer, NUNCA anuncia el final (falla hacia «intermedio»)", async () => {
+  it("si el estado del torneo no se puede leer, NUNCA anuncia el final: reintenta y luego SOURCE_ERROR", async () => {
     const screens: BroadcastScreen[] = [];
     const director = new BroadcastDirector({
       target: { kind: "tournament", tournamentId: "t1" },
       fetchJson: async (path) => {
-        if (path.startsWith("/tournaments?")) throw new Error("HTTP 503");
+        if (path === "/tournaments/t1") throw new Error("HTTP 503");
         return { items: [battle("b1", "finished", { red: 1, blue: 0 })] };
       },
       onScreen: (s) => screens.push(s),
+      onSourceError: () => undefined,
     });
     await director.tick();
-    expect(screens.map((s) => s.kind)).toEqual(["intermission"]);
+    expect(screens).toEqual([]);
+    await director.tick();
+    await director.tick();
+    expect(screens.map((s) => s.kind)).toEqual(["error"]);
   });
 
   it("un torneo cancelado también cierra la emisión con su pantalla terminal (FIX-BROADCAST: «cancelado»)", async () => {

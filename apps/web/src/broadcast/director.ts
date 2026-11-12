@@ -386,30 +386,18 @@ export class BroadcastDirector {
   }
 
   /**
-   * Estado del torneo por `listTournaments` (visitor; no hay GET por id). Se
-   * pagina con el cursor hasta encontrarlo (los torneos son pocos; tope de 5
-   * páginas). Cualquier fallo ⇒ null ⇒ «no cerrado»: mejor un intermedio de más
-   * que anunciar el final de un torneo que sigue.
+   * Estado del torneo por `GET /tournaments/{id}` (getTournament, visitor, anónimo).
+   * Entra en la MISMA contabilidad de fallos que el resto de consultas: NO se traga nada.
+   * Un fallo transitorio se propaga (tick ⇒ reintento; N seguidos ⇒ SOURCE_ERROR), uno
+   * permanente (404 «torneo no encontrado», forma inválida) ⇒ SOURCE_ERROR en el acto.
+   * Nunca se trata «no encontrado» como torneo abierto.
    */
   private async tournamentState(): Promise<string | null> {
     if (this.opts.target.kind !== "tournament") return null;
-    const tid = this.opts.target.tournamentId;
-    try {
-      let cursor: string | undefined;
-      for (let i = 0; i < 5; i++) {
-        const q = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
-        const page = (await this.opts.fetchJson(`/tournaments?limit=100${q}`)) as {
-          items?: { id: string; state?: string }[];
-          nextCursor?: string;
-        };
-        const t = page.items?.find((x) => x.id === tid);
-        if (t) return typeof t.state === "string" ? t.state : null;
-        if (!page.nextCursor) return null;
-        cursor = page.nextCursor;
-      }
-    } catch {
-      /* sin estado: se trata como torneo abierto */
-    }
-    return null;
+    const t = (await this.opts.fetchJson(`/tournaments/${encodeURIComponent(this.opts.target.tournamentId)}`)) as {
+      state?: unknown;
+    } | null;
+    if (!t || typeof t !== "object" || typeof t.state !== "string") throw invalidPayload("/tournaments/{id}");
+    return t.state;
   }
 }
