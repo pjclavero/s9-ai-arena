@@ -22,8 +22,7 @@ añade: parada con SIGKILL al árbol de procesos (sin Chromium huérfanos), STAR
 abandonada o un reinicio del streamer, `lastSession`, métricas `stream_*` y aislamiento del servicio
 (`cap_drop: ALL`, `init`, `pids`, `shm_size`). Incluye recursos medidos, rotación, backup/restore y el
 plan de despliegue y rollback. La arquitectura comprobada contra el código está en
-[streaming-architecture.md](../technical/streaming-architecture.md). YouTube real:
-**BLOCKED_BY_AUTHORIZATION**.
+[streaming-architecture.md](../technical/streaming-architecture.md). YouTube real: **VERIFICADO el 2026-11-12** (BATTLE_VISIBLE_ON_STREAM=PASS; registro del operador).
 
 **STREAMER-2 (2026-11-06, misma rama):** tres P3 de la revisión independiente. **H1:** la salida
 de Chromium se lee siempre (antes nadie la leía y Chromium podía quedarse bloqueado con la imagen
@@ -36,6 +35,28 @@ las líneas del log del contenedor son JSON (Xvfb escribe una). Ver
 señal **en blanco**. Diagnóstico por etapas con la imagen real y la puerta
 **BROADCAST_RENDER_READY**: ffmpeg y el relé no arrancan hasta que el display muestra la página
 pintada. Ver [Emisión en blanco (#256)](#emisión-en-blanco-256).
+
+## Actualización de estado — 2026-11-12
+
+El estado ya no es «YouTube sin probar»:
+
+- **#256** está verificado: la puerta `BROADCAST_RENDER_READY` evita publicar el framebuffer blanco y la prueba real no tuvo frames descartados.
+- **#274** está mergeado y desplegado en `web`: el Chromium interno que abre `http://web:3000/broadcast` puede resolver `/api/v1/` y `/ws/` contra los servicios reales en vez de recibir `index.html`.
+- **BATTLE_VISIBLE_ON_STREAM=PASS**: prueba real en YouTube con mapa, vehículos, movimiento y HUD visibles (registro del operador, 2026-11-12).
+- **MG / PR #269** está en `main`: espectador y replays públicos se gestionan desde Administración → Acceso público / Broadcast, con persistencia, auditoría y aplicación en caliente.
+
+Producción sigue separando el núcleo RC9 del despliegue puntual de `web`; consultar [Estado actual](../roadmap/current-status.md) antes de un cambio.
+
+### Limitación de V1
+
+Que la cadena RTMP funcione no resuelve todavía la **orquestación**:
+
+- una batalla puede empezar antes de que la emisión esté lista;
+- una única salida de torneo no garantiza cubrir varias batallas que corren en paralelo;
+- no hay todavía fuentes de producto por batalla para OBS/vMix;
+- los replays y playlists no son ítems de emisión.
+
+Eso pertenece a **Streaming V2 / Broadcast Manager** (MS-1 #275, DESIGN_ONLY hasta integrar MS-2…MS-8).
 
 ## Índice
 
