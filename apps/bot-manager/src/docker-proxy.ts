@@ -957,9 +957,20 @@ export class ProxyContainerRunner implements ContainerRunner {
   /** OLA2-MF · borrado forzado por Id completo; 404 (ya no existe) = éxito. */
   async removeById(id: string): Promise<void> {
     const res = await this.call("DELETE", `/containers/${id}?force=true`);
-    if (res.status !== 204 && res.status !== 404) {
-      throw new Error(`el proxy rechazó el borrado (${res.status}): ${res.json?.message ?? "sin detalle"}`);
+    if (res.status === 204 || res.status === 404) return;
+    // Con AutoRemove, Docker ya está borrando el contenedor cuando llega nuestro DELETE y
+    // responde 409 «removal ... already in progress»: no es un fallo, es una carrera ganada
+    // por Docker. Se espera (acotado) a que desaparezca y sólo entonces se da por borrado.
+    if (res.status === 409 && /removal of container .* is already in progress/i.test(String(res.json?.message ?? ""))) {
+      const deadline = Date.now() + 15_000;
+      for (;;) {
+        const left = (await this.list({ "arena.role": "battle-bot" })).filter((c) => c.id === id);
+        if (left.length === 0) return;
+        if (Date.now() > deadline) throw new Error(`el borrado en curso de ${id.slice(0, 12)} no terminó en 15 s`);
+        await new Promise((r) => setTimeout(r, 200));
+      }
     }
+    throw new Error(`el proxy rechazó el borrado (${res.status}): ${res.json?.message ?? "sin detalle"}`);
   }
 
   /** OLA2-MF · contenedores PROPIOS con todas estas labels (parados incluidos). */

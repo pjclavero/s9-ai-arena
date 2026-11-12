@@ -255,3 +255,35 @@ describe("OLA2-MF · start fallido: el contenedor creado se BORRA (antes quedaba
     expect(fake.reqs.some((q) => q.method === "DELETE")).toBe(true);
   });
 });
+
+describe("OLA2-MF · AutoRemove: Docker ya está borrando (409 «already in progress») no es un fallo", () => {
+  const fake = fakeEngine();
+  const inner = fake.backend.dispatch.bind(fake.backend);
+  let url = "";
+  let server: import("node:http").Server;
+  const removing = new Set<string>();
+  fake.backend.dispatch = async (method, path, body) => {
+    const del = /^\/containers\/([0-9a-f]{64})$/.exec(new URL(path, "http://x").pathname);
+    if (method === "DELETE" && del && removing.has(del[1])) {
+      return { status: 409, body: `{"message":"removal of container ${del[1]} is already in progress"}` };
+    }
+    return inner(method, path, body);
+  };
+  beforeAll(async () => ({ server, url } = await serve(fake)));
+  afterAll(() => new Promise<void>((r) => server.close(() => r())));
+
+  it("removeById espera a que el contenedor desaparezca y resuelve", async () => {
+    const id = fake.add({ name: "bot-ar", labels: { ...OWN }, state: "running" });
+    removing.add(id);
+    setTimeout(() => fake.cs.delete(id), 500);
+    await new ProxyContainerRunner(url).removeById(id);
+    expect(fake.cs.has(id)).toBe(false);
+  });
+  it("si Docker nunca termina el borrado en curso, falla (no lo da por bueno)", async () => {
+    const id = fake.add({ name: "bot-stuck", labels: { ...OWN }, state: "running" });
+    removing.add(id);
+    const t0 = Date.now();
+    await expect(new ProxyContainerRunner(url).removeById(id)).rejects.toThrow(/no terminó/);
+    expect(Date.now() - t0).toBeGreaterThan(14_000);
+  }, 30_000);
+});
