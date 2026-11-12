@@ -160,7 +160,9 @@ if [ -n "${S9_E2E_PG_URL:-}" ]; then
   [ $PG_OK -eq 1 ] || { log "PostgreSQL externo no responde (S9_E2E_PG_URL)"; exit 1; }
 fi
 log "postgres: $PG_MODE · redis: $([ -n "${S9_E2E_REDIS_URL:-}" ] && echo 'sí (aviso de trabajos)' || echo 'no (polling de BD)')"
-PIDS+=("$(start api env "${API_DB[@]}" PORT=$P_API DBURL_FILE="$STATE/db.url" \
+# MG · el entorno E2E refleja PRODUCCIÓN: espectador público activado (valor inicial de la
+# fila de ajustes de runtime). Los casos con el espectador apagado van en tests de componente.
+PIDS+=("$(start api env "${API_DB[@]}" S9_PUBLIC_SPECTATE_ENABLED=true PORT=$P_API DBURL_FILE="$STATE/db.url" \
   JWT_SECRET_FILE="$STATE/secrets/jwt_secret" SPECTATE_WS_URL=/ws/spectate \
   "$TSX" tests/browser/env/api-env.ts)")
 for _ in $(seq 1 120); do [ -s "$STATE/db.url" ] && break; sleep 1; done
