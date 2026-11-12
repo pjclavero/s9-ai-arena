@@ -116,7 +116,13 @@ function projectAll(frames: InternalFrame[], aud = audienceKey("public_live"), r
     { tick: 3, kind: "flag_taken", team: "red", sourceId: "veh_2" },
     { tick: 3, kind: "hit_dealt", targetId: "veh_2", damage: 12.5 },
   ].map((e) => pr.projectEvent(e));
-  const result = pr.projectResult({ winner: "red", ticks: 21, score: { red: 1 }, disqualified: ["veh_2"], versions: { engine: "x" } });
+  const result = pr.projectResult({
+    winner: "red",
+    ticks: 21,
+    score: { red: 1 },
+    disqualified: ["veh_2"],
+    versions: { engine: "x" },
+  });
   return { pr, bodies, events, result, roster: pr.projectRoster() };
 }
 
@@ -173,7 +179,11 @@ describe("PUBLIC_ENTITY_IDS · #261", () => {
   });
 
   it("T-ID-5 · fin de episodio: un id no se recicla y una reaparición recibe id nuevo", () => {
-    const m = new AudiencePublicIdMapper({ battleId: "b", audience: audienceKey("public_live"), projectionVersion: "t" });
+    const m = new AudiencePublicIdMapper({
+      battleId: "b",
+      audience: audienceKey("public_live"),
+      projectionVersion: "t",
+    });
     m.reveal([{ id: "proj_9", prefix: "p", x: 0, y: 0 }]);
     expect(m.toPublic("proj_9")).toBe("p_1");
     m.retire("proj_9");
@@ -199,7 +209,12 @@ describe("PUBLIC_ENTITY_IDS · #261", () => {
       score: {},
       objectives: [],
     });
-    const body = pr.project(f([{ id: "proj_1", position: { x: 9, y: 0 } }, { id: "proj_7", position: { x: 2, y: 0 } }])).body;
+    const body = pr.project(
+      f([
+        { id: "proj_1", position: { x: 9, y: 0 } },
+        { id: "proj_7", position: { x: 2, y: 0 } },
+      ]),
+    ).body;
     expect(body.projectiles).toEqual([
       { id: "p_1", position: { x: 2, y: 0 } },
       { id: "p_2", position: { x: 9, y: 0 } },
@@ -210,18 +225,39 @@ describe("PUBLIC_ENTITY_IDS · #261", () => {
     const a = projectAll(stream(true));
     const b = projectAll(stream(true));
     expect(JSON.stringify(a.bodies)).toBe(JSON.stringify(b.bodies));
-    const m1 = new AudiencePublicIdMapper({ battleId: "x", audience: audienceKey("public_live"), projectionVersion: "1" });
-    const m2 = new AudiencePublicIdMapper({ battleId: "x", audience: audienceKey("public_live"), projectionVersion: "1" });
+    const m1 = new AudiencePublicIdMapper({
+      battleId: "x",
+      audience: audienceKey("public_live"),
+      projectionVersion: "1",
+    });
+    const m2 = new AudiencePublicIdMapper({
+      battleId: "x",
+      audience: audienceKey("public_live"),
+      projectionVersion: "1",
+    });
     expect(m1.mappingId).toBe(m2.mappingId);
     expect(m1.mappingId).not.toBe(
-      new AudiencePublicIdMapper({ battleId: "x", audience: audienceKey("broadcast"), projectionVersion: "1" }).mappingId,
+      new AudiencePublicIdMapper({ battleId: "x", audience: audienceKey("broadcast"), projectionVersion: "1" })
+        .mappingId,
     );
   });
 
   it("replay: un segmento usa los mismos ids que el stream completo", () => {
     const frames = stream(true);
-    const full = projectReplayStream({ battleId: "b-261", audience: audienceKey("public_replay"), roster: ROSTER, snapshots: frames, events: [] });
-    const again = projectReplayStream({ battleId: "b-261", audience: audienceKey("public_replay"), roster: ROSTER, snapshots: frames, events: [] });
+    const full = projectReplayStream({
+      battleId: "b-261",
+      audience: audienceKey("public_replay"),
+      roster: ROSTER,
+      snapshots: frames,
+      events: [],
+    });
+    const again = projectReplayStream({
+      battleId: "b-261",
+      audience: audienceKey("public_replay"),
+      roster: ROSTER,
+      snapshots: frames,
+      events: [],
+    });
     expect(full.snapshots[5]).toEqual(again.snapshots[5]);
     expect(full.snapshots[5].projectiles.map((p) => p.id)).toEqual(["p_1", "p_2", "p_3", "p_4", "p_5", "p_6"]);
   });
@@ -299,7 +335,12 @@ describe("PRIVATE_EQUIPMENT · R2 (D-B1)", () => {
     const third = projectBotStats(stats, "public_replay");
     expect(Object.keys(third).sort()).toEqual(["botId", "damageDealt", "shotsFired", "team"]);
     const owner = projectBotStats(stats, "owner");
-    expect(owner).toMatchObject({ perModule: stats.perModule, minesDeployed: 2, radio: stats.radio, decisionTimeouts: 3 });
+    expect(owner).toMatchObject({
+      perModule: stats.perModule,
+      minesDeployed: 2,
+      radio: stats.radio,
+      decisionTimeouts: 3,
+    });
     expect(owner).not.toHaveProperty("vehicleId");
     expect(owner).not.toHaveProperty("somethingNew");
   });
@@ -341,7 +382,9 @@ describe("CROSS_VIEW · clave de proyección con audiencia y visibilityEpoch", (
       tick: 3,
       vehicles: [veh("veh_1", 1)],
       projectiles: [],
-      deployables: mine ? [{ id: "mine_4", kind: "mine", position: { x: 1, y: 1 }, ownerId: "veh_1", team: "red" }] : [],
+      deployables: mine
+        ? [{ id: "mine_4", kind: "mine", position: { x: 1, y: 1 }, ownerId: "veh_1", team: "red" }]
+        : [],
       score: {},
       objectives: [],
     };
@@ -368,7 +411,11 @@ describe("CROSS_VIEW · clave de proyección con audiencia y visibilityEpoch", (
 
   it("CV-2/CV-5 · audiencias distintas (public_live, broadcast, owner) nunca comparten entrada; control SAME sí", () => {
     const mk = (aud: ReturnType<typeof audienceKey>) => {
-      const p = new AudienceProjector({ battleId: "b", audience: aud, roster: [{ id: "veh_1", botId: "a", team: "red" }] });
+      const p = new AudienceProjector({
+        battleId: "b",
+        audience: aud,
+        roster: [{ id: "veh_1", botId: "a", team: "red" }],
+      });
       p.advance(frameWith(false));
       return projectionKeyString(p.key("*"));
     };
@@ -395,7 +442,15 @@ describe("CROSS_VIEW · clave de proyección con audiencia y visibilityEpoch", (
 });
 
 describe("estadísticas públicas cuantizadas (hallazgo P2-5)", () => {
-  const stats = { botId: "bot-a", team: "red", damageDealt: 1234, damageTaken: 301, shotsFired: 77, shotsHit: 33, accuracy: 33 / 77 };
+  const stats = {
+    botId: "bot-a",
+    team: "red",
+    damageDealt: 1234,
+    damageTaken: 301,
+    shotsFired: 77,
+    shotsHit: 33,
+    accuracy: 33 / 77,
+  };
 
   it("un tercero recibe daño en pasos de STATS_DAMAGE_STEP, aciertos en pasos de STATS_HITS_STEP y precisión derivada de los aciertos cuantizados", () => {
     const t = projectBotStats(stats, "public_replay") as Record<string, number>;
@@ -429,7 +484,10 @@ describe("estadísticas públicas cuantizadas (hallazgo P2-5)", () => {
   });
 
   it("sin disparos la precisión es null (no se inventa)", () => {
-    const t = projectBotStats({ botId: "b", team: "r", damageDealt: 0, shotsFired: 0, shotsHit: 0, accuracy: null }, "public_replay");
+    const t = projectBotStats(
+      { botId: "b", team: "r", damageDealt: 0, shotsFired: 0, shotsHit: 0, accuracy: null },
+      "public_replay",
+    );
     expect(t.accuracy).toBeNull();
   });
 });
@@ -437,7 +495,11 @@ describe("estadísticas públicas cuantizadas (hallazgo P2-5)", () => {
 describe("desempate público de la numeración (hallazgo P3-8)", () => {
   it("dos proyectiles que aparecen a la vez en el mismo punto se numeran por su rumbo público, no por el orden interno", () => {
     const mk = (order: [string, string]) => {
-      const m = new AudiencePublicIdMapper({ battleId: "b", audience: audienceKey("public_live"), projectionVersion: "t" });
+      const m = new AudiencePublicIdMapper({
+        battleId: "b",
+        audience: audienceKey("public_live"),
+        projectionVersion: "t",
+      });
       const cand = {
         proj_7: { id: "proj_7", prefix: "p" as const, x: 5, y: 5, tie: 0.5 },
         proj_9: { id: "proj_9", prefix: "p" as const, x: 5, y: 5, tie: 2.5 },
@@ -448,7 +510,11 @@ describe("desempate público de la numeración (hallazgo P3-8)", () => {
     expect(mk(["proj_7", "proj_9"])).toEqual(["p_1", "p_2"]);
     expect(mk(["proj_9", "proj_7"])).toEqual(["p_1", "p_2"]); // permutar el orden interno no cambia nada
     // permutar los IDS internos (mismos rumbos) tampoco: manda el rumbo
-    const m = new AudiencePublicIdMapper({ battleId: "b", audience: audienceKey("public_live"), projectionVersion: "t" });
+    const m = new AudiencePublicIdMapper({
+      battleId: "b",
+      audience: audienceKey("public_live"),
+      projectionVersion: "t",
+    });
     m.reveal([
       { id: "proj_1", prefix: "p", x: 5, y: 5, tie: 2.5 },
       { id: "proj_2", prefix: "p", x: 5, y: 5, tie: 0.5 },

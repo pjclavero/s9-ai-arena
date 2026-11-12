@@ -7,13 +7,7 @@
  * resultado (F3). Es función determinista del stream de frames internos.
  */
 import { createHash } from "node:crypto";
-import type {
-  AudienceKey,
-  InternalEntityId,
-  VisibilityEpoch,
-  VisibilityLevel,
-  VisibilityState,
-} from "./contracts.js";
+import type { AudienceKey, InternalEntityId, VisibilityEpoch, VisibilityLevel, VisibilityState } from "./contracts.js";
 
 interface Slot {
   level: VisibilityLevel;

@@ -27,11 +27,7 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
-import {
-  AudienceProjector,
-  audienceKey,
-  type InternalRosterEntry,
-} from "../../../../packages/projection/index.js";
+import { AudienceProjector, audienceKey, type InternalRosterEntry } from "../../../../packages/projection/index.js";
 import { verifySpectateTicket, type SpectatorView, type VerifiedSpectateTicket } from "../auth/tokens.js";
 import { publicSpectateEnabledFromEnv } from "../public-spectate.js";
 
@@ -222,7 +218,11 @@ export class SpectateGateway {
       // EQ5 · Con retardo, lo que ya existía se fecha AHORA: no se entrega hasta pasado
       // el retardo. Falla hacia «menos información», nunca hacia el estado vivo.
       if (delayMs > 0 && lastSnapshot !== null)
-        af.history.push({ at, msg: { type: "snapshot", snapshot: lastSnapshot, mappingId: projector.mappingId }, debugOnly: false });
+        af.history.push({
+          at,
+          msg: { type: "snapshot", snapshot: lastSnapshot, mappingId: projector.mappingId },
+          debugOnly: false,
+        });
       audiences.set(view, af);
     }
     // Los eventos ya emitidos no se reenvían (igual que antes): el stream sigue desde aquí.
@@ -244,7 +244,8 @@ export class SpectateGateway {
     const feed = this.feeds.get(battleId);
     if (!feed) return;
     if (feed.timer) clearInterval(feed.timer);
-    for (const af of feed.audiences.values()) for (const c of af.clients) this.dropClient(af, c, 1001, "battle_detached");
+    for (const af of feed.audiences.values())
+      for (const c of af.clients) this.dropClient(af, c, 1001, "battle_detached");
     this.feeds.delete(battleId);
   }
 

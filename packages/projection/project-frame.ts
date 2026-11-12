@@ -91,7 +91,8 @@ function projectVehicle(v: InternalVehicleState, ctx: FrameContext): PublicVehic
   if (emits(P, "vehicle.turretHeading", a)) out.turretHeading = num(v.turretHeading);
   const hpLevel = fieldLevel(P, "vehicle.hullHp", a);
   if (hpLevel === "SANITIZED") out.hullLevel = hullLevel(num(v.hullHp), num(v.hullHpMax));
-  if (emits(P, "vehicle.carryingFlag", a)) out.carryingFlag = typeof v.carryingFlag === "string" ? v.carryingFlag : null;
+  if (emits(P, "vehicle.carryingFlag", a))
+    out.carryingFlag = typeof v.carryingFlag === "string" ? v.carryingFlag : null;
   if (emits(P, "vehicle.juggernaut", a)) out.juggernaut = v.juggernaut === true;
   if (emits(P, "vehicle.respawnsLeft", a) && typeof v.respawnsLeft === "number") out.respawnsLeft = v.respawnsLeft;
   // vehicle.hullHp (exacto), hullHpMax y modules: sólo si la política los declarase

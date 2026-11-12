@@ -45,7 +45,11 @@ export function projectBotStats(
   if ("shotsHit" in out && q("shotsHit")) out.shotsHit = step(out.shotsHit, STATS_HITS_STEP);
   if ("accuracy" in out && q("accuracy")) {
     const fired = num((stats as Record<string, unknown>).shotsFired);
-    const hitsQ = num("shotsHit" in out && q("shotsHit") ? out.shotsHit : step((stats as Record<string, unknown>).shotsHit, STATS_HITS_STEP));
+    const hitsQ = num(
+      "shotsHit" in out && q("shotsHit")
+        ? out.shotsHit
+        : step((stats as Record<string, unknown>).shotsHit, STATS_HITS_STEP),
+    );
     out.accuracy =
       fired && fired > 0 && hitsQ !== null
         ? Math.floor(Math.min(1, hitsQ / fired) * STATS_ACCURACY_N) / STATS_ACCURACY_N

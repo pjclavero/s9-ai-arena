@@ -20,13 +20,7 @@
  *    blanca, o `undefined` (el campo se omite: falla hacia menos información).
  */
 import { createHash } from "node:crypto";
-import type {
-  AudienceKey,
-  InternalEntityId,
-  PublicEntityId,
-  PublicEntityPrefix,
-  PublicIdMapper,
-} from "./contracts.js";
+import type { AudienceKey, InternalEntityId, PublicEntityId, PublicEntityPrefix, PublicIdMapper } from "./contracts.js";
 
 /** Forma de un id público de proyección: `<prefijo>_<n>`. Un id de mapa con esta forma NO pasa. */
 export const PUBLIC_ID_RE = /^[vpdzc]_[0-9]{1,16}$/;
@@ -135,7 +129,9 @@ export class AudiencePublicIdMapper implements PublicIdMapper {
    */
   reveal(batch: readonly RevealCandidate[]): void {
     const fresh = batch.filter((c) => !this.toPub.has(c.id));
-    fresh.sort((a, b) => cmp(a.prefix, b.prefix) || qn(a.x) - qn(b.x) || qn(a.y) - qn(b.y) || qn(a.tie ?? 0) - qn(b.tie ?? 0));
+    fresh.sort(
+      (a, b) => cmp(a.prefix, b.prefix) || qn(a.x) - qn(b.x) || qn(a.y) - qn(b.y) || qn(a.tie ?? 0) - qn(b.tie ?? 0),
+    );
     for (const c of fresh) {
       const prev = this.retired.get(c.id);
       if (prev && this.continuity[c.prefix] === true) {

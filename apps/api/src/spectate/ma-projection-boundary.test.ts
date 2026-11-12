@@ -152,9 +152,15 @@ describe("PUBLIC_PROJECTION_BOUNDARY · directo y broadcast sólo por projectFra
     ] as const) {
       const msgs = c.got;
       expect(msgs[0].type, label).toBe("init");
-      expect(msgs.some((m) => m.type === "result"), `${label}: llega el resultado`).toBe(true);
+      expect(
+        msgs.some((m) => m.type === "result"),
+        `${label}: llega el resultado`,
+      ).toBe(true);
       // I1/F1 · ningún id interno, en ningún mensaje (init, snapshot, evento, resultado).
-      expect(strings(msgs).filter((s) => INTERNAL_ID.test(s)), label).toEqual([]);
+      expect(
+        strings(msgs).filter((s) => INTERNAL_ID.test(s)),
+        label,
+      ).toEqual([]);
       // EQUIPMENT_PRIVATE · ningún campo de equipamiento en ninguna profundidad.
       const keys = keysDeep(msgs);
       for (const k of EQUIPMENT_KEYS) expect(keys.has(k), `${label}: clave «${k}»`).toBe(false);

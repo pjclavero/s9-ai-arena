@@ -307,12 +307,7 @@ export const PROJECTED_HTTP_CACHE_CONTROL = "public, max-age=300";
 export function projectedEtag(...parts: string[]): string {
   const h = createHash("sha256")
     .update(
-      JSON.stringify([
-        PROJECTION_VERSION,
-        DEFAULT_SPECTATOR_POLICY,
-        policyRef(DEFAULT_DISCLOSURE_POLICY),
-        ...parts,
-      ]),
+      JSON.stringify([PROJECTION_VERSION, DEFAULT_SPECTATOR_POLICY, policyRef(DEFAULT_DISCLOSURE_POLICY), ...parts]),
     )
     .digest("hex")
     .slice(0, 32);

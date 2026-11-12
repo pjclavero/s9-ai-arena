@@ -82,7 +82,17 @@ describe("BotIdBook · ids públicos del bot", () => {
     const A = bookFor("veh_1");
     const o = A.observation({
       tick: 3,
-      sensors: { radar: [{ slot: "s", contacts: [{ kind: "vehicle", position: { x: 1, y: 1 } }, { entityId: "wall_n", position: { x: 2, y: 2 } }] }] },
+      sensors: {
+        radar: [
+          {
+            slot: "s",
+            contacts: [
+              { kind: "vehicle", position: { x: 1, y: 1 } },
+              { entityId: "wall_n", position: { x: 2, y: 2 } },
+            ],
+          },
+        ],
+      },
     });
     expect(o.sensors.radar[0].contacts[0]).not.toHaveProperty("entityId");
     expect(o.sensors.radar[0].contacts[1]).not.toHaveProperty("entityId");
@@ -96,7 +106,12 @@ describe("BotIdBook · ids públicos del bot", () => {
     expect(ev.targetId).toBe("v_3");
     expect(A.event({ tick: 9, kind: "hit_dealt", targetId: "veh_4", damage: 1 }).targetId).toBe("v_3");
     expect(A.event({ tick: 9, kind: "flag_taken", sourceId: "veh_2", team: "blue" }).sourceId).toBe("v_2");
-    expect(A.event({ tick: 9, kind: "hit_taken", sector: "front", damage: 1 })).toEqual({ tick: 9, kind: "hit_taken", sector: "front", damage: 1 });
+    expect(A.event({ tick: 9, kind: "hit_taken", sector: "front", damage: 1 })).toEqual({
+      tick: 9,
+      kind: "hit_taken",
+      sector: "front",
+      damage: 1,
+    });
     expect(JSON.stringify([o, ev])).not.toMatch(INTERNAL);
   });
 
@@ -155,7 +170,12 @@ describe("canal real del bot (ProtocolServer + WebSocket)", () => {
         proto: "arena/1",
         type: "HELLO",
         seq: 0,
-        payload: { botId: "bot_a", botVersion: "1", sdk: { name: "custom", version: "0" }, battleToken: "t".repeat(16) },
+        payload: {
+          botId: "bot_a",
+          botVersion: "1",
+          sdk: { name: "custom", version: "0" },
+          battleToken: "t".repeat(16),
+        },
       }),
     );
     await server.waitForResult();

@@ -259,7 +259,14 @@ describe("T8.2 canal de espectador (ticket E7 → gateway E8 → motor E2)", () 
     // 3) Whitelist estructural del snapshot público (T2.6/D8).
     for (const m of parsed.filter((x) => x.type === "snapshot")) {
       // OLA 2 · MA · `deployables` sólo lleva lo REVELADO a la audiencia: vacío en público.
-      expect(Object.keys(m.snapshot).sort()).toEqual(["deployables", "objectives", "projectiles", "score", "tick", "vehicles"]);
+      expect(Object.keys(m.snapshot).sort()).toEqual([
+        "deployables",
+        "objectives",
+        "projectiles",
+        "score",
+        "tick",
+        "vehicles",
+      ]);
       expect(m.snapshot.deployables).toEqual([]);
       for (const v of m.snapshot.vehicles) {
         expect(Object.keys(v).sort()).toEqual(
