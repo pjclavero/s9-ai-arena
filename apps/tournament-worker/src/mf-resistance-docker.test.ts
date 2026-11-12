@@ -193,6 +193,7 @@ interface Row {
   heapMb: number;
   availableMb: number;
   handles: Record<string, number>;
+  registryDetail?: unknown;
 }
 const rows: Row[] = [];
 
@@ -254,6 +255,7 @@ describe.skipIf(!DOCKER_E2E)("OLA2-MF · resistencia: N batallas reales seguidas
       heapMb: Math.round(process.memoryUsage().heapUsed / 1048576),
       availableMb: memAvailableMb(),
       handles: handles(),
+      registryDetail: resources.pending(battleId).length ? { pending: resources.pending(battleId), report } : undefined,
     };
     rows.push(row);
     return row;
@@ -269,7 +271,7 @@ describe.skipIf(!DOCKER_E2E)("OLA2-MF · resistencia: N batallas reales seguidas
       expect(r.containersLeft, `FINISHED_BATTLE_CONTAINERS batalla ${i}`).toBe(0);
       expect(r.cgroupsLeft, `ORPHAN_CGROUPS batalla ${i}`).toBe(0);
       expect(r.processesLeft, `ORPHAN_PROCESSES batalla ${i}`).toBe(0);
-      expect(r.registryLeft, `ORPHAN_JOBS batalla ${i}`).toBe(0);
+      expect(r.registryLeft, `ORPHAN_JOBS batalla ${i} ${JSON.stringify(r.registryDetail)}`).toBe(0);
       for (const k of ["Timeout", "TCPServerWrap", "TCPSocketWrap"])
         expect(r.handles[k] ?? 0, `handles ${k} batalla ${i}`).toBeLessThanOrEqual((baselineHandles[k] ?? 0) + 2);
     }
