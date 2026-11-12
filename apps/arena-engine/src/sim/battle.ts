@@ -185,7 +185,7 @@ export class Battle {
   publicEvents: any[] = [];
   /**
    * Motor 0.4.0 (ADR-022) · bajas de vehículos ENEMIGOS por equipo (criterio de
-   * desempate `kills`). No entra en el hash: es una función del historial de muertes.
+   * desempate `kills`). SÍ entra en el hash (componente `mode`, state-hash v2).
    */
   private teamKills: Record<string, number> = emptyDict<number>();
   snapshots: any[] = [];
@@ -1044,6 +1044,15 @@ export class Battle {
 
   /** Observación de un bot concreto: la usan el servidor de protocolo (E5) y los tests. */
   observationFor(vehicleId: string): any {
+    // OLA2-MD · GUARDA (review MD P2): los raycasts de Rapier fuera del bucle (y el step
+    // dt=0 de syncQueries tras un alta/baja de cuerpo) alteran contactos/sueño y por tanto
+    // la física posterior. En una batalla GRABADA (oficial) eso rompería verify(), así que
+    // no se admite. Residual: batallas sin recordReplay (tests, spectator) no son verificables.
+    if (this.config.recordReplay) {
+      throw new Error(
+        "observationFor() no se puede llamar fuera del bucle en una batalla grabada (recordReplay): altera la física y rompe verify()",
+      );
+    }
     const v = this.vehicles.find((x) => x.id === vehicleId);
     if (!v) throw new Error(`Vehículo desconocido: ${vehicleId}`);
     return buildObservation(
