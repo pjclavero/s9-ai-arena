@@ -40,8 +40,8 @@ afterAll(async () => {
 });
 
 const side = (list: TestBot[], team: string) => list.map((b) => ({ botId: b.botId, version: 1, team }));
-/** Límites imposibles: todo excede, así el informe lleva violaciones de bot y de bando. */
-const LIMITS = { botCredits: 1, teamCredits: 2, botMassKg: 1, teamMassKg: 2 };
+/** Límites mínimos permitidos: todo excede, así el informe lleva violaciones de bot y de bando. */
+const LIMITS = { botCredits: 200, teamCredits: 200, botMassKg: 500, teamMassKg: 500 };
 const body = (red: TestBot[], blue: TestBot[]) => ({
   mode: "team_deathmatch",
   rulesetId: "team-deathmatch-mvp",
