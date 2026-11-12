@@ -134,7 +134,7 @@ describe("T11.1 BroadcastPage (jsdom)", () => {
     render(<BroadcastPage config={parseBroadcastConfig("?tournament=t1")} />);
     await waitFor(() => expect(fetchCalls.length).toBeGreaterThan(0));
     for (const { url, init } of fetchCalls) {
-      expect(url).toMatch(/^\/api\/v1\/(battles(\?|\/|$)|tournaments\/[^/]+\/battles$|tournaments\?limit=100$)/);
+      expect(url).toMatch(/^\/api\/v1\/(battles(\?|\/|$)|tournaments\/[^/]+(\/battles)?$)/);
       const headers = (init?.headers ?? {}) as Record<string, string>;
       expect(Object.keys(headers)).toEqual([]);
     }

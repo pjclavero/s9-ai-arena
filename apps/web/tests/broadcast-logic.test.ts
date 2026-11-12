@@ -166,7 +166,7 @@ describe("T11.1 director: encadena batallas con esperas (torneo simulado)", () =
     expect(screens[4]).toMatchObject({ kind: "finished", lastBattle: { id: "b2" } });
 
     // Cero datos privados: SOLO la ruta pública de visitante del torneo (cap. 16).
-    for (const p of requested) expect(p).toMatch(/^\/tournaments(\/t1\/battles|\?limit=100)$/);
+    for (const p of requested) expect(p).toMatch(/^\/tournaments\/t1(\/battles)?$/);
   });
 
   it("modo batalla fija: scheduled→espera, running→directo, finished→final", async () => {
