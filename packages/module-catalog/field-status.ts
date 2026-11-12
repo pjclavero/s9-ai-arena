@@ -5,9 +5,13 @@
  * contrato, contracts/engine-v2.ts) y, si cuenta, la MUTACIÓN con la que el gate
  * CATALOG_CONTRACT (catalog-contract.test.ts) demuestra que tiene consumidor:
  *
- *   ACTIVE          · mutar el valor en el catálogo cambia una batalla corta determinista
- *                     (observaciones de los bots + hash de estado), pasando por
- *                     resolveVehicle(), la frontera catálogo → simulación.
+ *   ACTIVE          · mutar el valor en el catálogo cambia, en una batalla corta
+ *                     determinista que pasa por resolveVehicle() (la frontera catálogo →
+ *                     simulación), la MAGNITUD DE EFECTO OBSERVABLE que la entrada declara en
+ *                     `observes` (canales de catalog-probe.ts: daño aplicado, cinemática,
+ *                     proyectiles, minas, eventos, radio recibida…). G1: ya NO basta con
+ *                     que cambie el hash de estado: un campo sólo copiado al estado vivo,
+ *                     sin efecto, no cuenta como usado.
  *   VALIDATION_ONLY · mutarlo cambia el veredicto de validateLoadout() y NO la batalla.
  *   FUTURE          · sin consumidor: el esquema NO lo admite (no hay ninguno hoy).
  *   REMOVE          · eliminado del esquema; el gate comprueba que un módulo que lo traiga
@@ -25,8 +29,30 @@ import type { ModuleCategory, ModuleDefinition } from "./types.js";
 /** Nuevo valor del campo a partir del actual (`undefined` = el módulo no lo declaraba). */
 export type Perturb = (value: unknown, def: ModuleDefinition) => unknown;
 
+/**
+ * G1 · Canales de efecto observable de la sonda (catalog-probe.ts los define y los mide).
+ * Cada entrada ACTIVE declara cuáles DEBEN cambiar al mutarla (todos los declarados).
+ */
+export const PROBE_CHANNELS = [
+  "kinematics",
+  "turret",
+  "hull",
+  "modules",
+  "energy",
+  "projectiles",
+  "mines",
+  "damage",
+  "events",
+  "sensors",
+  "radio",
+  "score",
+] as const;
+export type ProbeChannel = (typeof PROBE_CHANNELS)[number];
+
 export interface FieldContract {
   readonly status: FieldStatus;
+  /** ACTIVE: magnitudes de efecto observable que la mutación DEBE cambiar (G1). */
+  readonly observes?: readonly ProbeChannel[];
   /** Consumidor real (ACTIVE) o regla del validador (VALIDATION_ONLY). */
   readonly consumer: string;
   /** Mutación del gate (obligatoria en ACTIVE y VALIDATION_ONLY). */
@@ -54,7 +80,12 @@ const rotate =
   (v) =>
     cycle[(cycle.indexOf(v as string) + 1) % cycle.length];
 
-const A = (consumer: string, perturb: Perturb): FieldContract => ({ status: "ACTIVE", consumer, perturb });
+const A = (consumer: string, perturb: Perturb, observes: readonly ProbeChannel[]): FieldContract => ({
+  status: "ACTIVE",
+  consumer,
+  perturb,
+  observes,
+});
 const V = (consumer: string, perturb: Perturb, sample?: unknown): FieldContract => ({
   status: "VALIDATION_ONLY",
   consumer,
@@ -67,12 +98,12 @@ export const IDENTITY_FIELDS: readonly string[] = ["id", "version", "category", 
 
 /** Campos comunes a todo módulo (propiedades raíz del esquema). */
 export const COMMON_FIELDS: Readonly<Record<string, FieldContract>> = {
-  massKg: A("resolve/index.ts → VehicleSpec.massKg → physics.addVehicle / movementCaps (D7)", scale(4, 50)),
+  massKg: A("resolve/index.ts → VehicleSpec.massKg → physics.addVehicle / movementCaps (D7)", scale(4, 50), ["kinematics"]),
   costCredits: V("validator: budget_exceeded / module_cost_cap_exceeded", scale(50, 1000)),
   size: V("validator: slot_size_exceeded (SIZE_RANK de la ranura)", (v) => (v === "XL" ? "S" : "XL")),
-  hp: A("vehicle.ts ModuleRuntime.hp → stateFromHealth / applyDamage", scale(0.25)),
-  "power.passiveEUs": { ...A("vehicle.ts passiveDrain → energía", scale(6, 1)), sample: 2 },
-  "power.perActionEU": A("combat.ts canFire / fire / canDeployMine / deployMine (coste por acción)", scale(8, 5)),
+  hp: A("vehicle.ts ModuleRuntime.hp → stateFromHealth / applyDamage", scale(0.25), ["modules"]),
+  "power.passiveEUs": { ...A("vehicle.ts passiveDrain → energía", scale(6, 1), ["energy"]), sample: 2 },
+  "power.perActionEU": A("combat.ts canFire / fire / canDeployMine / deployMine (coste por acción)", scale(8, 5), ["energy"]),
   // El gate lo prueba con DOS copias del módulo (ver catalog-contract.test.ts).
   maxPerVehicle: V("validator: duplicate_limit_exceeded (maxPerVehicle)", (v) => (v === 1 ? 3 : 1), 3),
   requiresChassis: V("validator: incompatible_chassis (requiresChassis)", set(["chassis.nonexistent"]), [
@@ -85,69 +116,68 @@ const SECTORS = ["front", "right", "rear", "left"] as const;
 
 export const CATEGORY_FIELDS: Readonly<Record<ModuleCategory, Readonly<Record<string, FieldContract>>>> = {
   chassis: {
-    hullHp: A("resolve → VehicleSpec.hullHp → Vehicle.hullHp", scale(0.5)),
-    radiusM: A("resolve → VehicleSpec.radiusM → física y boca del arma (battle.ts)", scale(1.4)),
+    hullHp: A("resolve → VehicleSpec.hullHp → Vehicle.hullHp", scale(0.5), ["hull"]),
+    radiusM: A("resolve → VehicleSpec.radiusM → física y boca del arma (battle.ts)", scale(1.4), ["kinematics"]),
     maxLoadKg: V("validator: mass_exceeded", scale(0.1)),
     // Integración OLA2 (MB+MC): con D-B2 la ranura es la CLAVE de la montura de torreta
     // (resolve → VehicleSpec.turretMounts[slot.id]); el id de ranura ya no es sólo de validación.
     "slots[].id": A(
       "resolve → VehicleSpec.turretMounts[slot.id] (montura D-B2) + validator unknown_slot",
-      (v) => `${String(v)}_x`,
-    ),
+      (v) => `${String(v)}_x`, ["turret"]),
     "slots[].accepts": V("validator: slot_type_mismatch", set(["utility"])),
     "slots[].maxSize": V("validator: slot_size_exceeded", set("S")),
     "slots[].sector": V("validator: slot_type_mismatch (sector de blindaje de la ranura)", rotate(SECTORS)),
     // D-B2 (MB): la cinemática de torreta es de la MONTURA de la ranura del chasis, no del arma.
-    "slots[].mount.turretRateRads": A("resolve → VehicleSpec.turretMounts → vehicle.ts turretRate (giro)", scale(0.2)),
-    "slots[].mount.turretArcRad": A("resolve → VehicleSpec.turretMounts → combat.ts canFire (out_of_arc)", set(0.5)),
+    "slots[].mount.turretRateRads": A("resolve → VehicleSpec.turretMounts → vehicle.ts turretRate (giro)", scale(0.2), ["turret"]),
+    "slots[].mount.turretArcRad": A("resolve → VehicleSpec.turretMounts → combat.ts canFire (out_of_arc)", set(0.5), ["events"]),
   },
   movement: {
-    maxSpeedMs: A("vehicle.ts movementCaps → physics.driveVehicle", scale(0.3)),
-    accelerationMs2: A("vehicle.ts movementCaps", scale(0.2)),
-    turnRateRads: A("vehicle.ts movementCaps", scale(0.2)),
-    ratedLoadKg: A("vehicle.ts movementCaps (massFactor, D7)", scale(0.1)),
+    maxSpeedMs: A("vehicle.ts movementCaps → physics.driveVehicle", scale(0.3), ["kinematics"]),
+    accelerationMs2: A("vehicle.ts movementCaps", scale(0.2), ["kinematics"]),
+    turnRateRads: A("vehicle.ts movementCaps", scale(0.2), ["kinematics"]),
+    ratedLoadKg: A("vehicle.ts movementCaps (massFactor, D7)", scale(0.1), ["kinematics"]),
   },
   power: {
-    capacityEU: A("vehicle.ts energyCapacity", scale(0.05)),
-    generationEUs: A("vehicle.ts energyGeneration", scale(0.1)),
+    capacityEU: A("vehicle.ts energyCapacity", scale(0.05), ["energy"]),
+    generationEUs: A("vehicle.ts energyGeneration", scale(0.1), ["energy"]),
   },
   sensor: {
-    sensorType: A("sensors.ts buildObservation (primitiva por tipo)", rotate(SENSOR_TYPES)),
-    rangeM: A("sensors.ts buildObservation (rangeM · rendimiento)", scale(0.3)),
-    fovRad: A("sensors.ts lidar (sólo lidar: esquema condicional)", scale(0.3)),
-    rays: A("sensors.ts lidar (sólo lidar: esquema condicional)", intScale(0.25)),
-    errorM: A("sensors.ts radar (sólo radar: esquema condicional)", scale(5, 3)),
+    sensorType: A("sensors.ts buildObservation (primitiva por tipo)", rotate(SENSOR_TYPES), ["sensors"]),
+    rangeM: A("sensors.ts buildObservation (rangeM · rendimiento)", scale(0.3), ["sensors"]),
+    fovRad: A("sensors.ts lidar (sólo lidar: esquema condicional)", scale(0.3), ["sensors"]),
+    rays: A("sensors.ts lidar (sólo lidar: esquema condicional)", intScale(0.25), ["sensors"]),
+    errorM: A("sensors.ts radar (sólo radar: esquema condicional)", scale(5, 3), ["sensors"]),
   },
   weapon: {
-    damage: A("combat.ts fire (daño del proyectil)", scale(3)),
-    cooldownTicks: A("combat.ts fire (cooldownUntilTick)", intScale(3)),
-    projectileSpeedMs: A("combat.ts fire (velocidad) + resolve/projectile.ts (vida)", scale(0.5)),
-    rangeM: A("resolve/projectile.ts → ModuleSpec.projectileLifetimeTicks → combat.ts fire (P-2)", scale(0.1)),
-    spreadRad: A("combat.ts fire (dispersión con el RNG del motor)", scale(10, 0.05)),
-    acceptsAmmo: A("combat.ts ammoFor (munición montada) + validator incompatible_ammo", set(["ammo.none_x"])),
+    damage: A("combat.ts fire (daño del proyectil)", scale(3), ["damage"]),
+    cooldownTicks: A("combat.ts fire (cooldownUntilTick)", intScale(3), ["projectiles"]),
+    projectileSpeedMs: A("combat.ts fire (velocidad) + resolve/projectile.ts (vida)", scale(0.5), ["projectiles"]),
+    rangeM: A("resolve/projectile.ts → ModuleSpec.projectileLifetimeTicks → combat.ts fire (P-2)", scale(0.1), ["projectiles"]),
+    spreadRad: A("combat.ts fire (dispersión con el RNG del motor)", scale(10, 0.05), ["projectiles"]),
+    acceptsAmmo: A("combat.ts ammoFor (munición montada) + validator incompatible_ammo", set(["ammo.none_x"]), ["projectiles"]),
   },
   ammo: {
-    rounds: A("vehicle.ts ModuleRuntime.ammo → combat.ts canFire (no_ammo)", set(2)),
-    damageMultiplier: A("combat.ts fire (daño)", scale(3)),
-    explosionRadiusM: A("combat.ts fire → battle.ts explode", (v) => (n(v ?? 0) > 0 ? 0 : 6)),
+    rounds: A("vehicle.ts ModuleRuntime.ammo → combat.ts canFire (no_ammo)", set(2), ["projectiles"]),
+    damageMultiplier: A("combat.ts fire (daño)", scale(3), ["damage"]),
+    explosionRadiusM: A("combat.ts fire → battle.ts explode", (v) => (n(v ?? 0) > 0 ? 0 : 6), ["damage"]),
   },
   mine: {
-    charges: A("vehicle.ts ModuleRuntime.charges → canDeployMine (no_charges)", (v) => (n(v) > 1 ? 1 : 3)),
-    damage: A("combat.ts deployMine → battle.ts resolveMines", scale(3)),
-    triggerRadiusM: A("combat.ts deployMine → battle.ts resolveMines", scale(5)),
-    explosionRadiusM: A("combat.ts deployMine → battle.ts explode", scale(3)),
-    armDelayTicks: A("combat.ts deployMine (armedAtTick)", set(400)),
-    cooldownTicks: A("combat.ts deployMine (cooldownUntilTick)", intScale(4)),
-    lifetimeTicks: A("combat.ts deployMine (expiresAtTick)", set(45)),
+    charges: A("vehicle.ts ModuleRuntime.charges → canDeployMine (no_charges)", (v) => (n(v) > 1 ? 1 : 3), ["mines"]),
+    damage: A("combat.ts deployMine → battle.ts resolveMines", scale(3), ["damage"]),
+    triggerRadiusM: A("combat.ts deployMine → battle.ts resolveMines", scale(5), ["mines"]),
+    explosionRadiusM: A("combat.ts deployMine → battle.ts explode", scale(3), ["damage"]),
+    armDelayTicks: A("combat.ts deployMine (armedAtTick)", set(400), ["mines"]),
+    cooldownTicks: A("combat.ts deployMine (cooldownUntilTick)", intScale(4), ["mines"]),
+    lifetimeTicks: A("combat.ts deployMine (expiresAtTick)", set(45), ["mines"]),
   },
   armor: {
-    sector: A("vehicle.ts armor[sector] → combat.ts applyDamage (+ validator)", rotate(SECTORS)),
-    reduction: A("combat.ts applyDamage", scale(0.2)),
+    sector: A("vehicle.ts armor[sector] → combat.ts applyDamage (+ validator)", rotate(SECTORS), ["damage"]),
+    reduction: A("combat.ts applyDamage", scale(0.2), ["damage"]),
   },
   radio: {
-    rangeM: A("sensors.ts radioRangeOf / radioDeliverableTo (P-2: alcance real)", scale(0.1)),
-    maxMessageBytes: A("sensors.ts validateRadio (too_large)", set(4)),
-    maxMessagesPerSecond: A("sensors.ts validateRadio (rate_limited)", set(0.5)),
+    rangeM: A("sensors.ts radioRangeOf / radioDeliverableTo (P-2: alcance real)", scale(0.1), ["radio"]),
+    maxMessageBytes: A("sensors.ts validateRadio (too_large)", set(4), ["radio"]),
+    maxMessagesPerSecond: A("sensors.ts validateRadio (rate_limited)", set(0.5), ["radio"]),
   },
   // Sin campos propios (P-2). Declarará `actions` (contracts/engine-v2.ts) con su consumidor.
   utility: {},

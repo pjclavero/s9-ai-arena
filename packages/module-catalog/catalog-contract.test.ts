@@ -10,13 +10,17 @@
  *   S4  una entrada que cuenta no trae la mutación con la que se demuestra;
  *   S5  la tabla de la UI (effect-status.ts) dice otra cosa que esta;
  *   S6  un arma resuelta no trae la vida del proyectil (el motor caería en la regla heredada);
- *   D1  un campo ACTIVE mutado NO cambia la batalla de sonda (= no tiene consumidor);
+ *   D1  un campo ACTIVE mutado NO cambia la magnitud de efecto observable que declara
+ *       (`observes`: daño aplicado, cinemática, proyectiles, minas, eventos, radio…) en la
+ *       batalla de sonda (= no tiene consumidor real);
  *   D2  un campo VALIDATION_ONLY mutado no cambia el veredicto del validador, o SÍ cambia la
  *       batalla (estaría mal clasificado);
  *   D3  un metadato (nombre, descripción) cambia la batalla.
  * D1-D3 son diferenciales sobre una batalla real (catalog-probe.ts) que pasa por
- * resolveVehicle(): un campo que la frontera no copia, o que el motor no lee, da el mismo
- * digest y pone el gate en rojo.
+ * resolveVehicle(). G1: D1 compara CANALES DE EFECTO (listas blancas de magnitudes), no el
+ * hash de estado: un campo que la frontera no copia, que el motor no lee, o que el motor
+ * sólo COPIA en su estado sin que ninguna magnitud observable cambie, pone el gate en rojo.
+ * D2/D3 (negativas) siguen comparando la traza COMPLETA (canales + observaciones + hash).
  */
 import { beforeAll, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
@@ -28,8 +32,15 @@ import { DATA_DIR, loadCatalog } from "./loadCatalog.js";
 import { resolveVehicle } from "./resolve/index.js";
 import { validateLoadout } from "./validator/index.js";
 import { effectOf } from "./effect-status.js";
-import { CATEGORY_FIELDS, COMMON_FIELDS, IDENTITY_FIELDS, REMOVED_FIELDS, fieldContract } from "./field-status.js";
-import { loadoutWith, probeDigest } from "./catalog-probe.js";
+import {
+  CATEGORY_FIELDS,
+  COMMON_FIELDS,
+  IDENTITY_FIELDS,
+  PROBE_CHANNELS,
+  REMOVED_FIELDS,
+  fieldContract,
+} from "./field-status.js";
+import { loadoutWith, probeTrace, type ProbeTrace } from "./catalog-probe.js";
 import type { LoadoutInput, LoadoutModuleEntry, ModuleCategory, ModuleDefinition } from "./types.js";
 
 const schema = JSON.parse(readFileSync(join(DATA_DIR, "..", "schema", "module.schema.json"), "utf8"));
@@ -322,6 +333,24 @@ describe("CATALOG_CONTRACT · S · el esquema y la tabla de campos coinciden", (
     expect(bad).toEqual([]);
   });
 
+  it("S4 · toda entrada ACTIVE declara al menos un canal de efecto observable, y sólo canales que la sonda mide", () => {
+    const bad: string[] = [];
+    const all = [
+      ...Object.entries(COMMON_FIELDS).map(([f, c]) => [`*.${f}`, c] as const),
+      ...CATEGORIES.flatMap((cat) => Object.entries(CATEGORY_FIELDS[cat]).map(([f, c]) => [`${cat}.${f}`, c] as const)),
+    ];
+    for (const [k, c] of all) {
+      if (c.status !== "ACTIVE") {
+        if (c.observes !== undefined) bad.push(`${k}: ${c.status} con observes`);
+        continue;
+      }
+      if (!c.observes || c.observes.length === 0) bad.push(`${k}: sin observes`);
+      for (const ch of c.observes ?? [])
+        if (!(PROBE_CHANNELS as readonly string[]).includes(ch)) bad.push(`${k}: canal ${ch} desconocido`);
+    }
+    expect(bad).toEqual([]);
+  });
+
   it("S5 · effect-status.ts (lo que ve la UI) coincide con esta tabla en todo campo del catálogo", () => {
     const map = { ACTIVE: "ACTIVE", VALIDATION_ONLY: "PARTIAL" } as const;
     const bad: string[] = [];
@@ -370,12 +399,16 @@ function cases(status: "ACTIVE" | "VALIDATION_ONLY"): { list: Case[]; uncovered:
   return { list, uncovered };
 }
 
-const baseDigests = new Map<string, string>();
-function baseDigest(t: ModuleDefinition): string {
+const baseTraces = new Map<string, ProbeTrace>();
+function baseTrace(t: ModuleDefinition): ProbeTrace {
   const k = `${t.id}@${t.version}`;
-  if (!baseDigests.has(k)) baseDigests.set(k, probeDigest(catalog, k));
-  return baseDigests.get(k)!;
+  if (!baseTraces.has(k)) baseTraces.set(k, probeTrace(catalog, k));
+  return baseTraces.get(k)!;
 }
+
+/** Canales de efecto cuya traza difiere entre dos batallas de sonda. */
+const changedChannels = (a: ProbeTrace, b: ProbeTrace): string[] =>
+  PROBE_CHANNELS.filter((ch) => a.channels[ch] !== b.channels[ch]);
 
 describe("CATALOG_CONTRACT · D1 · todo campo ACTIVE tiene consumidor en la simulación", () => {
   const { list, uncovered } = cases("ACTIVE");
@@ -383,13 +416,20 @@ describe("CATALOG_CONTRACT · D1 · todo campo ACTIVE tiene consumidor en la sim
     expect(uncovered).toEqual([]);
   });
   for (const c of list) {
-    it(`${c.cat}.${c.field} (${c.target.id}@${c.target.version}${c.injected ? ", inyectado" : ""}) cambia la batalla`, () => {
+    const declared = fieldContract(c.cat, c.field)!.observes ?? [];
+    it(`${c.cat}.${c.field} (${c.target.id}@${c.target.version}${c.injected ? ", inyectado" : ""}) cambia [${declared.join(", ")}]`, () => {
       const contract = fieldContract(c.cat, c.field)!;
       const before = c.injected ? undefined : getPath(c.target as unknown as Json, c.field);
       const after = contract.perturb!(c.injected ? contract.sample : before, c.target);
       expect(after, "la mutación no cambia el valor").not.toEqual(before);
+      expect(declared.length, "entrada ACTIVE sin canal de efecto declarado").toBeGreaterThan(0);
       const mutated = withField(catalog, c.target, c.field, after);
-      expect(probeDigest(mutated, `${c.target.id}@${c.target.version}`)).not.toBe(baseDigest(c.target));
+      const changed = changedChannels(probeTrace(mutated, `${c.target.id}@${c.target.version}`), baseTrace(c.target));
+      // Todos los canales declarados deben cambiar. El mensaje lista los que SÍ cambiaron.
+      expect(
+        declared.filter((ch) => !changed.includes(ch)),
+        `sin efecto observable en lo declarado; canales que cambian: [${changed.join(", ")}]`,
+      ).toEqual([]);
     });
   }
 });
@@ -414,8 +454,8 @@ describe("CATALOG_CONTRACT · D2 · todo campo VALIDATION_ONLY cambia el veredic
       // ...y la simulación no lo lee: mismo loadout, catálogo mutado ⇒ misma batalla.
       if (!dup) {
         const ref = `${c.target.id}@${c.target.version}`;
-        expect(probeDigest(mutated, ref, loadout), "un campo de validación cambia la batalla").toBe(
-          baseDigest(c.target),
+        expect(probeTrace(mutated, ref, loadout).full, "un campo de validación cambia la batalla").toBe(
+          baseTrace(c.target).full,
         );
       }
     });
@@ -428,7 +468,7 @@ describe("CATALOG_CONTRACT · D3 · los metadatos no cambian la batalla", () => 
     if (!t) continue;
     it(`${cat}: nombre y descripción (${t.id}@${t.version})`, () => {
       const both = catalog.map((m) => (m === t ? { ...m, name: "otro nombre", description: "otra" } : m));
-      expect(probeDigest(both, `${t.id}@${t.version}`)).toBe(baseDigest(t));
+      expect(probeTrace(both, `${t.id}@${t.version}`).full).toBe(baseTrace(t).full);
     });
   }
 });

@@ -3,10 +3,29 @@
  *
  * Monta una batalla corta y determinista con el módulo bajo prueba instalado en el vehículo
  * «E» (resuelto por resolveVehicle desde el catálogo recibido: la MISMA frontera que usa
- * producción) y devuelve un resumen (digest) de todo lo que la simulación produce: las
- * observaciones que recibe cada bot, sus eventos y el hash de estado. Dos catálogos que
- * sólo difieren en un campo dan digests distintos si, y sólo si, ese campo tiene consumidor
- * en la simulación.
+ * producción) y devuelve una TRAZA DE EFECTOS OBSERVABLES por canal (`ProbeChannel`).
+ *
+ * G1 (post-integración OLA 2): la sonda ya NO mide «¿cambia stateHash()?». Con el hash v2
+ * de MD los objetos vivos se serializan enteros, así que COPIAR un campo del catálogo a una
+ * entidad (la cola de radio, la mina) cambiaba el hash sin que ningún comportamiento lo
+ * leyera, y el gate lo daba por usado (mutantes M6/M12 de MC vivos). Ahora cada canal es una
+ * lista blanca de MAGNITUDES DE EFECTO leídas campo a campo (nunca objetos enteros):
+ *   kinematics  posición y rumbo de cada vehículo (física)
+ *   turret      rumbo de la torreta de cada vehículo
+ *   hull        casco vivo y alive de cada vehículo
+ *   modules     hp vivo y estado (stateOf) de cada módulo, hp de cada sector de blindaje
+ *   energy      energía almacenada de cada vehículo
+ *   projectiles id y posición de cada proyectil vivo (su vida = su alcance)
+ *   mines       id y posición de cada mina sobre el terreno (siembra, detonación, caducidad)
+ *   damage      registros exactos de daño aplicados (importe, reducción, casco, módulo)
+ *   events      eventos entregados a los bots (rechazos, impactos, detonaciones…)
+ *   sensors     lo que devuelven los sensores en la observación de cada bot
+ *   radio       los mensajes de radio que recibe cada bot
+ *   score       marcador
+ * Un campo que la simulación sólo COPIA en su estado, sin que ninguna de estas magnitudes
+ * cambie, NO cuenta como usado. `full` (todos los canales + observaciones completas +
+ * stateHash) sólo se usa para las comprobaciones NEGATIVAS del gate (D2/D3: «no cambia la
+ * batalla»), donde ser más sensible es más estricto.
  *
  * Escenario (arena vacía 120×80, tdm):
  *  - E (rojo): avanza, retrocede soltando minas en línea, gira; barre la torreta, dispara
@@ -23,6 +42,7 @@ import { emptyArena } from "../../apps/arena-engine/src/fixtures.js";
 import { resolveVehicle } from "./resolve/index.js";
 import { CATALOG_VERSION } from "./loadCatalog.js";
 import { findModule, type LoadoutInput, type LoadoutModuleEntry, type ModuleDefinition } from "./types.js";
+import { PROBE_CHANNELS, type ProbeChannel } from "./field-status.js";
 
 const ref = (m: ModuleDefinition): string => `${m.id}@${m.version}`;
 
@@ -102,15 +122,32 @@ export function loadoutWith(tested: ModuleDefinition, catalog: ModuleDefinition[
 
 const b64 = (s: string) => Buffer.from(s).toString("base64");
 
+/** Acumulador de la traza: un array por canal + las observaciones completas (sólo para `full`). */
+class Recorder {
+  readonly ch = Object.fromEntries(PROBE_CHANNELS.map((c) => [c, [] as unknown[]])) as Record<ProbeChannel, unknown[]>;
+  readonly full: unknown[] = [];
+  obs(tag: string, obs: any) {
+    this.full.push([tag, obs]);
+    // Sólo la SALIDA de los sensores y lo recibido por radio: no el autoinforme del bot
+    // (hullHpMax, capacityEU… son copias del spec, no efectos).
+    if (obs.sensors !== undefined) this.ch.sensors.push([tag, obs.tick, obs.sensors]);
+    if (obs.radio !== undefined) this.ch.radio.push([tag, obs.tick, obs.radio]);
+  }
+  event(tag: string, e: unknown) {
+    this.full.push([`${tag}!`, e]);
+    this.ch.events.push([tag, e]);
+  }
+}
+
 class Exerciser implements BotAgent {
   private d = 0;
   constructor(
     readonly botId: string,
-    private log: unknown[],
+    private log: Recorder,
   ) {}
   decide(obs: any) {
     const d = this.d++;
-    this.log.push(["E", obs]);
+    this.log.obs("E", obs);
     const throttle = d < 15 ? 1 : d < 30 ? -1 : d < 45 ? 0.6 : 0;
     const steer = d >= 30 && d < 45 ? 1 : 0;
     return {
@@ -124,7 +161,7 @@ class Exerciser implements BotAgent {
     };
   }
   onEvent(e: unknown) {
-    this.log.push(["E!", e]);
+    this.log.event("E", e);
   }
 }
 
@@ -132,14 +169,14 @@ class Listener implements BotAgent {
   constructor(
     readonly botId: string,
     private tag: string,
-    private log: unknown[],
+    private log: Recorder,
   ) {}
   decide(obs: any) {
-    this.log.push([this.tag, obs]);
+    this.log.obs(this.tag, obs);
     return { forTick: obs.tick };
   }
   onEvent(e: unknown) {
-    this.log.push([`${this.tag}!`, e]);
+    this.log.event(this.tag, e);
   }
 }
 
@@ -148,10 +185,10 @@ class Chaser implements BotAgent {
   battle: Battle | null = null;
   constructor(
     readonly botId: string,
-    private log: unknown[],
+    private log: Recorder,
   ) {}
   decide(obs: any) {
-    this.log.push(["X", obs]);
+    this.log.obs("X", obs);
     const me = obs.self.position;
     // Si E ha sembrado una mina, X pasa por encima (es la sonda: así daño, radio de explosión y
     // retardo de armado de la mina tienen consecuencia observable); si no, persigue a E.
@@ -169,17 +206,64 @@ class Chaser implements BotAgent {
     };
   }
   onEvent(e: unknown) {
-    this.log.push(["X!", e]);
+    this.log.event("X", e);
   }
 }
 
 export const PROBE_TICKS = 450;
 
+/** Traza de la sonda: digest por canal de efecto y digest completo (sólo negativas). */
+export interface ProbeTrace {
+  readonly channels: Readonly<Record<ProbeChannel, string>>;
+  readonly full: string;
+}
+
+const r6 = (x: number): number => Math.round(x * 1e6) / 1e6;
+const sha = (x: unknown): string => createHash("sha256").update(JSON.stringify(x)).digest("hex");
+
+/** Magnitudes de efecto del tick, campo a campo (lista blanca: nada de objetos enteros). */
+function sample(battle: Battle, rec: Recorder): void {
+  const t = battle.tick;
+  const ch = rec.ch;
+  for (const v of battle.getVehicles()) {
+    const p = battle.getPhysics().pose(v.id);
+    ch.kinematics.push([t, v.id, p ? [r6(p.position.x), r6(p.position.y), r6(p.heading)] : null]);
+    ch.turret.push([t, v.id, r6(v.turretHeading)]);
+    ch.hull.push([t, v.id, r6(v.hullHp), v.alive]);
+    ch.energy.push([t, v.id, r6(v.energyEU)]);
+    ch.modules.push([
+      t,
+      v.id,
+      [...v.modules.values()].map((m) => [m.spec.slot, r6(m.hp), v.stateOf(m.spec.slot)]),
+      Object.entries(v.armor).map(([sec, a]) => [sec, r6(a!.hp)]),
+    ]);
+  }
+  const frame = battle.getInternalFrame();
+  ch.projectiles.push([t, frame.projectiles.map((p: any) => [p.id, p.position.x, p.position.y])]);
+  ch.mines.push([t, battle.getMines().map((m) => [m.id, r6(m.position.x), r6(m.position.y)])]);
+  ch.score.push([t, frame.score]);
+  for (const d of battle.damageRecordsOfLastTick())
+    ch.damage.push([
+      t,
+      d.target,
+      d.sourceKind,
+      d.type,
+      r6(d.base),
+      r6(d.reduction),
+      r6(d.absorbed),
+      r6(d.effective),
+      r6(d.hull),
+      d.moduleSlot,
+      r6(d.moduleDamage),
+      d.sector,
+    ]);
+}
+
 /**
- * Digest de la batalla de sonda con `testedRef` instalado, resuelto contra `catalog`.
+ * Traza de la batalla de sonda con `testedRef` instalado, resuelto contra `catalog`.
  * `loadout` fija el loadout de E (por defecto, loadoutWith sobre el mismo catálogo).
  */
-export function probeDigest(catalog: ModuleDefinition[], testedRef: string, loadout?: LoadoutInput): string {
+export function probeTrace(catalog: ModuleDefinition[], testedRef: string, loadout?: LoadoutInput): ProbeTrace {
   const tested = findModule(catalog, testedRef);
   if (!tested) throw new Error(`sonda: ${testedRef} no está en el catálogo`);
   const map = emptyArena(120, 80);
@@ -188,7 +272,7 @@ export function probeDigest(catalog: ModuleDefinition[], testedRef: string, load
     { team: "red", position: { x: 20, y: 70 }, heading: 0 },
     { team: "blue", position: { x: 100, y: 40 }, heading: Math.PI },
   ];
-  const log: unknown[] = [];
+  const rec = new Recorder();
   const battle = new Battle({
     battleId: "catalog-probe",
     seed: "catalog-probe",
@@ -200,19 +284,21 @@ export function probeDigest(catalog: ModuleDefinition[], testedRef: string, load
       { id: "veh_3", botId: "bX", team: "blue", spec: resolveVehicle(ENEMY, catalog) },
     ],
   });
-  const chaser = new Chaser("bX", log);
+  const chaser = new Chaser("bX", rec);
   chaser.battle = battle;
-  battle.attachBot("veh_1", new Exerciser("bE", log));
-  battle.attachBot("veh_2", new Listener("bA", "A", log));
+  battle.attachBot("veh_1", new Exerciser("bE", rec));
+  battle.attachBot("veh_2", new Listener("bA", "A", rec));
   battle.attachBot("veh_3", chaser);
   try {
     for (let i = 0; i < PROBE_TICKS; i++) {
       battle.step();
-      if (i % 15 === 0) log.push(["hash", battle.tick, battle.stateHash()]);
+      sample(battle, rec);
+      if (i % 15 === 0) rec.full.push(["hash", battle.tick, battle.stateHash()]);
     }
-    log.push(["final", battle.stateHash()]);
+    rec.full.push(["final", battle.stateHash()]);
   } finally {
     battle.free();
   }
-  return createHash("sha256").update(JSON.stringify(log)).digest("hex");
+  const channels = Object.fromEntries(PROBE_CHANNELS.map((c) => [c, sha(rec.ch[c])])) as Record<ProbeChannel, string>;
+  return { channels, full: sha([channels, rec.full]) };
 }
