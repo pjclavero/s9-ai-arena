@@ -1,0 +1,12 @@
+{
+  "finalStateHash": "c999229c84bac75ea5e31ca56349dc4535e2a1aa29093d91221501820d08dd60",
+  "stateHashCount": 13,
+  "stateHashesDigest": "d7b3cd8e3d6a0251dab6aecc38d7a17bef717505b9a3317a21fbb960a9275bc5",
+  "snapshotsDigest": "fd1766a11cced59bac26a995eb868e9c161cfb69c2a2f11d59599ddef58803dd",
+  "versions": {
+    "engine": "0.4.0",
+    "physics": "@dimforge/rapier2d-compat@0.19.3",
+    "rules": "dm_practice@1",
+    "protocol": "arena/1"
+  }
+}
