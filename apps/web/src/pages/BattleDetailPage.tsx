@@ -86,7 +86,7 @@ interface BotStatsView {
   version?: number;
   team: string;
   damageDealt: number;
-  damageTaken: number;
+  damageTaken?: number;
   shotsFired: number;
   shotsHit: number;
   accuracy: number | null;
@@ -155,7 +155,7 @@ interface TeamStatsView {
   teamKills?: number;
   deaths?: number;
   damageDealt: number;
-  damageTaken: number;
+  damageTaken?: number;
   shotsFired: number;
   shotsHit: number;
   flagCaptures?: number;
@@ -588,7 +588,7 @@ function StatsSection({ b, s }: { b: BattleDetail; s: StatsResponse }) {
                 <td>{st.shotsHit}</td>
                 <td>{pct(st.accuracy)}</td>
                 <td>{Math.round(st.damageDealt)}</td>
-                <td>{Math.round(st.damageTaken)}</td>
+                <td>{typeof st.damageTaken === "number" ? Math.round(st.damageTaken) : "—"}</td>
                 <td>
                   {st.kills}
                   {st.teamKills ? ` (+${st.teamKills} de fuego amigo)` : ""}
@@ -696,7 +696,7 @@ function SidesStats({
               teamKills: sum((x) => x.teamKills),
               deaths: st.every((x) => typeof x.deaths === "number") ? sum((x) => x.deaths) : undefined,
               damageDealt: sum((x) => x.damageDealt),
-              damageTaken: sum((x) => x.damageTaken),
+              damageTaken: st.every((x) => typeof x.damageTaken === "number") ? sum((x) => x.damageTaken) : undefined,
               shotsFired: sum((x) => x.shotsFired),
               shotsHit: sum((x) => x.shotsHit),
               survivors: st.filter((x) => (typeof x.aliveAtEnd === "boolean" ? x.aliveAtEnd : !x.died)).length,
@@ -733,7 +733,7 @@ function SidesStats({
             </td>
             <td>{typeof t.deaths === "number" ? t.deaths : "—"}</td>
             <td>{Math.round(t.damageDealt)}</td>
-            <td>{Math.round(t.damageTaken)}</td>
+            <td>{typeof t.damageTaken === "number" ? Math.round(t.damageTaken) : "—"}</td>
             <td>{t.shotsFired}</td>
             <td>{t.shotsHit}</td>
             {showRespawns && <td>{typeof t.respawns === "number" ? t.respawns : "—"}</td>}

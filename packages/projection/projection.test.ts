@@ -483,6 +483,17 @@ describe("estadísticas públicas cuantizadas (hallazgo P2-5)", () => {
     expect(t.damageDealt % STATS_DAMAGE_STEP).toBe(0);
   });
 
+  it("un bot DESTRUIDO no publica damageTaken a terceros (≈ casco total); dueño y staff sí; vivo: cuantizado", () => {
+    const dead = { ...stats, died: true, deaths: 1, damageTaken: 301 };
+    expect(projectBotStats(dead, "public_replay")).not.toHaveProperty("damageTaken");
+    expect(projectBotStats(dead, "team")).not.toHaveProperty("damageTaken");
+    expect(projectBotStats(dead, "public_replay")).toMatchObject({ died: true }); // se indica KO
+    for (const aud of ["owner", "staff"] as const) expect(projectBotStats(dead, aud)).toMatchObject({ damageTaken: 301 });
+    expect(projectBotStats({ ...stats, died: false, deaths: 0 }, "public_replay")).toMatchObject({
+      damageTaken: Math.floor(301 / STATS_DAMAGE_STEP) * STATS_DAMAGE_STEP,
+    });
+  });
+
   it("sin disparos la precisión es null (no se inventa)", () => {
     const t = projectBotStats(
       { botId: "b", team: "r", damageDealt: 0, shotsFired: 0, shotsHit: 0, accuracy: null },

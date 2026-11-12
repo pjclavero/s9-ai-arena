@@ -198,7 +198,7 @@ El equipamiento y el loadout completo son privados por defecto para terceros (ve
 |---|---|
 | Espectador, broadcast, replay público | `hullHp` exacto (sale `hullLevel` 0..20), `hullHpMax`, estado por ranura (`modules`), minas |
 | Nómina pública (init, índice, descarga) | chasis |
-| `getBattleStats` | `perModule` (moduleId por ranura), `minesDeployed`, `minesTriggered`, `radio`, `decisionTimeouts`, id interno del vehículo; `damageDealt`/`damageTaken` (pasos de 24 HP), `shotsHit` (pasos de 5) y `accuracy` (derivada de los aciertos cuantizados, pasos de 1/20) salen cuantizados: el valor exacto es sólo del dueño y del staff |
+| `getBattleStats` | `perModule` (moduleId por ranura), `minesDeployed`, `minesTriggered`, `radio`, `decisionTimeouts`, id interno del vehículo; `damageDealt`/`damageTaken` (pasos de 24 HP), `shotsHit` (pasos de 5) y `accuracy` (derivada de los aciertos cuantizados, pasos de 1/20) salen cuantizados, y `damageTaken` de un bot destruido (≈ su casco total) no sale (ni el `damageTaken` de su bando en `perTeam`): el valor exacto es sólo del dueño y del staff |
 | `GET /bots/{id}/loadouts` | todo para quien no sea dueño ni staff, **también con un bot público** (404 uniforme) |
 | HUD del visor | no hay «N/M módulos» ni «módulos caídos»: el recuento es privado; el visor sólo pinta lo que la proyección emite (casco cuantizado) |
 | Canal del bot (WELCOME, OBSERVATION, EVENT, COMMAND) | ids públicos de la audiencia del bot (`v_N`, estables en la batalla); nunca `veh_N`/`proj_N`/`mine_N`; un `radio.to` con id interno o desconocido no se entrega |
@@ -216,8 +216,7 @@ El equipamiento y el loadout completo son privados por defecto para terceros (ve
 | Impactos hasta destruir | `hullLevel` (cuantizado a 20 niveles) |
 | Tamaño del vehículo | distancias de contacto en las colisiones |
 | Posición de una mina | sólo en el instante en que explota (`mine_triggered`) |
-| Daño medio por impacto | `damageDealt`/`shotsHit` cuantizados: sólo se afina con totales grandes; inevitable mientras se publiquen ambos agregados |
-| Orden de magnitud del casco de un bot destruido | `damageTaken` (resolución de 24 HP); inevitable mientras se publique el daño recibido. **Pendiente de decisión de M0** si se prefiere ocultarlo para bots destruidos |
+| Daño medio por impacto | inferible físicamente de la barra `hullLevel` cuantizada que cae por impacto (decisión de M0); `damageDealt`/`shotsHit` cuantizados no añaden más |
 
 ## Superficies abiertas conocidas
 

@@ -163,7 +163,15 @@ describe("4v4-STATS · /battles/{id}/stats con perTeam (TDM 4v4 real)", () => {
         // lo que el dueño ve de SUS bots es exacto, así que se cuantiza igual (idempotente en los ajenos).
         const sumQ = (k: string, step: number) => bots.reduce((a, b) => a + Math.floor(b[k] / step) * step, 0);
         expect(t.shotsHit, `${actor} ${team} shotsHit`).toBe(sumQ("shotsHit", STATS_HITS_STEP));
-        for (const k of ["damageDealt", "damageTaken"]) expect(t[k]).toBeCloseTo(sumQ(k, STATS_DAMAGE_STEP), 6);
+        expect(t.damageDealt).toBeCloseTo(sumQ("damageDealt", STATS_DAMAGE_STEP), 6);
+        // M0 · si algún bot del bando fue destruido, su damageTaken no se publica NI en perTeam
+        // (restar los demás reconstruiría el casco oculto); si no, se suma lo cuantizado.
+        if (bots.some((b) => b.died === true || b.deaths > 0)) {
+          expect(t, `${actor} ${team}`).not.toHaveProperty("damageTaken");
+          for (const b of bots.filter((x) => x.died === true || x.deaths > 0)) {
+            if (actor === "C" && team === "red") expect(b).not.toHaveProperty("damageTaken");
+          }
+        } else expect(t.damageTaken).toBeCloseTo(sumQ("damageTaken", STATS_DAMAGE_STEP), 6);
         expect(t.survivors).toBe(bots.filter((b) => b.aliveAtEnd).length);
       }
     }

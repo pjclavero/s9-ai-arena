@@ -165,7 +165,6 @@ export const DEFAULT_DISCLOSURE_POLICY: DisclosurePolicy = {
     "residual.impactsToKill": RESIDUAL,
     "residual.collisionRadius": RESIDUAL,
     "residual.damagePerHit": RESIDUAL,
-    "residual.hullFromDamageTaken": RESIDUAL,
     "residual.mineTriggerPosition": RESIDUAL,
   },
 };
@@ -214,8 +213,6 @@ export const ACCEPTED_RESIDUALS: Readonly<Record<string, string>> = {
   "residual.impactsToKill": "Cuántos impactos hacen falta para destruir un vehículo (con hullLevel cuantizado).",
   "residual.collisionRadius": "El tamaño del vehículo, por las distancias de contacto en las colisiones.",
   "residual.damagePerHit":
-    "El daño medio por impacto, como cociente de damageDealt/shotsHit cuantizados: sólo se afina con totales grandes (muchos impactos) y es inevitable mientras se publiquen ambos agregados.",
-  "residual.hullFromDamageTaken":
-    "El orden de magnitud del casco total de un bot destruido (damageTaken ≈ casco, con resolución de un paso de 24 HP): inevitable mientras se publique el daño recibido; los valores exactos y el casco máximo siguen privados.",
+    "El daño medio por impacto (decisión de M0): es inferible físicamente de la barra hullLevel cuantizada, que cae por impacto; los agregados damageDealt/shotsHit cuantizados no añaden más que eso con totales grandes.",
   "residual.mineTriggerPosition": "La posición de una mina en el instante en que explota (evento público).",
 };

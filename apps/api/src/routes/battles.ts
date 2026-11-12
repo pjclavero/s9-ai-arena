@@ -770,6 +770,7 @@ export function battleRoutes(
     const maxTimeouts = await maxConsecutiveTimeoutsOf(db, battle);
     // `team` es dato de BD/replay usado como clave: Map, y emptyDict al serializar.
     const teams = new Map<string, TeamBattleStats>();
+    const hideTeamDamageTaken = new Set<string>();
     for (const p of participants) {
       const botId = String(p.bot_id);
       const s = statsByBot.get(botId);
@@ -800,7 +801,11 @@ export function battleRoutes(
         }
         // TD-047 · `perTeam` es IGUAL para cualquier lector: se suma siempre lo que ve un
         // tercero (estadísticas cuantizadas), nunca los exactos del dueño.
-        addBotToTeam(t, owner ? (projectBotStats(rest, "public_replay") as Record<string, any>) : sporting);
+        const forTeam = owner ? (projectBotStats(rest, "public_replay") as Record<string, any>) : sporting;
+        addBotToTeam(t, forTeam);
+        // M0 · si el casco de un bot destruido no se publica, el `damageTaken` de su bando
+        // tampoco (restarle los demás reconstruiría el valor oculto).
+        if (rest && ((rest as any).died === true || Number((rest as any).deaths) > 0)) hideTeamDamageTaken.add(team);
       }
       if (owner) {
         diagnostics[botId] = buildDiagnostics(p, s, result, maxTimeouts);
@@ -816,7 +821,11 @@ export function battleRoutes(
     else if (battle.status === "finished" && battle.replay_ref) status = "pending";
     res.setHeader("Cache-Control", NO_STORE);
     const perTeam: Record<string, TeamBattleStats> = emptyDict<TeamBattleStats>();
-    for (const [team, t] of teams) perTeam[team] = t;
+    for (const [team, t] of teams) {
+      const copy: Record<string, unknown> = { ...t };
+      if (hideTeamDamageTaken.has(team)) delete copy.damageTaken;
+      perTeam[team] = copy as unknown as TeamBattleStats;
+    }
     // R-RULES · perfil de métricas por modo (FASE 13), derivado de la copia de reglas.
     const rules = rulesToJson(rulesOf(battle));
     res.json({
