@@ -28,7 +28,7 @@ import {
   RngStreams,
   RNG_STREAM_NAMES,
 } from "../src/rng.js";
-import { canonicalize, computeStateHash, STATE_HASH_COMPONENTS } from "../src/sim/state-hash.js";
+import { canonicalize, computeStateHash, hashFromComponents, STATE_HASH_COMPONENTS } from "../src/sim/state-hash.js";
 
 beforeAll(async () => {
   await initPhysics();
@@ -157,6 +157,26 @@ describe("verify() v2 compara el RESULTADO completo", () => {
     expect(v.matches).toBe(false);
     expect(v.divergedCheckpointTick).toBe(k.tick);
     expect(v.divergedComponents).toContain("vehicles");
+  });
+
+  it("components adulterados con el hash INTACTO ⇒ no verifica (review MD P2)", async () => {
+    const r = clone(base);
+    const k = r.checkpoints[0];
+    const hashOriginal = k.hash;
+    k.components.vehicles = "f".repeat(64);
+    expect(k.hash).toBe(hashOriginal);
+    const v = await verify(r);
+    expect(v.matches).toBe(false);
+    expect(v.mismatches.map((m) => m.field)).toContain("checkpoints");
+    expect(v.divergedCheckpointTick).toBe(k.tick);
+  });
+
+  it("hashFromComponents reproduce el hash de computeStateHash y rechaza componentes incompletos", () => {
+    const k = base.checkpoints[0];
+    expect(hashFromComponents(k.components)).toBe(k.hash);
+    const { vehicles: _omit, ...incompleto } = k.components as any;
+    expect(hashFromComponents(incompleto)).toBeNull();
+    expect(hashFromComponents(undefined)).toBeNull();
   });
 
   it("comando adulterado ⇒ divergencia con tick (no índice) y componentes", async () => {
@@ -413,6 +433,20 @@ describe("flujos de RNG con nombre", () => {
     expect(after).toEqual(before);
     // Además es reproducible: dos lecturas seguidas dan la misma observación.
     expect(o2).toEqual(o1);
+  });
+
+  it("observationFor() en una batalla GRABADA lanza (guarda: altera la física, review MD P2)", () => {
+    const g = new Battle(cfg("md-guard", { recordReplay: true }));
+    attachStubs(g);
+    g.step();
+    expect(() => g.observationFor("veh_1")).toThrow(/batalla grabada/);
+    g.free();
+    // Sin grabación (tests, herramientas) sigue permitida.
+    const n = new Battle(cfg("md-guard", { recordReplay: false }));
+    attachStubs(n);
+    n.step();
+    expect(() => n.observationFor("veh_1")).not.toThrow();
+    n.free();
   });
 
   it("ReadOnlyRng falla en voz alta si se consume", () => {
