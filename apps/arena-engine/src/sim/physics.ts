@@ -337,7 +337,12 @@ export class PhysicsWorld {
     return { awakeBodies, contactPairs };
   }
 
+  private freed = false;
+
+  /** Idempotente (G2/MF): liberar dos veces la memoria WASM de Rapier lanza; aquí no. */
   free(): void {
+    if (this.freed) return;
+    this.freed = true;
     this.world.free();
   }
 }

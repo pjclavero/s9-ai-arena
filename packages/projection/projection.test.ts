@@ -513,3 +513,79 @@ describe("desempate público de la numeración (hallazgo P3-8)", () => {
     expect([m.toPublic("proj_2"), m.toPublic("proj_1")]).toEqual(["p_1", "p_2"]);
   });
 });
+
+// ------------------------------------------------------------------ G2 · D-B4
+
+describe("D-B4 · rotura de blindaje visible, sin valores exactos ni módulo (G2)", () => {
+  const armorOf = (front: number, rear?: number) => ({
+    front: { hp: front, hpMax: 80 },
+    left: { hp: 60, hpMax: 60 },
+    ...(rear !== undefined ? { rear: { hp: rear, hpMax: 50 } } : {}),
+  });
+  const framesWith = (armor: Record<string, { hp: number; hpMax: number }>): InternalFrame[] =>
+    stream(false).map((f) => ({
+      ...f,
+      vehicles: f.vehicles.map((v) => (v.id === "veh_2" ? ({ ...v, armor } as typeof v) : v)),
+    }));
+  const publicVeh2 = (frames: InternalFrame[], aud = audienceKey("public_live")) => {
+    const { bodies, roster } = projectAll(frames, aud);
+    const id = (roster as any[]).find((r) => r.botId === "bot-b")!.id;
+    return bodies.map((b) => b.vehicles.find((v) => v.id === id)!);
+  };
+
+  it("G2-1 · sector roto ⇒ armorBroken { front: true } en TODA audiencia proyectada; sólo el booleano", () => {
+    for (const cls of ["public_live", "broadcast", "public_replay"] as const) {
+      const v = publicVeh2(framesWith(armorOf(0)), audienceKey(cls))[0];
+      expect(v.armorBroken, cls).toEqual({ front: true });
+    }
+    const raw = JSON.stringify(projectAll(framesWith(armorOf(0, 0))).bodies);
+    expect(raw).not.toMatch(/"hp"|hpMax|reduction|armor_|slot|"modules"/);
+  });
+
+  it("G2-2 · mientras no está roto el frame NO distingue blindajes (ni existencia de sectores): igual que sin blindaje", () => {
+    const sin = JSON.stringify(projectAll(framesWith({})).bodies);
+    for (const armor of [armorOf(80), armorOf(1), armorOf(0.0001, 49)]) {
+      const frames = framesWith(armor);
+      expect(JSON.stringify(projectAll(frames).bodies), JSON.stringify(armor)).toBe(sin);
+      expect(publicVeh2(frames)[0]).not.toHaveProperty("armorBroken");
+    }
+  });
+
+  it("G2-3 · sólo se publican los sectores rotos, todos `true`, y el cambio de estado se ve en el frame en que ocurre", () => {
+    const frames = stream(false).map((f, i) => ({
+      ...f,
+      vehicles: f.vehicles.map((v) =>
+        v.id === "veh_2" ? ({ ...v, armor: armorOf(i < 4 ? 40 : 0, i < 6 ? 25 : 0) } as typeof v) : v,
+      ),
+    }));
+    const seq = publicVeh2(frames).map((v) => v.armorBroken ?? null);
+    expect(seq.slice(0, 4)).toEqual([null, null, null, null]);
+    expect(seq[4]).toEqual({ front: true });
+    expect(seq[6]).toEqual({ front: true, rear: true });
+    for (const s of seq) for (const val of Object.values(s ?? {})) expect(val).toBe(true);
+  });
+
+  it("G2-4 · entrada hostil: hp no finito, hpMax 0 o un sector inventado NO producen rotura", () => {
+    const hostile = {
+      front: { hp: Number.NaN, hpMax: 80 },
+      left: { hp: 0, hpMax: 0 }, // sector sin hpMax: no «existía»
+      rear: { hp: 10, hpMax: Number.POSITIVE_INFINITY },
+      top: { hp: 0, hpMax: 10 },
+    } as unknown as Record<string, { hp: number; hpMax: number }>;
+    expect(publicVeh2(framesWith(hostile))[0]).not.toHaveProperty("armorBroken");
+  });
+
+  it("G2-5 · la política manda: sin fila `vehicle.armorBroken` no sale", () => {
+    const fields = { ...DEFAULT_DISCLOSURE_POLICY.fields };
+    delete fields["vehicle.armorBroken"];
+    const policy = { ...DEFAULT_DISCLOSURE_POLICY, fields };
+    const pr = new AudienceProjector({
+      battleId: "b-261",
+      audience: audienceKey("public_live"),
+      roster: ROSTER,
+      policy,
+    });
+    const body = pr.project(framesWith(armorOf(0))[0]).body;
+    expect(JSON.stringify(body)).not.toMatch(/armorBroken/);
+  });
+});

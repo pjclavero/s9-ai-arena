@@ -9,6 +9,7 @@
  * sin E/S, sin RNG, sin mutar el frame (F3). Los ids internos se traducen con el mapper
  * de la audiencia (`ctx.ids`); una referencia que no se puede traducir se OMITE.
  */
+import { armorBroken } from "../game-rules/damage-contract.js";
 import type { PublicEntityId, ProjectionContext, SanitizedFrame } from "./contracts.js";
 import type { InternalEvent, InternalFrame, InternalRosterEntry, InternalVehicleState } from "./frame-types.js";
 import { HULL_LEVEL_N, PUBLIC_FRAME_FORMAT, emits, fieldLevel } from "./policy.js";
@@ -54,6 +55,8 @@ export function hullLevel(hp: number, hpMax: number, n: number = HULL_LEVEL_N): 
 
 // --------------------------------------------------------------------- cuerpo
 
+const ARMOR_SECTORS = ["front", "left", "right", "rear"] as const;
+
 export interface PublicVehicle {
   id: string;
   team?: string;
@@ -62,6 +65,12 @@ export interface PublicVehicle {
   heading?: number;
   turretHeading?: number;
   hullLevel?: number;
+  /**
+   * D-B4 · sectores cuyo blindaje está ROTO (`{ front: true }`). Sólo aparecen los rotos y
+   * sólo `true`: un sector íntegro o inexistente es indistinguible (EQUIPMENT_PRIVATE).
+   * Ausente mientras no haya ninguno roto.
+   */
+  armorBroken?: Partial<Record<"front" | "left" | "right" | "rear", true>>;
   carryingFlag?: string | null;
   juggernaut?: boolean;
   respawnsLeft?: number;
@@ -91,6 +100,16 @@ function projectVehicle(v: InternalVehicleState, ctx: FrameContext): PublicVehic
   if (emits(P, "vehicle.turretHeading", a)) out.turretHeading = num(v.turretHeading);
   const hpLevel = fieldLevel(P, "vehicle.hullHp", a);
   if (hpLevel === "SANITIZED") out.hullLevel = hullLevel(num(v.hullHp), num(v.hullHpMax));
+  if (emits(P, "vehicle.armorBroken", a)) {
+    const broken: NonNullable<PublicVehicle["armorBroken"]> = {};
+    for (const s of ARMOR_SECTORS) {
+      const sec = v.armor?.[s];
+      // Dato no finito ⇒ no se afirma la rotura (nunca se inventa un estado).
+      if (sec && Number.isFinite(sec.hp) && Number.isFinite(sec.hpMax) && armorBroken(sec.hp, sec.hpMax))
+        broken[s] = true;
+    }
+    if (Object.keys(broken).length > 0) out.armorBroken = broken;
+  }
   if (emits(P, "vehicle.carryingFlag", a))
     out.carryingFlag = typeof v.carryingFlag === "string" ? v.carryingFlag : null;
   if (emits(P, "vehicle.juggernaut", a)) out.juggernaut = v.juggernaut === true;

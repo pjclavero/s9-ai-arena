@@ -19,10 +19,11 @@ import { Battle } from "../../src/sim/battle.js";
 import { initPhysics } from "../../src/sim/physics.js";
 import { ProtocolServer } from "../../src/protocol-server.js";
 import { emptyArena, gunnerLoadout, minerLoadout, scoutLoadout } from "../../src/fixtures.js";
-import { IdleBot } from "../../src/stubs.js";
+import { HunterBot, IdleBot } from "../../src/stubs.js";
+import { WebSocket } from "ws";
 import { projectIndex, projectReplayDocument } from "../../../api/src/replay-projection.js";
 import { effectOf } from "../../../../packages/module-catalog/effect-status.js";
-import { ScriptBot, allKeys, allStrings, contractIt, publicStream } from "../baseline/helpers.js";
+import { ScriptBot, allKeys, allStrings, publicStream } from "../baseline/helpers.js";
 import { recordReference } from "../baseline/reference-battle.js";
 
 beforeAll(async () => {
@@ -106,35 +107,76 @@ describe("MA · PublicEntityId: ningún id interno sale (I1, F1)", () => {
     expect(allStrings(idx).filter((s) => INTERNAL_ID.test(s))).toEqual([]);
   });
 
-  contractIt(
-    "MA",
-    "la observación del bot no entrega el id interno del vehículo detectado (espacio BotEntityRef)",
-    () => {
-      const map = emptyArena(200, 80);
-      map.spawns = [
-        { team: "red", position: { x: 40, y: 40 }, heading: 0 },
-        { team: "blue", position: { x: 55, y: 40 }, heading: Math.PI },
-      ];
-      const b = new Battle({
-        battleId: "me_botids",
-        seed: "me-botids",
-        ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: 60 }),
-        map,
-        participants: [
-          { id: "veh_1", botId: "b1", team: "red", spec: gunnerLoadout() },
-          { id: "veh_2", botId: "b2", team: "blue", spec: gunnerLoadout() },
-        ],
-      });
-      const obs: any[] = [];
-      b.attachBot("veh_1", new ScriptBot("b1", (_t, o) => (obs.push(o), undefined)));
-      b.attachBot("veh_2", new IdleBot("b2"));
-      for (let t = 0; t < 10; t++) b.step();
-      b.free();
-      const contacts = obs.flatMap((o) => (o.sensors?.radar ?? []).flatMap((r: any) => r.contacts ?? []));
-      expect(contacts.length).toBeGreaterThan(0); // control: el radar SÍ ve al rival
-      expect(allStrings(contacts).filter((s) => s === "veh_2")).toEqual([]);
-    },
-  );
+  // G2 (OLA 2): el contrato se verifica en la capa REAL donde está la garantía. Los ids del bot
+  // se traducen en el canal del bot (`ProtocolServer` + `BotIdBook`), no en `Battle`: se mide lo
+  // que el bot RECIBE por el protocolo (WebSocket real), sin mirar el motor.
+  it("[contrato MA cumplido · G2] lo que el bot RECIBE por el protocolo (WELCOME, OBSERVATION, EVENT) no trae ids internos veh_/proj_/mine_; el radar da v_N", async () => {
+    const map = emptyArena(200, 80);
+    map.spawns = [
+      { team: "red", position: { x: 40, y: 40 }, heading: 0 },
+      { team: "blue", position: { x: 55, y: 40 }, heading: Math.PI },
+    ];
+    const battle = await Battle.create({
+      battleId: "g2_botids_ws",
+      seed: "g2-botids-ws",
+      ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: 120 }),
+      map,
+      participants: [
+        { id: "veh_1", botId: "b1", team: "red", spec: gunnerLoadout() },
+        { id: "veh_2", botId: "b2", team: "blue", spec: gunnerLoadout() },
+      ],
+    });
+    battle.attachBot("veh_2", new HunterBot("b2"));
+    const server = new ProtocolServer({
+      battle,
+      catalogVersion: "mvp@1",
+      expected: [{ botId: "b1", vehicleId: "veh_1", battleToken: "t".repeat(16) }],
+      tickIntervalMs: 3,
+      decisionDeadlineMs: 40,
+    });
+    const msgs: any[] = [];
+    let ws: WebSocket | undefined;
+    try {
+      server.start();
+      ws = new WebSocket(`ws://127.0.0.1:${server.port}`);
+      ws.on("message", (raw) => msgs.push(JSON.parse(String(raw))));
+      await new Promise<void>((r) => ws!.once("open", () => r()));
+      ws.send(
+        JSON.stringify({
+          proto: "arena/1",
+          type: "HELLO",
+          seq: 0,
+          payload: {
+            botId: "b1",
+            botVersion: "1",
+            sdk: { name: "custom", version: "0" },
+            battleToken: "t".repeat(16),
+          },
+        }),
+      );
+      await server.waitForResult();
+    } finally {
+      ws?.close();
+      server.stop();
+    }
+    // Controles positivos: el bot recibió lo que se mide y el radar SÍ vio al rival.
+    expect(msgs.some((m) => m.type === "WELCOME")).toBe(true);
+    const obs = msgs.filter((m) => m.type === "OBSERVATION");
+    expect(obs.length).toBeGreaterThan(3);
+    const contactIds = obs
+      .flatMap((m) =>
+        (m.payload.sensors?.radar ?? []).flatMap((r: any) => (r.contacts ?? []).map((c: any) => c.entityId)),
+      )
+      .filter(Boolean);
+    expect(contactIds.length, "control: el radar vio al rival con id").toBeGreaterThan(0);
+    // Contrato: nada de ids internos en NINGÚN mensaje recibido; el contacto va en el espacio público.
+    for (const id of contactIds) expect(String(id)).toMatch(PUBLIC_ID);
+    for (const m of msgs)
+      expect(
+        allStrings(m).filter((x) => INTERNAL_ID.test(x)),
+        `${m.type}`,
+      ).toEqual([]);
+  }, 20000);
 });
 
 describe("MA · ids densos por audiencia: lo oculto no consume número (I3, P-1, #261)", () => {

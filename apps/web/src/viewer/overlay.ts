@@ -19,6 +19,11 @@ export interface VehicleOverlay {
   carryingFlag: string | null;
   /** slot → estado del módulo (operational/damaged/critical/destroyed/offline). */
   modules: Record<string, string>;
+  /**
+   * D-B4 · sectores con el blindaje ROTO según el frame público (`armorBroken`, sólo los
+   * `true`). Es la ÚNICA fuente pública de la rotura: `modules` no llega en público.
+   */
+  armorBrokenSectors?: string[];
 }
 
 export interface FeedItem {
@@ -46,6 +51,15 @@ export interface MatchResult {
 }
 
 const FEED_LIMIT = 50;
+
+/** Sectores marcados como rotos (`true`) en el `armorBroken` público; entrada hostil ⇒ []. */
+export function armorBrokenSectorsOf(raw: unknown): string[] {
+  if (!raw || typeof raw !== "object") return [];
+  return Object.entries(raw as Record<string, unknown>)
+    .filter(([, broken]) => broken === true)
+    .map(([sector]) => sector)
+    .sort();
+}
 
 export class OverlayState {
   score: Record<string, number> = {};
@@ -77,6 +91,7 @@ export class OverlayState {
         hullHpMax: typeof v.hullLevel === "number" ? HULL_LEVEL_N : v.hullHpMax,
         carryingFlag: v.carryingFlag ?? null,
         modules: Object.fromEntries((v.modules ?? []).map((m: any) => [m.slot, m.state])),
+        armorBrokenSectors: armorBrokenSectorsOf(v.armorBroken),
       });
       // El snapshot es la verdad más fresca también para la bandera: si alguien
       // la lleva, está "carried" aunque el evento aún no haya llegado.
