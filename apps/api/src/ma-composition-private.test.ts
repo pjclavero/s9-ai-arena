@@ -147,7 +147,7 @@ describe("dueño: cifras exactas sólo de lo propio", () => {
 
 describe("staff (moderador): todo exacto", () => {
   it("rules-check con bots ajenos ⇒ cifras en bots, totales y violaciones", async () => {
-    const r = await check(body([foreign[0], mine[0]], foreign.slice(1)), staffTok);
+    const r = await check(body(foreign, mine), staffTok);
     for (const t of r.body.composition.teams) {
       expect(t.figuresHidden).toBe(false);
       expect(typeof t.totalCredits).toBe("number");
