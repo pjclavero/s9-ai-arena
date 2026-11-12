@@ -341,6 +341,7 @@ export class IngestTap {
         const h = this.headBuf();
         this.need = 11;
         this.startBody(h);
+        this.phase = "body";
         continue;
       }
       // body

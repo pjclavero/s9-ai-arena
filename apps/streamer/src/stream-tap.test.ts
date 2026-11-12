@@ -170,7 +170,9 @@ describe("G6 · captura el ÚLTIMO keyframe que recibió el relé, con su timest
       ["aleatorio", chunked(s.bytes)],
       [
         "byte a byte",
-        Array.from(s.bytes.subarray(0, 300_000), (x) => Buffer.from([x])).concat([s.bytes.subarray(300_000)]),
+        Array.from(s.bytes.subarray(0, 300_000), (x) => Buffer.from([x])).concat([
+          Buffer.from(s.bytes.subarray(300_000)),
+        ]),
       ],
       ["entero", [s.bytes]],
     ] as const) {
