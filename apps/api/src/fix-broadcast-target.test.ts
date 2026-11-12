@@ -291,6 +291,13 @@ describe("FIX-BROADCAST (R2) · SCHEDULED_BATTLE · se puede empezar a emitir AN
   });
 
   it("programada con bot privado (sin torneo retransmitido) ⇒ rechazada con battle_not_public", async () => {
+    // La admin tampoco la anuncia como disponible (no sólo la frena `broadcastable`).
+    expect((await target("battle", B.scheduledPriv)).body).toMatchObject({
+      broadcastable: false,
+      broadcastAvailable: false,
+      reason: "battle_not_public",
+      broadcastPhase: "UNAVAILABLE",
+    });
     await expectRejected("battle", B.scheduledPriv, "battle_not_public");
   });
 
