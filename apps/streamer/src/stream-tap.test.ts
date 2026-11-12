@@ -233,7 +233,14 @@ describe("P3 · fallos de disco no dejan huérfanos ni descuadran la rotación",
     tap.observe(syntheticFlv(31).bytes);
     tap.flush();
     await tap.whenIdle();
-    const sup = new StreamSupervisor({ config: { ...DEFAULT_CONFIG }, spawner: () => new FakeChild(), logger: createLogger(null, () => {}), secrets: new SecretRegistry(), streamKey: KEY, tap });
+    const sup = new StreamSupervisor({
+      config: { ...DEFAULT_CONFIG },
+      spawner: () => new FakeChild(),
+      logger: createLogger(null, () => {}),
+      secrets: new SecretRegistry(),
+      streamKey: KEY,
+      tap,
+    });
     const control = createControlServer({
       supervisor: sup,
       config: { ...DEFAULT_CONFIG },
