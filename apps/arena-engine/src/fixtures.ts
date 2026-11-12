@@ -222,8 +222,6 @@ export const MODULES = {
     rangeM: 360,
     projectileLifetimeTicks: projectileLifetimeTicks(360, 120),
     spreadRad: 0.01,
-    turretArcRad: Math.PI * 2,
-    turretRateRads: 1.0,
     acceptsAmmo: ["ammo.ap", "ammo.he"],
   }),
   mg: mod({
@@ -241,8 +239,6 @@ export const MODULES = {
     rangeM: 600,
     projectileLifetimeTicks: projectileLifetimeTicks(600, 200),
     spreadRad: 0.05,
-    turretArcRad: Math.PI * 2,
-    turretRateRads: 2.2,
     acceptsAmmo: ["ammo.standard"],
   }),
   ammoAp: mod({

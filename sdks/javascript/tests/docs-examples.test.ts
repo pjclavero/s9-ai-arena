@@ -198,15 +198,17 @@ describe("DOC-A · los ejemplos JavaScript juegan de verdad (motor real, SDK rea
     battle.free();
     expect(result.disqualified).toEqual([]);
     expectValidCommands(a);
-    expect(a.welcome.teammates).toEqual(["veh_3"]);
-    expect(b.welcome.teammates).toEqual(["veh_1"]);
+    // OLA 2 · ids PÚBLICOS de la audiencia de cada bot (v_N por orden de botId en su equipo):
+    // a (bot_ex05a) = v_1 y su compañero b = v_2; b ve a a como v_1 y a sí mismo como v_2.
+    expect(a.welcome.teammates).toEqual(["v_2"]);
+    expect(b.welcome.teammates).toEqual(["v_1"]);
     expect(rival.welcome.teammates).toEqual([]);
     const sent = a.sent.concat(b.sent).filter((m: any) => m.payload.radio);
     expect(sent.length).toBeGreaterThan(0);
     // Los compañeros se oyen entre ellos, y sólo entre ellos.
     expect(a.heard.length + b.heard.length).toBeGreaterThan(0);
-    expect(a.heard.every((h: any) => h.from === "veh_3")).toBe(true);
-    expect(b.heard.every((h: any) => h.from === "veh_1")).toBe(true);
+    expect(a.heard.every((h: any) => h.from === "v_2")).toBe(true);
+    expect(b.heard.every((h: any) => h.from === "v_1")).toBe(true);
     for (const h of a.heard.concat(b.heard)) {
       expect(h.x).toBeGreaterThanOrEqual(0);
       expect(h.y).toBeGreaterThanOrEqual(0);
@@ -261,7 +263,7 @@ describe("DOC-A · los ejemplos JavaScript juegan de verdad (motor real, SDK rea
     expectValidCommands(a);
     expectValidCommands(b);
     // Cada uno ve al otro como compañero y se reparten los papeles sin hablar.
-    expect(a.welcome.teammates).toEqual(["veh_2"]);
+    expect(a.welcome.teammates).toEqual(["v_2"]); // id público de su audiencia
     expect([a.role, b.role].sort()).toEqual(["attacker", "defender"]);
     // El atacante sale hacia la base rival (x grande); el defensor se queda cerca de la suya.
     const attacker = a.role === "attacker" ? a : b;

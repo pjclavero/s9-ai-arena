@@ -22,11 +22,11 @@ El chasis es la base del vehículo: fija su vida, su tamaño, el peso que puede 
 
 | Chasis | Ranuras (entre paréntesis, el tamaño máximo de pieza: S pequeño, M mediano, L grande, XL muy grande) |
 |---|---|
-| Chasis pesado | Propulsión (XL) · Energía (L) · Sensor A (M) · Sensor B (S) · Torreta principal (XL) · Munición principal (L) · Compartimento de minas (M) · Radio (S) · Blindaje frontal (XL) · Blindaje izquierdo (L) · Blindaje derecho (L) · Blindaje trasero (L) |
-| Chasis ligero (versión 1) | Propulsión (M) · Energía (M) · Sensor A (M) · Torreta principal (M) · Munición principal (M) · Radio (S) · Blindaje frontal (M) · Blindaje izquierdo (S) · Blindaje derecho (S) · Blindaje trasero (S) |
-| Chasis ligero (versión 2) | Propulsión (M) · Energía (M) · Sensor A (M) · Torreta principal (M) · Munición principal (M) · Radio (S) · Blindaje frontal (M) · Blindaje izquierdo (S) · Blindaje derecho (S) · Blindaje trasero (S) |
-| Chasis medio (versión 1) | Propulsión (L) · Energía (M) · Sensor A (M) · Torreta principal (L) · Munición principal (M) · Compartimento de minas (M) · Radio (S) · Blindaje frontal (L) · Blindaje izquierdo (M) · Blindaje derecho (M) · Blindaje trasero (M) |
-| Chasis medio (versión 2) | Propulsión (L) · Energía (M) · Sensor A (M) · Torreta principal (L) · Munición principal (M) · Compartimento de minas (M) · Radio (S) · Blindaje frontal (L) · Blindaje izquierdo (M) · Blindaje derecho (M) · Blindaje trasero (M) |
+| Chasis pesado | Propulsión (XL) · Energía (L) · Sensor A (M) · Sensor B (S) · Torreta principal (XL, torreta 1 rad/s) · Munición principal (L) · Compartimento de minas (M) · Radio (S) · Blindaje frontal (XL) · Blindaje izquierdo (L) · Blindaje derecho (L) · Blindaje trasero (L) |
+| Chasis ligero (versión 1) | Propulsión (M) · Energía (M) · Sensor A (M) · Torreta principal (M, torreta 2,2 rad/s) · Munición principal (M) · Radio (S) · Blindaje frontal (M) · Blindaje izquierdo (S) · Blindaje derecho (S) · Blindaje trasero (S) |
+| Chasis ligero (versión 2) | Propulsión (M) · Energía (M) · Sensor A (M) · Torreta principal (M, torreta 2,2 rad/s) · Munición principal (M) · Radio (S) · Blindaje frontal (M) · Blindaje izquierdo (S) · Blindaje derecho (S) · Blindaje trasero (S) |
+| Chasis medio (versión 1) | Propulsión (L) · Energía (M) · Sensor A (M) · Torreta principal (L, torreta 1 rad/s) · Munición principal (M) · Compartimento de minas (M) · Radio (S) · Blindaje frontal (L) · Blindaje izquierdo (M) · Blindaje derecho (M) · Blindaje trasero (M) |
+| Chasis medio (versión 2) | Propulsión (L) · Energía (M) · Sensor A (M) · Torreta principal (L, torreta 1 rad/s) · Munición principal (M) · Compartimento de minas (M) · Radio (S) · Blindaje frontal (L) · Blindaje izquierdo (M) · Blindaje derecho (M) · Blindaje trasero (M) |
 
 ## Movimiento
 
@@ -63,11 +63,11 @@ Son los únicos ojos de tu bot: sin un sensor operativo, la observación no trae
 
 El arma dispara la munición que le montes (columna «Munición compatible»). La recarga se cuenta en ticks (30 por segundo). El **alcance** es la distancia máxima que recorre el proyectil antes de desaparecer.
 
-| Nombre | Daño | Recarga (ticks) | Velocidad del proyectil (m/s) | Alcance (m) | Dispersión (rad) | Giro de torreta (rad/s) | Consumo por acción (EU) | Masa (kg) | Coste (créditos) | Tamaño | Munición compatible |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| Cañón de 60 mm | 45 | 30 ticks (1 s) | 120 | 360 | 0,01 | 1 | 12 | 380 | 190 | grande (L) | Munición perforante, Munición explosiva |
-| Ametralladora (versión 1) | 12 | 6 ticks (0,2 s) | 200 | 600 | 0,05 | 2,2 | 3 | 120 | 90 | mediano (M) | Munición estándar |
-| Ametralladora (versión 2) | 18 | 5 ticks (0,167 s) | 200 | 600 | 0,05 | 2,2 | 2,5 | 120 | 115 | mediano (M) | Munición estándar |
+| Nombre | Daño | Recarga (ticks) | Velocidad del proyectil (m/s) | Alcance (m) | Dispersión (rad) | Consumo por acción (EU) | Masa (kg) | Coste (créditos) | Tamaño | Munición compatible |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Cañón de 60 mm | 45 | 30 ticks (1 s) | 120 | 360 | 0,01 | 12 | 380 | 190 | grande (L) | Munición perforante, Munición explosiva |
+| Ametralladora (versión 1) | 12 | 6 ticks (0,2 s) | 200 | 600 | 0,05 | 3 | 120 | 90 | mediano (M) | Munición estándar |
+| Ametralladora (versión 2) | 18 | 5 ticks (0,167 s) | 200 | 600 | 0,05 | 2,5 | 120 | 115 | mediano (M) | Munición estándar |
 
 ## Munición
 

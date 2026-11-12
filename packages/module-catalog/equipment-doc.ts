@@ -107,7 +107,6 @@ const COLUMNS: Record<ModuleCategory, string[]> = {
     "projectileSpeedMs",
     "rangeM",
     "spreadRad",
-    "turretRateRads",
     "power.perActionEU",
     "massKg",
     "costCredits",
@@ -166,7 +165,10 @@ function slotsTable(chassis: ModuleDefinition[]): string {
     "|---|---|",
   ];
   for (const c of chassis) {
-    const slots = (c.slots ?? []).map((s) => `${slotName(s.id)} (${s.maxSize})`).join(" · ");
+    // D-B2 · la torreta gira según la MONTURA de la ranura del chasis, no según el arma.
+    const slots = (c.slots ?? [])
+      .map((s) => `${slotName(s.id)} (${s.maxSize}${s.mount ? `, torreta ${num(s.mount.turretRateRads)} rad/s` : ""})`)
+      .join(" · ");
     lines.push(`| ${displayName(c, ALL)} | ${slots} |`);
   }
   return lines.join("\n");

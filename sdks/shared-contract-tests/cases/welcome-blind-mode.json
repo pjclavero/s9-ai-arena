@@ -7,7 +7,7 @@
     "seq": 1,
     "payload": {
       "battleId": "btl_blind",
-      "selfId": "veh_2",
+      "selfId": "v_2",
       "team": "blue",
       "timing": {
         "tickHz": 30,

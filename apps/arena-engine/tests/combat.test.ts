@@ -13,7 +13,8 @@ import {
   loadRuleset,
 } from "../../../packages/game-rules/index.js";
 import { Battle } from "../src/sim/battle.js";
-import { applyDamage, canDeployMine, canFire, sectorOfImpact } from "../src/sim/combat.js";
+import { canDeployMine, canFire, sectorOfImpact } from "../src/sim/combat.js";
+import { resolveDamage } from "../src/sim/damage.js";
 import { initPhysics, PhysicsWorld } from "../src/sim/physics.js";
 import { Vehicle } from "../src/sim/vehicle.js";
 import { Rng } from "../src/rng.js";
@@ -25,6 +26,32 @@ beforeAll(async () => {
 });
 
 const mkVehicle = () => new Vehicle("veh_t", "red", "bot_t", gunnerLoadout());
+
+/** Impacto cinético directo por la puerta única (antes applyDamage). */
+const applyDamage = (
+  v: Vehicle,
+  amount: number,
+  from: { x: number; y: number },
+  position: { x: number; y: number },
+  heading: number,
+  rng: Rng,
+) =>
+  resolveDamage(
+    {
+      amount,
+      type: "kinetic",
+      penetration: 0,
+      from,
+      owner: "veh_x",
+      ownerTeam: "blue",
+      sourceKind: "projectile",
+      seq: 0,
+    },
+    v,
+    { position, heading },
+    rng,
+    0,
+  );
 
 describe("sector de impacto", () => {
   const pos = { x: 0, y: 0 };
@@ -56,8 +83,8 @@ describe("matriz de daño (D6)", () => {
     const res = applyDamage(v, 100, { x: -10, y: 0 }, { x: 0, y: 0 }, 0, new Rng("d"));
 
     expect(res.sector).toBe("rear");
-    expect(res.effectiveDamage).toBeCloseTo(100, 5);
-    expect(res.hullDamage).toBeCloseTo(100 * CHASSIS_DAMAGE_SHARE, 5);
+    expect(res.effective).toBeCloseTo(100, 5);
+    expect(res.hull).toBeCloseTo(100 * CHASSIS_DAMAGE_SHARE, 5);
     expect(hp0 - v.hullHp).toBeCloseTo(100 * CHASSIS_DAMAGE_SHARE, 5);
     // El 30 % restante fue a un módulo.
     expect(res.moduleDamage).toBeCloseTo(100 * MODULE_DAMAGE_SHARE, 5);
@@ -70,22 +97,22 @@ describe("matriz de daño (D6)", () => {
     const res = applyDamage(v, 100, { x: 10, y: 0 }, { x: 0, y: 0 }, 0, new Rng("d"));
 
     expect(res.sector).toBe("front");
-    expect(res.effectiveDamage).toBeCloseTo(100 * (1 - reduction), 5); // 65
+    expect(res.effective).toBeCloseTo(100 * (1 - reduction), 5); // 65
   });
 
   it("el mismo daño duele MÁS por el sector sin blindaje: la posición importa", () => {
     const front = applyDamage(mkVehicle(), 100, { x: 10, y: 0 }, { x: 0, y: 0 }, 0, new Rng("d"));
     const side = applyDamage(mkVehicle(), 100, { x: 0, y: 10 }, { x: 0, y: 0 }, 0, new Rng("d"));
-    expect(side.effectiveDamage).toBeGreaterThan(front.effectiveDamage);
+    expect(side.effective).toBeGreaterThan(front.effective);
   });
 
   it("el blindaje NUNCA anula el daño: suelo de DMG_MIN_FRACTION", () => {
     // Un blindaje absurdo (reduction 0.99) sigue dejando pasar el 10 %.
     const v = mkVehicle();
-    v.armor.front!.reduction = 0.99;
+    (v.armor.front as { profile: unknown }).profile = { resist: { default: 0.99 }, degradation: "binary" };
     const res = applyDamage(v, 100, { x: 10, y: 0 }, { x: 0, y: 0 }, 0, new Rng("d"));
-    expect(res.effectiveDamage).toBeCloseTo(100 * DMG_MIN_FRACTION, 5);
-    expect(res.effectiveDamage).toBeGreaterThan(0);
+    expect(res.effective).toBeCloseTo(100 * DMG_MIN_FRACTION, 5);
+    expect(res.effective).toBeGreaterThan(0);
   });
 
   it("el blindaje se desgasta con lo que absorbe y acaba cediendo", () => {
@@ -99,7 +126,7 @@ describe("matriz de daño (D6)", () => {
 
     // Con el blindaje a cero, el daño frontal ya entra entero.
     const res = applyDamage(v, 100, { x: 10, y: 0 }, { x: 0, y: 0 }, 0, new Rng("z"));
-    expect(res.effectiveDamage).toBeCloseTo(100, 5);
+    expect(res.effective).toBeCloseTo(100, 5);
   });
 
   it("el chasis a 0 destruye el vehículo", () => {

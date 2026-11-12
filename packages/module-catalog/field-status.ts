@@ -88,10 +88,18 @@ export const CATEGORY_FIELDS: Readonly<Record<ModuleCategory, Readonly<Record<st
     hullHp: A("resolve → VehicleSpec.hullHp → Vehicle.hullHp", scale(0.5)),
     radiusM: A("resolve → VehicleSpec.radiusM → física y boca del arma (battle.ts)", scale(1.4)),
     maxLoadKg: V("validator: mass_exceeded", scale(0.1)),
-    "slots[].id": V("validator: unknown_slot (el loadout nombra la ranura)", (v) => `${String(v)}_x`),
+    // Integración OLA2 (MB+MC): con D-B2 la ranura es la CLAVE de la montura de torreta
+    // (resolve → VehicleSpec.turretMounts[slot.id]); el id de ranura ya no es sólo de validación.
+    "slots[].id": A(
+      "resolve → VehicleSpec.turretMounts[slot.id] (montura D-B2) + validator unknown_slot",
+      (v) => `${String(v)}_x`,
+    ),
     "slots[].accepts": V("validator: slot_type_mismatch", set(["utility"])),
     "slots[].maxSize": V("validator: slot_size_exceeded", set("S")),
     "slots[].sector": V("validator: slot_type_mismatch (sector de blindaje de la ranura)", rotate(SECTORS)),
+    // D-B2 (MB): la cinemática de torreta es de la MONTURA de la ranura del chasis, no del arma.
+    "slots[].mount.turretRateRads": A("resolve → VehicleSpec.turretMounts → vehicle.ts turretRate (giro)", scale(0.2)),
+    "slots[].mount.turretArcRad": A("resolve → VehicleSpec.turretMounts → combat.ts canFire (out_of_arc)", set(0.5)),
   },
   movement: {
     maxSpeedMs: A("vehicle.ts movementCaps → physics.driveVehicle", scale(0.3)),
@@ -117,8 +125,6 @@ export const CATEGORY_FIELDS: Readonly<Record<ModuleCategory, Readonly<Record<st
     rangeM: A("resolve/projectile.ts → ModuleSpec.projectileLifetimeTicks → combat.ts fire (P-2)", scale(0.1)),
     spreadRad: A("combat.ts fire (dispersión con el RNG del motor)", scale(10, 0.05)),
     acceptsAmmo: A("combat.ts ammoFor (munición montada) + validator incompatible_ammo", set(["ammo.none_x"])),
-    turretArcRad: A("combat.ts canFire (out_of_arc)", set(0.5)),
-    turretRateRads: A("vehicle.ts turretRate → giro de torreta (battle.ts)", scale(0.2)),
   },
   ammo: {
     rounds: A("vehicle.ts ModuleRuntime.ammo → combat.ts canFire (no_ammo)", set(2)),

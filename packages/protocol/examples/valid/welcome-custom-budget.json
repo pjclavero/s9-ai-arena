@@ -4,7 +4,7 @@
   "seq": 1,
   "payload": {
     "battleId": "btl_skirmish_low_budget",
-    "selfId": "veh_1",
+    "selfId": "v_1",
     "team": "red",
     "timing": {
       "tickHz": 30,

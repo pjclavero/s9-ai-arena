@@ -17,6 +17,8 @@ export interface ChassisSlot {
   accepts: ModuleCategory[];
   maxSize: Size;
   sector?: Sector;
+  /** D-B2 · Montura de torreta de una ranura de arma: tasa (rad/s) y arco (rad) del giro. */
+  mount?: { turretRateRads: number; turretArcRad: number };
 }
 
 export interface ModuleDefinition {
@@ -63,8 +65,6 @@ export interface ModuleDefinition {
   projectileSpeedMs?: number;
   spreadRad?: number;
   acceptsAmmo?: string[];
-  turretArcRad?: number;
-  turretRateRads?: number;
 
   // ammo
   rounds?: number;

@@ -118,7 +118,13 @@ function presentIn(def: ModuleDefinition): string[] {
   for (const [k, v] of Object.entries(def as unknown as Json)) {
     if (k === "power" && v && typeof v === "object") for (const s of Object.keys(v)) out.push(`power.${s}`);
     else if (k === "slots" && Array.isArray(v))
-      for (const s of v) for (const sk of Object.keys(s)) out.push(`slots[].${sk}`);
+      for (const s of v)
+        for (const [sk, sv] of Object.entries(s as Json)) {
+          // Objetos anidados de la ranura (p. ej. `mount`, D-B2): rutas `slots[].mount.x`, como el esquema.
+          if (sv && typeof sv === "object" && !Array.isArray(sv))
+            for (const k2 of Object.keys(sv)) out.push(`slots[].${sk}.${k2}`);
+          else out.push(`slots[].${sk}`);
+        }
     else out.push(k);
   }
   return [...new Set(out)];
@@ -128,7 +134,12 @@ function presentIn(def: ModuleDefinition): string[] {
 
 function getPath(def: Json, path: string): unknown {
   if (path.startsWith("power.")) return def.power?.[path.slice(6)];
-  if (path.startsWith("slots[].")) return def.slots?.[0]?.[path.slice(8)];
+  if (path.startsWith("slots[].")) {
+    const [key, sub] = path.slice(8).split(".");
+    // La ranura del arma para los datos de montura (las demás no la llevan).
+    const s = sub ? (def.slots as Json[] | undefined)?.find((x) => x[key] !== undefined) : def.slots?.[0];
+    return sub ? s?.[key]?.[sub] : s?.[key];
+  }
   return def[path];
 }
 
@@ -162,6 +173,9 @@ function withField(
             ? s
             : { ...s, sector: SECTOR_CYCLE[(SECTOR_CYCLE.indexOf(s.sector) + 1) % 4] as string },
         );
+      } else if (key.includes(".")) {
+        const [k1, k2] = key.split(".");
+        c.slots[idx] = { ...c.slots[idx], [k1]: { ...(c.slots[idx][k1] ?? {}), [k2]: value } };
       } else c.slots[idx] = { ...c.slots[idx], [key]: value };
     } else c[path] = value;
     return c as unknown as ModuleDefinition;

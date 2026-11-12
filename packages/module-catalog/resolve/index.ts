@@ -8,6 +8,8 @@
  * aplanar los datos del catálogo en la forma que el motor consume.
  */
 import type { ModuleCategory, ModuleSpec, VehicleSpec } from "../../../apps/arena-engine/src/sim/vehicle.js";
+import type { TurretMountDef } from "../contracts/engine-v2.js";
+import { emptyDict } from "../../game-rules/safe-lookup.js";
 import { findModule, type LoadoutInput, type ModuleDefinition } from "../types.js";
 import { InvalidProjectileRangeError, projectileLifetimeTicks } from "./projectile.js";
 
@@ -64,8 +66,6 @@ function toModuleSpec(slot: string, def: ModuleDefinition): ModuleSpec {
     cooldownTicks: def.cooldownTicks,
     projectileSpeedMs: def.projectileSpeedMs,
     spreadRad: def.spreadRad,
-    turretArcRad: def.turretArcRad,
-    turretRateRads: def.turretRateRads,
     acceptsAmmo: def.acceptsAmmo,
     projectileLifetimeTicks: projectileLifetime,
     // ammo
@@ -134,12 +134,22 @@ export function resolveVehicle(loadout: LoadoutInput, catalog: ModuleDefinition[
 
   const massKg = chassisDef.massKg + modules.reduce((sum, m) => sum + m.massKg, 0);
 
+  // D-B2 · monturas de torreta: dato de las RANURAS del chasis (no del arma). emptyDict:
+  // el id de ranura sale de datos de catálogo (clase `__proto__`).
+  const turretMounts = emptyDict<TurretMountDef>();
+  for (const slot of chassisDef.slots ?? []) {
+    if (slot.mount) {
+      turretMounts[slot.id] = { turretRateRads: slot.mount.turretRateRads, turretArcRad: slot.mount.turretArcRad };
+    }
+  }
+
   return {
     chassisId: `${chassisDef.id}@${chassisDef.version}`,
     hullHp: chassisDef.hullHp,
     radiusM: chassisDef.radiusM,
     massKg,
     modules,
+    turretMounts,
   };
 }
 

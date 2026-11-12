@@ -60,7 +60,7 @@ export const PROPERTY_EFFECTS: Record<ModuleCategory, Record<string, PropertyEff
     slots: p(
       "ACTIVE",
       true,
-      "Deciden qué puedes montar y el nombre de ranura que usas en los comandos (fire, deployMine).",
+      "Deciden qué puedes montar y el nombre de ranura que usas en los comandos (fire, deployMine). La ranura de arma lleva la MONTURA de torreta (mount: turretRateRads, turretArcRad): el giro y el arco son del chasis, no del arma.",
     ),
   },
   movement: {
@@ -85,15 +85,9 @@ export const PROPERTY_EFFECTS: Record<ModuleCategory, Record<string, PropertyEff
     cooldownTicks: p("ACTIVE", false, USED),
     projectileSpeedMs: p("ACTIVE", false, USED),
     spreadRad: p("ACTIVE", false, USED),
-    turretRateRads: p("ACTIVE", false, USED),
     acceptsAmmo: p("ACTIVE", true, USED),
     "power.perActionEU": p("ACTIVE", false, USED),
     rangeM: p("ACTIVE", false, "Alcance real del proyectil: resolveVehicle lo convierte en su vida en ticks (P-2)."),
-    turretArcRad: p(
-      "ACTIVE",
-      false,
-      "El motor rechaza el disparo fuera del arco (out_of_arc); los módulos actuales declaran 2π, sin límite.",
-    ),
   },
   ammo: {
     damageMultiplier: p("ACTIVE", false, USED),

@@ -146,7 +146,7 @@ El esquema es condicional por `sensorType` (OLA 2): `fovRad` y `rays` sólo se a
 - daño = `damage × damageMultiplier × perf`;
 - el cooldown se divide por `perf` (con mínimo 0.25);
 - la dispersión sale del RNG del motor;
-- la torreta gira a `turretRateRads × perf` hacia el objetivo;
+- la torreta gira a `turretRateRads × perf` hacia el objetivo, donde `turretRateRads` (y `turretArcRad`) son de la **montura de la ranura del chasis** (`slots[].mount`, leída con `Vehicle.mountOf(slot)`), no del arma: dos armas en la misma ranura giran igual (OLA2-MB, D-B2);
 - el proyectil vive **90 ticks** e impacta por *raycast*;
 - con radio de explosión, el daño cae linealmente con la distancia y la explosión no atraviesa muros;
 - sin fuego amigo, el proyectil atraviesa a los aliados.
@@ -231,13 +231,13 @@ Recalibrado en UX-01 (la auditoría FC-C sobre `0b8c12b` (octubre de 2026) se mi
 
 | Estado | Significado | Propiedades |
 |---|---|---|
-| **ACTIVE** | Lo que elige el usuario cambia la batalla | El chasis elegido (con versión); `chassis.hullHp/radiusM/slots`; `movement.maxSpeedMs/accelerationMs2/turnRateRads/ratedLoadKg`; `power.capacityEU/generationEUs`; `sensor.*` (lidar, radar, proximidad y acústico); `weapon.damage/cooldownTicks/projectileSpeedMs/rangeM/spreadRad/turretArcRad/turretRateRads/acceptsAmmo/power.perActionEU`; `ammo.*`; `mine.*` (si el bot despliega la mina con `deployMine`); `armor.reduction/sector`; `radio.rangeM/maxMessageBytes/maxMessagesPerSecond`; las comunes `massKg`, `hp`, `power.passiveEUs` |
+| **ACTIVE** | Lo que elige el usuario cambia la batalla | El chasis elegido (con versión); `chassis.hullHp/radiusM/slots`; `movement.maxSpeedMs/accelerationMs2/turnRateRads/ratedLoadKg`; `power.capacityEU/generationEUs`; `sensor.*` (lidar, radar, proximidad y acústico); `weapon.damage/cooldownTicks/projectileSpeedMs/rangeM/spreadRad/acceptsAmmo/power.perActionEU`; `chassis.slots[].mount.turretRateRads/turretArcRad` (montura de la ranura, D-B2); `armor.hp` (hp del módulo de blindaje, fuente única); `ammo.*`; `mine.*` (si el bot despliega la mina con `deployMine`); `armor.reduction/sector`; `radio.rangeM/maxMessageBytes/maxMessagesPerSecond`; las comunes `massKg`, `hp`, `power.passiveEUs` |
 | **PARTIAL** | Sólo cuenta para validar el loadout | `chassis.maxLoadKg`; las comunes `costCredits`, `size`, `maxPerVehicle` |
 | **FUTURE** | Ningún código de simulación la lee | Ninguna propiedad del catálogo (OLA 2). La categoría `utility` no tiene campos propios ni piezas; el comando `utility` no hace nada |
 
 **Gate CATALOG_CONTRACT (OLA 2).** `packages/module-catalog/field-status.ts` clasifica cada campo del esquema (ACTIVE / VALIDATION_ONLY / FUTURE / REMOVE) con su consumidor y una mutación; `catalog-contract.test.ts` lo demuestra con una batalla de sonda (`catalog-probe.ts`) que pasa por `resolveVehicle`: un campo ACTIVE mutado tiene que cambiar la batalla, uno VALIDATION_ONLY tiene que cambiar el veredicto del validador y no la batalla. Un campo declarado sin consumidor pone el gate en rojo.
 
-**`weapon.rangeM` es el alcance real** (OLA 2, P-2): `resolveVehicle` lo convierte en la vida del proyectil, `rangeM · TICK_HZ / projectileSpeedMs` ticks (entero, o el loadout no resuelve). Los datos se fijaron al alcance que ya tenían con el TTL fijo de 90 ticks (cañón 360 m, ametralladoras 600 m): mismo comportamiento, caracterizado en `range-characterization.test.ts`. Las specs grabadas sin vida resuelta (replays y checkpoints anteriores) re-simulan con la regla heredada de 90 ticks (`LEGACY_PROJECTILE_LIFETIME_TICKS`).
+**`weapon.rangeM` es el alcance real** (OLA 2, P-2): `resolveVehicle` lo convierte en la vida del proyectil, `rangeM · TICK_HZ / projectileSpeedMs` ticks (entero, o el loadout no resuelve). Los datos se fijaron al alcance que ya tenían con el TTL fijo de 90 ticks (cañón 360 m, ametralladoras 600 m): mismo comportamiento, caracterizado en `range-characterization.test.ts`. Hay una sola regla: una spec sin `rangeM`/velocidad o con una vida incoherente no se simula (fail-closed); la regla heredada de 90 ticks se eliminó y los replays anteriores al contrato (0.2.0/0.3.0/0.4.0 previos) dejaron de reproducirse (integración OLA 2).
 
 ## Campos eliminados en la OLA 2 y campos sólo de validación
 
