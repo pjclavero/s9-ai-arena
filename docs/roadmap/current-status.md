@@ -2,28 +2,24 @@
 
 ## Resumen
 
-Esta es la **fuente única del estado actual del proyecto**. Solo contiene el estado de hoy; lo anterior (versiones candidatas previas, SHA antiguos, el
-estado de la auditoría de octubre) está archivado en [../history/status/](../history/status/) y no es vigente.
-
-Hay dos planos y no se mezclan: lo que contiene `main` y lo que corre en producción.
+Esta es la **fuente única del estado actual del proyecto**. Distingue siempre entre lo que está en `main`, lo que está integrado en ramas de trabajo y lo que corre en producción.
 
 ```
-MAIN_SHA:        e3bf2fa83650559267ef269994c667fabfb29e46  (origin/main, merge del PR #225)
-REVISADO:        2026-11-02
-CÓDIGO:          main protegida; CI de main = 31 check-runs, 30 success + 1 neutral, 0 pendientes
-DESPLEGADO:      RC5.5 a1a6c4e (según el registro del operador)
-MAIN VS PROD:    111 commits por delante de producción, sin desplegar
-MOTOR / API:     motor 0.4.0 · contrato OpenAPI 0.12.0 · migraciones 001–016
-P0 / P1 / P2:    sin hallazgos NUEVOS en la revisión de integración del 2026-11-02;
-                 el registro de deuda conserva 3 P0, 7 P1 y 13 P2 heredados de octubre
-                 (recuento del 2026-11-02, ver más abajo), pendientes de re-priorización por el operador
-P3 CONOCIDOS:    7 hallazgos de la revisión (ver más abajo); el registro tiene 18 P3 y 4 P4 abiertos
+MAIN_SHA:        f5909474bb25aeef8f17a5476c6b7319aa96422a
+REVISADO:        2026-11-12
+CÓDIGO:          main protegida; último merge funcional: PR #269 (MG, ajustes runtime de acceso público)
+PRODUCCIÓN:      núcleo RC9 7bddda9; web con #274 desplegado (b32fcff), según registro del operador
+STREAMING REAL:  BATTLE_VISIBLE_ON_STREAM=PASS (YouTube real, mapa/tanques/movimiento/HUD, 0 frames descartados)
+OLA 2:           7 PR revisados/CI verde; todavía NO integrados como conjunto
+STREAMING V2:    MS-1 (#275) = DESIGN_ONLY; D1-D4 decididas; MS-2 no iniciado
 ```
+
+El estado de producción se anota como **REPORTADO por el operador** cuando no puede deducirse del repositorio.
 
 ## Índice
 
 - [Código y despliegue](#código-y-despliegue)
-- [Diferencia entre main y producción](#diferencia-entre-main-y-producción)
+- [Diferencia entre main, hardening y producción](#diferencia-entre-main-hardening-y-producción)
 - [Prioridades abiertas](#prioridades-abiertas)
 - [Functional](#functional)
 - [Partial](#partial)
@@ -35,139 +31,144 @@ P3 CONOCIDOS:    7 hallazgos de la revisión (ver más abajo); el registro tiene
 
 ## Código y despliegue
 
-| Plano | Estado | Cómo se sabe |
+| Plano | Estado | Evidencia |
 |---|---|---|
-| `main` | `e3bf2fa`. Protegida: cuatro checks obligatorios (`semaforo`, `functional-e2e / golden`, `functional-e2e / docker-e2e`, `functional-e2e / container-proxy-e2e`), también para administradores. CI del commit: 31 check-runs, 30 `success` y 1 `neutral`, ninguno pendiente | `gh api repos/pjclavero/s9-ai-arena/branches/main/protection`; `gh api …/commits/e3bf2fa…/check-runs` (2026-11-02) |
-| Producción | RC5.5, commit `a1a6c4e`. Es ascendiente de `main`; contiene el cierre funcional (PR #152), el *Production Readiness Closure* (PR #158), el cierre del proxy de Docker (PR #164) y la frontera de privilegio del proxy (PR #167) | registro del operador; `git merge-base --is-ancestor`. El repositorio no puede comprobar lo que corre en producción |
+| `main` | `f590947`; incluye PR #265, #274 y #269 | rama protegida de GitHub, 2026-11-12 |
+| Producción núcleo | RC9 `7bddda9`, 13/13 servicios healthy, sin lockups reportados | registro del operador, 2026-11-12 |
+| Producción web | arreglo #274 desplegado; `/broadcast` puede consultar JSON real por `/api/v1/` desde el nginx de `web` | PR #274 + prueba real reportada |
+| OLA 2 | ramas/PR #268, #270, #271, #272, #273 y #276 revisadas; MG #269 ya está en `main` | GitHub PRs; integración conjunta pendiente |
+| Streaming V2 | PR #275 draft, sólo arquitectura | `docs/technical/STREAMING_ARCHITECTURE_V2.md` en la rama de MS-1 |
 
-## Diferencia entre main y producción
+### Producción verificada/reportada el 2026-11-12
 
-`main` lleva 111 commits por delante de RC5.5. Nada de esto está desplegado:
+- RC9 se mantiene estable.
+- El espectador público está activado en producción; los replays públicos siguen apagados.
+- #274 está desplegado sólo en `web`.
+- `BATTLE_VISIBLE_ON_STREAM=PASS`: una batalla real llegó a YouTube con mapa, vehículos, movimiento y HUD, sin pantalla blanca y con 0 frames descartados.
+- La presión de ia02 desapareció al parar/deshabilitar Paperclip y OpenCode web; `prodguard` volvió a OK.
+- La sesión de emisión de la prueba puede cerrarse sin perder configuración ni credenciales.
 
-| Bloque | PR | Qué cambia para el usuario o el operador |
+## Diferencia entre main, hardening y producción
+
+### Ya está en `main`
+
+- PR #265: precisión documental sobre replays; la protección no depende de ocultar la semilla sino de no entregar comandos/estado privado.
+- PR #274: proxy interno de `web` para `/api/v1/` y `/ws/`, necesario para que Chromium de `/broadcast` vea la API real.
+- PR #269 (MG): ajustes de **Acceso público / Broadcast** persistentes y modificables desde la administración, sin editar `.env` ni recrear servicios.
+
+### OLA 2 revisada pero aún sin gate de integración final
+
+| PR | Equipo | Estado funcional |
 |---|---|---|
-| Motor 0.4.0 y reglas oficiales | #201 | Reglas de batalla con presets y copia inmutable por batalla y torneo, `maxRespawns`, desempates por familia, CTF con prórroga y salvaguarda técnica de 20 min, migración `016_battle_rules` ([ADR-022](../adr/ADR-022-motor-0-4-0-reglas-ctf-prorroga.md)). El procedimiento de despliegue y de vuelta atrás está en [upgrades.md](../operations/upgrades.md) |
-| Ayuda | #207, #210 | Centro de Ayuda integrado y sin conexión, generado desde las fuentes de verdad; componente ⓘ de ayuda contextual |
-| UX | #209 | Navegación agrupada por rol, «Mis bots» y equipos maestro-detalle, replays con filtros en el servidor |
-| Streaming | #211 | Director de torneo, vídeo limpio y auditoría real de la emisión ([streaming.md](../operations/streaming.md)) |
-| Clasificación | #220, #229 | La clasificación de temporada y modo agrega todos los torneos y sigue la política `official_played_not_reverted`: sólo batallas oficiales disputadas y no revertidas; el borrador no cuenta, inscribirse no hace aparecer a nadie, el bye no suma V-D-E y la reversión tiene marca propia (migración 018). Pendiente de merge y sin desplegar |
-| Paginación | #221 | Cursor con precisión completa y clave total; un cursor forjado da 400, no 500 |
-| Robustez de pruebas | #208, #214, #225 | Concurrencia de `initPhysics`, tests que no dejan procesos huérfanos, sin nombres internos en comentarios |
+| #271 | MD | Replay v2, verificación del resultado completo, hash completo y RNG con nombre |
+| #272 | MA | Frontera pública única, PublicEntityIds por audiencia y equipamiento privado |
+| #273 | MB | Contrato de daño, HE sin doble daño y torreta como propiedad de la montura |
+| #276 | MC | Catálogo veraz: alcance de arma/radio real, campos decorativos retirados y minas corregidas |
+| #270 | MF | Cleanup idempotente, reaper y pruebas repetidas con Docker real |
+| #268 | ME | Baseline/contratos/mutantes para demostrar que los cambios no son vacuos |
+
+Todos han pasado revisión de equipo y CI según el cierre de los equipos, pero **`ENGINE_HARDENING_READY` sigue pendiente hasta que se integren en una sola rama y se valide el conjunto**.
+
+### Streaming V2
+
+MS-1 (#275) fija la arquitectura y las decisiones D1-D4:
+
+- batalla suelta: inicio manual por defecto;
+- torneo: inicio automático por defecto;
+- una única salida YouTube: batallas en serie, retenidas hasta que el broadcast esté listo;
+- abandonar/cancelar una emisión nunca arranca por accidente una batalla retenida;
+- ticket de pre-roll firmado para preparar una batalla programada sin hacerla pública;
+- sesión RTMP separada del contenido mostrado, para cambiar de batalla sin cortar YouTube;
+- fuentes independientes para OBS/vMix;
+- replay único y listas de replays.
+
+**Todavía es DESIGN_ONLY.** MS-2 no ha empezado.
 
 ## Prioridades abiertas
 
-**P0 / P1 / P2:** la revisión de integración del 2026-11-02 no encontró hallazgos nuevos de estas prioridades. El [registro de deuda](technical-debt.md) conserva, sin re-priorizar, 3 P0, 7 P1 y 13 P2 heredados de la auditoría de octubre, pendientes de que el operador decida si siguen en esa prioridad ahora que el producto funciona en `main`. Recuento del registro a 2026-11-02, contando como abiertas las que no están CERRADAS (ABIERTA, MEJORADA o PARCIAL):
+La lista histórica de deuda sigue en [technical-debt.md](technical-debt.md), pero el recuento de prioridades del 2 de noviembre **no debe reutilizarse como recuento actual** sin una re-auditoría posterior a la integración OLA 2.
 
-| Prioridad | Abiertas en el registro |
-|---|---|
-| P0 | 3 (TD-006, TD-007, TD-008) |
-| P1 | 7 (TD-012, TD-013, TD-015, TD-016, TD-025, TD-031, TD-033) |
-| P2 | 13 |
-| P3 | 18 |
-| P4 | 4 |
+Prioridades de cierre actuales:
 
-La deuda heredada conserva la prioridad con la que se registró y no es un hallazgo nuevo. Las P0 y las P1 ABIERTAS o MEJORADAS (tipo operación o seguridad del host) son estas; TD-013, TD-015 y TD-016 (P1, PARCIAL) y las P2 están en el registro:
-
-| Id | Prioridad original | Estado | Resumen |
-|---|---|---|---|
-| [TD-006](technical-debt.md#td-006) | P0 | MEJORADA | confirmar con `runtime-drift-scan` que producción corre un único commit con `/version` |
-| [TD-007](technical-debt.md#td-007) | P0 | MEJORADA | alerta del backup probada, snapshot de la VM y apagado limpio |
-| [TD-008](technical-debt.md#td-008) | P0 | ABIERTA | nombres internos todavía en código, tests, CI y configuración (los documentos vigentes están limpios) |
-| [TD-012](technical-debt.md#td-012) | P1 | ABIERTA | registro abierto, recuperación de cuenta inoperante, sin pantallas de 2FA ni sesiones |
-| [TD-025](technical-debt.md#td-025) | P1 | ABIERTA | restauración sin ensayo reciente |
-| [TD-031](technical-debt.md#td-031) | P1 | ABIERTA | imágenes de servicio con vulnerabilidades HIGH/CRITICAL |
-| [TD-033](technical-debt.md#td-033) | P1 | ABIERTA (aceptada) | el anfitrión de bots tiene credenciales de BD en la red `arena` |
-
-**P3 conocidos** (cada uno comprobado en el código de `main`):
-
-| Id | Qué ocurre | Dónde |
-|---|---|---|
-| [TD-067](technical-debt.md#td-067) | `runCursorQuery` atribuye al cursor errores de conversión que vienen de los filtros | `apps/api/src/serialize.ts:168-175` |
-| [TD-072](technical-debt.md#td-072) | carrera en la spec de navegador `review-h3-perimeter` (sin reproducir) | `tests/browser/specs/review-h3-perimeter.spec.ts` |
-| [TD-068](technical-debt.md#td-068) | `listBots` puede devolver páginas más cortas que `limit` | `apps/api/src/routes/bots.ts:205-223` |
-| [TD-069](technical-debt.md#td-069) | el comparador del desempate por enfrentamientos directos no es transitivo | `apps/tournament-worker/src/results.ts:275-285` |
-| [TD-071](technical-debt.md#td-071) | el filtro `result=aborted` no incluye `technical_limit` | `apps/api/src/services/replay-list.ts:222-226` |
-| [TD-070](technical-debt.md#td-070) | CTF en torneos: bandos A/B frente a red/blue; se rechaza con motivo | `apps/api/src/services/battle-rules.ts:353-361` |
-| [TD-066](technical-debt.md#td-066) | streaming: la clave va en el argv de FFmpeg, no hay retención de MP4 ni alerta, y YouTube está BLOCKED | `apps/streamer/src/ffmpeg.ts:115-118` |
+1. Integrar OLA 2 en el orden acordado y obtener `ENGINE_HARDENING_READY=PASS`.
+2. Validar de nuevo privacidad, determinismo, lifecycle y catálogo sobre la rama integrada.
+3. Actualizar/retirar caracterizaciones que ahora fallen porque el defecto correspondiente se ha corregido.
+4. Revisar MS-1 y empezar MS-2 sólo después del cierre de la integración del motor.
+5. Mantener separadas las funciones futuras (Streaming V2, visuales posteriores, nuevas armas) del hardening actual.
 
 ## Functional
 
-**FUNCIONA EN `main`.** Lo ejerce la CI obligatoria (golden path en navegador real, sin mocks de servicios de S9) y las suites de cada área:
+**FUNCIONA EN `main` o ha sido verificado en producción, según se indica:**
 
-- **Recorrido completo del jugador** (`tests/browser/specs/golden-path.spec.ts`): registro, bot con código propio, build en el sandbox real, publicación, equipo, mapa (importar, guardar, reabrir, publicar), batalla en el mapa propio ejecutada con el artefacto firmado de la versión exacta de cada bot, visor en directo, resultado con estadísticas y replay reproducido en la web.
-- **Bots y versionado:** versión inmutable, historial, diff, clonado y procedencia; plantillas Python y JavaScript; SDK reales en `sdks/python` y `sdks/javascript` ([bots.md](../technical/bots.md), [bot-versioning.md](../technical/bot-versioning.md)).
-- **Batallas:** modos `deathmatch`, `team_deathmatch`, `capture_the_flag` y `zone_control`; equipos hasta 4 contra 4; validación modo, reglas y mapa en la API; una sola autoridad de ejecución con cierre exactamente una vez; diagnóstico por bot ([battles.md](../technical/battles.md), [game-modes.md](../technical/game-modes.md)).
-- **Torneos:** los seis formatos se aceptan y se ofrecen en la web; pool de mapas; calendario generado al cerrar inscripciones ([tournaments.md](../technical/tournaments.md)).
-- **Ranking:** Elo con temporada activa única entre API y worker; clasificación de temporada agregada entre torneos.
-- **Replays y directo:** lectura gobernada por una sola autoridad (propios, equipo, staff; públicos solo con la capability); visor con zoom, minimapa y móvil ([replays.md](../technical/replays.md)).
-- **Mapas y equipos:** editor visual que guarda en el servidor, borradores privados, equipos completos.
-- **Ayuda:** Centro de Ayuda y onboarding en la web.
-- **Seguridad de la ejecución:** sandbox de bots sin `docker.sock` ni `privileged`; proxy de Docker con ámbito, red dedicada y firewall como código; protección de rama de `main` ([security.md](../technical/security.md)).
+- Recorrido completo jugador/bot/build/batalla/replay de la versión actual.
+- Streaming real: la cadena Chromium → Xvfb → FFmpeg → relé RTMPS → YouTube está probada; #256 evita el arranque en blanco mediante `BROADCAST_RENDER_READY`.
+- #274 permite que la página capturada internamente por el streamer consulte la API y el WebSocket correctos.
+- Administración de streaming con credenciales selladas, relé interno y estado real de publicación.
+- **Acceso público / Broadcast (MG)**: el administrador puede activar/desactivar espectador y replays públicos desde la web; se persiste en BD, se audita y se aplica en caliente.
+- Política de lectura de batallas/replays y gateway cerrado para el replay-service interno.
+- Bots, versiones, loadouts, mapas, torneos, ranking, visor, replays y Centro de Ayuda existentes en `main`.
 
 ## Partial
 
-Detalle completo, con evidencia, en [pending-features.md](pending-features.md#parciales).
+Detalle en [pending-features.md](pending-features.md).
 
-| Área | Qué funciona | Qué falta | Deuda |
-|---|---|---|---|
-| Espectador y replays públicos | código y capabilities, apagadas por defecto | decidir la activación y cumplir las condiciones del gate | [pending-features.md](pending-features.md#parciales) |
-| Torneos | seis formatos, `mapPool` | E2E de los formatos distintos de `single_elimination`; una batalla `failed` bloquea el cierre; CTF no admitido | [TD-015](technical-debt.md#td-015), [TD-070](technical-debt.md#td-070) |
-| Equipamiento | catálogo, validación, persistencia | campos del catálogo sin efecto en el motor (`effect-status.ts`) | [TD-016](technical-debt.md#td-016) |
-| Streaming | cadena local verificada | YouTube real, clave fuera del argv, retención, alerta, despliegue | [TD-066](technical-debt.md#td-066) |
-| Cuenta | login con TOTP, API de 2FA y sesiones | pantallas; la recuperación no entrega el token | [TD-012](technical-debt.md#td-012) |
-| Administración web | roles, auditoría, hallazgos, catálogo, estado | backup, restore, readiness y drift solo por CLI | [TD-023](technical-debt.md#td-023) |
-| Observabilidad | perfil con 11 alertas, entre ellas las del backup | desplegarlo y probar las alertas | [TD-007](technical-debt.md#td-007) |
+| Área | Estado actual | Falta |
+|---|---|---|
+| OLA 2 / hardening motor | PRs terminados y revisados | integración conjunta + gate `ENGINE_HARDENING_READY` |
+| Streaming V2 | arquitectura MS-1 y decisiones D1-D4 | MS-2…MS-8 |
+| Replays públicos | runtime setting disponible | activación es decisión del operador; en producción sigue OFF |
+| Observabilidad | perfil y alertas existen | despliegue/ensayo completo del perfil |
+| Cuenta | login/TOTP y API existen | UI completa de 2FA/sesiones y recuperación utilizable |
+| Torneos | formatos y scheduler existen | E2E de todos los formatos y deudas específicas vigentes |
+| Administración operativa | panel funcional + acceso público/streaming | backup/restore/readiness/drift siguen mayormente en CLI |
+| Visuales posteriores | fases previas existentes | sonido, terreno, sombreado/shaders/CDN; pospuesto frente a hardening/streaming |
 
 ## Blocked
 
-**BLOQUEOS REALES:**
+No hay ya un bloqueo de autorización para probar YouTube: la prueba real se completó.
 
-1. **Desplegar `main`:** exige una ventana autorizada por el operador, la migración `016_battle_rules`, el motor 0.4.0 y haber leído el procedimiento de vuelta atrás ([upgrades.md](../operations/upgrades.md)). El cambio de reglas afecta a las batallas nuevas; las históricas no se reescriben.
-2. **Emisión a YouTube:** BLOCKED hasta que el operador facilite una clave y un canal de prueba.
-3. **Espectador y replays públicos:** decisión del operador y condiciones del gate de activación.
-4. **Recuperación de contraseña:** no existe canal de entrega; ningún usuario puede recuperar su cuenta sin intervención del operador.
+Bloqueos/condiciones reales:
+
+1. **OLA 2 a main:** bloqueada por el gate de integración, no por falta de código individual.
+2. **Despliegue de OLA 2/MG adicional:** requiere autorización del operador y plan de rollback; MG ya está en main pero no se asume desplegado por este documento.
+3. **Streaming V2:** no bloqueado técnicamente, pero por decisión de proyecto no empieza su implementación fuerte hasta cerrar/revisar la arquitectura y el hardening integrado.
+4. **Replays públicos en producción:** siguen desactivados por decisión del operador.
 
 ## Security
 
-| Problema | Estado | Deuda |
-|---|---|---|
-| Replays legibles por anónimos a través del gateway | CERRADO (PR #158) | [TD-004](technical-debt.md#td-004) |
-| Batallas y estadísticas con participantes de bots privados | CERRADO (PR #178) | [TD-047](technical-debt.md#td-047) |
-| Proxy de Docker sin ámbito; frontera de privilegio del proxy | CERRADO en `main` (PR #164, PR #167) | [TD-051](technical-debt.md#td-051), [TD-062](technical-debt.md#td-062) |
-| Anfitrión de bots con credenciales de BD en la red `arena` | ABIERTO (aceptado) | [TD-033](technical-debt.md#td-033) |
-| Worker con el secreto de sesión raíz | ABIERTO | [TD-043](technical-debt.md#td-043) |
-| Altas de equipo por email: oráculo de cuentas | ABIERTO (sin re-comprobar) | [TD-041](technical-debt.md#td-041) |
-| Registro abierto; límites por IP | ABIERTO | [TD-012](technical-debt.md#td-012) |
-| Imágenes con vulnerabilidades HIGH/CRITICAL | ABIERTO | [TD-031](technical-debt.md#td-031) |
-| Nombres internos en código, tests, CI y configuración | ABIERTO | [TD-008](technical-debt.md#td-008) |
-| Permisos de `.env` y `secrets/` en el host | ABIERTO (sin re-medir) | [TD-060](technical-debt.md#td-060) |
+- Clave RTMPS: ya no viaja en el argv de FFmpeg; el streamer publica mediante su relé interno y la credencial permanece sellada fuera del navegador.
+- La lectura pública de batallas/replays se decide en servidor y falla cerrada.
+- MG no expone secretos: sólo dos booleanos y metadatos de auditoría.
+- OLA 2 refuerza la frontera pública con `projectFrame()`, `PublicEntityId` y `EQUIPMENT_PRIVATE`, pero esas garantías nuevas no se declaran activas en `main` hasta integrar #272 con el conjunto.
+- El host de bots y otras deudas históricas siguen registradas en [technical-debt.md](technical-debt.md).
 
 ## Next priorities
 
-1. Decidir y planificar el despliegue de `main` (motor 0.4.0 y reglas), con ventana del operador.
-2. Cerrar la cuenta: canal de recuperación de contraseña y pantallas de 2FA y sesiones ([TD-012](technical-debt.md#td-012)).
-3. Hardening antes de abrir a terceros: [TD-041](technical-debt.md#td-041), [TD-043](technical-debt.md#td-043), [TD-033](technical-debt.md#td-033).
-4. Runtime y backup en el host: [TD-006](technical-debt.md#td-006), [TD-007](technical-debt.md#td-007), [TD-025](technical-debt.md#td-025).
-5. Retirar los P3 de la lista de arriba (cursor, paginación de bots, filtro `aborted`, desempate directo).
-
-Funciones pendientes de diseño: [pending-features.md](pending-features.md).
+1. Integrar: MD → MA → MB → MC → MF → ME.
+2. Ejecutar suite conjunta, mutantes, E2E relevantes y revisión final de privacidad/determinismo/lifecycle.
+3. Obtener `ENGINE_HARDENING_READY=PASS`.
+4. Preparar merge/deploy sólo con autorización explícita.
+5. Revisar/finalizar MS-1 y comenzar MS-2.
+6. Después: cola YouTube continua, start sincronizado, selección manual, fuentes OBS, replays/listas y UI unificada.
+7. Mantener visuales/nuevas armas fuera de esta fase hasta cerrar los gates anteriores.
 
 ## Documentación relacionada
 
-- [technical-debt.md](technical-debt.md) · [known-issues.md](known-issues.md) · [pending-features.md](pending-features.md)
-- [Auditoría de pendientes](../audits/2026-11/PENDING-AUDIT.md)
-- [Visión general](../overview/project.md) · [Arquitectura](../overview/architecture.md) · [Operación](../operations/index.md)
-- Estados anteriores (históricos): [../history/status/](../history/status/)
+- [Funciones pendientes](pending-features.md)
+- [Problemas conocidos](known-issues.md)
+- [Deuda técnica](technical-debt.md)
+- [Operación de streaming](../operations/streaming.md)
+- [Administración desde la web](../user/administration.md)
+- [Arquitectura actual de streaming](../technical/streaming-architecture.md)
+- Streaming V2: PR #275, `docs/technical/STREAMING_ARCHITECTURE_V2.md` (DESIGN_ONLY hasta merge)
 
 ## Verificación
 
 | Afirmación | Estado | Fuente |
 |---|---|---|
-| `MAIN_SHA` = `e3bf2fa…` | CODE_VERIFIED | `git rev-parse origin/main` (2026-11-02) |
-| CI de `e3bf2fa`: 31 check-runs, 30 `success` y 1 `neutral` | RUNTIME_VERIFIED (GitHub) | `gh api repos/pjclavero/s9-ai-arena/commits/e3bf2fa83650559267ef269994c667fabfb29e46/check-runs` |
-| Cuatro checks obligatorios en la protección de `main` | RUNTIME_VERIFIED (GitHub) | `gh api repos/pjclavero/s9-ai-arena/branches/main/protection` |
-| Producción en `a1a6c4e` | REPORTADO por el operador (no verificable desde el repositorio) | registro del operador (encargo de la auditoría) |
-| `a1a6c4e` es ascendiente de `main`; 111 commits de diferencia | CODE_VERIFIED | `git rev-list --count a1a6c4e..e3bf2fa` |
-| Motor 0.4.0, OpenAPI 0.12.0, migraciones 001–016 | CODE_VERIFIED | `apps/arena-engine/src/engine-deps.json`, `apps/api/openapi.yaml:50`, `apps/api/src/db/migrations.ts` |
-| Los siete P3 | CODE_VERIFIED, salvo TD-072 | ruta:línea de la tabla; TD-072 no se ha reproducido |
-| Sin hallazgos nuevos P0/P1/P2; el registro conserva 3 P0, 7 P1 y 13 P2 heredados | REPORTADO (revisión de integración) y recuento del registro | revisión de integración del 2026-11-02; [technical-debt.md](technical-debt.md) (índice, columnas Prioridad y Estado) |
+| `main=f590947` y #269 mergeado | CODE_VERIFIED | rama `main` de GitHub, 2026-11-12 |
+| #270/#271/#272/#273/#275/#276 siguen fuera de `main` | CODE_VERIFIED | estado de PRs en GitHub, 2026-11-12 |
+| #274 está en `main` y producción web | CODE_VERIFIED + REPORTADO_RUNTIME | GitHub + registro del operador |
+| `BATTLE_VISIBLE_ON_STREAM=PASS` | REPORTADO_RUNTIME | prueba real del operador, 2026-11-12 |
+| producción núcleo RC9 `7bddda9` | REPORTADO_RUNTIME | registro del operador |
+| espectador público ON, replays públicos OFF en producción | REPORTADO_RUNTIME | registro del operador |
