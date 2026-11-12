@@ -12,7 +12,7 @@
  * `projectIndex` (api). Si MA añade una audiencia a `computeBattleStats`, adapta SÓLO
  * `publicStats()`. Dependencia de equipo: MA.
  */
-import { beforeAll, describe, expect } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { projectIndex, projectReplayDocument } from "../../../api/src/replay-projection.js";
 import { computeBattleStats } from "../../../replay-service/src/stats.js";
 import { initPhysics } from "../../src/sim/physics.js";
@@ -48,7 +48,7 @@ describe("MA · D-B1 · getBattleStats (computeBattleStats) no revela el equipam
     },
   );
 
-  contractIt("MA", "las estadísticas públicas no llevan el loadout ni el chasis de catálogo", async () => {
+  it("(guarda de baseline, verde en el BASE_SHA) las estadísticas públicas no llevan el loadout ni el chasis", async () => {
     const stats = await publicStats();
     const keys = allKeys(stats);
     for (const k of ["loadout", "spec", "chassis", "chassisId", "modules"]) {

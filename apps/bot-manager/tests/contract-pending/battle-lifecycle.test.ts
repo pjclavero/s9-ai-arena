@@ -302,30 +302,25 @@ function nativeAndHeapBytes(): number {
 }
 
 describe("MF · memoria: crear y liberar batallas no acumula", () => {
-  contractIt(
-    "MF",
-    "40 batallas create/step/free seguidas no hacen crecer heap+external+arrayBuffers más de 16 MiB tras el calentamiento",
-    async () => {
-      const runOne = async (i: number) => {
-        const b = await Battle.create({
-          battleId: `me_mem_${i}`,
-          seed: `me-mem-${i}`,
-          ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: 60 }),
-          map: emptyArena(),
-          participants: [
-            { id: "veh_1", botId: "bm1", team: "red", spec: scoutLoadout() },
-            { id: "veh_2", botId: "bm2", team: "blue", spec: scoutLoadout() },
-          ],
-        });
-        for (let t = 0; t < 30; t++) b.step();
-        b.free();
-      };
-      for (let i = 0; i < 8; i++) await runOne(i); // calentamiento (JIT, wasm, cachés)
-      const base = nativeAndHeapBytes();
-      for (let i = 8; i < 48; i++) await runOne(i);
-      const growth = nativeAndHeapBytes() - base;
-      expect(growth, `crecimiento ${(growth / 1048576).toFixed(1)} MiB tras 40 batallas`).toBeLessThan(16 * 1048576);
-    },
-    120_000,
-  );
+  it("(guarda de baseline, verde en el BASE_SHA) 40 batallas create/step/free seguidas no hacen crecer heap+external+arrayBuffers más de 16 MiB tras el calentamiento", async () => {
+    const runOne = async (i: number) => {
+      const b = await Battle.create({
+        battleId: `me_mem_${i}`,
+        seed: `me-mem-${i}`,
+        ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: 60 }),
+        map: emptyArena(),
+        participants: [
+          { id: "veh_1", botId: "bm1", team: "red", spec: scoutLoadout() },
+          { id: "veh_2", botId: "bm2", team: "blue", spec: scoutLoadout() },
+        ],
+      });
+      for (let t = 0; t < 30; t++) b.step();
+      b.free();
+    };
+    for (let i = 0; i < 8; i++) await runOne(i); // calentamiento (JIT, wasm, cachés)
+    const base = nativeAndHeapBytes();
+    for (let i = 8; i < 48; i++) await runOne(i);
+    const growth = nativeAndHeapBytes() - base;
+    expect(growth, `crecimiento ${(growth / 1048576).toFixed(1)} MiB tras 40 batallas`).toBeLessThan(16 * 1048576);
+  }, 120_000);
 });
