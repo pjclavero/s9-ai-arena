@@ -601,6 +601,54 @@ autorización:
 | Pantalla negra o congelada | alerta `StreamerNoProgress`, fotogramas del MP4; si Chromium cayó, el log `chromium terminó; se relanza` lleva `outputTail` (los últimos 2 KiB de su stderr, redactados) | Chromium caído (se relanza solo); `/broadcast` sin directo público. `StreamerNoProgress` mira a ffmpeg, no a Chromium: una imagen congelada con ffmpeg sano no la detecta ninguna alerta |
 | Procesos acumulados | `docker compose exec streamer ps -o pid,ppid,stat,args`, `stream_killed_total` | no debería ocurrir (parada del árbol + init); si `stream_killed_total` sube, hay hijos que no atienden SIGTERM |
 
+### Tap pasivo de la señal de ingesta (DIAG, APAGADO por defecto)
+
+Sirve para demostrar **qué fotograma estaba enviando S9 de verdad** a la ingesta sin depender
+del framebuffer de Chromium. Código: `apps/streamer/src/tap.ts`; pruebas:
+`apps/streamer/src/stream-tap.test.ts`; mutantes: `scripts/stream-tap-mutants.py`.
+
+- **De dónde copia.** Del MISMO flujo FLV que ffmpeg escribe por el fd 3 y que recibe el relé,
+  antes del TLS. El supervisor le entrega cada trozo DESPUÉS de dárselo al relé. El tap sólo
+  lee y COPIA; no devuelve nada que el relé use y no lanza.
+- **Qué guarda.** Cada `STREAM_TAP_INTERVAL_SEC` (10 s por defecto), si ha pasado un keyframe
+  nuevo, escribe un `.flv` mínimo (onMetaData + secuencia AVC + ese keyframe H.264, tal cual
+  llegó) y un `.json` con `capturedAt` (cuándo pasó por el relé), `flvTimestampMs` (DTS),
+  `compositionTimeMs` y `ptsMs` (= DTS + cts) del flujo. No hay segunda codificación: el JPG se
+  obtiene decodificando UNA captura cuando se pide (`/diag/tap/latest.jpg`, un ffmpeg de un
+  fotograma y un hilo, de uno en uno; si hay otro en curso responde 429).
+- **Nunca frena la emisión.** Como mucho una escritura en disco en vuelo: si el disco va lento
+  o se cuelga, las capturas siguientes se descartan (`stats.dropped`). La memoria está acotada
+  a la última secuencia AVC, el último onMetaData y el último keyframe.
+- **Límites.** Como mucho `STREAM_TAP_MAX_FILES` capturas (10; dos ficheros cada una más
+  `latest.json`) y `STREAM_TAP_MAX_MB` (32) en total; se borran las más antiguas y nunca
+  ficheros que no sean del tap. Directorio: `/tmp/s9-stream-tap` del contenedor
+  (`STREAM_TAP_DIR`), que desaparece al recrearlo.
+- **Sin secretos.** El tap no recibe la clave (no está en el FLV: ffmpeg no la conoce). Los
+  nombres son `tap-<secuencia>-<fecha>.flv|json` y los metadatos sólo llevan tiempos, tamaños
+  y contadores.
+
+**Activar** (sólo diagnóstico, con revisión previa del coste): `STREAM_TAP_ENABLED=true` en el
+`.env` del despliegue y recrear el servicio (`docker compose --profile streaming up -d streamer`).
+Para apagarlo, quitar la variable y recrear.
+
+**Leer** sin entrar como root y sin poner el secreto en argv:
+`scripts/ops/stream-tap-read.sh <dir>` (en el host, desde el directorio del compose) deja
+`status.json`, `latest.json`, `latest.flv` y `latest.jpg`. El `node` que hace la petición corre
+dentro del contenedor como uid 1000 y lee el secreto de `STREAMER_CONTROL_SECRET_FILE`.
+También vale el fichero: `docker compose exec -u 1000 streamer cat /tmp/s9-stream-tap/latest.json`.
+
+| Endpoint (con `x-streamer-auth`) | Devuelve |
+|---|---|
+| `GET /diag/tap` | `enabled`, límites, contadores (`keyframes`, `written`, `dropped`, `writeErrors`…) y la última captura |
+| `GET /diag/tap/latest` | metadatos de la última captura (404 si el tap está apagado o aún no hay) |
+| `GET /diag/tap/latest.flv` | la captura (cabeceras `x-tap-pts-ms`, `x-tap-captured-at`) |
+| `GET /diag/tap/latest.jpg` | la captura decodificada a demanda |
+
+**Coste medido** (VM de pruebas, 4 vCPU; imagen real del streamer, 1080p30 x264 a una ingesta
+RTMP local, 120 s por tanda; ver `tests/streaming-e2e/tap-cost.sh`): ver la tabla del PR. Con el
+tap encendido la CPU del proceso Node (relé + tap) sube ~0,1-0,2 puntos y su RSS no cambia;
+la diferencia en la CPU total del contenedor queda dentro del ruido entre tandas.
+
 ## Pruebas (§31)
 
 Pruebas mínimas del encargo. **Existía** quiere decir que estaba en `main` antes de esta rama;

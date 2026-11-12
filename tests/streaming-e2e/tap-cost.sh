@@ -178,6 +178,10 @@ if [ "$MODE" = on ]; then
   # Lectura SIN root: como el usuario del servicio (uid 1000).
   docker exec -u 1000 "$TAG-streamer" sh -c 'id -u; ls -la /tmp/s9-stream-tap; cat /tmp/s9-stream-tap/latest.json' >"$E/ls-as-uid1000.txt" 2>&1
   docker exec -u 1000 "$TAG-streamer" sh -c 'cd /tmp/s9-stream-tap && tar cf - .' >"$E/tapdir.tar" 2>/dev/null
+  # Lectura con el script de operación (sin root, secreto leído dentro del contenedor).
+  bash "$(dirname "${BASH_SOURCE[0]}")/../../scripts/ops/stream-tap-read.sh" "$E/read-script" --container "$TAG-streamer" \
+    >"$E/read-script.txt" 2>&1
+  echo "read-script rc=$?" >>"$E/read-script.txt"
   docker logs "$TAG-streamer" >"$E/streamer.log" 2>&1
   # Auditoría: ningún trozo de ≥8 de la clave FALSA (tal cual, hex, base64) en nada de lo anterior.
   node -e '
@@ -188,7 +192,8 @@ if [ "$MODE" = on ]; then
     const grams = new Set(); for (const f of forms) for (let i = 0; i + 8 <= f.length; i++) grams.add(f.slice(i, i + 8).toLowerCase());
     const hits = [];
     const scan = (name, buf) => { const t = buf.toString("latin1").toLowerCase(); for (const g of grams) if (t.includes(g)) { hits.push(name); break; } };
-    for (const n of fs.readdirSync(dir)) { scan("nombre:" + n, Buffer.from(n)); scan(n, fs.readFileSync(path.join(dir, n))); }
+    const walk = (d) => { for (const n of fs.readdirSync(d)) { const p = path.join(d, n); scan("nombre:" + n, Buffer.from(n)); if (fs.statSync(p).isDirectory()) walk(p); else scan(path.relative(dir, p), fs.readFileSync(p)); } };
+    walk(dir);
     // Control positivo: el detector SÍ encuentra la clave en el propio fichero de la clave.
     const before = hits.length; scan("control", fs.readFileSync(keyFile)); const detectorOk = hits.length === before + 1; if (detectorOk) hits.pop();
     console.log(JSON.stringify({ secretAudit: hits.length ? "FUGA" : "LIMPIO", detectorOk, hits, scanned: fs.readdirSync(dir) }));
