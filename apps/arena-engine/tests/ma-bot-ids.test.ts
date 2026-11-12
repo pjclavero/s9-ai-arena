@@ -10,6 +10,7 @@ import { Battle, type BotAgent } from "../src/sim/battle.js";
 import { initPhysics } from "../src/sim/physics.js";
 import { ProtocolServer } from "../src/protocol-server.js";
 import { MODULES, emptyArena, scoutLoadout } from "../src/fixtures.js";
+import { HunterBot } from "../src/stubs.js";
 import type { VehicleSpec } from "../src/sim/vehicle.js";
 import { loadRuleset } from "../../../packages/game-rules/index.js";
 import { BotIdBook, UNRESOLVED_RADIO_TARGET } from "../../../packages/projection/bot-ids.js";
@@ -143,7 +144,7 @@ describe("canal real del bot (ProtocolServer + WebSocket)", () => {
     const battle = await Battle.create({
       battleId: "ma-bot-ids-ws",
       seed: "ma-bot-ids-ws",
-      ruleset: loadRuleset("tdm_mvp@1", { timeLimitTicks: 90 }),
+      ruleset: loadRuleset("tdm_mvp@1", { timeLimitTicks: 240 }),
       map: arena,
       participants: [
         { id: "veh_1", botId: "bot_a", team: "red", spec: radarSpec() },
@@ -160,7 +161,8 @@ describe("canal real del bot (ProtocolServer + WebSocket)", () => {
         return { forTick: obs.tick };
       },
     } as BotAgent);
-    battle.attachBot("veh_3", { botId: "bot_c", decide: () => ({ forTick: 0 }) } as BotAgent);
+    // el rival dispara: el WS bot recibirá `hit_taken` con sourceId (id interno veh_3 en el motor)
+    battle.attachBot("veh_3", new HunterBot("bot_c"));
     const server = new ProtocolServer({
       battle,
       catalogVersion: "mvp@1",
@@ -220,6 +222,9 @@ describe("canal real del bot (ProtocolServer + WebSocket)", () => {
     for (const id of contactIds) expect(id).toMatch(/^v_[0-9]+$/);
     // ESTABLE: un mismo rival conserva su id a lo largo de la batalla (como mucho el aliado y el rival)
     expect(new Set(contactIds).size).toBeLessThanOrEqual(2);
+    const sources = msgs.filter((m) => m.type === "EVENT" && m.payload.sourceId).map((m) => m.payload.sourceId);
+    expect(sources.length, "control positivo: llegó algún evento con sourceId").toBeGreaterThan(0);
+    for (const id of sources) expect(id).toMatch(/^v_[0-9]+$/);
     expect(heard.length, "la radio dirigida con el id PÚBLICO llegó al aliado").toBeGreaterThan(0);
     for (const m of msgs) expect(JSON.stringify(m), `${m.type}`).not.toMatch(INTERNAL);
   }, 20000);
