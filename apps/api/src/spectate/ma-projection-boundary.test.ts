@@ -35,11 +35,18 @@ afterEach(() => {
   for (const c of cleanups.splice(0)) c();
 });
 
-/** Caza y, además, intenta sembrar una mina en cada decisión. */
+/**
+ * Caza y, además, intenta sembrar una mina en cada decisión.
+ * OJO (defecto del motor, lo corrige MC en su rama): `resolveFiring` hace `continue` si el
+ * comando no trae `fire` no vacío, así que `deployMine` sólo se procesa junto a un disparo.
+ * Por eso el minador siempre incluye `fire` (aunque el arma se rechace por cadencia/munición).
+ * Cuando MC integre su corrección el test sigue siendo válido.
+ */
 class MinerHunter extends HunterBot {
   decide(obs: any) {
     const c = (super.decide(obs) ?? {}) as Record<string, unknown>;
-    return { ...c, deployMine: { slot: "mine_bay", armDelayTicks: 0 } };
+    const fire = Array.isArray(c.fire) && c.fire.length ? c.fire : ["turret_main"];
+    return { ...c, fire, deployMine: { slot: "mine_bay", armDelayTicks: 0 } };
   }
 }
 
