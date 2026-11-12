@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * OLA 2 · MA · EQUIPMENT_PRIVATE en el HUD. El frame público no lleva `modules` ni
  * hullHpMax (sólo `hullLevel`): el HUD NO debe pintar «0/0 módulos» ni ningún recuento
