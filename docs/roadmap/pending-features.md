@@ -17,6 +17,7 @@ Reglas:
 
 | Función | Qué existe | Qué falta | Referencia |
 |---|---|---|---|
+| **Autorización de /run** | `POST /battles/{id}/run` encola trabajo de forma idempotente | restringir el encolado al dueño o moderación según la política final | TD-039 |
 | **OLA 2 / hardening del motor** | MD #271, MA #272, MB #273, MC #276, MF #270 y ME #268 terminados/revisados en sus ramas | integrar en una sola rama, resolver caracterizaciones/goldens y obtener `ENGINE_HARDENING_READY=PASS` | PRs #268/#270/#271/#272/#273/#276 |
 | **Espectador público** | rutas públicas, ticket WS, #274 y ajuste runtime de MG #269 | en producción está activado; conservar gate/seguridad y política efectiva | #269, #274 |
 | **Replays públicos** | rutas y ajuste runtime desde la admin | activación por decisión del operador; producción sigue OFF | #269 |
@@ -26,7 +27,7 @@ Reglas:
 | **2FA en la web** | API/TOTP e inicio de sesión | pantallas de activación/desactivación | TD-012 |
 | **Recuperación de cuenta** | endpoints recover/reset | canal de entrega y pantallas | TD-012 |
 | **Formatos de torneo** | seis formatos aceptados y scheduler | E2E de worker+API para todos y deudas específicas como CTF | TD-015, TD-070 |
-| **Administración operativa** | estado, auditoría, roles, streaming y acceso público | backup, restore, readiness, drift y otras tareas siguen en CLI | TD-023 |
+| **Administración web de operación** | estado, auditoría, roles, streaming y acceso público | backup, restore, readiness, drift y otras tareas siguen en CLI | TD-023 |
 | **Fases visuales posteriores** | sprites/efectos/panel de estadísticas | sonido, texturas, niebla/sombreado determinista, shaders, CDN | pospuesto |
 | **Futuro de map-service** | servicio sigue en compose; código reutilizado como librería | decidir retiro o autoridad de mapas | TD-017 |
 
