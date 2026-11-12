@@ -488,7 +488,8 @@ describe("estadísticas públicas cuantizadas (hallazgo P2-5)", () => {
     expect(projectBotStats(dead, "public_replay")).not.toHaveProperty("damageTaken");
     expect(projectBotStats(dead, "team")).not.toHaveProperty("damageTaken");
     expect(projectBotStats(dead, "public_replay")).toMatchObject({ died: true }); // se indica KO
-    for (const aud of ["owner", "staff"] as const) expect(projectBotStats(dead, aud)).toMatchObject({ damageTaken: 301 });
+    for (const aud of ["owner", "staff"] as const)
+      expect(projectBotStats(dead, aud)).toMatchObject({ damageTaken: 301 });
     expect(projectBotStats({ ...stats, died: false, deaths: 0 }, "public_replay")).toMatchObject({
       damageTaken: Math.floor(301 / STATS_DAMAGE_STEP) * STATS_DAMAGE_STEP,
     });
