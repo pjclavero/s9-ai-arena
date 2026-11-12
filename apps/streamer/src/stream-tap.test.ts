@@ -663,27 +663,27 @@ const mustRunFfmpeg = process.env.CI === "true";
 
 /** Color medio (r,g,b) de un JPEG, decodificado con ffmpeg a 1×1. */
 function meanRgb(jpg: Buffer): number[] {
-  const raw = execFileSync(
-    "ffmpeg",
-    [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-f",
-      "image2pipe",
-      "-i",
-      "pipe:0",
-      "-vf",
-      "scale=1:1",
-      "-f",
-      "rawvideo",
-      "-pix_fmt",
-      "rgb24",
-      "pipe:1",
-    ],
-    { input: jpg },
-  );
-  return [raw[0], raw[1], raw[2]];
+  // Desde FICHERO (no image2pipe por stdin) y media de 16×16 píxeles calculada aquí.
+  const f = join(tmp("rgb"), "f.jpg");
+  writeFileSync(f, jpg);
+  const raw = execFileSync("ffmpeg", [
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-i",
+    f,
+    "-vf",
+    "scale=16:16",
+    "-f",
+    "rawvideo",
+    "-pix_fmt",
+    "rgb24",
+    "pipe:1",
+  ]);
+  const sum = [0, 0, 0];
+  for (let i = 0; i + 2 < raw.length; i += 3) for (let c = 0; c < 3; c++) sum[c] += raw[i + c];
+  const n = Math.max(1, Math.floor(raw.length / 3));
+  return sum.map((v) => Math.round(v / n));
 }
 
 describe.skipIf(!hasFfmpeg && !mustRunFfmpeg)("G6 · con el FLV REAL de ffmpeg (libx264, B-frames)", () => {
