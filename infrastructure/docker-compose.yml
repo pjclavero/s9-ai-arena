@@ -346,6 +346,10 @@ services:
         APP_PATH: apps/tournament-worker
     image: ${IMAGE_PREFIX:-ghcr.io/pjclavero/s9-ai-arena}/tournament-worker:${TOURNAMENT_WORKER_TAG:-${TAG:-latest}}
     profiles: [nucleo, development, production, external-db]
+    # OLA2-MF · el SIGTERM hace abortAll + worker.stop(): cada batalla en curso hace su teardown (TERM→KILL
+    # de 5 s + borrado, y el 409 de AutoRemove hasta 15 s). Con los 10 s por defecto Docker mataba el
+    # proceso a mitad; lo que quedara lo recoge el reaper, pero mejor no depender de él.
+    stop_grace_period: 45s
     # REVIEW (cierre funcional) · `arena`: los contenedores de los bots se conectan
     # al ProtocolServer y descargan su artefacto del host de la batalla, que viven
     # en ESTE proceso. Deuda aceptada y registrada (TD-033, ex TD-A1): el proceso

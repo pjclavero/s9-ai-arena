@@ -301,6 +301,29 @@ describe("OLA2-MF · AutoRemove: Docker ya está borrando (409 «already in prog
     await new ProxyContainerRunner(url).removeById(id);
     expect(fake.cs.has(id)).toBe(false);
   });
+  it("el sondeo del 409 se acota por battleId: sólo espera al contenedor de ESA batalla", async () => {
+    const id = fake.add({
+      name: "bot-b1",
+      labels: { ...OWN, [LABEL_ROLE]: ROLE_BATTLE_BOT, [LABEL_BATTLE_ID]: "B1" },
+      state: "running",
+    });
+    removing.add(id);
+    setTimeout(() => fake.cs.delete(id), 400);
+    const t0 = Date.now();
+    await new ProxyContainerRunner(url).removeById(id, "B1");
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(350); // con la label correcta lo VE y espera
+    // Con otro battleId el contenedor no cae en el listado filtrado: el sondeo no lo ve.
+    const id2 = fake.add({
+      name: "bot-b2",
+      labels: { ...OWN, [LABEL_ROLE]: ROLE_BATTLE_BOT, [LABEL_BATTLE_ID]: "B2" },
+      state: "running",
+    });
+    removing.add(id2);
+    const t1 = Date.now();
+    await new ProxyContainerRunner(url).removeById(id2, "OTRA");
+    expect(Date.now() - t1).toBeLessThan(300);
+    fake.cs.delete(id2);
+  });
   it("si Docker nunca termina el borrado en curso, falla (no lo da por bueno)", async () => {
     const id = fake.add({ name: "bot-stuck", labels: { ...OWN, [LABEL_ROLE]: ROLE_BATTLE_BOT }, state: "running" });
     removing.add(id);

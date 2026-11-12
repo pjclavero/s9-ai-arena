@@ -32,7 +32,7 @@ import { defaultBattleResources, type BattleResourceRegistry } from "./battle-re
 
 export interface ReaperRunner {
   list(labels: Record<string, string>): Promise<ManagedContainer[]>;
-  removeById(id: string): Promise<void>;
+  removeById(id: string, battleId?: string): Promise<void>;
 }
 
 export interface ReaperDeps {
@@ -116,7 +116,7 @@ export async function reapOnce(deps: ReaperDeps): Promise<ReapReport> {
       continue;
     }
     try {
-      await deps.runner.removeById(c.id);
+      await deps.runner.removeById(c.id, battleId);
       report.removed.push({ id: c.id, battleId, why });
     } catch (err) {
       report.errors.push(`${c.id.slice(0, 12)}: ${err instanceof Error ? err.message : String(err)}`);

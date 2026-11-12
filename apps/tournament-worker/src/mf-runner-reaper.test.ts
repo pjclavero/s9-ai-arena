@@ -70,7 +70,7 @@ function executorWith(
 
 async function runCase(
   then: (ctx: BattleContext) => Promise<BattleExecution>,
-  opts: { abort?: (res: BattleResourceRegistry, id: string) => void } = {},
+  opts: { abort?: (res: BattleResourceRegistry, id: string) => void; leaseMs?: number } = {},
 ) {
   const res = new BattleResourceRegistry();
   const released: string[] = [];
@@ -80,6 +80,7 @@ async function runCase(
     executor: executorWith(res, released, then),
     resources: res,
     memorySampleMs: 20,
+    ...(opts.leaseMs ? { leaseMs: opts.leaseMs } : {}),
     onBattleClosed: (c) => closed.push(c),
   });
   const p = handler(job(id), { db: h.db, workerId: "mf-w" });
@@ -157,6 +158,28 @@ describe("OLA2-MF · battle-runner: teardown único en todos los finales", () =>
     expect(r.res.totalPending()).toBe(0);
     const row = await h.db("battles").where({ id: r.id }).first();
     expect(row.status).toBe("scheduled");
+  });
+
+  it("CANCELLED de extremo a extremo: otro titular roba la reserva a mitad → LostBattleClaim → battle_busy, teardown CANCELLED y la fila ajena intacta", async () => {
+    const r = await runCase(
+      (ctx) =>
+        new Promise<BattleExecution>((_ok, ko) => ctx.signal!.addEventListener("abort", () => ko(ctx.signal!.reason))),
+      {
+        leaseMs: 900, // renueva cada 300 ms
+        abort: (_res, id) => void h.db("battles").where({ id }).update({ claimed_by: "otro-titular:job:9" }),
+      },
+    );
+    expect(r.err).toBeInstanceOf(InfrastructureFailure);
+    expect((r.err as InfrastructureFailure).code).toBe("battle_busy");
+    expect(r.closed).toHaveLength(1);
+    expect(r.closed[0].reason).toBe("CANCELLED");
+    expect(r.closed[0].cleanup.clean).toBe(true);
+    expect(r.released).toEqual(["protocol_server", "container:veh_1", "sandbox_host", "container_remove:veh_1"]);
+    expect(r.res.totalPending({ includeDraining: true })).toBe(0);
+    // No se toca la reserva del otro titular.
+    const row = await h.db("battles").where({ id: r.id }).first();
+    expect(row.status).toBe("running");
+    expect(row.claimed_by).toBe("otro-titular:job:9");
   });
 
   it("WORKER_ERROR (parada del worker: abortAll) → teardown con WORKER_ERROR", async () => {

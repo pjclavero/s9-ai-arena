@@ -957,7 +957,7 @@ export class ProxyContainerRunner implements ContainerRunner {
   }
 
   /** OLA2-MF · borrado forzado por Id completo; 404 (ya no existe) = éxito. */
-  async removeById(id: string): Promise<void> {
+  async removeById(id: string, battleId?: string): Promise<void> {
     const res = await this.call("DELETE", `/containers/${id}?force=true`);
     if (res.status === 204 || res.status === 404) return;
     // Con AutoRemove, Docker ya está borrando el contenedor cuando llega nuestro DELETE y
@@ -966,7 +966,11 @@ export class ProxyContainerRunner implements ContainerRunner {
     if (res.status === 409 && /removal of container .* is already in progress/i.test(String(res.json?.message ?? ""))) {
       const deadline = Date.now() + 15_000;
       for (;;) {
-        const left = (await this.list({ "arena.role": "battle-bot" })).filter((c) => c.id === id);
+        // Sondeo acotado a la batalla (label arena.battle-id) además del rol: un contenedor sin
+        // esas labels no aparecería y se daría por borrado al instante (falso positivo).
+        const left = (
+          await this.list({ "arena.role": "battle-bot", ...(battleId ? { "arena.battle-id": battleId } : {}) })
+        ).filter((c) => c.id === id);
         if (left.length === 0) return;
         if (Date.now() > deadline) throw new Error(`el borrado en curso de ${id.slice(0, 12)} no terminó en 15 s`);
         await new Promise((r) => setTimeout(r, 200));
@@ -1022,7 +1026,7 @@ export class ProxyContainerRunner implements ContainerRunner {
       // OLA2-MF · el contenedor YA existe (`Created`) y nadie lo arrancará:
       // AutoRemove no actúa sobre un contenedor que nunca arrancó. Se borra
       // aquí; si tampoco se puede, queda para el reconciliador (lleva labels).
-      await this.removeById(id).catch(() => undefined);
+      await this.removeById(id, spec.battleId).catch(() => undefined);
       throw new Error(`el proxy rechazó el start (${started.status}): ${started.json?.message ?? "sin detalle"}`);
     }
     const call = this.call.bind(this);
@@ -1038,7 +1042,7 @@ export class ProxyContainerRunner implements ContainerRunner {
         }
       },
       async remove() {
-        await removeById(id);
+        await removeById(id, spec.battleId);
       },
       async posture() {
         const inspected = await call("GET", `/containers/${id}/json`);

@@ -15,7 +15,7 @@ import { parse } from "yaml";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const compose = parse(readFileSync(join(here, "..", "docker-compose.yml"), "utf8"), { merge: true }) as {
-  services: Record<string, { init?: boolean }>;
+  services: Record<string, { init?: boolean; stop_grace_period?: string }>;
 };
 
 describe("OLA2-MF · reaping de huérfanos en contenedores con hijos efímeros", () => {
@@ -26,5 +26,10 @@ describe("OLA2-MF · reaping de huérfanos en contenedores con hijos efímeros",
   it("backup: el entrypoint sigue haciendo exec de crond (tini queda como PID 1, crond como hijo)", () => {
     const ep = readFileSync(join(here, "..", "backup", "entrypoint.sh"), "utf8");
     expect(ep).toMatch(/^exec crond -f/m);
+  });
+
+  it("tournament-worker: stop_grace_period >= 30 s (teardown de batallas en el SIGTERM)", () => {
+    const g = compose.services["tournament-worker"]?.stop_grace_period ?? "10s";
+    expect(Number(/^(\d+)s$/.exec(g)?.[1] ?? 0)).toBeGreaterThanOrEqual(30);
   });
 });

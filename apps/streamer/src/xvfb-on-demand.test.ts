@@ -143,4 +143,60 @@ describe("OLA2-MF · Xvfb y procesos de emisión a demanda", () => {
     expect(h.files.has("/tmp/.X99-lock")).toBe(false);
     h.display.release();
   });
+
+  it("carrera stop→start: ensure() espera a que muera el Xvfb anterior (su lock sigue vivo) en vez de rechazar", async () => {
+    // Modelo realista: el Xvfb viejo sigue en /proc (comm=Xvfb) con su lock hasta que SALE (40 ms tras el TERM).
+    const spawned: FakeProcess[] = [];
+    const files = new Set<string>();
+    const alivePids = new Set<string>();
+    let nextPid = 100;
+    const spawner: Spawner = (cmd, args) => {
+      const p = new FakeProcess(cmd, args);
+      const pid = String(nextPid++);
+      alivePids.add(pid);
+      files.add("/tmp/.X99-lock");
+      files.add("/tmp/.X11-unix/X99");
+      (p as any).pidStr = pid;
+      p.kill = (sig?: NodeJS.Signals) => {
+        p.signals.push(sig ?? "SIGTERM");
+        if (p.exitCode === null) {
+          p.exitCode = 0;
+          setTimeout(() => {
+            alivePids.delete(pid);
+            files.delete("/tmp/.X99-lock");
+            files.delete("/tmp/.X11-unix/X99");
+            p.emit("exit", 0);
+          }, 40);
+        }
+        return true;
+      };
+      spawned.push(p);
+      return p;
+    };
+    const display = new XvfbDisplay({
+      spawner,
+      display: ":99",
+      width: 1920,
+      height: 1080,
+      readyTimeoutMs: 500,
+      stopGraceMs: 500,
+      exists: (p) => files.has(p),
+      readFile: (p) => {
+        if (p === "/tmp/.X99-lock") return `${[...alivePids].at(-1) ?? "0"}\n`;
+        const m = /^\/proc\/(\d+)\/comm$/.exec(p);
+        if (m && alivePids.has(m[1])) return "Xvfb\n";
+        throw new Error("no existe");
+      },
+      remove: (p) => void files.delete(p),
+      sleep: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5))),
+    });
+    await display.ensure();
+    display.release();
+    await display.ensure(); // inmediatamente: antes fallaba con «ya lo usa un Xvfb vivo ajeno»
+    expect(display.running).toBe(true);
+    expect(display.stats.starts).toBe(2);
+    expect(spawned.filter((p) => p.alive)).toHaveLength(1);
+    display.release();
+    await tick(80);
+  });
 });

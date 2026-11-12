@@ -103,10 +103,25 @@ export class XvfbDisplay implements DisplayManager {
   ensure(): Promise<void> {
     if (this.running && !this.starting) return Promise.resolve();
     if (this.starting) return this.starting;
-    this.starting = this.start().finally(() => {
-      this.starting = null;
-    });
+    this.starting = this.waitForDying()
+      .then(() => this.start())
+      .finally(() => {
+        this.starting = null;
+      });
     return this.starting;
+  }
+
+  /**
+   * Carrera stop→start: `release()` pone proc=null y envía TERM, pero el Xvfb sigue
+   * en /proc (comm=Xvfb) y con su lock hasta que sale. Si `start()` corriera ya,
+   * `clearStale()` vería un Xvfb "vivo ajeno" y rechazaría. Se espera a que los
+   * procesos señalados salgan (acotado: gracia + SIGKILL + margen).
+   */
+  private async waitForDying(): Promise<void> {
+    if (this.dying === 0) return;
+    const sleep = this.o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    const deadline = Date.now() + (this.o.stopGraceMs ?? 5000) + 3000;
+    while (this.dying > 0 && Date.now() < deadline) await sleep(25);
   }
 
   private async start(): Promise<void> {

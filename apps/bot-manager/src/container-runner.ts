@@ -186,7 +186,7 @@ export interface ContainerRunner {
    */
   list?(labels: Record<string, string>): Promise<ManagedContainer[]>;
   /** OLA2-MF · borra (forzado) un contenedor gestionado por Id completo. 404 = éxito. */
-  removeById?(id: string): Promise<void>;
+  removeById?(id: string, battleId?: string): Promise<void>;
 }
 
 /**

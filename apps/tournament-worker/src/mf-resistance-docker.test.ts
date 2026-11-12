@@ -1,7 +1,7 @@
 /**
  * OLA2-MF · RESISTENCIA con Docker REAL (opt-in, banco VM112; NUNCA producción).
  *
- * N batallas seguidas (S9_MF_BATTLES, def. 20) con las piezas REALES del camino de
+ * N batallas seguidas (S9_MF_BATTLES, def. 40; el criterio sólo es válido con N>=40 y `node --expose-gc`) con las piezas REALES del camino de
  * producción: containerAgents → ProxyContainerRunner → s9-docker-proxy (real, en
  * proceso) → Docker → runtime python fijado en runtimes/DIGESTS.lock → bootstrap →
  * artefacto `arena-artifact/v1` servido por el SandboxHost → protocolo → motor.
@@ -49,8 +49,9 @@ import {
 import { PY_BAD_PROTOCOL, PY_CRASH, PY_GOOD, PY_HANG, pyFiles } from "../../bot-manager/tests/sandbox-bots.js";
 import { containerAgents, type BotLaunchProvider } from "./container-agents.js";
 import { BattleResourceRegistry } from "./battle-resources.js";
+import { evaluateGrowth } from "./mf-growth.js";
 
-const N = Number(process.env.S9_MF_BATTLES ?? 20) || 20;
+const N = Number(process.env.S9_MF_BATTLES ?? 40) || 40;
 const BOTS = [
   { botId: "11111111-1111-4111-8111-111111111111", version: 1, vehicleId: "veh_1", team: "red" },
   { botId: "22222222-2222-4222-8222-222222222222", version: 1, vehicleId: "veh_2", team: "blue" },
@@ -259,6 +260,9 @@ describe.skipIf(!DOCKER_E2E)("OLA2-MF · resistencia: N batallas reales seguidas
     const report = await resources.cleanupBattleResources(battleId, outcome === "FINISHED" ? "FINISHED" : "BOT_CRASH");
     const ids = launchedIds.slice(before);
     const left = await waitGone(battleId);
+    // Con `--expose-gc` el heapUsed se mide tras una recolección completa: separa una fuga de objetos
+    // de la deriva de las arenas de malloc (que sólo mueve la RSS).
+    (globalThis as { gc?: () => void }).gc?.();
     const row: Row = {
       i,
       battleId,
@@ -294,37 +298,31 @@ describe.skipIf(!DOCKER_E2E)("OLA2-MF · resistencia: N batallas reales seguidas
         for (const k of ["Timeout", "TCPServerWrap", "TCPSocketWrap"])
           expect(r.handles[k] ?? 0, `handles ${k} batalla ${i}`).toBeLessThanOrEqual((baselineHandles[k] ?? 0) + 2);
       }
-      // MULTI_BATTLE_MEMORY_GROWTH: pendiente (mínimos cuadrados) de la RSS idle y de MemAvailable en la
-      // SEGUNDA MITAD de la serie. La primera mitad es calentamiento de V8/malloc (la RSS sube y se
-      // estabiliza en una meseta: JIT, arenas de Rapier/WASM); una fuga real seguiría subiendo después.
+      // MULTI_BATTLE_MEMORY_GROWTH (ver mf-growth.ts): pendiente de RSS en la segunda mitad (< 1 MB/batalla),
+      // COTA ABSOLUTA (RSS final - mediana de la 1ª mitad < 20 MB), pendiente de heapUsed tras gc
+      // (< 0.25 MB/batalla; sólo con --expose-gc) y MemAvailable (> -2 MB/batalla).
       const all = rows.filter((r) => r.i >= 0);
-      const xs = all.slice(Math.floor(all.length / 2));
-      const slope = (set: Row[], key: "rssMb" | "availableMb") => {
-        const n = set.length;
-        const mx = set.reduce((a, r) => a + r.i, 0) / n;
-        const my = set.reduce((a, r) => a + r[key], 0) / n;
-        const num = set.reduce((a, r) => a + (r.i - mx) * (r[key] - my), 0);
-        const den = set.reduce((a, r) => a + (r.i - mx) ** 2, 0);
-        return den === 0 ? 0 : num / den;
-      };
-      const rssSlope = slope(xs, "rssMb");
-      const availSlope = slope(xs, "availableMb");
+      const gc = typeof (globalThis as { gc?: unknown }).gc === "function";
+      const verdict = evaluateGrowth(all, { gc });
       console.log(
         JSON.stringify({
           mf_resistance: {
             N,
-            rssSlopeMbPerBattle_secondHalf: rssSlope,
-            availSlopeMbPerBattle_secondHalf: availSlope,
-            rssSlopeMbPerBattle_all: slope(all, "rssMb"),
+            gc,
+            ...verdict.metrics,
             rssFirst: all[0]?.rssMb,
             rssLast: all[all.length - 1]?.rssMb,
             rssMax: Math.max(...all.map((r) => r.rssMb)),
+            heapFirst: all[0]?.heapMb,
+            heapLast: all[all.length - 1]?.heapMb,
+            violations: verdict.violations,
           },
         }),
       );
-      // Sin crecimiento sostenido: < 1 MB/batalla de RSS y < 2 MB/batalla de MemAvailable perdida.
-      expect(rssSlope).toBeLessThan(1);
-      expect(availSlope).toBeGreaterThan(-2);
+      expect(N, "el criterio de memoria sólo es válido con N>=40").toBeGreaterThanOrEqual(
+        process.env.S9_MF_ALLOW_SHORT === "1" ? 8 : 40,
+      );
+      expect(verdict.violations).toEqual([]);
     },
     60 * 60_000,
   );
@@ -332,12 +330,16 @@ describe.skipIf(!DOCKER_E2E)("OLA2-MF · resistencia: N batallas reales seguidas
   it(
     "batallas con bot que falla (excepción, protocolo roto, cuelgue): el teardown también deja 0 de todo",
     async () => {
-      // El resultado deportivo depende del SDK (una excepción en on_observation la absorbe el SDK y la
-      // batalla acaba); lo que se exige aquí es el teardown, no el resultado.
+      // Clasificación OBSERVADA (no es un invento del test): una excepción en el bot la captura el
+      // BOOTSTRAP (sandbox-bootstrap/bootstrap.py:240-245: la reporta como `runtime` y sale con código 9,
+      // no el SDK); el motor trata al bot desconectado como eliminado y la batalla acaba FINISHED. Igual con
+      // un protocolo roto. Un cuelgue sí es fallo deportivo (BOT_CRASH). Ver TD de producto en el informe MF.
       const bots = [PY_CRASH, PY_BAD_PROTOCOL, PY_HANG];
+      const expected = ["FINISHED", "FINISHED", "BOT_CRASH"];
       for (let i = 0; i < bots.length; i++) {
         const r = await oneBattle(1000 + i, (n) => (n === 0 ? bots[i] : PY_GOOD));
         console.log(JSON.stringify({ mf_bad_bot: { i, outcome: r.outcome } }));
+        expect(r.outcome, `clasificación del bot malo ${i}`).toBe(expected[i]);
         expect(
           [r.containersLeft, r.cgroupsLeft, r.processesLeft, r.registryLeft],
           `bot malo ${i} ${r.outcome}`,
