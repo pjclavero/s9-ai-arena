@@ -315,5 +315,6 @@ describe("Respawn TDM · nunca encima de un vehículo", () => {
   });
 });
 
-const GOLDEN_1V1_HASH_E902B0A = "e40ee855cb479a2a5f05cc214f9309edd2f4e5611ce31b9d9552873ce8626794";
+// RE-ANCLADO en OLA2-MB (741a2a7): orden por slot + hp del blindaje + turretHeading normalizado.
+const GOLDEN_1V1_HASH_E902B0A = "b1e9801098f5df03f4ce365c32be33121d6d0da4aac2f1c8d0258e0574372568";
 const GOLDEN_1V1_REALMAP_HASH_E902B0A = "6a9c139d094b1f8b6d933d6dfc9b6056d045ef6a9a9215066727759121c81abc";

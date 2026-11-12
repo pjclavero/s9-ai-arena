@@ -22,11 +22,12 @@ beforeAll(async () => {
 const realMap = (): ArenaMap =>
   toEngineMap(JSON.parse(readFileSync(new URL("../../../maps/mvp-arena-01.json", import.meta.url), "utf8")));
 
+// RE-ANCLADO en OLA2-MB (741a2a7): orden por slot + hp del blindaje + turretHeading normalizado.
 const PRE_FIX_HASHES: Record<string, string> = {
   "1v1-real": "2f720d64d435c96a1742ea376c5284186d392cf4a87486c1fc3c80900ec70a62",
   "2v2-real": "053b7848dcfc9dfdf2c06cf03c2450323322e7324de8c6127dbaadec42b0d41e",
-  "2v2-open": "11712f5ab7e16460e4be50d25d10371890e6541622921135c57c30bfbab98b58",
-  "4v4-real": "ca54080f7c7d129e3f68f7c0da2bbb6ab03335a343e876d61dcc00c68938ab34",
+  "2v2-open": "269bbb60152b2f53cf6153f168e119ac1aeb16a810e4c52da2e0e35387f91455",
+  "4v4-real": "7b270d03d177a2c634879e105e5e473772ec7b9941d777e5085ac0db8bf6a1ed",
 };
 
 function run(name: string, n: number, map: ArenaMap): string {

@@ -43,14 +43,17 @@ function runFor(b: Battle, ticks: number) {
   for (let t = 0; t < ticks && !b.isFinished(); t++) b.step();
 }
 
-// Medidos con el motor de 9aaad79 (`.local/scratch/hashes.ts` sobre `git archive origin/main`).
+// Anclas de 9aaad79 (`.local/scratch/hashes.ts` sobre `git archive origin/main`), RE-ANCLADAS en OLA2-MB
+// con los valores medidos en 741a2a7: las cambian (a) el orden por slot de los candidatos de módulo,
+// (b) el hp del blindaje (= hp del módulo) y (c) la normalización de turretHeading. Con las tres
+// revertidas vuelven EXACTAMENTE los hashes de 9aaad79 (experimento mb-atribucion.py).
 const HASHES_9AAAD79 = {
-  dm_1v1: { hash: "da5d6f4982980c3a8318793e77aba7085ab29107a14b72fd2094283e11468822", tick: 465 },
-  tdm_1v1: { hash: "db319ed9e07012637be5fbd2bcbe685046b8490eac1351e79869a62f7d5a30ca", tick: 3000 },
-  tdm_2v2: { hash: "b5c19955e9b904684c273b105ebb04be019d6241614df5e17f122a36ce1a546e", tick: 3000 },
-  tdm_4v4: { hash: "5bd33b9118f31e21b0b05f4c27837c079346e4ea72e8c42e741b7c764396cf6b", tick: 2528 },
-  tdm_4v4_norespawn: { hash: "3a24fcd0db010bbb7eb55bbfbfa54901157a9839bcf707bcb36d733830568ec2", tick: 1579 },
-  ctf_1v1: { hash: "7344d3906b8b130c9c80e5863471eb3de6e118a0ab7556709abfb4ecc0430b1a", tick: 2000 },
+  dm_1v1: { hash: "2f08024eaa04bd46de4e9b28435df905671ca088969fe2488216de1d718650dc", tick: 435 },
+  tdm_1v1: { hash: "0cbfaf858d437ada52035dde4a159d5755c0a18fdf3ce6bcca5e39aa4cf71f5c", tick: 3000 },
+  tdm_2v2: { hash: "a9ac53b80436a3be2fb8c7c3ab8e32e6353fdbae8e0579323bc626470fdc6a29", tick: 3000 },
+  tdm_4v4: { hash: "f3fdffe0868fde35a2f1e2d718193dcd78b503fcf2b640ff9ebccda74ac10599", tick: 2338 },
+  tdm_4v4_norespawn: { hash: "69c259ab03ad2bf04a8151b0ab19b7da510bfc4f84546fea13cbca32706cadf3", tick: 1090 },
+  ctf_1v1: { hash: "af819a46e9bbd4d653d92b01a35445d2f436c402bd873b00a913dd0d7ffe7110", tick: 2000 },
 };
 
 describe("regresión · configuraciones existentes = hash de 9aaad79", () => {
