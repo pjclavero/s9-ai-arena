@@ -92,6 +92,8 @@ export async function participantTotals(
   db: Db,
   participants: BattleRulesInput["participants"],
   catalog: ModuleDefinition[],
+  /** Bots cuyo detalle interno puede ver el solicitante (propios / todos si staff). Sin él: ninguno. */
+  canSee: (botId: string) => boolean = () => false,
 ): Promise<CompositionEntry[]> {
   const out: CompositionEntry[] = [];
   for (const p of participants) {
@@ -101,7 +103,13 @@ export async function participantTotals(
     const row = await db("bot_loadouts").where({ bot_id: p.botId, revision }).first();
     const label = `${(bot?.name as string | undefined) ?? p.botId} v${p.version}`;
     if (!row) {
-      throw new ApiError(409, "loadout_unavailable", `${label}: no tiene loadout (revisión ${revision})`);
+      throw new ApiError(
+        409,
+        "loadout_unavailable",
+        canSee(p.botId)
+          ? `${label}: no tiene loadout (revisión ${revision})`
+          : `${label}: no se puede calcular su composición`,
+      );
     }
     const loadout: LoadoutInput = {
       loadoutId: row.id,
@@ -117,7 +125,11 @@ export async function participantTotals(
       throw new ApiError(
         409,
         "loadout_unavailable",
-        `${label}: su loadout no se puede resolver con el catálogo de la batalla (${err instanceof Error ? err.message : String(err)})`,
+        // P2-C (revisión 3): el mensaje del catálogo lleva moduleId y ranura = loadout. Sólo el
+        // dueño y el staff lo ven; un tercero (también de un bot público) recibe uno genérico.
+        canSee(p.botId)
+          ? `${label}: su loadout no se puede resolver con el catálogo de la batalla (${err instanceof Error ? err.message : String(err)})`
+          : `${label}: no se puede calcular su composición`,
       );
     }
     // Coste: la MISMA suma que el presupuesto del loadout (validator/validateLoadoutServerSide:
@@ -137,12 +149,12 @@ export interface CompositionViewer {
   staff?: boolean;
 }
 
-async function redactForViewer(
+/** Ids de bot (entre los participantes) cuyo detalle puede ver el lector. */
+async function visibleBotIds(
   db: Db,
-  report: CompositionReport,
   participants: BattleRulesInput["participants"],
   viewer: CompositionViewer | undefined,
-): Promise<PublicCompositionReport> {
+): Promise<Set<string>> {
   const visible = new Set<string>();
   if (viewer?.staff) {
     for (const p of participants) visible.add(p.botId);
@@ -152,6 +164,16 @@ async function redactForViewer(
       if (bot && bot.owner_id === viewer.userId) visible.add(p.botId);
     }
   }
+  return visible;
+}
+
+async function redactForViewer(
+  db: Db,
+  report: CompositionReport,
+  participants: BattleRulesInput["participants"],
+  viewer: CompositionViewer | undefined,
+): Promise<PublicCompositionReport> {
+  const visible = await visibleBotIds(db, participants, viewer);
   return redactComposition(report, (id) => visible.has(id));
 }
 
@@ -247,7 +269,8 @@ export async function buildBattleRules(
   } else {
     const catalog = await getCatalog(db, catalogVersion);
     try {
-      entries = await participantTotals(db, input.participants, catalog);
+      const visible = await visibleBotIds(db, input.participants, opts.viewer);
+      entries = await participantTotals(db, input.participants, catalog, (id) => visible.has(id));
     } catch (err) {
       if (strict) throw err;
       entries = [];

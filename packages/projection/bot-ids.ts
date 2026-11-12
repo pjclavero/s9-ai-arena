@@ -18,6 +18,9 @@ import { audienceKey } from "./audience.js";
 import { AudiencePublicIdMapper, type RosterOrderEntry } from "./public-id-mapper.js";
 
 export const BOT_PROJECTION_VERSION = "bot-ids/1";
+/** Campos de contenido controlado por el emisor: nunca se reescriben (padre.campo). */
+const OPAQUE_FIELDS: ReadonlySet<string> = new Set(["radio.data"]);
+
 /** Destinatario NO RESUELTO: no coincide con ningún vehículo, así que la radio no se entrega. */
 export const UNRESOLVED_RADIO_TARGET = "unresolved_0";
 
@@ -150,13 +153,15 @@ export class BotIdBook {
    * escapado a la traducción explícita se traduce (o se omite). Un campo nuevo del motor con
    * un id no puede llegar al bot con `veh_N`.
    */
-  private scrub<T>(v: T): T {
+  private scrub<T>(v: T, key?: string): T {
     if (typeof v === "string") return (this.vehicleIds.has(v) ? (this.vehicleRef(v) ?? undefined) : v) as T;
-    if (Array.isArray(v)) return v.map((x) => this.scrub(x)).filter((x) => x !== undefined) as unknown as T;
+    if (Array.isArray(v)) return v.map((x) => this.scrub(x, key)).filter((x) => x !== undefined) as unknown as T;
     if (v && typeof v === "object") {
       const o: any = {};
       for (const [k, x] of Object.entries(v)) {
-        const y = this.scrub(x);
+        // P3-1 (revisión 3): `radio[].data` es un payload OPACO del emisor; reescribirlo filtraría
+        // el mapeo interno→público entre aliados y corrompería datos legítimos.
+        const y = OPAQUE_FIELDS.has(`${key}.${k}`) ? x : this.scrub(x, k);
         if (y !== undefined) o[k] = y;
       }
       return o;

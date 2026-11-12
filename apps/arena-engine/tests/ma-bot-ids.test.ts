@@ -99,6 +99,27 @@ describe("BotIdBook · ids públicos del bot", () => {
     expect(o.sensors.radar[0].contacts[1]).not.toHaveProperty("entityId");
   });
 
+  it("P3-1: radio[].data es OPACO: ni se reescribe ni se omite ni filtra el mapeo interno→público", () => {
+    const A = bookFor("veh_2");
+    // veh_4 percibido por el radar (recibe v_N); un aliado radia el literal "veh_4" / "veh_3" / "veh_9".
+    A.observation({
+      tick: 1,
+      sensors: {
+        radar: [{ slot: "sensor_b", contacts: [{ entityId: "veh_4", kind: "vehicle", position: { x: 5, y: 5 } }] }],
+      },
+    });
+    const o = A.observation({
+      tick: 2,
+      radio: [
+        { from: "veh_1", data: "veh_4", sentTick: 1 },
+        { from: "veh_1", data: "veh_3", sentTick: 1 },
+        { from: "veh_1", data: "veh_9", sentTick: 1 },
+      ],
+    });
+    expect(o.radio.map((m: any) => m.data)).toEqual(["veh_4", "veh_3", "veh_9"]);
+    expect(o.radio.every((m: any) => m.from === "v_1")).toBe(true); // `from` sí se traduce
+  });
+
   it("radio.from y eventos (sourceId/targetId) salen como v_N; un rival nunca visto recibe id al nombrarlo un evento público", () => {
     const A = bookFor("veh_1");
     const o = A.observation({ tick: 6, radio: [{ from: "veh_2", data: "AA==", sentTick: 3 }] });
