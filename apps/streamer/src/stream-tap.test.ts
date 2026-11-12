@@ -729,12 +729,16 @@ describe.skipIf(!hasFfmpeg && !mustRunFfmpeg)("G6 · con el FLV REAL de ffmpeg (
     const t = new IngestTap(cfg(dir));
     t.start();
     t.beginStream();
-    const chunks = chunked(flv, 21, 4096);
+    // Color liso ⇒ keyframes de ~70 bytes: con trozos de ≤32 bytes ninguno completa dos
+    // keyframes, así que el primero capturado es el de DTS 0 (rojo). El tap guarda el ÚLTIMO
+    // keyframe visto: con trozos de 4 KiB el primero ya traía los de 0, 500, 1000 y 1500 ms.
+    const chunks = chunked(flv, 21, 32);
     let i = 0;
     while (i < chunks.length && t.stats.keyframes < 1) t.observe(chunks[i++]);
     t.flush();
     await t.whenIdle();
     const first = t.latest!;
+    expect(first.flvTimestampMs).toBeLessThan(1000);
     const jpgRed = await decodeTapJpeg("ffmpeg", join(dir, first.file));
     expect(jpgRed.subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]));
     const [r1, , b1] = meanRgb(jpgRed);
