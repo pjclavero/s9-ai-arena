@@ -342,11 +342,12 @@ describe("MG · RUNTIME_CONFIG_PERSISTENCE", () => {
     try {
       const env = publicVisibilityFromEnv({ S9_PUBLIC_SPECTATE_ENABLED: "true" } as NodeJS.ProcessEnv);
       expect(env).toEqual({ publicSpectate: true, publicReplays: false });
-      // El worker (bootstrap:false) NO crea la fila: sigue con su entorno.
+      // El worker (bootstrap:false) NO crea la fila: sin lectura válida, CERRADO (no su entorno).
       const worker = new RuntimeSettingsStore(h2.db, { defaults: { publicSpectate: false, publicReplays: true } });
       await worker.refresh();
       expect(await h2.db("app_runtime_settings").first()).toBeUndefined();
-      expect(worker.snapshot().source).toBe("environment");
+      expect(worker.snapshot().source).toBe("unavailable");
+      expect(worker.publicVisibility()).toEqual({ publicSpectate: false, publicReplays: false });
       // La API sí: adopta SU entorno.
       const api = new RuntimeSettingsStore(h2.db, { defaults: env, bootstrap: true });
       await api.refresh();

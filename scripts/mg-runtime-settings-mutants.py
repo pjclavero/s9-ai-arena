@@ -15,6 +15,9 @@ API = "apps/api/src/mg-runtime-settings.test.ts"
 RBAC = "apps/api/src/rbac-matrix.test.ts"
 UI = "apps/web/tests/mg-public-access-settings.test.tsx"
 SPAGE = "apps/web/tests/eq5b-streaming-page.test.tsx"
+FC = "apps/api/src/mg-runtime-failclosed.test.ts"
+WFC = "apps/tournament-worker/src/runtime-settings-failclosed.test.ts"
+LIVE = "apps/web/tests/ux255-live-bulk.test.tsx"
 
 # (nombre, fichero, ancla, sustituto, test, fragmento del test que debe fallar)
 M = [
@@ -86,6 +89,50 @@ M = [
      '  return d.broadcastAvailable || d.reason === "battle_not_started";',
      "  return true;",
      SPAGE, "MG · autorizada pero /broadcast no puede leerla"),
+    ("M18 sin ventana de staleness (último valor para siempre)", "apps/api/src/runtime-settings.ts",
+     "return this.lastGoodAt !== null && this.now() - this.lastGoodAt <= this.staleMs;",
+     "return this.lastGoodAt !== null;",
+     FC, "conserva el último valor sólo durante la ventana"),
+    ("M19 arranque sin lectura usa el entorno", "apps/api/src/runtime-settings.ts",
+     "    if (this.fixed) return true;",
+     "    if (this.fixed || this.lastGoodAt === null) return true;",
+     FC, "BD caída al arrancar con el ENTORNO en true"),
+    ("M20 el worker crea la fila con su entorno", "apps/tournament-worker/src/runtime-settings-wiring.ts",
+     "{ ...opts, bootstrap: false }",
+     "{ ...opts, bootstrap: true }",
+     WFC, "BD viva sin fila"),
+    ("M21 el gateway del worker lee los defaults, no el store", "apps/tournament-worker/src/runtime-settings-wiring.ts",
+     "publicSpectateEnabled: () => store.publicVisibility().publicSpectate",
+     "publicSpectateEnabled: () => store.defaults.publicSpectate",
+     WFC, "BD caída en caliente"),
+    ("M22 el worker ignora la caída en el arranque", "apps/tournament-worker/src/runtime-settings-wiring.ts",
+     "  return { store, publicSpectateEnabled: () => store.publicVisibility().publicSpectate };",
+     "  return { store, publicSpectateEnabled: () => store.snapshot().publicSpectate || process.env.S9_PUBLIC_SPECTATE_ENABLED === 'true' };",
+     WFC, "BD caída al arrancar"),
+    ("M23 torneo ignora los bots no públicos", "apps/api/src/broadcast-effective.ts",
+     "  const botsBlocked = total > showable;",
+     "  const botsBlocked = false;",
+     FC, "sin broadcast y con un bot privado"),
+    ("M24 torneo ignora el estado cancelado", "apps/api/src/broadcast-effective.ts",
+     '  if (t.state === "cancelled") return out(false, "target_not_available");',
+     "",
+     FC, "cancelado"),
+    ("M25 estado global sin replays", "apps/api/src/routes/runtime-settings.ts",
+     "      publicReplaysAvailable: s.publicReplays,",
+     "      publicReplaysAvailable: true,",
+     FC, "estado global de la admin"),
+    ("M26 fallback de battleRoutes abierto", "apps/api/src/routes/battles.ts",
+     "flagSource(publicSpectateEnabled, () => false)",
+     "flagSource(publicSpectateEnabled, () => true)",
+     FC, "battleRoutes sin getter"),
+    ("M27 fallback del gateway abierto", "apps/api/src/spectate/gateway.ts",
+     "opts.publicSpectateEnabled ?? false",
+     "opts.publicSpectateEnabled ?? true",
+     FC, "SpectateGateway sin opción"),
+    ("M28 UI ignora el espectador apagado", "apps/web/src/pages/BattleDetailPage.tsx",
+     "return !!t && t.broadcastable && t.broadcastAvailable === false && t.reason !== \"battle_not_started\";",
+     "return false;",
+     LIVE, "espectador público APAGADO"),
 ]
 
 
