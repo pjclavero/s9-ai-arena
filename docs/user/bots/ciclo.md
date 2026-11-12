@@ -65,7 +65,7 @@ Es la ficha de tu batalla. Guárdate en `on_welcome` lo que vayas a necesitar:
 | `battleId`, `selfId`, `team` | Identificador de la batalla, el de **tu vehículo** (`v_1`…; ids públicos de tu partida, no los internos del motor `veh_N`: cambio incompatible de la OLA 2, ver [Radio](radio.md)) y tu bando (`red`, `blue`…). |
 | `teammates` | Ids de tus compañeros de equipo (no dice dónde están). Vacío si juegas solo. |
 | `timing` | `tickHz`, `decisionEveryNTicks`, `decisionDeadlineMs`, `maxConsecutiveTimeouts`. |
-| `rules` | `mode` (`deathmatch`, `team_deathmatch`, `capture_the_flag`, `zone_control`), `rulesetId`, `budgetCredits`, `timeLimitTicks`, `scoreToWin`, `friendlyFire`, `respawn` (`enabled`, `delayTicks`, `maxRespawns`), `sharedTeamVision` y los límites de `radio`. Los opcionales pueden faltar. |
+| `rules` | `mode` (`deathmatch`, `team_deathmatch`, `capture_the_flag`, `zone_control`), `rulesetId`, `budgetCredits`, `timeLimitTicks`, `scoreToWin`, `friendlyFire`, `respawn` (`enabled`, `delayTicks`, `maxRespawns`, `rearmPolicy`: con `all_alive_participants`, cada vez que reaparece un vehículo tú también vuelves a tu munición máxima si estás vivo), `sharedTeamVision` y los límites de `radio`. Los opcionales pueden faltar. |
 | `vehicle` | **Tu loadout ya resuelto**: `chassis` (`hullHp`, `radiusM`), `modules` (cada uno con su `slot`, `moduleId`, `category` y `specs` con sus prestaciones), `massKg` y `energy` (`capacityEU`, `generationEUs`). |
 | `map` | `mapId`, `mapVersion`, `widthM` y `heightM` (el ancho y el largo), y las listas `spawns` y `bases` (cada elemento con `team` y `position`). **No** trae los muros ni las cajas: para esquivarlos tienes que usar el lidar. |
 | `versions` | Versiones del motor, las reglas, el catálogo y el protocolo. |

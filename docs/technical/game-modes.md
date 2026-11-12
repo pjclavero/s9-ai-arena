@@ -36,7 +36,7 @@ Ruleset base que heredan todos (`packages/game-rules/index.ts:124-133`):
 | `timeLimitTicks` | 9000 (5 min a 30 Hz) | Sí (fin por tiempo) |
 | `scoreToWin` | 3 | Sí (salvo LMS) |
 | `friendlyFire` | false | Sí (proyectiles, explosiones, minas) |
-| `respawn` | `{enabled:true, delayTicks:150}` | Sí (paso 7 del bucle) |
+| `respawn` | `{enabled:true, delayTicks:150, rearmPolicy:"all_alive_participants"}` | Sí (paso 7 del bucle; ver «Rearme al reaparecer») |
 | `maxConsecutiveTimeouts` | 20 | Sí (descalifica) |
 | `budgetCredits` | 1000 | Lo valida el validador de loadout. El motor sólo lo propaga |
 | `sharedTeamVision` | false | **No lo aplica la simulación**. Sólo se pasa al protocolo de bots (`protocol-server.ts:444`) |
@@ -49,6 +49,23 @@ Ganador por defecto (`BaseMode.winner`):
 1. Un equipo alcanza `scoreToWin`.
 2. Se agota el tiempo: gana la mayor puntuación, con empate si hay igualdad.
 3. Sin respawn y con un solo equipo vivo, gana ese equipo; si no queda nadie vivo, empate.
+
+## Rearme al reaparecer (`RESPAWN_REARM_POLICY`, OLA2-G3)
+
+Decisión del usuario (2026-11-12): una batalla válida con respawn no debe quedar estancada porque los supervivientes agoten su munición de forma irreversible. La munición es por vehículo (rondas de los módulos `ammo`, cargas de los módulos `mine`) y no hay otro reabastecimiento en la arena. La regla es un DATO del ruleset, no un `if` por modo:
+
+| `respawn.rearmPolicy` | Qué se rearma cuando un vehículo reaparece |
+|---|---|
+| `self` | Sólo el que reaparece (comportamiento anterior a G3). Es también el valor efectivo si el campo falta o si no hay respawn. |
+| `all_alive_participants` | El que reaparece y TODOS los vehículos vivos y no descalificados, de cualquier bando. **Valor por defecto** de todos los rulesets del catálogo con respawn y de `engineRulesetFor` (presets y personalizado con respawn limitado o ilimitado). |
+
+- **Tipos y validación:** `RespawnRearmPolicy`, `RESPAWN_REARM_POLICIES`, `DEFAULT_RESPAWN_REARM_POLICY`, `respawnRearmPolicyOf()` y `respawnRearmPolicyProblems()` en `packages/game-rules/index.ts`. `modeMapIncompatibilities` (motor) rechaza un valor desconocido y la política declarada con `respawn.enabled: false`: la batalla no se crea.
+- **No la elige el jugador:** el personalizado prohíbe `rearmPolicy` (`CUSTOM_FORBIDDEN_FIELDS`, error `forbidden_field`), igual que el resto de reglas de munición. Por eso NO está en `RulesParams`: la fija `engineRulesetFor` y viaja en la copia inmutable (`engineRuleset`).
+- **Semántica:** rearmar = munición al MÁXIMO de catálogo (`m.ammo = rounds`, `m.charges = charges`), asignación y no suma: idempotente, nunca por encima del máximo. No repara módulos, no recarga energía ni reinicia cooldowns.
+- **Orden dentro del tick:** PASO 5 (combate) → PASO 6 (reglas del modo, puntuación y fin) → PASO 7 (reapariciones de todos los vehículos cuyo `respawnAtTick` vence, en el orden de `this.vehicles`) → **rearme** (una sola pasada si en el PASO 7 reapareció al menos uno, aunque sean varios) → PASO 8 (snapshot y hash). Un vehículo que muere en el PASO 5 de ese mismo tick no está vivo y no se rearma; una batalla que el PASO 6 da por terminada no llega al PASO 7.
+- **Determinismo y replay:** el rearme cambia la munición de los vehículos, que entra en el componente `vehicles` del `stateHash`. La política viaja en la cabecera del replay (`header.ruleset.respawn.rearmPolicy`), así que `verify()` la reproduce: quitarla de la cabecera hace divergir la verificación (test `respawn-rearm.test.ts`). No se emite evento: la munición es privada (D-B1), y no hay evento público nuevo.
+- **Bots:** el WELCOME envía `rules.respawn` tal cual, así que el bot recibe `rearmPolicy` (añadido a `welcome.schema.json` y a los tipos generados del SDK de JavaScript).
+- **Sin respawn** la munición es finita. Si se agota, la batalla sigue hasta `timeLimitTicks` y se resuelve con el desempate del modo (ver más abajo el diagnóstico de `tdm_4v4_norespawn`).
 
 ## Inventario de modos
 

@@ -15,7 +15,13 @@
  *    de forma determinista y la copia guarda AMBAS.
  */
 import { BUDGET_CREDITS_MAX, BUDGET_CREDITS_MIN, BUDGET_CREDITS_MVP, TICK_HZ } from "./constants.js";
-import { OVERTIME_TECHNICAL_LIMIT_TICKS, loadRuleset, type Ruleset, type TimeoutTiebreakCriterion } from "./index.js";
+import {
+  DEFAULT_RESPAWN_REARM_POLICY,
+  OVERTIME_TECHNICAL_LIMIT_TICKS,
+  loadRuleset,
+  type Ruleset,
+  type TimeoutTiebreakCriterion,
+} from "./index.js";
 
 /** Versión del contrato de la copia. Se sube si cambia su forma. 2 = motor 0.4.0 (ADR-022). */
 export const BATTLE_RULES_SCHEMA = 2;
@@ -443,6 +449,8 @@ export const CUSTOM_FORBIDDEN_FIELDS: readonly string[] = [
   "sensorRange",
   "infiniteAmmo",
   "ammo",
+  // OLA2-G3 · el rearme al reaparecer es regla fija del respawn (munición), no del jugador.
+  "rearmPolicy",
   "physics",
   "mass",
   "energy",
@@ -799,6 +807,8 @@ export function engineRulesetFor(p: RulesParams, rulesetId: string): Ruleset {
           enabled: true,
           delayTicks: (p.respawn.delaySeconds ?? 5) * TICK_HZ,
           ...(p.respawn.mode === "limited" ? { maxRespawns: p.respawn.maxRespawns ?? 0 } : {}),
+          // OLA2-G3 · regla explícita del respawn (no la elige el jugador: es munición).
+          rearmPolicy: DEFAULT_RESPAWN_REARM_POLICY,
         };
   const isCtf = p.game === "capture_the_flag";
   return loadRuleset(baseEngineRulesetId(p), {

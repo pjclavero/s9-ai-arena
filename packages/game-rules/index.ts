@@ -83,6 +83,42 @@ export const TIMEOUT_TIEBREAK_CRITERIA: readonly TimeoutTiebreakCriterion[] = [
   "hull",
 ];
 
+/**
+ * OLA2-G3 · `RESPAWN_REARM_POLICY`: regla EXPLÍCITA de rearme al reaparecer (decisión del
+ * usuario, 2026-11-12). La munición es por vehículo (rondas de los módulos `ammo` y cargas
+ * de los módulos `mine`) y no hay otro reabastecimiento en la arena:
+ *  - `self`: sólo el vehículo que reaparece recupera su munición (comportamiento anterior);
+ *  - `all_alive_participants`: cuando uno o más vehículos reaparecen en un tick, al final del
+ *    PASO 7 (respawn) y antes del PASO 8 (hash), TODOS los participantes vivos y no
+ *    descalificados (incluidos los que acaban de reaparecer) vuelven a su munición MÁXIMA de
+ *    catálogo. Es un relleno AL MÁXIMO, no una suma: idempotente, nunca por encima del máximo,
+ *    y se aplica una sola vez por tick aunque reaparezcan varios.
+ * El rearme NO repara módulos, no recarga energía ni toca cooldowns: sólo munición.
+ * Existe para que una batalla válida con respawn no quede estancada por agotamiento
+ * irreversible de munición de los supervivientes. Sin respawn no aplica: la munición es finita.
+ */
+export type RespawnRearmPolicy = "self" | "all_alive_participants";
+export const RESPAWN_REARM_POLICIES: readonly RespawnRearmPolicy[] = ["self", "all_alive_participants"];
+/** Política de los rulesets CON respawn del catálogo y de las reglas de batalla (presets y personalizado). */
+export const DEFAULT_RESPAWN_REARM_POLICY: RespawnRearmPolicy = "all_alive_participants";
+
+/** Política efectiva de un ruleset: sin respawn o sin declarar ⇒ `self`. */
+export function respawnRearmPolicyOf(r: Pick<Ruleset, "respawn">): RespawnRearmPolicy {
+  if (!r.respawn.enabled) return "self";
+  return r.respawn.rearmPolicy ?? "self";
+}
+
+/** Validación ESTRICTA de `respawn.rearmPolicy`. Lista vacía = válido. */
+export function respawnRearmPolicyProblems(r: Pick<Ruleset, "respawn">): string[] {
+  const p = (r.respawn as { rearmPolicy?: unknown }).rearmPolicy;
+  if (p === undefined) return [];
+  if (typeof p !== "string" || !(RESPAWN_REARM_POLICIES as readonly string[]).includes(p)) {
+    return [`respawn.rearmPolicy desconocida: ${JSON.stringify(p)} (admitidas: ${RESPAWN_REARM_POLICIES.join(", ")})`];
+  }
+  if (!r.respawn.enabled) return ["respawn.rearmPolicy sólo se admite con respawn activado"];
+  return [];
+}
+
 export interface Ruleset {
   rulesetId: string;
   mode: GameModeId;
@@ -97,7 +133,12 @@ export interface Ruleset {
    * terminar por eliminación aunque haya respawn. Ausente = respawn ilimitado,
    * exactamente el comportamiento de 0.3.0 (ningún ruleset del catálogo lo declara).
    */
-  respawn: { enabled: boolean; delayTicks: number; maxRespawns?: number };
+  /**
+   * `rearmPolicy` (OLA2-G3, `RESPAWN_REARM_POLICY`) · qué se rearma cuando un vehículo
+   * reaparece. Ver `RespawnRearmPolicy`. Ausente = `"self"` (comportamiento anterior a
+   * G3: sólo el que reaparece). Sólo se admite con `enabled: true`.
+   */
+  respawn: { enabled: boolean; delayTicks: number; maxRespawns?: number; rearmPolicy?: RespawnRearmPolicy };
   /**
    * R-RULES (ADR-021) · Desempate al agotarse el tiempo: criterios en orden; si todos
    * empatan, `draw`. Ausente = el desempate de 0.3.0 (más puntos; si no, empate).
@@ -169,7 +210,7 @@ const base: Omit<Ruleset, "rulesetId" | "mode"> = {
   timeLimitTicks: 9000, // 5 min a 30 Hz
   scoreToWin: 3,
   friendlyFire: false,
-  respawn: { enabled: true, delayTicks: 150 },
+  respawn: { enabled: true, delayTicks: 150, rearmPolicy: DEFAULT_RESPAWN_REARM_POLICY },
   sharedTeamVision: false,
   disconnectGraceTicks: 60,
   maxConsecutiveTimeouts: 20,

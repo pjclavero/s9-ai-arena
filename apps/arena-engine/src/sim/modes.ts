@@ -9,7 +9,10 @@ import {
   type Ruleset,
   type TimeoutTiebreakCriterion,
 } from "../../../../packages/game-rules/index.js";
-import { OVERTIME_TECHNICAL_LIMIT_TICKS } from "../../../../packages/game-rules/index.js";
+import {
+  OVERTIME_TECHNICAL_LIMIT_TICKS,
+  respawnRearmPolicyProblems,
+} from "../../../../packages/game-rules/index.js";
 import type { Vec2 } from "./physics.js";
 
 /**
@@ -995,6 +998,8 @@ export function modeMapIncompatibilities(ruleset: Ruleset, teams: string[], map:
   if (meta.respawn === "forbidden" && ruleset.respawn.enabled) {
     errs.push(`el modo ${meta.id} exige respawn DESACTIVADO en el ruleset`);
   }
+  // OLA2-G3 · RESPAWN_REARM_POLICY: valor conocido y sólo con respawn (falla cerrado).
+  errs.push(...respawnRearmPolicyProblems(ruleset));
 
   if (meta.requires.flagsAndBases) {
     for (const t of teams) {
