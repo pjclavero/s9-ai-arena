@@ -397,6 +397,7 @@ describe("engineRulesetFor", () => {
       enabled: true,
       delayTicks: 150,
       maxRespawns: 2,
+      rearmPolicy: "all_alive_participants", // OLA2-G3
     });
     expect(
       engineRulesetFor(
@@ -408,7 +409,7 @@ describe("engineRulesetFor", () => {
         },
         "x",
       ).respawn,
-    ).toEqual({ enabled: true, delayTicks: 210 });
+    ).toEqual({ enabled: true, delayTicks: 210, rearmPolicy: "all_alive_participants" });
     expect(
       engineRulesetFor({ ...base, respawn: { mode: "none", maxRespawns: null, delaySeconds: null } }, "x").respawn,
     ).toEqual({ enabled: false, delayTicks: 0 });

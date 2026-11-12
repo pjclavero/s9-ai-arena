@@ -58,7 +58,12 @@ describe("vidas = respawns + 1 (exacto)", () => {
     });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.engineRuleset.respawn).toEqual({ enabled: true, delayTicks: 30, maxRespawns: 2 });
+    expect(r.engineRuleset.respawn).toEqual({
+      enabled: true,
+      delayTicks: 30,
+      maxRespawns: 2,
+      rearmPolicy: "all_alive_participants", // OLA2-G3
+    });
     const { b, deaths } = run(r.engineRuleset, r.engineRuleset.timeLimitTicks);
     const res = b.getResult()!;
     expect(res.winner).toBe("red");
@@ -78,7 +83,8 @@ describe("vidas = respawns + 1 (exacto)", () => {
     const ctrl = run(
       loadRuleset("tdm_mvp@1", {
         ...r.engineRuleset,
-        respawn: { enabled: true, delayTicks: 30 },
+        // OLA2-G3 · misma política de rearme que la batalla limitada (misma simulación).
+        respawn: { enabled: true, delayTicks: 30, rearmPolicy: r.engineRuleset.respawn.rearmPolicy },
         scoreToWin: Number.MAX_SAFE_INTEGER,
         timeLimitTicks: res.ticks + 600,
       }),

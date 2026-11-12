@@ -152,7 +152,7 @@ describe("CTF base ctf@1 (decisión del operador)", () => {
       expect(e.mode).toBe("capture_the_flag");
       expect(e.scoreToWin).toBe(3);
       expect(e.timeLimitTicks).toBe(5 * 60 * 30);
-      expect(e.respawn).toEqual({ enabled: true, delayTicks: 150 });
+      expect(e.respawn).toEqual({ enabled: true, delayTicks: 150, rearmPolicy: "all_alive_participants" });
       expect(e.ctf).toEqual({ requireOwnFlagAtBase: true, flagReturnTicks: 300 });
       expect(e.friendlyFire).toBe(false);
       // Sin límite competitivo (decisión del operador): sólo el tipo de prórroga.
