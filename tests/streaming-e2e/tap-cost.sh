@@ -189,8 +189,11 @@ if [ "$MODE" = on ]; then
     const hits = [];
     const scan = (name, buf) => { const t = buf.toString("latin1").toLowerCase(); for (const g of grams) if (t.includes(g)) { hits.push(name); break; } };
     for (const n of fs.readdirSync(dir)) { scan("nombre:" + n, Buffer.from(n)); scan(n, fs.readFileSync(path.join(dir, n))); }
-    console.log(JSON.stringify({ secretAudit: hits.length ? "FUGA" : "LIMPIO", hits, scanned: fs.readdirSync(dir) }));
-  ' "$STATE/stream_key" "$E" | tee "$E/secret-audit.json"
+    // Control positivo: el detector SÍ encuentra la clave en el propio fichero de la clave.
+    const before = hits.length; scan("control", fs.readFileSync(keyFile)); const detectorOk = hits.length === before + 1; hits.pop();
+    console.log(JSON.stringify({ secretAudit: hits.length ? "FUGA" : "LIMPIO", detectorOk, hits, scanned: fs.readdirSync(dir) }));
+  ' "$STATE/stream_key" "$E" >"$OUT/secret-audit-$RUN.json"
+  cp "$OUT/secret-audit-$RUN.json" "$E/secret-audit.json"; cat "$E/secret-audit.json"
   node -e 'const b=require("fs").readFileSync(process.argv[1]);console.log("jpg_bytes="+b.length+" soi="+(b[0]===0xff&&b[1]===0xd8))' "$E/latest.jpg"
 fi
 echo TAP_COST_DONE
