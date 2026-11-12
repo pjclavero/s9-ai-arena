@@ -8,7 +8,7 @@ contra el código de `main` o contra el runtime medido (cada entrada dice cuál)
 nunca se implementaron van en [pending-features.md](pending-features.md). Los síntomas que ve el
 usuario o el operador van en [known-issues.md](known-issues.md).
 
-- **MAIN_SHA auditado:** `e3bf2fa83650559267ef269994c667fabfb29e46` (origin/main, 2026-11-02). Las 31 entradas con una línea «Auditoría 2026-11-02» se han vuelto a comprobar contra ese commit; en las demás, el campo «Evidencia» sigue siendo el de la medición original (auditoría de 2026-10-15 sobre `27f70bb`, o la de su fecha de detección) y no se ha vuelto a medir.
+- **MAIN_SHA auditado:** `e3bf2fa83650559267ef269994c667fabfb29e46` (auditoría completa 2026-11-02). **Actualización incremental 2026-11-12 contra `f590947`:** TD-066 se cierra por los cambios de streaming y la prueba real; TD-023 se actualiza por MG/#269. El resto conserva la evidencia de su última auditoría y no se presenta como re-auditado.
 - **LAST VERIFIED:** 2026-11-02 (auditoría documental DOC-B contra `e3bf2fa`). Antes: 2026-10-21 (RC2), 2026-10-18 (cierre funcional) y 2026-10-15 (auditoría original).
 - **Origen:** auditoría del 2026-10-15 ([resumen público](../audits/2026-10-15/README.md),
   [delta](../audits/2026-10-15/AUDIT-DELTA-2026-10.md)). Las excepciones son TD-026, TD-028,
@@ -95,7 +95,7 @@ Estados posibles:
 | [TD-062](#td-062) | El proxy ejecuta código de un árbol no sólo de root | P1 | Seguridad / operación | CERRADA en `main` (PR #167); migración de producción a cargo del operador |
 | [TD-063](#td-063) | Otros servicios del host en todas las interfaces | P3 | Seguridad / red | ABIERTA (sin medir) |
 | [TD-065](#td-065) | `status=finished` no garantiza stats materializados | P3 | API / contrato de batallas | CERRADA (PR #178) |
-| [TD-066](#td-066) | Streaming: clave en argv de FFmpeg, sin retención de MP4 ni alerta; YouTube sin probar | P3 | Streaming / operación | ABIERTA |
+| [TD-066](#td-066) | Streaming: custodia de clave, retención, alerta y prueba real | P3 | Streaming / operación | CERRADA (2026-11-12) |
 | [TD-067](#td-067) | `runCursorQuery` atribuye al cursor errores de conversión que vienen de los filtros | P3 | API | ABIERTA |
 | [TD-068](#td-068) | `listBots` puede devolver páginas más cortas que `limit` | P3 | API | ABIERTA |
 | [TD-069](#td-069) | El comparador del desempate por enfrentamientos directos no es transitivo | P3 | Torneos | ABIERTA |
