@@ -77,7 +77,15 @@ info:
   # (#255 R1, mismo 0.17.0 aún no publicado: `expectBotIds` → 409 team_bots_changed si
   # el conjunto de bots cambió tras la previsualización; outcome `retired` y
   # summary.retired: los bots retirados del dueño no se tocan.)
-  version: 0.17.0
+  # 0.18.0 · MG (aditivo, admin): getPublicAccessSettings / updatePublicAccessSettings
+  # (GET/PATCH /admin/settings/public-access): los flags de espectador y replays públicos
+  # pasan a ser ajustes de RUNTIME persistidos (el entorno es sólo bootstrap y fallback),
+  # con booleanos estrictos y auditoría. StreamingTarget y StreamingDestination ganan
+  # `broadcastAvailable`, `reason`, `publicSpectateEffective` y `publicReplaysEffective`
+  # (estado EFECTIVO: lo que /broadcast anónima puede leer de verdad con la política
+  # única); `publicBroadcastable` deja de ser alias de `broadcastable` y vale lo mismo
+  # que `broadcastAvailable`.
+  version: 0.18.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -545,6 +553,9 @@ paths:
         '200': { description: Actualizado, content: { application/json: { schema: { $ref: '#/components/schemas/Bot' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  # OLA 2 · EQUIPMENT_PRIVATE: la extensión GET /bots/{botId}/loadouts (listBotLoadouts, fuera del
+  # contrato) sólo responde al dueño y al staff; para cualquier otro es 404 uniforme, también
+  # con un bot de visibilidad pública.
   /bots/{botId}/loadouts:
     post:
       tags: [bots]
@@ -1282,7 +1293,7 @@ paths:
                 additionalProperties: true
                 required: [projection, battleId, snapshots, events, result]
                 properties:
-                  projection: { type: string, enum: [s9.replay.public-competition.v1] }
+                  projection: { type: string, enum: [s9.replay.public-competition.v2] }
                   battleId: { type: string }
                   snapshots: { type: array, items: { type: object, additionalProperties: true } }
                   events: { type: array, items: { type: object, additionalProperties: true } }
@@ -1324,7 +1335,7 @@ paths:
       responses:
         '202': { description: Encolada (la ejecuta el tournament-worker con el código real de cada bot), content: { application/json: { schema: { $ref: '#/components/schemas/Battle' } } } }
         '400': { description: 'Modo/participantes/team/ruleset/mapa inválidos o bot repetido. 4v4 · team_composition_invalid (un modo de equipo sin exactamente 2 bandos) · team_too_large (más de 4 bots por bando). R-RULES · rules_invalid (detalle errors[] por campo: tipo, rango, campo desconocido o combinación incompatible) · rules_team_size (el preset/personalizado NvN exige 2 bandos de exactamente N).', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
-        '422': { description: 'R-RULES · composition_invalid · algún bot o bando supera los topes de créditos o masa de las reglas (detalle composition, informe por bando y bot calculado con los loadouts REALES).', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { description: 'R-RULES · composition_invalid · algún bot o bando supera los topes de créditos o masa de las reglas (detalle composition, informe por bando y bot calculado con los loadouts REALES; mismas reglas de privacidad que rules-check: cifras exactas sólo de bots propios o para el staff, sin cifras de bots ajenos ni totales de bandos mixtos).', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '404': { description: 'bot_not_found · un bot inexistente o privado ajeno (TD-005); indistinguibles a propósito', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '409': { content: { application/json: { schema: { $ref: '#/components/schemas/NotEligibleError' } } }, description: 'bot_not_published · bot_version_not_eligible (ELIG: publicada pero su loadout histórico no cumple hoy la validación; `notEligible` con el motivo) · ruleset_mode_mismatch · map_mode_unsupported (checkBattleContent, misma regla que la web) · 4v4 · deathmatch_shared_team (deathmatch con bandos compartidos: usa team_deathmatch) · R-RULES · rules_mode_mismatch (el preset juega otro modo) · loadout_unavailable / catalog_unavailable (con topes de composición no se puede calcular coste o masa) · ADR-022 map_team_mismatch (en CTF un bando no tiene base y bandera en el mapa)' }
 
@@ -1336,6 +1347,10 @@ paths:
         R-RULES (FASE 11) · Comprueba reglas y composición SIN crear la batalla: mismas validaciones que
         POST /battles (contenido, participantes, visibilidad TD-005, versión publicada, reglas y topes de
         créditos/masa con los loadouts REALES). Ayuda para la UI; la autoridad sigue siendo POST /battles.
+        EQUIPMENT_PRIVATE (OLA 2): `composition` lleva `costCredits`/`massKg` sólo de los bots PROPIOS del
+        solicitante (staff, rol >= moderator: de todos); de un bot ajeno sólo `ok` y `figuresHidden:true`.
+        Un bando con algún bot ajeno no lleva `totalCredits`/`totalMassKg` (`figuresHidden:true`), y las
+        `violations` de lo ajeno llevan `limit` pero no `actual`/`excess` (ni cifras en el mensaje).
         Un bot no visible da 404 como en la creación. Cache-Control: private, no-store.
       x-min-role: user
       requestBody:
@@ -1406,7 +1421,16 @@ paths:
         batalla (misma política que getBattle); sin sesión, además, exige S9_PUBLIC_SPECTATE_ENABLED.
       x-min-role: visitor
       security: []
-      parameters: [{ $ref: '#/components/parameters/BattleId' }]
+      parameters:
+        - { $ref: '#/components/parameters/BattleId' }
+        - name: audience
+          in: query
+          description: |
+            OLA 2 · audiencia del canal (va FIRMADA en el ticket). `broadcast` para la página de
+            emisión; por defecto `public_live`. Los roles de staff reciben siempre `staff` salvo
+            que pidan `broadcast`. No concede nada: todas las audiencias públicas reciben la misma
+            proyección, separada por mapper de ids e historial.
+          schema: { type: string, enum: [public_live, broadcast] }
       responses:
         '201':
           description: Ticket
@@ -1983,6 +2007,39 @@ paths:
           content:
             application/json:
               schema: { type: array, items: { $ref: '#/components/schemas/AuditEntry' } }
+
+  # ------------------------------------------- MG · ajustes de runtime (admin)
+  /admin/settings/public-access:
+    get:
+      tags: [admin]
+      operationId: getPublicAccessSettings
+      summary: >-
+        MG · Acceso público / Broadcast: valor VIGENTE del espectador público y de los
+        replays públicos (persistidos; el entorno es sólo el bootstrap y el fallback), su
+        origen, el último cambio, la latencia máxima de propagación a los demás procesos y
+        el estado efectivo global con su motivo. Sin secretos.
+      x-min-role: admin
+      responses:
+        '200': { description: Ajustes, content: { application/json: { schema: { $ref: '#/components/schemas/PublicAccessSettings' } } } }
+    patch:
+      tags: [admin]
+      operationId: updatePublicAccessSettings
+      summary: >-
+        MG · Cambia en caliente (sin recrear servicios) el espectador público y/o los
+        replays públicos. Booleanos ESTRICTOS (ni cadenas, ni números, ni null; claves
+        desconocidas ⇒ 400). Cada cambio se audita en audit_log
+        (`settings.public_access.update`: actor, instante, valor anterior y nuevo). El
+        proceso que lo guarda lo aplica al instante; los demás (otras réplicas de la API y
+        el tournament-worker) en ≤ `propagationMaxMs`.
+      x-min-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublicAccessSettingsPatch' }
+      responses:
+        '200': { description: Guardado, content: { application/json: { schema: { $ref: '#/components/schemas/PublicAccessSettings' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
 
   # --------------------------------------------------------------- SYSTEM (R8)
   /system/status:
@@ -2682,8 +2739,8 @@ components:
               shotsFired: { type: integer }
               shotsHit: { type: integer }
               accuracy: { type: number, nullable: true }
-              damageDealt: { type: number }
-              damageTaken: { type: number }
+              damageDealt: { type: number, description: 'HP absolutos: sólo dueño y staff (R2/EQUIPMENT_PRIVATE; reconstruyen el casco). Ausente para el resto.' }
+              damageTaken: { type: number, description: 'HP absolutos: sólo dueño y staff. Ausente para el resto.' }
               kills: { type: integer, description: 'Bajas de ENEMIGOS causadas por este bot (todas, también con respawn).' }
               teamKills: { type: integer, description: '4v4-STATS · Bajas de compañeros o propias (sólo con fuego amigo).' }
               deaths: { type: integer, description: '4v4-STATS · Veces que fue destruido (con respawn puede ser > 1). Ausente en stats anteriores a 4v4-STATS.' }
@@ -2784,8 +2841,8 @@ components:
         kills: { type: integer }
         teamKills: { type: integer }
         deaths: { type: integer }
-        damageDealt: { type: number }
-        damageTaken: { type: number }
+        damageDealt: { type: number, description: 'Ausente en la API pública (daño absoluto privado, R2); no se publica en perTeam para ningún lector.' }
+        damageTaken: { type: number, description: 'Ausente en la API pública (idem damageDealt).' }
         shotsFired: { type: integer }
         shotsHit: { type: integer }
         flagCaptures: { type: integer }
@@ -3058,7 +3115,11 @@ components:
         broadcastable: { type: boolean, description: 'VISIBILIDAD · autorizado para retransmisión (misma regla que la lectura pública de /broadcast). No exige bots públicos.' }
         broadcastBlockedReason: { type: string, nullable: true, enum: [battle_not_public, tournament_not_broadcastable, null], description: 'battle_not_public · batalla suelta con bots no públicos (sólo un torneo con broadcast autoriza mostrarlos). tournament_not_broadcastable · batalla de un torneo sin broadcast con bots no públicos.' }
         tournamentBroadcast: { type: boolean, nullable: true }
-        publicBroadcastable: { type: boolean, deprecated: true, description: 'Alias de broadcastable.' }
+        publicBroadcastable: { type: boolean, deprecated: true, description: 'MG · igual que broadcastAvailable (antes alias de broadcastable).' }
+        broadcastAvailable: { type: boolean, description: 'MG · /broadcast (anónima) puede mostrar el destino AHORA: misma política (whereBattleReadable para un anónimo) con los ajustes públicos vigentes, el estado de la batalla, la visibilidad de los bots y del torneo, y un streamer configurado.' }
+        reason: { $ref: '#/components/schemas/BroadcastUnavailableReason' }
+        publicSpectateEffective: { type: boolean, description: 'MG · un anónimo puede ver este destino en directo ahora.' }
+        publicReplaysEffective: { type: boolean, description: 'MG · un anónimo puede leer esta batalla terminada ahora.' }
         delaySeconds: { type: number }
         delaySource: { type: string, enum: [snapshot, ruleset, final_visible, none] }
 
@@ -3077,6 +3138,73 @@ components:
         broadcastable: { type: boolean }
         broadcastBlockedReason: { type: string, nullable: true, enum: [battle_not_public, tournament_not_broadcastable, null] }
         tournamentBroadcast: { type: boolean, nullable: true }
+        broadcastAvailable: { type: boolean }
+        reason: { $ref: '#/components/schemas/BroadcastUnavailableReason' }
+        publicSpectateEffective: { type: boolean }
+        publicReplaysEffective: { type: boolean }
+
+    BroadcastUnavailableReason:
+      type: string
+      nullable: true
+      description: >-
+        MG · motivo REAL por el que /broadcast no puede mostrar el destino (null si puede).
+        public_spectate_disabled · espectador público desactivado; public_replays_disabled ·
+        replays públicos desactivados (batalla o torneo terminado); battle_not_public /
+        tournament_not_broadcastable · la batalla no es retransmisible por la visibilidad
+        de sus bots o de su torneo; battle_not_started · programada (se verá al empezar);
+        battle_not_available · fallida o revertida; target_not_available · torneo
+        cancelado; streaming_not_configured · sin streamer; other · otro.
+      enum:
+        - public_spectate_disabled
+        - public_replays_disabled
+        - battle_not_public
+        - tournament_not_broadcastable
+        - battle_not_started
+        - battle_not_available
+        - target_not_available
+        - streaming_not_configured
+        - other
+        - null
+
+    PublicAccessSettings:
+      type: object
+      properties:
+        publicSpectateEnabled: { type: boolean }
+        publicReplaysEnabled: { type: boolean }
+        source: { type: string, enum: [database, environment, unavailable], description: 'De dónde sale el valor vigente en el proceso que responde.' }
+        updatedAt: { type: string, format: date-time, nullable: true }
+        updatedBy: { type: string, format: uuid, nullable: true }
+        propagationMaxMs: { type: integer, description: 'Latencia máxima de un cambio en los demás procesos (intervalo de relectura).' }
+        defaults:
+          type: object
+          description: 'Valores del entorno de este proceso (bootstrap y fallback).'
+          properties:
+            publicSpectateEnabled: { type: boolean }
+            publicReplaysEnabled: { type: boolean }
+        effective:
+          type: object
+          properties:
+            publicSpectate: { type: boolean }
+            publicReplays: { type: boolean }
+            broadcastLiveAvailable: { type: boolean, description: 'Requisitos GLOBALES para retransmitir una batalla en directo (espectador público y streamer). El detalle por destino lo da getStreamingTarget.' }
+            reason: { $ref: '#/components/schemas/BroadcastUnavailableReason' }
+            publicReplaysAvailable: { type: boolean, description: 'Replays públicos activos (estado global).' }
+            replaysReason: { $ref: '#/components/schemas/BroadcastUnavailableReason' }
+        changed: { type: boolean, description: 'Sólo en la respuesta del PATCH.' }
+        before:
+          type: object
+          description: 'Sólo en la respuesta del PATCH: valores anteriores.'
+          properties:
+            publicSpectateEnabled: { type: boolean }
+            publicReplaysEnabled: { type: boolean }
+
+    PublicAccessSettingsPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        publicSpectateEnabled: { type: boolean }
+        publicReplaysEnabled: { type: boolean }
 
     StreamingIngests:
       type: object
@@ -3123,10 +3251,10 @@ components:
           description: 'true si SMOKE_BOT_DIGEST está definido. NO se expone el valor.'
         publicSpectateEnabled:
           type: boolean
-          description: 'R11 · Lectura de S9_PUBLIC_SPECTATE_ENABLED: si es false, /public/battles/live responde enabled=false, battles=[].'
+          description: 'R11 · Valor VIGENTE del espectador público (ajuste de runtime, MG; S9_PUBLIC_SPECTATE_ENABLED es sólo el bootstrap): si es false, /public/battles/live responde enabled=false, battles=[].'
         publicReplaysEnabled:
           type: boolean
-          description: 'R11 · Lectura de S9_PUBLIC_REPLAYS_ENABLED: si es false, /public/replays responde enabled=false, items=[].'
+          description: 'R11 · Valor VIGENTE de los replays públicos (ajuste de runtime, MG; S9_PUBLIC_REPLAYS_ENABLED es sólo el bootstrap): si es false, /public/replays responde enabled=false, items=[].'
         battlesByStatus: { type: object, additionalProperties: { type: integer } }
         buildsByStatus: { type: object, additionalProperties: { type: integer } }
         botVersionsByState: { type: object, additionalProperties: { type: integer } }

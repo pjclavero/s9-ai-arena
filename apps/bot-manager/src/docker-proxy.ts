@@ -12,6 +12,24 @@
  *   POST /containers/{id}/stop     parar
  *   GET  /containers/{id}/json     inspeccionar
  *   GET  /containers/{id}/stats?stream=false   métricas puntuales (B10, issue #9)
+ *   DELETE /containers/{id}[?force=true]       borrar (OLA2-MF, sólo PROPIOS)
+ *   GET  /containers/json?all=1&filters=…      listar (OLA2-MF, sólo PROPIOS y
+ *                                              filtrados por una label `arena.*`)
+ *
+ * OLA2-MF · POR QUÉ SE AMPLÍA CON BORRAR Y LISTAR (y con qué límites):
+ *   - Sin borrado el proxy podía CREAR contenedores que nadie podía quitar: un
+ *     create cuyo start falla queda `Created` para siempre (AutoRemove sólo
+ *     actúa al terminar un contenedor que arrancó), y un contenedor sin
+ *     AutoRemove queda `Exited`. Es un agotamiento de recursos abierto por el
+ *     propio proxy. El borrado exige lo MISMO que stop: Id completo, inspección
+ *     previa y labels de propiedad de esta instancia. Un contenedor ajeno → 403.
+ *     Sólo admite `force` (true/1/false/0); `v`/`link` → 403.
+ *   - Sin listado no hay reconciliador: lo que deja una batalla tras una caída
+ *     del worker es invisible. El listado exige `filters` con al menos una label
+ *     `arena.*` (nunca un listado de TODO el host), el proxy AÑADE siempre sus
+ *     labels de propiedad al filtro y, además, filtra la respuesta (sólo
+ *     contenedores propios) y la reduce a Id, Labels `arena.*`, State y Created.
+ *     No expone nombres, imágenes, montajes, redes ni comandos.
  *
  * B10 · POR QUÉ SE AMPLÍA LA ALLOWLIST CON `stats` (y por qué no se amplía más):
  *   - Es el ÚNICO sitio donde la Engine expone la CPU consumida por el cgroup del
@@ -76,6 +94,7 @@
 
 import http from "node:http";
 import net from "node:net";
+import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -265,7 +284,9 @@ export type ProxyAction =
   | { kind: "start"; id: string }
   | { kind: "stop"; id: string; timeoutSeconds?: number }
   | { kind: "inspect"; id: string }
-  | { kind: "stats"; id: string };
+  | { kind: "stats"; id: string }
+  | { kind: "remove"; id: string; force: boolean }
+  | { kind: "list"; all: boolean; labels: string[] };
 
 export type ProxyDecision =
   | { ok: true; action: ProxyAction; forwardPath: string; forwardBody: string | undefined }
@@ -432,6 +453,63 @@ export function createBodyViolations(body: unknown, policy: ProxyPolicy = DEFAUL
   return [...new Set(v)];
 }
 
+/** OLA2-MF · filtro de label admitido en un listado: `arena.<clave>=<valor>`. */
+const LIST_LABEL_RE = /^arena\.[a-z0-9._-]{1,63}=[A-Za-z0-9_.:@-]{1,200}$/;
+
+/** Parsea el `filters` de un listado: sólo `{"label":[...]}` con labels `arena.*`. */
+function parseListFilters(raw: string | null): { ok: true; labels: string[] } | { ok: false; reason: string } {
+  if (raw === null) return { ok: false, reason: "listado sin `filters`: nunca se lista todo el host" };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false, reason: "`filters` no es JSON" };
+  }
+  if (!isPlainObject(parsed)) return { ok: false, reason: "`filters` debe ser un objeto" };
+  const keys = Object.keys(parsed);
+  if (keys.length !== 1 || keys[0] !== "label") return { ok: false, reason: "`filters` sólo admite la clave `label`" };
+  const labels = parsed.label;
+  if (!Array.isArray(labels) || labels.length === 0 || labels.length > 8)
+    return { ok: false, reason: "`filters.label` debe ser una lista de 1 a 8 labels" };
+  for (const l of labels) {
+    if (typeof l !== "string" || !LIST_LABEL_RE.test(l))
+      return { ok: false, reason: `filtro de label no admitido (se exige arena.<clave>=<valor>): ${String(l)}` };
+  }
+  return { ok: true, labels: labels as string[] };
+}
+
+/**
+ * OLA2-MF · reduce la respuesta de `GET /containers/json` de la Engine a los
+ * contenedores PROPIOS (labels de propiedad de esta instancia) y, de cada uno,
+ * a Id, Labels `arena.*`, State y Created. Defensa en profundidad: la Engine ya
+ * recibió el filtro de propiedad, pero el proxy no se fía de ello.
+ */
+export function sanitizeContainerList(body: string, policy: ProxyPolicy = DEFAULT_POLICY): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return "[]";
+  }
+  if (!Array.isArray(parsed)) return "[]";
+  const want = ownerLabels(policy);
+  const out: Record<string, unknown>[] = [];
+  for (const c of parsed) {
+    if (!isPlainObject(c) || typeof c.Id !== "string" || !FULL_CONTAINER_ID_RE.test(c.Id)) continue;
+    const labels = isPlainObject(c.Labels) ? c.Labels : {};
+    if (!Object.entries(want).every(([k, v]) => labels[k] === v)) continue;
+    const arena: Record<string, string> = {};
+    for (const [k, v] of Object.entries(labels)) if (k.startsWith("arena.") && typeof v === "string") arena[k] = v;
+    out.push({
+      Id: c.Id,
+      Labels: arena,
+      State: typeof c.State === "string" ? c.State : "unknown",
+      Created: typeof c.Created === "number" ? c.Created : 0,
+    });
+  }
+  return JSON.stringify(out);
+}
+
 /** Decide sobre una petición HTTP al proxy. Todo lo no allowlisted → 403. */
 export function evaluateProxyRequest(
   method: string,
@@ -478,6 +556,47 @@ export function evaluateProxyRequest(
       // de propiedad se IMPONEN aquí (van después: ganan siempre).
       forwardPath: `/containers/create${name ? `?name=${encodeURIComponent(name)}` : ""}`,
       forwardBody: JSON.stringify({ ...validated, Labels: { ...clientLabels, ...ownerLabels(policy) } }),
+    };
+  }
+
+  // OLA2-MF · GET /containers/json: listado ACOTADO (ver cabecera).
+  if (path === "/containers/json") {
+    if (m !== "GET") return deny(`método ${m} no permitido para el listado`);
+    if (body && body.trim() && body.trim() !== "{}") return deny("el listado no admite cuerpo");
+    for (const k of url.searchParams.keys())
+      if (k !== "all" && k !== "filters") return deny(`parámetro de listado no permitido: ${k}`);
+    const allRaw = url.searchParams.get("all");
+    if (allRaw !== null && !["0", "1", "true", "false"].includes(allRaw)) return deny(`all no válido: ${allRaw}`);
+    const f = parseListFilters(url.searchParams.get("filters"));
+    if (f.ok === false) return deny(f.reason);
+    const all = allRaw === "1" || allRaw === "true";
+    const owner = Object.entries(ownerLabels(policy)).map(([k, v]) => `${k}=${v}`);
+    const filters = JSON.stringify({ label: [...owner, ...f.labels] });
+    return {
+      ok: true,
+      action: { kind: "list", all, labels: f.labels },
+      forwardPath: `/containers/json?all=${all ? 1 : 0}&filters=${encodeURIComponent(filters)}`,
+      forwardBody: undefined,
+    };
+  }
+
+  // OLA2-MF · DELETE /containers/{id}[?force=…]: sólo Id completo y sólo PROPIOS
+  // (la propiedad la comprueba el servidor con la inspección previa, como stop).
+  const delMatch = /^\/containers\/([^/]+)$/.exec(path);
+  if (delMatch && m === "DELETE") {
+    const id = delMatch[1];
+    if (!FULL_CONTAINER_ID_RE.test(id))
+      return deny(`identificador de contenedor no válido (se exige el Id completo de 64 hex): ${id}`);
+    if (body && body.trim() && body.trim() !== "{}") return deny("el borrado no admite cuerpo");
+    for (const k of url.searchParams.keys()) if (k !== "force") return deny(`parámetro de borrado no permitido: ${k}`);
+    const fRaw = url.searchParams.get("force");
+    if (fRaw !== null && !["0", "1", "true", "false"].includes(fRaw)) return deny(`force no válido: ${fRaw}`);
+    const force = fRaw === "1" || fRaw === "true";
+    return {
+      ok: true,
+      action: { kind: "remove", id, force },
+      forwardPath: `/containers/${id}${force ? "?force=true" : ""}`,
+      forwardBody: undefined,
     };
   }
 
@@ -714,6 +833,12 @@ export function createDockerProxyServer(opts: ProxyServerOptions): http.Server {
       }
       try {
         const action = decision.action;
+        if (action.kind === "list") {
+          log({ method, path, allowed: true });
+          const listed = await opts.backend.dispatch("GET", decision.forwardPath, undefined);
+          if (listed.status !== 200) return respond(502, { message: `listado de la Engine falló (${listed.status})` });
+          return respond(200, sanitizeContainerList(listed.body, policy));
+        }
         if (action.kind !== "create") {
           // RC2 · PROPIEDAD: inspección previa en el proxy, SIEMPRE por Id completo.
           const pre = await opts.backend.dispatch("GET", `/containers/${action.id}/json`);
@@ -769,7 +894,14 @@ export function createDockerProxyServer(opts: ProxyServerOptions): http.Server {
 
 // ── runner del bot-manager a través del proxy ────────────────────────────────
 
-import type { ContainerHandle, ContainerRunner, MeasuredContainerHandle, SandboxSpec } from "./container-runner.js";
+import type {
+  ContainerHandle,
+  ContainerRunner,
+  ManagedContainer,
+  MeasuredContainerHandle,
+  SandboxSpec,
+  StopOptions,
+} from "./container-runner.js";
 import { DockerContainerRunner, cpuMsFromDockerStats, runStateFromInspect } from "./container-runner.js";
 
 /**
@@ -805,13 +937,61 @@ export class ProxyContainerRunner implements ContainerRunner {
         ...(spec.autoRemove ? { AutoRemove: true } : {}),
       },
       NetworkingConfig: { EndpointsConfig: { [spec.network]: {} } },
+      // OLA2-MF · labels de batalla (`arena.*`); las `s9.*` las impone el proxy.
+      ...(spec.labels && Object.keys(spec.labels).length ? { Labels: { ...spec.labels } } : {}),
       // DEV-A · TD-001: bootstrap del código de usuario (argumentos del ENTRYPOINT).
       ...(spec.cmd ? { Cmd: spec.cmd } : {}),
     };
   }
 
-  static containerName(spec: SandboxSpec): string {
-    return `bot-${spec.botId}-v${spec.version}-${spec.battleId}`.replace(/[^A-Za-z0-9_.-]/g, "-").slice(0, 100);
+  /**
+   * OLA2-MF · el nombre lleva un sufijo aleatorio: con el nombre fijo de antes,
+   * un reintento de la MISMA batalla chocaba (409) contra el contenedor del
+   * intento anterior si éste aún no había desaparecido. La identidad de batalla
+   * va en las labels, no en el nombre.
+   */
+  static containerName(spec: SandboxSpec, suffix: string = randomBytes(3).toString("hex")): string {
+    return `bot-${spec.botId}-v${spec.version}-${spec.battleId}-${suffix}`
+      .replace(/[^A-Za-z0-9_.-]/g, "-")
+      .slice(0, 120);
+  }
+
+  /** OLA2-MF · borrado forzado por Id completo; 404 (ya no existe) = éxito. */
+  async removeById(id: string, battleId?: string): Promise<void> {
+    const res = await this.call("DELETE", `/containers/${id}?force=true`);
+    if (res.status === 204 || res.status === 404) return;
+    // Con AutoRemove, Docker ya está borrando el contenedor cuando llega nuestro DELETE y
+    // responde 409 «removal ... already in progress»: no es un fallo, es una carrera ganada
+    // por Docker. Se espera (acotado) a que desaparezca y sólo entonces se da por borrado.
+    if (res.status === 409 && /removal of container .* is already in progress/i.test(String(res.json?.message ?? ""))) {
+      const deadline = Date.now() + 15_000;
+      for (;;) {
+        // Sondeo acotado a la batalla (label arena.battle-id) además del rol: un contenedor sin
+        // esas labels no aparecería y se daría por borrado al instante (falso positivo).
+        const left = (
+          await this.list({ "arena.role": "battle-bot", ...(battleId ? { "arena.battle-id": battleId } : {}) })
+        ).filter((c) => c.id === id);
+        if (left.length === 0) return;
+        if (Date.now() > deadline) throw new Error(`el borrado en curso de ${id.slice(0, 12)} no terminó en 15 s`);
+        await new Promise((r) => setTimeout(r, 200));
+      }
+    }
+    throw new Error(`el proxy rechazó el borrado (${res.status}): ${res.json?.message ?? "sin detalle"}`);
+  }
+
+  /** OLA2-MF · contenedores PROPIOS con todas estas labels (parados incluidos). */
+  async list(labels: Record<string, string>): Promise<ManagedContainer[]> {
+    const filters = JSON.stringify({ label: Object.entries(labels).map(([k, v]) => `${k}=${v}`) });
+    const res = await this.call("GET", `/containers/json?all=1&filters=${encodeURIComponent(filters)}`);
+    if (res.status !== 200 || !Array.isArray(res.json)) {
+      throw new Error(`el proxy rechazó el listado (${res.status}): ${res.json?.message ?? "sin detalle"}`);
+    }
+    return (res.json as any[]).map((c) => ({
+      id: String(c.Id),
+      labels: (c.Labels ?? {}) as Record<string, string>,
+      state: String(c.State ?? "unknown"),
+      createdAtMs: typeof c.Created === "number" ? c.Created * 1000 : 0,
+    }));
   }
 
   private async call(method: string, path: string, body?: unknown): Promise<{ status: number; json: any }> {
@@ -838,19 +1018,31 @@ export class ProxyContainerRunner implements ContainerRunner {
       throw new Error(`el proxy rechazó el create (${created.status}): ${created.json?.message ?? "sin detalle"}`);
     }
     const id: string = created.json.Id;
-    const started = await this.call("POST", `/containers/${id}/start`);
+    const started = await this.call("POST", `/containers/${id}/start`).catch((e: unknown) => ({
+      status: 0,
+      json: { message: e instanceof Error ? e.message : String(e) },
+    }));
     if (started.status !== 204) {
+      // OLA2-MF · el contenedor YA existe (`Created`) y nadie lo arrancará:
+      // AutoRemove no actúa sobre un contenedor que nunca arrancó. Se borra
+      // aquí; si tampoco se puede, queda para el reconciliador (lleva labels).
+      await this.removeById(id, spec.battleId).catch(() => undefined);
       throw new Error(`el proxy rechazó el start (${started.status}): ${started.json?.message ?? "sin detalle"}`);
     }
     const call = this.call.bind(this);
+    const removeById = this.removeById.bind(this);
     return {
       id,
-      async stop() {
-        const stopped = await call("POST", `/containers/${id}/stop?t=5`);
+      async stop(opts?: StopOptions) {
+        const t = Math.max(0, Math.min(300, Math.floor(opts?.timeoutSeconds ?? 5)));
+        const stopped = await call("POST", `/containers/${id}/stop?t=${t}`);
         // 404 = ya no existe (AutoRemove tras salir): parado, que es lo pedido.
         if (stopped.status !== 204 && stopped.status !== 304 && stopped.status !== 404) {
           throw new Error(`el proxy rechazó el stop (${stopped.status}): ${stopped.json?.message ?? "sin detalle"}`);
         }
+      },
+      async remove() {
+        await removeById(id, spec.battleId);
       },
       async posture() {
         const inspected = await call("GET", `/containers/${id}/json`);

@@ -190,4 +190,36 @@ describe("4v4-STATS · BattleDetailPage", () => {
       ["azul", "4", "3", "8", "—", "400", "200", "40", "20", "2 / 4"],
     ]);
   });
+
+  it("M0 · sin daño absoluto en la API (tercero): la tabla por bot y por bando muestra «—» en daño, nunca un número ni «0»", async () => {
+    const perBot = Object.fromEntries(
+      participants.map((p) => {
+        const { damageDealt: _a, damageTaken: _b, ...rest } = stat(p.team, { deaths: 1, died: true });
+        return [p.botId, rest];
+      }),
+    );
+    mockStats({ status: "ready", perBot, perTeam: {}, diagnostics: {} });
+    render(<BattleDetailPage id="btl_st" />);
+    const rows = await screen.findAllByTestId("stats-row");
+    expect(rows).toHaveLength(8);
+    for (const r of rows) {
+      const c = cells(r);
+      expect(c[4], "daño hecho").toBe("—");
+      expect(c[5], "daño recibido").toBe("—");
+    }
+    const sides = within(screen.getByTestId("battle-stats-sides")).getAllByTestId("stats-side-row");
+    for (const r of sides) {
+      const c = cells(r);
+      expect(c[5], "daño hecho del bando").toBe("—");
+      expect(c[6], "daño recibido del bando").toBe("—");
+    }
+  });
+
+  it("P3-D · la columna de aciertos avisa de que la cifra pública va de 5 en 5 (un 0 no es «ninguno»)", async () => {
+    const perBot = Object.fromEntries(participants.map((p) => [p.botId, stat(p.team, {})]));
+    mockStats({ status: "ready", perBot, perTeam: {}, diagnostics: {} });
+    render(<BattleDetailPage id="btl_st" />);
+    await screen.findAllByTestId("stats-row");
+    expect(screen.getAllByText(/Aciertos \(de 5 en 5\)/).length).toBeGreaterThanOrEqual(2);
+  });
 });

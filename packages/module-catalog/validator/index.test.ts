@@ -142,8 +142,6 @@ const TEST_CATALOG: ModuleDefinition[] = [
     cooldownTicks: 5,
     projectileSpeedMs: 10,
     acceptsAmmo: ["ammo.shell"],
-    turretArcRad: 6.2832,
-    turretRateRads: 1,
   },
   {
     id: "weapon.gun_l",
@@ -158,8 +156,6 @@ const TEST_CATALOG: ModuleDefinition[] = [
     cooldownTicks: 5,
     projectileSpeedMs: 10,
     acceptsAmmo: ["ammo.shell"],
-    turretArcRad: 6.2832,
-    turretRateRads: 1,
   },
   {
     id: "weapon.gun_expensive",
@@ -174,8 +170,6 @@ const TEST_CATALOG: ModuleDefinition[] = [
     cooldownTicks: 5,
     projectileSpeedMs: 10,
     acceptsAmmo: ["ammo.shell"],
-    turretArcRad: 6.2832,
-    turretRateRads: 1,
   },
   {
     id: "weapon.locked_to_alt",
@@ -190,8 +184,6 @@ const TEST_CATALOG: ModuleDefinition[] = [
     cooldownTicks: 5,
     projectileSpeedMs: 10,
     acceptsAmmo: ["ammo.shell"],
-    turretArcRad: 6.2832,
-    turretRateRads: 1,
     requiresChassis: ["chassis.test_alt"],
   },
   {
@@ -292,7 +284,6 @@ const TEST_CATALOG: ModuleDefinition[] = [
     costCredits: 10,
     size: "S",
     hp: 10,
-    effect: "smoke",
     charges: 1,
     cooldownTicks: 1,
   },

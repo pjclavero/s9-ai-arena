@@ -19,7 +19,7 @@ La clasificación ACTIVE / PARTIAL / FUTURE de cada propiedad vive en código (`
 - [Daño y estado de módulos](#daño-y-estado-de-módulos)
 - [Validación del loadout](#validación-del-loadout)
 - [Efecto real en batalla (ACTIVE / PARTIAL / FUTURE)](#efecto-real-en-batalla-active--partial--future)
-- [Campos sin efecto en el motor](#campos-sin-efecto-en-el-motor)
+- [Campos eliminados en la OLA 2 y campos sólo de validación](#campos-eliminados-en-la-ola-2-y-campos-sólo-de-validación)
 - [Persistencia y API](#persistencia-y-api)
 - [Estado actual](#estado-actual)
 - [Documentación relacionada](#documentación-relacionada)
@@ -83,7 +83,7 @@ Efecto real en el motor:
 - con varios módulos de movilidad manda el mejor; no se suman;
 - sin movilidad operativa, el vehículo queda inmóvil, pero la torreta sigue funcionando.
 
-**Sin efecto**: `terrain` (ni lo pasa `resolveVehicle` ni lo lee el motor).
+`terrain` se **eliminó** del esquema en la OLA 2 (P-2): el mapa no tiene tipos de terreno.
 
 ### Energía (`power`)
 
@@ -101,7 +101,7 @@ Efecto real en el motor:
 - los módulos apagados no consumen;
 - disparar y poner minas gasta `perActionEU`; si no hay energía, la acción se rechaza (`no_energy`).
 
-**Sin efecto**: `peakEUs`.
+`peakEUs` se **eliminó** en la OLA 2 (no hay modelo de potencia de pico).
 
 ### Sensores (`sensor_a`, `sensor_b`)
 
@@ -124,7 +124,7 @@ Efecto real en el motor:
 - **Proximidad**: rumbos de vehículos y minas dentro del alcance, **sin comprobar línea de visión**.
 - **Acústico**: rumbo, tipo e intensidad de disparos, motores y explosiones del ciclo anterior. Nunca da posición.
 
-**Sin efecto**: `fovRad` del radar (el radar es siempre de 360°) y `refreshEveryNDecisions`.
+El esquema es condicional por `sensorType` (OLA 2): `fovRad` y `rays` sólo se admiten (y son obligatorios) en lidar; `errorM`, sólo en radar. `refreshEveryNDecisions` se **eliminó** (exigiría observación en caché por sensor dentro del hash, sin diseño en los contratos).
 
 ### Armas (`turret_main`) y munición (`ammo_main`)
 
@@ -146,7 +146,7 @@ Efecto real en el motor:
 - daño = `damage × damageMultiplier × perf`;
 - el cooldown se divide por `perf` (con mínimo 0.25);
 - la dispersión sale del RNG del motor;
-- la torreta gira a `turretRateRads × perf` hacia el objetivo;
+- la torreta gira a `turretRateRads × perf` hacia el objetivo, donde `turretRateRads` (y `turretArcRad`) son de la **montura de la ranura del chasis** (`slots[].mount`, leída con `Vehicle.mountOf(slot)`), no del arma: dos armas en la misma ranura giran igual (OLA2-MB, D-B2);
 - el proyectil vive **90 ticks** e impacta por *raycast*;
 - con radio de explosión, el daño cae linealmente con la distancia y la explosión no atraviesa muros;
 - sin fuego amigo, el proyectil atraviesa a los aliados.
@@ -177,10 +177,9 @@ Acero (`steel_*`): reducción 0.35 frontal, 0.25 lateral y 0.20 trasera; más pe
 - sólo la reciben los vehículos del **mismo equipo** que el emisor (`radioDeliverableTo`, `sensors.ts`), según el equipo del estado de batalla; el emisor no se oye a sí mismo, y un `to` a un rival o a un id inexistente no se entrega a nadie.
 - el replay sí guarda la radio de los dos bandos (son comandos grabados): tras la batalla la ve quien pueda leer el replay, un participante incluido ([replays.md](replays.md#autorización-de-acceso-td-004)).
 
-**Sin efecto**:
+- **alcance real** (OLA 2, P-2): al emitir, el motor fija en el mensaje la posición del emisor y su alcance efectivo `rangeM × perf` (`radioRangeOf`); en la entrega sólo lo reciben los compañeros que estén dentro de ese círculo (`radioDeliverableTo`). Fuera de alcance el mensaje no llega y el emisor no recibe aviso.
 
-- **`rangeM`**: `radioReaches()` existe pero no se llama.
-- **`encrypted`**.
+`encrypted` se **eliminó** en la OLA 2: sin escucha enemiga (RADIO_SCOPE=TEAM) no tiene sentido.
 
 Hallazgo nuevo de esta consolidación, comunicado a A como parte de [TD-016](../roadmap/technical-debt.md#td-016).
 
@@ -195,7 +194,7 @@ Hallazgo nuevo de esta consolidación, comunicado a A como parte de [TD-016](../
 - detona con un vehículo enemigo dentro del radio de activación (o cualquiera, con fuego amigo);
 - caduca al cumplir `lifetimeTicks`.
 
-**Sin efecto**: `detectable`. Toda mina es detectable por proximidad.
+`detectable` se **eliminó** en la OLA 2 (nunca se copiaba). Toda mina es detectable por proximidad; la firma por canal de un deployable (`DeployableVisibilityDef.signature`) lo sustituirá con su consumidor.
 
 ## Daño y estado de módulos
 
@@ -232,26 +231,28 @@ Recalibrado en UX-01 (la auditoría FC-C sobre `0b8c12b` (octubre de 2026) se mi
 
 | Estado | Significado | Propiedades |
 |---|---|---|
-| **ACTIVE** | Lo que elige el usuario cambia la batalla | El chasis elegido (con versión); `chassis.hullHp/radiusM/slots`; `movement.maxSpeedMs/accelerationMs2/turnRateRads/ratedLoadKg`; `power.capacityEU/generationEUs`; `sensor.*` (lidar, radar, proximidad y acústico); `weapon.damage/cooldownTicks/projectileSpeedMs/spreadRad/turretRateRads/acceptsAmmo/power.perActionEU`; `ammo.*`; `mine.*` (si el bot despliega la mina con `deployMine`); `armor.reduction/sector`; `radio.maxMessageBytes/maxMessagesPerSecond`; las comunes `massKg`, `hp`, `power.passiveEUs` |
+| **ACTIVE** | Lo que elige el usuario cambia la batalla | El chasis elegido (con versión); `chassis.hullHp/radiusM/slots`; `movement.maxSpeedMs/accelerationMs2/turnRateRads/ratedLoadKg`; `power.capacityEU/generationEUs`; `sensor.*` (lidar, radar, proximidad y acústico); `weapon.damage/cooldownTicks/projectileSpeedMs/rangeM/spreadRad/acceptsAmmo/power.perActionEU`; `chassis.slots[].mount.turretRateRads/turretArcRad` (montura de la ranura, D-B2); `armor.hp` (hp del módulo de blindaje, fuente única); `ammo.*`; `mine.*` (si el bot despliega la mina con `deployMine`); `armor.reduction/sector`; `radio.rangeM/maxMessageBytes/maxMessagesPerSecond`; las comunes `massKg`, `hp`, `power.passiveEUs` |
 | **PARTIAL** | Sólo cuenta para validar el loadout | `chassis.maxLoadKg`; las comunes `costCredits`, `size`, `maxPerVehicle` |
-| **FUTURE** | Ningún código de simulación la lee | `movement.terrain`; `weapon.rangeM` (el alcance lo da el TTL de 90 ticks, `combat.ts:198`); `weapon.turretArcRad` (todos los datos valen 2π: la comprobación nunca actúa); `radio.rangeM` (`radioReaches` sin llamadas, `sensors.ts:227`); `utility.effect/magnitude/durationTicks` |
+| **FUTURE** | Ningún código de simulación la lee | Ninguna propiedad del catálogo (OLA 2). La categoría `utility` no tiene campos propios ni piezas; el comando `utility` no hace nada |
 
-**Para que tengan efecto hace falta cambiar el motor:** `weapon.rangeM`, `radio.rangeM`, `turretArcRad` con los datos actuales, `ammo.hp` como pérdida de capacidad, `movement.terrain` y `utility.*`.
+**Gate CATALOG_CONTRACT (OLA 2).** `packages/module-catalog/field-status.ts` clasifica cada campo del esquema (ACTIVE / VALIDATION_ONLY / FUTURE / REMOVE) con su consumidor y una mutación; `catalog-contract.test.ts` lo demuestra con una batalla de sonda (`catalog-probe.ts`) que pasa por `resolveVehicle`: un campo ACTIVE mutado tiene que cambiar la batalla, uno VALIDATION_ONLY tiene que cambiar el veredicto del validador y no la batalla. Un campo declarado sin consumidor pone el gate en rojo.
 
-## Campos sin efecto en el motor
+**`weapon.rangeM` es el alcance real** (OLA 2, P-2): `resolveVehicle` lo convierte en la vida del proyectil, `rangeM · TICK_HZ / projectileSpeedMs` ticks (entero, o el loadout no resuelve). Los datos se fijaron al alcance que ya tenían con el TTL fijo de 90 ticks (cañón 360 m, ametralladoras 600 m): mismo comportamiento, caracterizado en `range-characterization.test.ts`. Hay una sola regla: una spec sin `rangeM`/velocidad o con una vida incoherente no se simula (fail-closed); la regla heredada de 90 ticks se eliminó y los replays anteriores al contrato (0.2.0/0.3.0/0.4.0 previos) dejaron de reproducirse (integración OLA 2).
 
-| Campo | Categoría | Motivo |
+## Campos eliminados en la OLA 2 y campos sólo de validación
+
+| Campo | Categoría | Decisión (OLA 2) |
 |---|---|---|
-| `terrain` | movimiento | `resolveVehicle` no lo pasa |
-| `peakEUs` | energía | no se pasa |
-| `fovRad` | radar | el radar no lo lee |
-| `refreshEveryNDecisions` | sensor | no se pasa |
-| `rangeM` | arma | el alcance real lo da la vida del proyectil (90 ticks) |
-| `rangeM` | radio | `radioReaches` no se llama |
-| `encrypted` | radio | no se pasa |
-| `detectable` | mina | fijado a `true` |
-| `effect`, `magnitude`, `durationTicks` | utilidad | no se pasan; no hay módulos `utility` |
-| `costCredits`, `size`, `maxPerVehicle`, `requiresChassis`, `maxLoadKg`, ranuras | todas | sólo el validador |
+| `terrain` | movimiento | REMOVE (P-2) |
+| `peakEUs` | energía | REMOVE |
+| `refreshEveryNDecisions` | sensor | REMOVE |
+| `encrypted` | radio | REMOVE |
+| `detectable` | mina | REMOVE (lo sustituirá `DeployableVisibilityDef.signature`) |
+| `effect`, `magnitude`, `durationTicks`, `charges`, `cooldownTicks` | utilidad | REMOVE (lo sustituirá `actions`) |
+| `slots[].offsetM` | chasis | REMOVE (sin datos ni consumidor) |
+| `costCredits`, `size`, `maxPerVehicle`, `requiresChassis`, `maxLoadKg`, ranuras | todas | VALIDATION_ONLY: sólo el validador |
+
+Los bloques v2 (`actions`, efectos, deployables, guidance) se validan y resuelven en `packages/module-catalog/v2/` y sólo existen como fixtures `test.fixture_*` (`test-fixtures/`): el esquema de módulo no los admite hasta que el motor los consuma.
 
 ## Persistencia y API
 

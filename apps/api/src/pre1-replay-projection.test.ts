@@ -41,7 +41,9 @@ import {
   projectReplayDocument,
   projectSegment,
   projectSnapshot,
+  projectedReplayStream,
 } from "./replay-projection.js";
+import { audienceKey, projectReplayStream } from "../../../packages/projection/index.js";
 import { ReplayPlayer, httpReplaySource } from "../../web/src/viewer/replay-player.js";
 
 const SEED = "PRE1-SEED-7f3a9c";
@@ -54,10 +56,27 @@ class RadioHunter extends HunterBot {
     return { ...c, radio: [{ slot: "radio_a", data: RADIO_SECRET }] };
   }
 }
-/** Bot que, además de cazar, intenta sembrar minas en cada decisión. */
+/**
+ * Bot que, además de cazar, pide sembrar una mina al FINAL de la partida (tick >= SEED_MINE_FROM).
+ * Antes pedía deployMine en cada decisión, pero el motor sólo lo procesaba si el comando traía
+ * también `fire` (defecto, corregido en OLA 2: deployMine se procesa sin fire). Con el arreglo,
+ * ese bot sembraba minas desde el tick 0 y, con la semilla fija, la partida cambiaba de
+ * trayectoria: nadie moría ni había eventos en 900 ticks y el test dejaba de probar nada.
+ * Sembrar sólo al final no puede alterar lo ocurrido antes (los ticks previos son idénticos a la
+ * partida sin mina, causalidad), así que los eventos públicos de la partida siguen existiendo; el
+ * crudo conserva `deployMine` y `mine.explosive@1`, que es lo que la calibración exige.
+ */
+// Integración OLA2 (M0, MB+MC+MD): con el motor integrado y la MISMA semilla, la partida sin minas acaba
+// por eliminación en el tick 782 (primer evento público en 614: v_red destruido; v_blue vive hasta 782;
+// medido en VM112). El umbral va entre ambos, cerca del final: los eventos de 614 son idénticos por
+// causalidad y el minador sigue vivo para sembrar de verdad (se comprueba con una mina viva en un snapshot crudo).
+// Con 2980 (la cifra de las notas, pensada para una partida que llegara al límite de 3000) no se
+// sembraba nada: la partida termina antes.
+const SEED_MINE_FROM = 690;
 class MinerHunter extends HunterBot {
   decide(obs: any) {
     const c = (super.decide(obs) ?? {}) as Record<string, unknown>;
+    if (obs.tick < SEED_MINE_FROM) return c;
     return { ...c, deployMine: { slot: "mine_bay", armDelayTicks: 0 } };
   }
 }
@@ -71,6 +90,23 @@ let catalogVersion: string;
 const tok: Record<string, string> = {};
 const B: Record<string, string> = {};
 const rawFile: Record<string, string> = {};
+
+/**
+ * OLA 2 · MA · proyección public_replay del stream interno de `base`. Los ids de vehículo
+ * siguen el orden público (bando, botId): aquí los bandos son distintos, así que no
+ * dependen del botId que cada batalla de prueba asigna.
+ */
+function fullProjection() {
+  return projectReplayStream({
+    battleId: base.header.battleId,
+    audience: audienceKey("public_replay"),
+    roster: base.header.participants.map((p: any) => ({ id: p.id, botId: p.botId, team: p.team })),
+    mapEntityIds: [],
+    snapshots: base.snapshots,
+    events: base.events,
+    result: base.result,
+  });
+}
 
 type Actor = "anon" | "A" | "C" | "T" | "S" | "organizer" | "moderator" | "admin";
 const ACTORS: Actor[] = ["anon", "A", "C", "T", "S", "organizer", "moderator", "admin"];
@@ -146,10 +182,14 @@ beforeAll(async () => {
     {
       battleId: "pre1-base",
       seed: SEED,
-      // Arena pequeña, 900 ticks y dos artilleros: hay destrucciones y cambios de marcador
+      // Arena pequeña, 3000 ticks y dos artilleros: hay destrucciones y cambios de marcador
       // (eventos públicos que el visor debe recibir); sin ellos la comprobación de eventos
       // del visor y la de la lista blanca no probarían nada.
-      ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: 900 }),
+      // OLA2-MB · antes 900: con el contrato de daño (orden de candidatos por slot, torreta de la
+      // montura, hp de blindaje = hp de módulo) la trayectoria cambia y en 900 ticks no cae nadie
+      // (0 eventos públicos; medido en VM112: 900 → {}, 3000 → 2 destrucciones + 2 cambios de marcador).
+      // Se alarga el límite de tiempo, NO se busca otra semilla: la semilla sigue siendo SEED.
+      ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: 3000 }),
       map: emptyArena(40, 30),
       participants: [
         { id: "v_red", botId: "bot_red", team: "red", spec: scoutLoadout() },
@@ -308,6 +348,10 @@ describe("PRE-1 · calibración: el CRUDO contiene lo que la proyección debe qu
     expect(replay.commands.length).toBeGreaterThan(10);
     expect(replay.commands.some((c) => Array.isArray(c.command?.radio))).toBe(true);
     expect(replay.commands.some((c) => c.command?.deployMine)).toBe(true);
+    // Mina REAL (P2-A de MC): el motor la sembró de verdad, no sólo se pidió. `mine_deployed` es un
+    // evento dirigido al dueño y no va al fichero; la prueba es una mina viva en un snapshot crudo.
+    const liveMine = (sn: any) => (sn.deployables ?? []).some((d: any) => d.kind === "mine" && d.ownerId === "v_blue");
+    expect(replay.snapshots.some(liveMine)).toBe(true);
     expect(replay.snapshots.length).toBeGreaterThan(5);
     // y eventos públicos reales (si no, «el visor recibe todos los eventos» sería 0 = 0)
     expect(replay.events.filter((e: any) => PUBLIC_EVENT_KINDS.has(e.kind)).length).toBeGreaterThan(0);
@@ -467,17 +511,24 @@ describe("PRE-1 · el visor de replays funciona con la proyección (anónimo, fl
     }
     expect(player.finished).toBe(true);
     expect(last.score).toEqual(base.result.score);
-    // Lo que pinta el visor con la proyección es EXACTAMENTE el snapshot público del motor.
-    const lastRaw = base.snapshots[base.snapshots.length - 1];
-    expect(last).toEqual(JSON.parse(JSON.stringify(lastRaw)));
+    // OLA 2 · MA · lo que pinta el visor es EXACTAMENTE la proyección public_replay del
+    // stream interno del motor (projectFrame), nunca el frame interno.
+    const expected = fullProjection().snapshots.at(-1);
+    expect(last).toEqual(JSON.parse(JSON.stringify(expected)));
+    expect(JSON.stringify(last)).not.toMatch(/"(veh|proj|mine)_\d+"|"v_red"|"v_blue"/);
     // Y los eventos públicos del motor llegan todos.
     expect(seen.length).toBe(base.events.filter((e) => PUBLIC_EVENT_KINDS.has(e.kind)).length);
   }, 120_000);
 
-  it("la proyección de snapshots es SIN PÉRDIDA para el visor (deriva del motor ⇒ rojo)", async () => {
+  it("el segmento público ES la proyección del stream completo (cualquier deriva ⇒ rojo)", async () => {
     const r = await get(on, "anon", `/replays/${B.pub}/segment?fromTick=0&toTick=${base.result.ticks}`);
     expect(r.status).toBe(200);
-    expect(r.body.snapshots).toEqual(JSON.parse(JSON.stringify(base.snapshots)));
+    expect(r.body.snapshots).toEqual(JSON.parse(JSON.stringify(fullProjection().snapshots)));
+    // Un segmento parcial usa los MISMOS ids que el documento completo (salto temporal).
+    const mid = Math.floor(base.result.ticks / 2);
+    const part = await get(on, "anon", `/replays/${B.pub}/segment?fromTick=${mid}&toTick=${mid + 30}`);
+    const byTick = new Map(fullProjection().snapshots.map((x) => [x.tick, x]));
+    for (const snap of part.body.snapshots) expect(snap).toEqual(JSON.parse(JSON.stringify(byTick.get(snap.tick))));
   });
 
   it("todo evento público que emite el motor está en la lista blanca (un tipo nuevo ⇒ rojo, se decide a propósito)", () => {
@@ -552,15 +603,17 @@ describe("PRE-1 · proyección pura: lista blanca + saneado a cualquier profundi
   };
 
   it("projectSegment: sin comandos, sin radio.data, sin semilla, sin spec, sin eventos privados", () => {
-    const out = projectSegment(hostile);
+    const meta = { world: {}, roster: [], mapEntityIds: ["zone"] };
+    const out = projectSegment(hostile, projectedReplayStream({ header: { battleId: "b1" }, ...hostile }, meta));
     assertClean("segment hostil", out);
     expect((out.events as any[]).map((e) => e.kind)).toEqual(["score_changed"]);
-    expect((out.snapshots as any[])[0].objectives).toEqual([{ id: "zone", owner: "red" }]);
+    // Lista blanca POR CAMPO del objetivo: `owner` no está declarado, no sale.
+    expect((out.snapshots as any[])[0].objectives).toEqual([{ id: "zone" }]);
   });
 
-  it("projectEvents: un tipo público con radio/semilla/spec anidados sale saneado", () => {
+  it("projectEvents: un tipo público con radio/semilla/spec anidados sale saneado (lista blanca por campo)", () => {
     const [e] = projectEvents(hostile.events);
-    expect(e).toEqual({ tick: 1, kind: "score_changed", team: "red", extra: {} });
+    expect(e).toEqual({ tick: 1, kind: "score_changed", team: "red" });
   });
 
   it("projectSnapshot: lista blanca por vehículo (ni radio, ni spec, ni carga en la posición)", () => {

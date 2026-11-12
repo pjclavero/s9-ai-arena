@@ -13,7 +13,7 @@
     { "id": "drive", "accepts": ["movement"], "maxSize": "L" },
     { "id": "power", "accepts": ["power"], "maxSize": "M" },
     { "id": "sensor_a", "accepts": ["sensor"], "maxSize": "M" },
-    { "id": "turret_main", "accepts": ["weapon"], "maxSize": "L" },
+    { "id": "turret_main", "accepts": ["weapon"], "maxSize": "L", "mount": { "turretRateRads": 1.0, "turretArcRad": 6.2832 } },
     { "id": "ammo_main", "accepts": ["ammo"], "maxSize": "M" },
     { "id": "mine_bay", "accepts": ["mine", "utility"], "maxSize": "M" },
     { "id": "radio_a", "accepts": ["radio"], "maxSize": "S" },

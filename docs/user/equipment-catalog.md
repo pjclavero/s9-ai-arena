@@ -22,11 +22,11 @@ El chasis es la base del vehículo: fija su vida, su tamaño, el peso que puede 
 
 | Chasis | Ranuras (entre paréntesis, el tamaño máximo de pieza: S pequeño, M mediano, L grande, XL muy grande) |
 |---|---|
-| Chasis pesado | Propulsión (XL) · Energía (L) · Sensor A (M) · Sensor B (S) · Torreta principal (XL) · Munición principal (L) · Compartimento de minas (M) · Radio (S) · Blindaje frontal (XL) · Blindaje izquierdo (L) · Blindaje derecho (L) · Blindaje trasero (L) |
-| Chasis ligero (versión 1) | Propulsión (M) · Energía (M) · Sensor A (M) · Torreta principal (M) · Munición principal (M) · Radio (S) · Blindaje frontal (M) · Blindaje izquierdo (S) · Blindaje derecho (S) · Blindaje trasero (S) |
-| Chasis ligero (versión 2) | Propulsión (M) · Energía (M) · Sensor A (M) · Torreta principal (M) · Munición principal (M) · Radio (S) · Blindaje frontal (M) · Blindaje izquierdo (S) · Blindaje derecho (S) · Blindaje trasero (S) |
-| Chasis medio (versión 1) | Propulsión (L) · Energía (M) · Sensor A (M) · Torreta principal (L) · Munición principal (M) · Compartimento de minas (M) · Radio (S) · Blindaje frontal (L) · Blindaje izquierdo (M) · Blindaje derecho (M) · Blindaje trasero (M) |
-| Chasis medio (versión 2) | Propulsión (L) · Energía (M) · Sensor A (M) · Torreta principal (L) · Munición principal (M) · Compartimento de minas (M) · Radio (S) · Blindaje frontal (L) · Blindaje izquierdo (M) · Blindaje derecho (M) · Blindaje trasero (M) |
+| Chasis pesado | Propulsión (XL) · Energía (L) · Sensor A (M) · Sensor B (S) · Torreta principal (XL, torreta 1 rad/s) · Munición principal (L) · Compartimento de minas (M) · Radio (S) · Blindaje frontal (XL) · Blindaje izquierdo (L) · Blindaje derecho (L) · Blindaje trasero (L) |
+| Chasis ligero (versión 1) | Propulsión (M) · Energía (M) · Sensor A (M) · Torreta principal (M, torreta 2,2 rad/s) · Munición principal (M) · Radio (S) · Blindaje frontal (M) · Blindaje izquierdo (S) · Blindaje derecho (S) · Blindaje trasero (S) |
+| Chasis ligero (versión 2) | Propulsión (M) · Energía (M) · Sensor A (M) · Torreta principal (M, torreta 2,2 rad/s) · Munición principal (M) · Radio (S) · Blindaje frontal (M) · Blindaje izquierdo (S) · Blindaje derecho (S) · Blindaje trasero (S) |
+| Chasis medio (versión 1) | Propulsión (L) · Energía (M) · Sensor A (M) · Torreta principal (L, torreta 1 rad/s) · Munición principal (M) · Compartimento de minas (M) · Radio (S) · Blindaje frontal (L) · Blindaje izquierdo (M) · Blindaje derecho (M) · Blindaje trasero (M) |
+| Chasis medio (versión 2) | Propulsión (L) · Energía (M) · Sensor A (M) · Torreta principal (L, torreta 1 rad/s) · Munición principal (M) · Compartimento de minas (M) · Radio (S) · Blindaje frontal (L) · Blindaje izquierdo (M) · Blindaje derecho (M) · Blindaje trasero (M) |
 
 ## Movimiento
 
@@ -61,13 +61,13 @@ Son los únicos ojos de tu bot: sin un sensor operativo, la observación no trae
 
 ## Armas
 
-El arma dispara la munición que le montes (columna «Munición compatible»). La recarga se cuenta en ticks (30 por segundo).
+El arma dispara la munición que le montes (columna «Munición compatible»). La recarga se cuenta en ticks (30 por segundo). El **alcance** es la distancia máxima que recorre el proyectil antes de desaparecer.
 
-| Nombre | Daño | Recarga (ticks) | Velocidad del proyectil (m/s) | Dispersión (rad) | Giro de torreta (rad/s) | Consumo por acción (EU) | Masa (kg) | Coste (créditos) | Tamaño | Munición compatible |
+| Nombre | Daño | Recarga (ticks) | Velocidad del proyectil (m/s) | Alcance (m) | Dispersión (rad) | Consumo por acción (EU) | Masa (kg) | Coste (créditos) | Tamaño | Munición compatible |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Cañón de 60 mm | 45 | 30 ticks (1 s) | 120 | 0,01 | 1 | 12 | 380 | 190 | grande (L) | Munición perforante, Munición explosiva |
-| Ametralladora (versión 1) | 12 | 6 ticks (0,2 s) | 200 | 0,05 | 2,2 | 3 | 120 | 90 | mediano (M) | Munición estándar |
-| Ametralladora (versión 2) | 18 | 5 ticks (0,167 s) | 200 | 0,05 | 2,2 | 2,5 | 120 | 115 | mediano (M) | Munición estándar |
+| Cañón de 60 mm | 45 | 30 ticks (1 s) | 120 | 360 | 0,01 | 12 | 380 | 190 | grande (L) | Munición perforante, Munición explosiva |
+| Ametralladora (versión 1) | 12 | 6 ticks (0,2 s) | 200 | 600 | 0,05 | 3 | 120 | 90 | mediano (M) | Munición estándar |
+| Ametralladora (versión 2) | 18 | 5 ticks (0,167 s) | 200 | 600 | 0,05 | 2,5 | 120 | 115 | mediano (M) | Munición estándar |
 
 ## Munición
 
@@ -96,11 +96,11 @@ Cada pieza protege un sector (frontal, izquierdo, derecho o trasero). Reduce el 
 
 ## Radio
 
-Permite enviar mensajes cortos (ver la [guía de radio](bots/radio.md)). La radio permite compartir información con los bots de tu propio equipo. Los bots rivales no reciben estos mensajes.
+Permite enviar mensajes cortos (ver la [guía de radio](bots/radio.md)). La radio permite compartir información con los bots de tu propio equipo, dentro de su **alcance** (medido desde donde se emite el mensaje). Los bots rivales no reciben estos mensajes.
 
-| Nombre | Tamaño máximo de mensaje (bytes) | Mensajes por segundo | Masa (kg) | Coste (créditos) | Consumo pasivo (EU/s) | Tamaño |
-|---|---|---|---|---|---|---|
-| Radio corta | 32 | 2 | 20 | 40 | 1 | pequeño (S) |
+| Nombre | Alcance (m) | Tamaño máximo de mensaje (bytes) | Mensajes por segundo | Masa (kg) | Coste (créditos) | Consumo pasivo (EU/s) | Tamaño |
+|---|---|---|---|---|---|---|---|
+| Radio corta | 80 | 32 | 2 | 20 | 40 | 1 | pequeño (S) |
 
 ## Minas
 
@@ -114,10 +114,6 @@ La mina se suelta con el comando `deployMine` y sólo cabe en la bahía de minas
 
 Algunos datos del catálogo existen pero **ningún código de la simulación los lee todavía**. No cuentes con ellos:
 
-- **Movimiento · Terreno**: el terreno no influye en la velocidad.
-- **Armas · Alcance**: el alcance real lo marca cuánto tiempo vive el proyectil en vuelo, no este dato.
-- **Armas · Arco de torreta**: todas las torretas giran 360°, no hay límite de arco.
-- **Radio · Alcance**: la radio no tiene alcance: llega a cualquier distancia.
 - **Utilidades**: el catálogo no trae ninguna pieza de utilidad y el comando `utility` todavía no hace nada.
 
 Estos otros sólo cuentan para **validar** el loadout (no cambian lo que pasa en la batalla):

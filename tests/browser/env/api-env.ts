@@ -17,6 +17,7 @@ import { writeFileSync } from "node:fs";
 import { startTestDb } from "../../../apps/api/src/testing/test-db.js";
 import { seedDev, seedContent } from "../../../apps/api/src/db/seeds/dev.js";
 import { createApp } from "../../../apps/api/src/app.js";
+import { RuntimeSettingsStore } from "../../../apps/api/src/runtime-settings.js";
 
 const h = await startTestDb();
 await seedDev(h.db);
@@ -25,7 +26,14 @@ await seedContent(h.db);
 const root = express();
 root.set("trust proxy", 2);
 root.get("/healthz", (_q, r) => r.json({ status: "ok", service: "api" }));
-root.use(createApp({ db: h.db, trustProxyHops: 2 }));
+// MG · como producción (server.ts): los flags públicos salen de la fila persistida,
+// creada aquí con el entorno (run.sh fija S9_PUBLIC_SPECTATE_ENABLED=true, el valor de
+// producción: sin él el espectador está apagado y «Retransmitir» queda bloqueado).
+// Se crea ANTES de publicar db.url, para que el worker ya encuentre la fila.
+const runtimeSettings = new RuntimeSettingsStore(h.db, { bootstrap: true });
+await runtimeSettings.refresh();
+runtimeSettings.start();
+root.use(createApp({ db: h.db, trustProxyHops: 2, runtimeSettings }));
 
 const port = Number(process.env.PORT ?? 38080);
 const server = root.listen(port, "127.0.0.1", () => {

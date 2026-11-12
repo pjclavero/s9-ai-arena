@@ -44,7 +44,9 @@ describe("UX-01 · aviso de efecto real del loadout", () => {
     expect(screen.getByTestId("effect-slot-turret_main").getAttribute("data-effect")).toBe("ACTIVE");
     const detail = screen.getByTestId("effect-detail-turret_main").textContent ?? "";
     expect(detail).not.toMatch(/arquetipo/);
-    expect(detail).toMatch(/rangeM.*FUTURE/s); // lo que el motor ignora sigue diciéndolo
+    // P-2 (OLA 2): rangeM es el alcance real; ninguna propiedad del cañón es FUTURE.
+    expect(detail).toMatch(/rangeM.*ACTIVE/s);
+    expect(detail).not.toMatch(/FUTURE/);
   });
 
   it("B2 · enseña la carga de módulos frente a maxLoadKg del chasis (la cifra que valida mass_exceeded)", () => {

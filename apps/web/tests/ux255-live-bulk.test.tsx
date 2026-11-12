@@ -47,7 +47,12 @@ const BATTLE = (status: string, extra: Record<string, unknown> = {}) => ({
 let calls: string[] = [];
 function backend(
   battle: Record<string, unknown>,
-  target?: { broadcastable: boolean; broadcastBlockedReason: string | null },
+  target?: {
+    broadcastable: boolean;
+    broadcastBlockedReason: string | null;
+    broadcastAvailable?: boolean;
+    reason?: string | null;
+  },
 ) {
   calls = [];
   apiMock.mockImplementation(async (method: string, path: string) => {
@@ -92,6 +97,36 @@ describe("#255 · BATTLE_LIVE_AND_BROADCAST_GROUPED (unitario)", () => {
     await waitFor(() => expect(status.textContent).toBe(BROADCAST_BLOCKED_TEXT.battle_not_public));
     expect((screen.getByTestId("broadcast-battle-blocked") as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByTestId("broadcast-battle")).toBeNull();
+  });
+
+  it("MG · espectador público APAGADO: autorizada por visibilidad pero «Retransmitir» deshabilitado y con el motivo visible", async () => {
+    backend(BATTLE("running"), {
+      broadcastable: true,
+      broadcastBlockedReason: null,
+      broadcastAvailable: false,
+      reason: "public_spectate_disabled",
+    });
+    render(<BattleDetailPage id={ID} me={ADMIN} />);
+    const status = await screen.findByTestId("broadcast-status");
+    await waitFor(() => expect(status.textContent).toContain("El espectador público está desactivado"));
+    expect(status.textContent).toMatch(/^No se puede retransmitir ahora/);
+    expect((screen.getByTestId("broadcast-battle-blocked") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByTestId("broadcast-battle")).toBeNull();
+  });
+
+  it("MG · sin streamer configurado: el enlace sigue habilitado (Streaming explica el estado) y se avisa", async () => {
+    backend(BATTLE("running"), {
+      broadcastable: true,
+      broadcastBlockedReason: null,
+      broadcastAvailable: false,
+      reason: "streaming_not_configured",
+    });
+    render(<BattleDetailPage id={ID} me={ADMIN} />);
+    const status = await screen.findByTestId("broadcast-status");
+    await waitFor(() => expect(status.textContent).toMatch(/^Se puede retransmitir/));
+    expect(status.textContent).toContain("no tiene streamer configurado");
+    expect(screen.getByTestId("broadcast-battle").getAttribute("href")).toBe(`#/streaming?battle=${ID}`);
+    expect(screen.queryByTestId("broadcast-battle-blocked")).toBeNull();
   });
 
   it("en curso + usuario normal: «Ver en directo» sí; «Retransmitir» y su estado, no (ni se pregunta a la API de admin)", async () => {

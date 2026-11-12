@@ -381,8 +381,9 @@ test.describe("@fase1 #255 Bots, Equipos y Batallas", () => {
     await visit(adm, `#/battles/${liveBattle}`);
     const ab = adm.getByTestId("live-broadcast");
     await expect(ab.getByTestId("watch-live")).toBeVisible();
-    await expect(ab.getByTestId("broadcast-battle")).toBeVisible();
+    // Primero el estado: si el botón no sale, el fallo muestra el motivo real.
     await expect(ab.getByTestId("broadcast-status")).toContainText("Se puede retransmitir");
+    await expect(ab.getByTestId("broadcast-battle")).toBeVisible();
     await expect(ab.getByTestId("broadcast-status")).toContainText("no empieza a emitir hasta que pulses «Iniciar»");
     // Un solo «Retransmitir» en toda la página.
     await expect(adm.getByText("Retransmitir", { exact: true })).toHaveCount(1);

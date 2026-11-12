@@ -152,7 +152,10 @@ async function arrancar(env: Record<string, string>) {
   const port = await puertoLibre();
   const proc = spawnService(process.execPath, [TSX, MAIN], {
     cwd: REPO,
-    env: { ...process.env, STREAMER_CONTROL_PORT: String(port), ...env },
+    // OLA2-MF · binarios FALSOS de chromium/ffmpeg y sin Xvfb en la máquina: esta
+    // prueba no va del display, así que usa el modo de display externo (el Xvfb a
+    // demanda lo prueban xvfb-on-demand.test.ts y la autoprueba de la imagen).
+    env: { ...process.env, STREAMER_CONTROL_PORT: String(port), STREAMER_XVFB_ON_DEMAND: "0", ...env },
     stdio: ["ignore", "pipe", "pipe"],
   }) as ChildProcessWithoutNullStreams;
   vivos.push(proc);
