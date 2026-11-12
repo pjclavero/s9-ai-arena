@@ -1282,7 +1282,7 @@ paths:
                 additionalProperties: true
                 required: [projection, battleId, snapshots, events, result]
                 properties:
-                  projection: { type: string, enum: [s9.replay.public-competition.v1] }
+                  projection: { type: string, enum: [s9.replay.public-competition.v2] }
                   battleId: { type: string }
                   snapshots: { type: array, items: { type: object, additionalProperties: true } }
                   events: { type: array, items: { type: object, additionalProperties: true } }
