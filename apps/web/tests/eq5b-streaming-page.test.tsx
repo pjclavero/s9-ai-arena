@@ -222,6 +222,44 @@ describe("EQ5b · controles", () => {
     expect((screen.getByTestId("stream-start") as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it.each([
+    ["public_spectate_disabled", /espectador público está desactivado/],
+    ["public_replays_disabled", /replays públicos están desactivados/],
+    ["streaming_not_configured", /No hay servicio de streaming configurado/],
+  ])(
+    "MG · autorizada pero /broadcast no puede leerla (%s): «No retransmisible ahora» con el motivo REAL e «Iniciar» deshabilitado",
+    async (reason, text) => {
+      targetOver = {
+        broadcastable: true,
+        publicBroadcastable: false,
+        broadcastBlockedReason: null,
+        broadcastAvailable: false,
+        reason,
+      };
+      render(<StreamingPage me={ME} route={`#/streaming?battle=${BATTLE}`} />);
+      const msg = await screen.findByTestId("stream-target-private");
+      expect(msg.getAttribute("data-reason")).toBe(reason);
+      expect(msg.textContent).toMatch(/^No retransmisible ahora/);
+      expect(msg.textContent).toMatch(text);
+      expect(screen.queryByTestId("simple-broadcastable")).toBeNull();
+      expect(screen.getByTestId("simple-target-tech").textContent).toContain(reason);
+      expect((screen.getByTestId("stream-start") as HTMLButtonElement).disabled).toBe(true);
+    },
+  );
+
+  it("MG · con el estado efectivo disponible se puede iniciar («Retransmisible»)", async () => {
+    targetOver = {
+      broadcastable: true,
+      publicBroadcastable: true,
+      broadcastBlockedReason: null,
+      broadcastAvailable: true,
+      reason: null,
+    };
+    render(<StreamingPage me={ME} route={`#/streaming?battle=${BATTLE}`} />);
+    expect((await screen.findByTestId("simple-broadcastable")).textContent).toMatch(/^Retransmisible/);
+    await waitFor(() => expect((screen.getByTestId("stream-start") as HTMLButtonElement).disabled).toBe(false));
+  });
+
   it("VISIBILIDAD · batalla de torneo retransmisible con bots privados: se puede iniciar y se explica qué se muestra", async () => {
     targetOver = {
       broadcastable: true,

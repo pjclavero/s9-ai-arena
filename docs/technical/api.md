@@ -168,8 +168,8 @@ Rol mínimo según `x-min-role`. «anón.» = `visitor` sin credencial.
 | `POST /battles/{battleId}/spectate-ticket` | anón. (404 sin sesión con la bandera apagada) |
 | `GET /replays/{battleId}` | anón. (cuota) para leer; el fichero crudo sólo a `moderator`/`admin` o al dueño de todos los bots ([PRE-1](replays.md#replay-crudo-y-proyección-pública-pre-1)); el resto, 404 |
 | `GET /replays/{battleId}/index`, `GET /replays/{battleId}/segment`, `POST /replays/{battleId}/verify` | anón. (cuota); sin acceso al crudo, índice y segmentos proyectados |
-| `GET /public/battles/live`, `GET /public/battles/{battleId}` | anón. (bandera `S9_PUBLIC_SPECTATE_ENABLED`) |
-| `GET /public/replays`, `GET /public/replays/{battleId}`, `GET /public/replays/{battleId}/download` | anón. (bandera `S9_PUBLIC_REPLAYS_ENABLED`) |
+| `GET /public/battles/live`, `GET /public/battles/{battleId}` | anón. (ajuste de runtime «espectador público»; `S9_PUBLIC_SPECTATE_ENABLED` es sólo el valor inicial) |
+| `GET /public/replays`, `GET /public/replays/{battleId}`, `GET /public/replays/{battleId}/download` | anón. (ajuste de runtime «replays públicos»; `S9_PUBLIC_REPLAYS_ENABLED` es sólo el valor inicial) |
 
 **Administración** ([../user/administration.md](../user/administration.md)):
 
@@ -177,6 +177,7 @@ Rol mínimo según `x-min-role`. «anón.» = `visitor` sin credencial.
 |---|---|
 | `GET /admin/security-findings`, `GET /admin/audit-log` | admin |
 | `GET /system/status`, `GET /system/rbac` | admin |
+| `GET /admin/settings/public-access`, `PATCH /admin/settings/public-access` | admin (MG, contrato 0.18.0: espectador y replays públicos en caliente, auditados) |
 
 ## Rutas del contrato no recogidas en las tablas anteriores
 

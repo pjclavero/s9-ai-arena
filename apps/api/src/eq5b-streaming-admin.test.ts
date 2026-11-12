@@ -303,8 +303,18 @@ describe("EQ5b · configuración", () => {
 describe("EQ5b · destino y retardo", () => {
   it("el retardo sale de la copia de reglas; destino privado y ajeno se distinguen", async () => {
     const t = await request(app).get(`/admin/streaming/target?kind=battle&id=${publicBattle}`).set(auth(admin));
-    expect(t.body).toMatchObject({ publicBroadcastable: true, delaySeconds: 30, delaySource: "snapshot" });
+    // MG (contrato 0.18.0) · `broadcastable` = autorización por visibilidad; `publicBroadcastable`
+    // ya no es su alias: vale `broadcastAvailable` (aquí el espectador público está apagado).
+    expect(t.body).toMatchObject({
+      broadcastable: true,
+      publicBroadcastable: false,
+      broadcastAvailable: false,
+      reason: "public_spectate_disabled",
+      delaySeconds: 30,
+      delaySource: "snapshot",
+    });
     const p = await request(app).get(`/admin/streaming/target?kind=battle&id=${privateBattle}`).set(auth(admin));
+    expect(p.body.broadcastable).toBe(false);
     expect(p.body.publicBroadcastable).toBe(false);
     expect(
       (await request(app).get(`/admin/streaming/target?kind=battle&id=${randomUUID()}`).set(auth(admin))).status,

@@ -200,8 +200,10 @@ services:
       # entregaba (un valor en infrastructure/.env no tenía efecto). Defaults
       # IDÉNTICOS a los del código: declararlas no cambia el comportamiento.
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
+      # MG · valor INICIAL (bootstrap) de los ajustes de runtime; después manda la BD.
       S9_PUBLIC_SPECTATE_ENABLED: ${S9_PUBLIC_SPECTATE_ENABLED:-}
       S9_PUBLIC_REPLAYS_ENABLED: ${S9_PUBLIC_REPLAYS_ENABLED:-}
+      S9_RUNTIME_SETTINGS_REFRESH_MS: ${S9_RUNTIME_SETTINGS_REFRESH_MS:-}
       S9_METRICS_ENABLED: ${S9_METRICS_ENABLED:-}
       # GET /keys/artifact-signing publica la clave PÚBLICA de verificación.
       ARTIFACT_VERIFY_KEY_FILE: /run/secrets/artifact_verify_key
@@ -370,8 +372,12 @@ services:
       # Sólo VERIFICA artefactos: recibe la clave PÚBLICA, no la de firma.
       ARTIFACT_VERIFY_KEY_FILE: /run/secrets/artifact_verify_key
       # El gateway de espectador (en este proceso) aplica la MISMA capability
-      # pública que la API al emitir el ticket anónimo (TD-030).
+      # pública que la API al emitir el ticket anónimo (TD-030). MG · son sólo el
+      # FALLBACK hasta que la API cree la fila de ajustes; este proceso la relee cada
+      # S9_RUNTIME_SETTINGS_REFRESH_MS y no la crea.
       S9_PUBLIC_SPECTATE_ENABLED: ${S9_PUBLIC_SPECTATE_ENABLED:-}
+      S9_PUBLIC_REPLAYS_ENABLED: ${S9_PUBLIC_REPLAYS_ENABLED:-}
+      S9_RUNTIME_SETTINGS_REFRESH_MS: ${S9_RUNTIME_SETTINGS_REFRESH_MS:-}
       SPECTATE_PORT: "8081"
       REPLAYS_DIR: /data/replays
       # B7 · directorios de datos cuya propiedad ajusta el entrypoint de la
