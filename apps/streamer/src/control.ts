@@ -12,6 +12,10 @@
  *   GET  /metrics                         → Prometheus para E10
  *   GET  /healthz                         → healthcheck del Compose
  *   GET  /version                         → identidad de build (ADR-016)
+ *   GET  /diag/tap                        → DIAG: estado del tap pasivo de ingesta (OFF por defecto)
+ *   GET  /diag/tap/latest                 → DIAG: metadatos de la última captura (timestamp, PTS)
+ *   GET  /diag/tap/latest.flv             → DIAG: la última captura (FLV mínimo: secuencia AVC + keyframe)
+ *   GET  /diag/tap/latest.jpg             → DIAG: esa captura decodificada A DEMANDA (un fotograma)
  *
  * EQ5b · Con STREAMER_CONTROL_SECRET_FILE configurado, todo menos /metrics,
  * /healthz y /version exige la cabecera `x-streamer-auth` (comparación en
@@ -42,6 +46,8 @@ import { parseIngestUrl, RtmpPublisher, type Dialer, type IngestTarget } from ".
 import { parseStartRequest, presetOf, sessionFingerprint, type Capabilities } from "./session.js";
 import { applyRetention, listRecordings, validateRetentionPolicy } from "./recordings.js";
 import { checkWritableDataDir } from "../../../packages/data-dir/index.js";
+import { readFile } from "node:fs/promises";
+import { decodeTapJpeg, readLatestCapture, type IngestTap } from "./tap.js";
 
 const MAX_BODY = 16 * 1024;
 /** Plazo total de /control/test (TLS + handshake + connect); vencido, se cierra el socket. */
@@ -72,6 +78,12 @@ export interface ControlOptions {
   allowPlainRtmp?: boolean;
   dial?: Dialer;
   now?: () => number;
+  /** DIAG · tap pasivo de ingesta (null/ausente = apagado). */
+  tap?: IngestTap | null;
+  /** DIAG · binario para la decodificación PUNTUAL de /diag/tap/latest.jpg. */
+  ffmpegBin?: string;
+  /** DIAG · decodificador inyectable (pruebas). */
+  decodeJpeg?: (flvPath: string) => Promise<Buffer>;
 }
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -174,6 +186,7 @@ export function createControlServer(opts: ControlOptions): Server {
     }
   }
 
+  let jpegBusy = false;
   return createServer((req, res) => {
     const respond = (status: number, body: unknown, contentType = "application/json") => {
       res.writeHead(status, { "content-type": contentType, "cache-control": "no-store" });
@@ -260,6 +273,69 @@ export function createControlServer(opts: ControlOptions): Server {
         // #256 · puerta BROADCAST_RENDER_READY: estado y última lectura del display.
         render: supervisor.render,
       });
+    }
+
+    // DIAG · tap pasivo de ingesta. Mismo secreto que el resto del control. Sólo lee
+    // lo que el tap ya guardó: nada de esto toca el camino de emisión.
+    if (req.method === "GET" && (url === "/diag/tap" || url.startsWith("/diag/tap/"))) {
+      const tap = opts.tap ?? null;
+      if (url === "/diag/tap") {
+        return respond(200, {
+          enabled: !!tap,
+          config: tap
+            ? {
+                intervalMs: tap.config.intervalMs,
+                maxFiles: tap.config.maxFiles,
+                maxBytes: tap.config.maxBytes,
+              }
+            : null,
+          stats: tap ? tap.stats : null,
+          latest: tap ? (readLatestCapture(tap.config.dir)?.capture ?? null) : null,
+        });
+      }
+      if (!tap) return respond(404, { error: "tap_disabled" });
+      const found = readLatestCapture(tap.config.dir);
+      if (!found) return respond(404, { error: "no_capture" });
+      if (url === "/diag/tap/latest") return respond(200, found.capture);
+      if (url === "/diag/tap/latest.flv") {
+        void readFile(found.flvPath).then(
+          (b) => {
+            res.writeHead(200, {
+              "content-type": "video/x-flv",
+              "cache-control": "no-store",
+              "x-tap-pts-ms": String(found.capture.ptsMs),
+              "x-tap-captured-at": found.capture.capturedAt,
+            });
+            res.end(b);
+          },
+          () => respond(404, { error: "no_capture" }),
+        );
+        return;
+      }
+      if (url === "/diag/tap/latest.jpg") {
+        // Decodificación PUNTUAL y de una en una: nunca en continuo.
+        if (jpegBusy) return respond(429, { error: "decode_in_progress" });
+        jpegBusy = true;
+        const decode = opts.decodeJpeg ?? ((p: string) => decodeTapJpeg(opts.ffmpegBin ?? "ffmpeg", p));
+        void decode(found.flvPath)
+          .then(
+            (jpg) => {
+              res.writeHead(200, {
+                "content-type": "image/jpeg",
+                "cache-control": "no-store",
+                "x-tap-pts-ms": String(found.capture.ptsMs),
+                "x-tap-captured-at": found.capture.capturedAt,
+              });
+              res.end(jpg);
+            },
+            () => respond(502, { error: "decode_failed" }),
+          )
+          .finally(() => {
+            jpegBusy = false;
+          });
+        return;
+      }
+      return respond(404, { error: "not_found" });
     }
 
     if (req.method === "GET" && url === "/recordings") {
