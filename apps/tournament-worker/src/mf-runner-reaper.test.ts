@@ -166,7 +166,17 @@ describe("OLA2-MF · battle-runner: teardown único en todos los finales", () =>
         new Promise<BattleExecution>((_ok, ko) => ctx.signal!.addEventListener("abort", () => ko(ctx.signal!.reason))),
       {
         leaseMs: 900, // renueva cada 300 ms
-        abort: (_res, id) => void h.db("battles").where({ id }).update({ claimed_by: "otro-titular:job:9" }),
+        // Roba la reserva en cuanto la batalla esté `running` (reintenta: el claim puede tardar más de 100 ms).
+        abort: (_res, id) => {
+          const steal = async () => {
+            for (let n = 0; n < 100; n++) {
+              const c = await h.db("battles").where({ id, status: "running" }).update({ claimed_by: "otro-titular:job:9" });
+              if (c > 0) return;
+              await new Promise((r) => setTimeout(r, 50));
+            }
+          };
+          void steal();
+        },
       },
     );
     expect(r.err).toBeInstanceOf(InfrastructureFailure);
@@ -180,7 +190,7 @@ describe("OLA2-MF · battle-runner: teardown único en todos los finales", () =>
     const row = await h.db("battles").where({ id: r.id }).first();
     expect(row.status).toBe("running");
     expect(row.claimed_by).toBe("otro-titular:job:9");
-  });
+  }, 30_000);
 
   it("WORKER_ERROR (parada del worker: abortAll) → teardown con WORKER_ERROR", async () => {
     const r = await runCase(
