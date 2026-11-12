@@ -170,7 +170,10 @@ describe("OLA2-MF · battle-runner: teardown único en todos los finales", () =>
         abort: (_res, id) => {
           const steal = async () => {
             for (let n = 0; n < 100; n++) {
-              const c = await h.db("battles").where({ id, status: "running" }).update({ claimed_by: "otro-titular:job:9" });
+              const c = await h
+                .db("battles")
+                .where({ id, status: "running" })
+                .update({ claimed_by: "otro-titular:job:9" });
               if (c > 0) return;
               await new Promise((r) => setTimeout(r, 50));
             }
