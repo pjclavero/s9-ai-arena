@@ -19,8 +19,8 @@ SPAGE = "apps/web/tests/eq5b-streaming-page.test.tsx"
 # (nombre, fichero, ancla, sustituto, test, fragmento del test que debe fallar)
 M = [
     ("M1 PATCH con rol user (RBAC)", "apps/api/openapi.yaml",
-     "operationId: updatePublicAccessSettings\n      summary: >-",
-     "operationId: updatePublicAccessSettings\n      x-min-role: user\n      summary: >-",
+     "en ≤ `propagationMaxMs`.\n      x-min-role: admin\n      requestBody:",
+     "en ≤ `propagationMaxMs`.\n      x-min-role: user\n      requestBody:",
      API, "anónimo ⇒ 401 y usuario normal ⇒ 403"),
     ("M2 booleanos no estrictos", "apps/api/src/runtime-settings.ts",
      'if (typeof o[k] !== "boolean") errors.push',
