@@ -139,8 +139,12 @@ describe("respawn limitado", () => {
   });
 
   it("2v2 con 1 respawn: la batalla no acaba mientras un bando conserve vidas, y acaba al agotarlas", () => {
-    // Termina POR CONSTRUCCIÓN: rojo caza, azul está inmóvil (IdleBot). La munición se repone al
-    // reaparecer, así que rojo agota las 2 vidas de cada azul; el resultado no depende de la trayectoria.
+    // Termina POR CONSTRUCCIÓN: rojo caza, azul está inmóvil (IdleBot) y rojo parte con munición
+    // sobrada. Diagnóstico (MB, VM112): con la dotación de serie, el artillero rojo gasta sus 40 AP
+    // hacia el tick 1392 y la munición SÓLO se repone al reaparecer (regla de juego, no hay
+    // reabastecimiento de supervivientes), y el explorador rojo no lleva radar (HunterBot nunca ve
+    // contactos): el combate se estanca con azul vivo. Eso es idéntico en f07ff6f (previo a MB).
+    // Aquí la munición no es el factor: el resultado no depende de la trayectoria ni del RNG.
     const parts = roster(2);
     const b = new Battle({
       battleId: "rr",
@@ -151,6 +155,8 @@ describe("respawn limitado", () => {
       recordReplay: true,
     });
     for (const p of parts) b.attachBot(p.id, p.team === "red" ? new HunterBot(p.botId) : new IdleBot(p.botId));
+    for (const v of b.getVehicles().filter((x) => x.team === "red"))
+      for (const a of v.modulesOf("ammo")) a.ammo = 100_000;
     const blue = () => b.getVehicles().filter((v) => v.team === "blue");
     for (let t = 0; t < 40_000 && !b.isFinished(); t++) {
       b.step();
