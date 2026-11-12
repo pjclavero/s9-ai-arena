@@ -218,7 +218,7 @@ El equipamiento y el loadout completo son privados por defecto para terceros (ve
 | Tamaño del vehículo | distancias de contacto en las colisiones |
 | Posición de una mina | sólo en el instante en que explota (`mine_triggered`) |
 
-**Observado y todavía pendiente (no es residual físico, es corregible).** `POST /battles/rules-check` y el 422 `composition_invalid` devuelven masa (kg) y coste (cr) exactos por vehículo y por bando, incluidos bots públicos ajenos, cuando se superan topes de composición. Son agregados del loadout, no módulos ni ranuras; se mantienen porque el jugador los necesita para componer dentro del presupuesto. Decisión de producto abierta (ocultarlos para bots ajenos o declararlos públicos); registrado en las DEPENDENCIES de MA.
+**Masa y coste de composición (cerrado, D-B1=R2).** `POST /battles/rules-check` y el 422 `composition_invalid` (crear batalla) dan masa (kg) y coste (cr) exactos sólo de los bots PROPIOS del solicitante (staff, rol ≥ moderador: de todos). De un bot ajeno, también público, sólo «cumple»/«excede» y el límite (`figuresHidden:true`, sin `actual`/`excess` ni cifras en el mensaje). El total de un bando que contiene algún bot ajeno va sin cifras (restando las propias se obtendría lo ajeno); si todos los bots del bando son propios, o es staff, cifras exactas. Revisadas sin cifras ajenas: ficha del bot, versiones, torneos (sin topes de composición; su 409 de elegibilidad ya es sólo veredicto) y elegibilidad. Residual: el «cumple/excede» repetido con composiciones distintas permite acotar por búsqueda binaria el coste de un bot ajeno frente a los topes; es inherente a poder componer.
 
 ## Superficies abiertas conocidas
 

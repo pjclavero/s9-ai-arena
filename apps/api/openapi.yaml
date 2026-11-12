@@ -1327,7 +1327,7 @@ paths:
       responses:
         '202': { description: Encolada (la ejecuta el tournament-worker con el código real de cada bot), content: { application/json: { schema: { $ref: '#/components/schemas/Battle' } } } }
         '400': { description: 'Modo/participantes/team/ruleset/mapa inválidos o bot repetido. 4v4 · team_composition_invalid (un modo de equipo sin exactamente 2 bandos) · team_too_large (más de 4 bots por bando). R-RULES · rules_invalid (detalle errors[] por campo: tipo, rango, campo desconocido o combinación incompatible) · rules_team_size (el preset/personalizado NvN exige 2 bandos de exactamente N).', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
-        '422': { description: 'R-RULES · composition_invalid · algún bot o bando supera los topes de créditos o masa de las reglas (detalle composition, informe por bando y bot calculado con los loadouts REALES).', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { description: 'R-RULES · composition_invalid · algún bot o bando supera los topes de créditos o masa de las reglas (detalle composition, informe por bando y bot calculado con los loadouts REALES; mismas reglas de privacidad que rules-check: cifras exactas sólo de bots propios o para el staff, sin cifras de bots ajenos ni totales de bandos mixtos).', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '404': { description: 'bot_not_found · un bot inexistente o privado ajeno (TD-005); indistinguibles a propósito', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '409': { content: { application/json: { schema: { $ref: '#/components/schemas/NotEligibleError' } } }, description: 'bot_not_published · bot_version_not_eligible (ELIG: publicada pero su loadout histórico no cumple hoy la validación; `notEligible` con el motivo) · ruleset_mode_mismatch · map_mode_unsupported (checkBattleContent, misma regla que la web) · 4v4 · deathmatch_shared_team (deathmatch con bandos compartidos: usa team_deathmatch) · R-RULES · rules_mode_mismatch (el preset juega otro modo) · loadout_unavailable / catalog_unavailable (con topes de composición no se puede calcular coste o masa) · ADR-022 map_team_mismatch (en CTF un bando no tiene base y bandera en el mapa)' }
 
@@ -1339,6 +1339,10 @@ paths:
         R-RULES (FASE 11) · Comprueba reglas y composición SIN crear la batalla: mismas validaciones que
         POST /battles (contenido, participantes, visibilidad TD-005, versión publicada, reglas y topes de
         créditos/masa con los loadouts REALES). Ayuda para la UI; la autoridad sigue siendo POST /battles.
+        EQUIPMENT_PRIVATE (OLA 2): `composition` lleva `costCredits`/`massKg` sólo de los bots PROPIOS del
+        solicitante (staff, rol >= moderator: de todos); de un bot ajeno sólo `ok` y `figuresHidden:true`.
+        Un bando con algún bot ajeno no lleva `totalCredits`/`totalMassKg` (`figuresHidden:true`), y las
+        `violations` de lo ajeno llevan `limit` pero no `actual`/`excess` (ni cifras en el mensaje).
         Un bot no visible da 404 como en la creación. Cache-Control: private, no-store.
       x-min-role: user
       requestBody:

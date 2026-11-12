@@ -38,7 +38,7 @@ import {
 } from "../battle-access.js";
 import { loadRuleset } from "../../../../packages/game-rules/index.js";
 import { resolveBattleRuleset } from "../services/battle-ruleset-resolver.js";
-import { buildBattleRules, rulesOf, rulesToJson } from "../services/battle-rules.js";
+import { buildBattleRules, compositionViewer, rulesOf, rulesToJson } from "../services/battle-rules.js";
 import { assertParticipantsShape, assertParticipantsUsable } from "../services/battle-participants.js";
 import type { Request } from "express";
 
@@ -643,7 +643,11 @@ export function battleRoutes(
 
     // R-RULES (ADR-021) · reglas: preset/personalizado/clásico, topes de créditos y
     // masa con los loadouts REALES, y la COPIA INMUTABLE que jugará el worker.
-    const rulesBuild = await buildBattleRules(db, { mode, rulesetId, rules: req.body?.rules, participants });
+    const rulesBuild = await buildBattleRules(
+      db,
+      { mode, rulesetId, rules: req.body?.rules, participants },
+      { viewer: compositionViewer(req.auth) },
+    );
 
     // Una sola transacción: batalla + participantes + trabajo. Antes eran tres
     // escrituras sueltas (una batalla podía quedar sin trabajo, o sin participantes).

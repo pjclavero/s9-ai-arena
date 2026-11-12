@@ -12,6 +12,7 @@
  */
 import type { Db } from "../db/connection.js";
 import { ApiError } from "../errors.js";
+import { ROLE_RANK } from "../openapi.js";
 import { resolveBattleRuleset } from "./battle-ruleset-resolver.js";
 import { getCatalog } from "./catalog.js";
 import { loadRuleset, type Ruleset } from "../../../../packages/game-rules/index.js";
@@ -31,6 +32,8 @@ import {
   type BattleRulesSnapshot,
   type CompositionEntry,
   type CompositionReport,
+  type PublicCompositionReport,
+  redactComposition,
   type RulesError,
 } from "../../../../packages/game-rules/battle-rules.js";
 import { resolveVehicle } from "../../../../packages/module-catalog/resolve/index.js";
@@ -52,7 +55,8 @@ export interface BattleRulesBuild {
    * hoy: se crea la batalla como en 0.3.0 (sin copia) y el worker falla igual que antes.
    */
   snapshot: BattleRulesSnapshot | null;
-  composition: CompositionReport;
+  /** Vista para el lector (OLA 2 · EQUIPMENT_PRIVATE: sin cifras de bots ajenos). */
+  composition: PublicCompositionReport;
 }
 
 /** Fallos de reglas, con el detalle que la UI enseña campo a campo. */
@@ -127,6 +131,30 @@ export async function participantTotals(
   return out;
 }
 
+/** Quién lee: el dueño ve sus bots; el staff (moderador+) ve todos. Sin lector, ninguno. */
+export interface CompositionViewer {
+  userId?: string;
+  staff?: boolean;
+}
+
+async function redactForViewer(
+  db: Db,
+  report: CompositionReport,
+  participants: BattleRulesInput["participants"],
+  viewer: CompositionViewer | undefined,
+): Promise<PublicCompositionReport> {
+  const visible = new Set<string>();
+  if (viewer?.staff) {
+    for (const p of participants) visible.add(p.botId);
+  } else if (viewer?.userId) {
+    for (const p of participants) {
+      const bot = await db("bots").where({ id: p.botId }).first("owner_id");
+      if (bot && bot.owner_id === viewer.userId) visible.add(p.botId);
+    }
+  }
+  return redactComposition(report, (id) => visible.has(id));
+}
+
 /** Ruleset del motor CLÁSICO: exactamente el que calculaba el worker en ejecución. */
 async function classicEngineRuleset(db: Db, mode: string, rulesetId: string): Promise<Ruleset | null> {
   const resolved = await resolveBattleRuleset(db, mode, rulesetId);
@@ -152,13 +180,14 @@ function sideSizes(participants: BattleRulesInput["participants"]): Map<string, 
 export async function buildBattleRules(
   db: Db,
   input: BattleRulesInput,
-  opts: { allowCompositionFailure?: boolean } = {},
+  opts: { allowCompositionFailure?: boolean; viewer?: CompositionViewer } = {},
 ): Promise<BattleRulesBuild> {
+  const view = (r: CompositionReport) => redactForViewer(db, r, input.participants, opts.viewer);
   const catalogVersion = await practiceCatalogVersion(db);
   let snapshot: BattleRulesSnapshot | null;
   if (input.rules === undefined || input.rules === null) {
     const engineRuleset = await classicEngineRuleset(db, input.mode, input.rulesetId);
-    if (!engineRuleset) return { snapshot: null, composition: checkComposition([], limitsOf(null)) };
+    if (!engineRuleset) return { snapshot: null, composition: await view(checkComposition([], limitsOf(null))) };
     snapshot = {
       schema: BATTLE_RULES_SCHEMA,
       source: "classic",
@@ -224,7 +253,9 @@ export async function buildBattleRules(
       entries = [];
     }
   }
-  const composition = checkComposition(entries, snapshot.composition);
+  // OLA 2 (EQUIPMENT_PRIVATE): el informe completo no sale de aquí; ni el 422 ni el
+  // rules-check llevan masa/coste de bots ajenos (ni mensajes con esas cifras).
+  const composition = await view(checkComposition(entries, snapshot.composition));
   if (!composition.ok && !opts.allowCompositionFailure) {
     throw new RulesRejected(
       422,
@@ -404,4 +435,9 @@ export async function buildTournamentRules(db: Db, input: TournamentRulesInput):
     engineRuleset,
     engineVersion: engineDeps.engine.version,
   };
+}
+
+/** Lector de una petición autenticada (dueño por id; staff = moderador o más). */
+export function compositionViewer(auth: { userId?: string; rank?: number } | undefined | null): CompositionViewer {
+  return { userId: auth?.userId, staff: (auth?.rank ?? 0) >= ROLE_RANK.moderator };
 }

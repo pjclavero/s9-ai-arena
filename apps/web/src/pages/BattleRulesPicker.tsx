@@ -17,7 +17,7 @@ import {
   tiebreakFamilyOf,
   type RulesParams,
   type RulesPreset,
-  type CompositionReport,
+  type PublicCompositionReport,
 } from "../../../../packages/game-rules/battle-rules.js";
 
 export interface RulesCatalog {
@@ -475,7 +475,7 @@ export function BattleRulesPicker(props: {
 export interface RulesCheckResult {
   ok: boolean;
   errors: { field: string; message: string }[];
-  composition: CompositionReport | null;
+  composition: PublicCompositionReport | null;
 }
 
 /**
@@ -547,23 +547,27 @@ export function RulesCheckReport(props: { result: RulesCheckResult | null; check
               {t.bots.map((b) => (
                 <li key={b.botId} className={b.ok ? "ok" : "warn"} data-testid="rules-check-bot">
                   {b.ok ? "✓" : "✗"} {b.label}
-                  {L?.botCredits !== null || L?.teamCredits !== null
+                  {b.costCredits !== undefined && (L?.botCredits !== null || L?.teamCredits !== null)
                     ? ` — ${b.costCredits}${L?.botCredits !== null ? `/${L?.botCredits}` : ""} cr`
                     : ""}
-                  {L?.botMassKg !== null || L?.teamMassKg !== null
+                  {b.massKg !== undefined && (L?.botMassKg !== null || L?.teamMassKg !== null)
                     ? ` · ${b.massKg}${L?.botMassKg !== null ? `/${L?.botMassKg}` : ""} kg`
                     : ""}
+                  {b.figuresHidden ? (b.ok ? " — cumple los límites" : " — excede los límites") : ""}
                 </li>
               ))}
-              {L?.teamCredits !== null && (
+              {L?.teamCredits !== null && t.totalCredits !== undefined && (
                 <li className={t.totalCredits <= (L?.teamCredits ?? 0) ? "ok" : "warn"}>
                   Total equipo: {t.totalCredits}/{L?.teamCredits} cr
                 </li>
               )}
-              {L?.teamMassKg !== null && (
+              {L?.teamMassKg !== null && t.totalMassKg !== undefined && (
                 <li className={t.totalMassKg <= (L?.teamMassKg ?? 0) ? "ok" : "warn"}>
                   Masa del equipo: {t.totalMassKg}/{L?.teamMassKg} kg
                 </li>
+              )}
+              {t.figuresHidden && (L?.teamCredits !== null || L?.teamMassKg !== null) && (
+                <li data-testid="rules-check-team-hidden">Totales del bando ocultos (incluye bots ajenos)</li>
               )}
             </ul>
           </div>
