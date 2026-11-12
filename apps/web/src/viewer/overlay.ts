@@ -52,13 +52,13 @@ export interface MatchResult {
 
 const FEED_LIMIT = 50;
 
+const ARMOR_SECTORS = ["front", "left", "right", "rear"] as const;
+
 /** Sectores marcados como rotos (`true`) en el `armorBroken` público; entrada hostil ⇒ []. */
 export function armorBrokenSectorsOf(raw: unknown): string[] {
-  if (!raw || typeof raw !== "object") return [];
-  return Object.entries(raw as Record<string, unknown>)
-    .filter(([, broken]) => broken === true)
-    .map(([sector]) => sector)
-    .sort();
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+  const o = raw as Record<string, unknown>;
+  return ARMOR_SECTORS.filter((s) => Object.prototype.hasOwnProperty.call(o, s) && o[s] === true).sort();
 }
 
 export class OverlayState {
