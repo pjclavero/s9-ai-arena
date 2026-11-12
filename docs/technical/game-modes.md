@@ -65,7 +65,13 @@ Decisión del usuario (2026-11-12): una batalla válida con respawn no debe qued
 - **Orden dentro del tick:** PASO 5 (combate) → PASO 6 (reglas del modo, puntuación y fin) → PASO 7 (reapariciones de todos los vehículos cuyo `respawnAtTick` vence, en el orden de `this.vehicles`) → **rearme** (una sola pasada si en el PASO 7 reapareció al menos uno, aunque sean varios) → PASO 8 (snapshot y hash). Un vehículo que muere en el PASO 5 de ese mismo tick no está vivo y no se rearma; una batalla que el PASO 6 da por terminada no llega al PASO 7.
 - **Determinismo y replay:** el rearme cambia la munición de los vehículos, que entra en el componente `vehicles` del `stateHash`. La política viaja en la cabecera del replay (`header.ruleset.respawn.rearmPolicy`), así que `verify()` la reproduce: quitarla de la cabecera hace divergir la verificación (test `respawn-rearm.test.ts`). No se emite evento: la munición es privada (D-B1), y no hay evento público nuevo.
 - **Bots:** el WELCOME envía `rules.respawn` tal cual, así que el bot recibe `rearmPolicy` (añadido a `welcome.schema.json` y a los tipos generados del SDK de JavaScript).
-- **Sin respawn** la munición es finita. Si se agota, la batalla sigue hasta `timeLimitTicks` y se resuelve con el desempate del modo (ver más abajo el diagnóstico de `tdm_4v4_norespawn`).
+- **Sin respawn** la munición es finita. Si se agota, la batalla sigue hasta `timeLimitTicks` y se resuelve con el desempate del modo (ver el diagnóstico de `tdm_4v4_norespawn` justo debajo).
+
+### Batallas sin respawn que llegan al límite de tiempo (`tdm_4v4_norespawn`)
+
+El escenario de anclas `tdm_4v4_norespawn` (`rules-respawn-tiebreak.test.ts`, `tdm_mvp@1` sin respawn, HunterBot, semilla `rules-seed`) ya no acaba por eliminación. Diagnóstico de G3 en VM112: **no es munición**. Tras la última baja (tick 768) quedan 3 azules y 1 rojo, todos con radar y con munición (19-25 AP de 40) y sin un solo `no_ammo`. Desde el tick 800 ningún rival se acerca a menos de 58,7 m (el radar alcanza 50 m), no hay proyectiles en vuelo y los supervivientes acaban contra los bordes: el patrón de búsqueda de `HunterBot` no los reencuentra. El ancla corta a 6000 ticks; con el `timeLimitTicks` real (9000) la batalla termina por tiempo y el desempate del ruleset (más puntos, 3 a 1) da la victoria a azul. Lo fija un test de caracterización en `respawn-rearm.test.ts`.
+
+La regla de rearme no aplica sin respawn. Cuando un modo sin respawn se queda sin munición, hoy termina por tiempo con desempate. Una regla aparte, por ejemplo `ammoExhaustionPolicy: "sudden_death_on_exhaustion"` (si todos los vivos se quedan sin munición útil, terminar en ese tick con el desempate del modo), queda **propuesta y sin implementar**: la decide el usuario.
 
 ## Inventario de modos
 
