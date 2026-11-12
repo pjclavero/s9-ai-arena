@@ -150,6 +150,8 @@ beforeAll(async () => {
     streamer: st,
     streamingPublicKey: () => ({ pem: PUB, kid: keyIdOf(PUB) }),
     broadcastBaseUrl: "http://web:3000/broadcast",
+    // FIX-BROADCAST · start exige que /broadcast pueda mostrar la batalla en directo.
+    publicSpectateEnabled: true,
   });
   admin = await tokenFor(h.db, DEV_USERS.admin);
   user = await tokenFor(h.db, DEV_USERS.user);

@@ -139,6 +139,10 @@ beforeAll(async () => {
     streamer: fake,
     streamingPublicKey: () => ({ pem: PUB, kid: keyIdOf(PUB) }),
     broadcastBaseUrl: "http://web:3000/broadcast",
+    // FIX-BROADCAST · `start` exige que /broadcast pueda mostrar el destino: con el espectador
+    // público apagado ninguna batalla en curso es emitible. El estado «apagado» se prueba abajo
+    // con su propia app (EQ5b · destino y retardo).
+    publicSpectateEnabled: true,
   });
   admin = await tokenFor(h.db, DEV_USERS.admin);
   user = await tokenFor(h.db, DEV_USERS.user);
@@ -302,7 +306,9 @@ describe("EQ5b · configuración", () => {
 
 describe("EQ5b · destino y retardo", () => {
   it("el retardo sale de la copia de reglas; destino privado y ajeno se distinguen", async () => {
-    const t = await request(app).get(`/admin/streaming/target?kind=battle&id=${publicBattle}`).set(auth(admin));
+    // Espectador público APAGADO (app propia: la principal lo tiene encendido para poder emitir).
+    const appOff = createApp({ db: h.db, streamer: fake, streamingPublicKey: () => ({ pem: PUB, kid: keyIdOf(PUB) }) });
+    const t = await request(appOff).get(`/admin/streaming/target?kind=battle&id=${publicBattle}`).set(auth(admin));
     // MG (contrato 0.18.0) · `broadcastable` = autorización por visibilidad; `publicBroadcastable`
     // ya no es su alias: vale `broadcastAvailable` (aquí el espectador público está apagado).
     expect(t.body).toMatchObject({
@@ -357,14 +363,12 @@ describe("EQ5b · controles", () => {
           .send({ target: { kind: "battle", id: privateBattle } })
       ).body.error,
     ).toBe("battle_not_public");
-    expect(
-      (
-        await request(app)
-          .post("/admin/streaming/start")
-          .set(auth(admin))
-          .send({ target: { kind: "battle", id: randomUUID() } })
-      ).status,
-    ).toBe(404);
+    // FIX-BROADCAST · destino inexistente ⇒ 409 con motivo estable (antes 404).
+    const missing = await request(app)
+      .post("/admin/streaming/start")
+      .set(auth(admin))
+      .send({ target: { kind: "battle", id: randomUUID() } });
+    expect([missing.status, missing.body.error]).toEqual([409, "target_not_found"]);
 
     // Dos peticiones a la vez: sólo una sesión.
     const [a, b] = await Promise.all([
