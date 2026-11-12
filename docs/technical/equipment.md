@@ -19,7 +19,7 @@ La clasificación ACTIVE / PARTIAL / FUTURE de cada propiedad vive en código (`
 - [Daño y estado de módulos](#daño-y-estado-de-módulos)
 - [Validación del loadout](#validación-del-loadout)
 - [Efecto real en batalla (ACTIVE / PARTIAL / FUTURE)](#efecto-real-en-batalla-active--partial--future)
-- [Campos sin efecto en el motor](#campos-sin-efecto-en-el-motor)
+- [Campos eliminados en la OLA 2 y campos sólo de validación](#campos-eliminados-en-la-ola-2-y-campos-solo-de-validacion)
 - [Persistencia y API](#persistencia-y-api)
 - [Estado actual](#estado-actual)
 - [Documentación relacionada](#documentación-relacionada)
