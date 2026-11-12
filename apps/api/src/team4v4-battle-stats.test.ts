@@ -27,6 +27,7 @@ import type { Replay } from "../../arena-engine/src/replay.js";
 import { ingestReplay } from "../../replay-service/src/store.js";
 import { runStatsJob } from "../../replay-service/src/stats.js";
 import { BLUE, RED, play4v4 } from "../../replay-service/tests/fixtures/team4v4.js";
+import { STATS_DAMAGE_STEP, STATS_HITS_STEP } from "../../../packages/projection/policy.js";
 
 let h: TestDbHandle;
 let app: Express;
@@ -157,9 +158,12 @@ describe("4v4-STATS · /battles/{id}/stats con perTeam (TDM 4v4 real)", () => {
         const bots = Object.values(r.body.perBot as Record<string, any>).filter((b) => b.team === team);
         const sum = (k: string) => bots.reduce((a, b) => a + b[k], 0);
         const t = r.body.perTeam[team];
-        for (const k of ["kills", "deaths", "shotsFired", "shotsHit"])
-          expect(t[k], `${actor} ${team} ${k}`).toBe(sum(k));
-        for (const k of ["damageDealt", "damageTaken"]) expect(t[k]).toBeCloseTo(sum(k), 6);
+        for (const k of ["kills", "deaths", "shotsFired"]) expect(t[k], `${actor} ${team} ${k}`).toBe(sum(k));
+        // OLA 2 · daño y aciertos: perTeam suma SIEMPRE lo cuantizado (igual para todo lector, TD-047);
+        // lo que el dueño ve de SUS bots es exacto, así que se cuantiza igual (idempotente en los ajenos).
+        const sumQ = (k: string, step: number) => bots.reduce((a, b) => a + Math.floor(b[k] / step) * step, 0);
+        expect(t.shotsHit, `${actor} ${team} shotsHit`).toBe(sumQ("shotsHit", STATS_HITS_STEP));
+        for (const k of ["damageDealt", "damageTaken"]) expect(t[k]).toBeCloseTo(sumQ(k, STATS_DAMAGE_STEP), 6);
         expect(t.survivors).toBe(bots.filter((b) => b.aliveAtEnd).length);
       }
     }
