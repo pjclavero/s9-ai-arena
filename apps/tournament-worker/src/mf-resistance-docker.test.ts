@@ -233,7 +233,7 @@ describe.skipIf(!DOCKER_E2E)("OLA2-MF · resistencia: N batallas reales seguidas
     try {
       await agents.run(input);
     } catch (e) {
-      outcome = (e as Error).name === "SportingFailure" ? "BOT_CRASH" : `ERROR:${(e as Error).message.slice(0, 80)}`;
+      outcome = (e as Error).name === "SportingFailure" ? "BOT_CRASH" : `ERROR:${(e as Error).message.slice(0, 400)}`;
     } finally {
       input.engine.free();
     }
