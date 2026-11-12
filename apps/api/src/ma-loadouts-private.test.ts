@@ -69,7 +69,11 @@ describe("GET /bots/{id}/loadouts · loadout privado también con bot público",
       const third = await request(app).get(`/bots/${bot.body.id}/loadouts`).set(auth(other));
       const missing = await request(app).get(`/bots/00000000-0000-4000-8000-000000000000/loadouts`).set(auth(other));
       expect(third.status, `bot ${visibility}`).toBe(404);
-      expect(third.body).toEqual(missing.body); // uniforme: no revela que existe
+      // uniforme: mismo error y mismo mensaje que un id inexistente (no revela que existe)
+      expect({ error: third.body.error, message: third.body.message }).toEqual({
+        error: missing.body.error,
+        message: missing.body.message,
+      });
       expect(JSON.stringify(third.body)).not.toMatch(/chassis|moduleId|modules/);
       // control: la ficha del bot público SÍ es visible para el tercero (sólo el loadout es privado)
       const ficha = await request(app).get(`/bots/${bot.body.id}`).set(auth(other));

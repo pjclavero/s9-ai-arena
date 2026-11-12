@@ -798,7 +798,9 @@ export function battleRoutes(
           t = emptyTeamStats(team, Number.isFinite(score) ? score : 0);
           teams.set(team, t);
         }
-        addBotToTeam(t, sporting);
+        // TD-047 · `perTeam` es IGUAL para cualquier lector: se suma siempre lo que ve un
+        // tercero (estadísticas cuantizadas), nunca los exactos del dueño.
+        addBotToTeam(t, owner ? (projectBotStats(rest, "public_replay") as Record<string, any>) : sporting);
       }
       if (owner) {
         diagnostics[botId] = buildDiagnostics(p, s, result, maxTimeouts);

@@ -291,7 +291,10 @@ describe("UX-06 · diagnóstico por bot: sólo el dueño de ESE bot y el staff",
     const rc = await call(closed, "C", "get", `/battles/${B.priv}/stats`);
     expect(Object.keys(rc.body.diagnostics)).toEqual([BOT.pub1]);
     const sporting = rc.body.perBot[BOT.privA];
-    expect(sporting).toMatchObject({ shotsFired: 10, shotsHit: 4, damageDealt: 120, botName: "AUDIT-UXD-privado" });
+    // OLA 2 · el rival recibe aciertos/daño CUANTIZADOS (5 en 5 y 24 HP): 4 aciertos ⇒ 0; 120 HP = 5 pasos.
+    expect(sporting).toMatchObject({ shotsFired: 10, shotsHit: 0, damageDealt: 120, botName: "AUDIT-UXD-privado" });
+    // el dueño recibe el valor exacto de SU bot
+    expect(r.body.perBot[BOT.privA]).toMatchObject({ shotsHit: 4, damageDealt: 120 });
     expect(sporting.cpuMs).toBeUndefined();
     expect(sporting.rejectionsByReason).toBeUndefined();
     expect(sporting.decisions).toBeUndefined();
