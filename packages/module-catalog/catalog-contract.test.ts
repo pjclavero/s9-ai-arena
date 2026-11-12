@@ -122,6 +122,8 @@ function getPath(def: Json, path: string): unknown {
 }
 
 /** Copia del catálogo con `path` de `target` cambiado a `value` (en slots: la ranura pertinente). */
+const SECTOR_CYCLE = ["front", "right", "rear", "left"];
+
 function withField(cat: ModuleDefinition[], target: ModuleDefinition, path: string, value: unknown): ModuleDefinition[] {
   return cat.map((m) => {
     if (m !== target) return m;
@@ -134,7 +136,13 @@ function withField(cat: ModuleDefinition[], target: ModuleDefinition, path: stri
         0,
         (c.slots as Json[]).findIndex((s) => (key === "sector" ? s.sector !== undefined : s.accepts.includes("weapon"))),
       );
-      c.slots[idx] = { ...c.slots[idx], [key]: value };
+      if (key === "sector") {
+        // Todas las ranuras de blindaje (la sonda monta el blindaje en la que le toca): la
+        // rotación de cada una desalinea el sector del módulo montado.
+        c.slots = (c.slots as Json[]).map((s) =>
+          s.sector === undefined ? s : { ...s, sector: (SECTOR_CYCLE[(SECTOR_CYCLE.indexOf(s.sector) + 1) % 4] as string) },
+        );
+      } else c.slots[idx] = { ...c.slots[idx], [key]: value };
     } else c[path] = value;
     return c as unknown as ModuleDefinition;
   });
@@ -221,7 +229,8 @@ describe("CATALOG_CONTRACT · S · el esquema y la tabla de campos coinciden", (
       for (const [f, c] of Object.entries(CATEGORY_FIELDS[cat]))
         if ((c.status === "ACTIVE" || c.status === "VALIDATION_ONLY") && !declaredFor(cat).includes(f))
           stale.push(`${cat}.${f}`);
-    for (const f of Object.keys(COMMON_FIELDS)) if (!COMMON_DECLARED.includes(f)) stale.push(`*.${f}`);
+    for (const f of Object.keys(COMMON_FIELDS))
+      if (!CATEGORIES.some((cat) => declaredFor(cat).includes(f))) stale.push(`*.${f}`);
     expect(stale).toEqual([]);
   });
 

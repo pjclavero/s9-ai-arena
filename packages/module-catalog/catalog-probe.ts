@@ -153,7 +153,10 @@ class Chaser implements BotAgent {
   decide(obs: any) {
     this.log.push(["X", obs]);
     const me = obs.self.position;
-    const target = this.battle!.getPhysics().pose("veh_1")?.position ?? me;
+    // Si E ha sembrado una mina, X pasa por encima (es la sonda: así daño, radio de explosión y
+    // retardo de armado de la mina tienen consecuencia observable); si no, persigue a E.
+    const mine = this.battle!.getMines()[0];
+    const target = mine?.position ?? this.battle!.getPhysics().pose("veh_1")?.position ?? me;
     const want = Math.atan2(target.y - me.y, target.x - me.x);
     let diff = want - obs.self.heading;
     while (diff > Math.PI) diff -= 2 * Math.PI;
