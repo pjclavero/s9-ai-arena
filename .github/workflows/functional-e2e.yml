@@ -136,6 +136,10 @@ jobs:
       # Misma imagen fijada por digest que S9_E2E_NGINX_IMAGE (el contexto `env` no
       # existe en jobs.<id>.env; functional-e2e-gate.test.ts exige que coincidan).
       S9_GATEWAY_TEST_NGINX_IMAGE: nginxinc/nginx-unprivileged:1.27-alpine@sha256:65e3e85dbaed8ba248841d9d58a899b6197106c23cb0ff1a132b7bfe0547e4c0
+      # BROADCAST-PUBLIC-ACCESS · gate INTERNAL_BROADCAST_API_PROXY: conf REAL de web en su
+      # imagen base (nginx:1.27-alpine, infrastructure/docker/web/Dockerfile), fijada por digest.
+      S9_RUN_WEB_PROXY_E2E: "1"
+      S9_WEB_PROXY_E2E_NGINX_IMAGE: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
       DOCKER_SOCKET: /var/run/docker.sock
     steps:
       - uses: actions/checkout@v4
@@ -156,6 +160,7 @@ jobs:
         run: |
           grep -v '^#' runtimes/DIGESTS.lock | awk 'NF==3 {print $3}' | while read -r img; do docker pull -q "$img"; done
           docker pull -q "$S9_GATEWAY_TEST_NGINX_IMAGE"
+          docker pull -q "$S9_WEB_PROXY_E2E_NGINX_IMAGE"
       - name: E2E Docker de vitest (opt-in ACTIVADO)
         # --maxWorkers=1: un fichero cada vez; las comprobaciones «no quedan
         # contenedores ^bot-» de un fichero no ven los de otro (runner efímero).
@@ -169,9 +174,10 @@ jobs:
           apps/api/src/fc-a-bot-pipeline-e2e.test.ts
           apps/tournament-worker/src/container-battle-e2e.test.ts
           infrastructure/gateway/tests/replay-gateway.test.ts
+          infrastructure/tests/web-nginx-proxy-e2e.test.ts
           --maxWorkers=1 --reporter=default --reporter=json
           --outputFile.json="${{ runner.temp }}/docker-e2e/vitest.json"
-      - name: Veredicto independiente (los 7 ficheros ejecutados, 0 skipped)
+      - name: Veredicto independiente (los 8 ficheros ejecutados, 0 skipped)
         if: always()
         timeout-minutes: 2
         run: >-
@@ -183,6 +189,7 @@ jobs:
           apps/api/src/fc-a-bot-pipeline-e2e.test.ts
           apps/tournament-worker/src/container-battle-e2e.test.ts
           infrastructure/gateway/tests/replay-gateway.test.ts
+          infrastructure/tests/web-nginx-proxy-e2e.test.ts
       - name: Evidencia (informe de vitest y contenedores)
         if: always()
         timeout-minutes: 2
