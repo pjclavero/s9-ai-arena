@@ -139,12 +139,29 @@ describe("respawn limitado", () => {
   });
 
   it("2v2 con 1 respawn: la batalla no acaba mientras un bando conserve vidas, y acaba al agotarlas", () => {
-    const b = battle(limited(1), roster(2));
-    runFor(b, 40_000);
+    // Termina POR CONSTRUCCIÓN: rojo caza, azul está inmóvil (IdleBot). La munición se repone al
+    // reaparecer, así que rojo agota las 2 vidas de cada azul; el resultado no depende de la trayectoria.
+    const parts = roster(2);
+    const b = new Battle({
+      battleId: "rr",
+      seed: "rules-seed",
+      ruleset: limited(1),
+      map: emptyArena(),
+      participants: parts,
+      recordReplay: true,
+    });
+    for (const p of parts) b.attachBot(p.id, p.team === "red" ? new HunterBot(p.botId) : new IdleBot(p.botId));
+    const blue = () => b.getVehicles().filter((v) => v.team === "blue");
+    for (let t = 0; t < 40_000 && !b.isFinished(); t++) {
+      b.step();
+      // Invariante de vidas: mientras la batalla siga, algún azul vive o aún tiene un respawn por gastar.
+      if (!b.isFinished()) expect(blue().some((v) => v.alive || v.respawnsUsed < 1)).toBe(true);
+    }
+    expect(b.isFinished()).toBe(true);
     const r = b.getResult()!;
-    expect(r.winner).not.toBe("draw");
-    const losers = b.getVehicles().filter((v) => v.team !== r.winner);
-    for (const v of losers) {
+    expect(r.ticks).toBeLessThan(40_000); // eliminación, no tiempo
+    expect(r.winner).toBe("red");
+    for (const v of blue()) {
       expect(v.alive).toBe(false);
       expect(v.respawnsUsed).toBe(1);
     }
@@ -152,7 +169,7 @@ describe("respawn limitado", () => {
       eliminations(b)
         .map((e: any) => e.targetId)
         .sort(),
-    ).toEqual(expect.arrayContaining(losers.map((v) => v.id).sort()));
+    ).toEqual(expect.arrayContaining(blue().map((v) => v.id).sort()));
     b.free();
   });
 
