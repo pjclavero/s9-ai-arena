@@ -21,8 +21,10 @@ import { publicShowabilityOf, type BroadcastBlockedReason } from "../replay-acce
 import type { BattleVisibility } from "../battle-access.js";
 import {
   battleBroadcastState,
+  broadcastTargetSummary,
   tournamentBroadcastState,
   type BroadcastEffectiveState,
+  type BroadcastTargetSummary,
   type BroadcastUnavailableReason,
 } from "../broadcast-effective.js";
 
@@ -653,7 +655,7 @@ export function credentialBinding(
 export type TargetKind = "battle" | "tournament";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export interface TargetInfo extends BroadcastEffectiveFields {
+export interface TargetInfo extends BroadcastEffectiveFields, BroadcastTargetSummary {
   kind: TargetKind;
   id: string;
   label: string;
@@ -712,6 +714,9 @@ export async function resolveTarget(
     if (!show) return null;
     const pub = show.showable;
     const eff = effectiveFields(await battleBroadcastState(db, t.id, vis));
+    // FIX-BROADCAST · qué es el destino (batalla suelta o de un torneo) y qué mostrará.
+    const summary = await broadcastTargetSummary(db, t, eff);
+    if (!summary) return null;
     let delaySeconds = 0;
     let delaySource: TargetInfo["delaySource"] = "none";
     if (b.spectator_mode === "visible") {
@@ -750,6 +755,7 @@ export async function resolveTarget(
       tournamentBroadcast: show.tournamentBroadcast,
       publicBroadcastable: eff.broadcastAvailable,
       ...eff,
+      ...summary,
       delaySeconds,
       delaySource,
     };
@@ -762,29 +768,45 @@ export async function resolveTarget(
   const snap = rulesOf(tr);
   const d = snap ? delayOf(snap.engineRuleset) : null;
   const teff = effectiveFields(await tournamentBroadcastState(db, t.id, vis));
+  const tsummary = await broadcastTargetSummary(db, t, teff);
+  if (!tsummary) return null;
   return {
     kind: "tournament",
     id: t.id,
     label: String(tr.name ?? `Torneo ${t.id.slice(0, 8)}`).slice(0, 120),
     status: tr.state,
-    // Un torneo siempre se puede emitir (compatibilidad): el director muestra las batallas
-    // que la API pública deja leer. Con `broadcast`, TODAS (con la proyección de competición
-    // de sus bots privados o de equipo); sin él, sólo las que no tienen bots no públicos.
+    // Un torneo siempre está AUTORIZADO por visibilidad (compatibilidad): el director muestra
+    // las batallas que la API pública deja leer. Con `broadcast`, TODAS (con la proyección de
+    // competición de sus bots privados o de equipo); sin él, sólo las que no tienen bots no
+    // públicos. FIX-BROADCAST · autorizado NO es emitible: `start` exige `broadcastAvailable`.
     broadcastable: true,
     broadcastBlockedReason: null,
     tournamentBroadcast: tr.broadcast === true,
     publicBroadcastable: teff.broadcastAvailable,
     ...teff,
+    ...tsummary,
     delaySeconds: d ?? 0,
     delaySource: d !== null ? "snapshot" : "none",
   };
 }
 
-/** URL de /broadcast que captura el streamer (branding por query, saneado allí también). */
-export function broadcastUrlFor(base: string, t: { kind: TargetKind; id: string }, b: Branding): string {
+/**
+ * URL de /broadcast que captura el streamer (branding por query, saneado allí también).
+ * FIX-BROADCAST (R2) · `waitScheduled`: el destino es una batalla PROGRAMADA (espera legítima
+ * validada por la API al iniciar/reiniciar). /broadcast es anónima y recibe 404 de una
+ * programada; con `wait=scheduled` la página muestra la espera en vez de SOURCE_ERROR hasta
+ * que la batalla empiece (con tope de tiempo). No da acceso a nada: sólo cambia la pantalla.
+ */
+export function broadcastUrlFor(
+  base: string,
+  t: { kind: TargetKind; id: string },
+  b: Branding,
+  opts: { waitScheduled?: boolean } = {},
+): string {
   const u = new URL(base);
   u.search = "";
   u.searchParams.set(t.kind, t.id);
+  if (opts.waitScheduled && t.kind === "battle") u.searchParams.set("wait", "scheduled");
   u.searchParams.set("event", b.eventName);
   if (b.logoUrl) u.searchParams.set("logo", b.logoUrl);
   u.searchParams.set("primary", b.primaryColor);
