@@ -79,7 +79,7 @@ def sh(cmd):
 
 def vitest():
     r = sh(f"timeout 300 npx vitest run {TEST} 2>&1")
-    out = r.stdout + r.stderr
+    out = re.sub(r"\x1b\[[0-9;]*m", "", r.stdout + r.stderr)
     m = re.search(r"Tests\s+(?:(\d+) failed \| )?(\d+) passed", out)
     return r.returncode, out, m.group(0) if m else None
 
