@@ -55,19 +55,20 @@ class RadioHunter extends HunterBot {
   }
 }
 /**
- * Bot que, además de cazar, siembra minas SÓLO en las decisiones en que dispara.
+ * Bot que, además de cazar, pide sembrar una mina al FINAL de la partida (tick >= SEED_MINE_FROM).
  * Antes pedía deployMine en cada decisión, pero el motor sólo lo procesaba si el comando traía
  * también `fire` (defecto, corregido en OLA 2: deployMine se procesa sin fire). Con el arreglo,
- * ese bot sembraba minas desde el tick 0 (también una sola, en el primer tick) y, con la semilla
- * fija, la partida cambiaba de trayectoria: nadie moría ni había eventos en 900 ticks, y el
- * test dejaba de probar nada. Pidiendo la mina sólo junto a `fire` el comando es el mismo que
- * el motor aceptaba antes del arreglo, así que la partida (semilla, eventos, final) es la
- * misma POR CONSTRUCCIÓN y el crudo sigue llevando `deployMine` y `mine.explosive@1`.
+ * ese bot sembraba minas desde el tick 0 y, con la semilla fija, la partida cambiaba de
+ * trayectoria: nadie moría ni había eventos en 900 ticks y el test dejaba de probar nada.
+ * Sembrar sólo al final no puede alterar lo ocurrido antes (los ticks previos son idénticos a la
+ * partida sin mina, causalidad), así que los eventos públicos de la partida siguen existiendo; el
+ * crudo conserva `deployMine` y `mine.explosive@1`, que es lo que la calibración exige.
  */
+const SEED_MINE_FROM = 880;
 class MinerHunter extends HunterBot {
   decide(obs: any) {
     const c = (super.decide(obs) ?? {}) as Record<string, unknown>;
-    if (!Array.isArray(c.fire) || c.fire.length === 0) return c;
+    if (obs.tick < SEED_MINE_FROM) return c;
     return { ...c, deployMine: { slot: "mine_bay", armDelayTicks: 0 } };
   }
 }
