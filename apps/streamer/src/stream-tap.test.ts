@@ -256,10 +256,21 @@ describe("P3 · fallos de disco no dejan huérfanos ni descuadran la rotación",
     await new Promise<void>((res) => control.listen(0, "127.0.0.1", res));
     const base = `http://127.0.0.1:${(control.address() as AddressInfo).port}`;
     const h = { "x-streamer-auth": "diag-secret" };
-    for (let i = 0; i < 2; i++) {
-      const res = await fetch(`${base}/diag/tap/latest.jpg`, { headers: h });
-      expect(res.status).toBe(502); // nunca 429
+    const statuses: Array<number | string> = [];
+    const swallow = () => {}; // con el defecto, el throw síncrono escapa del listener HTTP
+    process.on("uncaughtException", swallow);
+    try {
+      for (let i = 0; i < 2; i++) {
+        const res = await fetch(`${base}/diag/tap/latest.jpg`, {
+          headers: h,
+          signal: AbortSignal.timeout(2_000),
+        }).catch(() => null);
+        statuses.push(res ? res.status : "colgada");
+      }
+    } finally {
+      process.off("uncaughtException", swallow);
     }
+    expect(statuses).toEqual([502, 502]); // nunca 429 ni colgada
   });
 });
 
