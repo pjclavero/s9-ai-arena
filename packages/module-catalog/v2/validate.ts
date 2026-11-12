@@ -42,7 +42,13 @@ const set = <T extends string>(xs: readonly T[]): ReadonlySet<string> => new Set
 export const CONSUMED_CHANNELS = set<InterferenceChannel>(["lidar", "radar", "proximity", "acoustic", "radio"]);
 const ALL_CHANNELS = set<InterferenceChannel>(["lidar", "radar", "proximity", "acoustic", "radio", "optical"]);
 /** Registro inicial de B (DamageTypeProfile). Un id nuevo se añade aquí con su perfil. */
-export const KNOWN_DAMAGE_TYPES = set<KnownDamageType>(["kinetic", "explosive", "thermal", "electronic", "environmental"]);
+export const KNOWN_DAMAGE_TYPES = set<KnownDamageType>([
+  "kinetic",
+  "explosive",
+  "thermal",
+  "electronic",
+  "environmental",
+]);
 const RELATIONS = set(["self", "ally", "enemy", "any"]);
 const KINDS = set(["vehicle", "module", "deployable", "projectile"]);
 const FALLOFFS = set(["none", "linear", "step"]);
@@ -154,7 +160,8 @@ EFFECT_VALIDATORS.interference = {
   required: ["profile"],
   check(c, e, path) {
     c.num(e, "strength", path, { min: 0, max: 1 });
-    if (!(((e.radiusM as number | undefined) ?? 0) > 0)) c.fail(`${path}.radiusM`, "una interferencia es una zona: radiusM > 0");
+    if (!(((e.radiusM as number | undefined) ?? 0) > 0))
+      c.fail(`${path}.radiusM`, "una interferencia es una zona: radiusM > 0");
     if (!(((e.durationTicks as number | undefined) ?? 0) > 0))
       c.fail(`${path}.durationTicks`, "una zona de interferencia dura: durationTicks > 0");
     interferenceProfile(c, e.profile, `${path}.profile`);
@@ -221,7 +228,8 @@ function effectDef(c: Check, v: unknown, path: string): void {
 
 /** Lista ordenada de efectos (de una acción, un impacto o un deployable). */
 function effectList(c: Check, v: unknown, path: string, allowEmpty = false): void {
-  if (!Array.isArray(v) || (!allowEmpty && v.length === 0)) return c.fail(path, "debe ser una lista no vacía de efectos");
+  if (!Array.isArray(v) || (!allowEmpty && v.length === 0))
+    return c.fail(path, "debe ser una lista no vacía de efectos");
   v.forEach((e, i) => effectDef(c, e, `${path}[${i}]`));
   // `penetration` no daña por sí sola: necesita un efecto de daño HERMANO (§8).
   const prims = v.map((e) => (e && typeof e === "object" ? (e as Obj).primitive : undefined));

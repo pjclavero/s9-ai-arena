@@ -64,7 +64,9 @@ function normalizeEffects(list: unknown): Obj[] {
 }
 
 function normalizeTrigger(t: Obj): Obj {
-  return t.targets ? { ...t, targets: { ...(t.targets as Obj), requiresLineOfSight: (t.targets as Obj).requiresLineOfSight ?? true } } : { ...t };
+  return t.targets
+    ? { ...t, targets: { ...(t.targets as Obj), requiresLineOfSight: (t.targets as Obj).requiresLineOfSight ?? true } }
+    : { ...t };
 }
 
 function normalizeDeployable(d: Obj): Obj {
@@ -127,11 +129,14 @@ export const FIXTURES_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", 
 export function resolveFixtureModule(raw: unknown): FixtureModuleV2 {
   const issues: V2Issue[] = [];
   const o = raw as Obj;
-  if (!o || typeof o !== "object" || Array.isArray(o)) throw new V2ContractError([{ path: "fixture", message: "debe ser un objeto" }]);
-  for (const k of Object.keys(o)) if (!FIXTURE_KEYS.has(k)) issues.push({ path: `fixture.${k}`, message: "clave no declarada" });
+  if (!o || typeof o !== "object" || Array.isArray(o))
+    throw new V2ContractError([{ path: "fixture", message: "debe ser un objeto" }]);
+  for (const k of Object.keys(o))
+    if (!FIXTURE_KEYS.has(k)) issues.push({ path: `fixture.${k}`, message: "clave no declarada" });
   if (typeof o.id !== "string" || !FIXTURE_ID_PATTERN.test(o.id))
     issues.push({ path: "fixture.id", message: `id de fixture debe casar ${FIXTURE_ID_PATTERN}` });
-  if (!Number.isInteger(o.version) || (o.version as number) < 1) issues.push({ path: "fixture.version", message: "entero ≥ 1" });
+  if (!Number.isInteger(o.version) || (o.version as number) < 1)
+    issues.push({ path: "fixture.version", message: "entero ≥ 1" });
   if (typeof o.name !== "string" || o.name.length === 0) issues.push({ path: "fixture.name", message: "obligatorio" });
   issues.push(...validateActions(o.actions, `${String(o.id)}.actions`));
   ensure(issues);

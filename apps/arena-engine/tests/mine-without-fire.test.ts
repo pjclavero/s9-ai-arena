@@ -29,7 +29,10 @@ function mines(cmd: (tick: number) => Record<string, unknown>): number {
       { id: "veh_2", botId: "b2", team: "blue", spec: sandbagLoadout() },
     ],
   });
-  b.attachBot("veh_1", { botId: "b1", decide: (obs: any) => ({ forTick: obs.tick, ...(obs.tick === 0 ? cmd(0) : {}) }) });
+  b.attachBot("veh_1", {
+    botId: "b1",
+    decide: (obs: any) => ({ forTick: obs.tick, ...(obs.tick === 0 ? cmd(0) : {}) }),
+  });
   b.attachBot("veh_2", new IdleBot("b2"));
   for (let t = 0; t < 5; t++) b.step();
   const n = b.getMines().length;

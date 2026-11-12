@@ -37,8 +37,14 @@ export interface FieldContract {
 }
 
 const n = (v: unknown): number => v as number;
-const scale = (k: number, add = 0): Perturb => (v) => n(v) * k + add;
-const intScale = (k: number, min = 1): Perturb => (v) => Math.max(min, Math.round(n(v) * k));
+const scale =
+  (k: number, add = 0): Perturb =>
+  (v) =>
+    n(v) * k + add;
+const intScale =
+  (k: number, min = 1): Perturb =>
+  (v) =>
+    Math.max(min, Math.round(n(v) * k));
 const set =
   (x: unknown): Perturb =>
   () =>

@@ -61,7 +61,10 @@ describe("MC · radio.rangeM: valor exacto del alcance (unitario)", () => {
 });
 
 class Talker implements BotAgent {
-  constructor(readonly botId: string, private say: boolean) {}
+  constructor(
+    readonly botId: string,
+    private say: boolean,
+  ) {}
   got = 0;
   decide(obs: any) {
     this.got += Array.isArray(obs.radio) ? obs.radio.length : 0;

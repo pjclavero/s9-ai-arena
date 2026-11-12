@@ -41,7 +41,16 @@ const realCatalog = loadCatalog();
  */
 const SYNTHETIC: ModuleDefinition[] = (schema.properties.category.enum as ModuleCategory[])
   .filter((cat) => !realCatalog.some((m) => m.category === cat))
-  .map((cat) => ({ id: `${cat}.probe`, version: 1, category: cat, name: "sonda", massKg: 10, costCredits: 10, size: "S", hp: 10 }));
+  .map((cat) => ({
+    id: `${cat}.probe`,
+    version: 1,
+    category: cat,
+    name: "sonda",
+    massKg: 10,
+    costCredits: 10,
+    size: "S",
+    hp: 10,
+  }));
 const catalog = [...realCatalog, ...SYNTHETIC];
 const CATEGORIES = schema.properties.category.enum as ModuleCategory[];
 
@@ -54,7 +63,8 @@ function propsOf(node: Json | undefined, prefix = ""): string[] {
   const out: string[] = [];
   for (const [k, sub] of Object.entries((node?.properties ?? {}) as Json)) {
     if (sub === false) continue; // prohibido explícitamente (ver forbiddenIn)
-    if (sub.properties && (sub.type === "object" || sub.type === undefined)) out.push(...propsOf(sub, `${prefix}${k}.`));
+    if (sub.properties && (sub.type === "object" || sub.type === undefined))
+      out.push(...propsOf(sub, `${prefix}${k}.`));
     else if (sub.type === "array" && sub.items?.type === "object") out.push(...propsOf(sub.items, `${prefix}${k}[].`));
     else out.push(`${prefix}${k}`);
   }
@@ -107,7 +117,8 @@ function presentIn(def: ModuleDefinition): string[] {
   const out: string[] = [];
   for (const [k, v] of Object.entries(def as unknown as Json)) {
     if (k === "power" && v && typeof v === "object") for (const s of Object.keys(v)) out.push(`power.${s}`);
-    else if (k === "slots" && Array.isArray(v)) for (const s of v) for (const sk of Object.keys(s)) out.push(`slots[].${sk}`);
+    else if (k === "slots" && Array.isArray(v))
+      for (const s of v) for (const sk of Object.keys(s)) out.push(`slots[].${sk}`);
     else out.push(k);
   }
   return [...new Set(out)];
@@ -124,7 +135,12 @@ function getPath(def: Json, path: string): unknown {
 /** Copia del catálogo con `path` de `target` cambiado a `value` (en slots: la ranura pertinente). */
 const SECTOR_CYCLE = ["front", "right", "rear", "left"];
 
-function withField(cat: ModuleDefinition[], target: ModuleDefinition, path: string, value: unknown): ModuleDefinition[] {
+function withField(
+  cat: ModuleDefinition[],
+  target: ModuleDefinition,
+  path: string,
+  value: unknown,
+): ModuleDefinition[] {
   return cat.map((m) => {
     if (m !== target) return m;
     const c = structuredClone(m) as Json;
@@ -134,13 +150,17 @@ function withField(cat: ModuleDefinition[], target: ModuleDefinition, path: stri
       // Se muta la ranura que la sonda USA para ese dato (blindaje para sector; la del arma si no).
       const idx = Math.max(
         0,
-        (c.slots as Json[]).findIndex((s) => (key === "sector" ? s.sector !== undefined : s.accepts.includes("weapon"))),
+        (c.slots as Json[]).findIndex((s) =>
+          key === "sector" ? s.sector !== undefined : s.accepts.includes("weapon"),
+        ),
       );
       if (key === "sector") {
         // Todas las ranuras de blindaje (la sonda monta el blindaje en la que le toca): la
         // rotación de cada una desalinea el sector del módulo montado.
         c.slots = (c.slots as Json[]).map((s) =>
-          s.sector === undefined ? s : { ...s, sector: (SECTOR_CYCLE[(SECTOR_CYCLE.indexOf(s.sector) + 1) % 4] as string) },
+          s.sector === undefined
+            ? s
+            : { ...s, sector: SECTOR_CYCLE[(SECTOR_CYCLE.indexOf(s.sector) + 1) % 4] as string },
         );
       } else c.slots[idx] = { ...c.slots[idx], [key]: value };
     } else c[path] = value;
@@ -218,7 +238,8 @@ describe("CATALOG_CONTRACT · S · el esquema y la tabla de campos coinciden", (
     for (const m of catalog)
       for (const f of presentIn(m)) {
         if (IDENTITY_FIELDS.includes(f)) continue;
-        if (!declaredFor(m.category).includes(f) || !fieldContract(m.category, f)) bad.push(`${m.id}@${m.version}.${f}`);
+        if (!declaredFor(m.category).includes(f) || !fieldContract(m.category, f))
+          bad.push(`${m.id}@${m.version}.${f}`);
       }
     expect(bad).toEqual([]);
   });
@@ -295,7 +316,8 @@ describe("CATALOG_CONTRACT · S · el esquema y la tabla de campos coinciden", (
         if (IDENTITY_FIELDS.includes(f) || f.startsWith("slots[].")) continue;
         const c = fieldContract(m.category, f)!;
         const ui = effectOf(m.category, f);
-        if (!ui || ui.status !== map[c.status as keyof typeof map]) bad.push(`${m.category}.${f}: ${ui?.status} ≠ ${c.status}`);
+        if (!ui || ui.status !== map[c.status as keyof typeof map])
+          bad.push(`${m.category}.${f}: ${ui?.status} ≠ ${c.status}`);
       }
     expect([...new Set(bad)]).toEqual([]);
   });

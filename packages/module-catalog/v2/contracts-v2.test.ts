@@ -48,7 +48,13 @@ const ALL_PRIMITIVES: Record<EffectPrimitive, true> = {
   sensorModifier: true,
   communicationModifier: true,
 };
-const ALL_TRIGGERS: Record<TriggerKind, true> = { proximity: true, contact: true, timer: true, remote: true, event: true };
+const ALL_TRIGGERS: Record<TriggerKind, true> = {
+  proximity: true,
+  contact: true,
+  timer: true,
+  remote: true,
+  event: true,
+};
 const ALL_ACTIONS: Record<ActionKind, true> = { fire: true, deploy: true, activate: true, trigger: true };
 
 describe("MC · registros de primitivas = contrato", () => {
@@ -285,7 +291,9 @@ describe("MC · validación fail-closed (mutaciones de fixtures válidos)", () =
       expect(e).toBeInstanceOf(V2ContractError);
       expect((e as V2ContractError).issues.length).toBeGreaterThanOrEqual(2);
     }
-    expect(() => resolveFixtureModule({ ...raw("test.fixture_repair"), id: "utility.repair_kit" })).toThrow(V2ContractError);
+    expect(() => resolveFixtureModule({ ...raw("test.fixture_repair"), id: "utility.repair_kit" })).toThrow(
+      V2ContractError,
+    );
     expect(() => resolveFixtureModule({ ...raw("test.fixture_repair"), category: "utility" })).toThrow(V2ContractError);
   });
 });
@@ -297,7 +305,16 @@ describe("MC · los bloques v2 NO entran todavía en un módulo del catálogo (s
   const validateModule = ajv.compile(schema);
   const mine = loadCatalog().find((m) => m.category === "mine")!;
 
-  for (const block of ["actions", "deployable", "effects", "projectile", "guidance", "signature", "visibility", "sensor"]) {
+  for (const block of [
+    "actions",
+    "deployable",
+    "effects",
+    "projectile",
+    "guidance",
+    "signature",
+    "visibility",
+    "sensor",
+  ]) {
     it(`module.schema.json rechaza un módulo con \`${block}\``, () => {
       expect(validateModule(mine)).toBe(true);
       expect(validateModule({ ...mine, [block]: raw("test.fixture_proximity_mine").actions })).toBe(false);
