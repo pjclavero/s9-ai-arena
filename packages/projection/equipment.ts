@@ -12,13 +12,7 @@
 import { effectOf } from "../module-catalog/effect-status.js";
 import type { ModuleCategory } from "../module-catalog/types.js";
 import type { AudienceClass, DisclosurePolicy } from "./contracts.js";
-import {
-  DEFAULT_DISCLOSURE_POLICY,
-  STATS_ACCURACY_N,
-  STATS_HITS_STEP,
-  emits,
-  fieldLevel,
-} from "./policy.js";
+import { DEFAULT_DISCLOSURE_POLICY, STATS_ACCURACY_N, STATS_HITS_STEP, emits, fieldLevel } from "./policy.js";
 
 /** Proyecta las estadísticas de UN bot para una audiencia (`owner`/`staff` o pública). */
 export function projectBotStats(

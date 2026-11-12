@@ -332,7 +332,7 @@ describe("PRIVATE_EQUIPMENT · R2 (D-B1)", () => {
       somethingNew: 1,
     };
     const third = projectBotStats(stats, "public_replay");
-    expect(Object.keys(third).sort()).toEqual(["botId", "damageDealt", "shotsFired", "team"]);
+    expect(Object.keys(third).sort()).toEqual(["botId", "shotsFired", "team"]); // M0: sin daño absoluto
     const owner = projectBotStats(stats, "owner");
     expect(owner).toMatchObject({
       perModule: stats.perModule,
@@ -441,7 +441,17 @@ describe("CROSS_VIEW · clave de proyección con audiencia y visibilityEpoch", (
 });
 
 describe("estadísticas públicas sin daño absoluto (M0)", () => {
-  const stats = { botId: "bot-a", team: "red", damageDealt: 1234, damageTaken: 301, shotsFired: 77, shotsHit: 33, accuracy: 33 / 77, died: true, deaths: 1 };
+  const stats = {
+    botId: "bot-a",
+    team: "red",
+    damageDealt: 1234,
+    damageTaken: 301,
+    shotsFired: 77,
+    shotsHit: 33,
+    accuracy: 33 / 77,
+    died: true,
+    deaths: 1,
+  };
 
   it("un tercero o equipo NO recibe damageDealt ni damageTaken (HP absolutos reconstruyen el casco); dueño y staff, exactos", () => {
     for (const aud of ["public_replay", "public_live", "broadcast", "team", "bot_team"] as const) {
