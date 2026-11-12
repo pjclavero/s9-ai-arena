@@ -2,7 +2,7 @@
 
 Esta página es para quien tiene un rol de **administrador dentro del juego**. No es la guía del **operador del servidor** (instalar, hacer copias, actualizar), que está en [operaciones](../operations/index.md).
 
-Una cuenta con rol **admin** ve en la barra una entrada **«Administración»** con cuatro pantallas: **Usuarios y seguridad**, **Sistema**, **Auditoría** y **Roles y permisos**, y además **Streaming** (ver [Streaming](#streaming)). Un usuario sin el rol que abre una de ellas ve «No tienes permiso para esto».
+Una cuenta con rol **admin** ve la zona **«Administración»** y, además, la pantalla de **Streaming**. En Administración se gestionan roles, catálogo, hallazgos, auditoría y el bloque **«Acceso público / Broadcast»**. Un usuario sin rol admin recibe «No tienes permiso para esto».
 
 No hay gestión de usuarios propiamente dicha: no hay listado, búsqueda, bloqueo ni borrado.
 
@@ -12,6 +12,36 @@ No hay gestión de usuarios propiamente dicha: no hay listado, búsqueda, bloque
 - **Catálogo importado**: las versiones del catálogo de equipamiento, con su número de piezas.
 - **Hallazgos de seguridad**: lo que detecta la validación de bots (dependencias no permitidas, secretos en el código…), con fecha, tipo, gravedad y detalle.
 - **Auditoría (solo inserción)**: las últimas acciones registradas.
+
+## Acceso público / Broadcast
+
+Desde PR #269, el bloque **Administración → Acceso público / Broadcast** permite cambiar sin SSH ni editar `.env`:
+
+- **Espectador público**: permite ver batallas en directo sin cuenta cuando la batalla y su política lo permiten.
+- **Replays públicos**: permite ver replays sin cuenta cuando la política del replay/batalla lo permite.
+
+Los cambios:
+
+- se guardan en la aplicación (BD);
+- quedan auditados con quién, cuándo, valor anterior y nuevo;
+- se aplican en caliente; los demás procesos los releen en pocos segundos;
+- fallan cerrados: si no se puede leer un estado válido, no se abre el acceso público;
+- no contienen secretos.
+
+El bloque muestra también el **estado efectivo** de la retransmisión. Que una batalla tenga `broadcastable=true` no basta si, por ejemplo, el espectador público está desactivado.
+
+Ejemplos de motivos que puede mostrar la interfaz:
+
+- espectador público desactivado;
+- replays públicos desactivados;
+- batalla no pública;
+- torneo no retransmisible;
+- batalla todavía no iniciada;
+- streaming no configurado.
+
+### Importante
+
+Activar el espectador público expone sólo las batallas que la política pública permite. No hace público automáticamente el código, la ficha privada ni los datos internos de un bot. Consulta [Visibilidad](visibility.md).
 
 ## Sistema
 
@@ -56,6 +86,11 @@ No son pantallas de administración, pero exigen roles altos:
 
 ## Lo que no se hace desde la web
 
-Listar o buscar usuarios, bloquear cuentas, restablecer contraseñas, importar catálogos, suspender bots o activar la ejecución de batallas y la emisión pública. Esas tareas son del operador del servidor: ver [operaciones](../operations/index.md) y [configuración](../operations/configuration.md).
+Listar o buscar usuarios, bloquear cuentas, restablecer contraseñas, importar catálogos, suspender bots, activar la ejecución real de batallas y operar backup/restore/readiness siguen fuera de la web. **El espectador y los replays públicos sí se gestionan ya desde Administración → Acceso público / Broadcast.** Para el resto, ver [operaciones](../operations/index.md) y [configuración](../operations/configuration.md).
 
 Siguiente: [Cuentas](accounts.md).
+
+
+## Próxima evolución: Retransmisión V2 (DESIGN_ONLY)
+
+La arquitectura MS-1 (#275) está aprobada como **diseño**, pero todavía no forma parte del producto. Cuando MS-2…MS-8 se integren, Administración → Retransmisión deberá permitir preparar una batalla antes de arrancarla, esperar a `BROADCAST_READY`, emitir un torneo completo en una única sesión YouTube, elegir/cambiar la batalla, obtener fuentes por batalla para OBS/vMix y emitir replays o listas de replays. Hasta entonces, esta sección es informativa y no describe botones disponibles hoy.
