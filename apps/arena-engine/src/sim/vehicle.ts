@@ -56,8 +56,9 @@ export interface ModuleSpec {
   turretRateRads?: number;
   acceptsAmmo?: string[];
   /**
-   * Vida del proyectil en ticks, RESUELTA por resolveVehicle() desde weapon.rangeM
-   * (P-2, contrato G1): alcance = vida · velocidad · TICK_DT = rangeM exacto.
+   * SÓLO DERIVADO (informativo): lo calcula resolveVehicle() desde weapon.rangeM y la velocidad.
+   * El motor NO lo lee como entrada: deriva la vida de rangeM/velocidad (combat.ts
+   * projectileLifetimeOf) y, si este campo discrepa, lanza (spec incoherente).
    */
   projectileLifetimeTicks?: number;
   // ammo
