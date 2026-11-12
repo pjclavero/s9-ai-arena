@@ -2694,8 +2694,8 @@ components:
               shotsFired: { type: integer }
               shotsHit: { type: integer }
               accuracy: { type: number, nullable: true }
-              damageDealt: { type: number }
-              damageTaken: { type: number }
+              damageDealt: { type: number, description: 'HP absolutos: sólo dueño y staff (R2/EQUIPMENT_PRIVATE; reconstruyen el casco). Ausente para el resto.' }
+              damageTaken: { type: number, description: 'HP absolutos: sólo dueño y staff. Ausente para el resto.' }
               kills: { type: integer, description: 'Bajas de ENEMIGOS causadas por este bot (todas, también con respawn).' }
               teamKills: { type: integer, description: '4v4-STATS · Bajas de compañeros o propias (sólo con fuego amigo).' }
               deaths: { type: integer, description: '4v4-STATS · Veces que fue destruido (con respawn puede ser > 1). Ausente en stats anteriores a 4v4-STATS.' }
@@ -2796,8 +2796,8 @@ components:
         kills: { type: integer }
         teamKills: { type: integer }
         deaths: { type: integer }
-        damageDealt: { type: number }
-        damageTaken: { type: number }
+        damageDealt: { type: number, description: 'Ausente en la API pública (daño absoluto privado, R2); no se publica en perTeam para ningún lector.' }
+        damageTaken: { type: number, description: 'Ausente en la API pública (idem damageDealt).' }
         shotsFired: { type: integer }
         shotsHit: { type: integer }
         flagCaptures: { type: integer }
