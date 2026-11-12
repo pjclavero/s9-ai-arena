@@ -79,7 +79,7 @@ function writeLegibleReplay(battleId: string, replayPath: string): void {
   const jsonl = [
     {
       t: "header",
-      formatVersion: 1,
+      formatVersion: 2,
       battleId,
       seed: "top-secret-seed-should-never-leak",
       rulesetId: "r",

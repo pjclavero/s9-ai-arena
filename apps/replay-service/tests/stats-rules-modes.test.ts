@@ -17,7 +17,7 @@ beforeAll(async () => {
   await initPhysics();
 });
 
-async function play(ruleset: any, perSide: number): Promise<Replay> {
+async function play(ruleset: any, perSide: number, seed = "stats-rules"): Promise<Replay> {
   const participants = [];
   for (let i = 0; i < perSide * 2; i++) {
     participants.push({
@@ -27,7 +27,7 @@ async function play(ruleset: any, perSide: number): Promise<Replay> {
       spec: gunnerLoadout(),
     });
   }
-  return record({ battleId: "stats-rules", seed: "stats-rules", ruleset, map: emptyArena(), participants }, (b) => {
+  return record({ battleId: "stats-rules", seed, ruleset, map: emptyArena(), participants }, (b) => {
     for (const p of participants) b.attachBot(p.id, new HunterBot(p.botId));
   });
 }
@@ -49,7 +49,9 @@ function limitedRuleset() {
 describe("respawn limitado 2v2 (1 reaparición, 2 vidas)", () => {
   let replay: Replay;
   beforeAll(async () => {
-    replay = await play(limitedRuleset(), 2);
+    // OLA2-MD · con los flujos RNG v2, "stats-rules" acaba en tablas por tiempo; el escenario
+    // exige que un bando quede eliminado.
+    replay = await play(limitedRuleset(), 2, "stats-rules-2");
   }, 120_000);
 
   it("el replay verifica y lleva la copia del ruleset con maxRespawns", async () => {

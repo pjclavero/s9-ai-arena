@@ -1,9 +1,9 @@
 {
   "winner": "red",
-  "ticks": 590,
+  "ticks": 466,
   "score": {
     "blue": 0,
     "red": 1
   },
-  "finalStateHash": "feefbd307c9c47709ae26a32335c65ca4dbe5028cbcef5379217681d0aed7779"
+  "finalStateHash": "30410cb95163b13b6c9860ffcb2b390ec188e195b6855dc8655817584696717b"
 }
