@@ -239,10 +239,18 @@ Reglas de operación:
   /admin/streaming/start` exige `broadcastAvailable=true` (no basta `broadcastable`) y, si no, responde
   409 con el `reason` como código estable: torneo terminado sin replays públicos
   (`public_replays_disabled`) o sin ninguna batalla terminada que mostrar (`tournament_no_content`),
-  torneo cancelado (`target_not_available`) o en borrador (`tournament_not_started`), batalla programada
-  (`battle_not_started`), fallida o revertida (`battle_not_available`) y destino inexistente
-  (`target_not_found`, antes 404). Un torneo abierto o en curso sin batalla en directo es una espera
-  legítima (`broadcastPhase: WAITING_VALID`) y sí se puede emitir. `GET /admin/streaming/target` añade
+  torneo cancelado (`target_not_available`) o en borrador (`tournament_not_started`), batalla fallida o
+  revertida (`battle_not_available`) y destino inexistente (`target_not_found`, antes 404). Son esperas
+  legítimas (`broadcastPhase: WAITING_VALID`) y sí se pueden emitir: un torneo abierto o en curso sin
+  batalla en directo, y una batalla PROGRAMADA que será pública al empezar (bots públicos o torneo con
+  `broadcast`, y espectador público activo; si no, se rechaza con su motivo real). Así la emisión puede
+  empezar antes que la batalla. `restart` revalida el destino igual que `start`.
+- Batalla programada en `/broadcast`: un anónimo recibe 404 de una programada, así que la API añade
+  `wait=scheduled` a la URL que captura el streamer cuando el destino es una programada validada. Con
+  esa marca, mientras la batalla no se haya visto nunca, el 404 es «aún no visible» ⇒ espera
+  (`WAITING_VALID`), con un tope de 30 min; vencido, o sin la marca, el 404 es `SOURCE_ERROR`
+  (`target_not_found`). La marca sólo cambia la pantalla: no da acceso a ningún dato. No se añade
+  ningún endpoint público. `GET /admin/streaming/target` añade
   `targetType` (`standalone_battle` = batalla suelta, `tournament_battle`, `tournament`), `tournament`
   (torneo de la batalla), `battleCounts` (batallas del torneo por estado) y `broadcastPhase`; la pantalla
   de Streaming lo muestra en claro («Emitiendo: Torneo "prueba" (terminado, 0 en curso)», «Batalla

@@ -20,6 +20,7 @@ import {
   type BattleSummary,
   type BroadcastScreen,
 } from "../src/broadcast/director.js";
+import { parseBroadcastConfig } from "../src/broadcast/config.js";
 
 const battle = (id: string, status: BattleSummary["status"]): BattleSummary => ({
   id,
@@ -111,6 +112,68 @@ describe("FIX-BROADCAST · estados terminales del torneo", () => {
     const { director, screens } = battleDirector(async () => battle("b1", "scheduled"));
     await director.tick();
     expect(states(screens)).toEqual(["WAITING_VALID"]);
+  });
+});
+
+describe("FIX-BROADCAST (R2) · batalla programada (wait=scheduled)", () => {
+  function scheduledDirector(fetchJson: (path: string) => Promise<unknown>, clock: { t: number }, waitScheduled = true) {
+    const screens: BroadcastScreen[] = [];
+    const director = new BroadcastDirector({
+      target: { kind: "battle", battleId: "b1" },
+      fetchJson,
+      onScreen: (s) => screens.push(s),
+      onSourceError: () => undefined,
+      waitScheduled,
+      maxScheduledWaitMs: 60_000,
+      now: () => clock.t,
+    });
+    return { director, screens };
+  }
+  const notFound = () => new PublicApiError("HTTP 404 en GET /battles/b1", 404, "http");
+
+  it("programada aún no visible (404) ⇒ WAITING_VALID y reintenta; al pasar a running ⇒ LIVE", async () => {
+    let running = false;
+    const clock = { t: 0 };
+    const { director, screens } = scheduledDirector(async () => {
+      if (!running) throw notFound();
+      return battle("b1", "running");
+    }, clock);
+    await director.tick();
+    clock.t = 30_000;
+    await director.tick();
+    expect(states(screens)).toEqual(["WAITING_VALID"]);
+    running = true;
+    await director.tick();
+    expect(states(screens)).toEqual(["WAITING_VALID", "LIVE"]);
+  });
+
+  it("sin la marca, el mismo 404 es SOURCE_ERROR (destino inexistente) en el acto", async () => {
+    const { director, screens } = scheduledDirector(
+      async () => {
+        throw notFound();
+      },
+      { t: 0 },
+      false,
+    );
+    await director.tick();
+    expect(screens).toMatchObject([{ kind: "error", reason: "target_not_found" }]);
+  });
+
+  it("la espera tiene tope: vencido, el 404 pasa a SOURCE_ERROR (no hay espera eterna)", async () => {
+    const clock = { t: 0 };
+    const { director, screens } = scheduledDirector(async () => {
+      throw notFound();
+    }, clock);
+    await director.tick();
+    clock.t = 61_000;
+    await director.tick();
+    expect(states(screens)).toEqual(["WAITING_VALID", "SOURCE_ERROR"]);
+  });
+
+  it("config: wait=scheduled sólo cuenta para una batalla", () => {
+    expect(parseBroadcastConfig("?battle=b1&wait=scheduled").waitScheduled).toBe(true);
+    expect(parseBroadcastConfig("?battle=b1").waitScheduled).toBe(false);
+    expect(parseBroadcastConfig("?tournament=t1&wait=scheduled").waitScheduled).toBe(false);
   });
 });
 

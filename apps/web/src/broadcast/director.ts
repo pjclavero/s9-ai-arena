@@ -247,6 +247,16 @@ export interface DirectorOptions {
    * `SOURCE_ERROR` (por defecto 3: ~12 s con el sondeo de 4 s).
    */
   maxTransientFailures?: number;
+  /**
+   * FIX-BROADCAST (R2) · batalla programada validada por la API (`wait=scheduled`): mientras
+   * NUNCA se haya visto, un 404 es «programada todavía no visible» ⇒ WAITING_VALID, hasta
+   * `maxScheduledWaitMs` (por defecto 30 min); pasado el tope, 404 vuelve a ser
+   * `target_not_found` (SOURCE_ERROR). Una vez vista, el 404 significa «terminó».
+   */
+  waitScheduled?: boolean;
+  maxScheduledWaitMs?: number;
+  /** Reloj inyectable (tests). */
+  now?: () => number;
   /** FIX-BROADCAST · aviso reportable de cada error de la fuente (por defecto, console.warn). */
   onSourceError?: (err: { reason: SourceErrorReason; detail: string; consecutive: number }) => void;
   setIntervalImpl?: typeof setInterval;
@@ -270,9 +280,12 @@ export class BroadcastDirector {
   private failures = 0;
   /** FIX-BROADCAST · última batalla vista (modo batalla): si deja de ser legible, terminó. */
   private lastSeenBattle: BattleSummary | null = null;
+  /** FIX-BROADCAST (R2) · inicio de la espera de una programada (para el tope). */
+  private readonly createdAt: number;
 
   constructor(opts: DirectorOptions) {
     this.opts = opts;
+    this.createdAt = (opts.now ?? Date.now)();
   }
 
   start(): void {
@@ -333,6 +346,18 @@ export class BroadcastDirector {
         // replay público: es el final del destino, no un error de la fuente.
         if (this.lastSeenBattle && e instanceof PublicApiError && e.kind === "http" && e.status === 404) {
           return { kind: "finished", lastBattle: this.lastSeenBattle.status === "failed" ? null : this.lastSeenBattle };
+        }
+        // FIX-BROADCAST (R2) · 404 de una programada AÚN no visible (la API validó la espera al
+        // iniciar): espera legítima, se reintenta hasta que empiece o venza el tope.
+        if (
+          !this.lastSeenBattle &&
+          this.opts.waitScheduled &&
+          e instanceof PublicApiError &&
+          e.kind === "http" &&
+          e.status === 404 &&
+          (this.opts.now ?? Date.now)() - this.createdAt < (this.opts.maxScheduledWaitMs ?? 30 * 60_000)
+        ) {
+          return { kind: "waiting", nextBattle: null };
         }
         throw e;
       }

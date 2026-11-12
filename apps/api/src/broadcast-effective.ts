@@ -102,10 +102,15 @@ export async function battleBroadcastState(
     return out(false, (await showReason()) ?? "other");
   }
   if (status === "scheduled") {
-    // La política anónima NUNCA deja leer una programada (no hay vía para ello): no
-    // está disponible AHORA. Se dice por qué no lo estará tampoco al empezar, si es el caso.
+    // FIX-BROADCAST (R2) · espera LEGÍTIMA: la política anónima no deja leer una programada,
+    // pero al pasar a `running` la leerá con la vía del directo público (`wherePubliclyShowable`
+    // + espectador público). Si esa vía la dejará leer, se puede emitir YA (para no perder el
+    // principio) y /broadcast muestra la espera; si no, se rechaza con el motivo real.
     if (!vis.publicSpectate) return out(false, "public_spectate_disabled");
-    return out(false, (await showReason()) ?? "battle_not_started");
+    const show = await publicShowabilityOf(db, battleId);
+    if (!show) return out(false, "battle_not_available");
+    if (!show.showable) return out(false, show.reason ?? "other");
+    return out(true, null);
   }
   return out(false, "battle_not_available");
 }
@@ -228,7 +233,9 @@ export async function broadcastTargetSummary(
         ? "LIVE"
         : b.status === "finished"
           ? "TARGET_FINISHED"
-          : "UNAVAILABLE";
+          : b.status === "scheduled"
+            ? "WAITING_VALID"
+            : "UNAVAILABLE";
     return {
       targetType: b.tournament_id ? "tournament_battle" : "standalone_battle",
       tournament: b.tournament_id

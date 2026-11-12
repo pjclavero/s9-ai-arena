@@ -87,7 +87,7 @@ info:
   # que `broadcastAvailable`.
   # 0.19.0 · FIX-BROADCAST (aditivo, admin): startStreaming exige `broadcastAvailable`
   # (no basta `broadcastable`) y rechaza con 409 y motivo estable (public_replays_disabled,
-  # tournament_no_content, target_not_available, battle_not_started, battle_not_available,
+  # tournament_no_content, target_not_available, battle_not_available,
   # tournament_not_started, target_not_found…); el destino inexistente pasa de 404 a 409
   # target_not_found. StreamingTarget gana `targetType`, `tournament`, `battleCounts` y
   # `broadcastPhase`. BroadcastUnavailableReason gana target_not_found,
@@ -1907,7 +1907,7 @@ paths:
     post:
       tags: [streaming]
       operationId: startStreaming
-      summary: 'Inicia la emisión (o la grabación, según el modo) hacia un destino. Idempotente para el mismo destino y configuración; 409 si hay otra activa, si el streaming está desactivado, si falta la clave, si la clave está sellada para otra ingesta (credential_unbound), si el destino no está autorizado para retransmisión (battle_not_public: batalla suelta con bots no públicos; tournament_not_broadcastable: batalla de un torneo sin broadcast con bots no públicos), si el destino no existe (target_not_found) o si está autorizado pero /broadcast no tiene nada que mostrar (FIX-BROADCAST: exige broadcastAvailable; el código es el `reason` de getStreamingTarget, p. ej. public_replays_disabled, tournament_no_content, target_not_available, battle_not_started o battle_not_available), si no se puede medir el disco o queda poco (disk_unknown, disk_low) o si un stop la canceló mientras arrancaba (start_cancelled). start, restart y stop se ejecutan en serie.'
+      summary: 'Inicia la emisión (o la grabación, según el modo) hacia un destino. Idempotente para el mismo destino y configuración; 409 si hay otra activa, si el streaming está desactivado, si falta la clave, si la clave está sellada para otra ingesta (credential_unbound), si el destino no está autorizado para retransmisión (battle_not_public: batalla suelta con bots no públicos; tournament_not_broadcastable: batalla de un torneo sin broadcast con bots no públicos), si el destino no existe (target_not_found) o si está autorizado pero /broadcast no tiene nada que mostrar (FIX-BROADCAST: exige broadcastAvailable; el código es el `reason` de getStreamingTarget, p. ej. public_replays_disabled, tournament_no_content, target_not_available o battle_not_available; una batalla programada que será pública al empezar SÍ se admite: espera legítima, WAITING_VALID), si no se puede medir el disco o queda poco (disk_unknown, disk_low) o si un stop la canceló mientras arrancaba (start_cancelled). start, restart y stop se ejecutan en serie; restart revalida el destino igual que start.'
       x-min-role: admin
       requestBody:
         required: true
@@ -3161,7 +3161,7 @@ components:
         public_spectate_disabled · espectador público desactivado; public_replays_disabled ·
         replays públicos desactivados (batalla o torneo terminado); battle_not_public /
         tournament_not_broadcastable · la batalla no es retransmisible por la visibilidad
-        de sus bots o de su torneo; battle_not_started · programada (se verá al empezar);
+        de sus bots o de su torneo; battle_not_started · (ya no se emite: una programada que será pública al empezar está disponible con broadcastPhase WAITING_VALID);
         battle_not_available · fallida o revertida; target_not_available · torneo
         cancelado; streaming_not_configured · sin streamer; target_not_found · el destino
         no existe (start); tournament_no_content · torneo terminado sin ninguna batalla

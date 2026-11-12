@@ -340,10 +340,11 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     s: StreamingSettings,
     sessionId: string,
     t: { kind: "battle" | "tournament"; id: string },
+    opts: { waitScheduled?: boolean } = {},
   ) {
     const body: Record<string, unknown> = {
       sessionId,
-      broadcastUrl: broadcastUrlFor(base, t, s.branding),
+      broadcastUrl: broadcastUrlFor(base, t, s.branding, opts),
       mode: s.mode,
       encoder: s.encoder,
       preset: s.preset,
@@ -778,9 +779,27 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
   });
 
   /** Comprobaciones que no cambian el estado: fallan pronto sin tomar el cerrojo. */
-  async function startPrecheck(t: { kind: "battle" | "tournament"; id: string }): Promise<{ diskCheckedFor: string }> {
+  async function startPrecheck(
+    t: { kind: "battle" | "tournament"; id: string },
+  ): Promise<{ diskCheckedFor: string; waitScheduled: boolean }> {
     const s = await loadSettings(db);
     if (!s.enabled) throw conflict("streaming_disabled", "El streaming está desactivado: actívalo antes de emitir");
+    const info = await emittableTarget(t);
+    if (s.mode === "record") await checkDisk();
+    return { diskCheckedFor: s.mode, waitScheduled: waitsScheduled(info) };
+  }
+
+  /** FIX-BROADCAST (R2) · batalla programada emitible: /broadcast debe esperar, no dar error. */
+  function waitsScheduled(info: { kind: string; status: string }): boolean {
+    return info.kind === "battle" && info.status === "scheduled";
+  }
+
+  /**
+   * FIX-BROADCAST · el destino existe, está autorizado (`broadcastable`) y /broadcast tiene
+   * contenido que mostrar o una espera legítima (`broadcastAvailable`). Si no, 409 con motivo
+   * estable. Lo usan `start` y `restart` (R2: el reinicio también revalida).
+   */
+  async function emittableTarget(t: { kind: "battle" | "tournament"; id: string }) {
     const info = await resolveTarget(db, t, visibility());
     // FIX-BROADCAST · un destino inexistente es un rechazo con motivo ESTABLE (409), como el resto.
     if (!info) throw conflict("target_not_found", targetRejectMessage("target_not_found"));
@@ -802,8 +821,7 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
       const reason = info.reason ?? "other";
       throw conflict(reason, targetRejectMessage(reason), { target: targetBrief(info) });
     }
-    if (s.mode === "record") await checkDisk();
-    return { diskCheckedFor: s.mode };
+    return info;
   }
 
   // «Llenar el disco»: no se empieza a GRABAR con menos de MIN_FREE_BYTES libres
@@ -920,7 +938,7 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     req: Request,
     res: Response,
     t: { kind: "battle" | "tournament"; id: string },
-    pre: { diskCheckedFor: string },
+    pre: { diskCheckedFor: string; waitScheduled: boolean },
   ) {
     // Dentro del cerrojo se VUELVE a leer la configuración: pudo cambiar (o
     // desactivarse) mientras se hacían las comprobaciones previas.
@@ -964,7 +982,7 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     // Si el modo pasó a «record» después de la comprobación previa, se mide aquí.
     if (s.mode === "record" && pre.diskCheckedFor !== "record") await checkDisk();
     const sessionId = randomUUID();
-    const body = await buildStartBody(s, sessionId, t);
+    const body = await buildStartBody(s, sessionId, t, { waitScheduled: pre.waitScheduled });
     try {
       await db("streaming_sessions").insert({
         id: sessionId,
@@ -1053,7 +1071,13 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
     const s = await loadSettings(db);
     if (!s.enabled) throw conflict("streaming_disabled", "El streaming está desactivado");
     const t = { kind: session.target_kind, id: session.target_id };
-    const body = { ...(await buildStartBody(s, session.id, t)), replace: true };
+    // FIX-BROADCAST (R2) · el reinicio REVALIDA el destino: no se reinicia sobre un torneo
+    // terminado sin contenido, una batalla fallida/revertida o un destino ya no emitible.
+    const info = await emittableTarget(t);
+    const body = {
+      ...(await buildStartBody(s, session.id, t, { waitScheduled: waitsScheduled(info) })),
+      replace: true,
+    };
     const r = await callStreamer("POST", "/control/start", body);
     if (!r.ok) throw new ApiError(502, "streamer_error", String((r.body as Record<string, unknown>).error ?? "error"));
     // EQ5c (P2-4) · el reinicio no resucita una emisión que se paró mientras volaba.

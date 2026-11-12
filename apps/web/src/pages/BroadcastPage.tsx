@@ -44,6 +44,7 @@ export function BroadcastPage({ config }: { config: BroadcastConfig }) {
       fetchJson: api.get,
       onScreen: setScreen,
       pollIntervalMs: config.pollIntervalMs,
+      waitScheduled: config.waitScheduled,
     });
     director.start();
     return () => director.stop();

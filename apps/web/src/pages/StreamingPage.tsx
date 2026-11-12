@@ -421,6 +421,15 @@ export function finishedBattleNotice(d: Pick<Destination, "kind" | "status">): s
   return "Esta batalla ya terminó: la emisión mostrará sólo su pantalla final con el resultado. La repetición no se retransmite.";
 }
 
+/**
+ * FIX-BROADCAST (R2) · batalla PROGRAMADA emitible: la emisión puede empezar ya (para no
+ * perder el principio); /broadcast muestra la espera y entra en directo al empezar.
+ */
+export function scheduledBattleNotice(d: Pick<Destination, "kind" | "status">): string | null {
+  if (d.kind !== "battle" || d.status !== "scheduled") return null;
+  return "Esta batalla aún no ha empezado: la emisión mostrará la espera y pasará al directo en cuanto empiece.";
+}
+
 type Eligibility = Pick<Destination, "kind" | "broadcastable" | "broadcastBlockedReason" | "tournamentBroadcast"> &
   Partial<Pick<Destination, "broadcastAvailable" | "reason">>;
 
@@ -1016,6 +1025,11 @@ function ReadyView(props: {
           >
             {eligibilityText(destEff)}
           </p>
+          {scheduledBattleNotice(destEff) && (
+            <p data-testid="stream-target-scheduled" className="ok" role="status">
+              {scheduledBattleNotice(destEff)}
+            </p>
+          )}
           {finishedBattleNotice(dest) && (
             <p data-testid="stream-target-finished" className="warn" role="status">
               {finishedBattleNotice(dest)}

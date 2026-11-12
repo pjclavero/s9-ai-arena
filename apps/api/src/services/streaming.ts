@@ -790,11 +790,23 @@ export async function resolveTarget(
   };
 }
 
-/** URL de /broadcast que captura el streamer (branding por query, saneado allí también). */
-export function broadcastUrlFor(base: string, t: { kind: TargetKind; id: string }, b: Branding): string {
+/**
+ * URL de /broadcast que captura el streamer (branding por query, saneado allí también).
+ * FIX-BROADCAST (R2) · `waitScheduled`: el destino es una batalla PROGRAMADA (espera legítima
+ * validada por la API al iniciar/reiniciar). /broadcast es anónima y recibe 404 de una
+ * programada; con `wait=scheduled` la página muestra la espera en vez de SOURCE_ERROR hasta
+ * que la batalla empiece (con tope de tiempo). No da acceso a nada: sólo cambia la pantalla.
+ */
+export function broadcastUrlFor(
+  base: string,
+  t: { kind: TargetKind; id: string },
+  b: Branding,
+  opts: { waitScheduled?: boolean } = {},
+): string {
   const u = new URL(base);
   u.search = "";
   u.searchParams.set(t.kind, t.id);
+  if (opts.waitScheduled && t.kind === "battle") u.searchParams.set("wait", "scheduled");
   u.searchParams.set("event", b.eventName);
   if (b.logoUrl) u.searchParams.set("logo", b.logoUrl);
   u.searchParams.set("primary", b.primaryColor);

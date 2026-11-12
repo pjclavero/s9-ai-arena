@@ -12,6 +12,10 @@
  *    público, fallida, revertida o programada; destino inexistente). Ninguna sesión, ninguna
  *    orden al streamer.
  *  - START_WAITING_VALID: torneo en curso con batallas programadas ⇒ permitido (WAITING_VALID).
+ *  - SCHEDULED_BATTLE (R2): batalla programada que será pública al empezar ⇒ permitida
+ *    (WAITING_VALID) y la URL del streamer lleva `wait=scheduled`; con bot privado o el
+ *    espectador apagado ⇒ rechazada con su motivo real.
+ *  - RESTART_REVALIDATES (R2): el reinicio revalida el destino.
  *  - TARGET_INFO: getStreamingTarget dice tipo (batalla suelta o torneo), estado, batallas
  *    por estado y, para una batalla, si pertenece o no a un torneo.
  */
@@ -31,9 +35,9 @@ import type { StreamerCallResult, StreamerClient } from "./services/streamer-cli
 class FakeStreamer implements StreamerClient {
   configured = true;
   state = "idle";
-  calls: { method: string; path: string }[] = [];
-  async call<T>(method: "GET" | "POST", path: string): Promise<StreamerCallResult<T>> {
-    this.calls.push({ method, path });
+  calls: { method: string; path: string; body?: unknown }[] = [];
+  async call<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<StreamerCallResult<T>> {
+    this.calls.push({ method, path, body });
     const ok = (b: unknown) => ({ ok: true, status: 200, body: b as T });
     if (path === "/status") return ok({ state: this.state, capabilities: {}, lastError: null });
     if (path === "/recordings")
@@ -50,6 +54,10 @@ class FakeStreamer implements StreamerClient {
   }
   starts(): number {
     return this.calls.filter((c) => c.path === "/control/start").length;
+  }
+  lastStartUrl(): string {
+    const c = this.calls.filter((x) => x.path === "/control/start").at(-1);
+    return String((c?.body as { broadcastUrl?: string } | undefined)?.broadcastUrl ?? "");
   }
 }
 
@@ -85,7 +93,7 @@ async function newTournament(key: string, state: string): Promise<string> {
 
 async function newBattle(
   status: string,
-  opts: { tournamentId?: string; reverted?: boolean; botName?: string } = {},
+  opts: { tournamentId?: string; reverted?: boolean; botName?: string; privateBot?: boolean } = {},
 ): Promise<string> {
   const id = randomUUID();
   await h.db("battles").insert({
@@ -103,6 +111,7 @@ async function newBattle(
     reverted_at: opts.reverted ? h.db.fn.now() : null,
   });
   const bot = await createPublishedBot(h.db, opts.botName ?? `fix-${id.slice(0, 8)}`);
+  if (opts.privateBot) await h.db("bots").where({ id: bot.botId }).update({ visibility: "private" });
   await h.db("participants").insert({ battle_id: id, bot_id: bot.botId, version: 1, team: "red" });
   return id;
 }
@@ -178,6 +187,8 @@ beforeAll(async () => {
   B.failed = await newBattle("failed");
   B.reverted = await newBattle("finished", { reverted: true });
   B.scheduled = await newBattle("scheduled");
+  B.scheduledPriv = await newBattle("scheduled", { privateBot: true });
+  B.restart = await newBattle("running");
 }, 180_000);
 
 beforeEach(async () => {
@@ -238,9 +249,6 @@ describe("FIX-BROADCAST · START_REJECT_REASONS", () => {
     await expectRejected("battle", B.reverted, "battle_not_available");
   });
 
-  it("batalla programada ⇒ battle_not_started (/broadcast no puede leerla hasta que empiece)", async () => {
-    await expectRejected("battle", B.scheduled, "battle_not_started");
-  });
 
   it("destino inexistente ⇒ 409 target_not_found (batalla y torneo)", async () => {
     await expectRejected("battle", randomUUID(), "target_not_found");
@@ -259,6 +267,61 @@ describe("FIX-BROADCAST · START_WAITING_VALID", () => {
       battleCounts: { scheduled: 2, running: 0, finished: 1, failed: 0 },
     });
     await expectStarted("tournament", T.runSched);
+  });
+});
+
+describe("FIX-BROADCAST (R2) · SCHEDULED_BATTLE · se puede empezar a emitir ANTES de la batalla", () => {
+  it("batalla suelta programada con bots públicos y espectador ON ⇒ permitida, WAITING_VALID, URL con wait=scheduled", async () => {
+    expect((await target("battle", B.scheduled)).body).toMatchObject({
+      status: "scheduled",
+      broadcastable: true,
+      broadcastAvailable: true,
+      reason: null,
+      broadcastPhase: "WAITING_VALID",
+    });
+    // El anónimo aún no la lee (404): de ahí la marca para que /broadcast espere.
+    expect((await request(app).get(`/battles/${B.scheduled}`)).status).toBe(404);
+    const r = await start("battle", B.scheduled);
+    expect([r.status, r.body.error ?? null]).toEqual([201, null]);
+    expect(new URL(fake.lastStartUrl()).searchParams.get("wait")).toBe("scheduled");
+    await stopAll();
+    // Una en curso NO lleva la marca.
+    await start("battle", B.loose);
+    expect(new URL(fake.lastStartUrl()).searchParams.get("wait")).toBeNull();
+    await stopAll();
+  });
+
+  it("programada con bot privado (sin torneo retransmitido) ⇒ rechazada con battle_not_public", async () => {
+    await expectRejected("battle", B.scheduledPriv, "battle_not_public");
+  });
+
+  it("programada con el espectador público apagado ⇒ rechazada con public_spectate_disabled", async () => {
+    await setFlags(false, true);
+    await expectRejected("battle", B.scheduled, "public_spectate_disabled");
+  });
+});
+
+describe("FIX-BROADCAST (R2) · RESTART_REVALIDATES", () => {
+  it("el reinicio revalida: destino que dejó de ser emitible ⇒ 409 con su motivo y sin orden al streamer", async () => {
+    const r = await start("battle", B.restart);
+    expect(r.status).toBe(201);
+    const ok = await request(app).post("/admin/streaming/restart").set(auth(admin)).send({});
+    expect([ok.status, ok.body.restarted]).toEqual([200, true]);
+    await h.db("battles").where({ id: B.restart }).update({ status: "failed" });
+    try {
+      const n = fake.starts();
+      const bad = await request(app).post("/admin/streaming/restart").set(auth(admin)).send({});
+      expect([bad.status, bad.body.error]).toEqual([409, "battle_not_available"]);
+      expect(fake.starts()).toBe(n);
+      await setFlags(false, true);
+      await h.db("battles").where({ id: B.restart }).update({ status: "running" });
+      const off = await request(app).post("/admin/streaming/restart").set(auth(admin)).send({});
+      expect([off.status, off.body.error]).toEqual([409, "public_spectate_disabled"]);
+      expect(fake.starts()).toBe(n);
+    } finally {
+      await h.db("battles").where({ id: B.restart }).update({ status: "running" });
+      await stopAll();
+    }
   });
 });
 
