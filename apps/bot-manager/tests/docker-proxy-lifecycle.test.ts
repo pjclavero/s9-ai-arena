@@ -273,14 +273,14 @@ describe("OLA2-MF · AutoRemove: Docker ya está borrando (409 «already in prog
   afterAll(() => new Promise<void>((r) => server.close(() => r())));
 
   it("removeById espera a que el contenedor desaparezca y resuelve", async () => {
-    const id = fake.add({ name: "bot-ar", labels: { ...OWN }, state: "running" });
+    const id = fake.add({ name: "bot-ar", labels: { ...OWN, [LABEL_ROLE]: ROLE_BATTLE_BOT }, state: "running" });
     removing.add(id);
     setTimeout(() => fake.cs.delete(id), 500);
     await new ProxyContainerRunner(url).removeById(id);
     expect(fake.cs.has(id)).toBe(false);
   });
   it("si Docker nunca termina el borrado en curso, falla (no lo da por bueno)", async () => {
-    const id = fake.add({ name: "bot-stuck", labels: { ...OWN }, state: "running" });
+    const id = fake.add({ name: "bot-stuck", labels: { ...OWN, [LABEL_ROLE]: ROLE_BATTLE_BOT }, state: "running" });
     removing.add(id);
     const t0 = Date.now();
     await expect(new ProxyContainerRunner(url).removeById(id)).rejects.toThrow(/no terminó/);
