@@ -779,9 +779,10 @@ export function streamingRoutes(db: Db, deps: StreamingDeps): Router {
   });
 
   /** Comprobaciones que no cambian el estado: fallan pronto sin tomar el cerrojo. */
-  async function startPrecheck(
-    t: { kind: "battle" | "tournament"; id: string },
-  ): Promise<{ diskCheckedFor: string; waitScheduled: boolean }> {
+  async function startPrecheck(t: {
+    kind: "battle" | "tournament";
+    id: string;
+  }): Promise<{ diskCheckedFor: string; waitScheduled: boolean }> {
     const s = await loadSettings(db);
     if (!s.enabled) throw conflict("streaming_disabled", "El streaming está desactivado: actívalo antes de emitir");
     const info = await emittableTarget(t);

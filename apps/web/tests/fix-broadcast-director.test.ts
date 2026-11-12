@@ -116,7 +116,11 @@ describe("FIX-BROADCAST · estados terminales del torneo", () => {
 });
 
 describe("FIX-BROADCAST (R2) · batalla programada (wait=scheduled)", () => {
-  function scheduledDirector(fetchJson: (path: string) => Promise<unknown>, clock: { t: number }, waitScheduled = true) {
+  function scheduledDirector(
+    fetchJson: (path: string) => Promise<unknown>,
+    clock: { t: number },
+    waitScheduled = true,
+  ) {
     const screens: BroadcastScreen[] = [];
     const director = new BroadcastDirector({
       target: { kind: "battle", battleId: "b1" },

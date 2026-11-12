@@ -249,7 +249,6 @@ describe("FIX-BROADCAST · START_REJECT_REASONS", () => {
     await expectRejected("battle", B.reverted, "battle_not_available");
   });
 
-
   it("destino inexistente ⇒ 409 target_not_found (batalla y torneo)", async () => {
     await expectRejected("battle", randomUUID(), "target_not_found");
     await expectRejected("tournament", randomUUID(), "target_not_found");
