@@ -83,7 +83,11 @@ async function newBot(ownerId: string, visibility: string, teamId: string | null
 /** Batalla `finished` con un replay REAL ingerido a su nombre. */
 async function newBattle(botIds: string[]): Promise<string> {
   const id = randomUUID();
-  const stored = ingestReplay(dir, { ...base, header: { ...base.header, battleId: id } }, { official: false });
+  const stored = ingestReplay(
+    dir,
+    { ...base, header: { ...base.header, battleId: id }, result: { ...base.result, battleId: id } },
+    { official: false },
+  );
   await h.db("battles").insert({
     id,
     status: "finished",
