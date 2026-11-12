@@ -182,7 +182,9 @@ for (const m of mutants) {
     ok,
     vitestRc: res.rc ?? null,
     failed: failedNames,
-    failureMessages: (res.tests ?? []).filter((t) => t.status === "failed").map((t) => (t.message ?? "").split("\n")[0].slice(0, 300)),
+    failureMessages: (res.tests ?? [])
+      .filter((t) => t.status === "failed")
+      .map((t) => (t.message ?? "").split("\n")[0].slice(0, 300)),
     passedCount: passedNames.length,
     ...(m.kind === "fix" ? { passed: passedNames } : {}),
     seconds: Math.round((Date.now() - t0) / 1000),
