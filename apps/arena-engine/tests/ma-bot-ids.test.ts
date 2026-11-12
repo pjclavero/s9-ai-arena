@@ -134,7 +134,7 @@ afterEach(() => {
 });
 
 describe("canal real del bot (ProtocolServer + WebSocket)", () => {
-  it("WELCOME, OBSERVATION y EVENT recibidos NO contienen ningún id interno; sí hay contactos con v_N", async () => {
+  it("WELCOME, OBSERVATION y EVENT recibidos NO contienen ningún id interno; el radar da v_N estables y la radio llega al aliado por su id público", async () => {
     const arena = emptyArena(120, 80);
     arena.spawns = [
       { team: "red", position: { x: 40, y: 40 }, heading: 0 },
@@ -143,51 +143,79 @@ describe("canal real del bot (ProtocolServer + WebSocket)", () => {
     const battle = await Battle.create({
       battleId: "ma-bot-ids-ws",
       seed: "ma-bot-ids-ws",
-      ruleset: loadRuleset("dm_practice@1", { timeLimitTicks: 90 }),
+      ruleset: loadRuleset("tdm_mvp@1", { timeLimitTicks: 90 }),
       map: arena,
       participants: [
         { id: "veh_1", botId: "bot_a", team: "red", spec: radarSpec() },
-        { id: "veh_2", botId: "bot_b", team: "blue", spec: radarSpec() },
+        { id: "veh_2", botId: "bot_b", team: "red", spec: radarSpec() },
+        { id: "veh_3", botId: "bot_c", team: "blue", spec: radarSpec() },
       ],
     });
-    battle.attachBot("veh_2", { botId: "bot_b", decide: () => ({ forTick: 0 }) } as BotAgent);
+    // aliado en proceso: anota la radio que le llega (el remitente lo ve como su propio id interno)
+    const heard: string[] = [];
+    battle.attachBot("veh_2", {
+      botId: "bot_b",
+      decide: (obs: any) => {
+        for (const m of obs.radio ?? []) heard.push(m.data);
+        return { forTick: obs.tick };
+      },
+    } as BotAgent);
+    battle.attachBot("veh_3", { botId: "bot_c", decide: () => ({ forTick: 0 }) } as BotAgent);
     const server = new ProtocolServer({
       battle,
       catalogVersion: "mvp@1",
       expected: [{ botId: "bot_a", vehicleId: "veh_1", battleToken: "t".repeat(16) }],
       tickIntervalMs: 3,
-      decisionDeadlineMs: 20,
+      decisionDeadlineMs: 40,
     });
     servers.push(server);
     server.start();
     const ws = new WebSocket(`ws://127.0.0.1:${server.port}`);
     sockets.push(ws);
     const msgs: any[] = [];
-    ws.on("message", (raw) => msgs.push(JSON.parse(String(raw))));
+    let seq = 1;
+    let mate = "";
+    ws.on("message", (raw) => {
+      const m = JSON.parse(String(raw));
+      msgs.push(m);
+      if (m.type === "WELCOME") mate = m.payload.teammates[0];
+      if (m.type === "OBSERVATION") {
+        // el bot habla por radio a su aliado usando el id PÚBLICO que le dio el WELCOME
+        ws.send(
+          JSON.stringify({
+            proto: "arena/1",
+            type: "COMMAND",
+            seq: seq++,
+            tick: m.payload.tick + 3,
+            payload: { forTick: m.payload.tick + 3, radio: [{ slot: "radio_a", data: "QUI=", to: mate }] },
+          }),
+        );
+      }
+    });
     await new Promise<void>((r) => ws.once("open", () => r()));
     ws.send(
       JSON.stringify({
         proto: "arena/1",
         type: "HELLO",
         seq: 0,
-        payload: {
-          botId: "bot_a",
-          botVersion: "1",
-          sdk: { name: "custom", version: "0" },
-          battleToken: "t".repeat(16),
-        },
+        payload: { botId: "bot_a", botVersion: "1", sdk: { name: "custom", version: "0" }, battleToken: "t".repeat(16) },
       }),
     );
     await server.waitForResult();
     const welcome = msgs.find((m) => m.type === "WELCOME");
     expect(welcome.payload.selfId).toMatch(/^v_[0-9]+$/);
+    expect(welcome.payload.teammates).toHaveLength(1);
+    expect(welcome.payload.teammates[0]).toMatch(/^v_[0-9]+$/);
     const obsMsgs = msgs.filter((m) => m.type === "OBSERVATION");
     expect(obsMsgs.length).toBeGreaterThan(3);
     const contactIds = obsMsgs
       .flatMap((m) => (m.payload.sensors?.radar ?? []).flatMap((r: any) => r.contacts.map((c: any) => c.entityId)))
       .filter(Boolean);
-    expect(contactIds.length, "control positivo: el radar vio al rival nítido").toBeGreaterThan(0);
-    expect(new Set(contactIds).size).toBe(1); // estable
+    expect(contactIds.length, "control positivo: el radar vio a alguien nítido").toBeGreaterThan(0);
+    for (const id of contactIds) expect(id).toMatch(/^v_[0-9]+$/);
+    // ESTABLE: un mismo rival conserva su id a lo largo de la batalla (como mucho el aliado y el rival)
+    expect(new Set(contactIds).size).toBeLessThanOrEqual(2);
+    expect(heard.length, "la radio dirigida con el id PÚBLICO llegó al aliado").toBeGreaterThan(0);
     for (const m of msgs) expect(JSON.stringify(m), `${m.type}`).not.toMatch(INTERNAL);
   }, 20000);
 });

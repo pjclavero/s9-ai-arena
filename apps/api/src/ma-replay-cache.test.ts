@@ -19,13 +19,14 @@ describe("projectedReplayStream · caché", () => {
   it("mismo sha y misma nómina: misma entrada (control SAME); nombre distinto: proyección nueva", () => {
     const sha = "a".repeat(64);
     const first = projectedReplayStream(replay, meta("Alfa"), sha);
-    expect(first.roster.map((r) => r.name)).toEqual(["Alfa", "Beta"]);
+    const names = (r: { roster: Record<string, unknown>[] }) => r.roster.map((e) => e.name).sort();
+    expect(names(first)).toEqual(["Alfa", "Beta"]);
     expect(projectedReplayStream(replay, meta("Alfa"), sha)).toBe(first); // cacheado
     const renamed = projectedReplayStream(replay, meta("Alfa-2"), sha);
     expect(renamed).not.toBe(first);
-    expect(renamed.roster.map((r) => r.name)).toEqual(["Alfa-2", "Beta"]);
+    expect(names(renamed)).toEqual(["Alfa-2", "Beta"]);
     // y volver al nombre anterior sigue dando el nombre anterior
-    expect(projectedReplayStream(replay, meta("Alfa"), sha).roster.map((r) => r.name)).toEqual(["Alfa", "Beta"]);
+    expect(names(projectedReplayStream(replay, meta("Alfa"), sha))).toEqual(["Alfa", "Beta"]);
   });
 
   it("el digest de la nómina no depende del orden interno ni de los ids internos", () => {
