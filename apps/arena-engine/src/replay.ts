@@ -15,7 +15,7 @@ import { Battle, type BattleConfig, type BattleResult, type BotAgent } from "./s
 import { nowIso } from "./wall-clock.js";
 import deps from "./engine-deps.json" with { type: "json" };
 import { RNG_DERIVATION, RNG_STREAM_NAMES } from "./rng.js";
-import { canonicalize, diffComponents, STATE_HASH_SCHEME, type StateHashComponentV2 } from "./sim/state-hash.js";
+import { canonicalize, diffComponents, hashFromComponents, STATE_HASH_SCHEME, type StateHashComponentV2 } from "./sim/state-hash.js";
 import { CATALOG_VERSION } from "../../../packages/module-catalog/loadCatalog.js";
 
 /**
@@ -600,6 +600,15 @@ function compareCheckpoints(
     const r = byTick.get(o.tick);
     if (!r) {
       return { tick: o.tick, components: [], mismatch: { field: "checkpoints", official: o.tick, recomputed: null } };
+    }
+    // Un checkpoint oficial cuyo desglose no produce su propio hash está adulterado,
+    // aunque el hash coincida con el recomputado (review MD P2).
+    if (hashFromComponents(o.components) !== o.hash) {
+      return {
+        tick: o.tick,
+        components: diffComponents(o.components ?? {}, r.components),
+        mismatch: { field: "checkpoints", official: o.hash, recomputed: hashFromComponents(o.components) },
+      };
     }
     if (r.hash !== o.hash) {
       return {

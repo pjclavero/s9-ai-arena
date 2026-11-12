@@ -144,13 +144,26 @@ export function computeStateHash(input: StateHashInput, opts?: CanonicalizeOptio
     );
   }
   const components = {} as Record<StateHashComponentV2, string>;
+  for (const name of STATE_HASH_COMPONENTS) {
+    components[name] = hashComponent(input[name], opts);
+  }
+  return { hash: hashFromComponents(components), components };
+}
+
+/**
+ * Hash global a partir de los hashes por componente (única definición del esquema).
+ * verify() lo usa para exigir que `components` de un checkpoint oficial cuadre con su `hash`.
+ * Devuelve null si falta algún componente del contrato o no es una cadena.
+ */
+export function hashFromComponents(components: Partial<Record<string, unknown>> | null | undefined): string | null {
+  if (!components || typeof components !== "object") return null;
   const lines: string[] = [];
   for (const name of STATE_HASH_COMPONENTS) {
-    const h = hashComponent(input[name], opts);
-    components[name] = h;
+    const h = components[name];
+    if (typeof h !== "string") return null;
     lines.push(`${name}:${h}`);
   }
-  return { hash: sha256Hex(`${STATE_HASH_SCHEME}\n${lines.join("\n")}`), components };
+  return sha256Hex(`${STATE_HASH_SCHEME}\n${lines.join("\n")}`);
 }
 
 /** Componentes cuyo hash difiere entre dos desgloses (orden canónico). */
