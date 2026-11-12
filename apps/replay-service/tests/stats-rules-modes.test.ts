@@ -7,7 +7,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { initPhysics } from "../../arena-engine/src/sim/physics.js";
 import { record, verify, type Replay } from "../../arena-engine/src/replay.js";
 import { emptyArena, gunnerLoadout } from "../../arena-engine/src/fixtures.js";
-import { HunterBot } from "../../arena-engine/src/stubs.js";
+import { HunterBot, IdleBot } from "../../arena-engine/src/stubs.js";
 import { loadRuleset } from "../../../packages/game-rules/index.js";
 import { resolveRulesRequest } from "../../../packages/game-rules/battle-rules.js";
 import { computeBattleStats } from "../src/stats.js";
@@ -17,7 +17,13 @@ beforeAll(async () => {
   await initPhysics();
 });
 
-async function play(ruleset: any, perSide: number): Promise<Replay> {
+/**
+ * `byConstruction`: el escenario TERMINA POR CONSTRUCCIÓN, sin depender de la trayectoria ni de la semilla:
+ * rojo caza con munición sobrada y azul está inmóvil (IdleBot). Motivo (MB, VM112): la munición es por
+ * vehículo y sólo se repone al reaparecer, de modo que con la dotación de serie los cazadores agotan los
+ * disparos y la batalla puede estancarse con un bando vivo (decisión de juego pendiente; ver informe MB).
+ */
+async function play(ruleset: any, perSide: number, byConstruction = false): Promise<Replay> {
   const participants = [];
   for (let i = 0; i < perSide * 2; i++) {
     participants.push({
@@ -28,7 +34,11 @@ async function play(ruleset: any, perSide: number): Promise<Replay> {
     });
   }
   return record({ battleId: "stats-rules", seed: "stats-rules", ruleset, map: emptyArena(), participants }, (b) => {
-    for (const p of participants) b.attachBot(p.id, new HunterBot(p.botId));
+    for (const p of participants) {
+      const red = p.team === "red";
+      b.attachBot(p.id, byConstruction && !red ? new IdleBot(p.botId) : new HunterBot(p.botId));
+      if (byConstruction && red) for (const v of b.getVehicles().filter((x) => x.id === p.id)) for (const a of v.modulesOf("ammo")) a.ammo = 100_000;
+    }
   });
 }
 
@@ -49,7 +59,7 @@ function limitedRuleset() {
 describe("respawn limitado 2v2 (1 reaparición, 2 vidas)", () => {
   let replay: Replay;
   beforeAll(async () => {
-    replay = await play(limitedRuleset(), 2);
+    replay = await play(limitedRuleset(), 2, true);
   }, 120_000);
 
   it("el replay verifica y lleva la copia del ruleset con maxRespawns", async () => {

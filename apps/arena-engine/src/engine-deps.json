@@ -1,10 +1,10 @@
 {
   "$comment": "D4 del ADR-000. El motor verifica estos hashes al arrancar y se niega a ejecutar si no coinciden. Cambiar un valor aquí exige un ADR y regenerar las batallas golden: una build distinta de Rapier puede alterar resultados deterministas e invalidar replays oficiales.",
-  "$comment_reproduces": "ADR-022 · engine.reproduces = versiones ANTERIORES que este motor re-simula bit a bit cuando el ruleset de la cabecera no usa ninguna regla de 0.4.0 (respawn.maxRespawns, timeoutTiebreak, overtime). La verificación de esos replays la hace este motor y la declara (verifiedWith). Añadir una versión exige un test con replays REALES de esa versión (apps/replay-service/tests/engine-0.3.0-compat.test.ts).",
+  "$comment_reproduces": "ADR-022 · engine.reproduces = versiones ANTERIORES que este motor re-simula bit a bit cuando el ruleset de la cabecera no usa ninguna regla de 0.4.0 (respawn.maxRespawns, timeoutTiebreak, overtime). La verificación de esos replays la hace este motor y la declara (verifiedWith). OLA2-MB · vaciado: el contrato de daño (orden de candidatos por slot, hp de blindaje = hp de módulo, torreta normalizada) cambia la trayectoria y el motor ya no re-simula los replays 0.3.0; BACKWARD_COMPATIBILITY_REQUIRED=NO (decisión M0; MD retira igualmente los replays v1 y `reproduces`). Añadir una versión exige un test con replays REALES de esa versión.",
   "engine": {
     "version": "0.4.0",
     "runtime": "node22",
-    "reproduces": ["0.3.0"]
+    "reproduces": []
   },
   "physics": {
     "package": "@dimforge/rapier2d-compat",

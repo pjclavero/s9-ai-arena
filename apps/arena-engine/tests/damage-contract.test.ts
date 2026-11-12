@@ -48,7 +48,7 @@ import { resolveDamage, type EnginePacket } from "../src/sim/damage.js";
 import { initPhysics } from "../src/sim/physics.js";
 import { Vehicle, type VehicleSpec } from "../src/sim/vehicle.js";
 import { Rng } from "../src/rng.js";
-import { emptyArena, gunnerLoadout, sandbagLoadout } from "../src/fixtures.js";
+import { emptyArena, gunnerLoadout, minerLoadout, sandbagLoadout, scoutLoadout } from "../src/fixtures.js";
 import { IdleBot } from "../src/stubs.js";
 
 beforeAll(async () => {
@@ -458,6 +458,26 @@ describe("MOUNT · D-B2: tasa y arco son de la montura", () => {
   });
 });
 
+// Tasa de giro por chasis/montura (OLA2-MB, P2-1): fija el cambio de comportamiento de D-B2. Antes la fijaba el arma
+// (mg 2,2 / cañón 1,0); ahora la fija la montura del chasis. Un vehículo que monte el MISMO arma gira distinto
+// según el chasis; un cambio de la tabla debe ser deliberado.
+describe("MOUNT · tasa efectiva de giro por chasis y ranura (comportamiento resuelto)", () => {
+  // Mismo loadout del explorador (weapon.mg@1) sobre otro chasis.
+  const rateOf = (chassis: string) =>
+    new Vehicle("veh_r", "red", "bot_r", resolveVehicle({ ...ARCHETYPES.scout, chassis }, CATALOG)).turretRate();
+  it("resuelto de los arquetipos: scout 2,2 · gunner 1,0 · miner 1,0 (antes 2,2) · heavy 1,0", () => {
+    expect(new Vehicle("a", "red", "b", scoutLoadout()).turretRate()).toBeCloseTo(2.2, 12);
+    expect(new Vehicle("a", "red", "b", gunnerLoadout()).turretRate()).toBeCloseTo(1.0, 12);
+    expect(new Vehicle("a", "red", "b", minerLoadout()).turretRate()).toBeCloseTo(1.0, 12);
+    expect(new Vehicle("a", "red", "b", resolveVehicle(ARCHETYPES.heavy, CATALOG)).turretRate()).toBeCloseTo(1.0, 12);
+  });
+  it("el mismo arma gira según el chasis: weapon.mg en light 2,2 y en medium 1,0", () => {
+    expect(rateOf("chassis.light@1")).toBeCloseTo(2.2, 12);
+    expect(rateOf("chassis.medium@1")).toBeCloseTo(1.0, 12);
+    expect(rateOf("chassis.medium@2")).toBeCloseTo(1.0, 12);
+  });
+});
+
 // ------------------------------------------------------------------ D-B4 / D-B5
 describe("N20 · contrato público: hullLevel N = 20 y blindaje cuantizado", () => {
   it("N es 20", () => {
@@ -584,7 +604,8 @@ describe("STATIC · la capa de daño no despacha por contenido ni usa azar", () 
         if (n.type === "BinaryExpression" && ["===", "==", "!==", "!="].includes((n as any).operator)) {
           const { left, right } = n as any;
           const other = isStringLit(left) ? right : isStringLit(right) ? left : null;
-          if (other && isMember(other) && other.property?.type === "Identifier" && CONTENT_KEYS.has(other.property.name)) {
+          const prop = other && isMember(other) ? (other as any).property : null;
+          if (prop?.type === "Identifier" && CONTENT_KEYS.has(prop.name)) {
             bad.push(src.slice(n.start, n.end));
           }
         }

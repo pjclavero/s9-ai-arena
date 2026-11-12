@@ -146,7 +146,7 @@ Efecto real en el motor:
 - daño = `damage × damageMultiplier × perf`;
 - el cooldown se divide por `perf` (con mínimo 0.25);
 - la dispersión sale del RNG del motor;
-- la torreta gira a `turretRateRads × perf` hacia el objetivo;
+- la torreta gira a `turretRateRads × perf` hacia el objetivo, donde `turretRateRads` (y `turretArcRad`) son de la **montura de la ranura del chasis** (`slots[].mount`, leída con `Vehicle.mountOf(slot)`), no del arma: dos armas en la misma ranura giran igual (OLA2-MB, D-B2);
 - el proyectil vive **90 ticks** e impacta por *raycast*;
 - con radio de explosión, el daño cae linealmente con la distancia y la explosión no atraviesa muros;
 - sin fuego amigo, el proyectil atraviesa a los aliados.
@@ -232,11 +232,11 @@ Recalibrado en UX-01 (la auditoría FC-C sobre `0b8c12b` (octubre de 2026) se mi
 
 | Estado | Significado | Propiedades |
 |---|---|---|
-| **ACTIVE** | Lo que elige el usuario cambia la batalla | El chasis elegido (con versión); `chassis.hullHp/radiusM/slots`; `movement.maxSpeedMs/accelerationMs2/turnRateRads/ratedLoadKg`; `power.capacityEU/generationEUs`; `sensor.*` (lidar, radar, proximidad y acústico); `weapon.damage/cooldownTicks/projectileSpeedMs/spreadRad/turretRateRads/acceptsAmmo/power.perActionEU`; `ammo.*`; `mine.*` (si el bot despliega la mina con `deployMine`); `armor.reduction/sector`; `radio.maxMessageBytes/maxMessagesPerSecond`; las comunes `massKg`, `hp`, `power.passiveEUs` |
+| **ACTIVE** | Lo que elige el usuario cambia la batalla | El chasis elegido (con versión); `chassis.hullHp/radiusM/slots`; `movement.maxSpeedMs/accelerationMs2/turnRateRads/ratedLoadKg`; `power.capacityEU/generationEUs`; `sensor.*` (lidar, radar, proximidad y acústico); `weapon.damage/cooldownTicks/projectileSpeedMs/spreadRad/acceptsAmmo/power.perActionEU`; `chassis.slots[].mount.turretRateRads/turretArcRad` (montura de la ranura); `armor.hp` (hp del módulo de blindaje, fuente única); `ammo.*`; `mine.*` (si el bot despliega la mina con `deployMine`); `armor.reduction/sector`; `radio.maxMessageBytes/maxMessagesPerSecond`; las comunes `massKg`, `hp`, `power.passiveEUs` |
 | **PARTIAL** | Sólo cuenta para validar el loadout | `chassis.maxLoadKg`; las comunes `costCredits`, `size`, `maxPerVehicle` |
-| **FUTURE** | Ningún código de simulación la lee | `movement.terrain`; `weapon.rangeM` (el alcance lo da el TTL de 90 ticks, `combat.ts:198`); `weapon.turretArcRad` (todos los datos valen 2π: la comprobación nunca actúa); `radio.rangeM` (`radioReaches` sin llamadas, `sensors.ts:227`); `utility.effect/magnitude/durationTicks` |
+| **FUTURE** | Ningún código de simulación la lee | `movement.terrain`; `weapon.rangeM` (el alcance lo da el TTL de 90 ticks, `combat.ts:198`); `radio.rangeM` (`radioReaches` sin llamadas, `sensors.ts:227`); `utility.effect/magnitude/durationTicks` |
 
-**Para que tengan efecto hace falta cambiar el motor:** `weapon.rangeM`, `radio.rangeM`, `turretArcRad` con los datos actuales, `ammo.hp` como pérdida de capacidad, `movement.terrain` y `utility.*`.
+**Para que tengan efecto hace falta cambiar el motor:** `weapon.rangeM`, `radio.rangeM`, `ammo.hp` como pérdida de capacidad, `movement.terrain` y `utility.*`.
 
 ## Campos sin efecto en el motor
 
