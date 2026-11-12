@@ -28,12 +28,64 @@ export interface TournamentProgress {
   total: number | null;
 }
 
+/**
+ * FIX-BROADCAST · motivo ESTABLE de un fallo de la fuente (`SOURCE_ERROR`):
+ *  - target_not_found: la API pública responde 404 (destino inexistente o no legible);
+ *  - invalid_json: la respuesta no es JSON (p. ej. el index.html de la web);
+ *  - invalid_payload: JSON con otra forma;
+ *  - http_<código>: otro rechazo permanente (4xx);
+ *  - unreachable: N fallos transitorios seguidos (red, 5xx, 429).
+ */
+export type SourceErrorReason =
+  | "target_not_found"
+  | "invalid_json"
+  | "invalid_payload"
+  | "unreachable"
+  | `http_${number}`;
+
 export type BroadcastScreen = (
   | { kind: "waiting"; nextBattle: BattleSummary | null }
   | { kind: "live"; battle: BattleSummary }
   | { kind: "intermission"; lastBattle: BattleSummary; nextBattle: BattleSummary | null }
   | { kind: "finished"; lastBattle: BattleSummary | null }
+  /** FIX-BROADCAST · torneo cancelado: estado terminal propio (no «terminado»). */
+  | { kind: "cancelled"; lastBattle: BattleSummary | null }
+  /** FIX-BROADCAST · la fuente no da datos utilizables: error VISIBLE, no una espera falsa. */
+  | { kind: "error"; reason: SourceErrorReason; detail: string }
 ) & { progress?: TournamentProgress };
+
+/**
+ * FIX-BROADCAST · estado del director, distinguible y reportable (atributo
+ * `data-director-state` de la página):
+ *  - WAITING_VALID: espera legítima (torneo abierto o en curso sin batalla en directo
+ *    visible, o batalla programada);
+ *  - TARGET_FINISHED / TARGET_CANCELLED: el destino terminó; no se espera nada más;
+ *  - SOURCE_ERROR: la fuente falla de forma permanente o repetida.
+ */
+export type DirectorState =
+  | "LIVE"
+  | "INTERMISSION"
+  | "WAITING_VALID"
+  | "TARGET_FINISHED"
+  | "TARGET_CANCELLED"
+  | "SOURCE_ERROR";
+
+export function directorStateOf(screen: BroadcastScreen | null): DirectorState {
+  switch (screen?.kind) {
+    case "live":
+      return "LIVE";
+    case "intermission":
+      return "INTERMISSION";
+    case "finished":
+      return "TARGET_FINISHED";
+    case "cancelled":
+      return "TARGET_CANCELLED";
+    case "error":
+      return "SOURCE_ERROR";
+    default:
+      return "WAITING_VALID";
+  }
+}
 
 /**
  * Decide la pantalla a partir de la lista de batallas del torneo en orden de
@@ -86,12 +138,77 @@ export function applyTournamentState(screen: BroadcastScreen, state: string | nu
   const progress: TournamentProgress | undefined = screen.progress
     ? { played: screen.progress.played, total: closed ? screen.progress.total : null }
     : undefined;
+  if (screen.kind === "error") return screen;
+  if (closed && screen.kind !== "live") {
+    // FIX-BROADCAST · torneo CERRADO sin batalla en directo ⇒ estado terminal, aunque la
+    // lista visible esté vacía (p. ej. replays públicos apagados): antes `waiting` ganaba
+    // y la emisión decía «Esperando el inicio del torneo…» para siempre.
+    const lastBattle =
+      screen.kind === "finished" || screen.kind === "intermission" || screen.kind === "cancelled"
+        ? screen.lastBattle
+        : null;
+    return state === "cancelled"
+      ? { kind: "cancelled", lastBattle, progress }
+      : { kind: "finished", lastBattle, progress };
+  }
   if (screen.kind === "finished" && !closed) {
     return screen.lastBattle
       ? { kind: "intermission", lastBattle: screen.lastBattle, nextBattle: null, progress }
       : { kind: "waiting", nextBattle: null, progress };
   }
   return { ...screen, progress };
+}
+
+/** FIX-BROADCAST · error de la API pública con su clase (para decidir si reintentar). */
+export class PublicApiError extends Error {
+  constructor(
+    message: string,
+    /** Código HTTP (0 si no hubo respuesta). */
+    public readonly status: number,
+    public readonly kind: "http" | "invalid_json" | "invalid_payload" | "network",
+  ) {
+    super(message);
+    this.name = "PublicApiError";
+  }
+}
+
+/**
+ * FIX-BROADCAST · ¿el fallo es PERMANENTE (⇒ SOURCE_ERROR en el acto) o transitorio
+ * (⇒ reintento; SOURCE_ERROR sólo tras N seguidos)? Permanentes: 404 y demás 4xx salvo
+ * 408/429, JSON inválido y forma inválida. Transitorios: red, 5xx, 408, 429 y cualquier
+ * otro error desconocido.
+ */
+export function classifySourceError(e: unknown): { permanent: boolean; reason: SourceErrorReason; detail: string } {
+  const detail = e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200);
+  if (e instanceof SyntaxError) return { permanent: true, reason: "invalid_json", detail };
+  if (e instanceof PublicApiError) {
+    if (e.kind === "invalid_json") return { permanent: true, reason: "invalid_json", detail };
+    if (e.kind === "invalid_payload") return { permanent: true, reason: "invalid_payload", detail };
+    if (e.kind === "http") {
+      if (e.status === 404) return { permanent: true, reason: "target_not_found", detail };
+      if (e.status >= 400 && e.status < 500 && e.status !== 408 && e.status !== 429)
+        return { permanent: true, reason: `http_${e.status}`, detail };
+    }
+  }
+  return { permanent: false, reason: "unreachable", detail };
+}
+
+const BATTLE_STATUSES = new Set(["scheduled", "running", "finished", "failed"]);
+
+function validBattle(b: unknown): b is BattleSummary {
+  const o = b as BattleSummary | null;
+  return (
+    !!o && typeof o === "object" && typeof o.id === "string" && BATTLE_STATUSES.has(o.status) && Array.isArray(o.participants)
+  );
+}
+
+function invalidPayload(what: string): PublicApiError {
+  return new PublicApiError(`respuesta con forma inválida en ${what}`, 200, "invalid_payload");
+}
+
+function defaultSourceErrorReport(err: { reason: SourceErrorReason; detail: string; consecutive: number }): void {
+  // Reportable desde el Chromium del streamer (consola capturada) sin ensuciar la imagen.
+  console.warn(`[broadcast] fuente: ${err.reason} (${err.consecutive} seguido/s): ${err.detail}`);
 }
 
 /** GET anónimo de JSON. Inyectable en tests; en producción, fetch del navegador. */
@@ -105,9 +222,19 @@ export type PublicFetch = (path: string) => Promise<any>;
  */
 export function createPublicApi(base = "/api/v1", fetchImpl: typeof fetch = fetch) {
   const call = async (method: "GET" | "POST", path: string): Promise<any> => {
-    const res = await fetchImpl(`${base}${path}`, { method });
-    if (!res.ok) throw new Error(`HTTP ${res.status} en ${method} ${path}`);
-    return res.json();
+    let res: Response;
+    try {
+      res = await fetchImpl(`${base}${path}`, { method });
+    } catch (e) {
+      throw new PublicApiError(`red: ${(e as Error)?.message ?? String(e)} en ${method} ${path}`, 0, "network");
+    }
+    if (!res.ok) throw new PublicApiError(`HTTP ${res.status} en ${method} ${path}`, res.status, "http");
+    try {
+      return await res.json();
+    } catch {
+      // FIX-BROADCAST · p. ej. la web devolviendo su index.html en lugar de la API.
+      throw new PublicApiError(`respuesta no JSON en ${method} ${path}`, res.status, "invalid_json");
+    }
   };
   return {
     get: (path: string) => call("GET", path),
@@ -120,6 +247,13 @@ export interface DirectorOptions {
   fetchJson: PublicFetch;
   onScreen: (screen: BroadcastScreen) => void;
   pollIntervalMs?: number;
+  /**
+   * FIX-BROADCAST · fallos TRANSITORIOS seguidos tolerados antes de declarar
+   * `SOURCE_ERROR` (por defecto 3: ~12 s con el sondeo de 4 s).
+   */
+  maxTransientFailures?: number;
+  /** FIX-BROADCAST · aviso reportable de cada error de la fuente (por defecto, console.warn). */
+  onSourceError?: (err: { reason: SourceErrorReason; detail: string; consecutive: number }) => void;
   setIntervalImpl?: typeof setInterval;
   clearIntervalImpl?: typeof clearInterval;
 }
@@ -137,6 +271,10 @@ export class BroadcastDirector {
   private lastKey = "";
   /** Batalla actualmente en pantalla (para no saltar entre dos running). */
   private currentBattleId: string | null = null;
+  /** FIX-BROADCAST · fallos seguidos de la fuente. */
+  private failures = 0;
+  /** FIX-BROADCAST · última batalla vista (modo batalla): si deja de ser legible, terminó. */
+  private lastSeenBattle: BattleSummary | null = null;
 
   constructor(opts: DirectorOptions) {
     this.opts = opts;
@@ -156,23 +294,55 @@ export class BroadcastDirector {
 
   /** Un ciclo de sondeo. Público para poder probarlo sin relojes. */
   async tick(): Promise<void> {
+    let screen: BroadcastScreen;
     try {
-      const screen = await this.computeScreen();
-      this.currentBattleId = screen.kind === "live" ? screen.battle.id : null;
-      const key = `${screen.kind}:${screen.kind === "live" ? screen.battle.id : ((screen as any).nextBattle?.id ?? "")}`;
-      if (key !== this.lastKey) {
-        this.lastKey = key;
-        this.opts.onScreen(screen);
-      }
-    } catch {
-      // Fallo de red del sondeo: se conserva la última pantalla y se reintenta
-      // al siguiente ciclo. La emisión no se cae por un GET perdido.
+      screen = await this.computeScreen();
+      this.failures = 0;
+    } catch (e) {
+      // FIX-BROADCAST · antes un `catch` vacío: un fallo PERMANENTE (la web devolviendo
+      // index.html, un 404) dejaba «La batalla empieza en breve» para siempre. Ahora:
+      //  - permanente ⇒ SOURCE_ERROR en el acto;
+      //  - transitorio ⇒ se conserva la pantalla y se reintenta; con N seguidos, SOURCE_ERROR.
+      // Se sigue sondeando siempre: si la fuente vuelve, la emisión se recupera sola.
+      const c = classifySourceError(e);
+      this.failures++;
+      (this.opts.onSourceError ?? defaultSourceErrorReport)({
+        reason: c.reason,
+        detail: c.detail,
+        consecutive: this.failures,
+      });
+      if (!c.permanent && this.failures < (this.opts.maxTransientFailures ?? 3)) return;
+      screen = { kind: "error", reason: c.reason, detail: c.detail };
+    }
+    this.currentBattleId = screen.kind === "live" ? screen.battle.id : null;
+    const sub =
+      screen.kind === "live"
+        ? screen.battle.id
+        : screen.kind === "error"
+          ? screen.reason
+          : ((screen as { nextBattle?: BattleSummary | null }).nextBattle?.id ?? "");
+    const key = `${screen.kind}:${sub}`;
+    if (key !== this.lastKey) {
+      this.lastKey = key;
+      this.opts.onScreen(screen);
     }
   }
 
   private async computeScreen(): Promise<BroadcastScreen> {
     if (this.opts.target.kind === "battle") {
-      const b = (await this.opts.fetchJson(`/battles/${this.opts.target.battleId}`)) as BattleSummary;
+      let b: unknown;
+      try {
+        b = await this.opts.fetchJson(`/battles/${this.opts.target.battleId}`);
+      } catch (e) {
+        // FIX-BROADCAST · una batalla que SE VIO y deja de ser legible (404) terminó sin
+        // replay público: es el final del destino, no un error de la fuente.
+        if (this.lastSeenBattle && e instanceof PublicApiError && e.kind === "http" && e.status === 404) {
+          return { kind: "finished", lastBattle: this.lastSeenBattle.status === "failed" ? null : this.lastSeenBattle };
+        }
+        throw e;
+      }
+      if (!validBattle(b)) throw invalidPayload("/battles/{id}");
+      this.lastSeenBattle = b;
       if (b.status === "running") return { kind: "live", battle: b };
       if (b.status === "scheduled") return { kind: "waiting", nextBattle: b };
       return { kind: "finished", lastBattle: b.status === "finished" ? b : null };
@@ -189,6 +359,9 @@ export class BroadcastDirector {
       this.opts.fetchJson(`/tournaments/${tid}/battles`) as Promise<{ items: BattleSummary[] }>,
       this.tournamentState(),
     ]);
+    if (!page || typeof page !== "object" || !Array.isArray(page.items) || !page.items.every(validBattle)) {
+      throw invalidPayload("/tournaments/{id}/battles");
+    }
     return applyTournamentState(decideScreen(page.items, this.currentBattleId), state);
   }
 

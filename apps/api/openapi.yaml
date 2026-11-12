@@ -85,7 +85,15 @@ info:
   # (estado EFECTIVO: lo que /broadcast anónima puede leer de verdad con la política
   # única); `publicBroadcastable` deja de ser alias de `broadcastable` y vale lo mismo
   # que `broadcastAvailable`.
-  version: 0.18.0
+  # 0.19.0 · FIX-BROADCAST (aditivo, admin): startStreaming exige `broadcastAvailable`
+  # (no basta `broadcastable`) y rechaza con 409 y motivo estable (public_replays_disabled,
+  # tournament_no_content, target_not_available, battle_not_started, battle_not_available,
+  # tournament_not_started, target_not_found…); el destino inexistente pasa de 404 a 409
+  # target_not_found. StreamingTarget gana `targetType`, `tournament`, `battleCounts` y
+  # `broadcastPhase`. BroadcastUnavailableReason gana target_not_found,
+  # tournament_no_content y tournament_not_started; una batalla revertida es
+  # battle_not_available.
+  version: 0.19.0
   description: |
     Contrato de la API de plataforma (capítulos 16, 17 y 23 del Dosier técnico).
 
@@ -1899,7 +1907,7 @@ paths:
     post:
       tags: [streaming]
       operationId: startStreaming
-      summary: 'Inicia la emisión (o la grabación, según el modo) hacia un destino. Idempotente para el mismo destino y configuración; 409 si hay otra activa, si el streaming está desactivado, si falta la clave, si la clave está sellada para otra ingesta (credential_unbound), si el destino no está autorizado para retransmisión (battle_not_public: batalla suelta con bots no públicos; tournament_not_broadcastable: batalla de un torneo sin broadcast con bots no públicos), si no se puede medir el disco o queda poco (disk_unknown, disk_low) o si un stop la canceló mientras arrancaba (start_cancelled). start, restart y stop se ejecutan en serie.'
+      summary: 'Inicia la emisión (o la grabación, según el modo) hacia un destino. Idempotente para el mismo destino y configuración; 409 si hay otra activa, si el streaming está desactivado, si falta la clave, si la clave está sellada para otra ingesta (credential_unbound), si el destino no está autorizado para retransmisión (battle_not_public: batalla suelta con bots no públicos; tournament_not_broadcastable: batalla de un torneo sin broadcast con bots no públicos), si el destino no existe (target_not_found) o si está autorizado pero /broadcast no tiene nada que mostrar (FIX-BROADCAST: exige broadcastAvailable; el código es el `reason` de getStreamingTarget, p. ej. public_replays_disabled, tournament_no_content, target_not_available, battle_not_started o battle_not_available), si no se puede medir el disco o queda poco (disk_unknown, disk_low) o si un stop la canceló mientras arrancaba (start_cancelled). start, restart y stop se ejecutan en serie.'
       x-min-role: admin
       requestBody:
         required: true
@@ -1919,7 +1927,6 @@ paths:
         '200': { description: Ya activa (idempotente), content: { application/json: { schema: { type: object } } } }
         '201': { description: Iniciada, content: { application/json: { schema: { type: object } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
-        '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '503': { description: Streamer no disponible, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
@@ -3104,6 +3111,25 @@ components:
         reason: { $ref: '#/components/schemas/BroadcastUnavailableReason' }
         publicSpectateEffective: { type: boolean, description: 'MG · un anónimo puede ver este destino en directo ahora.' }
         publicReplaysEffective: { type: boolean, description: 'MG · un anónimo puede leer esta batalla terminada ahora.' }
+        targetType: { type: string, enum: [standalone_battle, tournament_battle, tournament], description: 'FIX-BROADCAST · standalone_battle = batalla suelta (no pertenece a ningún torneo).' }
+        tournament:
+          type: object
+          nullable: true
+          description: 'FIX-BROADCAST · torneo al que pertenece la batalla (null si es suelta o si el destino es un torneo).'
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+            state: { type: string }
+        battleCounts:
+          type: object
+          nullable: true
+          description: 'FIX-BROADCAST · batallas del torneo por estado (sólo destino torneo).'
+          properties:
+            scheduled: { type: integer }
+            running: { type: integer }
+            finished: { type: integer }
+            failed: { type: integer }
+        broadcastPhase: { type: string, enum: [LIVE, WAITING_VALID, TARGET_FINISHED, UNAVAILABLE], description: 'FIX-BROADCAST · qué mostrará /broadcast: directo, espera legítima (torneo abierto o en curso sin batalla en directo), final del destino, o no emitible.' }
         delaySeconds: { type: number }
         delaySource: { type: string, enum: [snapshot, ruleset, final_visible, none] }
 
@@ -3137,7 +3163,9 @@ components:
         tournament_not_broadcastable · la batalla no es retransmisible por la visibilidad
         de sus bots o de su torneo; battle_not_started · programada (se verá al empezar);
         battle_not_available · fallida o revertida; target_not_available · torneo
-        cancelado; streaming_not_configured · sin streamer; other · otro.
+        cancelado; streaming_not_configured · sin streamer; target_not_found · el destino
+        no existe (start); tournament_no_content · torneo terminado sin ninguna batalla
+        que /broadcast pueda mostrar; tournament_not_started · torneo en borrador; other · otro.
       enum:
         - public_spectate_disabled
         - public_replays_disabled
@@ -3147,6 +3175,9 @@ components:
         - battle_not_available
         - target_not_available
         - streaming_not_configured
+        - target_not_found
+        - tournament_no_content
+        - tournament_not_started
         - other
         - null
 

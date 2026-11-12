@@ -33,6 +33,15 @@ export type BroadcastUnavailableReason =
   | "battle_not_available"
   /** Torneo cancelado. */
   | "target_not_available"
+  /** FIX-BROADCAST · el destino no existe (start responde 409 con este motivo). */
+  | "target_not_found"
+  /**
+   * FIX-BROADCAST · torneo terminado sin NINGUNA batalla terminada que /broadcast pueda
+   * mostrar: la emisión sólo enseñaría «Torneo terminado» (o, antes, una espera eterna).
+   */
+  | "tournament_no_content"
+  /** FIX-BROADCAST · torneo en borrador: aún no existe ni su inscripción. */
+  | "tournament_not_started"
   /** No hay streamer configurado en este despliegue. */
   | "streaming_not_configured"
   /** La política anónima la deniega por otro motivo. */
@@ -63,7 +72,7 @@ export async function battleBroadcastState(
 ): Promise<BroadcastEffectiveState | null> {
   const b = await db("battles")
     .where({ id: battleId })
-    .first("id", "status")
+    .first("id", "status", "reverted_at")
     .catch(() => null);
   if (!b) return null;
   const readable = await anonymousCanReadBattle(db, battleId, vis);
@@ -79,6 +88,9 @@ export async function battleBroadcastState(
     const show = await publicShowabilityOf(db, battleId);
     return show && !show.showable ? show.reason : null;
   };
+  // FIX-BROADCAST · una batalla REVERTIDA no se emite aunque siga legible como replay: su
+  // resultado ya no cuenta y la emisión lo presentaría como válido.
+  if (b.reverted_at) return out(false, "battle_not_available");
   if (status === "running") {
     if (readable) return out(true, null);
     if (!vis.publicSpectate) return out(false, "public_spectate_disabled");
@@ -138,6 +150,7 @@ export async function tournamentBroadcastState(
     effective: { ...vis },
   });
   if (t.state === "cancelled") return out(false, "target_not_available");
+  if (t.state === "draft") return out(false, "tournament_not_started");
   if (finished ? !vis.publicReplays : !vis.publicSpectate) {
     return out(false, finished ? "public_replays_disabled" : "public_spectate_disabled");
   }
@@ -146,5 +159,97 @@ export async function tournamentBroadcastState(
   const shownTotal = await count(shown.clone());
   const readable = await count(whereBattleReadable(db, shown.clone(), undefined, vis));
   if (readable < shownTotal) return out(false, "other");
+  // FIX-BROADCAST · terminado y sin ninguna batalla terminada legible: no hay NADA que
+  // emitir (la emisión se quedaba en «Esperando el inicio del torneo…» para siempre).
+  if (finished && readable === 0) return out(false, "tournament_no_content");
   return out(true, null);
+}
+
+// ── FIX-BROADCAST · fase de la emisión y resumen del destino ────────────────
+
+/**
+ * Qué mostrará /broadcast con este destino, con la MISMA lectura que el director:
+ *  - LIVE: hay una batalla en directo que un anónimo puede ver;
+ *  - WAITING_VALID: espera LEGÍTIMA (torneo abierto o en curso sin batalla en directo
+ *    ahora: sus batallas programadas llegarán);
+ *  - TARGET_FINISHED: el destino terminó y tiene contenido final que mostrar;
+ *  - UNAVAILABLE: no se puede emitir (motivo en `reason`).
+ */
+export type BroadcastPhase = "LIVE" | "WAITING_VALID" | "TARGET_FINISHED" | "UNAVAILABLE";
+
+export interface BattleCounts {
+  scheduled: number;
+  running: number;
+  finished: number;
+  failed: number;
+}
+
+/** Información clara del destino para la admin (evita confundir batalla suelta y torneo). */
+export interface BroadcastTargetSummary {
+  /** `standalone_battle` = batalla suelta (sin torneo). */
+  targetType: "standalone_battle" | "tournament_battle" | "tournament";
+  /** Torneo al que pertenece la batalla (null si es suelta o si el destino es un torneo). */
+  tournament: { id: string; name: string; state: string } | null;
+  /** Batallas del torneo por estado (sólo destino torneo). */
+  battleCounts: BattleCounts | null;
+  broadcastPhase: BroadcastPhase;
+}
+
+async function countsByStatus(db: Db, tournamentId: string): Promise<BattleCounts> {
+  const rows: { status: string; n: string | number }[] = await db("battles")
+    .where("tournament_id", tournamentId)
+    .groupBy("status")
+    .select("status")
+    .count({ n: "id" });
+  const out: BattleCounts = { scheduled: 0, running: 0, finished: 0, failed: 0 };
+  for (const r of rows) if (r.status in out) out[r.status as keyof BattleCounts] = Number(r.n);
+  return out;
+}
+
+/**
+ * Resumen del destino y fase de la emisión a partir del estado EFECTIVO ya calculado
+ * (battleBroadcastState / tournamentBroadcastState). null = no existe.
+ */
+export async function broadcastTargetSummary(
+  db: Db,
+  t: { kind: "battle" | "tournament"; id: string },
+  eff: Pick<BroadcastEffectiveState, "broadcastAvailable">,
+): Promise<BroadcastTargetSummary | null> {
+  if (t.kind === "battle") {
+    const b = await db("battles")
+      .leftJoin("tournaments", "tournaments.id", "battles.tournament_id")
+      .where("battles.id", t.id)
+      .first("battles.status", "battles.tournament_id", "tournaments.name as t_name", "tournaments.state as t_state")
+      .catch(() => null);
+    if (!b) return null;
+    const phase: BroadcastPhase = !eff.broadcastAvailable
+      ? "UNAVAILABLE"
+      : b.status === "running"
+        ? "LIVE"
+        : b.status === "finished"
+          ? "TARGET_FINISHED"
+          : "UNAVAILABLE";
+    return {
+      targetType: b.tournament_id ? "tournament_battle" : "standalone_battle",
+      tournament: b.tournament_id
+        ? { id: String(b.tournament_id), name: String(b.t_name ?? "").slice(0, 120), state: String(b.t_state) }
+        : null,
+      battleCounts: null,
+      broadcastPhase: phase,
+    };
+  }
+  const tr = await db("tournaments")
+    .where({ id: t.id })
+    .first("id", "state")
+    .catch(() => null);
+  if (!tr) return null;
+  const counts = await countsByStatus(db, t.id);
+  const phase: BroadcastPhase = !eff.broadcastAvailable
+    ? "UNAVAILABLE"
+    : tr.state === "finished"
+      ? "TARGET_FINISHED"
+      : counts.running > 0
+        ? "LIVE"
+        : "WAITING_VALID";
+  return { targetType: "tournament", tournament: null, battleCounts: counts, broadcastPhase: phase };
 }

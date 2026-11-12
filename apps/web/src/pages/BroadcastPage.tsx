@@ -15,7 +15,14 @@
  */
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { BroadcastConfig } from "../broadcast/config.js";
-import { BroadcastDirector, createPublicApi, type BattleSummary, type BroadcastScreen } from "../broadcast/director.js";
+import {
+  BroadcastDirector,
+  createPublicApi,
+  directorStateOf,
+  type BattleSummary,
+  type BroadcastScreen,
+  type SourceErrorReason,
+} from "../broadcast/director.js";
 import { SpectatorClient } from "../viewer/spectator-client.js";
 import { LiveFeed } from "../viewer/live-feed.js";
 import { rosterFromMeta } from "../viewer/art-direction.js";
@@ -58,7 +65,14 @@ export function BroadcastPage({ config }: { config: BroadcastConfig }) {
   };
 
   return (
-    <div data-testid="broadcast-stage" style={stageStyle}>
+    // FIX-BROADCAST · el estado del director queda en el DOM: distinguible y reportable
+    // (WAITING_VALID / TARGET_FINISHED / TARGET_CANCELLED / SOURCE_ERROR…) aunque la slate sea limpia.
+    <div
+      data-testid="broadcast-stage"
+      data-director-state={config.target ? directorStateOf(screen) : undefined}
+      data-source-error={screen?.kind === "error" ? screen.reason : undefined}
+      style={stageStyle}
+    >
       <BroadcastHeader config={config} screen={screen} />
       {!config.target ? (
         <CenterCard accent={b.accentColor} title={b.eventName} subtitle="Configura ?battle=<id> o ?tournament=<id>" />
@@ -68,6 +82,10 @@ export function BroadcastPage({ config }: { config: BroadcastConfig }) {
         <IntermissionScreen config={config} last={screen.lastBattle} next={screen.nextBattle} />
       ) : screen.kind === "finished" ? (
         <FinishedScreen config={config} last={screen.lastBattle} />
+      ) : screen.kind === "cancelled" ? (
+        <CancelledScreen config={config} />
+      ) : screen.kind === "error" ? (
+        <SourceErrorScreen config={config} reason={screen.reason} />
       ) : (
         <LiveScreen config={config} battle={screen.battle} />
       )}
@@ -227,6 +245,44 @@ function FinishedScreen({ config, last }: { config: BroadcastConfig; last: Battl
           La repetición de esta batalla no se retransmite.
         </p>
       )}
+    </section>
+  );
+}
+
+/** FIX-BROADCAST · torneo cancelado: estado terminal propio. */
+function CancelledScreen({ config }: { config: BroadcastConfig }) {
+  return (
+    <section
+      data-testid="broadcast-cancelled"
+      style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}
+    >
+      <h1 style={{ fontSize: 56, color: config.branding.accentColor, margin: 0 }}>{config.branding.eventName}</h1>
+      <p style={{ fontSize: 36 }}>Torneo cancelado. No hay nada más que emitir.</p>
+    </section>
+  );
+}
+
+/**
+ * FIX-BROADCAST · la fuente no da datos utilizables (404, JSON inválido, N fallos
+ * seguidos). Slate limpia, pero NUNCA una espera falsa: dice que la emisión no está
+ * disponible y lleva el código estable (pequeño) para poder reportarlo.
+ */
+function SourceErrorScreen({ config, reason }: { config: BroadcastConfig; reason: SourceErrorReason }) {
+  return (
+    <section
+      data-testid="broadcast-source-error"
+      role="alert"
+      style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}
+    >
+      <h1 style={{ fontSize: 56, color: config.branding.accentColor, margin: 0 }}>{config.branding.eventName}</h1>
+      <p style={{ fontSize: 36 }}>
+        {reason === "unreachable"
+          ? "Emisión interrumpida: no se puede obtener el estado del evento."
+          : "Emisión no disponible: este contenido no se puede mostrar."}
+      </p>
+      <p data-testid="broadcast-source-error-code" style={{ fontSize: 18, opacity: 0.6 }}>
+        código: {reason}
+      </p>
     </section>
   );
 }

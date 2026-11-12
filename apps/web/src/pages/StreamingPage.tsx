@@ -141,6 +141,11 @@ interface TargetInfo {
   /** MG · /broadcast (anónima) puede mostrarlo AHORA, con el motivo si no. */
   broadcastAvailable?: boolean;
   reason?: string | null;
+  /** FIX-BROADCAST (0.19.0) · qué es el destino y qué mostrará /broadcast. */
+  targetType?: "standalone_battle" | "tournament_battle" | "tournament";
+  tournament?: { id: string; name: string; state: string } | null;
+  battleCounts?: { scheduled: number; running: number; finished: number; failed: number } | null;
+  broadcastPhase?: "LIVE" | "WAITING_VALID" | "TARGET_FINISHED" | "UNAVAILABLE";
   delaySeconds: number;
   delaySource: "snapshot" | "ruleset" | "final_visible" | "none";
 }
@@ -261,6 +266,16 @@ export function humanReason(code: string | null | undefined, message: string | n
       return "El servicio de streaming no está disponible.";
     case "battle_not_public":
       return "Esta batalla no puede retransmitirse públicamente.";
+    // FIX-BROADCAST · destino autorizado pero sin nada que /broadcast pueda mostrar.
+    case "public_spectate_disabled":
+    case "public_replays_disabled":
+    case "tournament_no_content":
+    case "tournament_not_started":
+    case "target_not_available":
+    case "battle_not_started":
+    case "battle_not_available":
+    case "target_not_found":
+      return broadcastReasonText(code);
     case "tournament_not_broadcastable":
       return "Esta batalla no puede retransmitirse públicamente: su torneo no tiene la retransmisión pública activada.";
     case "streaming_disabled":
@@ -410,21 +425,21 @@ type Eligibility = Pick<Destination, "kind" | "broadcastable" | "broadcastBlocke
   Partial<Pick<Destination, "broadcastAvailable" | "reason">>;
 
 /**
- * MG · ¿Se puede retransmitir? Autorizado por visibilidad (`broadcastable`) Y legible de
- * verdad por /broadcast (`broadcastAvailable`, si la API lo da). Una batalla programada
- * cuenta como retransmisible: /broadcast muestra la espera y la verá al empezar.
+ * MG · ¿Se puede retransmitir? Autorizado por visibilidad (`broadcastable`) Y con contenido
+ * que /broadcast puede mostrar (`broadcastAvailable`, si la API lo da).
+ * FIX-BROADCAST · una batalla programada YA NO cuenta: la página pública no puede leerla
+ * hasta que empiece (la API rechaza el start con battle_not_started).
  */
 export function canBroadcast(d: Eligibility): boolean {
   if (!d.broadcastable) return false;
   if (d.broadcastAvailable === undefined) return true; // API anterior: sólo hay autorización
-  return d.broadcastAvailable || d.reason === "battle_not_started";
+  return d.broadcastAvailable;
 }
 
 /** §6 · Explicación humana de si un destino se puede retransmitir. */
 export function eligibilityText(d: Eligibility): string {
   // MG · autorizado pero la página pública no podría leerlo: se dice el motivo REAL.
   if (d.broadcastable && d.broadcastAvailable === false) {
-    if (d.reason === "battle_not_started") return `Retransmisible cuando empiece: ${broadcastReasonText(d.reason)}`;
     return `No retransmisible ahora: ${broadcastReasonText(d.reason)}${
       d.reason === "public_spectate_disabled" || d.reason === "public_replays_disabled"
         ? " Actívalo en Administración → «Acceso público / Broadcast»."
@@ -444,6 +459,68 @@ export function eligibilityText(d: Eligibility): string {
   return d.broadcastBlockedReason === "tournament_not_broadcastable"
     ? "No retransmisible: esta batalla no puede retransmitirse porque contiene bots privados y su torneo se creó sin retransmisión pública."
     : "No retransmisible: esta batalla no puede retransmitirse porque contiene bots privados y no pertenece a un torneo con retransmisión pública.";
+}
+
+// ── FIX-BROADCAST · destino de la emisión en lenguaje humano ────────────────
+const TOURNAMENT_STATE_HUMAN: Record<string, string> = {
+  draft: "borrador",
+  open: "inscripción abierta",
+  closed: "inscripción cerrada",
+  running: "en curso",
+  finished: "terminado",
+  cancelled: "cancelado",
+};
+
+/** Lo que la API cuenta del destino (getStreamingTarget, contrato 0.19.0). */
+export type TargetSummaryInput = Pick<TargetInfo, "kind" | "label" | "status"> &
+  Partial<Pick<TargetInfo, "targetType" | "tournament" | "battleCounts">>;
+
+/**
+ * «Torneo "prueba" (terminado, 0 en curso)» o «Batalla suelta A vs B (no pertenece a ningún
+ * torneo)»: qué se está emitiendo de verdad, para no confundir una batalla suelta con un torneo.
+ */
+export function targetSummaryText(t: TargetSummaryInput): string {
+  if (t.kind === "tournament") {
+    const st = TOURNAMENT_STATE_HUMAN[t.status] ?? t.status;
+    const c = t.battleCounts;
+    if (!c) return `Torneo "${t.label}" (${st})`;
+    const parts = [st, `${c.running} en curso`];
+    if (c.scheduled > 0) parts.push(`${c.scheduled} programada${c.scheduled === 1 ? "" : "s"}`);
+    return `Torneo "${t.label}" (${parts.join(", ")})`;
+  }
+  const st = (STATUS_HUMAN[t.status] ?? t.status).toLowerCase();
+  if (t.targetType === "standalone_battle") return `Batalla suelta ${t.label} (${st}; no pertenece a ningún torneo)`;
+  if (t.tournament) return `Batalla ${t.label} (${st}; del torneo "${t.tournament.name}")`;
+  return `Batalla ${t.label} (${st})`;
+}
+
+/** Bloque «destino + motivo» (motivo humano; código plegado en detalles técnicos). */
+function TargetSummary(props: { target: TargetInfo; prefix?: string; testId: string }) {
+  const t = props.target;
+  if (!t.targetType) return null; // API anterior a 0.19.0: no hay resumen
+  const unavailable = t.broadcastAvailable === false;
+  return (
+    <div data-testid={props.testId} data-phase={t.broadcastPhase} data-reason={unavailable ? (t.reason ?? "other") : undefined}>
+      <p>
+        <strong data-testid={`${props.testId}-text`}>
+          {props.prefix ?? ""}
+          {targetSummaryText(t)}
+        </strong>
+      </p>
+      {unavailable && (
+        <p className="error" role="alert" data-testid={`${props.testId}-reason`}>
+          {broadcastReasonText(t.reason) || "La página pública no puede mostrar este destino."}
+        </p>
+      )}
+      {unavailable && (
+        <TechDetails testId={`${props.testId}-tech`}>
+          <p>
+            Motivo: <code>{t.reason ?? "other"}</code>
+          </p>
+        </TechDetails>
+      )}
+    </div>
+  );
 }
 
 // ── canal y calidad (§3, §32, §33) ──────────────────────────────────────────
@@ -798,6 +875,27 @@ function ReadyView(props: {
     return extra && extra.kind === kind && !base.some((d) => d.id === extra.id) ? [extra, ...base] : base;
   }, [list, kind, extra]);
   const dest = options.find((d) => `${d.kind}:${d.id}` === selected) ?? null;
+  // FIX-BROADCAST · el destino elegido, leído de getStreamingTarget (fuente autoritativa del
+  // start): qué es (batalla suelta o torneo, batallas en curso) y si hay algo que emitir.
+  const [destInfo, setDestInfo] = useState<TargetInfo | null>(null);
+  useEffect(() => {
+    setDestInfo(null);
+    if (!dest) return;
+    let alive = true;
+    void api<TargetInfo>("GET", `/admin/streaming/target?kind=${dest.kind}&id=${encodeURIComponent(dest.id)}`)
+      .then((t) => {
+        if (alive && t && t.kind === dest.kind && t.id === dest.id) setDestInfo(t);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dest?.kind, dest?.id]);
+  const destEff: Destination | null =
+    dest && destInfo && destInfo.broadcastAvailable !== undefined
+      ? { ...dest, status: destInfo.status, broadcastAvailable: destInfo.broadcastAvailable, reason: destInfo.reason }
+      : dest;
 
   const channels = channelOptions(st);
   const channelId = currentChannelId(st.settings);
@@ -807,11 +905,11 @@ function ReadyView(props: {
   const blockers: string[] = [];
   if (!st.settings.enabled) blockers.push("El streaming está desactivado.");
   if (!st.capabilities.streamerReachable) blockers.push("El servicio de streaming no está disponible.");
-  if (!dest) blockers.push(kind === "battle" ? "Elige una batalla." : "Elige un torneo.");
-  else if (!canBroadcast(dest))
+  if (!destEff) blockers.push(kind === "battle" ? "Elige una batalla." : "Elige un torneo.");
+  else if (!canBroadcast(destEff))
     blockers.push(
-      dest.broadcastable && dest.broadcastAvailable === false
-        ? broadcastReasonText(dest.reason)
+      destEff.broadcastable && destEff.broadcastAvailable === false
+        ? broadcastReasonText(destEff.reason)
         : "Este destino no se puede retransmitir.",
     );
   if (ch && !ch.ready)
@@ -901,15 +999,18 @@ function ReadyView(props: {
         </select>
         {listError ? <FormError error={listError} /> : null}
       </div>
-      {dest && (
+      {dest && destEff && (
         <div data-testid="stream-target-info">
+          {destInfo && <TargetSummary target={destInfo} testId="stream-target-summary" />}
           <p
-            data-testid={canBroadcast(dest) ? "simple-broadcastable" : "stream-target-private"}
-            data-reason={dest.broadcastBlockedReason ?? (canBroadcast(dest) ? undefined : (dest.reason ?? undefined))}
-            className={canBroadcast(dest) ? "ok" : "error"}
-            role={canBroadcast(dest) ? undefined : "alert"}
+            data-testid={canBroadcast(destEff) ? "simple-broadcastable" : "stream-target-private"}
+            data-reason={
+              destEff.broadcastBlockedReason ?? (canBroadcast(destEff) ? undefined : (destEff.reason ?? undefined))
+            }
+            className={canBroadcast(destEff) ? "ok" : "error"}
+            role={canBroadcast(destEff) ? undefined : "alert"}
           >
-            {eligibilityText(dest)}
+            {eligibilityText(destEff)}
           </p>
           {finishedBattleNotice(dest) && (
             <p data-testid="stream-target-finished" className="warn" role="status">
@@ -1036,12 +1137,29 @@ function LiveView(props: { st: StreamingAdminState; busy: string | null; act: Ac
     return () => clearInterval(t);
   }, []);
   const [label, setLabel] = useState<string | null>(null);
+  const [targetInfo, setTargetInfo] = useState<TargetInfo | null>(null);
   const target = st.session?.target ?? null;
   useEffect(() => {
     if (!target) return;
-    void api<TargetInfo>("GET", `/admin/streaming/target?kind=${target.kind}&id=${encodeURIComponent(target.id)}`)
-      .then((t) => setLabel(t.label))
-      .catch(() => setLabel(null));
+    let alive = true;
+    // FIX-BROADCAST · se relee cada 15 s: el destino evoluciona (el torneo termina, la
+    // batalla acaba) y la admin tiene que verlo sin recargar.
+    const load = () =>
+      void api<TargetInfo>("GET", `/admin/streaming/target?kind=${target.kind}&id=${encodeURIComponent(target.id)}`)
+        .then((t) => {
+          if (!alive) return;
+          setLabel(t.label);
+          setTargetInfo(t);
+        })
+        .catch(() => {
+          if (alive) setLabel(null);
+        });
+    load();
+    const timer = setInterval(load, 15_000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
   }, [target?.kind, target?.id]);
   const s = st.streamer;
   const relay = s?.relay;
@@ -1066,6 +1184,9 @@ function LiveView(props: { st: StreamingAdminState; busy: string | null; act: Ac
           {record ? "DETENER GRABACIÓN" : "DETENER EMISIÓN"}
         </button>
       </div>
+      {/* FIX-BROADCAST · QUÉ se está emitiendo de verdad (batalla suelta o torneo) y, si la
+          página pública ya no tiene nada que mostrar, por qué. */}
+      {targetInfo && <TargetSummary target={targetInfo} prefix="Emitiendo: " testId="live-target" />}
       {failed && (
         <div role="alert" className="error" data-testid="live-failure">
           <strong>
@@ -1086,7 +1207,9 @@ function LiveView(props: { st: StreamingAdminState; busy: string | null; act: Ac
         <div>
           <span>Destino</span>
           <strong data-testid="live-destination">
-            {label ?? (target ? (target.kind === "battle" ? "Batalla" : "Torneo") : "—")}
+            {targetInfo?.targetType
+              ? targetSummaryText(targetInfo)
+              : (label ?? (target ? (target.kind === "battle" ? "Batalla" : "Torneo") : "—"))}
           </strong>
         </div>
         <div>
@@ -1274,6 +1397,7 @@ function ManualTargetCard(props: { st: StreamingAdminState; route: string; busy:
       <FormError error={targetError} data-testid="stream-target-error" />
       {target && (
         <div data-testid="manual-target-info">
+          <TargetSummary target={target} testId="manual-target-summary" />
           <p>
             <strong>{target.label}</strong> · {STATUS_HUMAN[target.status] ?? target.status}
           </p>

@@ -321,7 +321,7 @@ describe("EQ5 · un visitante NO ve las batallas programadas: el final lo decide
     expect(screens.map((s) => s.kind)).toEqual(["intermission"]);
   });
 
-  it("un torneo cancelado también cierra la emisión con la pantalla final", async () => {
+  it("un torneo cancelado también cierra la emisión con su pantalla terminal (FIX-BROADCAST: «cancelado»)", async () => {
     const screens: BroadcastScreen[] = [];
     const director = new BroadcastDirector({
       target: { kind: "tournament", tournamentId: "t1" },
@@ -332,7 +332,7 @@ describe("EQ5 · un visitante NO ve las batallas programadas: el final lo decide
       onScreen: (s) => screens.push(s),
     });
     await director.tick();
-    expect(screens.map((s) => s.kind)).toEqual(["finished"]);
+    expect(screens.map((s) => s.kind)).toEqual(["cancelled"]);
   });
 });
 
