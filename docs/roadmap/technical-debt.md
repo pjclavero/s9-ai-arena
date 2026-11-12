@@ -653,13 +653,13 @@ Estados posibles:
 ## TD-023 — Administración operativa sólo por SSH
 
 - **Estado:** ABIERTA
-- **Auditoría 2026-11-02 (main `e3bf2fa`):** Sigue ABIERTA: `GET /system/status` no expone backup, restore, readiness ni drift (`apps/api/src/routes/system.ts:49-85`).
+- **Revisión 2026-11-12 (main `f590947`):** Sigue ABIERTA para backup, restore, readiness y drift. PR #269 sí retiró de SSH la activación del espectador/replays públicos mediante ajustes runtime persistentes y auditados.
 - **Prioridad:** P2
 - **Área:** Administración
 - **Detectado:** 2026-10-15
 - **Evidencia:**
   - La web cubre roles (por UUID), mapas, equipos y auditoría.
-  - Sólo por SSH o CLI: primer admin, `bootstrap`, backup, restore, readiness, drift, logs y activación de la ejecución o del espectador. La suspensión o retirada de bots sólo existe por API.
+  - Sólo por SSH o CLI siguen: primer admin, `bootstrap`, backup, restore, readiness, drift y logs. Desde PR #269, el espectador y los replays públicos se activan/desactivan desde **Administración → Acceso público / Broadcast** y se aplican en caliente; la ejecución real de batallas y otras tareas operativas siguen fuera de la web.
   - No hay listado ni baja de usuarios.
 - **Problema:** operar el sistema exige acceso al host.
 - **Impacto:** el producto no se puede administrar sin conocer la infraestructura.
@@ -1342,19 +1342,21 @@ Estados posibles:
 | Nightly 40/40 rojo | RUNTIME_VERIFIED (en la auditoría) | historial de GitHub Actions, sin cambios desde entonces |
 
 <a id="td-066"></a>
-## TD-066 — Streaming: clave en argv de FFmpeg, sin retención de MP4 ni alerta; YouTube sin probar
+## TD-066 — Streaming: custodia de clave, retención, alerta y prueba real
 
-- **Estado:** ABIERTA
-- **Prioridad:** P3
-- **Área:** Streaming / operación (`apps/streamer`)
-- **Detectado:** 2026-11-02, auditoría EQ5 y revisión de integración
-- **Evidencia:**
-  - La URL de salida, con la clave, entra en el argv de FFmpeg: `apps/streamer/src/ffmpeg.ts:115-118` (`${cfg.rtmpsUrl}/${streamKey}`). Se redacta en logs (`redactArgs`, `:123`) pero es visible con `ps` en el host.
-  - Sin retención de los MP4 del modo grabación y sin alerta sobre `streamer_up`: `infrastructure/observability/prometheus/alerts.yml` solo tiene `StreamDown` (`:49`), basada en cAdvisor. Detalle en [streaming.md](../operations/streaming.md) (EQ5-5, EQ5-7, EQ5-9).
-  - La emisión real a YouTube está BLOCKED: no hay clave ni canal de prueba.
-- **Problema:** la clave de emisión es visible a quien pueda leer `/proc` del host; el disco puede llenarse de vídeos; nadie se entera si el streamer cae.
-- **Solución prevista:** un relé que lea la clave de un fichero; política de retención; alerta sobre `streamer_up`; una prueba real contra YouTube con una clave del operador.
-- **Condición de cierre:** `ps` no muestra la clave, existe retención probada, la alerta se dispara en una prueba y hay una emisión de prueba verificada.
+- **Estado:** CERRADA (2026-11-12; código + prueba real reportada)
+- **Prioridad original:** P3
+- **Área:** Streaming / operación
+- **Detectado:** 2026-11-02
+- **Cierre:**
+  - La clave de emisión **ya no entra en el argv de FFmpeg**. FFmpeg entrega FLV por un descriptor al relé RTMP interno del streamer; la credencial sellada sólo se abre dentro del proceso Node.
+  - La administración de streaming incluye credenciales selladas, grabaciones/retención y auditoría.
+  - #256 añade `BROADCAST_RENDER_READY` y watchdog para no publicar una pantalla blanca.
+  - #274 corrige el acceso interno de `/broadcast` a `/api/v1/` y `/ws/` desde el nginx de `web`.
+  - El 2026-11-12 se obtuvo `BATTLE_VISIBLE_ON_STREAM=PASS` en una emisión real de YouTube: mapa, vehículos, movimiento y HUD visibles, 0 frames descartados (registro del operador).
+- **Evidencia de código:** `apps/streamer/src/ffmpeg.ts` documenta y construye la salida `pipe:3` al relé; `apps/api/src/routes/streaming.ts` y la administración gestionan credenciales/retención.
+- **Riesgo residual / siguiente fase:** la orquestación de múltiples batallas, start sincronizado, fuentes OBS y replay playlists pertenecen a Streaming V2 (MS-1 #275), no reabren TD-066.
+- **Condición de cierre:** cumplida para el alcance original.
 
 <a id="td-067"></a>
 ## TD-067 — `runCursorQuery` atribuye al cursor errores de conversión que vienen de los filtros
