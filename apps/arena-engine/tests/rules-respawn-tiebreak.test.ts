@@ -175,7 +175,13 @@ describe("respawn limitado", () => {
       eliminations(b)
         .map((e: any) => e.targetId)
         .sort(),
-    ).toEqual(expect.arrayContaining(blue().map((v) => v.id).sort()));
+    ).toEqual(
+      expect.arrayContaining(
+        blue()
+          .map((v) => v.id)
+          .sort(),
+      ),
+    );
     b.free();
   });
 

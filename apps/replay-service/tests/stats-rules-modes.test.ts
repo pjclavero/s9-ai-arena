@@ -37,7 +37,9 @@ async function play(ruleset: any, perSide: number, byConstruction = false): Prom
     for (const p of participants) {
       const red = p.team === "red";
       b.attachBot(p.id, byConstruction && !red ? new IdleBot(p.botId) : new HunterBot(p.botId));
-      if (byConstruction && red) for (const v of b.getVehicles().filter((x) => x.id === p.id)) for (const a of v.modulesOf("ammo")) a.ammo = 100_000;
+      if (byConstruction && red)
+        for (const v of b.getVehicles().filter((x) => x.id === p.id))
+          for (const a of v.modulesOf("ammo")) a.ammo = 100_000;
     }
   });
 }

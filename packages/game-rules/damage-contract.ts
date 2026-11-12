@@ -122,7 +122,11 @@ export function armorBroken(hp: number, hpMax: number): boolean {
 export type PublicImpactClass = "hit" | "critical" | "kill";
 
 /** Clase de impacto a partir de hechos discretos del registro, nunca de importes. */
-export function impactClassOf(r: { killed: boolean; armorBroken: boolean; moduleDestroyed: boolean }): PublicImpactClass {
+export function impactClassOf(r: {
+  killed: boolean;
+  armorBroken: boolean;
+  moduleDestroyed: boolean;
+}): PublicImpactClass {
   if (r.killed) return "kill";
   if (r.armorBroken || r.moduleDestroyed) return "critical";
   return "hit";

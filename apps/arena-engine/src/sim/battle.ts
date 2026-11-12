@@ -21,15 +21,7 @@ import {
 } from "../../../../packages/game-rules/index.js";
 import { Rng } from "../rng.js";
 import deps from "../engine-deps.json" with { type: "json" };
-import {
-  canDeployMine,
-  canFire,
-  deployMine,
-  explosionFalloff,
-  fire,
-  type Mine,
-  type Projectile,
-} from "./combat.js";
+import { canDeployMine, canFire, deployMine, explosionFalloff, fire, type Mine, type Projectile } from "./combat.js";
 import { ARENA_BOUNDARY_ID_PREFIX } from "../arena-map.js";
 import {
   TECHNICAL_LIMIT,
@@ -712,7 +704,16 @@ export class Battle {
             continue;
           }
           directTarget = target.id;
-          this.damageVehicle(target, p.damage, impact, poses, p.ownerId, p.team, DEFAULT_DIRECT_DAMAGE_TYPE, "projectile");
+          this.damageVehicle(
+            target,
+            p.damage,
+            impact,
+            poses,
+            p.ownerId,
+            p.team,
+            DEFAULT_DIRECT_DAMAGE_TYPE,
+            "projectile",
+          );
         } else if (this.destructibleHp.has(hit.entityId)) {
           const hp = (this.destructibleHp.get(hit.entityId) ?? 0) - p.damage;
           this.destructibleHp.set(hit.entityId, hp);

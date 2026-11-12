@@ -70,7 +70,12 @@ const pkt = (amount: number, from: { x: number; y: number }, over: Partial<Engin
   ...over,
 });
 const POSE = { position: { x: 0, y: 0 }, heading: 0 };
-const FROM = { front: { x: 10, y: 0 }, left: { x: 0, y: 10 }, right: { x: 0, y: -10 }, rear: { x: -10, y: 0 } } as const;
+const FROM = {
+  front: { x: 10, y: 0 },
+  left: { x: 0, y: 10 },
+  right: { x: 0, y: -10 },
+  rear: { x: -10, y: 0 },
+} as const;
 
 // ------------------------------------------------------------------ oráculo D6 histórico
 /**
@@ -179,7 +184,14 @@ describe("CHAR · la puerta única reproduce la fórmula D6 histórica", () => {
       "test.fixture.halfhull": { ...DAMAGE_TYPE_PROFILES.kinetic!, id: "test.fixture.halfhull", hullShare: 0.5 },
     };
     const v = new Vehicle("veh_t", "red", "bot_t", sandbagLoadout());
-    const rec = resolveDamage(pkt(10, FROM.rear, { type: "test.fixture.halfhull" }), v, POSE, new Rng("x"), 0, profiles);
+    const rec = resolveDamage(
+      pkt(10, FROM.rear, { type: "test.fixture.halfhull" }),
+      v,
+      POSE,
+      new Rng("x"),
+      0,
+      profiles,
+    );
     expect(rec.hull).toBe(5);
   });
 
@@ -503,9 +515,13 @@ describe("N20 · contrato público: hullLevel N = 20 y blindaje cuantizado", () 
 
   it("blindaje público: K niveles y rotura", () => {
     expect(ARMOR_LEVEL_STEPS).toBe(4);
-    expect([armorLevel(200, 200), armorLevel(150, 200), armorLevel(149, 200), armorLevel(1, 200), armorLevel(0, 200)]).toEqual([
-      4, 3, 3, 1, 0,
-    ]);
+    expect([
+      armorLevel(200, 200),
+      armorLevel(150, 200),
+      armorLevel(149, 200),
+      armorLevel(1, 200),
+      armorLevel(0, 200),
+    ]).toEqual([4, 3, 3, 1, 0]);
     expect(armorBroken(0, 200)).toBe(true);
     expect(armorBroken(0.1, 200)).toBe(false);
   });
@@ -617,7 +633,11 @@ describe("STATIC · la capa de daño no despacha por contenido ni usa azar", () 
   it("el motor nunca lee tasa ni arco de torreta de un módulo (sólo de la montura)", () => {
     const bad: string[] = [];
     let seen = 0;
-    for (const f of ["apps/arena-engine/src/sim/vehicle.ts", "apps/arena-engine/src/sim/combat.ts", "apps/arena-engine/src/sim/battle.ts"]) {
+    for (const f of [
+      "apps/arena-engine/src/sim/vehicle.ts",
+      "apps/arena-engine/src/sim/combat.ts",
+      "apps/arena-engine/src/sim/battle.ts",
+    ]) {
       const { src, ast } = astOf(f);
       walk(ast, (n) => {
         if (isMember(n, "turretRateRads") || isMember(n, "turretArcRad")) {

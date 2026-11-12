@@ -18,8 +18,17 @@
  * D-B3: ningún importe depende del RNG. El RNG sólo elige el módulo impactado, y sólo si
  * hay presupuesto de módulo (las zonas, con moduleShare 0, no consumen RNG).
  */
-import type { DamagePacket, DamageRecord, DamageTypeProfile, DamageTypeId } from "../../../../packages/module-catalog/contracts/engine-v2.js";
-import { ARMOR_REDUCTION_MAX, DAMAGE_TYPE_PROFILES, damageProfileOf } from "../../../../packages/game-rules/damage-contract.js";
+import type {
+  DamagePacket,
+  DamageRecord,
+  DamageTypeProfile,
+  DamageTypeId,
+} from "../../../../packages/module-catalog/contracts/engine-v2.js";
+import {
+  ARMOR_REDUCTION_MAX,
+  DAMAGE_TYPE_PROFILES,
+  damageProfileOf,
+} from "../../../../packages/game-rules/damage-contract.js";
 import { safeLookup } from "../../../../packages/game-rules/safe-lookup.js";
 import type { Rng } from "../rng.js";
 import type { Vec2 } from "./physics.js";

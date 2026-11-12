@@ -37,7 +37,16 @@ const applyDamage = (
   rng: Rng,
 ) =>
   resolveDamage(
-    { amount, type: "kinetic", penetration: 0, from, owner: "veh_x", ownerTeam: "blue", sourceKind: "projectile", seq: 0 },
+    {
+      amount,
+      type: "kinetic",
+      penetration: 0,
+      from,
+      owner: "veh_x",
+      ownerTeam: "blue",
+      sourceKind: "projectile",
+      seq: 0,
+    },
     v,
     { position, heading },
     rng,
