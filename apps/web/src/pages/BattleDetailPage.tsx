@@ -414,7 +414,15 @@ interface TargetView {
 
 /** MG · autorizada por visibilidad pero la página pública no podría leerla (p. ej. espectador público apagado). */
 function effectivelyBlocked(t: TargetView | null | undefined): boolean {
-  return !!t && t.broadcastable && t.broadcastAvailable === false && t.reason !== "battle_not_started";
+  // `battle_not_started` (espera) y `streaming_not_configured` (el botón sólo ABRE Streaming, que
+  // explica el estado del streamer) no bloquean el enlace; los motivos de lectura pública sí.
+  return (
+    !!t &&
+    t.broadcastable &&
+    t.broadcastAvailable === false &&
+    t.reason !== "battle_not_started" &&
+    t.reason !== "streaming_not_configured"
+  );
 }
 
 /**
@@ -473,7 +481,11 @@ function LiveAndBroadcast({ b, me, onShowResult }: { b: BattleDetail; me?: Me | 
                   : effectivelyBlocked(target.data)
                     ? `No se puede retransmitir ahora: ${broadcastReasonText(target.data?.reason)}`
                     : target.data?.broadcastable
-                      ? "Se puede retransmitir. «Retransmitir» abre Streaming con esta batalla seleccionada; no empieza a emitir hasta que pulses «Iniciar» allí."
+                      ? `Se puede retransmitir. «Retransmitir» abre Streaming con esta batalla seleccionada; no empieza a emitir hasta que pulses «Iniciar» allí.${
+                          target.data?.reason === "streaming_not_configured"
+                            ? " Aviso: este despliegue no tiene streamer configurado; Streaming lo indicará."
+                            : ""
+                        }`
                       : (BROADCAST_BLOCKED_TEXT[target.data?.broadcastBlockedReason ?? ""] ??
                         "No se puede retransmitir esta batalla.")}
             </p>

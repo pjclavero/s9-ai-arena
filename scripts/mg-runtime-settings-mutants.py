@@ -130,9 +130,13 @@ M = [
      "opts.publicSpectateEnabled ?? true",
      FC, "SpectateGateway sin opción"),
     ("M28 UI ignora el espectador apagado", "apps/web/src/pages/BattleDetailPage.tsx",
-     "return !!t && t.broadcastable && t.broadcastAvailable === false && t.reason !== \"battle_not_started\";",
-     "return false;",
+     "    t.broadcastAvailable === false &&\n",
+     "    false &&\n",
      LIVE, "espectador público APAGADO"),
+    ("M29 UI bloquea también sin streamer", "apps/web/src/pages/BattleDetailPage.tsx",
+     '    t.reason !== "battle_not_started" &&\n    t.reason !== "streaming_not_configured"\n',
+     '    t.reason !== "battle_not_started"\n',
+     LIVE, "sin streamer configurado"),
 ]
 
 

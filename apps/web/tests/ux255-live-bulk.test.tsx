@@ -114,6 +114,21 @@ describe("#255 · BATTLE_LIVE_AND_BROADCAST_GROUPED (unitario)", () => {
     expect(screen.queryByTestId("broadcast-battle")).toBeNull();
   });
 
+  it("MG · sin streamer configurado: el enlace sigue habilitado (Streaming explica el estado) y se avisa", async () => {
+    backend(BATTLE("running"), {
+      broadcastable: true,
+      broadcastBlockedReason: null,
+      broadcastAvailable: false,
+      reason: "streaming_not_configured",
+    });
+    render(<BattleDetailPage id={ID} me={ADMIN} />);
+    const status = await screen.findByTestId("broadcast-status");
+    await waitFor(() => expect(status.textContent).toMatch(/^Se puede retransmitir/));
+    expect(status.textContent).toContain("no tiene streamer configurado");
+    expect(screen.getByTestId("broadcast-battle").getAttribute("href")).toBe(`#/streaming?battle=${ID}`);
+    expect(screen.queryByTestId("broadcast-battle-blocked")).toBeNull();
+  });
+
   it("en curso + usuario normal: «Ver en directo» sí; «Retransmitir» y su estado, no (ni se pregunta a la API de admin)", async () => {
     backend(BATTLE("running"));
     render(<BattleDetailPage id={ID} me={USER} />);
